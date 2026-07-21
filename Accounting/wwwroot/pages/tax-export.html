@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Export ข้อมูลยื่นภาษี - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">Export ข้อมูลยื่นภาษี / ประกันสังคม</h2><p class="page-subtitle">ดาวน์โหลดไฟล์สำหรับยื่นกรมสรรพากรและสำนักงานประกันสังคม</p></div>
+    </div>
+
+    <!-- Period Selection -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="form-row" style="align-items:flex-end">
+        <div class="form-group"><label class="form-label">ปี (ค.ศ.)</label><input type="number" class="form-input" id="fYear" value="2026" style="width:100px"></div>
+        <div class="form-group"><label class="form-label">เดือน</label>
+          <select class="form-select" id="fMonth" style="width:140px">
+            <option value="1">มกราคม</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
+            <option value="4">เมษายน</option><option value="5">พฤษภาคม</option><option value="6">มิถุนายน</option>
+            <option value="7">กรกฎาคม</option><option value="8">สิงหาคม</option><option value="9">กันยายน</option>
+            <option value="10">ตุลาคม</option><option value="11">พฤศจิกายน</option><option value="12">ธันวาคม</option>
+          </select>
+        </div>
+        <div class="form-group"><button class="btn btn-primary" onclick="Page.loadPreviews()">ดูข้อมูล</button></div>
+      </div>
+    </div>
+
+    <!-- Export Cards Grid -->
+    <div class="grid grid-2 gap-4">
+
+      <!-- ภ.ง.ด.1 -->
+      <div class="card" id="cardPND1">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.1</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีหัก ณ ที่จ่าย เงินเดือน (รายเดือน)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND1">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND1')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- ภ.ง.ด.3 -->
+      <div class="card" id="cardPND3">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.3</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีหัก ณ ที่จ่าย บุคคลธรรมดา (รายเดือน)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND3">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd3')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND3')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- ภ.ง.ด.53 -->
+      <div class="card" id="cardPND53">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.53</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีหัก ณ ที่จ่าย นิติบุคคล (รายเดือน)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND53">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd53')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND53')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- ภ.พ.30 -->
+      <div class="card" id="cardPP30">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.พ.30</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีมูลค่าเพิ่ม (รายเดือน)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPP30">กำหนดยื่น: ภายในวันที่ 15 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pp30')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PP30')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- สปส.1-10 -->
+      <div class="card" id="cardSSO110">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">สปส.1-10</h3><p class="text-gray-500 text-xs" style="margin:0">เงินสมทบประกันสังคม (รายเดือน)</p></div>
+          <span class="badge badge-warning">ประกันสังคม</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewSSO110">กำหนดยื่น: ภายในวันที่ 15 ของเดือนถัดไป</div>
+        <div class="text-xs" style="margin-top:6px;color:var(--text-secondary)">
+          📌 ใช้ไฟล์ <b>Excel</b> แนบใน e-Service เมนู "ส่งข้อมูลเงินสมทบ" → เลือกวิธีแนบไฟล์
+          (โครงสร้างตรงกับไฟล์ที่ระบบ สปส. รับจริง — เลขบัตร/คำนำหน้า/ชื่อ/สกุล/ค่าจ้าง/เงินสมทบ)
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('sso110excel')">ดาวน์โหลด Excel (แนบ e-Service)</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('SSO110X')">ดูตัวอย่าง / ตรวจก่อนยื่น</button>
+        </div>
+      </div>
+
+      <!-- ภ.ง.ด.1ก -->
+      <div class="card" id="cardPND1K">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.1ก</h3><p class="text-gray-500 text-xs" style="margin:0">สรุปรายปีภาษีหัก ณ ที่จ่าย เงินเดือน</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND1K">กำหนดยื่น: ภายในเดือนกุมภาพันธ์ของปีถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1k')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND1K')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- ภ.ง.ด.51 (Half-year CIT) -->
+      <div class="card" id="cardPND51">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.51</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีเงินได้นิติบุคคล (ครึ่งปี §67 ทวิ)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND51">กำหนดยื่น: ภายใน 2 เดือนหลังครบ 6 เดือนของรอบบัญชี</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd51')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND51')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
+      <!-- DBD XBRL งบการเงินรายปี -->
+      <div class="card" id="cardDbdXbrl" style="border:2px solid #6366f1">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div>
+            <h3 class="text-lg font-bold" style="margin:0">📊 DBD XBRL — งบการเงินรายปี</h3>
+            <p class="text-gray-500 text-xs" style="margin:0">นำส่งงบการเงินกรมพัฒนาธุรกิจการค้า (e-Filing) — TFRS NPAEs taxonomy</p>
+          </div>
+          <span class="badge badge-info" style="background:#6366f1">DBD</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewDBDXBRL">⚠️ ต้องตั้ง 'ผู้ทำบัญชี + เลข CPD' ใน Settings ก่อน (พ.ร.บ.การบัญชี ม.7)</div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="Page.downloadXbrl()">📥 ดาวน์โหลด .xbrl</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.previewXbrl()">ดูตัวอย่าง</button>
+          <a class="btn btn-outline btn-sm" href="/pages/settings.html#accountant" style="text-decoration:none">⚙️ ตั้งค่าผู้ทำบัญชี</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div class="modal-overlay" id="previewModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="previewTitle">ดูตัวอย่างข้อมูล</h3><button class="modal-close" onclick="Layout.closeModal('previewModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="previewSummary" style="margin-bottom:12px"></div>
+          <pre id="previewData" style="background:var(--bg-secondary);padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;max-height:400px;white-space:pre-wrap;word-break:break-all"></pre>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('previewModal')" data-i18n="common.close">ปิด</button>
+          <button class="btn btn-primary" id="previewDownloadBtn" data-i18n="common.download">ดาวน์โหลด</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('tax-export')) return;
+        Layout.setTitle('Export ข้อมูลยื่นภาษี');
+        document.getElementById('fMonth').value = new Date().getMonth() + 1;
+        document.getElementById('fYear').value = new Date().getFullYear();
+      },
+      getYM() {
+        return { year: parseInt(document.getElementById('fYear').value), month: parseInt(document.getElementById('fMonth').value) };
+      },
+      async loadPreviews() {
+        const api = Layout.api(); if (!api) return;
+        const { year, month } = this.getYM();
+        const forms = ['PND1','PND3','PND53','PP30','SSO110'];
+        for (const code of forms) {
+          try {
+            const res = await api.previewTaxExport(code, year, month);
+            const d = res.data;
+            document.getElementById(`preview${code}`).innerHTML = d.summary || `${d.recordCount} รายการ | รายได้ ${Layout.money(d.totalIncome)} | ภาษี ${Layout.money(d.totalTax)}`;
+          } catch (e) {
+            document.getElementById(`preview${code}`).innerHTML = `<span class="text-danger text-xs">${Layout.esc(e.message || 'ไม่มีข้อมูล')}</span>`;
+          }
+        }
+        // PND1K is annual
+        try {
+          const res = await api.previewTaxExport('PND1K', year, 0);
+          const d = res.data;
+          document.getElementById('previewPND1K').innerHTML = d.summary || `${d.recordCount} รายการ`;
+        } catch(e) {
+          document.getElementById('previewPND1K').innerHTML = `<span class="text-danger text-xs">${Layout.esc(e.message || 'ไม่มีข้อมูล')}</span>`;
+        }
+      },
+      download(formCode) {
+        const api = Layout.api(); if (!api) return;
+        const { year, month } = this.getYM();
+        let url;
+        switch(formCode) {
+          case 'pnd1': url = api.exportPnd1(year, month); break;
+          case 'pnd3': url = api.exportPnd3(year, month); break;
+          case 'pnd53': url = api.exportPnd53(year, month); break;
+          case 'pnd1k': url = api.exportPnd1k(year); break;
+          case 'pp30': url = api.exportPp30(year, month); break;
+          case 'sso110': url = api.exportSso110(year, month); break;
+          case 'sso110excel': url = api.exportSso110Excel(year, month); break;
+          case 'pnd51': {
+            const cid = Layout.getCompanyId();
+            url = `/api/companies/${cid}/tax-filing-export/pnd51?year=${year}`;
+            break;
+          }
+        }
+        if (url) {
+          const token = localStorage.getItem('token');
+          // Download via fetch with auth header
+          fetch(url, { headers: { 'Authorization': `Bearer ${token}` }})
+            .then(r => {
+              if (!r.ok) throw new Error('Export failed');
+              // ใช้ชื่อไฟล์จาก Content-Disposition ของ server ก่อน (เช่น
+              // SocialSecurity_2569_06.xlsx ตาม convention ที่ e-Service คุ้น)
+              // fallback = <FORM>_<yyyyMM>.<ext ตาม form>
+              const cd = r.headers.get('Content-Disposition') || '';
+              const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+              this._dlName = m ? decodeURIComponent(m[1])
+                : `${formCode.toUpperCase()}_${year}${month ? String(month).padStart(2,'0') : ''}${formCode === 'sso110excel' ? '.xlsx' : '.txt'}`;
+              return r.blob();
+            })
+            .then(blob => {
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = this._dlName;
+              a.click();
+              URL.revokeObjectURL(a.href);
+              Layout.toast('ดาวน์โหลดสำเร็จ');
+            })
+            .catch(e => Layout.toast(e.message, 'error'));
+        }
+      },
+      escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); },
+      async preview(formCode) {
+        const api = Layout.api(); if (!api) return;
+        const { year, month } = this.getYM();
+        const formNames = { PND1:'ภ.ง.ด.1', PND3:'ภ.ง.ด.3', PND53:'ภ.ง.ด.53', PND1K:'ภ.ง.ด.1ก', PP30:'ภ.พ.30', SSO110:'สปส.1-10', SSO110X:'สปส.1-10 (Excel)' };
+        document.getElementById('previewTitle').textContent = `ตัวอย่างข้อมูล ${formNames[formCode] || formCode}`;
+        try {
+          // Fetch actual file content
+          const m = formCode === 'PND1K' ? 0 : month;
+          let url;
+          switch(formCode) {
+            case 'PND1': url = api.exportPnd1(year, month); break;
+            case 'PND3': url = api.exportPnd3(year, month); break;
+            case 'PND53': url = api.exportPnd53(year, month); break;
+            case 'PND1K': url = api.exportPnd1k(year); break;
+            case 'PP30': url = api.exportPp30(year, month); break;
+            case 'SSO110': url = api.exportSso110(year, month); break;
+            // SSO110X = ไฟล์ Excel (binary) — ไม่ดึงเนื้อไฟล์มาแสดง ใช้สรุป/คำเตือนพอ
+          }
+          let text = '(ไฟล์ Excel — ตรวจสรุปและคำเตือนด้านบน แล้วกดดาวน์โหลดเพื่อแนบใน e-Service)';
+          if (url) {
+            const token = localStorage.getItem('token');
+            const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` }});
+            text = await r.text();
+          }
+
+          // Summary
+          const res = await api.previewTaxExport(formCode, year, m);
+          const d = res.data;
+          document.getElementById('previewSummary').innerHTML = `
+            <div class="grid grid-3 gap-4">
+              <div><span class="text-gray-500 text-xs">จำนวนรายการ</span><div class="text-lg font-bold">${d.recordCount}</div></div>
+              <div><span class="text-gray-500 text-xs">รายได้/ฐานรวม</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
+              <div><span class="text-gray-500 text-xs">ภาษี/สมทบรวม</span><div class="text-lg font-bold text-danger">${Layout.money(d.totalTax)}</div></div>
+            </div>
+            <div class="text-sm" style="margin-top:8px;white-space:pre-line;color:${(d.summary || '').includes('⚠') ? '#b45309' : 'var(--text-secondary)'}">${this.escapeHtml(d.summary || '')}</div>`;
+
+          document.getElementById('previewData').textContent = text;
+          document.getElementById('previewDownloadBtn').onclick = () => this.download(formCode === 'SSO110X' ? 'sso110excel' : formCode.toLowerCase());
+          Layout.openModal('previewModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== DBD XBRL — annual financial statements =====
+      async previewXbrl() {
+        const { year } = this.getYM();
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await API.get(`/api/companies/${cid}/tax-filing-export/dbd-xbrl/preview?year=${year}`);
+          const d = r.data || {};
+          document.getElementById('previewTitle').textContent = `งบการเงิน DBD XBRL — ปี ${year}`;
+          document.getElementById('previewSummary').innerHTML = `
+            <div style="background:#eef2ff;border:1px solid #c7d2fe;padding:12px;border-radius:8px;margin-bottom:8px">
+              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:13px">
+                <div>สินทรัพย์รวม: <b>${Layout.money(d.totalAssets || 0)}</b></div>
+                <div>หนี้สินรวม: <b>${Layout.money(d.totalLiabilities || 0)}</b></div>
+                <div>ส่วนของเจ้าของ: <b>${Layout.money(d.totalEquity || 0)}</b></div>
+                <div>รายได้รวม: <b>${Layout.money(d.totalRevenue || 0)}</b></div>
+                <div>ค่าใช้จ่ายรวม: <b>${Layout.money(d.totalExpenses || 0)}</b></div>
+                <div>กำไรสุทธิ: <b style="color:${(d.netIncome||0)>=0?'#15803d':'#dc2626'}">${Layout.money(d.netIncome || 0)}</b></div>
+              </div>
+              <div style="margin-top:8px;font-size:11px;color:#6b7280">${Layout.esc(d.summary || '')}</div>
+            </div>
+          `;
+          document.getElementById('previewData').textContent = `File: ${d.fileName}\nSize: ${d.sizeBytes} bytes\n\n(ดาวน์โหลดเพื่อดู XBRL XML เต็ม)`;
+          document.getElementById('previewDownloadBtn').onclick = () => this.downloadXbrl();
+          Layout.openModal('previewModal');
+        } catch (e) {
+          const msg = e.message || 'ไม่สามารถ generate งบได้';
+          Layout.toast(msg, 'error', 8000);
+        }
+      },
+      async downloadXbrl() {
+        const { year } = this.getYM();
+        const cid = Layout.getCompanyId();
+        const url = `/api/companies/${cid}/tax-filing-export/dbd-xbrl?year=${year}`;
+        const token = localStorage.getItem('token');
+        try {
+          const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (!r.ok) {
+            let msg = 'ดาวน์โหลดไม่สำเร็จ';
+            try { const j = await r.json(); msg = j?.message || j?.data?.message || msg; } catch {}
+            Layout.toast(msg, 'error', 8000);
+            return;
+          }
+          const blob = await r.blob();
+          const dispo = r.headers.get('content-disposition') || '';
+          const m = dispo.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+          const filename = m ? decodeURIComponent(m[1]) : `DBD_XBRL_${year}.xbrl`;
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(a.href);
+          Layout.toast('ดาวน์โหลด XBRL สำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

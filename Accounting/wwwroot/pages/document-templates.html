@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เทมเพลตเอกสาร — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .editor-grid { display:grid; grid-template-columns:380px 1fr; gap:18px; align-items:start; }
+    .editor-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; max-height:calc(100vh - 200px); overflow-y:auto; }
+    .editor-section { padding:14px 18px; border-bottom:1px solid #f1f5f9; }
+    .editor-section h4 { margin:0 0 12px; font-size:13px; color:#1e293b; display:flex; align-items:center; gap:6px; }
+    .editor-section h4 .toggle { margin-left:auto; }
+    .editor-section.collapsed > .body { display:none; }
+    .editor-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+    .editor-row.single { grid-template-columns:1fr; }
+    .editor-row label { display:block; font-size:11px; color:#64748b; margin-bottom:3px; }
+    .editor-row input, .editor-row select, .editor-row textarea {
+      width:100%; padding:6px 10px; border:1px solid #d1d5db; border-radius:6px; font:inherit; font-size:13px;
+    }
+    .editor-row input[type="color"] { padding:0; height:36px; cursor:pointer; }
+    .check-row { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px; color:#334155; }
+    .preview-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; overflow:hidden; min-height:600px; }
+    .preview-card iframe { width:100%; height:1100px; border:none; display:block; }
+    .preview-toolbar { background:#f1f5f9; padding:10px 14px; border-bottom:1px solid #e2e8f0; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .preview-toolbar select { padding:6px 10px; border:1px solid #d1d5db; border-radius:6px; font:inherit; font-size:13px; }
+    .preview-toolbar .toolbar-status { margin-left:auto; font-size:12px; color:#64748b; }
+    .save-bar { position:sticky; bottom:0; background:#fff; border-top:1px solid #e2e8f0; padding:12px 18px; display:flex; gap:10px; justify-content:flex-end; }
+
+    /* ---- Overview gallery ---- */
+    .gallery-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:16px; }
+    .gallery-card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden; display:flex; flex-direction:column; transition:box-shadow .15s, transform .15s; }
+    .gallery-card:hover { box-shadow:0 8px 24px rgba(0,0,0,.10); transform:translateY(-2px); }
+    .gallery-card .thumb { width:100%; height:300px; overflow:hidden; position:relative; background:#f8fafc; border-bottom:1px solid #f1f5f9; }
+    .gallery-card .thumb iframe { width:744px; height:1052px; border:none; transform:scale(0.31); transform-origin:top left; position:absolute; top:0; left:0; pointer-events:none; }
+    .gallery-card .thumb .thumb-ph { display:flex; align-items:center; justify-content:center; height:100%; color:#94a3b8; font-size:13px; }
+    .gallery-card .meta { padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
+    .gallery-card .meta .dt-name { font-size:14px; font-weight:600; color:#1e293b; }
+    .gallery-card .meta .tpl-name { font-size:12px; color:#64748b; }
+    .gallery-card .meta .badge-default { display:inline-block; font-size:10px; background:#dbeafe; color:#1e40af; padding:1px 7px; border-radius:999px; }
+    .gallery-card .meta .badge-none { display:inline-block; font-size:10px; background:#f1f5f9; color:#64748b; padding:1px 7px; border-radius:999px; }
+
+    /* ---- Global design picker (with real mini previews) ---- */
+    .look-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:14px; }
+    .design-card { border:1px solid #e2e8f0; border-radius:12px; overflow:hidden; background:#fff; display:flex; flex-direction:column; transition:box-shadow .15s, transform .15s; }
+    .design-card:hover { box-shadow:0 8px 24px rgba(0,0,0,.10); transform:translateY(-2px); }
+    .design-thumb { height:250px; overflow:hidden; position:relative; background:#f8fafc; border-bottom:1px solid #f1f5f9; }
+    .design-thumb iframe { width:744px; height:1052px; border:none; transform:scale(0.255); transform-origin:top left; position:absolute; top:0; left:0; pointer-events:none; }
+    .design-thumb .thumb-ph { display:flex; align-items:center; justify-content:center; height:100%; color:#94a3b8; font-size:12px; }
+    .design-meta { padding:10px 12px; }
+
+    /* ---- Colour palette picker ---- */
+    .color-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:10px; }
+    .color-card { border:1px solid #e2e8f0; border-radius:10px; padding:10px; cursor:pointer; background:#fff; text-align:center; transition:border-color .15s, box-shadow .15s; }
+    .color-card:hover { border-color:#6366f1; box-shadow:0 4px 12px rgba(99,102,241,.12); }
+    .color-card .color-swatch { display:inline-block; width:22px; height:22px; border-radius:5px; margin:0 1px; }
+    .color-card .color-name { font-size:12px; font-weight:600; color:#1f2937; margin-top:6px; }
+
+    /* ---- (legacy swatch look picker) ---- */
+    .look-card { border:1px solid #e2e8f0; border-radius:10px; padding:10px; cursor:pointer; background:#fff; text-align:left; transition:border-color .15s, box-shadow .15s; }
+    .look-card { border:1px solid #e2e8f0; border-radius:10px; padding:10px; cursor:pointer; background:#fff; text-align:left; transition:border-color .15s, box-shadow .15s; }
+    .look-card:hover { border-color:#6366f1; box-shadow:0 4px 12px rgba(99,102,241,.12); }
+    .look-swatch { display:flex; gap:4px; margin-bottom:8px; }
+    .look-swatch span { width:20px; height:20px; border-radius:5px; }
+    .look-card .look-name { font-size:13px; font-weight:600; color:#1f2937; }
+    .look-card .look-sub { font-size:11px; color:#94a3b8; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+
+    <!-- ===================== OVERVIEW (landing) ===================== -->
+    <div id="overviewView">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">เทมเพลตเอกสาร</h2>
+          <p class="page-subtitle">เลือกธีมหลักของทั้งระบบ หรือกด "ปรับแต่ง" รายเอกสาร — เห็นหน้าตาจริงทุกแบบ</p>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 4px">1️⃣ เลือกโครงเทมเพลต — 10 แบบ การจัดวางหน้าต่างกัน</h3>
+        <p style="font-size:12px;color:#64748b;margin:0 0 12px">กดเลือกโครงที่ชอบ → ใช้กับเอกสารทุกประเภท (สีเดิมคงไว้ เปลี่ยนสีได้ในขั้นที่ 2)</p>
+        <div id="globalLayoutGrid" class="look-grid"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:18px">
+        <h3 style="margin:0 0 4px">2️⃣ เลือกโทนสี</h3>
+        <p style="font-size:12px;color:#64748b;margin:0 0 12px">เปลี่ยนชุดสีให้ทุกเอกสาร (โครงที่เลือกไว้คงเดิม)</p>
+        <div id="globalColorGrid" class="color-grid"></div>
+
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed #e2e8f0">
+          <div style="font-size:12px;font-weight:600;color:#334155;margin-bottom:10px">🎨 กำหนดสีเอง — เลือกเฉดหรือใส่โค้ดสี (#RRGGBB) ได้แต่ละส่วน</div>
+          <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end">
+            <div>
+              <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px">สีเน้น / หัวเรื่อง</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="cAccent" value="#1E40AF" oninput="Page._syncColor('cAccent','cAccentHex')" style="width:42px;height:34px;padding:0;border:1px solid #d1d5db;border-radius:6px;cursor:pointer">
+                <input type="text" id="cAccentHex" value="#1E40AF" oninput="Page._syncHex('cAccentHex','cAccent')" style="width:90px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              </div>
+            </div>
+            <div>
+              <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px">สีหัวตาราง / แบนเนอร์</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="cHead" value="#1E40AF" oninput="Page._syncColor('cHead','cHeadHex')" style="width:42px;height:34px;padding:0;border:1px solid #d1d5db;border-radius:6px;cursor:pointer">
+                <input type="text" id="cHeadHex" value="#1E40AF" oninput="Page._syncHex('cHeadHex','cHead')" style="width:90px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              </div>
+            </div>
+            <div>
+              <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px">สีแถบสลับแถว</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="cStripe" value="#EEF2FF" oninput="Page._syncColor('cStripe','cStripeHex')" style="width:42px;height:34px;padding:0;border:1px solid #d1d5db;border-radius:6px;cursor:pointer">
+                <input type="text" id="cStripeHex" value="#EEF2FF" oninput="Page._syncHex('cStripeHex','cStripe')" style="width:90px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="Page.applyCustomColor()">ใช้สีที่กำหนดเองกับทุกเอกสาร</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:18px">
+        <h3 style="margin:0 0 4px">3️⃣ ตำแหน่งป้าย "ต้นฉบับ / สำเนา"</h3>
+        <p style="font-size:12px;color:#64748b;margin:0 0 12px">ตั้งครั้งเดียวใช้กับทุกเอกสาร — ถ้าเอกสารประเภทไหนต้องการต่างออกไป ค่อยกด "ปรับแต่ง" รายเอกสารด้านล่าง</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div>
+            <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px">รูปแบบป้าย</label>
+            <select id="gCopyLabelPos" style="min-width:220px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              <option value="Watermark">ลายน้ำกลางหน้า (ค่าเดิม)</option>
+              <option value="TopRight">ป้ายมุมขวาบน</option>
+              <option value="TopLeft">ป้ายมุมซ้ายบน</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick="Page.applyGlobalCopyLabel()">ใช้กับทุกเอกสาร</button>
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:8px">
+          โหมดป้ายมุม: "สำเนา" เป็นกรอบเล็กมุมเอกสารแทนลายน้ำ · "ต้นฉบับ" (ใบกำกับภาษี §86/4) ย้ายจากท้ายชื่อเอกสารไปมุมเดียวกัน
+        </div>
+      </div>
+
+      <h3 style="margin:18px 0 10px">📄 เอกสารแต่ละประเภท — กด "ปรับแต่ง" เพื่อแก้รายเอกสาร</h3>
+      <div id="galleryGrid" class="gallery-grid"></div>
+    </div>
+
+    <!-- ===================== EDITOR (drill-in) ===================== -->
+    <div id="editorView" style="display:none">
+      <div class="page-header">
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="btn btn-secondary btn-sm" onclick="Page.showOverview()">← ภาพรวม</button>
+          <div>
+            <h2 class="page-title" id="editorTitle">ปรับแต่งเทมเพลต</h2>
+            <p class="page-subtitle">logo · สี · font · header/footer · watermark · ลายเซ็น — preview สด</p>
+          </div>
+        </div>
+        <div>
+          <button class="btn btn-secondary" onclick="Page.openNew()">+ สร้างเทมเพลตใหม่</button>
+        </div>
+      </div>
+
+    <div class="editor-grid">
+      <!-- Left: form editor -->
+      <div class="editor-card">
+        <div class="editor-section">
+          <h4>ข้อมูลเทมเพลต</h4>
+          <div class="body">
+            <!-- tplSelect kept hidden: editor is opened per document type from
+                 the gallery, so the confusing "pick a template" dropdown is gone. -->
+            <select id="tplSelect" onchange="Page.selectTemplate()" style="display:none"></select>
+            <div class="editor-row">
+              <div><label>ประเภทเอกสาร</label><select id="tplDocType" onchange="Page.markDirty()" disabled></select></div>
+              <div><label>ชื่อเทมเพลต</label><input id="tplName" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>หัวเอกสารบน PDF (TH) <span style="color:#64748b;font-weight:400;font-size:11px">— ว่าง = ใช้ชื่อมาตรฐาน</span></label>
+                <input id="customTitle" onchange="Page.markDirty()" placeholder="เช่น ใบแจ้งหนี้/ใบกำกับภาษี"></div>
+              <div><label>หัวเอกสาร (EN)</label>
+                <input id="customTitleEn" onchange="Page.markDirty()" placeholder="e.g. Invoice / Tax Invoice"></div>
+            </div>
+            <div class="editor-row single">
+              <label class="check-row"><input type="checkbox" id="tplIsDefault" onchange="Page.markDirty()"> ตั้งเป็นค่าเริ่มต้นสำหรับประเภทนี้</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>✨ ดีไซน์สำเร็จรูป (เลือกรูปแบบทั้งหมด) <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <p style="font-size:12px;color:#64748b;margin:0 0 10px">เลือกดีไซน์เต็มรูปแบบ — กำหนดทั้ง <b>โครงหน้าตา</b> (ตำแหน่งโลโก้/หัวเอกสาร/การจัดวาง) + ฟอนต์ + สี + การแสดงผลให้สวยงามทันที ปรับแต่งเพิ่มแล้วกดบันทึก</p>
+            <div class="editor-row">
+              <div><label>โครงหน้าตา (Layout)</label>
+                <select id="layoutStyle" onchange="Page.markDirty();Page.refreshPreview()">
+                  <option value="Classic">คลาสสิก — โลโก้ซ้าย หัวเรื่องกึ่งกลาง</option>
+                  <option value="ModernLeft">โมเดิร์น — จัดชิดซ้าย เส้นเน้นสี</option>
+                  <option value="BannerHeader">แบนเนอร์ — หัวกระดาษแถบสีเต็ม</option>
+                  <option value="Compact">กระชับ — ตัวอักษรเล็ก ประหยัดพื้นที่</option>
+                  <option value="Minimal">มินิมอล — เรียบ ไม่มีกรอบ</option>
+                  <option value="CenteredFormal">ทางการ — จัดกึ่งกลางทั้งหมด</option>
+                </select>
+              </div>
+            </div>
+            <div id="presetGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px"></div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>🎨 Font + สี <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <div class="editor-row">
+              <div><label>Font</label>
+                <select id="fontFamily" onchange="Page.markDirty()">
+                  <option>THSarabunNew</option><option>Prompt</option><option>NotoSansThai</option><option>Sarabun</option>
+                </select>
+              </div>
+              <div><label>ขนาด body (pt)</label><input id="bodyFontSize" type="number" min="8" max="24" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>ขนาด title (pt)</label><input id="titleFontSize" type="number" min="14" max="40" onchange="Page.markDirty()"></div>
+              <div><label>Primary color</label><input id="primaryColor" type="color" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>Accent color</label><input id="accentColor" type="color" onchange="Page.markDirty()"></div>
+              <div><label>Table header bg</label><input id="tableHeaderColor" type="color" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>Table header text</label><input id="tableHeaderTextColor" type="color" onchange="Page.markDirty()"></div>
+              <div><label>Header bg</label><input id="headerBackgroundColor" type="color" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>🖼️ Logo <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showLogo" onchange="Page.markDirty()"> แสดง logo</label>
+            <div class="editor-row">
+              <div><label>ตำแหน่ง</label>
+                <select id="logoPosition" onchange="Page.markDirty()">
+                  <option>Left</option><option>Center</option><option>Right</option>
+                </select>
+              </div>
+              <div><label>กว้าง (mm)</label><input id="logoWidth" type="number" min="10" max="200" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>สูง (mm)</label><input id="logoHeight" type="number" min="10" max="100" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>📑 Header (ข้อมูลบริษัท) <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showCompanyName" onchange="Page.markDirty()"> ชื่อบริษัท (TH)</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyNameEn" onchange="Page.markDirty()"> ชื่อบริษัท (EN)</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyAddress" onchange="Page.markDirty()"> ที่อยู่</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyTaxId" onchange="Page.markDirty()"> เลขผู้เสียภาษี</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyPhone" onchange="Page.markDirty()"> โทรศัพท์</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyEmail" onchange="Page.markDirty()"> อีเมล</label>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>👤 ข้อมูลคู่ค้า <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <div class="editor-row">
+              <div><label>หัวข้อ (TH)</label><input id="contactSectionTitle" onchange="Page.markDirty()"></div>
+              <div><label>หัวข้อ (EN)</label><input id="contactSectionTitleEn" onchange="Page.markDirty()"></div>
+            </div>
+            <label class="check-row"><input type="checkbox" id="showContactTaxId" onchange="Page.markDirty()"> เลขผู้เสียภาษีของคู่ค้า</label>
+            <label class="check-row"><input type="checkbox" id="showContactBranch" onchange="Page.markDirty()"> สาขา</label>
+            <label class="check-row"><input type="checkbox" id="showContactAddress" onchange="Page.markDirty()"> ที่อยู่</label>
+            <label class="check-row"><input type="checkbox" id="showContactPhone" onchange="Page.markDirty()"> โทรศัพท์</label>
+            <label class="check-row"><input type="checkbox" id="showContactEmail" onchange="Page.markDirty()"> อีเมล</label>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>📋 ตารางรายการ <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showLineNumber" onchange="Page.markDirty()"> เลขลำดับ</label>
+            <label class="check-row"><input type="checkbox" id="showItemCode" onchange="Page.markDirty()"> รหัสสินค้า</label>
+            <label class="check-row"><input type="checkbox" id="showUnit" onchange="Page.markDirty()"> หน่วย</label>
+            <label class="check-row"><input type="checkbox" id="showDiscount" onchange="Page.markDirty()"> ส่วนลด</label>
+            <label class="check-row"><input type="checkbox" id="showVatPerLine" onchange="Page.markDirty()"> VAT ต่อรายการ</label>
+            <label class="check-row"><input type="checkbox" id="showWithholdingTax" onchange="Page.markDirty()"> WHT ต่อรายการ</label>
+            <div class="editor-row">
+              <div><label>Border</label>
+                <select id="tableBorderStyle" onchange="Page.markDirty()">
+                  <option>Full</option><option>HeaderOnly</option><option>None</option>
+                </select>
+              </div>
+              <div><label>Striped color</label><input id="tableStripedColor" type="color" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>💰 สรุปยอด <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showSubTotal" onchange="Page.markDirty()"> SubTotal</label>
+            <label class="check-row"><input type="checkbox" id="showDiscountTotal" onchange="Page.markDirty()"> ส่วนลดรวม</label>
+            <label class="check-row"><input type="checkbox" id="showVatSummary" onchange="Page.markDirty()"> VAT รวม</label>
+            <label class="check-row"><input type="checkbox" id="showWithholdingTaxSummary" onchange="Page.markDirty()"> WHT รวม</label>
+            <label class="check-row"><input type="checkbox" id="showAmountInWords" onchange="Page.markDirty()"> จำนวนเงินเป็นตัวอักษร</label>
+            <div class="editor-row single">
+              <label>ภาษาของจำนวนเงินตัวอักษร</label>
+              <select id="amountInWordsLanguage" onchange="Page.markDirty()">
+                <option value="th">ไทย</option><option value="en">อังกฤษ</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>✍️ ลายเซ็น <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showSignature" onchange="Page.markDirty()"> แสดงช่องลงนาม</label>
+            <div class="editor-row">
+              <div><label>จำนวนช่อง</label>
+                <select id="signatureCount" onchange="Page.markDirty()">
+                  <option>1</option><option>2</option><option>3</option>
+                </select>
+              </div>
+              <div><label class="check-row"><input type="checkbox" id="showCompanyStamp" onchange="Page.markDirty()"> ตราประทับ</label></div>
+            </div>
+            <div class="editor-row">
+              <div style="flex:1">
+                <label>รูปตราประทับบริษัท (PNG พื้นหลังโปร่งใส)</label>
+                <input type="file" id="stampFile" accept="image/png,image/jpeg,image/webp" onchange="Page.uploadStamp(this)">
+                <input type="hidden" id="stampImagePath">
+                <div id="stampPreview" style="margin-top:6px"></div>
+              </div>
+            </div>
+            <div class="editor-row">
+              <div><label>ช่อง 1 (TH)</label><input id="signatureLabel1" onchange="Page.markDirty()"></div>
+              <div><label>ช่อง 1 (EN)</label><input id="signatureLabel1En" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>ช่อง 2 (TH)</label><input id="signatureLabel2" onchange="Page.markDirty()"></div>
+              <div><label>ช่อง 2 (EN)</label><input id="signatureLabel2En" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>ช่อง 3 (TH)</label><input id="signatureLabel3" onchange="Page.markDirty()"></div>
+              <div><label>ช่อง 3 (EN)</label><input id="signatureLabel3En" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>💧 Watermark <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showWatermark" onchange="Page.markDirty()"> แสดง watermark</label>
+            <div class="editor-row">
+              <div><label>ข้อความ</label><input id="watermarkText" placeholder="DRAFT / COPY / สำเนา" onchange="Page.markDirty()"></div>
+              <div><label>Opacity (0-1)</label><input id="watermarkOpacity" type="number" step="0.05" min="0.05" max="0.5" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row single">
+              <label>ตำแหน่งป้าย "ต้นฉบับ / สำเนา"</label>
+              <select id="copyLabelPosition" onchange="Page.markDirty()">
+                <option value="Watermark">ลายน้ำกลางหน้า (ค่าเดิม)</option>
+                <option value="TopRight">ป้ายมุมขวาบน</option>
+                <option value="TopLeft">ป้ายมุมซ้ายบน</option>
+              </select>
+              <div style="font-size:11px;color:#94a3b8;margin-top:2px">
+                ใช้กับป้าย ต้นฉบับ/สำเนา ตอนพิมพ์ PDF — โหมดป้ายมุม: "สำเนา" เป็นกรอบเล็กมุมเอกสารแทนลายน้ำ และ "ต้นฉบับ" ย้ายจากท้ายชื่อเอกสารไปมุมเดียวกัน
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>📞 Footer <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <div class="editor-row single">
+              <label>หมายเหตุ (TH)</label><textarea id="footerNotes" rows="2" onchange="Page.markDirty()"></textarea>
+            </div>
+            <div class="editor-row single">
+              <label>หมายเหตุ (EN)</label><textarea id="footerNotesEn" rows="2" onchange="Page.markDirty()"></textarea>
+            </div>
+            <label class="check-row"><input type="checkbox" id="showPaymentTerms" onchange="Page.markDirty()"> แสดง payment terms</label>
+            <label class="check-row"><input type="checkbox" id="showBankDetails" onchange="Page.markDirty()"> แสดงข้อมูลบัญชีธนาคาร</label>
+            <div class="editor-row single">
+              <label>ข้อความบัญชีธนาคาร</label><textarea id="bankDetailsText" rows="3" onchange="Page.markDirty()"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>📐 หน้ากระดาษ <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <div class="editor-row">
+              <div><label>ขนาด</label>
+                <select id="paperSize" onchange="Page.markDirty()">
+                  <option>A4</option><option>Letter</option><option>A5</option>
+                </select>
+              </div>
+              <div><label>แนว</label>
+                <select id="orientation" onchange="Page.markDirty()">
+                  <option>Portrait</option><option>Landscape</option>
+                </select>
+              </div>
+            </div>
+            <div class="editor-row">
+              <div><label>ขอบบน (mm)</label><input id="marginTop" type="number" onchange="Page.markDirty()"></div>
+              <div><label>ขอบล่าง (mm)</label><input id="marginBottom" type="number" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>ขอบซ้าย (mm)</label><input id="marginLeft" type="number" onchange="Page.markDirty()"></div>
+              <div><label>ขอบขวา (mm)</label><input id="marginRight" type="number" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="save-bar">
+          <button class="btn btn-secondary" onclick="Page.duplicateCurrent()">📋 ทำสำเนา</button>
+          <button class="btn btn-danger" onclick="Page.deleteCurrent()">ลบ</button>
+          <button class="btn btn-primary" onclick="Page.save()" id="saveBtn">บันทึก</button>
+        </div>
+      </div>
+
+      <!-- Right: live preview -->
+      <div class="preview-card">
+        <div class="preview-toolbar">
+          <label style="font-size:12px;color:#64748b">ตัวอย่างสด (ข้อมูลตัวอย่าง) — สะท้อนทุกการตั้งค่าทันที</label>
+          <select id="sampleDoc" style="display:none"></select>
+          <button class="btn btn-sm btn-secondary" onclick="Page.refreshPreview()">รีเฟรช</button>
+          <span class="toolbar-status" id="status">— เลือกเอกสารจากภาพรวม —</span>
+        </div>
+        <iframe id="previewFrame" sandbox="allow-same-origin"></iframe>
+      </div>
+    </div>
+    </div><!-- /editorView -->
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      templates: [],
+      sampleDocs: [],
+      current: null,
+      dirty: false,
+      debounceTimer: null,
+
+      // 9 complete designs. Each sets the LAYOUT (overall structure) plus
+      // font, colours, table style and a few sensible display toggles, so one
+      // click gives a finished, good-looking template. Other options are left
+      // untouched so a design can be layered on an existing template.
+      PRESETS: [
+        { key:'classic', name:'คลาสสิกธุรกิจ', layout:'Classic',        font:'THSarabunNew', primary:'#1F2937', accent:'#4472C4', headBg:'#4472C4', headText:'#FFFFFF', border:'Full',       stripe:'#F1F5F9', title:22 },
+        { key:'banner',  name:'แบนเนอร์น้ำเงิน', layout:'BannerHeader',  font:'Prompt',       primary:'#0F172A', accent:'#1E40AF', headBg:'#1E40AF', headText:'#FFFFFF', border:'Full',       stripe:'#EEF2FF', title:22 },
+        { key:'modern',  name:'โมเดิร์นเขียว',  layout:'ModernLeft',    font:'NotoSansThai', primary:'#134E4A', accent:'#0F766E', headBg:'#0F766E', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#F0FDFA', title:22 },
+        { key:'formal',  name:'ทางการคลาสสิก',  layout:'CenteredFormal',font:'THSarabunNew', primary:'#1C1917', accent:'#7F1D1D', headBg:'#991B1B', headText:'#FFFFFF', border:'Full',       stripe:'#FEF2F2', title:24 },
+        { key:'minimal', name:'มินิมอลขาว',    layout:'Minimal',       font:'Sarabun',      primary:'#111827', accent:'#111827', headBg:'#111827', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FFFFFF', title:22 },
+        { key:'compact', name:'กระชับประหยัด',  layout:'Compact',       font:'Sarabun',      primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', border:'Full',       stripe:'#F8FAFC', title:20 },
+        { key:'warm',    name:'อบอุ่นส้ม',     layout:'BannerHeader',  font:'Prompt',       primary:'#7C2D12', accent:'#C2410C', headBg:'#EA580C', headText:'#FFFFFF', border:'Full',       stripe:'#FFF7ED', title:22 },
+        { key:'purple',  name:'โมเดิร์นม่วง',   layout:'ModernLeft',    font:'NotoSansThai', primary:'#3B0764', accent:'#6D28D9', headBg:'#7C3AED', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FAF5FF', title:22 },
+        { key:'slate',   name:'เรียบหรูเทา',   layout:'CenteredFormal',font:'Prompt',       primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', border:'Full',       stripe:'#F8FAFC', title:24 },
+        { key:'rose',    name:'พรีเมียมโรสโกลด์', layout:'ModernLeft',  font:'Prompt',       primary:'#4C0519', accent:'#9F1239', headBg:'#BE123C', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FFF1F2', title:22 },
+      ],
+      _designFields(p) {
+        return {
+          layoutStyle: p.layout, fontFamily: p.font, titleFontSize: String(p.title),
+          primaryColor: p.primary, accentColor: p.accent,
+          tableHeaderColor: p.headBg, tableHeaderTextColor: p.headText,
+          tableBorderStyle: p.border, tableStripedColor: p.stripe,
+        };
+      },
+
+      LAYOUT_LABELS: { Classic:'คลาสสิก', ModernLeft:'โมเดิร์น', BannerHeader:'แบนเนอร์', Compact:'กระชับ', Minimal:'มินิมอล', CenteredFormal:'ทางการ' },
+
+      DOC_TYPES: [
+        ['Quotation','ใบเสนอราคา'], ['Invoice','ใบแจ้งหนี้'], ['TaxInvoice','ใบกำกับภาษี'],
+        ['Receipt','ใบเสร็จรับเงิน'], ['DeliveryNote','ใบส่งของ'], ['BillingNote','ใบวางบิล'],
+        ['DebitNote','ใบเพิ่มหนี้'], ['CreditNote','ใบลดหนี้'], ['PurchaseOrder','ใบสั่งซื้อ'],
+        ['GoodsReceiptNote','ใบรับสินค้า'], ['PurchaseInvoice','ใบแจ้งหนี้ซื้อ'], ['Expense','ใบบันทึกค่าใช้จ่าย'],
+        ['PaymentVoucher','ใบสำคัญจ่าย'], ['ReceiptVoucher','ใบสำคัญรับ'], ['CertificateInLieu','ใบรับรองแทนใบเสร็จ'],
+      ],
+      _typeLabel(t) { const f = this.DOC_TYPES.find(x => x[0] === t); return f ? f[1] : t; },
+
+      async init() {
+        if (!Layout.init('document-templates')) return;
+        Layout.setTitle('เทมเพลตเอกสาร');
+        this._populateDocTypeOptions();
+        this._renderPresets();
+        this._renderGlobalLooks();
+        await this.loadTemplates();   // populates this.templates (no auto-open)
+        await this._seedGlobalCustomColors();   // เติมช่อง "กำหนดสีเอง" จากค่าที่บันทึกจริง
+        this.showOverview();
+        // sample docs are only needed for the editor's live preview
+        this.loadSampleDocs();
+      },
+
+      // ───────────────── View switching ─────────────────
+      showOverview() {
+        document.getElementById('editorView').style.display = 'none';
+        document.getElementById('overviewView').style.display = '';
+        this.renderGallery();
+      },
+
+      // Open the per-document editor for ONE document type. Edits the type's
+      // default template, creating one first if it doesn't exist yet.
+      async openEditorForType(docType) {
+        let tpl = this._defaultTemplateFor(docType);
+        if (!tpl) {
+          try {
+            const cid = Layout.getCompanyId();
+            const body = { name: `${this._typeLabel(docType)} — เริ่มต้น`, documentType: docType, isDefault: true, isActive: true };
+            const r = await API.post(`/api/companies/${cid}/document-templates`, body);
+            tpl = r.data;
+            this.templates.push(tpl);
+          } catch (e) { Layout.toast('สร้างเทมเพลตไม่สำเร็จ: ' + e.message, 'error'); return; }
+        }
+        // list endpoint ส่งแค่ field ย่อ — ดึงตัวเต็มก่อนเติมฟอร์ม ไม่งั้น
+        // watermark/ตำแหน่งป้าย/ค่าอื่นโหลดว่างแล้วโดนบันทึกทับ
+        try {
+          const cid2 = Layout.getCompanyId();
+          const full = await API.get(`/api/companies/${cid2}/document-templates/${tpl.id}`);
+          if (full.data) tpl = full.data;
+        } catch (e) { /* ใช้ตัวย่อไปก่อน */ }
+        this.current = tpl;
+        this._fillForm(tpl);
+        document.getElementById('tplDocType').value = docType;
+        this.dirty = false;
+        document.getElementById('editorTitle').textContent = `ปรับแต่ง: ${this._typeLabel(docType)}`;
+        document.getElementById('overviewView').style.display = 'none';
+        document.getElementById('editorView').style.display = '';
+        // pick a sample doc of this type for the live preview if available
+        this._selectSampleForType(docType);
+        await this.refreshPreview();
+      },
+
+      _defaultTemplateFor(docType) {
+        const list = (this.templates || []).filter(t => t.documentType === docType);
+        return list.find(t => t.isDefault) || list[0] || null;
+      },
+
+      _selectSampleForType(docType) {
+        const sel = document.getElementById('sampleDoc');
+        if (!sel) return;
+        const opt = [...sel.options].find(o => o.dataset && o.dataset.type === docType);
+        if (opt) sel.value = opt.value;
+      },
+
+      // ───────────────── Gallery ─────────────────
+      renderGallery() {
+        const grid = document.getElementById('galleryGrid');
+        if (!grid) return;
+        grid.innerHTML = this.DOC_TYPES.map(([type, label]) => {
+          const tpl = this._defaultTemplateFor(type);
+          const badge = tpl
+            ? (tpl.isDefault ? '<span class="badge-default">ค่าเริ่มต้น</span>' : '')
+            : '<span class="badge-none">ยังไม่ตั้งค่า (ใช้แบบมาตรฐาน)</span>';
+          return `
+            <div class="gallery-card">
+              <div class="thumb" id="thumb-${type}"><div class="thumb-ph">กำลังโหลดตัวอย่าง…</div></div>
+              <div class="meta">
+                <div class="dt-name">${label}</div>
+                <div class="tpl-name">${tpl ? Layout.esc(tpl.name) : 'แบบมาตรฐาน'} ${badge}</div>
+                <button class="btn btn-sm btn-primary" onclick="Page.openEditorForType('${type}')">ปรับแต่ง →</button>
+              </div>
+            </div>`;
+        }).join('');
+        // Load each thumbnail lazily (sample-data preview HTML — no real doc needed).
+        this.DOC_TYPES.forEach(([type]) => this._loadThumb(type));
+      },
+
+      async _loadThumb(type) {
+        const host = document.getElementById('thumb-' + type);
+        if (!host) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const tpl = this._defaultTemplateFor(type);
+          const q = tpl ? `templateId=${tpl.id}` : `documentType=${type}`;
+          const token = localStorage.getItem('token');
+          const res = await fetch(`/api/companies/${cid}/document-templates/preview-html?${q}`, {
+            headers: { 'Authorization': 'Bearer ' + token } });
+          if (!res.ok) throw new Error('preview');
+          const html = await res.text();
+          const f = document.createElement('iframe');
+          f.setAttribute('sandbox', 'allow-same-origin');
+          f.srcdoc = html;
+          host.innerHTML = '';
+          host.appendChild(f);
+        } catch {
+          host.innerHTML = '<div class="thumb-ph">ดูตัวอย่างไม่ได้</div>';
+        }
+      },
+
+      // 10 structural templates — each arranges the page differently (header,
+      // title, meta, contact, totals). Colour is chosen separately below.
+      LAYOUTS: [
+        { key:'Classic',        name:'คลาสสิก',        desc:'โลโก้ซ้าย หัวเรื่องกึ่งกลาง', title:22 },
+        { key:'Letterhead',     name:'เลตเตอร์เฮด',     desc:'หัวกระดาษกึ่งกลาง เส้นคาดหนา', title:22 },
+        { key:'ModernLeft',     name:'โมเดิร์นซ้าย',    desc:'จัดชิดซ้าย แถบเน้นสี', title:22 },
+        { key:'BannerHeader',   name:'แบนเนอร์',        desc:'หัวกระดาษแถบสีเต็มความกว้าง', title:22 },
+        { key:'BoldHeader',     name:'หัวเรื่องเด่น',    desc:'ชื่อเอกสารตัวใหญ่อยู่บนสุด', title:26 },
+        { key:'SidebarAccent',  name:'แถบข้างสี',       desc:'หัวสี + ราวเน้นซ้าย + แถบยอดรวม', title:22 },
+        { key:'SplitHeader',    name:'สองคอลัมน์',      desc:'ข้อมูลเอกสารเป็นการ์ดมุมขวา', title:22 },
+        { key:'CenteredFormal', name:'ทางการ',         desc:'ทุกอย่างกึ่งกลาง เส้นคู่', title:24 },
+        { key:'Compact',        name:'กระชับ',         desc:'ตัวอักษรเล็ก ประหยัดพื้นที่', title:20 },
+        { key:'Minimal',        name:'มินิมอล',        desc:'เรียบ ไม่มีกรอบ เว้นเยอะ', title:22 },
+      ],
+      // Colour palettes applied on top of any layout.
+      COLORS: [
+        { key:'blue',   name:'น้ำเงิน', primary:'#1F2937', accent:'#1E40AF', headBg:'#1E40AF', headText:'#FFFFFF', stripe:'#EEF2FF' },
+        { key:'teal',   name:'เทอร์ควอยซ์', primary:'#134E4A', accent:'#0F766E', headBg:'#0F766E', headText:'#FFFFFF', stripe:'#F0FDFA' },
+        { key:'green',  name:'เขียว', primary:'#14532D', accent:'#15803D', headBg:'#16A34A', headText:'#FFFFFF', stripe:'#F0FDF4' },
+        { key:'maroon', name:'แดงเลือดหมู', primary:'#450A0A', accent:'#7F1D1D', headBg:'#991B1B', headText:'#FFFFFF', stripe:'#FEF2F2' },
+        { key:'orange', name:'ส้ม', primary:'#7C2D12', accent:'#C2410C', headBg:'#EA580C', headText:'#FFFFFF', stripe:'#FFF7ED' },
+        { key:'purple', name:'ม่วง', primary:'#3B0764', accent:'#6D28D9', headBg:'#7C3AED', headText:'#FFFFFF', stripe:'#FAF5FF' },
+        { key:'slate',  name:'เทาเข้ม', primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', stripe:'#F8FAFC' },
+        { key:'rose',   name:'โรสโกลด์', primary:'#4C0519', accent:'#9F1239', headBg:'#BE123C', headText:'#FFFFFF', stripe:'#FFF1F2' },
+      ],
+      _layoutThumbColor: '#334155',   // neutral colour for layout thumbnails so STRUCTURE stands out
+
+      // ───────────────── Global: structural layout picker ─────────────────
+      _renderGlobalLooks() {
+        const lg = document.getElementById('globalLayoutGrid');
+        if (lg) {
+          lg.innerHTML = this.LAYOUTS.map(l => `
+            <div class="design-card">
+              <div class="design-thumb" id="layout-${l.key}"><div class="thumb-ph">กำลังเรนเดอร์…</div></div>
+              <div class="design-meta">
+                <div class="look-name">${l.name}</div>
+                <div class="look-sub">${l.desc}</div>
+                <button class="btn btn-sm btn-primary" style="width:100%;margin-top:6px" onclick="Page.applyGlobalLayout('${l.key}')">ใช้โครงนี้</button>
+              </div>
+            </div>`).join('');
+          this.LAYOUTS.forEach(l => this._loadLayoutThumb(l));
+        }
+        const cg = document.getElementById('globalColorGrid');
+        if (cg) {
+          cg.innerHTML = this.COLORS.map(c => `
+            <button type="button" class="color-card" onclick="Page.applyGlobalColor('${c.key}')" title="${c.name}">
+              <span class="color-swatch" style="background:${c.accent}"></span>
+              <span class="color-swatch" style="background:${c.headBg}"></span>
+              <span class="color-swatch" style="background:${c.stripe};border:1px solid #cbd5e1"></span>
+              <div class="color-name">${c.name}</div>
+            </button>`).join('');
+        }
+      },
+
+      async _loadLayoutThumb(l) {
+        const host = document.getElementById('layout-' + l.key);
+        if (!host) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          // Neutral colour everywhere → only the STRUCTURE differs between cards.
+          const body = {
+            name: l.name, documentType: 'Invoice', layoutStyle: l.key, titleFontSize: String(l.title),
+            primaryColor: '#1F2937', accentColor: this._layoutThumbColor,
+            tableHeaderColor: this._layoutThumbColor, tableHeaderTextColor: '#FFFFFF', tableStripedColor: '#F1F5F9',
+          };
+          const res = await fetch(`/api/companies/${cid}/document-templates/preview-html-draft`, {
+            method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body) });
+          const html = await res.text();
+          const f = document.createElement('iframe');
+          f.setAttribute('sandbox', 'allow-same-origin');
+          f.srcdoc = html;
+          host.innerHTML = ''; host.appendChild(f);
+        } catch { host.innerHTML = '<div class="thumb-ph">ดูตัวอย่างไม่ได้</div>'; }
+      },
+
+      async applyGlobalLayout(layoutKey) {
+        const l = this.LAYOUTS.find(x => x.key === layoutKey);
+        if (!l) return;
+        if (!confirm(`ใช้โครง "${l.name}" กับเอกสารทุกประเภท?\n(สีเดิมจะคงไว้ — เปลี่ยนสีได้ในขั้นที่ 2)`)) return;
+        await this._applyToAll({ layoutStyle: l.key, titleFontSize: String(l.title) }, `โครง "${l.name}"`,
+          (type, label) => `${label} — ${l.name}`);
+      },
+
+      async applyGlobalColor(colorKey) {
+        const c = this.COLORS.find(x => x.key === colorKey);
+        if (!c) return;
+        if (!confirm(`ใช้โทนสี "${c.name}" กับเอกสารทุกประเภท?\n(โครงที่เลือกไว้จะคงเดิม)`)) return;
+        await this._applyToAll({
+          primaryColor: c.primary, accentColor: c.accent,
+          tableHeaderColor: c.headBg, tableHeaderTextColor: c.headText, tableStripedColor: c.stripe,
+        }, `โทนสี "${c.name}"`);
+      },
+
+      // Keep the colour-picker and hex text input in sync.
+      _syncColor(colorId, hexId) {
+        const v = document.getElementById(colorId).value;
+        document.getElementById(hexId).value = v.toUpperCase();
+      },
+      _syncHex(hexId, colorId) {
+        let v = document.getElementById(hexId).value.trim();
+        if (!v.startsWith('#')) v = '#' + v;
+        if (/^#[0-9A-Fa-f]{6}$/.test(v)) document.getElementById(colorId).value = v;
+      },
+      _validHex(v) { v = (v || '').trim(); if (!v.startsWith('#')) v = '#' + v; return /^#[0-9A-Fa-f]{6}$/.test(v) ? v.toUpperCase() : null; },
+      // Pick readable text colour (black/white) for a given background hex.
+      _textOn(hex) {
+        const h = hex.replace('#', '');
+        const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+        return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#111111' : '#FFFFFF';
+      },
+
+      async applyGlobalCopyLabel() {
+        const pos = document.getElementById('gCopyLabelPos').value || 'Watermark';
+        const label = { Watermark: 'ลายน้ำกลางหน้า', TopRight: 'ป้ายมุมขวาบน', TopLeft: 'ป้ายมุมซ้ายบน' }[pos] || pos;
+        if (!confirm(`ตั้งตำแหน่งป้าย ต้นฉบับ/สำเนา เป็น "${label}" กับเอกสารทุกประเภท?\n(ปรับรายเอกสารทีหลังได้)`)) return;
+        await this._applyToAll({ copyLabelPosition: pos }, `ป้าย "${label}"`);
+      },
+
+      async applyCustomColor() {
+        const accent = this._validHex(document.getElementById('cAccentHex').value);
+        const head = this._validHex(document.getElementById('cHeadHex').value);
+        const stripe = this._validHex(document.getElementById('cStripeHex').value);
+        if (!accent || !head || !stripe) {
+          Layout.toast('โค้ดสีไม่ถูกต้อง — ต้องเป็น #RRGGBB ทั้ง 3 ช่อง', 'error');
+          return;
+        }
+        if (!confirm('ใช้สีที่กำหนดเองกับเอกสารทุกประเภท? (โครงที่เลือกไว้จะคงเดิม)')) return;
+        await this._applyToAll({
+          primaryColor: accent, accentColor: accent,
+          tableHeaderColor: head, tableHeaderTextColor: this._textOn(head), tableStripedColor: stripe,
+        }, 'สีที่กำหนดเอง');
+      },
+
+      // Apply a partial field-set to the default template of every doc type
+      // (creating one when missing). Only the given fields change; everything
+      // else (the other of layout/colour, all toggles) is preserved.
+      async _applyToAll(fields, what, nameFn) {
+        const cid = Layout.getCompanyId();
+        let ok = 0, fail = 0, firstErr = '';
+        Layout.toast(`กำลังใช้${what}กับทุกเอกสาร…`, 'info');
+        for (const [type, label] of this.DOC_TYPES) {
+          try {
+            let tpl = this._defaultTemplateFor(type);
+            if (!tpl) {
+              const r = await API.post(`/api/companies/${cid}/document-templates`,
+                { name: nameFn ? nameFn(type, label) : `${label}`, documentType: type, isDefault: true });
+              tpl = r.data; this.templates.push(tpl);
+            }
+            const payload = Object.assign({ isDefault: true, isActive: true }, fields);
+            await API.put(`/api/companies/${cid}/document-templates/${tpl.id}`, payload);
+            ok++;
+          } catch (e) { fail++; if (!firstErr) firstErr = e?.message || String(e); }
+        }
+        await this.loadTemplates();
+        await this._seedGlobalCustomColors();   // ช่อง "กำหนดสีเอง" สะท้อนสีที่เพิ่งใช้
+        this.renderGallery();
+        if (ok > 0) Layout.toast(`ใช้${what}สำเร็จ ${ok} ประเภท${fail ? ` (พลาด ${fail})` : ''}`, fail ? 'info' : 'success');
+        else Layout.toast(`ไม่สำเร็จ: ${firstErr || 'unknown'}`, 'error');
+      },
+
+      // เติมช่อง "กำหนดสีเอง" จากสีที่บันทึกไว้จริง — list endpoint ไม่ส่งสี
+      // มา จึงดึงเทมเพลตตัวแทน (ใบแจ้งหนี้ หรือตัวแรก) แบบเต็มด้วย by-id
+      async _seedGlobalCustomColors() {
+        try {
+          const rep = this._defaultTemplateFor('Invoice') || (this.templates || [])[0];
+          if (!rep) return;
+          const cid = Layout.getCompanyId();
+          const full = (await API.get(`/api/companies/${cid}/document-templates/${rep.id}`)).data;
+          if (!full) return;
+          const setPair = (colorId, hexId, val) => {
+            const v = this._validHex(val);
+            if (!v) return;
+            const c = document.getElementById(colorId), h = document.getElementById(hexId);
+            if (c) c.value = v;
+            if (h) h.value = v;
+          };
+          setPair('cAccent', 'cAccentHex', full.accentColor);
+          setPair('cHead', 'cHeadHex', full.tableHeaderColor);
+          setPair('cStripe', 'cStripeHex', full.tableStripedColor);
+          // ตำแหน่งป้าย ต้นฉบับ/สำเนา ระดับ global — สะท้อนค่าที่ใช้อยู่
+          const gp = document.getElementById('gCopyLabelPos');
+          if (gp && full.copyLabelPosition) gp.value = full.copyLabelPosition;
+        } catch { /* คงค่า default เมื่อดึงไม่ได้ */ }
+      },
+
+      _renderPresets() {
+        const grid = document.getElementById('presetGrid');
+        if (!grid) return;
+        grid.innerHTML = this.PRESETS.map(p => `
+          <button type="button" onclick="Page.applyPreset('${p.key}')"
+            style="text-align:left;border:1px solid #e2e8f0;border-radius:8px;padding:8px;cursor:pointer;background:#fff">
+            <div style="display:flex;gap:4px;margin-bottom:6px">
+              <span style="width:18px;height:18px;border-radius:4px;background:${p.accent}"></span>
+              <span style="width:18px;height:18px;border-radius:4px;background:${p.headBg}"></span>
+              <span style="width:18px;height:18px;border-radius:4px;border:1px solid #cbd5e1;background:${p.stripe}"></span>
+            </div>
+            <div style="font-size:13px;font-weight:600;color:#1f2937">${p.name}</div>
+            <div style="font-size:11px;color:#94a3b8">โครง: ${this.LAYOUT_LABELS[p.layout] || p.layout} · ${p.font}</div>
+          </button>`).join('');
+      },
+
+      applyPreset(key) {
+        const p = this.PRESETS.find(x => x.key === key);
+        if (!p) return;
+        const set = (id, val) => { const el = document.getElementById(id); if (el != null && val != null) el.value = val; };
+        set('layoutStyle', p.layout);
+        set('fontFamily', p.font);
+        set('primaryColor', p.primary);
+        set('accentColor', p.accent);
+        set('tableHeaderColor', p.headBg);
+        set('tableHeaderTextColor', p.headText);
+        set('tableBorderStyle', p.border);
+        set('tableStripedColor', p.stripe);
+        if (p.title) set('titleFontSize', p.title);
+        this.markDirty();
+        this.refreshPreview();
+        Layout.toast(`ใช้ดีไซน์ "${p.name}" (โครง ${this.LAYOUT_LABELS[p.layout] || p.layout}) แล้ว — ปรับแต่งเพิ่มได้ แล้วกดบันทึก`, 'success');
+      },
+
+      _populateDocTypeOptions() {
+        document.getElementById('tplDocType').innerHTML =
+          this.DOC_TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+      },
+
+      async loadSampleDocs() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/document?pageSize=20`);
+          this.sampleDocs = r.data?.items || r.data || [];
+          document.getElementById('sampleDoc').innerHTML = this.sampleDocs.length === 0
+            ? '<option>— ยังไม่มีเอกสาร —</option>'
+            : this.sampleDocs.map(d => `<option value="${d.id}" data-type="${d.documentType}">${d.documentNumber} — ${d.documentType}</option>`).join('');
+        } catch (e) { /* fall through to "no sample" */ }
+      },
+
+      async loadTemplates() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/document-templates`);
+          this.templates = r.data || [];
+          // Hidden select kept in sync for legacy code paths; the gallery is
+          // the real navigation now, so we don't auto-open any editor here.
+          document.getElementById('tplSelect').innerHTML =
+            this.templates.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async selectTemplate() {
+        const id = document.getElementById('tplSelect').value;
+        let tpl = this.templates.find(t => t.id === id);
+        if (!tpl) return;
+        try {
+          const cid2 = Layout.getCompanyId();
+          const full = await API.get(`/api/companies/${cid2}/document-templates/${tpl.id}`);
+          if (full.data) tpl = full.data;
+        } catch (e) { /* ใช้ตัวย่อไปก่อน */ }
+        this.current = tpl;
+        this._fillForm(tpl);
+        document.getElementById('tplDocType').value = tpl.documentType;
+        document.getElementById('editorTitle').textContent = `ปรับแต่ง: ${this._typeLabel(tpl.documentType)}`;
+        document.getElementById('overviewView').style.display = 'none';
+        document.getElementById('editorView').style.display = '';
+        this.dirty = false;
+        this._selectSampleForType(tpl.documentType);
+        await this.refreshPreview();
+      },
+
+      _fillForm(t) {
+        const set = (id, val) => { const el = document.getElementById(id); if (el) {
+          if (el.type === 'checkbox') el.checked = !!val;
+          else el.value = val ?? '';
+        } };
+        // text/select fields
+        ['tplName:name','tplDocType:documentType','layoutStyle','fontFamily','bodyFontSize','titleFontSize',
+         'primaryColor','accentColor','tableHeaderColor','tableHeaderTextColor','headerBackgroundColor',
+         'logoPosition','logoWidth','logoHeight',
+         'contactSectionTitle','contactSectionTitleEn',
+         'tableBorderStyle','tableStripedColor',
+         'amountInWordsLanguage',
+         'signatureCount','signatureLabel1','signatureLabel1En',
+         'signatureLabel2','signatureLabel2En','signatureLabel3','signatureLabel3En',
+         'stampImagePath',
+         'watermarkText','watermarkOpacity','copyLabelPosition',
+         'customTitle','customTitleEn',
+         'footerNotes','footerNotesEn','bankDetailsText',
+         'paperSize','orientation','marginTop','marginBottom','marginLeft','marginRight',
+        ].forEach(spec => {
+          const [id, prop] = spec.includes(':') ? spec.split(':') : [spec, spec];
+          set(id, t[prop]);
+        });
+        // checkbox fields
+        ['tplIsDefault:isDefault',
+         'showLogo','showCompanyName','showCompanyNameEn','showCompanyAddress','showCompanyTaxId',
+         'showCompanyPhone','showCompanyEmail',
+         'showContactTaxId','showContactBranch','showContactAddress','showContactPhone','showContactEmail',
+         'showLineNumber','showItemCode','showUnit','showDiscount','showVatPerLine','showWithholdingTax',
+         'showSubTotal','showDiscountTotal','showVatSummary','showWithholdingTaxSummary','showAmountInWords',
+         'showSignature','showCompanyStamp',
+         'showWatermark','showPaymentTerms','showBankDetails',
+        ].forEach(spec => {
+          const [id, prop] = spec.includes(':') ? spec.split(':') : [spec, spec];
+          set(id, t[prop]);
+        });
+        this._renderStampPreview(t.stampImagePath);
+      },
+
+      _renderStampPreview(url) {
+        const box = document.getElementById('stampPreview');
+        if (!box) return;
+        box.innerHTML = url
+          ? `<img src="${url}" alt="ตราประทับ" style="max-height:64px;border:1px solid #e2e8f0;border-radius:6px;padding:4px">
+             <button type="button" class="btn btn-sm" onclick="Page.clearStamp()" style="margin-left:8px">ลบ</button>`
+          : '<span style="font-size:12px;color:#94a3b8">ยังไม่มีตราประทับ</span>';
+      },
+
+      async uploadStamp(input) {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('file', file);
+        const token = localStorage.getItem('token');
+        try {
+          // Reuse the shared image-upload endpoint; type=logo keeps the
+          // transparent PNG intact (no square crop). Returns a relative
+          // /uploads URL the PDF renderer resolves to a physical path.
+          const r = await fetch('/api/admin/upload-image?type=logo', {
+            method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'อัพโหลดไม่สำเร็จ');
+          const url = j.data.url || j.data.relativeUrl;
+          document.getElementById('stampImagePath').value = url;
+          document.getElementById('showCompanyStamp').checked = true;
+          this._renderStampPreview(url);
+          this.markDirty();
+          Layout.toast('อัพโหลดตราประทับสำเร็จ');
+        } catch (e) { Layout.toast('อัพโหลดตราประทับไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      clearStamp() {
+        document.getElementById('stampImagePath').value = '';
+        document.getElementById('stampFile').value = '';
+        this._renderStampPreview(null);
+        this.markDirty();
+      },
+
+      _collectForm() {
+        const get = id => document.getElementById(id).value;
+        const getNum = id => Number(document.getElementById(id).value || 0);
+        const getCheck = id => document.getElementById(id).checked;
+        return {
+          name: get('tplName'),
+          documentType: get('tplDocType'),
+          isDefault: getCheck('tplIsDefault'),
+          isActive: true,
+          layoutStyle: get('layoutStyle'),
+          fontFamily: get('fontFamily'),
+          bodyFontSize: get('bodyFontSize'),
+          titleFontSize: get('titleFontSize'),
+          primaryColor: get('primaryColor'),
+          accentColor: get('accentColor'),
+          tableHeaderColor: get('tableHeaderColor'),
+          tableHeaderTextColor: get('tableHeaderTextColor'),
+          headerBackgroundColor: get('headerBackgroundColor'),
+          showLogo: getCheck('showLogo'),
+          logoPosition: get('logoPosition'),
+          logoWidth: getNum('logoWidth'),
+          logoHeight: getNum('logoHeight'),
+          showCompanyName: getCheck('showCompanyName'),
+          showCompanyNameEn: getCheck('showCompanyNameEn'),
+          showCompanyAddress: getCheck('showCompanyAddress'),
+          showCompanyTaxId: getCheck('showCompanyTaxId'),
+          showCompanyPhone: getCheck('showCompanyPhone'),
+          showCompanyEmail: getCheck('showCompanyEmail'),
+          contactSectionTitle: get('contactSectionTitle'),
+          contactSectionTitleEn: get('contactSectionTitleEn'),
+          showContactTaxId: getCheck('showContactTaxId'),
+          showContactBranch: getCheck('showContactBranch'),
+          showContactAddress: getCheck('showContactAddress'),
+          showContactPhone: getCheck('showContactPhone'),
+          showContactEmail: getCheck('showContactEmail'),
+          showLineNumber: getCheck('showLineNumber'),
+          showItemCode: getCheck('showItemCode'),
+          showUnit: getCheck('showUnit'),
+          showDiscount: getCheck('showDiscount'),
+          showVatPerLine: getCheck('showVatPerLine'),
+          showWithholdingTax: getCheck('showWithholdingTax'),
+          tableBorderStyle: get('tableBorderStyle'),
+          tableStripedColor: get('tableStripedColor') || null,
+          showSubTotal: getCheck('showSubTotal'),
+          showDiscountTotal: getCheck('showDiscountTotal'),
+          showVatSummary: getCheck('showVatSummary'),
+          showWithholdingTaxSummary: getCheck('showWithholdingTaxSummary'),
+          showAmountInWords: getCheck('showAmountInWords'),
+          amountInWordsLanguage: get('amountInWordsLanguage'),
+          showSignature: getCheck('showSignature'),
+          signatureCount: Number(get('signatureCount')),
+          signatureLabel1: get('signatureLabel1'),
+          signatureLabel1En: get('signatureLabel1En'),
+          signatureLabel2: get('signatureLabel2'),
+          signatureLabel2En: get('signatureLabel2En'),
+          signatureLabel3: get('signatureLabel3'),
+          signatureLabel3En: get('signatureLabel3En'),
+          showCompanyStamp: getCheck('showCompanyStamp'),
+          // Send "" (not null) when cleared so the backend distinguishes
+          // "clear the stamp" from "field omitted / no change".
+          stampImagePath: get('stampImagePath'),
+          showWatermark: getCheck('showWatermark'),
+          watermarkText: get('watermarkText') || null,
+          watermarkOpacity: Number(get('watermarkOpacity') || 0.15),
+          copyLabelPosition: get('copyLabelPosition') || 'Watermark',
+          customTitle: get('customTitle') || null,
+          customTitleEn: get('customTitleEn') || null,
+          footerNotes: get('footerNotes') || null,
+          footerNotesEn: get('footerNotesEn') || null,
+          showPaymentTerms: getCheck('showPaymentTerms'),
+          showBankDetails: getCheck('showBankDetails'),
+          bankDetailsText: get('bankDetailsText') || null,
+          paperSize: get('paperSize'),
+          orientation: get('orientation'),
+          marginTop: getNum('marginTop'),
+          marginBottom: getNum('marginBottom'),
+          marginLeft: getNum('marginLeft'),
+          marginRight: getNum('marginRight'),
+        };
+      },
+
+      markDirty() {
+        this.dirty = true;
+        document.getElementById('status').textContent = '● ยังไม่บันทึก — preview จะรีเฟรชอัตโนมัติ';
+        clearTimeout(this.debounceTimer);
+        this.debounceTimer = setTimeout(() => this.refreshPreview(), 500);
+      },
+
+      toggle(el) {
+        const section = el.closest('.editor-section');
+        section.classList.toggle('collapsed');
+        el.textContent = section.classList.contains('collapsed') ? '▸' : '▾';
+      },
+
+      // Live preview straight from the editor form — every tick/colour/layout
+      // change is rendered immediately on sample data through the SAME engine
+      // real documents use (no save needed). Debounced via markDirty.
+      async refreshPreview() {
+        if (!this.current) { document.getElementById('status').textContent = '— เลือกเอกสารจากภาพรวมก่อน —'; return; }
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        document.getElementById('status').textContent = '⏳ กำลังเรนเดอร์ตัวอย่าง...';
+        try {
+          const body = this._collectForm();
+          const res = await fetch(`/api/companies/${cid}/document-templates/preview-html-draft`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          document.getElementById('previewFrame').srcdoc = await res.text();
+          document.getElementById('status').textContent = this.dirty
+            ? '● ตัวอย่างสด (ยังไม่บันทึก) — กด "บันทึก" เพื่อใช้งานจริง'
+            : '✓ ตัวอย่าง';
+        } catch (e) {
+          document.getElementById('status').textContent = '✗ ' + e.message;
+        }
+      },
+
+      async save() {
+        const btn = document.getElementById('saveBtn');
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+        try {
+          const cid = Layout.getCompanyId();
+          const body = this._collectForm();
+          const r = await API.put(`/api/companies/${cid}/document-templates/${this.current.id}`, body);
+          this.dirty = false;
+          Layout.toast('บันทึกเทมเพลตแล้ว');
+          await this.loadTemplates();
+          await this.refreshPreview();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; btn.textContent = 'บันทึก'; }
+      },
+
+      async openNew() {
+        const name = prompt('ชื่อเทมเพลตใหม่');
+        if (!name) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const body = { name, documentType: 'Invoice', isDefault: false, isActive: true };
+          const r = await API.post(`/api/companies/${cid}/document-templates`, body);
+          await this.loadTemplates();
+          if (r.data?.id) {
+            document.getElementById('tplSelect').value = r.data.id;
+            await this.selectTemplate();
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async duplicateCurrent() {
+        if (!this.current) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/document-templates/${this.current.id}/duplicate`, {});
+          await this.loadTemplates();
+          if (r.data?.id) {
+            document.getElementById('tplSelect').value = r.data.id;
+            await this.selectTemplate();
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteCurrent() {
+        if (!this.current) return;
+        if (!confirm(`ลบเทมเพลต "${this.current.name}"?`)) return;
+        try {
+          const cid = Layout.getCompanyId();
+          await API.del(`/api/companies/${cid}/document-templates/${this.current.id}`);
+          this.current = null;
+          await this.loadTemplates();
+          Layout.toast('ลบเทมเพลตแล้ว', 'success');
+          this.showOverview();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

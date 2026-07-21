@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ผังบัญชี - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .coa-tree { margin: 0; padding: 0; list-style: none; }
+    .coa-row { display: flex; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--gray-100); transition: background 0.15s; cursor: default; }
+    .coa-row:hover { background: var(--gray-50); }
+    .coa-row.level-1 { background: var(--gray-50); font-weight: 700; font-size: 15px; }
+    .coa-row.level-2 { padding-left: 28px; font-weight: 600; font-size: 14px; color: var(--gray-700); }
+    .coa-row.level-3 { padding-left: 48px; font-weight: 500; font-size: 13px; color: var(--gray-600); }
+    .coa-row.level-4 { padding-left: 68px; font-size: 13px; color: var(--gray-700); }
+    .coa-toggle { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; margin-right: 6px; font-size: 11px; color: var(--gray-400); transition: all 0.15s; flex-shrink: 0; }
+    .coa-toggle:hover { background: var(--gray-200); color: var(--gray-600); }
+    .coa-toggle.open { transform: rotate(90deg); }
+    .coa-toggle.empty { visibility: hidden; }
+    .coa-code { width: 90px; font-family: 'Inter', monospace; font-size: 13px; color: var(--gray-500); flex-shrink: 0; }
+    .coa-name { flex: 1; min-width: 0; }
+    .coa-name-en { font-size: 12px; color: var(--gray-400); margin-left: 8px; }
+    .coa-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .coa-children { display: none; }
+    .coa-children.open { display: block; }
+    .coa-category-header { display: flex; align-items: center; padding: 12px 16px; background: linear-gradient(135deg, var(--primary), var(--primary-dark, #1d4ed8)); color: #fff; font-weight: 700; font-size: 15px; border-radius: 8px; margin: 8px 0 4px; cursor: pointer; user-select: none; }
+    .coa-category-header .coa-toggle { color: rgba(255,255,255,0.7); }
+    .coa-category-header .coa-toggle:hover { background: rgba(255,255,255,0.15); color: #fff; }
+    .coa-category-header.asset { background: linear-gradient(135deg, #3b82f6, #1d4ed8); }
+    .coa-category-header.liability { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .coa-category-header.equity { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
+    .coa-category-header.revenue { background: linear-gradient(135deg, #10b981, #059669); }
+    .coa-category-header.expense { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .coa-summary { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; overflow-x: auto; }
+    .coa-summary-card { flex: 1; min-width: 100px; background: #fff; border: 1px solid var(--gray-200); border-radius: 8px; padding: 12px 16px; text-align: center; }
+    .coa-summary-card .count { font-size: 24px; font-weight: 700; color: var(--gray-800); }
+    .coa-summary-card .label { font-size: 12px; color: var(--gray-500); margin-top: 2px; }
+    .toolbar-actions { display: flex; gap: 8px; align-items: center; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ผังบัญชี</h2><p class="page-subtitle">จัดการรายการบัญชีทั้งหมด</p></div>
+      <div class="toolbar-actions">
+        <button class="btn btn-secondary" onclick="Page.toggleAll()">ขยาย/ย่อทั้งหมด</button>
+        <div class="dropdown-wrap" style="position:relative">
+          <button class="btn btn-secondary" onclick="Import.toggleMenu(this)">นำเข้า / ส่งออก ▾</button>
+          <div class="dropdown-menu" style="display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid var(--gray-200);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);min-width:220px;z-index:50;margin-top:4px">
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.exportCsv()">⬇️ ส่งออกผังบัญชี (CSV)</a>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.open()">⬆️ นำเข้าผังบัญชี (CSV)</a>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.downloadTemplate()">📄 ดาวน์โหลด Template เปล่า</a>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — เพิ่มบัญชีในผังบัญชี (1xxxx สินทรัพย์ / 2xxxx หนี้สิน / 3xxxx ทุน / 4xxxx รายได้ / 5xxxx ค่าใช้จ่าย) ตามมาตรฐานบัญชีไทย">+ เพิ่มบัญชี</button>
+      </div>
+    </div>
+
+    <div id="summaryCards" class="coa-summary"></div>
+
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหารหัสหรือชื่อบัญชี..." id="searchInput" oninput="Page.filter()">
+      <select class="filter-select" id="typeFilter" onchange="Page.filter()">
+        <option value="">ทุกประเภท</option>
+        <option value="Asset">สินทรัพย์</option>
+        <option value="Liability">หนี้สิน</option>
+        <option value="Equity">ส่วนของเจ้าของ</option>
+        <option value="Revenue">รายได้</option>
+        <option value="Expense">ค่าใช้จ่าย</option>
+      </select>
+    </div>
+
+    <div id="treeContainer" class="card" style="padding:0;overflow:hidden">
+      <div style="padding:40px;text-align:center;color:var(--gray-400)" data-i18n="common.loading">กำลังโหลด...</div>
+    </div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 class="modal-title" id="formTitle">เพิ่มบัญชี</h3>
+          <button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="editId">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">รหัสบัญชี *</label>
+              <input type="text" class="form-input" id="fCode" placeholder="เช่น 111301">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ประเภทบัญชี *</label>
+              <select class="form-select" id="fType">
+                <option value="Asset">สินทรัพย์</option>
+                <option value="Liability">หนี้สิน</option>
+                <option value="Equity">ส่วนของเจ้าของ</option>
+                <option value="Revenue">รายได้</option>
+                <option value="Expense">ค่าใช้จ่าย</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ชื่อบัญชี (ไทย) *</label>
+            <input type="text" class="form-input" id="fName" placeholder="ชื่อบัญชี">
+          </div>
+          <div class="form-group">
+            <label class="form-label">ชื่อบัญชี (อังกฤษ)</label>
+            <input type="text" class="form-input" id="fNameEn" placeholder="Account name">
+          </div>
+          <div class="form-group">
+            <label class="form-label">บัญชีแม่</label>
+            <select class="form-select" id="fParent"><option value="">-- ไม่มี (บัญชีหลัก) --</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="common.description">คำอธิบาย</label>
+            <textarea class="form-textarea" id="fDesc" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="fInputVatClaimable" checked>
+              <span>ภาษีซื้อของบัญชีนี้เครดิตได้ (ภพ.30)</span>
+            </label>
+            <div class="text-xs text-gray-400" style="margin-top:2px">ติ๊กออกสำหรับบัญชีภาษีซื้อต้องห้าม เช่น ค่ารับรอง / รถยนต์นั่ง — ระบบจะเตือนใน ภพ.30</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="importModal" class="modal-overlay">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <h3 id="importTitle">นำเข้าผังบัญชี</h3>
+          <button class="btn-close" onclick="Import.close()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="importStep1">
+            <div id="importDropZone" style="border:2px dashed var(--gray-300);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all .2s" onclick="document.getElementById('importFileInput').click()" ondragover="event.preventDefault();this.style.borderColor='var(--primary)';this.style.background='var(--blue-50)'" ondragleave="this.style.borderColor='var(--gray-300)';this.style.background=''" ondrop="Import.handleDrop(event)">
+              <div style="font-size:36px;margin-bottom:8px">📄</div>
+              <p style="font-size:15px;font-weight:600;color:var(--gray-700)">ลากไฟล์ CSV มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
+              <p style="font-size:13px;color:var(--gray-500);margin-top:4px">คอลัมน์: Code, NameTh, NameEn, Type, ParentCode, Description</p>
+              <input type="file" id="importFileInput" accept=".csv" style="display:none" onchange="Import.handleFile(this.files[0])">
+            </div>
+            <div id="importFileInfo" style="display:none;margin-top:12px;padding:12px 16px;background:var(--blue-50);border-radius:8px;align-items:center;justify-content:space-between">
+              <span id="importFileName" style="font-weight:600;font-size:14px"></span>
+              <button class="btn btn-sm btn-ghost text-red" onclick="Import.clearFile()">ลบ</button>
+            </div>
+            <p style="font-size:12px;color:var(--gray-500);margin-top:10px;line-height:1.6">
+              ระบบจะ <b>เปรียบเทียบกับผังบัญชีเดิม</b> ก่อน — แสดงว่ารายการไหน <b>เพิ่มใหม่</b> /
+              <b>แก้ไข</b> / <b>ไม่เปลี่ยน</b> แล้วจึงให้กดยืนยันบันทึก
+            </p>
+          </div>
+          <div id="importStep2" style="display:none">
+            <div id="importValidation" style="margin-bottom:10px"></div>
+            <div style="font-size:12px;margin-bottom:8px;display:flex;gap:14px;flex-wrap:wrap">
+              <span><span style="display:inline-block;width:10px;height:10px;background:#dcfce7;border:1px solid #16a34a;border-radius:2px"></span> เพิ่มใหม่</span>
+              <span><span style="display:inline-block;width:10px;height:10px;background:#fef9c3;border:1px solid #ca8a04;border-radius:2px"></span> แก้ไข (มีของเดิม)</span>
+              <span><span style="display:inline-block;width:10px;height:10px;background:#f1f5f9;border:1px solid #94a3b8;border-radius:2px"></span> ไม่เปลี่ยนแปลง</span>
+              <span><span style="display:inline-block;width:10px;height:10px;background:#fee2e2;border:1px solid #dc2626;border-radius:2px"></span> ผิดพลาด</span>
+            </div>
+            <div id="importPreview" style="max-height:340px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px"></div>
+          </div>
+          <div id="importStep3" style="display:none;text-align:center;padding:24px">
+            <div style="font-size:48px;margin-bottom:12px">✅</div>
+            <h3 id="importResultText" style="color:var(--green-600)"></h3>
+          </div>
+        </div>
+        <div class="modal-footer" id="importFooter">
+          <button class="btn btn-secondary" onclick="Import.close()">ยกเลิก</button>
+          <button class="btn btn-primary" id="importActionBtn" onclick="Import.validate()" disabled>ตรวจสอบข้อมูล</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      accounts: [],
+      allExpanded: false,
+      async init() {
+        if (!Layout.init('accounts')) return;
+        Layout.setTitle('ผังบัญชี');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts();
+          this.accounts = res.data?.items || res.data || [];
+          this.renderSummary();
+          this.renderTree(this.accounts);
+          this.populateParent();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      renderSummary() {
+        const counts = { Asset: 0, Liability: 0, Equity: 0, Revenue: 0, Expense: 0 };
+        this.accounts.forEach(a => { if (a.accountCode.length === 6 && counts[a.accountType] !== undefined) counts[a.accountType]++; });
+        const labels = { Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ', Revenue: 'รายได้', Expense: 'ค่าใช้จ่าย' };
+        document.getElementById('summaryCards').innerHTML = Object.entries(counts).map(([k, v]) =>
+          `<div class="coa-summary-card"><div class="count">${v}</div><div class="label">${labels[k]}</div></div>`
+        ).join('') + `<div class="coa-summary-card"><div class="count">${this.accounts.length}</div><div class="label" data-i18n="common.all">ทั้งหมด</div></div>`;
+      },
+      filter() {
+        const q = document.getElementById('searchInput').value.toLowerCase();
+        const t = document.getElementById('typeFilter').value;
+        if (!q && !t) { this.renderTree(this.accounts); return; }
+        // When filtering, show flat matching results
+        const filtered = this.accounts.filter(a =>
+          (!q || a.accountCode.toLowerCase().includes(q) || a.accountName.toLowerCase().includes(q) || (a.accountNameEn || '').toLowerCase().includes(q)) &&
+          (!t || a.accountType === t)
+        );
+        this.renderFlat(filtered);
+      },
+      renderFlat(items) {
+        const container = document.getElementById('treeContainer');
+        if (!items.length) { container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--gray-400)">ไม่พบรายการ</div>'; return; }
+        container.innerHTML = items.map(a => `
+          <div class="coa-row level-${Math.min(a.level || 1, 4)}">
+            <span class="coa-toggle empty"></span>
+            <span class="coa-code">${a.accountCode}</span>
+            <span class="coa-name">${a.accountName}${a.accountNameEn ? `<span class="coa-name-en">${a.accountNameEn}</span>` : ''}</span>
+            <span class="coa-meta">
+              <span class="badge badge-${this._typeBadge(a.accountType)}">${Layout.accountTypeLabel(a.accountType)}</span>
+              ${a.isActive ? '' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}
+              ${a.inputVatClaimable === false ? '<span class="badge badge-danger" title="ภาษีซื้อของบัญชีนี้เครดิตไม่ได้ใน ภพ.30">ภาษีซื้อต้องห้าม</span>' : ''}
+              ${a.isSystemAccount ? '' : `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')" data-i18n="common.edit">แก้ไข</button>`}
+            </span>
+          </div>
+        `).join('');
+      },
+      renderTree(items) {
+        const container = document.getElementById('treeContainer');
+        if (!items.length) { container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--gray-400)">ยังไม่มีผังบัญชี</div>'; return; }
+
+        // Build tree structure: group by account type category (level 1)
+        const tree = this._buildTree(items);
+        const categoryColors = { Asset: 'asset', Liability: 'liability', Equity: 'equity', Revenue: 'revenue', Expense: 'expense' };
+        const categoryLabels = { Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ', Revenue: 'รายได้', Expense: 'ค่าใช้จ่าย' };
+
+        let html = '';
+        for (const root of tree) {
+          const colorClass = categoryColors[root.accountType] || 'asset';
+          const hasChildren = root.children && root.children.length > 0;
+          html += `<div class="coa-category-header ${colorClass}" onclick="Page.toggleNode(this)">
+            <span class="coa-toggle${hasChildren ? ' open' : ' empty'}">&#9654;</span>
+            <span class="coa-code" style="color:rgba(255,255,255,0.8)">${root.accountCode}</span>
+            <span class="coa-name">${root.accountName}</span>
+          </div>`;
+          if (hasChildren) {
+            html += `<div class="coa-children open">`;
+            html += this._renderChildren(root.children);
+            html += `</div>`;
+          }
+        }
+        container.innerHTML = html;
+      },
+      _renderChildren(children) {
+        let html = '';
+        for (const node of children) {
+          const hasChildren = node.children && node.children.length > 0;
+          const level = Math.min(node.level || 2, 4);
+          html += `<div class="coa-row level-${level}"${hasChildren ? ' onclick="Page.toggleNode(this)"' : ''} style="${hasChildren ? 'cursor:pointer' : ''}">
+            <span class="coa-toggle${hasChildren ? '' : ' empty'}">&#9654;</span>
+            <span class="coa-code">${node.accountCode}</span>
+            <span class="coa-name">${node.accountName}${node.accountNameEn ? `<span class="coa-name-en">${node.accountNameEn}</span>` : ''}</span>
+            <span class="coa-meta">
+              ${!node.isActive ? '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>' : ''}
+              ${node.inputVatClaimable === false ? '<span class="badge badge-danger" title="ภาษีซื้อของบัญชีนี้เครดิตไม่ได้ใน ภพ.30">ภาษีซื้อต้องห้าม</span>' : ''}
+              ${!node.isSystemAccount ? `<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.openEdit('${node.id}')" data-i18n="common.edit">แก้ไข</button>` : ''}
+            </span>
+          </div>`;
+          if (hasChildren) {
+            html += `<div class="coa-children">`;
+            html += this._renderChildren(node.children);
+            html += `</div>`;
+          }
+        }
+        return html;
+      },
+      _buildTree(items) {
+        const map = {};
+        const roots = [];
+        // Sort by code
+        const sorted = [...items].sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+        sorted.forEach(a => { map[a.id] = { ...a, children: [] }; });
+        sorted.forEach(a => {
+          const node = map[a.id];
+          if (a.parentAccountId && map[a.parentAccountId]) {
+            map[a.parentAccountId].children.push(node);
+          } else {
+            roots.push(node);
+          }
+        });
+        return roots;
+      },
+      toggleNode(el) {
+        const childrenDiv = el.nextElementSibling;
+        if (!childrenDiv || !childrenDiv.classList.contains('coa-children')) return;
+        const toggle = el.querySelector('.coa-toggle');
+        childrenDiv.classList.toggle('open');
+        if (toggle) toggle.classList.toggle('open');
+      },
+      toggleAll() {
+        this.allExpanded = !this.allExpanded;
+        document.querySelectorAll('.coa-children').forEach(el => {
+          el.classList.toggle('open', this.allExpanded);
+        });
+        document.querySelectorAll('.coa-toggle:not(.empty)').forEach(el => {
+          el.classList.toggle('open', this.allExpanded);
+        });
+      },
+      _typeBadge(type) {
+        return { Asset: 'info', Liability: 'warning', Equity: 'primary', Revenue: 'success', Expense: 'danger' }[type] || 'gray';
+      },
+      populateParent() {
+        const sel = document.getElementById('fParent');
+        sel.innerHTML = '<option value="">-- ไม่มี (บัญชีหลัก) --</option>';
+        this.accounts.filter(a => a.accountCode.length <= 3).forEach(a => {
+          const indent = '\u00A0\u00A0'.repeat(Math.max(0, (a.level || 1) - 1));
+          sel.innerHTML += `<option value="${a.id}">${indent}${a.accountCode} - ${a.accountName}</option>`;
+        });
+      },
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'เพิ่มบัญชี';
+        document.getElementById('editId').value = '';
+        document.getElementById('fCode').value = '';
+        document.getElementById('fCode').disabled = false;
+        document.getElementById('fName').value = '';
+        document.getElementById('fNameEn').value = '';
+        document.getElementById('fType').value = 'Asset';
+        document.getElementById('fParent').value = '';
+        document.getElementById('fDesc').value = '';
+        document.getElementById('fInputVatClaimable').checked = true;
+        Layout.openModal('formModal');
+      },
+      openEdit(id) {
+        const a = this.accounts.find(x => x.id === id); if (!a) return;
+        document.getElementById('formTitle').textContent = 'แก้ไขบัญชี';
+        document.getElementById('editId').value = a.id;
+        document.getElementById('fCode').value = a.accountCode;
+        document.getElementById('fCode').disabled = true;
+        document.getElementById('fName').value = a.accountName;
+        document.getElementById('fNameEn').value = a.accountNameEn || '';
+        document.getElementById('fType').value = a.accountType;
+        document.getElementById('fParent').value = a.parentAccountId || '';
+        document.getElementById('fDesc').value = a.description || '';
+        document.getElementById('fInputVatClaimable').checked = a.inputVatClaimable !== false;
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('editId').value;
+        try {
+          if (id) {
+            await api.updateAccount(id, {
+              accountName: document.getElementById('fName').value,
+              accountNameEn: document.getElementById('fNameEn').value || null,
+              description: document.getElementById('fDesc').value || null,
+              inputVatClaimable: document.getElementById('fInputVatClaimable').checked,
+            });
+          } else {
+            await api.createAccount({
+              accountCode: document.getElementById('fCode').value,
+              accountName: document.getElementById('fName').value,
+              accountNameEn: document.getElementById('fNameEn').value || null,
+              accountType: document.getElementById('fType').value,
+              parentAccountId: document.getElementById('fParent').value || null,
+              description: document.getElementById('fDesc').value || null,
+              inputVatClaimable: document.getElementById('fInputVatClaimable').checked,
+            });
+          }
+          Layout.closeModal('formModal');
+          Layout.toast(id ? 'แก้ไขบัญชีสำเร็จ' : 'เพิ่มบัญชีสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    // ===== Chart-of-Accounts Export / Import =====
+    // Self-contained CSV pipeline. Import does a 3-way diff against the
+    // accounts already loaded on the page (matched by account code):
+    //   NEW       — code not present → will be created
+    //   CHANGED   — code present but name/nameEn/type/parent differ → updated
+    //   UNCHANGED — identical → skipped
+    //   ERROR     — missing code / bad type / unknown parent → blocked
+    // The operator reviews the diff and only then confirms the save.
+    const Import = {
+      _typeLabels: { Asset:'สินทรัพย์', Liability:'หนี้สิน', Equity:'ส่วนของเจ้าของ', Revenue:'รายได้', Expense:'ค่าใช้จ่าย' },
+      // Accept English enum names + Thai labels (case-insensitive) when
+      // reading the Type column so a hand-edited CSV still imports.
+      _typeAliases: {
+        'asset':'Asset','สินทรัพย์':'Asset',
+        'liability':'Liability','หนี้สิน':'Liability',
+        'equity':'Equity','ส่วนของเจ้าของ':'Equity','ทุน':'Equity',
+        'revenue':'Revenue','รายได้':'Revenue','income':'Revenue',
+        'expense':'Expense','ค่าใช้จ่าย':'Expense',
+      },
+      file: null,
+      diff: null,   // { rows:[...], newCount, changedCount, unchangedCount, errorCount }
+
+      toggleMenu(btn) {
+        const menu = btn.nextElementSibling;
+        const show = menu.style.display === 'none';
+        document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none');
+        menu.style.display = show ? 'block' : 'none';
+        if (show) setTimeout(() => document.addEventListener('click', Import._closeMenus, { once: true }), 0);
+      },
+      _closeMenus() { document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none'); },
+
+      // ─── CSV helpers ───
+      _csvCell(v) {
+        const s = (v == null ? '' : String(v));
+        return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      },
+      // Minimal RFC-4180 CSV line parser — handles quoted fields + escaped quotes.
+      _parseCsvLine(line) {
+        const out = []; let cur = ''; let inQ = false;
+        for (let i = 0; i < line.length; i++) {
+          const c = line[i];
+          if (inQ) {
+            if (c === '"') { if (line[i+1] === '"') { cur += '"'; i++; } else inQ = false; }
+            else cur += c;
+          } else {
+            if (c === '"') inQ = true;
+            else if (c === ',') { out.push(cur); cur = ''; }
+            else cur += c;
+          }
+        }
+        out.push(cur);
+        return out;
+      },
+
+      // ─── Export ───
+      exportCsv() {
+        Import._closeMenus();
+        const accounts = Page.accounts || [];
+        if (!accounts.length) { Layout.toast('ยังไม่มีผังบัญชีให้ส่งออก', 'error'); return; }
+        const byId = {}; accounts.forEach(a => byId[a.id] = a);
+        const header = ['Code','NameTh','NameEn','Type','ParentCode','Description'];
+        const sorted = [...accounts].sort((a,b) => a.accountCode.localeCompare(b.accountCode));
+        const lines = [header.join(',')];
+        sorted.forEach(a => {
+          const parent = a.parentAccountId && byId[a.parentAccountId];
+          lines.push([
+            a.accountCode, a.accountName, a.accountNameEn || '',
+            a.accountType, parent ? parent.accountCode : '', a.description || '',
+          ].map(Import._csvCell).join(','));
+        });
+        const bom = '﻿';
+        const blob = new Blob([bom + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const today = new Date().toISOString().slice(0,10);
+        const a = document.createElement('a');
+        a.href = url; a.download = `chart-of-accounts-${today}.csv`; a.click();
+        URL.revokeObjectURL(url);
+        Layout.toast(`ส่งออกผังบัญชี ${sorted.length} รายการสำเร็จ`);
+      },
+      downloadTemplate() {
+        Import._closeMenus();
+        const bom = '﻿';
+        const sample = [
+          'Code,NameTh,NameEn,Type,ParentCode,Description',
+          '11150,เงินฝากธนาคาร - บัญชีใหม่,Bank - New Account,Asset,111,',
+          '21919,ภาษีมูลค่าเพิ่มรอนำส่ง (ภ.พ.30),VAT Payable - Pending Submission,Liability,219,',
+        ].join('\r\n');
+        const blob = new Blob([bom + sample], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'chart-of-accounts-template.csv'; a.click();
+        URL.revokeObjectURL(url);
+      },
+
+      // ─── Import flow ───
+      open() {
+        Import._closeMenus();
+        Import.file = null; Import.diff = null;
+        document.getElementById('importStep1').style.display = '';
+        document.getElementById('importStep2').style.display = 'none';
+        document.getElementById('importStep3').style.display = 'none';
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        const btn = document.getElementById('importActionBtn');
+        btn.textContent = 'เปรียบเทียบกับของเดิม';
+        btn.disabled = true;
+        btn.onclick = Import.compare;
+        document.getElementById('importFooter').style.display = '';
+        document.getElementById('importModal').classList.add('active');
+      },
+      close() { document.getElementById('importModal').classList.remove('active'); },
+      handleDrop(e) {
+        e.preventDefault();
+        e.currentTarget.style.borderColor = 'var(--gray-300)'; e.currentTarget.style.background = '';
+        const file = e.dataTransfer.files[0];
+        if (file) Import.handleFile(file);
+      },
+      handleFile(file) {
+        if (!file) return;
+        if (!file.name.toLowerCase().endsWith('.csv')) {
+          Layout.toast('รองรับเฉพาะไฟล์ CSV — กรุณาบันทึก Excel เป็น .csv ก่อน', 'error');
+          return;
+        }
+        Import.file = file; Import.diff = null;
+        document.getElementById('importFileName').textContent = `${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+        document.getElementById('importFileInfo').style.display = 'flex';
+        document.getElementById('importActionBtn').disabled = false;
+      },
+      clearFile() {
+        Import.file = null;
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importActionBtn').disabled = true;
+      },
+
+      // Parse CSV → rows of {code,nameTh,nameEn,type,parentCode,description}.
+      async _readRows() {
+        let text = await Import.file.text();
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);  // strip BOM
+        const lines = text.split(/\r\n|\n|\r/).filter(l => l.trim().length > 0);
+        if (lines.length < 2) throw new Error('ไฟล์ว่างหรือไม่มีข้อมูล (ต้องมีหัวตาราง + อย่างน้อย 1 แถว)');
+        const header = Import._parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
+        const idx = {
+          code: header.findIndex(h => h === 'code' || h === 'รหัส' || h === 'accountcode'),
+          nameTh: header.findIndex(h => h === 'nameth' || h === 'ชื่อ' || h === 'accountname' || h === 'name'),
+          nameEn: header.findIndex(h => h === 'nameen' || h === 'accountnameen'),
+          type: header.findIndex(h => h === 'type' || h === 'ประเภท' || h === 'accounttype'),
+          parentCode: header.findIndex(h => h === 'parentcode' || h === 'parent' || h === 'บัญชีแม่'),
+          description: header.findIndex(h => h === 'description' || h === 'คำอธิบาย' || h === 'desc'),
+        };
+        if (idx.code < 0) throw new Error('ไม่พบคอลัมน์ "Code" ในไฟล์');
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+          const c = Import._parseCsvLine(lines[i]);
+          const get = j => (j >= 0 && j < c.length ? (c[j] || '').trim() : '');
+          rows.push({
+            csvRow: i + 1,
+            code: get(idx.code),
+            nameTh: get(idx.nameTh),
+            nameEn: get(idx.nameEn),
+            type: get(idx.type),
+            parentCode: get(idx.parentCode),
+            description: get(idx.description),
+          });
+        }
+        return rows;
+      },
+
+      // Compare parsed rows against Page.accounts → produce the diff.
+      async compare() {
+        if (!Import.file) return;
+        const btn = document.getElementById('importActionBtn');
+        btn.disabled = true; btn.textContent = 'กำลังเปรียบเทียบ...';
+        try {
+          const rows = await Import._readRows();
+          const existing = Page.accounts || [];
+          const byCode = {}; existing.forEach(a => byCode[a.accountCode] = a);
+          // Parent lookup: existing codes + every code present in this CSV.
+          const csvCodes = new Set(rows.map(r => r.code).filter(Boolean));
+
+          const diffRows = [];
+          let newCount = 0, changedCount = 0, unchangedCount = 0, errorCount = 0;
+          const seen = new Set();
+
+          for (const r of rows) {
+            const errs = [];
+            if (!r.code) errs.push('ไม่มีรหัสบัญชี');
+            if (seen.has(r.code)) errs.push('รหัสซ้ำในไฟล์');
+            seen.add(r.code);
+
+            const normType = Import._typeAliases[(r.type || '').toLowerCase()] || null;
+            const existingAcc = byCode[r.code];
+            if (!r.type && !existingAcc) errs.push('ไม่ระบุประเภทบัญชี');
+            else if (r.type && !normType) errs.push(`ประเภท "${r.type}" ไม่ถูกต้อง`);
+            if (!r.nameTh && !existingAcc) errs.push('ไม่มีชื่อบัญชี');
+            if (r.parentCode && !byCode[r.parentCode] && !csvCodes.has(r.parentCode))
+              errs.push(`ไม่พบบัญชีแม่รหัส ${r.parentCode}`);
+
+            let status;
+            if (errs.length) { status = 'error'; errorCount++; }
+            else if (!existingAcc) { status = 'new'; newCount++; }
+            else {
+              // Compare each field — flag CHANGED if any differs.
+              const changes = [];
+              if (r.nameTh && r.nameTh !== existingAcc.accountName)
+                changes.push(`ชื่อ: "${existingAcc.accountName}" → "${r.nameTh}"`);
+              if (r.nameEn && r.nameEn !== (existingAcc.accountNameEn || ''))
+                changes.push(`ชื่อ EN: "${existingAcc.accountNameEn || ''}" → "${r.nameEn}"`);
+              if (r.description && r.description !== (existingAcc.description || ''))
+                changes.push('คำอธิบาย');
+              if (changes.length) { status = 'changed'; changedCount++; r._changes = changes; }
+              else { status = 'unchanged'; unchangedCount++; }
+            }
+            diffRows.push({ ...r, status, normType, errs, existing: existingAcc });
+          }
+
+          Import.diff = { rows: diffRows, newCount, changedCount, unchangedCount, errorCount };
+          Import._renderDiff();
+          document.getElementById('importStep1').style.display = 'none';
+          document.getElementById('importStep2').style.display = '';
+          btn.textContent = `บันทึก (${newCount} ใหม่, ${changedCount} แก้ไข)`;
+          btn.disabled = (newCount + changedCount) === 0;
+          btn.onclick = Import.apply;
+        } catch (e) {
+          Layout.toast(e.message || 'อ่านไฟล์ไม่สำเร็จ', 'error');
+          btn.textContent = 'เปรียบเทียบกับของเดิม';
+          btn.disabled = false;
+        }
+      },
+
+      _renderDiff() {
+        const d = Import.diff;
+        const sumHtml = `<div style="padding:6px 0;font-size:13px">
+          <span style="color:#16a34a;font-weight:600">＋ ${d.newCount} เพิ่มใหม่</span> &nbsp;
+          <span style="color:#ca8a04;font-weight:600">✎ ${d.changedCount} แก้ไข</span> &nbsp;
+          <span style="color:#64748b;font-weight:600">＝ ${d.unchangedCount} ไม่เปลี่ยน</span>
+          ${d.errorCount ? ` &nbsp; <span style="color:#dc2626;font-weight:600">✗ ${d.errorCount} ผิดพลาด</span>` : ''}
+        </div>`;
+        document.getElementById('importValidation').innerHTML = sumHtml;
+
+        const bg = { new:'#dcfce7', changed:'#fef9c3', unchanged:'#f1f5f9', error:'#fee2e2' };
+        const tag = { new:'เพิ่มใหม่', changed:'แก้ไข', unchanged:'ไม่เปลี่ยน', error:'ผิดพลาด' };
+        let tbl = `<table class="table" style="font-size:12px"><thead><tr>
+          <th>สถานะ</th><th>รหัส</th><th>ชื่อบัญชี</th><th>ประเภท</th><th>บัญชีแม่</th><th>หมายเหตุ</th>
+          </tr></thead><tbody>`;
+        d.rows.forEach(r => {
+          const note = r.status === 'error' ? r.errs.join(', ')
+            : r.status === 'changed' ? (r._changes || []).join(' / ')
+            : '';
+          const typeLabel = r.normType ? Import._typeLabels[r.normType]
+            : (r.existing ? Import._typeLabels[r.existing.accountType] : '-');
+          tbl += `<tr style="background:${bg[r.status]}">
+            <td style="white-space:nowrap;font-weight:600">${tag[r.status]}</td>
+            <td>${Layout.esc(r.code || '-')}</td>
+            <td>${Layout.esc(r.nameTh || (r.existing ? r.existing.accountName : '-'))}</td>
+            <td>${typeLabel}</td>
+            <td>${Layout.esc(r.parentCode || '')}</td>
+            <td style="color:#475569">${Layout.esc(note)}</td>
+          </tr>`;
+        });
+        tbl += '</tbody></table>';
+        document.getElementById('importPreview').innerHTML = tbl;
+      },
+
+      // Apply: create NEW + update CHANGED. Parents resolved code→id, with
+      // NEW rows sorted shortest-code-first so a parent is created before
+      // its child references it.
+      async apply() {
+        const api = Layout.api(); if (!api) return;
+        const d = Import.diff; if (!d) return;
+        const btn = document.getElementById('importActionBtn');
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+
+        // code → id map, seeded with existing accounts.
+        const codeToId = {};
+        (Page.accounts || []).forEach(a => codeToId[a.accountCode] = a.id);
+
+        let created = 0, updated = 0, failed = 0;
+        const errors = [];
+
+        // CHANGED first (no ordering concern — they already exist).
+        for (const r of d.rows.filter(x => x.status === 'changed')) {
+          try {
+            await api.updateAccount(r.existing.id, {
+              accountName: r.nameTh || r.existing.accountName,
+              accountNameEn: (r.nameEn || r.existing.accountNameEn) || null,
+              description: (r.description || r.existing.description) || null,
+            });
+            updated++;
+          } catch (e) { failed++; errors.push(`${r.code}: ${e.message}`); }
+        }
+
+        // NEW — shortest code first so parents land before children.
+        const news = d.rows.filter(x => x.status === 'new')
+          .sort((a, b) => a.code.length - b.code.length || a.code.localeCompare(b.code));
+        for (const r of news) {
+          try {
+            const parentId = r.parentCode ? (codeToId[r.parentCode] || null) : null;
+            const res = await api.createAccount({
+              accountCode: r.code,
+              accountName: r.nameTh,
+              accountNameEn: r.nameEn || null,
+              accountType: r.normType,
+              parentAccountId: parentId,
+              description: r.description || null,
+            });
+            // Record the new id so later rows can use it as a parent.
+            const newId = res?.data?.id || res?.id;
+            if (newId) codeToId[r.code] = newId;
+            created++;
+          } catch (e) { failed++; errors.push(`${r.code}: ${e.message}`); }
+        }
+
+        document.getElementById('importStep2').style.display = 'none';
+        document.getElementById('importStep3').style.display = '';
+        document.getElementById('importResultText').innerHTML =
+          `เพิ่มใหม่ ${created} · แก้ไข ${updated}` +
+          (failed ? `<br><span style="color:#dc2626;font-size:13px">ล้มเหลว ${failed} รายการ</span>` : '');
+        if (errors.length) {
+          document.getElementById('importResultText').innerHTML +=
+            `<div style="max-height:120px;overflow:auto;background:#fef2f2;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;color:#991b1b;text-align:left">`
+            + errors.slice(0, 15).map(e => `<div>${Layout.esc(e)}</div>`).join('')
+            + (errors.length > 15 ? `<div>... อีก ${errors.length - 15}</div>` : '')
+            + `</div>`;
+        }
+        document.getElementById('importFooter').style.display = 'none';
+        if (typeof Page.load === 'function') await Page.load();
+      },
+    };
+    Page.init();
+    Layout.enableTour('accounts');
+  </script>
+</body>
+</html>

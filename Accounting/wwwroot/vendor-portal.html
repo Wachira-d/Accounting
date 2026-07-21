@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vendor Portal — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing:border-box; }
+    body { font-family:'Noto Sans Thai',-apple-system,sans-serif; margin:0; background:#f8fafc; color:#1e293b; }
+    .wrap { max-width:1100px; margin:0 auto; padding:24px 16px; }
+    .head { background:linear-gradient(135deg,#1e40af,#3730a3); color:#fff; padding:22px 28px; border-radius:14px; margin-bottom:24px; }
+    .head h1 { margin:0 0 6px; font-size:22px; }
+    .head .sub { opacity:.9; font-size:13px; }
+    .tabs { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
+    .tab { padding:8px 16px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; cursor:pointer; font:inherit; font-size:13px; }
+    .tab.active { background:#1e40af; color:#fff; border-color:#1e40af; }
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px; margin-bottom:14px; }
+    .card h3 { margin:0 0 12px; font-size:15px; color:#1e293b; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th { background:#f1f5f9; text-align:left; padding:8px 10px; color:#475569; font-weight:600; font-size:12px; }
+    td { padding:10px; border-bottom:1px solid #f1f5f9; }
+    tr:last-child td { border-bottom:none; }
+    .badge { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:600; }
+    .badge-Paid { background:#dcfce7; color:#15803d; }
+    .badge-Approved { background:#dbeafe; color:#1e40af; }
+    .badge-Draft { background:#f1f5f9; color:#64748b; }
+    .badge-Voided { background:#fee2e2; color:#dc2626; }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px; }
+    .form-grid label { display:block; font-size:12px; color:#64748b; margin-bottom:4px; }
+    .form-grid input, .form-grid textarea { width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; font:inherit; font-size:13px; }
+    .btn { background:#1e40af; color:#fff; border:none; padding:10px 22px; border-radius:8px; cursor:pointer; font:inherit; font-size:13px; font-weight:600; }
+    .btn:hover { filter:brightness(1.05); }
+    .err { background:#fee2e2; border-left:4px solid #dc2626; color:#7f1d1d; padding:12px 14px; border-radius:6px; margin-bottom:14px; }
+    .info { background:#eff6ff; border-left:4px solid #3b82f6; color:#1e40af; padding:12px 14px; border-radius:6px; margin-bottom:14px; font-size:13px; }
+    .row-amount { text-align:right; font-variant-numeric:tabular-nums; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <h1 id="vendorTitle">Vendor Portal</h1>
+      <div class="sub" id="vendorSub">รายการ PO + invoice + payment status ของคุณ</div>
+    </div>
+
+    <div id="loginBlock" class="card" style="display:none">
+      <h3>ลิงก์ไม่ถูกต้อง</h3>
+      <div class="err">Token หมดอายุ ถูกยกเลิก หรือไม่พบ. กรุณาขอ link ใหม่จากฝ่าย AP ของบริษัท.</div>
+    </div>
+
+    <div id="content" style="display:none">
+      <div class="tabs">
+        <button class="tab active" onclick="P.switchTab('pos')">รายการ PO</button>
+        <button class="tab" onclick="P.switchTab('invoices')">Invoice + status</button>
+        <button class="tab" onclick="P.switchTab('payments')">การชำระเงิน</button>
+        <button class="tab" onclick="P.switchTab('submit')">ส่ง invoice ใหม่</button>
+      </div>
+
+      <div id="tabPos" class="card">
+        <h3>PO ที่ยังไม่ปิด</h3>
+        <table><thead><tr>
+          <th>เลขที่ PO</th><th>วันที่</th><th class="row-amount">มูลค่า</th><th class="row-amount">คงเหลือส่งของ</th><th>สถานะ</th>
+        </tr></thead><tbody id="poBody"><tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:30px">— ไม่มีรายการ —</td></tr></tbody></table>
+      </div>
+
+      <div id="tabInvoices" class="card" style="display:none">
+        <h3>Invoice ที่คุณส่งไว้</h3>
+        <table><thead><tr>
+          <th>เลขที่</th><th>ประเภท</th><th>วันที่</th><th class="row-amount">มูลค่า</th><th class="row-amount">ยอดค้าง</th><th>สถานะ</th>
+        </tr></thead><tbody id="invBody"><tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:30px">— ไม่มีรายการ —</td></tr></tbody></table>
+      </div>
+
+      <div id="tabPayments" class="card" style="display:none">
+        <h3>การชำระเงินที่บริษัทได้จ่ายให้คุณ</h3>
+        <table><thead><tr>
+          <th>วันที่</th><th class="row-amount">จำนวน</th><th>วิธี</th><th>อ้างอิง</th><th>เอกสารที่จ่าย</th>
+        </tr></thead><tbody id="payBody"><tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:30px">— ไม่มีรายการ —</td></tr></tbody></table>
+      </div>
+
+      <div id="tabSubmit" class="card" style="display:none">
+        <h3>ส่ง invoice ใหม่</h3>
+        <div class="info">📋 invoice จะถูกบันทึกเป็น <b>Draft</b> ฝ่าย AP จะตรวจสอบและอนุมัติก่อนชำระเงิน</div>
+        <div class="form-grid">
+          <div><label>เลขที่ invoice ของคุณ</label><input id="fInvNum" placeholder="INV-2025-..."></div>
+          <div><label>วันที่ invoice</label><input id="fInvDate" type="date"></div>
+          <div><label>มูลค่ารวม (THB)</label><input id="fInvAmt" type="number" step="0.01" min="0"></div>
+          <div><label>URL ไฟล์แนบ (optional)</label><input id="fInvAttach" placeholder="https://..."></div>
+          <div style="grid-column:1 / -1"><label>หมายเหตุ</label><textarea id="fInvNotes" rows="3"></textarea></div>
+        </div>
+        <button class="btn" onclick="P.submitInvoice()">ส่ง invoice</button>
+        <div id="submitResult" style="margin-top:12px"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const P = {
+      token: null,
+
+      async init() {
+        const q = new URLSearchParams(location.search);
+        this.token = q.get('t');
+        if (!this.token) { document.getElementById('loginBlock').style.display = 'block'; return; }
+        try {
+          const r = await fetch('/api/portal/summary', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: this.token }),
+          });
+          const j = await r.json();
+          if (!r.ok || !j.success) { document.getElementById('loginBlock').style.display = 'block'; return; }
+          this.render(j.data);
+          document.getElementById('content').style.display = 'block';
+        } catch (e) { document.getElementById('loginBlock').style.display = 'block'; }
+      },
+
+      render(s) {
+        document.getElementById('vendorTitle').textContent = `Vendor Portal — ${s.contactName}`;
+        document.getElementById('vendorSub').textContent = `Role: ${s.role}`;
+        const fmt = n => (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const date = d => new Date(d).toLocaleDateString('th-TH');
+        const badge = s => `<span class="badge badge-${s}">${s}</span>`;
+        const esc = x => (x||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+        const pos = s.openPos || [];
+        document.getElementById('poBody').innerHTML = pos.length === 0
+          ? '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:30px">— ไม่มี PO เปิด —</td></tr>'
+          : pos.map(p => `<tr>
+            <td><b>${esc(p.number)}</b></td><td>${date(p.date)}</td>
+            <td class="row-amount">${fmt(p.totalAmount)}</td>
+            <td class="row-amount">${fmt(p.balanceDue)}</td>
+            <td>${badge(p.status)}</td>
+          </tr>`).join('');
+
+        const inv = s.invoices || [];
+        document.getElementById('invBody').innerHTML = inv.length === 0
+          ? '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:30px">— ยังไม่มี invoice —</td></tr>'
+          : inv.map(i => `<tr>
+            <td><b>${esc(i.number)}</b></td><td>${esc(i.type)}</td><td>${date(i.date)}</td>
+            <td class="row-amount">${fmt(i.totalAmount)}</td>
+            <td class="row-amount">${fmt(i.balanceDue)}</td>
+            <td>${badge(i.status)}</td>
+          </tr>`).join('');
+
+        const pay = s.payments || [];
+        document.getElementById('payBody').innerHTML = pay.length === 0
+          ? '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:30px">— ยังไม่มี payment —</td></tr>'
+          : pay.map(p => `<tr>
+            <td>${date(p.date)}</td>
+            <td class="row-amount"><b>${fmt(p.amount)}</b></td>
+            <td>${esc(p.method)}</td><td>${esc(p.reference || '-')}</td>
+            <td>${esc(p.relatedDocumentNumber || '-')}</td>
+          </tr>`).join('');
+      },
+
+      switchTab(t) {
+        const tabs = ['pos','invoices','payments','submit'];
+        document.querySelectorAll('.tab').forEach((b,i) =>
+          b.classList.toggle('active', tabs[i] === t));
+        ['Pos','Invoices','Payments','Submit'].forEach(n =>
+          document.getElementById('tab' + n).style.display = t === n.toLowerCase() ? 'block' : 'none');
+      },
+
+      async submitInvoice() {
+        const result = document.getElementById('submitResult');
+        const num = document.getElementById('fInvNum').value.trim();
+        const date = document.getElementById('fInvDate').value;
+        const amt = +document.getElementById('fInvAmt').value;
+        const notes = document.getElementById('fInvNotes').value;
+        const attach = document.getElementById('fInvAttach').value;
+        if (!num || !date || !amt) { result.innerHTML = '<div class="err">กรอกข้อมูลให้ครบ</div>'; return; }
+        try {
+          const r = await fetch('/api/portal/invoice', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: this.token, invoiceNumber: num,
+              invoiceDate: date, totalAmount: amt, notes, attachmentUrl: attach }),
+          });
+          const j = await r.json();
+          if (!r.ok || !j.success) {
+            result.innerHTML = `<div class="err">${j.message || 'ส่งไม่สำเร็จ'}</div>`; return;
+          }
+          result.innerHTML = `<div class="info">✅ ${j.message} (เลขที่: ${j.data.documentNumber})</div>`;
+          document.getElementById('fInvNum').value = '';
+          document.getElementById('fInvAmt').value = '';
+          document.getElementById('fInvNotes').value = '';
+          // refresh
+          const r2 = await fetch('/api/portal/summary', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: this.token }),
+          });
+          if (r2.ok) { const j2 = await r2.json(); if (j2.success) this.render(j2.data); }
+        } catch (e) { result.innerHTML = `<div class="err">${e.message}</div>`; }
+      },
+    };
+    P.init();
+  </script>
+</body>
+</html>

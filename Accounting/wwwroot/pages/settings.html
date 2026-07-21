@@ -1,0 +1,2076 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่า - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    @media (max-width: 768px) {
+      #setupBanner { flex-wrap:wrap; }
+      #setupBanner .btn { width:100%; }
+      #industryTypeGrid { grid-template-columns: repeat(2, 1fr) !important; }
+      #coaPreviewPanel [style*="display:flex"] { flex-wrap:wrap; }
+      #seedCoaSection [style*="display:flex"] { flex-wrap:wrap; gap:8px; }
+      #seedCoaSection [style*="display:flex"] .btn { width:100%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ตั้งค่าบริษัท</h2><p class="page-subtitle">จัดการการตั้งค่าระบบ</p></div>
+    </div>
+    <!-- Simple-mode advisory: tell the user some sections are hidden. -->
+    <script>
+      if ((localStorage.getItem('uiMode') || 'simple') === 'simple') {
+        document.write('<div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">' +
+          '<span>👀 ตัวเลือกขั้นสูงบางอย่างถูกซ่อนไว้ในโหมดง่าย</span>' +
+          '<button onclick="localStorage.setItem(\'uiMode\',\'advanced\'); window.location.reload();" style="background:#1e40af;color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;font-weight:600;">⚙️ แสดงทั้งหมด</button>' +
+          '</div>');
+      }
+    </script>
+
+    <div class="tabs">
+      <div class="tab active" onclick="Page.showTab('company',this)">ข้อมูลบริษัท</div>
+      <div class="tab" onclick="Page.showTab('license',this)">🎫 License</div>
+      <div class="tab" onclick="Page.showTab('general',this)">ทั่วไป</div>
+      <div class="tab" onclick="Page.showTab('document',this)">เอกสาร</div>
+      <div class="tab" onclick="Page.showTab('tax',this)">ภาษี</div>
+      <div class="tab advanced-only" onclick="Page.showTab('etax',this)">e-Tax</div>
+      <div class="tab" onclick="Page.showTab('email',this)" data-i18n="common.email">อีเมล</div>
+      <div class="tab" onclick="Page.showTab('line',this)">💬 LINE</div>
+      <div class="tab" onclick="Page.showTab('notify',this)">🔔 การแจ้งเตือน</div>
+      <div class="tab advanced-only" onclick="Page.showTab('approval',this)">อนุมัติ</div>
+      <div class="tab advanced-only" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
+      <div class="tab" onclick="Page.showTab('signature',this)">ลายเซ็นของฉัน</div>
+    </div>
+
+    <!-- Setup Banner (shown on first setup) -->
+    <div id="setupBanner" class="hidden" style="padding:16px 20px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;border-radius:8px;margin-bottom:16px;display:flex;align-items:center;gap:16px">
+      <div style="font-size:32px">🎉</div>
+      <div style="flex:1">
+        <h3 style="margin:0 0 4px;font-size:16px;font-weight:700">ตั้งค่าข้อมูลกิจการให้ครบถ้วน</h3>
+        <p style="margin:0;font-size:13px;opacity:0.9">กรอกข้อมูลบริษัทให้ครบเพื่อออกเอกสารภาษีและรายงานได้ถูกต้องตามกฎหมายไทย เมื่อตั้งค่าเสร็จกด "บันทึกและเริ่มใช้งาน"</p>
+      </div>
+      <button class="btn" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.3)" onclick="Page.completeSetup()">บันทึกและเริ่มใช้งาน</button>
+    </div>
+
+    <!-- ===== Company Info Tab ===== -->
+    <div id="tabLicense" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">🎫 License ของบริษัทนี้</h3>
+      <div id="licenseContent">
+        <div style="text-align:center;padding:30px;color:#94a3b8">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <div id="tabCompany" class="card">
+      <h3 class="card-title" style="margin-bottom:16px">ข้อมูลบริษัท</h3>
+
+      <!-- Logo Upload Section -->
+      <div style="margin-bottom:24px;padding:20px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+        <label class="form-label" style="font-weight:600;margin-bottom:12px;display:block">โลโก้บริษัท (แสดงหัวเอกสาร)</label>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div id="logoPreview" style="width:120px;height:80px;border:2px dashed #cbd5e1;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff">
+            <span style="color:#94a3b8;font-size:12px" id="logoPlaceholder">ยังไม่มีโลโก้</span>
+          </div>
+          <div>
+            <input type="file" id="logoFile" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" style="display:none" onchange="Page.uploadLogo()">
+            <button class="btn btn-primary" onclick="document.getElementById('logoFile').click()" style="margin-bottom:8px">เลือกไฟล์โลโก้</button>
+            <button class="btn btn-outline" onclick="Page.deleteLogo()" id="btnDeleteLogo" style="margin-bottom:8px;display:none">ลบโลโก้</button>
+            <p style="color:#64748b;font-size:12px;margin:0">PNG, JPEG, GIF, WebP, SVG | ขนาดไม่เกิน 10MB</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Company Stamp (ตราประทับบริษัท) Section -->
+      <div style="margin-bottom:24px;padding:20px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+        <label class="form-label" style="font-weight:600;margin-bottom:4px;display:block">ตราประทับบริษัท (ประทับบนเอกสารที่อนุมัติแล้ว)</label>
+        <p style="color:#64748b;font-size:12px;margin:0 0 12px">แนะนำไฟล์ PNG พื้นหลังโปร่งใส · ประทับเฉพาะเอกสารที่ <b>ผู้มีอำนาจอนุมัติแล้ว</b> (ฉบับร่าง/รออนุมัติจะไม่ประทับ) · วางในโซนลายเซ็นผู้อนุมัติ</p>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div id="stampPreview" style="width:100px;height:100px;border:2px dashed #cbd5e1;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff">
+            <span style="color:#94a3b8;font-size:12px" id="stampPlaceholder">ยังไม่มีตรา</span>
+          </div>
+          <div>
+            <input type="file" id="stampFile" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" style="display:none" onchange="Page.uploadStamp()">
+            <button class="btn btn-primary" onclick="document.getElementById('stampFile').click()" style="margin-bottom:8px">เลือกไฟล์ตรา</button>
+            <button class="btn btn-outline" onclick="Page.deleteStamp()" id="btnDeleteStamp" style="margin-bottom:8px;display:none">ลบตรา</button>
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+            <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">กว้าง (มม.)</label><input type="number" id="sStampW" class="form-input" min="0" max="120" step="1" style="width:90px" placeholder="32"></div>
+            <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">สูง (มม.)</label><input type="number" id="sStampH" class="form-input" min="5" max="120" step="1" style="width:90px" placeholder="32"></div>
+            <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">ตำแหน่ง</label>
+              <select id="sStampAlign" class="form-select" style="width:120px">
+                <option value="Right">ขวา</option>
+                <option value="Center">กลาง</option>
+                <option value="Left">ซ้าย</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span class="req">*</span></label><input type="text" id="cName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD" autocomplete="off"></div>
+        <div class="form-group"><label class="form-label">ชื่อบริษัท (EN)</label><input type="text" id="cNameEn" class="form-input" placeholder="Company Name"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี 13 หลัก <span class="req">*</span></label><div style="display:flex;gap:8px"><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13" style="flex:1"><button class="btn btn-secondary" id="cDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
+        <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" id="cBranchCode" class="form-input" placeholder="00000" value="00000"></div>
+        <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" id="cBranchName" class="form-input" placeholder="สำนักงานใหญ่"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">ประเภทนิติบุคคล <span style="font-weight:normal;color:#64748b;font-size:12px">(กำหนดโครงสร้างส่วนของเจ้าของในผังบัญชี)</span></label>
+          <select id="cBizType" class="form-select" onchange="Page.onBizTypeChange()">
+            <option value="JuristicPerson">🏢 บริษัทจำกัด</option><option value="Partnership">🤝 ห้างหุ้นส่วน</option>
+            <option value="Individual">👤 บุคคลธรรมดา</option><option value="PublicCompany">🏛️ บริษัทมหาชน</option>
+            <option value="Foundation">🏫 มูลนิธิ</option><option value="Association">🏟️ สมาคม</option><option value="Other">📋 อื่นๆ</option>
+          </select>
+          <div id="bizTypeDesc" style="margin-top:6px;font-size:12px;color:#64748b;padding:8px 12px;background:#f8fafc;border-radius:6px;display:none"></div>
+        </div>
+        <div class="form-group"><label class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" id="cJuristicId" class="form-input" placeholder="เลขทะเบียนนิติบุคคล" maxlength="13"></div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">ลักษณะธุรกิจ <span style="font-weight:normal;color:#64748b;font-size:12px">(กำหนดบัญชีรายได้/ค่าใช้จ่ายเฉพาะทาง)</span></label>
+        <div id="industryTypeGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px"></div>
+        <input type="hidden" id="cIndustryType" value="General">
+      </div>
+
+      <!-- Chart of Accounts Preview -->
+      <div id="coaPreviewPanel" style="margin-top:16px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;display:none">
+        <div style="padding:12px 16px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:between">
+          <div style="flex:1">
+            <strong style="font-size:14px">ตัวอย่างผังบัญชีเริ่มต้น</strong>
+            <span id="coaPreviewCount" style="margin-left:8px;font-size:12px;color:#64748b"></span>
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="Page.toggleCoaPreview()">ขยาย/ย่อ</button>
+        </div>
+        <div id="coaPreviewBody" style="max-height:300px;overflow-y:auto;display:none"></div>
+      </div>
+
+      <div id="seedCoaSection" style="margin-top:12px;padding:12px 16px;background:#fffbeb;border:1px solid #fbbf24;border-radius:8px;display:none">
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="font-size:20px">⚠️</span>
+          <div style="flex:1;font-size:13px;color:#92400e">ประเภทธุรกิจหรือลักษณะธุรกิจเปลี่ยน ต้องการรีเซ็ตผังบัญชีตาม template ใหม่หรือไม่?</div>
+          <button class="btn btn-sm btn-primary" onclick="Page.reseedAccounts()">รีเซ็ตผังบัญชี</button>
+        </div>
+      </div>
+
+      <!-- Thai Tax Registration -->
+      <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ทะเบียนภาษีและประกันสังคม</h4>
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+            <input type="checkbox" id="cVatRegistered" onchange="var o=document.getElementById('sVatRegistered');if(o)o.checked=this.checked">
+            <span>จดทะเบียนภาษีมูลค่าเพิ่ม (VAT)</span>
+          </label>
+        </div>
+        <div class="form-group"><label class="form-label">อัตรา VAT (%)</label><input type="number" id="cVatRate" class="form-input" value="7" step="0.01"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+            <input type="checkbox" id="cWhtRegistered" checked>
+            <span>หักภาษี ณ ที่จ่าย (ภ.ง.ด.3/53)</span>
+          </label>
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+            <input type="checkbox" id="cSocialSecurity">
+            <span>จดทะเบียนประกันสังคม</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-group" id="cSocialSecurityGroup" style="display:none">
+        <label class="form-label">เลขที่บัญชีประกันสังคม</label>
+        <input type="text" id="cSocialSecurityAccountNo" class="form-input" placeholder="เลขที่บัญชีนายจ้าง">
+      </div>
+      <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ที่อยู่ (ตามใบทะเบียน)</h4>
+      <div class="form-group">
+        <label class="form-label">วางที่อยู่เพื่อแยกอัตโนมัติ <span style="font-weight:normal;color:#64748b;font-size:12px">(ไม่จำเป็น — กรอกช่องด้านล่างได้เลย)</span></label>
+        <div style="display:flex;gap:8px">
+          <input type="text" class="form-input" id="cAddressPaste" placeholder="วางที่อยู่เต็มแล้วกดแยก..." style="flex:1">
+          <button type="button" class="btn btn-secondary btn-sm" style="white-space:nowrap" onclick="Page.parseAddressPaste()">แยกที่อยู่</button>
+        </div>
+      </div>
+      <input type="hidden" id="cAddress">
+      <div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:12px">
+        <div style="font-weight:600;margin-bottom:8px">ที่อยู่ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้สำหรับเอกสาร, e-Tax XML)</span></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="cBuildingNumber" placeholder="123/45"></div>
+          <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="cBuildingName"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="cMoo" placeholder="3" maxlength="5"></div>
+          <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="cStreetName" placeholder="สุขุมวิท"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">แขวง/ตำบล *</label><input type="text" id="cSubDistrict" class="form-input"></div>
+          <div class="form-group"><label class="form-label">เขต/อำเภอ *</label><input type="text" id="cDistrict" class="form-input"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">จังหวัด *</label><input type="text" id="cProvince" class="form-input"></div>
+          <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#64748b;font-size:11px">(5 หลัก)</span></label><input type="text" id="cPostalCode" class="form-input" maxlength="5" inputmode="numeric"></div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
+        <div class="form-group"><label class="form-label">แฟกซ์</label><input type="text" id="cFax" class="form-input"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">อีเมลบริษัท</label><input type="email" id="cEmail" class="form-input"></div>
+        <div class="form-group"><label class="form-label">เว็บไซต์</label><input type="text" id="cWebsite" class="form-input" placeholder="https://"></div>
+        <div class="form-group"><label class="form-label">เดือนเริ่มต้นปีบัญชี</label>
+          <select id="cFiscalMonth" class="form-select">
+            <option value="1">มกราคม</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
+            <option value="4">เมษายน</option><option value="5">พฤษภาคม</option><option value="6">มิถุนายน</option>
+            <option value="7">กรกฎาคม</option><option value="8">สิงหาคม</option><option value="9">กันยายน</option>
+            <option value="10">ตุลาคม</option><option value="11">พฤศจิกายน</option><option value="12">ธันวาคม</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <button class="btn btn-primary" onclick="Page.saveCompany()">บันทึกข้อมูลบริษัท</button>
+      </div>
+    </div>
+
+    <!-- ===== General Tab ===== -->
+    <div id="tabGeneral" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">ตั้งค่าระบบ</h3>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">สีหลัก</label><input type="color" id="sPrimaryColor" value="#4F46E5" class="form-input" style="height:42px"></div>
+        <div class="form-group"><label class="form-label">สีรอง</label><input type="color" id="sSecondaryColor" value="#0EA5E9" class="form-input" style="height:42px"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">เงื่อนไขชำระเงินเริ่มต้น</label><input type="text" class="form-input" id="sPaymentTerms" placeholder="30 วัน"></div>
+        <div class="form-group"><label class="form-label">จำนวนวันครบกำหนด</label><input type="number" class="form-input" id="sPaymentDueDays" value="30"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group form-checkbox"><input type="checkbox" id="sAutoClose"><label for="sAutoClose">ปิดงวดอัตโนมัติ</label></div>
+        <div class="form-group"><label class="form-label">วันปิดงวด</label><input type="number" class="form-input" id="sCloseDay" value="5" min="1" max="28"></div>
+      </div>
+
+      <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ปรับเมนูที่แสดง</h4>
+      <p style="color:#64748b;margin-bottom:12px;font-size:13px">ติ๊กเมนูที่ไม่ได้ใช้งานเพื่อซ่อนจาก sidebar (เก็บเป็นการตั้งค่าส่วนตัวของบริษัทนี้บนเครื่องนี้)</p>
+      <div id="menuVisibilityList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;max-height:400px;overflow-y:auto;padding:12px;background:#f8fafc;border-radius:8px"></div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button class="btn btn-sm btn-secondary" onclick="Page.menuShowAll()">แสดงทั้งหมด</button>
+        <button class="btn btn-sm btn-secondary" onclick="Page.menuHideAll()">ซ่อนทั้งหมด</button>
+      </div>
+    </div>
+
+    <!-- ===== Document Settings Tab ===== -->
+    <div id="tabDocument" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">การตั้งค่าเอกสาร</h3>
+      <p style="color:#64748b;margin-bottom:16px;font-size:14px">ข้อความเหล่านี้จะแสดงในเอกสารทุกฉบับตามประเภท (สามารถแก้ไขได้เฉพาะเอกสาร)</p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="form-group">
+          <label class="form-label">หมายเหตุใบแจ้งหนี้</label>
+          <textarea class="form-textarea" id="sInvoiceNotes" rows="3" placeholder="ข้อความที่แสดงในใบแจ้งหนี้ทุกฉบับ..."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">หมายเหตุใบเสร็จ</label>
+          <textarea class="form-textarea" id="sReceiptNotes" rows="3" placeholder="ข้อความที่แสดงในใบเสร็จทุกฉบับ..."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">หมายเหตุใบเสนอราคา</label>
+          <textarea class="form-textarea" id="sQuotationNotes" rows="3" placeholder="ข้อความที่แสดงในใบเสนอราคาทุกฉบับ..."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">ข้อความท้ายใบแจ้งหนี้</label>
+          <textarea class="form-textarea" id="sInvoiceFooter" rows="3" placeholder="เช่น เงื่อนไขการชำระ, ข้อมูลธนาคาร..."></textarea>
+        </div>
+        <div class="form-group" style="grid-column:1/3">
+          <label class="form-label">ข้อความท้ายใบเสร็จ</label>
+          <textarea class="form-textarea" id="sReceiptFooter" rows="3" placeholder="เช่น ขอบคุณที่ใช้บริการ..."></textarea>
+        </div>
+        <div class="form-group" style="grid-column:1/3">
+          <label class="form-checkbox" style="padding:12px;background:#fef3c7;border-radius:8px;border:1px solid #fcd34d;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sEnforceManagerApproval" style="margin-top:3px">
+            <span>
+              <span style="font-weight:600">บังคับให้เฉพาะหัวหน้าโดยตรงอนุมัติคำขอ HR (Leave / Salary Advance)</span>
+              <span style="display:block;font-size:11px;color:#78350f;margin-top:2px;line-height:1.5">เมื่อเปิด — เฉพาะ Direct Manager (หรือหัวหน้าแผนกถ้าไม่มี / Owner เท่านั้น) จึงจะอนุมัติ-ปฏิเสธใบลาและเงินทดรองได้ ค่าเริ่มต้นปิดไว้เพื่อให้บริษัทที่ใช้งานอยู่ยังทำงานเหมือนเดิม</span>
+            </span>
+          </label>
+        </div>
+        <div class="form-group advanced-only" style="grid-column:1/3">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sShowGlEntryOnDocument" style="margin-top:3px">
+            <span>
+              <span style="font-weight:600">แสดงการลงบัญชี (Dr./Cr.) ท้ายเอกสาร <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;">มืออาชีพ</span></span>
+              <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px;line-height:1.5">พิมพ์ตารางสรุปการบันทึกบัญชี (เดบิต/เครดิต) ไว้ท้ายเอกสาร เช่น ใบแจ้งหนี้ ใบเสร็จ ใบสำคัญจ่าย — สำหรับการตรวจสอบภายใน</span>
+            </span>
+          </label>
+        </div>
+        <div class="form-group advanced-only" style="grid-column:1/3">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sShowProjectOnDocuments" style="margin-top:3px">
+            <span>
+              <span style="font-weight:600">ช่อง "โครงการ" บนฟอร์มเอกสาร</span>
+              <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px;line-height:1.5">เปิดเมื่อธุรกิจติดตามกำไรต่องาน/โครงการ (รับเหมา, บริการ) — ปิดแล้วฟอร์มเบาลง ไม่เห็นช่องนี้เลย ข้อมูลเดิมไม่หาย</span>
+            </span>
+          </label>
+        </div>
+        <div class="form-group advanced-only" style="grid-column:1/3">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sShowCostCenterOnDocuments" style="margin-top:3px">
+            <span>
+              <span style="font-weight:600">ช่อง "ศูนย์ต้นทุน/แผนก" บนฟอร์มเอกสาร</span>
+              <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px;line-height:1.5">เปิดเมื่อต้องการวัดค่าใช้จ่ายแยกตามแผนก/หน่วยงานภายใน — ปิดแล้วฟอร์มเบาลง ข้อมูลเดิมไม่หาย</span>
+            </span>
+          </label>
+        </div>
+        <div class="form-group advanced-only" style="grid-column:1/3">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sUseCustomSignatory" style="margin-top:3px" onchange="document.getElementById('customSignatoryFields').style.display=this.checked?'':'none'">
+            <span>
+              <span style="font-weight:600">กำหนด "ผู้มีอำนาจลงนาม" เอง (แทนลายเซ็นผู้กดอนุมัติ)</span>
+              <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px;line-height:1.5">ปกติช่องผู้มีอำนาจลงนามใช้ลายเซ็นของ "คนที่กดอนุมัติ" แต่ละใบ — เปิดตัวเลือกนี้เมื่อต้องการให้เป็นชื่อ/ลายเซ็นเดียวกันทุกใบ (เช่น กรรมการผู้จัดการ) · ใช้เฉพาะเอกสารที่อนุมัติแล้ว · ไม่ทับลายเซ็นลูกค้าเซ็นรับของ</span>
+            </span>
+          </label>
+          <div id="customSignatoryFields" style="display:none;margin-top:10px;padding:12px;background:#fff;border:1px dashed #e2e8f0;border-radius:8px">
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ชื่อผู้มีอำนาจลงนาม</label><input type="text" class="form-input" id="sSignatoryName" placeholder="เช่น นายวชิร ..."></div>
+              <div class="form-group"><label class="form-label">ตำแหน่ง</label><input type="text" class="form-input" id="sSignatoryTitle" placeholder="เช่น กรรมการผู้จัดการ"></div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">รูปลายเซ็น (PNG พื้นโปร่ง แนะนำกว้าง ~400px)</label>
+              <input type="file" accept="image/png,image/jpeg" id="sSignatoryFile" onchange="Page.readSignatoryImage(this)">
+              <div id="sSignatoryPreview" style="margin-top:8px"></div>
+              <input type="hidden" id="sSignatoryImage">
+              <button type="button" class="btn btn-sm btn-secondary" style="margin-top:6px" onclick="document.getElementById('sSignatoryImage').value='';document.getElementById('sSignatoryPreview').innerHTML='<span style=\'font-size:12px;color:#94a3b8\'>ลบรูปแล้ว — กดบันทึกเพื่อยืนยัน</span>'">ลบรูปลายเซ็น</button>
+            </div>
+          </div>
+        </div>
+        <!-- ⛔ โซนอันตราย: ลบบริษัท (Owner เท่านั้น — server ตรวจสิทธิ์ซ้ำ) -->
+        <div class="form-group advanced-only" style="grid-column:1/3">
+          <div style="padding:14px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px">
+            <div style="font-weight:700;color:#991b1b;margin-bottom:4px">⛔ ลบบริษัทนี้</div>
+            <div style="font-size:12px;color:#b91c1c;line-height:1.7;margin-bottom:10px">
+              บริษัทจะหายจากรายการและสลับเข้าใช้ไม่ได้อีก (สมาชิกทุกคน) —
+              ข้อมูลบัญชี<b>ไม่ถูกลบจริง</b>ตาม พ.ร.บ.การบัญชี ม.10 (เก็บ 5 ปี เพื่อการตรวจสอบ)<br>
+              เฉพาะ "เจ้าของ" เท่านั้น และต้องพิมพ์ชื่อบริษัทยืนยัน
+            </div>
+            <button type="button" class="btn btn-danger" onclick="Page.deleteCompany()">ลบบริษัท…</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง) -->
+      <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">🏷️ หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง)</h3>
+      <p style="color:#64748b;margin:0 0 14px;font-size:13px">
+        ปล่อยว่าง = ใช้ชื่อมาตรฐาน (แสดงเป็น placeholder). ตั้งได้ทั้งหัวพื้นฐานต่อประเภท และหัวแบบมีเงื่อนไขทางบัญชี — มีผลกับ PDF/พิมพ์ทุกฉบับ (ภาษาไทย)
+      </p>
+      <div style="font-size:12.5px;font-weight:600;color:#334155;margin-bottom:8px">หัวแบบมีเงื่อนไข (ทางบัญชี)</div>
+      <div id="titleOverridesVariantGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px"></div>
+      <div style="font-size:12.5px;font-weight:600;color:#334155;margin-bottom:8px">หัวพื้นฐานต่อประเภทเอกสาร</div>
+      <div id="titleOverridesBaseGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px"></div>
+
+      <!-- Email Templates -->
+      <h3 class="card-title" style="margin:24px 0 16px;border-top:1px solid #e2e8f0;padding-top:20px">เทมเพลตอีเมล</h3>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">ชื่อผู้ส่ง</label><input type="text" class="form-input" id="sEmailFromName" placeholder="ชื่อบริษัท"></div>
+        <div class="form-group"><label class="form-label">ตอบกลับไปที่</label><input type="email" class="form-input" id="sEmailReplyTo" placeholder="email@company.com"></div>
+      </div>
+      <div class="form-group"><label class="form-label">หัวข้ออีเมลใบแจ้งหนี้</label><input type="text" class="form-input" id="sInvoiceEmailSubject" placeholder="ใบแจ้งหนี้จาก {company}"></div>
+      <div class="form-group"><label class="form-label">เนื้อหาอีเมลใบแจ้งหนี้</label><textarea class="form-textarea" id="sInvoiceEmailBody" rows="4" placeholder="เรียน {customer}\n\nแนบใบแจ้งหนี้เลขที่ {docNumber}..."></textarea></div>
+    </div>
+
+    <!-- ===== Tax Tab ===== -->
+    <div id="tabTax" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">การตั้งค่าภาษี</h3>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">อัตรา VAT เริ่มต้น (%)</label><input type="number" class="form-input" id="sVatRate" value="7" step="0.01"></div>
+        <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" checked onchange="var o=document.getElementById('cVatRegistered');if(o)o.checked=this.checked"><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label></div>
+      </div>
+      <div class="form-row" style="margin-top:12px">
+        <div class="form-group"><label class="form-label">วันที่จดทะเบียน VAT</label><input type="date" class="form-input" id="sVatRegistrationDate"></div>
+      </div>
+      <div class="form-group form-checkbox" style="margin-top:12px">
+        <input type="checkbox" id="sIsVehicleDealer">
+        <label for="sIsVehicleDealer" style="line-height:1.4">
+          บริษัทเป็นผู้ค้ารถยนต์ / อู่ซ่อม (Vehicle dealer)
+          <div style="font-size:12px;color:#64748b;margin-top:2px">
+            ปกติระบบเตือนว่า VAT ค่าน้ำมัน/ซ่อม/เช่ารถยนต์นั่ง ≤10 ที่นั่ง เคลมไม่ได้ (§82/5(6) + ประกาศอธิบดี 42).
+            เปิด flag นี้ = รถเป็น inventory ของบริษัท → เคลม VAT ได้ตามปกติ ระบบจะไม่เตือน
+          </div>
+        </label>
+      </div>
+
+      <h3 class="card-title" style="margin:24px 0 12px">การตั้งค่า OCR สแกนเอกสาร</h3>
+      <div class="form-group">
+        <label class="form-label">เมื่อสแกนใบกำกับภาษีซื้อ ระบบควรสร้างเอกสารประเภทใดเป็นค่าเริ่มต้น</label>
+        <select class="form-select" id="sOcrBuyerTarget">
+          <option value="13">ใบสำคัญจ่าย (จ่ายแล้ว) — Cash-basis (แนะนำสำหรับ SME)</option>
+          <option value="11">ใบกำกับภาษีซื้อ — Accrual A/P (ตั้งหนี้ก่อน จ่ายทีหลัง)</option>
+          <option value="14">บันทึกค่าใช้จ่าย — Journal ทั่วไป</option>
+        </select>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          💡 ระบบจะใช้ค่านี้เมื่อสแกนใบกำกับภาษีซื้อจาก vendor ที่ยังไม่มีประวัติในระบบ.
+          ถ้า vendor นี้เคยมีประวัติ ระบบจะเรียนรู้และเลือกตามที่คุณเคยใช้แทน
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">แหล่งเงินเริ่มต้น (บัญชี Cr) เมื่อ OCR สร้างใบสำคัญจ่าย/ใบเสร็จแบบจ่ายสด</label>
+        <select class="form-select" id="sDefaultPaymentAccount">
+          <option value="">— ให้ระบบเลือกอัตโนมัติ (บัญชีเงินสด/ธนาคารแรก) —</option>
+        </select>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          💡 เดิมระบบหยิบบัญชีธนาคารรหัสต่ำสุดมาเป็นค่าเริ่มต้น (มักได้บัญชีผิด).
+          ตั้งค่านี้ = บัญชีที่บริษัทใช้จ่ายเป็นหลัก → OCR จะลง Cr บัญชีนี้ให้ทุกครั้ง.
+          (Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน API จะใช้ค่าที่ส่งมาแทน)
+        </div>
+      </div>
+
+      <h3 class="card-title" style="margin:24px 0 12px">กองทุนเงินทดแทน (กท.20ก) — สมทบนายจ้างฝ่ายเดียว</h3>
+      <div class="form-group form-checkbox">
+        <input type="checkbox" id="sWorkersCompEnabled">
+        <label for="sWorkersCompEnabled">เปิดใช้กองทุนเงินทดแทน (พ.ร.บ.เงินทดแทน §44)</label>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          เมื่อเปิด: ระบบจะคิดสมทบรายเดือนตามอัตราด้านล่างของพนักงานที่อยู่ในระบบ
+          ประกันสังคม (cap ฐาน 240,000 บาท/คน/ปี) → ลงบัญชี Dr 54121 / Cr 21816
+          ในรอบเงินเดือน. รายงาน กท.20ก ยื่นรายปี (มี.ค.)
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">อัตราสมทบ (% ของค่าจ้าง)</label>
+        <input type="number" class="form-input" id="sWorkersCompRate" step="0.01" min="0.2" max="1.0" value="0.2" style="max-width:200px">
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          ตามประกาศกระทรวงแรงงาน 10 หมวด:
+          สำนักงาน 0.2% · ค้าปลีก 0.4% · อุตสาหกรรมเบา 0.6%–0.8% · ก่อสร้าง 1.0%
+        </div>
+      </div>
+
+      <h3 class="card-title" style="margin:24px 0 12px">หนังสือรับรองหัก ณ ที่จ่าย (50ทวิ)</h3>
+      <div class="form-group form-checkbox">
+        <input type="checkbox" id="sAutoAttachWhtCert">
+        <label for="sAutoAttachWhtCert">แนบ PDF ใบ 50ทวิ เข้าใบสำคัญจ่ายอัตโนมัติ</label>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          ปิดไว้ = ออกใบสำคัญจ่ายที่มีหัก ณ ที่จ่าย จะไม่แนบไฟล์ 50ทวิ ให้อัตโนมัติ
+          (กด download/พิมพ์เองจากหน้า "หัก ณ ที่จ่าย" ได้ไฟล์ที่สวยกว่า) · เปิด =
+          ระบบแนบให้ตอนออกใบ
+        </div>
+      </div>
+
+      <h3 id="accountant" class="card-title" style="margin:24px 0 12px">👤 ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)</h3>
+      <div style="background:#fef3c7;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;font-size:12px;color:#92400e;margin-bottom:12px">
+        ⚠️ <b>จำเป็นต้องระบุก่อนนำส่งงบการเงิน DBD</b> — งบที่นำส่งโดยไม่มีผู้ทำบัญชี ผู้บริหารรับผิดทางอาญา (พ.ร.บ.การบัญชี ม.7 + ม.40)
+      </div>
+      <div class="form-group">
+        <label class="form-label">ชื่อ-สกุลผู้ทำบัญชี</label>
+        <input type="text" class="form-input" id="sBookkeeperName" placeholder="เช่น นายสมชาย ใจดี" style="max-width:400px">
+      </div>
+      <div class="form-group">
+        <label class="form-label">เลขทะเบียนผู้ทำบัญชี (CPD)</label>
+        <input type="text" class="form-input" id="sBookkeeperCpdNumber" placeholder="เช่น CPD-123456" style="max-width:300px">
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          เลขทะเบียนที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี (TFAC). ตรวจได้ที่ <a href="https://www.tfac.or.th" target="_blank">tfac.or.th</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== e-Tax Tab ===== -->
+    <div id="tabEtax" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">ตั้งค่า e-Tax Invoice</h3>
+      <p style="color:#64748b;margin-bottom:20px;font-size:14px">จัดการการเชื่อมต่อ e-Tax Invoice / e-Receipt กับกรมสรรพากร</p>
+
+      <div class="form-group form-checkbox" style="margin-bottom:20px;padding:12px;background:#f0f9ff;border-radius:8px;border:1px solid #bae6fd">
+        <input type="checkbox" id="sEtaxEnabled"><label for="sEtaxEnabled" style="font-weight:600">เปิดใช้งาน e-Tax Invoice สำหรับบริษัทนี้</label>
+      </div>
+
+      <div id="etaxConfigSection" style="display:none">
+        <!-- Mode selection -->
+        <div style="margin-bottom:20px;padding:16px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe">
+          <h4 style="margin:0 0 12px;font-size:15px;color:#1e40af">รูปแบบการส่ง e-Tax</h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <label style="display:flex;align-items:flex-start;padding:12px;background:#fff;border-radius:8px;cursor:pointer;border:2px solid transparent" id="modeByEmailLabel">
+              <input type="radio" name="etaxMode" value="ByEmail" id="modeByEmail" style="margin-right:8px;margin-top:3px">
+              <div>
+                <div style="font-weight:600;font-size:14px">e-Tax by Email</div>
+                <div style="color:#64748b;font-size:12px;margin-top:4px">รายได้ &lt; 30 ล้าน • ส่งทางอีเมล + CC สรรพากร (csemail@etax.teda.th) เพื่อลงเวลา</div>
+              </div>
+            </label>
+            <label style="display:flex;align-items:flex-start;padding:12px;background:#fff;border-radius:8px;cursor:pointer;border:2px solid transparent" id="modeDirectLabel">
+              <input type="radio" name="etaxMode" value="Direct" id="modeDirect" style="margin-right:8px;margin-top:3px">
+              <div>
+                <div style="font-weight:600;font-size:14px">e-Tax Direct (Full)</div>
+                <div style="color:#64748b;font-size:12px;margin-top:4px">ยิง XML เข้า RD API • ต้องมี CA Certificate + RD API Key</div>
+              </div>
+            </label>
+          </div>
+          <label style="display:flex;align-items:center;margin-top:8px;padding:8px;cursor:pointer">
+            <input type="radio" name="etaxMode" value="Both" id="modeBoth" style="margin-right:8px">
+            <span style="font-size:13px;color:#475569">ใช้ทั้ง 2 รูปแบบ (เลือกได้ตอนสร้างเอกสาร)</span>
+          </label>
+        </div>
+
+        <!-- ByEmail config -->
+        <div id="etaxByEmailConfig" style="display:none;padding:16px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;margin-bottom:16px">
+          <h4 style="margin:0 0 12px;font-size:14px;color:#166534">การลงทะเบียน e-Tax by Email กับสรรพากร</h4>
+          <div style="background:#fef3c7;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;color:#78350f">
+            ⚠️ ต้องสมัครกับสรรพากร (รสภ.01-1) ก่อนใช้งาน • <a href="https://etax.rd.go.th" target="_blank" style="color:#0369a1">etax.rd.go.th</a>
+          </div>
+          <div class="form-group form-checkbox" style="margin-bottom:12px">
+            <input type="checkbox" id="sEtaxByEmailRdRegistered"><label for="sEtaxByEmailRdRegistered" style="font-weight:600">ลงทะเบียนกับสรรพากรเรียบร้อย</label>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label class="form-label">วันที่ได้รับอนุมัติ</label><input type="date" class="form-input" id="sEtaxByEmailRegDate"></div>
+            <div class="form-group"><label class="form-label">เลขรหัสรับรอง (ถ้ามี)</label><input type="text" class="form-input" id="sEtaxByEmailRegNumber"></div>
+            <div class="form-group"><label class="form-label">อีเมลผู้ส่งที่ลงทะเบียน <span class="req">*</span></label><input type="email" class="form-input" id="sEtaxByEmailSender" placeholder="ตรงกับที่แจ้งสรรพากร"></div>
+            <div class="form-group">
+              <label class="form-label">CC สรรพากร (Time Stamp) <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">ETDA กำหนด</span></label>
+              <input type="email" class="form-input" id="sEtaxByEmailRdCc" value="csemail@etax.teda.th" readonly style="background:#f1f5f9;cursor:not-allowed;font-family:monospace">
+              <div style="font-size:11px;color:#64748b;margin-top:2px">ETDA กำหนดที่อยู่นี้สำหรับลงเวลาประทับ — ห้ามเปลี่ยน</div>
+            </div>
+          </div>
+          <div id="etaxSenderMismatchWarning" style="display:none;padding:10px;background:#fee2e2;border-radius:6px;font-size:12px;color:#991b1b;margin-top:8px"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+            <div class="form-group form-checkbox" style="padding:8px;background:#fff;border-radius:6px"><input type="checkbox" id="sEtaxByEmailEmbedXml" checked><label for="sEtaxByEmailEmbedXml">ฝัง XML ใน PDF/A-3 (สรรพากรกำหนด)</label></div>
+            <div class="form-group form-checkbox" style="padding:8px;background:#fff;border-radius:6px"><input type="checkbox" id="sEtaxByEmailAutoSend"><label for="sEtaxByEmailAutoSend">ส่งอัตโนมัติเมื่อ approve เอกสาร</label></div>
+          </div>
+        </div>
+
+        <!-- Direct config -->
+        <div id="etaxDirectConfig" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+              <h4 style="margin:0 0 12px;font-size:14px;color:#334155">ใบรับรองดิจิทัล (X.509)</h4>
+              <div class="form-group"><label class="form-label">ไฟล์ Certificate (.p12/.pfx)</label><input type="text" class="form-input" id="sEtaxCertPath" placeholder="/path/to/certificate.p12"></div>
+              <div class="form-group"><label class="form-label">รหัสผ่าน Certificate</label><input type="password" class="form-input" id="sEtaxCertPassword" placeholder="Certificate password"></div>
+              <div id="etaxCertStatus"></div>
+            </div>
+            <div style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+              <h4 style="margin:0 0 12px;font-size:14px;color:#334155">API กรมสรรพากร</h4>
+              <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="sEtaxApiKey" placeholder="RD API Key"></div>
+              <div class="form-group"><label class="form-label">API Secret</label><input type="password" class="form-input" id="sEtaxApiSecret" placeholder="RD API Secret"></div>
+              <div class="form-group"><label class="form-label">ผู้ให้บริการ</label>
+                <select id="sEtaxProvider" class="form-select"><option value="RD">กรมสรรพากร (RD)</option><option value="INET">INET</option><option value="OTHER">อื่นๆ</option></select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+          <div class="form-group form-checkbox" style="padding:12px;background:#fffbeb;border-radius:8px;border:1px solid #fde68a">
+            <input type="checkbox" id="sEtaxTestMode" checked><label for="sEtaxTestMode">โหมดทดสอบ (Test Mode)</label>
+          </div>
+          <div class="form-group form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+            <input type="checkbox" id="sEtaxAutoSign"><label for="sEtaxAutoSign">ลงนามอัตโนมัติ</label>
+          </div>
+          <div class="form-group form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+            <input type="checkbox" id="sEtaxAutoSubmit"><label for="sEtaxAutoSubmit">ส่งสรรพากรอัตโนมัติ</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Email Tab ===== -->
+    <div id="tabEmail" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">ตั้งค่าระบบส่งอีเมล</h3>
+      <p style="color:#64748b;margin-bottom:20px;font-size:14px">เลือกผู้ให้บริการอีเมลและกรอกข้อมูลรับรอง • ทดสอบก่อนใช้งานจริง</p>
+
+      <div id="emailStatus" style="margin-bottom:16px"></div>
+
+      <div class="form-group">
+        <label class="form-label">ผู้ให้บริการ</label>
+        <select id="emailProvider" class="form-select" onchange="Page.toggleEmailProvider()">
+          <option value="Smtp">SMTP (รองรับทุกผู้ให้บริการ)</option>
+          <option value="MicrosoftGraph">Microsoft Graph API (Microsoft 365 / Outlook)</option>
+          <option value="GmailApi">Gmail API (Google Workspace / Gmail)</option>
+        </select>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label class="form-label">ที่อยู่อีเมลผู้ส่ง (From Address)</label><input type="email" class="form-input" id="emailFromAddress" placeholder="invoice@yourcompany.com"></div>
+        <div class="form-group"><label class="form-label">ชื่อผู้ส่ง (From Name)</label><input type="text" class="form-input" id="emailFromName" placeholder="บริษัท ABC จำกัด"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Reply-To (อีเมลตอบกลับ)</label><input type="email" class="form-input" id="emailReplyTo" placeholder="accounting@yourcompany.com — เว้นว่างจะใช้ From Address"></div>
+
+      <div id="emailProviderWarning" style="display:none;padding:10px;background:#fef3c7;border-radius:6px;color:#78350f;font-size:13px;margin-bottom:12px"></div>
+
+      <!-- SMTP -->
+      <div id="emailSmtp" style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;margin-bottom:12px">
+        <h4 style="margin:0 0 12px;font-size:14px;color:#334155">SMTP Configuration</h4>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">
+          <div class="form-group"><label class="form-label">SMTP Host</label><input type="text" class="form-input" id="smtpHost" placeholder="smtp.gmail.com / smtp.office365.com"></div>
+          <div class="form-group"><label class="form-label">Port</label><input type="number" class="form-input" id="smtpPort" value="587"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group"><label class="form-label">Username</label><input type="text" class="form-input" id="smtpUsername" placeholder="user@gmail.com"></div>
+          <div class="form-group"><label class="form-label">Password / App Password</label><input type="password" class="form-input" id="smtpPassword" placeholder="••••••••"></div>
+        </div>
+        <div class="form-group form-checkbox"><input type="checkbox" id="smtpUseSsl" checked><label for="smtpUseSsl">ใช้ SSL/TLS</label></div>
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;color:#0369a1;font-size:13px">ตัวอย่าง SMTP ที่นิยมใช้</summary>
+          <div style="font-size:12px;color:#64748b;padding:8px;background:#fff;border-radius:6px;margin-top:6px;line-height:1.6">
+            • <strong>Gmail:</strong> smtp.gmail.com:587 • ใช้ App Password (ต้องเปิด 2FA แล้วสร้าง App Password)<br>
+            • <strong>Office 365:</strong> smtp.office365.com:587 • Username = อีเมลเต็ม<br>
+            • <strong>Yahoo:</strong> smtp.mail.yahoo.com:587 • App Password<br>
+            • <strong>Zoho:</strong> smtp.zoho.com:587 • App Password
+          </div>
+        </details>
+      </div>
+
+      <!-- Microsoft Graph -->
+      <div id="emailMs" style="display:none;padding:16px;background:#f0f9ff;border-radius:8px;border:1px solid #bae6fd;margin-bottom:12px">
+        <h4 style="margin:0 0 12px;font-size:14px;color:#075985">Microsoft Graph API (App-only OAuth2)</h4>
+        <div style="background:#dbeafe;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px">
+          ต้อง register app ใน Azure AD และให้สิทธิ์ <code>Mail.Send</code> (Admin Consent)
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group"><label class="form-label">Tenant ID</label><input type="text" class="form-input" id="msTenantId" placeholder="GUID หรือ contoso.onmicrosoft.com"></div>
+          <div class="form-group"><label class="form-label">Client ID (App ID)</label><input type="text" class="form-input" id="msClientId"></div>
+          <div class="form-group"><label class="form-label">Client Secret</label><input type="password" class="form-input" id="msClientSecret"></div>
+          <div class="form-group"><label class="form-label">Sender Mailbox (UPN) <span class="req">*</span></label><input type="email" class="form-input" id="msSenderUpn" placeholder="invoice@yourtenant.com"></div>
+        </div>
+      </div>
+
+      <!-- Gmail API -->
+      <div id="emailGmail" style="display:none;padding:16px;background:#fef2f2;border-radius:8px;border:1px solid #fecaca;margin-bottom:12px">
+        <h4 style="margin:0 0 12px;font-size:14px;color:#991b1b">Gmail API (OAuth2 Refresh Token)</h4>
+        <div style="background:#fee2e2;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px">
+          ต้องสร้าง OAuth Client ใน Google Cloud Console และทำ OAuth Flow ครั้งแรกเพื่อรับ refresh token
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group"><label class="form-label">Client ID</label><input type="text" class="form-input" id="gmailClientId"></div>
+          <div class="form-group"><label class="form-label">Client Secret</label><input type="password" class="form-input" id="gmailClientSecret"></div>
+        </div>
+        <div class="form-group"><label class="form-label">Refresh Token</label><input type="password" class="form-input" id="gmailRefreshToken"></div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-primary" onclick="Page.saveEmailConfig()">บันทึกการตั้งค่า</button>
+        <button class="btn btn-outline" onclick="Page.testEmailConfig()">ทดสอบส่งอีเมล</button>
+      </div>
+    </div>
+
+    <!-- ===== LINE Messaging API Tab ===== -->
+    <div id="tabLine" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">💬 LINE Messaging API</h3>
+      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
+        ตั้งค่า Channel ของบริษัทคุณเอง — แจ้งเตือนจะส่งผ่าน LINE Official
+        Account ของคุณโดยตรง (แยกการเรียกเก็บ + แบรนด์). สมัครได้ที่
+        <a href="https://developers.line.biz/console/" target="_blank" rel="noopener" style="color:#06c755">LINE Developers Console</a>
+        → สร้าง Provider → Messaging API channel
+      </p>
+
+      <div class="form-group">
+        <label class="form-label">
+          <input type="checkbox" id="lineEnabled" /> เปิดใช้งานส่งแจ้งเตือนผ่าน LINE
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Channel Access Token (long-lived)</label>
+        <input type="password" class="form-input" id="lineToken"
+               placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
+        <div class="text-gray-400" style="font-size:11px;margin-top:4px">
+          <span id="lineTokenStatus">—</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Channel Secret <span class="text-gray-400" style="font-size:12px">(สำหรับ webhook signature)</span></label>
+        <input type="password" class="form-input" id="lineSecret"
+               placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
+        <div class="text-gray-400" style="font-size:11px;margin-top:4px">
+          <span id="lineSecretStatus">—</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Default Group/Room ID <span class="text-gray-400" style="font-size:12px">(optional — สำหรับแจ้งเตือนกลุ่ม เช่น "ทีมบัญชี")</span></label>
+        <input type="text" class="form-input" id="lineGroupId" placeholder="Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">LINE OA Basic ID <span class="text-gray-400" style="font-size:12px">(optional — เช่น @nextacc — ใช้ทำลิงก์เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิปเงินเดือน)</span></label>
+        <input type="text" class="form-input" id="lineOaBasicId" placeholder="@nextacc" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">📨 ทดสอบส่งข้อความ — LINE User ID / Group ID</label>
+        <input type="text" class="form-input" id="lineTestId" placeholder="U... หรือ C... ของผู้รับ" />
+        <div class="text-gray-400" style="font-size:11px;margin-top:4px">
+          พนักงาน/ผู้ใช้ต้อง add Official Account ของคุณเป็นเพื่อนก่อน ระบบจึงจะส่งข้อความหาได้
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="Page.saveLineConfig()">บันทึกการตั้งค่า</button>
+        <button class="btn btn-outline" onclick="Page.testLineConfig()">ทดสอบส่งข้อความ</button>
+      </div>
+      <div id="lineTestResult" style="margin-top:12px"></div>
+    </div>
+
+    <!-- ===== Notification Matrix Tab ===== -->
+    <div id="tabNotify" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">🔔 ตั้งค่าการแจ้งเตือน</h3>
+      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
+        เลือกว่า <strong>เหตุการณ์ใด</strong> จะแจ้งใคร (Role) ผ่านช่องทาง
+        ใดบ้าง — กระดิ่งในแอป / อีเมล / LINE. ปิดทุกช่อง = ไม่แจ้ง.
+        การส่งสลิป PDF ทาง Email + แนบไฟล์เป็นค่าตั้งของกฎ EmailSchedule (แท็บอีเมลกำหนด).
+      </p>
+      <div id="notifyMatrixWrap">
+        <div class="text-gray-400 text-center" style="padding:30px">กำลังโหลด…</div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-primary" onclick="Page.saveNotifyMatrix()">บันทึก</button>
+      </div>
+    </div>
+
+    <!-- ===== Approval Tab ===== -->
+    <div id="tabApproval" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">การอนุมัติและการเข้าถึง</h3>
+      <div class="form-group form-checkbox"><input type="checkbox" id="sRequireApproval"><label for="sRequireApproval">ต้องอนุมัติเอกสารก่อนส่ง</label></div>
+      <div class="form-group"><label class="form-label">จำนวนเงินขั้นต่ำที่ต้องอนุมัติ</label><input type="number" class="form-input" id="sApprovalThreshold" step="0.01"></div>
+
+      <h4 style="font-size:15px;font-weight:600;margin:24px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0">🛡️ การควบคุมภายใน (Internal Control)</h4>
+      <p style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;line-height:1.5">ตัวช่วยลดความเสี่ยงทุจริต/ผิดพลาด — ค่าเริ่มต้นปิดไว้เพื่อให้บริษัทที่ใช้งานอยู่ทำงานเหมือนเดิม</p>
+      <div class="form-group form-checkbox"><input type="checkbox" id="sSodBlockSelfApproval"><label for="sSodBlockSelfApproval">แยกหน้าที่ (SoD) — ห้ามคนสร้างเอกสารอนุมัติเอกสารของตัวเอง</label></div>
+      <div class="form-group">
+        <label class="form-label">คุมงบผูกพัน (Budget Commitment) — เมื่อสร้าง PO/ใบแจ้งหนี้ซื้อ/ค่าใช้จ่ายเกินงบ</label>
+        <select class="form-select" id="sBudgetCommitmentMode" style="max-width:280px">
+          <option value="Off">ปิด — ไม่ตรวจงบ</option>
+          <option value="Warn">เตือน — แจ้งเตือนแต่ให้ผ่านได้</option>
+          <option value="Block">บล็อก — เกินงบอนุมัติไม่ได้</option>
+        </select>
+      </div>
+      <div class="form-group form-checkbox"><input type="checkbox" id="sAllowNegativeStock"><label for="sAllowNegativeStock">อนุญาตให้สต๊อกติดลบ (ขายเกินจำนวนคงเหลือได้) — ปิดไว้ = บล็อกการตัดสต๊อกเกินยอด</label></div>
+      <div class="form-group form-checkbox advanced-only"><input type="checkbox" id="sEclEnabled"><label for="sEclEnabled">เปิดการตั้งค่าเผื่อหนี้สงสัยจะสูญ (ECL) อัตโนมัติรายเดือน <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">TFRS NPAEs</span></label></div>
+
+      <h4 style="font-size:15px;font-weight:600;margin:24px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0">API Access</h4>
+      <div class="form-group form-checkbox"><input type="checkbox" id="sEnableApiAccess"><label for="sEnableApiAccess">เปิดใช้งาน API Access (สร้าง API Key เชื่อมต่อระบบภายนอก)</label></div>
+      <div class="form-group"><label class="form-label">จำนวน API Key สูงสุด</label><input type="number" class="form-input" id="sMaxApiKeys" value="5" min="1" max="20" style="max-width:120px"></div>
+
+      <!-- API Key (acc_) จัดการที่หน้า "Webhooks & API" → แท็บ API Keys
+           (โซน Developer/API). ที่นี่เป็นแค่ master switch + ลิงก์ — กันมี
+           ตัวจัดการ key ซ้ำ 2 ที่ (เคยซ้ำ ทำให้สับสน) -->
+      <div style="margin-top:16px;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:13px;color:#0c4a6e;line-height:1.7">
+        🔑 <b>สร้าง/จัดการ API Key</b> (สำหรับให้สคริปต์/automation ของคุณเรียก REST API เช่น OCR สร้าง-อนุมัติเอกสาร)
+        ทำที่หน้า <a href="/pages/webhooks.html" style="color:#0369a1;font-weight:600">Webhooks &amp; API → แท็บ API Keys</a>
+        — เปิดสวิตช์ "API Access" ด้านบนก่อน แล้วจึงสร้าง key ได้<br>
+        <span style="color:#64748b;font-size:12px">หมายเหตุ: API key 2 แบบ — <b>acc_</b> (สคริปต์เราเรียก API) จัดการที่ Webhooks &amp; API ·
+        <b>int_</b> (เชื่อมระบบภายนอก POS/ERP มา sync) จัดการที่ <a href="/pages/integrations.html" style="color:#0369a1">เชื่อมต่อระบบ</a></span>
+      </div>
+    </div>
+
+    <!-- ===== Numbering Tab ===== -->
+    <div id="tabNumbering" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:16px">ลำดับเลขที่เอกสาร</h3>
+      <div id="numberSeriesContent"><div class="text-gray-400 text-center" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ===== Signature Tab ===== -->
+    <div id="tabSignature" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">ลายเซ็นอิเล็กทรอนิกส์</h3>
+      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
+        ลายเซ็นนี้จะถูกประทับอัตโนมัติบน PDF ใบกำกับภาษี / ใบเสร็จ ที่คุณ
+        <strong>สร้าง</strong> หรือ <strong>อนุมัติ</strong> เพื่อใช้เป็นหลักฐานทางบัญชี
+      </p>
+      <div class="form-group">
+        <label class="form-label">ชื่อ-นามสกุล (ใต้ลายเซ็น)</label>
+        <input id="sigName" type="text" class="form-input" placeholder="เช่น สมชาย ใจดี" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">ตำแหน่ง</label>
+        <input id="sigTitle" type="text" class="form-input" placeholder="เช่น ผู้จัดการ / กรรมการ" />
+      </div>
+
+      <!-- วิธีที่ 1: วาดลายเซ็นบนระบบ (เผื่อไม่มีไฟล์ลายเซ็น) -->
+      <div class="form-group">
+        <label class="form-label">✍️ วิธีที่ 1 — วาดลายเซ็นบนระบบ (เซ็นด้วยเมาส์ / นิ้ว / ปากกาสไตลัส)</label>
+        <canvas id="sigDrawCanvas" width="600" height="200"
+                style="border:2px dashed #94a3b8;border-radius:8px;cursor:crosshair;background:#fff;display:block;width:100%;max-width:600px;touch-action:none"></canvas>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+          <button type="button" class="btn btn-secondary" onclick="Page.clearSignatureCanvas()">ล้างกระดาน</button>
+          <button type="button" class="btn btn-primary" onclick="Page.useDrawnSignature()">ใช้ลายเซ็นที่วาดนี้</button>
+          <span class="text-gray-400" style="font-size:12px">เซ็นในกรอบด้านบน แล้วกด "ใช้ลายเซ็นที่วาดนี้" → จากนั้นกด "บันทึกลายเซ็น"</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">📁 วิธีที่ 2 — อัพโหลดรูปลายเซ็น (PNG พื้นหลังโปร่งใส แนะนำ)</label>
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <div style="flex:1">
+            <input id="sigUpload" type="file" accept="image/png,image/jpeg" onchange="Page.onSignatureUpload(event)" />
+            <p class="text-gray-400" style="font-size:12px;margin-top:6px">
+              ขนาดสูงสุด ~2 MB · รองรับ PNG / JPG · ระบบจะแปลงเป็น base64 อัตโนมัติ
+            </p>
+            <button type="button" class="btn btn-secondary" style="margin-top:8px" onclick="Page.clearSignature()">
+              ลบลายเซ็นออก
+            </button>
+          </div>
+          <div id="sigPreviewBox" style="border:1px dashed #94a3b8;width:240px;height:120px;display:flex;align-items:center;justify-content:center;background:#f8fafc;border-radius:6px">
+            <span id="sigPreviewEmpty" class="text-gray-400" style="font-size:12px">ยังไม่มีลายเซ็น</span>
+            <img id="sigPreview" src="" style="max-width:100%;max-height:100%;display:none" alt="ลายเซ็นปัจจุบัน" />
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-primary" onclick="Page.saveSignature()">บันทึกลายเซ็น</button>
+      </div>
+    </div>
+
+    <!-- ===== Services Tab ===== -->
+
+    <div style="margin-top:20px;display:flex;justify-content:flex-end">
+      <button class="btn btn-primary" onclick="Page.save()">บันทึกการตั้งค่า</button>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/dbd-lookup.js"></script>
+  <script src="/js/thai-address.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      // ลบบริษัท (soft-delete) — Owner + พิมพ์ชื่อยืนยัน; server ตรวจซ้ำทุกชั้น
+      async deleteCompany() {
+        const api = Layout.api(); if (!api) return;
+        const company = JSON.parse(localStorage.getItem('currentCompany') || '{}');
+        const typed = prompt(
+          `⛔ การลบบริษัทถอนคืนเองไม่ได้จากหน้าจอ\n\nบริษัทจะหายจากรายการของสมาชิกทุกคน (ข้อมูลบัญชีถูกเก็บตามกฎหมาย 5 ปี)\n\nพิมพ์ชื่อบริษัทให้ตรงทุกตัวอักษรเพื่อยืนยัน:\n"${company.name || ''}"`);
+        if (typed === null) return;
+        try {
+          await api.deleteCompany(typed);
+          localStorage.removeItem('currentCompany');
+          alert('ลบบริษัทเรียบร้อย — กลับสู่หน้าเลือกบริษัท');
+          location.href = '/app.html';
+        } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+      // อ่านรูปลายเซ็นผู้มีอำนาจลงนาม → base64 (จำกัด ~300KB กัน payload บวม)
+      readSignatoryImage(input) {
+        const f = input.files && input.files[0]; if (!f) return;
+        if (f.size > 300 * 1024) { Layout.toast('ไฟล์ใหญ่เกิน 300KB — กรุณาย่อรูปก่อน', 'error'); input.value = ''; return; }
+        const r = new FileReader();
+        r.onload = () => {
+          document.getElementById('sSignatoryImage').value = r.result;
+          document.getElementById('sSignatoryPreview').innerHTML = `<img src="${r.result}" style="max-height:60px;border:1px solid #e2e8f0;border-radius:6px;padding:4px;background:#fff">`;
+        };
+        r.readAsDataURL(f);
+      },
+      async load() {
+        await this.loadCompanyProfile();
+        await this.loadSettings();
+      },
+      async init() {
+        if (!Layout.init('settings')) return;
+        Layout.setTitle('ตั้งค่า');
+        await this.load();
+        // Toggle e-Tax section visibility
+        document.getElementById('sEtaxEnabled').addEventListener('change', function() {
+          document.getElementById('etaxConfigSection').style.display = this.checked ? 'block' : 'none';
+        });
+        // Toggle social security account number field
+        document.getElementById('cSocialSecurity').addEventListener('change', function() {
+          document.getElementById('cSocialSecurityGroup').style.display = this.checked ? 'block' : 'none';
+        });
+        // DBD Lookup: autocomplete on company name
+        const autoParseAddr = () => {
+          const raw = document.getElementById('cAddress').value;
+          if (!raw) return;
+          const api = Layout.api();
+          if (api) api.parseAddress(raw).then(async j => {
+            const p = (j && j.data) || {};
+            const setIfEmpty = (id, val) => {
+              if (!val) return;
+              const el = document.getElementById(id);
+              if (el && !el.value) el.value = val;
+            };
+            // Fill every structured field DbdLookup may have missed (the JS
+            // regex stops at the next non-space char, so addresses with
+            // "ตำบล สุรศักดิ์" — space after the prefix — silently fail).
+            setIfEmpty('cBuildingNumber', p.buildingNumber);
+            setIfEmpty('cBuildingName',   p.buildingName);
+            setIfEmpty('cMoo',            p.moo);
+            setIfEmpty('cStreetName',     p.streetName);
+            setIfEmpty('cSubDistrict',    p.subDistrict);
+            setIfEmpty('cDistrict',       p.district);
+            setIfEmpty('cProvince',       p.province);
+            setIfEmpty('cPostalCode',     p.postalCode);
+
+            if (typeof ThaiAddress !== 'undefined') {
+              const provEl = document.getElementById('cProvince');
+              if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+              // Postal reverse-lookup as fallback for anything the parser
+              // missed — guarantees canonical names from the gov dataset.
+              await ThaiAddress.autoFillFromPostal({
+                subDistrict: 'cSubDistrict', district: 'cDistrict',
+                province: 'cProvince', postalCode: 'cPostalCode',
+              });
+              await ThaiAddress.refresh({
+                subDistrict: 'cSubDistrict', district: 'cDistrict',
+                province: 'cProvince', postalCode: 'cPostalCode',
+              });
+            }
+          }).catch(() => {});
+        };
+        DbdLookup.attachNameSearch(document.getElementById('cName'), (result) => {
+          DbdLookup.fillCompanyForm(result, {
+            nameTh: 'cName', nameEn: 'cNameEn', taxId: 'cTaxId', juristicId: 'cJuristicId',
+            address: 'cAddress',
+            addressParts: { moo: 'cMoo', subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
+          });
+          autoParseAddr();
+          Layout.toast('ดึงข้อมูล ' + result.nameTh + ' จาก DBD สำเร็จ');
+        });
+        // DBD Lookup: tax ID lookup (auto-triggers on 13 digits + button click)
+        DbdLookup.attachTaxIdLookup(document.getElementById('cTaxId'), (result) => {
+          DbdLookup.fillCompanyForm(result, {
+            nameTh: 'cName', nameEn: 'cNameEn', juristicId: 'cJuristicId',
+            address: 'cAddress',
+            addressParts: { moo: 'cMoo', subDistrict: 'cSubDistrict', district: 'cDistrict', province: 'cProvince', postalCode: 'cPostalCode' }
+          });
+          autoParseAddr();
+          // Also map registered capital and biz type if available
+          if (result?.juristicType) {
+            const sel = document.getElementById('cBizType');
+            if (sel) {
+              const t = (result.juristicType || '').toString();
+              const opt = t.includes('มหาชน') ? 'PublicCompany'
+                        : t.includes('ห้างหุ้นส่วน') ? 'Partnership'
+                        : t.includes('มูลนิธิ') ? 'Foundation'
+                        : t.includes('สมาคม') ? 'Association'
+                        : (t.includes('บริษัท') ? 'JuristicPerson' : null);
+              if (opt) { sel.value = opt; sel.dispatchEvent(new Event('change')); }
+            }
+          }
+        }, document.getElementById('cDbdBtn'));
+      },
+      showTab(tab, el) {
+        ['tabCompany','tabLicense','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabLine','tabNotify','tabApproval','tabNumbering','tabSignature'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1))?.classList.remove('hidden');
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        if (tab === 'general') this.renderMenuVisibility();
+        if (tab === 'numbering') this.loadNumberSeries();
+        if (tab === 'email') this.loadEmailConfig();
+        if (tab === 'etax') this.loadEtaxConfig();
+        if (tab === 'signature') this.loadSignature();
+        if (tab === 'license') this.loadLicenseTab();
+        if (tab === 'line') this.loadLineConfig();
+        if (tab === 'notify') this.loadNotifyMatrix();
+      },
+
+      // ===== Signature Settings =====
+      _signatureBase64: null,
+      async loadLicenseTab() {
+        const cid = Layout.getCompanyId();
+        const el = document.getElementById('licenseContent');
+        try {
+          const r = await fetch(`/api/account-subscription/effective/${cid}`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success || !j.data?.hasPlan) {
+            el.innerHTML = `
+              <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:14px 18px;color:#78350f;font-size:13px">
+                ⚠️ บริษัทนี้ยังไม่มี Plan — ระบบจะใช้ <strong>FreeTrial</strong> ค่าเริ่มต้น
+              </div>
+              <a href="/pages/account-subscription.html" class="btn btn-primary" style="margin-top:14px;display:inline-block">🎫 เปิด License ของฉัน</a>`;
+            return;
+          }
+          const d = j.data;
+          const _fmt = (b) => { if(!b)return '0';const u=['B','KB','MB','GB'];let i=0,v=b;while(v>=1024&&i<3){v/=1024;i++;}return v.toFixed(v<10?1:0)+' '+u[i]; };
+          const sourceLabel = d.source === 'Account' ? '🎫 ใต้ License ส่วนตัวของคุณ (User Plan)' : '💼 บริษัทนี้จ่ายเองแยก (Company Plan)';
+          const sourceColor = d.source === 'Account' ? '#0c4a6e' : '#9a3412';
+          const sourceBg = d.source === 'Account' ? '#ecfeff' : '#fff7ed';
+          const sourceBorder = d.source === 'Account' ? '#67e8f9' : '#fdba74';
+          const inGraceBadge = d.inGrace
+            ? '<span style="background:#fed7aa;color:#9a3412;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;margin-left:8px">⚠️ Grace Period</span>' : '';
+          const activeBadge = d.isActive
+            ? '<span style="background:#dcfce7;color:#166534;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700">✓ Active</span>'
+            : '<span style="background:#fee2e2;color:#991b1b;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700">⏸ Inactive</span>';
+          el.innerHTML = `
+            <div style="background:${sourceBg};border:1px solid ${sourceBorder};border-radius:10px;padding:14px 18px;margin-bottom:18px;color:${sourceColor}">
+              <div style="font-weight:700;font-size:15px">${sourceLabel}</div>
+              <div style="font-size:12px;margin-top:4px;color:#475569">
+                ${activeBadge} ${inGraceBadge} · สถานะ ${d.status} · หมดอายุ ${new Date(d.endDate).toLocaleDateString('th-TH')}
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:18px">
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${d.maxUsers}</div><div style="font-size:11px;color:#64748b">MAX USERS / บริษัท</div></div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${d.maxDocumentsPerMonth}</div><div style="font-size:11px;color:#64748b">DOCS / เดือน</div></div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${d.maxJournalEntriesPerMonth}</div><div style="font-size:11px;color:#64748b">JE / เดือน</div></div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${_fmt(d.maxStorageBytes)}</div><div style="font-size:11px;color:#64748b">STORAGE</div></div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;text-align:center"><div style="font-size:22px;font-weight:700;color:#0f172a">${d.maxOcrPagesPerMonth}</div><div style="font-size:11px;color:#64748b">OCR PAGES / เดือน</div></div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <a href="/pages/account-subscription.html" class="btn btn-primary">🎫 จัดการ License ส่วนตัว</a>
+              <a href="/pages/subscription.html" class="btn btn-secondary">💼 จัดการแพ็กเกจของบริษัทนี้</a>
+              <a href="/pages/usage.html" class="btn btn-ghost">📊 ดูสถิติการใช้งาน</a>
+            </div>`;
+        } catch(e) {
+          el.innerHTML = `<div style="color:#dc2626;padding:20px">⚠️ ${e.message}</div>`;
+        }
+      },
+
+      // ===== หัวเรื่องเอกสารตั้งเอง =====
+      // คีย์ต้องตรงกับ PdfGenerationService.ComputeDocumentTitle (enum name + คีย์เงื่อนไข)
+      TITLE_VARIANTS: [
+        { k: 'TaxInvoiceReceipt', label: 'ใบกำกับ+รับเงินตอนออก / ใบเสร็จมี VAT', def: 'ใบกำกับภาษี/ใบเสร็จรับเงิน' },
+        { k: 'CombinedInvoice', label: 'ใบแจ้งหนี้ + ใบกำกับภาษี รวมใบเดียว', def: 'ใบแจ้งหนี้/ใบกำกับภาษี' },
+        { k: 'DepositSuffix', label: 'ต่อท้ายเอกสารเงินมัดจำ', def: '(เงินมัดจำ)' },
+      ],
+      TITLE_BASE: [
+        ['Quotation','ใบเสนอราคา'],['Invoice','ใบแจ้งหนี้'],['Receipt','ใบเสร็จรับเงิน'],
+        ['TaxInvoice','ใบกำกับภาษี'],['DebitNote','ใบเพิ่มหนี้'],['CreditNote','ใบลดหนี้'],
+        ['DeliveryNote','ใบส่งของ'],['BillingNote','ใบวางบิล'],['ReceiptVoucher','ใบสำคัญรับ'],
+        ['PurchaseRequisition','ใบขอซื้อ'],['PurchaseOrder','ใบสั่งซื้อ'],['GoodsReceiptNote','ใบรับสินค้า'],
+        ['PurchaseInvoice','ใบแจ้งหนี้ซื้อ'],['Expense','ใบบันทึกค่าใช้จ่าย'],['PaymentVoucher','ใบสำคัญจ่าย'],
+        ['CertificateInLieu','ใบรับรองแทนใบเสร็จรับเงิน'],
+      ],
+      renderTitleOverrides(json) {
+        let ov = {};
+        try { ov = json ? JSON.parse(json) : {}; } catch { ov = {}; }
+        const esc = s => String(s).replace(/"/g, '&quot;');
+        const field = (k, label, def) =>
+          `<div class="form-group" style="margin:0">
+             <label class="form-label" style="font-size:12px;color:#475569">${label}</label>
+             <input type="text" class="form-input" data-title-key="${k}" placeholder="${esc(def)}" value="${esc(ov[k] || '')}">
+           </div>`;
+        const vg = document.getElementById('titleOverridesVariantGrid');
+        if (vg) vg.innerHTML = this.TITLE_VARIANTS.map(v => field(v.k, v.label, v.def)).join('');
+        const bg = document.getElementById('titleOverridesBaseGrid');
+        if (bg) bg.innerHTML = this.TITLE_BASE.map(([k, def]) => field(k, def, def)).join('');
+      },
+      collectTitleOverrides() {
+        const ov = {};
+        document.querySelectorAll('[data-title-key]').forEach(el => {
+          const v = (el.value || '').trim();
+          if (v) ov[el.getAttribute('data-title-key')] = v;   // เก็บเฉพาะที่ตั้งจริง
+        });
+        return Object.keys(ov).length ? JSON.stringify(ov) : '';   // '' = ล้างกลับ default
+      },
+
+      async loadSignature() {
+        try {
+          const j = await API.getProfile();
+          if (!j || !j.success) throw new Error((j && j.message) || 'โหลดข้อมูลไม่สำเร็จ');
+          const p = j.data || {};
+          document.getElementById('sigName').value = p.signatureName || p.fullName || '';
+          document.getElementById('sigTitle').value = p.signatureTitle || '';
+          this._signatureBase64 = p.signatureImageBase64 || null;
+          this._renderSignaturePreview();
+          this.setupSignatureCanvas();
+        } catch (e) {
+          Layout.toast(e.message || 'โหลดลายเซ็นไม่สำเร็จ', 'error');
+        }
+      },
+
+      // ===== วาดลายเซ็นบน canvas (เผื่อผู้ใช้ไม่มีไฟล์) =====
+      setupSignatureCanvas() {
+        const canvas = document.getElementById('sigDrawCanvas');
+        if (!canvas || canvas._wired) return;
+        canvas._wired = true;
+        const ctx = canvas.getContext('2d');
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        this._sigCtx = ctx;
+        let drawing = false;
+        // แปลงพิกัด pointer → พิกัดภายใน canvas (รองรับ CSS scale + จอมือถือ)
+        const pos = (e) => {
+          const r = canvas.getBoundingClientRect();
+          const p = e.touches && e.touches[0] ? e.touches[0] : e;
+          return {
+            x: (p.clientX - r.left) * (canvas.width / r.width),
+            y: (p.clientY - r.top) * (canvas.height / r.height)
+          };
+        };
+        const start = (e) => { e.preventDefault(); drawing = true; const c = pos(e); ctx.beginPath(); ctx.moveTo(c.x, c.y); };
+        const move = (e) => { if (!drawing) return; e.preventDefault(); const c = pos(e); ctx.lineTo(c.x, c.y); ctx.stroke(); this._sigDrawn = true; };
+        const end = () => { drawing = false; };
+        canvas.addEventListener('mousedown', start);
+        canvas.addEventListener('mousemove', move);
+        canvas.addEventListener('mouseup', end);
+        canvas.addEventListener('mouseleave', end);
+        canvas.addEventListener('touchstart', start, { passive: false });
+        canvas.addEventListener('touchmove', move, { passive: false });
+        canvas.addEventListener('touchend', end);
+      },
+      clearSignatureCanvas() {
+        const canvas = document.getElementById('sigDrawCanvas');
+        if (canvas && this._sigCtx) this._sigCtx.clearRect(0, 0, canvas.width, canvas.height);
+        this._sigDrawn = false;
+      },
+      useDrawnSignature() {
+        if (!this._sigDrawn) { Layout.toast('กรุณาวาดลายเซ็นในกรอบก่อน', 'error'); return; }
+        const canvas = document.getElementById('sigDrawCanvas');
+        this._signatureBase64 = canvas.toDataURL('image/png');
+        this._renderSignaturePreview();
+        Layout.toast('ใช้ลายเซ็นที่วาดแล้ว — อย่าลืมกด "บันทึกลายเซ็น"');
+      },
+      onSignatureUpload(ev) {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        if (file.size > 2 * 1024 * 1024) {
+          Layout.toast('รูปมีขนาดใหญ่เกินไป (สูงสุด 2 MB)', 'error');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          this._signatureBase64 = reader.result;
+          this._renderSignaturePreview();
+        };
+        reader.readAsDataURL(file);
+      },
+      clearSignature() {
+        this._signatureBase64 = null;
+        document.getElementById('sigUpload').value = '';
+        this.clearSignatureCanvas();
+        this._renderSignaturePreview();
+      },
+      _renderSignaturePreview() {
+        const img = document.getElementById('sigPreview');
+        const empty = document.getElementById('sigPreviewEmpty');
+        if (this._signatureBase64) {
+          img.src = this._signatureBase64;
+          img.style.display = 'block';
+          empty.style.display = 'none';
+        } else {
+          img.src = '';
+          img.style.display = 'none';
+          empty.style.display = 'block';
+        }
+      },
+      async saveSignature() {
+        const body = {
+          signatureName: document.getElementById('sigName').value || null,
+          signatureTitle: document.getElementById('sigTitle').value || null,
+          signatureImageBase64: this._signatureBase64
+        };
+        try {
+          const j = await API.updateProfile(body);
+          if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
+          Layout.toast('บันทึกลายเซ็นสำเร็จ');
+        } catch (e) {
+          Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
+        }
+      },
+
+      // ===== LINE Messaging API Config =====
+      async loadLineConfig() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        try {
+          const r = await fetch(`/api/companies/${cid}/line-config`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          const c = j.data || {};
+          document.getElementById('lineEnabled').checked = !!c.enabled;
+          document.getElementById('lineGroupId').value = c.defaultGroupId || '';
+          document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
+          document.getElementById('lineToken').value = '';
+          document.getElementById('lineSecret').value = '';
+          document.getElementById('lineTokenStatus').textContent = c.hasAccessToken
+            ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '⚠️ ยังไม่มีค่า — ใส่เพื่อเปิดใช้';
+          document.getElementById('lineSecretStatus').textContent = c.hasChannelSecret
+            ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '— (จำเป็นเฉพาะถ้าจะใช้ webhook)';
+          if (c.lastTestedAt) {
+            document.getElementById('lineTestResult').innerHTML =
+              `<div style="font-size:12px;color:${c.configured ? '#16a34a' : '#dc2626'}">
+                 ทดสอบล่าสุด: ${new Date(c.lastTestedAt).toLocaleString()} — ${c.lastTestStatus || ''}
+               </div>`;
+          }
+        } catch (e) { Layout.toast('โหลดการตั้งค่า LINE ไม่สำเร็จ', 'error'); }
+      },
+      async saveLineConfig() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const body = {
+          enabled: document.getElementById('lineEnabled').checked,
+          channelAccessToken: document.getElementById('lineToken').value || null,
+          channelSecret: document.getElementById('lineSecret').value || null,
+          defaultGroupId: document.getElementById('lineGroupId').value || null,
+          oaBasicId: document.getElementById('lineOaBasicId').value || null,
+        };
+        try {
+          const r = await fetch(`/api/companies/${cid}/line-config`, {
+            method: 'PUT',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+          Layout.toast('บันทึก LINE config สำเร็จ');
+          await this.loadLineConfig();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async testLineConfig() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const to = document.getElementById('lineTestId').value.trim();
+        if (!to) { Layout.toast('กรุณาระบุ LINE User ID หรือ Group ID ปลายทาง', 'error'); return; }
+        const out = document.getElementById('lineTestResult');
+        out.innerHTML = '<div style="font-size:12px;color:#64748b">กำลังส่ง…</div>';
+        try {
+          const r = await fetch(`/api/companies/${cid}/line-config/test`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ toLineId: to })
+          });
+          const j = await r.json();
+          out.innerHTML = `<div style="font-size:13px;color:${j.success ? '#16a34a' : '#dc2626'}">
+            ${j.success ? '✅' : '❌'} ${j.message || ''}</div>`;
+        } catch (e) { out.innerHTML = `<div style="color:#dc2626">${e.message}</div>`; }
+      },
+
+      // ===== Notification Matrix =====
+      _notifyCatalog: null,
+      _notifySettings: [],
+      async loadNotifyMatrix() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const wrap = document.getElementById('notifyMatrixWrap');
+        try {
+          const [catRes, setRes] = await Promise.all([
+            fetch(`/api/companies/${cid}/notifications/config/catalog`,
+              { headers: { 'Authorization': 'Bearer ' + API.token } }).then(r => r.json()),
+            fetch(`/api/companies/${cid}/notifications/config/settings`,
+              { headers: { 'Authorization': 'Bearer ' + API.token } }).then(r => r.json()),
+          ]);
+          this._notifyCatalog = catRes.data || { events: [], recipientRoles: [] };
+          this._notifySettings = setRes.data || [];
+          this._renderNotifyMatrix();
+        } catch (e) {
+          wrap.innerHTML = '<div style="color:#dc2626;padding:20px">โหลดไม่สำเร็จ: ' + e.message + '</div>';
+        }
+      },
+      _renderNotifyMatrix() {
+        const cat = this._notifyCatalog;
+        if (!cat) return;
+        const map = new Map();
+        for (const s of this._notifySettings)
+          map.set(`${s.eventKey}|${s.recipientRole}`, s);
+        const events = cat.events || [];
+        const roles = cat.recipientRoles || cat.roles || [];
+        const roleLabel = { Requester: 'พนักงาน', DirectManager: 'หัวหน้างาน', DepartmentHead: 'หัวหน้าแผนก',
+          HR_Admin: 'HR', Accounting: 'บัญชี', Owner: 'เจ้าของบริษัท' };
+        let html = `<div style="overflow-x:auto"><table class="table" style="font-size:13px;min-width:780px">
+          <thead><tr>
+            <th style="text-align:left;width:30%">เหตุการณ์</th>
+            <th style="text-align:left">ผู้รับ</th>
+            <th style="text-align:center">🔔 กระดิ่ง</th>
+            <th style="text-align:center">✉️ อีเมล</th>
+            <th style="text-align:center">💬 LINE</th>
+          </tr></thead><tbody>`;
+        for (const ev of events) {
+          for (const role of roles) {
+            const key = `${ev.key}|${role}`;
+            const s = map.get(key) || { enableSystem: false, enableEmail: false, enableLine: false };
+            html += `<tr>
+              <td><div><strong>${ev.label}</strong></div><div class="text-gray-400" style="font-size:11px">${ev.key}</div></td>
+              <td>${roleLabel[role] || role}</td>
+              <td style="text-align:center"><input type="checkbox" data-ev="${ev.key}" data-role="${role}" data-ch="sys" ${s.enableSystem ? 'checked' : ''}></td>
+              <td style="text-align:center"><input type="checkbox" data-ev="${ev.key}" data-role="${role}" data-ch="email" ${s.enableEmail ? 'checked' : ''}></td>
+              <td style="text-align:center"><input type="checkbox" data-ev="${ev.key}" data-role="${role}" data-ch="line" ${s.enableLine ? 'checked' : ''}></td>
+            </tr>`;
+          }
+        }
+        html += `</tbody></table></div>`;
+        document.getElementById('notifyMatrixWrap').innerHTML = html;
+      },
+      async saveNotifyMatrix() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const rowsMap = new Map();
+        document.querySelectorAll('#notifyMatrixWrap input[type=checkbox]').forEach(cb => {
+          const k = `${cb.dataset.ev}|${cb.dataset.role}`;
+          if (!rowsMap.has(k)) rowsMap.set(k, {
+            eventKey: cb.dataset.ev, recipientRole: cb.dataset.role,
+            enableSystem: false, enableEmail: false, enableLine: false
+          });
+          const r = rowsMap.get(k);
+          if (cb.dataset.ch === 'sys') r.enableSystem = cb.checked;
+          if (cb.dataset.ch === 'email') r.enableEmail = cb.checked;
+          if (cb.dataset.ch === 'line') r.enableLine = cb.checked;
+        });
+        // ส่งทุก row — backend จัด upsert/delete ให้
+        const settings = Array.from(rowsMap.values());
+        try {
+          const r = await fetch(`/api/companies/${cid}/notifications/config/settings`, {
+            method: 'PUT',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ settings })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+          Layout.toast('บันทึกการตั้งค่าแจ้งเตือนเรียบร้อย');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Email Config =====
+      toggleEmailProvider() {
+        const v = document.getElementById('emailProvider').value;
+        document.getElementById('emailSmtp').style.display = v === 'Smtp' ? 'block' : 'none';
+        document.getElementById('emailMs').style.display = v === 'MicrosoftGraph' ? 'block' : 'none';
+        document.getElementById('emailGmail').style.display = v === 'GmailApi' ? 'block' : 'none';
+      },
+      async loadEmailConfig() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getEmailConfig();
+          const c = res.data || {};
+          document.getElementById('emailProvider').value = c.provider || 'Smtp';
+          document.getElementById('emailFromAddress').value = c.fromAddress || '';
+          document.getElementById('emailFromName').value = c.fromName || '';
+          document.getElementById('emailReplyTo').value = c.replyTo || '';
+          if (c.smtp) {
+            document.getElementById('smtpHost').value = c.smtp.host || '';
+            document.getElementById('smtpPort').value = c.smtp.port || 587;
+            document.getElementById('smtpUsername').value = c.smtp.username || '';
+            document.getElementById('smtpPassword').placeholder = c.smtp.hasPassword ? '••••••• (เก็บไว้)' : '';
+            document.getElementById('smtpUseSsl').checked = c.smtp.useSsl !== false;
+          }
+          if (c.microsoft) {
+            document.getElementById('msTenantId').value = c.microsoft.tenantId || '';
+            document.getElementById('msClientId').value = c.microsoft.clientId || '';
+            document.getElementById('msClientSecret').placeholder = c.microsoft.hasClientSecret ? '••••••• (เก็บไว้)' : '';
+            document.getElementById('msSenderUpn').value = c.microsoft.senderUpn || '';
+          }
+          if (c.gmail) {
+            document.getElementById('gmailClientId').value = c.gmail.clientId || '';
+            document.getElementById('gmailClientSecret').placeholder = c.gmail.hasClientSecret ? '••••••• (เก็บไว้)' : '';
+            document.getElementById('gmailRefreshToken').placeholder = c.gmail.hasRefreshToken ? '••••••• (เก็บไว้)' : '';
+          }
+          this.toggleEmailProvider();
+          this._checkEmailProviderFields(c);
+
+          const status = document.getElementById('emailStatus');
+          if (c.configured) {
+            status.innerHTML = `<div style="padding:10px;background:#dcfce7;border-radius:6px;color:#166534;font-size:13px">✓ ตั้งค่าและทดสอบสำเร็จ • ${c.lastTestedAt ? new Date(c.lastTestedAt).toLocaleString('th-TH') : ''}</div>`;
+          } else if (c.lastTestStatus && c.lastTestStatus !== 'OK') {
+            status.innerHTML = `<div style="padding:10px;background:#fee2e2;border-radius:6px;color:#991b1b;font-size:13px">⚠ ทดสอบล่าสุดไม่ผ่าน: ${c.lastTestStatus}</div>`;
+          } else {
+            status.innerHTML = `<div style="padding:10px;background:#fef3c7;border-radius:6px;color:#78350f;font-size:13px">⚠ ยังไม่ได้ทดสอบ — กรอกข้อมูลแล้วกด "ทดสอบส่งอีเมล" เพื่อยืนยัน</div>`;
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      _checkEmailProviderFields(c) {
+        const provider = document.getElementById('emailProvider').value;
+        const warn = document.getElementById('emailProviderWarning');
+        const missing = [];
+        if (provider === 'Smtp') {
+          if (!c?.smtp?.host) missing.push('SMTP Host');
+        } else if (provider === 'MicrosoftGraph') {
+          if (!c?.microsoft?.tenantId) missing.push('Tenant ID');
+          if (!c?.microsoft?.clientId) missing.push('Client ID');
+          if (!c?.microsoft?.hasClientSecret) missing.push('Client Secret');
+          if (!c?.microsoft?.senderUpn) missing.push('Sender Mailbox');
+        } else if (provider === 'GmailApi') {
+          if (!c?.gmail?.clientId) missing.push('Client ID');
+          if (!c?.gmail?.hasClientSecret) missing.push('Client Secret');
+          if (!c?.gmail?.hasRefreshToken) missing.push('Refresh Token');
+          if (!c?.fromAddress) missing.push('From Address');
+        }
+        if (missing.length > 0) {
+          warn.style.display = 'block';
+          warn.innerHTML = `⚠️ ยังขาดข้อมูลที่จำเป็นสำหรับ ${provider}: <strong>${missing.join(', ')}</strong> — หากไม่กรอก ระบบจะ fallback ไปใช้ SMTP ส่วนกลาง`;
+        } else {
+          warn.style.display = 'none';
+        }
+      },
+      async saveEmailConfig() {
+        const api = Layout.api(); if (!api) return;
+        const provider = document.getElementById('emailProvider').value;
+        const data = {
+          provider,
+          fromAddress: document.getElementById('emailFromAddress').value || null,
+          fromName: document.getElementById('emailFromName').value || null,
+          replyTo: document.getElementById('emailReplyTo').value || null,
+          smtp: {
+            host: document.getElementById('smtpHost').value || null,
+            port: parseInt(document.getElementById('smtpPort').value) || 587,
+            username: document.getElementById('smtpUsername').value || null,
+            password: document.getElementById('smtpPassword').value || null,
+            useSsl: document.getElementById('smtpUseSsl').checked
+          },
+          microsoft: {
+            tenantId: document.getElementById('msTenantId').value || null,
+            clientId: document.getElementById('msClientId').value || null,
+            clientSecret: document.getElementById('msClientSecret').value || null,
+            senderUpn: document.getElementById('msSenderUpn').value || null
+          },
+          gmail: {
+            clientId: document.getElementById('gmailClientId').value || null,
+            clientSecret: document.getElementById('gmailClientSecret').value || null,
+            refreshToken: document.getElementById('gmailRefreshToken').value || null
+          }
+        };
+        try {
+          await api.updateEmailConfig(data);
+          Layout.toast('บันทึกการตั้งค่าอีเมลสำเร็จ');
+          await this.loadEmailConfig();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async testEmailConfig() {
+        const api = Layout.api(); if (!api) return;
+        const to = prompt('กรอกอีเมลที่จะทดสอบส่งถึง:');
+        if (!to) return;
+        try {
+          const res = await api.testEmailConfig({ toAddress: to });
+          Layout.toast(res.success ? 'ส่งทดสอบสำเร็จ — โปรดตรวจสอบกล่องอีเมล' : 'ส่งไม่สำเร็จ: ' + (res.message || 'unknown'), res.success ? 'success' : 'error');
+          await this.loadEmailConfig();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== eTax Config =====
+      toggleEtaxMode() {
+        const mode = document.querySelector('input[name="etaxMode"]:checked')?.value;
+        document.getElementById('etaxByEmailConfig').style.display = (mode === 'ByEmail' || mode === 'Both') ? 'block' : 'none';
+        document.getElementById('etaxDirectConfig').style.display = (mode === 'Direct' || mode === 'Both') ? 'block' : 'none';
+      },
+      async loadEtaxConfig() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getEtaxConfig();
+          const c = res.data || {};
+          // Set mode radio
+          const modeMap = { 0: 'None', 1: 'ByEmail', 2: 'Direct', 3: 'Both' };
+          const mode = (typeof c.mode === 'number') ? modeMap[c.mode] : c.mode;
+          if (mode === 'ByEmail') document.getElementById('modeByEmail').checked = true;
+          else if (mode === 'Direct') document.getElementById('modeDirect').checked = true;
+          else if (mode === 'Both') document.getElementById('modeBoth').checked = true;
+          this.toggleEtaxMode();
+          // ByEmail fields
+          document.getElementById('sEtaxByEmailRdRegistered').checked = !!c.byEmailRdRegistered;
+          if (c.byEmailRegistrationDate) document.getElementById('sEtaxByEmailRegDate').value = c.byEmailRegistrationDate.substr(0,10);
+          document.getElementById('sEtaxByEmailRegNumber').value = c.byEmailRegistrationNumber || '';
+          document.getElementById('sEtaxByEmailSender').value = c.byEmailSenderEmail || '';
+          document.getElementById('sEtaxByEmailRdCc').value = c.byEmailRdTimestampAddress || 'csemail@etax.teda.th';
+          document.getElementById('sEtaxByEmailEmbedXml').checked = c.byEmailEmbedXml !== false;
+          document.getElementById('sEtaxByEmailAutoSend').checked = !!c.byEmailAutoSendOnApprove;
+
+          // Cross-validate: e-Tax sender email vs email provider From address
+          if (c.byEmailSenderEmail && (mode === 'ByEmail' || mode === 'Both')) {
+            try {
+              const emailRes = await api.getEmailConfig();
+              const ec = emailRes.data || {};
+              const providerFrom = ec.fromAddress || '';
+              const warn = document.getElementById('etaxSenderMismatchWarning');
+              if (providerFrom && c.byEmailSenderEmail.toLowerCase() !== providerFrom.toLowerCase()) {
+                warn.style.display = 'block';
+                warn.innerHTML = `⚠️ อีเมลผู้ส่งที่ลงทะเบียนกับสรรพากร (<strong>${c.byEmailSenderEmail}</strong>) ไม่ตรงกับ From Address ในตั้งค่าอีเมล (<strong>${providerFrom}</strong>) — สรรพากรจะตรวจสอบว่าอีเมลต้นทางตรงกับที่ลงทะเบียนไว้`;
+              } else {
+                warn.style.display = 'none';
+              }
+            } catch (_) {}
+          }
+        } catch (e) { /* graceful */ }
+        // Hook radio buttons to toggler
+        document.querySelectorAll('input[name="etaxMode"]').forEach(r =>
+          r.addEventListener('change', () => this.toggleEtaxMode()));
+      },
+      async saveEtaxConfig() {
+        const api = Layout.api(); if (!api) return;
+        const mode = document.querySelector('input[name="etaxMode"]:checked')?.value;
+        const modeNum = { 'None': 0, 'ByEmail': 1, 'Direct': 2, 'Both': 3 }[mode || 'None'];
+        const data = {
+          mode: modeNum,
+          enabled: document.getElementById('sEtaxEnabled').checked,
+          testMode: document.getElementById('sEtaxTestMode').checked,
+          autoSign: document.getElementById('sEtaxAutoSign').checked,
+          autoSubmit: document.getElementById('sEtaxAutoSubmit').checked,
+          byEmailRdRegistered: document.getElementById('sEtaxByEmailRdRegistered').checked,
+          byEmailRegistrationDate: document.getElementById('sEtaxByEmailRegDate').value || null,
+          byEmailRegistrationNumber: document.getElementById('sEtaxByEmailRegNumber').value || null,
+          byEmailSenderEmail: document.getElementById('sEtaxByEmailSender').value || null,
+          byEmailRdTimestampAddress: document.getElementById('sEtaxByEmailRdCc').value || null,
+          byEmailEmbedXml: document.getElementById('sEtaxByEmailEmbedXml').checked,
+          byEmailAutoSendOnApprove: document.getElementById('sEtaxByEmailAutoSend').checked,
+          serviceProvider: document.getElementById('sEtaxProvider').value
+        };
+        try { await api.updateEtaxConfig(data); } catch (e) { /* fallback to legacy */ }
+      },
+      async loadCompanyProfile() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const res = await API.getCompany(cid);
+          const c = res.data;
+          if (!c) return;
+          this._companyData = c;
+          document.getElementById('cName').value = c.name || '';
+          document.getElementById('cNameEn').value = c.nameEn || '';
+          document.getElementById('cTaxId').value = c.taxId || '';
+          document.getElementById('cBranchCode').value = c.branchCode || '00000';
+          document.getElementById('cBranchName').value = c.branchName || '';
+          document.getElementById('cBizType').value = c.businessType || 'JuristicPerson';
+          document.getElementById('cIndustryType').value = c.industryType || 'General';
+          this._origBizType = c.businessType || 'JuristicPerson';
+          this._origIndustryType = c.industryType || 'General';
+          this.renderIndustryGrid();
+          this.onBizTypeChange(true);
+          document.getElementById('cJuristicId').value = c.juristicId || '';
+          document.getElementById('cVatRegistered').checked = c.isVatRegistered || false;
+          document.getElementById('cVatRate').value = c.vatRate || 7;
+          document.getElementById('cWhtRegistered').checked = c.isWhtRegistered !== false;
+          document.getElementById('cSocialSecurity').checked = c.isSocialSecurityRegistered || false;
+          document.getElementById('cSocialSecurityAccountNo').value = c.socialSecurityAccountNo || '';
+          if (c.isSocialSecurityRegistered) document.getElementById('cSocialSecurityGroup').style.display = 'block';
+          document.getElementById('cAddress').value = c.address || '';
+          document.getElementById('cBuildingNumber').value = c.buildingNumber || '';
+          document.getElementById('cBuildingName').value = c.buildingName || '';
+          document.getElementById('cMoo').value = c.moo || '';
+          document.getElementById('cStreetName').value = c.streetName || '';
+          document.getElementById('cSubDistrict').value = c.subDistrict || '';
+          document.getElementById('cDistrict').value = c.district || '';
+          document.getElementById('cProvince').value = c.province || '';
+          document.getElementById('cPostalCode').value = c.postalCode || '';
+          // Wire the cascading datalist + postal autocomplete on the company
+          // address fields, matching the contact form. Idempotent — safe to
+          // run on every reload of the company profile.
+          if (typeof ThaiAddress !== 'undefined') {
+            ThaiAddress.enhance({
+              subDistrict: 'cSubDistrict', district: 'cDistrict',
+              province: 'cProvince', postalCode: 'cPostalCode',
+            });
+          }
+          document.getElementById('cPhone').value = c.phone || '';
+          document.getElementById('cFax').value = c.fax || '';
+          document.getElementById('cEmail').value = c.email || '';
+          document.getElementById('cWebsite').value = c.website || '';
+          document.getElementById('cFiscalMonth').value = c.fiscalYearStartMonth || 1;
+          // Show setup banner if not yet complete
+          if (!c.isSetupComplete || new URLSearchParams(window.location.search).get('setup') === '1') {
+            document.getElementById('setupBanner').classList.remove('hidden');
+          }
+        } catch (e) { console.warn('Could not load company profile:', e); }
+      },
+      async completeSetup() {
+        await this.saveCompany(); // saveCompany already sets isSetupComplete: true
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          // Seed chart of accounts based on selected business/industry type
+          const bizType = document.getElementById('cBizType').value;
+          const indType = document.getElementById('cIndustryType').value;
+          const api = Layout.api();
+          if (api) {
+            try {
+              await api.seedAccounts(bizType, indType);
+            } catch (seedErr) {
+              // If accounts already seeded/in use, continue setup
+              console.warn('Seed accounts:', seedErr.message);
+            }
+          }
+          document.getElementById('setupBanner').classList.add('hidden');
+          Layout.toast('ตั้งค่าเสร็จสิ้น! ระบบได้สร้างผังบัญชีเริ่มต้นให้แล้ว');
+          setTimeout(() => window.location.href = '/app.html', 800);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ===== Business Type & Industry Type UI =====
+      _bizTypeDescMap: {
+        Individual: '👤 เจ้าของคนเดียว ไม่จดทะเบียนนิติบุคคล | ส่วนของเจ้าของ: ทุนเจ้าของกิจการ',
+        JuristicPerson: '🏢 จดทะเบียนบริษัทจำกัด มีผู้ถือหุ้น | ส่วนของเจ้าของ: ทุนเรือนหุ้น (หุ้นสามัญ)',
+        Partnership: '🤝 ห้างหุ้นส่วนสามัญ/จำกัด | ส่วนของเจ้าของ: ทุนหุ้นส่วน',
+        PublicCompany: '🏛️ บริษัทมหาชนจำกัด | ส่วนของเจ้าของ: หุ้นสามัญ+บุริมสิทธิ',
+        Foundation: '🏫 มูลนิธิ ไม่แสวงหากำไร | สินทรัพย์สุทธิ: ทุนสะสม/เงินบริจาค',
+        Association: '🏟️ สมาคม สโมสร | สินทรัพย์สุทธิ: ทุนสะสม/ค่าสมาชิก',
+        Other: '📋 ประเภทอื่น | ส่วนของเจ้าของ: มาตรฐาน'
+      },
+      _industryTypes: [
+        { type: 'General', name: 'ทั่วไป', icon: '🏢', desc: 'ผังบัญชีมาตรฐาน' },
+        { type: 'Trading', name: 'ซื้อมาขายไป', icon: '🛒', desc: 'ค้าส่ง/ค้าปลีก' },
+        { type: 'Service', name: 'บริการ', icon: '🔧', desc: 'ให้บริการทั่วไป' },
+        { type: 'Beauty', name: 'ความงาม/สปา', icon: '💅', desc: 'ร้านทำเล็บ สปา ทำผม' },
+        { type: 'Restaurant', name: 'ร้านอาหาร', icon: '🍜', desc: 'อาหาร/ภัตตาคาร' },
+        { type: 'Cafe', name: 'คาเฟ่', icon: '☕', desc: 'กาแฟ/เครื่องดื่ม' },
+        { type: 'Retail', name: 'ค้าปลีก', icon: '🏪', desc: 'ร้านค้า/มินิมาร์ท' },
+        { type: 'Manufacturing', name: 'ผลิต/โรงงาน', icon: '🏭', desc: 'ผลิตสินค้า' },
+        { type: 'Construction', name: 'ก่อสร้าง', icon: '🏗️', desc: 'รับเหมา/ก่อสร้าง' },
+        { type: 'Technology', name: 'IT/ซอฟต์แวร์', icon: '💻', desc: 'พัฒนาซอฟต์แวร์/SaaS' },
+        { type: 'Hotel', name: 'โรงแรม/ที่พัก', icon: '🏨', desc: 'โรงแรม/รีสอร์ท' },
+        { type: 'Ecommerce', name: 'อีคอมเมิร์ซ', icon: '📱', desc: 'ขายออนไลน์' },
+        { type: 'Healthcare', name: 'สุขภาพ', icon: '🏥', desc: 'คลินิก/ร้านยา' },
+        { type: 'Education', name: 'การศึกษา', icon: '🎓', desc: 'กวดวิชา/คอร์ส' },
+        { type: 'Freelance', name: 'ฟรีแลนซ์', icon: '🎨', desc: 'รับงานอิสระ' },
+        { type: 'Transportation', name: 'ขนส่ง', icon: '🚛', desc: 'โลจิสติกส์' },
+        { type: 'Agriculture', name: 'เกษตร', icon: '🌾', desc: 'เกษตร/ฟาร์ม' },
+        { type: 'Other', name: 'อื่นๆ', icon: '📋', desc: 'ไม่ระบุ' },
+      ],
+      renderIndustryGrid() {
+        const current = document.getElementById('cIndustryType').value || 'General';
+        const grid = document.getElementById('industryTypeGrid');
+        grid.innerHTML = this._industryTypes.map(i => `
+          <div class="industry-card${i.type === current ? ' selected' : ''}" data-type="${i.type}" onclick="Page.selectIndustry('${i.type}')"
+               style="padding:10px 12px;border:2px solid ${i.type === current ? '#4F46E5' : '#e2e8f0'};border-radius:8px;cursor:pointer;text-align:center;transition:all 0.15s;background:${i.type === current ? '#EEF2FF' : '#fff'}"
+               onmouseenter="this.style.borderColor='#818cf8'" onmouseleave="this.style.borderColor='${i.type === current ? '#4F46E5' : '#e2e8f0'}'">
+            <div style="font-size:20px;margin-bottom:4px">${i.icon}</div>
+            <div style="font-size:12px;font-weight:600;color:#1e293b">${i.name}</div>
+            <div style="font-size:10px;color:#64748b;margin-top:2px">${i.desc}</div>
+          </div>
+        `).join('');
+      },
+      selectIndustry(type) {
+        document.getElementById('cIndustryType').value = type;
+        this.renderIndustryGrid();
+        this.onBizTypeChange();
+      },
+      onBizTypeChange(isLoad) {
+        const biz = document.getElementById('cBizType').value;
+        const ind = document.getElementById('cIndustryType').value;
+        // Show description
+        const descEl = document.getElementById('bizTypeDesc');
+        if (this._bizTypeDescMap[biz]) {
+          descEl.textContent = this._bizTypeDescMap[biz];
+          descEl.style.display = 'block';
+        } else { descEl.style.display = 'none'; }
+        // Show preview panel
+        document.getElementById('coaPreviewPanel').style.display = 'block';
+        this.loadCoaPreview();
+        // Show reseed warning if type changed (not on initial load)
+        if (!isLoad && (biz !== this._origBizType || ind !== this._origIndustryType)) {
+          document.getElementById('seedCoaSection').style.display = 'block';
+        } else {
+          document.getElementById('seedCoaSection').style.display = 'none';
+        }
+      },
+      _coaPreviewOpen: false,
+      toggleCoaPreview() {
+        this._coaPreviewOpen = !this._coaPreviewOpen;
+        document.getElementById('coaPreviewBody').style.display = this._coaPreviewOpen ? 'block' : 'none';
+      },
+      async loadCoaPreview() {
+        const api = Layout.api(); if (!api) return;
+        const biz = document.getElementById('cBizType').value;
+        const ind = document.getElementById('cIndustryType').value;
+        try {
+          const res = await api.previewAccountTemplate(biz, ind);
+          const data = res.data;
+          document.getElementById('coaPreviewCount').textContent = `(${data.totalAccounts} บัญชี)`;
+          const typeColors = { Asset: '#3b82f6', Liability: '#f59e0b', Equity: '#8b5cf6', Revenue: '#10b981', Expense: '#ef4444' };
+          const typeLabels = { Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ', Revenue: 'รายได้', Expense: 'ค่าใช้จ่าย' };
+          document.getElementById('coaPreviewBody').innerHTML = data.accounts.map(a => {
+            const indent = (a.level - 1) * 20;
+            const isCat = a.level <= 2;
+            const color = typeColors[a.accountType] || '#64748b';
+            return `<div style="padding:4px 16px 4px ${16 + indent}px;font-size:${isCat ? '13px' : '12px'};font-weight:${isCat ? '600' : '400'};color:${isCat ? '#1e293b' : '#475569'};border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:8px">
+              <span style="font-family:monospace;color:#94a3b8;min-width:60px">${a.code}</span>
+              <span style="flex:1">${a.nameTh}</span>
+              ${a.level === 1 ? `<span style="font-size:10px;padding:2px 8px;border-radius:4px;background:${color}15;color:${color};font-weight:600">${typeLabels[a.accountType] || a.accountType}</span>` : ''}
+            </div>`;
+          }).join('');
+        } catch (e) { console.warn('Preview error:', e); }
+      },
+      async reseedAccounts() {
+        if (!(await Layout.confirmDanger({ title: 'รีเซ็ตผังบัญชี', message: 'บัญชีระบบเดิมจะถูกลบทั้งหมด (บัญชีที่มีการเคลื่อนไหวจะคงไว้) — การดำเนินการนี้<b>ย้อนกลับไม่ได้</b>', mode: 'type', confirmText: 'confirm' }))) return;
+        const api = Layout.api(); if (!api) return;
+        const biz = document.getElementById('cBizType').value;
+        const ind = document.getElementById('cIndustryType').value;
+        try {
+          // Save company first so businessType/industryType are persisted
+          await this.saveCompany();
+          await api.seedAccounts(biz, ind);
+          this._origBizType = biz;
+          this._origIndustryType = ind;
+          document.getElementById('seedCoaSection').style.display = 'none';
+          Layout.toast('รีเซ็ตผังบัญชีสำเร็จ! ผังบัญชีใหม่ถูกสร้างตามประเภทธุรกิจที่เลือก');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      _origBizType: 'JuristicPerson',
+      _origIndustryType: 'General',
+
+      composeAddress() {
+        const moo = document.getElementById('cMoo').value;
+        const parts = [
+          document.getElementById('cBuildingNumber').value,
+          document.getElementById('cBuildingName').value,
+          moo ? 'หมู่ ' + moo : '',
+          document.getElementById('cStreetName').value ? 'ถ.' + document.getElementById('cStreetName').value : '',
+          document.getElementById('cSubDistrict').value,
+          document.getElementById('cDistrict').value,
+          document.getElementById('cProvince').value,
+          document.getElementById('cPostalCode').value
+        ].filter(Boolean);
+        return parts.join(' ') || null;
+      },
+      async parseAddressPaste() {
+        const text = document.getElementById('cAddressPaste').value;
+        if (!text || !text.trim()) { Layout.toast('กรุณาวางที่อยู่ก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const j = await api.parseAddress(text);
+          if (!j || !j.success) throw new Error((j && j.message) || 'แยกที่อยู่ไม่สำเร็จ');
+          const p = j.data || {};
+          if (p.buildingNumber) document.getElementById('cBuildingNumber').value = p.buildingNumber;
+          if (p.buildingName) document.getElementById('cBuildingName').value = p.buildingName;
+          if (p.moo) document.getElementById('cMoo').value = p.moo;
+          if (p.streetName) document.getElementById('cStreetName').value = p.streetName;
+          if (p.subDistrict) document.getElementById('cSubDistrict').value = p.subDistrict;
+          if (p.district) document.getElementById('cDistrict').value = p.district;
+          if (p.province) document.getElementById('cProvince').value = p.province;
+          if (p.postalCode) document.getElementById('cPostalCode').value = p.postalCode;
+          document.getElementById('cAddressPaste').value = '';
+          if (typeof ThaiAddress !== 'undefined') {
+            const provEl = document.getElementById('cProvince');
+            if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+            ThaiAddress.enhance({
+              subDistrict: 'cSubDistrict', district: 'cDistrict',
+              province: 'cProvince', postalCode: 'cPostalCode',
+            });
+            await ThaiAddress.autoFillFromPostal({
+              subDistrict: 'cSubDistrict', district: 'cDistrict',
+              province: 'cProvince', postalCode: 'cPostalCode',
+            });
+            await ThaiAddress.refresh({
+              subDistrict: 'cSubDistrict', district: 'cDistrict',
+              province: 'cProvince', postalCode: 'cPostalCode',
+            });
+          }
+          Layout.toast('แยกที่อยู่สำเร็จ — ตรวจและปรับแก้ก่อนบันทึก');
+        } catch (e) { Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error'); }
+      },
+      async saveCompany() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const name = document.getElementById('cName').value.trim();
+        if (!name) { Layout.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
+        try {
+          const res = await API.updateCompany(cid, {
+            name,
+            nameEn: document.getElementById('cNameEn').value || null,
+            taxId: document.getElementById('cTaxId').value || '-',
+            branchCode: document.getElementById('cBranchCode').value || '00000',
+            branchName: document.getElementById('cBranchName').value || null,
+            businessType: document.getElementById('cBizType').value,
+            industryType: document.getElementById('cIndustryType').value,
+            juristicId: document.getElementById('cJuristicId').value || null,
+            isVatRegistered: document.getElementById('cVatRegistered').checked,
+            vatRate: parseFloat(document.getElementById('cVatRate').value) || 7,
+            isWhtRegistered: document.getElementById('cWhtRegistered').checked,
+            isSocialSecurityRegistered: document.getElementById('cSocialSecurity').checked,
+            socialSecurityAccountNo: document.getElementById('cSocialSecurityAccountNo').value || null,
+            address: Page.composeAddress(),
+            buildingNumber: document.getElementById('cBuildingNumber').value || null,
+            buildingName: document.getElementById('cBuildingName').value || null,
+            moo: document.getElementById('cMoo').value || null,
+            streetName: document.getElementById('cStreetName').value || null,
+            subDistrict: document.getElementById('cSubDistrict').value || null,
+            district: document.getElementById('cDistrict').value || null,
+            province: document.getElementById('cProvince').value || null,
+            postalCode: document.getElementById('cPostalCode').value || null,
+            phone: document.getElementById('cPhone').value || null,
+            fax: document.getElementById('cFax').value || null,
+            email: document.getElementById('cEmail').value || null,
+            website: document.getElementById('cWebsite').value || null,
+            fiscalYearStartMonth: parseInt(document.getElementById('cFiscalMonth').value) || 1,
+            isSetupComplete: true,
+          });
+          if (!res || !res.success) throw new Error(res?.message || 'บันทึกไม่สำเร็จ');
+          // Update localStorage and Layout with the server response (authoritative)
+          const serverCompany = res.data || { ...Layout.currentCompany, name, isSetupComplete: true };
+          Layout.currentCompany = serverCompany;
+          localStorage.setItem('currentCompany', JSON.stringify(serverCompany));
+          // Also update companies array in Layout so dashboard banner check uses fresh data
+          if (Layout.companies) {
+            const idx = Layout.companies.findIndex(c => c.id === cid);
+            if (idx >= 0) Layout.companies[idx] = serverCompany;
+          }
+          const select = document.getElementById('companySelect');
+          if (select) { const opt = select.querySelector(`option[value="${cid}"]`); if (opt) opt.textContent = name; }
+          Layout.toast('บันทึกข้อมูลบริษัทสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      /** เติม dropdown แหล่งเงิน default จาก ChartOfAccount เงินสด/ธนาคาร
+       * (getPaymentChannels คืน GL เงินสด/ธนาคารทั้งหมด, value = ChartOfAccount.Id
+       * ตรงกับ DefaultPaymentAccountId). */
+      async populateDefaultPaymentAccount(api, currentId) {
+        const sel = document.getElementById('sDefaultPaymentAccount');
+        if (!sel) return;
+        try {
+          const res = await api.getPaymentChannels();
+          const accts = res?.data || [];
+          sel.innerHTML = '<option value="">— ให้ระบบเลือกอัตโนมัติ (บัญชีเงินสด/ธนาคารแรก) —</option>' +
+            accts.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+          if (currentId && currentId !== '00000000-0000-0000-0000-000000000000') sel.value = currentId;
+        } catch (e) { /* non-critical — dropdown เหลือแค่ตัวเลือก auto */ }
+      },
+      async loadSettings() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getSettings();
+          const s = res.data;
+          if (!s) return;
+          // Logo
+          if (s.logoUrl) {
+            document.getElementById('logoPreview').innerHTML = `<img src="${s.logoUrl}" style="max-width:100%;max-height:100%;object-fit:contain">`;
+            document.getElementById('btnDeleteLogo').style.display = 'inline-block';
+          }
+          // ตราประทับบริษัท
+          if (s.stampUrl) {
+            document.getElementById('stampPreview').innerHTML = `<img src="${s.stampUrl}" style="max-width:100%;max-height:100%;object-fit:contain">`;
+            document.getElementById('btnDeleteStamp').style.display = 'inline-block';
+          }
+          if (document.getElementById('sStampW')) document.getElementById('sStampW').value = s.stampWidthMm ?? 32;
+          if (document.getElementById('sStampH')) document.getElementById('sStampH').value = s.stampHeightMm ?? 32;
+          if (document.getElementById('sStampAlign')) document.getElementById('sStampAlign').value = s.stampAlign || 'Right';
+          // General
+          if (s.primaryColor) document.getElementById('sPrimaryColor').value = s.primaryColor;
+          if (s.secondaryColor) document.getElementById('sSecondaryColor').value = s.secondaryColor;
+          document.getElementById('sPaymentTerms').value = s.defaultPaymentTerms || '';
+          document.getElementById('sPaymentDueDays').value = s.defaultPaymentDueDays || 30;
+          document.getElementById('sAutoClose').checked = s.autoCloseMonthEnd || false;
+          document.getElementById('sCloseDay').value = s.monthEndClosingDay || 5;
+          // Document notes
+          document.getElementById('sInvoiceNotes').value = s.invoiceNotes || '';
+          document.getElementById('sReceiptNotes').value = s.receiptNotes || '';
+          document.getElementById('sQuotationNotes').value = s.quotationNotes || '';
+          document.getElementById('sInvoiceFooter').value = s.invoiceFooter || '';
+          document.getElementById('sReceiptFooter').value = s.receiptFooter || '';
+          document.getElementById('sShowGlEntryOnDocument').checked = !!s.showGlEntryOnDocument;
+          document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
+          document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
+          document.getElementById('sUseCustomSignatory').checked = !!s.useCustomAuthorizedSignatory;
+          document.getElementById('customSignatoryFields').style.display = s.useCustomAuthorizedSignatory ? '' : 'none';
+          document.getElementById('sSignatoryName').value = s.authorizedSignatoryName || '';
+          document.getElementById('sSignatoryTitle').value = s.authorizedSignatoryTitle || '';
+          document.getElementById('sSignatoryImage').value = s.authorizedSignatorySignatureBase64 || '';
+          if (s.authorizedSignatorySignatureBase64)
+            document.getElementById('sSignatoryPreview').innerHTML = `<img src="${s.authorizedSignatorySignatureBase64.startsWith('data:') ? s.authorizedSignatorySignatureBase64 : 'data:image/png;base64,' + s.authorizedSignatorySignatureBase64}" style="max-height:60px;border:1px solid #e2e8f0;border-radius:6px;padding:4px;background:#fff">`;
+          document.getElementById('sEnforceManagerApproval').checked = !!s.enforceManagerApproval;
+          this.renderTitleOverrides(s.documentTitleOverridesJson);
+          // Email
+          document.getElementById('sEmailFromName').value = s.emailFromName || '';
+          document.getElementById('sEmailReplyTo').value = s.emailReplyTo || '';
+          document.getElementById('sInvoiceEmailSubject').value = s.invoiceEmailSubject || '';
+          document.getElementById('sInvoiceEmailBody').value = s.invoiceEmailBody || '';
+          // Tax
+          document.getElementById('sVatRate').value = s.defaultVatRate || 7;
+          document.getElementById('sVatRegistered').checked = s.vatRegistered !== false;
+          document.getElementById('sVatRegistrationDate').value = s.vatRegistrationDate || '';
+          document.getElementById('sIsVehicleDealer').checked = !!s.isVehicleDealer;
+          // OCR preference — default 13 (PaymentVoucher)
+          document.getElementById('sOcrBuyerTarget').value = String(s.ocrBuyerInvoiceDefaultTarget ?? 13);
+          // OCR แหล่งเงิน default — populate dropdown (bank + cash GL) แล้ว set ค่า
+          await this.populateDefaultPaymentAccount(api, s.defaultPaymentAccountId);
+          // กองทุนเงินทดแทน (กท.20ก)
+          if (document.getElementById('sWorkersCompEnabled'))
+            document.getElementById('sWorkersCompEnabled').checked = !!s.workersCompensationEnabled;
+          if (document.getElementById('sWorkersCompRate') && s.workersCompensationRatePercent != null)
+            document.getElementById('sWorkersCompRate').value = s.workersCompensationRatePercent;
+          if (document.getElementById('sAutoAttachWhtCert'))
+            document.getElementById('sAutoAttachWhtCert').checked = !!s.autoAttachWhtCertPdf;
+          // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
+          if (document.getElementById('sBookkeeperName'))
+            document.getElementById('sBookkeeperName').value = s.bookkeeperName || '';
+          if (document.getElementById('sBookkeeperCpdNumber'))
+            document.getElementById('sBookkeeperCpdNumber').value = s.bookkeeperCpdNumber || '';
+          // e-Tax
+          document.getElementById('sEtaxEnabled').checked = s.etaxEnabled || false;
+          document.getElementById('sEtaxTestMode').checked = s.etaxTestMode !== false;
+          document.getElementById('sEtaxAutoSign').checked = s.etaxAutoSign || false;
+          document.getElementById('sEtaxAutoSubmit').checked = s.etaxAutoSubmit || false;
+          if (s.etaxServiceProvider) document.getElementById('sEtaxProvider').value = s.etaxServiceProvider;
+          document.getElementById('etaxConfigSection').style.display = s.etaxEnabled ? 'block' : 'none';
+          // Show cert/API status
+          if (s.etaxCertificateConfigured)
+            document.getElementById('etaxCertStatus').innerHTML = '<span style="color:#16a34a;font-size:12px">&#10003; ใบรับรองพร้อมใช้งาน</span>';
+          // Approval
+          document.getElementById('sRequireApproval').checked = s.requireApprovalForDocuments || false;
+          document.getElementById('sApprovalThreshold').value = s.approvalThresholdAmount || '';
+          document.getElementById('sSodBlockSelfApproval').checked = !!s.sodBlockSelfApproval;
+          document.getElementById('sBudgetCommitmentMode').value = s.budgetCommitmentMode || 'Off';
+          document.getElementById('sAllowNegativeStock').checked = !!s.allowNegativeStock;
+          document.getElementById('sEclEnabled').checked = !!s.eclEnabled;
+          // API Access
+          document.getElementById('sEnableApiAccess').checked = s.enableApiAccess || false;
+          document.getElementById('sMaxApiKeys').value = s.maxApiKeys || 5;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async uploadLogo() {
+        const api = Layout.api(); if (!api) return;
+        const fileInput = document.getElementById('logoFile');
+        const file = fileInput.files[0];
+        if (!file) return;
+        if (file.size > 10 * 1024 * 1024) { Layout.toast('ขนาดไฟล์เกิน 10MB', 'error'); return; }
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+          const res = await api.uploadLogo(formData);
+          const s = res.data;
+          if (s && s.logoUrl) {
+            document.getElementById('logoPreview').innerHTML = `<img src="${s.logoUrl}" style="max-width:100%;max-height:100%;object-fit:contain">`;
+            document.getElementById('btnDeleteLogo').style.display = 'inline-block';
+          }
+          Layout.toast('อัพโหลดโลโก้สำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        fileInput.value = '';
+      },
+      async deleteLogo() {
+        if (!confirm('ต้องการลบโลโก้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteLogo();
+          document.getElementById('logoPreview').innerHTML = '<span style="color:#94a3b8;font-size:12px" id="logoPlaceholder">ยังไม่มีโลโก้</span>';
+          document.getElementById('btnDeleteLogo').style.display = 'none';
+          Layout.toast('ลบโลโก้แล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async uploadStamp() {
+        const api = Layout.api(); if (!api) return;
+        const fileInput = document.getElementById('stampFile');
+        const file = fileInput.files[0];
+        if (!file) return;
+        if (file.size > 10 * 1024 * 1024) { Layout.toast('ขนาดไฟล์เกิน 10MB', 'error'); return; }
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+          const res = await api.uploadStamp(formData);
+          const s = res.data;
+          if (s && s.stampUrl) {
+            document.getElementById('stampPreview').innerHTML = `<img src="${s.stampUrl}" style="max-width:100%;max-height:100%;object-fit:contain">`;
+            document.getElementById('btnDeleteStamp').style.display = 'inline-block';
+          }
+          Layout.toast('อัพโหลดตราประทับสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        fileInput.value = '';
+      },
+      async deleteStamp() {
+        if (!confirm('ต้องการลบตราประทับ?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteStamp();
+          document.getElementById('stampPreview').innerHTML = '<span style="color:#94a3b8;font-size:12px" id="stampPlaceholder">ยังไม่มีตรา</span>';
+          document.getElementById('btnDeleteStamp').style.display = 'none';
+          Layout.toast('ลบตราประทับแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async loadNumberSeries() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getNumberSeries();
+          const items = res.data?.items || res.data || [];
+          document.getElementById('numberSeriesContent').innerHTML = items.length ?
+            `<div class="table-container"><table class="table">
+              <thead><tr><th>ประเภทเอกสาร</th><th>Prefix</th><th>Format</th><th>เลขปัจจุบัน</th><th data-i18n="common.reset">รีเซ็ต</th><th data-i18n="common.status">สถานะ</th></tr></thead>
+              <tbody>${items.map(n => `<tr>
+                <td>${Layout.docTypeLabel(n.documentType)}</td>
+                <td>${n.prefix}</td><td>${n.format}</td>
+                <td>${n.currentNumber}</td><td>${n.resetPeriod}</td>
+                <td>${n.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
+              </tr>`).join('')}</tbody>
+            </table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
+        } catch (e) { document.getElementById('numberSeriesContent').innerHTML = '<p class="text-danger text-center">' + e.message + '</p>'; }
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.updateSettings({
+            // General
+            primaryColor: document.getElementById('sPrimaryColor').value,
+            secondaryColor: document.getElementById('sSecondaryColor').value,
+            defaultPaymentTerms: document.getElementById('sPaymentTerms').value || null,
+            defaultPaymentDueDays: parseInt(document.getElementById('sPaymentDueDays').value),
+            autoCloseMonthEnd: document.getElementById('sAutoClose').checked,
+            monthEndClosingDay: parseInt(document.getElementById('sCloseDay').value),
+            // Document notes/footer
+            invoiceNotes: document.getElementById('sInvoiceNotes').value || null,
+            receiptNotes: document.getElementById('sReceiptNotes').value || null,
+            quotationNotes: document.getElementById('sQuotationNotes').value || null,
+            invoiceFooter: document.getElementById('sInvoiceFooter').value || null,
+            receiptFooter: document.getElementById('sReceiptFooter').value || null,
+            showGlEntryOnDocument: document.getElementById('sShowGlEntryOnDocument').checked,
+            showProjectOnDocuments: document.getElementById('sShowProjectOnDocuments').checked,
+            showCostCenterOnDocuments: document.getElementById('sShowCostCenterOnDocuments').checked,
+            useCustomAuthorizedSignatory: document.getElementById('sUseCustomSignatory').checked,
+            authorizedSignatoryName: document.getElementById('sSignatoryName').value,
+            authorizedSignatoryTitle: document.getElementById('sSignatoryTitle').value,
+            authorizedSignatorySignatureBase64: document.getElementById('sSignatoryImage').value,
+            enforceManagerApproval: document.getElementById('sEnforceManagerApproval').checked,
+            documentTitleOverridesJson: this.collectTitleOverrides(),
+            // ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดแยก)
+            stampWidthMm: parseFloat(document.getElementById('sStampW')?.value || '32'),
+            stampHeightMm: parseFloat(document.getElementById('sStampH')?.value || '32'),
+            stampAlign: document.getElementById('sStampAlign')?.value || 'Right',
+            // Email
+            emailFromName: document.getElementById('sEmailFromName').value || null,
+            emailReplyTo: document.getElementById('sEmailReplyTo').value || null,
+            invoiceEmailSubject: document.getElementById('sInvoiceEmailSubject').value || null,
+            invoiceEmailBody: document.getElementById('sInvoiceEmailBody').value || null,
+            // Tax
+            defaultVatRate: parseFloat(document.getElementById('sVatRate').value),
+            vatRegistered: document.getElementById('sVatRegistered').checked,
+            vatRegistrationDate: document.getElementById('sVatRegistrationDate').value || null,
+            isVehicleDealer: document.getElementById('sIsVehicleDealer').checked,
+            // OCR preference (DocumentType enum int — 13=PaymentVoucher, 11=PurchaseInvoice, 14=Expense)
+            ocrBuyerInvoiceDefaultTarget: parseInt(document.getElementById('sOcrBuyerTarget').value),
+            // OCR แหล่งเงิน default — ว่าง = Guid.Empty (service แปลงเป็น null = auto-pick)
+            defaultPaymentAccountId: document.getElementById('sDefaultPaymentAccount').value || '00000000-0000-0000-0000-000000000000',
+            // กองทุนเงินทดแทน (กท.20ก)
+            workersCompensationEnabled: document.getElementById('sWorkersCompEnabled')?.checked || false,
+            workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),
+            autoAttachWhtCertPdf: document.getElementById('sAutoAttachWhtCert')?.checked || false,
+            // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
+            bookkeeperName: document.getElementById('sBookkeeperName')?.value?.trim() || null,
+            bookkeeperCpdNumber: document.getElementById('sBookkeeperCpdNumber')?.value?.trim() || null,
+            // e-Tax
+            etaxEnabled: document.getElementById('sEtaxEnabled').checked,
+            etaxCertificatePath: document.getElementById('sEtaxCertPath').value || null,
+            etaxCertificatePassword: document.getElementById('sEtaxCertPassword').value || null,
+            etaxRdApiKey: document.getElementById('sEtaxApiKey').value || null,
+            etaxRdApiSecret: document.getElementById('sEtaxApiSecret').value || null,
+            etaxTestMode: document.getElementById('sEtaxTestMode').checked,
+            etaxAutoSign: document.getElementById('sEtaxAutoSign').checked,
+            etaxAutoSubmit: document.getElementById('sEtaxAutoSubmit').checked,
+            etaxServiceProvider: document.getElementById('sEtaxProvider').value,
+            // Approval
+            requireApprovalForDocuments: document.getElementById('sRequireApproval').checked,
+            approvalThresholdAmount: parseFloat(document.getElementById('sApprovalThreshold').value) || null,
+            sodBlockSelfApproval: document.getElementById('sSodBlockSelfApproval').checked,
+            budgetCommitmentMode: document.getElementById('sBudgetCommitmentMode').value,
+            allowNegativeStock: document.getElementById('sAllowNegativeStock').checked,
+            eclEnabled: document.getElementById('sEclEnabled').checked,
+            // API Access
+            enableApiAccess: document.getElementById('sEnableApiAccess').checked,
+            maxApiKeys: parseInt(document.getElementById('sMaxApiKeys').value) || 5,
+          });
+          // Save eTax mode + ByEmail config (separate endpoint)
+          if (document.querySelector('input[name="etaxMode"]:checked')) {
+            await this.saveEtaxConfig();
+          }
+          Layout.toast('บันทึกการตั้งค่าสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderMenuVisibility() {
+        const list = document.getElementById('menuVisibilityList');
+        if (!list) return;
+        const hidden = new Set(Layout.getHiddenMenuItems());
+        const items = (Layout.navItems || []).filter(i => i.id);
+        list.innerHTML = items.map(item => {
+          const checked = !hidden.has(item.id);
+          return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer">
+            <input type="checkbox" ${checked ? 'checked' : ''} onchange="Page.menuToggle('${item.id}', !this.checked)">
+            <span style="font-size:18px">${item.icon || '•'}</span>
+            <span style="font-size:13px;color:#334155">${item.label}</span>
+          </label>`;
+        }).join('');
+      },
+      menuToggle(id, hide) {
+        Layout.toggleMenuItem(id, hide);
+      },
+      menuShowAll() {
+        Layout.setHiddenMenuItems([]);
+        this.renderMenuVisibility();
+        Layout.toast('แสดงทุกเมนู');
+      },
+      menuHideAll() {
+        const ids = (Layout.navItems || []).filter(i => i.id).map(i => i.id);
+        Layout.setHiddenMenuItems(ids);
+        this.renderMenuVisibility();
+        Layout.toast('ซ่อนเมนูทั้งหมด (ยกเว้นแถบหัวข้อ)');
+      }
+    };
+    Page.init();
+  </script>
+
+</body>
+</html>

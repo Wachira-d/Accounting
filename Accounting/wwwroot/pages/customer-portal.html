@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portal ลูกค้า - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">Portal ลูกค้า</h2><p class="page-subtitle">จัดการการเข้าถึง Portal สำหรับลูกค้า ให้ลูกค้าดูเอกสารและดาวน์โหลด PDF ได้เอง</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างสิทธิ์เข้าถึง</button>
+    </div>
+
+    <!-- Summary -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px">
+      <div class="card" style="padding:20px;border-left:4px solid var(--primary)">
+        <div class="text-xs text-gray-500">สิทธิ์ทั้งหมด</div>
+        <div class="text-2xl font-bold" id="totalAccess">0</div>
+      </div>
+      <div class="card" style="padding:20px;border-left:4px solid var(--success)">
+        <div class="text-xs text-gray-500">ใช้งานอยู่</div>
+        <div class="text-2xl font-bold text-success" id="activeAccess">0</div>
+      </div>
+      <div class="card" style="padding:20px;border-left:4px solid var(--gray-400)">
+        <div class="text-xs text-gray-500">ปิดใช้งาน</div>
+        <div class="text-2xl font-bold text-gray-400" id="inactiveAccess">0</div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหาลูกค้า..." id="searchInput" oninput="Page.filterTable()">
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>ลูกค้า</th><th>อีเมลเข้าถึง</th><th>สร้างเมื่อ</th><th>เข้าใช้ล่าสุด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- Portal Link Info -->
+    <div class="card" style="padding:24px;margin-top:24px">
+      <h3 style="margin-bottom:12px">ลิงก์ Portal ลูกค้า</h3>
+      <p class="text-sm text-gray-500" style="margin-bottom:12px">ส่งลิงก์นี้ให้ลูกค้าเพื่อเข้าถึง Portal ดูเอกสารและดาวน์โหลด PDF</p>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" class="form-input" id="portalUrl" readonly style="font-family:monospace;font-size:13px">
+        <button class="btn btn-secondary" onclick="Page.copyPortalUrl()">คัดลอก</button>
+      </div>
+    </div>
+
+    <!-- Create Access Modal -->
+    <div class="modal-overlay" id="createModal">
+      <div class="modal" style="max-width:550px">
+        <div class="modal-header"><h3 class="modal-title">สร้างสิทธิ์เข้าถึง Portal</h3><button class="modal-close" onclick="Layout.closeModal('createModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ลูกค้า (ผู้ติดต่อ) *</label>
+            <select class="form-select" id="accessContact"><option value="">-- เลือกลูกค้า --</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">อีเมลสำหรับเข้าถึง *</label><input type="email" class="form-input" id="accessEmail" placeholder="อีเมลที่ลูกค้าจะใช้ login"></div>
+          <div class="form-group"><label class="form-label">รหัสผ่านเริ่มต้น *</label><input type="text" class="form-input" id="accessPassword" placeholder="รหัสผ่านเริ่มต้น"></div>
+          <div class="form-group">
+            <label class="form-label">สิทธิ์การเข้าถึง</label>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <label><input type="checkbox" id="permDocs" checked> ดูเอกสาร</label>
+              <label><input type="checkbox" id="permPdf" checked> ดาวน์โหลด PDF</label>
+              <label><input type="checkbox" id="permStatement" checked> ดู Statement</label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('createModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveAccess()">สร้าง</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  items: [],
+
+  init() {
+    if (!Layout.init('customer-portal')) return;
+    Layout.setTitle('Portal ลูกค้า');
+    // Customer-facing entry point — pre-filled with the company id
+    // so the owner can copy-paste a ready-to-share link.
+    const cid = Layout.getCompanyId();
+    document.getElementById('portalUrl').value =
+      window.location.origin + '/portal.html' + (cid ? `?company=${cid}` : '');
+    this.load();
+  },
+
+  async load() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getPortalAccess();
+      const items = res.data?.items || res.data || [];
+      this.items = items;
+
+      const active = items.filter(i => i.isActive !== false && i.status !== 'Inactive').length;
+      document.getElementById('totalAccess').textContent = items.length;
+      document.getElementById('activeAccess').textContent = active;
+      document.getElementById('inactiveAccess').textContent = items.length - active;
+
+      this.renderTable(items);
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  renderTable(items) {
+    const tbody = document.getElementById('tableBody');
+    if (items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสิทธิ์เข้าถึง Portal</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map(a => `<tr>
+      <td><span class="font-medium">${a.contactName || a.customerName || '-'}</span></td>
+      <td>${a.email || '-'}</td>
+      <td>${Layout.date(a.createdAt || a.createdDate)}</td>
+      <td>${a.lastLoginAt ? Layout.date(a.lastLoginAt) : 'ยังไม่เคยเข้า'}</td>
+      <td>${Layout.statusBadge(a.isActive !== false && a.status !== 'Inactive' ? 'Active' : 'Inactive')}</td>
+      <td>
+        ${a.isActive !== false && a.status !== 'Inactive'
+          ? `<button class="btn btn-sm btn-danger" onclick="Page.deactivate('${a.id}')">ปิดใช้งาน</button>`
+          : `<button class="btn btn-sm btn-success" onclick="Page.activate('${a.id}')">เปิดใช้งาน</button>`
+        }
+      </td>
+    </tr>`).join('');
+  },
+
+  filterTable() {
+    const q = (document.getElementById('searchInput')?.value || '').toLowerCase();
+    const filtered = this.items.filter(a =>
+      (a.contactName || a.customerName || '').toLowerCase().includes(q) ||
+      (a.email || '').toLowerCase().includes(q)
+    );
+    this.renderTable(filtered);
+  },
+
+  async openCreate() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getContacts('?pageSize=200');
+      const contacts = res.data?.items || res.data || [];
+      const sel = document.getElementById('accessContact');
+      sel.innerHTML = '<option value="">-- เลือกลูกค้า --</option>' +
+        contacts.map(c => `<option value="${c.id}" data-email="${Layout.esc(c.email||'')}">${Layout.esc(c.name)}</option>`).join('');
+      sel.onchange = function() {
+        const opt = this.options[this.selectedIndex];
+        const email = opt?.dataset?.email;
+        if (email) document.getElementById('accessEmail').value = email;
+      };
+    } catch (err) { /* ignore */ }
+    document.getElementById('accessEmail').value = '';
+    document.getElementById('accessPassword').value = '';
+    Layout.openModal('createModal');
+  },
+
+  async saveAccess() {
+    const api = Layout.api(); if (!api) return;
+    const contactId = document.getElementById('accessContact').value;
+    const email = document.getElementById('accessEmail').value;
+    const password = document.getElementById('accessPassword').value;
+    if (!contactId || !email || !password) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    const data = {
+      contactId,
+      email,
+      password,
+      permissions: {
+        viewDocuments: document.getElementById('permDocs').checked,
+        downloadPdf: document.getElementById('permPdf').checked,
+        viewStatement: document.getElementById('permStatement').checked,
+      }
+    };
+    try {
+      await api.createPortalAccess(data);
+      Layout.toast('สร้างสิทธิ์เข้าถึง Portal สำเร็จ');
+      Layout.closeModal('createModal');
+      this.load();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async deactivate(id) {
+    if (!confirm('ปิดใช้งานสิทธิ์นี้?')) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.deactivatePortalAccess(id);
+      Layout.toast('ปิดใช้งานสำเร็จ');
+      this.load();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async activate(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.updatePortalAccess(id, { isActive: true });
+      Layout.toast('เปิดใช้งานสำเร็จ');
+      this.load();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  copyPortalUrl() {
+    const input = document.getElementById('portalUrl');
+    input.select();
+    document.execCommand('copy');
+    Layout.toast('คัดลอกลิงก์แล้ว');
+  },
+};
+
+Page.init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>แพ็กเกจและการสมัครสมาชิก - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .sub-card { background:#fff; border:2px solid var(--gray-200); border-radius:var(--radius-xl); padding:24px; transition:all .3s; }
+    .sub-card.current { border-color:var(--primary); box-shadow:0 0 0 4px rgba(79,70,229,.1); }
+    .plan-badge { display:inline-block; padding:2px 12px; border-radius:9999px; font-size:12px; font-weight:600; }
+    .plan-free { background:#ECFDF5; color:#059669; }
+    .plan-basic { background:#EFF6FF; color:#2563EB; }
+    .plan-pro { background:#EEF2FF; color:var(--primary); }
+    .plan-enterprise { background:#FEF3C7; color:#D97706; }
+    .usage-bar { background:var(--gray-200); border-radius:4px; height:8px; overflow:hidden; }
+    .usage-bar-fill { height:100%; border-radius:4px; transition:width .3s; }
+    .trial-countdown { background:linear-gradient(135deg,var(--primary),#7C3AED); color:#fff; border-radius:var(--radius-xl); padding:32px; text-align:center; margin-bottom:24px; }
+    .trial-countdown .days { font-size:56px; font-weight:800; line-height:1; }
+    .payment-card { border:1px solid var(--gray-200); border-radius:var(--radius-lg); padding:16px; margin-bottom:12px; }
+    .billing-opt { border:2px solid var(--gray-200); border-radius:var(--radius); padding:12px 16px; cursor:pointer; transition:all .2s; }
+    .billing-opt:hover { border-color:var(--primary-light); }
+    .billing-opt.selected { border-color:var(--primary); background:#F5F3FF; }
+    .billing-opt .save { color:var(--success); font-size:12px; font-weight:600; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">แพ็กเกจของบริษัทนี้</h2><p class="page-subtitle">แพ็กเกจระดับบริษัท (Company-level) · ใช้เมื่อต้องการแยกบิลจาก License ส่วนตัว</p></div>
+      <a href="/pages/account-subscription.html" class="btn btn-secondary">🎫 ดู License ของฉัน →</a>
+    </div>
+
+    <!-- Account Plan banner — surfaces when this Company is covered by the
+         user's AccountSubscription so the user understands they don't need
+         a per-company plan unless they explicitly want one (separate billing). -->
+    <div id="accountPlanBanner"></div>
+
+    <!-- Current Subscription Status -->
+    <div id="trialBanner"></div>
+
+    <div id="currentSubSection" class="card" style="margin-bottom:24px">
+      <div class="card-header"><h3 class="card-title">สถานะ Subscription ปัจจุบัน</h3></div>
+      <div id="currentSubContent"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- Usage -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header"><h3 class="card-title">การใช้งานเดือนนี้</h3></div>
+      <div id="usageContent" class="grid grid-4 gap-4">
+        <div class="text-center text-gray-400" style="padding:20px;grid-column:1/-1" data-i18n="common.loading">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <!-- Plans -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header">
+        <h3 class="card-title">เลือกแพ็กเกจ</h3>
+        <div style="display:flex;gap:4px;background:var(--gray-100);border-radius:var(--radius);padding:2px">
+          <button class="billing-toggle active" onclick="Sub.setCycle('monthly',this)" style="font-size:13px;padding:6px 12px">รายเดือน</button>
+          <button class="billing-toggle" onclick="Sub.setCycle('quarterly',this)" style="font-size:13px;padding:6px 12px">3 เดือน</button>
+          <button class="billing-toggle" onclick="Sub.setCycle('semiannual',this)" style="font-size:13px;padding:6px 12px">6 เดือน</button>
+          <button class="billing-toggle" onclick="Sub.setCycle('annual',this)" style="font-size:13px;padding:6px 12px">รายปี</button>
+        </div>
+      </div>
+      <div id="plansGrid" class="grid grid-3 gap-4"><div class="text-center text-gray-400" style="padding:20px;grid-column:1/-1" data-i18n="common.loading">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- Trial Details -->
+    <div class="card" style="margin-bottom:24px" id="trialDetailSection">
+      <div class="card-header"><h3 class="card-title">รายละเอียดการทดลองใช้</h3></div>
+      <div id="trialDetailContent"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- Payment History -->
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">ประวัติการชำระเงิน</h3></div>
+      <div class="table-container" style="border:none">
+        <table class="table">
+          <thead><tr><th>เลขที่</th><th data-i18n="common.date">วันที่</th><th>แพ็กเกจ</th><th>รอบ</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th><th>ช่องทาง</th><th data-i18n="common.status">สถานะ</th></tr></thead>
+          <tbody id="paymentHistory"><tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Extend Trial Modal -->
+    <div class="modal-overlay" id="extendModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">ขยายเวลาทดลองใช้</h3><button class="modal-close" onclick="Layout.closeModal('extendModal')">&times;</button></div>
+        <div class="modal-body" id="extendContent"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('extendModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Sub.confirmExtend()">ขยายเวลา</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Convert/Upgrade Modal -->
+    <div class="modal-overlay" id="upgradeModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">อัปเกรดแพ็กเกจ</h3><button class="modal-close" onclick="Layout.closeModal('upgradeModal')">&times;</button></div>
+        <div class="modal-body" id="upgradeContent"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('upgradeModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Sub.confirmUpgrade()">ยืนยันอัปเกรด</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Sub = {
+      subscription: null, trial: null, plans: [], cycle: 'monthly', selectedPlan: null,
+
+      async load() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        await Promise.all([this.loadSubscription(cid), this.loadPlans(), this.loadPayments(cid), this.loadAccountBanner(cid)]);
+        await this.loadTrialStatus(cid);
+      },
+
+      /// <summary>Hit the effective-plan resolver. When this Company is under
+      /// an Account Plan (License at User level), tell the user — most people
+      /// land here looking for billing and need to understand "no, the License
+      /// covers this from your personal account".</summary>
+      async loadAccountBanner(cid) {
+        try {
+          const r = await fetch(`/api/account-subscription/effective/${cid}`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success || !j.data?.hasPlan) return;
+          const d = j.data;
+          const banner = document.getElementById('accountPlanBanner');
+          if (d.source === 'Account') {
+            banner.innerHTML = `
+              <div style="background:linear-gradient(135deg,#ecfeff,#fef9c3);border:1px solid #67e8f9;border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+                <div style="font-size:32px">🎫</div>
+                <div style="flex:1;min-width:260px">
+                  <div style="font-weight:700;font-size:15px;color:#0c4a6e">บริษัทนี้อยู่ใต้ License ของคุณ</div>
+                  <div style="font-size:12px;color:#475569;margin-top:2px">
+                    สถานะ ${d.status} · หมดอายุ ${new Date(d.endDate).toLocaleDateString('th-TH')}
+                    · MaxUsers ${d.maxUsers} · MaxDocs ${d.maxDocumentsPerMonth}/เดือน (รวมทุกบริษัทใต้ License)
+                  </div>
+                </div>
+                <a href="/pages/account-subscription.html" class="btn btn-primary btn-sm">จัดการ License</a>
+              </div>`;
+          } else if (d.source === 'Company') {
+            banner.innerHTML = `
+              <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+                <div style="font-size:32px">💼</div>
+                <div style="flex:1;min-width:260px">
+                  <div style="font-weight:700;font-size:15px;color:#9a3412">บริษัทนี้จ่ายเองแยกบิล</div>
+                  <div style="font-size:12px;color:#475569;margin-top:2px">
+                    ใช้แพ็กเกจของตัวเอง · ผูกกับ License ส่วนตัวก็ได้เพื่อรวมบิลและคุ้มกว่า
+                  </div>
+                </div>
+                <a href="/pages/account-subscription.html" class="btn btn-secondary btn-sm">+ ผูกเข้า License ส่วนตัว</a>
+              </div>`;
+          }
+        } catch { /* banner is best-effort */ }
+      },
+      async init() {
+        if (!Layout.init('subscription')) return;
+        Layout.setTitle('แพ็กเกจและการสมัครสมาชิก');
+        await this.load();
+      },
+
+      async loadSubscription(cid) {
+        try {
+          const res = await API.get(`/api/subscription/${cid}`);
+          this.subscription = res.data;
+          this.renderSubscription();
+        } catch (e) {
+          document.getElementById('currentSubContent').innerHTML = `<div class="text-center" style="padding:20px"><p class="text-gray-500">ยังไม่มี Subscription</p><button class="btn btn-primary" style="margin-top:8px" onclick="Sub.startTrial()">เริ่มทดลองใช้ฟรี</button></div>`;
+        }
+      },
+
+      async loadTrialStatus(cid) {
+        try {
+          const res = await API.get(`/api/subscription/${cid}/trial`);
+          this.trial = res.data;
+          this.renderTrial();
+        } catch (e) {
+          document.getElementById('trialDetailSection').style.display = 'none';
+        }
+      },
+
+      async loadPlans() {
+        try {
+          const res = await API.get('/api/subscription/plans');
+          this.plans = (res.data?.items || res.data || []).filter(p => p.plan !== 'FreeTrial');
+          this.renderPlans();
+        } catch (e) { document.getElementById('plansGrid').innerHTML = '<div class="text-danger text-center" style="grid-column:1/-1">โหลดแพ็กเกจไม่สำเร็จ</div>'; }
+      },
+
+      async loadPayments(cid) {
+        try {
+          const res = await API.get(`/api/subscription/${cid}/payments`);
+          const payments = res.data?.payments || res.data?.items || res.data || [];
+          const tbody = document.getElementById('paymentHistory');
+          const planMap = { FreeTrial:'ทดลองฟรี', Basic:'Starter', Pro:'Professional', Enterprise:'Enterprise' };
+          const cycleMap = { Monthly:'รายเดือน', Quarterly:'ราย 3 เดือน', SemiAnnual:'ราย 6 เดือน', Annual:'รายปี' };
+          const methodMap = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', PromptPay:'พร้อมเพย์' };
+          if (!payments.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่มีประวัติการชำระเงิน</td></tr>'; return; }
+          tbody.innerHTML = payments.map(p => `<tr>
+            <td class="font-medium">${Layout.esc(p.paymentNumber)}</td>
+            <td>${Layout.date(p.paymentDate)}</td>
+            <td>${planMap[p.requestedPlan] || Layout.esc(p.requestedPlan)}</td>
+            <td>${cycleMap[p.requestedBillingCycle] || Layout.esc(p.requestedBillingCycle)}</td>
+            <td class="text-right font-semibold">฿${Layout.money(p.amount)}</td>
+            <td>${methodMap[p.paymentMethod] || Layout.esc(p.paymentMethod)}</td>
+            <td>${Layout.statusBadge(p.status)}</td>
+          </tr>`).join('');
+        } catch (e) { document.getElementById('paymentHistory').innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'; }
+      },
+
+      renderSubscription() {
+        const s = this.subscription;
+        if (!s) return;
+        const planMap = { FreeTrial:'ทดลองฟรี', Basic:'Starter', Pro:'Professional', Enterprise:'Enterprise' };
+        const statusMap = { Trial:'ทดลองใช้', Active:'ใช้งาน', PastDue:'เกินกำหนดชำระ', Cancelled:'ยกเลิก', Expired:'หมดอายุ', Suspended:'ระงับ' };
+        const cycleMap = { Monthly:'รายเดือน', Quarterly:'ราย 3 เดือน', SemiAnnual:'ราย 6 เดือน', Annual:'รายปี' };
+
+        document.getElementById('currentSubContent').innerHTML = `
+          <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+            <div><div class="text-xs text-gray-500">แพ็กเกจ</div><div class="text-lg font-bold"><span class="plan-badge plan-${Layout.esc(s.plan?.toLowerCase())}">${planMap[s.plan] || Layout.esc(s.plan)}</span></div></div>
+            <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div class="text-lg font-bold">${Layout.statusBadge(s.status)}</div></div>
+            <div><div class="text-xs text-gray-500">รอบบิล</div><div class="text-lg font-bold">${cycleMap[s.billingCycle] || Layout.esc(s.billingCycle)}</div></div>
+            <div><div class="text-xs text-gray-500">ราคา/รอบ</div><div class="text-lg font-bold">฿${Layout.money(s.pricePerCycle)}</div></div>
+          </div>
+          <div class="grid grid-4 gap-4">
+            <div><div class="text-xs text-gray-500">วันเริ่มต้น</div><div class="font-medium">${Layout.date(s.startDate)}</div></div>
+            <div><div class="text-xs text-gray-500">วันหมดอายุ</div><div class="font-medium ${new Date(s.endDate) < new Date() ? 'text-danger' : ''}">${Layout.date(s.endDate)}</div></div>
+            <div><div class="text-xs text-gray-500">บิลถัดไป</div><div class="font-medium">${s.nextBillingDate ? Layout.date(s.nextBillingDate) : '-'}</div></div>
+            <div><div class="text-xs text-gray-500">วันที่เหลือ</div><div class="font-medium">${Math.max(0, Math.ceil((new Date(s.endDate) - new Date()) / 86400000))} วัน</div></div>
+          </div>`;
+
+        // Usage
+        const limits = s.limits || {};
+        const current = s.current || {};
+        const usageItems = [
+          { label:'เอกสาร', used: current.documentsThisMonth || 0, max: limits.maxDocumentsPerMonth || 0 },
+          { label:'รายการบัญชี', used: current.journalEntriesThisMonth || 0, max: limits.maxJournalEntriesPerMonth || 0 },
+          { label:'ผู้ใช้งาน', used: 1, max: limits.maxUsers || 0 },
+          { label:'พื้นที่', used: current.storageUsed || 0, max: limits.maxStorageBytes || 0, isBytes: true },
+        ];
+
+        document.getElementById('usageContent').innerHTML = usageItems.map(u => {
+          const pct = u.max > 0 ? Math.min(100, (u.used / u.max * 100)) : 0;
+          const color = pct > 90 ? 'var(--danger)' : pct > 70 ? 'var(--warning)' : 'var(--success)';
+          const usedStr = u.isBytes ? this.formatBytes(u.used) : u.used.toLocaleString();
+          const maxStr = u.isBytes ? this.formatBytes(u.max) : (u.max >= 99999 ? 'ไม่จำกัด' : u.max.toLocaleString());
+          return `<div>
+            <div class="flex justify-between text-sm" style="margin-bottom:4px"><span>${u.label}</span><span class="font-medium">${usedStr} / ${maxStr}</span></div>
+            <div class="usage-bar"><div class="usage-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+          </div>`;
+        }).join('');
+      },
+
+      renderTrial() {
+        const t = this.trial;
+        if (!t) { document.getElementById('trialDetailSection').style.display = 'none'; return; }
+
+        if (t.trialStatus === 'Active' || t.trialStatus === 'Extended') {
+          document.getElementById('trialBanner').innerHTML = `
+            <div class="trial-countdown">
+              <div style="margin-bottom:8px;opacity:.8">ระยะเวลาทดลองใช้คงเหลือ</div>
+              <div class="days">${t.daysRemaining}</div>
+              <div style="font-size:18px;margin-top:4px" data-i18n="common.days">วัน</div>
+              <div style="margin-top:16px;display:flex;justify-content:center;gap:12px">
+                ${t.canExtend ? `<button class="btn btn-white" onclick="Sub.openExtend()">ขยายเวลา (+${t.extensionsUsed < t.maxExtensions ? '7' : '0'} วัน)</button>` : ''}
+                <button class="btn btn-white" onclick="Sub.openUpgradeFromTrial()">อัปเกรดเลย</button>
+              </div>
+              ${t.incentive?.discountPercent ? `<div style="margin-top:12px;background:rgba(255,255,255,.15);padding:8px 16px;border-radius:var(--radius);display:inline-block">
+                พิเศษ! อัปเกรดตอนนี้ลด ${t.incentive.discountPercent}% ${t.incentive.promoCode ? `ใช้โค้ด <strong>${Layout.esc(t.incentive.promoCode)}</strong>` : ''}
+              </div>` : ''}
+            </div>`;
+        }
+
+        const statusMap = { NotStarted:'ยังไม่เริ่ม', Active:'กำลังทดลอง', Extended:'ขยายเวลาแล้ว', Expired:'หมดอายุ', Converted:'อัปเกรดแล้ว' };
+        const usage = t.usage || {};
+
+        document.getElementById('trialDetailContent').innerHTML = `
+          <div class="grid grid-3 gap-4" style="margin-bottom:20px">
+            <div class="sub-card"><div class="text-xs text-gray-500">สถานะ Trial</div><div class="font-bold text-lg">${statusMap[t.trialStatus] || Layout.esc(t.trialStatus)}</div></div>
+            <div class="sub-card"><div class="text-xs text-gray-500">วันเริ่ม - สิ้นสุด</div><div class="font-medium">${Layout.date(t.trialStartDate)} - ${Layout.date(t.trialEndDate)}</div></div>
+            <div class="sub-card"><div class="text-xs text-gray-500">ใช้ไป / ทั้งหมด</div><div class="font-bold text-lg">${t.daysUsed} / ${t.totalTrialDays} วัน</div></div>
+          </div>
+
+          <h4 class="font-semibold" style="margin-bottom:12px">ลิมิตทดลองใช้</h4>
+          <div class="grid grid-4 gap-4" style="margin-bottom:20px">
+            <div class="sub-card text-center"><div class="text-2xl font-bold">${usage.documentsUsed || 0}<span class="text-sm text-gray-400">/${usage.documentsLimit || 0}</span></div><div class="text-xs text-gray-500">เอกสาร</div></div>
+            <div class="sub-card text-center"><div class="text-2xl font-bold">${usage.journalEntriesUsed || 0}<span class="text-sm text-gray-400">/${usage.journalEntriesLimit || 0}</span></div><div class="text-xs text-gray-500">รายการบัญชี</div></div>
+            <div class="sub-card text-center"><div class="text-2xl font-bold">${usage.usersUsed || 1}<span class="text-sm text-gray-400">/${usage.usersLimit || 2}</span></div><div class="text-xs text-gray-500">ผู้ใช้งาน</div></div>
+            <div class="sub-card text-center"><div class="text-2xl font-bold">${this.formatBytes(usage.storageUsedBytes || 0)}</div><div class="text-xs text-gray-500">พื้นที่ (จาก ${this.formatBytes(usage.storageLimitBytes || 0)})</div></div>
+          </div>
+
+          <h4 class="font-semibold" style="margin-bottom:12px">การขยายเวลา</h4>
+          <div class="grid grid-3 gap-4" style="margin-bottom:20px">
+            <div class="sub-card"><div class="text-xs text-gray-500">ขยายแล้ว</div><div class="font-bold">${t.extensionsUsed} / ${t.maxExtensions} ครั้ง</div></div>
+            <div class="sub-card"><div class="text-xs text-gray-500">ขยายได้อีก</div><div class="font-bold">${t.canExtend ? 'ได้' : 'ไม่ได้'}</div></div>
+            <div class="sub-card"><div class="text-xs text-gray-500">วันที่ขยายต่อครั้ง</div><div class="font-bold">7 วัน</div></div>
+          </div>
+
+          <h4 class="font-semibold" style="margin-bottom:12px">หลังหมดอายุ</h4>
+          <div class="grid grid-3 gap-4">
+            <div class="sub-card"><div class="text-xs text-gray-500">พฤติกรรม</div><div class="font-medium">${t.expiryBehavior?.blockAccessOnExpiry ? 'บล็อกการเข้าถึง' : 'อ่านอย่างเดียว (Read-only)'}</div></div>
+            <div class="sub-card"><div class="text-xs text-gray-500">Grace Period</div><div class="font-bold">${t.expiryBehavior?.gracePeriodDays || 7} วัน</div></div>
+            <div class="sub-card"><div class="text-xs text-gray-500">ส่งออกข้อมูล</div><div class="font-bold">${t.expiryBehavior?.allowDataExportAfterExpiry ? '✓ ได้' : '✗ ไม่ได้'}</div></div>
+          </div>
+
+          ${t.expiryBehavior?.trialMessage ? `<div style="margin-top:16px;padding:12px;background:var(--gray-50);border-radius:var(--radius);font-size:13px;color:var(--gray-600)">ข้อความ: "${Layout.esc(t.expiryBehavior.trialMessage)}"</div>` : ''}
+        `;
+      },
+
+      setCycle(cycle, el) {
+        this.cycle = cycle;
+        el.parentElement.querySelectorAll('.billing-toggle').forEach(b => b.classList.remove('active'));
+        el.classList.add('active');
+        this.renderPlans();
+      },
+
+      renderPlans() {
+        const grid = document.getElementById('plansGrid');
+        const currentPlan = this.subscription?.plan;
+        const planMap = { Basic:'Starter', Pro:'Professional', Enterprise:'Enterprise' };
+
+        grid.innerHTML = this.plans.map(p => {
+          const price = this.getPrice(p);
+          const isCurrent = p.plan === currentPlan;
+          const features = this.getPlanFeatures(p);
+
+          return `<div class="sub-card${isCurrent ? ' current' : ''}" style="position:relative">
+            ${isCurrent ? '<div style="position:absolute;top:-10px;right:16px;background:var(--primary);color:#fff;padding:2px 12px;border-radius:9999px;font-size:11px;font-weight:600">แพ็กเกจปัจจุบัน</div>' : ''}
+            <div class="font-bold text-lg">${Layout.esc(p.name)}</div>
+            <div class="text-xs text-gray-500" style="margin-bottom:12px">${p.description ? Layout.esc(p.description.substring(0, 80)) + '...' : ''}</div>
+            <div style="margin-bottom:16px">
+              <span style="font-size:32px;font-weight:800">฿${this.formatMoney(price.perMonth)}</span>
+              <span class="text-gray-400">/เดือน</span>
+              ${this.cycle !== 'monthly' ? `<div class="text-xs text-success">฿${this.formatMoney(price.total)} / ${this.cycleName()} (ประหยัด ${Math.round((1 - price.perMonth / p.monthlyPrice) * 100)}%)</div>` : ''}
+            </div>
+            <div style="margin-bottom:16px">${features.map(f => `<div style="padding:3px 0;font-size:13px;color:var(--gray-600)"><span style="color:var(--success);font-weight:700">✓</span> ${f}</div>`).join('')}</div>
+            <div style="font-size:12px;color:var(--gray-500);padding:8px 0;border-top:1px solid var(--gray-100)">
+              ทดลองฟรี ${p.trialDurationDays} วัน | ขยายได้ ${p.trialMaxExtensions} ครั้ง | Grace ${p.trialGracePeriodDays} วัน
+            </div>
+            ${isCurrent ? '<button class="btn btn-secondary w-full" disabled>แพ็กเกจปัจจุบัน</button>' :
+              `<button class="btn btn-primary w-full" onclick="Sub.selectPlan('${Layout.esc(p.plan)}')">
+                ${!currentPlan || currentPlan === 'FreeTrial' ? 'เริ่มทดลองฟรี' : 'อัปเกรด'}
+              </button>`}
+          </div>`;
+        }).join('');
+      },
+
+      getPrice(plan) {
+        switch(this.cycle) {
+          case 'quarterly': return { total: plan.quarterlyPrice, perMonth: plan.quarterlyPrice / 3 };
+          case 'semiannual': return { total: plan.semiAnnualPrice, perMonth: plan.semiAnnualPrice / 6 };
+          case 'annual': return { total: plan.annualPrice, perMonth: plan.annualPrice / 12 };
+          default: return { total: plan.monthlyPrice, perMonth: plan.monthlyPrice };
+        }
+      },
+      cycleName() { return { monthly:'เดือน', quarterly:'3 เดือน', semiannual:'6 เดือน', annual:'ปี' }[this.cycle]; },
+      formatMoney(n) { return n.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); },
+      formatBytes(b) { if(b >= 1024*1024*1024) return (b/(1024*1024*1024)).toFixed(1)+' GB'; return (b/(1024*1024)).toFixed(0)+' MB'; },
+
+      getPlanFeatures(p) {
+        const base = [`ผู้ใช้ ${p.maxUsers >= 999 ? 'ไม่จำกัด' : p.maxUsers} คน`, `${p.maxCompanies >= 99 ? 'ไม่จำกัด' : p.maxCompanies} บริษัท`, `เอกสาร ${p.maxDocumentsPerMonth >= 99999 ? 'ไม่จำกัด' : p.maxDocumentsPerMonth.toLocaleString()}/เดือน`, `พื้นที่ ${this.formatBytes(p.maxStorageBytes)}`];
+        if (p.plan === 'Basic') base.push('ระบบบัญชีพื้นฐาน', 'ออกเอกสาร + ภาษี', 'รายงานมาตรฐาน');
+        if (p.plan === 'Pro') base.push('ทุกฟีเจอร์ Starter', 'สต็อก + กระทบยอดธนาคาร', 'งบประมาณ + Workflow + API');
+        if (p.plan === 'Enterprise') base.push('ทุกฟีเจอร์ Pro', 'e-Tax + เงินเดือน + AI', 'Consolidation + Priority Support');
+        return base;
+      },
+
+      openExtend() {
+        const t = this.trial;
+        document.getElementById('extendContent').innerHTML = `
+          <div class="text-center" style="margin-bottom:16px">
+            <div style="font-size:48px">⏰</div>
+            <h4 style="margin-top:8px">ขยายเวลาทดลองใช้</h4>
+          </div>
+          <div class="detail-list" style="margin-bottom:16px">
+            <div class="detail-item"><span class="detail-label">วันที่หมดอายุปัจจุบัน</span><span class="detail-value">${Layout.date(t.trialEndDate)}</span></div>
+            <div class="detail-item"><span class="detail-label">ขยายเพิ่ม</span><span class="detail-value">7 วัน</span></div>
+            <div class="detail-item"><span class="detail-label">ขยายแล้ว</span><span class="detail-value">${t.extensionsUsed} / ${t.maxExtensions} ครั้ง</span></div>
+          </div>
+          <div style="background:#FEF3C7;padding:12px;border-radius:var(--radius);font-size:13px;color:#92400E">
+            หลังจากขยายเวลา คุณจะมีเวลาทดลองใช้เพิ่มอีก 7 วัน
+          </div>`;
+        Layout.openModal('extendModal');
+      },
+
+      async confirmExtend() {
+        const cid = Layout.getCompanyId();
+        try {
+          await API.post(`/api/subscription/${cid}/trial/extend`, { additionalDays: 7 });
+          Layout.closeModal('extendModal');
+          Layout.toast('ขยายเวลาทดลองใช้สำเร็จ!');
+          setTimeout(() => location.reload(), 1000);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      selectPlan(plan) {
+        this.selectedPlan = plan;
+        this.openUpgrade(plan);
+      },
+
+      openUpgradeFromTrial() {
+        this.openUpgrade('Pro');
+      },
+
+      openUpgrade(plan) {
+        const p = this.plans.find(x => x.plan === plan);
+        if (!p) return;
+        this.selectedPlan = plan;
+        const price = this.getPrice(p);
+        const cycleEnum = { monthly:'Monthly', quarterly:'Quarterly', semiannual:'SemiAnnual', annual:'Annual' }[this.cycle];
+
+        document.getElementById('upgradeContent').innerHTML = `
+          <div class="text-center" style="margin-bottom:16px">
+            <div style="font-size:48px">&#x1F680;</div>
+            <h4>อัปเกรดเป็น ${Layout.esc(p.name)}</h4>
+          </div>
+          <div class="sub-card" style="margin-bottom:16px">
+            <div class="flex justify-between"><span>แพ็กเกจ</span><strong>${Layout.esc(p.name)}</strong></div>
+            <div class="flex justify-between"><span>รอบบิล</span><strong>${this.cycleName()}</strong></div>
+            <div class="flex justify-between"><span>ราคา/เดือน</span><strong>฿${this.formatMoney(price.perMonth)}</strong></div>
+            <div class="flex justify-between" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px"><span class="font-bold">ยอดชำระ</span><span class="font-bold text-lg text-primary">฿${this.formatMoney(price.total)}</span></div>
+          </div>
+          <div class="form-group"><label class="form-label">โค้ดส่วนลด (ถ้ามี)</label><input type="text" class="form-input" id="promoCode" placeholder="กรอกโค้ดส่วนลด"></div>
+          <input type="hidden" id="upgradePlan" value="${Layout.esc(plan)}">
+          <input type="hidden" id="upgradeCycle" value="${cycleEnum}">`;
+        Layout.openModal('upgradeModal');
+      },
+
+      async confirmUpgrade() {
+        const cid = Layout.getCompanyId();
+        const plan = document.getElementById('upgradePlan').value;
+        const cycle = document.getElementById('upgradeCycle').value;
+        const promo = document.getElementById('promoCode').value;
+        try {
+          await API.post(`/api/subscription/${cid}/convert`, { plan, billingCycle: cycle, promoCode: promo || null });
+          Layout.closeModal('upgradeModal');
+          Layout.toast('อัปเกรดสำเร็จ!');
+          setTimeout(() => location.reload(), 1000);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async startTrial() {
+        const cid = Layout.getCompanyId();
+        try {
+          await API.post('/api/subscription/trial/start', { companyId: cid, targetPlan: 'Basic' });
+          Layout.toast('เริ่มทดลองใช้สำเร็จ!');
+          setTimeout(() => location.reload(), 1000);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Sub.init();
+  </script>
+</body>
+</html>

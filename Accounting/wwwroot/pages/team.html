@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จัดการทีม - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .quota-bar { display:flex; align-items:center; gap:12px; padding:16px 20px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:20px; flex-wrap:wrap; }
+    .quota-bar .quota-info { flex:1; min-width:120px; }
+    .quota-bar .quota-label { font-size:13px; color:#64748b; margin-bottom:4px; }
+    .quota-bar .quota-value { font-size:20px; font-weight:700; color:#1e293b; }
+    .quota-bar .quota-value span { font-size:14px; font-weight:400; color:#94a3b8; }
+    .quota-progress { flex:1; min-width:120px; }
+    .quota-progress-bar { background:#e2e8f0; border-radius:6px; height:8px; overflow:hidden; }
+    .quota-progress-fill { height:100%; border-radius:6px; transition:width .4s ease; background:var(--primary); }
+    .quota-progress-fill.warn { background:#f59e0b; }
+    .quota-progress-fill.full { background:#ef4444; }
+
+    .member-card { display:flex; align-items:center; gap:16px; padding:16px 20px; border-bottom:1px solid #f1f5f9; }
+    .member-card:last-child { border-bottom:none; }
+    .member-avatar { width:44px; height:44px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:16px; flex-shrink:0; }
+    .member-info { flex:1; min-width:0; }
+    .member-name { font-weight:600; font-size:15px; color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .member-email { font-size:13px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .member-meta { font-size:12px; color:#94a3b8; margin-top:2px; }
+    .member-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; flex-wrap:wrap; }
+
+    .role-badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:12px; font-weight:600; }
+    .role-badge.owner { background:#EDE9FE; color:#6D28D9; }
+    .role-badge.accountant { background:#DBEAFE; color:#1D4ED8; }
+    .role-badge.staff { background:#D1FAE5; color:#059669; }
+    .role-badge.auditor { background:#FEF3C7; color:#D97706; }
+    .role-badge.viewer { background:#F1F5F9; color:#64748B; }
+    .role-badge.external { background:#FFE4E6; color:#E11D48; }
+
+    .add-form { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+    .add-form .form-group { margin-bottom:0; }
+
+    @media (max-width:768px) {
+      .member-card { flex-wrap:wrap; gap:12px; padding:14px 16px; }
+      .member-actions { width:100%; justify-content:flex-end; }
+      .add-form { flex-direction:column; }
+      .add-form .form-group, .add-form .btn { width:100%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">จัดการทีม</h2><p class="page-subtitle" id="pageSubtitle">เพิ่ม/ลบสมาชิกในองค์กร กำหนดสิทธิ์การเข้าถึง</p></div>
+      <button class="btn btn-primary" id="btnInvite" style="display:none" onclick="document.getElementById('addMemberSection').scrollIntoView({behavior:'smooth'}); document.getElementById('addEmail').focus();">+ เชิญสมาชิก</button>
+    </div>
+
+    <!-- Quota -->
+    <div class="quota-bar" id="quotaBar">
+      <div class="quota-info">
+        <div class="quota-label">สมาชิกในองค์กร</div>
+        <div class="quota-value"><span id="qCurrent">-</span> <span>/ <span id="qMax">-</span> คน</span></div>
+      </div>
+      <div class="quota-progress">
+        <div class="quota-progress-bar"><div class="quota-progress-fill" id="qFill" style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <!-- Add Member Form -->
+    <div class="card" id="addMemberSection" style="display:none">
+      <h3 class="card-title" style="margin-bottom:12px">เพิ่มสมาชิกใหม่</h3>
+      <p style="font-size:13px;color:#64748b;margin-bottom:16px">ผู้ใช้ต้องสมัครสมาชิก Next Acc ก่อน จึงจะเพิ่มเข้าบริษัทได้</p>
+      <div class="add-form">
+        <div class="form-group" style="flex:2;min-width:200px">
+          <label class="form-label">อีเมลผู้ใช้</label>
+          <input type="email" id="addEmail" class="form-input" placeholder="user@example.com">
+        </div>
+        <div class="form-group" style="min-width:160px">
+          <label class="form-label">บทบาท</label>
+          <select id="addRole" class="form-select" onchange="Page.onRoleChange(this.value)">
+            <option value="Accountant">นักบัญชี</option>
+            <option value="Staff">พนักงาน</option>
+            <option value="Auditor">ผู้ตรวจสอบ</option>
+            <option value="Viewer">ดูอย่างเดียว</option>
+            <option value="ExternalAccountant">นักบัญชีภายนอก</option>
+            <option value="Owner">⭐ เจ้าของ (สิทธิ์เต็ม)</option>
+          </select>
+          <div id="ownerWarning" style="display:none;font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fbbf24;padding:6px 8px;border-radius:6px;margin-top:6px;line-height:1.5">
+            ⚠️ <strong>สิทธิ์เจ้าของ</strong> เห็นข้อมูลทุกอย่าง รวมเงินเดือน + เอกสารลับ จัดการสมาชิก / ลบบริษัทได้ — ให้เฉพาะคนที่ไว้ใจ
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="Page.addMember()" style="height:40px;white-space:nowrap">เพิ่มสมาชิก</button>
+      </div>
+    </div>
+
+    <!-- Members List -->
+    <div class="card" style="padding:0;margin-top:16px">
+      <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <h3 class="card-title" style="margin:0">รายชื่อสมาชิก</h3>
+        <input type="text" id="searchMember" class="form-input" placeholder="ค้นหาชื่อ/อีเมล..." style="width:220px;max-width:100%" oninput="Page.filterMembers()">
+      </div>
+      <div id="memberList"><p style="text-align:center;padding:40px;color:#94a3b8" data-i18n="common.loading">กำลังโหลด...</p></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // Roles keyed by string (API returns enum as string via JsonStringEnumConverter)
+    const ROLES = {
+      'Owner': { label: 'เจ้าของ', cls: 'owner', icon: '👑', value: 1 },
+      'Accountant': { label: 'นักบัญชี', cls: 'accountant', icon: '📊', value: 2 },
+      'Staff': { label: 'พนักงาน', cls: 'staff', icon: '👤', value: 3 },
+      'Auditor': { label: 'ผู้ตรวจสอบ', cls: 'auditor', icon: '🔍', value: 4 },
+      'Viewer': { label: 'ดูอย่างเดียว', cls: 'viewer', icon: '👁️', value: 5 },
+      'ExternalAccountant': { label: 'นักบัญชีภายนอก', cls: 'external', icon: '🤝', value: 6 },
+      'SystemAdmin': { label: 'System Admin', cls: 'owner', icon: '⚡', value: 99 }
+    };
+    const ROLE_DEFAULT = { label: 'ไม่ทราบ', cls: 'viewer', icon: '❓', value: 0 };
+
+    const Page = {
+      members: [],
+      maxUsers: 0,
+      currentUserId: null,
+      currentUserRole: null,
+      customRoles: [],
+
+      async init() {
+        if (!Layout.init('team')) return;
+        Layout.setTitle('จัดการทีม');
+        this.currentUserId = Layout.user?.id;
+        this.isPlatformAdmin = Layout.user?.isSystemAdmin === true;
+        await this.loadCustomRoles();
+        await this.load();
+      },
+
+      async loadCustomRoles() {
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.get(`/api/company/${cid}/roles`);
+          this.customRoles = res?.data || [];
+        } catch { this.customRoles = []; }
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          // Load members and usage in parallel
+          const [membersRes, usageRes] = await Promise.all([
+            api.getMembers(),
+            api.getUsageDetail().catch(() => null)
+          ]);
+          this.members = membersRes.data || [];
+          this.maxUsers = usageRes?.data?.maxUsers || 999;
+
+          // Show company name so user knows which company they're managing
+          const companyName = Layout.currentCompany?.name || '';
+          document.getElementById('pageSubtitle').textContent =
+            companyName ? `${companyName} · เพิ่ม/ลบสมาชิก กำหนดสิทธิ์การเข้าถึง` : 'เพิ่ม/ลบสมาชิกในองค์กร กำหนดสิทธิ์การเข้าถึง';
+
+          // Primary: use myRole from company data (injected by server per requesting user)
+          // Fallback: find current user in members list (case-insensitive UUID + email match)
+          const companyRole = Layout.currentCompany?.myRole;
+          const uid = (this.currentUserId || '').toLowerCase();
+          const email = (Layout.user?.email || '').toLowerCase();
+          const me = this.members.find(m =>
+            (m.userId || '').toLowerCase() === uid ||
+            (m.email || '').toLowerCase() === email
+          );
+          this.currentUserRole = companyRole || me?.role;
+
+          // Platform SystemAdmin can always manage team regardless of CompanyUser role
+          const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin' || this.isPlatformAdmin;
+          document.getElementById('addMemberSection').style.display = isOwner ? 'block' : 'none';
+          document.getElementById('btnInvite').style.display = isOwner ? '' : 'none';
+
+          this.renderQuota();
+          this.renderMembers();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderQuota() {
+        const count = this.members.length;
+        const max = this.maxUsers;
+        document.getElementById('qCurrent').textContent = count;
+        document.getElementById('qMax').textContent = max >= 999 ? '∞' : max;
+        const pct = max >= 999 ? Math.min((count / 50) * 100, 100) : (count / max) * 100;
+        const fill = document.getElementById('qFill');
+        fill.style.width = Math.min(pct, 100) + '%';
+        fill.className = 'quota-progress-fill' + (pct >= 100 ? ' full' : pct >= 80 ? ' warn' : '');
+      },
+
+      renderMembers() {
+        const q = (document.getElementById('searchMember').value || '').toLowerCase();
+        const filtered = q ? this.members.filter(m =>
+          m.fullName.toLowerCase().includes(q) || m.email.toLowerCase().includes(q)
+        ) : this.members;
+
+        const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin' || this.isPlatformAdmin;
+
+        if (!filtered.length) {
+          document.getElementById('memberList').innerHTML = '<p style="text-align:center;padding:40px;color:#94a3b8">ไม่พบสมาชิก</p>';
+          return;
+        }
+
+        // Owner is editable too — promoting a trusted user to co-owner is a
+        // legit operation (multiple owners = shared full-control). Demoting an
+        // owner is blocked from the dropdown below (role check on the row).
+        const editableRoles = ['Owner','Accountant','Staff','Auditor','Viewer','ExternalAccountant'];
+
+        document.getElementById('memberList').innerHTML = filtered.map(m => {
+          const r = ROLES[m.role] || ROLE_DEFAULT;
+          const initials = (m.fullName || '?').substring(0, 2);
+          const isMe = (m.userId || '').toLowerCase() === (this.currentUserId || '').toLowerCase() ||
+                       (m.email || '').toLowerCase() === (Layout.user?.email || '').toLowerCase();
+          const joinDate = m.joinedAt ? new Date(m.joinedAt).toLocaleDateString('th-TH', { year:'numeric', month:'short', day:'numeric' }) : '-';
+          const lastLogin = m.lastLoginAt ? Page.timeAgo(m.lastLoginAt) : 'ยังไม่เคยเข้าใช้';
+
+          let actions = '';
+          // เจ้าของแก้ชื่อสมาชิกได้ทุกคน (รวมตัวเอง) — ใช้แก้ชื่อพิมพ์ผิดที่ไป
+          // โผล่บนลายเซ็น/เอกสาร. ปุ่มนี้แสดงแยกจากบล็อกจัดการ role ด้านล่าง
+          // (ซึ่งยังห้ามแก้ role/ลบตัวเอง)
+          const nameEditBtn = isOwner
+            ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="แก้ชื่อ-นามสกุล (ที่แสดงบนลายเซ็น/เอกสาร)" onclick="Page.editMemberName('${m.userId}','${(m.fullName||'').replace(/'/g,'&apos;')}')">&#9998; ชื่อ</button>`
+            : '';
+          // ดูสิทธิ์ effective รายคน (Owner ดูได้ทุกคน / สมาชิกดูของตัวเอง)
+          const permBtn = (isOwner || isMe)
+            ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="ดูสิทธิ์การใช้งานทั้งหมดของสมาชิกคนนี้ในบริษัทนี้" onclick="Page.viewPermissions('${m.userId}','${(m.fullName||'').replace(/'/g,'&apos;')}')">🔐 สิทธิ์</button>`
+            : '';
+          // Owners can manage any other member, including demoting another Owner.
+          // Self-edit / self-remove is always blocked — UI never offers it.
+          if (isOwner && !isMe) {
+            const customRoleOpts = Page.customRoles.map(cr =>
+              `<option value="${cr.id}" ${m.companyRoleId === cr.id ? 'selected' : ''}>${cr.icon} ${cr.name}</option>`
+            ).join('');
+            actions = `
+              <select class="form-select" style="width:auto;font-size:12px;padding:4px 8px;height:32px" onchange="Page.changeRole('${m.userId}',this.value)">
+                ${editableRoles.map(rv => `<option value="${rv}" ${m.role===rv?'selected':''}>${ROLES[rv].label}</option>`).join('')}
+              </select>
+              ${Page.customRoles.length ? `<select class="form-select" style="width:auto;font-size:12px;padding:4px 8px;height:32px" onchange="Page.assignCustomRole('${m.userId}',this.value)" title="กำหนดสิทธิ์เข้าถึงเมนู">
+                <option value="">-- สิทธิ์เมนู --</option>
+                ${customRoleOpts}
+              </select>` : ''}
+              <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${m.fullName.replace(/'/g,'&apos;')}',${m.role==='Owner'?'true':'false'})" data-i18n="common.delete">ลบ</button>
+            `;
+          }
+
+          return `<div class="member-card">
+            <div class="member-avatar">${initials}</div>
+            <div class="member-info">
+              <div class="member-name">${m.fullName}${isMe?' <span style="color:#94a3b8;font-weight:400;font-size:12px">(คุณ)</span>':''}</div>
+              <div class="member-email">${m.email}${m.phone?' · '+m.phone:''}</div>
+              <div class="member-meta">เข้าร่วม ${joinDate} · เข้าใช้ล่าสุด ${lastLogin}</div>
+            </div>
+            <div class="member-actions">
+              <span class="role-badge ${r.cls}">${r.icon} ${r.label}</span>
+              ${nameEditBtn}${permBtn}
+              ${actions}
+            </div>
+          </div>`;
+        }).join('');
+      },
+
+      filterMembers() { this.renderMembers(); },
+
+      onRoleChange(role) {
+        // Owner is high-privilege — show a warning banner so the action
+        // can't be made by accident.
+        document.getElementById('ownerWarning').style.display = role === 'Owner' ? 'block' : 'none';
+      },
+
+      async addMember() {
+        const api = Layout.api(); if (!api) return;
+        const email = document.getElementById('addEmail').value.trim();
+        const role = document.getElementById('addRole').value;
+        if (!email) { Layout.toast('กรุณากรอกอีเมล', 'error'); return; }
+        if (role === 'Owner' && !confirm(`เพิ่ม ${email} เป็น "เจ้าของ" ของบริษัทนี้?\n\nคนนี้จะ:\n• เห็นข้อมูลทั้งหมด รวมเงินเดือน + เอกสารลับ\n• จัดการสมาชิกคนอื่นได้\n• ลบ / โอน บริษัทได้\n\nให้เฉพาะคนที่ไว้ใจระดับเดียวกับคุณ`)) return;
+        try {
+          // Response shape: { success, data: { wasInvited, email, invitationId }, message }
+          const res = await api.addMember(email, role);
+          const wasInvited = res && res.data && res.data.wasInvited;
+          if (wasInvited) {
+            Layout.toast(`📩 ส่งคำเชิญถึง ${email} แล้ว — ผู้รับจะได้รับลิงก์สมัครและเข้าร่วมทีมในอีเมล`, 'success', 5500);
+          } else {
+            Layout.toast(role === 'Owner' ? '⭐ เพิ่มเจ้าของสำเร็จ' : 'เพิ่มสมาชิกสำเร็จ');
+          }
+          document.getElementById('addEmail').value = '';
+          document.getElementById('ownerWarning').style.display = 'none';
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async changeRole(userId, newRole) {
+        const api = Layout.api(); if (!api) return;
+        if (newRole === 'Owner' && !confirm('ยกระดับเป็น "เจ้าของ"?\n\nคนนี้จะมีสิทธิ์เท่าคุณทุกอย่าง — เห็นข้อมูลทั้งหมด จัดการสมาชิก ลบบริษัท')) return;
+        try {
+          await api.updateMemberRole(userId, newRole);
+          Layout.toast(newRole === 'Owner' ? '⭐ ยกระดับเป็นเจ้าของสำเร็จ' : 'เปลี่ยนบทบาทสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ดูสิทธิ์ effective ของสมาชิก — จัดกลุ่มตาม prefix ให้อ่านง่าย
+      async viewPermissions(userId, name) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getMemberPermissions(userId);
+          const d = res.data;
+          const perms = d.permissions || [];
+          const groups = {};
+          perms.forEach(p => {
+            const key = p.replace(/^Perm[.:]?/i, '');
+            const g = key.split('.')[0] || 'อื่น ๆ';
+            (groups[g] = groups[g] || []).push(key.split('.').slice(1).join('.') || key);
+          });
+          const gLabel = { Document: '📄 เอกสาร', Accounting: '📒 บัญชี', Payroll: '💰 เงินเดือน', HR: '👥 บุคคล', Leave: '🏖️ ลางาน', Advance: '💳 เงินทดรอง', POS: '🛒 POS', Pii: '🔒 ข้อมูลส่วนบุคคล', SensitiveDocs: '🔒 เอกสารลับ', Organization: '🏢 องค์กร' };
+          const body = Object.keys(groups).sort().map(g =>
+            `<div style="margin-bottom:10px"><b>${gLabel[g] || g}</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">${groups[g].sort().map(x => `<span style="background:var(--gray-100);border-radius:999px;padding:2px 10px;font-size:12px">${Layout.esc(x)}</span>`).join('')}</div></div>`).join('');
+          Layout.confirmDialog ? null : null;
+          const wrap = document.createElement('div');
+          wrap.className = 'modal-overlay active';
+          wrap.id = 'permViewModal';
+          wrap.innerHTML = `<div class="modal" style="max-width:520px"><div class="modal-header">
+              <h3 class="modal-title">🔐 สิทธิ์ของ ${Layout.esc(name || d.fullName || '')}</h3>
+              <button class="modal-close" onclick="document.getElementById('permViewModal').remove()">&times;</button></div>
+            <div class="modal-body">
+              <div style="margin-bottom:10px;font-size:13px;color:var(--gray-500)">บทบาท: <b>${Layout.esc(String(d.role))}</b> · ${perms.length} สิทธิ์ในบริษัทนี้</div>
+              ${body || '<div style="color:var(--gray-400)">ใช้สิทธิ์ตามบทบาทมาตรฐาน (ไม่มีสิทธิ์เฉพาะเพิ่ม)</div>'}
+            </div>
+            <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('permViewModal').remove()">ปิด</button></div></div>`;
+          document.body.appendChild(wrap);
+        } catch (e) { Layout.toast(e.message || 'โหลดสิทธิ์ไม่สำเร็จ', 'error'); }
+      },
+      async editMemberName(userId, currentName) {
+        const name = prompt('แก้ชื่อ-นามสกุล (จะแสดงบนลายเซ็น/เอกสารเมื่อผู้ใช้ยังไม่ตั้งชื่อใต้ลายเซ็นเอง):', currentName || '');
+        if (name === null) return;                       // ยกเลิก
+        const trimmed = name.trim();
+        if (trimmed.length < 2) { Layout.toast('ชื่อต้องยาวอย่างน้อย 2 ตัวอักษร', 'error'); return; }
+        if (trimmed === (currentName || '').trim()) return;   // ไม่เปลี่ยน
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.updateMemberName(userId, trimmed);
+          Layout.toast('แก้ชื่อสมาชิกสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async assignCustomRole(userId, roleId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const rid = roleId || '00000000-0000-0000-0000-000000000000';
+          await API.post(`/api/company/${cid}/roles/${rid}/assign/${userId}`);
+          Layout.toast(roleId ? 'กำหนดสิทธิ์เมนูสำเร็จ' : 'ยกเลิกสิทธิ์เมนูสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async removeMember(userId, name, isOwnerRow) {
+        // Refuse to leave 0 owners — count active owners minus this one.
+        if (isOwnerRow) {
+          const owners = (this.members || []).filter(m => m.role === 'Owner').length;
+          if (owners <= 1) {
+            Layout.toast('ลบไม่ได้ — ต้องมีเจ้าของอย่างน้อย 1 คน', 'error');
+            return;
+          }
+        }
+        const extra = isOwnerRow ? '<br><span style="color:#dc2626;font-weight:600">⚠️ คนนี้เป็นเจ้าของอีกคน — สิทธิ์เต็ม</span>' : '';
+        if (!(await Layout.confirmDanger({ title: 'ลบสมาชิก', message: `ลบ <b>${name}</b> ออกจากบริษัท — ผู้ใช้จะเข้าถึงข้อมูลบริษัทไม่ได้อีก${extra}`, mode: 'math' }))) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.removeMember(userId);
+          Layout.toast('ลบสมาชิกสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      timeAgo(dateStr) {
+        const diff = Date.now() - new Date(dateStr).getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 1) return 'เมื่อสักครู่';
+        if (mins < 60) return mins + ' นาทีที่แล้ว';
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return hrs + ' ชั่วโมงที่แล้ว';
+        const days = Math.floor(hrs / 24);
+        if (days < 30) return days + ' วันที่แล้ว';
+        return new Date(dateStr).toLocaleDateString('th-TH', { year:'numeric', month:'short', day:'numeric' });
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

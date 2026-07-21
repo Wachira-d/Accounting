@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>โครงการ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">โครงการ</h2><p class="page-subtitle">จัดการโครงการและติดตามต้นทุน</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างโครงการ</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหาโครงการ..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Active">กำลังดำเนินการ</option>
+        <option value="Completed">เสร็จสิ้น</option>
+        <option value="OnHold">ระงับ</option>
+      </select>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>รหัส</th><th>ชื่อโครงการ</th><th>ลูกค้า</th><th class="text-right">งบประมาณ</th><th class="text-right">ต้นทุนจริง</th><th>ความคืบหน้า</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">สร้างโครงการ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="fId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสโครงการ *</label><input type="text" class="form-input" id="fCode"></div>
+            <div class="form-group"><label class="form-label">ชื่อโครงการ *</label><input type="text" class="form-input" id="fName"></div>
+          </div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="fStart"></div>
+            <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="fEnd"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">งบประมาณ *</label><input type="number" class="form-input" id="fBudget" step="0.01"></div>
+            <div class="form-group"><label class="form-label">มูลค่าสัญญา</label><input type="number" class="form-input" id="fContract" step="0.01"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียดโครงการ</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="detailInfo" style="margin-bottom:16px"></div>
+          <div class="tabs" style="margin-bottom:0">
+            <div class="tab active" onclick="Page.detailTab('tasks',this)">งาน</div>
+            <div class="tab" onclick="Page.detailTab('costs',this)">ต้นทุน</div>
+            <div class="tab" onclick="Page.detailTab('profit',this)">กำไร</div>
+            <div class="tab" onclick="Page.detailTab('cashflow',this)">💵 กระแสเงินสด</div>
+            <div class="tab" onclick="Page.detailTab('labour',this)">👷 ค่าแรง</div>
+            <div class="tab" onclick="Page.detailTab('dashboard',this)">📊 Dashboard</div>
+          </div>
+          <div id="tasksTab" style="max-height:400px;overflow-y:auto"></div>
+          <div id="costsTab" class="hidden" style="max-height:400px;overflow-y:auto"></div>
+          <div id="profitTab" class="hidden"></div>
+          <div id="cashflowTab" class="hidden" style="max-height:500px;overflow-y:auto"></div>
+          <div id="labourTab" class="hidden" style="max-height:500px;overflow-y:auto"></div>
+          <div id="dashboardTab" class="hidden"></div>
+        </div>
+        <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
+
+    <!-- Add Task Modal -->
+    <div class="modal-overlay" id="taskModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มงาน</h3><button class="modal-close" onclick="Layout.closeModal('taskModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="taskProjectId">
+          <div class="form-group"><label class="form-label">ชื่องาน *</label><input type="text" class="form-input" id="taskName"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="taskDesc"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่ม</label><input type="date" class="form-input" id="taskStart"></div>
+            <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="taskEnd"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('taskModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveTask()">เพิ่มงาน</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Cost Modal -->
+    <div class="modal-overlay" id="costModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">บันทึกต้นทุน</h3><button class="modal-close" onclick="Layout.closeModal('costModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="costProjectId">
+          <div class="form-group"><label class="form-label">รายละเอียด *</label><input type="text" class="form-input" id="costDesc"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="costAmount" step="0.01"></div>
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="costDate"></div>
+          </div>
+          <div class="form-group"><label class="form-label">หมวดหมู่</label>
+            <select class="form-select" id="costCategory">
+              <option value="Labor">ค่าแรง</option><option value="Material">วัสดุ</option>
+              <option value="Equipment">อุปกรณ์</option><option value="Subcontract">ผู้รับเหมาช่วง</option>
+              <option value="Travel">ค่าเดินทาง</option><option value="Other">อื่นๆ</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('costModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveCost()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      currentProjectId: null,
+      async init() {
+        if (!Layout.init('projects')) return;
+        Layout.setTitle('โครงการ');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const status = document.getElementById('statusFilter').value;
+        const search = document.getElementById('searchInput').value;
+        let q = '?page=1&pageSize=30';
+        if (status) q += `&status=${status}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        try {
+          const res = await api.getProjects(q);
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีโครงการ</td></tr>'; return; }
+          tbody.innerHTML = items.map(p => {
+            const overBudget = p.actualCost > p.budgetAmount;
+            return `<tr>
+            <td class="font-medium">${p.code}</td>
+            <td>${p.name}</td>
+            <td>${p.customerName || '-'}</td>
+            <td class="text-right">${Layout.money(p.budgetAmount)}</td>
+            <td class="text-right ${overBudget ? 'text-danger' : ''}">${Layout.money(p.actualCost)}</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="flex:1;background:var(--gray-200);border-radius:4px;height:8px;overflow:hidden">
+                  <div style="width:${p.completionPercent||0}%;background:${(p.completionPercent||0) >= 100 ? 'var(--success)' : 'var(--primary)'};height:100%;border-radius:4px"></div>
+                </div>
+                <span class="text-xs">${p.completionPercent||0}%</span>
+              </div>
+            </td>
+            <td>${Layout.statusBadge(p.status)}</td>
+            <td>
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')" data-i18n="common.view">ดู</button>
+              ${p.status === 'Active' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')" data-i18n="common.edit">แก้ไข</button>` : ''}
+            </td>
+          </tr>`}).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'สร้างโครงการ';
+        document.getElementById('fId').value = '';
+        document.getElementById('fCode').value = ''; document.getElementById('fCode').disabled = false;
+        document.getElementById('fName').value = '';
+        document.getElementById('fDesc').value = '';
+        document.getElementById('fStart').value = Layout.toDateInput(new Date());
+        document.getElementById('fEnd').value = '';
+        document.getElementById('fBudget').value = '';
+        document.getElementById('fContract').value = '';
+        Layout.openModal('formModal');
+      },
+      async openEdit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProject(id);
+          const p = res.data;
+          document.getElementById('formTitle').textContent = 'แก้ไขโครงการ';
+          document.getElementById('fId').value = p.id;
+          document.getElementById('fCode').value = p.code; document.getElementById('fCode').disabled = true;
+          document.getElementById('fName').value = p.name;
+          document.getElementById('fDesc').value = p.description || '';
+          document.getElementById('fStart').value = Layout.dateInput(p.startDate);
+          document.getElementById('fEnd').value = Layout.dateInput(p.endDate);
+          document.getElementById('fBudget').value = p.budgetAmount;
+          document.getElementById('fContract').value = p.contractAmount || '';
+          Layout.openModal('formModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('fId').value;
+        const data = {
+          code: document.getElementById('fCode').value,
+          name: document.getElementById('fName').value,
+          description: document.getElementById('fDesc').value || null,
+          startDate: document.getElementById('fStart').value,
+          endDate: document.getElementById('fEnd').value || null,
+          budgetAmount: parseFloat(document.getElementById('fBudget').value) || 0,
+          contractAmount: parseFloat(document.getElementById('fContract').value) || 0,
+        };
+        try {
+          if (id) { await api.updateProject(id, data); }
+          else { await api.createProject(data); }
+          Layout.closeModal('formModal'); Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างโครงการสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async viewDetail(id) {
+        this.currentProjectId = id;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProject(id);
+          const p = res.data;
+          const overBudget = p.actualCost > p.budgetAmount;
+          const profit = (p.contractAmount || 0) - (p.actualCost || 0);
+
+          document.getElementById('detailTitle').textContent = `${p.code} - ${p.name}`;
+          document.getElementById('detailInfo').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+              <div><div class="text-xs text-gray-500">ระยะเวลา</div><div>${Layout.date(p.startDate)} - ${Layout.date(p.endDate)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(p.status)}</div></div>
+              <div><div class="text-xs text-gray-500">ความคืบหน้า</div><div class="font-semibold">${p.completionPercent || 0}%</div></div>
+            </div>
+            <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+              <div class="kpi-card"><div class="kpi-label">งบประมาณ</div><div class="kpi-value">${Layout.money(p.budgetAmount)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">มูลค่าสัญญา</div><div class="kpi-value">${Layout.money(p.contractAmount)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ต้นทุนจริง</div><div class="kpi-value ${overBudget ? 'text-danger' : ''}">${Layout.money(p.actualCost)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">กำไร (ประมาณ)</div><div class="kpi-value ${profit >= 0 ? 'text-success' : 'text-danger'}">${Layout.money(profit)}</div></div>
+            </div>
+            ${p.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.description">คำอธิบาย</div><div>${p.description}</div></div>` : ''}`;
+
+          await this.loadTasks(id);
+
+          let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
+          if (p.status === 'Active') {
+            footer += ` <button class="btn btn-info" onclick="Page.openAddTask('${id}')">+ เพิ่มงาน</button>`;
+            footer += ` <button class="btn btn-primary" onclick="Page.openAddCost('${id}')">+ บันทึกต้นทุน</button>`;
+            footer += ` <button class="btn btn-success" onclick="Page.completeProject('${id}')">เสร็จสิ้นโครงการ</button>`;
+          }
+          footer += ` <button class="btn btn-warning" onclick="Page.openEdit('${id}')" data-i18n="common.edit">แก้ไข</button>`;
+          footer += ` <button class="btn btn-danger" onclick="Page.deleteProject('${id}')" data-i18n="common.delete">ลบ</button>`;
+          document.getElementById('detailFooter').innerHTML = footer;
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      detailTab(tab, el) {
+        const tabs = ['tasks', 'costs', 'profit', 'cashflow', 'labour', 'dashboard'];
+        tabs.forEach(t => document.getElementById(t + 'Tab').classList.toggle('hidden', tab !== t));
+        el.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        if (tab === 'costs') this.loadCosts(this.currentProjectId);
+        if (tab === 'profit') this.loadProfit(this.currentProjectId);
+        if (tab === 'cashflow') this.loadCashFlow(this.currentProjectId);
+        if (tab === 'labour') this.loadLabour(this.currentProjectId);
+        if (tab === 'dashboard') this.loadDashboard(this.currentProjectId);
+      },
+
+      async loadLabour(projectId) {
+        const el = document.getElementById('labourTab');
+        el.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8">กำลังโหลด...</div>';
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/projects/${projectId}/labour-breakdown`);
+          const d = r.data;
+          const fmt = n => (n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+          const fmtH = n => (n||0).toLocaleString('th-TH',{minimumFractionDigits:1,maximumFractionDigits:2});
+          if (!d.byEmployee?.length) {
+            el.innerHTML = `<div style="padding:40px;text-align:center;color:#94a3b8">ยังไม่มีค่าแรงพนักงานบนโครงการนี้<br><small>เมื่อ payroll run ถูก allocate (หน้า "เวลาทำงาน-โครงการ" → กระจาย labour cost) ข้อมูลจะปรากฏที่นี่</small></div>`;
+            return;
+          }
+          el.innerHTML = `
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+              <div style="padding:14px;border-radius:10px;background:#dbeafe;border:1px solid #93c5fd">
+                <div style="font-size:11px;color:#1e40af;font-weight:600">รวมชั่วโมง</div>
+                <div style="font-size:24px;font-weight:700;color:#1e293b">${fmtH(d.totalHours)} ชม.</div>
+              </div>
+              <div style="padding:14px;border-radius:10px;background:#dcfce7;border:1px solid #86efac">
+                <div style="font-size:11px;color:#15803d;font-weight:600">รวมค่าแรง</div>
+                <div style="font-size:24px;font-weight:700;color:#1e293b">${fmt(d.totalAmount)}</div>
+              </div>
+              <div style="padding:14px;border-radius:10px;background:#ede9fe;border:1px solid #c4b5fd">
+                <div style="font-size:11px;color:#5b21b6;font-weight:600">จำนวนพนักงาน</div>
+                <div style="font-size:24px;font-weight:700;color:#1e293b">${d.employeeCount} คน</div>
+              </div>
+            </div>
+            <table class="data-table" style="font-size:13px">
+              <thead><tr>
+                <th>รหัส</th><th>ชื่อ</th><th>แผนก/ตำแหน่ง</th>
+                <th style="text-align:right">ชั่วโมง</th>
+                <th style="text-align:right">Billable / Non</th>
+                <th style="text-align:right">ค่าแรงรวม</th>
+                <th style="text-align:right">เฉลี่ย/ชม.</th>
+                <th>ประเภท</th>
+                <th style="text-align:right">รอบจ่าย</th>
+              </tr></thead>
+              <tbody>
+                ${d.byEmployee.map(e => `<tr>
+                  <td><b>${e.employeeCode}</b></td>
+                  <td>${e.employeeName}</td>
+                  <td><div style="font-size:12px">${e.department || '-'}</div><div style="font-size:11px;color:#64748b">${e.position || ''}</div></td>
+                  <td style="text-align:right">${fmtH(e.hours)}</td>
+                  <td style="text-align:right;font-size:11px"><span style="color:#15803d">${e.billableHours}</span> / <span style="color:#92400e">${e.nonBillableHours}</span></td>
+                  <td style="text-align:right;font-weight:600">${fmt(e.amount)}</td>
+                  <td style="text-align:right">${fmt(e.averageRate)}</td>
+                  <td><span class="badge ${e.costBehavior==='Fixed'?'b-Fixed':'b-Variable'}" style="padding:2px 8px;border-radius:999px;font-size:10px;background:${e.costBehavior==='Fixed'?'#dbeafe':'#fef3c7'};color:${e.costBehavior==='Fixed'?'#1e40af':'#92400e'}">${e.costBehavior}</span></td>
+                  <td style="text-align:right">${e.payrollRunCount}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>`;
+        } catch (e) {
+          el.innerHTML = `<div style="color:#dc2626;padding:20px;text-align:center">${e.message}</div>`;
+        }
+      },
+
+      async loadCashFlow(id) {
+        const cid = Layout.getCompanyId();
+        const el = document.getElementById('cashflowTab');
+        el.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8">กำลังโหลด...</div>';
+        try {
+          const r = await API.get(`/api/companies/${cid}/projects/${id}/cash-flow`);
+          const d = r.data || {};
+          const fmt = n => Layout.money(n || 0);
+          const sign = n => (n || 0) >= 0 ? '+' : '';
+          const color = n => (n || 0) >= 0 ? '#15803d' : '#dc2626';
+          el.innerHTML = `
+            <div style="padding:18px">
+              <div style="font-size:13px;color:#64748b;margin-bottom:10px">${r.message || ''}</div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
+                <div class="kpi-card"><div class="kpi-label">Operating</div><div class="kpi-value" style="color:${color(d.operatingActivities?.subTotal)}">${sign(d.operatingActivities?.subTotal)}${fmt(d.operatingActivities?.subTotal)}</div></div>
+                <div class="kpi-card"><div class="kpi-label">Investing</div><div class="kpi-value" style="color:${color(d.investingActivities?.subTotal)}">${sign(d.investingActivities?.subTotal)}${fmt(d.investingActivities?.subTotal)}</div></div>
+                <div class="kpi-card"><div class="kpi-label">Financing</div><div class="kpi-value" style="color:${color(d.financingActivities?.subTotal)}">${sign(d.financingActivities?.subTotal)}${fmt(d.financingActivities?.subTotal)}</div></div>
+                <div class="kpi-card" style="background:#eff6ff"><div class="kpi-label">Net change</div><div class="kpi-value" style="color:${color(d.netCashChange)};font-weight:700">${sign(d.netCashChange)}${fmt(d.netCashChange)}</div></div>
+              </div>
+              ${(d.operatingActivities?.items||[]).length ? `
+                <h4 style="margin:10px 0 6px;font-size:13px">กิจกรรมดำเนินการ (Operating)</h4>
+                <table style="width:100%;font-size:12px;border-collapse:collapse">
+                  ${(d.operatingActivities.items||[]).map(a => `<tr><td style="padding:3px 6px">${a.description||''}</td><td style="padding:3px 6px;text-align:right;color:${color(a.amount)}">${sign(a.amount)}${fmt(a.amount)}</td></tr>`).join('')}
+                </table>` : ''}
+              ${(d.investingActivities?.items||[]).length ? `
+                <h4 style="margin:14px 0 6px;font-size:13px">กิจกรรมลงทุน (Investing)</h4>
+                <table style="width:100%;font-size:12px;border-collapse:collapse">
+                  ${(d.investingActivities.items||[]).map(a => `<tr><td style="padding:3px 6px">${a.description||''}</td><td style="padding:3px 6px;text-align:right;color:${color(a.amount)}">${sign(a.amount)}${fmt(a.amount)}</td></tr>`).join('')}
+                </table>` : ''}
+              ${(d.financingActivities?.items||[]).length ? `
+                <h4 style="margin:14px 0 6px;font-size:13px">กิจกรรมจัดหาเงิน (Financing)</h4>
+                <table style="width:100%;font-size:12px;border-collapse:collapse">
+                  ${(d.financingActivities.items||[]).map(a => `<tr><td style="padding:3px 6px">${a.description||''}</td><td style="padding:3px 6px;text-align:right;color:${color(a.amount)}">${sign(a.amount)}${fmt(a.amount)}</td></tr>`).join('')}
+                </table>` : ''}
+            </div>`;
+        } catch (e) {
+          el.innerHTML = `<div style="padding:30px;text-align:center;color:#dc2626">${e.message}</div>`;
+        }
+      },
+
+      async loadDashboard(id) {
+        const cid = Layout.getCompanyId();
+        const el = document.getElementById('dashboardTab');
+        el.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8">กำลังโหลด...</div>';
+        try {
+          const r = await API.get(`/api/companies/${cid}/projects/${id}/dashboard`);
+          const d = r.data || {};
+          const p = d.project || {};
+          const profit = d.profit || {};
+          const cf = d.cashFlow || {};
+          const out = d.outstanding || {};
+          const fmt = n => Layout.money(n || 0);
+          const color = n => (n || 0) >= 0 ? '#15803d' : '#dc2626';
+          el.innerHTML = `
+            <div style="padding:18px">
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+                <div class="kpi-card"><div class="kpi-label">งบประมาณ</div><div class="kpi-value">${fmt(p.budgetAmount)}</div></div>
+                <div class="kpi-card"><div class="kpi-label">มูลค่าสัญญา</div><div class="kpi-value">${fmt(p.contractAmount)}</div></div>
+                <div class="kpi-card"><div class="kpi-label">เสร็จไปแล้ว</div><div class="kpi-value">${(p.completionPercent || 0).toFixed(0)}%</div></div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+                <div class="kpi-card" style="background:#f0fdf4"><div class="kpi-label">รายได้รับรู้</div><div class="kpi-value" style="color:#15803d">${fmt(profit.totalRevenue ?? p.actualRevenue)}</div></div>
+                <div class="kpi-card" style="background:#fef2f2"><div class="kpi-label">ต้นทุนเกิดขึ้น</div><div class="kpi-value" style="color:#dc2626">${fmt(profit.totalCost ?? p.actualCost)}</div></div>
+                <div class="kpi-card" style="background:#eff6ff"><div class="kpi-label">กำไรสุทธิ</div><div class="kpi-value" style="color:${color((profit.totalRevenue ?? 0) - (profit.totalCost ?? 0))}">${fmt((profit.totalRevenue ?? p.actualRevenue ?? 0) - (profit.totalCost ?? p.actualCost ?? 0))}</div></div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+                <div class="kpi-card"><div class="kpi-label">ยังเก็บไม่ได้ (AR)</div><div class="kpi-value" style="color:#d97706">${fmt(out.receivable)}</div></div>
+                <div class="kpi-card"><div class="kpi-label">ยังจ่ายไม่หมด (AP)</div><div class="kpi-value" style="color:#d97706">${fmt(out.payable)}</div></div>
+                <div class="kpi-card"><div class="kpi-label">Net working capital</div><div class="kpi-value" style="color:${color(out.net)}">${fmt(out.net)}</div></div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+                <div class="kpi-card" style="background:#f8fafc"><div class="kpi-label">เงินสดจาก Operating</div><div class="kpi-value" style="color:${color(cf.operating)}">${fmt(cf.operating)}</div></div>
+                <div class="kpi-card" style="background:#f8fafc"><div class="kpi-label">Investing</div><div class="kpi-value" style="color:${color(cf.investing)}">${fmt(cf.investing)}</div></div>
+                <div class="kpi-card" style="background:#f8fafc"><div class="kpi-label">Financing</div><div class="kpi-value" style="color:${color(cf.financing)}">${fmt(cf.financing)}</div></div>
+                <div class="kpi-card" style="background:#eef2ff;border:1px solid #c7d2fe"><div class="kpi-label">Net cash change</div><div class="kpi-value" style="color:${color(cf.netChange)};font-weight:700">${fmt(cf.netChange)}</div></div>
+              </div>
+            </div>`;
+        } catch (e) {
+          el.innerHTML = `<div style="padding:30px;text-align:center;color:#dc2626">${e.message}</div>`;
+        }
+      },
+      async loadTasks(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProjectTasks(id);
+          const items = res.data?.items || res.data || [];
+          const statusMap = { Pending:'รอดำเนินการ', InProgress:'กำลังทำ', Completed:'เสร็จสิ้น', Cancelled:'ยกเลิก' };
+          document.getElementById('tasksTab').innerHTML = items.length ?
+            `<div class="table-container"><table class="table"><thead><tr><th>ชื่องาน</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th data-i18n="common.status">สถานะ</th></tr></thead><tbody>${items.map(t => `<tr>
+              <td class="font-medium">${t.name}</td>
+              <td>${Layout.date(t.startDate)}</td>
+              <td>${Layout.date(t.endDate)}</td>
+              <td>${Layout.statusBadge(t.status)}</td>
+            </tr>`).join('')}</tbody></table></div>`
+            : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีงาน</div>';
+        } catch (e) { document.getElementById('tasksTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
+      },
+      async loadCosts(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProjectCosts(id);
+          const items = res.data?.items || res.data || [];
+          const catMap = { Labor:'ค่าแรง', Material:'วัสดุ', Equipment:'อุปกรณ์', Subcontract:'ผู้รับเหมาช่วง', Travel:'ค่าเดินทาง', Other:'อื่นๆ' };
+          document.getElementById('costsTab').innerHTML = items.length ?
+            `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.date">วันที่</th><th data-i18n="common.detail">รายละเอียด</th><th>หมวด</th><th class="text-right">จำนวน</th></tr></thead><tbody>${items.map(c => `<tr>
+              <td>${Layout.date(c.costDate || c.date)}</td>
+              <td>${c.description}</td>
+              <td><span class="badge badge-info">${catMap[c.category] || c.category}</span></td>
+              <td class="text-right font-semibold">${Layout.money(c.amount)}</td>
+            </tr>`).join('')}</tbody></table></div>`
+            : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีรายการต้นทุน</div>';
+        } catch (e) { document.getElementById('costsTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
+      },
+      // สีประจำหมวดต้นทุน (แถบสัดส่วน + จุดหน้าชื่อหมวด)
+      _costColors: { Labor:'#6366f1', Material:'#f59e0b', Subcontract:'#06b6d4', Overhead:'#94a3b8', Travel:'#ec4899', Other:'#cbd5e1' },
+      async loadProfit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProjectProfit(id);
+          const d = res.data;
+          const bd = d.costBreakdown || [];
+          const colorOf = t => this._costColors[t] || this._costColors.Other;
+          // เดิม tab นี้พังเงียบ: backend ส่ง dict แต่หน้า .map() เป็น array +
+          // อ่าน d.profit ที่ไม่มีจริง (ของจริง grossProfit) → catch → "โหลดไม่ได้"
+          document.getElementById('profitTab').innerHTML = `
+            <div class="grid grid-4 gap-4" style="padding:16px 0">
+              <div class="kpi-card"><div class="kpi-label">รายได้รับรู้แล้ว</div><div class="kpi-value text-success">${Layout.money(d.totalRevenue)}</div><div class="text-xs text-gray-400">สัญญา ${Layout.money(d.contractAmount)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ต้นทุนรวม</div><div class="kpi-value text-danger">${Layout.money(d.totalCost)}</div><div class="text-xs ${d.budgetVariance >= 0 ? 'text-gray-400' : 'text-danger'}">${d.budgetVariance >= 0 ? 'ต่ำกว่างบ ' + Layout.money(d.budgetVariance) : 'เกินงบ ' + Layout.money(-d.budgetVariance)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">กำไรขั้นต้น</div><div class="kpi-value ${d.grossProfit >= 0 ? 'text-success' : 'text-danger'}">${Layout.money(d.grossProfit)}</div><div class="text-xs text-gray-400">margin ${(d.grossProfitPercent || 0).toFixed(1)}%</div></div>
+              <div class="kpi-card"><div class="kpi-label">ความคืบหน้า</div><div class="kpi-value">${(d.completionPercent || 0).toFixed(0)}%</div></div>
+            </div>
+            ${bd.length ? `
+            <h4 style="margin:12px 0 8px">สัดส่วนต้นทุน — ค่าแรง / วัสดุ / จ้างเหมา / อื่น ๆ</h4>
+            <!-- แถบสัดส่วนรวม (stacked) เห็นภาพทันทีว่าเงินไปหมวดไหน -->
+            <div style="display:flex;height:22px;border-radius:8px;overflow:hidden;border:1px solid var(--gray-200)">
+              ${bd.map(c => `<div title="${Layout.esc(c.label)} ${c.percent}%" style="width:${Math.max(c.percent,1)}%;background:${colorOf(c.costType)}"></div>`).join('')}
+            </div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 14px;font-size:12px;color:var(--gray-600)">
+              ${bd.map(c => `<span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${colorOf(c.costType)};margin-right:4px"></span>${Layout.esc(c.label)} ${c.percent}%</span>`).join('')}
+            </div>
+            ${bd.map(c => `
+              <details style="background:#fff;border:1px solid var(--gray-200);border-radius:10px;margin-bottom:8px">
+                <summary style="cursor:pointer;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                  <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${colorOf(c.costType)};margin-right:6px"></span><b>${Layout.esc(c.label)}</b> <span style="color:var(--gray-400);font-size:12px">(${c.entryCount} รายการ)</span></span>
+                  <span style="white-space:nowrap"><b>${Layout.money(c.amount)}</b> <span style="color:var(--gray-400);font-size:12px">· ${c.percent}%</span></span>
+                </summary>
+                <div class="table-container" style="border-top:1px solid var(--gray-100)">
+                  <table class="table"><thead><tr><th>วันที่</th><th>รายละเอียด</th><th class="text-right">จำนวน × ต่อหน่วย</th><th class="text-right">ยอด</th><th>เอกสาร</th></tr></thead>
+                  <tbody>${(c.entries || []).map(e => `<tr>
+                    <td style="white-space:nowrap">${new Date(e.entryDate).toLocaleDateString('th-TH')}</td>
+                    <td>${Layout.esc(e.description)}</td>
+                    <td class="text-right" style="white-space:nowrap">${(e.quantity || 0).toLocaleString()} × ${Layout.money(e.unitCost)}</td>
+                    <td class="text-right"><b>${Layout.money(e.amount)}</b></td>
+                    <td>${e.documentId ? `<a href="/pages/documents.html?view=${e.documentId}" style="font-size:12px">${Layout.esc(e.documentNumber || 'เปิดเอกสาร')}</a>` : '<span style="color:var(--gray-300)">กรอกมือ</span>'}</td>
+                  </tr>`).join('')}</tbody></table>
+                </div>
+              </details>`).join('')}
+            ` : `<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีรายการต้นทุน — ต้นทุนจะเข้าอัตโนมัติเมื่อใบซื้อ/ใบสำคัญจ่าย tag โครงการนี้ หรือกรอกเองที่แท็บ "ต้นทุน"</div>`}`;
+        } catch (e) { document.getElementById('profitTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้: ' + Layout.esc(e.message || '') + '</div>'; }
+      },
+      openAddTask(id) {
+        document.getElementById('taskProjectId').value = id;
+        document.getElementById('taskName').value = '';
+        document.getElementById('taskDesc').value = '';
+        document.getElementById('taskStart').value = Layout.toDateInput(new Date());
+        document.getElementById('taskEnd').value = '';
+        Layout.openModal('taskModal');
+      },
+      async saveTask() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('taskProjectId').value;
+        try {
+          await api.createProjectTask(id, {
+            name: document.getElementById('taskName').value,
+            description: document.getElementById('taskDesc').value || null,
+            startDate: document.getElementById('taskStart').value || null,
+            endDate: document.getElementById('taskEnd').value || null,
+          });
+          Layout.closeModal('taskModal'); Layout.toast('เพิ่มงานสำเร็จ'); this.loadTasks(id);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openAddCost(id) {
+        document.getElementById('costProjectId').value = id;
+        document.getElementById('costDesc').value = '';
+        document.getElementById('costAmount').value = '';
+        document.getElementById('costDate').value = Layout.toDateInput(new Date());
+        Layout.openModal('costModal');
+      },
+      async saveCost() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('costProjectId').value;
+        try {
+          await api.addProjectCost(id, {
+            description: document.getElementById('costDesc').value,
+            amount: parseFloat(document.getElementById('costAmount').value),
+            costDate: document.getElementById('costDate').value,
+            category: document.getElementById('costCategory').value,
+          });
+          Layout.closeModal('costModal'); Layout.toast('บันทึกต้นทุนสำเร็จ');
+          this.loadCosts(id); this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async completeProject(id) {
+        if (!confirm('ยืนยันเสร็จสิ้นโครงการ?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.completeProject(id);
+          Layout.toast('โครงการเสร็จสิ้น'); Layout.closeModal('detailModal'); this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteProject(id) {
+        if (!confirm('ยืนยันลบโครงการนี้? หากมีรายการเชื่อมโยงระบบจะเปลี่ยนสถานะเป็นยกเลิกแทน')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteProject(id);
+          Layout.toast('ลบโครงการสำเร็จ'); Layout.closeModal('detailModal'); this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async openEdit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getProject(id);
+          const p = res.data;
+          if (!p) return;
+          // Reuse create modal if same form. Otherwise prompt.
+          const newName = prompt('ชื่อโครงการใหม่', p.name);
+          if (newName == null) return;
+          await api.updateProject(id, { name: newName });
+          Layout.toast('อัปเดตสำเร็จ');
+          Layout.closeModal('detailModal');
+          this.load();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

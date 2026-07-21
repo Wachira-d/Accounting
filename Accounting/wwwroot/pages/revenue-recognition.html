@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รับรู้รายได้ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('contracts')">สัญญา</button>
+      <button class="tab" onclick="Page.switchTab('deferred')">รายได้รอรับรู้</button>
+    </div>
+
+    <div id="tab-contracts">
+      <div class="page-header">
+        <div><h2 class="page-title">สัญญารับรู้รายได้</h2><p class="page-subtitle">จัดการสัญญาและกำหนดการรับรู้รายได้ตาม TFRS 15</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างสัญญา</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>เลขที่สัญญา</th><th>ลูกค้า</th><th>วันเริ่ม</th><th>วันสิ้นสุด</th><th class="text-right">มูลค่า</th><th class="text-right">รับรู้แล้ว</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-deferred" style="display:none">
+      <div class="page-header"><div><h2 class="page-title">รายได้รอรับรู้</h2><p class="page-subtitle">สรุปรายได้รอการรับรู้ (Deferred Revenue)</p></div></div>
+      <div id="deferredContent" class="card" style="padding:24px"><p class="text-gray-400 text-center" data-i18n="common.loading">กำลังโหลด...</p></div>
+    </div>
+
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title">สร้างสัญญา</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เลขที่สัญญา *</label><input type="text" class="form-input" id="fNumber"></div>
+            <div class="form-group"><label class="form-label">ลูกค้า *</label><input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="fStart"></div>
+            <div class="form-group"><label class="form-label">วันสิ้นสุด *</label><input type="date" class="form-input" id="fEnd"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">มูลค่าสัญญา *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
+            <div class="form-group"><label class="form-label">วิธีรับรู้</label>
+              <select class="form-select" id="fMethod"><option value="OverTime">ตามระยะเวลา</option><option value="PointInTime">ณ จุดเวลา</option><option value="Milestone">ตามขั้นตอน</option></select>
+            </div>
+          </div>
+          <div class="form-group"><label class="form-label" data-i18n="common.detail">รายละเอียด</label><textarea class="form-input" id="fDesc" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.save()">สร้าง</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:800px">
+        <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียดสัญญา</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent" style="max-height:70vh;overflow-y:auto"></div>
+        <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  init() {
+    if (!Layout.init('revenue-recognition')) return;
+    Layout.setTitle('รับรู้รายได้');
+    this.load();
+  },
+
+  switchTab(tab) {
+    ['contracts','deferred'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['contracts','deferred'][i] === tab));
+    if (tab === 'deferred') this.loadDeferred();
+  },
+
+  async load() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getRevenueContracts();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('tableBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสัญญา</td></tr>'; return; }
+      tbody.innerHTML = items.map(c => {
+        const recognized = c.recognizedAmount || c.totalRecognized || 0;
+        const total = c.totalAmount || c.contractValue || 0;
+        const pct = total > 0 ? Math.round(recognized / total * 100) : 0;
+        return `<tr>
+          <td><span class="font-medium">${c.contractNumber || '-'}</span></td>
+          <td>${c.customerName || c.contactName || '-'}</td>
+          <td>${Layout.date(c.startDate)}</td>
+          <td>${Layout.date(c.endDate)}</td>
+          <td class="text-right">${Layout.money(total)}</td>
+          <td class="text-right"><span class="text-primary">${Layout.money(recognized)}</span> <span class="text-xs text-gray-400">(${pct}%)</span></td>
+          <td>${Layout.statusBadge(c.status || 'Active')}</td>
+          <td>
+            <button class="btn btn-sm btn-secondary" onclick="Page.view('${c.id}')" data-i18n="common.view">ดู</button>
+            <button class="btn btn-sm btn-primary" onclick="Page.genSchedule('${c.id}')">สร้างตาราง</button>
+          </td>
+        </tr>`;
+      }).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async openCreate() {
+    if (!this._contactAC) {
+      this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
+    }
+    this._contactAC.clear();
+    ['fNumber','fStart','fEnd','fAmount','fDesc'].forEach(id => document.getElementById(id).value = '');
+    Layout.openModal('formModal');
+  },
+
+  async save() {
+    const api = Layout.api(); if (!api) return;
+    const data = { contractNumber: document.getElementById('fNumber').value, contactId: document.getElementById('fContactId').value, startDate: document.getElementById('fStart').value, endDate: document.getElementById('fEnd').value, totalAmount: parseFloat(document.getElementById('fAmount').value) || 0, recognitionMethod: document.getElementById('fMethod').value, description: document.getElementById('fDesc').value };
+    if (!data.contractNumber || !data.totalAmount) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    try { await api.createRevenueContract(data); Layout.toast('สร้างสัญญาสำเร็จ'); Layout.closeModal('formModal'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async view(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getRevenueContract(id);
+      const c = res.data;
+      const obligations = c.obligations || [];
+      const schedules = c.schedules || c.recognitionSchedule || [];
+      const methodMap = {OverTime:'ตามระยะเวลา',PointInTime:'ณ จุดเวลา',Milestone:'ตามขั้นตอน'};
+      document.getElementById('detailTitle').textContent = `สัญญา ${c.contractNumber}`;
+      document.getElementById('detailContent').innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+          <div><span class="text-sm text-gray-500">ลูกค้า:</span><br><strong>${c.customerName||c.contactName||'-'}</strong></div>
+          <div><span class="text-sm text-gray-500">วิธีรับรู้:</span><br><strong>${methodMap[c.recognitionMethod]||c.recognitionMethod||'-'}</strong></div>
+          <div><span class="text-sm text-gray-500">ระยะเวลา:</span><br><strong>${Layout.date(c.startDate)} - ${Layout.date(c.endDate)}</strong></div>
+          <div><span class="text-sm text-gray-500">มูลค่า:</span><br><strong class="text-primary">${Layout.money(c.totalAmount||c.contractValue)}</strong></div>
+        </div>
+        ${obligations.length ? `<h4 style="margin:16px 0 8px">ภาระผูกพัน (Performance Obligations)</h4>
+        <div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">มูลค่า</th><th class="text-right">ความคืบหน้า</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody>${obligations.map(o => `<tr>
+          <td>${o.description||o.name||'-'}</td>
+          <td class="text-right">${Layout.money(o.allocatedPrice||o.amount)}</td>
+          <td class="text-right">${o.completionPercent||o.progressPercentage||0}%</td>
+          <td>${o.isSatisfied ? '<span class="text-xs text-success">รับรู้ครบแล้ว</span>' : `<button class="btn btn-sm btn-primary" onclick="Page.invoiceObligation('${o.id}')">⚡ ออกใบแจ้งหนี้</button>`}</td>
+        </tr>`).join('')}</tbody></table></div>` : ''}
+        ${schedules.length ? `<h4 style="margin:16px 0 8px">ตารางรับรู้รายได้</h4>
+        <div class="table-container"><table class="table"><thead><tr><th>งวด</th><th data-i18n="common.date">วันที่</th><th class="text-right">ยอดรับรู้</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody>${schedules.map((s, i) => `<tr><td>${i+1}</td><td>${Layout.date(s.recognitionDate||s.date)}</td><td class="text-right">${Layout.money(s.amount)}</td><td>${Layout.statusBadge(s.status||'Pending')}</td><td>${s.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.recognize('${s.id}')">รับรู้</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+      document.getElementById('detailFooter').innerHTML = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
+      Layout.openModal('detailModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async genSchedule(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.generateRevenueSchedule(id); Layout.toast('สร้างตารางรับรู้สำเร็จ'); this.view(id); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async invoiceObligation(obligationId) {
+    const api = Layout.api(); if (!api) return;
+    if (!confirm('สร้างใบแจ้งหนี้จากภาระผูกพันนี้? (ระบบจะคำนวณยอดคงเหลือให้อัตโนมัติ)')) return;
+    try {
+      const res = await api.createInvoiceFromObligation(obligationId);
+      Layout.toast(res.message || 'สร้างใบแจ้งหนี้สำเร็จ');
+      if (res.data?.id && confirm('เปิดดูใบแจ้งหนี้ที่สร้าง?')) {
+        window.location.href = `/pages/documents.html?id=${res.data.id}`;
+      }
+    } catch (err) {
+      Layout.toast(err.message || 'สร้างใบแจ้งหนี้ไม่สำเร็จ', 'error');
+    }
+  },
+
+  async recognize(scheduleId) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.recognizeRevenue(scheduleId); Layout.toast('รับรู้รายได้สำเร็จ'); this.load(); Layout.closeModal('detailModal'); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async loadDeferred() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getDeferredRevenue();
+      // backend คืน DeferredRevenueReportResponse: { totalDeferred, totalRecognized, byContract: [{contractName, contactName, contractValue, recognized, deferred}] }
+      const items = res.data?.byContract || [];
+      const content = document.getElementById('deferredContent');
+      content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>สัญญา</th><th>ลูกค้า</th><th class="text-right">มูลค่าสัญญา</th><th class="text-right">รับรู้แล้ว</th><th class="text-right">รอรับรู้</th></tr></thead>
+      <tbody>${items.map(d => `<tr><td class="font-medium">${Layout.esc(d.contractName||'-')}</td><td>${Layout.esc(d.contactName||'-')}</td><td class="text-right">${Layout.money(d.contractValue)}</td><td class="text-right">${Layout.money(d.recognized)}</td><td class="text-right text-primary font-medium">${Layout.money(d.deferred)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
+    } catch (err) { document.getElementById('deferredContent').innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

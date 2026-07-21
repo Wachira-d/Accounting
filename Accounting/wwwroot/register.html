@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="register.title">สมัครสมาชิก - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="/js/inapp-browser-guard.js"></script>
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-left">
+      <div>
+        <a href="/" style="font-size:24px;font-weight:800;margin-bottom:48px;display:block">Next Acc</a>
+        <h2 data-i18n="register.welcome">เริ่มต้นใช้งานฟรี!</h2>
+        <p data-i18n="register.desc">Free Edition ใช้ฟรีตลอดชีพ — อัปเกรดเมื่อธุรกิจของคุณพร้อม</p>
+        <ul class="features-list">
+          <li data-i18n="register.feat1">✓ Free Edition ฟรีตลอดชีพ ไม่หมดอายุ</li>
+          <li data-i18n="register.feat2">✓ ไม่ต้องผูกบัตรเครดิต</li>
+          <li data-i18n="register.feat3">✓ ออกเอกสาร + บันทึกบัญชีได้ครบ</li>
+          <li data-i18n="register.feat4">✓ ทดลอง Pro 14 วันก็ได้</li>
+          <li data-i18n="register.feat5">✓ อัปเกรด/ยกเลิกได้ตลอด</li>
+        </ul>
+      </div>
+    </div>
+    <div class="auth-right">
+      <div class="auth-form">
+        <h1 data-i18n="register.heading">สมัครสมาชิก</h1>
+        <p class="subtitle" data-i18n="register.subtitle">กรอกข้อมูลเพื่อเริ่มต้นใช้งาน</p>
+
+        <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px;white-space:pre-line;line-height:1.5"></div>
+
+        <form onsubmit="handleRegister(event)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group">
+              <label class="form-label" data-i18n="register.firstName">ชื่อ</label>
+              <input type="text" id="firstName" class="form-input" data-i18n-placeholder="register.firstName" placeholder="ชื่อ" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" data-i18n="register.lastName">นามสกุล</label>
+              <input type="text" id="lastName" class="form-input" data-i18n-placeholder="register.lastName" placeholder="นามสกุล" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="login.emailLabel">อีเมล</label>
+            <input type="email" id="email" class="form-input" placeholder="your@email.com" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="register.companyName">ชื่อบริษัท</label>
+            <input type="text" id="companyName" class="form-input" data-i18n-placeholder="register.companyPlaceholder" placeholder="ชื่อบริษัทหรือกิจการ" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="register.passwordLabel">รหัสผ่าน</label>
+            <input type="password" id="password" class="form-input" data-i18n-placeholder="register.passwordHint" placeholder="อย่างน้อย 8 ตัวอักษร" required minlength="8" autocomplete="new-password">
+            <div id="pwHelp" style="margin-top:8px;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#374151">
+              <div style="font-weight:600;margin-bottom:4px">เกณฑ์รหัสผ่าน:</div>
+              <div id="pwLen" class="pw-rule">⚪ ความยาวอย่างน้อย 8 ตัวอักษร</div>
+              <div style="margin-top:6px;font-weight:500">ใช้ตัวอักษรอย่างน้อย <b>2 ประเภท</b> จาก:</div>
+              <div id="pwUpper" class="pw-rule">⚪ ตัวพิมพ์ใหญ่ (A-Z)</div>
+              <div id="pwLower" class="pw-rule">⚪ ตัวพิมพ์เล็ก (a-z)</div>
+              <div id="pwDigit" class="pw-rule">⚪ ตัวเลข (0-9)</div>
+              <div id="pwSpecial" class="pw-rule">⚪ อักขระพิเศษ (!@#$%^&amp;*)</div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="register.confirmPassword">ยืนยันรหัสผ่าน</label>
+            <input type="password" id="confirmPassword" class="form-input" data-i18n-placeholder="register.confirmPlaceholder" placeholder="กรอกรหัสผ่านอีกครั้ง" required minlength="8" autocomplete="new-password">
+            <div id="pwMatch" style="margin-top:6px;font-size:12px;color:#6b7280;display:none"></div>
+          </div>
+
+          <!-- Plan Selection -->
+          <div class="form-group" style="margin-bottom:20px">
+            <label class="form-label" style="font-weight:600;margin-bottom:10px" data-i18n="register.selectPlan">เลือกแพ็กเกจที่ต้องการ</label>
+            <div id="planGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+              <label class="plan-card" data-plan="FreeTrial" style="cursor:pointer;padding:12px;border:2px solid #10B981;border-radius:10px;text-align:center;transition:all 0.15s;background:linear-gradient(135deg,#ecfdf5,#ffffff);position:relative">
+                <input type="radio" name="plan" value="FreeTrial" checked style="display:none">
+                <div style="position:absolute;top:-8px;right:8px;background:#10B981;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">ฟรีตลอดชีพ</div>
+                <div style="font-size:20px">🎁</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px;color:#059669">Free</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">ฟรีตลอดชีพ</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">30 เอกสาร/เดือน</div>
+              </label>
+              <label class="plan-card" data-plan="Basic" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff">
+                <input type="radio" name="plan" value="Basic" style="display:none">
+                <div style="font-size:20px">📦</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px">Starter</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">ทดลอง 14 วัน</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">100 เอกสาร/เดือน</div>
+              </label>
+              <label class="plan-card" data-plan="Pro" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff;position:relative">
+                <input type="radio" name="plan" value="Pro" style="display:none">
+                <div style="position:absolute;top:-8px;right:8px;background:#4F46E5;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">แนะนำ</div>
+                <div style="font-size:20px">⚡</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px">Pro</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">ทดลอง 14 วัน</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">+ e-Tax, AI</div>
+              </label>
+              <label class="plan-card" data-plan="Enterprise" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff">
+                <input type="radio" name="plan" value="Enterprise" style="display:none">
+                <div style="font-size:20px">🏢</div>
+                <div style="font-weight:700;font-size:13px;margin-top:4px">Enterprise</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">ทดลอง 30 วัน</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">หลายบริษัท + API</div>
+              </label>
+            </div>
+            <div style="font-size:11px;color:#64748b;margin-top:6px;text-align:center">💡 เริ่มฟรีตลอดชีพ หรือทดลอง Pro/Enterprise ก่อนตัดสินใจซื้อ — เปลี่ยนแพ็กเกจได้ตลอดเวลา</div>
+          </div>
+
+          <div style="margin-bottom:24px">
+            <label class="form-checkbox">
+              <input type="checkbox" id="agreeTerms" required>
+              <span style="font-size:14px;color:var(--gray-600)">ยอมรับ <a href="#" style="color:var(--primary)">ข้อกำหนดการใช้งาน</a> และ <a href="#" style="color:var(--primary)">นโยบายความเป็นส่วนตัว</a></span>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary w-full btn-lg" id="registerBtn" data-i18n="register.registerBtn">
+            สมัครสมาชิกฟรี
+          </button>
+        </form>
+
+        <div class="auth-divider" data-i18n="register.orRegisterWith">หรือสมัครด้วย</div>
+
+        <div style="display:flex;gap:12px;margin-bottom:24px">
+          <button type="button" onclick="handleGoogleRegister()" class="btn btn-secondary w-full" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px">
+            <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
+            Google
+          </button>
+          <button type="button" onclick="handleFacebookRegister()" class="btn btn-secondary w-full" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px">
+            <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#1877F2" d="M18 9a9 9 0 1 0-10.406 8.89v-6.29H5.309V9h2.285V7.017c0-2.255 1.343-3.501 3.4-3.501.984 0 2.014.176 2.014.176v2.215h-1.135c-1.118 0-1.467.694-1.467 1.406V9h2.496l-.399 2.6h-2.097v6.29A9.002 9.002 0 0 0 18 9z"/></svg>
+            Facebook
+          </button>
+        </div>
+
+        <p style="text-align:center;font-size:14px;color:var(--gray-600)">
+          <span data-i18n="register.hasAccount">มีบัญชีอยู่แล้ว?</span> <a href="/login.html" style="color:var(--primary);font-weight:600" data-i18n="register.loginLink">เข้าสู่ระบบ</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!-- Facebook SDK -->
+  <script async defer crossorigin="anonymous" src="https://connect.facebook.net/th_TH/sdk.js"></script>
+
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    I18n.init();
+
+    // Invite mode: when arriving from /accept-invitation.html the URL carries
+    // ?invite=<token>&email=<addr>. Pre-fill the email, hide the company-name
+    // input (they're joining an existing company), and show a banner so the
+    // user understands why their form looks different.
+    (function _inviteBootstrap() {
+      const sp = new URLSearchParams(location.search);
+      const token = sp.get('invite');
+      const presetEmail = sp.get('email');
+      if (presetEmail) {
+        const e = document.getElementById('email');
+        if (e) { e.value = presetEmail; e.readOnly = true; }
+      }
+      if (!token) return;
+      const company = document.getElementById('companyName');
+      const companyGroup = company?.closest('.form-group');
+      if (companyGroup) companyGroup.style.display = 'none';
+      if (company) company.required = false;
+      const planSection = document.querySelector('input[name="plan"]')?.closest('.form-group, fieldset, div');
+      // Hide plan selection — invitees inherit the inviter's company plan.
+      if (planSection) planSection.style.display = 'none';
+      const form = document.querySelector('form');
+      if (form && !document.getElementById('inviteBanner')) {
+        const banner = document.createElement('div');
+        banner.id = 'inviteBanner';
+        banner.style.cssText = 'background:#ecfeff;border:1px solid #67e8f9;color:#0c4a6e;padding:12px 14px;border-radius:10px;font-size:13px;margin-bottom:16px;line-height:1.6';
+        banner.innerHTML = '🎉 คุณกำลังสมัครสมาชิกเพื่อเข้าร่วมทีม — หลังสมัครเสร็จ ระบบจะพาคุณเข้าบริษัทอัตโนมัติ';
+        form.parentNode.insertBefore(banner, form);
+      }
+    })();
+
+    let ssoConfig = { google: '', facebook: '' };
+    fetch('/api/auth/sso-config').then(r=>r.json()).then(d => {
+      ssoConfig = d.data || d;
+      if (ssoConfig.facebook && window.FB) {
+        FB.init({ appId: ssoConfig.facebook, cookie: true, xfbml: false, version: 'v19.0' });
+      }
+    }).catch(()=>{});
+
+    async function handleSsoResponse(provider, idToken) {
+      const errEl = document.getElementById('errorMsg');
+      errEl.classList.add('hidden');
+      const companyName = document.getElementById('companyName')?.value || '';
+      try {
+        const res = await API.ssoLogin(provider, idToken, companyName || null);
+        if (res.success && res.data) {
+          const token = res.data.accessToken || res.data.token;
+          localStorage.setItem('token', token);
+          localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
+          API.token = token;
+          window.location.href = '/app.html';
+        } else {
+          throw new Error(res.message || 'สมัครสมาชิกไม่สำเร็จ');
+        }
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    function handleGoogleRegister() {
+      if (!ssoConfig.google) {
+        document.getElementById('errorMsg').textContent = 'ยังไม่ได้ตั้งค่า Google OAuth';
+        document.getElementById('errorMsg').classList.remove('hidden');
+        return;
+      }
+      google.accounts.id.initialize({
+        client_id: ssoConfig.google,
+        callback: (response) => handleSsoResponse('Google', response.credential)
+      });
+      google.accounts.id.prompt();
+    }
+
+    function handleFacebookRegister() {
+      if (!ssoConfig.facebook) {
+        document.getElementById('errorMsg').textContent = 'ยังไม่ได้ตั้งค่า Facebook OAuth';
+        document.getElementById('errorMsg').classList.remove('hidden');
+        return;
+      }
+      if (!window.FB) {
+        FB.init({ appId: ssoConfig.facebook, cookie: true, xfbml: false, version: 'v19.0' });
+      }
+      FB.login(function(response) {
+        if (response.authResponse) {
+          handleSsoResponse('Facebook', response.authResponse.accessToken);
+        }
+      }, { scope: 'email,public_profile' });
+    }
+
+    // ===== Live password validation =====
+    function evalPassword(pw) {
+      const checks = {
+        len: pw.length >= 8,
+        upper: /[A-Z]/.test(pw),
+        lower: /[a-z]/.test(pw),
+        digit: /[0-9]/.test(pw),
+        special: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pw),
+      };
+      const cats = (checks.upper?1:0) + (checks.lower?1:0) + (checks.digit?1:0) + (checks.special?1:0);
+      return { ...checks, categories: cats, valid: checks.len && cats >= 2 };
+    }
+    function setRule(id, ok) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.firstChild.nodeValue = ok ? '✅ ' : '⚪ ';
+      el.style.color = ok ? '#059669' : '#6b7280';
+    }
+    document.getElementById('password').addEventListener('input', function() {
+      const r = evalPassword(this.value);
+      setRule('pwLen', r.len);
+      setRule('pwUpper', r.upper);
+      setRule('pwLower', r.lower);
+      setRule('pwDigit', r.digit);
+      setRule('pwSpecial', r.special);
+      checkMatch();
+    });
+    function checkMatch() {
+      const pw = document.getElementById('password').value;
+      const cf = document.getElementById('confirmPassword').value;
+      const el = document.getElementById('pwMatch');
+      if (!cf) { el.style.display = 'none'; return; }
+      if (pw === cf) { el.textContent = '✅ รหัสผ่านตรงกัน'; el.style.color = '#059669'; }
+      else { el.textContent = '✗ รหัสผ่านไม่ตรงกัน'; el.style.color = '#dc2626'; }
+      el.style.display = 'block';
+    }
+    document.getElementById('confirmPassword').addEventListener('input', checkMatch);
+
+    async function handleRegister(e) {
+      e.preventDefault();
+      const btn = document.getElementById('registerBtn');
+      const errEl = document.getElementById('errorMsg');
+      errEl.classList.add('hidden');
+
+      const password = document.getElementById('password').value;
+      const confirmPassword = document.getElementById('confirmPassword').value;
+
+      // Client-side password rules (mirror backend)
+      const r = evalPassword(password);
+      if (!r.valid) {
+        const reasons = [];
+        if (!r.len) reasons.push('ต้องยาวอย่างน้อย 8 ตัวอักษร');
+        if (r.categories < 2) reasons.push('ผสมอย่างน้อย 2 ประเภทจาก: พิมพ์ใหญ่/พิมพ์เล็ก/ตัวเลข/อักขระพิเศษ');
+        errEl.textContent = 'รหัสผ่านไม่ปลอดภัย — ' + reasons.join(' และ ');
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        errEl.textContent = 'รหัสผ่านไม่ตรงกัน';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'กำลังสมัครสมาชิก...';
+
+      try {
+        // ?invite=token preserved across the register form so the new
+        // account auto-joins the inviting company in the same request.
+        // The accept-invitation page hands this off when the invitee
+        // clicks "สมัครสมาชิกใหม่และตอบรับ".
+        const inviteToken = new URLSearchParams(location.search).get('invite') || null;
+        const selectedPlan = document.querySelector('input[name="plan"]:checked')?.value || 'Pro';
+        const res = await API.register({
+          firstName: document.getElementById('firstName').value,
+          lastName: document.getElementById('lastName').value,
+          email: document.getElementById('email').value,
+          password: password,
+          // When the user came in via an invite, they're joining an existing
+          // company — don't ask them to enter another company name (the
+          // backend skips company-creation when an invite is consumed, but
+          // submitting a value would still surface as a stale stub).
+          companyName: inviteToken ? null : document.getElementById('companyName').value,
+          plan: selectedPlan,
+          invitationToken: inviteToken,
+        });
+
+        if (res.success && res.data) {
+          const token = res.data.accessToken || res.data.token;
+          localStorage.setItem('token', token);
+          localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
+          API.token = token;
+          window.location.href = '/app.html';
+        } else {
+          throw new Error(res.message || 'สมัครสมาชิกไม่สำเร็จ');
+        }
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'สมัครสมาชิกฟรี';
+      }
+    }
+
+    if (localStorage.getItem('token')) {
+      window.location.href = '/app.html';
+    }
+
+    // Plan card visual selection
+    document.querySelectorAll('.plan-card').forEach(card => {
+      card.addEventListener('click', function() {
+        document.querySelectorAll('.plan-card').forEach(c => {
+          c.style.borderColor = '#e2e8f0';
+          c.style.background = '#fff';
+          const nameEl = c.querySelector('div:nth-child(3)');
+          if (nameEl) nameEl.style.color = '';
+        });
+        const isFree = this.dataset.plan === 'FreeTrial';
+        const accent = isFree ? '#10B981' : '#4F46E5';
+        const bg = isFree ? 'linear-gradient(135deg,#ecfdf5,#ffffff)' : 'linear-gradient(135deg,#eef2ff,#ffffff)';
+        this.style.borderColor = accent;
+        this.style.background = bg;
+        const nameEl = this.querySelector('div:nth-child(3)');
+        if (nameEl) nameEl.style.color = isFree ? '#059669' : '#4F46E5';
+        this.querySelector('input[type="radio"]').checked = true;
+      });
+    });
+
+    // Apply site settings (logo, background, colors)
+    (async function() {
+      try {
+        const res = await fetch('/api/site/landing');
+        const json = await res.json();
+        const d = json.data;
+        if (!d) return;
+        if (d.registrationEnabled === false) {
+          document.querySelector('.auth-form').innerHTML = '<h1>ปิดรับสมัครชั่วคราว</h1><p>ระบบปิดรับสมัครสมาชิกใหม่ในขณะนี้ กรุณาติดต่อผู้ดูแลระบบ</p><a href="/" class="btn btn-primary" style="margin-top:16px">กลับหน้าแรก</a>';
+          return;
+        }
+        if (d.siteLogoUrl || d.siteName) {
+          const logoEl = document.querySelector('.auth-left a');
+          if (logoEl) {
+            if (d.siteLogoUrl) logoEl.innerHTML = `<img src="${d.siteLogoUrl}" alt="${d.siteName||'Logo'}" style="height:36px;object-fit:contain">`;
+            else logoEl.textContent = d.siteName;
+          }
+        }
+        if (d.loginBackgroundUrl) {
+          const left = document.querySelector('.auth-left');
+          if (left) {
+            left.style.backgroundImage = `linear-gradient(135deg, rgba(99,102,241,.85), rgba(124,58,237,.85)), url('${d.loginBackgroundUrl}')`;
+            left.style.backgroundSize = 'cover';
+            left.style.backgroundPosition = 'center';
+          }
+        }
+        if (d.primaryColor) document.documentElement.style.setProperty('--primary', d.primaryColor);
+        if (d.faviconUrl) {
+          let link = document.querySelector("link[rel~='icon']");
+          if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+          link.href = d.faviconUrl;
+        }
+      } catch {}
+    })();
+  </script>
+</body>
+</html>

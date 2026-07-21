@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายการประจำ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">รายการประจำ</h2><p class="page-subtitle">จัดการรายการเอกสารที่เกิดซ้ำอัตโนมัติ (ใบแจ้งหนี้, ค่าใช้จ่าย)</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างรายการประจำ</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Active">ใช้งาน</option>
+        <option value="Paused">หยุดชั่วคราว</option>
+        <option value="Completed">เสร็จสิ้น</option>
+      </select>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>ชื่อรายการ</th><th data-i18n="common.type">ประเภท</th><th>ความถี่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอด</th><th>ครั้งถัดไป</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">สร้างรายการประจำ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="fId">
+          <div class="form-group"><label class="form-label">ชื่อรายการ *</label><input type="text" class="form-input" id="fName" placeholder="เช่น ค่าเช่าสำนักงาน"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
+              <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
+                <option value="Invoice">ใบแจ้งหนี้</option>
+                <option value="TaxInvoice">ใบกำกับภาษี</option>
+                <option value="Receipt">ใบเสร็จรับเงิน</option>
+                <option value="Expense">ค่าใช้จ่าย</option>
+                <option value="PurchaseOrder">ใบสั่งซื้อ</option>
+                <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
+                <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+                <option value="ReceiptVoucher">ใบสำคัญรับ</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">ความถี่ *</label>
+              <select class="form-select" id="fFrequency">
+                <option value="Daily">รายวัน</option>
+                <option value="Weekly">รายสัปดาห์</option>
+                <option value="Monthly" selected>รายเดือน</option>
+                <option value="Quarterly">รายไตรมาส</option>
+                <option value="Yearly">รายปี</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันเริ่มต้น *</label><input type="date" class="form-input" id="fStartDate"></div>
+            <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="fEndDate"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact"></div>
+            <div class="form-group"><label class="form-label">ยอดเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
+              <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
+            </div>
+            <div class="form-group" id="fExpenseCategoryGroup"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span>
+              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('RecurringExpense','fExpenseCategory','fExpenseCatHint')">🤖</button>
+            </label>
+              <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
+              <div id="fExpenseCatHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">VAT (%)</label><input type="number" class="form-input" id="fVatRate" step="0.01" value="7"></div>
+            <div class="form-group"><label class="form-label">หักภาษี ณ ที่จ่าย (%)</label>
+              <select class="form-select" id="fWhtRate">
+                <option value="0">ไม่หัก</option>
+                <option value="1">1% (ขนส่ง)</option>
+                <option value="2">2% (โฆษณา/รับเหมา)</option>
+                <option value="3">3% (บริการทั่วไป)</option>
+                <option value="5">5% (เช่าทรัพย์/วิชาชีพอิสระ)</option>
+                <option value="10">10% (ค่าธรรมเนียม)</option>
+                <option value="15">15% (ดอกเบี้ย)</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">ประเภทเงินได้</label>
+              <select class="form-select" id="fIncomeType">
+                <option value="">-- ไม่ระบุ --</option>
+                <option value="40(2)">40(2) ค่าจ้างทั่วไป</option>
+                <option value="40(3)">40(3) ค่าวิชาชีพอิสระ</option>
+                <option value="40(4)">40(4) ดอกเบี้ย/เงินปันผล</option>
+                <option value="40(5)">40(5) ค่าเช่า</option>
+                <option value="40(6)">40(6) ค่าวิชาชีพ</option>
+                <option value="40(7)">40(7) ค่ารับเหมา</option>
+                <option value="40(8)">40(8) ค่าบริการ/อื่นๆ</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+              <span data-i18n="common.detail">รายละเอียด</span>
+              <button type="button" class="btn btn-sm btn-secondary" style="font-size:11px;padding:2px 8px" onclick="Page.toggleVarPanel()">🏷️ แทรกตัวแปร</button>
+            </label>
+            <textarea class="form-input" id="fDescription" rows="2" placeholder="เช่น ค่าบริการทำบัญชีเดือน &lt;&lt;month&gt;&gt;" oninput="Page._updateVarPreview()"></textarea>
+            <div id="varPanel" style="display:none;margin-top:6px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px">
+              <div style="font-size:11px;color:#0369a1;margin-bottom:6px">💡 คลิกตัวแปรเพื่อแทรกลงในรายละเอียด — ระบบเติมค่าจริงให้ทุกงวดตอนออกเอกสาร (ค่าตัวอย่าง = งวดวันนี้)</div>
+              <div id="varChips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+              <div id="varPreview" style="margin-top:8px;font-size:11px;color:#64748b;border-top:1px dashed #bae6fd;padding-top:6px"></div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label"><input type="checkbox" id="fAutoApprove"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
+            </div>
+            <div class="form-group">
+              <label class="form-label"><input type="checkbox" id="fAutoWht" checked> สร้างหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติ (เมื่อมี WHT)</label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button></div>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="detailTitle" data-i18n="common.detail">รายละเอียด</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent"></div>
+        <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  page: 1,
+  items: [],
+
+  init() {
+    if (!Layout.init('recurring')) return;
+    Layout.setTitle('รายการประจำ');
+    this.load();
+  },
+
+  async load() {
+    const api = Layout.api(); if (!api) return;
+    const search = document.getElementById('searchInput')?.value || '';
+    const status = document.getElementById('statusFilter')?.value || '';
+    try {
+      let q = `?page=${this.page}&pageSize=20`;
+      if (search) q += '&search=' + encodeURIComponent(search);
+      if (status) q += '&status=' + status;
+      const res = await api.getRecurring(q);
+      const items = res.data?.items || res.data || [];
+      this.items = items;
+      const tbody = document.getElementById('tableBody');
+      const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',Yearly:'รายปี'};
+      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
+      tbody.innerHTML = items.map(r => `<tr>
+        <td><span class="font-medium">${r.name || '-'}</span></td>
+        <td>${Layout.docTypeLabel(r.documentType || '-')}</td>
+        <td>${freqMap[r.frequency] || r.frequency || '-'}</td>
+        <td>${r.contactName || '-'}</td>
+        <td class="text-right">${Layout.money(r.amount)}</td>
+        <td>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</td>
+        <td>${Layout.statusBadge(r.status || 'Active')}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="Page.view('${r.id}')" data-i18n="common.view">ดู</button>
+          ${r.status === 'Active' ? `<button class="btn btn-sm btn-warning" onclick="Page.pause('${r.id}')">หยุด</button>` : ''}
+          ${r.status === 'Paused' ? `<button class="btn btn-sm btn-success" onclick="Page.resume('${r.id}')">เริ่มต่อ</button>` : ''}
+          ${r.status === 'Active' ? `<button class="btn btn-sm btn-primary" onclick="Page.runNow('${r.id}')">สร้างทันที</button>` : ''}
+        </td>
+      </tr>`).join('');
+      const totalPages = res.data?.totalPages || 1;
+      document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.gotoPage');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  gotoPage(p) { Page.page = p; Page.load(); },
+
+  async openCreate() {
+    document.getElementById('formTitle').textContent = 'สร้างรายการประจำ';
+    document.getElementById('fId').value = '';
+    ['fName','fStartDate','fEndDate','fAmount','fDescription','fIncomeType'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('fFrequency').value = 'Monthly';
+    document.getElementById('fDocType').value = 'Invoice';
+    document.getElementById('fVatRate').value = '7';
+    document.getElementById('fWhtRate').value = '0';
+    document.getElementById('fPaymentChannel').value = '';
+    document.getElementById('fExpenseCategory').value = '';
+    document.getElementById('fAutoApprove').checked = false;
+    document.getElementById('fAutoWht').checked = true;
+    await this.loadFormData();
+    if (this._contactAC) this._contactAC.clear();
+    this.onDocTypeChange();
+    Layout.openModal('formModal');
+    const vp = document.getElementById('varPanel'); if (vp) vp.style.display = 'none';
+  },
+
+  // ── ตัวแปร placeholder — คำนวณค่าตัวอย่าง (งวดวันนี้) ให้ตรงกับ backend ──
+  _TH_MONTHS: ['', 'มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'],
+  _EN_MONTHS: ['', 'January','February','March','April','May','June','July','August','September','October','November','December'],
+  _varValues() {
+    const d = new Date(), m = d.getMonth() + 1, y = d.getFullYear();
+    const pv = new Date(y, m - 2, 1), nx = new Date(y, m, 1);
+    const p2 = (n) => String(n).padStart(2, '0');
+    return [
+      ['month', this._TH_MONTHS[m], 'เดือนนี้ (ไทย)'],
+      ['month_prev', this._TH_MONTHS[pv.getMonth()+1], 'เดือนก่อน'],
+      ['month_next', this._TH_MONTHS[nx.getMonth()+1], 'เดือนถัดไป'],
+      ['month_en', this._EN_MONTHS[m], 'เดือน (อังกฤษ)'],
+      ['month_no', p2(m), 'เลขเดือน'],
+      ['year', String(y + 543), 'ปี พ.ศ.'],
+      ['year_ce', String(y), 'ปี ค.ศ.'],
+      ['quarter_th', 'ไตรมาส ' + (Math.floor((m-1)/3)+1), 'ไตรมาส (ไทย)'],
+      ['quarter', 'Q' + (Math.floor((m-1)/3)+1), 'ไตรมาส'],
+      ['date', `${p2(d.getDate())}/${p2(m)}/${y+543}`, 'วันที่ออก'],
+      ['day', p2(d.getDate()), 'วันที่'],
+    ];
+  },
+  toggleVarPanel() {
+    const panel = document.getElementById('varPanel');
+    if (!panel) return;
+    const show = panel.style.display === 'none';
+    panel.style.display = show ? 'block' : 'none';
+    if (!show) return;
+    const chips = document.getElementById('varChips');
+    chips.innerHTML = this._varValues().map(([tok, val, label]) =>
+      `<button type="button" onclick="Page.insertVar('&lt;&lt;${tok}&gt;&gt;')" title="${label} → ${val}"
+        style="border:1px solid #7dd3fc;background:#fff;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;color:#0369a1">
+        &lt;&lt;${tok}&gt;&gt; <span style="color:#94a3b8">= ${val}</span></button>`).join('');
+    this._updateVarPreview();
+  },
+  insertVar(token) {
+    const ta = document.getElementById('fDescription');
+    if (!ta) return;
+    const s = ta.selectionStart ?? ta.value.length, e = ta.selectionEnd ?? ta.value.length;
+    ta.value = ta.value.slice(0, s) + token + ta.value.slice(e);
+    const pos = s + token.length;
+    ta.focus(); ta.setSelectionRange(pos, pos);
+    this._updateVarPreview();
+  },
+  _updateVarPreview() {
+    const prev = document.getElementById('varPreview');
+    const ta = document.getElementById('fDescription');
+    if (!prev || !ta) return;
+    let out = ta.value || '';
+    for (const [tok, val] of this._varValues())
+      out = out.replace(new RegExp(`(?:<<|\\{\\{)\\s*${tok}\\s*(?:>>|\\}\\})`, 'gi'), val);
+    prev.innerHTML = out.trim() ? `ตัวอย่างงวดนี้: <b style="color:#0f172a">${out.replace(/</g,'&lt;')}</b>` : '';
+  },
+
+  async aiSuggestAccount(slot, selectId, hintId) {
+    try {
+      const cid = Layout.getCompanyId();
+      const token = localStorage.getItem('token');
+      const r = await fetch(`/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`,
+        { headers: { 'Authorization': 'Bearer ' + token } });
+      const j = await r.json();
+      const d = j?.data;
+      const sel = document.getElementById(selectId);
+      const hint = hintId ? document.getElementById(hintId) : null;
+      if (!d || !d.accountId) { if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ'); return; }
+      if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+        const opt = document.createElement('option');
+        opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+        sel.appendChild(opt);
+      }
+      if (sel) sel.value = d.accountId;
+      if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+      if (sel && d.feedbackId) {
+        sel.addEventListener('change', () => {
+          try {
+            fetch(`/api/companies/${cid}/ai-feedback/record`, {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+            }).catch(() => {});
+          } catch {}
+        }, { once: true });
+      }
+    } catch { /* best-effort */ }
+  },
+  async loadFormData() {
+    const api = Layout.api(); if (!api) return;
+    if (!this._contactAC) {
+      this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
+    }
+    try {
+      const [baRes, pcRes] = await Promise.all([
+        api.getBankAccounts().catch(() => ({ data: [] })),
+        api.getPaymentChannels().catch(() => ({ data: [] }))
+      ]);
+      this.bankAccounts = baRes?.data || [];
+      this.paymentChannels = pcRes?.data || [];
+      const sel = document.getElementById('fPaymentChannel');
+      sel.innerHTML = '<option value="">— เงินสด (ค่าเริ่มต้น) —</option>';
+      if (this.bankAccounts.length) {
+        sel.innerHTML += '<optgroup label="บัญชีธนาคาร">' +
+          this.bankAccounts.map(a => `<option value="bank:${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
+          '</optgroup>';
+      }
+      const nonBankAccounts = this.paymentChannels.filter(a => !a.accountCode.startsWith('1112'));
+      if (nonBankAccounts.length) {
+        sel.innerHTML += '<optgroup label="เงินสด / อื่นๆ">' +
+          nonBankAccounts.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +
+          '</optgroup>';
+      }
+    } catch (e) { this.bankAccounts = []; this.paymentChannels = []; }
+    try {
+      const ac = await api.getAccounts('?type=Expense&pageSize=200');
+      this.expenseCategories = ac?.data?.items || ac?.data || [];
+      const sel = document.getElementById('fExpenseCategory');
+      sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + this.expenseCategories.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+    } catch (e) { this.expenseCategories = []; }
+  },
+
+  onDocTypeChange() {
+    const docType = document.getElementById('fDocType')?.value;
+    const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder'];
+    const ecGroup = document.getElementById('fExpenseCategoryGroup');
+    if (ecGroup) ecGroup.style.display = expenseTypes.includes(docType) ? '' : 'none';
+  },
+
+  async save() {
+    const api = Layout.api(); if (!api) return;
+    const id = document.getElementById('fId').value;
+    const name = document.getElementById('fName').value.trim();
+    const startDate = document.getElementById('fStartDate').value;
+    const amount = parseFloat(document.getElementById('fAmount').value) || 0;
+    const description = document.getElementById('fDescription').value.trim();
+    if (!name || !startDate || !amount) { Layout.toast('กรุณากรอกชื่อ, วันเริ่มต้น และยอดเงิน', 'error'); return; }
+
+    const vatRate = parseFloat(document.getElementById('fVatRate').value) || 0;
+    const whtRate = parseFloat(document.getElementById('fWhtRate').value) || 0;
+    const incomeType = document.getElementById('fIncomeType').value || null;
+
+    const paymentChannelVal = document.getElementById('fPaymentChannel')?.value || '';
+    let bankAccountId = null;
+    let paymentAccountId = null;
+    if (paymentChannelVal.startsWith('bank:')) bankAccountId = paymentChannelVal.substring(5);
+    else if (paymentChannelVal.startsWith('account:')) paymentAccountId = paymentChannelVal.substring(8);
+    const expenseCategoryId = document.getElementById('fExpenseCategory')?.value || null;
+
+    const templateData = JSON.stringify({
+      lines: [{
+        description: description || name,
+        quantity: 1,
+        unitPrice: amount,
+        vatRate: vatRate,
+        withholdingTaxRate: whtRate,
+        incomeTypeCode: incomeType
+      }],
+      bankAccountId: bankAccountId,
+      paymentAccountId: paymentAccountId,
+      expenseCategoryId: expenseCategoryId,
+      autoGenerateWht: document.getElementById('fAutoWht').checked,
+      dueDays: 30
+    });
+
+    const data = {
+      name,
+      description,
+      templateType: 'Document',
+      documentType: document.getElementById('fDocType').value,
+      frequency: document.getElementById('fFrequency').value,
+      startDate,
+      endDate: document.getElementById('fEndDate').value || null,
+      contactId: document.getElementById('fContactId').value || null,
+      templateData,
+      autoApprove: document.getElementById('fAutoApprove').checked,
+      notifyBeforeRun: true,
+      notifyDaysBefore: 1
+    };
+
+    try {
+      if (id) await api.updateRecurring(id, data);
+      else await api.createRecurring(data);
+      Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างสำเร็จ');
+      Layout.closeModal('formModal');
+      this.load();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async view(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      if (!this.bankAccounts || !this.expenseCategories) await this.loadFormData();
+      const res = await api.getRecurringItem(id);
+      const r = res.data;
+      const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',Yearly:'รายปี'};
+      document.getElementById('detailTitle').textContent = r.name || 'รายละเอียด';
+      let tdPaymentName = 'เงินสด (ค่าเริ่มต้น)', tdExpenseName = '-';
+      try {
+        const td = JSON.parse(r.templateData || '{}');
+        if (td.paymentAccountId && this.paymentChannels) {
+          const pa = this.paymentChannels.find(a => a.id === td.paymentAccountId);
+          if (pa) tdPaymentName = `${pa.accountCode} - ${pa.accountName}`;
+        } else if (td.bankAccountId && this.bankAccounts) {
+          const ba = this.bankAccounts.find(a => a.id === td.bankAccountId);
+          if (ba) tdPaymentName = `${ba.accountName} (${ba.bankName} ${ba.accountNumber})`;
+        }
+        if (td.expenseCategoryId && this.expenseCategories) {
+          const ec = this.expenseCategories.find(a => a.id === td.expenseCategoryId);
+          if (ec) tdExpenseName = `${ec.accountCode} - ${ec.accountName}`;
+        }
+      } catch {}
+      document.getElementById('detailContent').innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div><span class="text-gray-500 text-sm">ประเภทเอกสาร:</span><br><strong>${Layout.docTypeLabel(r.documentType||r.type)}</strong></div>
+          <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${freqMap[r.frequency]||r.frequency}</strong></div>
+          <div><span class="text-gray-500 text-sm">วันเริ่มต้น:</span><br><strong>${Layout.date(r.startDate)}</strong></div>
+          <div><span class="text-gray-500 text-sm">วันสิ้นสุด:</span><br><strong>${r.endDate ? Layout.date(r.endDate) : 'ไม่กำหนด'}</strong></div>
+          <div><span class="text-gray-500 text-sm">ผู้ติดต่อ:</span><br><strong>${r.contactName||'-'}</strong></div>
+          <div><span class="text-gray-500 text-sm">ยอดเงิน:</span><br><strong>${Layout.money(r.amount)}</strong></div>
+          <div><span class="text-gray-500 text-sm">แหล่งเงิน / ช่องทางชำระ:</span><br><strong>${tdPaymentName}</strong></div>
+          <div><span class="text-gray-500 text-sm">หมวดหมู่ค่าใช้จ่าย:</span><br><strong>${tdExpenseName}</strong></div>
+          <div><span class="text-gray-500 text-sm">สถานะ:</span><br>${Layout.statusBadge(r.status)}</div>
+          <div><span class="text-gray-500 text-sm">ครั้งถัดไป:</span><br><strong>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</strong></div>
+          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.executionCount || r.runCount || 0} ครั้ง</strong></div>
+          <div><span class="text-gray-500 text-sm">อนุมัติอัตโนมัติ:</span><br><strong>${r.autoApprove ? 'ใช่' : 'ไม่'}</strong></div>
+        </div>
+        ${r.description ? `<div style="margin-top:16px"><span class="text-gray-500 text-sm">รายละเอียด:</span><br>${r.description}</div>` : ''}`;
+      document.getElementById('detailFooter').innerHTML = `
+        <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
+        <button class="btn btn-danger" onclick="Page.del('${r.id}')" data-i18n="common.delete">ลบ</button>
+        <button class="btn btn-primary" onclick="Page.editFromDetail('${r.id}')" data-i18n="common.edit">แก้ไข</button>`;
+      Layout.openModal('detailModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async editFromDetail(id) {
+    Layout.closeModal('detailModal');
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getRecurringItem(id);
+      const r = res.data;
+      document.getElementById('formTitle').textContent = 'แก้ไขรายการประจำ';
+      document.getElementById('fId').value = r.id;
+      document.getElementById('fName').value = r.name || '';
+      document.getElementById('fDocType').value = r.documentType || r.type || 'Invoice';
+      document.getElementById('fFrequency').value = r.frequency || 'Monthly';
+      document.getElementById('fStartDate').value = Layout.dateInput(r.startDate);
+      document.getElementById('fEndDate').value = Layout.dateInput(r.endDate);
+      document.getElementById('fAmount').value = r.amount || '';
+      document.getElementById('fDescription').value = r.description || '';
+      document.getElementById('fAutoApprove').checked = r.autoApprove || false;
+
+      let savedPaymentChannelVal = '';
+      let savedExpenseCategoryId = '';
+      try {
+        const td = JSON.parse(r.templateData || '{}');
+        const line = td.lines && td.lines[0];
+        if (line) {
+          document.getElementById('fVatRate').value = line.vatRate ?? 7;
+          document.getElementById('fWhtRate').value = line.withholdingTaxRate ?? 0;
+          document.getElementById('fIncomeType').value = line.incomeTypeCode || '';
+        }
+        if (td.autoGenerateWht !== undefined) document.getElementById('fAutoWht').checked = td.autoGenerateWht;
+        if (td.paymentAccountId) savedPaymentChannelVal = 'account:' + td.paymentAccountId;
+        else if (td.bankAccountId) savedPaymentChannelVal = 'bank:' + td.bankAccountId;
+        savedExpenseCategoryId = td.expenseCategoryId || '';
+      } catch {}
+
+      await this.loadFormData();
+      if (r.contactId && this._contactAC) this._contactAC.setValue(r.contactId, r.contactName || '');
+      if (savedPaymentChannelVal) document.getElementById('fPaymentChannel').value = savedPaymentChannelVal;
+      if (savedExpenseCategoryId) document.getElementById('fExpenseCategory').value = savedExpenseCategoryId;
+      this.onDocTypeChange();
+      Layout.openModal('formModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async pause(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.pauseRecurring(id); Layout.toast('หยุดชั่วคราวสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async resume(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.resumeRecurring(id); Layout.toast('เริ่มต่อสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async runNow(id) {
+    if (!confirm('สร้างเอกสารจากรายการนี้ทันที?')) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.runRecurringNow(id); Layout.toast('สร้างเอกสารสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async del(id) {
+    if (!(await Layout.confirmDanger({ title: 'ลบรายการประจำ', message: 'การตั้งค่าและประวัติการรันจะถูกลบทั้งหมด', mode: 'math' }))) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.deleteRecurring(id); Layout.toast('ลบสำเร็จ'); Layout.closeModal('detailModal'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+};
+
+Page.init();
+  </script>
+</body>
+</html>

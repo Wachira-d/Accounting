@@ -1,0 +1,1602 @@
+# Document Flow — Reference
+
+> **ขอบเขต**: ไล่ flow เอกสารทุกประเภทในระบบ ตั้งแต่ "นำเข้า"
+> (สร้างเอง / OCR / integration / convert / recurring) จนถึง "นำออก"
+> (PDF / e-tax XML / รายงานภาษี / integration)
+> **เป้าหมาย**: ใช้เป็น single source of truth ของ behavior — ทุก commit
+> ที่เปลี่ยน flow ต้องอัปเดตไฟล์นี้พร้อมกัน
+
+อ้างอิงไฟล์หลัก:
+- `Models/Enums/AllEnums.cs:305` — `DocumentType` enum
+- `Models/Enums/AllEnums.cs:343` — `DocumentStatus` enum
+- `Services/Implementations/DocumentService.cs` — core flow (5,700+ บรรทัด)
+- `Services/Implementations/OcrService.cs` — OCR pipeline
+- `Services/Implementations/TaxService.cs` + `.Export.cs` + `.EFiling.cs`
+- `Services/Implementations/TaxFilingExportService.cs` — RD e-Filing
+- `Services/Implementations/PdfGenerationService*.cs` — PDF/A-3
+- `Services/Implementations/EtaxInvoiceService.cs` — XAdES-BES signing
+
+---
+
+## 1. ประเภทเอกสาร (DocumentType)
+
+### 1.1 ฝั่งรายรับ (Sales / Revenue)
+| Code | Type | ชื่อไทย | บทบาท |
+| --- | --- | --- | --- |
+| 1 | `Quotation` | ใบเสนอราคา | ก่อนขาย, ไม่กระทบ GL/VAT |
+| 2 | `Invoice` | ใบแจ้งหนี้ | สร้าง AR + revenue (accrual) |
+| 11 | `BillingNote` | ใบวางบิล | รวมใบแจ้งหนี้หลายใบมาวางบิล |
+| 4 | `TaxInvoice` | ใบกำกับภาษี | output VAT เข้า ภ.พ.30 |
+| 3 | `Receipt` | ใบเสร็จรับเงิน | รับเงิน (ปิด AR หรือ cash sale) |
+| 14 | `ReceiptVoucher` | ใบสำคัญรับ | ใบเสร็จ-ใบกำกับฯ คู่เดียว / มัดจำ |
+| 10 | `DeliveryNote` | ใบส่งของ | เคลื่อน stock ฝั่งส่ง (sales-side) |
+| 5 | `DebitNote` | ใบเพิ่มหนี้ | +ฐาน + VAT ของใบเดิม (§86/9) |
+| 6 | `CreditNote` | ใบลดหนี้ | −ฐาน − VAT (§86/10) — **บังคับเลือก `CreditNoteReason`** |
+
+### 1.2 ฝั่งรายจ่าย (Purchase / Expense)
+| Code | Type | ชื่อไทย | บทบาท |
+| --- | --- | --- | --- |
+| 12 | `PurchaseRequisition` | ใบขอซื้อ | internal, ไม่กระทบ GL/VAT |
+| 7 | `PurchaseOrder` | ใบสั่งซื้อ | commitment, ไม่กระทบ GL/VAT |
+| 16 | `GoodsReceiptNote` | ใบรับสินค้า (GRN) | รับของจริง, accrue GRNI, +stock |
+| 8 | `PurchaseInvoice` | ใบแจ้งหนี้ซื้อ | input VAT + AP (3-way match) |
+| 9 | `Expense` | ใบบันทึกค่าใช้จ่าย | input VAT + ค่าใช้จ่าย (ไม่ผูก PO) |
+| 13 | `PaymentVoucher` | ใบสำคัญจ่าย | จ่ายเงิน — อ้างใบกำกับซื้อ (PV master switch) |
+| 15 | `CertificateInLieu` | ใบรับรองแทนใบเสร็จ | จ่ายที่ผู้ขายไม่ออกใบเสร็จ (ขนส่ง/ตลาด/ฯลฯ) |
+
+### 1.3 สถานะ (DocumentStatus)
+```
+Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
+                            ↓   ↑ (restore กู้เอกสารยกเลิกผิด)
+                          Voided / Rejected / Overdue
+```
+- **`Draft`** = `DocumentNumber = "DRAFT-{guid}"` placeholder (กัน gap §86/4)
+  — *ยกเว้น* เอกสารที่ restore จาก Voided: Draft แต่ถือ **เลขจริงเดิม**
+  (re-approve คงเลข ไม่ regenerate)
+- **`Approved`** = ออกเลขจริง + post JE + snapshot tax point + stock move
+- **`Voided`** = reverse JE + reverse stock; เก็บไว้ดู audit (ห้าม hard delete).
+  กู้คืนได้ด้วย `RestoreVoidedDocumentAsync` → กลับเป็น Draft (คงเลข) ถ้ายังไม่
+  ยื่นภาษี/ไม่มี e-Tax accepted (ดู §3.6 Void/Restore)
+- **`Sent`** = email ออกแล้ว (optionally e-tax-by-email + RD cc)
+
+---
+
+## 2. ทางเข้า (Entry Points)
+
+### 2.1 สร้างมือ (ผู้ใช้)
+- **Endpoint**: `POST /api/companies/{companyId}/documents`
+- **Controller**: `DocumentController.cs:165` → `DocumentService.CreateDocumentAsync` (`DocumentService.cs:279`)
+- **กฎ**:
+  - ตั้ง `Status = Draft`, `DocumentNumber = "DRAFT-{guid}"`
+  - resolve `AccountCode → AccountId` ต่อบรรทัด (รองรับ AI suggest)
+  - validate VAT-claimability ต่อบัญชี (`ChartOfAccount.InputVatClaimable`)
+  - compute line amounts (`ComputeLineAmounts`) รองรับ `PricesIncludeVat`
+  - เก็บ `GlAccountAiFeedbackId` ต่อบรรทัด (ปิดลูปการสอน local model)
+  - ยังไม่สร้าง JE / ยังไม่กระทบ stock จนกว่าจะ Approve
+
+### 2.2 OCR (สแกนเอกสาร)
+- **Flow**: อัปโหลด → OCR เก็บ `OcrScanResult` → review modal → "สร้างเอกสาร"
+- **Endpoint**: `POST /api/companies/{id}/ocr/{scanId}/create-document`
+- **Service**: `OcrService.CreateDocumentFromScanAsync` (`OcrService.cs:3245`)
+- **กฎเหล็ก #3**: OCR ต้อง pre-fill **ครบทุก field §86/4** — ผู้ใช้แค่ "ยืนยัน"
+- **Field ที่ OCR map**:
+  - Header: contact (match TaxId → contact / สร้างใหม่ถ้าไม่เจอ), invoice no/date,
+    supplier branch, VAT base/amount/grand
+  - Lines: description, qty, unit price, vat rate, **`GlAccountAiFeedbackId`**
+    (เดิมหาย — ตอนนี้แนบให้บรรทัดแรกที่ใช้ผัง AI ตอน `Approve` จะเรียก
+    `RecordLineAccountFeedbackAsync` ปิดลูป)
+  - Payment: `scanDebitAccountId` → `ExpenseCategoryId`; `scanCreditAccountId` →
+    `BankAccountId / PaymentAccountId` (lookup `LinkedAccountId`)
+  - PV: `bookSupplierInvoice` flag → `HasTaxInvoiceReference = true` +
+    `SupplierInvoiceNumber / Date / BranchCode`
+- **Fallback chain (กฎเหล็ก #3)**:
+  Vision/OCR → local distillation model → historical lookup (vendor's last doc)
+  → rule defaults (VAT 7%, branch 00000, vendor default GL) → AI ตอน last resort
+  (ผ่าน `IAiOrchestrator.AskAsync` per กฎเหล็ก #1)
+- **แหล่งเงิน (Cr) auto-fill — 3 ชั้น priority** (`OcrService.cs` credit auto-fill
+  + `ResolvePaymentSourceOverrideAsync`): สำหรับ PV/Receipt/Expense จ่ายสด —
+  (1) partner metadata top-level `paymentAccountCode`/`bankCode`/`bankAccountCode`
+  (match CoA code → เลขบัญชีธนาคาร→LinkedAccountId) → (2)
+  `CompanySettings.DefaultPaymentAccountId` (admin ตั้งใน Settings) → (3)
+  lowest-code fallback เดิม. เดิมมีแต่ชั้น 3 → หยิบบัญชีรหัสต่ำสุดมั่ว
+  (กรุงไทย 11110 ชนะ กสิกร 11120). A/P-A/R ไม่มีแหล่งเงิน → ใช้ prefix เดิม.
+- **แก้แหล่งเงินหลัง approve** — `DocumentService.ReclassifyPaymentSourceAsync`
+  (`POST /documents/{id}/reclassify-payment-source`): คู่กับ reclassify-line
+  (ฝั่ง Dr). post correcting-JE **Dr ผังเก่า / Cr ผังใหม่** ขนาด PaidAmount →
+  เงินกลับเข้าบัญชีเก่า + ออกจากบัญชีใหม่. gate เดียวกับ reclassify-line
+  (period open, ไม่มี downstream/Payment แยก/TaxReport submitted/e-Tax).
+  UI: ปุ่ม ✏️ ข้าง "แหล่งเงิน (Cr)" ในหน้า detail (PV/Receipt/Expense ที่
+  Approved/Paid).
+- **Phantom split-VAT sanitizer**: `OcrService.SanitizeVatSplitArtifacts`
+  ตัด suffix "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)/(VATable)/(non-VAT)/(VAT included)…"
+  ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
+  ที่ description ตรงกัน + drop phantom remainder ≤ ฿1. รันก่อน serialize ลง
+  `ExtractedItemsJson` → ทุก path (web UI + OCR API) ได้ไฟล์ items ที่สะอาด.
+- **Single create path (กฎ: ห้ามมี path คู่ขนาน)**: ทั้ง web UI ("สร้างเอกสาร")
+  และ OCR API (`autoCreate=true`) สร้างเอกสารผ่าน **`CreateDocumentFromScanAsync`
+  ตัวเดียวกัน**. `AutoCreateDocumentAsync` (เรียกตอน scan ผ่าน confidence gate)
+  เป็น thin wrapper: `SaveChangesAsync()` (persist scan fields) → delegate ไป
+  `CreateDocumentFromScanAsync(scan.Id, targetType=null)`. เดิมเป็น
+  implementation คู่ขนานที่ "ง่ายกว่า" → OCR API ได้เอกสารไม่ตรงกับอัปโหลดผ่าน
+  เว็บ (ขาด WHT base reconstruct, supplier-invoice ref ภพ.30, bank/payment
+  account, sales-side contact, PO linkage, CertInLieu fields, line reconcile,
+  GL feedback, RD-compliance). ตอนนี้ data point ทุกตัวตรงกัน.
+- **DRAFT- placeholder (กฎ §86/4)**: `CreateDocumentFromScanAsync` ตั้งเลข
+  เริ่มต้นเป็น `DRAFT-{guid14}` เหมือน `DocumentService.CreateDocumentAsync`
+  → เลขจริงออกตอน Approve เท่านั้น (`ApproveDocumentAsync` line 1828 regen
+  จาก `doc.DocumentDate` ที่ตอนนั้น). กัน:
+  - **DocumentNumber↔DocumentDate desync** เคสที่ user แก้วันที่ตอน review
+    แล้วเลขที่ออกไปคาวันเก่า (artifact ก่อน TZ fix หรือก่อนแก้ DocumentDate)
+  - **Sequence gap** ตอนลบ Draft (เลขจริงไม่เคยออก → ลบได้ปลอดภัย)
+- **Line reconcile (Case A/B/C/D)** ใน `CreateDocumentFromScanAsync` (ใช้ร่วม
+  ทั้ง 2 path) — reconcile line amounts กับ header subtotal/total ก่อนสร้าง
+  `DocumentLine`:
+  - (A) ราคารวม VAT — `grossSum` อยู่ระหว่าง subtotal กับ total → ตั้ง
+    `PricesIncludeVat=true` + เติม line "ค่าขนส่ง/บริการอื่น" ถ้ามี gap
+  - (B) ราคาแยก VAT — `grossSum ≈ subtotal` → ไม่ปรับ
+  - (C) ส่วนลด — `grossSum > total` → คำนวณ `docDiscountPercent` ลงทุกบรรทัด
+  - (D) OCR ขาด — `grossSum < subtotal` → ปล่อยให้ user แก้
+- **Quota refund**: ถ้า re-OCR (retry) ไม่ใช้ quota ใหม่ (`OcrService.cs`)
+
+### 2.3 Integration ภายนอก
+- **Controller**: `IntegrationController.cs` — manage config + API key issuance
+- **เข้าทาง** `/api/companies/{id}/documents` (ทาง standard) พร้อม
+  `X-Acting-User` header
+- **Behavior พิเศษ**:
+  - resolve external account/user IDs → company members (mapping table)
+  - `AutoApprove` flag ตาม `IntegrationConfig` → ข้าม Draft state
+  - **`IsCashSale` (B2B ขายเงินสด)** บน `InboundInvoiceRequest`: สร้าง TaxInvoice
+    ที่ตั้ง `IssuedAsCashReceipt=true` + `PaymentAccountId` แล้ว **post JE แบบ
+    "ขายเงินสด" ผ่าน `IDocumentService.PostCashSaleJournalAsync` (→ AutoPost
+    branch cash-receipt ที่ขยายให้รับ TaxInvoice+IssuedAsCashReceipt)** — ไม่ใช่
+    mapping-JE (Dr ลูกหนี้) เดิม. **GL: `Dr เงินสด(PaymentAccountId) + [Dr 217xx +
+    Dr 21913 ถ้ามัดจำ drives] / Cr รายได้(ราย line) + Cr 21911` — ไม่มีลูกหนี้การค้า
+    เลย** (reuse เส้น `driveDeposit` ที่ verified). สำเร็จ → `PaidAmount=Total,
+    BalanceDue=0` → e-Tax **T03** + หัว "ใบเสร็จรับเงิน/ใบกำกับภาษี". ยุบ 3 ใบ
+    (TIV+REC×2) เหลือใบเดียว (spec TakeTime).
+    **fail-soft:** ลง JE เงินสดไม่สำเร็จ → degrade เป็นตั้งหนี้ (mapping JE Dr ลูกหนี้)
+    + คง `BalanceDue=Total` + `IssuedAsCashReceipt=false` → TakeTime capability-
+    detection (`balanceDue>0`) จะ fallback settle เอง (ไม่ settle ซ้ำ). PostCashSale
+    detach JE ที่ค้างใน context ก่อน rethrow (กัน pollution).
+  - **Deposit fields บน `InboundInvoiceRequest`** (`DepositAppliedAmount`,
+    `DepositAppliedRef`, `DepositOutputVatDeferred`, `DepositAppliedDrivesJournal`)
+    → persist ลง `Document` ตอนสร้าง (stamp `DepositAppliedAmount` ทุกกรณี).
+    `DepositAppliedDrivesJournal=true` → `driveDeposit` ใน AutoPost อ่านยอดนี้กลับ
+    217xx/21913 + Dr เงินสด "สุทธิ" (Total − ยอด). resolve `depositAppliedRef` เป็น
+    ใบมัดจำจริง (IsDeposit) — เคส A doc / เคส B journal-ref. `DrivesJournal=false`
+    = display-only (Dr เงินสดเต็ม, TakeTime กลับมัดจำเอง). void สมมาตรผ่าน 7c
+    (`UnrealizeDrivesDepositAsync`).
+  - `/integration/journals` + `/integration/daily-summary` → JournalEntry ที่
+    **ไม่มี SourceDocumentId** (รายงาน VAT มี fallback ใน `TaxService.cs:436+`
+    สแกนหา JE ที่มี VAT account แล้วรวมเข้า ภ.พ.30 ให้)
+  - **Idempotency (กัน retry สร้างเอกสารซ้ำ)**: ทุก inbound endpoint ที่สร้าง
+    เอกสาร (invoice / creditnote / debitnote / **expense** / payment_voucher /
+    certificate_in_lieu) เช็ค `ExternalRef` (→ `Document.Reference`) ก่อน; ถ้า
+    partner **ไม่ส่ง ExternalRef** → fallback `TryFindDocumentByExternalIdAsync`
+    ค้น sync log เดิม (`integrationId + eventType + ExternalId`, Success/Skipped,
+    มี `CreatedDocumentId`) แล้วคืนเอกสารเดิมถ้ายังไม่ voided (`IntegrationService.cs`).
+    `ProcessExpenseAsync`/`ProcessPaymentVoucherAsync` เดิม**ไม่มี** guard นี้ →
+    เพิ่มแล้ว (เคยสร้าง expense ซ้ำเมื่อ retry)
+  - **Resync update** (`ResyncUpdate=true` บน inbound invoice/expense):
+    เจอ ExternalRef เดิม → แทน idempotent skip ระบบ "แก้เอกสาร + ปรับ JE"
+    สองโหมดตามสถานะงวด (contract ระบบต้นทางเช่น TakeTime):
+    • **งวดเปิด + JE เดิมใบเดียว → in-place**: แก้ JE ใบเดิม (เลข JE คงเดิม
+      แทนที่บรรทัดทั้งชุด อัปเดต totals/วันที่) — audit ผ่าน Notes + sync log
+    • **งวดปิด / มีหลาย JE → reversal**: กลับ JE เดิมทั้งชุด (คู่ Dr↔Cr,
+      ลิงก์ Original/ReversedBy) + post JE ใหม่
+    เลขเอกสารคงเดิมทั้งสองโหมด; response message ระบุโหมดชัด
+    ("(in-place)" / "(reversal)") ให้ระบบต้นทางแสดงผลถูก.
+    Guard: มีการชำระแล้ว / มี CN-DN ลูก / เดือนภาษียื่น ภ.พ.30 หรือ filing-lock
+    แล้ว → คืน error ชัดเจน (ให้ void+ส่งใหม่ หรือออก CN แทน); sync log
+    Status="Updated"
+  - **CN/DN ผ่าน integration = ฝั่งขายเท่านั้น** (DTO มีแต่ field ลูกค้า) —
+    `CreateCreditNoteJournalAsync`/`CreateDebitNoteJournalAsync` ลง AR/ภาษีขาย
+    เสมอ; ใบลด/เพิ่มหนี้ฝั่งซื้อ sync ผ่าน expense reversal ไม่ผ่านช่องทางนี้
+  - **ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี (ขายปลีก)** — 2 ทางเข้า:
+    1. **Per-doc checkbox** `Document.BuyerDeclinedTaxInvoice=true` (UI ช่อง
+       `#fBuyerDeclinedTaxInvoice` สำหรับ TaxInvoice/Receipt/ReceiptVoucher) —
+       ผู้ใช้ติ๊กเองต่อใบ; ใช้กับลูกค้าที่ระบุตัวตนก็ได้ (มีชื่อ/ชื่อเล่น) ไม่บังคับ
+       ผูก walk-in contact.
+    2. **Walk-in contact** — เว้น customer fields ว่างทั้งหมด → ผูกผู้ติดต่อกลาง
+       "ลูกค้าเงินสด (ไม่ประสงค์รับใบกำกับภาษี)" (`Contact.IsWalkInCustomer=true`,
+       Address "-", สร้างครั้งเดียวต่อบริษัทผ่าน `GetOrCreateWalkInContactAsync`).
+    ทั้งสองทางได้รับยกเว้น hard-block §86/4 ฝั่งผู้ซื้อตอน approve
+    (`ApproveDocumentAsync` gate: `!doc.BuyerDeclinedTaxInvoice &&
+    !Contact.IsWalkInCustomer`). นอกจากนี้ **branch code (§86/4 ประกาศ 199)
+    บังคับเฉพาะผู้ซื้อนิติบุคคล** (`ContactType==JuristicPerson` หรือ TaxId 13 หลัก
+    ขึ้นต้น "0") — บุคคลธรรมดาไม่บังคับสาขา.
+    3. **Auto-downgrade (ไม่ block ทางตัน)** — เมื่อ §86/4 ผู้ซื้อไม่ครบตอน approve
+       (`DocumentService.cs:~1991`): **แยกตามชนิดผู้ซื้อ** — (a) **นิติบุคคล** (ตั้งใจ
+       เคลมภาษีซื้อ) → **block + ชี้ทางออก** ("เติมข้อมูล หรือ ติ๊กไม่ประสงค์รับใบกำกับ
+       เพื่อออกเป็นใบเสร็จ") กัน downgrade เงียบ ๆ ที่ทำให้ผู้ซื้อเสียสิทธิ; (b)
+       **บุคคลธรรมดา/ไม่มีเลขภาษี** (ขายปลีก) → ระบบ **auto ตั้ง
+       `BuyerDeclinedTaxInvoice=true`** เอง → หัว downgrade เป็น "ใบเสร็จรับเงิน",
+       **ไม่ block** (หลัก: เอกสาร §86/4 ไม่ครบ = ไม่ใช่ใบกำกับเต็มรูป จึงไม่ควรมีหัวว่า
+       "ใบกำกับภาษี"). VAT ขายยังลง ภ.พ.30 ครบ.
+    **หัวเอกสาร**: `ComputeDocumentTitle` เมื่อ `buyerDeclined` — per-doc flag,
+    walk-in, **หรือ `Buyer864Incomplete(doc)`** (ข้อมูล §86/4 ผู้ซื้อไม่ครบจริง:
+    เลขภาษี≠13 / ไม่มีที่อยู่ / นิติบุคคลไม่มีสาขา5 — เกณฑ์เดียวกับ approve gate,
+    เฉพาะเอกสารมี VAT ไม่ใช่มัดจำพักรอ) → ไม่ upgrade เป็น "ใบกำกับภาษี/ใบเสร็จ
+    รับเงิน"; ถ้า DocumentType=TaxInvoice → downgrade หัวเป็น "ใบเสร็จรับเงิน".
+    (กันเคสเอกสารที่ข้อมูลไม่ครบแต่หัวยังขึ้น "ใบกำกับภาษี" — ผิด §86/4)
+    VAT ขายลงรายงาน/ภ.พ.30 ครบตามปกติ (ภาระ VAT ไม่ขึ้นกับหัวเอกสาร),
+    ผู้ซื้อเคลมภาษีซื้อไม่ได้
+
+### 2.4 Convert (แปลงเอกสาร)
+- **Method**: `DocumentService.ConvertDocumentAsync` (full) / `ConvertDocumentPartialAsync`
+  (partial — qty subset) — `DocumentService.cs:3082` / `:3122`
+- **RelatedDocumentId ส่งเข้า CreateDocumentAsync ตั้งแต่ create** (ผ่าน
+  CreateDocumentRequest) — ไม่ใช่เซ็ตทีหลัง เพราะ PaymentType inference /
+  cash-settle / PV auto-approve ใช้ field นี้แยก "PV ตั้งต้น" กับ "PV settle
+  ใบแจ้งหนี้ซื้อ" (บั๊กเดิม: PV แปลงจาก PI โดน auto-approve เป็น standalone
+  cash ก่อนมีลิงก์ → PI ค้างชำระตลอด + JE ลงค่าใช้จ่ายซ้ำ)
+- **กันสร้างซ้ำ**: `ComputeConsumptionAsync` — ตรวจ axis
+  (`Delivery` / `Billing` / `None`) ที่ source line ถูกใช้ไปเท่าไหร่แล้ว
+- **ข้อยกเว้น Invoice→TaxInvoice (ทั้งฉบับ)**: ถือเป็น "อัปเกรดชนิดเอกสารรับรู้
+  รายได้ใบเดียวกัน" → **คัดลอกทุกบรรทัดเต็ม ข้าม consumption gate**
+  (`wholeDocRevenueUpgrade` ใน `ConvertDocumentAsync`) — เดิม Invoice/TaxInvoice
+  อยู่ Billing axis เดียวกัน gate ตัดบรรทัดที่มี child เก่าอ้าง → ใบกำกับ/ใบเสร็จ
+  ยอดขาดไม่ตรงใบแจ้งหนี้. การแปลงซ้ำยังถูกกันด้วย ValidateConversionAsync
+  (double revenue guard). partial ตั้งใจ → ConvertDocumentPartialAsync ตามเดิม
+- **คู่ที่แปลงได้** (`DocumentService.ValidConversions :2808`) — exact:
+  ```
+  Quotation        → Invoice / TaxInvoice / BillingNote / DeliveryNote / Receipt
+  BillingNote      → Invoice / TaxInvoice / Receipt
+  DeliveryNote     → Invoice / TaxInvoice
+  Invoice          → TaxInvoice / Receipt / ReceiptVoucher
+  TaxInvoice       → Receipt / ReceiptVoucher / CreditNote / DebitNote
+  DebitNote        → Receipt / ReceiptVoucher
+
+  PurchaseRequisition → PurchaseOrder
+  PurchaseOrder       → GoodsReceiptNote / PurchaseInvoice
+  GoodsReceiptNote    → PurchaseInvoice
+  PurchaseInvoice     → PaymentVoucher / CreditNote / DebitNote
+  Expense             → PaymentVoucher / CreditNote / DebitNote / CertificateInLieu
+  CertificateInLieu   → PaymentVoucher
+  ```
+  **Terminal** (no further conversion): `Receipt`, `ReceiptVoucher`, `CreditNote`, `PaymentVoucher`
+- **Lineage**: ลูก carry `RelatedDocumentId = source.Id`, `SourceLineId` ต่อ
+  บรรทัด (จำเป็นสำหรับ partial fulfillment + 3-way match)
+- **Cascade**: `CustomAppendix / RevenueContractId / PerformanceObligationId /
+  FileAttachment` (`CascadeAttachmentsAsync :3077`)
+- **JE ของใบลูกดูประเภทต้นทาง (กันยอดเบิ้ล/ยอดหาย)**:
+  - Receipt/ReceiptVoucher: **settlement mode (Cr AR) เฉพาะเมื่อ source ตั้ง
+    ลูกหนี้จริง** (Invoice/TaxInvoice/DebitNote) — source เป็น
+    Quotation/BillingNote (operational ไม่มี JE) → ลง **standalone**:
+    Dr เงินสด / Cr รายได้ + VAT (เดิมเช็คแค่ `RelatedDocumentId.HasValue` →
+    Cr ลูกหนี้ผี + รายได้ไม่ถูกบันทึก)
+  - CertificateInLieu ที่อ้าง Expense/PI: **settlement เหมือน PV** — Dr AP /
+    Cr เงินสด (+WHT ตาม basis) — เดิม Dr ค่าใช้จ่ายซ้ำเสมอ = ค่าใช้จ่ายเบิ้ล
+    + เจ้าหนี้ค้างตลอดกาล; CIL เข้า settlementTypes (PaidAmount push + cap
+    + revert ตอน void) แล้ว
+
+### 2.5 CMS (เว็บไซต์ของฉัน) — Storefront commerce + booking
+- **Order flow** (`CmsCommerceService.cs`):
+  - Customer checkout → `SiteOrder` + upload สลิป → `RecordPaymentSlipAsync`
+    สร้าง `SiteOrderPayment` Status=`Pending`
+  - Admin/webhook ยืนยันรับเงิน → `ConfirmPaymentAsync` (`POST /orders/{id}/confirm-payment`)
+    ทำงาน 6 ขั้นรวด (idempotent):
+    1. `SiteOrderPayment.Status = Confirmed` + `Order.PaidAmount/PaidAt`
+    2. `SyncOrderToErpAsync` ถ้ายังไม่ sync — ใช้ `IDocumentService.CreateDocumentAsync`
+       (เลข gap-free §86/4, tax point, VAT validation ครบ)
+    3. `IDocumentService.ApproveDocumentAsync` → auto-post JE
+       (Dr AR / Cr Revenue + Cr Output VAT 21911)
+    4. `IDocumentService.CreatePaymentAsync` → Dr Cash/Bank / Cr AR (เคลียร์ลูกหนี้)
+    5. `DeductStockAsync` — idempotent ตาม `line.StockDeducted` flag
+    6. `IEtaxInvoiceService.GenerateAsync` ถ้า `RequestTaxInvoice + EtaxEnabled`
+  - ทุก step fault-tolerant: ล้มเหลว → log + ไม่ rollback step ก่อนหน้า
+- **Booking flow** (`CmsBookingService.SyncBookingToErpAsync`):
+  - Map `BookingType` → DocumentType:
+    - `Lead/Appointment` → `Quotation` (Draft, รอ admin confirm)
+    - `Guaranteed` → `TaxInvoice` (Approved + JE auto)
+    - `PrePayment` → `Receipt` ที่ `IsDeposit=true` → Cr 217xx ขายรอรับรู้
+      + Cr 21911 VAT (§78/1 รับชำระแล้ว → เข้า ภพ.30 ทันที)
+      ต่อมา realize ด้วย `RealizeDepositAsync` ตัด 217xx → 41000
+- **Gap (ยัง TODO)**:
+  - Payment reconciliation (match `SiteOrderPayment.Reference` กับ bank statement)
+  - Webhook gateway (Stripe/PromptPay) → ตอนนี้ admin กดยืนยันสลิปเอง
+
+### 2.6 POS (Point of Sale)
+- **Method**: `PosService.CompleteOrderAsync` (`Services/Implementations/PosService.Orders.cs:908`)
+- **Auto JE ทันที** ตอน complete order (ไม่ผ่าน Draft):
+  - Dr Cash 1011 / Bank 1012 / Credit Card 1131 (ตาม PaymentMethod)
+  - Cr Sales Revenue 41000 (net of VAT)
+  - Cr Output VAT 21911 (7%)
+  - Cr Tip Liability 2160 (ถ้ามี)
+  - Dr COGS / Cr Inventory (สินค้าที่ track stock)
+- **Tax Invoice** (deferred): `IssueTaxInvoiceAsync` → สร้าง Document ใน
+  Status=Approved (กัน JE ซ้อน) + เรียก `EtaxInvoiceService`
+- **Refund/Void**: reverse JE + return stock
+  - **Refund คิดสัดส่วนหลังส่วนลดระดับบิล** (`RefundOrderAsync`,
+    `PosService.Orders.cs`): ยอดคืน = `Σ(item.TotalAmount × ratio) × discountFactor`
+    โดย `discountFactor = (Σ item.TotalAmount − (DiscountAmount + CouponDiscountAmount))
+    / Σ item.TotalAmount` — กันคืนเกินเมื่อบิลมีส่วนลด/คูปองระดับออเดอร์ (เช่น
+    สินค้า 1000 ลดทั้งบิล 10% ลูกค้าจ่าย 900 → คืนเต็มต้องได้ 900 ไม่ใช่ 1000).
+    ServiceCharge/Tip เป็นรายการเสริมบนบิล ไม่คืนตามการคืนสินค้า
+- **Offline sync**: `SyncOfflineOrderAsync(ClientOrderId)` dedup
+- **Gap (ยัง TODO)**:
+  - Z-report consolidation (ปัจจุบัน 1 JE/order, ไม่มี shift-end batch)
+  - มัดจำ/booking (217xx flow ยังไม่ enabled ฝั่ง POS)
+  - WHT tip §50 ทวิ (เกิน 1,000/รอบ — niche)
+
+### 2.7 Recurring
+- **Service**: `RecurringTransactionService.cs:41`
+- ความถี่: `Daily / Weekly / BiWeekly / Monthly / Quarterly / SemiAnnual / Annual`
+- template เก็บใน `RecurringTransaction.TemplateData` (JSON)
+- `AutoApprove=true` → ใบที่ generate ขึ้นจะถูก approve อัตโนมัติ (ทำตาม flow
+  approve ปกติทุกขั้น — tax point, JE, stock, fixed asset)
+
+### 2.8 Quotation online accept (ลูกค้ากดยอมรับใบเสนอราคา)
+- **สร้างลิงก์** (ต้อง login): `POST /document/{id}/quotation-accept-link` —
+  เฉพาะ Quotation ที่อนุมัติแล้ว; token 64 hex อายุ 30 วัน เก็บบน
+  `Document.QuotationAcceptToken(+ExpiresAt)`; เรียกซ้ำ = revoke ลิงก์เก่า
+- **ฝั่งลูกค้า** (`PublicQuotationController`, AllowAnonymous):
+  `GET /api/public/quotation/{token}` ดูรายการ+ยอด (sanitized) และ
+  `POST .../accept` บันทึก `QuotationAcceptedAt/By` + stamp หลักฐานลง Notes
+  (append-only) — **ไม่ auto-convert** เป็น invoice (ผู้ขายกดแปลงเองหลังเห็น
+  การยอมรับ — กันเอกสารการเงินเกิดจาก anonymous click)
+- **หน้า**: `pages/quotation-accept.html` (standalone, ไม่ใช้ Layout)
+- ปุ่ม "🔗 ลิงก์ยอมรับ" ในหน้ารายการเอกสาร (Quotation Approved/Sent)
+
+### 2.8b Delivery e-sign — ลูกค้าเซ็นรับสินค้าออนไลน์ (Proof of Delivery)
+- **สร้างลิงก์**: `POST /document/{id}/delivery-sign-link` — เฉพาะ DeliveryNote
+  ที่อนุมัติแล้ว; token 64 hex อายุ 14 วัน (`Document.DeliverySignToken`)
+- **ฝั่งลูกค้า**: `GET/POST /api/public/delivery/{token}(/sign)` — วาดลายเซ็น
+  บน canvas (มือถือ) + ชื่อผู้รับ → เก็บ `DeliverySignatureBase64/SignedAt/By`
+  + stamp Notes; ลายเซ็น**ประทับลงช่อง "ผู้รับของ" (slot 1) บน PDF อัตโนมัติ**
+  (`ResolveSignersAsync` override) พร้อมเวลาเซ็น (+07:00)
+- **หน้า**: `pages/delivery-sign.html` (standalone signature pad)
+- ปุ่ม "✍️ ลิงก์เซ็นรับ" ในหน้ารายการเอกสาร (DeliveryNote Approved/Sent)
+
+### 2.9 Consignment (ฝากขาย)
+- **Service**: `Services/Implementations/Consignment/ConsignmentService.cs`
+- **Outbound dispatch** (`DispatchOutboundAsync`): ลด `CurrentStock` ทันที
+  (ของอยู่ที่ลูกค้า กรรมสิทธิ์ยังเป็นเรา — ไม่มี GL) + **เขียน `StockMovement`
+  คู่เสมอ** (เพิ่งแก้ — เดิมขยับ stock เปล่า ทำ stock card drift)
+- **Consumption** (`RecordConsumptionAsync`): Inbound → สร้าง Draft
+  `PurchaseInvoice`, Outbound → Draft `Invoice`; เอกสารใช้ **`DRAFT-{guid}`
+  placeholder** ตาม convention กลาง (เดิมใช้เลข `CON-...` เองซึ่งหลุด series
+  gap-free §86/4) + มี `Lines` + `SubTotal` ครบให้ approve ผ่าน gate ปกติ;
+  ref consignment เก็บใน `Reference` (`CON-{id8}`)
+
+---
+
+## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
+
+### 3.1 Create / Update (Draft → Draft)
+- **Update เฉพาะ Draft** — service guard: `doc.Status != Draft` throws
+- **Field ที่ Update ได้** (เพิ่งเพิ่ม): `CreditNoteReason`, `IsForeignService`,
+  `IsDeposit`, `DepositDeferredAccountCode`, `DepositOutputVatDeferred`
+  (เดิม `UpdateDocumentRequest` ไม่มี → แก้ Draft แล้ว field เหล่านี้ "เงียบหาย")
+- **เลขเอกสารยังเป็น `DRAFT-{guid}`** (ไม่ออกเลขจริง กัน gap §86/4)
+
+### 3.2 Approve (Draft/WaitingApproval → Approved) — **ขั้นสำคัญที่สุด**
+
+> **ทางเข้า approve มี 3 ทาง — ทุกทางวิ่งเข้า `ApproveDocumentAsync` เดียวกัน:**
+> ① ปุ่มอนุมัติ/บันทึกและอนุมัติ (ตรง) ② กฎอนุมัติตามวงเงิน (ApprovalService
+> gate — กฎ match แล้วปุ่มตรงถูกล็อคจน workflow ผ่าน) ③ ส่งเซ็นอนุมัติ
+> (SignatureApprovalService — เซ็นครบทุกคน → เรียก ApproveDocumentAsync
+> ให้อัตโนมัติ; **เดิมตั้ง Status ตรง ๆ ข้าม JE/สต๊อกทั้งหมด — แก้แล้ว**)
+> RequireApprovalForDocuments (เกินวงเงิน) ยกเว้นให้เอกสารที่เซ็นครบแล้ว
+> (กัน flow ที่ setting บังคับใช้โดน block ตัวเอง)
+**`DocumentService.ApproveDocumentAsync` (`:1512`)** ทำตามลำดับ:
+
+1. **Permission + workflow gate** (`:1638`) — ตรวจ ApprovalWorkflow
+   (multi-level), credit limit ของลูกค้า (AR/AP advanced)
+   - **§90/2 hard-block**: `CompanySettings.VatRegistered=false` → ห้ามอนุมัติ
+     ใบกำกับภาษี (ทุกกรณี) และเอกสารขายที่ VatAmount > 0 (Invoice/Receipt/RV/
+     BillingNote/CN/DN ฝั่งขาย — CN/DN ฝั่งซื้อที่ related เป็น PI/Expense/GRN
+     ไม่ block); integration inbound invoice ก็ปฏิเสธด้วยเหตุผลเดียวกัน; ฟอร์ม
+     สร้างเอกสาร (documents.html) ปิดตัวเลือกใบกำกับภาษี + ป้ายเตือน
+   - **ภาษีซื้อฝั่งไม่จด VAT**: บริษัท `VatRegistered=false` → ทุกบรรทัดถูกบังคับ
+     `IsVatClaimable=false` ตอน create/update (DocumentService) → posting รวม
+     VAT เข้าต้นทุน/ค่าใช้จ่าย ไม่เข้า 11610/11640 (เคลมภาษีซื้อไม่ได้). เมนู
+     ภ.พ.30/ภ.พ.30 ย้อนหลัง/ภาษีซื้อรอ (nav `vatOnly:true`) ถูกซ่อนใน layout.js
+   - **Settlement doc self-paid**: PV/Receipt/RV/CIL ที่มี RelatedDocumentId
+     (แปลงมาจากเอกสารตั้งหนี้) เมื่ออนุมัติ → ตัวมันเอง PaidAmount=Total,
+     Status=Paid (เป็นเอกสารการจ่าย/รับเงินจริง ไม่ใช่ลูกหนี้/เจ้าหนี้ใหม่)
+2. **AI warning collection** (`:1528`) — AI rule-based ตรวจหา anomaly
+   (ราคาผิดปกติ, vendor ไม่ตรงประเภท ฯลฯ)
+3. **ออกเลขจริง** — `DocumentNumberGenerator.NextAsync` — รูปแบบจริงในโค้ด =
+   `{PREFIX}-{yyyyMMdd}-{NNNN}` (เลข running รีเซ็ต **รายวัน**, key ต่อ
+   `(CompanyId, prefix)` ผ่าน `pg_advisory_xact_lock` กันเลขซ้ำใน transaction).
+   วันที่ฝังในเลข → เลขไม่ซ้ำข้ามวัน; DB มี partial unique index
+   `UX_Documents_CompanyId_DocumentNumber` เป็น backstop (ยกเว้น draft/soft-deleted).
+   หมายเหตุ compliance: ยัง**ไม่**เป็น running ต่อปีภาษี/แยกสาขาแบบเต็มตาม §86/4
+   (multi-branch) — ดู backlog "ปรับ scheme เลขเอกสาร" (ต้องมี migration path)
+4. **Snapshot Tax Point** (`:1760`) — `TaxPointResolver.Resolve(doc)` →
+   `doc.TaxPointDate` = MIN(delivery / ownership transfer / payment received /
+   invoice issue) ตาม §78 / §78/1 → ตัดสินงวด ภ.พ.30
+5. **Retention** (`:1766`) — `doc.RetentionUntil ??= DocumentDate + 5 years`
+   ตาม พ.ร.บ.บัญชี ม.10 (ห้ามลบจริงก่อนหมดอายุ)
+6. **§65 ตรี** (`:1773`) — `ApplySection65TerAsync` → `doc.NonDeductibleAmount`
+   + breakdown JSON (`NonDeductibleRuleJson`); ไหลเข้า ภ.ง.ด.50 ผ่าน
+   `TaxService.GenerateCitReport` (บวกกลับ).
+   **§65 ตรี(4) ค่ารับรอง cap = per fiscal year** (กฎกระทรวง 143) —
+   `Section65TerValidator.Context.PriorYtdEntertainmentExpense` ส่ง YTD
+   ของเอกสารฝั่งซื้อ/ค่าใช้จ่าย Approved ที่ description มี "รับรอง" →
+   excess clamp ที่ใบปัจจุบันรับผิดชอบ. §82/5(6) vehicle warning bypass
+   เมื่อ `CompanySettings.IsVehicleDealer=true`.
+7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
+   - **Header JE สืบทอด `ProjectId` + `DimensionId` จากเอกสาร** — โครงการ
+     (งานชั่วคราว วัดกำไรต่องาน) และ cost center/มิติ (สาขา/แผนกถาวร วัด
+     ต้นทุนตามโครงสร้าง) เป็นคนละแกน เลือกได้อิสระทั้งคู่ในฟอร์มสร้างเอกสาร
+     → รายงาน P&L ต่อมิติ (`getDimensionPnl`) มีข้อมูลจากเอกสารซื้อ-ขายจริง
+   - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
+     deposit deferred)
+   - **มัดจำ VAT พักรอ (21913) — การแสดงผล ≠ การลงบัญชี**: ใบเสร็จ/ใบสำคัญรับ
+     ที่ `IsDeposit && DepositOutputVatDeferred` ยังไม่ใช่ใบกำกับภาษี (tax point
+     ยังไม่เกิด §78) → PDF/HTML **ซ่อนบรรทัด "ยอดก่อน VAT" + "VAT 7%"**, หัวเรื่อง
+     ไม่ขึ้น "ใบกำกับภาษี", บรรทัดรายการพิมพ์ยอดรวม VAT (Amount+VatAmount) ให้เท่า
+     ยอดสุทธิ, ใส่หมายเหตุ "ไม่ใช่ใบกำกับภาษี" (`PdfGenerationService.IsDeferredVatDeposit`);
+     **JE ยังแยก net/21913 ตามเดิม** (คนละเรื่อง) และ **ยกเว้น §86/4 gate** ตอน
+     approve (ไม่บังคับ TaxId/ที่อยู่ผู้ซื้อ — ใบกำกับจริงออกตอนใช้บริการค่อยบังคับ).
+     ตรงข้าม: มัดจำ tax point เกิดแล้ว (21911) = ใบกำกับจริง → โชว์ VAT ครบ
+   - **sales COGS (perpetual — นโยบายเดียวกับ POS)**: Invoice/TaxInvoice
+     ที่มีบรรทัดสินค้า TrackStock → Dr ต้นทุนขาย (51110/511) /
+     Cr สินค้าคงเหลือ (11500/115) ที่ WAC ปัจจุบัน (`ComputeSalesCogsAsync`
+     — ตรงกับ UnitCost ที่ stock movement stamp); ข้ามเมื่อ `IsDeposit`
+     (ยังไม่ส่งมอบของ) หรือผัง 511/115 ไม่มี (log warning);
+     COGS เป็น THB ไม่ผ่านการแปลง FX. ใบลดหนี้ฝั่งขายแบบ **Reason=Return**
+     กลับ COGS ด้วย: Dr สินค้าคงเหลือ / Cr ต้นทุนขาย
+   - purchase: Dr Expense + Dr Input VAT (11610 หรือ **11640** ถ้า §86/4
+     ไม่ครบ) / Cr AP — **บรรทัดสินค้า TrackStock ที่ user ไม่ได้เลือกบัญชี
+     เอง default เข้าสินค้าคงเหลือ** (`Product.InventoryAccountId` → 11500/115)
+     แทนค่าใช้จ่าย (perpetual — สมมาตรกับ COGS ตอนขาย; ใช้กับ PI standalone,
+     GRN, และ CN/DN ฝั่งซื้อ ผ่าน `BuildPurchaseLineAccountResolverAsync`)
+   - cash receipt: Dr Cash/Bank / Cr AR (หรือ Cr 217xx ถ้า `IsDeposit`)
+   - payment voucher: Dr AP/Expense / Cr Cash/Bank
+   - WHT: Cr 21915/21916 ตามประเภทเงินได้
+8. **Stock movements** (`:1794` → `ApplyStockMovementsAsync :4605`) —
+   switch ตัดสินตาม `DocumentType` (`:4612`):
+   - **OUT (−1)**: `Invoice` / `TaxInvoice` (sale); **CN ฝั่งซื้อแบบ Return**
+     (source = PI/Expense/CIL — เราคืนของให้ vendor = ของออกจากสต๊อกเรา)
+   - **IN (+1)**: `GoodsReceiptNote` / `PurchaseInvoice` /
+     `CreditNote when Reason==Return` (ฝั่งขาย — ลูกค้าคืนของ)
+   - **มัดจำ (`IsDeposit`) → ไม่ขยับสต๊อก** (ยังไม่ส่งมอบ — ใบส่งมอบจริง
+     เป็นผู้ตัด + ลง COGS)
+   - **ขา void กลับตาม movement ที่เกิดจริง** (net ต่อ product ของ
+     `DocumentId` เดิม, ต้นทุนเดิม) — ไม่ recompute จากกติกาปัจจุบัน →
+     เอกสารเก่าที่ขยับด้วยกติกาเดิมกลับได้ถูก + void ซ้ำเป็น no-op
+   - `PurchaseInvoice` ที่ผูก GRN accrual แล้ว → **ข้าม** (กันนับซ้ำ
+     `:4633`)
+   - **No-op (`_ => 0`)**: ทุกประเภทอื่น — รวมถึง `Receipt`,
+     `ReceiptVoucher`, `DeliveryNote` (`DeliveryNote` ตั้งใจไม่ trigger
+     เพราะ Invoice ที่ตามมาจะ trigger ให้ — กัน double-count `:4608`),
+     `Quotation`, `PO`, `PR`, `BillingNote`, `DebitNote`, และ
+     `CreditNote.Discount/Adjustment/Writeoff`
+   - **UnitCost ของ movement ตาม CostingMethod** (TFRS NPAEs บทที่ 8):
+     ซื้อเข้า (PI/GRN) = ต้นทุนจริง line net ต่อหน่วย + อัปเดต WAC running
+     average; ขายออก = `AverageUnitCost` ปัจจุบัน (เมื่อ WeightedAverage,
+     ไม่ใช่ `CostPrice` นิ่ง); void = ต้นทุนเดิมของ movement ต้นทาง
+     (ให้กลับรายการหักล้างมูลค่าเท่ากัน). POS ใช้ helper `EffectiveUnitCost`
+     เดียวกันทั้ง COGS JE / stock stamp / refund
+9. **Fixed asset auto-register** (`:1799`) — `AutoRegisterFixedAssetsAsync`:
+   บรรทัดที่ลงผัง 12210 / 12220 / 12230 / 12240 / 12260 / 12270 / 12290 /
+   12310 → **group ตาม AccountId** → 1 group = 1 `FixedAsset` (TFRS for NPAEs
+   บทที่ 10: ค่าขนส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม/setup ฯลฯ = ต้นทุนที่ทำ
+   ให้พร้อมใช้ — รวมเป็น cost ของ asset หลัก ไม่แยก asset)
+   - main line = บรรทัดแรกใน group ที่ description ไม่ใช่ auxiliary keyword
+   - cost = sum ของทุก line ใน group (รวม aux)
+   - asset Description log auxiliary breakdown ไว้ audit trail
+   - **AssetCode = "DRAFT-{guid:14}"** placeholder (ไม่กิน counter)
+     → user กดยืนยันใน `FixedAssetService.UpdateAsync` → generate
+     `FA-yyyyMM-####` จริง (gap-free, ลำดับตามเวลายืนยัน)
+   - `Status = Active, NeedsReview = true` พร้อม suggested `UsefulLifeMonths`
+     + depreciation method (`StraightLine` default, ที่ดิน → `None`)
+   - **Delete guard** (`FixedAssetService.DeleteAsync`):
+     • block ถ้า AccumulatedDepreciation > 0 หรือมี posted depreciation
+       → ต้อง Dispose/WriteOff
+     • block ถ้า `SourceDocumentId.Status` ไม่ใช่ Voided/Rejected → ต้อง
+       ยกเลิกเอกสารต้นทางก่อน (กัน orphan GL — Dr 12210 ใน JE ของใบยังอยู่
+       แต่ asset register หาย)
+   - **Void cascade** (`VoidDocumentAsync` step 7-asset): asset ของ doc ที่
+     `NeedsReview=true` + ไม่มี posted dep → ลบ inline (ไม่เรียก DeleteAsync
+     เพราะ source.Status ยังไม่ save), asset ที่ยืนยันแล้ว → log warning
+     ไม่ลบ ผู้ใช้ต้อง dispose/write-off เอง
+   - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
+     `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
+     `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
+     "ไปยืนยันสินทรัพย์" (auto-dismiss 12s)
+   - **Banner ที่หน้าทะเบียนสินทรัพย์** (`fixed-assets.html`): list สินทรัพย์
+     `NeedsReview=true` ติด badge "⚠️ รอตรวจ" + row สีเหลือง + ปุ่ม
+     "ตรวจสอบและยืนยัน" (primary) — เปิดแก้เลย
+   - **Auto-clear**: เมื่อผู้ใช้กด save ใน edit-asset modal → `Update` ปลด
+     `NeedsReview = false` อัตโนมัติ (FixedAssetService.cs Update +
+     implicit confirmation semantics — ไม่ใช่ field ใน DTO กัน client เผลอเซ็ตกลับ)
+10. **Audit log** — append-only row + hash chain (`PrevHash + RowHash SHA-256`)
+11. **Document number lock** — `IsDocumentNumberLocked = true` (กันแก้ภายหลัง)
+
+### 3.3 Send (Approved → Sent)
+- **Endpoint**: `POST /documents/{id}/send-email`
+- **Controller**: `DocumentController.cs:43` → `IDocumentEmailService`
+- **กระทำ**:
+  - generate PDF (ถ้ายังไม่มี cache)
+  - ถ้ามี EtaxInvoice + IsEtaxByEmail → cc `csemail@etax.teda.th` +
+    subject = `{TaxId}.{DocNo}` (RD บังคับ)
+  - log ลง `DocumentEmailLog` (Sent/Failed/Bounced)
+- **ไม่กระทบ JE / stock / VAT**
+
+### 3.4 Pay / Partial Pay
+- **Methods**: `CreatePaymentAsync` / `CreateMultiDocPaymentAsync`
+  (`:534–541`)
+- **Allowlist ประเภทที่ชำระตรงได้** (`PayableDocumentTypes`): Invoice /
+  TaxInvoice / DebitNote / PurchaseInvoice / Expense เท่านั้น — ประเภทอื่น
+  block พร้อมเหตุผล:
+  - ใบวางบิล/ใบเสนอราคา/PO ฯลฯ (operational, ไม่มี JE ตอนอนุมัติ) → ชำระ
+    แล้ว Cr AR ที่ไม่เคยถูก Dr / เข้า branch ผิดฝั่ง — ต้องแปลงเป็น
+    Invoice/TaxInvoice/Receipt ก่อน
+  - Receipt / ReceiptVoucher / PaymentVoucher / CertificateInLieu = เอกสาร
+    เงินเข้า-ออก "จริงแล้ว" ตอนอนุมัติ → ชำระซ้ำ = เงินสดเบิ้ล
+- **Receipt/ReceiptVoucher force `PaymentType=Cash` ตอน create** — ใบเสร็จ
+  คือหลักฐานรับเงินแล้ว "เครดิต" ไม่มีความหมาย (เดิมปล่อย Credit ได้ →
+  BalanceDue ค้างทั้งที่เงินเข้า GL แล้ว → โผล่ aging ผิด + ถูกชำระซ้ำได้)
+- **DebitNote สองฝั่ง**: การชำระ + bank balance + void reversal ดูฝั่งจาก
+  เอกสารต้นทาง (`IsCashInflowDocAsync`) — ฝั่งซื้อ (source = PI/Expense/CIL)
+  = เงินออก Dr AP / Cr Cash (เดิมลงฝั่งเงินเข้าเสมอ — ผิดฝั่ง)
+- คำนวณ `BalanceDue = TotalAmount − TotalPaid`
+- → `PartiallyPaid` หรือ `Paid` อัตโนมัติ
+- post JE: Dr Cash/Bank / Cr AR (sales) หรือ Dr AP / Cr Cash/Bank (purchase)
+- **FX realized gain/loss**: เอกสารสกุลต่างประเทศใส่ `ExchangeRate` (rate วัน
+  ชำระ) บน payment ได้ — เงินสดเข้า-ออกที่ rate วันชำระ, AR/AP ตัดที่ rate
+  เอกสาร, ผลต่าง → 42600 กำไร / 54950 ขาดทุน (`ResolveFxGainLossAccountAsync`
+  รองรับ 42600/4901 + 54950/5901 + ค้นชื่อ); เก็บ rate บน `Payments.ExchangeRate`
+  เพื่อให้ void กลับยอดธนาคารด้วย rate เดิม; settlement Receipt/PV ข้ามใบที่
+  rate ต่างกัน (ใบเสร็จ rate วันรับ vs invoice rate วันแจ้ง) ก็ post FX diff
+  เช่นกัน; สิ้นงวด unrealized ใช้ `FxRevaluationService.PostAsync` (มีอยู่แล้ว)
+- **ค่าธรรมเนียมหักจากยอดโอน** (marketplace Shopee/Lazada, gateway, ธนาคาร):
+  `Payment.FeeAmount(+FeeAccountId)` — Amount คือเงินสุทธิที่เข้า, เอกสาร
+  ถูกล้างที่ Amount+Fee: JE Dr เงินสด + Dr ค่าธรรมเนียม (53200/ค้นชื่อ) /
+  Cr AR ยอดเต็ม; void คืน PaidAmount รวม fee; เฉพาะฝั่งขาย
+- WHT cert auto-issue (`WithholdingTaxCertService` — ถ้ามี WHT บนใบ)
+
+### 3.5 Void / Cancel
+- **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:
+  1. Reverse linked **Payments** → `ReversePaymentInternalAsync`
+  2. Reverse posted JEs → `ReverseJournalEntryAsync` (สร้าง JE ใหม่ Dr↔Cr กลับ
+     + link `OriginalEntryId/ReversedByEntryId`, ไม่ลบ JE เดิม)
+  3. Void linked **e-Tax invoices** (soft — เก็บ XML ไว้ audit; รวมสถานะ
+     `Submitted` ด้วย). **Guard ก่อน void**: block เฉพาะ e-Tax ที่
+     `Accepted` (RD ตอบรับแล้ว = จุด no-return, ต้องยื่นขอยกเลิกที่ RD);
+     `Submitted` (เซ็น/คิว ยังไม่ได้ตอบรับ) ยกเลิกได้ก่อนนำส่ง ภ.พ.30 —
+     งวดที่ Filed แล้วถูกกันด้วย filing-lock guard แยกอยู่แล้ว
+  4. Unlink **BankTransactions** (clear matched reference)
+  5. Revert source-doc adjustments (ลูกของ CN/DN กลับ AR/AP ของต้นทาง)
+  6. Reverse stock (`ApplyStockMovementsAsync(−1)`) + project cost entries
+  7. Void linked **WHT certificates** (`_whtService.VoidAsync`)
+  8. ตั้ง `Status = Voided`, `AgingDays = null`
+  9. **Reset stateful posting flags** (เพิ่ม commit ล่าสุด): re-approve
+     ไม่ข้ามขั้นที่ควรรัน:
+     - `InputVatPostedAsUndue = false`, `InputVatBecameClaimableAt = null`
+     - ถ้า `IsDeposit`: reset `DepositRealizedAmount/At`,
+       `DepositOutputVatRecognizedAt`, `DepositRefundedAmount/At`,
+       `DepositAppliedToDocumentId` → list ไม่โชว์ Partial/Realized ค้าง
+  2b. **กลับ JV ตัดชำระด้วยมัดจำ** (`ApplyDepositToInvoiceAsync`): JV นั้น
+      `SourceDocumentId=ใบมัดจำ` จึงหลุด step 2 → หา deposit ที่
+      `DepositAppliedToDocumentId==ใบนี้` → reverse JV (คัดเฉพาะ JE มีขา Cr 113
+      กันชน realize-JE) + คืน subledger (Realized/Recognized/AppliedTo). เคส
+      drives (ขา reversal ฝังในใบ ไม่มี JV) ข้าม → step 7c จัดการ
+- **Restore (กู้เอกสารที่ยกเลิกผิด)**: `RestoreVoidedDocumentAsync`
+  (`DocumentService.cs`) — `Voided → Draft` **คงเลขเดิม** (re-approve ไม่
+  regenerate เพราะเลขไม่ใช่ `DRAFT-`). ปลอดภัยเพราะ void เก็บ row/line ครบ +
+  reset posting flags (9) เป็น approve-ready ไว้แล้ว; reversal JE เดิมคงไว้เป็น
+  audit (คู่ net-zero) → re-approve post JE ใหม่ สุทธิถูก ไม่ double. **Gate
+  compliance (block ทั้งหมด)**: (1) e-Tax `Accepted`; (2) เดือนภาษี (TaxPoint/
+  DocDate) ยื่น ภ.พ.30/ล็อกแล้ว (period-based ไม่ใช่ line-ref เพราะ void ถอด
+  doc ออกจาก report line แล้ว); (3) เลขถูกใช้กับใบ active อื่น. **ไม่คืน
+  payment/ApplyDeposit อัตโนมัติ** — ผู้ใช้บันทึกใหม่หลังอนุมัติ. Endpoint
+  `POST /document/{id}/restore` (สิทธิ์ = `Document.Void`); UI ปุ่ม "↩️ กู้คืน"
+  โผล่เฉพาะสถานะ Voided ใน detail modal
+- **ห้าม hard delete** (ตาม §86/4 + พ.ร.บ.บัญชี)
+- ⚠️ PDF footer "การลงบัญชี" (`PdfGenerationService.LoadGlPostingAsync`)
+  query `OriginalEntryId == null` เพื่อแสดง **JE forward ต้นทาง** เสมอ
+  ไม่ใช่ reversal — กัน footer ขึ้น Cr แทน Dr ตอน void
+- **Standalone void ปลอดภัยจาก void ซ้อน (row lock ใน tx)**:
+  - `VoidPaymentAsync` (`DocumentService.cs`) — lock `Payments` row `FOR UPDATE`
+    ในทรานแซกชัน + re-check `IsDeleted`; ถ้า void ไปแล้ว = no-op (กัน reverse
+    bank balance/PaidAmount สองรอบ)
+  - `VoidPayrollAsync` (`PayrollService.cs`) — lock `PayrollRuns` row `FOR UPDATE`
+    + re-check `Status="Voided"`; กัน restore เงินทดรอง (SalaryAdvance
+    OutstandingAmount) + reverse JE ซ้ำเมื่อกด void พร้อมกัน
+
+### 3.6 §82/3 Undue VAT Reclassification (auto)
+- เมื่อ approve PI/Expense ที่ใบกำกับยังไม่ครบ §86/4 (ขาดเลข/วันที่/สาขา
+  ผู้ขาย) → input VAT ลง **11640 "ภาษีซื้อยังไม่ถึงกำหนด"** (ไม่เคลม)
+- ผู้ใช้เติมข้อมูลภายหลังผ่าน `POST /documents/{id}/complete-tax-invoice`
+  → `ReclassifyUndueInputVatAsync` (`:1137`): สร้าง JE Dr 11610 / Cr 11640
+  + ตั้ง `InputVatBecameClaimableAt = now`
+- รายงาน ภ.พ.30 ใช้ `InputVatBecameClaimableAt` เป็น tax point (ไม่ใช่
+  `DocumentDate` ของใบเดิม) — เคลมในเดือนที่ใบครบ
+
+### 3.7 มัดจำ (Deposit lifecycle)
+- เปิด Receipt/ReceiptVoucher ที่ `IsDeposit = true`:
+  - **`DepositOutputVatDeferred = false`** (default): Cr Output VAT 21911
+    เข้า ภ.พ.30 ทันที (§78 รับชำระราคา = tax point) + Cr 217xx ขายรอรับรู้
+  - **`DepositOutputVatDeferred = true`**: Cr 21913 "ภาษีขายรอเรียกเก็บ"
+    — ยังไม่เข้า ภ.พ.30 จนกว่าจะ realize
+- **Realize**: `RealizeDepositAsync(amount, revenueAccountCode)` →
+  Dr 217xx / Cr รายได้ (41xxx/42xxx); ถ้า deferred → ย้าย 21913 → 21911
+  พร้อม `DepositOutputVatRecognizedAt = now`
+- **Refund**: `RefundDepositAsync` → reverse + ออกใบลดหนี้ภาษีขาย
+- **Apply**: `ApplyDepositToInvoiceAsync` (`:1389`) → ใน 1 transaction:
+  0. **FX guard**: ถ้า `invoice.Currency != deposit.Currency` หรือ
+     `|invoice.ExchangeRate − deposit.ExchangeRate| > 0.0001` → throw
+     (กัน FX silent corruption ตาม IAS 21 — ระบบยังไม่รองรับการบันทึก
+     gain/loss FX อัตโนมัติ user ต้องทำ JE manual หรือใช้มัดจำสกุลเดียวกัน)
+  1. คำนวณ `vatPortion = deposit.VatAmount / deposit.TotalAmount`
+  2. เรียก `RealizeDepositAsync` ด้วยฐานไม่รวม VAT (`amount × (1−vatPortion)`)
+     → Dr 217xx ขายรอรับรู้ / Cr รายได้ + (ถ้า deferred) ย้าย 21913→21911
+  3. ลด `invoice.BalanceDue` ตามยอด `amount` (gross — มัดจำจ่ายเงินจริงแล้ว
+     ถือเป็น prepayment)
+  4. ถ้า BalanceDue ≤ 0.005 → ตั้ง `Status = Paid`
+  5. mark `deposit.DepositAppliedToDocumentId = invoiceId` (1 ใบมัดจำ → 1 ใบ
+     ปลายทาง; ถ้า apply หลายใบต้องเรียกหลายครั้ง)
+  6. Fire webhook `deposit.applied`
+- **Deposit-applied drives-journal** (integration self-contained JE) — ใบรับเงิน
+  สุดท้ายส่ง `DepositAppliedAmount` + `DepositAppliedRef` + `DepositAppliedDrivesJournal=true`
+  → JE ใบเดียวกลับ deferred ของมัดจำ (ไม่ต้องมี JV reverse แยก).
+  `DepositAppliedRef` resolve 2 ทาง (`AutoPostToJournalAsync`, `DocumentService.cs:7499`):
+  - **เคส A** — ตรงกับ **ใบมัดจำ (Document, `IsDeposit`)** ตาม `DocumentNumber` →
+    Dr 217xx/21913 ของใบมัดจำ + mark `deposit.DepositAppliedToDocumentId`
+  - **เคส B** — ไม่พบ Document → resolve เป็น **`JournalEntry.EntryNumber`** (มัดจำ
+    ภายนอก เช่น JV-INT ที่ integration ลง Cr 217xx/21913 เอง) → อ่านบรรทัด Cr ของ
+    journal หาบัญชี deferred (215xx/217xx) + VAT (21913/21911) → Dr กลับบัญชีเดิม
+    ตามสัดส่วน; guard double-reverse ด้วย `JournalEntry.DepositAppliedToDocumentId`
+    (void ใบ → un-mark ให้ resync ได้). ต้นเหตุ: TakeTime "drives รับ journal ref"
+- **UX**: ตอนผู้ใช้เลือก contact ในฟอร์ม Invoice/TaxInvoice/Receipt/Quotation/
+  BillingNote → `onContactChange` เรียก `checkContactDeposits(contactId)` →
+  ถ้า `GetContactDepositSummaryAsync` คืน outstanding > 0 → โชว์ banner เขียว
+  "ลูกค้านี้มีมัดจำคงค้าง XXX" + ปุ่ม "หักมัดจำจากใบนี้" (เฉพาะ
+  `editingId != null` — ต้องบันทึกใบก่อนถึงจะ apply ได้) → เปิด picker modal
+  เลือกใบมัดจำ + ยอด → `applyDeposit` endpoint
+- **Booking-match auto-suggest**: เมื่อใบปลายทางและใบมัดจำมี `BookingNumber`
+  เดียวกัน (เคส PMS/POS/CRM: ลูกค้าจอง BK-2026-001 → จ่ายมัดจำ → ออกใบกำกับ) →
+  - banner โชว์ badge เพิ่ม "✓ N ใบ booking ตรงกัน (XXX บาท)"
+  - ปุ่มเปลี่ยน label เป็น "หักมัดจำที่ booking ตรงกัน"
+  - picker modal sort booking-match ขึ้นบนสุด + prefix "✓" + option label
+    มี `· booking BK-XXX`
+  - ถ้าตรง 1 ใบ → **auto-select** + เติมยอดสูงสุดให้ → ผู้ใช้กดบันทึกได้เลย
+    (กฎเหล็ก #3 spirit: ระบบเติมให้ครบ ผู้ใช้แค่ยืนยัน)
+  - `fBookingNumber` มี `onchange/onblur` → re-render banner live เมื่อพิมพ์
+- **DTO field**: `DepositSummary.BookingNumber` (เพิ่มล่าสุด — เดิมมีแต่
+  `Reference`) populate ใน `GetDepositsAsync` (`DocumentService.cs:1581`)
+- **การตรวจจับมัดจำใน dashboard** (`GetDepositsAsync`) — 3 ชั้น ไม่พึ่งแค่ธง
+  `IsDeposit` เพื่อให้ KPI สะท้อนหนี้สินมัดจำจริงบนงบดุล:
+  1. **Native** — `Documents.IsDeposit = true` (สร้างในระบบ) → ใช้
+     `SubTotal − DepositRealizedAmount`
+  2. **GL-detected (มีเอกสารผูก)** — เอกสารที่ยังไม่ติดธง `IsDeposit` แต่มี JE
+     (Posted, ไม่ reverse) **Cr สุทธิ** บัญชีมัดจำ (`AccountCode` 215xx/217xx
+     **หรือ** `AccountName` มี "มัดจำ/รับล่วงหน้า/รอรับรู้") — **ทุก doc type**
+     (integration/POS/receipt/invoice) ไม่จำกัดแค่ Receipt; ฐาน/คงค้างใช้ยอด
+     **Cr สุทธิใน GL** (ΣCr − ΣDr) แทน `SubTotal` เพราะ integration doc อาจ
+     ไม่ตั้ง `SubTotal` → เดิมคำนวณ outstanding = 0
+  3. **Doc-less (JE ล้วน ไม่มี `SourceDocumentId`)** — รวมยอด Cr สุทธิเป็น 1
+     แถวสรุป (`Id = Guid.Empty`, ไม่มีปุ่มรับรู้/คืน) เพื่อ KPI ไม่ขึ้น 0
+     ทั้งที่งบดุลมีหนี้สินมัดจำ (รับรู้/คืนต้องผ่านสมุดรายวันตรง)
+
+---
+
+## 4. ผลกระทบต่อระบบรายงาน (per document type)
+
+| Type | JE on Approve | Stock | VAT report side | Tax point | Special |
+| --- | --- | --- | --- | --- | --- |
+| `Quotation` | ❌ | ❌ | – | – | – |
+| `Invoice` | Dr AR / Cr Rev + Cr 21911 | ❌ (DN จัดการแยก) | output (เฉพาะถ้าไม่ใช่ "Cash basis" company) | `TaxPointDate` snapshot | – |
+| `TaxInvoice` | Dr AR / Cr Rev + Cr 21911 | ❌ | output | `TaxPointDate` snapshot | – |
+| `BillingNote` | ❌ (รอ Receipt) | ❌ | – | – | – |
+| `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 | ❌ (Receipt **ไม่อยู่** ใน `ApplyStockMovementsAsync` switch — ถ้าต้อง OUT ต้อง issue Invoice/TaxInvoice ก่อน) | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
+| `ReceiptVoucher` standalone | เหมือน Receipt | ❌ (same as Receipt) | output | DocumentDate | รองรับ `IsDeposit` (2 เคส VAT ดู §3.7) |
+| `DeliveryNote` | ❌ | ❌ (ตั้งใจไม่ trigger — Invoice ที่ตามมาจะ OUT ให้, กัน double-count) | – | – | ใช้คู่กับ Invoice ใน Quotation→DN→Invoice chain |
+| `DebitNote` | Dr AR / Cr Rev + Cr VAT | ❌ | output (หรือ input ถ้า `RelatedDocumentId` เป็น purchase) | DocumentDate | บังคับมี `RelatedDocumentId` |
+| `CreditNote` | Cr AR / Dr Rev + Dr VAT | IN เฉพาะ `Reason = Return` | output (หรือ input) | DocumentDate | บังคับ `CreditNoteReason` |
+| `PurchaseRequisition` | ❌ | ❌ | – | – | internal commitment |
+| `PurchaseOrder` | ❌ | ❌ | – | – | – |
+| `GoodsReceiptNote` | Dr Inv / Cr GRNI (accrual) | IN | – | – | 3-way match prep |
+| `PurchaseInvoice` | Dr Exp + Dr Input VAT / Cr AP | IN (ถ้าไม่มี GRN ก่อน) | input (11610 หรือ 11640) | TaxPointDate; 11640 → `InputVatBecameClaimableAt` | §86/4 completeness gate |
+| `Expense` | Dr Exp + Dr Input VAT / Cr Cash/AP | ❌ (ยกเว้นมี product code) | input | TaxPointDate | §65 ตรี ที่ approve |
+| `PaymentVoucher` | Dr AP/Exp / Cr Cash/Bank | ❌ | input (เฉพาะถ้าเปิด PV master switch + มีใบกำกับ) | DocumentDate | `PaymentType` (Cash/Credit) |
+| `CertificateInLieu` | Dr Exp / Cr Cash | ❌ | input (§86/4 ถ้าครบ) | DocumentDate | บังคับ `CertReason + CertifierName` |
+
+---
+
+## 5. ทางออก (Output Channels)
+
+### 5.1 PDF (มาตรฐาน + e-Tax)
+- **Service**: `PdfGenerationService.GenerateDocumentPdfAsync` (`:39`)
+- **Detection chain**:
+  1. มี `EtaxInvoice` + `XmlContent` → **PDF/A-3 + embed XML** (ตาม
+     ETDA ขมธอ.3-2560 — ใช้ยื่นภาษีได้)
+  2. มี HTML template + Chromium headless → render HTML → PDF
+  3. fallback: QuestPDF native (Thai-safe layout)
+- รองรับ template per `DocumentType + IsDefault` flag
+- ลายเซ็น/ลายน้ำ/QR/รหัส GL footer (toggle ต่อบริษัท)
+- **หัวเรื่องเอกสาร — resolver กลาง `ComputeDocumentTitle`** (ใช้ทั้ง QuestPDF
+  native + HTML กัน logic drift). ครอบทุกเคสจริงทางบัญชี:
+  - หัวพื้นฐาน 16 ประเภท (`GetDocumentTitle`) — ทุกชนิดถูกต้องตามชื่อไทย
+  - **เงื่อนไข** (auto): ใบกำกับ+รับเงินตอนออก (ServedAsReceipt) / ใบเสร็จมี
+    VAT → "ใบกำกับภาษี/ใบเสร็จรับเงิน"; TaxInvoice+`CombinedInvoiceTaxInvoice`
+    → "ใบแจ้งหนี้/ใบกำกับภาษี"; มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ
+    (ไม่ upgrade); `IsDeposit` → ต่อท้าย "(เงินมัดจำ)"
+  - **ตั้งเองได้ทุกหัว** (พื้นฐาน + เงื่อนไข) ผ่าน
+    `CompanySettings.DocumentTitleOverridesJson` (คีย์ = ชื่อ enum +
+    `TaxInvoiceReceipt`/`CombinedInvoice`/`DepositSuffix`) — หน้าตั้งค่า →
+    เอกสาร → "หัวเรื่องเอกสาร"; per-template `CustomTitle` ยังชนะ base override
+
+### 5.2 e-Tax XML (XAdES-BES, RSA-SHA256)
+- **Service**: `EtaxInvoiceService.GenerateAsync` (`:87`)
+- **Trigger**: เอกสาร approve แล้วผู้ใช้กด "ออกใบกำกับ e-Tax"
+  หรือบริษัทเปิด auto-sign
+- **Types ที่ generate**: `Invoice` / `TaxInvoice` / `DebitNote` /
+  `CreditNote` / `Receipt` (เฉพาะที่มี VAT)
+- **Schema**: UBL 2.1 + ETDA profile (DocumentTypeCode T01–T04,
+  ISO 8601 +07:00, CurrencyCode=THB)
+- **Signing**: private key เก็บใน `Company.EtaxPrivateKeyBlobEncrypted`
+  (AES-256 at rest); key ≥ 2048-bit; CA ที่ ETDA รับรอง
+- **Storage**: `EtaxInvoice` entity → `XmlContent` + `EtaxRefNumber` +
+  `CertificateSerialNumber` + `SignedAt`
+- **Submission**: cron ส่ง batch ภายในวันที่ 15 ของเดือนถัดไป →
+  `SubmittedToRdAt`
+- **ยอดเงิน (CII summation) — ต้อง ex-VAT ทั้งหมด** (`BuildLineItem` +
+  summation `:667`):
+  - per-line: `ChargeAmount` (unit price) + `ActualAmount` (discount) ถอด VAT
+    เมื่อ `PricesIncludeVat=true` (`UnitPrice / (1+rate)`) → สอดคล้องกับ
+    `BasisAmount`/`NetLineTotalAmount` (ex-VAT) ในบรรทัดเดียวกัน
+  - `LineTotalAmount = doc.SubTotal` (net of discount = Σ NetLineTotalAmount)
+  - `AllowanceTotalAmount = 0` (ส่วนลดเป็น line-level แสดงต่อบรรทัด ไม่ใช่ doc)
+  - `TaxBasisTotalAmount = doc.SubTotal` (เดิม `SubTotal − Discount` หักซ้ำ
+    เพราะ SubTotal net อยู่แล้ว → TaxBasis+Tax ≠ Grand → RD reject)
+  - `GrandTotalAmount = SubTotal + VAT` (ไม่ใช่ `doc.TotalAmount` ที่หัก WHT —
+    WHT แยกตอนจ่าย ไม่ใช่ face value ใบกำกับ)
+  - invariant: `LineTotal − Allowance = TaxBasis` และ `TaxBasis + Tax = Grand` ✓
+
+### 5.3 รายงานภาษี
+| รายงาน | Service / Method | Source data |
+| --- | --- | --- |
+| **ภ.พ.30 (จอ + Excel)** | `TaxService.GenerateVatReport` (`:119`), export ผ่าน `TaxService.Export.cs` | `TaxReport.Lines` |
+| **ภ.พ.30 (CSV ยื่น RD)** | `TaxFilingExportService.ExportPp30Async` (`:243`) — **ใช้ `ComputeVatReportAsync` ตัวเดียวกับจอ** (รวมแล้วใน commit ล่าสุด) | `ComputeVatReportAsync` → TaxReport ชั่วคราว |
+| **ภ.พ.36** (ซื้อบริการ ตปท. self-assess VAT) | `TaxFilingExportService.ExportPp36Async` (`:566`) | Documents.IsForeignService |
+| **ภ.ง.ด.1** (เงินเดือน WHT) | `ExportPnd1Async` (`:42`) | PayrollDetail |
+| **ภ.ง.ด.3 / 53 / 54** | `ExportPnd3 / 53 / 54Async` | WithholdingTaxCert + DocumentLine.WHT |
+| **ภ.ง.ด.50** (CIT รายปี) | `TaxService.GenerateCitReport` (`:731`) — **บวกกลับ §65 ตรี อัตโนมัติ** (commit ล่าสุด: ตัด rule (4) กัน double count) | JE Revenue/Expense + Document.NonDeductibleAmount |
+| **ภ.ง.ด.51** (ครึ่งปี) | `ExportPnd51Async` | half-year P&L |
+| **สปส.1-10** (ประกันสังคม) | `ExportSso110Async` (`:412`) | PayrollRun + Employee |
+| **สปส.1-03** (ขึ้นทะเบียนเข้าใหม่) | `ExportSps103Async` | Employee.StartDate ในเดือน + IsSubjectToSocialSecurity |
+| **สปส.6-09** (แจ้งออก) | `ExportSps609Async` | Employee.EndDate ในเดือน |
+
+> **นำส่ง สปส. (สปส.1-10):** `PayrollService.SettleSocialSecurityAsync` post JE
+> Dr 21815 / Cr Bank + เงินเพิ่ม §49 2%/เดือน. **Deadline tracker:** ตอนสร้าง/
+> เลิกจ้างพนักงาน → `TrackSsoEmployeeFilingAsync` สร้าง `ComplianceFiling`
+> (SSO_NewEmployee due+30วัน / SSO_Termination due วันที่15เดือนถัดไป).
+
+### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
+- **Service**: `WithholdingTaxCertService`
+- **Trigger**: ตอน `PaymentVoucher` / `Expense` ที่มี WHT > 0 ถูก approve
+  → auto-issue 2 ฉบับ ("สำหรับยื่นแบบ" + "เก็บไว้")
+- **PDF**: `PdfGenerationService.WhtCert.cs`
+- **DTA override**: ถ้า payee ต่างประเทศ + มี DTA → ใช้อัตรา bilateral
+  แทน default 15%/10% (ม.70)
+
+### 5.5 Integration ภายนอก (เอาออก)
+- `GET /api/companies/{id}/documents/{id}` คืน `DocumentResponse`
+  (รวม `IsForeignService` + ทุก field — เพิ่มล่าสุดให้ครบ)
+- มี **`SensitivityKind`** gate: ถ้า caller ไม่มีสิทธิ์ดูเงินเดือน → คืน
+  redacted stub (ไม่ 404) ผ่าน `RedactDocumentResponse` (`:5726`)
+
+### 5.6 Stock / Fixed Asset register
+- Stock: `StockMovement` row ที่ post ตอน approve — query ผ่าน
+  `/inventory/movements`
+- Fixed Asset: `FixedAsset` row สร้างอัตโนมัติ → ผู้ใช้กรอก
+  `UsefulLifeMonths + DepreciationMethod` ในหน้า fixed-assets แล้วยืนยัน
+  (`NeedsReview = false`) → schedule depreciation ปกติ
+
+---
+
+## 6. Cross-cutting
+
+### 6.1 Audit log (tamper-evident)
+- **Entity**: `AuditLog(actorId, entityType, entityId, before, after, at, ip, reason, prevHash, rowHash)`
+- **append-only** — ห้าม UPDATE/DELETE
+- Hash chain: `rowHash = SHA-256(prevHash + actor + entity + before + after + at)`
+- write จุดสำคัญ: Create, Update (Draft), Approve, Void, Payment,
+  WHT cert issue, e-Tax submission, DSR access
+
+### 6.2 PDPA (ม.26 / ม.37 / ม.39)
+- **Sensitive PII** (เลขบัตร 13 หลัก, salary, sensitive contact data) →
+  AES-256 at rest, KMS key
+- Display mask `1-XXXX-XXXXX-XX-3` — full value เฉพาะ role `pii:view`
+- `PiiAccessLog` ≥ 1 ปี
+- DSR endpoints `/dsr/access | rectify | erase | portability` SLA 30 วัน
+  (cascade-erase ยกเว้น legal_hold ของ พ.ร.บ.บัญชี/สรรพากร — MAX retention)
+
+### 6.3 §87/3 retention (5 ปี)
+- ทุกเอกสารตั้ง `RetentionUntil = MAX(filingDate, reportDate, DocumentDate) + 5y`
+- nightly job ห้ามลบจริง (soft-delete + flag `legal_hold`)
+- e-Tax ที่ submitted แล้วยืดเป็น **7 ปี** (extended retention)
+
+### 6.4 AI distillation (กฎเหล็ก #1) ที่ฝังใน flow
+
+**Feature enum**: `AiFeatureKey` (`Models/Enums/AllEnums.cs:1188`) —
+**ตารางนี้ verified ตรงกับ enum จริงในโค้ด**
+
+| จุดเรียก AI | Feature key (enum) | Local model class | Round-trip feedback |
+| --- | --- | --- | --- |
+| OCR full review | `OcrFullReview = 22` | `GenericFeedbackDistillationModel` (register ใน Program.cs) | `SubmitCorrectionAsync` (OcrService) |
+| ผังบัญชี GL ต่อบรรทัด | `GlAccountSuggestion = 2` | `GlAccountDistillationModel.cs` (4-tier: vendor+keyword exact → fuzzy → company-keyword ×0.85 → industry-keyword ×0.55) | `RecordLineAccountFeedbackAsync` ตอน approve |
+| OCR document type label | `DocumentTypeClassification = 3` | generic | ตอน user แก้ในหน้า scan |
+| OCR target doc to create | `DocumentConversionSuggestion = 23` | generic | ตอน user เปลี่ยน targetDocType |
+| Vendor canonical match | `VendorCanonicalization = 1` | `VendorCanonDistillationModel.cs` | ตอน user เลือก contact |
+| Buyer/Seller role infer | `DocumentRoleInference = 4` | generic | – |
+| WHT category infer | `WhtCategoryInference = 5` | generic | ตอน user แก้ |
+| Line item structured parse | `LineItemStructuredParse = 6` | – (ไม่มี student — heavy AI) | – |
+| Approval warning fix | `ApprovalWarningFixSuggestion = 7` | `ApprovalWarningDistillationModel.cs` | – |
+| Bank statement match | `BankStatementMatch = 8` | `BankMatchDistillationModel.cs` | ตอน user reconcile |
+| Credit note reason | `CreditNoteReasonClassification = 9` | generic | ตอน user เลือก radio |
+| Fuzzy duplicate doc | `FuzzyDuplicateDetection = 10` | `DuplicateDocumentDistillationModel.cs` | – |
+| Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | – |
+| Forecast narrative | `ForecastNarrative = 12` | – (essay) | – |
+| Product match | `ProductMatch = 13` | generic | ตอน user เลือก product |
+| Contact match | `ContactMatch = 14` | generic | ตอน user เลือก |
+| Payment method suggest | `PaymentMethodSuggestion = 15` | generic | ตอน user แก้ |
+| Currency + FX suggest | `CurrencyAndFxSuggestion = 16` | generic | ตอน user แก้ rate |
+| Aging explanation | `AgingExplanation = 17` | – (essay) | – |
+| Tax filing pre-check | `TaxFilingPreCheck = 18` | – (essay) | – |
+| Stock movement validation | `StockMovementValidation = 19` | generic | – |
+| **Bulk PV accounting** (ใบสำคัญจ่าย) | `PaymentVoucherAccountingSuggestion = 20` | bespoke (ใน prompts) | ตอน user save PV |
+| Manual JE line suggest | `ManualJournalSuggestion = 21` | generic | ตอน user save JE |
+| Reorder forecast | `ReorderForecast = 24` | local Croston/Holt-Winters | – |
+| Bulk bank statement match | `BulkBankStatementMatch = 25` | bespoke | – |
+| Import column match | `ImportColumnMatch = 26` | bespoke | ตอน user map |
+| Import data review | `ImportDataReview = 27` | – (essay) | – |
+| **Payment type** (Cash/Credit) | `PaymentTypeSuggestion = 28` | `PaymentTypeDistillationModel.cs` | ตอน user เปลี่ยน select |
+| OCR project match | `OcrProjectMatch = 29` | generic | – |
+| VAT type per line | `VatTypeInference = 30` | generic | ตอน user แก้ |
+| Payment terms / credit days | `PaymentTermsSuggestion = 31` | – (pure lookup, ทุกครั้งผ่าน orchestrator) | ตอน user แก้ |
+| Payment channel (แหล่งเงิน) | `PaymentChannelSuggestion = 32` | generic | ตอน user เปลี่ยน select |
+| Project allocation per line | `ProjectAllocationSuggestion = 33` | generic | ตอน user เลือก project |
+| Contact fuzzy match | `ContactFuzzyMatch = 34` | generic | – |
+| Manual JE account suggest | `ManualJeAccountSuggestion = 35` | reuse `GlAccountDistillationModel` | – |
+| Dimension allocation | `DimensionAllocationSuggestion = 36` | generic | – |
+| Asset category suggest | `AssetCategorySuggestion = 37` | rule-based keyword (no AI by default) | ตอน user แก้ใน asset modal |
+
+**Litmus test ก่อน commit**: ปิด provider ทุกตัว → feature ยังทำงานครบ 100%
+(`AiProviderConfig.IsActive = false`)
+
+---
+
+## 7. Validation gates (compliance — กฎเหล็ก #2)
+
+| Gate | Where | กระทำ |
+| --- | --- | --- |
+| §86/4 completeness (PI/Expense/PV) | `TaxInvoiceCompletenessChecker` | ถ้าไม่ครบ → input VAT ลง 11640 (undue) |
+| §82/5 prohibited input VAT | `ChartOfAccount.InputVatClaimable` + per-line `IsVatClaimable` | flag claim=false, แยกออกจาก ภ.พ.30 + แสดง "🚫 §82/5" line |
+| §82/5(1)(2) non-full-tax-invoice | `OcrDocumentRoleInferrer.Infer` → `InputVatClaimable/InputVatClaimWarning` | OCR ตรวจ "ใบกำกับภาษีอย่างย่อ §86/6" หรือ "ใบเสร็จ/บิลเงินสด ไม่ใช่ §86/4" + มี VAT → เขียน `[VAT-CLAIM]` ลง ProcessingNotes; review UI + form แสดง banner แดง "เคลม VAT ไม่ได้ — ขอใบกำกับเต็มรูป"; ไม่ auto-ติ๊ก "ขอเครดิตภาษีซื้อ" |
+| §82/3 6-month window | `TaxFilingExportService.ExportPp30Async` + `GenerateVatReport` | เกิน 6 เดือน → block claim หรือ require `LateReason` |
+| §86/9–86/10 CN/DN | `CreditNote/DebitNote` flow | required `RelatedDocumentId` + `CreditNoteReason` (CN); cap ≤ original |
+| §78 / §78/1 tax point | `TaxPointResolver` | snapshot ตอน approve |
+| §65 ตรี รายจ่ายต้องห้าม | `Section65TerValidator` | `NonDeductibleAmount + RuleJson` → ภ.ง.ด.50 |
+| §65 ตรี(4) cap per fiscal year | `Section65TerValidator.Context.PriorYtdEntertainmentExpense` | sum YTD entertainment of Approved docs → excess บวกกลับใบปัจจุบัน |
+| §82/5(6) vehicle dealer override | `CompanySettings.IsVehicleDealer` | bypass warning เมื่อรถเป็น inventory (ประกาศอธิบดี 42) |
+| F14 audit hash chain | `AuditTrailService.VerifyHashChainAsync` + `AuditChainVerifyJob` | cron 7 วัน re-compute SHA-256 → notify ถ้า tamper (พ.ร.บ.บัญชี ม.11 ทวิ) |
+| Recurring template validate | `RecurringTransactionService.ValidateTemplateAsync` | fail-fast ตอน Create/Update ก่อนรอ midnight cron — accountId ต้องอยู่ใน CoA, journal balance |
+| Reclassify line GL (post-approve) | `DocumentService.ReclassifyLineAccountAsync` | Expense/PI/PV เท่านั้น (TaxInvoice/Receipt/CN/DN ห้าม §86/4); post JE คู่ใหม่ Dr ผังใหม่/Cr ผังเก่า ลงงวดเดิม + update line.AccountId. gate: period Open + no downstream + no payment + no submitted ภพ.30 + no e-Tax submitted |
+| §87(3) chronological | ExportPp30Async summary | นับ doc ที่ tax point ย้อนกลับ → surface ใน Summary.csv |
+| §87/3 retention 5 ปี | `RetentionUntil` | ห้าม hard delete; soft + legal_hold |
+| §85/1 VAT threshold 1.8M | annual revenue check | warning "ต้องจด VAT ภายใน 30 วัน" |
+| WHT 50 ทวิ ≤ threshold 1,000 | `CheckWhtThresholdAsync` | ไม่หักถ้ารวมสัญญา < 1,000 |
+| DTA override | WHT cert PDF | bilateral rate แทน ม.70 default |
+| OCR auto-fill ครบ (กฎเหล็ก #3) | `OcrService.CreateDocumentFromScanAsync` | ทุก §86/4 field ต้อง pre-filled ก่อนเปิดฟอร์ม |
+
+---
+
+## 8. Quick reference — โค้ดอยู่ไหน
+
+| ต้องการทำอะไร | ไปดูที่ |
+| --- | --- |
+| แก้การคิดส่วนลด/VAT ต่อบรรทัด | `DocumentService.ComputeLineAmounts :254` — รองรับ `DiscountPercent` + `DiscountAmount` (ยอดเงิน, มาตรฐานสากล: ใบระบุส่วนลดเป็นบาท). amount > 0 ชนะ % |
+| เพิ่ม `DocumentType` ใหม่ | `Models/Enums/AllEnums.cs:305` + `DocumentService.cs` หลายจุด (search by enum literal) |
+| แก้ flow Approve | `DocumentService.ApproveDocumentAsync :1512` |
+| แก้ flow JE per type | `DocumentService.AutoPostToJournalAsync :4684+` |
+| แก้ stock movement | `DocumentService.ApplyStockMovementsAsync :4605–4682` |
+| แก้ §65 ตรี rule | `Services/Implementations/Tax/Section65TerValidator.cs` |
+| แก้ tax point logic | `Services/Implementations/Tax/TaxPointResolver.cs` |
+| แก้ §86/4 completeness | `Services/Implementations/Tax/TaxInvoiceCompletenessChecker.cs` |
+| แก้ fixed asset auto-register | `DocumentService.AutoRegisterFixedAssetsAsync :4477` |
+| แก้ผัง 11640 ↔ 11610 reclassify | `DocumentService.ReclassifyUndueInputVatAsync :1137` |
+| แก้ deposit Realize/Refund/Apply | `DocumentService.cs` ค้นหา `RealizeDepositAsync` / `RefundDepositAsync` / `ApplyDepositToInvoiceAsync` |
+| แก้รายงาน ภ.พ.30 (จอ) | `TaxService.GenerateVatReport :119` |
+| แก้รายงาน ภ.พ.30 (CSV ยื่น) | `TaxFilingExportService.ExportPp30Async :243` — ดึงจาก `ComputeVatReportAsync` |
+| แก้ ภ.ง.ด.50 | `TaxService.GenerateCitReport :731` |
+| แก้ WHT cert auto-issue | `WithholdingTaxCertService` |
+| แก้ PDF template | `PdfGenerationService.DocumentRenderer.cs` / `HtmlRenderer.cs` |
+| แก้ e-Tax XML | `EtaxInvoiceService.GenerateAsync :87` |
+| แก้ OCR pipeline | `OcrService.cs` (3,800+ บรรทัด) — `ProcessScanAsync`, `CreateDocumentFromScanAsync` |
+| แก้ AI orchestration | `Services/Ai/AiOrchestrator.cs` |
+| แก้ local distillation | `Services/Ai/Distillation/*` (per feature) |
+
+---
+
+## 9. หลักการสำคัญที่ต้องไม่ลืม
+
+1. **DocumentNumber ออกตอน Approve เท่านั้น** — Draft = `DRAFT-{guid}` กัน gap (§86/4)
+2. **ห้ามแก้ Approved เอกสาร** — ใช้ Void แล้วออกใหม่ (§86/4 ห้ามแก้ย้อนหลัง)
+3. **TaxPointDate snapshot ตอน approve** — ห้ามคำนวณ on-the-fly (กัน period leak)
+4. **Tenant isolation** — ทุก query ต้องมี `CompanyId == @companyId` — ไม่มีข้อยกเว้น
+5. **Soft delete + legal_hold** — ใน 5 ปีห้าม hard delete (§87/3 + ม.10)
+6. **Audit log append-only + hash chain** — tamper-evident
+7. **กฎเหล็ก #1 Distillation Mandate** — ทุก AI call ผ่าน `IAiOrchestrator.AskAsync`,
+   capture FeedbackId, ปิดลูปด้วย `RecordUserChoiceAsync`
+8. **กฎเหล็ก #2 Thai compliance** — ทุก feature ผ่าน checklist §86/4, §82/5,
+   §65 ตรี, PDPA ก่อน commit
+9. **กฎเหล็ก #3 OCR auto-fill** — ทุก §86/4 field ต้อง pre-filled ก่อนผู้ใช้
+   เห็นฟอร์ม — เป้าหมาย = 1-click approve
+10. **Single source of truth for ภ.พ.30** — `ComputeVatReportAsync`
+    ตัวเดียวสำหรับจอ + Excel + CSV ยื่น (รวมแล้วล่าสุด — กัน drift)
+
+---
+
+_รอบ 17: Payroll import endpoint (TakeTime) — POST /payroll/runs/import รับ
+ยอดสำเร็จรูปต่อพนักงาน → run สถานะ Calculated (ไม่ recalc) → approve/pay/
+exports เดิมออก GL+ภงด.1+สปส.1-10+50ทวิ+payslip จากยอดที่ส่งมา. idempotent
+(ExternalRunRef + unique index), validate net=gross−หักลูกจ้าง, account override
+(salary/payment code) ลง JE. + integration outbound document attachments[]._
+
+_รอบ 18: OCR contact address ครบ + กทม. แสดง แขวง/เขต ถูกต้อง. ปัญหา: OCR ผ่าน
+API → เอกสารที่อยู่ กทม. ขึ้น "ตำบล/อำเภอ" (ผิด ต้องเป็น "แขวง/เขต") + ผู้ติดต่อ
+ไม่มีที่อยู่จนกด "ดึงข้อมูล" เอง. แก้ 4 ชั้น:
+(1) `OcrService.EnrichContactAddress` — contact ที่ match จากของเดิม เติมทั้ง
+free-text + structured (เดิมเติมแค่ free-text) จาก DbdAddress ก่อน VendorAddress;
+ทับเฉพาะเมื่อ DBD ยืนยัน + contact OCR-managed.
+(2) `PdfGenerationService.FormatThaiAddress` — เมื่อ structured locality ว่าง
+parse free-text ผ่าน `ThaiAddressParser` ตอน render → กทม. ได้ แขวง/เขต ครบทุก
+เอกสารโดยไม่ต้อง migrate; แก้ token-strip เป็น word-aware (เดิม substring replace
+ทำ "บางนาตราด"→"ตราด"); 50ทวิ payee/company address route ผ่าน FormatThaiAddress.
+(3) `ThaiAddressParser` — StreetRegex/BuildingNameRegex หยุดที่ marker เขตปกครอง
+(ไม่กลืนชื่อตำบล) + `ExtractStreetHead` รักษาส่วนหัวเต็ม (ห้อง/ชั้น/อาคาร/ซอย/ถนน).
+(4) `DocumentService.GetContactAsync` — lazy backfill structured จาก free-text
+ตอนเปิดฟอร์ม (self-heal contact เก่า ไม่ต้องกด "ดึงข้อมูล")._
+
+_รอบ 19: OCR header subtotal ผูกกับ grand total — แก้ "รายงานยอด 530 แต่ใบพิมพ์/
+JE = 630". เคส: OCR แกะ subtotal (630) ไม่ตรง grand total (530) โดยไม่มี VAT/ส่วนลด
+อธิบาย → `CreateDocumentFromScanAsync` fallback line (items==0) ใช้ headerSubTotal
+(630) แต่ document.TotalAmount = headerTotal (530) → report (อ่าน TotalAmount) ≠
+print/JE (อ่าน line). แก้: headerSubTotal ใช้ ExtractedSubTotal เฉพาะตอน tie กับ
+grand total (subtotal+VAT−discount=total); ไม่งั้น derive จาก grand total (ตัวเลข
+ที่พาร์ทเนอร์/ใบส่งมา = ตัวตั้งต้นเชื่อถือได้สุด) → line/subtotal/total แตกกันไม่ได้.
+หมายเหตุ: แก้เฉพาะ doc ที่สร้างใหม่ — เอกสารเดิมที่ผิดต้องลบแล้ว re-OCR._
+
+_รอบ 20: OCR เชื่อค่าเงินจากระบบภายนอก (override OCR vision). `ScanAsync` →
+`ApplyExternalAmountOverrides(extractedData, metadata)` หลัง EnrichFromRawText:
+อ่านยอดที่พาร์ทเนอร์กรอกมาใน metadata (top-level หรือ nested "amounts") —
+total/totalAmount/grandTotal/amount, subTotal, vat/vatAmount, wht/whtAmount|whtRate,
+และ "lineItems":[{description,quantity,unitPrice,amount}] — เขียนทับค่าที่ OCR แกะ
+จากรูป (กันอ่านเลขผิด 530↔630) + ตั้ง FieldConfidence=1.0 + re-sync เข้า scanResult
+ก่อน dup-check/serialize/auto-create. เพิ่ม body metadata ให้ endpoint POST
+/ocr/scan/{fileId} (flow 2 ขั้น) ด้วย (`OcrScanMetadataRequest{Metadata,Engine}`).
+fallback chain กฎเหล็ก #3: partner-provided > OCR vision. Fail-safe: metadata
+เพี้ยน → คงค่า OCR._
+
+_รอบ 21: ภ.พ.30 ภาษีซื้อ = 0 ทั้งที่มียอด — `GenerateVatReport`
+(`TaxService.cs`) loop จัด input VAT จาก PurchaseInvoice/Expense/CertificateInLieu
+เท่านั้น **ไม่มี branch ของ PaymentVoucher** → ใบสำคัญจ่ายที่ติ๊ก "ใช้งานใบกำกับ
+ภาษี" (HasTaxInvoiceReference=true) ภาษีซื้อตกหล่นทั้งหมด (JE ของ PV มี
+SourceDocumentId → JE-only fallback ก็ข้าม). แก้: เพิ่มเงื่อนไข
+`|| (DocumentType==PaymentVoucher && HasTaxInvoiceReference)` เข้า branch ภาษีซื้อ
+(ใช้ §82/5 prohibited + §82/3 window เดิม). PV ที่ไม่ติ๊ก = ไม่เคลม (§82/5(1)).
+มีผลทั้งจอ + CSV ยื่น (ComputeVatReportAsync → GenerateVatReport ตัวเดียวกัน)._
+
+_รอบ 22: หน้านำส่งภาษี/ประกันสังคมรวม (StatutoryRemittance) — สปส.1-10 + ภงด.1/3/53
++ ภพ.30 ในที่เดียว (pattern QuickBooks Pay Liabilities). `StatutoryRemittanceService`
+.GetDashboardAsync รวมยอดค้าง (SSO=PayrollRun Paid ที่ยังไม่ settle; ภงด.1=Total
+WithholdingTax; ภงด.3/53=เอกสาร WHT แยกชนิดผู้ติดต่อ; ภพ.30=ComputeVatReportAsync
+.NetVat) + กำหนดยื่น/overdue/เงินเพิ่ม §49. .RemitAsync post JE ล้างหนี้ค้างจ่าย/Cr
+ธนาคาร (VAT: Dr 21911/Cr 11610/Cr ธนาคาร net), บันทึก remittance (unique/งวด กัน
+จ่ายซ้ำ), stamp PayrollRun.SsoSettledAt, แนบใบเสร็จ (FileAttachment "StatutoryRemittance").
+รองรับทั้งบริษัทรันเงินเดือนในระบบ (ตั้งค้างจ่าย 21815 อัตโนมัติ) + ทำข้างนอก.
+หน้า /pages/tax-remittance.html. Endpoints GET/POST /companies/{id}/remittances._
+
+_รอบ 23 (ชุดแก้ + ปรับปรุง): (a) รายงานภาษีซื้อ/ขายบนจอ + พิมพ์ → ฟอร์มราชการ §87
+(ฉบับที่ 104): GetTaxReportAsync เติม InvoiceNumber/BranchCode/CompanyName-TaxId ต่อ
+บรรทัด; tax.html ตารางคอลัมน์ราชการ + ปุ่ม "พิมพ์ฟอร์มราชการ". (b) WHT cert 50ทวิ:
+GenerateWithholdingTaxCertPdfAsync ลอง render HTML (BuildWithholdingTaxCertHtml +
+ลายเซ็น) ผ่าน IHtmlPdfRenderer/Puppeteer ก่อน → fallback QuestPDF (font Sarabun:
+ThaiFontCandidatePaths เพิ่ม Windows/macOS/Fonts bundle); auto-attach เข้า PV ปิด
+default ผ่าน CompanySettings.AutoAttachWhtCertPdf. (c) StatutoryRemittance ภพ.30
+เปลี่ยนเป็นอ่าน TaxReports ที่ generate แล้ว (เลิกคำนวณสด — กันหน้าค้าง) + per-section
+try/catch. (d) documents list: server-side types[] filter + DocumentPermissionHelper
+Other=rev&&pur (กัน paging หายสำหรับ owner) + count bar. (e) OCR amount: external
+metadata override (เชื่อยอดที่ partner ส่ง) + headerSubTotal ผูก grand total._
+
+_รอบ 24 (UX หน้านำส่งภาษี/ประกันสังคม): (a) ถอด Floating Action Button "＋ Quick"
+ออกทั้งระบบ (layout.js — ปุ่มลอยมุมขวาล่างบังเนื้อหา; ทางลัดยังอยู่ใน sidebar +
+mobile bottom-nav). (b) "แหล่งเงิน (บัญชีจ่าย)" ในโมดัลนำส่ง: เพิ่ม payment channels
+ครบ — bank accounts (optgroup, value `bank:<id>` → LinkedAccountId) + GL เงินสด/
+ช่องจ่ายอื่น (getPaymentChannels, value `account:<id>` → ใช้เป็นผัง Cr ตรง ๆ).
+RemitRequest เพิ่ม `BankGlAccountId`; ResolveBankGlAsync validate GL เป็นผังบริษัทนี้
++ active + level≥4 ก่อนใช้. (c) แนบเอกสารที่จ่าย/ใบเสร็จได้ในโมดัลนำส่งเลย (input
+`rmDoc`) → หลัง RemitAsync สำเร็จ auto-upload เข้า FileAttachment "StatutoryRemittance"
+ใน flow เดียว (ไม่เลือกไฟล์ → แสดง step แนบภายหลังเหมือนเดิม)._
+
+_รอบ 25 (payroll import loop — เห็นรายคน): POST /payroll/runs/import (ระบบนอก เช่น
+TakeTime ส่งยอดสำเร็จรูป recalculate=false → run สถานะ Calculated) เดิมหน้า "ดู" รอบ
+เงินเดือนตารางรายคนว่าง เพราะ GetPayrollRunAsync (PayrollRunResponse) ไม่คืน detail
+lines. แก้: PayrollRunResponse เพิ่ม `Details` (List<PayrollRunLineDto>) — เติมเฉพาะตอน
+ดึง run เดี่ยว (list ปล่อย null) + `ExternalSystem`/`ExternalRunRef`. payroll.html
+viewRun แสดงรายคน + ปุ่มดูสลิป/50ทวิ ได้ครบทั้ง run ที่สร้างในระบบและ import; runs
+list ติด badge "↧ <ระบบนอก>". ลูปต่อ (approve → pay → settle-sso → payslip → ภงด.1 →
+50ทวิรายปี) ครบเหมือน run ปกติ — import ไม่ auto-post ต้องกด approve/pay ในระบบเอง._
+
+_รอบ 26 (แหล่งจ่ายเงินรายคน): เดิม ProcessPaymentAsync ลง Cr เงินสด/ธนาคารบรรทัด
+เดียวรวมทั้ง run (run.NetPaymentAccountCode → default 11122/111x) — จ่ายทุกคนจากบัญชี
+เดียว. แก้ให้แยกรายคน: PayrollDetail เพิ่ม `NetPaymentAccountCode` (migration). import
+เก็บ PaymentAccountCode รายคนลง detail (เลิกยุบเป็นค่าเดียว). Pay → group ยอดสุทธิ
+(NetPay − AdvanceRecovered) ตามบัญชีจ่ายของแต่ละคน (fallback detail → run → default)
+→ ลง Cr หลายบรรทัดตามบัญชี. ผู้ใช้แก้แหล่งจ่ายรายคนได้ก่อนจ่าย (Calculated/Approved)
+ผ่าน PUT /payroll/runs/{id}/employees/{empId}/payment-account (validate 111x/1133/2123)
+→ หน้า run detail dropdown ราย row. PayrollRunLineDto เพิ่ม NetPaymentAccountCode._
+
+_รอบ 27 (แก้ 2 จุดหน้า run detail): (a) dropdown แหล่งจ่ายรายคน "ไม่มีบัญชีธนาคาร" —
+GetPaymentChannelAccountsAsync ตัด 1112x (ธนาคาร) ออกโดยตั้งใจ (ธนาคารมาจาก
+getBankAccounts แยก). payroll.html viewRun โหลด getBankAccounts ด้วย → optgroup
+"บัญชีธนาคาร" (value = LinkedAccountCode) + "เงินสด/ช่องทางอื่น" (payment channels).
+(b) ดูสลิปไม่ขึ้น — iframe payslip ส่ง ?token= แต่ JWT รับ query-token เฉพาะ /hubs +
+OCR image และอ่านคีย์ access_token เท่านั้น. Program.cs OnMessageReceived: รับทั้ง
+access_token+token และ allow path ที่ลงท้าย /payslip._
+
+_รอบ 28 (สลิปเงินเดือน — แสดง inline + ดีไซน์ใหม่): (a) เดิม GetPayslip ส่ง
+File(bytes,ct,fileName) → Content-Disposition: attachment → เบราว์เซอร์ดาวน์โหลด
+แทนที่จะ render. แก้: download=false (default) → set inline + File ไม่มีชื่อไฟล์ →
+iframe โชว์; download=true → attachment ชื่อไฟล์มีชื่อพนักงาน (สลิปเงินเดือน_<ชื่อ>_
+MM-YYYY.pdf). หน้า payslip modal เพิ่มปุ่ม "⬇️ ดาวน์โหลด". (b) GeneratePayslipAsync
+สร้าง HTML ดีไซน์ใหม่ (หัวแถบสีธีม PrimaryColor + โลโก้ data-URI, การ์ดข้อมูล,
+ตารางรายได้/หัก, กล่อง Net Pay เด่น). **render ด้วย QuestPDF โดยตรง**
+(PdfGenerationService.Payslip.cs → GeneratePayslipPdfAsync) ไม่ผ่าน HTML→Chromium
+จึงสวยคงที่ทุก server แม้ไม่เปิด Puppeteer; สีธีมดึงจากเทมเพลตใบกำกับ
+(AccentColor/TableHeaderColor) + โลโก้จาก CompanySettings.LogoPath._
+
+_รอบ 29 (ดู JE ของรอบเงินเดือน): การจ่ายเงินเดือนลงเป็น JournalEntry 1 ใบ/รอบ
+(ProcessPaymentAsync, ref "HR-PR-{year}-{month}", sensitivity=Payroll) ไม่ออกเอกสาร
+ใบสำคัญจ่ายแยก. เพิ่ม JournalEntryId ใน PayrollRunResponse + MapToPayrollRunResponse
+→ payroll.html run detail ปุ่ม "🧾 ดูรายการบัญชี (JE)" deep-link
+journals.html?entryId={id} (เปิด JE detail ตรง). สลิป = หลักฐานพนักงาน (HR), JE =
+บันทึกบัญชีการจ่าย — แยกหน้าที่กัน._
+
+_รอบ 30 (แก้ยอดรายคนก่อนจ่าย): เดิมไม่มีทางแก้ยอดรายคน (Calculate ทำเฉพาะ Draft +
+ลบ detail คำนวณใหม่; import เป็น Calculated). เพิ่ม UpdatePayrollDetailAsync +
+PUT /payroll/runs/{id}/employees/{empId}/detail (UpdatePayrollDetailRequest, field
+nullable แก้เฉพาะที่ส่ง) — อนุญาตเฉพาะ Calculated/Approved, รวม Gross/หัก/สุทธิ +
+run totals ใหม่, กันสุทธิติดลบ, ปัดค่าติดลบเป็น 0. PayrollRunLineDto ขยายเป็น raw
+fields ครบ (commission/otherIncome/PVD/loan/SSO นายจ้าง) เพื่อ pre-fill ตัวแก้.
+payroll.html run detail: ปุ่ม "✏️ แก้ยอด" ราย row → โมดัลแก้ทีละช่อง + รวมสุทธิ live._
+
+_รอบ 31 (กดจ่ายแล้ว "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้"): ProcessPaymentAsync commit JE แล้ว
+แต่ยัง await งานหนักใน request — IssueMonthlyPnd1Certs + AutoGenerateFilings (สร้าง
+PDF ภงด.1/สปส. + สลิป QuestPDF ทุกคน + upload) + email enqueue → ใช้เวลานาน proxy
+reset connection (client เห็น "Failed to fetch" ทั้งที่จ่ายสำเร็จแล้ว). แก้: ย้ายงาน
+สร้างเอกสารไป background DI scope ใหม่ (IServiceScopeFactory) ผ่าน
+DispatchPostPaymentArtifactsAsync → GeneratePostPaymentArtifactsAsync (IPayrollService);
+response กลับทันทีหลัง commit + notifications. ไม่มี scopeFactory (test) → inline เดิม.
+เอกสาร best-effort + สร้าง on-demand ได้._
+
+_รอบ 32 (กดจ่ายแล้ว error จริง — nested transaction): log ชี้ "The connection is
+already in a transaction and cannot participate in another transaction". ต้นเหตุ:
+ProcessPaymentAsync/SettleSocialSecurityAsync เปิด tx เอง แล้วเรียก
+AccountingService.CreateJournalEntryAsync ที่ก็เปิด tx ใหม่แบบ unconditional →
+Npgsql ห้าม nested tx. แก้: CreateJournalEntryAsync ใช้ ambient-tx pattern เดียวกับ
+ReverseJournalEntryAsync (เช็ค _db.Database.CurrentTransaction — เปิด/commit เฉพาะ
+ตอนไม่มี ambient tx) → JE creation เข้าร่วม tx ของ caller. PayrollController.Pay
+ครอบ try/catch คืน 400 + ข้อความจริง (เดิม propagate ดิบ). แก้ทั้ง payroll pay +
+settle SSO + ทุก caller ที่ครอบ JE ด้วย tx._
+
+_รอบ 33 (post JE ซ้ำ — "post ได้เฉพาะ Draft"): หลังแก้ nested-tx (รอบ 32) โผล่บั๊ก
+ถัดมา — CreateJournalEntryAsync สร้าง JE เป็น Posted ตั้งแต่แรก (ไม่มีขั้น Draft) แต่
+ผู้เรียก 4 ที่ (payroll pay / settle SSO / severance / RemitAsync นำส่งภาษี) เรียก
+PostJournalEntryAsync ตามหลัง Create → post ใบที่ Posted แล้ว → throw. แก้:
+PostJournalEntryAsync เป็น idempotent — entry Posted อยู่แล้ว → no-op สำเร็จ (คืน
+response เดิม); Draft → post ปกติ; สถานะอื่น (Voided/Reversed) → ยัง throw._
+
+_รอบ 34 (แหล่งจ่ายโมดัลนำส่ง สปส. ไม่ครบ): settleSsoBank โหลดแค่ getBankAccounts —
+เพิ่ม getPaymentChannels (เงินสด/เงินทดรองกรรมการ 1133/ช่องจ่าย 2123) แบบ optgroup
+(value bank:<id> / account:<id>). SettleSsoRequest + SettleSocialSecurityAsync เพิ่ม
+BankGlAccountId (validate ผังบริษัท+active+level≥4 ใช้เป็น Cr ตรง ๆ). pattern เดียวกับ
+รอบ 24 (หน้านำส่งภาษี) + payment-source รายคน._
+
+_รอบ 35 (reclassify ผังบัญชี "กดแล้วไม่เปลี่ยน"): ReclassifyLineAccountAsync ทำงาน
+ถูกต้อง (update line.AccountId + post JE คู่ Dr ใหม่/Cr เก่า ผ่าน JournalEntryBuilder
+status=Posted, ไม่มี nested-tx). บั๊กอยู่ที่ frontend: submitReclassifyLine สำเร็จแล้ว
+เรียก this.openDetail?.() ที่ "ไม่มี method นี้จริง" (ชื่อจริง detail()) → optional-chaining
+no-op เงียบ → detail ไม่ refresh → ดูเหมือนข้อมูลไม่เปลี่ยน. แก้: เรียก
+await this.detail(ctx.docId). (retry ไม่สร้าง JE ซ้ำ — backend guard line.AccountId==new → no-op)._
+
+_รอบ 36 (PDF footer "การบันทึกบัญชี" สะท้อน reclassify): เดิม LoadGlPostingAsync หยิบ
+JE ต้นทางใบเดียว (FirstOrDefault) → footer ยังโชว์ผังเดิม (516) แม้ reclassify แล้ว.
+แก้: รวม JE forward ทั้งหมดของเอกสาร (SourceDocumentId เดียวกัน + OriginalEntryId==null
++ Posted + ReversedByEntryId==null = JE ต้นทาง + คู่แก้ไข reclassify) → NetGlLinesByAccount
+net Dr−Cr ต่อผัง (ผังที่ reclassify หักล้างเป็น 0 หายไป เหลือผังใหม่) → footer แสดงยอด
+สุทธิ Dr ผังใหม่ / Cr เงินสด ตรงกับที่แก้. label เพิ่ม "(สุทธิรวมแก้ไข N)" เมื่อมี >1 JE.
+footer นี้ opt-in ผ่าน CompanySettings.ShowGlEntryOnDocument (default ปิด); เอกสารปกติ
+ไม่แสดงผังบัญชีบนหน้า (ไม่ใช่ field §86/4)._
+
+_รอบ 37 (แก้ "แหล่งเงิน" ไม่ได้ — แต่แก้ผังบัญชีได้): backend ReclassifyPaymentSourceAsync
+ทำงานถูก (JournalEntryBuilder Dr เก่า/Cr ใหม่, guards ผ่าน). บั๊กที่ frontend:
+openReclassifyPaymentSource หา doc จาก this.docs (list projection ที่อาจไม่มี doc
+นี้/ไม่มี bankAccountId·paidAmount) แล้ว hard-return "ไม่พบเอกสาร" — ต่างจาก
+openReclassifyLine ที่รับ args inline จึงไม่กระทบ. แก้: ใช้ this._currentDoc (เอกสารที่
+detail() เพิ่ง fetch มี field ครบ) ก่อน fallback this.docs._
+
+_รอบ 38 (ตั้งค่าต่อลูกค้า "ออกใบกำกับภาษีเสมอ"): Contact เพิ่ม
+DefaultIssueTaxInvoice (bool, migration) + Create/Update/ContactResponse DTO +
+MapContactToResponse. contacts.html เพิ่ม checkbox ในส่วนตั้งค่าบันทึกบัญชี (save/load/
+reset). documents.html onContactChange → maybePreselectTaxInvoice: ลูกค้าที่ flag=true
++ ชนิดปัจจุบัน Invoice → เปลี่ยนเป็น TaxInvoice อัตโนมัติ + เตือน §86/4 (TaxId/สาขา/
+ที่อยู่) ไม่ครบ. ไม่บังคับ — ยังเลือกชนิดเองได้/convert ได้เหมือนเดิม._
+
+_รอบ 39 (หมายเหตุขึ้น PDF + รายละเอียดหลายบรรทัด): (a) doc.Notes (หมายเหตุที่กรอกตอน
+สร้าง) เดิมไม่ถูก render บน PDF (โชว์แต่ CustomFooterNotes) — เพิ่ม render ทั้ง 2 path:
+RenderDocumentPdfNative (QuestPDF Text รองรับ \n) + BuildDocumentHtml (white-space:
+pre-line). (b) รายละเอียดรายการรองรับหลายบรรทัด: line desc input เปลี่ยนจาก <input>
+เป็น <textarea rows=1 auto-grow> (Enter=เว้นบรรทัด; ProductLookup ยัง select ด้วย Enter
+เมื่อ arrow-highlight เท่านั้น idx≥0 จึงไม่ชน); PDF cell + on-screen td ใช้ pre-line/Td
+.Text() render \n ครบ._
+
+_รอบ 40 (ชุด invoice/tax-invoice ครบวงจร): (a) เครดิตเทอมต่อลูกค้า —
+Contact.PaymentDueDays/PaymentTerms → เติมวันครบกำหนดอัตโนมัติตอนสร้างเอกสารขาย.
+(b) §86/4 บังคับตอนอนุมัติ — enforce864 default true; TaxInvoice บังคับ field ผู้ซื้อ
+(เลขภาษี13/ที่อยู่) → ใบไม่ครบ block. **ยกเว้น**: (i) `BuyerDeclinedTaxInvoice`/walk-in
+→ ข้าม gate ทั้งชุด; (ii) branch code (สาขา5) บังคับเฉพาะผู้ซื้อนิติบุคคล
+(ประกาศ 199) บุคคลธรรมดาไม่บังคับ (ดู §2.3 ผู้ซื้อไม่ประสงค์รับใบกำกับ). (c) ป้าย "ต้นฉบับ" บน PDF
+— ใบกำกับ/ใบเสร็จภาษี/CN/DN เติม "(ต้นฉบับ)" (สำเนา=WatermarkOverride) ทั้ง
+QuestPDF+HTML. (d) หัว PDF ต่อชนิด GetDocumentTitle ถูกต้องอยู่แล้ว. (e) auto-receipt:
+ชำระครบบน Invoice/TaxInvoice → prompt "ออกใบเสร็จรับเงิน" → convertDocument→Receipt
+(VAT รับรู้ที่ใบเดิม ไม่คิดซ้ำ). (f) e-Tax email 1-คลิก: ปุ่ม sendEtaxEmailOneClick =
+/etax/generate → sendEtaxByEmail (PDF/A-3+XML+CC สรรพากร)._
+
+_รอบ 41 (ดาวน์โหลดสำเนา): pdfModal เพิ่ม dropdown "ต้นฉบับ/สำเนา" (pdfCopyMode) →
+_refreshPdfPreview re-render + printPdf/downloadServerPdf/generate-html ส่ง
+watermarkOverride="สำเนา (COPY)". server พิมพ์ลายน้ำ "สำเนา" (HTML div.watermark +
+QuestPDF background) + isCopyPrint ตัดป้าย "(ต้นฉบับ)" ออก. ต้นฉบับ=ให้ลูกค้า,
+สำเนา=ผู้ขายเก็บ (retention 5 ปี §87/3). จำเป็นเฉพาะเอกสารภาษี (ใบกำกับ/ใบเสร็จ
+VAT/CN/DN); เอกสารทั่วไป (ใบแจ้งหนี้/เสนอราคา/ส่งของ) ไม่บังคับ._
+
+_รอบ 42 (audit เชิงลึก convert/void/CN — verify แล้วแก้ 5 จุด): (a) ConvertCoreAsync
+คงสกุลเงิน+เรตต้นทาง (เดิม default THB). (b) ValidateConversionAsync กันแปลงซ้ำเป็น
+Invoice/TaxInvoice (1 ต้นทาง=1 ใบรับรู้รายได้ กัน double VAT/ภพ.30). (c) VoidDocumentAsync
+block เมื่อมีเอกสารลูก active อ้างอยู่ (กัน orphan + ครอบเคสลูกมี e-Tax ยื่น RD).
+(d) Void เพิ่ม FOR UPDATE lock + re-read สถานะ (กัน double-void race → reverse JE ซ้ำ).
+(e) §86/10 CN cumulative cap: SUM(CN)≤source.TotalAmount (โหมดคืนเงินสดเดิมไม่ cap).
+หมายเหตุ: ภพ.30 สร้างแบบ on-demand จาก documents (อ่านสด ตาม TaxPointDate) —
+สะท้อน CN/DN/void ถูกต้องอยู่แล้ว ไม่ต้องมี TaxReportLine incremental._
+
+_รอบ 43 (supersede + หัวเอกสารรวม): (a) แปลง Invoice→TaxInvoice: เมื่ออนุมัติ
+TaxInvoice ที่แปลงจากใบแจ้งหนี้ (approved/ยังไม่ชำระ/ไม่มีลูกอื่น) →
+SupersedeSourceInvoiceAsync ล้างใบแจ้งหนี้เดิม (reverse JE + stock -1 + project -1
++ Voided) กัน GL/รายได้/สต๊อกซ้ำ (ภพ.30 นับ TaxInvoice ใบเดียวอยู่แล้ว). (b) หัว
+PDF ต่อชนิด GetDocumentTitle ถูกต้อง (Invoice→ใบแจ้งหนี้, TaxInvoice→ใบกำกับภาษี+
+ต้นฉบับ, Receipt+VAT→ใบกำกับภาษี/ใบเสร็จรับเงิน) — แต่ไม่มี "ใบแจ้งหนี้/ใบกำกับภาษี"
+รวม. เปิดช่อง CustomTitle/CustomTitleEn ในหน้า document-templates (เดิมมี field
+แต่ UI ไม่โชว์) → ตั้งหัวเอกสารเองต่อเทมเพลตได้ (เช่น "ใบแจ้งหนี้/ใบกำกับภาษี").
+เมื่อตั้ง CustomTitle → "(ต้นฉบับ)" auto ไม่ต่อท้าย (ใส่เองในหัวได้)._
+
+_รอบ 44 (ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว — checkbox บนฟอร์ม): เพิ่ม flag ระดับ
+เอกสาร `Document.CombinedInvoiceTaxInvoice` (bool, migration ALTER ADD COLUMN
+IF NOT EXISTS). หน้า create-doc (documents.html) มี checkbox `fCombinedTaxInvoice`
+โผล่เฉพาะฝั่งขาย Invoice/TaxInvoice (คุมโดย onDocTypeChange). ติ๊กแล้ว save →
+frontend บังคับ `documentType='TaxInvoice'` + `combinedInvoiceTaxInvoice=true`
+(ผ่าน `_effectiveDocType`). เอกสารทำงานเป็นใบกำกับภาษีเต็มรูป (post VAT 21911→
+ภพ.30, บังคับ §86/4 ตอน approve, ออก e-Tax T03/T01 ได้ตามปกติ) แต่หัวกระดาษ PDF
+พิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี" (Invoice / Tax Invoice) แทน "ใบกำกับภาษี" — override
+ทั้ง QuestPDF (PdfGenerationService.DocumentRenderer.cs) + HTML path
+(PdfGenerationService.cs) เมื่อ `type==TaxInvoice && CombinedInvoiceTaxInvoice
+&& CustomTitle==null`. ยังคงต่อท้าย "(ต้นฉบับ)"/สำเนา ตามเดิม. เครดิตเทอมดึงจาก
+contact.paymentDueDays → fDueDate + fPaymentTerms อัตโนมัติ (maybePreselectTaxInvoice
+เดิม). Service กันเฉพาะ type=TaxInvoice จริงเท่านั้นถึงรับ flag (กันหัวเพี้ยน).
+DTO: CreateDocumentRequest + DocumentResponse echo flag; hydrate checkbox ตอน edit._
+
+_รอบ 45 (ส่งสลิปเงินเดือนทาง LINE): พนักงานผูก LINE เองผ่าน LINE OA บริษัท —
+HR สร้างรหัส 6 หลัก (`EmployeeLineBindCode`, หมดอายุ 24 ชม.), พนักงานเพิ่มเพื่อน
+OA แล้วส่ง "สลิป {รหัส}" → LineBotService.TryBindFromLineAsync เขียน Employee.LineId
+(= push userId เดียวกับ NotificationEngine). ส่งสลิป: PayslipLineDeliveryService
+สร้าง `PayslipShareToken` (สุ่ม 32 bytes base64url, หมดอายุ 7 วัน, เพิกถอน token
+เก่าของงวด+คนเดียวกัน) แล้ว push flex card **ซ่อนยอดเงิน** (โชว์แค่ชื่อ/งวด + ปุ่ม)
+ผ่าน ILineNotifyService.PushFlexToUserAsync (channel ต่อบริษัท). ปุ่มลิงก์ไป
+`GET /api/public/payslip/{token}` ([AllowAnonymous]) → validate token → reuse
+GeneratePayslipAsync → stream PDF inline + log **PdpaPiiAccessLog** (ม.37(4),
+Operation=Read, SubjectType=Employee) + increment AccessCount. UI payroll.html:
+ปุ่ม "📤 LINE" รายคน + "ส่งสลิปทั้งงวดทาง LINE" + modal รหัสผูก (NotBound →
+เสนอสร้างรหัส). Settings: LINE OA Basic ID (`CompanySettings.LineOaBasicId`)
+ทำลิงก์เพิ่มเพื่อน. Endpoints (HR-authed): POST runs/{r}/employees/{e}/payslip/
+send-line · POST runs/{r}/payslip/send-line-all · POST employees/{e}/line-bind-code
+· GET employees/{e}/line-status._
+
+_รอบ 46 (กันส่งอีเมลเอกสาร Draft): เดิมกด "ส่งอีเมลหลังบันทึก" ตอนสร้าง →
+ส่ง PDF เลข DRAFT-xxx ให้ลูกค้าทันทีโดยไม่อนุมัติ (ผิด §86/4 — เลขจริงออกตอน
+Approve). แก้ 2 ชั้น: (a) backend DocumentEmailService.SendDocumentEmailAsync
+บล็อกเอกสาร Draft/WaitingApproval/Rejected/Voided (throw) — กันทุกทาง
+(create-flow, ปุ่มส่งซ้ำ, integration). e-Tax path บล็อก Draft อยู่แล้ว
+(EtaxInvoiceService). (b) frontend create-flow: ติ๊กส่งอีเมล → อนุมัติให้ก่อน
+(ออกเลขจริง) แล้วค่อยส่ง (1-click); อนุมัติไม่ผ่าน (§86/4 ไม่ครบ) → ไม่ส่ง +
+แจ้งเหตุ. แชร์ savedStatus กับ paid-on-issue chain กัน approve ซ้ำ (ApproveDocument
+throw ถ้าไม่ใช่ Draft/WaitingApproval). เพิ่มปุ่ม "📧 ส่งอีเมล" (PDF ปกติ) บน
+เอกสารฝั่งขายที่อนุมัติแล้ว นอกเหนือจาก "ส่ง e-Tax อีเมล" (CC สรรพากร+XML) เดิม.
+e-Tax by Email checkbox แสดงกับ TaxInvoice (รวม combined) อยู่แล้ว.
+
+_รอบ 47 (รายงานภาษี — สะท้อน GL + PDF + ภ.พ.30): (a) รายงานภาษีซื้อไม่ดึง
+เอกสารที่ไม่ได้เคลม VAT — เดิม §82/5/ไม่เคลม (IsVatClaimable=false, VAT กลบ
+ค่าใช้จ่ายไม่ลง 11610) ถูกใส่เป็น audit line IsExcluded → เลิก emit; รายงานมี
+เฉพาะภาษีซื้อที่เคลมจริง (claimableVat>0) สะท้อน GL. ต้นเหตุ: OCR ตั้ง
+HasTaxInvoiceReference=true อัตโนมัติเมื่อมี VAT+เลขใบ แต่ผังบัญชีบังคับ
+ไม่เคลมตอน approve. (b) วันที่ export วว/ดด/ปปปป (พ.ศ.) ตรงหัวคอลัมน์ (เดิม
+สลับ ปปปป-ดด-วว). (c) เพิ่ม PDF: GET tax/{id}/export-pdf?kind=purchase|sales|
+pp30 → PdfGenerationService.GenerateVatReportPdfAsync (QuestPDF) — รายงาน
+ภาษีซื้อ/ขาย ตาราง §87 ประกาศ 104 + แบบสรุป ภ.พ.30 (ช่อง 1-9); ปุ่มในหน้า tax._
+
+(c) UX: maker ที่ไม่มีสิทธิ์อนุมัติ (เช็คจาก my-permissions allowedMenuIds:
+perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่องส่งอีเมล
+ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
+(กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
+
+_Last verified against codebase: 2026-07-20 (รอบ 60) — รอบ 13-14: OCR API=web UI,_
+_DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
+_floor 1,650, กท.20ก, สปส.1-03/6-09._
+_รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
+_PII encrypt+ (Bank/SSN), audit-log DB trigger, §86/4 hard-block opt-in,_
+_ภ.ง.ด.51 SME bracket, PDPA Wave 3 (RoPA/Consent/PiiAccessLog/Breach)._
+_รอบ 42: ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี — per-doc checkbox_
+_`BuyerDeclinedTaxInvoice` (นอกจาก walk-in contact) ยกเว้น §86/4 gate +_
+_downgrade หัว TaxInvoice → "ใบเสร็จรับเงิน"; branch code (§86/4) บังคับเฉพาะ_
+_ผู้ซื้อนิติบุคคล บุคคลธรรมดาไม่บังคับ (ประกาศอธิบดีฯ 199). VAT → ภ.พ.30 ครบ._
+_รอบ 43: §86/4 smart-lock — ไม่ block ทางตัน: บุคคลธรรมดา/ไม่มีเลขภาษีที่ข้อมูล_
+_ไม่ครบ → auto ตั้ง BuyerDeclinedTaxInvoice (ออกเป็นใบเสร็จ, VAT ครบ); นิติบุคคล_
+_→ block + ชี้ทางออก (เติม/ติ๊กไม่รับใบกำกับ). + ตราประทับบริษัท (company seal):_
+_อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
+_(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
+_(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 77: integration Expense/PV รองรับ `AutoApprove` (default true = เดิม). false =_
+_สร้าง Draft: ไม่ลง GL + ไม่ออก 50 ทวิ ตอน create (เดิม hardcode Approved + JE +_
+_50 ทวิ เสมอ). อนุมัติภายหลังผ่าน `ApproveDocumentAsync` → post JE + ออก 50 ทวิ._
+_เพิ่มเงื่อนไข 50 ทวิ ตอน approve ให้ครอบ "จ่ายเต็มแล้ว" (BalanceDue<=0+PaidAmount>0)_
+_ไม่ใช่แค่ Status Paid — กันใบ PV Draft ที่จ่ายแล้วมาอนุมัติทีหลังไม่ออก 50 ทวิ._
+_backward-compat: ผู้เรียกเดิมไม่ส่ง AutoApprove = true เหมือนเดิม._
+_รอบ 76: gate ภาษีซื้อ (§82/5) — ใบที่ "ขอเครดิตภาษีซื้อ" (HasTaxInvoiceReference)_
+_ต้องให้ Contact ผู้ขายมีเลขภาษี 13 หลัก มิฉะนั้น **block อนุมัติ (hard, ไม่มี_
+_acknowledge bypass)** ใน `ApproveDocumentAsync` — เคลมภาษีซื้อโดยผู้ขายไม่มีเลข_
+_ภาษี/ไม่ใช่ใบกำกับเต็มรูป = §82/5(1)(5) โดนประเมินคืน. + frontend guard: เลขผู้เสีย_
+_ภาษีผู้ขายต้อง 13 หลัก + ตรงกับ contact ที่เลือกก่อนบันทึก (เตือน+บล็อก). หมายเหตุ:_
+_backend เคลมด้วย Contact.TaxId จริง (field ผู้ขายบนฟอร์มเป็น display อ่านจาก contact)._
+_รอบ 75: FormatBranch ทนทานขึ้น — (1) รหัสสาขาจริง + ชื่อสาขา default "สำนักงานใหญ่"_
+_ไม่ต่อท้าย "(สำนักงานใหญ่)" ที่ขัดกัน; (2) รหัสสาขา=00000 แต่ "ชื่อสาขา" เป็นเลขล้วน_
+_(เช่น 00001 — กรอกผิดช่อง) → แสดง "สาขาที่ 00001" (regex เลขล้วนกัน false-positive_
+_เช่น "สำนักงานใหญ่ ชั้น 5"). หมายเหตุ: ถ้า รหัสสาขา=00000 จริง (ชื่อ="สำนักงานใหญ่")_
+_เอกสารโชว์ "สำนักงานใหญ่" ถูกต้องตามกฎหมาย — ต้องตั้ง รหัสสาขา=00001 ที่ entity._
+_รอบ 74: เลขที่ 50 ทวิ เพิ่มเดือน — `WHT-{ปี}-{run}` → `WHT-{ปี}{เดือน2หลัก}-{run}`._
+_เดิม manual (`CreateAsync`) รันต่อปี (WHT-2026-0006) แต่ auto (`AutoGenerate`)_
+_รันต่อเดือน (WHT-202607-0006) — ไม่สอดคล้อง. แก้ manual ให้ใส่เดือน (TaxMonth ที่_
+_ผู้ใช้ระบุ = เดือนภาษี) รันต่อเดือน; auto เปลี่ยนฐานเดือนจาก UtcNow → เดือนของ_
+_paymentDate (tax month) ให้ตรง TaxMonth ในใบ. เลขเก่าไม่ชนกัน (prefix ต่างกัน)._
+_รอบ 73: 50 ทวิ — แก้ที่ **client-side renderer** ด้วย (wht.html สร้าง HTML print_
+_เองใน JS ไม่ผ่าน C# BuildWithholdingTaxCertHtml). รอบ 72 แก้แค่ 2 renderer ฝั่ง_
+_C# (HTML+native) → ปุ่ม "พิมพ์/บันทึก PDF" ที่ผู้ใช้เห็นยังขึ้น 2 ฉบับ+ป้ายเดิม._
+_แก้ buildCopy 1,2 → 1,2,3 + copy-label บรรทัดที่ 3 + ป้ายลงชื่อ → "ผู้มีหน้าที่_
+_หักภาษี ณ ที่จ่าย" ใน wht.html. **บทเรียน: 50 ทวิ มี 3 renderer** (C# HTML,_
+_C# native, JS ใน wht.html) — แก้ต้องครบทั้งสาม._
+_รอบ 72: 50 ทวิ — (1) ป้ายลงชื่อเปลี่ยน "ผู้จ่ายเงิน" → "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย"_
+_(ตรงช่องลงชื่อ ทั้ง HTML + native; ป้าย "ผู้จ่ายเงิน" ในแถวเงื่อนไข (1)หัก/(2)ออกให้_
+_คงเดิม—เป็นฟิลด์ทางการ). (2) เพิ่ม "ฉบับที่ 3 (สำหรับผู้หักภาษี ณ ที่จ่าย เก็บไว้เป็น_
+_หลักฐาน)" — จากเดิม 2 ฉบับ (ผู้ถูกหัก ใช้แนบ/เก็บ) เป็น 3 ฉบับ; loop native 1→3,_
+_BuildCopy(3) ฝั่ง HTML, copy-header เพิ่มบรรทัดที่ 3 ทั้งสอง renderer._
+_รอบ 71: 50 ทวิ — เพิ่มสาขาต่อท้ายชื่อผู้จ่าย/ผู้รับ (inline, ไม่กระทบ layout ฟอร์ม)._
+_เฉพาะนิติบุคคล (เลขภาษี 13 หลักขึ้นต้น 0) ผ่าน `CertBranchSuffix` — บุคคลธรรมดา_
+_(ภ.ง.ด.3) ไม่มีสาขา คืนค่าว่าง. 50 ทวิ ไม่บังคับช่องสาขาตามกฎหมาย (คนละกรณี §86/4)_
+_เพิ่มเพื่อความครบถ้วนในการระบุตัว (ช่วย ภ.ง.ด.53). ครบทั้ง HTML + native cert renderer._
+_รอบ 70: แสดง "สาขา/สำนักงานใหญ่" บนเอกสาร (§86/4 + ประกาศฯ 199). เดิมหัวเอกสาร_
+_ไม่แสดงรหัสสาขาเลย. เพิ่ม `FormatBranch(code, name, lang)`: 00000/ว่าง = "สำนักงานใหญ่",_
+_อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
+_คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
+_(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 74 (purge สมมาตร void — กัน 21510 สะสมติดลบจาก recreate ทับ): TakeTime เจอ
+21510 ติดลบ −934.58 จากการ resync (ลบ+สร้างใหม่) ซ้ำหลายรอบ. VoidDocumentAsync
+มี step 2b (กลับ JV ตัดชำระด้วยมัดจำ + คืน subledger ใบมัดจำ) แต่ **PurgeDocumentAsync
+ไม่มี** → hard-delete ใบกำกับแล้ว JV ApplyDeposit (SourceDocumentId=ใบมัดจำ, หลุด
+step 1 ที่ลบเฉพาะ JE sourced จากใบนี้) ค้าง → มัดจำถูกตัด 217xx/21913 ถาวร +
+subledger ไม่คืน → recreate ทับ → Dr 21510 สะสม. เพิ่ม purge step 0c (mirror 2b
+แบบ delete): ลบ JV ApplyDeposit ที่ Reference=เลขใบนี้ (คัด Cr 113) + คืน subledger
+มัดจำ (RealizedAmount/RecognizedAt/AppliedTo). **หมายเหตุ: root cause ที่ TakeTime
+เจอคือ env ยังไม่ deploy branch นี้ — ทั้ง isCashSale + step 2b/0c ยังไม่ทำงานที่นั่น
+→ ทุก resync สะสม. deploy = หยุด churn + delete สมมาตร**._
+_รอบ 73 (มัดจำหลายใบ/ใบกำกับ — blocker โรงแรม): `driveDeposit` เดิม resolve
+`depositAppliedRef` เป็นเลขเดียว (exact match) → comma-separated หาไม่เจอ →
+degrade เป็น AR. เพิ่ม: split `depositAppliedRef` ด้วยจุลภาค — ถ้า >1 เลข →
+loop **reverse ทุกใบเต็มยอดคงเหลือ** (GL-driven ต่อใบ: Dr 215xx/217xx + 21913/
+21911 ที่แต่ละใบ Cr ไว้จริง, mark ใบมัดจำ realized เต็ม + one-shot guard ต่อใบ +
+row-lock). ผลรวม Dr = `depositAppliedAmount` (ยอดรวมที่ส่งมา) → cashAmt (Total −
+รวม) สมดุลพอดี; ไม่ตรง → AutoPost balance check throw → degrade (ปลอดภัย).
+**เลขเดียว → else = logic เดิมไม่แตะ (zero regression)**. contract TakeTime: คง
+comma-separated `depositAppliedRef` + `depositAppliedAmount`=ผลรวม, แต่ละใบถูก
+consume เต็ม (semantic checkout โรงแรม). ⚠️ GL-critical — Windows GL test เคส
+2+ ใบก่อนเปิด._
+_รอบ 72 (ลบ+resync ให้สะอาด — ใบเสร็จ REC ลอยค้าง): ผู้ใช้ลบใบกำกับเก่าที่มี
+ปัญหาเพื่อ resync ใหม่ แต่ **PurgeDocumentAsync เดิม step 7 แค่ NULL
+RelatedDocumentId ไม่ได้ลบใบเสร็จ settlement (REC)** → REC ลอยค้างใน list. แก้:
+(1) purge เพิ่ม step 6c — cascade ลบ settlement receipt (IsSettlementReceipt +
+RelatedDocumentId==ใบนี้) พร้อม e-Tax/line ก่อน NULL ref; (2)
+`BulkCleanupController`: `GET /cleanup/orphaned-settlement-receipts` (diagnostic,
+API key อ่านได้) + `POST .../purge` (Owner soft-delete) — ล้าง REC ที่ orphan
+อยู่แล้วจากการลบก่อนหน้า (RelatedDocumentId NULL หรือต้นทาง Voided). settlement
+receipt ไม่มี JE ของตัวเอง (payment ถือ JE, ถูกลบไปกับใบกำกับ) → ลบปลอดภัย
+ไม่กระทบ GL. วิธี resync สะอาด: ลบทั้ง group (มัดจำ+ใบกำกับ+REC) → resync มัดจำ
+fresh + ใบกำกับ isCashSale อ้าง depositAppliedRef ใหม่._
+_รอบ 71 (กันยอดเบิ้ลจากชำระซ้ำ — root cause ที่ผู้ใช้เจอ): `ProcessPaymentAsync`
+(integration payment endpoint) เดิมมีแค่ idempotency-by-reference — **ไม่มี**
+status guard/over-pay cap → ยิง payment ส่วนมัดจำแยก = Dr เงินสด/Cr ลูกหนี้ ซ้ำ
+กับที่มัดจำ+ใบกำกับลงไปแล้ว → เงินสด/มัดจำนับซ้ำ + สร้าง REC settlement เยอะ.
+เพิ่ม guard: เอกสาร `IssuedAsCashReceipt` (ขายเงินสด settle ในตัวแล้ว) หรือ
+`Status=Paid`/`BalanceDue≤0` → skip ไม่รับชำระภายนอก; over-pay (Amount>คงค้าง)
+→ throw พร้อมชี้ให้ใช้ `depositAppliedRef` (drives) แทนการยิง payment แยก.
+(`DocumentService.CreatePaymentAsync` มี guard นี้อยู่แล้ว — เติมให้ครบฝั่ง
+integration). วิธีถูก: ออกใบกำกับ isCashSale + depositAppliedRef → driveDeposit
+**ดึงใบมัดจำเดิม** (กลับ 21510/21913) ใบเดียวจบ ไม่สร้าง receipt ใหม่/ไม่นับซ้ำ._
+_รอบ 70 (TakeTime cash-sale — GL สะอาด ไม่มีลูกหนี้): แก้ตามที่ผู้ใช้ทัก — ขายเงินสด
+B2B ต้องไม่มีลูกหนี้การค้าในการลงบัญชี. เดิม integration `isCashSale` ลงผ่าน
+mapping-JE (Dr ลูกหนี้) + ApplyDeposit + settle → **AR-transit** (สุทธิ 0 แต่ footer
+JE โชว์ Dr ลูกหนี้). เปลี่ยนเป็น: **(1)** ขยาย branch cash-receipt ใน
+`AutoPostToJournalAsync` ให้รับ `TaxInvoice && IssuedAsCashReceipt` (sales branch
+เพิ่ม `&& !IssuedAsCashReceipt` เพื่อ exclude; บังคับ `receiptSettlesAr=false`) →
+reuse เส้น `driveDeposit` ที่ verified. **(2)** `IDocumentService.PostCashSaleJournalAsync`
+(public wrapper: AutoPost + SaveChanges + detach-on-error + คืน JE id). **(3)**
+integration isCashSale ตั้ง `IssuedAsCashReceipt=true` + `PaymentAccountId` + stamp
+`DepositAppliedAmount` ทุกกรณี → post ผ่าน PostCashSale (ไม่ใช่ mapping+settle).
+ผล GL: `Dr เงินสด(+217xx+21913 ถ้ามัดจำ) / Cr รายได้+21911` **ไม่มี 113 เลย** ใบเดียว.
+fail-soft → degrade เป็นตั้งหนี้ (mapping JE) ให้ TakeTime fallback. ลบ
+`TrySettleCashSaleAsync`/ApplyDeposit-transit path ทิ้ง. void สมมาตรผ่าน 7c เดิม.
+⚠️ GL-critical + env นี้ test ไม่ได้ → **ต้อง verify GL บน Windows ก่อนเปิด**._
+_รอบ 69 (ทุกเอกสาร): OWNER fallback ไม่ทับผู้อนุมัติตัวจริงอีกต่อไป. เดิม fallback_
+_ทำงานทุกครั้งที่ slot 1 ไม่มี "รูปลายเซ็น" → ผู้อนุมัติจริงที่ยังไม่อัปโหลดลายเซ็น_
+_ถูกแทนด้วยลายเซ็น+ชื่อ "เจ้าของ" ทุกประเภทเอกสาร (โชว์ผิดคน + แก้ชื่อผู้อนุมัติ_
+_ไม่เปลี่ยนตาม). แก้: fallback ทำงานเฉพาะเมื่อ "ไม่มีผู้อนุมัติระบุเลย" (slot 1 ไม่มี_
+_ชื่อ) — ถ้ามีผู้อนุมัติจริง (ชื่อ resolve สดจาก Users) คงชื่อไว้ เว้นบรรทัดลายเซ็น_
+_ให้เซ็นมือ. custom signatory (opt-in) คงเดิม (ตั้งใจ fix ชื่อ — แก้ที่ Settings)._
+_รอบ 68: ใบเสร็จ settlement เก่า — โชว์ชื่อผู้กดที่ถูกต้องด้วย. ชื่อ/ลายเซ็นถูก_
+_resolve สดตอน render (ไม่ snapshot — ไม่มี field เก็บ HTML/PDF/ชื่อบนใบ) → ใบเดิม_
+_แสดงชื่อถูกอัตโนมัติหลัง deploy. เสริม robustness: ใบ settlement ที่ UpdatedBy ว่าง_
+_(ใบเก่า/บาง path) → approver ตกไปใช้ CreatedBy (= ผู้กดคนเดียวกัน) กันเว้นว่าง/เด้ง_
+_ไปเจ้าของ. ไม่ต้อง migrate DB._
+_รอบ 67: ใบเสร็จ settlement — ยกเว้น custom authorized signatory ด้วย (ต่อ รอบ 64)._
+_รอบ 64 ข้าม owner fallback ให้ใบ settlement แล้ว แต่ **ยังไม่ข้าม custom signatory**_
+_(opt-in `UseCustomAuthorizedSignatory`) ที่ override slot 1 ก่อนหน้า. `AuthorizedSignatoryName`_
+_เป็นค่า "เก็บไว้" ใน CompanySettings → แก้ชื่อ user แล้วไม่เปลี่ยนตาม = อาการ "ชื่อเก่า_
+_ไม่อัปเดต" + ลายเซ็นเจ้าของที่ผู้ใช้รายงานซ้ำ. แก้: เพิ่ม `!doc.IsSettlementReceipt` ที่_
+_เงื่อนไข custom signatory ด้วย → ใบเสร็จ settlement ใช้ผู้กดบันทึก (อ่านชื่อสดจาก Users)_
+_เสมอ ทั้ง custom + owner ข้ามหมด. ยืนยันไม่มี name snapshot ตอนสร้าง (ไม่เซ็ต PreparerName)._
+_รอบ 66 (backlog F11): `RecalcVatTotals` นับ JE_INPUT เป็นภาษีซื้อ. เดิมภาษีซื้อ_
+_จาก JE ล้วน (tag "JE_INPUT") ถูกเช็ค `!= "INPUT"` → หลุดไปรวมใน OutputVat +_
+_หายจาก InputVat = ภาษีขายเกิน + ภาษีซื้อขาด → NetVat ผิด (นำส่งเกิน) ตอนแก้ไข/_
+_finalize รายงานที่ recompute. แก้: `IsInputLine` = "INPUT" or "JE_INPUT"_
+_(ตรงกับ LineSide ที่ generate ครั้งแรกถูกอยู่แล้ว — ปิด drift ระหว่าง 2 เส้นทาง)._
+_รอบ 65 (backlog F5 — ปิดช่องนำส่งภาษีขายขาด): ใบแจ้งหนี้ (Invoice) ที่มี VAT_
+_เข้า ภ.พ.30. เหตุ: `AutoPostToJournalAsync` ลง Cr 21911 ให้ทั้ง Invoice และ_
+_TaxInvoice เท่ากัน แต่ `TaxService.GenerateVatReport` รายงานเฉพาะ TaxInvoice →_
+_ใบแจ้งหนี้ที่มี VAT มีภาระภาษีขายใน GL แต่ไม่เคยถูกนำส่ง = ภ.พ.30 < GL (โดนปรับ)._
+_แก้: branch output VAT รับ Invoice (VatAmount>0) ด้วย ยกเว้นใบที่ถูกแปลงเป็น_
+_ใบกำกับภาษี (`supersededInvoiceIds` = Invoice ที่มี TaxInvoice child non-void_
+_อ้างถึง) กันนับซ้ำ. Invoice→Receipt = settlement (Receipt child ถูก exclude ที่_
+_branch เดิมอยู่แล้ว) ไม่กระทบ. **ค้าง (design)**: แปลง Invoice→TaxInvoice ที่_
+_ทั้งคู่มี VAT → GL 21911 เบิ้ล (ต้อง reverse JE ใบต้นทางตอน convert) แยกแก้._
+_รอบ 64: ใบเสร็จ settlement — ช่องผู้อนุมัติ = ลายเซ็นผู้กดบันทึก ไม่ใช่เจ้าของ._
+_ปัญหา: กดรับเงินจากใบกำกับ/ใบแจ้งหนี้ → ใบเสร็จโชว์ลายเซ็น+ชื่อ "เจ้าของ" (Owner)_
+_ไม่ใช่ผู้กด และผู้กดแก้ชื่อตัวเองแล้วไม่เปลี่ยนตาม. เหตุ: `ResolveSignersAsync`_
+_มี Owner-signature fallback เมื่อ approver ยังไม่มีรูปลายเซ็น → ผู้กดที่ยังไม่ตั้ง_
+_ลายเซ็นเด้งไปลายเซ็น+ชื่อเจ้าของ. แก้: fallback นี้ **ข้ามใบ IsSettlementReceipt**_
+_→ ช่องผู้อนุมัติ = ผู้กด (UpdatedBy) เท่านั้น (ผ่านเช็คสิทธิ์อนุมัติแล้ว; ไม่มีสิทธิ์_
+_= ใบเป็น Draft). ชื่ออ่านสดจาก Users ทุกครั้ง แก้ชื่อแล้วเปลี่ยนตามทันที._
+_รอบ 63: ชื่ออาคาร (BuildingName) ขึ้นบนที่อยู่เอกสารครบ —_
+_`PdfGenerationService.FormatThaiAddress` รับพารามิเตอร์ buildingName เพิ่ม_
+_(เดิม structured street ประกอบจาก เลขที่+หมู่+ถนน เท่านั้น → contact ที่บันทึก_
+_ชื่ออาคารไว้หายจากเอกสารพิมพ์ทุกใบ); อัปเดต call site ทั้ง 6 จุด (HTML + native_
+_renderer, company + contact + 50ทวิ) + กันซ้ำเมื่อ street head จาก free-text_
+_มีชื่ออาคารอยู่แล้ว + คงพฤติกรรมเดิมเมื่อมีแค่ชื่ออาคารโดด ๆ (ตกไปใช้ free-text)._
+_`WithholdingTaxCertService.ComposeFullAddress` (API response) เติม buildingName_
+_ใน structured fallback ด้วย. e-Tax XML มี BuildingName element อยู่แล้วทั้ง 2 ฝั่ง._
+_รอบ 62: **Deposit Center** — redesign หน้าเงินมัดจำทั้งหน้า (`/pages/_
+_deposit-center.html` + endpoint ใหม่ `GET document/deposit-center`): payload_
+_เดียวจบ (rows + KPI + **GL tie-out** + sources + GeneratedAtUtc + build marker)_
+_→ หน้ากับ GL ไม่ตรง = ฟ้องบน banner ทันที ไม่มีวันโชว์ 0 เงียบ. URL ใหม่ทั้ง_
+_หน้า+API = ทะลุ cache เก่าทุกชั้น (SW/browser/CDN) ที่ทำ "แก้แล้วยังขึ้น 0"._
+_เมนูชี้หน้าใหม่, หน้าเก่า redirect. mobile-first cards / desktop table, tabs+_
+_ค้นหา+เรียง, VAT chip (พักรอ 21913/รายงานแล้ว), booking chip, progress bar_
+_รับรู้/คืน, refresh + เวลาข้อมูลจากเซิร์ฟเวอร์, modal รับรู้/คืนเงิน (payload_
+_เดิม), accordion ที่มาของตัวเลขรายบัญชี._
+_รอบ 61 (ปิด backlog สูงจาก audit รอบ 60): กัน**รายได้ซ้ำ** QT/BN → Invoice_
+_และ → Receipt (นับ Receipt/RV เป็น revenue-child ของ QT/BN ใน conversion guard_
+_F3); **ภ.พ.30 นับ Receipt ที่แปลงจาก QT/BN** (ขายเงินสด — VAT ลง GL แต่เดิม_
+_ถูก exclude เพราะมี RelatedDocumentId = นำส่งขาด F4-sales; settlement ของ_
+_Invoice/TaxInvoice ยัง exclude ตามเดิม); PI อ้าง GRN + VAT ต้องห้าม → Dr VAT_
+_เข้าเป็นต้นทุนตามบรรทัด (เดิม JE ไม่สมดุล F1-purchase); 50 ทวิ ลง**เดือนที่จ่าย_
+_จริง** (paymentDate param F13) + auto-สร้างตอน approve เอกสารจ่ายที่จบทันที_
+_(PV เงินสด/settle — เดิมไม่มี cert เลย F12); recurring ส่งต่อส่วนลดบาท/_
+_IsVatClaimable/ProductCode/BillDiscount/PricesIncludeVat (D1/D2) + RunNow lock_
+_+ เลื่อน NextRunDate กันออกใบซ้ำกับ cron (D3)._
+_ยัง backlog (ต้อง design/เสี่ยงสูง): F5 Invoice ไม่เข้า ภ.พ.30 (VAT ใน GL ตั้งแต่_
+_approve — ต้องเลือก post ตอน settle หรือรายงาน Invoice), F15 ภ.พ.36 ไม่มี JE,_
+_F10 Receipt ขายสดไม่ตัด COGS/สต๊อก (เสี่ยงชน POS ที่เขียน movement เอง), A8_
+_multi-warehouse, A4/A10 FIFO relayer ตอน void, A7 negative-stock enforcement,_
+_F16 หัวใบเสร็จ settlement ขึ้น "ใบกำกับภาษี", F6 คอลัมน์ exempt/0%, §65ตรี ครบ_
+_ทุกวงเล็บ, ใบกำกับอย่างย่อ (§86/6), F11 RecalcVatTotals JE_INPUT, F8 §82/3_
+_anchor ตามงวดรายงาน, D5 convert race._
+_รอบ 60 (audit ทุกประเภทเอกสาร — แก้ criticals ชุดแรก 15 จุด): void ใบเสร็จ_
+_settlement ถูก block (ให้ยกเลิก payment แทน — กัน AR ติดลบ/เก็บซ้ำ B3/F8);_
+_FindAccountAsync exact-match ข้าม header Level<4 (CN ซื้อเคย Cr "116"/"212"_
+_header F2); CN/DN เคารพ WHT basis Cash (gross AR/AP ไม่แตะ 11910 F2-sales);_
+_ห้าม CN/DN อ้างใบ Voided (§86/9-10 F9); void CN ซื้อคืน PaidAmount (Dr 212 probe_
+_F3); ภ.พ.30 ไม่เคลม VAT undue 11640 (excluded line F4) + CIL ออกจาก input_
+_whitelist (§82/4 F7); Overdue เฉพาะใบอนุมัติแล้ว + จ่ายใบ Overdue ได้ (F7-sales);_
+_convert ส่งต่อ BillDiscount/PricesIncludeVat/ส่วนลดบาท/IsVatClaimable (F1, เฉลี่ย_
+_ตาม partial); FIFO sign-agnostic + marginal-slice costing (A1/A2/A6); WAC rebuild_
+_หลัง void (A5); void payment จัดการ 50 ทวิ Draft (B5); apply มัดจำ stamp_
+_DepositAppliedAmount ลงใบ (E2); sensitivity ไม่โผล่ search/CSV (PDPA E3); HTML_
+_scale-back ยกเว้นมัดจำ defer (F14). backlog ที่เหลือดูรายงาน audit._
+_รอบ 60 (TakeTime cash-sale spec — B2B ขายเงินสด ใบเดียว จบ = e-Tax T03):
+เพิ่ม `Document.IssuedAsCashReceipt` (bool, persist, migration ALTER ADD COLUMN).
+IsCashSale settle สำเร็จ (BalanceDue→0) → ตั้ง flag → e-Tax **T03**
+"ใบเสร็จรับเงิน/ใบกำกับภาษี" (EtaxInvoiceService docTypeCode/Name switch เพิ่ม
+`TaxInvoice when IssuedAsCashReceipt`) + หัว PDF "ใบเสร็จรับเงิน/ใบกำกับภาษี"
+(PdfGenerationService.ComputeDocumentTitle). ต่าง ServedAsReceipt (NotMapped,
+คิดตอน render) ตรงที่ persist → คุม e-Tax type ได้ (ServedAsReceipt คุมแค่หัว).
++ InboundInvoiceRequest รับ deposit fields (DepositAppliedAmount/Ref/
+OutputVatDeferred/DrivesJournal) → persist ลง Document ตอนสร้าง (รองรับ resync
++ deposit/checkout). **เคสมีมัดจำ (DrivesJournal=true):** ก่อน settle เรียก
+`ApplyDepositToInvoiceAsync` (เส้น verified — Dr 217xx + Dr [21913|21911] /
+Cr ลูกหนี้, กลับ deferred ของใบมัดจำ REC-xxx ที่อ้าง, ไม่รับรู้รายได้ซ้ำ) →
+BalanceDue เหลือสุทธิ → settle รับแค่ส่วนต่าง → GL: Dr เงินสด(สุทธิ) +
+Dr 217xx/VAT-reversal / Cr รายได้+VAT+ล้าง AR. drives ต้องมี "ใบมัดจำจริง"
+(IsDeposit) — resolve จาก depositAppliedRef; ไม่พบ → fail-soft (ใบกำกับค้างชำระ
+ไม่ล้ม sync). display-only mode (DrivesJournal=false): stamp DepositAppliedAmount
+ที่ create เพื่อ render "หักมัดจำ/รับสุทธิ" เท่านั้น ไม่แตะ GL, settle จ่ายเต็ม.
+⚠ ยัง gate ด้วย toggle ฝั่ง TakeTime (`Nexaacc_CashSale_Deposit`) จนกว่า
+test GL บน Windows ผ่าน. **สมมาตร void (step 2b ใหม่ใน VoidDocumentAsync):**
+JV ตัดชำระด้วยมัดจำ (ApplyDepositToInvoiceAsync) มี SourceDocumentId=ใบมัดจำ
+จึงหลุด step 2 (กลับเฉพาะ JE ของใบที่ void) → เพิ่ม 2b: หา deposit ที่
+DepositAppliedToDocumentId ชี้มาใบนี้ → reverse JV (คัดเฉพาะ JE ที่มีขา Cr 113
+กัน realize-JE) + คืน subledger (RealizedAmount/RecognizedAt เฉพาะผู้ stamp
+Dr 21913/AppliedToDocumentId) — ปิดช่อง AR ติดลบ + มัดจำถูกกลืนถาวร (ครอบ
+ApplyDeposit ฝั่ง UI ที่มีช่องเดิมนี้ด้วย); เคส drives (ขา reversal ฝังใน JE
+ใบเช็คเอาท์ ไม่มี JV) ข้าม 2b โดยธรรมชาติ → 7c ทำงานตามเดิม. **Self-heal
+(TrySettleCashSaleAsync ใช้ร่วม 3 จุด: create / retry "Already synced" /
+resyncUpdate):** create รอบแรก fail-soft → partner ยิงซ้ำหรือ resync → settle
+ต่อจากขั้นที่ค้าง (มัดจำ apply แล้วข้าม — ดูจาก DepositAppliedAmount ที่ drives
+ไม่ pre-stamp, ยอดปิดแล้ว → heal flag T03 อย่างเดียว); resync re-stamp deposit
+fields จาก request (source of truth — guard PaidAmount==0 ผ่านแล้วจึงปลอดภัย)._
+_รอบ 59 (audit จำลอง scenario — ชุดใหญ่ 15 แก้): **สมมาตร apply↔void สมบูรณ์** —_
+_void/purge un-realize คิดจาก "บรรทัด JE จริงของใบเช็คเอาท์" (helper Unrealize_
+_DrivesDepositAsync: depBase = ΣDr 215/217, เคลียร์ RecognizedAt เฉพาะเมื่อใบมี_
+_Dr 21913 จริง) แทน field-ratio — ปิด F1 (gross drift +VAT/รอบ), F2 (void แล้ว_
+_VAT ผี ค้าง ภ.พ.30), F3 (ล้าง stamp ของ RealizeDeposit ผิดใบ → 21913 ติดลบ/_
+_21911 เบิ้ล). เคส A เพิ่ม guard ครบ (F4): one-shot+self-heal เหมือนเคส B +_
+_over-apply เทียบ GL net/subledger + row-lock FOR UPDATE กัน concurrent (F9B,_
+_ทั้งใบมัดจำและ JV+reload). purge un-realize subledger ก่อนลบ JE (F7). Apply_
+_classic: over-apply guard + one-shot + คุม status PartiallyPaid + stamp_
+_RecognizedAt เมื่อครบเท่านั้น (กัน 21913 ghost จาก partial). Refund: guard_
+_เทียบคงเหลือจริง (หัก realized) + **ออกใบลดหนี้จริง** (§86/10) เมื่อ VAT เคย_
+_ถูกรายงาน → ภ.พ.30 ลดยอดถูกต้อง. หน้า deposits: หัก refunded, clamp ≥0,_
+_fallback GL net เมื่อ SubTotal=0, DTO เพิ่ม RefundedAmount. create block_
+_IsDeposit+RelatedDocumentId (มัดจำต้อง standalone)._
+_รอบ 58 (audit จำลอง scenario): แก้ **ภ.พ.30 นับ VAT มัดจำซ้ำ** — มัดจำ defer ที่_
+_ถูกหักผ่าน drives/apply (DepositAppliedToDocumentId ตั้ง) เคยถูกดึงเข้า ภ.พ.30_
+_งวด RecognizedAt ทั้งที่ใบเช็คเอาท์/ใบกำกับปลายทางรายงาน VAT เต็มใบแล้ว → ยอด_
+_ขาย/ภาษีขายเกินจริง. แก้: exclude applied deposits จาก deferredRecognized query_
+_+ Receipt branch (standalone RealizeDeposit ยังรายงานปกติ). + deferred ตัดสิน_
+_**GL-first** (flag หรือขา Cr 21913 จริงใน JE ใบมัดจำ) เหมือน drives d7ee4d3 —_
+_มัดจำ integration ที่ flag ไม่ตั้งเคยถูกรายงานเดือนรับเงินทั้งที่ GL พัก 21913._
+_รอบ 57: drives — **หลักเดียวทุกเคส** (TakeTime §5): resolve เจอแล้ว → อ่าน "ขา Cr_
+_จริง" ของใบมัดจำ/JV แล้วกลับตามนั้น ไม่ assume โหมดจาก field/flag/setting._
+_เคส A ยกเครื่องเหมือนเคส B: อ่าน JE ของใบมัดจำ (SourceDocumentId, Posted||Reversed)_
+_→ ratio ฐาน/VAT จากขา Cr จริง + Dr กลับ "บัญชีเดิมที่ถูกเครดิต" (ไม่เดาผัง):_
+_gross (ไม่มีขา VAT) → Dr 217xx เต็ม / net+21913 → Dr ทั้งคู่ + Cr 21911 เต็ม /_
+_net+21911 → Dr 21911 (net). fallback field+flag เฉพาะเมื่อ JE ไม่ผูกใบมัดจำ._
+_รอบ 56: drives เคส A (document REC-) + deferred VAT — ขา VAT อ่านจาก **GL จริง**_
+_ของใบมัดจำ (GL-first, flag-fallback) เหมือนเคส B: เดิมพึ่ง flag DepositOutputVat_
+_Deferred อย่างเดียว → มัดจำที่ Cr 21913 จริงแต่ flag ไม่ตั้ง ถูกเลือก 21911 →_
+_Dr net กับ Cr 21911 ของใบเช็คเอาท์ = 21913 ค้างถาวร + ภาษีขายงวดขาด + JE ≠_
+_ยอดเอกสาร (เคส REC-20260707-0002). ใหม่: sum(Cr−Dr) บน 21913 ของ JE ที่_
+_SourceDocumentId=ใบมัดจำ (Posted||Reversed) ≥ depVat → Dr 21913 + Cr 21911 เต็ม._
+_รอบ 55: drives-resolve (เคส B journal) เปลี่ยนจาก link-based เป็น **net-balance**_
+_ครอบคลุมทุกกลไก un-reverse — เดิมกรอง `ReversedByEntryId == null` (partner_
+_reverse→un-reverse → link ค้างที่ NextAcc → หาไม่เจอ). เปลี่ยนเป็นคำนวณ **net GL_
+_จริง**: Σ(Cr−Dr) บนบัญชี deferred ของ **ทั้ง reverse-family** (transitive closure_
+_ตาม OriginalEntryId ทุกชั้น) นับ **Status = Posted||Reversed** (ตรงกับ GetGeneral_
+_Ledger/TrialBalance — Reversed ยังอยู่ใน ledger; Voided/Draft/ลบ หลุด) →_
+_telescope เป็น net เสมอ: reversal-of-reversal(+Cr)/void/delete reversal → net live;_
+_reversal ยัง active → net 0 (ตัด). สำคัญ: reverse ตั้ง original.Status=Reversed_
+_ถ้ากรองแค่ Posted จะหา original ไม่เจอหลัง reverse. verify: TakeTime reverse ผ่าน_
+_integration ProcessJournalReverse → ตั้ง OriginalEntryId + Status=Reversed →_
+_closure เห็นครบ. ไม่พึ่ง flag ReversedByEntryId → un-reverse วิธีใดก็ได้._
+_รอบ 54: กวาดบั๊ก Include(Contact) INNER JOIN ทั้งระบบ (~40 จุด) + integration_
+_invoice รับ `bookingNumber` — helper กลาง `ContactHydration` (Hydrate*ContactsAsync_
+_ผูก Contact ที่ soft-delete กลับเข้า nav ด้วย IgnoreQueryFilters). ครอบคลุม ภาษี_
+_(ภ.พ.30/36/54, ภ.ง.ด.3, aging, bad-debt, 50 ทวิ), รายงาน (executive/dashboard/_
+_cashforecast/reportbuilder), bank reconciliation, PDF/email/etax, portal,_
+_revenue-recognition. `InboundInvoiceRequest.BookingNumber` (JSON `bookingNumber`,_
+_string) → `Document.BookingNumber` (company endpoint มีอยู่แล้ว)._
+_รอบ 53: **ต้นเหตุจริง** หน้าเงินมัดจำโชว์ 0 (ไม่ใช่ cache/deploy) —_
+_`GetDepositsAsync` ทำ `.Include(d => d.Contact)` แต่ `Document.Contact` เป็น_
+_required (ContactId non-nullable) + `Contact` มี `HasQueryFilter(!IsDeleted)` →_
+_EF Core แปลงเป็น **INNER JOIN + filter** → เอกสารมัดจำที่ contact ถูกลบ/ปิด_
+_(IsDeleted=true เช่น vendor โรงแรมที่ deactivate) ถูก "ตัดทิ้งเงียบทั้งใบ" →_
+_native 16 ใบหายหมด. Diagnostic ไม่มี Include เลยนับครบ (= 2 ตัวเลขขัดกัน). แก้:_
+_เลิก .Include, โหลดชื่อ/เลขภาษี contact แยกด้วย IgnoreQueryFilters ลง dictionary_
+_แล้ว map ตอน build DepositSummary (contact ที่ถูกลบยังโชว์ชื่อ ไม่ทำใบหาย)._
+_รอบ 52: deposit-applied drives-journal รับ journal ref (TakeTime point 2) —_
+_เดิม `DepositAppliedRef` resolve ได้แค่ใบมัดจำ (Document) ตาม DocumentNumber →_
+_มัดจำที่เป็นสมุดรายวันภายนอก (JV-INT) หาไม่เจอ → throw → integration ต้อง_
+_fallback ส่ง JV reverse แยก. เพิ่มเคส B: ไม่พบ Document → resolve เป็น_
+_JournalEntry.EntryNumber → กลับ deferred (217xx/21913) จากบรรทัด Cr จริงของ_
+_journal → net JE ใบเดียว. guard double-reverse ด้วยคอลัมน์ใหม่_
+_JournalEntry.DepositAppliedToDocumentId (void → un-mark). เคส A ไม่แตะ._
+_รอบ 51: ที่อยู่ต่างประเทศของ Contact — ฟอร์มผู้ติดต่อเดิมเป็นโครงไทยล้วน_
+_(จังหวัด/รหัสไปรษณีย์ required) → vendor/ลูกค้าต่างชาติ (เช่น Booking.com B.V.)_
+_กรอกไม่ได้. เพิ่ม checkbox "🌐 ที่อยู่ต่างประเทศ" → สลับเป็น dropdown ประเทศ_
+_(ISO alpha-2) + textarea ที่อยู่เต็ม; save เซ็ต `CountryCode`≠TH + `Address`_
+_free-text + null โครงไทย. e-Tax `BuildBuyerParty`: guard `isThai` — CountryID≠TH_
+_บังคับไปทาง unstructured (LineOne + CountryID ต่างชาติ) ไม่ยัด TISI geo-code_
+_ไทยให้ที่อยู่ต่างชาติ. (backend DTO/entity/WHT ม.70 รองรับ CountryCode อยู่แล้ว)_
+_รอบ 50: dashboard เงินมัดจำ (`GetDepositsAsync`) — ยังโชว์ 0. ขยายการตรวจจับ_
+_เป็น 3 ชั้น: (1) native IsDeposit, (2) GL-detected **ทุก doc type** (เลิกจำกัด_
+_แค่ Receipt/RV) ใช้ยอด **Cr สุทธิใน GL** (ΣCr−ΣDr) เป็นฐาน/คงค้าง แทน SubTotal_
+_ที่ integration doc อาจไม่ตั้ง (เดิม outstanding=0), (3) doc-less: มัดจำที่เป็น_
+_JE ล้วน `SourceDocumentId=null` → รวมเป็น 1 แถวสรุป (Id=Guid.Empty ไม่มีปุ่ม)_
+_เพื่อ KPI ไม่ขึ้น 0 ทั้งที่งบดุลมีหนี้สินมัดจำ._
+_รอบ 49: dashboard เงินมัดจำ (`GetDepositsAsync`) — เดิมกรอง `IsDeposit=true`_
+_อย่างเดียว → พลาดมัดจำที่สร้างผ่าน integration (ลง JE เอง Cr 215xx/217xx ผ่าน_
+_mapping DEPOSIT_RECEIVED โดยไม่ set IsDeposit) → หน้าเงินมัดจำโชว์ 0. เพิ่มการ_
+_ตรวจจาก GL จริง (เอกสาร Receipt/RV ที่มี JE posted Cr 215xx/217xx ไม่ reverse)_
+_union กับ native → สะท้อนความจริงทางบัญชี ไม่พึ่งแค่ธง._
+_รอบ 48: e-Tax PDF/A-3 — เปลี่ยนวิธีฝัง XML จาก hand-rolled injector (2 xref,_
+_XMP ซ้อน → strict parser/สรรพากรหา XML ไม่เจอ = "XML หาย") → **QuestPDF native_
+_`DocumentOperation.AddAttachment()` + `ExtendMetadata()`** (qpdf single-pass,_
+_xref เดียว, XMP เดียว, /AF ถูก — เหมือน iTextSharp ที่ TakeTime ใช้)._
+_`AttachEtaxXmlNative` (temp file + fallback injector ถ้า native ล้ม),_
+_`BuildEtdaXmpExtension` (rsm schema สำหรับ ExtendMetadata). ใช้ทั้ง_
+_BuildEtaxPdfA3WithEmbeddedXml + GenerateDocumentPdfAsync._
+_รอบ 47: e-Tax PDF/A-3 — แก้บั๊ก /Size ผิด (trailer /Size = maxObj+1 แต่ add_
+_object เลข maxObj+1..+4 → embedded XML objects นอกช่วง → สรรพากร "ประมวลผล_
+_เอกสารแนบไม่ได้"). แก้เป็น newOffsets.Keys.Max()+1. นี่คือสาเหตุหลักที่ RD reject._
+_รอบ 46: e-Tax PDF/A-3 — แก้ compliance ให้ผ่าน validator: (1) trailer เพิ่ม /ID_
+_(incremental update คง file id เดิม — PDF/A บังคับ), (2) XMP เพิ่ม field มาตรฐาน_
+_ครบ (dc:title/creator/description, pdf:Producer/Keywords, xmp:CreatorTool/Create_
+_Date/ModifyDate) ตรงกับ Info dict + วันที่ capture ครั้งเดียว, (3) FindMaxObj_
+_fallback สแกน object header กัน XML ไม่ถูกฝังเงียบ. + DocumentEmailService:_
+_ส่ง e-Tax by Email ถ้าสร้าง PDF/A-3 ไม่ได้ → **fail loud** (เดิม swallow ส่ง_
+_อีเมลเปล่าไม่มีเอกสารตามกฎหมาย). หมายเหตุ: วิธี robust สุดคือใช้ PDF/A library_
+_(ETDA reference ใช้ iTextSharp) — ปัจจุบัน QuestPDF(A-2b)+injector ยังเปราะ._
+_รอบ 45: บันทึกชำระเงิน → ออก "ใบเสร็จรับเงิน" หลักฐานอัตโนมัติ (default เปิด_
+_ฝั่งขาย Invoice/TaxInvoice/DebitNote). `Document.IsSettlementReceipt=true` +_
+_`SettlementPaymentId`, `Payment.ReceiptDocumentId`. ใบนี้ **evidence-only**:_
+_Payment ลง Dr เงินสด/Cr ลูกหนี้ + ตัด AR แล้ว → ใบเสร็จ **ไม่ลง JE ซ้ำ ไม่ตัด_
+_หนี้ซ้ำ ไม่คิด VAT ซ้ำ** (VAT อยู่ที่ใบกำกับ, VatAmount=0) สร้างตรงเป็น Status=_
+_Paid ไม่ผ่าน ApproveDocumentAsync. void payment → void ใบเสร็จตาม. เลิกใช้_
+_convert Invoice→Receipt เป็นทางตัดหนี้ (กันเบิ้ล). `CreateSettlementReceiptAsync`._
+_รอบ 44: หัวเอกสาร downgrade ตาม `Buyer864Incomplete` จริง (ไม่ใช่แค่ flag) —_
+_ข้อมูล §86/4 ผู้ซื้อไม่ครบ = ห้ามขึ้น "ใบกำกับภาษี". + ส่วนลดท้ายบิล (จากยอด_
+_รวม): `Document.BillDiscountPercent/Amount` — `ComputeLineAmounts(extraDiscount)`_
+_เฉลี่ย pro-rata (ex-VAT) ลงบรรทัด → VAT/WHT รายบรรทัดถูกต้องแม้ mixed-rate._
+_SubTotal = หลังหักท้ายบิล (คง invariant Σ line.Amount); PDF แสดง "ยอดรวมก่อน_
+_VAT" = SubTotal+BillDiscount + บรรทัด "ส่วนลดท้ายบิล". `AllocateBillDiscount`._
+_รอบ 16 (audit ยอดเบิ้ล/double-count + concurrency): supersede block,_
+_deposit-apply settlement JE, settlement receipt กันนับซ้ำในรายงานรายได้,_
+_POS tip fix, POS refund discountFactor, Integration idempotency (expense/PV_
+_+ ExternalId fallback), payment/JE FOR UPDATE ใน tx (create+void), payroll_
+_void row-lock, recurring FOR UPDATE SKIP LOCKED, Employee.LineId migration._
+_รอบ 16: DBD XBRL annual export (TFRS-NPAEs taxonomy) + ผู้ทำบัญชี CPD gate_
+_(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Consent/Breach with 72h timer)._
+
+## รายการที่ผ่านมาเรียงตามรอบ
+
+| รอบ | Theme | Key items |
+| --- | --- | --- |
+| 6 | e-Tax XML ครบสุด | line ChargeAmount ถอด VAT, TaxBasis แก้, PDF format |
+| 7 | Multi-currency มัดจำ + audit | FX guard, hash chain weekly verifier, recurring template validate, §65 ตรี(4) YTD, §82/5(6) override |
+| 8 | Option-1 reclassify + CMS sync | line GL reclassify-JE, PV Cash auto-approve all channels, CMS ConfirmPaymentAsync 6-step, PrePayment booking IsDeposit 217xx |
+| 9 | CMS gap close + perf | payment-gateway webhook, POS Z/X-Report, Stock unify, OverdueDunningJob, Dashboard alerts, e-Tax retry, §82/3 LateReason, dup-doc detect, 11 indexes |
+| 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
+| 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
+| 12 | JE migrate + business gaps ปิด | JE Builder phase 2 (ReclassifyLine + FxRevaluation refactor), UnifiedPaymentQueryService cross-domain (AR+AP+POS+CMS), POS deposit IsDeposit+DepositRealizedAt, TipPayoutService §50 ทวิ (3% WHT >1000), RecurringLateFeeAccrualJob (rate/grace/cap config), DocumentLineDeliveryService LINE flex, Budget scenarios best/base/worst |
+_Files referenced are accurate; if behavior diverges, this doc is wrong —_
+_update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._

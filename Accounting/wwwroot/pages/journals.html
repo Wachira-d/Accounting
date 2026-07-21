@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สมุดรายวัน - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .journal-tabs { display:flex; gap:4px; background:var(--gray-100); padding:4px; border-radius:10px; margin-bottom:16px; flex-wrap:wrap; }
+    .journal-tab { padding:8px 16px; border-radius:8px; border:none; background:transparent; cursor:pointer; font-size:13px; font-weight:500; color:var(--gray-600); transition:all .2s; white-space:nowrap; }
+    .journal-tab:hover { background:var(--gray-200); }
+    .journal-tab.active { background:white; color:var(--primary); box-shadow:0 1px 3px rgba(0,0,0,.1); font-weight:600; }
+    .journal-tab .tab-badge { display:inline-block; background:var(--gray-200); color:var(--gray-600); font-size:11px; padding:1px 6px; border-radius:10px; margin-left:4px; }
+    .journal-tab.active .tab-badge { background:var(--primary-light,#ede9fe); color:var(--primary); }
+    .batch-bar { display:none; align-items:center; gap:12px; padding:10px 16px; background:#fef3c7; border:1px solid #fcd34d; border-radius:8px; margin-bottom:12px; }
+    .batch-bar.show { display:flex; }
+    .batch-bar .count { font-weight:600; color:#92400e; }
+    @media(max-width:768px) { .modal { max-width:95vw !important; } }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">สมุดรายวัน</h2><p class="page-subtitle">สมุดบัญชี 5 เล่มตามมาตรฐานบัญชีไทย</p></div>
+      <div style="display:flex;gap:8px" id="pageActions"></div>
+    </div>
+
+    <!-- Journal Type Tabs -->
+    <div class="journal-tabs" id="journalTabs"
+         data-tour-step="1"
+         data-tour-text="ขั้นที่ 1 — เลือกประเภทสมุดบัญชี 5 เล่มตามมาตรฐานบัญชีไทย (JV/SV/UV/RV/PV) ระบบสร้าง JE จากเอกสารให้อัตโนมัติเข้าเล่มที่ถูก">
+      <button class="journal-tab active" data-type="" onclick="Page.setType('')">ทั้งหมด <span class="tab-badge" id="countAll">-</span></button>
+      <button class="journal-tab" data-type="General" onclick="Page.setType('General')">JV สมุดรายวันทั่วไป <span class="tab-badge" id="countGeneral">-</span></button>
+      <button class="journal-tab" data-type="Sales" onclick="Page.setType('Sales')">SV สมุดรายวันขาย <span class="tab-badge" id="countSales">-</span></button>
+      <button class="journal-tab" data-type="Purchase" onclick="Page.setType('Purchase')">UV สมุดรายวันซื้อ <span class="tab-badge" id="countPurchase">-</span></button>
+      <button class="journal-tab" data-type="CashReceipts" onclick="Page.setType('CashReceipts')">RV สมุดรายวันรับ <span class="tab-badge" id="countCashReceipts">-</span></button>
+      <button class="journal-tab" data-type="CashPayments" onclick="Page.setType('CashPayments')">PV สมุดรายวันจ่าย <span class="tab-badge" id="countCashPayments">-</span></button>
+    </div>
+
+    <div class="toolbar" style="flex-wrap:wrap;gap:8px"
+         data-tour-step="2"
+         data-tour-text="ขั้นที่ 2 — ค้นหา/กรองตามสถานะ ช่วงวันที่ โครงการ สาขา แท็ก · กรองรายการสมุดรายวันให้แคบเพื่อดู / export">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่รายการ..." id="searchInput" oninput="Page.debounceSearch()">
+      <select class="filter-select" id="statusFilter">
+        <option value="">ทุกสถานะ</option>
+        <option value="Draft">ร่าง</option>
+        <option value="Posted">ผ่านรายการ</option>
+        <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
+        <option value="Reversed">กลับรายการแล้ว</option>
+      </select>
+      <input type="date" class="form-input" id="fromDate" style="width:150px">
+      <span class="text-gray-400">ถึง</span>
+      <input type="date" class="form-input" id="toDate" style="width:150px">
+      <select class="filter-select" id="projectFilter" style="min-width:130px"><option value="">ทุกโครงการ</option></select>
+      <select class="filter-select" id="dimBranchFilter" style="min-width:130px"><option value="">ทุกสาขา</option></select>
+      <input type="text" class="form-input" id="tagFilter" placeholder="แท็ก..." style="width:110px">
+      <button class="btn btn-primary btn-sm" onclick="Page.applyFilters()" style="white-space:nowrap">ค้นหา</button>
+      <button class="btn btn-ghost btn-sm" onclick="Page.clearFilters()" style="white-space:nowrap;color:var(--gray-500)">ล้างตัวกรอง</button>
+    </div>
+
+    <!-- Batch Action Bar -->
+    <div class="batch-bar" id="batchBar">
+      <span>เลือกแล้ว <span class="count" id="batchCount">0</span> รายการ</span>
+      <span id="batchExportSlot"></span>
+      <button class="btn btn-danger btn-sm" onclick="Page.batchDelete()" title="ลบข้อมูลออกจากระบบ (สำหรับข้อมูลที่ยิงผิด)">ลบรายการที่เลือก</button>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr>
+          <th style="width:36px"><input type="checkbox" id="checkAll" onchange="Page.toggleAll(this.checked)"></th>
+          <th>เลขที่</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.date">วันที่</th><th data-i18n="common.description">คำอธิบาย</th><th data-i18n="common.reference">อ้างอิง</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th>
+        </tr></thead>
+        <tbody id="tableBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:800px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="formTitle">บันทึกรายการ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" data-help="แยกประเภทสมุดเพื่อให้รายงานสะดวก — JV: ปรับปรุงทั่วไป (เช่น ดอกเบี้ย / ค่าเสื่อม) · SV: ขาย · UV: ซื้อ · RV: รับเงิน · PV: จ่ายเงิน">ประเภทสมุดรายวัน *</label>
+              <select class="form-select" id="fType">
+                <option value="General">JV - สมุดรายวันทั่วไป</option>
+                <option value="Sales">SV - สมุดรายวันขาย</option>
+                <option value="Purchase">UV - สมุดรายวันซื้อ</option>
+                <option value="CashReceipts">RV - สมุดรายวันรับ</option>
+                <option value="CashPayments">PV - สมุดรายวันจ่าย</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
+          </div>
+          <div class="form-row advanced-only">
+            <div class="form-group">
+              <label class="form-label" data-help="ผูก JE เข้ากับโครงการเพื่อให้รายงานต้นทุน/กำไรต่อโครงการคำนวณถูกต้อง">โครงการ</label>
+              <select class="form-select" id="fProject"><option value="">-- ไม่ระบุ --</option></select>
+            </div>
+            <div class="form-group"><label class="form-label" data-help="แท็กอิสระ สำหรับกรองรายงาน เช่น audit, 2026Q1 — คั่นด้วย comma">แท็ก (คั่นด้วย ,)</label><input type="text" class="form-input" id="fTags" placeholder="เช่น audit,2026Q1"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">เลขเอกสารอ้างอิง</label>
+            <input type="text" class="form-input" id="fSrcDocNumber" placeholder="เช่น INV-2026-001 (ระบบจะเชื่อมอัตโนมัติถ้าพบในระบบ)">
+          </div>
+          <div class="form-group">
+            <label class="form-label">หมายเหตุเพิ่มเติม</label>
+            <textarea class="form-input" id="fNote" rows="2" placeholder="หมายเหตุภายใน..."></textarea>
+          </div>
+
+          <div style="margin-top:16px">
+            <div class="flex items-center justify-between" style="margin-bottom:8px">
+              <label class="form-label" style="margin:0" data-i18n="common.items">รายการ</label>
+              <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มบรรทัด</button>
+            </div>
+            <div class="table-container">
+              <table class="table" id="linesTable">
+                <thead><tr><th>บัญชี</th><th>เดบิต</th><th>เครดิต</th><th data-i18n="common.description">คำอธิบาย</th><th></th></tr></thead>
+                <tbody id="linesBody"></tbody>
+                <tfoot>
+                  <tr style="background:var(--gray-50)">
+                    <td class="font-semibold" data-i18n="common.total">รวม</td>
+                    <td class="text-right font-semibold" id="totalDebit">0.00</td>
+                    <td class="text-right font-semibold" id="totalCredit">0.00</td>
+                    <td colspan="2"></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <div id="balanceWarning" class="text-danger text-sm hidden" style="margin-top:8px">* ยอดเดบิตและเครดิตไม่เท่ากัน</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+          <h3 class="modal-title">รายละเอียดรายการ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="detailContent"></div>
+        <div class="modal-footer" id="detailActions"></div>
+      </div>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="importModal" class="modal-overlay">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <h3 id="importTitle">นำเข้าสมุดรายวัน</h3>
+          <button class="btn-close" onclick="Import.close()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="importStep1">
+            <div id="importDropZone" style="border:2px dashed var(--gray-300);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all .2s" onclick="document.getElementById('importFileInput').click()" ondragover="event.preventDefault();this.style.borderColor='var(--primary)';this.style.background='var(--blue-50)'" ondragleave="this.style.borderColor='var(--gray-300)';this.style.background=''" ondrop="Import.handleDrop(event)">
+              <div style="font-size:36px;margin-bottom:8px">📄</div>
+              <p style="font-size:15px;font-weight:600;color:var(--gray-700)">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
+              <p style="font-size:13px;color:var(--gray-500);margin-top:4px">รองรับ CSV, Excel (.xlsx, .xls)</p>
+              <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="Import.handleFile(this.files[0])">
+            </div>
+            <div id="importFileInfo" style="display:none;margin-top:12px;padding:12px 16px;background:var(--blue-50);border-radius:8px;align-items:center;justify-content:space-between">
+              <span id="importFileName" style="font-weight:600;font-size:14px"></span>
+              <button class="btn btn-sm btn-ghost text-red" onclick="Import.clearFile()">ลบ</button>
+            </div>
+          </div>
+          <div id="importStep2" style="display:none">
+            <div id="importValidation" style="margin-bottom:12px"></div>
+            <div id="importPreview" style="max-height:300px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px"></div>
+          </div>
+          <div id="importStep3" style="display:none;text-align:center;padding:24px">
+            <div style="font-size:48px;margin-bottom:12px">✅</div>
+            <h3 id="importResultText" style="color:var(--green-600)"></h3>
+          </div>
+        </div>
+        <div class="modal-footer" id="importFooter">
+          <button class="btn btn-secondary" onclick="Import.close()">ยกเลิก</button>
+          <button class="btn btn-primary" id="importActionBtn" onclick="Import.validate()" disabled>ตรวจสอบข้อมูล</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
+  <script>
+    const Page = {
+      page: 1, accounts: [], currentType: '', selected: new Set(), currentItems: [],
+      journalTypeLabels: {
+        'General': 'JV ทั่วไป',
+        'Sales': 'SV ขาย',
+        'Purchase': 'UV ซื้อ',
+        'CashReceipts': 'RV รับ',
+        'CashPayments': 'PV จ่าย'
+      },
+      journalTypeBadge(type) {
+        const colors = {
+          'General': '#6b7280', 'Sales': '#2563eb', 'Purchase': '#d97706',
+          'CashReceipts': '#059669', 'CashPayments': '#dc2626'
+        };
+        const label = this.journalTypeLabels[type] || 'JV';
+        const color = colors[type] || '#6b7280';
+        return `<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;background:${color}15;color:${color}">${label}</span>`;
+      },
+      async init() {
+        if (!Layout.init('journals')) return;
+        Layout.setTitle('สมุดรายวัน');
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts();
+          this.accounts = res.data?.items || res.data || [];
+        } catch(e) {}
+        this.renderHeaderActions();
+        await this.loadDimensionFilters();
+        const params = new URLSearchParams(window.location.search);
+        const urlType = params.get('type');
+        if (urlType) this.currentType = urlType;
+        this.updateTabs();
+        await this.load();
+        this.loadCounts();
+        this.checkDraftCount();
+        const entryId = params.get('entryId');
+        if (entryId) {
+          this.detail(entryId);
+          if (params.get('fromDeepLink') === '1') Layout.toast('🔗 เปิดจากระบบที่เชื่อมต่อ', 'success');
+        }
+      },
+      renderHeaderActions() {
+        const holder = document.getElementById('pageActions');
+        if (!holder) return;
+        holder.innerHTML = `
+          ${ExportUtil.renderButtons('(f)=>Page.exportAll(f)')}
+          <div class="dropdown-wrap" style="position:relative">
+            <button class="btn btn-secondary" onclick="Import.toggleMenu(this)">นำเข้า ▾</button>
+            <div class="dropdown-menu" style="display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid var(--gray-200);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
+              <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.open()">นำเข้า CSV/Excel</a>
+              <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.downloadTemplate()">ดาวน์โหลด Template</a>
+            </div>
+          </div>
+          <button class="btn btn-success" id="btnPostAll" style="display:none" onclick="Page.batchPostAll()">ผ่านรายการทั้งหมด</button>
+          <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกรายการ</button>
+        `;
+      },
+      async loadDimensionFilters() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [projRes, branchRes] = await Promise.all([
+            api.getActiveProjects?.().catch(()=>null),
+            api.getBranches?.().catch(()=>null)
+          ]);
+          const projSel = document.getElementById('projectFilter');
+          const branchSel = document.getElementById('dimBranchFilter');
+          const projects = projRes?.data?.items || projRes?.data || [];
+          if (projSel) {
+            projSel.innerHTML = '<option value="">ทุกโครงการ</option>' +
+              projects.map(p => `<option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name || '-'}</option>`).join('');
+          }
+          const branches = branchRes?.data?.items || branchRes?.data || [];
+          if (branchSel) {
+            branchSel.innerHTML = '<option value="">ทุกสาขา</option>' +
+              branches.map(b => `<option value="${b.id}">${b.code ? `[${b.code}] ` : ''}${b.name || '-'}</option>`).join('');
+          }
+        } catch(e) {}
+      },
+      _exportColumns() {
+        return [
+          { key: 'entryNumber', label: 'เลขที่' },
+          { key: 'journalType', label: 'ประเภท', format: v => this.journalTypeLabels[v] || v || '' },
+          { key: 'entryDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
+          { key: 'description', label: 'คำอธิบาย' },
+          { key: 'reference', label: 'อ้างอิง' },
+          { key: 'totalDebit', label: 'เดบิต', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) },
+          { key: 'totalCredit', label: 'เครดิต', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) },
+          { key: 'status', label: 'สถานะ' }
+        ];
+      },
+      async exportAll(format) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังโหลดข้อมูลทั้งหมด...', 'info');
+          let q = `?page=1&pageSize=10000`;
+          if (this.currentType) q += `&journalType=${this.currentType}`;
+          const statusF = document.getElementById('statusFilter').value;
+          const fromD = document.getElementById('fromDate').value;
+          const toD = document.getElementById('toDate').value;
+          const proj = document.getElementById('projectFilter')?.value;
+          const branch = document.getElementById('dimBranchFilter')?.value;
+          const tag = document.getElementById('tagFilter')?.value?.trim();
+          if (statusF) q += `&status=${statusF}`;
+          if (fromD) q += `&fromDate=${fromD}`;
+          if (toD) q += `&toDate=${toD}`;
+          if (proj) q += `&projectId=${proj}`;
+          if (branch) q += `&branchId=${branch}`;
+          if (tag) q += `&tag=${encodeURIComponent(tag)}`;
+          const res = await api.getJournals(q);
+          const rows = res.data?.items || res.data || [];
+          const totalD = rows.reduce((a,r)=>a+Number(r.totalDebit||0),0);
+          const totalC = rows.reduce((a,r)=>a+Number(r.totalCredit||0),0);
+          ExportUtil.exportData(format, {
+            rows, columns: this._exportColumns(),
+            filename: `สมุดรายวัน${this.currentType ? '_'+this.journalTypeLabels[this.currentType] : ''}`,
+            title: `สมุดรายวัน${this.currentType ? ' - '+this.journalTypeLabels[this.currentType] : ''}`,
+            subtitle: `ช่วงวันที่: ${fromD||'ทั้งหมด'} ถึง ${toD||'ทั้งหมด'} | จำนวน ${rows.length} รายการ`,
+            landscape: true,
+            totals: { 'รวมเดบิต': totalD.toLocaleString('en-US',{minimumFractionDigits:2}), 'รวมเครดิต': totalC.toLocaleString('en-US',{minimumFractionDigits:2}) }
+          });
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      exportSelected(format) {
+        const ids = [...this.selected];
+        if (!ids.length) { Layout.toast('กรุณาเลือกรายการก่อน', 'error'); return; }
+        const rows = this.currentItems.filter(j => ids.includes(j.id));
+        const totalD = rows.reduce((a,r)=>a+Number(r.totalDebit||0),0);
+        const totalC = rows.reduce((a,r)=>a+Number(r.totalCredit||0),0);
+        ExportUtil.exportData(format, {
+          rows, columns: this._exportColumns(),
+          filename: `สมุดรายวัน_รายการที่เลือก`,
+          title: 'สมุดรายวัน (รายการที่เลือก)',
+          subtitle: `จำนวน ${rows.length} รายการ`,
+          landscape: true,
+          totals: { 'รวมเดบิต': totalD.toLocaleString('en-US',{minimumFractionDigits:2}), 'รวมเครดิต': totalC.toLocaleString('en-US',{minimumFractionDigits:2}) }
+        });
+      },
+      setType(type) {
+        this.currentType = type;
+        this.page = 1;
+        this.updateTabs();
+        this.load();
+      },
+      updateTabs() {
+        document.querySelectorAll('.journal-tab').forEach(tab => {
+          tab.classList.toggle('active', tab.dataset.type === this.currentType);
+        });
+      },
+      async loadCounts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const types = ['', 'General', 'Sales', 'Purchase', 'CashReceipts', 'CashPayments'];
+          const ids = ['countAll', 'countGeneral', 'countSales', 'countPurchase', 'countCashReceipts', 'countCashPayments'];
+          for (let i = 0; i < types.length; i++) {
+            let q = `?page=1&pageSize=1`;
+            if (types[i]) q += `&journalType=${types[i]}`;
+            try {
+              const res = await api.getJournals(q);
+              const total = res.data?.totalCount ?? res.data?.items?.length ?? 0;
+              const el = document.getElementById(ids[i]);
+              if (el) el.textContent = total;
+            } catch(e) {}
+          }
+        } catch(e) {}
+      },
+      _searchTimer: null,
+      debounceSearch() {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
+      },
+      applyFilters() {
+        this.page = 1;
+        this.load();
+      },
+      clearFilters() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('statusFilter').value = '';
+        document.getElementById('fromDate').value = '';
+        document.getElementById('toDate').value = '';
+        document.getElementById('projectFilter').value = '';
+        document.getElementById('dimBranchFilter').value = '';
+        document.getElementById('tagFilter').value = '';
+        this.page = 1;
+        this.load();
+      },
+
+      // ===== Selection =====
+      toggleAll(checked) {
+        const selectable = this.currentItems.filter(j => j.status !== 'Reversed');
+        if (checked) {
+          selectable.forEach(j => this.selected.add(j.id));
+        } else {
+          selectable.forEach(j => this.selected.delete(j.id));
+        }
+        document.querySelectorAll('.row-check').forEach(cb => {
+          const j = this.currentItems.find(x => x.id === cb.dataset.id);
+          if (j && j.status !== 'Reversed') cb.checked = checked;
+        });
+        this.updateBatchBar();
+      },
+      toggleRow(id, checked) {
+        if (checked) this.selected.add(id); else this.selected.delete(id);
+        const allCheckable = this.currentItems.filter(j => j.status !== 'Reversed');
+        document.getElementById('checkAll').checked = allCheckable.length > 0 && allCheckable.every(j => this.selected.has(j.id));
+        this.updateBatchBar();
+      },
+      clearSelection() {
+        this.selected.clear();
+        document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+        document.getElementById('checkAll').checked = false;
+        this.updateBatchBar();
+      },
+      updateBatchBar() {
+        const count = this.selected.size;
+        document.getElementById('batchCount').textContent = count;
+        document.getElementById('batchBar').classList.toggle('show', count > 0);
+        const slot = document.getElementById('batchExportSlot');
+        if (slot && !slot._rendered) {
+          slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportSelected(f)');
+          slot._rendered = true;
+        }
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const search = document.getElementById('searchInput').value.trim();
+        const status = document.getElementById('statusFilter').value;
+        const from = document.getElementById('fromDate').value;
+        const to = document.getElementById('toDate').value;
+        const proj = document.getElementById('projectFilter')?.value;
+        const br = document.getElementById('dimBranchFilter')?.value;
+        const tag = document.getElementById('tagFilter')?.value?.trim();
+        let q = `?page=${this.page}&pageSize=20`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        if (this.currentType) q += `&journalType=${this.currentType}`;
+        if (status) q += `&status=${status}`;
+        if (from) q += `&fromDate=${from}`;
+        if (to) q += `&toDate=${to}`;
+        if (proj) q += `&projectId=${proj}`;
+        if (br) q += `&branchId=${br}`;
+        if (tag) q += `&tag=${encodeURIComponent(tag)}`;
+        try {
+          const res = await api.getJournals(q);
+          const data = res.data;
+          const items = data?.items || data || [];
+          this.currentItems = items;
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>';
+            document.getElementById('checkAll').checked = false;
+            return;
+          }
+          tbody.innerHTML = items.map(j => {
+            const canSelect = j.status !== 'Reversed';
+            const isChecked = this.selected.has(j.id);
+            const statusBadge = j.status === 'Reversed'
+              ? '<span class="badge" style="background:#7c3aed15;color:#7c3aed">กลับรายการแล้ว</span>'
+              : Layout.statusBadge(j.status);
+            let actBtns = `<button class="btn btn-sm btn-ghost" onclick="Page.detail('${j.id}')" data-i18n="common.view">ดู</button>`;
+            // Direct edit on the row — backend allows any status; document-sourced
+            // entries are skipped (edit at the document instead).
+            if (!j.sourceDocumentId) {
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.openEdit('${j.id}')" title="แก้ไขตัวเลข/ผังบัญชี">แก้ไข</button>`;
+            } else {
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.editAtSource('${j.sourceDocumentId}')" title="รายการนี้สร้างจากเอกสาร — แก้ไขที่เอกสารต้นทาง">✏️ แก้ที่เอกสาร</button>`;
+            }
+            if (j.status === 'Posted') {
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#d97706" onclick="Page.correctEntry('${j.id}')" title="แก้ไขด้วยการกลับรายการ (audit-safe)">กลับ-แก้</button>`;
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#7c3aed" onclick="Page.reverseEntry('${j.id}')" title="กลับรายการ (สร้างรายการตรงข้าม)">กลับรายการ</button>`;
+            }
+            // Delete now allowed on any status (soft-delete; GL filter cascades).
+            actBtns += `<button class="btn btn-sm btn-ghost" style="color:#ef4444" onclick="Page.deleteEntry('${j.id}')" title="ลบออกจากระบบ" data-i18n="common.delete">ลบ</button>`;
+            return `<tr${isChecked ? ' style="background:#fffbeb"' : ''}>
+              <td><input type="checkbox" class="row-check" data-id="${j.id}" ${canSelect ? '' : 'disabled'} ${isChecked ? 'checked' : ''} onchange="Page.toggleRow('${j.id}',this.checked)"></td>
+              <td class="font-medium">${j.entryNumber}${j.isAutoGenerated ? ' <span class="badge badge-info" style="font-size:10px;padding:1px 5px">API</span>' : ''}${j.originalEntryId ? ' <span class="badge" style="background:#7c3aed15;color:#7c3aed;font-size:10px;padding:1px 5px">REV</span>' : ''}</td>
+              <td>${this.journalTypeBadge(j.journalType)}</td>
+              <td>${Layout.date(j.entryDate)}</td>
+              <td>${j.description || '-'}</td>
+              <td class="text-gray-500">${j.reference || '-'}</td>
+              <td class="text-right">${Layout.money(j.totalDebit)}</td>
+              <td class="text-right">${Layout.money(j.totalCredit)}</td>
+              <td>${statusBadge}</td>
+              <td>${actBtns}</td>
+            </tr>`;
+          }).join('');
+          const allCheckable = items.filter(j => j.status !== 'Reversed');
+          document.getElementById('checkAll').checked = allCheckable.length > 0 && allCheckable.every(j => this.selected.has(j.id));
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      goPage(p) { Page.page = p; Page.load(); },
+      accountSelect(id) {
+        return `<select class="form-select" id="${id}" style="font-size:13px">
+          <option value="">เลือกบัญชี</option>
+          ${this.accounts.map(a => `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('')}
+        </select>`;
+      },
+      lineCount: 0,
+      addLine() {
+        const i = this.lineCount++;
+        const row = document.createElement('tr');
+        row.id = `line_${i}`;
+        row.innerHTML = `
+          <td>${this.accountSelect(`acc_${i}`)}</td>
+          <td><input type="number" class="form-input text-right line-debit" step="0.01" value="0" oninput="Page.calcTotals()"></td>
+          <td><input type="number" class="form-input text-right line-credit" step="0.01" value="0" oninput="Page.calcTotals()"></td>
+          <td><input type="text" class="form-input" id="ldesc_${i}" style="font-size:13px" placeholder="พิมพ์เพื่อให้ AI แนะนำบัญชี"></td>
+          <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcTotals()">&#10005;</button></td>
+        `;
+        document.getElementById('linesBody').appendChild(row);
+        // AI suggest-account ตอน blur description — ใช้ JE history ของ
+        // บริษัทนี้ที่ description คล้ายกัน (heuristic-only)
+        const descEl = row.querySelector(`#ldesc_${i}`);
+        if (descEl) descEl.addEventListener('blur', () => this.suggestLineAccount(row));
+      },
+
+      async suggestLineAccount(row) {
+        try {
+          const descEl = row.querySelector('input[id^="ldesc_"]');
+          const desc = (descEl?.value || '').trim();
+          if (desc.length < 3) return;
+          const accSel = row.querySelector('select');
+          if (!accSel || accSel.value || accSel.dataset.userTouched === '1') return;
+          const debit = parseFloat(row.querySelector('.line-debit')?.value || '0') || 0;
+          const credit = parseFloat(row.querySelector('.line-credit')?.value || '0') || 0;
+          const side = credit > debit ? 'Credit' : 'Debit';
+          const amount = side === 'Credit' ? credit : debit;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/manual-je/suggest-account`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              description: desc, amount, entryType: this.currentType || 'General', side,
+            })
+          });
+          const j = await r.json();
+          const top = (j?.data?.suggestions || [])[0];
+          if (!top) return;
+          const optionExists = Array.from(accSel.options).some(o => o.value === top.accountId);
+          if (optionExists) {
+            accSel.value = top.accountId;
+            accSel.dataset.aiFeedbackId = j.data.feedbackId || '';
+            accSel.title = `🤖 ${top.accountCode} - ${top.accountName} (${Math.round((top.confidence || 0) * 100)}% — ${top.supportingSamples} ครั้ง)`;
+            accSel.addEventListener('change', () => {
+              accSel.dataset.userTouched = '1';
+              if (!accSel.dataset.aiFeedbackId) return;
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    feedbackId: accSel.dataset.aiFeedbackId,
+                    chosenAnswer: accSel.value,
+                    acceptedAi: accSel.value === top.accountId,
+                  })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
+      },
+      calcTotals() {
+        let d = 0, c = 0;
+        document.querySelectorAll('.line-debit').forEach(el => d += parseFloat(el.value) || 0);
+        document.querySelectorAll('.line-credit').forEach(el => c += parseFloat(el.value) || 0);
+        document.getElementById('totalDebit').textContent = Layout.money(d);
+        document.getElementById('totalCredit').textContent = Layout.money(c);
+        document.getElementById('balanceWarning').classList.toggle('hidden', Math.abs(d - c) < 0.01);
+      },
+      async openCreate() {
+        this.editingId = null;
+        document.getElementById('formTitle').textContent = 'บันทึกรายการใหม่';
+        document.getElementById('fType').value = this.currentType || 'General';
+        document.getElementById('fDate').value = Layout.toDateInput(new Date());
+        document.getElementById('fRef').value = '';
+        document.getElementById('fDesc').value = '';
+        document.getElementById('fTags').value = '';
+        document.getElementById('fNote').value = '';
+        const srcEl = document.getElementById('fSrcDocNumber'); if (srcEl) srcEl.value = '';
+        // Mirror filter project into form, fall back to first option
+        const filterProj = document.getElementById('projectFilter')?.value || '';
+        // Populate project dropdown from active projects
+        const api = Layout.api();
+        if (api) {
+          try {
+            const res = await api.getActiveProjects?.();
+            const projects = res?.data?.items || res?.data || [];
+            const sel = document.getElementById('fProject');
+            sel.innerHTML = '<option value="">-- ไม่ระบุ --</option>' +
+              projects.map(p => `<option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name || '-'}</option>`).join('');
+            if (filterProj) sel.value = filterProj;
+          } catch(e) {}
+        }
+        document.getElementById('linesBody').innerHTML = '';
+        this.lineCount = 0;
+        this.addLine(); this.addLine();
+        this.calcTotals();
+        Layout.openModal('formModal');
+      },
+      // A document-sourced JE mirrors its document — it cannot be edited
+      // directly; jump to the document and open it for editing instead.
+      editAtSource(documentId) {
+        if (!documentId) return;
+        window.location.href = `/pages/documents.html?editDoc=${encodeURIComponent(documentId)}`;
+      },
+      async openEdit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getJournal(id);
+          const j = res.data;
+          this.editingId = id;
+          document.getElementById('formTitle').textContent = `แก้ไขใบสำคัญ ${j.entryNumber || ''}`;
+          document.getElementById('fType').value = j.journalType || 'General';
+          document.getElementById('fDate').value = Layout.toDateInput(j.entryDate);
+          document.getElementById('fRef').value = j.reference || '';
+          document.getElementById('fDesc').value = j.description || '';
+          document.getElementById('fTags').value = j.tags || '';
+          document.getElementById('fNote').value = j.note || '';
+          const srcEl = document.getElementById('fSrcDocNumber'); if (srcEl) srcEl.value = j.sourceDocumentNumber || '';
+          // Populate projects then preselect
+          try {
+            const pr = await api.getActiveProjects?.();
+            const projects = pr?.data?.items || pr?.data || [];
+            const sel = document.getElementById('fProject');
+            sel.innerHTML = '<option value="">-- ไม่ระบุ --</option>' +
+              projects.map(p => `<option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name || '-'}</option>`).join('');
+            if (j.projectId) sel.value = j.projectId;
+          } catch (_) {}
+          // Rebuild lines from the existing entry — pre-fill account, debit,
+          // credit and per-line description so the user can tweak any field.
+          document.getElementById('linesBody').innerHTML = '';
+          this.lineCount = 0;
+          (j.lines || []).forEach(l => {
+            this.addLine();
+            const row = document.getElementById('linesBody').lastElementChild;
+            const sel = row.querySelector('select');
+            if (sel) sel.value = l.accountId || '';
+            row.querySelector('.line-debit').value = l.debitAmount || 0;
+            row.querySelector('.line-credit').value = l.creditAmount || 0;
+            const desc = row.querySelector('input[type="text"]');
+            if (desc) desc.value = l.description || '';
+          });
+          if ((j.lines || []).length === 0) { this.addLine(); this.addLine(); }
+          this.calcTotals();
+          Layout.closeModal('detailModal');
+          Layout.openModal('formModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const rows = document.querySelectorAll('#linesBody tr');
+        const lines = [];
+        let skippedLines = 0;
+        rows.forEach((row, i) => {
+          const acc = row.querySelector('select')?.value;
+          const debit = parseFloat(row.querySelector('.line-debit')?.value) || 0;
+          const credit = parseFloat(row.querySelector('.line-credit')?.value) || 0;
+          if (acc && (debit > 0 || credit > 0)) {
+            lines.push({ accountId: acc, debitAmount: debit, creditAmount: credit, description: row.querySelector('input[type="text"]')?.value || null });
+          } else if (!acc && (debit > 0 || credit > 0)) {
+            skippedLines++;
+          }
+        });
+        if (skippedLines > 0) { Layout.toast(`มี ${skippedLines} รายการที่ไม่ได้เลือกบัญชี กรุณาเลือกบัญชีให้ครบ`, 'error'); return; }
+        if (lines.length < 2) { Layout.toast('ต้องมีอย่างน้อย 2 รายการ', 'error'); return; }
+        const totalD = lines.reduce((s, l) => s + l.debitAmount, 0);
+        const totalC = lines.reduce((s, l) => s + l.creditAmount, 0);
+        if (Math.abs(totalD - totalC) >= 0.01) { Layout.toast('ยอดเดบิตและเครดิตไม่เท่ากัน', 'error'); return; }
+        const payload = {
+          entryDate: document.getElementById('fDate').value,
+          description: document.getElementById('fDesc').value || null,
+          reference: document.getElementById('fRef').value || null,
+          journalType: document.getElementById('fType').value,
+          projectId: document.getElementById('fProject').value || null,
+          note: document.getElementById('fNote').value || null,
+          tags: document.getElementById('fTags').value || null,
+          sourceDocumentNumber: document.getElementById('fSrcDocNumber').value || null,
+          lines
+        };
+        try {
+          if (this.editingId) {
+            await api.updateJournal(this.editingId, payload);
+            Layout.toast('แก้ไขรายการสำเร็จ');
+          } else {
+            await api.createJournal(payload);
+            Layout.toast('บันทึกรายการสำเร็จ');
+          }
+          this.editingId = null;
+          Layout.closeModal('formModal');
+          await this.load();
+          this.loadCounts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async detail(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getJournal(id);
+          const j = res.data;
+          const statusBadge = j.status === 'Reversed'
+            ? '<span class="badge" style="background:#7c3aed15;color:#7c3aed">กลับรายการแล้ว</span>'
+            : Layout.statusBadge(j.status);
+          // Two-way navigation between original and its reversal.  Keep the
+          // detail-item row for inline display, plus surface a prominent banner
+          // at the top of the modal so the operator can't miss which side of
+          // a reverse pair they're looking at.
+          let reversalInfo = '';
+          let reversalBanner = '';
+          if (j.reversedByEntryId) {
+            reversalInfo = `<div class="detail-item"><span class="detail-label">กลับรายการโดย</span><span class="detail-value"><a href="#" onclick="Page.detail('${j.reversedByEntryId}');return false" style="color:#7c3aed">ดูรายการกลับรายการ</a></span></div>`;
+            reversalBanner = `<div style="background:#f5f3ff;border:1px solid #ddd6fe;color:#5b21b6;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;display:flex;align-items:center;gap:8px">
+              <span style="font-size:18px">⮌</span>
+              <div style="flex:1"><strong>ใบสำคัญนี้ถูกกลับรายการแล้ว</strong> — มีรายการตรงข้ามที่หักล้างยอดในงบ</div>
+              <a href="#" onclick="Page.detail('${j.reversedByEntryId}');return false" class="btn btn-sm" style="background:#7c3aed;color:#fff">ดูตัวกลับรายการ →</a>
+            </div>`;
+          }
+          if (j.originalEntryId) {
+            reversalInfo = `<div class="detail-item"><span class="detail-label">กลับรายการจาก</span><span class="detail-value"><a href="#" onclick="Page.detail('${j.originalEntryId}');return false" style="color:#7c3aed">ดูรายการต้นฉบับ</a></span></div>`;
+            reversalBanner = `<div style="background:#fef3c7;border:1px solid #fde68a;color:#92400e;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;display:flex;align-items:center;gap:8px">
+              <span style="font-size:18px">↩</span>
+              <div style="flex:1"><strong>นี่คือ "ตัวกลับรายการ"</strong> — สร้างขึ้นเพื่อหักล้างใบสำคัญต้นฉบับ Dr/Cr สลับด้านจากต้นฉบับ</div>
+              <a href="#" onclick="Page.detail('${j.originalEntryId}');return false" class="btn btn-sm" style="background:#d97706;color:#fff">ดูใบต้นฉบับ →</a>
+            </div>`;
+          }
+          document.getElementById('detailContent').innerHTML = `
+            ${reversalBanner}
+            <div class="detail-list" style="margin-bottom:20px">
+              <div class="detail-item"><span class="detail-label">เลขที่</span><span class="detail-value">${j.entryNumber}${j.isAutoGenerated ? ' <span class="badge badge-info" style="font-size:10px;padding:2px 6px">สร้างจาก API</span>' : ''}${j.originalEntryId ? ' <span class="badge" style="background:#7c3aed15;color:#7c3aed;font-size:10px;padding:2px 6px">รายการกลับรายการ</span>' : ''}</span></div>
+              <div class="detail-item"><span class="detail-label" data-i18n="common.type">ประเภท</span><span class="detail-value">${this.journalTypeBadge(j.journalType)}</span></div>
+              <div class="detail-item"><span class="detail-label" data-i18n="common.date">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
+              <div class="detail-item"><span class="detail-label" data-i18n="common.status">สถานะ</span><span class="detail-value">${statusBadge}</span></div>
+              <div class="detail-item"><span class="detail-label" data-i18n="common.reference">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
+              ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value"><a href="/pages/documents.html?search=${encodeURIComponent(j.sourceDocumentNumber)}" style="color:var(--primary)">${j.sourceDocumentNumber}</a>${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${j.sourceDocumentType}</span>` : ''}</span></div>` : ''}
+              ${reversalInfo}
+            </div>
+            <p class="text-sm text-gray-600" style="margin-bottom:16px">${j.description || ''}</p>
+            <div class="table-container">
+              <table class="table">
+                <thead><tr><th>รหัสบัญชี</th><th>ชื่อบัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
+                <tbody>${(j.lines || []).map(l => `<tr>
+                  <td>${l.accountCode}</td><td>${l.accountName}</td>
+                  <td class="text-right">${l.debitAmount > 0 ? Layout.money(l.debitAmount) : ''}</td>
+                  <td class="text-right">${l.creditAmount > 0 ? Layout.money(l.creditAmount) : ''}</td>
+                </tr>`).join('')}</tbody>
+                <tfoot><tr style="background:var(--gray-50)"><td colspan="2" class="font-semibold" data-i18n="common.total">รวม</td><td class="text-right font-semibold">${Layout.money(j.totalDebit)}</td><td class="text-right font-semibold">${Layout.money(j.totalCredit)}</td></tr></tfoot>
+              </table>
+            </div>`;
+          let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
+          actions += ` <button class="btn btn-secondary" onclick="Layout.showEntityTimeline('JournalEntry','${j.id}','${Layout.esc(j.entryNumber)}')" title="ประวัติการสร้าง / ผ่านรายการ / กลับรายการ / แก้ไข ของรายการบัญชี">📜 ประวัติ</button>`;
+          // Direct edit — works in any status; backend blocks only auto-generated
+          // (document-sourced) entries. For audit-safe edits on Posted, the
+          // existing "แก้ไข (กลับรายการ)" button still uses Reverse+Draft.
+          if (!j.sourceDocumentId) {
+            actions += ` <button class="btn btn-primary" onclick="Page.openEdit('${j.id}')">✏️ แก้ไขตัวเลข/ผังบัญชี</button>`;
+          } else {
+            actions += ` <button class="btn btn-primary" onclick="Page.editAtSource('${j.sourceDocumentId}')">✏️ แก้ไขที่เอกสารต้นทาง</button>`;
+          }
+          if (j.status === 'Draft') {
+            actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายการ</button>`;
+          }
+          if (j.status === 'Posted') {
+            actions += ` <button class="btn btn-warning" onclick="Page.correctEntry('${j.id}')">แก้ไข (กลับรายการ)</button>`;
+            actions += ` <button class="btn" style="background:#7c3aed;color:white" onclick="Page.reverseEntry('${j.id}')">กลับรายการ</button>`;
+          }
+          // Delete is now allowed in any status (backend soft-deletes).
+          actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')" data-i18n="common.delete">ลบ</button>`;
+          document.getElementById('detailActions').innerHTML = actions;
+          // Comments + activity timeline (#23)
+          const commentsHost = document.createElement('div');
+          commentsHost.id = `jeComments-${id}`;
+          commentsHost.style.cssText = 'margin-top:20px;padding:16px;background:#fafbfc;border-radius:8px;border:1px solid #e5e7eb';
+          document.getElementById('detailContent').appendChild(commentsHost);
+          const mountComments = () => window.CommentsWidget?.mount(commentsHost,
+            { companyId: Layout.getCompanyId(), entityType: 'JournalEntry', entityId: id });
+          if (window.CommentsWidget) { mountComments(); }
+          else {
+            const s = document.createElement('script');
+            s.src = '/js/comments-widget.js';
+            s.onload = mountComments;
+            document.head.appendChild(s);
+          }
+          Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async post(id) {
+        const api = Layout.api(); if (!api) return;
+        try { await api.postJournal(id); Layout.closeModal('detailModal'); Layout.toast('ผ่านรายการสำเร็จ'); await this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteEntry(id) {
+        const ok = await Layout.confirmDanger({
+          title: 'ลบรายการสมุดรายวัน',
+          message: 'การลบจะ<b>นำข้อมูลออกจากระบบถาวร</b> ใช้สำหรับกรณีที่ยิงข้อมูลเข้ามาผิดเท่านั้น<br><br>หากต้องการยกเลิกธุรกรรมทางธุรกิจ (เช่น ยกเลิกจอง) ให้ใช้ <b>กลับรายการ</b> แทน',
+          mode: 'type',
+          confirmText: 'ลบ'
+        });
+        if (!ok) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteJournal(id);
+          Layout.closeModal('detailModal');
+          this.selected.delete(id);
+          Layout.toast('ลบรายการสำเร็จ');
+          await this.load();
+          this.loadCounts();
+          this.updateBatchBar();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async reverseEntry(id) {
+        // Custom posting-date for the reversal — operator-set instead of
+        // hardcoded today, matches Thai RD requirement that the reversal
+        // posts on a chosen accounting date inside an open period.
+        const today = new Date().toISOString().slice(0, 10);
+        const html = `
+          <div style="font-size:13px;line-height:1.7;color:var(--gray-700)">
+            ระบบจะสร้าง<b>รายการใหม่</b>ที่สลับยอดเดบิต↔เครดิต เพื่อหักล้างรายการเดิม<br>
+            รายการต้นฉบับจะเปลี่ยนสถานะเป็น <b>กลับรายการแล้ว (Reversed)</b><br><br>
+            <label style="font-weight:600">วันที่ลงตัวกลับรายการ (Posting Date):</label>
+            <input type="date" id="reverseDateInput" value="${today}"
+              style="display:block;margin-top:6px;padding:8px 12px;border:1px solid var(--gray-300);border-radius:6px;font-size:14px;width:100%">
+            <div style="font-size:11px;color:var(--gray-500);margin-top:4px">
+              💡 เลือกวันที่ในงวดบัญชีที่ยังเปิดอยู่ — ปกติคือวันที่ค้นพบข้อผิดพลาด
+            </div>
+            <label style="font-weight:600;display:block;margin-top:14px">หมายเหตุ (optional):</label>
+            <textarea id="reverseNoteInput" rows="2" placeholder="ระบุเหตุผลในการกลับรายการ..."
+              style="display:block;margin-top:6px;padding:8px 12px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;width:100%;resize:vertical"></textarea>
+          </div>`;
+        const ok = await Layout.confirmDanger({
+          title: 'กลับรายการ (Journal Reverse)',
+          message: html,
+          mode: 'math'
+        });
+        if (!ok) return;
+        const reversalDate = document.getElementById('reverseDateInput')?.value || today;
+        const noteEl = document.getElementById('reverseNoteInput');
+        const note = noteEl?.value?.trim() || null;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.reverseJournal(id, { reversalDate, description: note });
+          Layout.closeModal('detailModal');
+          this.selected.delete(id);
+          Layout.toast(`กลับรายการสำเร็จ — สร้างรายการลงวันที่ ${reversalDate}`);
+          await this.load();
+          this.loadCounts();
+          this.updateBatchBar();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async correctEntry(id) {
+        const ok = await Layout.confirmDanger({
+          title: 'แก้ไขด้วยการกลับรายการ',
+          message: 'ระบบจะ:<br>1. <b>กลับรายการ</b>ใบเดิม (สลับ Dr↔Cr เพื่อหักล้าง)<br>2. <b>สร้าง Draft ใหม่</b> ที่ copy ข้อมูลจากใบเดิม<br><br>คุณสามารถแก้ผังบัญชีที่ผิดใน Draft ใหม่ แล้ว Post ได้เลย<br><small class="text-gray-500">Audit trail สมบูรณ์: ต้นฉบับ (Reversed) → ใบกลับ (Posted) → ใบใหม่ (Draft)</small>',
+          mode: 'math'
+        });
+        if (!ok) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.correctJournal(id);
+          Layout.closeModal('detailModal');
+          const draft = res.data?.draftEntry;
+          Layout.toast(`แก้ไขสำเร็จ — สร้าง Draft ใหม่ ${draft?.entryNumber || ''} พร้อมให้แก้ไขผังบัญชี`);
+          await this.load();
+          this.loadCounts();
+          this.updateBatchBar();
+          if (draft?.id) setTimeout(() => this.detail(draft.id), 300);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async batchDelete() {
+        const ids = [...this.selected];
+        if (!ids.length) { Layout.toast('กรุณาเลือกรายการก่อน', 'error'); return; }
+        const ok = await Layout.confirmDanger({
+          title: `ลบ ${ids.length} รายการ`,
+          message: `คุณกำลังจะ<b>ลบ ${ids.length} รายการ</b>ออกจากระบบถาวร ใช้สำหรับกรณีที่ยิงข้อมูลเข้ามาผิดเท่านั้น`,
+          mode: ids.length >= 3 ? 'type' : 'math',
+          confirmText: 'ลบทั้งหมด'
+        });
+        if (!ok) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.batchDeleteJournals(ids);
+          this.selected.clear();
+          Layout.toast(res.message || `ลบสำเร็จ ${ids.length} รายการ`);
+          await this.load();
+          this.loadCounts();
+          this.updateBatchBar();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async batchPostAll() {
+        if (!confirm('ต้องการผ่านรายการ (Post) ทุกรายการที่เป็นร่าง (Draft)?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.batchPostJournals();
+          Layout.toast(res.message || 'ผ่านรายการสำเร็จ');
+          await this.load();
+          this.loadCounts();
+          this.checkDraftCount();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async checkDraftCount() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getJournals('?page=1&pageSize=1&status=Draft');
+          const count = res.data?.totalCount ?? 0;
+          document.getElementById('btnPostAll').style.display = count > 0 ? '' : 'none';
+        } catch(e) {}
+      }
+    };
+    const Import = {
+      entityType: 'journal-entries',
+      file: null,
+      validated: false,
+      toggleMenu(btn) {
+        const menu = btn.nextElementSibling;
+        const show = menu.style.display === 'none';
+        document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none');
+        menu.style.display = show ? 'block' : 'none';
+        if (show) setTimeout(() => document.addEventListener('click', Import._closeMenus, { once: true }), 0);
+      },
+      _closeMenus() { document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none'); },
+      open() {
+        Import._closeMenus();
+        Import.file = null; Import.validated = false;
+        document.getElementById('importStep1').style.display = '';
+        document.getElementById('importStep2').style.display = 'none';
+        document.getElementById('importStep3').style.display = 'none';
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importActionBtn').textContent = 'ตรวจสอบข้อมูล';
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').onclick = Import.validate;
+        document.getElementById('importFooter').style.display = '';
+        document.getElementById('importModal').classList.add('active');
+      },
+      close() { document.getElementById('importModal').classList.remove('active'); },
+      async downloadTemplate() {
+        Import._closeMenus();
+        try {
+          const token = localStorage.getItem('token');
+          const resp = await fetch(`/api/companies/${Layout.getCompanyId()}/import-export/templates/${Import.entityType}/download?format=csv`, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (!resp.ok) throw new Error('Download failed');
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = `journal-entries-template.csv`; a.click();
+          URL.revokeObjectURL(url);
+        } catch (e) { Layout.toast('ดาวน์โหลด Template ไม่สำเร็จ', 'error'); }
+      },
+      handleDrop(e) {
+        e.preventDefault();
+        e.currentTarget.style.borderColor = 'var(--gray-300)'; e.currentTarget.style.background = '';
+        const file = e.dataTransfer.files[0];
+        if (file) Import.handleFile(file);
+      },
+      handleFile(file) {
+        if (!file) return;
+        Import.file = file; Import.validated = false;
+        document.getElementById('importFileName').textContent = `${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+        document.getElementById('importFileInfo').style.display = 'flex';
+        document.getElementById('importActionBtn').disabled = false;
+      },
+      clearFile() {
+        Import.file = null;
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importActionBtn').disabled = true;
+      },
+      async validate() {
+        if (!Import.file) return;
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').textContent = 'กำลังตรวจสอบ...';
+        try {
+          const fd = new FormData(); fd.append('file', Import.file); fd.append('entityType', Import.entityType);
+          const json = await API.upload(`/api/companies/${Layout.getCompanyId()}/import-export/validate`, fd);
+          if (!json.success) throw new Error(json.message || 'Validation failed');
+          const d = json.data;
+          let html = `<div style="padding:8px 0"><span style="color:var(--green-600);font-weight:600">✓ ${d.validCount || d.totalRows || 0} รายการถูกต้อง</span>`;
+          if (d.errorCount > 0) html += ` &nbsp; <span style="color:var(--red-600);font-weight:600">✗ ${d.errorCount} รายการมีข้อผิดพลาด</span>`;
+          html += '</div>';
+          if (d.errors && d.errors.length > 0) {
+            html += '<div style="max-height:120px;overflow:auto;background:var(--red-50);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:13px;color:var(--red-700)">';
+            d.errors.slice(0, 10).forEach(e => html += `<div>แถว ${e.row}: ${e.message}</div>`);
+            if (d.errors.length > 10) html += `<div>... และอีก ${d.errors.length - 10} รายการ</div>`;
+            html += '</div>';
+          }
+          document.getElementById('importValidation').innerHTML = html;
+          if (d.preview && d.preview.length > 0) {
+            let tbl = '<table class="table" style="font-size:12px"><thead><tr>';
+            Object.keys(d.preview[0]).forEach(k => tbl += `<th>${k}</th>`);
+            tbl += '</tr></thead><tbody>';
+            d.preview.slice(0, 5).forEach(row => { tbl += '<tr>'; Object.values(row).forEach(v => tbl += `<td>${v ?? ''}</td>`); tbl += '</tr>'; });
+            tbl += '</tbody></table>';
+            document.getElementById('importPreview').innerHTML = tbl;
+          }
+          document.getElementById('importStep1').style.display = 'none';
+          document.getElementById('importStep2').style.display = '';
+          Import.validated = true;
+          document.getElementById('importActionBtn').textContent = 'นำเข้าข้อมูล';
+          document.getElementById('importActionBtn').disabled = (d.validCount || d.totalRows || 0) === 0;
+          document.getElementById('importActionBtn').onclick = Import.execute;
+        } catch (e) {
+          Layout.toast(e.message || 'ตรวจสอบไม่สำเร็จ', 'error');
+          document.getElementById('importActionBtn').textContent = 'ตรวจสอบข้อมูล';
+          document.getElementById('importActionBtn').disabled = false;
+        }
+      },
+      async execute() {
+        if (!Import.file) return;
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').textContent = 'กำลังนำเข้า...';
+        try {
+          const fd = new FormData(); fd.append('file', Import.file); fd.append('entityType', Import.entityType);
+          const json = await API.upload(`/api/companies/${Layout.getCompanyId()}/import-export/import`, fd);
+          if (!json.success) throw new Error(json.message || 'Import failed');
+          const d = json.data;
+          document.getElementById('importStep2').style.display = 'none';
+          document.getElementById('importStep3').style.display = '';
+          document.getElementById('importResultText').textContent = `นำเข้าสำเร็จ ${d.importedCount || d.count || 0} รายการ`;
+          document.getElementById('importFooter').style.display = 'none';
+          if (typeof Page.load === 'function') Page.load();
+        } catch (e) {
+          Layout.toast(e.message || 'นำเข้าไม่สำเร็จ', 'error');
+          document.getElementById('importActionBtn').textContent = 'นำเข้าข้อมูล';
+          document.getElementById('importActionBtn').disabled = false;
+        }
+      }
+    };
+    Page.init();
+    Layout.enableTour('journals');
+  </script>
+</body>
+</html>

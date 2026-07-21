@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สถานะการใช้งาน - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .usage-card { background:#fff; border:1px solid var(--gray-200); border-radius:var(--radius-xl); padding:20px; }
+    .usage-card h4 { margin:0 0 4px; font-size:13px; color:var(--gray-500); font-weight:500; }
+    .usage-card .value { font-size:28px; font-weight:800; line-height:1.2; }
+    .usage-card .sub { font-size:12px; color:var(--gray-400); margin-top:2px; }
+    .progress-bar { background:var(--gray-200); border-radius:6px; height:10px; overflow:hidden; margin-top:8px; }
+    .progress-fill { height:100%; border-radius:6px; transition:width .5s ease; }
+    .pct-label { font-size:12px; font-weight:600; margin-top:4px; text-align:right; }
+    .alert-item { display:flex; align-items:flex-start; gap:10px; padding:12px 16px; border-radius:var(--radius); margin-bottom:8px; font-size:14px; }
+    .alert-item.danger { background:#FEF2F2; border:1px solid #FECACA; color:#991B1B; }
+    .alert-item.warning { background:#FFFBEB; border:1px solid #FDE68A; color:#92400E; }
+    .alert-item.info { background:#EFF6FF; border:1px solid #BFDBFE; color:#1E40AF; }
+    .alert-icon { font-size:18px; flex-shrink:0; }
+    .storage-row { display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--gray-100); }
+    .storage-row:last-child { border-bottom:none; }
+    .storage-cat-bar { flex:1; height:8px; background:var(--gray-100); border-radius:4px; overflow:hidden; }
+    .storage-cat-fill { height:100%; border-radius:4px; }
+    .user-row { display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--gray-100); }
+    .user-row:last-child { border-bottom:none; }
+    .user-avatar { width:36px; height:36px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px; flex-shrink:0; }
+    .file-row { display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--gray-100); font-size:13px; }
+    .file-row:last-child { border-bottom:none; }
+    .quick-action { display:flex; align-items:center; gap:10px; padding:14px 16px; border:1px solid var(--gray-200); border-radius:var(--radius-lg); cursor:pointer; transition:all .2s; }
+    .quick-action:hover { border-color:var(--primary); background:#F5F3FF; }
+    .quick-action .qa-icon { font-size:24px; }
+    .quick-action .qa-title { font-weight:600; font-size:14px; }
+    .quick-action .qa-desc { font-size:12px; color:var(--gray-500); }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">สถานะการใช้งาน</h2>
+        <p class="page-subtitle">ตรวจสอบการใช้งาน พื้นที่ และโควต้าของบริษัท</p>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="Page.refresh()">รีเฟรช</button>
+        <button class="btn btn-primary" onclick="location.href='/pages/subscription.html'">จัดการแพ็กเกจ</button>
+      </div>
+    </div>
+
+    <!-- Alerts -->
+    <div id="alertSection" style="margin-bottom:20px"></div>
+
+    <!-- Overview Cards -->
+    <div id="overviewCards" class="grid grid-4 gap-4" style="margin-bottom:24px">
+      <div class="usage-card"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- Usage Bars -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header"><h3 class="card-title">โควต้าการใช้งาน</h3></div>
+      <div id="usageBars" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:4px 0">
+        <div class="text-center text-gray-400" style="padding:20px;grid-column:1/-1" data-i18n="common.loading">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px">
+      <!-- Storage Breakdown -->
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">พื้นที่เก็บข้อมูลแยกประเภท</h3></div>
+        <div id="storageBreakdown"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
+      </div>
+
+      <!-- User Accounts -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">บัญชีผู้ใช้</h3>
+          <span id="userCount" class="badge badge-primary"></span>
+        </div>
+        <div id="userList"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
+      </div>
+    </div>
+
+    <!-- Largest Files -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header"><h3 class="card-title">ไฟล์ขนาดใหญ่ที่สุด</h3></div>
+      <div id="largestFiles"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">จัดการพื้นที่และแพ็กเกจ</h3></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+        <div class="quick-action" onclick="location.href='/pages/subscription.html'">
+          <div class="qa-icon">💎</div>
+          <div><div class="qa-title">อัปเกรดแพ็กเกจ</div><div class="qa-desc">เพิ่มโควต้าและพื้นที่</div></div>
+        </div>
+        <div class="quick-action" onclick="location.href='/pages/import-export.html'">
+          <div class="qa-icon">📥</div>
+          <div><div class="qa-title">ส่งออกข้อมูล</div><div class="qa-desc">สำรองข้อมูลก่อนเคลียร์</div></div>
+        </div>
+        <div class="quick-action" onclick="Page.showCleanupGuide()">
+          <div class="qa-icon">🧹</div>
+          <div><div class="qa-title">เคลียร์พื้นที่</div><div class="qa-desc">ลบไฟล์ที่ไม่จำเป็น</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cleanup Guide Modal -->
+    <div class="modal-overlay" id="cleanupModal">
+      <div class="modal" style="max-width:550px">
+        <div class="modal-header"><h3 class="modal-title">คู่มือเคลียร์พื้นที่</h3><button class="modal-close" onclick="Layout.closeModal('cleanupModal')">&times;</button></div>
+        <div class="modal-body">
+          <div style="margin-bottom:16px">
+            <h4 style="font-size:15px;font-weight:600;margin-bottom:8px">วิธีลดพื้นที่การใช้งาน</h4>
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <div style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+                <div style="font-weight:600;font-size:14px;margin-bottom:4px">1. ลบไฟล์แนบที่ไม่ใช้แล้ว</div>
+                <p style="font-size:13px;color:#64748b;margin:0">เข้าไปที่หน้าเอกสาร/รายการบัญชีแต่ละรายการ แล้วลบไฟล์แนบที่ไม่จำเป็น</p>
+              </div>
+              <div style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+                <div style="font-weight:600;font-size:14px;margin-bottom:4px">2. ส่งออกข้อมูลเก่า</div>
+                <p style="font-size:13px;color:#64748b;margin:0">ใช้ฟีเจอร์ส่งออก (Export) เพื่อสำรองข้อมูลเก่าไว้ภายนอก แล้ว void เอกสารที่ไม่ต้องการ</p>
+              </div>
+              <div style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+                <div style="font-weight:600;font-size:14px;margin-bottom:4px">3. ลดขนาดไฟล์ก่อนอัปโหลด</div>
+                <p style="font-size:13px;color:#64748b;margin:0">บีบอัดรูปภาพหรือ PDF ก่อนแนบไฟล์ เพื่อประหยัดพื้นที่</p>
+              </div>
+              <div style="padding:12px;background:#EFF6FF;border-radius:8px;border:1px solid #BFDBFE">
+                <div style="font-weight:600;font-size:14px;margin-bottom:4px;color:#1E40AF">4. อัปเกรดแพ็กเกจ</div>
+                <p style="font-size:13px;color:#1E40AF;margin:0">หากต้องการพื้นที่มากขึ้น สามารถอัปเกรดแพ็กเกจเพื่อเพิ่มโควต้าทุกด้าน</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('cleanupModal')" data-i18n="common.close">ปิด</button>
+          <button class="btn btn-primary" onclick="location.href='/pages/subscription.html'">อัปเกรดแพ็กเกจ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      data: null,
+
+      async load() {
+        await this.loadUsage();
+      },
+      async init() {
+        if (!Layout.init('usage')) return;
+        Layout.setTitle('สถานะการใช้งาน');
+        await this.load();
+      },
+
+      async loadUsage() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        try {
+          const res = await API.get(`/api/subscription/${cid}/usage/detail`);
+          this.data = res.data;
+          this.render();
+        } catch (e) {
+          document.getElementById('overviewCards').innerHTML = `
+            <div style="grid-column:1/-1;text-align:center;padding:40px">
+              <div style="font-size:48px;margin-bottom:12px">📊</div>
+              <h3 style="margin-bottom:8px">ยังไม่มีข้อมูล Subscription</h3>
+              <p style="color:var(--gray-500);margin-bottom:16px">เริ่มทดลองใช้งานเพื่อดูสถานะการใช้งาน</p>
+              <button class="btn btn-primary" onclick="location.href='/pages/subscription.html'">เริ่มต้นใช้งาน</button>
+            </div>`;
+          document.querySelectorAll('#usageBars,#storageBreakdown,#userList,#largestFiles,#alertSection').forEach(el => el.innerHTML = '');
+        }
+      },
+
+      render() {
+        const d = this.data;
+        if (!d) return;
+        this.renderAlerts(d.alerts);
+        this.renderOverview(d);
+        this.renderUsageBars(d);
+        this.renderStorageBreakdown(d.storageBreakdown, d.storageUsed);
+        this.renderUsers(d.users, d.currentUsers, d.maxUsers);
+        this.renderLargestFiles(d.largestFiles);
+      },
+
+      renderAlerts(alerts) {
+        const el = document.getElementById('alertSection');
+        if (!alerts || !alerts.length) { el.innerHTML = ''; return; }
+        el.innerHTML = alerts.map(a => `
+          <div class="alert-item ${a.type}">
+            <span class="alert-icon">${a.type === 'danger' ? '🚨' : a.type === 'warning' ? '⚠️' : 'ℹ️'}</span>
+            <span>${a.message}</span>
+          </div>
+        `).join('');
+      },
+
+      renderOverview(d) {
+        const planMap = { FreeTrial:'ทดลองฟรี', Basic:'Starter', Pro:'Professional', Enterprise:'Enterprise' };
+        const statusMap = { Trial:'ทดลองใช้', Active:'ใช้งาน', PastDue:'เกินกำหนด', Cancelled:'ยกเลิก', Expired:'หมดอายุ', Suspended:'ระงับ' };
+        const daysLeft = Math.max(0, Math.ceil((new Date(d.endDate) - new Date()) / 86400000));
+        const storagePct = d.maxStorageBytes > 0 ? (d.storageUsed / d.maxStorageBytes * 100).toFixed(1) : 0;
+
+        document.getElementById('overviewCards').innerHTML = `
+          <div class="usage-card">
+            <h4>แพ็กเกจ</h4>
+            <div class="value" style="color:var(--primary)">${planMap[d.plan] || d.plan}</div>
+            <div class="sub">${statusMap[d.status] || d.status} | เหลือ ${daysLeft} วัน</div>
+          </div>
+          <div class="usage-card">
+            <h4>ผู้ใช้งาน</h4>
+            <div class="value">${d.currentUsers} <span style="font-size:16px;font-weight:400;color:var(--gray-400)">/ ${d.maxUsers >= 999 ? '∞' : d.maxUsers}</span></div>
+            <div class="sub">บัญชีที่ใช้งานอยู่</div>
+          </div>
+          <div class="usage-card">
+            <h4>พื้นที่ใช้งาน</h4>
+            <div class="value">${this.formatBytes(d.storageUsed)}</div>
+            <div class="sub">จาก ${this.formatBytes(d.maxStorageBytes)} (${storagePct}%)</div>
+            <div class="progress-bar" style="margin-top:8px"><div class="progress-fill" style="width:${Math.min(100,storagePct)}%;background:${storagePct > 90 ? 'var(--danger)' : storagePct > 70 ? 'var(--warning)' : 'var(--success)'}"></div></div>
+          </div>
+          <div class="usage-card">
+            <h4>เอกสารเดือนนี้</h4>
+            <div class="value">${d.documentsThisMonth} <span style="font-size:16px;font-weight:400;color:var(--gray-400)">/ ${d.maxDocumentsPerMonth >= 99999 ? '∞' : d.maxDocumentsPerMonth}</span></div>
+            <div class="sub">รีเซ็ต ${this.formatDate(d.usageResetDate)}</div>
+          </div>`;
+      },
+
+      renderUsageBars(d) {
+        const items = [
+          { label: 'เอกสาร / เดือน', used: d.documentsThisMonth, max: d.maxDocumentsPerMonth, icon: '📄' },
+          { label: 'รายการบัญชี / เดือน', used: d.journalEntriesThisMonth, max: d.maxJournalEntriesPerMonth, icon: '📝' },
+          { label: 'OCR สแกน / เดือน', used: d.ocrPagesThisMonth || 0, max: d.maxOcrPagesPerMonth || 0, icon: '🔍',
+            extra: (d.ocrBonusPages > 0 ? ` +โบนัส ${d.ocrBonusPages}` : '') + (d.ocrCreditPagesRemaining > 0 ? ` +เครดิต ${d.ocrCreditPagesRemaining}` : '') },
+          { label: 'ผู้ใช้งาน', used: d.currentUsers, max: d.maxUsers, icon: '👥' },
+          { label: 'พื้นที่จัดเก็บ', used: d.storageUsed, max: d.maxStorageBytes, isBytes: true, icon: '💾' },
+        ];
+
+        document.getElementById('usageBars').innerHTML = items.map(u => {
+          const pct = u.max > 0 && u.max < 99999 ? Math.min(100, u.used / u.max * 100) : (u.max >= 99999 ? 0 : 0);
+          const color = pct > 90 ? 'var(--danger)' : pct > 70 ? 'var(--warning)' : 'var(--success)';
+          const usedStr = u.isBytes ? this.formatBytes(u.used) : u.used.toLocaleString();
+          const maxStr = u.isBytes ? this.formatBytes(u.max) : (u.max >= 99999 ? 'ไม่จำกัด' : u.max.toLocaleString());
+          return `<div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <span style="font-size:14px">${u.icon} ${u.label}</span>
+              <span style="font-weight:600;font-size:14px">${usedStr} / ${maxStr}${u.extra || ''}</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${color}"></div></div>
+            <div class="pct-label" style="color:${color}">${pct.toFixed(1)}%</div>
+          </div>`;
+        }).join('');
+      },
+
+      renderStorageBreakdown(breakdown, totalUsed) {
+        const el = document.getElementById('storageBreakdown');
+        if (!breakdown || !breakdown.length) {
+          el.innerHTML = '<p class="text-center text-gray-400" style="padding:20px">ยังไม่มีไฟล์</p>';
+          return;
+        }
+        const colors = ['#4F46E5','#0EA5E9','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#6366F1'];
+        el.innerHTML = breakdown.map((c, i) => {
+          const pct = totalUsed > 0 ? (c.bytes / totalUsed * 100) : 0;
+          return `<div class="storage-row">
+            <span style="width:100px;font-size:13px;font-weight:500">${c.label}</span>
+            <div class="storage-cat-bar"><div class="storage-cat-fill" style="width:${pct}%;background:${colors[i % colors.length]}"></div></div>
+            <span style="width:80px;text-align:right;font-size:13px;font-weight:600">${this.formatBytes(c.bytes)}</span>
+            <span style="width:60px;text-align:right;font-size:12px;color:var(--gray-400)">${c.fileCount} ไฟล์</span>
+          </div>`;
+        }).join('');
+      },
+
+      renderUsers(users, current, max) {
+        document.getElementById('userCount').textContent = `${current} / ${max >= 999 ? '∞' : max}`;
+        const el = document.getElementById('userList');
+        if (!users || !users.length) {
+          el.innerHTML = '<p class="text-center text-gray-400" style="padding:20px">ไม่มีผู้ใช้</p>';
+          return;
+        }
+        const roleMap = { Owner:'เจ้าของ', Accountant:'นักบัญชี', Staff:'พนักงาน', Auditor:'ผู้ตรวจสอบ', Viewer:'ผู้ดู', ExternalAccountant:'นักบัญชีภายนอก', SystemAdmin:'แอดมิน' };
+        const roleBadge = { Owner:'badge-primary', Accountant:'badge-info', Staff:'badge-gray', Auditor:'badge-warning', Viewer:'badge-gray', ExternalAccountant:'badge-info', SystemAdmin:'badge-danger' };
+        el.innerHTML = users.map(u => `
+          <div class="user-row">
+            <div class="user-avatar">${(u.fullName || u.email || '?')[0].toUpperCase()}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${u.fullName || '-'}</div>
+              <div style="font-size:12px;color:var(--gray-500)">${u.email}</div>
+            </div>
+            <span class="badge ${roleBadge[u.role] || 'badge-gray'}">${roleMap[u.role] || u.role}</span>
+            <div style="text-align:right;font-size:11px;color:var(--gray-400)">
+              <div>เข้าร่วม ${this.formatDate(u.joinedAt)}</div>
+              <div>${u.lastLoginAt ? 'ล่าสุด ' + this.formatDate(u.lastLoginAt) : 'ยังไม่ล็อกอิน'}</div>
+            </div>
+          </div>
+        `).join('') + `
+          <div style="padding:12px 0;text-align:center">
+            <button class="btn btn-secondary btn-sm" onclick="Page.showAddUserInfo()" ${current >= max && max < 999 ? 'disabled title="โควต้าผู้ใช้เต็มแล้ว"' : ''}>
+              + เพิ่มผู้ใช้
+            </button>
+          </div>`;
+      },
+
+      renderLargestFiles(files) {
+        const el = document.getElementById('largestFiles');
+        if (!files || !files.length) {
+          el.innerHTML = '<p class="text-center text-gray-400" style="padding:20px">ยังไม่มีไฟล์</p>';
+          return;
+        }
+        const catMap = { Document:'เอกสาร', JournalEntry:'รายการบัญชี', Contact:'ผู้ติดต่อ', Product:'สินค้า', ExpenseClaim:'เบิกค่าใช้จ่าย', FixedAsset:'สินทรัพย์', Logo:'โลโก้' };
+        el.innerHTML = `<div class="table-container"><table class="table" style="font-size:13px">
+          <thead><tr><th>ชื่อไฟล์</th><th data-i18n="common.type">ประเภท</th><th class="text-right">ขนาด</th><th>อัปโหลดโดย</th><th data-i18n="common.date">วันที่</th></tr></thead>
+          <tbody>${files.map(f => `<tr>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f.fileName}">${f.fileName}</td>
+            <td><span class="badge badge-gray">${catMap[f.entityType] || f.entityType}</span></td>
+            <td class="text-right font-semibold">${this.formatBytes(f.fileSize)}</td>
+            <td>${f.uploadedBy}</td>
+            <td>${this.formatDate(f.uploadedAt)}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+      },
+
+      showCleanupGuide() {
+        Layout.openModal('cleanupModal');
+      },
+
+      showAddUserInfo() {
+        const d = this.data;
+        if (d && d.currentUsers >= d.maxUsers && d.maxUsers < 999) {
+          Layout.toast('โควต้าผู้ใช้เต็มแล้ว กรุณาอัปเกรดแพ็กเกจ', 'error');
+          return;
+        }
+        Layout.toast('เพิ่มผู้ใช้ได้ที่เมนู ตั้งค่า > ข้อมูลบริษัท หรือติดต่อแอดมิน', 'info');
+      },
+
+      async refresh() {
+        Layout.toast('กำลังรีเฟรช...', 'info');
+        await this.loadUsage();
+        Layout.toast('รีเฟรชสำเร็จ');
+      },
+
+      formatBytes(b) {
+        if (b >= 1024*1024*1024) return (b/(1024*1024*1024)).toFixed(1)+' GB';
+        if (b >= 1024*1024) return (b/(1024*1024)).toFixed(1)+' MB';
+        if (b >= 1024) return (b/1024).toFixed(0)+' KB';
+        return b + ' B';
+      },
+
+      formatDate(d) {
+        if (!d) return '-';
+        const dt = new Date(d);
+        return dt.toLocaleDateString('th-TH', { year:'numeric', month:'short', day:'numeric' });
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

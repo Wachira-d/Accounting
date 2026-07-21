@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จัดการเช็ค — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .badge { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:600; }
+    .b-Issued { background:#fef3c7; color:#92400e; }
+    .b-Cleared { background:#dcfce7; color:#15803d; }
+    .b-Bounced { background:#fee2e2; color:#dc2626; }
+    .b-Voided { background:#f1f5f9; color:#64748b; }
+    .b-DepositedPending { background:#dbeafe; color:#1e40af; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">จัดการเช็ค</h2>
+        <p class="page-subtitle">เปิดเล่มเช็ค · ออกเช็คจ่าย · บันทึกเช็ครับ · ติดตามเช็คคงค้าง</p>
+      </div>
+    </div>
+
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab-btn active" onclick="Page.switchTab('outstanding')">เช็คคงค้าง</button>
+      <button class="tab-btn" onclick="Page.switchTab('books')">เล่มเช็ค</button>
+      <button class="tab-btn" onclick="Page.switchTab('issue')">ออกเช็คใหม่</button>
+    </div>
+
+    <div id="tabOutstanding" class="card">
+      <div class="card-header" style="display:flex;align-items:center;gap:12px">
+        <h3 class="card-title" style="margin:0;flex:1">เช็คคงค้าง</h3>
+        <button class="btn btn-primary" onclick="Page.loadOutstanding()">รีเฟรช</button>
+      </div>
+      <div class="table-container">
+        <table class="data-table">
+          <thead><tr>
+            <th>เลขที่</th><th>วันที่</th><th style="text-align:right">จำนวน</th>
+            <th>ผู้รับ/ผู้ออก</th><th>ทิศทาง</th><th>สถานะ</th><th>การจัดการ</th>
+          </tr></thead>
+          <tbody id="outstandingBody">
+            <tr><td colspan="7" style="text-align:center;padding:40px;color:#94a3b8">กด รีเฟรช เพื่อโหลด</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tabBooks" class="card hidden">
+      <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h3 class="card-title" style="margin:0;flex:1">เปิดเล่มเช็คใหม่</h3>
+      </div>
+      <div style="padding:18px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;max-width:760px">
+        <div><label>บัญชีธนาคาร</label><select id="bookBank" class="form-input"></select></div>
+        <div><label>เลขเล่ม</label><input id="bookNumber" class="form-input"></div>
+        <div><label>เลขเริ่มต้น</label><input id="bookStart" type="number" class="form-input"></div>
+        <div><label>เลขสุดท้าย</label><input id="bookEnd" type="number" class="form-input"></div>
+      </div>
+      <div style="padding:0 18px 18px">
+        <button class="btn btn-primary" onclick="Page.openBook()">เปิดเล่ม</button>
+      </div>
+    </div>
+
+    <div id="tabIssue" class="card hidden">
+      <div class="card-header"><h3 class="card-title">ออกเช็คใหม่ (Outbound)</h3></div>
+      <div style="padding:18px;display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:760px">
+        <div><label>เล่มเช็ค</label><select id="issueBook" class="form-input"></select></div>
+        <div><label>ผู้รับ (Contact)</label><select id="issueContact" class="form-input"><option value="">— เลือกผู้รับ —</option></select></div>
+        <div><label>วันที่</label><input id="issueDate" type="date" class="form-input"></div>
+        <div><label>จำนวนเงิน</label><input id="issueAmount" type="number" step="0.01" min="0" class="form-input"></div>
+        <div><label>โครงการ (optional)</label><select id="issueProject" class="form-input"><option value="">— ไม่ระบุ —</option></select></div>
+        <div style="grid-column:1/-1"><label>หมายเหตุ</label><textarea id="issueNotes" rows="2" class="form-input"></textarea></div>
+      </div>
+      <div style="padding:0 18px 18px">
+        <button class="btn btn-primary" onclick="Page.issueOutbound()">ออกเช็ค</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('cheques')) return;
+        Layout.setTitle('จัดการเช็ค');
+        document.getElementById('issueDate').value = Layout.toDateInput(new Date());
+        await this.loadBanks();
+        await this.loadBooks();
+        await this.loadProjects();
+        await this.loadContacts();
+        await this.loadOutstanding();
+      },
+
+      _contacts: [],
+      async loadContacts() {
+        try {
+          const cid = Layout.getCompanyId(); if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/document/contacts?pageSize=500`);
+          this._contacts = r.data?.items || r.data || [];
+          const sel = document.getElementById('issueContact');
+          if (sel) sel.innerHTML = '<option value="">— เลือกผู้รับ —</option>' +
+            this._contacts.map(c => `<option value="${c.id}">${(c.name||'').replace(/</g,'&lt;')}${c.taxId ? ' ('+c.taxId+')' : ''}</option>`).join('');
+        } catch (e) { /* keep the empty placeholder */ }
+      },
+      _contactName(id) { const c = this._contacts.find(x => x.id === id); return c ? c.name : (id ? id.toString().slice(0,8)+'…' : '-'); },
+
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const sel = document.getElementById('issueProject');
+          const opts = items.map(p =>
+            `<option value="${p.id}">${(p.code || p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+          sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
+        } catch (e) { /* ignore */ }
+      },
+
+      switchTab(t) {
+        const tabs = ['outstanding','books','issue'];
+        document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', tabs[i]===t));
+        ['Outstanding','Books','Issue'].forEach(n =>
+          document.getElementById('tab'+n).classList.toggle('hidden', n.toLowerCase()!==t));
+      },
+
+      _fmt(n) { return (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+
+      async loadBanks() {
+        try {
+          const api = Layout.api(); if (!api) return;
+          const r = await api.get('/bank/accounts');
+          const banks = r.data || [];
+          // เช็คออกได้เฉพาะบัญชีกระแสรายวัน — เรียงขึ้นก่อนและติดป้ายประเภทให้เห็นชัด
+          const typeLabel = t => t === 'Current' ? 'กระแสรายวัน' : t === 'Savings' ? 'ออมทรัพย์' : t === 'Fixed' ? 'ฝากประจำ' : (t || '');
+          banks.sort((a, b) => (a.accountType === 'Current' ? 0 : 1) - (b.accountType === 'Current' ? 0 : 1));
+          const opt = banks.map(b => `<option value="${b.id}">${b.accountName} (${b.bankName}${b.accountType ? ' · ' + typeLabel(b.accountType) : ''})</option>`).join('');
+          document.getElementById('bookBank').innerHTML = opt || '<option>--</option>';
+        } catch (e) { /* ignore */ }
+      },
+
+      async loadBooks() {
+        // For now just leave the select empty — backend has no list-books endpoint yet.
+        // User picks book at outstanding/issue time via the dropdown that's populated after openBook.
+      },
+
+      async openBook() {
+        const api = Layout.api(); if (!api) return;
+        const body = {
+          bankAccountId: document.getElementById('bookBank').value,
+          bookNumber: document.getElementById('bookNumber').value,
+          startNumber: +document.getElementById('bookStart').value,
+          endNumber: +document.getElementById('bookEnd').value,
+        };
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/cheques/books`, body);
+          Layout.toast(r.message || 'เปิดเล่มเช็คแล้ว');
+          // Add option to issue tab
+          const sel = document.getElementById('issueBook');
+          const o = document.createElement('option');
+          o.value = r.data.id; o.textContent = body.bookNumber + ` (${body.startNumber}-${body.endNumber})`;
+          sel.appendChild(o); sel.value = o.value;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async issueOutbound() {
+        const cid = Layout.getCompanyId();
+        const body = {
+          chequeBookId: document.getElementById('issueBook').value,
+          contactId: document.getElementById('issueContact').value || null,
+          chequeDate: document.getElementById('issueDate').value,
+          amount: +document.getElementById('issueAmount').value,
+          paymentId: null,
+          notes: document.getElementById('issueNotes').value,
+          projectId: document.getElementById('issueProject').value || null,
+        };
+        try {
+          const r = await API.post(`/api/companies/${cid}/cheques/outbound`, body);
+          Layout.toast(r.message);
+          await this.loadOutstanding();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async loadOutstanding() {
+        const tbody = document.getElementById('outstandingBody');
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px">กำลังโหลด...</td></tr>';
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/cheques/outstanding`);
+          const rows = r.data || [];
+          if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#94a3b8">ไม่มีเช็คคงค้าง</td></tr>';
+            return;
+          }
+          tbody.innerHTML = rows.map(c => `<tr>
+            <td><b>${c.chequeNumber}</b></td>
+            <td>${new Date(c.chequeDate).toLocaleDateString('th-TH')}</td>
+            <td style="text-align:right">${this._fmt(c.amount)}</td>
+            <td>${this._contactName(c.contactId)}</td>
+            <td>${c.isInbound ? '⬇️ รับ' : '⬆️ จ่าย'}</td>
+            <td><span class="badge b-${c.status}">${c.status}</span></td>
+            <td>
+              <button class="btn btn-sm btn-success" onclick="Page.clearCheque('${c.id}')">ผ่านแล้ว</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.bounceCheque('${c.id}')">คืน</button>
+            </td>
+          </tr>`).join('');
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="7" style="color:#dc2626;text-align:center;padding:30px">${e.message}</td></tr>`;
+        }
+      },
+
+      async clearCheque(id) {
+        const cid = Layout.getCompanyId();
+        try {
+          await API.post(`/api/companies/${cid}/cheques/${id}/clear`, { clearedAt: new Date().toISOString() });
+          Layout.toast('อัปเดตเช็คผ่านแล้ว');
+          await this.loadOutstanding();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async bounceCheque(id) {
+        const reason = prompt('เหตุผลที่เช็คคืน');
+        if (!reason) return;
+        const cid = Layout.getCompanyId();
+        try {
+          await API.post(`/api/companies/${cid}/cheques/${id}/bounce`, { reason });
+          Layout.toast('บันทึกเช็คคืนแล้ว');
+          await this.loadOutstanding();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

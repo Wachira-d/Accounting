@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายงานสำหรับผู้บริหาร - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .er-tabs { display:flex; gap:4px; border-bottom:2px solid #e5e7eb; margin-bottom:16px; flex-wrap:wrap }
+    .er-tab { padding:10px 16px; cursor:pointer; border:none; background:none; font-size:14px; font-weight:500; color:#6b7280; border-bottom:2px solid transparent; margin-bottom:-2px }
+    .er-tab.active { color:#2563eb; border-bottom-color:#2563eb }
+    .er-tab:hover { color:#1f2937 }
+    .er-grid { display:grid; gap:16px }
+    .er-grid-4 { grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)) }
+    .er-grid-3 { grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)) }
+    .er-grid-2 { grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)) }
+    .kpi-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px }
+    .kpi-label { font-size:12px; color:#6b7280; font-weight:500 }
+    .kpi-value { font-size:24px; font-weight:700; color:#111827; margin:4px 0 }
+    .kpi-delta { font-size:12px; font-weight:600 }
+    .kpi-delta.up { color:#10b981 }
+    .kpi-delta.down { color:#ef4444 }
+    .kpi-delta.neutral { color:#6b7280 }
+    .alert-box { padding:12px 16px; border-radius:8px; border-left:4px solid; margin-bottom:8px }
+    .alert-box.critical { background:#fef2f2; border-color:#dc2626 }
+    .alert-box.warning { background:#fffbeb; border-color:#f59e0b }
+    .alert-box.info { background:#eff6ff; border-color:#3b82f6 }
+    .alert-title { font-weight:600; color:#1f2937; margin-bottom:2px }
+    .alert-desc { font-size:13px; color:#4b5563 }
+    .er-section { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px }
+    .er-section h3 { font-size:16px; font-weight:600; color:#1f2937; margin-bottom:12px }
+    .er-table th { background:#f9fafb; font-weight:600; color:#374151; font-size:12px }
+    .er-table td { font-size:13px }
+    .ratio-good { color:#10b981; font-weight:600 }
+    .ratio-bad { color:#ef4444; font-weight:600 }
+    .ratio-neutral { color:#6b7280 }
+    .er-mini-bar { height:6px; background:#e5e7eb; border-radius:3px; overflow:hidden; margin-top:4px }
+    .er-mini-bar > div { height:100%; background:#2563eb }
+    .pill { display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600 }
+    .pill-A { background:#dcfce7; color:#166534 }
+    .pill-B { background:#fef9c3; color:#854d0e }
+    .pill-C { background:#fee2e2; color:#991b1b }
+    .pill-OnTrack { background:#dcfce7; color:#166534 }
+    .pill-Over { background:#fee2e2; color:#991b1b }
+    .pill-Under { background:#fef3c7; color:#92400e }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">รายงานสำหรับผู้บริหาร</h2>
+        <p class="page-subtitle">วิเคราะห์ธุรกิจและการเงินจากหลายมุมมอง — สำหรับผู้บริหารและผู้ประกอบการ</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="date" id="fromDate" class="form-input" style="width:160px">
+        <span style="color:#6b7280">ถึง</span>
+        <input type="date" id="toDate" class="form-input" style="width:160px">
+        <button class="btn btn-primary" onclick="Page.reload()">รีเฟรช</button>
+      </div>
+    </div>
+
+    <div class="er-tabs" id="tabs">
+      <button class="er-tab active" data-tab="summary">ภาพรวม CEO</button>
+      <button class="er-tab" data-tab="ratios">อัตราส่วนทางการเงิน</button>
+      <button class="er-tab" data-tab="trends">วิเคราะห์แนวโน้ม</button>
+      <button class="er-tab" data-tab="customers">ลูกค้า</button>
+      <button class="er-tab" data-tab="suppliers">ผู้ขาย</button>
+      <button class="er-tab" data-tab="products">สินค้า/บริการ</button>
+      <button class="er-tab" data-tab="budget">งบประมาณ vs จริง</button>
+      <button class="er-tab" data-tab="forecast">พยากรณ์เงินสด</button>
+      <button class="er-tab" data-tab="breakeven">จุดคุ้มทุน</button>
+      <button class="er-tab" data-tab="sales">ผลการขาย</button>
+      <button class="er-tab" data-tab="projects">กำไรตามโครงการ</button>
+    </div>
+
+    <div id="tabContent">
+      <div class="text-center text-gray-400" style="padding:60px" data-i18n="common.loading">กำลังโหลด...</div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    Layout.init('executive-reports');
+    const fmt = n => (n == null) ? '-' : Number(n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmtInt = n => (n == null) ? '-' : Number(n).toLocaleString('th-TH');
+    const fmtPct = n => (n == null) ? '-' : (Number(n).toFixed(2) + '%');
+    const todayStr = Layout.toDateInput(new Date());
+    const yearStartStr = Layout.toDateInput(new Date(new Date().getFullYear(),0,1));
+
+    const Page = {
+      currentTab: 'summary',
+      cache: {},
+      init() {
+        document.getElementById('fromDate').value = yearStartStr;
+        document.getElementById('toDate').value = todayStr;
+        document.querySelectorAll('.er-tab').forEach(b => b.addEventListener('click', () => this.switchTab(b.dataset.tab)));
+        this.loadTab('summary');
+      },
+      switchTab(tab) {
+        this.currentTab = tab;
+        document.querySelectorAll('.er-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+        this.loadTab(tab);
+      },
+      reload() { this.cache = {}; this.loadTab(this.currentTab); },
+      query() {
+        const f = document.getElementById('fromDate').value;
+        const t = document.getElementById('toDate').value;
+        return `?fromDate=${f}&toDate=${t}`;
+      },
+      async loadTab(tab) {
+        const c = document.getElementById('tabContent');
+        c.innerHTML = '<div class="text-center text-gray-400" style="padding:60px" data-i18n="common.loading">กำลังโหลด...</div>';
+        const api = Layout.api(); if (!api) return;
+        try {
+          const handler = this.handlers[tab];
+          if (!handler) { c.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">ยังไม่มีรายงาน</div>'; return; }
+          await handler.call(this, api, c);
+        } catch (e) {
+          c.innerHTML = `<div class="er-section" style="color:#dc2626">เกิดข้อผิดพลาด: ${Layout.esc(e.message || String(e))}</div>`;
+        }
+      },
+      handlers: {},
+      kpiCard(label, value, delta, isPct) {
+        const cls = delta == null ? '' : (delta > 0 ? 'up' : delta < 0 ? 'down' : 'neutral');
+        const arrow = delta == null ? '' : (delta > 0 ? '↑' : delta < 0 ? '↓' : '→');
+        const valStr = isPct ? fmtPct(value) : fmt(value);
+        const dStr = delta == null ? '' : `<div class="kpi-delta ${cls}">${arrow} ${fmtPct(Math.abs(delta))}</div>`;
+        return `<div class="kpi-card"><div class="kpi-label">${label}</div><div class="kpi-value">${valStr}</div>${dStr}</div>`;
+      }
+    };
+    window.Page = Page;
+
+    Page.handlers.summary = async function(api, c) {
+      const r = (await api.getExecutiveSummary(this.query())).data;
+      const k = r.kpi;
+      const cp = r.cashPosition;
+      const ratios = r.ratios;
+      let alerts = '';
+      r.alerts.forEach(a => {
+        alerts += `<div class="alert-box ${a.severity}"><div class="alert-title">${a.title}</div><div class="alert-desc">${a.description}</div></div>`;
+      });
+      const kpis = [
+        this.kpiCard('รายได้', k.revenue, k.revenueGrowthPercent),
+        this.kpiCard('ค่าใช้จ่าย', k.expense, k.expenseGrowthPercent),
+        this.kpiCard('กำไรสุทธิ', k.netIncome, k.netIncomeGrowthPercent),
+        this.kpiCard('อัตรากำไรสุทธิ', k.netProfitMarginPercent, null, true),
+        this.kpiCard('กำไรขั้นต้น', k.grossProfit, null),
+        this.kpiCard('Margin ขั้นต้น', k.grossProfitMarginPercent, null, true),
+        this.kpiCard('EBITDA', k.ebitda, null),
+        this.kpiCard('Margin EBITDA', k.ebitdaMarginPercent, null, true),
+      ].join('');
+      const cash = [
+        this.kpiCard('เงินสดในมือ', cp.cashOnHand, null),
+        this.kpiCard('ยอดเงินธนาคาร', cp.bankBalance, null),
+        this.kpiCard('รวมเงินสด', cp.total, null),
+        this.kpiCard('ใช้ได้ (หักหนี้เกินกำหนด)', cp.availableNet, null),
+      ].join('');
+      const more = [
+        this.kpiCard('ลูกหนี้คงค้าง', k.receivables, null),
+        this.kpiCard('เจ้าหนี้คงค้าง', k.payables, null),
+        this.kpiCard('ทุนหมุนเวียน', k.workingCapital, null),
+        `<div class="kpi-card"><div class="kpi-label">เงินสดเหลือใช้</div><div class="kpi-value">${cp.cashRunwayDays} วัน</div><div class="kpi-delta neutral">เฉลี่ย ${fmt(cp.averageDailyExpense)}/วัน</div></div>`,
+      ].join('');
+      const inv = [
+        this.kpiCard('ใบแจ้งหนี้', k.invoiceCount),
+        this.kpiCard('เกินกำหนด', k.overdueInvoiceCount),
+        this.kpiCard('ยอดเกินกำหนด', k.overdueReceivables, null),
+      ].join('');
+      let topCust = '<tr><td colspan="3" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      if (r.topCustomers && r.topCustomers.length) {
+        topCust = r.topCustomers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td></tr>`).join('');
+      }
+      let topSupp = '<tr><td colspan="3" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      if (r.topSuppliers && r.topSuppliers.length) {
+        topSupp = r.topSuppliers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td></tr>`).join('');
+      }
+      const ratioCards = [
+        `<div class="kpi-card"><div class="kpi-label">Current Ratio</div><div class="kpi-value">${fmt(ratios.currentRatio)}</div></div>`,
+        `<div class="kpi-card"><div class="kpi-label">Quick Ratio</div><div class="kpi-value">${fmt(ratios.quickRatio)}</div></div>`,
+        `<div class="kpi-card"><div class="kpi-label">D/E Ratio</div><div class="kpi-value">${fmt(ratios.debtToEquity)}</div></div>`,
+        `<div class="kpi-card"><div class="kpi-label">ROE</div><div class="kpi-value">${fmtPct(ratios.returnOnEquity)}</div></div>`,
+      ].join('');
+      c.innerHTML = `
+        <div class="er-section"><h3>การแจ้งเตือนสำคัญ</h3>${alerts}</div>
+        <div class="er-section"><h3>ผลประกอบการ (KPI)</h3><div class="er-grid er-grid-4">${kpis}</div></div>
+        <div class="er-section"><h3>สถานะเงินสด</h3><div class="er-grid er-grid-4">${cash}</div></div>
+        <div class="er-section"><h3>ลูกหนี้ / เจ้าหนี้ / ทุนหมุนเวียน</h3><div class="er-grid er-grid-4">${more}</div></div>
+        <div class="er-section"><h3>การวางบิล</h3><div class="er-grid er-grid-4">${inv}</div></div>
+        <div class="er-section"><h3>อัตราส่วนสำคัญ</h3><div class="er-grid er-grid-4">${ratioCards}</div></div>
+        <div class="er-grid er-grid-2">
+          <div class="er-section"><h3>ลูกค้าหลัก (Top 5)</h3><table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${topCust}</tbody></table></div>
+          <div class="er-section"><h3>ผู้ขายหลัก (Top 5)</h3><table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${topSupp}</tbody></table></div>
+        </div>
+      `;
+    };
+
+    Page.handlers.ratios = async function(api, c) {
+      const r = (await api.getFinancialRatios(this.query() + '&asOfDate=' + document.getElementById('toDate').value)).data;
+      const x = r.ratios;
+      const sec = (title, items) => {
+        const cards = items.map(([l, v, isPct]) => `<div class="kpi-card"><div class="kpi-label">${l}</div><div class="kpi-value">${isPct ? fmtPct(v) : fmt(v)}</div></div>`).join('');
+        return `<div class="er-section"><h3>${title}</h3><div class="er-grid er-grid-4">${cards}</div></div>`;
+      };
+      let raw = '';
+      Object.entries(r.rawValues).forEach(([k, v]) => raw += `<tr><td>${k}</td><td class="text-right">${fmt(v)}</td></tr>`);
+      c.innerHTML =
+        sec('สภาพคล่อง (Liquidity)', [['Current Ratio', x.currentRatio], ['Quick Ratio', x.quickRatio], ['Cash Ratio', x.cashRatio]]) +
+        sec('ความสามารถในการทำกำไร', [['Gross Margin', x.grossProfitMargin, true], ['Operating Margin', x.operatingMargin, true], ['Net Profit Margin', x.netProfitMargin, true], ['ROA', x.returnOnAssets, true], ['ROE', x.returnOnEquity, true]]) +
+        sec('ประสิทธิภาพ', [['Asset Turnover', x.assetTurnover], ['Inventory Turnover', x.inventoryTurnover], ['AR Turnover', x.receivablesTurnover], ['AP Turnover', x.payablesTurnover], ['DSO (วัน)', x.daysSalesOutstanding], ['DPO (วัน)', x.daysPayablesOutstanding], ['DIO (วัน)', x.daysInventoryOutstanding], ['Cash Conversion Cycle', x.cashConversionCycle]]) +
+        sec('โครงสร้างทุน', [['Debt to Assets', x.debtToAssets], ['Debt to Equity', x.debtToEquity], ['Equity Multiplier', x.equityMultiplier]]) +
+        `<div class="er-section"><h3>ค่าฐานที่ใช้คำนวณ</h3><table class="table er-table"><thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">มูลค่า</th></tr></thead><tbody>${raw}</tbody></table></div>`;
+    };
+
+    Page.handlers.trends = async function(api, c) {
+      const r = (await api.getTrendAnalysis('?granularity=monthly&periods=12')).data;
+      const buildTbl = (title, points) => {
+        const rows = points.map(p => `<tr><td>${p.label}</td><td class="text-right">${fmt(p.value)}</td><td class="text-right">${p.growthPercent != null ? fmtPct(p.growthPercent) : '-'}</td></tr>`).join('');
+        return `<div class="er-section"><h3>${title}</h3><table class="table er-table"><thead><tr><th>ช่วงเวลา</th><th class="text-right">มูลค่า</th><th class="text-right">เติบโต</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      };
+      c.innerHTML = `
+        <div class="er-grid er-grid-2">
+          <div class="kpi-card"><div class="kpi-label">CAGR รายได้</div><div class="kpi-value">${fmtPct(r.compoundGrowthRevenue)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">CAGR ค่าใช้จ่าย</div><div class="kpi-value">${fmtPct(r.compoundGrowthExpense)}</div></div>
+        </div>
+        ${buildTbl('แนวโน้มรายได้', r.revenue)}
+        ${buildTbl('แนวโน้มค่าใช้จ่าย', r.expense)}
+        ${buildTbl('แนวโน้มกำไรขั้นต้น', r.grossProfit)}
+        ${buildTbl('แนวโน้มกำไรสุทธิ', r.netIncome)}
+        ${buildTbl('แนวโน้มเงินสด', r.cash)}
+      `;
+    };
+
+    Page.handlers.customers = async function(api, c) {
+      const r = (await api.getCustomerAnalytics(this.query() + '&topN=20')).data;
+      const summary = [
+        this.kpiCard('จำนวนลูกค้า', r.customerCount),
+        this.kpiCard('ลูกค้าที่ยังเคลื่อนไหว', r.activeCustomerCount),
+        this.kpiCard('รายได้รวม', r.totalRevenue, null),
+        this.kpiCard('เฉลี่ย/ลูกค้า', r.averageRevenuePerCustomer, null),
+      ].join('');
+      const abc = r.abcSegments.map(s => `<tr><td><span class="pill pill-${s.class}">Class ${s.class}</span></td><td class="text-right">${fmtInt(s.customerCount)}</td><td class="text-right">${fmt(s.totalRevenue)}</td><td class="text-right">${fmtPct(s.sharePercent)}</td></tr>`).join('');
+      const top = r.topCustomers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.count)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      const churn = r.churnRisk.map(x => `<tr><td>${x.name}</td><td>${x.lastInvoiceDate ? x.lastInvoiceDate.slice(0,10) : '-'}</td><td class="text-right">${x.daysSinceLastInvoice}</td><td class="text-right">${fmt(x.historicRevenue)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีลูกค้าที่เสี่ยงสูญเสีย</td></tr>';
+      const all = r.customers.slice(0, 50).map(x => `<tr><td>${x.name}</td><td>${x.taxId || '-'}</td><td class="text-right">${fmt(x.totalRevenue)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.invoiceCount)}</td><td class="text-right">${fmt(x.outstandingBalance)}</td><td class="text-right">${fmt(x.overdueBalance)}</td><td>${x.lastInvoiceDate ? x.lastInvoiceDate.slice(0,10) : '-'}</td></tr>`).join('') || '<tr><td colspan="8" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      c.innerHTML = `
+        <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-4">${summary}</div></div>
+        <div class="er-section"><h3>การวิเคราะห์ ABC (Pareto 80/20)</h3>
+          <table class="table er-table"><thead><tr><th>กลุ่ม</th><th class="text-right">จำนวนลูกค้า</th><th class="text-right">รายได้รวม</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${abc}</tbody></table>
+        </div>
+        <div class="er-section"><h3>ลูกค้าหลัก (Top)</h3>
+          <table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th><th class="text-right">จำนวนใบ</th></tr></thead><tbody>${top}</tbody></table>
+        </div>
+        <div class="er-section"><h3>ลูกค้าเสี่ยงสูญเสีย (Churn Risk)</h3>
+          <table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>ใบล่าสุด</th><th class="text-right">วันห่าง</th><th class="text-right">ยอดสะสม</th></tr></thead><tbody>${churn}</tbody></table>
+        </div>
+        <div class="er-section"><h3>รายชื่อลูกค้าทั้งหมด (50 รายแรก)</h3>
+          <div class="table-container"><table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขผู้เสียภาษี</th><th class="text-right">รายได้</th><th class="text-right">สัดส่วน</th><th class="text-right">ใบ</th><th class="text-right">คงค้าง</th><th class="text-right">เกินกำหนด</th><th>ใบล่าสุด</th></tr></thead><tbody>${all}</tbody></table></div>
+        </div>
+      `;
+    };
+
+    Page.handlers.suppliers = async function(api, c) {
+      const r = (await api.getSupplierAnalytics(this.query() + '&topN=20')).data;
+      const summary = [
+        this.kpiCard('จำนวนผู้ขาย', r.supplierCount),
+        this.kpiCard('ผู้ขายที่ยังเคลื่อนไหว', r.activeSupplierCount),
+        this.kpiCard('ยอดซื้อรวม', r.totalPurchases, null),
+        this.kpiCard('เฉลี่ย/ผู้ขาย', r.averagePurchasePerSupplier, null),
+        this.kpiCard('Top-3 ครองสัดส่วน', r.supplierConcentrationPercent, null, true),
+      ].join('');
+      const top = r.topSuppliers.map(x => `<tr><td>${x.name}</td><td class="text-right">${fmt(x.amount)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.count)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      const all = r.suppliers.slice(0, 50).map(x => `<tr><td>${x.name}</td><td>${x.taxId || '-'}</td><td class="text-right">${fmt(x.totalPurchases)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td><td class="text-right">${fmtInt(x.invoiceCount)}</td><td class="text-right">${fmt(x.outstandingPayables)}</td><td>${x.lastPurchaseDate ? x.lastPurchaseDate.slice(0,10) : '-'}</td></tr>`).join('') || '<tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      c.innerHTML = `
+        <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-4">${summary}</div></div>
+        <div class="er-section"><h3>ผู้ขายหลัก (Top)</h3>
+          <table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th><th class="text-right">ใบ</th></tr></thead><tbody>${top}</tbody></table>
+        </div>
+        <div class="er-section"><h3>รายชื่อผู้ขายทั้งหมด (50 รายแรก)</h3>
+          <div class="table-container"><table class="table er-table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขผู้เสียภาษี</th><th class="text-right">ยอดซื้อ</th><th class="text-right">สัดส่วน</th><th class="text-right">ใบ</th><th class="text-right">คงค้าง</th><th>ใบล่าสุด</th></tr></thead><tbody>${all}</tbody></table></div>
+        </div>
+      `;
+    };
+
+    Page.handlers.products = async function(api, c) {
+      const r = (await api.getProductAnalytics(this.query() + '&topN=20')).data;
+      const summary = [
+        this.kpiCard('รายได้รวม', r.totalRevenue, null),
+        this.kpiCard('จำนวนหน่วยขาย', r.totalUnitsSold),
+        this.kpiCard('สินค้าที่ขาย', r.uniqueProductsSold),
+      ].join('');
+      const tbl = (title, rows, showQty) => {
+        const body = rows.map(x => `<tr><td>${x.productCode || '-'}</td><td>${x.productName}</td><td class="text-right">${fmt(x.quantitySold)}</td><td class="text-right">${fmt(x.revenue)}</td><td class="text-right">${fmt(x.grossProfit)}</td><td class="text-right">${fmtPct(x.marginPercent)}</td><td class="text-right">${fmtPct(x.sharePercent)}</td></tr>`).join('') || '<tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+        return `<div class="er-section"><h3>${title}</h3><div class="table-container"><table class="table er-table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th class="text-right">จำนวน</th><th class="text-right">รายได้</th><th class="text-right">กำไร</th><th class="text-right">Margin</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+      };
+      c.innerHTML = `
+        <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-4">${summary}</div></div>
+        ${tbl('ขายดี (ตามรายได้)', r.topByRevenue)}
+        ${tbl('ขายดี (ตามจำนวน)', r.topByQuantity)}
+        ${tbl('Margin สูงสุด', r.topByMargin)}
+        ${tbl('สินค้าขายช้า (Slow Movers)', r.slowMovers)}
+      `;
+    };
+
+    Page.handlers.budget = async function(api, c) {
+      const r = (await api.getBudgetVariance(this.query())).data;
+      if (!r.budgetId) {
+        c.innerHTML = '<div class="er-section text-center text-gray-400">ไม่พบงบประมาณที่ตั้งไว้สำหรับปีนี้ กรุณาสร้างงบประมาณก่อน</div>';
+        return;
+      }
+      const s = r.summary;
+      const summary = [
+        this.kpiCard('งบประมาณรายได้', s.revenueBudget, null),
+        this.kpiCard('รายได้จริง', s.revenueActual, null),
+        this.kpiCard('ผลต่าง', s.revenueVariance, s.revenueVariancePercent),
+        this.kpiCard('งบประมาณรายจ่าย', s.expenseBudget, null),
+        this.kpiCard('รายจ่ายจริง', s.expenseActual, null),
+        this.kpiCard('ผลต่าง', s.expenseVariance, s.expenseVariancePercent),
+        this.kpiCard('กำไรตามงบ', s.netIncomeBudget, null),
+        this.kpiCard('กำไรจริง', s.netIncomeActual, null),
+      ].join('');
+      const lines = r.lines.map(x => `<tr><td>${x.accountCode}</td><td>${x.accountName}</td><td>${x.accountType}</td><td class="text-right">${fmt(x.budget)}</td><td class="text-right">${fmt(x.actual)}</td><td class="text-right">${fmt(x.variance)}</td><td class="text-right">${fmtPct(x.variancePercent)}</td><td><span class="pill pill-${x.status}">${x.status}</span></td></tr>`).join('') || '<tr><td colspan="8" class="text-center text-gray-400" data-i18n="common.noItems">ไม่มีรายการ</td></tr>';
+      c.innerHTML = `
+        <div class="er-section"><h3>${r.budgetName || 'งบประมาณ'} (ปี ${r.fiscalYear})</h3><div class="er-grid er-grid-4">${summary}</div></div>
+        <div class="er-section"><h3>รายละเอียดตามบัญชี</h3><div class="table-container"><table class="table er-table"><thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th data-i18n="common.type">ประเภท</th><th class="text-right">งบ</th><th class="text-right">จริง</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th><th data-i18n="common.status">สถานะ</th></tr></thead><tbody>${lines}</tbody></table></div></div>
+      `;
+    };
+
+    Page.handlers.forecast = async function(api, c) {
+      const r = (await api.getCashFlowForecast('?days=90')).data;
+      const summary = [
+        this.kpiCard('เงินสดเริ่มต้น', r.openingCash, null),
+        this.kpiCard('คาดการณ์ ณ สิ้นช่วง', r.projectedClosingCash, null),
+        this.kpiCard('ระยะเวลา (วัน)', r.days),
+      ].join('');
+      const weeks = r.weeks.map(w => `<tr><td>W${w.weekNumber}</td><td>${w.weekStart.slice(0,10)}</td><td>${w.weekEnd.slice(0,10)}</td><td class="text-right">${fmt(w.openingBalance)}</td><td class="text-right" style="color:#10b981">+${fmt(w.expectedInflows)}</td><td class="text-right" style="color:#ef4444">-${fmt(w.expectedOutflows)}</td><td class="text-right">${fmt(w.netChange)}</td><td class="text-right">${fmt(w.closingBalance)}</td><td class="text-right">${fmtPct(w.confidenceLevel)}</td></tr>`).join('') || '<tr><td colspan="9" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+
+      // ── Scenario block (best/expected/worst) — present when the
+      // backend's Holt-Winters fit had enough history to produce
+      // confidence bands. Falls back gracefully when missing.
+      let scenarioBlock = '';
+      if (r.scenarios && r.scenarios.weeks && r.scenarios.weeks.length > 0) {
+        const s = r.scenarios;
+        const riskColor = {
+          Low: '#16a34a', Moderate: '#d97706', High: '#dc2626', Critical: '#7f1d1d',
+        }[s.overallRisk] || '#64748b';
+        const riskBadge = `<span style="background:${riskColor};color:#fff;padding:3px 12px;border-radius:999px;font-size:12px;font-weight:700">${s.overallRisk}</span>`;
+        const factors = (s.keyRiskFactors || []).map(f => `<li style="margin-bottom:4px">${f}</li>`).join('');
+        const scenarioRows = s.weeks.map(w => {
+          // visual band — width proportional to risk; color by risk band
+          const bgColor = w.riskIndex >= 80 ? '#fee2e2' : w.riskIndex >= 50 ? '#fef3c7' : w.riskIndex >= 20 ? '#dbeafe' : '#dcfce7';
+          return `<tr style="background:${bgColor}">
+            <td>W${w.weekNumber}</td>
+            <td class="text-right" style="color:#15803d">${fmt(w.best)}</td>
+            <td class="text-right" style="font-weight:600">${fmt(w.expected)}</td>
+            <td class="text-right" style="color:#dc2626">${fmt(w.worst)}</td>
+            <td class="text-right">${w.riskIndex.toFixed(1)}</td>
+          </tr>`;
+        }).join('');
+        scenarioBlock = `
+        <div class="er-section">
+          <h3>สถานการณ์ (Best / Expected / Worst)
+            <span style="float:right;font-size:14px;font-weight:400">ระดับความเสี่ยง: ${riskBadge}</span>
+          </h3>
+          <div style="background:#f8fafc;padding:14px 18px;border-radius:10px;margin-bottom:14px">
+            <div style="display:flex;gap:30px;flex-wrap:wrap">
+              <div><div style="font-size:12px;color:#64748b">ยอดต่ำสุด (worst case)</div><div style="font-weight:700;font-size:18px;color:#dc2626">${fmt(s.minClosingBalance)}</div></div>
+              ${s.minClosingDate ? `<div><div style="font-size:12px;color:#64748b">วันที่ยอดต่ำสุด</div><div style="font-weight:700;font-size:16px">${s.minClosingDate.slice(0,10)}</div></div>` : ''}
+              <div><div style="font-size:12px;color:#64748b">ยอดสูงสุด (best case)</div><div style="font-weight:700;font-size:18px;color:#15803d">${fmt(s.maxClosingBalance)}</div></div>
+            </div>
+            ${factors ? `<div style="margin-top:12px"><div style="font-size:13px;font-weight:600;color:#475569;margin-bottom:6px">🚩 ปัจจัยเสี่ยงสำคัญ</div><ul style="margin:0;padding-left:20px;font-size:13px;color:#475569">${factors}</ul></div>` : ''}
+          </div>
+          <div class="table-container">
+            <table class="table er-table">
+              <thead><tr>
+                <th>สัปดาห์</th>
+                <th class="text-right">Best (AR เร็ว + AP ช้า)</th>
+                <th class="text-right">Expected</th>
+                <th class="text-right">Worst (AR ช้า + AP เร็ว)</th>
+                <th class="text-right">Risk Index</th>
+              </tr></thead>
+              <tbody>${scenarioRows}</tbody>
+            </table>
+          </div>
+        </div>`;
+      }
+
+      c.innerHTML = `
+        <div class="er-section"><h3>ภาพรวม (พยากรณ์ 90 วัน)</h3><div class="er-grid er-grid-4">${summary}</div></div>
+        ${scenarioBlock}
+        <div class="er-section"><h3>ตามสัปดาห์</h3>
+          <div class="table-container"><table class="table er-table"><thead><tr><th>สัปดาห์</th><th>เริ่ม</th><th>สิ้นสุด</th><th class="text-right">ยอดเริ่ม</th><th class="text-right">เข้า</th><th class="text-right">ออก</th><th class="text-right">สุทธิ</th><th class="text-right">ยอดปลาย</th><th class="text-right">ความมั่นใจ</th></tr></thead><tbody>${weeks}</tbody></table></div>
+        </div>
+      `;
+    };
+
+    Page.handlers.breakeven = async function(api, c) {
+      const r = (await api.getBreakEvenAnalysis(this.query())).data;
+      const cards = [
+        this.kpiCard('รายได้รวม', r.totalRevenue, null),
+        this.kpiCard('ต้นทุนผันแปร', r.totalVariableCost, null),
+        this.kpiCard('ต้นทุนคงที่', r.totalFixedCost, null),
+        this.kpiCard('Contribution Margin', r.contributionMargin, null),
+        this.kpiCard('CM Ratio', r.contributionMarginRatio, null, true),
+        this.kpiCard('จุดคุ้มทุน (ยอดขาย)', r.breakEvenSales, null),
+        this.kpiCard('Margin of Safety', r.marginOfSafety, null),
+        this.kpiCard('Margin of Safety %', r.marginOfSafetyPercent, null, true),
+        this.kpiCard('Operating Leverage', r.operatingLeverage),
+      ].join('');
+      c.innerHTML = `
+        <div class="er-section"><h3>การวิเคราะห์จุดคุ้มทุน</h3><div class="er-grid er-grid-4">${cards}</div></div>
+        <div class="er-section"><h3>สมมติฐาน</h3><p style="color:#4b5563">${r.assumption}</p></div>
+      `;
+    };
+
+    Page.handlers.sales = async function(api, c) {
+      const r = (await api.getSalesPerformance(this.query())).data;
+      const summary = [
+        this.kpiCard('รายได้รวม', r.totalRevenue, null),
+        this.kpiCard('มูลค่าใบเฉลี่ย', r.averageInvoiceValue, null),
+        this.kpiCard('จำนวนใบ', r.invoiceCount),
+        this.kpiCard('Quote→Invoice', r.quotationToInvoiceRatio, null, true),
+        this.kpiCard('ประสิทธิภาพการเก็บเงิน', r.collectionEfficiencyPercent, null, true),
+      ].join('');
+      const byMonth = r.byMonth.map(m => `<tr><td>${m.year}-${String(m.month).padStart(2,'0')}</td><td>${m.monthName}</td><td class="text-right">${fmt(m.revenue)}</td><td class="text-right">${fmtInt(m.invoiceCount)}</td><td class="text-right">${fmt(m.averageInvoice)}</td></tr>`).join('') || '<tr><td colspan="5" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      const byType = r.byDocumentType.map(t => `<tr><td>${t.label}</td><td class="text-right">${fmtInt(t.count)}</td><td class="text-right">${fmt(t.amount)}</td><td class="text-right">${fmtPct(t.sharePercent)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+      c.innerHTML = `
+        <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-4">${summary}</div></div>
+        <div class="er-section"><h3>รายเดือน</h3><table class="table er-table"><thead><tr><th>ปี-เดือน</th><th>เดือน</th><th class="text-right">รายได้</th><th class="text-right">ใบ</th><th class="text-right">เฉลี่ย</th></tr></thead><tbody>${byMonth}</tbody></table></div>
+        <div class="er-section"><h3>ตามประเภทเอกสาร</h3><table class="table er-table"><thead><tr><th data-i18n="common.type">ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead><tbody>${byType}</tbody></table></div>
+      `;
+    };
+
+    Page.handlers.projects = async function(api, c) {
+      const r = (await api.getProjectProfitability(this.query())).data;
+      const summary = [
+        this.kpiCard('รายได้โครงการรวม', r.totalProjectRevenue, null),
+        this.kpiCard('ต้นทุนโครงการรวม', r.totalProjectCost, null),
+        this.kpiCard('กำไรโครงการรวม', r.totalProjectProfit, null),
+      ].join('');
+      const rows = r.projects.map(p => `<tr><td>${p.code}</td><td>${p.name}</td><td>${p.status}</td><td class="text-right">${fmt(p.budget)}</td><td class="text-right">${fmt(p.revenue)}</td><td class="text-right">${fmt(p.cost)}</td><td class="text-right">${fmt(p.profit)}</td><td class="text-right">${fmtPct(p.marginPercent)}</td><td class="text-right">${fmtPct(p.completionPercent)}</td><td class="text-right">${fmt(p.budgetVariance)}</td></tr>`).join('') || '<tr><td colspan="10" class="text-center text-gray-400">ไม่มีโครงการ</td></tr>';
+      c.innerHTML = `
+        <div class="er-section"><h3>ภาพรวม</h3><div class="er-grid er-grid-3">${summary}</div></div>
+        <div class="er-section"><h3>รายโครงการ</h3>
+          <div class="table-container"><table class="table er-table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th data-i18n="common.status">สถานะ</th><th class="text-right">งบ</th><th class="text-right">รายได้</th><th class="text-right">ต้นทุน</th><th class="text-right">กำไร</th><th class="text-right">Margin</th><th class="text-right">% เสร็จ</th><th class="text-right">ผลต่างงบ</th></tr></thead><tbody>${rows}</tbody></table></div>
+        </div>
+      `;
+    };
+
+    Page.init();
+  </script>
+</body>
+</html>

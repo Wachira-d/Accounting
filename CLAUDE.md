@@ -1,0 +1,518 @@
+# CLAUDE.md — กฎสำหรับ AI agent ที่พัฒนาโปรเจกต์นี้
+
+เอกสารนี้ Claude Code (และ AI agent อื่น) อ่านอัตโนมัติทุก session
+**ต้องทำตามทุกข้อ ไม่มีข้อยกเว้น** — เป็น policy ของเจ้าของโปรเจกต์
+
+---
+
+## 🚨 กฎเหล็ก #1 — Distillation Mandate
+
+> **ห้ามเรียก AI ภายนอกแบบ "ยิงทิ้ง" เด็ดขาด**
+
+ทุกครั้งที่เขียนโค้ดที่เรียก LLM / AI provider (DeepSeek, Claude, OpenAI,
+Gemini, local Llama, ฯลฯ) **ต้องมี distillation loop ครบ 4 ขั้น** เสมอ
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. STUDENT FIRST   → ถาม local model ก่อน                  │
+│  2. TEACHER FALLBACK → เรียก AI เฉพาะตอน student ไม่มั่นใจ │
+│  3. CAPTURE         → บันทึกคำตอบ AI เป็น feedback row     │
+│  4. DISTILL         → งานกลางคืน retrain local model       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### ทำไม
+
+- **ต้นทุน** — token DeepSeek/Claude คิดเงินทุก call บริษัทไม่อยากจ่าย
+  ทุกเอกสารทุกเดือนตลอดไป
+- **Sovereignty** — local model เป็น *ทรัพย์สิน* ของบริษัท ฉลาดขึ้นเรื่อย ๆ
+  ตามการใช้งาน ไม่ผูกกับ vendor ภายนอก
+- **Latency** — เรียก AI ภายนอก 1-5 วินาที, local model หลัก ms
+- **Privacy** — ข้อมูลลูกค้าไม่ควรไหลออกไป provider ทุกครั้ง
+
+### 🛡️ Local-First Sovereignty — local model ต้องทดแทน AI ได้ 100%
+
+> **หลักการสูงสุด:** AI ภายนอกเป็น "ครูพิเศษ" ที่ช่วยสอน — ไม่ใช่ "อวัยวะ
+> สำคัญ" ที่ระบบขาดไม่ได้ ทุก feature ที่โยนข้อมูลไปให้ AI คิด **ต้องนำคำตอบ
+> กลับมาสอน local model จนถึงจุดที่ local ทำงานแทนได้เต็ม 100%** เมื่อ AI
+> ล่ม / ถูกปิด / เกินงบ / โดน rate-limit / เครือข่ายขาด ระบบต้องทำงานต่อ
+> **ได้ครบทุกฟังก์ชัน** เหมือน AI ยังอยู่ — ผู้ใช้ไม่ควรรู้สึกถึงความต่าง
+
+นี่คือเหตุผลที่ขั้น CAPTURE + DISTILL **ห้ามข้าม**: ทุก call ที่ไปหา AI คือ
+โอกาสเก็บ training data ถ้าไม่เก็บ = จ่าย token ฟรีโดยไม่ได้อะไรกลับมา และ
+local model จะไม่มีวันโตพอจะยืนด้วยตัวเอง
+
+**ข้อบังคับเชิงสถาปัตยกรรม (ทุกข้อเป็น hard requirement):**
+
+1. **ไม่มี hard dependency บน AI** — โค้ดทุกเส้นทางต้องมี local path ที่ให้
+   คำตอบใช้งานได้จริง (ไม่ใช่ throw / return null / ปล่อยฟอร์มว่าง) เมื่อ
+   provider ไม่ตอบสนอง การปิด AI ทั้งระบบต้อง **ไม่ทำให้ feature ใดพัง**
+2. **Feature parity** — ทุก `AiFeatureKey` ที่เรียก AI ต้องมี
+   `ILocalDistillationModel` register แล้ว 1 ตัวเสมอ ห้ามมี feature ที่เรียก
+   AI ได้แต่ไม่มี student รองรับ (= สร้าง dependency ที่ถอดไม่ได้) ถ้า output
+   เป็น **single answer** (classification/suggestion) ไม่ต้องเขียน model ใหม่
+   — register `GenericFeedbackDistillationModel(featureKey, …)` ใน `Program.cs`
+   ก็พอ (เรียนรู้ exact-input + company majority fallback ให้อัตโนมัติ) เขียน
+   bespoke model เฉพาะตอน output เป็น structured/bulk/free-form essay
+   (เช่น OcrFullReview, ImportColumnMatch, BulkBankStatementMatch)
+3. **Cold-start ต้องไม่ว่างเปล่า** — tenant ใหม่ที่ยังไม่มี feedback ของ
+   ตัวเอง local model ต้องตอบได้จาก seed/baseline (`IDistillationCorpusSeeder`,
+   `SystemOcr*` mappings, rule resolver) — ไม่ใช่รอจน AI สอนถึงจะทำงาน
+4. **Graceful degradation เงียบ** — provider ดับ/เกินงบ/timeout → สลับมา
+   local ทันที ห้าม error ขึ้นหา user, ห้าม log spam, ห้าม block UI
+5. **Kill-switch ต้องผ่าน** — โค้ดต้องทำงานถูกต้องเมื่อ **ปิด provider ทุก
+   ตัว** (`AiProviderConfig.IsActive = false` ทั้งหมด) ก่อน commit ให้คิด
+   เสมอว่า "ถ้า AI หายไปวันนี้ feature นี้ยังทำงานครบไหม" ถ้าตอบไม่ได้ = ยัง
+   ไม่ผ่าน
+6. **วัดความพร้อม** — ใช้ `<Feature>UsedAi` ที่ลดลงเรื่อย ๆ เป็นตัวชี้วัด:
+   ยิ่ง local โตเท่าไร อัตราการเรียก AI ยิ่งต่ำ เป้าหมายคือ short-circuit
+   ที่ local ≥ 0.85 confidence จนแทบไม่ต้องแตะ AI ในงานประจำ
+
+**Litmus test ก่อน commit ทุก feature ที่แตะ AI:**
+> "ถ้าตอนนี้ตัด DeepSeek/Claude ออกจากระบบถาวร — feature นี้ยังให้ผลลัพธ์ที่
+> ใช้งานได้ครบ 100% หรือไม่?" ถ้า **ไม่** แปลว่าโค้ดยังพึ่ง AI เป็นไม้ค้ำ
+> ไม่ใช่ครู — ต้องแก้ให้ local ยืนเองได้ก่อน
+
+### Checklist — ต้องผ่านทุกข้อก่อน commit
+
+- [ ] ใช้ `IAiOrchestrator.AskAsync(AiRequest)` (ไม่เรียก `IAiProvider` หรือ
+      HTTP client ตรง) — orchestrator จัด student-first routing ให้
+- [ ] สร้างหรือใช้ `ILocalDistillationModel` ที่ตรงกับ `AiFeatureKey` —
+      ต้องมี `PredictAsync` (student) + `LoadFromFeedbackAsync` (retrain)
+- [ ] register distillation model ใน `Program.cs` (`AddSingleton<ILocalDistillationModel, ...>`)
+- [ ] เพิ่ม enum value ใน `AiFeatureKey` (`Models/Enums/AllEnums.cs`)
+- [ ] เก็บ `FeedbackId` ที่ orchestrator คืน → ใส่ใน entity เป็น
+      `<Feature>AiFeedbackId` ให้ค้นเจอ row ตอนผู้ใช้แก้
+- [ ] ตอนผู้ใช้ **ยืนยัน/แก้** คำตอบ → เรียก
+      `IAiFeedbackRecorder.RecordUserChoiceAsync(feedbackId, chosenAnswer,
+      acceptedAi)` — มิฉะนั้น `AiFeedbackTrainingJob` จะ mine ไม่ได้
+- [ ] เพิ่ม **anti-hallucination guard** — validate คำตอบ AI กับข้อมูล
+      จริง (CoA, contact list, candidate set) ก่อน apply
+- [ ] เพิ่ม `bool <Feature>UsedAi` ใน DTO → UI ติดป้ายซื่อสัตย์
+      ("🤖 AI แนะนำ" เฉพาะตอนเรียกจริง, ไม่งั้น "⚙️ ระบบแนะนำ")
+- [ ] fallback graceful: provider ดับ/เกินงบ/timeout → ใช้ local
+      ต่อไปได้เงียบ ๆ ห้าม throw ขึ้นมาหา user
+- [ ] **Kill-switch test** — ปิด provider ทุกตัว (`IsActive=false`) แล้ว
+      feature ยังทำงานครบ 100% ผ่าน local path (ดู "🛡️ Local-First
+      Sovereignty") ถ้ายังพึ่ง AI เป็นไม้ค้ำ = ยังไม่ผ่าน
+- [ ] cold-start: tenant ใหม่ (ยังไม่มี feedback) local model ตอบได้จาก
+      seed/baseline ไม่ใช่รอ AI สอนก่อน
+
+### Template ที่ลอกได้
+
+| ส่วน | ตัวอย่างที่มีในโปรเจกต์ | ไฟล์ |
+| --- | --- | --- |
+| Augmenter pattern | `SuggestGlAccountAsync` | `Services/Ai/OcrAiAugmenter.cs` |
+| Distillation model (bespoke) | `GlAccountDistillationModel` | `Services/Ai/Distillation/GlAccountDistillationModel.cs` |
+| Distillation model (generic) | `GenericFeedbackDistillationModel` — ใช้กับ feature single-answer ที่ไม่ต้องเขียน model เอง register 1 instance/feature ใน `Program.cs` | `Services/Ai/Distillation/GenericFeedbackDistillationModel.cs` |
+| Wiring เข้า pipeline | OCR GL-account classification block | `Services/Implementations/OcrService.cs` |
+| ปิด loop จาก user edit | `SubmitCorrectionAsync` → `RecordUserChoiceAsync` | `Services/Implementations/OcrService.cs` |
+| Routing config | Hybrid default 0.85 short-circuit | `Services/Ai/AiFeatureRoutingResolver.cs` |
+| Budget guard | DailyCallCap + MonthlyBudgetUsd | `Services/Ai/AiBudgetGuard.cs` |
+
+### Anti-pattern — ห้ามทำ
+
+```csharp
+// ❌ ห้าม: ยิง AI ตรง ๆ ไม่มี distillation
+var http = _factory.CreateClient();
+var resp = await http.PostAsync("https://api.deepseek.com/...", body);
+return resp;
+
+// ❌ ห้าม: เรียก provider ข้าม orchestrator
+var raw = await _deepseek.CompleteAsync(req, cfg, ct);
+
+// ❌ ห้าม: ใช้คำตอบ AI โดยไม่ validate
+extractedData.AccountCode = aiResponse.Answer;  // hallucination = ลงบัญชีผิด
+
+// ❌ ห้าม: ไม่บันทึก feedback
+var resp = await _orch.AskAsync(req);
+return resp.Answer;  // user แก้แล้วระบบไม่รู้ → ไม่เคยฉลาดขึ้น
+```
+
+```csharp
+// ✅ ถูก
+var resp = await _orchestrator.AskAsync(new AiRequest(
+    CompanyId: cid, FeatureKey: AiFeatureKey.MyFeature,
+    SystemPrompt: sys, UserPromptJson: payload, ...), ct);
+
+entity.MyFeatureAiFeedbackId = resp.FeedbackId;
+entity.MyFeatureUsedAi = resp.UsedAi;
+
+if (resp.UsedAi && (resp.Confidence ?? 0) >= 0.70m
+    && candidateSet.Contains(resp.PrimaryAnswer))   // ⬅ guard
+{
+    entity.Field = resp.PrimaryAnswer;
+}
+
+// ตอน user ยืนยัน/แก้:
+await _recorder.RecordUserChoiceAsync(
+    entity.MyFeatureAiFeedbackId.Value, userChoice,
+    acceptedAi: userChoice == aiOriginalAnswer);
+```
+
+---
+
+---
+
+## 🚨 กฎเหล็ก #2 — Thai Legal & Regulatory Compliance (Hard Requirements)
+
+> **ทุก feature ที่แตะ "เอกสารบัญชี/ภาษี/พนักงาน/ข้อมูลส่วนบุคคล" ต้องผ่าน
+> checklist นี้ก่อน commit** — ไม่ใช่ best-effort เป็น **กฎหมาย** ผิด = ลูกค้า
+> โดนสรรพากร/DBD/PDPC ปรับ → บริษัทรับผิดร่วมในฐานะผู้ให้บริการ
+
+### A. ใบกำกับภาษี (ป.รัษฎากร §86/4, §86/6, §86/9, §86/10)
+
+**§86/4 ใบกำกับภาษีเต็มรูป — บังคับ 8 รายการ:**
+- [ ] คำว่า **"ใบกำกับภาษี"** บน header (literal, bold) — block save ถ้าไม่มี
+- [ ] `SellerName`, `SellerAddress`, `SellerTaxId` required;
+  TaxId regex `^[0-9]{13}$` + **mod-11 checksum**
+- [ ] `BuyerName`, `BuyerAddress` required; `BuyerTaxId` required เมื่อ buyer
+  เป็น VAT registrant (regex + checksum เหมือนกัน)
+- [ ] `SellerBranchCode`, `BuyerBranchCode` required, regex `^[0-9]{5}$` —
+  `00000` render "สำนักงานใหญ่", อื่น ๆ render "สาขาที่ {code}"
+  (ประกาศอธิบดีฯ ฉบับที่ 199 ลว. 26 ธ.ค. 2556)
+- [ ] `InvoiceNo` unique per `CompanyId+BranchCode+TaxYear`, **gap-free running**
+- [ ] ทุก line: `Description` ≥ 1 ตัวอักษร, `Quantity > 0`, `UnitPrice ≥ 0`,
+  `LineAmount = round(Qty × UnitPrice, 2)`; block save ถ้า `items.Count == 0`
+- [ ] PDF/HTML ต้อง render `Subtotal`, `VatAmount`, `GrandTotal` **คนละบรรทัด**;
+  per-line VAT rate รองรับ mixed
+- [ ] `IssueDate` required, store ค.ศ. (UTC+7), render **พ.ศ.** บนพิมพ์;
+  ห้าม backdate/post-date เกินกฎ
+- [ ] **ห้ามแก้ไขย้อนหลัง** — เลขที่ออกแล้วต้องออก "ใบยกเลิก" + ใบใหม่
+  (`CancelledByDocumentId`, `ReplacedByDocumentId`)
+
+**§86/6 ใบกำกับภาษีอย่างย่อ:**
+- [ ] เปิดใช้เฉพาะ `Company.IsRetailApproved=true` + `PhoR06ApprovedDate != null`
+  (อนุมัติ ภ.พ.06 แล้ว); ตัวแทนห้ามออก
+- [ ] header "ใบกำกับภาษีอย่างย่อ" + `PriceInclusiveVat=true`,
+  `VatAmount = round(GrandTotal × 7/107, 2)`
+- [ ] **ห้ามใช้เป็นภาษีซื้อ** (§82/5(2)) — block insert ลง `PurchaseVatReport`,
+  flag `InputVatBlocked=true`
+
+**§86/9 ใบเพิ่มหนี้ / §86/10 ใบลดหนี้:**
+- [ ] `Reason` enum required (closed list); `OriginalTaxInvoiceId` FK required +
+  same tenant + same counterparty
+- [ ] header "ใบเพิ่มหนี้" / "ใบลดหนี้"; ต้อง ref **เลขที่+วันที่ใบเดิม + ผลต่าง + VAT ผลต่าง**
+- [ ] **`SUM(creditNotes WHERE OriginalInvoiceId=X) ≤ OriginalInvoice.Amount`** — block save
+- [ ] ห้ามออกถ้าใบเดิม `status = Voided`
+- [ ] `IssueDate` ต้องอยู่ในเดือนภาษีเดียวกับ event date หรือเดือนถัดไป
+  (เกิน → require `LateReason`)
+
+### B. ภาษีซื้อต้องห้าม (§82/5) + 6-month window (§82/3)
+
+**Auto set `InputVatClaimable=false` + log `RuleCode` + `LegalReference`:**
+- [ ] **§82/5(1)** ใบกำกับขาดรายการ §86/4 → `Claimable=false`, reason=`NoInvoice`
+- [ ] **§82/5(2)** ใบกำกับอย่างย่อ → block claim (buyer)
+- [ ] **§82/5(3)** ไม่เกี่ยวกับกิจการ — `BusinessPurpose` required, flag `personal_use` → block
+- [ ] **§82/5(4)** ค่ารับรอง / ของขวัญ → auto `Claimable=false` (รวม §65 ตรี(4))
+- [ ] **§82/5(5)** ใบกำกับออกโดยผู้ไม่มีสิทธิ (ผู้ไม่จด VAT/ถูกเพิกถอน) → block
+- [ ] **§82/5(6)** รถยนต์นั่ง ≤ 10 ที่นั่ง + ค่าน้ำมัน/ซ่อม/เช่าซื้อ → block
+  (ยกเว้น `IsVehicleDealer=true`) — ประกาศอธิบดีฯ ฉบับที่ 42
+- [ ] **§82/3** 6-month window — `(FilingMonth − InvoiceMonth) > 6` → block;
+  1–6 เดือนช้า → require `LateReason`; expired → auto reclassify เป็น expense
+
+### C. รายงานภาษีซื้อ/ขาย (§87) + Tax Point (§78, §78/1, §78/2)
+
+- [ ] รายงานภาษีขาย: ลงภายใน **3 วันทำการ** นับจากวันที่ในใบกำกับ; ภาษีซื้อ:
+  3 วันทำการนับจากวันที่ได้รับ
+- [ ] ลำดับ **chronological** ห้ามสลับ ห้ามเว้นบรรทัด ห้ามแก้โดยไม่ขีดฆ่า
+- [ ] รายงานสินค้าและวัตถุดิบ §87(3) เปิดเฉพาะ `BusinessType ∈ {Trading, Manufacturing}`
+- [ ] **Retention 5 ปี** (§87/3) นับจากวันยื่นแบบ — `retainUntil = max(filingDate, reportDate) + 5y`,
+  ห้ามลบจริงในช่วงนี้
+- [ ] **Tax Point** — ขายสินค้า §78: `taxPointDate = MIN(deliveryDate, ownershipTransferDate, paymentDate, invoiceDate)`;
+  บริการ §78/1: `MIN(paymentReceivedDate, invoiceDate, serviceUsedDate)`;
+  นำเข้า §78/2: `customsDutyPaidDate`
+- [ ] VAT period = month ของ `taxPointDate` (ไม่ใช่ `invoiceDate`) → ใช้ map เข้า ภ.พ.30
+
+### D. VAT — อัตราและสถานะผู้ประกอบการ
+
+- [ ] **§81/1 Threshold 1.8 ล.บาท/ปี** — `if annualRevenue > 1,800,000 AND !vatRegistered`
+  → blocking prompt "ต้องจด VAT ภายใน 30 วัน (§85/1)"
+- [ ] enum `VatStatus = {Standard7, ZeroRated, Exempt}`:
+  - **Standard7** (7%) — ออกใบกำกับ, claim input ได้
+  - **§80/1 ZeroRated** (0%) — ส่งออก/บริการใช้ต่างประเทศ — ออกใบกำกับ rate=0, claim input ได้
+  - **§81 Exempt** — สินค้าเกษตรไม่แปรรูป/การแพทย์/การศึกษา — **ห้ามออกใบกำกับ**, claim input ไม่ได้ (ลง cost)
+- [ ] รายงานภาษีขาย: **แยก column** 7% / 0% / ยกเว้น
+
+### E. หัก ณ ที่จ่าย (ท.ป.4/2528)
+
+**อัตรา (รวม §3 เตรส):**
+| ประเภทเงินได้ | บุคคล | นิติบุคคลไทย | แบบยื่น |
+| --- | --- | --- | --- |
+| เงินเดือน ม.40(1) | ขั้นบันได | — | **ภงด.1** |
+| ค่าบริการ/รับเหมา ม.40(2)(7)(8) | 3% | 3% | **ภงด.3 / 53** |
+| ค่าโฆษณา | 2% | 2% | ภงด.3 / 53 |
+| ค่าขนส่ง (ไม่ใช่สาธารณะ) | 1% | 1% | ภงด.3 / 53 |
+| ค่าเช่าอสังหา ม.40(5)(ก) | 5% | 5% | ภงด.3 / 53 |
+| วิชาชีพอิสระ ม.40(6) | 3% | 3% | ภงด.3 / 53 |
+| ดอกเบี้ย ม.40(4)(ก) | 15% | 1% | ภงด.2 / 53 |
+| เงินปันผล | 10% | 10% | ภงด.2 / 53 |
+| ค่าสิทธิ ม.40(3) | 3% | 3% | ภงด.3 / 53 |
+| จ่าย ตปท. ม.70 | — | 15% (ทั่วไป) / 10% (ปันผล) | **ภงด.54** |
+| VAT แทน ตปท. ม.83/6 | — | 7% | **ภ.พ.36** |
+
+**ระบบต้องบังคับ:**
+- [ ] **Threshold 1,000 บาท** — ไม่หักถ้ายอดสัญญา < 1,000; แต่ถ้ารวมทั้งสัญญา ≥ 1,000 ต้องหักทุกงวด
+- [ ] **หนังสือรับรอง 50 ทวิ** — auto-issue 2 ฉบับ ("สำหรับยื่นแบบ" + "เก็บไว้") ในวันจ่าย
+- [ ] **กำหนดยื่น**: กระดาษ = วันที่ **7** ของเดือนถัดไป; e-Filing = วันที่ **15** (ขยายถึง 31 ม.ค. 2570);
+  ถ้าตรงเสาร์/อาทิตย์/วันหยุด → next business day
+- [ ] **DTA override** — เก็บตาราง bilateral treaty rate, ใช้แทนอัตรา default เมื่อ
+  payee country มี DTA และเอกสาร TH8/CoR ครบ
+
+### F. e-Tax Invoice / e-Receipt (ETDA ขมธอ.3-2560)
+
+- [ ] **XML schema UBL 2.1 + ETDA profile** field: `DocumentTypeCode`
+  (T01–T04), `ID`, `IssueDateTime` (ISO 8601 +07:00), `Seller.TaxID`, `Seller.BranchID`,
+  `Buyer.TaxID`, `Buyer.BranchID`, `LineItem[]`, `VATAmount`, `TotalAmount`,
+  `CurrencyCode=THB`, `ReferenceID` (กรณีอ้างใบเดิม)
+- [ ] **Digital signature** XAdES-BES, RSA-SHA256, key ≥ 2048-bit, CA ที่ ETDA รับรอง
+  → field `CertificateSerialNumber`, `SignatureValue`, `SignedAt`
+- [ ] **Submission cron**: ส่งทุกฉบับของเดือนก่อน → RD portal **ภายในวันที่ 15 ของเดือนถัดไป**;
+  field `SubmittedToRdAt`, retry queue
+- [ ] **e-Tax Invoice by Email (SME ≤ 30 ล.บาท/ปี)**: PDF/A-3 + embedded XML →
+  cc `csemail@etax.teda.th` → เก็บ `EtdaTimestampToken`
+
+### G. TFRS for NPAEs (ฉบับปรับปรุง 2565, มีผล 1 ม.ค. 2566)
+
+- [ ] **บทที่ 6 Revenue** — ขาย: `RevenueRecognizedAt` แยกจาก `InvoiceDate`;
+  บริการ: percentage-of-completion → `PercentComplete` + milestone trigger
+- [ ] **บทที่ 8 Inventory** — enum `InventoryCostMethod ∈ {SpecificIdentification, FIFO, WeightedAverage}`;
+  **ห้าม LIFO** (validation reject); วัด LCNRV → ตั้งค่าเผื่อ `InventoryWriteDownAllowance`
+- [ ] **บทที่ 9 AR** — table `ArAgingBucket` (0-30 / 31-60 / 61-90 / 91-180 / 180+) +
+  `LossRatePercent` ต่อ tenant; nightly job คำนวณ `AllowanceForDoubtfulAccounts`
+- [ ] **บทที่ 10 PPE** — `UsefulLifeYears` + `DepreciationMethod ∈ {StraightLine, DecliningBalance, UnitsOfProduction}`;
+  ที่ดิน → `DepreciationMethod = None` (validation); ทบทวนสิ้นปี → `UsefulLifeReviewedAt`
+- [ ] **บทที่ 19 FX** — spot rate วันทำรายการ, สิ้นงวด revalue monetary items ด้วย closing rate →
+  field `JournalLine.ForeignCurrency`, `OriginalRate`, `ClosingRate`, `FxGainLossAccountId`
+
+### H. พ.ร.บ.การบัญชี พ.ศ. 2543 + DBD
+
+- [ ] **ม.7** `BookkeeperCpdNumber` + `BookkeeperName` required ก่อน finalize งบ
+- [ ] **ม.10** เก็บเอกสาร **5 ปี** (ขยายได้ถึง 7 ปี) — `RetentionUntil = AccountingPeriodEndDate + 5y`
+- [ ] **ม.11** รอบบัญชี enum `FiscalPeriodType ∈ {Normal, FirstYear, FinalYear, ChangeApproved}`;
+  Normal ต้อง = 12 เดือนพอดี
+- [ ] **DBD submission** — บริษัท: ภายใน 1 เดือนจาก AGM approve **และ** ≤ 5 เดือนจากสิ้นรอบ;
+  alert เมื่อ `(ApprovedAt + 30d)` หรือ `(FiscalYearEnd + 150d)` ใกล้ถึง
+- [ ] **XBRL export** ตาม taxonomy DBD — map ทุก GL account → XBRL concept
+
+### I. ภงด.50 / ภงด.51 (ภาษีนิติบุคคล)
+
+- [ ] **ภงด.50** ภายใน **150 วัน** จากสิ้นรอบ; e-Filing +8 วัน → flag `EFilingExtension`
+- [ ] **ภงด.51** ภายใน 2 เดือนหลังครบ 6 เดือน; รอบ < 12 เดือน → `IsExemptFromPnd51=true`
+- [ ] **Penalty calculator** — ประมาณการต่ำเกิน 25% → เงินเพิ่ม 20% ของส่วนต่าง
+- [ ] **SME rate table** (ทุน ≤ 5 ล. + รายได้ ≤ 30 ล.): 0% (≤300k), 15% (300k–3M), 20% (>3M);
+  ทั่วไป 20% → `CitRateBracket(fiscalYear, taxpayerType, min, max, rate)`
+
+### J. PDPA (พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล 2562)
+
+- [ ] **ม.26 Sensitive data** — column ต้อง **AES-256 encrypt-at-rest** แยก key (KMS);
+  เลขบัตรประชาชน 13 หลัก display mask `1-XXXX-XXXXX-XX-3`, full value เฉพาะ role `pii:view`
+- [ ] **DSR endpoints บังคับ**: `GET /dsr/access`, `POST /dsr/rectify`,
+  `DELETE /dsr/erase` (cascade ยกเว้นที่ พ.ร.บ.บัญชี/สรรพากร hold), `GET /dsr/portability`;
+  SLA **30 วัน** → `DsrRequest.DueAt = CreatedAt + 30d`
+- [ ] **ม.37** TLS 1.2+, RBAC, `PiiAccessLog(userId, dataSubjectId, fieldName, op, purpose, at)` ≥ 1 ปี
+- [ ] **ม.39 RoPA** — `ProcessingActivity(purpose, legalBasis, dataCategories, retentionPeriod, recipients)`
+- [ ] **Retention by purpose** — nightly purge/anonymize เมื่อหมดอายุ;
+  ถ้า `legal_hold=true` (พ.ร.บ.บัญชี/สรรพากร) → คงไว้ (**MAX(retention)** rule)
+- [ ] **Consent** — `ConsentRecord(subjectId, purposeId, grantedAt, withdrawnAt, version, evidenceHash)`
+- [ ] **ม.37(4) Breach** — แจ้ง PDPC ภายใน **72 ชม.** → incident workflow + auto-draft notification
+
+### K. ประกันสังคม (พ.ร.บ.ประกันสังคม 2533)
+
+- [ ] **ม.33** สมทบ 5% ลูกจ้าง + 5% นายจ้าง; floor 1,650, **cap 15,000/เดือน** →
+  `min(max(salary, 1650), 15000) * 0.05` (เพดาน 750/ฝ่าย/เดือน)
+- [ ] **กองทุนเงินทดแทน** — นายจ้างฝ่ายเดียว 0.2%–1.0% (cap 240,000/คน/ปี) ตามประเภทกิจการ;
+  cron มี.ค. ออก กท.20ก
+- [ ] **สปส.1-10** ยื่น + จ่ายภายในวันที่ **15** ของเดือนถัดไป; late fee 2%/เดือน auto-calc
+- [ ] **สปส.1-03** ขึ้นทะเบียนลูกจ้างใหม่ภายใน 30 วัน (trigger ตอน insert Employee)
+- [ ] **สปส.6-09** แจ้งออกภายในวันที่ 15 ของเดือนถัดจากเดือนที่ลาออก
+
+### L. §65 ตรี — รายจ่ายต้องห้าม (Non-Deductible Expenses)
+
+> ทุก expense save → ระบบเรียก `Section65TerValidator.Evaluate(expense)` คืน
+> `{nonDeductible, addBackAmount, ruleCode}` → ผูกกับ ภ.ง.ด.50 worksheet
+> **"บวกกลับ"** อัตโนมัติ ห้ามให้ user ลืม
+
+- [ ] **(1) เงินสำรอง** — block ยกเว้น `provident_fund_pvd`, `life_insurance_reserve` (≤65% เบี้ย), `bad_debt_reserve_bank_insurance`
+- [ ] **(2) เงินกองทุน** — block ยกเว้น PVD
+- [ ] **(3) รายจ่ายส่วนตัว/เสน่หา/การกุศลทั่วไป** — default `nonDeductible=true` + warn
+- [ ] **(4) ค่ารับรอง** — `cap = MAX(0.003×revenue, 0.003×paidUpCapital)` แต่ไม่เกิน
+  **10,000,000 บาท/รอบ** (กฎกระทรวง 143); ส่วนเกิน mark `nonDeductible`;
+  require ใบเสร็จ + ผู้อนุมัติระดับกรรมการ
+- [ ] **(5) Capex (อายุใช้งาน > 1 ปี หรือ amount ≥ threshold)** — block save as expense,
+  force capitalize + คิด depreciation (พ.ร.ฎ.145); รวมต่อเติม/ขยาย/ทำให้ดีขึ้น
+- [ ] **(6) เบี้ยปรับ/เงินเพิ่ม/ค่าปรับอาญา** — auto `nonDeductible=true`, **no override**
+- [ ] **(6 ทวิ) ภาษีเงินได้นิติบุคคล** — `glAccount LIKE 'CIT%'` → auto `nonDeductible=true`
+- [ ] **(7) เงินบริจาค** — ทั่วไป cap 2% ของกำไรสุทธิ; การศึกษา/กีฬา +2% เพิ่ม;
+  ส่วนเกิน mark `nonDeductible`; คำนวณตอนปิดรอบ
+- [ ] **(8) รายจ่ายไม่ได้จ่ายจริง** — `paymentEvidence is null` && `!accrualReversed` → block
+- [ ] **(9) ไม่มี source document** — `sourceDocument is null` && `amount > 0` → block save
+- [ ] **(10) รายจ่ายรอบปีก่อน** — `expenseDate.fiscalYear < currentFiscalYear` → warn + require justification
+- [ ] **(11)(18) ไม่ระบุผู้รับเงิน** — `payeeName empty OR payeeTaxId empty` && `amount > 0` → **hard block**
+- [ ] **(12) ดอกเบี้ยของทุน/สำรองตนเอง** — auto `nonDeductible=true`
+- [ ] **(13) เช่าทรัพย์สินของบริษัทเอง** — block
+- [ ] **(14) ไม่เกี่ยวกิจการ** — checkbox `relatedToBusiness=false` → auto `nonDeductible=true`
+- [ ] **(15) Transfer pricing** — `unitPrice > marketPrice × 1.2` (related party) → warn
+- [ ] **(19) นอกประเทศไม่เชื่อมไทย** — `expenseLocation='offshore'` && `!linkedToThaiOperation` → `nonDeductible=true`
+
+### M. Cross-cutting invariants (ทุก feature ต้องเป็นจริง)
+
+- [ ] **Tenant isolation** `CompanyId == @companyId` ในทุก query
+- [ ] **Retention superset** — ถ้า field อยู่ใต้หลายกฎหมาย ใช้ `MAX(retention)` + mark `legal_hold`
+- [ ] **Audit log append-only** `AuditLog(actorId, entityType, entityId, before, after, at, ip, reason)`
+  — ห้าม UPDATE/DELETE; ใช้ hash chain (PrevHash + RowHash SHA-256) เป็น tamper-evident
+- [ ] **Time zone** เก็บ `timestamptz` UTC, แสดง Asia/Bangkok (+07:00); พ.ศ. เฉพาะแบบยื่นภาษี/รายงานทางการ
+- [ ] **เลขเอกสาร** ออกตอน Approve เท่านั้น (Draft `DRAFT-{guid}`), gap-free ตาม §86/4
+- [ ] **Legal reference logging** — ทุก validation rule log `RuleCode` + `LegalReference`
+  (เช่น `RD-82/5(6)`) ลง audit; UI tooltip อ้างมาตรา
+
+### Litmus test ก่อน commit (compliance)
+
+> "ถ้าสรรพากร/DBD/PDPC ตรวจวันนี้ — feature ใหม่ของฉันจะทำให้ลูกค้าโดนปรับไหม?"
+> ถ้าตอบไม่ได้ = ยังไม่ผ่าน ต้องเปิด research/ถามนักบัญชีก่อน
+
+---
+
+## 🚨 กฎเหล็ก #3 — OCR Auto-Fill (User Confirms Only)
+
+> **ถ้า OCR เข้ามา ระบบต้องกรอกข้อมูลให้ครบทุก field ที่บังคับ
+> ผู้ใช้แค่ "ยืนยัน" — ห้ามให้ผู้ใช้กรอกซ้ำ**
+
+OCR ไม่ใช่ "ตัวช่วยพิมพ์" แต่เป็น "ผู้กรอกอัตโนมัติเต็มรูปแบบ" target UX =
+**1-click approve** ไม่ใช่ **fill-in-the-blank**
+
+### ข้อบังคับ
+
+1. **ครบทุก field §86/4** — เมื่อ OCR เสร็จ DTO ที่ส่งไป UI ต้องมี:
+   `SellerName`, `SellerTaxId`, `SellerBranchCode`, `SellerAddress`,
+   `BuyerName`, `BuyerTaxId`, `BuyerBranchCode`, `BuyerAddress`,
+   `InvoiceNo`, `InvoiceDate`, ทุก `Line.Description/Qty/UnitPrice/VatRate`,
+   `Subtotal`, `VatAmount`, `GrandTotal`, `WhtRate` (ถ้ามี), `GlAccountCode` (รายบรรทัด),
+   `PaymentTerms` — **ห้ามมี null/empty** ใน field ที่เอกสารต้องมีตามกฎหมาย
+
+2. **Fallback chain เติมให้เต็ม** — ลำดับการเติมเมื่อ OCR confidence ต่ำ:
+   1. **Vision/OCR primary** (DeepSeek-VL / รุ่นที่กำหนด)
+   2. **Local distillation model** (`OcrFullReviewDistillationModel` +
+      `GlAccountDistillationModel` ฯลฯ — ตามกฎเหล็ก #1)
+   3. **Historical lookup** — ถ้า `SellerTaxId` เคยมีในระบบ → autofill
+      `SellerName/Address/BranchCode` จาก `Contact` ล่าสุดของ vendor นั้น
+   4. **Rule-based defaults** — VAT 7%, BranchCode `00000`, GL account จาก
+      `VendorDefaultGlAccount`, payment terms = company default
+   5. **เดาแบบมีเหตุผล** ใช้ `IAiOrchestrator.AskAsync` เป็น last resort
+      (per กฎเหล็ก #1: ต้อง CAPTURE + DISTILL)
+
+3. **Confidence + ป้ายเตือน** — field ที่ confidence < 0.85 → highlight สีเหลือง
+   พร้อม tooltip "ตรวจสอบอีกครั้ง" แต่ **ยังต้องมีค่าเติมไว้แล้ว** ไม่ใช่ blank
+
+4. **UI = ปุ่ม "ยืนยัน" เด่นเป็นหลัก** — ไม่ใช่ form ว่าง รอกรอก
+   - **Default action** = approve (Enter / ปุ่มเขียวใหญ่)
+   - **Secondary** = edit (เปิดเฉพาะ field ที่ user แตะ)
+   - ห้ามมี required-field validation error ตอนกด approve (ทุก field ต้อง pre-filled แล้ว)
+
+5. **Round-trip learning** — ทุก field ที่ user แก้ → call
+   `IAiFeedbackRecorder.RecordUserChoiceAsync(feedbackId, userValue, acceptedAi=false)`
+   เพื่อ retrain ทำให้ครั้งหน้า OCR เติมถูกตั้งแต่แรก (per กฎเหล็ก #1)
+
+6. **Multi-page / multi-line table** — ตาราง line items ต้อง parse ครบทุกแถว
+   ห้ามให้ user เพิ่มแถวเอง; เพิ่ม "Add line" เฉพาะกรณี OCR หลุดแล้ว user รายงาน
+
+### Anti-pattern — ห้ามทำ
+
+```csharp
+// ❌ ห้าม: OCR เสร็จ → return เฉพาะ raw text ให้ user แปะลงฟอร์ม
+return new { rawText = ocrResult };
+
+// ❌ ห้าม: เติมแค่บาง field ปล่อย field อื่นว่าง
+dto.SellerName = ocr.SellerName;  // เติม
+dto.BuyerTaxId = null;            // ปล่อยให้ user หา — ห้าม
+
+// ❌ ห้าม: required validation error ตอน approve เพราะ field ว่าง
+if (string.IsNullOrEmpty(dto.GlAccountCode))
+    return BadRequest("กรุณาเลือกบัญชี");  // ผิด — ต้อง pre-fill ไว้แล้ว
+```
+
+```csharp
+// ✅ ถูก
+var dto = await _ocrService.FullExtractAsync(file, companyId, ct);
+// dto ทุก field ที่ §86/4 บังคับ ต้องมีค่า (จาก OCR → distill → history → rule → AI)
+// confidence ต่ำ = highlight แต่ห้าม null
+return Ok(dto);  // UI โชว์ → user กด "ยืนยัน" จบ
+```
+
+---
+
+## กฎอื่นในโปรเจกต์
+
+- **ฐานข้อมูล** PostgreSQL, schema migrate ด้วย `DatabaseMigrationHelper.ApplyMissingColumns`
+  (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) — ห้ามใช้ EF Migrations
+- **Tenant isolation** — query ทุกอันต้องมี `CompanyId == companyId`
+- **Excel** ใช้ `MiniExcel` เท่านั้น (zero transitive deps) ห้าม ClosedXML/EPPlus
+- **Frontend** vanilla HTML + Tailwind CDN, ไม่ใช้ build step
+- **ภาษา** comment / log / UI string ใช้ไทย (mix อังกฤษได้ถ้าศัพท์เทคนิค)
+- **ปี** ในรายงานสรรพากร = พ.ศ. (ค.ศ. + 543); ภายในระบบเก็บ ค.ศ.
+- **VAT** = 7% (กฎหมายไทย); per-line `VatRate` รองรับ mixed rate / 0% / exempt
+- **เลขเอกสาร** ออกตอน Approve เท่านั้น (Draft ใช้ `DRAFT-{guid}` placeholder)
+  เพื่อกัน gap จากการลบ Draft (compliance §86/4)
+
+## วิธีทำงาน
+
+- **อย่าเรียก `dotnet build/test`** — env ไม่มี SDK เช็ค brace balance
+  เองด้วย `awk` แล้วบอกผู้ใช้ rebuild ฝั่งเขา
+- **commit message** เขียนเป็นไทยได้ อธิบาย *ทำไม* มากกว่า *ทำอะไร*
+- **ห้าม push** main/master โดยไม่มี explicit approval
+- งานพัฒนาทั้งหมดอยู่บน branch ที่ระบุใน prompt ต้น session
+
+## 📘 DOCUMENT_FLOW.md — เอกสารอ้างอิง flow ล่าสุด
+
+`DOCUMENT_FLOW.md` (root ของ repo) คือ **single source of truth** ของ flow
+เอกสารทุกประเภทในระบบ — ตั้งแต่ทางเข้า (สร้าง/OCR/integration/convert/recurring)
+→ lifecycle (Draft → Approved → Sent → Paid/Voided) → ทางออก (PDF, e-Tax XML,
+รายงานภาษี). ใช้เป็น reference เวลาแก้/เพิ่ม feature ที่เกี่ยวกับเอกสาร
+
+### กฎการดูแล (hard requirement)
+
+> **ทุก PR/commit ที่เปลี่ยน flow ต้องอัปเดต `DOCUMENT_FLOW.md` ในคอมมิตเดียวกัน**
+> — ห้ามแยก commit, ห้ามขึ้น TODO ไว้ทำทีหลัง. ถ้าไฟล์นี้ drift จากโค้ดจริง
+> = ทุกคน (รวม AI agent) จะตัดสินใจผิดจาก doc ที่ไม่ตรงความจริง
+
+**ต้องอัปเดตเมื่อแก้สิ่งต่อไปนี้** (ไม่ครบก็ใส่เพิ่มได้):
+1. เพิ่ม/ลด `DocumentType` enum value
+2. เปลี่ยน `DocumentStatus` หรือ transition (เพิ่ม state ใหม่, เปลี่ยน guard)
+3. แก้ `ApproveDocumentAsync` (ลำดับขั้น, เพิ่ม/ลด validation, JE/stock/asset)
+4. แก้ JE posting per type (`AutoPostToJournalAsync`)
+5. แก้ `ApplyStockMovementsAsync` (เปลี่ยน DocumentType ที่กระทบ stock)
+6. แก้ tax point logic (`TaxPointResolver`)
+7. แก้ §86/4 / §82/3 / §82/5 / §65 ตรี gate
+8. แก้ undue VAT reclassification (11640 ↔ 11610)
+9. แก้ deposit lifecycle (Realize/Refund/Apply)
+10. เพิ่ม/แก้ entry point ใหม่ (OCR, integration, convert pair, recurring)
+11. เพิ่ม/แก้ออก channel (PDF template, e-Tax type, รายงานภาษีใหม่)
+12. เพิ่ม/แก้ AI feature (`AiFeatureKey`) — ต้องเพิ่มในตาราง distillation
+13. แก้ retention period / PDPA gate
+
+### Workflow ที่ AI agent ต้องทำ
+
+ก่อน commit ที่กระทบ flow:
+- [ ] อ่าน `DOCUMENT_FLOW.md` ก่อน — ให้รู้ behavior ปัจจุบัน
+- [ ] แก้โค้ด + อัปเดต section ที่เกี่ยวข้องใน `DOCUMENT_FLOW.md`
+  (แก้ file:line, แก้ตาราง, แก้ลำดับขั้นถ้าจำเป็น)
+- [ ] อัปเดตบรรทัดท้ายไฟล์: `Last verified against codebase: YYYY-MM-DD —
+  commit <new-sha>` (รอใส่ sha จริงหลัง commit ก็ได้)
+- [ ] ใส่ทั้ง 2 ไฟล์ใน commit เดียวกัน
+
+### Anti-pattern — ห้ามทำ
+
+```
+❌ "เดี๋ยวค่อยอัปเดต doc ทีหลัง" → doc drift → คนถัดมา (รวม AI) อ่าน doc
+   แล้วทำผิดเพราะ doc ไม่ตรงโค้ด
+❌ commit แยกระหว่างโค้ดกับ doc → ระหว่าง 2 commit นี้ branch อยู่ใน
+   inconsistent state
+❌ อัปเดตแค่ตาราง ไม่อัปเดต file:line → ลิงก์ใน "Quick reference" จะตาย
+   หลัง refactor
+```
+
+### ถ้าพบ doc กับโค้ดไม่ตรง
+
+แปลว่า **doc ผิด** (โค้ดเป็น ground truth). ให้แก้ doc ทันทีในคอมมิต
+เดียวกับงานที่กำลังทำ — ห้ามรอ
+

@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จัดการลูกค้า - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .detail-tabs{display:flex;gap:0;border-bottom:2px solid #e2e8f0;margin-bottom:16px}
+    .detail-tab{padding:10px 18px;cursor:pointer;font-size:13px;font-weight:600;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;white-space:nowrap}
+    .detail-tab.active{color:#4f46e5;border-bottom-color:#4f46e5}
+    .detail-tab:hover{color:#1e293b}
+    .detail-panel{display:none}.detail-panel.active{display:block}
+    .info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+    .info-item .label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:2px;font-weight:600}
+    .info-item .value{font-size:14px;font-weight:500;color:#1e293b}
+    .action-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:12px}
+    .action-card h4{font-size:14px;margin:0 0 12px;color:#1e293b}
+    .action-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+    .action-row .field{display:flex;flex-direction:column;gap:4px}
+    .action-row .field label{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase}
+    .action-row .field input,.action-row .field select{padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-width:140px}
+    .history-item{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;font-size:13px}
+    .history-item:last-child{border-bottom:none}
+    .history-dot{width:8px;height:8px;border-radius:50%;background:#4f46e5;margin-top:6px;flex-shrink:0}
+    .history-time{font-size:11px;color:#94a3b8;margin-top:2px}
+    .limit-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+    .limit-bar .bar{flex:1;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden}
+    .limit-bar .fill{height:100%;border-radius:3px;background:#4f46e5}
+    .limit-bar .fill.warn{background:#f59e0b}
+    .limit-bar .fill.full{background:#ef4444}
+    .limit-label{font-size:12px;color:#64748b;min-width:100px}
+    .limit-value{font-size:12px;font-weight:600;min-width:80px;text-align:right}
+    @media(max-width:768px){
+      .detail-tabs{overflow-x:auto}
+      .info-grid{grid-template-columns:1fr 1fr}
+      .action-row{flex-direction:column}
+      .action-row .field input,.action-row .field select{min-width:100%;width:100%}
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="admin-card">
+      <div class="admin-toolbar">
+        <input type="text" id="searchInput" class="admin-input admin-search" placeholder="ค้นหาชื่อบริษัท, เลขภาษี, อีเมล..." onkeyup="if(event.key==='Enter')loadCustomers()">
+        <select id="filterPlan" class="admin-select" onchange="loadCustomers()">
+          <option value="">ทุกแพ็กเกจ</option>
+          <option value="FreeTrial">ทดลองใช้</option>
+          <option value="Basic">Starter</option>
+          <option value="Pro">Professional</option>
+          <option value="Enterprise">Enterprise</option>
+        </select>
+        <select id="filterStatus" class="admin-select" onchange="loadCustomers()">
+          <option value="">ทุกสถานะ</option>
+          <option value="Active">Active</option>
+          <option value="Trial">Trial</option>
+          <option value="Expired">Expired</option>
+          <option value="Suspended">Suspended</option>
+          <option value="PastDue">PastDue</option>
+          <option value="Cancelled">Cancelled</option>
+        </select>
+        <button class="admin-btn admin-btn-primary" onclick="loadCustomers()">ค้นหา</button>
+      </div>
+      <div id="customerList">กำลังโหลด...</div>
+      <div id="pagination" class="admin-pagination"></div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div id="detailModal" style="display:none"></div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('customers');
+    let currentPage = 1;
+    let currentDetail = null; // store current detail data
+
+    async function loadCustomers(page = 1) {
+      currentPage = page;
+      const search = document.getElementById('searchInput').value;
+      const plan = document.getElementById('filterPlan').value;
+      const status = document.getElementById('filterStatus').value;
+      let params = `?page=${page}&pageSize=20`;
+      if (search) params += `&search=${encodeURIComponent(search)}`;
+      if (plan) params += `&plan=${plan}`;
+      if (status) params += `&status=${status}`;
+
+      try {
+        const res = await AdminAPI.customers(params);
+        const d = res.data;
+
+        if (d.items.length === 0) {
+          document.getElementById('customerList').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">ไม่พบข้อมูล</div>';
+          document.getElementById('pagination').innerHTML = '';
+          return;
+        }
+
+        document.getElementById('customerList').innerHTML = `
+          <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr>
+              <th>บริษัท</th><th>เจ้าของ</th><th>แพ็กเกจ</th><th>สถานะ</th><th>ผู้ใช้</th><th>สมัครเมื่อ</th><th>หมดอายุ</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${d.items.map(c => `
+                <tr>
+                  <td>
+                    <strong>${c.name}</strong>
+                    <div style="font-size:12px;color:#94a3b8">${c.taxId || '-'}</div>
+                  </td>
+                  <td>${c.owner ? `<div>${c.owner.fullName}</div><div style="font-size:12px;color:#94a3b8">${c.owner.email}</div>` : '-'}</td>
+                  <td>${c.subscription ? AdminLayout.planBadge(c.subscription.plan) + (c.subscription.viaLicense ? ` <span title="ผ่าน License ของ ${c.subscription.licenseOwnerEmail || '-'}" style="background:#ecfeff;color:#0c4a6e;border:1px solid #67e8f9;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:4px">🎫</span>` : '') : '<span style="color:#94a3b8">-</span>'}</td>
+                  <td>${c.subscription ? AdminLayout.statusBadge(c.subscription.status) : '<span style="color:#94a3b8">ไม่มี</span>'}</td>
+                  <td>${c.userCount}</td>
+                  <td>${AdminLayout.date(c.createdAt)}</td>
+                  <td>${c.subscription ? AdminLayout.date(c.subscription.endDate) : '-'}</td>
+                  <td>
+                    <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="showDetail('${c.id}')">จัดการ</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          </div>
+        `;
+
+        let pagHtml = '';
+        if (d.totalPages > 1) {
+          pagHtml += `<button ${page <= 1 ? 'disabled' : ''} onclick="loadCustomers(${page - 1})">ก่อนหน้า</button>`;
+          for (let i = 1; i <= Math.min(d.totalPages, 10); i++) {
+            pagHtml += `<button class="${i === page ? 'active' : ''}" onclick="loadCustomers(${i})">${i}</button>`;
+          }
+          pagHtml += `<button ${page >= d.totalPages ? 'disabled' : ''} onclick="loadCustomers(${page + 1})">ถัดไป</button>`;
+        }
+        document.getElementById('pagination').innerHTML = pagHtml;
+      } catch (err) {
+        document.getElementById('customerList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${err.message}</div>`;
+      }
+    }
+
+    async function showDetail(companyId) {
+      window.currentCompanyId = companyId;
+      try {
+        const res = await AdminAPI.customer(companyId);
+        currentDetail = res.data;
+        renderDetail();
+      } catch (err) {
+        AdminLayout.toast(err.message, 'error');
+      }
+    }
+
+    function renderDetail() {
+      const d = currentDetail;
+      const c = d.company;
+      const s = d.subscription;
+      const t = d.trial;
+      const ap = d.accountPlan;
+      // Banner shown above the subscription panel when the company is covered
+      // by a parent Account Plan. Pure HTML, plugged into the existing template
+      // a few lines below.
+      const accountPlanBanner = ap ? `
+        <div style="background:linear-gradient(135deg,#ecfeff,#fef9c3);border:1px solid #67e8f9;border-radius:10px;padding:12px 16px;margin-bottom:14px">
+          <div style="font-weight:700;color:#0c4a6e;font-size:14px">🎫 บริษัทนี้อยู่ใต้ Account Plan</div>
+          <div style="font-size:12px;color:#475569;margin-top:4px">
+            License: <strong>${ap.planName}</strong> (${ap.status}) ·
+            เจ้าของ License: <strong>${ap.ownerName}</strong> &lt;${ap.ownerEmail}&gt; ·
+            หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}
+          </div>
+          <a href="/admin/account-subscriptions.html" style="font-size:12px;color:#0ea5e9;text-decoration:none;font-weight:600;display:inline-block;margin-top:6px">→ จัดการ Account Plan</a>
+        </div>` : '';
+
+      const fmtDate = (d) => d ? new Date(d).toISOString().split('T')[0] : '';
+      const fmtBytes = (b) => {
+        if (!b) return '0 B';
+        if (b < 1024) return b + ' B';
+        if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+        if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+        return (b/1073741824).toFixed(2) + ' GB';
+      };
+
+      document.getElementById('detailModal').style.display = '';
+      document.getElementById('detailModal').innerHTML = `
+        <div class="admin-modal-overlay" onclick="if(event.target===this)closeModal()">
+          <div class="admin-modal" style="max-width:900px;max-height:90vh;overflow-y:auto">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+              <h3 style="margin:0">${c.name} ${s ? AdminLayout.planBadge(s.plan) + ' ' + AdminLayout.statusBadge(s.status) : ''}</h3>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="closeModal()" style="font-size:18px;padding:2px 10px">&times;</button>
+            </div>
+
+            <!-- Tabs -->
+            <div class="detail-tabs">
+              <div class="detail-tab active" onclick="switchTab('overview',this)">ภาพรวม</div>
+              <div class="detail-tab" onclick="switchTab('subscription',this)">Subscription</div>
+              <div class="detail-tab" onclick="switchTab('actions',this)">จัดการ</div>
+              <div class="detail-tab" onclick="switchTab('users',this)">ผู้ใช้ (${d.users.length})</div>
+              <div class="detail-tab" onclick="switchTab('payments',this)">การชำระเงิน</div>
+              <div class="detail-tab" onclick="switchTab('history',this)">ประวัติ</div>
+            </div>
+
+            ${accountPlanBanner}
+
+            <!-- Overview -->
+            <div class="detail-panel active" id="panel-overview">
+              <div class="info-grid">
+                <div class="info-item"><div class="label">ชื่อบริษัท</div><div class="value">${c.name}</div></div>
+                <div class="info-item"><div class="label">เลขผู้เสียภาษี</div><div class="value">${c.taxId || '-'}</div></div>
+                <div class="info-item"><div class="label">สถานะบริษัท</div><div class="value">${AdminLayout.statusBadge(c.status)}</div></div>
+                <div class="info-item"><div class="label">สมัครเมื่อ</div><div class="value">${AdminLayout.datetime(c.createdAt)}</div></div>
+                <div class="info-item"><div class="label">ที่อยู่</div><div class="value">${[c.address, c.province].filter(Boolean).join(', ') || '-'}</div></div>
+                <div class="info-item"><div class="label">จำนวนเอกสาร</div><div class="value">${d.usage.documents}</div></div>
+                <div class="info-item"><div class="label">สมุดรายวัน</div><div class="value">${d.usage.journalEntries}</div></div>
+              </div>
+
+              <!-- Quick Status Change -->
+              <div class="action-card">
+                <h4>สถานะบริษัท</h4>
+                <div class="action-row">
+                  <div class="field">
+                    <label>สถานะ</label>
+                    <select id="companyStatusSelect">
+                      ${['Active','Inactive','Suspended'].map(st => `<option value="${st}" ${c.status===st?'selected':''}>${st}</option>`).join('')}
+                    </select>
+                  </div>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="updateCompanyStatus('${c.id}')">อัพเดท</button>
+                </div>
+                <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #fecaca">
+                  <div style="font-size:12px;color:#b91c1c;margin-bottom:6px">⛔ ลบบริษัทถาวรจากรายการ (soft-delete — ข้อมูลบัญชีเก็บตามกฎหมาย 5 ปี) ทุก user สลับเข้าไม่ได้อีก</div>
+                  <button class="admin-btn admin-btn-sm" style="background:#dc2626;color:#fff" onclick="adminDeleteCompany('${c.id}', '${(c.name||'').replace(/'/g,'&apos;')}')">ลบบริษัทนี้…</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Subscription -->
+            <div class="detail-panel" id="panel-subscription">
+              ${ap ? `
+                <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#9a3412;line-height:1.6">
+                  ⚠️ <strong>อ่านลำดับการ resolver:</strong> บริษัทนี้อยู่ใต้ Account Plan
+                  <strong>${ap.planName}</strong> ของ <strong>${ap.ownerName}</strong>
+                  → quota / features ที่ใช้จริง <strong>ดูจาก Account Plan</strong>
+                  (หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}) ·
+                  ค่าด้านล่างนี้เป็น Subscription ระดับบริษัทเฉพาะตอน "ถอดออกจาก Account Plan" หรือใช้แยกบิลเท่านั้น
+                </div>
+              ` : ''}
+              ${s ? `
+                <div class="info-grid">
+                  <div class="info-item"><div class="label">แพ็กเกจ</div><div class="value">${AdminLayout.planBadge(s.plan)}</div></div>
+                  <div class="info-item"><div class="label">สถานะ Subscription</div><div class="value">${AdminLayout.statusBadge(s.status)}</div></div>
+                  <div class="info-item"><div class="label">รอบบิล</div><div class="value">${s.billingCycle}</div></div>
+                  <div class="info-item"><div class="label">ราคา/รอบ</div><div class="value">${AdminLayout.money(s.pricePerCycle)}</div></div>
+                  <div class="info-item"><div class="label">เริ่มต้น</div><div class="value">${AdminLayout.date(s.startDate)}</div></div>
+                  <div class="info-item"><div class="label">หมดอายุ</div><div class="value">${AdminLayout.date(s.endDate)}</div></div>
+                  <div class="info-item"><div class="label">บิลถัดไป</div><div class="value">${AdminLayout.date(s.nextBillingDate)}</div></div>
+                </div>
+
+                ${s.limits ? `
+                <div style="margin-top:16px">
+                  <h4 style="font-size:14px;margin-bottom:12px">Usage Limits</h4>
+                  ${renderLimitBar('ผู้ใช้', s.current?.documentsThisMonth || 0, s.limits.maxUsers, d.users.length)}
+                  ${renderLimitBar('เอกสาร/เดือน', s.current?.documentsThisMonth || 0, s.limits.maxDocumentsPerMonth)}
+                  ${renderLimitBar('สมุดรายวัน/เดือน', s.current?.journalEntriesThisMonth || 0, s.limits.maxJournalEntriesPerMonth)}
+                  ${renderLimitBar('พื้นที่จัดเก็บ', s.current?.storageUsed || 0, s.limits.maxStorageBytes, null, true)}
+                </div>
+                ` : ''}
+
+                ${t ? `
+                <div style="margin-top:16px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">
+                  <h4 style="font-size:14px;margin:0 0 8px;color:#1d4ed8">Trial Info</h4>
+                  <div class="info-grid">
+                    <div class="info-item"><div class="label">เริ่ม Trial</div><div class="value">${AdminLayout.date(t.trialStartDate)}</div></div>
+                    <div class="info-item"><div class="label">สิ้นสุด Trial</div><div class="value">${AdminLayout.date(t.trialEndDate)}</div></div>
+                    <div class="info-item"><div class="label">ต่ออายุแล้ว</div><div class="value">${t.extensionsUsed}/${t.maxExtensions} ครั้ง</div></div>
+                    <div class="info-item"><div class="label">หมดอายุ?</div><div class="value">${t.isTrialExpired ? '<span style="color:#ef4444">หมดแล้ว</span>' : '<span style="color:#16a34a">ยังใช้ได้</span>'}</div></div>
+                    <div class="info-item"><div class="label">Grace Period</div><div class="value">${AdminLayout.date(t.gracePeriodEndDate)}</div></div>
+                  </div>
+                </div>
+                ` : ''}
+              ` : '<p style="color:#94a3b8;text-align:center;padding:20px">ยังไม่มี Subscription</p>'}
+            </div>
+
+            <!-- Actions — License-centric only.
+                 The per-company plan/status/dates/limits controls were removed
+                 because billing now lives at the User License layer; managing
+                 quota at the company level was a footgun (mismatch with parent
+                 license). Operators attach the company to a User License or
+                 detach it; everything else is done on /admin/account-subscriptions.html. -->
+            <div class="detail-panel" id="panel-actions">
+              ${ap ? `
+              <div class="action-card" style="border:2px solid #0ea5e9;background:#ecfeff">
+                <h4 style="color:#0c4a6e;margin-top:0">🎫 บริษัทนี้อยู่ใต้ License <span style="background:#0ea5e9;color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px">${ap.planName}</span></h4>
+                <div style="font-size:13px;color:#475569;line-height:1.7;margin-bottom:12px">
+                  เจ้าของ License: <strong>${ap.ownerName}</strong> &lt;${ap.ownerEmail}&gt;<br>
+                  สถานะ: <strong>${ap.status}</strong> · หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}<br>
+                  <span style="color:#0c4a6e">ℹ️ การจัดการแพ็กเกจ / ราคา / quota / วันต่ออายุ ทำได้ที่หน้า License เท่านั้น
+                  เพื่อไม่ให้ค่ารายบริษัทขัดแย้งกับ License แม่</span>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                  <a href="/admin/account-subscriptions.html?id=${ap.id}" class="admin-btn admin-btn-primary admin-btn-sm" style="text-decoration:none">→ ไปจัดการ License</a>
+                  <button class="admin-btn admin-btn-danger admin-btn-sm" onclick="apDetach('${c.id}','${c.name.replace(/'/g,'&apos;')}')">🔓 ถอดบริษัทออกจาก License</button>
+                </div>
+              </div>
+              ` : `
+              <div class="action-card" style="border:2px solid #fbbf24;background:#fef3c7">
+                <h4 style="color:#92400e;margin-top:0">⚠️ บริษัทนี้ยังไม่ผูกกับ License ใด</h4>
+                <div style="font-size:13px;color:#78350f;line-height:1.7;margin-bottom:12px">
+                  บริษัทที่ไม่มี License แม่จะใช้ Subscription ระดับบริษัท (FreeTrial default) ซึ่ง<strong>ไม่ใช่โหมดที่แนะนำ</strong>
+                  สำหรับบัญชีลูกค้าจริง — ผูกเข้ากับ License ของผู้ใช้เพื่อให้ quota / billing / วันต่ออายุไหลรวมกัน
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
+                  <div class="field" style="flex:1;min-width:240px">
+                    <label>เลือก License ของผู้ใช้</label>
+                    <select id="attachLicenseSelect">
+                      <option value="">— กำลังโหลด —</option>
+                    </select>
+                  </div>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="doAttachLicense('${c.id}')">🔗 ผูกเข้า License</button>
+                  <a href="/admin/users.html" class="admin-btn admin-btn-ghost admin-btn-sm" style="text-decoration:none">+ สร้าง License ให้ผู้ใช้</a>
+                </div>
+              </div>
+              `}
+            </div>
+
+            <!-- Users -->
+            <div class="detail-panel" id="panel-users">
+              <div class="admin-table-wrap">
+              <table class="admin-table">
+                <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>Role</th><th>สถานะ</th><th>เข้าล่าสุด</th><th>จัดการ</th></tr></thead>
+                <tbody>
+                  ${d.users.length ? d.users.map(u => `<tr>
+                    <td><strong>${u.fullName}</strong></td>
+                    <td>${u.email}</td>
+                    <td>
+                      <select style="font-size:12px;padding:3px 6px;border-radius:4px;border:1px solid #d1d5db"
+                        onchange="changeUserRole('${c.id}','${u.userId}',this.value)">
+                        <option value="Owner" ${u.role==='Owner'?'selected':''}>Owner</option>
+                        <option value="Accountant" ${u.role==='Accountant'?'selected':''}>นักบัญชี</option>
+                        <option value="Staff" ${u.role==='Staff'?'selected':''}>พนักงาน</option>
+                        <option value="Auditor" ${u.role==='Auditor'?'selected':''}>ผู้ตรวจสอบ</option>
+                        <option value="Viewer" ${u.role==='Viewer'?'selected':''}>ดูอย่างเดียว</option>
+                        <option value="ExternalAccountant" ${u.role==='ExternalAccountant'?'selected':''}>นักบัญชีภายนอก</option>
+                      </select>
+                    </td>
+                    <td>${AdminLayout.statusBadge(u.status)}</td>
+                    <td>${AdminLayout.datetime(u.lastLoginAt)}</td>
+                    <td><button class="admin-btn admin-btn-outline admin-btn-sm" onclick="viewUser('${u.userId}')">ดูผู้ใช้</button></td>
+                  </tr>`).join('') : '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:20px">ไม่มีผู้ใช้</td></tr>'}
+                </tbody>
+              </table>
+              </div>
+            </div>
+
+            <!-- Payments -->
+            <div class="detail-panel" id="panel-payments">
+              ${d.recentPayments.length ? `
+              <div class="admin-table-wrap">
+              <table class="admin-table">
+                <thead><tr><th>เลขที่</th><th>จำนวน</th><th>วิธีชำระ</th><th>สถานะ</th><th>แพ็กเกจที่ขอ</th><th>วันที่</th></tr></thead>
+                <tbody>
+                  ${d.recentPayments.map(p => `<tr>
+                    <td>${p.paymentNumber}</td>
+                    <td>${AdminLayout.money(p.amount)}</td>
+                    <td>${p.paymentMethod || '-'}</td>
+                    <td>${AdminLayout.statusBadge(p.status)}</td>
+                    <td>${p.requestedPlan ? AdminLayout.planBadge(p.requestedPlan) : '-'}</td>
+                    <td>${AdminLayout.date(p.createdAt)}</td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+              </div>
+              ` : '<p style="text-align:center;color:#94a3b8;padding:20px">ยังไม่มีการชำระเงิน</p>'}
+            </div>
+
+            <!-- History -->
+            <div class="detail-panel" id="panel-history">
+              <div id="historyContent"><p style="text-align:center;color:#94a3b8;padding:20px">กดโหลดประวัติ</p></div>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="loadHistory('${c.id}')" style="margin-top:8px">โหลดประวัติการเปลี่ยนแปลง</button>
+            </div>
+          </div>
+        </div>
+      `;
+      // Populate the License dropdown only when the company is NOT attached —
+      // the select element only exists in that branch of the template.
+      if (!ap) loadAttachLicenseOptions();
+    }
+
+    function renderLimitBar(label, current, max, actualCount, isBytes) {
+      const used = actualCount != null ? actualCount : current;
+      const pct = max > 0 ? Math.min((used / max) * 100, 100) : 0;
+      const cls = pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
+      const fmtVal = isBytes
+        ? `${(used/1048576).toFixed(1)}/${(max/1048576).toFixed(0)} MB`
+        : `${used}/${max >= 99999 ? '∞' : max}`;
+      return `<div class="limit-bar">
+        <span class="limit-label">${label}</span>
+        <div class="bar"><div class="fill ${cls}" style="width:${pct}%"></div></div>
+        <span class="limit-value">${fmtVal}</span>
+      </div>`;
+    }
+
+    function switchTab(tab, el) {
+      document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.detail-panel').forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('panel-' + tab).classList.add('active');
+    }
+
+    // ===== Actions =====
+
+    // ลบบริษัท (SystemAdmin) — type-to-confirm ชื่อบริษัท กันลบผิด
+    async function adminDeleteCompany(id, name) {
+      const typed = prompt(`⛔ ลบบริษัท "${name}"\n\nบริษัทจะหายจากรายการของทุก user ทันที (ข้อมูลบัญชีเก็บตามกฎหมาย 5 ปี)\n\nพิมพ์ชื่อบริษัทให้ตรงทุกตัวอักษรเพื่อยืนยัน:`);
+      if (typed === null) return;
+      try {
+        await AdminApi.deleteCompany(id, typed);
+        alert('ลบบริษัทเรียบร้อย');
+        document.getElementById('detailDrawer')?.classList?.remove('open');
+        loadCustomers();
+      } catch (e) { alert(e.message || 'ลบไม่สำเร็จ'); }
+    }
+    async function updateCompanyStatus(companyId) {
+      const status = document.getElementById('companyStatusSelect').value;
+      try {
+        await AdminAPI.updateCustomerStatus(companyId, status);
+        AdminLayout.toast('อัพเดทสถานะบริษัทสำเร็จ');
+        await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    // ===== Attach to User License =====
+    // Per-company plan/status/dates/limits/trial handlers were removed when
+    // we moved billing to the User License layer — those concerns now live
+    // on /admin/account-subscriptions.html. The only company-level write
+    // here is "attach this company to a License".
+    async function loadAttachLicenseOptions() {
+      const sel = document.getElementById('attachLicenseSelect');
+      if (!sel) return;
+      try {
+        const r = await AdminAPI.get('/account-subscriptions');
+        const usable = new Set(['Trial', 'Active', 'PastDue']);
+        const items = (r.data || []).filter(a => a.companiesUsed < a.maxCompanies && usable.has(a.status));
+        if (!items.length) {
+          sel.innerHTML = '<option value="">— ไม่มี License ที่ว่าง — ต้องสร้าง / เพิ่ม MaxCompanies ก่อน —</option>';
+          sel.disabled = true;
+          return;
+        }
+        sel.disabled = false;
+        sel.innerHTML = '<option value="">— เลือก License —</option>' + items.map(a =>
+          `<option value="${a.id}">${a.ownerName} &lt;${a.ownerEmail}&gt; · ${a.planName} (${a.companiesUsed}/${a.maxCompanies} ใช้แล้ว)</option>`
+        ).join('');
+      } catch (e) {
+        sel.innerHTML = `<option value="">— โหลดล้มเหลว: ${e.message} —</option>`;
+      }
+    }
+
+    async function doAttachLicense(companyId) {
+      const sel = document.getElementById('attachLicenseSelect');
+      const apId = sel?.value;
+      if (!apId) { AdminLayout.toast('กรุณาเลือก License', 'error'); return; }
+      const label = sel.options[sel.selectedIndex].text;
+      if (!confirm(`🔗 ผูกบริษัทนี้เข้ากับ License:\n${label}\n\nบริษัทจะใช้ quota / สิทธิ์ / วันหมดอายุของ License นี้`)) return;
+      try {
+        await AdminAPI.post('/companies/' + companyId + '/attach-to-account-plan', { accountSubscriptionId: apId });
+        AdminLayout.toast('ผูกเข้า License สำเร็จ');
+        await refreshDetail(companyId);
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+    }
+
+    // ===== Account Plan (User License) actions =====
+    // These delegate to /api/admin/account-subscriptions/{id}/... — the same
+    // endpoints the dedicated /admin/account-subscriptions.html page calls.
+    // Action affects ALL companies under the same License, hence the explicit
+    // confirms.
+    async function apExtend(apId, currentEnd) {
+      const cur = new Date(currentEnd);
+      cur.setDate(cur.getDate() + 30);
+      const def = cur.toISOString().slice(0,10);
+      const v = prompt('🎫 ขยายอายุ License — วันสิ้นสุดใหม่ (YYYY-MM-DD)\n\n⚠️ จะมีผลกับทุกบริษัทใต้ License เดียวกัน', def);
+      if (!v) return;
+      try {
+        await AdminAPI.put('/account-subscriptions/' + apId + '/extend', { endDate: v + 'T00:00:00Z' });
+        alert('✓ ขยายอายุ License สำเร็จ');
+        showDetail(window.currentCompanyId);
+      } catch(e) { alert(e.message); }
+    }
+    async function apStatus(apId, current) {
+      const next = prompt('🎫 สถานะใหม่ของ License (Trial / Active / PastDue / Suspended / Cancelled / Expired)\n\n⚠️ จะมีผลกับทุกบริษัทใต้ License', current);
+      if (!next) return;
+      const reason = prompt('เหตุผล (เก็บใน audit)', '') || '';
+      try {
+        await AdminAPI.put('/account-subscriptions/' + apId + '/status', { status: next, reason });
+        alert('✓ เปลี่ยนสถานะ License สำเร็จ');
+        showDetail(window.currentCompanyId);
+      } catch(e) { alert(e.message); }
+    }
+    async function apLimits(apId) {
+      // Fetch the current values so prompts default sensibly.
+      try {
+        const r = await AdminAPI.get('/account-subscriptions/' + apId);
+        const d = r.data;
+        const mc = parseInt(prompt('MaxCompanies (slots)', d.maxCompanies));
+        if (isNaN(mc)) return;
+        const mu = parseInt(prompt('MaxUsersPerCompany', d.maxUsersPerCompany));
+        if (isNaN(mu)) return;
+        const md = parseInt(prompt('MaxDocumentsPerMonth (aggregate)', d.maxDocumentsPerMonth));
+        if (isNaN(md)) return;
+        const mj = parseInt(prompt('MaxJournalEntriesPerMonth (aggregate)', d.maxJournalEntriesPerMonth));
+        if (isNaN(mj)) return;
+        const mo = parseInt(prompt('MaxOcrPagesPerMonth (aggregate)', d.maxOcrPagesPerMonth));
+        if (isNaN(mo)) return;
+        await AdminAPI.put('/account-subscriptions/' + apId + '/limits', {
+          maxCompanies: mc, maxUsersPerCompany: mu,
+          maxDocumentsPerMonth: md, maxJournalEntriesPerMonth: mj,
+          maxOcrPagesPerMonth: mo,
+        });
+        alert('✓ บันทึก limits ใหม่แล้ว');
+        showDetail(window.currentCompanyId);
+      } catch(e) { alert(e.message); }
+    }
+    async function apDetach(companyId, name) {
+      if (!confirm(`🔓 ถอด "${name}" ออกจาก License ของผู้ใช้?\n\nบริษัทจะกลับไปใช้ Subscription แยกของตัวเอง (FreeTrial ถ้าไม่มี)\nเหมาะกับเคสขายบริษัท / แยกบิล holding`)) return;
+      try {
+        // Detach lives on the user-side API; admin can call it on behalf via
+        // the same path — server checks ownership at the user layer. For
+        // admin-level detach we route through limits change setting
+        // AccountSubscriptionId to null on the company subscription.
+        await AdminAPI.post('/companies/' + companyId + '/detach-from-account-plan', {});
+        alert('✓ ถอดออกแล้ว — บริษัทกลับไปใช้ Subscription ของตัวเอง');
+        showDetail(window.currentCompanyId);
+      } catch(e) { alert(e.message); }
+    }
+
+    async function changeUserRole(companyId, userId, role) {
+      try {
+        await AdminAPI.changeCompanyUserRole(companyId, userId, role);
+        AdminLayout.toast(`เปลี่ยน Role เป็น ${role} สำเร็จ`);
+        await loadDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    function viewUser(userId) {
+      window.location.href = `/admin/users.html?userId=${userId}`;
+    }
+
+    async function loadHistory(companyId) {
+      try {
+        const res = await AdminAPI.subHistory(companyId);
+        const items = res.data || [];
+        if (!items.length) {
+          document.getElementById('historyContent').innerHTML = '<p style="text-align:center;color:#94a3b8">ไม่มีประวัติ</p>';
+          return;
+        }
+        document.getElementById('historyContent').innerHTML = items.map(h => `
+          <div class="history-item">
+            <div class="history-dot"></div>
+            <div style="flex:1;min-width:0">
+              <div><strong>${h.action}</strong></div>
+              ${h.fromPlan && h.toPlan ? `<div style="font-size:12px;color:#64748b">แพ็กเกจ: ${h.fromPlan} → ${h.toPlan}</div>` : ''}
+              ${h.fromStatus && h.toStatus ? `<div style="font-size:12px;color:#64748b">สถานะ: ${h.fromStatus} → ${h.toStatus}</div>` : ''}
+              ${h.notes ? `<div style="font-size:12px;color:#94a3b8">${h.notes}</div>` : ''}
+              <div class="history-time">${AdminLayout.datetime(h.createdAt)}</div>
+            </div>
+          </div>
+        `).join('');
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    async function refreshDetail(companyId) {
+      try {
+        const res = await AdminAPI.customer(companyId);
+        currentDetail = res.data;
+        renderDetail();
+        loadCustomers(currentPage);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    function closeModal() {
+      document.getElementById('detailModal').style.display = 'none';
+      document.getElementById('detailModal').innerHTML = '';
+    }
+
+    loadCustomers();
+  </script>
+</body>
+</html>

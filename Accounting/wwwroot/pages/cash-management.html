@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จัดการเงินสด — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">จัดการเงินสด</h2>
+        <p class="page-subtitle">เช็คล่วงหน้า · พยากรณ์เงินสด · เบิก-เคลียร์เงินสด · จ่ายรวมหลายบิล</p>
+      </div>
+    </div>
+    <div class="tabs">
+      <div class="tab active" onclick="Page.switchTab('forecast',this)">📊 พยากรณ์เงินสด</div>
+      <div class="tab" onclick="Page.switchTab('pdc',this)">💳 เช็คล่วงหน้า</div>
+      <div class="tab" onclick="Page.switchTab('advance',this)">🪙 เบิก-เคลียร์เงินสด</div>
+      <div class="tab" onclick="Page.switchTab('bulkpay',this)">📑 จ่ายรวม vendor</div>
+      <div class="tab" onclick="Page.switchTab('statement',this)">📜 ใบแจ้งยอด</div>
+    </div>
+
+    <!-- TAB: Cash Forecast -->
+    <div id="tab-forecast" class="tab-pane">
+      <div class="toolbar">
+        <label class="text-sm font-medium">ณ วันที่:</label>
+        <input type="date" class="form-input" id="asOfDateForecast" style="width:180px">
+        <button class="btn btn-primary" onclick="Page.loadForecast()">โหลดข้อมูล</button>
+      </div>
+      <div id="forecastBanner"></div>
+      <div class="grid grid-4 gap-4" id="forecastKpi" style="margin-bottom:24px"></div>
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Cash Flow Projection</h3></div>
+        <div id="forecastTable" style="padding:16px"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Post-Dated Check -->
+    <div id="tab-pdc" class="tab-pane" style="display:none">
+      <div class="toolbar">
+        <select id="pdcDirection" class="form-input" style="width:160px" onchange="Page.loadPdcs()">
+          <option value="">— ทุกประเภท —</option>
+          <option value="1">รับเช็ค (Inbound)</option>
+          <option value="2">จ่ายเช็ค (Outbound)</option>
+        </select>
+        <select id="pdcStatus" class="form-input" style="width:180px" onchange="Page.loadPdcs()">
+          <option value="">— Active เท่านั้น —</option>
+          <option value="1">Held (ยังไม่ฝาก)</option>
+          <option value="2">Deposited (รอ clear)</option>
+          <option value="3">Cleared</option>
+          <option value="4">Dishonored (เด้ง)</option>
+          <option value="5">Cancelled</option>
+          <option value="6">Returned</option>
+        </select>
+        <button class="btn btn-primary" onclick="Page.openPdcModal()">+ บันทึกเช็คใหม่</button>
+      </div>
+      <div class="grid grid-4 gap-4" id="pdcSummary" style="margin-bottom:16px"></div>
+      <div class="card">
+        <div id="pdcTable" style="padding:16px"><p class="text-center text-gray-400">กำลังโหลด…</p></div>
+      </div>
+    </div>
+
+    <!-- TAB: Cash Advance -->
+    <div id="tab-advance" class="tab-pane" style="display:none">
+      <div class="toolbar">
+        <select id="caStatus" class="form-input" style="width:200px" onchange="Page.loadCa()">
+          <option value="">— ทุกสถานะ —</option>
+          <option value="1">รออนุมัติ</option>
+          <option value="2">อนุมัติแล้ว รอจ่าย</option>
+          <option value="3">จ่ายแล้ว รอเคลียร์</option>
+          <option value="5">เคลียร์แล้ว</option>
+          <option value="6">มีเงินคืน</option>
+          <option value="7">ปฏิเสธ</option>
+        </select>
+        <button class="btn btn-primary" onclick="Page.openCaModal()">+ ขอเบิกเงินสด</button>
+        <button class="btn btn-secondary" onclick="Page.loadCaOverdue()">⚠️ ดูรายการเลยกำหนด</button>
+      </div>
+      <div class="card">
+        <div id="caTable" style="padding:16px"><p class="text-center text-gray-400">กำลังโหลด…</p></div>
+      </div>
+    </div>
+
+    <!-- TAB: Bulk Vendor Payment -->
+    <div id="tab-bulkpay" class="tab-pane" style="display:none">
+      <div class="toolbar">
+        <select id="vendorSelect" class="form-input" style="width:320px" onchange="Page.loadVendorOutstanding()">
+          <option value="">— เลือก vendor —</option>
+        </select>
+        <button class="btn btn-outline" onclick="Page.loadVendorList()">↻ โหลด vendor</button>
+      </div>
+      <div class="card">
+        <div id="vendorOutstandingTable" style="padding:16px"><p class="text-center text-gray-400">เลือก vendor เพื่อดูบิลค้าง</p></div>
+      </div>
+    </div>
+
+    <!-- TAB: Customer Statement -->
+    <div id="tab-statement" class="tab-pane" style="display:none">
+      <div class="toolbar">
+        <select id="stmtSide" class="form-input" style="width:140px">
+          <option value="AR">ลูกหนี้ (AR)</option>
+          <option value="AP">เจ้าหนี้ (AP)</option>
+        </select>
+        <select id="stmtContact" class="form-input" style="width:320px">
+          <option value="">— เลือกผู้ติดต่อ —</option>
+        </select>
+        <label class="text-sm">จาก:</label>
+        <input type="date" class="form-input" id="stmtFrom" style="width:160px">
+        <label class="text-sm">ถึง:</label>
+        <input type="date" class="form-input" id="stmtTo" style="width:160px">
+        <button class="btn btn-primary" onclick="Page.loadStatement()">แสดง</button>
+        <button class="btn btn-secondary" onclick="Page.exportStatement()">📥 Export CSV</button>
+      </div>
+      <div class="card">
+        <div id="statementView" style="padding:16px"><p class="text-center text-gray-400">เลือกผู้ติดต่อแล้วกด "แสดง"</p></div>
+      </div>
+    </div>
+
+    <!-- PDC Modal -->
+    <div class="modal-overlay" id="pdcModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3 class="modal-title">บันทึกเช็คล่วงหน้า</h3><button class="modal-close" onclick="Layout.closeModal('pdcModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ประเภท</label>
+            <select class="form-select" id="mPdcDir"><option value="1">รับเช็ค (Inbound)</option><option value="2">จ่ายเช็ค (Outbound)</option></select>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เลขที่เช็ค *</label><input type="text" class="form-input" id="mCheckNo"></div>
+            <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="mAmount" step="0.01"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ธนาคาร *</label><input type="text" class="form-input" id="mBank" placeholder="กรุงเทพ / กสิกร / SCB"></div>
+            <div class="form-group"><label class="form-label">สาขา</label><input type="text" class="form-input" id="mBranch"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่บนเช็ค *</label><input type="date" class="form-input" id="mCheckDate"></div>
+            <div class="form-group"><label class="form-label">วันที่จะฝาก</label><input type="date" class="form-input" id="mDepDate"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ผู้ติดต่อ (ลูกค้า/vendor)</label>
+            <select class="form-select" id="mContact"><option value="">— เลือก —</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><textarea class="form-input" id="mNotes" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('pdcModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.savePdc()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cash Advance Modal -->
+    <div class="modal-overlay" id="caModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">ขอเบิกเงินสด</h3><button class="modal-close" onclick="Layout.closeModal('caModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">พนักงาน *</label>
+            <select class="form-select" id="mCaEmp"><option value="">— เลือก —</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="mCaAmount" step="0.01"></div>
+          <div class="form-group"><label class="form-label">วัตถุประสงค์ *</label><textarea class="form-input" id="mCaPurpose" rows="3" placeholder="เช่น ค่าทำธุระจัดส่งของลูกค้า A"></textarea></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('caModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveCa()">ส่งคำขอ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      currentTab: 'forecast',
+      async init() {
+        if (!Layout.init('cash-management')) return;
+        Layout.setTitle('จัดการเงินสด');
+        document.getElementById('asOfDateForecast').value = Layout.toDateInput(new Date());
+        document.getElementById('mCheckDate').value = Layout.toDateInput(new Date());
+        const today = new Date();
+        const first = new Date(today.getFullYear(), today.getMonth(), 1);
+        document.getElementById('stmtFrom').value = Layout.toDateInput(first);
+        document.getElementById('stmtTo').value = Layout.toDateInput(today);
+        await this.loadContacts();
+        await this.loadForecast();
+      },
+      switchTab(tab, el) {
+        this.currentTab = tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        ['forecast','pdc','advance','bulkpay','statement'].forEach(t => {
+          const el = document.getElementById('tab-'+t);
+          if (el) el.style.display = t === tab ? '' : 'none';
+        });
+        if (tab === 'pdc') this.loadPdcs();
+        else if (tab === 'advance') this.loadCa();
+        else if (tab === 'bulkpay') this.loadVendorList();
+      },
+      async loadContacts() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/document/contacts?pageSize=500`, { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          const items = j.data?.items || j.data || [];
+          const opts = items.map(c => `<option value="${c.id}">${Layout.esc(c.name)} ${c.taxId ? `(${c.taxId})` : ''}</option>`).join('');
+          ['mContact','stmtContact'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '<option value="">— เลือก —</option>' + opts;
+          });
+        } catch(e) {}
+      },
+
+      // ===== Cash Forecast =====
+      async loadForecast() {
+        const cid = Layout.getCompanyId();
+        const date = document.getElementById('asOfDateForecast').value;
+        try {
+          const r = await fetch(`/api/companies/${cid}/cash-forecast?asOfDate=${date}`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          const d = j.data;
+          document.getElementById('forecastBanner').innerHTML = d.hasNegativeProjection
+            ? `<div style="padding:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-bottom:16px;color:#991b1b">${Layout.esc(d.alertMessage)}</div>`
+            : '';
+          document.getElementById('forecastKpi').innerHTML = `
+            <div class="kpi-card"><div class="kpi-label">เงินสด/Bank ปัจจุบัน</div><div class="kpi-value">${Layout.money(d.currentCashBalance)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">AR ค้างเก็บ</div><div class="kpi-value text-success">${Layout.money(d.totalArDueAll)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">AP ค้างจ่าย</div><div class="kpi-value text-danger">${Layout.money(d.totalApDueAll)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">เช็คในมือ</div><div class="kpi-value">${Layout.money(d.pdcInboundHeld - d.pdcOutboundHeld)}</div><div class="text-xs text-gray-400">รับ ${Layout.money(d.pdcInboundHeld)} · จ่าย ${Layout.money(d.pdcOutboundHeld)}</div></div>
+          `;
+          const rows = (d.bands || []).map(b => `<tr>
+            <td>${Layout.esc(b.label)}</td>
+            <td class="text-right text-success">${Layout.money(b.expectedInflow)}</td>
+            <td class="text-right text-danger">${Layout.money(b.expectedOutflow)}</td>
+            <td class="text-right ${b.netCashFlow >= 0 ? 'text-success' : 'text-danger'}">${Layout.money(b.netCashFlow)}</td>
+            <td class="text-right font-bold ${b.projectedBalance < 0 ? 'text-danger' : ''}">${Layout.money(b.projectedBalance)}</td>
+          </tr>`).join('');
+          document.getElementById('forecastTable').innerHTML = `<table class="table"><thead>
+            <tr><th>ช่วงเวลา</th><th class="text-right">เงินเข้า (AR + PDC รับ)</th><th class="text-right">เงินออก (AP + PDC จ่าย)</th><th class="text-right">Net</th><th class="text-right">Projected Balance</th></tr>
+          </thead><tbody>${rows}</tbody></table>`;
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== PDC =====
+      async loadPdcs() {
+        const cid = Layout.getCompanyId();
+        const dir = document.getElementById('pdcDirection').value;
+        const st = document.getElementById('pdcStatus').value;
+        const q = [dir ? `direction=${dir}` : '', st ? `status=${st}` : ''].filter(Boolean).join('&');
+        try {
+          const r = await fetch(`/api/companies/${cid}/post-dated-checks${q ? '?'+q : ''}`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          const d = j.data;
+          document.getElementById('pdcSummary').innerHTML = `
+            <div class="kpi-card"><div class="kpi-label">เช็ครับ Held</div><div class="kpi-value text-success">${Layout.money(d.summary.heldInboundTotal)}</div><div class="text-xs">${d.summary.heldInboundCount} ฉบับ</div></div>
+            <div class="kpi-card"><div class="kpi-label">เช็คจ่าย Held</div><div class="kpi-value text-danger">${Layout.money(d.summary.heldOutboundTotal)}</div><div class="text-xs">${d.summary.heldOutboundCount} ฉบับ</div></div>
+            <div class="kpi-card"><div class="kpi-label">ใกล้ฝาก 7 วัน</div><div class="kpi-value">${d.summary.dueWithin7Days}</div></div>
+            <div class="kpi-card"><div class="kpi-label">รวม Net</div><div class="kpi-value">${Layout.money(d.summary.heldInboundTotal - d.summary.heldOutboundTotal)}</div></div>
+          `;
+          const rows = (d.rows || []).map(p => `<tr>
+            <td><span class="pill pill-${p.direction === 1 ? 'success' : 'warning'}">${p.direction === 1 ? '⬇️ รับ' : '⬆️ จ่าย'}</span></td>
+            <td class="font-semibold">${Layout.esc(p.checkNumber)}</td>
+            <td>${Layout.esc(p.bankName)}</td>
+            <td>${Layout.esc(p.contactName || '-')}</td>
+            <td class="text-right">${Layout.money(p.amount)}</td>
+            <td>${new Date(p.scheduledDepositDate).toLocaleDateString('th-TH')}</td>
+            <td class="${p.daysUntilDeposit < 0 ? 'text-danger' : p.daysUntilDeposit <= 7 ? 'text-warning' : ''}">${p.daysUntilDeposit < 0 ? 'เลย ' + (-p.daysUntilDeposit) + ' วัน' : 'อีก ' + p.daysUntilDeposit + ' วัน'}</td>
+            <td><span class="pill pill-${p.status === 1 ? 'info' : p.status === 2 ? 'warning' : p.status === 3 ? 'success' : 'danger'}">${['','Held','Deposited','Cleared','Dishonored','Cancelled','Returned'][p.status]}</span></td>
+            <td>${p.status === 1 ? `<button class="btn btn-sm btn-primary" onclick="Page.pdcAction('${p.id}','deposit')">📥 ฝาก</button>` :
+                p.status === 2 ? `<button class="btn btn-sm btn-success" onclick="Page.pdcAction('${p.id}','clear')">✓ Clear</button>
+                                  <button class="btn btn-sm btn-danger" onclick="Page.pdcDishonor('${p.id}')">⚠ เด้ง</button>` : ''}</td>
+          </tr>`).join('');
+          document.getElementById('pdcTable').innerHTML = rows ? `<table class="table"><thead><tr><th>ประเภท</th><th>เลขเช็ค</th><th>ธนาคาร</th><th>ผู้ติดต่อ</th><th class="text-right">จำนวน</th><th>วันฝาก</th><th>คงเหลือ</th><th>สถานะ</th><th>การจัดการ</th></tr></thead><tbody>${rows}</tbody></table>`
+            : '<p class="text-center text-gray-400" style="padding:40px">ไม่มีเช็ค</p>';
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      openPdcModal() { Layout.openModal('pdcModal'); },
+      async savePdc() {
+        const cid = Layout.getCompanyId();
+        const body = {
+          direction: parseInt(document.getElementById('mPdcDir').value),
+          checkNumber: document.getElementById('mCheckNo').value.trim(),
+          bankName: document.getElementById('mBank').value.trim(),
+          bankBranch: document.getElementById('mBranch').value.trim() || null,
+          amount: parseFloat(document.getElementById('mAmount').value),
+          checkDate: document.getElementById('mCheckDate').value,
+          issueDate: new Date().toISOString().slice(0,10),
+          scheduledDepositDate: document.getElementById('mDepDate').value || document.getElementById('mCheckDate').value,
+          contactId: document.getElementById('mContact').value || null,
+          notes: document.getElementById('mNotes').value.trim() || null
+        };
+        try {
+          const r = await fetch(`/api/companies/${cid}/post-dated-checks`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message || 'บันทึกแล้ว');
+          Layout.closeModal('pdcModal');
+          this.loadPdcs();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async pdcAction(id, action) {
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await fetch(`/api/companies/${cid}/post-dated-checks/${id}/${action}`, {
+            method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          this.loadPdcs();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async pdcDishonor(id) {
+        const reason = prompt('เหตุผลที่เช็คเด้ง:', 'เงินไม่พอ');
+        if (!reason) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await fetch(`/api/companies/${cid}/post-dated-checks/${id}/dishonor`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason, dishonoredAt: new Date().toISOString() })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          this.loadPdcs();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Cash Advance =====
+      async loadCa() {
+        const cid = Layout.getCompanyId();
+        const st = document.getElementById('caStatus').value;
+        try {
+          // Lazy-load employees if needed
+          if (!this._employees) {
+            const er = await fetch(`/api/companies/${cid}/payroll/employees?pageSize=500`, {
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+            const ej = await er.json();
+            this._employees = ej.data?.items || ej.data || [];
+            document.getElementById('mCaEmp').innerHTML = '<option value="">— เลือก —</option>' +
+              this._employees.map(e => `<option value="${e.id}">${e.employeeCode} ${e.firstNameTh} ${e.lastNameTh}</option>`).join('');
+          }
+          const r = await fetch(`/api/companies/${cid}/cash-advances${st ? '?status='+st : ''}`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          const rows = (j.data || []).map(c => `<tr>
+            <td class="font-semibold">${Layout.esc(c.requestNumber)}</td>
+            <td>${Layout.esc(c.employee.firstNameTh + ' ' + c.employee.lastNameTh)}</td>
+            <td>${Layout.esc(c.purpose)}</td>
+            <td class="text-right">${Layout.money(c.requestedAmount)}</td>
+            <td class="text-right">${c.approvedAmount ? Layout.money(c.approvedAmount) : '-'}</td>
+            <td>${new Date(c.requestDate).toLocaleDateString('th-TH')}</td>
+            <td>${c.clearanceDueDate ? new Date(c.clearanceDueDate).toLocaleDateString('th-TH') : '-'}</td>
+            <td><span class="pill pill-${c.status === 1 ? 'warning' : c.status === 5 || c.status === 6 ? 'success' : c.status === 7 || c.status === 8 ? 'danger' : 'info'}">${['','รออนุมัติ','อนุมัติแล้ว','จ่ายแล้ว','เลยกำหนด','เคลียร์แล้ว','คืนเงิน','ปฏิเสธ','ยกเลิก'][c.status]}</span>${c.overdue ? ' 🔴' : ''}</td>
+            <td>
+              ${c.status === 1 ? `<button class="btn btn-sm btn-success" onclick="Page.caAction('${c.id}','approve')">✓ อนุมัติ</button>
+                                   <button class="btn btn-sm btn-danger" onclick="Page.caAction('${c.id}','reject')">✗</button>` : ''}
+              ${c.status === 2 ? `<button class="btn btn-sm btn-primary" onclick="Page.caAction('${c.id}','disburse')">💸 จ่าย</button>` : ''}
+              ${c.status === 3 ? `<button class="btn btn-sm btn-primary" onclick="Page.caAction('${c.id}','clear')">📝 เคลียร์</button>` : ''}
+            </td>
+          </tr>`).join('');
+          document.getElementById('caTable').innerHTML = rows ? `<table class="table"><thead><tr><th>เลขที่</th><th>พนักงาน</th><th>วัตถุประสงค์</th><th class="text-right">ขอ</th><th class="text-right">อนุมัติ</th><th>วันขอ</th><th>กำหนด clear</th><th>สถานะ</th><th>การจัดการ</th></tr></thead><tbody>${rows}</tbody></table>`
+            : '<p class="text-center text-gray-400" style="padding:40px">ไม่มีรายการ</p>';
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      openCaModal() { Layout.openModal('caModal'); },
+      async saveCa() {
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await fetch(`/api/companies/${cid}/cash-advances`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              employeeId: document.getElementById('mCaEmp').value,
+              requestedAmount: parseFloat(document.getElementById('mCaAmount').value),
+              purpose: document.getElementById('mCaPurpose').value.trim(),
+              requestDate: new Date().toISOString()
+            })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          Layout.closeModal('caModal');
+          this.loadCa();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async caAction(id, action) {
+        const cid = Layout.getCompanyId();
+        let body = null;
+        if (action === 'approve') {
+          const amt = prompt('จำนวนเงินที่อนุมัติ (บาท):');
+          if (!amt) return;
+          body = { approvedAmount: parseFloat(amt), note: prompt('หมายเหตุ:') || null };
+        } else if (action === 'reject') {
+          const reason = prompt('เหตุผลที่ปฏิเสธ:');
+          if (!reason) return;
+          return this._caRejectQs(id, reason);
+        } else if (action === 'disburse') {
+          const days = parseInt(prompt('ระยะเวลาให้ clear (วัน):', '14')) || 14;
+          body = { disburseDate: new Date().toISOString(), clearanceDays: days, bankAccountId: null };
+        } else if (action === 'clear') {
+          const cleared = parseFloat(prompt('ยอดที่ใช้จ่ายจริง (บาท):'));
+          if (isNaN(cleared)) return;
+          const refund = parseFloat(prompt('ยอดเงินคืน (บาท):', '0')) || 0;
+          body = { clearedAmount: cleared, refundAmount: refund, documentIds: null };
+        }
+        try {
+          const r = await fetch(`/api/companies/${cid}/cash-advances/${id}/${action}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          this.loadCa();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async _caRejectQs(id, reason) {
+        const cid = Layout.getCompanyId();
+        const r = await fetch(`/api/companies/${cid}/cash-advances/${id}/reject?reason=${encodeURIComponent(reason)}`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        const j = await r.json();
+        Layout.toast(j.message);
+        this.loadCa();
+      },
+      async loadCaOverdue() {
+        const cid = Layout.getCompanyId();
+        const r = await fetch(`/api/companies/${cid}/cash-advances/overdue`, {
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+        const j = await r.json();
+        if (!j.success) return;
+        alert(`พบรายการเลยกำหนดเคลียร์ ${j.data.count} รายการ รวม ${Layout.money(j.data.totalAmount)} บาท`);
+      },
+
+      // ===== Bulk Vendor Pay =====
+      async loadVendorList() {
+        const cid = Layout.getCompanyId();
+        const r = await fetch(`/api/companies/${cid}/document/contacts?isSupplier=true&pageSize=500`, {
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+        const j = await r.json();
+        const items = j.data?.items || j.data || [];
+        document.getElementById('vendorSelect').innerHTML = '<option value="">— เลือก vendor —</option>' +
+          items.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
+      },
+      async loadVendorOutstanding() {
+        const cid = Layout.getCompanyId();
+        const vid = document.getElementById('vendorSelect').value;
+        if (!vid) return;
+        try {
+          const r = await fetch(`/api/companies/${cid}/vendor-payment/contact/${vid}/outstanding`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          const d = j.data;
+          const rows = (d.docs || []).map(doc => `<tr>
+            <td><input type="checkbox" class="bulkPayCheck" data-id="${doc.id}" data-amount="${doc.balanceDue}"></td>
+            <td>${Layout.esc(doc.documentNumber)}</td>
+            <td>${doc.documentType}</td>
+            <td>${new Date(doc.documentDate).toLocaleDateString('th-TH')}</td>
+            <td>${doc.dueDate ? new Date(doc.dueDate).toLocaleDateString('th-TH') : '-'}</td>
+            <td class="text-right">${Layout.money(doc.totalAmount)}</td>
+            <td class="text-right text-danger font-semibold">${Layout.money(doc.balanceDue)}</td>
+            <td>${doc.agingDays > 0 ? doc.agingDays + ' วัน' : '-'}</td>
+          </tr>`).join('');
+          document.getElementById('vendorOutstandingTable').innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <div><strong>${d.count} บิลค้าง · รวม ${Layout.money(d.totalDue)} บาท · WHT ${Layout.money(d.totalWht)}</strong></div>
+              <button class="btn btn-primary" onclick="Page.bulkPay()">📑 จ่ายรวม</button>
+            </div>
+            <table class="table"><thead><tr><th><input type="checkbox" onchange="document.querySelectorAll('.bulkPayCheck').forEach(c=>c.checked=this.checked)"></th><th>เลขบิล</th><th>ประเภท</th><th>วันที่</th><th>ครบกำหนด</th><th class="text-right">ยอดรวม</th><th class="text-right">คงค้าง</th><th>อายุ</th></tr></thead><tbody>${rows}</tbody></table>`;
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async bulkPay() {
+        const ids = Array.from(document.querySelectorAll('.bulkPayCheck:checked')).map(c => c.dataset.id);
+        if (ids.length === 0) { Layout.toast('เลือกบิลที่จะจ่าย', 'error'); return; }
+        if (!confirm(`สร้างใบสำคัญจ่ายตัด ${ids.length} บิล?`)) return;
+        const cid = Layout.getCompanyId();
+        const vid = document.getElementById('vendorSelect').value;
+        try {
+          const r = await fetch(`/api/companies/${cid}/vendor-payment/contact/${vid}/pay-bulk`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ documentIds: ids, payDate: new Date().toISOString(), reference: 'จ่ายรวม' })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          this.loadVendorOutstanding();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Customer Statement =====
+      async loadStatement() {
+        const cid = Layout.getCompanyId();
+        const ctc = document.getElementById('stmtContact').value;
+        const side = document.getElementById('stmtSide').value;
+        const from = document.getElementById('stmtFrom').value;
+        const to = document.getElementById('stmtTo').value;
+        if (!ctc) { Layout.toast('เลือกผู้ติดต่อ', 'error'); return; }
+        try {
+          const r = await fetch(`/api/companies/${cid}/statements/contact/${ctc}?fromDate=${from}&toDate=${to}&side=${side}`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          const s = j.data;
+          const rows = (s.lines || []).map(l => `<tr>
+            <td>${new Date(l.date).toLocaleDateString('th-TH')}</td>
+            <td>${Layout.esc(l.documentNumber)}</td>
+            <td>${Layout.esc(l.description)}</td>
+            <td>${l.dueDate ? new Date(l.dueDate).toLocaleDateString('th-TH') : '-'}</td>
+            <td class="text-right">${l.debit > 0 ? Layout.money(l.debit) : ''}</td>
+            <td class="text-right">${l.credit > 0 ? Layout.money(l.credit) : ''}</td>
+            <td class="text-right font-bold">${Layout.money(l.runningBalance)}</td>
+          </tr>`).join('');
+          document.getElementById('statementView').innerHTML = `
+            <h3 style="margin:0 0 4px">${Layout.esc(s.contactName)}</h3>
+            ${s.taxId ? `<div class="text-sm text-gray-400">เลขผู้เสียภาษี: ${s.taxId}</div>` : ''}
+            <div class="text-sm text-gray-400" style="margin-bottom:12px">${s.fromDate.slice(0,10)} → ${s.toDate.slice(0,10)}</div>
+            <div class="grid grid-3 gap-4" style="margin-bottom:16px">
+              <div class="kpi-card"><div class="kpi-label">ยอดยกมา</div><div class="kpi-value">${Layout.money(s.openingBalance)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">รายการในช่วง</div><div class="kpi-value text-xs">Dr ${Layout.money(s.totalDebit)} / Cr ${Layout.money(s.totalCredit)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ยอดคงเหลือ</div><div class="kpi-value text-danger">${Layout.money(s.closingBalance)}</div></div>
+            </div>
+            <table class="table"><thead><tr><th>วันที่</th><th>เลขที่</th><th>รายละเอียด</th><th>ครบกำหนด</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th class="text-right">คงเหลือ</th></tr></thead>
+              <tbody><tr style="background:#f8fafc"><td colspan="6">ยอดยกมา</td><td class="text-right font-bold">${Layout.money(s.openingBalance)}</td></tr>${rows}</tbody>
+              <tfoot><tr style="background:#f1f5f9"><td colspan="4" class="font-bold">รวม</td><td class="text-right font-bold">${Layout.money(s.totalDebit)}</td><td class="text-right font-bold">${Layout.money(s.totalCredit)}</td><td class="text-right font-bold">${Layout.money(s.closingBalance)}</td></tr></tfoot>
+            </table>
+            <div style="margin-top:12px;padding:12px;background:#fff7ed;border-radius:6px;font-size:13px">
+              <strong>Aging:</strong> ปัจจุบัน ${Layout.money(s.current)} · 1-30 ${Layout.money(s.d1to30)} · 31-60 ${Layout.money(s.d31to60)} · 61-90 ${Layout.money(s.d61to90)} · &gt;90 <span class="text-danger">${Layout.money(s.over90)}</span>
+            </div>`;
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async exportStatement() {
+        const cid = Layout.getCompanyId();
+        const ctc = document.getElementById('stmtContact').value;
+        const side = document.getElementById('stmtSide').value;
+        const from = document.getElementById('stmtFrom').value;
+        const to = document.getElementById('stmtTo').value;
+        if (!ctc) { Layout.toast('เลือกผู้ติดต่อ', 'error'); return; }
+        window.location.href = `/api/companies/${cid}/statements/contact/${ctc}/export?fromDate=${from}&toDate=${to}&side=${side}`;
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

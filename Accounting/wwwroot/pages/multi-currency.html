@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สกุลเงินต่างประเทศ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('currencies')">สกุลเงิน</button>
+      <button class="tab" onclick="Page.switchTab('rates')">อัตราแลกเปลี่ยน</button>
+      <button class="tab" onclick="Page.switchTab('converter')">แปลงสกุลเงิน</button>
+    </div>
+
+    <!-- Currencies Tab -->
+    <div id="tab-currencies">
+      <div class="page-header">
+        <div><h2 class="page-title">สกุลเงินที่ใช้งาน</h2><p class="page-subtitle">จัดการสกุลเงินในระบบ</p></div>
+        <button class="btn btn-primary" onclick="Page.openAddCurrency()">+ เพิ่มสกุลเงิน</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th>สัญลักษณ์</th><th class="text-right">อัตราล่าสุด (ต่อ THB)</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="currBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Exchange Rates Tab -->
+    <div id="tab-rates" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">อัตราแลกเปลี่ยน</h2><p class="page-subtitle">ประวัติอัตราแลกเปลี่ยน</p></div>
+        <button class="btn btn-primary" onclick="Page.openAddRate()">+ เพิ่มอัตราแลกเปลี่ยน</button>
+      </div>
+      <div class="toolbar">
+        <select class="filter-select" id="rateFrom" onchange="Page.loadRates()"><option value="">ทุกสกุลเงิน</option></select>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th data-i18n="common.date">วันที่</th><th>จากสกุลเงิน</th><th>เป็นสกุลเงิน</th><th class="text-right">อัตรา</th><th>แหล่งข้อมูล</th></tr></thead>
+          <tbody id="rateBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Converter Tab -->
+    <div id="tab-converter" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">แปลงสกุลเงิน</h2><p class="page-subtitle">คำนวณอัตราแลกเปลี่ยนตามอัตราล่าสุดในระบบ</p></div>
+      </div>
+      <div class="card" style="padding:32px;max-width:500px">
+        <div class="form-group"><label class="form-label" data-i18n="common.amount">จำนวนเงิน</label><input type="number" class="form-input" id="convAmount" value="1000" step="0.01" oninput="Page.convert()"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">จาก</label><select class="form-select" id="convFrom" onchange="Page.convert()"></select></div>
+          <div class="form-group" style="display:flex;align-items:end;justify-content:center;max-width:60px">
+            <button class="btn btn-secondary btn-sm" onclick="Page.swapCurrency()" style="font-size:18px">⇄</button>
+          </div>
+          <div class="form-group"><label class="form-label">เป็น</label><select class="form-select" id="convTo" onchange="Page.convert()"></select></div>
+        </div>
+        <div id="convResult" style="text-align:center;padding:24px;background:var(--gray-50);border-radius:8px;margin-top:16px">
+          <div class="text-xs text-gray-500">ผลลัพธ์</div>
+          <div class="text-2xl font-bold text-primary" id="convResultAmount">-</div>
+          <div class="text-xs text-gray-400" id="convRate"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Currency Modal -->
+    <div class="modal-overlay" id="currModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มสกุลเงิน</h3><button class="modal-close" onclick="Layout.closeModal('currModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">รหัสสกุลเงิน (ISO 4217) *</label>
+            <select class="form-select" id="newCurrCode">
+              <option value="USD">USD - ดอลลาร์สหรัฐ</option>
+              <option value="EUR">EUR - ยูโร</option>
+              <option value="GBP">GBP - ปอนด์</option>
+              <option value="JPY">JPY - เยน</option>
+              <option value="CNY">CNY - หยวน</option>
+              <option value="SGD">SGD - ดอลลาร์สิงคโปร์</option>
+              <option value="MYR">MYR - ริงกิต</option>
+              <option value="KRW">KRW - วอน</option>
+              <option value="AUD">AUD - ดอลลาร์ออสเตรเลีย</option>
+              <option value="HKD">HKD - ดอลลาร์ฮ่องกง</option>
+              <option value="CHF">CHF - ฟรังก์สวิส</option>
+              <option value="TWD">TWD - ดอลลาร์ไต้หวัน</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">อัตราแลกเปลี่ยนเริ่มต้น (1 หน่วย = ? THB)</label><input type="number" class="form-input" id="newCurrRate" step="0.0001" placeholder="เช่น 34.50"></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('currModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveCurrency()" data-i18n="common.add">เพิ่ม</button></div>
+      </div>
+    </div>
+
+    <!-- Add Rate Modal -->
+    <div class="modal-overlay" id="rateModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มอัตราแลกเปลี่ยน</h3><button class="modal-close" onclick="Layout.closeModal('rateModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จากสกุลเงิน</label><select class="form-select" id="addRateFrom"></select></div>
+            <div class="form-group"><label class="form-label">เป็นสกุลเงิน</label><select class="form-select" id="addRateTo"></select></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">อัตรา *</label><input type="number" class="form-input" id="addRateValue" step="0.000001"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.date">วันที่</label><input type="date" class="form-input" id="addRateDate"></div>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('rateModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRate()" data-i18n="common.save">บันทึก</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  currencies: [],
+
+  init() {
+    if (!Layout.init('multi-currency')) return;
+    Layout.setTitle('สกุลเงินต่างประเทศ');
+    this.loadCurrencies();
+  },
+
+  switchTab(tab) {
+    ['currencies','rates','converter'].forEach(t => {
+      const el = document.getElementById('tab-'+t);
+      if (el) el.style.display = t === tab ? '' : 'none';
+    });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['currencies','rates','converter'][i] === tab));
+    if (tab === 'rates') this.loadRates();
+    if (tab === 'converter') this.populateConverterSelects();
+  },
+
+  async loadCurrencies() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getCurrencies();
+      const items = res.data?.items || res.data || [];
+      this.currencies = items;
+      // backend ไม่มี latestRate ใน CompanyCurrencyResponse — ดึงจากตารางอัตราแลกเปลี่ยนล่าสุดแทน
+      let latestRates = {};
+      try {
+        const rateRes = await api.getExchangeRates('');
+        const rates = rateRes.data?.items || rateRes.data || [];
+        for (const r of rates) {
+          const key = r.fromCurrency;
+          if (!latestRates[key] || new Date(r.effectiveDate) > new Date(latestRates[key].effectiveDate)) latestRates[key] = r;
+        }
+      } catch (e) { /* ไม่มีอัตรา — แสดง '-' */ }
+      const tbody = document.getElementById('currBody');
+      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสกุลเงิน กดเพิ่มสกุลเงินเพื่อเริ่มต้น</td></tr>'; return; }
+      tbody.innerHTML = items.map(c => `<tr>
+        <td><span class="font-medium">${c.currencyCode || c.code}</span></td>
+        <td>${c.currencyName || c.name || '-'}</td>
+        <td>${c.symbol || '-'}</td>
+        <td class="text-right">${latestRates[c.currencyCode || c.code]?.midRate != null ? latestRates[c.currencyCode || c.code].midRate.toFixed(4) : '-'}</td>
+        <td>${Layout.statusBadge(c.isActive !== false ? 'Active' : 'Inactive')}</td>
+        <td><button class="btn btn-sm btn-secondary" onclick="Page.editCurrency('${c.id}')" data-i18n="common.edit">แก้ไข</button></td>
+      </tr>`).join('');
+
+      // Populate filter selects
+      const rf = document.getElementById('rateFrom');
+      rf.innerHTML = '<option value="">ทุกสกุลเงิน</option>' + items.map(c => `<option value="${c.code||c.currencyCode}">${c.code||c.currencyCode}</option>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openAddCurrency() { Layout.openModal('currModal'); },
+
+  async saveCurrency() {
+    const api = Layout.api(); if (!api) return;
+    const code = document.getElementById('newCurrCode').value;
+    const rate = parseFloat(document.getElementById('newCurrRate').value) || null;
+    try {
+      await api.addCurrency({ currencyCode: code, code, initialRate: rate });
+      Layout.toast('เพิ่มสกุลเงินสำเร็จ');
+      Layout.closeModal('currModal');
+      this.loadCurrencies();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async editCurrency(id) {
+    // Simple toggle active/inactive
+    const api = Layout.api(); if (!api) return;
+    const c = this.currencies.find(x => x.id === id);
+    if (!c) return;
+    try {
+      await api.updateCurrency(id, { isActive: c.isActive === false });
+      Layout.toast('อัพเดตสำเร็จ');
+      this.loadCurrencies();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async loadRates() {
+    const api = Layout.api(); if (!api) return;
+    const from = document.getElementById('rateFrom')?.value || '';
+    try {
+      let q = from ? `?from=${from}` : '';
+      const res = await api.getExchangeRates(q);
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('rateBody');
+      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ไม่มีข้อมูลอัตราแลกเปลี่ยน</td></tr>'; return; }
+      tbody.innerHTML = items.map(r => `<tr>
+        <td>${Layout.date(r.effectiveDate || r.date)}</td>
+        <td>${r.fromCurrency || r.sourceCurrency}</td>
+        <td>${r.toCurrency || r.targetCurrency}</td>
+        <td class="text-right font-medium">${(r.midRate ?? r.buyRate)?.toFixed(4) || '-'}</td>
+        <td>${r.source || 'Manual'}</td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openAddRate() {
+    const items = this.currencies;
+    ['addRateFrom','addRateTo'].forEach(id => {
+      const sel = document.getElementById(id);
+      sel.innerHTML = items.map(c => `<option value="${c.code||c.currencyCode}">${c.code||c.currencyCode}</option>`).join('');
+    });
+    document.getElementById('addRateDate').value = Layout.dateInput(new Date());
+    Layout.openModal('rateModal');
+  },
+
+  async saveRate() {
+    const api = Layout.api(); if (!api) return;
+    const data = {
+      fromCurrency: document.getElementById('addRateFrom').value,
+      toCurrency: document.getElementById('addRateTo').value,
+      rate: parseFloat(document.getElementById('addRateValue').value),
+      effectiveDate: document.getElementById('addRateDate').value,
+    };
+    if (!data.rate) { Layout.toast('กรุณากรอกอัตรา', 'error'); return; }
+    try {
+      await api.addExchangeRate(data);
+      Layout.toast('เพิ่มอัตราแลกเปลี่ยนสำเร็จ');
+      Layout.closeModal('rateModal');
+      this.loadRates();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  populateConverterSelects() {
+    const items = this.currencies;
+    const allCodes = [{code:'THB',name:'บาท'}, ...items.map(c => ({code:c.code||c.currencyCode,name:c.name||c.currencyName||''}))];
+    ['convFrom','convTo'].forEach((id, i) => {
+      const sel = document.getElementById(id);
+      sel.innerHTML = allCodes.map(c => `<option value="${c.code}" ${i===0 && c.code==='USD' ? 'selected' : ''} ${i===1 && c.code==='THB' ? 'selected' : ''}>${c.code} ${c.name ? '- '+c.name : ''}</option>`).join('');
+    });
+    this.convert();
+  },
+
+  swapCurrency() {
+    const from = document.getElementById('convFrom');
+    const to = document.getElementById('convTo');
+    const tmp = from.value;
+    from.value = to.value;
+    to.value = tmp;
+    this.convert();
+  },
+
+  async convert() {
+    const api = Layout.api(); if (!api) return;
+    const amount = parseFloat(document.getElementById('convAmount')?.value) || 0;
+    const from = document.getElementById('convFrom')?.value;
+    const to = document.getElementById('convTo')?.value;
+    if (!from || !to || !amount) return;
+    try {
+      const res = await api.getLatestRate(from, to);
+      const rate = res.data?.rate || res.data?.exchangeRate || 0;
+      const result = amount * rate;
+      document.getElementById('convResultAmount').textContent = result.toLocaleString('th-TH', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ' + to;
+      document.getElementById('convRate').textContent = `1 ${from} = ${rate.toFixed(4)} ${to}`;
+    } catch (err) {
+      document.getElementById('convResultAmount').textContent = 'ไม่พบอัตราแลกเปลี่ยน';
+      document.getElementById('convRate').textContent = '';
+    }
+  },
+};
+
+Page.init();
+  </script>
+</body>
+</html>

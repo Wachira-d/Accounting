@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>งานเบื้องหลัง - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .job-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:16px }
+    .job { border:1px solid #e2e8f0; border-radius:12px; padding:16px; background:#fff }
+    .job h3 { margin:0 0 4px; font-size:15px }
+    .job .interval { display:inline-block; background:#ede9fe; color:#6d28d9; font-size:11px; font-weight:600; padding:2px 9px; border-radius:9999px }
+    .job p { font-size:13px; color:#475569; margin:8px 0 12px; line-height:1.55 }
+    .job .auto { font-size:12px; color:#16a34a; font-weight:600 }
+    .trigger-box { margin-top:10px; padding-top:10px; border-top:1px dashed #e2e8f0 }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="info-box">
+      <strong>งานเบื้องหลัง (Background Jobs)</strong> — งานที่ระบบรันอัตโนมัติตามรอบเวลา
+      บางงานสามารถสั่งรันทันทีได้จากปุ่มด้านล่าง (ไม่ต้องรอรอบถัดไป)
+    </div>
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">🛠️ งานเบื้องหลังของระบบ</span></div>
+      <div class="job-grid" id="grid"></div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    const Page = {
+      jobs: [
+        { name:'BackgroundJobService', title:'งานประจำรอบ 15 นาที', interval:'ทุก 15 นาที',
+          desc:'รายการตั้งเวลา (recurring), จดหมายทวงหนี้, เตือนชำระเงิน, escalation การอนุมัติ, ปฏิทินภาษี, sync ธนาคาร, OCR self-correction',
+          triggers:[ { label:'รันรายการตั้งเวลาเดี๋ยวนี้', fn:'processRecurring' } ] },
+        { name:'DocumentAgingBackgroundService', title:'คำนวณอายุเอกสาร', interval:'ทุก 6 ชั่วโมง',
+          desc:'อัปเดต AgingDays ของเอกสารที่อนุมัติแล้วแต่ยังค้างชำระ เพื่อให้รายงานอายุลูกหนี้/เจ้าหนี้แสดงผลเร็ว', triggers:[] },
+        { name:'DepreciationBackgroundService', title:'ค่าเสื่อมราคาประจำเดือน', interval:'ทุก 24 ชั่วโมง',
+          desc:'ตรวจและโพสต์ JE ค่าเสื่อมราคาสินทรัพย์ถาวรของเดือนที่แล้วอัตโนมัติ (idempotent — ไม่โพสต์ซ้ำ)', triggers:[] },
+        { name:'OcrMlBackgroundService', title:'ML ประมวลผล OCR กลางคืน', interval:'ทุก 24 ชั่วโมง',
+          desc:'รวมองค์ความรู้ OCR ข้าม tenant + ขุด association rule เพื่อเพิ่มความแม่นยำการอ่านเอกสาร', triggers:[] },
+        { name:'AbandonedCartService', title:'ตะกร้าค้าง (E-commerce)', interval:'ทุก 60 นาที',
+          desc:'ตั้งสถานะตะกร้าที่ค้างเกิน 3 ชม. + ส่งอีเมลกระตุ้น และล้างตะกร้า guest ที่หมดอายุเกิน 30 วัน', triggers:[] },
+      ],
+      // Extra system maintenance triggers not tied to one hosted service
+      extra: [
+        { label:'ประมวลผล Trial ที่หมดอายุ', fn:'processExpiredTrials' },
+        { label:'ประมวลผล Subscription ที่หมดอายุ', fn:'processExpiredSubs' },
+        { label:'ส่งการแจ้งเตือน Subscription', fn:'processNotifications' },
+      ],
+      init() { AdminLayout.init('background-jobs'); this.render(); },
+      render() {
+        const grid = document.getElementById('grid');
+        let html = this.jobs.map(j => `
+          <div class="job">
+            <h3>${j.title}</h3>
+            <span class="interval">⏱ ${j.interval}</span>
+            <p>${j.desc}</p>
+            <div class="auto">✓ รันอัตโนมัติ</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px">${j.name}</div>
+            ${j.triggers.length ? `<div class="trigger-box">${j.triggers.map(t =>
+              `<button class="btn-secondary" style="font-size:12px" onclick="Page.run('${t.fn}',this)">▶ ${t.label}</button>`).join(' ')}</div>` : ''}
+          </div>`).join('');
+        // System maintenance card
+        html += `
+          <div class="job" style="border-color:#c7d2fe;background:#f5f3ff">
+            <h3>🔧 งานบำรุงรักษาระบบ (สั่งเอง)</h3>
+            <p>งานด้าน subscription / trial ที่ปกติ BackgroundJobService จัดการให้ — สั่งรันทันทีได้ที่นี่</p>
+            <div class="trigger-box">
+              ${this.extra.map(t => `<button class="btn-secondary" style="font-size:12px;margin:2px" onclick="Page.run('${t.fn}',this)">▶ ${t.label}</button>`).join('')}
+            </div>
+          </div>`;
+        grid.innerHTML = html;
+      },
+      async run(fn, btn) {
+        const orig = btn.textContent;
+        btn.disabled = true; btn.textContent = '⏳ กำลังรัน...';
+        try {
+          const res = await AdminAPI[fn]();
+          alert(res.message || 'รันงานสำเร็จ');
+        } catch (e) { alert('รันงานไม่สำเร็จ: ' + e.message); }
+        finally { btn.disabled = false; btn.textContent = orig; }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

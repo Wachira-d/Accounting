@@ -1,0 +1,3109 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บัญชีธนาคาร - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">บัญชีธนาคาร</h2><p class="page-subtitle">จัดการบัญชีธนาคารและกระทบยอด</p></div>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="Page.openImport()"
+                data-tour-step="2"
+                data-tour-text="นำเข้า Statement CSV/Excel ของ KBank/SCB/BBL/KTB/BAY/TTB — ระบบ map คอลัมน์ + parse วันที่ + ปี พ.ศ. อัตโนมัติ พร้อมอัปเดตยอดตามธนาคารบนการ์ดบัญชี">นำเข้า Statement</button>
+        <button class="btn btn-secondary" onclick="Page.openGroupReconcile()" title="จับคู่หลายรายการธนาคารกับหลายเอกสารพร้อมหักล้าง (Net-off)">🔗 กลุ่มกระทบยอด</button>
+        <button class="btn btn-secondary" onclick="Page.exportReconciliationReport()" title="ดาวน์โหลดรายงานการกระทบยอดเป็น Excel">📊 ส่งออกรายงาน</button>
+        <button class="btn btn-secondary" onclick="Page.openConnections()">Open Banking</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — เพิ่มบัญชีธนาคาร ผูกกับบัญชีในผังบัญชี (1012) → ใช้สำหรับ reconciliation + statement import">+ เพิ่มบัญชี</button>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <div class="tab active" onclick="Page.setTab('accounts',this)">บัญชีธนาคาร</div>
+      <div class="tab" onclick="Page.setTab('reconcile',this)">กระทบยอด</div>
+      <div class="tab" onclick="Page.setTab('connections',this)">Open Banking</div>
+    </div>
+
+    <!-- Bank Account Cards -->
+    <div id="tabAccounts">
+      <div class="grid grid-3 gap-4" id="bankCards" style="margin-bottom:24px">
+        <div class="card text-center" style="padding:40px"><div class="text-gray-400" data-i18n="common.loading">กำลังโหลด...</div></div>
+      </div>
+
+      <!-- Transactions for selected account -->
+      <div class="card" id="transSection" style="display:none">
+        <div class="card-header">
+          <h3 class="card-title" id="transTitle">รายการเคลื่อนไหว</h3>
+          <div class="flex gap-2">
+            <button class="btn btn-sm btn-secondary" onclick="Page.openAddTrans()">+ เพิ่มรายการ</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()">จับคู่อัตโนมัติ</button>
+          </div>
+        </div>
+        <!-- Search/Filter bar -->
+        <div class="toolbar" style="padding:12px 16px;border-bottom:1px solid var(--border)">
+          <input type="text" class="search-input" placeholder="ค้นหาคำอธิบาย..." id="transSearch" oninput="Page.filterTrans()" style="max-width:200px">
+          <select class="filter-select" id="transTypeFilter" onchange="Page.filterTrans()">
+            <option value="">ทุกประเภท</option>
+            <option value="Deposit">ฝาก</option>
+            <option value="Withdrawal">ถอน</option>
+            <option value="Transfer">โอน</option>
+            <option value="Fee">ค่าธรรมเนียม</option>
+            <option value="Interest">ดอกเบี้ย</option>
+          </select>
+          <select class="filter-select" id="transStatusFilter" onchange="Page.filterTrans()">
+            <option value="">ทุกสถานะ</option>
+            <option value="Unmatched">รอจับคู่</option>
+            <option value="Matched">จับคู่แล้ว</option>
+            <option value="Excluded">ไม่รวม</option>
+          </select>
+          <input type="date" class="form-input" id="transFrom" style="width:140px" onchange="Page.loadTransactions()">
+          <span class="text-gray-400">ถึง</span>
+          <input type="date" class="form-input" id="transTo" style="width:140px" onchange="Page.loadTransactions()">
+          <button class="btn btn-sm btn-outline" onclick="Page.openBulkDeleteModal()" style="margin-left:auto;color:var(--danger);border-color:var(--danger)">🗑️ ลบหลายรายการ / ตามช่วงวันที่</button>
+        </div>
+        <div id="bulkActionBar" style="display:none;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-bottom:8px;align-items:center;gap:12px">
+          <span class="font-medium" id="bulkSelectedCount">0 รายการที่เลือก</span>
+          <button class="btn btn-sm btn-danger" onclick="Page.deleteSelectedTransactions()">ลบที่เลือกทั้งหมด</button>
+          <button class="btn btn-sm btn-ghost" onclick="Page.clearTransSelection()" data-i18n="common.cancel">ยกเลิก</button>
+        </div>
+        <!-- Mismatched-match warning (legacy bad matches) -->
+        <div id="matchIssuesBar" style="display:none;margin:0 0 10px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;align-items:center;gap:12px">
+          <span style="font-weight:600;color:#b91c1c" id="matchIssuesText">⚠️ พบรายการที่จับคู่แล้วแต่ยอดไม่ตรง</span>
+          <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="Page.showMatchIssues()">ดูรายการที่ยอดไม่ตรง</button>
+        </div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr>
+              <th style="width:30px"><input type="checkbox" id="transSelectAll" onchange="Page.toggleSelectAllTrans(this.checked)"></th>
+              <th data-i18n="common.date">วันที่</th><th data-i18n="common.type">ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ยอดคงเหลือ</th><th data-i18n="common.description">คำอธิบาย</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th>
+            </tr></thead>
+            <tbody id="transBody"><tr><td colspan="8" class="text-center text-gray-400">เลือกบัญชีด้านบน</td></tr></tbody>
+          </table>
+        </div>
+        <div id="transPagination" style="padding:12px 16px"></div>
+      </div>
+
+      <!-- Mismatched-matches list -->
+      <div id="matchIssuesModal" class="modal-overlay">
+        <div class="modal" style="max-width:760px;width:94%;max-height:86vh;overflow:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3 style="margin:0;color:#b91c1c">⚠️ รายการที่จับคู่แล้วแต่ยอดไม่ตรง</h3>
+            <button class="btn btn-sm btn-ghost" onclick="Layout.closeModal('matchIssuesModal')">✕</button>
+          </div>
+          <div id="matchIssuesBody" style="margin-top:12px"></div>
+        </div>
+      </div>
+
+      <!-- Per-row matched-counterpart popup -->
+      <div id="matchInfoModal" class="modal-overlay">
+        <div class="modal" style="max-width:480px;width:92%">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3 style="margin:0">🔍 รายการนี้จับคู่กับ</h3>
+            <button class="btn btn-sm btn-ghost" onclick="Page.closeMatchInfo()">✕</button>
+          </div>
+          <div id="matchInfoBody" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reconciliation Tab -->
+    <div id="tabReconcile" style="display:none">
+      <!-- Single consolidated header — 4 key metrics + bank context.
+           Replaces the previous 7-card / 3-row layout that made the
+           operator scan too much before getting to the action.  -->
+      <div class="card" style="margin-bottom:16px;padding:18px 20px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+          <div>
+            <div style="font-size:12px;color:#64748b">บัญชีที่กำลังกระทบยอด</div>
+            <div style="font-weight:700;font-size:16px" id="reconAccountName">ยังไม่ได้เลือก</div>
+            <div style="font-size:11px;color:#94a3b8" id="reconAccountHint">เลือกจากแท็บ "บัญชีธนาคาร" ก่อน</div>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">ยอดตาม Statement</div>
+              <div style="font-weight:700;font-size:18px" id="reconBankBal">—</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">ยอดตามบัญชี (GL)</div>
+              <div style="font-weight:700;font-size:18px" id="reconBookBal">—</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">ผลต่าง</div>
+              <div style="font-weight:700;font-size:18px;color:#dc2626" id="reconDiff">—</div>
+            </div>
+            <div style="text-align:right;border-left:1px solid #e2e8f0;padding-left:16px">
+              <div style="font-size:11px;color:#94a3b8">ยอดเอกสาร (รับ−จ่าย)</div>
+              <div style="font-weight:700;font-size:18px" id="reconDocBal">—</div>
+              <div style="font-size:10px;color:#94a3b8">
+                รับ <span class="text-success" id="reconReceipts">—</span> ·
+                จ่าย <span class="text-danger" id="reconPVs">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Match status pills — replaces the 4 individual cards. -->
+        <div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:12px;border-top:1px solid #f1f5f9">
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f1f5f9;border-radius:999px;font-size:13px">
+            รายการทั้งหมด <b id="reconTotal">0</b>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#dcfce7;color:#166534;border-radius:999px;font-size:13px">
+            ✓ จับคู่แล้ว <b id="reconMatched">0</b>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#fef3c7;color:#92400e;border-radius:999px;font-size:13px">
+            ⏳ รอจับคู่ <b id="reconCount">0</b>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f1f5f9;color:#64748b;border-radius:999px;font-size:13px">
+            🚫 ไม่รวม <b id="reconExcluded">0</b>
+          </div>
+          <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="Page.openReconDetail()"
+            title="ดูว่าแต่ละรายการจับคู่กับเอกสาร/JE อะไร และทำไมยอดธนาคารกับ GL ยังต่างกัน">
+            🔍 ดูรายการที่จับคู่ / อธิบายผลต่าง
+          </button>
+        </div>
+      </div>
+
+      <!-- Matched detail + difference explainer modal -->
+      <div id="reconDetailModal" class="modal-overlay">
+        <div class="modal" style="max-width:880px;width:94%;max-height:88vh;overflow:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3 style="margin:0">🔍 รายการที่จับคู่ & ที่มาของผลต่าง</h3>
+            <button class="btn btn-sm btn-ghost" onclick="Page.closeReconDetail()">✕</button>
+          </div>
+          <div id="reconDetailBody" style="margin-top:12px">
+            <div style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Match Controls -->
+      <div class="card" style="margin-bottom:16px;border:1px solid #e0e7ff;background:linear-gradient(180deg,#fafbff,#ffffff)">
+        <div class="card-header" style="padding:14px 18px">
+          <div>
+            <h3 class="card-title" style="margin:0">🧠 กระทบยอดอัตโนมัติ</h3>
+            <p style="font-size:11px;color:#64748b;margin:2px 0 0">AI จะดูเอกสาร/JE/Payment ในช่วงเดือนที่เลือก (±5 วัน) + ย้อนหลัง 90 วันสำหรับเอกสารค้างชำระ</p>
+          </div>
+          <div class="flex gap-2" style="align-items:center;flex-wrap:wrap">
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569">
+              เดือน
+              <input type="month" id="aiMatchMonth" class="form-input"
+                     style="width:auto;font-size:13px;padding:4px 8px"
+                     title="เลือกเดือนที่จะให้ AI กระทบยอด">
+            </label>
+            <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()" title="จับคู่ตามกฎตายตัว (ยอด+วันที่+อ้างอิง) — เร็ว ไม่ใช้ AI">⚡ จับคู่พื้นฐาน</button>
+            <button class="btn btn-sm" onclick="Page.runAiMatch()" id="btnAiMatch"
+                    style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff"
+                    title="Heuristic + local model — ไม่ส่งไป provider">🤖 AI (local)</button>
+            <button class="btn btn-sm" onclick="Page.runBulkAiMatch()" id="btnBulkAi"
+                    title="ส่งทุก txn ที่ค้าง + เอกสารเปิด + JE ของเดือนนี้ไป DeepSeek match ทีเดียว"
+                    style="background:linear-gradient(135deg,#ec4899,#f43f5e);color:#fff">🧠 AI match ทั้งเดือน</button>
+          </div>
+        </div>
+        <div id="aiMatchStatus" style="padding:0 18px 14px;display:none">
+          <div style="background:var(--bg-secondary);border-radius:8px;padding:12px 16px">
+            <div class="flex items-center gap-2" style="margin-bottom:8px">
+              <div style="width:8px;height:8px;border-radius:50%;background:var(--primary);animation:pulse 1.5s infinite" id="aiDot"></div>
+              <span class="font-medium" id="aiStatusText">กำลังวิเคราะห์...</span>
+            </div>
+            <div class="text-xs text-gray-500" id="aiStatusDetail"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Match Suggestions -->
+      <div class="card" id="aiSuggestionsCard" style="display:none;margin-bottom:16px">
+        <div class="card-header">
+          <h3 class="card-title">ผลการวิเคราะห์ AI</h3>
+          <div class="flex gap-2">
+            <span class="badge badge-primary" id="aiSugCount">0 คู่</span>
+            <button class="btn btn-sm btn-success" onclick="Page.acceptAllSuggestions()">ยืนยันทั้งหมด</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.dismissSuggestions()" data-i18n="common.close">ปิด</button>
+          </div>
+        </div>
+        <div id="aiSuggestionsList" style="max-height:500px;overflow-y:auto"></div>
+      </div>
+
+      <!-- Cash vs Bank Warnings -->
+      <div class="card" id="discrepancyCard" style="display:none;margin-bottom:16px;border-left:4px solid var(--warning)">
+        <div class="card-header">
+          <h3 class="card-title">ตรวจพบ: รายการเงินสดที่อาจเป็นรายการธนาคาร</h3>
+          <span class="badge badge-warning" id="discrepancyCount">0</span>
+        </div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th data-i18n="common.date">วันที่</th><th>เลขที่บันทึก</th><th class="text-right">จำนวน</th><th data-i18n="common.description">คำอธิบาย</th><th>ลงบัญชีเป็น</th><th>แนะนำ</th></tr></thead>
+            <tbody id="discrepancyBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Warnings -->
+      <div class="card" id="warningCard" style="display:none;margin-bottom:16px;border-left:4px solid var(--danger)">
+        <div class="card-header">
+          <h3 class="card-title">คำเตือน</h3>
+          <span class="badge badge-danger" id="warningCount">0</span>
+        </div>
+        <div id="warningList" style="padding:0 16px 12px"></div>
+      </div>
+
+      <!-- Comparison View: Bank ↔ Accounting -->
+      <div class="card" style="overflow:hidden">
+        <div class="card-header">
+          <h3 class="card-title">🔄 เปรียบเทียบยอด: ธนาคาร ↔ บัญชี</h3>
+          <div style="font-size:12px;color:#64748b">คลิกรายการด้านซ้าย → ดูรายการบัญชีที่ตรงกัน → จับคู่</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;min-height:420px;border-top:1px solid var(--border)">
+          <!-- Left: Bank Transactions -->
+          <div style="border-right:2px solid var(--border);display:flex;flex-direction:column">
+            <div style="padding:10px 14px;background:linear-gradient(135deg,#eef2ff,#f8fafc);border-bottom:1px solid var(--border);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between">
+              <span>🏦 รายการธนาคาร (รอจับคู่)</span>
+              <span class="badge badge-warning" id="compBankCount">0</span>
+            </div>
+            <div id="compBankList" style="flex:1;overflow-y:auto;max-height:550px">
+              <div style="text-align:center;color:#94a3b8;padding:40px">เลือกบัญชีจากแท็บ "บัญชีธนาคาร" ก่อน</div>
+            </div>
+          </div>
+          <!-- Right: Match Candidates -->
+          <div style="display:flex;flex-direction:column">
+            <div style="padding:10px 14px;background:linear-gradient(135deg,#f0fdf4,#f8fafc);border-bottom:1px solid var(--border);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between">
+              <span>📒 รายการบัญชีที่ตรงกัน</span>
+              <span class="badge badge-primary" id="compCandCount">-</span>
+            </div>
+            <div id="compCandidateList" style="flex:1;overflow-y:auto;max-height:550px">
+              <div style="text-align:center;color:#94a3b8;padding:40px">
+                <div style="font-size:28px;margin-bottom:8px">👈</div>
+                คลิกรายการธนาคารด้านซ้าย<br>เพื่อค้นหารายการที่ตรงกัน
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Reconciliation Groups history -->
+      <div class="card" style="margin-top:20px">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <h3>📚 ประวัติการกระทบยอดแบบกลุ่ม (M:N)</h3>
+          <button class="btn btn-sm btn-secondary" onclick="GroupHistory.reload()">🔄 รีเฟรช</button>
+        </div>
+        <div id="reconGroupHistory" style="padding:0">
+          <div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">เลือกบัญชีจากรายการบัญชีก่อนเพื่อดูประวัติกลุ่มกระทบยอด</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Open Banking Tab -->
+    <div id="tabConnections" style="display:none">
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">การเชื่อมต่อ Open Banking</h3>
+          <button class="btn btn-sm btn-primary" onclick="Page.openCreateConnection()">+ เพิ่มการเชื่อมต่อ</button>
+        </div>
+        <div class="table-container" style="border:none">
+          <table class="table">
+            <thead><tr><th>ธนาคาร</th><th>บัญชี</th><th data-i18n="common.status">สถานะ</th><th>ซิงค์ล่าสุด</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+            <tbody id="connBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create/Edit Bank Account Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มบัญชีธนาคาร</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="fId">
+          <div class="form-group"><label class="form-label">ชื่อบัญชี *</label><input type="text" class="form-input" id="fName"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ธนาคาร *</label>
+              <select class="form-select" id="fBank">
+                <option value="กสิกรไทย">ธนาคารกสิกรไทย</option>
+                <option value="กรุงเทพ">ธนาคารกรุงเทพ</option>
+                <option value="ไทยพาณิชย์">ธนาคารไทยพาณิชย์</option>
+                <option value="กรุงไทย">ธนาคารกรุงไทย</option>
+                <option value="กรุงศรี">ธนาคารกรุงศรีอยุธยา</option>
+                <option value="ทหารไทยธนชาต">ธนาคารทหารไทยธนชาต</option>
+                <option value="อื่นๆ">อื่นๆ</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">เลขที่บัญชี *</label><input type="text" class="form-input" id="fAccNum"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภทบัญชี</label>
+              <select class="form-select" id="fAccType"><option value="Savings">ออมทรัพย์</option><option value="Current">กระแสรายวัน</option><option value="Fixed">ฝากประจำ</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">สกุลเงิน</label><input type="text" class="form-input" id="fCurrency" value="THB"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">สาขา</label><input type="text" class="form-input" id="fBranch"></div>
+            <div class="form-group"><label class="form-label" id="fOpeningLabel">ยอดเปิดบัญชี</label><input type="number" class="form-input" id="fOpening" step="0.01" value="0">
+              <div class="text-xs text-gray-400 hidden" id="fOpeningHint">แก้ยอดเปิดบัญชีหลังสร้างไม่ได้ — ใช้ "เพิ่มรายการเคลื่อนไหว" หรือ JE ปรับปรุงแทน</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Diff Explain Modal (งบพิสูจน์ยอดเงินฝากแบบย่อ) -->
+    <div class="modal-overlay" id="diffExplainModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">ทำไมยอดธนาคารกับยอดบัญชีไม่ตรงกัน?</h3><button class="modal-close" onclick="Layout.closeModal('diffExplainModal')">&times;</button></div>
+        <div class="modal-body" id="diffExplainBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('diffExplainModal')" data-i18n="common.close">ปิด</button>
+          <button class="btn btn-primary" id="diffExplainGoBtn">ไปกระทบยอด →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Transaction Modal -->
+    <div class="modal-overlay" id="transModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มรายการเคลื่อนไหว</h3><button class="modal-close" onclick="Layout.closeModal('transModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="tDate"></div>
+            <div class="form-group"><label class="form-label">ประเภท *</label>
+              <select class="form-select" id="tType"><option value="Deposit">ฝาก</option><option value="Withdrawal">ถอน</option><option value="Transfer">โอน</option><option value="Fee">ค่าธรรมเนียม</option><option value="Interest">ดอกเบี้ย</option></select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="tAmount" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ผู้รับ/ผู้จ่าย</label><input type="text" class="form-input" id="tPayee"></div>
+          </div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="tDesc"></div>
+          <div class="form-group"><label class="form-label">เลขอ้างอิง</label><input type="text" class="form-input" id="tRef"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('transModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveTrans()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Statement Modal -->
+    <div class="modal-overlay" id="importModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">นำเข้า Bank Statement</h3><button class="modal-close" onclick="Layout.closeModal('importModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">บัญชีธนาคาร *</label>
+            <select class="form-select" id="impAccount"></select>
+          </div>
+          <div class="form-group"><label class="form-label">รูปแบบไฟล์ *</label>
+            <select class="form-select" id="impFormat">
+              <option value="CSV">CSV (.csv)</option>
+              <option value="EXCEL">Excel (.xlsx)</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">ไฟล์ Statement *</label>
+            <input type="file" class="form-input" id="impFile" accept=".csv,.xlsx,.xls,.txt">
+          </div>
+          <div style="background:#f1f5f9;padding:10px;border-radius:6px;font-size:12px;color:#475569;line-height:1.5">
+            <strong>📌 รูปแบบที่รองรับ:</strong><br>
+            ระบบจะตรวจหาคอลัมน์อัตโนมัติ — ไฟล์ต้องมีหัวคอลัมน์ที่มีคำว่า:<br>
+            • <strong data-i18n="common.date">วันที่</strong> หรือ Date (รองรับ dd/MM/yyyy, MM/dd/yyyy, yyyy-MM-dd, ปี พ.ศ.)<br>
+            • <strong>ฝากเงิน/ถอนเงิน</strong> หรือ Deposit/Withdrawal (หรือคอลัมน์ Amount เดียวที่มีเครื่องหมาย +/-)<br>
+            • <strong>ยอดคงเหลือ</strong> หรือ Balance<br>
+            • (option) เวลา, รายการ, ช่องทาง, รายละเอียด, เลขอ้างอิง<br>
+            ✅ รองรับ Statement จาก KBank, SCB, BBL, KTB, BAY, TTB และอื่นๆ (CSV / Excel .xlsx)<br>
+            ✅ รองรับตัวเลขที่มี comma (5,998.50) และยอดติดลบในวงเล็บ<br>
+            ✅ ตรวจจับรูปแบบวันที่อัตโนมัติ — ป้องกันการสลับ วัน↔เดือน เมื่อใช้ statement แบบ US (MM/DD)<br>
+            ⚠️ CSV ต้องบันทึกเป็น <strong>UTF-8</strong> เพื่อให้แสดงภาษาไทยถูกต้อง
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('importModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.doImport()" data-i18n="common.import">นำเข้า</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bulk Delete By Date Range Modal -->
+    <div class="modal-overlay" id="bulkDeleteModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 class="modal-title" style="color:var(--danger)">🗑️ ลบรายการธนาคารตามช่วงวันที่</h3>
+          <button class="modal-close" onclick="Layout.closeModal('bulkDeleteModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;font-size:13px;color:#991b1b;margin-bottom:16px;line-height:1.5">
+            <strong>⚠️ คำเตือน:</strong> การลบรายการเป็นแบบถาวร (soft-delete) — รายการที่ลบจะหายจากรายงานและการกระทบยอด<br>
+            ใช้ฟีเจอร์นี้เมื่อ <strong>นำเข้าผิดปี</strong> หรือ <strong>ผิดช่วงวันที่</strong>
+          </div>
+          <div class="form-group">
+            <label class="form-label">บัญชีธนาคาร</label>
+            <input type="text" class="form-input" id="bdAccountName" disabled style="background:#f8fafc">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group">
+              <label class="form-label">ตั้งแต่วันที่</label>
+              <input type="date" class="form-input" id="bdFrom">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ถึงวันที่</label>
+              <input type="date" class="form-input" id="bdTo">
+            </div>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:12px">เว้นว่าง = ไม่จำกัดด้านนั้น (เช่น เว้นวันที่เริ่ม = ลบตั้งแต่รายการแรกสุด)</div>
+          <label class="form-checkbox" style="background:#fff7ed;padding:10px;border-radius:6px;border:1px solid #fed7aa">
+            <input type="checkbox" id="bdIncludeReconciled">
+            <span style="font-size:13px"><strong>รวมรายการที่กระทบยอดแล้ว</strong> — เลือกถ้าต้องการลบทั้งหมด รวมถึงรายการที่ match กับการชำระเงิน/journal</span>
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('bulkDeleteModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.confirmBulkDeleteByRange()">ลบรายการตามช่วง</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create Connection Modal -->
+    <div class="modal-overlay" id="connModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มการเชื่อมต่อ Open Banking</h3><button class="modal-close" onclick="Layout.closeModal('connModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อการเชื่อมต่อ *</label><input type="text" class="form-input" id="cName"></div>
+          <div class="form-group"><label class="form-label">ธนาคาร *</label>
+            <select class="form-select" id="cBank">
+              <option value="KBANK">กสิกรไทย</option><option value="BBL">กรุงเทพ</option><option value="SCB">ไทยพาณิชย์</option>
+              <option value="KTB">กรุงไทย</option><option value="BAY">กรุงศรี</option><option value="TTB">ทหารไทยธนชาต</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">บัญชีธนาคาร *</label>
+            <select class="form-select" id="cAccount"></select>
+          </div>
+          <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="cApiKey"></div>
+          <div class="form-group"><label class="form-label">API Secret</label><input type="password" class="form-input" id="cApiSecret"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('connModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveConnection()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual Reconcile Picker Modal -->
+    <div class="modal-overlay" id="reconcileModal">
+      <div class="modal" style="max-width:960px">
+        <div class="modal-header">
+          <h3 class="modal-title">🔗 จับคู่รายการธนาคารกับเอกสารบัญชี</h3>
+          <button class="modal-close" onclick="Layout.closeModal('reconcileModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:0">
+          <input type="hidden" id="rTransId">
+
+          <!-- Bank transaction summary -->
+          <div id="rBankSummary" style="padding:14px 18px;background:linear-gradient(135deg,#eef2ff,#f8fafc);border-bottom:1px solid #e2e8f0">
+            <div style="font-size:11px;color:#64748b;margin-bottom:4px">รายการธนาคารที่จะจับคู่</div>
+            <div id="rBankInfo" style="font-size:14px;color:#0f172a"></div>
+          </div>
+
+          <!-- Tab switcher: All / Payment / Journal -->
+          <div style="display:flex;border-bottom:1px solid #e2e8f0">
+            <button class="rcn-tab" data-tab="all" onclick="Page.switchPickerTab('all')"
+              style="flex:1;padding:12px;border:none;background:#fff;cursor:pointer;font-weight:600;font-size:14px;border-bottom:3px solid #4F46E5;color:#4F46E5">
+              ทั้งหมด <span id="rAllCount" style="background:#e0e7ff;color:#4338ca;padding:1px 8px;border-radius:10px;font-size:11px;margin-left:4px">0</span>
+            </button>
+            <button class="rcn-tab" data-tab="payment" onclick="Page.switchPickerTab('payment')"
+              style="flex:1;padding:12px;border:none;background:#fff;cursor:pointer;font-weight:600;font-size:14px;border-bottom:3px solid transparent;color:#64748b">
+              💳 ชำระเงิน <span id="rPaymentCount" style="background:#f1f5f9;color:#475569;padding:1px 8px;border-radius:10px;font-size:11px;margin-left:4px">0</span>
+            </button>
+            <button class="rcn-tab" data-tab="journal" onclick="Page.switchPickerTab('journal')"
+              style="flex:1;padding:12px;border:none;background:#fff;cursor:pointer;font-weight:600;font-size:14px;border-bottom:3px solid transparent;color:#64748b">
+              📒 Journal <span id="rJournalCount" style="background:#f1f5f9;color:#475569;padding:1px 8px;border-radius:10px;font-size:11px;margin-left:4px">0</span>
+            </button>
+          </div>
+
+          <!-- Search + AI bar -->
+          <div style="padding:10px 18px;background:#f8fafc;border-bottom:1px solid #e2e8f0">
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="text" id="rPickerSearch" class="form-input"
+                placeholder="🔍 ค้นหาด้วย ชื่อลูกค้า, เลขเอกสาร, จำนวนเงิน, รายละเอียด..."
+                oninput="Page.filterPickerCandidates()" style="font-size:13px;flex:1">
+              <button class="btn btn-sm" id="rAiBtn" onclick="Page.runAiSuggestForTxn()" type="button"
+                style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;font-weight:600;white-space:nowrap;padding:8px 14px"
+                title="ให้ AI ตรวจสอบยอดและติ๊กให้อัตโนมัติ">
+                ✨ AI จับคู่อัตโนมัติ
+              </button>
+            </div>
+            <!-- Deposit category filter chips -->
+            <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">
+              <span style="font-size:11px;color:#64748b">กรองตามที่ลงบัญชี:</span>
+              <button class="dep-chip active" data-cat="" onclick="Page.setDepositFilter('')"
+                style="padding:3px 10px;border:1px solid #4F46E5;background:#4F46E5;color:#fff;border-radius:14px;font-size:11px;cursor:pointer" data-i18n="common.all">ทั้งหมด</button>
+              <button class="dep-chip" data-cat="Bank" onclick="Page.setDepositFilter('Bank')"
+                style="padding:3px 10px;border:1px solid #93c5fd;background:#fff;color:#0369a1;border-radius:14px;font-size:11px;cursor:pointer">🏦 บัญชีธนาคาร</button>
+              <button class="dep-chip" data-cat="Mixed" onclick="Page.setDepositFilter('Mixed')"
+                style="padding:3px 10px;border:1px solid #c4b5fd;background:#fff;color:#7c3aed;border-radius:14px;font-size:11px;cursor:pointer">🔄 โอนข้ามบัญชี</button>
+              <button class="dep-chip" data-cat="Cash" onclick="Page.setDepositFilter('Cash')"
+                style="padding:3px 10px;border:1px solid #fcd34d;background:#fff;color:#b45309;border-radius:14px;font-size:11px;cursor:pointer">💵 เงินสด</button>
+              <span style="margin-left:8px;font-size:11px;color:#64748b">|  ยอด:</span>
+              <button id="rAmtFilterChip" onclick="Page.toggleAmountFilter()"
+                style="padding:3px 10px;border:1px solid #fbbf24;background:#fef3c7;color:#92400e;border-radius:14px;font-size:11px;cursor:pointer;font-weight:600"
+                title="แสดงเฉพาะรายการที่ยอดต่างจากธนาคารไม่เกิน 5%">🎯 ใกล้เคียงยอด (±5%)</button>
+            </div>
+            <div id="rAiHint" style="font-size:11px;color:#64748b;margin-top:6px">
+              💡 ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว (Many-to-one) — หรือกด "AI จับคู่อัตโนมัติ" ให้ระบบวิเคราะห์ยอดและติ๊กให้
+            </div>
+          </div>
+
+          <!-- Candidate list -->
+          <div id="rCandidateList" style="max-height:380px;overflow-y:auto;padding:8px">
+            <div style="text-align:center;color:#94a3b8;padding:40px" data-i18n="common.loading">กำลังโหลด...</div>
+          </div>
+
+          <!-- Selection summary bar -->
+          <div id="rSelectionBar" style="display:none;padding:12px 18px;background:#fff7ed;border-top:2px solid #fed7aa">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <div style="font-size:13px;color:#9a3412">
+                <strong id="rSelectionCount">0</strong> รายการที่เลือก —
+                รวม <strong id="rSelectionSum" style="color:#0f172a">฿0.00</strong>
+                / ยอดธนาคาร <strong id="rBankSumDisplay" style="color:#0f172a">฿0.00</strong>
+              </div>
+              <div id="rSelectionDiff" style="margin-left:auto;font-size:13px;font-weight:700"></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reconcileModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" id="rConfirmBtn" onclick="Page.confirmMultiMatch()" disabled
+            style="background:linear-gradient(135deg,#10b981,#059669);border:none">
+            ✓ จับคู่ <span id="rConfirmCountText">(เลือกรายการก่อน)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group Detail Modal (read-only viewer + unmatch action) -->
+    <div class="modal-overlay" id="groupDetailModal">
+      <div class="modal" style="max-width:780px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="gdTitle">รายละเอียดกลุ่มกระทบยอด</h3>
+          <button class="modal-close" onclick="Layout.closeModal('groupDetailModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="gdBody">กำลังโหลด...</div>
+        <div class="modal-footer" style="justify-content:space-between">
+          <button class="btn btn-danger" id="gdUnmatchBtn" onclick="GroupHistory.unmatchCurrent()">🔓 ยกเลิกกลุ่มนี้</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('groupDetailModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group Reconciliation Modal (M:N + Net-off) -->
+    <div class="modal-overlay" id="groupReconcileModal">
+      <div class="modal" style="max-width:1100px">
+        <div class="modal-header">
+          <h3 class="modal-title">🔗 จับคู่กลุ่มกระทบยอด (M:N + Net-off)</h3>
+          <button class="modal-close" onclick="Layout.closeModal('groupReconcileModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:0">
+          <div style="padding:10px 18px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <label style="font-size:12px;color:#475569">บัญชี:</label>
+            <select id="grAccount" class="form-select" style="font-size:13px;max-width:300px" onchange="GroupReconcile.reload()"></select>
+            <button class="btn btn-sm" onclick="GroupReconcile.applyAiLearned()" type="button"
+              style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;font-weight:600;font-size:12px;padding:6px 12px"
+              title="ดึงคำแนะนำจาก AI ที่เรียนรู้จากประวัติการจับคู่ของคุณ — จะติ๊กรายการที่เข้าเค้าให้อัตโนมัติ">
+              ✨ AI จับคู่จากประวัติ
+            </button>
+            <label style="font-size:12px;color:#475569;margin-left:auto">วันที่กระทบยอด:</label>
+            <input type="date" id="grDate" class="form-input" style="font-size:13px;max-width:160px">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e2e8f0">
+            <!-- LEFT: bank transactions -->
+            <div style="border-right:1px solid #e2e8f0">
+              <div style="padding:8px 12px;background:#eef2ff;font-size:12px;font-weight:600;color:#3730a3;display:flex;justify-content:space-between;align-items:center">
+                <span>🏦 รายการธนาคาร (เลือกได้หลายรายการ)</span>
+                <input type="text" id="grBankSearch" placeholder="🔍 ค้นหา" oninput="GroupReconcile.filterBank()"
+                  class="form-input" style="font-size:11px;padding:3px 8px;max-width:140px">
+              </div>
+              <div id="grBankList" style="max-height:340px;overflow-y:auto;padding:6px"></div>
+            </div>
+            <!-- RIGHT: match items -->
+            <div>
+              <div style="padding:8px 12px;background:#fef3c7;font-size:12px;font-weight:600;color:#92400e;display:flex;justify-content:space-between;align-items:center">
+                <span>📄 รายการกระทบ (Payment / JE / Document)</span>
+                <input type="text" id="grItemSearch" placeholder="🔍 ค้นหา" oninput="GroupReconcile.filterItems()"
+                  class="form-input" style="font-size:11px;padding:3px 8px;max-width:140px">
+              </div>
+              <div style="padding:4px 8px;background:#fffbeb;font-size:11px;color:#92400e;border-bottom:1px solid #fef3c7">
+                💡 พิมพ์เครื่องหมาย <b>−</b> หน้าจำนวนเงินเพื่อตั้งเป็นรายการหักล้าง (เช่น ใบสำคัญจ่ายที่หักจากเงินที่ได้รับ)
+              </div>
+              <div id="grItemList" style="max-height:310px;overflow-y:auto;padding:6px"></div>
+            </div>
+          </div>
+          <!-- Running totals + balance -->
+          <div style="padding:12px 18px;background:#fff7ed;border-top:2px solid #fed7aa">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;font-size:13px;margin-bottom:8px">
+              <div>ฝั่งธนาคาร: <strong id="grBankSum" style="color:#0f172a">฿0.00</strong></div>
+              <div>ฝั่งรายการ: <strong id="grItemSum" style="color:#0f172a">฿0.00</strong></div>
+              <div>ผลต่าง: <strong id="grDiff" style="color:#dc2626">฿0.00</strong> <span id="grBalIcon"></span></div>
+            </div>
+            <textarea id="grNotes" class="form-input" placeholder="บันทึกย่อ (optional)" rows="2" style="font-size:12px;width:100%;resize:vertical"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('groupReconcileModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="grConfirmBtn" onclick="GroupReconcile.confirm()" disabled
+            style="background:linear-gradient(135deg,#10b981,#059669);border:none">
+            ✓ ยืนยันการกระทบยอด <span id="grConfirmCounts" style="font-weight:400;font-size:12px"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ai-suggestion.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      selectedAccount: null,
+      allTransactions: [],
+      transPage: 1,
+      accounts: [],
+      aiResult: null,
+      async load() {
+        await this.loadAccounts();
+      },
+      async init() {
+        if (!Layout.init('bank')) return;
+        Layout.setTitle('บัญชีธนาคาร');
+        // Default the AI-match month picker to the current month so the
+        // user sees which period will be analysed (and can change it).
+        const mInput = document.getElementById('aiMatchMonth');
+        if (mInput && !mInput.value) {
+          const t = new Date();
+          mInput.value = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`;
+        }
+        await this.load();
+      },
+      setTab(tab, el) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('tabAccounts').style.display = tab === 'accounts' ? '' : 'none';
+        document.getElementById('tabReconcile').style.display = tab === 'reconcile' ? '' : 'none';
+        document.getElementById('tabConnections').style.display = tab === 'connections' ? '' : 'none';
+        if (tab === 'reconcile') { this.loadReconciliationSummary(); this.loadUnreconciled(); GroupHistory.reload(); }
+        if (tab === 'connections') this.loadConnections();
+      },
+      // === ACCOUNTS ===
+      async loadAccounts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getBankAccounts();
+          this.accounts = res.data?.items || res.data || [];
+          const container = document.getElementById('bankCards');
+          if (!this.accounts.length) {
+            container.innerHTML = '<div class="card text-center" style="padding:40px;grid-column:1/-1"><p class="text-gray-500">ยังไม่มีบัญชีธนาคาร</p><button class="btn btn-primary" style="margin-top:12px" onclick="Page.openCreate()">+ เพิ่มบัญชี</button></div>';
+            return;
+          }
+          container.innerHTML = this.accounts.map(a => `
+            <div class="card" style="cursor:pointer;transition:all .2s;${this.selectedAccount?.id === a.id ? 'border-color:var(--primary);box-shadow:var(--shadow-md)' : ''}" onclick="Page.selectAccount('${a.id}')">
+              <div class="flex items-center justify-between" style="margin-bottom:12px">
+                <div class="font-semibold">${a.accountName}</div>
+                <div class="flex gap-1">
+                  ${a.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}
+                  <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.openEdit('${a.id}')" title="แก้ไข">&#9998;</button>
+                </div>
+              </div>
+              <div class="text-xs text-gray-500">${a.bankName} - ${a.accountNumber}</div>
+              <div class="text-xs text-gray-400">${a.accountType === 'Savings' ? 'ออมทรัพย์' : a.accountType === 'Current' ? 'กระแสรายวัน' : a.accountType === 'Fixed' ? 'ฝากประจำ' : a.accountType || ''} | ${a.branchName || '-'}</div>
+              ${a.linkedAccountCode ? `<div class="text-xs" style="color:var(--primary);margin-top:4px">ผังบัญชี: ${a.linkedAccountCode} ${a.linkedAccountName || ''}</div>` : ''}
+              ${this.renderBalances(a)}
+            </div>
+          `).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ยอด 2 บรรทัด: ธนาคารจริง (statement ล่าสุด) เป็นตัวหลัก + ยอดตามบัญชี (GL)
+      // ผลต่าง > 0.01 = มีรายการยังไม่กระทบยอด/ยังไม่บันทึก → ป้ายเตือนชี้ไป tab กระทบยอด
+      renderBalances(a) {
+        const fmtD = d => { const t = new Date(d); return isNaN(t) ? '' : t.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }); };
+        if (a.statementBalance == null) {
+          // ยังไม่เคยอัพ statement — โชว์ยอดตามบัญชีแบบเดิม พร้อมชวนนำเข้า
+          return `<div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.currentBalance)}</div>
+              <div class="text-xs text-gray-400">${a.currency || 'THB'} · ยอดตามบัญชี (GL) — <span style="color:var(--primary)">นำเข้า statement เพื่อเทียบยอดธนาคารจริง</span></div>`;
+        }
+        const diff = a.statementDiff ?? (a.statementBalance - (a.bookBalance ?? a.currentBalance));
+        const hasDiff = Math.abs(diff) > 0.01;
+        return `<div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.statementBalance)}</div>
+              <div class="text-xs text-gray-400">${a.currency || 'THB'} · 🏦 ยอดตามธนาคาร${a.statementBalanceDate ? ' ณ ' + fmtD(a.statementBalanceDate) : ''}</div>
+              <div class="text-xs" style="margin-top:2px;color:var(--text-secondary)">📒 ยอดตามบัญชี (GL): <b>${Layout.money(a.bookBalance ?? a.currentBalance)}</b></div>
+              ${hasDiff
+                ? `<div class="text-xs" style="margin-top:4px"><span class="badge badge-warning" style="cursor:pointer" title="คลิกดูสาเหตุที่ยอดไม่ตรงกัน" onclick="event.stopPropagation();Page.openDiffExplain('${a.id}')">⚠ ต่างกัน ${Layout.money(Math.abs(diff))} — ทำไม?</span> <a href="javascript:void(0)" onclick="event.stopPropagation();Page.selectAccount('${a.id}');document.querySelectorAll('.tab')[1]?.click()" style="color:var(--primary)">ไปกระทบยอด →</a></div>`
+                : `<div class="text-xs" style="margin-top:4px"><span class="badge badge-success">✓ ยอดตรงกัน</span></div>`}`;
+      },
+      // งบพิสูจน์ยอดเงินฝากแบบย่อ: แตกผลต่างเป็น (1) รายการใน statement ที่ยัง
+      // ไม่บันทึก/จับคู่ (2) ส่วนที่เหลือ = รายการฝั่งบัญชีที่ยังไม่ผ่านธนาคาร
+      // (เช็คค้างจ่าย/เงินฝากระหว่างทาง) หรือยอดยกมา/statement ไม่ครบช่วง
+      async openDiffExplain(id) {
+        const a = this.accounts.find(x => x.id === id);
+        if (!a || a.statementBalance == null) return;
+        const api = Layout.api(); if (!api) return;
+        const body = document.getElementById('diffExplainBody');
+        body.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">กำลังวิเคราะห์...</div>';
+        Layout.openModal('diffExplainModal');
+        let s = null;
+        try { const r = await api.getReconciliationSummary(id); s = r.data; } catch (e) { /* summary optional */ }
+        const stmt = a.statementBalance;
+        const book = a.bookBalance ?? a.currentBalance;
+        const diff = stmt - book;
+        const unIn = s?.unmatchedDeposits || 0;
+        const unOut = s?.unmatchedWithdrawals || 0;
+        const unCount = s?.unmatchedCount || 0;
+        const unmatchedNet = unIn - unOut;
+        const residual = diff - unmatchedNet;
+        const fmtD = d => { const t = new Date(d); return isNaN(t) ? '' : t.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }); };
+        const row = (label, val, bold) => `<div class="flex justify-between" style="padding:6px 0;border-bottom:1px dashed var(--border)${bold ? ';font-weight:600' : ''}"><span>${label}</span><span style="font-variant-numeric:tabular-nums">${val}</span></div>`;
+        body.innerHTML = `
+          <div class="text-sm">
+            ${row(`🏦 ยอดตามธนาคาร (statement ณ ${fmtD(a.statementBalanceDate)})`, Layout.money(stmt), true)}
+            ${row('📒 ยอดตามบัญชี (GL)', Layout.money(book), true)}
+            ${row('ผลต่างที่ต้องอธิบาย', (diff >= 0 ? '+' : '') + Layout.money(diff), true)}
+            <div style="margin-top:10px;color:var(--text-secondary);font-size:12px">สาเหตุที่ระบบตรวจพบ (รายการใน statement ที่ยังไม่กระทบยอด ${unCount} รายการ):</div>
+            ${row('เงินเข้าที่ยังไม่บันทึก/จับคู่', '+' + Layout.money(unIn))}
+            ${row('เงินออกที่ยังไม่บันทึก/จับคู่', '−' + Layout.money(unOut))}
+            ${row('คงเหลือที่ยังอธิบายไม่ได้', (residual >= 0 ? '+' : '') + Layout.money(residual), true)}
+            <div style="margin-top:10px;padding:10px;border-radius:6px;font-size:12px;line-height:1.6;background:${Math.abs(residual) < 0.01 ? 'rgba(16,185,129,.08)' : 'rgba(245,158,11,.08)'}">
+              ${Math.abs(residual) < 0.01
+                ? '✅ ผลต่างทั้งหมดมาจากรายการ statement ที่ยังไม่กระทบยอด — กด "ไปกระทบยอด" จับคู่/สร้าง JE ให้ครบ ยอดจะตรงกันพอดี'
+                : '⚠️ มีส่วนต่างที่ไม่ได้มาจากรายการค้างกระทบยอด — สาเหตุที่พบบ่อย:<br>• รายการบันทึกในบัญชีแล้วแต่ยังไม่ผ่านธนาคาร (เช็คสั่งจ่ายยังไม่ขึ้นเงิน / เงินฝากระหว่างทาง)<br>• ยอดยกมาใน GL ไม่ตรงกับยอดเปิดบัญชีจริง<br>• statement ที่นำเข้าไม่ครบช่วง (ขาดเดือนก่อนหน้า)<br>แนะนำ: นำเข้า statement ย้อนหลังให้ครบ แล้วสร้าง JE ปรับปรุงยอดยกมา 1 ครั้ง'}
+            </div>
+          </div>`;
+        document.getElementById('diffExplainGoBtn').onclick = () => {
+          Layout.closeModal('diffExplainModal');
+          this.selectAccount(id);
+          document.querySelectorAll('.tab')[1]?.click();
+        };
+      },
+      async selectAccount(id) {
+        const acct = this.accounts.find(a => a.id === id);
+        if (!acct) return;
+        this.selectedAccount = acct;
+        document.getElementById('transSection').style.display = 'block';
+        document.getElementById('transTitle').textContent = `รายการเคลื่อนไหว - ${acct.accountName}`;
+        document.getElementById('reconAccountName').textContent = acct.accountName;
+        await this.loadAccounts();
+        this.transPage = 1;
+        await this.loadTransactions();
+      },
+      // === TRANSACTIONS ===
+      async loadTransactions() {
+        if (!this.selectedAccount) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          let q = `?page=${this.transPage}&pageSize=20`;
+          const from = document.getElementById('transFrom').value;
+          const to = document.getElementById('transTo').value;
+          if (from) q += `&fromDate=${from}`;
+          if (to) q += `&toDate=${to}`;
+          const res = await api.getTransactions(this.selectedAccount.id, q);
+          const data = res.data;
+          this.allTransactions = data?.items || data || [];
+          this.renderTransactions();
+          const totalPages = data?.totalPages || 1;
+          document.getElementById('transPagination').innerHTML = Layout.renderPagination(this.transPage, totalPages, 'Page.goTransPage');
+          this.loadMatchIssues();   // surface legacy mismatched matches
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      filterTrans() { this.renderTransactions(); },
+      renderTransactions() {
+        const search = (document.getElementById('transSearch').value || '').toLowerCase();
+        const typeF = document.getElementById('transTypeFilter').value;
+        const statusF = document.getElementById('transStatusFilter').value;
+        let items = this.allTransactions;
+        if (search) items = items.filter(t => (t.description || '').toLowerCase().includes(search) || (t.payee || '').toLowerCase().includes(search));
+        if (typeF) items = items.filter(t => t.transactionType === typeF);
+        if (statusF) items = items.filter(t => (t.reconciliationStatus || 'Unmatched') === statusF);
+        const tbody = document.getElementById('transBody');
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; this.updateBulkBar(); return; }
+        const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
+        const isCredit = t => t === 'Deposit' || t === 'Interest';
+        const sel = this.selectedTxnIds || new Set();
+        tbody.innerHTML = items.map(t => `<tr>
+          <td><input type="checkbox" class="trans-check" data-id="${t.id}" ${sel.has(t.id) ? 'checked' : ''} onchange="Page.toggleTransSelection('${t.id}', this.checked)"></td>
+          <td>${Layout.date(t.transactionDate)}</td>
+          <td><span class="badge ${isCredit(t.transactionType) ? 'badge-success' : 'badge-danger'}">${typeMap[t.transactionType] || t.transactionType}</span></td>
+          <td class="text-right ${isCredit(t.transactionType) ? 'text-success' : 'text-danger'} font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
+          <td class="text-right">${Layout.money(t.balanceAfter)}</td>
+          <td>${t.description || t.payee || '-'}${t.reference ? ' <span class="text-xs text-gray-400">('+t.reference+')</span>' : ''}</td>
+          <td>${t.reconciliationStatus === 'Matched' ? `<span class="badge badge-success">จับคู่แล้ว</span>${(this._matchIssueIds && this._matchIssueIds.has(t.id)) ? ' <span class="badge badge-danger" title="ยอดที่จับไม่ตรงกับยอดธนาคาร">⚠️ ยอดไม่ตรง</span>' : ''}${t.matchedPaymentId ? ` <a href="/pages/documents.html?search=${t.reference||''}" class="text-xs" style="margin-left:4px">ดูเอกสาร</a>` : ''}` : t.reconciliationStatus === 'Suggested' ? '<span class="badge" style="background:#ddd6fe;color:#5b21b6">🤖 AI แนะนำ — รอยืนยัน</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
+          <td>
+            ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost" onclick="Page.showMatchInfo('${t.id}')" title="ดูว่าจับคู่กับเอกสาร/JE อะไร">🔍 ดูคู่</button><button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>${t.reconciliationStatus !== 'Suggested' ? `<button class="btn btn-sm btn-ghost" onclick="Page.askAiBankMatch(event, '${t.id}')" title="ขอความเห็น AI">🤖</button>` : ''}`}
+            <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteOneTransaction('${t.id}')" title="ลบรายการ">🗑️</button>
+          </td>
+        </tr>`).join('');
+        this.updateBulkBar();
+      },
+
+      // Per-row "what did this match to?" popup.
+      async showMatchInfo(txnId) {
+        const body = document.getElementById('matchInfoBody');
+        Layout.openModal('matchInfoModal');
+        body.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8">กำลังโหลด…</div>';
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.getMatchInfo(txnId);
+          const d = r.data;
+          const m = v => (v||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          if (!d.counterparts.length) {
+            body.innerHTML = '<div style="padding:20px;color:#92400e;background:#fffbeb;border-radius:8px">จับคู่แล้วแต่ไม่พบรายละเอียดคู่ที่จับ (อาจถูกลบ/แก้ไขภายหลัง) — แนะนำกด "ยกเลิก" แล้วจับคู่ใหม่</div>';
+            return;
+          }
+          let html = `<div style="font-size:13px;color:#64748b;margin-bottom:10px">ยอดธนาคาร <b>฿${m(d.txnAmount)}</b>${d.groupNumber ? ` · กลุ่ม ${this.esc(d.groupNumber)}` : ''}</div>`;
+          html += d.counterparts.map(c => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px">
+            <div><div style="font-size:11px;color:#94a3b8">${c.kind}</div><div style="font-weight:600">${this.esc(c.label)}</div>${c.date ? `<div style="font-size:11px;color:#94a3b8">${Layout.date(c.date)}</div>` : ''}</div>
+            <div style="font-weight:700;color:#4F46E5">฿${m(c.amount)}</div>
+          </div>`).join('');
+          if (d.counterparts.length > 1 || !d.amountsAgree) {
+            html += `<div style="display:flex;justify-content:space-between;padding:10px 12px;border-top:2px solid #e2e8f0;font-weight:700">
+              <span>รวมคู่ที่จับ</span><span style="color:${d.amountsAgree?'#059669':'#dc2626'}">฿${m(d.counterpartTotal)}${d.amountsAgree?' ✓':' ⚠️ ไม่ตรงยอดธนาคาร'}</span>
+            </div>`;
+          }
+          body.innerHTML = html;
+        } catch (e) {
+          body.innerHTML = `<div style="text-align:center;color:#dc2626;padding:30px">❌ ${this.esc(e.message)}</div>`;
+        }
+      },
+      closeMatchInfo() { Layout.closeModal('matchInfoModal'); },
+
+      // Detect already-matched lines whose amounts don't agree (legacy bad
+      // matches) so they can be flagged in the list + listed for fixing.
+      _matchIssues: [],
+      _matchIssueIds: new Set(),
+      async loadMatchIssues() {
+        const bar = document.getElementById('matchIssuesBar');
+        if (!this.selectedAccount) { if (bar) bar.style.display = 'none'; return; }
+        try {
+          const r = await Layout.api().getMatchIssues(this.selectedAccount.id);
+          const d = r.data || { count: 0, issues: [] };
+          this._matchIssues = d.issues || [];
+          this._matchIssueIds = new Set(this._matchIssues.map(i => i.txnId));
+          if (d.count > 0) {
+            const m = v => (v||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+            document.getElementById('matchIssuesText').textContent =
+              `⚠️ พบ ${d.count} รายการที่จับคู่แล้วแต่ยอดไม่ตรง (ผลต่างรวม ฿${m(d.totalDifference)})`;
+            bar.style.display = 'flex';
+          } else { bar.style.display = 'none'; }
+          // Re-render so row flags appear.
+          if (this.allTransactions?.length) this.renderTransactions();
+        } catch (e) { if (bar) bar.style.display = 'none'; }
+      },
+      showMatchIssues() {
+        const body = document.getElementById('matchIssuesBody');
+        Layout.openModal('matchIssuesModal');
+        const m = v => (v||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+        if (!this._matchIssues.length) { body.innerHTML = '<div style="padding:20px;color:#16a34a">✓ ไม่พบรายการที่ยอดไม่ตรง</div>'; return; }
+        body.innerHTML = `<div style="font-size:13px;color:#64748b;margin-bottom:10px">รายการเหล่านี้ยอดธนาคารกับเอกสาร/JE ที่จับไว้ไม่เท่ากัน — กด "ยกเลิกการจับคู่" แล้วจับใหม่ให้ยอดตรง (หรือใช้กลุ่มกระทบยอด M:N ถ้าครอบหลายเอกสาร)</div>
+          <table class="table"><thead><tr>
+            <th>วันที่</th><th>ประเภท</th><th>คำอธิบาย</th><th class="text-right">ยอดธนาคาร</th><th class="text-right">ยอดที่จับ</th><th class="text-right">ผลต่าง</th><th></th>
+          </tr></thead><tbody>` +
+          this._matchIssues.map(i => `<tr>
+            <td>${Layout.date(i.date)}</td>
+            <td>${this.esc(i.type)}</td>
+            <td style="font-size:12px;color:#475569;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.esc(i.description||'-')}${i.counterpartLabel?` <span style="color:#94a3b8">(${this.esc(i.counterpartLabel)})</span>`:''}</td>
+            <td class="text-right font-medium">${m(i.bankAmount)}</td>
+            <td class="text-right">${m(i.matchedAmount)}</td>
+            <td class="text-right" style="color:#dc2626;font-weight:600">${m(i.difference)}</td>
+            <td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${i.txnId}')">ยกเลิกการจับคู่</button></td>
+          </tr>`).join('') + `</tbody></table>`;
+      },
+
+      // === DELETE: selection + bulk + by-date-range ===
+      selectedTxnIds: new Set(),
+      toggleTransSelection(id, checked) {
+        if (!this.selectedTxnIds) this.selectedTxnIds = new Set();
+        if (checked) this.selectedTxnIds.add(id); else this.selectedTxnIds.delete(id);
+        this.updateBulkBar();
+      },
+      toggleSelectAllTrans(checked) {
+        if (!this.selectedTxnIds) this.selectedTxnIds = new Set();
+        document.querySelectorAll('.trans-check').forEach(cb => {
+          cb.checked = checked;
+          const id = cb.dataset.id;
+          if (checked) this.selectedTxnIds.add(id); else this.selectedTxnIds.delete(id);
+        });
+        this.updateBulkBar();
+      },
+      clearTransSelection() {
+        this.selectedTxnIds = new Set();
+        document.querySelectorAll('.trans-check').forEach(cb => cb.checked = false);
+        const all = document.getElementById('transSelectAll');
+        if (all) all.checked = false;
+        this.updateBulkBar();
+      },
+      updateBulkBar() {
+        const bar = document.getElementById('bulkActionBar');
+        const cnt = (this.selectedTxnIds && this.selectedTxnIds.size) || 0;
+        if (bar) {
+          bar.style.display = cnt > 0 ? 'flex' : 'none';
+          const span = document.getElementById('bulkSelectedCount');
+          if (span) span.textContent = cnt + ' รายการที่เลือก';
+        }
+      },
+      async deleteOneTransaction(id) {
+        if (!(await Layout.confirmDanger({ title: 'ลบรายการ', message: 'ลบรายการธนาคารนี้? ถ้ารายการกระทบยอดแล้วจะถูกยกเลิกการจับคู่ด้วย', mode: 'simple', confirmText: 'ลบ' }))) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteBankTransaction(id);
+          Layout.toast('ลบรายการสำเร็จ', 'success');
+          await this.loadTransactions();
+          await this.loadAccounts();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteSelectedTransactions() {
+        const ids = Array.from(this.selectedTxnIds || []);
+        if (!ids.length) return;
+        if (!(await Layout.confirmDanger({ title: `ลบ ${ids.length} รายการ`, message: 'ลบรายการที่เลือกทั้งหมด? รายการที่กระทบยอดแล้วจะถูกข้าม', mode: 'type', confirmText: 'confirm' }))) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.bulkDeleteBankTransactions({ transactionIds: ids, deleteReconciled: false });
+          Layout.toast(`ลบ ${res.data || 0} รายการสำเร็จ`, 'success');
+          this.clearTransSelection();
+          await this.loadTransactions();
+          await this.loadAccounts();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      openBulkDeleteModal() {
+        if (!this.selectedAccount) { Layout.toast('กรุณาเลือกบัญชีก่อน', 'error'); return; }
+        document.getElementById('bdAccountName').textContent = this.selectedAccount.accountName + ' - ' + this.selectedAccount.bankName;
+        document.getElementById('bdFrom').value = '';
+        document.getElementById('bdTo').value = '';
+        document.getElementById('bdIncludeReconciled').checked = false;
+        Layout.openModal('bulkDeleteModal');
+      },
+      async confirmBulkDeleteByRange() {
+        const from = document.getElementById('bdFrom').value;
+        const to = document.getElementById('bdTo').value;
+        const includeReconciled = document.getElementById('bdIncludeReconciled').checked;
+        if (!from && !to) { Layout.toast('กรุณาระบุช่วงวันที่อย่างน้อย 1 ด้าน', 'error'); return; }
+        const range = (from || '–') + ' ถึง ' + (to || '–');
+        if (!(await Layout.confirmDanger({
+          title: 'ลบรายการทั้งหมดตามช่วงวันที่',
+          message: `ลบรายการในบัญชี "${this.selectedAccount.accountName}" ช่วง ${range}${includeReconciled ? ' (รวมที่กระทบยอดแล้ว)' : ' (ยกเว้นที่กระทบยอดแล้ว)'} ?`,
+          mode: 'type', confirmText: 'confirm'
+        }))) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.bulkDeleteBankTransactions({
+            bankAccountId: this.selectedAccount.id,
+            dateFrom: from || null,
+            dateTo: to || null,
+            deleteReconciled: includeReconciled
+          });
+          Layout.toast(`ลบ ${res.data || 0} รายการสำเร็จ`, 'success');
+          Layout.closeModal('bulkDeleteModal');
+          this.clearTransSelection();
+          await this.loadTransactions();
+          await this.loadAccounts();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      goTransPage(p) { Page.transPage = p; Page.loadTransactions(); },
+      // === RECONCILIATION SUMMARY ===
+      async loadReconciliationSummary() {
+        if (!this.selectedAccount) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getReconciliationSummary(this.selectedAccount.id);
+          const s = res.data;
+          if (!s) return;
+          document.getElementById('reconBankBal').textContent = Layout.money(s.bankBalance);
+          document.getElementById('reconBookBal').textContent = Layout.money(s.bookBalance);
+          const diff = s.difference;
+          const diffEl = document.getElementById('reconDiff');
+          diffEl.textContent = (diff >= 0 ? '+' : '') + Layout.money(diff);
+          diffEl.style.color = Math.abs(diff) < 0.01 ? 'var(--success)' : 'var(--danger)';
+          document.getElementById('reconTotal').textContent = s.totalTransactions;
+          document.getElementById('reconMatched').textContent = s.matchedCount;
+          document.getElementById('reconCount').textContent = s.unmatchedCount;
+          document.getElementById('reconExcluded').textContent = s.excludedCount;
+          // Document-based balance (receipts - payment vouchers)
+          const docBalEl = document.getElementById('reconDocBal');
+          if (docBalEl && s.documentBalance !== undefined) {
+            docBalEl.textContent = Layout.money(s.documentBalance);
+            const recEl = document.getElementById('reconReceipts');
+            const pvEl = document.getElementById('reconPVs');
+            if (recEl) recEl.textContent = Layout.money(s.receiptTotal || 0);
+            if (pvEl) pvEl.textContent = Layout.money(s.paymentVoucherTotal || 0);
+          }
+        } catch (e) { /* silent */ }
+      },
+      // === RECONCILIATION ===
+      async loadUnreconciled() {
+        const bankList = document.getElementById('compBankList');
+        const candList = document.getElementById('compCandidateList');
+        if (!this.selectedAccount) {
+          if (bankList) bankList.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">เลือกบัญชีจากแท็บ "บัญชีธนาคาร" ก่อน</div>';
+          return;
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getUnreconciled(this.selectedAccount.id);
+          const items = res.data?.items || res.data || [];
+          this._compUnreconciled = items;
+          this._compSelectedTxnId = null;
+          document.getElementById('compBankCount').textContent = items.length;
+          this.renderCompBankList();
+          if (candList) candList.innerHTML = `<div style="text-align:center;color:#94a3b8;padding:40px">
+            <div style="font-size:28px;margin-bottom:8px">👈</div>
+            คลิกรายการธนาคารด้านซ้าย<br>เพื่อค้นหารายการที่ตรงกัน
+          </div>`;
+          document.getElementById('compCandCount').textContent = '-';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      renderCompBankList() {
+        const items = this._compUnreconciled || [];
+        const container = document.getElementById('compBankList');
+        if (!container) return;
+        if (!items.length) {
+          container.innerHTML = '<div style="text-align:center;padding:40px"><div style="font-size:28px;margin-bottom:8px">✅</div><div style="color:#10b981;font-weight:600">กระทบยอดครบทุกรายการแล้ว</div></div>';
+          return;
+        }
+        const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
+        const isCredit = t => t === 'Deposit' || t === 'Interest';
+        container.innerHTML = items.map(t => {
+          const sel = this._compSelectedTxnId === t.id;
+          return `<div onclick="Page.selectCompTxn('${t.id}')" style="padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:all 0.15s;${sel ? 'background:linear-gradient(135deg,#eef2ff,#e0e7ff);border-left:4px solid #4F46E5' : 'border-left:4px solid transparent'}">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <span class="text-xs text-gray-500">${Layout.date(t.transactionDate)}</span>
+                <span class="badge ${isCredit(t.transactionType) ? 'badge-success' : 'badge-danger'}" style="font-size:10px;margin-left:6px">${typeMap[t.transactionType] || t.transactionType}</span>
+              </div>
+              <strong style="color:${isCredit(t.transactionType) ? 'var(--success)' : 'var(--danger)'};font-size:14px">
+                ${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}
+              </strong>
+            </div>
+            <div style="font-size:12px;color:#475569;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(t.description || t.payee || '-')}</div>
+            ${t.reference ? `<div style="font-size:11px;color:#94a3b8">${this.esc(t.reference)}</div>` : ''}
+          </div>`;
+        }).join('');
+      },
+      async selectCompTxn(txnId) {
+        this._compSelectedTxnId = txnId;
+        this.renderCompBankList();
+        const container = document.getElementById('compCandidateList');
+        container.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">⏳ กำลังค้นหารายการที่ตรงกัน...</div>';
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getMatchCandidates(txnId);
+          const d = res.data;
+          const all = [
+            ...(d.payments || []).map(c => ({...c, _srcType: 'Payment', _icon: '💳'})),
+            ...(d.journalEntries || []).map(c => ({...c, _srcType: 'JournalEntry', _icon: '📒'}))
+          ].sort((a, b) => b.score - a.score);
+          document.getElementById('compCandCount').textContent = all.length;
+          if (!all.length) {
+            // No existing Payment/JE matches this bank line — offer to CREATE
+            // a journal entry + reconcile in one step (the Take-Time-style
+            // orphan-deposit case). Picks revenue accounts for deposits,
+            // expense for withdrawals, by default.
+            container.innerHTML = this._renderCreateJePanel(txnId);
+            this._populateCreateJeAccounts(txnId);
+            return;
+          }
+          container.innerHTML = `<div style="padding:8px 12px;background:#f8fafc;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11px;color:#64748b">เรียงตามคะแนนความตรงกัน (สูง→ต่ำ)</span>
+            <button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${txnId}')" style="font-size:11px">🔍 เปิดตัวเลือกเต็ม (Many-to-one)</button>
+          </div>` + all.slice(0, 10).map((c, i) => {
+            const scoreColor = c.score >= 80 ? '#10b981' : c.score >= 50 ? '#f59e0b' : '#94a3b8';
+            const scoreBg = c.score >= 80 ? '#d1fae5' : c.score >= 50 ? '#fef3c7' : '#f1f5f9';
+            const isBest = i === 0 && c.score >= 70;
+            let depBadge = '';
+            if (c.depositLabel) {
+              const depColor = c.depositCategory === 'Bank' ? '#0369a1' : c.depositCategory === 'Mixed' ? '#7c3aed' : '#b45309';
+              const depBg2 = c.depositCategory === 'Bank' ? '#dbeafe' : c.depositCategory === 'Mixed' ? '#ede9fe' : '#fef3c7';
+              depBadge = `<span style="background:${depBg2};color:${depColor};padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600">${this.esc(c.depositLabel)}</span>`;
+            }
+            return `<div style="padding:10px 14px;border-bottom:1px solid var(--border);${isBest ? 'background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border-left:4px solid #10b981' : 'border-left:4px solid transparent'}">
+              <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
+                    <span style="background:${scoreBg};color:${scoreColor};padding:2px 8px;border-radius:6px;font-weight:700;font-size:12px">${c.score}%</span>
+                    <span style="font-size:11px">${c._icon}</span>
+                    <strong style="font-size:13px;color:#0f172a">${this.esc(c.number)}</strong>
+                    ${depBadge}
+                    ${isBest ? '<span style="background:#10b981;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600">Best</span>' : ''}
+                  </div>
+                  <div style="font-size:11px;color:#64748b;display:flex;gap:8px;flex-wrap:wrap">
+                    <span>📅 ${Layout.date(c.date)}</span>
+                    ${c.dateDiffDays === 0 ? '<span style="color:#10b981">✓ วันเดียวกัน</span>' : `<span>ห่าง ${c.dateDiffDays} วัน</span>`}
+                    ${c.amountDiff < 0.01 ? '<span style="color:#10b981">✓ ยอดตรง</span>' : ''}
+                  </div>
+                  ${c.counterpartyName ? `<div style="font-size:12px;color:#334155;margin-top:2px">${this.esc(c.counterpartyName)}</div>` : ''}
+                </div>
+                <div style="text-align:right;flex-shrink:0">
+                  <div style="font-weight:700;color:#4F46E5;font-size:14px">฿${Layout.money(c.amount)}</div>
+                  <button class="btn btn-sm" onclick="event.stopPropagation();Page.quickMatch('${txnId}','${c._srcType}','${c.id}')"
+                    style="margin-top:4px;background:${c.score >= 70 ? 'linear-gradient(135deg,#10b981,#059669)' : '#6b7280'};color:#fff;border:none;font-size:11px;padding:4px 12px;white-space:nowrap">
+                    ✓ จับคู่
+                  </button>
+                </div>
+              </div>
+            </div>`;
+          }).join('') + (all.length > 10 ? `<div style="text-align:center;padding:12px;font-size:12px;color:#64748b">
+            แสดง 10 จาก ${all.length} รายการ — <a href="#" onclick="event.preventDefault();Page.openReconcileOne('${txnId}')" style="color:#4F46E5;font-weight:600">ดูทั้งหมด</a>
+          </div>` : '');
+        } catch (e) {
+          container.innerHTML = `<div style="text-align:center;color:#dc2626;padding:40px">❌ ${this.esc(e.message)}</div>`;
+        }
+      },
+      async quickMatch(txnId, candidateType, candidateId) {
+        if (!confirm('ยืนยันการจับคู่รายการนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const payload = { bankTransactionId: txnId };
+          if (candidateType === 'Payment') payload.matchedPaymentId = candidateId;
+          else payload.matchedJournalEntryId = candidateId;
+          await api.reconcile(payload);
+          Layout.toast('จับคู่สำเร็จ', 'success');
+          this._compUnreconciled = this._compUnreconciled.filter(t => t.id !== txnId);
+          this._compSelectedTxnId = null;
+          document.getElementById('compBankCount').textContent = this._compUnreconciled.length;
+          this.renderCompBankList();
+          document.getElementById('compCandidateList').innerHTML = `<div style="text-align:center;padding:40px">
+            <div style="font-size:28px;margin-bottom:8px">✅</div>
+            <div style="color:#10b981;font-weight:600">จับคู่สำเร็จ</div>
+            <div style="color:#64748b;font-size:12px;margin-top:4px">เลือกรายการถัดไปด้านซ้าย</div>
+          </div>`;
+          document.getElementById('compCandCount').textContent = '-';
+          await this.loadReconciliationSummary();
+          if (this.allTransactions?.length) await this.loadTransactions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ── Create-JE-from-orphan-bank-line (Phase 3) ──────────────────────
+      _renderCreateJePanel(txnId) {
+        const t = (this._compUnreconciled || []).find(x => x.id === txnId);
+        const isIn = t && (t.transactionType === 'Deposit' || t.transactionType === 'Interest');
+        const sideLabel = isIn ? 'รายรับ (บัญชีรายได้)' : 'รายจ่าย (บัญชีค่าใช้จ่าย)';
+        const amount = t ? Layout.money(t.amount) : '';
+        return `<div style="padding:20px 16px">
+          <div style="text-align:center;color:#94a3b8;margin-bottom:14px">
+            <div style="font-size:28px;margin-bottom:6px">🧾</div>
+            ไม่พบรายการบัญชีที่ตรงกัน — สร้างใหม่แล้วกระทบยอดได้เลย
+          </div>
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px">
+            <div style="font-size:12px;color:#64748b;margin-bottom:4px">${isIn ? '💰 เงินเข้า' : '💸 เงินออก'} · ฿${amount} · ${t ? Layout.date(t.transactionDate) : ''}</div>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">${sideLabel} *</label>
+            <select id="createJeAccount_${txnId}" class="form-select" style="width:100%;margin-bottom:8px"><option value="">กำลังโหลดผังบัญชี…</option></select>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">คำอธิบาย</label>
+            <input id="createJeDesc_${txnId}" class="form-input" style="width:100%;margin-bottom:10px"
+                   value="${this.esc(t ? (t.payee || t.description || '') : '')}" placeholder="เช่น รับเงินค่าบริการ">
+            <button class="btn btn-primary" style="width:100%" onclick="Page.submitCreateJe('${txnId}')">
+              ➕ สร้างรายการบัญชี + กระทบยอด
+            </button>
+            <div style="font-size:11px;color:#94a3b8;margin-top:6px">
+              ระบบจะลง ${isIn ? 'Dr ธนาคาร / Cr บัญชีที่เลือก' : 'Dr บัญชีที่เลือก / Cr ธนาคาร'} แล้วผูกกับรายการนี้อัตโนมัติ
+            </div>
+          </div>
+          <div style="text-align:center;margin-top:10px">
+            <button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${txnId}')" style="font-size:11px">หรือ 🔍 เปิดตัวเลือกจับคู่เต็ม</button>
+          </div>
+        </div>`;
+      },
+
+      async _populateCreateJeAccounts(txnId) {
+        const sel = document.getElementById('createJeAccount_' + txnId);
+        if (!sel) return;
+        const t = (this._compUnreconciled || []).find(x => x.id === txnId);
+        const isIn = t && (t.transactionType === 'Deposit' || t.transactionType === 'Interest');
+        try {
+          // Cache the chart once per session.
+          if (!this._chartCache) {
+            const api = Layout.api();
+            const r = await api.getAccounts();
+            this._chartCache = (r.data?.items || r.data || []);
+          }
+          // Income → revenue (type 4 / code 4xxx); expense → expense (type 5 / 5xxx).
+          const wanted = this._chartCache.filter(a => {
+            const code = (a.accountCode || '').toString();
+            const type = a.accountType;
+            return isIn ? (type === 'Revenue' || type === 4 || code.startsWith('4'))
+                        : (type === 'Expense' || type === 5 || code.startsWith('5'));
+          });
+          const list = wanted.length ? wanted : this._chartCache;
+          sel.innerHTML = '<option value="">— เลือกบัญชี —</option>' +
+            list.map(a => `<option value="${a.id}">${this.esc(a.accountCode)} - ${this.esc(a.accountName)}</option>`).join('');
+          // AI categorize: ใช้คำอธิบายรายการ → แนะนำบัญชีคู่ (manual-je
+          // endpoint รองรับ description + side; deposit=Credit รายได้,
+          // withdrawal=Debit ค่าใช้จ่าย). เรียนต่อบริษัทผ่าน memory.
+          this._aiSuggestJeAccount(txnId, isIn);
+        } catch (e) {
+          sel.innerHTML = '<option value="">โหลดผังบัญชีไม่สำเร็จ</option>';
+        }
+      },
+
+      async _aiSuggestJeAccount(txnId, isIn) {
+        try {
+          const sel = document.getElementById('createJeAccount_' + txnId);
+          const desc = document.getElementById('createJeDesc_' + txnId)?.value?.trim() || '';
+          if (!sel || desc.length < 3) return;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/manual-je/suggest-account`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description: desc, side: isIn ? 'Credit' : 'Debit', entryType: 'General' })
+          });
+          const j = await r.json();
+          const top = (j?.data?.suggestions || [])[0];
+          if (!top || !top.accountId) return;
+          if (!sel.value && Array.from(sel.options).some(o => o.value === top.accountId)) {
+            sel.value = top.accountId;
+            sel.title = `🤖 ${top.accountCode} - ${top.accountName} (${Math.round((top.confidence || 0) * 100)}%)`;
+            // hint บรรทัดเล็กใต้ dropdown
+            let hint = document.getElementById('createJeHint_' + txnId);
+            if (!hint) {
+              hint = document.createElement('div');
+              hint.id = 'createJeHint_' + txnId;
+              hint.style.cssText = 'font-size:11px;color:#0369a1;margin:-4px 0 6px';
+              sel.parentNode.insertBefore(hint, sel.nextSibling);
+            }
+            hint.textContent = `🤖 แนะนำ ${top.accountCode} - ${top.accountName} จากคำอธิบาย`;
+            if (j.data.feedbackId) {
+              sel.addEventListener('change', () => {
+                try {
+                  fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ feedbackId: j.data.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === top.accountId })
+                  }).catch(() => {});
+                } catch {}
+              }, { once: true });
+            }
+          }
+        } catch { /* best-effort */ }
+      },
+
+      async submitCreateJe(txnId) {
+        const accId = document.getElementById('createJeAccount_' + txnId)?.value;
+        if (!accId) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        const desc = document.getElementById('createJeDesc_' + txnId)?.value || null;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.createJeFromTxn(txnId, { counterpartAccountId: accId, description: desc });
+          Layout.toast(r.message || 'สร้างรายการบัญชีและกระทบยอดสำเร็จ', 'success');
+          this._compUnreconciled = (this._compUnreconciled || []).filter(t => t.id !== txnId);
+          this._compSelectedTxnId = null;
+          document.getElementById('compBankCount').textContent = this._compUnreconciled.length;
+          this.renderCompBankList();
+          document.getElementById('compCandidateList').innerHTML = `<div style="text-align:center;padding:40px">
+            <div style="font-size:28px;margin-bottom:8px">✅</div>
+            <div style="color:#10b981;font-weight:600">สร้าง + กระทบยอดสำเร็จ</div>
+            <div style="color:#64748b;font-size:12px;margin-top:4px">เลือกรายการถัดไปด้านซ้าย</div>
+          </div>`;
+          document.getElementById('compCandCount').textContent = '-';
+          await this.loadReconciliationSummary();
+          if (this.allTransactions?.length) await this.loadTransactions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ── Matched-detail + difference explainer ─────────────────────
+      closeReconDetail() { Layout.closeModal('reconDetailModal'); },
+      async openReconDetail() {
+        if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        Layout.openModal('reconDetailModal');
+        const body = document.getElementById('reconDetailBody');
+        body.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด…</div>';
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.getReconciliationDetail(this.selectedAccount.id);
+          const d = r.data;
+          const m = v => (v||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const diffColor = Math.abs(d.difference) < 0.01 ? '#10b981' : '#dc2626';
+          const cpKind = { Payment: '💳 Payment', JournalEntry: '📒 JE', Group: '🔗 กลุ่ม', '—': '—' };
+
+          let html = `
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+              <div style="flex:1;min-width:140px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px">
+                <div style="font-size:11px;color:#94a3b8">ยอดตาม Statement</div>
+                <div style="font-weight:700;font-size:17px">฿${m(d.bankBalance)}</div>
+              </div>
+              <div style="flex:1;min-width:140px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px">
+                <div style="font-size:11px;color:#94a3b8">ยอดตาม GL</div>
+                <div style="font-weight:700;font-size:17px">฿${m(d.bookBalance)}</div>
+              </div>
+              <div style="flex:1;min-width:140px;background:#fff;border:1px solid ${diffColor};border-radius:8px;padding:10px 14px">
+                <div style="font-size:11px;color:#94a3b8">ผลต่าง</div>
+                <div style="font-weight:700;font-size:17px;color:${diffColor}">฿${m(d.difference)}</div>
+              </div>
+            </div>
+            <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px;color:#92400e;margin-bottom:16px">
+              ${this.esc(d.explanation)}
+            </div>`;
+
+          // Unlinked GL postings — the source of the difference.
+          if (d.unlinkedGlPostings && d.unlinkedGlPostings.length) {
+            html += `<h4 style="margin:0 0 8px">📌 รายการ GL ที่ไม่มี bank txn รองรับ (ที่มาของผลต่าง รวม ฿${m(d.unlinkedGlTotal)})</h4>
+              <table class="table" style="margin-bottom:18px"><thead><tr>
+                <th>เลขที่ JE</th><th>วันที่</th><th>คำอธิบาย</th><th class="text-right">สุทธิ (Dr−Cr)</th>
+              </tr></thead><tbody>` +
+              d.unlinkedGlPostings.map(g => `<tr>
+                <td>${this.esc(g.jeNumber)}</td>
+                <td>${Layout.date(g.date)}</td>
+                <td style="font-size:12px;color:#475569">${this.esc(g.description||'-')}</td>
+                <td class="text-right" style="color:${g.net>=0?'#059669':'#dc2626'}">${m(g.net)}</td>
+              </tr>`).join('') + `</tbody></table>`;
+          }
+
+          // Matched lines — what each bank txn reconciled to.
+          html += `<h4 style="margin:0 0 8px">✓ รายการที่จับคู่แล้ว (${d.matched.length})</h4>`;
+          if (!d.matched.length) {
+            html += '<div style="color:#94a3b8;padding:12px">ยังไม่มีรายการที่จับคู่</div>';
+          } else {
+            html += `<table class="table"><thead><tr>
+              <th>วันที่</th><th>ประเภท</th><th class="text-right">ยอดธนาคาร</th><th>จับคู่กับ</th><th class="text-right">ยอดที่จับ</th>
+            </tr></thead><tbody>` +
+              d.matched.map(x => {
+                const mismatch = x.amountsAgree === false;
+                return `<tr>
+                  <td>${Layout.date(x.date)}</td>
+                  <td>${this.esc(x.type)}</td>
+                  <td class="text-right">${m(x.amount)}</td>
+                  <td><span style="font-size:11px;color:#64748b">${cpKind[x.counterpartKind]||x.counterpartKind}</span><br>${this.esc(x.counterpartLabel)}</td>
+                  <td class="text-right" style="${mismatch?'color:#dc2626;font-weight:600':''}">${x.counterpartAmount?m(x.counterpartAmount):'-'}${mismatch?' ⚠️':''}</td>
+                </tr>`;
+              }).join('') + `</tbody></table>`;
+          }
+          body.innerHTML = html;
+        } catch (e) {
+          body.innerHTML = `<div style="text-align:center;color:#dc2626;padding:40px">❌ ${this.esc(e.message)}</div>`;
+        }
+      },
+
+      toggleAllRecon(cb) {
+        document.querySelectorAll('.recon-check').forEach(c => c.checked = cb.checked);
+      },
+      async autoMatch() {
+        if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.autoMatch(this.selectedAccount.id);
+          const matched = res.data?.length || 0;
+          Layout.toast(`จับคู่อัตโนมัติสำเร็จ ${matched} รายการ`);
+          await this.loadTransactions();
+          await this.loadUnreconciled();
+          await this.loadReconciliationSummary();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === AI SMART MATCH ===
+      async runAiMatch() {
+        if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        const btn = document.getElementById('btnAiMatch');
+        const status = document.getElementById('aiMatchStatus');
+        const dot = document.getElementById('aiDot');
+        btn.disabled = true; btn.textContent = 'กำลังวิเคราะห์...';
+        status.style.display = 'block';
+        document.getElementById('aiStatusText').textContent = 'AI กำลังวิเคราะห์รายการ...';
+        document.getElementById('aiStatusDetail').textContent = 'ตรวจสอบ 1-to-1, ยอดรวม, เงินสด/ธนาคาร, รายการซ้ำ';
+        try {
+          const res = await api.aiSmartMatch(this.selectedAccount.id, {
+            includeAggregated: true,
+            includeCashBankCheck: true,
+            minConfidence: 0.5
+          });
+          this.aiResult = res.data;
+          btn.disabled = false; btn.textContent = 'AI วิเคราะห์และจับคู่';
+          dot.style.background = 'var(--success)'; dot.style.animation = 'none';
+          document.getElementById('aiStatusText').textContent = `วิเคราะห์เสร็จ: พบ ${this.aiResult.suggestionsFound} คู่ที่แนะนำ`;
+          document.getElementById('aiStatusDetail').textContent =
+            `1-to-1: ${this.aiResult.oneToOneMatches} | ยอดรวม: ${this.aiResult.aggregatedMatches} | คำเตือน: ${this.aiResult.warnings?.length || 0} | เงินสด/ธนาคาร: ${this.aiResult.discrepancies?.length || 0}`;
+          this.renderAiSuggestions();
+          this.renderDiscrepancies();
+          this.renderWarnings();
+          await this.loadReconciliationSummary();
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'AI วิเคราะห์และจับคู่';
+          dot.style.background = 'var(--danger)'; dot.style.animation = 'none';
+          document.getElementById('aiStatusText').textContent = 'เกิดข้อผิดพลาด';
+          document.getElementById('aiStatusDetail').textContent = e.message;
+          Layout.toast(e.message, 'error');
+        }
+      },
+      // === BULK AI MATCH (entire month in one DeepSeek call) ===
+      async runBulkAiMatch() {
+        if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        // Resolve the target month from the picker (YYYY-MM). Fall back to the
+        // current calendar month when the field is empty/invalid. from = 1st of
+        // that month, to = last day (new Date(y, m+1, 0) = last day of month m).
+        const mv = document.getElementById('aiMatchMonth')?.value;
+        let year, month0;
+        if (mv && /^\d{4}-\d{2}$/.test(mv)) {
+          year = parseInt(mv.slice(0, 4), 10);
+          month0 = parseInt(mv.slice(5, 7), 10) - 1;
+        } else {
+          const today = new Date();
+          year = today.getFullYear();
+          month0 = today.getMonth();
+        }
+        const from = new Date(year, month0, 1);
+        const to = new Date(year, month0 + 1, 0);
+        const fromStr = Layout.toDateInput(from);
+        const toStr = Layout.toDateInput(to);
+        const btn = document.getElementById('btnBulkAi');
+        btn.disabled = true; btn.textContent = '🧠 AI กำลังคิด ทั้งเดือน...';
+        // Visible status so the user always knows what happened (the modal alone
+        // can be missed; an error/empty response must never fail silently).
+        const statusBox = document.getElementById('aiMatchStatus');
+        const statusText = document.getElementById('aiStatusText');
+        const statusDetail = document.getElementById('aiStatusDetail');
+        if (statusBox) statusBox.style.display = '';
+        if (statusText) statusText.textContent = `🧠 AI กำลังกระทบยอด ${fromStr} → ${toStr} (อาจใช้เวลาถึง ~1 นาที)...`;
+        if (statusDetail) {
+          // Inline cancel link so the user can abort the wait (AbortController
+          // → server's CancellationToken → orchestrator stops the AI call).
+          // Without this they had to leave the page entirely to escape a hang.
+          statusDetail.innerHTML = '<a href="#" id="aiCancelLink" style="color:#dc2626;text-decoration:underline">ยกเลิกการรอ</a>';
+        }
+        const aiAbort = new AbortController();
+        this._bulkAiAbort = aiAbort;
+        const cancelLink = document.getElementById('aiCancelLink');
+        if (cancelLink) cancelLink.onclick = (ev) => {
+          ev.preventDefault();
+          aiAbort.abort();
+        };
+        try {
+          const accId = this.selectedAccount.id;
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/bank/accounts/${accId}/bulk-ai-match?fromDate=${fromStr}&toDate=${toStr}`, {}, aiAbort.signal);
+          btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
+          // Defensive: rate-limit / not-ready paths return {success:false,data:null}
+          // WITHOUT throwing, so guard before touching plan fields.
+          if (!r || !r.data) {
+            const m = (r && r.message) ? r.message : 'AI ไม่ตอบกลับ — อาจถูกจำกัดอัตรา (rate limit) หรือ provider ไม่พร้อม ลองใหม่อีกครั้ง';
+            if (statusText) statusText.textContent = '⚠️ ไม่สำเร็จ';
+            if (statusDetail) statusDetail.textContent = m;
+            Layout.toast(m, 'error');
+            return;
+          }
+          this.bulkPlan = r.data;
+          if (statusText) statusText.textContent = '✓ วิเคราะห์เสร็จ — ดูผลในหน้าต่างที่เปิดขึ้น';
+          if (statusDetail) statusDetail.textContent = r.message || '';
+          this.renderBulkPlan(r.data, r.message);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
+          // User-initiated cancel via AbortController — friendly message, no toast spam.
+          const wasAborted = e?.name === 'AbortError' || /aborted|abort/i.test(e?.message || '');
+          const m = wasAborted ? 'ยกเลิกการรอ AI แล้ว' : (e?.message || 'เกิดข้อผิดพลาดในการเรียก AI');
+          if (statusText) statusText.textContent = wasAborted ? 'ยกเลิกแล้ว' : '⚠️ เกิดข้อผิดพลาด';
+          if (statusDetail) statusDetail.textContent = m;
+          if (!wasAborted) Layout.toast(m, 'error');
+        } finally {
+          this._bulkAiAbort = null;
+        }
+      },
+
+      renderBulkPlan(plan, message) {
+        if (!plan) { Layout.toast(message || 'ไม่มีผลลัพธ์จาก AI', 'error'); return; }
+        let modal = document.getElementById('bulkAiPlanModal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'bulkAiPlanModal';
+          modal.className = 'modal-overlay';
+          modal.innerHTML = `<div class="modal" style="max-width:960px;width:95%;max-height:88vh;overflow:auto"><div id="bulkPlanBody"></div></div>`;
+          document.body.appendChild(modal);
+        }
+        const esc = s => (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const fmtAmt = n => (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const statusColor = plan.status === 'Success' ? '#16a34a'
+          : plan.status === 'Truncated' ? '#d97706'
+          : plan.status === 'AiUnavailable' ? '#dc2626'
+          : plan.status === 'NoCandidates' ? '#d97706' : '#64748b';
+        // Friendlier Thai label for the badge (status is an internal code).
+        const statusLabel = ({
+          Success: 'สำเร็จ', Truncated: 'สำเร็จ (ตัดบางส่วน)',
+          AiUnavailable: 'AI ไม่พร้อม', EmptyInput: 'ไม่มีรายการ',
+          NoCandidates: 'ไม่มีรายการให้จับคู่',
+        })[plan.status] || plan.status;
+        const warningsBlock = (plan.warnings || []).length === 0 ? '' : `
+          <div style="background:#fef3c7;border-left:4px solid #d97706;border-radius:6px;padding:10px 14px;margin:12px 0">
+            <div style="font-weight:600;color:#92400e;margin-bottom:4px">⚠️ คำเตือน</div>
+            <ul style="margin:0;padding-left:18px;font-size:12px;color:#92400e">
+              ${plan.warnings.map(w => `<li>${esc(w)}</li>`).join('')}
+            </ul>
+          </div>`;
+        const missingBlock = (plan.missingData || []).length === 0 ? '' : `
+          <div style="background:#fee2e2;border-left:4px solid #dc2626;border-radius:6px;padding:10px 14px;margin:12px 0">
+            <div style="font-weight:600;color:#dc2626;margin-bottom:6px">🔍 ข้อมูลที่ขาด — ${plan.missingData.length} รายการ</div>
+            <table style="width:100%;font-size:12px">
+              <thead><tr style="color:#dc2626"><th style="text-align:left">Bank txn</th><th style="text-align:left">ประเภทที่ขาด</th><th style="text-align:left">รายละเอียด</th></tr></thead>
+              <tbody>${plan.missingData.map(m => `<tr>
+                <td style="font-family:monospace">${esc(m.bankTxnId.slice(0,8))}…</td>
+                <td>${esc(m.missingType)}</td>
+                <td>${esc(m.hint)}</td>
+              </tr>`).join('')}</tbody>
+            </table>
+            <div style="font-size:11px;color:#7f1d1d;margin-top:6px">💡 สร้างเอกสารที่ขาดก่อน แล้วยิง AI อีกครั้ง — รายการที่เคยขาดจะ match ได้</div>
+          </div>`;
+        // Detect ANY double-use across the plan: a candidate (RV/JE/Payment) or
+        // a bank line appearing in 2+ matches. Within an M:N group the doc is
+        // legitimately shared across rows, so count it once per group.
+        const candUse = {}, bankUse = {};
+        (plan.matches || []).forEach(m => {
+          bankUse[m.bankTxnId] = (bankUse[m.bankTxnId] || 0) + 1;
+          const key = m.matchGroupId || ('m' + (m.bankTxnId));
+          (m.candidates || []).forEach(c => {
+            candUse[c.candidateId] = candUse[c.candidateId] || new Set();
+            candUse[c.candidateId].add(key);   // distinct owners (group or single match)
+          });
+        });
+        const dupCandIds = new Set(Object.keys(candUse).filter(id => candUse[id].size > 1));
+        const dupBankIds = new Set(Object.keys(bankUse).filter(id => bankUse[id] > 1));
+        const dupBanner = (dupCandIds.size === 0 && dupBankIds.size === 0) ? `
+          <div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:6px;padding:8px 14px;margin:8px 0;font-size:12px;color:#166534">✓ ตรวจแล้ว — ไม่มีการจับคู่ซ้ำ (เอกสาร/รายการธนาคารแต่ละตัวใช้ครั้งเดียว)</div>`
+          : `<div style="background:#fee2e2;border-left:4px solid #dc2626;border-radius:6px;padding:8px 14px;margin:8px 0;font-size:12px;color:#991b1b">⚠️ พบการใช้ซ้ำ: ${dupCandIds.size} เอกสาร / ${dupBankIds.size} รายการธนาคาร ถูกใช้มากกว่า 1 ครั้ง — แถวที่เกี่ยวข้องถูกไฮไลต์สีส้ม ระบบจะตัดตัวซ้ำออกตอนยืนยัน</div>`;
+
+        // Show calibrated-low-confidence matches FIRST so the operator reviews
+        // suspects (amount mismatches the server downgraded) before the easy
+        // wins. KEEP the original index so the checkbox maps back to the right
+        // entry in this.bulkPlan.matches (which stays in arrival order).
+        const sortedMatches = [...(plan.matches || [])]
+          .map((m, idx) => ({ m, idx }))
+          .sort((a, b) => (a.m.confidence ?? 1) - (b.m.confidence ?? 1) || a.idx - b.idx);
+        const matchRows = sortedMatches.map(({ m, idx }) => {
+          const conf = (m.confidence * 100).toFixed(0);
+          const confColor = m.confidence >= 0.8 ? '#16a34a' : m.confidence >= 0.6 ? '#d97706' : '#dc2626';
+          const confBg = m.confidence >= 0.8 ? '#dcfce7' : m.confidence >= 0.6 ? '#fef3c7' : '#fee2e2';
+          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
+          // Prefer the bank details carried in the plan (works for txns not on
+          // the current page); fall back to the loaded list.
+          const bankAmt = (m.bankAmount != null && m.bankAmount > 0) ? m.bankAmount
+            : (bt ? Math.abs(bt.amount) : null);
+          const bankDir = m.bankDirection || (bt ? (bt.transactionType === 'Deposit' || bt.transactionType === 'Interest' ? 'In' : 'Out') : null);
+          const bankDate = m.bankDate || (bt ? bt.transactionDate : null);
+          const bankMemo = m.bankMemo || (bt ? (bt.payee || bt.description) : '');
+          const candSum = (m.candidates || []).reduce((s, c) => s + (c.amount || 0), 0);
+          const mismatch = bankAmt != null && Math.abs(candSum - bankAmt) > 0.01;
+          // Does this row reuse a candidate / bank line that another row also uses?
+          const hasDup = dupBankIds.has(m.bankTxnId)
+            || (m.candidates || []).some(c => dupCandIds.has(c.candidateId));
+          // Candidates as "RV-202604-0500 (500) + RV-…0501 (500) = 1,000" using
+          // the real doc number (label) the server resolved, not a GUID. Repeated
+          // docs are flagged ♻.
+          const cands = (m.candidates || [])
+            .map(c => `${dupCandIds.has(c.candidateId)?'<span title="ใช้ซ้ำ" style="color:#ea580c">♻</span>':''}${esc(c.label || (c.candidateType + ':' + c.candidateId.slice(0,8) + '…'))} <b>${fmtAmt(c.amount)}</b>`)
+            .join(' + ') + ` = <b>${fmtAmt(candSum)}</b>`;
+          const bankCell = (bankDate || bankMemo)
+            ? `<div style="font-size:10px;color:${bankDir==='In'?'#16a34a':'#dc2626'}">${bankDir==='In'?'รับ':'จ่าย'}${bankDate?' · '+Layout.date(bankDate):''}</div>
+               <div style="font-size:10px;color:#94a3b8">${esc((bankMemo||'').slice(0,28))}</div>`
+            : `<span style="font-family:monospace;font-size:11px">${esc(m.bankTxnId.slice(0,8))}…</span>`;
+          // ยอดธนาคาร + ยอดรวมที่จับ adjacent; red + diff when they disagree.
+          const bankAmtCell = bankAmt != null
+            ? `<span style="font-weight:700">${fmtAmt(bankAmt)}</span>` : '—';
+          const sumCell = `<span style="font-weight:700;color:${mismatch?'#dc2626':'#16a34a'}">${fmtAmt(candSum)}</span>` +
+            (mismatch ? `<div style="font-size:10px;color:#dc2626">ต่าง ${fmtAmt(candSum - bankAmt)}</div>` : '');
+          return `<tr style="border-bottom:1px solid #f1f5f9;${hasDup?'background:#fff7ed':mismatch?'background:#fff7f7':''}">
+            <td><input type="checkbox" ${m.confidence>=(m.aiValidated?0.85:0.95) && !mismatch && !hasDup?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" data-aiok="${m.aiValidated?1:0}" class="bulkMatchCheck"></td>
+            <td>${bankCell}</td>
+            <td><span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:999px;font-size:11px">${esc(m.matchType)}</span></td>
+            <td style="font-size:12px;min-width:240px">${cands}</td>
+            <td style="text-align:right;white-space:nowrap">${bankAmtCell}</td>
+            <td style="text-align:right;white-space:nowrap">${sumCell}</td>
+            <td style="text-align:right;white-space:nowrap"><span style="background:${confBg};color:${confColor};font-weight:700;padding:2px 8px;border-radius:6px">${conf}%</span>${m.aiValidated?'<span title="AI ตรวจสอบยืนยันแล้ว — เกณฑ์ติ๊ก 0.85" style="background:#ede9fe;color:#6d28d9;font-size:10px;padding:1px 5px;border-radius:4px;margin-left:4px">AI✓</span>':''}</td>
+            <td style="font-size:11px;color:#475569">${esc(m.reasoning || '')}</td>
+          </tr>`;
+        }).join('');
+        const unmatchedRows = (plan.unmatched || []).map(u => `<tr>
+          <td style="font-family:monospace;font-size:11px">${esc(u.bankTxnId.slice(0,8))}…</td>
+          <td style="font-size:12px">${esc(u.reason)}</td>
+          <td style="font-size:12px;color:#1d4ed8">${esc(u.suggestedAction || '—')}</td>
+        </tr>`).join('');
+        document.getElementById('bulkPlanBody').innerHTML = `
+          <h3 style="margin:0 0 4px">🧠 AI match ทั้งเดือน — ผลการวิเคราะห์</h3>
+          <p style="font-size:13px;color:#64748b;margin:0 0 12px">${esc(message || '')}</p>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+            <span style="background:${statusColor};color:#fff;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600">${esc(statusLabel)}</span>
+            <span style="font-size:13px;color:#475569">Bank txn พิจารณา: <b>${plan.bankTxnsConsidered}</b></span>
+            <span style="font-size:13px;color:#475569">ผู้สมัคร: <b>${plan.candidatesConsidered}</b></span>
+            <span style="font-size:13px;color:#16a34a">Match: <b>${(plan.matches||[]).length}</b></span>
+            <span style="font-size:13px;color:#d97706">Unmatched: <b>${(plan.unmatched||[]).length}</b></span>
+            <span style="font-size:13px;color:#dc2626">Missing data: <b>${(plan.missingData||[]).length}</b></span>
+            <button class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#0f172a" onclick="Page.viewBulkAiRaw('${esc(plan.feedbackId || '')}')">🔍 ดู AI response เต็ม</button>
+          </div>
+          ${plan.reasoning ? `<div style="background:#f8fafc;padding:10px 14px;border-radius:6px;font-size:13px;color:#475569;margin-bottom:12px">💭 ${esc(plan.reasoning)}</div>` : ''}
+          ${warningsBlock}
+          ${missingBlock}
+          ${(plan.matches||[]).length === 0 ? '' : `
+          <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 6px;flex-wrap:wrap;gap:8px">
+            <h4 style="margin:0">✅ Match ที่เสนอ <span style="font-weight:400;color:#94a3b8;font-size:12px">(เรียงตามความมั่นใจ — ที่ต้องตรวจอยู่บนสุด)</span></h4>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="Page.bulkSelect('high')">✓ เฉพาะมั่นใจ ≥85%</button>
+              <button class="btn btn-sm" style="background:#f1f5f9" onclick="Page.bulkSelect('all')">เลือกทั้งหมด</button>
+              <button class="btn btn-sm" style="background:#f1f5f9" onclick="Page.bulkSelect('none')">ล้าง</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">📅 ผู้สมัครครอบคลุม: เอกสารย้อนหลัง 90 วัน + JE ในช่วง ±5 วันของเดือนที่เลือก (กันใบที่ออกก่อนแต่จ่ายในเดือนนี้)</div>
+          ${dupBanner}
+          <div style="overflow:auto;max-height:380px;border:1px solid #e2e8f0;border-radius:8px">
+            <table style="width:100%;font-size:12px">
+              <thead style="position:sticky;top:0;background:#f1f5f9">
+                <tr><th></th><th>Bank</th><th>Type</th><th>Candidates (เอกสาร × ยอด)</th><th style="text-align:right">ยอดธนาคาร</th><th style="text-align:right">ยอดรวมที่จับ</th><th style="text-align:right">Conf</th><th>Reasoning</th></tr>
+              </thead>
+              <tbody>${matchRows}</tbody>
+            </table>
+          </div>`}
+          ${(plan.unmatched||[]).length === 0 ? '' : `
+          <h4 style="margin:18px 0 6px">⚠️ Bank txn ที่ AI ไม่สามารถ match ได้</h4>
+          <table style="width:100%;font-size:12px;border:1px solid #e2e8f0;border-radius:8px;border-collapse:collapse">
+            <thead style="background:#f1f5f9"><tr><th>Bank</th><th>เหตุผล</th><th>คำแนะนำ</th></tr></thead>
+            <tbody>${unmatchedRows}</tbody>
+          </table>`}
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+            <button class="btn btn-secondary" onclick="Layout.closeModal('bulkAiPlanModal')">ปิด</button>
+            ${(plan.matches||[]).length === 0 ? '' :
+              `<button class="btn btn-primary" onclick="Page.applyBulkPlan()">ยืนยัน match ที่เลือก</button>`}
+          </div>`;
+        Layout.openModal('bulkAiPlanModal');
+      },
+
+      // Quick-select helpers on the bulk plan modal: 'high' keeps only the
+      // calibrated-confident rows (the ones safe to rubber-stamp), 'all' /
+      // 'none' are the obvious bulk toggles. Uses the data-conf attribute set
+      // per row from the server-calibrated confidence.
+      bulkSelect(mode) {
+        document.querySelectorAll('.bulkMatchCheck').forEach(el => {
+          const c = parseFloat(el.dataset.conf || '0');
+          const ai = el.dataset.aiok === '1';
+          // Server-only matches require 0.95; AI-validated matches (AI agreed)
+          // need only 0.85 — AI gave the second opinion the user wanted.
+          el.checked = mode === 'all' ? true
+            : mode === 'none' ? false
+            : c >= (ai ? 0.85 : 0.95);
+        });
+      },
+
+      async applyBulkPlan() {
+        if (!this.bulkPlan) return;
+        const checks = Array.from(document.querySelectorAll('.bulkMatchCheck:checked'));
+        if (checks.length === 0) { Layout.toast('เลือกอย่างน้อย 1 รายการ', 'error'); return; }
+        let matches = checks.map(el => this.bulkPlan.matches[+el.dataset.bulkidx]);
+        const api = Layout.api(); if (!api) return;
+
+        // Client-side de-dup guard (the server already de-dups the plan, but
+        // the operator could hand-pick two rows that reuse the same RV/JE or
+        // bank line). Keep the higher-confidence one; drop later collisions.
+        {
+          const usedCand = new Set(), usedBank = new Set();
+          const ordered = [...matches].sort((a, b) => (b.confidence||0) - (a.confidence||0));
+          const ok = new Set();
+          for (const m of ordered) {
+            const cids = (m.candidates || []).map(c => c.candidateId);
+            const isGroup = !!m.matchGroupId;
+            if (usedBank.has(m.bankTxnId) || (!isGroup && cids.some(id => usedCand.has(id)))) continue;
+            ok.add(m);
+            usedBank.add(m.bankTxnId);
+            // Claim candidates so non-group rows can't reuse them; group rows
+            // skip the *check* (above) so they may share their own doc.
+            cids.forEach(id => usedCand.add(id));
+          }
+          matches = matches.filter(m => ok.has(m));
+        }
+
+        // Bank details preferring the plan (covers off-page txns), then the list.
+        const bankOf = (m) => {
+          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
+          return {
+            amount: (m.bankAmount != null && m.bankAmount > 0) ? m.bankAmount : (bt ? Math.abs(bt.amount) : null),
+            date: m.bankDate || (bt ? bt.transactionDate : null),
+            memo: m.bankMemo || (bt ? (bt.description || bt.payee) : ''),
+            matched: bt ? bt.reconciliationStatus === 'Matched' : false,
+          };
+        };
+        // Human-readable label for a plan row (date + amount + memo snippet) so
+        // every skip/failure can name the actual transaction, not a GUID.
+        const rowLabel = (m) => {
+          const b = bankOf(m);
+          if (b.amount == null) return m.bankTxnId.slice(0, 8) + '…';
+          const d = b.date ? Layout.date(b.date) : '';
+          const desc = (b.memo || '').slice(0, 36);
+          return `${d} ${Layout.money(b.amount)}${desc ? ' ('+desc+')' : ''}`;
+        };
+        const skips = [];   // {label, reason}
+
+        // If ANY member of an M:N group is already matched, the WHOLE group is
+        // invalid (can't settle one doc against a partial set) — drop it all.
+        const brokenGroups = new Set(
+          matches.filter(m => m.matchGroupId && bankOf(m).matched).map(m => m.matchGroupId));
+
+        matches = matches.filter(m => {
+          const b = bankOf(m);
+          if (m.matchGroupId && brokenGroups.has(m.matchGroupId)) {
+            skips.push({ label: rowLabel(m), reason: 'กลุ่มนี้มีรายการที่จับคู่ไปแล้ว — ยกเลิกของเดิมก่อน' });
+            return false;
+          }
+          if (b.matched) {
+            skips.push({ label: rowLabel(m), reason: 'จับคู่ไปแล้วก่อนหน้า' });
+            return false;
+          }
+          // Amount sanity (non-group rows): candidate sum must equal the bank
+          // amount within 1 satang — protects the atomic batch from a bad guess.
+          if (!m.matchGroupId && b.amount != null) {
+            const sum = (m.candidates || []).reduce((s, c) => s + (c.amount || 0), 0);
+            if (Math.abs(sum - b.amount) > 0.01) {
+              skips.push({ label: rowLabel(m),
+                reason: `ยอดรวมที่จับ (${Layout.money(sum)}) ≠ ยอดธนาคาร (${Layout.money(b.amount)})` });
+              return false;
+            }
+          }
+          return true;
+        });
+
+        // Many-banks-to-one rows (several deposits settling ONE document) share
+        // a matchGroupId and CANNOT go through BatchReconcile (each deposit's
+        // amount ≠ the document's full amount). Route those through the M:N
+        // ReconciliationGroup path with partial allocations; everything else
+        // goes through the normal batch path.
+        const groupRows = matches.filter(m => m.matchGroupId);
+        const normalRows = matches.filter(m => !m.matchGroupId);
+        let groupsApplied = 0;
+        const byGroup = {};
+        groupRows.forEach(m => { (byGroup[m.matchGroupId] = byGroup[m.matchGroupId] || []).push(m); });
+        for (const gid of Object.keys(byGroup)) {
+          const rows = byGroup[gid];
+          const doc = rows[0].candidates[0];           // shared document across the group
+          const itemType = doc.candidateType;          // Payment | JournalEntry
+          try {
+            // Each group applied independently so one failure doesn't abort the rest.
+            await api.createReconciliationGroup({
+              bankAccountId: this.selectedAccount.id,
+              reconciledDate: new Date().toISOString(),
+              bankTransactions: rows.map(m => ({
+                itemType: 'BankTransaction', itemId: m.bankTxnId,
+                allocatedAmount: m.candidates[0].amount, notes: null })),
+              matchItems: [{ itemType, itemId: doc.candidateId,
+                allocatedAmount: rows.reduce((s, m) => s + m.candidates[0].amount, 0), notes: null }],
+              notes: 'AI: หลายโอนรวมเป็นเอกสารเดียว', tolerance: 0.01,
+            });
+            groupsApplied += rows.length;
+          } catch (e) {
+            rows.forEach(m => skips.push({ label: rowLabel(m), reason: 'กลุ่ม M:N: ' + e.message }));
+          }
+        }
+
+        // Translate the remaining AI plan into the existing BatchReconcileRequest
+        // contract (MatchType: "Payment" | "JournalEntry" | "Multiple")
+        // so we route through the same audited apply path.
+        const items = normalRows.flatMap(m => {
+          const payIds = m.candidates.filter(c => c.candidateType === 'Payment').map(c => c.candidateId);
+          const jeIds  = m.candidates.filter(c => c.candidateType === 'JournalEntry').map(c => c.candidateId);
+          const allIds = [...payIds, ...jeIds];
+          if (allIds.length === 0) {
+            skips.push({ label: rowLabel(m), reason: 'ไม่มี Payment/JE ให้จับคู่' }); return [];
+          }
+          if (allIds.length === 1 && payIds.length === 1) {
+            return [{ bankTransactionId: m.bankTxnId, matchType: 'Payment',
+                      matchedPaymentId: payIds[0], matchedJournalEntryId: null, matchedEntryIds: null }];
+          }
+          if (allIds.length === 1 && jeIds.length === 1) {
+            return [{ bankTransactionId: m.bankTxnId, matchType: 'JournalEntry',
+                      matchedPaymentId: null, matchedJournalEntryId: jeIds[0], matchedEntryIds: null }];
+          }
+          // Multiple (M:1 split) — server stores all IDs as JSON.
+          return [{ bankTransactionId: m.bankTxnId, matchType: 'Multiple',
+                    matchedPaymentId: null, matchedJournalEntryId: null, matchedEntryIds: allIds }];
+        });
+        if (items.length === 0 && groupsApplied === 0) {
+          if (skips.length > 0) { Layout.toast(`ข้ามทั้งหมด ${skips.length} รายการ`, 'error'); this._showBulkSkips(skips); }
+          else Layout.toast('ไม่มีรายการ match ที่ทำได้ (อาจต้องสร้าง Payment ก่อน)', 'error');
+          return;
+        }
+        try {
+          if (items.length > 0) await api.batchReconcile({ items });
+          // Per-match feedback — closes the training loop so
+          // BankMatchDistillationModel learns from every confirmed match.
+          // Fire-and-forget; never blocks the user.
+          try {
+            const accId = this.selectedAccount.id;
+            const cid = Layout.getCompanyId();
+            const outcomes = matches
+              .filter(m => m.perMatchFeedbackId && m.perMatchFeedbackId !== '00000000-0000-0000-0000-000000000000')
+              .map(m => ({
+                perMatchFeedbackId: m.perMatchFeedbackId,
+                chosenCandidateJson: JSON.stringify(m.candidates.map(c => ({
+                  type: c.candidateType, id: c.candidateId, amount: c.amount }))),
+                acceptedAi: true,        // user kept AI's suggestion
+              }));
+            if (outcomes.length > 0) {
+              await API.post(`/api/companies/${cid}/bank/accounts/${accId}/bulk-ai-match/outcomes`,
+                { outcomes });
+            }
+          } catch (e) { /* training feedback is best-effort */ }
+          let msg = `ยืนยัน match แล้ว ${items.length + groupsApplied} รายการ`;
+          if (groupsApplied > 0) msg += ` (รวมกลุ่ม M:N ${groupsApplied})`;
+          Layout.toast(msg);
+          if (skips.length > 0) this._showBulkSkips(skips);
+          Layout.closeModal('bulkAiPlanModal');
+          await this.loadTransactions();
+          await this.loadReconciliationSummary();
+        } catch (e) {
+          // The batch is atomic — name the failing line if the server told us.
+          Layout.toast(e.message, 'error');
+          if (skips.length > 0) this._showBulkSkips(skips);
+        }
+      },
+
+      // Render a clear, scrollable list of skipped/failed rows (date + amount +
+      // memo + reason) so the operator knows EXACTLY which transactions to fix.
+      _showBulkSkips(skips) {
+        const id = 'bulkSkipOverlay';
+        document.getElementById(id)?.remove();
+        const el = document.createElement('div');
+        el.id = id;
+        el.className = 'modal-overlay active';
+        el.style.zIndex = '2000';
+        el.innerHTML = `<div class="modal" style="max-width:640px;width:94%;max-height:80vh;overflow:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3 style="margin:0;color:#b45309">⚠️ ข้าม/ทำไม่สำเร็จ ${skips.length} รายการ</h3>
+            <button class="btn btn-sm btn-ghost" onclick="document.getElementById('${id}').remove()">✕</button>
+          </div>
+          <p style="font-size:12px;color:#64748b;margin:8px 0">รายการเหล่านี้ไม่ถูกจับคู่ — ตรวจแล้วจับด้วยมือ หรือยกเลิกการจับคู่เดิมก่อน</p>
+          <table class="table"><thead><tr><th>รายการธนาคาร</th><th>เหตุผล</th></tr></thead><tbody>${
+            skips.map(s => `<tr><td>${this.esc(s.label)}</td><td style="color:#dc2626;font-size:12px">${this.esc(s.reason)}</td></tr>`).join('')
+          }</tbody></table>
+        </div>`;
+        document.body.appendChild(el);
+      },
+
+      // Fetch the raw AI payload behind a bulk-match result and show it in
+      // an overlay. Lets the operator inspect exactly what DeepSeek replied
+      // (incl. truncation tails / prose around the JSON) without digging in
+      // server logs or the DB.
+      async viewBulkAiRaw(feedbackId) {
+        const cid = Layout.getCompanyId(); if (!cid || !feedbackId) return;
+        const overlay = document.getElementById('bulkAiRawOverlay') || (() => {
+          const el = document.createElement('div');
+          el.id = 'bulkAiRawOverlay';
+          el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:9999';
+          document.body.appendChild(el);
+          return el;
+        })();
+        overlay.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:1100px;width:95%;max-height:88vh;display:flex;flex-direction:column;padding:18px 20px;box-shadow:0 8px 30px rgba(0,0,0,.25)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:12px">
+            <h3 style="margin:0">🔍 AI raw response</h3>
+            <button class="btn btn-sm" onclick="document.getElementById('bulkAiRawOverlay').remove()">ปิด</button>
+          </div>
+          <div id="bulkAiRawContent" style="overflow:auto;flex:1;font-size:12px"><div class="text-sm" style="color:#64748b">กำลังโหลด…</div></div>
+        </div>`;
+        try {
+          // Use the specific feedback id when present, else fall back to the
+          // latest BulkBankStatementMatch row for this company — covers the
+          // old build that didn't carry feedbackId through to the plan, plus
+          // any future page that wants a 'show me last AI call' affordance.
+          const url = feedbackId
+            ? `/api/companies/${cid}/ai-feedback/${feedbackId}/raw`
+            : `/api/companies/${cid}/ai-feedback/latest?featureKey=BulkBankStatementMatch`;
+          const r = await fetch(url,
+            { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } });
+          const j = await r.json();
+          if (!j.success || !j.data) throw new Error(j.message || 'ไม่พบข้อมูล');
+          const d = j.data;
+          const esc = s => (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          const pretty = v => {
+            if (v == null) return '(null)';
+            try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); }
+            catch { return String(v); }
+          };
+          const meta = (label, val) => `<tr><td style="padding:3px 8px;color:#64748b;white-space:nowrap">${label}</td><td style="padding:3px 8px"><code>${esc(val)}</code></td></tr>`;
+          const block = (title, val, hint) => `<div style="margin-top:10px"><div style="font-weight:600;margin-bottom:4px">${title} ${hint ? `<span style="font-weight:400;color:#94a3b8;font-size:11px">${hint}</span>` : ''}</div>
+            <pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.5">${esc(pretty(val))}</pre></div>`;
+          document.getElementById('bulkAiRawContent').innerHTML = `
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              ${meta('Feedback id', d.id)}
+              ${meta('Feature', d.featureKey)}
+              ${meta('Status', d.status)}
+              ${meta('Provider', d.providerUsed + (d.modelVersion ? ' · ' + d.modelVersion : ''))}
+              ${meta('Latency', (d.latencyMs ?? '?') + ' ms')}
+              ${meta('Tokens', `in=${d.inputTokens ?? '?'}  out=${d.outputTokens ?? '?'}`)}
+              ${meta('Cost', '$' + (d.costUsd ?? 0))}
+              ${d.errorMessage ? meta('Error', d.errorMessage) : ''}
+              ${meta('Created', d.createdAt)}
+            </table>
+            ${block('Response JSON', d.responseJson, d.responseJson ? (String(d.responseJson).length + ' chars') : '')}
+            ${block('Primary answer (raw)', d.aiPrimaryAnswer)}
+            ${d.localModelAnswer ? block('Local model answer', d.localModelAnswer, 'version: ' + (d.localModelVersion ?? '?')) : ''}
+            ${block('Prompt JSON (sent to AI)', d.promptJson)}`;
+        } catch (e) {
+          document.getElementById('bulkAiRawContent').innerHTML =
+            `<div class="text-danger" style="padding:12px">โหลดไม่สำเร็จ: ${e.message}</div>`;
+        }
+      },
+
+      renderAiSuggestions() {
+        const r = this.aiResult;
+        if (!r || !r.suggestions?.length) {
+          document.getElementById('aiSuggestionsCard').style.display = 'none';
+          return;
+        }
+        document.getElementById('aiSuggestionsCard').style.display = '';
+        document.getElementById('aiSugCount').textContent = `${r.suggestions.length} คู่`;
+        const list = document.getElementById('aiSuggestionsList');
+        const confColor = c => c >= 0.8 ? 'var(--success)' : c >= 0.6 ? 'var(--warning)' : 'var(--danger)';
+        const confLabel = c => c >= 0.8 ? 'สูง' : c >= 0.6 ? 'ปานกลาง' : 'ต่ำ';
+        const typeMap = { Deposit: 'ฝาก', Withdrawal: 'ถอน', Transfer: 'โอน', Fee: 'ค่าธรรมเนียม', Interest: 'ดอกเบี้ย' };
+        const isCredit = t => t === 'Deposit' || t === 'Interest';
+        list.innerHTML = r.suggestions.map((s, idx) => {
+          const bt = s.bankTransaction;
+          const matchTypeLabel = s.matchType === 'ManyToOne' ? `ยอดรวม (${s.accountingEntries.length} รายการ)` : '1-to-1';
+          return `<div style="padding:12px 16px;border-bottom:1px solid var(--border);${idx % 2 ? 'background:var(--bg-secondary)' : ''}" id="sug_${s.matchId}">
+            <div class="flex items-center justify-between" style="margin-bottom:8px">
+              <div class="flex items-center gap-2">
+                <span class="badge" style="background:${confColor(s.confidence)};color:white">${confLabel(s.confidence)} ${Math.round(s.confidence*100)}%</span>
+                <span class="badge badge-primary">${matchTypeLabel}</span>
+                <span class="text-xs text-gray-500">${s.reasoning}</span>
+              </div>
+              <div class="flex gap-1">
+                <button class="btn btn-sm btn-success" onclick="Page.acceptSuggestion(${idx})" data-i18n="common.confirm">ยืนยัน</button>
+                <button class="btn btn-sm btn-ghost" onclick="Page.dismissSuggestion('${s.matchId}')">ข้าม</button>
+              </div>
+            </div>
+            <div class="grid grid-2 gap-4">
+              <div style="border:1px solid var(--border);border-radius:6px;padding:8px 12px">
+                <div class="text-xs text-gray-500" style="margin-bottom:4px">Bank Statement</div>
+                <div class="flex justify-between">
+                  <span>${Layout.date(bt.transactionDate)}</span>
+                  <span class="font-bold ${isCredit(bt.transactionType) ? 'text-success' : 'text-danger'}">${isCredit(bt.transactionType) ? '+' : '-'}${Layout.money(bt.amount)}</span>
+                </div>
+                <div class="text-xs text-gray-500">${bt.description || bt.payee || '-'}</div>
+              </div>
+              <div style="border:1px solid var(--border);border-radius:6px;padding:8px 12px">
+                <div class="text-xs text-gray-500" style="margin-bottom:4px">รายการบัญชี${s.accountingEntries.length > 1 ? ` (${s.accountingEntries.length} รายการ)` : ''}</div>
+                ${s.accountingEntries.map(e => `<div class="flex justify-between" style="margin-bottom:2px">
+                  <span class="text-xs">${Layout.date(e.entryDate)} ${e.entryNumber || ''} ${e.contactName ? '- ' + e.contactName : ''}</span>
+                  <span class="font-medium text-xs">${Layout.money(e.amount)}</span>
+                </div>
+                <div class="text-xs text-gray-400">${e.description || '-'}</div>`).join('')}
+                ${s.difference > 0.01 ? `<div class="text-xs text-danger" style="margin-top:4px">ผลต่าง: ${Layout.money(s.difference)}</div>` : ''}
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+      },
+      renderDiscrepancies() {
+        const d = this.aiResult?.discrepancies;
+        if (!d?.length) { document.getElementById('discrepancyCard').style.display = 'none'; return; }
+        document.getElementById('discrepancyCard').style.display = '';
+        document.getElementById('discrepancyCount').textContent = d.length;
+        document.getElementById('discrepancyBody').innerHTML = d.map(x => `<tr>
+          <td>${Layout.date(x.entryDate)}</td>
+          <td class="font-medium">${x.journalNumber || '-'}</td>
+          <td class="text-right">${Layout.money(x.amount)}</td>
+          <td class="text-xs">${x.description || '-'}</td>
+          <td><span class="badge badge-warning">${x.bookedTo}</span></td>
+          <td class="text-xs">${x.suggestedFix}${x.suggestedAccountName ? ' (' + x.suggestedAccountName + ')' : ''}</td>
+        </tr>`).join('');
+      },
+      renderWarnings() {
+        const w = this.aiResult?.warnings;
+        if (!w?.length) { document.getElementById('warningCard').style.display = 'none'; return; }
+        document.getElementById('warningCard').style.display = '';
+        document.getElementById('warningCount').textContent = w.length;
+        const typeIcon = { Duplicate: '&#9888;', AmountMismatch: '&#9888;', DateGap: '&#128197;', MissingEntry: '&#10060;' };
+        document.getElementById('warningList').innerHTML = w.map(x =>
+          `<div style="padding:6px 0;border-bottom:1px solid var(--border)" class="text-sm">
+            <span>${typeIcon[x.warningType] || '&#9888;'}</span>
+            <span class="badge badge-danger" style="font-size:10px">${x.warningType}</span>
+            ${x.message}
+          </div>`).join('');
+      },
+      async acceptSuggestion(idx) {
+        if (!this.aiResult?.suggestions?.[idx]) return;
+        const api = Layout.api(); if (!api) return;
+        const s = this.aiResult.suggestions[idx];
+        const bt = s.bankTransaction;
+        try {
+          if (s.matchType === 'OneToOne' && s.accountingEntries.length === 1) {
+            const e = s.accountingEntries[0];
+            const req = { bankTransactionId: bt.id };
+            if (e.entryType === 'Payment') req.matchedPaymentId = e.entryId;
+            else req.matchedJournalEntryId = e.entryId;
+            await api.reconcile(req);
+          } else {
+            await api.batchReconcile({
+              items: [{ bankTransactionId: bt.id, matchType: 'Multiple',
+                matchedEntryIds: s.accountingEntries.map(e => e.entryId) }]
+            });
+          }
+          const el = document.getElementById(`sug_${s.matchId}`);
+          if (el) { el.style.opacity = '0.4'; el.style.pointerEvents = 'none';
+            el.querySelector('.flex.gap-1').innerHTML = '<span class="badge badge-success">&#10003; ยืนยันแล้ว</span>'; }
+          Layout.toast('จับคู่สำเร็จ');
+          await this.loadUnreconciled();
+          await this.loadReconciliationSummary();
+          await this.loadTransactions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async acceptAllSuggestions() {
+        if (!this.aiResult?.suggestions?.length) return;
+        if (!confirm(`ยืนยันจับคู่ทั้ง ${this.aiResult.suggestions.length} คู่?`)) return;
+        const api = Layout.api(); if (!api) return;
+        let ok = 0, fail = 0;
+        for (let i = 0; i < this.aiResult.suggestions.length; i++) {
+          try { await this.acceptSuggestion(i); ok++; } catch { fail++; }
+        }
+        Layout.toast(`ยืนยันสำเร็จ ${ok} คู่${fail ? `, ล้มเหลว ${fail} คู่` : ''}`);
+      },
+      dismissSuggestion(matchId) {
+        const el = document.getElementById(`sug_${matchId}`);
+        if (el) el.remove();
+      },
+      dismissSuggestions() {
+        document.getElementById('aiSuggestionsCard').style.display = 'none';
+        document.getElementById('discrepancyCard').style.display = 'none';
+        document.getElementById('warningCard').style.display = 'none';
+        document.getElementById('aiMatchStatus').style.display = 'none';
+        this.aiResult = null;
+      },
+      async unmatchTxn(txnId) {
+        if (!confirm('ต้องการยกเลิกการจับคู่?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.unmatchTransaction({ bankTransactionId: txnId });
+          Layout.toast('ยกเลิกการจับคู่สำเร็จ');
+          await this.loadTransactions();
+          await this.loadUnreconciled();
+          await this.loadReconciliationSummary();
+          await this.loadMatchIssues();
+          // Refresh the issues modal in place if it's open.
+          if (document.getElementById('matchIssuesModal')?.classList.contains('active')) this.showMatchIssues();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === MANUAL RECONCILE PICKER (multi-select capable) ===
+      _pickerData: null,
+      _pickerTab: 'all',
+      _pickerSelected: [],
+      _pickerDepFilter: '',
+      _pickerAmtFilter: false,
+      _compSelectedTxnId: null,
+      _compUnreconciled: [],
+      // 🤖 Quick AI suggestion popover for a single unmatched bank
+      // transaction. Shows the AI's top pick + alternatives inline so
+      // the user can verify before opening the full reconcile modal.
+      // The full modal already has its own AI button (rAiBtn at line
+      // 433) — this row-level button is the "did you mean..." entry
+      // point that lets the user pre-screen without modal overhead.
+      askAiBankMatch(ev, transId) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const btn = ev?.currentTarget;
+        AiSuggestion.show({
+          anchorEl: btn,
+          fetch: () => API.post(`/api/companies/${cid}/ai/bank/suggest-match`,
+            { bankTransactionId: transId, currentMatchedDocId: null }),
+          // Accepting the AI pick opens the full reconcile modal so the
+          // user can complete the match (the modal's existing AI button
+          // can deep-link to the specific candidate row). Bank match
+          // is high-stakes (wrong invoice → wrong AR/AP) so we never
+          // auto-apply from this popover.
+          applyAnswer: (docId) => {
+            if (!docId || docId === '__NEW__') {
+              Layout.toast('AI แนะนำให้สร้างเอกสารใหม่ — เปิดหน้าเลือกเต็ม', 'info');
+            }
+            this.openReconcileOne(transId);
+          },
+          answerToLabel: (v) => v === '__NEW__' ? 'สร้างเอกสารใหม่' : ('Document ' + v.substring(0, 8) + '…'),
+        });
+      },
+
+      async openReconcileOne(transId) {
+        document.getElementById('rTransId').value = transId;
+        document.getElementById('rPickerSearch').value = '';
+        this._pickerTab = 'all';
+        this._pickerSelected = [];
+        this._pickerDepFilter = '';
+        this._pickerAmtFilter = false;
+        // Reset chip and tab styles
+        setTimeout(() => { this.switchPickerTab('all'); this.setDepositFilter(''); this.applyAmtChipStyle(); }, 10);
+        document.getElementById('rBankInfo').textContent = 'กำลังโหลด...';
+        document.getElementById('rCandidateList').innerHTML =
+          '<div style="text-align:center;color:#94a3b8;padding:40px">⏳ กำลังค้นหารายการที่อาจตรงกัน...</div>';
+        document.getElementById('rPaymentCount').textContent = '0';
+        document.getElementById('rJournalCount').textContent = '0';
+        this.updateSelectionBar();
+        Layout.openModal('reconcileModal');
+
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getMatchCandidates(transId);
+          this._pickerData = res.data;
+          const d = res.data;
+          const dateStr = Layout.date(d.bankTransactionDate);
+          const amtStr = Layout.money(d.bankTransactionAmount);
+          document.getElementById('rBankInfo').innerHTML =
+            `<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <div><strong>📅 ${dateStr}</strong></div>
+              <div style="font-size:18px;font-weight:700;color:#4F46E5">฿${amtStr}</div>
+              <div style="color:#475569;flex:1;min-width:200px">${this.esc(d.bankTransactionDescription || '-')}</div>
+            </div>`;
+          // Show "X / Y" when the displayed list is capped vs total in window.
+          // After server-side exclusion, totalPaymentsInWindow is the real unmatched count;
+          // if it's larger than the displayed length, the list is capped (DisplayCap=200).
+          const pShown = (d.payments || []).length;
+          const jShown = (d.journalEntries || []).length;
+          const pTotal = d.totalPaymentsInWindow || pShown;
+          const jTotal = d.totalJournalEntriesInWindow || jShown;
+          document.getElementById('rAllCount').textContent = pShown + jShown;
+          document.getElementById('rPaymentCount').textContent = pShown < pTotal ? `${pShown} / ${pTotal}` : `${pShown}`;
+          document.getElementById('rJournalCount').textContent = jShown < jTotal ? `${jShown} / ${jTotal}` : `${jShown}`;
+          document.getElementById('rBankSumDisplay').textContent = '฿' + amtStr;
+          // Show transparency hint: how many candidates were filtered out
+          const excluded = d.excludedAlreadyMatchedCount || 0;
+          const aiHint = document.getElementById('rAiHint');
+          if (aiHint) {
+            const parts = [];
+            if (excluded > 0) parts.push(`<span style="color:#0369a1">🔒 ซ่อน ${excluded} รายการที่จับคู่กับธุรกรรมอื่นแล้ว</span>`);
+            if (pShown < pTotal || jShown < jTotal) {
+              const cap = [];
+              if (pShown < pTotal) cap.push(`💳 ${pShown}/${pTotal}`);
+              if (jShown < jTotal) cap.push(`📒 ${jShown}/${jTotal}`);
+              parts.push(`<span style="color:#92400e">⚠️ แสดง top ${cap.join(' · ')} — ใช้ค้นหาหรือ "ใกล้เคียงยอด" เพื่อกรอง</span>`);
+            }
+            parts.push('ติ๊กหลายรายการเพื่อรวมเป็นการจับคู่เดียว หรือกด "AI จับคู่อัตโนมัติ"');
+            aiHint.innerHTML = parts.join(' — ');
+          }
+          this.renderPickerCandidates();
+        } catch(e) {
+          document.getElementById('rCandidateList').innerHTML =
+            `<div style="text-align:center;color:#dc2626;padding:40px">❌ โหลดข้อมูลไม่สำเร็จ: ${this.esc(e.message)}</div>`;
+        }
+      },
+      switchPickerTab(tab) {
+        this._pickerTab = tab;
+        document.querySelectorAll('.rcn-tab').forEach(b => {
+          const isActive = b.dataset.tab === tab;
+          b.style.borderBottomColor = isActive ? '#4F46E5' : 'transparent';
+          b.style.color = isActive ? '#4F46E5' : '#64748b';
+        });
+        this.renderPickerCandidates();
+      },
+      filterPickerCandidates() { this.renderPickerCandidates(); },
+      toggleAmountFilter() {
+        this._pickerAmtFilter = !this._pickerAmtFilter;
+        this.applyAmtChipStyle();
+        this.renderPickerCandidates();
+      },
+      applyAmtChipStyle() {
+        const chip = document.getElementById('rAmtFilterChip');
+        if (!chip) return;
+        if (this._pickerAmtFilter) {
+          chip.style.background = '#10b981';
+          chip.style.color = '#fff';
+          chip.style.borderColor = '#10b981';
+          chip.innerHTML = '✓ ใกล้เคียงยอด (±5%)';
+        } else {
+          chip.style.background = '#fef3c7';
+          chip.style.color = '#92400e';
+          chip.style.borderColor = '#fbbf24';
+          chip.innerHTML = '🎯 ใกล้เคียงยอด (±5%)';
+        }
+      },
+      setDepositFilter(cat) {
+        this._pickerDepFilter = cat || '';
+        document.querySelectorAll('.dep-chip').forEach(b => {
+          const isActive = (b.dataset.cat || '') === this._pickerDepFilter;
+          b.style.background = isActive ? '#4F46E5' : '#fff';
+          b.style.color = isActive ? '#fff' : (
+            b.dataset.cat === 'Bank' ? '#0369a1' :
+            b.dataset.cat === 'Mixed' ? '#7c3aed' :
+            b.dataset.cat === 'Cash' ? '#b45309' : '#4F46E5');
+          b.style.borderColor = isActive ? '#4F46E5' : (
+            b.dataset.cat === 'Bank' ? '#93c5fd' :
+            b.dataset.cat === 'Mixed' ? '#c4b5fd' :
+            b.dataset.cat === 'Cash' ? '#fcd34d' : '#4F46E5');
+        });
+        this.renderPickerCandidates();
+      },
+      isPickerSelected(type, id) {
+        return (this._pickerSelected || []).some(s => s.type === type && s.id === id);
+      },
+      togglePickerSelect(type, id, number, amount) {
+        if (!this._pickerSelected) this._pickerSelected = [];
+        const ix = this._pickerSelected.findIndex(s => s.type === type && s.id === id);
+        if (ix >= 0) {
+          this._pickerSelected.splice(ix, 1);
+        } else {
+          // Cannot mix Payment and JournalEntry types — backend stores them on different columns
+          if (this._pickerSelected.length > 0 && this._pickerSelected[0].type !== type) {
+            Layout.toast('เลือกได้แค่ประเภทเดียวต่อการจับคู่ (Payment หรือ Journal Entry — ไม่ผสมกัน)', 'error');
+            return;
+          }
+          this._pickerSelected.push({ type, id, number, amount: Number(amount) || 0 });
+        }
+        this.renderPickerCandidates();
+        this.updateSelectionBar();
+      },
+      // Direction of a candidate inferred from its doc-number prefix:
+      // RV / Receipt / Invoice = inflow (+); PV / Expense = outflow (−).
+      // For an IN bank line same-side adds and opposite-side subtracts —
+      // the net (= signed sum) is what must match the bank amount.
+      _candidateSign(item, bankIsIn) {
+        const n = (item.number || '').toUpperCase();
+        const isIn = n.startsWith('RV') || n.startsWith('REC') || n.startsWith('INV') || n.startsWith('TI') || n.startsWith('BN') || n.startsWith('DN');
+        const isOut = n.startsWith('PV') || n.startsWith('PAY') || n.startsWith('EX') || n.startsWith('PI');
+        if (!isIn && !isOut) return +1;            // unknown — additive
+        return (isIn === bankIsIn) ? +1 : -1;
+      },
+      updateSelectionBar() {
+        const sel = this._pickerSelected || [];
+        const bar = document.getElementById('rSelectionBar');
+        const btn = document.getElementById('rConfirmBtn');
+        const cntText = document.getElementById('rConfirmCountText');
+        if (!sel.length) {
+          if (bar) bar.style.display = 'none';
+          if (btn) btn.disabled = true;
+          if (cntText) cntText.textContent = '(เลือกรายการก่อน)';
+          return;
+        }
+        const bankAmt = this._pickerData?.bankTransactionAmount || 0;
+        const bankIsIn = (this._pickerData?.bankTransactionType || '') !== 'Withdrawal'
+                       && (this._pickerData?.bankTransactionType || '') !== 'Fee';
+        // Net (signed) sum so mixing RV + PV (net-settlement) totals correctly.
+        const sum = sel.reduce((s, x) => s + this._candidateSign(x, bankIsIn) * (x.amount || 0), 0);
+        const diff = bankAmt - sum;
+        document.getElementById('rSelectionCount').textContent = sel.length;
+        document.getElementById('rSelectionSum').textContent = '฿' + Layout.money(sum);
+        const diffEl = document.getElementById('rSelectionDiff');
+        if (Math.abs(diff) < 0.01) {
+          diffEl.innerHTML = '<span style="color:#10b981">✓ ยอดตรงเป๊ะ</span>';
+        } else if (diff > 0) {
+          diffEl.innerHTML = `<span style="color:#dc2626">ต่าง ฿${Layout.money(Math.abs(diff))} (เลือกขาด)</span>`;
+        } else {
+          diffEl.innerHTML = `<span style="color:#dc2626">ต่าง ฿${Layout.money(Math.abs(diff))} (เลือกเกิน)</span>`;
+        }
+        bar.style.display = 'block';
+        btn.disabled = false;
+        cntText.textContent = sel.length === 1
+          ? `1 รายการ (฿${Layout.money(sum)})`
+          : `รวม ${sel.length} รายการ (฿${Layout.money(sum)})`;
+      },
+      renderPickerCandidates() {
+        const d = this._pickerData; if (!d) return;
+        let list;
+        if (this._pickerTab === 'all') {
+          list = [
+            ...(d.payments || []).map(c => ({...c, type: c.type || 'Payment'})),
+            ...(d.journalEntries || []).map(c => ({...c, type: c.type || 'JournalEntry'}))
+          ].sort((a, b) => b.score - a.score);
+        } else {
+          list = this._pickerTab === 'payment' ? (d.payments || []) : (d.journalEntries || []);
+        }
+        const lockedType = (this._pickerSelected?.length > 0) ? this._pickerSelected[0].type : null;
+        const search = (document.getElementById('rPickerSearch').value || '').toLowerCase().trim();
+
+        let filtered = list;
+        if (search) {
+          filtered = list.filter(c =>
+            (c.number || '').toLowerCase().includes(search) ||
+            (c.description || '').toLowerCase().includes(search) ||
+            (c.counterpartyName || '').toLowerCase().includes(search) ||
+            (c.reference || '').toLowerCase().includes(search) ||
+            String(c.amount).includes(search));
+        }
+        // Apply deposit-category filter chip
+        if (this._pickerDepFilter) {
+          filtered = filtered.filter(c => c.depositCategory === this._pickerDepFilter);
+        }
+        // Apply close-amount filter — keep only candidates within ±5% of bank amount
+        if (this._pickerAmtFilter) {
+          const bankAmt = this._pickerData?.bankTransactionAmount || 0;
+          if (bankAmt > 0) {
+            const tolerance = Math.max(bankAmt * 0.05, 1);
+            filtered = filtered.filter(c => Math.abs((c.amount || 0) - bankAmt) <= tolerance);
+          }
+        }
+
+        const container = document.getElementById('rCandidateList');
+        if (!filtered.length) {
+          const reasons = ['✓ จับคู่กับธุรกรรมธนาคารอื่นแล้ว (รวมถึง many-to-one batch)',
+                           '✓ JE ที่เป็น "ฝาแฝด" ของ Payment ที่จับคู่ไปแล้ว (และในทางกลับกัน)',
+                           '✓ เอกสารต้นทางถูกยกเลิก (Voided) หรือถูกลบ'];
+          if (this._pickerAmtFilter) reasons.unshift('🎯 อยู่นอกช่วง ±5% ของยอดธนาคาร — ปิด "ใกล้เคียงยอด" เพื่อดูทั้งหมด');
+          if (this._pickerDepFilter) reasons.unshift(`📌 ที่ลงบัญชีไม่ตรงกับตัวกรอง "${this._pickerDepFilter}"`);
+          container.innerHTML = `<div style="text-align:center;color:#94a3b8;padding:40px">
+            ${search ? '🔍 ไม่พบรายการที่ตรงกับการค้นหา' : (this._pickerTab === 'all' ? '📋 ไม่มีรายการบัญชีที่ใกล้เคียง' : this._pickerTab === 'payment' ? '💳 ไม่มีรายการชำระเงินที่ใกล้เคียง' : '📒 ไม่มี Journal Entry ที่ใกล้เคียง')}
+            <div style="margin-top:8px;font-size:12px;line-height:1.6;text-align:left;display:inline-block">
+              รายการที่ถูกซ่อนจากที่นี่:<br>
+              ${reasons.join('<br>')}
+            </div>
+          </div>`;
+          return;
+        }
+
+        container.innerHTML = filtered.map(c => {
+          const scoreColor = c.score >= 80 ? '#10b981' : c.score >= 50 ? '#f59e0b' : '#94a3b8';
+          const scoreBg = c.score >= 80 ? '#d1fae5' : c.score >= 50 ? '#fef3c7' : '#f1f5f9';
+          const dateStr = Layout.date(c.date);
+          const isSel = this.isPickerSelected(c.type, c.id);
+          const isDimmed = this._pickerTab === 'all' && lockedType && c.type !== lockedType;
+          const borderColor = isSel ? '#10b981' : '#e2e8f0';
+          const bg = isSel ? 'linear-gradient(135deg,#ecfdf5,#ffffff)' : '#fff';
+
+          // Type badge for unified view
+          const typeBadge = this._pickerTab === 'all'
+            ? `<span style="background:${c.type === 'Payment' ? '#dbeafe' : '#fef3c7'};color:${c.type === 'Payment' ? '#1e40af' : '#92400e'};padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600">${c.type === 'Payment' ? '💳' : '📒'}</span>`
+            : '';
+
+          // Deposit badge — shows where money was booked in the GL.
+          // Bank category gets a strong green ring (great for matching),
+          // Cash category gets a warning amber ring (rare match for bank txn — usually
+          // the user should match the "deposit cash to bank" JE instead).
+          let depBadge = '';
+          if (c.depositLabel) {
+            const depColor = c.depositCategory === 'Bank' ? '#0369a1'
+                           : c.depositCategory === 'Mixed' ? '#7c3aed'
+                           : '#b45309';
+            const depBg = c.depositCategory === 'Bank' ? '#dbeafe'
+                        : c.depositCategory === 'Mixed' ? '#ede9fe'
+                        : '#fef3c7';
+            depBadge = `<span style="background:${depBg};color:${depColor};padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;white-space:nowrap">${this.esc(c.depositLabel)}</span>`;
+          }
+
+          return `<div style="border:2px solid ${borderColor};border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer;transition:all 0.15s;background:${bg};${isDimmed ? 'opacity:0.35;pointer-events:none' : ''}"
+            onclick="Page.togglePickerSelect('${c.type}','${c.id}','${this.esc(c.number).replace(/'/g,"\\'")}',${c.amount})">
+            <div style="display:flex;align-items:start;gap:12px">
+              <input type="checkbox" ${isSel ? 'checked' : ''} style="margin-top:8px;width:18px;height:18px;cursor:pointer" onclick="event.stopPropagation();Page.togglePickerSelect('${c.type}','${c.id}','${this.esc(c.number).replace(/'/g,"\\'")}',${c.amount})">
+              <div style="background:${scoreBg};color:${scoreColor};padding:6px 10px;border-radius:8px;font-weight:700;font-size:14px;min-width:54px;text-align:center">
+                ${c.score}%
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;align-items:center">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0">
+                    ${typeBadge}
+                    <strong style="color:#0f172a">${this.esc(c.number)}</strong>
+                    ${depBadge}
+                  </div>
+                  <strong style="color:#4F46E5;font-size:15px;white-space:nowrap">฿${Layout.money(c.amount)}</strong>
+                </div>
+                <div style="font-size:12px;color:#64748b;display:flex;gap:12px;flex-wrap:wrap">
+                  <span>📅 ${dateStr}</span>
+                  ${c.dateDiffDays === 0 ? '<span style="color:#10b981">✓ วันเดียวกัน</span>' : `<span>ห่าง ${c.dateDiffDays} วัน</span>`}
+                  ${c.amountDiff < 0.01 ? '<span style="color:#10b981">✓ ยอดตรงเป๊ะ</span>' : ''}
+                </div>
+                ${c.counterpartyName ? `<div style="font-size:13px;color:#334155;margin-top:4px">👤 ${this.esc(c.counterpartyName)}</div>` : ''}
+                ${c.description && c.description !== c.counterpartyName ? `<div style="font-size:12px;color:#64748b;margin-top:2px">${this.esc(c.description)}</div>` : ''}
+                ${c.reference ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px">อ้างอิง: ${this.esc(c.reference)}</div>` : ''}
+                ${c.scoreReason ? `<div style="font-size:11px;color:${scoreColor};margin-top:4px">💡 ${this.esc(c.scoreReason)}</div>` : ''}
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+      },
+      async confirmMultiMatch() {
+        const sel = this._pickerSelected || [];
+        if (!sel.length) return;
+        const transId = document.getElementById('rTransId').value;
+        const type = sel[0].type;
+        const bankAmt = this._pickerData?.bankTransactionAmount || 0;
+        const bankIsIn = (this._pickerData?.bankTransactionType || '') !== 'Withdrawal'
+                       && (this._pickerData?.bankTransactionType || '') !== 'Fee';
+        // Net (signed) sum: RV on same side as bank adds, PV on opposite side
+        // subtracts. So a 5,000 receipt − 200 service fee = 4,800 net deposit.
+        const sum = sel.reduce((s, x) => s + this._candidateSign(x, bankIsIn) * x.amount, 0);
+        const diff = Math.abs(bankAmt - sum);
+
+        let msg;
+        if (sel.length === 1) {
+          msg = `จับคู่กับ ${type === 'Payment' ? 'การชำระเงิน' : 'Journal Entry'} ${sel[0].number}\nยอด ฿${Layout.money(sel[0].amount)}`;
+        } else {
+          msg = `รวม ${sel.length} รายการเป็นการจับคู่เดียว\nรวมยอด ฿${Layout.money(sum)} / ยอดธนาคาร ฿${Layout.money(bankAmt)}`;
+        }
+        if (diff >= 0.01) msg += `\n\n⚠️ ยอดต่างกัน ฿${diff.toFixed(2)}`;
+        msg += '\n\nยืนยันการจับคู่?';
+        if (!confirm(msg)) return;
+
+        const api = Layout.api(); if (!api) return;
+        try {
+          if (sel.length === 1) {
+            // Use the simple single-match endpoint
+            const payload = { bankTransactionId: transId };
+            if (type === 'Payment') payload.matchedPaymentId = sel[0].id;
+            else payload.matchedJournalEntryId = sel[0].id;
+            await api.reconcile(payload);
+          } else {
+            // Use batch endpoint with MatchType="Multiple"
+            await api.batchReconcile({
+              items: [{
+                bankTransactionId: transId,
+                matchType: 'Multiple',
+                matchedEntryIds: sel.map(s => s.id)
+              }]
+            });
+          }
+          Layout.closeModal('reconcileModal');
+          Layout.toast('จับคู่สำเร็จ', 'success');
+          await this.loadTransactions();
+          if (this.loadUnreconciled) await this.loadUnreconciled();
+          if (this.loadReconciliationSummary) await this.loadReconciliationSummary();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async runAiSuggestForTxn() {
+        const transId = document.getElementById('rTransId').value;
+        if (!transId) return;
+        const btn = document.getElementById('rAiBtn');
+        const hint = document.getElementById('rAiHint');
+        const orig = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '⏳ กำลังวิเคราะห์...';
+        hint.innerHTML = '<span style="color:#6366f1">🔬 AI กำลังตรวจสอบยอดทุกรายการและหาชุดที่รวมแล้วได้ยอดตรงกับธนาคาร...</span>';
+
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.aiSuggestMatch(transId);
+          const r = res.data || {};
+          if (!r.found || !r.suggestedIds?.length) {
+            hint.innerHTML = `<span style="color:#dc2626">❌ ${this.esc(r.message || 'AI ไม่พบชุดที่ตรง — กรุณาเลือกด้วยตนเอง')}</span>`;
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            return;
+          }
+
+          // Switch tab to the suggested type
+          const targetTab = r.type === 'Payment' ? 'payment' : 'journal';
+          if (this._pickerTab !== targetTab) this.switchPickerTab(targetTab);
+
+          // Many-to-one matches contain items whose individual amounts are below the
+          // bank amount — turn off the close-amount filter so AI's selections are visible.
+          if (this._pickerAmtFilter) {
+            this._pickerAmtFilter = false;
+            this.applyAmtChipStyle();
+          }
+
+          // Look up the candidate objects so we have number+amount for selection state
+          const list = r.type === 'Payment'
+            ? (this._pickerData?.payments || [])
+            : (this._pickerData?.journalEntries || []);
+
+          this._pickerSelected = [];
+          for (const id of r.suggestedIds) {
+            const c = list.find(x => x.id === id);
+            if (c) {
+              this._pickerSelected.push({
+                type: r.type, id: c.id, number: c.number, amount: Number(c.amount) || 0
+              });
+            }
+          }
+          this.renderPickerCandidates();
+          this.updateSelectionBar();
+
+          // Scroll first selected card into view
+          setTimeout(() => {
+            const firstChecked = document.querySelector('#rCandidateList input[type="checkbox"]:checked');
+            firstChecked?.closest('div[style*="border"]')?.scrollIntoView({ behavior:'smooth', block:'center' });
+          }, 100);
+
+          hint.innerHTML = `<span style="color:#10b981;font-weight:600">✓ ${this.esc(r.message)} — กด "จับคู่" เพื่อยืนยัน</span>`;
+        } catch(e) {
+          hint.innerHTML = `<span style="color:#dc2626">❌ ${this.esc(e.message || 'วิเคราะห์ไม่สำเร็จ')}</span>`;
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = orig;
+        }
+      },
+      esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); },
+      async manualReconcile() {
+        const checked = [...document.querySelectorAll('.recon-check:checked')];
+        if (!checked.length) { Layout.toast('เลือกรายการที่ต้องการจับคู่', 'error'); return; }
+        if (checked.length === 1) { this.openReconcileOne(checked[0].value); return; }
+        if (!this.selectedAccount) { Layout.toast('กรุณาเลือกบัญชีธนาคาร', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.autoMatch(this.selectedAccount.id);
+          Layout.toast('จับคู่อัตโนมัติสำเร็จ');
+          await this.loadUnreconciled();
+          await this.loadReconciliationSummary();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === CREATE/EDIT ACCOUNT ===
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'เพิ่มบัญชีธนาคาร';
+        document.getElementById('fId').value = '';
+        document.getElementById('fName').value = '';
+        document.getElementById('fBank').value = 'กสิกรไทย';
+        document.getElementById('fAccNum').value = '';
+        document.getElementById('fAccType').value = 'Savings';
+        document.getElementById('fCurrency').value = 'THB';
+        document.getElementById('fBranch').value = '';
+        const op = document.getElementById('fOpening');
+        op.value = '0'; op.disabled = false;
+        document.getElementById('fOpeningHint').classList.add('hidden');
+        Layout.openModal('formModal');
+      },
+      openEdit(id) {
+        const a = this.accounts.find(x => x.id === id);
+        if (!a) return;
+        document.getElementById('formTitle').textContent = 'แก้ไขบัญชีธนาคาร';
+        document.getElementById('fId').value = a.id;
+        document.getElementById('fName').value = a.accountName;
+        document.getElementById('fBank').value = a.bankName;
+        document.getElementById('fAccNum').value = a.accountNumber;
+        document.getElementById('fAccType').value = a.accountType || 'Savings';
+        document.getElementById('fCurrency').value = a.currency || 'THB';
+        document.getElementById('fBranch').value = a.branchName || '';
+        // ยอดเปิดถูกรวมเข้า CurrentBalance ตอนสร้างแล้ว — แก้ย้อนหลังไม่ได้
+        const op = document.getElementById('fOpening');
+        op.value = a.currentBalance ?? 0; op.disabled = true;
+        document.getElementById('fOpeningHint').classList.remove('hidden');
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('fId').value;
+        const data = {
+          accountName: document.getElementById('fName').value,
+          bankName: document.getElementById('fBank').value,
+          accountNumber: document.getElementById('fAccNum').value,
+          branchName: document.getElementById('fBranch').value || null,
+          accountType: document.getElementById('fAccType').value,
+          currency: document.getElementById('fCurrency').value || 'THB',
+          openingBalance: parseFloat(document.getElementById('fOpening').value) || 0,
+        };
+        if (!data.accountName || !data.accountNumber) { Layout.toast('กรุณากรอกข้อมูลที่จำเป็น', 'error'); return; }
+        try {
+          if (id) { await api.updateBankAccount(id, data); }
+          else { await api.createBankAccount(data); }
+          Layout.closeModal('formModal');
+          Layout.toast(id ? 'แก้ไขบัญชีสำเร็จ' : 'เพิ่มบัญชีธนาคารสำเร็จ');
+          await this.loadAccounts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === ADD TRANSACTION ===
+      openAddTrans() {
+        if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        document.getElementById('tDate').value = Layout.toDateInput(new Date());
+        document.getElementById('tType').value = 'Deposit';
+        document.getElementById('tAmount').value = '';
+        document.getElementById('tPayee').value = '';
+        document.getElementById('tDesc').value = '';
+        document.getElementById('tRef').value = '';
+        Layout.openModal('transModal');
+      },
+      async saveTrans() {
+        const api = Layout.api(); if (!api) return;
+        const amount = parseFloat(document.getElementById('tAmount').value);
+        if (!amount) { Layout.toast('กรุณาระบุจำนวนเงิน', 'error'); return; }
+        try {
+          await api.createTransaction({
+            bankAccountId: this.selectedAccount.id,
+            transactionDate: document.getElementById('tDate').value,
+            transactionType: document.getElementById('tType').value,
+            amount,
+            payee: document.getElementById('tPayee').value || null,
+            description: document.getElementById('tDesc').value || null,
+            reference: document.getElementById('tRef').value || null,
+          });
+          Layout.closeModal('transModal');
+          Layout.toast('เพิ่มรายการสำเร็จ');
+          await this.loadTransactions();
+          await this.loadAccounts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === IMPORT STATEMENT ===
+      openImport() {
+        const sel = document.getElementById('impAccount');
+        sel.innerHTML = '<option value="">เลือกบัญชี</option>' + this.accounts.map(a => `<option value="${a.id}">${a.accountName} - ${a.accountNumber}</option>`).join('');
+        Layout.openModal('importModal');
+      },
+      async doImport() {
+        const api = Layout.api(); if (!api) return;
+        const accountId = document.getElementById('impAccount').value;
+        const file = document.getElementById('impFile').files[0];
+        if (!accountId || !file) { Layout.toast('กรุณาเลือกบัญชีและไฟล์', 'error'); return; }
+        // Auto-correct the format dropdown based on the actual file extension —
+        // users frequently leave the default "CSV" selected but pick an .xlsx
+        // file. Excel and CSV use different parsers; the extension is the
+        // authoritative signal so we override the dropdown silently.
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        let format = document.getElementById('impFormat').value;
+        if (ext === 'xlsx' || ext === 'xls') format = 'EXCEL';
+        else if (ext === 'csv' || ext === 'txt') format = 'CSV';
+        else if (ext === 'ofx') format = 'OFX';
+        else if (ext === 'qif') format = 'QIF';
+        document.getElementById('impFormat').value = format;
+        try {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            const base64 = e.target.result.split(',')[1];
+            try {
+              const res = await api.importBankFile(accountId, format, base64);
+              const stats = res?.data;
+
+              // Handle conflicts: ask user to choose old or new
+              if (stats && stats.conflicts > 0 && stats.conflictDetails?.length) {
+                const conflicts = stats.conflictDetails;
+                const choice = await Layout.confirmDanger({
+                  title: `พบรายการซ้ำ ${conflicts.length} รายการ`,
+                  message: `ข้อมูลในไฟล์ต่างจากข้อมูลที่มีอยู่:\n\n` +
+                    conflicts.slice(0,5).map(c =>
+                      `• ${Layout.date(c.transactionDate)} ${Layout.money(c.amount)}\n  เดิม: ${c.existingDescription || '-'}\n  ใหม่: ${c.newDescription || '-'}`
+                    ).join('\n\n') +
+                    (conflicts.length > 5 ? `\n\n... อีก ${conflicts.length - 5} รายการ` : '') +
+                    '\n\nต้องการใช้ข้อมูลจากไฟล์ใหม่แทนหรือไม่?',
+                  mode: 'confirm',
+                  confirmText: 'ใช้ข้อมูลใหม่',
+                  cancelText: 'เก็บข้อมูลเดิม'
+                });
+                if (choice) {
+                  // Re-import with forceOverwrite
+                  const res2 = await api.importBankFile(accountId, format, base64, true);
+                  Layout.closeModal('importModal');
+                  Layout.toast(`นำเข้าสำเร็จ ${res2?.data?.imported || 0} รายการ (อัพเดตรายการซ้ำ)`, 'success');
+                } else {
+                  Layout.closeModal('importModal');
+                  Layout.toast(`นำเข้าสำเร็จ ${stats.imported || 0} รายการ (ข้าม ${stats.conflicts} รายการซ้ำ)`, 'info');
+                }
+              } else {
+                Layout.closeModal('importModal');
+                const msg = stats
+                  ? `นำเข้าสำเร็จ ${stats.imported || 0} รายการ` +
+                    (stats.skipped ? `, ข้าม ${stats.skipped} รายการซ้ำ` : '')
+                  : 'นำเข้า Statement สำเร็จ';
+                Layout.toast(msg, 'success');
+              }
+
+              // คำเตือนคุณภาพไฟล์จาก backend (เช่น ยอดคงเหลือไม่ต่อเนื่อง = ไฟล์ขาดรายการ)
+              const warns = stats?.warnings || [];
+              warns.forEach(w => Layout.toast(w, 'warning', 10000));
+
+              // 1) Refresh accounts (balance may have changed)
+              await this.loadAccounts();
+
+              // 2) Auto-select the account that was imported into so the user
+              //    immediately sees the new rows on screen.
+              const target = (this.accounts || []).find(a => a.id === accountId);
+              if (target) {
+                this.selectedAccount = target;
+                const ts = document.getElementById('transSection');
+                if (ts) ts.style.display = 'block';
+                const tt = document.getElementById('transTitle');
+                if (tt) tt.textContent = `รายการเคลื่อนไหว - ${target.accountName}`;
+                const ra = document.getElementById('reconAccountName');
+                if (ra) ra.textContent = target.accountName;
+                this.transPage = 1;
+
+                // 3) Clear date/status/search filters — imported rows may be outside
+                //    whatever the user had filtered to (this is the actual reason
+                //    "ไม่ขึ้นข้อมูลอะไร" — old filter hides them).
+                const fromEl = document.getElementById('transFrom');
+                const toEl = document.getElementById('transTo');
+                const searchEl = document.getElementById('transSearch');
+                const typeEl = document.getElementById('transTypeFilter');
+                const statusEl = document.getElementById('transStatusFilter');
+                if (fromEl) fromEl.value = '';
+                if (toEl) toEl.value = '';
+                if (searchEl) searchEl.value = '';
+                if (typeEl) typeEl.value = '';
+                if (statusEl) statusEl.value = '';
+
+                // 4) Reload transactions and scroll into view
+                await this.loadTransactions();
+                ts?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }
+            } catch (err) {
+              const errMsg = err?.response?.data?.message || err?.data?.message || err?.message || 'นำเข้าล้มเหลว';
+              Layout.toast(errMsg, 'error', 8000);
+              console.error('Import error details:', err);
+            }
+          };
+          reader.readAsDataURL(file);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // === OPEN BANKING ===
+      openConnections() { this.setTab('connections', document.querySelectorAll('.tab')[2]); },
+      async loadConnections() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getConnections();
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('connBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีการเชื่อมต่อ</td></tr>'; return; }
+          tbody.innerHTML = items.map(c => `<tr>
+            <td class="font-medium">${c.bankCode || c.bankName || '-'}</td>
+            <td>${c.bankAccountName || '-'}</td>
+            <td>${c.status === 'Active' ? '<span class="badge badge-success">เชื่อมต่อ</span>' : c.status === 'Error' ? '<span class="badge badge-danger" data-i18n="common.error">ผิดพลาด</span>' : '<span class="badge badge-gray">' + (c.status || 'ไม่ทราบ') + '</span>'}</td>
+            <td>${c.lastSyncAt ? Layout.date(c.lastSyncAt) : 'ยังไม่เคย'}</td>
+            <td class="flex gap-1">
+              <button class="btn btn-sm btn-primary" onclick="Page.syncConn('${c.id}')">ซิงค์</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteConn('${c.id}')" data-i18n="common.delete">ลบ</button>
+            </td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreateConnection() {
+        const sel = document.getElementById('cAccount');
+        sel.innerHTML = '<option value="">เลือกบัญชี</option>' + this.accounts.map(a => `<option value="${a.id}">${a.accountName}</option>`).join('');
+        document.getElementById('cName').value = '';
+        document.getElementById('cApiKey').value = '';
+        document.getElementById('cApiSecret').value = '';
+        Layout.openModal('connModal');
+      },
+      async saveConnection() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createConnection({
+            connectionName: document.getElementById('cName').value,
+            bankCode: document.getElementById('cBank').value,
+            bankAccountId: document.getElementById('cAccount').value,
+            apiKey: document.getElementById('cApiKey').value || null,
+            apiSecret: document.getElementById('cApiSecret').value || null,
+          });
+          Layout.closeModal('connModal');
+          Layout.toast('เพิ่มการเชื่อมต่อสำเร็จ');
+          await this.loadConnections();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async syncConn(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.syncConnection(id);
+          Layout.toast('ซิงค์สำเร็จ');
+          await this.loadConnections();
+          await this.loadAccounts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteConn(id) {
+        if (!confirm('ต้องการลบการเชื่อมต่อนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteConnection(id);
+          Layout.toast('ลบสำเร็จ');
+          await this.loadConnections();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Group Reconciliation (M:N + Net-off) launchers =====
+      openGroupReconcile() {
+        const accId = this.selectedAccountId || this.accounts?.[0]?.id;
+        if (!accId) { Layout.toast('เลือกบัญชีธนาคารก่อน', 'error'); return; }
+        GroupReconcile.open(accId, this.accounts || []);
+      },
+      async exportReconciliationReport() {
+        const accId = this.selectedAccountId || this.accounts?.[0]?.id;
+        if (!accId) { Layout.toast('เลือกบัญชีธนาคารก่อน', 'error'); return; }
+        const cid = Layout.getCompanyId();
+        const url = `/api/companies/${cid}/bank/accounts/${accId}/reconciliation-report.xlsx`;
+        // Use anchor + temp click so the auth cookie / bearer flow ใช้ session ปัจจุบัน
+        const token = localStorage.getItem('token');
+        try {
+          const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+          if (!res.ok) throw new Error(`ส่งออกล้มเหลว (${res.status})`);
+          const blob = await res.blob();
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `reconciliation-${new Date().toISOString().slice(0,10)}.xlsx`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+          Layout.toast('ดาวน์โหลดรายงานสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+
+    // ===== Group Reconciliation module =====
+    // Standalone controller: lets the operator pick N bank transactions and
+    // M match items (Payment / JournalEntry / Document) with signed amounts,
+    // then submit as one reconciliation group. The signed amount on the items
+    // side is what enables net-off ("ใบเสร็จ +1000 + ใบสำคัญจ่าย −200 = +800
+    // ในธนาคารรายการเดียว").
+    const GroupReconcile = {
+      accountId: null,
+      bankTxns: [],           // [{id, date, amount, type, description, _selected, _alloc}]
+      items: [],              // [{type, id, number, date, description, amount, _selected, _alloc}]
+      bankFilter: '',
+      itemFilter: '',
+      async open(accountId, accounts) {
+        this.accountId = accountId;
+        this.bankFilter = '';
+        this.itemFilter = '';
+        document.getElementById('grAccount').innerHTML = accounts
+          .map(a => `<option value="${a.id}" ${a.id === accountId ? 'selected' : ''}>${a.accountName} — ${a.bankName} ${a.accountNumber}</option>`).join('');
+        document.getElementById('grDate').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('grNotes').value = '';
+        document.getElementById('grBankSearch').value = '';
+        document.getElementById('grItemSearch').value = '';
+        await this.reload();
+        Layout.openModal('groupReconcileModal');
+      },
+      async reload() {
+        this.accountId = document.getElementById('grAccount').value || this.accountId;
+        const api = Layout.api(); if (!api) return;
+        document.getElementById('grBankList').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px">กำลังโหลด...</div>';
+        document.getElementById('grItemList').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px">กำลังโหลด...</div>';
+        try {
+          // 1. Unreconciled bank transactions
+          const tx = await api.getUnreconciled(this.accountId);
+          this.bankTxns = (tx?.data || []).map(t => ({
+            id: t.id, date: t.transactionDate, amount: t.amount, type: t.transactionType,
+            description: t.description || '', reference: t.reference || '',
+            _selected: false,
+            _alloc: t.transactionType === 'Deposit' ? t.amount : -t.amount,
+          }));
+          // 2. Full pool of unmatched items for the account (Payment / JE / Document)
+          //    — not tied to a single bank transaction so the workbench can mix
+          //    items from across the whole pool.
+          const u = await api.getUnmatchedItems(this.accountId);
+          const data = u?.data || { payments: [], journalEntries: [], documents: [] };
+          const map = arr => arr.map(it => ({
+            type: it.itemType, id: it.id, number: it.number,
+            date: it.date, description: it.description || it.contactName || '',
+            defaultAmount: it.amount,
+            _selected: false, _alloc: it.amount,
+          }));
+          this.items = [...map(data.payments || []), ...map(data.journalEntries || []), ...map(data.documents || [])];
+          this.renderBank();
+          this.renderItems();
+          this.recalc();
+        } catch (e) {
+          document.getElementById('grBankList').innerHTML = `<div style="text-align:center;color:#dc2626;padding:20px">${e.message}</div>`;
+          document.getElementById('grItemList').innerHTML = '';
+        }
+      },
+      filterBank() { this.bankFilter = document.getElementById('grBankSearch').value.toLowerCase(); this.renderBank(); },
+      filterItems() { this.itemFilter = document.getElementById('grItemSearch').value.toLowerCase(); this.renderItems(); },
+      renderBank() {
+        const list = document.getElementById('grBankList');
+        const filtered = this.bankTxns.filter(t => {
+          if (!this.bankFilter) return true;
+          return (t.description + ' ' + t.reference + ' ' + t.amount).toLowerCase().includes(this.bankFilter);
+        });
+        if (filtered.length === 0) { list.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px">ไม่มีรายการธนาคารที่ยังไม่ได้กระทบยอด</div>'; return; }
+        list.innerHTML = filtered.map((t, originalIdx) => {
+          const i = this.bankTxns.indexOf(t);
+          const sign = t.type === 'Deposit' ? '+' : '−';
+          const color = t.type === 'Deposit' ? '#059669' : '#dc2626';
+          return `
+            <label class="gr-row" style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;padding:8px;border-radius:6px;cursor:pointer;margin-bottom:4px;background:${t._selected ? '#dbeafe' : '#fff'};border:1px solid ${t._selected ? '#60a5fa' : '#e2e8f0'}">
+              <input type="checkbox" ${t._selected ? 'checked' : ''} onchange="GroupReconcile.toggleBank(${i}, this.checked)">
+              <div>
+                <div style="font-size:13px;font-weight:500">${new Date(t.date).toLocaleDateString('th-TH')} · ${t.description || '(ไม่มีรายละเอียด)'}</div>
+                <div style="font-size:11px;color:#64748b">${t.reference || '—'}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:14px;font-weight:600;color:${color}">${sign}${Layout.money(t.amount)}</div>
+                ${t._selected ? `<input type="number" step="0.01" value="${t._alloc.toFixed(2)}" onchange="GroupReconcile.setBankAlloc(${i}, this.value)" onclick="event.preventDefault()" style="margin-top:4px;width:110px;font-size:11px;padding:2px 6px;text-align:right">` : ''}
+              </div>
+            </label>`;
+        }).join('');
+      },
+      renderItems() {
+        const list = document.getElementById('grItemList');
+        const filtered = this.items.filter(it => {
+          if (!this.itemFilter) return true;
+          return (it.number + ' ' + it.description + ' ' + it.defaultAmount).toLowerCase().includes(this.itemFilter);
+        });
+        if (filtered.length === 0) { list.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px">ไม่มีรายการที่ตรงเงื่อนไข</div>'; return; }
+        list.innerHTML = filtered.map(it => {
+          const i = this.items.indexOf(it);
+          const typeBadge = it.type === 'Payment' ? '💳' : it.type === 'JournalEntry' ? '📒' : '📄';
+          const sign = it._alloc < 0 ? '−' : '+';
+          const color = it._alloc < 0 ? '#dc2626' : '#059669';
+          return `
+            <label class="gr-row" style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;padding:8px;border-radius:6px;cursor:pointer;margin-bottom:4px;background:${it._selected ? '#fef3c7' : '#fff'};border:1px solid ${it._selected ? '#fbbf24' : '#e2e8f0'}">
+              <input type="checkbox" ${it._selected ? 'checked' : ''} onchange="GroupReconcile.toggleItem(${i}, this.checked)">
+              <div>
+                <div style="font-size:13px;font-weight:500">${typeBadge} ${it.number || '—'} · ${it.description || ''}</div>
+                <div style="font-size:11px;color:#64748b">${it.date ? new Date(it.date).toLocaleDateString('th-TH') : ''}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:13px;color:#64748b">ยอด: ${Layout.money(Math.abs(it.defaultAmount))}</div>
+                ${it._selected ? `<input type="number" step="0.01" value="${it._alloc.toFixed(2)}" onchange="GroupReconcile.setItemAlloc(${i}, this.value)" onclick="event.preventDefault()" title="เครื่องหมายลบ = หักล้าง" style="margin-top:4px;width:110px;font-size:11px;padding:2px 6px;text-align:right;border:1px solid ${color};color:${color}">` : ''}
+              </div>
+            </label>`;
+        }).join('');
+      },
+      // Fetch learned suggestions for each currently-selected bank txn and
+      // auto-tick the highest-confidence matching items on the right side.
+      // Operator can still adjust amounts / un-tick before confirming.
+      async applyAiLearned() {
+        const api = Layout.api(); if (!api) return;
+        const selectedBanks = this.bankTxns.filter(t => t._selected);
+        const targets = selectedBanks.length > 0 ? selectedBanks : this.bankTxns;
+        if (targets.length === 0) { Layout.toast('ไม่มี bank transaction', 'error'); return; }
+        try {
+          let totalApplied = 0;
+          for (const t of targets) {
+            const res = await api.getLearnedSuggestions(t.id);
+            const sugs = res?.data?.suggestions || [];
+            for (const s of sugs) {
+              // High-confidence only — anything below 0.4 is too noisy to auto-apply.
+              if (s.confidence < 0.4) continue;
+              const item = this.items.find(it => it.type === s.itemType && it.id === s.id);
+              if (item && !item._selected) {
+                item._selected = true;
+                totalApplied++;
+              }
+            }
+            // If no bank was selected, mark the targets as selected too.
+            if (selectedBanks.length === 0) t._selected = true;
+          }
+          this.renderBank(); this.renderItems(); this.recalc();
+          Layout.toast(totalApplied > 0 ? `ติ๊กรายการที่ AI แนะนำ ${totalApplied} รายการ` : 'ยังไม่มี pattern ที่เรียนรู้ — ลองจับคู่ด้วยมือสัก 2-3 ครั้งก่อน', totalApplied > 0 ? 'success' : 'info');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      toggleBank(i, on) { this.bankTxns[i]._selected = on; this.renderBank(); this.recalc(); },
+      toggleItem(i, on) { this.items[i]._selected = on; this.renderItems(); this.recalc(); },
+      setBankAlloc(i, v) { this.bankTxns[i]._alloc = parseFloat(v) || 0; this.recalc(); },
+      setItemAlloc(i, v) { this.items[i]._alloc = parseFloat(v) || 0; this.recalc(); },
+      recalc() {
+        const bSel = this.bankTxns.filter(t => t._selected);
+        const iSel = this.items.filter(it => it._selected);
+        const bSum = bSel.reduce((s, t) => s + t._alloc, 0);
+        const iSum = iSel.reduce((s, it) => s + it._alloc, 0);
+        const diff = bSum - iSum;
+        document.getElementById('grBankSum').textContent = (bSum < 0 ? '−' : '') + '฿' + Math.abs(bSum).toLocaleString('en-US', { minimumFractionDigits: 2 });
+        document.getElementById('grItemSum').textContent = (iSum < 0 ? '−' : '') + '฿' + Math.abs(iSum).toLocaleString('en-US', { minimumFractionDigits: 2 });
+        const diffEl = document.getElementById('grDiff');
+        diffEl.textContent = (diff < 0 ? '−' : '') + '฿' + Math.abs(diff).toLocaleString('en-US', { minimumFractionDigits: 2 });
+        const balanced = Math.abs(diff) <= 0.01;
+        diffEl.style.color = balanced ? '#059669' : '#dc2626';
+        document.getElementById('grBalIcon').textContent = balanced ? '✓ สมดุล' : '✗ ไม่สมดุล';
+        document.getElementById('grBalIcon').style.color = balanced ? '#059669' : '#dc2626';
+        document.getElementById('grConfirmCounts').textContent = `(${bSel.length} bank × ${iSel.length} รายการ)`;
+        const btn = document.getElementById('grConfirmBtn');
+        btn.disabled = !(bSel.length > 0 && iSel.length > 0);
+      },
+      async confirm() {
+        const bSel = this.bankTxns.filter(t => t._selected);
+        const iSel = this.items.filter(it => it._selected);
+        if (!bSel.length || !iSel.length) return;
+        const diff = bSel.reduce((s, t) => s + t._alloc, 0) - iSel.reduce((s, it) => s + it._alloc, 0);
+        if (Math.abs(diff) > 0.01 && !confirm(`ยอดสองฝั่งไม่สมดุล ผลต่าง ฿${Math.abs(diff).toFixed(2)} ต้องการดำเนินการต่อหรือไม่?`)) return;
+        const api = Layout.api(); if (!api) return;
+        const payload = {
+          bankAccountId: this.accountId,
+          reconciledDate: document.getElementById('grDate').value,
+          bankTransactions: bSel.map(t => ({ itemType: 'BankTransaction', itemId: t.id, allocatedAmount: t._alloc })),
+          matchItems: iSel.map(it => ({ itemType: it.type, itemId: it.id, allocatedAmount: it._alloc })),
+          notes: document.getElementById('grNotes').value || null,
+        };
+        const btn = document.getElementById('grConfirmBtn');
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+        try {
+          const res = await api.createReconciliationGroup(payload);
+          Layout.toast(res?.message || 'กระทบยอดสำเร็จ', 'success');
+          Layout.closeModal('groupReconcileModal');
+          if (typeof Page.loadAccounts === 'function') await Page.loadAccounts();
+          if (typeof Page.loadTransactions === 'function' && Page.selectedAccountId) await Page.loadTransactions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; btn.innerHTML = '✓ ยืนยันการกระทบยอด <span id="grConfirmCounts" style="font-weight:400;font-size:12px"></span>'; }
+      },
+    };
+
+    // ===== Reconciliation Group History viewer =====
+    const GroupHistory = {
+      currentDetailId: null,
+      async reload() {
+        const accId = Page.selectedAccountId || Page.accounts?.[0]?.id;
+        const container = document.getElementById('reconGroupHistory');
+        if (!accId) {
+          container.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">เลือกบัญชีก่อนเพื่อดูประวัติ</div>';
+          return;
+        }
+        container.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px">กำลังโหลด...</div>';
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.listReconciliationGroups(accId, '?page=1&pageSize=50');
+          const items = res?.data?.items || [];
+          if (items.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">ยังไม่เคยสร้างกลุ่มกระทบยอด — กด "🔗 กลุ่มกระทบยอด" ด้านบนเพื่อเริ่ม</div>';
+            return;
+          }
+          container.innerHTML = `
+            <table class="table" style="margin:0">
+              <thead><tr>
+                <th>เลขกลุ่ม</th><th>วันที่</th><th class="text-center">Bank txns</th><th class="text-center">รายการ</th>
+                <th class="text-right">Bank รวม</th><th class="text-right">รายการรวม</th><th class="text-center">สมดุล</th><th></th>
+              </tr></thead>
+              <tbody>${items.map(g => `
+                <tr>
+                  <td><strong>${Layout.esc(g.groupNumber)}</strong></td>
+                  <td>${new Date(g.reconciledDate).toLocaleDateString('th-TH')}</td>
+                  <td class="text-center">${g.bankTransactionCount}</td>
+                  <td class="text-center">${g.matchItemCount}</td>
+                  <td class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(g.totalBankAmount)}</td>
+                  <td class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(g.totalMatchedAmount)}</td>
+                  <td class="text-center">${g.isBalanced ? '<span style="color:#059669">✓</span>' : '<span style="color:#dc2626">✗</span>'}</td>
+                  <td class="text-right"><button class="btn btn-sm btn-ghost" onclick="GroupHistory.viewDetail('${g.id}')">รายละเอียด</button></td>
+                </tr>`).join('')}</tbody>
+            </table>`;
+        } catch (e) {
+          container.innerHTML = `<div style="text-align:center;color:#dc2626;padding:24px;font-size:13px">${e.message}</div>`;
+        }
+      },
+      async viewDetail(id) {
+        this.currentDetailId = id;
+        document.getElementById('gdTitle').textContent = 'รายละเอียดกลุ่มกระทบยอด';
+        document.getElementById('gdBody').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px">กำลังโหลด...</div>';
+        Layout.openModal('groupDetailModal');
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getReconciliationGroup(id);
+          const g = res?.data;
+          if (!g) throw new Error('ไม่พบกลุ่ม');
+          document.getElementById('gdTitle').textContent = `กลุ่ม ${g.groupNumber}`;
+          const banks = g.items.filter(i => i.itemType === 'BankTransaction');
+          const matches = g.items.filter(i => i.itemType !== 'BankTransaction');
+          const fmt = a => (a < 0 ? '−' : '') + '฿' + Math.abs(a).toLocaleString('en-US', { minimumFractionDigits: 2 });
+          document.getElementById('gdBody').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;font-size:13px">
+              <div><span style="color:#64748b">วันที่</span><br><strong>${new Date(g.reconciledDate).toLocaleDateString('th-TH')}</strong></div>
+              <div><span style="color:#64748b">ผู้ทำรายการ</span><br><strong>${Layout.esc(g.createdBy || '-')}</strong></div>
+              <div><span style="color:#64748b">สถานะ</span><br><strong style="color:${g.isBalanced ? '#059669' : '#dc2626'}">${g.isBalanced ? '✓ สมดุล' : '✗ ไม่สมดุล'}</strong></div>
+            </div>
+            ${g.notes ? `<div style="background:#fffbeb;border:1px solid #fef3c7;padding:8px;border-radius:6px;margin-bottom:12px;font-size:13px">📝 ${Layout.esc(g.notes)}</div>` : ''}
+            <div style="margin-bottom:12px"><strong>🏦 ฝั่งธนาคาร (${banks.length})</strong></div>
+            <table class="table table-sm" style="margin-bottom:16px">
+              <thead><tr><th>วันที่</th><th>รายละเอียด</th><th class="text-right">จำนวน</th></tr></thead>
+              <tbody>${banks.map(b => `<tr>
+                <td>${b.itemDate ? new Date(b.itemDate).toLocaleDateString('th-TH') : '-'}</td>
+                <td>${Layout.esc(b.itemDescription || '-')}</td>
+                <td class="text-right" style="color:${b.allocatedAmount < 0 ? '#dc2626' : '#059669'};font-variant-numeric:tabular-nums">${fmt(b.allocatedAmount)}</td>
+              </tr>`).join('')}</tbody>
+              <tfoot><tr style="background:#f1f5f9"><td colspan="2"><strong>รวมฝั่งธนาคาร</strong></td><td class="text-right"><strong>${fmt(g.totalBankAmount)}</strong></td></tr></tfoot>
+            </table>
+            <div style="margin-bottom:12px"><strong>📄 ฝั่งรายการ (${matches.length})</strong></div>
+            <table class="table table-sm">
+              <thead><tr><th>ประเภท</th><th>เลข</th><th>วันที่</th><th>รายละเอียด</th><th class="text-right">จำนวน</th></tr></thead>
+              <tbody>${matches.map(m => `<tr>
+                <td><span class="badge">${m.itemType}</span></td>
+                <td>${Layout.esc(m.itemNumber || '-')}</td>
+                <td>${m.itemDate ? new Date(m.itemDate).toLocaleDateString('th-TH') : '-'}</td>
+                <td>${Layout.esc(m.itemDescription || '-')}</td>
+                <td class="text-right" style="color:${m.allocatedAmount < 0 ? '#dc2626' : '#059669'};font-variant-numeric:tabular-nums">${fmt(m.allocatedAmount)}</td>
+              </tr>`).join('')}</tbody>
+              <tfoot><tr style="background:#f1f5f9"><td colspan="4"><strong>รวมฝั่งรายการ</strong></td><td class="text-right"><strong>${fmt(g.totalMatchedAmount)}</strong></td></tr>
+                <tr style="background:${g.isBalanced ? '#d1fae5' : '#fee2e2'}"><td colspan="4"><strong>ผลต่าง</strong></td><td class="text-right"><strong>${fmt(g.difference)}</strong></td></tr>
+              </tfoot>
+            </table>`;
+        } catch (e) { document.getElementById('gdBody').innerHTML = `<div style="color:#dc2626;padding:16px">${e.message}</div>`; }
+      },
+      async unmatchCurrent() {
+        if (!this.currentDetailId) return;
+        if (!confirm('ยกเลิกการกระทบยอดของกลุ่มนี้? รายการธนาคารและเอกสารจะกลับสู่สถานะยังไม่กระทบยอด')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.unreconcileGroup(this.currentDetailId);
+          Layout.toast('ยกเลิกกลุ่มสำเร็จ');
+          Layout.closeModal('groupDetailModal');
+          this.currentDetailId = null;
+          await this.reload();
+          if (typeof Page.loadTransactions === 'function') await Page.loadTransactions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+
+    Page.init();
+    Layout.enableTour('bank');
+  </script>
+</body>
+</html>

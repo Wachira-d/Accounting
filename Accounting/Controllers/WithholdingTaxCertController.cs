@@ -1,0 +1,172 @@
+using Accounting.Data;
+using Accounting.Helpers;
+using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Tax;
+using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Controllers;
+
+[ApiController]
+[Route("api/companies/{companyId:guid}/withholding-tax-certs")]
+[Authorize]
+public class WithholdingTaxCertController : ControllerBase
+{
+    private readonly IWithholdingTaxCertService _whtService;
+    private readonly AccountingDbContext _db;
+
+    public WithholdingTaxCertController(IWithholdingTaxCertService whtService, AccountingDbContext db)
+    {
+        _whtService = whtService;
+        _db = db;
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> Create(
+        Guid companyId, [FromBody] CreateWithholdingTaxCertRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _whtService.CreateAsync(companyId, request, userId);
+        return StatusCode(201, new ApiResponse<WithholdingTaxCertResponse>(true, result, "สร้างหนังสือรับรองหัก ณ ที่จ่ายสำเร็จ"));
+    }
+
+    [HttpGet("{certId:guid}")]
+    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> GetById(Guid companyId, Guid certId)
+    {
+        var result = await _whtService.GetByIdAsync(companyId, certId);
+        return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result));
+    }
+
+    /// <summary>แก้ไขหนังสือรับรอง — เฉพาะ Draft + สร้างเอง (ไม่อ้างอิง
+    /// ใบสำคัญจ่าย/payroll). Service throw ถ้าไม่เข้าเงื่อนไข.</summary>
+    [HttpPut("{certId:guid}")]
+    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> Update(
+        Guid companyId, Guid certId, [FromBody] CreateWithholdingTaxCertRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _whtService.UpdateAsync(companyId, certId, request, userId);
+        return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result, "แก้ไขหนังสือรับรองสำเร็จ"));
+    }
+
+    [HttpGet]
+    public async Task<ActionResult<ApiResponse<PagedResponse<WithholdingTaxCertResponse>>>> GetAll(
+        Guid companyId,
+        [FromQuery] TaxType? taxFormType, [FromQuery] int? year, [FromQuery] int? month,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var result = await _whtService.GetAllAsync(companyId, taxFormType, year, month, new PagedRequest(page, pageSize));
+        return Ok(new ApiResponse<PagedResponse<WithholdingTaxCertResponse>>(true, result));
+    }
+
+    [HttpPost("{certId:guid}/issue")]
+    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> Issue(Guid companyId, Guid certId)
+    {
+        var result = await _whtService.IssueAsync(companyId, certId);
+        return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result, "ออกหนังสือรับรองสำเร็จ"));
+    }
+
+    [HttpPost("{certId:guid}/void")]
+    public async Task<ActionResult<ApiResponse<bool>>> Void(Guid companyId, Guid certId)
+    {
+        await _whtService.VoidAsync(companyId, certId);
+        return Ok(new ApiResponse<bool>(true, true, "ยกเลิกสำเร็จ"));
+    }
+
+    [HttpDelete("{certId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid certId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var isSystemAdmin = User.IsInRole("SystemAdmin");
+        if (!isSystemAdmin)
+        {
+            var role = await _db.CompanyUsers
+                .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+                .Select(cu => cu.Role)
+                .FirstOrDefaultAsync();
+            if (role != UserRole.Owner)
+                return StatusCode(403, new ApiResponse<string>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบหนังสือรับรองถาวรได้"));
+        }
+
+        await _whtService.DeleteAsync(companyId, certId, userId);
+        return Ok(new ApiResponse<string>(true, null, "ลบหนังสือรับรองหัก ณ ที่จ่ายสำเร็จ"));
+    }
+
+    [HttpGet("contacts/{contactId:guid}")]
+    public async Task<ActionResult<ApiResponse<List<WithholdingTaxCertResponse>>>> GetByContact(
+        Guid companyId, Guid contactId, [FromQuery] int? year)
+    {
+        var result = await _whtService.GetByContactAsync(companyId, contactId, year);
+        return Ok(new ApiResponse<List<WithholdingTaxCertResponse>>(true, result));
+    }
+
+    /// <summary>Auto-generate WHT cert from a document that has withholding tax</summary>
+    [HttpPost("auto-generate")]
+    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> AutoGenerate(
+        Guid companyId, [FromBody] AutoGenerateWhtRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _whtService.AutoGenerateFromDocumentAsync(companyId, request.DocumentId, request.AutoIssue, userId);
+        return StatusCode(201, new ApiResponse<WithholdingTaxCertResponse>(true, result, "สร้างหนังสือรับรองหัก ณ ที่จ่ายจากเอกสารสำเร็จ"));
+    }
+
+    /// <summary>Get documents with WHT that don't have certs yet</summary>
+    [HttpGet("pending")]
+    public async Task<ActionResult<ApiResponse<List<PendingWhtDocumentResponse>>>> GetPending(
+        Guid companyId, [FromQuery] int? year, [FromQuery] int? month)
+    {
+        var result = await _whtService.GetPendingDocumentsAsync(companyId, year, month);
+        return Ok(new ApiResponse<List<PendingWhtDocumentResponse>>(true, result));
+    }
+
+    /// <summary>Dismiss a document from the "waiting to issue cert" list — the
+    /// source document is left exactly as-is, we just stop prompting the user
+    /// to issue a cert for it. POST /pending/{docId}/dismiss to skip;
+    /// /pending/{docId}/restore to bring it back.</summary>
+    [HttpPost("pending/{documentId:guid}/dismiss")]
+    public async Task<ActionResult<ApiResponse<object>>> DismissPending(Guid companyId, Guid documentId)
+    {
+        await _whtService.DismissPendingAsync(companyId, documentId, dismiss: true);
+        return Ok(new ApiResponse<object>(true, null, "ข้ามเอกสารนี้แล้ว — จะไม่แสดงในรายการรอออกอีก"));
+    }
+    [HttpPost("pending/{documentId:guid}/restore")]
+    public async Task<ActionResult<ApiResponse<object>>> RestorePending(Guid companyId, Guid documentId)
+    {
+        await _whtService.DismissPendingAsync(companyId, documentId, dismiss: false);
+        return Ok(new ApiResponse<object>(true, null, "คืนเอกสารสู่รายการรอออก"));
+    }
+
+    /// <summary>Bulk generate WHT certs for all pending documents in a period</summary>
+    [HttpPost("bulk-generate")]
+    public async Task<ActionResult<ApiResponse<BulkGenerateWhtResponse>>> BulkGenerate(
+        Guid companyId, [FromBody] BulkGenerateWhtRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _whtService.BulkGenerateAsync(companyId, request, userId);
+        return Ok(new ApiResponse<BulkGenerateWhtResponse>(true, result,
+            $"สร้างสำเร็จ {result.Generated} รายการ" + (result.Skipped > 0 ? $", ข้าม {result.Skipped} รายการ" : "")));
+    }
+
+    /// <summary>ข้อมูลอ้างอิง: ประเภทเงินได้ + อัตราหัก ณ ที่จ่ายตามกฎหมาย</summary>
+    [HttpGet("~/api/reference/income-types")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<object>> GetIncomeTypes()
+    {
+        var incomeTypes = new[]
+        {
+            new { Code = "1", Name = "เงินเดือน ค่าจ้าง บำนาญ", TaxSection = "40(1)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.1" } },
+            new { Code = "2", Name = "ค่านายหน้า", TaxSection = "40(2)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "3", Name = "ค่าแห่งลิขสิทธิ์", TaxSection = "40(3)", DefaultRate = 5m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "4a", Name = "ดอกเบี้ย", TaxSection = "40(4)(a)", DefaultRate = 15m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "4b", Name = "เงินปันผล", TaxSection = "40(4)(b)", DefaultRate = 10m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "5", Name = "ค่าเช่าทรัพย์สิน", TaxSection = "40(5)", DefaultRate = 5m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+            new { Code = "6", Name = "ค่าวิชาชีพอิสระ", TaxSection = "40(6)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3" } },
+            new { Code = "7", Name = "ค่ารับเหมา", TaxSection = "40(7)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3" } },
+            new { Code = "8", Name = "ค่าจ้างทำของ/ค่าบริการ", TaxSection = "40(8)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
+        };
+
+        return Ok(new ApiResponse<object>(true, incomeTypes));
+    }
+}

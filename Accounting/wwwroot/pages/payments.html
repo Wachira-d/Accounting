@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>การชำระเงิน - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">การชำระเงิน</h2><p class="page-subtitle">รายการชำระเงินทั้งหมด</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()"
+              data-tour-step="1"
+              data-tour-text="ขั้นที่ 1 — บันทึกการชำระเงิน เลือกใบแจ้งหนี้/ใบกำกับที่จะตัดยอด ใส่จำนวน ช่องทาง (โอน/พร้อมเพย์/เช็ค/บัตร) — ระบบจะตัดลูกหนี้/เจ้าหนี้ + คำนวณ WHT ให้">+ บันทึกการชำระเงิน</button>
+    </div>
+    <div class="toolbar"
+         data-tour-step="2"
+         data-tour-text="ค้นหา/กรองตามช่องทาง · กดที่แถวเพื่อดูรายละเอียด หรือพิมพ์ใบเสร็จรับเงิน">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="methodFilter" onchange="Page.load()">
+        <option value="">ทุกช่องทาง</option>
+        <option value="Cash">เงินสด</option>
+        <option value="BankTransfer">โอนเงิน</option>
+        <option value="CreditCard">บัตรเครดิต</option>
+        <option value="Cheque">เช็ค</option>
+        <option value="PromptPay">พร้อมเพย์</option>
+      </select>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>เลขที่</th><th>เอกสารอ้างอิง</th><th data-i18n="common.date">วันที่</th><th>ช่องทาง</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th><th data-i18n="common.reference">อ้างอิง</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <!-- Create/Detail Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:650px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">บันทึกการชำระเงิน</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">เอกสารอ้างอิง *</label>
+            <select class="form-select" id="fDocId"><option value="">-- เลือกเอกสาร --</option></select>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่ชำระ *</label><input type="date" class="form-input" id="fDate"></div>
+            <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ช่องทาง *</label>
+              <select class="form-select" id="fMethod">
+                <option value="BankTransfer">โอนเงิน</option><option value="Cash">เงินสด</option>
+                <option value="CreditCard">บัตรเครดิต</option><option value="Cheque">เช็ค</option>
+                <option value="PromptPay">พร้อมเพย์</option><option value="DirectDebit">หักบัญชี</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">หมายเลขอ้างอิง</label><input type="text" class="form-input" id="fRef" placeholder="เช่น เลขที่เช็ค, หมายเลขโอน"></div>
+          </div>
+          <div class="form-group"><label class="form-label">บัญชีธนาคาร</label>
+            <select class="form-select" id="fBankAcc"><option value="">-- ไม่ระบุ --</option></select>
+          </div>
+          <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><textarea class="form-textarea" id="fNotes" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer" id="formFooter">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:550px">
+        <div class="modal-header"><h3 class="modal-title">รายละเอียดการชำระเงิน</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const methodMap = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', Cheque:'เช็ค', PromptPay:'พร้อมเพย์', DirectDebit:'หักบัญชี', EWallet:'E-Wallet' };
+    const Page = {
+      page: 1, _cache: {},
+      async init() {
+        if (!Layout.init('payments')) return;
+        Layout.setTitle('การชำระเงิน');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const method = document.getElementById('methodFilter').value;
+        const search = document.getElementById('searchInput').value;
+        let q = `?page=${this.page}&pageSize=20`;
+        if (method) q += `&method=${method}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        try {
+          const res = await api.getPayments(q);
+          const data = res.data; const items = data?.items || data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
+          items.forEach(p => Page._cache[p.id] = p);
+          tbody.innerHTML = items.map(p => `<tr>
+            <td class="font-medium">${p.paymentNumber}</td>
+            <td class="text-xs">${p.documentNumber || (p.documentId ? p.documentId.substring(0,8)+'...' : '-')}</td>
+            <td>${Layout.date(p.paymentDate)}</td>
+            <td><span class="badge badge-info">${methodMap[p.paymentMethod] || p.paymentMethod}</span></td>
+            <td class="text-right font-semibold">${Layout.money(p.amount)}</td>
+            <td class="text-gray-500">${p.reference || '-'}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')" data-i18n="common.view">ดู</button></td>
+          </tr>`).join('');
+          const totalPages = data?.totalPages || 1;
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      goPage(p) { Page.page = p; Page.load(); },
+      viewDetail(id) {
+        const p = this._cache[id]; if (!p) return;
+        document.getElementById('detailContent').innerHTML = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${p.paymentNumber}</div></div>
+            <div><div class="text-xs text-gray-500">วันที่ชำระ</div><div>${Layout.date(p.paymentDate)}</div></div>
+            <div><div class="text-xs text-gray-500">ช่องทาง</div><div><span class="badge badge-info">${methodMap[p.paymentMethod] || p.paymentMethod}</span></div></div>
+            <div><div class="text-xs text-gray-500" data-i18n="common.amount">จำนวนเงิน</div><div class="font-semibold text-lg">${Layout.money(p.amount)}</div></div>
+            <div><div class="text-xs text-gray-500">เอกสารอ้างอิง</div><div>${p.documentNumber || p.documentId || '-'}</div></div>
+            <div><div class="text-xs text-gray-500">หมายเลขอ้างอิง</div><div>${p.reference || '-'}</div></div>
+          </div>
+          ${p.notes ? `<div style="margin-top:16px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${p.notes}</div></div>` : ''}`;
+        Layout.openModal('detailModal');
+      },
+      async openCreate() {
+        document.getElementById('formTitle').textContent = 'บันทึกการชำระเงิน';
+        document.getElementById('fDate').value = Layout.toDateInput(new Date());
+        document.getElementById('fAmount').value = '';
+        document.getElementById('fRef').value = '';
+        document.getElementById('fNotes').value = '';
+        // Load documents for dropdown
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [docsRes, bankRes] = await Promise.all([
+            api.getDocuments('?page=1&pageSize=100&status=Approved'),
+            api.getBankAccounts()
+          ]);
+          const docs = docsRes.data?.items || docsRes.data || [];
+          this._docsMap = {};
+          docs.forEach(d => this._docsMap[d.id] = d);
+          const docSelect = document.getElementById('fDocId');
+          docSelect.innerHTML = '<option value="">-- เลือกเอกสาร --</option>' +
+            docs.map(d => `<option value="${d.id}">${d.documentNumber} - ${d.contactName || ''} (${Layout.money(d.balanceDue || d.totalAmount)})</option>`).join('');
+          docSelect.onchange = () => {
+            const doc = this._docsMap[docSelect.value];
+            if (doc) {
+              const bal = doc.balanceDue || doc.totalAmount;
+              document.getElementById('fAmount').value = bal;
+              document.getElementById('fAmount').max = bal;
+            }
+          };
+          const banks = bankRes.data?.items || bankRes.data || [];
+          const bankSelect = document.getElementById('fBankAcc');
+          bankSelect.innerHTML = '<option value="">-- ไม่ระบุ --</option>' +
+            banks.map(b => `<option value="${b.id}">${b.accountName} - ${b.bankName}</option>`).join('');
+        } catch (e) { /* ignore */ }
+        Layout.openModal('formModal');
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const docId = document.getElementById('fDocId').value;
+        if (!docId) { Layout.toast('กรุณาเลือกเอกสารอ้างอิง', 'error'); return; }
+        const amount = parseFloat(document.getElementById('fAmount').value);
+        if (!amount || amount <= 0) { Layout.toast('กรุณากรอกจำนวนเงินที่ถูกต้อง', 'error'); return; }
+        const doc = this._docsMap?.[docId];
+        if (doc) {
+          const maxAmount = doc.balanceDue || doc.totalAmount;
+          if (amount > maxAmount) { Layout.toast(`จำนวนเงินเกินยอดคงค้าง (${Layout.money(maxAmount)})`, 'error'); return; }
+          // §86/4: รับเงินใบแจ้งหนี้ที่มี VAT โดยยังไม่ออกใบกำกับ — เตือนก่อน
+          // (แปลงเป็นใบกำกับ "หลังรับเงิน" ไม่ได้ — supersede block เมื่อจ่ายแล้ว)
+          if (doc.documentType === 'Invoice' && Number(doc.vatAmount || 0) > 0) {
+            const ok = confirm(
+              'ใบแจ้งหนี้นี้มี VAT และยังไม่ได้ออกใบกำกับภาษี\n' +
+              'ตามกฎหมายเมื่อรับเงินต้องออกใบกำกับภาษี (แปลงหลังรับเงินไม่ได้)\n\n' +
+              'แนะนำ: ไปที่หน้าเอกสาร → แปลงเป็นใบกำกับภาษีก่อน แล้วค่อยรับเงิน\n\n' +
+              'กด OK เพื่อรับเงินต่อโดยไม่ออกใบกำกับ (ลูกค้าเคลมภาษีซื้อไม่ได้)');
+            if (!ok) return;
+          }
+        }
+        // กันกดซ้ำ — double-click ระหว่างรอ network = บันทึกรับเงินซ้ำ 2 รายการ
+        if (this._saving) return;
+        this._saving = true;
+        const saveBtn = document.querySelector('#formModal .btn-primary');
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'กำลังบันทึก...'; }
+        try {
+          await api.createPayment({
+            documentId: docId,
+            paymentDate: document.getElementById('fDate').value,
+            amount,
+            paymentMethod: document.getElementById('fMethod').value,
+            reference: document.getElementById('fRef').value || null,
+            bankAccountId: document.getElementById('fBankAcc').value || null,
+            notes: document.getElementById('fNotes').value || null,
+          });
+          Layout.closeModal('formModal'); Layout.toast('บันทึกการชำระเงินสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally {
+          this._saving = false;
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'บันทึก'; }
+        }
+      }
+    };
+    Page.init();
+    Layout.enableTour('payments');
+  </script>
+</body>
+</html>

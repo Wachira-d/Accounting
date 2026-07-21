@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เว็บไซต์ของฉัน - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .tpl-card { border:1px solid var(--gray-200); border-radius:10px; padding:0; cursor:pointer; transition:all .15s; overflow:hidden; background:#fff; display:flex; flex-direction:column }
+    .tpl-card:hover { border-color:var(--primary); transform:translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,.08) }
+    .tpl-card.selected { border-color:var(--primary); box-shadow:0 0 0 3px rgba(79,70,229,.15) }
+    .tpl-thumb { height:140px; background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%); display:flex; align-items:center; justify-content:center; color:#fff; font-size:48px }
+    .tpl-thumb.eco { background:linear-gradient(135deg,#10B981 0%,#059669 100%) }
+    .tpl-thumb.book { background:linear-gradient(135deg,#F59E0B 0%,#DC2626 100%) }
+    .tpl-thumb.blank { background:linear-gradient(135deg,#6B7280 0%,#374151 100%) }
+    .tpl-body { padding:14px; flex:1 }
+    .tpl-title { font-weight:700; font-size:15px; margin-bottom:4px }
+    .tpl-desc { font-size:12px; color:var(--gray-500); line-height:1.5 }
+    .site-card { border:1px solid var(--gray-200); border-radius:10px; padding:16px; background:#fff; transition:all .15s }
+    .site-card:hover { box-shadow:0 4px 12px rgba(0,0,0,.06) }
+    .site-status { display:inline-block; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:600 }
+    .site-status.draft { background:#FEF3C7; color:#92400E }
+    .site-status.published { background:#D1FAE5; color:#065F46 }
+    .site-status.maintenance { background:#FEE2E2; color:#991B1B }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">เว็บไซต์ของฉัน</h2><p class="page-subtitle">สร้างเว็บไซต์ ร้านค้าออนไลน์ หรือระบบจองนัดหมายสำหรับธุรกิจของคุณ</p></div>
+      <div class="flex gap-2">
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — สร้างเว็บไซต์ใหม่ เลือก Template จาก 17 อุตสาหกรรม (ร้านค้า/ร้านอาหาร/โรงแรม/คลินิก/บริการ ฯลฯ)">+ สร้างเว็บไซต์ใหม่</button>
+      </div>
+    </div>
+
+    <!-- Site list -->
+    <div id="sitesList" class="grid grid-2 gap-4" style="margin-bottom:20px"
+         data-tour-step="2"
+         data-tour-text="เว็บไซต์ที่สร้างไว้จะแสดงที่นี่ — กดเข้าไปแก้ไขเนื้อหา/สินค้า/สี/โลโก้ และ Publish เผยแพร่">
+      <div class="text-center text-gray-400" style="padding:40px;grid-column:1/-1">กำลังโหลด...</div>
+    </div>
+
+    <!-- Empty state -->
+    <div id="emptyState" style="display:none;text-align:center;padding:60px 20px;background:#fff;border:1px dashed var(--gray-300);border-radius:12px">
+      <div style="font-size:64px;margin-bottom:16px">🌐</div>
+      <h3 style="margin-bottom:8px">ยังไม่มีเว็บไซต์</h3>
+      <p style="color:var(--gray-500);margin-bottom:20px">สร้างเว็บไซต์แรกของคุณได้ภายใน 1 นาที — เลือกจาก template สำเร็จรูป</p>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เริ่มสร้างเว็บไซต์</button>
+    </div>
+
+    <!-- Create Modal -->
+    <div class="modal-overlay" id="createModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header">
+          <h3 class="modal-title">สร้างเว็บไซต์ใหม่</h3>
+          <button class="modal-close" onclick="Layout.closeModal('createModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- Step 1: Template Gallery -->
+          <div id="step1">
+            <h4 style="margin-bottom:12px;font-size:14px;font-weight:600">1. เลือก Template</h4>
+            <div class="grid grid-4 gap-3" id="templateGallery"></div>
+          </div>
+
+          <!-- Step 2: Site details -->
+          <div id="step2" style="display:none">
+            <button class="btn btn-sm btn-ghost" style="margin-bottom:12px" onclick="Page.backToTemplates()">← เปลี่ยน Template</button>
+            <div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:12px;margin-bottom:16px">
+              <strong id="selectedTplName" style="font-size:14px"></strong>
+              <div style="font-size:12px;color:var(--gray-600);margin-top:2px" id="selectedTplDesc"></div>
+            </div>
+            <h4 style="margin-bottom:12px;font-size:14px;font-weight:600">2. ข้อมูลเว็บไซต์</h4>
+            <div class="form-group">
+              <label class="form-label">ชื่อเว็บไซต์ *</label>
+              <input type="text" class="form-input" id="fName" placeholder="เช่น ร้านดอกไม้สวยงาม">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ชื่อเว็บไซต์ (อังกฤษ)</label>
+              <input type="text" class="form-input" id="fNameEn" placeholder="เช่น Beautiful Flowers Shop">
+            </div>
+            <div class="form-group">
+              <label class="form-label">URL ย่อย (Subdomain) *</label>
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="color:var(--gray-500);font-size:13px;white-space:nowrap">/site/</span>
+                <input type="text" class="form-input" id="fSubdomain" placeholder="my-shop" style="flex:1" oninput="Page.normalizeSubdomain(this)">
+              </div>
+              <p style="font-size:12px;color:var(--gray-500);margin-top:4px">ใช้ได้เฉพาะตัวอักษร a-z, ตัวเลข, ขีดกลาง — สามารถเปลี่ยนหรือเชื่อม domain ของตัวเองภายหลังได้</p>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">ภาษาหลัก</label>
+                <select class="form-input" id="fLang">
+                  <option value="th">ไทย</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">สกุลเงิน</label>
+                <select class="form-input" id="fCurrency">
+                  <option value="THB">THB (บาท)</option>
+                  <option value="USD">USD (Dollar)</option>
+                </select>
+              </div>
+            </div>
+            <!-- Starter template — seeds 4-5 pages so the customer doesn't
+                 land on a blank canvas. They edit the copy/images later. -->
+            <div class="form-group" style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-top:8px">
+              <label class="form-checkbox" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+                <input type="checkbox" id="fSeedTemplate" checked style="margin-top:3px">
+                <span>
+                  <strong style="font-size:14px">🎁 สร้างพร้อมเนื้อหาตัวอย่าง (แนะนำ)</strong>
+                  <span style="display:block;font-size:12px;color:#166534;margin-top:3px;line-height:1.5">
+                    ระบบจะใส่หน้าเว็บ 4-5 หน้าให้พร้อมใช้ทันที (หน้าหลัก · เกี่ยวกับเรา · บริการ/เมนู/สินค้า · ติดต่อ) ลูกค้าค่อยแก้คำ ใส่รูป ปรับแต่งเองได้ทีหลัง
+                  </span>
+                </span>
+              </label>
+            </div>
+            <div class="form-group" id="industryWrap">
+              <label class="form-label">ประเภทธุรกิจ <span style="color:var(--gray-500);font-size:11px">(เลือกเพื่อให้ระบบใส่เนื้อหาตัวอย่างที่เหมาะกับธุรกิจ)</span></label>
+              <select class="form-input" id="fIndustry">
+                <option value="0">ทั่วไป / บริการ</option>
+                <option value="2">บริการมืออาชีพ</option>
+                <option value="17">ฟรีแลนซ์ / ที่ปรึกษา</option>
+                <option value="4">ร้านอาหาร</option>
+                <option value="5">คาเฟ่ / เครื่องดื่ม</option>
+                <option value="6">ค้าปลีก / Retail</option>
+                <option value="16">ขายออนไลน์ / E-commerce</option>
+                <option value="1">ซื้อมาขายไป / Trading</option>
+                <option value="14">เกษตร</option>
+                <option value="12">สปา / ทำเล็บ / ความงาม</option>
+                <option value="10">คลินิก / สุขภาพ</option>
+                <option value="11">การศึกษา / สอนพิเศษ</option>
+                <option value="7">รับเหมาก่อสร้าง</option>
+                <option value="8">อสังหาริมทรัพย์</option>
+                <option value="9">เทคโนโลยี / SaaS</option>
+                <option value="13">ขนส่ง / โลจิสติกส์</option>
+                <option value="15">โรงแรม / ที่พัก</option>
+                <option value="3">โรงงาน / OEM</option>
+                <option value="99">อื่น ๆ</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('createModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="btnCreate" onclick="Page.createSite()" style="display:none">สร้างเว็บไซต์</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // Starter templates — define a site preset + array of pages with blocks.
+    // When the user picks one, we create the site, then create each page (with
+    // its blocks inline in the page-create call so it's atomic per page).
+    // Template metadata only. The actual page+block content lives in
+    // CmsSiteTemplateSeeder on the server — keyed by IndustryType — so we
+    // don't have to keep two copies in sync. Each card here picks an
+    // IndustryType + a SiteType; the backend fills the pages.
+    const TEMPLATES = {
+      blank: {
+        name: 'เริ่มจากศูนย์',
+        nameEn: 'Blank',
+        icon: '📄',
+        thumbClass: 'blank',
+        description: 'เริ่มต้นจากหน้าเปล่า — ออกแบบเองทุกอย่าง',
+        siteType: 1, // Corporate
+        industryType: 0,
+        seedTemplate: false  // truly blank — server creates one empty Home page on demand later
+      },
+      corporate: {
+        name: 'เว็บบริษัท / บริการ',
+        nameEn: 'Corporate',
+        icon: '🏢',
+        thumbClass: '',
+        description: 'เว็บแสดงข้อมูลบริษัท บริการ ราคา รีวิวลูกค้า และช่องทางติดต่อ — 4 หน้า พร้อมใช้',
+        siteType: 1, industryType: 0, seedTemplate: true,
+        _legacy_pages_unused: [
+          {
+            title: 'หน้าแรก', slug: 'home', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'ยินดีต้อนรับ', subheadline: 'บริษัทของเราพร้อมให้บริการคุณ', ctaText: 'ติดต่อเรา', ctaUrl: '/contact', backgroundUrl: '' } },
+              { type: 2, config: { content: '<h2>เกี่ยวกับเรา</h2><p>เราเป็นบริษัทที่ทุ่มเทเพื่อมอบบริการที่ดีที่สุดให้แก่ลูกค้า</p>' } },
+              { type: 14, config: { headline: 'บริการของเรา', plans: [
+                { name: 'พื้นฐาน', price: '999', features: ['คุณสมบัติ A','คุณสมบัติ B'] },
+                { name: 'มืออาชีพ', price: '2,999', features: ['ทุกอย่างจาก พื้นฐาน','คุณสมบัติ C','คุณสมบัติ D'] }
+              ] } },
+              { type: 15, config: { headline: 'พร้อมเริ่มต้นกับเรา?', ctaText: 'ติดต่อเลย', ctaUrl: '/contact' } }
+            ]
+          },
+          {
+            title: 'เกี่ยวกับเรา', slug: 'about', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'เกี่ยวกับเรา', subheadline: 'เรื่องราวของบริษัท' } },
+              { type: 2, config: { content: '<h2>วิสัยทัศน์</h2><p>...</p><h2>พันธกิจ</h2><p>...</p>' } }
+            ]
+          },
+          {
+            title: 'บริการ', slug: 'services', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'บริการของเรา' } },
+              { type: 2, config: { content: '<p>รายละเอียดบริการที่เราให้</p>' } }
+            ]
+          },
+          {
+            title: 'ติดต่อเรา', slug: 'contact', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'ติดต่อเรา', subheadline: 'เราพร้อมรับฟังคุณ' } },
+              { type: 9, config: { headline: 'ส่งข้อความถึงเรา', fields: [
+                { name: 'name', label: 'ชื่อ', type: 'text', required: true },
+                { name: 'email', label: 'อีเมล', type: 'email', required: true },
+                { name: 'message', label: 'ข้อความ', type: 'textarea', required: true }
+              ] } },
+              { type: 11, config: { address: '', lat: 13.7563, lng: 100.5018 } }
+            ]
+          }
+        ]
+      },
+      ecommerce: {
+        name: 'ร้านค้าออนไลน์',
+        nameEn: 'Ecommerce',
+        icon: '🛒',
+        thumbClass: 'eco',
+        description: 'ขายสินค้าออนไลน์ — Hero / สินค้าแนะนำ / รีวิวลูกค้า / FAQ',
+        siteType: 2, industryType: 16, seedTemplate: true,
+        _legacy_pages_unused: [
+          {
+            title: 'หน้าแรก', slug: 'home', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'สินค้าคุณภาพ ราคาดี', subheadline: 'ส่งฟรีทั่วประเทศ', ctaText: 'ช้อปเลย', ctaUrl: '/shop' } },
+              { type: 6, config: { headline: 'สินค้าแนะนำ', featured: true, limit: 8 } },
+              { type: 12, config: { headline: 'ลูกค้าพูดถึงเรา', testimonials: [] } }
+            ]
+          },
+          {
+            title: 'สินค้าทั้งหมด', slug: 'shop', pageType: 5,
+            blocks: [
+              { type: 1, config: { headline: 'สินค้าทั้งหมด' } },
+              { type: 6, config: { headline: '', limit: 24 } }
+            ]
+          },
+          {
+            title: 'ตะกร้าสินค้า', slug: 'cart', pageType: 6,
+            blocks: [
+              { type: 23, config: {} }
+            ]
+          },
+          {
+            title: 'ติดต่อเรา', slug: 'contact', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'ติดต่อเรา' } },
+              { type: 9, config: { headline: 'ส่งข้อความถึงเรา', fields: [] } }
+            ]
+          }
+        ]
+      },
+      restaurant: {
+        name: 'ร้านอาหาร / คาเฟ่',
+        nameEn: 'Restaurant',
+        icon: '🍜',
+        thumbClass: 'food',
+        description: 'หน้าหลัก · เมนู · จองโต๊ะ · ติดต่อ — รวมเมนูตัวอย่างพร้อมราคา',
+        siteType: 1, industryType: 4, seedTemplate: true
+      },
+      beauty: {
+        name: 'สปา / ความงาม',
+        nameEn: 'Beauty & Spa',
+        icon: '💆',
+        thumbClass: 'beauty',
+        description: 'หน้าหลัก · บริการ · จองคิว · ติดต่อ — พร้อมแพ็กเกจตัวอย่าง',
+        siteType: 3, industryType: 12, seedTemplate: true
+      },
+      healthcare: {
+        name: 'คลินิก / สุขภาพ',
+        nameEn: 'Healthcare',
+        icon: '🏥',
+        thumbClass: 'health',
+        description: 'หน้าหลัก · บริการ · นัดหมายแพทย์ · ติดต่อ',
+        siteType: 1, industryType: 10, seedTemplate: true
+      },
+      booking: {
+        name: 'จองนัดหมาย (ทั่วไป)',
+        nameEn: 'Booking',
+        icon: '📅',
+        thumbClass: 'book',
+        description: 'รับจองคิว/นัดหมายออนไลน์ — สำหรับบริการอื่น ๆ',
+        siteType: 3, industryType: 2, seedTemplate: true,
+        _legacy_pages_unused: [
+          {
+            title: 'หน้าแรก', slug: 'home', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'จองคิวออนไลน์ ง่าย รวดเร็ว', subheadline: 'เลือกบริการและเวลาที่สะดวก', ctaText: 'จองเลย', ctaUrl: '/booking' } },
+              { type: 14, config: { headline: 'บริการของเรา', plans: [] } },
+              { type: 12, config: { headline: 'ลูกค้ารีวิว' } }
+            ]
+          },
+          {
+            title: 'บริการของเรา', slug: 'services', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'บริการของเรา' } },
+              { type: 2, config: { content: '<p>รายละเอียดบริการ</p>' } }
+            ]
+          },
+          {
+            title: 'จองคิว', slug: 'booking', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'จองคิว' } },
+              { type: 8, config: {} }
+            ]
+          },
+          {
+            title: 'ติดต่อเรา', slug: 'contact', pageType: 1,
+            blocks: [
+              { type: 1, config: { headline: 'ติดต่อเรา' } },
+              { type: 9, config: { headline: 'ส่งข้อความ', fields: [] } },
+              { type: 11, config: { address: '' } }
+            ]
+          }
+        ]
+      },
+      construction: {
+        name: 'รับเหมาก่อสร้าง',
+        nameEn: 'Construction',
+        icon: '🏗️',
+        thumbClass: 'construction',
+        description: 'หน้าหลัก · ผลงาน · ขอใบเสนอราคา · ติดต่อ — สำหรับผู้รับเหมา',
+        siteType: 1, industryType: 7, seedTemplate: true
+      },
+      realestate: {
+        name: 'อสังหาริมทรัพย์',
+        nameEn: 'Real Estate',
+        icon: '🏘️',
+        thumbClass: 'realestate',
+        description: 'นายหน้า — รายการขาย/เช่า บ้าน คอนโด ที่ดิน + นัดดูทรัพย์',
+        siteType: 1, industryType: 8, seedTemplate: true
+      },
+      technology: {
+        name: 'เทคโนโลยี / ซอฟต์แวร์',
+        nameEn: 'Tech / SaaS',
+        icon: '💻',
+        thumbClass: 'tech',
+        description: 'หน้าหลัก · ฟีเจอร์ · ราคา · ติดต่อเดโม — แพ็กเกจ + รีวิว',
+        siteType: 1, industryType: 9, seedTemplate: true
+      },
+      education: {
+        name: 'สถาบันสอน / คอร์ส',
+        nameEn: 'Education',
+        icon: '🎓',
+        thumbClass: 'education',
+        description: 'หน้าหลัก · หลักสูตร · สมัครเรียน · ติดต่อ — รวมราคาคอร์ส',
+        siteType: 1, industryType: 11, seedTemplate: true
+      },
+      transportation: {
+        name: 'ขนส่ง / โลจิสติกส์',
+        nameEn: 'Transportation',
+        icon: '🚚',
+        thumbClass: 'transport',
+        description: 'หน้าหลัก · บริการ · ขอราคา/จองรถ · ติดต่อ',
+        siteType: 1, industryType: 13, seedTemplate: true
+      },
+      hotel: {
+        name: 'โรงแรม / ที่พัก',
+        nameEn: 'Hotel',
+        icon: '🏨',
+        thumbClass: 'hotel',
+        description: 'หน้าหลัก · ห้องพัก · จองห้อง · ติดต่อ — รวมรีวิวแขก',
+        siteType: 3, industryType: 15, seedTemplate: true
+      },
+      manufacturing: {
+        name: 'โรงงาน / OEM',
+        nameEn: 'Manufacturing',
+        icon: '🏭',
+        thumbClass: 'manufacturing',
+        description: 'หน้าหลัก · ความสามารถ · RFQ · ติดต่อ',
+        siteType: 1, industryType: 3, seedTemplate: true
+      },
+      cafe: {
+        name: 'คาเฟ่ / ร้านกาแฟ',
+        nameEn: 'Cafe',
+        icon: '☕',
+        thumbClass: 'food',
+        description: 'หน้าหลัก · เมนูกาแฟ/ขนม · บรรยากาศร้าน · ติดต่อ — สำหรับคาเฟ่เน้นกาแฟ + work-friendly',
+        siteType: 1, industryType: 5, seedTemplate: true
+      },
+      retail: {
+        name: 'ร้านค้าปลีก',
+        nameEn: 'Retail',
+        icon: '🏬',
+        thumbClass: 'eco',
+        description: 'ร้านค้าปลีกหน้าร้าน + ออนไลน์ — Hero / สินค้าแนะนำ / รีวิว / ติดต่อ',
+        siteType: 1, industryType: 6, seedTemplate: true
+      },
+      trading: {
+        name: 'ซื้อมาขายไป / B2B',
+        nameEn: 'Trading',
+        icon: '📦',
+        thumbClass: 'eco',
+        description: 'แคตตาล็อกขายส่ง · MOQ · ใบเสนอราคา · ติดต่อ — สำหรับผู้กระจายสินค้า',
+        siteType: 1, industryType: 1, seedTemplate: true
+      },
+      agriculture: {
+        name: 'เกษตร / ฟาร์ม',
+        nameEn: 'Agriculture',
+        icon: '🌾',
+        thumbClass: 'food',
+        description: 'ฟาร์ม-สู่-โต๊ะ · ผักออร์แกนิก · CSA Box · ติดต่อ — สำหรับเกษตรกร + เกษตรอินทรีย์',
+        siteType: 1, industryType: 14, seedTemplate: true
+      },
+      freelance: {
+        name: 'ฟรีแลนซ์ / Portfolio',
+        nameEn: 'Freelance',
+        icon: '🎨',
+        thumbClass: 'tech',
+        description: 'พอร์ตโฟลิโอ · บริการ · ราคา · จ้างผม/ฉัน — สำหรับฟรีแลนซ์รับงาน',
+        siteType: 1, industryType: 17, seedTemplate: true
+      }
+    };
+
+    // Accept both numeric (legacy) and enum-name (JsonStringEnumConverter) status values.
+    const STATUS_LABEL = {
+      'Draft':     ['ร่าง','draft'],     0: ['ร่าง','draft'],
+      'Published': ['เผยแพร่','published'], 1: ['เผยแพร่','published'],
+      'Maintenance':['ปรับปรุง','maintenance'], 2: ['ปรับปรุง','maintenance'],
+      'Suspended': ['ระงับ','maintenance'], 3: ['ระงับ','maintenance'],
+    };
+    const isSitePublished = (s) => s === 1 || s === 'Published' || s === 'published';
+    const TYPE_LABEL = { 1: 'เว็บบริษัท', 2: 'ร้านค้าออนไลน์', 3: 'จองนัดหมาย', 4: 'แค็ตตาล็อกบริการ', 5: 'ผสม' };
+
+    const Page = {
+      sites: [],
+      selectedTpl: null,
+
+      async init() {
+        if (!Layout.init('cms-sites')) return;
+        Layout.setTitle('เว็บไซต์ของฉัน');
+        await this.load();
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListSites('?pageSize=100');
+          this.sites = res.data?.items || res.data || [];
+          this.render();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      render() {
+        const list = document.getElementById('sitesList');
+        const empty = document.getElementById('emptyState');
+        if (!this.sites.length) {
+          list.style.display = 'none';
+          empty.style.display = 'block';
+          return;
+        }
+        list.style.display = '';
+        empty.style.display = 'none';
+        list.innerHTML = this.sites.map(s => {
+          const [statusLabel, statusClass] = STATUS_LABEL[s.status] || ['?','draft'];
+          const typeLabel = TYPE_LABEL[s.siteType] || '-';
+          const pathUrl = `/site/${s.subdomain}`;
+          const displayUrl = `${location.origin}/site/${s.subdomain}`;
+          const isPublished = isSitePublished(s.status);
+          return `
+            <div class="site-card">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+                <div>
+                  <h3 style="font-size:18px;font-weight:700;margin-bottom:4px">${Layout.esc(s.name)}</h3>
+                  <div style="font-size:13px;color:var(--gray-500)">
+                    <span class="site-status ${statusClass}">${statusLabel}</span>
+                    <span style="margin:0 6px">·</span>
+                    <span>${typeLabel}</span>
+                  </div>
+                </div>
+                <div style="font-size:32px">🌐</div>
+              </div>
+              <div style="font-size:13px;color:var(--gray-600);margin-bottom:8px">
+                <span style="color:var(--gray-400)">URL:</span>
+                ${isPublished
+                  ? `<a href="${pathUrl}" target="_blank" style="color:var(--primary);text-decoration:underline">${Layout.esc(displayUrl)}</a>`
+                  : `<span style="color:var(--gray-500)">${Layout.esc(displayUrl)}</span>`}
+              </div>
+              <div style="font-size:12px;color:var(--gray-500);margin-bottom:14px">
+                สร้างเมื่อ ${new Date(s.createdAt).toLocaleDateString('th-TH', { day:'numeric', month:'short', year:'numeric' })}
+                ${s.publishedAt ? ` · เผยแพร่ ${new Date(s.publishedAt).toLocaleDateString('th-TH',{ day:'numeric', month:'short', year:'numeric' })}` : ''}
+              </div>
+              <div class="flex gap-2" style="flex-wrap:wrap">
+                <a href="/pages/cms-edit.html?siteId=${s.id}" class="btn btn-sm btn-primary">✏️ แก้ไข</a>
+                <a href="${pathUrl}/home${!isPublished?'?preview=1':''}" target="_blank" class="btn btn-sm btn-secondary" title="ดูตัวอย่างเว็บไซต์">👁 ดูตัวอย่าง</a>
+                ${!isPublished ? `<button class="btn btn-sm btn-success" onclick="Page.publish('${s.id}')">🚀 เผยแพร่</button>` : ''}
+                ${isPublished ? `<a href="${pathUrl}" target="_blank" class="btn btn-sm btn-secondary" title="URL ที่เผยแพร่">🔗 ${Layout.esc(s.subdomain)}</a>` : ''}
+                <button class="btn btn-sm btn-danger" onclick="Page.deleteSite('${s.id}','${Layout.esc(s.name)}')" style="margin-left:auto">🗑</button>
+              </div>
+            </div>`;
+        }).join('');
+      },
+
+      openCreate() {
+        // Reset to step 1 with template gallery
+        document.getElementById('step1').style.display = '';
+        document.getElementById('step2').style.display = 'none';
+        document.getElementById('btnCreate').style.display = 'none';
+        document.getElementById('fName').value = '';
+        document.getElementById('fNameEn').value = '';
+        document.getElementById('fSubdomain').value = '';
+        document.getElementById('fLang').value = 'th';
+        document.getElementById('fCurrency').value = 'THB';
+        this.selectedTpl = null;
+        this.renderTemplateGallery();
+        Layout.openModal('createModal');
+      },
+
+      renderTemplateGallery() {
+        const gallery = document.getElementById('templateGallery');
+        gallery.innerHTML = Object.entries(TEMPLATES).map(([key, tpl]) => `
+          <div class="tpl-card" onclick="Page.selectTemplate('${key}')">
+            <div class="tpl-thumb ${tpl.thumbClass}">${tpl.icon}</div>
+            <div class="tpl-body">
+              <div class="tpl-title">${tpl.name}</div>
+              <div class="tpl-desc">${tpl.description}</div>
+            </div>
+          </div>
+        `).join('');
+      },
+
+      selectTemplate(key) {
+        this.selectedTpl = key;
+        const tpl = TEMPLATES[key];
+        document.getElementById('selectedTplName').textContent = `เทมเพลต: ${tpl.name}${tpl.seedTemplate === false ? ' (หน้าเปล่า)' : ' — ระบบจะใส่ 4 หน้าตัวอย่างให้'}`;
+        document.getElementById('selectedTplDesc').textContent = tpl.description;
+        document.getElementById('step1').style.display = 'none';
+        document.getElementById('step2').style.display = '';
+        document.getElementById('btnCreate').style.display = '';
+      },
+
+      backToTemplates() {
+        document.getElementById('step1').style.display = '';
+        document.getElementById('step2').style.display = 'none';
+        document.getElementById('btnCreate').style.display = 'none';
+      },
+
+      normalizeSubdomain(input) {
+        input.value = (input.value || '').toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '').slice(0, 63);
+      },
+
+      async createSite() {
+        const api = Layout.api(); if (!api) return;
+        const name = document.getElementById('fName').value.trim();
+        const nameEn = document.getElementById('fNameEn').value.trim();
+        const subdomain = document.getElementById('fSubdomain').value.trim();
+        const lang = document.getElementById('fLang').value;
+        const currency = document.getElementById('fCurrency').value;
+        if (!name) { Layout.toast('กรุณากรอกชื่อเว็บไซต์', 'error'); return; }
+        if (!subdomain || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(subdomain)) {
+          Layout.toast('Subdomain ไม่ถูกต้อง — ใช้ตัวอักษร a-z, ตัวเลข, ขีดกลาง', 'error');
+          return;
+        }
+        const tpl = TEMPLATES[this.selectedTpl];
+        if (!tpl) { Layout.toast('กรุณาเลือก Template', 'error'); return; }
+
+        const btn = document.getElementById('btnCreate');
+        btn.disabled = true;
+        btn.textContent = 'กำลังสร้าง...';
+
+        // Industry picker can override the template's default — useful when
+        // the user picks "Corporate" template but they're really a freelance
+        // designer; pick "ทั่วไป" to get the generic copy.
+        const industryOverride = parseInt(document.getElementById('fIndustry')?.value || '');
+        const useSeed = document.getElementById('fSeedTemplate')?.checked !== false && tpl.seedTemplate !== false;
+
+        try {
+          // One API call — backend creates the site + seeds pages atomically.
+          const siteRes = await api.cmsCreateSite({
+            name, nameEn: nameEn || null,
+            subdomain, siteType: tpl.siteType,
+            renderMode: 1, // ServerRendered
+            useGlobalInventory: true,
+            defaultLanguage: lang,
+            defaultCurrency: currency,
+            seedTemplate: useSeed,
+            industryType: !isNaN(industryOverride) ? industryOverride : (tpl.industryType ?? 0)
+          });
+          const site = siteRes.data;
+          if (!site?.id) throw new Error('ไม่ได้รับข้อมูลเว็บไซต์ที่สร้าง');
+
+          Layout.toast('สร้างเว็บไซต์สำเร็จ — กำลังพาไปหน้าแก้ไข', 'success');
+          Layout.closeModal('createModal');
+          setTimeout(() => { window.location.href = `/pages/cms-edit.html?siteId=${site.id}`; }, 700);
+        } catch (e) {
+          Layout.toast(e.message || 'สร้างไม่สำเร็จ', 'error');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'สร้างเว็บไซต์';
+        }
+      },
+
+      async publish(id) {
+        const api = Layout.api(); if (!api) return;
+        if (!confirm('ยืนยันการเผยแพร่เว็บไซต์? เว็บจะเข้าถึงได้สาธารณะ')) return;
+        try {
+          await api.cmsPublishSite(id);
+          Layout.toast('เผยแพร่สำเร็จ', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteSite(id, name) {
+        if (!(await Layout.confirmDanger({
+          title: 'ลบเว็บไซต์',
+          message: `เว็บไซต์ "${name}" และเนื้อหาทั้งหมดจะถูกลบถาวร — ไม่สามารถกู้คืนได้`,
+          mode: 'doubleCheck',
+          confirmText: name
+        }))) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.cmsDeleteSite(id);
+          Layout.toast('ลบสำเร็จ', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+
+    Page.init();
+    Layout.enableTour('cms-sites');
+  </script>
+</body>
+</html>

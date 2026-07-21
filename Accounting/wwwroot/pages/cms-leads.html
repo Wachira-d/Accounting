@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คำขอ / Lead จากเว็บไซต์ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .stat-card { background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px }
+    .stat-label { font-size:12px;color:var(--gray-500) }
+    .stat-value { font-size:22px;font-weight:700;margin-top:4px }
+    .lead-row { cursor:pointer } .lead-row:hover { background:var(--gray-50) }
+    .status-pill { display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600 }
+    .status-New        { background:#fef3c7;color:#92400e }
+    .status-Qualified  { background:#dbeafe;color:#1e40af }
+    .status-Quoted     { background:#e0e7ff;color:#3730a3 }
+    .status-Won        { background:#d1fae5;color:#065f46 }
+    .status-Lost       { background:#fee2e2;color:#991b1b }
+    .status-Spam       { background:#e5e7eb;color:#374151 }
+    .type-pill { display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:500;background:#f3f4f6;color:#374151 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">คำขอ / Lead จากเว็บไซต์</h2>
+        <p class="page-subtitle">ติดต่อ · ขอใบเสนอราคา (RFQ) · นัดดูทรัพย์ · นัด demo · สมัครเรียน · ทุก lead รวมจุดเดียว</p>
+      </div>
+      <div class="flex gap-2">
+        <select class="form-input" id="siteSelector" onchange="Page.onSiteChange()" style="min-width:220px">
+          <option value="">กำลังโหลดเว็บไซต์...</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid grid-4 gap-4" style="margin-bottom:18px">
+      <div class="stat-card"><div class="stat-label">ใหม่</div><div class="stat-value" id="statNew" style="color:#92400e">-</div></div>
+      <div class="stat-card"><div class="stat-label">Qualified</div><div class="stat-value" id="statQualified" style="color:#1e40af">-</div></div>
+      <div class="stat-card"><div class="stat-label">เสนอราคาแล้ว</div><div class="stat-value" id="statQuoted" style="color:#3730a3">-</div></div>
+      <div class="stat-card"><div class="stat-label">ปิดได้ (เดือนนี้)</div><div class="stat-value" id="statWon" style="color:#065f46">-</div></div>
+    </div>
+
+    <div class="toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="New">ใหม่</option>
+        <option value="Qualified">Qualified</option>
+        <option value="Quoted">เสนอราคาแล้ว</option>
+        <option value="Won">ปิดได้</option>
+        <option value="Lost">เสียดีล</option>
+        <option value="Spam">Spam</option>
+      </select>
+      <select class="filter-select" id="typeFilter" onchange="Page.load()">
+        <option value="">ทุกประเภท</option>
+        <option value="Contact">ติดต่อทั่วไป</option>
+        <option value="Rfq">RFQ (ขอใบเสนอราคา)</option>
+        <option value="Viewing">นัดดูทรัพย์</option>
+        <option value="Demo">นัด Demo</option>
+        <option value="Enrollment">สมัครเรียน</option>
+        <option value="Quote">ขอใบเสนอราคางาน</option>
+        <option value="Subscription">สมัครสมาชิก</option>
+        <option value="ShipmentQuote">ขอราคาขนส่ง</option>
+        <option value="Other">อื่น ๆ</option>
+      </select>
+      <input type="text" class="search-input" placeholder="ค้นหาเลข lead / ชื่อ / เบอร์ / อีเมล / บริษัท..." id="searchInput" oninput="Page.debounceLoad()">
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr>
+          <th>เลข</th><th>ประเภท</th><th>ลูกค้า</th><th>ติดต่อ</th><th>หน้าที่มา</th>
+          <th>สถานะ</th><th>วันที่</th>
+        </tr></thead>
+        <tbody id="leadsBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กรุณาเลือกเว็บไซต์ก่อน</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="modal-overlay" id="leadModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="leadTitle">รายละเอียดคำขอ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('leadModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="leadBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('leadModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const STATUS_LABEL = {
+      'New':'ใหม่','Qualified':'Qualified','Quoted':'เสนอราคาแล้ว',
+      'Won':'ปิดได้','Lost':'เสียดีล','Spam':'Spam'
+    };
+    const TYPE_LABEL = {
+      'Contact':'ติดต่อทั่วไป','Rfq':'RFQ','Viewing':'นัดดูทรัพย์','Demo':'Demo',
+      'Enrollment':'สมัครเรียน','Quote':'ขอใบเสนอราคา','Subscription':'สมาชิก',
+      'ShipmentQuote':'ขอราคาขนส่ง','Other':'อื่น ๆ'
+    };
+    const NEXT_STATUS = {
+      'New':       [['Qualified','✓ รับคำขอ (Qualify)','btn-primary'],['Spam','Spam','btn-secondary'],['Lost','ไม่สนใจแล้ว','btn-secondary']],
+      'Qualified': [['Quoted','สร้างใบเสนอราคา','btn-primary',true],['Lost','ปิดดีลไม่ได้','btn-secondary']],
+      'Quoted':    [['Won','✓ ปิดดีลได้','btn-primary'],['Lost','ปิดดีลไม่ได้','btn-secondary']],
+      'Won':       [],
+      'Lost':      [['Qualified','กลับมาเปิดใหม่','btn-secondary']],
+      'Spam':      [['New','คืนสถานะ New','btn-secondary']]
+    };
+
+    const Page = {
+      siteId: null, _searchTimer: null, _currentLead: null,
+      async init() {
+        if (!Layout.init('cms-leads')) return;
+        await this.loadSites();
+      },
+      async loadSites() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListSites();
+          const sites = res?.data?.items || res?.data || [];
+          const sel = document.getElementById('siteSelector');
+          if (!sites.length) {
+            sel.innerHTML = '<option value="">ยังไม่มีเว็บไซต์ — สร้างจาก /cms-sites ก่อน</option>';
+            return;
+          }
+          sel.innerHTML = sites.map(s => `<option value="${s.id}">${Layout.esc(s.name)}</option>`).join('');
+          this.siteId = new URLSearchParams(location.search).get('siteId') || sites[0].id;
+          sel.value = this.siteId;
+          await this.load();
+          await this.loadStats();
+        } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async onSiteChange() {
+        this.siteId = document.getElementById('siteSelector').value;
+        await this.load(); await this.loadStats();
+      },
+      debounceLoad() {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => this.load(), 300);
+      },
+      async loadStats() {
+        if (!this.siteId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [nu, qu, qt, wn] = await Promise.all([
+            api.cmsListLeads(this.siteId, '?status=New&pageSize=1'),
+            api.cmsListLeads(this.siteId, '?status=Qualified&pageSize=1'),
+            api.cmsListLeads(this.siteId, '?status=Quoted&pageSize=1'),
+            api.cmsListLeads(this.siteId, '?status=Won&pageSize=1')
+          ]);
+          document.getElementById('statNew').textContent = nu?.data?.totalItems ?? '0';
+          document.getElementById('statQualified').textContent = qu?.data?.totalItems ?? '0';
+          document.getElementById('statQuoted').textContent = qt?.data?.totalItems ?? '0';
+          document.getElementById('statWon').textContent = wn?.data?.totalItems ?? '0';
+        } catch (e) { /* non-fatal */ }
+      },
+      async load() {
+        if (!this.siteId) return;
+        const api = Layout.api(); if (!api) return;
+        const status = document.getElementById('statusFilter').value;
+        const type = document.getElementById('typeFilter').value;
+        const search = document.getElementById('searchInput').value;
+        let q = '?pageSize=50';
+        if (status) q += `&status=${encodeURIComponent(status)}`;
+        if (type) q += `&type=${encodeURIComponent(type)}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        try {
+          const res = await api.cmsListLeads(this.siteId, q);
+          const items = res?.data?.items || res?.data || [];
+          const tbody = document.getElementById('leadsBody');
+          if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีคำขอ</td></tr>';
+            return;
+          }
+          tbody.innerHTML = items.map(l => `
+            <tr class="lead-row" onclick="Page.viewLead('${l.id}')">
+              <td class="font-medium">${Layout.esc(l.leadNumber||l.id.substring(0,8))}</td>
+              <td><span class="type-pill">${TYPE_LABEL[l.leadType]||l.leadType}</span></td>
+              <td>${Layout.esc(l.customerName||'(ไม่ระบุ)')}</td>
+              <td style="font-size:12px">${l.customerEmail?`📧 ${Layout.esc(l.customerEmail)}`:''}${l.customerPhone?`<br>📱 ${Layout.esc(l.customerPhone)}`:''}</td>
+              <td style="font-size:11px;color:var(--gray-600)">${l.sourceSlug ? `/${Layout.esc(l.sourceSlug)}` : '-'}</td>
+              <td><span class="status-pill status-${l.status}">${STATUS_LABEL[l.status]||l.status}</span></td>
+              <td style="font-size:12px;color:var(--gray-600)">${Layout.date(l.createdAt)}</td>
+            </tr>`).join('');
+        } catch (e) { Layout.toast('โหลด lead ไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async viewLead(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsGetLead(this.siteId, id);
+          const l = res?.data || res;
+          if (!l) return;
+          this._currentLead = l;
+          document.getElementById('leadTitle').textContent = `${l.leadNumber} — ${TYPE_LABEL[l.leadType]||l.leadType}`;
+          const workflow = (NEXT_STATUS[l.status] || []).map(([next, label, cls, convert]) =>
+            convert
+              ? `<button class="btn ${cls}" onclick="Page.convertToQuotation('${l.id}')">${label}</button>`
+              : `<button class="btn ${cls}" onclick="Page.advance('${l.id}', '${next}')">${label}</button>`
+          ).join('');
+          const fields = l.fields || {};
+          const fieldRows = Object.keys(fields).map(k =>
+            `<div style="display:flex;border-bottom:1px solid var(--gray-100);padding:4px 0">
+              <div style="width:160px;font-size:11px;color:var(--gray-500)">${Layout.esc(k)}</div>
+              <div style="font-size:13px;color:var(--gray-900);word-break:break-word">${Layout.esc(String(fields[k]))}</div>
+            </div>`).join('');
+          document.getElementById('leadBody').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+              <div>
+                <div style="font-size:11px;color:var(--gray-500);font-weight:600">ลูกค้า</div>
+                <div style="font-weight:600">${Layout.esc(l.customerName||'(ไม่ระบุ)')}</div>
+                ${l.customerCompany ? `<div style="font-size:12px;color:var(--gray-700)">🏢 ${Layout.esc(l.customerCompany)}</div>` : ''}
+                ${l.customerEmail ? `<div style="font-size:12px;color:var(--gray-700)">📧 ${Layout.esc(l.customerEmail)}</div>` : ''}
+                ${l.customerPhone ? `<div style="font-size:12px;color:var(--gray-700)">📱 ${Layout.esc(l.customerPhone)}</div>` : ''}
+                ${l.customerTaxId ? `<div style="font-size:12px;color:var(--gray-700)">🆔 ${Layout.esc(l.customerTaxId)}</div>` : ''}
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--gray-500);font-weight:600">สถานะ</div>
+                <div><span class="status-pill status-${l.status}">${STATUS_LABEL[l.status]||l.status}</span></div>
+                ${l.sourceSlug ? `<div style="font-size:11px;color:var(--gray-500);margin-top:4px">หน้าที่มา: <code>/${Layout.esc(l.sourceSlug)}</code></div>` : ''}
+                ${l.assignedToName ? `<div style="font-size:11px;color:var(--gray-500);margin-top:4px">รับผิดชอบ: ${Layout.esc(l.assignedToName)}</div>` : ''}
+              </div>
+            </div>
+            ${l.message ? `<div style="background:var(--gray-50);padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;white-space:pre-wrap">${Layout.esc(l.message)}</div>` : ''}
+            ${fieldRows ? `
+            <div style="margin-bottom:14px">
+              <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px">ข้อมูลเพิ่มเติม</div>
+              <div style="background:var(--gray-50);padding:8px 12px;border-radius:8px">${fieldRows}</div>
+            </div>` : ''}
+            ${l.erpDocumentId ? `<div style="font-size:12px;color:#059669;margin-bottom:10px">✓ ผูกกับใบเสนอราคา — <a href="/pages/documents.html?id=${l.erpDocumentId}" style="color:#059669;text-decoration:underline">ดูในระบบบัญชี</a></div>` : ''}
+            ${l.contactId ? `<div style="font-size:12px;color:#1e40af;margin-bottom:10px">✓ ผูกกับ Contact ID: <code>${l.contactId}</code></div>` : ''}
+            ${l.internalNotes ? `<div style="margin-bottom:14px"><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">บันทึกภายใน</div><pre style="background:#fef3c7;padding:8px 12px;border-radius:8px;font-size:12px;white-space:pre-wrap;font-family:inherit">${Layout.esc(l.internalNotes)}</pre></div>` : ''}
+            <div style="margin-bottom:14px">
+              <label style="font-size:11px;color:var(--gray-500);font-weight:600">เพิ่มบันทึก (จะแสดงในประวัติด้านบน)</label>
+              <textarea id="noteInput" class="form-input" rows="2" placeholder="ใส่ note สั้นๆ ก่อนเปลี่ยนสถานะ" style="margin-top:4px"></textarea>
+            </div>
+            ${workflow ? `<h4 style="margin-top:8px;margin-bottom:6px;font-size:13px">ดำเนินการ</h4><div style="display:flex;gap:8px;flex-wrap:wrap">${workflow}</div>` : ''}`;
+          Layout.openModal('leadModal');
+        } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async advance(leadId, nextStatus) {
+        const api = Layout.api(); if (!api) return;
+        const note = document.getElementById('noteInput')?.value?.trim() || null;
+        const lostReason = nextStatus === 'Lost' ? (prompt('เหตุผลที่ปิดดีลไม่ได้ (ถ้ามี)') || null) : null;
+        try {
+          await api.cmsUpdateLeadStatus(this.siteId, leadId, { status: nextStatus, internalNotes: note, lostReason });
+          Layout.toast('อัปเดตสถานะเรียบร้อย');
+          Layout.closeModal('leadModal');
+          await this.load();
+          await this.loadStats();
+        } catch (e) { Layout.toast('อัปเดตไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async convertToQuotation(leadId) {
+        const api = Layout.api(); if (!api) return;
+        const amountStr = prompt('ระบุยอดประมาณการ (บาท) — ใส่ 0 ถ้ายังไม่ทราบ ค่อยแก้ในเอกสาร', '0');
+        if (amountStr === null) return;
+        const amount = parseFloat(amountStr) || 0;
+        const notes = document.getElementById('noteInput')?.value?.trim() || null;
+        try {
+          const res = await api.cmsConvertLeadToQuotation(this.siteId, leadId, {
+            estimatedAmount: amount,
+            quotationNotes: notes
+          });
+          Layout.toast('สร้างใบเสนอราคาแล้ว — กำลังเปิดหน้าเอกสาร...');
+          const docId = res?.data?.erpDocumentId;
+          if (docId) location.href = `/pages/documents.html?id=${docId}`;
+          else { Layout.closeModal('leadModal'); await this.load(); }
+        } catch (e) { Layout.toast('สร้างใบเสนอราคาไม่สำเร็จ: ' + e.message, 'error'); }
+      }
+    };
+
+    window.Page = Page;
+    Page.init();
+  </script>
+</body>
+</html>

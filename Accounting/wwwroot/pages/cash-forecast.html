@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คาดการณ์กระแสเงินสด — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .kpi { padding:18px;border-radius:12px;border:1px solid #e2e8f0;background:#fff }
+    .kpi.opening { background:linear-gradient(135deg,#dbeafe,#fff);border-color:#93c5fd }
+    .kpi.closing { background:linear-gradient(135deg,#dcfce7,#fff);border-color:#86efac }
+    .kpi.closing.danger { background:linear-gradient(135deg,#fee2e2,#fff);border-color:#fca5a5 }
+    .kpi.min { background:linear-gradient(135deg,#fef3c7,#fff);border-color:#fde047 }
+    .kpi.in { background:linear-gradient(135deg,#dcfce7,#fff);border-color:#86efac }
+    .kpi.out { background:linear-gradient(135deg,#fee2e2,#fff);border-color:#fca5a5 }
+    .kpi-l { font-size:12px;color:#64748b;font-weight:600 }
+    .kpi-v { font-size:26px;font-weight:700;color:#1e293b;margin-top:4px }
+    .risk { padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px }
+    .risk-Critical { background:#fee2e2;border:1px solid #fca5a5;color:#991b1b }
+    .risk-Warning { background:#fef3c7;border:1px solid #fde047;color:#854d0e }
+    .risk-Info { background:#dbeafe;border:1px solid #93c5fd;color:#1e3a8a }
+    .timing-OnTime { color:#15803d }
+    .timing-Overdue { color:#dc2626;font-weight:600 }
+    .day-row td { padding:6px 10px;font-size:13px }
+    .day-row.negative { background:#fef2f2 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">คาดการณ์กระแสเงินสด</h2>
+        <p class="page-subtitle">เงินจะเข้า-ออกเมื่อไหร่ · จะติดลบไหม · ลูกหนี้/เจ้าหนี้คงค้าง · ความเสี่ยง</p>
+      </div>
+    </div>
+
+    <div class="toolbar" style="margin-bottom:14px">
+      <label>ขอบเขต:</label>
+      <select id="filterDays" class="filter-select" onchange="Page.load()">
+        <option value="7">7 วัน</option>
+        <option value="14">14 วัน</option>
+        <option value="30" selected>30 วัน (1 เดือน)</option>
+        <option value="60">60 วัน</option>
+        <option value="90">90 วัน (1 ไตรมาส)</option>
+      </select>
+      <label>โครงการ:</label>
+      <select id="filterProject" class="filter-select" onchange="Page.load()" style="min-width:240px"><option value="">— ทุกโครงการ (รวมบริษัท) —</option></select>
+      <label>ยอดสำรองขั้นต่ำ:</label>
+      <input type="number" id="filterFloor" class="form-input" style="width:140px" placeholder="เช่น 100000" onchange="Page.load()">
+      <button class="btn btn-secondary" onclick="Page.load()">รีเฟรช</button>
+    </div>
+
+    <!-- KPI row -->
+    <div class="grid gap-4" style="grid-template-columns:repeat(5,1fr);margin-bottom:18px" id="kpiRow"></div>
+
+    <!-- Risk alerts -->
+    <div id="riskBox" style="margin-bottom:18px"></div>
+
+    <!-- AI narrative panel — slot สำหรับ /ai/cash-forecast/narrative (Sprint 13) -->
+    <div id="aiNarrative" style="margin-bottom:18px;padding:14px 16px;background:linear-gradient(135deg,#eff6ff,#f0fdf4);border-left:4px solid #4F46E5;border-radius:6px;display:none">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div>
+          <div style="font-size:12px;color:#4F46E5;font-weight:600">🤖 สรุปจาก AI</div>
+          <div id="narrativeText" style="font-size:14px;color:#1e3a8a;margin-top:4px"></div>
+        </div>
+        <button class="btn btn-sm btn-ghost" onclick="document.getElementById('aiNarrative').style.display='none'">×</button>
+      </div>
+    </div>
+
+    <div class="grid gap-4" style="grid-template-columns:2fr 1fr">
+      <!-- Day-by-day forecast -->
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">รายวัน — เงินเข้า/ออก/คงเหลือ</h3></div>
+        <div style="max-height:520px;overflow-y:auto">
+          <table class="data-table" style="font-size:13px">
+            <thead><tr>
+              <th>วันที่</th>
+              <th style="text-align:right;color:#15803d">เข้า</th>
+              <th style="text-align:right;color:#dc2626">ออก</th>
+              <th style="text-align:right">สุทธิ</th>
+              <th style="text-align:right">คงเหลือ</th>
+              <th style="text-align:center">รายการ</th>
+            </tr></thead>
+            <tbody id="dayBody"><tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">กำลังโหลด...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Top debtors + creditors -->
+      <div>
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-header"><h3 class="card-title">ลูกหนี้คงค้าง (Top 10)</h3></div>
+          <div style="max-height:240px;overflow-y:auto">
+            <table class="data-table" style="font-size:12px">
+              <thead><tr><th>ลูกค้า</th><th style="text-align:right">ยอด</th><th style="text-align:right">เกิน 90</th></tr></thead>
+              <tbody id="debtorBody"><tr><td colspan="3" style="text-align:center;padding:20px;color:#94a3b8">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">เจ้าหนี้คงค้าง (Top 10)</h3></div>
+          <div style="max-height:240px;overflow-y:auto">
+            <table class="data-table" style="font-size:12px">
+              <thead><tr><th>ผู้ขาย</th><th style="text-align:right">ยอด</th><th style="text-align:right">เกิน 90</th></tr></thead>
+              <tbody id="creditorBody"><tr><td colspan="3" style="text-align:center;padding:20px;color:#94a3b8">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Upcoming items -->
+    <div class="grid gap-4" style="grid-template-columns:1fr 1fr;margin-top:18px">
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">ขาเข้าที่คาดว่าจะได้รับ</h3></div>
+        <div style="max-height:340px;overflow-y:auto">
+          <table class="data-table" style="font-size:12px">
+            <thead><tr><th>วันที่</th><th>เอกสาร</th><th>ลูกค้า</th><th style="text-align:right">ยอด</th></tr></thead>
+            <tbody id="inBody"><tr><td colspan="4" style="text-align:center;padding:20px;color:#94a3b8">—</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">ขาออกที่ต้องจ่าย</h3></div>
+        <div style="max-height:340px;overflow-y:auto">
+          <table class="data-table" style="font-size:12px">
+            <thead><tr><th>วันที่</th><th>เอกสาร</th><th>ผู้รับ</th><th style="text-align:right">ยอด</th></tr></thead>
+            <tbody id="outBody"><tr><td colspan="4" style="text-align:center;padding:20px;color:#94a3b8">—</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('cash-forecast')) return;
+        Layout.setTitle('คาดการณ์กระแสเงินสด');
+        await this.loadProjects();
+        await this.load();
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+      _date(d) { return d ? new Date(d).toLocaleDateString('th-TH', { day:'2-digit', month:'short' }) : '—'; },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/projects?pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const opts = items.map(p => `<option value="${p.id}">${(p.code || p.projectNumber || '')} · ${p.name || ''}</option>`).join('');
+          document.getElementById('filterProject').innerHTML =
+            '<option value="">— ทุกโครงการ (รวมบริษัท) —</option>' + opts;
+        } catch (e) { /* ignore */ }
+      },
+      async load() {
+        const days = +document.getElementById('filterDays').value;
+        const projectId = document.getElementById('filterProject').value;
+        const floor = parseFloat(document.getElementById('filterFloor').value);
+        try {
+          const cid = Layout.getCompanyId();
+          const params = [`days=${days}`];
+          if (projectId) params.push(`projectId=${projectId}`);
+          if (floor > 0) params.push(`minimumCashFloor=${floor}`);
+          const r = await API.get(`/api/companies/${cid}/cash-forecast/detailed?${params.join('&')}`);
+          this.render(r.data);
+          this.loadAiNarrative(r.data, days);
+        } catch (e) {
+          Layout.toast(e.message, 'error');
+        }
+      },
+
+      async loadAiNarrative(d, days) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const body = {
+            cashIn: d.totalExpectedIn || 0,
+            cashOut: d.totalExpectedOut || 0,
+            currentBalance: d.openingCash || 0,
+            lowestBalance: d.minimumCashInPeriod || 0,
+            lowestBalanceDate: d.firstNegativeDate || null,
+            days,
+            overdueArCount: d.overdueArCount || (d.topDebtors?.length || 0),
+            overdueArAmount: d.overdueArAmount || (d.topDebtors?.reduce((s, x) => s + (x.balance || 0), 0) || 0),
+          };
+          const r = await fetch(`/api/companies/${cid}/ai/cash-forecast/narrative`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          const dd = j?.data;
+          if (!dd) return;
+          const box = document.getElementById('aiNarrative');
+          const txt = document.getElementById('narrativeText');
+          if (!box || !txt) return;
+          let html = dd.narrative.replace(/\n/g, '<br>');
+          if (dd.actions?.length > 0) {
+            html += `<div style="margin-top:8px;font-size:12px"><strong>คำแนะนำ:</strong><ul style="margin:4px 0 0 18px;padding:0">${
+              dd.actions.map(a => `<li>${a}</li>`).join('')
+            }</ul></div>`;
+          }
+          txt.innerHTML = html;
+          box.style.display = '';
+        } catch { /* best-effort */ }
+      },
+      render(d) {
+        const closeNeg = d.projectedClosingCash < 0;
+        document.getElementById('kpiRow').innerHTML = `
+          <div class="kpi opening"><div class="kpi-l">เงินสดวันนี้</div><div class="kpi-v">${this._fmt(d.openingCash)}</div></div>
+          <div class="kpi closing ${closeNeg ? 'danger' : ''}"><div class="kpi-l">คาดการณ์สิ้นช่วง (${this._date(d.horizonEndDate)})</div><div class="kpi-v" style="color:${closeNeg ? '#dc2626' : '#15803d'}">${this._fmt(d.projectedClosingCash)}</div></div>
+          <div class="kpi min"><div class="kpi-l">ต่ำสุดในช่วง</div><div class="kpi-v" style="color:${d.minimumCashInPeriod < 0 ? '#dc2626' : '#92400e'}">${this._fmt(d.minimumCashInPeriod)}</div>${d.firstNegativeDate ? `<div style="font-size:11px;color:#dc2626;margin-top:4px">⚠ ติดลบ ${this._date(d.firstNegativeDate)}</div>` : ''}</div>
+          <div class="kpi in"><div class="kpi-l">รวมเข้าคาดการณ์</div><div class="kpi-v" style="color:#15803d">+${this._fmt(d.totalExpectedIn)}</div></div>
+          <div class="kpi out"><div class="kpi-l">รวมออกคาดการณ์</div><div class="kpi-v" style="color:#dc2626">−${this._fmt(d.totalExpectedOut)}</div></div>`;
+
+        document.getElementById('riskBox').innerHTML = (d.risks || []).length === 0
+          ? '<div style="padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;color:#15803d;font-size:13px">✓ ไม่พบความเสี่ยงในช่วงนี้</div>'
+          : d.risks.map(r => `<div class="risk risk-${r.level}"><b>${r.title}</b> — ${r.message}${r.relevantDate ? ` (${this._date(r.relevantDate)})` : ''}</div>`).join('');
+
+        document.getElementById('dayBody').innerHTML = (d.byDay || []).map(b => `
+          <tr class="day-row ${b.runningBalance < 0 ? 'negative' : ''}">
+            <td>${this._date(b.date)}</td>
+            <td style="text-align:right;color:${b.expectedIn > 0 ? '#15803d' : '#94a3b8'}">${b.expectedIn > 0 ? '+' + this._fmt(b.expectedIn) : '—'}</td>
+            <td style="text-align:right;color:${b.expectedOut > 0 ? '#dc2626' : '#94a3b8'}">${b.expectedOut > 0 ? '−' + this._fmt(b.expectedOut) : '—'}</td>
+            <td style="text-align:right;font-weight:600;color:${b.netChange < 0 ? '#dc2626' : (b.netChange > 0 ? '#15803d' : '#64748b')}">${this._fmt(b.netChange)}</td>
+            <td style="text-align:right;font-weight:700;color:${b.runningBalance < 0 ? '#dc2626' : '#1e293b'}">${this._fmt(b.runningBalance)}</td>
+            <td style="text-align:center;font-size:11px;color:#64748b">${b.inflowItemCount}/${b.outflowItemCount}</td>
+          </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:20px">ไม่มีรายการ</td></tr>';
+
+        document.getElementById('debtorBody').innerHTML = (d.topDebtors || []).slice(0,10).map(c => `
+          <tr><td>${c.contactName}</td><td style="text-align:right">${this._fmt(c.totalOutstanding)}</td><td style="text-align:right;color:${c.over90Days > 0 ? '#dc2626' : '#94a3b8'}">${c.over90Days > 0 ? this._fmt(c.over90Days) : '—'}</td></tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
+
+        document.getElementById('creditorBody').innerHTML = (d.topCreditors || []).slice(0,10).map(c => `
+          <tr><td>${c.contactName}</td><td style="text-align:right">${this._fmt(c.totalOutstanding)}</td><td style="text-align:right;color:${c.over90Days > 0 ? '#dc2626' : '#94a3b8'}">${c.over90Days > 0 ? this._fmt(c.over90Days) : '—'}</td></tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
+
+        document.getElementById('inBody').innerHTML = (d.upcomingReceipts || []).slice(0,50).map(i => `
+          <tr><td class="timing-${i.timingStatus}">${this._date(i.expectedDate)}</td><td>${i.documentNumber || '—'}</td><td style="font-size:11px">${i.contactName || '—'}</td><td style="text-align:right">${this._fmt(i.amount)}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
+
+        document.getElementById('outBody').innerHTML = (d.upcomingPayments || []).slice(0,50).map(i => `
+          <tr><td class="timing-${i.timingStatus}">${this._date(i.expectedDate)}</td><td>${i.documentNumber || '—'} ${i.source === 'Payroll' ? '<span style="font-size:10px;background:#ede9fe;padding:1px 5px;border-radius:4px;color:#5b21b6">payroll</span>' : ''}</td><td style="font-size:11px">${i.contactName || (i.source === 'Payroll' ? 'พนักงาน' : '—')}</td><td style="text-align:right">${this._fmt(i.amount)}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

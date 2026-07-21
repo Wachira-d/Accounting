@@ -4,10 +4,93 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Force ALL transitive package assemblies into the publish output.
+         Without this, the production publish pipeline has skipped indirect
+         dependencies (DocumentFormat.OpenXml.Framework.dll,
+         ClosedXML.Parser.dll, …) one at a time, causing FileNotFoundException
+         at first call. CopyLocalLockFileAssemblies forces the entire NuGet
+         dependency graph from project.assets.json into bin/. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.3.0" />
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+    <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
+    <PackageReference Include="QuestPDF" Version="2024.12.2" />
+    <!-- Headless-Chromium HTML→PDF (exact match to the HTML preview) is
+         OPT-IN and guarded by the USE_PUPPETEER compile symbol so the build
+         stays green without the package. To enable:
+           1) Install the "PuppeteerSharp" NuGet package (pick the latest
+              version the NuGet UI offers — it auto-resolves a valid one), and
+           2) add USE_PUPPETEER to the project's conditional compilation
+              symbols (Project ▸ Properties ▸ Build), or build with
+              -p:DefineConstants=USE_PUPPETEER.
+         When the symbol is absent the renderer is a no-op and PDFs use
+         QuestPDF. -->
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+    <!-- Embedded OCR — Tesseract via NuGet (cross-platform native libs included).
+         Used as the always-available local fallback when Azure DI is unavailable
+         or the optional Python ocr-service is not running. tessdata files for
+         Thai+English ship in wwwroot/tessdata. -->
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+    <!-- 3.1.12 supersedes 3.1.6 — 3.1.6 itself was flagged by GHSA-2cmq-823j-5qj8
+         and GHSA-rxmq-m78w-7wmc after release. DO NOT downgrade past 3.1.12. -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <!-- PDF → image rasterization for the embedded OCR path. Pure-managed wrapper
+         around SkiaSharp + PDFium; cross-platform native libs ship with NuGet.
+         5.1.0 is the lowest version compatible with the API we use. -->
+    <PackageReference Include="PDFtoImage" Version="5.1.0" />
+    <!-- Pure-C# PDF text-layer extractor. Used to bypass Azure DI / Tesseract
+         entirely for digital-born PDFs (Thai e-Tax invoices, system-generated
+         receipts) — extracting the embedded text layer directly is free,
+         instant, and 100% accurate. MIT-licensed, zero native deps. -->
+    <PackageReference Include="PdfPig" Version="0.1.9" />
+    <!-- Excel (.xlsx) reader/writer for bank-statement import + reconciliation
+         report export. Single self-contained MIT-licensed assembly with
+         ZERO transitive deps — chosen after ClosedXML's transitive dep
+         chain (DocumentFormat.OpenXml, ClosedXML.Parser, ExcelNumberFormat,
+         RBush, SixLabors.Fonts) repeatedly failed to publish on the
+         production pipeline despite CopyLocalLockFileAssemblies + explicit
+         pins. MiniExcel ships as one DLL — the publish output cannot drop
+         a transitive that doesn't exist. -->
+    <PackageReference Include="MiniExcel" Version="1.34.2" />
+    <!-- Multilingual sentence embeddings via ONNX Runtime. Powers the
+         high-quality path of IEmbeddingService — vendor canon fuzzy
+         match and document near-dup detection. Model file lives at
+         models/sentence-encoder.onnx + models/vocab.txt (tracked via
+         Git LFS). On startup the service probes for these files; if
+         missing, DI falls back to HashingEmbeddingService transparently.
+         Microsoft.ML.OnnxRuntime ships native binaries cross-platform
+         (Linux x64 + macOS arm64 + Windows x64); no extra config. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Expose internal types (e.g. ExpenseCategoryResolver) to the test project. -->
+    <InternalsVisibleTo Include="Accounting.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Thai administrative codes (TISI 1099) for ETDA e-Tax XML -->
+    <EmbeddedResource Include="Resources\ThaiAdmin.csv" />
+    <!-- Tesseract language data files — copied to output so they ship with the app -->
+    <None Include="wwwroot\tessdata\*.traineddata" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Bundled Thai fonts (Sarabun) — คุมหน้าตา PDF (ใบหัก ณ ที่จ่าย ฯลฯ) ให้
+         เหมือนกันทุก OS. วางไฟล์ .ttf ใน Fonts/ แล้วจะถูก copy ไป output +
+         register โดย EnsureThaiFontsRegistered (PdfGenerationService.PdfA3.cs). -->
+    <None Include="Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

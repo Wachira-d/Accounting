@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ซื้อสินค้า - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- =================================================================
+       DASHBOARD-ONLY MODE (since 2026)
+       Previously this page hosted its own create/edit form modal which
+       was a stripped-down copy of the documents.html form (no project
+       dimension, no WHT cumulative cap, no CertificateInLieu, no
+       approval-warning AI hints, no OCR review, no e-Tax XML, etc.).
+       That meant data captured here was systematically lower-quality
+       than data captured in the main documents.html — bookkeepers
+       lost project-cost tracking and risked WHT over-deduction on
+       installment purchases.
+       The form modal was removed; this page is now a procurement-
+       focused DASHBOARD (summary cards + list + tab filter). All
+       creation/edit links jump to documents.html which carries the
+       complete form + AI augmentation. The redundancy is gone but
+       the procurement role-specific UX (summary cards, type tabs)
+       is preserved.
+  ================================================================= -->
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ซื้อสินค้า</h2>
+        <p class="page-subtitle">ติดตามและรายงานเอกสารฝั่งซื้อ — สร้าง/แก้ไขผ่านหน้าเอกสาร (มี dimension + AI + approval warnings ครบ)</p>
+      </div>
+      <div class="flex gap-2" id="pageActions">
+        <a class="btn btn-primary" href="/pages/documents.html?openCreate=expense&type=PurchaseOrder">+ ใบสั่งซื้อ</a>
+        <a class="btn btn-secondary" href="/pages/documents.html?openCreate=expense&type=PurchaseInvoice">+ บันทึกซื้อสินค้า</a>
+      </div>
+    </div>
+
+    <!-- Summary Cards (procurement KPIs) -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
+      <div class="card" style="padding:16px;text-align:center">
+        <div class="text-xs text-gray-500">ใบสั่งซื้อเดือนนี้</div>
+        <div class="text-xl font-bold" id="statPO">0</div>
+      </div>
+      <div class="card" style="padding:16px;text-align:center">
+        <div class="text-xs text-gray-500">รอรับสินค้า</div>
+        <div class="text-xl font-bold text-warning" id="statPending">0</div>
+      </div>
+      <div class="card" style="padding:16px;text-align:center">
+        <div class="text-xs text-gray-500">ซื้อสินค้าเดือนนี้</div>
+        <div class="text-xl font-bold text-primary" id="statPurchase">฿0</div>
+      </div>
+      <div class="card" style="padding:16px;text-align:center">
+        <div class="text-xs text-gray-500">ค้างชำระ</div>
+        <div class="text-xl font-bold text-danger" id="statUnpaid">฿0</div>
+      </div>
+    </div>
+
+    <div class="tabs" id="docTabs">
+      <div class="tab active" data-type="" onclick="Page.setType(this)" data-i18n="common.all">ทั้งหมด</div>
+      <div class="tab" data-type="PurchaseRequisition" onclick="Page.setType(this)">ใบขอซื้อ</div>
+      <div class="tab" data-type="PurchaseOrder" onclick="Page.setType(this)">ใบสั่งซื้อ</div>
+      <div class="tab" data-type="PurchaseInvoice" onclick="Page.setType(this)">บันทึกซื้อสินค้า</div>
+      <div class="tab" data-type="PaymentVoucher" onclick="Page.setType(this)">ใบสำคัญจ่าย</div>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่เอกสาร / ผู้จำหน่าย..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Draft">ร่าง</option>
+        <option value="Approved">อนุมัติ</option>
+        <option value="Sent">ส่งแล้ว</option>
+        <option value="Paid">ชำระแล้ว</option>
+        <option value="PartiallyPaid">ชำระบางส่วน</option>
+        <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
+      </select>
+    </div>
+
+    <div id="purSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
+      <span>เลือกแล้ว <b id="purSelCount">0</b> เอกสาร</span>
+      <span id="purSelExportSlot"></span>
+      <button class="btn btn-secondary btn-sm" onclick="Page.clearPurSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th style="width:36px"><input type="checkbox" id="purCheckAll" onchange="Page.toggleAllPur(this.checked)"></th><th>เลขที่</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.date">วันที่</th><th>ผู้จำหน่าย</th><th class="text-right">ยอดรวม</th><th class="text-right">ค้างชำระ</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/export-util.js"></script>
+  <script>
+    const Page = {
+      // Expense-side document types — used to filter the list when the
+      // user picks "ทั้งหมด" (server returns all sides; we trim to
+      // expense here so this dashboard never accidentally shows revenue
+      // docs).
+      _expenseTypes: ['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','Expense','PaymentVoucher','CertificateInLieu'],
+      docType: '',
+      page: 1,
+      selectedPur: new Set(),
+      _currentItems: [],
+
+      async init() {
+        if (!Layout.init('purchases')) return;
+        Layout.setTitle('ซื้อสินค้า');
+        const pa = document.getElementById('pageActions');
+        if (pa && window.ExportUtil) pa.insertAdjacentHTML('afterbegin', ExportUtil.renderButtons('(f)=>Page.exportAll(f)'));
+        await this.load();
+        this.loadStats();
+      },
+
+      // ─── List view ───────────────────────────────────────────────
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const status = document.getElementById('statusFilter').value;
+        const search = document.getElementById('searchInput').value;
+        let q = `?page=${this.page}&pageSize=20`;
+        if (this.docType) q += `&type=${this.docType}`;
+        if (status) q += `&status=${status}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        try {
+          const res = await api.getDocuments(q);
+          const data = res.data;
+          let items = data?.items || data || [];
+          if (!this.docType) items = items.filter(d => this._expenseTypes.includes(d.documentType));
+          this._currentItems = items;
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ยังไม่มีเอกสารฝั่งซื้อ — กด "+ ใบสั่งซื้อ" หรือ "+ บันทึกซื้อสินค้า" ด้านบน</td></tr>';
+            return;
+          }
+          // The "ดู / แก้ไข" action navigates to documents.html with
+          // ?editDoc=<id>; documents.html init reads that param and pops
+          // its full edit modal. Same flow already used by journals.html
+          // and general-ledger.html drill-downs.
+          tbody.innerHTML = items.map(d => `<tr>
+            <td><input type="checkbox" class="pur-check" data-id="${d.id}" ${this.selectedPur?.has(d.id) ? 'checked' : ''} onchange="Page.onPurCheck(this)"></td>
+            <td class="font-medium"><a href="/pages/documents.html?editDoc=${d.id}" style="color:var(--primary);text-decoration:none">${d.documentNumber}</a></td>
+            <td>${Layout.docTypeLabel(d.documentType)}</td>
+            <td>${Layout.date(d.documentDate)}</td>
+            <td>${d.contact?.name || '-'}</td>
+            <td class="text-right">${Layout.money(d.totalAmount)}</td>
+            <td class="text-right ${d.balanceDue > 0 ? 'text-danger' : ''}">${Layout.money(d.balanceDue)}</td>
+            <td>${Layout.statusBadge(d.status)}</td>
+            <td>
+              <a class="btn btn-sm btn-ghost" href="/pages/documents.html?editDoc=${d.id}">ดู / แก้ไข</a>
+            </td>
+          </tr>`).join('');
+          this._updatePurSelectionBar();
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async loadStats() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getDocuments('?pageSize=200');
+          const items = (res.data?.items || res.data || []).filter(d => this._expenseTypes.includes(d.documentType));
+          const now = new Date();
+          const thisMonth = items.filter(d => { const dt = new Date(d.documentDate); return dt.getMonth() === now.getMonth() && dt.getFullYear() === now.getFullYear(); });
+          const po = thisMonth.filter(d => d.documentType === 'PurchaseOrder');
+          const pending = items.filter(d => d.documentType === 'PurchaseOrder' && (d.status === 'Approved' || d.status === 'Sent'));
+          const purchased = thisMonth.filter(d => d.documentType === 'PurchaseInvoice');
+          const unpaid = items.filter(d => d.balanceDue > 0 && d.status !== 'Draft' && d.status !== 'Voided');
+          document.getElementById('statPO').textContent = po.length;
+          document.getElementById('statPending').textContent = pending.length;
+          document.getElementById('statPurchase').textContent = '฿' + Layout.money(purchased.reduce((s,d) => s + d.totalAmount, 0));
+          document.getElementById('statUnpaid').textContent = '฿' + Layout.money(unpaid.reduce((s,d) => s + d.balanceDue, 0));
+        } catch(e) { /* stats are best-effort */ }
+      },
+
+      setType(el) {
+        document.querySelectorAll('#docTabs .tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        this.docType = el.dataset.type;
+        this.page = 1;
+        this.load();
+      },
+      goPage(p) { Page.page = p; Page.load(); },
+
+      // ─── Bulk select + export (kept — useful for procurement reports) ──
+      onPurCheck(cb) {
+        if (cb.checked) this.selectedPur.add(cb.dataset.id); else this.selectedPur.delete(cb.dataset.id);
+        this._updatePurSelectionBar();
+      },
+      toggleAllPur(checked) {
+        document.querySelectorAll('.pur-check').forEach(cb => {
+          cb.checked = checked;
+          if (checked) this.selectedPur.add(cb.dataset.id); else this.selectedPur.delete(cb.dataset.id);
+        });
+        this._updatePurSelectionBar();
+      },
+      clearPurSelection() {
+        this.selectedPur.clear();
+        document.querySelectorAll('.pur-check').forEach(cb => cb.checked = false);
+        const ca = document.getElementById('purCheckAll'); if (ca) ca.checked = false;
+        this._updatePurSelectionBar();
+      },
+      _updatePurSelectionBar() {
+        const bar = document.getElementById('purSelectionBar'); if (!bar) return;
+        const count = this.selectedPur.size;
+        document.getElementById('purSelCount').textContent = count;
+        bar.style.display = count > 0 ? 'flex' : 'none';
+        const slot = document.getElementById('purSelExportSlot');
+        if (slot && !slot._rendered && window.ExportUtil) {
+          slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportSelectedPur(f)');
+          slot._rendered = true;
+        }
+      },
+      exportSelectedPur(format) {
+        const ids = [...this.selectedPur];
+        if (!ids.length) { Layout.toast('กรุณาเลือกเอกสารก่อน', 'error'); return; }
+        const rows = (this._currentItems || []).filter(d => ids.includes(d.id));
+        if (!rows.length) { Layout.toast('ไม่พบเอกสารที่เลือกในหน้าปัจจุบัน', 'error'); return; }
+        const cols = [
+          { key: 'documentNumber', label: 'เลขที่' },
+          { key: 'documentType', label: 'ประเภท', format: v => Layout.docTypeLabel(v) },
+          { key: 'documentDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
+          { key: 'contact.name', label: 'ผู้จำหน่าย' },
+          { key: 'subTotal', label: 'ก่อนภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'vatAmount', label: 'ภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'totalAmount', label: 'รวม', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+          { key: 'status', label: 'สถานะ' }
+        ];
+        ExportUtil.exportData(format, {
+          rows, columns: cols, filename: `ซื้อสินค้า_เลือก${rows.length}รายการ`,
+          title: 'เอกสารซื้อที่เลือก', subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
+        });
+      },
+      async exportAll(format) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังโหลดข้อมูลทั้งหมด...', 'info');
+          let q = '?page=1&pageSize=10000';
+          if (this.docType) q += `&type=${this.docType}`;
+          const status = document.getElementById('statusFilter')?.value;
+          if (status) q += `&status=${status}`;
+          const res = await api.getDocuments(q);
+          let rows = res.data?.items || res.data || [];
+          if (!this.docType) rows = rows.filter(d => this._expenseTypes.includes(d.documentType));
+          const cols = [
+            { key: 'documentNumber', label: 'เลขที่' },
+            { key: 'documentType', label: 'ประเภท', format: v => Layout.docTypeLabel(v) },
+            { key: 'documentDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
+            { key: 'contact.name', label: 'ผู้จำหน่าย' },
+            { key: 'subTotal', label: 'ก่อนภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+            { key: 'vatAmount', label: 'ภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+            { key: 'totalAmount', label: 'รวม', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
+            { key: 'status', label: 'สถานะ' }
+          ];
+          ExportUtil.exportData(format, {
+            rows, columns: cols, filename: 'ซื้อสินค้า', title: 'ซื้อสินค้า',
+            subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
+          });
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

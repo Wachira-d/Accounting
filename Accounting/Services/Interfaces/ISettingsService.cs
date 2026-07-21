@@ -1,0 +1,29 @@
+using Accounting.Models.DTOs.Settings;
+
+namespace Accounting.Services.Interfaces;
+
+public interface ISettingsService
+{
+    // Company Settings
+    Task<CompanySettingsResponse> GetSettingsAsync(Guid companyId);
+    Task<CompanySettingsResponse> UpdateSettingsAsync(Guid companyId, UpdateCompanySettingsRequest request);
+    Task<CompanySettingsResponse> UploadLogoAsync(Guid companyId, Stream fileStream, string fileName, string contentType);
+    Task DeleteLogoAsync(Guid companyId);
+    Task<CompanySettingsResponse> UploadStampAsync(Guid companyId, Stream fileStream, string fileName, string contentType);
+    Task DeleteStampAsync(Guid companyId);
+    Task<LandingServicesResponse?> GetLandingServicesAsync();
+
+    // Number Series
+    Task<NumberSeriesResponse> CreateNumberSeriesAsync(Guid companyId, CreateNumberSeriesRequest request);
+    Task<List<NumberSeriesResponse>> GetNumberSeriesAsync(Guid companyId);
+    Task<NumberSeriesResponse> UpdateNumberSeriesAsync(Guid companyId, Guid seriesId, UpdateNumberSeriesRequest request);
+    Task<string> GetNextNumberAsync(Guid companyId, Accounting.Models.Enums.DocumentType documentType);
+    /// <summary>Same as GetNextNumberAsync but uses yyyyMM ของ documentDate
+    /// (สอดคล้องเลข+วันที่). null = ใช้ DateTime.UtcNow ตามเดิม</summary>
+    Task<string> GetNextNumberAsync(Guid companyId, Accounting.Models.Enums.DocumentType documentType, DateTime? documentDate);
+
+    // API Key Management
+    Task<ApiKeyCreatedResponse> CreateApiKeyAsync(Guid companyId, Guid userId, CreateApiKeyRequest request);
+    Task<List<ApiKeyResponse>> GetApiKeysAsync(Guid companyId);
+    Task RevokeApiKeyAsync(Guid companyId, Guid apiKeyId);
+}

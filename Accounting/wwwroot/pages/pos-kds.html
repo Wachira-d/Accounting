@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KDS — หน้าจอครัว / บาร์ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Kiosk-only: hide the accounting chrome so the kitchen sees nothing but tickets. */
+    body.kds-mode .sidebar, body.kds-mode .sidebar-overlay, body.kds-mode .app-header { display:none !important; }
+    body.kds-mode .main-content { margin-left:0 !important; width:100% !important; }
+    body.kds-mode #pageContent { height:100vh; }
+
+    .kds-shell { display:flex; flex-direction:column; height:100vh; background:#1a1a1a; color:#fff; }
+    .kds-topbar { display:flex; justify-content:space-between; align-items:center; padding:10px 18px;
+                  background:#0f0f0f; border-bottom:1px solid #333; flex-shrink:0; }
+    .kds-topbar .brand { font-size:18px; font-weight:700; }
+    .kds-topbar .meta { font-size:13px; color:#aaa; display:flex; gap:18px; align-items:center; }
+    .kds-topbar .btn { background:#2a2a2a; color:#fff; border:1px solid #444; padding:6px 12px;
+                       border-radius:6px; cursor:pointer; font-size:13px; }
+    .kds-topbar .btn:hover { background:#3a3a3a; }
+    .kds-topbar select { background:#2a2a2a; color:#fff; border:1px solid #444; padding:6px 12px;
+                         border-radius:6px; font-size:13px; }
+
+    .kds-grid { flex:1; overflow-y:auto; padding:14px;
+                display:grid; grid-template-columns:repeat(auto-fill, minmax(310px, 1fr)); gap:12px; align-content:start; }
+    .kds-empty { grid-column:1/-1; text-align:center; padding:80px 20px; color:#666; font-size:18px; }
+
+    .ticket { background:#fff; color:#222; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,.4);
+              display:flex; flex-direction:column; overflow:hidden; }
+    .ticket.elapsed-warn { box-shadow:0 0 0 3px #f59e0b, 0 2px 6px rgba(0,0,0,.4); }
+    .ticket.elapsed-late { box-shadow:0 0 0 3px #ef4444, 0 2px 6px rgba(0,0,0,.4); animation:pulse 1.5s infinite; }
+    @keyframes pulse { 50% { box-shadow:0 0 0 6px #ef4444, 0 2px 6px rgba(0,0,0,.4); } }
+
+    .ticket-head { background:#111; color:#fff; padding:10px 12px; display:flex; justify-content:space-between; align-items:center; }
+    .ticket-head .no { font-size:16px; font-weight:700; }
+    .ticket-head .time { font-size:13px; }
+    .ticket-meta { background:#f4f4f5; padding:6px 12px; font-size:12px; color:#666; display:flex; gap:10px; flex-wrap:wrap; }
+
+    .ticket-items { padding:6px 0; }
+    .ticket-item { display:flex; align-items:center; justify-content:space-between; gap:8px;
+                   padding:8px 12px; border-bottom:1px solid #f3f4f6; }
+    .ticket-item:last-child { border-bottom:none; }
+    .ticket-item .info { flex:1; min-width:0; }
+    .ticket-item .name { font-weight:600; font-size:14px; word-break:break-word; }
+    .ticket-item .modifiers { font-size:12px; color:#888; margin-top:2px; }
+    .ticket-item .notes { font-size:12px; color:#b45309; font-style:italic; margin-top:2px; }
+    .ticket-item .qty { background:#111; color:#fff; padding:2px 8px; border-radius:4px;
+                        font-size:13px; font-weight:600; flex-shrink:0; }
+    .ticket-item.status-Preparing { background:#fef3c7; }
+    .ticket-item.status-Ready { background:#d1fae5; }
+    .ticket-item.status-Served, .ticket-item.status-Cancelled { opacity:.45; text-decoration:line-through; }
+
+    .ticket-actions { padding:6px 8px; display:flex; gap:6px; }
+    .ticket-actions .btn { flex:1; padding:6px; font-size:12px; border:1px solid #d4d4d8;
+                           border-radius:5px; background:#fff; cursor:pointer; }
+    .ticket-actions .btn:hover { background:#f4f4f5; }
+    .ticket-actions .btn-primary { background:#2563eb; color:#fff; border-color:#2563eb; }
+    .ticket-actions .btn-success { background:#10b981; color:#fff; border-color:#10b981; }
+
+    .ticket.new-ticket { animation:flashNew 1.6s ease-out 2; }
+    @keyframes flashNew {
+      0%, 100% { background:#fff; }
+      50%      { background:#fef3c7; box-shadow:0 0 0 4px #fbbf24, 0 2px 6px rgba(0,0,0,.4); }
+    }
+
+    .kds-topbar .audio-toggle { background:none; border:1px solid #444; color:#fff;
+      width:34px; height:30px; border-radius:6px; cursor:pointer; font-size:16px; }
+    .kds-topbar .audio-toggle.muted { opacity:.4; }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="kds-shell">
+      <div class="kds-topbar">
+        <div class="brand">🍳 KDS — หน้าจอครัว / บาร์</div>
+        <div class="meta">
+          <span id="kdsClock">--:--</span>
+          <span>ออเดอร์ที่รอ: <strong id="kdsCount" style="color:#fbbf24;">0</strong></span>
+          <select id="kdsCategory" onchange="KDS.render()">
+            <option value="">ทุกประเภท</option>
+            <option value="DineIn">ทานที่ร้าน</option>
+            <option value="Takeaway">นำกลับ</option>
+            <option value="Delivery">เดลิเวอรี่</option>
+          </select>
+          <button class="audio-toggle" id="kdsAudioBtn" onclick="KDS.toggleAudio()" title="เปิด/ปิดเสียงเตือนเมื่อมีออเดอร์ใหม่">🔔</button>
+          <button class="btn" onclick="KDS.refresh()">🔄 รีเฟรช</button>
+          <button class="btn" onclick="window.location.href='/pages/pos.html'">← ออก</button>
+        </div>
+      </div>
+      <div class="kds-grid" id="kdsGrid">
+        <div class="kds-empty">กำลังโหลด...</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const KDS = {
+      orders: [],
+      pollTimer: null,
+      clockTimer: null,
+      pageSize: 50,
+      knownIds: new Set(),               // order ids we've already seen — used to flash + chime only on new ones
+      audioEnabled: localStorage.getItem('kdsAudio') !== '0',
+      _audioCtx: null,
+      _firstLoad: true,                  // skip the chime on the very first poll (everything is "new")
+
+      async init() {
+        document.body.classList.add('kds-mode');
+        // โหลดบริษัท (getCompanyId) — ไม่งั้น Layout.api()=null → KDS ไม่ดึงออเดอร์.
+        // เมนูถูกซ่อนด้วย CSS kds-mode อยู่แล้ว (แสดงเต็มจอ).
+        if (!Layout.init('pos-kds')) return;
+        this._applyAudioToggleUi();
+        this.tickClock();
+        this.clockTimer = setInterval(() => this.tickClock(), 1000);
+        await this.refresh();
+        // Auto-refresh every 10s — kitchen needs near-realtime, but server load matters
+        this.pollTimer = setInterval(() => this.refresh(), 10000);
+      },
+
+      toggleAudio() {
+        this.audioEnabled = !this.audioEnabled;
+        localStorage.setItem('kdsAudio', this.audioEnabled ? '1' : '0');
+        this._applyAudioToggleUi();
+        // Browsers require a user gesture before AudioContext is allowed —
+        // bootstrap it here while we're inside a click handler.
+        if (this.audioEnabled) this._ensureAudio();
+      },
+
+      _applyAudioToggleUi() {
+        const b = document.getElementById('kdsAudioBtn');
+        if (!b) return;
+        b.classList.toggle('muted', !this.audioEnabled);
+        b.textContent = this.audioEnabled ? '🔔' : '🔕';
+      },
+
+      _ensureAudio() {
+        if (this._audioCtx || !window.AudioContext && !window.webkitAudioContext) return;
+        try { this._audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        catch { /* unsupported */ }
+      },
+
+      _chime() {
+        if (!this.audioEnabled || !this._audioCtx) return;
+        try {
+          // Two short tones — recognisably "order up" without being annoying
+          const ctx = this._audioCtx;
+          const beep = (when, freq) => {
+            const o = ctx.createOscillator(), g = ctx.createGain();
+            o.type = 'sine'; o.frequency.value = freq;
+            o.connect(g); g.connect(ctx.destination);
+            g.gain.setValueAtTime(0.0001, ctx.currentTime + when);
+            g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + when + 0.02);
+            g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + when + 0.22);
+            o.start(ctx.currentTime + when); o.stop(ctx.currentTime + when + 0.25);
+          };
+          beep(0, 880); beep(0.22, 1175);
+        } catch { /* swallow — never break the screen over audio */ }
+      },
+
+      tickClock() {
+        const d = new Date();
+        document.getElementById('kdsClock').textContent =
+          d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      },
+
+      async refresh() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          // Open + InProgress + ReadyToServe — KDS shows the whole prep pipeline.
+          // We fetch each status separately because GetOrdersAsync takes a single status filter.
+          const statuses = ['Open', 'InProgress', 'ReadyToServe'];
+          const results = await Promise.all(statuses.map(s =>
+            api.getPosOrders(`?status=${s}&pageSize=${this.pageSize}`).catch(() => ({ data: { items: [] } }))));
+          const all = results.flatMap(r => (r.data?.items || r.data || []));
+          // Dedupe (paranoia — should not happen across status partitions)
+          const seen = new Set();
+          this.orders = all.filter(o => !seen.has(o.id) && seen.add(o.id));
+
+          // Detect newly-arrived orders since the last poll
+          const newIds = [];
+          for (const o of this.orders) {
+            if (!this.knownIds.has(o.id)) { newIds.push(o.id); this.knownIds.add(o.id); }
+          }
+          // Drop ids that have rolled off the open pipeline so the set doesn't grow forever
+          const stillOpen = new Set(this.orders.map(o => o.id));
+          for (const id of [...this.knownIds]) if (!stillOpen.has(id)) this.knownIds.delete(id);
+
+          if (newIds.length && !this._firstLoad) this._chime();
+          this._firstLoad = false;
+          this._newIds = new Set(newIds);
+          this.render();
+        } catch (e) {
+          document.getElementById('kdsGrid').innerHTML =
+            `<div class="kds-empty">❌ โหลดไม่สำเร็จ: ${this.esc(e.message)}</div>`;
+        }
+      },
+
+      render() {
+        const cat = document.getElementById('kdsCategory').value;
+        let list = this.orders.slice();
+        if (cat) list = list.filter(o => o.orderType === cat);
+        // Sort oldest first — kitchen FIFO
+        // Server timestamps may be naive UTC — parse via asUtc so the
+        // resulting Date is the correct moment in time (sort order +
+        // elapsed-time calc would both be wrong by the local UTC offset
+        // if we used `new Date(string)` directly).
+        list.sort((a, b) => this._asUtc(a.orderDate) - this._asUtc(b.orderDate));
+        document.getElementById('kdsCount').textContent = list.length;
+
+        const grid = document.getElementById('kdsGrid');
+        if (!list.length) {
+          grid.innerHTML = '<div class="kds-empty">✅ ไม่มีออเดอร์ที่รอ</div>';
+          return;
+        }
+        grid.innerHTML = list.map(o => this.renderTicket(o)).join('');
+      },
+
+      renderTicket(o) {
+        const elapsedMin = (Date.now() - this._asUtc(o.orderDate).getTime()) / 60000;
+        const elapsedClass = elapsedMin >= 15 ? 'elapsed-late'
+                           : elapsedMin >= 5 ? 'elapsed-warn' : '';
+        const newClass = this._newIds && this._newIds.has(o.id) ? 'new-ticket' : '';
+        const items = (o.items || []).filter(i => i.status !== 'Served' && i.status !== 'Cancelled');
+        const meta = [];
+        if (o.tableNumber) meta.push(`โต๊ะ ${this.esc(o.tableNumber)}`);
+        if (o.queueNumber) meta.push(`คิว ${this.esc(o.queueNumber)}`);
+        if (o.customerName) meta.push(this.esc(o.customerName));
+        if (o.orderType) meta.push(this.typeLabel(o.orderType));
+
+        return `
+          <div class="ticket ${elapsedClass} ${newClass}">
+            <div class="ticket-head">
+              <span class="no">#${this.esc(o.orderNumber || '')}</span>
+              <span class="time">${this.fmtTime(o.orderDate)} · ${Math.floor(elapsedMin)} นาที</span>
+            </div>
+            ${meta.length ? `<div class="ticket-meta">${meta.join(' · ')}</div>` : ''}
+            <div class="ticket-items">
+              ${(o.items || []).map(i => this.renderItem(o.id, i)).join('')}
+            </div>
+            <div class="ticket-actions">
+              <button class="btn btn-success" onclick="KDS.advanceAll('${o.id}','Ready')">✅ พร้อมเสิร์ฟทั้งบิล</button>
+            </div>
+          </div>`;
+      },
+
+      renderItem(orderId, i) {
+        const mods = (i.modifiers || []).map(m => m.name || m.modifierName).filter(Boolean).join(', ');
+        const nextStatus = this.nextStatus(i.status);
+        const nextLabel = this.statusActionLabel(i.status);
+        return `
+          <div class="ticket-item status-${this.esc(i.status)}">
+            <div class="info">
+              <div class="name">${this.esc(i.itemName)}</div>
+              ${mods ? `<div class="modifiers">+ ${this.esc(mods)}</div>` : ''}
+              ${i.notes ? `<div class="notes">📝 ${this.esc(i.notes)}</div>` : ''}
+            </div>
+            <span class="qty">×${this.fmtQty(i.quantity)}</span>
+            ${nextStatus
+              ? `<button class="btn btn-primary" style="padding:4px 10px;font-size:12px;border:none;border-radius:4px;color:#fff;background:#2563eb;cursor:pointer;"
+                  onclick="KDS.advanceItem('${orderId}','${i.id}','${nextStatus}')">${nextLabel}</button>`
+              : ''}
+          </div>`;
+      },
+
+      nextStatus(current) {
+        return ({ Pending: 'Preparing', Preparing: 'Ready', Ready: 'Served' })[current] || null;
+      },
+
+      statusActionLabel(current) {
+        return ({ Pending: '🔥 เริ่มทำ', Preparing: '✅ พร้อมเสิร์ฟ', Ready: '🍽 เสิร์ฟแล้ว' })[current] || '';
+      },
+
+      async advanceItem(orderId, itemId, status) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.updatePosItemStatus(orderId, itemId, { status });
+          // Update local state without a full refresh — feels snappier
+          const o = this.orders.find(x => x.id === orderId);
+          if (o) {
+            const it = (o.items || []).find(x => x.id === itemId);
+            if (it) it.status = status;
+            this.render();
+          }
+        } catch (e) {
+          alert('อัพเดทไม่สำเร็จ: ' + e.message);
+        }
+      },
+
+      async advanceAll(orderId, status) {
+        const o = this.orders.find(x => x.id === orderId);
+        if (!o) return;
+        const targets = (o.items || []).filter(i => i.status !== status && i.status !== 'Served' && i.status !== 'Cancelled');
+        if (!targets.length) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          for (const it of targets) {
+            await api.updatePosItemStatus(orderId, it.id, { status });
+            it.status = status;
+          }
+          this.render();
+        } catch (e) {
+          alert('อัพเดทไม่สำเร็จ: ' + e.message);
+        }
+      },
+
+      typeLabel(t) {
+        return ({ DineIn: '🪑 ทานที่ร้าน', Takeaway: '🥡 กลับ', Delivery: '🛵 ส่ง' })[t] || t;
+      },
+
+      fmtTime(d) {
+        return this._asUtc(d).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+      },
+
+      // Robust timestamp parser — server may emit naive ISO strings; treat
+      // those as UTC so the kitchen wall clock matches reality.
+      _asUtc(s) {
+        if (!s) return new Date(NaN);
+        if (s instanceof Date) return s;
+        const str = String(s);
+        return /[zZ]$|[+-]\d{2}:?\d{2}$/.test(str) ? new Date(str) : new Date(str + 'Z');
+      },
+
+      fmtQty(q) {
+        return Number(q) % 1 === 0 ? Number(q).toString() : Number(q).toFixed(2);
+      },
+
+      esc(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c => (
+          { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      },
+    };
+
+    document.addEventListener('DOMContentLoaded', () => KDS.init());
+    window.addEventListener('beforeunload', () => {
+      if (KDS.pollTimer) clearInterval(KDS.pollTimer);
+      if (KDS.clockTimer) clearInterval(KDS.clockTimer);
+    });
+  </script>
+</body>
+</html>

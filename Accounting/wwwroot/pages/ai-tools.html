@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI อัจฉริยะ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('categorize')">จัดหมวดหมู่อัตโนมัติ</button>
+      <button class="tab" onclick="Page.switchTab('anomaly')">ตรวจจับผิดปกติ</button>
+      <button class="tab" onclick="Page.switchTab('ocr')">OCR สแกนเอกสาร</button>
+      <button class="tab" onclick="Page.switchTab('forecast')">พยากรณ์กระแสเงินสด</button>
+      <button class="tab" onclick="Page.switchTab('arap')">🤖 วิเคราะห์ลูกหนี้/เจ้าหนี้</button>
+      <button class="tab" onclick="Page.switchTab('rfm')">📊 RFM ลูกค้า</button>
+      <button class="tab" onclick="Page.switchTab('abc')">📦 ABC สินค้า</button>
+    </div>
+
+    <!-- Auto-Categorize -->
+    <div id="tab-categorize">
+      <div class="page-header">
+        <div><h2 class="page-title">AI จัดหมวดหมู่อัตโนมัติ</h2><p class="page-subtitle">ใช้ AI จัดหมวดหมู่รายการบัญชีอัตโนมัติจากรูปแบบที่เรียนรู้</p></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary" onclick="Page.learnRules()">เรียนรู้จากประวัติ</button>
+          <button class="btn btn-primary" onclick="Page.batchCategorize()">จัดหมวดหมู่ทั้งหมด</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">กฎการจัดหมวดหมู่</h3>
+          <div id="rulesContent"><p class="text-gray-400 text-center" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</p></div>
+        </div>
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">จัดหมวดหมู่รายการเดี่ยว</h3>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" data-i18n="common.type">ประเภท</label>
+              <select class="form-select" id="catEntityType"><option value="Transaction">ธุรกรรม</option><option value="Document">เอกสาร</option><option value="Expense">ค่าใช้จ่าย</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">ID</label><input type="text" class="form-input" id="catEntityId" placeholder="Entity ID"></div>
+          </div>
+          <button class="btn btn-primary" onclick="Page.singleCategorize()">จัดหมวดหมู่</button>
+          <div id="catResult" style="margin-top:16px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Anomaly Detection -->
+    <div id="tab-anomaly" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">ตรวจจับความผิดปกติ</h2><p class="page-subtitle">AI ตรวจจับรายการที่ผิดปกติจากรูปแบบปกติ</p></div>
+        <button class="btn btn-primary" onclick="Page.detectAnomalies()">สแกนหาความผิดปกติ</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th data-i18n="common.type">ประเภท</th><th data-i18n="common.items">รายการ</th><th data-i18n="common.detail">รายละเอียด</th><th>ความรุนแรง</th><th data-i18n="common.date">วันที่</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="anomalyBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กดปุ่มสแกนเพื่อตรวจจับ</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- OCR -->
+    <div id="tab-ocr" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">OCR สแกนเอกสาร</h2><p class="page-subtitle">สแกนใบเสร็จ/ใบกำกับภาษีด้วย AI แล้วสร้างเอกสารอัตโนมัติ</p></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">อัพโหลดเอกสาร</h3>
+          <div class="form-group">
+            <label class="form-label">เลือกรูปภาพหรือ PDF</label>
+            <input type="file" class="form-input" id="ocrFile" accept="image/*,.pdf" style="padding:8px">
+          </div>
+          <button class="btn btn-primary" onclick="Page.uploadAndScan()">สแกนด้วย OCR</button>
+          <div id="ocrUploadResult" style="margin-top:16px"></div>
+        </div>
+        <div class="card" style="padding:24px">
+          <h3 style="margin-bottom:16px">ผลการสแกนล่าสุด</h3>
+          <div id="ocrResults"><p class="text-gray-400 text-center" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cash Flow Forecast -->
+    <div id="tab-forecast" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">พยากรณ์กระแสเงินสด</h2><p class="page-subtitle">AI พยากรณ์กระแสเงินสดล่วงหน้าจากข้อมูลในอดีต</p></div>
+        <button class="btn btn-primary" onclick="Page.createForecast()">สร้างการพยากรณ์ใหม่</button>
+      </div>
+      <div id="forecastContent"><p class="text-gray-400 text-center" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</p></div>
+    </div>
+
+    <!-- AR/AP analysis — AI looks at aging, customer/vendor payment
+         history and produces risk buckets + cash gap forecast. -->
+    <div id="tab-arap" style="display:none">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">🤖 วิเคราะห์ลูกหนี้/เจ้าหนี้ด้วย AI</h2>
+          <p class="page-subtitle">ส่งข้อมูล aging + ประวัติการชำระไปให้ AI วิเคราะห์ — ระบุลูกค้าเสี่ยงสูง, ลูกค้าจ่ายช้าแต่จ่ายแน่, พยากรณ์ช่องว่างเงินสด</p>
+        </div>
+        <button class="btn btn-primary" onclick="Page.runArApAnalysis()">เริ่มวิเคราะห์</button>
+      </div>
+      <div id="arapContent" style="padding:20px;color:#94a3b8">กดปุ่ม "เริ่มวิเคราะห์" เพื่อให้ AI วิเคราะห์ AR/AP ของคุณ</div>
+    </div>
+
+    <!-- ===== Customer RFM ===== -->
+    <div id="tab-rfm" style="display:none">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">📊 วิเคราะห์ลูกค้าด้วย RFM</h2>
+          <p class="page-subtitle">Recency / Frequency / Monetary — แบ่งลูกค้าเป็นกลุ่มตามพฤติกรรมการซื้อ</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="rfmWindow" class="form-select" style="width:auto">
+            <option value="365" selected>1 ปีย้อนหลัง</option>
+            <option value="180">6 เดือนย้อนหลัง</option>
+            <option value="90">3 เดือนย้อนหลัง</option>
+            <option value="730">2 ปีย้อนหลัง</option>
+          </select>
+          <button class="btn btn-primary" onclick="Page.loadRfm()">วิเคราะห์</button>
+        </div>
+      </div>
+      <div id="rfmSummary" style="margin-bottom:20px"></div>
+      <div id="rfmTop20"></div>
+    </div>
+
+    <!-- ===== Inventory ABC ===== -->
+    <div id="tab-abc" style="display:none">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">📦 วิเคราะห์สินค้าด้วย ABC (Pareto)</h2>
+          <p class="page-subtitle">A-class = top 75% รายได้, B = 15%, C = 10% — โฟกัสบริหารสต็อกที่จุดสำคัญ</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="abcWindow" class="form-select" style="width:auto">
+            <option value="365" selected>1 ปีย้อนหลัง</option>
+            <option value="180">6 เดือนย้อนหลัง</option>
+            <option value="90">3 เดือนย้อนหลัง</option>
+          </select>
+          <button class="btn btn-primary" onclick="Page.loadAbc()">วิเคราะห์</button>
+        </div>
+      </div>
+      <div id="abcSummary" style="margin-bottom:20px"></div>
+      <div id="abcTable"></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  init() {
+    if (!Layout.init('ai-tools')) return;
+    Layout.setTitle('AI อัจฉริยะ');
+    this.loadRules();
+  },
+
+  switchTab(tab) {
+    const tabs = ['categorize','anomaly','ocr','forecast','arap','rfm','abc'];
+    tabs.forEach(t => { const el = document.getElementById('tab-'+t); if (el) el.style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', tabs[i] === tab));
+    if (tab === 'anomaly') this.loadAnomalies();
+    if (tab === 'ocr') this.loadOcrResults();
+    if (tab === 'forecast') this.loadForecasts();
+    if (tab === 'rfm') this.loadRfm();
+    if (tab === 'abc') this.loadAbc();
+  },
+
+  // ===== Customer RFM =====
+  _segmentLabel(seg) {
+    return ({
+      Champion: { th: 'แชมเปี้ยน', color: '#10b981', emoji: '🏆' },
+      Loyal: { th: 'ลูกค้าประจำ', color: '#3b82f6', emoji: '💎' },
+      NewCustomer: { th: 'ลูกค้าใหม่', color: '#8b5cf6', emoji: '🆕' },
+      AtRisk: { th: 'เสี่ยงหายไป', color: '#f59e0b', emoji: '⚠️' },
+      Lost: { th: 'หายแล้ว', color: '#dc2626', emoji: '👋' },
+      BigSpender: { th: 'ยอดซื้อสูง', color: '#0891b2', emoji: '💰' },
+      Regular: { th: 'ปกติ', color: '#64748b', emoji: '👤' },
+    })[seg] || { th: seg, color: '#64748b', emoji: '•' };
+  },
+  async loadRfm() {
+    const cid = Layout.getCompanyId(); const token = localStorage.getItem('token');
+    const days = document.getElementById('rfmWindow')?.value || 365;
+    const sumEl = document.getElementById('rfmSummary');
+    const topEl = document.getElementById('rfmTop20');
+    if (sumEl) sumEl.innerHTML = '<p class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</p>';
+    try {
+      const r = await fetch(`/api/companies/${cid}/ai/customer/rfm-segmentation?windowDays=${days}`,
+        { headers: { 'Authorization': 'Bearer ' + token } });
+      const j = await r.json();
+      const d = j?.data;
+      if (!d || d.customerCount === 0) {
+        sumEl.innerHTML = `<div class="card" style="padding:20px;text-align:center;color:#94a3b8">ไม่มีข้อมูลในช่วงนี้</div>`;
+        topEl.innerHTML = '';
+        return;
+      }
+      sumEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">${
+        (d.summary || []).map(s => {
+          const m = this._segmentLabel(s.segment);
+          return `<div class="card" style="padding:16px;border-left:4px solid ${m.color}">
+            <div style="font-size:20px">${m.emoji} <strong>${m.th}</strong></div>
+            <div style="font-size:28px;font-weight:700;margin-top:8px">${s.count}</div>
+            <div style="font-size:11px;color:#64748b;margin-top:4px">ยอดรวม ${(s.totalValue || 0).toLocaleString()} บาท</div>
+          </div>`;
+        }).join('')
+      }</div>
+      <p style="font-size:12px;color:#64748b;margin-top:12px">${d.reasoning || ''}</p>`;
+
+      topEl.innerHTML = `<div class="card" style="padding:20px">
+        <h3 style="margin-bottom:12px">Top 20 ลูกค้า</h3>
+        <div class="table-container"><table class="table" style="font-size:13px">
+          <thead><tr><th>ชื่อ</th><th class="text-center">R</th><th class="text-center">F</th><th class="text-center">M</th><th>กลุ่ม</th><th class="text-right">ยอดซื้อ</th><th class="text-right">เคยซื้อล่าสุด (วัน)</th></tr></thead>
+          <tbody>${(d.top20 || []).map(s => {
+            const m = this._segmentLabel(s.segment);
+            return `<tr>
+              <td>${Layout.esc ? Layout.esc(s.name) : s.name}</td>
+              <td class="text-center">${s.rScore}</td>
+              <td class="text-center">${s.fScore}</td>
+              <td class="text-center">${s.mScore}</td>
+              <td><span style="color:${m.color};font-weight:600">${m.emoji} ${m.th}</span></td>
+              <td class="text-right">${(s.monetary || 0).toLocaleString()}</td>
+              <td class="text-right">${s.recency}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table></div>
+      </div>`;
+    } catch (e) {
+      sumEl.innerHTML = `<div class="card" style="padding:20px;color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</div>`;
+    }
+  },
+
+  // ===== Inventory ABC =====
+  async loadAbc() {
+    const cid = Layout.getCompanyId(); const token = localStorage.getItem('token');
+    const days = document.getElementById('abcWindow')?.value || 365;
+    const sumEl = document.getElementById('abcSummary');
+    const tabEl = document.getElementById('abcTable');
+    if (sumEl) sumEl.innerHTML = '<p class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</p>';
+    try {
+      const r = await fetch(`/api/companies/${cid}/ai/inventory/abc-analysis?windowDays=${days}`,
+        { headers: { 'Authorization': 'Bearer ' + token } });
+      const j = await r.json();
+      const d = j?.data;
+      if (!d || !d.classCounts) {
+        sumEl.innerHTML = `<div class="card" style="padding:20px;text-align:center;color:#94a3b8">ไม่มีข้อมูลในช่วงนี้</div>`;
+        tabEl.innerHTML = '';
+        return;
+      }
+      const c = d.classCounts;
+      sumEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div class="card" style="padding:16px;border-left:4px solid #10b981">
+          <div><strong>A-class (เพชร)</strong> <span style="font-size:11px;color:#64748b">75% รายได้</span></div>
+          <div style="font-size:28px;font-weight:700;margin-top:8px">${c.A} SKUs</div>
+          <div style="font-size:11px;color:#64748b">ต้อง stockout watch ใกล้ชิด</div>
+        </div>
+        <div class="card" style="padding:16px;border-left:4px solid #3b82f6">
+          <div><strong>B-class (ทอง)</strong> <span style="font-size:11px;color:#64748b">15% รายได้</span></div>
+          <div style="font-size:28px;font-weight:700;margin-top:8px">${c.B} SKUs</div>
+          <div style="font-size:11px;color:#64748b">ตรวจสอบรอบปกติ</div>
+        </div>
+        <div class="card" style="padding:16px;border-left:4px solid #f59e0b">
+          <div><strong>C-class (เงิน)</strong> <span style="font-size:11px;color:#64748b">10% รายได้</span></div>
+          <div style="font-size:28px;font-weight:700;margin-top:8px">${c.C} SKUs</div>
+          <div style="font-size:11px;color:#64748b">พิจารณาตัด/ลด stock</div>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#64748b;margin-top:12px">ยอดขายรวม ${(d.totalRevenue || 0).toLocaleString()} บาท · ${d.reasoning || ''}</p>`;
+
+      tabEl.innerHTML = `<div class="card" style="padding:20px">
+        <h3 style="margin-bottom:12px">รายการสินค้า (100 อันดับแรก)</h3>
+        <div class="table-container"><table class="table" style="font-size:13px">
+          <thead><tr><th>รหัส</th><th>กลุ่ม</th><th class="text-right">รายได้</th><th class="text-right">% รายได้</th><th class="text-right">ยอดสะสม %</th></tr></thead>
+          <tbody>${(d.items || []).map(it => {
+            const color = it.classification === 'A' ? '#10b981' : it.classification === 'B' ? '#3b82f6' : '#f59e0b';
+            return `<tr>
+              <td>${Layout.esc ? Layout.esc(it.productCode) : it.productCode}</td>
+              <td><span style="color:${color};font-weight:600">${it.classification}</span></td>
+              <td class="text-right">${(it.revenue || 0).toLocaleString()}</td>
+              <td class="text-right">${it.revenuePct}%</td>
+              <td class="text-right">${it.cumulativePct}%</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table></div>
+      </div>`;
+    } catch (e) {
+      sumEl.innerHTML = `<div class="card" style="padding:20px;color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</div>`;
+    }
+  },
+
+  // ===== Categorize =====
+  async loadRules() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getAiRules();
+      const items = res.data?.items || res.data || [];
+      document.getElementById('rulesContent').innerHTML = items.length ? `<div style="max-height:300px;overflow-y:auto">${items.map(r => `<div style="padding:8px 0;border-bottom:1px solid var(--gray-100)">
+        <div class="text-sm font-medium">${r.pattern || r.name || '-'}</div>
+        <div class="text-xs text-gray-500">${r.category || r.accountName || '-'} | ความแม่นยำ: ${r.confidence ? Math.round(r.confidence*100)+'%' : '-'}</div>
+      </div>`).join('')}</div>` : '<p class="text-gray-400 text-center">ยังไม่มีกฎ กดปุ่ม "เรียนรู้จากประวัติ" เพื่อสร้างกฎอัตโนมัติ</p>';
+    } catch (err) { document.getElementById('rulesContent').innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
+  },
+
+  async learnRules() {
+    const api = Layout.api(); if (!api) return;
+    try { await api.aiLearnRules(); Layout.toast('เรียนรู้กฎสำเร็จ'); this.loadRules(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async batchCategorize() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.aiBatchCategorize({});
+      const d = res.data || {};
+      Layout.toast(`จัดหมวดหมู่สำเร็จ ${d.categorizedCount || d.count || 0} รายการ`);
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async singleCategorize() {
+    const api = Layout.api(); if (!api) return;
+    const entityType = document.getElementById('catEntityType').value;
+    const entityId = document.getElementById('catEntityId').value;
+    if (!entityId) { Layout.toast('กรุณาระบุ Entity ID', 'error'); return; }
+    try {
+      const res = await api.aiCategorize(entityType, entityId);
+      const d = res.data || {};
+      document.getElementById('catResult').innerHTML = `<div class="card" style="padding:16px;background:var(--gray-50)">
+        <div class="text-sm"><strong>หมวดหมู่:</strong> ${d.suggestedCategory || d.category || '-'}</div>
+        <div class="text-sm"><strong>บัญชี:</strong> ${d.suggestedAccount || d.accountName || '-'}</div>
+        <div class="text-sm"><strong>ความมั่นใจ:</strong> ${d.confidence ? Math.round(d.confidence*100)+'%' : '-'}</div>
+        <button class="btn btn-sm btn-success" style="margin-top:8px" onclick="Page.acceptCategory('${d.resultId || d.id}')">ยอมรับ</button>
+      </div>`;
+    } catch (err) { document.getElementById('catResult').innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
+  },
+
+  async acceptCategory(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.aiAcceptCategory(id); Layout.toast('ยอมรับสำเร็จ'); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== Anomaly =====
+  async loadAnomalies() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getAnomalies();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('anomalyBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่พบความผิดปกติ</td></tr>'; return; }
+      const sevMap = {High:'<span class="badge badge-danger">สูง</span>',Medium:'<span class="badge badge-warning">ปานกลาง</span>',Low:'<span class="badge badge-info">ต่ำ</span>'};
+      tbody.innerHTML = items.map(a => {
+        // AI explanation may already be cached on the server (populated
+        // by a prior /explain call) — surface inline when present so
+        // user doesn't have to click again. When NOT yet explained,
+        // show a "🤖 ขอ AI อธิบาย" button that lazily fetches + caches.
+        const hasAi = !!a.aiVerdict;
+        const aiBadge = hasAi
+          ? `<div style="margin-top:6px;font-size:11px;line-height:1.5;color:#475569"><span style="background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:9999px;font-weight:600">🤖 ${a.aiVerdict}${a.aiConfidence ? ' ' + Math.round(a.aiConfidence*100) + '%' : ''}</span>${a.aiReasoning ? '<div style="margin-top:4px">' + a.aiReasoning + '</div>' : ''}</div>`
+          : `<button class="btn btn-sm btn-ghost" style="margin-top:6px;font-size:11px" onclick="Page.explainAnomaly('${a.id}')">🤖 ขอ AI อธิบาย</button>`;
+        return `<tr id="anomaly-row-${a.id}">
+          <td>${a.anomalyType || a.type || '-'}</td>
+          <td class="font-medium">${a.entityDescription || a.description || '-'}${aiBadge}</td>
+          <td class="text-sm">${a.details || a.reason || '-'}</td>
+          <td>${sevMap[a.severity] || a.severity || '-'}</td>
+          <td>${Layout.date(a.detectedAt || a.createdAt)}</td>
+          <td>${Layout.statusBadge(a.status || 'Open')}</td>
+          <td>${a.status !== 'Resolved' ? `<button class="btn btn-sm btn-success" onclick="Page.resolveAnomaly('${a.id}')">แก้ไขแล้ว</button>` : ''}</td>
+        </tr>`;
+      }).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async detectAnomalies() {
+    const api = Layout.api(); if (!api) return;
+    Layout.toast('กำลังสแกน...', 'info');
+    try { await api.aiDetectAnomalies(); Layout.toast('สแกนสำเร็จ'); this.loadAnomalies(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async explainAnomaly(id) {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    Layout.toast('กำลังถาม AI...', 'info');
+    try {
+      const r = await API.post(`/api/companies/${cid}/ai/anomalies/${id}/explain`);
+      // Re-fetch the list so the row gets re-rendered with the cached AI fields.
+      // Cheaper: patch just this row. We reload for simplicity since list is small.
+      this.loadAnomalies();
+    } catch (e) { Layout.toast('ขอ AI ไม่สำเร็จ: ' + e.message, 'error'); }
+  },
+
+  async resolveAnomaly(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.resolveAnomaly(id, 'แก้ไขแล้ว'); Layout.toast('อัพเดตสำเร็จ'); this.loadAnomalies(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== OCR =====
+  async loadOcrResults() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getOcrResults();
+      const items = res.data?.items || res.data || [];
+      const content = document.getElementById('ocrResults');
+      if (!items.length) { content.innerHTML = '<p class="text-gray-400 text-center">ยังไม่มีผลสแกน</p>'; return; }
+      content.innerHTML = `<div style="max-height:400px;overflow-y:auto">${items.slice(0,10).map(r => `<div style="padding:12px 0;border-bottom:1px solid var(--gray-100)">
+        <div class="text-sm font-medium">${r.fileName || r.documentType || 'เอกสาร'}</div>
+        <div class="text-xs text-gray-500">วันที่: ${Layout.date(r.scannedAt || r.createdAt)} | ${r.status === 'Completed' ? '<span class="text-success">สแกนสำเร็จ</span>' : '<span class="text-warning">กำลังประมวลผล</span>'}</div>
+        ${r.extractedData ? `<div class="text-xs" style="margin-top:4px">ยอด: ${Layout.money(r.extractedData.totalAmount || r.extractedData.amount)} | ผู้ขาย: ${r.extractedData.vendorName || '-'}</div>` : ''}
+        ${r.status === 'Completed' ? `<button class="btn btn-sm btn-primary" style="margin-top:4px" onclick="Page.createDocFromOcr('${r.id}')">สร้างเอกสาร</button>` : ''}
+      </div>`).join('')}</div>`;
+    } catch (err) { document.getElementById('ocrResults').innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
+  },
+
+  async uploadAndScan() {
+    const api = Layout.api(); if (!api) return;
+    const fileInput = document.getElementById('ocrFile');
+    if (!fileInput.files.length) { Layout.toast('กรุณาเลือกไฟล์', 'error'); return; }
+    const result = document.getElementById('ocrUploadResult');
+    result.innerHTML = '<div style="text-align:center"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500">กำลังสแกน...</p></div>';
+    try {
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      const scanRes = await api.ocrUploadAndScan(formData);
+      const d = scanRes.data || {};
+      if (d.id) {
+        result.innerHTML = `<div class="card" style="padding:16px;background:var(--gray-50)">
+          <div class="text-sm font-medium text-success">สแกนสำเร็จ! (ความเชื่อมั่น ${((d.confidence || 0) * 100).toFixed(0)}%)</div>
+          <div class="text-sm" style="margin-top:8px">
+            <div><strong>ประเภท:</strong> ${d.documentType || '-'}</div>
+            <div><strong>ผู้ขาย:</strong> ${d.extractedVendorName || '-'}</div>
+            <div><strong>เลขผู้เสียภาษี:</strong> ${d.extractedVendorTaxId || '-'}</div>
+            <div><strong>เลขที่เอกสาร:</strong> ${d.extractedDocumentNumber || '-'}</div>
+            <div><strong>ยอดรวม:</strong> ${Layout.money(d.extractedTotalAmount)}</div>
+            <div><strong>VAT:</strong> ${Layout.money(d.extractedVatAmount)}</div>
+            <div><strong>วันที่:</strong> ${d.extractedDate ? new Date(d.extractedDate).toLocaleDateString('th-TH') : '-'}</div>
+          </div>
+          <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="Page.createDocFromOcr('${d.id}')">สร้างเอกสาร</button>
+        </div>`;
+        this.loadOcrResults();
+      }
+    } catch (err) { result.innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
+  },
+
+  async createDocFromOcr(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.ocrCreateDocument(id); Layout.toast('สร้างเอกสารจาก OCR สำเร็จ'); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== Forecast =====
+  async loadForecasts() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getForecasts();
+      const items = res.data?.items || res.data || [];
+      const content = document.getElementById('forecastContent');
+      if (!items.length) { content.innerHTML = '<div class="card" style="padding:40px;text-align:center"><p class="text-gray-400">ยังไม่มีการพยากรณ์ กดปุ่มสร้างการพยากรณ์ใหม่</p></div>'; return; }
+      content.innerHTML = items.map(f => `<div class="card" style="padding:24px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div><h3 class="font-medium">${f.name || 'พยากรณ์กระแสเงินสด'}</h3><span class="text-sm text-gray-500">สร้างเมื่อ: ${Layout.date(f.createdAt)}</span></div>
+          <span class="badge ${f.status === 'Completed' ? 'badge-success' : 'badge-warning'}">${f.status === 'Completed' ? 'เสร็จสิ้น' : 'กำลังประมวลผล'}</span>
+        </div>
+        ${f.periods || f.predictions ? `<div class="table-container"><table class="table"><thead><tr><th>งวด</th><th class="text-right">รายรับคาดการณ์</th><th class="text-right">รายจ่ายคาดการณ์</th><th class="text-right">เงินสดสุทธิ</th></tr></thead>
+        <tbody>${(f.periods || f.predictions || []).map(p => `<tr>
+          <td>${p.period || p.month || '-'}</td>
+          <td class="text-right text-success">${Layout.money(p.predictedInflow || p.income)}</td>
+          <td class="text-right text-danger">${Layout.money(p.predictedOutflow || p.expense)}</td>
+          <td class="text-right font-medium">${Layout.money((p.predictedInflow||p.income||0)-(p.predictedOutflow||p.expense||0))}</td>
+        </tr>`).join('')}</tbody></table></div>` : ''}
+      </div>`).join('');
+    } catch (err) { document.getElementById('forecastContent').innerHTML = `<div class="card" style="padding:24px"><p class="text-danger text-center">${Layout.esc(err.message)}</p></div>`; }
+  },
+
+  async createForecast() {
+    const api = Layout.api(); if (!api) return;
+    Layout.toast('กำลังสร้างการพยากรณ์...', 'info');
+    try { await api.createForecast({ periods: 6, method: 'AI' }); Layout.toast('สร้างการพยากรณ์สำเร็จ'); this.loadForecasts(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== AR/AP analysis =====
+  async runArApAnalysis() {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const el = document.getElementById('arapContent');
+    el.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:40px">🤖 กำลังถาม AI...</p>';
+    try {
+      const r = await API.post(`/api/companies/${cid}/ai/ar-ap/analyze`);
+      const d = r?.data;
+      if (!d) { el.innerHTML = '<p style="color:#dc2626">AI ไม่ตอบ</p>'; return; }
+      let buckets = null;
+      let cashGap = null;
+      if (d.structured) {
+        try {
+          const parsed = JSON.parse(d.structured);
+          buckets = parsed.risk_buckets;
+          cashGap = parsed.cash_gap_forecast;
+        } catch (e) { /* tolerate */ }
+      }
+      // Schema warnings from backend ToResult validation — show when AI
+      // ran but its JSON skipped a key the UI parses (risk_buckets /
+      // cash_gap_forecast / recommendations). Tells the operator "AI
+      // ตอบแต่ขาดบางส่วน" instead of letting the page render half-empty.
+      const schemaWarnings = (d.schemaWarnings || []).filter(Boolean);
+      el.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr;gap:16px;max-width:900px">
+          ${!d.usedAi ? '<div style="background:#fef3c7;border-left:4px solid #d97706;padding:12px 16px;border-radius:6px;color:#92400e">🤖 AI ไม่พร้อม — แสดงคำตอบ local model</div>' : ''}
+          ${schemaWarnings.length ? `<div style="background:#fef3c7;border-left:4px solid #d97706;padding:12px 16px;border-radius:6px;color:#92400e">⚠️ ${schemaWarnings.map(Layout.esc).join('<br>')}</div>` : ''}
+          ${d.primary ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px"><strong style="font-size:15px;color:#16a34a">${Layout.esc(d.primary)}</strong></div>` : ''}
+          ${d.reasoning ? `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;line-height:1.6">${Layout.esc(d.reasoning)}</div>` : ''}
+          ${buckets ? `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px">
+            <h4 style="margin:0 0 10px;color:#1e293b">📊 กลุ่มเสี่ยง</h4>
+            ${buckets.high_risk_customers?.length ? '<div style="margin-bottom:10px"><b style="color:#dc2626">ลูกค้าเสี่ยงสูง</b><ul style="margin:4px 0 0 20px">' + buckets.high_risk_customers.map(c => `<li>${Layout.esc(c)}</li>`).join('') + '</ul></div>' : ''}
+            ${buckets.late_but_reliable?.length ? '<div style="margin-bottom:10px"><b style="color:#d97706">จ่ายช้าแต่จ่ายแน่</b><ul style="margin:4px 0 0 20px">' + buckets.late_but_reliable.map(c => `<li>${Layout.esc(c)}</li>`).join('') + '</ul></div>' : ''}
+            ${buckets.high_risk_vendors?.length ? '<div><b style="color:#7c3aed">เจ้าหนี้เสี่ยงสูง</b><ul style="margin:4px 0 0 20px">' + buckets.high_risk_vendors.map(c => `<li>${Layout.esc(c)}</li>`).join('') + '</ul></div>' : ''}
+          </div>` : ''}
+          ${cashGap ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px">
+            <h4 style="margin:0 0 8px;color:#1e40af">💰 พยากรณ์ช่องว่างเงินสด</h4>
+            <p style="margin:0;line-height:1.6">${Layout.esc(cashGap)}</p>
+          </div>` : ''}
+          ${(d.suggestedActions || []).length ? `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:16px">
+            <h4 style="margin:0 0 8px;color:#9a3412">📝 แนะนำให้ทำ</h4>
+            <ul style="margin:0 0 0 20px">${d.suggestedActions.map(a => `<li>${Layout.esc(a)}</li>`).join('')}</ul>
+          </div>` : ''}
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<p style="color:#dc2626">เรียกไม่สำเร็จ: ${e.message}</p>`;
+    }
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

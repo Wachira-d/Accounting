@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="landing.title">โปรแกรมบัญชีออนไลน์ + รับทำบัญชี ครบวงจร รองรับภาษีไทย | NextAcc</title>
+  <meta name="description" content="NextAcc โปรแกรมบัญชีออนไลน์ + บริการรับทำบัญชีครบวงจรสำหรับ SME ไทย — ใบกำกับภาษีอิเล็กทรอนิกส์ (e-Tax), ยื่นภาษี ภ.พ.30/ภ.ง.ด., ระบบเงินเดือน, ปิดงบการเงิน TFRS, POS, เชื่อม API. เริ่มฟรีตลอดชีพ ไม่ต้องผูกบัตร">
+  <meta name="keywords" content="โปรแกรมบัญชีออนไลน์, ระบบบัญชี, รับทำบัญชี, สำนักงานบัญชี, ทำบัญชีรายเดือน, ปิดงบการเงิน, ยื่นภาษีออนไลน์, ใบกำกับภาษีอิเล็กทรอนิกส์, e-Tax Invoice, ระบบเงินเดือน, โปรแกรมบัญชี SME, ภ.พ.30, ภ.ง.ด., accounting software Thailand">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+  <meta name="author" content="NextAcc">
+  <meta name="theme-color" content="#4f46e5">
+  <link rel="canonical" href="https://nextacc.net/">
+  <link rel="alternate" hreflang="th" href="https://nextacc.net/">
+  <link rel="alternate" hreflang="en" href="https://nextacc.net/?lang=en">
+  <link rel="alternate" hreflang="x-default" href="https://nextacc.net/">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NextAcc">
+  <meta property="og:locale" content="th_TH">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:url" content="https://nextacc.net/">
+  <meta property="og:title" content="โปรแกรมบัญชีออนไลน์ + รับทำบัญชี ครบวงจร รองรับภาษีไทย | NextAcc">
+  <meta property="og:description" content="โปรแกรมบัญชีออนไลน์ + บริการรับทำบัญชีครบวงจรสำหรับ SME ไทย — e-Tax, ยื่นภาษี, เงินเดือน, ปิดงบ TFRS, POS. เริ่มฟรีตลอดชีพ">
+  <meta property="og:image" content="https://nextacc.net/assets/icon-512.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="NextAcc — โปรแกรมบัญชีออนไลน์และบริการรับทำบัญชี">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="โปรแกรมบัญชีออนไลน์ + รับทำบัญชี ครบวงจร | NextAcc">
+  <meta name="twitter:description" content="โปรแกรมบัญชีออนไลน์ + รับทำบัญชีครบวงจรสำหรับ SME ไทย — e-Tax, ยื่นภาษี, เงินเดือน, ปิดงบ TFRS. เริ่มฟรีตลอดชีพ">
+  <meta name="twitter:image" content="https://nextacc.net/assets/icon-512.png">
+
+  <!-- Structured data: Organization + SoftwareApplication + WebSite + Service + FAQ -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://nextacc.net/#org",
+        "name": "NextAcc",
+        "alternateName": "เน็กซ์แอค",
+        "url": "https://nextacc.net/",
+        "logo": "https://nextacc.net/assets/icon-512.png",
+        "description": "โปรแกรมบัญชีออนไลน์และบริการรับทำบัญชีครบวงจรสำหรับธุรกิจไทย",
+        "areaServed": { "@type": "Country", "name": "Thailand" },
+        "knowsLanguage": ["th", "en"]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://nextacc.net/#website",
+        "url": "https://nextacc.net/",
+        "name": "NextAcc",
+        "publisher": { "@id": "https://nextacc.net/#org" },
+        "inLanguage": "th-TH",
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": { "@type": "EntryPoint", "urlTemplate": "https://nextacc.net/?q={search_term_string}" },
+          "query-input": "required name=search_term_string"
+        }
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://nextacc.net/#app",
+        "name": "NextAcc",
+        "applicationCategory": "BusinessApplication",
+        "applicationSubCategory": "AccountingSoftware",
+        "operatingSystem": "Web",
+        "url": "https://nextacc.net/",
+        "description": "โปรแกรมบัญชีออนไลน์ครบวงจร รองรับมาตรฐานบัญชีไทย TFRS, ภาษีมูลค่าเพิ่ม, หัก ณ ที่จ่าย, ใบกำกับภาษีอิเล็กทรอนิกส์ (e-Tax), ระบบเงินเดือน, POS และ 58 โมดูล",
+        "inLanguage": "th-TH",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "THB",
+          "description": "Free Edition ใช้ฟรีตลอดชีพ ไม่ต้องผูกบัตรเครดิต"
+        },
+        "featureList": [
+          "ใบกำกับภาษีอิเล็กทรอนิกส์ (e-Tax Invoice)",
+          "ยื่นภาษี ภ.พ.30 / ภ.ง.ด.1/3/53/50/51",
+          "ระบบเงินเดือนและประกันสังคม",
+          "ปิดงบการเงินตามมาตรฐาน TFRS for NPAEs",
+          "ระบบ POS หน้าร้าน",
+          "เชื่อมต่อ REST API และ Webhooks"
+        ]
+      },
+      {
+        "@type": "Service",
+        "@id": "https://nextacc.net/#accounting-service",
+        "serviceType": "รับทำบัญชี",
+        "name": "บริการรับทำบัญชีครบวงจร",
+        "provider": { "@id": "https://nextacc.net/#org" },
+        "areaServed": { "@type": "Country", "name": "Thailand" },
+        "description": "บริการรับทำบัญชีรายเดือน บันทึกบัญชี ปิดงบการเงิน จัดทำและยื่นรายงานภาษี โดยผู้ทำบัญชีที่ขึ้นทะเบียน — พร้อมระบบบัญชีออนไลน์ในตัว"
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://nextacc.net/#faq",
+        "mainEntity": [
+          { "@type": "Question", "name": "ใช้ฟรีตลอดชีพจริงไหม?", "acceptedAnswer": { "@type": "Answer", "text": "จริงครับ! Free Edition ใช้ได้ฟรีตลอดชีพไม่หมดอายุ ไม่ต้องผูกบัตรเครดิต ใช้งานฟีเจอร์พื้นฐานได้ครบ — ออกเอกสาร บันทึกบัญชี ดูรายงาน เมื่อธุรกิจขยายสามารถอัปเกรดเป็น Starter, Pro หรือ Enterprise ได้ตลอด" } },
+          { "@type": "Question", "name": "รองรับมาตรฐานบัญชีไทยหรือไม่?", "acceptedAnswer": { "@type": "Answer", "text": "รองรับครบถ้วน ทั้งมาตรฐานการรายงานทางการเงิน (TFRS) ภาษีมูลค่าเพิ่ม ภาษีหัก ณ ที่จ่าย ภาษีเงินได้นิติบุคคล ใบกำกับภาษีอิเล็กทรอนิกส์ และหนังสือรับรองหัก ณ ที่จ่าย" } },
+          { "@type": "Question", "name": "สามารถเชื่อมต่อกับระบบอื่นได้ไหม?", "acceptedAnswer": { "@type": "Answer", "text": "ได้ครับ ระบบรองรับ REST API ครบถ้วน, Webhooks สำหรับ Real-time events, Open Banking API สำหรับเชื่อมต่อธนาคาร และระบบ Import/Export ข้อมูล" } },
+          { "@type": "Question", "name": "ข้อมูลปลอดภัยแค่ไหน?", "acceptedAnswer": { "@type": "Answer", "text": "ข้อมูลถูกเข้ารหัสทั้ง at-rest และ in-transit, ระบบ Authentication ด้วย JWT, API Key, รองรับ Multi-tenancy แยกข้อมูลระหว่างบริษัท, Audit Trail บันทึกทุกการเปลี่ยนแปลง" } },
+          { "@type": "Question", "name": "รองรับหลายสาขาได้ไหม?", "acceptedAnswer": { "@type": "Answer", "text": "ได้ครับ แพ็กเกจ Enterprise รองรับ Multi-branch, Intercompany transactions, งบการเงินรวม (Consolidation) และ Dimensional Accounting" } },
+          { "@type": "Question", "name": "มี API Documentation ไหม?", "acceptedAnswer": { "@type": "Answer", "text": "มีครับ ระบบมี Swagger UI ที่รวม API Documentation ครบทุก 480+ endpoints พร้อมตัวอย่างการใช้งาน สามารถทดสอบ API ได้ทันที" } }
+        ]
+      }
+    ]
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="landing-nav" id="navbar">
+    <div class="container nav-inner">
+      <a href="/" class="nav-logo">
+        <span>Next Acc</span>
+      </a>
+      <div class="nav-links" id="navLinks">
+        <a href="#features" data-i18n="landing.navFeatures">ฟีเจอร์</a>
+        <a href="#services" data-i18n="landing.navServices">บริการบัญชี</a>
+        <a href="#pricing" data-i18n="landing.navPricing">ราคา</a>
+        <a href="#faq" data-i18n="landing.navFaq">คำถามที่พบบ่อย</a>
+        <a href="/contact.html" data-i18n="landing.navContact">ติดต่อเรา</a>
+      </div>
+      <div class="nav-actions">
+        <a href="/login.html" class="btn btn-ghost" data-i18n="landing.login">เข้าสู่ระบบ</a>
+        <a href="/register.html" class="btn btn-primary" data-i18n="landing.tryFree">ทดลองใช้ฟรี</a>
+        <div id="langSwitcher" style="margin-left:8px"></div>
+      </div>
+      <button class="nav-mobile-toggle" onclick="toggleMobileNav()">☰</button>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container hero-content">
+      <div class="slide-up">
+        <div class="hero-badge" data-i18n="landing.heroBadge">🚀 ระบบบัญชีออนไลน์รุ่นใหม่</div>
+        <h1><span data-i18n="landing.heroTitle1">จัดการบัญชีธุรกิจ</span><br><span class="gradient-text" data-i18n="landing.heroTitle2">อย่างมืออาชีพ</span></h1>
+        <p data-i18n="landing.heroDesc">ระบบบัญชีออนไลน์ครบวงจร สำหรับ SME และองค์กร รองรับมาตรฐานบัญชีไทย ภาษีมูลค่าเพิ่ม หัก ณ ที่จ่าย ใบกำกับภาษีอิเล็กทรอนิกส์ ระบบเงินเดือน และอีก 40+ โมดูล</p>
+        <div class="hero-actions">
+          <a href="/register.html" class="btn btn-primary btn-xl" data-i18n="landing.heroBtn1">เริ่มต้นใช้ฟรีตลอดชีพ</a>
+          <a href="#features" class="btn btn-outline btn-lg" data-i18n="landing.heroBtn2">ดูฟีเจอร์ทั้งหมด →</a>
+        </div>
+        <div class="hero-stats">
+          <div class="hero-stat"><div class="num">38</div><div class="label" data-i18n="landing.statModules">โมดูลทั้งหมด</div></div>
+          <div class="hero-stat"><div class="num">480+</div><div class="label" data-i18n="landing.statEndpoints">API Endpoints</div></div>
+          <div class="hero-stat"><div class="num">100%</div><div class="label" data-i18n="landing.statTax">รองรับภาษีไทย</div></div>
+        </div>
+      </div>
+      <div class="hero-visual slide-up delay-2">
+        <div class="hero-mockup">
+          <div class="hero-mockup-header">
+            <div class="hero-mockup-dot" style="background:#EF4444"></div>
+            <div class="hero-mockup-dot" style="background:#F59E0B"></div>
+            <div class="hero-mockup-dot" style="background:#10B981"></div>
+          </div>
+          <div class="hero-mockup-content">
+            <div class="mockup-card">
+              <div style="font-size:12px;color:var(--gray-500)" data-i18n="landing.mockRevenue">รายได้เดือนนี้</div>
+              <div class="num" style="color:var(--success)">฿1,250,000</div>
+            </div>
+            <div class="mockup-card">
+              <div style="font-size:12px;color:var(--gray-500)" data-i18n="landing.mockExpense">ค่าใช้จ่าย</div>
+              <div class="num" style="color:var(--danger)">฿850,000</div>
+            </div>
+            <div class="mockup-card">
+              <div style="font-size:12px;color:var(--gray-500)" data-i18n="landing.mockReceivable">ลูกหนี้คงค้าง</div>
+              <div class="num" style="color:var(--warning)">฿320,000</div>
+            </div>
+            <div class="mockup-card">
+              <div style="font-size:12px;color:var(--gray-500)" data-i18n="landing.mockProfit">กำไรสุทธิ</div>
+              <div class="num" style="color:var(--primary)">฿400,000</div>
+            </div>
+          </div>
+          <div class="mockup-chart">
+            <div class="mockup-chart-line"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Key Features -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="section-header">
+        <div class="badge badge-primary" data-i18n="landing.featBadge">ฟีเจอร์หลัก</div>
+        <h2 data-i18n="landing.featTitle">ทุกสิ่งที่ธุรกิจคุณต้องการ</h2>
+        <p data-i18n="landing.featDesc">ระบบบัญชีออนไลน์ที่ครบครันที่สุด ครอบคลุมทุกด้านของการจัดการบัญชีและการเงิน</p>
+      </div>
+      <div class="features-grid">
+        <div class="feature-card slide-up delay-1">
+          <div class="feature-icon" style="background:#EEF2FF;color:var(--primary)">📊</div>
+          <h3 data-i18n="landing.feat1Title">บัญชีและการเงิน</h3>
+          <p data-i18n="landing.feat1Desc">ผังบัญชี สมุดรายวัน งบทดลอง งบดุล งบกำไรขาดทุน กระแสเงินสด ครบจบในที่เดียว</p>
+          <ul class="feature-list">
+            <li data-i18n="landing.feat1Item1">ผังบัญชีไม่จำกัดระดับ</li>
+            <li data-i18n="landing.feat1Item2">บันทึกสมุดรายวันทั่วไป</li>
+            <li data-i18n="landing.feat1Item3">งบการเงินอัตโนมัติ</li>
+            <li data-i18n="landing.feat1Item4">รอบระยะเวลาบัญชี</li>
+          </ul>
+        </div>
+        <div class="feature-card slide-up delay-2">
+          <div class="feature-icon" style="background:#ECFDF5;color:var(--success)">📄</div>
+          <h3 data-i18n="landing.feat2Title">เอกสารธุรกิจ</h3>
+          <p data-i18n="landing.feat2Desc">ใบแจ้งหนี้ ใบเสร็จ ใบเสนอราคา ใบสั่งซื้อ สร้างและจัดการได้ง่ายดาย</p>
+          <ul class="feature-list">
+            <li data-i18n="landing.feat2Item1">สร้างเอกสารไม่จำกัด</li>
+            <li data-i18n="landing.feat2Item2">เทมเพลตปรับแต่งได้</li>
+            <li data-i18n="landing.feat2Item3">ส่งอีเมลอัตโนมัติ</li>
+            <li data-i18n="landing.feat2Item4">แปลงเอกสารข้ามประเภท</li>
+          </ul>
+        </div>
+        <div class="feature-card slide-up delay-3">
+          <div class="feature-icon" style="background:#FEF3C7;color:var(--warning)">🏛️</div>
+          <h3 data-i18n="landing.feat3Title">ภาษีไทยครบวงจร</h3>
+          <p data-i18n="landing.feat3Desc">ภาษีมูลค่าเพิ่ม ภาษีหัก ณ ที่จ่าย ภาษีเงินได้นิติบุคคล ปฏิทินภาษี ยื่นภาษีอิเล็กทรอนิกส์</p>
+          <ul class="feature-list">
+            <li data-i18n="landing.feat3Item1">ภพ.30, ภงด.3, ภงด.53</li>
+            <li data-i18n="landing.feat3Item2">หนังสือรับรองหัก ณ ที่จ่าย</li>
+            <li data-i18n="landing.feat3Item3">ใบกำกับภาษีอิเล็กทรอนิกส์</li>
+            <li data-i18n="landing.feat3Item4">ปฏิทินภาษีอัตโนมัติ</li>
+          </ul>
+        </div>
+        <div class="feature-card slide-up delay-1">
+          <div class="feature-icon" style="background:#FEE2E2;color:var(--danger)">👥</div>
+          <h3 data-i18n="landing.feat4Title">เงินเดือนและ HR</h3>
+          <p data-i18n="landing.feat4Desc">ระบบเงินเดือนอัตโนมัติ คำนวณภาษีเงินได้ ประกันสังคม กองทุนสำรองเลี้ยงชีพ</p>
+          <ul class="feature-list">
+            <li data-i18n="landing.feat4Item1">คำนวณเงินเดือนอัตโนมัติ</li>
+            <li data-i18n="landing.feat4Item2">สลิปเงินเดือน PDF</li>
+            <li data-i18n="landing.feat4Item3">ภงด.1, ประกันสังคม</li>
+            <li data-i18n="landing.feat4Item4">จัดการลาหยุด</li>
+          </ul>
+        </div>
+        <div class="feature-card slide-up delay-2">
+          <div class="feature-icon" style="background:#E0F2FE;color:var(--secondary)">🏦</div>
+          <h3 data-i18n="landing.feat5Title">ธนาคารและการชำระเงิน</h3>
+          <p data-i18n="landing.feat5Desc">เชื่อมต่อธนาคาร นำเข้ารายการธนาคาร จับคู่อัตโนมัติ กระทบยอด</p>
+          <ul class="feature-list">
+            <li data-i18n="landing.feat5Item1">Open Banking API</li>
+            <li data-i18n="landing.feat5Item2">นำเข้า Bank Statement</li>
+            <li data-i18n="landing.feat5Item3">จับคู่รายการอัตโนมัติ</li>
+            <li data-i18n="landing.feat5Item4">กระทบยอดธนาคาร</li>
+          </ul>
+        </div>
+        <div class="feature-card slide-up delay-3">
+          <div class="feature-icon" style="background:#F3E8FF;color:#7C3AED">🤖</div>
+          <h3 data-i18n="landing.feat6Title">AI อัจฉริยะ</h3>
+          <p data-i18n="landing.feat6Desc">จัดหมวดหมู่รายการอัตโนมัติ ตรวจจับความผิดปกติ พยากรณ์กระแสเงินสด OCR สแกนเอกสาร</p>
+          <ul class="feature-list">
+            <li data-i18n="landing.feat6Item1">Auto-categorize รายการ</li>
+            <li data-i18n="landing.feat6Item2">ตรวจจับ Anomaly</li>
+            <li data-i18n="landing.feat6Item3">พยากรณ์กระแสเงินสด</li>
+            <li data-i18n="landing.feat6Item4">OCR สแกนใบเสร็จ</li>
+          </ul>
+        </div>
+        <div class="feature-card slide-up delay-1">
+          <div class="feature-icon" style="background:#FDF2F8;color:#DB2777">🛒</div>
+          <h3 data-i18n="landing.feat7Title">CMS & E-Commerce</h3>
+          <p data-i18n="landing.feat7Desc">สร้างเว็บไซต์พร้อมร้านค้าออนไลน์ครบวงจร ระบบตะกร้า ชำระเงิน คูปอง จัดส่ง รีวิว เชื่อมต่อ ERP อัตโนมัติ</p>
+          <ul class="feature-list">
+            <li data-i18n="landing.feat7Item1">สร้างเว็บไซต์ Multi-site</li>
+            <li data-i18n="landing.feat7Item2">ตะกร้า + ระบบชำระเงิน</li>
+            <li data-i18n="landing.feat7Item3">คูปอง, จัดส่ง, รีวิว, Wishlist</li>
+            <li data-i18n="landing.feat7Item4">ตัวแปรสินค้า (ไซส์/สี/SKU)</li>
+          </ul>
+        </div>
+        <div class="feature-card slide-up delay-2">
+          <div class="feature-icon" style="background:#ECFDF5;color:#059669">📅</div>
+          <h3 data-i18n="landing.feat8Title">Booking & จองบริการ</h3>
+          <p data-i18n="landing.feat8Desc">ระบบจองนัดหมาย จองบริการ ตารางเวลาพนักงาน ชำระเงินมัดจำ เตือนอัตโนมัติ</p>
+          <ul class="feature-list">
+            <li data-i18n="landing.feat8Item1">จองนัดหมายออนไลน์</li>
+            <li data-i18n="landing.feat8Item2">ตารางว่าง/เต็มอัตโนมัติ</li>
+            <li data-i18n="landing.feat8Item3">เก็บเงินมัดจำ</li>
+            <li data-i18n="landing.feat8Item4">เชื่อมปฏิทิน + แจ้งเตือน</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Accounting Services -->
+  <section class="section" id="services">
+    <div class="container">
+      <div class="section-header">
+        <div class="badge badge-success" data-i18n="landing.svcBadge">บริการทางบัญชี</div>
+        <h2 data-i18n="landing.svcTitle">บริการจัดทำบัญชีครบวงจร</h2>
+        <p data-i18n="landing.svcDesc">ทีมนักบัญชีผู้เชี่ยวชาญพร้อมดูแลงานบัญชีและภาษีให้คุณ ด้วยระบบ Next Acc</p>
+      </div>
+
+      <!-- Contact Bar -->
+      <div id="serviceContact" style="display:none;text-align:center;margin-bottom:40px">
+        <div style="display:inline-flex;flex-wrap:wrap;gap:24px;align-items:center;background:#fff;padding:16px 32px;border-radius:var(--radius-xl);box-shadow:var(--shadow-md)">
+          <span id="svcPhone" style="display:none"><span style="font-size:20px">📞</span> <a href="#" class="font-semibold text-primary" id="svcPhoneLink"></a></span>
+          <span id="svcLine" style="display:none"><span style="font-size:20px">💬</span> LINE: <strong id="svcLineId"></strong></span>
+          <span id="svcEmail" style="display:none"><span style="font-size:20px">📧</span> <a href="#" class="text-primary" id="svcEmailLink"></a></span>
+        </div>
+      </div>
+
+      <!-- Service Packages (rendered by JS for bilingual support) -->
+      <div id="serviceGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px;max-width:1200px;margin:0 auto">
+      </div>
+    </div>
+  </section>
+
+  <!-- All Modules -->
+  <section class="section bg-gray-50" id="modules">
+    <div class="container">
+      <div class="section-header">
+        <div class="badge badge-info" data-i18n="landing.modBadge">โมดูลทั้งหมด</div>
+        <h2 data-i18n="landing.modTitle">58 โมดูล ครบทุกความต้องการ</h2>
+        <p data-i18n="landing.modDesc">ระบบ ERP + CMS + E-Commerce ที่ครบครันที่สุดในประเทศไทย ครอบคลุมทุกกระบวนการทางธุรกิจ</p>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px" id="modulesGrid">
+        <!-- Generated by JS -->
+      </div>
+    </div>
+  </section>
+
+  <!-- Pricing -->
+  <section class="section pricing-section" id="pricing">
+    <div class="container">
+      <div class="section-header">
+        <div class="badge badge-success" data-i18n="landing.priceBadge">ราคา</div>
+        <h2 data-i18n="landing.priceTitle">แพ็กเกจที่เหมาะกับทุกธุรกิจ</h2>
+        <p data-i18n="landing.priceDesc">เริ่มต้นด้วย Free Edition ฟรีตลอดชีพ — อัปเกรดเป็นแพ็กเกจมืออาชีพได้ตลอด ไม่ต้องผูกบัตรเครดิต</p>
+      </div>
+
+      <!-- Billing Cycle Toggle -->
+      <div style="display:flex;justify-content:center;margin-bottom:32px">
+        <div style="display:inline-flex;flex-wrap:wrap;justify-content:center;gap:2px;background:#fff;border-radius:var(--radius-lg);padding:4px;box-shadow:var(--shadow)">
+          <button class="billing-toggle active" data-cycle="monthly" onclick="Pricing.setCycle('monthly',this)" data-i18n="landing.billingMonthly">รายเดือน</button>
+          <button class="billing-toggle" data-cycle="quarterly" onclick="Pricing.setCycle('quarterly',this)" data-i18n-html="landing.billingQuarterly">ราย 3 เดือน <span style="color:var(--success);font-size:11px">-5%</span></button>
+          <button class="billing-toggle" data-cycle="semiannual" onclick="Pricing.setCycle('semiannual',this)" data-i18n-html="landing.billingSemiannual">ราย 6 เดือน <span style="color:var(--success);font-size:11px">-10%</span></button>
+          <button class="billing-toggle" data-cycle="annual" onclick="Pricing.setCycle('annual',this)" data-i18n-html="landing.billingAnnual">รายปี <span style="color:var(--success);font-size:11px">-15%</span></button>
+        </div>
+      </div>
+      <style>
+        .billing-toggle { padding:8px 16px; border:none; background:transparent; font-size:14px; font-weight:500; border-radius:var(--radius); cursor:pointer; color:var(--gray-600); transition:all .2s; }
+        .billing-toggle.active { background:var(--primary); color:#fff; box-shadow:var(--shadow-sm); }
+        .pricing-trial-badge { display:inline-block; background:linear-gradient(135deg,#10B981,#059669); color:#fff; padding:4px 14px; border-radius:9999px; font-size:12px; font-weight:600; margin-bottom:12px; }
+        .pricing-limit { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px; color:var(--gray-600); }
+        .pricing-limit .icon { font-size:16px; }
+        .pricing-compare { margin-top:40px; }
+        .trial-detail-box { background:#ECFDF5; border:1px solid #A7F3D0; border-radius:var(--radius-lg); padding:24px; margin-top:32px; text-align:center; }
+      </style>
+
+      <div class="pricing-grid" id="pricingGrid">
+        <!-- Dynamic pricing cards loaded from API -->
+        <div style="grid-column:1/-1;text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div></div>
+      </div>
+
+      <!-- Free Edition Detail Box -->
+      <div class="trial-detail-box">
+        <h3 style="font-size:20px;font-weight:700;margin-bottom:8px" data-i18n="landing.freeTitle">🎁 Free Edition ฟรีตลอดชีพ</h3>
+        <p style="color:var(--gray-600);margin-bottom:16px" data-i18n="landing.freeDesc">เริ่มใช้งานได้ทันที ไม่จำกัดระยะเวลา ไม่ต้องผูกบัตรเครดิต อัปเกรดเป็นแพ็กเกจอื่นได้ตลอดเมื่อธุรกิจขยาย</p>
+        <div style="display:flex;justify-content:center;gap:32px;flex-wrap:wrap;margin-bottom:16px">
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">∞</div><div class="text-xs text-gray-500" data-i18n="landing.freeLifetime">ตลอดชีพ</div></div>
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">0฿</div><div class="text-xs text-gray-500" data-i18n="landing.freeCost">ค่าใช้จ่าย</div></div>
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">30</div><div class="text-xs text-gray-500" data-i18n="landing.freeDocs">เอกสาร/เดือน</div></div>
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">1</div><div class="text-xs text-gray-500" data-i18n="landing.freeUsers">ผู้ใช้งาน</div></div>
+        </div>
+        <div style="display:flex;justify-content:center;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--gray-600)">
+          <span data-i18n="landing.freeNoCc">&#10003; ไม่ต้องผูกบัตรเครดิต</span>
+          <span data-i18n="landing.freeForeverLabel">&#10003; ฟรีตลอดชีพ ไม่หมดอายุ</span>
+          <span data-i18n="landing.freeExport">&#10003; ส่งออกข้อมูลได้ตลอด</span>
+          <span data-i18n="landing.freeUpgrade">&#10003; อัปเกรดเมื่อต้องการ</span>
+        </div>
+      </div>
+
+      <!-- Feature Comparison Table -->
+      <div class="pricing-compare">
+        <h3 style="text-align:center;font-size:24px;font-weight:700;margin-bottom:24px" data-i18n="landing.compareTitle">เปรียบเทียบฟีเจอร์ทุกแพ็กเกจ</h3>
+        <div class="table-container" style="max-width:900px;margin:0 auto;-webkit-overflow-scrolling:touch">
+          <table class="table">
+            <thead>
+              <tr><th data-i18n="landing.cmpFeature">ฟีเจอร์</th><th class="text-center" data-i18n="landing.cmpFreeTrial">ทดลองฟรี</th><th class="text-center" data-i18n="landing.cmpStarter">Starter</th><th class="text-center" style="background:#EEF2FF" data-i18n="landing.cmpPro">Professional</th><th class="text-center" data-i18n="landing.cmpEnterprise">Enterprise</th></tr>
+            </thead>
+            <tbody>
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecUsage">ลิมิตการใช้งาน</td></tr>
+              <tr><td data-i18n="landing.cmpUsers">จำนวนผู้ใช้</td><td class="text-center">2</td><td class="text-center">2</td><td class="text-center" style="background:#FAFAFF">10</td><td class="text-center" data-i18n="landing.cmpUnlimited">ไม่จำกัด</td></tr>
+              <tr><td data-i18n="landing.cmpCompanies">จำนวนบริษัท</td><td class="text-center">1</td><td class="text-center">1</td><td class="text-center" style="background:#FAFAFF">3</td><td class="text-center" data-i18n="landing.cmpUnlimited">ไม่จำกัด</td></tr>
+              <tr><td data-i18n="landing.cmpDocsMonth">เอกสาร/เดือน</td><td class="text-center">30</td><td class="text-center">100</td><td class="text-center" style="background:#FAFAFF">1,000</td><td class="text-center" data-i18n="landing.cmpUnlimited">ไม่จำกัด</td></tr>
+              <tr><td data-i18n="landing.cmpJournalsMonth">รายการบัญชี/เดือน</td><td class="text-center">50</td><td class="text-center">200</td><td class="text-center" style="background:#FAFAFF">2,000</td><td class="text-center" data-i18n="landing.cmpUnlimited">ไม่จำกัด</td></tr>
+              <tr><td data-i18n="landing.cmpStorage">พื้นที่จัดเก็บ</td><td class="text-center">100 MB</td><td class="text-center">500 MB</td><td class="text-center" style="background:#FAFAFF">5 GB</td><td class="text-center">50 GB</td></tr>
+
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecCore">ฟีเจอร์หลัก</td></tr>
+              <tr><td data-i18n="landing.cmpAccounting">ระบบบัญชี + สมุดรายวัน</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpDocuments">ออกเอกสาร (ใบแจ้งหนี้/ใบเสร็จ/ใบกำกับ)</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpVatWht">ภาษีมูลค่าเพิ่ม + หัก ณ ที่จ่าย</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpDashboard">แดชบอร์ดภาพรวม</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpReports">รายงาน (งบทดลอง/งบดุล/กำไรขาดทุน)</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpAuditLog">Audit Log + ไฟล์แนบ</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpAging">รายงานอายุลูกหนี้/เจ้าหนี้</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecPro">ฟีเจอร์ขั้นสูง (Pro)</td></tr>
+              <tr><td data-i18n="landing.cmpAdvReports">รายงานขั้นสูง + กระแสเงินสด</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpInventory">สต็อกสินค้า + คลังสินค้า</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpRecon">กระทบยอดธนาคาร</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpBudget">งบประมาณ + ศูนย์ต้นทุน</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpApproval">ระบบอนุมัติ + Workflow</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpMultiApi">Multi-company + API Access</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpRecurring">รายการซ้ำอัตโนมัติ + เบิกค่าใช้จ่าย</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecCms">CMS & E-Commerce</td></tr>
+              <tr><td data-i18n="landing.cmpCmsSite">สร้างเว็บไซต์ Multi-site CMS</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpStore">ร้านค้าออนไลน์ + ตะกร้า + ชำระเงิน</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpCoupon">คูปอง + โปรโมชั่น + Free Shipping</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpShipping">ระบบจัดส่ง (Zone + Rate + คำนวณอัตโนมัติ)</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpVariants">ตัวแปรสินค้า (ไซส์/สี/SKU)</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpReview">รีวิว + Wishlist + Abandoned Cart</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpQuotation">โหมดใบเสนอราคาอัตโนมัติ (Quotation-only)</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpBooking">ระบบจองบริการ + นัดหมาย</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecEnt">ฟีเจอร์ Enterprise</td></tr>
+              <tr><td data-i18n="landing.cmpEtax">e-Tax Invoice + ลายเซ็นดิจิทัล</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpPayroll">ระบบเงินเดือน + ประกันสังคม</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpProject">โครงการ + Time Billing</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpConsol">Consolidation + Intercompany</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpAsset">สินทรัพย์ถาวร + ค่าเสื่อมราคา</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpAi">AI อัจฉริยะ + OCR เอกสาร</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpBanking">Open Banking + Webhook</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpLoan">สินเชื่อ + คอมมิชชั่น + FP&A</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+              <tr><td data-i18n="landing.cmpPriority">Priority Support</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
+
+              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecTrial">การทดลองใช้</td></tr>
+              <tr><td data-i18n="landing.cmpTrialDur">ระยะเวลาทดลอง</td><td class="text-center" data-i18n="landing.cmp14days">14 วัน</td><td class="text-center" data-i18n="landing.cmp14days">14 วัน</td><td class="text-center" style="background:#FAFAFF" data-i18n="landing.cmp14days">14 วัน</td><td class="text-center" data-i18n="landing.cmp30days">30 วัน</td></tr>
+              <tr><td data-i18n="landing.cmpExtend">ขยายเวลาทดลอง</td><td class="text-center" data-i18n="landing.cmpExt1x7d">1 ครั้ง (+7 วัน)</td><td class="text-center" data-i18n="landing.cmpExt1x7d">1 ครั้ง (+7 วัน)</td><td class="text-center" style="background:#FAFAFF" data-i18n="landing.cmpExt2x7d">2 ครั้ง (+7 วัน)</td><td class="text-center" data-i18n="landing.cmpExt3x15d">3 ครั้ง (+15 วัน)</td></tr>
+              <tr><td data-i18n="landing.cmpGrace">Grace Period หลังหมดอายุ</td><td class="text-center" data-i18n="landing.cmp7days">7 วัน</td><td class="text-center" data-i18n="landing.cmp7days">7 วัน</td><td class="text-center" style="background:#FAFAFF" data-i18n="landing.cmp14days">14 วัน</td><td class="text-center" data-i18n="landing.cmp30days">30 วัน</td></tr>
+              <tr><td data-i18n="landing.cmpExportExpiry">ส่งออกข้อมูลหลังหมดอายุ</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="section" id="faq">
+    <div class="container">
+      <div class="section-header">
+        <div class="badge badge-warning" data-i18n="landing.faqBadge">FAQ</div>
+        <h2 data-i18n="landing.faqTitle">คำถามที่พบบ่อย</h2>
+      </div>
+      <div style="max-width:700px;margin:0 auto" id="faqList">
+        <!-- Static fallback so search + AI crawlers (ที่ไม่รัน JS) อ่านได้;
+             renderFaqs() จะ replace เป็นเวอร์ชัน interactive ให้ผู้ใช้ -->
+        <details style="border:1px solid var(--gray-200);border-radius:12px;margin-bottom:12px;padding:14px 18px"><summary style="font-weight:600;cursor:pointer">ใช้ฟรีตลอดชีพจริงไหม?</summary><p style="margin:10px 0 0;color:var(--gray-600);line-height:1.7">จริงครับ! Free Edition ใช้ได้ฟรีตลอดชีพไม่หมดอายุ ไม่ต้องผูกบัตรเครดิต ใช้งานฟีเจอร์พื้นฐานได้ครบ — ออกเอกสาร บันทึกบัญชี ดูรายงาน อัปเกรดเป็น Starter/Pro/Enterprise ได้ตลอด</p></details>
+        <details style="border:1px solid var(--gray-200);border-radius:12px;margin-bottom:12px;padding:14px 18px"><summary style="font-weight:600;cursor:pointer">รองรับมาตรฐานบัญชีไทยหรือไม่?</summary><p style="margin:10px 0 0;color:var(--gray-600);line-height:1.7">รองรับครบถ้วน ทั้ง TFRS for NPAEs, ภาษีมูลค่าเพิ่ม (ภ.พ.30), ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.1/3/53), ภาษีเงินได้นิติบุคคล (ภ.ง.ด.50/51), ใบกำกับภาษีอิเล็กทรอนิกส์ (e-Tax) และหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ</p></details>
+        <details style="border:1px solid var(--gray-200);border-radius:12px;margin-bottom:12px;padding:14px 18px"><summary style="font-weight:600;cursor:pointer">มีบริการรับทำบัญชีด้วยไหม?</summary><p style="margin:10px 0 0;color:var(--gray-600);line-height:1.7">มีครับ NextAcc ให้บริการทั้งซอฟต์แวร์บัญชีและบริการรับทำบัญชีรายเดือน — บันทึกบัญชี ปิดงบการเงิน จัดทำและยื่นรายงานภาษี โดยผู้ทำบัญชีที่ขึ้นทะเบียน ใช้ระบบเดียวกัน</p></details>
+        <details style="border:1px solid var(--gray-200);border-radius:12px;margin-bottom:12px;padding:14px 18px"><summary style="font-weight:600;cursor:pointer">เชื่อมต่อกับระบบอื่น (API) ได้ไหม?</summary><p style="margin:10px 0 0;color:var(--gray-600);line-height:1.7">ได้ครับ รองรับ REST API 480+ endpoints, Webhooks สำหรับ real-time events, Open Banking API เชื่อมต่อธนาคาร และ Import/Export ข้อมูล</p></details>
+        <details style="border:1px solid var(--gray-200);border-radius:12px;margin-bottom:12px;padding:14px 18px"><summary style="font-weight:600;cursor:pointer">ข้อมูลปลอดภัยแค่ไหน?</summary><p style="margin:10px 0 0;color:var(--gray-600);line-height:1.7">ข้อมูลเข้ารหัสทั้ง at-rest และ in-transit, ยืนยันตัวตนด้วย JWT/API Key, แยกข้อมูลระหว่างบริษัท (multi-tenant), Audit Trail บันทึกทุกการเปลี่ยนแปลง สอดคล้อง PDPA</p></details>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section">
+    <div class="container">
+      <h2 data-i18n="landing.ctaTitle">พร้อมเริ่มต้นหรือยัง?</h2>
+      <p data-i18n="landing.ctaDesc">ใช้ Free Edition ฟรีตลอดชีพ ไม่ต้องผูกบัตรเครดิต อัปเกรดได้ตลอดเวลา</p>
+      <a href="/register.html" class="btn btn-white btn-xl" data-i18n="landing.ctaBtn">🚀 เริ่มต้นใช้งานฟรี</a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <h3>Next Acc</h3>
+          <p data-i18n="landing.footerDesc">ระบบบัญชีออนไลน์ครบวงจร สำหรับธุรกิจไทย รองรับมาตรฐานบัญชีและภาษีไทย ใช้งานง่าย ปลอดภัย เชื่อถือได้</p>
+        </div>
+        <div class="footer-links">
+          <h4 data-i18n="landing.footerProducts">ผลิตภัณฑ์</h4>
+          <a href="#features" data-i18n="landing.navFeatures">ฟีเจอร์</a>
+          <a href="#pricing" data-i18n="landing.navPricing">ราคา</a>
+          <a href="#modules" data-i18n="landing.modBadge">โมดูลทั้งหมด</a>
+          <a href="#">API Documentation</a>
+        </div>
+        <div class="footer-links">
+          <h4 data-i18n="landing.footerCompany">บริษัท</h4>
+          <a href="#" data-i18n="landing.footerAbout">เกี่ยวกับเรา</a>
+          <a href="/contact.html" data-i18n="landing.navContact">ติดต่อเรา</a>
+          <a href="#" data-i18n="landing.footerBlog">บล็อก</a>
+          <a href="#" data-i18n="landing.footerCareers">ร่วมงานกับเรา</a>
+        </div>
+        <div class="footer-links">
+          <h4 data-i18n="landing.footerSupport">สนับสนุน</h4>
+          <a href="#" data-i18n="landing.footerHelp">ศูนย์ช่วยเหลือ</a>
+          <a href="#" data-i18n="landing.footerApiDocs">เอกสาร API</a>
+          <a href="#" data-i18n="landing.footerStatus">สถานะระบบ</a>
+          <a href="#" data-i18n="landing.footerPrivacy">นโยบายความเป็นส่วนตัว</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span data-i18n="landing.footerCopy">&copy; 2026 Next Acc. สงวนลิขสิทธิ์ทุกประการ</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script>
+    I18n.init();
+    I18n.renderSwitcher('langSwitcher');
+
+    // Navbar scroll effect
+    window.addEventListener('scroll', () => {
+      document.getElementById('navbar').classList.toggle('scrolled', window.scrollY > 10);
+    });
+
+    // Mobile nav toggle
+    function toggleMobileNav() {
+      const navLinks = document.getElementById('navLinks');
+      const navActions = document.querySelector('.nav-actions');
+      navLinks.classList.toggle('show');
+      if (navActions) {
+        navActions.style.display = navLinks.classList.contains('show') ? 'flex' : '';
+        if (navLinks.classList.contains('show')) {
+          navActions.style.flexDirection = 'column';
+          navActions.style.position = 'absolute';
+          navActions.style.top = navLinks.scrollHeight + 72 + 'px';
+          navActions.style.left = '0';
+          navActions.style.right = '0';
+          navActions.style.padding = '0 24px 16px';
+          navActions.style.background = '#fff';
+          navActions.style.zIndex = '99';
+          navActions.style.gap = '8px';
+          navActions.style.boxShadow = 'var(--shadow-lg)';
+        } else {
+          navActions.removeAttribute('style');
+        }
+      }
+    }
+
+    // Service packages (6 packs)
+    const svcPacks = [
+      { icon: '📋', key: 'svc1' },
+      { icon: '📊', key: 'svc2' },
+      { icon: '🏢', key: 'svc3' },
+      { icon: '📋', key: 'svc4' },
+      { icon: '📋', key: 'svc5' },
+      { icon: '📋', key: 'svc6' },
+    ];
+
+    function renderServices() {
+      const grid = document.getElementById('serviceGrid');
+      grid.style.gridTemplateColumns = 'repeat(3,1fr)';
+      grid.innerHTML = svcPacks.map((s, i) => {
+        const isFeatured = i === 2;
+        return `<div class="feature-card" style="text-align:center;padding:32px;${isFeatured ? 'border-color:var(--primary);box-shadow:var(--shadow-lg)' : ''}">
+          <div style="font-size:36px;margin-bottom:12px">${s.icon}</div>
+          <h3 style="margin-bottom:8px">${I18n.t('landing.' + s.key + 'Name')}</h3>
+          <p style="font-size:14px;color:var(--gray-500);margin-bottom:16px">${I18n.t('landing.' + s.key + 'Desc')}</p>
+          <div style="font-size:28px;font-weight:800;color:var(--primary);margin-bottom:8px">${I18n.t('landing.' + s.key + 'Price')}</div>
+          <ul style="text-align:left;font-size:13px;color:var(--gray-600);list-style:none;padding:0;margin:0">
+            <li style="padding:4px 0">${I18n.t('landing.' + s.key + 'Item1')}</li>
+            <li style="padding:4px 0">${I18n.t('landing.' + s.key + 'Item2')}</li>
+            <li style="padding:4px 0">${I18n.t('landing.' + s.key + 'Item3')}</li>
+            <li style="padding:4px 0">${I18n.t('landing.' + s.key + 'Item4')}</li>
+          </ul>
+        </div>`;
+      }).join('');
+    }
+    renderServices();
+
+    // Modules grid
+    const modules = [
+      { icon: '📊', key: 'mod1' },
+      { icon: '📖', key: 'mod2' },
+      { icon: '📄', key: 'mod3' },
+      { icon: '👤', key: 'mod4' },
+      { icon: '💰', key: 'mod5' },
+      { icon: '📦', key: 'mod6' },
+      { icon: '🏦', key: 'mod7' },
+      { icon: '🔄', key: 'mod8' },
+      { icon: '🏛️', key: 'mod9' },
+      { icon: '📋', key: 'mod10' },
+      { icon: '🧾', key: 'mod11' },
+      { icon: '📅', key: 'mod12' },
+      { icon: '👥', key: 'mod13' },
+      { icon: '🏖️', key: 'mod14' },
+      { icon: '🏢', key: 'mod15' },
+      { icon: '📈', key: 'mod16' },
+      { icon: '💳', key: 'mod17' },
+      { icon: '🔁', key: 'mod18' },
+      { icon: '💱', key: 'mod19' },
+      { icon: '📊', key: 'mod20' },
+      { icon: '📋', key: 'mod21' },
+      { icon: '🏗️', key: 'mod22' },
+      { icon: '🏭', key: 'mod23' },
+      { icon: '📦', key: 'mod24' },
+      { icon: '🏪', key: 'mod25' },
+      { icon: '🏢', key: 'mod26' },
+      { icon: '🔗', key: 'mod27' },
+      { icon: '📊', key: 'mod28' },
+      { icon: '💼', key: 'mod29' },
+      { icon: '💵', key: 'mod30' },
+      { icon: '📑', key: 'mod31' },
+      { icon: '⏱️', key: 'mod32' },
+      { icon: '🤖', key: 'mod33' },
+      { icon: '🔍', key: 'mod34' },
+      { icon: '📸', key: 'mod35' },
+      { icon: '📊', key: 'mod36' },
+      { icon: '✅', key: 'mod37' },
+      { icon: '🔔', key: 'mod38' },
+      { icon: '📱', key: 'mod39' },
+      { icon: '🌐', key: 'mod40' },
+      { icon: '🔗', key: 'mod41' },
+      { icon: '🔑', key: 'mod42' },
+      { icon: '📥', key: 'mod43' },
+      { icon: '📎', key: 'mod44' },
+      { icon: '📝', key: 'mod45' },
+      { icon: '⚙️', key: 'mod46' },
+      // CMS & E-Commerce
+      { icon: '🌐', key: 'mod47' },
+      { icon: '🛒', key: 'mod48' },
+      { icon: '🛍️', key: 'mod49' },
+      { icon: '🎫', key: 'mod50' },
+      { icon: '🚚', key: 'mod51' },
+      { icon: '⭐', key: 'mod52' },
+      { icon: '❤️', key: 'mod53' },
+      { icon: '🔀', key: 'mod54' },
+      { icon: '🛎️', key: 'mod55' },
+      { icon: '💳', key: 'mod56' },
+      { icon: '📋', key: 'mod57' },
+      { icon: '📅', key: 'mod58' },
+    ];
+
+    function renderModules() {
+      const grid = document.getElementById('modulesGrid');
+      grid.innerHTML = modules.map(m => `<div class="feature-card" style="padding:20px;text-align:center">
+        <div style="font-size:28px;margin-bottom:8px">${m.icon}</div>
+        <div style="font-size:14px;font-weight:600">${I18n.t('landing.' + m.key + 'Name')}</div>
+        <div style="font-size:12px;color:var(--gray-500)">${I18n.t('landing.' + m.key + 'Desc')}</div>
+      </div>`).join('');
+    }
+    renderModules();
+
+    // FAQ
+    const faqKeys = ['faq1','faq2','faq3','faq4','faq5','faq6','faq7','faq8'];
+
+    function renderFaqs() {
+      const faqList = document.getElementById('faqList');
+      faqList.innerHTML = faqKeys.map((k, i) => `<div style="border:1px solid var(--gray-200);border-radius:var(--radius-lg);margin-bottom:12px;overflow:hidden">
+        <button onclick="toggleFaq(${i})" style="width:100%;display:flex;justify-content:space-between;align-items:center;padding:16px 20px;background:none;font-size:15px;font-weight:600;color:var(--gray-800);text-align:left">
+          ${I18n.t('landing.' + k + 'Q')} <span id="faqIcon${i}" style="transition:transform .2s">▼</span>
+        </button>
+        <div id="faq${i}" style="padding:0 20px;max-height:0;overflow:hidden;transition:all .3s">
+          <p style="padding-bottom:16px;font-size:14px;color:var(--gray-600);line-height:1.7">${I18n.t('landing.' + k + 'A')}</p>
+        </div>
+      </div>`).join('');
+    }
+    renderFaqs();
+
+    function toggleFaq(i) {
+      const el = document.getElementById(`faq${i}`);
+      const icon = document.getElementById(`faqIcon${i}`);
+      if (el.style.maxHeight === '0px' || !el.style.maxHeight) {
+        el.style.maxHeight = '200px';
+        el.style.padding = '0 20px';
+        icon.style.transform = 'rotate(180deg)';
+      } else {
+        el.style.maxHeight = '0px';
+        icon.style.transform = 'rotate(0)';
+      }
+    }
+
+    // Smooth scroll for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        document.querySelector(a.getAttribute('href'))?.scrollIntoView({ behavior: 'smooth' });
+      });
+    });
+
+    // ===== Dynamic Pricing =====
+    const Pricing = {
+      plans: [],
+      cycle: 'monthly',
+
+      async init() {
+        try {
+          const res = await fetch('/api/subscription/plans');
+          const json = await res.json();
+          this.plans = (json.data?.items || json.data || []).filter(p => p.plan !== 'FreeTrial');
+          if (this.plans.length) this.render();
+        } catch (e) { this.renderFallback(); }
+      },
+
+      setCycle(cycle, el) {
+        this.cycle = cycle;
+        document.querySelectorAll('.billing-toggle').forEach(b => b.classList.remove('active'));
+        el.classList.add('active');
+        this.render();
+      },
+
+      getPrice(plan) {
+        switch(this.cycle) {
+          case 'quarterly': return { total: plan.quarterlyPrice, perMonth: plan.quarterlyPrice / 3 };
+          case 'semiannual': return { total: plan.semiAnnualPrice, perMonth: plan.semiAnnualPrice / 6 };
+          case 'annual': return { total: plan.annualPrice, perMonth: plan.annualPrice / 12 };
+          default: return { total: plan.monthlyPrice, perMonth: plan.monthlyPrice };
+        }
+      },
+
+      cycleName() {
+        return { monthly: I18n.t('landing.cycleMonth'), quarterly: I18n.t('landing.cycle3Month'), semiannual: I18n.t('landing.cycle6Month'), annual: I18n.t('landing.cycleYear') }[this.cycle];
+      },
+
+      formatMoney(n) {
+        return n.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+      },
+
+      formatStorage(bytes) {
+        if (bytes >= 1024*1024*1024) return (bytes / (1024*1024*1024)).toFixed(0) + ' GB';
+        return (bytes / (1024*1024)).toFixed(0) + ' MB';
+      },
+
+      featureList(plan) {
+        const t = k => I18n.t('landing.' + k);
+        const features = {
+          'Basic': [
+            { check: true, text: t('pricUsers').replace('{n}', plan.maxUsers) },
+            { check: true, text: t('pricDocs').replace('{n}', plan.maxDocumentsPerMonth.toLocaleString()) },
+            { check: true, text: t('pricStorage').replace('{n}', this.formatStorage(plan.maxStorageBytes)) },
+            { check: true, text: t('pricBasicAccounting') },
+            { check: true, text: t('pricDocsTax') },
+            { check: true, text: t('pricVatWht') },
+            { check: true, text: t('pricStdReports') },
+            { check: true, text: t('pricFreeTrial').replace('{n}', plan.trialDurationDays) },
+            { check: false, text: t('pricNoInventory') },
+            { check: false, text: t('pricNoPayrollAi') },
+          ],
+          'Pro': [
+            { check: true, text: t('pricUsers').replace('{n}', plan.maxUsers) },
+            { check: true, text: t('pricCompanies').replace('{n}', plan.maxCompanies) },
+            { check: true, text: t('pricDocs').replace('{n}', plan.maxDocumentsPerMonth.toLocaleString()) },
+            { check: true, text: t('pricStorage').replace('{n}', this.formatStorage(plan.maxStorageBytes)) },
+            { check: true, text: t('pricAllStarter') },
+            { check: true, text: t('pricInventoryRecon') },
+            { check: true, text: t('pricBudgetCost') },
+            { check: true, text: t('pricApiMulti') },
+            { check: true, text: t('pricApprovalWf') },
+            { check: true, text: t('pricFreeTrial').replace('{n}', plan.trialDurationDays) },
+          ],
+          'Enterprise': [
+            { check: true, text: t('pricUnlimitedUsers') },
+            { check: true, text: t('pricCompaniesPlus').replace('{n}', plan.maxCompanies) },
+            { check: true, text: t('pricUnlimitedDocs') },
+            { check: true, text: t('pricStorage').replace('{n}', this.formatStorage(plan.maxStorageBytes)) },
+            { check: true, text: t('pricAllPro') },
+            { check: true, text: t('pricEtaxDigital') },
+            { check: true, text: t('pricPayrollSso') },
+            { check: true, text: t('pricConsolidation') },
+            { check: true, text: t('pricAiOcrBank') },
+            { check: true, text: t('pricFreeTrialPriority').replace('{n}', plan.trialDurationDays) },
+          ],
+        };
+        return features[plan.plan] || [];
+      },
+
+      render() {
+        const grid = document.getElementById('pricingGrid');
+        grid.innerHTML = this.plans.map((p, i) => {
+          const price = this.getPrice(p);
+          const isFeatured = p.plan === 'Pro';
+          const features = this.featureList(p);
+          const savingsPercent = this.cycle !== 'monthly' ? Math.round((1 - price.perMonth / p.monthlyPrice) * 100) : 0;
+
+          return `<div class="pricing-card${isFeatured ? ' featured' : ''}">
+            <div class="pricing-trial-badge">${I18n.t('landing.pricTrialBadge').replace('{n}', p.trialDurationDays)}</div>
+            <div class="pricing-name">${p.name}</div>
+            <div class="pricing-desc">${p._descKey ? I18n.t(p._descKey) : (p.description ? p.description.substring(0, 60) + '...' : '')}</div>
+            <div class="pricing-price">
+              <span class="amount">฿${this.formatMoney(price.perMonth)}</span>
+              <span class="period">${I18n.t('landing.pricPerMonth')}</span>
+            </div>
+            ${this.cycle !== 'monthly' ? `<div style="font-size:13px;color:var(--success);margin-top:-16px;margin-bottom:16px">
+              ฿${this.formatMoney(price.total)}/${this.cycleName()} (${I18n.t('landing.pricSave')} ${savingsPercent}%)
+            </div>` : '<div style="margin-bottom:8px"></div>'}
+            <ul class="pricing-features">
+              ${features.map(f => `<li><span class="${f.check ? 'check' : 'cross'}">${f.check ? '✓' : '✗'}</span> ${f.text}</li>`).join('')}
+            </ul>
+            <a href="/register.html?plan=${p.plan.toLowerCase()}" class="btn ${isFeatured ? 'btn-primary' : 'btn-outline'} w-full">
+              ${p.plan === 'Enterprise' ? I18n.t('landing.pricContactSales') : I18n.t('landing.pricStartTrial')}
+            </a>
+          </div>`;
+        }).join('');
+      },
+
+      renderFallback() {
+        // ใช้ข้อมูล static ถ้า API ไม่ตอบ
+        this.plans = [
+          { name:'Starter', plan:'Basic', monthlyPrice:590, quarterlyPrice:1680, semiAnnualPrice:3186, annualPrice:6018, maxUsers:2, maxCompanies:1, maxDocumentsPerMonth:100, maxStorageBytes:500*1024*1024, trialDurationDays:14, _descKey:'landing.descBasic' },
+          { name:'Professional', plan:'Pro', monthlyPrice:1490, quarterlyPrice:4248, semiAnnualPrice:8046, annualPrice:15198, maxUsers:10, maxCompanies:3, maxDocumentsPerMonth:1000, maxStorageBytes:5*1024*1024*1024, trialDurationDays:14, _descKey:'landing.descPro' },
+          { name:'Enterprise', plan:'Enterprise', monthlyPrice:4990, quarterlyPrice:14222, semiAnnualPrice:26946, annualPrice:50898, maxUsers:999, maxCompanies:99, maxDocumentsPerMonth:99999, maxStorageBytes:50*1024*1024*1024, trialDurationDays:30, _descKey:'landing.descEnterprise' },
+        ];
+        this.render();
+      }
+    };
+    Pricing.init();
+
+    // ===== Load Site Settings & Apply Dynamic Branding =====
+    (async function() {
+      try {
+        const res = await fetch('/api/site/landing');
+        const json = await res.json();
+        const d = json.data;
+        if (!d) return;
+
+        // Apply site branding
+        if (d.siteLogoUrl) {
+          const navLogo = document.querySelector('.nav-logo');
+          if (navLogo) navLogo.innerHTML = `<img src="${d.siteLogoUrl}" alt="${d.siteName || 'Logo'}" style="height:32px;object-fit:contain">`;
+        }
+        if (d.siteName) {
+          const footerBrand = document.querySelector('.footer-brand h3');
+          if (footerBrand) footerBrand.textContent = d.siteName;
+        }
+        if (d.faviconUrl) {
+          let link = document.querySelector("link[rel~='icon']");
+          if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+          link.href = d.faviconUrl;
+        }
+        if (d.footerCopyright) {
+          const fc = document.querySelector('[data-i18n="landing.footerCopy"]');
+          if (fc) fc.textContent = d.footerCopyright;
+        }
+        if (d.primaryColor) {
+          document.documentElement.style.setProperty('--primary', d.primaryColor);
+        }
+
+        // Show contact bar if any contact info exists
+        if (d.contactPhone || d.contactLine || d.contactEmail) {
+          document.getElementById('serviceContact').style.display = '';
+          if (d.contactPhone) {
+            document.getElementById('svcPhone').style.display = '';
+            const phoneLink = document.getElementById('svcPhoneLink');
+            phoneLink.href = 'tel:' + d.contactPhone.replace(/[^0-9+]/g, '');
+            phoneLink.textContent = d.contactPhone;
+          }
+          if (d.contactLine) {
+            document.getElementById('svcLine').style.display = '';
+            document.getElementById('svcLineId').textContent = d.contactLine;
+          }
+          if (d.contactEmail) {
+            document.getElementById('svcEmail').style.display = '';
+            const emailLink = document.getElementById('svcEmailLink');
+            emailLink.href = 'mailto:' + d.contactEmail;
+            emailLink.textContent = d.contactEmail;
+          }
+        }
+      } catch (e) { /* Use default static content */ }
+    })();
+
+    // Re-render JS-generated content on language change
+    I18n.onLangChange(() => {
+      renderServices();
+      renderModules();
+      renderFaqs();
+      if (Pricing.plans.length) Pricing.render();
+    });
+  </script>
+</body>
+</html>

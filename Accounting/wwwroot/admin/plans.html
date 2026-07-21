@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จัดการแพ็กเกจ - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <div id="pageContent">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <div class="admin-card-title">แพ็กเกจทั้งหมด</div>
+      </div>
+      <div id="planList">กำลังโหลด...</div>
+    </div>
+
+    <div id="editModal" style="display:none"></div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('plans');
+
+    let allFeatures = [];
+    const categoryLabels = {
+      core: 'หลัก/พื้นฐาน',
+      reporting: 'รายงาน',
+      multi: 'หลายบริษัท/หลายสกุลเงิน',
+      operations: 'การดำเนินงาน',
+      advanced: 'ขั้นสูง/Workflow',
+      integration: 'เชื่อมต่อ/นำเข้า',
+      ai: 'AI / OCR',
+      other: 'อื่นๆ'
+    };
+    const categoryOrder = ['core', 'reporting', 'multi', 'operations', 'advanced', 'integration', 'ai', 'other'];
+
+    async function loadFeatures() {
+      try {
+        const res = await AdminAPI.features();
+        allFeatures = res.data || [];
+      } catch (e) { console.warn('Could not load features', e); }
+    }
+
+    async function loadPlans() {
+      await loadFeatures();
+      try {
+        const res = await AdminAPI.plans(true);
+        const plans = res.data;
+
+        if (!plans || plans.length === 0) {
+          document.getElementById('planList').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">ยังไม่มีแพ็กเกจ</div>';
+          return;
+        }
+
+        document.getElementById('planList').innerHTML = `
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">
+            ${plans.map(p => `
+              <div class="admin-card" style="border:2px solid ${p.isPermanentFree ? '#f59e0b' : (p.isActive ? 'var(--admin-primary)' : '#e2e8f0')};position:relative">
+                ${!p.isActive ? '<div style="position:absolute;top:12px;right:12px"><span class="admin-badge-sm bg-gray">ปิดใช้งาน</span></div>' : ''}
+                ${p.isPermanentFree ? '<div style="position:absolute;top:12px;right:12px"><span class="admin-badge-sm" style="background:#fef3c7;color:#92400e">🎁 ฟรีตลอดไป</span></div>' : ''}
+                <div style="margin-bottom:16px">
+                  <div style="font-size:18px;font-weight:800">${p.name}</div>
+                  <div style="font-size:12px;color:#94a3b8">${AdminLayout.planBadge(p.plan)}</div>
+                </div>
+                <div style="font-size:13px;color:#64748b;margin-bottom:16px;min-height:60px">${p.description || ''}</div>
+
+                <div style="margin-bottom:16px">
+                  <div style="font-size:28px;font-weight:800">${AdminLayout.money(p.monthlyPrice)}<span style="font-size:14px;font-weight:400;color:#94a3b8">/เดือน</span></div>
+                  <div style="font-size:12px;color:#94a3b8;margin-top:4px">
+                    รายไตรมาส: ${AdminLayout.money(p.quarterlyPrice)} |
+                    ครึ่งปี: ${AdminLayout.money(p.semiAnnualPrice)} |
+                    รายปี: ${AdminLayout.money(p.annualPrice)}
+                  </div>
+                </div>
+
+                <div style="border-top:1px solid #e2e8f0;padding-top:12px;font-size:13px">
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span title="MaxUsers = ผู้ใช้ใน 1 บริษัท · Account Plan ใช้เป็น MaxUsersPerCompany (ต่อบริษัทใต้ Plan)">ผู้ใช้/บริษัท</span><strong>${p.maxUsers}</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span title="จำนวน Company slots เมื่อใช้เป็น Account Plan (User-level License). บน Subscription ระดับบริษัท ค่านี้ถูกเก็บเป็น 1 เสมอ">บริษัทสูงสุด <span style="color:#94a3b8;font-size:11px">(slots)</span></span><strong>${p.maxCompanies}</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span>เอกสาร/เดือน</span><strong>${p.maxDocumentsPerMonth?.toLocaleString() || '-'}</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span>รายการบัญชี/เดือน</span><strong>${p.maxJournalEntriesPerMonth?.toLocaleString() || '-'}</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
+                    <span>พื้นที่จัดเก็บ</span><strong>${formatBytes(p.maxStorageBytes)}</strong>
+                  </div>
+                </div>
+
+                <div style="border-top:1px solid #e2e8f0;padding-top:12px;margin-top:12px;font-size:13px">
+                  <div style="font-weight:600;margin-bottom:6px">ฟีเจอร์ที่เปิดใช้</div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>เปิดใช้</span><strong>${(p.enabledFeatureNames || []).length} / ${allFeatures.length} ฟีเจอร์</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>ทดลองใช้</span><strong>${(p.trialFeatureNames || []).length} / ${allFeatures.length} ฟีเจอร์</strong>
+                  </div>
+                </div>
+
+                <div style="border-top:1px solid #e2e8f0;padding-top:12px;margin-top:12px;font-size:13px">
+                  <div style="font-weight:600;margin-bottom:6px">การทดลองใช้</div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>ระยะเวลา</span><strong>${p.trialDurationDays || 0} วัน</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>ต่ออายุได้</span><strong>${p.trialMaxExtensions || 0} ครั้ง (${p.trialExtensionDays || 0} วัน/ครั้ง)</strong>
+                  </div>
+                  <div class="admin-flex" style="justify-content:space-between;margin-bottom:4px">
+                    <span>ลิมิต Trial</span><strong>${p.trialMaxUsers || 0} คน / ${(p.trialMaxDocumentsPerMonth || 0).toLocaleString()} เอกสาร / เดือน</strong>
+                  </div>
+                </div>
+
+                <div style="margin-top:16px">
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="editPlan('${p.id}')">แก้ไข</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+
+        window._plans = plans;
+      } catch (err) {
+        document.getElementById('planList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${err.message}</div>`;
+      }
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes) return '-';
+      if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(0) + ' GB';
+      if (bytes >= 1048576) return (bytes / 1048576).toFixed(0) + ' MB';
+      return (bytes / 1024).toFixed(0) + ' KB';
+    }
+
+    function buildFeaturePickerHtml(idPrefix, enabledNames) {
+      if (!allFeatures.length) {
+        return '<div style="color:#94a3b8;font-style:italic">ไม่สามารถโหลดรายการฟีเจอร์ได้</div>';
+      }
+      const enabledSet = new Set(enabledNames || []);
+      const byCategory = {};
+      allFeatures.forEach(f => {
+        const cat = f.category || 'other';
+        if (!byCategory[cat]) byCategory[cat] = [];
+        byCategory[cat].push(f);
+      });
+      const total = allFeatures.length;
+      const enabled = (enabledNames || []).filter(n => allFeatures.some(f => f.name === n)).length;
+
+      let html = `
+        <div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:12px;color:#64748b">เปิดใช้ <strong id="${idPrefix}_count">${enabled}</strong> / ${total} ฟีเจอร์</div>
+          <div style="display:flex;gap:6px">
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureSelectAll('${idPrefix}', true)">เลือกทั้งหมด</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureSelectAll('${idPrefix}', false)">ล้างทั้งหมด</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureApplyPreset('${idPrefix}','trial')">ค่ามาตรฐาน Trial</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureApplyPreset('${idPrefix}','basic')">Basic</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureApplyPreset('${idPrefix}','pro')">Pro</button>
+            <button type="button" class="admin-btn admin-btn-outline admin-btn-sm" onclick="featureApplyPreset('${idPrefix}','enterprise')">Enterprise</button>
+          </div>
+        </div>
+        <div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;max-height:280px;overflow:auto;background:#f8fafc">`;
+      categoryOrder.forEach(cat => {
+        if (!byCategory[cat]) return;
+        const features = byCategory[cat];
+        html += `<div style="margin-bottom:10px">
+          <div style="font-weight:600;font-size:12px;color:#334155;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">${categoryLabels[cat] || cat}</div>
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px 12px;font-size:13px">`;
+        features.forEach(f => {
+          const checked = enabledSet.has(f.name) ? 'checked' : '';
+          html += `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0">
+            <input type="checkbox" class="${idPrefix}_feat" data-name="${f.name}" ${checked} onchange="featureCount('${idPrefix}')">
+            <span>${f.labelTh || f.name}</span>
+          </label>`;
+        });
+        html += `</div></div>`;
+      });
+      html += `</div>`;
+      return html;
+    }
+
+    function featureCount(prefix) {
+      const checked = document.querySelectorAll('.' + prefix + '_feat:checked').length;
+      const el = document.getElementById(prefix + '_count');
+      if (el) el.textContent = checked;
+    }
+
+    function featureSelectAll(prefix, val) {
+      document.querySelectorAll('.' + prefix + '_feat').forEach(cb => cb.checked = val);
+      featureCount(prefix);
+    }
+
+    const presets = {
+      trial: ['BasicAccounting', 'DocumentEngine', 'TaxManagement', 'Dashboard'],
+      basic: ['BasicAccounting', 'DocumentEngine', 'TaxManagement', 'Dashboard', 'AuditLog', 'EmailNotification', 'FileAttachments', 'AgingReport'],
+      pro: ['BasicAccounting', 'DocumentEngine', 'TaxManagement', 'Dashboard', 'AuditLog', 'EmailNotification', 'FileAttachments', 'AgingReport',
+        'AdvancedReporting', 'MultiCompany', 'APIAccess', 'BulkImport', 'CustomChartOfAccounts', 'AutoPosting', 'MultiUser',
+        'BankReconciliation', 'Inventory', 'RecurringTransactions', 'ApprovalWorkflow', 'PurchaseOrders', 'ExpenseManagement',
+        'BudgetManagement', 'CostCenter'],
+      enterprise: allFeatures.map(f => f.name)
+    };
+
+    function featureApplyPreset(prefix, preset) {
+      const set = new Set(presets[preset] || []);
+      document.querySelectorAll('.' + prefix + '_feat').forEach(cb => {
+        cb.checked = set.has(cb.dataset.name);
+      });
+      featureCount(prefix);
+    }
+
+    function getSelectedFeatures(prefix) {
+      return [...document.querySelectorAll('.' + prefix + '_feat:checked')].map(cb => cb.dataset.name);
+    }
+
+    function editPlan(planId) {
+      const p = window._plans.find(x => x.id === planId);
+      if (!p) return;
+
+      document.getElementById('editModal').style.display = '';
+      document.getElementById('editModal').innerHTML = `
+        <div class="admin-modal-overlay" onclick="if(event.target===this)closeEditModal()">
+          <div class="admin-modal" style="max-width:760px;max-height:90vh;overflow:auto">
+            <h3>แก้ไขแพ็กเกจ: ${p.name}</h3>
+            <form onsubmit="savePlan(event,'${p.id}')">
+              <div class="admin-grid-2">
+                <div class="admin-form-group">
+                  <label class="admin-label">ชื่อแพ็กเกจ</label>
+                  <input class="admin-input" id="ep_name" value="${p.name}" required>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">เปิดใช้งาน</label>
+                  <select class="admin-select" id="ep_active" style="width:100%">
+                    <option value="true" ${p.isActive ? 'selected' : ''}>เปิดใช้งาน</option>
+                    <option value="false" ${!p.isActive ? 'selected' : ''}>ปิดใช้งาน</option>
+                  </select>
+                </div>
+              </div>
+              <div class="admin-form-group">
+                <label class="admin-label">รายละเอียด</label>
+                <textarea class="admin-input" id="ep_desc" rows="3">${p.description || ''}</textarea>
+              </div>
+
+              <div class="admin-form-group" style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:12px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500">
+                  <input type="checkbox" id="ep_perm_free" ${p.isPermanentFree ? 'checked' : ''}>
+                  <span>🎁 แพ็กเกจฟรีตลอดไป (ไม่หมดอายุ ไม่นับวัน trial)</span>
+                </label>
+                <div style="font-size:12px;color:#92400e;margin-top:4px;margin-left:24px">
+                  เมื่อเปิด: subscription จะถูกตั้งเป็น Active ตลอดไป, ระบบจะข้ามการตรวจสอบวันหมด trial และใช้ <code>EnabledFeatures</code> (ไม่ใช่ <code>TrialFeatures</code>)
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">ราคา (THB)</div>
+              <div class="admin-grid-2">
+                <div class="admin-form-group">
+                  <label class="admin-label">รายเดือน</label>
+                  <input type="number" step="0.01" class="admin-input" id="ep_monthly" value="${p.monthlyPrice}" required>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายไตรมาส</label>
+                  <input type="number" step="0.01" class="admin-input" id="ep_quarterly" value="${p.quarterlyPrice}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">ครึ่งปี</label>
+                  <input type="number" step="0.01" class="admin-input" id="ep_semiannual" value="${p.semiAnnualPrice}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายปี</label>
+                  <input type="number" step="0.01" class="admin-input" id="ep_annual" value="${p.annualPrice}">
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">ลิมิตการใช้งาน (แผนแบบเสียเงิน)</div>
+              <div class="admin-grid-3">
+                <div class="admin-form-group">
+                  <label class="admin-label">ผู้ใช้สูงสุด / บริษัท <span style="font-weight:400;color:#94a3b8;font-size:11px">— ต่อบริษัท · บน Account Plan map → MaxUsersPerCompany</span></label>
+                  <input type="number" min="1" class="admin-input" id="ep_users" value="${p.maxUsers}">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">หากใช้เป็น Account Plan: บริษัทแต่ละแห่งใต้ Plan รับผู้ใช้ได้ตามนี้ (ไม่ใช่รวมทุกบริษัท)</div>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">บริษัทสูงสุด <span style="font-weight:400;color:#94a3b8;font-size:11px">— ใช้เป็น "slots" บน Account Plan / ระดับบริษัท = 1</span></label>
+                  <input type="number" min="1" class="admin-input" id="ep_companies" value="${p.maxCompanies}">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">เลข ≥2 = plan รองรับ Account-level License ครอบหลายบริษัท</div>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">เอกสาร/เดือน</label>
+                  <input type="number" min="0" class="admin-input" id="ep_docs" value="${p.maxDocumentsPerMonth}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายการบัญชี/เดือน</label>
+                  <input type="number" min="0" class="admin-input" id="ep_journals" value="${p.maxJournalEntriesPerMonth || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">พื้นที่จัดเก็บ (MB)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_storage_mb" value="${Math.round((p.maxStorageBytes || 0) / 1048576)}">
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">โควต้า OCR (หน้า/เดือน)</div>
+              <div style="font-size:12px;color:#64748b;margin-bottom:8px;line-height:1.5">
+                💡 <strong>Azure DI</strong> = แม่นยำสูง (มีค่าใช้จ่ายต่อหน้า) — เซ็ต <code>0</code> เพื่อปิด Azure สำหรับแพ็คนี้.
+                <strong>Local OCR</strong> (PaddleOCR/Tesseract) = ฟรี — เว้นว่าง = ไม่จำกัด.
+                <strong>Total</strong> ใช้เป็น budget รวม (legacy) เมื่อ Azure/Local ไม่ได้แยกชัด.
+              </div>
+              <div class="admin-grid-3">
+                <div class="admin-form-group">
+                  <label class="admin-label">รวมทั้งหมด (Total) /เดือน</label>
+                  <input type="number" min="0" class="admin-input" id="ep_ocr_total" value="${p.maxOcrPagesPerMonth || 0}" title="Legacy single budget — ใช้เมื่อ Azure/Local ไม่ได้แยกค่า">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">Azure DI /เดือน <span style="color:#dc2626">💎</span></label>
+                  <input type="number" min="0" class="admin-input" id="ep_ocr_azure" value="${p.azureOcrPagesPerMonth ?? ''}" placeholder="(ใช้ Total ด้านบน)" title="0 = ปิด Azure / ตัวเลข = limit ต่อเดือน / ว่าง = ใช้ Total">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">Local OCR /เดือน <span style="color:#16a34a">🆓</span></label>
+                  <input type="number" min="0" class="admin-input" id="ep_ocr_local" value="${p.localOcrPagesPerMonth ?? ''}" placeholder="(ไม่จำกัด)" title="ว่าง = ไม่จำกัด, ตัวเลข = limit ต่อเดือน">
+                </div>
+                <div class="admin-form-group" style="grid-column: span 2">
+                  <label class="admin-label" style="display:flex;align-items:center;gap:6px">
+                    <input type="checkbox" id="ep_ocr_fallback" ${p.fallbackToLocalWhenAzureExhausted ? 'checked' : ''}>
+                    <span>เมื่อ Azure quota หมด → fall back ไป Local OCR อัตโนมัติ</span>
+                  </label>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">Trial OCR /เดือน</label>
+                  <input type="number" min="0" class="admin-input" id="ep_ocr_trial" value="${p.trialMaxOcrPagesPerMonth || 0}" title="โควต้า OCR ของผู้ใช้ที่อยู่ในช่วง Trial">
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">การทดลองใช้ (Trial)</div>
+              <div class="admin-grid-3">
+                <div class="admin-form-group">
+                  <label class="admin-label">ระยะเวลา (วัน)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_days" value="${p.trialDurationDays || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">ต่อได้ (ครั้ง)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_ext" value="${p.trialMaxExtensions || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">ต่อครั้งละ (วัน)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_ext_days" value="${p.trialExtensionDays || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">Grace Period (วัน)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_grace" value="${p.trialGracePeriodDays || 0}" title="วันที่ผู้ใช้ยังเข้าระบบได้หลังหมด trial">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">หลังหมดอายุ</label>
+                  <select class="admin-select" id="ep_trial_block" style="width:100%">
+                    <option value="false" ${!p.trialBlockOnExpiry ? 'selected' : ''}>อ่านอย่างเดียว (Read-only)</option>
+                    <option value="true" ${p.trialBlockOnExpiry ? 'selected' : ''}>บล็อกการเข้าใช้</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:16px 0 8px">ลิมิตช่วง Trial</div>
+              <div class="admin-grid-3">
+                <div class="admin-form-group">
+                  <label class="admin-label">ผู้ใช้สูงสุด (Trial)</label>
+                  <input type="number" min="1" class="admin-input" id="ep_trial_users" value="${p.trialMaxUsers || 1}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">เอกสาร/เดือน (Trial)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_docs" value="${p.trialMaxDocumentsPerMonth || 0}">
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">รายการบัญชี/เดือน (Trial)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_journals" value="${p.trialMaxJournalEntriesPerMonth || 0}">
+                </div>
+              </div>
+
+              <div style="font-weight:600;margin:20px 0 8px;border-top:2px solid #e2e8f0;padding-top:16px">ฟีเจอร์ที่เปิดใช้ในแพ็กเกจนี้</div>
+              <div id="features_paid_picker">${buildFeaturePickerHtml('feat_paid', p.enabledFeatureNames)}</div>
+
+              <div style="font-weight:600;margin:20px 0 8px;border-top:1px dashed #e2e8f0;padding-top:16px">ฟีเจอร์ระหว่างทดลองใช้</div>
+              <div style="font-size:12px;color:#64748b;margin-bottom:8px">เมื่อบริษัทอยู่ในสถานะ Trial จะใช้ฟีเจอร์ตามรายการนี้แทน</div>
+              <div id="features_trial_picker">${buildFeaturePickerHtml('feat_trial', p.trialFeatureNames)}</div>
+
+              <div class="admin-modal-actions" style="flex-wrap:wrap;gap:8px">
+                <button type="submit" class="admin-btn admin-btn-primary">บันทึก</button>
+                <button type="button" class="admin-btn admin-btn-outline" onclick="resyncSubscriptions('${p.id}')"
+                        title="ดันค่าใน template ลง subscription ทุกบริษัทบนแพ็คนี้ — ใช้เมื่อค่ายังไม่ตามไป (เช่นเปลี่ยนสถานะตรงๆ ใน DB)">
+                  ↻ Resync ลง subscription
+                </button>
+                <button type="button" class="admin-btn admin-btn-outline" onclick="closeEditModal()">ยกเลิก</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    async function savePlan(e, planId) {
+      e.preventDefault();
+      try {
+        const enabledFeatureNames = getSelectedFeatures('feat_paid');
+        const trialFeatureNames = getSelectedFeatures('feat_trial');
+        const storageMB = parseInt(document.getElementById('ep_storage_mb').value) || 0;
+        await AdminAPI.updatePlan(planId, {
+          name: document.getElementById('ep_name').value,
+          description: document.getElementById('ep_desc').value,
+          isActive: document.getElementById('ep_active').value === 'true',
+          monthlyPrice: parseFloat(document.getElementById('ep_monthly').value),
+          quarterlyPrice: parseFloat(document.getElementById('ep_quarterly').value),
+          semiAnnualPrice: parseFloat(document.getElementById('ep_semiannual').value),
+          annualPrice: parseFloat(document.getElementById('ep_annual').value),
+          // Paid plan limits
+          maxUsers: parseInt(document.getElementById('ep_users').value),
+          maxCompanies: parseInt(document.getElementById('ep_companies').value),
+          maxDocumentsPerMonth: parseInt(document.getElementById('ep_docs').value),
+          maxJournalEntriesPerMonth: parseInt(document.getElementById('ep_journals').value),
+          maxStorageBytes: storageMB * 1048576,
+          // Trial settings
+          trialDurationDays: parseInt(document.getElementById('ep_trial_days').value),
+          trialMaxExtensions: parseInt(document.getElementById('ep_trial_ext').value),
+          trialExtensionDays: parseInt(document.getElementById('ep_trial_ext_days').value),
+          trialMaxUsers: parseInt(document.getElementById('ep_trial_users').value),
+          trialMaxDocumentsPerMonth: parseInt(document.getElementById('ep_trial_docs').value),
+          trialMaxJournalEntriesPerMonth: parseInt(document.getElementById('ep_trial_journals').value),
+          trialGracePeriodDays: parseInt(document.getElementById('ep_trial_grace').value),
+          trialBlockOnExpiry: document.getElementById('ep_trial_block').value === 'true',
+          // Permanent free flag
+          isPermanentFree: document.getElementById('ep_perm_free').checked,
+          // OCR per-engine quotas — empty input = leave as null (not set)
+          maxOcrPagesPerMonth: parseInt(document.getElementById('ep_ocr_total').value) || 0,
+          azureOcrPagesPerMonth: document.getElementById('ep_ocr_azure').value === ''
+            ? null : parseInt(document.getElementById('ep_ocr_azure').value),
+          localOcrPagesPerMonth: document.getElementById('ep_ocr_local').value === ''
+            ? null : parseInt(document.getElementById('ep_ocr_local').value),
+          fallbackToLocalWhenAzureExhausted: document.getElementById('ep_ocr_fallback').checked,
+          trialMaxOcrPagesPerMonth: parseInt(document.getElementById('ep_ocr_trial').value) || 0,
+          // Features
+          enabledFeatureNames,
+          trialFeatureNames,
+        });
+        AdminLayout.toast('บันทึกแพ็กเกจสำเร็จ — อัพเดตให้บริษัทที่อยู่ในแพ็กเกจนี้แล้ว');
+        closeEditModal();
+        loadPlans();
+      } catch (err) {
+        AdminLayout.toast(err.message, 'error');
+      }
+    }
+
+    function closeEditModal() {
+      document.getElementById('editModal').style.display = 'none';
+      document.getElementById('editModal').innerHTML = '';
+    }
+
+    // Force-push every subscription on this plan to use the template's
+    // current values. Use after editing the template if any tenant is
+    // stuck on old quotas (e.g. status hand-flipped in DB so the normal
+    // UpgradeAsync flow was bypassed).
+    async function resyncSubscriptions(planId) {
+      if (!confirm('ดันค่าใน template ลง subscription ทุกบริษัทบนแพ็คนี้?\n\n' +
+                   'ใช้กับกรณีลูกค้ายังเห็นโควต้าเก่า ทั้งที่แก้ template แล้ว.')) return;
+      try {
+        const res = await AdminAPI.resyncPlanSubscriptions(planId);
+        AdminLayout.toast(res?.message || 'Resync สำเร็จ');
+      } catch (err) {
+        AdminLayout.toast('Resync ล้มเหลว: ' + (err.message || err), 'error');
+      }
+    }
+
+    loadPlans();
+  </script>
+</body>
+</html>

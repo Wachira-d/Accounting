@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>โครงสร้างองค์กร - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .org-tree { font-size:13px }
+    .org-tree ul { list-style:none; padding-left:24px; border-left:1px dashed #cbd5e1; margin:2px 0 }
+    .org-tree li { padding:4px 0 }
+    .org-node { display:inline-flex; gap:8px; align-items:center; padding:4px 10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px }
+    .org-node .nm { font-weight:600 }
+    .org-node .pos { color:#64748b; font-size:11px }
+    .org-node .dept { color:#0c4a6e; font-size:11px; background:#e0f2fe; padding:1px 6px; border-radius:4px }
+    .org-node.inactive { opacity:.5; text-decoration:line-through }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">โครงสร้างองค์กร</h2>
+        <p class="page-subtitle">แผนก, ตำแหน่งงาน, สายบังคับบัญชา — แผนกผูกกับ Cost Center ของระบบบัญชี ใช้กับ Payroll Voucher และ Approval Workflow</p>
+      </div>
+    </div>
+
+    <div class="tabs" style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:16px">
+      <button class="tab tab-active" id="tabDept" onclick="Page.switchTab('dept')">🏢 แผนก</button>
+      <button class="tab" id="tabPos" onclick="Page.switchTab('pos')">💼 ตำแหน่ง</button>
+      <button class="tab" id="tabChart" onclick="Page.switchTab('chart')">🌳 แผนผังองค์กร</button>
+    </div>
+
+    <!-- ===== Department Tab ===== -->
+    <div id="paneDept" class="tab-pane">
+      <div class="toolbar" style="margin-bottom:8px">
+        <button class="btn btn-primary" onclick="Page.openCreateDept()">+ เพิ่มแผนก</button>
+        <label style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px">
+          <input type="checkbox" id="deptIncludeInactive" onchange="Page.loadDepts()"> รวมที่ไม่ใช้งาน
+        </label>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>รหัส</th><th>ชื่อแผนก</th><th>Cost Center</th><th>บัญชีค่าใช้จ่ายเริ่มต้น</th>
+              <th>หัวหน้าแผนก</th><th class="text-right">พนักงาน</th>
+              <th>สถานะ</th><th data-i18n="common.manage">จัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="deptBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:32px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== Position Tab ===== -->
+    <div id="panePos" class="tab-pane hidden">
+      <div class="toolbar" style="margin-bottom:8px">
+        <button class="btn btn-primary" onclick="Page.openCreatePos()">+ เพิ่มตำแหน่ง</button>
+        <label style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px">
+          <input type="checkbox" id="posIncludeInactive" onchange="Page.loadPositions()"> รวมที่ไม่ใช้งาน
+        </label>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>รหัส</th><th>ตำแหน่ง</th><th>Band</th>
+              <th class="text-right">ช่วงเงินเดือน</th><th class="text-right">พนักงาน</th>
+              <th>สถานะ</th><th data-i18n="common.manage">จัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="posBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:32px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== Org Chart Tab ===== -->
+    <div id="paneChart" class="tab-pane hidden">
+      <div style="background:#f8fafc;border-radius:8px;padding:16px;min-height:300px" id="orgChart">กำลังโหลด...</div>
+    </div>
+
+    <!-- ===== Department Modal ===== -->
+    <div class="modal-overlay" id="deptModal">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header"><h3 class="modal-title" id="deptModalTitle">เพิ่มแผนก</h3><button class="modal-close" onclick="Layout.closeModal('deptModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="dId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสแผนก *</label><input type="text" class="form-input" id="dCode" placeholder="เช่น SALES, IT, HR"></div>
+            <div class="form-group"><label class="form-label">ชื่อแผนก (ไทย) *</label><input type="text" class="form-input" id="dName"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อแผนก (อังกฤษ)</label><input type="text" class="form-input" id="dNameEn"></div>
+            <div class="form-group"><label class="form-label">แผนกแม่</label><select class="form-select" id="dParent"><option value="">— ไม่มี (Top-level)</option></select></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Cost Center (Dimension)</label><select class="form-select" id="dDim"><option value="">— ไม่ระบุ —</option></select>
+              <div style="font-size:11px;color:#94a3b8;margin-top:3px">ผูกแผนกกับ cost center ที่มีอยู่ — Payroll/Benefit voucher จะลงบัญชีไปที่ dimension นี้อัตโนมัติ</div>
+            </div>
+            <div class="form-group"><label class="form-label">บัญชีค่าใช้จ่ายเริ่มต้น
+              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('DeptExpense','dAcct','dAcctHint')">🤖</button>
+            </label><select class="form-select" id="dAcct"><option value="">— ไม่ระบุ —</option></select>
+            <div id="dAcctHint" style="font-size:11px;color:#64748b;margin-top:4px"></div></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">หัวหน้าแผนก</label><select class="form-select" id="dManager"><option value="">— ไม่ระบุ —</option></select></div>
+            <div class="form-group" id="dActiveRow" style="display:none">
+              <label class="form-label">สถานะ</label>
+              <label style="display:inline-flex;align-items:center;gap:6px;margin-top:8px">
+                <input type="checkbox" id="dActive" checked> ใช้งาน
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">คำอธิบาย</label>
+            <textarea class="form-textarea" id="dDesc" rows="2"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('deptModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveDept()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Position Modal ===== -->
+    <div class="modal-overlay" id="posModal">
+      <div class="modal" style="max-width:540px">
+        <div class="modal-header"><h3 class="modal-title" id="posModalTitle">เพิ่มตำแหน่ง</h3><button class="modal-close" onclick="Layout.closeModal('posModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="pId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัส *</label><input type="text" class="form-input" id="pCode" placeholder="เช่น MGR-SALES, DEV-SR"></div>
+            <div class="form-group"><label class="form-label">ชื่อตำแหน่ง (ไทย) *</label><input type="text" class="form-input" id="pTitle"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อตำแหน่ง (อังกฤษ)</label><input type="text" class="form-input" id="pTitleEn"></div>
+            <div class="form-group"><label class="form-label">Band</label>
+              <select class="form-select" id="pBand">
+                <option value="">—</option>
+                <option>Intern</option><option>Junior</option><option>Senior</option><option>Lead</option><option>Manager</option><option>Director</option><option>Executive</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เงินเดือนขั้นต่ำ</label><input type="number" class="form-input" id="pMin" step="0.01"></div>
+            <div class="form-group"><label class="form-label">เงินเดือนสูงสุด</label><input type="number" class="form-input" id="pMax" step="0.01"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">คำอธิบาย</label>
+            <textarea class="form-textarea" id="pDesc" rows="2"></textarea>
+          </div>
+          <div class="form-group" id="pActiveRow" style="display:none">
+            <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="pActive" checked> ใช้งาน</label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('posModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.savePos()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _depts: [], _positions: [], _employees: [], _dimensions: [], _accounts: [],
+      async init() {
+        if (!Layout.init('organization')) return;
+        Layout.setTitle('โครงสร้างองค์กร');
+        await Promise.all([this.loadRefs(), this.loadDepts()]);
+      },
+      async loadRefs() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [empRes, dimRes, acctRes] = await Promise.all([
+            api.getEmployees('?pageSize=500'),
+            api.getDimensions ? api.getDimensions() : Promise.resolve({ data: [] }),
+            api.getAccounts('?pageSize=1000'),
+          ]);
+          this._employees = empRes.data?.items || empRes.data || [];
+          this._dimensions = (dimRes.data?.items || dimRes.data || []).filter(d => d.isActive !== false);
+          this._accounts = (acctRes.data?.items || acctRes.data || []).filter(a => a.isActive !== false);
+        } catch (e) { console.warn('โหลดข้อมูลอ้างอิงไม่สำเร็จ', e); }
+      },
+      switchTab(t) {
+        ['dept', 'pos', 'chart'].forEach(x => {
+          document.getElementById('tab' + x.charAt(0).toUpperCase() + x.slice(1)).classList.toggle('tab-active', x === t);
+          document.getElementById('pane' + x.charAt(0).toUpperCase() + x.slice(1)).classList.toggle('hidden', x !== t);
+        });
+        if (t === 'pos' && this._positions.length === 0) this.loadPositions();
+        if (t === 'chart') this.loadOrgChart();
+      },
+
+      // ===== Departments =====
+      async loadDepts() {
+        const api = Layout.api(); if (!api) return;
+        const includeInactive = document.getElementById('deptIncludeInactive').checked;
+        try {
+          const res = await api.getDepartments(includeInactive);
+          const items = res.data || [];
+          this._depts = items;
+          const tbody = document.getElementById('deptBody');
+          tbody.innerHTML = items.length === 0
+            ? '<tr><td colspan="8" class="text-center text-gray-400" style="padding:32px">ยังไม่มีแผนก — กด "เพิ่มแผนก" เพื่อเริ่มต้น</td></tr>'
+            : items.map(d => `<tr ${!d.isActive ? 'style="opacity:.6"' : ''}>
+              <td class="font-medium">${Layout.esc(d.code)}</td>
+              <td>${Layout.esc(d.name)}${d.parentDepartmentName ? '<div style="font-size:11px;color:#64748b">↑ ' + Layout.esc(d.parentDepartmentName) + '</div>' : ''}</td>
+              <td>${d.dimensionCode ? '<code style="background:#e0f2fe;padding:2px 6px;border-radius:4px">' + Layout.esc(d.dimensionCode) + '</code> ' + Layout.esc(d.dimensionName || '') : '<span style="color:#94a3b8">—</span>'}</td>
+              <td>${d.defaultExpenseAccountCode ? '<code>' + Layout.esc(d.defaultExpenseAccountCode) + '</code>' : '<span style="color:#94a3b8">—</span>'}</td>
+              <td>${d.managerName ? Layout.esc(d.managerName) : '<span style="color:#94a3b8">—</span>'}</td>
+              <td class="text-right">${d.employeeCount}</td>
+              <td>${d.isActive ? '<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">ใช้งาน</span>' : '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">ปิด</span>'}</td>
+              <td>
+                <button class="btn btn-sm btn-ghost" onclick="Page.editDept('${d.id}')" data-i18n="common.edit">แก้ไข</button>
+                <button class="btn btn-sm btn-danger" onclick="Page.deleteDept('${d.id}','${Layout.esc(d.name)}')" data-i18n="common.delete">ลบ</button>
+              </td>
+            </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      _fillDeptSelects(currentId) {
+        const dimOpts = '<option value="">— ไม่ระบุ —</option>' + this._dimensions.map(d => `<option value="${d.id}">${Layout.esc(d.code)} · ${Layout.esc(d.name)}</option>`).join('');
+        const acctOpts = '<option value="">— ไม่ระบุ —</option>' + this._accounts.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} · ${Layout.esc(a.accountName)}</option>`).join('');
+        const empOpts = '<option value="">— ไม่ระบุ —</option>' + this._employees.map(e => `<option value="${e.id}">${Layout.esc(e.firstNameTh + ' ' + e.lastNameTh)} (${Layout.esc(e.employeeCode)})</option>`).join('');
+        const parentOpts = '<option value="">— ไม่มี (Top-level)</option>' + this._depts.filter(d => d.id !== currentId).map(d => `<option value="${d.id}">${Layout.esc(d.code + ' · ' + d.name)}</option>`).join('');
+        document.getElementById('dDim').innerHTML = dimOpts;
+        document.getElementById('dAcct').innerHTML = acctOpts;
+        document.getElementById('dManager').innerHTML = empOpts;
+        document.getElementById('dParent').innerHTML = parentOpts;
+      },
+      // AI suggest GL account ต่อช่อง (generic slot endpoint) — เรียนต่อบริษัท
+      async aiSuggestAccount(slot, selectId, hintId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          const sel = document.getElementById(selectId);
+          const hint = hintId ? document.getElementById(hintId) : null;
+          if (!d || !d.accountId) { if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ'); return; }
+          if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+            const opt = document.createElement('option');
+            opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+            sel.appendChild(opt);
+          }
+          if (sel) sel.value = d.accountId;
+          if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+          if (sel && d.feedbackId) {
+            sel.addEventListener('change', () => {
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
+      },
+
+      openCreateDept() {
+        document.getElementById('deptModalTitle').textContent = 'เพิ่มแผนก';
+        document.getElementById('dActiveRow').style.display = 'none';
+        ['dId','dCode','dName','dNameEn','dDesc'].forEach(id => document.getElementById(id).value = '');
+        this._fillDeptSelects(null);
+        ['dParent','dDim','dAcct','dManager'].forEach(id => document.getElementById(id).value = '');
+        Layout.openModal('deptModal');
+      },
+      async editDept(id) {
+        const d = this._depts.find(x => x.id === id);
+        if (!d) return;
+        document.getElementById('deptModalTitle').textContent = 'แก้ไขแผนก';
+        document.getElementById('dActiveRow').style.display = 'block';
+        document.getElementById('dId').value = d.id;
+        document.getElementById('dCode').value = d.code;
+        document.getElementById('dName').value = d.name;
+        document.getElementById('dNameEn').value = d.nameEn || '';
+        document.getElementById('dDesc').value = d.description || '';
+        this._fillDeptSelects(d.id);
+        document.getElementById('dParent').value = d.parentDepartmentId || '';
+        document.getElementById('dDim').value = d.dimensionId || '';
+        document.getElementById('dAcct').value = d.defaultExpenseAccountId || '';
+        document.getElementById('dManager').value = d.managerEmployeeId || '';
+        document.getElementById('dActive').checked = !!d.isActive;
+        Layout.openModal('deptModal');
+      },
+      async saveDept() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('dId').value;
+        const code = document.getElementById('dCode').value.trim();
+        const name = document.getElementById('dName').value.trim();
+        if (!code || !name) { Layout.toast('กรุณาระบุรหัสและชื่อแผนก', 'error'); return; }
+        const body = {
+          code, name,
+          nameEn: document.getElementById('dNameEn').value || null,
+          description: document.getElementById('dDesc').value || null,
+          parentDepartmentId: document.getElementById('dParent').value || null,
+          dimensionId: document.getElementById('dDim').value || null,
+          defaultExpenseAccountId: document.getElementById('dAcct').value || null,
+          managerEmployeeId: document.getElementById('dManager').value || null,
+        };
+        if (id) body.isActive = document.getElementById('dActive').checked;
+        try {
+          if (id) await api.updateDepartment(id, body);
+          else await api.createDepartment(body);
+          Layout.closeModal('deptModal');
+          Layout.toast(id ? 'แก้ไขแผนกสำเร็จ' : 'สร้างแผนกสำเร็จ');
+          await this.loadDepts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteDept(id, name) {
+        if (!confirm(`ยืนยันลบแผนก "${name}"?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteDepartment(id);
+          Layout.toast('ลบสำเร็จ');
+          await this.loadDepts();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Positions =====
+      async loadPositions() {
+        const api = Layout.api(); if (!api) return;
+        const includeInactive = document.getElementById('posIncludeInactive').checked;
+        try {
+          const res = await api.getPositions(includeInactive);
+          const items = res.data || [];
+          this._positions = items;
+          const tbody = document.getElementById('posBody');
+          tbody.innerHTML = items.length === 0
+            ? '<tr><td colspan="7" class="text-center text-gray-400" style="padding:32px">ยังไม่มีตำแหน่ง — กด "เพิ่มตำแหน่ง" เพื่อเริ่มต้น</td></tr>'
+            : items.map(p => `<tr ${!p.isActive ? 'style="opacity:.6"' : ''}>
+              <td class="font-medium">${Layout.esc(p.code)}</td>
+              <td>${Layout.esc(p.title)}${p.titleEn ? '<div style="font-size:11px;color:#64748b">' + Layout.esc(p.titleEn) + '</div>' : ''}</td>
+              <td>${p.band ? Layout.esc(p.band) : '<span style="color:#94a3b8">—</span>'}</td>
+              <td class="text-right">${p.minSalary != null || p.maxSalary != null ? Layout.money(p.minSalary || 0) + ' – ' + Layout.money(p.maxSalary || 0) : '<span style="color:#94a3b8">—</span>'}</td>
+              <td class="text-right">${p.employeeCount}</td>
+              <td>${p.isActive ? '<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">ใช้งาน</span>' : '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">ปิด</span>'}</td>
+              <td>
+                <button class="btn btn-sm btn-ghost" onclick="Page.editPos('${p.id}')" data-i18n="common.edit">แก้ไข</button>
+                <button class="btn btn-sm btn-danger" onclick="Page.deletePos('${p.id}','${Layout.esc(p.title)}')" data-i18n="common.delete">ลบ</button>
+              </td>
+            </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openCreatePos() {
+        document.getElementById('posModalTitle').textContent = 'เพิ่มตำแหน่ง';
+        document.getElementById('pActiveRow').style.display = 'none';
+        ['pId','pCode','pTitle','pTitleEn','pBand','pMin','pMax','pDesc'].forEach(id => document.getElementById(id).value = '');
+        Layout.openModal('posModal');
+      },
+      async editPos(id) {
+        const p = this._positions.find(x => x.id === id);
+        if (!p) return;
+        document.getElementById('posModalTitle').textContent = 'แก้ไขตำแหน่ง';
+        document.getElementById('pActiveRow').style.display = 'block';
+        document.getElementById('pId').value = p.id;
+        document.getElementById('pCode').value = p.code;
+        document.getElementById('pTitle').value = p.title;
+        document.getElementById('pTitleEn').value = p.titleEn || '';
+        document.getElementById('pBand').value = p.band || '';
+        document.getElementById('pMin').value = p.minSalary || '';
+        document.getElementById('pMax').value = p.maxSalary || '';
+        document.getElementById('pDesc').value = p.description || '';
+        document.getElementById('pActive').checked = !!p.isActive;
+        Layout.openModal('posModal');
+      },
+      async savePos() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('pId').value;
+        const code = document.getElementById('pCode').value.trim();
+        const title = document.getElementById('pTitle').value.trim();
+        if (!code || !title) { Layout.toast('กรุณาระบุรหัสและชื่อตำแหน่ง', 'error'); return; }
+        const body = {
+          code, title,
+          titleEn: document.getElementById('pTitleEn').value || null,
+          band: document.getElementById('pBand').value || null,
+          minSalary: parseFloat(document.getElementById('pMin').value) || null,
+          maxSalary: parseFloat(document.getElementById('pMax').value) || null,
+          description: document.getElementById('pDesc').value || null,
+        };
+        if (id) body.isActive = document.getElementById('pActive').checked;
+        try {
+          if (id) await api.updatePosition(id, body);
+          else await api.createPosition(body);
+          Layout.closeModal('posModal');
+          Layout.toast(id ? 'แก้ไขตำแหน่งสำเร็จ' : 'สร้างตำแหน่งสำเร็จ');
+          await this.loadPositions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deletePos(id, title) {
+        if (!confirm(`ยืนยันลบตำแหน่ง "${title}"?`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deletePosition(id);
+          Layout.toast('ลบสำเร็จ');
+          await this.loadPositions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Org Chart =====
+      async loadOrgChart() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getOrgChart();
+          const roots = res.data || [];
+          const container = document.getElementById('orgChart');
+          container.innerHTML = roots.length === 0
+            ? '<div style="text-align:center;padding:48px;color:#94a3b8">ยังไม่มีพนักงาน หรือยังไม่ได้กำหนดสายบังคับบัญชา</div>'
+            : '<div class="org-tree">' + roots.map(this._renderNode).join('') + '</div>';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      _renderNode(n) {
+        const inactiveCls = n.isActive ? '' : ' inactive';
+        const children = (n.directReports && n.directReports.length)
+          ? '<ul>' + n.directReports.map(Page._renderNode).join('') + '</ul>'
+          : '';
+        return `<li>
+          <div class="org-node${inactiveCls}">
+            <span class="nm">${Layout.esc(n.fullName)}</span>
+            ${n.positionTitle ? '<span class="pos">' + Layout.esc(n.positionTitle) + '</span>' : ''}
+            ${n.departmentName ? '<span class="dept">' + Layout.esc(n.departmentName) + '</span>' : ''}
+            <span style="color:#94a3b8;font-size:11px">${Layout.esc(n.employeeCode)}</span>
+          </div>
+          ${children}
+        </li>`;
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

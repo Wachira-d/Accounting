@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายงาน POS - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .report-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; margin-bottom:24px; }
+    .report-card { background:#fff; border:1px solid var(--gray-200); border-radius:var(--radius-lg); padding:20px; text-align:center; }
+    .report-card .rc-label { font-size:13px; color:var(--gray-500); margin-bottom:4px; }
+    .report-card .rc-value { font-size:28px; font-weight:700; }
+    .report-card .rc-sub { font-size:12px; color:var(--gray-400); margin-top:4px; }
+    .report-card.primary .rc-value { color:var(--primary); }
+    .report-card.success .rc-value { color:var(--success); }
+    .report-card.warning .rc-value { color:var(--warning); }
+    .report-card.danger .rc-value { color:var(--danger); }
+    .tab-bar { display:flex; gap:4px; border-bottom:2px solid var(--gray-200); margin-bottom:20px; }
+    .tab-bar .tab { padding:10px 20px; font-size:14px; font-weight:600; color:var(--gray-500); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; transition:all .15s; }
+    .tab-bar .tab.active { color:var(--primary); border-bottom-color:var(--primary); }
+    .tab-bar .tab:hover { color:var(--gray-800); }
+    .date-range { display:flex; align-items:center; gap:8px; }
+    .date-range input { padding:8px 12px; border:1px solid var(--gray-300); border-radius:var(--radius); font-size:13px; }
+    .commission-card { background:#fff; border:1px solid var(--gray-200); border-radius:var(--radius); padding:16px; margin-bottom:12px; }
+    .commission-card .cc-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    .commission-card .cc-name { font-size:16px; font-weight:600; }
+    .commission-card .cc-total { font-size:20px; font-weight:700; color:var(--success); }
+    .commission-card .cc-detail { font-size:13px; color:var(--gray-500); display:flex; gap:16px; }
+    .bar-chart { display:flex; align-items:flex-end; gap:6px; height:150px; padding:10px 0; }
+    .bar-chart .bar-col { flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; }
+    .bar-chart .bar { width:100%; border-radius:4px 4px 0 0; background:var(--primary); min-height:2px; transition:height .3s; }
+    .bar-chart .bar-label { font-size:11px; color:var(--gray-500); white-space:nowrap; }
+    .bar-chart .bar-value { font-size:11px; font-weight:600; color:var(--gray-700); }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">รายงาน POS</h2><p class="page-subtitle">สรุปยอดขาย คอมมิชชัน และวิเคราะห์ผลการดำเนินงาน</p></div>
+    </div>
+
+    <div class="toolbar" style="justify-content:space-between;">
+      <div class="tab-bar" style="border:none;margin:0;">
+        <div class="tab active" onclick="Page.switchTab('daily')">สรุปยอดขาย</div>
+        <div class="tab" onclick="Page.switchTab('orders')">รายการออเดอร์</div>
+        <div class="tab" onclick="Page.switchTab('commission')">คอมมิชชัน</div>
+      </div>
+      <div class="date-range">
+        <input type="date" id="dateFrom">
+        <span>ถึง</span>
+        <input type="date" id="dateTo">
+        <button class="btn btn-sm btn-primary" onclick="Page.load()">ดูรายงาน</button>
+      </div>
+    </div>
+
+    <!-- Daily Summary Tab -->
+    <div id="tabDaily">
+      <div class="report-cards" id="summaryCards">
+        <div class="report-card"><div class="rc-label" data-i18n="common.loading">กำลังโหลด...</div><div class="rc-value">-</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-lg);padding:20px;">
+          <h4 style="margin-bottom:12px;">ยอดขายรายวัน (7 วันล่าสุด)</h4>
+          <div class="bar-chart" id="dailyChart"></div>
+        </div>
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-lg);padding:20px;">
+          <h4 style="margin-bottom:12px;">แยกตามช่องทางชำระ</h4>
+          <div id="paymentBreakdown"><p class="text-center text-gray-400" style="padding:20px;" data-i18n="common.loading">กำลังโหลด...</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Orders Tab -->
+    <div id="tabOrders" style="display:none;">
+      <div class="toolbar" style="padding:0;margin-bottom:12px;">
+        <input type="text" class="search-input" placeholder="ค้นหาเลขออเดอร์, ชื่อลูกค้า..." id="orderSearch" oninput="Page.loadOrders()">
+        <select class="filter-select" id="orderStatus" onchange="Page.loadOrders()">
+          <option value="">ทุกสถานะ</option>
+          <option value="0">รอดำเนินการ</option>
+          <option value="1">กำลังทำ</option>
+          <option value="2">พร้อมเสิร์ฟ</option>
+          <option value="3">เสร็จสิ้น</option>
+          <option value="4" data-i18n="common.cancel">ยกเลิก</option>
+        </select>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>เลขออเดอร์</th><th data-i18n="common.date">วันที่</th><th data-i18n="common.type">ประเภท</th><th>ลูกค้า</th><th data-i18n="common.items">รายการ</th><th class="text-right">ยอดรวม</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="ordersBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+      <div id="ordersPagination"></div>
+    </div>
+
+    <!-- Commission Tab -->
+    <div id="tabCommission" style="display:none;">
+      <div id="commissionContent"><p class="text-center text-gray-400" style="padding:40px;" data-i18n="common.loading">กำลังโหลด...</p></div>
+    </div>
+
+    <!-- Order Detail Modal -->
+    <div class="modal-overlay" id="orderDetailModal">
+      <div class="modal" style="max-width:650px;">
+        <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียดออเดอร์</h3><button class="modal-close" onclick="Layout.closeModal('orderDetailModal')">&times;</button></div>
+        <div class="modal-body" id="detailContent"></div>
+      </div>
+    </div>
+
+    <!-- Commission Detail Modal -->
+    <div class="modal-overlay" id="commissionDetailModal">
+      <div class="modal" style="max-width:900px;">
+        <div class="modal-header"><h3 class="modal-title" id="commissionDetailTitle">คอมมิชชั่นรายกิจกรรม</h3><button class="modal-close" onclick="Layout.closeModal('commissionDetailModal')">&times;</button></div>
+        <div class="modal-body" id="commissionDetailContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      currentTab: 'daily', ordersPage: 1, _orderCache: {},
+
+      async init() {
+        if (!Layout.init('pos-reports')) return;
+        Layout.setTitle('รายงาน POS');
+        const today = Layout.toDateInput(new Date());
+        const weekAgo = Layout.toDateInput(new Date(Date.now() - 7*86400000));
+        document.getElementById('dateFrom').value = weekAgo;
+        document.getElementById('dateTo').value = today;
+        await this.load();
+      },
+
+      switchTab(tab) {
+        this.currentTab = tab;
+        document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+        event.target.classList.add('active');
+        document.getElementById('tabDaily').style.display = tab === 'daily' ? '' : 'none';
+        document.getElementById('tabOrders').style.display = tab === 'orders' ? '' : 'none';
+        document.getElementById('tabCommission').style.display = tab === 'commission' ? '' : 'none';
+        this.load();
+      },
+
+      async load() {
+        if (this.currentTab === 'daily') await this.loadDailySummary();
+        else if (this.currentTab === 'orders') await this.loadOrders();
+        else if (this.currentTab === 'commission') await this.loadCommission();
+      },
+
+      async loadDailySummary() {
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('dateFrom').value;
+        const to = document.getElementById('dateTo').value;
+        try {
+          const res = await api.getPosDailySummary(`?fromDate=${from}&toDate=${to}`);
+          const d = res.data;
+          document.getElementById('summaryCards').innerHTML = `
+            <div class="report-card primary"><div class="rc-label">ยอดขายรวม</div><div class="rc-value">${Layout.money(d.totalSales)}</div><div class="rc-sub">สุทธิหลังหัก VAT/ส่วนลด</div></div>
+            <div class="report-card success"><div class="rc-label">จำนวนออเดอร์</div><div class="rc-value">${d.totalOrders}</div><div class="rc-sub">เฉพาะที่เสร็จสิ้น</div></div>
+            <div class="report-card warning"><div class="rc-label">ยอดเฉลี่ย/บิล</div><div class="rc-value">${d.totalOrders ? Layout.money(d.totalSales / d.totalOrders) : '0.00'}</div><div class="rc-sub">Average ticket</div></div>
+            <div class="report-card danger"><div class="rc-label">ส่วนลดรวม</div><div class="rc-value">${Layout.money(d.totalDiscount)}</div><div class="rc-sub">VAT ${Layout.money(d.totalVat)}</div></div>
+          `;
+          // Payment breakdown
+          const pb = d.paymentBreakdown || [];
+          if (pb.length) {
+            document.getElementById('paymentBreakdown').innerHTML = `
+              <div class="table-container"><table class="table" style="font-size:13px;">
+                <thead><tr><th>ช่องทาง</th><th class="text-right">จำนวน</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead>
+                <tbody>${pb.map(p => {
+                  const pct = d.totalSales > 0 ? ((p.amount || 0) / d.totalSales * 100).toFixed(1) : 0;
+                  return `<tr><td>${Page.payLabel(p.method)}</td><td class="text-right">${p.count}</td><td class="text-right">${Layout.money(p.amount)}</td><td class="text-right">${pct}%</td></tr>`;
+                }).join('')}</tbody>
+              </table></div>`;
+          } else {
+            document.getElementById('paymentBreakdown').innerHTML = '<p class="text-center text-gray-400" style="padding:20px;" data-i18n="common.noData">ไม่มีข้อมูล</p>';
+          }
+          // Daily chart - try loading last 7 days individually
+          this.renderDailyChart(d);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderDailyChart(summaryData) {
+        const chart = document.getElementById('dailyChart');
+        // If we have breakdown by day, use it; otherwise show single bar
+        const totalSales = summaryData.totalSales || 0;
+        if (totalSales <= 0) {
+          chart.innerHTML = '<p class="text-center text-gray-400" style="width:100%;align-self:center;" data-i18n="common.noData">ไม่มีข้อมูล</p>';
+          return;
+        }
+        // backend สรุปเป็นยอดรวมทั้งช่วง (ยังไม่มี breakdown รายวัน) — แสดงยอดจริงเท่านั้น
+        // ห้ามสร้างกราฟรายวันจากการสุ่ม/เกลี่ยค่า เพราะเป็นตัวเลขเงินปลอมที่ทำให้เข้าใจผิด
+        const from = document.getElementById('dateFrom').value;
+        const to = document.getElementById('dateTo').value;
+        const days = Math.max(1, Math.ceil((new Date(to) - new Date(from)) / 86400000) + 1);
+        chart.innerHTML = `
+          <div style="width:100%;align-self:center;text-align:center;padding:20px">
+            <div class="text-2xl font-bold">${Layout.money(totalSales)}</div>
+            <div class="text-sm text-gray-500" style="margin-top:4px">ยอดขายรวม ${days} วัน (เฉลี่ย ${Layout.money(totalSales / days)}/วัน)</div>
+            <div class="text-xs text-gray-400" style="margin-top:8px">ระบบยังไม่รองรับกราฟแยกรายวัน — ดูรายละเอียดรายบิลได้ที่แท็บ "ออเดอร์"</div>
+          </div>`;
+      },
+
+      async loadOrders() {
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('dateFrom').value;
+        const to = document.getElementById('dateTo').value;
+        const search = document.getElementById('orderSearch')?.value || '';
+        const status = document.getElementById('orderStatus')?.value || '';
+        let q = `?page=${this.ordersPage}&pageSize=20&fromDate=${from}&toDate=${to}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        if (status !== '') q += `&status=${status}`;
+        try {
+          const res = await api.getPosOrders(q);
+          const data = res.data; const items = data?.items || data || [];
+          const tbody = document.getElementById('ordersBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
+          items.forEach(o => this._orderCache[o.id] = o);
+          tbody.innerHTML = items.map(o => `<tr>
+            <td class="font-medium">${o.orderNumber}</td>
+            <td>${Layout.date(o.orderDate || o.createdAt)}</td>
+            <td>${Page.orderTypeLabel(o.orderType)}</td>
+            <td>${o.customerName || '-'}</td>
+            <td>${o.itemCount || (o.items||[]).length} รายการ</td>
+            <td class="text-right font-semibold">${Layout.money(o.netAmount)}</td>
+            <td>${Page.statusBadge(o.status)}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.showOrderDetail('${o.id}')" data-i18n="common.view">ดู</button></td>
+          </tr>`).join('');
+          document.getElementById('ordersPagination').innerHTML = Layout.renderPagination(this.ordersPage, data.totalPages || 1, 'Page.goOrdersPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      goOrdersPage(p) { Page.ordersPage = p; Page.loadOrders(); },
+
+      async showOrderDetail(id) {
+        const api = Layout.api(); if (!api) return;
+        Layout.openModal('orderDetailModal');
+        try {
+          const res = await api.getPosOrder(id);
+          const o = res.data;
+          this._detailOrder = o;
+          document.getElementById('detailTitle').textContent = `ออเดอร์ ${o.orderNumber}`;
+          document.getElementById('detailContent').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+              <div><span class="text-gray-500">วันที่:</span> ${Layout.dateTime(o.orderDate || o.createdAt)}</div>
+              <div><span class="text-gray-500">ประเภท:</span> ${Page.orderTypeLabel(o.orderType)}</div>
+              <div><span class="text-gray-500">ลูกค้า:</span> ${o.customerName || '-'}</div>
+              <div><span class="text-gray-500">โต๊ะ:</span> ${o.tableNumber || '-'}</div>
+              <div><span class="text-gray-500">สถานะ:</span> ${Page.statusBadge(o.status)}</div>
+              <div><span class="text-gray-500">พนักงาน:</span> ${o.primaryStaffName || '-'}</div>
+            </div>
+            <h4 style="margin-bottom:8px;">รายการสินค้า</h4>
+            <div class="table-container"><table class="table" style="font-size:13px;margin-bottom:16px;">
+              <thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">จำนวน</th><th class="text-right">ราคา</th><th class="text-right" data-i18n="common.total">รวม</th></tr></thead>
+              <tbody>${(o.items || []).map(i => `<tr>
+                <td>${i.itemName}${(i.modifiers||[]).length ? '<br><small class="text-gray-400">+ ' + i.modifiers.map(m=>m.modifierName).join(', ') + '</small>' : ''}</td>
+                <td class="text-right">${i.quantity}</td>
+                <td class="text-right">${Layout.money(i.unitPrice)}</td>
+                <td class="text-right">${Layout.money(i.lineTotal)}</td>
+              </tr>`).join('')}</tbody>
+            </table></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+              <div>
+                <h4 style="margin-bottom:8px;">การชำระเงิน</h4>
+                ${(o.payments || []).length ? `<div class="table-container"><table class="table" style="font-size:13px;">
+                  <thead><tr><th>ช่องทาง</th><th class="text-right">จำนวน</th><th class="text-right">ทอน</th></tr></thead>
+                  <tbody>${(o.payments || []).map(p => `<tr><td>${Page.payLabel(p.paymentMethod)}</td><td class="text-right">${Layout.money(p.amount)}</td><td class="text-right">${Layout.money(p.changeAmount)}</td></tr>`).join('')}</tbody>
+                </table></div>` : '<p class="text-gray-400">ยังไม่ชำระ</p>'}
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:13px;color:var(--gray-500);">รวม: ${Layout.money(o.subTotal)}</div>
+                <div style="font-size:13px;color:var(--gray-500);">ส่วนลด: ${Layout.money(o.discountAmount)}</div>
+                <div style="font-size:13px;color:var(--gray-500);">VAT: ${Layout.money(o.vatAmount)}</div>
+                <div style="font-size:20px;font-weight:700;color:var(--primary);margin-top:8px;">สุทธิ: ${Layout.money(o.netAmount)}</div>
+              </div>
+            </div>
+            ${o.status === 'Completed' ? `
+            <div style="margin-top:16px;border-top:1px dashed var(--gray-300);padding-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-sm btn-danger" onclick="Page.toggleRefund('${o.id}')">↩️ คืนเงิน (บางส่วน/ทั้งหมด)</button>
+              ${o.documentId ? `<span class="badge badge-success" style="padding:6px 10px;">📄 ออกใบกำกับภาษีเต็มรูปแล้ว</span>` : `<button class="btn btn-sm btn-primary" onclick="Page.toggleIssueInvoice('${o.id}')">📄 ออกใบกำกับภาษีเต็มรูป</button>`}
+            </div>
+            <div id="refundForm" style="display:none;margin-top:10px;"></div>
+            <div id="issueInvoiceForm" style="display:none;margin-top:10px;"></div>` : ''}
+          `;
+        } catch (e) { document.getElementById('detailContent').innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
+      },
+
+      toggleRefund() {
+        const box = document.getElementById('refundForm');
+        if (!box) return;
+        if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+        const o = this._detailOrder;
+        const rows = (o.items || []).map(i => {
+          const remaining = (i.quantity || 0) - (i.refundedQuantity || 0);
+          return `<tr>
+            <td>${Layout.esc(i.itemName)}</td>
+            <td class="text-right">${i.quantity}</td>
+            <td class="text-right">${i.refundedQuantity || 0}</td>
+            <td class="text-right font-semibold">${remaining}</td>
+            <td><input type="number" class="form-input" data-refund-item="${i.id}" min="0" max="${remaining}" step="any" value="0" style="width:84px" ${remaining <= 0 ? 'disabled' : ''}></td>
+          </tr>`;
+        }).join('');
+        box.innerHTML = `
+          <table class="table" style="font-size:13px;">
+            <thead><tr><th>รายการ</th><th class="text-right">ขาย</th><th class="text-right">คืนแล้ว</th><th class="text-right">คงเหลือ</th><th>คืนครั้งนี้</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+            <select id="refundMethod" class="filter-select"><option value="Cash">เงินสด</option><option value="PromptPay">พร้อมเพย์</option><option value="BankTransfer">โอน</option><option value="CreditCard">บัตร</option></select>
+            <input type="text" id="refundReason" class="search-input" placeholder="เหตุผลการคืนเงิน" style="flex:1;min-width:160px;">
+            <button class="btn btn-sm btn-danger" onclick="Page.submitRefund('${o.id}')">ยืนยันคืนเงิน</button>
+          </div>
+          <div class="text-xs text-gray-400" style="margin-top:6px;">ระบบจะกลับรายการบัญชี (รายได้/VAT/ต้นทุน) และคืนสต็อกตามสัดส่วนที่คืน</div>`;
+        box.style.display = '';
+      },
+
+      async submitRefund(orderId) {
+        const api = Layout.api(); if (!api) return;
+        const lines = [];
+        document.querySelectorAll('#refundForm input[data-refund-item]').forEach(inp => {
+          const q = parseFloat(inp.value) || 0;
+          if (q > 0) lines.push({ itemId: inp.dataset.refundItem, quantity: q });
+        });
+        if (!lines.length) { Layout.toast('กรุณาระบุจำนวนที่จะคืนอย่างน้อย 1 รายการ', 'warning'); return; }
+        if (!confirm('ยืนยันการคืนเงิน? ระบบจะกลับรายการบัญชีและคืนสต็อก')) return;
+        try {
+          await api.refundPosOrder(orderId, {
+            lines,
+            refundMethod: document.getElementById('refundMethod').value,
+            reason: document.getElementById('refundReason').value || null,
+          });
+          Layout.toast('คืนเงินสำเร็จ');
+          Layout.closeModal('orderDetailModal');
+          await this.loadOrders();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      toggleIssueInvoice(orderId) {
+        const box = document.getElementById('issueInvoiceForm');
+        if (!box) return;
+        if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+        box.innerHTML = `
+          <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius);padding:12px;">
+            <div style="font-weight:600;margin-bottom:8px;">ข้อมูลผู้ซื้อสำหรับใบกำกับภาษีเต็มรูป</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div><label class="text-xs text-gray-500">ชื่อผู้ซื้อ *</label>
+                <input type="text" class="form-input" id="invBuyerName" placeholder="บริษัท / บุคคล"></div>
+              <div><label class="text-xs text-gray-500">เลขผู้เสียภาษี (13 หลัก)</label>
+                <input type="text" class="form-input" id="invBuyerTaxId" placeholder="0123456789012" maxlength="13"></div>
+              <div><label class="text-xs text-gray-500">รหัสสาขา</label>
+                <input type="text" class="form-input" id="invBuyerBranch" placeholder="00000 = สำนักงานใหญ่"></div>
+              <div><label class="text-xs text-gray-500">ที่อยู่ผู้ซื้อ</label>
+                <input type="text" class="form-input" id="invBuyerAddr" placeholder="ที่อยู่"></div>
+            </div>
+            <div style="margin-top:8px;"><label class="text-xs text-gray-500">หมายเหตุ</label>
+              <input type="text" class="form-input" id="invNotes" placeholder="ไม่บังคับ"></div>
+            <div class="text-xs text-gray-400" style="margin-top:6px;">
+              ระบบจะสร้างเอกสารใบกำกับภาษี (TaxInvoice) ผูกกับออเดอร์นี้ + ผูก JE เดิมเข้ากับเอกสาร เพื่อกัน VAT ซ้ำใน ภพ.30
+            </div>
+            <div style="margin-top:8px;text-align:right;">
+              <button class="btn btn-sm btn-primary" onclick="Page.submitIssueInvoice('${orderId}')">ยืนยันออกใบกำกับ</button>
+            </div>
+          </div>`;
+        box.style.display = '';
+      },
+
+      async submitIssueInvoice(orderId) {
+        const api = Layout.api(); if (!api) return;
+        const name = document.getElementById('invBuyerName').value.trim();
+        if (!name) { Layout.toast('กรุณาระบุชื่อผู้ซื้อ', 'warning'); return; }
+        const taxId = document.getElementById('invBuyerTaxId').value.trim();
+        if (taxId && !/^\d{13}$/.test(taxId)) { Layout.toast('เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก', 'warning'); return; }
+        try {
+          await api.issuePosTaxInvoice(orderId, {
+            buyerName: name,
+            buyerTaxId: taxId || null,
+            buyerBranchCode: document.getElementById('invBuyerBranch').value.trim() || null,
+            buyerAddress: document.getElementById('invBuyerAddr').value.trim() || null,
+            notes: document.getElementById('invNotes').value.trim() || null,
+          });
+          Layout.toast('ออกใบกำกับภาษีเต็มรูปสำเร็จ');
+          Layout.closeModal('orderDetailModal');
+          await this.loadOrders();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async loadCommission() {
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('dateFrom').value;
+        const to = document.getElementById('dateTo').value;
+        try {
+          const res = await api.getPosCommissionSummary(`?fromDate=${from}&toDate=${to}`);
+          const items = res.data || [];
+          const el = document.getElementById('commissionContent');
+          if (!items.length) {
+            el.innerHTML = '<p class="text-center text-gray-400" style="padding:40px;">ไม่มีข้อมูลคอมมิชชันในช่วงเวลานี้</p>';
+            return;
+          }
+          const totalCommission = items.reduce((s, i) => s + i.totalCommission, 0);
+          el.innerHTML = `
+            <div class="report-cards" style="margin-bottom:20px;">
+              <div class="report-card success"><div class="rc-label">คอมมิชชันรวม</div><div class="rc-value">${Layout.money(totalCommission)}</div></div>
+              <div class="report-card primary"><div class="rc-label">จำนวนพนักงาน</div><div class="rc-value">${items.length}</div></div>
+              <div class="report-card warning"><div class="rc-label">เฉลี่ย/คน</div><div class="rc-value">${Layout.money(totalCommission / items.length)}</div></div>
+            </div>
+            ${items.map(s => `
+              <div class="commission-card">
+                <div class="cc-header">
+                  <div class="cc-name">${Layout.esc(s.staffName || 'พนักงาน ' + (s.staffId||'').slice(0,8))}</div>
+                  <div style="display:flex;align-items:center;gap:12px;">
+                    <div class="cc-total">${Layout.money(s.totalCommission)}</div>
+                    <button class="btn btn-sm btn-secondary"
+                      onclick="Page.openCommissionDetail('${s.staffId}','${Layout.esc(s.staffName||'')}')">
+                      🔍 ดูรายละเอียด
+                    </button>
+                  </div>
+                </div>
+                <div class="cc-detail">
+                  <span>ออเดอร์: ${s.orderCount || '-'}</span>
+                  <span>รายการ: ${s.totalActivities || s.serviceCount || '-'}</span>
+                  <span>ยอดขาย: ${Layout.money(s.totalSales || 0)}</span>
+                </div>
+              </div>
+            `).join('')}
+          `;
+        } catch (e) { document.getElementById('commissionContent').innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
+      },
+
+      async openCommissionDetail(staffId, staffName) {
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('dateFrom').value;
+        const to = document.getElementById('dateTo').value;
+        document.getElementById('commissionDetailTitle').textContent =
+          `คอมมิชชั่นรายกิจกรรม — ${staffName || ''}`;
+        const body = document.getElementById('commissionDetailContent');
+        body.innerHTML = '<p class="text-center text-gray-400" style="padding:40px;">กำลังโหลด...</p>';
+        Layout.openModal('commissionDetailModal');
+        try {
+          const res = await api.getPosCommissionDetail(
+            `?staffId=${encodeURIComponent(staffId)}&periodStart=${from}&periodEnd=${to}`);
+          const rows = res.data || [];
+          const total = rows.reduce((s, r) => s + (r.commissionAmount || 0), 0);
+          body.innerHTML = !rows.length
+            ? '<p class="text-center text-gray-400" style="padding:40px;">ไม่มีกิจกรรมในช่วงเวลานี้</p>'
+            : `
+              <div style="margin-bottom:12px;font-size:13px;color:var(--gray-600);">
+                รวมทั้งสิ้น <strong>${rows.length}</strong> กิจกรรม
+                รวมเป็นเงิน <strong style="color:var(--success);">${Layout.money(total)}</strong>
+              </div>
+              <div style="max-height:60vh;overflow:auto;">
+                <table class="table table-sm" style="font-size:13px;">
+                  <thead><tr>
+                    <th>วันที่</th><th>เลขออเดอร์</th><th>บริการ</th>
+                    <th>ขั้นตอน</th><th>สถานะ</th><th class="text-right">คอม</th>
+                  </tr></thead>
+                  <tbody>
+                    ${rows.map(r => `
+                      <tr>
+                        <td style="white-space:nowrap;">${Layout.date(r.orderDate)}</td>
+                        <td><a href="#" onclick="Layout.closeModal('commissionDetailModal');Page.showOrderDetail('${r.orderId}');return false;">${Layout.esc(r.orderNumber)}</a></td>
+                        <td>${Layout.esc(r.itemName)}</td>
+                        <td>${Layout.esc(r.componentName)}</td>
+                        <td>${this.activityStatusLabel(r.status)}</td>
+                        <td class="text-right">${Layout.money(r.commissionAmount)}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>`;
+        } catch (e) {
+          body.innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`;
+        }
+      },
+
+      activityStatusLabel(s) {
+        const m = { Pending: '⏳ รอ', InProgress: '🔄 กำลังทำ', Completed: '✅ เสร็จ', Cancelled: '❌ ยกเลิก' };
+        return m[s] || s;
+      },
+
+      payLabel(m) {
+        const map = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', PromptPay:'พร้อมเพย์', Cheque:'เช็ค' };
+        return map[m] || m;
+      },
+
+      orderTypeLabel(t) {
+        const map = { 0:'ทานที่ร้าน', 1:'กลับบ้าน', 2:'เดลิเวอรี่', 3:'คิว', 4:'นัดหมาย', DineIn:'ทานที่ร้าน', TakeAway:'กลับบ้าน', Delivery:'เดลิเวอรี่', Queue:'คิว', Appointment:'นัดหมาย' };
+        return map[t] || t;
+      },
+
+      statusBadge(s) {
+        const map = {
+          0: ['รอดำเนินการ','badge-warning'], 1: ['กำลังทำ','badge-info'], 2: ['พร้อมเสิร์ฟ','badge-primary'],
+          3: ['เสร็จสิ้น','badge-success'], 4: ['ยกเลิก','badge-gray'],
+          Pending: ['รอดำเนินการ','badge-warning'], InProgress: ['กำลังทำ','badge-info'], Ready: ['พร้อมเสิร์ฟ','badge-primary'],
+          Completed: ['เสร็จสิ้น','badge-success'], Cancelled: ['ยกเลิก','badge-gray']
+        };
+        const [label, cls] = map[s] || [s, 'badge-gray'];
+        return `<span class="badge ${cls}">${label}</span>`;
+      }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

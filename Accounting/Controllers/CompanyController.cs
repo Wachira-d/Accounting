@@ -1,0 +1,145 @@
+using Accounting.Helpers;
+using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Company;
+using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Accounting.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class CompanyController : ControllerBase
+{
+    private readonly ICompanyService _companyService;
+
+    private readonly IPermissionService? _permissionService;
+
+    public CompanyController(ICompanyService companyService, IPermissionService? permissionService = null)
+    {
+        _companyService = companyService;
+        _permissionService = permissionService;
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<ApiResponse<CompanyResponse>>> Create([FromBody] CreateCompanyRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _companyService.CreateAsync(userId, request);
+        return StatusCode(201, new ApiResponse<CompanyResponse>(true, result, "สร้างบริษัทสำเร็จ"));
+    }
+
+    [HttpGet]
+    public async Task<ActionResult<ApiResponse<List<CompanyResponse>>>> GetMyCompanies()
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _companyService.GetUserCompaniesAsync(userId);
+        return Ok(new ApiResponse<List<CompanyResponse>>(true, result));
+    }
+
+    [HttpGet("{companyId:guid}")]
+    public async Task<ActionResult<ApiResponse<CompanyResponse>>> GetById(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _companyService.GetByIdAsync(companyId, userId);
+        return Ok(new ApiResponse<CompanyResponse>(true, result));
+    }
+
+    [HttpPut("{companyId:guid}")]
+    public async Task<ActionResult<ApiResponse<CompanyResponse>>> Update(Guid companyId, [FromBody] UpdateCompanyRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _companyService.UpdateAsync(companyId, userId, request);
+        return Ok(new ApiResponse<CompanyResponse>(true, result));
+    }
+
+    [HttpGet("{companyId:guid}/users")]
+    public async Task<ActionResult<ApiResponse<List<CompanyMemberResponse>>>> GetMembers(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _companyService.GetMembersAsync(companyId, userId);
+        return Ok(new ApiResponse<List<CompanyMemberResponse>>(true, result));
+    }
+
+    [HttpPost("{companyId:guid}/users")]
+    public async Task<ActionResult<ApiResponse<object>>> AddUser(Guid companyId, [FromBody] AddCompanyUserRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _companyService.AddUserAsync(companyId, userId, request);
+        // Honest message per outcome. When email isn't configured we DON'T
+        // claim it was sent — we tell the owner to share the link manually
+        // (returned in the payload so the UI can show a copy button).
+        string message;
+        if (!result.WasInvited)
+            message = "เพิ่มผู้ใช้สำเร็จ";
+        else if (result.EmailSent)
+            message = $"ส่งคำเชิญไปยัง {result.Email} แล้ว — ผู้รับจะได้รับลิงก์สมัครและเข้าร่วมทีมในอีเมล";
+        else
+            message = $"สร้างคำเชิญสำหรับ {result.Email} แล้ว แต่ระบบยังไม่ได้ตั้งค่าอีเมล — กรุณาคัดลอกลิงก์ด้านล่างส่งให้ผู้รับเอง";
+        return StatusCode(201, new ApiResponse<object>(true,
+            new { result.WasInvited, result.Email, result.InvitationId, result.EmailSent, result.InviteLink }, message));
+    }
+
+    [HttpPut("{companyId:guid}/users/{targetUserId:guid}/role")]
+    public async Task<ActionResult<ApiResponse<string>>> UpdateUserRole(Guid companyId, Guid targetUserId, [FromBody] UpdateUserRoleRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.UpdateUserRoleAsync(companyId, userId, targetUserId, request.Role);
+        return Ok(new ApiResponse<string>(true, null, "เปลี่ยน Role สำเร็จ"));
+    }
+
+    /// <summary>เจ้าของแก้ชื่อ-นามสกุลของสมาชิก (แก้ชื่อที่พิมพ์ผิดบนลายเซ็น/เอกสาร).</summary>
+    [HttpPut("{companyId:guid}/users/{targetUserId:guid}/name")]
+    public async Task<ActionResult<ApiResponse<string>>> UpdateMemberName(Guid companyId, Guid targetUserId, [FromBody] UpdateMemberNameRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.UpdateMemberNameAsync(companyId, userId, targetUserId, request.FullName);
+        return Ok(new ApiResponse<string>(true, null, "แก้ชื่อสมาชิกสำเร็จ"));
+    }
+
+    [HttpDelete("{companyId:guid}/users/{targetUserId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> RemoveUser(Guid companyId, Guid targetUserId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.RemoveUserAsync(companyId, userId, targetUserId);
+        return NoContent();
+    }
+
+    /// <summary>ลบบริษัท (soft-delete) — Owner เท่านั้น + พิมพ์ชื่อบริษัทยืนยัน.
+    /// ข้อมูลบัญชีไม่ถูกลบจริง (พ.ร.บ.การบัญชี ม.10 เก็บ 5 ปี).</summary>
+    [HttpDelete("{companyId:guid}")]
+    public async Task<ActionResult> DeleteCompany(Guid companyId, [FromQuery] string confirmName)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.DeleteCompanyAsync(companyId, userId, confirmName);
+        return NoContent();
+    }
+
+    /// <summary>สิทธิ์ effective ของสมาชิกคนหนึ่งในบริษัทนี้ — ดูได้เฉพาะ
+    /// Owner หรือตัวสมาชิกเอง (คนอื่นห้ามส่องสิทธิ์กัน).</summary>
+    [HttpGet("{companyId:guid}/users/{targetUserId:guid}/permissions")]
+    public async Task<ActionResult<ApiResponse<object>>> GetMemberPermissions(Guid companyId, Guid targetUserId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var users = await _companyService.GetMembersAsync(companyId, userId); // ตรวจ membership ของผู้เรียกในตัว
+        var requester = users.FirstOrDefault(u => u.UserId == userId);
+        if (requester == null) return Forbid();
+        if (userId != targetUserId && requester.Role != Models.Enums.UserRole.Owner)
+            throw new InvalidOperationException("เฉพาะเจ้าของบริษัทหรือเจ้าตัวเท่านั้นที่ดูสิทธิ์ได้");
+        var member = users.FirstOrDefault(u => u.UserId == targetUserId)
+            ?? throw new KeyNotFoundException("ไม่พบสมาชิกในบริษัทนี้");
+        var permissions = _permissionService != null
+            ? await _permissionService.GetUserPermissionsAsync(companyId, targetUserId)
+            : new List<string>();
+        return Ok(new ApiResponse<object>(true, new
+        {
+            member.UserId,
+            member.FullName,
+            member.Email,
+            member.Role,
+            Permissions = permissions.OrderBy(p => p).ToList(),
+        }));
+    }
+}

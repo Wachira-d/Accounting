@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่าฟีเจอร์และเมนู - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .feature-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:10px; margin-bottom:24px; }
+    .feature-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .feature-card.disabled { background:#f1f5f9; opacity:0.7; }
+    .feature-card .name { font-weight:600; color:#1e293b; font-size:13px; }
+    .feature-card .desc { font-size:11px; color:#64748b; margin-top:2px; }
+    .switch { position:relative; display:inline-block; width:42px; height:22px; flex-shrink:0; }
+    .switch input { opacity:0; width:0; height:0; }
+    .switch .slider { position:absolute; cursor:pointer; inset:0; background:#cbd5e1; border-radius:22px; transition:.2s; }
+    .switch .slider:before { content:''; position:absolute; height:16px; width:16px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:.2s; }
+    .switch input:checked + .slider { background:#22c55e; }
+    .switch input:checked + .slider:before { transform:translateX(20px); }
+    .menu-tree { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:14px; max-height:60vh; overflow:auto; }
+    .menu-section { font-weight:700; color:#0f172a; margin:8px 0 4px; padding:6px 8px; background:#f1f5f9; border-radius:6px; }
+    .menu-row { display:flex; align-items:center; gap:8px; padding:6px 10px; }
+    .menu-row label { flex:1; cursor:pointer; font-size:13px; }
+    .menu-row input[type=checkbox] { width:18px; height:18px; cursor:pointer; }
+    .toolbar-sticky { position:sticky; top:0; background:#f8fafc; padding:12px 0; z-index:5; border-bottom:1px solid #e2e8f0; margin-bottom:14px; display:flex; gap:10px; align-items:center; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">⚙️ ตั้งค่าฟีเจอร์และเมนู</h2>
+        <p class="page-subtitle">เจ้าของบริษัทเลือกปิดฟีเจอร์ที่ไม่ใช้ + ซ่อนเมนูที่ไม่ต้องการให้ทีมเห็น (ใช้ได้กับทุกคนในบริษัทนี้)</p>
+      </div>
+    </div>
+
+    <div id="ownerOnlyGate" style="display:none;background:#fef2f2;border:1px solid #fca5a5;color:#7f1d1d;padding:14px;border-radius:8px;margin-bottom:16px">
+      ⛔ เฉพาะเจ้าของกิจการ (Owner) หรือ SystemAdmin เท่านั้นที่ตั้งค่าได้
+    </div>
+
+    <div id="main" style="display:none">
+      <div class="toolbar-sticky">
+        <button class="btn btn-primary" onclick="Page.save()" id="saveBtn">💾 บันทึก</button>
+        <span id="dirtyMark" style="color:#d97706;font-weight:600"></span>
+        <span style="flex:1"></span>
+        <span style="font-size:12px;color:#64748b" id="statusLine"></span>
+      </div>
+
+      <div class="tabs">
+        <div class="tab active" onclick="Page.switchTab('features',this)">🧩 ฟีเจอร์ที่เปิด/ปิด</div>
+        <div class="tab" onclick="Page.switchTab('menus',this)">📂 ซ่อนเมนู</div>
+      </div>
+
+      <!-- Tab 1: Feature toggles -->
+      <div id="tab-features">
+        <div style="background:#eff6ff;border-left:4px solid #3b82f6;padding:10px 14px;border-radius:6px;font-size:12px;color:#1e40af;margin-bottom:14px">
+          💡 ปิดสวิตช์ใดสวิตช์หนึ่ง = เมนูและ API ทุกหน้าที่ใช้ฟีเจอร์นั้นจะหายหมด สำหรับทุกคนในบริษัทนี้.
+          เปิดกลับมาเมื่อไหร่ก็ได้.
+          แสดงเฉพาะฟีเจอร์ที่อยู่ในแพ็คเกจของคุณ — แพ็คเกจไม่รวมจะไม่ขึ้นที่นี่
+        </div>
+        <div id="featureGrid" class="feature-grid">กำลังโหลด...</div>
+      </div>
+
+      <!-- Tab 2: Hide menus -->
+      <div id="tab-menus" style="display:none">
+        <div style="background:#eff6ff;border-left:4px solid #3b82f6;padding:10px 14px;border-radius:6px;font-size:12px;color:#1e40af;margin-bottom:14px">
+          💡 ติ๊กเพื่อ <b>ซ่อน</b> เมนูจาก sidebar — API ยังเปิดอยู่ (ไม่กระทบเอกสารที่มีอยู่) แค่ไม่โชว์ใน nav.
+          เหมาะกับเมนูที่ไม่ใช้แต่ยังอยากให้ feature ทำงานเบื้องหลังได้
+        </div>
+        <div id="menuTree" class="menu-tree">กำลังโหลด...</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // Feature → display label mapping. Keys must match FeatureFlags
+    // enum names from the server. Labels in Thai per Owner persona.
+    const FEATURE_LABELS = {
+      BasicAccounting:       { label:'บัญชีพื้นฐาน',        desc:'GL · journal · งบทดลอง · ผังบัญชี' },
+      AdvancedReporting:     { label:'รายงานขั้นสูง',      desc:'งบดุล · งบกำไรขาดทุน · executive reports' },
+      TaxManagement:         { label:'จัดการภาษี',          desc:'ภพ.30 · ภงด.1/3/53 · e-Tax' },
+      DocumentEngine:        { label:'ระบบเอกสาร',          desc:'ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเสร็จ · PO/PI' },
+      MultiCompany:          { label:'หลายบริษัท',          desc:'จัดการหลายบริษัทใน account เดียว' },
+      APIAccess:             { label:'API Access',          desc:'integrate ระบบนอก ผ่าน REST API' },
+      BulkImport:            { label:'นำเข้าจำนวนมาก',      desc:'CSV / Excel bulk import' },
+      AutoPosting:           { label:'auto-post GL',         desc:'ลง journal อัตโนมัติจาก doc' },
+      EtaxInvoice:           { label:'e-Tax Invoice',       desc:'PDF/A-3 + XML ETDA' },
+      WorkflowEngine:        { label:'Workflow อนุมัติ',     desc:'multi-step approval routing' },
+      AuditLog:              { label:'Audit Log',           desc:'log การเข้าถึง + แก้ไขข้อมูล' },
+      EmailNotification:     { label:'อีเมลแจ้งเตือน',      desc:'ส่งใบกำกับ + แจ้งครบกำหนด' },
+      MultiUser:             { label:'หลายผู้ใช้',          desc:'invite + role-based access' },
+      BankReconciliation:    { label:'กระทบยอดธนาคาร',     desc:'auto-match bank statement' },
+      Inventory:             { label:'คลังสินค้า',          desc:'stock movement · barcode · cost' },
+      FixedAssets:           { label:'สินทรัพย์ถาวร',       desc:'depreciation · disposal · register' },
+      RecurringTransactions: { label:'รายการประจำ',         desc:'auto-create recurring docs' },
+      MultiCurrency:         { label:'หลายสกุลเงิน',        desc:'FX rate · multi-currency posting' },
+      ApprovalWorkflow:      { label:'Approval flow',       desc:'document approval chain' },
+      FileAttachments:       { label:'แนบไฟล์',             desc:'attach รูป / PDF กับเอกสาร' },
+      PurchaseOrders:        { label:'ใบสั่งซื้อ',          desc:'PO → รับสินค้า → PI chain' },
+      ExpenseManagement:     { label:'จัดการเบิกพนักงาน',    desc:'expense claim · §65 ทวิ · approval' },
+      Dashboard:             { label:'แดชบอร์ด',            desc:'KPI · กราฟ · executive summary' },
+      BudgetManagement:      { label:'งบประมาณ',            desc:'budget vs actual · variance' },
+      AgingReport:           { label:'รายงาน aging',        desc:'aging AR / AP · alert' },
+      Payroll:               { label:'เงินเดือน + ลา',       desc:'payroll runs · leave · ภงด.1' },
+      ProjectAccounting:     { label:'บัญชีโครงการ',        desc:'project P&L · cost tracking' },
+      CostCenter:            { label:'cost centre',         desc:'dimension-based GL reporting' },
+      Consolidation:         { label:'งบรวม',               desc:'consolidate หลายบริษัท' },
+      WarehouseManagement:   { label:'หลายคลัง',            desc:'multi-warehouse stock' },
+      LoanManagement:        { label:'จัดการเงินกู้',       desc:'ผ่อนต้น + ดอกเบี้ย' },
+      Commission:            { label:'คอมมิชชัน',           desc:'rule-based commission calc' },
+      AI_Features:           { label:'AI Augmentation',     desc:'DeepSeek + local model train' },
+      DocumentOCR:           { label:'OCR เอกสาร',           desc:'ถ่ายรูปบิล → AI อ่าน → ลง doc' },
+      ReportBuilder:         { label:'สร้างรายงานเอง',      desc:'custom report builder' },
+      CustomerPortal:        { label:'Customer Portal',     desc:'ลูกค้า login ดูเอกสารตัวเอง' },
+      TimeBilling:           { label:'Time billing',        desc:'ลง timesheet → bill ลูกค้า' },
+      OpenBanking:           { label:'Open Banking',        desc:'auto-import bank txns' },
+      Webhook:               { label:'Webhooks',            desc:'push events ออกไปข้างนอก' },
+      RevenueRecognition:    { label:'รับรู้รายได้',         desc:'ASC 606 / TFRS 15' },
+      FPA:                   { label:'FP&A',                desc:'forecast + variance' },
+      EtaxByEmail:           { label:'e-Tax ผ่านอีเมล',     desc:'PDF/A-3 ส่งให้ลูกค้า + RD timestamp' },
+      EtaxDirect:            { label:'e-Tax ตรง RD',        desc:'submit XML ตรง RD API' },
+      CmsWebsiteBuilder:     { label:'CMS เว็บไซต์',        desc:'สร้างเว็บบริษัท / ขายของ' },
+      CmsEcommerce:          { label:'CMS Ecommerce',       desc:'ระบบ shopping cart' },
+    };
+
+    // Menu groups extracted from layout.js navItems — labels match the
+    // sidebar so user toggling here = direct effect on what they see.
+    const MENU_GROUPS = [
+      { title:'หลัก', ids:['dashboard','accountant'] },
+      { title:'ขาย / รายรับ', ids:['documents','revenue-recognition','customer-portal'] },
+      { title:'ซื้อ / รายจ่าย', ids:['purchases','expense-docs','payments'] },
+      { title:'พนักงาน (Self-Service)', ids:['expense','expense-no-receipt','leave-my'] },
+      { title:'POS หน้าร้าน', ids:['pos','pos-packages','pos-modifiers','pos-reports'] },
+      { title:'ลูกค้า & สินค้า', ids:['contacts','products','inventory','warehouses'] },
+      { title:'เงิน & ธนาคาร', ids:['bank','loans','currencies'] },
+      { title:'บัญชี', ids:['chart-of-accounts','journals','general-ledger','fiscal','fixed-assets'] },
+      { title:'ภาษี & e-Filing', ids:['vat','wht','etax','tax-calendar','rd-export'] },
+      { title:'HR & เงินเดือน', ids:['organization','payroll','leave-types','leave-calendar','salary-advance','commission'] },
+      { title:'รายงาน & วิเคราะห์', ids:['executive-reports','reports','budget','aging','arap-analysis','fpa','executive-dashboard'] },
+      { title:'CMS / Multi-Site', ids:['cms-sites','cms-edit','cms-leads','cms-bookings','cms-orders'] },
+      { title:'ตั้งค่า / Admin', ids:['settings','settings-features','users','roles','audit-log','approvals','integrations'] },
+    ];
+
+    const Page = {
+      _data: null,
+      _dirty: false,
+
+      async init() {
+        if (!Layout.init('settings-features')) return;
+        Layout.setTitle('ตั้งค่าฟีเจอร์และเมนู');
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const r = await API.get(`/api/companies/${cid}/owner-config`);
+          this._data = r?.data;
+          document.getElementById('main').style.display = '';
+          this.renderFeatures();
+          this.renderMenus();
+        } catch (e) {
+          if ((e.message || '').includes('Forbid') || e.status === 403) {
+            document.getElementById('ownerOnlyGate').style.display = '';
+          } else {
+            document.getElementById('statusLine').textContent = 'โหลดไม่สำเร็จ: ' + e.message;
+          }
+        }
+      },
+
+      switchTab(t, el) {
+        document.querySelectorAll('.tabs .tab').forEach(x => x.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('tab-features').style.display = t === 'features' ? '' : 'none';
+        document.getElementById('tab-menus').style.display = t === 'menus' ? '' : 'none';
+      },
+
+      renderFeatures() {
+        const plan = new Set(this._data.planFeatures || []);
+        const disabled = new Set(this._data.disabledFeatures || []);
+        const grid = document.getElementById('featureGrid');
+        // Only render features the plan includes — outside-plan features
+        // are hidden (Owner can't enable them from here anyway).
+        const ordered = Object.keys(FEATURE_LABELS).filter(k => plan.has(k));
+        if (!ordered.length) {
+          grid.innerHTML = '<div style="grid-column:1/-1;padding:14px;color:#94a3b8">แพ็คเกจปัจจุบันยังไม่เปิดฟีเจอร์ใดๆ</div>';
+          return;
+        }
+        grid.innerHTML = ordered.map(key => {
+          const meta = FEATURE_LABELS[key];
+          const isOn = !disabled.has(key);
+          return `<div class="feature-card${isOn ? '' : ' disabled'}" data-key="${key}">
+            <div>
+              <div class="name">${meta.label}</div>
+              <div class="desc">${meta.desc}</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" ${isOn ? 'checked' : ''} onchange="Page.toggleFeature('${key}', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>`;
+        }).join('');
+      },
+
+      renderMenus() {
+        const hidden = new Set(this._data.hiddenMenuIds || []);
+        const tree = document.getElementById('menuTree');
+        tree.innerHTML = MENU_GROUPS.map(g => `
+          <div class="menu-section">${g.title}</div>
+          ${g.ids.map(id => `
+            <div class="menu-row">
+              <input type="checkbox" id="hide_${id}" ${hidden.has(id) ? 'checked' : ''} onchange="Page.toggleMenu('${id}', this.checked)">
+              <label for="hide_${id}">${id} — <span style="color:#64748b">ซ่อนเมนูนี้</span></label>
+            </div>`).join('')}
+        `).join('');
+      },
+
+      toggleFeature(key, isOn) {
+        const disabled = new Set(this._data.disabledFeatures || []);
+        if (isOn) disabled.delete(key); else disabled.add(key);
+        this._data.disabledFeatures = Array.from(disabled);
+        this.renderFeatures();
+        this._markDirty();
+      },
+
+      toggleMenu(id, isHidden) {
+        const hidden = new Set(this._data.hiddenMenuIds || []);
+        if (isHidden) hidden.add(id); else hidden.delete(id);
+        this._data.hiddenMenuIds = Array.from(hidden);
+        this._markDirty();
+      },
+
+      _markDirty() {
+        this._dirty = true;
+        document.getElementById('dirtyMark').textContent = '* ยังไม่บันทึก';
+      },
+
+      async save() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const btn = document.getElementById('saveBtn');
+        btn.disabled = true;
+        try {
+          await API.put(`/api/companies/${cid}/owner-config`, {
+            disabledFeatureNames: this._data.disabledFeatures || [],
+            hiddenMenuIds: this._data.hiddenMenuIds || [],
+          });
+          this._dirty = false;
+          document.getElementById('dirtyMark').textContent = '';
+          document.getElementById('statusLine').textContent = '✓ บันทึกแล้ว — รีโหลดเพื่อดูผล';
+          Layout.toast('บันทึกสำเร็จ — รีโหลดเพื่อให้เมนูใหม่มีผล');
+          // Auto-reload after 1.5s so user sees the menu actually change.
+          setTimeout(() => window.location.reload(), 1500);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

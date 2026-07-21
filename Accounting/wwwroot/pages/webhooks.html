@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Webhooks & API Keys - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">Webhooks & API</h2><p class="page-subtitle">เชื่อมต่อระบบภายนอกกับ Next Acc</p></div>
+    </div>
+
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('connection')">ข้อมูลเชื่อมต่อ</button>
+      <button class="tab" onclick="Page.switchTab('webhooks')">Webhooks</button>
+      <button class="tab" onclick="Page.switchTab('apikeys')">API Keys</button>
+    </div>
+
+    <!-- Connection Info Tab -->
+    <div id="tab-connection">
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="card-title" style="margin-bottom:16px">ข้อมูลสำหรับเชื่อมต่อ API</h3>
+        <p style="font-size:13px;color:#64748b;margin-bottom:20px">ใช้ข้อมูลด้านล่างนี้ในการตั้งค่าระบบภายนอกที่ต้องการเชื่อมต่อกับ Next Acc</p>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <!-- Company ID -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <div>
+                <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Company ID</div>
+                <code id="infoCompanyId" style="font-size:14px;color:#1e293b;word-break:break-all">-</code>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page.copyText('infoCompanyId')">คัดลอก</button>
+            </div>
+          </div>
+
+          <!-- Base URL -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <div>
+                <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Base URL</div>
+                <code id="infoBaseUrl" style="font-size:14px;color:#1e293b;word-break:break-all">-</code>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page.copyText('infoBaseUrl')">คัดลอก</button>
+            </div>
+          </div>
+
+          <!-- API Base Path -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <div>
+                <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">API Base Path (Company-scoped)</div>
+                <code id="infoApiBase" style="font-size:14px;color:#1e293b;word-break:break-all">-</code>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page.copyText('infoApiBase')">คัดลอก</button>
+            </div>
+          </div>
+
+          <!-- Auth Header -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Authentication Header</div>
+              <code style="font-size:14px;color:#1e293b">X-Api-Key: {YOUR_API_KEY}</code>
+              <p style="font-size:12px;color:#94a3b8;margin:4px 0 0">สร้าง API Key ได้ที่แท็บ "API Keys" ด้านบน</p>
+            </div>
+          </div>
+
+          <!-- Content-Type -->
+          <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Content-Type</div>
+              <code style="font-size:14px;color:#1e293b">application/json</code>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Common Endpoints -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="card-title" style="margin-bottom:16px">Endpoints หลัก</h3>
+        <div class="table-container">
+          <table class="table">
+            <thead><tr><th>Method</th><th>Endpoint</th><th data-i18n="common.description">คำอธิบาย</th></tr></thead>
+            <tbody id="endpointList"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Quick Test -->
+      <div class="card">
+        <h3 class="card-title" style="margin-bottom:12px">ทดสอบการเชื่อมต่อ</h3>
+        <p style="font-size:13px;color:#64748b;margin-bottom:16px">ใช้คำสั่ง cURL ด้านล่างเพื่อทดสอบ API (แทนที่ YOUR_API_KEY ด้วย API Key ของคุณ)</p>
+        <div style="background:#1e293b;color:#e2e8f0;padding:16px;border-radius:8px;font-family:monospace;font-size:13px;overflow-x:auto;white-space:pre;line-height:1.6" id="curlExample">-</div>
+        <button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="Page.copyText('curlExample')">คัดลอก cURL</button>
+      </div>
+    </div>
+
+    <!-- Webhooks Tab -->
+    <div id="tab-webhooks" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">Webhooks</h2><p class="page-subtitle">รับการแจ้งเตือนแบบ Real-time เมื่อเกิดเหตุการณ์ในระบบ</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateWebhook()">+ สร้าง Webhook</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>URL</th><th>Events</th><th data-i18n="common.status">สถานะ</th><th>ส่งล่าสุด</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="webhookBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- API Keys Tab -->
+    <div id="tab-apikeys" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">API Keys (acc_)</h2><p class="page-subtitle">API Key สำหรับให้สคริปต์/automation ของคุณเรียก REST API (เช่น OCR สร้าง-อนุมัติเอกสาร, n8n)</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateApiKey()">+ สร้าง API Key</button>
+      </div>
+      <div style="font-size:12.5px;color:#0c4a6e;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 14px;margin-bottom:14px;line-height:1.7">
+        📌 <b>นี่คือ acc_ key</b> — ผูกกับบัญชีผู้ใช้ของคุณ ใช้สร้าง/อนุมัติเอกสารแทนคุณได้ (เช่น OCR).
+        ส่ง header <code>X-Api-Key: acc_...</code> ทุก request. ต้องเปิด "API Access" ที่
+        <a href="/pages/settings.html" style="color:#0369a1;font-weight:600">ตั้งค่า</a> ก่อนสร้าง.<br>
+        ถ้าต้องการเชื่อม<u>ระบบภายนอก</u> (POS/PMS/ERP) ให้ sync ข้อมูลเข้า + mapping บัญชี → ใช้ int_ key ที่
+        <a href="/pages/integrations.html" style="color:#0369a1;font-weight:600">🔗 เชื่อมต่อระบบ</a>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th data-i18n="common.name">ชื่อ</th><th>Key (prefix)</th><th>สร้างเมื่อ</th><th>ใช้ล่าสุด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="apikeyBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Webhook Modal -->
+    <div class="modal-overlay" id="webhookModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title" id="whTitle">สร้าง Webhook</h3><button class="modal-close" onclick="Layout.closeModal('webhookModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="whId">
+          <div class="form-group"><label class="form-label">URL *</label><input type="url" class="form-input" id="whUrl" placeholder="https://your-server.com/webhook"></div>
+          <div class="form-group"><label class="form-label">Secret (สำหรับ verify signature)</label><input type="text" class="form-input" id="whSecret" placeholder="webhook_secret_key"></div>
+          <div class="form-group"><label class="form-label">Events ที่ต้องการรับ *</label>
+            <div id="whEvents" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:200px;overflow-y:auto"></div>
+          </div>
+          <div class="form-group"><label class="form-label"><input type="checkbox" id="whActive" checked> เปิดใช้งาน</label></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('webhookModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveWebhook()" data-i18n="common.save">บันทึก</button></div>
+      </div>
+    </div>
+
+    <!-- Deliveries Modal -->
+    <div class="modal-overlay" id="deliveryModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title">ประวัติการส่ง</h3><button class="modal-close" onclick="Layout.closeModal('deliveryModal')">&times;</button></div>
+        <div class="modal-body" id="deliveryContent" style="max-height:60vh;overflow-y:auto"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('deliveryModal')" data-i18n="common.close">ปิด</button></div>
+      </div>
+    </div>
+
+    <!-- API Key Modal -->
+    <div class="modal-overlay" id="apikeyModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">สร้าง API Key</h3><button class="modal-close" onclick="Layout.closeModal('apikeyModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="akName" placeholder="เช่น Production Key, Test Key"></div>
+          <div class="form-group"><label class="form-label">วันหมดอายุ</label><input type="date" class="form-input" id="akExpiry"></div>
+          <div class="form-group"><label class="form-label">สิทธิ์</label>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <label><input type="checkbox" id="akPermRead" checked> อ่านข้อมูล (Read)</label>
+              <label><input type="checkbox" id="akPermWrite"> เขียนข้อมูล (Write)</label>
+              <label><input type="checkbox" id="akPermDelete"> ลบข้อมูล (Delete)</label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('apikeyModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveApiKey()">สร้าง</button></div>
+      </div>
+    </div>
+
+    <!-- Key Created Modal -->
+    <div class="modal-overlay" id="keyCreatedModal">
+      <div class="modal" style="max-width:550px">
+        <div class="modal-header"><h3 class="modal-title">API Key สร้างเรียบร้อย</h3><button class="modal-close" onclick="Layout.closeModal('keyCreatedModal')">&times;</button></div>
+        <div class="modal-body">
+          <div style="background:var(--warning-50,#FFFBEB);border:1px solid var(--warning);padding:16px;border-radius:8px;margin-bottom:16px">
+            <p class="text-sm font-medium" style="color:var(--warning)">สำคัญ: คัดลอก API Key นี้ไว้ เพราะจะไม่แสดงอีกครั้ง</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">API Key</label>
+            <div style="display:flex;gap:8px">
+              <input type="text" class="form-input" id="createdKeyValue" readonly style="font-family:monospace;font-size:12px">
+              <button class="btn btn-secondary" onclick="Page.copyKey()">คัดลอก</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-primary" onclick="Layout.closeModal('keyCreatedModal')">เข้าใจแล้ว</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  eventTypes: [],
+
+  init() {
+    if (!Layout.init('webhooks')) return;
+    Layout.setTitle('Webhooks & API');
+    this.renderConnectionInfo();
+    this.loadEventTypes();
+  },
+
+  switchTab(tab) {
+    ['connection','webhooks','apikeys'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['connection','webhooks','apikeys'][i] === tab));
+    if (tab === 'webhooks') this.loadWebhooks();
+    if (tab === 'apikeys') this.loadApiKeys();
+  },
+
+  renderConnectionInfo() {
+    const companyId = Layout.getCompanyId();
+    const origin = window.location.origin;
+    const apiBase = `${origin}/api/companies/${companyId}`;
+
+    document.getElementById('infoCompanyId').textContent = companyId || '(ยังไม่ได้เลือกบริษัท)';
+    document.getElementById('infoBaseUrl').textContent = origin;
+    document.getElementById('infoApiBase').textContent = `${origin}/api/companies/${companyId}/`;
+
+    // Endpoints table — verified against actual controller routes
+    const endpoints = [
+      // Dashboard
+      ['GET', '/dashboard', 'ข้อมูลแดชบอร์ด (สรุปรายรับ-จ่าย)'],
+      // Chart of Accounts
+      ['GET', '/accounting/accounts', 'ดึงผังบัญชีทั้งหมด'],
+      ['POST', '/accounting/accounts', 'สร้างบัญชีใหม่'],
+      // Journal Entries
+      ['GET', '/accounting/journals?page=1&pageSize=20', 'ดึงสมุดรายวัน (รองรับ pagination)'],
+      ['POST', '/accounting/journals', 'สร้างรายการบัญชี (Journal Entry)'],
+      ['POST', '/accounting/journals/{entryId}/post', 'อนุมัติรายการบัญชี'],
+      // Documents (ใบแจ้งหนี้, ใบเสร็จ, ใบกำกับภาษี)
+      ['GET', '/document?type=Invoice', 'ดึงเอกสารตามประเภท (Invoice, Receipt, PurchaseOrder, ...)'],
+      ['POST', '/document', 'สร้างเอกสารใหม่'],
+      // Contacts (ลูกค้า/ผู้จำหน่าย)
+      ['GET', '/document/contacts', 'ดึงรายชื่อลูกค้า/ผู้จำหน่าย'],
+      ['POST', '/document/contacts', 'สร้างผู้ติดต่อใหม่'],
+      // Products
+      ['GET', '/product', 'ดึงรายการสินค้า/บริการ'],
+      ['POST', '/product', 'สร้างสินค้า/บริการ'],
+      // Payments
+      ['GET', '/document/payments', 'ดึงรายการชำระเงิน'],
+      ['POST', '/document/payments', 'สร้างรายการชำระเงิน'],
+      // Reports
+      ['GET', '/accounting/reports/trial-balance?asOfDate=2025-12-31', 'งบทดลอง'],
+      ['GET', '/accounting/reports/balance-sheet?asOfDate=2025-12-31', 'งบแสดงฐานะการเงิน'],
+      ['GET', '/accounting/reports/profit-loss?fromDate=2025-01-01&toDate=2025-12-31', 'งบกำไรขาดทุน'],
+      ['GET', '/accounting/reports/general-ledger?fromDate=2025-01-01&toDate=2025-12-31', 'บัญชีแยกประเภท'],
+      ['GET', '/accounting/reports/cash-flow?fromDate=2025-01-01&toDate=2025-12-31', 'งบกระแสเงินสด'],
+      // Settings & Webhooks
+      ['GET', '/settings', 'ดึงการตั้งค่าบริษัท'],
+      ['GET', '/webhooks', 'ดึงรายการ Webhooks'],
+    ];
+
+    document.getElementById('endpointList').innerHTML = endpoints.map(([method, path, desc]) => {
+      const color = method === 'GET' ? '#059669' : method === 'POST' ? '#2563EB' : method === 'PUT' ? '#D97706' : '#DC2626';
+      return `<tr>
+        <td><span style="font-family:monospace;font-weight:700;color:${color};font-size:13px">${method}</span></td>
+        <td style="font-family:monospace;font-size:12px;word-break:break-all">${apiBase}${path}</td>
+        <td class="text-sm">${desc}</td>
+      </tr>`;
+    }).join('');
+
+    // cURL example
+    document.getElementById('curlExample').textContent =
+`curl -X GET "${apiBase}/accounting/accounts" \\
+  -H "X-Api-Key: YOUR_API_KEY" \\
+  -H "Content-Type: application/json"`;
+  },
+
+  copyText(id) {
+    const el = document.getElementById(id);
+    const text = el.textContent || el.innerText;
+    navigator.clipboard.writeText(text).then(() => Layout.toast('คัดลอกแล้ว')).catch(() => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      document.execCommand('copy');
+      Layout.toast('คัดลอกแล้ว');
+    });
+  },
+
+  // ===== Webhooks =====
+  async loadEventTypes() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getWebhookEventTypes();
+      this.eventTypes = res.data || [];
+    } catch (err) {
+      this.eventTypes = ['document.created','document.approved','document.paid','payment.received','payment.created','invoice.overdue','contact.created','expense.submitted','expense.approved','journal.posted'];
+    }
+  },
+
+  async loadWebhooks() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getWebhooks();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('webhookBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มี Webhook</td></tr>'; return; }
+      tbody.innerHTML = items.map(w => `<tr>
+        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis"><span class="font-medium text-sm" style="font-family:monospace">${Layout.esc(w.url || '-')}</span></td>
+        <td><span class="text-sm">${Layout.esc((w.events || w.eventTypes || []).slice(0,3).join(', '))}${(w.events||w.eventTypes||[]).length > 3 ? '...' : ''}</span></td>
+        <td>${Layout.statusBadge(w.isActive !== false ? 'Active' : 'Inactive')}</td>
+        <td class="text-sm">${w.lastDeliveryAt ? Layout.date(w.lastDeliveryAt) : 'ยังไม่เคยส่ง'}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="Page.editWebhook('${w.id}')" data-i18n="common.edit">แก้ไข</button>
+          <button class="btn btn-sm btn-info" onclick="Page.testWebhook('${w.id}')">ทดสอบ</button>
+          <button class="btn btn-sm btn-secondary" onclick="Page.viewDeliveries('${w.id}')">ประวัติ</button>
+          <button class="btn btn-sm btn-danger" onclick="Page.deleteWebhook('${w.id}')" data-i18n="common.delete">ลบ</button>
+        </td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openCreateWebhook() {
+    document.getElementById('whTitle').textContent = 'สร้าง Webhook';
+    document.getElementById('whId').value = '';
+    document.getElementById('whUrl').value = '';
+    document.getElementById('whSecret').value = '';
+    document.getElementById('whActive').checked = true;
+    const events = this.eventTypes.length ? this.eventTypes : ['document.created','document.approved','payment.received'];
+    document.getElementById('whEvents').innerHTML = events.map(e => `<label class="text-sm"><input type="checkbox" value="${Layout.esc(e.name||e)}" checked> ${Layout.esc(e.displayName||e.name||e)}</label>`).join('');
+    Layout.openModal('webhookModal');
+  },
+
+  editWebhook(id) {
+    document.getElementById('whTitle').textContent = 'แก้ไข Webhook';
+    document.getElementById('whId').value = id;
+    Layout.openModal('webhookModal');
+  },
+
+  async saveWebhook() {
+    const api = Layout.api(); if (!api) return;
+    const id = document.getElementById('whId').value;
+    const checkedEvents = [...document.querySelectorAll('#whEvents input:checked')].map(cb => cb.value);
+    const data = { url: document.getElementById('whUrl').value, secret: document.getElementById('whSecret').value, events: checkedEvents, isActive: document.getElementById('whActive').checked };
+    if (!data.url || !checkedEvents.length) { Layout.toast('กรุณากรอก URL และเลือก Event', 'error'); return; }
+    try {
+      if (id) await api.updateWebhook(id, data); else await api.createWebhook(data);
+      Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้าง Webhook สำเร็จ');
+      Layout.closeModal('webhookModal'); this.loadWebhooks();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async testWebhook(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.testWebhook(id); Layout.toast('ส่งทดสอบสำเร็จ'); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async deleteWebhook(id) {
+    if (!confirm('ลบ Webhook นี้?')) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.deleteWebhook(id); Layout.toast('ลบสำเร็จ'); this.loadWebhooks(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async viewDeliveries(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getWebhookDeliveries(id);
+      const items = res.data?.items || res.data || [];
+      document.getElementById('deliveryContent').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>Event</th><th>HTTP Status</th><th>Response Time</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+      <tbody>${items.map(d => `<tr>
+        <td class="text-sm">${new Date(d.timestamp || d.createdAt).toLocaleString('th-TH')}</td>
+        <td class="text-sm">${Layout.esc(d.eventType || '-')}</td>
+        <td><span class="badge ${d.statusCode >= 200 && d.statusCode < 300 ? 'badge-success' : 'badge-danger'}">${d.statusCode || '-'}</span></td>
+        <td class="text-sm">${d.responseTime || d.duration || '-'}ms</td>
+        <td>${d.statusCode >= 400 || !d.statusCode ? `<button class="btn btn-sm btn-secondary" onclick="Page.retryDelivery('${d.id}')">ส่งใหม่</button>` : ''}</td>
+      </tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีประวัติการส่ง</p>';
+      Layout.openModal('deliveryModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async retryDelivery(id) {
+    const api = Layout.api(); if (!api) return;
+    try { await api.retryDelivery(id); Layout.toast('ส่งใหม่สำเร็จ'); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ===== API Keys =====
+  async loadApiKeys() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getApiKeys();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('apikeyBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มี API Key</td></tr>'; return; }
+      tbody.innerHTML = items.map(k => {
+        // DTO ส่ง k.status (enum string: "Active"/"Revoked"/"Expired") —
+        // เดิม badge เช็ค k.isActive/k.isRevoked ที่ไม่มีอยู่จริง → แสดง
+        // "ใช้งาน" เสมอ ทำให้ key ที่เพิกถอนแล้วดูเหมือนยังอยู่
+        const isActive = k.status === 'Active';
+        return `<tr${isActive ? '' : ' style="opacity:.55"'}>
+        <td class="font-medium">${Layout.esc(k.name || '-')}</td>
+        <td><code style="background:var(--gray-100);padding:2px 6px;border-radius:4px;font-size:12px">${Layout.esc(k.keyPrefix || k.key?.substring(0,12) || '***')}...</code></td>
+        <td>${Layout.date(k.createdAt)}</td>
+        <td>${k.lastUsedAt ? Layout.date(k.lastUsedAt) : 'ยังไม่เคยใช้'}</td>
+        <td>${Layout.statusBadge(isActive ? 'Active' : 'Inactive')}${k.status === 'Revoked' ? ' <span style="font-size:11px;color:#dc2626">เพิกถอนแล้ว</span>' : k.status === 'Expired' ? ' <span style="font-size:11px;color:#d97706">หมดอายุ</span>' : ''}</td>
+        <td>${isActive ? `<button class="btn btn-sm btn-danger" onclick="Page.revokeApiKey('${k.id}')">เพิกถอน</button>` : '<span class="text-gray-400" style="font-size:12px">—</span>'}</td>
+      </tr>`; }).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openCreateApiKey() {
+    document.getElementById('akName').value = '';
+    document.getElementById('akExpiry').value = '';
+    Layout.openModal('apikeyModal');
+  },
+
+  async saveApiKey() {
+    const api = Layout.api(); if (!api) return;
+    // DTO CreateApiKeyRequest = flat canRead/canWrite/canDelete + allowedFeatures
+    // (เดิมส่ง permissions:{} ผิด shape → key ถูกสร้างด้วย default CanWrite=false
+    // → เรียก OCR สร้าง/อนุมัติเอกสารไม่ได้). allowedFeatures = APIAccess(32)
+    // | DocumentEngine(8) = 40 สำหรับงาน REST/OCR
+    const data = {
+      name: document.getElementById('akName').value,
+      expiresAt: document.getElementById('akExpiry').value || null,
+      allowedFeatures: 40,
+      canRead: document.getElementById('akPermRead').checked,
+      canWrite: document.getElementById('akPermWrite').checked,
+      canDelete: document.getElementById('akPermDelete').checked,
+    };
+    if (!data.name) { Layout.toast('กรุณากรอกชื่อ', 'error'); return; }
+    try {
+      const res = await api.createApiKey(data);
+      const key = res.data?.key || res.data?.apiKey || '';
+      Layout.closeModal('apikeyModal');
+      if (key) {
+        document.getElementById('createdKeyValue').value = key;
+        Layout.openModal('keyCreatedModal');
+      }
+      Layout.toast('สร้าง API Key สำเร็จ');
+      this.loadApiKeys();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async revokeApiKey(id) {
+    if (!confirm('เพิกถอน API Key นี้? จะไม่สามารถใช้งานได้อีก')) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.revokeApiKey(id); Layout.toast('เพิกถอนสำเร็จ'); this.loadApiKeys(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  copyKey() {
+    const input = document.getElementById('createdKeyValue');
+    input.select();
+    document.execCommand('copy');
+    Layout.toast('คัดลอก API Key แล้ว');
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

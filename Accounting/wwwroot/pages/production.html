@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>งานผลิต & BOM — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">งานผลิต (Production Orders) & BOM</h2>
+        <p class="page-subtitle">Bill of Materials → production order → backflush components at WAC → produce finished goods</p>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="Page.openBom()">+ สร้างสูตรการผลิต (BOM)</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงานผลิต</button>
+      </div>
+    </div>
+
+    <!-- BOM list -->
+    <div class="card">
+      <h3>สูตรการผลิต (Bill of Materials)</h3>
+      <p class="page-subtitle" style="margin:2px 0 10px">กำหนดว่าสินค้า 1 ชิ้นใช้วัตถุดิบอะไรบ้าง — ต้องมี BOM ก่อนจึงสร้างงานผลิตได้</p>
+      <div class="table-container">
+        <table class="data-table">
+          <thead><tr><th>สินค้าที่ผลิต</th><th>เวอร์ชัน</th><th>จำนวนวัตถุดิบ</th><th>สถานะ</th></tr></thead>
+          <tbody id="bomsBody"><tr><td colspan="4" style="text-align:center;padding:24px;color:#94a3b8">โหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3>รายการงานผลิต</h3>
+      <div class="table-container" style="margin-top:12px">
+        <table class="data-table">
+          <thead><tr><th>เลขที่</th><th>แผน</th><th>ผลิตเสร็จ</th><th>ต้นทุนรวม</th><th>สถานะ</th><th>การจัดการ</th></tr></thead>
+          <tbody id="ordersBody"><tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">โหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Create production order -->
+    <div id="createModal" class="modal-overlay">
+      <div class="modal" style="max-width:560px;width:90%">
+        <h3 style="margin-top:0">สร้างงานผลิต</h3>
+        <label>เลขที่งาน</label><input id="orderNumber" class="form-input" placeholder="PROD-2025-001">
+        <label>สูตรการผลิต (BOM) *</label>
+        <select id="bomId" class="form-select"><option value="">— เลือก BOM —</option></select>
+        <div id="bomHint" style="font-size:11px;color:#94a3b8;margin-top:2px"></div>
+        <label>จำนวนวางแผน</label><input id="plannedQty" type="number" class="form-input" min="1" value="1">
+        <label>วันที่เริ่ม</label><input id="plannedStart" type="date" class="form-input">
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeCreate()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.create()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create BOM -->
+    <div id="bomModal" class="modal-overlay">
+      <div class="modal" style="max-width:680px;width:92%">
+        <h3 style="margin-top:0">สร้างสูตรการผลิต (BOM)</h3>
+        <label>สินค้าที่ผลิต (Finished good) *</label>
+        <select id="bomParent" class="form-select"><option value="">— เลือกสินค้า —</option></select>
+        <label style="margin-top:8px">เวอร์ชัน</label>
+        <input id="bomVersion" class="form-input" placeholder="v1" value="v1">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
+          <strong>วัตถุดิบ (Components) — ใช้ทำสินค้า 1 ชิ้น</strong>
+          <button class="btn btn-sm btn-secondary" onclick="Page.addBomLine()">+ เพิ่มวัตถุดิบ</button>
+        </div>
+        <div id="bomLines"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeBom()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.createBom()">บันทึก BOM</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _products: [],
+      _boms: [],
+      async init() {
+        if (!Layout.init('production')) return;
+        Layout.setTitle('งานผลิต');
+        document.getElementById('plannedStart').value = new Date().toISOString().slice(0,10);
+        await this.loadProducts();
+        await this.loadBoms();
+        await this.load();
+      },
+      async loadProducts() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/product`);
+          this._products = (r.data?.items || r.data || []);
+        } catch (e) { this._products = []; }
+      },
+      _productOptions(selectedId) {
+        return '<option value="">— เลือกสินค้า —</option>' + this._products.map(p =>
+          `<option value="${p.id}" ${p.id===selectedId?'selected':''}>${this.esc(p.code||'')} ${this.esc(p.name||'')}</option>`).join('');
+      },
+      esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
+      async loadBoms() {
+        const tbody = document.getElementById('bomsBody');
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/mfg/boms`);
+          this._boms = r.data || [];
+          if (this._boms.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:#94a3b8">ยังไม่มีสูตรการผลิต — กด "+ สร้างสูตรการผลิต (BOM)" ก่อน</td></tr>';
+          } else {
+            tbody.innerHTML = this._boms.map(b => `<tr>
+              <td>${this.esc(b.parentProductCode||'')} ${this.esc(b.parentProductName||'')}</td>
+              <td>${this.esc(b.version)}</td>
+              <td>${b.componentCount} รายการ</td>
+              <td>${b.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+            </tr>`).join('');
+          }
+          // Fill the production-order BOM dropdown.
+          const sel = document.getElementById('bomId');
+          sel.innerHTML = '<option value="">— เลือก BOM —</option>' + this._boms.filter(b=>b.isActive).map(b =>
+            `<option value="${b.id}">${this.esc(b.parentProductName)} (${this.esc(b.version)}, ${b.componentCount} วัตถุดิบ)</option>`).join('');
+        } catch (e) { tbody.innerHTML = `<tr><td colspan="4" style="color:#dc2626;text-align:center">${this.esc(e.message)}</td></tr>`; }
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2 }); },
+      async load() {
+        const tbody = document.getElementById('ordersBody');
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/mfg/production-orders`);
+          const rows = r.data || [];
+          if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">ยังไม่มีงานผลิต</td></tr>'; return;
+          }
+          tbody.innerHTML = rows.map(o => `<tr>
+            <td>${o.orderNumber}</td><td>${this._fmt(o.plannedQty)}</td>
+            <td>${this._fmt(o.completedQty)}</td>
+            <td style="text-align:right">${this._fmt(o.cumulativeComponentCost)}</td>
+            <td>${o.status}</td>
+            <td>${o.status === 'Planned' ? `<button class="btn btn-sm btn-warning" onclick="Page.checkShortage('${o.id}')">เช็ค shortage</button> <button class="btn btn-sm btn-success" onclick="Page.release('${o.id}')">ปล่อยผลิต</button>` : o.status === 'Released' ? `<button class="btn btn-sm btn-success" onclick="Page.complete('${o.id}', ${o.plannedQty})">บันทึกผลิตเสร็จ</button>` : '-'}</td>
+          </tr>`).join('');
+        } catch (e) { tbody.innerHTML = `<tr><td colspan="6" style="color:#dc2626;text-align:center">${e.message}</td></tr>`; }
+      },
+      openCreate() {
+        if (!this._boms.filter(b=>b.isActive).length) {
+          Layout.toast('ยังไม่มีสูตรการผลิต (BOM) — สร้าง BOM ก่อน', 'error');
+          this.openBom();
+          return;
+        }
+        // Auto-suggest an order number.
+        const seq = (this._orderSeq || 0) + 1;
+        document.getElementById('orderNumber').value =
+          'PROD-' + new Date().getFullYear() + '-' + String(Date.now()).slice(-5);
+        Layout.openModal("createModal");
+      },
+      closeCreate() { Layout.closeModal("createModal"); },
+      async create() {
+        const cid = Layout.getCompanyId();
+        const bomId = document.getElementById('bomId').value;
+        const orderNumber = document.getElementById('orderNumber').value.trim();
+        const plannedQty = +document.getElementById('plannedQty').value;
+        if (!bomId) { Layout.toast('เลือกสูตรการผลิต (BOM) ก่อน', 'error'); return; }
+        if (!orderNumber) { Layout.toast('กรอกเลขที่งาน', 'error'); return; }
+        if (!plannedQty || plannedQty <= 0) { Layout.toast('จำนวนวางแผนต้องมากกว่า 0', 'error'); return; }
+        try {
+          await API.post(`/api/companies/${cid}/mfg/production-orders`, {
+            orderNumber, bomId, plannedQty,
+            plannedStartAt: document.getElementById('plannedStart').value,
+            notes: null,
+          });
+          Layout.toast('สร้างงานผลิตสำเร็จ');
+          this.closeCreate();
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ── BOM management ────────────────────────────────────────────
+      openBom() {
+        if (!this._products.length) { Layout.toast('ยังไม่มีสินค้าในระบบ — เพิ่มสินค้าก่อน', 'error'); return; }
+        document.getElementById('bomParent').innerHTML = this._productOptions('');
+        document.getElementById('bomVersion').value = 'v1';
+        document.getElementById('bomLines').innerHTML = '';
+        this.addBomLine();
+        Layout.openModal("bomModal");
+      },
+      closeBom() { Layout.closeModal("bomModal"); },
+      addBomLine() {
+        const wrap = document.getElementById('bomLines');
+        const row = document.createElement('div');
+        row.className = 'bomLineRow';
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px';
+        row.innerHTML = `
+          <select class="form-select bomLineProduct" style="flex:1">${this._productOptions('')}</select>
+          <input type="number" class="form-input bomLineQty" placeholder="จำนวน" min="0" step="0.0001" style="width:110px">
+          <button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('.bomLineRow').remove()" title="ลบ">×</button>`;
+        wrap.appendChild(row);
+      },
+      async createBom() {
+        const cid = Layout.getCompanyId();
+        const parentId = document.getElementById('bomParent').value;
+        if (!parentId) { Layout.toast('เลือกสินค้าที่ผลิตก่อน', 'error'); return; }
+        const lines = [];
+        document.querySelectorAll('#bomLines .bomLineRow').forEach(r => {
+          const pid = r.querySelector('.bomLineProduct').value;
+          const qty = +r.querySelector('.bomLineQty').value;
+          if (pid && qty > 0) lines.push({ componentProductId: pid, quantityPerParent: qty, notes: null });
+        });
+        if (!lines.length) { Layout.toast('เพิ่มวัตถุดิบอย่างน้อย 1 รายการ (พร้อมจำนวน)', 'error'); return; }
+        if (lines.some(l => l.componentProductId === parentId)) { Layout.toast('วัตถุดิบต้องไม่ใช่สินค้าที่ผลิตเอง', 'error'); return; }
+        try {
+          await API.post(`/api/companies/${cid}/mfg/boms`, {
+            parentProductId: parentId,
+            version: document.getElementById('bomVersion').value.trim() || 'v1',
+            notes: null, lines,
+          });
+          Layout.toast('สร้าง BOM สำเร็จ');
+          this.closeBom();
+          await this.loadBoms();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async checkShortage(id) {
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await API.get(`/api/companies/${cid}/mfg/production-orders/${id}/shortages`);
+          const s = r.data.shortages || [];
+          if (s.length === 0) { Layout.toast('วัตถุดิบครบ พร้อมผลิต'); return; }
+          alert(`ขาด component:\n${s.map(x => `${x.productName}: ขาด ${x.shortage}`).join('\n')}`);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async release(id) {
+        const cid = Layout.getCompanyId();
+        try { await API.post(`/api/companies/${cid}/mfg/production-orders/${id}/release`, {}); await this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async complete(id, planned) {
+        const qty = +(prompt('จำนวนที่ผลิตเสร็จ', planned) || 0);
+        if (!qty) return;
+        const cid = Layout.getCompanyId();
+        try {
+          await API.post(`/api/companies/${cid}/mfg/production-orders/${id}/complete`,
+            { completedQty: qty, completedAt: new Date().toISOString() });
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

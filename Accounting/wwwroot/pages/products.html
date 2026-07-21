@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สินค้า/บริการ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">สินค้า/บริการ</h2><p class="page-subtitle">จัดการรายการสินค้า บริการ และสต็อก</p></div>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="Page.showValuation()">มูลค่าสินค้าคงเหลือ</button>
+        <button class="btn btn-secondary" onclick="Page.showStockCount()">ตรวจนับสต็อก</button>
+        <button class="btn btn-secondary" onclick="Page.showCategories()">หมวดหมู่</button>
+        <div class="dropdown-wrap" style="position:relative">
+          <button class="btn btn-secondary" onclick="Import.toggleMenu(this)">นำเข้า ▾</button>
+          <div class="dropdown-menu" style="display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid var(--gray-200);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.open()">📄 นำเข้า CSV/Excel</a>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.downloadTemplate()">⬇ ดาวน์โหลด Template</a>
+            <div style="border-top:1px solid var(--gray-200);margin:4px 0"></div>
+            <a class="dropdown-item" href="/pages/document-scan.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">📸 สแกนใบเสร็จ / ใบกำกับ (OCR) → สต็อก/วัสดุ/สินทรัพย์</a>
+            <a class="dropdown-item" href="/pages/supplies.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">🧻 ไปหน้าวัสดุสิ้นเปลือง</a>
+            <a class="dropdown-item" href="/pages/fixed-assets.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">🏢 ไปหน้าสินทรัพย์ถาวร</a>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — เพิ่มสินค้า/บริการ ตั้งราคา ผูกบาร์โค้ด เลือกประเภท (สินค้า/บริการ/ไม่ติดสต็อก) และบัญชีรายได้-สต๊อก">+ เพิ่มสินค้า</button>
+      </div>
+    </div>
+    <div class="toolbar"
+         data-tour-step="2"
+         data-tour-text="ค้นหา/กรอง · กดที่แถวเพื่อดูรายละเอียด แก้ราคา ปรับสต๊อก หรือดูประวัติการเคลื่อนไหว">
+      <input type="text" class="search-input" placeholder="ค้นหาสินค้า..." id="searchInput" oninput="Page.load()">
+      <select class="filter-select" id="typeFilter" onchange="Page.load()">
+        <option value="">ทุกประเภท</option>
+        <option value="Product">สินค้า</option>
+        <option value="Service">บริการ</option>
+        <option value="NonStock">ไม่ติดตามสต็อก</option>
+      </select>
+    </div>
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th data-i18n="common.type">ประเภท</th><th>หมวด</th><th>หน่วย</th><th class="text-right">ราคาขาย</th><th class="text-right">ต้นทุน</th><th class="text-right">คงเหลือ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มสินค้า</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="editId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสสินค้า *</label><input type="text" class="form-input" id="fCode"></div>
+            <div class="form-group"><label class="form-label">ประเภท *</label>
+              <select class="form-select" id="fType"><option value="Product">สินค้า</option><option value="Service">บริการ</option><option value="NonStock">ไม่ติดตามสต็อก</option></select>
+            </div>
+          </div>
+          <div class="form-group"><label class="form-label">ชื่อสินค้า (ไทย) *</label><input type="text" class="form-input" id="fName"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อ (อังกฤษ)</label><input type="text" class="form-input" id="fNameEn"></div>
+            <div class="form-group"><label class="form-label">หมวดหมู่
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestProductCategory()">🤖 ให้ AI เลือก</button>
+              </label>
+              <input type="text" class="form-input" id="fCategory" placeholder="พิมพ์เอง หรือกด AI">
+              <div id="categoryHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">หน่วยหลัก *</label><input type="text" class="form-input" id="fUnit" value="ชิ้น"></div>
+            <div class="form-group"><label class="form-label">SKU</label><input type="text" class="form-input" id="fSku"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ราคาขาย *</label><input type="number" class="form-input" id="fSellPrice" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ต้นทุน</label><input type="number" class="form-input" id="fCostPrice" step="0.01" value="0"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">อัตรา VAT</label>
+              <select class="form-select" id="fVat"><option value="7">7%</option><option value="0">0% (ยกเว้น)</option></select>
+            </div>
+            <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="fVatIncl"><label for="fVatIncl">ราคารวม VAT แล้ว</label></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group form-checkbox"><input type="checkbox" id="fTrackStock" checked><label for="fTrackStock">ติดตามสต็อก</label></div>
+            <div class="form-group"><label class="form-label">สต็อกขั้นต่ำ
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestReorderPoint()" title="คำนวณจากการใช้งาน 90 วันล่าสุด">🤖 ให้ AI คำนวณ</button>
+              </label>
+              <input type="number" class="form-input" id="fMinStock" value="0" step="0.01">
+              <div id="reorderHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+            </div>
+          </div>
+          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+          <div class="form-group">
+            <label class="form-label">🍳 สถานีพิมพ์ (POS multi-printer) <span style="font-size:11px;color:#64748b;font-weight:400">— ใช้ตอนพิมพ์ใบออเดอร์ส่งครัว/บาร์</span></label>
+            <select class="form-select" id="fPrintStation">
+              <option value="">— ไม่ระบุ (พิมพ์ที่แคชเชียร์ปกติ) —</option>
+              <option value="Kitchen-Hot">🔥 ครัวร้อน (Kitchen-Hot)</option>
+              <option value="Kitchen-Cold">❄️ ครัวเย็น (Kitchen-Cold)</option>
+              <option value="Bar">🍹 บาร์ (Bar)</option>
+              <option value="Drinks">🥤 เครื่องดื่ม (Drinks)</option>
+            </select>
+          </div>
+
+          <!-- Image gallery: only enabled after save (need productId).
+               First image becomes the storefront thumbnail. -->
+          <div class="form-group" id="fImagesGroup" style="display:none">
+            <label class="form-label">รูปสินค้า <span style="font-size:11px;color:#64748b;font-weight:400">(รูปแรก = รูปหน้าปก · ระบบบีบอัดอัตโนมัติ)</span></label>
+            <div id="fImagesGrid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
+            <label class="btn btn-ghost btn-sm" for="fImageInput" style="cursor:pointer">📷 เพิ่มรูป</label>
+            <input type="file" id="fImageInput" accept="image/jpeg,image/png,image/webp,image/gif" style="display:none" onchange="Page.uploadImage(this.files[0])">
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px">รองรับ JPG/PNG/WebP/GIF · บีบอัดเป็น JPEG ≤1200px อัตโนมัติ</div>
+          </div>
+          <div class="form-group" id="fImagesHint" style="font-size:12px;color:#64748b">
+            💡 หลังบันทึกข้อมูลสินค้าครั้งแรก จะมีช่องให้อัพโหลดรูปสินค้า
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal" style="max-width:850px">
+        <div class="modal-header"><h3 class="modal-title" id="dtTitle">รายละเอียดสินค้า</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
+        <div class="modal-body" id="dtBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
+          <button class="btn btn-ghost" onclick="Page.openAdjustStock()">ปรับสต็อก</button>
+          <button class="btn btn-ghost" onclick="Page.openAddConversion()">เพิ่มหน่วยแปลง</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Adjust Stock Modal -->
+    <div class="modal-overlay" id="adjustModal">
+      <div class="modal" style="max-width:450px">
+        <div class="modal-header"><h3 class="modal-title">ปรับสต็อก</h3><button class="modal-close" onclick="Layout.closeModal('adjustModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label" data-i18n="common.type">ประเภท</label>
+            <select class="form-select" id="adjType"><option value="IN">รับเข้า (IN)</option><option value="OUT">จ่ายออก (OUT)</option><option value="ADJUST">ปรับยอด (ADJUST)</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">จำนวน *</label><input type="number" class="form-input" id="adjQty" step="0.01"></div>
+          <div class="form-group"><label class="form-label">ต้นทุน/หน่วย</label><input type="number" class="form-input" id="adjCost" step="0.01"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="adjRef"></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="adjNote"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('adjustModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveAdjustStock()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Unit Conversion Modal -->
+    <div class="modal-overlay" id="convModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มการแปลงหน่วย</h3><button class="modal-close" onclick="Layout.closeModal('convModal')">&times;</button></div>
+        <div class="modal-body">
+          <p class="text-sm text-gray-500" style="margin-bottom:12px" id="convInfo"></p>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จากหน่วย *</label><input type="text" class="form-input" id="cvFrom" placeholder="เช่น ลัง, โหล, แพ็ค"></div>
+            <div class="form-group"><label class="form-label">เป็นหน่วย *</label><input type="text" class="form-input" id="cvTo" readonly></div>
+          </div>
+          <div class="form-group"><label class="form-label">อัตราแปลง * (1 หน่วยซ้าย = ? หน่วยขวา)</label><input type="number" class="form-input" id="cvRate" step="0.01" placeholder="เช่น 12"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ราคาขาย/หน่วยนี้</label><input type="number" class="form-input" id="cvSell" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ต้นทุน/หน่วยนี้</label><input type="number" class="form-input" id="cvCost" step="0.01"></div>
+          </div>
+          <div class="form-group"><label class="form-label">Barcode หน่วยนี้</label><input type="text" class="form-input" id="cvBarcode"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('convModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveConversion()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Categories Modal -->
+    <div class="modal-overlay" id="catModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">หมวดหมู่สินค้า</h3><button class="modal-close" onclick="Layout.closeModal('catModal')">&times;</button></div>
+        <div class="modal-body">
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+            <input type="text" class="form-input" id="catCode" placeholder="รหัส" style="width:100px">
+            <input type="text" class="form-input" id="catName" placeholder="ชื่อหมวดหมู่" style="flex:1">
+            <button class="btn btn-primary btn-sm" onclick="Page.saveCategory()" data-i18n="common.add">เพิ่ม</button>
+          </div>
+          <div id="catList"></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('catModal')" data-i18n="common.close">ปิด</button></div>
+      </div>
+    </div>
+
+    <!-- Stock Count Modal -->
+    <div class="modal-overlay" id="scModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title" id="scTitle">ตรวจนับสต็อก</h3><button class="modal-close" onclick="Layout.closeModal('scModal')">&times;</button></div>
+        <div class="modal-body" id="scBody"></div>
+        <div class="modal-footer" id="scFooter"></div>
+      </div>
+    </div>
+
+    <!-- Valuation Modal -->
+    <div class="modal-overlay" id="valModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title">มูลค่าสินค้าคงเหลือ (Weighted Average)</h3><button class="modal-close" onclick="Layout.closeModal('valModal')">&times;</button></div>
+        <div class="modal-body" id="valBody"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('valModal')" data-i18n="common.close">ปิด</button></div>
+      </div>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="importModal" class="modal-overlay">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <h3 id="importTitle">นำเข้าข้อมูล</h3>
+          <button class="btn-close" onclick="Import.close()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="importStep1">
+            <div id="importDropZone" style="border:2px dashed var(--gray-300);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all .2s" onclick="document.getElementById('importFileInput').click()" ondragover="event.preventDefault();this.style.borderColor='var(--primary)';this.style.background='var(--blue-50)'" ondragleave="this.style.borderColor='var(--gray-300)';this.style.background=''" ondrop="Import.handleDrop(event)">
+              <div style="font-size:36px;margin-bottom:8px">📄</div>
+              <p style="font-size:15px;font-weight:600;color:var(--gray-700)">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
+              <p style="font-size:13px;color:var(--gray-500);margin-top:4px">รองรับ CSV, Excel (.xlsx, .xls)</p>
+              <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="Import.handleFile(this.files[0])">
+            </div>
+            <div id="importFileInfo" style="display:none;margin-top:12px;padding:12px 16px;background:var(--blue-50);border-radius:8px;align-items:center;justify-content:space-between">
+              <span id="importFileName" style="font-weight:600;font-size:14px"></span>
+              <button class="btn btn-sm btn-ghost text-red" onclick="Import.clearFile()">ลบ</button>
+            </div>
+          </div>
+          <div id="importStep2" style="display:none">
+            <div id="importValidation" style="margin-bottom:12px"></div>
+            <div id="importPreview" style="max-height:300px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px"></div>
+          </div>
+          <div id="importStep3" style="display:none;text-align:center;padding:24px">
+            <div style="font-size:48px;margin-bottom:12px">✅</div>
+            <h3 id="importResultText" style="color:var(--green-600)"></h3>
+          </div>
+        </div>
+        <div class="modal-footer" id="importFooter">
+          <button class="btn btn-secondary" onclick="Import.close()">ยกเลิก</button>
+          <button class="btn btn-primary" id="importActionBtn" onclick="Import.validate()" disabled>ตรวจสอบข้อมูล</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const typeMap = {Product:'สินค้า',Service:'บริการ',NonStock:'อื่นๆ'};
+    const Page = {
+      page: 1, _cache: {}, _current: null,
+      async init() {
+        if (!Layout.init('products')) return;
+        Layout.setTitle('สินค้า/บริการ');
+        await this.load();
+        // Dead-stock alert ขึ้นด้านบนทันทีถ้ามีสินค้าจม > 30 รายการ
+        // หรือเงินทุนจม > 100K บาท — แสดง 1 ครั้งต่อ session
+        this.checkDeadStock();
+        // Deep-link support — when the OCR import-result table (or any
+        // other page) links here with ?id={productId}, auto-open the
+        // detail modal so the user lands on the right product without
+        // having to search the list.
+        const deepId = new URLSearchParams(location.search).get('id');
+        if (deepId) await this.viewDetail(deepId);
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const search = document.getElementById('searchInput').value;
+        const type = document.getElementById('typeFilter').value;
+        let q = `?page=${this.page}&pageSize=20`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        if (type) q += `&productType=${type}`;
+        try {
+          const res = await api.getProducts(q);
+          const data = res.data; const items = data?.items || data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
+          items.forEach(p => Page._cache[p.id] = p);
+          tbody.innerHTML = items.map(p => `<tr>
+            <td class="font-medium">${p.code}</td>
+            <td>${p.featuredImageUrl ? `<img src="${Layout.esc(p.featuredImageUrl)}" alt="" style="width:32px;height:32px;border-radius:4px;object-fit:cover;vertical-align:middle;margin-right:6px;border:1px solid #e2e8f0" loading="lazy">` : ''}${p.name}</td>
+            <td>${typeMap[p.productType]||p.productType}</td>
+            <td>${p.category || '-'}</td>
+            <td>${p.unit}</td>
+            <td class="text-right">${Layout.money(p.sellingPrice)}</td>
+            <td class="text-right">${Layout.money(p.costPrice)}</td>
+            <td class="text-right ${(p.currentStock<=p.minimumStock&&p.trackStock)?'text-danger font-semibold':''}">${p.trackStock?p.currentStock:'-'}</td>
+            <td>
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')" data-i18n="common.view">ดู</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')" data-i18n="common.edit">แก้ไข</button>
+              ${p.trackStock ? `<button class="btn btn-sm btn-primary" onclick="Page.quickAdjustStock('${p.id}','${(p.name||'').replace(/'/g, '&apos;')}','${p.unit||''}',${p.currentStock||0},${p.costPrice||0})" title="เพิ่ม/ลด/ปรับสต็อก">📦 สต็อก</button>` : ''}
+            </td>
+          </tr>`).join('');
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages||1, 'Page.goPage');
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      goPage(p) { Page.page=p; Page.load(); },
+
+      async checkDeadStock() {
+        try {
+          if (sessionStorage.getItem('deadStockAlertShown')) return;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/inventory/dead-stock?days=90`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d || d.deadStockCount === 0) return;
+          if (d.deadStockCount < 5 && d.deadStockValue < 50000) return;  // ไม่กวนถ้าน้อย
+          sessionStorage.setItem('deadStockAlertShown', '1');
+          if (typeof Layout.toast === 'function') {
+            Layout.toast(`📦 ${d.reasoning}`, 'warning');
+          }
+        } catch { /* best-effort */ }
+      },
+
+      async suggestReorderPoint() {
+        try {
+          const id = document.getElementById('editId')?.value;
+          if (!id) {
+            if (typeof Layout.toast === 'function') Layout.toast('บันทึกสินค้าก่อนแล้วค่อยให้ AI คำนวณ', 'warning');
+            return;
+          }
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/inventory/reorder-point/suggest?productId=${id}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d) return;
+          const inputEl = document.getElementById('fMinStock');
+          const hintEl = document.getElementById('reorderHint');
+          if (d.reorderPoint > 0 && inputEl) inputEl.value = d.reorderPoint;
+          if (hintEl) {
+            const warn = d.needsReorderNow ? '<strong style="color:#dc2626"> ⚠️ สต็อกปัจจุบันต่ำกว่าจุดสั่งซื้อ — ควรสั่งซื้อทันที</strong>' : '';
+            hintEl.innerHTML = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)${warn}`;
+          }
+        } catch { /* best-effort */ }
+      },
+
+      async suggestProductCategory() {
+        try {
+          const name = document.getElementById('fName')?.value?.trim() || '';
+          const desc = document.getElementById('fDesc')?.value?.trim() || '';
+          if (name.length < 2) {
+            if (typeof Layout.toast === 'function') Layout.toast('กรุณากรอกชื่อสินค้าก่อน', 'warning');
+            return;
+          }
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/product/suggest-category`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productName: name, description: desc })
+          });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d) return;
+          const catEl = document.getElementById('fCategory');
+          const hintEl = document.getElementById('categoryHint');
+          const suggested = d.existingCategoryName || d.category;
+          if (catEl) catEl.value = suggested;
+          if (hintEl) {
+            hintEl.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+            hintEl.dataset.aiFeedbackId = d.feedbackId || '';
+          }
+          // เรียนตอน user แก้หมวด → ส่ง ground-truth กลับ (train ไปเลย)
+          if (catEl && d.feedbackId) {
+            catEl.addEventListener('change', () => {
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    feedbackId: d.feedbackId,
+                    chosenAnswer: catEl.value,
+                    acceptedAi: catEl.value === suggested,
+                  })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
+      },
+
+      openCreate() {
+        document.getElementById('formTitle').textContent='เพิ่มสินค้า';
+        document.getElementById('editId').value='';
+        ['fCode','fName','fNameEn','fCategory','fSku','fDesc'].forEach(id=>document.getElementById(id).value='');
+        document.getElementById('fPrintStation').value='';
+        document.getElementById('fUnit').value='ชิ้น';document.getElementById('fSellPrice').value='';document.getElementById('fCostPrice').value='0';
+        document.getElementById('fType').value='Product';document.getElementById('fVat').value='7';document.getElementById('fVatIncl').checked=false;
+        document.getElementById('fTrackStock').checked=true;document.getElementById('fMinStock').value='0';document.getElementById('fCode').disabled=false;
+        this._toggleImageSection(null);
+        Layout.openModal('formModal');
+      },
+      openEdit(id) {
+        const p=this._cache[id]; if(!p)return;
+        document.getElementById('formTitle').textContent='แก้ไขสินค้า';
+        document.getElementById('editId').value=p.id;
+        document.getElementById('fCode').value=p.code;document.getElementById('fCode').disabled=true;
+        document.getElementById('fName').value=p.name;document.getElementById('fNameEn').value=p.nameEn||'';
+        document.getElementById('fCategory').value=p.category||'';document.getElementById('fSku').value=p.sku||'';
+        document.getElementById('fUnit').value=p.unit||'ชิ้น';document.getElementById('fSellPrice').value=p.sellingPrice;
+        document.getElementById('fCostPrice').value=p.costPrice;document.getElementById('fType').value=p.productType;
+        document.getElementById('fVat').value=p.vatRate==0?'0':'7';document.getElementById('fVatIncl').checked=p.isVatIncluded;
+        document.getElementById('fTrackStock').checked=p.trackStock;document.getElementById('fMinStock').value=p.minimumStock;
+        document.getElementById('fDesc').value=p.description||'';
+        document.getElementById('fPrintStation').value=p.printStation||'';
+        this._toggleImageSection(p);
+        Layout.openModal('formModal');
+      },
+      _toggleImageSection(p) {
+        const grp = document.getElementById('fImagesGroup');
+        const hint = document.getElementById('fImagesHint');
+        if (p && p.id) {
+          grp.style.display = '';
+          hint.style.display = 'none';
+          this._renderImages(p.imageUrls || []);
+        } else {
+          grp.style.display = 'none';
+          hint.style.display = '';
+        }
+      },
+      _renderImages(urls) {
+        const grid = document.getElementById('fImagesGrid');
+        if (!urls || urls.length === 0) {
+          grid.innerHTML = '<div style="font-size:12px;color:#94a3b8;padding:8px">ยังไม่มีรูป</div>';
+          return;
+        }
+        grid.innerHTML = urls.map((u, i) => `
+          <div style="position:relative;width:96px;height:96px;border-radius:8px;overflow:hidden;border:${i===0?'2px solid #16a34a':'1px solid #e2e8f0'};background:#f8fafc">
+            <img src="${Layout.esc(u)}" style="width:100%;height:100%;object-fit:cover" loading="lazy">
+            ${i===0?'<div style="position:absolute;bottom:0;left:0;right:0;background:#16a34a;color:#fff;font-size:10px;text-align:center;padding:2px">หน้าปก</div>':''}
+            <button type="button" onclick="Page.deleteImage('${encodeURIComponent(u)}')" title="ลบ" style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,.9);color:#fff;border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:14px;line-height:1">&times;</button>
+          </div>`).join('');
+      },
+      async uploadImage(file) {
+        if (!file) return;
+        const id = document.getElementById('editId').value;
+        if (!id) { Layout.toast('กรุณาบันทึกสินค้าก่อนเพิ่มรูป','warning'); return; }
+        const api = Layout.api(); if (!api) return;
+        const fd = new FormData(); fd.append('file', file);
+        const inp = document.getElementById('fImageInput');
+        try {
+          const res = await api.uploadProductImage(id, fd);
+          this._renderImages(res.data.imageUrls || []);
+          if (this._cache[id]) this._cache[id] = res.data;
+          await this.load();
+          Layout.toast('อัพโหลดรูปสำเร็จ');
+        } catch(e) { Layout.toast(e.message,'error'); }
+        finally { inp.value=''; }
+      },
+      async deleteImage(encUrl) {
+        const id = document.getElementById('editId').value;
+        if (!id) return;
+        if (!confirm('ลบรูปนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          // The encUrl arriving from the inline onclick is already encoded once
+          // by `encodeURIComponent`; decode here so api.deleteProductImage can
+          // re-encode without double-escaping.
+          const res = await api.deleteProductImage(id, decodeURIComponent(encUrl));
+          this._renderImages(res.data.imageUrls || []);
+          if (this._cache[id]) this._cache[id] = res.data;
+          await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async save() {
+        const api=Layout.api(); if(!api)return;
+        const id=document.getElementById('editId').value;
+        try {
+          let saved;
+          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value),vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:parseInt(document.getElementById('fMinStock').value),description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
+          else { saved = await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value)||0,vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:parseInt(document.getElementById('fMinStock').value)||0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
+          Layout.toast(id?'แก้ไขสำเร็จ':'เพิ่มสินค้าสำเร็จ — ตอนนี้อัพโหลดรูปได้แล้ว');
+          await this.load();
+          // Keep modal open so the user can upload images right after creating —
+          // first save creates the product (gets an id), then the image section
+          // unlocks. Switch the modal into edit mode for the new row.
+          const p = saved?.data;
+          if (p && p.id) {
+            document.getElementById('editId').value = p.id;
+            document.getElementById('fCode').disabled = true;
+            document.getElementById('formTitle').textContent = 'แก้ไขสินค้า';
+            this._cache[p.id] = p;
+            this._toggleImageSection(p);
+          } else {
+            Layout.closeModal('formModal');
+          }
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== PRODUCT DETAIL =====
+      async viewDetail(id) {
+        const api=Layout.api(); if(!api)return;
+        // Settle each call independently so a 500 on stock movements
+        // or unit conversions doesn't blank the whole detail panel —
+        // the user still sees product info + the specific endpoint that
+        // failed, instead of a generic "internal system error" toast.
+        const [pRes, mvRes, ucRes] = await Promise.allSettled([
+          api.getProduct(id),
+          api.getStockMovements(id),
+          api.getUnitConversions(id)
+        ]);
+
+        if (pRes.status === 'rejected') {
+          Layout.toast('โหลดข้อมูลสินค้าไม่สำเร็จ: ' + (pRes.reason?.message || pRes.reason), 'error');
+          return;
+        }
+        const p = pRes.value.data; this._current = p;
+        const mvs = mvRes.status === 'fulfilled' ? (mvRes.value.data?.items || mvRes.value.data || []) : [];
+        const ucs = ucRes.status === 'fulfilled' ? (ucRes.value.data?.items || ucRes.value.data || []) : [];
+
+        const partialWarnings = [];
+        if (mvRes.status === 'rejected') partialWarnings.push(`ประวัติสต็อก: ${mvRes.reason?.message || mvRes.reason}`);
+        if (ucRes.status === 'rejected') partialWarnings.push(`การแปลงหน่วย: ${ucRes.reason?.message || ucRes.reason}`);
+
+        try {
+          document.getElementById('dtTitle').textContent=`${p.code} - ${p.name}`;
+          document.getElementById('dtBody').innerHTML = `
+            ${partialWarnings.length ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#991b1b">
+              ⚠️ โหลดข้อมูลบางส่วนไม่สำเร็จ:<br>${partialWarnings.map(w => '• ' + Layout.esc(w)).join('<br>')}
+            </div>` : ''}
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+              <div><span class="text-xs text-gray-500" data-i18n="common.type">ประเภท</span><div>${typeMap[p.productType]||p.productType||'-'}</div></div>
+              <div><span class="text-xs text-gray-500">หน่วยหลัก</span><div class="font-medium">${p.unit||'-'}</div></div>
+              <div><span class="text-xs text-gray-500">หมวดหมู่</span><div>${p.category||'-'}</div></div>
+            </div>
+            <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+              <div class="kpi-card"><div class="kpi-label">ราคาขาย</div><div class="kpi-value">${Layout.money(p.sellingPrice)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ต้นทุน</div><div class="kpi-value">${Layout.money(p.costPrice)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">คงเหลือ</div><div class="kpi-value ${(p.currentStock<=p.minimumStock&&p.trackStock)?'text-danger':''}">${p.trackStock?p.currentStock:'-'}</div></div>
+              <div class="kpi-card"><div class="kpi-label">สต็อกขั้นต่ำ</div><div class="kpi-value">${p.minimumStock}</div></div>
+            </div>
+            ${ucs.length ? `<h4 style="margin-bottom:8px">การแปลงหน่วย</h4>
+            <div class="table-container"><table class="table" style="margin-bottom:16px"><thead><tr><th>จากหน่วย</th><th>เป็นหน่วย</th><th class="text-right">อัตรา</th><th class="text-right">ราคาขาย</th><th class="text-right">ต้นทุน</th><th></th></tr></thead>
+            <tbody>${ucs.map(u=>`<tr><td>${u.fromUnit}</td><td>${u.toUnit}</td><td class="text-right">${u.conversionRate}</td><td class="text-right">${u.sellingPrice!=null?Layout.money(u.sellingPrice):'-'}</td><td class="text-right">${u.costPrice!=null?Layout.money(u.costPrice):'-'}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteConversion('${u.id}')" data-i18n="common.delete">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : ''}
+            <h4 style="margin-bottom:8px">ประวัติเคลื่อนไหวสต็อก (ล่าสุด)</h4>
+            ${mvs.length ? `<div style="max-height:250px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th data-i18n="common.date">วันที่</th><th data-i18n="common.type">ประเภท</th><th class="text-right">จำนวน</th><th class="text-right">ต้นทุน</th><th class="text-right">คงเหลือ</th><th data-i18n="common.reference">อ้างอิง</th></tr></thead>
+            <tbody>${mvs.slice(0,30).map(m=>`<tr><td>${Layout.date(m.movementDate)}</td><td>${m.movementType}</td><td class="text-right ${m.movementType==='OUT'?'text-danger':'text-success'}">${m.quantity}</td><td class="text-right">${Layout.money(m.unitCost)}</td><td class="text-right font-semibold">${m.balanceAfter}</td><td>${m.reference||'-'}</td></tr>`).join('')}</tbody></table></div></div>` : '<div class="text-center text-gray-400" data-i18n="common.noItems">ไม่มีรายการ</div>'}`;
+          Layout.openModal('detailModal');
+        } catch(e) { Layout.toast('แสดงข้อมูลไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      // ===== STOCK ADJUST =====
+      openAdjustStock() {
+        if(!this._current) return;
+        document.getElementById('adjQty').value='';document.getElementById('adjCost').value=this._current.costPrice||'';
+        document.getElementById('adjRef').value='';document.getElementById('adjNote').value='';document.getElementById('adjType').value='IN';
+        Layout.closeModal('detailModal');Layout.openModal('adjustModal');
+      },
+      /**
+       * One-click stock adjust from the products table row — skips
+       * the detail modal so common stock changes (receive 12 units,
+       * write off 1 broken unit) take 2 clicks instead of 4.
+       * Synthesizes _current from the row data so saveAdjustStock
+       * has what it needs without an extra getById round trip.
+       */
+      quickAdjustStock(id, name, unit, currentStock, costPrice) {
+        this._current = { id, name, unit, currentStock, costPrice };
+        document.getElementById('adjQty').value = '';
+        document.getElementById('adjCost').value = costPrice || '';
+        document.getElementById('adjRef').value = '';
+        document.getElementById('adjNote').value = '';
+        document.getElementById('adjType').value = 'IN';
+        // If the adjust modal has a header/info slot, mention which product
+        const titleEl = document.querySelector('#adjustModal .modal-title');
+        if (titleEl) titleEl.textContent = `ปรับสต็อก — ${name} (คงเหลือ ${currentStock} ${unit})`;
+        Layout.openModal('adjustModal');
+      },
+      async saveAdjustStock() {
+        const api=Layout.api(); if(!api||!this._current)return;
+        try {
+          await api.adjustStock({productId:this._current.id,quantity:parseFloat(document.getElementById('adjQty').value),movementType:document.getElementById('adjType').value,unitCost:parseFloat(document.getElementById('adjCost').value)||null,reference:document.getElementById('adjRef').value||null,notes:document.getElementById('adjNote').value||null});
+          Layout.closeModal('adjustModal');Layout.toast('ปรับสต็อกสำเร็จ');this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== UNIT CONVERSION =====
+      openAddConversion() {
+        if(!this._current) return;
+        document.getElementById('convInfo').textContent=`สินค้า: ${this._current.name} (หน่วยหลัก: ${this._current.unit})`;
+        document.getElementById('cvFrom').value='';document.getElementById('cvTo').value=this._current.unit;
+        document.getElementById('cvRate').value='';document.getElementById('cvSell').value='';document.getElementById('cvCost').value='';document.getElementById('cvBarcode').value='';
+        Layout.closeModal('detailModal');Layout.openModal('convModal');
+      },
+      async saveConversion() {
+        const api=Layout.api(); if(!api||!this._current)return;
+        try {
+          await api.createUnitConversion(this._current.id,{productId:this._current.id,fromUnit:document.getElementById('cvFrom').value,toUnit:document.getElementById('cvTo').value,conversionRate:parseFloat(document.getElementById('cvRate').value),sellingPrice:document.getElementById('cvSell').value?parseFloat(document.getElementById('cvSell').value):null,costPrice:document.getElementById('cvCost').value?parseFloat(document.getElementById('cvCost').value):null,barcode:document.getElementById('cvBarcode').value||null});
+          Layout.closeModal('convModal');Layout.toast('เพิ่มการแปลงหน่วยสำเร็จ');this.viewDetail(this._current.id);
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async deleteConversion(id) {
+        if(!confirm('ลบการแปลงหน่วยนี้?'))return;
+        const api=Layout.api(); if(!api)return;
+        try { await api.deleteUnitConversion(id); Layout.toast('ลบสำเร็จ'); this.viewDetail(this._current.id); } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== CATEGORIES =====
+      async showCategories() {
+        const api=Layout.api(); if(!api)return;
+        try {
+          const res=await api.getProductCategories();
+          const cats=res.data?.items||res.data||[];
+          document.getElementById('catList').innerHTML = cats.length ? `<div class="table-container"><table class="table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th class="text-right">สินค้า</th><th></th></tr></thead>
+          <tbody>${cats.map(c=>`<tr><td class="font-medium">${c.code}</td><td>${c.name}</td><td class="text-right">${c.productCount}</td><td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteCategory('${c.id}')" data-i18n="common.delete">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ยังไม่มีหมวดหมู่</div>';
+          Layout.openModal('catModal');
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async saveCategory() {
+        const api=Layout.api(); if(!api)return;
+        try {
+          await api.createProductCategory({code:document.getElementById('catCode').value,name:document.getElementById('catName').value});
+          document.getElementById('catCode').value='';document.getElementById('catName').value='';
+          Layout.toast('เพิ่มหมวดหมู่สำเร็จ');this.showCategories();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async deleteCategory(id) {
+        if(!confirm('ลบหมวดหมู่นี้?'))return;
+        const api=Layout.api(); if(!api)return;
+        try { await api.deleteProductCategory(id); this.showCategories(); } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== STOCK COUNT =====
+      async showStockCount() {
+        const api=Layout.api(); if(!api)return;
+        try {
+          const res=await api.getStockCounts();
+          const counts=res.data?.items||res.data||[];
+          document.getElementById('scTitle').textContent='ตรวจนับสต็อก';
+          document.getElementById('scBody').innerHTML = `
+            <button class="btn btn-primary btn-sm" style="margin-bottom:12px" onclick="Page.createStockCount()">+ สร้างใบตรวจนับ</button>
+            ${counts.length ? `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th data-i18n="common.date">วันที่</th><th data-i18n="common.status">สถานะ</th><th class="text-right" data-i18n="common.items">รายการ</th><th class="text-right">ผลต่างรวม</th><th></th></tr></thead>
+            <tbody>${counts.map(c=>`<tr><td class="font-medium">${c.countNumber}</td><td>${Layout.date(c.countDate)}</td><td>${Layout.statusBadge(c.status)}</td><td class="text-right">${c.lineCount}</td><td class="text-right ${c.totalVariance>0?'text-warning':''}">${c.totalVariance.toFixed(2)}</td><td><button class="btn btn-sm btn-ghost" onclick="Page.openStockCount('${c.id}')" data-i18n="common.view">ดู</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-center text-gray-400">ยังไม่มีใบตรวจนับ</div>'}`;
+          document.getElementById('scFooter').innerHTML='<button class="btn btn-secondary" onclick="Layout.closeModal(\'scModal\')" data-i18n="common.close">ปิด</button>';
+          Layout.openModal('scModal');
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async createStockCount() {
+        const api=Layout.api(); if(!api)return;
+        try {
+          await api.createStockCount({countDate:Layout.toDateInput(new Date())});
+          Layout.toast('สร้างใบตรวจนับสำเร็จ');this.showStockCount();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async openStockCount(id) {
+        const api=Layout.api(); if(!api)return;
+        try {
+          const res=await api.getStockCount(id);
+          const c=res.data; this._currentCount=c;
+          document.getElementById('scTitle').textContent=`ตรวจนับ ${c.countNumber}`;
+          const lines=c.lines||[];
+          document.getElementById('scBody').innerHTML = `
+            <div style="margin-bottom:12px"><span class="text-sm text-gray-500">วันที่: ${Layout.date(c.countDate)}</span> | <span class="text-sm">${Layout.statusBadge(c.status)}</span></div>
+            <div style="max-height:400px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th>หน่วย</th><th class="text-right">ระบบ</th><th class="text-right">นับได้</th><th class="text-right">ผลต่าง</th></tr></thead>
+            <tbody>${lines.map(l=>`<tr><td>${l.productCode}</td><td>${l.productName}</td><td>${l.unit}</td><td class="text-right">${l.systemQty}</td><td class="text-right">${c.status!=='Completed' ? `<input type="number" class="form-input" style="width:80px;text-align:right;padding:2px 6px" value="${l.countedQty}" data-pid="${l.productId}" onchange="Page.updateCountLine(this)">` : l.countedQty}</td><td class="text-right ${l.variance!==0?'text-danger font-semibold':''}">${l.variance}</td></tr>`).join('')}</tbody></table></div></div>`;
+          let footer='<button class="btn btn-secondary" onclick="Page.showStockCount()">กลับ</button>';
+          if(c.status!=='Completed'&&c.status!=='Cancelled') {
+            footer+=` <button class="btn btn-primary" onclick="Page.saveCountLines('${c.id}')">บันทึกยอดนับ</button>`;
+            footer+=` <button class="btn btn-danger" onclick="Page.applyCount('${c.id}')">ปรับสต็อกตามผลนับ</button>`;
+          }
+          document.getElementById('scFooter').innerHTML=footer;
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      _pendingLines: {},
+      updateCountLine(el) { this._pendingLines[el.dataset.pid]=parseFloat(el.value)||0; },
+      async saveCountLines(id) {
+        const api=Layout.api(); if(!api)return;
+        const lines=Object.entries(this._pendingLines).map(([pid,qty])=>({productId:pid,countedQty:qty}));
+        if(!lines.length) { Layout.toast('ไม่มีข้อมูลที่เปลี่ยนแปลง','error');return; }
+        try { await api.updateStockCountLines(id,lines); Layout.toast('บันทึกสำเร็จ');this._pendingLines={};this.openStockCount(id); } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async applyCount(id) {
+        if(!confirm('ปรับสต็อกตามผลตรวจนับ? การดำเนินการนี้ไม่สามารถย้อนกลับได้'))return;
+        const api=Layout.api(); if(!api)return;
+        try { await api.applyStockCount(id); Layout.toast('ปรับสต็อกสำเร็จ');this.openStockCount(id);this.load(); } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== VALUATION =====
+      async showValuation() {
+        const api=Layout.api(); if(!api)return;
+        try {
+          const res=await api.getInventoryValuation();
+          const d=res.data;
+          document.getElementById('valBody').innerHTML = `
+            <div class="grid grid-3 gap-4" style="margin-bottom:16px">
+              <div class="kpi-card"><div class="kpi-label">มูลค่ารวม</div><div class="kpi-value text-primary">${Layout.money(d.totalValue)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">จำนวนสินค้า</div><div class="kpi-value">${d.totalProducts} รายการ</div></div>
+              <div class="kpi-card"><div class="kpi-label">วิธีคำนวณ</div><div class="kpi-value">Weighted Average</div></div>
+            </div>
+            ${d.items?.length ? `<div style="max-height:400px;overflow-y:auto"><div class="table-container"><table class="table"><thead><tr><th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th>หมวด</th><th>หน่วย</th><th class="text-right">คงเหลือ</th><th class="text-right">ต้นทุนเฉลี่ย</th><th class="text-right">มูลค่า</th></tr></thead>
+            <tbody>${d.items.map(i=>`<tr><td class="font-medium">${i.productCode}</td><td>${i.productName}</td><td>${i.category||'-'}</td><td>${i.unit}</td><td class="text-right">${i.currentStock}</td><td class="text-right">${Layout.money(i.averageCost)}</td><td class="text-right font-semibold">${Layout.money(i.totalValue)}</td></tr>`).join('')}</tbody>
+            <tfoot><tr style="background:var(--gray-100)"><td colspan="6" class="font-bold">รวมทั้งสิ้น</td><td class="text-right font-bold">${Layout.money(d.totalValue)}</td></tr></tfoot></table></div></div>` : '<div class="text-center text-gray-400">ไม่มีสินค้าคงเหลือ</div>'}`;
+          Layout.openModal('valModal');
+        } catch(e) { Layout.toast(e.message,'error'); }
+      }
+    };
+    const Import = {
+      entityType: 'products',
+      file: null,
+      validated: false,
+      toggleMenu(btn) {
+        const menu = btn.nextElementSibling;
+        const show = menu.style.display === 'none';
+        document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none');
+        menu.style.display = show ? 'block' : 'none';
+        if (show) setTimeout(() => document.addEventListener('click', Import._closeMenus, { once: true }), 0);
+      },
+      _closeMenus() { document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none'); },
+      open() {
+        Import._closeMenus();
+        Import.file = null; Import.validated = false;
+        document.getElementById('importStep1').style.display = '';
+        document.getElementById('importStep2').style.display = 'none';
+        document.getElementById('importStep3').style.display = 'none';
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importActionBtn').textContent = 'ตรวจสอบข้อมูล';
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').onclick = Import.validate;
+        document.getElementById('importFooter').style.display = '';
+        document.getElementById('importModal').classList.add('active');
+      },
+      close() { document.getElementById('importModal').classList.remove('active'); },
+      async downloadTemplate() {
+        Import._closeMenus();
+        try {
+          const token = localStorage.getItem('token');
+          const resp = await fetch(`/api/companies/${Layout.getCompanyId()}/import-export/templates/${Import.entityType}/download?format=csv`, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (!resp.ok) throw new Error('Download failed');
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = `${Import.entityType}-template.csv`; a.click();
+          URL.revokeObjectURL(url);
+        } catch (e) { Layout.toast('ดาวน์โหลด Template ไม่สำเร็จ', 'error'); }
+      },
+      handleDrop(e) {
+        e.preventDefault();
+        e.currentTarget.style.borderColor = 'var(--gray-300)'; e.currentTarget.style.background = '';
+        const file = e.dataTransfer.files[0];
+        if (file) Import.handleFile(file);
+      },
+      handleFile(file) {
+        if (!file) return;
+        Import.file = file; Import.validated = false;
+        document.getElementById('importFileName').textContent = `${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+        document.getElementById('importFileInfo').style.display = 'flex';
+        document.getElementById('importActionBtn').disabled = false;
+      },
+      clearFile() {
+        Import.file = null;
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importActionBtn').disabled = true;
+      },
+      async validate() {
+        if (!Import.file) return;
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').textContent = 'กำลังตรวจสอบ...';
+        try {
+          const fd = new FormData(); fd.append('file', Import.file); fd.append('entityType', Import.entityType);
+          const json = await API.upload(`/api/companies/${Layout.getCompanyId()}/import-export/validate`, fd);
+          if (!json.success) throw new Error(json.message || 'Validation failed');
+          const d = json.data;
+          let html = `<div style="padding:8px 0"><span style="color:var(--green-600);font-weight:600">✓ ${d.validCount || d.totalRows || 0} รายการถูกต้อง</span>`;
+          if (d.errorCount > 0) html += ` &nbsp; <span style="color:var(--red-600);font-weight:600">✗ ${d.errorCount} รายการมีข้อผิดพลาด</span>`;
+          html += '</div>';
+          if (d.errors && d.errors.length > 0) {
+            html += '<div style="max-height:120px;overflow:auto;background:var(--red-50);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:13px;color:var(--red-700)">';
+            d.errors.slice(0, 10).forEach(e => html += `<div>แถว ${e.row}: ${e.message}</div>`);
+            if (d.errors.length > 10) html += `<div>... และอีก ${d.errors.length - 10} รายการ</div>`;
+            html += '</div>';
+          }
+          document.getElementById('importValidation').innerHTML = html;
+          if (d.preview && d.preview.length > 0) {
+            let tbl = '<table class="table" style="font-size:12px"><thead><tr>';
+            Object.keys(d.preview[0]).forEach(k => tbl += `<th>${k}</th>`);
+            tbl += '</tr></thead><tbody>';
+            d.preview.slice(0, 5).forEach(row => { tbl += '<tr>'; Object.values(row).forEach(v => tbl += `<td>${v ?? ''}</td>`); tbl += '</tr>'; });
+            tbl += '</tbody></table>';
+            document.getElementById('importPreview').innerHTML = tbl;
+          }
+          document.getElementById('importStep1').style.display = 'none';
+          document.getElementById('importStep2').style.display = '';
+          Import.validated = true;
+          document.getElementById('importActionBtn').textContent = 'นำเข้าข้อมูล';
+          document.getElementById('importActionBtn').disabled = (d.validCount || d.totalRows || 0) === 0;
+          document.getElementById('importActionBtn').onclick = Import.execute;
+        } catch (e) {
+          Layout.toast(e.message || 'ตรวจสอบไม่สำเร็จ', 'error');
+          document.getElementById('importActionBtn').textContent = 'ตรวจสอบข้อมูล';
+          document.getElementById('importActionBtn').disabled = false;
+        }
+      },
+      async execute() {
+        if (!Import.file) return;
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').textContent = 'กำลังนำเข้า...';
+        try {
+          const fd = new FormData(); fd.append('file', Import.file); fd.append('entityType', Import.entityType);
+          const json = await API.upload(`/api/companies/${Layout.getCompanyId()}/import-export/import`, fd);
+          if (!json.success) throw new Error(json.message || 'Import failed');
+          const d = json.data;
+          document.getElementById('importStep2').style.display = 'none';
+          document.getElementById('importStep3').style.display = '';
+          document.getElementById('importResultText').textContent = `นำเข้าสำเร็จ ${d.importedCount || d.count || 0} รายการ`;
+          document.getElementById('importFooter').style.display = 'none';
+          if (typeof Page.load === 'function') Page.load();
+        } catch (e) {
+          Layout.toast(e.message || 'นำเข้าไม่สำเร็จ', 'error');
+          document.getElementById('importActionBtn').textContent = 'นำเข้าข้อมูล';
+          document.getElementById('importActionBtn').disabled = false;
+        }
+      }
+    };
+    // Expose to global so inline onclick="Page.foo()" / "Import.bar()" handlers
+    // can find these from the HTML — top-level const declarations in a
+    // classic <script> create script-scoped bindings that some browsers
+    // don't reliably expose to inline event handlers. Belt-and-braces.
+    window.Page = Page;
+    window.Import = Import;
+    Page.init();
+    Layout.enableTour('products');
+  </script>
+</body>
+</html>

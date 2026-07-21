@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Time & Billing - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('entries')">บันทึกเวลา</button>
+      <button class="tab" onclick="Page.switchTab('rates')">อัตราค่าบริการ</button>
+      <button class="tab" onclick="Page.switchTab('summary')">สรุปและออกบิล</button>
+    </div>
+
+    <div id="tab-entries">
+      <div class="page-header">
+        <div><h2 class="page-title">บันทึกเวลา</h2><p class="page-subtitle">บันทึกชั่วโมงทำงานเพื่อออกบิลลูกค้า</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateEntry()">+ บันทึกเวลา</button>
+      </div>
+      <div class="toolbar">
+        <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput" oninput="Page.loadEntries()">
+        <select class="filter-select" id="statusFilter" onchange="Page.loadEntries()">
+          <option value="">ทุกสถานะ</option><option value="Draft">ร่าง</option><option value="Submitted">ส่งแล้ว</option><option value="Approved">อนุมัติ</option><option value="Billed">ออกบิลแล้ว</option>
+        </select>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th data-i18n="common.date">วันที่</th><th>โปรเจค/ลูกค้า</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">ชั่วโมง</th><th class="text-right">อัตรา</th><th class="text-right">ยอด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="entryBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-rates" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">อัตราค่าบริการ</h2><p class="page-subtitle">กำหนดอัตราค่าบริการต่อชั่วโมง</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateRate()">+ เพิ่มอัตรา</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th data-i18n="common.name">ชื่อ</th><th data-i18n="common.type">ประเภท</th><th class="text-right">อัตรา/ชม.</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="rateBody"><tr><td colspan="4" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-summary" style="display:none">
+      <div class="page-header">
+        <div><h2 class="page-title">สรุปและออกบิล</h2><p class="page-subtitle">สรุปชั่วโมงที่อนุมัติแล้วและสร้างใบแจ้งหนี้</p></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px" id="summaryCards"></div>
+      <div class="card" style="padding:24px">
+        <h3 style="margin-bottom:16px">Utilization Rate</h3>
+        <div id="utilizationContent"><p class="text-gray-400 text-center" data-i18n="common.loading">กำลังโหลด...</p></div>
+      </div>
+      <div class="card" style="padding:24px;margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h3>รายการพร้อมออกบิล</h3>
+          <button class="btn btn-primary" onclick="Page.generateInvoice()">สร้างใบแจ้งหนี้</button>
+        </div>
+        <div id="billableContent"><p class="text-gray-400 text-center" data-i18n="common.loading">กำลังโหลด...</p></div>
+      </div>
+    </div>
+
+    <!-- Entry Modal -->
+    <div class="modal-overlay" id="entryModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">บันทึกเวลา</h3><button class="modal-close" onclick="Layout.closeModal('entryModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="eDate"></div>
+            <div class="form-group"><label class="form-label">ชั่วโมง *</label><input type="number" class="form-input" id="eHours" step="0.25" min="0.25"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">โปรเจค</label><select class="form-select" id="eProject"></select></div>
+            <div class="form-group"><label class="form-label">ลูกค้า</label><input type="hidden" id="eContactId"><input type="text" class="form-input" id="eContact"></div>
+          </div>
+          <div class="form-group"><label class="form-label">รายละเอียดงาน *</label><textarea class="form-input" id="eDesc" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label"><input type="checkbox" id="eBillable" checked> Billable (เรียกเก็บได้)</label></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('entryModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEntry()" data-i18n="common.save">บันทึก</button></div>
+      </div>
+    </div>
+
+    <!-- Rate Modal -->
+    <div class="modal-overlay" id="rateModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มอัตราค่าบริการ</h3><button class="modal-close" onclick="Layout.closeModal('rateModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="rName" placeholder="เช่น Senior Consultant"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" data-i18n="common.type">ประเภท</label>
+              <select class="form-select" id="rType"><option value="Standard">มาตรฐาน</option><option value="Premium">พรีเมียม</option><option value="Discount">ส่วนลด</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">อัตรา/ชม. (บาท) *</label><input type="number" class="form-input" id="rRate" step="0.01"></div>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('rateModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRate()" data-i18n="common.save">บันทึก</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  init() {
+    if (!Layout.init('time-billing')) return;
+    Layout.setTitle('Time & Billing');
+    this.loadEntries();
+  },
+
+  switchTab(tab) {
+    ['entries','rates','summary'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['entries','rates','summary'][i] === tab));
+    if (tab === 'rates') this.loadRates();
+    if (tab === 'summary') this.loadSummary();
+  },
+
+  async loadEntries() {
+    const api = Layout.api(); if (!api) return;
+    const search = document.getElementById('searchInput')?.value || '';
+    const status = document.getElementById('statusFilter')?.value || '';
+    try {
+      let q = '?pageSize=50';
+      if (search) q += '&search=' + encodeURIComponent(search);
+      if (status) q += '&status=' + status;
+      const res = await api.getTimeEntries(q);
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('entryBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีบันทึกเวลา</td></tr>'; return; }
+      tbody.innerHTML = items.map(e => `<tr>
+        <td>${Layout.date(e.date || e.entryDate)}</td>
+        <td>${e.projectName || e.customerName || e.contactName || '-'}</td>
+        <td>${e.description || '-'}</td>
+        <td class="text-right">${e.hours || e.duration || 0}</td>
+        <td class="text-right">${Layout.money(e.rate || e.billingRate)}</td>
+        <td class="text-right font-medium">${Layout.money((e.hours||0)*(e.rate||0))}</td>
+        <td>${Layout.statusBadge(e.status || 'Draft')}</td>
+        <td>
+          ${e.status === 'Draft' ? `<button class="btn btn-sm btn-info" onclick="Page.submitEntry('${e.id}')">ส่ง</button>` : ''}
+          ${e.status === 'Submitted' ? `<button class="btn btn-sm btn-success" onclick="Page.approveEntry('${e.id}')">อนุมัติ</button>` : ''}
+        </td>
+      </tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async openCreateEntry() {
+    const api = Layout.api(); if (!api) return;
+    document.getElementById('eDate').value = Layout.dateInput(new Date());
+    document.getElementById('eHours').value = '';
+    document.getElementById('eDesc').value = '';
+    document.getElementById('eBillable').checked = true;
+    try {
+      const pRes = await api.getProjects('?pageSize=100');
+      const projects = pRes.data?.items || pRes.data || [];
+      document.getElementById('eProject').innerHTML = '<option value="">-- ไม่ระบุ --</option>' + projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    } catch (err) { /* ignore */ }
+    if (!this._contactAC) {
+      this._contactAC = Layout.contactAutocomplete('eContact', 'eContactId');
+    }
+    if (this._contactAC) this._contactAC.clear();
+    Layout.openModal('entryModal');
+  },
+
+  async saveEntry() {
+    const api = Layout.api(); if (!api) return;
+    const data = { date: document.getElementById('eDate').value, hours: parseFloat(document.getElementById('eHours').value) || 0, projectId: document.getElementById('eProject').value || null, contactId: document.getElementById('eContactId').value || null, description: document.getElementById('eDesc').value, isBillable: document.getElementById('eBillable').checked };
+    if (!data.date || !data.hours || !data.description) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    try { await api.createTimeEntry(data); Layout.toast('บันทึกสำเร็จ'); Layout.closeModal('entryModal'); this.loadEntries(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async submitEntry(id) { const api = Layout.api(); if (!api) return; try { await api.submitTimeEntry(id); Layout.toast('ส่งสำเร็จ'); this.loadEntries(); } catch (err) { Layout.toast(err.message, 'error'); } },
+  async approveEntry(id) { const api = Layout.api(); if (!api) return; try { await api.approveTimeEntry(id); Layout.toast('อนุมัติสำเร็จ'); this.loadEntries(); } catch (err) { Layout.toast(err.message, 'error'); } },
+
+  async loadRates() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getBillingRates();
+      const items = res.data?.items || res.data || [];
+      const tbody = document.getElementById('rateBody');
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="4" class="text-center text-gray-400" style="padding:40px">ยังไม่มีอัตรา</td></tr>'; return; }
+      tbody.innerHTML = items.map(r => `<tr><td class="font-medium">${r.name||'-'}</td><td>${r.type||r.rateType||'Standard'}</td><td class="text-right">${Layout.money(r.rate||r.hourlyRate)}/ชม.</td><td><button class="btn btn-sm btn-secondary" data-i18n="common.edit">แก้ไข</button></td></tr>`).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  openCreateRate() { document.getElementById('rName').value = ''; document.getElementById('rRate').value = ''; Layout.openModal('rateModal'); },
+
+  async saveRate() {
+    const api = Layout.api(); if (!api) return;
+    const data = { name: document.getElementById('rName').value, rateType: document.getElementById('rType').value, hourlyRate: parseFloat(document.getElementById('rRate').value) || 0 };
+    if (!data.name || !data.hourlyRate) { Layout.toast('กรุณากรอกข้อมูล', 'error'); return; }
+    try { await api.createBillingRate(data); Layout.toast('เพิ่มอัตราสำเร็จ'); Layout.closeModal('rateModal'); this.loadRates(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async loadSummary() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const [sumRes, utilRes] = await Promise.allSettled([api.getTimeSummary(), api.getUtilization()]);
+      if (sumRes.status === 'fulfilled') {
+        const d = sumRes.value.data || {};
+        document.getElementById('summaryCards').innerHTML = `
+          <div class="card" style="padding:20px;border-left:4px solid var(--primary)"><div class="text-xs text-gray-500">ชั่วโมงทั้งหมด</div><div class="text-2xl font-bold">${d.totalHours||0}</div></div>
+          <div class="card" style="padding:20px;border-left:4px solid var(--success)"><div class="text-xs text-gray-500">Billable Hours</div><div class="text-2xl font-bold text-success">${d.billableHours||0}</div></div>
+          <div class="card" style="padding:20px;border-left:4px solid var(--warning)"><div class="text-xs text-gray-500">รอออกบิล</div><div class="text-2xl font-bold text-warning">${Layout.money(d.unbilledAmount)}</div></div>
+          <div class="card" style="padding:20px;border-left:4px solid var(--info)"><div class="text-xs text-gray-500">ออกบิลแล้ว</div><div class="text-2xl font-bold">${Layout.money(d.billedAmount)}</div></div>`;
+      }
+      if (utilRes.status === 'fulfilled') {
+        const items = utilRes.value.data?.items || utilRes.value.data || [];
+        document.getElementById('utilizationContent').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">ชม.ทั้งหมด</th><th class="text-right">Billable</th><th class="text-right">Utilization</th></tr></thead>
+        <tbody>${items.map(u => `<tr><td>${u.employeeName||u.name||'-'}</td><td class="text-right">${u.totalHours||0}</td><td class="text-right">${u.billableHours||0}</td><td class="text-right font-medium">${u.utilizationPercent||0}%</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
+      }
+    } catch (err) { /* ignore */ }
+  },
+
+  async generateInvoice() {
+    const api = Layout.api(); if (!api) return;
+    if (!confirm('สร้างใบแจ้งหนี้จากรายการ Billable ที่อนุมัติแล้ว?')) return;
+    try { const res = await api.generateTimeInvoice({}); Layout.toast('สร้างใบแจ้งหนี้สำเร็จ'); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

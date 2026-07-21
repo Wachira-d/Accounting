@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Review Queue - NextAcc</title>
+<link rel="stylesheet" href="/css/layout.css">
+<style>
+  .queue-card {
+    display:grid;
+    grid-template-columns:auto 1fr auto auto auto;
+    gap:12px;
+    align-items:center;
+    background:white;
+    border:1px solid var(--gray-200);
+    border-left:4px solid var(--gray-300);
+    border-radius:8px;
+    padding:14px 18px;
+    margin-bottom:10px;
+    cursor:pointer;
+    transition:transform .12s, box-shadow .12s;
+  }
+  .queue-card:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(0,0,0,.08); }
+  .queue-rank {
+    font-weight:700;
+    font-size:18px;
+    color:var(--gray-400);
+    width:28px;
+    text-align:center;
+  }
+  .queue-meta { min-width:0; }
+  .queue-vendor { font-weight:600; color:var(--gray-800); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; }
+  .queue-filename { font-size:11px; color:var(--gray-500); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; }
+  .queue-hint { font-size:11px; color:var(--gray-600); margin-top:2px }
+  .grade-badge {
+    font-weight:700;
+    font-size:20px;
+    width:38px;
+    height:38px;
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:white;
+  }
+  .priority {
+    font-family:monospace;
+    font-size:13px;
+    font-weight:600;
+    color:var(--primary);
+    background:var(--gray-50);
+    padding:4px 10px;
+    border-radius:6px;
+  }
+  .asset-flag {
+    background:#fef3c7;
+    color:#92400e;
+    font-size:10px;
+    font-weight:700;
+    padding:3px 8px;
+    border-radius:4px;
+    margin-left:6px;
+  }
+  .empty-state {
+    text-align:center;
+    padding:48px 24px;
+    color:var(--gray-500);
+    background:var(--gray-50);
+    border:2px dashed var(--gray-300);
+    border-radius:12px;
+  }
+  .empty-state .icon { font-size:48px; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<div id="layoutRoot"></div>
+<div class="page-container">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+    <div>
+      <h1 style="margin:0">Review Queue</h1>
+      <p style="margin:4px 0 0;color:var(--gray-500);font-size:14px">
+        คิวเรียงตาม priority — แก้รายการบนสุดก่อน ระบบจะเรียนรู้ได้เร็วที่สุด
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <label style="font-size:13px;color:var(--gray-600)">แสดง:</label>
+      <select id="limitSelect" onchange="Page.load()" style="padding:6px 12px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
+        <option value="10">10 อันดับ</option>
+        <option value="20" selected>20 อันดับ</option>
+        <option value="50">50 อันดับ</option>
+      </select>
+      <button onclick="Page.load()" class="btn btn-sm btn-outline" title="รีเฟรช">🔄 รีเฟรช</button>
+    </div>
+  </div>
+
+  <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;line-height:1.6;color:#065f46">
+    💡 <b>วิธีการเรียงลำดับ</b>: combination ของ
+    <b>uncertainty</b> (ระบบไม่มั่นใจ) ×
+    <b>novelty</b> (vendor ใหม่) ×
+    <b>recency</b> (ใหม่ภายใน 7 วัน) ×
+    <b>asset boost</b> (มี potential asset). กดที่แถวเพื่อเปิดหน้า review
+  </div>
+
+  <div id="queueList"></div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+  const Page = {
+    async init() {
+      if (!Layout.init('review-queue')) return;
+      Layout.setTitle('Review Queue');
+      await this.load();
+    },
+
+    async load() {
+      const cid = Layout.getCompanyId();
+      const limit = parseInt(document.getElementById('limitSelect').value) || 20;
+      const listEl = document.getElementById('queueList');
+      listEl.innerHTML = '<div style="text-align:center;padding:48px;color:var(--gray-400)">กำลังโหลด...</div>';
+      try {
+        const res = await fetch(`/api/companies/${cid}/ocr/review-queue?limit=${limit}`, {
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        const data = await res.json();
+        if (!data.success) {
+          listEl.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><div>${Layout.esc(data.message || 'โหลดไม่สำเร็จ')}</div></div>`;
+          return;
+        }
+        const items = data.data || [];
+        if (items.length === 0) {
+          listEl.innerHTML = `<div class="empty-state"><div class="icon">✅</div><div><strong>คิวว่าง</strong><br><span style="font-size:13px">ไม่มี scan ที่ต้อง review — ระบบมั่นใจกับทุก scan ปัจจุบัน</span></div></div>`;
+          return;
+        }
+        listEl.innerHTML = items.map((s, i) => this.render(s, i + 1)).join('');
+      } catch (err) {
+        listEl.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><div>โหลดไม่สำเร็จ: ${Layout.esc(err.message || err)}</div></div>`;
+      }
+    },
+
+    render(scan, rank) {
+      const q = scan.quality;
+      const gradeBg = q ? q.color : '#9ca3af';
+      const gradeLetter = q ? q.letter : '?';
+      const priority = (scan.priorityScore || 0).toFixed(2);
+      const asset = scan.hasPotentialFixedAsset ? '<span class="asset-flag">💼 Asset</span>' : '';
+      return `
+        <div class="queue-card" style="border-left-color:${gradeBg}"
+             onclick="window.location.href='/pages/document-scan.html?reviewScan=${scan.scanId}'">
+          <div class="queue-rank">#${rank}</div>
+          <div class="queue-meta">
+            <div class="queue-vendor">
+              ${Layout.esc(scan.vendorName || '(ไม่ทราบผู้ขาย)')}
+              ${asset}
+            </div>
+            <div class="queue-filename">${Layout.esc(scan.originalFileName || '')}</div>
+            <div class="queue-hint">${Layout.esc(scan.reasonHint || '—')} • ${Layout.date(scan.processedAt)}</div>
+          </div>
+          <div class="priority" title="Priority score">${priority}</div>
+          <div class="grade-badge" style="background:${gradeBg}" title="Quality grade${q ? ` ${q.letter} (${q.score}/100)` : ''}">${gradeLetter}</div>
+          <div style="color:var(--gray-400);font-size:20px">→</div>
+        </div>`;
+    },
+  };
+  document.addEventListener('DOMContentLoaded', () => Page.init());
+</script>
+</body>
+</html>

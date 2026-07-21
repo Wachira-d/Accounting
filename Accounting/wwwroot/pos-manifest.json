@@ -1,0 +1,54 @@
+{
+  "id": "/pages/pos.html",
+  "name": "Next Acc POS — ระบบขายหน้าร้าน",
+  "short_name": "Next Acc POS",
+  "description": "ระบบ POS หน้าร้านครบฟังก์ชั่น — ออกใบเสร็จผ่านเครื่องพิมพ์ Thermal, เปิดลิ้นชักเก็บเงิน, สแกนบาร์โค้ดด้วยกล้อง, ใช้งานออฟไลน์ได้ เปิดร้านได้แม้เน็ตล่ม",
+  "start_url": "/pages/pos.html?source=pwa",
+  "scope": "/pages/pos",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#16a34a",
+  "lang": "th",
+  "dir": "ltr",
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "screenshots": [
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "หน้าขาย POS"
+    }
+  ],
+  "categories": ["business", "finance", "shopping", "productivity"],
+  "shortcuts": [
+    {
+      "name": "หน้าขาย POS",
+      "short_name": "ขาย",
+      "description": "เปิดหน้าขายทันที",
+      "url": "/pages/pos.html",
+      "icons": [{ "src": "/assets/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "หน้าจอครัว (KDS)",
+      "short_name": "ครัว",
+      "description": "เปิดจอดูออเดอร์ที่ครัว",
+      "url": "/pages/pos-kds.html",
+      "icons": [{ "src": "/assets/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "รายงานขาย",
+      "short_name": "รายงาน",
+      "url": "/pages/pos-reports.html",
+      "icons": [{ "src": "/assets/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เงินมัดจำ/รับล่วงหน้า - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <script>
+    // หน้านี้ถูกแทนที่ด้วย "ศูนย์เงินมัดจำ" (redesign — URL ใหม่ ปลอด cache เก่า)
+    location.replace('/pages/deposit-center.html');
+  </script>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">เงินมัดจำ / รับล่วงหน้า</h2>
+        <p class="page-subtitle">
+          มัดจำ = หนี้สิน (ขายรอรับรู้ 217xx) บนงบดุล — ไม่ใช่เจ้าหนี้การค้า ·
+          ภาษีขายถึงกำหนดทันทีตั้งแต่วันรับเงิน (§78/§78/1) ·
+          รับรู้รายได้เมื่อส่งมอบจริง
+        </p>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="Page.setStatus('',this)">ทั้งหมด</div>
+      <div class="tab" onclick="Page.setStatus('Outstanding',this)">คงค้าง</div>
+      <div class="tab" onclick="Page.setStatus('Partial',this)">รับรู้บางส่วน</div>
+      <div class="tab" onclick="Page.setStatus('Realized',this)">รับรู้ครบแล้ว</div>
+    </div>
+
+    <div class="grid grid-4 gap-4" id="kpis" style="margin-bottom:24px"></div>
+
+    <div class="card" id="listContent">
+      <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>
+    </div>
+  </div>
+
+  <!-- Realize modal — ใช้ .modal-overlay กลาง (เดิมเขียน overlay เอง ไม่มี ×,
+       ไม่มี animation, ไม่ตรงกับ modal อื่นในระบบ) -->
+  <div class="modal-overlay" id="realizeModal">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <h3 class="modal-title">รับรู้รายได้จากมัดจำ</h3>
+        <button class="modal-close" onclick="Layout.closeModal('realizeModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="realizeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <div class="form-group">
+          <label class="form-label" data-help="ยอดที่ส่งของ/บริการแล้ว — Dr ขายรอรับรู้ (24650) / Cr รายได้ (41000/42000) • ใส่ 'ฐานก่อน VAT' — ถ้ามัดจำมี VAT, ระบบจะคำนวณ VAT ที่จะถอนจาก 24655 อัตโนมัติ">จำนวนเงินที่รับรู้ (ฐานไม่รวม VAT)</label>
+          <input type="number" step="0.01" min="0" class="form-input" id="realizeAmount">
+        </div>
+        <div class="form-group">
+          <label class="form-label" data-help="วัน tax point ที่ผลิตภัณฑ์/บริการส่งมอบ — ใช้กำหนดงวด ภพ.30 (ฝั่งขาย) ของ VAT มัดจำ">วันที่รับรู้</label>
+          <input type="date" class="form-input" id="realizeDate">
+        </div>
+        <div class="form-group">
+          <label class="form-label" data-help="บัญชีรายได้ที่จะ Cr — เว้นว่างจะ default 41000 (รายได้ขาย) สำหรับสินค้า, 42000 (รายได้บริการ) สำหรับบริการ. ระบุ code ถ้าต้องการบัญชีอื่น เช่น 41100 รายได้-โครงการ X">ผังบัญชีรายได้ (เว้นว่าง = ค่าเริ่มต้น 41000/42000)</label>
+          <input type="text" class="form-input" id="realizeRevenueCode" placeholder="เช่น 41000">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('realizeModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.submitRealize()">รับรู้รายได้</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Refund modal -->
+  <div class="modal-overlay" id="refundModal">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <h3 class="modal-title">คืนเงินมัดจำ (ยกเลิกการจอง)</h3>
+        <button class="modal-close" onclick="Layout.closeModal('refundModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="refundInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <div class="form-group">
+          <label class="form-label" data-help="ยอดคืนรวม VAT (Cr เงินสด/ธนาคาร) — ระบบจะถอน VAT ที่ตามสัดส่วน แล้วออก 'ใบลดหนี้ภาษีขาย' (§86/10) ไปลดยอดในงวดที่คืน">จำนวนเงินที่คืน (รวม VAT)</label>
+          <input type="number" step="0.01" min="0" class="form-input" id="refundAmount">
+        </div>
+        <div class="form-group">
+          <label class="form-label" data-help="วันที่จ่ายเงินคืนจริง — ใช้เป็นวันออกใบลดหนี้ + งวด ภพ.30 ที่จะ Cr VAT ขาย">วันที่คืน</label>
+          <input type="date" class="form-input" id="refundDate">
+        </div>
+        <div class="form-group">
+          <label class="form-label" data-help="ใช้บันทึกที่มาของการคืน เพื่อ audit trail (ภพ.30 ใบลดหนี้ต้องระบุเหตุผลตาม §86/10) — เช่น 'ลูกค้ายกเลิกงานก่อนเริ่มผลิต'">เหตุผล (เช่น ยกเลิกงาน, เลื่อนวัน)</label>
+          <input type="text" class="form-input" id="refundReason" placeholder="เหตุผลการคืนมัดจำ">
+        </div>
+        <div style="font-size:12px;color:#92400e">⚠️ ระบบจะกลับรายการขายรอรับรู้ + ออกใบลดหนี้ภาษีขายอัตโนมัติ</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('refundModal')">ยกเลิก</button>
+        <button class="btn btn-danger" onclick="Page.submitRefund()">คืนเงินมัดจำ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      status: '',
+      _rows: [],
+      _realizeId: null,
+      async init() {
+        if (!Layout.init('deposits')) return;
+        Layout.setTitle('เงินมัดจำ / รับล่วงหน้า');
+        await this.load();
+      },
+      setStatus(s, el) {
+        this.status = s;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const content = document.getElementById('listContent');
+        content.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>';
+        try {
+          const res = await api.getDeposits(this.status);
+          const rows = res.data || [];
+          this._rows = rows;
+          this.renderKpis(rows);
+          this.renderTable(rows);
+        } catch (e) {
+          content.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+        }
+      },
+      renderKpis(rows) {
+        const outstanding = rows.reduce((s, r) => s + (r.outstandingAmount || 0), 0);
+        const realized = rows.reduce((s, r) => s + (r.realizedAmount || 0), 0);
+        const vat = rows.reduce((s, r) => s + (r.vatAmount || 0), 0);
+        const openCount = rows.filter(r => r.status !== 'Realized').length;
+        document.getElementById('kpis').innerHTML = `
+          <div class="kpi-card"><div class="kpi-label">มัดจำคงค้าง (ฐาน)</div><div class="kpi-value">${Layout.money(outstanding)}</div><div class="text-xs text-gray-400">${openCount} รายการ</div></div>
+          <div class="kpi-card"><div class="kpi-label">รับรู้รายได้แล้ว</div><div class="kpi-value">${Layout.money(realized)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">ภาษีขาย (ยื่นแล้ว/ถึงกำหนด)</div><div class="kpi-value">${Layout.money(vat)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">จำนวนใบทั้งหมด</div><div class="kpi-value">${rows.length}</div></div>`;
+      },
+      statusBadge(st) {
+        const map = {
+          Outstanding: ['#fef3c7', '#92400e', 'คงค้าง'],
+          Partial:     ['#dbeafe', '#1e40af', 'รับรู้บางส่วน'],
+          Realized:    ['#dcfce7', '#15803d', 'รับรู้ครบแล้ว'],
+        };
+        const [bg, fg, label] = map[st] || ['#f1f5f9', '#475569', st];
+        return `<span style="padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700;background:${bg};color:${fg}">${label}</span>`;
+      },
+      renderTable(rows) {
+        const content = document.getElementById('listContent');
+        if (!rows.length) {
+          content.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">ไม่มีรายการเงินมัดจำ</div>';
+          // ว่างเปล่า → ดึงตัววินิจฉัยมาบอกว่าติดตรงไหน (บัญชี/JE/เอกสาร)
+          this.loadDiagnostics();
+          return;
+        }
+        content.innerHTML = `
+          <div class="table-container" style="border:none">
+            <table class="table">
+              <thead><tr>
+                <th>เลขที่</th><th>วันที่</th><th>ลูกค้า</th><th>อ้างอิง</th>
+                <th class="text-right">ฐาน</th><th class="text-right">VAT</th>
+                <th class="text-center">ภาษีขาย</th>
+                <th class="text-right">รับรู้แล้ว</th><th class="text-right">คงค้าง</th>
+                <th class="text-center">อายุ</th><th class="text-center">สถานะ</th><th></th>
+              </tr></thead>
+              <tbody>${rows.map(r => {
+                const vatCell = !r.outputVatDeferred
+                  ? '<span style="color:#15803d;font-size:11px" title="tax point เกิดแล้ว — เข้า ภ.พ.30 (21911)">✓ ถึงกำหนด</span>'
+                  : (r.outputVatRecognizedAt
+                      ? `<span style="color:#15803d;font-size:11px" title="ย้ายเข้า ภ.พ.30 เมื่อ ${Layout.date(r.outputVatRecognizedAt)}">✓ รับรู้แล้ว</span>`
+                      : '<span style="color:#b45309;font-size:11px" title="พักที่ 21913 ยังไม่เข้า ภ.พ.30">⏳ รอเรียกเก็บ</span>');
+                return `
+                <tr>
+                  <td class="font-medium">${Layout.esc(r.documentNumber)}</td>
+                  <td>${Layout.date(r.documentDate)}</td>
+                  <td>${Layout.esc(r.contactName || '-')}</td>
+                  <td style="font-size:12px;color:#475569">${Layout.esc(r.reference || '-')}</td>
+                  <td class="text-right">${Layout.money(r.baseAmount)}</td>
+                  <td class="text-right">${Layout.money(r.vatAmount)}</td>
+                  <td class="text-center">${vatCell}</td>
+                  <td class="text-right">${Layout.money(r.realizedAmount)}</td>
+                  <td class="text-right ${r.outstandingAmount > 0 ? 'text-danger' : ''}">${Layout.money(r.outstandingAmount)}</td>
+                  <td class="text-center">${r.ageDays} วัน</td>
+                  <td class="text-center">${this.statusBadge(r.status)}</td>
+                  <td class="text-right" style="white-space:nowrap">
+                    ${(!r.id || r.id === '00000000-0000-0000-0000-000000000000')
+                      ? '<span style="font-size:11px;color:#94a3b8" title="ยอดจาก GL ที่ยังไม่ผูกเอกสาร — รับรู้/คืนผ่านสมุดรายวันโดยตรง">ไม่มีเอกสารอ้างอิง</span>'
+                      : `${r.status === 'Realized' ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.openRealize('${r.id}')">รับรู้รายได้</button>`}
+                    ${r.outstandingAmount > 0.005 ? `<button class="btn btn-sm btn-ghost" onclick="Page.openRefund('${r.id}')" title="คืนเงินมัดจำ (ยกเลิกการจอง)">คืนมัดจำ</button>` : ''}`}
+                  </td>
+                </tr>`; }).join('')}</tbody>
+            </table>
+          </div>`;
+      },
+      async loadDiagnostics() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getDepositDiagnostics();
+          const d = res.data; if (!d) return;
+          const acctRows = (d.matchedAccounts || []).map(a =>
+            `<tr><td style="padding:2px 8px">${Layout.esc(a.accountCode)}</td><td style="padding:2px 8px">${Layout.esc(a.accountName)}</td><td style="padding:2px 8px;text-align:right">${Layout.money(a.netCredit)}</td></tr>`
+          ).join('');
+          const content = document.getElementById('listContent');
+          content.innerHTML = `
+            <div style="padding:24px;max-width:760px;margin:0 auto">
+              <div style="text-align:center;color:#94a3b8;margin-bottom:16px">ไม่มีรายการเงินมัดจำ</div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px">
+                <div style="font-weight:700;color:#1e293b;margin-bottom:8px">🔎 ผลตรวจสอบระบบ</div>
+                <div style="font-size:13px;color:#334155;line-height:1.9">
+                  บัญชีมัดจำในผังบัญชี: <b>${d.matchedAccountCount}</b> บัญชี ·
+                  เอกสารติดธงมัดจำ: <b>${d.nativeDepositDocCount}</b> ·
+                  JE เครดิตบัญชีมัดจำ: <b>${d.creditLineCount}</b> บรรทัด
+                  (ผูกเอกสาร ${d.docLinkedCreditCount} / ไม่ผูก ${d.docLessCreditCount}) ·
+                  ยอดคงค้างสุทธิ: <b>${Layout.money(d.totalCreditNet)}</b> ·
+                  self-probe (endpoint รายการใน build นี้): <b>${d.listEndpointCount ?? 0} แถว</b>
+                  ${d.listEndpointError ? `<span style="color:#b91c1c">· error: ${Layout.esc(d.listEndpointError)}</span>` : ''}
+                </div>
+                ${acctRows ? `<table style="width:100%;font-size:12px;margin-top:10px;border-top:1px solid #e2e8f0">
+                  <thead><tr style="color:#64748b"><th style="text-align:left;padding:4px 8px">รหัส</th><th style="text-align:left;padding:4px 8px">ชื่อบัญชี</th><th style="text-align:right;padding:4px 8px">คงค้างสุทธิ</th></tr></thead>
+                  <tbody>${acctRows}</tbody></table>` : ''}
+                <div style="margin-top:12px;padding:10px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e">
+                  💡 ${Layout.esc(d.hint)}
+                </div>
+              </div>
+            </div>`;
+        } catch (e) { /* วินิจฉัยล้ม → คงข้อความ "ไม่มีรายการ" ไว้เฉย ๆ */ }
+      },
+      openRealize(id) {
+        const r = this._rows.find(x => x.id === id);
+        if (!r) return;
+        this._realizeId = id;
+        document.getElementById('realizeInfo').innerHTML =
+          `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (ฐาน): <b>${Layout.money(r.outstandingAmount)}</b>`;
+        document.getElementById('realizeAmount').value = (r.outstandingAmount || 0).toFixed(2);
+        document.getElementById('realizeAmount').max = r.outstandingAmount;
+        document.getElementById('realizeDate').value = Layout.toDateInput(new Date());
+        document.getElementById('realizeRevenueCode').value = '';
+        Layout.openModal('realizeModal');
+      },
+      closeRealize() {
+        Layout.closeModal('realizeModal');
+        this._realizeId = null;
+      },
+      openRefund(id) {
+        const r = this._rows.find(x => x.id === id);
+        if (!r) return;
+        this._refundId = id;
+        document.getElementById('refundInfo').innerHTML =
+          `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (รวม VAT): <b>${Layout.money(r.totalAmount - (r.realizedAmount || 0))}</b>`;
+        document.getElementById('refundAmount').value = (r.totalAmount || 0).toFixed(2);
+        document.getElementById('refundDate').value = Layout.toDateInput(new Date());
+        document.getElementById('refundReason').value = '';
+        Layout.openModal('refundModal');
+      },
+      closeRefund() {
+        Layout.closeModal('refundModal');
+        this._refundId = null;
+      },
+      async submitRefund() {
+        const api = Layout.api(); if (!api || !this._refundId) return;
+        const amount = parseFloat(document.getElementById('refundAmount').value);
+        const dateRaw = document.getElementById('refundDate').value;
+        const reason = document.getElementById('refundReason').value.trim();
+        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงินที่คืน', 'error'); return; }
+        try {
+          await api.refundDeposit(this._refundId, {
+            amount, refundDate: dateRaw ? new Date(dateRaw).toISOString() : null, reason: reason || null
+          });
+          this.closeRefund();
+          Layout.toast('คืนเงินมัดจำสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'คืนเงินไม่สำเร็จ', 'error'); }
+      },
+      async submitRealize() {
+        const api = Layout.api(); if (!api || !this._realizeId) return;
+        const amount = parseFloat(document.getElementById('realizeAmount').value);
+        const dateRaw = document.getElementById('realizeDate').value;
+        const code = document.getElementById('realizeRevenueCode').value.trim();
+        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงินที่รับรู้', 'error'); return; }
+        const body = {
+          amount,
+          realizeDate: dateRaw ? new Date(dateRaw).toISOString() : null,
+          revenueAccountCode: code || null
+        };
+        try {
+          await api.realizeDeposit(this._realizeId, body);
+          this.closeRealize();
+          Layout.toast('รับรู้รายได้จากมัดจำสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
+      },
+    };
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

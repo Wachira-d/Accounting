@@ -1,0 +1,244 @@
+using Accounting.Models.Enums;
+
+namespace Accounting.Models.Entities;
+
+/// <summary>
+/// สินค้า/บริการ (Product/Service Catalog)
+/// เทียบเท่า FlowAccount & PEAK: Product management
+/// </summary>
+public class Product : TenantEntity
+{
+    public string Code { get; set; } = null!;
+    public string Name { get; set; } = null!;
+    public string? NameEn { get; set; }
+    public string? Description { get; set; }
+    public ProductType ProductType { get; set; }
+    public string? SKU { get; set; }
+    public string? Barcode { get; set; }
+    public string? Category { get; set; }
+    public string Unit { get; set; } = "ชิ้น";
+
+    // Pricing
+    public decimal SellingPrice { get; set; }
+    public decimal CostPrice { get; set; }
+
+    // Tax
+    public decimal VatRate { get; set; } = 7;
+    public bool IsVatIncluded { get; set; } = false;
+
+    // Account mapping
+    public Guid? SalesAccountId { get; set; }
+    public ChartOfAccount? SalesAccount { get; set; }
+    public Guid? PurchaseAccountId { get; set; }
+    public ChartOfAccount? PurchaseAccount { get; set; }
+    public Guid? InventoryAccountId { get; set; }
+    public ChartOfAccount? InventoryAccount { get; set; }
+
+    // Supplies-specific account mapping (วัสดุสิ้นเปลือง)
+    public Guid? SuppliesAccountId { get; set; }        // บัญชีวัสดุสิ้นเปลือง (118xx)
+    public ChartOfAccount? SuppliesAccount { get; set; }
+    public Guid? SuppliesExpenseAccountId { get; set; }  // บัญชีค่าวัสดุสิ้นเปลือง (5xxxxx)
+    public ChartOfAccount? SuppliesExpenseAccount { get; set; }
+
+    // Stock (สำหรับ ProductType = Product)
+    public decimal CurrentStock { get; set; }
+    public decimal MinimumStock { get; set; }
+    public bool TrackStock { get; set; } = false;
+
+    /// <summary>How COGS is calculated when this product moves OUT.
+    /// WeightedAverage is the Thai SME default — running average
+    /// updated on every receipt. FIFO requires layered cost history
+    /// and is used when valuation precision matters. Standard uses
+    /// CostPrice flat + posts variance to a variance account.</summary>
+    public CostingMethod CostingMethod { get; set; } = CostingMethod.WeightedAverage;
+
+    /// <summary>Live running average cost — updated by
+    /// InventoryCostingService on every IN movement. CurrentStock
+    /// is the running quantity; AverageUnitCost is the per-unit
+    /// figure that gets stamped onto outbound StockMovements'
+    /// UnitCost so the COGS posting matches the weighted average.</summary>
+    public decimal AverageUnitCost { get; set; }
+
+    public bool IsActive { get; set; } = true;
+
+    /// <summary>POS multi-printer routing key — "Kitchen-Hot" / "Kitchen-Cold" /
+    /// "Bar" / "Drinks" / custom string. Null = default cashier printer only.
+    /// Used when the cashier prints kitchen tickets so items group to the right
+    /// station. Restaurants typically route hot food to the kitchen printer and
+    /// cold drinks to the bar printer.</summary>
+    public string? PrintStation { get; set; }
+
+    // Media — JSON array of image URLs (gallery). First is featured.
+    // Gets surfaced on /pages/products.html cards and falls through to the
+    // storefront when SiteProduct.ImageUrlsJson hasn't been overridden.
+    public string? ImageUrlsJson { get; set; }
+
+    // Relationships
+    public ICollection<UnitConversion> UnitConversions { get; set; } = new List<UnitConversion>();
+}
+
+/// <summary>
+/// Stock Movement (ประวัติเคลื่อนไหวสินค้า)
+/// </summary>
+public class StockMovement : TenantEntity
+{
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public DateTime MovementDate { get; set; }
+    public string MovementType { get; set; } = null!;  // IN, OUT, ADJUST, TRANSFER_OUT, TRANSFER_IN
+    public decimal Quantity { get; set; }
+    public decimal UnitCost { get; set; }
+    public decimal BalanceAfter { get; set; }
+    public string? Reference { get; set; }
+    public Guid? DocumentId { get; set; }
+    public string? Notes { get; set; }
+
+    /// <summary>Warehouse location ของรายการเคลื่อนไหวนี้. Optional —
+    /// บริษัทที่มี warehouse เดียวเก็บ null. Multi-warehouse ใช้กำหนด
+    /// stock per location.</summary>
+    public Guid? WarehouseId { get; set; }
+
+    /// <summary>Lot/batch number สำหรับ pharma/food/expiration-tracking.
+    /// Optional — ผูกกับ Lot detail (expiry date, supplier batch ref).</summary>
+    public string? LotNumber { get; set; }
+
+    /// <summary>Serial number สำหรับ high-value items (electronics /
+    /// equipment). 1 serial = 1 unit; quantity = 1 เสมอสำหรับรายการ
+    /// ที่ track serial.</summary>
+    public string? SerialNumber { get; set; }
+
+    /// <summary>Counter movement — สำหรับ Transfer ระหว่าง warehouse:
+    /// TRANSFER_OUT มี TransferPairId ชี้ไปยัง TRANSFER_IN movement
+    /// ของ warehouse ปลายทาง. ใช้ match cycle count + audit.</summary>
+    public Guid? TransferPairId { get; set; }
+}
+
+/// <summary>
+/// Product Lot/Batch — track per-lot inventory + expiration.
+/// pharma / food / cosmetic ที่ต้อง FIFO/FEFO (first-expired-first-out).
+/// NOTE: StockTransfer + StockTransferLine นิยามอยู่ใน AdvancedOperations.cs
+/// (ของเดิม) — ไม่ define ซ้ำที่นี่. StockTransferController ใช้ของเดิม
+/// ซึ่งมีฟิลด์ครบ (TransferNumber/From/To/Status/Lines + line Notes/Lot/Serial).
+/// </summary>
+public class ProductLot : TenantEntity
+{
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public string LotNumber { get; set; } = "";
+    public DateTime? ManufactureDate { get; set; }
+    public DateTime? ExpirationDate { get; set; }
+    public decimal QuantityOnHand { get; set; }
+    public decimal UnitCost { get; set; }
+    public Guid? WarehouseId { get; set; }
+    public string? SupplierBatchRef { get; set; }   // batch ref จาก supplier (cross-reference)
+    public string? Notes { get; set; }
+}
+
+/// <summary>
+/// การแปลงหน่วยสินค้า เช่น 1 ลัง = 12 ชิ้น, 1 โหล = 12 ชิ้น
+/// </summary>
+public class UnitConversion : TenantEntity
+{
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public string FromUnit { get; set; } = null!;    // เช่น "ลัง"
+    public string ToUnit { get; set; } = null!;      // เช่น "ชิ้น"
+    public decimal ConversionRate { get; set; }       // เช่น 12 (1 ลัง = 12 ชิ้น)
+    public decimal? SellingPrice { get; set; }        // ราคาขายต่อหน่วยนี้
+    public decimal? CostPrice { get; set; }           // ราคาทุนต่อหน่วยนี้
+    public string? Barcode { get; set; }              // Barcode สำหรับหน่วยนี้
+}
+
+/// <summary>
+/// หมวดหมู่สินค้า
+/// </summary>
+public class ProductCategory : TenantEntity
+{
+    public string Code { get; set; } = null!;
+    public string Name { get; set; } = null!;
+    public string? Description { get; set; }
+    public Guid? ParentCategoryId { get; set; }
+    public ProductCategory? ParentCategory { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>
+/// ตรวจนับสินค้า (Physical Inventory Count)
+/// </summary>
+public class StockCount : TenantEntity
+{
+    public string CountNumber { get; set; } = null!;
+    public DateTime CountDate { get; set; }
+    public string Status { get; set; } = "Draft";  // Draft, InProgress, Completed, Cancelled
+    public string? Notes { get; set; }
+    public Guid? WarehouseId { get; set; }
+    /// <summary>"Full" | "Cycle" | "Partial" — tracking mode used by the
+    /// count session. Defaults to Full so legacy rows (no value) read
+    /// consistently.</summary>
+    public string CountType { get; set; } = "Full";
+    public ICollection<StockCountLine> Lines { get; set; } = new List<StockCountLine>();
+}
+
+public class StockCountLine : TenantEntity
+{
+    public Guid StockCountId { get; set; }
+    public StockCount StockCount { get; set; } = null!;
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public decimal SystemQty { get; set; }
+    public decimal CountedQty { get; set; }
+    public decimal Variance { get; set; }       // CountedQty - SystemQty
+    /// <summary>Per-unit cost at count time (WAC snapshot) so the
+    /// adjustment JE can value variances correctly.</summary>
+    public decimal UnitCost { get; set; }
+    public string? Notes { get; set; }
+}
+
+/// <summary>
+/// สรุปมูลค่าสินค้าคงเหลือ ณ สิ้นงวด (Inventory Period Snapshot)
+/// ใช้สำหรับปิดงบประจำเดือน/ปี
+/// </summary>
+public class InventorySnapshot : TenantEntity
+{
+    public DateTime SnapshotDate { get; set; }
+    public string Status { get; set; } = "Draft";  // Draft, Finalized
+    public string? Description { get; set; }
+    public decimal TotalValue { get; set; }
+    public int TotalProducts { get; set; }
+    public Guid? JournalEntryId { get; set; }
+    public JournalEntry? JournalEntry { get; set; }
+    public ICollection<InventorySnapshotLine> Lines { get; set; } = new List<InventorySnapshotLine>();
+}
+
+public class InventorySnapshotLine : TenantEntity
+{
+    public Guid SnapshotId { get; set; }
+    public InventorySnapshot Snapshot { get; set; } = null!;
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public decimal Quantity { get; set; }
+    public decimal UnitCost { get; set; }
+    public decimal TotalValue { get; set; }
+}
+
+/// <summary>
+/// บันทึกการเบิกใช้วัสดุสิ้นเปลือง (Supplies Usage Log)
+/// ทุกครั้งที่เบิก → Dr ค่าวัสดุสิ้นเปลือง (5xxxxx) / Cr วัสดุสิ้นเปลือง (118xx)
+/// </summary>
+public class SuppliesUsageLog : TenantEntity
+{
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public DateTime UsageDate { get; set; }
+    public decimal Quantity { get; set; }
+    public decimal UnitCost { get; set; }
+    public decimal TotalCost { get; set; }
+    public string? Department { get; set; }      // แผนก/ห้องที่เบิก
+    public string? Purpose { get; set; }         // วัตถุประสงค์
+    public string? Reference { get; set; }       // เลขที่อ้างอิง
+    public string? Notes { get; set; }           // หมายเหตุเพิ่มเติม (multi-line)
+    public string? IssuedToUserId { get; set; }  // ผู้รับวัสดุ (UserId)
+    public string? IssuedToName { get; set; }    // ชื่อผู้รับ (สำหรับเบิกให้คนนอกระบบ เช่น ผู้รับเหมา)
+    public Guid? JournalEntryId { get; set; }
+    public JournalEntry? JournalEntry { get; set; }
+}

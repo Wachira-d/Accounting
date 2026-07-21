@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDPA — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .pdpa-tabs { display:flex; gap:2px; border-bottom:2px solid #e5e7eb; margin-bottom:16px; flex-wrap:wrap }
+    .pdpa-tab { padding:10px 16px; cursor:pointer; border:none; background:transparent; font-size:14px; color:#6b7280; border-bottom:3px solid transparent; margin-bottom:-2px }
+    .pdpa-tab.active { color:#1e40af; border-bottom-color:#1e40af; font-weight:600 }
+    .pdpa-tab .count { background:#dc2626; color:#fff; border-radius:10px; padding:1px 7px; font-size:11px; margin-left:5px }
+    .pdpa-pane { display:none }
+    .pdpa-pane.active { display:block }
+    .breach-row { padding:12px; border:1px solid #fecaca; background:#fef2f2; border-radius:8px; margin-bottom:8px }
+    .breach-row.warn { border-color:#fed7aa; background:#fff7ed }
+    .breach-row.ok { border-color:#bbf7d0; background:#f0fdf4 }
+    .sev { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:600 }
+    .sev.Critical, .sev.High { background:#dc2626; color:#fff }
+    .sev.Medium { background:#f59e0b; color:#fff }
+    .sev.Low { background:#9ca3af; color:#fff }
+    .timer { font-family:ui-monospace,monospace; font-weight:700 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">PDPA — ระบบคุ้มครองข้อมูลส่วนบุคคล</h2>
+        <p class="page-subtitle">พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล (DSR §32 · RoPA §39 · Consent §19 · PiiAccessLog ม.37(4) · Breach 72h)</p>
+      </div>
+    </div>
+
+    <div class="pdpa-tabs">
+      <button class="pdpa-tab active" onclick="Page.tab('dsr',this)">📥 คำขอจากเจ้าของข้อมูล (DSR)</button>
+      <button class="pdpa-tab" onclick="Page.tab('ropa',this)">📋 RoPA (ม.39)</button>
+      <button class="pdpa-tab" onclick="Page.tab('consent',this)">✅ Consent</button>
+      <button class="pdpa-tab" onclick="Page.tab('breach',this)">🚨 Breach <span id="breachAlertBadge" class="count" style="display:none">0</span></button>
+      <button class="pdpa-tab" onclick="Page.tab('access',this)">👁️ Access Log</button>
+    </div>
+
+    <!-- ====== TAB: DSR ====== -->
+    <div id="pane-dsr" class="pdpa-pane active">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h3 style="margin:0">⚠️ คำขอที่เลยกำหนด</h3>
+          <button class="btn btn-primary" onclick="Page.openDsr()">+ รับคำขอใหม่</button>
+        </div>
+        <div id="overdueList" style="margin-top:10px">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <!-- ====== TAB: RoPA ====== -->
+    <div id="pane-ropa" class="pdpa-pane">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div>
+            <h3 style="margin:0">📋 Record of Processing Activity (RoPA)</h3>
+            <p style="color:#6b7280;font-size:12px;margin:4px 0 0">บันทึกกิจกรรมการประมวลผลข้อมูลส่วนบุคคลของบริษัท (ม.39) — PDPC ตรวจจะขอดูตัวนี้</p>
+          </div>
+          <button class="btn btn-primary" onclick="Page.openRopa()">+ เพิ่มกิจกรรม</button>
+        </div>
+        <div id="ropaList" style="margin-top:10px">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <!-- ====== TAB: Consent ====== -->
+    <div id="pane-consent" class="pdpa-pane">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div>
+            <h3 style="margin:0">✅ บันทึกความยินยอม (Consent)</h3>
+            <p style="color:#6b7280;font-size:12px;margin:4px 0 0">บันทึกการยินยอม/ถอนความยินยอมตาม ม.19, 22 — ต้องเก็บหลักฐาน (evidence hash)</p>
+          </div>
+          <button class="btn btn-primary" onclick="Page.openConsent()">+ บันทึกความยินยอม</button>
+        </div>
+        <div style="font-size:13px;color:#6b7280;padding:24px;text-align:center">
+          💡 ระบบใช้ลำดับเหตุการณ์ — บันทึกผ่าน API ตรง.<br>
+          ใช้ <code>POST /api/companies/{id}/pdpa/consent</code> + <code>/withdraw</code> เพื่อจัดการ.<br>
+          UI สำหรับ list ทั้งหมดสามารถ extend ได้ใน sprint ถัดไป (ขอบเขตของ MVP).
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== TAB: Breach ====== -->
+    <div id="pane-breach" class="pdpa-pane">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div>
+            <h3 style="margin:0">🚨 เหตุการณ์ข้อมูลรั่วไหล (Breach)</h3>
+            <p style="color:#6b7280;font-size:12px;margin:4px 0 0">ม.37(4) — ต้องแจ้ง PDPC ภายใน 72 ชั่วโมงนับจากตรวจพบ</p>
+          </div>
+          <button class="btn btn-primary" onclick="Page.openBreach()">+ บันทึกเหตุการณ์</button>
+        </div>
+        <h4 style="margin:16px 0 8px;font-size:14px">⏰ Alerts — ใกล้ครบ 72 ชม. หรือเกินกำหนด</h4>
+        <div id="breachList" style="margin-top:10px">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <!-- ====== TAB: Access Log ====== -->
+    <div id="pane-access" class="pdpa-pane">
+      <div class="card">
+        <h3 style="margin-top:0">👁️ PII Access Log (ม.37(4))</h3>
+        <p style="color:#6b7280;font-size:12px">บันทึก event การเข้าถึงข้อมูล PII (เช่น HR เปิดดูเลขบัตรประชาชน) — เก็บ ≥ 1 ปี</p>
+        <div style="background:#f3f4f6;border-radius:8px;padding:16px;font-size:13px;color:#374151">
+          💡 ระบบบันทึก log อัตโนมัติเมื่อ caller เรียก <code>IPdpaService.LogPiiAccessAsync(...)</code>.<br>
+          การเชื่อมโยงไปยัง PayrollController/HR endpoints (เพื่อ log เมื่อ user เปิดดู CitizenId) ทำได้ใน sprint ถัดไป<br>
+          — backend service พร้อมรับ event แล้ว.
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Modals ===== -->
+
+    <!-- DSR Modal -->
+    <div id="dsrModal" class="modal-overlay">
+      <div class="modal" style="max-width:560px;width:90%">
+        <h3 style="margin-top:0">รับคำขอ PDPA</h3>
+        <label>อีเมล/เบอร์โทร ผู้ขอ</label>
+        <input id="dsrContact" class="form-input" placeholder="email หรือ phone">
+        <label>ชื่อ</label>
+        <input id="dsrName" class="form-input">
+        <label>ประเภทคำขอ</label>
+        <select id="dsrType" class="form-input">
+          <option value="Access">Access — ขอดูข้อมูล</option>
+          <option value="Erasure">Erasure — ขอลบข้อมูล</option>
+          <option value="Rectification">Rectification — ขอแก้ไข</option>
+          <option value="Portability">Portability — ขอข้อมูลเป็นไฟล์</option>
+          <option value="Restriction">Restriction — ขอหยุดประมวลผล</option>
+          <option value="Objection">Objection — ขอคัดค้าน</option>
+        </select>
+        <label>รายละเอียด</label>
+        <textarea id="dsrDesc" class="form-input" rows="3"></textarea>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeModal('dsrModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitDsr()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RoPA Modal -->
+    <div id="ropaModal" class="modal-overlay">
+      <div class="modal" style="max-width:680px;width:90%">
+        <h3 id="ropaModalTitle" style="margin-top:0">เพิ่มกิจกรรมประมวลผล (RoPA)</h3>
+        <input type="hidden" id="ropaId">
+        <label>วัตถุประสงค์ <span style="color:#dc2626">*</span></label>
+        <input id="ropaPurpose" class="form-input" placeholder="เช่น จ่ายเงินเดือนพนักงาน">
+        <label>ฐานทางกฎหมาย (ม.24) <span style="color:#dc2626">*</span></label>
+        <select id="ropaLegalBasis" class="form-input">
+          <option value="Contract">Contract — สัญญา</option>
+          <option value="LegalObligation">LegalObligation — หน้าที่ตามกฎหมาย</option>
+          <option value="LegitimateInterest">LegitimateInterest — ประโยชน์อันชอบด้วยกฎหมาย</option>
+          <option value="Consent">Consent — ความยินยอม</option>
+          <option value="VitalInterest">VitalInterest — ป้องกันชีวิต</option>
+          <option value="PublicInterest">PublicInterest — ประโยชน์สาธารณะ</option>
+        </select>
+        <label>ประเภทข้อมูล (คั่นด้วย ,) <span style="color:#dc2626">*</span></label>
+        <input id="ropaDataCat" class="form-input" placeholder="เช่น Name, CitizenId, Email, BankAccount, Salary">
+        <label>ระยะเวลาเก็บ <span style="color:#dc2626">*</span></label>
+        <input id="ropaRetention" class="form-input" placeholder="เช่น 5 ปีหลังจากออกจากงาน">
+        <label>ผู้รับข้อมูล (คั่นด้วย ,)</label>
+        <input id="ropaRecipients" class="form-input" placeholder="เช่น สรรพากร, ประกันสังคม, ธนาคาร">
+        <label style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="ropaTransferAbroad">
+          ส่งข้อมูลออกนอกประเทศไทย
+        </label>
+        <label>มาตรการรักษาความปลอดภัยกรณีส่งออกนอกประเทศ</label>
+        <input id="ropaSafeguards" class="form-input" placeholder="เช่น SCC, BCR, Adequacy Decision">
+        <label>หมายเหตุ</label>
+        <textarea id="ropaNotes" class="form-input" rows="2"></textarea>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeModal('ropaModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitRopa()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Consent Modal -->
+    <div id="consentModal" class="modal-overlay" style="display:none">
+      <div class="modal" style="max-width:560px;width:90%">
+        <h3 style="margin-top:0">บันทึกความยินยอม</h3>
+        <label>อีเมล/เบอร์โทร เจ้าของข้อมูล</label>
+        <input id="consentSubject" class="form-input" placeholder="email หรือ phone">
+        <label>วัตถุประสงค์ <span style="color:#dc2626">*</span></label>
+        <input id="consentPurpose" class="form-input" placeholder="เช่น ส่งโฆษณา, รับข่าวสาร, แชร์ไปบริษัทแม่">
+        <label>เวอร์ชั่นนโยบาย</label>
+        <input id="consentVersion" class="form-input" value="1.0">
+        <label>ช่องทาง</label>
+        <select id="consentChannel" class="form-input">
+          <option value="web-form">Web form</option>
+          <option value="email">Email confirmation</option>
+          <option value="sms">SMS</option>
+          <option value="paper">Paper</option>
+        </select>
+        <label>Hash หลักฐาน (SHA-256)</label>
+        <input id="consentEvidence" class="form-input" placeholder="optional — hash ของหลักฐานที่ใช้ยืนยัน">
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeModal('consentModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitConsent()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Breach Modal -->
+    <div id="breachModal" class="modal-overlay" style="display:none">
+      <div class="modal" style="max-width:600px;width:90%">
+        <h3 style="margin-top:0">🚨 บันทึกเหตุการณ์ข้อมูลรั่ว (Breach)</h3>
+        <p style="color:#dc2626;font-size:12px;margin:0 0 12px">⚠️ ต้องแจ้ง PDPC ภายใน 72 ชั่วโมงนับจากเวลาตรวจพบ</p>
+        <label>ระดับความรุนแรง <span style="color:#dc2626">*</span></label>
+        <select id="breachSev" class="form-input">
+          <option value="Critical">Critical — ข้อมูลละเอียดอ่อนรั่ว/จำนวนมาก</option>
+          <option value="High">High — รั่วแต่ควบคุมได้</option>
+          <option value="Medium" selected>Medium — ความเสี่ยงปานกลาง</option>
+          <option value="Low">Low — แทบไม่กระทบ</option>
+        </select>
+        <label>รายละเอียดเหตุการณ์ <span style="color:#dc2626">*</span></label>
+        <textarea id="breachDesc" class="form-input" rows="3" placeholder="เกิดอะไร เมื่อไหร่ ที่ไหน อย่างไร"></textarea>
+        <label>ประเภทข้อมูลที่รั่ว (คั่นด้วย ,) <span style="color:#dc2626">*</span></label>
+        <input id="breachCat" class="form-input" placeholder="เช่น Name, CitizenId, BankAccount, Salary">
+        <label>จำนวน Subject ที่ได้รับผลกระทบ (โดยประมาณ)</label>
+        <input type="number" id="breachCount" class="form-input" min="0">
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeModal('breachModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitBreach()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _activeTab: 'dsr',
+      async init() {
+        if (!Layout.init('pdpa')) return;
+        Layout.setTitle('PDPA');
+        await this.loadOverdue();
+        await this.loadBreachAlerts();
+      },
+      _esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      _cid() { return Layout.getCompanyId(); },
+
+      tab(name, el) {
+        this._activeTab = name;
+        document.querySelectorAll('.pdpa-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.pdpa-pane').forEach(p => p.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('pane-' + name).classList.add('active');
+        if (name === 'dsr') this.loadOverdue();
+        if (name === 'ropa') this.loadRopa();
+        if (name === 'breach') this.loadBreachAlerts();
+      },
+
+      // ใช้ระบบ .active ของ .modal-overlay (opacity/pointer-events) —
+      // toggle display ตรง ๆ จะได้ modal โปร่งใสคลิกไม่ได้ (opacity ค้าง 0)
+      closeModal(id) { document.getElementById(id).classList.remove('active'); },
+      _openModal(id) { document.getElementById(id).classList.add('active'); },
+
+      // ===== DSR =====
+      async loadOverdue() {
+        const el = document.getElementById('overdueList');
+        try {
+          const r = await API.get(`/api/companies/${this._cid()}/pdpa/overdue`);
+          const rows = r.data || [];
+          if (rows.length === 0) {
+            el.innerHTML = '<div style="color:#15803d;padding:14px">✅ ไม่มีคำขอเลยกำหนด</div>';
+            return;
+          }
+          el.innerHTML = `<table class="data-table"><thead><tr><th>เลขที่</th><th>ประเภท</th><th>ผู้ขอ</th><th>รับเมื่อ</th><th>ครบกำหนด</th><th>สถานะ</th><th>การจัดการ</th></tr></thead><tbody>${rows.map(r => `
+            <tr>
+              <td>${r.requestNumber}</td>
+              <td>${r.requestType}</td>
+              <td>${this._esc(r.requesterName || r.requesterContact)}</td>
+              <td>${new Date(r.requestedAt).toLocaleDateString('th-TH')}</td>
+              <td style="color:#dc2626"><b>${new Date(r.dueBy).toLocaleDateString('th-TH')}</b></td>
+              <td>${r.status}</td>
+              <td><button class="btn btn-sm btn-success" onclick="Page.completeDsr('${r.id}')">ปิดงาน</button></td>
+            </tr>`).join('')}</tbody></table>`;
+        } catch (e) { el.innerHTML = `<div style="color:#dc2626">${e.message}</div>`; }
+      },
+      openDsr() { this._openModal('dsrModal'); },
+      async submitDsr() {
+        try {
+          await API.post(`/api/companies/${this._cid()}/pdpa/requests`, {
+            requesterContact: document.getElementById('dsrContact').value,
+            requesterName: document.getElementById('dsrName').value,
+            requestType: document.getElementById('dsrType').value,
+            description: document.getElementById('dsrDesc').value,
+            linkedUserId: null, linkedContactId: null,
+          });
+          this.closeModal('dsrModal');
+          await this.loadOverdue();
+          Layout.toast('บันทึกคำขอแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async completeDsr(id) {
+        const note = prompt('บันทึกการดำเนินการ');
+        if (!note) return;
+        try {
+          await API.post(`/api/companies/${this._cid()}/pdpa/requests/${id}/complete`, { completionNote: note });
+          await this.loadOverdue();
+          Layout.toast('ปิดงานแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== RoPA =====
+      async loadRopa() {
+        const el = document.getElementById('ropaList');
+        try {
+          const r = await API.get(`/api/companies/${this._cid()}/pdpa/ropa`);
+          const rows = r.data || [];
+          if (rows.length === 0) {
+            el.innerHTML = '<div style="color:#6b7280;padding:14px;text-align:center">ยังไม่มี RoPA — กดเพิ่มกิจกรรม</div>';
+            return;
+          }
+          el.innerHTML = `<table class="data-table"><thead><tr><th>วัตถุประสงค์</th><th>ฐาน กม.</th><th>ข้อมูล</th><th>เก็บ</th><th>ผู้รับ</th><th>ส่งต่างประเทศ</th><th>ตรวจล่าสุด</th><th></th></tr></thead><tbody>${rows.map(r => `
+            <tr>
+              <td><b>${this._esc(r.purpose)}</b></td>
+              <td>${this._esc(r.legalBasis)}</td>
+              <td><small>${this._esc(r.dataCategories)}</small></td>
+              <td><small>${this._esc(r.retentionPeriod)}</small></td>
+              <td><small>${this._esc(r.recipients || '-')}</small></td>
+              <td>${r.transfersOutsideThailand ? '✅' : '-'}</td>
+              <td><small>${new Date(r.lastReviewedAt).toLocaleDateString('th-TH')}</small></td>
+              <td><button class="btn btn-sm btn-secondary" onclick='Page.editRopa(${JSON.stringify(r).replace(/'/g,"&#39;")})'>แก้</button></td>
+            </tr>`).join('')}</tbody></table>`;
+        } catch (e) { el.innerHTML = `<div style="color:#dc2626">${e.message}</div>`; }
+      },
+      openRopa() {
+        document.getElementById('ropaModalTitle').textContent = 'เพิ่มกิจกรรมประมวลผล (RoPA)';
+        document.getElementById('ropaId').value = '';
+        document.getElementById('ropaPurpose').value = '';
+        document.getElementById('ropaLegalBasis').value = 'Contract';
+        document.getElementById('ropaDataCat').value = '';
+        document.getElementById('ropaRetention').value = '';
+        document.getElementById('ropaRecipients').value = '';
+        document.getElementById('ropaTransferAbroad').checked = false;
+        document.getElementById('ropaSafeguards').value = '';
+        document.getElementById('ropaNotes').value = '';
+        this._openModal('ropaModal');
+      },
+      editRopa(r) {
+        document.getElementById('ropaModalTitle').textContent = 'แก้ไขกิจกรรมประมวลผล';
+        document.getElementById('ropaId').value = r.id;
+        document.getElementById('ropaPurpose').value = r.purpose || '';
+        document.getElementById('ropaLegalBasis').value = r.legalBasis || 'Contract';
+        document.getElementById('ropaDataCat').value = r.dataCategories || '';
+        document.getElementById('ropaRetention').value = r.retentionPeriod || '';
+        document.getElementById('ropaRecipients').value = r.recipients || '';
+        document.getElementById('ropaTransferAbroad').checked = !!r.transfersOutsideThailand;
+        document.getElementById('ropaSafeguards').value = r.transferSafeguards || '';
+        document.getElementById('ropaNotes').value = r.notes || '';
+        this._openModal('ropaModal');
+      },
+      async submitRopa() {
+        try {
+          await API.post(`/api/companies/${this._cid()}/pdpa/ropa`, {
+            id: document.getElementById('ropaId').value || null,
+            purpose: document.getElementById('ropaPurpose').value,
+            legalBasis: document.getElementById('ropaLegalBasis').value,
+            dataCategories: document.getElementById('ropaDataCat').value,
+            retentionPeriod: document.getElementById('ropaRetention').value,
+            recipients: document.getElementById('ropaRecipients').value || null,
+            transfersOutsideThailand: document.getElementById('ropaTransferAbroad').checked,
+            transferSafeguards: document.getElementById('ropaSafeguards').value || null,
+            notes: document.getElementById('ropaNotes').value || null,
+          });
+          this.closeModal('ropaModal');
+          await this.loadRopa();
+          Layout.toast('บันทึก RoPA แล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Consent =====
+      openConsent() { this._openModal('consentModal'); },
+      async submitConsent() {
+        try {
+          await API.post(`/api/companies/${this._cid()}/pdpa/consent`, {
+            subjectUserId: null,
+            subjectContactId: null,
+            subjectContact: document.getElementById('consentSubject').value,
+            purpose: document.getElementById('consentPurpose').value,
+            policyVersion: document.getElementById('consentVersion').value,
+            channel: document.getElementById('consentChannel').value,
+            evidenceHash: document.getElementById('consentEvidence').value || null,
+          });
+          this.closeModal('consentModal');
+          Layout.toast('บันทึกความยินยอมแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Breach =====
+      async loadBreachAlerts() {
+        const el = document.getElementById('breachList');
+        const badge = document.getElementById('breachAlertBadge');
+        try {
+          const r = await API.get(`/api/companies/${this._cid()}/pdpa/breach/alerts`);
+          const rows = r.data || [];
+          if (rows.length > 0) {
+            badge.style.display = 'inline-block';
+            badge.textContent = rows.length;
+          } else {
+            badge.style.display = 'none';
+          }
+          if (rows.length === 0) {
+            el.innerHTML = '<div style="color:#15803d;padding:14px">✅ ไม่มี breach ที่ใกล้/เกินกำหนด</div>';
+            return;
+          }
+          const now = Date.now();
+          el.innerHTML = rows.map(b => {
+            const due = new Date(b.notifyPdpcDueBy).getTime();
+            const overdue = due < now;
+            const cls = overdue ? '' : 'warn';
+            const ms = Math.abs(due - now);
+            const hrs = Math.floor(ms / 3600000);
+            const mins = Math.floor((ms % 3600000) / 60000);
+            return `<div class="breach-row ${cls}">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+                <div>
+                  <span class="sev ${b.severity}">${b.severity}</span>
+                  <b style="margin-left:8px">${this._esc(b.incidentNumber)}</b>
+                  <span style="margin-left:8px;color:#6b7280">${this._esc(b.affectedDataCategories)}</span>
+                </div>
+                <div class="timer" style="color:${overdue?'#dc2626':'#d97706'}">
+                  ${overdue ? '⛔ เกิน' : '⏰ เหลือ'} ${hrs}h ${mins}m
+                </div>
+              </div>
+              <div style="font-size:13px;color:#374151;margin-top:6px">${this._esc(b.description)}</div>
+              <div style="font-size:12px;color:#6b7280;margin-top:4px">
+                ตรวจพบ ${new Date(b.detectedAt).toLocaleString('th-TH')} ·
+                กำหนดแจ้ง PDPC ${new Date(b.notifyPdpcDueBy).toLocaleString('th-TH')}
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+                <button class="btn btn-sm btn-primary" onclick="Page.notifyPdpc('${b.id}')">📨 แจ้ง PDPC แล้ว</button>
+                <button class="btn btn-sm btn-secondary" onclick="Page.markBreachStatus('${b.id}','Investigating')">🔍 กำลังตรวจสอบ</button>
+                <button class="btn btn-sm btn-success" onclick="Page.markBreachStatus('${b.id}','Closed')">✅ ปิดเคส</button>
+              </div>
+            </div>`;
+          }).join('');
+        } catch (e) { el.innerHTML = `<div style="color:#dc2626">${e.message}</div>`; }
+      },
+      openBreach() { this._openModal('breachModal'); },
+      async submitBreach() {
+        const desc = document.getElementById('breachDesc').value.trim();
+        const cat = document.getElementById('breachCat').value.trim();
+        if (!desc || !cat) { Layout.toast('กรุณากรอกรายละเอียดและประเภทข้อมูล', 'error'); return; }
+        try {
+          await API.post(`/api/companies/${this._cid()}/pdpa/breach`, {
+            severity: document.getElementById('breachSev').value,
+            description: desc,
+            affectedDataCategories: cat,
+            affectedSubjectsCount: parseInt(document.getElementById('breachCount').value) || null,
+          });
+          this.closeModal('breachModal');
+          await this.loadBreachAlerts();
+          Layout.toast('บันทึกเหตุการณ์แล้ว — ต้องแจ้ง PDPC ภายใน 72 ชม.', 'success');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async notifyPdpc(id) {
+        const ref = prompt('กรอกเลขรับเรื่องจาก PDPC (ถ้ามี)') || '';
+        try {
+          await API.post(`/api/companies/${this._cid()}/pdpa/breach/${id}`, {
+            status: 'NotifiedPdpc',
+            pdpcNotifiedAt: new Date().toISOString(),
+            pdpcReferenceNumber: ref || null,
+            subjectsNotifiedAt: null, mitigation: null, rootCause: null,
+          });
+          await this.loadBreachAlerts();
+          Layout.toast('บันทึกการแจ้ง PDPC แล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async markBreachStatus(id, status) {
+        try {
+          await API.post(`/api/companies/${this._cid()}/pdpa/breach/${id}`, {
+            status,
+            pdpcNotifiedAt: null, pdpcReferenceNumber: null,
+            subjectsNotifiedAt: null, mitigation: null, rootCause: null,
+          });
+          await this.loadBreachAlerts();
+          Layout.toast('อัปเดตสถานะแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

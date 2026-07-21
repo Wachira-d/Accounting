@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>งบประมาณ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">งบประมาณ</h2><p class="page-subtitle">จัดการงบประมาณและเปรียบเทียบกับยอดจริง</p></div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงบประมาณ</button>
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th data-i18n="common.name">ชื่อ</th><th>ปีงบประมาณ</th><th class="text-right">งบประมาณรวม</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- Compare Modal -->
+    <div class="modal-overlay" id="compareModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title">เปรียบเทียบงบประมาณ vs ยอดจริง</h3><button class="modal-close" onclick="Layout.closeModal('compareModal')">&times;</button></div>
+        <div class="modal-body" id="compareContent"></div>
+      </div>
+    </div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:800px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">สร้างงบประมาณ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="fId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่องบประมาณ *</label><input type="text" class="form-input" id="fName"></div>
+            <div class="form-group"><label class="form-label">ปีงบประมาณ *</label><input type="number" class="form-input" id="fYear" value="2026"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="grid-column:1/-1">
+              <label class="form-label">โครงการ (optional)</label>
+              <select class="form-select" id="fProject"><option value="">— ไม่ระบุ (งบประมาณรวมของบริษัท) —</option></select>
+              <div style="font-size:11px;color:#64748b;margin-top:4px">📁 ถ้าระบุ การเปรียบเทียบ vs ยอดจริงจะกรองเฉพาะ JE ของโครงการนี้</div>
+            </div>
+          </div>
+          <div style="margin-top:16px">
+            <div class="flex items-center justify-between" style="margin-bottom:8px">
+              <label class="form-label" style="margin:0">รายการงบประมาณ</label>
+              <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มบัญชี</button>
+            </div>
+            <div class="table-container"><table class="table">
+              <thead><tr><th>บัญชี</th><th class="text-right">งบประมาณ (บาท)</th><th></th></tr></thead>
+              <tbody id="linesBody"></tbody>
+            </table></div>
+            <div class="text-right font-semibold" style="margin-top:8px">รวม: <span id="fTotal">0.00</span> บาท</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      accounts: [],
+      async init() {
+        if (!Layout.init('budget')) return;
+        Layout.setTitle('งบประมาณ');
+        await this.loadAccounts();
+        await this.loadProjects();
+        await this.load();
+      },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const opts = items.map(p =>
+            `<option value="${p.id}">${(p.code || p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+          document.getElementById('fProject').innerHTML =
+            '<option value="">— ไม่ระบุ (งบประมาณรวมของบริษัท) —</option>' + opts;
+        } catch (e) { /* ignore */ }
+      },
+      async loadAccounts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts();
+          this.accounts = res.data?.items || res.data || [];
+        } catch (e) { /* ignore */ }
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getBudgets();
+          const items = res.data?.items || res.data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ไม่มีงบประมาณ</td></tr>'; return; }
+          tbody.innerHTML = items.map(b => `<tr>
+            <td class="font-medium">${b.name}</td>
+            <td>${b.fiscalYear}</td>
+            <td class="text-right font-semibold">${Layout.money(b.totalBudget)}</td>
+            <td>${b.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
+            <td>
+              <button class="btn btn-sm btn-ghost" onclick="Page.compare('${b.id}')">เปรียบเทียบ</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${b.id}')" data-i18n="common.edit">แก้ไข</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.remove('${b.id}')" data-i18n="common.delete">ลบ</button>
+            </td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async compare(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getBudgetVsActual(id);
+          const d = res.data;
+          const totalBudget = (d.lines||[]).reduce((s,l) => s + (l.budgetAmount||0), 0);
+          const totalActual = (d.lines||[]).reduce((s,l) => s + (l.actualAmount||0), 0);
+          document.getElementById('compareContent').innerHTML = `
+            <div class="flex items-center justify-between" style="margin-bottom:16px">
+              <div><span class="font-semibold">${d.budgetName}</span> - ปี ${d.fiscalYear}</div>
+              <div class="text-sm">งบ: <strong>${Layout.money(totalBudget)}</strong> | จริง: <strong>${Layout.money(totalActual)}</strong> | ผลต่าง: <strong class="${totalBudget - totalActual >= 0 ? 'text-success':'text-danger'}">${Layout.money(totalBudget - totalActual)}</strong></div>
+            </div>
+            <div class="table-container"><table class="table">
+              <thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th class="text-right">งบประมาณ</th><th class="text-right">ยอดจริง</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th><th data-i18n="common.status">สถานะ</th></tr></thead>
+              <tbody>${(d.lines||[]).map(l => {
+                const pct = l.budgetAmount > 0 ? (l.actualAmount / l.budgetAmount * 100) : 0;
+                const over = l.actualAmount > l.budgetAmount;
+                return `<tr>
+                <td>${l.accountCode}</td><td>${l.accountName}</td>
+                <td class="text-right">${Layout.money(l.budgetAmount)}</td>
+                <td class="text-right">${Layout.money(l.actualAmount)}</td>
+                <td class="text-right ${l.variance < 0 ? 'text-danger' : 'text-success'}">${Layout.money(l.variance)}</td>
+                <td class="text-right">${(l.variancePercent||0).toFixed(1)}%</td>
+                <td>${over ? '<span class="badge badge-danger">เกินงบ</span>' : pct > 80 ? '<span class="badge badge-warning">ใกล้ถึงงบ</span>' : '<span class="badge badge-success">ปกติ</span>'}</td>
+              </tr>`}).join('')}</tbody>
+            </table></div>`;
+          Layout.openModal('compareModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      addLine() {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td><select class="form-select" data-f="account" style="font-size:13px">
+            ${this.accounts.filter(a => a.accountType === 'Expense' || a.accountType === 'Revenue').map(a => `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('')}
+          </select></td>
+          <td><input type="number" class="form-input text-right" data-f="amount" step="0.01" value="0" oninput="Page.calcTotal()"></td>
+          <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcTotal()">✕</button></td>`;
+        document.getElementById('linesBody').appendChild(row);
+      },
+      calcTotal() {
+        let total = 0;
+        document.querySelectorAll('#linesBody tr').forEach(row => {
+          total += parseFloat(row.querySelector('[data-f="amount"]')?.value) || 0;
+        });
+        document.getElementById('fTotal').textContent = Layout.money(total);
+      },
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'สร้างงบประมาณ';
+        document.getElementById('fId').value = '';
+        document.getElementById('fName').value = '';
+        document.getElementById('fYear').value = new Date().getFullYear();
+        document.getElementById('fProject').value = '';
+        document.getElementById('linesBody').innerHTML = '';
+        document.getElementById('fTotal').textContent = '0.00';
+        this.addLine();
+        Layout.openModal('formModal');
+      },
+      async openEdit(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getBudget(id);
+          const b = res.data;
+          document.getElementById('formTitle').textContent = 'แก้ไขงบประมาณ';
+          document.getElementById('fId').value = b.id;
+          document.getElementById('fName').value = b.name;
+          document.getElementById('fYear').value = b.fiscalYear;
+          document.getElementById('fProject').value = b.projectId || '';
+          document.getElementById('linesBody').innerHTML = '';
+          (b.lines || []).forEach(l => {
+            this.addLine();
+            const row = document.getElementById('linesBody').lastElementChild;
+            row.querySelector('[data-f="account"]').value = l.accountId;
+            row.querySelector('[data-f="amount"]').value = l.totalBudget;   // BudgetLineResponse ใช้ totalBudget (เดิมอ่าน budgetAmount → ว่าง)
+          });
+          if (!b.lines?.length) this.addLine();
+          this.calcTotal();
+          Layout.openModal('formModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('fId').value;
+        const lines = [];
+        document.querySelectorAll('#linesBody tr').forEach(row => {
+          const amt = parseFloat(row.querySelector('[data-f="amount"]').value) || 0;
+          if (amt > 0) {
+            // BudgetLineRequest ฝั่ง backend รับเป็นรายเดือน Month1..Month12 (ไม่มี
+            // budgetAmount) — เดิมส่ง budgetAmount → bind ไม่ติด งบบันทึกเป็น 0.
+            // UI เป็นยอด "รายปี" ต่อบัญชี → เกลี่ยเท่ากัน 12 เดือน เศษลงเดือน 12
+            const line = { accountId: row.querySelector('[data-f="account"]').value };
+            const per = Math.round((amt / 12) * 100) / 100;
+            for (let m = 1; m <= 12; m++)
+              line['month' + m] = m === 12 ? +(amt - per * 11).toFixed(2) : per;
+            lines.push(line);
+          }
+        });
+        const data = {
+          name: document.getElementById('fName').value,
+          fiscalYear: parseInt(document.getElementById('fYear').value),
+          lines,
+          projectId: document.getElementById('fProject').value || null,
+        };
+        try {
+          if (id) { await api.updateBudget(id, data); }
+          else { await api.createBudget(data); }
+          Layout.closeModal('formModal'); Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างงบประมาณสำเร็จ'); await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async remove(id) {
+        if (!(await Layout.confirmDanger({ title: 'ลบงบประมาณ', message: 'งบประมาณและรายการย่อยทั้งหมดจะถูกลบ', mode: 'math' }))) return;
+        const api = Layout.api(); if (!api) return;
+        try { await api.deleteBudget(id); Layout.toast('ลบสำเร็จ'); this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Login - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <div class="admin-auth-page">
+    <div class="admin-auth-card">
+      <div style="text-align:center;margin-bottom:24px">
+        <span style="font-size:24px;font-weight:800">Next Acc</span>
+        <span class="admin-badge" style="margin-left:8px">ADMIN</span>
+      </div>
+      <h1>เข้าสู่ระบบผู้ดูแล</h1>
+      <p class="subtitle">สำหรับ System Administrator เท่านั้น</p>
+
+      <div id="errMsg" class="admin-err"></div>
+
+      <form onsubmit="handleLogin(event)">
+        <div class="admin-form-group">
+          <label class="admin-label">อีเมล</label>
+          <input type="email" id="email" class="admin-input" placeholder="admin@nextacc.com" required>
+        </div>
+        <div class="admin-form-group">
+          <label class="admin-label">รหัสผ่าน</label>
+          <input type="password" id="password" class="admin-input" placeholder="รหัสผ่าน" required>
+        </div>
+        <button type="submit" id="loginBtn" class="admin-btn admin-btn-primary" style="width:100%;justify-content:center;padding:12px;font-size:15px;margin-top:8px">
+          เข้าสู่ระบบ
+        </button>
+      </form>
+
+      <p style="text-align:center;margin-top:20px;font-size:13px;color:#94a3b8">
+        <a href="/" style="color:var(--admin-primary);text-decoration:none">กลับหน้าเว็บไซต์หลัก</a>
+      </p>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script>
+    async function handleLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('loginBtn');
+      const err = document.getElementById('errMsg');
+      err.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'กำลังเข้าสู่ระบบ...';
+
+      try {
+        const res = await AdminAPI.login(
+          document.getElementById('email').value,
+          document.getElementById('password').value
+        );
+        const token = res.data.accessToken || res.data.token;
+        localStorage.setItem('admin_token', token);
+        localStorage.setItem('admin_user', JSON.stringify(res.data.user));
+        window.location.href = '/admin/index.html';
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'เข้าสู่ระบบ';
+      }
+    }
+
+    // Redirect if already logged in
+    const t = localStorage.getItem('admin_token');
+    const u = JSON.parse(localStorage.getItem('admin_user') || 'null');
+    if (t && u && u.isSystemAdmin) window.location.href = '/admin/index.html';
+  </script>
+</body>
+</html>

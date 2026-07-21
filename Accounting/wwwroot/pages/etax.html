@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>e-Tax Invoice - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">e-Tax Invoice / e-Receipt</h2><p class="page-subtitle">ใบกำกับภาษีอิเล็กทรอนิกส์ ตามมาตรฐาน ETDA / กรมสรรพากร</p></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="Page.showConfig()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — ตั้งค่าครั้งแรก: เลข PID ผู้เสียภาษี / Certificate / URL ETDA · ต้องตั้งให้ครบก่อนสร้าง e-Tax ใบแรก">ตั้งค่า</button>
+        <button class="btn btn-primary" onclick="Page.openGenerate()"
+                data-tour-step="2"
+                data-tour-text="ขั้นที่ 2 — สร้าง e-Tax จากเอกสารที่มีอยู่ (ใบกำกับ/ใบเสร็จ/ใบลดหนี้) ระบบจะแปลงเป็น XML + PDF/A-3 พร้อม sign อัตโนมัติ">+ สร้าง e-Tax</button>
+      </div>
+    </div>
+
+    <!-- Config Status Banner -->
+    <div id="configBanner" class="card" style="margin-bottom:16px;display:none;border-left:4px solid #f59e0b;background:#fffbeb">
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:20px">&#9888;</span>
+        <div>
+          <strong>ยังไม่ได้ตั้งค่าครบ</strong>
+          <div id="configWarnings" class="text-gray-500 text-sm"></div>
+        </div>
+        <button class="btn btn-sm btn-outline" onclick="Page.showConfig()" style="margin-left:auto">ตั้งค่า</button>
+      </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="grid grid-4 gap-4" style="margin-bottom:16px">
+      <div class="card"><div class="text-gray-500 text-xs" data-i18n="common.all">ทั้งหมด</div><div class="text-2xl font-bold" id="statTotal">0</div></div>
+      <div class="card"><div class="text-gray-500 text-xs">รอลงนาม</div><div class="text-2xl font-bold text-warning" id="statGenerated">0</div></div>
+      <div class="card"><div class="text-gray-500 text-xs">ส่งแล้ว</div><div class="text-2xl font-bold text-info" id="statSubmitted">0</div></div>
+      <div class="card"><div class="text-gray-500 text-xs">ตอบรับแล้ว</div><div class="text-2xl font-bold text-success" id="statAccepted">0</div></div>
+    </div>
+
+    <!-- Status Tabs -->
+    <div class="tabs" style="margin-bottom:16px">
+      <div class="tab active" data-status="" onclick="Page.setStatus(this)" data-i18n="common.all">ทั้งหมด</div>
+      <div class="tab" data-status="Generated" onclick="Page.setStatus(this)">รอลงนาม</div>
+      <div class="tab" data-status="Signed" onclick="Page.setStatus(this)">ลงนามแล้ว</div>
+      <div class="tab" data-status="Submitted" onclick="Page.setStatus(this)">ส่งแล้ว</div>
+      <div class="tab" data-status="Accepted" onclick="Page.setStatus(this)">ตอบรับ</div>
+      <div class="tab" data-status="Error" onclick="Page.setStatus(this)">ข้อผิดพลาด</div>
+    </div>
+
+    <!-- Table -->
+    <div class="card">
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>เลขอ้างอิง</th>
+              <th>ผู้ซื้อ</th>
+              <th>เลขประจำตัวผู้เสียภาษี</th>
+              <th data-i18n="common.status">สถานะ</th>
+              <th>วันที่สร้าง</th>
+              <th>วันที่ส่ง</th>
+              <th>การดำเนินการ</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+      <div id="pagination" class="pagination"></div>
+      <div id="emptyState" class="empty-state" style="display:none">
+        <p>ยังไม่มี e-Tax Invoice</p>
+        <button class="btn btn-primary" onclick="Page.openGenerate()">สร้าง e-Tax ใหม่</button>
+      </div>
+    </div>
+
+    <!-- Generate Modal -->
+    <div id="generateModal" class="modal" style="display:none">
+      <div class="modal-overlay" onclick="Page.closeModal('generateModal')"></div>
+      <div class="modal-content" style="max-width:500px">
+        <div class="modal-header">
+          <h3>สร้าง e-Tax Invoice</h3>
+          <button class="btn-close" onclick="Page.closeModal('generateModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>เลือกเอกสาร (ใบกำกับภาษีที่อนุมัติแล้ว)</label>
+            <select id="docSelect" class="form-input">
+              <option value="">กรุณาเลือกเอกสาร...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="signDigitally" checked> ลงนามดิจิทัลอัตโนมัติ</label>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="quickSubmit"> ส่งกรมสรรพากรทันที (Quick Submit)</label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="Page.closeModal('generateModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.doGenerate()">สร้าง e-Tax</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Send by Email Modal -->
+    <div id="sendEmailModal" class="modal" style="display:none">
+      <div class="modal-overlay" onclick="Page.closeModal('sendEmailModal')"></div>
+      <div class="modal-content" style="max-width:600px">
+        <div class="modal-header">
+          <h3>📧 ส่ง e-Tax ทางอีเมล</h3>
+          <button class="btn-close" onclick="Page.closeModal('sendEmailModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="sendEmailWarning" style="display:none;padding:12px;background:#fef3c7;border-radius:8px;font-size:13px;margin-bottom:12px"></div>
+          <div class="form-group"><label class="form-label">ถึง <span class="req">*</span></label><input type="email" class="form-input" id="seTo" placeholder="customer@example.com"></div>
+          <div class="form-group"><label class="form-label">CC (อื่นๆ)</label><input type="text" class="form-input" id="seCc" placeholder="cc1@example.com, cc2@example.com"></div>
+          <div class="form-group">
+            <label class="form-label">หัวข้อ <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">RD บังคับ</span></label>
+            <input type="text" class="form-input" id="seSubject" readonly style="background:#f1f5f9;cursor:not-allowed;font-family:monospace">
+            <div style="font-size:11px;color:#dc2626;margin-top:4px;line-height:1.5">
+              ⚠️ สรรพากรกำหนดรูปแบบ <code>{เลขผู้เสียภาษี}.{เลขที่เอกสาร}</code> เพื่อให้ ETDA ลงเวลาประทับได้ — ห้ามแก้ไข มิฉะนั้น Time Stamp จะไม่ทำงานและเอกสารจะไม่ถูกต้องตามกฎหมาย
+            </div>
+          </div>
+          <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="seBody" rows="8"></textarea></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludePdf" checked> แนบ PDF</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludeXml" checked> แนบ XML</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludeRd" checked> CC สรรพากร</label>
+          </div>
+          <div style="margin-top:12px;padding:10px;background:#f0fdf4;border-radius:6px;font-size:12px;color:#166534">
+            ℹ️ การ CC <code>csemail@etax.teda.th</code> เป็นข้อกำหนดของสรรพากรเพื่อให้ระบบลงเวลาประทับ (Time Stamp) — โปรดเปิดไว้
+          </div>
+        </div>
+        <div class="modal-footer" style="padding:16px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px">
+          <button class="btn btn-outline" onclick="Page.closeModal('sendEmailModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.doSendByEmail()">ส่งอีเมล</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- XML Preview Modal -->
+    <div id="xmlModal" class="modal" style="display:none">
+      <div class="modal-overlay" onclick="Page.closeModal('xmlModal')"></div>
+      <div class="modal-content" style="max-width:800px">
+        <div class="modal-header">
+          <h3>XML Preview</h3>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-sm btn-outline" onclick="Page.downloadXml()">ดาวน์โหลด XML</button>
+            <button class="btn-close" onclick="Page.closeModal('xmlModal')">&times;</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <pre id="xmlContent" style="background:#1e293b;color:#e2e8f0;padding:16px;border-radius:8px;overflow-x:auto;font-size:12px;max-height:500px;overflow-y:auto"></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Config Modal -->
+    <div id="configModal" class="modal" style="display:none">
+      <div class="modal-overlay" onclick="Page.closeModal('configModal')"></div>
+      <div class="modal-content" style="max-width:600px">
+        <div class="modal-header">
+          <h3>ตั้งค่า e-Tax Invoice</h3>
+          <button class="btn-close" onclick="Page.closeModal('configModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="configStatusContent"></div>
+          <hr style="margin:16px 0">
+          <h4 style="margin-bottom:12px">ขั้นตอนการตั้งค่าสำหรับ Production</h4>
+          <div class="text-sm" style="line-height:1.8">
+            <p><strong>1. ใบรับรองดิจิทัล (Digital Certificate)</strong></p>
+            <ul style="margin:8px 0 16px 20px">
+              <li>ซื้อ e-Tax Certificate จาก CA ที่ ETDA รับรอง (TOT, CAT, INET)</li>
+              <li>ได้ไฟล์ <code>.p12</code> หรือ <code>.pfx</code></li>
+              <li>ตั้งค่า <code>Etax:CertificatePath</code> ใน appsettings.json</li>
+              <li>ตั้งค่า <code>Etax:CertificatePassword</code></li>
+            </ul>
+            <p><strong>2. สมัคร RD e-Tax API</strong></p>
+            <ul style="margin:8px 0 16px 20px">
+              <li>สมัครที่ <a href="https://etax.rd.go.th" target="_blank">etax.rd.go.th</a></li>
+              <li>ได้ API Key + Secret</li>
+              <li>ตั้งค่า <code>Etax:RdApiKey</code> และ <code>Etax:RdApiSecret</code></li>
+            </ul>
+            <p><strong>3. ทดสอบ</strong></p>
+            <ul style="margin:8px 0 16px 20px">
+              <li>เปิด Test Mode: <code>Etax:RdTestMode = true</code></li>
+              <li>ทดสอบสร้าง + ลงนาม + ส่ง กับ RD Test Server</li>
+              <li>เมื่อพร้อม เปลี่ยน <code>RdTestMode = false</code></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+  const Page = {
+    companyId: null,
+    items: [],
+    currentStatus: '',
+    currentXmlId: null,
+    page: 1,
+
+    async init() {
+      if (!Layout.init('etax')) return;
+      Layout.setTitle('e-Tax Invoice');
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      this.companyId = localStorage.getItem('companyId');
+      if (!this.companyId) { window.location.href = '/pages/settings.html'; return; }
+      await this.loadConfigStatus();
+      await this.load();
+    },
+
+    async loadConfigStatus() {
+      try {
+        const res = await API.get(`/api/companies/${this.companyId}/etax/config-status`);
+        const cfg = res.data;
+        const warnings = [];
+        if (!cfg.certificateConfigured) warnings.push('ยังไม่ได้ตั้งค่าใบรับรองดิจิทัล (Certificate)');
+        if (!cfg.rdApiConfigured) warnings.push('ยังไม่ได้ตั้งค่า RD API Key');
+        if (cfg.testMode) warnings.push('กำลังใช้งาน Test Mode');
+
+        if (warnings.length > 0) {
+          document.getElementById('configBanner').style.display = 'block';
+          document.getElementById('configWarnings').innerHTML = warnings.join(' | ');
+        }
+      } catch(e) {}
+    },
+
+    async load() {
+      try {
+        const statusParam = this.currentStatus ? `&status=${this.currentStatus}` : '';
+        const res = await API.get(`/api/companies/${this.companyId}/etax?page=${this.page}&pageSize=20${statusParam}`);
+        this.items = res.data.items || [];
+        this.render(res.data);
+        this.updateStats();
+      } catch(e) { console.error(e); }
+    },
+
+    async updateStats() {
+      try {
+        const all = await API.get(`/api/companies/${this.companyId}/etax?page=1&pageSize=1`);
+        document.getElementById('statTotal').textContent = all.data.totalCount || 0;
+
+        for (const [status, elId] of [['Generated','statGenerated'],['Submitted','statSubmitted'],['Accepted','statAccepted']]) {
+          try {
+            const r = await API.get(`/api/companies/${this.companyId}/etax?page=1&pageSize=1&status=${status}`);
+            document.getElementById(elId).textContent = r.data.totalCount || 0;
+          } catch(e) { document.getElementById(elId).textContent = '0'; }
+        }
+      } catch(e) {}
+    },
+
+    render(data) {
+      const tbody = document.getElementById('tableBody');
+      const empty = document.getElementById('emptyState');
+      if (!data.items || data.items.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+      }
+      empty.style.display = 'none';
+      tbody.innerHTML = data.items.map(e => `
+        <tr>
+          <td><strong>${this.esc(e.etaxRefNumber)}</strong></td>
+          <td>${this.esc(e.buyerName || '-')}</td>
+          <td>${this.esc(e.buyerTaxId || '-')}</td>
+          <td>${this.statusBadge(e.status)}</td>
+          <td>${this.fmtDate(e.createdAt)}</td>
+          <td>${e.submittedAt ? this.fmtDate(e.submittedAt) : '-'}</td>
+          <td>
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              <button class="btn btn-xs btn-outline" onclick="Page.viewXml('${e.id}')">XML</button>
+              <button class="btn btn-xs btn-outline" onclick="Page.downloadPdfA3('${e.id}')" title="ดาวน์โหลด PDF/A-3 พร้อมฝัง XML (ตามมาตรฐาน e-Tax by Email)">📄 PDF/A-3</button>
+              ${e.status === 'Generated' ? `<button class="btn btn-xs btn-primary" onclick="Page.sign('${e.id}')">ลงนาม</button>` : ''}
+              ${e.status === 'Signed' ? `<button class="btn btn-xs btn-success" onclick="Page.submit('${e.id}')">ส่ง RD</button>` : ''}
+              ${e.status === 'Generated' ? `<button class="btn btn-xs btn-success" onclick="Page.signAndSubmit('${e.id}')">ลงนาม+ส่ง</button>` : ''}
+              ${(e.status === 'Signed' || e.status === 'Submitted' || e.status === 'Accepted') ? `<button class="btn btn-xs btn-info" onclick="Page.openSendByEmail('${e.id}')">📧 ส่งทางอีเมล</button>` : ''}
+              ${e.status === 'Error' ? `<button class="btn btn-xs btn-warning" onclick="Page.sign('${e.id}')">ลองใหม่</button>` : ''}
+              ${e.status !== 'Accepted' ? `<button class="btn btn-xs btn-danger" onclick="Page.void('${e.id}')" data-i18n="common.cancel">ยกเลิก</button>` : ''}
+            </div>
+            ${e.errorMessage ? `<div class="text-danger text-xs" style="margin-top:4px">${this.esc(e.errorMessage)}</div>` : ''}
+            ${e.acceptanceNumber ? `<div class="text-success text-xs" style="margin-top:4px">เลขตอบรับ: ${this.esc(e.acceptanceNumber)}</div>` : ''}
+          </td>
+        </tr>
+      `).join('');
+    },
+
+    statusBadge(status) {
+      const map = {
+        'Generated': ['รอลงนาม', 'warning'],
+        'Signed': ['ลงนามแล้ว', 'info'],
+        'Submitted': ['ส่งแล้ว', 'info'],
+        'Accepted': ['ตอบรับ', 'success'],
+        'Rejected': ['ปฏิเสธ', 'danger'],
+        'Error': ['ข้อผิดพลาด', 'danger']
+      };
+      const [label, color] = map[status] || [status, 'gray'];
+      return `<span class="badge badge-${color}">${label}</span>`;
+    },
+
+    setStatus(el) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      this.currentStatus = el.dataset.status;
+      this.page = 1;
+      this.load();
+    },
+
+    async openGenerate() {
+      // Load approved documents
+      try {
+        const res = await API.get(`/api/companies/${this.companyId}/document?page=1&pageSize=100&status=Approved`);
+        const docs = (res.data.items || res.data || []).filter(d =>
+          ['TaxInvoice','Receipt','DebitNote','CreditNote'].includes(d.documentType));
+        const select = document.getElementById('docSelect');
+        select.innerHTML = '<option value="">กรุณาเลือกเอกสาร...</option>' +
+          docs.map(d => `<option value="${d.id}">${d.documentNumber} - ${d.contactName || ''} (${d.totalAmount?.toLocaleString() || 0} THB)</option>`).join('');
+      } catch(e) { console.error(e); }
+      document.getElementById('generateModal').style.display = 'flex';
+    },
+
+    async doGenerate() {
+      const docId = document.getElementById('docSelect').value;
+      if (!docId) { alert('กรุณาเลือกเอกสาร'); return; }
+      const signDigitally = document.getElementById('signDigitally').checked;
+      const quickSubmit = document.getElementById('quickSubmit').checked;
+
+      try {
+        let res;
+        if (quickSubmit) {
+          res = await API.post(`/api/companies/${this.companyId}/etax/quick-submit`, { documentId: docId, signDigitally });
+        } else {
+          res = await API.post(`/api/companies/${this.companyId}/etax/generate`, { documentId: docId, signDigitally });
+        }
+        alert(res.message || 'สร้าง e-Tax สำเร็จ');
+        this.closeModal('generateModal');
+        await this.load();
+      } catch(e) { alert(e.message); }
+    },
+
+    async sign(id) {
+      if (!confirm('ต้องการลงนามดิจิทัล?')) return;
+      try {
+        const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/sign`);
+        alert(res.message || 'ลงนามสำเร็จ');
+        await this.load();
+      } catch(e) { alert(e.message); }
+    },
+
+    async submit(id) {
+      if (!confirm('ต้องการส่งข้อมูลไปกรมสรรพากร?')) return;
+      try {
+        const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/submit`);
+        alert(res.message || 'ส่งสำเร็จ');
+        await this.load();
+      } catch(e) { alert(e.message); }
+    },
+
+    async signAndSubmit(id) {
+      if (!confirm('ต้องการลงนามและส่งกรมสรรพากร?')) return;
+      try {
+        const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/sign-and-submit`);
+        alert(res.message || 'ลงนามและส่งสำเร็จ');
+        await this.load();
+      } catch(e) { alert(e.message); }
+    },
+
+    async viewXml(id) {
+      this.currentXmlId = id;
+      try {
+        const res = await fetch(`/api/companies/${this.companyId}/etax/${id}/xml`, {
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        const xml = await res.text();
+        document.getElementById('xmlContent').textContent = xml;
+        document.getElementById('xmlModal').style.display = 'flex';
+      } catch(e) { alert(e.message); }
+    },
+
+    downloadXml() {
+      if (!this.currentXmlId) return;
+      const content = document.getElementById('xmlContent').textContent;
+      const blob = new Blob([content], { type: 'application/xml' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `etax-${this.currentXmlId}.xml`;
+      a.click();
+    },
+
+    async downloadPdfA3(etaxId) {
+      try {
+        Layout.toast?.('กำลังสร้าง PDF/A-3 พร้อมฝัง XML...', 'info');
+        const url = `/api/companies/${this.companyId}/etax/${etaxId}/pdf`;
+        const resp = await fetch(url, { credentials: 'include' });
+        if (!resp.ok) throw new Error('Failed: ' + resp.status);
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `etax-${etaxId}.pdf`;
+        a.click();
+        Layout.toast?.('ดาวน์โหลด PDF/A-3 สำเร็จ', 'success');
+      } catch(e) { alert(e.message || 'ดาวน์โหลด PDF ล้มเหลว'); }
+    },
+
+    async void(id) {
+      if (!(await Layout.confirmDanger({ title: 'ยกเลิก e-Tax Invoice', message: 'e-Tax Invoice ที่ส่งกรมสรรพากรแล้ว ต้องแจ้งยกเลิกตามขั้นตอน', mode: 'type', confirmText: 'confirm' }))) return;
+      try {
+        await API.post(`/api/companies/${this.companyId}/etax/${id}/void`);
+        alert('ยกเลิกสำเร็จ');
+        await this.load();
+      } catch(e) { alert(e.message); }
+    },
+
+    async openSendByEmail(etaxId) {
+      this._sendingEtaxId = etaxId;
+      // Load eTax details and pre-fill email defaults
+      const etax = (this.items || []).find(x => x.id === etaxId);
+      if (!etax) { Layout.toast('ไม่พบเอกสาร', 'error'); return; }
+
+      // Pre-validate config
+      try {
+        const cfg = await API.get(`/api/companies/${this.companyId}/etax/config`);
+        const c = cfg.data || {};
+        const warnings = [];
+        if (!c.byEmailRdRegistered) warnings.push('⚠ ยังไม่ได้ลงทะเบียน e-Tax by Email กับสรรพากร');
+        if (!c.byEmailSenderEmail) warnings.push('⚠ ยังไม่ได้ตั้งค่าอีเมลผู้ส่งที่ลงทะเบียน');
+        const w = document.getElementById('sendEmailWarning');
+        if (warnings.length > 0) {
+          w.style.display = 'block';
+          w.innerHTML = warnings.join('<br>') + '<br><a href="/pages/settings.html" style="color:#0369a1">→ ไปตั้งค่า</a>';
+        } else { w.style.display = 'none'; }
+      } catch(e) {}
+
+      // Get email config to check if any provider is configured
+      try {
+        const ec = await API.get(`/api/companies/${this.companyId}/email-config`);
+        if (!ec.data?.configured) {
+          const w = document.getElementById('sendEmailWarning');
+          w.style.display = 'block';
+          w.innerHTML = (w.innerHTML || '') + '<br>⚠ ยังไม่ได้ตั้งค่าอีเมลผู้ส่ง — โปรดไปที่หน้าตั้งค่า';
+        }
+      } catch(e) {}
+
+      document.getElementById('seTo').value = etax.buyerEmail || '';
+      document.getElementById('seCc').value = '';
+      // RD spec: Subject MUST be exactly "{SellerTaxId}.{EtaxRefNumber}" — auto-generated and locked.
+      // Backend re-builds and overrides this anyway, but we display the exact value users will see in their inbox.
+      const taxId = (etax.sellerTaxId || '').trim();
+      const refNum = (etax.etaxRefNumber || '').trim();
+      document.getElementById('seSubject').value = (taxId && refNum) ? `${taxId}.${refNum}` : '⚠️ ขาดข้อมูล';
+      document.getElementById('seBody').value = `<p>เรียน คุณ${etax.buyerName || 'ลูกค้า'}</p>
+<p>โปรดตรวจสอบ e-Tax Invoice เลขที่ <strong>${etax.etaxRefNumber}</strong> ตามไฟล์แนบ</p>
+<p style="background:#fef3c7;padding:10px;border-radius:6px;font-size:13px">ℹ️ อีเมลฉบับนี้เป็น e-Tax Invoice & Receipt by Email ซึ่งกรมสรรพากรจะลงเวลาประทับอัตโนมัติ — โปรดเก็บอีเมลและไฟล์แนบไว้เป็นหลักฐาน</p>`;
+      document.getElementById('seIncludePdf').checked = true;
+      document.getElementById('seIncludeXml').checked = true;
+      document.getElementById('seIncludeRd').checked = true;
+      document.getElementById('sendEmailModal').style.display = 'flex';
+    },
+
+    async doSendByEmail() {
+      const to = document.getElementById('seTo').value.trim();
+      if (!to) { Layout.toast('กรุณากรอกอีเมลผู้รับ', 'error'); return; }
+
+      const subj = document.getElementById('seSubject').value.trim();
+      if (!subj || subj.startsWith('⚠️')) {
+        Layout.toast('ไม่สามารถสร้างหัวข้อตามรูปแบบ RD ได้ — ตรวจสอบเลขผู้เสียภาษีและเลขเอกสาร', 'error');
+        return;
+      }
+
+      const includeRd = document.getElementById('seIncludeRd').checked;
+      if (!includeRd) {
+        if (!confirm('⚠️ คุณยังไม่ได้ติ๊ก "CC สรรพากร"\n\nหาก CC ไม่ครบ ETDA จะไม่ลงเวลาประทับ (Time Stamp) ทำให้เอกสารนี้ไม่ถูกต้องตามกฎหมายในรูปแบบ e-Tax by Email\n\nต้องการส่งต่อทั้งที่ทราบความเสี่ยงนี้?')) {
+          return;
+        }
+      }
+
+      const req = {
+        to,
+        cc: document.getElementById('seCc').value || null,
+        subject: subj,  // backend will override anyway, but send the locked value for log accuracy
+        body: document.getElementById('seBody').value || null,
+        includePdf: document.getElementById('seIncludePdf').checked,
+        includeXml: document.getElementById('seIncludeXml').checked,
+        includeRdTimestamp: includeRd
+      };
+
+      try {
+        const res = await API.post(
+          `/api/companies/${this.companyId}/etax/${this._sendingEtaxId}/send-email`, req);
+        if (res.success) {
+          Layout.toast(req.includeRdTimestamp ? 'ส่ง e-Tax สำเร็จ — สรรพากรจะลงเวลาประทับ' : 'ส่งอีเมลสำเร็จ');
+          this.closeModal('sendEmailModal');
+        } else {
+          Layout.toast(res.message || 'ส่งไม่สำเร็จ', 'error');
+        }
+      } catch(e) { Layout.toast(e.message, 'error'); }
+    },
+
+    async showConfig() {
+      try {
+        const res = await API.get(`/api/companies/${this.companyId}/etax/config-status`);
+        const cfg = res.data;
+        document.getElementById('configStatusContent').innerHTML = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="card" style="padding:12px;border-left:4px solid ${cfg.certificateConfigured ? '#22c55e' : '#ef4444'}">
+              <div class="text-xs text-gray-500">ใบรับรองดิจิทัล</div>
+              <div class="font-bold">${cfg.certificateConfigured ? 'ตั้งค่าแล้ว' : 'ยังไม่ได้ตั้งค่า'}</div>
+              ${cfg.certificatePath ? `<div class="text-xs">${cfg.certificatePath}</div>` : ''}
+            </div>
+            <div class="card" style="padding:12px;border-left:4px solid ${cfg.rdApiConfigured ? '#22c55e' : '#ef4444'}">
+              <div class="text-xs text-gray-500">RD API</div>
+              <div class="font-bold">${cfg.rdApiConfigured ? 'ตั้งค่าแล้ว' : 'ยังไม่ได้ตั้งค่า'}</div>
+            </div>
+            <div class="card" style="padding:12px;border-left:4px solid ${cfg.testMode ? '#f59e0b' : '#22c55e'}">
+              <div class="text-xs text-gray-500">โหมด</div>
+              <div class="font-bold">${cfg.testMode ? 'Test Mode' : 'Production'}</div>
+            </div>
+            <div class="card" style="padding:12px">
+              <div class="text-xs text-gray-500">อัตโนมัติ</div>
+              <div class="text-sm">ลงนาม: ${cfg.autoSign ? 'เปิด' : 'ปิด'} | ส่ง: ${cfg.autoSubmit ? 'เปิด' : 'ปิด'}</div>
+            </div>
+          </div>`;
+      } catch(e) {
+        document.getElementById('configStatusContent').innerHTML = '<div class="text-danger">ไม่สามารถโหลดสถานะการตั้งค่าได้</div>';
+      }
+      document.getElementById('configModal').style.display = 'flex';
+    },
+
+    closeModal(id) { document.getElementById(id).style.display = 'none'; },
+    fmtDate(d) { return d ? new Date(d).toLocaleDateString('th-TH', {year:'numeric',month:'short',day:'numeric'}) : '-'; },
+    esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  };
+
+  Page.init();
+  Layout.enableTour('etax');
+  </script>
+</body>
+</html>

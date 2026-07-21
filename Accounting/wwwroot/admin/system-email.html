@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>อีเมลระบบ (SMTP) - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .email-grid { display: grid; grid-template-columns: 1fr; gap: 24px; max-width: 900px; }
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+    .form-group .hint { font-size: 12px; color: #6b7280; margin-top: 4px; }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px;
+      font-family: inherit; transition: border-color .2s;
+    }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.1); }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .provider-card { display: none; }
+    .provider-card.active { display: block; }
+    .status-badge {
+      display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 600;
+    }
+    .status-ok { background: #dcfce7; color: #16a34a; }
+    .status-pending { background: #fef3c7; color: #d97706; }
+    .status-error { background: #fee2e2; color: #dc2626; }
+    .test-section {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-top: 16px;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none;
+      padding: 12px 32px; border-radius: 10px; font-size: 15px; font-weight: 600;
+      cursor: pointer; transition: all .2s; font-family: inherit;
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99,102,241,.3); }
+    .btn-primary:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+    .btn-secondary {
+      background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0;
+      padding: 10px 24px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+      font-family: inherit; transition: all .2s;
+    }
+    .btn-secondary:hover { background: #16a34a; color: #fff; }
+    .info-box {
+      background: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 16px;
+      border-radius: 8px; font-size: 13px; color: #1e40af; margin-bottom: 16px;
+    }
+    .password-field { position: relative; }
+    .password-field input { padding-right: 100px; }
+    .password-field .keep-existing {
+      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      font-size: 11px; color: #6b7280; padding: 4px 8px; background: #f3f4f6; border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="info-box">
+      <strong>อีเมลระบบ (System Email)</strong> ใช้สำหรับส่งคำเชิญถึงผู้ใช้ที่ <strong>ยังไม่ได้สมัครสมาชิก</strong>,
+      รีเซ็ตรหัสผ่าน, และการแจ้งเตือนของระบบ
+      (แตกต่างจากอีเมลของแต่ละบริษัท ที่ใช้ส่งใบกำกับภาษี/ใบเสร็จให้ลูกค้า)
+    </div>
+
+    <div class="email-grid">
+      <!-- Status Card -->
+      <div class="admin-card">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="admin-card-title">สถานะปัจจุบัน</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">การตั้งค่าอีเมลระบบที่ใช้งานอยู่</div>
+          </div>
+          <div id="statusBadge" class="status-badge status-pending">กำลังโหลด...</div>
+        </div>
+        <div id="statusInfo" style="font-size:14px;color:#475569"></div>
+      </div>
+
+      <!-- General Settings -->
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">การตั้งค่าทั่วไป</div>
+        </div>
+
+        <div class="form-group">
+          <label>ผู้ให้บริการ (Provider)</label>
+          <select id="provider" onchange="switchProvider()">
+            <option value="0">SMTP (Gmail, Office 365, ฯลฯ)</option>
+            <option value="1">Microsoft Graph API</option>
+            <option value="2">Gmail API</option>
+          </select>
+          <div class="hint">SMTP ใช้ได้กับ Gmail (App Password), Office 365, และ SMTP server ทั่วไป</div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>อีเมลผู้ส่ง (From Address) <span style="color:#dc2626">*</span></label>
+            <input type="email" id="fromAddress" placeholder="noreply@yourdomain.com">
+          </div>
+          <div class="form-group">
+            <label>ชื่อผู้ส่ง (From Name)</label>
+            <input type="text" id="fromName" placeholder="Next Acc">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Reply-To (ไม่บังคับ)</label>
+            <input type="email" id="replyTo" placeholder="support@yourdomain.com">
+          </div>
+          <div class="form-group">
+            <label>App Base URL <span style="color:#dc2626">*</span></label>
+            <input type="text" id="appBaseUrl" placeholder="https://app.nextacc.com">
+            <div class="hint">ใช้สร้างลิงก์ในอีเมล (ตอบรับคำเชิญ, รีเซ็ตรหัสผ่าน)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SMTP Card -->
+      <div class="admin-card provider-card" id="provider-smtp">
+        <div class="admin-card-header">
+          <div class="admin-card-title">การตั้งค่า SMTP</div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>SMTP Host <span style="color:#dc2626">*</span></label>
+            <input type="text" id="smtpHost" placeholder="smtp.gmail.com">
+            <div class="hint">Gmail: smtp.gmail.com | Office 365: smtp.office365.com</div>
+          </div>
+          <div class="form-group">
+            <label>Port <span style="color:#dc2626">*</span></label>
+            <input type="number" id="smtpPort" value="587">
+            <div class="hint">587 (TLS) หรือ 465 (SSL)</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="smtpUsername" placeholder="your-email@gmail.com">
+        </div>
+
+        <div class="form-group">
+          <label>Password / App Password</label>
+          <div class="password-field">
+            <input type="password" id="smtpPassword" placeholder="••••••••">
+            <span class="keep-existing" id="smtpPasswordHint" style="display:none">ปล่อยว่าง = ใช้ค่าเดิม</span>
+          </div>
+          <div class="hint" style="color:#dc2626">
+            <strong>Gmail:</strong> ต้องใช้ <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:#dc2626;text-decoration:underline">App Password</a>
+            (ไม่ใช่รหัสผ่านปกติ)
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="smtpUseSsl" checked style="width:auto;margin-right:6px">
+            ใช้ SSL/TLS (แนะนำ)
+          </label>
+        </div>
+      </div>
+
+      <!-- Microsoft Graph Card -->
+      <div class="admin-card provider-card" id="provider-msgraph">
+        <div class="admin-card-header">
+          <div class="admin-card-title">Microsoft Graph API (Office 365)</div>
+        </div>
+
+        <div class="form-group">
+          <label>Tenant ID <span style="color:#dc2626">*</span></label>
+          <input type="text" id="msTenantId" placeholder="11111111-2222-3333-4444-555555555555">
+        </div>
+        <div class="form-group">
+          <label>Client ID (Application ID) <span style="color:#dc2626">*</span></label>
+          <input type="text" id="msClientId">
+        </div>
+        <div class="form-group">
+          <label>Client Secret <span style="color:#dc2626">*</span></label>
+          <div class="password-field">
+            <input type="password" id="msClientSecret" placeholder="••••••••">
+            <span class="keep-existing" id="msClientSecretHint" style="display:none">ปล่อยว่าง = ใช้ค่าเดิม</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Sender UPN (User Principal Name) <span style="color:#dc2626">*</span></label>
+          <input type="email" id="msSenderUpn" placeholder="noreply@yourdomain.com">
+          <div class="hint">อีเมล mailbox ใน Office 365 ที่จะใช้ส่ง</div>
+        </div>
+      </div>
+
+      <!-- Gmail API Card -->
+      <div class="admin-card provider-card" id="provider-gmail">
+        <div class="admin-card-header">
+          <div class="admin-card-title">Gmail API (OAuth2)</div>
+        </div>
+
+        <div class="form-group">
+          <label>Client ID <span style="color:#dc2626">*</span></label>
+          <input type="text" id="gmailClientId">
+        </div>
+        <div class="form-group">
+          <label>Client Secret <span style="color:#dc2626">*</span></label>
+          <div class="password-field">
+            <input type="password" id="gmailClientSecret" placeholder="••••••••">
+            <span class="keep-existing" id="gmailClientSecretHint" style="display:none">ปล่อยว่าง = ใช้ค่าเดิม</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Refresh Token <span style="color:#dc2626">*</span></label>
+          <div class="password-field">
+            <input type="password" id="gmailRefreshToken" placeholder="••••••••">
+            <span class="keep-existing" id="gmailRefreshTokenHint" style="display:none">ปล่อยว่าง = ใช้ค่าเดิม</span>
+          </div>
+          <div class="hint">ดู <a href="https://developers.google.com/gmail/api/quickstart" target="_blank" style="color:#3b82f6">Gmail API Quickstart</a> เพื่อสร้าง refresh token</div>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div style="display:flex;justify-content:space-between;gap:12px;padding-bottom:24px">
+        <div></div>
+        <div style="display:flex;gap:12px">
+          <button class="btn-primary" id="saveBtn" onclick="saveSettings()">บันทึกการตั้งค่า</button>
+        </div>
+      </div>
+
+      <!-- Test Section -->
+      <div class="admin-card">
+        <div class="admin-card-header">
+          <div class="admin-card-title">ทดสอบส่งอีเมล</div>
+          <div style="font-size:13px;color:#94a3b8;margin-top:4px">ส่งอีเมลทดสอบเพื่อยืนยันการตั้งค่า (ต้องบันทึกก่อน)</div>
+        </div>
+
+        <div class="form-row" style="grid-template-columns: 2fr 1fr; align-items:end">
+          <div class="form-group" style="margin-bottom:0">
+            <label>อีเมลผู้รับ</label>
+            <input type="email" id="testEmail" placeholder="your-email@gmail.com">
+          </div>
+          <button class="btn-secondary" id="testBtn" onclick="testEmail()">ส่งทดสอบ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('system-email');
+
+    let currentConfig = null;
+
+    async function loadConfig() {
+      try {
+        const res = await AdminAPI.systemEmail();
+        const d = res.data;
+        currentConfig = d;
+
+        document.getElementById('provider').value = d.provider;
+        document.getElementById('fromAddress').value = d.fromAddress || '';
+        document.getElementById('fromName').value = d.fromName || '';
+        document.getElementById('replyTo').value = d.replyTo || '';
+        document.getElementById('appBaseUrl').value = d.appBaseUrl || (location.origin);
+
+        if (d.smtp) {
+          document.getElementById('smtpHost').value = d.smtp.host || '';
+          document.getElementById('smtpPort').value = d.smtp.port || 587;
+          document.getElementById('smtpUsername').value = d.smtp.username || '';
+          document.getElementById('smtpUseSsl').checked = d.smtp.useSsl !== false;
+          document.getElementById('smtpPasswordHint').style.display = d.smtp.hasPassword ? '' : 'none';
+        }
+        if (d.microsoft) {
+          document.getElementById('msTenantId').value = d.microsoft.tenantId || '';
+          document.getElementById('msClientId').value = d.microsoft.clientId || '';
+          document.getElementById('msSenderUpn').value = d.microsoft.senderUpn || '';
+          document.getElementById('msClientSecretHint').style.display = d.microsoft.hasClientSecret ? '' : 'none';
+        }
+        if (d.gmail) {
+          document.getElementById('gmailClientId').value = d.gmail.clientId || '';
+          document.getElementById('gmailClientSecretHint').style.display = d.gmail.hasClientSecret ? '' : 'none';
+          document.getElementById('gmailRefreshTokenHint').style.display = d.gmail.hasRefreshToken ? '' : 'none';
+        }
+
+        // Default test email
+        const adminEmail = JSON.parse(localStorage.getItem('admin_user') || '{}').email;
+        if (adminEmail) document.getElementById('testEmail').value = adminEmail;
+
+        updateStatus(d);
+        switchProvider();
+      } catch (e) {
+        AdminLayout.toast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'error');
+      }
+    }
+
+    function updateStatus(d) {
+      const badge = document.getElementById('statusBadge');
+      const info = document.getElementById('statusInfo');
+
+      if (d.configured) {
+        badge.className = 'status-badge status-ok';
+        badge.textContent = '✓ พร้อมใช้งาน';
+      } else if (d.lastTestStatus && d.lastTestStatus !== 'OK') {
+        badge.className = 'status-badge status-error';
+        badge.textContent = '✗ ทดสอบไม่ผ่าน';
+      } else {
+        badge.className = 'status-badge status-pending';
+        badge.textContent = '⚠ ยังไม่ได้ทดสอบ';
+      }
+
+      const lines = [];
+      lines.push(`Provider: <strong>${['SMTP', 'Microsoft Graph', 'Gmail API'][d.provider] || 'SMTP'}</strong>`);
+      if (d.fromAddress) lines.push(`ผู้ส่ง: <strong>${d.fromName || ''} &lt;${d.fromAddress}&gt;</strong>`);
+      if (d.lastTestedAt) {
+        const date = new Date(d.lastTestedAt).toLocaleString('th-TH');
+        lines.push(`ทดสอบล่าสุด: <strong>${date}</strong> (${d.lastTestStatus || 'unknown'})`);
+      }
+      info.innerHTML = lines.join('<br>');
+    }
+
+    function switchProvider() {
+      const v = document.getElementById('provider').value;
+      document.getElementById('provider-smtp').classList.toggle('active', v === '0');
+      document.getElementById('provider-msgraph').classList.toggle('active', v === '1');
+      document.getElementById('provider-gmail').classList.toggle('active', v === '2');
+    }
+
+    async function saveSettings() {
+      const btn = document.getElementById('saveBtn');
+      btn.disabled = true;
+      btn.textContent = 'กำลังบันทึก...';
+
+      try {
+        const provider = parseInt(document.getElementById('provider').value);
+        const payload = {
+          provider,
+          fromAddress: document.getElementById('fromAddress').value || null,
+          fromName: document.getElementById('fromName').value || null,
+          replyTo: document.getElementById('replyTo').value || null,
+          appBaseUrl: document.getElementById('appBaseUrl').value || null,
+        };
+
+        if (provider === 0) {
+          payload.smtp = {
+            host: document.getElementById('smtpHost').value || null,
+            port: parseInt(document.getElementById('smtpPort').value) || 587,
+            username: document.getElementById('smtpUsername').value || null,
+            password: document.getElementById('smtpPassword').value || null,
+            useSsl: document.getElementById('smtpUseSsl').checked,
+          };
+        } else if (provider === 1) {
+          payload.microsoft = {
+            tenantId: document.getElementById('msTenantId').value || null,
+            clientId: document.getElementById('msClientId').value || null,
+            clientSecret: document.getElementById('msClientSecret').value || null,
+            senderUpn: document.getElementById('msSenderUpn').value || null,
+          };
+        } else if (provider === 2) {
+          payload.gmail = {
+            clientId: document.getElementById('gmailClientId').value || null,
+            clientSecret: document.getElementById('gmailClientSecret').value || null,
+            refreshToken: document.getElementById('gmailRefreshToken').value || null,
+          };
+        }
+
+        const res = await AdminAPI.updateSystemEmail(payload);
+        AdminLayout.toast('บันทึกสำเร็จ — กรุณาทดสอบส่งอีเมลเพื่อยืนยัน', 'success');
+        // Clear password fields
+        document.getElementById('smtpPassword').value = '';
+        document.getElementById('msClientSecret').value = '';
+        document.getElementById('gmailClientSecret').value = '';
+        document.getElementById('gmailRefreshToken').value = '';
+        // Reload to update status
+        await loadConfig();
+      } catch (e) {
+        AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'บันทึกการตั้งค่า';
+      }
+    }
+
+    async function testEmail() {
+      const to = document.getElementById('testEmail').value;
+      if (!to) {
+        AdminLayout.toast('กรุณาระบุอีเมลผู้รับ', 'warning');
+        return;
+      }
+
+      const btn = document.getElementById('testBtn');
+      btn.disabled = true;
+      btn.textContent = 'กำลังส่ง...';
+
+      try {
+        const res = await AdminAPI.testSystemEmail(to);
+        if (res.data && res.data.success) {
+          AdminLayout.toast(`ส่งอีเมลทดสอบสำเร็จ! ตรวจสอบกล่องจดหมาย ${to}`, 'success');
+        } else {
+          AdminLayout.toast('ส่งทดสอบไม่สำเร็จ: ' + (res.data?.errorMessage || 'unknown'), 'error');
+        }
+        await loadConfig();
+      } catch (e) {
+        AdminLayout.toast('ส่งทดสอบไม่สำเร็จ: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'ส่งทดสอบ';
+      }
+    }
+
+    loadConfig();
+  </script>
+</body>
+</html>

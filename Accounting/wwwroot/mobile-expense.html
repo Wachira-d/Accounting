@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+  <title>เบิกค่าใช้จ่าย — Mobile</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    body { font-family:'Noto Sans Thai',-apple-system,sans-serif; margin:0; background:#f8fafc; color:#1e293b; padding-bottom:80px; }
+    .head { background:linear-gradient(135deg,#16a34a,#15803d); color:#fff; padding:20px 18px; }
+    .head h1 { margin:0; font-size:18px; }
+    .wrap { padding:14px; }
+    .card { background:#fff; border-radius:14px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .card h3 { margin:0 0 10px; font-size:14px; color:#1e293b; }
+    label { display:block; font-size:12px; color:#64748b; margin-bottom:6px; margin-top:10px; }
+    input, select, textarea { width:100%; padding:11px 14px; border:1px solid #cbd5e1; border-radius:10px; font:inherit; font-size:15px; }
+    input:focus, select:focus, textarea:focus { outline:none; border-color:#16a34a; box-shadow:0 0 0 3px rgba(22,163,74,.15); }
+    .photo-area { background:#f0fdf4; border:2px dashed #86efac; border-radius:12px; padding:32px 16px; text-align:center; margin-bottom:10px; }
+    .photo-area svg { width:48px; height:48px; color:#16a34a; }
+    .photo-area p { margin:8px 0 4px; color:#16a34a; font-weight:600; }
+    .photo-area .sub { font-size:12px; color:#64748b; }
+    .photo-preview { display:none; }
+    .photo-preview.show { display:block; }
+    .photo-preview img { max-width:100%; border-radius:10px; }
+    .fab { position:fixed; bottom:18px; left:14px; right:14px; padding:16px; background:linear-gradient(135deg,#16a34a,#15803d); color:#fff; border:none; border-radius:14px; font:inherit; font-size:16px; font-weight:700; cursor:pointer; box-shadow:0 4px 14px rgba(22,163,74,.4); }
+    .fab:disabled { opacity:.6; }
+    .ok { background:#dcfce7; color:#15803d; padding:10px 14px; border-radius:8px; font-size:13px; }
+    .err { background:#fee2e2; color:#dc2626; padding:10px 14px; border-radius:8px; font-size:13px; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  </style>
+</head>
+<body>
+  <div class="head"><h1>เบิกค่าใช้จ่าย</h1></div>
+
+  <div class="wrap">
+    <div class="card">
+      <h3>📸 ถ่ายใบเสร็จ</h3>
+      <div id="photoArea" class="photo-area" onclick="document.getElementById('photoInput').click()">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        <p>แตะเพื่อถ่ายรูป</p>
+        <div class="sub">หรือเลือกจากแกลเลอรี (จะใช้ OCR ดึงยอดเงินอัตโนมัติ)</div>
+      </div>
+      <div id="photoPreview" class="photo-preview"><img id="photoImg"></div>
+      <input id="photoInput" type="file" accept="image/*" capture="environment" style="display:none" onchange="App.onPhoto(event)">
+    </div>
+
+    <div class="card">
+      <h3>รายละเอียด</h3>
+      <label>ประเภทค่าใช้จ่าย</label>
+      <select id="category">
+        <option value="travel">เดินทาง / ค่าแท็กซี่</option>
+        <option value="meals">อาหาร / รับรอง</option>
+        <option value="office">วัสดุสำนักงาน</option>
+        <option value="fuel">น้ำมัน</option>
+        <option value="utilities">ค่าสาธารณูปโภค</option>
+        <option value="other">อื่นๆ</option>
+      </select>
+
+      <label>ร้านค้า / ผู้ขาย</label>
+      <input id="vendor" placeholder="เช่น 7-Eleven, Grab">
+
+      <div class="row">
+        <div>
+          <label>ยอดเงิน (THB)</label>
+          <input id="amount" type="number" step="0.01" min="0" placeholder="0.00">
+        </div>
+        <div>
+          <label>วันที่</label>
+          <input id="expDate" type="date">
+        </div>
+      </div>
+
+      <label>หมายเหตุ</label>
+      <textarea id="notes" rows="3" placeholder="คำอธิบายเพิ่มเติม (เช่น เดินทางไปพบลูกค้า)"></textarea>
+    </div>
+
+    <div id="result"></div>
+  </div>
+
+  <button class="fab" id="submitBtn" onclick="App.submit()">✅ ส่งเบิกค่าใช้จ่าย</button>
+
+  <script>
+    const App = {
+      photo: null,
+
+      init() {
+        document.getElementById('expDate').value = new Date().toISOString().slice(0,10);
+      },
+
+      onPhoto(e) {
+        const f = e.target.files[0];
+        if (!f) return;
+        const r = new FileReader();
+        r.onload = ev => {
+          this.photo = ev.target.result;
+          document.getElementById('photoImg').src = ev.target.result;
+          document.getElementById('photoPreview').classList.add('show');
+          document.getElementById('photoArea').style.display = 'none';
+        };
+        r.readAsDataURL(f);
+      },
+
+      async submit() {
+        const btn = document.getElementById('submitBtn');
+        const res = document.getElementById('result');
+        const amount = +document.getElementById('amount').value;
+        const vendor = document.getElementById('vendor').value.trim();
+        const date = document.getElementById('expDate').value;
+        const category = document.getElementById('category').value;
+        const notes = document.getElementById('notes').value;
+        if (!amount || !vendor) {
+          res.innerHTML = '<div class="err">กรอกร้านค้า + ยอดเงิน</div>'; return;
+        }
+        btn.disabled = true; btn.textContent = 'กำลังส่ง...';
+        try {
+          const token = localStorage.getItem('token');
+          const companyId = localStorage.getItem('companyId');
+          if (!token || !companyId) {
+            res.innerHTML = '<div class="err">ต้อง login + เลือกบริษัทก่อน</div>';
+            btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย'; return;
+          }
+          const body = {
+            documentType: 'Expense',
+            documentDate: date,
+            contactName: vendor,
+            totalAmount: amount,
+            notes: `[Mobile ${category}] ${notes}`,
+            attachmentBase64: this.photo,
+          };
+          const r = await fetch(`/api/companies/${companyId}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify(body),
+          });
+          const j = await r.json();
+          if (!r.ok || !j.success) {
+            res.innerHTML = `<div class="err">${j.message || 'ส่งไม่สำเร็จ'}</div>`;
+            btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย'; return;
+          }
+          res.innerHTML = `<div class="ok">✅ ส่งเบิกแล้ว — เลขที่ ${j.data?.documentNumber || 'รออนุมัติ'}</div>`;
+          setTimeout(() => {
+            document.getElementById('amount').value = '';
+            document.getElementById('vendor').value = '';
+            document.getElementById('notes').value = '';
+            document.getElementById('photoArea').style.display = 'block';
+            document.getElementById('photoPreview').classList.remove('show');
+            this.photo = null;
+            btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย';
+          }, 1500);
+        } catch (e) {
+          res.innerHTML = `<div class="err">${e.message}</div>`;
+          btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย';
+        }
+      },
+    };
+    App.init();
+  </script>
+</body>
+</html>

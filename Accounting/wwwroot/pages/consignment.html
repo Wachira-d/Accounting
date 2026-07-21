@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สินค้าฝากขาย — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">สินค้าฝากขาย / รับฝาก (Consignment)</h2>
+        <p class="page-subtitle">ใช้กับสินค้าที่อยู่กับอีกฝ่ายแต่ยังไม่เปลี่ยนมือทางบัญชี จนกว่าจะมีการใช้/ขายจริง</p>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="Page.openForm('Inbound')">+ รับฝากเข้า (Inbound)</button>
+        <button class="btn btn-primary" onclick="Page.openForm('Outbound')">+ ฝากขายออก (Outbound)</button>
+      </div>
+    </div>
+
+    <!-- How-to explainer -->
+    <div class="card" style="background:#f8fafc;border:1px solid #e2e8f0;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <div style="font-weight:700;color:#1e40af;margin-bottom:4px">📥 รับฝาก (Inbound) — ของผู้ขายมาวางที่เรา</div>
+          <div style="font-size:13px;color:#475569;line-height:1.6">
+            ผู้ขายเอาสินค้ามาฝากไว้ที่เรา <b>เรายังไม่เป็นหนี้</b> จนกว่าจะหยิบมาใช้/ขาย<br>
+            • รับเข้า → ยังไม่ลงบัญชี (ยังไม่ใช่ของเรา)<br>
+            • กด "บันทึกใช้" ตามจำนวนจริง → ระบบสร้าง <b>เจ้าหนี้ (AP)</b> + ใบสำคัญจ่ายให้อัตโนมัติ
+          </div>
+        </div>
+        <div>
+          <div style="font-weight:700;color:#15803d;margin-bottom:4px">📤 ฝากขาย (Outbound) — ของเราไปวางที่ลูกค้า/ตัวแทน</div>
+          <div style="font-size:13px;color:#475569;line-height:1.6">
+            เราเอาสินค้าไปฝากตัวแทนขาย <b>ยังไม่รับรู้รายได้</b> จนกว่าตัวแทนจะขายได้<br>
+            • ส่งออก → ตัดสต๊อกเราไปพักไว้ (ยังไม่ใช่รายได้)<br>
+            • กด "บันทึกใช้" ตามที่ขายได้ → ระบบสร้าง <b>ลูกหนี้ (AR)</b> + ใบแจ้งหนี้/รับรู้รายได้ให้อัตโนมัติ
+          </div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:10px;border-top:1px solid #e2e8f0;padding-top:8px">
+        💡 ใช่ — นี่คือวิธีขายของที่เราไม่ต้องสต๊อกเอง (รับฝาก) หรือฝากคนอื่นขายให้ (ฝากขาย) โดยลงบัญชี<b>ตอนเกิดการใช้/ขายจริงเท่านั้น</b> ไม่ใช่ตอนรับ/ส่งของ
+      </div>
+    </div>
+
+    <div class="tabs" style="margin-bottom:14px">
+      <button class="tab-btn active" onclick="Page.switchTab('all')">ทั้งหมด</button>
+      <button class="tab-btn" onclick="Page.switchTab('Inbound')">รับฝาก (Inbound)</button>
+      <button class="tab-btn" onclick="Page.switchTab('Outbound')">ฝากขาย (Outbound)</button>
+    </div>
+
+    <div class="card">
+      <div class="table-container">
+        <table class="data-table">
+          <thead><tr><th>สินค้า</th><th>คู่ค้า</th><th>ทิศทาง</th><th style="text-align:right">คงเหลือ</th><th style="text-align:right">ราคา/หน่วย</th><th>รับ/ส่งเมื่อ</th><th>สถานะ</th><th>การจัดการ</th></tr></thead>
+          <tbody id="rowsBody"><tr><td colspan="8" style="text-align:center;padding:30px;color:#94a3b8">โหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Create inbound/outbound modal -->
+    <div id="formModal" class="modal-overlay">
+      <div class="modal" style="max-width:540px;width:92%">
+        <h3 id="formTitle" style="margin-top:0">รับฝากเข้า</h3>
+        <p id="formHint" style="font-size:12px;color:#64748b;margin:0 0 12px"></p>
+        <label>สินค้า *</label>
+        <select id="fProduct" class="form-select"><option value="">— เลือกสินค้า —</option></select>
+        <label id="fContactLabel" style="margin-top:8px">คู่ค้า *</label>
+        <select id="fContact" class="form-select"><option value="">— เลือกคู่ค้า —</option></select>
+        <div style="display:flex;gap:10px;margin-top:8px">
+          <div style="flex:1"><label>จำนวน *</label><input id="fQty" type="number" class="form-input" min="0" step="0.0001"></div>
+          <div style="flex:1"><label>ราคา/หน่วยที่ตกลง</label><input id="fPrice" type="number" class="form-input" min="0" step="0.01" placeholder="ใส่ตอนนี้หรือทีหลังก็ได้"></div>
+        </div>
+        <label style="margin-top:8px">วันที่</label>
+        <input id="fDate" type="date" class="form-input">
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px" id="fPriceHint"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeForm()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitForm()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      direction: null,
+      _formDir: 'Inbound',
+      _products: [],
+      _contacts: [],
+      async init() {
+        if (!Layout.init('consignment')) return;
+        Layout.setTitle('สินค้าฝากขาย');
+        await Promise.all([this.loadProducts(), this.loadContacts()]);
+        await this.load();
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { maximumFractionDigits: 4 }); },
+      esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
+
+      async loadProducts() {
+        try { const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/product`);
+          this._products = (r.data?.items || r.data || []);
+        } catch (e) { this._products = []; }
+      },
+      async loadContacts() {
+        try { const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/document/contacts?pageSize=500`);
+          this._contacts = (r.data?.items || r.data || []);
+        } catch (e) { this._contacts = []; }
+      },
+      _productName(id) { const p = this._products.find(x => x.id === id); return p ? `${p.code||''} ${p.name||''}`.trim() : (id||'').slice(0,8)+'…'; },
+      _contactName(id) { const c = this._contacts.find(x => x.id === id); return c ? c.name : (id||'').slice(0,8)+'…'; },
+
+      switchTab(d) {
+        document.querySelectorAll('.tab-btn').forEach((b, i) =>
+          b.classList.toggle('active', ['all','Inbound','Outbound'][i] === d));
+        this.direction = d === 'all' ? null : d;
+        this.load();
+      },
+      async load() {
+        const tbody = document.getElementById('rowsBody');
+        try {
+          const cid = Layout.getCompanyId();
+          const url = `/api/companies/${cid}/mfg/consignment` + (this.direction ? `?direction=${this.direction}` : '');
+          const r = await API.get(url);
+          const rows = r.data || [];
+          if (rows.length === 0) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:#94a3b8">ไม่มีข้อมูล — กดปุ่มมุมขวาบนเพื่อรับฝาก/ฝากขาย</td></tr>'; return; }
+          tbody.innerHTML = rows.map(x => {
+            const isIn = x.direction === 'Inbound';
+            const closed = !!x.returnedOrSettledAt;
+            return `<tr>
+            <td>${this.esc(this._productName(x.productId))}</td>
+            <td>${this.esc(this._contactName(x.contactId))}</td>
+            <td><span style="background:${isIn ? '#dbeafe' : '#dcfce7'};color:${isIn ? '#1e40af' : '#15803d'};padding:2px 9px;border-radius:999px;font-size:11px">${isIn ? 'รับฝาก' : 'ฝากขาย'}</span></td>
+            <td style="text-align:right;font-weight:600">${this._fmt(x.quantityOnHand)}</td>
+            <td style="text-align:right">${x.agreedUnitPrice ? '฿'+this._fmt(x.agreedUnitPrice) : '<span style="color:#f59e0b">ยังไม่ตกลง</span>'}</td>
+            <td>${new Date(x.receivedAt).toLocaleDateString('th-TH')}</td>
+            <td>${closed ? '<span class="badge badge-gray">ปิดแล้ว</span>' : (x.quantityOnHand > 0 ? '<span class="badge badge-success">คงเหลือ</span>' : '<span class="badge badge-gray">หมด</span>')}</td>
+            <td>${closed || x.quantityOnHand <= 0 ? '-' : `<button class="btn btn-sm btn-warning" onclick="Page.consume('${x.id}', ${x.quantityOnHand}, '${isIn ? 'ใช้' : 'ขายได้'}')">บันทึก${isIn ? 'ใช้' : 'ขาย'}</button>`}</td>
+          </tr>`}).join('');
+        } catch (e) { tbody.innerHTML = `<tr><td colspan="8" style="color:#dc2626;text-align:center">${this.esc(e.message)}</td></tr>`; }
+      },
+
+      openForm(dir) {
+        this._formDir = dir;
+        const isIn = dir === 'Inbound';
+        document.getElementById('formTitle').textContent = isIn ? '📥 รับฝากเข้า (Inbound)' : '📤 ฝากขายออก (Outbound)';
+        document.getElementById('formHint').textContent = isIn
+          ? 'ผู้ขายเอาของมาฝากที่เรา — ยังไม่ลงบัญชี จนกว่าจะกด "บันทึกใช้" (ตอนนั้นจะตั้งเจ้าหนี้ให้)'
+          : 'เราเอาของไปฝากตัวแทน — ยังไม่รับรู้รายได้ จนกว่าจะกด "บันทึกขาย" (ตอนนั้นจะตั้งลูกหนี้ให้)';
+        document.getElementById('fContactLabel').textContent = isIn ? 'ผู้ขาย (เจ้าของสินค้า) *' : 'ลูกค้า/ตัวแทนที่รับฝาก *';
+        document.getElementById('fPriceHint').textContent = isIn
+          ? 'ราคาที่จะจ่ายผู้ขายต่อหน่วยเมื่อใช้สินค้า'
+          : 'ราคาขายต่อหน่วยที่จะรับรู้เป็นรายได้เมื่อขายได้';
+        // Products: outbound should only show goods we own; both list all for now.
+        document.getElementById('fProduct').innerHTML = '<option value="">— เลือกสินค้า —</option>' +
+          this._products.map(p => `<option value="${p.id}">${this.esc(p.code||'')} ${this.esc(p.name||'')}</option>`).join('');
+        // Contacts: inbound→suppliers, outbound→customers (fall back to all).
+        const wanted = this._contacts.filter(c => isIn ? c.isSupplier : c.isCustomer);
+        const list = wanted.length ? wanted : this._contacts;
+        document.getElementById('fContact').innerHTML = '<option value="">— เลือกคู่ค้า —</option>' +
+          list.map(c => `<option value="${c.id}">${this.esc(c.name||'')}${c.taxId ? ' ('+this.esc(c.taxId)+')' : ''}</option>`).join('');
+        document.getElementById('fQty').value = '';
+        document.getElementById('fPrice').value = '';
+        document.getElementById('fDate').value = new Date().toISOString().slice(0,10);
+        Layout.openModal("formModal");
+      },
+      closeForm() { Layout.closeModal("formModal"); },
+      async submitForm() {
+        const cid = Layout.getCompanyId();
+        const productId = document.getElementById('fProduct').value;
+        const contactId = document.getElementById('fContact').value;
+        const qty = +document.getElementById('fQty').value;
+        const price = document.getElementById('fPrice').value ? +document.getElementById('fPrice').value : null;
+        const date = document.getElementById('fDate').value;
+        if (!productId) { Layout.toast('เลือกสินค้าก่อน', 'error'); return; }
+        if (!contactId) { Layout.toast('เลือกคู่ค้าก่อน', 'error'); return; }
+        if (!qty || qty <= 0) { Layout.toast('จำนวนต้องมากกว่า 0', 'error'); return; }
+        const isIn = this._formDir === 'Inbound';
+        try {
+          const body = isIn
+            ? { productId, vendorContactId: contactId, quantity: qty, agreedUnitPrice: price, receivedAt: date }
+            : { productId, customerContactId: contactId, quantity: qty, agreedUnitPrice: price, dispatchedAt: date };
+          const r = await API.post(`/api/companies/${cid}/mfg/consignment/${isIn ? 'inbound' : 'outbound'}`, body);
+          Layout.toast(r.message || 'บันทึกสำเร็จ');
+          this.closeForm();
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async consume(id, max, verb) {
+        const qty = +(prompt(`จำนวนที่${verb} (คงเหลือ ${this._fmt(max)})`, max) || 0);
+        if (!qty) return;
+        if (qty > max) { Layout.toast('เกินจำนวนคงเหลือ', 'error'); return; }
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await API.post(`/api/companies/${cid}/mfg/consignment/consume`,
+            { consignmentRecordId: id, consumedQuantity: qty, consumedAt: new Date().toISOString() });
+          Layout.toast(r.message);
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

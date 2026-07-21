@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>การจองจากเว็บไซต์ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .stat-card { background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px }
+    .stat-label { font-size:12px;color:var(--gray-500) }
+    .stat-value { font-size:22px;font-weight:700;margin-top:4px }
+    .booking-row { cursor:pointer } .booking-row:hover { background:var(--gray-50) }
+    .status-pill { display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600 }
+    .status-Pending     { background:#fef3c7;color:#92400e }
+    .status-Confirmed   { background:#dbeafe;color:#1e40af }
+    .status-InProgress  { background:#e0e7ff;color:#3730a3 }
+    .status-Completed   { background:#d1fae5;color:#065f46 }
+    .status-Cancelled   { background:#fee2e2;color:#991b1b }
+    .status-NoShow      { background:#fde68a;color:#78350f }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">การจองจากเว็บไซต์</h2>
+        <p class="page-subtitle">จัดการการจอง — ร้านอาหาร · สปา · คลินิก · โรงแรม · บริการอื่นๆ ที่รับจองผ่านหน้าเว็บ</p>
+      </div>
+      <div class="flex gap-2">
+        <select class="form-input" id="siteSelector" onchange="Page.onSiteChange()" style="min-width:220px">
+          <option value="">กำลังโหลดเว็บไซต์...</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid grid-4 gap-4" style="margin-bottom:18px">
+      <div class="stat-card"><div class="stat-label">รอยืนยัน</div><div class="stat-value" id="statPending" style="color:#92400e">-</div></div>
+      <div class="stat-card"><div class="stat-label">ยืนยันแล้ว</div><div class="stat-value" id="statConfirmed" style="color:#1e40af">-</div></div>
+      <div class="stat-card"><div class="stat-label">วันนี้</div><div class="stat-value" id="statToday" style="color:#3730a3">-</div></div>
+      <div class="stat-card"><div class="stat-label">เสร็จสิ้น (เดือนนี้)</div><div class="stat-value" id="statCompleted" style="color:#065f46">-</div></div>
+    </div>
+
+    <div class="toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Pending">รอยืนยัน</option>
+        <option value="Confirmed">ยืนยันแล้ว</option>
+        <option value="InProgress">กำลังให้บริการ</option>
+        <option value="Completed">เสร็จสิ้น</option>
+        <option value="Cancelled">ยกเลิก</option>
+        <option value="NoShow">ไม่มา (No-show)</option>
+      </select>
+      <input type="date" class="form-input" id="dateFilter" onchange="Page.load()">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่จองหรือชื่อลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr>
+          <th>#</th><th>ลูกค้า</th><th>บริการ</th><th>วันที่</th><th>เวลา</th>
+          <th class="text-right">ยอด</th><th>สถานะ</th>
+        </tr></thead>
+        <tbody id="bookingsBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กรุณาเลือกเว็บไซต์ก่อน</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="modal-overlay" id="bkModal">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="bkTitle">รายละเอียดการจอง</h3>
+          <button class="modal-close" onclick="Layout.closeModal('bkModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="bkBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('bkModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const STATUS_LABEL = {
+      'Pending':'รอยืนยัน','Confirmed':'ยืนยันแล้ว','InProgress':'กำลังให้บริการ',
+      'Completed':'เสร็จสิ้น','Cancelled':'ยกเลิก','NoShow':'ไม่มา (No-show)'
+    };
+    const NEXT_STATUS = {
+      'Pending':    [['Confirmed','✓ ยืนยันการจอง','btn-primary'],['Cancelled','ปฏิเสธ/ยกเลิก','btn-secondary']],
+      'Confirmed':  [['InProgress','เริ่มให้บริการ','btn-primary'],['NoShow','ลูกค้าไม่มา','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],
+      'InProgress': [['Completed','✓ เสร็จสิ้น','btn-primary']],
+      'Completed':  [],
+      'Cancelled':  [],
+      'NoShow':     []
+    };
+
+    const Page = {
+      siteId: null, _searchTimer: null,
+      async init() {
+        if (!Layout.init('cms-bookings')) return;
+        await this.loadSites();
+      },
+      async loadSites() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsListSites();
+          const sites = res?.data?.items || res?.data || [];
+          const sel = document.getElementById('siteSelector');
+          if (!sites.length) {
+            sel.innerHTML = '<option value="">ยังไม่มีเว็บไซต์</option>'; return;
+          }
+          sel.innerHTML = sites.map(s => `<option value="${s.id}">${Layout.esc(s.name)}</option>`).join('');
+          this.siteId = new URLSearchParams(location.search).get('siteId') || sites[0].id;
+          sel.value = this.siteId;
+          await this.load();
+          await this.loadStats();
+        } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async onSiteChange() {
+        this.siteId = document.getElementById('siteSelector').value;
+        await this.load(); await this.loadStats();
+      },
+      debounceLoad() {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => this.load(), 300);
+      },
+      async loadStats() {
+        if (!this.siteId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const today = new Date().toISOString().split('T')[0];
+          const [pend, conf, td, done] = await Promise.all([
+            api.cmsListBookings(this.siteId, '?status=Pending&pageSize=1'),
+            api.cmsListBookings(this.siteId, '?status=Confirmed&pageSize=1'),
+            api.cmsListBookings(this.siteId, `?date=${today}&pageSize=1`),
+            api.cmsListBookings(this.siteId, '?status=Completed&pageSize=1')
+          ]);
+          document.getElementById('statPending').textContent = pend?.data?.totalItems ?? '0';
+          document.getElementById('statConfirmed').textContent = conf?.data?.totalItems ?? '0';
+          document.getElementById('statToday').textContent = td?.data?.totalItems ?? '0';
+          document.getElementById('statCompleted').textContent = done?.data?.totalItems ?? '0';
+        } catch (e) { /* non-fatal */ }
+      },
+      async load() {
+        if (!this.siteId) return;
+        const api = Layout.api(); if (!api) return;
+        const status = document.getElementById('statusFilter').value;
+        const date = document.getElementById('dateFilter').value;
+        const search = document.getElementById('searchInput').value;
+        let q = `?pageSize=50`;
+        if (status) q += `&status=${encodeURIComponent(status)}`;
+        if (date) q += `&date=${encodeURIComponent(date)}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        try {
+          const res = await api.cmsListBookings(this.siteId, q);
+          const items = res?.data?.items || res?.data || [];
+          const tbody = document.getElementById('bookingsBody');
+          if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีการจองตามเงื่อนไข</td></tr>';
+            return;
+          }
+          tbody.innerHTML = items.map(b => `
+            <tr class="booking-row" onclick="Page.viewBooking('${b.id}')">
+              <td class="font-medium">${Layout.esc(b.bookingNumber||b.id.substring(0,8))}</td>
+              <td>${Layout.esc(b.customerName||'(ไม่ระบุ)')}</td>
+              <td>${Layout.esc(b.serviceName||'-')}</td>
+              <td>${Layout.date(b.bookingDate)}</td>
+              <td><strong>${Layout.esc(b.startTime||'')}</strong></td>
+              <td class="text-right">฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
+              <td><span class="status-pill status-${b.status}">${STATUS_LABEL[b.status]||b.status}</span></td>
+            </tr>`).join('');
+        } catch (e) { Layout.toast('โหลดการจองไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async viewBooking(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsGetBooking(this.siteId, id);
+          const b = res?.data || res;
+          if (!b) return;
+          document.getElementById('bkTitle').textContent = `จอง #${b.bookingNumber} — ${STATUS_LABEL[b.status]||b.status}`;
+          const workflow = (NEXT_STATUS[b.status] || []).map(([next, label, cls]) =>
+            `<button class="btn ${cls}" onclick="Page.advance('${b.id}', '${next}')">${label}</button>`).join('');
+          document.getElementById('bkBody').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+              <div>
+                <div style="font-size:11px;color:var(--gray-500);font-weight:600">ลูกค้า</div>
+                <div style="font-weight:600">${Layout.esc(b.customerName||b.guestName||'-')}</div>
+                ${b.customerEmail || b.guestEmail ? `<div style="font-size:12px;color:var(--gray-600)">📧 ${Layout.esc(b.customerEmail||b.guestEmail)}</div>` : ''}
+                ${b.guestPhone ? `<div style="font-size:12px;color:var(--gray-600)">📱 ${Layout.esc(b.guestPhone)}</div>` : ''}
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--gray-500);font-weight:600">สถานะ</div>
+                <div><span class="status-pill status-${b.status}">${STATUS_LABEL[b.status]||b.status}</span></div>
+              </div>
+            </div>
+            <div style="background:var(--gray-50);padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
+              <div style="font-weight:600;margin-bottom:6px">📅 ${Layout.date(b.bookingDate)} เวลา <strong>${Layout.esc(b.startTime)}</strong> — ${Layout.esc(b.endTime||'?')}</div>
+              <div>บริการ: <strong>${Layout.esc(b.serviceName)}</strong> · ${b.durationMinutes||0} นาที</div>
+              <div>จำนวนคน: ${b.guestCount||1}</div>
+            </div>
+            <div style="background:var(--gray-50);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
+              <div style="display:flex;justify-content:space-between"><span>ค่าบริการรวม</span><span>฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
+              ${b.depositAmount>0 ? `<div style="display:flex;justify-content:space-between"><span>มัดจำ</span><span>฿${Number(b.depositAmount).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>` : ''}
+              <div style="display:flex;justify-content:space-between"><span>ชำระแล้ว</span><span class="${b.paidAmount>=b.totalAmount?'text-success':'text-warning'}">฿${Number(b.paidAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
+              ${b.erpDocumentId ? `<div style="margin-top:6px;font-size:11px;color:#059669">✓ ผูกกับเอกสารบัญชี — <a href="/pages/documents.html?id=${b.erpDocumentId}" style="color:#059669;text-decoration:underline">เปิดดู</a></div>` : ''}
+            </div>
+            ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
+            ${workflow ? `<h4 style="margin-top:12px;margin-bottom:6px;font-size:13px">ดำเนินการ</h4><div style="display:flex;gap:8px;flex-wrap:wrap">${workflow}</div>` : ''}`;
+          Layout.openModal('bkModal');
+        } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async advance(id, nextStatus) {
+        const api = Layout.api(); if (!api) return;
+        const note = nextStatus === 'Cancelled' ? prompt('เหตุผลที่ยกเลิก (ถ้ามี)') : null;
+        try {
+          await api.cmsUpdateBookingStatus(this.siteId, id, { status: nextStatus, internalNotes: note });
+          Layout.toast('อัปเดตสถานะเรียบร้อย');
+          Layout.closeModal('bkModal');
+          await this.load();
+          await this.loadStats();
+        } catch (e) { Layout.toast('อัปเดตไม่สำเร็จ: ' + e.message, 'error'); }
+      }
+    };
+
+    window.Page = Page;
+    Page.init();
+  </script>
+</body>
+</html>

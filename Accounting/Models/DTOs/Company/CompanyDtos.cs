@@ -1,0 +1,129 @@
+using System.ComponentModel.DataAnnotations;
+using Accounting.Models.Enums;
+
+namespace Accounting.Models.DTOs.Company;
+
+public record CreateCompanyRequest(
+    [property: Required, StringLength(100)] string Name,
+    string? NameEn,
+    [property: Required, RegularExpression(@"^\d{13}$", ErrorMessage = "เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก")] string TaxId,
+    [property: RegularExpression(@"^\d{5}$", ErrorMessage = "รหัสสาขาต้องเป็นตัวเลข 5 หลัก")] string? BranchCode,
+    string? BranchName,
+    BusinessType BusinessType,
+    IndustryType IndustryType = IndustryType.General,
+    string? JuristicId = null,
+    bool IsVatRegistered = false,
+    [property: Range(0, 100)] decimal VatRate = 7m,
+    bool IsWhtRegistered = true,
+    bool IsSocialSecurityRegistered = false,
+    string? SocialSecurityAccountNo = null,
+    string? Address = null,
+    string? BuildingNumber = null,
+    string? BuildingName = null,
+    string? Moo = null,
+    string? StreetName = null,
+    string? SubDistrict = null,
+    string? District = null,
+    string? Province = null,
+    string? PostalCode = null,
+    string? Phone = null,
+    string? Fax = null,
+    string? Email = null,
+    string? Website = null,
+    int FiscalYearStartMonth = 1);
+
+public record UpdateCompanyRequest(
+    [property: StringLength(100)] string? Name,
+    string? NameEn,
+    [property: RegularExpression(@"^\d{13}$", ErrorMessage = "เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก")] string? TaxId,
+    [property: RegularExpression(@"^\d{5}$", ErrorMessage = "รหัสสาขาต้องเป็นตัวเลข 5 หลัก")] string? BranchCode,
+    string? BranchName,
+    BusinessType? BusinessType,
+    IndustryType? IndustryType,
+    string? JuristicId,
+    bool? IsVatRegistered,
+    [property: Range(0, 100)] decimal? VatRate,
+    bool? IsWhtRegistered,
+    bool? IsSocialSecurityRegistered,
+    string? SocialSecurityAccountNo,
+    string? Address,
+    string? BuildingNumber,
+    string? BuildingName,
+    string? Moo,
+    string? StreetName,
+    string? SubDistrict,
+    string? District,
+    string? Province,
+    string? PostalCode,
+    string? Phone,
+    string? Fax,
+    string? Email,
+    string? Website,
+    int? FiscalYearStartMonth,
+    bool? IsSetupComplete);
+
+public record CompanyResponse(
+    Guid Id,
+    string Name,
+    string? NameEn,
+    string TaxId,
+    string? BranchCode,
+    string? BranchName,
+    BusinessType BusinessType,
+    IndustryType IndustryType,
+    CompanyStatus Status,
+    string? JuristicId,
+    bool IsVatRegistered,
+    decimal VatRate,
+    bool IsWhtRegistered,
+    bool IsSocialSecurityRegistered,
+    string? SocialSecurityAccountNo,
+    string? Address,
+    string? BuildingNumber,
+    string? BuildingName,
+    string? Moo,
+    string? StreetName,
+    string? SubDistrict,
+    string? District,
+    string? Province,
+    string? PostalCode,
+    string? Phone,
+    string? Fax,
+    string? Email,
+    string? Website,
+    int FiscalYearStartMonth,
+    bool IsSetupComplete,
+    SubscriptionSummary? Subscription,
+    string? MyRole = null);  // current requesting user's role in this company
+
+public record SubscriptionSummary(
+    SubscriptionPlan Plan,
+    SubscriptionStatus Status,
+    DateTime EndDate,
+    TrialSummary? Trial);
+
+public record TrialSummary(
+    TrialStatus Status,
+    DateTime TrialEndDate,
+    int DaysRemaining,
+    int ExtensionsUsed,
+    int MaxExtensions);
+
+public record AddCompanyUserRequest(
+    string Email,
+    UserRole Role);
+
+public record UpdateUserRoleRequest(UserRole Role);
+public record UpdateMemberNameRequest(string FullName);
+
+public record CompanyMemberResponse(
+    Guid UserId,
+    string FullName,
+    string Email,
+    string? Phone,
+    UserRole Role,
+    Guid? CompanyRoleId,
+    string? CompanyRoleName,
+    DateTime JoinedAt,
+    DateTime? LastLoginAt,
+    UserStatus Status);

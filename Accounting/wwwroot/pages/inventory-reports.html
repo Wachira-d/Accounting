@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายงานสินค้าคงเหลือ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">รายงานสินค้าคงเหลือ</h2>
+        <p class="page-subtitle">ดูยอดคงเหลือ การเคลื่อนไหว อายุสินค้า และปิดงวดสต็อก</p>
+      </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="tabs" style="margin-bottom:24px">
+      <button class="tab-btn active" onclick="Page.switchTab('balance')">สินค้าคงเหลือ ณ วันที่</button>
+      <button class="tab-btn" onclick="Page.switchTab('movement')">สรุปเคลื่อนไหวสินค้า</button>
+      <button class="tab-btn" onclick="Page.switchTab('aging')">อายุสินค้าคงเหลือ</button>
+      <button class="tab-btn" onclick="Page.switchTab('snapshots')">ปิดงวดสินค้า</button>
+      <button class="tab-btn" onclick="Page.switchTab('reorder')">พยากรณ์สต็อก + สั่งซื้อ</button>
+    </div>
+
+    <!-- ===== Tab 1: Stock Balance as of Date ===== -->
+    <div id="tabBalance" class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <h3 class="card-title" style="margin:0">สินค้าคงเหลือ ณ วันที่</h3>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="date" class="form-input" id="balanceDate" style="width:180px">
+          <select class="form-input" id="balanceCategory" style="width:160px">
+            <option value="">ทุกหมวด</option>
+          </select>
+          <label style="font-size:13px;display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="balanceIncludeZero"> รวมหมด
+          </label>
+          <button class="btn btn-primary" onclick="Page.loadBalance()">ดูรายงาน</button>
+        </div>
+      </div>
+
+      <div id="balanceSummary" style="display:none;padding:16px;background:#f0f9ff;border-radius:8px;margin:16px 0">
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <div><span style="color:#64748b;font-size:13px">จำนวนรายการ</span><div style="font-size:20px;font-weight:700" id="balTotalProducts">-</div></div>
+          <div><span style="color:#64748b;font-size:13px">มูลค่ารวม</span><div style="font-size:20px;font-weight:700;color:#059669" id="balTotalValue">-</div></div>
+        </div>
+        <div id="balByCategory" style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap"></div>
+      </div>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>หน่วย</th><th>หมวด</th><th style="text-align:right">จำนวนคงเหลือ</th><th style="text-align:right">ต้นทุนเฉลี่ย</th><th style="text-align:right">มูลค่ารวม</th></tr>
+          </thead>
+          <tbody id="balanceBody">
+            <tr><td colspan="7" style="text-align:center;padding:40px;color:#94a3b8">เลือกวันที่แล้วกด "ดูรายงาน"</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== Tab 2: Stock Movement Summary ===== -->
+    <div id="tabMovement" class="card hidden">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <h3 class="card-title" style="margin:0">สรุปเคลื่อนไหวสินค้า</h3>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="date" class="form-input" id="mvFromDate" style="width:160px">
+          <span>ถึง</span>
+          <input type="date" class="form-input" id="mvToDate" style="width:160px">
+          <button class="btn btn-primary" onclick="Page.loadMovement()">ดูรายงาน</button>
+        </div>
+      </div>
+
+      <div id="mvSummary" style="display:none;padding:16px;background:#f0f9ff;border-radius:8px;margin:16px 0">
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <div><span style="color:#64748b;font-size:13px">มูลค่าต้นงวด</span><div style="font-size:18px;font-weight:700" id="mvOpenValue">-</div></div>
+          <div><span style="color:#64748b;font-size:13px">มูลค่าปลายงวด</span><div style="font-size:18px;font-weight:700;color:#059669" id="mvCloseValue">-</div></div>
+          <div><span style="color:#64748b;font-size:13px">ต้นทุนขาย (COGS)</span><div style="font-size:18px;font-weight:700;color:#ef4444" id="mvCOGS">-</div></div>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>หน่วย</th><th style="text-align:right">ยอดต้นงวด</th><th style="text-align:right">รับเข้า</th><th style="text-align:right">จ่ายออก</th><th style="text-align:right">ปรับปรุง</th><th style="text-align:right">ยอดปลายงวด</th></tr>
+          </thead>
+          <tbody id="movementBody">
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8">เลือกช่วงวันที่แล้วกด "ดูรายงาน"</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== Tab 3: Stock Aging ===== -->
+    <div id="tabAging" class="card hidden">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <h3 class="card-title" style="margin:0">อายุสินค้าคงเหลือ (Stock Aging)</h3>
+        <button class="btn btn-primary" onclick="Page.loadAging()">โหลดรายงาน</button>
+      </div>
+
+      <div id="agingBuckets" style="display:none;padding:16px;gap:12px;flex-wrap:wrap;margin:16px 0"></div>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>หมวด</th><th style="text-align:right">จำนวน</th><th style="text-align:right">มูลค่า</th><th style="text-align:right">วันที่อยู่ในสต็อก</th><th>ช่วงอายุ</th><th>เคลื่อนไหวล่าสุด</th></tr>
+          </thead>
+          <tbody id="agingBody">
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8">กด "โหลดรายงาน"</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== Tab 4: Inventory Snapshots ===== -->
+    <div id="tabSnapshots" class="card hidden">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div>
+          <h3 class="card-title" style="margin:0">ปิดงวดสินค้าคงเหลือ (Inventory Snapshot)</h3>
+          <p style="color:#64748b;font-size:13px;margin-top:4px">สรุปมูลค่าสินค้าคงเหลือ ณ สิ้นงวด พร้อมบันทึกบัญชีปรับปรุงอัตโนมัติ</p>
+        </div>
+        <button class="btn btn-primary" onclick="Page.showCreateSnapshot()">สร้าง Snapshot ใหม่</button>
+      </div>
+
+      <div class="table-container" style="margin-top:16px">
+        <table class="data-table">
+          <thead>
+            <tr><th data-i18n="common.date">วันที่</th><th data-i18n="common.detail">รายละเอียด</th><th data-i18n="common.status">สถานะ</th><th style="text-align:right">จำนวนรายการ</th><th style="text-align:right">มูลค่ารวม</th><th>บันทึกบัญชี</th><th>วันที่สร้าง</th><th></th></tr>
+          </thead>
+          <tbody id="snapshotsBody">
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8" data-i18n="common.loading">กำลังโหลด...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Create Snapshot Modal -->
+    <div id="snapshotModal" class="modal hidden">
+      <div class="modal-content" style="max-width:500px">
+        <h3 class="modal-title">สร้าง Inventory Snapshot</h3>
+        <div class="form-group"><label class="form-label">วันที่สิ้นงวด</label><input type="date" class="form-input" id="snapDate"></div>
+        <div class="form-group"><label class="form-label" data-i18n="common.detail">รายละเอียด</label><input type="text" class="form-input" id="snapDesc" placeholder="เช่น ปิดงวดประจำปี 2567"></div>
+        <div class="form-group form-checkbox">
+          <input type="checkbox" id="snapAutoJournal" checked>
+          <label for="snapAutoJournal">สร้างบันทึกบัญชีปรับปรุงสินค้าคงเหลืออัตโนมัติ</label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="Page.closeModal('snapshotModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.createSnapshot()">สร้าง Snapshot</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Snapshot Detail Modal -->
+    <div id="snapshotDetailModal" class="modal hidden">
+      <div class="modal-content" style="max-width:800px">
+        <h3 class="modal-title" id="snapDetailTitle">รายละเอียด Snapshot</h3>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>หน่วย</th><th>หมวด</th><th style="text-align:right">จำนวน</th><th style="text-align:right">ต้นทุน/หน่วย</th><th style="text-align:right">มูลค่า</th></tr>
+            </thead>
+            <tbody id="snapDetailBody"></tbody>
+          </table>
+        </div>
+        <div class="modal-actions"><button class="btn btn-secondary" onclick="Page.closeModal('snapshotDetailModal')" data-i18n="common.close">ปิด</button></div>
+      </div>
+    </div>
+
+    <!-- ===== Tab 5: Reorder Forecast (Croston per-SKU) ===== -->
+    <div id="tabReorder" class="card hidden">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div>
+          <h3 class="card-title" style="margin:0">พยากรณ์สต็อก + ข้อเสนอแนะการสั่งซื้อ</h3>
+          <p style="margin:4px 0 0;font-size:13px;color:#64748b">
+            ใช้ Croston (intermittent demand) คำนวณจาก stock movement 90 วัน → แสดงจำนวนวันที่จะหมด + จำนวนที่ควรสั่ง
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:12px;color:#64748b">history</label>
+          <input type="number" id="reorderHistoryDays" value="90" min="14" max="365" style="width:80px" class="form-input">
+          <label style="font-size:12px;color:#64748b">lead time (วัน)</label>
+          <input type="number" id="reorderLeadDays" value="7" min="1" max="90" style="width:70px" class="form-input">
+          <label style="font-size:12px;color:#64748b">service level</label>
+          <select id="reorderServiceLevel" class="form-input" style="width:120px">
+            <option value="1.282">90%</option>
+            <option value="1.645" selected>95%</option>
+            <option value="1.960">97.5%</option>
+            <option value="2.326">99%</option>
+          </select>
+          <button class="btn btn-primary" onclick="Page.loadReorder()">โหลดรายงาน</button>
+          <button class="btn" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff"
+            onclick="Page.requestReorderNarrative()" id="btnReorderAi"
+            title="ให้ AI สรุปลำดับความสำคัญ + เหตุผลภาษาไทย">🧠 AI สรุป</button>
+        </div>
+      </div>
+      <div id="reorderNarrative" style="display:none;background:#eef2ff;border-left:4px solid #6366f1;padding:12px 16px;border-radius:8px;margin:16px 0;font-size:14px;color:#1e293b"></div>
+
+      <div id="reorderSummary" style="display:none;padding:16px;background:#fef3c7;border-left:4px solid #d97706;border-radius:8px;margin:16px 0">
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <div><span style="color:#92400e;font-size:13px">วิกฤต (ต้องสั่งด่วน)</span><div style="font-size:20px;font-weight:700;color:#dc2626" id="roCritCount">-</div></div>
+          <div><span style="color:#92400e;font-size:13px">เตือน (สต็อกต่ำ)</span><div style="font-size:20px;font-weight:700;color:#d97706" id="roWarnCount">-</div></div>
+          <div><span style="color:#92400e;font-size:13px">ปกติ</span><div style="font-size:20px;font-weight:700;color:#16a34a" id="roOkCount">-</div></div>
+          <div><span style="color:#92400e;font-size:13px">ไม่เคลื่อนไหว 90 วัน</span><div style="font-size:20px;font-weight:700;color:#64748b" id="roIdleCount">-</div></div>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>ชื่อสินค้า</th>
+              <th style="text-align:right">คงเหลือ</th>
+              <th style="text-align:right">ขาย/วัน เฉลี่ย</th>
+              <th style="text-align:right">หมดใน (วัน)</th>
+              <th style="text-align:right">ROP (จุดสั่งซ้ำ)</th>
+              <th style="text-align:right">แนะนำสั่ง</th>
+              <th>สถานะ</th>
+              <th>วิธี</th>
+            </tr>
+          </thead>
+          <tbody id="reorderBody">
+            <tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">กด "โหลดรายงาน" เพื่อพยากรณ์ทุก SKU</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _today: Layout.toDateInput(new Date()),
+      _firstOfYear: Layout.toDateInput(new Date(new Date().getFullYear(), 0, 1)),
+
+      async init() {
+        if (!Layout.init('inventory-reports')) return;
+        Layout.setTitle('รายงานสินค้าคงเหลือ');
+        document.getElementById('balanceDate').value = this._today;
+        document.getElementById('mvFromDate').value = this._firstOfYear;
+        document.getElementById('mvToDate').value = this._today;
+        await this.loadSnapshots();
+      },
+
+      _fmt(n) { return (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+      _fmtDate(d) { return d ? new Date(d).toLocaleDateString('th-TH') : '-'; },
+
+      switchTab(tab) {
+        const tabs = ['balance', 'movement', 'aging', 'snapshots', 'reorder'];
+        document.querySelectorAll('.tab-btn').forEach((b, i) =>
+          b.classList.toggle('active', tabs[i] === tab));
+        ['Balance', 'Movement', 'Aging', 'Snapshots', 'Reorder'].forEach(t =>
+          document.getElementById('tab' + t).classList.toggle('hidden', t.toLowerCase() !== tab));
+        if (tab === 'snapshots') this.loadSnapshots();
+      },
+
+      // ===== Reorder forecast (Croston) =====
+      async loadReorder() {
+        const api = Layout.api(); if (!api) return;
+        const tbody = document.getElementById('reorderBody');
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px">กำลังคำนวณ...</td></tr>';
+        try {
+          const h = +document.getElementById('reorderHistoryDays').value;
+          const lt = +document.getElementById('reorderLeadDays').value;
+          const sl = +document.getElementById('reorderServiceLevel').value;
+          const r = await api.get(`/products/reorder-forecast?historyDays=${h}&leadTimeDays=${lt}&serviceLevelZ=${sl}`);
+          const rows = r.data || [];
+          this._lastReorderRows = rows;
+          const counts = { Critical: 0, Warning: 0, OK: 0, Idle: 0 };
+          rows.forEach(x => { counts[x.urgency] = (counts[x.urgency] || 0) + 1; });
+          document.getElementById('roCritCount').textContent = counts.Critical;
+          document.getElementById('roWarnCount').textContent = counts.Warning;
+          document.getElementById('roOkCount').textContent = counts.OK;
+          document.getElementById('roIdleCount').textContent = counts.Idle;
+          document.getElementById('reorderSummary').style.display = 'block';
+          if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ยังไม่มีสินค้าที่ track stock — เปิด TrackStock ที่หน้าสินค้าก่อน</td></tr>';
+            return;
+          }
+          const badge = u => {
+            const colors = {
+              Critical: 'background:#fee2e2;color:#dc2626',
+              Warning:  'background:#fef3c7;color:#d97706',
+              OK:       'background:#dcfce7;color:#16a34a',
+              Idle:     'background:#f1f5f9;color:#64748b',
+            };
+            return `<span style="${colors[u]||''};padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600">${u}</span>`;
+          };
+          tbody.innerHTML = rows.map(x => `<tr>
+            <td style="font-family:monospace;font-size:12px">${x.sku || '-'}</td>
+            <td>${x.name}</td>
+            <td style="text-align:right">${this._fmt(x.currentStock)}</td>
+            <td style="text-align:right">${this._fmt(x.avgDailyDemand)}</td>
+            <td style="text-align:right;color:${x.daysOfStockRemaining >= 0 && x.daysOfStockRemaining < 7 ? '#dc2626' : '#1e293b'}">
+              ${x.daysOfStockRemaining < 0 ? '∞' : this._fmt(x.daysOfStockRemaining)}
+            </td>
+            <td style="text-align:right">${this._fmt(x.reorderPoint)}</td>
+            <td style="text-align:right;font-weight:700;color:#1d4ed8">${x.suggestedOrderQuantity > 0 ? this._fmt(x.suggestedOrderQuantity) : '-'}</td>
+            <td>${badge(x.urgency)}</td>
+            <td style="font-size:11px;color:#64748b">${x.forecastMethod}</td>
+          </tr>`).join('');
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="9" style="color:#dc2626;text-align:center;padding:30px">${e.message}</td></tr>`;
+        }
+      },
+
+      async requestReorderNarrative() {
+        if (!this._lastReorderRows || this._lastReorderRows.length === 0) {
+          Layout.toast('โหลดรายงานก่อน', 'error'); return;
+        }
+        const btn = document.getElementById('btnReorderAi');
+        const nb = document.getElementById('reorderNarrative');
+        btn.disabled = true; btn.textContent = '🧠 AI กำลังคิด...';
+        nb.style.display = 'block'; nb.textContent = 'กำลังประมวลผล...';
+        try {
+          const cid = Layout.getCompanyId();
+          const top = this._lastReorderRows
+            .filter(r => r.urgency === 'Critical' || r.urgency === 'Warning')
+            .slice(0, 40);
+          const r = await API.post(`/api/companies/${cid}/ai/inventory/reorder-narrative`, {
+            rows: top.map(x => ({
+              sku: x.sku || '-', name: x.name,
+              currentStock: x.currentStock, avgDailyDemand: x.avgDailyDemand,
+              daysOfStockRemaining: x.daysOfStockRemaining,
+              suggestedOrderQuantity: x.suggestedOrderQuantity,
+              urgency: x.urgency,
+            })),
+          });
+          nb.textContent = r.data?.narrative || '(AI ไม่ตอบ)';
+          btn.disabled = false; btn.textContent = '🧠 AI สรุป';
+        } catch (e) {
+          nb.textContent = 'ผิดพลาด: ' + e.message;
+          btn.disabled = false; btn.textContent = '🧠 AI สรุป';
+        }
+      },
+
+      // ===== Balance =====
+      async loadBalance() {
+        const api = Layout.api(); if (!api) return;
+        const date = document.getElementById('balanceDate').value;
+        const cat = document.getElementById('balanceCategory').value;
+        const zero = document.getElementById('balanceIncludeZero').checked;
+        const tbody = document.getElementById('balanceBody');
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px" data-i18n="common.loading">กำลังโหลด...</td></tr>';
+        try {
+          const q = `?asOfDate=${date}&includeZero=${zero}${cat ? '&category=' + encodeURIComponent(cat) : ''}`;
+          const res = await api.getStockBalance(q);
+          const d = res.data;
+          document.getElementById('balanceSummary').style.display = '';
+          document.getElementById('balTotalProducts').textContent = d.totalProducts;
+          document.getElementById('balTotalValue').textContent = this._fmt(d.totalValue);
+          document.getElementById('balByCategory').innerHTML = (d.byCategory || []).map(c =>
+            `<div style="background:#e0f2fe;padding:6px 12px;border-radius:6px;font-size:13px"><strong>${c.category}</strong>: ${this._fmt(c.totalValue)} (${c.productCount} รายการ)</div>`
+          ).join('');
+          if (!d.items.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#94a3b8">ไม่มีสินค้าคงเหลือ</td></tr>';
+            return;
+          }
+          tbody.innerHTML = d.items.map(i => `<tr>
+            <td><code>${i.productCode}</code></td><td>${i.productName}</td><td>${i.unit}</td><td>${i.category || '-'}</td>
+            <td style="text-align:right">${this._fmt(i.quantityAsOfDate)}</td><td style="text-align:right">${this._fmt(i.averageCost)}</td>
+            <td style="text-align:right;font-weight:600">${this._fmt(i.totalValue)}</td></tr>`).join('');
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="7" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
+        }
+      },
+
+      // ===== Movement =====
+      async loadMovement() {
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('mvFromDate').value;
+        const to = document.getElementById('mvToDate').value;
+        const tbody = document.getElementById('movementBody');
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px" data-i18n="common.loading">กำลังโหลด...</td></tr>';
+        try {
+          const q = `?fromDate=${from}&toDate=${to}`;
+          const res = await api.getMovementSummary(q);
+          const d = res.data;
+          document.getElementById('mvSummary').style.display = '';
+          document.getElementById('mvOpenValue').textContent = this._fmt(d.totalOpeningValue);
+          document.getElementById('mvCloseValue').textContent = this._fmt(d.totalClosingValue);
+          document.getElementById('mvCOGS').textContent = this._fmt(d.totalCOGS);
+          if (!d.items.length) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8">ไม่มีรายการเคลื่อนไหว</td></tr>';
+            return;
+          }
+          tbody.innerHTML = d.items.map(i => `<tr>
+            <td><code>${i.productCode}</code></td><td>${i.productName}</td><td>${i.unit}</td>
+            <td style="text-align:right">${this._fmt(i.openingStock)}</td>
+            <td style="text-align:right;color:#059669">${i.totalIn > 0 ? '+' + this._fmt(i.totalIn) : '-'}</td>
+            <td style="text-align:right;color:#ef4444">${i.totalOut > 0 ? '-' + this._fmt(i.totalOut) : '-'}</td>
+            <td style="text-align:right;color:#f59e0b">${i.totalAdjust !== 0 ? this._fmt(i.totalAdjust) : '-'}</td>
+            <td style="text-align:right;font-weight:600">${this._fmt(i.closingStock)}</td></tr>`).join('');
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
+        }
+      },
+
+      // ===== Aging =====
+      async loadAging() {
+        const api = Layout.api(); if (!api) return;
+        const tbody = document.getElementById('agingBody');
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px" data-i18n="common.loading">กำลังโหลด...</td></tr>';
+        try {
+          const res = await api.getStockAging();
+          const d = res.data;
+          const bucketColors = { '0-30': '#059669', '31-60': '#0284c7', '61-90': '#f59e0b', '91-180': '#ea580c', '180+': '#dc2626' };
+          const bucketsEl = document.getElementById('agingBuckets');
+          bucketsEl.style.display = 'flex';
+          bucketsEl.innerHTML = (d.bucketSummary || []).map(b =>
+            `<div style="background:#f8fafc;border:2px solid ${bucketColors[b.bucket] || '#94a3b8'};padding:12px 16px;border-radius:8px;min-width:120px">
+              <div style="font-weight:700;color:${bucketColors[b.bucket] || '#334155'}">${b.bucket} วัน</div>
+              <div style="font-size:13px;color:#64748b">${b.productCount} รายการ</div>
+              <div style="font-weight:600">${this._fmt(b.totalValue)}</div>
+              <div style="font-size:12px;color:#94a3b8">${b.percentage}%</div></div>`
+          ).join('');
+          if (!d.items.length) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8">ไม่มีสินค้าคงเหลือ</td></tr>';
+            return;
+          }
+          tbody.innerHTML = d.items.map(i => {
+            const color = bucketColors[i.agingBucket] || '#334155';
+            return `<tr>
+              <td><code>${i.productCode}</code></td><td>${i.productName}</td><td>${i.category || '-'}</td>
+              <td style="text-align:right">${this._fmt(i.currentStock)}</td><td style="text-align:right">${this._fmt(i.totalValue)}</td>
+              <td style="text-align:right">${i.daysInStock} วัน</td>
+              <td><span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px">${i.agingBucket}</span></td>
+              <td>${this._fmtDate(i.lastMovementDate)}</td></tr>`;
+          }).join('');
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
+        }
+      },
+
+      // ===== Snapshots =====
+      async loadSnapshots() {
+        const api = Layout.api(); if (!api) return;
+        const tbody = document.getElementById('snapshotsBody');
+        try {
+          const res = await api.getInventorySnapshots();
+          const items = res.data || [];
+          if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8">ยังไม่มี snapshot<br><small>กด "สร้าง Snapshot ใหม่" เพื่อสรุปสินค้าคงเหลือ ณ สิ้นงวด</small></td></tr>';
+            return;
+          }
+          tbody.innerHTML = items.map(s => `<tr>
+            <td>${this._fmtDate(s.snapshotDate)}</td><td>${s.description || '-'}</td>
+            <td><span class="badge ${s.status === 'Finalized' ? 'badge-green' : 'badge-yellow'}">${s.status}</span></td>
+            <td style="text-align:right">${s.totalProducts}</td>
+            <td style="text-align:right;font-weight:600">${this._fmt(s.totalValue)}</td>
+            <td>${s.journalEntryId ? '<span class="badge badge-blue">มี</span>' : '<span class="badge badge-gray">-</span>'}</td>
+            <td>${this._fmtDate(s.createdAt)}</td>
+            <td><button class="btn btn-sm" onclick="Page.viewSnapshot('${s.id}')">ดูรายละเอียด</button></td></tr>`).join('');
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="8" style="color:red;text-align:center;padding:20px">${Layout.esc(e.message)}</td></tr>`;
+        }
+      },
+
+      showCreateSnapshot() {
+        document.getElementById('snapDate').value = this._today;
+        document.getElementById('snapDesc').value = '';
+        document.getElementById('snapshotModal').classList.remove('hidden');
+      },
+
+      async createSnapshot() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.createInventorySnapshot({
+            snapshotDate: document.getElementById('snapDate').value,
+            description: document.getElementById('snapDesc').value || null,
+            autoCreateJournal: document.getElementById('snapAutoJournal').checked
+          });
+          this.closeModal('snapshotModal');
+          Layout.toast('สร้าง snapshot สำเร็จ', 'success');
+          this.loadSnapshots();
+        } catch (e) {
+          Layout.toast(e.message, 'error');
+        }
+      },
+
+      async viewSnapshot(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getInventorySnapshotDetail(id);
+          const d = res.data;
+          document.getElementById('snapDetailTitle').textContent = `Snapshot: ${this._fmtDate(d.snapshotDate)} — ${this._fmt(d.totalValue)} บาท (${d.totalProducts} รายการ)`;
+          document.getElementById('snapDetailBody').innerHTML = (d.lines || []).map(l => `<tr>
+            <td><code>${l.productCode}</code></td><td>${l.productName}</td><td>${l.unit}</td><td>${l.category || '-'}</td>
+            <td style="text-align:right">${this._fmt(l.quantity)}</td><td style="text-align:right">${this._fmt(l.unitCost)}</td>
+            <td style="text-align:right;font-weight:600">${this._fmt(l.totalValue)}</td></tr>`).join('');
+          document.getElementById('snapshotDetailModal').classList.remove('hidden');
+        } catch (e) {
+          Layout.toast(e.message, 'error');
+        }
+      },
+
+      closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

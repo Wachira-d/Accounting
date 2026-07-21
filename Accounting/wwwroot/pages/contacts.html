@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ผู้ติดต่อ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ผู้ติดต่อ</h2><p class="page-subtitle">ลูกค้าและผู้จำหน่าย</p></div>
+      <div class="flex gap-2">
+        <div class="dropdown-wrap" style="position:relative">
+          <button class="btn btn-secondary" onclick="Import.toggleMenu(this)">นำเข้า ▾</button>
+          <div class="dropdown-menu" style="display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid var(--gray-200);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.open()">นำเข้า CSV/Excel</a>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.downloadTemplate()">ดาวน์โหลด Template</a>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — เพิ่มลูกค้า / ผู้ขาย ใส่ชื่อ / TaxId / สาขา / ที่อยู่แบบมีโครงสร้าง (ตำบล/อำเภอ/จังหวัด) เพื่อใช้กับ e-Tax">+ เพิ่มผู้ติดต่อ</button>
+      </div>
+    </div>
+
+    <div class="tabs"
+         data-tour-step="2"
+         data-tour-text="แท็บกรอง: ทั้งหมด / ลูกค้า / ผู้ขาย — รายการในตารางแสดงตามที่เลือก">
+      <div class="tab active" onclick="Page.setFilter('all',this)" data-i18n="common.all">ทั้งหมด</div>
+      <div class="tab" onclick="Page.setFilter('customer',this)">ลูกค้า</div>
+      <div class="tab" onclick="Page.setFilter('supplier',this)">ผู้จำหน่าย</div>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหาชื่อ, เลขประจำตัวผู้เสียภาษี..." id="searchInput" oninput="Page.load()">
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขผู้เสียภาษี</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.phone">โทรศัพท์</th><th data-i18n="common.email">อีเมล</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+
+    <!-- Modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มผู้ติดต่อ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="editId">
+          <!-- ประเภทผู้ติดต่อ -->
+          <div class="form-group">
+            <label class="form-label">ประเภทผู้ติดต่อ *</label>
+            <select class="form-input" id="fContactType" onchange="Page.onContactTypeChange()">
+              <option value="2">นิติบุคคล (บริษัท/ห้างหุ้นส่วน)</option>
+              <option value="1">บุคคลธรรมดา</option>
+              <option value="3">หน่วยงานราชการ</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px" id="fNameHint">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
+          <!-- AI fuzzy-match suggestion: เด้งเตือนเมื่อชื่อ/TaxId คล้ายกับ
+               contact ที่มีอยู่แล้ว — ป้องกัน duplicate (data hygiene #1) -->
+          <div id="fuzzyMatchBox" style="display:none;margin:-8px 0 12px;padding:10px 12px;background:#fef3c7;border-left:4px solid #f59e0b;border-radius:4px;font-size:13px">
+            <div style="font-weight:600;color:#92400e;margin-bottom:6px">⚠️ อาจซ้ำกับผู้ติดต่อในระบบ:</div>
+            <div id="fuzzyMatchList"></div>
+          </div>
+          <div class="form-row" id="taxIdRow">
+            <div class="form-group" style="flex:1"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล DBD</button></div></div>
+          </div>
+          <!-- ฟิลด์เฉพาะนิติบุคคล -->
+          <div id="juristicFields" style="margin-bottom:12px">
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fJuristicId" maxlength="13" placeholder="เลข 13 หลักจาก DBD"></div>
+              <div class="form-group"><label class="form-label">ประเภทนิติบุคคล</label><input type="text" class="form-input" id="fJuristicType" placeholder="เช่น บริษัทจำกัด" readonly style="background:#f8fafc"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ทุนจดทะเบียน</label><input type="text" class="form-input" id="fRegisteredCapital" readonly style="background:#f8fafc"></div>
+              <div class="form-group"><label class="form-label">สถานะนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fDbdStatus" readonly style="background:#f8fafc"></div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group form-checkbox"><input type="checkbox" id="fIsCustomer" checked onchange="Page.onCustomerToggle()"><label for="fIsCustomer">ลูกค้า</label></div>
+            <div class="form-group form-checkbox"><input type="checkbox" id="fIsSupplier"><label for="fIsSupplier">ผู้จำหน่าย</label></div>
+          </div>
+          <div class="form-row" id="creditLimitRow">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">วงเงินเครดิต (THB)
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestCreditLimit()">🤖 ให้ AI แนะนำ</button>
+                <span style="color:#64748b;font-size:11px;font-weight:normal">— ว่าง = ไม่จำกัด</span>
+              </label>
+              <input type="number" class="form-input" id="fCreditLimit" step="1000" min="0" placeholder="เช่น 100,000">
+              <div id="creditLimitHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+            </div>
+            <div class="form-group" style="flex:1">
+              <label class="form-label">เครดิตเทอม (วัน)
+                <span style="color:#64748b;font-size:11px;font-weight:normal">— ว่าง = ใช้ค่าบริษัท</span>
+              </label>
+              <input type="number" class="form-input" id="fPaymentDueDays" step="1" min="0" placeholder="เช่น 30 (Net 30)">
+              <div style="font-size:11px;color:#64748b;margin-top:4px">ตอนสร้างเอกสารขาย ระบบจะเติม "วันครบกำหนด" = วันที่เอกสาร + จำนวนวันนี้ ให้อัตโนมัติ</div>
+            </div>
+          </div>
+          <!-- สลับที่อยู่ไทย ↔ ต่างประเทศ — vendor/ลูกค้าต่างชาติ (เช่น
+               Booking.com B.V.) ไม่มีจังหวัด/รหัสไปรษณีย์ไทย → ติ๊กเพื่อกรอก
+               ประเทศ + ที่อยู่แบบ free-text. CountryCode != "TH" จะไป WHT ม.70
+               (ภงด.54) + e-Tax XML ออกเป็น unstructured LineOne อัตโนมัติ -->
+          <label style="display:flex;align-items:center;gap:8px;margin:6px 0 12px;cursor:pointer">
+            <input type="checkbox" id="fIsForeign" onchange="Page.toggleForeignAddress()">
+            <span style="font-size:13px;font-weight:600">🌐 ที่อยู่ต่างประเทศ (Foreign address)</span>
+            <span style="font-size:11px;color:#64748b;font-weight:normal">— ไม่ใช้โครงที่อยู่ไทย (จังหวัด/รหัสไปรษณีย์)</span>
+          </label>
+
+          <input type="hidden" id="fAddress">
+
+          <!-- กล่องที่อยู่ต่างประเทศ (ซ่อนไว้ default) -->
+          <div id="addrForeignBox" style="display:none;margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:12px">
+            <div class="form-group">
+              <label class="form-label">ประเทศ *</label>
+              <select class="form-input" id="fCountryCode">
+                <option value="">— เลือกประเทศ —</option>
+                <option value="NL">Netherlands (NL)</option>
+                <option value="US">United States (US)</option>
+                <option value="GB">United Kingdom (GB)</option>
+                <option value="SG">Singapore (SG)</option>
+                <option value="JP">Japan (JP)</option>
+                <option value="CN">China (CN)</option>
+                <option value="HK">Hong Kong (HK)</option>
+                <option value="MY">Malaysia (MY)</option>
+                <option value="DE">Germany (DE)</option>
+                <option value="FR">France (FR)</option>
+                <option value="AU">Australia (AU)</option>
+                <option value="IN">India (IN)</option>
+                <option value="KR">South Korea (KR)</option>
+                <option value="IE">Ireland (IE)</option>
+                <option value="CH">Switzerland (CH)</option>
+                <option value="OTHER">อื่น ๆ (ระบุรหัสเอง)</option>
+              </select>
+            </div>
+            <div class="form-group" id="fCountryOtherWrap" style="display:none">
+              <label class="form-label">รหัสประเทศ ISO (2 ตัว) *</label>
+              <input type="text" class="form-input" id="fCountryOther" maxlength="2" placeholder="เช่น IT, ES, VN" style="text-transform:uppercase">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ที่อยู่เต็ม (Full address) *</label>
+              <textarea class="form-input" id="fForeignAddress" rows="3" placeholder="เช่น Oosterdoksstraat 114, 1011 DK Amsterdam, Netherlands"></textarea>
+              <div style="font-size:11px;color:#64748b;margin-top:4px">พิมพ์ที่อยู่เต็มตามรูปแบบของประเทศนั้น — ใช้ในเอกสาร/e-Tax XML (LineOne)</div>
+            </div>
+          </div>
+
+          <div id="addrThaiBox">
+
+          <!-- วางที่อยู่เต็มเพื่อแยกอัตโนมัติ -->
+          <div class="form-group">
+            <label class="form-label">วางที่อยู่เพื่อแยกอัตโนมัติ <span style="font-weight:normal;color:#64748b;font-size:12px">(ไม่จำเป็น — กรอกช่องด้านล่างได้เลย)</span></label>
+            <div style="display:flex;gap:8px">
+              <input type="text" class="form-input" id="fAddressPaste" placeholder="วางที่อยู่เต็มแล้วกดแยก..." style="flex:1">
+              <button type="button" class="btn btn-secondary btn-sm" style="white-space:nowrap" onclick="Page.parseFromPaste()">แยกที่อยู่</button>
+            </div>
+          </div>
+
+          <!-- ที่อยู่แบบแยกส่วน (หลัก) — กรอกรหัสไปรษณีย์ก่อน → ระบบเติม
+               จังหวัด/อำเภอ/ตำบลให้อัตโนมัติ (ผ่าน ThaiAddress.autoFillFromPostal).
+               เริ่มจาก zoom-out (รหัสไปรษณีย์ = ใหญ่สุด) แล้วไล่ลงมา zoom-in
+               (จังหวัด → อำเภอ → ตำบล) ลงท้ายด้วย บ้านเลขที่ — ตามที่
+               คนไทยกรอกฟอร์มราชการคุ้นชิน. -->
+          <div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:12px">
+            <div style="font-weight:600;margin-bottom:8px">ที่อยู่ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้สำหรับเอกสาร, e-Tax XML)</span></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#0369a1;font-size:11px">⤴ กรอกก่อน → เติมที่อยู่อัตโนมัติ</span></label><input type="text" class="form-input" id="fPostalCode" maxlength="5" inputmode="numeric" placeholder="10110"></div>
+              <div class="form-group"><label class="form-label">จังหวัด *</label><input type="text" class="form-input" id="fProvince"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">อำเภอ/เขต *</label><input type="text" class="form-input" id="fDistrict"></div>
+              <div class="form-group"><label class="form-label">ตำบล/แขวง *</label><input type="text" class="form-input" id="fSubDistrict"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="fBuildingNumber" placeholder="123/45"></div>
+              <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="fBuildingName"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="fMoo" placeholder="3" maxlength="5"></div>
+              <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="fStreetName" placeholder="สุขุมวิท"></div>
+            </div>
+            <div class="form-row" id="branchRow">
+              <div class="form-group" id="branchCodeGroup"><label class="form-label">รหัสสาขา <span style="font-weight:normal;color:#64748b;font-size:11px">(00000 = สำนักงานใหญ่)</span></label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
+              <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
+            </div>
+          </div>
+          </div><!-- /addrThaiBox -->
+
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
+            <div class="form-group"><label class="form-label" data-i18n="common.email">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="text" class="form-input" id="fContactPerson"></div>
+
+          <!-- ───── ตั้งค่าการบันทึกบัญชี ─────
+               Per-contact GL overrides. Defaults pull from the system
+               (first level-4+ account starting with 113 / 212 / 212305).
+               When this contact behaves differently from the company
+               default — e.g. employee receivable should go to 1132 not
+               1131, or a specific supplier needs its own AP sub-ledger
+               — the operator pins the right account here and every
+               document that posts for this contact uses the pinned
+               account instead. Leave at "(ใช้ค่าเริ่มต้นของระบบ)" to
+               keep system behaviour. -->
+          <div style="margin-top:16px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
+            <div style="font-weight:600;color:#1e293b;margin-bottom:10px">⚙️ ตั้งค่าการบันทึกบัญชี</div>
+            <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:12px;cursor:pointer">
+              <input type="checkbox" id="fDefaultIssueTaxInvoice" style="margin-top:3px">
+              <span style="font-size:13px;line-height:1.4">
+                <b>ออกใบกำกับภาษีเสมอ</b> — เมื่อเลือกลูกค้ารายนี้ตอนสร้างเอกสารขาย ระบบจะตั้งชนิดเป็น
+                <b>ใบกำกับภาษี</b> ให้อัตโนมัติ (แทนใบแจ้งหนี้) และเตือนถ้าข้อมูล §86/4 (เลขภาษี/สาขา/ที่อยู่) ไม่ครบ
+                <span style="display:block;color:#64748b;font-size:11px;margin-top:2px">เหมาะกับลูกค้าจด VAT ที่ต้องใช้ใบกำกับเคลมภาษีซื้อ</span>
+              </span>
+            </label>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี
+                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAR','fDefaultArAccount','arHint')">🤖</button>
+                </label>
+                <select class="form-input" id="fDefaultArAccount">
+                  <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
+                </select>
+                <div class="hint" id="arHint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 113xxx — ลูกหนี้การค้า</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">ถ้าเป็นเจ้าหนี้ จะบันทึกบัญชี
+                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAP','fDefaultApAccount','apHint')">🤖</button>
+                </label>
+                <select class="form-input" id="fDefaultApAccount">
+                  <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
+                </select>
+                <div class="hint" id="apHint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212xxx — เจ้าหนี้การค้า</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">บันทึกบัญชีกระทบเอกสาร (IR/GR)
+                <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactIrGr','fDefaultIrGrAccount','grHint')">🤖</button>
+              </label>
+              <select class="form-input" id="fDefaultIrGrAccount">
+                <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
+              </select>
+              <div class="hint" id="grHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+              <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212305 — ค่าใช้จ่ายค้างจ่ายอื่น (Invoice/Goods Received-Not-Invoiced clearing)</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-secondary" id="contactHistoryBtn" onclick="Page.showHistory()" style="display:none" title="ดูประวัติการแก้ไขผู้ติดต่อรายนี้">📜 ประวัติ</button>
+          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="importModal" class="modal-overlay">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <h3 id="importTitle">นำเข้าข้อมูล</h3>
+          <button class="btn-close" onclick="Import.close()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="importStep1">
+            <div id="importDropZone" style="border:2px dashed var(--gray-300);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all .2s" onclick="document.getElementById('importFileInput').click()" ondragover="event.preventDefault();this.style.borderColor='var(--primary)';this.style.background='var(--blue-50)'" ondragleave="this.style.borderColor='var(--gray-300)';this.style.background=''" ondrop="Import.handleDrop(event)">
+              <div style="font-size:36px;margin-bottom:8px">📄</div>
+              <p style="font-size:15px;font-weight:600;color:var(--gray-700)">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
+              <p style="font-size:13px;color:var(--gray-500);margin-top:4px">รองรับ CSV, Excel (.xlsx, .xls)</p>
+              <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="Import.handleFile(this.files[0])">
+            </div>
+            <div id="importFileInfo" style="display:none;margin-top:12px;padding:12px 16px;background:var(--blue-50);border-radius:8px;align-items:center;justify-content:space-between">
+              <span id="importFileName" style="font-weight:600;font-size:14px"></span>
+              <button class="btn btn-sm btn-ghost text-red" onclick="Import.clearFile()">ลบ</button>
+            </div>
+          </div>
+          <div id="importStep2" style="display:none">
+            <div id="importValidation" style="margin-bottom:12px"></div>
+            <div id="importPreview" style="max-height:300px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px"></div>
+          </div>
+          <div id="importStep3" style="display:none;text-align:center;padding:24px">
+            <div style="font-size:48px;margin-bottom:12px">✅</div>
+            <h3 id="importResultText" style="color:var(--green-600)"></h3>
+          </div>
+        </div>
+        <div class="modal-footer" id="importFooter">
+          <button class="btn btn-secondary" onclick="Import.close()">ยกเลิก</button>
+          <button class="btn btn-primary" id="importActionBtn" onclick="Import.validate()" disabled>ตรวจสอบข้อมูล</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/dbd-lookup.js"></script>
+  <script src="/js/thai-address.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      page: 1, filterType: 'all', _cache: {},
+      async init() {
+        if (!Layout.init('contacts')) return;
+        Layout.setTitle('ผู้ติดต่อ');
+        this._attachDbd();
+        this._attachFuzzyMatch();
+        // Preload chart of accounts so the GL-override dropdowns are
+        // populated on first modal open. Filter to AR/AP/clearing-style
+        // accounts only to keep the dropdown manageable — anything
+        // starting with 1 (asset), 2 (liability) qualifies.
+        await this._loadAccountDropdowns();
+        await this.load();
+        const params = new URLSearchParams(window.location.search);
+        const openId = params.get('id');
+        if (openId) this.openEdit(openId);
+        // Cross-page "create new contact" flow: documents.html opens this
+        // page with ?name=<typed>&autoopen=1&returnto=opener. We auto-open
+        // the create modal, pre-fill the name, and on save postMessage the
+        // new id back so the opener tab can auto-pick it.
+        if (params.get('autoopen') === '1') {
+          this.openCreate();
+          const seed = params.get('name');
+          if (seed) {
+            const el = document.getElementById('fName');
+            if (el) el.value = seed;
+          }
+          // OCR review's "เพิ่มผู้ติดต่อใหม่" link also seeds the tax id so
+          // the user can hit "ดึงข้อมูล" (DBD lookup) immediately.
+          const seedTax = params.get('taxId');
+          if (seedTax) {
+            const tx = document.getElementById('fTaxId');
+            if (tx && !tx.value) tx.value = seedTax;
+          }
+          if (params.get('returnto') === 'opener') {
+            this._returnToOpener = true;
+          }
+        }
+      },
+
+      // ตั้งค่าการบันทึกบัญชี — load chart of accounts ONCE on init,
+      // populate the 3 dropdowns. Defaults marked with [ค่าเริ่มต้น].
+      async _loadAccountDropdowns() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts('?pageSize=500');
+          const all = (res?.data?.items || res?.data || []);
+          this._accounts = all;
+          const arCandidates = all.filter(a => (a.accountCode||'').startsWith('1') && (a.accountType === 'Asset' || a.accountType === 'CurrentAsset' || a.accountType == null));
+          const apCandidates = all.filter(a => (a.accountCode||'').startsWith('2') && (a.accountType === 'Liability' || a.accountType === 'CurrentLiability' || a.accountType == null));
+          // IR/GR clearing — accrued liability sub-ledger, typically 2123xx.
+          const grirCandidates = all.filter(a => (a.accountCode||'').startsWith('212') || (a.accountCode||'').startsWith('21'));
+          const fillSelect = (id, candidates, defaultPrefix) => {
+            const sel = document.getElementById(id);
+            if (!sel) return;
+            // Mark the system-default option with a star so user knows
+            // which one fires when "(ใช้ค่าเริ่มต้นของระบบ)" is chosen.
+            const sysDef = candidates.find(a => (a.accountCode || '').startsWith(defaultPrefix) && (a.level || 0) >= 4);
+            const sysDefLabel = sysDef ? ` — ระบบจะใช้ ${sysDef.accountCode} ${sysDef.accountName}` : '';
+            sel.innerHTML = `<option value="">(ใช้ค่าเริ่มต้นของระบบ${sysDefLabel})</option>` +
+              candidates.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+          };
+          fillSelect('fDefaultArAccount', arCandidates, '113');
+          fillSelect('fDefaultApAccount', apCandidates, '212');
+          fillSelect('fDefaultIrGrAccount', grirCandidates, '212305');
+        } catch (e) {
+          // Soft fail — dropdowns stay with the placeholder; user can
+          // still save the contact, just can't pin a custom account
+          // until accounts load.
+          console.warn('Account dropdown load failed', e);
+        }
+      },
+      setFilter(type, el) {
+        this.filterType = type; this.page = 1;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const search = document.getElementById('searchInput').value;
+        let q = `?page=${this.page}&pageSize=20`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        if (this.filterType === 'customer') q += '&isCustomer=true';
+        if (this.filterType === 'supplier') q += '&isSupplier=true';
+        try {
+          const res = await api.getContacts(q);
+          const data = res.data;
+          const items = data?.items || data || [];
+          const tbody = document.getElementById('tableBody');
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีผู้ติดต่อ</td></tr>'; return; }
+          items.forEach(c => Page._cache[c.id] = c);
+          const ctLabel = (ct) => ({1:'บุคคลธรรมดา',2:'นิติบุคคล',3:'หน่วยงานราชการ'}[ct] || '-');
+          tbody.innerHTML = items.map(c => `<tr>
+            <td class="font-medium">${Layout.esc(c.name)}</td>
+            <td>${Layout.esc(c.taxId || '-')}${c.branchCode && c.contactType === 2 ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchCode)})</span>` : ''}</td>
+            <td><span class="badge ${c.contactType===2?'badge-info':c.contactType===3?'badge-warning':'badge-gray'}">${ctLabel(c.contactType)}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
+            <td>${c.phone || '-'}</td>
+            <td>${c.email || '-'}</td>
+            <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')" data-i18n="common.edit">แก้ไข</button> <a class="btn btn-sm btn-ghost" href="/pages/documents.html?contactId=${c.id}" title="ดูเอกสารทั้งหมดของผู้ติดต่อ">เอกสาร</a> <button class="btn btn-sm btn-ghost text-red" onclick="Page.deleteContact('${c.id}')">ลบ</button></td>
+          </tr>`).join('');
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      goPage(p) { Page.page = p; Page.load(); },
+
+      // AI fuzzy-match: debounced lookup ตอนพิมพ์ชื่อ/TaxId — เด้งกล่อง
+      // เตือน contact ที่คล้ายกัน. หลีกเลี่ยง duplicate (data hygiene #1).
+      _fuzzyDebounce: null,
+      _attachFuzzyMatch() {
+        const nameEl = document.getElementById('fName');
+        const taxIdEl = document.getElementById('fTaxId');
+        const trigger = () => {
+          clearTimeout(this._fuzzyDebounce);
+          this._fuzzyDebounce = setTimeout(() => this._runFuzzyMatch(), 400);
+        };
+        if (nameEl) nameEl.addEventListener('input', trigger);
+        if (taxIdEl) taxIdEl.addEventListener('input', trigger);
+      },
+      async _runFuzzyMatch() {
+        const box = document.getElementById('fuzzyMatchBox');
+        const list = document.getElementById('fuzzyMatchList');
+        if (!box || !list) return;
+        // Hide เมื่อเป็นการ edit ของเดิม (มี contact id) หรือ ชื่อสั้นเกินไป
+        const editingId = document.getElementById('fId')?.value;
+        if (editingId) { box.style.display = 'none'; return; }
+        const name = document.getElementById('fName')?.value?.trim() || '';
+        const taxId = document.getElementById('fTaxId')?.value?.trim() || '';
+        if (name.length < 2 && taxId.length < 10) { box.style.display = 'none'; return; }
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/contact/fuzzy-match`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, taxId, limit: 5 })
+          });
+          const j = await r.json();
+          const matches = j?.data?.matches || [];
+          if (matches.length === 0) { box.style.display = 'none'; return; }
+          list.innerHTML = matches.map(m => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #fde68a">
+              <div>
+                <strong>${Layout.esc ? Layout.esc(m.name) : m.name}</strong>
+                ${m.taxId ? `<span style="color:#92400e;font-size:11px;margin-left:6px">[${m.taxId}]</span>` : ''}
+                <div style="font-size:11px;color:#92400e">${m.reason} (${Math.round((m.confidence || 0) * 100)}%)</div>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page._useExistingContact('${m.id}')">ใช้รายนี้</button>
+            </div>
+          `).join('');
+          box.style.display = 'block';
+        } catch { box.style.display = 'none'; }
+      },
+      _useExistingContact(id) {
+        // คืนค่ากลับให้ caller (documents.html flow) ถ้าเปิดจากที่นั่น
+        // หรือปิด modal + เลื่อนไปแก้ contact เดิม
+        const cb = window.opener?.Page?.onContactCreated || window.parent?.Page?.onContactCreated;
+        if (typeof cb === 'function') { cb({ id }); }
+        document.getElementById('fuzzyMatchBox').style.display = 'none';
+        if (typeof Layout.toast === 'function') Layout.toast('เลือกผู้ติดต่อรายเดิมแล้ว');
+        // refresh เพื่อโชว์รายการที่ highlight
+        this.load();
+      },
+
+      _dbdAttached: false,
+      _attachDbd() {
+        if (this._dbdAttached) return;
+        this._dbdAttached = true;
+        const fillFromDbd = (result) => {
+          if (!result) return;
+          // DBD returns juristic person data → auto-set type
+          document.getElementById('fContactType').value = '2';
+          Page.onContactTypeChange();
+          // Fill name + taxId + free-text address + structured address parts
+          DbdLookup.fillCompanyForm(result, {
+            nameTh: 'fName',
+            taxId: 'fTaxId',
+            address: 'fAddress',
+            addressParts: {
+              moo: 'fMoo',
+              subDistrict: 'fSubDistrict',
+              district: 'fDistrict',
+              province: 'fProvince',
+              postalCode: 'fPostalCode'
+            }
+          });
+          if (result.juristicId && !document.getElementById('fTaxId').value) {
+            document.getElementById('fTaxId').value = result.juristicId;
+          }
+          // Fill juristic-specific fields from DBD
+          if (result.juristicId) document.getElementById('fJuristicId').value = result.juristicId;
+          if (result.juristicType) document.getElementById('fJuristicType').value = result.juristicType;
+          if (result.registeredCapital) document.getElementById('fRegisteredCapital').value = Number(result.registeredCapital).toLocaleString('th-TH') + ' บาท';
+          if (result.status) document.getElementById('fDbdStatus').value = result.status;
+          // Default branch to 00000 (head office) for juristic
+          if (!document.getElementById('fBranch').value) document.getElementById('fBranch').value = '00000';
+          if (!document.getElementById('fBranchName').value) document.getElementById('fBranchName').value = 'สำนักงานใหญ่';
+          // Auto-parse the DBD address to extract every structured field that
+          // DbdLookup._parseThaiAddress missed (and Moo, which it doesn't
+          // surface even on a good match). The backend ThaiAddressParser is
+          // more forgiving than the JS regex, and even when it fails the
+          // postal-code reverse-lookup below is the bulletproof fallback.
+          const rawAddr = document.getElementById('fAddress').value;
+          if (rawAddr) {
+            const api = Layout.api();
+            if (api) api.parseAddress(rawAddr).then(async j => {
+              const p = (j && j.data) || {};
+              const setIfEmpty = (id, val) => {
+                if (!val) return;
+                const el = document.getElementById(id);
+                if (el && !el.value) el.value = val;
+              };
+              setIfEmpty('fBuildingNumber', p.buildingNumber);
+              setIfEmpty('fBuildingName',   p.buildingName);
+              setIfEmpty('fMoo',            p.moo);
+              setIfEmpty('fStreetName',     p.streetName);
+              setIfEmpty('fSubDistrict',    p.subDistrict);
+              setIfEmpty('fDistrict',       p.district);
+              setIfEmpty('fProvince',       p.province);
+              setIfEmpty('fPostalCode',     p.postalCode);
+
+              if (typeof ThaiAddress !== 'undefined') {
+                // Normalize the DBD province alias (กทม → กรุงเทพมหานคร) so
+                // the cascade can find district matches.
+                const provEl = document.getElementById('fProvince');
+                if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+                // Postal-driven autofill: when the postal box has 5 digits
+                // but tambon/amphur/province are still blank, fetch the
+                // postal and fill them. Programmatic `el.value = ...` doesn't
+                // fire the `input` event the widget listens for, so this
+                // explicit call is required after every DBD / paste fill.
+                await ThaiAddress.autoFillFromPostal({
+                  subDistrict: 'fSubDistrict', district: 'fDistrict',
+                  province: 'fProvince', postalCode: 'fPostalCode',
+                });
+                // Warm the cascading datalists with whatever values we
+                // ended up with so manual edits get autocomplete suggestions.
+                await ThaiAddress.refresh({
+                  subDistrict: 'fSubDistrict', district: 'fDistrict',
+                  province: 'fProvince', postalCode: 'fPostalCode',
+                });
+              }
+            }).catch(() => {});
+          }
+        };
+        DbdLookup.attachNameSearch(document.getElementById('fName'), fillFromDbd,
+          { enabledCheck: () => parseInt(document.getElementById('fContactType').value) === 2 });
+        DbdLookup.attachTaxIdLookup(
+          document.getElementById('fTaxId'),
+          fillFromDbd,
+          document.getElementById('fDbdBtn'),
+          { enabledCheck: () => parseInt(document.getElementById('fContactType').value) === 2 }
+        );
+      },
+      _allFieldIds: [
+        'fName','fTaxId','fBranch','fBranchName','fAddressPaste',
+        'fBuildingNumber','fBuildingName','fMoo','fStreetName',
+        'fSubDistrict','fDistrict','fProvince','fPostalCode',
+        'fPhone','fEmail','fContactPerson',
+        'fJuristicId','fJuristicType','fRegisteredCapital','fDbdStatus'
+      ],
+      onContactTypeChange() {
+        const ct = parseInt(document.getElementById('fContactType').value);
+        const isJuristic = ct === 2;
+        const isGov = ct === 3;
+        document.getElementById('juristicFields').style.display = isJuristic ? '' : 'none';
+        document.getElementById('branchCodeGroup').style.display = (isJuristic || isGov) ? '' : 'none';
+        document.getElementById('fDbdBtn').style.display = isJuristic ? '' : 'none';
+        document.getElementById('fNameHint').style.display = isJuristic ? '' : 'none';
+        document.getElementById('fName').placeholder = isJuristic ? 'พิมพ์ชื่อบริษัทเพื่อค้นหา...' : isGov ? 'ชื่อหน่วยงานราชการ' : 'ชื่อ-นามสกุล';
+        document.getElementById('taxIdLabel').textContent = isJuristic ? 'เลขผู้เสียภาษี (13 หลัก)' : isGov ? 'เลขประจำตัวผู้เสียภาษี' : 'เลขบัตรประชาชน (13 หลัก)';
+      },
+
+      // AI suggest GL account ต่อช่อง (AR/AP/GR) — generic endpoint
+      // เรียนรู้ต่อบริษัทผ่าน memory; แสดงเหตุผล + บันทึก override feedback
+      async suggestGlSlot(slot, selectId, hintId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const contactId = document.getElementById('editId')?.value || '';
+          const url = `/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`
+            + (contactId ? `&contactId=${contactId}` : '');
+          const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          const sel = document.getElementById(selectId);
+          const hint = document.getElementById(hintId);
+          if (!d || !d.accountId) {
+            if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ');
+            return;
+          }
+          // option อาจยังไม่อยู่ใน dropdown (filter) — เพิ่มถ้าไม่มี
+          if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+            const opt = document.createElement('option');
+            opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+            sel.appendChild(opt);
+          }
+          if (sel) sel.value = d.accountId;
+          if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+          // เรียนตอน user เปลี่ยน → ส่ง ground-truth กลับ (train ไปเลย)
+          if (sel && d.feedbackId) {
+            sel.addEventListener('change', () => {
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
+      },
+
+      // Show/hide credit-limit field — เห็นเฉพาะ contact ที่เป็น "ลูกค้า"
+      onCustomerToggle() {
+        const isCust = document.getElementById('fIsCustomer')?.checked;
+        const row = document.getElementById('creditLimitRow');
+        if (row) row.style.display = isCust ? '' : 'none';
+      },
+
+      async suggestCreditLimit() {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/credit-limit/suggest`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j?.success || !j.data) return;
+          const inputEl = document.getElementById('fCreditLimit');
+          const hintEl = document.getElementById('creditLimitHint');
+          if (inputEl) inputEl.value = j.data.creditLimit;
+          if (hintEl) hintEl.textContent = `🤖 ${j.data.reasoning} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+        } catch (e) {
+          if (typeof Layout.toast === 'function') Layout.toast('แนะนำวงเงินไม่สำเร็จ', 'error');
+        }
+      },
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'เพิ่มผู้ติดต่อ';
+        document.getElementById('editId').value = '';
+        this._allFieldIds.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+        const cl = document.getElementById('fCreditLimit'); if (cl) cl.value = '';
+        const ch = document.getElementById('creditLimitHint'); if (ch) ch.textContent = '';
+        document.getElementById('fContactType').value = '2';
+        document.getElementById('fIsCustomer').checked = true;
+        document.getElementById('fIsSupplier').checked = false;
+        this.onCustomerToggle();
+        // Reset GL override dropdowns to "ใช้ค่าเริ่มต้นของระบบ" — a
+        // stale selection from a previous open would silently pin the
+        // new contact to a specific account.
+        ['fDefaultArAccount','fDefaultApAccount','fDefaultIrGrAccount'].forEach(id => {
+          const el = document.getElementById(id); if (el) el.value = '';
+        });
+        const taxInvChk = document.getElementById('fDefaultIssueTaxInvoice'); if (taxInvChk) taxInvChk.checked = false;
+        const dueDaysEl = document.getElementById('fPaymentDueDays'); if (dueDaysEl) dueDaysEl.value = '';
+        // reset ที่อยู่ต่างประเทศ → default = ที่อยู่ไทย
+        document.getElementById('fIsForeign').checked = false;
+        document.getElementById('fCountryCode').value = '';
+        document.getElementById('fCountryOther').value = '';
+        document.getElementById('fForeignAddress').value = '';
+        document.getElementById('fCountryOtherWrap').style.display = 'none';
+        this.toggleForeignAddress();
+        const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = 'none';
+        this.onContactTypeChange();
+        Layout.openModal('formModal');
+        setTimeout(() => { this._enhanceAddress(); this._attachDbd(); }, 100);
+      },
+      _enhanceAddress() {
+        if (typeof ThaiAddress === 'undefined') return;
+        ThaiAddress.enhance({
+          subDistrict: 'fSubDistrict',
+          district:    'fDistrict',
+          province:    'fProvince',
+          postalCode:  'fPostalCode',
+        });
+      },
+      // สลับที่อยู่ไทย ↔ ต่างประเทศ. ต่างประเทศ = ซ่อนโครงไทย โชว์ประเทศ +
+      // textbox ที่อยู่เต็ม. เรียกจาก checkbox onchange + ตอน openEdit/openNew
+      toggleForeignAddress() {
+        const foreign = document.getElementById('fIsForeign').checked;
+        document.getElementById('addrThaiBox').style.display = foreign ? 'none' : '';
+        document.getElementById('addrForeignBox').style.display = foreign ? '' : 'none';
+        // ผูก onchange ของ dropdown ประเทศ → โชว์ช่อง "ระบุรหัสเอง" เมื่อเลือก OTHER
+        const sel = document.getElementById('fCountryCode');
+        if (sel && !sel._wired) {
+          sel._wired = true;
+          sel.addEventListener('change', () => {
+            document.getElementById('fCountryOtherWrap').style.display =
+              sel.value === 'OTHER' ? '' : 'none';
+          });
+        }
+      },
+      // อ่านรหัสประเทศจากฟอร์มต่างประเทศ (dropdown หรือช่อง OTHER)
+      _readForeignCountry() {
+        const sel = document.getElementById('fCountryCode').value;
+        if (sel === 'OTHER')
+          return (document.getElementById('fCountryOther').value || '').trim().toUpperCase() || null;
+        return sel || null;
+      },
+      showHistory() {
+        const id = document.getElementById('editId').value;
+        if (!id) return;
+        const c = this._cache[id];
+        Layout.showEntityTimeline('Contact', id, c ? c.name : '');
+      },
+      openEdit(id) {
+        const c = this._cache[id]; if (!c) return;
+        document.getElementById('formTitle').textContent = 'แก้ไขผู้ติดต่อ';
+        document.getElementById('editId').value = c.id;
+        const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = '';
+        document.getElementById('fContactType').value = String(c.contactType || 2);
+        document.getElementById('fName').value = c.name;
+        document.getElementById('fTaxId').value = c.taxId || '';
+        document.getElementById('fBranch').value = c.branchCode || '';
+        document.getElementById('fBranchName').value = c.branchName || '';
+        document.getElementById('fIsCustomer').checked = c.isCustomer;
+        document.getElementById('fIsSupplier').checked = c.isSupplier;
+        document.getElementById('fCreditLimit').value = c.creditLimit ?? '';
+        this.onCustomerToggle();
+        document.getElementById('fAddress').value = c.address || '';
+        document.getElementById('fBuildingNumber').value = c.buildingNumber || '';
+        document.getElementById('fBuildingName').value = c.buildingName || '';
+        document.getElementById('fMoo').value = c.moo || '';
+        document.getElementById('fStreetName').value = c.streetName || '';
+        document.getElementById('fSubDistrict').value = c.subDistrict || '';
+        document.getElementById('fDistrict').value = c.district || '';
+        document.getElementById('fProvince').value = c.province || '';
+        document.getElementById('fPostalCode').value = c.postalCode || '';
+        document.getElementById('fPhone').value = c.phone || '';
+        document.getElementById('fEmail').value = c.email || '';
+        document.getElementById('fContactPerson').value = c.contactPerson || '';
+        // ที่อยู่ต่างประเทศ: countryCode != TH → เปิดโหมดต่างประเทศ + เติมค่า
+        const cc = (c.countryCode || 'TH').toUpperCase();
+        const isForeign = cc !== 'TH';
+        document.getElementById('fIsForeign').checked = isForeign;
+        if (isForeign) {
+          const sel = document.getElementById('fCountryCode');
+          const known = Array.from(sel.options).some(o => o.value === cc);
+          if (known) { sel.value = cc; document.getElementById('fCountryOther').value = ''; document.getElementById('fCountryOtherWrap').style.display = 'none'; }
+          else { sel.value = 'OTHER'; document.getElementById('fCountryOther').value = cc; document.getElementById('fCountryOtherWrap').style.display = ''; }
+          document.getElementById('fForeignAddress').value = c.address || '';
+        } else {
+          document.getElementById('fCountryCode').value = '';
+          document.getElementById('fCountryOther').value = '';
+          document.getElementById('fForeignAddress').value = '';
+          document.getElementById('fCountryOtherWrap').style.display = 'none';
+        }
+        this.toggleForeignAddress();
+        // ตั้งค่าการบันทึกบัญชี — restore per-contact overrides; empty
+        // value means "use system default" (113/212/212305 prefix).
+        const arSel = document.getElementById('fDefaultArAccount');
+        if (arSel) arSel.value = c.defaultArAccountId || '';
+        const apSel = document.getElementById('fDefaultApAccount');
+        if (apSel) apSel.value = c.defaultApAccountId || '';
+        const grirSel = document.getElementById('fDefaultIrGrAccount');
+        if (grirSel) grirSel.value = c.defaultIrGrAccountId || '';
+        const taxInvChk = document.getElementById('fDefaultIssueTaxInvoice');
+        if (taxInvChk) taxInvChk.checked = !!c.defaultIssueTaxInvoice;
+        const dueDaysEl = document.getElementById('fPaymentDueDays');
+        if (dueDaysEl) dueDaysEl.value = (c.paymentDueDays ?? '') === '' ? '' : c.paymentDueDays;
+        document.getElementById('fJuristicId').value = '';
+        document.getElementById('fJuristicType').value = '';
+        document.getElementById('fRegisteredCapital').value = '';
+        document.getElementById('fDbdStatus').value = '';
+        this.onContactTypeChange();
+        Layout.openModal('formModal');
+        setTimeout(() => { this._enhanceAddress(); this._attachDbd(); }, 100);
+      },
+      async parseFromPaste() {
+        const text = document.getElementById('fAddressPaste').value;
+        if (!text || !text.trim()) { Layout.toast('กรุณาวางที่อยู่ก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const j = await api.parseAddress(text);
+          if (!j || !j.success) throw new Error((j && j.message) || 'แยกที่อยู่ไม่สำเร็จ');
+          const p = j.data || {};
+          if (p.buildingNumber) document.getElementById('fBuildingNumber').value = p.buildingNumber;
+          if (p.buildingName) document.getElementById('fBuildingName').value = p.buildingName;
+          if (p.moo) document.getElementById('fMoo').value = p.moo;
+          if (p.streetName) document.getElementById('fStreetName').value = p.streetName;
+          if (p.subDistrict) document.getElementById('fSubDistrict').value = p.subDistrict;
+          if (p.district) document.getElementById('fDistrict').value = p.district;
+          if (p.province) document.getElementById('fProvince').value = p.province;
+          if (p.postalCode) document.getElementById('fPostalCode').value = p.postalCode;
+          document.getElementById('fAddressPaste').value = '';
+          // Warm the cascade datalists with the parsed values + run alias
+          // normalization (e.g. "กรุงเทพฯ" → "กรุงเทพมหานคร") so the form is
+          // ready for the user to tweak.
+          this._enhanceAddress();
+          if (typeof ThaiAddress !== 'undefined') {
+            const provEl = document.getElementById('fProvince');
+            if (provEl.value) provEl.value = ThaiAddress.normalize(provEl.value, 'province');
+            // Postal-driven fallback for any field the parser couldn't
+            // extract — the gov postal endpoint is the canonical source.
+            await ThaiAddress.autoFillFromPostal({
+              subDistrict: 'fSubDistrict', district: 'fDistrict',
+              province: 'fProvince', postalCode: 'fPostalCode',
+            });
+            await ThaiAddress.refresh({
+              subDistrict: 'fSubDistrict', district: 'fDistrict',
+              province: 'fProvince', postalCode: 'fPostalCode',
+            });
+          }
+          Layout.toast('แยกที่อยู่สำเร็จ — ตรวจและปรับแก้ก่อนบันทึก');
+        } catch (e) { Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error'); }
+      },
+      composeAddress() {
+        const moo = document.getElementById('fMoo').value;
+        const parts = [
+          document.getElementById('fBuildingNumber').value,
+          document.getElementById('fBuildingName').value,
+          moo ? 'หมู่ ' + moo : '',
+          document.getElementById('fStreetName').value ? 'ถ.' + document.getElementById('fStreetName').value : '',
+          document.getElementById('fSubDistrict').value,
+          document.getElementById('fDistrict').value,
+          document.getElementById('fProvince').value,
+          document.getElementById('fPostalCode').value
+        ].filter(Boolean);
+        return parts.join(' ') || null;
+      },
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('editId').value;
+        const ct = parseInt(document.getElementById('fContactType').value);
+        const name = document.getElementById('fName').value;
+        const taxId = document.getElementById('fTaxId').value || null;
+        const phone = document.getElementById('fPhone').value || null;
+        const isForeign = document.getElementById('fIsForeign').checked;
+        // ที่อยู่ต่างประเทศ: ไม่ validate รหัสไปรษณีย์ไทย
+        const postalCode = isForeign ? null : (document.getElementById('fPostalCode').value || null);
+
+        const checks = [
+          { field: 'fName', value: name, label: 'ชื่อผู้ติดต่อ', checks: ['required'] },
+          { field: 'fTaxId', value: taxId, label: 'เลขประจำตัวผู้เสียภาษี', checks: ['taxId'] },
+          { field: 'fPhone', value: phone, label: 'เบอร์โทรศัพท์', checks: ['phone'] },
+        ];
+        if (!isForeign)
+          checks.push({ field: 'fPostalCode', value: document.getElementById('fPostalCode').value || null, label: 'รหัสไปรษณีย์', checks: ['postalCode'] });
+        const valid = Layout.validateForm(checks);
+        if (!valid) return;
+
+        // ต่างประเทศ: ต้องเลือกประเทศ + กรอกที่อยู่เต็ม
+        let foreignCountry = null, foreignAddress = null;
+        if (isForeign) {
+          foreignCountry = this._readForeignCountry();
+          foreignAddress = (document.getElementById('fForeignAddress').value || '').trim();
+          if (!foreignCountry) { Layout.toast('กรุณาเลือก/ระบุประเทศ', 'error'); return; }
+          if (!/^[A-Z]{2}$/.test(foreignCountry)) { Layout.toast('รหัสประเทศต้องเป็นตัวอักษร 2 ตัว (ISO เช่น NL, US)', 'error'); return; }
+          if (!foreignAddress) { Layout.toast('กรุณากรอกที่อยู่เต็ม', 'error'); return; }
+        }
+
+        const data = {
+          name: name,
+          taxId: taxId,
+          branchCode: (ct === 2 || ct === 3) ? (document.getElementById('fBranch').value || '00000') : null,
+          branchName: document.getElementById('fBranchName').value || null,
+          contactType: ct,
+          isCustomer: document.getElementById('fIsCustomer').checked,
+          isSupplier: document.getElementById('fIsSupplier').checked,
+          creditLimit: (() => {
+            const v = parseFloat(document.getElementById('fCreditLimit').value);
+            return isNaN(v) || v <= 0 ? null : v;
+          })(),
+          // ต่างประเทศ = free-text address + null โครงไทย (ไม่งั้น e-Tax จะยัด
+          // geo-code ไทยให้ที่อยู่ต่างชาติ). ไทย = โครงแยกส่วนตามเดิม.
+          countryCode: isForeign ? foreignCountry : 'TH',
+          address: isForeign ? foreignAddress : this.composeAddress(),
+          buildingNumber: isForeign ? '' : (document.getElementById('fBuildingNumber').value || null),
+          buildingName: isForeign ? '' : (document.getElementById('fBuildingName').value || null),
+          moo: isForeign ? '' : (document.getElementById('fMoo').value || null),
+          streetName: isForeign ? '' : (document.getElementById('fStreetName').value || null),
+          subDistrict: isForeign ? '' : (document.getElementById('fSubDistrict').value || null),
+          district: isForeign ? '' : (document.getElementById('fDistrict').value || null),
+          province: isForeign ? '' : (document.getElementById('fProvince').value || null),
+          postalCode: isForeign ? '' : (document.getElementById('fPostalCode').value || null),
+          // ส่งค่า trim ตรง ๆ (ไม่ใช่ value||null) — เมื่อผู้ใช้ลบจนว่างจะส่ง ""
+          // ให้ backend "ล้างค่า" ได้ (เดิมส่ง null → backend ตี null = ไม่เปลี่ยน
+          // → ลบเบอร์แล้วเปิดมายังขึ้นค่าเดิม). backend normalize ""→null เอง.
+          phone: document.getElementById('fPhone').value.trim(),
+          email: document.getElementById('fEmail').value.trim(),
+          contactPerson: document.getElementById('fContactPerson').value.trim(),
+          // GL overrides — empty string maps to null on Create (skips
+          // pinning) and to Guid.Empty on Update (explicitly clears
+          // the existing pin per the UpdateContactAsync semantics).
+          defaultArAccountId: document.getElementById('fDefaultArAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
+          defaultApAccountId: document.getElementById('fDefaultApAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
+          defaultIrGrAccountId: document.getElementById('fDefaultIrGrAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
+          defaultIssueTaxInvoice: !!document.getElementById('fDefaultIssueTaxInvoice')?.checked,
+          paymentDueDays: document.getElementById('fPaymentDueDays')?.value !== '' ? parseInt(document.getElementById('fPaymentDueDays').value) : null,
+        };
+        try {
+          let savedId = id;
+          if (id) {
+            await api.updateContact(id, data);
+          } else {
+            const r = await api.createContact(data);
+            savedId = (r && r.data && (r.data.id || r.data.contactId)) || null;
+          }
+          Layout.closeModal('formModal');
+          Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มผู้ติดต่อสำเร็จ');
+          await this.load();
+          // Cross-page hand-off: documents.html opened us with returnto=opener
+          // and is waiting for the new contact id. Post it back and close
+          // this tab — the opener auto-picks the contact.
+          if (this._returnToOpener && savedId && window.opener && !window.opener.closed) {
+            try {
+              window.opener.postMessage(
+                { type: 'contact-created', contactId: savedId, name: data.name, taxId: data.taxId },
+                window.location.origin);
+              setTimeout(() => window.close(), 300);
+            } catch (_) { /* opener gone — leave tab open */ }
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteContact(id) {
+        if (!confirm('ต้องการลบผู้ติดต่อนี้? (หากมีเอกสารอ้างอิง จะปิดการใช้งานแทน)')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.deleteContact(id);
+          const data = res?.data;
+          if (data && data.deactivated) {
+            Layout.toast(data.message || 'ปิดการใช้งานผู้ติดต่อแล้ว (มีเอกสารอ้างอิง)', 'warning');
+          } else {
+            Layout.toast('ลบผู้ติดต่อสำเร็จ');
+          }
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+
+    const Import = {
+      entityType: 'contacts',
+      file: null,
+      validated: false,
+
+      toggleMenu(btn) {
+        const menu = btn.nextElementSibling;
+        const show = menu.style.display === 'none';
+        document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none');
+        menu.style.display = show ? 'block' : 'none';
+        if (show) setTimeout(() => document.addEventListener('click', Import._closeMenus, { once: true }), 0);
+      },
+      _closeMenus() { document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none'); },
+
+      open() {
+        Import._closeMenus();
+        Import.file = null;
+        Import.validated = false;
+        document.getElementById('importStep1').style.display = '';
+        document.getElementById('importStep2').style.display = 'none';
+        document.getElementById('importStep3').style.display = 'none';
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importActionBtn').textContent = 'ตรวจสอบข้อมูล';
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').onclick = Import.validate;
+        document.getElementById('importFooter').style.display = '';
+        document.getElementById('importModal').classList.add('active');
+      },
+      close() { document.getElementById('importModal').classList.remove('active'); },
+
+      async downloadTemplate() {
+        Import._closeMenus();
+        try {
+          const token = localStorage.getItem('token');
+          const resp = await fetch(`/api/companies/${Layout.getCompanyId()}/import-export/templates/${Import.entityType}/download?format=csv`, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (!resp.ok) throw new Error('Download failed');
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = `${Import.entityType}-template.csv`; a.click();
+          URL.revokeObjectURL(url);
+        } catch (e) { Layout.toast('ดาวน์โหลด Template ไม่สำเร็จ', 'error'); }
+      },
+
+      handleDrop(e) {
+        e.preventDefault();
+        e.currentTarget.style.borderColor = 'var(--gray-300)';
+        e.currentTarget.style.background = '';
+        const file = e.dataTransfer.files[0];
+        if (file) Import.handleFile(file);
+      },
+      handleFile(file) {
+        if (!file) return;
+        Import.file = file;
+        Import.validated = false;
+        document.getElementById('importFileName').textContent = `${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+        document.getElementById('importFileInfo').style.display = 'flex';
+        document.getElementById('importActionBtn').disabled = false;
+      },
+      clearFile() {
+        Import.file = null;
+        document.getElementById('importFileInfo').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importActionBtn').disabled = true;
+      },
+
+      async validate() {
+        if (!Import.file) return;
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').textContent = 'กำลังตรวจสอบ...';
+        try {
+          const fd = new FormData();
+          fd.append('file', Import.file);
+          fd.append('entityType', Import.entityType);
+          const json = await API.upload(`/api/companies/${Layout.getCompanyId()}/import-export/validate`, fd);
+          if (!json.success) throw new Error(json.message || 'Validation failed');
+          const d = json.data;
+          let html = `<div style="padding:8px 0"><span style="color:var(--green-600);font-weight:600">✓ ${d.validCount || d.totalRows || 0} รายการถูกต้อง</span>`;
+          if (d.errorCount > 0) html += ` &nbsp; <span style="color:var(--red-600);font-weight:600">✗ ${d.errorCount} รายการมีข้อผิดพลาด</span>`;
+          html += '</div>';
+          if (d.errors && d.errors.length > 0) {
+            html += '<div style="max-height:120px;overflow:auto;background:var(--red-50);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:13px;color:var(--red-700)">';
+            d.errors.slice(0, 10).forEach(e => html += `<div>แถว ${e.row}: ${e.message}</div>`);
+            if (d.errors.length > 10) html += `<div>... และอีก ${d.errors.length - 10} รายการ</div>`;
+            html += '</div>';
+          }
+          document.getElementById('importValidation').innerHTML = html;
+          if (d.preview && d.preview.length > 0) {
+            let tbl = '<table class="table" style="font-size:12px"><thead><tr>';
+            Object.keys(d.preview[0]).forEach(k => tbl += `<th>${k}</th>`);
+            tbl += '</tr></thead><tbody>';
+            d.preview.slice(0, 5).forEach(row => {
+              tbl += '<tr>';
+              Object.values(row).forEach(v => tbl += `<td>${v ?? ''}</td>`);
+              tbl += '</tr>';
+            });
+            tbl += '</tbody></table>';
+            document.getElementById('importPreview').innerHTML = tbl;
+          }
+          document.getElementById('importStep1').style.display = 'none';
+          document.getElementById('importStep2').style.display = '';
+          Import.validated = true;
+          document.getElementById('importActionBtn').textContent = 'นำเข้าข้อมูล';
+          document.getElementById('importActionBtn').disabled = (d.validCount || d.totalRows || 0) === 0;
+          document.getElementById('importActionBtn').onclick = Import.execute;
+        } catch (e) {
+          Layout.toast(e.message || 'ตรวจสอบไม่สำเร็จ', 'error');
+          document.getElementById('importActionBtn').textContent = 'ตรวจสอบข้อมูล';
+          document.getElementById('importActionBtn').disabled = false;
+        }
+      },
+
+      async execute() {
+        if (!Import.file) return;
+        document.getElementById('importActionBtn').disabled = true;
+        document.getElementById('importActionBtn').textContent = 'กำลังนำเข้า...';
+        try {
+          const fd = new FormData();
+          fd.append('file', Import.file);
+          fd.append('entityType', Import.entityType);
+          const json = await API.upload(`/api/companies/${Layout.getCompanyId()}/import-export/import`, fd);
+          if (!json.success) throw new Error(json.message || 'Import failed');
+          const d = json.data;
+          document.getElementById('importStep2').style.display = 'none';
+          document.getElementById('importStep3').style.display = '';
+          document.getElementById('importResultText').textContent = `นำเข้าสำเร็จ ${d.importedCount || d.count || 0} รายการ`;
+          document.getElementById('importFooter').style.display = 'none';
+          if (typeof Page.load === 'function') Page.load();
+        } catch (e) {
+          Layout.toast(e.message || 'นำเข้าไม่สำเร็จ', 'error');
+          document.getElementById('importActionBtn').textContent = 'นำเข้าข้อมูล';
+          document.getElementById('importActionBtn').disabled = false;
+        }
+      }
+    };
+
+    Page.init();
+    Layout.enableTour('contacts');
+  </script>
+</body>
+</html>

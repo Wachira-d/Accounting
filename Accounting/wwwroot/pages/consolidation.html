@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>งบการเงินรวม - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="tabs" style="margin-bottom:20px">
+      <button class="tab active" onclick="Page.switchTab('groups')">กลุ่มบริษัท</button>
+      <button class="tab" onclick="Page.switchTab('reports')">งบการเงินรวม</button>
+      <button class="tab" onclick="Page.switchTab('eliminations')">รายการตัดบัญชี</button>
+    </div>
+
+    <div id="tab-groups">
+      <div class="page-header">
+        <div><h2 class="page-title">กลุ่มบริษัท</h2><p class="page-subtitle">จัดกลุ่มบริษัทสำหรับจัดทำงบการเงินรวม</p></div>
+        <button class="btn btn-primary" onclick="Page.openCreateGroup()">+ สร้างกลุ่ม</button>
+      </div>
+      <div id="groupList"></div>
+    </div>
+
+    <div id="tab-reports" style="display:none">
+      <div class="page-header"><div><h2 class="page-title">งบการเงินรวม</h2><p class="page-subtitle">ดูงบดุลและงบกำไรขาดทุนรวม</p></div></div>
+      <div class="toolbar">
+        <select class="filter-select" id="reportGroup" onchange="Page.loadReport()"></select>
+        <select class="filter-select" id="reportType" onchange="Page.loadReport()">
+          <option value="bs">งบดุลรวม</option>
+          <option value="pnl">งบกำไรขาดทุนรวม</option>
+        </select>
+      </div>
+      <div id="reportContent" class="card" style="padding:24px"><p class="text-gray-400 text-center">เลือกกลุ่มบริษัทและประเภทรายงาน</p></div>
+    </div>
+
+    <div id="tab-eliminations" style="display:none">
+      <div class="page-header"><div><h2 class="page-title">รายการตัดบัญชี</h2><p class="page-subtitle">รายการปรับปรุงที่ตัดรายการระหว่างกัน</p></div></div>
+      <div class="toolbar"><select class="filter-select" id="elimGroup" onchange="Page.loadEliminations()"></select></div>
+      <div id="elimContent" class="card" style="padding:24px"><p class="text-gray-400 text-center">เลือกกลุ่มบริษัท</p></div>
+    </div>
+
+    <div class="modal-overlay" id="groupModal">
+      <div class="modal" style="max-width:550px">
+        <div class="modal-header"><h3 class="modal-title">สร้างกลุ่มบริษัท</h3><button class="modal-close" onclick="Layout.closeModal('groupModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อกลุ่ม *</label><input type="text" class="form-input" id="groupName"></div>
+          <div class="form-group"><label class="form-label">บริษัทแม่ *</label><select class="form-select" id="groupParent"></select></div>
+          <div class="form-group"><label class="form-label">สกุลเงินรายงาน</label><input type="text" class="form-input" id="groupCurrency" value="THB"></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('groupModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveGroup()">สร้าง</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="memberModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มบริษัทลูก</h3><button class="modal-close" onclick="Layout.closeModal('memberModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="memberGroupId">
+          <div class="form-group"><label class="form-label">บริษัท *</label><select class="form-select" id="memberCompany"></select></div>
+          <div class="form-group"><label class="form-label">สัดส่วนการถือหุ้น (%)</label><input type="number" class="form-input" id="memberOwnership" value="100" min="0" max="100"></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('memberModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.addMember()" data-i18n="common.add">เพิ่ม</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  groups: [],
+  init() {
+    if (!Layout.init('consolidation')) return;
+    Layout.setTitle('งบการเงินรวม');
+    this.loadGroups();
+  },
+
+  switchTab(tab) {
+    ['groups','reports','eliminations'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['groups','reports','eliminations'][i] === tab));
+    if (tab === 'reports' || tab === 'eliminations') this.populateGroupSelects();
+  },
+
+  populateGroupSelects() {
+    ['reportGroup','elimGroup'].forEach(id => {
+      const sel = document.getElementById(id);
+      sel.innerHTML = '<option value="">-- เลือกกลุ่ม --</option>' + this.groups.map(g => `<option value="${g.id}">${g.name}</option>`).join('');
+    });
+  },
+
+  async loadGroups() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getConsolidationGroups();
+      this.groups = res.data?.items || res.data || [];
+      const container = document.getElementById('groupList');
+      if (!this.groups.length) { container.innerHTML = '<div class="card" style="padding:40px;text-align:center"><p class="text-gray-400">ยังไม่มีกลุ่มบริษัท</p></div>'; return; }
+      container.innerHTML = this.groups.map(g => {
+        const members = g.members || [];
+        return `<div class="card" style="padding:20px;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div><h3 class="font-medium">${g.name}</h3><span class="text-sm text-gray-500">สกุลเงิน: ${g.reportingCurrency || 'THB'} | สมาชิก: ${members.length} บริษัท</span></div>
+            <button class="btn btn-sm btn-primary" onclick="Page.openAddMember('${g.id}')">+ เพิ่มบริษัทลูก</button>
+          </div>
+          ${members.length ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.company">บริษัท</th><th class="text-right">สัดส่วน (%)</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody>${members.map(m => `<tr><td>${m.companyName || '-'}</td><td class="text-right">${m.ownershipPercentage || 100}%</td><td><button class="btn btn-sm btn-danger" onclick="Page.removeMember('${g.id}','${m.id}')" data-i18n="common.delete">ลบ</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="text-sm text-gray-400">ยังไม่มีบริษัทลูก</p>'}
+        </div>`;
+      }).join('');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async openCreateGroup() {
+    try {
+      const res = await API.getCompanies();
+      const companies = res.data?.items || res.data || [];
+      document.getElementById('groupParent').innerHTML = companies.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    } catch (err) { /* ignore */ }
+    document.getElementById('groupName').value = '';
+    Layout.openModal('groupModal');
+  },
+
+  async saveGroup() {
+    const api = Layout.api(); if (!api) return;
+    const data = { name: document.getElementById('groupName').value, parentCompanyId: document.getElementById('groupParent').value, reportingCurrency: document.getElementById('groupCurrency').value };
+    if (!data.name) { Layout.toast('กรุณากรอกชื่อกลุ่ม', 'error'); return; }
+    try { await api.createConsolidationGroup(data); Layout.toast('สร้างกลุ่มสำเร็จ'); Layout.closeModal('groupModal'); this.loadGroups(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async openAddMember(groupId) {
+    document.getElementById('memberGroupId').value = groupId;
+    try {
+      const res = await API.getCompanies();
+      const companies = res.data?.items || res.data || [];
+      document.getElementById('memberCompany').innerHTML = companies.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    } catch (err) { /* ignore */ }
+    Layout.openModal('memberModal');
+  },
+
+  async addMember() {
+    const api = Layout.api(); if (!api) return;
+    const gid = document.getElementById('memberGroupId').value;
+    const data = { companyId: document.getElementById('memberCompany').value, ownershipPercentage: parseFloat(document.getElementById('memberOwnership').value) || 100 };
+    try { await api.addConsolidationMember(gid, data); Layout.toast('เพิ่มสำเร็จ'); Layout.closeModal('memberModal'); this.loadGroups(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async removeMember(gid, mid) {
+    if (!confirm('ลบบริษัทนี้ออกจากกลุ่ม?')) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.removeConsolidationMember(gid, mid); Layout.toast('ลบสำเร็จ'); this.loadGroups(); } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async loadReport() {
+    const api = Layout.api(); if (!api) return;
+    const gid = document.getElementById('reportGroup').value;
+    const type = document.getElementById('reportType').value;
+    const content = document.getElementById('reportContent');
+    if (!gid) { content.innerHTML = '<p class="text-gray-400 text-center">เลือกกลุ่มบริษัท</p>'; return; }
+    try {
+      const res = type === 'bs' ? await api.getConsolidatedBS(gid) : await api.getConsolidatedPnl(gid);
+      const d = res.data || {};
+      const items = d.items || d.lines || [];
+      content.innerHTML = `<h3 style="margin-bottom:16px">${type === 'bs' ? 'งบดุลรวม' : 'งบกำไรขาดทุนรวม'}</h3>
+      <div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">ยอดรวม</th></tr></thead>
+      <tbody>${items.map(i => `<tr style="${i.isHeader?'font-weight:bold;background:var(--gray-50)':''}"><td style="padding-left:${(i.level||0)*20}px">${i.name||i.accountName||'-'}</td><td class="text-right">${Layout.money(i.amount||i.balance)}</td></tr>`).join('')}</tbody></table></div>`;
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
+  },
+
+  async loadEliminations() {
+    const api = Layout.api(); if (!api) return;
+    const gid = document.getElementById('elimGroup').value;
+    const content = document.getElementById('elimContent');
+    if (!gid) { content.innerHTML = '<p class="text-gray-400 text-center">เลือกกลุ่มบริษัท</p>'; return; }
+    try {
+      const res = await api.getEliminations(gid);
+      const items = res.data?.items || res.data || [];
+      content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th>บัญชี</th><th>จาก → ถึง</th><th class="text-right">จำนวนเงิน</th></tr></thead>
+      <tbody>${items.map(e => `<tr><td>${e.description||'-'}</td><td>${e.accountName||e.accountCode||'-'}</td><td>${(e.sourceCompany||'-')+' → '+(e.targetCompany||'-')}</td><td class="text-right">${Layout.money(e.amount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีรายการตัดบัญชี</p>';
+    } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
+  },
+};
+Page.init();
+  </script>
+</body>
+</html>

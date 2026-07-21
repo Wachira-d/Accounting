@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>อากรแสตมป์ — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">อากรแสตมป์ (Stamp Duty)</h2>
+        <p class="page-subtitle">ตามประมวลรัษฎากร §103-105 — สัญญาเช่า · กู้ยืม · จ้างทำของ · มอบอำนาจ</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>คำนวณอากร</h3>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0;max-width:760px">
+        <div><label>หมวด (RD Schedule)</label>
+          <select id="schedule" class="form-input">
+            <option value="1">Group 1: ค่าเช่า (0.1% cap 1k/ปี)</option>
+            <option value="4">Group 4: จ้างทำของ (0.1% cap 200k)</option>
+            <option value="5">Group 5: กู้ยืม (0.05% cap 10k)</option>
+            <option value="7">Group 7: มอบอำนาจ (30 baht flat)</option>
+            <option value="17">Group 17: เช็คต่างประเทศ (3 baht/ฉบับ)</option>
+          </select>
+        </div>
+        <div><label>มูลค่าสัญญา</label><input id="instValue" type="number" class="form-input" placeholder="100000"></div>
+        <div><label>ปีสัญญา (Group 1)</label><input id="years" type="number" class="form-input" value="1"></div>
+        <div style="display:flex;align-items:end"><button class="btn btn-primary" onclick="Page.compute()">คำนวณ</button></div>
+      </div>
+      <div id="computeResult" style="padding:14px;background:#f8fafc;border-radius:10px"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>บันทึกอากรแสตมป์</h3>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0;max-width:1000px">
+        <div><label>Reference</label><input id="cRef" class="form-input" placeholder="เลขที่สัญญา"></div>
+        <div><label>ประเภท (InstrumentType)</label><input id="cType" class="form-input" placeholder="เช่น Lease"></div>
+        <div><label>หมวด (RD Schedule)</label>
+          <select id="cSchedule" class="form-input">
+            <option value="1">Group 1: ค่าเช่า</option>
+            <option value="4">Group 4: จ้างทำของ</option>
+            <option value="5">Group 5: กู้ยืม</option>
+            <option value="7">Group 7: มอบอำนาจ</option>
+            <option value="17">Group 17: เช็คต่างประเทศ</option>
+          </select>
+        </div>
+        <div><label>มูลค่าสัญญา</label><input id="cValue" type="number" step="0.01" class="form-input"></div>
+        <div><label>ปีสัญญา (Group 1)</label><input id="cYears" type="number" class="form-input" value="1"></div>
+        <div><label>วันที่สัญญา</label><input id="cDate" type="date" class="form-input"></div>
+        <div><label>วิธีจ่าย</label>
+          <select id="cMethod" class="form-input">
+            <option value="Affix">ติดอากร (Affix)</option>
+            <option value="Cash">ชำระเงินสด (Cash)</option>
+            <option value="Receipt">ใบเสร็จ RD (Receipt)</option>
+          </select>
+        </div>
+        <div><label>โครงการ (optional)</label>
+          <select id="cProject" class="form-input"><option value="">— ไม่ระบุ —</option></select>
+        </div>
+        <div style="display:flex;align-items:end"><button class="btn btn-primary" onclick="Page.createRecord()">บันทึก</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h3 style="margin:0">รายการอากรค้างชำระ</h3>
+        <button class="btn btn-secondary" onclick="Page.loadUnpaid()">รีเฟรช</button>
+      </div>
+      <div class="table-container" style="margin-top:12px">
+        <table class="data-table">
+          <thead><tr><th>Reference</th><th>ประเภท</th><th style="text-align:right">มูลค่า</th><th style="text-align:right">อากร</th><th>วันที่</th><th>การจัดการ</th></tr></thead>
+          <tbody id="unpaidBody"><tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">กด รีเฟรช</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('stamp-duty')) return;
+        Layout.setTitle('อากรแสตมป์');
+        document.getElementById('cDate').value = Layout.toDateInput(new Date());
+        await this.loadProjects();
+        await this.loadUnpaid();
+      },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const opts = items.map(p =>
+            `<option value="${p.id}">${(p.code || p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+          document.getElementById('cProject').innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
+        } catch (e) { /* ignore */ }
+      },
+      async createRecord() {
+        const body = {
+          reference: document.getElementById('cRef').value.trim(),
+          contactId: null,
+          rdScheduleNumber: +document.getElementById('cSchedule').value,
+          instrumentType: document.getElementById('cType').value.trim(),
+          instrumentValue: +document.getElementById('cValue').value,
+          instrumentDate: document.getElementById('cDate').value,
+          leaseYears: +document.getElementById('cYears').value || null,
+          paymentMethod: document.getElementById('cMethod').value,
+          projectId: document.getElementById('cProject').value || null,
+        };
+        if (!body.reference || !body.instrumentType || !body.instrumentValue) {
+          Layout.toast('กรอกข้อมูลให้ครบ', 'error'); return;
+        }
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/stamp-duty`, body);
+          Layout.toast(r.message);
+          await this.loadUnpaid();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { maximumFractionDigits: 0 }); },
+      async compute() {
+        const sch = +document.getElementById('schedule').value;
+        const val = +document.getElementById('instValue').value;
+        const yr = +document.getElementById('years').value;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/stamp-duty/compute?rdScheduleNumber=${sch}&instrumentValue=${val}&leaseYears=${yr}`);
+          const d = r.data;
+          document.getElementById('computeResult').innerHTML = `<div style="font-size:16px"><b>อากรที่ต้องจ่าย: ${this._fmt(d.duty)} บาท</b></div><div style="font-size:12px;color:#64748b;margin-top:4px">หมวด ${d.schedule} · มูลค่าสัญญา ${this._fmt(d.instrumentValue)}${d.leaseYears ? ' · ' + d.leaseYears + ' ปี' : ''}</div>`;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async loadUnpaid() {
+        const tbody = document.getElementById('unpaidBody');
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px">กำลังโหลด...</td></tr>';
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/stamp-duty/unpaid`);
+          const rows = r.data || [];
+          if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">ไม่มีอากรค้างชำระ</td></tr>';
+            return;
+          }
+          tbody.innerHTML = rows.map(r => `<tr>
+            <td>${r.reference}</td><td>${r.instrumentType}</td>
+            <td style="text-align:right">${this._fmt(r.instrumentValue)}</td>
+            <td style="text-align:right;color:#dc2626"><b>${this._fmt(r.dutyAmount)}</b></td>
+            <td>${new Date(r.instrumentDate).toLocaleDateString('th-TH')}</td>
+            <td><button class="btn btn-sm btn-success" onclick="Page.markPaid('${r.id}')">บันทึกจ่าย</button></td>
+          </tr>`).join('');
+        } catch (e) { tbody.innerHTML = `<tr><td colspan="6" style="color:#dc2626;text-align:center">${e.message}</td></tr>`; }
+      },
+      async markPaid(id) {
+        const rcpt = prompt('เลข receipt RD');
+        if (!rcpt) return;
+        const cid = Layout.getCompanyId();
+        try {
+          await API.post(`/api/companies/${cid}/stamp-duty/${id}/paid`,
+            { rdReceiptNumber: rcpt, paidAt: new Date().toISOString() });
+          await this.loadUnpaid();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>
