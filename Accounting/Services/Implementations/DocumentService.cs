@@ -8296,8 +8296,7 @@ public class DocumentService : IDocumentService
                     // ข้างบน = Total − DepositAppliedAmount) + ผลรวมนี้ = สมดุลพอดี;
                     // ไม่ตรง → AutoPost balance check throw → degrade เป็นตั้งหนี้ (ปลอดภัย).
                     // (เลขเดียว → else ด้านล่าง = logic เดิม ไม่แตะ เพื่อ zero regression)
-                    var _depRefs = (doc.DepositAppliedRef ?? "")
-                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var _depRefs = DepositReversalMath.ParseDepositRefs(doc.DepositAppliedRef);
                     if (_depRefs.Length > 1)
                     {
                         foreach (var depRef in _depRefs)
@@ -8443,10 +8442,8 @@ public class DocumentService : IDocumentService
                             // GL-driven: สัดส่วนฐาน/VAT จากขา Cr จริง — gross ไม่มีขา VAT
                             // → ratio 0 → Dr 217xx เต็ม. กลับ "บัญชีเดิมที่ถูกเครดิต" ไม่เดาผัง
                             var glVat = glVat13 ?? glVat11;
-                            var glGross = glDeferred.Net + (glVat?.Net ?? 0m);
-                            var ratio = glGross > 0 ? (glVat?.Net ?? 0m) / glGross : 0m;
-                            depBase = Math.Round(doc.DepositAppliedAmount * (1 - ratio), 2, MidpointRounding.AwayFromZero);
-                            depVat = Math.Round(doc.DepositAppliedAmount - depBase, 2, MidpointRounding.AwayFromZero);
+                            (depBase, depVat) = DepositReversalMath.SplitBaseVat(
+                                doc.DepositAppliedAmount, glDeferred.Net, glVat?.Net ?? 0m);
                             deferredAcctId = glDeferred.AccountId;
                             vatAcctId = glVat?.AccountId;
                             depVatDeferredPending = glVat13 != null && depVat > 0;
@@ -8454,9 +8451,9 @@ public class DocumentService : IDocumentService
                         else
                         {
                             // fallback: JE มัดจำไม่ผูก SourceDocumentId → field เอกสาร + flag
-                            var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
-                            depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
-                            depVat = Math.Round(doc.DepositAppliedAmount - depBase, 2, MidpointRounding.AwayFromZero);
+                            // (deferredCr = ฐาน = SubTotal ; vatCr = VatAmount → ratio = VAT/Total)
+                            (depBase, depVat) = DepositReversalMath.SplitBaseVat(
+                                doc.DepositAppliedAmount, deposit.TotalAmount - deposit.VatAmount, deposit.VatAmount);
                             var depDeferredAcc = await FindAccountAsync(companyId, deposit.DepositDeferredAccountCode ?? "21712")
                                 ?? await FindAccountAsync(companyId, "217");
                             deferredAcctId = depDeferredAcc?.Id;
@@ -8602,10 +8599,8 @@ public class DocumentService : IDocumentService
                         // สัดส่วน VAT = VAT / (ฐาน+VAT) จากยอด Cr จริงของ journal
                         var jeBaseCr = deferredLine.CreditAmount;
                         var jeVatCr = vatLine?.CreditAmount ?? 0m;
-                        var jeGross = jeBaseCr + jeVatCr;
-                        var depVatRatio = jeGross > 0 ? jeVatCr / jeGross : 0m;
-                        var depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
-                        var depVat = Math.Round(doc.DepositAppliedAmount - depBase, 2, MidpointRounding.AwayFromZero);
+                        var (depBase, depVat) = DepositReversalMath.SplitBaseVat(
+                            doc.DepositAppliedAmount, jeBaseCr, jeVatCr);
 
                         // Dr กลับ "บัญชีเดิม" ที่ journal เครดิตไว้ (ตรงบัญชี ไม่เดา)
                         if (depBase != 0m)
