@@ -4026,9 +4026,14 @@ public class DocumentService : IDocumentService
     /// — ใช้เฉพาะ JE ต้นฉบับ OriginalEntryId == null). ไม่ SaveChanges เอง.</summary>
     private async Task UnrealizeDrivesDepositAsync(Guid companyId, Document doc)
     {
+        // ref อาจเป็นเลข NextAcc (DocumentNumber) หรือเลขระบบต้นทาง (Reference =
+        // externalRef เช่น REC260713008 ของ TakeTime) — จับคู่เลขเราก่อน แล้วค่อย ref
         var deposit = await _db.Documents.FirstOrDefaultAsync(d =>
-            d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-            && d.DocumentNumber == doc.DepositAppliedRef);
+                d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                && d.DocumentNumber == doc.DepositAppliedRef)
+            ?? await _db.Documents.FirstOrDefaultAsync(d =>
+                d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                && d.Reference == doc.DepositAppliedRef);
         if (deposit != null)
         {
             // อ่านขา Dr จริงจาก JE ต้นฉบับของใบเช็คเอาท์ (ไม่รวม reversal)
@@ -8361,13 +8366,18 @@ public class DocumentService : IDocumentService
                         var _seenDeps = new HashSet<Guid>();
                         foreach (var depRef in _depRefs)
                         {
+                            // ref = เลข NextAcc หรือเลขระบบต้นทาง (Reference/externalRef)
                             var mDepId = await _db.Documents.AsNoTracking()
                                 .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
                                     && d.DocumentNumber == depRef)
-                                .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
+                                .Select(d => (Guid?)d.Id).FirstOrDefaultAsync()
+                                ?? await _db.Documents.AsNoTracking()
+                                    .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                                        && d.Reference == depRef)
+                                    .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
                             if (!mDepId.HasValue)
                                 throw new InvalidOperationException(
-                                    $"หักมัดจำหลายใบ: ไม่พบใบมัดจำ {depRef} (IsDeposit) — ตรวจ depositAppliedRef");
+                                    $"หักมัดจำหลายใบ: ไม่พบใบมัดจำ {depRef} (IsDeposit — เทียบทั้งเลขเอกสารและ external ref) — ตรวจ depositAppliedRef");
                             if (!_seenDeps.Add(mDepId.Value)) continue;   // ใบนี้หักไปแล้วในรอบนี้ → ข้าม
                             // row-lock กัน race เหมือนใบเดียว
                             await _db.Database.ExecuteSqlRawAsync(
@@ -8431,10 +8441,17 @@ public class DocumentService : IDocumentService
                     // มัดจำใบเดียว = read-modify-write race บน DepositRealizedAmount/
                     // AppliedToDocumentId (Document ไม่มี concurrency token) → lost
                     // update + Dr เบิ้ล. lock ใน transaction ของ approve ให้ serialize
+                    // ref = เลข NextAcc (DocumentNumber) หรือเลขระบบต้นทาง (Reference =
+                    // externalRef เช่น REC260713008 ของ TakeTime) — เดิมจับคู่แค่เลขเรา
+                    // → TakeTime ส่งเลขเขา → หาไม่เจอ → degrade เป็นตั้งหนี้เสมอ
                     var depIdForLock = await _db.Documents.AsNoTracking()
                         .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
                             && d.DocumentNumber == doc.DepositAppliedRef)
-                        .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
+                        .Select(d => (Guid?)d.Id).FirstOrDefaultAsync()
+                        ?? await _db.Documents.AsNoTracking()
+                            .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                                && d.Reference == doc.DepositAppliedRef)
+                            .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
                     if (depIdForLock.HasValue)
                         await _db.Database.ExecuteSqlRawAsync(
                             @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} FOR UPDATE",

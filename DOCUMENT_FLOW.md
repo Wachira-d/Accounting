@@ -1292,6 +1292,15 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 75 (depositAppliedRef รับ external ref — root cause ที่ทำ degrade เสมอ):
+หลักฐานจากใบทดสอบจริง (TIV-20260718-0001): TakeTime ส่ง `depositAppliedRef` เป็น
+**เลขใบเสร็จของเขาเอง** (REC260713008) แต่ resolver จับคู่เฉพาะ `DocumentNumber`
+ของ NextAcc (REC-20260713-xxxx) → หาไม่เจอ → PostCashSale throw → **degrade เป็น
+ตั้งหนี้เสมอ** แม้ deploy แล้ว → TakeTime fallback settle (มัดจำเป็น payment ใหม่
+= เงินสด/มัดจำเบิ้ล + REC settlement งอก). แก้ 3 จุด (single lock-lookup / multi
+loop / UnrealizeDrivesDeposit): จับคู่ `DocumentNumber` ก่อน → ไม่เจอ → จับคู่
+`Reference` (= externalRef ที่ integration stamp ตอนสร้างใบมัดจำ). เลขจอง
+(BookingNumber) ไม่เกี่ยว — `อ้างอิง` บนใบ = externalRef ตาม contract idempotency._
 _รอบ 74 (purge สมมาตร void — กัน 21510 สะสมติดลบจาก recreate ทับ): TakeTime เจอ
 21510 ติดลบ −934.58 จากการ resync (ลบ+สร้างใหม่) ซ้ำหลายรอบ. VoidDocumentAsync
 มี step 2b (กลับ JV ตัดชำระด้วยมัดจำ + คืน subledger ใบมัดจำ) แต่ **PurgeDocumentAsync
