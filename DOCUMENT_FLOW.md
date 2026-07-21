@@ -1292,6 +1292,15 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 79 (UX สร้างมัดจำ — discoverability + กันพลาด): (1) เพิ่ม pseudo-type
+"💰 ใบมัดจำ / รับเงินล่วงหน้า" ใน dropdown ประเภทเอกสาร (ฝั่งขาย) → save map เป็น
+`Receipt` + `isDeposit=true` อัตโนมัติ (pattern เดียวกับ CombinedInvoiceTaxInvoice
+ที่ map → TaxInvoice); onDocTypeChange ติ๊ก IsDeposit + โชว์ depositOptions ให้เลย
+(เดิมต้องรู้เองว่า "เลือกใบเสร็จ → ติ๊ก checkbox"). (2) guard ตอน save: บรรทัดใด
+เลือกผัง 215xx/217xx (ขายรอรับรู้/รับล่วงหน้า) แต่ไม่ได้ตั้งเป็นเอกสารมัดจำ → เตือน
+(GL เข้า 217xx แต่ subledger มัดจำไม่รู้จัก = "มัดจำไร้เอกสาร" ที่ Realize/หัก/drives
+ไม่เจอ) แนะนำเลือกประเภทใบมัดจำ. flag `IsDeposit` (ไม่ใช่ผังบัญชี) คือตัวคุมทุกกลไก
+มัดจำ. frontend เท่านั้น._
 _รอบ 78 (หัก "JV มัดจำที่ไม่มีเอกสาร" ได้): มัดจำที่ integration post ตรงผ่าน
 `/integration/journals` (ไม่มี SourceDocumentId) เดิมหักเข้าใบแจ้งหนี้ไม่ได้ผ่าน UI
 (ApplyDepositToInvoiceAsync ต้องมีใบมัดจำ Document). เพิ่ม:

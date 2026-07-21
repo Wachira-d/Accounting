@@ -237,6 +237,7 @@
                   <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้ — เริ่มนับ aging">ใบแจ้งหนี้</option>
                   <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้ + Cr Output VAT — เข้า ภพ.30">ใบกำกับภาษี</option>
                   <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR (หรือ Cr รายได้+VAT ถ้าจ่ายสด)">ใบเสร็จรับเงิน</option>
+                  <option value="Deposit" title="รับเงินมัดจำ/รับล่วงหน้าก่อนส่งมอบสินค้า-บริการ — Dr เงินสด/ธนาคาร / Cr ขายรอรับรู้ (217xx) แทนรายได้ · รับรู้รายได้/หักเข้าใบกำกับภายหลัง (ออกใบเสร็จ + ตั้ง IsDeposit ให้อัตโนมัติ)">💰 ใบมัดจำ / รับเงินล่วงหน้า</option>
                   <option value="DeliveryNote" title="ส่งของแล้วแต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL, เป็นเอกสารโลจิสติก">ใบส่งของ</option>
                   <option value="BillingNote" title="ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว — ไม่ลง GL, เป็นเอกสารเรียกเก็บ">ใบวางบิล</option>
                   <option value="DebitNote" title="เพิ่มยอดที่ลูกค้าต้องจ่าย (เช่นค่าปรับ, ค่าขนส่งเพิ่ม) — Dr AR / Cr รายได้/VAT">ใบเพิ่มหนี้</option>
@@ -2974,14 +2975,17 @@
           aiAccBtn.style.display = purchaseLike.includes(docType) ? '' : 'none';
         }
 
-        // เงินมัดจำ/รับล่วงหน้า — แสดงเฉพาะใบเสร็จ/ใบสำคัญรับ (รับเงินก่อนส่งมอบ)
+        // เงินมัดจำ/รับล่วงหน้า:
+        //  • Receipt/ReceiptVoucher → โชว์ checkbox ให้ติ๊กเอง
+        //  • pseudo-type "Deposit" (ใบมัดจำ) → บังคับเป็นมัดจำเลย (ซ่อน checkbox,
+        //    ติ๊กให้อัตโนมัติ) → save map เป็น Receipt + isDeposit=true
         const depositWrap = document.getElementById('fIsDepositWrap');
         if (depositWrap) {
           const isReceipt = docType === 'Receipt' || docType === 'ReceiptVoucher';
+          const isDepositType = docType === 'Deposit';
           depositWrap.style.display = isReceipt ? 'inline-flex' : 'none';
-          if (!isReceipt) {
-            const cb = document.getElementById('fIsDeposit'); if (cb) cb.checked = false;
-          }
+          const cb = document.getElementById('fIsDeposit');
+          if (cb) cb.checked = isDepositType ? true : (isReceipt ? cb.checked : false);
           this.onDepositToggle();
         }
         // Reset checkbox when the section hides so a stale "paid" state
@@ -4547,6 +4551,26 @@
         if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
         if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }
+        // 🛡️ กันพลาด: เลือกผัง "ขายรอรับรู้/รับล่วงหน้า" (215xx/217xx) ในบรรทัด แต่
+        // ไม่ได้ตั้งเป็นเอกสารมัดจำ → GL เข้า 217xx จริง แต่ subledger มัดจำไม่รู้จัก
+        // ใบนี้ (หน้าเงินมัดจำไม่โชว์ · Realize/หักเข้าใบกำกับ/drives ไม่ได้ =
+        // "มัดจำไร้เอกสาร"). เตือน + แนะนำเลือกประเภท "ใบมัดจำ"
+        const _isDepositDocNow = _docType === 'Deposit'
+          || ((_docType === 'Receipt' || _docType === 'ReceiptVoucher')
+              && document.getElementById('fIsDeposit')?.checked);
+        const _hasDepositAcctLine = lines.some(l => {
+          const c = (l.accountCode || '').trim();
+          return c.startsWith('215') || c.startsWith('217');
+        });
+        if (_hasDepositAcctLine && !_isDepositDocNow) {
+          if (!confirm('พบบรรทัดที่เลือกผังบัญชี "ขายรอรับรู้/รับล่วงหน้า" (215xx/217xx) '
+            + 'แต่ยังไม่ได้ตั้งเป็นเอกสารมัดจำ\n\n'
+            + '⚠️ ถ้าลงแบบนี้ GL จะเข้า 217xx จริง แต่ระบบมัดจำจะไม่รู้จักใบนี้ '
+            + '(หน้าเงินมัดจำไม่โชว์ · Realize/หักเข้าใบกำกับ/drives ไม่ได้)\n\n'
+            + 'แนะนำ: เลือกประเภท "💰 ใบมัดจำ / รับเงินล่วงหน้า" แทน\n\n'
+            + 'กด "ตกลง" = ลงตามที่เลือก (ไม่แนะนำ) · "ยกเลิก" = กลับไปแก้'))
+            return;
+        }
         // Required-field validation ที่เดิม "ติด * แต่ไม่เตือน" (audit พบ
         // user เห็นดอกจันแล้วบันทึกผ่านได้ทำให้สับสน) — เพิ่มเช็คให้ครบ:
         // • PV ที่ติ๊ก "ใช้งานใบกำกับภาษี" → เลขใบ+วันที่+สาขา ต้องมี (§86/4)
@@ -4609,7 +4633,8 @@
           _combineTax = true;
           Layout.toast('ขายรับเงินสด + มี VAT → ออกเป็น "ใบแจ้งหนี้/ใบกำกับภาษี" ให้อัตโนมัติตาม §86/4 (ถ้าผู้ซื้อไม่ต้องการใบกำกับ ให้ติ๊ก "ไม่ประสงค์รับใบกำกับภาษี")', 'info', 7000);
         }
-        const _effectiveDocType = _combineTax ? 'TaxInvoice' : _docType;
+        // pseudo-type "Deposit" (ใบมัดจำ) → ลงเป็น Receipt + isDeposit=true
+        const _effectiveDocType = _combineTax ? 'TaxInvoice' : (_docType === 'Deposit' ? 'Receipt' : _docType);
         const payload = {
           documentType: _effectiveDocType,
           combinedInvoiceTaxInvoice: _combineTax,
@@ -4677,9 +4702,10 @@
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
           // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"
           // (217xx) แทนรายได้. depositOutputVatDeferred เลือกจังหวะ tax point.
-          isDeposit: (document.getElementById('fDocType').value === 'Receipt'
-                      || document.getElementById('fDocType').value === 'ReceiptVoucher')
-                     && (document.getElementById('fIsDeposit')?.checked || false),
+          isDeposit: _docType === 'Deposit'
+                     || ((document.getElementById('fDocType').value === 'Receipt'
+                          || document.getElementById('fDocType').value === 'ReceiptVoucher')
+                         && (document.getElementById('fIsDeposit')?.checked || false)),
           depositOutputVatDeferred:
             (document.querySelector('input[name="fDepositVat"]:checked')?.value === 'deferred') || false,
           depositDeferredAccountCode:
