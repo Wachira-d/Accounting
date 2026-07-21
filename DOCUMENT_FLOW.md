@@ -47,12 +47,16 @@
 ### 1.3 สถานะ (DocumentStatus)
 ```
 Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
-                            ↓
+                            ↓   ↑ (restore กู้เอกสารยกเลิกผิด)
                           Voided / Rejected / Overdue
 ```
 - **`Draft`** = `DocumentNumber = "DRAFT-{guid}"` placeholder (กัน gap §86/4)
+  — *ยกเว้น* เอกสารที่ restore จาก Voided: Draft แต่ถือ **เลขจริงเดิม**
+  (re-approve คงเลข ไม่ regenerate)
 - **`Approved`** = ออกเลขจริง + post JE + snapshot tax point + stock move
-- **`Voided`** = reverse JE + reverse stock; เก็บไว้ดู audit (ห้าม hard delete)
+- **`Voided`** = reverse JE + reverse stock; เก็บไว้ดู audit (ห้าม hard delete).
+  กู้คืนได้ด้วย `RestoreVoidedDocumentAsync` → กลับเป็น Draft (คงเลข) ถ้ายังไม่
+  ยื่นภาษี/ไม่มี e-Tax accepted (ดู §3.6 Void/Restore)
 - **`Sent`** = email ออกแล้ว (optionally e-tax-by-email + RD cc)
 
 ---
@@ -560,6 +564,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      - ถ้า `IsDeposit`: reset `DepositRealizedAmount/At`,
        `DepositOutputVatRecognizedAt`, `DepositRefundedAmount/At`,
        `DepositAppliedToDocumentId` → list ไม่โชว์ Partial/Realized ค้าง
+  2b. **กลับ JV ตัดชำระด้วยมัดจำ** (`ApplyDepositToInvoiceAsync`): JV นั้น
+      `SourceDocumentId=ใบมัดจำ` จึงหลุด step 2 → หา deposit ที่
+      `DepositAppliedToDocumentId==ใบนี้` → reverse JV (คัดเฉพาะ JE มีขา Cr 113
+      กันชน realize-JE) + คืน subledger (Realized/Recognized/AppliedTo). เคส
+      drives (ขา reversal ฝังในใบ ไม่มี JV) ข้าม → step 7c จัดการ
+- **Restore (กู้เอกสารที่ยกเลิกผิด)**: `RestoreVoidedDocumentAsync`
+  (`DocumentService.cs`) — `Voided → Draft` **คงเลขเดิม** (re-approve ไม่
+  regenerate เพราะเลขไม่ใช่ `DRAFT-`). ปลอดภัยเพราะ void เก็บ row/line ครบ +
+  reset posting flags (9) เป็น approve-ready ไว้แล้ว; reversal JE เดิมคงไว้เป็น
+  audit (คู่ net-zero) → re-approve post JE ใหม่ สุทธิถูก ไม่ double. **Gate
+  compliance (block ทั้งหมด)**: (1) e-Tax `Accepted`; (2) เดือนภาษี (TaxPoint/
+  DocDate) ยื่น ภ.พ.30/ล็อกแล้ว (period-based ไม่ใช่ line-ref เพราะ void ถอด
+  doc ออกจาก report line แล้ว); (3) เลขถูกใช้กับใบ active อื่น. **ไม่คืน
+  payment/ApplyDeposit อัตโนมัติ** — ผู้ใช้บันทึกใหม่หลังอนุมัติ. Endpoint
+  `POST /document/{id}/restore` (สิทธิ์ = `Document.Void`); UI ปุ่ม "↩️ กู้คืน"
+  โผล่เฉพาะสถานะ Voided ใน detail modal
 - **ห้าม hard delete** (ตาม §86/4 + พ.ร.บ.บัญชี)
 - ⚠️ PDF footer "การลงบัญชี" (`PdfGenerationService.LoadGlPostingAsync`)
   query `OriginalEntryId == null` เพื่อแสดง **JE forward ต้นทาง** เสมอ

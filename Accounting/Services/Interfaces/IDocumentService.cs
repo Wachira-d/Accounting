@@ -68,6 +68,14 @@ public interface IDocumentService
     /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>
     Task VoidDocumentAsync(Guid companyId, Guid documentId);
 
+    /// <summary>กู้คืนเอกสารที่ "ยกเลิกผิด" — คืนสถานะ Voided → Draft โดย
+    /// **คงเลขเอกสารเดิม** (re-approve จะไม่ regenerate เพราะไม่ใช่ DRAFT-).
+    /// ผู้ใช้กดอนุมัติใหม่เพื่อลงบัญชี/e-Tax ใหม่ผ่าน pipeline เดิม. gate เข้ม
+    /// (compliance): บล็อกถ้า e-Tax Accepted / เดือนภาษียื่น ภ.พ.30 แล้ว /
+    /// เลขถูกใช้กับใบอื่น. reversal JE เดิมของ void คงไว้เป็น audit (คู่ net-zero).
+    /// ไม่คืน payment/ApplyDeposit อัตโนมัติ — ต้องบันทึกใหม่หลังอนุมัติ.</summary>
+    Task<DocumentResponse> RestoreVoidedDocumentAsync(Guid companyId, Guid documentId, string actor);
+
     /// <summary>เปลี่ยนผังบัญชีของบรรทัดในเอกสารที่อนุมัติแล้ว (Expense / PI /
     /// PV / JournalEntry เท่านั้น) โดยไม่แตะเลขเอกสาร / ยอด / VAT / contact
     /// — ระบบจะ post reclassify-JE คู่ใหม่ (Dr ผังใหม่ / Cr ผังเก่า) ลงงวด
