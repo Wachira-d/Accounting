@@ -1159,7 +1159,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowDocumentNumber) sb.AppendLine($"<div>เลขที่: {doc.DocumentNumber}</div>");
         if (template.ShowDocumentDate) sb.AppendLine($"<div>วันที่: {doc.DocumentDate:dd/MM/yyyy}</div>");
         if (template.ShowDueDate && doc.DueDate.HasValue) sb.AppendLine($"<div>ครบกำหนด: {doc.DueDate:dd/MM/yyyy}</div>");
-        if (template.ShowReference && doc.Reference != null) sb.AppendLine($"<div>อ้างอิง: {doc.Reference}</div>");
+        if (template.ShowReference && doc.DisplayReference != null) sb.AppendLine($"<div>อ้างอิง: {doc.DisplayReference}</div>");
         sb.AppendLine("</div>");
 
         // Contact

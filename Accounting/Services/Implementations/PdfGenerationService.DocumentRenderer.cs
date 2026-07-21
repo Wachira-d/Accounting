@@ -343,8 +343,8 @@ public partial class PdfGenerationService
                             if (template.ShowDocumentDate) c.Item().Text($"วันที่: {doc.DocumentDate:dd/MM/yyyy}").FontSize(10);
                             if (template.ShowDueDate && doc.DueDate.HasValue)
                                 c.Item().Text($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}").FontSize(10);
-                            if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference))
-                                c.Item().Text($"อ้างอิง: {doc.Reference}").FontSize(10);
+                            if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference))
+                                c.Item().Text($"อ้างอิง: {doc.DisplayReference}").FontSize(10);
                         });
                 });
                 break;
@@ -395,8 +395,8 @@ public partial class PdfGenerationService
                         tt.Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}   ").FontSize(10).FontColor("#374151");
                     if (template.ShowDueDate && doc.DueDate.HasValue)
                         tt.Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}   ").FontSize(10).FontColor("#374151");
-                    if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference))
-                        tt.Span($"อ้างอิง: {doc.Reference}").FontSize(10).FontColor("#374151");
+                    if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference))
+                        tt.Span($"อ้างอิง: {doc.DisplayReference}").FontSize(10).FontColor("#374151");
                 });
                 break;
         }
@@ -446,8 +446,8 @@ public partial class PdfGenerationService
                 tt.Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}   ").FontSize(10);
             if (t.ShowDueDate && doc.DueDate.HasValue)
                 tt.Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}   ").FontSize(10);
-            if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference))
-                tt.Span($"อ้างอิง: {doc.Reference}").FontSize(10);
+            if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference))
+                tt.Span($"อ้างอิง: {doc.DisplayReference}").FontSize(10);
         });
     }
 
@@ -457,7 +457,7 @@ public partial class PdfGenerationService
         if (t.ShowDocumentNumber) Span($"เลขที่: {doc.DocumentNumber}");
         if (t.ShowDocumentDate) Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}");
         if (t.ShowDueDate && doc.DueDate.HasValue) Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}");
-        if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference)) Span($"อ้างอิง: {doc.Reference}");
+        if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference)) Span($"อ้างอิง: {doc.DisplayReference}");
     }
 
     // ─────────────────────────────────────────────────────────────────

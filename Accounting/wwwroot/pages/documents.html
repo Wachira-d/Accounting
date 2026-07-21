@@ -4915,7 +4915,7 @@
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
               <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${d.contact.name}</a>` : '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
-              ${d.reference ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
+              ${(d.bookingNumber || d.reference) ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${Layout.esc(d.bookingNumber || d.reference)}</div></div>` : ''}
               ${d.supplierInvoiceNumber ? `<div><div class="text-xs text-gray-500">เลขใบกำกับผู้ขาย</div><div class="font-medium">${this.escapeHtml(d.supplierInvoiceNumber)}</div></div>` : ''}
               ${d.supplierTaxInvoiceDate ? `<div><div class="text-xs text-gray-500">วันที่ใบกำกับผู้ขาย</div><div>${Layout.date(d.supplierTaxInvoiceDate)}</div></div>` : ''}
               ${d.paymentTerms || d.creditDays ? `<div><div class="text-xs text-gray-500">เทอมจ่าย</div><div>${this.escapeHtml(d.paymentTerms || '')}${d.creditDays ? ' (' + d.creditDays + ' วัน)' : ''}</div></div>` : ''}
@@ -6700,7 +6700,7 @@
               <div><span style="font-size:12px;color:#666">เลขที่:</span> <strong>${d.documentNumber}</strong></div>
               <div><span style="font-size:12px;color:#666">วันที่:</span> ${Layout.date(d.documentDate)}</div>
               ${d.dueDate ? `<div><span style="font-size:12px;color:#666">ครบกำหนด:</span> ${Layout.date(d.dueDate)}</div>` : ''}
-              ${d.reference ? `<div><span style="font-size:12px;color:#666">อ้างอิง:</span> ${d.reference}</div>` : ''}
+              ${(d.bookingNumber || d.reference) ? `<div><span style="font-size:12px;color:#666">อ้างอิง:</span> ${Layout.esc(d.bookingNumber || d.reference)}</div>` : ''}
             </div>
           </div>
 
