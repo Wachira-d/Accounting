@@ -1292,6 +1292,15 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 77 (หักมัดจำได้ในฟอร์มสร้างเอกสารเลย): เดิมตอนสร้างใหม่ banner มัดจำคงค้าง
+บอกแค่ "บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ" (2 ขั้น). เพิ่ม selector ในฟอร์ม
+(checkbox + เลือกใบมัดจำ + ยอด, auto-select ใบ booking ตรงกัน) → เก็บ
+`_pendingDepositApply` → `save()` หลัง approve สำเร็จเรียก `applyDeposit` อัตโนมัติ
+(ApplyDepositToInvoiceAsync ที่ verified) = create+approve+หักมัดจำ ใน action เดียว.
+cap ยอดไม่เกินคงเหลือ (UI guard). ต้อง "บันทึกและอนุมัติ" (บันทึกร่าง → หักไม่ได้
+เพราะ ApplyDeposit ต้องเอกสาร approved). fail-soft: หักไม่ผ่าน → ใบยังอยู่ หักเอง
+ได้. + แก้บั๊กเดิม: banner ใช้ `deposit.id` (DepositSummary) แทน `.depositDocumentId`
+ที่ไม่มีจริง (quick-apply เคย pass undefined). frontend เท่านั้น ไม่แตะ GL logic._
 _รอบ 76 (display "อ้างอิง" = เลขจอง ไม่ใช่ dedup key): integration เก็บ externalRef
 (REC260718006 = dedup key ภายใน) ลง `Document.Reference` → PDF/หน้าเอกสารโชว์เป็น
 "อ้างอิง" ทำให้ลูกค้า/บัญชีเห็นเลขใบเสร็จ TakeTime แทนรหัสจอง. เพิ่ม
