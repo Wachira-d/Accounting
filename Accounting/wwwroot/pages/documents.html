@@ -2099,7 +2099,7 @@
                       const out = Number(d.outstandingAmount) || 0;
                       return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
                         <label style="font-size:13px;color:#065f46;display:flex;gap:6px;align-items:center;cursor:pointer;flex:1;min-width:220px">
-                          <input type="checkbox" class="fDepChk" value="${d.id}" data-out="${out}" ${matchedIds.has(d.id) ? 'checked' : ''} onchange="Page.onApplyDepChange()">
+                          <input type="checkbox" class="fDepChk" value="${d.id}" data-out="${out}" data-booking="${Layout.esc(d.bookingNumber || '')}" data-ref="${Layout.esc(d.reference || '')}" ${matchedIds.has(d.id) ? 'checked' : ''} onchange="Page.onApplyDepChange()">
                           <span>${Layout.esc(d.documentNumber)} · คงเหลือ <b>${Layout.money(out)}</b>${d.reference ? ' · ' + Layout.esc(d.reference) : ''}</span>
                         </label>
                         <input type="number" step="0.01" min="0" class="fDepAmt" data-id="${d.id}" style="max-width:130px;font-size:13px" value="${out.toFixed(2)}" onchange="Page.onApplyDepChange()" placeholder="ยอดหัก" title="ยอดที่หัก (รวม VAT) — ไม่เกินคงเหลือ">
@@ -2124,6 +2124,9 @@
       onApplyDepChange() {
         const jvEntries = (this._pendingDepositApplies || []).filter(a => a.kind === 'journal');
         const docEntries = [];
+        // เก็บ booking/อ้างอิงของใบมัดจำใบแรกที่ติ๊ก → เติมให้หัวเอกสารอัตโนมัติ
+        // (ผู้ใช้เลือกดึงแค่เลขจอง+อ้างอิง ไม่แตะบรรทัดสินค้า)
+        let pickBooking = '', pickRef = '';
         document.querySelectorAll('.fDepChk').forEach(chk => {
           if (!chk.checked) return;
           const id = chk.value;
@@ -2132,8 +2135,21 @@
           let val = parseFloat(amtEl?.value || '0') || 0;
           if (val <= 0 || val > out) { val = out; if (amtEl) amtEl.value = out.toFixed(2); }
           if (val > 0.005) docEntries.push({ depositDocumentId: id, amount: val });
+          if (!pickBooking && chk.dataset.booking) pickBooking = chk.dataset.booking;
+          if (!pickRef && chk.dataset.ref) pickRef = chk.dataset.ref;
         });
         this._pendingDepositApplies = [...docEntries, ...jvEntries];
+
+        // เติม "เลขจอง" + "อ้างอิง" จากใบมัดจำที่ติ๊ก — เฉพาะตอนช่องยังว่าง
+        // (ไม่ทับค่าที่ผู้ใช้พิมพ์เอง). ผูกใบกำกับเข้า booking เดียวกับมัดจำ
+        if (pickBooking) {
+          const bn = document.getElementById('fBookingNumber');
+          if (bn && !bn.value.trim()) bn.value = pickBooking;
+        }
+        if (pickRef) {
+          const rf = document.getElementById('fRef');
+          if (rf && !rf.value.trim()) rf.value = pickRef;
+        }
       },
 
       /** ค้น JV มัดจำที่ไม่มีเอกสาร — ใส่ query (เลขอ้างอิง/booking/เลข JV)
