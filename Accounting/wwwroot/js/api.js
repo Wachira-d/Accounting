@@ -214,7 +214,7 @@ const API = {
       refundDeposit: (id, body) => API.post(`${base}/document/${id}/refund-deposit`, body),
       applyDeposit: (invoiceId, body) => API.post(`${base}/document/${invoiceId}/apply-deposit`, body),
       searchJournalDeposits: (q) => API.get(`${base}/document/journal-deposits${q ? ('?q=' + encodeURIComponent(q)) : ''}`),
-      applyJournalDeposit: (invoiceId, journalEntryNumber) => API.post(`${base}/document/${invoiceId}/apply-journal-deposit`, { journalEntryNumber }),
+      applyJournalDeposit: (invoiceId, journalEntryNumber, applyDate) => API.post(`${base}/document/${invoiceId}/apply-journal-deposit`, { journalEntryNumber, applyDate: applyDate || null }),
       getContactDepositSummary: (contactId) => API.get(`${base}/document/contacts/${contactId}/deposit-summary`),
       getDocumentsByBooking: (bookingNumber) => API.get(`${base}/document/by-booking/${encodeURIComponent(bookingNumber)}`),
       getUndueInputVat: () => API.get(`${base}/document/undue-input-vat`),

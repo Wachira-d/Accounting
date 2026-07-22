@@ -2370,7 +2370,7 @@ public class DocumentService : IDocumentService
     /// เต็ม JV** (v1 ไม่รองรับ partial — มัดจำมากกว่ายอดใบ = block). mark
     /// JV.DepositAppliedToDocumentId กัน apply ซ้ำ. GL-critical — verify Windows.</summary>
     public async Task<DocumentResponse> ApplyJournalDepositToInvoiceAsync(
-        Guid companyId, Guid invoiceId, string journalEntryNumber, string actor)
+        Guid companyId, Guid invoiceId, string journalEntryNumber, string actor, DateTime? applyDate = null)
     {
         var invoice = await _db.Documents.FirstOrDefaultAsync(d => d.Id == invoiceId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบแจ้งหนี้");
@@ -2425,7 +2425,10 @@ public class DocumentService : IDocumentService
         var arAcc = await FindAccountAsync(companyId, "113", invoice.Contact)
             ?? throw new InvalidOperationException("ไม่พบบัญชีลูกหนี้การค้า (113)");
 
-        var when = DateTime.UtcNow;
+        // วันที่ลง JE ตัดชำระ — ควรตรงวันที่เอกสารปลายทาง (VAT ตกเดือนภาษีเดียว
+        // กับ tax point ของใบ §78); เดิม hardcode UtcNow → backdate ใบข้ามเดือน
+        // แล้ว VAT recognition หลุดไปเดือนปัจจุบัน
+        var when = applyDate ?? DateTime.UtcNow;
         var apply = new JournalEntry
         {
             CompanyId = companyId,

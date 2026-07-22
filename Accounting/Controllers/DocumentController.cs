@@ -419,7 +419,7 @@ public class DocumentController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.JournalEntryNumber))
             return BadRequest(new ApiResponse<DocumentResponse>(false, null, "ต้องระบุเลขสมุดรายวัน (JournalEntryNumber)"));
         var result = await _documentService.ApplyJournalDepositToInvoiceAsync(
-            companyId, invoiceId, request.JournalEntryNumber.Trim(), userIdGuid.ToString());
+            companyId, invoiceId, request.JournalEntryNumber.Trim(), userIdGuid.ToString(), request.ApplyDate);
         return Ok(new ApiResponse<DocumentResponse>(true, result, "นำ JV มัดจำมาหักสำเร็จ"));
     }
 

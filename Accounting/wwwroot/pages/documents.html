@@ -2199,7 +2199,10 @@
         if (this.editingId) {
           if (!confirm(`หัก JV มัดจำ ${entryNumber} (${Layout.money(gross)}) เข้าใบนี้?`)) return;
           try {
-            await api.applyJournalDeposit(this.editingId, entryNumber);
+            // ส่งวันที่เอกสารเป็นวันที่ JE ตัดชำระ (VAT ตกเดือนภาษีเดียวกับใบ §78)
+            const dRaw = document.getElementById('fDate')?.value;
+            await api.applyJournalDeposit(this.editingId, entryNumber,
+              dRaw ? new Date(dRaw).toISOString() : null);
             Layout.toast('หัก JV มัดจำเข้าใบนี้แล้ว', 'success');
             if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
             await this.searchJvDeposits();
@@ -2327,7 +2330,10 @@
         } else {
           document.getElementById('adAmount').value = '';
         }
-        document.getElementById('adDate').value = Layout.toDateInput(new Date());
+        // default วันที่หัก = วันที่เอกสาร (ไม่ใช่วันนี้) — JE ตัดชำระ + VAT
+        // recognition ตกเดือนภาษีเดียวกับ tax point ของใบ (§78); ผู้ใช้แก้ได้
+        const adDocDate = document.getElementById('fDate')?.value;
+        document.getElementById('adDate').value = adDocDate || Layout.toDateInput(new Date());
         Layout.openModal('applyDepositModal');
       },
 
@@ -4080,6 +4086,41 @@
         }
       },
 
+      /** วนหักมัดจำที่เลือกไว้ (เอกสาร + JV ปนกันได้) เข้าใบ savedDocId —
+       *  "consume" list ทันทีกันหักซ้ำ (ถูกเรียกได้จาก 2 branch: cash-sale
+       *  จ่ายทันที และ บันทึก+อนุมัติปกติ — branch ไหนมาก่อนได้หักไป).
+       *  fail-soft ต่อใบ: ใบไหนไม่ผ่านข้าม ที่เหลือหักต่อ. คืน {okCount,
+       *  failCount, okAmt} หรือ null ถ้าไม่มีอะไรให้หัก. */
+      async _applyPendingDeposits(api, savedDocId) {
+        const pending = this._pendingDepositApplies || [];
+        if (!pending.length || !savedDocId) return null;
+        this._pendingDepositApplies = [];
+        // วันที่ apply = วันที่เอกสาร (ไม่ใช่วันนี้) — ให้ JE ตัดชำระ + VAT
+        // recognition ตกเดือนภาษีเดียวกับ tax point ของใบ (§78). backdate
+        // ใบข้ามเดือนแล้ว VAT จะไม่หลุดไปเดือนปัจจุบัน
+        const docDateRaw = document.getElementById('fDate')?.value;
+        const applyDate = docDateRaw ? new Date(docDateRaw).toISOString() : new Date().toISOString();
+        let okCount = 0, failCount = 0, okAmt = 0;
+        for (const ap of pending) {
+          try {
+            if (ap.kind === 'journal') {
+              await api.applyJournalDeposit(savedDocId, ap.journalEntryNumber, applyDate);
+            } else {
+              await api.applyDeposit(savedDocId, {
+                depositDocumentId: ap.depositDocumentId,
+                amount: ap.amount,
+                applyDate
+              });
+            }
+            okCount++; okAmt += (Number(ap.amount) || 0);
+          } catch (de) {
+            failCount++;
+            console.warn('deposit apply failed', ap, de);
+          }
+        }
+        return { okCount, failCount, okAmt };
+      },
+
       // ภาษีซื้อต้องห้าม (§82/5 ประมวลรัษฎากร) — toggle + AI heuristic
       // ─────────────────────────────────────────────────────────────
       // Click ไอคอนสลับ ✓ ↔ 🚫 ต่อบรรทัด. 🚫 = VAT ไม่ขึ้น ภพ.30
@@ -4932,7 +4973,13 @@
           // (audit-friendly + operator can finish the chain manually) but
           // surface as a warning toast so the operator knows.
           const paidNow = document.getElementById('fPaidOnIssue')?.checked;
-          if (paidNow && !this.editingId && savedDocId) {
+          // ⛔ chain "จ่ายแล้ว" (approve + ชำระ + ใบเสร็จ) รันเฉพาะปุ่ม "บันทึกและ
+          // อนุมัติ" — เดิมกด "บันทึกร่าง" ก็ approve + บันทึกชำระเลย (ร่างที่ขยับ
+          // เงินจริง = ผิด principle of least surprise + ยกเลิกยากกว่าร่าง)
+          if (paidNow && !approveAfter && !this.editingId && savedDocId) {
+            Layout.toast('บันทึกเป็นร่างแล้ว — ติ๊ก "ลูกค้าจ่ายเงินแล้ว" ไว้ แต่ร่างยังไม่อนุมัติ/บันทึกชำระ · กด "บันทึกและอนุมัติ" เมื่อพร้อม', 'info', 8000);
+          }
+          if (paidNow && approveAfter && !this.editingId && savedDocId) {
             // Derive method from the chosen payment channel — single source
             // of truth so the Payment metadata can't drift from the GL.
             const method = this._deriveMethodFromChannel().method;
@@ -4945,8 +4992,15 @@
                 await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
                 savedStatus = 'Approved';
               }
+              // ⭐ หักมัดจำ "ก่อน" บันทึกชำระ — เดิมจ่ายเต็ม balanceDue ก่อนแล้ว
+              // ข้ามบล็อกหักมัดจำ (อยู่ใน approveAfter ที่ skip เพราะ Approved แล้ว)
+              // → เงินเข้าธนาคารเต็ม 9,900 ทั้งที่รับจริงแค่ส่วนต่าง + มัดจำค้าง
+              // ไม่ถูกหักเงียบ ๆ. ลำดับใหม่: approve → หักมัดจำ (ลด BalanceDue)
+              // → จ่ายเฉพาะยอดคงเหลือจริง
+              const cashDepRes = await this._applyPendingDeposits(api, savedDocId);
               // Re-fetch to get authoritative totals + balanceDue (server
-              // rounding / VAT calc can drift from client-side sum).
+              // rounding / VAT calc can drift from client-side sum; รวมผล
+              // หักมัดจำที่เพิ่ง apply ด้วย).
               const detail = await api.getDocument(savedDocId);
               const balance = Number(detail?.data?.balanceDue ?? detail?.data?.totalAmount ?? 0);
               if (balance > 0.01) {
@@ -4957,10 +5011,16 @@
                   paymentMethod: method,
                   notes: 'รับเงินพร้อมออกใบกำกับ (cash sale)',
                 });
-                Layout.toast('สร้างเอกสาร + บันทึกชำระ + ออกใบเสร็จสำเร็จ', 'success');
+                Layout.toast(cashDepRes && cashDepRes.okCount
+                  ? `สร้างเอกสาร + หักมัดจำ ${cashDepRes.okCount} ใบ (${Layout.money(cashDepRes.okAmt)}) + รับชำระส่วนที่เหลือ ${Layout.money(balance)} สำเร็จ`
+                  : 'สร้างเอกสาร + บันทึกชำระ + ออกใบเสร็จสำเร็จ', 'success');
               } else {
-                Layout.toast('เอกสารอนุมัติแล้ว (ไม่มียอดต้องชำระ)', 'success');
+                Layout.toast(cashDepRes && cashDepRes.okCount
+                  ? `สร้างเอกสาร + หักมัดจำ ${cashDepRes.okCount} ใบ (${Layout.money(cashDepRes.okAmt)}) ครบยอด — ไม่มีเงินต้องรับเพิ่ม`
+                  : 'เอกสารอนุมัติแล้ว (ไม่มียอดต้องชำระ)', 'success');
               }
+              if (cashDepRes && cashDepRes.failCount)
+                Layout.toast(`⚠️ หักมัดจำไม่ผ่าน ${cashDepRes.failCount} ใบ — เปิดใบแล้วกด "หักมัดจำ" เอง (ก่อนบันทึกชำระเพิ่ม)`, 'warning', 9000);
             } catch (e) {
               Layout.toast('สร้างเอกสารแล้ว แต่บันทึกชำระไม่สำเร็จ: ' + e.message + ' — โปรดกด "💰 บันทึกชำระเงิน" ในหน้ารายละเอียดแทน', 'warning', 8000);
             }
@@ -4981,38 +5041,16 @@
               await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
               // ── หักมัดจำเข้าใบนี้ (ถ้าเลือกไว้ตอนสร้าง) — ต่อจาก approve สำเร็จ ──
               // ใช้ ApplyDepositToInvoiceAsync (verified): Dr 217xx + Dr [21913|21911]
-              // / Cr ลูกหนี้ + ลด BalanceDue. รวม create+approve+หักมัดจำ ใน action เดียว
-              // (ไม่ต้องบันทึกก่อนแล้วเปิดแก้). fail-soft: หักไม่ผ่าน → ใบยังอยู่ ให้หักเองได้
-              if (this._pendingDepositApplies && this._pendingDepositApplies.length) {
-                // วนหักทีละใบ (เอกสาร + JV ปนกันได้) — fail-soft ต่อใบ: ใบไหนหักไม่ผ่าน
-                // ข้ามไป ที่เหลือหักต่อ, สรุปผลรวมท้าย. backend guard over-apply อยู่แล้ว
-                let okCount = 0, failCount = 0, okAmt = 0;
-                for (const ap of this._pendingDepositApplies) {
-                  try {
-                    if (ap.kind === 'journal') {
-                      await api.applyJournalDeposit(savedDocId, ap.journalEntryNumber);
-                    } else {
-                      await api.applyDeposit(savedDocId, {
-                        depositDocumentId: ap.depositDocumentId,
-                        amount: ap.amount,
-                        applyDate: new Date().toISOString()
-                      });
-                    }
-                    okCount++; okAmt += (Number(ap.amount) || 0);
-                  } catch (de) {
-                    failCount++;
-                    console.warn('deposit apply failed', ap, de);
-                  }
-                }
-                if (okCount && !failCount)
-                  Layout.toast(`บันทึก+อนุมัติ + หักมัดจำ ${okCount} ใบ รวม ${Layout.money(okAmt)} เข้าใบนี้แล้ว`, 'success');
-                else if (okCount && failCount)
-                  Layout.toast(`บันทึก+อนุมัติแล้ว · หักมัดจำสำเร็จ ${okCount} ใบ (${Layout.money(okAmt)}) แต่ไม่ผ่าน ${failCount} ใบ — เปิดใบแล้วหักที่เหลือเองได้`, 'warning', 9000);
-                else
-                  Layout.toast('บันทึก+อนุมัติแล้ว แต่หักมัดจำไม่ผ่าน — เปิดใบแล้วกด "หักมัดจำ" เองได้', 'warning', 9000);
-              } else {
+              // / Cr ลูกหนี้ + ลด BalanceDue. fail-soft: หักไม่ผ่าน → ใบยังอยู่ ให้หักเองได้
+              const depRes = await this._applyPendingDeposits(api, savedDocId);
+              if (depRes && depRes.okCount && !depRes.failCount)
+                Layout.toast(`บันทึก+อนุมัติ + หักมัดจำ ${depRes.okCount} ใบ รวม ${Layout.money(depRes.okAmt)} เข้าใบนี้แล้ว`, 'success');
+              else if (depRes && depRes.okCount && depRes.failCount)
+                Layout.toast(`บันทึก+อนุมัติแล้ว · หักมัดจำสำเร็จ ${depRes.okCount} ใบ (${Layout.money(depRes.okAmt)}) แต่ไม่ผ่าน ${depRes.failCount} ใบ — เปิดใบแล้วหักที่เหลือเองได้`, 'warning', 9000);
+              else if (depRes)
+                Layout.toast('บันทึก+อนุมัติแล้ว แต่หักมัดจำไม่ผ่าน — เปิดใบแล้วกด "หักมัดจำ" เองได้', 'warning', 9000);
+              else
                 Layout.toast('บันทึกและอนุมัติแล้ว — ออกเลขเอกสารจริง + ลงบัญชีเรียบร้อย', 'success');
-              }
             } catch (ae) {
               if (ae?.status === 403) {
                 Layout.toast('บันทึกเป็นร่างแล้ว — คุณไม่มีสิทธิ์อนุมัติ ให้ผู้มีสิทธิ์กด "อนุมัติ" ในหน้ารายการ', 'info', 8000);

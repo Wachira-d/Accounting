@@ -1249,6 +1249,19 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 86 (audit ซ้ำ): (1) chain "จ่ายแล้ว" รันเฉพาะปุ่ม "บันทึกและอนุมัติ" — เดิม_
+_กด "บันทึกร่าง" ก็ approve+บันทึกชำระเลย (ร่างขยับเงินจริง) (2) วันที่ JE ตัด_
+_ชำระมัดจำ = วันที่เอกสาร (เดิม UtcNow → backdate ข้ามเดือน VAT recognition_
+_หลุดเดือน ภ.พ.30): ApplyJournalDepositRequest + ApplyJournalDepositToInvoiceAsync_
+_รับ ApplyDate, frontend ส่ง fDate ทุกจุด (pending applies + pickJvDeposit)._
+_ตรวจแล้วถูกอยู่: PDF โชว์ "หักเงินมัดจำ→ยอดชำระสุทธิ" (ทั้ง 2 apply path stamp_
+_DepositAppliedAmount/Ref), JV apply แบบ GL-driven รองรับทั้ง JV มี/ไม่มี VAT leg._
+_รอบ 85: แก้ "จ่ายเงินแล้ว (cash sale) + หักมัดจำ" ชนกัน — เดิม paidNow branch_
+_approve แล้วจ่าย "เต็ม balanceDue" ทันที แล้ว skip บล็อกหักมัดจำ (อยู่ใน_
+_approveAfter ที่ข้ามเพราะ Approved แล้ว) → เงินเข้าธนาคารเต็มใบทั้งที่รับจริงแค่_
+_ส่วนต่าง + มัดจำค้างไม่ถูกหักเงียบ ๆ. แก้: แยก _applyPendingDeposits (consume_
+_list กันหักซ้ำ) เรียกทั้ง 2 branch — ลำดับใหม่: approve → หักมัดจำ (ลด_
+_BalanceDue) → จ่ายเฉพาะยอดคงเหลือจริง (re-fetch หลัง apply)._
 _รอบ 84: หักมัดจำในฟอร์ม — (1) totals box เพิ่มแถว "หักมัดจำที่เลือก / คงเหลือรับ_
 _ชำระ" (updateDepositSummary — ยอดสุทธิใบไม่เปลี่ยนตาม §86/4, มัดจำลดยอดค้างหลัง_
 _อนุมัติ) (2) แก้หน่วยยอด: DepositSummary.outstandingAmount เป็น "ฐานไม่รวม VAT"_
