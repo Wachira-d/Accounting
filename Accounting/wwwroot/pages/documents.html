@@ -4637,6 +4637,10 @@
         if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
         if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }
+        // ประกาศ _docType ก่อนใช้ทุกจุด (deposit-account guard ด้านล่างอ้างถึง →
+        // เดิมประกาศทีหลัง = TDZ "Cannot access '_docType' before initialization"
+        // พังทั้งบันทึกร่าง/อนุมัติ)
+        const _docType = document.getElementById('fDocType').value;
         // 🛡️ กันพลาด: เลือกผัง "ขายรอรับรู้/รับล่วงหน้า" (215xx/217xx) ในบรรทัด แต่
         // ไม่ได้ตั้งเป็นเอกสารมัดจำ → GL เข้า 217xx จริง แต่ subledger มัดจำไม่รู้จัก
         // ใบนี้ (หน้าเงินมัดจำไม่โชว์ · Realize/หักเข้าใบกำกับ/drives ไม่ได้ =
@@ -4661,7 +4665,7 @@
         // user เห็นดอกจันแล้วบันทึกผ่านได้ทำให้สับสน) — เพิ่มเช็คให้ครบ:
         // • PV ที่ติ๊ก "ใช้งานใบกำกับภาษี" → เลขใบ+วันที่+สาขา ต้องมี (§86/4)
         // • CertificateInLieu → เหตุผล + ชื่อ-ตำแหน่งผู้ออก ต้องมี
-        const _docType = document.getElementById('fDocType').value;
+        // (_docType ประกาศไว้ด้านบนแล้ว ก่อน deposit-account guard)
         if (_docType === 'PaymentVoucher' && document.getElementById('fHasTaxInvoiceRef')?.checked) {
           if (!document.getElementById('fSupplierInvoiceNumberPV')?.value.trim()) {
             Layout.toast('กรุณาระบุเลขที่ใบกำกับภาษีของผู้ขาย', 'error'); return;
