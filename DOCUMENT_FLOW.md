@@ -1249,6 +1249,11 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 89: ปิด field-driven 21712 ที่เหลือ — Realize + Refund มัดจำ. เพิ่ม helper_
+_ResolveDepositBaseAccountAsync (หาผัง 215/217 ยอด Cr สูงสุดจาก JE จริงของใบมัดจำ)_
+_→ Dr ผังจริง (เช่น 21510) แทนเดา 21712 (ไม่งั้น 21510 ค้าง Cr + 21712 ติดลบ)._
+_ครบทุกเส้นแล้ว: apply(doc/JV), realize, refund, drives(cash-sale), void/purge_
+_= GL-driven อ่านขาจริงหมด. 21510 = ผังมัดจำจริงของ tenant (ที่ผู้ใช้ส่งมา)._
 _รอบ 88: ApplyDepositToInvoiceAsync เปลี่ยนเป็น GL-driven (แบบเดียวกับ JV apply)_
 _— เดิม field-driven (DepositDeferredAccountCode ?? 21712 + flag เดา VAT) → ใบ_
 _มัดจำที่ JE จริงลง Cr ผังอื่น (integration ลง 21510/21610) ถูก Dr 21712 ผิดผัง:_

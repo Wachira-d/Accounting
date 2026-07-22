@@ -1544,6 +1544,31 @@ public class DocumentService : IDocumentService
         return updated;
     }
 
+    /// <summary>หาผัง "หนี้สินมัดจำ" ที่ใบมัดจำนี้ Cr ไว้จริง (215/217 ยอด Cr สูงสุด
+    /// จาก JE จริง) — ใช้แทนการเดา DepositDeferredAccountCode ?? "21712" ที่ Dr ผิด
+    /// ผังเมื่อมัดจำลง 21510/21610 (native หรือ integration) → ผังเดิมค้าง Cr ถาวร +
+    /// 21712 ติดลบ. null = ใบไม่มีขา 215/217 (ให้ caller fallback field/217).</summary>
+    private async Task<ChartOfAccount?> ResolveDepositBaseAccountAsync(Guid companyId, Guid depositId)
+    {
+        var legs = await (from l in _db.JournalEntryLines.AsNoTracking()
+                          join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                          join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                          where j.CompanyId == companyId && j.SourceDocumentId == depositId
+                                && !j.IsDeleted && !l.IsDeleted
+                                && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                                && j.Status == JournalEntryStatus.Posted
+                                && (a.AccountCode.StartsWith("215") || a.AccountCode.StartsWith("217"))
+                          select new { l.AccountId, Net = l.CreditAmount - l.DebitAmount })
+            .ToListAsync();
+        var best = legs.GroupBy(x => x.AccountId)
+            .Select(g => new { AccountId = g.Key, Net = g.Sum(x => x.Net) })
+            .Where(x => x.Net > 0.005m)
+            .OrderByDescending(x => x.Net)
+            .FirstOrDefault();
+        return best == null ? null
+            : await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == best.AccountId && a.CompanyId == companyId);
+    }
+
     public async Task<DocumentResponse> RealizeDepositAsync(
         Guid companyId, Guid documentId, RealizeDepositRequest request, string actor)
     {
@@ -1566,7 +1591,9 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"รับรู้เกินยอดมัดจำคงค้าง (คงค้าง {outstanding:N2}, ขอรับรู้ {request.Amount:N2})");
 
-        var deferredAcc = await FindAccountAsync(companyId, doc.DepositDeferredAccountCode ?? "21712")
+        // GL-driven: Dr ผังหนี้สินมัดจำจริงที่ใบนี้ Cr ไว้ (เช่น 21510) — ไม่เดา 21712
+        var deferredAcc = await ResolveDepositBaseAccountAsync(companyId, doc.Id)
+            ?? await FindAccountAsync(companyId, doc.DepositDeferredAccountCode ?? "21712")
             ?? await FindAccountAsync(companyId, "217")
             ?? throw new InvalidOperationException("ไม่พบบัญชีขายรอรับรู้ (217xx) ในผังบัญชี");
         var revenueAcc = await FindAccountAsync(companyId, request.RevenueAccountCode ?? "41000")
@@ -2067,7 +2094,9 @@ public class DocumentService : IDocumentService
                 $"คืนเกินมัดจำคงเหลือ (ฐานคงเหลือ {Math.Max(0, remainingBase):N2} — " +
                 $"รับรู้/ตัดชำระแล้ว {doc.DepositRealizedAmount:N2}, คืนแล้ว {refundedBaseSoFar:N2})");
 
-        var deferredAcc = await FindAccountAsync(companyId, doc.DepositDeferredAccountCode ?? "21712")
+        // GL-driven: Dr ผังหนี้สินมัดจำจริง (เช่น 21510) ไม่เดา 21712
+        var deferredAcc = await ResolveDepositBaseAccountAsync(companyId, doc.Id)
+            ?? await FindAccountAsync(companyId, doc.DepositDeferredAccountCode ?? "21712")
             ?? await FindAccountAsync(companyId, "217");
         var outVatAcc = doc.DepositOutputVatDeferred && doc.DepositOutputVatRecognizedAt == null
             ? await FindAccountAsync(companyId, "21913")
