@@ -1249,6 +1249,13 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 88: ApplyDepositToInvoiceAsync เปลี่ยนเป็น GL-driven (แบบเดียวกับ JV apply)_
+_— เดิม field-driven (DepositDeferredAccountCode ?? 21712 + flag เดา VAT) → ใบ_
+_มัดจำที่ JE จริงลง Cr ผังอื่น (integration ลง 21510/21610) ถูก Dr 21712 ผิดผัง:_
+_ผังเดิมค้าง Cr ถาวร + 21712 ติดลบ. ใหม่: family-net (Cr−Dr ต่อผัง) จากทุก JE_
+_forward ของใบมัดจำ (ต้นทาง+apply ก่อนหน้า, ตัดผัง 1xxxx) → Dr ตามขาจริงตาม_
+_สัดส่วน, ฐาน/VAT แยกตามผังจริง (21913/21911), guard เกิน grossRemaining._
+_field-driven เหลือเป็น fallback เมื่อไม่มี JE forward เท่านั้น._
 _รอบ 87: footer "การบันทึกบัญชี" รวม JE ตัดมัดจำ — เดิมดึงเฉพาะ SourceDocumentId_
 _== ใบนี้ แต่ JE ตัดมัดจำผูกกับ "ใบมัดจำ" (doc apply) / null (JV apply) → net view_
 _โชว์ Dr ลูกหนี้ "ค้าง" เท่ายอดมัดจำทั้งที่ GL จริงล้างครบ (ผู้ใช้เข้าใจผิดว่าลงผิด)._

@@ -2236,24 +2236,33 @@ public class DocumentService : IDocumentService
             // ใบเดิมถูกลบ/ยกเลิกแล้ว → มาร์คโมฆะ → apply ใหม่ได้ (ทับมาร์คด้านล่าง)
         }
 
-        var deferredAcc = await FindAccountAsync(companyId, deposit.DepositDeferredAccountCode ?? "21712")
-            ?? await FindAccountAsync(companyId, "217")
-            ?? throw new InvalidOperationException("ไม่พบบัญชีขายรอรับรู้ (217xx) ในผังบัญชี");
         var arAcc = await FindAccountAsync(companyId, "113", invoice.Contact)
             ?? throw new InvalidOperationException("ไม่พบบัญชีลูกหนี้การค้า (113) ในผังบัญชี");
-        // VAT ของมัดจำอยู่บัญชีไหน: ยัง deferred (21913) หรือรับรู้แล้ว (21911)
-        var depositVatDeferredPending = deposit.DepositOutputVatDeferred
-            && deposit.DepositOutputVatRecognizedAt == null && vatAmt > 0;
-        ChartOfAccount? vatAcc = null;
-        if (vatAmt > 0)
-        {
-            vatAcc = depositVatDeferredPending
-                ? await FindAccountAsync(companyId, "21913")
-                : await FindAccountAsync(companyId, "21911");
-            if (vatAcc == null)
-                throw new InvalidOperationException("ไม่พบบัญชีภาษีขาย (21911/21913) — ไม่สามารถนำมัดจำมาตัดชำระได้");
-        }
 
+        // ── GL-driven: อ่าน "ขาจริง" จาก JE ของใบมัดจำ (แบบเดียวกับ JV apply) ──
+        // เดิม field-driven (DepositDeferredAccountCode ?? 21712 + flag เดา VAT)
+        // → ใบมัดจำที่ลง Cr ผังอื่นจริง (เช่น integration ลง 21510/21610) จะถูก
+        // Dr 21712 ผิดผัง: ผังเดิมค้าง Cr ถาวร + 21712 ติดลบ. family-net = Cr−Dr
+        // ต่อผังรวม "ทุก JE forward ของใบมัดจำ" (JE ต้นทาง + apply ก่อนหน้า ซึ่ง
+        // ผูก SourceDocumentId = ใบมัดจำเหมือนกัน) → เหลือเท่าไรกลับเท่านั้น.
+        // ตัดผัง 1xxxx ออก (เงินสด Dr ของ JE ต้นทาง / ลูกหนี้ Cr ของ apply เดิม)
+        var famLines = await (from l in _db.JournalEntryLines.AsNoTracking()
+                              join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                              join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                              where j.CompanyId == companyId && j.SourceDocumentId == deposit.Id
+                                    && !j.IsDeleted && !l.IsDeleted
+                                    && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                                    && j.Status == JournalEntryStatus.Posted
+                              select new { l.AccountId, a.AccountCode, Net = l.CreditAmount - l.DebitAmount })
+            .ToListAsync();
+        var famLegs = famLines
+            .GroupBy(x => new { x.AccountId, x.AccountCode })
+            .Select(g => (g.Key.AccountId, g.Key.AccountCode, Net: g.Sum(x => x.Net)))
+            .Where(x => x.Net > 0.005m && !x.AccountCode.StartsWith("1"))
+            .OrderByDescending(x => x.Net)
+            .ToList();
+
+        bool depositVatDeferredPending;
         var when = request.ApplyDate ?? DateTime.UtcNow;
         var je = new JournalEntry
         {
@@ -2271,13 +2280,64 @@ public class DocumentService : IDocumentService
         };
         _db.JournalEntries.Add(je);
         var ln = 1;
-        _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = je.Id, AccountId = deferredAcc.Id,
-            DebitAmount = baseAmt, CreditAmount = 0, Description = "ตัดขายรอรับรู้ (มัดจำ)", LineOrder = ln++ });
-        if (vatAmt > 0 && vatAcc != null)
-            _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = je.Id, AccountId = vatAcc.Id,
-                DebitAmount = vatAmt, CreditAmount = 0,
-                Description = depositVatDeferredPending ? "ตัดภาษีขายรอเรียกเก็บ (มัดจำ→ใบกำกับ)" : "ล้าง VAT มัดจำ (รับรู้ที่ใบกำกับแล้ว)",
-                LineOrder = ln++ });
+        if (famLegs.Count > 0)
+        {
+            // แบ่ง request.Amount (gross) ตามสัดส่วนขาจริงคงเหลือ — เศษปัดเข้า
+            // ขาแรก (ใหญ่สุด) ให้รวม Dr = Cr ลูกหนี้พอดี
+            var grossRemaining = famLegs.Sum(x => x.Net);
+            if (request.Amount > grossRemaining + 0.01m)
+                throw new InvalidOperationException(
+                    $"ยอดที่ตัดชำระ ({request.Amount:N2}) เกินมัดจำคงเหลือตามบัญชีจริง ({grossRemaining:N2}) — " +
+                    $"มัดจำ {deposit.DocumentNumber} อาจถูกหัก/คืนไปแล้วบางส่วน");
+            var factor = request.Amount / grossRemaining;
+            var debits = famLegs.Select(x => (x.AccountId, x.AccountCode,
+                Amt: Math.Round(x.Net * factor, 2, MidpointRounding.AwayFromZero))).ToList();
+            var rounding = request.Amount - debits.Sum(d => d.Amt);
+            if (rounding != 0m && debits.Count > 0)
+                debits[0] = (debits[0].AccountId, debits[0].AccountCode, debits[0].Amt + rounding);
+
+            // แยกฐาน/VAT ตามผังจริง (ไม่ใช่ ratio field) → subledger ตรง GL
+            baseAmt = debits.Where(d => d.AccountCode != "21913" && d.AccountCode != "21911").Sum(d => d.Amt);
+            vatAmt = request.Amount - baseAmt;
+            depositVatDeferredPending = debits.Any(d => d.AccountCode == "21913" && d.Amt > 0m);
+
+            foreach (var d in debits.Where(d => d.Amt > 0m))
+            {
+                var isVat = d.AccountCode == "21913" || d.AccountCode == "21911";
+                _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = je.Id, AccountId = d.AccountId,
+                    DebitAmount = d.Amt, CreditAmount = 0,
+                    Description = isVat
+                        ? (d.AccountCode == "21913" ? "ตัดภาษีขายรอเรียกเก็บ (มัดจำ→ใบกำกับ)" : "ล้าง VAT มัดจำ (รับรู้ที่ใบกำกับแล้ว)")
+                        : $"ตัดมัดจำ {deposit.DocumentNumber} (ตามผังที่ลงจริง)",
+                    LineOrder = ln++ });
+            }
+        }
+        else
+        {
+            // Fallback (ใบมัดจำไม่มี JE forward — ไม่ควรเกิดกับใบ approved ปกติ):
+            // ใช้วิธี field-driven เดิม
+            var deferredAcc = await FindAccountAsync(companyId, deposit.DepositDeferredAccountCode ?? "21712")
+                ?? await FindAccountAsync(companyId, "217")
+                ?? throw new InvalidOperationException("ไม่พบบัญชีขายรอรับรู้ (217xx) ในผังบัญชี");
+            depositVatDeferredPending = deposit.DepositOutputVatDeferred
+                && deposit.DepositOutputVatRecognizedAt == null && vatAmt > 0;
+            ChartOfAccount? vatAcc = null;
+            if (vatAmt > 0)
+            {
+                vatAcc = depositVatDeferredPending
+                    ? await FindAccountAsync(companyId, "21913")
+                    : await FindAccountAsync(companyId, "21911");
+                if (vatAcc == null)
+                    throw new InvalidOperationException("ไม่พบบัญชีภาษีขาย (21911/21913) — ไม่สามารถนำมัดจำมาตัดชำระได้");
+            }
+            _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = je.Id, AccountId = deferredAcc.Id,
+                DebitAmount = baseAmt, CreditAmount = 0, Description = "ตัดขายรอรับรู้ (มัดจำ)", LineOrder = ln++ });
+            if (vatAmt > 0 && vatAcc != null)
+                _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = je.Id, AccountId = vatAcc.Id,
+                    DebitAmount = vatAmt, CreditAmount = 0,
+                    Description = depositVatDeferredPending ? "ตัดภาษีขายรอเรียกเก็บ (มัดจำ→ใบกำกับ)" : "ล้าง VAT มัดจำ (รับรู้ที่ใบกำกับแล้ว)",
+                    LineOrder = ln++ });
+        }
         _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = je.Id, AccountId = arAcc.Id,
             DebitAmount = 0, CreditAmount = request.Amount,
             Description = $"ตัดลูกหนี้ด้วยมัดจำ - {deposit.DocumentNumber}", LineOrder = ln++ });
