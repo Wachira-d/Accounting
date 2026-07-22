@@ -1249,6 +1249,13 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 90: JV apply strictly one-shot — เดิม guard บล็อกเฉพาะ apply ไปใบอื่น_
+_(DepositAppliedToDocumentId != invoiceId) แต่ "ยอมหักซ้ำใบเดิม" (== invoiceId)._
+_JV เป็น one-shot เต็มจำนวน ไม่มี remaining tracking แบบมัดจำเอกสาร → หักซ้ำ =_
+_โพสต์ Dr 21510/Cr ลูกหนี้ ซ้ำเต็มจำนวน. เคสจริง JV 3,000 ถูกหัก 3 ครั้ง →_
+_Dr 21510 9,467.29 (467.29+3×3,000) + Cr ลูกหนี้ค้าง 6,000. แก้: == invoiceId_
+_→ throw idempotent (แก้ยอด = void/ลบใบแล้วสร้างใหม่). มัดจำเอกสารปลอดภัยอยู่_
+_แล้ว (availableBase guard). ใบที่พังไปแล้วต้อง void+recreate บน build ใหม่._
 _รอบ 89: ปิด field-driven 21712 ที่เหลือ — Realize + Refund มัดจำ. เพิ่ม helper_
 _ResolveDepositBaseAccountAsync (หาผัง 215/217 ยอด Cr สูงสุดจาก JE จริงของใบมัดจำ)_
 _→ Dr ผังจริง (เช่น 21510) แทนเดา 21712 (ไม่งั้น 21510 ค้าง Cr + 21712 ติดลบ)._

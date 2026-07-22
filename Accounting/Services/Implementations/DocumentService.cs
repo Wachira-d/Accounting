@@ -2476,8 +2476,18 @@ public class DocumentService : IDocumentService
         await _db.Database.ExecuteSqlRawAsync(
             @"SELECT ""Id"" FROM ""JournalEntries"" WHERE ""Id"" = {0} FOR UPDATE", jv.Id);
         await _db.Entry(jv).ReloadAsync();
-        if (jv.DepositAppliedToDocumentId.HasValue && jv.DepositAppliedToDocumentId.Value != invoiceId)
-            throw new InvalidOperationException($"JV {journalEntryNumber} ถูกนำไปตัดชำระเอกสารอื่นแล้ว");
+        if (jv.DepositAppliedToDocumentId.HasValue)
+        {
+            if (jv.DepositAppliedToDocumentId.Value != invoiceId)
+                throw new InvalidOperationException($"JV {journalEntryNumber} ถูกนำไปตัดชำระเอกสารอื่นแล้ว");
+            // == invoiceId: หักเข้าใบนี้ไปแล้ว. JV เป็น one-shot เต็มจำนวน (ไม่มี
+            // partial/remaining tracking แบบมัดจำเอกสารที่มี DepositRealizedAmount)
+            // → apply ซ้ำใบเดิม = โพสต์ Dr 21510/Cr ลูกหนี้ ซ้ำเต็มจำนวน (root cause
+            // ที่เห็น Dr 21510 เกิน + Cr ลูกหนี้ค้าง). บล็อก idempotent
+            throw new InvalidOperationException(
+                $"JV {journalEntryNumber} ถูกนำมาตัดชำระใบ {invoice.DocumentNumber} แล้ว — หักซ้ำไม่ได้ " +
+                "(ถ้าต้องแก้ยอด ให้ยกเลิก/ลบใบนี้แล้วสร้างใหม่)");
+        }
 
         var acctIds = jv.Lines.Where(l => !l.IsDeleted).Select(l => l.AccountId).Distinct().ToList();
         var codes = await _db.ChartOfAccounts.AsNoTracking()
