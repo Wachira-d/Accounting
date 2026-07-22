@@ -1249,6 +1249,13 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 84: หักมัดจำในฟอร์ม — (1) totals box เพิ่มแถว "หักมัดจำที่เลือก / คงเหลือรับ_
+_ชำระ" (updateDepositSummary — ยอดสุทธิใบไม่เปลี่ยนตาม §86/4, มัดจำลดยอดค้างหลัง_
+_อนุมัติ) (2) แก้หน่วยยอด: DepositSummary.outstandingAmount เป็น "ฐานไม่รวม VAT"_
+_แต่ ApplyDeposit.amount เป็น gross → เดิม UI ส่งฐานเป็น gross = มัดจำมี VAT หัก_
+_ขาด (เศษ VAT ค้าง AR). เพิ่ม _depGrossOut แปลงฐาน→gross ใช้ทุกจุด (banner/_
+_checkbox rows/quick-apply/modal) + label "(รวม VAT)" (3) แก้ modal picker ใช้_
+_d.id (เดิม d.depositDocumentId ที่ไม่มีจริง → option value undefined หักไม่ได้)._
 _รอบ 83: purge ครอบผลข้างเคียงนอก GL ครบ (mirror void) — เดิม PurgeDocumentAsync_
 _ลบ JE/Payment/WHT/e-Tax แต่ "ไม่กลับ" สต๊อก, ยอดใบต้นทางที่ถูกตัดชำระ, project_
 _billed/cost, FixedAsset auto-register, bank match (MatchedPaymentId + สถานะ_
