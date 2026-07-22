@@ -1249,6 +1249,12 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 91: void/purge คืน "JV มัดจำ raw (non-drives)" — เดิม void 2b/purge 0c วน_
+_เฉพาะ Document deposits (d.IsDeposit) → JV apply (raw JE, SourceDocumentId=null,_
+_Reference=docNo) ไม่ถูก reverse/delete + JV mark ไม่ถูกล้าง → ลบใบแล้ว 3 JV apply_
+_(Dr 21510/Cr 113) ค้าง orphan + JV นำไป apply ใบใหม่ไม่ได้. เพิ่ม helper_
+_ReverseOrphanJvDepositAppliesAsync (void→reverse / purge→delete ทุก apply JE +_
+_un-mark JV ต้นทางจาก description "JV XXX"). ปรับ PaidAmount ตาม gross ที่คืน._
 _รอบ 90: JV apply strictly one-shot — เดิม guard บล็อกเฉพาะ apply ไปใบอื่น_
 _(DepositAppliedToDocumentId != invoiceId) แต่ "ยอมหักซ้ำใบเดิม" (== invoiceId)._
 _JV เป็น one-shot เต็มจำนวน ไม่มี remaining tracking แบบมัดจำเอกสาร → หักซ้ำ =_
