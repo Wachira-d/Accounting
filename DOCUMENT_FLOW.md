@@ -1249,6 +1249,10 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 92: หักมัดจำหลายใบโชว์ครบบน PDF — apply สะสมทุกเลขใน DepositAppliedRef
+_(MergeDepositRef comma-sep+dedup, เดิมเก็บใบแรก → label โชว์เลขเดียว) + PDF
+_แตกบรรทัดต่อใบ (LoadDepositApplyBreakdownAsync อ่าน gross ต่อใบจาก apply JE:
+_Cr 113; เลข = Document มัดจำ/JV จาก description) ผ่าน param depositApplies._
 _รอบ 91: void/purge คืน "JV มัดจำ raw (non-drives)" — เดิม void 2b/purge 0c วน_
 _เฉพาะ Document deposits (d.IsDeposit) → JV apply (raw JE, SourceDocumentId=null,_
 _Reference=docNo) ไม่ถูก reverse/delete + JV mark ไม่ถูกล้าง → ลบใบแล้ว 3 JV apply_

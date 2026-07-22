@@ -1548,6 +1548,19 @@ public class DocumentService : IDocumentService
     /// จาก JE จริง) — ใช้แทนการเดา DepositDeferredAccountCode ?? "21712" ที่ Dr ผิด
     /// ผังเมื่อมัดจำลง 21510/21610 (native หรือ integration) → ผังเดิมค้าง Cr ถาวร +
     /// 21712 ติดลบ. null = ใบไม่มีขา 215/217 (ให้ caller fallback field/217).</summary>
+    /// <summary>ผนวกเลขมัดจำเข้า DepositAppliedRef แบบ comma-separated + dedup —
+    /// หักหลายใบเข้าใบเดียว → เก็บเลขครบทุกใบ (เดิมเก็บแค่ใบแรก → PDF/รายงานโชว์
+    /// "หักเงินมัดจำ (ใบแรก)" ทั้งที่หักหลายใบ). driveDeposit resolution + PDF
+    /// อ่านโดย split comma อยู่แล้ว.</summary>
+    private static string MergeDepositRef(string? existing, string add)
+    {
+        var refs = string.IsNullOrWhiteSpace(existing)
+            ? new List<string>()
+            : existing.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+        if (!string.IsNullOrWhiteSpace(add) && !refs.Contains(add.Trim())) refs.Add(add.Trim());
+        return string.Join(", ", refs);
+    }
+
     private async Task<ChartOfAccount?> ResolveDepositBaseAccountAsync(Guid companyId, Guid depositId)
     {
         var legs = await (from l in _db.JournalEntryLines.AsNoTracking()
@@ -2392,8 +2405,7 @@ public class DocumentService : IDocumentService
         // stamp ยอดหักมัดจำลงใบแจ้งหนี้ (audit E2): list/PDF โชว์ "หักมัดจำ/รับสุทธิ"
         // + API consumers เห็นยอดจริง (เดิมตั้งเฉพาะตอน create — apply ทีหลังไม่ตั้ง)
         invoice.DepositAppliedAmount += request.Amount;
-        if (string.IsNullOrWhiteSpace(invoice.DepositAppliedRef))
-            invoice.DepositAppliedRef = deposit.DocumentNumber;
+        invoice.DepositAppliedRef = MergeDepositRef(invoice.DepositAppliedRef, deposit.DocumentNumber);
         deposit.DepositAppliedToDocumentId = invoiceId;
 
         await _db.SaveChangesAsync();
@@ -2560,8 +2572,7 @@ public class DocumentService : IDocumentService
         else if (invoice.BalanceDue > 0.005m && invoice.Status == DocumentStatus.Approved)
             invoice.Status = DocumentStatus.PartiallyPaid;
         invoice.DepositAppliedAmount += gross;
-        if (string.IsNullOrWhiteSpace(invoice.DepositAppliedRef))
-            invoice.DepositAppliedRef = jv.EntryNumber;
+        invoice.DepositAppliedRef = MergeDepositRef(invoice.DepositAppliedRef, jv.EntryNumber);
 
         await _db.SaveChangesAsync();
         var updated = await GetDocumentAsync(companyId, invoiceId);
