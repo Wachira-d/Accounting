@@ -537,7 +537,14 @@ public partial class AccountingService : IAccountingService
             query = query.Where(j => j.JournalType == parsedType);
 
         if (!string.IsNullOrEmpty(request.Search))
-            query = query.Where(j => j.EntryNumber.Contains(request.Search) || (j.Description != null && j.Description.Contains(request.Search)));
+        {
+            // ค้นแบบ %...% ครอบ เลขที่รายการ + คำอธิบาย + อ้างอิง (เดิมขาด Reference →
+            // ค้นด้วยเลขเอกสารต้นทาง เช่น REC-... ที่โชว์คอลัมน์ "อ้างอิง" ไม่เจอ)
+            var s = request.Search.Trim();
+            query = query.Where(j => j.EntryNumber.Contains(s)
+                || (j.Description != null && j.Description.Contains(s))
+                || (j.Reference != null && j.Reference.Contains(s)));
+        }
 
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<Models.Enums.JournalEntryStatus>(status, true, out var parsedStatus))
             query = query.Where(j => j.Status == parsedStatus);
