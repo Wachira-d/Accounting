@@ -1249,6 +1249,13 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 82: หักมัดจำ "หลายใบ" ในฟอร์มสร้างเอกสาร — เดิม dropdown เดียว = หักได้ใบเดียว/_
+_บันทึก. เปลี่ยนเป็น checkbox rows (แต่ละใบมียอดของตัวเอง, booking-match pre-tick),_
+_`_pendingDepositApply` → array `_pendingDepositApplies` (ปนมัดจำเอกสาร+JV ได้),_
+_save() วน applyDeposit/applyJournalDeposit ทีละใบหลัง approve, fail-soft ต่อใบ +_
+_สรุปผลรวม. ติ๊กใบมัดจำ → autofill เลขจอง (fBookingNumber) + อ้างอิง (fRef) จากใบ_
+_มัดจำ (เฉพาะตอนช่องว่าง ไม่ทับที่ผู้ใช้พิมพ์; ไม่แตะบรรทัดสินค้า) ผูกใบเข้า booking_
+_เดียวกัน. frontend เท่านั้น (backend applyDeposit เรียกซ้ำสะสมได้อยู่แล้ว)._
 _รอบ 81: WHT cert ประเภทแบบ guard (ภ.ง.ด.3↔53 ตามผู้ถูกหัก) — ResolveWhtFormType_
 _+ DetectJuristic บังคับทุก create path, override ค่าที่ integration ส่งผิด._
 _รอบ 80: OCR review inline line editing (Description/Quantity/UnitPrice แก้ในตาราง_
