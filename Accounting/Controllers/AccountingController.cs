@@ -186,7 +186,13 @@ public class AccountingController : ControllerBase
         Guid companyId, [FromBody] BatchVoidRequest request)
     {
         var count = await _accountingService.BatchDeleteJournalEntriesAsync(companyId, request.EntryIds);
-        return Ok(new ApiResponse<string>(true, null, $"ลบสำเร็จ {count} รายการ"));
+        // count อาจ > ที่เลือก (ตัวกลับรายการคู่ถูกลากมาลบด้วย) หรือ < ที่เลือก
+        // (JE ที่ผูกเอกสารถูกข้าม — ต้องจัดการที่เอกสารต้นทาง). แจ้งให้ชัดแทนเงียบ
+        var requested = request.EntryIds?.Count ?? 0;
+        var msg = count >= requested
+            ? $"ลบสำเร็จ {count} รายการ" + (count > requested ? " (รวมตัวกลับรายการคู่ที่ถูกลบตาม)" : "")
+            : $"ลบสำเร็จ {count} จาก {requested} รายการ — ที่ข้ามคือรายการที่สร้างจากเอกสาร ให้ลบ/ยกเลิกที่เอกสารต้นทางแทน";
+        return Ok(new ApiResponse<string>(true, null, msg));
     }
 
     [HttpPost("journals/batch-post")]

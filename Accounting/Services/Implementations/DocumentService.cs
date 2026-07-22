@@ -4266,6 +4266,7 @@ public class DocumentService : IDocumentService
     {
         var doc = await _db.Documents
             .IgnoreQueryFilters()
+            .Include(d => d.Lines)   // ApplyStockMovementsAsync(-1) อ่านจาก Lines (mirror void)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
@@ -4300,6 +4301,11 @@ public class DocumentService : IDocumentService
             doc.DocumentNumber, doc.DocumentType, doc.Status,
             doc.TotalAmount, doc.ContactId, doc.DocumentDate
         });
+
+        // เก็บ id ไว้ unwind ReconciliationGroup หลัง commit (rows ถูกลบไปแล้ว
+        // แต่ GroupItems ยังอ้าง id ค้าง — unwind ตามหลังได้)
+        var purgedPaymentIds = new List<Guid>();
+        var purgedJournalIds = new List<Guid>();
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
@@ -4382,6 +4388,56 @@ public class DocumentService : IDocumentService
             if (purgeAppliedDeposits.Count > 0)
                 await _db.SaveChangesAsync();
 
+            // 0d. กลับ "ผลข้างเคียงนอก GL" ของการ approve — mirror VoidDocumentAsync
+            //     (เดิม purge ลบแค่ JE/Payment → สต๊อกค้างตัดของเอกสารผี, ยอดใบต้นทาง
+            //     ที่ถูกใบนี้ตัดชำระไม่คืน, project billed/cost ค้าง → resync สร้างใหม่
+            //     = ตัดซ้ำ/เบิ้ลทุกตัว). ข้าม Draft (ไม่เคย post) และ Voided (void
+            //     กลับให้ครบแล้วตอนยกเลิก — ทำซ้ำ = คืนเกิน)
+            var wasPosted = doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.Voided;
+            if (wasPosted)
+            {
+                await RevertSourceDocumentAdjustmentsAsync(companyId, doc);          // คืนยอดใบต้นทาง (ใบเสร็จ/CN/PV ที่ตัดยอด)
+                await ApplyProjectBillingAsync(companyId, doc, -1);                  // คืน BilledAmount โครงการ
+                await ApplyStockMovementsAsync(companyId, doc, -1, "system-purge");  // คืนสต๊อก (OUT→IN / IN→OUT)
+                await ReverseProjectCostEntriesAsync(companyId, doc);                // คืน ActualCost โครงการ
+                await _db.SaveChangesAsync();
+            }
+
+            // ลบแถว stock movement ของใบนี้ทิ้ง (ต้นฉบับ + ตัวคืนจาก -1 ซึ่ง net ศูนย์
+            // กันแล้ว) — ไม่งั้น stock card โชว์รายการอ้างเอกสารผี + resync เบิ้ลแถว
+            await _db.StockMovements.IgnoreQueryFilters()
+                .Where(m => m.CompanyId == companyId && m.DocumentId == documentId)
+                .ExecuteDeleteAsync();
+
+            // 0e. FixedAsset ที่ AutoRegister จากใบนี้ — mirror void 7-asset:
+            //     ยังไม่ยืนยัน + ไม่มีค่าเสื่อม posted → ลบ (orphan placeholder);
+            //     นอกนั้นเก็บไว้แต่ตัด link กันชี้เอกสารผี (ผู้ใช้ dispose เองผ่าน UI)
+            var purgeAssets = await _db.FixedAssets
+                .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId)
+                .ToListAsync();
+            foreach (var asset in purgeAssets)
+            {
+                var hasPostedDep = await _db.AssetDepreciations
+                    .AnyAsync(d => d.FixedAssetId == asset.Id && d.IsPosted && !d.IsDeleted);
+                if (asset.NeedsReview && !hasPostedDep)
+                {
+                    var deps = await _db.AssetDepreciations
+                        .Where(d => d.FixedAssetId == asset.Id).ToListAsync();
+                    _db.AssetDepreciations.RemoveRange(deps);
+                    _db.FixedAssets.Remove(asset);
+                }
+                else
+                {
+                    asset.SourceDocumentId = null;
+                    asset.UpdatedAt = DateTime.UtcNow;
+                    _logger.LogWarning(
+                        "Purge {Doc}: asset {Code} ยืนยันแล้ว/มีค่าเสื่อม — คงไว้แต่ตัด link เอกสาร (dispose เองผ่าน UI)",
+                        doc.DocumentNumber, asset.AssetCode);
+                }
+            }
+            if (purgeAssets.Count > 0)
+                await _db.SaveChangesAsync();
+
             // 1. Delete JournalLineDimensions → JournalEntryLines → JournalEntries
             var journalIds = await _db.JournalEntries
                 .IgnoreQueryFilters()
@@ -4420,17 +4476,42 @@ public class DocumentService : IDocumentService
                         lineIds);
                 }
 
-                // Null out references from other tables before deleting journals
-                await _db.Database.ExecuteSqlRawAsync(
-                    @"UPDATE ""BankTransactions"" SET ""MatchedJournalEntryId"" = NULL WHERE ""MatchedJournalEntryId"" = ANY({0})",
-                    journalIds);
+                // ปลด bank match ที่ชี้ JE พวกนี้ — ต้อง reset สถานะกลับ Unmatched ด้วย
+                // (เดิม null แค่ id → แถวค้างสถานะ Matched ทั้งที่คู่ match หายไปแล้ว
+                // = จับคู่ใหม่ไม่ได้ตลอดไป). mirror VoidDocumentAsync step 4
+                await _db.BankTransactions
+                    .Where(t => t.CompanyId == companyId
+                        && t.MatchedJournalEntryId.HasValue
+                        && journalIds.Contains(t.MatchedJournalEntryId.Value))
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(t => t.MatchedJournalEntryId, (Guid?)null)
+                        .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Unmatched)
+                        .SetProperty(t => t.ReconciledAt, (DateTime?)null));
 
                 await _db.Database.ExecuteSqlRawAsync(
                     @"DELETE FROM ""JournalEntries"" WHERE ""Id"" = ANY({0})",
                     journalIds);
+                purgedJournalIds.AddRange(journalIds);
             }
 
-            // 2. Delete Payments
+            // 2. Delete Payments — ปลด bank match ที่ชี้ payment พวกนี้ก่อน
+            //    (เดิมลบ raw ทิ้ง MatchedPaymentId ค้างชี้ payment ผี + สถานะ
+            //    Matched ค้าง → กระทบยอดธนาคารจับคู่ใหม่ไม่ได้)
+            purgedPaymentIds = await _db.Payments.IgnoreQueryFilters()
+                .Where(p => p.DocumentId == documentId && p.CompanyId == companyId)
+                .Select(p => p.Id)
+                .ToListAsync();
+            if (purgedPaymentIds.Count > 0)
+            {
+                await _db.BankTransactions
+                    .Where(t => t.CompanyId == companyId
+                        && t.MatchedPaymentId.HasValue
+                        && purgedPaymentIds.Contains(t.MatchedPaymentId.Value))
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(t => t.MatchedPaymentId, (Guid?)null)
+                        .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Unmatched)
+                        .SetProperty(t => t.ReconciledAt, (DateTime?)null));
+            }
             await _db.Database.ExecuteSqlRawAsync(
                 @"DELETE FROM ""Payments"" WHERE ""DocumentId"" = {0} AND ""CompanyId"" = {1}",
                 documentId, companyId);
@@ -4499,6 +4580,13 @@ public class DocumentService : IDocumentService
                 @"UPDATE ""Documents"" SET ""RelatedDocumentId"" = NULL WHERE ""RelatedDocumentId"" = {0}",
                 documentId);
 
+            // 7b. ตัด link จาก OCR scan ที่เคยสร้างใบนี้ — คืนสถานะ scan เป็น "ยัง
+            //     ไม่สร้างเอกสาร" (สร้างใหม่/resync ได้ ไม่ค้างชี้เอกสารผี; ไฟล์แนบ
+            //     ของ scan คงอยู่ — FileAttachment ผูกกับ scan ไม่ใช่เอกสาร)
+            await _db.Set<OcrScanResult>()
+                .Where(s => s.CompanyId == companyId && s.CreatedDocumentId == documentId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.CreatedDocumentId, (Guid?)null));
+
             // 8. Delete DocumentLines → Document
             await _db.Database.ExecuteSqlRawAsync(
                 @"DELETE FROM ""DocumentLines"" WHERE ""DocumentId"" = {0}",
@@ -4532,6 +4620,26 @@ public class DocumentService : IDocumentService
         finally
         {
             _db.ChangeTracker.Clear();
+        }
+
+        // ปลด ReconciliationGroup ที่อ้าง document/payment/JE ที่เพิ่งถูกลบ —
+        // GroupItems เก็บ id ไว้แม้แถวจริงตายแล้ว → group ค้างอ้างผี + bank txn
+        // ในกลุ่มติดสถานะ Matched ถาวร. ทำหลัง commit แบบ best-effort
+        // (mirror VoidPaymentAsync/VoidDocumentAsync)
+        if (_bankService != null)
+        {
+            try
+            {
+                await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Document, documentId);
+                foreach (var pid in purgedPaymentIds)
+                    await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Payment, pid);
+                foreach (var jid in purgedJournalIds)
+                    await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.JournalEntry, jid);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Purge {DocId}: unwind reconciliation groups ไม่สำเร็จ (non-fatal)", documentId);
+            }
         }
     }
 
