@@ -2330,7 +2330,10 @@
         } else {
           document.getElementById('adAmount').value = '';
         }
-        document.getElementById('adDate').value = Layout.toDateInput(new Date());
+        // default วันที่หัก = วันที่เอกสาร (ไม่ใช่วันนี้) — JE ตัดชำระ + VAT
+        // recognition ตกเดือนภาษีเดียวกับ tax point ของใบ (§78); ผู้ใช้แก้ได้
+        const adDocDate = document.getElementById('fDate')?.value;
+        document.getElementById('adDate').value = adDocDate || Layout.toDateInput(new Date());
         Layout.openModal('applyDepositModal');
       },
 
