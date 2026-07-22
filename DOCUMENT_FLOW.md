@@ -780,6 +780,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Trigger**: ตอน `PaymentVoucher` / `Expense` ที่มี WHT > 0 ถูก approve
   → auto-issue 2 ฉบับ ("สำหรับยื่นแบบ" + "เก็บไว้")
 - **PDF**: `PdfGenerationService.WhtCert.cs`
+- **ประเภทแบบ guard (ภ.ง.ด.3 ↔ 53)**: `ResolveWhtFormType` + `DetectJuristic`
+  บังคับที่ **ทุก create path** (`CreateAsync`, `AutoGenerateFromDocumentAsync`,
+  `UpdateAsync`) — ประเภทแบบขึ้นกับ **ผู้ถูกหักภาษี**: นิติบุคคล → 53,
+  บุคคลธรรมดา → 3. เดิมถ้า caller (เช่น integration/มังกร) ส่ง `TaxFormType` มา
+  ระบบเชื่อทันที → บริษัทได้ใบ ภ.ง.ด.3 ผิด. guard ตรวจจาก 3 สัญญาณ (เลขภาษี 13
+  หลักขึ้นต้น 0 = นิติบุคคล authoritative / ContactType / ชื่อ "บริษัท,หจก,Co.,Ltd")
+  → override ค่าที่ส่งมาถ้าไม่ตรง + log correction. ภ.ง.ด.1 (เงินเดือน) / ภ.ง.ด.2
+  (ดอกเบี้ย/ปันผล) ไม่แตะ (ขึ้นกับประเภทเงินได้). test: `WhtFormTypeGuardTests`
 - **DTA override**: ถ้า payee ต่างประเทศ + มี DTA → ใช้อัตรา bilateral
   แทน default 15%/10% (ม.70)
 
@@ -1241,6 +1249,8 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 81: WHT cert ประเภทแบบ guard (ภ.ง.ด.3↔53 ตามผู้ถูกหัก) — ResolveWhtFormType_
+_+ DetectJuristic บังคับทุก create path, override ค่าที่ integration ส่งผิด._
 _รอบ 80: OCR review inline line editing (Description/Quantity/UnitPrice แก้ในตาราง_
 _→ SetExtractedLineFieldsAsync recompute Amount + persist, คู่กับ qty-guard); ปิดลูป_
 _project-match feedback (SetExtractedLineProject → RecordUserChoiceAsync)._
