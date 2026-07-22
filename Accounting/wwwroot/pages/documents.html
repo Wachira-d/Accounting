@@ -2091,40 +2091,49 @@
                     : `<button type="button" class="btn btn-sm btn-success" onclick="Page.openApplyDeposit()">${matchedDeposits.length ? 'หักมัดจำที่ booking ตรงกัน' : 'หักมัดจำจากใบนี้'}</button>`)
                 // ── สร้างใหม่: เลือกหักมัดจำในฟอร์มได้เลย (บันทึก+อนุมัติ → apply อัตโนมัติ) ──
                 : (() => {
-                    const preId = matchedDeposits.length ? matchedDeposits[0].id : (summary.deposits[0]?.id || '');
-                    const preOut = matchedDeposits.length ? matchedDeposits[0].outstandingAmount : (summary.deposits[0]?.outstandingAmount || 0);
-                    return `<div style="width:100%;margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                      <label style="font-size:13px;color:#065f46;display:flex;gap:6px;align-items:center;cursor:pointer">
-                        <input type="checkbox" id="fApplyDepOnSave" ${matchedDeposits.length ? 'checked' : ''} onchange="Page.onApplyDepChange()">
-                        <b>หักมัดจำเข้าใบนี้ตอนบันทึก</b> (ต้องกด "บันทึกและอนุมัติ")
-                      </label>
-                      <select id="fApplyDepId" class="form-select" style="max-width:300px;font-size:13px" onchange="Page.onApplyDepChange()">
-                        ${summary.deposits.map(d => `<option value="${d.id}" data-out="${d.outstandingAmount}" ${d.id===preId?'selected':''}>${Layout.esc(d.documentNumber)} · คงเหลือ ${Layout.money(d.outstandingAmount)}${d.reference?' · '+Layout.esc(d.reference):''}</option>`).join('')}
-                      </select>
-                      <input type="number" step="0.01" min="0" id="fApplyDepAmount" class="form-input" style="max-width:130px;font-size:13px" value="${preOut.toFixed(2)}" onchange="Page.onApplyDepChange()" placeholder="ยอดหัก" title="ยอดที่หัก (รวม VAT) — ไม่เกินยอดคงเหลือ">
+                    // เลือกหักมัดจำ "หลายใบ" ได้ — แต่ละใบมี checkbox + ยอดหักของตัวเอง
+                    // (เดิม dropdown เดียว = หักได้ใบเดียว/บันทึก). ใบที่ booking ตรง →
+                    // pre-tick. save() วนหัก applyDeposit ทีละใบหลัง approve.
+                    const matchedIds = new Set(matchedDeposits.map(m => m.id));
+                    const rows = summary.deposits.map(d => {
+                      const out = Number(d.outstandingAmount) || 0;
+                      return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+                        <label style="font-size:13px;color:#065f46;display:flex;gap:6px;align-items:center;cursor:pointer;flex:1;min-width:220px">
+                          <input type="checkbox" class="fDepChk" value="${d.id}" data-out="${out}" ${matchedIds.has(d.id) ? 'checked' : ''} onchange="Page.onApplyDepChange()">
+                          <span>${Layout.esc(d.documentNumber)} · คงเหลือ <b>${Layout.money(out)}</b>${d.reference ? ' · ' + Layout.esc(d.reference) : ''}</span>
+                        </label>
+                        <input type="number" step="0.01" min="0" class="fDepAmt" data-id="${d.id}" style="max-width:130px;font-size:13px" value="${out.toFixed(2)}" onchange="Page.onApplyDepChange()" placeholder="ยอดหัก" title="ยอดที่หัก (รวม VAT) — ไม่เกินคงเหลือ">
+                      </div>`;
+                    }).join('');
+                    return `<div style="width:100%;margin-top:8px">
+                      <div style="font-size:13px;color:#065f46;font-weight:700">หักมัดจำเข้าใบนี้ตอนบันทึก <span style="font-weight:400">— ติ๊กใบที่จะหัก (เลือกหลายใบได้) · ต้องกด "บันทึกและอนุมัติ"</span></div>
+                      ${rows}
                     </div>`;
                   })()}
             </div>`;
           // ตั้งค่า pending apply เริ่มต้นตาม pre-select (ถ้า booking match → เปิดไว้เลย)
-          this._pendingDepositApply = null;
+          this._pendingDepositApplies = [];
           if (!this.editingId) this.onApplyDepChange();
         } catch { /* best-effort */ }
       },
 
-      /** ตอนสร้างใหม่: sync ตัวเลือกหักมัดจำ (checkbox + ใบ + ยอด) → เก็บใน
-       *  this._pendingDepositApply เพื่อให้ save() เรียก applyDeposit หลัง approve.
-       *  cap ยอดไม่เกินคงเหลือของใบที่เลือก (guard ชั้น UI; backend ก็ guard). */
+      /** ตอนสร้างใหม่: sync ตัวเลือกหักมัดจำ "หลายใบ" (checkbox rows + ยอดต่อใบ) →
+       *  เก็บ array this._pendingDepositApplies เพื่อให้ save() วนเรียก applyDeposit
+       *  ทีละใบหลัง approve. คง JV entries ที่เลือกไว้ (kind='journal') ไม่ให้หาย.
+       *  cap ยอดต่อใบไม่เกินคงเหลือ (guard ชั้น UI; backend ก็ guard). */
       onApplyDepChange() {
-        const chk = document.getElementById('fApplyDepOnSave');
-        const sel = document.getElementById('fApplyDepId');
-        const amt = document.getElementById('fApplyDepAmount');
-        if (!chk || !sel) { this._pendingDepositApply = null; return; }
-        const out = parseFloat(sel.selectedOptions[0]?.dataset.out || '0') || 0;
-        let val = parseFloat(amt?.value || '0') || 0;
-        if (val <= 0 || val > out) { val = out; if (amt) amt.value = out.toFixed(2); }
-        this._pendingDepositApply = (chk.checked && sel.value && val > 0.005)
-          ? { depositDocumentId: sel.value, amount: val }
-          : null;
+        const jvEntries = (this._pendingDepositApplies || []).filter(a => a.kind === 'journal');
+        const docEntries = [];
+        document.querySelectorAll('.fDepChk').forEach(chk => {
+          if (!chk.checked) return;
+          const id = chk.value;
+          const out = parseFloat(chk.dataset.out || '0') || 0;
+          const amtEl = document.querySelector(`.fDepAmt[data-id="${id}"]`);
+          let val = parseFloat(amtEl?.value || '0') || 0;
+          if (val <= 0 || val > out) { val = out; if (amtEl) amtEl.value = out.toFixed(2); }
+          if (val > 0.005) docEntries.push({ depositDocumentId: id, amount: val });
+        });
+        this._pendingDepositApplies = [...docEntries, ...jvEntries];
       },
 
       /** ค้น JV มัดจำที่ไม่มีเอกสาร — ใส่ query (เลขอ้างอิง/booking/เลข JV)
@@ -2165,13 +2174,14 @@
             await this.searchJvDeposits();
           } catch (e) { Layout.toast(e.message || 'หัก JV ไม่สำเร็จ', 'error'); }
         } else {
-          // สร้างใหม่: ตั้ง pending (kind=journal) → save() หักหลัง approve.
-          // ปิดตัวเลือกมัดจำเอกสาร (checkbox) กันหัก 2 ทาง
-          const chk = document.getElementById('fApplyDepOnSave'); if (chk) chk.checked = false;
-          this._pendingDepositApply = { kind: 'journal', journalEntryNumber: entryNumber, amount: gross };
+          // สร้างใหม่: append JV เข้า pending array (kind=journal) — หักพร้อมมัดจำเอกสาร
+          // หลายใบได้ (ไม่ต้อง mutual-exclusive กับ checkbox แล้ว). save() หักหลัง approve
+          this._pendingDepositApplies = this._pendingDepositApplies || [];
+          if (!this._pendingDepositApplies.some(a => a.kind === 'journal' && a.journalEntryNumber === entryNumber))
+            this._pendingDepositApplies.push({ kind: 'journal', journalEntryNumber: entryNumber, amount: gross });
           Layout.toast(`เลือก JV ${entryNumber} แล้ว — จะหักตอนกด "บันทึกและอนุมัติ"`, 'info', 7000);
           const box = document.getElementById('jvDepResults');
-          if (box) box.innerHTML = `<span style="color:#065f46">✓ เลือก JV ${Layout.esc(entryNumber)} (${Layout.money(gross)}) — จะหักตอนบันทึกและอนุมัติ · <a href="#" onclick="Page._pendingDepositApply=null;Page.searchJvDeposits();return false" style="color:#dc2626">ยกเลิก</a></span>`;
+          if (box) box.innerHTML = `<span style="color:#065f46">✓ เลือก JV ${Layout.esc(entryNumber)} (${Layout.money(gross)}) — จะหักตอนบันทึกและอนุมัติ · <a href="#" onclick="Page._pendingDepositApplies=(Page._pendingDepositApplies||[]).filter(a=>!(a.kind==='journal'&&a.journalEntryNumber==='${Layout.esc(entryNumber)}'));Page.searchJvDeposits();return false" style="color:#dc2626">ยกเลิก</a></span>`;
         }
       },
 
@@ -4893,23 +4903,33 @@
               // ใช้ ApplyDepositToInvoiceAsync (verified): Dr 217xx + Dr [21913|21911]
               // / Cr ลูกหนี้ + ลด BalanceDue. รวม create+approve+หักมัดจำ ใน action เดียว
               // (ไม่ต้องบันทึกก่อนแล้วเปิดแก้). fail-soft: หักไม่ผ่าน → ใบยังอยู่ ให้หักเองได้
-              if (this._pendingDepositApply) {
-                try {
-                  if (this._pendingDepositApply.kind === 'journal') {
-                    await api.applyJournalDeposit(savedDocId, this._pendingDepositApply.journalEntryNumber);
-                    Layout.toast(`บันทึก+อนุมัติ + หัก JV มัดจำ ${this._pendingDepositApply.journalEntryNumber} เข้าใบนี้แล้ว`, 'success');
-                  } else {
-                    await api.applyDeposit(savedDocId, {
-                      depositDocumentId: this._pendingDepositApply.depositDocumentId,
-                      amount: this._pendingDepositApply.amount,
-                      applyDate: new Date().toISOString()
-                    });
-                    Layout.toast(`บันทึก+อนุมัติ + หักมัดจำ ${Layout.money(this._pendingDepositApply.amount)} เข้าใบนี้แล้ว`, 'success');
+              if (this._pendingDepositApplies && this._pendingDepositApplies.length) {
+                // วนหักทีละใบ (เอกสาร + JV ปนกันได้) — fail-soft ต่อใบ: ใบไหนหักไม่ผ่าน
+                // ข้ามไป ที่เหลือหักต่อ, สรุปผลรวมท้าย. backend guard over-apply อยู่แล้ว
+                let okCount = 0, failCount = 0, okAmt = 0;
+                for (const ap of this._pendingDepositApplies) {
+                  try {
+                    if (ap.kind === 'journal') {
+                      await api.applyJournalDeposit(savedDocId, ap.journalEntryNumber);
+                    } else {
+                      await api.applyDeposit(savedDocId, {
+                        depositDocumentId: ap.depositDocumentId,
+                        amount: ap.amount,
+                        applyDate: new Date().toISOString()
+                      });
+                    }
+                    okCount++; okAmt += (Number(ap.amount) || 0);
+                  } catch (de) {
+                    failCount++;
+                    console.warn('deposit apply failed', ap, de);
                   }
-                } catch (de) {
-                  Layout.toast('บันทึก+อนุมัติแล้ว แต่หักมัดจำไม่ผ่าน: '
-                    + (de.message || '') + ' — เปิดใบแล้วกด "หักมัดจำ" เองได้', 'warning', 9000);
                 }
+                if (okCount && !failCount)
+                  Layout.toast(`บันทึก+อนุมัติ + หักมัดจำ ${okCount} ใบ รวม ${Layout.money(okAmt)} เข้าใบนี้แล้ว`, 'success');
+                else if (okCount && failCount)
+                  Layout.toast(`บันทึก+อนุมัติแล้ว · หักมัดจำสำเร็จ ${okCount} ใบ (${Layout.money(okAmt)}) แต่ไม่ผ่าน ${failCount} ใบ — เปิดใบแล้วหักที่เหลือเองได้`, 'warning', 9000);
+                else
+                  Layout.toast('บันทึก+อนุมัติแล้ว แต่หักมัดจำไม่ผ่าน — เปิดใบแล้วกด "หักมัดจำ" เองได้', 'warning', 9000);
               } else {
                 Layout.toast('บันทึกและอนุมัติแล้ว — ออกเลขเอกสารจริง + ลงบัญชีเรียบร้อย', 'success');
               }
@@ -4921,11 +4941,11 @@
                   + (ae.message || 'กรุณาตรวจข้อมูล (§86/4/§82/5) แล้วอนุมัติจากหน้ารายการ'), 'warning', 9000);
               }
             }
-          } else if (this._pendingDepositApply && savedDocId) {
+          } else if (this._pendingDepositApplies && this._pendingDepositApplies.length && savedDocId) {
             // เลือกหักมัดจำแต่ไม่ได้กดอนุมัติ (บันทึกร่าง) → หักไม่ได้ (ต้อง approve ก่อน)
             Layout.toast('บันทึกเป็นร่างแล้ว — การหักมัดจำต้อง "บันทึกและอนุมัติ" (เปิดใบแล้วหักมัดจำได้)', 'info', 8000);
           }
-          this._pendingDepositApply = null;
+          this._pendingDepositApplies = [];
 
           Layout.closeModal('formModal');
           this.editingId = null;
