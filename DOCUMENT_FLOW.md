@@ -1249,6 +1249,16 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 83: purge ครอบผลข้างเคียงนอก GL ครบ (mirror void) — เดิม PurgeDocumentAsync_
+_ลบ JE/Payment/WHT/e-Tax แต่ "ไม่กลับ" สต๊อก, ยอดใบต้นทางที่ถูกตัดชำระ, project_
+_billed/cost, FixedAsset auto-register, bank match (MatchedPaymentId + สถานะ_
+_Matched ค้าง), ReconciliationGroup, OcrScanResult.CreatedDocumentId → resync =_
+_ตัดสต๊อกซ้ำ/ยอดเบิ้ล/กระทบยอดค้างผี. เพิ่ม step 0d (Revert+Billing−1+Stock−1+_
+_PCE reverse — ข้าม Draft/Voided กันคืนเกิน), ลบแถว StockMovement ของใบ, 0e_
+_asset cascade (NeedsReview+ไม่มี dep → ลบ; อื่น ๆ ตัด link), reset bank txn เป็น_
+_Unmatched ทั้งขา JE และ Payment, 7b ตัด link OCR scan, unwind groups หลัง_
+_commit. + JE คู่กลับรายการ: ลบ REV → คืนใบเดิม Posted; ลบใบเดิม → ลาก REV ตาม_
+_(AccountingService). batch-delete แจ้งรายการที่ข้าม (ผูกเอกสาร) แทนเงียบ._
 _รอบ 82: หักมัดจำ "หลายใบ" ในฟอร์มสร้างเอกสาร — เดิม dropdown เดียว = หักได้ใบเดียว/_
 _บันทึก. เปลี่ยนเป็น checkbox rows (แต่ละใบมียอดของตัวเอง, booking-match pre-tick),_
 _`_pendingDepositApply` → array `_pendingDepositApplies` (ปนมัดจำเอกสาร+JV ได้),_

@@ -815,8 +815,41 @@ public partial class AccountingService : IAccountingService
 
         await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
 
-        // Soft-delete dimension allocations for each line
-        var lineIds = entry.Lines.Select(l => l.Id).ToList();
+        var toDelete = new List<JournalEntry> { entry };
+
+        // ── รักษาคู่ "ใบเดิม ↔ ตัวกลับรายการ" ให้สอดคล้องเสมอ ──
+        // (1) ลบ "ตัวกลับรายการ" (REV) → คืนสถานะใบเดิมเป็น Posted + ตัด link
+        //     (เดิมใบเดิมค้าง Reversed ชี้หา JE ที่ถูกลบ → กลับรายการใหม่ก็ไม่ได้
+        //     รายงานก็โชว์ "กลับรายการแล้ว" ทั้งที่ผลกลับหายไปจาก GL แล้ว)
+        if (entry.OriginalEntryId.HasValue)
+        {
+            var original = await _db.JournalEntries.FirstOrDefaultAsync(j =>
+                j.Id == entry.OriginalEntryId.Value && j.CompanyId == companyId && !j.IsDeleted);
+            if (original != null && original.ReversedByEntryId == entry.Id)
+            {
+                original.ReversedByEntryId = null;
+                if (original.Status == JournalEntryStatus.Reversed)
+                    original.Status = JournalEntryStatus.Posted;
+                original.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        // (2) ลบ "ใบเดิมที่ถูกกลับรายการแล้ว" → ลบตัวกลับรายการตามไปด้วย —
+        //     คู่นี้ net ศูนย์ ปล่อย REV ค้างเดี่ยวจะเหลือผลกลับรายการลอยใน GL
+        if (entry.ReversedByEntryId.HasValue)
+        {
+            var rev = await _db.JournalEntries
+                .Include(j => j.Lines)
+                .FirstOrDefaultAsync(j => j.Id == entry.ReversedByEntryId.Value
+                    && j.CompanyId == companyId && !j.IsDeleted);
+            if (rev != null)
+            {
+                await ValidateFiscalPeriodOpenAsync(rev.FiscalPeriodId);
+                toDelete.Add(rev);
+            }
+        }
+
+        var lineIds = toDelete.SelectMany(e => e.Lines.Select(l => l.Id)).ToList();
         var dims = await _db.JournalLineDimensions
             .Where(d => lineIds.Contains(d.JournalEntryLineId))
             .ToListAsync();
@@ -826,16 +859,16 @@ public partial class AccountingService : IAccountingService
             d.UpdatedAt = DateTime.UtcNow;
         }
 
-        // Soft-delete lines
-        foreach (var line in entry.Lines)
+        foreach (var e in toDelete)
         {
-            line.IsDeleted = true;
-            line.UpdatedAt = DateTime.UtcNow;
+            foreach (var line in e.Lines)
+            {
+                line.IsDeleted = true;
+                line.UpdatedAt = DateTime.UtcNow;
+            }
+            e.IsDeleted = true;
+            e.UpdatedAt = DateTime.UtcNow;
         }
-
-        // Soft-delete the entry itself
-        entry.IsDeleted = true;
-        entry.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
     }
 
@@ -1138,6 +1171,43 @@ public partial class AccountingService : IAccountingService
             .Where(j => j.CompanyId == companyId && entryIds.Contains(j.Id)
                 && !j.SourceDocumentId.HasValue)
             .ToListAsync();
+
+        var deleteIds = entries.Select(e => e.Id).ToHashSet();
+
+        // ── รักษาคู่ "ใบเดิม ↔ ตัวกลับรายการ" เหมือน delete เดี่ยว ──
+        // ลบ REV → คืนสถานะใบเดิม (ถ้าใบเดิมไม่ได้ถูกลบในชุดเดียวกัน)
+        var originalIds = entries
+            .Where(e => e.OriginalEntryId.HasValue && !deleteIds.Contains(e.OriginalEntryId.Value))
+            .Select(e => e.OriginalEntryId!.Value).Distinct().ToList();
+        if (originalIds.Count > 0)
+        {
+            var originals = await _db.JournalEntries
+                .Where(j => originalIds.Contains(j.Id) && j.CompanyId == companyId && !j.IsDeleted)
+                .ToListAsync();
+            foreach (var original in originals)
+            {
+                if (!original.ReversedByEntryId.HasValue || !deleteIds.Contains(original.ReversedByEntryId.Value))
+                    continue;
+                original.ReversedByEntryId = null;
+                if (original.Status == JournalEntryStatus.Reversed)
+                    original.Status = JournalEntryStatus.Posted;
+                original.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        // ลบใบเดิมที่ถูกกลับแล้ว → ลากตัวกลับรายการที่ไม่อยู่ในชุดมาลบด้วย (คู่ net ศูนย์)
+        var danglingRevIds = entries
+            .Where(e => e.ReversedByEntryId.HasValue && !deleteIds.Contains(e.ReversedByEntryId.Value))
+            .Select(e => e.ReversedByEntryId!.Value).Distinct().ToList();
+        if (danglingRevIds.Count > 0)
+        {
+            var revs = await _db.JournalEntries
+                .Include(j => j.Lines)
+                .Where(j => danglingRevIds.Contains(j.Id) && j.CompanyId == companyId && !j.IsDeleted)
+                .ToListAsync();
+            entries.AddRange(revs);
+            foreach (var r in revs) deleteIds.Add(r.Id);
+        }
 
         var allLineIds = entries.SelectMany(e => e.Lines.Select(l => l.Id)).ToList();
         var dims = await _db.JournalLineDimensions
