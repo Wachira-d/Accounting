@@ -97,14 +97,18 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
     public async Task<WithholdingTaxCertResponse> CreateAsync(Guid companyId, CreateWithholdingTaxCertRequest request, string createdBy)
     {
-        // Auto-determine TaxFormType from contact if not specified
-        var taxFormType = request.TaxFormType;
-        if (!taxFormType.HasValue)
-        {
-            var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.PayeeContactId && c.CompanyId == companyId)
-                ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
-            taxFormType = DetermineTaxFormType(contact);
-        }
+        // เลือก/ตรวจ TaxFormType จาก payee เสมอ — ไม่เชื่อค่าที่ caller ส่งมาแบบตรง ๆ
+        // (เคสจริง: มังกรออกใบให้บริษัทแต่ส่ง TaxFormType=ภ.ง.ด.3 มา → เดิมเชื่อทันที
+        // = ใบผิด). ProcessReceipt/integration/UI ทุกทางต้องผ่าน create นี้ → แก้ที่
+        // จุดเดียวคุมได้หมด. ภ.ง.ด.3↔53 derive จาก juristic status ของ payee จริง
+        var payee = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.PayeeContactId && c.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        var (resolvedForm, corrected, reason) = ResolveWhtFormType(payee, request.TaxFormType);
+        if (corrected)
+            _logger.LogWarning(
+                "WHT cert: แก้ประเภทแบบจาก {From} → {To} ({Reason}) payee={Payee} taxId={TaxId} — ค่าที่ส่งมาไม่ตรงกับสถานะผู้ถูกหัก",
+                request.TaxFormType, resolvedForm, reason, payee.Name, payee.TaxId);
+        var taxFormType = (TaxType?)resolvedForm;
 
         // เลขที่ 50ทวิ = WHT-{ปีค.ศ.}{เดือน 2 หลัก}-{running 4 หลัก} รันต่อ "เดือนภาษี"
         // (company × ปี × เดือน). เดือน = TaxMonth ที่ผู้ใช้ระบุ (เดือนของเงินได้ที่จ่าย)
@@ -187,7 +191,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         // อัปเดต header fields (CertificateNumber + TaxYear sequence ไม่แตะ)
         cert.PayeeContactId = request.PayeeContactId;
-        if (request.TaxFormType.HasValue) cert.TaxFormType = request.TaxFormType.Value;
+        // ตรวจ/แก้ประเภทแบบตาม payee เหมือน CreateAsync — แก้มือก็ต้องถูกกฎ
+        // (ภ.ง.ด.3↔53 ขึ้นกับผู้ถูกหัก ไม่ใช่สิ่งที่ user เลือกได้ตามใจ)
+        var updPayee = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.PayeeContactId && c.CompanyId == companyId);
+        var (updForm, updCorrected, updReason) = ResolveWhtFormType(updPayee, request.TaxFormType ?? cert.TaxFormType);
+        if (updCorrected)
+            _logger.LogWarning("WHT cert update: แก้ประเภทแบบ → {To} ({Reason}) payee={Payee}", updForm, updReason, updPayee?.Name);
+        cert.TaxFormType = updForm;
         cert.TaxYear = request.TaxYear;
         cert.TaxMonth = request.TaxMonth;
         cert.CertificateType = request.CertificateType;
@@ -392,8 +402,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         if (existing)
             throw new InvalidOperationException("เอกสารนี้มีหนังสือรับรองหัก ณ ที่จ่ายแล้ว");
 
-        // Determine tax form type: ภ.ง.ด.53 for juristic persons, ภ.ง.ด.3 for individuals
-        var taxFormType = DetermineTaxFormType(doc.Contact);
+        // ประเภทแบบ ภ.ง.ด.53 นิติบุคคล / ภ.ง.ด.3 บุคคลธรรมดา — ตรวจจากหลายสัญญาณ
+        // (เลขภาษี 13 หลัก + ContactType + ชื่อ) ไม่ใช่แค่ ContactType ที่ default เป็น
+        // Individual (เคสบริษัทที่ contact สร้างจาก integration แล้วไม่ตั้ง type)
+        var (taxFormType, _, _) = ResolveWhtFormType(doc.Contact, null);
 
         // เลขเดือน = เดือน "เงินได้ที่จ่าย" (tax month) ไม่ใช่เดือนที่ generate (UtcNow)
         // → ตรงกับ TaxMonth ที่ลงในใบ + สอดคล้องกับ CreateAsync (WHT-YYYYMM-####)
@@ -586,6 +598,70 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             ContactType.GovernmentAgency => TaxType.WithholdingTax53,
             _ => TaxType.WithholdingTax3
         };
+    }
+
+    // ── ตรวจว่า payee เป็น "นิติบุคคล" หรือ "บุคคลธรรมดา" แบบหลายสัญญาณ ──
+    // ประเภทแบบ ภ.ง.ด. ขึ้นกับ *ผู้ถูกหักภาษี*: นิติบุคคล → 53, บุคคลธรรมดา → 3.
+    // เดิมดูแค่ ContactType (default = Individual) → ถ้า contact ถูกสร้างจาก
+    // integration/มังกร โดยไม่ตั้ง type ให้ถูก หรือส่ง TaxFormType=ภ.ง.ด.3 มาตรง ๆ
+    // ระบบเชื่อทันที → บริษัทได้ใบ ภ.ง.ด.3 ผิด. ตัวนี้ยืนยันจากหลักฐานที่หนักแน่น:
+    //   1) เลขประจำตัวผู้เสียภาษี 13 หลัก — นิติบุคคลขึ้นต้น 0 / บุคคลธรรมดา 1-8
+    //      (authoritative ที่สุด: เป็นเลขทะเบียนตามกฎหมาย)
+    //   2) ContactType ระบุชัดเป็นนิติบุคคล/ราชการ
+    //   3) ชื่อมีคำบ่งชี้นิติบุคคล (บริษัท/ห้างหุ้นส่วน/มหาชน/Co.,Ltd…)
+    // คืน true=นิติบุคคล, false=บุคคลธรรมดา, null=ไม่มีสัญญาณชัด (ให้ caller fallback)
+    internal static bool? DetectJuristic(Contact? contact)
+    {
+        if (contact == null) return null;
+
+        var digits = new string((contact.TaxId ?? "").Where(char.IsDigit).ToArray());
+        if (digits.Length == 13)
+        {
+            if (digits[0] == '0') return true;                    // นิติบุคคล
+            if (digits[0] >= '1' && digits[0] <= '8') return false; // บุคคลธรรมดา
+        }
+
+        if (contact.ContactType is ContactType.JuristicPerson or ContactType.GovernmentAgency)
+            return true;
+
+        var name = (contact.Name ?? "").Trim();
+        if (name.Length > 0)
+        {
+            // Thai keywords (distinctive) + English legal suffixes
+            string[] thaiKw = { "บริษัท", "บมจ", "หจก", "ห้างหุ้นส่วน", "มหาชน", "องค์การ", "สหกรณ์", "มูลนิธิ", "สมาคม" };
+            if (thaiKw.Any(k => name.Contains(k))) return true;
+            var lower = name.ToLowerInvariant();
+            string[] engKw = { "co.,ltd", "co., ltd", "co.ltd", "company limited", "ltd.", "ltd ", " plc", "public company", "partnership", "corporation", "incorporated" };
+            if (engKw.Any(k => lower.Contains(k))) return true;
+        }
+
+        // ไม่มีสัญญาณนิติบุคคล + ContactType ตั้งเป็น Individual ชัด → บุคคลธรรมดา;
+        // ถ้า type ยังเป็น default โดยไม่มีหลักฐานอื่น คืน null ให้ caller ตัดสิน
+        return contact.ContactType == ContactType.Individual ? false : (bool?)null;
+    }
+
+    /// <summary>เลือกประเภทแบบ ภ.ง.ด. ที่ "ถูกต้อง" จาก payee — ตรวจ/แก้แม้ caller
+    /// (เช่น มังกร) ส่ง TaxFormType มาแล้ว. แก้เฉพาะแกน ภ.ง.ด.3 ↔ 53 (ขึ้นกับผู้ถูก
+    /// หัก); ภ.ง.ด.1 (เงินเดือน) / ภ.ง.ด.2 (ดอกเบี้ย/ปันผล) ขึ้นกับประเภทเงินได้ —
+    /// ไม่แตะ. คืน (form ที่ถูก, corrected=แก้จากที่ขอมาไหม, reason).</summary>
+    internal static (TaxType formType, bool corrected, string reason) ResolveWhtFormType(Contact? contact, TaxType? requested)
+    {
+        // แบบที่ไม่ใช่แกน 3/53 → ปล่อยตามที่ขอ (income-type-driven)
+        if (requested.HasValue
+            && requested.Value != TaxType.WithholdingTax3
+            && requested.Value != TaxType.WithholdingTax53)
+            return (requested.Value, false, "");
+
+        var juristic = DetectJuristic(contact);
+        TaxType correct;
+        string reason;
+        if (juristic == true) { correct = TaxType.WithholdingTax53; reason = "payee เป็นนิติบุคคล"; }
+        else if (juristic == false) { correct = TaxType.WithholdingTax3; reason = "payee เป็นบุคคลธรรมดา"; }
+        else if (contact != null) { correct = DetermineTaxFormType(contact); reason = "จาก ContactType"; }
+        else { correct = requested ?? TaxType.WithholdingTax3; reason = "ไม่พบ payee"; }
+
+        var corrected = requested.HasValue && requested.Value != correct;
+        return (correct, corrected, reason);
     }
 
     private static string ComposeFullAddress(string? address, string? subDistrict, string? district, string? province, string? postalCode,

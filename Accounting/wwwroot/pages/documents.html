@@ -237,6 +237,7 @@
                   <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้ — เริ่มนับ aging">ใบแจ้งหนี้</option>
                   <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้ + Cr Output VAT — เข้า ภพ.30">ใบกำกับภาษี</option>
                   <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR (หรือ Cr รายได้+VAT ถ้าจ่ายสด)">ใบเสร็จรับเงิน</option>
+                  <option value="Deposit" title="รับเงินมัดจำ/รับล่วงหน้าก่อนส่งมอบสินค้า-บริการ — Dr เงินสด/ธนาคาร / Cr ขายรอรับรู้ (217xx) แทนรายได้ · รับรู้รายได้/หักเข้าใบกำกับภายหลัง (ออกใบเสร็จ + ตั้ง IsDeposit ให้อัตโนมัติ)">💰 ใบมัดจำ / รับเงินล่วงหน้า</option>
                   <option value="DeliveryNote" title="ส่งของแล้วแต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL, เป็นเอกสารโลจิสติก">ใบส่งของ</option>
                   <option value="BillingNote" title="ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว — ไม่ลง GL, เป็นเอกสารเรียกเก็บ">ใบวางบิล</option>
                   <option value="DebitNote" title="เพิ่มยอดที่ลูกค้าต้องจ่าย (เช่นค่าปรับ, ค่าขนส่งเพิ่ม) — Dr AR / Cr รายได้/VAT">ใบเพิ่มหนี้</option>
@@ -290,6 +291,16 @@
                → เรียก applyDeposit (Realize 217xx + ลด BalanceDue + ย้าย VAT
                21913→21911 ถ้า deferred). -->
           <div id="contactDepositBanner" style="display:none;background:#ecfdf5;border:1px solid #6ee7b7;border-left:4px solid #10b981;border-radius:10px;padding:12px 14px;margin-bottom:14px"></div>
+          <!-- JV มัดจำที่ไม่มีเอกสาร (post ตรงผ่าน integration/journals หรือลงมือ) —
+               ค้นด้วยเลขอ้างอิง/booking/เลข JV แล้วนำมาหักเข้าใบนี้ (หักเต็ม JV). -->
+          <div id="jvDepositBox" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #3b82f6;border-radius:10px;padding:10px 14px;margin-bottom:14px">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span style="font-size:13px;font-weight:600;color:#1e40af">🔎 หา JV มัดจำ (ไม่มีเอกสาร)</span>
+              <input type="text" id="jvDepQuery" class="form-input" style="max-width:260px;font-size:13px" placeholder="เลขอ้างอิง / booking / เลข JV" onkeydown="if(event.key==='Enter'){event.preventDefault();Page.searchJvDeposits()}">
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.searchJvDeposits()">ค้นหา</button>
+            </div>
+            <div id="jvDepResults" style="margin-top:8px;font-size:13px"></div>
+          </div>
           <!-- §82/5 — เตือนเมื่อเอกสารต้นทางเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/
                ใบเสร็จ ที่ไม่ใช่ใบกำกับเต็มรูป §86/4). มาจาก OCR handoff. -->
           <div id="vatClaimWarnBanner" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#991b1b;line-height:1.7"></div>
@@ -2075,12 +2086,93 @@
                 ? (matchedDeposits.length === 1
                     // 1-click apply: booking ตรงเป๊ะ 1 ใบ → กดปุ่มเดียวจบ ไม่ต้อง
                     // เปิด picker (กฎเหล็ก #3: ระบบเติมให้ ผู้ใช้แค่ยืนยัน)
-                    ? `<button type="button" class="btn btn-sm btn-success" onclick="Page.quickApplyDeposit('${matchedDeposits[0].depositDocumentId}', ${matchedDeposits[0].outstandingAmount})" title="หักมัดจำใบที่ booking ตรงกัน ${matchedDeposits[0].outstandingAmount.toFixed(2)} บาท ทันที — กดอีกครั้งใน picker ถ้าอยากปรับยอด"><b>✓ หักมัดจำทันที</b> ${Layout.money(matchedDeposits[0].outstandingAmount)}</button>
+                    ? `<button type="button" class="btn btn-sm btn-success" onclick="Page.quickApplyDeposit('${matchedDeposits[0].id}', ${matchedDeposits[0].outstandingAmount})" title="หักมัดจำใบที่ booking ตรงกัน ${matchedDeposits[0].outstandingAmount.toFixed(2)} บาท ทันที — กดอีกครั้งใน picker ถ้าอยากปรับยอด"><b>✓ หักมัดจำทันที</b> ${Layout.money(matchedDeposits[0].outstandingAmount)}</button>
                        <button type="button" class="btn btn-sm btn-ghost" onclick="Page.openApplyDeposit()" title="ปรับยอด/เลือกใบอื่น">ปรับ…</button>`
                     : `<button type="button" class="btn btn-sm btn-success" onclick="Page.openApplyDeposit()">${matchedDeposits.length ? 'หักมัดจำที่ booking ตรงกัน' : 'หักมัดจำจากใบนี้'}</button>`)
-                : `<span style="font-size:11px;color:#047857;font-style:italic">บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ</span>`}
+                // ── สร้างใหม่: เลือกหักมัดจำในฟอร์มได้เลย (บันทึก+อนุมัติ → apply อัตโนมัติ) ──
+                : (() => {
+                    const preId = matchedDeposits.length ? matchedDeposits[0].id : (summary.deposits[0]?.id || '');
+                    const preOut = matchedDeposits.length ? matchedDeposits[0].outstandingAmount : (summary.deposits[0]?.outstandingAmount || 0);
+                    return `<div style="width:100%;margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                      <label style="font-size:13px;color:#065f46;display:flex;gap:6px;align-items:center;cursor:pointer">
+                        <input type="checkbox" id="fApplyDepOnSave" ${matchedDeposits.length ? 'checked' : ''} onchange="Page.onApplyDepChange()">
+                        <b>หักมัดจำเข้าใบนี้ตอนบันทึก</b> (ต้องกด "บันทึกและอนุมัติ")
+                      </label>
+                      <select id="fApplyDepId" class="form-select" style="max-width:300px;font-size:13px" onchange="Page.onApplyDepChange()">
+                        ${summary.deposits.map(d => `<option value="${d.id}" data-out="${d.outstandingAmount}" ${d.id===preId?'selected':''}>${Layout.esc(d.documentNumber)} · คงเหลือ ${Layout.money(d.outstandingAmount)}${d.reference?' · '+Layout.esc(d.reference):''}</option>`).join('')}
+                      </select>
+                      <input type="number" step="0.01" min="0" id="fApplyDepAmount" class="form-input" style="max-width:130px;font-size:13px" value="${preOut.toFixed(2)}" onchange="Page.onApplyDepChange()" placeholder="ยอดหัก" title="ยอดที่หัก (รวม VAT) — ไม่เกินยอดคงเหลือ">
+                    </div>`;
+                  })()}
             </div>`;
+          // ตั้งค่า pending apply เริ่มต้นตาม pre-select (ถ้า booking match → เปิดไว้เลย)
+          this._pendingDepositApply = null;
+          if (!this.editingId) this.onApplyDepChange();
         } catch { /* best-effort */ }
+      },
+
+      /** ตอนสร้างใหม่: sync ตัวเลือกหักมัดจำ (checkbox + ใบ + ยอด) → เก็บใน
+       *  this._pendingDepositApply เพื่อให้ save() เรียก applyDeposit หลัง approve.
+       *  cap ยอดไม่เกินคงเหลือของใบที่เลือก (guard ชั้น UI; backend ก็ guard). */
+      onApplyDepChange() {
+        const chk = document.getElementById('fApplyDepOnSave');
+        const sel = document.getElementById('fApplyDepId');
+        const amt = document.getElementById('fApplyDepAmount');
+        if (!chk || !sel) { this._pendingDepositApply = null; return; }
+        const out = parseFloat(sel.selectedOptions[0]?.dataset.out || '0') || 0;
+        let val = parseFloat(amt?.value || '0') || 0;
+        if (val <= 0 || val > out) { val = out; if (amt) amt.value = out.toFixed(2); }
+        this._pendingDepositApply = (chk.checked && sel.value && val > 0.005)
+          ? { depositDocumentId: sel.value, amount: val }
+          : null;
+      },
+
+      /** ค้น JV มัดจำที่ไม่มีเอกสาร — ใส่ query (เลขอ้างอิง/booking/เลข JV)
+       *  → list JV ที่เปิดให้หัก. ถ้าไม่ใส่ query จะดึงเลข booking ในฟอร์มมาช่วย
+       *  (ถ้ามี) แล้วค่อย fallback list ทั้งหมด. */
+      async searchJvDeposits() {
+        const box = document.getElementById('jvDepResults');
+        if (!box) return;
+        const api = Layout.api(); if (!api) return;
+        let q = (document.getElementById('jvDepQuery')?.value || '').trim();
+        if (!q) q = (document.getElementById('fBookingNumber')?.value || '').trim();
+        box.innerHTML = '<span style="color:#64748b">กำลังค้นหา…</span>';
+        try {
+          const r = await api.searchJournalDeposits(q);
+          const rows = r?.data || [];
+          if (!rows.length) { box.innerHTML = `<span style="color:#64748b">ไม่พบ JV มัดจำที่เปิดอยู่${q ? ' สำหรับ "' + Layout.esc(q) + '"' : ''} — ลองคำค้นอื่น หรือเว้นว่างเพื่อดูทั้งหมด</span>`; return; }
+          box.innerHTML = rows.map(j => `
+            <div style="display:flex;gap:10px;align-items:center;padding:6px 8px;border:1px solid #dbeafe;border-radius:8px;margin-bottom:6px;background:#fff">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:600;color:#1e3a8a">${Layout.esc(j.entryNumber)} · ${Layout.money(j.gross)}</div>
+                <div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${new Date(j.entryDate).toLocaleDateString('th-TH')}${j.reference ? ' · อ้างอิง ' + Layout.esc(j.reference) : ''}${j.description ? ' · ' + Layout.esc(j.description) : ''}</div>
+              </div>
+              <button type="button" class="btn btn-sm btn-primary" onclick="Page.pickJvDeposit('${Layout.esc(j.entryNumber)}', ${j.gross})">หัก</button>
+            </div>`).join('');
+        } catch (e) { box.innerHTML = `<span style="color:#dc2626">ค้นไม่สำเร็จ: ${Layout.esc(e.message || '')}</span>`; }
+      },
+
+      /** เลือก JV มัดจำมาหัก — editing (ใบ approved แล้ว) หักทันที;
+       *  creating → เก็บ pending แล้วหักหลัง "บันทึกและอนุมัติ". */
+      async pickJvDeposit(entryNumber, gross) {
+        const api = Layout.api(); if (!api) return;
+        if (this.editingId) {
+          if (!confirm(`หัก JV มัดจำ ${entryNumber} (${Layout.money(gross)}) เข้าใบนี้?`)) return;
+          try {
+            await api.applyJournalDeposit(this.editingId, entryNumber);
+            Layout.toast('หัก JV มัดจำเข้าใบนี้แล้ว', 'success');
+            if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
+            await this.searchJvDeposits();
+          } catch (e) { Layout.toast(e.message || 'หัก JV ไม่สำเร็จ', 'error'); }
+        } else {
+          // สร้างใหม่: ตั้ง pending (kind=journal) → save() หักหลัง approve.
+          // ปิดตัวเลือกมัดจำเอกสาร (checkbox) กันหัก 2 ทาง
+          const chk = document.getElementById('fApplyDepOnSave'); if (chk) chk.checked = false;
+          this._pendingDepositApply = { kind: 'journal', journalEntryNumber: entryNumber, amount: gross };
+          Layout.toast(`เลือก JV ${entryNumber} แล้ว — จะหักตอนกด "บันทึกและอนุมัติ"`, 'info', 7000);
+          const box = document.getElementById('jvDepResults');
+          if (box) box.innerHTML = `<span style="color:#065f46">✓ เลือก JV ${Layout.esc(entryNumber)} (${Layout.money(gross)}) — จะหักตอนบันทึกและอนุมัติ · <a href="#" onclick="Page._pendingDepositApply=null;Page.searchJvDeposits();return false" style="color:#dc2626">ยกเลิก</a></span>`;
+        }
       },
 
       /** 1-click apply เมื่อมัดจำ booking match เป๊ะ 1 ใบ — ข้าม picker
@@ -2785,6 +2877,9 @@
           hint.style.display = opt.title ? '' : 'none';
         }
         const docType = sel?.value;
+        // JV มัดจำ (ไม่มีเอกสาร) — โชว์เฉพาะฝั่งขายที่ตั้งลูกหนี้ (หักมัดจำได้)
+        const jvBox = document.getElementById('jvDepositBox');
+        if (jvBox) jvBox.style.display = ['Invoice', 'TaxInvoice'].includes(docType) ? '' : 'none';
         // Show/hide expense category based on document type
         const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
         const ecField = document.getElementById('fExpenseCategory')?.closest('.form-group');
@@ -2880,14 +2975,17 @@
           aiAccBtn.style.display = purchaseLike.includes(docType) ? '' : 'none';
         }
 
-        // เงินมัดจำ/รับล่วงหน้า — แสดงเฉพาะใบเสร็จ/ใบสำคัญรับ (รับเงินก่อนส่งมอบ)
+        // เงินมัดจำ/รับล่วงหน้า:
+        //  • Receipt/ReceiptVoucher → โชว์ checkbox ให้ติ๊กเอง
+        //  • pseudo-type "Deposit" (ใบมัดจำ) → บังคับเป็นมัดจำเลย (ซ่อน checkbox,
+        //    ติ๊กให้อัตโนมัติ) → save map เป็น Receipt + isDeposit=true
         const depositWrap = document.getElementById('fIsDepositWrap');
         if (depositWrap) {
           const isReceipt = docType === 'Receipt' || docType === 'ReceiptVoucher';
+          const isDepositType = docType === 'Deposit';
           depositWrap.style.display = isReceipt ? 'inline-flex' : 'none';
-          if (!isReceipt) {
-            const cb = document.getElementById('fIsDeposit'); if (cb) cb.checked = false;
-          }
+          const cb = document.getElementById('fIsDeposit');
+          if (cb) cb.checked = isDepositType ? true : (isReceipt ? cb.checked : false);
           this.onDepositToggle();
         }
         // Reset checkbox when the section hides so a stale "paid" state
@@ -4453,6 +4551,26 @@
         if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
         if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }
+        // 🛡️ กันพลาด: เลือกผัง "ขายรอรับรู้/รับล่วงหน้า" (215xx/217xx) ในบรรทัด แต่
+        // ไม่ได้ตั้งเป็นเอกสารมัดจำ → GL เข้า 217xx จริง แต่ subledger มัดจำไม่รู้จัก
+        // ใบนี้ (หน้าเงินมัดจำไม่โชว์ · Realize/หักเข้าใบกำกับ/drives ไม่ได้ =
+        // "มัดจำไร้เอกสาร"). เตือน + แนะนำเลือกประเภท "ใบมัดจำ"
+        const _isDepositDocNow = _docType === 'Deposit'
+          || ((_docType === 'Receipt' || _docType === 'ReceiptVoucher')
+              && document.getElementById('fIsDeposit')?.checked);
+        const _hasDepositAcctLine = lines.some(l => {
+          const c = (l.accountCode || '').trim();
+          return c.startsWith('215') || c.startsWith('217');
+        });
+        if (_hasDepositAcctLine && !_isDepositDocNow) {
+          if (!confirm('พบบรรทัดที่เลือกผังบัญชี "ขายรอรับรู้/รับล่วงหน้า" (215xx/217xx) '
+            + 'แต่ยังไม่ได้ตั้งเป็นเอกสารมัดจำ\n\n'
+            + '⚠️ ถ้าลงแบบนี้ GL จะเข้า 217xx จริง แต่ระบบมัดจำจะไม่รู้จักใบนี้ '
+            + '(หน้าเงินมัดจำไม่โชว์ · Realize/หักเข้าใบกำกับ/drives ไม่ได้)\n\n'
+            + 'แนะนำ: เลือกประเภท "💰 ใบมัดจำ / รับเงินล่วงหน้า" แทน\n\n'
+            + 'กด "ตกลง" = ลงตามที่เลือก (ไม่แนะนำ) · "ยกเลิก" = กลับไปแก้'))
+            return;
+        }
         // Required-field validation ที่เดิม "ติด * แต่ไม่เตือน" (audit พบ
         // user เห็นดอกจันแล้วบันทึกผ่านได้ทำให้สับสน) — เพิ่มเช็คให้ครบ:
         // • PV ที่ติ๊ก "ใช้งานใบกำกับภาษี" → เลขใบ+วันที่+สาขา ต้องมี (§86/4)
@@ -4515,7 +4633,8 @@
           _combineTax = true;
           Layout.toast('ขายรับเงินสด + มี VAT → ออกเป็น "ใบแจ้งหนี้/ใบกำกับภาษี" ให้อัตโนมัติตาม §86/4 (ถ้าผู้ซื้อไม่ต้องการใบกำกับ ให้ติ๊ก "ไม่ประสงค์รับใบกำกับภาษี")', 'info', 7000);
         }
-        const _effectiveDocType = _combineTax ? 'TaxInvoice' : _docType;
+        // pseudo-type "Deposit" (ใบมัดจำ) → ลงเป็น Receipt + isDeposit=true
+        const _effectiveDocType = _combineTax ? 'TaxInvoice' : (_docType === 'Deposit' ? 'Receipt' : _docType);
         const payload = {
           documentType: _effectiveDocType,
           combinedInvoiceTaxInvoice: _combineTax,
@@ -4583,9 +4702,10 @@
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
           // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"
           // (217xx) แทนรายได้. depositOutputVatDeferred เลือกจังหวะ tax point.
-          isDeposit: (document.getElementById('fDocType').value === 'Receipt'
-                      || document.getElementById('fDocType').value === 'ReceiptVoucher')
-                     && (document.getElementById('fIsDeposit')?.checked || false),
+          isDeposit: _docType === 'Deposit'
+                     || ((document.getElementById('fDocType').value === 'Receipt'
+                          || document.getElementById('fDocType').value === 'ReceiptVoucher')
+                         && (document.getElementById('fIsDeposit')?.checked || false)),
           depositOutputVatDeferred:
             (document.querySelector('input[name="fDepositVat"]:checked')?.value === 'deferred') || false,
           depositDeferredAccountCode:
@@ -4769,7 +4889,30 @@
               && !['Approved', 'Sent', 'PartiallyPaid', 'Paid'].includes(savedStatus)) {
             try {
               await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
-              Layout.toast('บันทึกและอนุมัติแล้ว — ออกเลขเอกสารจริง + ลงบัญชีเรียบร้อย', 'success');
+              // ── หักมัดจำเข้าใบนี้ (ถ้าเลือกไว้ตอนสร้าง) — ต่อจาก approve สำเร็จ ──
+              // ใช้ ApplyDepositToInvoiceAsync (verified): Dr 217xx + Dr [21913|21911]
+              // / Cr ลูกหนี้ + ลด BalanceDue. รวม create+approve+หักมัดจำ ใน action เดียว
+              // (ไม่ต้องบันทึกก่อนแล้วเปิดแก้). fail-soft: หักไม่ผ่าน → ใบยังอยู่ ให้หักเองได้
+              if (this._pendingDepositApply) {
+                try {
+                  if (this._pendingDepositApply.kind === 'journal') {
+                    await api.applyJournalDeposit(savedDocId, this._pendingDepositApply.journalEntryNumber);
+                    Layout.toast(`บันทึก+อนุมัติ + หัก JV มัดจำ ${this._pendingDepositApply.journalEntryNumber} เข้าใบนี้แล้ว`, 'success');
+                  } else {
+                    await api.applyDeposit(savedDocId, {
+                      depositDocumentId: this._pendingDepositApply.depositDocumentId,
+                      amount: this._pendingDepositApply.amount,
+                      applyDate: new Date().toISOString()
+                    });
+                    Layout.toast(`บันทึก+อนุมัติ + หักมัดจำ ${Layout.money(this._pendingDepositApply.amount)} เข้าใบนี้แล้ว`, 'success');
+                  }
+                } catch (de) {
+                  Layout.toast('บันทึก+อนุมัติแล้ว แต่หักมัดจำไม่ผ่าน: '
+                    + (de.message || '') + ' — เปิดใบแล้วกด "หักมัดจำ" เองได้', 'warning', 9000);
+                }
+              } else {
+                Layout.toast('บันทึกและอนุมัติแล้ว — ออกเลขเอกสารจริง + ลงบัญชีเรียบร้อย', 'success');
+              }
             } catch (ae) {
               if (ae?.status === 403) {
                 Layout.toast('บันทึกเป็นร่างแล้ว — คุณไม่มีสิทธิ์อนุมัติ ให้ผู้มีสิทธิ์กด "อนุมัติ" ในหน้ารายการ', 'info', 8000);
@@ -4778,7 +4921,11 @@
                   + (ae.message || 'กรุณาตรวจข้อมูล (§86/4/§82/5) แล้วอนุมัติจากหน้ารายการ'), 'warning', 9000);
               }
             }
+          } else if (this._pendingDepositApply && savedDocId) {
+            // เลือกหักมัดจำแต่ไม่ได้กดอนุมัติ (บันทึกร่าง) → หักไม่ได้ (ต้อง approve ก่อน)
+            Layout.toast('บันทึกเป็นร่างแล้ว — การหักมัดจำต้อง "บันทึกและอนุมัติ" (เปิดใบแล้วหักมัดจำได้)', 'info', 8000);
           }
+          this._pendingDepositApply = null;
 
           Layout.closeModal('formModal');
           this.editingId = null;

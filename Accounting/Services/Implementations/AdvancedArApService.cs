@@ -107,7 +107,7 @@ public class AdvancedArApService : IAdvancedArApService
 
     public async Task<List<CreditSettingResponse>> GetAllCreditSettingsAsync(Guid companyId)
     {
-        var settings = await _db.Set<ContactCreditSetting>()
+        var settings = await _db.Set<ContactCreditSetting>().AsNoTracking()
             // ไม่ Include/OrderBy Contact ใน SQL (required nav + !IsDeleted →
             // INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach + sort ใน memory
             .Where(s => s.CompanyId == companyId && !s.IsDeleted)
@@ -321,7 +321,7 @@ public class AdvancedArApService : IAdvancedArApService
     {
         // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ). ค้นด้วยชื่อ
         // contact ทำผ่าน pre-resolve ContactId (IgnoreQueryFilters) แทน join.
-        var query = _db.Set<DunningLetter>()
+        var query = _db.Set<DunningLetter>().AsNoTracking()
             .Include(l => l.Lines)
             .Where(l => l.CompanyId == companyId && !l.IsDeleted);
 
@@ -413,7 +413,7 @@ public class AdvancedArApService : IAdvancedArApService
 
     public async Task<List<PaymentReminderResponse>> GetRemindersAsync(Guid companyId, Guid? documentId = null)
     {
-        var query = _db.Set<PaymentReminder>()
+        var query = _db.Set<PaymentReminder>().AsNoTracking()
             .Where(r => r.CompanyId == companyId && !r.IsDeleted);
 
         if (documentId.HasValue)
@@ -428,11 +428,11 @@ public class AdvancedArApService : IAdvancedArApService
         var docIds = reminders.Select(r => r.DocumentId).Distinct().ToList();
         var contactIds = reminders.Select(r => r.ContactId).Distinct().ToList();
 
-        var documents = await _db.Documents
+        var documents = await _db.Documents.AsNoTracking()
             .Where(d => docIds.Contains(d.Id))
             .ToDictionaryAsync(d => d.Id, d => d.DocumentNumber);
 
-        var contacts = await _db.Contacts
+        var contacts = await _db.Contacts.AsNoTracking()
             .Where(c => contactIds.Contains(c.Id))
             .ToDictionaryAsync(c => c.Id, c => c.Name);
 
@@ -462,7 +462,7 @@ public class AdvancedArApService : IAdvancedArApService
             .SumAsync(d => d.BalanceDue);
 
         // Get all documents in the period
-        var invoices = await _db.Documents
+        var invoices = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId
                 && d.ContactId == contactId
                 && d.DocumentType == DocumentType.Invoice
@@ -473,7 +473,7 @@ public class AdvancedArApService : IAdvancedArApService
             .ToListAsync();
 
         // Get all payments in the period
-        var payments = await _db.Payments
+        var payments = await _db.Payments.AsNoTracking()
             .Include(p => p.Document)
             .Where(p => p.CompanyId == companyId
                 && p.Document!.ContactId == contactId

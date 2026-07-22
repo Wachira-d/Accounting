@@ -2450,6 +2450,27 @@ public class OcrService : IOcrService
         foreach (var item in data.Items)
             item.Description = TrimSplitSuffix(item.Description, splitMarkers);
 
+        // 1b) ⭐ กัน "จำนวนระเบิด": OCR อ่านยอดบรรทัด (Amount) ถูก แต่อ่าน "จำนวน"
+        //     ผิด (มักอ่านตัวเลขในคอลัมน์ยอด/ราคา มาใส่เป็นจำนวน) → line-building
+        //     คิด qty×unitPrice → ยอดพุ่งไกลจาก Amount จริง. ถ้าเจอ Amount ที่เชื่อได้
+        //     + UnitPrice + Quantity ครบ แล้ว qty×price เพี้ยนจาก Amount เกิน tol
+        //     (±2% หรือ ฿1) → **เชื่อ Amount เป็นหลัก** แก้ Quantity = Amount/UnitPrice
+        //     (รักษายอดบรรทัด = Amount ที่ OCR แสดงถูก → ยอดรวมไม่ระเบิด).
+        //     ทำก่อน fold/merge เพื่อให้ EffAmt/ยอดรวมถัดไปใช้ค่าที่ reconcile แล้ว.
+        foreach (var item in data.Items)
+        {
+            var amt = item.Amount ?? 0m;
+            var up = item.UnitPrice ?? 0m;
+            var qty = item.Quantity ?? 0m;
+            if (amt <= 0m || up <= 0m || qty <= 0m) continue;
+            var computed = System.Math.Round(up * qty, 2);
+            var tol = System.Math.Max(1m, System.Math.Abs(amt) * 0.02m);
+            if (System.Math.Abs(computed - amt) <= tol) continue;   // ตรงอยู่แล้ว
+            // เพี้ยน → qty น่าจะอ่านผิด. เชื่อ Amount+UnitPrice → แก้ qty ให้ line = Amount
+            var fixedQty = System.Math.Round(amt / up, 3, System.MidpointRounding.AwayFromZero);
+            item.Quantity = fixedQty > 0m ? fixedQty : 1m;
+        }
+
         // EffAmt = ยอดบรรทัดที่เชื่อถือได้ — Amount ถ้ามี, ไม่งั้น UnitPrice×Quantity.
         // กันเคส external OCR ส่งแต่ UnitPrice+Quantity ไม่ได้ส่ง Amount.
         static decimal EffAmt(OcrExtractedLineItem it)
@@ -4437,6 +4458,24 @@ public class OcrService : IOcrService
         if (lineIndex >= items.Count)
             throw new ArgumentOutOfRangeException(nameof(lineIndex), "lineIndex เกินจำนวนรายการที่สแกนได้");
 
+        // ปิดลูปการสอน MatchLineProject (กฎเหล็ก #1) — ผู้ใช้ override project ราย
+        // บรรทัด = ground-truth. ถ้าบรรทัดนี้เคยถูก AI เดา (มี ProjectAiFeedbackId)
+        // → record คำตอบจริง. acceptedAi = ผู้ใช้เลือกตรงกับที่ AI แนะนำ.
+        var lineBefore = items[lineIndex];
+        if (_feedbackRecorder != null && lineBefore.ProjectAiFeedbackId.HasValue && projectId.HasValue)
+        {
+            try
+            {
+                var acceptedAi = lineBefore.AiSuggestedProjectId == projectId;
+                await _feedbackRecorder.RecordUserChoiceAsync(
+                    lineBefore.ProjectAiFeedbackId.Value, projectId.Value.ToString(), acceptedAi, default);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to record project-match feedback choice (non-fatal)");
+            }
+        }
+
         items[lineIndex].ProjectId = projectId;
         items[lineIndex].ProjectName = projectName;
         scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
@@ -4478,12 +4517,79 @@ public class OcrService : IOcrService
         foreach (var item in items)
         {
             if (onlyEmpty && item.ProjectId.HasValue) continue;
+            // ปิดลูป (กฎเหล็ก #1) เช่นเดียวกับ single-line — บรรทัดที่ AI เคยเดาแล้ว
+            // ผู้ใช้ "apply main" ทับ = user override. record ก่อนเขียนทับ.
+            if (_feedbackRecorder != null && item.ProjectAiFeedbackId.HasValue && projectId.HasValue)
+            {
+                try
+                {
+                    var acceptedAi = item.AiSuggestedProjectId == projectId;
+                    await _feedbackRecorder.RecordUserChoiceAsync(
+                        item.ProjectAiFeedbackId.Value, projectId.Value.ToString(), acceptedAi, default);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to record project-match feedback (bulk, non-fatal)");
+                }
+            }
             item.ProjectId = projectId;
             item.ProjectName = projectName;
         }
         scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
         scan.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>แก้ description / จำนวน / ราคาต่อหน่วย ของบรรทัด OCR ในหน้า review
+    /// (กฎเหล็ก #3: OCR เติมให้ครบ ผู้ใช้แค่ยืนยัน/แก้ inline — ไม่ต้องสร้างเอกสารก่อน
+    /// แล้วค่อยเข้าไปแก้ทีหลัง). recompute Amount = round(qty×unitPrice,2) เสมอ เพื่อ
+    /// ให้ qty-guard (SanitizeVatSplitArtifacts) ที่รันซ้ำตอน create ไม่ "แก้กลับ"
+    /// ค่าที่ผู้ใช้ตั้งเอง (qty×price == amount เป๊ะ → อยู่ในระยะ tolerance). persist
+    /// ลง ExtractedItemsJson → CreateDocumentFromScan อ่านไปใช้. คืน amount ใหม่ให้ UI
+    /// อัปเดตช่องยอดโดยไม่ต้อง refetch. null = ไม่แตะ field นั้น (คงค่าเดิม).</summary>
+    public async Task<decimal> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
+        int lineIndex, string? description, decimal? quantity, decimal? unitPrice)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new InvalidOperationException("OCR scan result not found.");
+        if (string.IsNullOrEmpty(scan.ExtractedItemsJson))
+            throw new InvalidOperationException("Scan ไม่มีรายการสินค้าใน OCR result.");
+        if (lineIndex < 0)
+            throw new ArgumentOutOfRangeException(nameof(lineIndex));
+        if (quantity.HasValue && quantity.Value < 0m)
+            throw new InvalidOperationException("จำนวนต้องไม่ติดลบ");
+        if (unitPrice.HasValue && unitPrice.Value < 0m)
+            throw new InvalidOperationException("ราคาต่อหน่วยต้องไม่ติดลบ");
+
+        List<OcrExtractedLineItem> items;
+        try
+        {
+            items = System.Text.Json.JsonSerializer
+                .Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new();
+        }
+        catch
+        {
+            throw new InvalidOperationException("ExtractedItemsJson เสียหาย — ไม่สามารถ parse");
+        }
+        if (lineIndex >= items.Count)
+            throw new ArgumentOutOfRangeException(nameof(lineIndex), "lineIndex เกินจำนวนรายการที่สแกนได้");
+
+        var line = items[lineIndex];
+        if (description != null) line.Description = description.Trim();
+        if (quantity.HasValue) line.Quantity = quantity.Value;
+        if (unitPrice.HasValue) line.UnitPrice = unitPrice.Value;
+
+        // recompute amount จาก qty×price ที่ (แก้แล้ว) — ถ้าครบทั้งคู่
+        var qty = line.Quantity ?? 0m;
+        var up = line.UnitPrice ?? 0m;
+        if (qty > 0m && up > 0m)
+            line.Amount = System.Math.Round(qty * up, 2);
+
+        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return line.Amount ?? 0m;
     }
 
     public async Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId)
@@ -4495,6 +4601,25 @@ public class OcrService : IOcrService
         var contact = await _db.Contacts
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == contactId)
             ?? throw new InvalidOperationException("Contact not found.");
+
+        // ปิดลูปการสอน local model (กฎเหล็ก #1) — ตอน AI เดา vendor canon แล้ว
+        // ผู้ใช้มา "ยืนยัน/แก้" คู่ค้าเอง คือ ground-truth ของ VendorCanon feature.
+        // ถ้าไม่บันทึก AiFeedbackTrainingJob จะ mine ไม่ได้ (มัน mine row ที่
+        // UserChosenAt != null) → student ไม่เคยเรียนคำตอบจริง. acceptedAi =
+        // ผู้ใช้เลือกตรงกับที่ AI แนะนำพอดี. ห่อ try กัน record ล้มไม่ให้ล้ม match.
+        if (_feedbackRecorder != null && result.AiSuggestionFeedbackId.HasValue)
+        {
+            try
+            {
+                var acceptedAi = result.AiSuggestedContactId == contactId;
+                await _feedbackRecorder.RecordUserChoiceAsync(
+                    result.AiSuggestionFeedbackId.Value, contactId.ToString(), acceptedAi, default);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to record VendorCanon feedback choice (non-fatal)");
+            }
+        }
 
         result.MatchedContactId = contactId;
         await _db.SaveChangesAsync();
@@ -5624,4 +5749,10 @@ internal class OcrExtractedLineItem
     /// <summary>Unit (ถุง/เส้น/กล่อง…) detected from the description —
     /// flows to DocumentLine.Unit instead of the blanket "ชิ้น" default.</summary>
     public string? Unit { get; set; }
+    /// <summary>ปิดลูปการสอน MatchLineProject (กฎเหล็ก #1) — feedback row ที่
+    /// orchestrator คืนตอน AI เดา project ให้บรรทัดนี้. เก็บฝังใน ExtractedItemsJson
+    /// เพื่อให้ตอนผู้ใช้ override project (SetExtractedLineProjectAsync) รู้ว่าจะปิด
+    /// ลูปไหน + AiSuggestedProjectId ใช้เทียบว่าผู้ใช้รับคำตอบ AI หรือแก้.</summary>
+    public Guid? ProjectAiFeedbackId { get; set; }
+    public Guid? AiSuggestedProjectId { get; set; }
 }

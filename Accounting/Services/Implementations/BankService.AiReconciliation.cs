@@ -28,9 +28,10 @@ public partial class BankService
 
         var unmatched = await txnQuery.OrderBy(t => t.TransactionDate).ToListAsync();
 
-        var allTxns = await _db.Set<BankTransaction>()
-            .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId)
-            .ToListAsync();
+        // นับยอดรวมทั้งบัญชีด้วย SQL (เดิมโหลดทุก BankTransaction เข้า memory แค่
+        // เพื่อ .Count) — BuildSummary คำนวณสถานะ/ยอดที่เหลือด้วย projection เอง
+        var totalTxnCount = await _db.Set<BankTransaction>()
+            .CountAsync(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId);
 
         // Load candidate accounting entries
         var dateMin = unmatched.Any() ? unmatched.Min(t => t.TransactionDate).AddDays(-14) : DateTime.MinValue;
@@ -244,10 +245,10 @@ public partial class BankService
         }
 
         // ── Summary ──
-        var summary = BuildSummary(account, allTxns, bankCoaId, companyId);
+        var summary = BuildSummary(account, bankCoaId, companyId);
 
         return new AiReconciliationResult(
-            allTxns.Count,
+            totalTxnCount,
             unmatched.Count,
             suggestions.Count,
             oneToOne,
@@ -657,7 +658,7 @@ public partial class BankService
 
     // ── Summary builder ──
     private async Task<ReconciliationSummaryDto> BuildSummary(
-        BankAccount account, List<BankTransaction> allTxns, Guid? bankCoaId, Guid companyId)
+        BankAccount account, Guid? bankCoaId, Guid companyId)
     {
         decimal bankBalance = account.CurrentBalance;
 
@@ -710,22 +711,37 @@ public partial class BankService
         var totalPvBalance = pvTotal + paymentOut;
         var documentBalance = totalReceiptBalance - totalPvBalance;
 
-        var matched = allTxns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Matched);
-        var excluded = allTxns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Excluded);
-        var unmatchedList = allTxns.Where(t => t.ReconciliationStatus == ReconciliationStatus.Unmatched).ToList();
+        // นับสถานะ + รวมยอด unmatched ด้วย SQL แทนโหลด BankTransaction ทั้งบัญชี
+        // เข้า memory (เดิมโหลดทุก row มาแค่ .Count()/.Sum() → บัญชีที่รายการเยอะ =
+        // full-table scan ทุกครั้งที่เปิดหน้าสรุป). projection ให้ผลเท่าเดิมเป๊ะ.
+        var txnBase = _db.Set<BankTransaction>()
+            .Where(t => t.CompanyId == companyId && t.BankAccountId == account.Id);
+
+        var total = await txnBase.CountAsync();
+        var matched = await txnBase.CountAsync(t => t.ReconciliationStatus == ReconciliationStatus.Matched);
+        var excluded = await txnBase.CountAsync(t => t.ReconciliationStatus == ReconciliationStatus.Excluded);
+        var unmatchedCount = await txnBase.CountAsync(t => t.ReconciliationStatus == ReconciliationStatus.Unmatched);
+        var unmatchedInflow = await txnBase
+            .Where(t => t.ReconciliationStatus == ReconciliationStatus.Unmatched
+                && (t.TransactionType == BankTransactionType.Deposit
+                    || t.TransactionType == BankTransactionType.Interest))
+            .SumAsync(t => (decimal?)t.Amount) ?? 0m;
+        var unmatchedOutflow = await txnBase
+            .Where(t => t.ReconciliationStatus == ReconciliationStatus.Unmatched
+                && (t.TransactionType == BankTransactionType.Withdrawal
+                    || t.TransactionType == BankTransactionType.Fee))
+            .SumAsync(t => (decimal?)t.Amount) ?? 0m;
 
         return new ReconciliationSummaryDto(
             bankBalance,
             bookBalance,
             bankBalance - bookBalance,
-            allTxns.Count,
+            total,
             matched,
-            unmatchedList.Count,
+            unmatchedCount,
             excluded,
-            unmatchedList.Where(t => t.TransactionType == BankTransactionType.Deposit
-                || t.TransactionType == BankTransactionType.Interest).Sum(t => t.Amount),
-            unmatchedList.Where(t => t.TransactionType == BankTransactionType.Withdrawal
-                || t.TransactionType == BankTransactionType.Fee).Sum(t => t.Amount),
+            unmatchedInflow,
+            unmatchedOutflow,
             documentBalance,
             totalReceiptBalance,
             totalPvBalance);
@@ -738,11 +754,9 @@ public partial class BankService
             .FirstOrDefaultAsync(a => a.Id == bankAccountId && a.CompanyId == companyId && !a.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
 
-        var allTxns = await _db.Set<BankTransaction>()
-            .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId)
-            .ToListAsync();
-
-        return await BuildSummary(account, allTxns, account.LinkedAccountId, companyId);
+        // BuildSummary คำนวณ count/sum ด้วย SQL projection เอง — ไม่ต้องโหลด
+        // BankTransaction ทั้งบัญชีเข้า memory อีก (แก้ full-table scan ต่อการเปิดสรุป)
+        return await BuildSummary(account, account.LinkedAccountId, companyId);
     }
 
     public async Task<List<BankTransactionResponse>> BatchReconcileAsync(

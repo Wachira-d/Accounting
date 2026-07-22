@@ -536,7 +536,7 @@ public class FpaService : IFpaService
         var yearStart = new DateTime(fiscalYear, 1, 1);
         var yearEnd = new DateTime(fiscalYear, 12, 31);
 
-        var glData = await _db.JournalEntryLines
+        var glData = await _db.JournalEntryLines.AsNoTracking()
             .Include(l => l.JournalEntry)
             .Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId

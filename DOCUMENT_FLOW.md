@@ -112,6 +112,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
   ที่ description ตรงกัน + drop phantom remainder ≤ ฿1. รันก่อน serialize ลง
   `ExtractedItemsJson` → ทุก path (web UI + OCR API) ได้ไฟล์ items ที่สะอาด.
+- **Inline line editing ในหน้า review (กฎเหล็ก #3)**: review modal ให้แก้
+  `Description/Quantity/UnitPrice` ราย line ได้ในตัว (input ในตาราง, เดิม read-only
+  โชว์แค่ project picker) → `OcrService.SetExtractedLineFieldsAsync`
+  (`POST /ocr/{id}/line-fields`) recompute `Amount = round(qty×price,2)` + persist
+  ลง `ExtractedItemsJson`. คู่กับ qty-guard (`SanitizeVatSplitArtifacts` reconcile
+  จำนวน): guard แก้เคสที่ตรวจเจอ (Amount ถูก แต่ qty×price ระเบิด), inline edit
+  ครอบเคสที่เหลือ — ผู้ใช้ไม่ต้องสร้างเอกสารก่อนแล้วเข้าไปแก้ทีหลัง.
 - **Single create path (กฎ: ห้ามมี path คู่ขนาน)**: ทั้ง web UI ("สร้างเอกสาร")
   และ OCR API (`autoCreate=true`) สร้างเอกสารผ่าน **`CreateDocumentFromScanAsync`
   ตัวเดียวกัน**. `AutoCreateDocumentAsync` (เรียกตอน scan ผ่าน confidence gate)
@@ -773,6 +780,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Trigger**: ตอน `PaymentVoucher` / `Expense` ที่มี WHT > 0 ถูก approve
   → auto-issue 2 ฉบับ ("สำหรับยื่นแบบ" + "เก็บไว้")
 - **PDF**: `PdfGenerationService.WhtCert.cs`
+- **ประเภทแบบ guard (ภ.ง.ด.3 ↔ 53)**: `ResolveWhtFormType` + `DetectJuristic`
+  บังคับที่ **ทุก create path** (`CreateAsync`, `AutoGenerateFromDocumentAsync`,
+  `UpdateAsync`) — ประเภทแบบขึ้นกับ **ผู้ถูกหักภาษี**: นิติบุคคล → 53,
+  บุคคลธรรมดา → 3. เดิมถ้า caller (เช่น integration/มังกร) ส่ง `TaxFormType` มา
+  ระบบเชื่อทันที → บริษัทได้ใบ ภ.ง.ด.3 ผิด. guard ตรวจจาก 3 สัญญาณ (เลขภาษี 13
+  หลักขึ้นต้น 0 = นิติบุคคล authoritative / ContactType / ชื่อ "บริษัท,หจก,Co.,Ltd")
+  → override ค่าที่ส่งมาถ้าไม่ตรง + log correction. ภ.ง.ด.1 (เงินเดือน) / ภ.ง.ด.2
+  (ดอกเบี้ย/ปันผล) ไม่แตะ (ขึ้นกับประเภทเงินได้). test: `WhtFormTypeGuardTests`
 - **DTA override**: ถ้า payee ต่างประเทศ + มี DTA → ใช้อัตรา bilateral
   แทน default 15%/10% (ม.70)
 
@@ -848,7 +863,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | Import column match | `ImportColumnMatch = 26` | bespoke | ตอน user map |
 | Import data review | `ImportDataReview = 27` | – (essay) | – |
 | **Payment type** (Cash/Credit) | `PaymentTypeSuggestion = 28` | `PaymentTypeDistillationModel.cs` | ตอน user เปลี่ยน select |
-| OCR project match | `OcrProjectMatch = 29` | generic | – |
+| OCR project match | `OcrProjectMatch = 29` | generic | `SetExtractedLineProjectAsync` / `SetAllExtractedLineProjectsAsync` (ตอน user override project ราย line — ปิดลูปด้วย `ProjectAiFeedbackId` ฝังใน line) |
 | VAT type per line | `VatTypeInference = 30` | generic | ตอน user แก้ |
 | Payment terms / credit days | `PaymentTermsSuggestion = 31` | – (pure lookup, ทุกครั้งผ่าน orchestrator) | ตอน user แก้ |
 | Payment channel (แหล่งเงิน) | `PaymentChannelSuggestion = 32` | generic | ตอน user เปลี่ยน select |
@@ -1234,6 +1249,11 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 81: WHT cert ประเภทแบบ guard (ภ.ง.ด.3↔53 ตามผู้ถูกหัก) — ResolveWhtFormType_
+_+ DetectJuristic บังคับทุก create path, override ค่าที่ integration ส่งผิด._
+_รอบ 80: OCR review inline line editing (Description/Quantity/UnitPrice แก้ในตาราง_
+_→ SetExtractedLineFieldsAsync recompute Amount + persist, คู่กับ qty-guard); ปิดลูป_
+_project-match feedback (SetExtractedLineProject → RecordUserChoiceAsync)._
 _Last verified against codebase: 2026-07-20 (รอบ 60) — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
@@ -1292,6 +1312,35 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 79 (UX สร้างมัดจำ — discoverability + กันพลาด): (1) เพิ่ม pseudo-type
+"💰 ใบมัดจำ / รับเงินล่วงหน้า" ใน dropdown ประเภทเอกสาร (ฝั่งขาย) → save map เป็น
+`Receipt` + `isDeposit=true` อัตโนมัติ (pattern เดียวกับ CombinedInvoiceTaxInvoice
+ที่ map → TaxInvoice); onDocTypeChange ติ๊ก IsDeposit + โชว์ depositOptions ให้เลย
+(เดิมต้องรู้เองว่า "เลือกใบเสร็จ → ติ๊ก checkbox"). (2) guard ตอน save: บรรทัดใด
+เลือกผัง 215xx/217xx (ขายรอรับรู้/รับล่วงหน้า) แต่ไม่ได้ตั้งเป็นเอกสารมัดจำ → เตือน
+(GL เข้า 217xx แต่ subledger มัดจำไม่รู้จัก = "มัดจำไร้เอกสาร" ที่ Realize/หัก/drives
+ไม่เจอ) แนะนำเลือกประเภทใบมัดจำ. flag `IsDeposit` (ไม่ใช่ผังบัญชี) คือตัวคุมทุกกลไก
+มัดจำ. frontend เท่านั้น._
+_รอบ 78 (หัก "JV มัดจำที่ไม่มีเอกสาร" ได้): มัดจำที่ integration post ตรงผ่าน
+`/integration/journals` (ไม่มี SourceDocumentId) เดิมหักเข้าใบแจ้งหนี้ไม่ได้ผ่าน UI
+(ApplyDepositToInvoiceAsync ต้องมีใบมัดจำ Document). เพิ่ม:
+(1) `SearchJournalDepositsAsync` — ค้น JE Posted, ไม่มี source doc, ยังไม่ apply,
+มีขา Cr 215/217, filter ด้วย query (EntryNumber/Reference/Description contains) →
+`GET /document/journal-deposits?q=`. (2) `ApplyJournalDepositToInvoiceAsync` —
+อ่านขา Cr จริงของ JV (215/217 + 21913/21911) → post JV ตัดชำระ: Dr บัญชีเดิม +
+Dr VAT / Cr ลูกหนี้ (gross) + ลด BalanceDue + mark `JV.DepositAppliedToDocumentId`
+(one-shot, หักเต็ม JV; gross>ยอดใบ → block) → `POST /document/{id}/apply-journal-deposit`.
+(3) frontend: กล่องค้น JV ในฟอร์ม (booking auto-fill) → editing หักทันที / creating
+หักหลัง approve. GL-critical v1 — verify Windows._
+_รอบ 77 (หักมัดจำได้ในฟอร์มสร้างเอกสารเลย): เดิมตอนสร้างใหม่ banner มัดจำคงค้าง
+บอกแค่ "บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ" (2 ขั้น). เพิ่ม selector ในฟอร์ม
+(checkbox + เลือกใบมัดจำ + ยอด, auto-select ใบ booking ตรงกัน) → เก็บ
+`_pendingDepositApply` → `save()` หลัง approve สำเร็จเรียก `applyDeposit` อัตโนมัติ
+(ApplyDepositToInvoiceAsync ที่ verified) = create+approve+หักมัดจำ ใน action เดียว.
+cap ยอดไม่เกินคงเหลือ (UI guard). ต้อง "บันทึกและอนุมัติ" (บันทึกร่าง → หักไม่ได้
+เพราะ ApplyDeposit ต้องเอกสาร approved). fail-soft: หักไม่ผ่าน → ใบยังอยู่ หักเอง
+ได้. + แก้บั๊กเดิม: banner ใช้ `deposit.id` (DepositSummary) แทน `.depositDocumentId`
+ที่ไม่มีจริง (quick-apply เคย pass undefined). frontend เท่านั้น ไม่แตะ GL logic._
 _รอบ 76 (display "อ้างอิง" = เลขจอง ไม่ใช่ dedup key): integration เก็บ externalRef
 (REC260718006 = dedup key ภายใน) ลง `Document.Reference` → PDF/หน้าเอกสารโชว์เป็น
 "อ้างอิง" ทำให้ลูกค้า/บัญชีเห็นเลขใบเสร็จ TakeTime แทนรหัสจอง. เพิ่ม

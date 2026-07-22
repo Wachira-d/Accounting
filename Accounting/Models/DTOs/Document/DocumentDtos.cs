@@ -259,6 +259,21 @@ public record ApplyDepositRequest(
     decimal Amount,
     DateTime? ApplyDate = null);
 
+/// <summary>"JV มัดจำที่ไม่มีเอกสาร" ที่เปิดให้นำมาตัดชำระได้ (integration post ตรง
+/// ผ่าน /integration/journals หรือลงมือ). DeferredNet = ยอดคงเหลือบัญชี 215/217;
+/// Gross = รวม VAT. EntryNumber ใช้ apply ผ่าน /apply-journal-deposit.</summary>
+public record JournalDepositCandidate(
+    string EntryNumber,
+    DateTime EntryDate,
+    string? Description,
+    string? Reference,
+    decimal DeferredNet,
+    decimal Gross);
+
+/// <summary>นำ JV มัดจำ (ไม่มีเอกสาร) มาตัดชำระใบแจ้งหนี้ — ระบุ EntryNumber ของ
+/// สมุดรายวันมัดจำ (หักเต็ม JV, v1).</summary>
+public record ApplyJournalDepositRequest(string JournalEntryNumber);
+
 /// <summary>สรุปมัดจำคงค้างต่อ contact (สำหรับหน้า contact + dropdown ตอน
 /// ออกใบแจ้งหนี้). TotalOutstanding = มัดจำที่ยังไม่รับรู้/ไม่คืน.</summary>
 public record ContactDepositSummary(

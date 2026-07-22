@@ -395,6 +395,34 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "นำมัดจำมาหักสำเร็จ"));
     }
 
+    /// <summary>ค้น "JV มัดจำที่ไม่มีเอกสาร" (case B: post ตรงผ่าน /integration/journals
+    /// หรือลงมือ) ที่ยังเปิดให้ตัดชำระ — ใส่ query = เลขอ้างอิง/booking/เลข JV จะหา
+    /// ที่เกี่ยวข้อง; ไม่ใส่ = list ที่เปิดอยู่. read-only.</summary>
+    [HttpGet("journal-deposits")]
+    public async Task<ActionResult<ApiResponse<List<JournalDepositCandidate>>>> SearchJournalDeposits(
+        Guid companyId, [FromQuery] string? q = null)
+    {
+        var result = await _documentService.SearchJournalDepositsAsync(companyId, q);
+        return Ok(new ApiResponse<List<JournalDepositCandidate>>(true, result));
+    }
+
+    /// <summary>นำ JV มัดจำ (ไม่มีเอกสาร) มาตัดชำระใบแจ้งหนี้/ใบกำกับ — หักเต็ม JV.</summary>
+    [HttpPost("{invoiceId:guid}/apply-journal-deposit")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ApplyJournalDeposit(
+        Guid companyId, Guid invoiceId, [FromBody] ApplyJournalDepositRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, invoiceId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>("ไม่มีสิทธิ์นำมัดจำมาหัก");
+        if (string.IsNullOrWhiteSpace(request.JournalEntryNumber))
+            return BadRequest(new ApiResponse<DocumentResponse>(false, null, "ต้องระบุเลขสมุดรายวัน (JournalEntryNumber)"));
+        var result = await _documentService.ApplyJournalDepositToInvoiceAsync(
+            companyId, invoiceId, request.JournalEntryNumber.Trim(), userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "นำ JV มัดจำมาหักสำเร็จ"));
+    }
+
     /// <summary>รับรู้รายได้จากเงินมัดจำเมื่อส่งมอบจริง (ตัด ขายรอรับรู้ →
     /// รายได้). รองรับรับรู้บางส่วน.</summary>
     [HttpPost("{documentId:guid}/realize-deposit")]

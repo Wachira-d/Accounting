@@ -419,7 +419,7 @@ public class ConsolidationService : IConsolidationService
             .Select(m => m.CompanyId)
             .ToList();
 
-        var icTxns = await _db.Set<IntercompanyTransaction>()
+        var icTxns = await _db.Set<IntercompanyTransaction>().AsNoTracking()
             .Where(t => memberCompanyIds.Contains(t.SourceCompanyId)
                 && memberCompanyIds.Contains(t.TargetCompanyId)
                 && t.Status == IntercompanyStatus.Completed
@@ -427,7 +427,7 @@ public class ConsolidationService : IConsolidationService
                 && t.TransactionDate <= asOfDate)
             .ToListAsync();
 
-        var companies = await _db.Companies
+        var companies = await _db.Companies.AsNoTracking()
             .Where(c => memberCompanyIds.Contains(c.Id))
             .ToDictionaryAsync(c => c.Id, c => c.Name);
 
@@ -450,7 +450,7 @@ public class ConsolidationService : IConsolidationService
         }
 
         // Eliminate intercompany revenue/expense
-        var icRevenue = await _db.Documents
+        var icRevenue = await _db.Documents.AsNoTracking()
             .Where(d => memberCompanyIds.Contains(d.CompanyId)
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
                 // เอกสารรับรู้รายได้เท่านั้น: ใบแจ้งหนี้/ใบกำกับ + ใบเสร็จขายสด

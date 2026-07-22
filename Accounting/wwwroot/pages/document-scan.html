@@ -586,6 +586,30 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
+      /// ผู้ใช้แก้ รายละเอียด/จำนวน/ราคา ของบรรทัด OCR inline (กฎเหล็ก #3 — แก้
+      /// ก่อนสร้างเอกสาร ไม่ต้องสร้างแล้วเข้าไปแก้ทีหลัง). POST /line-fields →
+      /// backend recompute amount = qty×price + persist ลง ExtractedItemsJson แล้ว
+      /// คืน amount ใหม่ → อัปเดตช่อง "รวม" โดยไม่ refetch. เก็บ state modal ที่เหลือไว้.
+      async saveLineFields(scanId, lineIndex) {
+        try {
+          const cid = Layout.getCompanyId();
+          const row = document.querySelector(`tr[data-line-row="${lineIndex}"]`);
+          if (!row) return;
+          const descEl = row.querySelector('[data-line-desc]');
+          const qtyEl = row.querySelector('[data-line-qty]');
+          const priceEl = row.querySelector('[data-line-price]');
+          const res = await API.post(`/api/companies/${cid}/ocr/${scanId}/line-fields`, {
+            lineIndex,
+            description: descEl ? descEl.value : null,
+            quantity: (qtyEl && qtyEl.value !== '') ? Number(qtyEl.value) : null,
+            unitPrice: (priceEl && priceEl.value !== '') ? Number(priceEl.value) : null,
+          });
+          const amt = res?.data?.amount;
+          const amtCell = row.querySelector('[data-line-amt]');
+          if (amtCell && amt != null) amtCell.textContent = Layout.money(amt);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       /// Find the project that already appears on the most lines.
       /// Used to pre-select the "main project" picker so when user
       /// re-opens a partially-allocated review, the picker shows the
@@ -2074,7 +2098,7 @@
                 </div>
                 <table style="width:100%;font-size:12px;border-collapse:collapse">
                   <tr style="background:var(--gray-100)"><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px">บัญชี</th><th style="padding:4px 6px;min-width:180px">โครงการ</th></tr>
-                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 6px">${Layout.esc(it.description || '-')}</td><td style="padding:4px 6px;text-align:right">${it.quantity || '-'}</td><td style="padding:4px 6px;text-align:right">${it.unitPrice != null ? Layout.money(it.unitPrice) : '-'}</td><td style="padding:4px 6px;text-align:right">${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;color:var(--primary)">${it.suggestedAccountCode || '-'}</td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${scan.id}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
+                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:70px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:90px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;color:var(--primary)">${it.suggestedAccountCode || '-'}</td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${scan.id}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
                 </table>
               </div>` : ''}
             </div>

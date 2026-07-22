@@ -98,36 +98,51 @@ public class OverdueDunningJob : BackgroundService
                 _ => "รอบที่ 1 (30 วัน+) — friendly reminder",
             };
 
-            if (notify != null)
+            // ไม่มี notifier ก็ยังส่งไม่ได้ — "อย่า" mark ว่าส่งแล้ว ไม่งั้นใบนี้จะ
+            // ถูกข้ามถาวรที่ระดับนี้ทั้งที่ลูกค้าไม่เคยได้รับหนังสือทวง
+            if (notify == null) continue;
+
+            bool dispatched;
+            try
             {
-                try
+                await notify.DispatchAsync(c.CompanyId, eventKey, new NotificationContext
                 {
-                    await notify.DispatchAsync(c.CompanyId, eventKey, new NotificationContext
-                    {
-                        Title = $"AR ค้าง {c.AgingDays} วัน: {c.DocumentNumber} — {contactName ?? "(ไม่ระบุ)"}",
-                        Message = $"หนังสือทวงหนี้{levelLabel}. ยอดค้าง ฿{c.BalanceDue:N2}",
-                        ActionUrl = $"/pages/documents.html?id={c.Id}",
-                        EntityType = "Document", EntityId = c.Id,
-                    });
-                }
-                catch (Exception ex)
-                { _logger.LogWarning(ex, "Dunning notify failed for doc {DocId}", c.Id); }
+                    Title = $"AR ค้าง {c.AgingDays} วัน: {c.DocumentNumber} — {contactName ?? "(ไม่ระบุ)"}",
+                    Message = $"หนังสือทวงหนี้{levelLabel}. ยอดค้าง ฿{c.BalanceDue:N2}",
+                    ActionUrl = $"/pages/documents.html?id={c.Id}",
+                    EntityType = "Document", EntityId = c.Id,
+                });
+                dispatched = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Dunning notify failed for doc {DocId}", c.Id);
+                dispatched = false;
             }
 
-            // mark sent — ใช้ tracked entity เพื่อบันทึก
+            // dispatch ล้ม → "อย่า" mark → รอบถัดไปทวงซ้ำได้ (ไม่ทิ้งหนี้เงียบ)
+            if (!dispatched) continue;
+
+            // mark + save ทันทีต่อใบ (idempotency) — เดิม dispatch ทั้ง batch ก่อน
+            // แล้วค่อย SaveChanges ทีเดียวท้ายรอบ: ถ้า process ตายกลางลูป มาร์คที่ยัง
+            // ไม่ persist หายหมด → รอบถัดไปส่งซ้ำทุกใบที่เพิ่งส่งไป (spam ลูกค้า).
+            // save ต่อใบ ปิด window นี้ให้เหลือแค่ 1 ใบต่อการล่ม 1 ครั้ง
             var trackedDoc = await db.Documents.FirstOrDefaultAsync(d => d.Id == c.Id, ct);
             if (trackedDoc != null)
             {
                 trackedDoc.LastDunningSentAt = DateTime.UtcNow;
                 trackedDoc.LastDunningLevel = targetLevel;
-                sent++;
+                try
+                {
+                    await db.SaveChangesAsync(ct);
+                    sent++;
+                }
+                catch (Exception ex)
+                { _logger.LogWarning(ex, "Dunning mark-sent save failed for doc {DocId}", c.Id); }
             }
         }
 
         if (sent > 0)
-        {
-            await db.SaveChangesAsync(ct);
             _logger.LogInformation("OverdueDunningJob: dispatched {Count} notices", sent);
-        }
     }
 }
