@@ -49,7 +49,7 @@ public interface IDocumentService
     Task<List<JournalDepositCandidate>> SearchJournalDepositsAsync(Guid companyId, string? query);
 
     /// <summary>นำ JV มัดจำ (ไม่มีเอกสาร) มาตัดชำระใบแจ้งหนี้/ใบกำกับ (หักเต็ม JV, v1).</summary>
-    Task<DocumentResponse> ApplyJournalDepositToInvoiceAsync(Guid companyId, Guid invoiceId, string journalEntryNumber, string actor);
+    Task<DocumentResponse> ApplyJournalDepositToInvoiceAsync(Guid companyId, Guid invoiceId, string journalEntryNumber, string actor, DateTime? applyDate = null);
     /// <summary>เอกสารทั้งหมดที่ผูก booking เดียวกัน (มัดจำ → ใบสุดท้าย → ใบเสร็จ).</summary>
     Task<List<DocumentResponse>> GetDocumentsByBookingAsync(Guid companyId, string bookingNumber);
     /// <summary>รายการเอกสารที่ภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 (สำหรับ

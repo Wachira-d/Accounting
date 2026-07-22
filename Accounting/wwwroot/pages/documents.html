@@ -2199,7 +2199,10 @@
         if (this.editingId) {
           if (!confirm(`หัก JV มัดจำ ${entryNumber} (${Layout.money(gross)}) เข้าใบนี้?`)) return;
           try {
-            await api.applyJournalDeposit(this.editingId, entryNumber);
+            // ส่งวันที่เอกสารเป็นวันที่ JE ตัดชำระ (VAT ตกเดือนภาษีเดียวกับใบ §78)
+            const dRaw = document.getElementById('fDate')?.value;
+            await api.applyJournalDeposit(this.editingId, entryNumber,
+              dRaw ? new Date(dRaw).toISOString() : null);
             Layout.toast('หัก JV มัดจำเข้าใบนี้แล้ว', 'success');
             if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
             await this.searchJvDeposits();
@@ -4089,16 +4092,21 @@
         const pending = this._pendingDepositApplies || [];
         if (!pending.length || !savedDocId) return null;
         this._pendingDepositApplies = [];
+        // วันที่ apply = วันที่เอกสาร (ไม่ใช่วันนี้) — ให้ JE ตัดชำระ + VAT
+        // recognition ตกเดือนภาษีเดียวกับ tax point ของใบ (§78). backdate
+        // ใบข้ามเดือนแล้ว VAT จะไม่หลุดไปเดือนปัจจุบัน
+        const docDateRaw = document.getElementById('fDate')?.value;
+        const applyDate = docDateRaw ? new Date(docDateRaw).toISOString() : new Date().toISOString();
         let okCount = 0, failCount = 0, okAmt = 0;
         for (const ap of pending) {
           try {
             if (ap.kind === 'journal') {
-              await api.applyJournalDeposit(savedDocId, ap.journalEntryNumber);
+              await api.applyJournalDeposit(savedDocId, ap.journalEntryNumber, applyDate);
             } else {
               await api.applyDeposit(savedDocId, {
                 depositDocumentId: ap.depositDocumentId,
                 amount: ap.amount,
-                applyDate: new Date().toISOString()
+                applyDate
               });
             }
             okCount++; okAmt += (Number(ap.amount) || 0);
@@ -4962,7 +4970,13 @@
           // (audit-friendly + operator can finish the chain manually) but
           // surface as a warning toast so the operator knows.
           const paidNow = document.getElementById('fPaidOnIssue')?.checked;
-          if (paidNow && !this.editingId && savedDocId) {
+          // ⛔ chain "จ่ายแล้ว" (approve + ชำระ + ใบเสร็จ) รันเฉพาะปุ่ม "บันทึกและ
+          // อนุมัติ" — เดิมกด "บันทึกร่าง" ก็ approve + บันทึกชำระเลย (ร่างที่ขยับ
+          // เงินจริง = ผิด principle of least surprise + ยกเลิกยากกว่าร่าง)
+          if (paidNow && !approveAfter && !this.editingId && savedDocId) {
+            Layout.toast('บันทึกเป็นร่างแล้ว — ติ๊ก "ลูกค้าจ่ายเงินแล้ว" ไว้ แต่ร่างยังไม่อนุมัติ/บันทึกชำระ · กด "บันทึกและอนุมัติ" เมื่อพร้อม', 'info', 8000);
+          }
+          if (paidNow && approveAfter && !this.editingId && savedDocId) {
             // Derive method from the chosen payment channel — single source
             // of truth so the Payment metadata can't drift from the GL.
             const method = this._deriveMethodFromChannel().method;

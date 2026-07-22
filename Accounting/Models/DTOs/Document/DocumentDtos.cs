@@ -272,7 +272,9 @@ public record JournalDepositCandidate(
 
 /// <summary>นำ JV มัดจำ (ไม่มีเอกสาร) มาตัดชำระใบแจ้งหนี้ — ระบุ EntryNumber ของ
 /// สมุดรายวันมัดจำ (หักเต็ม JV, v1).</summary>
-public record ApplyJournalDepositRequest(string JournalEntryNumber);
+// ApplyDate: วันที่ลง JE ตัดชำระ (ควร = วันที่เอกสารปลายทาง เพื่อให้ VAT
+// recognition ตกเดือนภาษีเดียวกับ tax point ของใบ §78) — null = วันนี้
+public record ApplyJournalDepositRequest(string JournalEntryNumber, DateTime? ApplyDate = null);
 
 /// <summary>สรุปมัดจำคงค้างต่อ contact (สำหรับหน้า contact + dropdown ตอน
 /// ออกใบแจ้งหนี้). TotalOutstanding = มัดจำที่ยังไม่รับรู้/ไม่คืน.</summary>
