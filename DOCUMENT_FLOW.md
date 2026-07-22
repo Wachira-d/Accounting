@@ -1249,6 +1249,13 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 93: เปิดฟอร์มออก "ใบกำกับภาษี/ใบเสร็จรับเงิน ใบเดียว" (ขายเงินสด) — เดิม
+_IssuedAsCashReceipt set ได้เฉพาะ integration (TakeTime IsCashSale); ฟอร์มสร้างเอง
+_มีแค่ "จ่ายแล้ว (2 ใบ + REC แยก)". เพิ่ม CreateDocumentRequest.IssuedAsCashReceipt
+_(guard TaxInvoice), approve ปิด Paid, checkbox ในฟอร์ม (mutually exclusive กับ
+_paidOnIssue). มัดจำที่เลือก → ส่ง drives (DepositAppliedDrivesJournal) reuse เส้น
+_AutoPost cash-sale ที่ verified (JE เดียว Dr เงินสดสุทธิ+กลับมัดจำ/Cr รายได้+VAT,
+_ไม่ตั้งลูกหนี้, ไม่ออก REC แยก, e-Tax T03).
 _รอบ 92: หักมัดจำหลายใบโชว์ครบบน PDF — apply สะสมทุกเลขใน DepositAppliedRef
 _(MergeDepositRef comma-sep+dedup, เดิมเก็บใบแรก → label โชว์เลขเดียว) + PDF
 _แตกบรรทัดต่อใบ (LoadDepositApplyBreakdownAsync อ่าน gross ต่อใบจาก apply JE:

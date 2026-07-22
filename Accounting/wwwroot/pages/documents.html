@@ -474,6 +474,24 @@
             </label>
           </div>
 
+          <!-- ขายเงินสด: ใบกำกับภาษี/ใบเสร็จรับเงิน "ใบเดียว" — ทางเลือกแทน "จ่ายแล้ว
+               (2 ใบ)". ลง Dr เงินสด/Cr รายได้ (ไม่ตั้งลูกหนี้ + ไม่ออกใบเสร็จแยก),
+               e-Tax T03, หัว "ใบเสร็จรับเงิน/ใบกำกับภาษี". mutually exclusive กับ paidOnIssue -->
+          <div id="cashReceiptSection" style="margin-bottom:12px;background:#eff6ff;border:1px solid #3b82f6;border-radius:8px;padding:10px 14px;display:none">
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.6">
+              <input type="checkbox" id="fIssuedAsCashReceipt" style="margin-top:3px" onchange="Page.onCashReceiptToggle()">
+              <div style="flex:1">
+                <div style="font-weight:600;color:#1e40af">🧾 ออกเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ใบเดียว (ขายเงินสด)</div>
+                <div style="color:#1d4ed8;font-size:12px;margin-top:2px">
+                  ลูกค้าจ่ายเงินสด/โอน ณ วันออก — ออกใบเดียวจบ (ไม่แยกใบเสร็จ):
+                  ลง Dr เงินสด/ธนาคาร · Cr รายได้+VAT (ไม่ตั้งลูกหนี้), e-Tax T03,
+                  หัวเอกสาร "ใบเสร็จรับเงิน/ใบกำกับภาษี", สถานะ "ชำระครบ" ทันที.
+                  มีมัดจำ → หักในใบเดียว ( Dr เงินสดสุทธิ + กลับมัดจำ)
+                </div>
+              </div>
+            </label>
+          </div>
+
           <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
                Only "คืนสินค้า" restocks; the other 3 reasons are pure
                financial adjustments with no stock impact. -->
@@ -2779,7 +2797,21 @@
         }
         return { method: 'Cash', label: 'เงินสด (ค่าเริ่มต้น)' };
       },
+      /** ติ๊ก "ใบเดียว (ขายเงินสด)" → ปลด "ลูกค้าจ่ายเงินแล้ว (2 ใบ)" อัตโนมัติ
+       *  (mutually exclusive — คนละโมเดล GL). กลับกันก็ปลดตัวนี้. */
+      onCashReceiptToggle() {
+        const cr = document.getElementById('fIssuedAsCashReceipt');
+        if (cr?.checked) {
+          const paid = document.getElementById('fPaidOnIssue');
+          if (paid?.checked) { paid.checked = false; const r = document.getElementById('fPaidOnIssueDerivedRow'); if (r) r.style.display = 'none'; }
+        }
+      },
+
       _syncPaidOnIssueMethod() {
+        // ติ๊ก "จ่ายแล้ว (2 ใบ)" → ปลด "ใบเดียว" (mutually exclusive)
+        const paid = document.getElementById('fPaidOnIssue');
+        const cr = document.getElementById('fIssuedAsCashReceipt');
+        if (paid?.checked && cr?.checked) cr.checked = false;
         const cb = document.getElementById('fPaidOnIssue');
         if (!cb || !cb.checked) return;
         const { method, label } = this._deriveMethodFromChannel();
@@ -2997,6 +3029,14 @@
         const cashShortcutTypes = ['Invoice', 'TaxInvoice'];
         const paidSection = document.getElementById('paidOnIssueSection');
         if (paidSection) paidSection.style.display = cashShortcutTypes.includes(docType) ? '' : 'none';
+        // "ใบกำกับภาษี/ใบเสร็จรับเงิน ใบเดียว (ขายเงินสด)" — เฉพาะ TaxInvoice (ต้องออก
+        // ใบกำกับได้ + T03). ซ่อน + reset เมื่อไม่ใช่
+        const cashRcptSection = document.getElementById('cashReceiptSection');
+        if (cashRcptSection) {
+          const showCr = docType === 'TaxInvoice';
+          cashRcptSection.style.display = showCr ? '' : 'none';
+          if (!showCr) { const c = document.getElementById('fIssuedAsCashReceipt'); if (c) c.checked = false; }
+        }
         // "ออกเป็นใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" — แสดง checkbox เฉพาะฝั่งขาย
         // ที่ออกใบกำกับได้ (Invoice/TaxInvoice). ติ๊กแล้ว save จะ force type=
         // TaxInvoice + combinedInvoiceTaxInvoice=true เพื่อพิมพ์หัวรวม.
@@ -4842,6 +4882,27 @@
           depositDeferredAccountCode:
             document.getElementById('fDepositDeferredAcc')?.value.trim() || null,
         };
+        // ── ขายเงินสด "ใบเดียว" (ใบกำกับภาษี/ใบเสร็จรับเงิน) ──
+        // IssuedAsCashReceipt → AutoPost ลง Dr เงินสด/Cr รายได้ (ไม่ตั้งลูกหนี้),
+        // e-Tax T03, Paid ทันที, ไม่ออกใบเสร็จแยก. มัดจำที่เลือก → ส่งเป็น drives
+        // (หักใน JE เดียว) แทน apply แยกหลัง approve
+        const _issuedAsCashReceipt = document.getElementById('fIssuedAsCashReceipt')?.checked || false;
+        payload.issuedAsCashReceipt = _issuedAsCashReceipt;
+        if (_issuedAsCashReceipt && (this._pendingDepositApplies || []).length) {
+          const refs = []; let depSum = 0;
+          for (const ap of this._pendingDepositApplies) {
+            depSum += Number(ap.amount) || 0;
+            if (ap.kind === 'journal') refs.push(ap.journalEntryNumber);
+            else {
+              const d = (this._contactDepositSummary?.deposits || []).find(x => x.id === ap.depositDocumentId);
+              refs.push(d?.documentNumber || ap.depositDocumentId);
+            }
+          }
+          payload.depositAppliedAmount = depSum;
+          payload.depositAppliedRef = refs.join(', ');
+          payload.depositAppliedDrivesJournal = true;
+          this._pendingDepositApplies = [];   // drives จัดการใน JE เดียว — ไม่ apply แยก
+        }
         // หมายเลขอ้างอิง/เลขจอง ของมัดจำ → เก็บใน Reference (ใช้กลับรายการ)
         if (payload.isDeposit) {
           const depRef = document.getElementById('fDepositRef')?.value.trim();

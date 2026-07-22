@@ -678,6 +678,10 @@ public class DocumentService : IDocumentService
                 DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
                 BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice ?? false,
+                // ขายเงินสด ใบเดียว (เฉพาะ TaxInvoice ฝั่งขาย) — AutoPost ลงแบบเงินสด
+                // ไม่ตั้งลูกหนี้ + ไม่ออกใบเสร็จแยก, e-Tax T03. approve ปิดยอด Paid
+                IssuedAsCashReceipt = (request.IssuedAsCashReceipt ?? false)
+                    && request.DocumentType == DocumentType.TaxInvoice,
                 // ผู้จัดทำจากระบบต้นทาง (คนทำจริง) → ช่อง "ผู้จัดทำ/ผู้รับเงิน" บน PDF
                 // แทน CreatedBy user (เหมือน integration PV/invoice)
                 PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
@@ -3127,6 +3131,17 @@ public class DocumentService : IDocumentService
                 if (doc.RelatedDocumentId.HasValue
                     && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.Receipt
                         or DocumentType.ReceiptVoucher or DocumentType.CertificateInLieu)
+                {
+                    doc.PaidAmount = doc.TotalAmount;
+                    doc.BalanceDue = 0m;
+                    doc.Status = DocumentStatus.Paid;
+                }
+
+                // ขายเงินสด ใบเดียว (ใบกำกับภาษี/ใบเสร็จรับเงิน) — AutoPost ลง Dr เงินสด
+                // เต็ม (+ กลับมัดจำถ้ามี) แล้ว → รับเงินจบในตัว ปิดยอด Paid ทันที
+                // (mirror integration PostCashSaleJournal). ไม่มี Payment row / ไม่ออก
+                // ใบเสร็จหลักฐานแยก (frontend ข้าม paidOnIssue chain)
+                if (doc.IssuedAsCashReceipt && doc.DocumentType == DocumentType.TaxInvoice)
                 {
                     doc.PaidAmount = doc.TotalAmount;
                     doc.BalanceDue = 0m;

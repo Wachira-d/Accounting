@@ -24,6 +24,11 @@ public record CreateDocumentRequest(
     string? DepositAppliedRef = null,
     bool? DepositAppliedDrivesJournal = null,
     bool? BuyerDeclinedTaxInvoice = null,
+    // ขายเงินสด: ออก "ใบกำกับภาษี/ใบเสร็จรับเงิน" ใบเดียว (ไม่ตั้งลูกหนี้ + ไม่ออก
+    // ใบเสร็จหลักฐานแยก). TaxInvoice + IssuedAsCashReceipt → AutoPost ลงแบบเงินสด
+    // (Dr เงินสด/Cr รายได้+VAT + กลับมัดจำถ้ามี), e-Tax T03, หัว "ใบเสร็จรับเงิน/
+    // ใบกำกับภาษี", สถานะ Paid ทันที. ถ้ามีมัดจำต้องส่ง DepositAppliedDrivesJournal=true
+    bool? IssuedAsCashReceipt = null,
     // ส่วนลดท้ายบิล (จากยอดรวม) — กรอกอย่างใดอย่างหนึ่ง: % หรือ ยอดบาท (ex-VAT).
     // ระบบเฉลี่ย pro-rata ลงบรรทัดให้ VAT ถูกต้อง
     decimal? BillDiscountPercent = null,
