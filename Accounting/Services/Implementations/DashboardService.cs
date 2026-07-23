@@ -379,20 +379,53 @@ public class DashboardService : IDashboardService
 
     private async Task<VatWhtSummary?> GetVatWhtSummaryAsync(Guid companyId, DateTime fromDate, DateTime toDate)
     {
-        // Per Revenue Code §86: only TaxInvoice creates VAT obligation
-        var outputVat = await _db.Documents
-            .Where(d => d.CompanyId == companyId
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
-                && d.DocumentType == DocumentType.TaxInvoice
-                && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
-            .SumAsync(d => d.VatAmount);
+        decimal outputVat, inputVat;
 
-        var inputVat = await _db.Documents
-            .Where(d => d.CompanyId == companyId
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
-                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu)
-                && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
-            .SumAsync(d => d.VatAmount);
+        // ── Source of truth = รายงานภาษี (ภ.พ.30) ที่ generate แล้ว ──
+        // ให้ Dashboard "ตรงกับยอดที่ยื่นจริง" (ผ่านกฎ tax point/§82/3/§82/5/undue
+        // 11640/JE-only/CN-DN ครบ). เดิม Dashboard คำนวณดิบ (SUM header VatAmount
+        // ตาม DocumentDate) — ตกหล่น PaymentVoucher, JE-only + ไม่ตัด undue/prohibited
+        // → ค่าไม่ตรงหน้ารายงาน. อ่านรายงานเดือนที่คาบเกี่ยว period (dedup ต่อเดือน)
+        var vatReports = await _db.TaxReports.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && t.TaxType == TaxType.VAT
+                && (t.Year > fromDate.Year || (t.Year == fromDate.Year && t.Month >= fromDate.Month))
+                && (t.Year < toDate.Year || (t.Year == toDate.Year && t.Month <= toDate.Month)))
+            .OrderByDescending(t => t.UpdatedAt)
+            .Select(t => new { t.Year, t.Month, t.OutputVat, t.InputVat, t.UpdatedAt })
+            .ToListAsync();
+        var byMonth = vatReports.GroupBy(x => (x.Year, x.Month)).Select(g => g.First()).ToList();
+
+        if (byMonth.Count > 0)
+        {
+            outputVat = byMonth.Sum(x => x.OutputVat);
+            inputVat = byMonth.Sum(x => x.InputVat);
+        }
+        else
+        {
+            // Fallback (ยังไม่ generate รายงานเดือนนี้) — ประมาณการจากเอกสาร.
+            // Per §86: TaxInvoice = output. Input รวม PaymentVoucher ด้วย (เดิม
+            // ตกหล่น → PV ซื้อที่มี VAT หายทั้งหมด). ยังเป็น "ประมาณการ" — ยอดจริง
+            // ดูที่หน้ารายงานภาษีหลัง generate
+            outputVat = await _db.Documents
+                .Where(d => d.CompanyId == companyId
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                    && d.DocumentType == DocumentType.TaxInvoice
+                    && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
+                .SumAsync(d => d.VatAmount);
+
+            inputVat = await _db.Documents
+                .Where(d => d.CompanyId == companyId
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                    // undue 11640 ที่ยังไม่ถึงกำหนด (ใบกำกับไม่ครบ/ภ.พ.36 ยังไม่รับรู้)
+                    // ยังเคลมไม่ได้ → ไม่นับ (ให้ตรงหลักรายงาน)
+                    && !(d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null)
+                    && (d.DocumentType == DocumentType.PurchaseInvoice
+                        || d.DocumentType == DocumentType.Expense
+                        || d.DocumentType == DocumentType.PaymentVoucher
+                        || d.DocumentType == DocumentType.CertificateInLieu)
+                    && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
+                .SumAsync(d => d.VatAmount);
+        }
 
         // WHT is tracked in WithholdingTaxCerts (the official ภ.ง.ด. cert), not on
         // Documents.WithholdingTaxAmount — many users issue certs without the source
