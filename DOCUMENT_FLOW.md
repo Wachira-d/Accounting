@@ -1249,6 +1249,14 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 97: แก้ภาษีซื้อที่ "ถึงกำหนดทีหลัง" (§83/6 ภ.พ.36 รับรู้ / §86/4 เติมใบกำกับ)
+_หายจากรายงาน — GenerateVatReport เดิมโหลดเอกสารด้วย (TaxPointDate ?? DocumentDate)
+_ในงวดเท่านั้น → ใบเดือน พ.ค. ที่ BecameClaimableAt=ก.ค. ไม่ถูกโหลดในรายงาน ก.ค.
+_= "กดเคลมแล้วหาไม่เจอ". แก้ docs query: OR (InputVatBecameClaimableAt ในงวด) +
+_ในลูป input เพิ่ม guard "เคลมเฉพาะเดือนที่ถึงกำหนด" (skip ถ้า BecameClaimableAt
+_นอกงวด) → นับเฉพาะงวดรับรู้ กันเคลมผิดเดือน/เบิ้ล 2 งวด. + recognize ภ.พ.36 ให้
+_ผู้ใช้กรอก "วันที่ใบเสร็จ RD" (เดิม hardcode วันนี้) → JE + BecameClaimableAt +
+_เดือนที่เข้า ภ.พ.30 = วันที่นั้น (§77/2)._
 _รอบ 96: แก้ §83/6 โชว์ผิด flow "รอใบกำกับ §86/4" — เอกสารบริการต่างประเทศ post
 _11640 (InputVatPostedAsUndue) เหมือนกัน แต่เคลมผ่าน ภ.พ.36 (นำส่ง+รับรู้) ไม่ใช่
 _§86/4 completeness. ผู้ขาย ตปท. ไม่มีเลขภาษีไทย → CompleteSupplierTaxInvoice
