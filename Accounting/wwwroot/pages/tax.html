@@ -389,6 +389,7 @@
           const res = await api.getTaxReport(id);
           const d = res.data || {};
           this._currentReport = d;
+          this._currentReportId = id;   // ให้ auto-save รู้ว่ากำลังแก้รายงานไหน
           const editable = d.status !== 'Filed';
           const _esc = s => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/"/g, '&quot;');
           const _branch = b => { const x = String(b || '').replace(/\D/g, ''); return (!x || x === '00000' || x === '0') ? 'สำนักงานใหญ่' : 'สาขาที่ ' + x; };
@@ -463,33 +464,36 @@
               const ex = !!ln.isExcluded;
               const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';
               const chk = editable
-                ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} title="ใช้รายการนี้ในรายงาน">`
+                ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} onchange="Page.onVatLineToggle(this)" title="ใช้รายการนี้ในรายงาน">`
                 : (ex ? '✗' : '✓');
-              return `<tr style="${rowStyle}">
+              const cf = /ยกมา §82\/3/.test(ln.description || '');
+              return `<tr style="${rowStyle}" data-vatrow${cf ? ' data-cf="1"' : ''}>
                 <td class="text-center">${chk}</td>
-                <td>${ln.lineOrder}</td>
+                <td>${ln.lineOrder}${cf ? ' <span title="ยกมาจากเดือนก่อน (§82/3 ยังไม่เกิน 6 เดือน) — ติ๊กใช้เพื่อเคลมเดือนนี้" style="color:#d97706">↩</span>' : ''}</td>
                 <td class="text-xs">${dstr(ln.transactionDate)}</td>
                 <td class="text-xs">${esc(ln.invoiceNumber || ln.description || '-')}</td>
                 <td class="text-xs">${esc(ln.taxPayerId || '-')}</td>
                 <td class="text-center text-xs">${branchLabel(ln.branchCode)}</td>
                 <td class="text-xs">${esc(ln.taxPayerName || '-')}</td>
-                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:96px">` : Layout.money(ln.incomeAmount)}</td>
-                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:96px">` : Layout.money(ln.taxAmount)}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:96px" onchange="Page.onVatLineToggle(this)">` : Layout.money(ln.incomeAmount)}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:96px" onchange="Page.onVatLineToggle(this)">` : Layout.money(ln.taxAmount)}</td>
               </tr>`;
             };
             const renderVatTable = (title, color, rows) => {
               const used = rows.filter(r => !r.isExcluded);
               const sumBase = used.reduce((s, r) => s + Number(r.incomeAmount || 0), 0);
               const sumTax = used.reduce((s, r) => s + Number(r.taxAmount || 0), 0);
-              return `<div style="margin:14px 0 4px;font-weight:600;font-size:13px;color:${color}">${title} <span class="text-xs text-gray-400">(${rows.length} รายการ)</span></div>
+              const cfCount = rows.filter(r => /ยกมา §82\/3/.test(r.description || '')).length;
+              const cfNote = cfCount > 0 ? ` <span class="text-xs" style="color:#d97706">· ยกมา §82/3 ${cfCount} ใบ (ติ๊ก "ใช้" เพื่อเคลมเดือนนี้)</span>` : '';
+              return `<div style="margin:14px 0 4px;font-weight:600;font-size:13px;color:${color}">${title} <span class="text-xs text-gray-400">(${rows.length} รายการ)</span>${cfNote}</div>
                 <div class="table-container"><table class="table">
                 <thead><tr><th style="width:30px" title="เลือกใช้/ไม่ใช้">ใช้</th><th>ลำดับ</th><th>วันที่ใบกำกับ</th><th>เลขที่ใบกำกับ</th><th>เลขผู้เสียภาษี</th><th class="text-center">สาขา</th><th>ชื่อผู้ขาย/ผู้ซื้อ</th><th class="text-right">มูลค่า</th><th class="text-right">ภาษีมูลค่าเพิ่ม</th></tr></thead>
                 <tbody>${rows.map(renderVatRow).join('')}</tbody>
-                <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="7" class="text-right">รวม (เฉพาะที่เลือกใช้)</td><td class="text-right">${Layout.money(sumBase)}</td><td class="text-right">${Layout.money(sumTax)}</td></tr></tfoot>
+                <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="7" class="text-right">รวม (เฉพาะที่เลือกใช้)</td><td class="text-right" data-foot="base">${Layout.money(sumBase)}</td><td class="text-right" data-foot="tax">${Layout.money(sumTax)}</td></tr></tfoot>
                 </table></div>`;
             };
-            html += '<h4 class="text-sm font-semibold" style="margin:14px 0 0">รายละเอียด</h4>';
-            html += '<div class="text-xs text-gray-400" style="margin:2px 0 4px">ติ๊ก "ใช้" ออกเพื่อไม่นำรายการนั้นเข้ายอดรายงาน (รายการยังถูกเก็บไว้)</div>';
+            html += '<h4 class="text-sm font-semibold" style="margin:14px 0 0">รายละเอียด <span id="vatSaveIndicator" class="text-xs" style="color:#10b981;font-weight:400"></span></h4>';
+            html += '<div class="text-xs text-gray-400" style="margin:2px 0 4px">ติ๊ก "ใช้" ออก/เข้า → ยอดรวมอัปเดตทันที + <b>บันทึกอัตโนมัติ</b> (ไม่ต้องกดปุ่มบันทึก). รายการที่ติ๊กออกยังถูกเก็บไว้ + ยกไปเลือกใช้เดือนถัดไปได้ (§82/3 ไม่เกิน 6 เดือน)</div>';
             if (isVat) {
               const groups = [
                 ['output', '📤 ภาษีขาย (Output VAT)', '#0369a1'],
@@ -565,9 +569,7 @@
           box.innerHTML = html;
         } catch(e) { box.innerHTML = ''; }
       },
-      async saveReport(id) {
-        const api = Layout.api(); if (!api) return;
-        const notes = document.getElementById('taxNotes')?.value || '';
+      _collectVatLines() {
         const lineInputs = document.querySelectorAll('#detailContent input[data-line]');
         const lineMap = {};
         lineInputs.forEach(inp => {
@@ -578,9 +580,61 @@
           else if (field === 'description') lineMap[lid][field] = inp.value;
           else lineMap[lid][field] = parseFloat(inp.value) || 0;
         });
-        const lines = Object.values(lineMap);
+        return Object.values(lineMap);
+      },
+
+      /** ติ๊ก "ใช้" / แก้ยอด → recalc footer ตารางนั้นทันที (client) + auto-save
+       *  แบบ debounce (ผู้ใช้ไม่ต้องกดปุ่มบันทึก — ตอบคำถาม "เซฟตรงไหน"). */
+      onVatLineToggle(el) {
+        const table = el.closest('table');
+        const tr = el.closest('tr');
+        if (tr && el.dataset.field === 'include') {
+          tr.style.opacity = el.checked ? '' : '.45';
+          tr.style.textDecoration = el.checked ? '' : 'line-through';
+        }
+        if (table) {
+          let base = 0, tax = 0;
+          table.querySelectorAll('tbody tr').forEach(row => {
+            const c = row.querySelector('input[data-field="include"]');
+            if (c && !c.checked) return;
+            base += parseFloat(row.querySelector('input[data-field="incomeAmount"]')?.value || '0') || 0;
+            tax += parseFloat(row.querySelector('input[data-field="taxAmount"]')?.value || '0') || 0;
+          });
+          const fb = table.querySelector('[data-foot="base"]');
+          const ft = table.querySelector('[data-foot="tax"]');
+          if (fb) fb.textContent = Layout.money(base);
+          if (ft) ft.textContent = Layout.money(tax);
+        }
+        const ind = document.getElementById('vatSaveIndicator');
+        if (ind) { ind.textContent = '● กำลังบันทึก...'; ind.style.color = '#d97706'; }
+        clearTimeout(this._vatSaveTimer);
+        const rid = this._currentReportId;
+        this._vatSaveTimer = setTimeout(() => this._autoSaveVat(rid), 700);
+      },
+
+      /** persist เงียบ ๆ (ไม่ full-reload — คงตำแหน่ง scroll/การติ๊กต่อ) + อัปเดต
+       *  KPI บนสุดจาก server response (ยอดจริงหลัง recompute). */
+      async _autoSaveVat(id) {
+        const api = Layout.api(); if (!api || !id) return;
+        const ind = document.getElementById('vatSaveIndicator');
         try {
-          await api.updateTaxReport(id, { notes, lines });
+          const notes = document.getElementById('taxNotes')?.value || '';
+          const res = await api.updateTaxReport(id, { notes, lines: this._collectVatLines() });
+          const d = res?.data || res;
+          // อัปเดต KPI ภาษีขาย/ซื้อ/สุทธิ ถ้ามี element
+          const set = (elid, v) => { const e = document.getElementById(elid); if (e && v != null) e.textContent = Layout.money(v); };
+          set('kpiOutputVat', d?.outputVat); set('kpiInputVat', d?.inputVat); set('kpiNetVat', d?.netVat);
+          if (ind) { ind.textContent = '✓ บันทึกอัตโนมัติแล้ว'; ind.style.color = '#10b981'; setTimeout(() => { if (ind.textContent.includes('บันทึก')) ind.textContent = ''; }, 2500); }
+        } catch (e) {
+          if (ind) { ind.textContent = '⚠ บันทึกไม่สำเร็จ กด "บันทึก"'; ind.style.color = '#dc2626'; }
+        }
+      },
+
+      async saveReport(id) {
+        const api = Layout.api(); if (!api) return;
+        const notes = document.getElementById('taxNotes')?.value || '';
+        try {
+          await api.updateTaxReport(id, { notes, lines: this._collectVatLines() });
           Layout.toast('บันทึกสำเร็จ');
           await this.load();
           await this.viewDetail(id);
