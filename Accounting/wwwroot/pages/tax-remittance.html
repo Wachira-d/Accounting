@@ -150,7 +150,7 @@
         c.innerHTML = `
           <div class="table-container" style="border:none">
             <table class="table">
-              <thead><tr><th>ประเภท</th><th>งวด</th><th class="text-right">ยอด</th><th class="text-right">เงินเพิ่ม</th><th>วันที่จ่าย</th><th>เลขรับ</th><th class="text-center">ใบเสร็จ</th></tr></thead>
+              <thead><tr><th>ประเภท</th><th>งวด</th><th class="text-right">ยอด</th><th class="text-right">เงินเพิ่ม</th><th>วันที่จ่าย</th><th>เลขรับ</th><th class="text-center">ใบเสร็จ</th><th></th></tr></thead>
               <tbody>${rows.map(r => `
                 <tr>
                   <td>${Layout.esc(r.formCode)}</td>
@@ -160,9 +160,25 @@
                   <td>${Layout.date(r.payDate)}</td>
                   <td>${Layout.esc(r.filingNumber || '-')}</td>
                   <td class="text-center">${r.receiptAttachmentId ? '📎' : '-'}</td>
+                  <td class="text-right">${r.remittanceType === 'VatPp36'
+                    ? `<button class="btn btn-sm btn-outline" onclick="Page.recognizePp36(${r.periodYear}, ${r.periodMonth})" title="ได้ใบเสร็จกรมสรรพากรแล้ว → รับรู้ภาษีซื้อ (Dr 11610 / Cr 11640) เข้า ภ.พ.30 (§77/2) — ระบบกันรับรู้ซ้ำให้">🧾 รับรู้ภาษีซื้อ</button>`
+                    : ''}</td>
                 </tr>`).join('')}</tbody>
             </table>
           </div>`;
+      },
+
+      /** รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD — Dr 11610 / Cr 11640 + เข้า
+       *  ภ.พ.30 เดือนที่รับรู้ (§77/2). backend กันรับรู้ซ้ำ/ยังไม่นำส่งให้. */
+      async recognizePp36(year, month) {
+        if (!confirm(`ยืนยันรับรู้ภาษีซื้อ ภ.พ.36 งวด ${String(month).padStart(2, '0')}/${year}?\n\n(กดเมื่อได้รับใบเสร็จจากกรมสรรพากรแล้ว — ระบบจะย้ายภาษีซื้อเข้า ภ.พ.30 เดือนปัจจุบัน)`)) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.post(`/api/companies/${cid}/remittances/pp36/recognize`,
+            { periodYear: year, periodMonth: month, recognizeDate: new Date().toISOString().slice(0, 10) });
+          Layout.toast(res?.message || 'รับรู้ภาษีซื้อ ภ.พ.36 แล้ว', 'success', 8000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'รับรู้ไม่สำเร็จ', 'error', 8000); }
       },
 
       _byId(id) { return document.getElementById(id); },

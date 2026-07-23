@@ -65,6 +65,29 @@ public class StatutoryRemittanceController : ControllerBase
         }
     }
 
+    public sealed record RecognizePp36Request(int PeriodYear, int PeriodMonth, DateTime? RecognizeDate);
+
+    /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จกรมสรรพากร (§77/2) —
+    /// Dr 11610 / Cr 11640 + stamp เอกสาร → เข้า ภ.พ.30 เดือนที่รับรู้.
+    /// ต้องนำส่ง ภ.พ.36 งวดนั้นก่อน.</summary>
+    [HttpPost("pp36/recognize")]
+    [RequirePermission(PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<RemitResult>>> RecognizePp36(
+        Guid companyId, [FromBody] RecognizePp36Request request)
+    {
+        try
+        {
+            var res = await _service.RecognizePp36InputVatAsync(companyId,
+                request.PeriodYear, request.PeriodMonth,
+                request.RecognizeDate ?? DateTime.UtcNow.Date, User.Identity?.Name ?? "");
+            return Ok(new ApiResponse<RemitResult>(true, res, res.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<RemitResult>(false, null, ex.Message));
+        }
+    }
+
     /// <summary>แนบไฟล์ใบเสร็จ/หลักฐานการนำส่งเข้ารายการที่นำส่งแล้ว.</summary>
     [HttpPost("{remittanceId:guid}/receipt")]
     public async Task<ActionResult<ApiResponse<object>>> UploadReceipt(

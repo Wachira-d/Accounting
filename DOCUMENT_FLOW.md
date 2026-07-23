@@ -1249,6 +1249,16 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 94 (ภ.พ.36 ครบวงจร §83/6): (A) AutoPost แก้ JE บริการต่างประเทศ — เดิม Cr
+_เจ้าหนี้/เงินสด "รวม VAT" (จ่ายผู้ขาย ตปท. เกิน 7% + งบไม่มีหนี้ ภ.พ.36). ใหม่:
+_Cr ผู้ขาย/เงินสด = ฐาน + Cr 21912 เจ้าหนี้ ภ.พ.36 = VAT ประเมินเอง + Dr 11640
+_บังคับเสมอ (§77/2 เคลมได้หลังนำส่ง) — ทั้ง branch Expense/PI accrual และ PV
+_standalone (cash + legacy credit). (B) StatutoryRemittance เพิ่ม VatPp36:
+_dashboard pending จากเอกสาร IsForeignService, RemitAsync generic → Dr 21912/
+_Cr ธนาคาร, due 7/15. (C) RecognizePp36InputVatAsync — หลังได้ใบเสร็จ RD:
+_Dr 11610/Cr 11640 + stamp InputVatBecameClaimableAt → เข้า ภ.พ.30 เดือนรับรู้;
+_idempotent (JE Ref ภ.พ.36R-YYYYMM) + ต้องนำส่งก่อน. UI: หน้า tax-remittance
+_แถว ภ.พ.36 ขึ้น pending อัตโนมัติ + ปุ่ม "รับรู้ภาษีซื้อ" บนประวัติ._
 _รอบ 93: เปิดฟอร์มออก "ใบกำกับภาษี/ใบเสร็จรับเงิน ใบเดียว" (ขายเงินสด) — เดิม
 _IssuedAsCashReceipt set ได้เฉพาะ integration (TakeTime IsCashSale); ฟอร์มสร้างเอง
 _มีแค่ "จ่ายแล้ว (2 ใบ + REC แยก)". เพิ่ม CreateDocumentRequest.IssuedAsCashReceipt
