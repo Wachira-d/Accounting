@@ -363,7 +363,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     /// เรียกได้หลังนำส่ง (มี remittance VatPp36 งวดนั้น). idempotent ผ่าน JE
     /// Reference ภ.พ.36R-YYYYMM + เอกสารที่ stamp แล้วไม่นับซ้ำ.</summary>
     public async Task<RemitResult> RecognizePp36InputVatAsync(Guid companyId, int periodYear,
-        int periodMonth, DateTime recognizeDate, string performedBy)
+        int periodMonth, DateTime? recognizeDate, string performedBy)
     {
         // ต้องนำส่งงวดนั้นก่อน (Excel flow: 15/6 นำส่ง → 16/6 ได้ใบเสร็จ → รับรู้)
         var remitted = await _db.Set<StatutoryRemittance>().AnyAsync(r => r.CompanyId == companyId
@@ -403,11 +403,17 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             ?? await ResolveAccountAsync(companyId, "11630")
             ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11640 (ภาษีซื้อยังไม่ถึงกำหนด)");
 
+        // วันเคลม ภ.พ.30 ต่อใบ = "วันที่ใบกำกับผู้ขาย" ของใบนั้น (§82/3 เคลมตามวัน
+        // ใบกำกับ) — ผู้ใช้เลือก default นี้. ถ้าผู้ใช้ระบุ recognizeDate มา = ใช้วันนั้น
+        // ทั้งชุด (override). วันที่ JE = recognizeDate หรือ ใบกำกับล่าสุดในชุด
+        DateTime ClaimDateOf(Document d) => recognizeDate ?? d.SupplierTaxInvoiceDate ?? d.PaymentDate ?? d.DocumentDate;
+        var jeDate = recognizeDate ?? docs.Max(d => d.SupplierTaxInvoiceDate ?? d.PaymentDate ?? d.DocumentDate);
+
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
             var jeReq = new CreateJournalEntryRequest(
-                EntryDate: recognizeDate,
+                EntryDate: jeDate,
                 Description: $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} (ได้ใบเสร็จกรมสรรพากร §77/2)",
                 Reference: refNo,
                 Lines: new List<JournalLineRequest>
@@ -419,10 +425,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             var je = await _accounting.CreateJournalEntryAsync(companyId, jeReq, performedBy);
             await _accounting.PostJournalEntryAsync(companyId, je.Id);
 
-            // stamp เอกสาร → ภ.พ.30 เดือนที่รับรู้จะ include ภาษีซื้อก้อนนี้
+            // stamp เอกสาร → ภ.พ.30 เดือน "วันที่ใบกำกับ" (หรือ recognizeDate ถ้าระบุ)
+            // จะ include ภาษีซื้อก้อนนี้
             foreach (var d in docs)
             {
-                d.InputVatBecameClaimableAt = recognizeDate;
+                d.InputVatBecameClaimableAt = ClaimDateOf(d);
                 d.UpdatedAt = DateTime.UtcNow;
             }
             await _db.SaveChangesAsync();
@@ -430,8 +437,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
             _logger.LogInformation("Recognized PP36 input VAT {Month}/{Year} {Amt} ({Docs} docs) → JE {Je}",
                 periodMonth, periodYear, vatTotal, docs.Count, je.Id);
+            var claimMonths = string.Join(", ", docs.Select(ClaimDateOf).Select(dt => dt.ToString("MM/yyyy")).Distinct());
             return new RemitResult(Guid.Empty, je.Id, vatTotal, 0m,
-                $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} จำนวน {vatTotal:N2} บาท ({docs.Count} เอกสาร) — จะเข้า ภ.พ.30 เดือน {recognizeDate:MM/yyyy}");
+                $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} จำนวน {vatTotal:N2} บาท ({docs.Count} เอกสาร) — เข้า ภ.พ.30 เดือน {claimMonths} (ตามวันที่ใบกำกับ)");
         }
         catch
         {
