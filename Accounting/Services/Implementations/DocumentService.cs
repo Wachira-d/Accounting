@@ -7263,6 +7263,11 @@ public class DocumentService : IDocumentService
     {
         // ไม่เคย suspend → ไม่ต้องทำอะไร
         if (!doc.InputVatPostedAsUndue) return false;
+        // §83/6 บริการต่างประเทศ: ภาษีซื้อพักที่ 11640 ด้วยเหตุ "ยังไม่นำส่ง ภ.พ.36"
+        // (ไม่ใช่ใบกำกับ §86/4 ไม่ครบ) — เคลมผ่าน RecognizePp36InputVatAsync เท่านั้น
+        // (หลังนำส่ง+ใบเสร็จ RD §77/2). ห้ามย้ายผ่านเส้น §86/4 นี้ (ผู้ขาย ตปท.
+        // ไม่มีเลขภาษีไทย → completeness ก็ fail อยู่แล้ว แต่กันชัด ๆ)
+        if (doc.IsForeignService) return false;
         // เคย reclassify ไปแล้ว → ไม่ทำซ้ำ (idempotent)
         if (doc.InputVatBecameClaimableAt.HasValue) return false;
         // มี override → user ตั้งใจไม่เคลม VAT → ไม่ reclassify

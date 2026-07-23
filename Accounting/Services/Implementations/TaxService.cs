@@ -597,6 +597,74 @@ public partial class TaxService : ITaxService
                 // เคลม). audit ว่าตัดยอดไหนออก ดูได้จากตัวเอกสาร (line.IsVatClaimable
                 // + ผังบัญชี) — รายงานสะท้อน GL: มีเฉพาะภาษีซื้อที่เคลมจริง.
             }
+
+            // ===== §82/3 carry-forward: ภาษีซื้อที่ "เลือกไม่ใช้" เดือนก่อน =====
+            // บรรทัด INPUT ที่นักบัญชีติ๊กออก (IsExcluded) ในรายงานเดือนก่อน ยังมี
+            // สิทธิเคลมภายใน 6 เดือนนับจากเดือนภาษีของใบกำกับ — เดิมรายงานเดือน
+            // ใหม่ดึงเฉพาะเอกสารเดือนตัวเอง → เครดิตที่เลื่อนไว้ "หายถาวร". ดึงมา
+            // เป็นบรรทัดให้เลือกใช้ (default ติ๊กออก — ผู้ใช้เลือกเดือนที่ใช้เอง
+            // ตอนติ๊กจะนับเข้า InputVat ผ่าน RecalcVatTotals ตอนบันทึก)
+            try
+            {
+                var cfWindowStart = startDate.AddMonths(-6);
+                var cfYear = startDate.Year; var cfMonth = startDate.Month;
+                var priorExcluded = await _db.TaxReports.AsNoTracking()
+                    .Where(t => t.CompanyId == companyId && t.TaxType == TaxType.VAT && t.Id != report.Id
+                        && (t.Year < cfYear || (t.Year == cfYear && t.Month < cfMonth)))
+                    .SelectMany(t => t.Lines)
+                    .Where(l => l.IncomeTypeCode == "INPUT" && l.IsExcluded
+                        && l.DocumentId != null && l.TaxAmount > 0
+                        && l.TransactionDate >= cfWindowStart && l.TransactionDate < startDate
+                        && !l.Description!.StartsWith("🚫"))
+                    .ToListAsync();
+                if (priorExcluded.Count > 0)
+                {
+                    // dedup: ใบที่ "ถูกใช้แล้ว" (มี line INPUT IsExcluded=false ในรายงาน
+                    // ใด ๆ) หรือมีบรรทัดสดในรายงานนี้อยู่แล้ว → ไม่ยกมา
+                    var cfDocIds = priorExcluded.Select(l => l.DocumentId!.Value).Distinct().ToList();
+                    var usedDocIds = (await _db.TaxReports.AsNoTracking()
+                        .Where(t => t.CompanyId == companyId && t.TaxType == TaxType.VAT)
+                        .SelectMany(t => t.Lines)
+                        .Where(l => l.IncomeTypeCode == "INPUT" && !l.IsExcluded
+                            && l.DocumentId != null && cfDocIds.Contains(l.DocumentId.Value))
+                        .Select(l => l.DocumentId!.Value).ToListAsync()).ToHashSet();
+                    var freshDocIds = report.Lines.Where(l => l.DocumentId.HasValue)
+                        .Select(l => l.DocumentId!.Value).ToHashSet();
+                    // ใบที่ยัง "ไม่ถึงกำหนด" (11640 รอใบกำกับครบ) ไม่ยกมา — ยังเคลมไม่ได้
+                    var stillUndue = (await _db.Documents.AsNoTracking()
+                        .Where(d => cfDocIds.Contains(d.Id)
+                            && ((d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null)
+                                || d.Status == DocumentStatus.Voided || d.IsDeleted))
+                        .Select(d => d.Id).ToListAsync()).ToHashSet();
+
+                    foreach (var grp in priorExcluded.GroupBy(l => l.DocumentId!.Value))
+                    {
+                        var docId = grp.Key;
+                        if (usedDocIds.Contains(docId) || freshDocIds.Contains(docId)
+                            || stillUndue.Contains(docId)) continue;
+                        var src = grp.OrderByDescending(l => l.TransactionDate).First();
+                        report.Lines.Add(new TaxReportLine
+                        {
+                            TaxReportId = report.Id,
+                            LineOrder = lineOrder++,
+                            TaxPayerId = src.TaxPayerId,
+                            TaxPayerName = src.TaxPayerName,
+                            TransactionDate = src.TransactionDate,
+                            Description = $"[ยกมา §82/3 — ติ๊ก 'ใช้' เพื่อเคลมเดือนนี้] {src.Description}",
+                            IncomeAmount = src.IncomeAmount,
+                            TaxRate = src.TaxRate,
+                            TaxAmount = src.TaxAmount,
+                            DocumentId = docId,
+                            IncomeTypeCode = "INPUT",
+                            IsExcluded = true   // default ไม่ใช้ — ผู้ใช้ติ๊กเองแล้วบันทึก
+                        });
+                    }
+                }
+            }
+            catch
+            {
+                // best-effort — carry-forward ล้มไม่กระทบรายงานหลัก (TaxService ไม่มี logger)
+            }
         }
 
         // ===== Fallback: scan journal entries that have NO source document =====
