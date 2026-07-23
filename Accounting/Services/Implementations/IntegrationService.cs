@@ -448,6 +448,12 @@ public class IntegrationService : IIntegrationService
                 if (request.Email != null) contact.Email = request.Email;
                 if (request.Address != null) contact.Address = request.Address;
                 if (request.TaxId != null) contact.TaxId = request.TaxId;
+                // §86/4: รหัสสาขา + ประเภทผู้ติดต่อ ต้องอัปเดตตอน resync ด้วย —
+                // เดิม set เฉพาะตอน create → contact นิติบุคคลเก่า (สร้างก่อน
+                // TakeTime ส่ง branchCode) ไม่มีวันได้รหัสสาขา → ใบกำกับเต็มรูป
+                // approve 400 "ต้องมีรหัสสาขาผู้ซื้อ" ตลอดไป แม้ TakeTime ส่งครบ
+                if (request.BranchCode != null) contact.BranchCode = request.BranchCode;
+                if (request.ContactType != null) contact.ContactType = ParseContactType(request.ContactType);
                 if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
                 if (request.BuildingName != null) contact.BuildingName = request.BuildingName;
                 if (request.Moo != null) contact.Moo = request.Moo;
