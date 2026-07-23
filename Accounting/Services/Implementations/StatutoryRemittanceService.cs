@@ -36,6 +36,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         "WhtPnd3"   => ("ภาษีหัก ณ ที่จ่าย (บุคคลธรรมดา)", "ภ.ง.ด.3", "21916"),
         "WhtPnd53"  => ("ภาษีหัก ณ ที่จ่าย (นิติบุคคล)", "ภ.ง.ด.53", "21917"),
         "VatPp30"   => ("ภาษีมูลค่าเพิ่ม", "ภ.พ.30", "21911"),
+        // §83/6 reverse charge — VAT ประเมินเองจากจ่ายค่าบริการ ตปท. (ตั้งหนี้
+        // Cr 21912 ตอนบันทึกเอกสาร IsForeignService → นำส่ง Dr 21912/Cr ธนาคาร)
+        "VatPp36"   => ("ภาษีมูลค่าเพิ่ม (บริการต่างประเทศ §83/6)", "ภ.พ.36", "21912"),
         _           => ("ไม่ทราบ", type, "")
     };
 
@@ -151,6 +154,31 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "โหลด ภพ.30 ไม่สำเร็จ"); }
+
+        // ── ภพ.36 — VAT ประเมินเองจากบริการต่างประเทศ (§83/6) ──
+        // แหล่งหนี้: เอกสาร IsForeignService ที่อนุมัติแล้ว (JE ตั้ง Cr 21912 ไว้)
+        try
+        {
+            var fsDocs = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.IsForeignService && d.VatAmount > 0
+                    && (d.PaymentDate ?? d.DocumentDate) >= start
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                .Select(d => new { d.VatAmount, d.PaymentDate, d.DocumentDate })
+                .ToListAsync();
+            foreach (var g in fsDocs
+                .Select(d => new { Date = d.PaymentDate ?? d.DocumentDate, d.VatAmount })
+                .Where(d => InRange(d.Date.Year, d.Date.Month))
+                .GroupBy(d => (d.Date.Year, d.Date.Month)))
+            {
+                var outstanding = g.Sum(x => x.VatAmount) - Remitted("VatPp36", g.Key.Year, g.Key.Month);
+                if (outstanding <= 0.009m) continue;
+                pending.Add(BuildItem("VatPp36", g.Key.Year, g.Key.Month, outstanding, today,
+                    payeeCount: g.Count()));
+            }
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ ภพ.36 ไม่สำเร็จ"); }
 
         // ── ประวัติที่นำส่งล่าสุด ──
         var history = remits.OrderByDescending(r => r.PayDate).Take(30)
@@ -321,6 +349,89 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
             return new RemitResult(rec.Id, je.Id, amount, lateFee,
                 $"นำส่ง{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} สำเร็จ ({amount + lateFee:N2} บาท)");
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จกรมสรรพากร (§77/2: เคลมได้เดือน
+    /// ที่นำส่ง) — JE: Dr 11610 ภาษีซื้อ ภ.พ.30 / Cr 11640 ยังไม่ถึงกำหนด + stamp
+    /// InputVatBecameClaimableAt ลงเอกสาร → ภ.พ.30 เดือนที่รับรู้ include ให้เอง.
+    /// เรียกได้หลังนำส่ง (มี remittance VatPp36 งวดนั้น). idempotent ผ่าน JE
+    /// Reference ภ.พ.36R-YYYYMM + เอกสารที่ stamp แล้วไม่นับซ้ำ.</summary>
+    public async Task<RemitResult> RecognizePp36InputVatAsync(Guid companyId, int periodYear,
+        int periodMonth, DateTime recognizeDate, string performedBy)
+    {
+        // ต้องนำส่งงวดนั้นก่อน (Excel flow: 15/6 นำส่ง → 16/6 ได้ใบเสร็จ → รับรู้)
+        var remitted = await _db.Set<StatutoryRemittance>().AnyAsync(r => r.CompanyId == companyId
+            && !r.IsDeleted && r.RemittanceType == "VatPp36"
+            && r.PeriodYear == periodYear && r.PeriodMonth == periodMonth);
+        if (!remitted)
+            throw new InvalidOperationException(
+                $"ยังไม่ได้นำส่ง ภ.พ.36 งวด {periodMonth:D2}/{periodYear} — นำส่งก่อนแล้วค่อยรับรู้ภาษีซื้อ");
+
+        var refNo = $"ภ.พ.36R-{periodYear}{periodMonth:D2}";
+        var dupJe = await _db.JournalEntries.AnyAsync(j => j.CompanyId == companyId
+            && j.Reference == refNo && !j.IsDeleted && j.Status == JournalEntryStatus.Posted);
+        if (dupJe)
+            throw new InvalidOperationException($"งวด {periodMonth:D2}/{periodYear} รับรู้ภาษีซื้อไปแล้ว (JE {refNo})");
+
+        // เอกสารบริการ ตปท. ของงวด ที่ VAT ยังพักอยู่ 11640 (ยังไม่เคยรับรู้)
+        var docs = await _db.Documents
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.IsForeignService && d.VatAmount > 0
+                && d.InputVatBecameClaimableAt == null
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+            .ToListAsync();
+        docs = docs.Where(d =>
+        {
+            var dt = d.PaymentDate ?? d.DocumentDate;
+            return dt.Year == periodYear && dt.Month == periodMonth;
+        }).ToList();
+        var vatTotal = docs.Sum(d => d.VatAmount);
+        if (vatTotal <= 0.009m)
+            throw new InvalidOperationException(
+                $"ไม่มีภาษีซื้อ ภ.พ.36 ค้างรับรู้ในงวด {periodMonth:D2}/{periodYear}");
+
+        var claimAcc = await ResolveAccountAsync(companyId, "11610")
+            ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11610 (ภาษีซื้อ ภ.พ.30)");
+        var undueAcc = await ResolveAccountAsync(companyId, "11640")
+            ?? await ResolveAccountAsync(companyId, "11630")
+            ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11640 (ภาษีซื้อยังไม่ถึงกำหนด)");
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var jeReq = new CreateJournalEntryRequest(
+                EntryDate: recognizeDate,
+                Description: $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} (ได้ใบเสร็จกรมสรรพากร §77/2)",
+                Reference: refNo,
+                Lines: new List<JournalLineRequest>
+                {
+                    new(claimAcc.Id, vatTotal, 0, "ภาษีซื้อ ภ.พ.30 (จาก ภ.พ.36 ที่นำส่งแล้ว)"),
+                    new(undueAcc.Id, 0, vatTotal, "ล้างภาษีซื้อยังไม่ถึงกำหนด (ภ.พ.36)"),
+                },
+                JournalType: JournalType.General);
+            var je = await _accounting.CreateJournalEntryAsync(companyId, jeReq, performedBy);
+            await _accounting.PostJournalEntryAsync(companyId, je.Id);
+
+            // stamp เอกสาร → ภ.พ.30 เดือนที่รับรู้จะ include ภาษีซื้อก้อนนี้
+            foreach (var d in docs)
+            {
+                d.InputVatBecameClaimableAt = recognizeDate;
+                d.UpdatedAt = DateTime.UtcNow;
+            }
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            _logger.LogInformation("Recognized PP36 input VAT {Month}/{Year} {Amt} ({Docs} docs) → JE {Je}",
+                periodMonth, periodYear, vatTotal, docs.Count, je.Id);
+            return new RemitResult(Guid.Empty, je.Id, vatTotal, 0m,
+                $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} จำนวน {vatTotal:N2} บาท ({docs.Count} เอกสาร) — จะเข้า ภ.พ.30 เดือน {recognizeDate:MM/yyyy}");
         }
         catch
         {

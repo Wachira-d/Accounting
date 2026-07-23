@@ -8657,9 +8657,16 @@ public class DocumentService : IDocumentService
             var claimableVatPi = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
             if (claimableVatPi > 0)
             {
-                var (vatInputAccount, postedAsUndue) = await ResolveInputVatAccountAsync(companyId, doc);
+                // §83/6 บริการต่างประเทศ: VAT เคลมได้เฉพาะ "เดือนที่นำส่ง ภ.พ.36 +
+                // ได้ใบเสร็จ RD" (§77/2) — บังคับพักที่ 11640 เสมอ (ไม่ดู completeness
+                // เพราะไม่มีใบกำกับไทย) → RecognizePp36 จะย้าย 11640→11610 ทีหลัง
+                var (vatInputAccount, postedAsUndue) = doc.IsForeignService
+                    ? ((await FindAccountAsync(companyId, "11640") ?? await FindAccountAsync(companyId, "11630")
+                        ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11640 (ภาษีซื้อยังไม่ถึงกำหนด) สำหรับ ภ.พ.36")), true)
+                    : await ResolveInputVatAccountAsync(companyId, doc);
                 AddLine(vatInputAccount.Id, claimableVatPi, 0,
-                    postedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด (ใบกำกับไม่ครบ §86/4)"
+                    doc.IsForeignService ? "ภาษีซื้อยังไม่ถึงกำหนด (ภ.พ.36 §83/6 — รอนำส่ง+ใบเสร็จ RD)"
+                    : postedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด (ใบกำกับไม่ครบ §86/4)"
                                   : (doc.InputVatAccountCodeOverride != null
                                         ? $"VAT → {vatInputAccount.AccountCode} {vatInputAccount.AccountName} (override)"
                                         : "ภาษีซื้อ (เคลมได้)"));
@@ -8674,13 +8681,26 @@ public class DocumentService : IDocumentService
             // On Accrual the payable carries NET of WHT (we'll withhold when we
             // pay). On Cash it carries GROSS (full amount owed before deducting
             // the WHT we'll withhold when actually paying).
+            //
+            // §83/6 (reverse charge): ผู้ขายต่างประเทศ "ไม่เก็บ VAT ไทย" — เจ้าหนี้
+            // ผู้ขายต้องเป็น "ฐาน" เท่านั้น ส่วน VAT ที่ประเมินเองตั้งเป็นหนี้ต่อ
+            // สรรพากร (Cr 21912 เจ้าหนี้ ภ.พ.36) แยกต่างหาก — เดิม Cr เจ้าหนี้รวม
+            // VAT = ตั้งหนี้/จ่ายผู้ขายเกินยอดจริง + งบไม่มีหนี้ ภ.พ.36
             var apAccount = await ResolvePayableAccountAsync(companyId, doc.DocumentType, doc.Contact);
-            var apAmountAtInvoice = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
+            var pp36Vat = doc.IsForeignService ? doc.VatAmount : 0m;
+            var apAmountAtInvoice = (whtBasis == Models.Enums.WhtRecognitionBasis.Cash
                 ? doc.TotalAmount + doc.WithholdingTaxAmount
-                : doc.TotalAmount;
+                : doc.TotalAmount) - pp36Vat;
             if (apAccount != null)
                 AddLine(apAccount.Id, 0, apAmountAtInvoice,
-                    $"{(doc.DocumentType == DocumentType.Expense ? "เจ้าหนี้อื่น (ตั้งหนี้ค่าใช้จ่าย)" : "เจ้าหนี้การค้า")} - {doc.DocumentNumber}");
+                    $"{(doc.DocumentType == DocumentType.Expense ? "เจ้าหนี้อื่น (ตั้งหนี้ค่าใช้จ่าย)" : "เจ้าหนี้การค้า")} - {doc.DocumentNumber}"
+                    + (pp36Vat > 0 ? " (ฐาน ไม่รวม VAT ประเมินเอง §83/6)" : ""));
+            if (pp36Vat > 0)
+            {
+                var pp36Acc = await FindAccountAsync(companyId, "21912")
+                    ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีขาย ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
+                AddLine(pp36Acc.Id, 0, pp36Vat, $"เจ้าหนี้ ภ.พ.36 (VAT ประเมินเอง §83/6) - {doc.DocumentNumber}");
+            }
 
             // Cr: ภาษีหัก ณ ที่จ่ายค้างจ่าย (21916 ภ.ง.ด.3 / 21917 ภ.ง.ด.53).
             // Accrual only — Cash basis defers to the PaymentVoucher path.
@@ -9335,14 +9355,31 @@ public class DocumentService : IDocumentService
                 var claimableVatPv = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
                 if (claimableVatPv > 0)
                 {
-                    // เหมือน PI — เลือก 11610/11640/override ตาม completeness §86/4
-                    var (vatInputAccount, postedAsUndue) = await ResolveInputVatAccountAsync(companyId, doc);
+                    // เหมือน PI — เลือก 11610/11640/override ตาม completeness §86/4.
+                    // §83/6 บริการต่างประเทศ → บังคับ 11640 เสมอ (เคลมได้หลังนำส่ง
+                    // ภ.พ.36 + ได้ใบเสร็จ RD §77/2 — RecognizePp36 ย้ายให้ทีหลัง)
+                    var (vatInputAccount, postedAsUndue) = doc.IsForeignService
+                        ? ((await FindAccountAsync(companyId, "11640") ?? await FindAccountAsync(companyId, "11630")
+                            ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11640 (ภาษีซื้อยังไม่ถึงกำหนด) สำหรับ ภ.พ.36")), true)
+                        : await ResolveInputVatAccountAsync(companyId, doc);
                     AddLine(vatInputAccount.Id, claimableVatPv, 0,
-                        postedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด (ใบกำกับไม่ครบ §86/4)"
+                        doc.IsForeignService ? "ภาษีซื้อยังไม่ถึงกำหนด (ภ.พ.36 §83/6 — รอนำส่ง+ใบเสร็จ RD)"
+                        : postedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด (ใบกำกับไม่ครบ §86/4)"
                                       : (doc.InputVatAccountCodeOverride != null
                                             ? $"VAT → {vatInputAccount.AccountCode} {vatInputAccount.AccountName} (override)"
                                             : "ภาษีซื้อ (เคลมได้)"));
                     doc.InputVatPostedAsUndue = postedAsUndue;
+                }
+
+                // §83/6: VAT ประเมินเอง → Cr เจ้าหนี้ ภ.พ.36 (21912); เงินที่จ่าย
+                // ผู้ขายจริง = ฐานเท่านั้น (ผู้ขาย ตปท. ไม่เก็บ VAT ไทย — เดิม Cr
+                // เงินสดรวม VAT = จ่ายเกิน 7%)
+                var pp36VatPv = doc.IsForeignService ? doc.VatAmount : 0m;
+                if (pp36VatPv > 0)
+                {
+                    var pp36AccPv = await FindAccountAsync(companyId, "21912")
+                        ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีขาย ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
+                    AddLine(pp36AccPv.Id, 0, pp36VatPv, $"เจ้าหนี้ ภ.พ.36 (VAT ประเมินเอง §83/6) - {doc.DocumentNumber}");
                 }
 
                 // Credit side depends on the settlement basis:
@@ -9361,13 +9398,14 @@ public class DocumentService : IDocumentService
                     // (เจ้าหนี้อื่น 21220) so AP reports stay consistent.
                     var apAccount = await ResolvePayableAccountAsync(companyId, DocumentType.Expense, doc.Contact);
                     if (apAccount != null)
-                        AddLine(apAccount.Id, 0, doc.TotalAmount,
+                        AddLine(apAccount.Id, 0, doc.TotalAmount - pp36VatPv,
                             $"เจ้าหนี้ - {doc.DocumentNumber}");
                 }
                 else if (moneyAccount != null)
                 {
-                    AddLine(moneyAccount.Id, 0, doc.TotalAmount,
-                        $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
+                    AddLine(moneyAccount.Id, 0, doc.TotalAmount - pp36VatPv,
+                        $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}"
+                        + (pp36VatPv > 0 ? " (ฐาน — VAT ตั้งหนี้ ภ.พ.36)" : ""));
                 }
 
                 if (doc.WithholdingTaxAmount > 0)
