@@ -1249,6 +1249,14 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 96: แก้ §83/6 โชว์ผิด flow "รอใบกำกับ §86/4" — เอกสารบริการต่างประเทศ post
+_11640 (InputVatPostedAsUndue) เหมือนกัน แต่เคลมผ่าน ภ.พ.36 (นำส่ง+รับรู้) ไม่ใช่
+_§86/4 completeness. ผู้ขาย ตปท. ไม่มีเลขภาษีไทย → CompleteSupplierTaxInvoice
+_(completeness) fail เงียบ ๆ แต่ toast บอก "สำเร็จ ย้ายเข้า ภ.พ.30" ทั้งที่ไม่ย้าย.
+_แก้: (1) ReclassifyUndueInputVatAsync guard IsForeignService → return false (ชัด).
+_(2) banner detail + badge list แยก §83/6 → โชว์ "🌐 ภ.พ.36 รอรับรู้" + ลิงก์หน้า
+_นำส่งภาษี (ไม่โชว์ฟอร์ม §86/4). (3) toast completeTaxInvoice ซื่อสัตย์ — เช็ค
+_inputVatBecameClaimableAt จริง: ย้ายแล้ว/ยังเคลมไม่ได้ (ชี้ ภ.พ.36 ถ้า ตปท.)._
 _รอบ 95: หน้ารายงานภาษี (tax.html) — (1) ติ๊ก "ใช้" ไม่มี onchange → ยอดไม่ recalc
 _+ ต้องกดปุ่มบันทึกเอง. เพิ่ม onVatLineToggle: recalc footer ตารางนั้นทันที
 _(client) + auto-save debounce 700ms (indicator ● กำลังบันทึก → ✓ บันทึกแล้ว) +

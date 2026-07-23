@@ -3826,7 +3826,9 @@
             // ก่อนเคลม ภ.พ.30. โชว์เฉพาะตอนยังไม่ reclassify (becameClaimableAt ว่าง).
             let undueVatBadge = '';
             if (d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt) {
-              undueVatBadge = `<span title="ใบกำกับภาษีซื้อยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่ 11640 'ยังไม่ถึงกำหนด' ยังเคลม ภ.พ.30 ไม่ได้ กด 'ดู' เพื่อเติมข้อมูลใบกำกับ" style="margin-left:6px;padding:1px 6px;background:#7c3aed;color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ รอใบกำกับ</span>`;
+              undueVatBadge = d.isForeignService
+                ? `<span title="ภาษีซื้อ ภ.พ.36 (บริการต่างประเทศ §83/6) — พักไว้ที่ 11640 เคลมได้หลังนำส่ง ภ.พ.36 + ได้ใบเสร็จ RD (กด 'รับรู้ภาษีซื้อ' ที่หน้านำส่งภาษี)" style="margin-left:6px;padding:1px 6px;background:#2563eb;color:#fff;border-radius:6px;font-size:10px;font-weight:600">🌐 ภ.พ.36 รอรับรู้</span>`
+                : `<span title="ใบกำกับภาษีซื้อยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่ 11640 'ยังไม่ถึงกำหนด' ยังเคลม ภ.พ.30 ไม่ได้ กด 'ดู' เพื่อเติมข้อมูลใบกำกับ" style="margin-left:6px;padding:1px 6px;background:#7c3aed;color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ รอใบกำกับ</span>`;
             }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
@@ -5271,10 +5273,16 @@
               ${d.revenueContractId ? `<div><div class="text-xs text-gray-500">สัญญารายได้</div><div class="font-medium">📜 ${d.revenueContractId.substring(0,8)}...</div></div>` : ''}
               ${(d.bankAccountId || d.paymentAccountId) ? `<div><div class="text-xs text-gray-500">แหล่งเงิน (Cr)</div><div class="font-medium">💳 ${this.escapeHtml(d.bankAccountName || d.paymentAccountName || '-')}${(['PaymentVoucher','Receipt','ReceiptVoucher','Expense'].includes(d.documentType) && ['Approved','Sent','PartiallyPaid','Paid'].includes(d.status)) ? ` <button class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:10px" onclick="Page.openReclassifyPaymentSource('${d.id}')" title="เปลี่ยนแหล่งเงิน (ระบบสร้าง JE คู่ใหม่ Dr ผังเก่า/Cr ผังใหม่ — ไม่แก้เอกสารต้นฉบับ)">✏️</button>` : ''}</div></div>` : ''}
             </div>
-            ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt) ? `
+            ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && d.isForeignService) ? `
+              <div style="margin-bottom:12px;padding:12px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px">
+                <div style="font-size:13px;font-weight:700;color:#1e40af;margin-bottom:4px">🌐 ภาษีซื้อ ภ.พ.36 (บริการต่างประเทศ §83/6) — พักไว้ที่ 11640</div>
+                <div style="font-size:12px;color:#1d4ed8;margin-bottom:10px">ผู้ขายต่างประเทศ<b>ไม่มีใบกำกับภาษีไทย</b> — เคลมภาษีซื้อผ่าน §86/4 <b>ไม่ได้</b>. ภาษีซื้อก้อนนี้เคลมได้เมื่อ (1) นำส่ง ภ.พ.36 (2) ได้รับใบเสร็จกรมสรรพากร → กด "🧾 รับรู้ภาษีซื้อ" ที่<b>หน้านำส่งภาษี</b> ระบบจะย้าย 11640 → 11610 + เข้า ภ.พ.30 ให้เอง (§77/2)</div>
+                <a class="btn btn-sm btn-primary" href="/pages/tax-remittance.html">ไปหน้านำส่งภาษี (ภ.พ.36) →</a>
+              </div>` : ''}
+            ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.isForeignService) ? `
               <div style="margin-bottom:12px;padding:12px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">
                 <div style="font-size:13px;font-weight:700;color:#6d28d9;margin-bottom:4px">⏳ ภาษีซื้อยังไม่ถึงกำหนด (พักไว้ที่บัญชี 11640)</div>
-                <div style="font-size:12px;color:#6b21a8;margin-bottom:10px">ใบกำกับภาษีซื้อยังไม่ครบตาม §86/4 — ภาษีซื้อยังเคลม ภ.พ.30 ไม่ได้ เติมเลขที่ + วันที่ + สาขาให้ครบ ระบบจะย้ายเข้า "ภาษีซื้อ ภ.พ.30" (11610) อัตโนมัติ และนับเข้ารายงานภาษีซื้อในเดือนที่ปรับ</div>
+                <div style="font-size:12px;color:#6b21a8;margin-bottom:10px">ใบกำกับภาษีซื้อยังไม่ครบตาม §86/4 — ภาษีซื้อยังเคลม ภ.พ.30 ไม่ได้ เติมเลขที่ + วันที่ + สาขาให้ครบ (ผู้ขายต้องมีเลขภาษี 13 หลักไทย) ระบบจะย้ายเข้า "ภาษีซื้อ ภ.พ.30" (11610) อัตโนมัติ และนับเข้ารายงานภาษีซื้อในเดือนที่ปรับ</div>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
                   <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เช่น INV-2026-0042"></div>
                   <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
@@ -5946,9 +5954,14 @@
           supplierBranchCode: branch || null
         };
         try {
-          await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`, body);
+          const res = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`, body);
+          const d = res?.data || res;
           Layout.closeModal('detailModal');
-          Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 แล้ว');
+          // toast ซื่อสัตย์: เช็คจริงว่าย้ายเข้า 11610 แล้วหรือยัง (inputVatBecameClaimableAt)
+          if (d && d.inputVatBecameClaimableAt)
+            Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 (11610) แล้ว', 'success');
+          else
+            Layout.toast('บันทึกข้อมูลใบกำกับแล้ว — แต่ "ยังเคลม ภ.พ.30 ไม่ได้": ใบกำกับยังไม่ครบ §86/4 (ผู้ขายต้องมีเลขภาษี 13 หลักไทย). ถ้าเป็นบริการต่างประเทศ ให้เคลมผ่าน ภ.พ.36 ที่หน้านำส่งภาษี', 'warning', 10000);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },
