@@ -658,6 +658,104 @@ public class AdminController : ControllerBase
             "ลบข้อมูลส่วนบุคคลของผู้ใช้แล้ว (คงประวัติ/เอกสารตามกฎหมาย)"));
     }
 
+    /// <summary>WP-D4: user detail 360° — บริษัท+role, last login, session,
+    /// License ที่ถือ (AccountSubscription), invitation ค้าง.</summary>
+    [HttpGet("users/{userId:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> GetUserDetail(Guid userId)
+    {
+        var user = await _db.Users.AsNoTracking()
+            .Include(u => u.CompanyUsers).ThenInclude(cu => cu.Company)
+            .FirstOrDefaultAsync(u => u.Id == userId);
+        if (user == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผู้ใช้"));
+
+        var now = DateTime.UtcNow;
+        var licenses = await _db.AccountSubscriptions.AsNoTracking()
+            .Where(a => a.OwnerUserId == userId && !a.IsDeleted)
+            .Include(a => a.PlanTemplate)
+            .Select(a => new
+            {
+                a.Id, planName = a.PlanTemplate.Name, status = a.Status.ToString(),
+                a.EndDate, a.MaxCompanies
+            }).ToListAsync();
+
+        var pendingInvites = await _db.CompanyInvitations.AsNoTracking()
+            .Where(i => i.Email.ToLower() == user.Email.ToLower()
+                && i.Status == InvitationStatus.Pending && i.ExpiresAt > now)
+            .Include(i => i.Company)
+            .Select(i => new { i.Id, company = i.Company.Name, role = i.Role.ToString(), i.ExpiresAt })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            user = new
+            {
+                user.Id, user.Email, user.FullName, user.Phone, user.Status,
+                user.IsSystemAdmin, user.EmailVerified, user.LastLoginAt, user.CreatedAt
+            },
+            companies = user.CompanyUsers.Select(cu => new
+            {
+                cu.CompanyId, company = cu.Company.Name, role = cu.Role.ToString(), cu.IsDefault, cu.JoinedAt
+            }),
+            session = new
+            {
+                hasActiveSession = user.RefreshToken != null && user.RefreshTokenExpiry > now,
+                refreshTokenExpiry = user.RefreshTokenExpiry,
+                revokedAt = user.RefreshTokenRevokedAt
+            },
+            licenses,
+            pendingInvites
+        }));
+    }
+
+    /// <summary>WP-D4: เพิกถอน session (revoke refresh token) → ผู้ใช้ต้อง login ใหม่.</summary>
+    [HttpPost("users/{userId:guid}/revoke-sessions")]
+    public async Task<ActionResult<ApiResponse<object>>> RevokeUserSessions(Guid userId)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผู้ใช้"));
+        user.RefreshToken = null;
+        user.PreviousRefreshToken = null;
+        user.RefreshTokenExpiry = null;
+        user.RefreshTokenRevokedAt = DateTime.UtcNow;
+        user.UpdatedAt = DateTime.UtcNow;
+        user.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, null, "เพิกถอน session แล้ว — ผู้ใช้ต้องเข้าสู่ระบบใหม่"));
+    }
+
+    /// <summary>WP-D4: ส่งคำเชิญเข้าบริษัทซ้ำ (ต่ออายุ token + เวลา).</summary>
+    [HttpPost("invitations/{invitationId:guid}/resend")]
+    public async Task<ActionResult<ApiResponse<object>>> ResendInvitation(Guid invitationId)
+    {
+        var inv = await _db.CompanyInvitations.Include(i => i.Company)
+            .FirstOrDefaultAsync(i => i.Id == invitationId);
+        if (inv == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบคำเชิญ"));
+        if (inv.Status != InvitationStatus.Pending)
+            return BadRequest(new ApiResponse<object>(false, null, "คำเชิญนี้ไม่ได้อยู่ในสถานะรอตอบรับ"));
+
+        inv.ExpiresAt = DateTime.UtcNow.AddDays(7);
+        inv.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        var baseUrl = (await _db.SiteSettings.AsNoTracking().Select(s => s.AppBaseUrl).FirstOrDefaultAsync())?.TrimEnd('/')
+            ?? $"{Request.Scheme}://{Request.Host}";
+        var link = $"{baseUrl}/accept-invitation.html?token={Uri.EscapeDataString(inv.Token)}";
+        var sent = false;
+        try
+        {
+            if (await _email.IsSystemEmailConfiguredAsync())
+            {
+                await _email.SendNotificationEmailAsync(inv.Email, inv.Email,
+                    $"คำเชิญเข้าใช้งาน {inv.Company.Name}",
+                    $"คุณได้รับคำเชิญเข้าร่วม {inv.Company.Name} (บทบาท {inv.Role}). คลิกเพื่อตอบรับ", link);
+                sent = true;
+            }
+        }
+        catch { }
+        return Ok(new ApiResponse<object>(true, new { inviteLink = link, emailSent = sent },
+            sent ? "ส่งคำเชิญซ้ำทางอีเมลแล้ว" : "ต่ออายุคำเชิญแล้ว (คัดลอกลิงก์ส่งให้ผู้ใช้)"));
+    }
+
     // ===== WP-D1/D2: Admin User Lifecycle =====
     public sealed record AdminCreateUserRequest(string Email, string FullName, string? Phone,
         Guid? CompanyId, string? Role, bool MakeSystemAdmin);

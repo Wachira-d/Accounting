@@ -93,6 +93,8 @@
                         ${u.isSystemAdmin ? 'ยกเลิก Admin' : 'ตั้งเป็น Admin'}
                       </button>
                       <button class="admin-btn admin-btn-sm admin-btn-outline"
+                        onclick="showUserDetail('${u.id}')">👁 รายละเอียด</button>
+                      <button class="admin-btn admin-btn-sm admin-btn-outline"
                         onclick="resetUserPassword('${u.id}','${u.email}')">🔑 รีเซ็ตรหัส</button>
                       <button class="admin-btn admin-btn-sm" style="background:#dc2626;color:#fff"
                         onclick="anonymizeUser('${u.id}','${u.email}')">🗑 ลบ (PDPA)</button>
@@ -151,6 +153,63 @@
       try {
         const res = await AdminAPI.resetUserPassword(userId);
         showLinkResult('ลิงก์รีเซ็ตรหัสผ่าน', res.data, res.message);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    // ===== WP-D4: user detail 360° =====
+    async function showUserDetail(userId) {
+      try {
+        const res = await AdminAPI.userDetail(userId);
+        const d = res.data;
+        const u = d.user;
+        const fmt = t => t ? new Date(t).toLocaleString('th-TH') : '-';
+        const companies = (d.companies||[]).length
+          ? d.companies.map(c => `<div style="font-size:13px;padding:3px 0">${c.company} <span style="color:#94a3b8">(${c.role})</span>${c.isDefault?' ⭐':''}</div>`).join('')
+          : '<span style="color:#94a3b8">ไม่มี</span>';
+        const licenses = (d.licenses||[]).length
+          ? d.licenses.map(l => `<div style="font-size:13px;padding:3px 0">🎫 ${l.planName} · ${l.status} · หมดอายุ ${AdminLayout.date(l.endDate)} · ${l.maxCompanies} บริษัท</div>`).join('')
+          : '<span style="color:#94a3b8">ไม่ถือ License</span>';
+        const invites = (d.pendingInvites||[]).length
+          ? d.pendingInvites.map(i => `<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0">
+               <span>${i.company} (${i.role}) · หมดอายุ ${AdminLayout.date(i.expiresAt)}</span>
+               <button class="admin-btn admin-btn-sm admin-btn-outline" onclick="resendInvite('${i.id}')">ส่งซ้ำ</button></div>`).join('')
+          : '<span style="color:#94a3b8">ไม่มีคำเชิญค้าง</span>';
+        const sess = d.session || {};
+        document.getElementById('userModal').style.display = '';
+        document.getElementById('userModal').innerHTML = `
+          <div class="admin-modal-overlay" onclick="if(event.target===this)closeUserModal()">
+            <div class="admin-modal" style="max-width:640px">
+              <h3>${u.fullName} <span style="font-size:13px;color:#94a3b8">${u.email}</span></h3>
+              <div class="admin-grid-2" style="margin-bottom:12px">
+                <div><div class="admin-label">สถานะ</div>${AdminLayout.statusBadge(u.status)}${u.isSystemAdmin?' <span class="admin-badge-sm bg-purple">Admin</span>':''}</div>
+                <div><div class="admin-label">อีเมลยืนยัน</div>${u.emailVerified?'✓ ยืนยันแล้ว':'✗ ยังไม่ยืนยัน'}</div>
+                <div><div class="admin-label">เข้าใช้ล่าสุด</div>${fmt(u.lastLoginAt)}</div>
+                <div><div class="admin-label">สมัครเมื่อ</div>${fmt(u.createdAt)}</div>
+              </div>
+              <div class="admin-form-group"><div class="admin-label">Session</div>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span>${sess.hasActiveSession ? '🟢 มี session ใช้งาน (หมดอายุ '+AdminLayout.date(sess.refreshTokenExpiry)+')' : '⚪ ไม่มี session'}</span>
+                  ${sess.hasActiveSession ? `<button class="admin-btn admin-btn-sm admin-btn-danger" onclick="revokeSessions('${u.id}')">เพิกถอน</button>` : ''}
+                </div>
+              </div>
+              <div class="admin-form-group"><div class="admin-label">บริษัท + บทบาท</div>${companies}</div>
+              <div class="admin-form-group"><div class="admin-label">License ที่ถือ</div>${licenses}</div>
+              <div class="admin-form-group"><div class="admin-label">คำเชิญค้าง</div>${invites}</div>
+              <div class="admin-modal-actions"><button class="admin-btn admin-btn-outline" onclick="closeUserModal()">ปิด</button></div>
+            </div>
+          </div>`;
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+    async function revokeSessions(userId) {
+      if (!confirm('เพิกถอน session ของผู้ใช้นี้? เขาจะต้องเข้าสู่ระบบใหม่')) return;
+      try { const r = await AdminAPI.revokeUserSessions(userId); AdminLayout.toast(r.message||'เพิกถอนแล้ว'); showUserDetail(userId); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+    async function resendInvite(invId) {
+      try {
+        const r = await AdminAPI.resendInvitation(invId);
+        if (r.data && r.data.inviteLink) showLinkResult('ลิงก์คำเชิญ', { resetLink: r.data.inviteLink, emailSent: r.data.emailSent }, r.message);
+        else AdminLayout.toast(r.message||'ส่งซ้ำแล้ว');
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 

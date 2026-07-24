@@ -104,6 +104,9 @@ const AdminAPI = {
   createUser(data) { return this.post('/users', data); },
   resetUserPassword(userId) { return this.post(`/users/${userId}/reset-password`, {}); },
   anonymizeUser(userId) { return this.post(`/users/${userId}/anonymize`, {}); },
+  userDetail(userId) { return this.get(`/users/${userId}`); },
+  revokeUserSessions(userId) { return this.post(`/users/${userId}/revoke-sessions`, {}); },
+  resendInvitation(invitationId) { return this.post(`/invitations/${invitationId}/resend`, {}); },
   updateUserStatus(id, status) { return this.put(`/users/${id}/status`, { status }); },
   toggleAdmin(id, isAdmin) { return this.put(`/users/${id}/admin`, { isAdmin }); },
 
