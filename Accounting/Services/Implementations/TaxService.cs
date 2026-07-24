@@ -143,6 +143,10 @@ public partial class TaxService : ITaxService
                     ((d.TaxPointDate ?? d.DocumentDate) >= startDate && (d.TaxPointDate ?? d.DocumentDate) <= endDate)
                     || (d.InputVatBecameClaimableAt != null
                         && d.InputVatBecameClaimableAt >= startDate && d.InputVatBecameClaimableAt <= endDate)
+                    // ฝั่งขาย mirror: ใบแจ้งหนี้บริการที่ VAT "ถึงกำหนด" เดือนนี้
+                    // (รับเงินเดือนนี้) แม้วันที่ใบอยู่เดือนก่อน — ต้องเข้ารายงานเดือนนี้
+                    || (d.OutputVatDueAt != null
+                        && d.OutputVatDueAt >= startDate && d.OutputVatDueAt <= endDate)
                 ))
             .ToListAsync();
         await _db.HydrateContactsAsync(companyId, docs);
@@ -280,6 +284,26 @@ public partial class TaxService : ITaxService
                 .ToListAsync())
                 .ToHashSet();
 
+        // ใบแจ้งหนี้บริการล้วน: VAT พักที่ 21913 "ภาษีขายรอเรียกเก็บ" (§78/1 —
+        // ใบแจ้งหนี้ไม่ใช่ใบกำกับ, tax point เกิดเมื่อรับชำระ) → ห้ามเข้า ภ.พ.30
+        // จนกว่าจะ reclass (OutputVatDueAt). ตัดสิน GL-driven: อ่านขา 21913 จริง
+        // ของ JE ใบนั้น — ใบเก่า/ใบมีสินค้า (ลง 21911 ตรง) net=0 → พฤติกรรมเดิม (F5)
+        var invGl21913Net = invoiceIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : (await _db.JournalEntryLines
+                .Where(l => !l.IsDeleted
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.SourceDocumentId != null
+                    && invoiceIds.Contains(l.JournalEntry.SourceDocumentId.Value)
+                    && !l.JournalEntry.IsDeleted
+                    && (l.JournalEntry.Status == JournalEntryStatus.Posted
+                        || l.JournalEntry.Status == JournalEntryStatus.Reversed)
+                    && l.Account.AccountCode == "21913")
+                .GroupBy(l => l.JournalEntry.SourceDocumentId!.Value)
+                .Select(g => new { DocId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+                .ToListAsync())
+                .ToDictionary(x => x.DocId, x => x.Net);
+
         decimal outputVat = 0, inputVat = 0;
         decimal vatExemptAmount = 0;
         var lineOrder = 1;
@@ -302,6 +326,29 @@ public partial class TaxService : ITaxService
                     && doc.VatAmount > 0
                     && !supersededInvoiceIds.Contains(doc.Id)))
             {
+                var invTxDate = doc.TaxPointDate ?? doc.DocumentDate;
+                if (doc.DocumentType == DocumentType.Invoice)
+                {
+                    if (doc.OutputVatDueAt != null)
+                    {
+                        // ใบแจ้งหนี้บริการที่รับเงินแล้ว (reclass 21913→21911 แล้ว):
+                        // tax point = วันรับเงิน (§78/1) → เข้า ภ.พ.30 งวดนั้นเท่านั้น
+                        if (doc.OutputVatDueAt < startDate || doc.OutputVatDueAt > endDate) continue;
+                        invTxDate = doc.OutputVatDueAt.Value;
+                    }
+                    else if (invGl21913Net.GetValueOrDefault(doc.Id) > 0.005m)
+                    {
+                        // VAT ยังพัก 21913 (ยังไม่รับเงิน/ยังไม่ออกใบกำกับ) —
+                        // tax point ยังไม่เกิด → ห้ามเข้า ภ.พ.30 (ตามที่ผู้ใช้รายงาน:
+                        // ใบแจ้งหนี้ค้างชำระต้องไม่ขึ้นรายงานภาษีขาย)
+                        continue;
+                    }
+                    else if (invTxDate < startDate || invTxDate > endDate)
+                    {
+                        // legacy/ใบมีสินค้า (ลง 21911 ตรง) — งวดตาม tax point เดิม
+                        continue;
+                    }
+                }
                 outputVat += doc.VatAmount;
                 report.Lines.Add(new TaxReportLine
                 {
@@ -309,7 +356,7 @@ public partial class TaxService : ITaxService
                     LineOrder = lineOrder++,
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
-                    TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
+                    TransactionDate = invTxDate,
                     Description = doc.DocumentNumber,
                     IncomeAmount = doc.SubTotal,
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,

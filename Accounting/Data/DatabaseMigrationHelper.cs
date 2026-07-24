@@ -1300,6 +1300,9 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatBecameClaimableAt" timestamp with time zone NULL;
             """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OutputVatDueAt" timestamp with time zone NULL;
+            """,
             // §82/3: ภาษีซื้อ 11640 พ้น 6 เดือน → reclassify เป็นค่าใช้จ่าย
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatExpiredAt" timestamp with time zone NULL;""",
             // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม
