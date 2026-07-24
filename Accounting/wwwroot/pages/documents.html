@@ -234,8 +234,8 @@
               <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
                 <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
                   <option value="Quotation" title="เสนอราคาให้ลูกค้าก่อนซื้อขายจริง — ยังไม่ลง GL, ไม่มี VAT effect">ใบเสนอราคา</option>
-                  <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้ — เริ่มนับ aging">ใบแจ้งหนี้</option>
-                  <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้ + Cr Output VAT — เข้า ภพ.30">ใบกำกับภาษี</option>
+                  <option value="Invoice" title="ขายเครดิต — แจ้งหนี้ลูกค้า (ยังไม่รับเงิน, ยังไม่ใช่ใบกำกับภาษี) — งานบริการ: VAT รอเรียกเก็บ ยังไม่เข้า ภพ.30 จนกว่าจะรับเงิน (§78/1) · มีสินค้า: VAT นำส่งทันที (ส่งมอบ §78 — ควรออกใบกำกับ/ติ๊กใบรวมแทน)">ใบแจ้งหนี้</option>
+                  <option value="TaxInvoice" title="ใบกำกับภาษีเต็มรูป (§86) — ออกใบกำกับ = tax point เกิดทันที: Cr Output VAT + เข้า ภพ.30 งวดนี้ ไม่ว่ารับเงินหรือยัง (ขายเครดิต = ตั้งลูกหนี้)">ใบกำกับภาษี</option>
                   <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR (หรือ Cr รายได้+VAT ถ้าจ่ายสด)">ใบเสร็จรับเงิน</option>
                   <option value="Deposit" title="รับเงินมัดจำ/รับล่วงหน้าก่อนส่งมอบสินค้า-บริการ — Dr เงินสด/ธนาคาร / Cr ขายรอรับรู้ (217xx) แทนรายได้ · รับรู้รายได้/หักเข้าใบกำกับภายหลัง (ออกใบเสร็จ + ตั้ง IsDeposit ให้อัตโนมัติ)">💰 ใบมัดจำ / รับเงินล่วงหน้า</option>
                   <option value="DeliveryNote" title="ส่งของแล้วแต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL, เป็นเอกสารโลจิสติก">ใบส่งของ</option>
@@ -262,6 +262,11 @@
                 <input type="checkbox" id="fCombinedTaxInvoice" style="margin-top:3px">
                 <span>ออกเป็น <b>"ใบแจ้งหนี้/ใบกำกับภาษี"</b> ใบเดียว — ทำงานเป็นใบกำกับภาษีเต็มรูป (ลง VAT/ภพ.30 · ออก e-Tax ได้) แต่พิมพ์หัวรวม
                   <span style="display:block;color:#64748b;font-size:11px">ต้องมีเลขภาษี/สาขา/ที่อยู่ผู้ซื้อครบ (§86/4)</span>
+                  <span style="display:block;color:#0369a1;font-size:11px;margin-top:2px">
+                    • ติ๊กนี้อย่างเดียว = <b>ขายเครดิต</b>: ตั้งลูกหนี้รอเก็บเงิน แต่ VAT นำส่ง ภพ.30 <b>ทันที</b> (ออกใบกำกับ = tax point เกิดแล้ว) และลูกค้าเคลมภาษีซื้อได้เลย<br>
+                    • ติ๊กนี้ + "💰 ลูกค้าจ่ายเงินแล้ว" (รับครบ) = <b>ขายสดใบเดียวจบ</b> — หัวพิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน" ไม่ออกใบเสร็จแยก<br>
+                    • ถ้ายังไม่แน่ใจว่าจะเก็บเงินได้ (งานบริการ) — ใช้ "ใบแจ้งหนี้" เปล่า จะยังไม่ต้องนำส่ง VAT จนกว่ารับเงิน (§78/1)
+                  </span>
                 </span>
               </label>
               <label id="fDeclineTaxRow" style="display:none;margin-top:8px;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer">
@@ -458,11 +463,13 @@
             <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.6">
               <input type="checkbox" id="fPaidOnIssue" style="margin-top:3px">
               <div style="flex:1">
-                <div style="font-weight:600;color:#065f46">💰 ลูกค้าจ่ายเงินแล้ว — สร้างใบเสร็จพร้อมกัน</div>
+                <div style="font-weight:600;color:#065f46">💰 ลูกค้าจ่ายเงินแล้ว — บันทึกรับเงินพร้อมออกเอกสาร</div>
                 <div style="color:#047857;font-size:12px;margin-top:2px">
-                  ติ๊กถ้าเป็นขายเงินสด / บริการที่ได้รับเงินแล้ว — ระบบจะ
-                  อนุมัติเอกสาร + บันทึกชำระ + ออกใบเสร็จในคลิกเดียว
-                  (ตามประมวลรัษฎากร §78/1 บริการต้องออกใบกำกับตอนรับเงิน)
+                  ติ๊กถ้ารับเงินแล้ว ณ วันออกเอกสาร — ระบบอนุมัติ + บันทึกชำระ + ออกหลักฐานรับเงินในคลิกเดียว
+                  (§78/1 บริการต้องออกใบกำกับตอนรับเงิน)<br>
+                  <b>ไม่ติ๊ก = ขายเครดิต</b> (ตั้งลูกหนี้ รอเก็บเงินภายหลัง)<br>
+                  ติ๊กคู่กับ "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" + รับครบ → ได้ใบเดียวหัว
+                  <b>"ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน"</b> (ไม่ออกใบเสร็จแยก)
                 </div>
                 <div id="fPaidOnIssueDerivedRow" style="display:none;margin-top:10px;background:#fff;border:1px dashed #6ee7b7;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.7">
                   <div style="color:#065f46;font-weight:600;margin-bottom:2px">📌 ใช้ช่องทางเดียวกับ "แหล่งเงิน / ช่องทางชำระ" ด้านบน</div>
