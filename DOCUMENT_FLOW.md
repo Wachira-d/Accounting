@@ -722,11 +722,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - หัวพื้นฐาน 16 ประเภท (`GetDocumentTitle`) — ทุกชนิดถูกต้องตามชื่อไทย
   - **เงื่อนไข** (auto): ใบกำกับ+รับเงินตอนออก (ServedAsReceipt) / ใบเสร็จมี
     VAT → "ใบกำกับภาษี/ใบเสร็จรับเงิน"; TaxInvoice+`CombinedInvoiceTaxInvoice`
-    → "ใบแจ้งหนี้/ใบกำกับภาษี"; มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ
-    (ไม่ upgrade); `IsDeposit` → ต่อท้าย "(เงินมัดจำ)"
+    → "ใบแจ้งหนี้/ใบกำกับภาษี" และเมื่อ **จ่ายครบ+ไม่มีใบเสร็จแยก
+    (ServedAsReceipt)** → upgrade เป็น **"ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน"
+    (3-in-1)** — คำว่าใบเสร็จรับเงินโผล่เฉพาะเมื่อรับเงินจริง (ม.105);
+    **ใบเสร็จ settlement ที่อ้าง TaxInvoice** (`SettlesTaxInvoiceSource` —
+    resolve ตอน render) → คงหัว "ใบเสร็จรับเงิน" เปล่า ห้ามพิมพ์คำใบกำกับซ้ำ
+    (กันลูกค้าถือกระดาษใบกำกับ 2 ใบจากขายครั้งเดียว = เคลมภาษีซื้อซ้ำ);
+    settlement ที่อ้าง Invoice ยังพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน" (มันคือ
+    ใบกำกับที่ต้องออก ณ วันรับเงิน §78/1 — คู่กับโมเดล undue 21913);
+    มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ (ไม่ upgrade);
+    `IsDeposit` → ต่อท้าย "(เงินมัดจำ)"
   - **ตั้งเองได้ทุกหัว** (พื้นฐาน + เงื่อนไข) ผ่าน
     `CompanySettings.DocumentTitleOverridesJson` (คีย์ = ชื่อ enum +
-    `TaxInvoiceReceipt`/`CombinedInvoice`/`DepositSuffix`) — หน้าตั้งค่า →
+    `TaxInvoiceReceipt`/`CombinedInvoice`/`CombinedInvoiceReceipt`/
+    `DepositSuffix`) — หน้าตั้งค่า →
     เอกสาร → "หัวเรื่องเอกสาร"; per-template `CustomTitle` ยังชนะ base override
 
 ### 5.2 e-Tax XML (XAdES-BES, RSA-SHA256)

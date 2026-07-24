@@ -91,6 +91,16 @@ public class Document : TenantEntity
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public bool ServedAsReceipt { get; set; }
 
+    /// <summary>Transient (ไม่เก็บ DB) — ใบเสร็จ/ใบสำคัญรับที่ "อ้างใบกำกับภาษี"
+    /// (settlement ของ TaxInvoice ที่รายงาน VAT ไปแล้ว) → หัวต้องเป็น
+    /// "ใบเสร็จรับเงิน" เปล่า ห้ามมีคำว่า "ใบกำกับภาษี" ซ้ำ — ไม่งั้นลูกค้าถือ
+    /// กระดาษที่มีคำว่าใบกำกับ 2 ใบจากการขายครั้งเดียว = เสี่ยงเคลมภาษีซื้อซ้ำ.
+    /// (settlement ของ "ใบแจ้งหนี้" ตรงข้าม: ใบเสร็จนี่แหละคือใบกำกับที่กฎหมาย
+    /// บังคับออก ณ วันรับเงิน §78/1 → พิมพ์ ใบกำกับภาษี/ใบเสร็จรับเงิน ถูกแล้ว)
+    /// คำนวณตอน render ใน ResolveServedAsReceiptAsync.</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public bool SettlesTaxInvoiceSource { get; set; }
+
     /// <summary>ขายเงินสด B2B (integration isCashSale) — ใบกำกับภาษีที่รับชำระครบ
     /// พร้อมออก ทำหน้าที่เป็น "ใบเสร็จรับเงิน/ใบกำกับภาษี" ในตัว. persist (ต่างจาก
     /// ServedAsReceipt ที่คำนวณตอน render) เพราะ e-Tax generator ต้องรู้ตอน export
