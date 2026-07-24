@@ -36,6 +36,7 @@ public class AdminController : ControllerBase
     private readonly IWebHostEnvironment _env;
     private readonly ISaasBillingDocumentService _billing;
     private readonly IEmailService _email;
+    private readonly IJobRunRecorder _jobRec;
 
     public AdminController(
         AccountingDbContext db,
@@ -47,7 +48,8 @@ public class AdminController : ControllerBase
         IImageProcessingService images,
         IWebHostEnvironment env,
         ISaasBillingDocumentService billing,
-        IEmailService email)
+        IEmailService email,
+        IJobRunRecorder jobRec)
     {
         _db = db;
         _subscriptionService = subscriptionService;
@@ -59,6 +61,7 @@ public class AdminController : ControllerBase
         _env = env;
         _billing = billing;
         _email = email;
+        _jobRec = jobRec;
     }
 
     // ===== Dashboard Analytics =====
@@ -997,7 +1000,8 @@ public class AdminController : ControllerBase
     [HttpPost("trial/process-expired")]
     public async Task<ActionResult<ApiResponse<string>>> ProcessExpiredTrials()
     {
-        await _subscriptionService.ProcessExpiredTrialsAsync();
+        await _jobRec.TrackAsync("ProcessExpiredTrials", async () =>
+            { await _subscriptionService.ProcessExpiredTrialsAsync(); return 0; });
         return Ok(new ApiResponse<string>(true, null, "ประมวลผล expired trials สำเร็จ"));
     }
 
@@ -1415,22 +1419,41 @@ public class AdminController : ControllerBase
     [HttpPost("subscription/process-notifications")]
     public async Task<ActionResult<ApiResponse<string>>> ProcessSubscriptionNotifications()
     {
-        await _subscriptionService.ProcessSubscriptionNotificationsAsync();
+        await _jobRec.TrackAsync("ProcessSubscriptionNotifications", async () =>
+            { await _subscriptionService.ProcessSubscriptionNotificationsAsync(); return 0; });
         return Ok(new ApiResponse<string>(true, null, "ประมวลผลแจ้งเตือน subscription สำเร็จ"));
     }
 
     [HttpPost("subscription/process-expired")]
     public async Task<ActionResult<ApiResponse<string>>> ProcessExpiredSubscriptions()
     {
-        await _subscriptionService.ProcessExpiredSubscriptionsAsync();
+        await _jobRec.TrackAsync("ProcessExpiredSubscriptions", async () =>
+            { await _subscriptionService.ProcessExpiredSubscriptionsAsync(); return 0; });
         return Ok(new ApiResponse<string>(true, null, "ประมวลผล expired subscriptions สำเร็จ"));
     }
 
     [HttpPost("recurring/process")]
     public async Task<ActionResult<ApiResponse<string>>> ProcessRecurringTransactions()
     {
-        await _recurringService.ProcessDueRecurringTransactionsAsync();
+        await _jobRec.TrackAsync("ProcessRecurringTransactions", async () =>
+            { await _recurringService.ProcessDueRecurringTransactionsAsync(); return 0; });
         return Ok(new ApiResponse<string>(true, null, "ประมวลผลรายการที่เกิดซ้ำสำเร็จ"));
+    }
+
+    /// <summary>WP-F2: ผลการรัน job ล่าสุด (ต่อ job) + ประวัติ.</summary>
+    [HttpGet("job-runs")]
+    public async Task<ActionResult<ApiResponse<object>>> GetJobRuns([FromQuery] int limit = 50)
+    {
+        limit = Math.Clamp(limit, 1, 200);
+        var recent = await _db.JobRunLogs.AsNoTracking()
+            .OrderByDescending(j => j.StartedAt).Take(limit)
+            .Select(j => new { j.JobName, j.StartedAt, j.FinishedAt, j.Success, j.Message, j.ItemsProcessed, j.DurationMs })
+            .ToListAsync();
+        // ล่าสุดต่อ job
+        var latest = recent.GroupBy(j => j.JobName)
+            .Select(g => g.OrderByDescending(x => x.StartedAt).First())
+            .ToList();
+        return Ok(new ApiResponse<object>(true, new { latest, recent }));
     }
 
     // ===== Site Settings (Global) =====

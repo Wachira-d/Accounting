@@ -147,6 +147,7 @@ builder.Services.AddScoped<Accounting.Services.Interfaces.ILineBotService, Accou
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
+builder.Services.AddSingleton<IJobRunRecorder, JobRunRecorder>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
@@ -1475,7 +1476,20 @@ app.MapFallback(context =>
                     CONSTRAINT ""FK_DocumentSignatures_Documents"" FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT,
                     CONSTRAINT ""FK_DocumentSignatures_Approvals"" FOREIGN KEY (""DocumentApprovalId"") REFERENCES ""DocumentApprovals""(""Id"") ON DELETE RESTRICT,
                     CONSTRAINT ""FK_DocumentSignatures_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
-                );"
+                );",
+                // WP-F2: JobRunLog — ผลการรัน background job แต่ละรอบ
+                @"CREATE TABLE IF NOT EXISTS ""JobRunLogs"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                    ""JobName"" text NOT NULL,
+                    ""StartedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""FinishedAt"" timestamp NULL,
+                    ""Success"" boolean NOT NULL DEFAULT false,
+                    ""Message"" text NULL,
+                    ""ItemsProcessed"" integer NOT NULL DEFAULT 0,
+                    ""DurationMs"" bigint NOT NULL DEFAULT 0,
+                    CONSTRAINT ""PK_JobRunLogs"" PRIMARY KEY (""Id"")
+                );",
+                @"CREATE INDEX IF NOT EXISTS ""IX_JobRunLogs_Job_Started"" ON ""JobRunLogs"" (""JobName"", ""StartedAt"" DESC);"
             };
             foreach (var sql in rawSqlStatements)
             {

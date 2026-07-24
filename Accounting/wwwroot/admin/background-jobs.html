@@ -26,6 +26,10 @@
       <div class="admin-card-header"><span class="admin-card-title">🛠️ งานเบื้องหลังของระบบ</span></div>
       <div class="job-grid" id="grid"></div>
     </div>
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">📋 ผลการรันล่าสุด (JobRunLog)</span></div>
+      <div id="runLog">กำลังโหลด...</div>
+    </div>
   </div>
 
   <script src="/admin/admin-api.js"></script>
@@ -51,7 +55,34 @@
         { label:'ประมวลผล Subscription ที่หมดอายุ', fn:'processExpiredSubs' },
         { label:'ส่งการแจ้งเตือน Subscription', fn:'processNotifications' },
       ],
-      init() { AdminLayout.init('background-jobs'); this.render(); },
+      init() { AdminLayout.init('background-jobs'); this.render(); this.loadRuns(); },
+      async loadRuns() {
+        try {
+          const res = await AdminAPI.jobRuns(50);
+          const d = res.data || {};
+          const recent = d.recent || [];
+          if (recent.length === 0) {
+            document.getElementById('runLog').innerHTML = '<div style="color:#94a3b8;padding:16px">ยังไม่มีประวัติการรัน (job จะบันทึกผลเมื่อรันครั้งถัดไป)</div>';
+            return;
+          }
+          const fmt = t => t ? new Date(t).toLocaleString('th-TH') : '-';
+          document.getElementById('runLog').innerHTML = `
+            <div class="admin-table-wrap"><table class="admin-table">
+              <thead><tr><th>Job</th><th>เริ่ม</th><th>ผล</th><th>รายการ</th><th>ใช้เวลา</th><th>หมายเหตุ</th></tr></thead>
+              <tbody>${recent.map(r => `
+                <tr>
+                  <td><strong>${r.jobName}</strong></td>
+                  <td>${fmt(r.startedAt)}</td>
+                  <td>${r.success ? '<span style="color:#16a34a">✓ สำเร็จ</span>' : '<span style="color:#dc2626">✗ ล้มเหลว</span>'}</td>
+                  <td class="admin-text-right">${r.itemsProcessed}</td>
+                  <td>${r.durationMs != null ? (r.durationMs/1000).toFixed(1) + ' วิ' : '-'}</td>
+                  <td style="font-size:12px;color:#64748b">${(r.message||'').replace(/</g,'&lt;')}</td>
+                </tr>`).join('')}</tbody>
+            </table></div>`;
+        } catch (e) {
+          document.getElementById('runLog').innerHTML = `<div style="color:var(--admin-danger);padding:16px">${e.message}</div>`;
+        }
+      },
       render() {
         const grid = document.getElementById('grid');
         let html = this.jobs.map(j => `
@@ -81,6 +112,7 @@
         try {
           const res = await AdminAPI[fn]();
           alert(res.message || 'รันงานสำเร็จ');
+          this.loadRuns();
         } catch (e) { alert('รันงานไม่สำเร็จ: ' + e.message); }
         finally { btn.disabled = false; btn.textContent = orig; }
       },

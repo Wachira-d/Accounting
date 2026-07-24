@@ -145,6 +145,7 @@ const AdminAPI = {
   processExpiredSubs() { return this.post('/subscription/process-expired'); },
   processNotifications() { return this.post('/subscription/process-notifications'); },
   processRecurring() { return this.post('/recurring/process'); },
+  jobRuns(limit = 50) { return this.get(`/job-runs?limit=${limit}`); },
 
   // Master Chart of Accounts template (qs = scope query string, e.g. '?businessType=Partnership')
   coaTemplateScopes() { return this.get('/coa-template/scopes'); },

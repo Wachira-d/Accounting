@@ -65,12 +65,18 @@ public class AccountPlanExpiryReminderJob : BackgroundService
                 && a.EndDate <= horizon)
             .ToListAsync(ct);
 
+        var recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
+        var jobStart = now;
+        int processed = 0;
         foreach (var a in rows)
         {
             if (ct.IsCancellationRequested) break;
-            try { await ProcessOne(db, email, a, now, ct); }
+            try { await ProcessOne(db, email, a, now, ct); processed++; }
             catch (Exception ex) { _logger.LogWarning(ex, "Reminder failed for AccountSub {Id}", a.Id); }
         }
+        if (recorder != null)
+            await recorder.RecordAsync("AccountPlanExpiryReminder", true,
+                $"ตรวจ {rows.Count} License, ประมวลผล {processed}", processed, jobStart);
 
         // WP-A3: per-company subscription lifecycle — เดิมเป็น manual-only
         // (เรียกจาก AdminController เท่านั้น) ทำให้ Active→PastDue→Suspended

@@ -53,6 +53,7 @@ public class AccountingDbContext : DbContext
 
     // Audit
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
     public DbSet<SystemAccountTemplate> SystemAccountTemplates => Set<SystemAccountTemplate>();
 
