@@ -259,6 +259,13 @@
         <button class="btn btn-sm btn-secondary" onclick="Page.menuShowAll()">แสดงทั้งหมด</button>
         <button class="btn btn-sm btn-secondary" onclick="Page.menuHideAll()">ซ่อนทั้งหมด</button>
       </div>
+
+      <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">การแนะนำการใช้งาน (Tour)</h4>
+      <p style="color:#64748b;margin-bottom:12px;font-size:13px">
+        หน้าที่กด "ปิดการสอนนี้" ไปแล้วจะไม่แสดงคำแนะนำอัตโนมัติอีก —
+        กดปุ่มนี้เพื่อเปิดการแนะนำกลับทุกหน้า (หรือกดปุ่ม 📘 มุมขวาล่างของแต่ละหน้าเพื่อดูเฉพาะหน้านั้น)
+      </p>
+      <button class="btn btn-sm btn-secondary" onclick="Page.resetTours(this)">📘 เปิดการแนะนำการใช้งานกลับทุกหน้า</button>
     </div>
 
     <!-- ===== Document Settings Tab ===== -->
@@ -2067,6 +2074,24 @@
         Layout.setHiddenMenuItems(ids);
         this.renderMenuVisibility();
         Layout.toast('ซ่อนเมนูทั้งหมด (ยกเว้นแถบหัวข้อ)');
+      },
+      // เปิดการแนะนำการใช้งาน (tour) กลับทุกหน้า — ล้างทั้ง server + local cache
+      async resetTours(btn) {
+        if (btn) { btn.disabled = true; btn.textContent = 'กำลังเปิดกลับ...'; }
+        try {
+          await API.post('/api/auth/tour-prefs/reset', {});
+          localStorage.removeItem('tourPrefs');
+          // ล้าง seen/legacy key ให้เด้งใหม่เหมือนผู้ใช้ใหม่
+          Object.keys(localStorage)
+            .filter(k => k.startsWith('tourSeen:') || k.startsWith('tour:'))
+            .forEach(k => localStorage.removeItem(k));
+          if (window.Onboarding) window.Onboarding._prefs = null;
+          Layout.toast('เปิดการแนะนำการใช้งานกลับทุกหน้าแล้ว');
+        } catch (e) {
+          Layout.toast('เปิดกลับไม่สำเร็จ: ' + (e.message || ''), 'error');
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = '📘 เปิดการแนะนำการใช้งานกลับทุกหน้า'; }
+        }
       }
     };
     Page.init();

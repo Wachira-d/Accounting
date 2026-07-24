@@ -137,6 +137,11 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "StreetName" varchar(200) NULL;
             """,
 
+            // ===== Users: onboarding tour dismissal (ปิดการสอนถาวร ต่อ user) =====
+            """
+            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "DismissedToursJson" text NULL;
+            """,
+
             // ===== Companies: suspend metadata (WP-A2 enforcement) =====
             """
             ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "SuspendReason" text NULL;
