@@ -984,6 +984,31 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<SubscriptionPaymentListResponse>(true, result));
     }
 
+    /// <summary>WP-C1: admin บันทึกรับเงินเอง (เงินสด/โอนนอกระบบ) หรือยกเว้นค่าบริการ
+    /// → สร้าง payment record + อนุมัติทันที + ต่ออายุ. แทนการต่ออายุแบบไร้ร่องรอย.</summary>
+    [HttpPost("companies/{companyId:guid}/subscription-payments/record")]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> RecordManualPayment(
+        Guid companyId, [FromBody] RecordManualPaymentRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        try
+        {
+            var result = await _subscriptionService.RecordManualPaymentAsync(companyId, request, userId);
+            var message = request.IsWaived
+                ? "บันทึกการยกเว้นค่าบริการ + ต่ออายุแล้ว"
+                : "บันทึกรับเงิน + ต่ออายุ Subscription แล้ว";
+            return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null, ex.Message));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new ApiResponse<SubscriptionPaymentResponse>(false, null, ex.Message));
+        }
+    }
+
     // ===== Subscription Notification Settings (Admin) =====
 
     [HttpGet("companies/{companyId:guid}/subscription-notifications")]

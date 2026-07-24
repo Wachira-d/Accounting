@@ -223,6 +223,22 @@ public record ReviewSubscriptionPaymentRequest(
     string? ReviewNotes,
     string? RejectionReason);
 
+/// <summary>WP-C1: admin บันทึกรับเงินเอง (เงินสด/โอนนอกระบบ) หรือยกเว้นค่าบริการ.
+/// สร้าง SubscriptionPayment แล้ววิ่งเข้าเส้น approve เดิม (ต่ออายุ+ประวัติ+ใบเสร็จ)
+/// เพื่อให้ทุกบาทมี record — ไม่ต่ออายุแบบไร้ร่องรอย.
+/// Waived: Amount=0 + WaiveReason required.</summary>
+public record RecordManualPaymentRequest(
+    decimal Amount,
+    DateTime PaymentDate,
+    PaymentMethod PaymentMethod,
+    SubscriptionPlan RequestedPlan,
+    BillingCycle RequestedBillingCycle,
+    int RequestedPeriodMonths,
+    bool IsWaived,
+    SubscriptionWaiveReason? WaiveReason,
+    string? TransferReference,
+    string? Notes);
+
 public record SubscriptionPaymentResponse(
     Guid Id,
     Guid SubscriptionId,

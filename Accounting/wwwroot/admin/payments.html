@@ -19,6 +19,7 @@
       <div class="admin-toolbar">
         <button class="admin-btn admin-btn-primary" id="tabPending" onclick="switchTab('pending')">รอตรวจสอบ</button>
         <button class="admin-btn admin-btn-outline" id="tabAll" onclick="switchTab('all')">ทั้งหมด</button>
+        <button class="admin-btn admin-btn-success" onclick="openRecord()">+ บันทึกรับเงิน (manual)</button>
         <div style="flex:1"></div>
         <select id="filterStatus" class="admin-select" onchange="loadAllPayments()">
           <option value="">ทุกสถานะ</option>
@@ -40,6 +41,7 @@
     </div>
 
     <div id="reviewModal" style="display:none"></div>
+    <div id="recordModal" style="display:none"></div>
   </div>
 
   <script src="/admin/admin-api.js"></script>
@@ -229,6 +231,186 @@
     function closeReview() {
       document.getElementById('reviewModal').style.display = 'none';
       document.getElementById('reviewModal').innerHTML = '';
+    }
+
+    // ===== WP-C1: บันทึกรับเงินเอง / ยกเว้นค่าบริการ =====
+    let recPlans = [];
+    const CYCLE_MONTHS = { Monthly: 1, Quarterly: 3, SemiAnnual: 6, Annual: 12 };
+
+    async function openRecord() {
+      const today = new Date().toISOString().slice(0, 10);
+      document.getElementById('recordModal').style.display = '';
+      document.getElementById('recordModal').innerHTML = `
+        <div class="admin-modal-overlay" onclick="if(event.target===this)closeRecord()">
+          <div class="admin-modal">
+            <h3>บันทึกรับเงิน / ยกเว้นค่าบริการ</h3>
+            <div style="background:#ecfeff;border:1px solid #67e8f9;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#0c4a6e;line-height:1.6">
+              💡 สร้าง payment record แล้วต่ออายุทันที (ต่อ EndDate + cascade License + ประวัติ + ใบเสร็จ) — ทุกบาทมีร่องรอย ไม่ต่ออายุแบบไร้เอกสาร
+            </div>
+
+            <div class="admin-form-group">
+              <label class="admin-label">บริษัท *</label>
+              <div style="display:flex;gap:8px">
+                <input class="admin-input" id="recSearch" placeholder="ค้นหาชื่อ/เลขภาษี" oninput="reloadRecCompanies()" style="flex:1">
+              </div>
+              <select class="admin-input" id="recCompany" style="margin-top:6px"><option value="">— เลือกบริษัท —</option></select>
+            </div>
+
+            <div class="admin-grid-2">
+              <div class="admin-form-group">
+                <label class="admin-label">แพ็กเกจ *</label>
+                <select class="admin-input" id="recPlan" onchange="recAutoAmount()"></select>
+              </div>
+              <div class="admin-form-group">
+                <label class="admin-label">รอบบิล *</label>
+                <select class="admin-input" id="recCycle" onchange="recAutoAmount()">
+                  <option value="Monthly">รายเดือน (1)</option>
+                  <option value="Quarterly">ราย 3 เดือน</option>
+                  <option value="SemiAnnual">ราย 6 เดือน</option>
+                  <option value="Annual" selected>รายปี (12)</option>
+                </select>
+              </div>
+              <div class="admin-form-group">
+                <label class="admin-label">จำนวนเดือนที่ต่อ *</label>
+                <input class="admin-input" id="recMonths" type="number" min="1" value="12">
+              </div>
+              <div class="admin-form-group">
+                <label class="admin-label">วันที่รับเงิน *</label>
+                <input class="admin-input" id="recDate" type="date" value="${today}">
+              </div>
+              <div class="admin-form-group">
+                <label class="admin-label">ยอดเงิน (บาท) *</label>
+                <input class="admin-input" id="recAmount" type="number" min="0" step="0.01" value="0">
+              </div>
+              <div class="admin-form-group">
+                <label class="admin-label">วิธีรับเงิน</label>
+                <select class="admin-input" id="recMethod">
+                  <option value="BankTransfer">โอนธนาคาร</option>
+                  <option value="Cash">เงินสด</option>
+                  <option value="PromptPay">พร้อมเพย์</option>
+                  <option value="CreditCard">บัตรเครดิต</option>
+                  <option value="Other">อื่น ๆ</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="admin-form-group">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="recWaive" onchange="toggleWaive()"> ยกเว้นค่าบริการ (ต่ออายุให้ฟรี ยอด 0)
+              </label>
+            </div>
+            <div class="admin-form-group" id="recWaiveReasonWrap" style="display:none">
+              <label class="admin-label">เหตุผลการยกเว้น *</label>
+              <select class="admin-input" id="recWaiveReason">
+                <option value="Goodwill">Goodwill — ไมตรีจิต</option>
+                <option value="Compensation">Compensation — ชดเชยเหตุขัดข้อง</option>
+                <option value="Correction">Correction — แก้ไขข้อผิดพลาด</option>
+              </select>
+            </div>
+
+            <div class="admin-form-group">
+              <label class="admin-label">เลขอ้างอิงการโอน</label>
+              <input class="admin-input" id="recRef" placeholder="(ถ้ามี)">
+            </div>
+            <div class="admin-form-group">
+              <label class="admin-label">หมายเหตุ</label>
+              <textarea class="admin-input" id="recNotes" rows="2"></textarea>
+            </div>
+
+            <div class="admin-modal-actions">
+              <button class="admin-btn admin-btn-success" id="recSubmitBtn" onclick="submitRecord()">บันทึก + ต่ออายุ</button>
+              <button class="admin-btn admin-btn-outline" onclick="closeRecord()">ยกเลิก</button>
+            </div>
+          </div>
+        </div>
+      `;
+      await Promise.all([reloadRecCompanies(), loadRecPlans()]);
+    }
+
+    async function loadRecPlans() {
+      try {
+        const res = await AdminAPI.plans(false);
+        recPlans = res.data || [];
+        const sel = document.getElementById('recPlan');
+        if (!sel) return;
+        sel.innerHTML = recPlans.map(p => `<option value="${p.plan}">${p.name}</option>`).join('')
+          || '<option value="">— ไม่มีแพ็กเกจ —</option>';
+        recAutoAmount();
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    let recSearchTimer = null;
+    function reloadRecCompanies() {
+      clearTimeout(recSearchTimer);
+      return new Promise(resolve => {
+        recSearchTimer = setTimeout(async () => {
+          const q = (document.getElementById('recSearch')?.value || '').trim();
+          try {
+            const res = await AdminAPI.customers(`?pageSize=50${q ? '&search=' + encodeURIComponent(q) : ''}`);
+            const items = res.data?.items || res.data?.companies || [];
+            const sel = document.getElementById('recCompany');
+            if (sel) sel.innerHTML = '<option value="">— เลือกบริษัท —</option>'
+              + items.map(c => `<option value="${c.id}">${c.name}${c.taxId ? ' (' + c.taxId + ')' : ''}</option>`).join('');
+          } catch (err) { AdminLayout.toast(err.message, 'error'); }
+          resolve();
+        }, 250);
+      });
+    }
+
+    function recAutoAmount() {
+      if (document.getElementById('recWaive')?.checked) return;
+      const plan = recPlans.find(p => p.plan === document.getElementById('recPlan')?.value);
+      const cycle = document.getElementById('recCycle')?.value || 'Annual';
+      if (document.getElementById('recMonths')) document.getElementById('recMonths').value = CYCLE_MONTHS[cycle] || 1;
+      if (!plan) return;
+      const price = { Monthly: plan.monthlyPrice, Quarterly: plan.quarterlyPrice, SemiAnnual: plan.semiAnnualPrice, Annual: plan.annualPrice }[cycle] ?? plan.monthlyPrice;
+      const amt = document.getElementById('recAmount');
+      if (amt) amt.value = price ?? 0;
+    }
+
+    function toggleWaive() {
+      const waived = document.getElementById('recWaive').checked;
+      document.getElementById('recWaiveReasonWrap').style.display = waived ? '' : 'none';
+      const amt = document.getElementById('recAmount');
+      if (waived) { amt.value = '0'; amt.setAttribute('disabled', 'disabled'); }
+      else { amt.removeAttribute('disabled'); recAutoAmount(); }
+    }
+
+    async function submitRecord() {
+      const companyId = document.getElementById('recCompany').value;
+      if (!companyId) { AdminLayout.toast('กรุณาเลือกบริษัท', 'error'); return; }
+      const waived = document.getElementById('recWaive').checked;
+      const months = parseInt(document.getElementById('recMonths').value || '0', 10);
+      if (months <= 0) { AdminLayout.toast('จำนวนเดือนต้องมากกว่า 0', 'error'); return; }
+      const body = {
+        amount: waived ? 0 : parseFloat(document.getElementById('recAmount').value || '0'),
+        paymentDate: new Date(document.getElementById('recDate').value).toISOString(),
+        paymentMethod: document.getElementById('recMethod').value,
+        requestedPlan: document.getElementById('recPlan').value,
+        requestedBillingCycle: document.getElementById('recCycle').value,
+        requestedPeriodMonths: months,
+        isWaived: waived,
+        waiveReason: waived ? document.getElementById('recWaiveReason').value : null,
+        transferReference: document.getElementById('recRef').value || null,
+        notes: document.getElementById('recNotes').value || null
+      };
+      const btn = document.getElementById('recSubmitBtn');
+      btn.setAttribute('disabled', 'disabled'); btn.textContent = 'กำลังบันทึก...';
+      try {
+        const res = await AdminAPI.recordManualPayment(companyId, body);
+        AdminLayout.toast(res.message || 'บันทึกสำเร็จ');
+        closeRecord();
+        loadPending();
+        if (currentTab === 'all') loadAllPayments();
+      } catch (err) {
+        AdminLayout.toast(err.message, 'error');
+        btn.removeAttribute('disabled'); btn.textContent = 'บันทึก + ต่ออายุ';
+      }
+    }
+
+    function closeRecord() {
+      document.getElementById('recordModal').style.display = 'none';
+      document.getElementById('recordModal').innerHTML = '';
     }
 
     loadPending();

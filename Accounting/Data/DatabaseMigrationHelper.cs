@@ -349,6 +349,14 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "IncomeTypeCode" text NULL;
             """,
 
+            // ===== SubscriptionPayments: admin manual/waived recording (WP-C1) =====
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "Kind" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WaiveReason" integer NULL;
+            """,
+
             // ===== Subscriptions: Notification settings =====
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "NotifyBeforeExpiry" boolean NOT NULL DEFAULT true;

@@ -92,6 +92,7 @@ const AdminAPI = {
   allPayments(params = '') { return this.get(`/subscription-payments/all${params}`); },
   paymentDetail(id) { return this.get(`/subscription-payments/${id}`); },
   reviewPayment(id, approve, notes) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes }); },
+  recordManualPayment(companyId, data) { return this.post(`/companies/${companyId}/subscription-payments/record`, data); },
 
   // Company specifics
   companyTrial(id) { return this.get(`/companies/${id}/trial`); },

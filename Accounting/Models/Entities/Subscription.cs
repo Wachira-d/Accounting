@@ -284,4 +284,8 @@ public class SubscriptionPayment : BaseEntity
     // Result (after approval)
     public DateTime? SubscriptionExtendedTo { get; set; } // วันที่ต่ออายุถึง
     public string? CustomerNotes { get; set; }            // หมายเหตุจากลูกค้า
+
+    // WP-C1: ที่มา/ประเภทการบันทึก — แยกรับเงินปกติ vs admin บันทึกเอง vs ยกเว้น
+    public SubscriptionPaymentKind Kind { get; set; } = SubscriptionPaymentKind.Normal;
+    public SubscriptionWaiveReason? WaiveReason { get; set; }  // required เมื่อ Kind=Waived
 }
