@@ -137,6 +137,14 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "StreetName" varchar(200) NULL;
             """,
 
+            // ===== Companies: suspend metadata (WP-A2 enforcement) =====
+            """
+            ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "SuspendReason" text NULL;
+            """,
+            """
+            ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "SuspendedAt" timestamptz NULL;
+            """,
+
             // ===== Documents: currency field =====
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Currency" varchar(3) NOT NULL DEFAULT 'THB';

@@ -1,6 +1,9 @@
 using System.Text.Json;
+using Accounting.Data;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
+using SubscriptionService_EffectivePlan = Accounting.Services.Implementations.SubscriptionService.EffectivePlan;
 
 namespace Accounting.Middleware;
 
@@ -10,6 +13,14 @@ namespace Accounting.Middleware;
 public class SubscriptionCheckMiddleware
 {
     private readonly RequestDelegate _next;
+    private readonly IConfiguration _config;
+    private readonly ILogger<SubscriptionCheckMiddleware> _logger;
+
+    /// <summary>โหมดบังคับ readonly-after-expiry (kill-switch WP-A1) —
+    /// อ่านจาก config `Subscription:Enforcement:Mode`.
+    /// Off = ไม่ทำอะไร, LogOnly = log แต่ปล่อยผ่าน (default, ทยอยเปิด),
+    /// Enforce = บล็อก write จริง.</summary>
+    private enum EnforceMode { Off, LogOnly, Enforce }
 
     private static readonly HashSet<string> ExcludedPaths = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -116,12 +127,28 @@ public class SubscriptionCheckMiddleware
         ("/booking",                  FeatureFlags.CmsBooking),
     };
 
-    public SubscriptionCheckMiddleware(RequestDelegate next)
+    public SubscriptionCheckMiddleware(RequestDelegate next,
+        IConfiguration config, ILogger<SubscriptionCheckMiddleware> logger)
     {
         _next = next;
+        _config = config;
+        _logger = logger;
     }
 
-    public async Task InvokeAsync(HttpContext context, ISubscriptionService subscriptionService)
+    private EnforceMode GetEnforceMode() =>
+        (_config["Subscription:Enforcement:Mode"] ?? "LogOnly").Trim().ToLowerInvariant() switch
+        {
+            "off" => EnforceMode.Off,
+            "enforce" => EnforceMode.Enforce,
+            _ => EnforceMode.LogOnly,   // default = ทยอยเปิด (log-only ก่อน)
+        };
+
+    private static bool IsWriteMethod(string method) =>
+        HttpMethods.IsPost(method) || HttpMethods.IsPut(method)
+        || HttpMethods.IsPatch(method) || HttpMethods.IsDelete(method);
+
+    public async Task InvokeAsync(HttpContext context,
+        ISubscriptionService subscriptionService, AccountingDbContext db)
     {
         var path = context.Request.Path.Value ?? "";
 
@@ -171,6 +198,66 @@ public class SubscriptionCheckMiddleware
             return;
         }
 
+        var enforceMode = GetEnforceMode();
+        var isWrite = IsWriteMethod(context.Request.Method);
+
+        // ===== WP-A2: บังคับ CompanyStatus.Suspended (admin สั่งระงับบริษัท) =====
+        // Suspended = บล็อก write ทุกอย่าง (อ่านยังได้ ให้ export/ดูข้อมูลตาม PDPA);
+        // billing/auth ถูก whitelist ไว้แล้วผ่าน ExcludedPaths ด้านบน.
+        if (enforceMode != EnforceMode.Off && isWrite)
+        {
+            var co = await SafeGetCompanyStatusAsync(db, companyId);
+
+            if (co != null && co.Status == CompanyStatus.Suspended)
+            {
+                var reason = string.IsNullOrWhiteSpace(co.SuspendReason)
+                    ? "โปรดติดต่อผู้ดูแลระบบ"
+                    : co.SuspendReason;
+                if (enforceMode == EnforceMode.Enforce)
+                {
+                    await Write403(context, "COMPANY_SUSPENDED",
+                        $"บริษัทนี้ถูกระงับการใช้งาน: {reason}");
+                    return;
+                }
+                _logger.LogInformation(
+                    "[Enforcement:LogOnly] would block WRITE {Method} {Path} — company {CompanyId} suspended",
+                    context.Request.Method, path, companyId);
+            }
+        }
+
+        // ===== WP-A1: readonly-after-expiry — หมดอายุเกิน grace → บล็อก write =====
+        // read (GET/HEAD) ยังผ่านได้เสมอ; billing/auth whitelist แล้ว → ต่ออายุได้.
+        if (enforceMode != EnforceMode.Off && isWrite)
+        {
+            SubscriptionService_EffectivePlan? eff = null;
+            try
+            {
+                eff = await subscriptionService.GetEffectivePlanAsync(companyId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "GetEffectivePlanAsync {CompanyId} ล้มเหลว — ไม่บล็อก (fail-open)", companyId);
+            }
+
+            if (eff != null)
+            {
+                if (eff.InGrace)
+                    context.Response.Headers["X-Subscription-Grace"] = "true";
+
+                if (!eff.IsActive)
+                {
+                    if (enforceMode == EnforceMode.Enforce)
+                    {
+                        await WriteExpired(context, plan.ToString());
+                        return;
+                    }
+                    _logger.LogInformation(
+                        "[Enforcement:LogOnly] would block WRITE {Method} {Path} — plan expired past grace (company {CompanyId})",
+                        context.Request.Method, path, companyId);
+                }
+            }
+        }
+
         // Determine required feature for this route (most specific match wins).
         // Match is "segment-anchored": path contains "{key}/" or ends with "{key}"
         // to avoid /payroll matching /payroll-history.
@@ -197,6 +284,24 @@ public class SubscriptionCheckMiddleware
         await _next(context);
     }
 
+    private sealed record CompanyStatusRow(CompanyStatus Status, string? SuspendReason);
+
+    private async Task<CompanyStatusRow?> SafeGetCompanyStatusAsync(AccountingDbContext db, Guid companyId)
+    {
+        try
+        {
+            return await db.Set<Models.Entities.Company>().AsNoTracking()
+                .Where(c => c.Id == companyId)
+                .Select(c => new CompanyStatusRow(c.Status, c.SuspendReason))
+                .FirstOrDefaultAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "อ่านสถานะบริษัท {CompanyId} ไม่ได้ — ข้ามการบังคับ suspend", companyId);
+            return null;
+        }
+    }
+
     private static string GetStatusText(SubscriptionStatus s) => s switch
     {
         SubscriptionStatus.Cancelled => "ถูกยกเลิก",
@@ -205,6 +310,29 @@ public class SubscriptionCheckMiddleware
         SubscriptionStatus.PastDue => "เกินกำหนดชำระ",
         _ => "ไม่พร้อมใช้งาน"
     };
+
+    /// <summary>402 Payment Required — หมดอายุเกิน grace, บล็อกเฉพาะ write.
+    /// อ่านได้ปกติ + ชี้หน้าต่ออายุ (partner/integration parse JSON นี้ได้).</summary>
+    private static async Task WriteExpired(HttpContext context, string? plan)
+    {
+        context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
+        context.Response.ContentType = "application/json; charset=utf-8";
+        var payload = new
+        {
+            success = false,
+            data = (object?)null,
+            message = "การสมัครสมาชิกหมดอายุแล้ว — เปิดดูข้อมูลได้แต่สร้าง/แก้ไขไม่ได้ โปรดต่ออายุ",
+            errors = (object?)null,
+            code = "SUBSCRIPTION_EXPIRED",
+            feature = (string?)null,
+            currentPlan = plan,
+            upgradeUrl = "/pages/subscription.html"
+        };
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        }));
+    }
 
     private static async Task Write403(HttpContext context, string code, string message, string? feature = null, string? plan = null)
     {

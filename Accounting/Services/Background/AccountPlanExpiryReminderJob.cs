@@ -71,6 +71,19 @@ public class AccountPlanExpiryReminderJob : BackgroundService
             try { await ProcessOne(db, email, a, now, ct); }
             catch (Exception ex) { _logger.LogWarning(ex, "Reminder failed for AccountSub {Id}", a.Id); }
         }
+
+        // WP-A3: per-company subscription lifecycle — เดิมเป็น manual-only
+        // (เรียกจาก AdminController เท่านั้น) ทำให้ Active→PastDue→Suspended
+        // ไม่เคย flip เองถ้า admin ไม่กด. ผูกเข้ากับ job นี้ให้รันอัตโนมัติ
+        // ทุกรอบ (6 ชม.) — idempotent อยู่แล้ว (เช็ค status ก่อนเปลี่ยน).
+        var subscriptionService = scope.ServiceProvider.GetService<ISubscriptionService>();
+        if (subscriptionService != null)
+        {
+            try { await subscriptionService.ProcessExpiredSubscriptionsAsync(); }
+            catch (Exception ex) { _logger.LogError(ex, "ProcessExpiredSubscriptionsAsync failed"); }
+            try { await subscriptionService.ProcessSubscriptionNotificationsAsync(); }
+            catch (Exception ex) { _logger.LogError(ex, "ProcessSubscriptionNotificationsAsync failed"); }
+        }
     }
 
     private async Task ProcessOne(AccountingDbContext db, IEmailService email, AccountSubscription a, DateTime now, CancellationToken ct)
@@ -91,11 +104,34 @@ public class AccountPlanExpiryReminderJob : BackgroundService
                  + $"<p>ระบบจะให้คุณใช้งานต่อในช่วง Grace Period {a.GracePeriodDays} วัน · "
                  + $"หลังจากนั้นบริษัทใต้ Plan จะกลายเป็นโหมด readonly (ดูได้ บันทึกไม่ได้)</p>"
                  + $"<p>โปรดต่ออายุที่หน้าจัดการ License เพื่อใช้งานบริษัทใต้ Plan ต่อเนื่อง</p>";
-            // Schedule the per-company status update to "Expired" on Subscription
-            // rows under this account — they're already gracefully degraded via
-            // the resolver, but flagging the status flag makes admin dashboards
-            // show the right state.
+            // WP-A3 cascade: flip the per-company Subscription rows under this
+            // License to Expired ด้วย — ไม่ใช่แค่ตั้ง flag ที่ account row.
+            // (เดิม comment ว่าจะ cascade แต่โค้ดไม่ได้ทำ → admin dashboard โชว์
+            // company ยัง Active ทั้งที่ License หมดแล้ว). resolver degrade อยู่แล้ว
+            // แต่ status flag ต้องตรงเพื่อให้ middleware/หน้า admin ทำงานถูก.
             a.Status = SubscriptionStatus.Expired;
+            var childSubs = await db.Subscriptions
+                .Where(s => s.AccountSubscriptionId == a.Id && !s.IsDeleted
+                    && (s.Status == SubscriptionStatus.Active
+                        || s.Status == SubscriptionStatus.Trial
+                        || s.Status == SubscriptionStatus.PastDue))
+                .ToListAsync(ct);
+            foreach (var cs in childSubs)
+            {
+                var from = cs.Status;
+                cs.Status = SubscriptionStatus.Expired;
+                cs.UpdatedAt = now;
+                db.SubscriptionHistories.Add(new SubscriptionHistory
+                {
+                    SubscriptionId = cs.Id,
+                    AccountSubscriptionId = a.Id,
+                    Action = "CascadeExpiredFromLicense",
+                    FromStatus = from,
+                    ToStatus = SubscriptionStatus.Expired,
+                    Notes = $"License ({planName}) หมดอายุ {a.EndDate:yyyy-MM-dd} → cascade company subscription เป็น Expired",
+                    PerformedBy = "system:reminder-job"
+                });
+            }
         }
         else if (daysLeft <= 1 && daysLeft > 0 && (a.ExpiryRemindersSentMask & 4) == 0)
         {

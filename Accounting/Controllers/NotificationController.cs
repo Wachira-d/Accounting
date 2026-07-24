@@ -52,7 +52,7 @@ public class NotificationController : ControllerBase
     }
 
     [HttpPost("send")]
-    [Authorize(Roles = "SystemAdmin,Admin")]
+    [Authorize(Roles = "SystemAdmin")]
     public async Task<ActionResult<ApiResponse<string>>> Send([FromBody] SendNotificationRequest request)
     {
         await _notificationService.SendAsync(

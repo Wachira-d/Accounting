@@ -12,6 +12,11 @@ public class Company : BaseEntity
     public BusinessType BusinessType { get; set; }
     public IndustryType IndustryType { get; set; } = IndustryType.General;  // ลักษณะธุรกิจ
     public CompanyStatus Status { get; set; } = CompanyStatus.Active;
+    /// <summary>เหตุผลที่ admin ระงับบริษัท (CompanyStatus.Suspended) — โชว์ใน 403
+    /// ให้ผู้ใช้รู้ว่าทำไมใช้งานไม่ได้ + ติดต่อใคร. null เมื่อ Active.</summary>
+    public string? SuspendReason { get; set; }
+    /// <summary>เวลาที่ถูกระงับ (UTC) — audit + แสดงใน admin.</summary>
+    public DateTime? SuspendedAt { get; set; }
 
     // Thai Business Registration (ข้อมูลตามกฎหมายไทย)
     public string? JuristicId { get; set; }              // เลขทะเบียนนิติบุคคล (DBD)
