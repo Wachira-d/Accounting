@@ -242,6 +242,15 @@
 
               ${p.slipFileName ? `<div class="admin-mb"><div class="admin-label">สลิปการโอน</div><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;text-align:center">${p.slipFileName}</div></div>` : ''}
 
+              ${p.slipOcrAmount != null || p.slipOcrAmountMatches != null ? `
+                <div style="border:1px solid ${p.slipOcrAmountMatches ? '#86efac' : '#fde68a'};background:${p.slipOcrAmountMatches ? '#f0fdf4' : '#fffbeb'};border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
+                  🔍 <strong>OCR อ่านสลิป</strong> (ช่วยตรวจ — โปรดยืนยันกับสลิปจริง):
+                  ยอด <strong>${p.slipOcrAmount != null ? AdminLayout.money(p.slipOcrAmount) : '—'}</strong>
+                  ${p.slipOcrAmountMatches === true ? '<span style="color:#16a34a">✓ ตรงกับที่แจ้ง</span>' : (p.slipOcrAmountMatches === false ? '<span style="color:#b45309">⚠ ไม่ตรงกับที่แจ้ง</span>' : '')}
+                  ${p.slipOcrDate ? ` · วันที่ ${AdminLayout.date(p.slipOcrDate)}` : ''}
+                  ${p.slipOcrReference ? ` · อ้างอิง ${p.slipOcrReference}` : ''}
+                </div>` : ''}
+
               ${p.referenceNumber ? `<div class="admin-mb"><div class="admin-label">เลขอ้างอิง</div>${p.referenceNumber}</div>` : ''}
               ${p.notes ? `<div class="admin-mb"><div class="admin-label">หมายเหตุลูกค้า</div>${p.notes}</div>` : ''}
 

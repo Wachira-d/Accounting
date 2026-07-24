@@ -148,6 +148,7 @@ builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
 builder.Services.AddSingleton<IJobRunRecorder, JobRunRecorder>();
+builder.Services.AddScoped<ISlipOcrAssistService, SlipOcrAssistService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();

@@ -16,14 +16,16 @@ public class SubscriptionController : ControllerBase
     private readonly IImageProcessingService _images;
     private readonly IWebHostEnvironment _env;
     private readonly ISaasBillingDocumentService _billing;
+    private readonly ISlipOcrAssistService _slipOcr;
 
     public SubscriptionController(ISubscriptionService subscriptionService, IImageProcessingService images,
-        IWebHostEnvironment env, ISaasBillingDocumentService billing)
+        IWebHostEnvironment env, ISaasBillingDocumentService billing, ISlipOcrAssistService slipOcr)
     {
         _subscriptionService = subscriptionService;
         _images = images;
         _env = env;
         _billing = billing;
+        _slipOcr = slipOcr;
     }
 
     // ===== Trial =====
@@ -181,6 +183,19 @@ public class SubscriptionController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.UploadPaymentSlipAsync(
             paymentId, fileName, file.FileName, file.ContentType, finalSize, storagePath, userId);
+
+        // WP-C3: อ่านสลิป (local OCR) เทียบยอด → ช่วย admin review. best-effort ไม่ block.
+        // ใช้ dir + fileName (path จริงบน filesystem ที่เพิ่งเซฟ) ตรง ๆ กันความกำกวม
+        try
+        {
+            var savedPath = Path.Combine(dir, fileName);
+            if (System.IO.File.Exists(savedPath))
+            {
+                var bytes = await System.IO.File.ReadAllBytesAsync(savedPath);
+                await _slipOcr.ParseAndStoreAsync(paymentId, bytes, file.ContentType);
+            }
+        }
+        catch { /* advisory only */ }
 
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, "อัพโหลดสลิปสำเร็จ"));
     }

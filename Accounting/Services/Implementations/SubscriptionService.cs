@@ -1910,7 +1910,11 @@ public class SubscriptionService : ISubscriptionService
             p.CustomerNotes,
             p.CreatedAt,
             p.ReceiptNumber,
-            p.ReceiptIsTaxInvoice);
+            p.ReceiptIsTaxInvoice,
+            p.SlipOcrAmount,
+            p.SlipOcrAmountMatches,
+            p.SlipOcrReference,
+            p.SlipOcrDate);
     }
 
     private static PlanTemplateResponse MapTemplateToResponse(PlanTemplate t)

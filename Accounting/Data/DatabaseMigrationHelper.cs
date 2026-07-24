@@ -371,6 +371,23 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptIsTaxInvoice" boolean NOT NULL DEFAULT false;
             """,
 
+            // ===== SubscriptionPayments: slip OCR assist (WP-C3) =====
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrAmount" decimal(18,2) NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrDate" timestamptz NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrReference" text NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrAmountMatches" boolean NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrParsedAt" timestamptz NULL;
+            """,
+
             // ===== SiteSettings: platform billing seller identity (WP-B2) =====
             """
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerName" text NULL;

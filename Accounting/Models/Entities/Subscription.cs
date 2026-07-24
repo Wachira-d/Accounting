@@ -300,4 +300,12 @@ public class SubscriptionPayment : BaseEntity
     public Guid? ReceiptAttachmentId { get; set; }        // FileAttachment ของ PDF ที่ gen
     public DateTime? ReceiptIssuedAt { get; set; }
     public bool ReceiptIsTaxInvoice { get; set; }         // true = ใบกำกับภาษี §86/4 (platform จด VAT)
+
+    // WP-C3: ผล OCR สลิป (local Tesseract + rule-based) — advisory ช่วย admin review
+    // ไม่ auto-approve (admin ยืนยันเอง). null = ยังไม่ได้อ่าน/อ่านไม่ได้.
+    public decimal? SlipOcrAmount { get; set; }           // ยอดที่อ่านได้จากสลิป
+    public DateTime? SlipOcrDate { get; set; }            // วันที่ที่อ่านได้
+    public string? SlipOcrReference { get; set; }         // เลขอ้างอิง/รายการที่อ่านได้
+    public bool? SlipOcrAmountMatches { get; set; }       // ยอดในสลิปตรงกับที่ลูกค้าแจ้งไหม
+    public DateTime? SlipOcrParsedAt { get; set; }
 }
