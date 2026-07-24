@@ -10481,6 +10481,31 @@ public class DocumentService : IDocumentService
                     "ถ้ารายได้เกิน 1.8 ล้าน/ปี ต้องจด VAT ภายใน 30 วัน (§85/1)");
         }
 
+        // §86+§78 — "ใบแจ้งหนี้" ที่มีสินค้า TrackStock: อนุมัติ = ตัดสต๊อก = ส่งมอบ
+        // → tax point เกิดทันที ระบบนำส่ง VAT ให้ครบ (Cr 21911 + ภ.พ.30) แต่กระดาษ
+        // "ใบแจ้งหนี้" ไม่ใช่ใบกำกับภาษี — ผู้ขายมีหน้าที่ออกใบกำกับ ณ วันส่งมอบ และ
+        // ผู้ซื้อใช้ใบแจ้งหนี้เคลมภาษีซื้อไม่ได้ → เตือนให้ใช้ใบกำกับ/ใบรวมแทน.
+        // (ใบแจ้งหนี้ "บริการล้วน" ไม่เตือน — tax point ยังไม่เกิด VAT พัก 21913 ถูกแล้ว)
+        if (doc.DocumentType == DocumentType.Invoice && doc.VatAmount > 0)
+        {
+            var invGoodsCodes = doc.Lines
+                .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+                .Select(l => l.ProductCode!)
+                .Distinct()
+                .ToList();
+            if (invGoodsCodes.Count > 0)
+            {
+                var invHasGoods = await _db.Products.AsNoTracking()
+                    .AnyAsync(p => p.CompanyId == companyId && invGoodsCodes.Contains(p.Code)
+                        && !p.IsDeleted && p.TrackStock);
+                if (invHasGoods)
+                    warnings.Add("ใบแจ้งหนี้นี้มีสินค้า (อนุมัติแล้วตัดสต๊อก = ส่งมอบ) — จุดความรับผิด VAT เกิดทันที (§78) " +
+                        "ผู้ขายต้องออก 'ใบกำกับภาษี' ให้ผู้ซื้อ ณ วันส่งมอบ: แนะนำเปลี่ยนเป็นใบกำกับภาษี " +
+                        "หรือติ๊ก 'ใบแจ้งหนี้/ใบกำกับภาษี' ใบเดียว — ใบแจ้งหนี้เปล่าผู้ซื้อเคลมภาษีซื้อไม่ได้ " +
+                        "(ระบบจะนำส่ง VAT เข้า ภ.พ.30 ให้ทันทีอยู่แล้วไม่ว่าเลือกแบบไหน)");
+            }
+        }
+
         // Per-line VAT + WHT rate sanity. The 0/7 hard block sits in the
         // create path; this is the "rate is technically legal but unusual"
         // shoulder (e.g. ratio that doesn't match a known ภ.ง.ด. code).

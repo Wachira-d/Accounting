@@ -314,7 +314,13 @@ public partial class TaxService : ITaxService
             var exemptLines = doc.Lines.Where(l => l.VatRate == -1).ToList();
             if (exemptLines.Any())
             {
-                vatExemptAmount += exemptLines.Sum(l => l.Amount);
+                // นับยอดยกเว้นครั้งเดียวใน "เดือนที่ขาย" เท่านั้น — เอกสารที่ถูกดึง
+                // เข้ามาด้วย OR-เงื่อนไข (InputVatBecameClaimableAt/OutputVatDueAt =
+                // เดือนรับรู้/รับเงิน ซึ่งต่างจากเดือนขาย) จะโผล่ในรายงาน 2 งวด →
+                // ถ้าไม่ guard ยอดยกเว้นถูกบวกซ้ำทั้งสองเดือน
+                var exemptSaleDate = doc.TaxPointDate ?? doc.DocumentDate;
+                if (exemptSaleDate >= startDate && exemptSaleDate <= endDate)
+                    vatExemptAmount += exemptLines.Sum(l => l.Amount);
             }
 
             // Output VAT - from tax invoices (ใบกำกับภาษี) per Thai law ภ.พ.30.
