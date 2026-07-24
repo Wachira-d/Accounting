@@ -1,6 +1,22 @@
 // ===== Shared Layout Component =====
 // Provides sidebar navigation + header for all app pages
 
+// WP-E3: แบนเนอร์แดงเตือนตลอด session เมื่ออยู่ในโหมด "เข้าดูในนามลูกค้า"
+// (token มี claim imp=true) — read-only, admin support. โชว์ทันทีก่อน layout โหลด.
+(function () {
+  try {
+    const t = localStorage.getItem('token');
+    if (!t) return;
+    const payload = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (payload && payload.imp === 'true') {
+      const bar = document.createElement('div');
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#dc2626;color:#fff;text-align:center;padding:6px 12px;font-size:13px;font-weight:600;font-family:sans-serif';
+      bar.textContent = '🕵️ โหมดเข้าดูในนามลูกค้า (READ-ONLY) — แก้ไขข้อมูลไม่ได้ · จบ session: ปุ่มออกจากระบบ';
+      document.addEventListener('DOMContentLoaded', () => { document.body.prepend(bar); document.body.style.paddingTop = '32px'; });
+    }
+  } catch {}
+})();
+
 const Layout = {
   currentPage: '',
   user: null,

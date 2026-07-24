@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Security.Claims;
 
 namespace Accounting.Controllers;
 
@@ -762,6 +763,56 @@ public class AdminController : ControllerBase
         user.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         await _db.SaveChangesAsync();
         return Ok(new ApiResponse<object>(true, null, "เพิกถอน session แล้ว — ผู้ใช้ต้องเข้าสู่ระบบใหม่"));
+    }
+
+    /// <summary>WP-E3: admin "เข้าดูในนามลูกค้า" (read-only support session).
+    /// ปิดโดย default — ต้องเปิด config Impersonation:Enabled หลัง security review.
+    /// mint token อายุสั้น (imp=true → ImpersonationReadonlyMiddleware บล็อก write ทุกจุด)
+    /// + ลง audit ทุกครั้ง. ไม่ใส่ SystemAdmin role → สิทธิ์ admin ไม่รั่วเข้า tenant.</summary>
+    [HttpPost("companies/{companyId:guid}/impersonate")]
+    public async Task<ActionResult<ApiResponse<object>>> Impersonate(
+        Guid companyId, [FromServices] IConfiguration config)
+    {
+        if (!config.GetValue<bool>("Impersonation:Enabled"))
+            return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object>(false, null,
+                "ฟีเจอร์เข้าดูในนามลูกค้าถูกปิดอยู่ (เปิด Impersonation:Enabled หลัง security review)"));
+
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => new { c.Id, c.Name }).FirstOrDefaultAsync();
+        if (company == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
+
+        // เลือกผู้ใช้จริงในบริษัท (Owner ก่อน) เป็นตัวตนที่จะเข้าดู
+        var target = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId)
+            .OrderBy(cu => cu.Role == UserRole.Owner ? 0 : 1)
+            .Join(_db.Users, cu => cu.UserId, u => u.Id, (cu, u) => new { u.Id, u.Email, u.FullName })
+            .FirstOrDefaultAsync();
+        if (target == null) return BadRequest(new ApiResponse<object>(false, null, "บริษัทนี้ไม่มีผู้ใช้ให้เข้าดู"));
+
+        var adminId = JwtHelper.GetUserIdFromClaims(User);
+        var (token, expiresAt) = JwtHelper.GenerateImpersonationToken(
+            target.Id, target.Email, target.FullName, adminId, config, 15);
+
+        // audit ทุกครั้ง (platform action) — เพื่อ trace ว่าใครเข้าดูบริษัทไหน เมื่อไร
+        _db.AuditLogs.Add(new Models.Entities.AuditLog
+        {
+            CompanyId = companyId,
+            UserId = adminId,
+            UserEmail = User.FindFirstValue(ClaimTypes.Email) ?? "",
+            Action = AuditAction.View,
+            EntityType = "Impersonation",
+            EntityId = companyId.ToString(),
+            NewValues = JsonSerializer.Serialize(new { targetUserId = target.Id, targetEmail = target.Email, expiresAt }),
+            Timestamp = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            token, expiresAt, readOnly = true,
+            targetUser = new { target.Id, target.Email, target.FullName },
+            company = new { company.Id, company.Name }
+        }, "สร้าง session เข้าดูในนามลูกค้า (read-only, 15 นาที) แล้ว"));
     }
 
     /// <summary>WP-D4: ส่งคำเชิญเข้าบริษัทซ้ำ (ต่ออายุ token + เวลา).</summary>

@@ -252,6 +252,10 @@
                   </div>
                   <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="updateCompanyStatus('${c.id}')">อัพเดท</button>
                 </div>
+                <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #e2e8f0">
+                  <div style="font-size:12px;color:#64748b;margin-bottom:6px">🕵️ เข้าดูข้อมูลในนามลูกค้าแบบอ่านอย่างเดียว (support) — เปิด session 15 นาที + ลง audit (ต้องเปิด Impersonation:Enabled)</div>
+                  <button class="admin-btn admin-btn-sm admin-btn-outline" onclick="impersonate('${c.id}')">เข้าดูในนามลูกค้า (read-only)</button>
+                </div>
                 <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #fecaca">
                   <div style="font-size:12px;color:#b91c1c;margin-bottom:6px">⛔ ลบบริษัทถาวรจากรายการ (soft-delete — ข้อมูลบัญชีเก็บตามกฎหมาย 5 ปี) ทุก user สลับเข้าไม่ได้อีก</div>
                   <button class="admin-btn admin-btn-sm" style="background:#dc2626;color:#fff" onclick="adminDeleteCompany('${c.id}', '${(c.name||'').replace(/'/g,'&apos;')}')">ลบบริษัทนี้…</button>
@@ -465,6 +469,19 @@
         await AdminAPI.updateCustomerStatus(companyId, status, reason);
         AdminLayout.toast('อัพเดทสถานะบริษัทสำเร็จ');
         await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    // WP-E3: เข้าดูในนามลูกค้า (read-only)
+    async function impersonate(companyId) {
+      if (!confirm('เปิด session เข้าดูในนามลูกค้าแบบอ่านอย่างเดียว (15 นาที)?\nการเข้าดูนี้จะถูกบันทึก audit')) return;
+      try {
+        const res = await AdminAPI.impersonate(companyId);
+        const d = res.data;
+        // same-origin → tenant app อ่าน localStorage 'token' ตัวเดียวกัน
+        localStorage.setItem('token', d.token);
+        AdminLayout.toast(`เข้าดูในนาม ${d.targetUser.email} (read-only ${new Date(d.expiresAt).toLocaleTimeString('th-TH')})`);
+        window.open('/index.html', '_blank');
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 

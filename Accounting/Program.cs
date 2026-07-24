@@ -757,6 +757,10 @@ app.Use(async (context, next) =>
     await next();
 });
 
+// 6.9 WP-E3: บังคับ read-only เมื่อ impersonation (ต้องหลัง UseAuthentication) —
+// ชั้นความปลอดภัยหลักของฟีเจอร์ "เข้าดูในนามลูกค้า"
+app.UseMiddleware<Accounting.Middleware.ImpersonationReadonlyMiddleware>();
+
 // 7. Tenant access control (after auth)
 app.UseMiddleware<TenantAccessMiddleware>();
 
