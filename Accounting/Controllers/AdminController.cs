@@ -273,6 +273,47 @@ public class AdminController : ControllerBase
         }));
     }
 
+    /// <summary>WP-E2: บริษัทที่ใช้งานใกล้เต็ม limit (>85%) — โอกาส upsell +
+    /// เตือนก่อนโดนบล็อก. อ่านจาก CurrentMonth* counters (ไม่ query หนัก).</summary>
+    [HttpGet("usage-alerts")]
+    public async Task<ActionResult<ApiResponse<object>>> GetUsageAlerts([FromQuery] int thresholdPercent = 85)
+    {
+        var t = Math.Clamp(thresholdPercent, 50, 100) / 100m;
+        var subs = await _db.Subscriptions.AsNoTracking()
+            .Where(s => !s.IsDeleted && s.Status == SubscriptionStatus.Active)
+            .Join(_db.Companies, s => s.CompanyId, c => c.Id, (s, c) => new
+            {
+                c.Id, c.Name,
+                s.CurrentMonthDocuments, s.MaxDocumentsPerMonth,
+                s.CurrentMonthJournalEntries, s.MaxJournalEntriesPerMonth,
+                s.CurrentMonthOcrPages, s.MaxOcrPagesPerMonth,
+                s.Plan
+            }).ToListAsync();
+
+        var alerts = new List<(Guid Id, string Name, string Plan, string Metric, int Used, int Max, decimal Pct)>();
+        foreach (var s in subs)
+        {
+            void Check(string metric, int used, int max)
+            {
+                if (max > 0 && (decimal)used / max >= t)
+                    alerts.Add((s.Id, s.Name, s.Plan.ToString(), metric, used, max,
+                        Math.Round((decimal)used / max * 100, 0)));
+            }
+            Check("เอกสาร/เดือน", s.CurrentMonthDocuments, s.MaxDocumentsPerMonth);
+            Check("สมุดรายวัน/เดือน", s.CurrentMonthJournalEntries, s.MaxJournalEntriesPerMonth);
+            Check("OCR/เดือน", s.CurrentMonthOcrPages, s.MaxOcrPagesPerMonth);
+        }
+        return Ok(new ApiResponse<object>(true, new
+        {
+            thresholdPercent,
+            alerts = alerts.OrderByDescending(a => a.Pct).Select(a => new
+            {
+                companyId = a.Id, companyName = a.Name, plan = a.Plan,
+                metric = a.Metric, used = a.Used, max = a.Max, percent = a.Pct
+            }).ToList()
+        }));
+    }
+
     // ===== Customer / Tenant Management =====
 
     [HttpGet("customers")]

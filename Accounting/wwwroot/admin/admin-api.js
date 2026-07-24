@@ -93,6 +93,7 @@ const AdminAPI = {
   // Dashboard
   dashboard() { return this.get('/dashboard'); },
   revenueDashboard(months = 12) { return this.get(`/revenue-dashboard?months=${months}`); },
+  usageAlerts(threshold = 85) { return this.get(`/usage-alerts?thresholdPercent=${threshold}`); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },
