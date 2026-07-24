@@ -1121,7 +1121,7 @@ public class OcrController : ControllerBase
     /// Ready (eng+tha)" etc.
     /// </summary>
     [HttpGet("admin/config")]
-    [Authorize(Roles = "SystemAdmin,Admin")]
+    [Authorize(Roles = "SystemAdmin")]
     public async Task<ActionResult<ApiResponse<object>>> GetOcrConfig(
         Guid companyId,
         [FromServices] Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService embeddedOcr)
@@ -1159,7 +1159,7 @@ public class OcrController : ControllerBase
     /// changed — null/missing fields are left as-is.
     /// </summary>
     [HttpPut("admin/config")]
-    [Authorize(Roles = "SystemAdmin,Admin")]
+    [Authorize(Roles = "SystemAdmin")]
     public async Task<ActionResult<ApiResponse<object>>> UpdateOcrConfig(
         Guid companyId,
         [FromBody] UpdateOcrConfigRequest request)
@@ -1200,7 +1200,7 @@ public class OcrController : ControllerBase
     /// they're testing a sample file that wasn't saved as a real scan.
     /// </summary>
     [HttpPost("admin/train-from-sample")]
-    [Authorize(Roles = "SystemAdmin,Admin")]
+    [Authorize(Roles = "SystemAdmin")]
     public async Task<ActionResult<ApiResponse<object>>> TrainFromSample(
         Guid companyId,
         [FromBody] AdminTrainRequest request,
@@ -1273,7 +1273,7 @@ public class OcrController : ControllerBase
     /// </summary>
     [HttpPost("admin/test-scan")]
     [RequestSizeLimit(10 * 1024 * 1024)]
-    [Authorize(Roles = "SystemAdmin,Admin")]
+    [Authorize(Roles = "SystemAdmin")]
     public async Task<ActionResult<ApiResponse<object>>> AdminTestScan(
         Guid companyId,
         IFormFile file,
@@ -1466,7 +1466,7 @@ public class OcrController : ControllerBase
     /// vendors that already have history. Idempotent — safe to re-run.
     /// </summary>
     [HttpPost("intelligence/backfill")]
-    [Authorize(Roles = "SystemAdmin,Admin")]
+    [Authorize(Roles = "SystemAdmin")]
     public async Task<ActionResult<ApiResponse<object>>> BackfillVendorIntelligence(
         Guid companyId,
         [FromServices] Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
@@ -1482,7 +1482,7 @@ public class OcrController : ControllerBase
     /// debugging "why did OCR pre-fill account X for this vendor?"
     /// </summary>
     [HttpGet("intelligence/vendor")]
-    [Authorize(Roles = "SystemAdmin,Admin")]
+    [Authorize(Roles = "SystemAdmin")]
     public async Task<ActionResult<ApiResponse<object>>> GetVendorIntelligence(
         Guid companyId, [FromQuery] string? taxId, [FromQuery] string? name)
     {

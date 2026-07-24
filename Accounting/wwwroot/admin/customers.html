@@ -421,8 +421,13 @@
     }
     async function updateCompanyStatus(companyId) {
       const status = document.getElementById('companyStatusSelect').value;
+      let reason = null;
+      if (status === 'Suspended') {
+        reason = prompt('เหตุผลการระงับบริษัท (จะโชว์ให้ผู้ใช้เห็นเมื่อถูกบล็อก):', 'ค้างชำระค่าบริการ');
+        if (reason === null) { await refreshDetail(companyId); return; } // ยกเลิก
+      }
       try {
-        await AdminAPI.updateCustomerStatus(companyId, status);
+        await AdminAPI.updateCustomerStatus(companyId, status, reason);
         AdminLayout.toast('อัพเดทสถานะบริษัทสำเร็จ');
         await refreshDetail(companyId);
       } catch (err) { AdminLayout.toast(err.message, 'error'); }

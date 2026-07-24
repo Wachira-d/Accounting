@@ -77,9 +77,11 @@ public class StatutoryRemittanceController : ControllerBase
     {
         try
         {
+            // RecognizeDate null = ใช้ "วันที่ใบกำกับผู้ขาย" ต่อใบเป็นวันเคลม ภ.พ.30
+            // (default ที่ผู้ใช้เลือก); มีค่า = override ทั้งชุด
             var res = await _service.RecognizePp36InputVatAsync(companyId,
                 request.PeriodYear, request.PeriodMonth,
-                request.RecognizeDate ?? DateTime.UtcNow.Date, User.Identity?.Name ?? "");
+                request.RecognizeDate, User.Identity?.Name ?? "");
             return Ok(new ApiResponse<RemitResult>(true, res, res.Message));
         }
         catch (InvalidOperationException ex)

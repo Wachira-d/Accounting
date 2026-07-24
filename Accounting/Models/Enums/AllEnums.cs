@@ -534,6 +534,23 @@ public enum SubscriptionPaymentStatus
     Cancelled = 4          // ยกเลิก
 }
 
+/// <summary>ที่มาของ payment record — แยกการรับเงินปกติ (ลูกค้าอัปสลิป)
+/// ออกจากการบันทึกโดย admin เพื่อ audit + รายงานรายรับ (WP-C1).</summary>
+public enum SubscriptionPaymentKind
+{
+    Normal = 0,            // ลูกค้าชำระ + อัปสลิป → admin review
+    ManualByAdmin = 1,     // admin บันทึกรับเงินเอง (เงินสด/โอน นอกระบบ) → อนุมัติทันที
+    Waived = 2             // ยกเว้น/ต่ออายุให้ฟรี ยอด 0 (Goodwill/Compensation/Correction)
+}
+
+/// <summary>เหตุผลการต่ออายุแบบไม่เก็บเงิน (Waived) — บังคับเลือกเพื่อ audit.</summary>
+public enum SubscriptionWaiveReason
+{
+    Goodwill = 1,          // ไมตรีจิต/ชดเชยความไม่สะดวก
+    Compensation = 2,      // ชดเชยเหตุขัดข้องระบบ
+    Correction = 3         // แก้ไขข้อผิดพลาดการบันทึก
+}
+
 // ==================== Notification ====================
 public enum NotificationType
 {

@@ -146,6 +146,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Import.IDuplicate
 builder.Services.AddScoped<Accounting.Services.Interfaces.ILineBotService, Accounting.Services.Implementations.LineBotService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
+builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();

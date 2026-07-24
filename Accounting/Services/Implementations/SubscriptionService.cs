@@ -16,13 +16,18 @@ public class SubscriptionService : ISubscriptionService
     private readonly AccountingDbContext _db;
     private readonly INotificationService _notificationService;
     private readonly INotificationEngine? _notify;
+    private readonly ISaasBillingDocumentService? _billing;
+
+    /// <summary>WP-B1: ออกใบแจ้งหนี้ต่ออายุกี่วันก่อนหมดอายุ (default 15).</summary>
+    private const int RenewalInvoiceLeadDays = 15;
 
     public SubscriptionService(AccountingDbContext db, INotificationService notificationService,
-        INotificationEngine? notify = null)
+        INotificationEngine? notify = null, ISaasBillingDocumentService? billing = null)
     {
         _db = db;
         _notificationService = notificationService;
         _notify = notify;
+        _billing = billing;
     }
 
     /// <summary>duplicate audit #7 phase 2: route subscription notification ผ่าน
@@ -1601,7 +1606,74 @@ public class SubscriptionService : ISubscriptionService
         }
 
         await _db.SaveChangesAsync();
+
+        // WP-B2: อนุมัติแล้ว → ออกใบเสร็จ/ใบกำกับค่าบริการ (best-effort, ไม่ block approval)
+        if (payment.Status == SubscriptionPaymentStatus.Approved && _billing != null)
+            await _billing.GenerateReceiptForApprovedPaymentAsync(payment.Id);
+
         return MapPaymentToResponse(payment);
+    }
+
+    public async Task<SubscriptionPaymentResponse> RecordManualPaymentAsync(
+        Guid companyId, RecordManualPaymentRequest request, string performedBy)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+
+        if (request.RequestedPeriodMonths <= 0)
+            throw new InvalidOperationException("จำนวนเดือนที่ต่ออายุต้องมากกว่า 0");
+
+        // Waived = ต่ออายุให้ฟรี → บังคับเหตุผล + ยอดต้องเป็น 0 (กัน admin แอบตั้งยอด)
+        if (request.IsWaived)
+        {
+            if (request.WaiveReason == null)
+                throw new InvalidOperationException("การยกเว้นค่าบริการต้องระบุเหตุผล (Goodwill/Compensation/Correction)");
+        }
+        else if (request.Amount <= 0)
+        {
+            throw new InvalidOperationException("ยอดรับเงินต้องมากกว่า 0 (หรือเลือกยกเว้นค่าบริการ)");
+        }
+
+        var count = await _db.SubscriptionPayments.CountAsync(p => p.SubscriptionId == sub.Id);
+        var paymentNumber = $"SP-{sub.CompanyId.ToString()[..8].ToUpper()}-{count + 1:D4}";
+
+        var kindLabel = request.IsWaived ? "ยกเว้นค่าบริการ" : "บันทึกรับเงินโดย admin";
+        var payment = new SubscriptionPayment
+        {
+            SubscriptionId = sub.Id,
+            PaymentNumber = paymentNumber,
+            Amount = request.IsWaived ? 0m : request.Amount,
+            PaymentDate = request.PaymentDate,
+            PaymentMethod = request.PaymentMethod,
+            TransferReference = request.TransferReference,
+            RequestedPlan = request.RequestedPlan,
+            RequestedBillingCycle = request.RequestedBillingCycle,
+            RequestedPeriodMonths = request.RequestedPeriodMonths,
+            Kind = request.IsWaived ? SubscriptionPaymentKind.Waived : SubscriptionPaymentKind.ManualByAdmin,
+            WaiveReason = request.IsWaived ? request.WaiveReason : null,
+            CustomerNotes = request.Notes,
+            Status = SubscriptionPaymentStatus.Pending,
+            CreatedBy = performedBy
+        };
+        _db.SubscriptionPayments.Add(payment);
+
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            Action = request.IsWaived ? "PaymentWaivedRecorded" : "PaymentManualRecorded",
+            Notes = $"{kindLabel} {paymentNumber}: {payment.Amount:N2} THB"
+                  + (request.IsWaived ? $" (เหตุผล: {request.WaiveReason})" : ""),
+            PerformedBy = performedBy
+        });
+
+        await _db.SaveChangesAsync();
+
+        // วิ่งเข้าเส้น approve เดิม → ต่ออายุ + cascade License + ประวัติ + (WP-B2) ใบเสร็จ
+        return await ReviewPaymentAsync(payment.Id,
+            new ReviewSubscriptionPaymentRequest(true,
+                $"{kindLabel}" + (string.IsNullOrWhiteSpace(request.Notes) ? "" : $" — {request.Notes}"),
+                null),
+            performedBy);
     }
 
     public async Task<SubscriptionPaymentListResponse> GetAllPendingPaymentsAsync()
@@ -1644,6 +1716,15 @@ public class SubscriptionService : ISubscriptionService
                         $"Subscription จะหมดอายุในอีก {daysUntilExpiry} วัน",
                         $"Subscription plan {sub.Plan} จะหมดอายุในวันที่ {sub.EndDate:dd/MM/yyyy} (อีก {daysUntilExpiry} วัน) กรุณาต่ออายุก่อนหมดอายุ");
                 }
+            }
+
+            // WP-B1: ออกใบแจ้งหนี้ต่ออายุล่วงหน้า (default 15 วันก่อนหมดอายุ) —
+            // idempotent ต่อ EndDate ของรอบ (service เช็คซ้ำอีกชั้น) จึงเรียกซ้ำได้ปลอดภัย
+            if (_billing != null && daysUntilExpiry > 0 && daysUntilExpiry <= RenewalInvoiceLeadDays
+                && sub.Status == SubscriptionStatus.Active
+                && sub.RenewalInvoiceForEndDate != sub.EndDate)
+            {
+                await _billing.GenerateRenewalInvoiceAsync(sub.Id);
             }
 
             // แจ้งเตือนก่อนตัดบัญชี
@@ -1827,7 +1908,9 @@ public class SubscriptionService : ISubscriptionService
             p.RejectionReason,
             p.SubscriptionExtendedTo,
             p.CustomerNotes,
-            p.CreatedAt);
+            p.CreatedAt,
+            p.ReceiptNumber,
+            p.ReceiptIsTaxInvoice);
     }
 
     private static PlanTemplateResponse MapTemplateToResponse(PlanTemplate t)

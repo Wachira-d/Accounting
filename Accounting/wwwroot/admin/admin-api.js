@@ -54,6 +54,29 @@ const AdminAPI = {
     return data;
   },
 
+  // Binary download (adds auth header, triggers browser save)
+  async downloadFile(path, fallbackName) {
+    const token = localStorage.getItem('admin_token');
+    const res = await fetch(`${this.base}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (res.status === 401) { window.location.href = '/admin/login.html'; throw new Error('Unauthorized'); }
+    if (!res.ok) {
+      let msg = 'ดาวน์โหลดไม่สำเร็จ';
+      try { const j = await res.json(); msg = j.message || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const m = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+    const name = m ? decodeURIComponent(m[1]) : (fallbackName || 'download');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    a.remove(); URL.revokeObjectURL(url);
+  },
+  downloadPaymentReceipt(paymentId) { return this.downloadFile(`/subscription-payments/${paymentId}/receipt`, `receipt-${paymentId}.pdf`); },
+  issueRenewalInvoice(companyId) { return this.post(`/companies/${companyId}/renewal-invoice`, {}); },
+  downloadRenewalInvoice(companyId) { return this.downloadFile(`/companies/${companyId}/renewal-invoice`, `invoice-${companyId}.pdf`); },
+
   // Auth
   async login(email, password) {
     const res = await fetch('/api/auth/login', {
@@ -69,14 +92,17 @@ const AdminAPI = {
 
   // Dashboard
   dashboard() { return this.get('/dashboard'); },
+  revenueDashboard(months = 12) { return this.get(`/revenue-dashboard?months=${months}`); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },
   customer(id) { return this.get(`/customers/${id}`); },
-  updateCustomerStatus(id, status) { return this.put(`/customers/${id}/status`, { status }); },
+  updateCustomerStatus(id, status, suspendReason = null) { return this.put(`/customers/${id}/status`, { status, suspendReason }); },
 
   // Users
   users(params = '') { return this.get(`/users${params}`); },
+  createUser(data) { return this.post('/users', data); },
+  resetUserPassword(userId) { return this.post(`/users/${userId}/reset-password`, {}); },
   updateUserStatus(id, status) { return this.put(`/users/${id}/status`, { status }); },
   toggleAdmin(id, isAdmin) { return this.put(`/users/${id}/admin`, { isAdmin }); },
 
@@ -92,6 +118,7 @@ const AdminAPI = {
   allPayments(params = '') { return this.get(`/subscription-payments/all${params}`); },
   paymentDetail(id) { return this.get(`/subscription-payments/${id}`); },
   reviewPayment(id, approve, notes) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes }); },
+  recordManualPayment(companyId, data) { return this.post(`/companies/${companyId}/subscription-payments/record`, data); },
 
   // Company specifics
   companyTrial(id) { return this.get(`/companies/${id}/trial`); },
@@ -133,6 +160,8 @@ const AdminAPI = {
 
   // Site Settings
   siteSettings() { return this.get('/site-settings'); },
+  platformBilling() { return this.get('/platform-billing-settings'); },
+  updatePlatformBilling(data) { return this.put('/platform-billing-settings', data); },
   updateSiteSettings(data) { return this.put('/site-settings', data); },
 
   // System Email Configuration

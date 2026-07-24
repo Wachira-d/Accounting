@@ -171,12 +171,25 @@
       /** รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD — Dr 11610 / Cr 11640 + เข้า
        *  ภ.พ.30 เดือนที่รับรู้ (§77/2). backend กันรับรู้ซ้ำ/ยังไม่นำส่งให้. */
       async recognizePp36(year, month) {
-        if (!confirm(`ยืนยันรับรู้ภาษีซื้อ ภ.พ.36 งวด ${String(month).padStart(2, '0')}/${year}?\n\n(กดเมื่อได้รับใบเสร็จจากกรมสรรพากรแล้ว — ระบบจะย้ายภาษีซื้อเข้า ภ.พ.30 เดือนปัจจุบัน)`)) return;
+        // default: เว้นว่าง = ใช้ "วันที่ใบกำกับผู้ขาย" ของแต่ละใบเป็นวันเคลม ภ.พ.30
+        // (§82/3). ผู้ใช้ระบุวันเดียว (YYYY-MM-DD) ได้ถ้าต้องการ override ทั้งชุด
+        const dateStr = prompt(
+          `รับรู้ภาษีซื้อ ภ.พ.36 งวด ${String(month).padStart(2, '0')}/${year}\n\n` +
+          `• เว้นว่าง = ใช้ "วันที่ใบกำกับผู้ขาย" ของแต่ละใบเป็นวันเคลม ภ.พ.30 (แนะนำ)\n` +
+          `• หรือระบุวันเดียว (YYYY-MM-DD) ถ้าต้องการกำหนดเองทั้งชุด:`,
+          '');
+        if (dateStr === null) return;   // กด Cancel
+        let recognizeDate = null;
+        if (dateStr.trim()) {
+          const d = new Date(dateStr.trim());
+          if (isNaN(d.getTime())) { Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ใช้ YYYY-MM-DD)', 'error'); return; }
+          recognizeDate = dateStr.trim();
+        }
         try {
           const cid = Layout.getCompanyId();
           const res = await API.post(`/api/companies/${cid}/remittances/pp36/recognize`,
-            { periodYear: year, periodMonth: month, recognizeDate: new Date().toISOString().slice(0, 10) });
-          Layout.toast(res?.message || 'รับรู้ภาษีซื้อ ภ.พ.36 แล้ว', 'success', 8000);
+            { periodYear: year, periodMonth: month, recognizeDate });
+          Layout.toast(res?.message || 'รับรู้ภาษีซื้อ ภ.พ.36 แล้ว', 'success', 9000);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'รับรู้ไม่สำเร็จ', 'error', 8000); }
       },

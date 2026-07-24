@@ -133,10 +133,17 @@ public partial class TaxService : ITaxService
             // ไม่ Include Contact (required nav + !IsDeleted filter → INNER JOIN
             // ตัดใบที่ contact ถูกลบ = under-report ภ.พ.30). hydrate แยกด้านล่าง
             .Where(d => d.CompanyId == companyId
-                && (d.TaxPointDate ?? d.DocumentDate) >= startDate
-                && (d.TaxPointDate ?? d.DocumentDate) <= endDate
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
-                && d.VatAmount != 0)
+                && d.VatAmount != 0
+                // ปกติ: tax point อยู่ในงวด — OR: ภาษีซื้อที่ "ถึงกำหนดเคลม" เดือนนี้
+                // (BecameClaimableAt) แม้วันที่เอกสารอยู่เดือนก่อน (§83/6 ภ.พ.36 รับรู้
+                // ทีหลัง / §86/4 เติมใบกำกับครบทีหลัง) — เดิม query เอา DocumentDate
+                // อย่างเดียว → ใบเดือน พ.ค. รับรู้ ก.ค. หลุดจากรายงาน ก.ค. ทั้งใบ = หาไม่เจอ
+                && (
+                    ((d.TaxPointDate ?? d.DocumentDate) >= startDate && (d.TaxPointDate ?? d.DocumentDate) <= endDate)
+                    || (d.InputVatBecameClaimableAt != null
+                        && d.InputVatBecameClaimableAt >= startDate && d.InputVatBecameClaimableAt <= endDate)
+                ))
             .ToListAsync();
         await _db.HydrateContactsAsync(companyId, docs);
 
@@ -489,6 +496,14 @@ public partial class TaxService : ITaxService
                     });
                     continue;
                 }
+                // ภาษีซื้อที่ "ถึงกำหนดแล้ว" (BecameClaimableAt set — §83/6 รับรู้ ภ.พ.36
+                // / §86/4 เติมใบกำกับครบ): เคลมใน "เดือนที่ถึงกำหนด" เท่านั้น. ใบนี้อาจ
+                // ถูกโหลดทั้งจากงวด DocumentDate (เดือนใบ) และงวด BecameClaimableAt
+                // (เดือนรับรู้) → นับเฉพาะงวดรับรู้ กันเคลมผิดเดือน + เบิ้ล 2 งวด
+                if (doc.InputVatBecameClaimableAt.HasValue
+                    && (doc.InputVatBecameClaimableAt.Value < startDate
+                        || doc.InputVatBecameClaimableAt.Value > endDate))
+                    continue;
                 // ----- Rule B: detect prohibited input VAT (ภาษีซื้อต้องห้าม) -----
                 // Prohibited VAT = ผลรวมจาก (a) บรรทัดที่ user/AI ติ๊ก
                 // IsVatClaimable=false (explicit) + (b) บรรทัดที่ AccountId

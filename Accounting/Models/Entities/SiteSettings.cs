@@ -186,4 +186,24 @@ public class SiteSettings : BaseEntity
     /// "last trained X hours ago" on the admin AI page so an operator
     /// notices when the job is wedged.</summary>
     public DateTime? AiLastFeedbackTrainingAt { get; set; }
+
+    // ===== Platform Billing Seller Identity (WP-B2) =====
+    // ตัวตน "ผู้ขาย" ของแพลตฟอร์มเอง ใช้ออกใบเสร็จ/ใบกำกับค่าบริการ SaaS ให้ลูกค้า.
+    // ต่างจากข้อมูลบริษัทลูกค้า (tenant) — นี่คือข้อมูลของผู้ให้บริการ.
+    /// <summary>ชื่อผู้ขาย (นิติบุคคลผู้ให้บริการ). ว่าง = fallback ไป SiteName.</summary>
+    public string? PlatformSellerName { get; set; }
+    /// <summary>เลขผู้เสียภาษี 13 หลักของแพลตฟอร์ม — required เมื่อจะออกใบกำกับภาษี §86/4.</summary>
+    public string? PlatformSellerTaxId { get; set; }
+    /// <summary>รหัสสาขา 5 หลัก (00000 = สำนักงานใหญ่).</summary>
+    public string? PlatformSellerBranchCode { get; set; } = "00000";
+    /// <summary>ที่อยู่ผู้ขายสำหรับพิมพ์บนเอกสาร.</summary>
+    public string? PlatformSellerAddress { get; set; }
+    public string? PlatformSellerPhone { get; set; }
+    public string? PlatformSellerEmail { get; set; }
+    /// <summary>true = แพลตฟอร์มจด VAT → ออก "ใบกำกับภาษี/ใบเสร็จรับเงิน" §86/4
+    /// (แยก VAT 7%). false = ออก "ใบเสร็จรับเงิน" เฉย ๆ ไม่มี VAT line.</summary>
+    public bool PlatformIsVatRegistered { get; set; } = false;
+    /// <summary>true = ราคาแพ็กเกจรวม VAT แล้ว (คำนวณ VAT = amount×7/107);
+    /// false = ราคายังไม่รวม VAT (VAT = amount×7%). ใช้เฉพาะเมื่อจด VAT.</summary>
+    public bool PlatformPriceIncludesVat { get; set; } = true;
 }

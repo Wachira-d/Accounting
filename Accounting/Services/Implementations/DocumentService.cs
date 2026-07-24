@@ -1524,6 +1524,17 @@ public class DocumentService : IDocumentService
         if (doc.Status == DocumentStatus.Voided)
             throw new InvalidOperationException("เอกสารถูกยกเลิกแล้ว — แก้ไขไม่ได้");
 
+        // §83/6 บริการต่างประเทศ (ภ.พ.36): บล็อกชัด ๆ — เส้นนี้เป็น §86/4 (เติม
+        // ใบกำกับผู้ขายไทย → ย้าย 11640→11610). ภ.พ.36 ผู้ขาย ตปท. ไม่มีใบกำกับไทย
+        // ต้องเคลมผ่าน "นำส่ง ภ.พ.36 → รับรู้ภาษีซื้อ" ที่หน้านำส่งภาษี (§77/2).
+        // ไม่ให้ save metadata ใบกำกับผิดเส้น + ไม่แตะ JE (ตอบคำถาม: ไม่ต้องลง JE
+        // กลับ เพราะไม่ยอมให้เกิด action ผิด flow ตั้งแต่แรก)
+        if (doc.IsForeignService)
+            throw new InvalidOperationException(
+                "เอกสารนี้เป็นบริการต่างประเทศ (ภ.พ.36 §83/6) — เคลมภาษีซื้อผ่านหน้า "
+                + "\"นำส่งภาษี\": นำส่ง ภ.พ.36 แล้วกด \"รับรู้ภาษีซื้อ\" เมื่อได้ใบเสร็จ "
+                + "กรมสรรพากร (ไม่ใช่การเติมใบกำกับ §86/4)");
+
         // เติม/แก้เฉพาะ field ที่ส่งมา (null = คงค่าเดิม)
         if (request.SupplierInvoiceNumber != null)
             doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;

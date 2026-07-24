@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายรับ / ธุรกิจ - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .rev-chart{display:flex;align-items:flex-end;gap:6px;height:180px;padding:12px 4px 0;overflow-x:auto}
+    .rev-bar{flex:1;min-width:26px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+    .rev-bar .bar{width:70%;background:linear-gradient(180deg,#6366f1,#818cf8);border-radius:6px 6px 0 0;min-height:2px;transition:height .3s}
+    .rev-bar .val{font-size:10px;color:#64748b;margin-bottom:4px;white-space:nowrap}
+    .rev-bar .lbl{font-size:10px;color:#94a3b8;margin-top:4px;transform:rotate(-30deg);white-space:nowrap}
+    .rev-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    @media(max-width:900px){.rev-cols{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="admin-kpi-grid" id="kpi"><div class="admin-kpi"><div class="admin-kpi-label">กำลังโหลด...</div></div></div>
+
+    <div class="admin-card">
+      <div class="admin-toolbar">
+        <div class="section-title" style="margin:0">รายรับรายเดือน (อนุมัติแล้ว)</div>
+        <div style="flex:1"></div>
+        <select id="rangeSel" class="admin-select" onchange="load()">
+          <option value="6">6 เดือน</option>
+          <option value="12" selected>12 เดือน</option>
+          <option value="24">24 เดือน</option>
+        </select>
+      </div>
+      <div class="rev-chart" id="chart"></div>
+    </div>
+
+    <div class="rev-cols">
+      <div class="admin-card">
+        <div class="section-title">ใกล้หมดอายุ 7 วัน</div>
+        <div id="exp7">กำลังโหลด...</div>
+      </div>
+      <div class="admin-card">
+        <div class="section-title">ใกล้หมดอายุ 30 วัน</div>
+        <div id="exp30">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="section-title">เกินกำหนด / หมดอายุ (PastDue)</div>
+      <div id="pastdue">กำลังโหลด...</div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('revenue');
+
+    function expTable(rows) {
+      if (!rows || rows.length === 0)
+        return '<div style="text-align:center;color:#94a3b8;padding:24px">ไม่มีรายการ</div>';
+      return `<div class="admin-table-wrap"><table class="admin-table">
+        <thead><tr><th>บริษัท</th><th>แพ็กเกจ</th><th>หมดอายุ</th><th class="admin-text-right">ยอด</th><th></th></tr></thead>
+        <tbody>${rows.map(r => `
+          <tr>
+            <td>${r.companyName || '-'}</td>
+            <td>${AdminLayout.planBadge(r.plan)}</td>
+            <td>${AdminLayout.date(r.endDate)}</td>
+            <td class="admin-text-right"><strong>${AdminLayout.money(r.amount)}</strong></td>
+            <td style="white-space:nowrap">
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="issueInv('${r.companyId}')">แจ้งหนี้</button>
+              <a class="admin-btn admin-btn-primary admin-btn-sm" href="/admin/payments.html">รับเงิน</a>
+            </td>
+          </tr>`).join('')}</tbody></table></div>`;
+    }
+
+    async function issueInv(companyId) {
+      try {
+        const res = await AdminAPI.issueRenewalInvoice(companyId);
+        AdminLayout.toast(res.message || 'ออกใบแจ้งหนี้แล้ว');
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+    }
+
+    async function load() {
+      const months = parseInt(document.getElementById('rangeSel').value, 10);
+      try {
+        const res = await AdminAPI.revenueDashboard(months);
+        const d = res.data;
+
+        document.getElementById('kpi').innerHTML = `
+          <div class="admin-kpi"><div class="admin-kpi-label">MRR</div><div class="admin-kpi-value">${AdminLayout.money(d.mrr)}</div></div>
+          <div class="admin-kpi"><div class="admin-kpi-label">ARR</div><div class="admin-kpi-value">${AdminLayout.money(d.arr)}</div></div>
+          <div class="admin-kpi"><div class="admin-kpi-label">รายรับเดือนนี้</div><div class="admin-kpi-value" style="color:var(--admin-success)">${AdminLayout.money(d.revenueThisMonth)}</div></div>
+          <div class="admin-kpi"><div class="admin-kpi-label">Trial → Paid</div><div class="admin-kpi-value">${d.conversion.ratePercent}%</div><div class="admin-kpi-label">${d.conversion.converted} จ่าย / ${d.conversion.trials} ทดลอง</div></div>
+          <div class="admin-kpi"><div class="admin-kpi-label">สลิปรอตรวจ</div><div class="admin-kpi-value" style="color:${d.slipQueue.pending ? 'var(--admin-warning)' : 'inherit'}">${d.slipQueue.pending}</div><div class="admin-kpi-label">ค้างนานสุด ${d.slipQueue.oldestPendingDays} วัน</div></div>
+        `;
+
+        const max = Math.max(1, ...d.monthlyRevenue.map(m => m.revenue));
+        document.getElementById('chart').innerHTML = d.monthlyRevenue.map(m => `
+          <div class="rev-bar" title="${m.month}: ${AdminLayout.money(m.revenue)}">
+            <div class="val">${m.revenue >= 1000 ? (m.revenue/1000).toFixed(0)+'k' : m.revenue.toFixed(0)}</div>
+            <div class="bar" style="height:${Math.round(m.revenue / max * 100)}%"></div>
+            <div class="lbl">${m.month.slice(2)}</div>
+          </div>`).join('');
+
+        document.getElementById('exp7').innerHTML = expTable(d.expiring7d);
+        document.getElementById('exp30').innerHTML = expTable(d.expiring30d);
+
+        const pd = d.pastDue || [];
+        document.getElementById('pastdue').innerHTML = pd.length === 0
+          ? '<div style="text-align:center;color:#94a3b8;padding:24px">ไม่มีรายการค้างชำระ 🎉</div>'
+          : `<div class="admin-table-wrap"><table class="admin-table">
+              <thead><tr><th>บริษัท</th><th>แพ็กเกจ</th><th>สถานะ</th><th>หมดอายุ</th><th class="admin-text-right">ยอด</th><th></th></tr></thead>
+              <tbody>${pd.map(r => `
+                <tr>
+                  <td>${r.companyName || '-'}</td>
+                  <td>${AdminLayout.planBadge(r.plan)}</td>
+                  <td>${AdminLayout.statusBadge(r.status)}</td>
+                  <td>${AdminLayout.date(r.endDate)}</td>
+                  <td class="admin-text-right"><strong>${AdminLayout.money(r.amount)}</strong></td>
+                  <td style="white-space:nowrap">
+                    <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="issueInv('${r.companyId}')">แจ้งหนี้</button>
+                    <a class="admin-btn admin-btn-primary admin-btn-sm" href="/admin/payments.html">รับเงิน</a>
+                  </td>
+                </tr>`).join('')}</tbody></table></div>`;
+      } catch (err) {
+        document.getElementById('kpi').innerHTML = `<div class="admin-kpi"><div class="admin-kpi-label" style="color:var(--admin-danger)">${err.message}</div></div>`;
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

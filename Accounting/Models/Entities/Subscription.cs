@@ -34,6 +34,12 @@ public class Subscription : BaseEntity
     public DateTime EndDate { get; set; }
     public DateTime? CancelledAt { get; set; }
 
+    // WP-B1: ใบแจ้งหนี้ต่ออายุที่ออกล่วงหน้าก่อนหมดอายุ. ผูกกับ EndDate ที่ออกให้
+    // → รอบใหม่ (EndDate เปลี่ยนหลังจ่าย) จะออกใบใหม่ ไม่ออกซ้ำรอบเดิม (idempotent).
+    public string? RenewalInvoiceNumber { get; set; }
+    public DateTime? RenewalInvoiceIssuedAt { get; set; }
+    public DateTime? RenewalInvoiceForEndDate { get; set; }
+
     // Trial Management (ควบคุมการทดลองใช้อย่างละเอียด)
     public TrialConfig? TrialConfig { get; set; }
 
@@ -284,4 +290,14 @@ public class SubscriptionPayment : BaseEntity
     // Result (after approval)
     public DateTime? SubscriptionExtendedTo { get; set; } // วันที่ต่ออายุถึง
     public string? CustomerNotes { get; set; }            // หมายเหตุจากลูกค้า
+
+    // WP-C1: ที่มา/ประเภทการบันทึก — แยกรับเงินปกติ vs admin บันทึกเอง vs ยกเว้น
+    public SubscriptionPaymentKind Kind { get; set; } = SubscriptionPaymentKind.Normal;
+    public SubscriptionWaiveReason? WaiveReason { get; set; }  // required เมื่อ Kind=Waived
+
+    // WP-B2: เอกสารใบเสร็จ/ใบกำกับค่าบริการ SaaS ที่ออกตอนอนุมัติ (platform → ลูกค้า)
+    public string? ReceiptNumber { get; set; }            // เลขรันเอกสาร platform (แยกจาก tenant)
+    public Guid? ReceiptAttachmentId { get; set; }        // FileAttachment ของ PDF ที่ gen
+    public DateTime? ReceiptIssuedAt { get; set; }
+    public bool ReceiptIsTaxInvoice { get; set; }         // true = ใบกำกับภาษี §86/4 (platform จด VAT)
 }

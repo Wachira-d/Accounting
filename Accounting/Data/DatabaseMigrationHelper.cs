@@ -137,6 +137,14 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "StreetName" varchar(200) NULL;
             """,
 
+            // ===== Companies: suspend metadata (WP-A2 enforcement) =====
+            """
+            ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "SuspendReason" text NULL;
+            """,
+            """
+            ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "SuspendedAt" timestamptz NULL;
+            """,
+
             // ===== Documents: currency field =====
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Currency" varchar(3) NOT NULL DEFAULT 'THB';
@@ -339,6 +347,65 @@ public static class DatabaseMigrationHelper
             // ===== DocumentLines: WHT income type =====
             """
             ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "IncomeTypeCode" text NULL;
+            """,
+
+            // ===== SubscriptionPayments: admin manual/waived recording (WP-C1) =====
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "Kind" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WaiveReason" integer NULL;
+            """,
+
+            // ===== SubscriptionPayments: SaaS receipt/tax-invoice (WP-B2) =====
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptNumber" text NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptAttachmentId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptIssuedAt" timestamptz NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptIsTaxInvoice" boolean NOT NULL DEFAULT false;
+            """,
+
+            // ===== SiteSettings: platform billing seller identity (WP-B2) =====
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerName" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerTaxId" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerBranchCode" text NULL DEFAULT '00000';
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerAddress" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerPhone" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerEmail" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformIsVatRegistered" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformPriceIncludesVat" boolean NOT NULL DEFAULT true;
+            """,
+
+            // ===== Subscriptions: renewal invoice (WP-B1) =====
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceNumber" text NULL;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceIssuedAt" timestamptz NULL;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceForEndDate" timestamptz NULL;
             """,
 
             // ===== Subscriptions: Notification settings =====

@@ -26,5 +26,5 @@ public interface IStatutoryRemittanceService
     /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD (Dr 11610 / Cr 11640 +
     /// stamp เอกสาร → เข้า ภ.พ.30 เดือนที่รับรู้) — ต้องนำส่งงวดนั้นก่อน</summary>
     Task<RemitResult> RecognizePp36InputVatAsync(Guid companyId, int periodYear,
-        int periodMonth, DateTime recognizeDate, string performedBy);
+        int periodMonth, DateTime? recognizeDate, string performedBy);
 }

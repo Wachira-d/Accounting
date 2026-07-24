@@ -34,6 +34,8 @@ public class AdminController : ControllerBase
     private readonly ISecretProtector _secrets;
     private readonly IImageProcessingService _images;
     private readonly IWebHostEnvironment _env;
+    private readonly ISaasBillingDocumentService _billing;
+    private readonly IEmailService _email;
 
     public AdminController(
         AccountingDbContext db,
@@ -43,7 +45,9 @@ public class AdminController : ControllerBase
         IOcrQuotaService ocrQuota,
         ISecretProtector secrets,
         IImageProcessingService images,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        ISaasBillingDocumentService billing,
+        IEmailService email)
     {
         _db = db;
         _subscriptionService = subscriptionService;
@@ -53,6 +57,8 @@ public class AdminController : ControllerBase
         _secrets = secrets;
         _images = images;
         _env = env;
+        _billing = billing;
+        _email = email;
     }
 
     // ===== Dashboard Analytics =====
@@ -175,6 +181,92 @@ public class AdminController : ControllerBase
             },
             planDistribution,
             recentUsers
+        }));
+    }
+
+    // ===== WP-F1: Revenue / Business Dashboard =====
+    [HttpGet("revenue-dashboard")]
+    public async Task<ActionResult<ApiResponse<object>>> GetRevenueDashboard([FromQuery] int months = 12)
+    {
+        months = Math.Clamp(months, 3, 24);
+        var now = DateTime.UtcNow;
+        var thisMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var subs = await _db.Subscriptions.AsNoTracking().Where(s => !s.IsDeleted).ToListAsync();
+        decimal Mrr(IEnumerable<Models.Entities.Subscription> src) => src
+            .Where(s => s.Status == SubscriptionStatus.Active)
+            .Sum(s => s.BillingCycle switch
+            {
+                BillingCycle.Monthly => s.PricePerCycle,
+                BillingCycle.Quarterly => s.PricePerCycle / 3m,
+                BillingCycle.SemiAnnual => s.PricePerCycle / 6m,
+                BillingCycle.Annual => s.PricePerCycle / 12m,
+                _ => s.PricePerCycle
+            });
+        var mrr = Math.Round(Mrr(subs), 2);
+
+        // Monthly revenue series (approved payments by review month)
+        var since = thisMonth.AddMonths(-(months - 1));
+        var approved = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.Status == SubscriptionPaymentStatus.Approved && p.ReviewedAt != null && p.ReviewedAt >= since)
+            .Select(p => new { p.ReviewedAt, p.Amount })
+            .ToListAsync();
+        var series = new List<object>();
+        for (int i = 0; i < months; i++)
+        {
+            var m = since.AddMonths(i);
+            var mEnd = m.AddMonths(1);
+            var total = approved.Where(p => p.ReviewedAt >= m && p.ReviewedAt < mEnd).Sum(p => p.Amount);
+            series.Add(new { month = m.ToString("yyyy-MM"), revenue = Math.Round(total, 2) });
+        }
+
+        // Expiring soon (Active, within 7 / 30 days) — with company + amount for quick "record payment"
+        async Task<List<object>> Expiring(int days) => (await _db.Subscriptions.AsNoTracking()
+            .Where(s => !s.IsDeleted && s.Status == SubscriptionStatus.Active
+                && s.EndDate > now && s.EndDate <= now.AddDays(days))
+            .OrderBy(s => s.EndDate)
+            .Join(_db.Companies, s => s.CompanyId, c => c.Id, (s, c) => new
+            {
+                companyId = c.Id, companyName = c.Name, plan = s.Plan, endDate = s.EndDate,
+                billingCycle = s.BillingCycle, amount = s.PricePerCycle
+            })
+            .Take(100).ToListAsync()).Cast<object>().ToList();
+
+        var pastDue = (await _db.Subscriptions.AsNoTracking()
+            .Where(s => !s.IsDeleted && (s.Status == SubscriptionStatus.PastDue || s.Status == SubscriptionStatus.Expired))
+            .OrderBy(s => s.EndDate)
+            .Join(_db.Companies, s => s.CompanyId, c => c.Id, (s, c) => new
+            {
+                companyId = c.Id, companyName = c.Name, plan = s.Plan, status = s.Status,
+                endDate = s.EndDate, amount = s.PricePerCycle
+            })
+            .Take(100).ToListAsync()).Cast<object>().ToList();
+
+        // Trial → paid conversion (approx): companies with ≥1 approved payment vs current trials
+        var converted = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.Status == SubscriptionPaymentStatus.Approved)
+            .Select(p => p.SubscriptionId).Distinct().CountAsync();
+        var trialCount = subs.Count(s => s.Status == SubscriptionStatus.Trial);
+        var conversionRate = (converted + trialCount) > 0
+            ? Math.Round((decimal)converted / (converted + trialCount) * 100, 1) : 0;
+
+        // Slip review queue + oldest age
+        var pendingSlips = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview)
+            .Select(p => p.CreatedAt).ToListAsync();
+        var oldestPendingDays = pendingSlips.Count > 0 ? (int)(now - pendingSlips.Min()).TotalDays : 0;
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            mrr,
+            arr = Math.Round(mrr * 12, 2),
+            revenueThisMonth = Math.Round(approved.Where(p => p.ReviewedAt >= thisMonth).Sum(p => p.Amount), 2),
+            monthlyRevenue = series,
+            expiring7d = await Expiring(7),
+            expiring30d = await Expiring(30),
+            pastDue,
+            conversion = new { converted, trials = trialCount, ratePercent = conversionRate },
+            slipQueue = new { pending = pendingSlips.Count, oldestPendingDays }
         }));
     }
 
@@ -377,6 +469,19 @@ public class AdminController : ControllerBase
         if (company == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบบริษัท"));
 
         company.Status = request.Status;
+        // WP-A2: เก็บเหตุผล + เวลาระงับ (โชว์ใน 403 ให้ผู้ใช้รู้ว่าทำไมใช้ไม่ได้);
+        // ปลดระงับ → ล้างค่า
+        if (request.Status == CompanyStatus.Suspended)
+        {
+            company.SuspendReason = string.IsNullOrWhiteSpace(request.SuspendReason)
+                ? "ระงับโดยผู้ดูแลระบบ" : request.SuspendReason.Trim();
+            company.SuspendedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            company.SuspendReason = null;
+            company.SuspendedAt = null;
+        }
         company.UpdatedAt = DateTime.UtcNow;
         company.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         await _db.SaveChangesAsync();
@@ -480,6 +585,109 @@ public class AdminController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(new ApiResponse<string>(true, null, request.IsAdmin ? "กำหนดเป็น Admin สำเร็จ" : "ยกเลิกสิทธิ์ Admin สำเร็จ"));
+    }
+
+    // ===== WP-D1/D2: Admin User Lifecycle =====
+    public sealed record AdminCreateUserRequest(string Email, string FullName, string? Phone,
+        Guid? CompanyId, string? Role, bool MakeSystemAdmin);
+    public sealed record AdminResetResult(string ResetLink, DateTime ExpiresAt, bool EmailSent);
+
+    /// <summary>สร้าง reset token + ลิงก์ตั้ง/รีเซ็ตรหัส. ส่งอีเมล (ถ้าตั้งค่า SMTP)
+    /// + คืนลิงก์เสมอ (copy-link fallback ตามแนวทางโปรเจกต์).</summary>
+    private async Task<AdminResetResult> IssueResetLinkAsync(Models.Entities.User user)
+    {
+        var token = Convert.ToBase64String(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
+        user.PasswordResetToken = token;
+        user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(24); // admin-issued → ให้เวลามากกว่า self-service
+        user.UpdatedAt = DateTime.UtcNow;
+        user.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+
+        var baseUrl = (await _db.SiteSettings.AsNoTracking().Select(s => s.AppBaseUrl).FirstOrDefaultAsync())
+            ?.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var link = $"{baseUrl}/reset-password.html?token={Uri.EscapeDataString(token)}";
+
+        var emailSent = false;
+        try
+        {
+            if (await _email.IsSystemEmailConfiguredAsync())
+            {
+                await _email.SendPasswordResetAsync(user.Email, user.FullName, token);
+                emailSent = true;
+            }
+        }
+        catch { /* copy-link fallback ครอบไว้แล้ว */ }
+
+        return new AdminResetResult(link, user.PasswordResetTokenExpiry.Value, emailSent);
+    }
+
+    [HttpPost("users/{userId:guid}/reset-password")]
+    public async Task<ActionResult<ApiResponse<AdminResetResult>>> AdminResetPassword(Guid userId)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null) return NotFound(new ApiResponse<AdminResetResult>(false, null, "ไม่พบผู้ใช้"));
+        var result = await IssueResetLinkAsync(user);
+        return Ok(new ApiResponse<AdminResetResult>(true, result,
+            result.EmailSent ? "ส่งลิงก์รีเซ็ตรหัสทางอีเมลแล้ว" : "สร้างลิงก์รีเซ็ตรหัสแล้ว (คัดลอกส่งให้ผู้ใช้)"));
+    }
+
+    [HttpPost("users")]
+    public async Task<ActionResult<ApiResponse<object>>> AdminCreateUser([FromBody] AdminCreateUserRequest request)
+    {
+        var email = (request.Email ?? "").Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+            return BadRequest(new ApiResponse<object>(false, null, "อีเมลไม่ถูกต้อง"));
+        if (string.IsNullOrWhiteSpace(request.FullName))
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณาระบุชื่อ-นามสกุล"));
+        if (await _db.Users.AnyAsync(u => u.Email.ToLower() == email))
+            return BadRequest(new ApiResponse<object>(false, null, "อีเมลนี้มีในระบบแล้ว"));
+
+        UserRole role = UserRole.Staff;
+        if (request.CompanyId.HasValue && !string.IsNullOrWhiteSpace(request.Role)
+            && !Enum.TryParse(request.Role, true, out role))
+            return BadRequest(new ApiResponse<object>(false, null, "role ไม่ถูกต้อง"));
+
+        if (request.CompanyId.HasValue
+            && !await _db.Companies.AnyAsync(c => c.Id == request.CompanyId.Value))
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัทที่ระบุ"));
+
+        var user = new Models.Entities.User
+        {
+            Email = email,
+            FullName = request.FullName.Trim(),
+            Phone = request.Phone?.Trim(),
+            // รหัสสุ่มที่ผู้ใช้ไม่รู้ — ต้องตั้งรหัสผ่านผ่านลิงก์ (set-password)
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(Convert.ToBase64String(
+                System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))),
+            Status = UserStatus.PendingVerification,
+            EmailVerified = false,
+            IsSystemAdmin = request.MakeSystemAdmin,
+            CreatedBy = JwtHelper.GetUserIdFromClaims(User).ToString()
+        };
+        _db.Users.Add(user);
+
+        if (request.CompanyId.HasValue)
+        {
+            _db.Set<Models.Entities.CompanyUser>().Add(new Models.Entities.CompanyUser
+            {
+                UserId = user.Id,
+                CompanyId = request.CompanyId.Value,
+                Role = role,
+                IsDefault = true,
+                JoinedAt = DateTime.UtcNow
+            });
+        }
+        await _db.SaveChangesAsync();
+
+        var reset = await IssueResetLinkAsync(user);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            userId = user.Id, email = user.Email,
+            setPasswordLink = reset.ResetLink, expiresAt = reset.ExpiresAt, emailSent = reset.EmailSent
+        }, reset.EmailSent ? "สร้างผู้ใช้ + ส่งลิงก์ตั้งรหัสทางอีเมลแล้ว" : "สร้างผู้ใช้แล้ว (คัดลอกลิงก์ตั้งรหัสส่งให้ผู้ใช้)"));
     }
 
     /// <summary>System-wide Azure DI / Local OCR usage for the current
@@ -949,6 +1157,7 @@ public class AdminController : ControllerBase
                 p.Id, p.PaymentNumber, p.Amount, p.PaymentMethod, p.Status,
                 p.RequestedPlan, p.CreatedAt, p.ReviewedAt,
                 p.ReviewNotes, p.SubscriptionExtendedTo,
+                p.ReceiptNumber, p.ReceiptIsTaxInvoice, p.Kind,
                 company = p.Subscription != null ? new { p.Subscription.Company.Id, p.Subscription.Company.Name } : null
             })
             .ToListAsync();
@@ -982,6 +1191,65 @@ public class AdminController : ControllerBase
     {
         var result = await _subscriptionService.GetPaymentsAsync(companyId);
         return Ok(new ApiResponse<SubscriptionPaymentListResponse>(true, result));
+    }
+
+    /// <summary>WP-C1: admin บันทึกรับเงินเอง (เงินสด/โอนนอกระบบ) หรือยกเว้นค่าบริการ
+    /// → สร้าง payment record + อนุมัติทันที + ต่ออายุ. แทนการต่ออายุแบบไร้ร่องรอย.</summary>
+    [HttpPost("companies/{companyId:guid}/subscription-payments/record")]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> RecordManualPayment(
+        Guid companyId, [FromBody] RecordManualPaymentRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        try
+        {
+            var result = await _subscriptionService.RecordManualPaymentAsync(companyId, request, userId);
+            var message = request.IsWaived
+                ? "บันทึกการยกเว้นค่าบริการ + ต่ออายุแล้ว"
+                : "บันทึกรับเงิน + ต่ออายุ Subscription แล้ว";
+            return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null, ex.Message));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new ApiResponse<SubscriptionPaymentResponse>(false, null, ex.Message));
+        }
+    }
+
+    /// <summary>WP-B2: ดาวน์โหลดใบเสร็จ/ใบกำกับค่าบริการ SaaS ของ payment.</summary>
+    [HttpGet("subscription-payments/{paymentId:guid}/receipt")]
+    public async Task<IActionResult> DownloadReceipt(Guid paymentId)
+    {
+        var pdf = await _billing.GetReceiptPdfAsync(paymentId);
+        if (pdf == null)
+            return NotFound(new ApiResponse<object>(false, null, "ยังไม่มีใบเสร็จสำหรับรายการนี้"));
+        return File(pdf.Value.Bytes, "application/pdf", pdf.Value.FileName);
+    }
+
+    /// <summary>WP-B1: admin สั่งออก/ดาวน์โหลดใบแจ้งหนี้ต่ออายุของบริษัท.</summary>
+    [HttpPost("companies/{companyId:guid}/renewal-invoice")]
+    public async Task<ActionResult<ApiResponse<object>>> IssueRenewalInvoice(Guid companyId)
+    {
+        var subId = await _db.Subscriptions.Where(s => s.CompanyId == companyId)
+            .Select(s => (Guid?)s.Id).FirstOrDefaultAsync();
+        if (subId == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ subscription"));
+        var number = await _billing.GenerateRenewalInvoiceAsync(subId.Value);
+        return number == null
+            ? BadRequest(new ApiResponse<object>(false, null, "ออกใบแจ้งหนี้ไม่ได้ (อาจเป็นแพ็กเกจฟรี/ไม่มีราคา)"))
+            : Ok(new ApiResponse<object>(true, new { invoiceNumber = number }, $"ออกใบแจ้งหนี้ {number} แล้ว"));
+    }
+
+    [HttpGet("companies/{companyId:guid}/renewal-invoice")]
+    public async Task<IActionResult> DownloadRenewalInvoice(Guid companyId)
+    {
+        var subId = await _db.Subscriptions.Where(s => s.CompanyId == companyId)
+            .Select(s => (Guid?)s.Id).FirstOrDefaultAsync();
+        if (subId == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ subscription"));
+        var pdf = await _billing.GetRenewalInvoicePdfAsync(subId.Value);
+        if (pdf == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่มีใบแจ้งหนี้ต่ออายุ"));
+        return File(pdf.Value.Bytes, "application/pdf", pdf.Value.FileName);
     }
 
     // ===== Subscription Notification Settings (Admin) =====
@@ -1110,6 +1378,48 @@ public class AdminController : ControllerBase
             settings.RegistrationEnabled, settings.MaintenanceMode,
             settings.MaintenanceMessage, settings.DefaultLanguage),
             "บันทึกการตั้งค่าสำเร็จ"));
+    }
+
+    // ===== Platform Billing Seller Identity (WP-B2) =====
+    public sealed record PlatformBillingSettingsDto(
+        string? PlatformSellerName, string? PlatformSellerTaxId, string? PlatformSellerBranchCode,
+        string? PlatformSellerAddress, string? PlatformSellerPhone, string? PlatformSellerEmail,
+        bool PlatformIsVatRegistered, bool PlatformPriceIncludesVat);
+
+    [HttpGet("platform-billing-settings")]
+    public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> GetPlatformBilling()
+    {
+        var s = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt).FirstOrDefaultAsync();
+        return Ok(new ApiResponse<PlatformBillingSettingsDto>(true, new PlatformBillingSettingsDto(
+            s?.PlatformSellerName, s?.PlatformSellerTaxId, s?.PlatformSellerBranchCode ?? "00000",
+            s?.PlatformSellerAddress, s?.PlatformSellerPhone, s?.PlatformSellerEmail,
+            s?.PlatformIsVatRegistered ?? false, s?.PlatformPriceIncludesVat ?? true)));
+    }
+
+    [HttpPut("platform-billing-settings")]
+    public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> UpdatePlatformBilling(
+        [FromBody] PlatformBillingSettingsDto request)
+    {
+        // จด VAT ต้องมีเลขภาษี 13 หลัก ไม่งั้นออกใบกำกับ §86/4 ไม่ได้ (กัน compliance ผิด)
+        var taxId = request.PlatformSellerTaxId?.Trim();
+        if (request.PlatformIsVatRegistered && (string.IsNullOrEmpty(taxId) || taxId.Length != 13 || !taxId.All(char.IsDigit)))
+            return BadRequest(new ApiResponse<PlatformBillingSettingsDto>(false, null,
+                "จด VAT ต้องระบุเลขประจำตัวผู้เสียภาษี 13 หลักที่ถูกต้อง"));
+
+        var s = await _db.SiteSettings.FirstOrDefaultAsync();
+        if (s == null) { s = new SiteSettings(); _db.SiteSettings.Add(s); }
+        s.PlatformSellerName = request.PlatformSellerName?.Trim();
+        s.PlatformSellerTaxId = taxId;
+        s.PlatformSellerBranchCode = string.IsNullOrWhiteSpace(request.PlatformSellerBranchCode) ? "00000" : request.PlatformSellerBranchCode.Trim();
+        s.PlatformSellerAddress = request.PlatformSellerAddress?.Trim();
+        s.PlatformSellerPhone = request.PlatformSellerPhone?.Trim();
+        s.PlatformSellerEmail = request.PlatformSellerEmail?.Trim();
+        s.PlatformIsVatRegistered = request.PlatformIsVatRegistered;
+        s.PlatformPriceIncludesVat = request.PlatformPriceIncludesVat;
+        s.UpdatedAt = DateTime.UtcNow;
+        s.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<PlatformBillingSettingsDto>(true, request, "บันทึกข้อมูลผู้ขาย (แพลตฟอร์ม) สำเร็จ"));
     }
 
     [HttpPost("upload-logo")]
@@ -2486,7 +2796,7 @@ public class AdminController : ControllerBase
 
 // ===== Admin-specific DTOs =====
 
-public record UpdateCustomerStatusRequest(CompanyStatus Status);
+public record UpdateCustomerStatusRequest(CompanyStatus Status, string? SuspendReason = null);
 public record UpdateUserStatusRequest(UserStatus Status);
 public record ToggleAdminRequest(bool IsAdmin);
 
