@@ -22,9 +22,15 @@
 | **F1** revenue dashboard | ✅ เสร็จ | หน้า revenue.html + endpoint (MRR/ARR/กราฟ/expiring/PastDue/conversion/คิวสลิป) |
 | **D1** สร้าง user | ✅ เสร็จ | + ผูกบริษัท/role + set-password link |
 | **D2** reset password | ✅ เสร็จ | token 24 ชม. + อีเมล/copy-link |
-| **C4** payments redesign | ⬜ ค้าง | filters/ยอดรวม/aging/export/bulk approve |
-| **E1** company 360° | ⬜ ค้าง | หน้า detail รวม subscription/usage/members/activity |
-| **C3/D3/D4/E2/E3/F2/F3** | ⬜ ค้าง | Phase 4 |
+| **C4** payments redesign | ✅ เสร็จ | filters (เดือน/แพ็กเกจ) + ยอดรวม + export Excel + bulk approve |
+| **E1** company 360° | ✅ เสร็จ | detail drawer +integrations/activity/limits/การเงิน + suspend reason |
+| **D3** ลบ/anonymize user | ✅ เสร็จ | PDPA ม.30 — anonymize PII คง FK/audit, บล็อก sole-Owner |
+| **D4** user detail 360° | ⬜ ค้าง Phase 4 | companies/role + sessions (revoke) + invitations resend |
+| **E2** usage alert >85% | ⬜ ค้าง Phase 4 | ต้องมี current-month usage counters ครบก่อน |
+| **E3** impersonation | ⬜ ค้าง Phase 4 | ⚠️ ต้อง security review ก่อน merge (read-only token + banner + audit) |
+| **F2** background-jobs + JobRunLog | ⬜ ค้าง Phase 4 | เพิ่ม entity JobRunLog + instrument ทุก job |
+| **F3** admin action audit | ⬜ ค้าง Phase 4 | เขียน AuditLog hash-chain ทุก endpoint แก้ sub/user/company |
+| **C3** OCR สลิป assist | ⬜ ค้าง Phase 4 | ⚠️ ต้องทำเต็มกฎเหล็ก #1 (orchestrator + distillation + kill-switch) |
 
 > ⚠️ **ต้องทดสอบบน Windows/Postgres ก่อนเปิด Enforce**: CI ไม่มี Postgres —
 > enforcement gate, renewal, receipt generation ผ่าน brace-check + node --check
