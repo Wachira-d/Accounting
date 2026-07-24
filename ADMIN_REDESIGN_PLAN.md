@@ -25,12 +25,12 @@
 | **C4** payments redesign | ✅ เสร็จ | filters (เดือน/แพ็กเกจ) + ยอดรวม + export Excel + bulk approve |
 | **E1** company 360° | ✅ เสร็จ | detail drawer +integrations/activity/limits/การเงิน + suspend reason |
 | **D3** ลบ/anonymize user | ✅ เสร็จ | PDPA ม.30 — anonymize PII คง FK/audit, บล็อก sole-Owner |
-| **D4** user detail 360° | ⬜ ค้าง Phase 4 | companies/role + sessions (revoke) + invitations resend |
-| **E2** usage alert >85% | ⬜ ค้าง Phase 4 | ต้องมี current-month usage counters ครบก่อน |
-| **E3** impersonation | ⬜ ค้าง Phase 4 | ⚠️ ต้อง security review ก่อน merge (read-only token + banner + audit) |
-| **F2** background-jobs + JobRunLog | ⬜ ค้าง Phase 4 | เพิ่ม entity JobRunLog + instrument ทุก job |
-| **F3** admin action audit | ⬜ ค้าง Phase 4 | เขียน AuditLog hash-chain ทุก endpoint แก้ sub/user/company |
-| **C3** OCR สลิป assist | ⬜ ค้าง Phase 4 | ⚠️ ต้องทำเต็มกฎเหล็ก #1 (orchestrator + distillation + kill-switch) |
+| **D4** user detail 360° | ✅ เสร็จ | companies/role + session revoke + License + invitation resend |
+| **E2** usage alert >85% | ✅ เสร็จ (read) | endpoint + ตารางบน revenue dashboard; auto-notify+idempotency เป็น follow-up |
+| **F2** background-jobs + JobRunLog | ✅ เสร็จ | entity + recorder + instrument 5 job + ตารางผลใน UI |
+| **F3** admin action audit | ✅ ครอบแล้ว | DbContext auto-capture (hash-chain) ทุก TenantEntity/BaseEntity + actor จาก UpdatedBy/CreatedBy — ไม่ต้องเขียนเอง |
+| **E3** impersonation | ⛔ ค้าง (มี gate) | ⚠️ ต้อง **security review** ก่อน merge + ต้อง mint user JWT (แตะ auth pipeline core) — ทดสอบใน CI ไม่ได้ ไม่ควรรีบ |
+| **C3** OCR สลิป assist | ⛔ ค้าง (มี gate) | ต้องทำ **เต็มกฎเหล็ก #1** (AiFeatureKey + distillation model + orchestrator + anti-hallucination + feedback + kill-switch) — งานใหญ่ ทำครึ่ง ๆ = ผิดกฎ |
 
 > ⚠️ **ต้องทดสอบบน Windows/Postgres ก่อนเปิด Enforce**: CI ไม่มี Postgres —
 > enforcement gate, renewal, receipt generation ผ่าน brace-check + node --check
