@@ -264,7 +264,10 @@ public record SubscriptionPaymentResponse(
     string? RejectionReason,
     DateTime? SubscriptionExtendedTo,
     string? CustomerNotes,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // WP-B2: เอกสารใบเสร็จ/ใบกำกับที่ออกแล้ว (null = ยังไม่ออก)
+    string? ReceiptNumber = null,
+    bool ReceiptIsTaxInvoice = false);
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,

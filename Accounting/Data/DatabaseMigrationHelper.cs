@@ -357,6 +357,46 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WaiveReason" integer NULL;
             """,
 
+            // ===== SubscriptionPayments: SaaS receipt/tax-invoice (WP-B2) =====
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptNumber" text NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptAttachmentId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptIssuedAt" timestamptz NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptIsTaxInvoice" boolean NOT NULL DEFAULT false;
+            """,
+
+            // ===== SiteSettings: platform billing seller identity (WP-B2) =====
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerName" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerTaxId" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerBranchCode" text NULL DEFAULT '00000';
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerAddress" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerPhone" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformSellerEmail" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformIsVatRegistered" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformPriceIncludesVat" boolean NOT NULL DEFAULT true;
+            """,
+
             // ===== Subscriptions: Notification settings =====
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "NotifyBeforeExpiry" boolean NOT NULL DEFAULT true;

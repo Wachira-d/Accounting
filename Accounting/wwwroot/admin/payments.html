@@ -142,7 +142,9 @@
                   <td>
                     ${p.status === 'Pending' || p.status === 'UnderReview'
                       ? `<button class="admin-btn admin-btn-primary admin-btn-sm" onclick="showReview('${p.id}')">ตรวจสอบ</button>`
-                      : ''}
+                      : (p.receiptNumber
+                          ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="dlReceipt('${p.id}')" title="${p.receiptNumber}">🧾 ${p.receiptIsTaxInvoice ? 'ใบกำกับ' : 'ใบเสร็จ'}</button>`
+                          : '')}
                   </td>
                 </tr>
               `).join('')}
@@ -411,6 +413,11 @@
     function closeRecord() {
       document.getElementById('recordModal').style.display = 'none';
       document.getElementById('recordModal').innerHTML = '';
+    }
+
+    async function dlReceipt(paymentId) {
+      try { await AdminAPI.downloadPaymentReceipt(paymentId); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 
     loadPending();

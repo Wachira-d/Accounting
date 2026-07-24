@@ -120,6 +120,7 @@
       <button onclick="switchTab('contact')">ข้อมูลติดต่อ & Social</button>
       <button onclick="switchTab('services')">แพ็กเกจบริการ</button>
       <button onclick="switchTab('system')">ระบบ</button>
+      <button onclick="switchTab('billing')">ผู้ขาย / ใบเสร็จค่าบริการ</button>
     </div>
 
     <!-- Tab 1: Branding -->
@@ -343,8 +344,72 @@
       </div>
     </div>
 
+    <!-- Tab 5: Platform Billing Seller (WP-B2) -->
+    <div class="tab-panel" id="tab-billing">
+      <div class="settings-grid">
+        <div class="admin-card">
+          <div class="section-title">ข้อมูลผู้ขาย (แพลตฟอร์ม)</div>
+          <div class="help-text" style="margin-bottom:12px">
+            ใช้พิมพ์บนใบเสร็จ/ใบกำกับค่าบริการที่ออกให้ลูกค้าเมื่ออนุมัติการชำระเงิน —
+            นี่คือข้อมูล "ผู้ให้บริการ" ไม่ใช่ข้อมูลบริษัทลูกค้า
+          </div>
+          <div class="form-group">
+            <label>ชื่อผู้ขาย</label>
+            <input type="text" id="pbSellerName" placeholder="บริษัท ... จำกัด">
+            <div class="help-text">เว้นว่าง = ใช้ชื่อเว็บไซต์</div>
+          </div>
+          <div class="form-group">
+            <label>ที่อยู่</label>
+            <textarea id="pbSellerAddress" rows="2"></textarea>
+          </div>
+          <div style="display:flex;gap:12px">
+            <div class="form-group" style="flex:1"><label>โทรศัพท์</label><input type="text" id="pbSellerPhone"></div>
+            <div class="form-group" style="flex:1"><label>อีเมล</label><input type="text" id="pbSellerEmail"></div>
+          </div>
+        </div>
+
+        <div class="admin-card">
+          <div class="section-title">ภาษีมูลค่าเพิ่ม (VAT)</div>
+          <div class="toggle-group">
+            <div>
+              <label>แพลตฟอร์มจดทะเบียน VAT</label>
+              <div class="help-text">เปิด = ออก "ใบกำกับภาษี/ใบเสร็จรับเงิน" §86/4 (แยก VAT 7%); ปิด = ออกใบเสร็จรับเงินธรรมดา</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="pbIsVat" onchange="pbToggleVat()">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="pbVatFields" style="display:none">
+            <div class="form-group">
+              <label>เลขประจำตัวผู้เสียภาษี (13 หลัก)</label>
+              <input type="text" id="pbTaxId" maxlength="13" placeholder="0000000000000">
+            </div>
+            <div class="form-group">
+              <label>รหัสสาขา</label>
+              <input type="text" id="pbBranch" maxlength="5" placeholder="00000">
+              <div class="help-text">00000 = สำนักงานใหญ่</div>
+            </div>
+            <div class="toggle-group">
+              <div>
+                <label>ราคาแพ็กเกจรวม VAT แล้ว</label>
+                <div class="help-text">เปิด = VAT = ราคา×7/107; ปิด = VAT = ราคา×7% (บวกเพิ่ม)</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="pbPriceInclVat" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:16px">
+        <button class="btn-save" id="pbSaveBtn" onclick="savePlatformBilling()">บันทึกข้อมูลผู้ขาย</button>
+      </div>
+    </div>
+
     <!-- Save Button -->
-    <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:24px;padding-bottom:24px">
+    <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:24px;padding-bottom:24px" id="mainSaveBar">
       <button class="btn-save" id="saveBtn" onclick="saveSettings()">บันทึกการตั้งค่า</button>
     </div>
 
@@ -370,11 +435,13 @@
 
     // ===== Tab Switching =====
     function switchTab(tab) {
-      document.querySelectorAll('.tab-nav button').forEach((btn, i) => btn.classList.toggle('active', btn.textContent.includes({
-        branding: 'แบรนด์', contact: 'ข้อมูลต���ดต่อ', services: 'แพ็กเกจบริการ', system: 'ระบบ'
-      }[tab])));
+      const labels = { branding: 'แบรนด์', contact: 'ข้อมูลติดต่อ', services: 'แพ็กเกจบริการ', system: 'ระบบ', billing: 'ผู้ขาย' };
+      document.querySelectorAll('.tab-nav button').forEach((btn) => btn.classList.toggle('active', btn.textContent.includes(labels[tab] || ' ')));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       document.getElementById('tab-' + tab).classList.add('active');
+      // แท็บ billing มีปุ่มบันทึกของตัวเอง → ซ่อนปุ่มบันทึก site-settings หลัก
+      const mainBar = document.getElementById('mainSaveBar');
+      if (mainBar) mainBar.style.display = tab === 'billing' ? 'none' : '';
     }
 
     // ===== Image Upload =====
@@ -682,8 +749,54 @@
       document.getElementById('previewModal').style.display = '';
     }
 
+    // ===== Platform Billing Seller (WP-B2) =====
+    function pbToggleVat() {
+      document.getElementById('pbVatFields').style.display =
+        document.getElementById('pbIsVat').checked ? '' : 'none';
+    }
+
+    async function loadPlatformBilling() {
+      try {
+        const res = await AdminAPI.platformBilling();
+        const d = res.data || {};
+        document.getElementById('pbSellerName').value = d.platformSellerName || '';
+        document.getElementById('pbSellerAddress').value = d.platformSellerAddress || '';
+        document.getElementById('pbSellerPhone').value = d.platformSellerPhone || '';
+        document.getElementById('pbSellerEmail').value = d.platformSellerEmail || '';
+        document.getElementById('pbTaxId').value = d.platformSellerTaxId || '';
+        document.getElementById('pbBranch').value = d.platformSellerBranchCode || '00000';
+        document.getElementById('pbIsVat').checked = !!d.platformIsVatRegistered;
+        document.getElementById('pbPriceInclVat').checked = d.platformPriceIncludesVat !== false;
+        pbToggleVat();
+      } catch (e) { /* first-load empty is fine */ }
+    }
+
+    async function savePlatformBilling() {
+      const btn = document.getElementById('pbSaveBtn');
+      btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+      try {
+        const payload = {
+          platformSellerName: document.getElementById('pbSellerName').value || null,
+          platformSellerTaxId: document.getElementById('pbTaxId').value || null,
+          platformSellerBranchCode: document.getElementById('pbBranch').value || '00000',
+          platformSellerAddress: document.getElementById('pbSellerAddress').value || null,
+          platformSellerPhone: document.getElementById('pbSellerPhone').value || null,
+          platformSellerEmail: document.getElementById('pbSellerEmail').value || null,
+          platformIsVatRegistered: document.getElementById('pbIsVat').checked,
+          platformPriceIncludesVat: document.getElementById('pbPriceInclVat').checked,
+        };
+        const res = await AdminAPI.updatePlatformBilling(payload);
+        AdminLayout.toast(res.message || 'บันทึกสำเร็จ');
+      } catch (e) {
+        AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false; btn.textContent = 'บันทึกข้อมูลผู้ขาย';
+      }
+    }
+
     // ===== Init =====
     loadSettings();
+    loadPlatformBilling();
   </script>
 </body>
 </html>

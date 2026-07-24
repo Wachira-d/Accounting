@@ -54,6 +54,27 @@ const AdminAPI = {
     return data;
   },
 
+  // Binary download (adds auth header, triggers browser save)
+  async downloadFile(path, fallbackName) {
+    const token = localStorage.getItem('admin_token');
+    const res = await fetch(`${this.base}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (res.status === 401) { window.location.href = '/admin/login.html'; throw new Error('Unauthorized'); }
+    if (!res.ok) {
+      let msg = 'ดาวน์โหลดไม่สำเร็จ';
+      try { const j = await res.json(); msg = j.message || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const m = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+    const name = m ? decodeURIComponent(m[1]) : (fallbackName || 'download');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    a.remove(); URL.revokeObjectURL(url);
+  },
+  downloadPaymentReceipt(paymentId) { return this.downloadFile(`/subscription-payments/${paymentId}/receipt`, `receipt-${paymentId}.pdf`); },
+
   // Auth
   async login(email, password) {
     const res = await fetch('/api/auth/login', {
@@ -134,6 +155,8 @@ const AdminAPI = {
 
   // Site Settings
   siteSettings() { return this.get('/site-settings'); },
+  platformBilling() { return this.get('/platform-billing-settings'); },
+  updatePlatformBilling(data) { return this.put('/platform-billing-settings', data); },
   updateSiteSettings(data) { return this.put('/site-settings', data); },
 
   // System Email Configuration

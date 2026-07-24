@@ -34,6 +34,7 @@ public class AdminController : ControllerBase
     private readonly ISecretProtector _secrets;
     private readonly IImageProcessingService _images;
     private readonly IWebHostEnvironment _env;
+    private readonly ISaasBillingDocumentService _billing;
 
     public AdminController(
         AccountingDbContext db,
@@ -43,7 +44,8 @@ public class AdminController : ControllerBase
         IOcrQuotaService ocrQuota,
         ISecretProtector secrets,
         IImageProcessingService images,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        ISaasBillingDocumentService billing)
     {
         _db = db;
         _subscriptionService = subscriptionService;
@@ -53,6 +55,7 @@ public class AdminController : ControllerBase
         _secrets = secrets;
         _images = images;
         _env = env;
+        _billing = billing;
     }
 
     // ===== Dashboard Analytics =====
@@ -949,6 +952,7 @@ public class AdminController : ControllerBase
                 p.Id, p.PaymentNumber, p.Amount, p.PaymentMethod, p.Status,
                 p.RequestedPlan, p.CreatedAt, p.ReviewedAt,
                 p.ReviewNotes, p.SubscriptionExtendedTo,
+                p.ReceiptNumber, p.ReceiptIsTaxInvoice, p.Kind,
                 company = p.Subscription != null ? new { p.Subscription.Company.Id, p.Subscription.Company.Name } : null
             })
             .ToListAsync();
@@ -1007,6 +1011,16 @@ public class AdminController : ControllerBase
         {
             return NotFound(new ApiResponse<SubscriptionPaymentResponse>(false, null, ex.Message));
         }
+    }
+
+    /// <summary>WP-B2: ดาวน์โหลดใบเสร็จ/ใบกำกับค่าบริการ SaaS ของ payment.</summary>
+    [HttpGet("subscription-payments/{paymentId:guid}/receipt")]
+    public async Task<IActionResult> DownloadReceipt(Guid paymentId)
+    {
+        var pdf = await _billing.GetReceiptPdfAsync(paymentId);
+        if (pdf == null)
+            return NotFound(new ApiResponse<object>(false, null, "ยังไม่มีใบเสร็จสำหรับรายการนี้"));
+        return File(pdf.Value.Bytes, "application/pdf", pdf.Value.FileName);
     }
 
     // ===== Subscription Notification Settings (Admin) =====
@@ -1135,6 +1149,48 @@ public class AdminController : ControllerBase
             settings.RegistrationEnabled, settings.MaintenanceMode,
             settings.MaintenanceMessage, settings.DefaultLanguage),
             "บันทึกการตั้งค่าสำเร็จ"));
+    }
+
+    // ===== Platform Billing Seller Identity (WP-B2) =====
+    public sealed record PlatformBillingSettingsDto(
+        string? PlatformSellerName, string? PlatformSellerTaxId, string? PlatformSellerBranchCode,
+        string? PlatformSellerAddress, string? PlatformSellerPhone, string? PlatformSellerEmail,
+        bool PlatformIsVatRegistered, bool PlatformPriceIncludesVat);
+
+    [HttpGet("platform-billing-settings")]
+    public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> GetPlatformBilling()
+    {
+        var s = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt).FirstOrDefaultAsync();
+        return Ok(new ApiResponse<PlatformBillingSettingsDto>(true, new PlatformBillingSettingsDto(
+            s?.PlatformSellerName, s?.PlatformSellerTaxId, s?.PlatformSellerBranchCode ?? "00000",
+            s?.PlatformSellerAddress, s?.PlatformSellerPhone, s?.PlatformSellerEmail,
+            s?.PlatformIsVatRegistered ?? false, s?.PlatformPriceIncludesVat ?? true)));
+    }
+
+    [HttpPut("platform-billing-settings")]
+    public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> UpdatePlatformBilling(
+        [FromBody] PlatformBillingSettingsDto request)
+    {
+        // จด VAT ต้องมีเลขภาษี 13 หลัก ไม่งั้นออกใบกำกับ §86/4 ไม่ได้ (กัน compliance ผิด)
+        var taxId = request.PlatformSellerTaxId?.Trim();
+        if (request.PlatformIsVatRegistered && (string.IsNullOrEmpty(taxId) || taxId.Length != 13 || !taxId.All(char.IsDigit)))
+            return BadRequest(new ApiResponse<PlatformBillingSettingsDto>(false, null,
+                "จด VAT ต้องระบุเลขประจำตัวผู้เสียภาษี 13 หลักที่ถูกต้อง"));
+
+        var s = await _db.SiteSettings.FirstOrDefaultAsync();
+        if (s == null) { s = new SiteSettings(); _db.SiteSettings.Add(s); }
+        s.PlatformSellerName = request.PlatformSellerName?.Trim();
+        s.PlatformSellerTaxId = taxId;
+        s.PlatformSellerBranchCode = string.IsNullOrWhiteSpace(request.PlatformSellerBranchCode) ? "00000" : request.PlatformSellerBranchCode.Trim();
+        s.PlatformSellerAddress = request.PlatformSellerAddress?.Trim();
+        s.PlatformSellerPhone = request.PlatformSellerPhone?.Trim();
+        s.PlatformSellerEmail = request.PlatformSellerEmail?.Trim();
+        s.PlatformIsVatRegistered = request.PlatformIsVatRegistered;
+        s.PlatformPriceIncludesVat = request.PlatformPriceIncludesVat;
+        s.UpdatedAt = DateTime.UtcNow;
+        s.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<PlatformBillingSettingsDto>(true, request, "บันทึกข้อมูลผู้ขาย (แพลตฟอร์ม) สำเร็จ"));
     }
 
     [HttpPost("upload-logo")]

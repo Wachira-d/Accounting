@@ -16,13 +16,15 @@ public class SubscriptionService : ISubscriptionService
     private readonly AccountingDbContext _db;
     private readonly INotificationService _notificationService;
     private readonly INotificationEngine? _notify;
+    private readonly ISaasBillingDocumentService? _billing;
 
     public SubscriptionService(AccountingDbContext db, INotificationService notificationService,
-        INotificationEngine? notify = null)
+        INotificationEngine? notify = null, ISaasBillingDocumentService? billing = null)
     {
         _db = db;
         _notificationService = notificationService;
         _notify = notify;
+        _billing = billing;
     }
 
     /// <summary>duplicate audit #7 phase 2: route subscription notification ผ่าน
@@ -1601,6 +1603,11 @@ public class SubscriptionService : ISubscriptionService
         }
 
         await _db.SaveChangesAsync();
+
+        // WP-B2: อนุมัติแล้ว → ออกใบเสร็จ/ใบกำกับค่าบริการ (best-effort, ไม่ block approval)
+        if (payment.Status == SubscriptionPaymentStatus.Approved && _billing != null)
+            await _billing.GenerateReceiptForApprovedPaymentAsync(payment.Id);
+
         return MapPaymentToResponse(payment);
     }
 
@@ -1889,7 +1896,9 @@ public class SubscriptionService : ISubscriptionService
             p.RejectionReason,
             p.SubscriptionExtendedTo,
             p.CustomerNotes,
-            p.CreatedAt);
+            p.CreatedAt,
+            p.ReceiptNumber,
+            p.ReceiptIsTaxInvoice);
     }
 
     private static PlanTemplateResponse MapTemplateToResponse(PlanTemplate t)

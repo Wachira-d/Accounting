@@ -288,4 +288,10 @@ public class SubscriptionPayment : BaseEntity
     // WP-C1: ที่มา/ประเภทการบันทึก — แยกรับเงินปกติ vs admin บันทึกเอง vs ยกเว้น
     public SubscriptionPaymentKind Kind { get; set; } = SubscriptionPaymentKind.Normal;
     public SubscriptionWaiveReason? WaiveReason { get; set; }  // required เมื่อ Kind=Waived
+
+    // WP-B2: เอกสารใบเสร็จ/ใบกำกับค่าบริการ SaaS ที่ออกตอนอนุมัติ (platform → ลูกค้า)
+    public string? ReceiptNumber { get; set; }            // เลขรันเอกสาร platform (แยกจาก tenant)
+    public Guid? ReceiptAttachmentId { get; set; }        // FileAttachment ของ PDF ที่ gen
+    public DateTime? ReceiptIssuedAt { get; set; }
+    public bool ReceiptIsTaxInvoice { get; set; }         // true = ใบกำกับภาษี §86/4 (platform จด VAT)
 }

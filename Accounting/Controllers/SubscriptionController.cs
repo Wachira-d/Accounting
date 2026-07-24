@@ -15,12 +15,15 @@ public class SubscriptionController : ControllerBase
     private readonly ISubscriptionService _subscriptionService;
     private readonly IImageProcessingService _images;
     private readonly IWebHostEnvironment _env;
+    private readonly ISaasBillingDocumentService _billing;
 
-    public SubscriptionController(ISubscriptionService subscriptionService, IImageProcessingService images, IWebHostEnvironment env)
+    public SubscriptionController(ISubscriptionService subscriptionService, IImageProcessingService images,
+        IWebHostEnvironment env, ISaasBillingDocumentService billing)
     {
         _subscriptionService = subscriptionService;
         _images = images;
         _env = env;
+        _billing = billing;
     }
 
     // ===== Trial =====
@@ -200,6 +203,21 @@ public class SubscriptionController : ControllerBase
     {
         var result = await _subscriptionService.GetPaymentAsync(paymentId);
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result));
+    }
+
+    /// <summary>WP-B3: ลูกค้าดาวน์โหลดใบเสร็จ/ใบกำกับค่าบริการของตัวเอง.
+    /// ตรวจ tenant: payment ต้องอยู่ใต้ subscription ของ companyId ที่ระบุ.</summary>
+    [HttpGet("{companyId:guid}/payments/{paymentId:guid}/receipt")]
+    public async Task<IActionResult> DownloadOwnReceipt(Guid companyId, Guid paymentId)
+    {
+        var list = await _subscriptionService.GetPaymentsAsync(companyId);
+        if (list.Payments.All(p => p.Id != paymentId))
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระเงินของบริษัทนี้"));
+
+        var pdf = await _billing.GetReceiptPdfAsync(paymentId);
+        if (pdf == null)
+            return NotFound(new ApiResponse<object>(false, null, "ยังไม่มีใบเสร็จสำหรับรายการนี้"));
+        return File(pdf.Value.Bytes, "application/pdf", pdf.Value.FileName);
     }
 
     // ===== Usage Monitor =====
