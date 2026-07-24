@@ -306,6 +306,13 @@ public class AuthService : IAuthService
         user.FailedLoginAttempts = 0;
         user.LockoutEnd = null;
         user.PasswordWeakDetectedAt = null;
+        // ตั้งรหัสผ่านผ่านลิงก์ที่ส่งไปอีเมล = พิสูจน์การเข้าถึงอีเมลแล้ว →
+        // activate ผู้ใช้ที่ admin สร้างไว้ (WP-D1) ให้ล็อกอินได้ทันที
+        if (user.Status == Models.Enums.UserStatus.PendingVerification)
+        {
+            user.Status = Models.Enums.UserStatus.Active;
+            user.EmailVerified = true;
+        }
         await _db.SaveChangesAsync();
     }
 

@@ -13,10 +13,13 @@
       <div class="admin-toolbar">
         <input type="text" id="searchInput" class="admin-input admin-search" placeholder="ค้นหาชื่อหรืออีเมล..." onkeyup="if(event.key==='Enter')loadUsers()">
         <button class="admin-btn admin-btn-primary" onclick="loadUsers()">ค้นหา</button>
+        <div style="flex:1"></div>
+        <button class="admin-btn admin-btn-success" onclick="openCreateUser()">+ สร้างผู้ใช้</button>
       </div>
       <div id="userList">กำลังโหลด...</div>
       <div id="pagination" class="admin-pagination"></div>
     </div>
+    <div id="userModal" style="display:none"></div>
   </div>
 
   <script src="/admin/admin-api.js"></script>
@@ -89,6 +92,8 @@
                         onclick="toggleAdmin('${u.id}', ${!u.isSystemAdmin}, '${u.email}')">
                         ${u.isSystemAdmin ? 'ยกเลิก Admin' : 'ตั้งเป็น Admin'}
                       </button>
+                      <button class="admin-btn admin-btn-sm admin-btn-outline"
+                        onclick="resetUserPassword('${u.id}','${u.email}')">🔑 รีเซ็ตรหัส</button>
                     </div>
                   </td>
                 </tr>
@@ -136,6 +141,110 @@
       } catch (err) {
         AdminLayout.toast(err.message, 'error');
       }
+    }
+
+    // ===== WP-D2: reset password (admin) =====
+    async function resetUserPassword(userId, email) {
+      if (!confirm(`ออกลิงก์รีเซ็ตรหัสผ่านสำหรับ ${email}?`)) return;
+      try {
+        const res = await AdminAPI.resetUserPassword(userId);
+        showLinkResult('ลิงก์รีเซ็ตรหัสผ่าน', res.data, res.message);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    // ===== WP-D1: create user (admin) =====
+    async function openCreateUser() {
+      let companyOpts = '<option value="">— ไม่ผูกบริษัท —</option>';
+      try {
+        const r = await AdminAPI.customers('?pageSize=100');
+        const items = r.data?.items || [];
+        companyOpts += items.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      } catch {}
+      document.getElementById('userModal').style.display = '';
+      document.getElementById('userModal').innerHTML = `
+        <div class="admin-modal-overlay" onclick="if(event.target===this)closeUserModal()">
+          <div class="admin-modal">
+            <h3>สร้างผู้ใช้ใหม่</h3>
+            <div class="admin-form-group"><label class="admin-label">อีเมล *</label><input class="admin-input" id="cuEmail" type="email"></div>
+            <div class="admin-form-group"><label class="admin-label">ชื่อ-นามสกุล *</label><input class="admin-input" id="cuName"></div>
+            <div class="admin-form-group"><label class="admin-label">โทรศัพท์</label><input class="admin-input" id="cuPhone"></div>
+            <div class="admin-form-group"><label class="admin-label">ผูกกับบริษัท</label><select class="admin-input" id="cuCompany" onchange="cuToggleRole()">${companyOpts}</select></div>
+            <div class="admin-form-group" id="cuRoleWrap" style="display:none"><label class="admin-label">บทบาทในบริษัท</label>
+              <select class="admin-input" id="cuRole">
+                <option value="Owner">Owner</option>
+                <option value="Accountant">Accountant</option>
+                <option value="Staff" selected>Staff</option>
+                <option value="Auditor">Auditor</option>
+                <option value="Viewer">Viewer</option>
+                <option value="ExternalAccountant">ExternalAccountant</option>
+              </select>
+            </div>
+            <div class="admin-form-group">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="cuAdmin"> ให้สิทธิ์ System Admin
+              </label>
+            </div>
+            <div class="admin-modal-actions">
+              <button class="admin-btn admin-btn-success" id="cuBtn" onclick="submitCreateUser()">สร้างผู้ใช้</button>
+              <button class="admin-btn admin-btn-outline" onclick="closeUserModal()">ยกเลิก</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function cuToggleRole() {
+      document.getElementById('cuRoleWrap').style.display =
+        document.getElementById('cuCompany').value ? '' : 'none';
+    }
+
+    async function submitCreateUser() {
+      const email = document.getElementById('cuEmail').value.trim();
+      const fullName = document.getElementById('cuName').value.trim();
+      if (!email || !fullName) { AdminLayout.toast('กรอกอีเมลและชื่อ', 'error'); return; }
+      const companyId = document.getElementById('cuCompany').value || null;
+      const body = {
+        email, fullName,
+        phone: document.getElementById('cuPhone').value || null,
+        companyId,
+        role: companyId ? document.getElementById('cuRole').value : null,
+        makeSystemAdmin: document.getElementById('cuAdmin').checked
+      };
+      const btn = document.getElementById('cuBtn');
+      btn.disabled = true; btn.textContent = 'กำลังสร้าง...';
+      try {
+        const res = await AdminAPI.createUser(body);
+        closeUserModal();
+        showLinkResult('ลิงก์ตั้งรหัสผ่าน', { resetLink: res.data.setPasswordLink, expiresAt: res.data.expiresAt, emailSent: res.data.emailSent }, res.message);
+        loadUsers(currentPage);
+      } catch (err) {
+        AdminLayout.toast(err.message, 'error');
+        btn.disabled = false; btn.textContent = 'สร้างผู้ใช้';
+      }
+    }
+
+    function showLinkResult(title, data, message) {
+      const link = data.resetLink || '';
+      document.getElementById('userModal').style.display = '';
+      document.getElementById('userModal').innerHTML = `
+        <div class="admin-modal-overlay" onclick="if(event.target===this)closeUserModal()">
+          <div class="admin-modal">
+            <h3>${title}</h3>
+            <p style="color:#475569;font-size:13px">${message || ''}${data.emailSent ? ' (ส่งอีเมลแล้ว)' : ' — ยังไม่ได้ตั้งค่า SMTP: คัดลอกลิงก์ส่งให้ผู้ใช้'}</p>
+            <div class="admin-form-group">
+              <input class="admin-input" id="linkBox" value="${link}" readonly onclick="this.select()">
+            </div>
+            <p style="color:#94a3b8;font-size:12px">หมดอายุ ${data.expiresAt ? new Date(data.expiresAt).toLocaleString('th-TH') : '-'}</p>
+            <div class="admin-modal-actions">
+              <button class="admin-btn admin-btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('linkBox').value).then(()=>AdminLayout.toast('คัดลอกแล้ว'))">คัดลอกลิงก์</button>
+              <button class="admin-btn admin-btn-outline" onclick="closeUserModal()">ปิด</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function closeUserModal() {
+      document.getElementById('userModal').style.display = 'none';
+      document.getElementById('userModal').innerHTML = '';
     }
 
     // ===== License management modal =====

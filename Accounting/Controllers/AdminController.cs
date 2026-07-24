@@ -35,6 +35,7 @@ public class AdminController : ControllerBase
     private readonly IImageProcessingService _images;
     private readonly IWebHostEnvironment _env;
     private readonly ISaasBillingDocumentService _billing;
+    private readonly IEmailService _email;
 
     public AdminController(
         AccountingDbContext db,
@@ -45,7 +46,8 @@ public class AdminController : ControllerBase
         ISecretProtector secrets,
         IImageProcessingService images,
         IWebHostEnvironment env,
-        ISaasBillingDocumentService billing)
+        ISaasBillingDocumentService billing,
+        IEmailService email)
     {
         _db = db;
         _subscriptionService = subscriptionService;
@@ -56,6 +58,7 @@ public class AdminController : ControllerBase
         _images = images;
         _env = env;
         _billing = billing;
+        _email = email;
     }
 
     // ===== Dashboard Analytics =====
@@ -569,6 +572,109 @@ public class AdminController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(new ApiResponse<string>(true, null, request.IsAdmin ? "กำหนดเป็น Admin สำเร็จ" : "ยกเลิกสิทธิ์ Admin สำเร็จ"));
+    }
+
+    // ===== WP-D1/D2: Admin User Lifecycle =====
+    public sealed record AdminCreateUserRequest(string Email, string FullName, string? Phone,
+        Guid? CompanyId, string? Role, bool MakeSystemAdmin);
+    public sealed record AdminResetResult(string ResetLink, DateTime ExpiresAt, bool EmailSent);
+
+    /// <summary>สร้าง reset token + ลิงก์ตั้ง/รีเซ็ตรหัส. ส่งอีเมล (ถ้าตั้งค่า SMTP)
+    /// + คืนลิงก์เสมอ (copy-link fallback ตามแนวทางโปรเจกต์).</summary>
+    private async Task<AdminResetResult> IssueResetLinkAsync(Models.Entities.User user)
+    {
+        var token = Convert.ToBase64String(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
+        user.PasswordResetToken = token;
+        user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(24); // admin-issued → ให้เวลามากกว่า self-service
+        user.UpdatedAt = DateTime.UtcNow;
+        user.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+
+        var baseUrl = (await _db.SiteSettings.AsNoTracking().Select(s => s.AppBaseUrl).FirstOrDefaultAsync())
+            ?.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var link = $"{baseUrl}/reset-password.html?token={Uri.EscapeDataString(token)}";
+
+        var emailSent = false;
+        try
+        {
+            if (await _email.IsSystemEmailConfiguredAsync())
+            {
+                await _email.SendPasswordResetAsync(user.Email, user.FullName, token);
+                emailSent = true;
+            }
+        }
+        catch { /* copy-link fallback ครอบไว้แล้ว */ }
+
+        return new AdminResetResult(link, user.PasswordResetTokenExpiry.Value, emailSent);
+    }
+
+    [HttpPost("users/{userId:guid}/reset-password")]
+    public async Task<ActionResult<ApiResponse<AdminResetResult>>> AdminResetPassword(Guid userId)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null) return NotFound(new ApiResponse<AdminResetResult>(false, null, "ไม่พบผู้ใช้"));
+        var result = await IssueResetLinkAsync(user);
+        return Ok(new ApiResponse<AdminResetResult>(true, result,
+            result.EmailSent ? "ส่งลิงก์รีเซ็ตรหัสทางอีเมลแล้ว" : "สร้างลิงก์รีเซ็ตรหัสแล้ว (คัดลอกส่งให้ผู้ใช้)"));
+    }
+
+    [HttpPost("users")]
+    public async Task<ActionResult<ApiResponse<object>>> AdminCreateUser([FromBody] AdminCreateUserRequest request)
+    {
+        var email = (request.Email ?? "").Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+            return BadRequest(new ApiResponse<object>(false, null, "อีเมลไม่ถูกต้อง"));
+        if (string.IsNullOrWhiteSpace(request.FullName))
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณาระบุชื่อ-นามสกุล"));
+        if (await _db.Users.AnyAsync(u => u.Email.ToLower() == email))
+            return BadRequest(new ApiResponse<object>(false, null, "อีเมลนี้มีในระบบแล้ว"));
+
+        UserRole role = UserRole.Staff;
+        if (request.CompanyId.HasValue && !string.IsNullOrWhiteSpace(request.Role)
+            && !Enum.TryParse(request.Role, true, out role))
+            return BadRequest(new ApiResponse<object>(false, null, "role ไม่ถูกต้อง"));
+
+        if (request.CompanyId.HasValue
+            && !await _db.Companies.AnyAsync(c => c.Id == request.CompanyId.Value))
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัทที่ระบุ"));
+
+        var user = new Models.Entities.User
+        {
+            Email = email,
+            FullName = request.FullName.Trim(),
+            Phone = request.Phone?.Trim(),
+            // รหัสสุ่มที่ผู้ใช้ไม่รู้ — ต้องตั้งรหัสผ่านผ่านลิงก์ (set-password)
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(Convert.ToBase64String(
+                System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))),
+            Status = UserStatus.PendingVerification,
+            EmailVerified = false,
+            IsSystemAdmin = request.MakeSystemAdmin,
+            CreatedBy = JwtHelper.GetUserIdFromClaims(User).ToString()
+        };
+        _db.Users.Add(user);
+
+        if (request.CompanyId.HasValue)
+        {
+            _db.Set<Models.Entities.CompanyUser>().Add(new Models.Entities.CompanyUser
+            {
+                UserId = user.Id,
+                CompanyId = request.CompanyId.Value,
+                Role = role,
+                IsDefault = true,
+                JoinedAt = DateTime.UtcNow
+            });
+        }
+        await _db.SaveChangesAsync();
+
+        var reset = await IssueResetLinkAsync(user);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            userId = user.Id, email = user.Email,
+            setPasswordLink = reset.ResetLink, expiresAt = reset.ExpiresAt, emailSent = reset.EmailSent
+        }, reset.EmailSent ? "สร้างผู้ใช้ + ส่งลิงก์ตั้งรหัสทางอีเมลแล้ว" : "สร้างผู้ใช้แล้ว (คัดลอกลิงก์ตั้งรหัสส่งให้ผู้ใช้)"));
     }
 
     /// <summary>System-wide Azure DI / Local OCR usage for the current
