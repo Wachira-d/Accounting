@@ -1132,22 +1132,39 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<SubscriptionPaymentListResponse>(true, result));
     }
 
-    [HttpGet("subscription-payments/all")]
-    public async Task<ActionResult<ApiResponse<object>>> GetAllPayments(
-        [FromQuery] string? status,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20)
+    // WP-C4: filters ร่วมสำหรับ list + export (สถานะ/เดือน/แพ็กเกจ)
+    private IQueryable<Models.Entities.SubscriptionPayment> FilteredPayments(string? status, string? month, string? plan)
     {
         var query = _db.SubscriptionPayments
             .Include(p => p.Subscription).ThenInclude(s => s!.Company)
             .AsQueryable();
 
         if (Enum.TryParse<SubscriptionPaymentStatus>(status, true, out var statusEnum))
-        {
             query = query.Where(p => p.Status == statusEnum);
+        if (Enum.TryParse<SubscriptionPlan>(plan, true, out var planEnum))
+            query = query.Where(p => p.RequestedPlan == planEnum);
+        // month = yyyy-MM → กรองตาม CreatedAt ในเดือนนั้น (UTC)
+        if (!string.IsNullOrWhiteSpace(month) && DateTime.TryParse(month + "-01", out var m))
+        {
+            var mStart = new DateTime(m.Year, m.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            var mEnd = mStart.AddMonths(1);
+            query = query.Where(p => p.CreatedAt >= mStart && p.CreatedAt < mEnd);
         }
+        return query;
+    }
+
+    [HttpGet("subscription-payments/all")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAllPayments(
+        [FromQuery] string? status, [FromQuery] string? month, [FromQuery] string? plan,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var query = FilteredPayments(status, month, plan);
 
         var total = await query.CountAsync();
+        // ยอดรวมของ filter ปัจจุบัน (เฉพาะ Approved = เงินเข้าจริง) + ยอดทุกสถานะ
+        var approvedSum = await query.Where(p => p.Status == SubscriptionPaymentStatus.Approved).SumAsync(p => (decimal?)p.Amount) ?? 0;
+        var allSum = await query.SumAsync(p => (decimal?)p.Amount) ?? 0;
+
         var payments = await query
             .OrderByDescending(p => p.CreatedAt)
             .Skip((page - 1) * pageSize)
@@ -1165,8 +1182,63 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<object>(true, new
         {
             items = payments, total, page, pageSize,
-            totalPages = (int)Math.Ceiling(total / (double)pageSize)
+            totalPages = (int)Math.Ceiling(total / (double)pageSize),
+            approvedSum = Math.Round(approvedSum, 2),
+            allSum = Math.Round(allSum, 2)
         }));
+    }
+
+    /// <summary>WP-C4: export รายการชำระเงินตาม filter เป็น Excel (MiniExcel).</summary>
+    [HttpGet("subscription-payments/export")]
+    public async Task<IActionResult> ExportPayments(
+        [FromQuery] string? status, [FromQuery] string? month, [FromQuery] string? plan)
+    {
+        var rows = await FilteredPayments(status, month, plan)
+            .OrderByDescending(p => p.CreatedAt)
+            .Select(p => new
+            {
+                เลขที่ = p.PaymentNumber,
+                บริษัท = p.Subscription != null ? p.Subscription.Company.Name : "",
+                แพ็กเกจ = p.RequestedPlan.ToString(),
+                ยอด = p.Amount,
+                วิธีชำระ = p.PaymentMethod.ToString(),
+                ประเภท = p.Kind.ToString(),
+                สถานะ = p.Status.ToString(),
+                วันที่ส่ง = p.CreatedAt,
+                วันที่ตรวจ = p.ReviewedAt,
+                ต่ออายุถึง = p.SubscriptionExtendedTo,
+                ใบเสร็จ = p.ReceiptNumber ?? ""
+            })
+            .ToListAsync();
+
+        using var ms = new MemoryStream();
+        MiniExcelLibs.MiniExcel.SaveAs(ms, rows);
+        return File(ms.ToArray(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"payments-{DateTime.UtcNow:yyyyMMdd}.xlsx");
+    }
+
+    public sealed record BulkApproveRequest(List<Guid> PaymentIds);
+
+    /// <summary>WP-C4: อนุมัติหลายรายการพร้อมกัน (ที่ตรวจแล้วว่ายอดตรง).
+    /// อนุมัติทีละใบผ่าน ReviewPaymentAsync เส้นเดิม (ต่ออายุ+ใบเสร็จครบ).</summary>
+    [HttpPost("subscription-payments/bulk-approve")]
+    public async Task<ActionResult<ApiResponse<object>>> BulkApprovePayments([FromBody] BulkApproveRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        int ok = 0; var failed = new List<object>();
+        foreach (var id in (request.PaymentIds ?? new List<Guid>()).Distinct())
+        {
+            try
+            {
+                await _subscriptionService.ReviewPaymentAsync(id,
+                    new ReviewSubscriptionPaymentRequest(true, "Bulk approve", null), userId);
+                ok++;
+            }
+            catch (Exception ex) { failed.Add(new { paymentId = id, error = ex.Message }); }
+        }
+        return Ok(new ApiResponse<object>(true, new { approved = ok, failed },
+            $"อนุมัติสำเร็จ {ok} รายการ" + (failed.Count > 0 ? $", ล้มเหลว {failed.Count}" : "")));
     }
 
     [HttpGet("subscription-payments/{paymentId:guid}")]

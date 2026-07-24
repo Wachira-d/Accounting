@@ -116,6 +116,8 @@ const AdminAPI = {
   // Payments
   pendingPayments() { return this.get('/subscription-payments/pending'); },
   allPayments(params = '') { return this.get(`/subscription-payments/all${params}`); },
+  exportPayments(params = '') { return this.downloadFile(`/subscription-payments/export${params}`, 'payments.xlsx'); },
+  bulkApprovePayments(paymentIds) { return this.post('/subscription-payments/bulk-approve', { paymentIds }); },
   paymentDetail(id) { return this.get(`/subscription-payments/${id}`); },
   reviewPayment(id, approve, notes) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes }); },
   recordManualPayment(companyId, data) { return this.post(`/companies/${companyId}/subscription-payments/record`, data); },

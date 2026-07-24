@@ -21,6 +21,14 @@
         <button class="admin-btn admin-btn-outline" id="tabAll" onclick="switchTab('all')">ทั้งหมด</button>
         <button class="admin-btn admin-btn-success" onclick="openRecord()">+ บันทึกรับเงิน (manual)</button>
         <div style="flex:1"></div>
+        <input type="month" id="filterMonth" class="admin-select" style="display:none" onchange="loadAllPayments()">
+        <select id="filterPlan" class="admin-select" style="display:none" onchange="loadAllPayments()">
+          <option value="">ทุกแพ็กเกจ</option>
+          <option value="FreeTrial">FreeTrial</option>
+          <option value="Basic">Basic</option>
+          <option value="Pro">Pro</option>
+          <option value="Enterprise">Enterprise</option>
+        </select>
         <select id="filterStatus" class="admin-select" onchange="loadAllPayments()">
           <option value="">ทุกสถานะ</option>
           <option value="Pending">Pending</option>
@@ -29,12 +37,18 @@
           <option value="Rejected">Rejected</option>
           <option value="Cancelled">Cancelled</option>
         </select>
+        <button id="exportBtn" class="admin-btn admin-btn-outline" style="display:none" onclick="exportPayments()">⬇ Excel</button>
       </div>
 
       <div id="pendingSection">
+        <div class="admin-toolbar" style="margin-bottom:8px">
+          <button class="admin-btn admin-btn-success admin-btn-sm" onclick="bulkApprove()">✓ อนุมัติที่เลือก</button>
+          <span id="bulkCount" style="color:#64748b;font-size:13px">เลือก 0 รายการ</span>
+        </div>
         <div id="pendingList">กำลังโหลด...</div>
       </div>
       <div id="allSection" style="display:none">
+        <div id="allTotals" class="admin-kpi-grid" style="margin-bottom:12px"></div>
         <div id="allList">กำลังโหลด...</div>
         <div id="pagination" class="admin-pagination"></div>
       </div>
@@ -56,8 +70,41 @@
       document.getElementById('tabAll').className = `admin-btn ${tab === 'all' ? 'admin-btn-primary' : 'admin-btn-outline'}`;
       document.getElementById('pendingSection').style.display = tab === 'pending' ? '' : 'none';
       document.getElementById('allSection').style.display = tab === 'all' ? '' : 'none';
-      document.getElementById('filterStatus').style.display = tab === 'all' ? '' : 'none';
+      const showAll = tab === 'all' ? '' : 'none';
+      ['filterStatus','filterMonth','filterPlan','exportBtn'].forEach(id => document.getElementById(id).style.display = showAll);
       if (tab === 'all') loadAllPayments();
+    }
+
+    function allParams() {
+      const status = document.getElementById('filterStatus').value;
+      const month = document.getElementById('filterMonth').value;
+      const plan = document.getElementById('filterPlan').value;
+      let p = [];
+      if (status) p.push('status=' + status);
+      if (month) p.push('month=' + month);
+      if (plan) p.push('plan=' + plan);
+      return p.length ? '?' + p.join('&') : '';
+    }
+
+    async function exportPayments() {
+      try { await AdminAPI.exportPayments(allParams()); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    function updateBulkCount() {
+      const n = document.querySelectorAll('.bulkChk:checked').length;
+      document.getElementById('bulkCount').textContent = `เลือก ${n} รายการ`;
+    }
+
+    async function bulkApprove() {
+      const ids = [...document.querySelectorAll('.bulkChk:checked')].map(c => c.value);
+      if (ids.length === 0) { AdminLayout.toast('ยังไม่ได้เลือกรายการ', 'warning'); return; }
+      if (!confirm(`อนุมัติ ${ids.length} รายการที่เลือก?`)) return;
+      try {
+        const res = await AdminAPI.bulkApprovePayments(ids);
+        AdminLayout.toast(res.message || 'อนุมัติแล้ว');
+        loadPending();
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 
     async function loadPending() {
@@ -84,10 +131,11 @@
         document.getElementById('pendingList').innerHTML = `
           <div class="admin-table-wrap">
           <table class="admin-table">
-            <thead><tr><th>เลขที่</th><th>บริษัท</th><th>แพ็กเกจที่ขอ</th><th>จำนวน</th><th>วิธีชำระ</th><th>สถานะ</th><th>วันที่</th><th></th></tr></thead>
+            <thead><tr><th><input type="checkbox" onchange="document.querySelectorAll('.bulkChk').forEach(c=>c.checked=this.checked);updateBulkCount()"></th><th>เลขที่</th><th>บริษัท</th><th>แพ็กเกจที่ขอ</th><th>จำนวน</th><th>วิธีชำระ</th><th>สถานะ</th><th>วันที่</th><th></th></tr></thead>
             <tbody>
               ${payments.map(p => `
                 <tr>
+                  <td><input type="checkbox" class="bulkChk" value="${p.id}" onchange="updateBulkCount()"></td>
                   <td><strong>${p.paymentNumber || '-'}</strong></td>
                   <td>${p.companyName || '-'}</td>
                   <td>${AdminLayout.planBadge(p.requestedPlan)}</td>
@@ -104,19 +152,25 @@
           </table>
           </div>
         `;
+        updateBulkCount();
       } catch (err) {
         document.getElementById('pendingList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${err.message}</div>`;
       }
     }
 
     async function loadAllPayments(page = 1) {
-      const status = document.getElementById('filterStatus').value;
-      let params = `?page=${page}&pageSize=20`;
-      if (status) params += `&status=${status}`;
+      const base = allParams();
+      const params = (base ? base + '&' : '?') + `page=${page}&pageSize=20`;
 
       try {
         const res = await AdminAPI.allPayments(params);
         const d = res.data;
+
+        document.getElementById('allTotals').innerHTML = `
+          <div class="admin-kpi"><div class="admin-kpi-label">เงินเข้าจริง (อนุมัติ)</div><div class="admin-kpi-value" style="color:var(--admin-success)">${AdminLayout.money(d.approvedSum || 0)}</div></div>
+          <div class="admin-kpi"><div class="admin-kpi-label">รวมทุกสถานะ</div><div class="admin-kpi-value">${AdminLayout.money(d.allSum || 0)}</div></div>
+          <div class="admin-kpi"><div class="admin-kpi-label">จำนวนรายการ</div><div class="admin-kpi-value">${d.total || 0}</div></div>
+        `;
 
         if (d.items.length === 0) {
           document.getElementById('allList').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">ไม่พบข้อมูล</div>';
