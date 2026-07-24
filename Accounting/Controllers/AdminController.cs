@@ -609,6 +609,52 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, request.IsAdmin ? "กำหนดเป็น Admin สำเร็จ" : "ยกเลิกสิทธิ์ Admin สำเร็จ"));
     }
 
+    /// <summary>WP-D3: ลบ/anonymize ผู้ใช้ (PDPA ม.30) — ไม่ hard delete
+    /// (คง FK/audit ตามกฎ MAX(retention) พ.ร.บ.บัญชี) แต่ลบ PII: ชื่อ/อีเมล/
+    /// เบอร์ → ค่า anonymized + ปิดบัญชี. บล็อกถ้าเป็น Owner เดียวของบริษัทใด
+    /// (ต้องโอน ownership ก่อน).</summary>
+    [HttpPost("users/{userId:guid}/anonymize")]
+    public async Task<ActionResult<ApiResponse<object>>> AnonymizeUser(Guid userId)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผู้ใช้"));
+
+        // เป็น Owner เดียวของบริษัทไหนไหม → ต้องโอนก่อน
+        var ownerCompanyIds = await _db.Set<Models.Entities.CompanyUser>().AsNoTracking()
+            .Where(cu => cu.UserId == userId && cu.Role == UserRole.Owner)
+            .Select(cu => cu.CompanyId).ToListAsync();
+        foreach (var cid in ownerCompanyIds)
+        {
+            var otherOwners = await _db.Set<Models.Entities.CompanyUser>().AsNoTracking()
+                .CountAsync(cu => cu.CompanyId == cid && cu.UserId != userId && cu.Role == UserRole.Owner);
+            if (otherOwners == 0)
+                return BadRequest(new ApiResponse<object>(false, null,
+                    "ผู้ใช้นี้เป็นเจ้าของบริษัทเพียงคนเดียว — ต้องโอนสิทธิ์เจ้าของให้ผู้อื่นก่อนจึงจะลบได้"));
+        }
+
+        // anonymize PII (คง Id/FK เพื่อ audit/เอกสารตามกฎหมาย)
+        var tag = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(user.Id.ToString())))[..12].ToLowerInvariant();
+        user.FullName = "ผู้ใช้ที่ถูกลบ";
+        user.Email = $"deleted-{tag}@anonymized.local";
+        user.Phone = null;
+        user.RefreshToken = null;
+        user.PreviousRefreshToken = null;
+        user.PasswordResetToken = null;
+        user.PasswordResetTokenExpiry = null;
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(Convert.ToBase64String(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)));
+        user.Status = UserStatus.Inactive;
+        user.SignatureImageBase64 = null;
+        user.LineUserId = null;
+        user.UpdatedAt = DateTime.UtcNow;
+        user.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<object>(true, new { userId = user.Id, anonymizedEmail = user.Email },
+            "ลบข้อมูลส่วนบุคคลของผู้ใช้แล้ว (คงประวัติ/เอกสารตามกฎหมาย)"));
+    }
+
     // ===== WP-D1/D2: Admin User Lifecycle =====
     public sealed record AdminCreateUserRequest(string Email, string FullName, string? Phone,
         Guid? CompanyId, string? Role, bool MakeSystemAdmin);

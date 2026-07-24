@@ -103,6 +103,7 @@ const AdminAPI = {
   users(params = '') { return this.get(`/users${params}`); },
   createUser(data) { return this.post('/users', data); },
   resetUserPassword(userId) { return this.post(`/users/${userId}/reset-password`, {}); },
+  anonymizeUser(userId) { return this.post(`/users/${userId}/anonymize`, {}); },
   updateUserStatus(id, status) { return this.put(`/users/${id}/status`, { status }); },
   toggleAdmin(id, isAdmin) { return this.put(`/users/${id}/admin`, { isAdmin }); },
 
