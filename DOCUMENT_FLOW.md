@@ -1386,6 +1386,14 @@ _(2) integration invoice.created: ถ้ามี INV active อ้างอิ�
 _→ ออกใบกำกับผ่าน ConvertDocumentAsync+Approve (copy บรรทัดจากใบจริง + supersede_
 _อัตโนมัติ), ยอดไม่ตรง/ชำระแล้ว/มีมัดจำ → Failed ดัง ๆ ไม่ mint TIV แยกใบ;_
 _(3) payment.received lookup ข้ามใบ Voided/Rejected + เลือก TIV ก่อน INV._
+_รอบ 83 (2026-07-24): settlement receipt v2 — (A) ใบรวม (Combined) รับครบงวดเดียว_
+_ผ่าน modal/paidOnIssue → ไม่ออกใบเสร็จแยก ตัวใบรวม ServedAsReceipt → หัว 3-in-1_
+_"ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน" (ผ่อนหลายงวด = ใบเสร็จแยกต่องวด + หัวคง_
+_2 หน้าที่เดิม); (B) ใบแจ้งหนี้ VAT รับครบงวดเดียว → settlement receipt ถือ VAT/_
+_บรรทัดจากใบแจ้งหนี้ (carryVatFromSource) = ใบกำกับภาษี ณ วันรับเงิน §78/1 หัว_
+_"ใบกำกับภาษี/ใบเสร็จรับเงิน" — ไม่ post JE/ไม่เข้า ภ.พ.30 ที่ใบนี้ (VAT รายงานที่_
+_INV ผ่าน OutputVatDueAt, settlement ถูก exclude เดิม); งวดแรกบางส่วน/TIV source_
+_= ใบเสร็จเปล่า VAT=0 เหมือนเดิม._
 _Last verified against codebase: 2026-07-20 (รอบ 60) — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
