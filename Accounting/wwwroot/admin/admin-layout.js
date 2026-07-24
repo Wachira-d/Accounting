@@ -11,6 +11,7 @@ const AdminLayout = {
     { section: 'แพ็กเกจ' },
     { id: 'plans', label: 'จัดการแพ็กเกจ', icon: '💎', href: '/admin/plans.html' },
     { section: 'การเงิน' },
+    { id: 'revenue', label: 'รายรับ/ธุรกิจ', icon: '📈', href: '/admin/revenue.html' },
     { id: 'payments', label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },
     { section: 'เชื่อมต่อระบบ' },
     { id: 'integrations', label: 'Integration', icon: '🔗', href: '/admin/integrations.html' },

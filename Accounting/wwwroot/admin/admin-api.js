@@ -92,6 +92,7 @@ const AdminAPI = {
 
   // Dashboard
   dashboard() { return this.get('/dashboard'); },
+  revenueDashboard(months = 12) { return this.get(`/revenue-dashboard?months=${months}`); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },

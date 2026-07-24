@@ -181,6 +181,92 @@ public class AdminController : ControllerBase
         }));
     }
 
+    // ===== WP-F1: Revenue / Business Dashboard =====
+    [HttpGet("revenue-dashboard")]
+    public async Task<ActionResult<ApiResponse<object>>> GetRevenueDashboard([FromQuery] int months = 12)
+    {
+        months = Math.Clamp(months, 3, 24);
+        var now = DateTime.UtcNow;
+        var thisMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var subs = await _db.Subscriptions.AsNoTracking().Where(s => !s.IsDeleted).ToListAsync();
+        decimal Mrr(IEnumerable<Models.Entities.Subscription> src) => src
+            .Where(s => s.Status == SubscriptionStatus.Active)
+            .Sum(s => s.BillingCycle switch
+            {
+                BillingCycle.Monthly => s.PricePerCycle,
+                BillingCycle.Quarterly => s.PricePerCycle / 3m,
+                BillingCycle.SemiAnnual => s.PricePerCycle / 6m,
+                BillingCycle.Annual => s.PricePerCycle / 12m,
+                _ => s.PricePerCycle
+            });
+        var mrr = Math.Round(Mrr(subs), 2);
+
+        // Monthly revenue series (approved payments by review month)
+        var since = thisMonth.AddMonths(-(months - 1));
+        var approved = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.Status == SubscriptionPaymentStatus.Approved && p.ReviewedAt != null && p.ReviewedAt >= since)
+            .Select(p => new { p.ReviewedAt, p.Amount })
+            .ToListAsync();
+        var series = new List<object>();
+        for (int i = 0; i < months; i++)
+        {
+            var m = since.AddMonths(i);
+            var mEnd = m.AddMonths(1);
+            var total = approved.Where(p => p.ReviewedAt >= m && p.ReviewedAt < mEnd).Sum(p => p.Amount);
+            series.Add(new { month = m.ToString("yyyy-MM"), revenue = Math.Round(total, 2) });
+        }
+
+        // Expiring soon (Active, within 7 / 30 days) — with company + amount for quick "record payment"
+        async Task<List<object>> Expiring(int days) => (await _db.Subscriptions.AsNoTracking()
+            .Where(s => !s.IsDeleted && s.Status == SubscriptionStatus.Active
+                && s.EndDate > now && s.EndDate <= now.AddDays(days))
+            .OrderBy(s => s.EndDate)
+            .Join(_db.Companies, s => s.CompanyId, c => c.Id, (s, c) => new
+            {
+                companyId = c.Id, companyName = c.Name, plan = s.Plan, endDate = s.EndDate,
+                billingCycle = s.BillingCycle, amount = s.PricePerCycle
+            })
+            .Take(100).ToListAsync()).Cast<object>().ToList();
+
+        var pastDue = (await _db.Subscriptions.AsNoTracking()
+            .Where(s => !s.IsDeleted && (s.Status == SubscriptionStatus.PastDue || s.Status == SubscriptionStatus.Expired))
+            .OrderBy(s => s.EndDate)
+            .Join(_db.Companies, s => s.CompanyId, c => c.Id, (s, c) => new
+            {
+                companyId = c.Id, companyName = c.Name, plan = s.Plan, status = s.Status,
+                endDate = s.EndDate, amount = s.PricePerCycle
+            })
+            .Take(100).ToListAsync()).Cast<object>().ToList();
+
+        // Trial → paid conversion (approx): companies with ≥1 approved payment vs current trials
+        var converted = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.Status == SubscriptionPaymentStatus.Approved)
+            .Select(p => p.SubscriptionId).Distinct().CountAsync();
+        var trialCount = subs.Count(s => s.Status == SubscriptionStatus.Trial);
+        var conversionRate = (converted + trialCount) > 0
+            ? Math.Round((decimal)converted / (converted + trialCount) * 100, 1) : 0;
+
+        // Slip review queue + oldest age
+        var pendingSlips = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview)
+            .Select(p => p.CreatedAt).ToListAsync();
+        var oldestPendingDays = pendingSlips.Count > 0 ? (int)(now - pendingSlips.Min()).TotalDays : 0;
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            mrr,
+            arr = Math.Round(mrr * 12, 2),
+            revenueThisMonth = Math.Round(approved.Where(p => p.ReviewedAt >= thisMonth).Sum(p => p.Amount), 2),
+            monthlyRevenue = series,
+            expiring7d = await Expiring(7),
+            expiring30d = await Expiring(30),
+            pastDue,
+            conversion = new { converted, trials = trialCount, ratePercent = conversionRate },
+            slipQueue = new { pending = pendingSlips.Count, oldestPendingDays }
+        }));
+    }
+
     // ===== Customer / Tenant Management =====
 
     [HttpGet("customers")]
