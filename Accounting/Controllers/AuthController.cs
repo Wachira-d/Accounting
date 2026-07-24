@@ -44,6 +44,84 @@ public class AuthController : ControllerBase
         }));
     }
 
+    // ===== Onboarding tour preferences (ปิดการสอนถาวร ต่อ user) =====
+    // เก็บฝั่ง server เพื่อให้ "กดปิดแล้วไม่ขึ้นอีกเลย" ข้ามเครื่อง/ล้าง cache.
+    public sealed record DismissTourRequest(string? PageKey, bool All = false);
+
+    [Authorize]
+    [HttpGet("tour-prefs")]
+    public async Task<ActionResult<ApiResponse<object>>> GetTourPrefs(
+        [FromServices] Data.AccountingDbContext db)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var user = await db.Users.FindAsync(userId);
+        var dismissed = ParseDismissed(user?.DismissedToursJson);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            dismissed,
+            all = dismissed.Contains("*")
+        }));
+    }
+
+    [Authorize]
+    [HttpPost("tour-prefs/dismiss")]
+    public async Task<ActionResult<ApiResponse<object>>> DismissTour(
+        [FromBody] DismissTourRequest request,
+        [FromServices] Data.AccountingDbContext db)
+    {
+        if (!request.All && string.IsNullOrWhiteSpace(request.PageKey))
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุ pageKey หรือ all"));
+
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var user = await db.Users.FindAsync(userId);
+        if (user == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผู้ใช้"));
+
+        var dismissed = ParseDismissed(user.DismissedToursJson);
+        // sanitize pageKey — เก็บเฉพาะ a-z0-9-_ กัน payload แปลก ๆ โตไม่จำกัด
+        var key = request.All ? "*"
+            : new string(request.PageKey!.Trim().ToLowerInvariant()
+                .Where(c => char.IsLetterOrDigit(c) || c is '-' or '_').ToArray());
+        if (key.Length == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "pageKey ไม่ถูกต้อง"));
+        if (dismissed.Count >= 300 && !dismissed.Contains(key))
+            return BadRequest(new ApiResponse<object>(false, null, "รายการปิดการสอนเต็ม"));
+
+        dismissed.Add(key);
+        user.DismissedToursJson = System.Text.Json.JsonSerializer.Serialize(dismissed.OrderBy(x => x));
+        user.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<object>(true, new { dismissed, all = dismissed.Contains("*") },
+            request.All ? "ปิดการสอนทุกหน้าแล้ว" : "ปิดการสอนหน้านี้แล้ว จะไม่แสดงอีก"));
+    }
+
+    /// <summary>เปิดการสอนกลับ (จากหน้า settings) — ล้างรายการปิดทั้งหมด.</summary>
+    [Authorize]
+    [HttpPost("tour-prefs/reset")]
+    public async Task<ActionResult<ApiResponse<object>>> ResetTourPrefs(
+        [FromServices] Data.AccountingDbContext db)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var user = await db.Users.FindAsync(userId);
+        if (user == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผู้ใช้"));
+        user.DismissedToursJson = null;
+        user.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { dismissed = Array.Empty<string>(), all = false },
+            "เปิดการสอนทุกหน้ากลับแล้ว"));
+    }
+
+    private static HashSet<string> ParseDismissed(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var list = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
+            return new HashSet<string>(list ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+        }
+        catch { return new HashSet<string>(StringComparer.OrdinalIgnoreCase); }
+    }
+
     [HttpPost("sso")]
     public async Task<ActionResult<ApiResponse<LoginResponse>>> SsoLogin([FromBody] SsoLoginRequest request)
     {

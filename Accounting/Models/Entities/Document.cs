@@ -53,6 +53,15 @@ public class Document : TenantEntity
     /// เมื่อ InputVatPostedAsUndue = true (เพื่อให้ตรงกับ JE จริง).</summary>
     public DateTime? InputVatBecameClaimableAt { get; set; }
 
+    /// <summary>ฝั่งขาย (mirror ของ InputVatBecameClaimableAt): ใบแจ้งหนี้งานบริการ
+    /// ล้วน VAT พักที่ 21913 "ภาษีขายรอเรียกเก็บ" (§78/1 tax point เกิดเมื่อรับชำระ/
+    /// ออกใบกำกับ — ใบแจ้งหนี้ไม่ใช่ใบกำกับภาษี). เมื่อรับเงิน (Payment/ใบเสร็จ
+    /// settlement) ระบบออก adjusting JE: Dr 21913 / Cr 21911 + stamp วันที่นี้ →
+    /// ภ.พ.30 include ใบนี้ในเดือนของ OutputVatDueAt (ไม่ใช่ DocumentDate).
+    /// Null + GL มี 21913 ค้าง = ยังไม่ถึง tax point → ไม่เข้า ภ.พ.30.
+    /// Null + ไม่มี 21913 (ใบเก่า/ใบมีสินค้า ลง 21911 ตรง) = พฤติกรรมเดิม.</summary>
+    public DateTime? OutputVatDueAt { get; set; }
+
     /// <summary>§82/3: ภาษีซื้อที่ค้าง 11640 พ้น 6 เดือนโดยใบกำกับไม่ครบ → เคลม
     /// ไม่ได้แล้ว ถูก reclassify เป็นค่าใช้จ่าย (Dr ค่าใช้จ่าย / Cr 11640) เมื่อ
     /// timestamp นี้ถูกตั้ง. คู่กับ ReclassifyExpiredUndueInputVatAsync.</summary>
@@ -81,6 +90,16 @@ public class Document : TenantEntity
     /// ไม่ persist เพราะสถานะชำระเปลี่ยนได้.</summary>
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public bool ServedAsReceipt { get; set; }
+
+    /// <summary>Transient (ไม่เก็บ DB) — ใบเสร็จ/ใบสำคัญรับที่ "อ้างใบกำกับภาษี"
+    /// (settlement ของ TaxInvoice ที่รายงาน VAT ไปแล้ว) → หัวต้องเป็น
+    /// "ใบเสร็จรับเงิน" เปล่า ห้ามมีคำว่า "ใบกำกับภาษี" ซ้ำ — ไม่งั้นลูกค้าถือ
+    /// กระดาษที่มีคำว่าใบกำกับ 2 ใบจากการขายครั้งเดียว = เสี่ยงเคลมภาษีซื้อซ้ำ.
+    /// (settlement ของ "ใบแจ้งหนี้" ตรงข้าม: ใบเสร็จนี่แหละคือใบกำกับที่กฎหมาย
+    /// บังคับออก ณ วันรับเงิน §78/1 → พิมพ์ ใบกำกับภาษี/ใบเสร็จรับเงิน ถูกแล้ว)
+    /// คำนวณตอน render ใน ResolveServedAsReceiptAsync.</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public bool SettlesTaxInvoiceSource { get; set; }
 
     /// <summary>ขายเงินสด B2B (integration isCashSale) — ใบกำกับภาษีที่รับชำระครบ
     /// พร้อมออก ทำหน้าที่เป็น "ใบเสร็จรับเงิน/ใบกำกับภาษี" ในตัว. persist (ต่างจาก

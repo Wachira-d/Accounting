@@ -267,7 +267,12 @@ public record SubscriptionPaymentResponse(
     DateTime CreatedAt,
     // WP-B2: เอกสารใบเสร็จ/ใบกำกับที่ออกแล้ว (null = ยังไม่ออก)
     string? ReceiptNumber = null,
-    bool ReceiptIsTaxInvoice = false);
+    bool ReceiptIsTaxInvoice = false,
+    // WP-C3: ผล OCR สลิป (advisory)
+    decimal? SlipOcrAmount = null,
+    bool? SlipOcrAmountMatches = null,
+    string? SlipOcrReference = null,
+    DateTime? SlipOcrDate = null);
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,

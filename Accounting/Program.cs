@@ -147,6 +147,8 @@ builder.Services.AddScoped<Accounting.Services.Interfaces.ILineBotService, Accou
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
+builder.Services.AddSingleton<IJobRunRecorder, JobRunRecorder>();
+builder.Services.AddScoped<ISlipOcrAssistService, SlipOcrAssistService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
@@ -754,6 +756,10 @@ app.Use(async (context, next) =>
     }
     await next();
 });
+
+// 6.9 WP-E3: บังคับ read-only เมื่อ impersonation (ต้องหลัง UseAuthentication) —
+// ชั้นความปลอดภัยหลักของฟีเจอร์ "เข้าดูในนามลูกค้า"
+app.UseMiddleware<Accounting.Middleware.ImpersonationReadonlyMiddleware>();
 
 // 7. Tenant access control (after auth)
 app.UseMiddleware<TenantAccessMiddleware>();
@@ -1475,7 +1481,20 @@ app.MapFallback(context =>
                     CONSTRAINT ""FK_DocumentSignatures_Documents"" FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT,
                     CONSTRAINT ""FK_DocumentSignatures_Approvals"" FOREIGN KEY (""DocumentApprovalId"") REFERENCES ""DocumentApprovals""(""Id"") ON DELETE RESTRICT,
                     CONSTRAINT ""FK_DocumentSignatures_Companies"" FOREIGN KEY (""CompanyId"") REFERENCES ""Companies""(""Id"")
-                );"
+                );",
+                // WP-F2: JobRunLog — ผลการรัน background job แต่ละรอบ
+                @"CREATE TABLE IF NOT EXISTS ""JobRunLogs"" (
+                    ""Id"" uuid NOT NULL DEFAULT gen_random_uuid(),
+                    ""JobName"" text NOT NULL,
+                    ""StartedAt"" timestamp NOT NULL DEFAULT now(),
+                    ""FinishedAt"" timestamp NULL,
+                    ""Success"" boolean NOT NULL DEFAULT false,
+                    ""Message"" text NULL,
+                    ""ItemsProcessed"" integer NOT NULL DEFAULT 0,
+                    ""DurationMs"" bigint NOT NULL DEFAULT 0,
+                    CONSTRAINT ""PK_JobRunLogs"" PRIMARY KEY (""Id"")
+                );",
+                @"CREATE INDEX IF NOT EXISTS ""IX_JobRunLogs_Job_Started"" ON ""JobRunLogs"" (""JobName"", ""StartedAt"" DESC);"
             };
             foreach (var sql in rawSqlStatements)
             {

@@ -38,6 +38,40 @@ public static class JwtHelper
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    /// <summary>WP-E3: token สำหรับ admin "เข้าดูในนามลูกค้า" (read-only support).
+    /// อายุสั้น + claim imp=true (บังคับ read-only ผ่าน ImpersonationReadonlyMiddleware)
+    /// + imp_by=adminId (audit). ไม่ใส่ SystemAdmin role — สิทธิ์ admin ไม่รั่วเข้า tenant.
+    /// ⚠️ ต้อง security review ก่อนเปิดใช้ (Impersonation:Enabled).</summary>
+    public static (string Token, DateTime ExpiresAt) GenerateImpersonationToken(
+        Guid targetUserId, string email, string fullName, Guid adminUserId,
+        IConfiguration config, int minutes = 15)
+    {
+        var secret = config["Jwt:Secret"]
+            ?? throw new InvalidOperationException("JWT:Secret is not configured");
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var expires = DateTime.UtcNow.AddMinutes(Math.Clamp(minutes, 1, 60));
+
+        var claimsList = new List<Claim>
+        {
+            new Claim(ClaimTypes.NameIdentifier, targetUserId.ToString()),
+            new Claim(ClaimTypes.Email, email),
+            new Claim(ClaimTypes.Name, fullName),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim("imp", "true"),                        // read-only impersonation marker
+            new Claim("imp_by", adminUserId.ToString())      // who is impersonating (audit)
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: config["Jwt:Issuer"],
+            audience: config["Jwt:Audience"],
+            claims: claimsList,
+            expires: expires,
+            signingCredentials: credentials);
+
+        return (new JwtSecurityTokenHandler().WriteToken(token), expires);
+    }
+
     public static string GenerateRefreshToken()
     {
         return Convert.ToBase64String(Guid.NewGuid().ToByteArray());

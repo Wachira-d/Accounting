@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Security.Claims;
 
 namespace Accounting.Controllers;
 
@@ -36,6 +37,7 @@ public class AdminController : ControllerBase
     private readonly IWebHostEnvironment _env;
     private readonly ISaasBillingDocumentService _billing;
     private readonly IEmailService _email;
+    private readonly IJobRunRecorder _jobRec;
 
     public AdminController(
         AccountingDbContext db,
@@ -47,7 +49,8 @@ public class AdminController : ControllerBase
         IImageProcessingService images,
         IWebHostEnvironment env,
         ISaasBillingDocumentService billing,
-        IEmailService email)
+        IEmailService email,
+        IJobRunRecorder jobRec)
     {
         _db = db;
         _subscriptionService = subscriptionService;
@@ -59,6 +62,7 @@ public class AdminController : ControllerBase
         _env = env;
         _billing = billing;
         _email = email;
+        _jobRec = jobRec;
     }
 
     // ===== Dashboard Analytics =====
@@ -267,6 +271,47 @@ public class AdminController : ControllerBase
             pastDue,
             conversion = new { converted, trials = trialCount, ratePercent = conversionRate },
             slipQueue = new { pending = pendingSlips.Count, oldestPendingDays }
+        }));
+    }
+
+    /// <summary>WP-E2: บริษัทที่ใช้งานใกล้เต็ม limit (>85%) — โอกาส upsell +
+    /// เตือนก่อนโดนบล็อก. อ่านจาก CurrentMonth* counters (ไม่ query หนัก).</summary>
+    [HttpGet("usage-alerts")]
+    public async Task<ActionResult<ApiResponse<object>>> GetUsageAlerts([FromQuery] int thresholdPercent = 85)
+    {
+        var t = Math.Clamp(thresholdPercent, 50, 100) / 100m;
+        var subs = await _db.Subscriptions.AsNoTracking()
+            .Where(s => !s.IsDeleted && s.Status == SubscriptionStatus.Active)
+            .Join(_db.Companies, s => s.CompanyId, c => c.Id, (s, c) => new
+            {
+                c.Id, c.Name,
+                s.CurrentMonthDocuments, s.MaxDocumentsPerMonth,
+                s.CurrentMonthJournalEntries, s.MaxJournalEntriesPerMonth,
+                s.CurrentMonthOcrPages, s.MaxOcrPagesPerMonth,
+                s.Plan
+            }).ToListAsync();
+
+        var alerts = new List<(Guid Id, string Name, string Plan, string Metric, int Used, int Max, decimal Pct)>();
+        foreach (var s in subs)
+        {
+            void Check(string metric, int used, int max)
+            {
+                if (max > 0 && (decimal)used / max >= t)
+                    alerts.Add((s.Id, s.Name, s.Plan.ToString(), metric, used, max,
+                        Math.Round((decimal)used / max * 100, 0)));
+            }
+            Check("เอกสาร/เดือน", s.CurrentMonthDocuments, s.MaxDocumentsPerMonth);
+            Check("สมุดรายวัน/เดือน", s.CurrentMonthJournalEntries, s.MaxJournalEntriesPerMonth);
+            Check("OCR/เดือน", s.CurrentMonthOcrPages, s.MaxOcrPagesPerMonth);
+        }
+        return Ok(new ApiResponse<object>(true, new
+        {
+            thresholdPercent,
+            alerts = alerts.OrderByDescending(a => a.Pct).Select(a => new
+            {
+                companyId = a.Id, companyName = a.Name, plan = a.Plan,
+                metric = a.Metric, used = a.Used, max = a.Max, percent = a.Pct
+            }).ToList()
         }));
     }
 
@@ -655,6 +700,154 @@ public class AdminController : ControllerBase
             "ลบข้อมูลส่วนบุคคลของผู้ใช้แล้ว (คงประวัติ/เอกสารตามกฎหมาย)"));
     }
 
+    /// <summary>WP-D4: user detail 360° — บริษัท+role, last login, session,
+    /// License ที่ถือ (AccountSubscription), invitation ค้าง.</summary>
+    [HttpGet("users/{userId:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> GetUserDetail(Guid userId)
+    {
+        var user = await _db.Users.AsNoTracking()
+            .Include(u => u.CompanyUsers).ThenInclude(cu => cu.Company)
+            .FirstOrDefaultAsync(u => u.Id == userId);
+        if (user == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผู้ใช้"));
+
+        var now = DateTime.UtcNow;
+        var licenses = await _db.AccountSubscriptions.AsNoTracking()
+            .Where(a => a.OwnerUserId == userId && !a.IsDeleted)
+            .Include(a => a.PlanTemplate)
+            .Select(a => new
+            {
+                a.Id, planName = a.PlanTemplate.Name, status = a.Status.ToString(),
+                a.EndDate, a.MaxCompanies
+            }).ToListAsync();
+
+        var pendingInvites = await _db.CompanyInvitations.AsNoTracking()
+            .Where(i => i.Email.ToLower() == user.Email.ToLower()
+                && i.Status == InvitationStatus.Pending && i.ExpiresAt > now)
+            .Include(i => i.Company)
+            .Select(i => new { i.Id, company = i.Company.Name, role = i.Role.ToString(), i.ExpiresAt })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            user = new
+            {
+                user.Id, user.Email, user.FullName, user.Phone, user.Status,
+                user.IsSystemAdmin, user.EmailVerified, user.LastLoginAt, user.CreatedAt
+            },
+            companies = user.CompanyUsers.Select(cu => new
+            {
+                cu.CompanyId, company = cu.Company.Name, role = cu.Role.ToString(), cu.IsDefault, cu.JoinedAt
+            }),
+            session = new
+            {
+                hasActiveSession = user.RefreshToken != null && user.RefreshTokenExpiry > now,
+                refreshTokenExpiry = user.RefreshTokenExpiry,
+                revokedAt = user.RefreshTokenRevokedAt
+            },
+            licenses,
+            pendingInvites
+        }));
+    }
+
+    /// <summary>WP-D4: เพิกถอน session (revoke refresh token) → ผู้ใช้ต้อง login ใหม่.</summary>
+    [HttpPost("users/{userId:guid}/revoke-sessions")]
+    public async Task<ActionResult<ApiResponse<object>>> RevokeUserSessions(Guid userId)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผู้ใช้"));
+        user.RefreshToken = null;
+        user.PreviousRefreshToken = null;
+        user.RefreshTokenExpiry = null;
+        user.RefreshTokenRevokedAt = DateTime.UtcNow;
+        user.UpdatedAt = DateTime.UtcNow;
+        user.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, null, "เพิกถอน session แล้ว — ผู้ใช้ต้องเข้าสู่ระบบใหม่"));
+    }
+
+    /// <summary>WP-E3: admin "เข้าดูในนามลูกค้า" (read-only support session).
+    /// ปิดโดย default — ต้องเปิด config Impersonation:Enabled หลัง security review.
+    /// mint token อายุสั้น (imp=true → ImpersonationReadonlyMiddleware บล็อก write ทุกจุด)
+    /// + ลง audit ทุกครั้ง. ไม่ใส่ SystemAdmin role → สิทธิ์ admin ไม่รั่วเข้า tenant.</summary>
+    [HttpPost("companies/{companyId:guid}/impersonate")]
+    public async Task<ActionResult<ApiResponse<object>>> Impersonate(
+        Guid companyId, [FromServices] IConfiguration config)
+    {
+        if (!config.GetValue<bool>("Impersonation:Enabled"))
+            return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object>(false, null,
+                "ฟีเจอร์เข้าดูในนามลูกค้าถูกปิดอยู่ (เปิด Impersonation:Enabled หลัง security review)"));
+
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => new { c.Id, c.Name }).FirstOrDefaultAsync();
+        if (company == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
+
+        // เลือกผู้ใช้จริงในบริษัท (Owner ก่อน) เป็นตัวตนที่จะเข้าดู
+        var target = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId)
+            .OrderBy(cu => cu.Role == UserRole.Owner ? 0 : 1)
+            .Join(_db.Users, cu => cu.UserId, u => u.Id, (cu, u) => new { u.Id, u.Email, u.FullName })
+            .FirstOrDefaultAsync();
+        if (target == null) return BadRequest(new ApiResponse<object>(false, null, "บริษัทนี้ไม่มีผู้ใช้ให้เข้าดู"));
+
+        var adminId = JwtHelper.GetUserIdFromClaims(User);
+        var (token, expiresAt) = JwtHelper.GenerateImpersonationToken(
+            target.Id, target.Email, target.FullName, adminId, config, 15);
+
+        // audit ทุกครั้ง (platform action) — เพื่อ trace ว่าใครเข้าดูบริษัทไหน เมื่อไร
+        _db.AuditLogs.Add(new Models.Entities.AuditLog
+        {
+            CompanyId = companyId,
+            UserId = adminId,
+            UserEmail = User.FindFirstValue(ClaimTypes.Email) ?? "",
+            Action = AuditAction.View,
+            EntityType = "Impersonation",
+            EntityId = companyId.ToString(),
+            NewValues = JsonSerializer.Serialize(new { targetUserId = target.Id, targetEmail = target.Email, expiresAt }),
+            Timestamp = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            token, expiresAt, readOnly = true,
+            targetUser = new { target.Id, target.Email, target.FullName },
+            company = new { company.Id, company.Name }
+        }, "สร้าง session เข้าดูในนามลูกค้า (read-only, 15 นาที) แล้ว"));
+    }
+
+    /// <summary>WP-D4: ส่งคำเชิญเข้าบริษัทซ้ำ (ต่ออายุ token + เวลา).</summary>
+    [HttpPost("invitations/{invitationId:guid}/resend")]
+    public async Task<ActionResult<ApiResponse<object>>> ResendInvitation(Guid invitationId)
+    {
+        var inv = await _db.CompanyInvitations.Include(i => i.Company)
+            .FirstOrDefaultAsync(i => i.Id == invitationId);
+        if (inv == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบคำเชิญ"));
+        if (inv.Status != InvitationStatus.Pending)
+            return BadRequest(new ApiResponse<object>(false, null, "คำเชิญนี้ไม่ได้อยู่ในสถานะรอตอบรับ"));
+
+        inv.ExpiresAt = DateTime.UtcNow.AddDays(7);
+        inv.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        var baseUrl = (await _db.SiteSettings.AsNoTracking().Select(s => s.AppBaseUrl).FirstOrDefaultAsync())?.TrimEnd('/')
+            ?? $"{Request.Scheme}://{Request.Host}";
+        var link = $"{baseUrl}/accept-invitation.html?token={Uri.EscapeDataString(inv.Token)}";
+        var sent = false;
+        try
+        {
+            if (await _email.IsSystemEmailConfiguredAsync())
+            {
+                await _email.SendNotificationEmailAsync(inv.Email, inv.Email,
+                    $"คำเชิญเข้าใช้งาน {inv.Company.Name}",
+                    $"คุณได้รับคำเชิญเข้าร่วม {inv.Company.Name} (บทบาท {inv.Role}). คลิกเพื่อตอบรับ", link);
+                sent = true;
+            }
+        }
+        catch { }
+        return Ok(new ApiResponse<object>(true, new { inviteLink = link, emailSent = sent },
+            sent ? "ส่งคำเชิญซ้ำทางอีเมลแล้ว" : "ต่ออายุคำเชิญแล้ว (คัดลอกลิงก์ส่งให้ผู้ใช้)"));
+    }
+
     // ===== WP-D1/D2: Admin User Lifecycle =====
     public sealed record AdminCreateUserRequest(string Email, string FullName, string? Phone,
         Guid? CompanyId, string? Role, bool MakeSystemAdmin);
@@ -997,7 +1190,8 @@ public class AdminController : ControllerBase
     [HttpPost("trial/process-expired")]
     public async Task<ActionResult<ApiResponse<string>>> ProcessExpiredTrials()
     {
-        await _subscriptionService.ProcessExpiredTrialsAsync();
+        await _jobRec.TrackAsync("ProcessExpiredTrials", async () =>
+            { await _subscriptionService.ProcessExpiredTrialsAsync(); return 0; });
         return Ok(new ApiResponse<string>(true, null, "ประมวลผล expired trials สำเร็จ"));
     }
 
@@ -1415,22 +1609,41 @@ public class AdminController : ControllerBase
     [HttpPost("subscription/process-notifications")]
     public async Task<ActionResult<ApiResponse<string>>> ProcessSubscriptionNotifications()
     {
-        await _subscriptionService.ProcessSubscriptionNotificationsAsync();
+        await _jobRec.TrackAsync("ProcessSubscriptionNotifications", async () =>
+            { await _subscriptionService.ProcessSubscriptionNotificationsAsync(); return 0; });
         return Ok(new ApiResponse<string>(true, null, "ประมวลผลแจ้งเตือน subscription สำเร็จ"));
     }
 
     [HttpPost("subscription/process-expired")]
     public async Task<ActionResult<ApiResponse<string>>> ProcessExpiredSubscriptions()
     {
-        await _subscriptionService.ProcessExpiredSubscriptionsAsync();
+        await _jobRec.TrackAsync("ProcessExpiredSubscriptions", async () =>
+            { await _subscriptionService.ProcessExpiredSubscriptionsAsync(); return 0; });
         return Ok(new ApiResponse<string>(true, null, "ประมวลผล expired subscriptions สำเร็จ"));
     }
 
     [HttpPost("recurring/process")]
     public async Task<ActionResult<ApiResponse<string>>> ProcessRecurringTransactions()
     {
-        await _recurringService.ProcessDueRecurringTransactionsAsync();
+        await _jobRec.TrackAsync("ProcessRecurringTransactions", async () =>
+            { await _recurringService.ProcessDueRecurringTransactionsAsync(); return 0; });
         return Ok(new ApiResponse<string>(true, null, "ประมวลผลรายการที่เกิดซ้ำสำเร็จ"));
+    }
+
+    /// <summary>WP-F2: ผลการรัน job ล่าสุด (ต่อ job) + ประวัติ.</summary>
+    [HttpGet("job-runs")]
+    public async Task<ActionResult<ApiResponse<object>>> GetJobRuns([FromQuery] int limit = 50)
+    {
+        limit = Math.Clamp(limit, 1, 200);
+        var recent = await _db.JobRunLogs.AsNoTracking()
+            .OrderByDescending(j => j.StartedAt).Take(limit)
+            .Select(j => new { j.JobName, j.StartedAt, j.FinishedAt, j.Success, j.Message, j.ItemsProcessed, j.DurationMs })
+            .ToListAsync();
+        // ล่าสุดต่อ job
+        var latest = recent.GroupBy(j => j.JobName)
+            .Select(g => g.OrderByDescending(x => x.StartedAt).First())
+            .ToList();
+        return Ok(new ApiResponse<object>(true, new { latest, recent }));
     }
 
     // ===== Site Settings (Global) =====

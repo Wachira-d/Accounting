@@ -688,7 +688,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | Type | JE on Approve | Stock | VAT report side | Tax point | Special |
 | --- | --- | --- | --- | --- | --- |
 | `Quotation` | ❌ | ❌ | – | – | – |
-| `Invoice` | Dr AR / Cr Rev + Cr 21911 | ❌ (DN จัดการแยก) | output (เฉพาะถ้าไม่ใช่ "Cash basis" company) | `TaxPointDate` snapshot | – |
+| `Invoice` | Dr AR / Cr Rev + Cr **[21913 บริการล้วน \| 21911 มีสินค้า TrackStock]** | ❌ (DN จัดการแยก) | output — บริการล้วน: เข้าเมื่อ `OutputVatDueAt` (รับเงิน §78/1); มีสินค้า/legacy (GL ลง 21911 ตรง): เข้าทันทีตาม tax point (§78 ส่งมอบ) | `TaxPointDate` snapshot; บริการ → `OutputVatDueAt` ตอนรับชำระ | รับชำระ (Payment/ใบเสร็จ settlement) → `TryReclassifyUndueOutputVatAsync`: JV Dr 21913 / Cr 21911 เต็มยอดคงเหลือ + stamp `OutputVatDueAt` (full-on-first-settlement, GL-driven, idempotent). แปลงเป็น TIV → supersede reverse JE ทั้งใบ (รวม 21913) ใบกำกับลง 21911 เอง |
 | `TaxInvoice` | Dr AR / Cr Rev + Cr 21911 | ❌ | output | `TaxPointDate` snapshot | – |
 | `BillingNote` | ❌ (รอ Receipt) | ❌ | – | – | – |
 | `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 | ❌ (Receipt **ไม่อยู่** ใน `ApplyStockMovementsAsync` switch — ถ้าต้อง OUT ต้อง issue Invoice/TaxInvoice ก่อน) | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
@@ -722,11 +722,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - หัวพื้นฐาน 16 ประเภท (`GetDocumentTitle`) — ทุกชนิดถูกต้องตามชื่อไทย
   - **เงื่อนไข** (auto): ใบกำกับ+รับเงินตอนออก (ServedAsReceipt) / ใบเสร็จมี
     VAT → "ใบกำกับภาษี/ใบเสร็จรับเงิน"; TaxInvoice+`CombinedInvoiceTaxInvoice`
-    → "ใบแจ้งหนี้/ใบกำกับภาษี"; มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ
-    (ไม่ upgrade); `IsDeposit` → ต่อท้าย "(เงินมัดจำ)"
+    → "ใบแจ้งหนี้/ใบกำกับภาษี" และเมื่อ **จ่ายครบ+ไม่มีใบเสร็จแยก
+    (ServedAsReceipt)** → upgrade เป็น **"ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน"
+    (3-in-1)** — คำว่าใบเสร็จรับเงินโผล่เฉพาะเมื่อรับเงินจริง (ม.105);
+    **ใบเสร็จ settlement ที่อ้าง TaxInvoice** (`SettlesTaxInvoiceSource` —
+    resolve ตอน render) → คงหัว "ใบเสร็จรับเงิน" เปล่า ห้ามพิมพ์คำใบกำกับซ้ำ
+    (กันลูกค้าถือกระดาษใบกำกับ 2 ใบจากขายครั้งเดียว = เคลมภาษีซื้อซ้ำ);
+    settlement ที่อ้าง Invoice ยังพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน" (มันคือ
+    ใบกำกับที่ต้องออก ณ วันรับเงิน §78/1 — คู่กับโมเดล undue 21913);
+    มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ (ไม่ upgrade);
+    `IsDeposit` → ต่อท้าย "(เงินมัดจำ)"
   - **ตั้งเองได้ทุกหัว** (พื้นฐาน + เงื่อนไข) ผ่าน
     `CompanySettings.DocumentTitleOverridesJson` (คีย์ = ชื่อ enum +
-    `TaxInvoiceReceipt`/`CombinedInvoice`/`DepositSuffix`) — หน้าตั้งค่า →
+    `TaxInvoiceReceipt`/`CombinedInvoice`/`CombinedInvoiceReceipt`/
+    `DepositSuffix`) — หน้าตั้งค่า →
     เอกสาร → "หัวเรื่องเอกสาร"; per-template `CustomTitle` ยังชนะ base override
 
 ### 5.2 e-Tax XML (XAdES-BES, RSA-SHA256)
@@ -1366,6 +1375,10 @@ _+ DetectJuristic บังคับทุก create path, override ค่าท
 _รอบ 80: OCR review inline line editing (Description/Quantity/UnitPrice แก้ในตาราง_
 _→ SetExtractedLineFieldsAsync recompute Amount + persist, คู่กับ qty-guard); ปิดลูป_
 _project-match feedback (SetExtractedLineProject → RecordUserChoiceAsync)._
+_รอบ 81 (2026-07-24): Invoice undue output VAT — ใบแจ้งหนี้บริการล้วน Cr 21913_
+_(ไม่เข้า ภ.พ.30 จนรับเงิน §78/1) → reclass 21913→21911 + OutputVatDueAt เมื่อ_
+_รับชำระ (Payment/ใบเสร็จ settlement); ใบมีสินค้า TrackStock = ส่งมอบ (§78) ลง_
+_21911 ทันทีเหมือนเดิม; report ตัดสิน GL-driven (ใบเก่า net 21913=0 → พฤติกรรมเดิม)._
 _Last verified against codebase: 2026-07-20 (รอบ 60) — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

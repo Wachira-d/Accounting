@@ -1,6 +1,22 @@
 // ===== Shared Layout Component =====
 // Provides sidebar navigation + header for all app pages
 
+// WP-E3: แบนเนอร์แดงเตือนตลอด session เมื่ออยู่ในโหมด "เข้าดูในนามลูกค้า"
+// (token มี claim imp=true) — read-only, admin support. โชว์ทันทีก่อน layout โหลด.
+(function () {
+  try {
+    const t = localStorage.getItem('token');
+    if (!t) return;
+    const payload = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (payload && payload.imp === 'true') {
+      const bar = document.createElement('div');
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#dc2626;color:#fff;text-align:center;padding:6px 12px;font-size:13px;font-weight:600;font-family:sans-serif';
+      bar.textContent = '🕵️ โหมดเข้าดูในนามลูกค้า (READ-ONLY) — แก้ไขข้อมูลไม่ได้ · จบ session: ปุ่มออกจากระบบ';
+      document.addEventListener('DOMContentLoaded', () => { document.body.prepend(bar); document.body.style.paddingTop = '32px'; });
+    }
+  } catch {}
+})();
+
 const Layout = {
   currentPage: '',
   user: null,
@@ -48,6 +64,15 @@ const Layout = {
       const s2 = document.createElement('script'); s2.src = '/js/ux-helpers.js'; s2.defer = true; document.head.appendChild(s2);
       // Smart inline validators — tax-id checksum / period close / VAT mismatch
       const s3 = document.createElement('script'); s3.src = '/js/smart-hooks.js'; s3.defer = true; document.head.appendChild(s3);
+    }
+    // ระบบแนะนำการใช้งาน (onboarding tour) — โหลดครั้งเดียว ทุกหน้าได้อัตโนมัติ
+    // เนื้อหา + ปิดถาวร (sync server) อยู่ใน onboarding.js
+    if (!document.querySelector('script[src="/js/onboarding.js"]')) {
+      const sOb = document.createElement('script'); sOb.src = '/js/onboarding.js';
+      sOb.onload = () => { try { window.Onboarding?.auto(this.currentPage); } catch {} };
+      document.head.appendChild(sOb);
+    } else {
+      setTimeout(() => { try { window.Onboarding?.auto(this.currentPage); } catch {} }, 0);
     }
     // Reflect ui-mode on <body> so pages can hide advanced-only sections via CSS.
     const uiMode = localStorage.getItem('uiMode') || 'simple';
@@ -1685,76 +1710,20 @@ const Layout = {
     }, 0);
   },
 
-  // Guided tour runner. Any page can opt-in by marking elements with
-  //   <element data-tour-step="1" data-tour-text="..."></element>
-  // and (optionally) data-tour-position="top|bottom|left|right".
-  // Call Layout.startTour() from page code or auto-trigger on first visit:
-  //   if (!localStorage.getItem('tour:'+pageName)) Layout.startTour(pageName);
+  // Guided tour — delegate ทั้งหมดไปที่ระบบใหม่ (js/onboarding.js):
+  // การ์ดอธิบายภาพรวม + ไล่ชี้ทีละจุด + ปิดถาวร sync server (ไม่ขึ้นอีกเลย).
+  // คง signature เดิมไว้ให้ 17 หน้าที่เรียก Layout.enableTour/startTour อยู่แล้ว
+  // ทำงานต่อได้โดยไม่ต้องแก้ — เนื้อหาจาก Onboarding.TOURS ชนะ data-tour-text เดิม
   startTour(pageKey) {
-    const steps = Array.from(document.querySelectorAll('[data-tour-step]'))
-      .map(el => ({ el, n: parseInt(el.getAttribute('data-tour-step') || '0', 10),
-                    text: el.getAttribute('data-tour-text') || '',
-                    pos: el.getAttribute('data-tour-position') || 'bottom' }))
-      .filter(s => s.n > 0 && s.text)
-      .sort((a, b) => a.n - b.n);
-    if (steps.length === 0) return;
-    let i = 0;
-    const overlay = document.createElement('div');
-    overlay.id = 'tourOverlay';
-    document.body.appendChild(overlay);
-    const renderStep = () => {
-      const s = steps[i];
-      const r = s.el.getBoundingClientRect();
-      // Highlight ring
-      overlay.innerHTML = `
-        <div class="tour-mask" style="top:${r.top - 6}px;left:${r.left - 6}px;width:${r.width + 12}px;height:${r.height + 12}px;"></div>
-        <div class="tour-pop tour-pos-${s.pos}" style="top:${r.bottom + 12}px;left:${Math.max(8, r.left)}px;">
-          <div class="tour-text">${this.esc(s.text)}</div>
-          <div class="tour-actions">
-            <span class="tour-progress">${i + 1} / ${steps.length}</span>
-            <div style="flex:1;"></div>
-            <button class="tour-skip" type="button">ข้าม</button>
-            ${i < steps.length - 1
-              ? '<button class="tour-next" type="button">ถัดไป →</button>'
-              : '<button class="tour-done" type="button">เสร็จสิ้น ✓</button>'}
-          </div>
-        </div>`;
-      overlay.querySelector('.tour-skip').onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:' + pageKey, '1'); };
-      const next = overlay.querySelector('.tour-next');
-      if (next) next.onclick = () => { i++; s.el.scrollIntoView({ block: 'center', behavior: 'smooth' }); setTimeout(renderStep, 250); };
-      const done = overlay.querySelector('.tour-done');
-      if (done) done.onclick = () => { overlay.remove(); if (pageKey) localStorage.setItem('tour:' + pageKey, '1'); };
-    };
-    steps[0].el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    setTimeout(renderStep, 300);
+    const run = () => window.Onboarding?.start(pageKey || this.currentPage);
+    if (window.Onboarding) run();
+    else setTimeout(run, 400); // onboarding.js กำลังโหลด (inject จาก init)
   },
 
-  // One-liner page opt-in: auto-runs the tour on first visit and injects a
-  // floating "📘 สอนใช้หน้านี้" replay button. Pages just call
-  //   Layout.enableTour('document-scan')
-  // after DOM ready and add data-tour-step / data-tour-text on key elements.
   enableTour(pageKey, opts) {
-    if (!pageKey) return;
-    const o = opts || {};
-    const hasSteps = document.querySelector('[data-tour-step]');
-    if (!hasSteps) return;
-    // Replay button
-    if (!document.getElementById('tourReplayBtn')) {
-      const btn = document.createElement('button');
-      btn.id = 'tourReplayBtn';
-      btn.type = 'button';
-      btn.className = 'tour-replay-btn';
-      btn.title = 'สอนใช้หน้านี้อีกครั้ง';
-      btn.innerHTML = '📘 สอนใช้หน้านี้';
-      btn.onclick = () => this.startTour(pageKey);
-      document.body.appendChild(btn);
-    }
-    // Auto-trigger on first visit
-    const key = 'tour:' + pageKey;
-    if (!localStorage.getItem(key)) {
-      const delay = o.delay || 600;
-      setTimeout(() => this.startTour(pageKey), delay);
-    }
+    const run = () => window.Onboarding?.auto(pageKey || this.currentPage);
+    if (window.Onboarding) run();
+    else setTimeout(run, 400);
   },
 
   _toggleFab() {

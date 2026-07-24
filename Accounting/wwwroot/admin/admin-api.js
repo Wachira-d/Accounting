@@ -93,17 +93,22 @@ const AdminAPI = {
   // Dashboard
   dashboard() { return this.get('/dashboard'); },
   revenueDashboard(months = 12) { return this.get(`/revenue-dashboard?months=${months}`); },
+  usageAlerts(threshold = 85) { return this.get(`/usage-alerts?thresholdPercent=${threshold}`); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },
   customer(id) { return this.get(`/customers/${id}`); },
   updateCustomerStatus(id, status, suspendReason = null) { return this.put(`/customers/${id}/status`, { status, suspendReason }); },
+  impersonate(companyId) { return this.post(`/companies/${companyId}/impersonate`, {}); },
 
   // Users
   users(params = '') { return this.get(`/users${params}`); },
   createUser(data) { return this.post('/users', data); },
   resetUserPassword(userId) { return this.post(`/users/${userId}/reset-password`, {}); },
   anonymizeUser(userId) { return this.post(`/users/${userId}/anonymize`, {}); },
+  userDetail(userId) { return this.get(`/users/${userId}`); },
+  revokeUserSessions(userId) { return this.post(`/users/${userId}/revoke-sessions`, {}); },
+  resendInvitation(invitationId) { return this.post(`/invitations/${invitationId}/resend`, {}); },
   updateUserStatus(id, status) { return this.put(`/users/${id}/status`, { status }); },
   toggleAdmin(id, isAdmin) { return this.put(`/users/${id}/admin`, { isAdmin }); },
 
@@ -145,6 +150,7 @@ const AdminAPI = {
   processExpiredSubs() { return this.post('/subscription/process-expired'); },
   processNotifications() { return this.post('/subscription/process-notifications'); },
   processRecurring() { return this.post('/recurring/process'); },
+  jobRuns(limit = 50) { return this.get(`/job-runs?limit=${limit}`); },
 
   // Master Chart of Accounts template (qs = scope query string, e.g. '?businessType=Partnership')
   coaTemplateScopes() { return this.get('/coa-template/scopes'); },

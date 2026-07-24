@@ -48,6 +48,11 @@
       <div class="section-title">เกินกำหนด / หมดอายุ (PastDue)</div>
       <div id="pastdue">กำลังโหลด...</div>
     </div>
+
+    <div class="admin-card">
+      <div class="section-title">⚠️ ใกล้เต็ม limit (&gt;85%) — โอกาส upsell</div>
+      <div id="usageAlerts">กำลังโหลด...</div>
+    </div>
   </div>
 
   <script src="/admin/admin-api.js"></script>
@@ -124,6 +129,29 @@
                 </tr>`).join('')}</tbody></table></div>`;
       } catch (err) {
         document.getElementById('kpi').innerHTML = `<div class="admin-kpi"><div class="admin-kpi-label" style="color:var(--admin-danger)">${err.message}</div></div>`;
+      }
+      loadUsageAlerts();
+    }
+
+    async function loadUsageAlerts() {
+      try {
+        const res = await AdminAPI.usageAlerts(85);
+        const rows = res.data?.alerts || [];
+        document.getElementById('usageAlerts').innerHTML = rows.length === 0
+          ? '<div style="text-align:center;color:#94a3b8;padding:24px">ยังไม่มีบริษัทใกล้เต็ม limit</div>'
+          : `<div class="admin-table-wrap"><table class="admin-table">
+              <thead><tr><th>บริษัท</th><th>แพ็กเกจ</th><th>รายการ</th><th>ใช้/จำกัด</th><th>%</th><th></th></tr></thead>
+              <tbody>${rows.map(r => `
+                <tr>
+                  <td>${r.companyName}</td>
+                  <td>${AdminLayout.planBadge(r.plan)}</td>
+                  <td>${r.metric}</td>
+                  <td class="admin-text-right">${r.used} / ${r.max}</td>
+                  <td class="admin-text-right"><strong style="color:${r.percent >= 100 ? 'var(--admin-danger)' : 'var(--admin-warning)'}">${r.percent}%</strong></td>
+                  <td><a class="admin-btn admin-btn-outline admin-btn-sm" href="/admin/customers.html">ดูบริษัท</a></td>
+                </tr>`).join('')}</tbody></table></div>`;
+      } catch (err) {
+        document.getElementById('usageAlerts').innerHTML = `<div style="color:var(--admin-danger);padding:16px">${err.message}</div>`;
       }
     }
 

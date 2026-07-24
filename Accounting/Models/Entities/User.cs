@@ -59,6 +59,12 @@ public class User : BaseEntity
     /// alerts. Null means "LINE channel falls back to System / Email".</summary>
     public string? LineUserId { get; set; }
 
+    /// <summary>รายการหน้าที่ผู้ใช้กด "ปิดการสอนนี้ ไม่ต้องแสดงอีก" — JSON array
+    /// ของ pageKey เช่น ["documents","journals"] หรือมี "*" = ปิดทุกหน้า.
+    /// เก็บฝั่ง server เพื่อให้ "ไม่ขึ้นอีกเลย" จริง ๆ ข้ามเครื่อง/ล้าง cache
+    /// (localStorage เป็นแค่ cache). null = ยังไม่เคยปิดอะไร.</summary>
+    public string? DismissedToursJson { get; set; }
+
     // Navigation
     public ICollection<CompanyUser> CompanyUsers { get; set; } = new List<CompanyUser>();
 }

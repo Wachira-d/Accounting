@@ -1031,10 +1031,20 @@ public partial class PdfGenerationService : IPdfGenerationService
             // "ใบเสร็จรับเงิน/ใบกำกับภาษี" (ก่อน combined/servedAsReceipt)
             if (doc.DocumentType == DocumentType.TaxInvoice && doc.IssuedAsCashReceipt)
                 title = isEn ? "Receipt / Tax Invoice" : Ov("CashReceiptTaxInvoice", "ใบเสร็จรับเงิน/ใบกำกับภาษี");
+            // ใบรวมที่ "จ่ายครบแล้ว + ไม่มีใบเสร็จแยก" → 3-in-1 (คำว่าใบเสร็จรับเงิน
+            // โผล่เมื่อรับเงินจริงเท่านั้น — ม.105); ยังไม่จ่าย → หัวรวม 2 หน้าที่เดิม
             else if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
-                title = isEn ? "Invoice / Tax Invoice" : Ov("CombinedInvoice", "ใบแจ้งหนี้/ใบกำกับภาษี");
+                title = doc.ServedAsReceipt
+                    ? (isEn ? "Invoice / Tax Invoice / Receipt"
+                            : Ov("CombinedInvoiceReceipt", "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน"))
+                    : (isEn ? "Invoice / Tax Invoice" : Ov("CombinedInvoice", "ใบแจ้งหนี้/ใบกำกับภาษี"));
+            // ใบเสร็จ settlement ของ "ใบกำกับภาษี" (VAT รายงานที่ใบกำกับแล้ว) →
+            // คงหัว "ใบเสร็จรับเงิน" เปล่า (ไม่เข้า branch ล่าง) — กันกระดาษที่มีคำ
+            // ใบกำกับภาษี 2 ใบจากการขายเดียว. settlement ของ "ใบแจ้งหนี้" ยังเข้า
+            // branch ล่างตามเดิม (ใบเสร็จนั้นคือใบกำกับ ณ วันรับเงิน §78/1)
             else if (((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
-                        && doc.VatAmount > 0 && !IsDeferredVatDeposit(doc))
+                        && doc.VatAmount > 0 && !IsDeferredVatDeposit(doc)
+                        && !doc.SettlesTaxInvoiceSource)
                      || (doc.DocumentType == DocumentType.TaxInvoice && doc.ServedAsReceipt))
                 title = isEn ? "Tax Invoice / Receipt" : Ov("TaxInvoiceReceipt", "ใบกำกับภาษี/ใบเสร็จรับเงิน");
         }
@@ -1074,13 +1084,31 @@ public partial class PdfGenerationService : IPdfGenerationService
 
     /// <summary>ตั้ง doc.ServedAsReceipt: ใบกำกับภาษีที่ชำระครบ ณ วันออก (cash
     /// sale) และไม่มีใบเสร็จ/ใบสำคัญรับแยกอ้างถึง → ทำหน้าที่เป็นใบเสร็จในตัว
-    /// → หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน". ถ้ามีใบเสร็จแยกออกให้แล้ว
-    /// (credit ที่ชำระภายหลังด้วยการแปลงเป็นใบเสร็จ) → คงเป็น "ใบกำกับภาษี".</summary>
+    /// → หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน". ใบรวม (CombinedInvoiceTaxInvoice)
+    /// ก็ upgrade ได้เหมือนกัน → "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน" (3-in-1)
+    /// — จ่ายครบเมื่อไร คำว่าใบเสร็จรับเงินต้องโผล่ (ม.105 ใบรับ = รับเงินแล้ว).
+    /// ถ้ามีใบเสร็จแยกออกให้แล้ว (credit ที่ชำระภายหลังด้วยการแปลงเป็นใบเสร็จ)
+    /// → คงหัวเดิม (ใบเสร็จแยกคือหลักฐานรับเงิน).
+    ///
+    /// + ตั้ง doc.SettlesTaxInvoiceSource: ใบเสร็จ/ใบสำคัญรับที่อ้าง TaxInvoice
+    /// (ใบกำกับรายงาน VAT ไปแล้ว) → หัวห้ามมีคำ "ใบกำกับภาษี" ซ้ำ (กันเคลมซ้ำ).</summary>
     private async Task ResolveServedAsReceiptAsync(Guid companyId, Document doc)
     {
         doc.ServedAsReceipt = false;
+        doc.SettlesTaxInvoiceSource = false;
+
+        // ใบเสร็จ settlement: เช็คประเภทเอกสารต้นทางที่อ้าง
+        if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+            && doc.RelatedDocumentId.HasValue)
+        {
+            var srcType = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync();
+            doc.SettlesTaxInvoiceSource = srcType == DocumentType.TaxInvoice;
+        }
+
         if (doc.DocumentType != DocumentType.TaxInvoice) return;
-        if (doc.CombinedInvoiceTaxInvoice) return;   // มีหัวรวมของตัวเองแล้ว
         // ชำระครบวันเดียวกัน (same-day settlement) → ใบกำกับทำหน้าที่ใบเสร็จในตัว.
         // เดิมบังคับ Status == Paid เป๊ะ → พลาดเคสที่ balance = 0 แต่ label ยัง
         // Approved/PartiallyPaid (เช่น หักมัดจำผ่าน flow อื่น / rounding) — คำขอ
@@ -1214,7 +1242,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Contact
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{template.ContactSectionTitle}</div>");
         sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
-        if (template.ShowContactTaxId && doc.Contact.TaxId != null) sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId} ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})</div>");
+        // แสดงสาขาเฉพาะเมื่อมีเลขภาษี (สาขาเป็นเรื่องนิติบุคคลผู้จด VAT) — กันบุคคล
+        // ธรรมดาที่ไม่มีเลขภาษีขึ้น "(สำนักงานใหญ่)" เกินจำเป็น. ตรงกับ QuestPDF
+        // renderer (DocumentRenderer.cs:499) + บล็อกผู้ขายด้านบน (IsNullOrWhiteSpace)
+        if (template.ShowContactTaxId && !string.IsNullOrWhiteSpace(doc.Contact.TaxId))
+            sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId} ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})</div>");
         if (template.ShowContactAddress)
         {
             var caddr = FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,

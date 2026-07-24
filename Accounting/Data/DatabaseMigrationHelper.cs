@@ -137,6 +137,11 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "StreetName" varchar(200) NULL;
             """,
 
+            // ===== Users: onboarding tour dismissal (ปิดการสอนถาวร ต่อ user) =====
+            """
+            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "DismissedToursJson" text NULL;
+            """,
+
             // ===== Companies: suspend metadata (WP-A2 enforcement) =====
             """
             ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "SuspendReason" text NULL;
@@ -369,6 +374,23 @@ public static class DatabaseMigrationHelper
             """,
             """
             ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "ReceiptIsTaxInvoice" boolean NOT NULL DEFAULT false;
+            """,
+
+            // ===== SubscriptionPayments: slip OCR assist (WP-C3) =====
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrAmount" decimal(18,2) NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrDate" timestamptz NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrReference" text NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrAmountMatches" boolean NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "SlipOcrParsedAt" timestamptz NULL;
             """,
 
             // ===== SiteSettings: platform billing seller identity (WP-B2) =====
@@ -1277,6 +1299,9 @@ public static class DatabaseMigrationHelper
             """,
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatBecameClaimableAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OutputVatDueAt" timestamp with time zone NULL;
             """,
             // §82/3: ภาษีซื้อ 11640 พ้น 6 เดือน → reclassify เป็นค่าใช้จ่าย
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatExpiredAt" timestamp with time zone NULL;""",
