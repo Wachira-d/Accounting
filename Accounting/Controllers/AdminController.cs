@@ -469,6 +469,19 @@ public class AdminController : ControllerBase
         if (company == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบบริษัท"));
 
         company.Status = request.Status;
+        // WP-A2: เก็บเหตุผล + เวลาระงับ (โชว์ใน 403 ให้ผู้ใช้รู้ว่าทำไมใช้ไม่ได้);
+        // ปลดระงับ → ล้างค่า
+        if (request.Status == CompanyStatus.Suspended)
+        {
+            company.SuspendReason = string.IsNullOrWhiteSpace(request.SuspendReason)
+                ? "ระงับโดยผู้ดูแลระบบ" : request.SuspendReason.Trim();
+            company.SuspendedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            company.SuspendReason = null;
+            company.SuspendedAt = null;
+        }
         company.UpdatedAt = DateTime.UtcNow;
         company.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         await _db.SaveChangesAsync();
@@ -2783,7 +2796,7 @@ public class AdminController : ControllerBase
 
 // ===== Admin-specific DTOs =====
 
-public record UpdateCustomerStatusRequest(CompanyStatus Status);
+public record UpdateCustomerStatusRequest(CompanyStatus Status, string? SuspendReason = null);
 public record UpdateUserStatusRequest(UserStatus Status);
 public record ToggleAdminRequest(bool IsAdmin);
 

@@ -97,7 +97,7 @@ const AdminAPI = {
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },
   customer(id) { return this.get(`/customers/${id}`); },
-  updateCustomerStatus(id, status) { return this.put(`/customers/${id}/status`, { status }); },
+  updateCustomerStatus(id, status, suspendReason = null) { return this.put(`/customers/${id}/status`, { status, suspendReason }); },
 
   // Users
   users(params = '') { return this.get(`/users${params}`); },
