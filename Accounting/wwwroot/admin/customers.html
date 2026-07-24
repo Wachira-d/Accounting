@@ -214,6 +214,32 @@
                 <div class="info-item"><div class="label">สมุดรายวัน</div><div class="value">${d.usage.journalEntries}</div></div>
               </div>
 
+              ${c.status === 'Suspended' && c.suspendReason ? `
+                <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-top:12px;color:#b91c1c;font-size:13px">
+                  ⛔ <strong>ถูกระงับ:</strong> ${c.suspendReason}
+                  ${c.suspendedAt ? `<span style="color:#94a3b8"> (${AdminLayout.datetime(c.suspendedAt)})</span>` : ''}
+                </div>` : ''}
+
+              <div class="action-card">
+                <h4>🔗 Integrations (${(d.integrations||[]).length})</h4>
+                ${(d.integrations||[]).length === 0
+                  ? '<div style="color:#94a3b8;font-size:13px">ยังไม่มีการเชื่อมต่อ</div>'
+                  : (d.integrations.map(i => `<div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid #f1f5f9">
+                       <span>${i.systemName} <span style="color:#94a3b8">(${i.systemType})</span></span>
+                       <span>${i.isActive ? '🟢' : '⚪'} ${i.lastSyncAt ? 'sync ' + AdminLayout.date(i.lastSyncAt) : 'ยังไม่ sync'}${i.consecutiveErrors > 0 ? ` · ⚠️${i.consecutiveErrors}` : ''}</span>
+                     </div>`).join(''))}
+              </div>
+
+              <div class="action-card">
+                <h4>🕑 กิจกรรมล่าสุด</h4>
+                ${(d.recentActivity||[]).length === 0
+                  ? '<div style="color:#94a3b8;font-size:13px">ไม่มีกิจกรรม</div>'
+                  : (d.recentActivity.map(a => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:#475569">
+                       <span>${a.action} · ${a.entityType}</span>
+                       <span style="color:#94a3b8">${a.userEmail || 'system'} · ${AdminLayout.datetime(a.timestamp)}</span>
+                     </div>`).join(''))}
+              </div>
+
               <!-- Quick Status Change -->
               <div class="action-card">
                 <h4>สถานะบริษัท</h4>
@@ -264,6 +290,15 @@
                   ${renderLimitBar('พื้นที่จัดเก็บ', s.current?.storageUsed || 0, s.limits.maxStorageBytes, null, true)}
                 </div>
                 ` : ''}
+
+                <div class="action-card">
+                  <h4>💳 การเงิน</h4>
+                  <div class="action-row" style="flex-wrap:wrap;gap:8px">
+                    <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="issueInvoice('${c.id}')">ออกใบแจ้งหนี้ต่ออายุ</button>
+                    ${s.renewalInvoiceNumber ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="dlInvoice('${c.id}')">⬇ ใบแจ้งหนี้ ${s.renewalInvoiceNumber}</button>` : ''}
+                    <a class="admin-btn admin-btn-primary admin-btn-sm" href="/admin/payments.html">บันทึกรับเงิน →</a>
+                  </div>
+                </div>
 
                 ${t ? `
                 <div style="margin-top:16px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">
@@ -431,6 +466,19 @@
         AdminLayout.toast('อัพเดทสถานะบริษัทสำเร็จ');
         await refreshDetail(companyId);
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    // WP-E1: renewal invoice actions
+    async function issueInvoice(companyId) {
+      try {
+        const res = await AdminAPI.issueRenewalInvoice(companyId);
+        AdminLayout.toast(res.message || 'ออกใบแจ้งหนี้แล้ว');
+        await refreshDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+    async function dlInvoice(companyId) {
+      try { await AdminAPI.downloadRenewalInvoice(companyId); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 
     // ===== Attach to User License =====

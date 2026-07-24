@@ -94,6 +94,8 @@
                       </button>
                       <button class="admin-btn admin-btn-sm admin-btn-outline"
                         onclick="resetUserPassword('${u.id}','${u.email}')">🔑 รีเซ็ตรหัส</button>
+                      <button class="admin-btn admin-btn-sm" style="background:#dc2626;color:#fff"
+                        onclick="anonymizeUser('${u.id}','${u.email}')">🗑 ลบ (PDPA)</button>
                     </div>
                   </td>
                 </tr>
@@ -149,6 +151,16 @@
       try {
         const res = await AdminAPI.resetUserPassword(userId);
         showLinkResult('ลิงก์รีเซ็ตรหัสผ่าน', res.data, res.message);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    // ===== WP-D3: anonymize user (PDPA) =====
+    async function anonymizeUser(userId, email) {
+      if (!confirm(`ลบข้อมูลส่วนบุคคลของ ${email}?\n\nชื่อ/อีเมล/เบอร์จะถูกลบถาวร (คงประวัติ/เอกสารตามกฎหมาย 5 ปี). ผู้ใช้จะเข้าระบบไม่ได้อีก.`)) return;
+      try {
+        const res = await AdminAPI.anonymizeUser(userId);
+        AdminLayout.toast(res.message || 'ลบข้อมูลส่วนบุคคลแล้ว');
+        loadUsers(currentPage);
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 

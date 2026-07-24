@@ -399,6 +399,17 @@ public class AdminController : ControllerBase
         var docCount = await _db.Documents.CountAsync(d => d.CompanyId == companyId);
         var journalCount = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
 
+        // WP-E1: integrations + recent activity + limits ให้หน้า detail ครบ 360°
+        var integrations = await _db.ExternalIntegrations.AsNoTracking()
+            .Where(i => i.CompanyId == companyId)
+            .Select(i => new { i.SystemName, i.SystemType, i.IsActive, i.LastSyncAt, i.ErrorCount, i.ConsecutiveErrors })
+            .ToListAsync();
+        var recentActivity = await _db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId)
+            .OrderByDescending(a => a.Timestamp).Take(15)
+            .Select(a => new { a.Action, a.EntityType, a.UserEmail, a.Timestamp })
+            .ToListAsync();
+
         // When the company is under an Account Plan, surface who pays + the
         // plan name so support can jump there to renew / extend at the right
         // layer. Without this admin would extend Company.Subscription.EndDate
@@ -431,7 +442,8 @@ public class AdminController : ControllerBase
             {
                 company.Id, company.Name, company.NameEn, company.TaxId, company.BranchCode,
                 company.BusinessType, company.Status, company.Address, company.Province,
-                company.Phone, company.Email, company.BaseCurrency, company.CreatedAt
+                company.Phone, company.Email, company.BaseCurrency, company.CreatedAt,
+                company.SuspendReason, company.SuspendedAt
             },
             users = company.CompanyUsers.Select(cu => new
             {
@@ -445,7 +457,17 @@ public class AdminController : ControllerBase
                 company.Subscription.StartDate, company.Subscription.EndDate,
                 company.Subscription.EnabledFeatures,
                 company.Subscription.AccountSubscriptionId,
+                company.Subscription.RenewalInvoiceNumber,
+                limits = new
+                {
+                    maxDocumentsPerMonth = company.Subscription.MaxDocumentsPerMonth,
+                    maxJournalEntriesPerMonth = company.Subscription.MaxJournalEntriesPerMonth,
+                    maxStorageBytes = company.Subscription.MaxStorageBytes,
+                    maxUsers = company.Subscription.MaxUsers,
+                },
             },
+            integrations,
+            recentActivity,
             accountPlan,
             trial = trial == null ? null : new
             {
@@ -585,6 +607,52 @@ public class AdminController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(new ApiResponse<string>(true, null, request.IsAdmin ? "กำหนดเป็น Admin สำเร็จ" : "ยกเลิกสิทธิ์ Admin สำเร็จ"));
+    }
+
+    /// <summary>WP-D3: ลบ/anonymize ผู้ใช้ (PDPA ม.30) — ไม่ hard delete
+    /// (คง FK/audit ตามกฎ MAX(retention) พ.ร.บ.บัญชี) แต่ลบ PII: ชื่อ/อีเมล/
+    /// เบอร์ → ค่า anonymized + ปิดบัญชี. บล็อกถ้าเป็น Owner เดียวของบริษัทใด
+    /// (ต้องโอน ownership ก่อน).</summary>
+    [HttpPost("users/{userId:guid}/anonymize")]
+    public async Task<ActionResult<ApiResponse<object>>> AnonymizeUser(Guid userId)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผู้ใช้"));
+
+        // เป็น Owner เดียวของบริษัทไหนไหม → ต้องโอนก่อน
+        var ownerCompanyIds = await _db.Set<Models.Entities.CompanyUser>().AsNoTracking()
+            .Where(cu => cu.UserId == userId && cu.Role == UserRole.Owner)
+            .Select(cu => cu.CompanyId).ToListAsync();
+        foreach (var cid in ownerCompanyIds)
+        {
+            var otherOwners = await _db.Set<Models.Entities.CompanyUser>().AsNoTracking()
+                .CountAsync(cu => cu.CompanyId == cid && cu.UserId != userId && cu.Role == UserRole.Owner);
+            if (otherOwners == 0)
+                return BadRequest(new ApiResponse<object>(false, null,
+                    "ผู้ใช้นี้เป็นเจ้าของบริษัทเพียงคนเดียว — ต้องโอนสิทธิ์เจ้าของให้ผู้อื่นก่อนจึงจะลบได้"));
+        }
+
+        // anonymize PII (คง Id/FK เพื่อ audit/เอกสารตามกฎหมาย)
+        var tag = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(user.Id.ToString())))[..12].ToLowerInvariant();
+        user.FullName = "ผู้ใช้ที่ถูกลบ";
+        user.Email = $"deleted-{tag}@anonymized.local";
+        user.Phone = null;
+        user.RefreshToken = null;
+        user.PreviousRefreshToken = null;
+        user.PasswordResetToken = null;
+        user.PasswordResetTokenExpiry = null;
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(Convert.ToBase64String(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)));
+        user.Status = UserStatus.Inactive;
+        user.SignatureImageBase64 = null;
+        user.LineUserId = null;
+        user.UpdatedAt = DateTime.UtcNow;
+        user.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<object>(true, new { userId = user.Id, anonymizedEmail = user.Email },
+            "ลบข้อมูลส่วนบุคคลของผู้ใช้แล้ว (คงประวัติ/เอกสารตามกฎหมาย)"));
     }
 
     // ===== WP-D1/D2: Admin User Lifecycle =====
@@ -1132,22 +1200,39 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<SubscriptionPaymentListResponse>(true, result));
     }
 
-    [HttpGet("subscription-payments/all")]
-    public async Task<ActionResult<ApiResponse<object>>> GetAllPayments(
-        [FromQuery] string? status,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20)
+    // WP-C4: filters ร่วมสำหรับ list + export (สถานะ/เดือน/แพ็กเกจ)
+    private IQueryable<Models.Entities.SubscriptionPayment> FilteredPayments(string? status, string? month, string? plan)
     {
         var query = _db.SubscriptionPayments
             .Include(p => p.Subscription).ThenInclude(s => s!.Company)
             .AsQueryable();
 
         if (Enum.TryParse<SubscriptionPaymentStatus>(status, true, out var statusEnum))
-        {
             query = query.Where(p => p.Status == statusEnum);
+        if (Enum.TryParse<SubscriptionPlan>(plan, true, out var planEnum))
+            query = query.Where(p => p.RequestedPlan == planEnum);
+        // month = yyyy-MM → กรองตาม CreatedAt ในเดือนนั้น (UTC)
+        if (!string.IsNullOrWhiteSpace(month) && DateTime.TryParse(month + "-01", out var m))
+        {
+            var mStart = new DateTime(m.Year, m.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            var mEnd = mStart.AddMonths(1);
+            query = query.Where(p => p.CreatedAt >= mStart && p.CreatedAt < mEnd);
         }
+        return query;
+    }
+
+    [HttpGet("subscription-payments/all")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAllPayments(
+        [FromQuery] string? status, [FromQuery] string? month, [FromQuery] string? plan,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var query = FilteredPayments(status, month, plan);
 
         var total = await query.CountAsync();
+        // ยอดรวมของ filter ปัจจุบัน (เฉพาะ Approved = เงินเข้าจริง) + ยอดทุกสถานะ
+        var approvedSum = await query.Where(p => p.Status == SubscriptionPaymentStatus.Approved).SumAsync(p => (decimal?)p.Amount) ?? 0;
+        var allSum = await query.SumAsync(p => (decimal?)p.Amount) ?? 0;
+
         var payments = await query
             .OrderByDescending(p => p.CreatedAt)
             .Skip((page - 1) * pageSize)
@@ -1165,8 +1250,63 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<object>(true, new
         {
             items = payments, total, page, pageSize,
-            totalPages = (int)Math.Ceiling(total / (double)pageSize)
+            totalPages = (int)Math.Ceiling(total / (double)pageSize),
+            approvedSum = Math.Round(approvedSum, 2),
+            allSum = Math.Round(allSum, 2)
         }));
+    }
+
+    /// <summary>WP-C4: export รายการชำระเงินตาม filter เป็น Excel (MiniExcel).</summary>
+    [HttpGet("subscription-payments/export")]
+    public async Task<IActionResult> ExportPayments(
+        [FromQuery] string? status, [FromQuery] string? month, [FromQuery] string? plan)
+    {
+        var rows = await FilteredPayments(status, month, plan)
+            .OrderByDescending(p => p.CreatedAt)
+            .Select(p => new
+            {
+                เลขที่ = p.PaymentNumber,
+                บริษัท = p.Subscription != null ? p.Subscription.Company.Name : "",
+                แพ็กเกจ = p.RequestedPlan.ToString(),
+                ยอด = p.Amount,
+                วิธีชำระ = p.PaymentMethod.ToString(),
+                ประเภท = p.Kind.ToString(),
+                สถานะ = p.Status.ToString(),
+                วันที่ส่ง = p.CreatedAt,
+                วันที่ตรวจ = p.ReviewedAt,
+                ต่ออายุถึง = p.SubscriptionExtendedTo,
+                ใบเสร็จ = p.ReceiptNumber ?? ""
+            })
+            .ToListAsync();
+
+        using var ms = new MemoryStream();
+        MiniExcelLibs.MiniExcel.SaveAs(ms, rows);
+        return File(ms.ToArray(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"payments-{DateTime.UtcNow:yyyyMMdd}.xlsx");
+    }
+
+    public sealed record BulkApproveRequest(List<Guid> PaymentIds);
+
+    /// <summary>WP-C4: อนุมัติหลายรายการพร้อมกัน (ที่ตรวจแล้วว่ายอดตรง).
+    /// อนุมัติทีละใบผ่าน ReviewPaymentAsync เส้นเดิม (ต่ออายุ+ใบเสร็จครบ).</summary>
+    [HttpPost("subscription-payments/bulk-approve")]
+    public async Task<ActionResult<ApiResponse<object>>> BulkApprovePayments([FromBody] BulkApproveRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        int ok = 0; var failed = new List<object>();
+        foreach (var id in (request.PaymentIds ?? new List<Guid>()).Distinct())
+        {
+            try
+            {
+                await _subscriptionService.ReviewPaymentAsync(id,
+                    new ReviewSubscriptionPaymentRequest(true, "Bulk approve", null), userId);
+                ok++;
+            }
+            catch (Exception ex) { failed.Add(new { paymentId = id, error = ex.Message }); }
+        }
+        return Ok(new ApiResponse<object>(true, new { approved = ok, failed },
+            $"อนุมัติสำเร็จ {ok} รายการ" + (failed.Count > 0 ? $", ล้มเหลว {failed.Count}" : "")));
     }
 
     [HttpGet("subscription-payments/{paymentId:guid}")]
