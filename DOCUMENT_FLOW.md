@@ -1379,6 +1379,13 @@ _รอบ 81 (2026-07-24): Invoice undue output VAT — ใบแจ้งห�
 _(ไม่เข้า ภ.พ.30 จนรับเงิน §78/1) → reclass 21913→21911 + OutputVatDueAt เมื่อ_
 _รับชำระ (Payment/ใบเสร็จ settlement); ใบมีสินค้า TrackStock = ส่งมอบ (§78) ลง_
 _21911 ทันทีเหมือนเดิม; report ตัดสิน GL-driven (ใบเก่า net 21913=0 → พฤติกรรมเดิม)._
+_รอบ 82 (2026-07-24): กันใบกำกับซ้อน/ยอดหาย (เคส INV 97,500 + TIV 75,000 ไม่ผูกกัน):_
+_(1) Supersede guard — อนุมัติ TIV ที่แปลงจาก INV ยอดต้องเท่าใบต้นทาง (±0.01)_
+_ไม่งั้น block (กัน partial/ราคาหลุด 0 ทำส่วนต่างหายจาก GL เงียบ);_
+_(2) integration invoice.created: ถ้ามี INV active อ้างอิง (WO) เดียวกัน — ยอดตรง_
+_→ ออกใบกำกับผ่าน ConvertDocumentAsync+Approve (copy บรรทัดจากใบจริง + supersede_
+_อัตโนมัติ), ยอดไม่ตรง/ชำระแล้ว/มีมัดจำ → Failed ดัง ๆ ไม่ mint TIV แยกใบ;_
+_(3) payment.received lookup ข้ามใบ Voided/Rejected + เลือก TIV ก่อน INV._
 _Last verified against codebase: 2026-07-20 (รอบ 60) — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

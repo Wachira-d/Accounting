@@ -680,6 +680,63 @@ public class IntegrationService : IIntegrationService
 
             var totalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
 
+            // ── กันใบกำกับซ้อนกับ "ใบแจ้งหนี้" เดิมอ้างอิง (WO) เดียวกัน ──
+            // เคสจริง: INV 97,500 ค้างอยู่ + integration mint TIV 75,000 แยกใบ
+            // (บรรทัดหนึ่ง payload ส่งราคา 0 มา) → ไม่ผูกกัน = GL รายได้/VAT ซ้ำ
+            // 2 ใบ + ภ.พ.30 ขึ้นซ้อน + ใบกำกับยอดขาด 22,500 เงียบ ๆ.
+            // ทางแก้: ถ้ามีใบแจ้งหนี้ active อ้างอิงเดียวกัน →
+            //   • ยอดตรง + ยังไม่ชำระ + ไม่มีมัดจำใน payload → "แปลงจากใบแจ้งหนี้
+            //     จริง" (ConvertDocumentAsync + Approve) — บรรทัด/ราคา copy จาก
+            //     ใบแจ้งหนี้ ไม่ใช้ payload + SupersedeSourceInvoiceAsync void
+            //     ใบแจ้งหนี้อัตโนมัติ = เหลือใบกำกับใบเดียวใน GL/ภ.พ.30
+            //   • ยอดไม่ตรง/ชำระแล้ว/มีมัดจำ → Failed พร้อมเหตุผล (ห้ามสร้างซ้อนเงียบ)
+            if (!string.IsNullOrEmpty(request.ExternalRef) && _documentService != null)
+            {
+                var priorInvoice = await _db.Documents.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId
+                        && d.Reference == request.ExternalRef && !d.IsDeleted
+                        && d.DocumentType == DocumentType.Invoice
+                        && d.Status != DocumentStatus.Voided
+                        && d.Status != DocumentStatus.Rejected)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (priorInvoice != null)
+                {
+                    string? failReason = null;
+                    if (priorInvoice.PaidAmount > 0.01m)
+                        failReason = $"ใบแจ้งหนี้ {priorInvoice.DocumentNumber} (อ้างอิง {request.ExternalRef}) มีการชำระแล้ว {priorInvoice.PaidAmount:N2} บาท — ออกใบกำกับซ้อนไม่ได้ กรุณาจัดการใบเดิมก่อน";
+                    else if (Math.Abs(priorInvoice.TotalAmount - totalAmount) > 0.01m)
+                        failReason = $"ยอดใบกำกับที่ส่งมา ({totalAmount:N2}) ไม่ตรงกับใบแจ้งหนี้ {priorInvoice.DocumentNumber} ({priorInvoice.TotalAmount:N2}) อ้างอิงเดียวกัน ({request.ExternalRef}) — ตรวจราคาต่อบรรทัดใน payload (พบเคสส่งราคา 0 มา) แล้ว sync ใหม่ หรือยกเลิกใบแจ้งหนี้เดิมก่อน";
+                    else if (request.DepositAppliedAmount > 0m)
+                        failReason = $"มีใบแจ้งหนี้ {priorInvoice.DocumentNumber} อ้างอิงเดียวกันค้างอยู่ + payload มีหักมัดจำ — เคสนี้ต้องยกเลิกใบแจ้งหนี้เดิมก่อนแล้ว sync ใหม่ (กันมัดจำ/ยอดซ้อน)";
+
+                    if (failReason != null)
+                    {
+                        log.Status = "Failed";
+                        log.ErrorMessage = failReason;
+                        log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                        await SaveSyncLog(log, integrationId);
+                        return new InboundSyncResponse(false, failReason, priorInvoice.Id, null, null, null, priorInvoice.DocumentNumber);
+                    }
+
+                    // ยอดตรง → ออกใบกำกับด้วยการแปลงจากใบแจ้งหนี้จริง (เส้นทางเดียว
+                    // กับผู้ใช้กดแปลงในระบบ: เลขรัน TIV + JE + supersede ครบ)
+                    var convertActor = "integration:invoice-sync";
+                    var converted = await _documentService.ConvertDocumentAsync(
+                        companyId, priorInvoice.Id, DocumentType.TaxInvoice, convertActor);
+                    var approvedTiv = await _documentService.ApproveDocumentAsync(
+                        companyId, converted.Id, convertActor);
+                    log.Status = "Success";
+                    log.CreatedDocumentId = approvedTiv.Id;
+                    log.ErrorMessage = $"ออกใบกำกับโดยแปลงจากใบแจ้งหนี้ {priorInvoice.DocumentNumber} (ใบแจ้งหนี้ถูกแทนที่อัตโนมัติ)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true,
+                        $"Tax invoice issued by converting {priorInvoice.DocumentNumber} (superseded)",
+                        approvedTiv.Id, priorInvoice.ContactId, null, null, approvedTiv.DocumentNumber);
+                }
+            }
+
             var document = new Document
             {
                 CompanyId = companyId,
@@ -792,7 +849,17 @@ public class IntegrationService : IIntegrationService
             if (request.DocumentId.HasValue)
                 document = await _db.Documents.FirstOrDefaultAsync(d => d.Id == request.DocumentId.Value && d.CompanyId == companyId);
             else if (!string.IsNullOrEmpty(request.InvoiceExternalRef))
-                document = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId && d.Reference == request.InvoiceExternalRef && !d.IsDeleted);
+                // อ้างอิง (WO) เดียวกันอาจมีหลายใบ: INV ที่ถูกแทนที่ (Voided) + TIV
+                // ตัวจริง — ต้องไม่จับใบ Voided/Rejected และให้ใบกำกับ (TIV) มาก่อน
+                // ใบแจ้งหนี้ (กันชำระเข้าใบที่ supersede ไปแล้ว → AR ที่ถูก reverse)
+                document = await _db.Documents
+                    .Where(d => d.CompanyId == companyId
+                        && d.Reference == request.InvoiceExternalRef && !d.IsDeleted
+                        && d.Status != DocumentStatus.Voided
+                        && d.Status != DocumentStatus.Rejected)
+                    .OrderByDescending(d => d.DocumentType == DocumentType.TaxInvoice)
+                    .ThenByDescending(d => d.CreatedAt)
+                    .FirstOrDefaultAsync();
 
             if (document == null)
                 throw new KeyNotFoundException($"ไม่พบเอกสารอ้างอิง: {request.InvoiceExternalRef ?? request.DocumentId?.ToString()}");

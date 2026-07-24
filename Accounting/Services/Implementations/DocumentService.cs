@@ -7769,6 +7769,15 @@ public class DocumentService : IDocumentService
         // ต้อง "กลับรายการใบแจ้งหนี้เดิม" เท่านั้นถึงจะไม่ซ้ำ. ถ้ากลับรายการไม่ได้
         // (ชำระแล้วบางส่วน/ครบ หรือมีเอกสารลูกอื่น) → **ห้ามลงบัญชีซ้ำ** → block การ
         // อนุมัติ (throw ใน transaction → rollback JE ของ TaxInvoice ทั้งหมด).
+        //
+        // กันยอดไม่เท่ากัน (เคสจริง: INV 97,500 → TIV 75,000 เพราะบรรทัดราคาหลุด
+        // เป็น 0 / partial convert / แก้ draft ก่อนอนุมัติ): supersede reverse ใบ
+        // แจ้งหนี้ "ทั้งใบ" — ถ้าใบกำกับคุมยอดไม่ครบ ส่วนต่างจะหายจาก GL/ภาษีเงียบ ๆ
+        if (Math.Abs(taxInvoice.TotalAmount - src.TotalAmount) > 0.01m)
+            throw new InvalidOperationException(
+                $"ยอดใบกำกับภาษี ({taxInvoice.TotalAmount:N2}) ไม่เท่ากับใบแจ้งหนี้ต้นทาง {src.DocumentNumber} ({src.TotalAmount:N2}) — " +
+                "การแทนที่ต้องยอดตรงกันทั้งใบ (ตรวจราคาต่อบรรทัดของใบกำกับ: พบเคสราคาหลุดเป็น 0). " +
+                "ถ้าต้องการออกใบกำกับบางส่วน ให้ยกเลิกใบแจ้งหนี้เดิมแล้วออกใบแจ้งหนี้ใหม่ตามยอดจริงก่อน");
         if (src.PaidAmount > 0.01m)
             throw new InvalidOperationException(
                 $"ใบแจ้งหนี้ต้นทาง {src.DocumentNumber} มีการชำระแล้ว ({src.PaidAmount:N2} บาท) — " +
