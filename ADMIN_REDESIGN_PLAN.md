@@ -1,8 +1,35 @@
 # ADMIN_REDESIGN_PLAN.md — แผน redesign ระบบ Admin (จัดการ user/บริษัท/การชำระเงิน/ต่ออายุ)
 
 > เอกสาร handoff สำหรับรอบพัฒนา (Opus 4.8) — วิเคราะห์จากการสำรวจโค้ดจริงทั้งระบบ
-> (23 ก.ค. 2026). **ยังไม่ได้ implement อะไรในเอกสารนี้** — เป็นแผนงานแบ่งส่วนละเอียด
-> อ่านคู่กับ CLAUDE.md (กฎเหล็ก) และ DOCUMENT_FLOW.md
+> (23 ก.ค. 2026). อ่านคู่กับ CLAUDE.md (กฎเหล็ก) และ DOCUMENT_FLOW.md
+
+---
+
+## ✅ สถานะการพัฒนา (อัปเดต 24 ก.ค. 2026)
+
+| WP | สถานะ | หมายเหตุ |
+|---|---|---|
+| **A1** readonly-after-expiry | ✅ เสร็จ | middleware + kill-switch `Subscription:Enforcement:Mode` (Off/LogOnly/**Enforce**), default LogOnly |
+| **A2** บังคับ Suspended | ✅ เสร็จ | +SuspendReason/SuspendedAt + endpoint ตั้งเหตุผล + UI prompt |
+| **A3** cascade + jobs | ✅ เสร็จ | license→company cascade + ProcessExpired/Notifications รันรายวันแล้ว |
+| **A4** role ตาย | ✅ เสร็จ | "SystemAdmin,Admin"→"SystemAdmin" (7 จุด) |
+| **C1** manual/waived payment | ✅ เสร็จ | RecordManualPaymentAsync → เส้น approve เดิม + UI modal |
+| **B2** ใบเสร็จ/ใบกำกับ | ✅ เสร็จ | gen ตอน approve + เก็บ + อีเมล + ดาวน์โหลด; §86/4 เมื่อ platform จด VAT |
+| **B1** ใบแจ้งหนี้ต่ออายุ | ✅ เสร็จ | 15 วันก่อนหมดอายุ ผ่าน job (idempotent ต่อ EndDate) |
+| **B3** ลูกค้าโหลดเอง | 🟡 endpoint เสร็จ | หน้า subscription.html tenant ยังไม่เพิ่มปุ่ม (endpoint พร้อม) |
+| **B4** เลขรันแยก | ✅ เสร็จ | RCPT/TINV/SINV แยกจากเอกสาร tenant |
+| **C2** dunning | ✅ ครอบแล้ว | ProcessSubscriptionNotifications (ทวง 3 ระดับ) + A3 flip อัตโนมัติ |
+| **F1** revenue dashboard | ✅ เสร็จ | หน้า revenue.html + endpoint (MRR/ARR/กราฟ/expiring/PastDue/conversion/คิวสลิป) |
+| **D1** สร้าง user | ✅ เสร็จ | + ผูกบริษัท/role + set-password link |
+| **D2** reset password | ✅ เสร็จ | token 24 ชม. + อีเมล/copy-link |
+| **C4** payments redesign | ⬜ ค้าง | filters/ยอดรวม/aging/export/bulk approve |
+| **E1** company 360° | ⬜ ค้าง | หน้า detail รวม subscription/usage/members/activity |
+| **C3/D3/D4/E2/E3/F2/F3** | ⬜ ค้าง | Phase 4 |
+
+> ⚠️ **ต้องทดสอบบน Windows/Postgres ก่อนเปิด Enforce**: CI ไม่มี Postgres —
+> enforcement gate, renewal, receipt generation ผ่าน brace-check + node --check
+> เท่านั้น. เปลี่ยน `Subscription:Enforcement:Mode` เป็น `Enforce` หลัง monitor
+> log 1-2 สัปดาห์.
 
 ---
 
