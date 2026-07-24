@@ -5665,6 +5665,19 @@ public class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     $"เอกสาร {source.DocumentNumber} ไม่มียอดคงค้าง — ไม่สามารถแปลงเป็น {targetType}");
         }
+
+        // เอกสาร settle จาก convert = "เต็มใบ" เสมอ (copy ทุกบรรทัด) — ต้นทางที่
+        // รับ/จ่าย "บางส่วน" ไปแล้ว แปลงต่อไม่ได้ (ยอดใบ settle จะเกินคงค้าง →
+        // เดิมปล่อยแปลงแล้วไป throw ตอนอนุมัติ = ผู้ใช้งงว่าผิดตรงไหน). บอกทาง
+        // ที่ถูกตั้งแต่ตอนกดแปลง: งวดบางส่วน/งวดที่เหลือใช้ "บันทึกชำระเงิน"
+        // (partial ได้หลายงวด + หักยอด/แสดงคงค้าง + ออกใบเสร็จหลักฐานต่องวด)
+        var settlementTargets = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+        if (settlementTargets.Contains(targetType) && source.PaidAmount > 0.01m)
+            throw new InvalidOperationException(
+                $"เอกสาร {source.DocumentNumber} รับ/จ่ายชำระบางส่วนแล้ว ({source.PaidAmount:N2} จาก {source.TotalAmount:N2} บาท) — " +
+                "การแปลงจะออกเอกสารยอดเต็มใบซึ่งเกินยอดคงค้าง. สำหรับงวดที่เหลือให้ใช้ปุ่ม '💰 บันทึกชำระเงิน' แทน " +
+                "(รองรับจ่ายบางส่วนหลายงวดจนครบ + ออกใบเสร็จหลักฐานให้ทุกงวดอัตโนมัติ)");
     }
 
     /// <summary>Create the child document from a chosen set of (source line,
