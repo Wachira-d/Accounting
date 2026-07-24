@@ -399,6 +399,17 @@ public class AdminController : ControllerBase
         var docCount = await _db.Documents.CountAsync(d => d.CompanyId == companyId);
         var journalCount = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
 
+        // WP-E1: integrations + recent activity + limits ให้หน้า detail ครบ 360°
+        var integrations = await _db.ExternalIntegrations.AsNoTracking()
+            .Where(i => i.CompanyId == companyId)
+            .Select(i => new { i.SystemName, i.SystemType, i.IsActive, i.LastSyncAt, i.ErrorCount, i.ConsecutiveErrors })
+            .ToListAsync();
+        var recentActivity = await _db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId)
+            .OrderByDescending(a => a.Timestamp).Take(15)
+            .Select(a => new { a.Action, a.EntityType, a.UserEmail, a.Timestamp })
+            .ToListAsync();
+
         // When the company is under an Account Plan, surface who pays + the
         // plan name so support can jump there to renew / extend at the right
         // layer. Without this admin would extend Company.Subscription.EndDate
@@ -431,7 +442,8 @@ public class AdminController : ControllerBase
             {
                 company.Id, company.Name, company.NameEn, company.TaxId, company.BranchCode,
                 company.BusinessType, company.Status, company.Address, company.Province,
-                company.Phone, company.Email, company.BaseCurrency, company.CreatedAt
+                company.Phone, company.Email, company.BaseCurrency, company.CreatedAt,
+                company.SuspendReason, company.SuspendedAt
             },
             users = company.CompanyUsers.Select(cu => new
             {
@@ -445,7 +457,17 @@ public class AdminController : ControllerBase
                 company.Subscription.StartDate, company.Subscription.EndDate,
                 company.Subscription.EnabledFeatures,
                 company.Subscription.AccountSubscriptionId,
+                company.Subscription.RenewalInvoiceNumber,
+                limits = new
+                {
+                    maxDocumentsPerMonth = company.Subscription.MaxDocumentsPerMonth,
+                    maxJournalEntriesPerMonth = company.Subscription.MaxJournalEntriesPerMonth,
+                    maxStorageBytes = company.Subscription.MaxStorageBytes,
+                    maxUsers = company.Subscription.MaxUsers,
+                },
             },
+            integrations,
+            recentActivity,
             accountPlan,
             trial = trial == null ? null : new
             {
