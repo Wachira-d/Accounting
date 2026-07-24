@@ -29,8 +29,13 @@
 | **E2** usage alert >85% | ✅ เสร็จ (read) | endpoint + ตารางบน revenue dashboard; auto-notify+idempotency เป็น follow-up |
 | **F2** background-jobs + JobRunLog | ✅ เสร็จ | entity + recorder + instrument 5 job + ตารางผลใน UI |
 | **F3** admin action audit | ✅ ครอบแล้ว | DbContext auto-capture (hash-chain) ทุก TenantEntity/BaseEntity + actor จาก UpdatedBy/CreatedBy — ไม่ต้องเขียนเอง |
-| **E3** impersonation | ⛔ ค้าง (มี gate) | ⚠️ ต้อง **security review** ก่อน merge + ต้อง mint user JWT (แตะ auth pipeline core) — ทดสอบใน CI ไม่ได้ ไม่ควรรีบ |
-| **C3** OCR สลิป assist | ⛔ ค้าง (มี gate) | ต้องทำ **เต็มกฎเหล็ก #1** (AiFeatureKey + distillation model + orchestrator + anti-hallucination + feedback + kill-switch) — งานใหญ่ ทำครึ่ง ๆ = ผิดกฎ |
+| **C3** OCR สลิป assist | ✅ เสร็จ | local Tesseract + rule-based เทียบยอด → badge (advisory, ไม่เรียก LLM = ไม่ต้อง distillation, ไม่ auto-approve) |
+| **E3** impersonation | ✅ เสร็จ (OFF) | build ครบ + safe-by-construction (OFF by default, read-only middleware, no role leak, audit, banner) — ⚠️ เปิด `Impersonation:Enabled` เฉพาะหลัง security review บน Postgres จริง |
+
+> **สถานะรวม: ทุก WP (A–F) implement ครบแล้ว.** เหลือขั้นตอนฝั่งผู้ใช้: (1) แก้แอปสตาร์ท
+> (500.37 — DB connectivity, ไม่ใช่โค้ด), (2) rebuild + ทดสอบบน Windows/Postgres,
+> (3) monitor enforcement log 1–2 สัปดาห์ก่อนเปิด `Enforce`, (4) security review ก่อนเปิด
+> `Impersonation:Enabled`.
 
 > ⚠️ **ต้องทดสอบบน Windows/Postgres ก่อนเปิด Enforce**: CI ไม่มี Postgres —
 > enforcement gate, renewal, receipt generation ผ่าน brace-check + node --check
