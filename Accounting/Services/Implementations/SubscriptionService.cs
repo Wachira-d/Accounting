@@ -18,6 +18,9 @@ public class SubscriptionService : ISubscriptionService
     private readonly INotificationEngine? _notify;
     private readonly ISaasBillingDocumentService? _billing;
 
+    /// <summary>WP-B1: ออกใบแจ้งหนี้ต่ออายุกี่วันก่อนหมดอายุ (default 15).</summary>
+    private const int RenewalInvoiceLeadDays = 15;
+
     public SubscriptionService(AccountingDbContext db, INotificationService notificationService,
         INotificationEngine? notify = null, ISaasBillingDocumentService? billing = null)
     {
@@ -1713,6 +1716,15 @@ public class SubscriptionService : ISubscriptionService
                         $"Subscription จะหมดอายุในอีก {daysUntilExpiry} วัน",
                         $"Subscription plan {sub.Plan} จะหมดอายุในวันที่ {sub.EndDate:dd/MM/yyyy} (อีก {daysUntilExpiry} วัน) กรุณาต่ออายุก่อนหมดอายุ");
                 }
+            }
+
+            // WP-B1: ออกใบแจ้งหนี้ต่ออายุล่วงหน้า (default 15 วันก่อนหมดอายุ) —
+            // idempotent ต่อ EndDate ของรอบ (service เช็คซ้ำอีกชั้น) จึงเรียกซ้ำได้ปลอดภัย
+            if (_billing != null && daysUntilExpiry > 0 && daysUntilExpiry <= RenewalInvoiceLeadDays
+                && sub.Status == SubscriptionStatus.Active
+                && sub.RenewalInvoiceForEndDate != sub.EndDate)
+            {
+                await _billing.GenerateRenewalInvoiceAsync(sub.Id);
             }
 
             // แจ้งเตือนก่อนตัดบัญชี

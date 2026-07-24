@@ -220,6 +220,17 @@ public class SubscriptionController : ControllerBase
         return File(pdf.Value.Bytes, "application/pdf", pdf.Value.FileName);
     }
 
+    /// <summary>WP-B1: ลูกค้าดาวน์โหลดใบแจ้งหนี้ต่ออายุของบริษัทตัวเอง.</summary>
+    [HttpGet("{companyId:guid}/renewal-invoice")]
+    public async Task<IActionResult> DownloadRenewalInvoice(Guid companyId)
+    {
+        var sub = await _subscriptionService.GetSubscriptionAsync(companyId);
+        var pdf = await _billing.GetRenewalInvoicePdfAsync(sub.Id);
+        if (pdf == null)
+            return NotFound(new ApiResponse<object>(false, null, "ยังไม่มีใบแจ้งหนี้ต่ออายุ"));
+        return File(pdf.Value.Bytes, "application/pdf", pdf.Value.FileName);
+    }
+
     // ===== Usage Monitor =====
 
     /// <summary>

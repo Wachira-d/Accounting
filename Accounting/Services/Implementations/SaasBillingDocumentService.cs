@@ -168,6 +168,232 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
     private static bool IsValidTaxId(string? taxId)
         => !string.IsNullOrWhiteSpace(taxId) && taxId.Length == 13 && taxId.All(char.IsDigit);
 
+    private static string StyleBlock() =>
+        "<!DOCTYPE html><html lang='th'><head><meta charset='utf-8'/><style>" + @"
+            *{box-sizing:border-box;}
+            body{font-family:'THSarabunNew','Noto Sans Thai',sans-serif;font-size:14px;color:#1e293b;margin:0;padding:28px;}
+            .doc{max-width:720px;margin:0 auto;}
+            .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #334155;padding-bottom:10px;}
+            .seller-name{font-size:20px;font-weight:700;}
+            .muted{color:#64748b;font-size:12px;line-height:1.5;}
+            .title{text-align:right;}
+            .title h1{font-size:20px;margin:0;color:#0f172a;}
+            .meta{display:flex;justify-content:space-between;margin:14px 0;gap:16px;}
+            .box{flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;}
+            .box .label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;}
+            table{width:100%;border-collapse:collapse;margin-top:8px;}
+            th,td{padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:left;}
+            th{background:#f1f5f9;font-size:12px;}
+            td.r,th.r{text-align:right;}
+            .sum{margin-top:10px;margin-left:auto;width:260px;}
+            .sum .row{display:flex;justify-content:space-between;padding:3px 0;}
+            .sum .grand{border-top:2px solid #334155;margin-top:4px;padding-top:6px;font-weight:700;font-size:16px;}
+            .foot{margin-top:26px;display:flex;justify-content:space-between;color:#64748b;font-size:12px;}
+            .pay{margin-top:16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;color:#1e3a8a;font-size:13px;}
+            .sign{margin-top:44px;border-top:1px dashed #94a3b8;width:220px;text-align:center;padding-top:4px;}
+        " + "</style></head><body>";
+
+    private (string Name, string? Address, string? TaxId, string Branch, string? Phone, string? Email)
+        Seller(SiteSettings? s) => (
+            !string.IsNullOrWhiteSpace(s?.PlatformSellerName) ? s!.PlatformSellerName! : (s?.SiteName ?? "ผู้ให้บริการ"),
+            s?.PlatformSellerAddress, s?.PlatformSellerTaxId,
+            string.IsNullOrWhiteSpace(s?.PlatformSellerBranchCode) ? "00000" : s!.PlatformSellerBranchCode!,
+            s?.PlatformSellerPhone, s?.PlatformSellerEmail ?? s?.ContactEmail);
+
+    // ---- WP-B1: renewal invoice ----
+    public async Task<string?> GenerateRenewalInvoiceAsync(Guid subscriptionId)
+    {
+        try
+        {
+            var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.Id == subscriptionId);
+            if (sub == null) return null;
+
+            // idempotent ต่อ EndDate ของรอบนี้
+            if (sub.RenewalInvoiceForEndDate.HasValue
+                && sub.RenewalInvoiceForEndDate.Value == sub.EndDate
+                && !string.IsNullOrEmpty(sub.RenewalInvoiceNumber))
+                return sub.RenewalInvoiceNumber;
+
+            var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == sub.CompanyId);
+            if (buyer == null) return null;
+
+            var template = await _db.PlanTemplates.AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Plan == sub.Plan && t.IsActive);
+            var amount = PriceFor(template, sub.BillingCycle, sub.PricePerCycle);
+            if (amount <= 0) return null; // ฟรี/ไม่มีราคา → ไม่ต้องออกใบแจ้งหนี้
+
+            var settings = await _db.Set<SiteSettings>().AsNoTracking().OrderBy(s => s.CreatedAt).FirstOrDefaultAsync();
+            var now = DateTime.UtcNow;
+            var number = await NextInvoiceNumberAsync(now);
+            var months = MonthsFor(sub.BillingCycle);
+
+            var html = BuildInvoiceHtml(buyer, settings, number, now, sub.EndDate, amount, sub.Plan, sub.BillingCycle, months);
+            byte[] pdfBytes;
+            try { pdfBytes = _pdf.ConvertHtmlToPdfBytes(html); }
+            catch (Exception ex) { _logger.LogWarning(ex, "แปลง PDF ใบแจ้งหนี้ต่ออายุไม่สำเร็จ sub {Sub}", subscriptionId); return null; }
+
+            var ownerUserId = await _db.CompanyUsers.AsNoTracking()
+                .Where(cu => cu.CompanyId == sub.CompanyId && cu.Role == UserRole.Owner)
+                .Select(cu => cu.UserId).FirstOrDefaultAsync();
+            if (ownerUserId == Guid.Empty)
+                ownerUserId = await _db.CompanyUsers.AsNoTracking()
+                    .Where(cu => cu.CompanyId == sub.CompanyId).Select(cu => cu.UserId).FirstOrDefaultAsync();
+            if (ownerUserId == Guid.Empty) return null;
+
+            var att = await _files.UploadBytesAsync(sub.CompanyId, "SubscriptionInvoice", sub.Id,
+                $"{number}.pdf", "application/pdf", pdfBytes, ownerUserId);
+
+            sub.RenewalInvoiceNumber = number;
+            sub.RenewalInvoiceIssuedAt = now;
+            sub.RenewalInvoiceForEndDate = sub.EndDate;
+            await _db.SaveChangesAsync();
+
+            await SendInvoiceEmailAsync(sub.CompanyId, number, amount, sub.EndDate);
+            return number;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GenerateRenewalInvoiceAsync ล้มเหลว sub {Sub}", subscriptionId);
+            return null;
+        }
+    }
+
+    public async Task<(byte[] Bytes, string FileName)?> GetRenewalInvoicePdfAsync(Guid subscriptionId)
+    {
+        var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == subscriptionId);
+        if (sub == null || string.IsNullOrEmpty(sub.RenewalInvoiceNumber)) return null;
+
+        // หาไฟล์ที่เก็บไว้
+        var atts = await _files.GetByEntityAsync(sub.CompanyId, "SubscriptionInvoice", sub.Id);
+        var stored = atts.OrderByDescending(a => a.CreatedAt)
+            .FirstOrDefault(a => a.OriginalFileName == $"{sub.RenewalInvoiceNumber}.pdf");
+        if (stored != null)
+        {
+            var fullPath = Path.IsPathRooted(stored.StoragePath)
+                ? stored.StoragePath : Path.Combine(Directory.GetCurrentDirectory(), stored.StoragePath);
+            if (File.Exists(fullPath))
+                return (await File.ReadAllBytesAsync(fullPath), stored.OriginalFileName);
+        }
+
+        // regenerate
+        var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == sub.CompanyId);
+        if (buyer == null) return null;
+        var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == sub.Plan && t.IsActive);
+        var amount = PriceFor(template, sub.BillingCycle, sub.PricePerCycle);
+        var settings = await _db.Set<SiteSettings>().AsNoTracking().OrderBy(s => s.CreatedAt).FirstOrDefaultAsync();
+        var issuedAt = sub.RenewalInvoiceIssuedAt ?? DateTime.UtcNow;
+        var forEnd = sub.RenewalInvoiceForEndDate ?? sub.EndDate;
+        var html = BuildInvoiceHtml(buyer, settings, sub.RenewalInvoiceNumber!, issuedAt, forEnd, amount,
+            sub.Plan, sub.BillingCycle, MonthsFor(sub.BillingCycle));
+        try { return (_pdf.ConvertHtmlToPdfBytes(html), $"{sub.RenewalInvoiceNumber}.pdf"); }
+        catch { return null; }
+    }
+
+    private static int MonthsFor(BillingCycle c) => c switch
+    {
+        BillingCycle.Monthly => 1, BillingCycle.Quarterly => 3,
+        BillingCycle.SemiAnnual => 6, BillingCycle.Annual => 12, _ => 1
+    };
+
+    private static decimal PriceFor(PlanTemplate? t, BillingCycle c, decimal fallback)
+    {
+        if (t == null) return fallback;
+        return c switch
+        {
+            BillingCycle.Monthly => t.MonthlyPrice,
+            BillingCycle.Quarterly => t.QuarterlyPrice,
+            BillingCycle.SemiAnnual => t.SemiAnnualPrice,
+            BillingCycle.Annual => t.AnnualPrice,
+            _ => t.MonthlyPrice
+        };
+    }
+
+    private async Task<string> NextInvoiceNumberAsync(DateTime now)
+    {
+        var period = now.ToString("yyyyMM");
+        var like = $"SINV-{period}-%";
+        var count = await _db.Subscriptions
+            .CountAsync(s => s.RenewalInvoiceNumber != null && EF.Functions.Like(s.RenewalInvoiceNumber, like));
+        return $"SINV-{period}-{count + 1:D4}";
+    }
+
+    private async Task SendInvoiceEmailAsync(Guid companyId, string number, decimal amount, DateTime dueDate)
+    {
+        if (_email == null) return;
+        try
+        {
+            if (!await _email.IsSystemEmailConfiguredAsync()) return;
+            var owner = await _db.CompanyUsers.AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner)
+                .Join(_db.Users, cu => cu.UserId, u => u.Id, (cu, u) => new { u.Email, u.FullName })
+                .FirstOrDefaultAsync();
+            if (owner == null || string.IsNullOrWhiteSpace(owner.Email)) return;
+            var msg = $"ใบแจ้งหนี้ค่าบริการเลขที่ {number} ยอด {amount:N2} บาท "
+                    + $"(ต่ออายุก่อน {dueDate.AddHours(7):dd/MM/yyyy}) — คลิกเพื่อชำระและต่ออายุ";
+            await _email.SendNotificationEmailAsync(owner.Email, owner.FullName ?? "ลูกค้า",
+                $"ใบแจ้งหนี้ค่าบริการ {number}", msg, "/pages/subscription.html");
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "ส่งอีเมลใบแจ้งหนี้ไม่สำเร็จ company {CompanyId}", companyId); }
+    }
+
+    private string BuildInvoiceHtml(Company buyer, SiteSettings? s, string number, DateTime issuedAt,
+        DateTime dueDate, decimal amount, SubscriptionPlan plan, BillingCycle cycle, int months)
+    {
+        var seller = Seller(s);
+        var isVat = s != null && s.PlatformIsVatRegistered && IsValidTaxId(seller.TaxId);
+        decimal subtotal, vat, grand;
+        if (isVat)
+        {
+            if (s!.PlatformPriceIncludesVat) { vat = Math.Round(amount * 7m / 107m, 2); subtotal = amount - vat; grand = amount; }
+            else { subtotal = amount; vat = Math.Round(amount * 0.07m, 2); grand = amount + vat; }
+        }
+        else { subtotal = amount; vat = 0m; grand = amount; }
+
+        var sellerBranchLabel = seller.Branch == "00000" ? "สำนักงานใหญ่" : $"สาขาที่ {seller.Branch}";
+
+        var sb = new StringBuilder();
+        sb.Append(StyleBlock());
+        sb.Append("<div class='doc'>");
+        sb.Append("<div class='head'><div>");
+        sb.Append($"<div class='seller-name'>{Enc(seller.Name)}</div>");
+        if (!string.IsNullOrWhiteSpace(seller.Address)) sb.Append($"<div class='muted'>{Enc(seller.Address)}</div>");
+        if (isVat) sb.Append($"<div class='muted'>เลขประจำตัวผู้เสียภาษี: {Enc(seller.TaxId)} ({Enc(sellerBranchLabel)})</div>");
+        var contact = string.Join("  ", new[] {
+            string.IsNullOrWhiteSpace(seller.Phone) ? null : $"โทร {Enc(seller.Phone)}",
+            string.IsNullOrWhiteSpace(seller.Email) ? null : Enc(seller.Email) }.Where(x => x != null));
+        if (contact.Length > 0) sb.Append($"<div class='muted'>{contact}</div>");
+        sb.Append("</div>");
+        sb.Append("<div class='title'><h1>ใบแจ้งหนี้ค่าบริการ</h1>");
+        sb.Append($"<div class='muted'>เลขที่: <strong>{Enc(number)}</strong></div>");
+        sb.Append($"<div class='muted'>วันที่: {issuedAt.AddHours(7):dd/MM/yyyy}</div>");
+        sb.Append($"<div class='muted'>กำหนดชำระ: {dueDate.AddHours(7):dd/MM/yyyy}</div>");
+        sb.Append("</div></div>");
+
+        sb.Append("<div class='meta'><div class='box'><div class='label'>เรียกเก็บจาก</div>");
+        sb.Append($"<div><strong>{Enc(buyer.Name)}</strong></div>");
+        if (!string.IsNullOrWhiteSpace(buyer.Address)) sb.Append($"<div class='muted'>{Enc(buyer.Address)}</div>");
+        if (isVat && IsValidTaxId(buyer.TaxId)) sb.Append($"<div class='muted'>เลขผู้เสียภาษี: {Enc(buyer.TaxId)}</div>");
+        sb.Append("</div></div>");
+
+        sb.Append("<table><thead><tr><th>รายการ</th><th class='r'>จำนวนเงิน</th></tr></thead><tbody>");
+        sb.Append($"<tr><td>ค่าบริการระบบบัญชีออนไลน์ — {Enc(plan.ToString())} · {Enc(cycle.ToString())} · {months} เดือน</td>");
+        sb.Append($"<td class='r'>{subtotal:N2}</td></tr></tbody></table>");
+
+        sb.Append("<div class='sum'>");
+        if (isVat)
+        {
+            sb.Append($"<div class='row'><span>มูลค่าก่อนภาษี</span><span>{subtotal:N2}</span></div>");
+            sb.Append($"<div class='row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{vat:N2}</span></div>");
+        }
+        sb.Append($"<div class='row grand'><span>ยอดชำระ</span><span>{grand:N2} บาท</span></div></div>");
+
+        sb.Append("<div class='pay'>💳 ชำระเงินและต่ออายุได้ที่หน้า \"การสมัครสมาชิก\" ในระบบ — "
+                + "อัปโหลดสลิปเพื่อให้ทีมงานตรวจสอบและต่ออายุอัตโนมัติ</div>");
+        sb.Append("<div class='foot'><div>เอกสารออกโดยระบบอัตโนมัติ (ยังไม่ใช่ใบเสร็จ — จะออกใบเสร็จเมื่อชำระเงินแล้ว)</div></div>");
+        sb.Append("</div></body></html>");
+        return sb.ToString();
+    }
+
     private static string Enc(string? s) => WebUtility.HtmlEncode(s ?? "");
 
     private string BuildHtml(SubscriptionPayment payment, Company buyer, SiteSettings? s,
@@ -209,31 +435,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         var extendedTo = payment.SubscriptionExtendedTo;
 
         var sb = new StringBuilder();
-        sb.Append("<!DOCTYPE html><html lang='th'><head><meta charset='utf-8'/><style>");
-        sb.Append(@"
-            *{box-sizing:border-box;}
-            body{font-family:'THSarabunNew','Noto Sans Thai',sans-serif;font-size:14px;color:#1e293b;margin:0;padding:28px;}
-            .doc{max-width:720px;margin:0 auto;}
-            .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #334155;padding-bottom:10px;}
-            .seller-name{font-size:20px;font-weight:700;}
-            .muted{color:#64748b;font-size:12px;line-height:1.5;}
-            .title{text-align:right;}
-            .title h1{font-size:20px;margin:0;color:#0f172a;}
-            .meta{display:flex;justify-content:space-between;margin:14px 0;gap:16px;}
-            .box{flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;}
-            .box .label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;}
-            table{width:100%;border-collapse:collapse;margin-top:8px;}
-            th,td{padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:left;}
-            th{background:#f1f5f9;font-size:12px;}
-            td.r,th.r{text-align:right;}
-            .sum{margin-top:10px;margin-left:auto;width:260px;}
-            .sum .row{display:flex;justify-content:space-between;padding:3px 0;}
-            .sum .grand{border-top:2px solid #334155;margin-top:4px;padding-top:6px;font-weight:700;font-size:16px;}
-            .foot{margin-top:26px;display:flex;justify-content:space-between;color:#64748b;font-size:12px;}
-            .stamp{margin-top:40px;text-align:center;}
-            .sign{margin-top:44px;border-top:1px dashed #94a3b8;width:220px;text-align:center;padding-top:4px;}
-        ");
-        sb.Append("</style></head><body><div class='doc'>");
+        sb.Append(StyleBlock());
+        sb.Append("<div class='doc'>");
 
         sb.Append("<div class='head'><div>");
         sb.Append($"<div class='seller-name'>{Enc(sellerName)}</div>");

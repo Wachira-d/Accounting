@@ -74,6 +74,8 @@ const AdminAPI = {
     a.remove(); URL.revokeObjectURL(url);
   },
   downloadPaymentReceipt(paymentId) { return this.downloadFile(`/subscription-payments/${paymentId}/receipt`, `receipt-${paymentId}.pdf`); },
+  issueRenewalInvoice(companyId) { return this.post(`/companies/${companyId}/renewal-invoice`, {}); },
+  downloadRenewalInvoice(companyId) { return this.downloadFile(`/companies/${companyId}/renewal-invoice`, `invoice-${companyId}.pdf`); },
 
   // Auth
   async login(email, password) {

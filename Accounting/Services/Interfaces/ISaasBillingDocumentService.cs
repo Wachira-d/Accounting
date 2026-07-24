@@ -13,4 +13,12 @@ public interface ISaasBillingDocumentService
 
     /// <summary>ดึง PDF ที่ออกแล้วสำหรับดาวน์โหลด (regenerate ถ้าไฟล์หาย).</summary>
     Task<(byte[] Bytes, string FileName)?> GetReceiptPdfAsync(Guid paymentId);
+
+    /// <summary>WP-B1: ออกใบแจ้งหนี้ต่ออายุล่วงหน้าก่อนหมดอายุ (SINV-YYYYMM-####)
+    /// ยอดตาม PlanTemplate + BillingCycle ปัจจุบัน + เก็บ PDF + อีเมลลิงก์จ่าย.
+    /// idempotent ต่อ EndDate ของรอบ — ไม่ throw. คืนเลขใบที่ออก (null = ไม่ได้ออก).</summary>
+    Task<string?> GenerateRenewalInvoiceAsync(Guid subscriptionId);
+
+    /// <summary>ดึง PDF ใบแจ้งหนี้ต่ออายุที่ออกแล้ว (สำหรับดาวน์โหลด).</summary>
+    Task<(byte[] Bytes, string FileName)?> GetRenewalInvoicePdfAsync(Guid subscriptionId);
 }

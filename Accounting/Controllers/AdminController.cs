@@ -1023,6 +1023,30 @@ public class AdminController : ControllerBase
         return File(pdf.Value.Bytes, "application/pdf", pdf.Value.FileName);
     }
 
+    /// <summary>WP-B1: admin สั่งออก/ดาวน์โหลดใบแจ้งหนี้ต่ออายุของบริษัท.</summary>
+    [HttpPost("companies/{companyId:guid}/renewal-invoice")]
+    public async Task<ActionResult<ApiResponse<object>>> IssueRenewalInvoice(Guid companyId)
+    {
+        var subId = await _db.Subscriptions.Where(s => s.CompanyId == companyId)
+            .Select(s => (Guid?)s.Id).FirstOrDefaultAsync();
+        if (subId == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ subscription"));
+        var number = await _billing.GenerateRenewalInvoiceAsync(subId.Value);
+        return number == null
+            ? BadRequest(new ApiResponse<object>(false, null, "ออกใบแจ้งหนี้ไม่ได้ (อาจเป็นแพ็กเกจฟรี/ไม่มีราคา)"))
+            : Ok(new ApiResponse<object>(true, new { invoiceNumber = number }, $"ออกใบแจ้งหนี้ {number} แล้ว"));
+    }
+
+    [HttpGet("companies/{companyId:guid}/renewal-invoice")]
+    public async Task<IActionResult> DownloadRenewalInvoice(Guid companyId)
+    {
+        var subId = await _db.Subscriptions.Where(s => s.CompanyId == companyId)
+            .Select(s => (Guid?)s.Id).FirstOrDefaultAsync();
+        if (subId == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ subscription"));
+        var pdf = await _billing.GetRenewalInvoicePdfAsync(subId.Value);
+        if (pdf == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่มีใบแจ้งหนี้ต่ออายุ"));
+        return File(pdf.Value.Bytes, "application/pdf", pdf.Value.FileName);
+    }
+
     // ===== Subscription Notification Settings (Admin) =====
 
     [HttpGet("companies/{companyId:guid}/subscription-notifications")]

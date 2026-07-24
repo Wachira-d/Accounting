@@ -34,6 +34,12 @@ public class Subscription : BaseEntity
     public DateTime EndDate { get; set; }
     public DateTime? CancelledAt { get; set; }
 
+    // WP-B1: ใบแจ้งหนี้ต่ออายุที่ออกล่วงหน้าก่อนหมดอายุ. ผูกกับ EndDate ที่ออกให้
+    // → รอบใหม่ (EndDate เปลี่ยนหลังจ่าย) จะออกใบใหม่ ไม่ออกซ้ำรอบเดิม (idempotent).
+    public string? RenewalInvoiceNumber { get; set; }
+    public DateTime? RenewalInvoiceIssuedAt { get; set; }
+    public DateTime? RenewalInvoiceForEndDate { get; set; }
+
     // Trial Management (ควบคุมการทดลองใช้อย่างละเอียด)
     public TrialConfig? TrialConfig { get; set; }
 

@@ -397,6 +397,17 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformPriceIncludesVat" boolean NOT NULL DEFAULT true;
             """,
 
+            // ===== Subscriptions: renewal invoice (WP-B1) =====
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceNumber" text NULL;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceIssuedAt" timestamptz NULL;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceForEndDate" timestamptz NULL;
+            """,
+
             // ===== Subscriptions: Notification settings =====
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "NotifyBeforeExpiry" boolean NOT NULL DEFAULT true;
