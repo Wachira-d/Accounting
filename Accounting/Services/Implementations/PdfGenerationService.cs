@@ -1214,7 +1214,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Contact
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{template.ContactSectionTitle}</div>");
         sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
-        if (template.ShowContactTaxId && doc.Contact.TaxId != null) sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId} ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})</div>");
+        // แสดงสาขาเฉพาะเมื่อมีเลขภาษี (สาขาเป็นเรื่องนิติบุคคลผู้จด VAT) — กันบุคคล
+        // ธรรมดาที่ไม่มีเลขภาษีขึ้น "(สำนักงานใหญ่)" เกินจำเป็น. ตรงกับ QuestPDF
+        // renderer (DocumentRenderer.cs:499) + บล็อกผู้ขายด้านบน (IsNullOrWhiteSpace)
+        if (template.ShowContactTaxId && !string.IsNullOrWhiteSpace(doc.Contact.TaxId))
+            sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId} ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})</div>");
         if (template.ShowContactAddress)
         {
             var caddr = FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,
