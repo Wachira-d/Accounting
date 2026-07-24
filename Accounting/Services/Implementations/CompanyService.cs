@@ -106,29 +106,54 @@ public class CompanyService : ICompanyService
     /// Failures are logged but never blow up the create flow — a missing
     /// Subscription row is recoverable later, but a failed Company create
     /// because of a billing hiccup is not.</summary>
-    public async Task EnsureSubscriptionForNewCompanyAsync(Guid companyId, Guid userId)
+    public async Task EnsureSubscriptionForNewCompanyAsync(Guid companyId, Guid userId,
+        SubscriptionPlan? preferredPlan = null)
     {
         try
         {
             var existing = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
             if (existing == null)
             {
-                // Seed a minimal FreeTrial Subscription so usage counters / quota
-                // checks don't NRE. The detailed plan-template-driven setup lives
-                // in SubscriptionService.StartTrialAsync; we replicate the minimal
-                // shape here to avoid a circular dep on the full service.
-                _db.Subscriptions.Add(new Subscription
+                // เส้นหลัก: template-driven ผ่าน StartTrialAsync — ได้ features/limits/
+                // TrialConfig ตาม PlanTemplate ที่ admin ตั้ง + เคารพ plan ที่ผู้ใช้เลือก
+                // (เดิม seed stub FreeTrial hardcode ทิ้งค่า template ทั้งหมด → บริษัท
+                // ที่สร้างจาก setup wizard ได้ limit ผิดจากที่ตั้งไว้)
+                var seeded = false;
+                if (_subscriptionService != null)
                 {
-                    CompanyId = companyId,
-                    Plan = SubscriptionPlan.FreeTrial,
-                    Status = SubscriptionStatus.Trial,
-                    StartDate = DateTime.UtcNow,
-                    EndDate = DateTime.UtcNow.AddYears(100),  // Free perpetual
-                    MaxUsers = 1, MaxCompanies = 1,
-                    MaxDocumentsPerMonth = 30, MaxJournalEntriesPerMonth = 50,
-                    MaxStorageBytes = 100L * 1024 * 1024,
-                });
-                await _db.SaveChangesAsync();
+                    try
+                    {
+                        await _subscriptionService.StartTrialAsync(
+                            new Models.DTOs.Subscription.StartTrialRequest(
+                                companyId, preferredPlan ?? SubscriptionPlan.FreeTrial),
+                            userId.ToString());
+                        seeded = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(ex,
+                            "StartTrialAsync (plan {Plan}) ล้มเหลวตอนสร้างบริษัท {CompanyId} — ใช้ stub fallback",
+                            preferredPlan ?? SubscriptionPlan.FreeTrial, companyId);
+                    }
+                }
+
+                if (!seeded)
+                {
+                    // last-resort stub — กัน usage counter NRE เมื่อ template/DB มีปัญหา
+                    _db.Subscriptions.Add(new Subscription
+                    {
+                        CompanyId = companyId,
+                        Plan = preferredPlan ?? SubscriptionPlan.FreeTrial,
+                        Status = SubscriptionStatus.Trial,
+                        StartDate = DateTime.UtcNow,
+                        EndDate = DateTime.UtcNow.AddYears(100),  // Free perpetual
+                        MaxUsers = 1, MaxCompanies = 1,
+                        MaxDocumentsPerMonth = 30, MaxJournalEntriesPerMonth = 50,
+                        MaxStorageBytes = 100L * 1024 * 1024,
+                        CreatedBy = userId.ToString()
+                    });
+                    await _db.SaveChangesAsync();
+                }
             }
 
             // Auto-attach to creator's AccountSubscription if it has a slot.

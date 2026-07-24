@@ -76,7 +76,10 @@ public record SsoLoginRequest(
     [Required(ErrorMessage = "กรุณาระบุ token")]
     string IdToken,        // OAuth ID token from provider
 
-    string? CompanyName);  // Optional: create company on first SSO signup
+    string? CompanyName,   // Optional: create company on first SSO signup
+    // แพ็กเกจที่ผู้ใช้เลือกบนหน้า register ก่อนกด SSO — เดิมถูกทิ้ง ทำให้สมัครผ่าน
+    // SSO ได้ FreeTrial เสมอไม่ว่าจะเลือกอะไร (null = FreeTrial)
+    Models.Enums.SubscriptionPlan? Plan = null);
 
 /// <summary>
 /// Returned by GET /api/auth/profile and used to render the signature settings UI.

@@ -191,8 +191,10 @@
       const errEl = document.getElementById('errorMsg');
       errEl.classList.add('hidden');
       const companyName = document.getElementById('companyName')?.value || '';
+      // แพ็กเกจที่เลือกบนการ์ด — ต้องส่งไปด้วย ไม่งั้นสมัครผ่าน SSO ได้ FreeTrial เสมอ
+      const ssoPlan = document.querySelector('input[name="plan"]:checked')?.value || null;
       try {
-        const res = await API.ssoLogin(provider, idToken, companyName || null);
+        const res = await API.ssoLogin(provider, idToken, companyName || null, ssoPlan);
         if (res.success && res.data) {
           const token = res.data.accessToken || res.data.token;
           localStorage.setItem('token', token);

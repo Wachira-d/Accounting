@@ -41,5 +41,10 @@ public interface ICompanyService
     /// also need to call it so an existing License-holder who creates a new
     /// company via those paths doesn't end up with an orphaned FreeTrial
     /// subscription instead of riding the License.</summary>
-    Task EnsureSubscriptionForNewCompanyAsync(Guid companyId, Guid userId);
+    /// <summary>สร้าง Subscription ให้บริษัทใหม่ (template-driven ผ่าน StartTrialAsync)
+    /// + auto-attach License ของผู้สร้างถ้ามี slot. preferredPlan = แพ็กเกจที่ผู้ใช้
+    /// เลือกตอนสมัคร (null = FreeTrial) — ทำให้ retry หลัง StartTrial ล้มเหลว
+    /// ยังได้ plan ที่เลือกไว้ ไม่หล่นเป็น stub เงียบ ๆ.</summary>
+    Task EnsureSubscriptionForNewCompanyAsync(Guid companyId, Guid userId,
+        Models.Enums.SubscriptionPlan? preferredPlan = null);
 }

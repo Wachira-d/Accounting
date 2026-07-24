@@ -151,7 +151,9 @@ public class AuthService : IAuthService
             // company to an existing identity), attach the new company to it
             // so quota/features flow from the License rather than the stub
             // FreeTrial we just seeded. No-op when no License exists.
-            try { await _companyService.EnsureSubscriptionForNewCompanyAsync(company.Id, user.Id); }
+            // ส่ง plan ที่เลือกไปด้วย — ถ้า StartTrialAsync ข้างบนล้มเหลว เส้นนี้จะ
+            // retry ด้วย plan เดิม (เดิม fallback เป็น FreeTrial stub → plan ที่เลือกหาย)
+            try { await _companyService.EnsureSubscriptionForNewCompanyAsync(company.Id, user.Id, plan); }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "License auto-attach failed for company {CompanyId}", company.Id);
@@ -434,11 +436,13 @@ public class AuthService : IAuthService
                     });
                     await _db.SaveChangesAsync();
 
-                    // Auto-start Free Edition subscription (permanent free)
+                    // Auto-start subscription ตามแพ็กเกจที่เลือกบนหน้า register
+                    // (เดิม hardcode FreeTrial → เลือก Pro แล้วสมัครผ่าน SSO ได้ FreeTrial)
+                    var ssoPlan = request.Plan ?? Models.Enums.SubscriptionPlan.FreeTrial;
                     try
                     {
                         await _subscriptionService.StartTrialAsync(
-                            new Models.DTOs.Subscription.StartTrialRequest(company.Id, Models.Enums.SubscriptionPlan.FreeTrial),
+                            new Models.DTOs.Subscription.StartTrialRequest(company.Id, ssoPlan),
                             user.Id.ToString());
                     }
                     catch (Exception ex)
@@ -449,8 +453,8 @@ public class AuthService : IAuthService
                     // SSO re-link path: an existing License-holder signing in
                     // through SSO with a new company name needs the new
                     // company attached to their License, not stranded on the
-                    // FreeTrial stub above.
-                    try { await _companyService.EnsureSubscriptionForNewCompanyAsync(company.Id, user.Id); }
+                    // FreeTrial stub above. ส่ง plan ไปด้วยให้ retry path ใช้ plan เดิม.
+                    try { await _companyService.EnsureSubscriptionForNewCompanyAsync(company.Id, user.Id, ssoPlan); }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "SSO: License auto-attach failed for company {CompanyId}", company.Id);
