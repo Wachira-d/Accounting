@@ -267,6 +267,10 @@
                     • ติ๊กนี้ + "💰 ลูกค้าจ่ายเงินแล้ว" (รับครบ) = <b>ขายสดใบเดียวจบ</b> — หัวพิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน" ไม่ออกใบเสร็จแยก<br>
                     • ถ้ายังไม่แน่ใจว่าจะเก็บเงินได้ (งานบริการ) — ใช้ "ใบแจ้งหนี้" เปล่า จะยังไม่ต้องนำส่ง VAT จนกว่ารับเงิน (§78/1)
                   </span>
+                  <span id="combinedForcedNote" style="display:none;color:#b45309;font-size:11px;margin-top:4px;font-weight:600">
+                    🔒 ติ๊กให้อัตโนมัติ: รับเงินแล้ว + มี VAT → ต้องออกใบกำกับภาษี ณ วันรับเงิน (§78/1)
+                    — เอาออกได้โดยยกเลิกติ๊ก "ลูกค้าจ่ายเงินแล้ว" หรือเอา VAT ออกจากทุกบรรทัด
+                  </span>
                 </span>
               </label>
               <label id="fDeclineTaxRow" style="display:none;margin-top:8px;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer">
@@ -1240,6 +1244,10 @@
           paidCb.addEventListener('change', () => {
             paidRow.style.display = paidCb.checked ? 'block' : 'none';
             if (paidCb.checked) this._syncPaidOnIssueMethod();
+            // §78/1: ใบแจ้งหนี้ + รับเงินแล้ว + มี VAT → ต้องเป็นใบกำกับ —
+            // ติ๊ก/ล็อคใบรวมให้เห็นทันที (เดิม upgrade เงียบ ๆ ตอนบันทึก
+            // → หน้าจอโชว์ checkbox ไม่ตรงกับใบที่ออกจริง)
+            this.syncCombinedForPaid();
           });
         }
         // Whenever the user changes "แหล่งเงิน / ช่องทางชำระ", refresh
@@ -3084,9 +3092,12 @@
           combinedRow.style.display = canCombine ? 'flex' : 'none';
           if (!canCombine) {
             const cb = document.getElementById('fCombinedTaxInvoice');
-            if (cb) cb.checked = false;
+            if (cb) { cb.checked = false; cb.disabled = false; }
+            const n = document.getElementById('combinedForcedNote'); if (n) n.style.display = 'none';
           }
         }
+        // §78/1 live-lock — ประเมินใหม่เมื่อเปลี่ยนประเภทเอกสาร
+        this.syncCombinedForPaid?.();
         // "ผู้ซื้อไม่ประสงค์รับใบกำกับ" — เฉพาะเอกสารฝั่งขายที่มี VAT (ออกใบกำกับได้)
         const declineRow = document.getElementById('fDeclineTaxRow');
         if (declineRow) {
@@ -3366,6 +3377,33 @@
         // เก็บ relatedDocumentId hidden ลง form state เพื่อส่งกลับ
         this._linkedTaxInvoiceSourceId = id;
         this._updateTaxInvVatPreview(d);
+      },
+
+      // ===== §78/1 live-lock: ใบแจ้งหนี้ + รับเงินแล้ว + มี VAT → บังคับใบรวม =====
+      // เดิม auto-upgrade เงียบ ๆ ตอนกดบันทึก → หน้าจอโชว์ combined ไม่ติ๊กทั้งที่
+      // ใบจริงจะออกเป็นใบรวม (ผู้ใช้สับสน "ติ๊กจ่ายแต่ไม่ติ๊กใบรวมได้ด้วยหรอ").
+      // ตอนนี้ sync สด: เงื่อนไขเข้า = ติ๊ก+ล็อค checkbox ใบรวมทันที พร้อมเหตุผล;
+      // เงื่อนไขหลุด (ยกเลิกจ่าย/เอา VAT ออก/เปลี่ยนประเภท) = ปลดล็อค.
+      // ประเภทอื่น (TaxInvoice = ใบกำกับอยู่แล้ว / ไม่มี VAT = ไม่ต้องใบกำกับ) ไม่บังคับ.
+      _anyVatLine() {
+        return [...document.querySelectorAll('#linesBody [data-f="vat"]')]
+          .some(s => parseFloat(s.value) > 0);
+      },
+      syncCombinedForPaid() {
+        const cb = document.getElementById('fCombinedTaxInvoice');
+        const note = document.getElementById('combinedForcedNote');
+        if (!cb) return;
+        const docType = document.getElementById('fDocType')?.value;
+        const paid = document.getElementById('fPaidOnIssue')?.checked || false;
+        const mustCombine = docType === 'Invoice' && paid && this._anyVatLine();
+        if (mustCombine) {
+          cb.checked = true;
+          cb.disabled = true;
+          if (note) note.style.display = 'block';
+        } else {
+          cb.disabled = false;
+          if (note) note.style.display = 'none';
+        }
       },
 
       // ===== ใบเสร็จรับเงิน: ดึงใบค้างของลูกหนี้มา "รับชำระ" (ตัดลูกหนี้) =====
@@ -4201,6 +4239,8 @@
         this.refreshVatProhibitedBanner();
         // แถว "หักมัดจำ / คงเหลือรับชำระ" ใต้ยอดสุทธิ — ยอดใบไม่เปลี่ยน (ตาม §86/4)
         this.updateDepositSummary(totalCalc);
+        // §78/1 live-lock — VAT ต่อบรรทัดเปลี่ยน (เพิ่ม/เอาออก) กระทบเงื่อนไขบังคับใบรวม
+        this.syncCombinedForPaid?.();
       },
 
       /** แสดงยอดมัดจำที่เลือกหัก (จะ apply ตอน "บันทึกและอนุมัติ") ใน totals box —
