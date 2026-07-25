@@ -499,6 +499,21 @@
             </label>
           </div>
 
+          <!-- ใบเสร็จรับเงิน: ดึงใบค้างของลูกหนี้มา "รับชำระ" (ตัดลูกหนี้ ไม่ลง
+               รายได้ซ้ำ) — ไม่เลือก = ใบเสร็จอิสระ (ขายสด ลงรายได้+VAT) -->
+          <div id="receiptSourceSection" style="margin-bottom:12px;background:#fefce8;border:1px solid #eab308;border-radius:8px;padding:10px 14px;display:none">
+            <div style="font-weight:600;color:#854d0e;font-size:13px">📥 รับชำระใบค้างของลูกค้ารายนี้ (ตัดลูกหนี้)</div>
+            <select id="fReceiptSourceDoc" class="form-select" style="margin-top:6px" onchange="Page.onReceiptSourceSelect()">
+              <option value="">— ใบเสร็จอิสระ (ขายสด: ลงรายได้ + VAT) —</option>
+            </select>
+            <div id="receiptSourceHint" style="display:none;color:#854d0e;font-size:12px;margin-top:6px;line-height:1.6">
+              ✅ ใบเสร็จนี้จะ <b>ตัดลูกหนี้</b> ของใบที่เลือก (Dr เงินสด / Cr ลูกหนี้) —
+              <b>ไม่ลงรายได้/VAT ซ้ำ</b> (รับรู้ที่ใบต้นทางแล้ว) · แก้ยอดในบรรทัดเพื่อ
+              <b>รับบางส่วน</b>ได้ (ระบบกันเกินยอดคงค้าง) · ใบแจ้งหนี้บริการที่ต้องการ
+              ใบกำกับเต็มรูป ณ วันรับเงิน แนะนำ "แปลงเอกสาร" หรือ "บันทึกชำระ" เต็มยอดแทน
+            </div>
+          </div>
+
           <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
                Only "คืนสินค้า" restocks; the other 3 reasons are pure
                financial adjustments with no stock impact. -->
@@ -2031,6 +2046,8 @@
           this._fillSupplierBranchFromContact(true);     // สาขาผู้ขาย ดึงจาก contact ที่เลือกด้วย
           this._loadTaxInvoiceSourceDocs();
         }
+        // ใบเสร็จรับเงิน: reload รายการใบค้าง (AR) ของลูกค้าที่เพิ่งเลือก
+        this._loadReceiptSourceDocs();
         // For a Payment Voucher, ask the local model whether this supplier is
         // usually paid Cash (จ่ายทันที) or Credit (เครดิต) and pre-select it.
         if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
@@ -3044,6 +3061,20 @@
           cashRcptSection.style.display = showCr ? '' : 'none';
           if (!showCr) { const c = document.getElementById('fIssuedAsCashReceipt'); if (c) c.checked = false; }
         }
+        // ใบเสร็จ/ใบสำคัญรับ: ตัวดึงใบค้างลูกหนี้ (ตัดลูกหนี้ ไม่ลงรายได้ซ้ำ)
+        // — ไม่โชว์กับใบมัดจำ (pseudo-type Deposit ลงเป็น Receipt แต่คนละ semantics)
+        const rcvSrcSection = document.getElementById('receiptSourceSection');
+        if (rcvSrcSection) {
+          const showRcvSrc = (docType === 'Receipt' || docType === 'ReceiptVoucher');
+          rcvSrcSection.style.display = showRcvSrc ? '' : 'none';
+          if (!showRcvSrc) {
+            this._receiptSourceId = null;
+            const s = document.getElementById('fReceiptSourceDoc'); if (s) s.value = '';
+            const h = document.getElementById('receiptSourceHint'); if (h) h.style.display = 'none';
+          } else {
+            this._loadReceiptSourceDocs();
+          }
+        }
         // "ออกเป็นใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" — แสดง checkbox เฉพาะฝั่งขาย
         // ที่ออกใบกำกับได้ (Invoice/TaxInvoice). ติ๊กแล้ว save จะ force type=
         // TaxInvoice + combinedInvoiceTaxInvoice=true เพื่อพิมพ์หัวรวม.
@@ -3335,6 +3366,71 @@
         // เก็บ relatedDocumentId hidden ลง form state เพื่อส่งกลับ
         this._linkedTaxInvoiceSourceId = id;
         this._updateTaxInvVatPreview(d);
+      },
+
+      // ===== ใบเสร็จรับเงิน: ดึงใบค้างของลูกหนี้มา "รับชำระ" (ตัดลูกหนี้) =====
+      _receiptSourceId: null,
+      _receiptSourceCache: {},
+
+      async _loadReceiptSourceDocs() {
+        const section = document.getElementById('receiptSourceSection');
+        const sel = document.getElementById('fReceiptSourceDoc');
+        if (!section || !sel || section.style.display === 'none') return;
+        const contactId = document.getElementById('fContactId')?.value;
+        this._receiptSourceCache = {};
+        this._receiptSourceId = null;
+        sel.innerHTML = '<option value="">— ใบเสร็จอิสระ (ขายสด: ลงรายได้ + VAT) —</option>';
+        const h = document.getElementById('receiptSourceHint'); if (h) h.style.display = 'none';
+        if (!contactId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getDocuments(`?contactId=${contactId}&pageSize=100`);
+          const items = (res.data?.items || res.data || [])
+            .filter(d => ['Invoice', 'TaxInvoice', 'DebitNote'].includes(d.documentType)
+              && ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'].includes(d.status)
+              && Number(d.balanceDue) > 0.01);
+          items.forEach(d => {
+            this._receiptSourceCache[d.id] = d;
+            const o = document.createElement('option');
+            o.value = d.id;
+            o.textContent = `${d.documentNumber} · คงค้าง ${Layout.money(d.balanceDue)} (${Layout.date(d.documentDate)})`;
+            sel.appendChild(o);
+          });
+          if (items.length === 0) {
+            const o = document.createElement('option');
+            o.disabled = true;
+            o.textContent = '(ลูกค้ารายนี้ไม่มีใบค้างชำระ)';
+            sel.appendChild(o);
+          }
+        } catch { /* best-effort */ }
+      },
+
+      onReceiptSourceSelect() {
+        const id = document.getElementById('fReceiptSourceDoc')?.value || '';
+        const h = document.getElementById('receiptSourceHint');
+        this._receiptSourceId = id || null;
+        if (!id) { if (h) h.style.display = 'none'; return; }
+        const d = this._receiptSourceCache[id];
+        if (!d) return;
+        if (h) h.style.display = '';
+        // เติมบรรทัดรับชำระ (VAT 0 — VAT รับรู้ที่ใบต้นทางแล้ว) ยอด = คงค้างทั้งใบ
+        // แก้เป็นบางส่วนได้ (server กันเกินคงค้างตอนอนุมัติ) — ใช้โมเดล DOM
+        // เดียวกับ OCR fill (linesBody + addLine + data-f)
+        document.getElementById('linesBody').innerHTML = '';
+        this.lineCount = 0;
+        this.addLine();
+        const row = document.getElementById('linesBody').lastElementChild;
+        const descEl = row.querySelector('[data-f="desc"]');
+        if (descEl) { descEl.value = `รับชำระเงินตาม${Layout.docTypeLabel(d.documentType)}เลขที่ ${d.documentNumber}`; descEl.__grow?.(); }
+        const qtyEl = row.querySelector('[data-f="qty"]'); if (qtyEl) qtyEl.value = 1;
+        const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = 'รายการ';
+        const priceEl = row.querySelector('[data-f="price"]'); if (priceEl) priceEl.value = Number(d.balanceDue) || 0;
+        const vatSel = row.querySelector('[data-f="vat"]'); if (vatSel) vatSel.value = '0';
+        const whtEl = row.querySelector('[data-f="wht"]'); if (whtEl) whtEl.value = 0;
+        this.calcSum?.();
+        const refEl = document.getElementById('fRef');
+        if (refEl && !refEl.value) refEl.value = d.documentNumber;
+        Layout.toast(`ผูกกับ ${d.documentNumber} แล้ว — อนุมัติใบเสร็จ = ตัดลูกหนี้ (แก้ยอดเพื่อรับบางส่วนได้)`, 'info', 6000);
       },
 
       _fillSupplierTaxIdFromContact(force = false) {
@@ -4818,6 +4914,12 @@
         const payload = {
           documentType: _effectiveDocType,
           combinedInvoiceTaxInvoice: _combineTax,
+          // ใบเสร็จที่ "ดึงใบค้างลูกหนี้" → ผูกต้นทาง = settlement (ตัดลูกหนี้
+          // ไม่ลงรายได้ซ้ำ). ส่งเฉพาะตอนสร้างใหม่และเลือกใบไว้เท่านั้น —
+          // ไม่ส่ง null ทับของเดิมตอนแก้ไขเอกสารที่แปลงมา
+          ...((!this.editingId && this._receiptSourceId
+              && (_effectiveDocType === 'Receipt' || _effectiveDocType === 'ReceiptVoucher'))
+            ? { relatedDocumentId: this._receiptSourceId } : {}),
           buyerDeclinedTaxInvoice: document.getElementById('fBuyerDeclinedTaxInvoice')?.checked || false,
           // ส่วนลดท้ายบิล (จากยอดรวม) — โหมด % → billDiscountPercent, โหมด ฿ → billDiscountAmount
           billDiscountPercent: (document.getElementById('fBillDiscountMode')?.value === 'pct')

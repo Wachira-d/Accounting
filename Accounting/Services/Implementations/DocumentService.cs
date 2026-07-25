@@ -10612,6 +10612,31 @@ public class DocumentService : IDocumentService
             }
         }
 
+        // ใบเสร็จ "อิสระ" (ไม่อ้างใบต้นทาง = ลง Dr เงินสด / Cr รายได้+VAT ใหม่ทั้งใบ)
+        // ทั้งที่ลูกค้ารายนี้มีใบแจ้งหนี้/ใบกำกับค้างชำระอยู่ — ถ้าใบเสร็จนี้คือการ
+        // รับชำระใบเดิม จะกลายเป็น "รายได้ + VAT ซ้ำ 2 รอบ" จากการขายครั้งเดียว
+        // → เตือนให้ใช้ตัวดึงใบค้าง (หน้าเอกสาร) / แปลงจากใบเดิม / บันทึกชำระ แทน
+        if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+            && !doc.RelatedDocumentId.HasValue && !doc.IsDeposit && doc.ContactId != Guid.Empty)
+        {
+            var arOutstanding = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.ContactId == doc.ContactId
+                    && d.Id != doc.Id && !d.IsDeleted
+                    && (d.DocumentType == DocumentType.Invoice
+                        || d.DocumentType == DocumentType.TaxInvoice
+                        || d.DocumentType == DocumentType.DebitNote)
+                    && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent
+                        || d.Status == DocumentStatus.PartiallyPaid || d.Status == DocumentStatus.Overdue)
+                    && d.BalanceDue > 0.01m)
+                .Select(d => new { d.DocumentNumber, d.BalanceDue })
+                .Take(3)
+                .ToListAsync();
+            if (arOutstanding.Count > 0)
+                warnings.Add($"ลูกค้ารายนี้มีเอกสารค้างชำระอยู่ (เช่น {string.Join(", ", arOutstanding.Select(a => $"{a.DocumentNumber} คงค้าง {a.BalanceDue:N2}"))}) " +
+                    "— ใบเสร็จอิสระใบนี้จะลง 'รายได้ + VAT ใหม่ทั้งใบ' ไม่ตัดยอดใบเดิม. " +
+                    "ถ้าตั้งใจรับชำระใบค้าง ให้ใช้ช่อง 'รับชำระใบค้างของลูกค้า' ตอนสร้างใบเสร็จ หรือกด 'บันทึกชำระเงิน'/'แปลงเอกสาร' จากใบเดิมแทน — มิฉะนั้นรายได้และภาษีขายจะซ้ำ 2 รอบ");
+        }
+
         // Per-line VAT + WHT rate sanity. The 0/7 hard block sits in the
         // create path; this is the "rate is technically legal but unusual"
         // shoulder (e.g. ratio that doesn't match a known ภ.ง.ด. code).
