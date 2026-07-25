@@ -234,8 +234,8 @@
               <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
                 <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
                   <option value="Quotation" title="เสนอราคาให้ลูกค้าก่อนซื้อขายจริง — ยังไม่ลง GL, ไม่มี VAT effect">ใบเสนอราคา</option>
-                  <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้ — เริ่มนับ aging">ใบแจ้งหนี้</option>
-                  <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้ + Cr Output VAT — เข้า ภพ.30">ใบกำกับภาษี</option>
+                  <option value="Invoice" title="ขายเครดิต — แจ้งหนี้ลูกค้า (ยังไม่รับเงิน, ยังไม่ใช่ใบกำกับภาษี) — งานบริการ: VAT รอเรียกเก็บ ยังไม่เข้า ภพ.30 จนกว่าจะรับเงิน (§78/1) · มีสินค้า: VAT นำส่งทันที (ส่งมอบ §78 — ควรออกใบกำกับ/ติ๊กใบรวมแทน)">ใบแจ้งหนี้</option>
+                  <option value="TaxInvoice" title="ใบกำกับภาษีเต็มรูป (§86) — ออกใบกำกับ = tax point เกิดทันที: Cr Output VAT + เข้า ภพ.30 งวดนี้ ไม่ว่ารับเงินหรือยัง (ขายเครดิต = ตั้งลูกหนี้)">ใบกำกับภาษี</option>
                   <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR (หรือ Cr รายได้+VAT ถ้าจ่ายสด)">ใบเสร็จรับเงิน</option>
                   <option value="Deposit" title="รับเงินมัดจำ/รับล่วงหน้าก่อนส่งมอบสินค้า-บริการ — Dr เงินสด/ธนาคาร / Cr ขายรอรับรู้ (217xx) แทนรายได้ · รับรู้รายได้/หักเข้าใบกำกับภายหลัง (ออกใบเสร็จ + ตั้ง IsDeposit ให้อัตโนมัติ)">💰 ใบมัดจำ / รับเงินล่วงหน้า</option>
                   <option value="DeliveryNote" title="ส่งของแล้วแต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL, เป็นเอกสารโลจิสติก">ใบส่งของ</option>
@@ -262,6 +262,11 @@
                 <input type="checkbox" id="fCombinedTaxInvoice" style="margin-top:3px">
                 <span>ออกเป็น <b>"ใบแจ้งหนี้/ใบกำกับภาษี"</b> ใบเดียว — ทำงานเป็นใบกำกับภาษีเต็มรูป (ลง VAT/ภพ.30 · ออก e-Tax ได้) แต่พิมพ์หัวรวม
                   <span style="display:block;color:#64748b;font-size:11px">ต้องมีเลขภาษี/สาขา/ที่อยู่ผู้ซื้อครบ (§86/4)</span>
+                  <span style="display:block;color:#0369a1;font-size:11px;margin-top:2px">
+                    • ติ๊กนี้อย่างเดียว = <b>ขายเครดิต</b>: ตั้งลูกหนี้รอเก็บเงิน แต่ VAT นำส่ง ภพ.30 <b>ทันที</b> (ออกใบกำกับ = tax point เกิดแล้ว) และลูกค้าเคลมภาษีซื้อได้เลย<br>
+                    • ติ๊กนี้ + "💰 ลูกค้าจ่ายเงินแล้ว" (รับครบ) = <b>ขายสดใบเดียวจบ</b> — หัวพิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน" ไม่ออกใบเสร็จแยก<br>
+                    • ถ้ายังไม่แน่ใจว่าจะเก็บเงินได้ (งานบริการ) — ใช้ "ใบแจ้งหนี้" เปล่า จะยังไม่ต้องนำส่ง VAT จนกว่ารับเงิน (§78/1)
+                  </span>
                 </span>
               </label>
               <label id="fDeclineTaxRow" style="display:none;margin-top:8px;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer">
@@ -458,11 +463,13 @@
             <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.6">
               <input type="checkbox" id="fPaidOnIssue" style="margin-top:3px">
               <div style="flex:1">
-                <div style="font-weight:600;color:#065f46">💰 ลูกค้าจ่ายเงินแล้ว — สร้างใบเสร็จพร้อมกัน</div>
+                <div style="font-weight:600;color:#065f46">💰 ลูกค้าจ่ายเงินแล้ว — บันทึกรับเงินพร้อมออกเอกสาร</div>
                 <div style="color:#047857;font-size:12px;margin-top:2px">
-                  ติ๊กถ้าเป็นขายเงินสด / บริการที่ได้รับเงินแล้ว — ระบบจะ
-                  อนุมัติเอกสาร + บันทึกชำระ + ออกใบเสร็จในคลิกเดียว
-                  (ตามประมวลรัษฎากร §78/1 บริการต้องออกใบกำกับตอนรับเงิน)
+                  ติ๊กถ้ารับเงินแล้ว ณ วันออกเอกสาร — ระบบอนุมัติ + บันทึกชำระ + ออกหลักฐานรับเงินในคลิกเดียว
+                  (§78/1 บริการต้องออกใบกำกับตอนรับเงิน)<br>
+                  <b>ไม่ติ๊ก = ขายเครดิต</b> (ตั้งลูกหนี้ รอเก็บเงินภายหลัง)<br>
+                  ติ๊กคู่กับ "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" + รับครบ → ได้ใบเดียวหัว
+                  <b>"ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน"</b> (ไม่ออกใบเสร็จแยก)
                 </div>
                 <div id="fPaidOnIssueDerivedRow" style="display:none;margin-top:10px;background:#fff;border:1px dashed #6ee7b7;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.7">
                   <div style="color:#065f46;font-weight:600;margin-bottom:2px">📌 ใช้ช่องทางเดียวกับ "แหล่งเงิน / ช่องทางชำระ" ด้านบน</div>
@@ -490,6 +497,21 @@
                 </div>
               </div>
             </label>
+          </div>
+
+          <!-- ใบเสร็จรับเงิน: ดึงใบค้างของลูกหนี้มา "รับชำระ" (ตัดลูกหนี้ ไม่ลง
+               รายได้ซ้ำ) — ไม่เลือก = ใบเสร็จอิสระ (ขายสด ลงรายได้+VAT) -->
+          <div id="receiptSourceSection" style="margin-bottom:12px;background:#fefce8;border:1px solid #eab308;border-radius:8px;padding:10px 14px;display:none">
+            <div style="font-weight:600;color:#854d0e;font-size:13px">📥 รับชำระใบค้างของลูกค้ารายนี้ (ตัดลูกหนี้)</div>
+            <select id="fReceiptSourceDoc" class="form-select" style="margin-top:6px" onchange="Page.onReceiptSourceSelect()">
+              <option value="">— ใบเสร็จอิสระ (ขายสด: ลงรายได้ + VAT) —</option>
+            </select>
+            <div id="receiptSourceHint" style="display:none;color:#854d0e;font-size:12px;margin-top:6px;line-height:1.6">
+              ✅ ใบเสร็จนี้จะ <b>ตัดลูกหนี้</b> ของใบที่เลือก (Dr เงินสด / Cr ลูกหนี้) —
+              <b>ไม่ลงรายได้/VAT ซ้ำ</b> (รับรู้ที่ใบต้นทางแล้ว) · แก้ยอดในบรรทัดเพื่อ
+              <b>รับบางส่วน</b>ได้ (ระบบกันเกินยอดคงค้าง) · ใบแจ้งหนี้บริการที่ต้องการ
+              ใบกำกับเต็มรูป ณ วันรับเงิน แนะนำ "แปลงเอกสาร" หรือ "บันทึกชำระ" เต็มยอดแทน
+            </div>
           </div>
 
           <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
@@ -2024,6 +2046,8 @@
           this._fillSupplierBranchFromContact(true);     // สาขาผู้ขาย ดึงจาก contact ที่เลือกด้วย
           this._loadTaxInvoiceSourceDocs();
         }
+        // ใบเสร็จรับเงิน: reload รายการใบค้าง (AR) ของลูกค้าที่เพิ่งเลือก
+        this._loadReceiptSourceDocs();
         // For a Payment Voucher, ask the local model whether this supplier is
         // usually paid Cash (จ่ายทันที) or Credit (เครดิต) and pre-select it.
         if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
@@ -3037,6 +3061,20 @@
           cashRcptSection.style.display = showCr ? '' : 'none';
           if (!showCr) { const c = document.getElementById('fIssuedAsCashReceipt'); if (c) c.checked = false; }
         }
+        // ใบเสร็จ/ใบสำคัญรับ: ตัวดึงใบค้างลูกหนี้ (ตัดลูกหนี้ ไม่ลงรายได้ซ้ำ)
+        // — ไม่โชว์กับใบมัดจำ (pseudo-type Deposit ลงเป็น Receipt แต่คนละ semantics)
+        const rcvSrcSection = document.getElementById('receiptSourceSection');
+        if (rcvSrcSection) {
+          const showRcvSrc = (docType === 'Receipt' || docType === 'ReceiptVoucher');
+          rcvSrcSection.style.display = showRcvSrc ? '' : 'none';
+          if (!showRcvSrc) {
+            this._receiptSourceId = null;
+            const s = document.getElementById('fReceiptSourceDoc'); if (s) s.value = '';
+            const h = document.getElementById('receiptSourceHint'); if (h) h.style.display = 'none';
+          } else {
+            this._loadReceiptSourceDocs();
+          }
+        }
         // "ออกเป็นใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" — แสดง checkbox เฉพาะฝั่งขาย
         // ที่ออกใบกำกับได้ (Invoice/TaxInvoice). ติ๊กแล้ว save จะ force type=
         // TaxInvoice + combinedInvoiceTaxInvoice=true เพื่อพิมพ์หัวรวม.
@@ -3328,6 +3366,71 @@
         // เก็บ relatedDocumentId hidden ลง form state เพื่อส่งกลับ
         this._linkedTaxInvoiceSourceId = id;
         this._updateTaxInvVatPreview(d);
+      },
+
+      // ===== ใบเสร็จรับเงิน: ดึงใบค้างของลูกหนี้มา "รับชำระ" (ตัดลูกหนี้) =====
+      _receiptSourceId: null,
+      _receiptSourceCache: {},
+
+      async _loadReceiptSourceDocs() {
+        const section = document.getElementById('receiptSourceSection');
+        const sel = document.getElementById('fReceiptSourceDoc');
+        if (!section || !sel || section.style.display === 'none') return;
+        const contactId = document.getElementById('fContactId')?.value;
+        this._receiptSourceCache = {};
+        this._receiptSourceId = null;
+        sel.innerHTML = '<option value="">— ใบเสร็จอิสระ (ขายสด: ลงรายได้ + VAT) —</option>';
+        const h = document.getElementById('receiptSourceHint'); if (h) h.style.display = 'none';
+        if (!contactId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getDocuments(`?contactId=${contactId}&pageSize=100`);
+          const items = (res.data?.items || res.data || [])
+            .filter(d => ['Invoice', 'TaxInvoice', 'DebitNote'].includes(d.documentType)
+              && ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'].includes(d.status)
+              && Number(d.balanceDue) > 0.01);
+          items.forEach(d => {
+            this._receiptSourceCache[d.id] = d;
+            const o = document.createElement('option');
+            o.value = d.id;
+            o.textContent = `${d.documentNumber} · คงค้าง ${Layout.money(d.balanceDue)} (${Layout.date(d.documentDate)})`;
+            sel.appendChild(o);
+          });
+          if (items.length === 0) {
+            const o = document.createElement('option');
+            o.disabled = true;
+            o.textContent = '(ลูกค้ารายนี้ไม่มีใบค้างชำระ)';
+            sel.appendChild(o);
+          }
+        } catch { /* best-effort */ }
+      },
+
+      onReceiptSourceSelect() {
+        const id = document.getElementById('fReceiptSourceDoc')?.value || '';
+        const h = document.getElementById('receiptSourceHint');
+        this._receiptSourceId = id || null;
+        if (!id) { if (h) h.style.display = 'none'; return; }
+        const d = this._receiptSourceCache[id];
+        if (!d) return;
+        if (h) h.style.display = '';
+        // เติมบรรทัดรับชำระ (VAT 0 — VAT รับรู้ที่ใบต้นทางแล้ว) ยอด = คงค้างทั้งใบ
+        // แก้เป็นบางส่วนได้ (server กันเกินคงค้างตอนอนุมัติ) — ใช้โมเดล DOM
+        // เดียวกับ OCR fill (linesBody + addLine + data-f)
+        document.getElementById('linesBody').innerHTML = '';
+        this.lineCount = 0;
+        this.addLine();
+        const row = document.getElementById('linesBody').lastElementChild;
+        const descEl = row.querySelector('[data-f="desc"]');
+        if (descEl) { descEl.value = `รับชำระเงินตาม${Layout.docTypeLabel(d.documentType)}เลขที่ ${d.documentNumber}`; descEl.__grow?.(); }
+        const qtyEl = row.querySelector('[data-f="qty"]'); if (qtyEl) qtyEl.value = 1;
+        const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = 'รายการ';
+        const priceEl = row.querySelector('[data-f="price"]'); if (priceEl) priceEl.value = Number(d.balanceDue) || 0;
+        const vatSel = row.querySelector('[data-f="vat"]'); if (vatSel) vatSel.value = '0';
+        const whtEl = row.querySelector('[data-f="wht"]'); if (whtEl) whtEl.value = 0;
+        this.calcSum?.();
+        const refEl = document.getElementById('fRef');
+        if (refEl && !refEl.value) refEl.value = d.documentNumber;
+        Layout.toast(`ผูกกับ ${d.documentNumber} แล้ว — อนุมัติใบเสร็จ = ตัดลูกหนี้ (แก้ยอดเพื่อรับบางส่วนได้)`, 'info', 6000);
       },
 
       _fillSupplierTaxIdFromContact(force = false) {
@@ -4811,6 +4914,12 @@
         const payload = {
           documentType: _effectiveDocType,
           combinedInvoiceTaxInvoice: _combineTax,
+          // ใบเสร็จที่ "ดึงใบค้างลูกหนี้" → ผูกต้นทาง = settlement (ตัดลูกหนี้
+          // ไม่ลงรายได้ซ้ำ). ส่งเฉพาะตอนสร้างใหม่และเลือกใบไว้เท่านั้น —
+          // ไม่ส่ง null ทับของเดิมตอนแก้ไขเอกสารที่แปลงมา
+          ...((!this.editingId && this._receiptSourceId
+              && (_effectiveDocType === 'Receipt' || _effectiveDocType === 'ReceiptVoucher'))
+            ? { relatedDocumentId: this._receiptSourceId } : {}),
           buyerDeclinedTaxInvoice: document.getElementById('fBuyerDeclinedTaxInvoice')?.checked || false,
           // ส่วนลดท้ายบิล (จากยอดรวม) — โหมด % → billDiscountPercent, โหมด ฿ → billDiscountAmount
           billDiscountPercent: (document.getElementById('fBillDiscountMode')?.value === 'pct')

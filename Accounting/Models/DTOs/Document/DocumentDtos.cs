@@ -988,7 +988,12 @@ public record PaymentResponse(
     /// in the response — only its presence — to keep payloads compact and
     /// avoid leaking signature images to clients that don't render them.</summary>
     bool HasPayerSignature = false,
-    string? PayerSignatureName = null);
+    string? PayerSignatureName = null,
+    /// <summary>"payment" = แถวจากตาราง Payments (บันทึกชำระ/modal);
+    /// "document" = แถวสังเคราะห์จากเอกสาร settle เส้น "แปลงเอกสาร"
+    /// (ใบเสร็จ/ใบสำคัญรับ-จ่าย/CIL ที่ไม่มี Payment row) — read-only ให้
+    /// สองเส้นทางเห็นประวัติเหมือนกัน.</summary>
+    string Source = "payment");
 
 
 public record WriteOffBadDebtRequest(string? Reason);

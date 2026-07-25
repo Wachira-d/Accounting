@@ -5665,6 +5665,19 @@ public class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     $"เอกสาร {source.DocumentNumber} ไม่มียอดคงค้าง — ไม่สามารถแปลงเป็น {targetType}");
         }
+
+        // เอกสาร settle จาก convert = "เต็มใบ" เสมอ (copy ทุกบรรทัด) — ต้นทางที่
+        // รับ/จ่าย "บางส่วน" ไปแล้ว แปลงต่อไม่ได้ (ยอดใบ settle จะเกินคงค้าง →
+        // เดิมปล่อยแปลงแล้วไป throw ตอนอนุมัติ = ผู้ใช้งงว่าผิดตรงไหน). บอกทาง
+        // ที่ถูกตั้งแต่ตอนกดแปลง: งวดบางส่วน/งวดที่เหลือใช้ "บันทึกชำระเงิน"
+        // (partial ได้หลายงวด + หักยอด/แสดงคงค้าง + ออกใบเสร็จหลักฐานต่องวด)
+        var settlementTargets = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+        if (settlementTargets.Contains(targetType) && source.PaidAmount > 0.01m)
+            throw new InvalidOperationException(
+                $"เอกสาร {source.DocumentNumber} รับ/จ่ายชำระบางส่วนแล้ว ({source.PaidAmount:N2} จาก {source.TotalAmount:N2} บาท) — " +
+                "การแปลงจะออกเอกสารยอดเต็มใบซึ่งเกินยอดคงค้าง. สำหรับงวดที่เหลือให้ใช้ปุ่ม '💰 บันทึกชำระเงิน' แทน " +
+                "(รองรับจ่ายบางส่วนหลายงวดจนครบ + ออกใบเสร็จหลักฐานให้ทุกงวดอัตโนมัติ)");
     }
 
     /// <summary>Create the child document from a chosen set of (source line,
@@ -6367,8 +6380,23 @@ public class DocumentService : IDocumentService
     /// (Receipt + VAT=0 ไม่ upgrade เป็นใบกำกับ).</summary>
     private async Task<Document> CreateSettlementReceiptAsync(
         Guid companyId, Document invoice, Payment payment, string createdBy,
-        bool issueApproved = true)
+        bool issueApproved = true, bool carryVatFromSource = false)
     {
+        // carryVatFromSource (เคส ข): ใบแจ้งหนี้บริการ (VAT พัก 21913) รับครบงวด
+        // เดียว → ใบเสร็จนี้ทำหน้าที่ "ใบกำกับภาษี ณ วันรับเงิน" (§78/1) — copy
+        // บรรทัด + Sub/VAT/WHT/Total จากใบแจ้งหนี้ (เหมือนผลแปลงใบแจ้งหนี้→ใบเสร็จ)
+        // → หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน". ยังไม่ post JE/ไม่นับ ภ.พ.30 ที่
+        // ใบนี้ (VAT รายงานที่ใบแจ้งหนี้ผ่าน OutputVatDueAt — settlement ถูก exclude
+        // อยู่แล้ว กระดาษกับ GL ไม่ซ้ำ)
+        List<DocumentLine>? srcLines = null;
+        if (carryVatFromSource)
+        {
+            srcLines = await _db.DocumentLines.AsNoTracking()
+                .Where(l => l.DocumentId == invoice.Id && !l.IsDeleted)
+                .OrderBy(l => l.LineOrder)
+                .ToListAsync();
+            if (srcLines.Count == 0) { carryVatFromSource = false; srcLines = null; }
+        }
         // issueApproved: ผู้กดบันทึกมีสิทธิ์อนุมัติ → ใบสมบูรณ์ทันที (เลขจริง)
         // ไม่มีสิทธิ์ → Draft (เลข placeholder — เลขจริงออกตอนผู้มีสิทธิ์อนุมัติ
         // ผ่าน ApproveDocumentAsync ซึ่ง skip การลงบัญชีให้แล้วสำหรับใบ settlement)
@@ -6398,31 +6426,61 @@ public class DocumentService : IDocumentService
             Currency = invoice.Currency,
             ExchangeRate = invoice.ExchangeRate,
             ProjectId = invoice.ProjectId,
-            SubTotal = payment.Amount,
-            DiscountAmount = 0m,
-            VatAmount = 0m,                 // VAT อยู่ที่ใบกำกับต้นทางแล้ว — ไม่คิดซ้ำ
-            WithholdingTaxAmount = 0m,
-            TotalAmount = payment.Amount,
-            PaidAmount = payment.Amount,
+            SubTotal = carryVatFromSource ? invoice.SubTotal : payment.Amount,
+            DiscountAmount = carryVatFromSource ? invoice.DiscountAmount : 0m,
+            // ปกติ: VAT อยู่ที่ใบกำกับต้นทางแล้ว — ไม่คิดซ้ำ (VAT=0)
+            // carryVat: ใบนี้คือใบกำกับ ณ วันรับเงิน → ถือ VAT ของใบแจ้งหนี้
+            VatAmount = carryVatFromSource ? invoice.VatAmount : 0m,
+            WithholdingTaxAmount = carryVatFromSource ? invoice.WithholdingTaxAmount : 0m,
+            TotalAmount = carryVatFromSource ? invoice.TotalAmount : payment.Amount,
+            PaidAmount = carryVatFromSource ? invoice.TotalAmount : payment.Amount,
             BalanceDue = 0m,
             BankAccountId = payment.BankAccountId,
             Notes = $"รับชำระเงินตาม{srcLabel}เลขที่ {invoice.DocumentNumber} " +
-                    $"(วันที่รับ {payment.PaymentDate:dd/MM/yyyy}, {payment.PaymentMethod})",
+                    $"(วันที่รับ {payment.PaymentDate:dd/MM/yyyy}, {payment.PaymentMethod})" +
+                    (carryVatFromSource ? " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (§78/1)" : ""),
             CreatedBy = createdBy,
         };
         _db.Documents.Add(receipt);
-        _db.DocumentLines.Add(new DocumentLine
+        if (carryVatFromSource && srcLines != null)
         {
-            DocumentId = receipt.Id,
-            LineOrder = 1,
-            Description = $"รับชำระเงินตาม{srcLabel}เลขที่ {invoice.DocumentNumber}",
-            Quantity = 1m,
-            Unit = "รายการ",
-            UnitPrice = payment.Amount,
-            Amount = payment.Amount,
-            VatRate = 0m,
-            VatAmount = 0m,
-        });
+            var ln = 1;
+            foreach (var sl in srcLines)
+            {
+                _db.DocumentLines.Add(new DocumentLine
+                {
+                    DocumentId = receipt.Id,
+                    LineOrder = ln++,
+                    ProductCode = sl.ProductCode,
+                    Description = sl.Description,
+                    Quantity = sl.Quantity,
+                    Unit = sl.Unit,
+                    UnitPrice = sl.UnitPrice,
+                    DiscountPercent = sl.DiscountPercent,
+                    DiscountAmount = sl.DiscountAmount,
+                    Amount = sl.Amount,
+                    VatRate = sl.VatRate,
+                    VatAmount = sl.VatAmount,
+                    AccountId = sl.AccountId,
+                    ProjectId = sl.ProjectId,
+                });
+            }
+        }
+        else
+        {
+            _db.DocumentLines.Add(new DocumentLine
+            {
+                DocumentId = receipt.Id,
+                LineOrder = 1,
+                Description = $"รับชำระเงินตาม{srcLabel}เลขที่ {invoice.DocumentNumber}",
+                Quantity = 1m,
+                Unit = "รายการ",
+                UnitPrice = payment.Amount,
+                Amount = payment.Amount,
+                VatRate = 0m,
+                VatAmount = 0m,
+            });
+        }
         return receipt;
     }
 
@@ -6632,7 +6690,21 @@ public class DocumentService : IDocumentService
             // (ลูกค้าจ่ายเรา). Payment ลง JE/ตัด AR แล้ว → ใบนี้ evidence-only ไม่ลง JE
             // ซ้ำ ไม่คิด VAT ซ้ำ (VAT อยู่ที่ใบกำกับ) ลงวันที่รับเงินจริง. รองรับผ่อน
             // หลายงวด (1 Payment = 1 ใบเสร็จ).
+            // รับครบใน "งวดเดียว" (ไม่มีชำระก่อนหน้า + งวดนี้ปิดยอด) — ตัวตัดสิน
+            // ทั้งเคส 3-in-1 (A) และใบเสร็จถือ VAT (B) ข้างล่าง
+            var priorPaidBefore = doc.PaidAmount - payment.Amount - payment.WithholdingTaxAmount;
+            var singleShotFull = doc.BalanceDue <= 0.005m && priorPaidBefore <= 0.05m;
+
+            // (A) ใบรวม "ใบแจ้งหนี้/ใบกำกับภาษี" + ติ๊กรับเงินครบงวดเดียว → ตัวใบรวม
+            // ทำหน้าที่ใบเสร็จเอง (ServedAsReceipt → หัวพิมพ์ 3-in-1 "ใบแจ้งหนี้/
+            // ใบกำกับภาษี/ใบเสร็จรับเงิน") — ไม่ออกใบเสร็จแยกซ้ำ กระดาษใบเดียวจบ.
+            // ผ่อนหลายงวดยังออกใบเสร็จหลักฐานต่องวดตามเดิม (ใบรวมแทนใบเสร็จ
+            // ของหลายงวดไม่ได้ → หัวคง 2 หน้าที่)
+            var combinedSelfReceipt = doc.DocumentType == DocumentType.TaxInvoice
+                && doc.CombinedInvoiceTaxInvoice && singleShotFull;
+
             var wantReceipt = (request.IssueReceiptDocument ?? true)
+                && !combinedSelfReceipt
                 && doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.DebitNote;
             if (wantReceipt)
             {
@@ -6650,7 +6722,13 @@ public class DocumentService : IDocumentService
                     if (_permissionService != null && Guid.TryParse(createdBy, out var recorderUid))
                         recorderCanApprove = await Accounting.Helpers.DocumentPermissionHelper
                             .CanApproveAsync(_permissionService, companyId, recorderUid, DocumentType.Receipt);
-                    var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy, recorderCanApprove);
+                    // (B) ใบแจ้งหนี้ (VAT undue model) รับครบงวดเดียว → ใบเสร็จนี้คือ
+                    // "ใบกำกับภาษี" ที่กฎหมายบังคับออก ณ วันรับเงิน (§78/1) → ถือ
+                    // VAT/บรรทัดจากใบแจ้งหนี้ (หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน")
+                    // — เหมือนผล convert ใบแจ้งหนี้→ใบเสร็จทุกประการ
+                    var carryVat = doc.DocumentType == DocumentType.Invoice
+                        && doc.VatAmount > 0 && singleShotFull;
+                    var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy, recorderCanApprove, carryVat);
                     payment.ReceiptDocumentId = receiptDoc.Id;
                     await _db.SaveChangesAsync();
                 }
@@ -7077,13 +7155,41 @@ public class DocumentService : IDocumentService
         if (documentId.HasValue) query = query.Where(p => p.DocumentId == documentId.Value);
 
         var payments = await query.OrderByDescending(p => p.PaymentDate).ToListAsync();
-        return payments.Select(p => new PaymentResponse(
+        var rows = payments.Select(p => new PaymentResponse(
             p.Id, p.PaymentNumber, p.DocumentId,
             p.PaymentDate, p.Amount, p.PaymentMethod,
             p.Reference, p.BankAccount, p.BankAccountId,
             p.Notes, p.CreatedAt,
             HasPayerSignature: !string.IsNullOrWhiteSpace(p.PayerSignatureBase64),
             PayerSignatureName: p.PayerSignatureName)).ToList();
+
+        // ── รวมเอกสาร settle จากเส้น "แปลงเอกสาร" (ไม่มี Payment row) ──
+        // หลัก: สองเส้นทางชำระ (แปลง vs บันทึกชำระ) ต้องเห็นประวัติเหมือนกัน.
+        // ใบ IsSettlementReceipt ข้าม — เกิดคู่ Payment row อยู่แล้ว (modal/
+        // integration) กันแถวซ้ำ. read-only projection ไม่กระทบยอด/GL ใด ๆ.
+        var settleTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+        var settleDocsQ = _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId
+                && d.RelatedDocumentId != null
+                && settleTypes.Contains(d.DocumentType)
+                && !d.IsSettlementReceipt
+                && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Draft
+                && d.Status != DocumentStatus.Rejected
+                && d.Status != DocumentStatus.WaitingApproval);
+        if (documentId.HasValue)
+            settleDocsQ = settleDocsQ.Where(d => d.RelatedDocumentId == documentId.Value);
+        var settleDocs = await settleDocsQ.ToListAsync();
+        rows.AddRange(settleDocs.Select(d => new PaymentResponse(
+            d.Id, d.DocumentNumber, d.RelatedDocumentId!.Value,
+            d.DocumentDate, d.TotalAmount, PaymentMethod.Other,
+            "ชำระผ่านการแปลงเอกสาร", null, d.BankAccountId,
+            d.Notes, d.CreatedAt,
+            Source: "document")));
+
+        return rows.OrderByDescending(r => r.PaymentDate).ToList();
     }
 
     // ==================== Private ====================
@@ -7769,6 +7875,15 @@ public class DocumentService : IDocumentService
         // ต้อง "กลับรายการใบแจ้งหนี้เดิม" เท่านั้นถึงจะไม่ซ้ำ. ถ้ากลับรายการไม่ได้
         // (ชำระแล้วบางส่วน/ครบ หรือมีเอกสารลูกอื่น) → **ห้ามลงบัญชีซ้ำ** → block การ
         // อนุมัติ (throw ใน transaction → rollback JE ของ TaxInvoice ทั้งหมด).
+        //
+        // กันยอดไม่เท่ากัน (เคสจริง: INV 97,500 → TIV 75,000 เพราะบรรทัดราคาหลุด
+        // เป็น 0 / partial convert / แก้ draft ก่อนอนุมัติ): supersede reverse ใบ
+        // แจ้งหนี้ "ทั้งใบ" — ถ้าใบกำกับคุมยอดไม่ครบ ส่วนต่างจะหายจาก GL/ภาษีเงียบ ๆ
+        if (Math.Abs(taxInvoice.TotalAmount - src.TotalAmount) > 0.01m)
+            throw new InvalidOperationException(
+                $"ยอดใบกำกับภาษี ({taxInvoice.TotalAmount:N2}) ไม่เท่ากับใบแจ้งหนี้ต้นทาง {src.DocumentNumber} ({src.TotalAmount:N2}) — " +
+                "การแทนที่ต้องยอดตรงกันทั้งใบ (ตรวจราคาต่อบรรทัดของใบกำกับ: พบเคสราคาหลุดเป็น 0). " +
+                "ถ้าต้องการออกใบกำกับบางส่วน ให้ยกเลิกใบแจ้งหนี้เดิมแล้วออกใบแจ้งหนี้ใหม่ตามยอดจริงก่อน");
         if (src.PaidAmount > 0.01m)
             throw new InvalidOperationException(
                 $"ใบแจ้งหนี้ต้นทาง {src.DocumentNumber} มีการชำระแล้ว ({src.PaidAmount:N2} บาท) — " +
@@ -10470,6 +10585,56 @@ public class DocumentService : IDocumentService
                 warnings.Add("⚠️ บริษัทยังไม่ได้จดทะเบียน VAT แต่กำลังออกใบกำกับภาษีที่มี VAT — " +
                     "ผู้ไม่จด VAT ห้ามออกใบกำกับ (§90/2) และต้องนำส่ง VAT ที่เรียกเก็บ. " +
                     "ถ้ารายได้เกิน 1.8 ล้าน/ปี ต้องจด VAT ภายใน 30 วัน (§85/1)");
+        }
+
+        // §86+§78 — "ใบแจ้งหนี้" ที่มีสินค้า TrackStock: อนุมัติ = ตัดสต๊อก = ส่งมอบ
+        // → tax point เกิดทันที ระบบนำส่ง VAT ให้ครบ (Cr 21911 + ภ.พ.30) แต่กระดาษ
+        // "ใบแจ้งหนี้" ไม่ใช่ใบกำกับภาษี — ผู้ขายมีหน้าที่ออกใบกำกับ ณ วันส่งมอบ และ
+        // ผู้ซื้อใช้ใบแจ้งหนี้เคลมภาษีซื้อไม่ได้ → เตือนให้ใช้ใบกำกับ/ใบรวมแทน.
+        // (ใบแจ้งหนี้ "บริการล้วน" ไม่เตือน — tax point ยังไม่เกิด VAT พัก 21913 ถูกแล้ว)
+        if (doc.DocumentType == DocumentType.Invoice && doc.VatAmount > 0)
+        {
+            var invGoodsCodes = doc.Lines
+                .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+                .Select(l => l.ProductCode!)
+                .Distinct()
+                .ToList();
+            if (invGoodsCodes.Count > 0)
+            {
+                var invHasGoods = await _db.Products.AsNoTracking()
+                    .AnyAsync(p => p.CompanyId == companyId && invGoodsCodes.Contains(p.Code)
+                        && !p.IsDeleted && p.TrackStock);
+                if (invHasGoods)
+                    warnings.Add("ใบแจ้งหนี้นี้มีสินค้า (อนุมัติแล้วตัดสต๊อก = ส่งมอบ) — จุดความรับผิด VAT เกิดทันที (§78) " +
+                        "ผู้ขายต้องออก 'ใบกำกับภาษี' ให้ผู้ซื้อ ณ วันส่งมอบ: แนะนำเปลี่ยนเป็นใบกำกับภาษี " +
+                        "หรือติ๊ก 'ใบแจ้งหนี้/ใบกำกับภาษี' ใบเดียว — ใบแจ้งหนี้เปล่าผู้ซื้อเคลมภาษีซื้อไม่ได้ " +
+                        "(ระบบจะนำส่ง VAT เข้า ภ.พ.30 ให้ทันทีอยู่แล้วไม่ว่าเลือกแบบไหน)");
+            }
+        }
+
+        // ใบเสร็จ "อิสระ" (ไม่อ้างใบต้นทาง = ลง Dr เงินสด / Cr รายได้+VAT ใหม่ทั้งใบ)
+        // ทั้งที่ลูกค้ารายนี้มีใบแจ้งหนี้/ใบกำกับค้างชำระอยู่ — ถ้าใบเสร็จนี้คือการ
+        // รับชำระใบเดิม จะกลายเป็น "รายได้ + VAT ซ้ำ 2 รอบ" จากการขายครั้งเดียว
+        // → เตือนให้ใช้ตัวดึงใบค้าง (หน้าเอกสาร) / แปลงจากใบเดิม / บันทึกชำระ แทน
+        if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+            && !doc.RelatedDocumentId.HasValue && !doc.IsDeposit && doc.ContactId != Guid.Empty)
+        {
+            var arOutstanding = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.ContactId == doc.ContactId
+                    && d.Id != doc.Id && !d.IsDeleted
+                    && (d.DocumentType == DocumentType.Invoice
+                        || d.DocumentType == DocumentType.TaxInvoice
+                        || d.DocumentType == DocumentType.DebitNote)
+                    && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent
+                        || d.Status == DocumentStatus.PartiallyPaid || d.Status == DocumentStatus.Overdue)
+                    && d.BalanceDue > 0.01m)
+                .Select(d => new { d.DocumentNumber, d.BalanceDue })
+                .Take(3)
+                .ToListAsync();
+            if (arOutstanding.Count > 0)
+                warnings.Add($"ลูกค้ารายนี้มีเอกสารค้างชำระอยู่ (เช่น {string.Join(", ", arOutstanding.Select(a => $"{a.DocumentNumber} คงค้าง {a.BalanceDue:N2}"))}) " +
+                    "— ใบเสร็จอิสระใบนี้จะลง 'รายได้ + VAT ใหม่ทั้งใบ' ไม่ตัดยอดใบเดิม. " +
+                    "ถ้าตั้งใจรับชำระใบค้าง ให้ใช้ช่อง 'รับชำระใบค้างของลูกค้า' ตอนสร้างใบเสร็จ หรือกด 'บันทึกชำระเงิน'/'แปลงเอกสาร' จากใบเดิมแทน — มิฉะนั้นรายได้และภาษีขายจะซ้ำ 2 รอบ");
         }
 
         // Per-line VAT + WHT rate sanity. The 0/7 hard block sits in the
