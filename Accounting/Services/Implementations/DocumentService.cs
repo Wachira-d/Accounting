@@ -7155,13 +7155,41 @@ public class DocumentService : IDocumentService
         if (documentId.HasValue) query = query.Where(p => p.DocumentId == documentId.Value);
 
         var payments = await query.OrderByDescending(p => p.PaymentDate).ToListAsync();
-        return payments.Select(p => new PaymentResponse(
+        var rows = payments.Select(p => new PaymentResponse(
             p.Id, p.PaymentNumber, p.DocumentId,
             p.PaymentDate, p.Amount, p.PaymentMethod,
             p.Reference, p.BankAccount, p.BankAccountId,
             p.Notes, p.CreatedAt,
             HasPayerSignature: !string.IsNullOrWhiteSpace(p.PayerSignatureBase64),
             PayerSignatureName: p.PayerSignatureName)).ToList();
+
+        // ── รวมเอกสาร settle จากเส้น "แปลงเอกสาร" (ไม่มี Payment row) ──
+        // หลัก: สองเส้นทางชำระ (แปลง vs บันทึกชำระ) ต้องเห็นประวัติเหมือนกัน.
+        // ใบ IsSettlementReceipt ข้าม — เกิดคู่ Payment row อยู่แล้ว (modal/
+        // integration) กันแถวซ้ำ. read-only projection ไม่กระทบยอด/GL ใด ๆ.
+        var settleTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+        var settleDocsQ = _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId
+                && d.RelatedDocumentId != null
+                && settleTypes.Contains(d.DocumentType)
+                && !d.IsSettlementReceipt
+                && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Draft
+                && d.Status != DocumentStatus.Rejected
+                && d.Status != DocumentStatus.WaitingApproval);
+        if (documentId.HasValue)
+            settleDocsQ = settleDocsQ.Where(d => d.RelatedDocumentId == documentId.Value);
+        var settleDocs = await settleDocsQ.ToListAsync();
+        rows.AddRange(settleDocs.Select(d => new PaymentResponse(
+            d.Id, d.DocumentNumber, d.RelatedDocumentId!.Value,
+            d.DocumentDate, d.TotalAmount, PaymentMethod.Other,
+            "ชำระผ่านการแปลงเอกสาร", null, d.BankAccountId,
+            d.Notes, d.CreatedAt,
+            Source: "document")));
+
+        return rows.OrderByDescending(r => r.PaymentDate).ToList();
     }
 
     // ==================== Private ====================
