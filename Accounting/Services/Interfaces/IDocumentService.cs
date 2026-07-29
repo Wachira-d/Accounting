@@ -142,6 +142,10 @@ public interface IDocumentService
 
     // Contacts
     Task<ContactResponse> CreateContactAsync(Guid companyId, CreateContactRequest request);
+    /// <summary>กลุ่มผู้ติดต่อซ้ำ (เลขภาษี+สาขา / ชื่อเหมือนเป๊ะ) พร้อมตัวเก็บที่แนะนำ.</summary>
+    Task<List<object>> GetDuplicateContactGroupsAsync(Guid companyId);
+    /// <summary>รวมผู้ติดต่อซ้ำ — repoint FK ทุกตาราง + soft-delete ตัวที่ถูกรวม. คืนจำนวนแถวที่ย้าย.</summary>
+    Task<int> MergeContactsAsync(Guid companyId, Guid keepId, List<Guid> mergeIds, string performedBy);
     Task<ContactResponse> GetContactAsync(Guid companyId, Guid contactId);
     Task<PagedResponse<ContactResponse>> GetContactsAsync(Guid companyId, bool? isCustomer = null, bool? isSupplier = null, string? search = null, PagedRequest? paging = null);
     Task<ContactResponse> UpdateContactAsync(Guid companyId, Guid contactId, UpdateContactRequest request);

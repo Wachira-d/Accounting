@@ -6084,8 +6084,213 @@ public class DocumentService : IDocumentService
 
     // ==================== Contacts ====================
 
+    /// <summary>normalize เลขผู้เสียภาษีเหลือตัวเลขล้วน — จุด match ทุกที่ต้องใช้
+    /// ตัวนี้ (เดิมเทียบ == ตรง ๆ → "0-2735-63000-92-0" ไม่เจอ "0273563000920"
+    /// → OCR/API สร้างผู้ติดต่อซ้ำทุกครั้งที่สแกน).</summary>
+    internal static string NormalizeTaxDigits(string? taxId)
+        => new string((taxId ?? "").Where(char.IsDigit).ToArray());
+
+    internal static string NormalizeBranchCode(string? branch)
+    {
+        var d = new string((branch ?? "").Where(char.IsDigit).ToArray());
+        return d.Length == 0 ? "00000" : d.PadLeft(5, '0');
+    }
+
+    /// <summary>หา contact เดิมที่ "ซ้ำ" กับข้อมูลที่ส่งมา — คีย์หลัก = เลขภาษี 13
+    /// หลัก (normalize) + สาขา (00000 = สำนักงานใหญ่; เลขภาษีเดียวกันคนละสาขา =
+    /// คนละ record ถูกต้องตามกฎหมาย). ไม่มีเลขภาษี → ไม่ตัดสินว่าซ้ำ (ชื่อคนซ้ำ
+    /// กันได้จริง — ให้เครื่องมือ merge จัดการ).</summary>
+    public async Task<Contact?> FindDuplicateContactAsync(Guid companyId, string? taxId, string? branchCode)
+    {
+        var tax = NormalizeTaxDigits(taxId);
+        if (tax.Length != 13) return null;
+        var branch = NormalizeBranchCode(branchCode);
+        // เทียบ normalize ใน memory (EF แปล digit-strip เป็น SQL ไม่ได้) — โหลด
+        // เฉพาะ candidate ที่มี TaxId (โปรเจกต์จริงหลักร้อย/พันแถว รับได้)
+        var candidates = await _db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                && c.TaxId != null && c.TaxId != "")
+            .Select(c => new { c.Id, c.TaxId, c.BranchCode })
+            .ToListAsync();
+        var hit = candidates.FirstOrDefault(c =>
+            NormalizeTaxDigits(c.TaxId) == tax && NormalizeBranchCode(c.BranchCode) == branch);
+        return hit == null ? null
+            : await _db.Contacts.FirstOrDefaultAsync(c => c.Id == hit.Id);
+    }
+
+    /// <summary>หากลุ่มผู้ติดต่อซ้ำ — คีย์: เลขภาษี 13 หลัก (normalize) + สาขา.
+    /// เสริมด้วยกลุ่มชื่อเหมือนกันเป๊ะที่ไม่มีเลขภาษี (แนะนำอย่างเดียว).</summary>
+    public async Task<List<object>> GetDuplicateContactGroupsAsync(Guid companyId)
+    {
+        var all = await _db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => new { c.Id, c.Name, c.TaxId, c.BranchCode, c.Address, c.Email, c.Phone, c.CreatedAt, c.IsCustomer, c.IsSupplier })
+            .ToListAsync();
+
+        var groups = new List<object>();
+        // กลุ่มตามเลขภาษี+สาขา
+        foreach (var g in all
+            .Where(c => NormalizeTaxDigits(c.TaxId).Length == 13)
+            .GroupBy(c => NormalizeTaxDigits(c.TaxId) + "|" + NormalizeBranchCode(c.BranchCode))
+            .Where(g => g.Count() > 1))
+        {
+            // แนะนำ "ตัวเก็บ": ข้อมูลครบสุด (ที่อยู่/อีเมล/โทร) แล้วเก่าสุด (เลขอ้าง
+            // ในเอกสารเดิมมักชี้ตัวแรก)
+            var ordered = g
+                .OrderByDescending(c => (string.IsNullOrWhiteSpace(c.Address) ? 0 : 1)
+                    + (string.IsNullOrWhiteSpace(c.Email) ? 0 : 1)
+                    + (string.IsNullOrWhiteSpace(c.Phone) ? 0 : 1))
+                .ThenBy(c => c.CreatedAt)
+                .ToList();
+            groups.Add(new
+            {
+                key = g.Key,
+                matchBy = "taxId",
+                taxId = NormalizeTaxDigits(ordered[0].TaxId),
+                suggestedKeepId = ordered[0].Id,
+                contacts = ordered.Select(c => new
+                {
+                    c.Id, c.Name, c.TaxId, c.BranchCode, c.Address, c.Email, c.Phone,
+                    c.CreatedAt, c.IsCustomer, c.IsSupplier
+                }).ToList()
+            });
+        }
+        // กลุ่มชื่อซ้ำเป๊ะ (ไม่มีเลขภาษีทั้งคู่) — แสดงให้ตัดสินใจเอง
+        foreach (var g in all
+            .Where(c => NormalizeTaxDigits(c.TaxId).Length != 13)
+            .GroupBy(c => (c.Name ?? "").Trim().ToLowerInvariant())
+            .Where(g => g.Key.Length > 0 && g.Count() > 1))
+        {
+            var ordered = g.OrderBy(c => c.CreatedAt).ToList();
+            groups.Add(new
+            {
+                key = "name|" + g.Key,
+                matchBy = "name",
+                taxId = (string?)null,
+                suggestedKeepId = ordered[0].Id,
+                contacts = ordered.Select(c => new
+                {
+                    c.Id, c.Name, c.TaxId, c.BranchCode, c.Address, c.Email, c.Phone,
+                    c.CreatedAt, c.IsCustomer, c.IsSupplier
+                }).ToList()
+            });
+        }
+        return groups;
+    }
+
+    /// <summary>รวมผู้ติดต่อซ้ำ: repoint FK ทุกตาราง/คอลัมน์ที่ชี้ Contact (อ่านจาก
+    /// information_schema — generic ไม่หลุดตารางใหม่ในอนาคต) → เติม field ที่ตัวเก็บ
+    /// ยังว่างจากตัวที่ถูกรวม → soft-delete ตัวที่ถูกรวม + audit. เอกสาร/ประวัติ
+    /// ทั้งหมดย้ายมาอยู่ใต้ contact เดียว.</summary>
+    public async Task<int> MergeContactsAsync(Guid companyId, Guid keepId, List<Guid> mergeIds, string performedBy)
+    {
+        mergeIds = mergeIds.Where(id => id != keepId).Distinct().ToList();
+        if (mergeIds.Count == 0) throw new InvalidOperationException("ไม่มีรายการให้รวม");
+
+        var keep = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keepId && c.CompanyId == companyId && !c.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อตัวเก็บ (keep)");
+        var losers = await _db.Contacts
+            .Where(c => mergeIds.Contains(c.Id) && c.CompanyId == companyId && !c.IsDeleted)
+            .ToListAsync();
+        if (losers.Count != mergeIds.Count)
+            throw new InvalidOperationException("บางรายการไม่พบ/ถูกลบแล้ว — โหลดรายการซ้ำใหม่อีกครั้ง");
+
+        // เติมข้อมูลที่ตัวเก็บยังว่างจากตัวที่ถูกรวม (ไม่ overwrite ของเดิม)
+        foreach (var l in losers)
+        {
+            if (string.IsNullOrWhiteSpace(keep.TaxId) && !string.IsNullOrWhiteSpace(l.TaxId)) keep.TaxId = l.TaxId;
+            if (string.IsNullOrWhiteSpace(keep.Address) && !string.IsNullOrWhiteSpace(l.Address)) keep.Address = l.Address;
+            if (string.IsNullOrWhiteSpace(keep.Email) && !string.IsNullOrWhiteSpace(l.Email)) keep.Email = l.Email;
+            if (string.IsNullOrWhiteSpace(keep.Phone) && !string.IsNullOrWhiteSpace(l.Phone)) keep.Phone = l.Phone;
+            if (l.IsCustomer) keep.IsCustomer = true;
+            if (l.IsSupplier) keep.IsSupplier = true;
+        }
+
+        // repoint FK ทุกคอลัมน์ที่ชี้ Contact — generic จาก information_schema
+        // (ContactId + ชื่อ *ContactId ทุกแบบ: PayeeContactId, LinkedContactId,
+        // MatchedContactId, ...) ยกเว้นตาราง Contacts เอง. Guid ไม่ชนข้าม tenant.
+        var fkCols = await _db.Database.SqlQuery<FkColRow>($@"
+            SELECT c.table_name AS ""TableName"", c.column_name AS ""ColumnName""
+            FROM information_schema.columns c
+            JOIN information_schema.tables t
+              ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+            WHERE c.table_schema = 'public'
+              AND t.table_type = 'BASE TABLE'
+              AND c.table_name <> 'Contacts'
+              AND (c.column_name = 'ContactId' OR c.column_name LIKE '%ContactId')
+              AND c.data_type = 'uuid'")
+            .ToListAsync();
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        var repointed = 0;
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            foreach (var loser in losers)
+            {
+                foreach (var col in fkCols)
+                {
+                    // table/column มาจาก information_schema (trusted) — quote กัน case
+                    var sql = $"UPDATE \"{col.TableName}\" SET \"{col.ColumnName}\" = {{0}} WHERE \"{col.ColumnName}\" = {{1}}";
+                    repointed += await _db.Database.ExecuteSqlRawAsync(sql, keepId, loser.Id);
+                }
+                loser.IsDeleted = true;
+                loser.Notes = ((loser.Notes ?? "") + $" [รวมเข้ากับ {keep.Name} ({keepId}) โดย merge]").Trim();
+                loser.UpdatedAt = DateTime.UtcNow;
+                loser.UpdatedBy = performedBy;
+            }
+            keep.UpdatedAt = DateTime.UtcNow;
+            keep.UpdatedBy = performedBy;
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(performedBy, out var uid) ? uid : null,
+                Action = AuditAction.Update,
+                EntityType = "ContactMerge",
+                EntityId = keepId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                { keepId, merged = mergeIds, rowsRepointed = repointed }),
+                Timestamp = DateTime.UtcNow
+            });
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        });
+
+        _logger.LogInformation("Merged {N} contacts into {Keep} ({Name}) — repointed {Rows} rows",
+            losers.Count, keepId, keep.Name, repointed);
+        return repointed;
+    }
+
+    private sealed class FkColRow
+    {
+        public string TableName { get; set; } = "";
+        public string ColumnName { get; set; } = "";
+    }
+
     public async Task<ContactResponse> CreateContactAsync(Guid companyId, CreateContactRequest request)
     {
+        // ── กันสร้างซ้ำที่ "ศูนย์กลาง" (ครอบทุกเส้น: UI สร้างใหม่ / quick-sale /
+        // OCR / import) — เลขภาษี+สาขาเดียวกัน = record เดียว: คืนตัวเดิมแบบ
+        // idempotent + เติม field ที่ตัวเดิมยังว่างจากข้อมูลใหม่ (ไม่ overwrite
+        // ของที่มีอยู่). เดิมไม่มี guard เลย → ผู้ติดต่อซ้ำ 3-4 รายการต่อ vendor
+        var dup = await FindDuplicateContactAsync(companyId, request.TaxId, request.BranchCode);
+        if (dup != null)
+        {
+            var enriched = false;
+            void Fill(Func<string?> get, Action<string> set, string? val)
+            { if (string.IsNullOrWhiteSpace(get()) && !string.IsNullOrWhiteSpace(val)) { set(val!); enriched = true; } }
+            Fill(() => dup.Phone, v => dup.Phone = v, request.Phone);
+            Fill(() => dup.Email, v => dup.Email = v, request.Email);
+            Fill(() => dup.Address, v => dup.Address = v, request.Address);
+            Fill(() => dup.ContactPerson, v => dup.ContactPerson = v, request.ContactPerson);
+            if (request.IsCustomer && !dup.IsCustomer) { dup.IsCustomer = true; enriched = true; }
+            if (request.IsSupplier && !dup.IsSupplier) { dup.IsSupplier = true; enriched = true; }
+            if (enriched) { dup.UpdatedAt = DateTime.UtcNow; await _db.SaveChangesAsync(); }
+            _logger.LogInformation("CreateContact dedup: reuse {Id} ({Name}) for TaxId {Tax}",
+                dup.Id, dup.Name, NormalizeTaxDigits(request.TaxId));
+            return MapContactToResponse(dup);
+        }
+
         // If structured fields are missing but free-text Address is provided,
         // attempt to auto-parse so e-Tax XML has the data it needs.
         var parsed = NeedsAutoParse(request) && !string.IsNullOrWhiteSpace(request.Address)

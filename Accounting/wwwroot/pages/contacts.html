@@ -37,6 +37,14 @@
       <input type="text" class="search-input" placeholder="ค้นหาชื่อ, เลขประจำตัวผู้เสียภาษี..." id="searchInput" oninput="Page.load()">
     </div>
 
+    <!-- ผู้ติดต่อซ้ำ (เลขภาษีเดียวกัน/ชื่อซ้ำ) — โชว์เมื่อตรวจพบ + เครื่องมือรวม -->
+    <div id="dupBanner" style="display:none;margin:0 0 12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:10px;padding:12px 16px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:14px;color:#92400e">⚠️ พบผู้ติดต่อซ้ำ <b id="dupCount">0</b> กลุ่ม — เอกสารกระจายหลาย record ทำให้ยอดค้าง/ประวัติต่อรายไม่ครบ</span>
+        <button class="btn btn-sm btn-primary" onclick="Page.openDupModal()">🧹 จัดการรวมรายการซ้ำ</button>
+      </div>
+    </div>
+
     <div class="table-container">
       <table class="table">
         <thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขผู้เสียภาษี</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.phone">โทรศัพท์</th><th data-i18n="common.email">อีเมล</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
@@ -302,6 +310,84 @@
   <script>
     const Page = {
       page: 1, filterType: 'all', _cache: {},
+      // ===== ผู้ติดต่อซ้ำ: ตรวจ + รวม =====
+      _dupGroups: [],
+      async checkDuplicates() {
+        try {
+          const api = Layout.api(); if (!api) return;
+          const res = await api.getContactDuplicates();
+          this._dupGroups = res.data || [];
+          const banner = document.getElementById('dupBanner');
+          const cnt = document.getElementById('dupCount');
+          if (banner && cnt) {
+            cnt.textContent = this._dupGroups.length;
+            banner.style.display = this._dupGroups.length > 0 ? '' : 'none';
+          }
+        } catch { /* best-effort */ }
+      },
+
+      openDupModal() {
+        const groups = this._dupGroups || [];
+        if (!groups.length) { Layout.toast('ไม่พบรายการซ้ำ', 'info'); return; }
+        let ov = document.getElementById('dupModal');
+        if (ov) ov.remove();
+        ov = document.createElement('div');
+        ov.id = 'dupModal';
+        ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9998;overflow:auto;padding:24px';
+        const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        ov.innerHTML = `
+          <div style="max-width:760px;margin:30px auto;background:#fff;border-radius:14px;padding:22px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <h3 style="margin:0;font-size:17px">🧹 รวมผู้ติดต่อซ้ำ (${groups.length} กลุ่ม)</h3>
+              <button onclick="document.getElementById('dupModal').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#64748b">&times;</button>
+            </div>
+            <p style="color:#64748b;font-size:13px;margin:0 0 14px">
+              เลือก "รายการที่จะเก็บ" ในแต่ละกลุ่ม (ระบบแนะนำตัวที่ข้อมูลครบสุดให้แล้ว) —
+              เอกสาร/ประวัติทั้งหมดของรายการอื่นจะย้ายมารวมที่ตัวเก็บ แล้วรายการซ้ำถูกปิดใช้งาน (กู้ไม่ได้)
+            </p>
+            ${groups.map((g, gi) => `
+              <div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:12px" id="dupG${gi}">
+                <div style="font-size:13px;font-weight:600;color:#334155;margin-bottom:8px">
+                  ${g.matchBy === 'taxId' ? `เลขผู้เสียภาษี ${esc(g.taxId)}` : 'ชื่อเหมือนกัน (ไม่มีเลขภาษี — โปรดตรวจว่าเป็นรายเดียวกันจริง)'}
+                  · ${g.contacts.length} รายการ
+                </div>
+                ${g.contacts.map(c => `
+                  <label style="display:flex;gap:10px;align-items:flex-start;padding:6px 4px;cursor:pointer;font-size:13px">
+                    <input type="radio" name="dupKeep${gi}" value="${c.id}" ${c.id === g.suggestedKeepId ? 'checked' : ''} style="margin-top:3px">
+                    <span><b>${esc(c.name)}</b>${c.id === g.suggestedKeepId ? ' <span style="color:#16a34a;font-size:11px">← แนะนำ</span>' : ''}
+                      <span style="display:block;color:#94a3b8;font-size:11px">
+                        ${esc(c.taxId || 'ไม่มีเลขภาษี')} · สาขา ${esc(c.branchCode || '00000')} · ${esc(c.address || 'ไม่มีที่อยู่')} · สร้าง ${new Date(c.createdAt).toLocaleDateString('th-TH')}
+                      </span>
+                    </span>
+                  </label>`).join('')}
+                <button class="btn btn-sm btn-primary" style="margin-top:6px" onclick="Page.mergeGroup(${gi}, this)">รวมกลุ่มนี้</button>
+              </div>`).join('')}
+          </div>`;
+        document.body.appendChild(ov);
+      },
+
+      async mergeGroup(gi, btn) {
+        const g = this._dupGroups[gi]; if (!g) return;
+        const keepId = document.querySelector(`input[name="dupKeep${gi}"]:checked`)?.value;
+        if (!keepId) { Layout.toast('เลือกรายการที่จะเก็บก่อน', 'error'); return; }
+        const mergeIds = g.contacts.map(c => c.id).filter(id => id !== keepId);
+        if (!confirm(`รวม ${mergeIds.length} รายการเข้ากับรายการที่เลือก?\nเอกสาร/ประวัติทั้งหมดจะย้ายตาม และรายการซ้ำจะถูกปิดใช้งานถาวร`)) return;
+        btn.disabled = true; btn.textContent = 'กำลังรวม...';
+        try {
+          const api = Layout.api();
+          const res = await api.mergeContacts({ keepId, mergeIds });
+          Layout.toast(res.message || 'รวมสำเร็จ');
+          document.getElementById(`dupG${gi}`)?.remove();
+          this._dupGroups[gi] = null;
+          await this.load();
+          await this.checkDuplicates();
+          if (!(this._dupGroups || []).length) document.getElementById('dupModal')?.remove();
+        } catch (e) {
+          Layout.toast(e.message, 'error');
+          btn.disabled = false; btn.textContent = 'รวมกลุ่มนี้';
+        }
+      },
+
       async init() {
         if (!Layout.init('contacts')) return;
         Layout.setTitle('ผู้ติดต่อ');
@@ -313,6 +399,7 @@
         // starting with 1 (asset), 2 (liability) qualifies.
         await this._loadAccountDropdowns();
         await this.load();
+        this.checkDuplicates();   // ตรวจผู้ติดต่อซ้ำ (banner) — best-effort ไม่ block หน้า
         const params = new URLSearchParams(window.location.search);
         const openId = params.get('id');
         if (openId) this.openEdit(openId);

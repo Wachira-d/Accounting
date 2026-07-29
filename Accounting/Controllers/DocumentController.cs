@@ -734,6 +734,32 @@ public class DocumentController : ControllerBase
         return StatusCode(201, new ApiResponse<ContactResponse>(true, result, "สร้างผู้ติดต่อสำเร็จ"));
     }
 
+    /// <summary>กลุ่มผู้ติดต่อซ้ำ (เลขภาษี+สาขา / ชื่อเหมือนเป๊ะ) — ให้หน้า contacts
+    /// โชว์ banner + เครื่องมือรวม.</summary>
+    [HttpGet("contacts/duplicates")]
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetDuplicateContacts(Guid companyId)
+    {
+        var groups = await _documentService.GetDuplicateContactGroupsAsync(companyId);
+        return Ok(new ApiResponse<List<object>>(true, groups));
+    }
+
+    public sealed record MergeContactsRequest(Guid KeepId, List<Guid> MergeIds);
+
+    /// <summary>รวมผู้ติดต่อซ้ำเข้า record เดียว — เอกสาร/ประวัติทั้งหมดย้ายตาม.</summary>
+    [HttpPost("contacts/merge")]
+    public async Task<ActionResult<ApiResponse<object>>> MergeContacts(Guid companyId, [FromBody] MergeContactsRequest request)
+    {
+        try
+        {
+            var performedBy = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+            var rows = await _documentService.MergeContactsAsync(companyId, request.KeepId, request.MergeIds ?? new List<Guid>(), performedBy);
+            return Ok(new ApiResponse<object>(true, new { rowsRepointed = rows },
+                $"รวมผู้ติดต่อสำเร็จ — ย้ายการอ้างอิง {rows} รายการ"));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
     [HttpPut("contacts/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<ContactResponse>>> UpdateContact(Guid companyId, Guid contactId, [FromBody] UpdateContactRequest request)
     {
