@@ -614,6 +614,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   + ตั้ง `InputVatBecameClaimableAt = now`
 - รายงาน ภ.พ.30 ใช้ `InputVatBecameClaimableAt` เป็น tax point (ไม่ใช่
   `DocumentDate` ของใบเดิม) — เคลมในเดือนที่ใบครบ
+- UI: `DocumentResponse.UndueInputVatBlockers` (populate ใน
+  `MapDocumentToResponse` เมื่อค้าง 11640) = เหตุผลจริงที่ยังเคลมไม่ได้
+  (missing fields จาก `TaxInvoiceCompletenessChecker` + override/ไม่มีบรรทัด
+  เคลม VAT/§83/6) — กล่องเติมใบกำกับใน documents.html โชว์ checklist นี้
+  + prefill รหัสสาขาจาก `Contact.BranchCode` (fallback 00000 สนญ.)
 
 ### 3.7 มัดจำ (Deposit lifecycle)
 - เปิด Receipt/ReceiptVoucher ที่ `IsDeposit = true`:

@@ -10406,10 +10406,30 @@ public class DocumentService : IDocumentService
         Dictionary<Guid, Guid>? pceByLine = null)
     {
         var (lifecycle, reason) = ComputeLifecycle(d, conversionPercent, downstream);
+        // เหตุผลจริงที่ภาษีซื้อยังค้าง 11640 — คำนวณจาก checker + guard เดียวกับ
+        // ReclassifyUndueInputVatAsync เพื่อให้ UI บอกผู้ใช้ตรง ๆ ว่าขาดอะไร
+        // (ก่อนหน้านี้ UI เดาว่า "เลขภาษีผู้ขายไม่ถูก" เสมอ → ผู้ใช้งง)
+        List<string>? undueBlockers = null;
+        if (d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null)
+        {
+            undueBlockers = new List<string>();
+            if (d.IsForeignService)
+                undueBlockers.Add("บริการต่างประเทศ (§83/6) — เคลมผ่านหน้านำส่งภาษี ภ.พ.36 (ไม่ใช่การเติมใบกำกับ)");
+            else
+            {
+                var cti = TaxInvoiceCompletenessChecker.Evaluate(d, d.Contact);
+                foreach (var f in cti.MissingFields) undueBlockers.Add("ขาด: " + f);
+                if (!string.IsNullOrWhiteSpace(d.InputVatAccountCodeOverride))
+                    undueBlockers.Add($"ตั้งผังภาษีซื้อ override ไว้ ({d.InputVatAccountCodeOverride}) = ตั้งใจไม่เคลม VAT — ต้องล้าง override ก่อนจึงย้ายเข้า 11610 ได้");
+                var claimableVat = d.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+                if (claimableVat <= 0)
+                    undueBlockers.Add("ไม่มีบรรทัดที่เคลมภาษีซื้อได้ (ทุกบรรทัดถูกปิด \"เคลม VAT\" หรือยอด VAT = 0) — ไม่มียอดให้ย้ายเข้า 11610");
+            }
+        }
         return new(
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
-        new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
+        new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId, d.Contact.BranchCode),
         d.SubTotal, d.DiscountAmount, d.BillDiscountPercent, d.BillDiscountAmount,
         d.VatAmount, d.WithholdingTaxAmount,
         d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Reference, d.Notes,
@@ -10510,7 +10530,8 @@ public class DocumentService : IDocumentService
         BookingNumber: d.BookingNumber,
         CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice,
         DepositAppliedAmount: d.DepositAppliedAmount,
-        IsSettlementReceipt: d.IsSettlementReceipt);
+        IsSettlementReceipt: d.IsSettlementReceipt,
+        UndueInputVatBlockers: undueBlockers);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

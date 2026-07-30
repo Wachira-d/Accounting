@@ -5431,11 +5431,17 @@
             ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.isForeignService) ? `
               <div style="margin-bottom:12px;padding:12px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">
                 <div style="font-size:13px;font-weight:700;color:#6d28d9;margin-bottom:4px">⏳ ภาษีซื้อยังไม่ถึงกำหนด (พักไว้ที่บัญชี 11640)</div>
-                <div style="font-size:12px;color:#6b21a8;margin-bottom:10px">ใบกำกับภาษีซื้อยังไม่ครบตาม §86/4 — ภาษีซื้อยังเคลม ภ.พ.30 ไม่ได้ เติมเลขที่ + วันที่ + สาขาให้ครบ (ผู้ขายต้องมีเลขภาษี 13 หลักไทย) ระบบจะย้ายเข้า "ภาษีซื้อ ภ.พ.30" (11610) อัตโนมัติ และนับเข้ารายงานภาษีซื้อในเดือนที่ปรับ</div>
+                <div style="font-size:12px;color:#6b21a8;margin-bottom:8px">ใบกำกับภาษีซื้อยังไม่ครบตาม §86/4 — ภาษีซื้อยังเคลม ภ.พ.30 ไม่ได้ เมื่อข้อมูลครบ ระบบจะย้ายเข้า "ภาษีซื้อ ภ.พ.30" (11610) อัตโนมัติ และนับเข้ารายงานภาษีซื้อในเดือนที่ปรับ</div>
+                ${(d.undueInputVatBlockers || []).length ? `
+                <div style="font-size:12px;color:#7c2d12;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 10px;margin-bottom:10px">
+                  <b>สิ่งที่ยังขาด/ติดเงื่อนไข:</b>
+                  <ul style="margin:4px 0 0 18px;padding:0">${d.undueInputVatBlockers.map(b => `<li>${this.escapeHtml(b)}</li>`).join('')}</ul>
+                  ${d.undueInputVatBlockers.some(b => b.includes('ผู้ขาย') && (b.includes('ชื่อ') || b.includes('ที่อยู่') || b.includes('เลขผู้เสียภาษี'))) ? `<div style="margin-top:6px">ข้อมูลชื่อ/เลขภาษี/ที่อยู่ผู้ขายดึงจากผู้ติดต่อ → <a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary);font-weight:600">แก้ที่หน้าผู้ติดต่อ</a> แล้วกลับมากด "บันทึก" อีกครั้ง</div>` : ''}
+                </div>` : ''}
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
                   <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เช่น INV-2026-0042"></div>
                   <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
-                  <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || '')}" placeholder="00000" maxlength="5"></div>
+                  <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" placeholder="00000" maxlength="5">${!d.supplierBranchCode ? `<div style="font-size:10px;color:#9333ea;margin-top:2px">${d.contact?.branchCode ? '⚙️ ดึงจากผู้ติดต่ออัตโนมัติ' : '⚙️ ค่าเริ่มต้น สำนักงานใหญ่'}</div>` : ''}</div>
                 </div>
                 <button class="btn btn-sm btn-primary" onclick="Page.completeTaxInvoice('${d.id}')">บันทึก + ย้ายเข้าภาษีซื้อ ภ.พ.30</button>
               </div>` : ''}
@@ -6105,12 +6111,18 @@
         try {
           const res = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`, body);
           const d = res?.data || res;
-          Layout.closeModal('detailModal');
           // toast ซื่อสัตย์: เช็คจริงว่าย้ายเข้า 11610 แล้วหรือยัง (inputVatBecameClaimableAt)
-          if (d && d.inputVatBecameClaimableAt)
+          if (d && d.inputVatBecameClaimableAt) {
+            Layout.closeModal('detailModal');
             Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 (11610) แล้ว', 'success');
-          else
-            Layout.toast('บันทึกข้อมูลใบกำกับแล้ว — แต่ "ยังเคลม ภ.พ.30 ไม่ได้": ใบกำกับยังไม่ครบ §86/4 (ผู้ขายต้องมีเลขภาษี 13 หลักไทย). ถ้าเป็นบริการต่างประเทศ ให้เคลมผ่าน ภ.พ.36 ที่หน้านำส่งภาษี', 'warning', 10000);
+          } else {
+            // ยังย้ายไม่ได้ → บอกเหตุผลจริงจาก backend (ไม่เดาว่าเลขภาษีผิดเสมอ)
+            const why = (d?.undueInputVatBlockers || []).map(b => '• ' + b).join('\n');
+            Layout.toast('บันทึกข้อมูลใบกำกับแล้ว — แต่ยังเคลม ภ.พ.30 ไม่ได้:\n'
+              + (why || 'ใบกำกับยังไม่ครบ §86/4'), 'warning', 12000);
+            // เปิด detail ใหม่ให้เห็น checklist ที่อัปเดตแล้ว (ไม่ปิด modal ทิ้งเฉย ๆ)
+            this.detail(id);
+          }
           await this.load();
         } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },

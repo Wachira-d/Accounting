@@ -598,7 +598,13 @@ public record DocumentResponse(
     // ใบเสร็จ "หลักฐานรับเงิน" ที่ระบบออกอัตโนมัติคู่การชำระ — ไม่มี JE/VAT ของ
     // ตัวเอง (บัญชีอยู่ที่ Payment + ใบกำกับต้นทาง) → list ติดป้ายให้ผู้ใช้รู้ว่า
     // ไม่ใช่ยอดขายซ้ำ
-    bool IsSettlementReceipt = false);
+    bool IsSettlementReceipt = false,
+    // ===== เหตุผลที่ภาษีซื้อยังค้าง 11640 (เคลม ภ.พ.30 ไม่ได้) =====
+    // Populated เฉพาะตอน InputVatPostedAsUndue=true + BecameClaimableAt=null —
+    // รายการภาษาไทยบอกตรง ๆ ว่า "ขาดอะไร" (จาก TaxInvoiceCompletenessChecker
+    // + guard อื่นของ ReclassifyUndueInputVatAsync เช่น override/ไม่มีบรรทัดเคลม
+    // VAT) เพื่อให้ UI โชว์เหตุผลจริงแทนข้อความ generic ที่ทำให้ผู้ใช้งง
+    List<string>? UndueInputVatBlockers = null);
 
 public record ProjectCostBrief(
     Guid ProjectId,
@@ -695,7 +701,7 @@ public record DocumentLineFulfillmentResponse(
     Guid? ProjectId,
     string? ProductCode);
 
-public record ContactBrief(Guid Id, string Name, string? TaxId);
+public record ContactBrief(Guid Id, string Name, string? TaxId, string? BranchCode = null);
 
 public record ApproveDocumentRequest(string? Notes, bool AcknowledgeWarnings = false);
 
