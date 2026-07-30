@@ -73,6 +73,26 @@ public class SubscriptionService : ISubscriptionService
             : (request.TrialDays ?? template?.TrialDurationDays ?? 30);
         var now = DateTime.UtcNow;
 
+        // ===== เลือกแหล่ง limit ให้ถูกโหมด + floor > 0 =====
+        // แพ็กเกจฟรีถาวร (IsPermanentFree) ไม่ใช่ trial — limit ตัวจริงอยู่คอลัมน์
+        // หลักของ plan (Max*). เดิมดึง Trial* เสมอ → template ฟรีที่ admin ไม่ได้
+        // กรอก Trial* ได้ 0/0 = สมัครปุ๊บสร้างเอกสาร/ลงบัญชีไม่ได้เลย.
+        // Floor: plan ที่เปิดให้สมัครต้องใช้งานขั้นต่ำได้เสมอ — ค่า 0 บน counter
+        // หลัก = ตั้งค่าพลาด ไม่ใช่เจตนา (ต่างจาก OCR ที่ 0 = ไม่ให้ใช้ ถูกต้อง)
+        static int Pick(int primary, int secondary, int fallback)
+            => primary > 0 ? primary : secondary > 0 ? secondary : fallback;
+        var tMaxUsers = isPermanentFree
+            ? Pick(template?.MaxUsers ?? 0, template?.TrialMaxUsers ?? 0, 2)
+            : Pick(template?.TrialMaxUsers ?? 0, template?.MaxUsers ?? 0, 2);
+        var tMaxDocs = isPermanentFree
+            ? Pick(template?.MaxDocumentsPerMonth ?? 0, template?.TrialMaxDocumentsPerMonth ?? 0, 20)
+            : Pick(template?.TrialMaxDocumentsPerMonth ?? 0, template?.MaxDocumentsPerMonth ?? 0, 20);
+        var tMaxJournals = isPermanentFree
+            ? Pick(template?.MaxJournalEntriesPerMonth ?? 0, template?.TrialMaxJournalEntriesPerMonth ?? 0, 50)
+            : Pick(template?.TrialMaxJournalEntriesPerMonth ?? 0, template?.MaxJournalEntriesPerMonth ?? 0, 50);
+        var tMaxStorage = (template?.MaxStorageBytes ?? 0) > 0
+            ? template!.MaxStorageBytes : 50L * 1024 * 1024;
+
         var subscription = new Subscription
         {
             CompanyId = request.CompanyId,
@@ -84,15 +104,17 @@ public class SubscriptionService : ISubscriptionService
             EnabledFeatures = isPermanentFree
                 ? (template?.EnabledFeatures ?? FeatureFlags.TrialFeatures)
                 : (template?.TrialFeatures ?? FeatureFlags.TrialFeatures),
-            MaxUsers = template?.TrialMaxUsers ?? 2,
+            MaxUsers = tMaxUsers,
             MaxCompanies = 1,
-            MaxDocumentsPerMonth = template?.TrialMaxDocumentsPerMonth ?? 20,
-            MaxJournalEntriesPerMonth = template?.TrialMaxJournalEntriesPerMonth ?? 50,
-            MaxStorageBytes = 50 * 1024 * 1024,
+            MaxDocumentsPerMonth = tMaxDocs,
+            MaxJournalEntriesPerMonth = tMaxJournals,
+            MaxStorageBytes = tMaxStorage,
             // Pull OCR quotas from the template so a new subscription
             // honors the per-engine budget the admin configured for this
             // plan tier (free=0 Azure pages, paid tiers get more).
-            MaxOcrPagesPerMonth = template?.TrialMaxOcrPagesPerMonth ?? 10,
+            MaxOcrPagesPerMonth = isPermanentFree
+                ? (template?.MaxOcrPagesPerMonth ?? 0)
+                : (template?.TrialMaxOcrPagesPerMonth ?? 10),
             AzureOcrPagesPerMonth = template?.AzureOcrPagesPerMonth,
             LocalOcrPagesPerMonth = template?.LocalOcrPagesPerMonth,
             FallbackToLocalWhenAzureExhausted = template?.FallbackToLocalWhenAzureExhausted ?? true,
@@ -114,9 +136,11 @@ public class SubscriptionService : ISubscriptionService
             MaxExtensions = template?.TrialMaxExtensions ?? 2,
             ExtensionDays = template?.TrialExtensionDays ?? 15,
             TrialFeatures = template?.TrialFeatures ?? FeatureFlags.TrialFeatures,
-            TrialMaxUsers = template?.TrialMaxUsers ?? 2,
-            TrialMaxDocumentsPerMonth = template?.TrialMaxDocumentsPerMonth ?? 20,
-            TrialMaxJournalEntriesPerMonth = template?.TrialMaxJournalEntriesPerMonth ?? 50,
+            // ใช้ค่า effective เดียวกับ Subscription (ผ่าน Pick แล้ว) — ไม่งั้น
+            // หน้าจอ trial status โชว์ 0/0 ทั้งที่ subscription จริงมี limit
+            TrialMaxUsers = tMaxUsers,
+            TrialMaxDocumentsPerMonth = tMaxDocs,
+            TrialMaxJournalEntriesPerMonth = tMaxJournals,
             TrialMaxCompanies = 1,
             BlockAccessOnExpiry = template?.TrialBlockOnExpiry ?? false,
             GracePeriodDays = template?.TrialGracePeriodDays ?? 7,
@@ -594,6 +618,17 @@ public class SubscriptionService : ISubscriptionService
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null) return false;
 
+        // Self-heal: subscription ที่ถูกสร้างช่วงบั๊ก "แพ็กเกจฟรีถาวรดึง Trial*"
+        // ค้าง limit = 0 → สร้างเอกสาร/ลงบัญชีไม่ได้เลยตั้งแต่สมัคร. sync จาก
+        // template ทันทีที่มีการเช็คสิทธิ์ — ลูกค้าเก่าหายเองหลัง deploy ไม่ต้อง
+        // รอ admin ไล่แก้มือทีละราย
+        if ((sub.MaxDocumentsPerMonth <= 0 || sub.MaxJournalEntriesPerMonth <= 0
+                || sub.MaxUsers <= 0 || sub.MaxStorageBytes <= 0)
+            && (sub.Status == SubscriptionStatus.Trial || sub.Status == SubscriptionStatus.Active))
+        {
+            await ResyncZeroLimitsFromTemplateAsync(sub);
+        }
+
         // Reset per-company monthly usage when the month rolls. Per-company
         // counters stay so the UI can show "Company X used 230 / 1,000" —
         // the AGGREGATE is what we enforce against when on an Account Plan.
@@ -630,6 +665,50 @@ public class SubscriptionService : ISubscriptionService
             "storage" => sub.CurrentStorageUsed < sub.MaxStorageBytes,
             _ => true
         };
+    }
+
+    /// <summary>ซ่อม subscription ที่ counter หลักเป็น 0 (สร้างช่วงบั๊กแพ็กเกจ
+    /// ฟรีถาวรดึงคอลัมน์ Trial*) — เติมจาก template ของ plan ปัจจุบันด้วยลำดับ
+    /// เดียวกับ StartTrialAsync: ฟรีถาวร → Max* ก่อน, trial → Trial* ก่อน,
+    /// สุดท้าย fallback ค่า default. แตะเฉพาะ field ที่เป็น 0 (ไม่ทับค่าที่ admin
+    /// ตั้งเองไว้แล้ว). best-effort — ล้มเหลวเงียบ ไม่ block เส้นเช็คสิทธิ์.</summary>
+    private async Task ResyncZeroLimitsFromTemplateAsync(Subscription sub)
+    {
+        try
+        {
+            var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == sub.Plan && p.IsActive);
+            static int Pick(int primary, int secondary, int fallback)
+                => primary > 0 ? primary : secondary > 0 ? secondary : fallback;
+            var freeMode = sub.IsPermanentFree || (template?.IsPermanentFree ?? false);
+
+            if (sub.MaxUsers <= 0)
+                sub.MaxUsers = freeMode
+                    ? Pick(template?.MaxUsers ?? 0, template?.TrialMaxUsers ?? 0, 2)
+                    : Pick(template?.TrialMaxUsers ?? 0, template?.MaxUsers ?? 0, 2);
+            if (sub.MaxDocumentsPerMonth <= 0)
+                sub.MaxDocumentsPerMonth = freeMode
+                    ? Pick(template?.MaxDocumentsPerMonth ?? 0, template?.TrialMaxDocumentsPerMonth ?? 0, 20)
+                    : Pick(template?.TrialMaxDocumentsPerMonth ?? 0, template?.MaxDocumentsPerMonth ?? 0, 20);
+            if (sub.MaxJournalEntriesPerMonth <= 0)
+                sub.MaxJournalEntriesPerMonth = freeMode
+                    ? Pick(template?.MaxJournalEntriesPerMonth ?? 0, template?.TrialMaxJournalEntriesPerMonth ?? 0, 50)
+                    : Pick(template?.TrialMaxJournalEntriesPerMonth ?? 0, template?.MaxJournalEntriesPerMonth ?? 0, 50);
+            if (sub.MaxStorageBytes <= 0)
+                sub.MaxStorageBytes = (template?.MaxStorageBytes ?? 0) > 0
+                    ? template!.MaxStorageBytes : 50L * 1024 * 1024;
+            if (sub.MaxCompanies <= 0) sub.MaxCompanies = 1;
+
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id,
+                Action = "LimitsSelfHealed",
+                Notes = $"Limit หลักเป็น 0 → resync จาก template {sub.Plan} " +
+                        $"(users={sub.MaxUsers}, docs={sub.MaxDocumentsPerMonth}, journals={sub.MaxJournalEntriesPerMonth})",
+                PerformedBy = "system"
+            });
+            await _db.SaveChangesAsync();
+        }
+        catch { /* best-effort — เส้นเช็คสิทธิ์ต้องไม่ล้มเพราะการซ่อม */ }
     }
 
     public async Task<bool> CanFitStorageAsync(Guid companyId, long additionalBytes)

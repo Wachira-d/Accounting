@@ -108,6 +108,30 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         if (await _db.EtaxInvoices.AnyAsync(e => e.DocumentId == document.Id && e.CompanyId == companyId && e.Status != EtaxStatus.Error))
             throw new InvalidOperationException("เอกสารนี้มี e-Tax Invoice แล้ว");
 
+        // ===== CN/DN gate: ต้องมีใบอ้างอิง + ต้องเป็นฝั่งขายเท่านั้น =====
+        // §86/9-10 + Schematron DCN-AdditionalReferencedDocument: ใบลดหนี้/เพิ่มหนี้
+        // ต้องอ้างเลขที่+วันที่ใบกำกับเดิม — ไม่มี ref = XML ใส่ "-" + มูลค่าเดิมเท็จ
+        // และ CN/DN "ฝั่งซื้อ" (อ้าง PI/Expense/CIL/PV) คือใบที่ *ผู้ขาย* เป็นผู้ออก
+        // เราเป็นเพียงผู้บันทึก — ห้ามสร้าง/เซ็น e-Tax แทนผู้ขาย (บทบาท Seller/Buyer
+        // ใน XML จะสลับผิดด้วย)
+        if (document.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote)
+        {
+            var cnDnLabel = document.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้";
+            if (!document.RelatedDocumentId.HasValue)
+                throw new InvalidOperationException(
+                    $"{cnDnLabel}ยังไม่ได้อ้างอิงใบกำกับภาษีต้นฉบับ — e-Tax {cnDnLabel} (ETDA) บังคับต้องมี"
+                    + "เลขที่+วันที่+มูลค่าใบเดิม (§86/9-10) กรุณาระบุเอกสารต้นฉบับก่อน");
+            var cnDnSrcType = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == document.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync();
+            if (cnDnSrcType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                or DocumentType.CertificateInLieu or DocumentType.PaymentVoucher)
+                throw new InvalidOperationException(
+                    $"{cnDnLabel}นี้เป็นฝั่งซื้อ (อ้างเอกสารซื้อ) — ผู้ขายเป็นผู้ออกใบจริง เราเป็นเพียงผู้บันทึก"
+                    + " จึงออก e-Tax แทนผู้ขายไม่ได้ (ไฟล์ e-Tax ต้องมาจากระบบของผู้ขาย)");
+        }
+
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
         // ===== Pre-flight validation & auto-fix (prevent Schematron errors) =====
@@ -706,9 +730,12 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             doc.SubTotal.ToString("0.##", inv2)));
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
-            var diff = doc.SubTotal - (originalDoc?.SubTotal ?? doc.SubTotal);
+            // ผลต่าง (§86/9-10) = มูลค่าของ CN/DN ใบนี้เอง — บรรทัดใน CN คือ
+            // "ยอดที่ลด/เพิ่ม" ไม่ใช่มูลค่าที่ถูกต้องหลังปรับ. สูตรเดิม
+            // (doc.SubTotal − ใบเดิม.SubTotal) ให้ค่าติดลบผิดความหมาย
+            // (ใบเดิม 48,000 ลด 5,000 → −43,000 แทนที่จะเป็น 5,000)
             summationElements.Add(new XElement(ram + "DifferenceInformationAmount",
-                diff.ToString("0.##", inv2)));
+                doc.SubTotal.ToString("0.##", inv2)));
         }
         summationElements.Add(new XElement(ram + "AllowanceTotalAmount", "0.00"));
         summationElements.Add(new XElement(ram + "TaxBasisTotalAmount",

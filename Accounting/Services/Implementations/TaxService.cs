@@ -481,11 +481,14 @@ public partial class TaxService : ITaxService
                 // Cross-period lookup via relatedDocTypes — was searching THIS
                 // PERIOD's docs only which mis-classified CN-on-prior-month-PI
                 // as sales side (under-reducing input VAT on ภ.พ.30).
+                // PaymentVoucher = PV standalone จ่ายทันที (ตั้งหนี้+จ่ายในใบเดียว)
+                // — CN ที่อ้างต้องลดภาษีซื้อ ไม่ใช่ภาษีขาย (คู่กับ AutoPost ฝั่งซื้อ)
                 var isPurchaseSide = doc.RelatedDocumentId.HasValue
                     && relatedDocTypes.TryGetValue(doc.RelatedDocumentId.Value, out var rtype)
                     && (rtype == DocumentType.PurchaseInvoice
                         || rtype == DocumentType.Expense
-                        || rtype == DocumentType.CertificateInLieu);
+                        || rtype == DocumentType.CertificateInLieu
+                        || rtype == DocumentType.PaymentVoucher);
                 if (isPurchaseSide)
                 {
                     inputVat -= doc.VatAmount;
@@ -516,12 +519,13 @@ public partial class TaxService : ITaxService
             // DebitNote — increases output/input VAT
             else if (doc.DocumentType == DocumentType.DebitNote)
             {
-                // Same cross-period fix as CreditNote.
+                // Same cross-period fix as CreditNote. (+ PV standalone ฝั่งซื้อ)
                 var isPurchaseSide = doc.RelatedDocumentId.HasValue
                     && relatedDocTypes.TryGetValue(doc.RelatedDocumentId.Value, out var rtype)
                     && (rtype == DocumentType.PurchaseInvoice
                         || rtype == DocumentType.Expense
-                        || rtype == DocumentType.CertificateInLieu);
+                        || rtype == DocumentType.CertificateInLieu
+                        || rtype == DocumentType.PaymentVoucher);
                 if (isPurchaseSide)
                 {
                     inputVat += doc.VatAmount;

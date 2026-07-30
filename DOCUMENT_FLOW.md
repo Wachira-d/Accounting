@@ -257,11 +257,31 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   PurchaseRequisition → PurchaseOrder
   PurchaseOrder       → GoodsReceiptNote / PurchaseInvoice
   GoodsReceiptNote    → PurchaseInvoice
+  Receipt          → CreditNote / DebitNote   (เฉพาะใบเสร็จที่เป็นใบกำกับในตัว)
+  ReceiptVoucher   → CreditNote / DebitNote   (เงื่อนไขเดียวกับ Receipt)
+
   PurchaseInvoice     → PaymentVoucher / CreditNote / DebitNote
   Expense             → PaymentVoucher / CreditNote / DebitNote / CertificateInLieu
   CertificateInLieu   → PaymentVoucher
+  PaymentVoucher      → CreditNote / DebitNote   (เฉพาะ PV standalone จ่ายทันที)
   ```
-  **Terminal** (no further conversion): `Receipt`, `ReceiptVoucher`, `CreditNote`, `PaymentVoucher`
+  **Terminal** (no further conversion): `CreditNote`
+- **Receipt/RV → CN/DN** (§86/9-10 อ้าง "กระดาษใบกำกับจริง"): เปิดเฉพาะใบเสร็จ
+  ที่เป็นใบกำกับภาษีในตัว — ขายสด standalone (Cr 21911 เอง) หรือ settlement
+  ถือ VAT §78/1 (เจ้าของแถว ภ.พ.30). guard: ใบมัดจำ → ใช้เมนู "คืนมัดจำ";
+  ใบเสร็จหลักฐานรับเงินเปล่า (VAT=0 + อ้างต้นทาง) → ชี้ให้อ้างเอกสารตั้งหนี้แทน.
+  JE: cash-refund mode (Cr เงินสด — ใบเสร็จ Paid เสมอ); stock **ไม่ขยับ**
+  (Receipt/RV ไม่เคยตัดสต๊อกตอนขาย). + hard gate ตอน approve: CN/DN ที่มี VAT
+  ต้องมี RelatedDocumentId หรือกรอกเลขใบกำกับเดิมในช่อง "อ้างอิง" (ใบเดิมนอก
+  ระบบ/ก่อน migrate) ไม่งั้น block; warning เมื่ออ้าง "ใบแจ้งหนี้" (ไม่ใช่ใบกำกับ
+  — ถ้าคู่ขายมี TIV/ใบเสร็จถือ VAT ต้องอ้างใบนั้น); DN ไม่กรอกหมายเหตุสาเหตุ → warn
+- **PV → CN/DN**: PV standalone (จ่ายทันที = ตั้งหนี้+จ่ายในใบเดียว ไม่มี PI/Expense
+  ให้อ้าง) — ผู้ขายส่งของพร้อมใบลดหนี้ทีหลังอ้าง PV ได้. PV แบบ settlement (อ้าง
+  PI/Expense/CIL) → `ValidateConversionAsync` block พร้อมชี้ให้ออก CN อ้างเอกสาร
+  ตั้งหนี้แทน (§86/10). จุดตรวจ "ฝั่งซื้อ" ทั้ง 4 รวม PV แล้ว: JE (`AutoPost` CN/DN
+  branch), ภ.พ.30 (`TaxService` CN+DN), stock (PV → **ไม่ขยับ** เพราะ PV ไม่เคย
+  รับของเข้าสต๊อก), e-Tax gate. + hard block คู่ค้าบน CN/DN ต้องตรงใบเดิม
+  + approve warning §86/9-10 เมื่อลงวันที่ย้อนหลังเกิน 1 เดือนภาษีโดยไม่มี LateReason
 - **Lineage**: ลูก carry `RelatedDocumentId = source.Id`, `SourceLineId` ต่อ
   บรรทัด (จำเป็นสำหรับ partial fulfillment + 3-way match)
 - **Cascade**: `CustomAppendix / RevenueContractId / PerformanceObligationId /
@@ -699,8 +719,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 | ❌ (Receipt **ไม่อยู่** ใน `ApplyStockMovementsAsync` switch — ถ้าต้อง OUT ต้อง issue Invoice/TaxInvoice ก่อน) | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
 | `ReceiptVoucher` standalone | เหมือน Receipt | ❌ (same as Receipt) | output | DocumentDate | รองรับ `IsDeposit` (2 เคส VAT ดู §3.7) |
 | `DeliveryNote` | ❌ | ❌ (ตั้งใจไม่ trigger — Invoice ที่ตามมาจะ OUT ให้, กัน double-count) | – | – | ใช้คู่กับ Invoice ใน Quotation→DN→Invoice chain |
-| `DebitNote` | Dr AR / Cr Rev + Cr VAT | ❌ | output (หรือ input ถ้า `RelatedDocumentId` เป็น purchase) | DocumentDate | บังคับมี `RelatedDocumentId` |
-| `CreditNote` | Cr AR / Dr Rev + Dr VAT | IN เฉพาะ `Reason = Return` | output (หรือ input) | DocumentDate | บังคับ `CreditNoteReason` |
+| `DebitNote` | Dr AR / Cr Rev + Cr VAT | ❌ | output (หรือ input ถ้า `RelatedDocumentId` เป็น purchase: PI/Expense/CIL/**PV**) | DocumentDate | บังคับมี `RelatedDocumentId`; คู่ค้าต้องตรงใบเดิม (hard block) |
+| `CreditNote` | Cr AR / Dr Rev + Dr VAT (ฝั่งซื้อ: กลับด้าน — source PI/Expense/CIL/**PV**) | ฝั่งขาย IN เฉพาะ `Reason = Return`; ฝั่งซื้อ OUT (คืนของ) ยกเว้น source=PV → ไม่ขยับ | output (หรือ input) | DocumentDate | บังคับ `CreditNoteReason`; คู่ค้าต้องตรงใบเดิม; วันที่ย้อนหลัง >1 เดือนภาษี → warning + LateReason (§86/9-10); PDF แสดงกล่อง มูลค่าเดิม/ที่ถูกต้อง/ผลต่าง |
 | `PurchaseRequisition` | ❌ | ❌ | – | – | internal commitment |
 | `PurchaseOrder` | ❌ | ❌ | – | – | – |
 | `GoodsReceiptNote` | Dr Inv / Cr GRNI (accrual) | IN | – | – | 3-way match prep |
@@ -769,6 +789,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - `GrandTotalAmount = SubTotal + VAT` (ไม่ใช่ `doc.TotalAmount` ที่หัก WHT —
     WHT แยกตอนจ่าย ไม่ใช่ face value ใบกำกับ)
   - invariant: `LineTotal − Allowance = TaxBasis` และ `TaxBasis + Tax = Grand` ✓
+- **CN/DN gate (`GenerateAsync`)**: (1) ต้องมี `RelatedDocumentId` — Schematron
+  DCN บังคับเลขที่+วันที่+มูลค่าใบเดิม; (2) **ฝั่งซื้อ block** — CN/DN ที่อ้าง
+  PI/Expense/CIL/PV คือใบที่ผู้ขายออก เราเป็นผู้บันทึก ห้ามสร้าง/เซ็น e-Tax แทน.
+  `DifferenceInformationAmount = doc.SubTotal` (ยอดลด/เพิ่มของใบเอง — สูตรเดิม
+  `doc − ใบเดิม` ให้ค่าติดลบผิดความหมาย), `OriginalInformationAmount = ใบเดิม.SubTotal`
 
 ### 5.3 รายงานภาษี
 | รายงาน | Service / Method | Source data |
@@ -1409,7 +1434,8 @@ _(เข้า ภ.พ.30) หัว upgrade เป็น "ใบกำกับ
 _ถูก apply เข้าใบปลายทาง (ใบปลายทางคือใบกำกับ กันกระดาษซ้ำ). ข้อยกเว้น invariant_
 _ที่ตั้งใจ: ใบแจ้งหนี้สินค้า/legacy + ผู้ซื้อปฏิเสธใบกำกับ (ขายปลีก) = อยู่ในรายงาน_
 _โดยกระดาษไม่มีหัวใบกำกับ (นำส่งครบตามกฎหมาย มี approval warning ชี้ทางแล้ว)._
-_Last verified against codebase: 2026-07-20 (รอบ 60) — รอบ 13-14: OCR API=web UI,_
+_Last verified against codebase: 2026-07-30 (CN/DN ครบวงจร: PV เป็นต้นทางฝั่งซื้อ,_
+_e-Tax gate + DifferenceInformationAmount, กล่อง §86/9-10 บน PDF) — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
 _รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_

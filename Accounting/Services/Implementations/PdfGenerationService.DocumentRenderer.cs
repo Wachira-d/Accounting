@@ -146,6 +146,7 @@ public partial class PdfGenerationService
                             });
                         Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText));
                         Safe(() => ComposeContact(col, doc, template, accent));
+                        Safe(() => ComposeAdjustmentRef(col, doc, accent));
                         Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, layout, accent));
                         Safe(() => ComposeSummary(col, doc, template, accent, layout));
                         Safe(() => ComposeFooter(col, doc, template, accent));
@@ -511,6 +512,39 @@ public partial class PdfGenerationService
                 cc.Item().Text($"โทร: {c.Phone}").FontSize(9).FontColor("#374151");
             if (t.ShowContactEmail && !string.IsNullOrWhiteSpace(c.Email))
                 cc.Item().Text($"Email: {c.Email}").FontSize(9).FontColor("#374151");
+        });
+    }
+
+    /// <summary>กล่องอ้างอิงใบต้นฉบับบนใบลดหนี้/ใบเพิ่มหนี้ — §86/9-10 บังคับแสดง
+    /// เลขที่+วันที่ใบกำกับเดิม, มูลค่าตามใบเดิม, มูลค่าที่ถูกต้อง, ผลต่าง (+VAT
+    /// ผลต่างอยู่ในตารางสรุปของใบอยู่แล้ว). ข้อมูลจาก transient AdjustmentOriginal*
+    /// (โหลดใน ResolveServedAsReceiptAsync) — ใบที่ไม่มี ref จะไม่มีกล่อง.</summary>
+    private static void ComposeAdjustmentRef(ColumnDescriptor col, EntDoc doc, string accent)
+    {
+        if (doc.DocumentType is not (Accounting.Models.Enums.DocumentType.CreditNote
+            or Accounting.Models.Enums.DocumentType.DebitNote)) return;
+        if (string.IsNullOrWhiteSpace(doc.AdjustmentOriginalNumber)) return;
+
+        var isCn = doc.DocumentType == Accounting.Models.Enums.DocumentType.CreditNote;
+        var origBase = doc.AdjustmentOriginalSubTotal ?? 0m;
+        var corrected = isCn ? origBase - doc.SubTotal : origBase + doc.SubTotal;
+        var origDate = doc.AdjustmentOriginalDate.HasValue
+            ? doc.AdjustmentOriginalDate.Value.ToString("dd/MM/yyyy")
+            : "-";
+
+        col.Item().PaddingTop(6).Border(1).BorderColor("#D1D5DB").Background("#FFFBEB")
+            .PaddingVertical(5).PaddingHorizontal(9).Column(cc =>
+        {
+            cc.Item().Text($"อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{(isCn ? "10" : "9")})")
+                .FontSize(9.5f).Bold().FontColor(accent);
+            cc.Item().Text($"เลขที่ {doc.AdjustmentOriginalNumber}  ลงวันที่ {origDate}")
+                .FontSize(9.5f).FontColor("#374151");
+            cc.Item().Row(r =>
+            {
+                r.RelativeItem().Text($"มูลค่าตามใบเดิม: {origBase:N2}").FontSize(9).FontColor("#374151");
+                r.RelativeItem().Text($"มูลค่าที่ถูกต้อง: {corrected:N2}").FontSize(9).FontColor("#374151");
+                r.RelativeItem().Text($"ผลต่าง ({(isCn ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}").FontSize(9).Bold().FontColor("#374151");
+            });
         });
     }
 
