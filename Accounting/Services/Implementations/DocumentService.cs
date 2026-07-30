@@ -5541,9 +5541,17 @@ public class DocumentService : IDocumentService
         [DocumentType.CertificateInLieu] = new[]
         {
             DocumentType.PaymentVoucher
+        },
+        // PV "จ่ายทันที" standalone = ตั้งหนี้+จ่ายในใบเดียว (ไม่มี PI/Expense ให้
+        // CN อ้าง) — ผู้ขายส่งของพร้อมใบลดหนี้/เพิ่มหนี้ทีหลังต้องอ้าง PV ได้
+        // (ValidateConversionAsync กัน PV แบบ settlement ที่อ้าง PI/Expense —
+        // เคสนั้นต้องออก CN อ้างเอกสารตั้งหนี้แทน)
+        [DocumentType.PaymentVoucher] = new[]
+        {
+            DocumentType.CreditNote, DocumentType.DebitNote
         }
         // Terminal types (no further conversion):
-        // Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
+        // Receipt, ReceiptVoucher, CreditNote
     };
 
     /// <summary>Public accessor used by API endpoint to surface valid targets to UI.</summary>
@@ -5647,6 +5655,25 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"ไม่สามารถแปลง {source.DocumentType} → {targetType} ได้ตามมาตรฐานบัญชี " +
                 $"(แปลงได้เฉพาะ: {(allowedNames.Length > 0 ? allowedNames : "ไม่มี — เอกสารนี้เป็นปลายทาง")})");
+        }
+
+        // PV → CN/DN เปิดเฉพาะ PV standalone (จ่ายทันที = ตั้งหนี้+จ่ายในใบเดียว).
+        // PV แบบ settlement (อ้าง PI/Expense/CIL) ไม่ใช่เอกสารตั้งหนี้ — ใบลดหนี้
+        // ของผู้ขายต้องอ้าง "ใบตั้งหนี้/ใบกำกับ" (§86/10) ไม่ใช่เอกสารจ่ายเงินของเรา
+        if (source.DocumentType == DocumentType.PaymentVoucher
+            && (targetType == DocumentType.CreditNote || targetType == DocumentType.DebitNote)
+            && source.RelatedDocumentId.HasValue)
+        {
+            var pvSrc = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == source.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => new { d.DocumentNumber, d.DocumentType })
+                .FirstOrDefaultAsync();
+            if (pvSrc != null && pvSrc.DocumentType is DocumentType.PurchaseInvoice
+                or DocumentType.Expense or DocumentType.CertificateInLieu)
+                throw new InvalidOperationException(
+                    $"ใบสำคัญจ่ายนี้เป็นการจ่ายชำระ {pvSrc.DocumentNumber} — ใบลดหนี้/ใบเพิ่มหนี้"
+                    + $"จากผู้ขายต้องออกโดยอ้าง {pvSrc.DocumentNumber} (เอกสารตั้งหนี้) โดยตรง"
+                    + " ไม่ใช่ใบสำคัญจ่าย (§86/10 ใบลดหนี้อ้างใบกำกับ/ใบตั้งหนี้เดิม)");
         }
 
         // Cycle detection — fetch entire ancestry chain in a single recursive CTE
@@ -8364,8 +8391,11 @@ public class DocumentService : IDocumentService
         };
         if (direction == 0) return;
 
-        // ใบลดหนี้ "ฝั่งซื้อ" แบบรับคืน (source = PI/Expense/CertificateInLieu):
-        // เราคืนของให้ vendor → ของออกจากสต๊อกเรา (−1) ไม่ใช่รับเข้า (+1)
+        // ใบลดหนี้ "ฝั่งซื้อ" แบบรับคืน (source = PI/Expense/CIL):
+        // เราคืนของให้ vendor → ของออกจากสต๊อกเรา (−1) ไม่ใช่รับเข้า (+1).
+        // ยกเว้น source = PV standalone: PV ไม่เคยรับของเข้าสต๊อก (IN มีแค่
+        // GRN/PI) → CN ห้ามตัดออก ไม่งั้นสต๊อกติดลบโดยไม่มีขารับ (JE/VAT
+        // ยังลงฝั่งซื้อครบตาม AutoPost — แค่ไม่แตะ stock)
         if (doc.DocumentType == DocumentType.CreditNote && doc.RelatedDocumentId.HasValue)
         {
             var srcType = await _db.Documents.AsNoTracking()
@@ -8375,7 +8405,10 @@ public class DocumentService : IDocumentService
             if (srcType is DocumentType.PurchaseInvoice or DocumentType.Expense
                 or DocumentType.CertificateInLieu)
                 direction = -1;
+            else if (srcType == DocumentType.PaymentVoucher)
+                direction = 0;
         }
+        if (direction == 0) return;
 
         // มัดจำ (IsDeposit): เงินรับล่วงหน้า — ยังไม่ส่งมอบสินค้า → สต๊อกต้อง
         // ไม่ขยับ (สอดคล้องกับ COGS ที่ข้าม IsDeposit ใน AutoPostToJournalAsync
@@ -8907,10 +8940,21 @@ public class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     $"ไม่สามารถออก{(doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")}อ้างอิง {source.DocumentNumber} ได้ — เอกสารต้นทางถูกยกเลิกแล้ว (§86/9-10)");
 
+            // §86/9-10: CN/DN ต้องเป็นคู่ค้าเดียวกับใบเดิม — คนละคู่ค้า = ลดหนี้
+            // ผิดราย (AR/AP ของอีกรายโดนตัด + ภ.พ.30 รายงานผิดคน). convert flow
+            // copy contact มาให้อยู่แล้ว guard นี้กันเคสสร้างตรง/API/แก้ contact ทีหลัง
+            if (source != null && source.ContactId != doc.ContactId)
+                throw new InvalidOperationException(
+                    $"คู่ค้าบน{(doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")}ไม่ตรงกับเอกสารต้นฉบับ {source.DocumentNumber} — §86/9-10 ต้องออกให้คู่ค้ารายเดียวกับใบเดิม");
+
+            // PaymentVoucher = PV standalone จ่ายทันที (ตั้งหนี้+จ่ายในใบเดียว) —
+            // CN/DN ที่อ้างต้องลงฝั่งซื้อเหมือน PI/Expense (เดิมไม่อยู่ใน list →
+            // ตกไปฝั่งขาย: Cr ลูกหนี้/Dr รายได้ ทั้งที่เป็นการซื้อ)
             var isPurchaseSide = source != null && (
                 source.DocumentType == DocumentType.PurchaseInvoice
                 || source.DocumentType == DocumentType.Expense
-                || source.DocumentType == DocumentType.CertificateInLieu);
+                || source.DocumentType == DocumentType.CertificateInLieu
+                || source.DocumentType == DocumentType.PaymentVoucher);
             var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
             var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
 
@@ -11115,6 +11159,21 @@ public class DocumentService : IDocumentService
         //    for the source link so VAT reversal ties back to the original.
         if (doc.DocumentType == DocumentType.CreditNote && doc.RelatedDocumentId == null)
             warnings.Add("ใบลดหนี้ยังไม่ได้อ้างอิงใบกำกับภาษี/ใบแจ้งหนี้ต้นฉบับ — ตามมาตรา 86/10 ควรระบุเลขที่และวันที่เอกสารเดิมที่ลดหนี้");
+
+        // 3b. §86/9-10: CN/DN ต้องออกในเดือนภาษีที่เกิดเหตุ (คืนของ/แก้ราคา)
+        //     หรือเดือนถัดไป — อนุมัติใบที่ลงวันที่ย้อนหลังข้ามงวดโดยไม่มีเหตุผล
+        //     = ภ.พ.30 งวดนั้นถูกยื่นไปแล้วโดยไม่มีแถวนี้ → ต้องยื่นเพิ่มเติม
+        if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote)
+        {
+            var now = DateTime.UtcNow;
+            var monthsBack = (now.Year - doc.DocumentDate.Year) * 12 + (now.Month - doc.DocumentDate.Month);
+            if (monthsBack > 1 && string.IsNullOrWhiteSpace(doc.LateReason))
+                warnings.Add(
+                    $"§86/9-10: {(doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")}ลงวันที่ "
+                    + $"{doc.DocumentDate:yyyy-MM-dd} ย้อนหลังเกิน 1 เดือนภาษี — ตามกฎต้องออกในเดือนที่เกิดเหตุ"
+                    + " (คืนของ/ลดราคา) หรือเดือนถัดไป. ถ้าจำเป็น กรอกเหตุผลความล่าช้า (LateReason) เพื่อ audit trail"
+                    + " และตรวจว่าต้องยื่น ภ.พ.30 เพิ่มเติมของงวดนั้นหรือไม่");
+        }
 
         // 4. Cash-settled Payment Voucher (จ่ายทันที) must NOT post to a
         //    payable (เจ้าหนี้) account — the money already left, so a 2xx

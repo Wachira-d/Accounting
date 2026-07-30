@@ -1115,6 +1115,23 @@ public partial class PdfGenerationService : IPdfGenerationService
             doc.SettlesTaxInvoiceSource = srcType == DocumentType.TaxInvoice;
         }
 
+        // ใบลดหนี้/ใบเพิ่มหนี้: โหลดเลขที่+วันที่+มูลค่าใบต้นฉบับ — §86/9-10 บังคับ
+        // กระดาษต้องแสดง มูลค่าตามใบเดิม + มูลค่าที่ถูกต้อง + ผลต่าง (ไม่ใช่แค่เลขอ้างอิง)
+        if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+            && doc.RelatedDocumentId.HasValue)
+        {
+            var orig = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => new { d.DocumentNumber, d.DocumentDate, d.SubTotal })
+                .FirstOrDefaultAsync();
+            if (orig != null)
+            {
+                doc.AdjustmentOriginalNumber = orig.DocumentNumber;
+                doc.AdjustmentOriginalDate = orig.DocumentDate;
+                doc.AdjustmentOriginalSubTotal = orig.SubTotal;
+            }
+        }
+
         if (doc.DocumentType != DocumentType.TaxInvoice) return;
         // ชำระครบวันเดียวกัน (same-day settlement) → ใบกำกับทำหน้าที่ใบเสร็จในตัว.
         // เดิมบังคับ Status == Paid เป๊ะ → พลาดเคสที่ balance = 0 แต่ label ยัง
@@ -1272,6 +1289,23 @@ public partial class PdfGenerationService : IPdfGenerationService
         var inclVat = doc.PricesIncludeVat;
         var priceLbl = inclVat ? "ราคา/หน่วย (รวม VAT)" : "ราคา/หน่วย";
         var amountLbl = inclVat ? "จำนวนเงิน (รวม VAT)" : "จำนวนเงิน";
+
+        // §86/9-10: กล่องอ้างอิงใบต้นฉบับบนใบลดหนี้/ใบเพิ่มหนี้ — กฎหมายบังคับแสดง
+        // เลขที่+วันที่ใบเดิม, มูลค่าเดิม, มูลค่าที่ถูกต้อง, ผลต่าง (sync กับ
+        // ComposeAdjustmentRef ฝั่ง QuestPDF — ข้อมูลจาก transient AdjustmentOriginal*)
+        if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+            && !string.IsNullOrWhiteSpace(doc.AdjustmentOriginalNumber))
+        {
+            var isCnBox = doc.DocumentType == DocumentType.CreditNote;
+            var adjOrigBase = doc.AdjustmentOriginalSubTotal ?? 0m;
+            var adjCorrected = isCnBox ? adjOrigBase - doc.SubTotal : adjOrigBase + doc.SubTotal;
+            var adjOrigDate = doc.AdjustmentOriginalDate?.ToString("dd/MM/yyyy") ?? "-";
+            sb.AppendLine("<div style='margin:8px 0;padding:6px 10px;border:1px solid #D1D5DB;background:#FFFBEB;font-size:11px'>");
+            sb.AppendLine($"<div style='font-weight:bold'>อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{(isCnBox ? "10" : "9")})</div>");
+            sb.AppendLine($"<div>เลขที่ {WebUtility.HtmlEncode(doc.AdjustmentOriginalNumber)}  ลงวันที่ {adjOrigDate}</div>");
+            sb.AppendLine($"<div>มูลค่าตามใบเดิม: {adjOrigBase:N2} &nbsp;|&nbsp; มูลค่าที่ถูกต้อง: {adjCorrected:N2} &nbsp;|&nbsp; <b>ผลต่าง ({(isCnBox ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}</b></div>");
+            sb.AppendLine("</div>");
+        }
 
         sb.AppendLine("<table class='items-table'><thead><tr>");
         if (template.ShowLineNumber) sb.AppendLine("<th class='center'>#</th>");

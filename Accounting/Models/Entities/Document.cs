@@ -101,6 +101,16 @@ public class Document : TenantEntity
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public bool SettlesTaxInvoiceSource { get; set; }
 
+    /// <summary>Transient (ไม่เก็บ DB) — ข้อมูลใบต้นฉบับสำหรับกล่อง §86/9-10 บน
+    /// ใบลดหนี้/ใบเพิ่มหนี้ (เลขที่+วันที่+มูลค่าใบเดิม → มูลค่าที่ถูกต้อง+ผลต่าง)
+    /// โหลดตอน render ใน ResolveServedAsReceiptAsync ทั้ง HTML และ QuestPDF.</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? AdjustmentOriginalNumber { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public DateTime? AdjustmentOriginalDate { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public decimal? AdjustmentOriginalSubTotal { get; set; }
+
     /// <summary>ขายเงินสด B2B (integration isCashSale) — ใบกำกับภาษีที่รับชำระครบ
     /// พร้อมออก ทำหน้าที่เป็น "ใบเสร็จรับเงิน/ใบกำกับภาษี" ในตัว. persist (ต่างจาก
     /// ServedAsReceipt ที่คำนวณตอน render) เพราะ e-Tax generator ต้องรู้ตอน export
