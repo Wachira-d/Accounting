@@ -371,6 +371,50 @@ public class DocumentService : IDocumentService
         return alloc;
     }
 
+    /// <summary>ปรับเศษสตางค์ VAT/WHT รายบรรทัดให้ผลรวม "ต่อกลุ่มอัตรา" เท่ากับการ
+    /// คิดตรงจากฐานรวมของกลุ่ม (round(Σ net × rate/100)) — วิธีเดียวกับที่ผู้ใช้/
+    /// สรรพากรดีดเครื่องคิดเลขตรวจ. การปัดรายบรรทัดแล้วค่อยรวม (เช่นหลังเฉลี่ยส่วนลด
+    /// ท้ายบิล หลายบรรทัดลงท้าย .875 ถูกปัดขึ้นซ้ำกัน) สะสมเป็น ±สตางค์ ทำให้ VAT 7%
+    /// ของฐาน 42,000.00 กลายเป็น 2,940.01 แทน 2,940.00 → ยอดบนใบ/ภ.พ.30 ไม่ตรง
+    /// ใบกำกับจริง. เศษถูกเกลี่ยเข้าบรรทัดฐานสูงสุดของกลุ่ม (largest-remainder).
+    /// บรรทัดที่ integration ส่ง VatAmountOverride มาไม่แตะ (external คิดเองแล้ว).
+    /// โหมดราคารวม VAT: ขยับ net สวนทาง VAT เท่ากัน เพื่อคงยอด gross ที่ผู้ใช้กรอก.</summary>
+    private static void ReconcileTaxRounding(
+        IReadOnlyList<DocumentLineRequest> lines, LineAmounts[] amts, bool pricesIncludeVat)
+    {
+        const MidpointRounding R = MidpointRounding.AwayFromZero;
+        // --- VAT: กลุ่มตาม VatRate (รองรับ mixed-rate — คนละอัตรากระทบยอดแยกกัน) ---
+        foreach (var g in Enumerable.Range(0, lines.Count)
+                     .Where(i => !lines[i].VatAmountOverride.HasValue
+                                 && lines[i].VatRate > 0 && amts[i].NetAmount != 0m)
+                     .GroupBy(i => lines[i].VatRate))
+        {
+            var target = Math.Round(g.Sum(i => amts[i].NetAmount) * g.Key / 100m, 2, R);
+            var diff = target - g.Sum(i => amts[i].VatAmount);
+            // เศษปัดจริงมีขนาดระดับสตางค์ — ถ้าห่างเกิน ฿1 แปลว่าไม่ใช่เศษปัด (ข้อมูล
+            // ผิดทางอื่น) ไม่เขียนทับเงียบ ๆ
+            if (diff == 0m || Math.Abs(diff) > 1m) continue;
+            var j = g.OrderByDescending(i => Math.Abs(amts[i].NetAmount)).First();
+            amts[j] = amts[j] with
+            {
+                VatAmount = amts[j].VatAmount + diff,
+                // ราคารวม VAT: gross ต่อบรรทัด (net+VAT) คือค่าที่ผู้ใช้กรอก — คงไว้
+                NetAmount = pricesIncludeVat ? amts[j].NetAmount - diff : amts[j].NetAmount,
+            };
+        }
+        // --- WHT: ฐาน ex-VAT เสมอ — ทำหลัง VAT เพราะโหมดราคารวม VAT อาจขยับ net ---
+        foreach (var g in Enumerable.Range(0, lines.Count)
+                     .Where(i => lines[i].WithholdingTaxRate > 0 && amts[i].NetAmount != 0m)
+                     .GroupBy(i => lines[i].WithholdingTaxRate))
+        {
+            var target = Math.Round(g.Sum(i => amts[i].NetAmount) * g.Key / 100m, 2, R);
+            var diff = target - g.Sum(i => amts[i].WhtAmount);
+            if (diff == 0m || Math.Abs(diff) > 1m) continue;
+            var j = g.OrderByDescending(i => Math.Abs(amts[i].NetAmount)).First();
+            amts[j] = amts[j] with { WhtAmount = amts[j].WhtAmount + diff };
+        }
+    }
+
     /// <summary>ยุบ VAT-split phantom lines — choke point สุดท้ายครอบคลุมทุก
     /// path (frontend form / integration / OCR handoff ที่เข้าทาง POST /documents).
     /// เคส: external OCR แตกสินค้า 1 ตัวเป็น "...(ส่วนมีภาษี)" + "...(ส่วนไม่มีภาษี)"
@@ -832,13 +876,20 @@ public class DocumentService : IDocumentService
             doc.IsForeignService = request.IsForeignService;
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
-            var billAlloc = AllocateBillDiscount(request.Lines ?? [], request.PricesIncludeVat,
+            var createLines = request.Lines ?? [];
+            var billAlloc = AllocateBillDiscount(createLines, request.PricesIncludeVat,
                 request.BillDiscountPercent ?? 0m, request.BillDiscountAmount ?? 0m);
+            // คิดยอดครบทุกบรรทัดก่อน แล้วกระทบยอดเศษสตางค์ต่อกลุ่มอัตรา — ให้
+            // ΣVAT/WHT ตรงกับการคิดจากฐานรวม (เครื่องคิดเลข) ก่อนค่อยเขียนบรรทัด
+            var createAmts = new LineAmounts[createLines.Count];
+            for (int i = 0; i < createLines.Count; i++)
+                createAmts[i] = ComputeLineAmounts(createLines[i], request.PricesIncludeVat, billAlloc[i]);
+            ReconcileTaxRounding(createLines, createAmts, request.PricesIncludeVat);
             int lineIdx = -1;
-            foreach (var line in request.Lines ?? [])
+            foreach (var line in createLines)
             {
                 lineIdx++;
-                var amt = ComputeLineAmounts(line, request.PricesIncludeVat, billAlloc[lineIdx]);
+                var amt = createAmts[lineIdx];
 
                 subTotal += amt.NetAmount;
                 totalDiscount += amt.DiscountAmount;
@@ -1400,11 +1451,16 @@ public class DocumentService : IDocumentService
             var updBillAmt = request.BillDiscountAmount
                 ?? (request.BillDiscountPercent.HasValue ? 0m : doc.BillDiscountAmount);
             var updBillAlloc = AllocateBillDiscount(request.Lines, doc.PricesIncludeVat, updBillPct, updBillAmt);
+            // กระทบยอดเศษสตางค์ต่อกลุ่มอัตรา — เหมือน create path (แก้แล้วต้องไม่เพี้ยนกลับ)
+            var updAmts = new LineAmounts[request.Lines.Count];
+            for (int i = 0; i < request.Lines.Count; i++)
+                updAmts[i] = ComputeLineAmounts(request.Lines[i], doc.PricesIncludeVat, updBillAlloc[i]);
+            ReconcileTaxRounding(request.Lines, updAmts, doc.PricesIncludeVat);
             int updLineIdx = -1;
             foreach (var line in request.Lines)
             {
                 updLineIdx++;
-                var amt = ComputeLineAmounts(line, doc.PricesIncludeVat, updBillAlloc[updLineIdx]);
+                var amt = updAmts[updLineIdx];
 
                 subTotal += amt.NetAmount;
                 totalDiscount += amt.DiscountAmount;

@@ -922,6 +922,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | ต้องการทำอะไร | ไปดูที่ |
 | --- | --- |
 | แก้การคิดส่วนลด/VAT ต่อบรรทัด | `DocumentService.ComputeLineAmounts :254` — รองรับ `DiscountPercent` + `DiscountAmount` (ยอดเงิน, มาตรฐานสากล: ใบระบุส่วนลดเป็นบาท). amount > 0 ชนะ % |
+| เศษสตางค์ VAT/WHT (ปัดรายบรรทัดแล้วรวมเพี้ยน ±0.01) | `DocumentService.ReconcileTaxRounding` — หลังคิดทุกบรรทัด (create+update) กระทบยอดต่อกลุ่มอัตรา: ΣVAT/WHT ของกลุ่ม = round(Σฐาน × อัตรา) ตรงเครื่องคิดเลข; เศษเกลี่ยเข้าบรรทัดฐานสูงสุด; ข้าม `VatAmountOverride`; โหมดราคารวม VAT ขยับ net สวนทางคง gross. frontend mirror ใน `documents.html calcSum` (allocation+reconcile แบบเดียวกัน — ยอดก่อน/หลังบันทึกตรงกัน) |
 | เพิ่ม `DocumentType` ใหม่ | `Models/Enums/AllEnums.cs:305` + `DocumentService.cs` หลายจุด (search by enum literal) |
 | แก้ flow Approve | `DocumentService.ApproveDocumentAsync :1512` |
 | แก้ flow JE per type | `DocumentService.AutoPostToJournalAsync :4684+` |
