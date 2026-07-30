@@ -275,6 +275,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ต้องมี RelatedDocumentId หรือกรอกเลขใบกำกับเดิมในช่อง "อ้างอิง" (ใบเดิมนอก
   ระบบ/ก่อน migrate) ไม่งั้น block; warning เมื่ออ้าง "ใบแจ้งหนี้" (ไม่ใช่ใบกำกับ
   — ถ้าคู่ขายมี TIV/ใบเสร็จถือ VAT ต้องอ้างใบนั้น); DN ไม่กรอกหมายเหตุสาเหตุ → warn
+- **ฟอร์มสร้าง CN/DN ตรง** (documents.html `cnSourceSection`): dropdown เลือก
+  ใบกำกับ/เอกสารต้นฉบับของคู่ค้า (filter เงื่อนไขเดียวกับ ValidConversions —
+  ตัดมัดจำ/ใบเสร็จเปล่า/PV settlement) → เลือกแล้วเติมบรรทัดจากใบเดิมให้แก้เป็น
+  ยอดลด/เพิ่มจริง + ผูก `relatedDocumentId`; หรือช่องกรอกเลขใบเดิมนอกระบบ →
+  `reference`. เส้นสร้างตรงมี guard ซ้ำตอน approve (AutoPost CN/DN block:
+  มัดจำ/ใบเสร็จเปล่า/PV settlement) — กติกาเดียวกับ convert ทั้งสองทาง
 - **PV → CN/DN**: PV standalone (จ่ายทันที = ตั้งหนี้+จ่ายในใบเดียว ไม่มี PI/Expense
   ให้อ้าง) — ผู้ขายส่งของพร้อมใบลดหนี้ทีหลังอ้าง PV ได้. PV แบบ settlement (อ้าง
   PI/Expense/CIL) → `ValidateConversionAsync` block พร้อมชี้ให้ออก CN อ้างเอกสาร

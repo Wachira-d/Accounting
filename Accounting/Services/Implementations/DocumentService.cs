@@ -9000,6 +9000,35 @@ public class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     $"คู่ค้าบน{(doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")}ไม่ตรงกับเอกสารต้นฉบับ {source.DocumentNumber} — §86/9-10 ต้องออกให้คู่ค้ารายเดียวกับใบเดิม");
 
+            // Guard เส้น "สร้างตรง" (ไม่ผ่าน ValidateConversionAsync) — กติกา
+            // เดียวกับตอน convert: มัดจำ → เมนูคืนมัดจำ; ใบเสร็จหลักฐานรับเงิน
+            // เปล่า (ไม่ใช่ใบกำกับ) / PV settlement → ต้องอ้างเอกสารตั้งหนี้จริง
+            if (source != null && (source.DocumentType == DocumentType.Receipt
+                || source.DocumentType == DocumentType.ReceiptVoucher))
+            {
+                if (source.IsDeposit)
+                    throw new InvalidOperationException(
+                        $"{source.DocumentNumber} เป็นใบมัดจำ/รับล่วงหน้า — ใช้เมนู \"คืนมัดจำ\" แทน "
+                        + "(ระบบออกใบลดหนี้ + ปรับ VAT ตามวงจรมัดจำให้ถูกต้อง)");
+                if (source.VatAmount <= 0.005m && source.RelatedDocumentId.HasValue)
+                    throw new InvalidOperationException(
+                        $"{source.DocumentNumber} เป็นใบเสร็จหลักฐานรับเงิน (ไม่ใช่ใบกำกับภาษี — VAT อยู่ที่เอกสาร"
+                        + "ต้นทาง) — ใบลดหนี้/ใบเพิ่มหนี้ต้องอ้างใบกำกับ/เอกสารตั้งหนี้ตัวจริง (§86/9-10)");
+            }
+            if (source != null && source.DocumentType == DocumentType.PaymentVoucher
+                && source.RelatedDocumentId.HasValue)
+            {
+                var pvSettles = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == source.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => new { d.DocumentNumber, d.DocumentType })
+                    .FirstOrDefaultAsync();
+                if (pvSettles != null && pvSettles.DocumentType is DocumentType.PurchaseInvoice
+                    or DocumentType.Expense or DocumentType.CertificateInLieu)
+                    throw new InvalidOperationException(
+                        $"{source.DocumentNumber} เป็นใบสำคัญจ่ายที่จ่ายชำระ {pvSettles.DocumentNumber} — "
+                        + $"ใบลดหนี้/ใบเพิ่มหนี้จากผู้ขายต้องอ้าง {pvSettles.DocumentNumber} (เอกสารตั้งหนี้) โดยตรง (§86/10)");
+            }
+
             // PaymentVoucher = PV standalone จ่ายทันที (ตั้งหนี้+จ่ายในใบเดียว) —
             // CN/DN ที่อ้างต้องลงฝั่งซื้อเหมือน PI/Expense (เดิมไม่อยู่ใน list →
             // ตกไปฝั่งขาย: Cr ลูกหนี้/Dr รายได้ ทั้งที่เป็นการซื้อ)
