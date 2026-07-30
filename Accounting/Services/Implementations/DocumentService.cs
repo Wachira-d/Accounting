@@ -371,6 +371,50 @@ public class DocumentService : IDocumentService
         return alloc;
     }
 
+    /// <summary>ปรับเศษสตางค์ VAT/WHT รายบรรทัดให้ผลรวม "ต่อกลุ่มอัตรา" เท่ากับการ
+    /// คิดตรงจากฐานรวมของกลุ่ม (round(Σ net × rate/100)) — วิธีเดียวกับที่ผู้ใช้/
+    /// สรรพากรดีดเครื่องคิดเลขตรวจ. การปัดรายบรรทัดแล้วค่อยรวม (เช่นหลังเฉลี่ยส่วนลด
+    /// ท้ายบิล หลายบรรทัดลงท้าย .875 ถูกปัดขึ้นซ้ำกัน) สะสมเป็น ±สตางค์ ทำให้ VAT 7%
+    /// ของฐาน 42,000.00 กลายเป็น 2,940.01 แทน 2,940.00 → ยอดบนใบ/ภ.พ.30 ไม่ตรง
+    /// ใบกำกับจริง. เศษถูกเกลี่ยเข้าบรรทัดฐานสูงสุดของกลุ่ม (largest-remainder).
+    /// บรรทัดที่ integration ส่ง VatAmountOverride มาไม่แตะ (external คิดเองแล้ว).
+    /// โหมดราคารวม VAT: ขยับ net สวนทาง VAT เท่ากัน เพื่อคงยอด gross ที่ผู้ใช้กรอก.</summary>
+    private static void ReconcileTaxRounding(
+        IReadOnlyList<DocumentLineRequest> lines, LineAmounts[] amts, bool pricesIncludeVat)
+    {
+        const MidpointRounding R = MidpointRounding.AwayFromZero;
+        // --- VAT: กลุ่มตาม VatRate (รองรับ mixed-rate — คนละอัตรากระทบยอดแยกกัน) ---
+        foreach (var g in Enumerable.Range(0, lines.Count)
+                     .Where(i => !lines[i].VatAmountOverride.HasValue
+                                 && lines[i].VatRate > 0 && amts[i].NetAmount != 0m)
+                     .GroupBy(i => lines[i].VatRate))
+        {
+            var target = Math.Round(g.Sum(i => amts[i].NetAmount) * g.Key / 100m, 2, R);
+            var diff = target - g.Sum(i => amts[i].VatAmount);
+            // เศษปัดจริงมีขนาดระดับสตางค์ — ถ้าห่างเกิน ฿1 แปลว่าไม่ใช่เศษปัด (ข้อมูล
+            // ผิดทางอื่น) ไม่เขียนทับเงียบ ๆ
+            if (diff == 0m || Math.Abs(diff) > 1m) continue;
+            var j = g.OrderByDescending(i => Math.Abs(amts[i].NetAmount)).First();
+            amts[j] = amts[j] with
+            {
+                VatAmount = amts[j].VatAmount + diff,
+                // ราคารวม VAT: gross ต่อบรรทัด (net+VAT) คือค่าที่ผู้ใช้กรอก — คงไว้
+                NetAmount = pricesIncludeVat ? amts[j].NetAmount - diff : amts[j].NetAmount,
+            };
+        }
+        // --- WHT: ฐาน ex-VAT เสมอ — ทำหลัง VAT เพราะโหมดราคารวม VAT อาจขยับ net ---
+        foreach (var g in Enumerable.Range(0, lines.Count)
+                     .Where(i => lines[i].WithholdingTaxRate > 0 && amts[i].NetAmount != 0m)
+                     .GroupBy(i => lines[i].WithholdingTaxRate))
+        {
+            var target = Math.Round(g.Sum(i => amts[i].NetAmount) * g.Key / 100m, 2, R);
+            var diff = target - g.Sum(i => amts[i].WhtAmount);
+            if (diff == 0m || Math.Abs(diff) > 1m) continue;
+            var j = g.OrderByDescending(i => Math.Abs(amts[i].NetAmount)).First();
+            amts[j] = amts[j] with { WhtAmount = amts[j].WhtAmount + diff };
+        }
+    }
+
     /// <summary>ยุบ VAT-split phantom lines — choke point สุดท้ายครอบคลุมทุก
     /// path (frontend form / integration / OCR handoff ที่เข้าทาง POST /documents).
     /// เคส: external OCR แตกสินค้า 1 ตัวเป็น "...(ส่วนมีภาษี)" + "...(ส่วนไม่มีภาษี)"
@@ -832,13 +876,20 @@ public class DocumentService : IDocumentService
             doc.IsForeignService = request.IsForeignService;
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
-            var billAlloc = AllocateBillDiscount(request.Lines ?? [], request.PricesIncludeVat,
+            var createLines = request.Lines ?? [];
+            var billAlloc = AllocateBillDiscount(createLines, request.PricesIncludeVat,
                 request.BillDiscountPercent ?? 0m, request.BillDiscountAmount ?? 0m);
+            // คิดยอดครบทุกบรรทัดก่อน แล้วกระทบยอดเศษสตางค์ต่อกลุ่มอัตรา — ให้
+            // ΣVAT/WHT ตรงกับการคิดจากฐานรวม (เครื่องคิดเลข) ก่อนค่อยเขียนบรรทัด
+            var createAmts = new LineAmounts[createLines.Count];
+            for (int i = 0; i < createLines.Count; i++)
+                createAmts[i] = ComputeLineAmounts(createLines[i], request.PricesIncludeVat, billAlloc[i]);
+            ReconcileTaxRounding(createLines, createAmts, request.PricesIncludeVat);
             int lineIdx = -1;
-            foreach (var line in request.Lines ?? [])
+            foreach (var line in createLines)
             {
                 lineIdx++;
-                var amt = ComputeLineAmounts(line, request.PricesIncludeVat, billAlloc[lineIdx]);
+                var amt = createAmts[lineIdx];
 
                 subTotal += amt.NetAmount;
                 totalDiscount += amt.DiscountAmount;
@@ -1400,11 +1451,16 @@ public class DocumentService : IDocumentService
             var updBillAmt = request.BillDiscountAmount
                 ?? (request.BillDiscountPercent.HasValue ? 0m : doc.BillDiscountAmount);
             var updBillAlloc = AllocateBillDiscount(request.Lines, doc.PricesIncludeVat, updBillPct, updBillAmt);
+            // กระทบยอดเศษสตางค์ต่อกลุ่มอัตรา — เหมือน create path (แก้แล้วต้องไม่เพี้ยนกลับ)
+            var updAmts = new LineAmounts[request.Lines.Count];
+            for (int i = 0; i < request.Lines.Count; i++)
+                updAmts[i] = ComputeLineAmounts(request.Lines[i], doc.PricesIncludeVat, updBillAlloc[i]);
+            ReconcileTaxRounding(request.Lines, updAmts, doc.PricesIncludeVat);
             int updLineIdx = -1;
             foreach (var line in request.Lines)
             {
                 updLineIdx++;
-                var amt = ComputeLineAmounts(line, doc.PricesIncludeVat, updBillAlloc[updLineIdx]);
+                var amt = updAmts[updLineIdx];
 
                 subTotal += amt.NetAmount;
                 totalDiscount += amt.DiscountAmount;
@@ -6084,8 +6140,213 @@ public class DocumentService : IDocumentService
 
     // ==================== Contacts ====================
 
+    /// <summary>normalize เลขผู้เสียภาษีเหลือตัวเลขล้วน — จุด match ทุกที่ต้องใช้
+    /// ตัวนี้ (เดิมเทียบ == ตรง ๆ → "0-2735-63000-92-0" ไม่เจอ "0273563000920"
+    /// → OCR/API สร้างผู้ติดต่อซ้ำทุกครั้งที่สแกน).</summary>
+    internal static string NormalizeTaxDigits(string? taxId)
+        => new string((taxId ?? "").Where(char.IsDigit).ToArray());
+
+    internal static string NormalizeBranchCode(string? branch)
+    {
+        var d = new string((branch ?? "").Where(char.IsDigit).ToArray());
+        return d.Length == 0 ? "00000" : d.PadLeft(5, '0');
+    }
+
+    /// <summary>หา contact เดิมที่ "ซ้ำ" กับข้อมูลที่ส่งมา — คีย์หลัก = เลขภาษี 13
+    /// หลัก (normalize) + สาขา (00000 = สำนักงานใหญ่; เลขภาษีเดียวกันคนละสาขา =
+    /// คนละ record ถูกต้องตามกฎหมาย). ไม่มีเลขภาษี → ไม่ตัดสินว่าซ้ำ (ชื่อคนซ้ำ
+    /// กันได้จริง — ให้เครื่องมือ merge จัดการ).</summary>
+    public async Task<Contact?> FindDuplicateContactAsync(Guid companyId, string? taxId, string? branchCode)
+    {
+        var tax = NormalizeTaxDigits(taxId);
+        if (tax.Length != 13) return null;
+        var branch = NormalizeBranchCode(branchCode);
+        // เทียบ normalize ใน memory (EF แปล digit-strip เป็น SQL ไม่ได้) — โหลด
+        // เฉพาะ candidate ที่มี TaxId (โปรเจกต์จริงหลักร้อย/พันแถว รับได้)
+        var candidates = await _db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                && c.TaxId != null && c.TaxId != "")
+            .Select(c => new { c.Id, c.TaxId, c.BranchCode })
+            .ToListAsync();
+        var hit = candidates.FirstOrDefault(c =>
+            NormalizeTaxDigits(c.TaxId) == tax && NormalizeBranchCode(c.BranchCode) == branch);
+        return hit == null ? null
+            : await _db.Contacts.FirstOrDefaultAsync(c => c.Id == hit.Id);
+    }
+
+    /// <summary>หากลุ่มผู้ติดต่อซ้ำ — คีย์: เลขภาษี 13 หลัก (normalize) + สาขา.
+    /// เสริมด้วยกลุ่มชื่อเหมือนกันเป๊ะที่ไม่มีเลขภาษี (แนะนำอย่างเดียว).</summary>
+    public async Task<List<object>> GetDuplicateContactGroupsAsync(Guid companyId)
+    {
+        var all = await _db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => new { c.Id, c.Name, c.TaxId, c.BranchCode, c.Address, c.Email, c.Phone, c.CreatedAt, c.IsCustomer, c.IsSupplier })
+            .ToListAsync();
+
+        var groups = new List<object>();
+        // กลุ่มตามเลขภาษี+สาขา
+        foreach (var g in all
+            .Where(c => NormalizeTaxDigits(c.TaxId).Length == 13)
+            .GroupBy(c => NormalizeTaxDigits(c.TaxId) + "|" + NormalizeBranchCode(c.BranchCode))
+            .Where(g => g.Count() > 1))
+        {
+            // แนะนำ "ตัวเก็บ": ข้อมูลครบสุด (ที่อยู่/อีเมล/โทร) แล้วเก่าสุด (เลขอ้าง
+            // ในเอกสารเดิมมักชี้ตัวแรก)
+            var ordered = g
+                .OrderByDescending(c => (string.IsNullOrWhiteSpace(c.Address) ? 0 : 1)
+                    + (string.IsNullOrWhiteSpace(c.Email) ? 0 : 1)
+                    + (string.IsNullOrWhiteSpace(c.Phone) ? 0 : 1))
+                .ThenBy(c => c.CreatedAt)
+                .ToList();
+            groups.Add(new
+            {
+                key = g.Key,
+                matchBy = "taxId",
+                taxId = NormalizeTaxDigits(ordered[0].TaxId),
+                suggestedKeepId = ordered[0].Id,
+                contacts = ordered.Select(c => new
+                {
+                    c.Id, c.Name, c.TaxId, c.BranchCode, c.Address, c.Email, c.Phone,
+                    c.CreatedAt, c.IsCustomer, c.IsSupplier
+                }).ToList()
+            });
+        }
+        // กลุ่มชื่อซ้ำเป๊ะ (ไม่มีเลขภาษีทั้งคู่) — แสดงให้ตัดสินใจเอง
+        foreach (var g in all
+            .Where(c => NormalizeTaxDigits(c.TaxId).Length != 13)
+            .GroupBy(c => (c.Name ?? "").Trim().ToLowerInvariant())
+            .Where(g => g.Key.Length > 0 && g.Count() > 1))
+        {
+            var ordered = g.OrderBy(c => c.CreatedAt).ToList();
+            groups.Add(new
+            {
+                key = "name|" + g.Key,
+                matchBy = "name",
+                taxId = (string?)null,
+                suggestedKeepId = ordered[0].Id,
+                contacts = ordered.Select(c => new
+                {
+                    c.Id, c.Name, c.TaxId, c.BranchCode, c.Address, c.Email, c.Phone,
+                    c.CreatedAt, c.IsCustomer, c.IsSupplier
+                }).ToList()
+            });
+        }
+        return groups;
+    }
+
+    /// <summary>รวมผู้ติดต่อซ้ำ: repoint FK ทุกตาราง/คอลัมน์ที่ชี้ Contact (อ่านจาก
+    /// information_schema — generic ไม่หลุดตารางใหม่ในอนาคต) → เติม field ที่ตัวเก็บ
+    /// ยังว่างจากตัวที่ถูกรวม → soft-delete ตัวที่ถูกรวม + audit. เอกสาร/ประวัติ
+    /// ทั้งหมดย้ายมาอยู่ใต้ contact เดียว.</summary>
+    public async Task<int> MergeContactsAsync(Guid companyId, Guid keepId, List<Guid> mergeIds, string performedBy)
+    {
+        mergeIds = mergeIds.Where(id => id != keepId).Distinct().ToList();
+        if (mergeIds.Count == 0) throw new InvalidOperationException("ไม่มีรายการให้รวม");
+
+        var keep = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keepId && c.CompanyId == companyId && !c.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อตัวเก็บ (keep)");
+        var losers = await _db.Contacts
+            .Where(c => mergeIds.Contains(c.Id) && c.CompanyId == companyId && !c.IsDeleted)
+            .ToListAsync();
+        if (losers.Count != mergeIds.Count)
+            throw new InvalidOperationException("บางรายการไม่พบ/ถูกลบแล้ว — โหลดรายการซ้ำใหม่อีกครั้ง");
+
+        // เติมข้อมูลที่ตัวเก็บยังว่างจากตัวที่ถูกรวม (ไม่ overwrite ของเดิม)
+        foreach (var l in losers)
+        {
+            if (string.IsNullOrWhiteSpace(keep.TaxId) && !string.IsNullOrWhiteSpace(l.TaxId)) keep.TaxId = l.TaxId;
+            if (string.IsNullOrWhiteSpace(keep.Address) && !string.IsNullOrWhiteSpace(l.Address)) keep.Address = l.Address;
+            if (string.IsNullOrWhiteSpace(keep.Email) && !string.IsNullOrWhiteSpace(l.Email)) keep.Email = l.Email;
+            if (string.IsNullOrWhiteSpace(keep.Phone) && !string.IsNullOrWhiteSpace(l.Phone)) keep.Phone = l.Phone;
+            if (l.IsCustomer) keep.IsCustomer = true;
+            if (l.IsSupplier) keep.IsSupplier = true;
+        }
+
+        // repoint FK ทุกคอลัมน์ที่ชี้ Contact — generic จาก information_schema
+        // (ContactId + ชื่อ *ContactId ทุกแบบ: PayeeContactId, LinkedContactId,
+        // MatchedContactId, ...) ยกเว้นตาราง Contacts เอง. Guid ไม่ชนข้าม tenant.
+        var fkCols = await _db.Database.SqlQuery<FkColRow>($@"
+            SELECT c.table_name AS ""TableName"", c.column_name AS ""ColumnName""
+            FROM information_schema.columns c
+            JOIN information_schema.tables t
+              ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+            WHERE c.table_schema = 'public'
+              AND t.table_type = 'BASE TABLE'
+              AND c.table_name <> 'Contacts'
+              AND (c.column_name = 'ContactId' OR c.column_name LIKE '%ContactId')
+              AND c.data_type = 'uuid'")
+            .ToListAsync();
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        var repointed = 0;
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            foreach (var loser in losers)
+            {
+                foreach (var col in fkCols)
+                {
+                    // table/column มาจาก information_schema (trusted) — quote กัน case
+                    var sql = $"UPDATE \"{col.TableName}\" SET \"{col.ColumnName}\" = {{0}} WHERE \"{col.ColumnName}\" = {{1}}";
+                    repointed += await _db.Database.ExecuteSqlRawAsync(sql, keepId, loser.Id);
+                }
+                loser.IsDeleted = true;
+                loser.Notes = ((loser.Notes ?? "") + $" [รวมเข้ากับ {keep.Name} ({keepId}) โดย merge]").Trim();
+                loser.UpdatedAt = DateTime.UtcNow;
+                loser.UpdatedBy = performedBy;
+            }
+            keep.UpdatedAt = DateTime.UtcNow;
+            keep.UpdatedBy = performedBy;
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(performedBy, out var uid) ? uid : null,
+                Action = AuditAction.Update,
+                EntityType = "ContactMerge",
+                EntityId = keepId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                { keepId, merged = mergeIds, rowsRepointed = repointed }),
+                Timestamp = DateTime.UtcNow
+            });
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        });
+
+        _logger.LogInformation("Merged {N} contacts into {Keep} ({Name}) — repointed {Rows} rows",
+            losers.Count, keepId, keep.Name, repointed);
+        return repointed;
+    }
+
+    private sealed class FkColRow
+    {
+        public string TableName { get; set; } = "";
+        public string ColumnName { get; set; } = "";
+    }
+
     public async Task<ContactResponse> CreateContactAsync(Guid companyId, CreateContactRequest request)
     {
+        // ── กันสร้างซ้ำที่ "ศูนย์กลาง" (ครอบทุกเส้น: UI สร้างใหม่ / quick-sale /
+        // OCR / import) — เลขภาษี+สาขาเดียวกัน = record เดียว: คืนตัวเดิมแบบ
+        // idempotent + เติม field ที่ตัวเดิมยังว่างจากข้อมูลใหม่ (ไม่ overwrite
+        // ของที่มีอยู่). เดิมไม่มี guard เลย → ผู้ติดต่อซ้ำ 3-4 รายการต่อ vendor
+        var dup = await FindDuplicateContactAsync(companyId, request.TaxId, request.BranchCode);
+        if (dup != null)
+        {
+            var enriched = false;
+            void Fill(Func<string?> get, Action<string> set, string? val)
+            { if (string.IsNullOrWhiteSpace(get()) && !string.IsNullOrWhiteSpace(val)) { set(val!); enriched = true; } }
+            Fill(() => dup.Phone, v => dup.Phone = v, request.Phone);
+            Fill(() => dup.Email, v => dup.Email = v, request.Email);
+            Fill(() => dup.Address, v => dup.Address = v, request.Address);
+            Fill(() => dup.ContactPerson, v => dup.ContactPerson = v, request.ContactPerson);
+            if (request.IsCustomer && !dup.IsCustomer) { dup.IsCustomer = true; enriched = true; }
+            if (request.IsSupplier && !dup.IsSupplier) { dup.IsSupplier = true; enriched = true; }
+            if (enriched) { dup.UpdatedAt = DateTime.UtcNow; await _db.SaveChangesAsync(); }
+            _logger.LogInformation("CreateContact dedup: reuse {Id} ({Name}) for TaxId {Tax}",
+                dup.Id, dup.Name, NormalizeTaxDigits(request.TaxId));
+            return MapContactToResponse(dup);
+        }
+
         // If structured fields are missing but free-text Address is provided,
         // attempt to auto-parse so e-Tax XML has the data it needs.
         var parsed = NeedsAutoParse(request) && !string.IsNullOrWhiteSpace(request.Address)
@@ -10201,10 +10462,30 @@ public class DocumentService : IDocumentService
         Dictionary<Guid, Guid>? pceByLine = null)
     {
         var (lifecycle, reason) = ComputeLifecycle(d, conversionPercent, downstream);
+        // เหตุผลจริงที่ภาษีซื้อยังค้าง 11640 — คำนวณจาก checker + guard เดียวกับ
+        // ReclassifyUndueInputVatAsync เพื่อให้ UI บอกผู้ใช้ตรง ๆ ว่าขาดอะไร
+        // (ก่อนหน้านี้ UI เดาว่า "เลขภาษีผู้ขายไม่ถูก" เสมอ → ผู้ใช้งง)
+        List<string>? undueBlockers = null;
+        if (d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null)
+        {
+            undueBlockers = new List<string>();
+            if (d.IsForeignService)
+                undueBlockers.Add("บริการต่างประเทศ (§83/6) — เคลมผ่านหน้านำส่งภาษี ภ.พ.36 (ไม่ใช่การเติมใบกำกับ)");
+            else
+            {
+                var cti = TaxInvoiceCompletenessChecker.Evaluate(d, d.Contact);
+                foreach (var f in cti.MissingFields) undueBlockers.Add("ขาด: " + f);
+                if (!string.IsNullOrWhiteSpace(d.InputVatAccountCodeOverride))
+                    undueBlockers.Add($"ตั้งผังภาษีซื้อ override ไว้ ({d.InputVatAccountCodeOverride}) = ตั้งใจไม่เคลม VAT — ต้องล้าง override ก่อนจึงย้ายเข้า 11610 ได้");
+                var claimableVat = d.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+                if (claimableVat <= 0)
+                    undueBlockers.Add("ไม่มีบรรทัดที่เคลมภาษีซื้อได้ (ทุกบรรทัดถูกปิด \"เคลม VAT\" หรือยอด VAT = 0) — ไม่มียอดให้ย้ายเข้า 11610");
+            }
+        }
         return new(
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
-        new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
+        new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId, d.Contact.BranchCode),
         d.SubTotal, d.DiscountAmount, d.BillDiscountPercent, d.BillDiscountAmount,
         d.VatAmount, d.WithholdingTaxAmount,
         d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Reference, d.Notes,
@@ -10305,7 +10586,8 @@ public class DocumentService : IDocumentService
         BookingNumber: d.BookingNumber,
         CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice,
         DepositAppliedAmount: d.DepositAppliedAmount,
-        IsSettlementReceipt: d.IsSettlementReceipt);
+        IsSettlementReceipt: d.IsSettlementReceipt,
+        UndueInputVatBlockers: undueBlockers);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

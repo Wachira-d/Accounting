@@ -239,6 +239,8 @@ const API = {
       // Contacts
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),
       createContact: (d) => API.post(`${base}/document/contacts`, d),
+      getContactDuplicates: () => API.get(`${base}/document/contacts/duplicates`),
+      mergeContacts: (d) => API.post(`${base}/document/contacts/merge`, d),
       updateContact: (id, d) => API.put(`${base}/document/contacts/${id}`, d),
       getContact: (id) => API.get(`${base}/document/contacts/${id}`),
       deleteContact: (id) => API.del(`${base}/document/contacts/${id}`),

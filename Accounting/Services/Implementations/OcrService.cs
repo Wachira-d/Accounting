@@ -1357,10 +1357,19 @@ public class OcrService : IOcrService
                 // branch (สำนักงานใหญ่ 00000 + สาขา 00001, …). Pick the contact
                 // whose BranchCode matches the OCR'd branch; blank/absent codes
                 // normalize to head-office 00000 so legacy rows still match.
-                var taxMatches = await _db.Contacts
-                    .Where(c => c.CompanyId == companyId && c.TaxId == extractedData.VendorTaxId && !c.IsDeleted)
+                // ⚠️ เทียบเลขภาษีแบบ normalize (ตัวเลขล้วน) ใน memory — เดิมเทียบ
+                // == ตรง ๆ: contact เก่าที่เก็บมีขีด/เว้นวรรค ("0-2735-...") ไม่
+                // match กับ OCR ("0273563000920") → หลุดไปสร้างซ้ำทุกสแกน
+                // (เคสจริง: vendor เดียวโดนสร้าง 3 record เลขภาษีเดียวกัน)
+                var ocrTaxDigits = DocumentService.NormalizeTaxDigits(extractedData.VendorTaxId);
+                var taxMatches = (await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                        && c.TaxId != null && c.TaxId != "")
+                    .Select(c => new { c.Id, c.Name, c.BranchCode, c.TaxId })
+                    .ToListAsync())
+                    .Where(c => DocumentService.NormalizeTaxDigits(c.TaxId) == ocrTaxDigits)
                     .Select(c => new { c.Id, c.Name, c.BranchCode })
-                    .ToListAsync();
+                    .ToList();
                 if (taxMatches.Count == 1)
                 {
                     scanResult.MatchedContactId = taxMatches[0].Id;
@@ -3662,10 +3671,19 @@ public class OcrService : IOcrService
             var buyerTax = result.BuyerTaxId;
             var buyerNm = result.BuyerName;
             if (!string.IsNullOrWhiteSpace(buyerTax))
-                contactId = await _db.Contacts
-                    .Where(c => c.CompanyId == companyId && c.TaxId == buyerTax && !c.IsDeleted)
+            {
+                // normalize เลขภาษี (กันสร้างลูกค้าซ้ำจาก format ต่างกัน — เคสเดียว
+                // กับ vendor ฝั่งซื้อ)
+                var buyerTaxDigits = DocumentService.NormalizeTaxDigits(buyerTax);
+                contactId = (await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                        && c.TaxId != null && c.TaxId != "")
+                    .Select(c => new { c.Id, c.TaxId })
+                    .ToListAsync())
+                    .Where(c => DocumentService.NormalizeTaxDigits(c.TaxId) == buyerTaxDigits)
                     .Select(c => (Guid?)c.Id)
-                    .FirstOrDefaultAsync();
+                    .FirstOrDefault();
+            }
             if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerNm))
                 contactId = await _db.Contacts
                     .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Name.Contains(buyerNm))
@@ -3695,9 +3713,16 @@ public class OcrService : IOcrService
             contactId = result.MatchedContactId;
             if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId))
             {
-                var contact = await _db.Contacts
-                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == result.ExtractedVendorTaxId);
-                contactId = contact?.Id;
+                // normalize เลขภาษี — เทียบ == ตรง ๆ ไม่เจอเมื่อ format ต่าง → สร้างซ้ำ
+                var vTaxDigits = DocumentService.NormalizeTaxDigits(result.ExtractedVendorTaxId);
+                contactId = (await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                        && c.TaxId != null && c.TaxId != "")
+                    .Select(c => new { c.Id, c.TaxId })
+                    .ToListAsync())
+                    .Where(c => DocumentService.NormalizeTaxDigits(c.TaxId) == vTaxDigits)
+                    .Select(c => (Guid?)c.Id)
+                    .FirstOrDefault();
             }
             if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorName))
             {

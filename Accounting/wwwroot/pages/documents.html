@@ -267,6 +267,10 @@
                     • ติ๊กนี้ + "💰 ลูกค้าจ่ายเงินแล้ว" (รับครบ) = <b>ขายสดใบเดียวจบ</b> — หัวพิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน" ไม่ออกใบเสร็จแยก<br>
                     • ถ้ายังไม่แน่ใจว่าจะเก็บเงินได้ (งานบริการ) — ใช้ "ใบแจ้งหนี้" เปล่า จะยังไม่ต้องนำส่ง VAT จนกว่ารับเงิน (§78/1)
                   </span>
+                  <span id="combinedForcedNote" style="display:none;color:#b45309;font-size:11px;margin-top:4px;font-weight:600">
+                    🔒 ติ๊กให้อัตโนมัติ: รับเงินแล้ว + มี VAT → ต้องออกใบกำกับภาษี ณ วันรับเงิน (§78/1)
+                    — เอาออกได้โดยยกเลิกติ๊ก "ลูกค้าจ่ายเงินแล้ว" หรือเอา VAT ออกจากทุกบรรทัด
+                  </span>
                 </span>
               </label>
               <label id="fDeclineTaxRow" style="display:none;margin-top:8px;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer">
@@ -1240,6 +1244,10 @@
           paidCb.addEventListener('change', () => {
             paidRow.style.display = paidCb.checked ? 'block' : 'none';
             if (paidCb.checked) this._syncPaidOnIssueMethod();
+            // §78/1: ใบแจ้งหนี้ + รับเงินแล้ว + มี VAT → ต้องเป็นใบกำกับ —
+            // ติ๊ก/ล็อคใบรวมให้เห็นทันที (เดิม upgrade เงียบ ๆ ตอนบันทึก
+            // → หน้าจอโชว์ checkbox ไม่ตรงกับใบที่ออกจริง)
+            this.syncCombinedForPaid();
           });
         }
         // Whenever the user changes "แหล่งเงิน / ช่องทางชำระ", refresh
@@ -3084,9 +3092,12 @@
           combinedRow.style.display = canCombine ? 'flex' : 'none';
           if (!canCombine) {
             const cb = document.getElementById('fCombinedTaxInvoice');
-            if (cb) cb.checked = false;
+            if (cb) { cb.checked = false; cb.disabled = false; }
+            const n = document.getElementById('combinedForcedNote'); if (n) n.style.display = 'none';
           }
         }
+        // §78/1 live-lock — ประเมินใหม่เมื่อเปลี่ยนประเภทเอกสาร
+        this.syncCombinedForPaid?.();
         // "ผู้ซื้อไม่ประสงค์รับใบกำกับ" — เฉพาะเอกสารฝั่งขายที่มี VAT (ออกใบกำกับได้)
         const declineRow = document.getElementById('fDeclineTaxRow');
         if (declineRow) {
@@ -3366,6 +3377,33 @@
         // เก็บ relatedDocumentId hidden ลง form state เพื่อส่งกลับ
         this._linkedTaxInvoiceSourceId = id;
         this._updateTaxInvVatPreview(d);
+      },
+
+      // ===== §78/1 live-lock: ใบแจ้งหนี้ + รับเงินแล้ว + มี VAT → บังคับใบรวม =====
+      // เดิม auto-upgrade เงียบ ๆ ตอนกดบันทึก → หน้าจอโชว์ combined ไม่ติ๊กทั้งที่
+      // ใบจริงจะออกเป็นใบรวม (ผู้ใช้สับสน "ติ๊กจ่ายแต่ไม่ติ๊กใบรวมได้ด้วยหรอ").
+      // ตอนนี้ sync สด: เงื่อนไขเข้า = ติ๊ก+ล็อค checkbox ใบรวมทันที พร้อมเหตุผล;
+      // เงื่อนไขหลุด (ยกเลิกจ่าย/เอา VAT ออก/เปลี่ยนประเภท) = ปลดล็อค.
+      // ประเภทอื่น (TaxInvoice = ใบกำกับอยู่แล้ว / ไม่มี VAT = ไม่ต้องใบกำกับ) ไม่บังคับ.
+      _anyVatLine() {
+        return [...document.querySelectorAll('#linesBody [data-f="vat"]')]
+          .some(s => parseFloat(s.value) > 0);
+      },
+      syncCombinedForPaid() {
+        const cb = document.getElementById('fCombinedTaxInvoice');
+        const note = document.getElementById('combinedForcedNote');
+        if (!cb) return;
+        const docType = document.getElementById('fDocType')?.value;
+        const paid = document.getElementById('fPaidOnIssue')?.checked || false;
+        const mustCombine = docType === 'Invoice' && paid && this._anyVatLine();
+        if (mustCombine) {
+          cb.checked = true;
+          cb.disabled = true;
+          if (note) note.style.display = 'block';
+        } else {
+          cb.disabled = false;
+          if (note) note.style.display = 'none';
+        }
       },
 
       // ===== ใบเสร็จรับเงิน: ดึงใบค้างของลูกหนี้มา "รับชำระ" (ตัดลูกหนี้) =====
@@ -4133,7 +4171,11 @@
         // on-screen totals match what gets saved.
         const inclVat = document.getElementById('fPricesIncludeVat')?.checked || false;
         const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
-        let sub = 0, vat = 0, wht = 0;
+        // เก็บรายบรรทัดก่อน แล้วคิดภาษีท้ายบิลแบบ "กลุ่มอัตรา" — mirror backend
+        // (AllocateBillDiscount + ComputeLineAmounts + ReconcileTaxRounding) เป๊ะ ๆ
+        // เดิม frontend scale VAT ด้วย ratio แต่ backend ปัดรายบรรทัด → ยอดก่อน
+        // บันทึก (2,940.00) ไม่ตรงยอดหลังบันทึก (2,940.01) ผู้ใช้ดีดเครื่องคิดเลขจับได้
+        const rows = [];
         document.querySelectorAll('#linesBody .line-card').forEach((row, idx) => {
           // Re-sequence line numbers (ลบแถวกลางแล้วเลขไม่ขาดช่วง)
           const numEl = row.querySelector('.lc-num'); if (numEl) numEl.textContent = idx + 1;
@@ -4154,24 +4196,61 @@
             net = r2(entered);
             lineVat = r2(entered * vatR / 100);
           }
-          sub += net;
-          vat += lineVat;
-          wht += r2(net * whtR / 100);
           // Per-line total (net + VAT) — แสดงให้ user เห็นยอดต่อแถวชัดเจน
           const lineTotalEl = row.querySelector('[data-f="lineTotal"]');
           if (lineTotalEl) lineTotalEl.textContent = Layout.money(net + lineVat);
+          rows.push({ net, vat: lineVat, wht: r2(net * whtR / 100), vatR, whtR });
         });
-        // ส่วนลดท้ายบิล (จากยอดรวม) — เฉลี่ย pro-rata: net แต่ละบรรทัดลดตามสัดส่วน
-        // → VAT/WHT ลดตามสัดส่วนเดียวกัน (เพราะเป็นเชิงเส้นต่อ net). ตรงกับ backend.
+        let sub = r2(rows.reduce((s, r) => s + r.net, 0));
+        // ส่วนลดท้ายบิล (จากยอดรวม) — เฉลี่ย pro-rata ex-VAT ลงบรรทัด (เศษปัดเก็บ
+        // บรรทัดสุดท้าย) แล้วคิด VAT/WHT ใหม่บนฐานที่ลด — ตรง AllocateBillDiscount
         const billMode = document.getElementById('fBillDiscountMode')?.value || 'amt';
         const billVal = parseFloat(document.getElementById('fBillDiscount')?.value) || 0;
         let billDisc = billMode === 'pct' ? r2(sub * billVal / 100) : r2(billVal);
         billDisc = Math.max(0, Math.min(billDisc, sub));
         if (billDisc > 0 && sub > 0) {
-          const ratio = (sub - billDisc) / sub;
-          vat = r2(vat * ratio);
-          wht = r2(wht * ratio);
+          let running = 0, lastIdx = -1;
+          rows.forEach((r, i) => {
+            if (r.net <= 0) return;
+            r.alloc = r2(billDisc * r.net / sub);
+            running = r2(running + r.alloc);
+            lastIdx = i;
+          });
+          if (lastIdx >= 0 && running !== billDisc)
+            rows[lastIdx].alloc = r2((rows[lastIdx].alloc || 0) + (billDisc - running));
+          rows.forEach(r => {
+            if (!r.alloc || r.net <= 0) return;
+            r.net = r2(r.net - Math.min(r.alloc, r.net));
+            r.vat = r.vatR > 0 ? r2(r.net * r.vatR / 100) : 0;
+            r.wht = r2(r.net * r.whtR / 100);
+          });
         }
+        // กระทบยอดเศษสตางค์ต่อกลุ่มอัตรา (mirror ReconcileTaxRounding): ΣVAT/WHT
+        // ของแต่ละอัตรา = round(Σฐานกลุ่ม × อัตรา) — ตรงเครื่องคิดเลข; เศษเกลี่ย
+        // เข้าบรรทัดฐานสูงสุด. โหมดราคารวม VAT ขยับ net สวนทางคง gross ที่กรอก
+        const reconcile = (rateKey, amtKey, shiftNet) => {
+          const groups = {};
+          rows.forEach((r, i) => {
+            if (r[rateKey] > 0 && r.net !== 0) (groups[r[rateKey]] = groups[r[rateKey]] || []).push(i);
+          });
+          Object.entries(groups).forEach(([rate, idxs]) => {
+            const base = idxs.reduce((s, i) => s + rows[i].net, 0);
+            const target = r2(base * parseFloat(rate) / 100);
+            const diff = r2(target - idxs.reduce((s, i) => s + rows[i][amtKey], 0));
+            if (!diff || Math.abs(diff) > 1) return;
+            const j = idxs.reduce((a, b) => Math.abs(rows[a].net) >= Math.abs(rows[b].net) ? a : b);
+            rows[j][amtKey] = r2(rows[j][amtKey] + diff);
+            if (shiftNet) rows[j].net = r2(rows[j].net - diff);
+          });
+        };
+        reconcile('vatR', 'vat', inclVat);
+        reconcile('whtR', 'wht', false);   // WHT ฐาน ex-VAT — ทำหลัง VAT (net อาจขยับ)
+        const vat = r2(rows.reduce((s, r) => s + r.vat, 0));
+        const wht = r2(rows.reduce((s, r) => s + r.wht, 0));
+        // sub ที่โชว์ = "ยอดรวมก่อน VAT" ก่อนหักท้ายบิล — คำนวณย้อนจาก net สุดท้าย
+        // + ส่วนลดที่เฉลี่ยไป (net อาจถูกขยับสตางค์ตอน reconcile โหมดรวม VAT)
+        sub = r2(rows.reduce((s, r) => s + r.net + (r.alloc || 0), 0));
+        billDisc = r2(rows.reduce((s, r) => s + (r.alloc || 0), 0));
         // sumSubTotal = "ยอดรวมก่อน VAT" (ก่อนหักท้ายบิล) = sub
         document.getElementById('sumSubTotal').textContent = Layout.money(sub);
         // แถว "ยอดหลังหักส่วนลด (ฐานภาษี)" — โชว์เฉพาะเมื่อมีส่วนลดท้ายบิล
@@ -4201,6 +4280,8 @@
         this.refreshVatProhibitedBanner();
         // แถว "หักมัดจำ / คงเหลือรับชำระ" ใต้ยอดสุทธิ — ยอดใบไม่เปลี่ยน (ตาม §86/4)
         this.updateDepositSummary(totalCalc);
+        // §78/1 live-lock — VAT ต่อบรรทัดเปลี่ยน (เพิ่ม/เอาออก) กระทบเงื่อนไขบังคับใบรวม
+        this.syncCombinedForPaid?.();
       },
 
       /** แสดงยอดมัดจำที่เลือกหัก (จะ apply ตอน "บันทึกและอนุมัติ") ใน totals box —
@@ -5391,11 +5472,17 @@
             ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.isForeignService) ? `
               <div style="margin-bottom:12px;padding:12px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">
                 <div style="font-size:13px;font-weight:700;color:#6d28d9;margin-bottom:4px">⏳ ภาษีซื้อยังไม่ถึงกำหนด (พักไว้ที่บัญชี 11640)</div>
-                <div style="font-size:12px;color:#6b21a8;margin-bottom:10px">ใบกำกับภาษีซื้อยังไม่ครบตาม §86/4 — ภาษีซื้อยังเคลม ภ.พ.30 ไม่ได้ เติมเลขที่ + วันที่ + สาขาให้ครบ (ผู้ขายต้องมีเลขภาษี 13 หลักไทย) ระบบจะย้ายเข้า "ภาษีซื้อ ภ.พ.30" (11610) อัตโนมัติ และนับเข้ารายงานภาษีซื้อในเดือนที่ปรับ</div>
+                <div style="font-size:12px;color:#6b21a8;margin-bottom:8px">ใบกำกับภาษีซื้อยังไม่ครบตาม §86/4 — ภาษีซื้อยังเคลม ภ.พ.30 ไม่ได้ เมื่อข้อมูลครบ ระบบจะย้ายเข้า "ภาษีซื้อ ภ.พ.30" (11610) อัตโนมัติ และนับเข้ารายงานภาษีซื้อในเดือนที่ปรับ</div>
+                ${(d.undueInputVatBlockers || []).length ? `
+                <div style="font-size:12px;color:#7c2d12;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 10px;margin-bottom:10px">
+                  <b>สิ่งที่ยังขาด/ติดเงื่อนไข:</b>
+                  <ul style="margin:4px 0 0 18px;padding:0">${d.undueInputVatBlockers.map(b => `<li>${this.escapeHtml(b)}</li>`).join('')}</ul>
+                  ${d.undueInputVatBlockers.some(b => b.includes('ผู้ขาย') && (b.includes('ชื่อ') || b.includes('ที่อยู่') || b.includes('เลขผู้เสียภาษี'))) ? `<div style="margin-top:6px">ข้อมูลชื่อ/เลขภาษี/ที่อยู่ผู้ขายดึงจากผู้ติดต่อ → <a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary);font-weight:600">แก้ที่หน้าผู้ติดต่อ</a> แล้วกลับมากด "บันทึก" อีกครั้ง</div>` : ''}
+                </div>` : ''}
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
                   <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เช่น INV-2026-0042"></div>
                   <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
-                  <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || '')}" placeholder="00000" maxlength="5"></div>
+                  <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" placeholder="00000" maxlength="5">${!d.supplierBranchCode ? `<div style="font-size:10px;color:#9333ea;margin-top:2px">${d.contact?.branchCode ? '⚙️ ดึงจากผู้ติดต่ออัตโนมัติ' : '⚙️ ค่าเริ่มต้น สำนักงานใหญ่'}</div>` : ''}</div>
                 </div>
                 <button class="btn btn-sm btn-primary" onclick="Page.completeTaxInvoice('${d.id}')">บันทึก + ย้ายเข้าภาษีซื้อ ภ.พ.30</button>
               </div>` : ''}
@@ -6065,12 +6152,18 @@
         try {
           const res = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`, body);
           const d = res?.data || res;
-          Layout.closeModal('detailModal');
           // toast ซื่อสัตย์: เช็คจริงว่าย้ายเข้า 11610 แล้วหรือยัง (inputVatBecameClaimableAt)
-          if (d && d.inputVatBecameClaimableAt)
+          if (d && d.inputVatBecameClaimableAt) {
+            Layout.closeModal('detailModal');
             Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 (11610) แล้ว', 'success');
-          else
-            Layout.toast('บันทึกข้อมูลใบกำกับแล้ว — แต่ "ยังเคลม ภ.พ.30 ไม่ได้": ใบกำกับยังไม่ครบ §86/4 (ผู้ขายต้องมีเลขภาษี 13 หลักไทย). ถ้าเป็นบริการต่างประเทศ ให้เคลมผ่าน ภ.พ.36 ที่หน้านำส่งภาษี', 'warning', 10000);
+          } else {
+            // ยังย้ายไม่ได้ → บอกเหตุผลจริงจาก backend (ไม่เดาว่าเลขภาษีผิดเสมอ)
+            const why = (d?.undueInputVatBlockers || []).map(b => '• ' + b).join('\n');
+            Layout.toast('บันทึกข้อมูลใบกำกับแล้ว — แต่ยังเคลม ภ.พ.30 ไม่ได้:\n'
+              + (why || 'ใบกำกับยังไม่ครบ §86/4'), 'warning', 12000);
+            // เปิด detail ใหม่ให้เห็น checklist ที่อัปเดตแล้ว (ไม่ปิด modal ทิ้งเฉย ๆ)
+            this.detail(id);
+          }
           await this.load();
         } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },

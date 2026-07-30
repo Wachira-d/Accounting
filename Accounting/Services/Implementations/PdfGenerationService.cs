@@ -980,9 +980,16 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// บรรทัด VAT และหัวเรื่องต้องไม่ใช่ "ใบกำกับภาษี" — JE ภายในยังแยก net/21913
     /// ถูกต้องตามเดิม (คนละเรื่องกับการแสดงผล). ตรงข้าม: มัดจำที่ tax point เกิด
     /// แล้ว (21911, DepositOutputVatDeferred=false) = ใบกำกับภาษีจริง → โชว์ VAT.</summary>
+    /// <summary>มัดจำที่ VAT "ยังพักรอ" (ยังไม่เป็นใบกำกับ) — หัวห้ามมีคำ
+    /// "ใบกำกับภาษี". เมื่อ recognize แล้ว (RecognizedAt ตั้ง = tax point เกิด →
+    /// เข้า ภ.พ.30) หัวต้อง upgrade เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ให้ตรง
+    /// invariant "ใบที่อยู่ในรายงานภาษี = ใบที่หัวมีคำใบกำกับ". ยกเว้นมัดจำที่ถูก
+    /// "หักเข้าใบปลายทาง" (AppliedToDocumentId) — ใบปลายทางรายงาน VAT เต็มใบ
+    /// เป็นใบกำกับแทน ใบมัดจำคงเป็นใบเสร็จ (กันกระดาษใบกำกับซ้ำ→เคลมซ้ำ).</summary>
     internal static bool IsDeferredVatDeposit(Document doc) =>
         doc.IsDeposit && doc.DepositOutputVatDeferred && doc.VatAmount != 0m
-        && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
+        && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+        && (doc.DepositOutputVatRecognizedAt == null || doc.DepositAppliedToDocumentId != null);
 
     private static Dictionary<string, string> ParseTitleOverrides(CompanySettings? settings)
     {

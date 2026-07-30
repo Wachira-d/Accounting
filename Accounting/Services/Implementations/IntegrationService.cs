@@ -1306,7 +1306,23 @@ public class IntegrationService : IIntegrationService
         Contact? contact = null;
 
         if (!string.IsNullOrEmpty(taxId))
-            contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == taxId && !c.IsDeleted);
+        {
+            // normalize เลขภาษี (ตัวเลขล้วน) — เทียบ == ตรง ๆ พลาดเมื่อ format ต่าง
+            // (ขีด/เว้นวรรค) → สร้าง contact ซ้ำทุก sync
+            var taxDigits = DocumentService.NormalizeTaxDigits(taxId);
+            if (taxDigits.Length >= 10)
+            {
+                var hit = (await _db.Set<Contact>().AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                        && c.TaxId != null && c.TaxId != "")
+                    .Select(c => new { c.Id, c.TaxId })
+                    .ToListAsync())
+                    .FirstOrDefault(c => DocumentService.NormalizeTaxDigits(c.TaxId) == taxDigits);
+                if (hit != null)
+                    contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == hit.Id);
+            }
+            contact ??= await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == taxId && !c.IsDeleted);
+        }
 
         if (contact == null && !string.IsNullOrEmpty(name))
             contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == name.ToLower() && !c.IsDeleted);

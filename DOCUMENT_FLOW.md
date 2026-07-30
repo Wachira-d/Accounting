@@ -614,6 +614,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   + ตั้ง `InputVatBecameClaimableAt = now`
 - รายงาน ภ.พ.30 ใช้ `InputVatBecameClaimableAt` เป็น tax point (ไม่ใช่
   `DocumentDate` ของใบเดิม) — เคลมในเดือนที่ใบครบ
+- UI: `DocumentResponse.UndueInputVatBlockers` (populate ใน
+  `MapDocumentToResponse` เมื่อค้าง 11640) = เหตุผลจริงที่ยังเคลมไม่ได้
+  (missing fields จาก `TaxInvoiceCompletenessChecker` + override/ไม่มีบรรทัด
+  เคลม VAT/§83/6) — กล่องเติมใบกำกับใน documents.html โชว์ checklist นี้
+  + prefill รหัสสาขาจาก `Contact.BranchCode` (fallback 00000 สนญ.)
 
 ### 3.7 มัดจำ (Deposit lifecycle)
 - เปิด Receipt/ReceiptVoucher ที่ `IsDeposit = true`:
@@ -917,6 +922,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | ต้องการทำอะไร | ไปดูที่ |
 | --- | --- |
 | แก้การคิดส่วนลด/VAT ต่อบรรทัด | `DocumentService.ComputeLineAmounts :254` — รองรับ `DiscountPercent` + `DiscountAmount` (ยอดเงิน, มาตรฐานสากล: ใบระบุส่วนลดเป็นบาท). amount > 0 ชนะ % |
+| เศษสตางค์ VAT/WHT (ปัดรายบรรทัดแล้วรวมเพี้ยน ±0.01) | `DocumentService.ReconcileTaxRounding` — หลังคิดทุกบรรทัด (create+update) กระทบยอดต่อกลุ่มอัตรา: ΣVAT/WHT ของกลุ่ม = round(Σฐาน × อัตรา) ตรงเครื่องคิดเลข; เศษเกลี่ยเข้าบรรทัดฐานสูงสุด; ข้าม `VatAmountOverride`; โหมดราคารวม VAT ขยับ net สวนทางคง gross. frontend mirror ใน `documents.html calcSum` (allocation+reconcile แบบเดียวกัน — ยอดก่อน/หลังบันทึกตรงกัน) |
 | เพิ่ม `DocumentType` ใหม่ | `Models/Enums/AllEnums.cs:305` + `DocumentService.cs` หลายจุด (search by enum literal) |
 | แก้ flow Approve | `DocumentService.ApproveDocumentAsync :1512` |
 | แก้ flow JE per type | `DocumentService.AutoPostToJournalAsync :4684+` |
@@ -1394,6 +1400,15 @@ _บรรทัดจากใบแจ้งหนี้ (carryVatFromSource) 
 _"ใบกำกับภาษี/ใบเสร็จรับเงิน" — ไม่ post JE/ไม่เข้า ภ.พ.30 ที่ใบนี้ (VAT รายงานที่_
 _INV ผ่าน OutputVatDueAt, settlement ถูก exclude เดิม); งวดแรกบางส่วน/TIV source_
 _= ใบเสร็จเปล่า VAT=0 เหมือนเดิม._
+_รอบ 84 (2026-07-24): invariant "หัวมีคำใบกำกับภาษี ⇔ อยู่ใน ภ.พ.30" — (1) ใบเสร็จ_
+_ถือ VAT ที่ settle ใบแจ้งหนี้ undue เป็น "เจ้าของแถว ภ.พ.30" แทน INV (เลข/วันที่ตรง_
+_กระดาษใบกำกับจริง; INV skip กันซ้ำ; ไม่มีใบเสร็จถือ VAT → fallback INV ตาม_
+_OutputVatDueAt เดิม — VAT ไม่หลุดรายงาน; legacy invoice (OutputVatDueAt null)_
+_ใบเสร็จ convert ไม่ผ่านเงื่อนไข → ไม่ซ้ำ); (2) มัดจำ deferred ที่ recognize แล้ว_
+_(เข้า ภ.พ.30) หัว upgrade เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน (เงินมัดจำ)" — ยกเว้น_
+_ถูก apply เข้าใบปลายทาง (ใบปลายทางคือใบกำกับ กันกระดาษซ้ำ). ข้อยกเว้น invariant_
+_ที่ตั้งใจ: ใบแจ้งหนี้สินค้า/legacy + ผู้ซื้อปฏิเสธใบกำกับ (ขายปลีก) = อยู่ในรายงาน_
+_โดยกระดาษไม่มีหัวใบกำกับ (นำส่งครบตามกฎหมาย มี approval warning ชี้ทางแล้ว)._
 _Last verified against codebase: 2026-07-20 (รอบ 60) — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

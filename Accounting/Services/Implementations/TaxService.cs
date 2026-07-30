@@ -252,11 +252,14 @@ public partial class TaxService : ITaxService
             .Select(d => d.RelatedDocumentId!.Value)
             .Distinct()
             .ToList();
-        var relatedDocTypes = relatedDocIds.Count == 0
-            ? new Dictionary<Guid, DocumentType>()
-            : await _db.Documents.AsNoTracking()
+        var relatedDocInfos = relatedDocIds.Count == 0
+            ? new Dictionary<Guid, (DocumentType Type, DateTime? OutputVatDueAt)>()
+            : (await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && relatedDocIds.Contains(d.Id))
-                .ToDictionaryAsync(d => d.Id, d => d.DocumentType);
+                .Select(d => new { d.Id, d.DocumentType, d.OutputVatDueAt })
+                .ToListAsync())
+                .ToDictionary(x => x.Id, x => (x.DocumentType, x.OutputVatDueAt));
+        var relatedDocTypes = relatedDocInfos.ToDictionary(kv => kv.Key, kv => kv.Value.Type);
 
         // F5 — ใบแจ้งหนี้ (Invoice) ที่มี VAT: AutoPostToJournalAsync ลง Cr 21911
         // (ภาษีขาย) ให้ทั้ง Invoice และ TaxInvoice เท่ากัน แต่ ภ.พ.30 เดิมรายงาน
@@ -288,6 +291,29 @@ public partial class TaxService : ITaxService
         // ใบแจ้งหนี้ไม่ใช่ใบกำกับ, tax point เกิดเมื่อรับชำระ) → ห้ามเข้า ภ.พ.30
         // จนกว่าจะ reclass (OutputVatDueAt). ตัดสิน GL-driven: อ่านขา 21913 จริง
         // ของ JE ใบนั้น — ใบเก่า/ใบมีสินค้า (ลง 21911 ตรง) net=0 → พฤติกรรมเดิม (F5)
+        // invariant "ใบที่หัวมีคำใบกำกับภาษี = ใบที่อยู่ในรายงาน": ใบแจ้งหนี้ undue
+        // ที่ถูก settle ด้วย "ใบเสร็จถือ VAT" (convert/modal รับครบ — กระดาษพิมพ์
+        // "ใบกำกับภาษี/ใบเสร็จรับเงิน") → ใบเสร็จนั้นเป็นเจ้าของแถว ภ.พ.30 (เลขที่/
+        // วันที่ตรงกระดาษใบกำกับจริง) และใบแจ้งหนี้ต้องไม่รายงานซ้ำ. ใบแจ้งหนี้ที่
+        // settle ด้วย payment เปล่า (ไม่มีใบเสร็จถือ VAT) → fallback รายงานที่ INV
+        // ผ่าน OutputVatDueAt ตามเดิม (VAT ห้ามหลุดจากรายงาน)
+        var invoiceIdsOwnedByVatReceipt = invoiceIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.Documents.AsNoTracking()
+                .Where(r => r.CompanyId == companyId
+                    && r.RelatedDocumentId != null
+                    && invoiceIds.Contains(r.RelatedDocumentId.Value)
+                    && (r.DocumentType == DocumentType.Receipt
+                        || r.DocumentType == DocumentType.ReceiptVoucher)
+                    && r.VatAmount > 0.005m
+                    && r.Status != DocumentStatus.Voided
+                    && r.Status != DocumentStatus.Draft
+                    && r.Status != DocumentStatus.Rejected
+                    && !r.IsDeleted)
+                .Select(r => r.RelatedDocumentId!.Value)
+                .ToListAsync())
+                .ToHashSet();
+
         var invGl21913Net = invoiceIds.Count == 0
             ? new Dictionary<Guid, decimal>()
             : (await _db.JournalEntryLines
@@ -337,6 +363,9 @@ public partial class TaxService : ITaxService
                 {
                     if (doc.OutputVatDueAt != null)
                     {
+                        // มีใบเสร็จถือ VAT (กระดาษใบกำกับจริง) → ใบเสร็จรายงานแทน
+                        // (branch ล่าง) — ใบแจ้งหนี้ห้ามรายงานซ้ำ
+                        if (invoiceIdsOwnedByVatReceipt.Contains(doc.Id)) continue;
                         // ใบแจ้งหนี้บริการที่รับเงินแล้ว (reclass 21913→21911 แล้ว):
                         // tax point = วันรับเงิน (§78/1) → เข้า ภ.พ.30 งวดนั้นเท่านั้น
                         if (doc.OutputVatDueAt < startDate || doc.OutputVatDueAt > endDate) continue;
@@ -382,12 +411,20 @@ public partial class TaxService : ITaxService
                      // นับ standalone + ใบที่แปลงจาก QT/BN (ขายเงินสด — JE ลง Cr 21911
                      // เองแล้ว ต้องเข้า ภ.พ.30; audit F4-sales เดิมถูก exclude เพราะมี
                      // RelatedDocumentId → VAT อยู่ใน GL แต่ไม่เคยถูกรายงาน = นำส่งขาด).
-                     // ใบที่อ้าง Invoice/TaxInvoice = settlement → ใบกำกับต้นทางรายงาน
+                     // + ใบเสร็จ "ถือ VAT" ที่ settle ใบแจ้งหนี้ undue (OutputVatDueAt
+                     // ตั้งแล้ว) = ใบกำกับ ณ วันรับเงิน → เจ้าของแถว ภ.พ.30 (invariant:
+                     // กระดาษที่หัวมีคำใบกำกับ = ใบที่อยู่ในรายงาน; INV ถูก skip ที่
+                     // branch บนแล้ว). ใบเสร็จอ้าง TaxInvoice / ใบเสร็จเปล่า (VAT=0)
+                     // ที่อ้าง Invoice = settlement เฉย ๆ → ใบกำกับ/INV ต้นทางรายงาน
                      // ไปแล้ว ห้ามนับซ้ำ (พฤติกรรมเดิม)
                      && (!doc.RelatedDocumentId.HasValue
                          || (relatedDocTypes.TryGetValue(doc.RelatedDocumentId.Value, out var rcptSrcType)
                              && (rcptSrcType == DocumentType.Quotation
-                                 || rcptSrcType == DocumentType.BillingNote))))
+                                 || rcptSrcType == DocumentType.BillingNote))
+                         || (doc.VatAmount > 0.005m
+                             && relatedDocInfos.TryGetValue(doc.RelatedDocumentId.Value, out var rcptSrcInfo)
+                             && rcptSrcInfo.Type == DocumentType.Invoice
+                             && rcptSrcInfo.OutputVatDueAt != null)))
             {
                 // มัดจำเคส Deferred output VAT: tax point เกิดเมื่อ RecognizedAt.
                 //   • ยังไม่ recognized → ข้าม (ยังไม่เข้า ภ.พ.30 — VAT อยู่ 21913)
