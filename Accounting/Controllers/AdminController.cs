@@ -401,6 +401,8 @@ public class AdminController : ControllerBase
                     EndDate = c.Subscription.AccountSubscription != null
                         ? c.Subscription.AccountSubscription.EndDate
                         : c.Subscription.EndDate,
+                    // ฟรีถาวร → UI แสดง "ไม่หมดอายุ" แทนวันที่ sentinel +100 ปี
+                    c.Subscription.IsPermanentFree,
                     // Surface the License attachment so the UI can show a
                     // "via License: <ownerName>" badge if it wants to.
                     ViaLicense = c.Subscription.AccountSubscriptionId != null,
@@ -500,6 +502,8 @@ public class AdminController : ControllerBase
                 company.Subscription.Id, company.Subscription.Plan, company.Subscription.Status,
                 company.Subscription.BillingCycle, company.Subscription.PricePerCycle,
                 company.Subscription.StartDate, company.Subscription.EndDate,
+                company.Subscription.NextBillingDate,
+                company.Subscription.IsPermanentFree,
                 company.Subscription.EnabledFeatures,
                 company.Subscription.AccountSubscriptionId,
                 company.Subscription.RenewalInvoiceNumber,

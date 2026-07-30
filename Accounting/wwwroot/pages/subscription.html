@@ -236,9 +236,9 @@
           </div>
           <div class="grid grid-4 gap-4">
             <div><div class="text-xs text-gray-500">วันเริ่มต้น</div><div class="font-medium">${Layout.date(s.startDate)}</div></div>
-            <div><div class="text-xs text-gray-500">วันหมดอายุ</div><div class="font-medium ${new Date(s.endDate) < new Date() ? 'text-danger' : ''}">${Layout.date(s.endDate)}</div></div>
-            <div><div class="text-xs text-gray-500">บิลถัดไป</div><div class="font-medium">${s.nextBillingDate ? Layout.date(s.nextBillingDate) : '-'}</div></div>
-            <div><div class="text-xs text-gray-500">วันที่เหลือ</div><div class="font-medium">${Math.max(0, Math.ceil((new Date(s.endDate) - new Date()) / 86400000))} วัน</div></div>
+            <div><div class="text-xs text-gray-500">วันหมดอายุ</div><div class="font-medium ${!s.isPermanentFree && new Date(s.endDate) < new Date() ? 'text-danger' : ''}">${s.isPermanentFree ? '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>' : Layout.date(s.endDate)}</div></div>
+            <div><div class="text-xs text-gray-500">บิลถัดไป</div><div class="font-medium">${s.isPermanentFree ? '-' : (s.nextBillingDate ? Layout.date(s.nextBillingDate) : '-')}</div></div>
+            <div><div class="text-xs text-gray-500">วันที่เหลือ</div><div class="font-medium">${s.isPermanentFree ? '∞' : Math.max(0, Math.ceil((new Date(s.endDate) - new Date()) / 86400000)) + ' วัน'}</div></div>
           </div>`;
 
         // Usage

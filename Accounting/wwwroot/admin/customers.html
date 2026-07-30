@@ -116,7 +116,7 @@
                   <td>${c.subscription ? AdminLayout.statusBadge(c.subscription.status) : '<span style="color:#94a3b8">ไม่มี</span>'}</td>
                   <td>${c.userCount}</td>
                   <td>${AdminLayout.date(c.createdAt)}</td>
-                  <td>${c.subscription ? AdminLayout.date(c.subscription.endDate) : '-'}</td>
+                  <td>${c.subscription ? (c.subscription.isPermanentFree ? '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>' : AdminLayout.date(c.subscription.endDate)) : '-'}</td>
                   <td>
                     <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="showDetail('${c.id}')">จัดการ</button>
                   </td>
@@ -281,8 +281,8 @@
                   <div class="info-item"><div class="label">รอบบิล</div><div class="value">${s.billingCycle}</div></div>
                   <div class="info-item"><div class="label">ราคา/รอบ</div><div class="value">${AdminLayout.money(s.pricePerCycle)}</div></div>
                   <div class="info-item"><div class="label">เริ่มต้น</div><div class="value">${AdminLayout.date(s.startDate)}</div></div>
-                  <div class="info-item"><div class="label">หมดอายุ</div><div class="value">${AdminLayout.date(s.endDate)}</div></div>
-                  <div class="info-item"><div class="label">บิลถัดไป</div><div class="value">${AdminLayout.date(s.nextBillingDate)}</div></div>
+                  <div class="info-item"><div class="label">หมดอายุ</div><div class="value">${s.isPermanentFree ? '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>' : AdminLayout.date(s.endDate)}</div></div>
+                  <div class="info-item"><div class="label">บิลถัดไป</div><div class="value">${s.isPermanentFree ? '-' : AdminLayout.date(s.nextBillingDate)}</div></div>
                 </div>
 
                 ${s.limits ? `
