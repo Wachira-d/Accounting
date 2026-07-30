@@ -776,6 +776,137 @@ public partial class TaxService : ITaxService
             }
         }
 
+        // ===== เอกสาร "มาช้า": tax point อยู่งวดก่อน แต่ยังไม่เคยอยู่ในรายงานใด =====
+        // เคสจริง: ใบกำกับซื้อของ มิ.ย. เพิ่งเอามาบันทึกตอน ก.ค. ทั้งที่ยื่น ภ.พ.30
+        // มิ.ย. ไปแล้ว → tax point = มิ.ย. → query หลักของงวด ก.ค. ไม่ดึง (นอกช่วง)
+        // และงวด มิ.ย. ที่ Filed แล้ว regenerate ไม่ได้ → ภาษีซื้อ "หายทั้งก้อน"
+        // แบบเงียบ ๆ. carry-forward ข้างบนช่วยเฉพาะใบที่ "เคยมีบรรทัดแล้วถูกติ๊กออก"
+        // — ใบที่ไม่เคยอยู่ในรายงานไหนเลยตกหล่น. กวาดเก็บที่นี่:
+        //   • ภาษีซื้อ (§82/3): เคลมงวดหลังได้ภายใน 6 เดือน → ใส่เป็นบรรทัด opt-in
+        //     (IsExcluded=true) ให้นักบัญชีติ๊ก "ใช้" เอง — ไม่แตะยอดจนกว่าจะติ๊ก
+        //   • ภาษีขาย: กฎหมายเลื่อนงวดไม่ได้ → ใส่บรรทัดเตือน (excluded) ให้รู้ว่า
+        //     ต้องยื่น ภ.พ.30 "เพิ่มเติม" ของงวดนั้น ห้ามย้ายมาโปะงวดนี้
+        // Gate กันเสียงรบกวน: ยกมาเฉพาะใบที่งวดของมัน "ยื่นแล้ว" หรือใบที่ถูก
+        // บันทึกเข้าระบบหลังเดือนของ tax point จบไปแล้ว (มาช้าจริง) — งานบันทึก
+        // ปกติที่ยังไม่ได้สร้างรายงานงวดก่อนจะไม่ถูกยกมากวน
+        try
+        {
+            var lateWindowStart = startDate.AddMonths(-6);
+            var anyLineDocIds = (await _db.TaxReportLines.AsNoTracking()
+                .Where(l => l.DocumentId != null
+                    && l.TaxReport.CompanyId == companyId && l.TaxReport.TaxType == TaxType.VAT)
+                .Select(l => l.DocumentId!.Value).ToListAsync()).ToHashSet();
+            var filedPeriods = (await _db.TaxReports.AsNoTracking()
+                .Where(t => t.CompanyId == companyId && t.TaxType == TaxType.VAT
+                    && t.Status == TaxReportStatus.Filed)
+                .Select(t => new { t.Year, t.Month }).ToListAsync())
+                .Select(x => (x.Year, x.Month)).ToHashSet();
+
+            var lateCandidates = await _db.Documents.AsNoTracking()
+                .Include(d => d.Lines)
+                .Where(d => d.CompanyId == companyId
+                    && d.VatAmount != 0
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                    && d.Status != DocumentStatus.Rejected
+                    && (d.TaxPointDate ?? d.DocumentDate) < startDate
+                    && (d.TaxPointDate ?? d.DocumentDate) >= lateWindowStart
+                    // ยังไม่ถึงกำหนดเคลม (ค้าง 11640 รอใบกำกับครบ) → ยังไม่ยกมา
+                    && !(d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null)
+                    // ใบที่ VAT "ถึงกำหนด" ในงวดนี้ ถูก query หลักดึงไปแล้ว
+                    && (d.InputVatBecameClaimableAt == null
+                        || d.InputVatBecameClaimableAt < startDate || d.InputVatBecameClaimableAt > endDate)
+                    && (d.OutputVatDueAt == null
+                        || d.OutputVatDueAt < startDate || d.OutputVatDueAt > endDate))
+                .OrderBy(d => d.DocumentDate)
+                .Take(300)
+                .ToListAsync();
+            await _db.HydrateContactsAsync(companyId, lateCandidates);
+
+            var freshIds = report.Lines.Where(l => l.DocumentId.HasValue)
+                .Select(l => l.DocumentId!.Value).ToHashSet();
+
+            foreach (var d in lateCandidates)
+            {
+                if (anyLineDocIds.Contains(d.Id) || freshIds.Contains(d.Id)) continue;
+
+                var tp = d.TaxPointDate ?? d.DocumentDate;
+                var tpPeriodEnd = new DateTime(tp.Year, tp.Month, 1).AddMonths(1);
+                var periodFiled = filedPeriods.Contains((tp.Year, tp.Month));
+                var arrivedLate = d.CreatedAt >= tpPeriodEnd;
+                if (!periodFiled && !arrivedLate) continue;   // งานบันทึกปกติ — ไม่ต้องยกมา
+
+                // ฝั่งของเอกสาร — เดาไม่ได้ (CN/DN ขึ้นกับใบต้นทาง) ให้ข้าม
+                bool? isInput = d.DocumentType switch
+                {
+                    DocumentType.PurchaseInvoice or DocumentType.Expense
+                        or DocumentType.CertificateInLieu => true,
+                    DocumentType.PaymentVoucher => d.HasTaxInvoiceReference ? true : (bool?)null,
+                    DocumentType.TaxInvoice or DocumentType.Invoice
+                        or DocumentType.Receipt or DocumentType.ReceiptVoucher => false,
+                    _ => null
+                };
+                if (isInput == null) continue;
+
+                var tpLabel = $"{tp.Month:D2}/{tp.Year}";
+                var taxRate = d.Lines.Any(l => l.VatRate > 0)
+                    ? d.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0m;
+
+                if (isInput == true)
+                {
+                    // เคลมได้เฉพาะส่วนที่ไม่ใช่ภาษีซื้อต้องห้าม (§82/5) — ไม่ยกยอดเต็ม
+                    var claimable = d.Lines
+                        .Where(l => l.IsVatClaimable
+                            && (l.AccountId == null || !nonClaimableAccountIds.Contains(l.AccountId.Value)))
+                        .Sum(l => l.VatAmount);
+                    if (claimable <= 0) continue;
+                    report.Lines.Add(new TaxReportLine
+                    {
+                        TaxReportId = report.Id,
+                        LineOrder = lineOrder++,
+                        TaxPayerId = d.Contact?.TaxId,
+                        TaxPayerName = d.Contact?.Name ?? "",
+                        TransactionDate = tp,
+                        Description = $"[ใบกำกับซื้อมาช้า — งวด {tpLabel}"
+                            + (periodFiled ? " ยื่นแล้ว" : "") + "] "
+                            + $"{d.DocumentNumber} · ติ๊ก \"ใช้\" เพื่อเคลมเดือนนี้ (§82/3 ภายใน 6 เดือน)",
+                        IncomeAmount = d.SubTotal,
+                        TaxRate = taxRate,
+                        TaxAmount = claimable,
+                        DocumentId = d.Id,
+                        IncomeTypeCode = "INPUT",
+                        IsExcluded = true      // opt-in — ไม่กระทบยอดจนกว่านักบัญชีจะติ๊ก
+                    });
+                }
+                else
+                {
+                    // ภาษีขายเลื่อนงวดไม่ได้ — บรรทัดนี้เป็น "ป้ายเตือน" ล้วน
+                    report.Lines.Add(new TaxReportLine
+                    {
+                        TaxReportId = report.Id,
+                        LineOrder = lineOrder++,
+                        TaxPayerId = d.Contact?.TaxId,
+                        TaxPayerName = d.Contact?.Name ?? "",
+                        TransactionDate = tp,
+                        Description = periodFiled
+                            ? $"⚠️ [ขายงวด {tpLabel} ยื่น ภ.พ.30 แล้ว] {d.DocumentNumber} — "
+                              + "ภาษีขายเลื่อนมางวดนี้ไม่ได้ ต้องยื่น ภ.พ.30 \"เพิ่มเติม\" ของงวดนั้น"
+                            : $"⚠️ [ขายงวด {tpLabel} ยังไม่อยู่ในรายงานงวดนั้น] {d.DocumentNumber} — "
+                              + $"ให้สร้าง/สร้างรายงานงวด {tpLabel} ใหม่ก่อนยื่น",
+                        IncomeAmount = d.SubTotal,
+                        TaxRate = taxRate,
+                        TaxAmount = d.VatAmount,
+                        DocumentId = d.Id,
+                        IncomeTypeCode = "OUTPUT",
+                        IsExcluded = true      // เตือนอย่างเดียว ไม่แตะยอดงวดนี้
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // best-effort — การกวาดใบมาช้าล้มไม่กระทบรายงานหลัก
+        }
+
         // ===== Fallback: scan journal entries that have NO source document =====
         // Handles data imported via /integration/journals or /integration/daily-summary
         // which create JournalEntries without Documents.
@@ -1716,12 +1847,23 @@ public partial class TaxService : ITaxService
         return false;
     }
 
+    /// <summary>ประเภทเอกสารที่ "ดึงเข้ารายงาน ภ.พ.30" ด้วยมือได้ + ฝั่งภาษี
+    /// (true = ภาษีซื้อ). ต้องครอบคลุมทุกประเภทที่ loop หลักนับเป็น VAT — เดิม
+    /// ขาด PaymentVoucher (ซึ่ง loop หลักนับเป็นภาษีซื้อเมื่อติ๊ก "ใช้งานใบกำกับ
+    /// ภาษี") + ใบขายที่ไม่ใช่ TaxInvoice → ใบกำกับซื้อที่บันทึกเป็น PV มาช้า
+    /// ดึงเข้างวดถัดไปไม่ได้เลย (ภาษีซื้อหายถาวรเมื่องวดเดิมยื่นแล้ว).
+    /// CN/DN ไม่อยู่ในนี้ตั้งใจ — ฝั่ง/เครื่องหมายขึ้นกับใบต้นทาง ต้องแก้ผ่าน
+    /// การ regenerate งวดที่ถูกต้องแทน (กันดึงผิดข้างแล้วยอดกลับด้าน).</summary>
     private static readonly Dictionary<DocumentType, bool> PullableVatTypes = new()
     {
         [DocumentType.TaxInvoice] = false,        // output
+        [DocumentType.Invoice] = false,           // output (ใบแจ้งหนี้/ใบรวมที่มี VAT)
+        [DocumentType.Receipt] = false,           // output (ใบเสร็จที่เป็นใบกำกับในตัว)
+        [DocumentType.ReceiptVoucher] = false,    // output
         [DocumentType.PurchaseInvoice] = true,    // input
         [DocumentType.Expense] = true,            // input
         [DocumentType.CertificateInLieu] = true,  // input
+        [DocumentType.PaymentVoucher] = true,     // input (เมื่อ HasTaxInvoiceReference)
     };
 
     public async Task<List<PullableDocumentDto>> GetPullableDocumentsAsync(
@@ -1797,6 +1939,24 @@ public partial class TaxService : ITaxService
             throw new InvalidOperationException($"เอกสารประเภท {doc.DocumentType} ไม่สามารถดึงเข้ารายงาน ภพ.30 ได้");
         if (doc.VatAmount == 0)
             throw new InvalidOperationException("เอกสารนี้ไม่มี VAT");
+        // PV ที่ไม่ได้ติ๊ก "ใช้งานใบกำกับภาษี" = จ่ายเงินเฉย ๆ ไม่ขอเครดิตภาษีซื้อ
+        // (§82/5(1) ไม่มีใบกำกับเต็มรูป) — loop หลักก็ไม่นับ ห้ามดึงเข้ามาเคลม
+        if (doc.DocumentType == DocumentType.PaymentVoucher && !doc.HasTaxInvoiceReference)
+            throw new InvalidOperationException(
+                $"ใบสำคัญจ่าย {doc.DocumentNumber} ยังไม่ได้ติ๊ก \"ใช้งานใบกำกับภาษี\" (ขอเครดิตภาษีซื้อ) — "
+                + "เปิดเอกสารแล้วติ๊ก + กรอกเลขที่/วันที่ใบกำกับของผู้ขายก่อน จึงจะดึงเข้า ภ.พ.30 ได้ (§86/4)");
+        // §82/3: เกิน 6 เดือนนับจากเดือนภาษีของใบกำกับ → เคลมไม่ได้แล้ว (ฝั่งซื้อ)
+        if (isInput)
+        {
+            var claimBase = doc.SupplierTaxInvoiceDate ?? doc.TaxPointDate ?? doc.DocumentDate;
+            var claimLimit = new DateTime(claimBase.Year, claimBase.Month, 1).AddMonths(7);
+            var periodStart = new DateTime(report.Year, report.Month, 1);
+            if (periodStart >= claimLimit)
+                throw new InvalidOperationException(
+                    $"ใบกำกับลงวันที่ {claimBase:dd/MM/yyyy} — เกินกรอบ 6 เดือนตาม §82/3 "
+                    + $"(เคลมได้ถึงงวด {claimLimit.AddMonths(-1):MM/yyyy}) จึงดึงเข้างวด "
+                    + $"{report.Month:D2}/{report.Year} ไม่ได้ ต้องบันทึก VAT เป็นค่าใช้จ่ายแทน");
+        }
         if (report.Lines.Any(l => l.DocumentId == documentId))
             throw new InvalidOperationException("เอกสารนี้อยู่ในรายงานนี้แล้ว");
 
