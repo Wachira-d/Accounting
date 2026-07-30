@@ -258,7 +258,7 @@ public partial class TaxService : ITaxService
                 .Where(d => d.CompanyId == companyId && relatedDocIds.Contains(d.Id))
                 .Select(d => new { d.Id, d.DocumentType, d.OutputVatDueAt })
                 .ToListAsync())
-                .ToDictionary(x => x.Id, x => (x.DocumentType, x.OutputVatDueAt));
+                .ToDictionary(x => x.Id, x => (Type: x.DocumentType, x.OutputVatDueAt));
         var relatedDocTypes = relatedDocInfos.ToDictionary(kv => kv.Key, kv => kv.Value.Type);
 
         // F5 — ใบแจ้งหนี้ (Invoice) ที่มี VAT: AutoPostToJournalAsync ลง Cr 21911

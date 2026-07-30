@@ -6290,8 +6290,10 @@ public class DocumentService : IDocumentService
                     var sql = $"UPDATE \"{col.TableName}\" SET \"{col.ColumnName}\" = {{0}} WHERE \"{col.ColumnName}\" = {{1}}";
                     repointed += await _db.Database.ExecuteSqlRawAsync(sql, keepId, loser.Id);
                 }
+                // ร่องรอยการ merge เก็บใน AuditLog "ContactMerge" ด้านล่าง
+                // (Contact ไม่มี field โน้ตอิสระให้เขียน)
                 loser.IsDeleted = true;
-                loser.Notes = ((loser.Notes ?? "") + $" [รวมเข้ากับ {keep.Name} ({keepId}) โดย merge]").Trim();
+                loser.IsActive = false;
                 loser.UpdatedAt = DateTime.UtcNow;
                 loser.UpdatedBy = performedBy;
             }
