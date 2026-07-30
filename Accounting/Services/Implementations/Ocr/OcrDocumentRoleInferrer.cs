@@ -180,7 +180,21 @@ public static class OcrDocumentRoleInferrer
         var hasCashBill = ContainsAny(text, "บิลเงินสด", "cash bill", "cash sale");
         // ใบกำกับภาษีอย่างย่อ (abbreviated tax invoice — retail/POS) is by
         // definition a paid-at-the-till document → PaymentVoucher.
-        var hasAbbrevTaxInvoice = ContainsAny(text, "ใบกำกับภาษีอย่างย่อ", "abbreviated tax invoice");
+        // ⚠️ กับดัก false positive 2 ทาง (ผู้ใช้เจอใบเต็มรูปถูกตีเป็นอย่างย่อ):
+        //   (1) ข้อความปฏิเสธ — vision model บางครั้งบรรยายว่าเอกสาร "ไม่ใช่
+        //       ใบกำกับภาษีอย่างย่อ" → substring ดิบจับเจอทั้งที่ความหมายตรงข้าม
+        //   (2) นิยาม §86/6 — ใบอย่างย่อ "ไม่ระบุชื่อ/เลขภาษีผู้ซื้อ". ถ้า OCR
+        //       สกัดเลขภาษีผู้ซื้อ 13 หลักได้ = ใบเต็มรูปแน่นอน ต่อให้เจอคำนี้
+        //       ที่อื่นบนกระดาษก็ห้ามตีเป็นอย่างย่อ (เคลมภาษีซื้อได้ ห้ามปัดตก)
+        var hasAbbrevTaxInvoice = ContainsAnyNotNegated(text, "ใบกำกับภาษีอย่างย่อ", "abbreviated tax invoice");
+        var buyerTaxIdIs13 = !string.IsNullOrEmpty(buyerTaxId)
+            && buyerTaxId.Count(char.IsDigit) == 13;
+        if (hasAbbrevTaxInvoice && buyerTaxIdIs13)
+        {
+            hasAbbrevTaxInvoice = false;
+            reasons.Add("พบคำ \"อย่างย่อ\" บนกระดาษ แต่ใบระบุเลขผู้เสียภาษีผู้ซื้อครบ 13 หลัก "
+                + "(ใบอย่างย่อตาม §86/6 ไม่มีข้อมูลผู้ซื้อ) → ตีเป็นใบกำกับภาษีเต็มรูป เคลมภาษีซื้อได้");
+        }
         // Explicit paid stamps on the paper.
         var hasPaidMarker = ContainsAny(text,
             "ชำระแล้ว", "ชำระเงินสด", "จ่ายเงินสด", "รับเงินแล้ว", "รับเงินเรียบร้อย",
@@ -376,6 +390,30 @@ public static class OcrDocumentRoleInferrer
 
     private static bool ContainsAny(string text, params string[] needles)
         => needles.Any(n => text.Contains(n.ToLowerInvariant()));
+
+    /// <summary>เหมือน ContainsAny แต่ข้าม occurrence ที่ถูก "ปฏิเสธ" — มีคำ
+    /// ไม่ใช่/ไม่เป็น/มิใช่/ไม่ออก/not/no นำหน้าภายใน ~14 ตัวอักษร. กันเคส
+    /// vision model บรรยายว่า "เอกสารนี้ไม่ใช่ใบกำกับภาษีอย่างย่อ" แล้ว
+    /// substring ดิบตีความกลับด้าน (ใบเต็มรูปโดนปัดตกจากการเคลมภาษีซื้อ).</summary>
+    private static bool ContainsAnyNotNegated(string text, params string[] needles)
+    {
+        foreach (var raw in needles)
+        {
+            var n = raw.ToLowerInvariant();
+            int idx = 0;
+            while ((idx = text.IndexOf(n, idx, StringComparison.Ordinal)) >= 0)
+            {
+                var start = Math.Max(0, idx - 14);
+                var prefix = text.Substring(start, idx - start);
+                var negated = prefix.Contains("ไม่ใช่") || prefix.Contains("ไม่เป็น")
+                    || prefix.Contains("มิใช่") || prefix.Contains("ไม่ออก")
+                    || prefix.Contains("not ") || prefix.Contains("no ");
+                if (!negated) return true;
+                idx += n.Length;
+            }
+        }
+        return false;
+    }
 
     private static bool ContainsAll(string text, params string[] needles)
         => needles.All(n => text.Contains(n.ToLowerInvariant()));
