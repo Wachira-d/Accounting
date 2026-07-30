@@ -2812,6 +2812,20 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "ใบลดหนี้ต้องระบุเหตุผล (คืนสินค้า / ส่วนลด / ปรับยอด / ตัดยอด) ก่อนอนุมัติ");
 
+        // §86/9-10: CN/DN ที่มี VAT = เอกสารภาษี — กระดาษต้องระบุ เลขที่+วันที่
+        // ใบกำกับภาษีเดิม (รายการบังคับตามกฎหมาย ไม่ใช่ optional). ไม่มีทั้ง ref
+        // ในระบบและเลขใบเดิมในช่อง "อ้างอิง" = ใบไม่ครบรายการ + ภ.พ.30 ตรวจย้อน
+        // ไม่ได้ → hard block. ใบเดิมอยู่นอกระบบ (ก่อน migrate) กรอกเลขที่ช่อง
+        // อ้างอิงแทนได้ (กล่องมูลค่าเดิมบนกระดาษจะไม่มี — ผู้ใช้แนบใบเดิมเอง)
+        if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+            && doc.VatAmount > 0.005m
+            && doc.RelatedDocumentId == null
+            && string.IsNullOrWhiteSpace(doc.Reference))
+            throw new InvalidOperationException(
+                (doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")
+                + "ที่มี VAT ต้องอ้างอิงใบกำกับภาษีเดิม (§86/9-10) — เลือกเอกสารต้นทางในระบบ"
+                + " หรือกรอกเลขที่ใบกำกับเดิมในช่อง \"อ้างอิง\" (กรณีใบเดิมออกนอกระบบ/ก่อนย้ายข้อมูล)");
+
         // ===== §90/2 — บริษัทไม่จดทะเบียน VAT ห้ามออกใบกำกับภาษี/เรียกเก็บ =====
         // VAT ขาย (hard block — เดิมเป็นแค่ warning กด acknowledge ผ่านได้).
         // default VatRegistered=true → บริษัทที่ไม่เคยตั้งค่าไม่กระทบ; block
@@ -5549,9 +5563,20 @@ public class DocumentService : IDocumentService
         [DocumentType.PaymentVoucher] = new[]
         {
             DocumentType.CreditNote, DocumentType.DebitNote
+        },
+        // ใบเสร็จที่ "เป็นใบกำกับภาษีในตัว" (ขายสด standalone Cr 21911 เอง /
+        // settlement ถือ VAT §78/1 ที่เป็นเจ้าของแถว ภ.พ.30) — §86/9-10 บังคับ
+        // CN/DN อ้าง "กระดาษใบกำกับจริง" ซึ่งเคสพวกนี้คือใบเสร็จ ไม่ใช่ใบแจ้งหนี้
+        // (ValidateConversionAsync กันใบเสร็จหลักฐานรับเงินเปล่า/ใบมัดจำ)
+        [DocumentType.Receipt] = new[]
+        {
+            DocumentType.CreditNote, DocumentType.DebitNote
+        },
+        [DocumentType.ReceiptVoucher] = new[]
+        {
+            DocumentType.CreditNote, DocumentType.DebitNote
         }
-        // Terminal types (no further conversion):
-        // Receipt, ReceiptVoucher, CreditNote
+        // Terminal types (no further conversion): CreditNote
     };
 
     /// <summary>Public accessor used by API endpoint to surface valid targets to UI.</summary>
@@ -5655,6 +5680,31 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"ไม่สามารถแปลง {source.DocumentType} → {targetType} ได้ตามมาตรฐานบัญชี " +
                 $"(แปลงได้เฉพาะ: {(allowedNames.Length > 0 ? allowedNames : "ไม่มี — เอกสารนี้เป็นปลายทาง")})");
+        }
+
+        // Receipt/RV → CN/DN เปิดเฉพาะใบเสร็จที่ "เป็นใบกำกับภาษีในตัว":
+        //   • ใบมัดจำ → ใช้เมนู "คืนมัดจำ" (RefundDepositAsync ออกใบลดหนี้ + กลับ
+        //     VAT ตาม deposit lifecycle) — convert ตรงจะข้าม DepositRefunded*
+        //   • ใบเสร็จหลักฐานรับเงินเปล่า (VAT=0 + อ้างเอกสารต้นทาง) ไม่ใช่ใบกำกับ
+        //     — §86/9-10 ต้องออก CN/DN อ้างใบกำกับ/เอกสารตั้งหนี้ตัวจริงแทน
+        if ((source.DocumentType == DocumentType.Receipt || source.DocumentType == DocumentType.ReceiptVoucher)
+            && (targetType == DocumentType.CreditNote || targetType == DocumentType.DebitNote))
+        {
+            if (source.IsDeposit)
+                throw new InvalidOperationException(
+                    $"{source.DocumentNumber} เป็นใบมัดจำ/รับล่วงหน้า — การคืนเงิน/ลดยอดให้ใช้เมนู "
+                    + "\"คืนมัดจำ\" ในหน้ารายละเอียดเอกสาร (ระบบออกใบลดหนี้ + ปรับ VAT ตามวงจรมัดจำให้ถูกต้อง)");
+            if (source.VatAmount <= 0.005m && source.RelatedDocumentId.HasValue)
+            {
+                var rcptSrcNo = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == source.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => d.DocumentNumber)
+                    .FirstOrDefaultAsync();
+                throw new InvalidOperationException(
+                    $"{source.DocumentNumber} เป็นใบเสร็จหลักฐานรับเงิน (ไม่ใช่ใบกำกับภาษี — VAT อยู่ที่เอกสารต้นทาง) "
+                    + $"— ใบลดหนี้/ใบเพิ่มหนี้ตาม §86/9-10 ต้องอ้างใบกำกับ/เอกสารตั้งหนี้ตัวจริง"
+                    + (rcptSrcNo != null ? $" ({rcptSrcNo})" : "") + " แทน");
+            }
         }
 
         // PV → CN/DN เปิดเฉพาะ PV standalone (จ่ายทันที = ตั้งหนี้+จ่ายในใบเดียว).
@@ -8405,7 +8455,10 @@ public class DocumentService : IDocumentService
             if (srcType is DocumentType.PurchaseInvoice or DocumentType.Expense
                 or DocumentType.CertificateInLieu)
                 direction = -1;
-            else if (srcType == DocumentType.PaymentVoucher)
+            // PV/Receipt/RV ไม่เคยขยับสต๊อกตอนขาย/ซื้อ (ไม่อยู่ใน switch ข้างบน)
+            // → CN ที่อ้างห้าม restock/ตัดออก ไม่งั้นสต๊อกคลาดโดยไม่มีขาแรก
+            else if (srcType is DocumentType.PaymentVoucher
+                or DocumentType.Receipt or DocumentType.ReceiptVoucher)
                 direction = 0;
         }
         if (direction == 0) return;
@@ -11173,6 +11226,29 @@ public class DocumentService : IDocumentService
                     + $"{doc.DocumentDate:yyyy-MM-dd} ย้อนหลังเกิน 1 เดือนภาษี — ตามกฎต้องออกในเดือนที่เกิดเหตุ"
                     + " (คืนของ/ลดราคา) หรือเดือนถัดไป. ถ้าจำเป็น กรอกเหตุผลความล่าช้า (LateReason) เพื่อ audit trail"
                     + " และตรวจว่าต้องยื่น ภ.พ.30 เพิ่มเติมของงวดนั้นหรือไม่");
+
+            // 3c. CN/DN มี VAT ที่อ้าง "ใบแจ้งหนี้" (Invoice) — ใบแจ้งหนี้ไม่ใช่
+            //     ใบกำกับภาษี. ถ้าการขายนั้นมีใบกำกับจริงแยก (TIV / ใบเสร็จถือ VAT
+            //     ที่ออกคู่กัน) ต้องอ้างใบนั้นแทน — เลขที่บนกระดาษ CN ต้องตรงกับ
+            //     เลขใบกำกับที่ลูกค้าถือ ไม่งั้นสรรพากรจับคู่ไม่ได้
+            if (doc.VatAmount > 0.005m && doc.RelatedDocumentId.HasValue)
+            {
+                var cnRefType = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => (DocumentType?)d.DocumentType)
+                    .FirstOrDefaultAsync();
+                if (cnRefType == DocumentType.Invoice)
+                    warnings.Add(
+                        "§86/9-10: เอกสารอ้างอิงเป็น \"ใบแจ้งหนี้\" ซึ่งไม่ใช่ใบกำกับภาษี — ถ้าการขายนี้มี"
+                        + "ใบกำกับภาษีแยก (ใบกำกับ/ใบเสร็จรับเงินที่ถือ VAT ออกคู่กัน) ต้องออกใบลดหนี้/เพิ่มหนี้"
+                        + "อ้างใบนั้นแทน ให้เลขที่บนกระดาษตรงกับใบกำกับที่ลูกค้าถืออยู่");
+            }
+
+            // 3d. ใบเพิ่มหนี้ต้องระบุ "สาเหตุ" บนกระดาษ (§86/9 — ราคาสินค้า/ค่าบริการ
+            //     เพิ่มขึ้นเพราะอะไร) — ระบบพิมพ์จากช่องหมายเหตุ
+            if (doc.DocumentType == DocumentType.DebitNote && string.IsNullOrWhiteSpace(doc.Notes))
+                warnings.Add("§86/9: ใบเพิ่มหนี้ควรระบุสาเหตุการเพิ่มหนี้ในช่อง \"หมายเหตุ\" "
+                    + "(เช่น ราคาสินค้าปรับขึ้น/คำนวณต่ำกว่าจริง/ค่าขนส่งเพิ่ม) — ข้อความนี้จะพิมพ์บนใบให้ลูกค้า");
         }
 
         // 4. Cash-settled Payment Voucher (จ่ายทันที) must NOT post to a

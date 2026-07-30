@@ -257,12 +257,24 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   PurchaseRequisition → PurchaseOrder
   PurchaseOrder       → GoodsReceiptNote / PurchaseInvoice
   GoodsReceiptNote    → PurchaseInvoice
+  Receipt          → CreditNote / DebitNote   (เฉพาะใบเสร็จที่เป็นใบกำกับในตัว)
+  ReceiptVoucher   → CreditNote / DebitNote   (เงื่อนไขเดียวกับ Receipt)
+
   PurchaseInvoice     → PaymentVoucher / CreditNote / DebitNote
   Expense             → PaymentVoucher / CreditNote / DebitNote / CertificateInLieu
   CertificateInLieu   → PaymentVoucher
   PaymentVoucher      → CreditNote / DebitNote   (เฉพาะ PV standalone จ่ายทันที)
   ```
-  **Terminal** (no further conversion): `Receipt`, `ReceiptVoucher`, `CreditNote`
+  **Terminal** (no further conversion): `CreditNote`
+- **Receipt/RV → CN/DN** (§86/9-10 อ้าง "กระดาษใบกำกับจริง"): เปิดเฉพาะใบเสร็จ
+  ที่เป็นใบกำกับภาษีในตัว — ขายสด standalone (Cr 21911 เอง) หรือ settlement
+  ถือ VAT §78/1 (เจ้าของแถว ภ.พ.30). guard: ใบมัดจำ → ใช้เมนู "คืนมัดจำ";
+  ใบเสร็จหลักฐานรับเงินเปล่า (VAT=0 + อ้างต้นทาง) → ชี้ให้อ้างเอกสารตั้งหนี้แทน.
+  JE: cash-refund mode (Cr เงินสด — ใบเสร็จ Paid เสมอ); stock **ไม่ขยับ**
+  (Receipt/RV ไม่เคยตัดสต๊อกตอนขาย). + hard gate ตอน approve: CN/DN ที่มี VAT
+  ต้องมี RelatedDocumentId หรือกรอกเลขใบกำกับเดิมในช่อง "อ้างอิง" (ใบเดิมนอก
+  ระบบ/ก่อน migrate) ไม่งั้น block; warning เมื่ออ้าง "ใบแจ้งหนี้" (ไม่ใช่ใบกำกับ
+  — ถ้าคู่ขายมี TIV/ใบเสร็จถือ VAT ต้องอ้างใบนั้น); DN ไม่กรอกหมายเหตุสาเหตุ → warn
 - **PV → CN/DN**: PV standalone (จ่ายทันที = ตั้งหนี้+จ่ายในใบเดียว ไม่มี PI/Expense
   ให้อ้าง) — ผู้ขายส่งของพร้อมใบลดหนี้ทีหลังอ้าง PV ได้. PV แบบ settlement (อ้าง
   PI/Expense/CIL) → `ValidateConversionAsync` block พร้อมชี้ให้ออก CN อ้างเอกสาร
