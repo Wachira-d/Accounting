@@ -77,6 +77,9 @@ public record CreateDocumentRequest(
     string? SupplierBranchCode = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
+    /// <summary>ภาษาของเอกสารใบนี้เมื่อพิมพ์/ส่งออก ("th"/"en") — null = ใช้ค่า
+    /// ตั้งต้นของบริษัท (CompanySettings.DocumentLanguage)</summary>
+    string? DocumentLanguage = null,
     // Settlement basis (Payment Voucher: เครดิต vs จ่ายทันที). Cash → straight
     // to Cash/Bank, no payable/due/aging. Credit → AP + due date + aging.
     // Null → service infers per type (standalone PV defaults to Cash).
@@ -196,6 +199,9 @@ public record UpdateDocumentRequest(
     string? InputVatAccountCodeOverride = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
+    /// <summary>ภาษาของเอกสารใบนี้เมื่อพิมพ์/ส่งออก ("th"/"en") — null = ใช้ค่า
+    /// ตั้งต้นของบริษัท (CompanySettings.DocumentLanguage)</summary>
+    string? DocumentLanguage = null,
     PaymentType? PaymentType = null,
     // Nullable on update so omitting it preserves the stored value.
     bool? PricesIncludeVat = null,

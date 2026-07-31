@@ -1100,18 +1100,18 @@
           html += '</div>';
           if (d.errors && d.errors.length > 0) {
             html += '<div style="max-height:120px;overflow:auto;background:var(--red-50);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:13px;color:var(--red-700)">';
-            d.errors.slice(0, 10).forEach(e => html += `<div>แถว ${e.row}: ${e.message}</div>`);
+            d.errors.slice(0, 10).forEach(e => html += `<div>แถว ${e.row}: ${Layout.esc(e.message)}</div>`);
             if (d.errors.length > 10) html += `<div>... และอีก ${d.errors.length - 10} รายการ</div>`;
             html += '</div>';
           }
           document.getElementById('importValidation').innerHTML = html;
           if (d.preview && d.preview.length > 0) {
             let tbl = '<table class="table" style="font-size:12px"><thead><tr>';
-            Object.keys(d.preview[0]).forEach(k => tbl += `<th>${k}</th>`);
+            Object.keys(d.preview[0]).forEach(k => tbl += `<th>${Layout.esc(k)}</th>`);
             tbl += '</tr></thead><tbody>';
             d.preview.slice(0, 5).forEach(row => {
               tbl += '<tr>';
-              Object.values(row).forEach(v => tbl += `<td>${v ?? ''}</td>`);
+              Object.values(row).forEach(v => tbl += `<td>${Layout.esc(String(v ?? ''))}</td>`);
               tbl += '</tr>';
             });
             tbl += '</tbody></table>';

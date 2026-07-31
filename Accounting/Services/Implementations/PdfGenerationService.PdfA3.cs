@@ -100,8 +100,11 @@ public partial class PdfGenerationService
             Accounting.Models.Enums.DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
             _ => "TaxInvoice_CrossIndustryInvoice"
         };
+        // ต้อง match TypeCode-name pairing ของ XML (T03/T02/388) — EtaxInvoiceService
         var docTypeNameTh = document.DocumentType switch
         {
+            Accounting.Models.Enums.DocumentType.TaxInvoice when document.IssuedAsCashReceipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",
+            Accounting.Models.Enums.DocumentType.TaxInvoice when document.CombinedInvoiceTaxInvoice => "ใบแจ้งหนี้/ใบกำกับภาษี",
             Accounting.Models.Enums.DocumentType.TaxInvoice => "ใบกำกับภาษี",
             Accounting.Models.Enums.DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",
             Accounting.Models.Enums.DocumentType.DebitNote => "ใบเพิ่มหนี้",
@@ -565,9 +568,12 @@ public partial class PdfGenerationService
                 });
             }
 
-            TotalRow("ยอดรวม / Subtotal", m.SubTotal);
+            // m.SubTotal หักส่วนลดแล้ว (Σ line.NetAmount) — แถว "ยอดรวม" ต้องบวก
+            // ส่วนลดกลับเป็นยอดก่อนหัก และ "ฐานภาษี" = SubTotal ตรง ๆ ห้ามหักซ้ำ
+            // ไม่งั้น ฐาน×7% ≠ VAT บนใบกำกับ (§86/4) และไม่ตรง XML ที่ฝังในไฟล์
+            TotalRow("ยอดรวม / Subtotal", m.SubTotal + m.DiscountAmount);
             if (m.DiscountAmount > 0) TotalRow("ส่วนลด / Discount", -m.DiscountAmount);
-            TotalRow("ฐานภาษี / Taxable", m.SubTotal - m.DiscountAmount);
+            TotalRow("ฐานภาษี / Taxable", m.SubTotal);
             TotalRow("ภาษีมูลค่าเพิ่ม / VAT", m.VatAmount);
             if (m.WithholdingTaxAmount > 0) TotalRow("หัก ณ ที่จ่าย / WHT", -m.WithholdingTaxAmount);
             TotalRow($"รวมทั้งสิ้น / Grand Total ({m.Currency})", m.TotalAmount, bold: true, border: true);

@@ -32,6 +32,12 @@ public class WithholdingTaxCert : TenantEntity
     ///   • Annual summary aggregation (group by SourcePayrollRunId.Year)</summary>
     public Guid? SourcePayrollRunId { get; set; }
 
+    /// <summary>งวดการจ่ายเงินที่ทำให้เกิดใบนี้ (ภ.ง.ด.3/53 = cash basis) —
+    /// เอกสารที่ทยอยจ่ายหลายงวดจะมี 50 ทวิ หลายใบ ใบละงวด ยอดตามที่หักจริง
+    /// ของงวดนั้น. null = ใบที่ออกจากเอกสารทั้งใบ (จ่ายครั้งเดียว/legacy).
+    /// ใช้เป็น idempotency key แทน DocumentId เมื่อจ่ายเป็นงวด.</summary>
+    public Guid? SourcePaymentId { get; set; }
+
     public ICollection<WithholdingTaxCertLine> Lines { get; set; } = new List<WithholdingTaxCertLine>();
 }
 

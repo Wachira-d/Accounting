@@ -91,6 +91,13 @@ public partial class BankService
             var txn = bankTxns.First(t => t.Id == bankReq.ItemId);
             var defaultAmount = txn.TransactionType == BankTransactionType.Deposit ? txn.Amount : -txn.Amount;
             var amount = bankReq.AllocatedAmount == 0 ? defaultAmount : bankReq.AllocatedAmount;
+            // ห้าม override เกินยอดจริงของรายการเดินบัญชี — ไม่งั้น client กำหนด
+            // ตัวเลขได้ทั้งสองฝั่งแล้ว balance check ด้านล่างกลายเป็นการเทียบค่าที่
+            // client แต่งเองกับตัวเอง (ผ่านเสมอ) และยอดที่บันทึกลง DB เป็นค่าปลอม
+            if (Math.Abs(amount) > Math.Abs(txn.Amount) + 0.01m)
+                throw new InvalidOperationException(
+                    $"ยอดจัดสรรฝั่งธนาคาร ({amount:N2}) เกินยอดรายการเดินบัญชีจริง "
+                    + $"({txn.TransactionDate:dd/MM/yyyy} {txn.Amount:N2})");
             bankAllocations.Add((txn, amount));
             totalBank += amount;
         }
@@ -108,6 +115,17 @@ public partial class BankService
             if (await IsItemAlreadyInGroupAsync(companyId, itemType, item.ItemId))
                 throw new InvalidOperationException(
                     $"{itemType} {item.ItemId.ToString("N")[..8]} ถูกกระทบยอดในกลุ่มอื่นอยู่แล้ว");
+
+            // ยอดจัดสรรต้องไม่เกิน "ยอดจริงของรายการนั้นใน DB" — จัดสรรบางส่วนได้
+            // (ใบใหญ่ทยอยตัด) แต่ห้ามเกิน. เดิมเชื่อ AllocatedAmount จาก client
+            // ทั้งสองฝั่ง → ยิง payload ให้สองฝั่งเท่ากันเองแล้วผ่าน balance check
+            // ได้ทันที (เช็ค 5,000 จับคู่ใบเสร็จ 50 บาท) และยอดที่เก็บลง DB ปลอม
+            var realAmount = await ResolveItemAmountAsync(companyId, itemType, item.ItemId);
+            if (realAmount > 0 && Math.Abs(item.AllocatedAmount) > realAmount + 0.01m)
+                throw new InvalidOperationException(
+                    $"ยอดจัดสรรของ {itemType} ({item.AllocatedAmount:N2}) เกินยอดจริงของรายการ ({realAmount:N2}) — "
+                    + "จัดสรรบางส่วนได้ แต่ห้ามเกินยอดเอกสาร/รายการต้นทาง");
+
             totalMatched += item.AllocatedAmount;
         }
 
@@ -454,6 +472,34 @@ public partial class BankService
             .DefaultIfEmpty(0)
             .Max();
         return $"{prefix}{next:D3}";
+    }
+
+    /// <summary>ยอดจริงของรายการฝั่งที่นำมากระทบ (absolute) — ใช้เป็นเพดานของ
+    /// AllocatedAmount ที่ client ส่งมา. คืน 0 เมื่อหาไม่ได้ (ผู้เรียกจะข้ามการ
+    /// ตรวจ ไม่ block งานที่ยังจับคู่ได้จริง).</summary>
+    private async Task<decimal> ResolveItemAmountAsync(Guid companyId, ReconciliationItemType type, Guid id)
+    {
+        switch (type)
+        {
+            case ReconciliationItemType.Payment:
+                return await _db.Set<Payment>().AsNoTracking()
+                    .Where(p => p.Id == id && p.CompanyId == companyId)
+                    .Select(p => p.Amount).FirstOrDefaultAsync();
+
+            case ReconciliationItemType.Document:
+                return await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == id && d.CompanyId == companyId)
+                    .Select(d => d.TotalAmount).FirstOrDefaultAsync();
+
+            case ReconciliationItemType.JournalEntry:
+                // JE สมดุลเสมอ → ใช้ TotalDebit เป็นขนาดของรายการ
+                return await _db.JournalEntries.AsNoTracking()
+                    .Where(j => j.Id == id && j.CompanyId == companyId)
+                    .Select(j => j.TotalDebit).FirstOrDefaultAsync();
+
+            default:
+                return 0m;
+        }
     }
 
     private async Task<bool> DoesItemExistAsync(Guid companyId, ReconciliationItemType type, Guid id)

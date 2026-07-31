@@ -147,6 +147,16 @@ public class AiOrchestrator : IAiOrchestrator
             };
         }
 
+        // Disabled ต้องชนะทุก override (ForceProviderCall/BypassCache) — เดิม
+        // เงื่อนไขครอบ switch ทั้งก้อน ทำให้ feature ที่ admin ปิดแล้วยังยิง
+        // provider ได้ = kill-switch ระดับ feature ใช้ไม่ได้จริง
+        if (routing.Mode == AiFeatureRoutingMode.Disabled)
+        {
+            var fidDisabled = await RecordSkip(request, AiCallStatus.Skipped,
+                "Feature disabled by admin routing policy", ct);
+            return FallbackToLocal(request, AiCallStatus.Skipped, null, fidDisabled);
+        }
+
         if (!request.ForceProviderCall && !request.BypassCache)
         {
             switch (routing.Mode)

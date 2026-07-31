@@ -88,6 +88,15 @@ public class CompanySettings : TenantEntity
     /// PdfGenerationService.ComputeDocumentTitle</summary>
     public string? DocumentTitleOverridesJson { get; set; }
 
+    /// <summary>ภาษาของ "เอกสารที่ออก" ทุกใบ (PDF/HTML) — "th" (ค่าตั้งต้น) หรือ "en".
+    /// เป็นค่าตั้งต้นระดับบริษัท: ใบเดี่ยว/เทมเพลต/คำขอดาวน์โหลดยังตั้งทับได้
+    /// (ลำดับ: request → Document.DocumentLanguage → template.Language → ค่านี้ → "th")
+    ///
+    /// หมายเหตุกฎหมาย: โหมด "en" พิมพ์หัวเอกสารแบบสองภาษา ("Tax Invoice /
+    /// ใบกำกับภาษี") เพราะ §86/4 บังคับให้มีคำว่า "ใบกำกับภาษี" บนเอกสารที่ใช้
+    /// เคลมภาษีซื้อในไทย — ตัดไทยทิ้งจะทำให้ผู้ซื้อเคลมไม่ได้ (§82/5(1))</summary>
+    public string DocumentLanguage { get; set; } = "th";
+
     // HR — annual leave quota per LeaveType, stored as JSON:
     //   {"Annual": 6, "Sick": 30, "Personal": 3, "Maternity": 98}
     // Null / missing keys fall back to the Thai labor-law minimums in

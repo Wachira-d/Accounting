@@ -384,7 +384,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     // ==================== Auto-Generate from Document ====================
 
     public async Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(
-        Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null)
+        Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null,
+        Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null)
     {
         var doc = await _db.Documents
             .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ทำ doc = null → 50 ทวิ ออกไม่ได้)
@@ -395,12 +396,35 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         if (doc.WithholdingTaxAmount <= 0)
             throw new InvalidOperationException("เอกสารนี้ไม่มีภาษีหัก ณ ที่จ่าย");
 
-        // Check if cert already exists for this document
-        var existing = await _db.WithholdingTaxCerts
-            .AnyAsync(w => w.CompanyId == companyId && w.DocumentId == documentId
-                && w.Status != WithholdingTaxCertStatus.Voided);
-        if (existing)
-            throw new InvalidOperationException("เอกสารนี้มีหนังสือรับรองหัก ณ ที่จ่ายแล้ว");
+        // Idempotency — ภ.ง.ด.3/53 เป็น cash basis: จ่ายเป็นงวดต้องออกใบ "งวดละใบ"
+        // ตามยอดที่หักจริงของงวดนั้น จึงเช็คซ้ำที่ระดับ "งวดการจ่าย" เมื่อระบุ
+        // sourcePaymentId มา (เดิมเช็คระดับเอกสาร → งวดที่ 2 เป็นต้นไปออกใบไม่ได้
+        // และใบแรกก็ระบุยอดเต็มทั้งเอกสารทั้งที่จ่ายไปแค่บางส่วน)
+        if (sourcePaymentId.HasValue)
+        {
+            var dupPayment = await _db.WithholdingTaxCerts
+                .AnyAsync(w => w.CompanyId == companyId && w.SourcePaymentId == sourcePaymentId.Value
+                    && w.Status != WithholdingTaxCertStatus.Voided);
+            if (dupPayment)
+                throw new InvalidOperationException("งวดการจ่ายนี้มีหนังสือรับรองหัก ณ ที่จ่ายแล้ว");
+        }
+        else
+        {
+            var existing = await _db.WithholdingTaxCerts
+                .AnyAsync(w => w.CompanyId == companyId && w.DocumentId == documentId
+                    && w.Status != WithholdingTaxCertStatus.Voided);
+            if (existing)
+                throw new InvalidOperationException("เอกสารนี้มีหนังสือรับรองหัก ณ ที่จ่ายแล้ว");
+        }
+
+        // สัดส่วนของงวดนี้เทียบยอดภาษีหักทั้งเอกสาร — ใช้เฉลี่ยยอดรายบรรทัด
+        // (จ่าย 40% → ใบระบุภาษีหัก 40% ไม่ใช่ 100%)
+        var whtRatio = 1m;
+        if (paymentWhtAmount.HasValue && doc.WithholdingTaxAmount > 0
+            && paymentWhtAmount.Value > 0 && paymentWhtAmount.Value < doc.WithholdingTaxAmount)
+        {
+            whtRatio = paymentWhtAmount.Value / doc.WithholdingTaxAmount;
+        }
 
         // ประเภทแบบ ภ.ง.ด.53 นิติบุคคล / ภ.ง.ด.3 บุคคลธรรมดา — ตรวจจากหลายสัญญาณ
         // (เลขภาษี 13 หลัก + ContactType + ชื่อ) ไม่ใช่แค่ ContactType ที่ default เป็น
@@ -436,12 +460,17 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             TaxMonth = (paymentDate ?? doc.PaymentDate ?? doc.DocumentDate).Month,
             CertificateType = WithholdingTaxCertType.Withhold,
             DocumentId = documentId,
+            SourcePaymentId = sourcePaymentId,
             CreatedBy = createdBy
         };
 
         // Create lines from document lines that have WHT
         var order = 1;
         var whtLines = doc.Lines.Where(l => l.WithholdingTaxAmount > 0).ToList();
+        // ยอดของงวด: เฉลี่ยตามสัดส่วน (whtRatio = 1 เมื่อจ่ายครั้งเดียว/เต็มจำนวน)
+        decimal Prorate(decimal v) => whtRatio == 1m
+            ? v : Math.Round(v * whtRatio, 2, MidpointRounding.AwayFromZero);
+
         if (whtLines.Count == 0)
         {
             // Fallback: use document-level WHT with default income type
@@ -449,11 +478,12 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             {
                 LineOrder = 1,
                 IncomeTypeCode = "8", // ค่าบริการอื่นๆ default
-                IncomeDescription = $"ตามเอกสาร {doc.DocumentNumber}",
+                IncomeDescription = $"ตามเอกสาร {doc.DocumentNumber}"
+                    + (whtRatio == 1m ? "" : $" (จ่ายงวดนี้ {whtRatio:P0})"),
                 PaymentDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate,
-                IncomeAmount = doc.SubTotal,
+                IncomeAmount = Prorate(doc.SubTotal),
                 TaxRate = doc.SubTotal > 0 ? doc.WithholdingTaxAmount * 100 / doc.SubTotal : 3m,
-                TaxAmount = doc.WithholdingTaxAmount
+                TaxAmount = paymentWhtAmount ?? doc.WithholdingTaxAmount
             });
         }
         else
@@ -466,10 +496,18 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     IncomeTypeCode = line.IncomeTypeCode ?? "8",
                     IncomeDescription = line.Description,
                     PaymentDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate,
-                    IncomeAmount = line.Amount,
+                    IncomeAmount = Prorate(line.Amount),
                     TaxRate = line.WithholdingTaxRate,
-                    TaxAmount = line.WithholdingTaxAmount
+                    TaxAmount = Prorate(line.WithholdingTaxAmount)
                 });
+            }
+            // ปัดเศษรายบรรทัดอาจไม่รวมเท่ายอดงวดพอดี — ดูดผลต่างเข้าบรรทัดสุดท้าย
+            // เพื่อให้ Σ บรรทัด = ภาษีที่นำส่งจริงของงวดนั้นเป๊ะ
+            if (paymentWhtAmount.HasValue && cert.Lines.Count > 0)
+            {
+                var diff = paymentWhtAmount.Value - cert.Lines.Sum(l => l.TaxAmount);
+                if (diff != 0m && Math.Abs(diff) <= 0.05m * cert.Lines.Count)
+                    cert.Lines.Last().TaxAmount += diff;
             }
         }
 

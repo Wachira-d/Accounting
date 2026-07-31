@@ -81,6 +81,9 @@ public record UpdateCompanySettingsRequest(
     bool? ShowGlEntryOnDocument = null,
     // หัวเรื่องเอกสารตั้งเอง (JSON dict — ต่อประเภท + เงื่อนไข). null = ไม่แก้
     string? DocumentTitleOverridesJson = null,
+    // ภาษาของเอกสารที่ออกทุกใบ: "th" | "en" (null = ไม่แก้). โหมด en พิมพ์หัว
+    // สองภาษาบนเอกสารภาษี เพื่อคงคำว่า "ใบกำกับภาษี" ตาม §86/4
+    string? DocumentLanguage = null,
 
     // Annual leave quotas per LeaveType — JSON e.g.
     //   {"Annual":6,"Sick":30,"Personal":3,"Maternity":98}
@@ -177,6 +180,7 @@ public record CompanySettingsResponse(
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
     bool ShowGlEntryOnDocument = false,
     string? DocumentTitleOverridesJson = null,
+    string DocumentLanguage = "th",
 
     // Per-company annual leave quota override (JSON by LeaveType).
     string? LeaveQuotasJson = null,

@@ -729,6 +729,13 @@ public class OcrService : IOcrService
             // pick the value up correctly on the initial run.
             scanResult.BuyerName = extractedData.BuyerName;
             scanResult.BuyerTaxId = extractedData.BuyerTaxId;
+            // §86/4 สาขา + ที่อยู่ที่อ่านได้จากใบใบนี้ (กฎเหล็ก #3) — เดิมมีแต่ใน
+            // OcrExtractedData ที่อยู่ในหน่วยความจำ พอ reload หน้าค่าหาย และตอน
+            // สร้างเอกสารต้องไปหยิบ Contact.BranchCode ซึ่งอาจเป็นสาขาอื่น
+            scanResult.VendorBranchCode = extractedData.VendorBranchCode;
+            scanResult.VendorAddress = extractedData.VendorAddress;
+            scanResult.BuyerBranchCode = extractedData.BuyerBranchCode;
+            scanResult.BuyerAddress = extractedData.BuyerAddress;
             if (extractedData.FieldConfidence.Count > 0)
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
                     string.Join("\n", extractedData.FieldConfidence.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
@@ -1397,13 +1404,33 @@ public class OcrService : IOcrService
                 }
             }
 
-            if (!scanResult.MatchedContactId.HasValue && !string.IsNullOrEmpty(extractedData.VendorName))
+            // ⚠️ จับคู่ด้วย "ชื่อ" เป็นเส้นเสี่ยงที่สุด — ผูกเอกสารผิดรายได้ทั้งใบ
+            // (เคสจริง: ใบกำกับของบริษัทหนึ่งไปโผล่ใต้ชื่ออีกราย). กติกา:
+            //   • ชื่อที่ OCR อ่านได้ต้องยาวพอ (≥6 ตัวอักษรหลังตัดช่องว่าง) —
+            //     เดิมไม่มีขั้นต่ำ: ถ้า OCR ได้ "นาย"/"บริษัท" จะ Contains ตรงกับ
+            //     ผู้ติดต่อจำนวนมาก แล้ว FirstOrDefault (ไม่มี OrderBy) หยิบมั่ว
+            //   • หยิบตัวที่ "ใกล้เคียงที่สุด" แบบ deterministic ไม่ใช่แถวแรกที่ DB คืน
+            var ocrVendorName = (extractedData.VendorName ?? "").Trim();
+            var ocrVendorNameKey = new string(ocrVendorName.Where(ch => !char.IsWhiteSpace(ch)).ToArray());
+            if (!scanResult.MatchedContactId.HasValue && ocrVendorNameKey.Length >= 6)
             {
-                // First try the cheap substring match
-                var matchedContact = await _db.Contacts
-                    .FirstOrDefaultAsync(c => c.CompanyId == companyId
-                        && c.Name.Contains(extractedData.VendorName) && !c.IsDeleted);
-                scanResult.MatchedContactId = matchedContact?.Id;
+                // substring match — โหลด candidate มาเลือกในหน่วยความจำ (deterministic)
+                var subMatches = await _db.Contacts.AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                        && c.Name.Contains(ocrVendorName))
+                    .Select(c => new { c.Id, c.Name })
+                    .Take(50)
+                    .ToListAsync();
+                var subPick = subMatches
+                    .Select(c => new { c.Id, c.Name, Sim = Ocr.FuzzyMatcher.Similarity(c.Name, ocrVendorName) })
+                    .OrderByDescending(x => x.Sim)
+                    .ThenBy(x => x.Name.Length)     // ชื่อสั้นสุด = ตรงตัวสุด
+                    .ThenBy(x => x.Id)
+                    .FirstOrDefault();
+                if (subMatches.Count > 1)
+                    extractedData.ReasoningTrace.Add(
+                        $"[Match] ชื่อผู้ขาย '{ocrVendorName}' ตรงแบบ substring {subMatches.Count} ราย — เลือก '{subPick!.Name}' (ใกล้เคียงสุด) โปรดตรวจสอบ");
+                scanResult.MatchedContactId = subPick?.Id;
 
                 // When substring misses, fall back to Levenshtein-based fuzzy
                 // match against every supplier contact. This catches the
@@ -1420,6 +1447,7 @@ public class OcrService : IOcrService
                     var best = allSuppliers
                         .Select(c => new { c.Id, c.Name, Sim = Ocr.FuzzyMatcher.Similarity(c.Name, extractedData.VendorName) })
                         .OrderByDescending(x => x.Sim)
+                        .ThenBy(x => x.Id)       // tie → deterministic (สแกนซ้ำได้ผลเดิม)
                         .FirstOrDefault();
                     if (best != null && best.Sim >= 0.85)
                     {
@@ -1639,9 +1667,26 @@ public class OcrService : IOcrService
                 if (existing != null)
                 {
                     bool changed = false;
-                    // (1) TaxId — unconditional fill ถ้าว่าง
-                    if (string.IsNullOrWhiteSpace(existing.TaxId) && !string.IsNullOrEmpty(extractedData.VendorTaxId))
-                    { existing.TaxId = extractedData.VendorTaxId; changed = true; }
+                    // (1) TaxId — เขียนได้เฉพาะเมื่อ "มั่นใจว่าเป็นรายเดียวกันจริง"
+                    // ⚠️ contact ตัวนี้อาจถูกจับคู่มาด้วย "ชื่อ" (substring/fuzzy)
+                    // การประทับเลขภาษีจากกระดาษลงไปทันทีจะ "เปลี่ยนตัวตน" ของ
+                    // ผู้ติดต่อรายนั้นถาวร → เอกสารเก่าทุกใบของรายนั้นเปลี่ยนเลข
+                    // ภาษีตาม + รายงานภาษีเพี้ยน. เงื่อนไข: ชื่อบนกระดาษต้อง
+                    // ใกล้เคียงชื่อ contact จริง ๆ (≥0.90) และเลขต้องครบ 13 หลัก
+                    var enrichNameSim = string.IsNullOrWhiteSpace(extractedData.VendorName)
+                        ? 0d
+                        : Ocr.FuzzyMatcher.Similarity(existing.Name, extractedData.VendorName!);
+                    var enrichTaxDigits = DocumentService.NormalizeTaxDigits(extractedData.VendorTaxId);
+                    if (string.IsNullOrWhiteSpace(existing.TaxId) && enrichTaxDigits.Length == 13)
+                    {
+                        if (enrichNameSim >= 0.90)
+                        { existing.TaxId = extractedData.VendorTaxId; changed = true; }
+                        else
+                            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                                + $"\n[Enrich] ไม่เติมเลขภาษี {enrichTaxDigits} ให้ '{existing.Name}' — ชื่อบนกระดาษ"
+                                + $" ('{extractedData.VendorName}') ต่างจากผู้ติดต่อที่จับคู่ไว้ (ความใกล้เคียง {enrichNameSim:P0})"
+                                + " โปรดตรวจว่าเป็นผู้ขายรายเดียวกันก่อนแก้ข้อมูลผู้ติดต่อเอง";
+                    }
                     // (2) DBD / phone / address enrichment — gated ตามเดิม
                     var hasDbdOrContacts = extractedData.DbdCanonicalName != null
                         || !string.IsNullOrWhiteSpace(extractedData.DbdAddress)
@@ -3912,10 +3957,16 @@ public class OcrService : IOcrService
         // แล้ว (VendorBranchRegex → Contact.BranchCode) — ใช้ค่านั้นก่อน ค่อย
         // fallback 00000. เดิม hardcode "00000" ทับ → ใบสาขา 00003 ขึ้นรายงาน
         // ภาษีซื้อเป็นสำนักงานใหญ่ผิด (ประกาศฯ 199/§86/4) แบบเงียบ
+        // ⚠️ ลำดับที่ถูกต้อง: สาขาที่พิมพ์อยู่ "บนใบใบนี้" ต้องมาก่อน Contact —
+        // ผู้ขายหลายสาขาใช้ Contact เดียวกัน ถ้าอ่านจาก Contact จะได้สาขาของใบที่
+        // สแกนครั้งก่อน (เช่นใบนี้สาขา 00003 แต่ Contact ค้าง 00000) ขึ้นรายงาน
+        // ภาษีซื้อผิดสาขาแบบเงียบ (ประกาศฯ 199 / §86/4)
         var vendorBranchForBook = bookSupplierInvoice
-            ? await _db.Contacts.AsNoTracking()
-                .Where(c => c.Id == contactId.Value && c.CompanyId == companyId)
-                .Select(c => c.BranchCode).FirstOrDefaultAsync()
+            ? (!string.IsNullOrWhiteSpace(result.VendorBranchCode)
+                ? result.VendorBranchCode
+                : await _db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == contactId.Value && c.CompanyId == companyId)
+                    .Select(c => c.BranchCode).FirstOrDefaultAsync())
             : null;
         var document = new Document
         {
@@ -5398,7 +5449,13 @@ public class OcrService : IOcrService
             // หลีกเลี่ยง DB call ต่อ scan)
             GlAccountAiSuggestedCode: r.GlAccountAiSuggestedCode,
             GlAccountAiSuggestedName: null,
-            GlAccountAiConfidence: r.GlAccountAiConfidence);
+            GlAccountAiConfidence: r.GlAccountAiConfidence,
+            // §86/4 (กฎเหล็ก #3): ค่าจาก scan ล่าสุดก่อน แล้ว fallback ค่าที่เก็บไว้
+            // — สาขาต้องมีค่าเสมอ ("00000" = สำนักงานใหญ่) ห้ามปล่อย null ให้ UI
+            VendorBranchCode: data?.VendorBranchCode ?? r.VendorBranchCode ?? "00000",
+            VendorAddress: data?.VendorAddress ?? r.VendorAddress,
+            BuyerBranchCode: data?.BuyerBranchCode ?? r.BuyerBranchCode ?? "00000",
+            BuyerAddress: data?.BuyerAddress ?? r.BuyerAddress);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)

@@ -91,6 +91,11 @@ public class Document : TenantEntity
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public bool ServedAsReceipt { get; set; }
 
+    /// <summary>ภาษาของเอกสารใบนี้เมื่อพิมพ์/ส่งออก ("th"/"en") — null = ใช้ค่า
+    /// ตั้งต้นของบริษัท (<c>CompanySettings.DocumentLanguage</c>). ตรึงไว้กับใบ
+    /// เพื่อให้ลูกค้าต่างชาติได้ไฟล์ภาษาเดิมทุกครั้งที่พิมพ์ซ้ำ</summary>
+    public string? DocumentLanguage { get; set; }
+
     /// <summary>Transient (ไม่เก็บ DB) — ใบเสร็จ/ใบสำคัญรับที่ "อ้างใบกำกับภาษี"
     /// (settlement ของ TaxInvoice ที่รายงาน VAT ไปแล้ว) → หัวต้องเป็น
     /// "ใบเสร็จรับเงิน" เปล่า ห้ามมีคำว่า "ใบกำกับภาษี" ซ้ำ — ไม่งั้นลูกค้าถือ

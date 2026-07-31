@@ -1814,6 +1814,11 @@ public static class DatabaseMigrationHelper
             """,
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerName" varchar(500) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerTaxId" varchar(20) NULL;""",
+            // §86/4 สาขา + ที่อยู่ที่อ่านได้จากใบ (กฎเหล็ก #3 — pre-fill ครบทุก field)
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorBranchCode" varchar(10) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorAddress" varchar(1000) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerBranchCode" varchar(10) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerAddress" varchar(1000) NULL;""",
             // AI GL suggestion transparency — เก็บ AI primary แม้ถูก confidence guard ปฏิเสธ
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiSuggestedCode" varchar(20) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiConfidence" numeric(5,4) NULL;""",
@@ -4467,6 +4472,9 @@ public static class DatabaseMigrationHelper
 
             // ===== หัวเรื่องเอกสารตั้งเอง (ต่อประเภท + เงื่อนไข) =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentTitleOverridesJson" text NULL;""",
+            // ภาษาเอกสารที่ออก (th/en) — ค่าตั้งต้นระดับบริษัท + override รายใบ
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NOT NULL DEFAULT 'th';""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NULL;""",
 
             // ===== ลูกค้าเงินสดไม่ประสงค์รับใบกำกับ (ผู้ซื้อกลางของใบกำกับขายปลีก) =====
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "IsWalkInCustomer" boolean NOT NULL DEFAULT false;""",
@@ -4843,6 +4851,10 @@ public static class DatabaseMigrationHelper
             // monthly auto-issue + idempotency check (re-post payroll = re-issue cert).
             """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "SourcePayrollRunId" uuid NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_WithholdingTaxCerts_SourcePayrollRunId" ON "WithholdingTaxCerts" ("SourcePayrollRunId") WHERE "SourcePayrollRunId" IS NOT NULL;""",
+            // 50 ทวิ ต่อ "งวดการจ่าย" (ภ.ง.ด.3/53 = cash basis) — เอกสารที่ทยอยจ่าย
+            // มีใบละงวด ยอดตามที่หักจริงของงวดนั้น; ใช้เป็น idempotency key
+            """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "SourcePaymentId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_WithholdingTaxCerts_SourcePaymentId" ON "WithholdingTaxCerts" ("SourcePaymentId") WHERE "SourcePaymentId" IS NOT NULL;""",
 
             // ===== PayrollDetails: TaxableGross — รายได้ที่ใช้คำนวณ WHT
             """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "TaxableGross" numeric(18,2) NOT NULL DEFAULT 0;""",

@@ -73,7 +73,14 @@ public record OcrResultResponse(
     /// ได้เอง. null = AI ไม่ถูกเรียก หรือไม่เสนอผัง.</summary>
     string? GlAccountAiSuggestedCode = null,
     string? GlAccountAiSuggestedName = null,
-    decimal? GlAccountAiConfidence = null);
+    decimal? GlAccountAiConfidence = null,
+    /// <summary>§86/4 รหัสสาขา + ที่อยู่ที่อ่านได้จากใบ (กฎเหล็ก #3 — ต้องส่งออกมา
+    /// ให้หน้า review แสดง/แก้ได้ ไม่ใช่ปล่อยว่างแล้วไปหยิบจาก Contact ซึ่งอาจเป็น
+    /// สาขาอื่น). "00000" = สำนักงานใหญ่</summary>
+    string? VendorBranchCode = null,
+    string? VendorAddress = null,
+    string? BuyerBranchCode = null,
+    string? BuyerAddress = null);
 
 /// <summary>One open PO of the matched vendor — what the picker modal
 /// renders. Lines come back inline so the operator can map OCR ↔ PO line

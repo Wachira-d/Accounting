@@ -748,6 +748,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   3. fallback: QuestPDF native (Thai-safe layout)
 - รองรับ template per `DocumentType + IsDefault` flag
 - ลายเซ็น/ลายน้ำ/QR/รหัส GL footer (toggle ต่อบริษัท)
+- **ภาษาเอกสาร — resolver กลาง `ResolveDocumentLanguage`** (`PdfGenerationService.cs`)
+  ลำดับ: `request.Language` → `Document.DocumentLanguage` → `template.Language`
+  → `CompanySettings.DocumentLanguage` → `"th"`. ข้อความทั้งหมดมาจาก
+  `Services/Implementations/Pdf/DocumentLabels.cs` (ไทย/อังกฤษ ชุดเดียว ใช้ทั้ง
+  QuestPDF native + HTML renderer)
+  - โหมด **en** พิมพ์หัวเอกสารที่มี VAT แบบ **สองภาษา** ("Tax Invoice /
+    ใบกำกับภาษี") — §86/4 บังคับคำไทย ตัดทิ้ง = ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(1)
+  - **แบบฟอร์มราชการคงไทยเสมอ**: 50 ทวิ, ภ.ง.ด.1/3/53/54, ภ.พ.30, ภ.พ.36
+  - ตั้งค่าที่ Settings → "ภาษาของเอกสารที่ออก"; ตั้งทับรายใบผ่าน
+    `Document.DocumentLanguage` (create/update request)
+
 - **หัวเรื่องเอกสาร — resolver กลาง `ComputeDocumentTitle`** (ใช้ทั้ง QuestPDF
   native + HTML กัน logic drift). ครอบทุกเคสจริงทางบัญชี:
   - หัวพื้นฐาน 16 ประเภท (`GetDocumentTitle`) — ทุกชนิดถูกต้องตามชื่อไทย
@@ -1455,6 +1466,24 @@ _(เข้า ภ.พ.30) หัว upgrade เป็น "ใบกำกับ
 _ถูก apply เข้าใบปลายทาง (ใบปลายทางคือใบกำกับ กันกระดาษซ้ำ). ข้อยกเว้น invariant_
 _ที่ตั้งใจ: ใบแจ้งหนี้สินค้า/legacy + ผู้ซื้อปฏิเสธใบกำกับ (ขายปลีก) = อยู่ในรายงาน_
 _โดยกระดาษไม่มีหัวใบกำกับ (นำส่งครบตามกฎหมาย มี approval warning ชี้ทางแล้ว)._
+_รอบ 16 (multi-team audit 8 โดเมน — ดู DEVELOPMENT_PHASES.md): void ใบที่ชำระ_
+_ด้วย multi-doc payment คืนยอดธนาคารครบ (ReverseMultiDocPaymentInternalAsync;_
+_ยกเลิกใบเดียวในกลุ่ม → block ให้ยกเลิกใบชำระก่อน); RealizeDeposit หัก_
+_DepositRefundedAmount; ApplyDepositToInvoice ห่อ transaction + FOR UPDATE;_
+_UpdateDocument บล็อกการแก้ใบที่ restore แล้วถือเลขจริง (§86/4); approve_
+_idempotency guard ไม่นับ reversal (void→restore→approve ต้อง post JE ใหม่);_
+_FX reval เฉพาะ monetary types; ค่าเสื่อม/ตีราคาเช็คงวดปิด + FiscalPeriodId;_
+_ภ.ง.ด.3/53 แยกผู้ถูกหักด้วย DetectJuristic + กรองเฉพาะเอกสารฝั่งซื้อ + ภ.ง.ด.1_
+_ไม่ดึงจากเอกสาร; BuildPnd กรอง SUMMARY/IsExcluded; void ติ๊กบรรทัดรายงานทุกแบบ_
+_(RecalcWhtTotals); 50 ทวิ ออกตามงวดจ่าย (SourcePaymentId + pro-rate);_
+_claimedElsewhere ยกเว้นงวดเดียวกัน; Sale.csv กรอง IsExcluded + ปี พ.ศ. ต่อแถว;_
+_InputVat ไม่รวมเครดิตยกมา; ฐานรายงาน = VatableBase หักบรรทัดยกเว้น; e-Tax_
+_BasisAmount/PDF ไม่หักส่วนลดซ้ำ + TaxId ผู้ซื้อบังคับ 13 หลัก + ISO8601 +07:00 +_
+_ชื่อเอกสาร PDF=XML; AI: fingerprint ตรงกันเมื่อ sanitize PII, ImportDataReview_
+_มี local heuristics, DailyCallCap นับเฉพาะ provider call, OCR เก็บสาขา/ที่อยู่;_
+_tenant: CMS cart scope, POS ProductId, payroll includeSalary; XSS 4 หน้า;_
+_import: พ.ศ.→ค.ศ. ทุกจุด + JE/bank dedup. **ใหม่: ภาษาเอกสาร th/en**)_
+
 _Last verified against codebase: 2026-07-31 (audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
 _แก้ 43 บั๊ก 3 ชุด: CN/DN text-ref resolve+undue VAT accounts+GRN block+qty cap+_
 _FX rate+refund txn; ภ.พ.30 regen snapshot ticks+double-tick guard+warn-line_

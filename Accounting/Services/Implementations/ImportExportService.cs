@@ -663,6 +663,23 @@ public class ImportExportService : IImportExportService
             throw new InvalidOperationException("TransactionType ไม่ถูกต้อง");
 
         var amount = decimal.TryParse(row.GetValueOrDefault("Amount"), out var amt) ? amt : throw new InvalidOperationException("Amount ไม่ถูกต้อง");
+        var txnDate = DateTime.TryParse(row.GetValueOrDefault("TransactionDate"), out var dtParsed)
+            ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dtParsed) : DateTime.UtcNow;
+        var reference = row.GetValueOrDefault("Reference");
+        var descr = row.GetValueOrDefault("Description");
+
+        // Idempotent: รันไฟล์เดิมซ้ำต้องไม่สร้างรายการซ้ำและห้ามเดินยอดบัญชีซ้ำ
+        // (เดิมไม่มี dedup เลย — import ซ้ำ = CurrentBalance วิ่งเพิ่มอีกเต็มไฟล์)
+        var dupInDb = await _db.BankTransactions.AsNoTracking().AnyAsync(t =>
+            t.CompanyId == companyId && t.BankAccountId == bankAccountId
+            && t.TransactionDate == txnDate && t.TransactionType == txnType
+            && t.Amount == amount && t.Reference == reference && t.Description == descr);
+        var dupInTracker = _db.ChangeTracker.Entries<BankTransaction>().Select(e => e.Entity).Any(t =>
+            t.CompanyId == companyId && t.BankAccountId == bankAccountId
+            && t.TransactionDate == txnDate && t.TransactionType == txnType
+            && t.Amount == amount && t.Reference == reference && t.Description == descr);
+        if (dupInDb || dupInTracker) return;
+
         var balanceChange = txnType == BankTransactionType.Withdrawal || txnType == BankTransactionType.Fee ? -Math.Abs(amount) : Math.Abs(amount);
         account.CurrentBalance += balanceChange;
 
@@ -670,7 +687,7 @@ public class ImportExportService : IImportExportService
         {
             CompanyId = companyId,
             BankAccountId = bankAccountId,
-            TransactionDate = DateTime.TryParse(row.GetValueOrDefault("TransactionDate"), out var dt) ? dt : DateTime.UtcNow,
+            TransactionDate = txnDate,
             TransactionType = txnType,
             Amount = amount,
             BalanceAfter = account.CurrentBalance,
@@ -681,7 +698,7 @@ public class ImportExportService : IImportExportService
 
     private async Task ImportJournalEntryAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
     {
-        var date = DateTime.TryParse(row.GetValueOrDefault("Date"), out var dt) ? dt : DateTime.UtcNow;
+        var date = DateTime.TryParse(row.GetValueOrDefault("Date"), out var dt) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dt) : DateTime.UtcNow;
         var accountCode = row.GetValueOrDefault("AccountCode") ?? throw new InvalidOperationException("AccountCode is required");
         var debitAmount = decimal.TryParse(row.GetValueOrDefault("DebitAmount"), out var da) ? da : 0;
         var creditAmount = decimal.TryParse(row.GetValueOrDefault("CreditAmount"), out var ca) ? ca : 0;
@@ -701,22 +718,38 @@ public class ImportExportService : IImportExportService
             contactId = contact?.Id;
         }
 
-        var existing = await _db.JournalEntries
-            .Include(j => j.Lines)
-            .FirstOrDefaultAsync(j => j.CompanyId == companyId
-                && j.EntryDate == date
-                && j.Description == description
-                && j.Reference == reference);
+        // สแกน ChangeTracker ก่อน DB — SaveChanges เกิดครั้งเดียวท้ายไฟล์ ดังนั้น
+        // แถว Dr/Cr ของ JE เดียวกันในไฟล์เดียวกันยังไม่อยู่ใน DB: ถ้า query DB
+        // อย่างเดียวจะหากันไม่เจอ → แตกเป็น JE บรรทัดเดียวหลายใบ (ไม่ balance
+        // สักใบ) และรันไฟล์เดิมซ้ำจะ append บรรทัดเงาเข้าใบเดิม (pattern เดียวกับ
+        // ImportOpeningSubledgerAsync/ImportDocumentAsync ที่แก้ไว้แล้ว)
+        var existing = _db.ChangeTracker.Entries<JournalEntry>().Select(e => e.Entity)
+                .FirstOrDefault(j => j.CompanyId == companyId
+                    && j.EntryDate == date && j.Description == description && j.Reference == reference)
+            ?? await _db.JournalEntries
+                .Include(j => j.Lines)
+                .FirstOrDefaultAsync(j => j.CompanyId == companyId
+                    && j.EntryDate == date
+                    && j.Description == description
+                    && j.Reference == reference);
 
         if (existing != null)
         {
-            existing.Lines.Add(new JournalEntryLine
+            // กันรันไฟล์เดิมซ้ำ: บรรทัดเดิม (บัญชี+ยอดเดียวกัน) มีแล้ว = ข้าม
+            var dupLine = existing.Lines.Any(l => l.AccountId == account.Id
+                && l.DebitAmount == debitAmount && l.CreditAmount == creditAmount);
+            if (!dupLine)
             {
-                AccountId = account.Id,
-                DebitAmount = debitAmount,
-                CreditAmount = creditAmount,
-                Description = description
-            });
+                existing.Lines.Add(new JournalEntryLine
+                {
+                    AccountId = account.Id,
+                    DebitAmount = debitAmount,
+                    CreditAmount = creditAmount,
+                    Description = description
+                });
+            }
+            existing.TotalDebit = existing.Lines.Sum(l => l.DebitAmount);
+            existing.TotalCredit = existing.Lines.Sum(l => l.CreditAmount);
         }
         else
         {
@@ -735,6 +768,8 @@ public class ImportExportService : IImportExportService
                 Note = contactId.HasValue ? $"ContactId:{contactId}" : null,
                 Status = JournalEntryStatus.Draft,
                 CreatedBy = performedBy,
+                TotalDebit = debitAmount,
+                TotalCredit = creditAmount,
                 Lines = new List<JournalEntryLine>
                 {
                     new()
@@ -846,7 +881,7 @@ public class ImportExportService : IImportExportService
         var qty = decimal.TryParse(row.GetValueOrDefault("Quantity"), out var q) ? q
             : throw new InvalidOperationException("Quantity ไม่ถูกต้อง");
         var unitCost = decimal.TryParse(row.GetValueOrDefault("UnitCost"), out var uc) ? uc : product.CostPrice;
-        var openingDate = DateTime.TryParse(row.GetValueOrDefault("OpeningDate"), out var od) ? od : DateTime.UtcNow;
+        var openingDate = DateTime.TryParse(row.GetValueOrDefault("OpeningDate"), out var od) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(od) : DateTime.UtcNow;
 
         // Replace any previously imported opening balance so re-running the
         // file twice doesn't double-count. The MovementType OPENING is the
@@ -902,9 +937,8 @@ public class ImportExportService : IImportExportService
         if (!decimal.TryParse(row.GetValueOrDefault("Amount"), out var amount) || amount <= 0)
             throw new InvalidOperationException("Amount ต้องเป็นตัวเลขมากกว่า 0");
 
-        var invoiceDate = DateTime.TryParse(row.GetValueOrDefault("InvoiceDate"), out var idt)
-            ? idt : throw new InvalidOperationException("InvoiceDate ไม่ถูกต้อง");
-        DateTime? dueDate = DateTime.TryParse(row.GetValueOrDefault("DueDate"), out var dd) ? dd : null;
+        var invoiceDate = DateTime.TryParse(row.GetValueOrDefault("InvoiceDate"), out var idt) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(idt) : throw new InvalidOperationException("InvoiceDate ไม่ถูกต้อง");
+        DateTime? dueDate = DateTime.TryParse(row.GetValueOrDefault("DueDate"), out var dd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dd) : null;
 
         // Resolve or create the contact (migration convenience). The import
         // runs many rows then SaveChanges once at the end — so also scan the
@@ -1020,7 +1054,7 @@ public class ImportExportService : IImportExportService
         };
 
         var unitCost = decimal.TryParse(row.GetValueOrDefault("UnitCost"), out var uc) ? uc : product.CostPrice;
-        var date = DateTime.TryParse(row.GetValueOrDefault("AdjustmentDate"), out var d) ? d : DateTime.UtcNow;
+        var date = DateTime.TryParse(row.GetValueOrDefault("AdjustmentDate"), out var d) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(d) : DateTime.UtcNow;
 
         product.CurrentStock += signed;
 
@@ -1047,7 +1081,7 @@ public class ImportExportService : IImportExportService
         if (await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId && a.AssetCode == code))
             throw new InvalidOperationException($"รหัสสินทรัพย์ {code} ซ้ำ");
 
-        var purchaseDate = DateTime.TryParse(row.GetValueOrDefault("PurchaseDate"), out var pd) ? pd
+        var purchaseDate = DateTime.TryParse(row.GetValueOrDefault("PurchaseDate"), out var pd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(pd)
             : throw new InvalidOperationException("PurchaseDate ไม่ถูกต้อง");
         var purchaseCost = decimal.TryParse(row.GetValueOrDefault("PurchaseCost"), out var pc) ? pc
             : throw new InvalidOperationException("PurchaseCost ไม่ถูกต้อง");
@@ -1179,7 +1213,7 @@ public class ImportExportService : IImportExportService
 
         var amount = decimal.TryParse(row.GetValueOrDefault("Amount"), out var amt) ? amt
             : throw new InvalidOperationException("Amount ไม่ถูกต้อง");
-        var date = DateTime.TryParse(row.GetValueOrDefault("PaymentDate"), out var pd) ? pd : DateTime.UtcNow;
+        var date = DateTime.TryParse(row.GetValueOrDefault("PaymentDate"), out var pd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(pd) : DateTime.UtcNow;
         var method = Enum.TryParse<PaymentMethod>(row.GetValueOrDefault("PaymentMethod"), true, out var pm) ? pm : PaymentMethod.Cash;
 
         // Reuse the same number-series pattern as the rest of the codebase
@@ -1256,9 +1290,9 @@ public class ImportExportService : IImportExportService
             Description = row.GetValueOrDefault("Description"),
             CustomerName = row.GetValueOrDefault("CustomerName"),
             ProjectManagerName = row.GetValueOrDefault("ProjectManagerName"),
-            StartDate = DateTime.TryParse(row.GetValueOrDefault("StartDate"), out var sd) ? sd
+            StartDate = DateTime.TryParse(row.GetValueOrDefault("StartDate"), out var sd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(sd)
                 : throw new InvalidOperationException("StartDate ไม่ถูกต้อง"),
-            EndDate = DateTime.TryParse(row.GetValueOrDefault("EndDate"), out var ed) ? ed : null,
+            EndDate = DateTime.TryParse(row.GetValueOrDefault("EndDate"), out var ed) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(ed) : null,
             Status = row.GetValueOrDefault("Status") ?? "Active",
             BudgetAmount = decimal.TryParse(row.GetValueOrDefault("BudgetAmount"), out var ba) ? ba : 0,
             ContractAmount = decimal.TryParse(row.GetValueOrDefault("ContractAmount"), out var ca) ? ca : 0,
@@ -1307,12 +1341,12 @@ public class ImportExportService : IImportExportService
             FirstNameEn = row.GetValueOrDefault("FirstNameEn"),
             LastNameEn = row.GetValueOrDefault("LastNameEn"),
             CitizenId = row.GetValueOrDefault("CitizenId"),
-            DateOfBirth = DateTime.TryParse(row.GetValueOrDefault("DateOfBirth"), out var dob) ? dob : null,
+            DateOfBirth = DateTime.TryParse(row.GetValueOrDefault("DateOfBirth"), out var dob) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dob) : null,
             Phone = row.GetValueOrDefault("Phone"),
             Email = row.GetValueOrDefault("Email"),
             Department = row.GetValueOrDefault("Department"),
             Position = row.GetValueOrDefault("Position"),
-            StartDate = DateTime.TryParse(row.GetValueOrDefault("StartDate"), out var sd) ? sd
+            StartDate = DateTime.TryParse(row.GetValueOrDefault("StartDate"), out var sd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(sd)
                 : throw new InvalidOperationException("StartDate ไม่ถูกต้อง"),
             BaseSalary = decimal.TryParse(row.GetValueOrDefault("BaseSalary"), out var bs) ? bs
                 : throw new InvalidOperationException("BaseSalary ไม่ถูกต้อง"),
@@ -1431,7 +1465,7 @@ public class ImportExportService : IImportExportService
         {
             if (!Enum.TryParse<DocumentType>(row.GetValueOrDefault("DocumentType"), true, out var docType))
                 throw new InvalidOperationException("DocumentType ไม่ถูกต้อง");
-            var docDate = DateTime.TryParse(row.GetValueOrDefault("DocumentDate"), out var dd) ? dd
+            var docDate = DateTime.TryParse(row.GetValueOrDefault("DocumentDate"), out var dd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dd)
                 : throw new InvalidOperationException("DocumentDate ไม่ถูกต้อง");
 
             var contactName = row.GetValueOrDefault("ContactName") ?? "";
@@ -1451,7 +1485,7 @@ public class ImportExportService : IImportExportService
                 DocumentNumber = docNum,
                 DocumentType = docType,
                 DocumentDate = docDate,
-                DueDate = DateTime.TryParse(row.GetValueOrDefault("DueDate"), out var due) ? due : null,
+                DueDate = DateTime.TryParse(row.GetValueOrDefault("DueDate"), out var due) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(due) : null,
                 ContactId = contact.Id,
                 Status = DocumentStatus.Draft,
                 Reference = row.GetValueOrDefault("Reference"),

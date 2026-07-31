@@ -169,10 +169,18 @@ public partial class PdfGenerationService
     {
         // สรุปยอดตามช่องหลักของแบบ ภ.พ.30 — ใช้ทบทวน/เก็บแฟ้ม (การยื่นจริงใช้
         // ไฟล์ e-Filing ที่ระบบสร้างแยก). แยก 7% / 0% / ยกเว้น จาก TaxRate ของ line.
-        var salesLines = report.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY" && l.IncomeTypeCode != "INPUT").ToList();
+        // ต้องตัด VAT_CREDIT_CF (เครดิตภาษีซื้อยกมา — TaxRate=0 แต่ไม่ใช่ยอดขาย)
+        // และ JE_INPUT ออกด้วย ไม่งั้นเครดิตยกมาถูกนับเป็น "ยอดขายที่ได้รับยกเว้น"
+        // ในช่อง 1/§81. อีกทั้งขายอัตรา 0% (§80/1) เก็บ TaxRate = 0 เหมือนยกเว้น →
+        // แยกไม่ได้ด้วยอัตรา ต้องดู IncomeTypeCode ("EXEMPT" = §81, ที่เหลือ 0% = ส่งออก)
+        var salesLines = report.Lines.Where(l => !l.IsExcluded
+            && l.IncomeTypeCode != "SUMMARY" && l.IncomeTypeCode != "INPUT"
+            && l.IncomeTypeCode != "JE_INPUT" && l.IncomeTypeCode != "VAT_CREDIT_CF").ToList();
         var std = salesLines.Where(l => l.TaxRate >= 6.5m).Sum(l => l.IncomeAmount);
-        var zero = salesLines.Where(l => l.TaxRate > 0 && l.TaxRate < 6.5m).Sum(l => l.IncomeAmount);
-        var exempt = salesLines.Where(l => l.TaxRate == 0).Sum(l => l.IncomeAmount);
+        var exempt = salesLines.Where(l => l.TaxRate < 6.5m && l.IncomeTypeCode == "EXEMPT")
+            .Sum(l => l.IncomeAmount);
+        var zero = salesLines.Where(l => l.TaxRate < 6.5m && l.IncomeTypeCode != "EXEMPT")
+            .Sum(l => l.IncomeAmount);
         var totalSales = std + zero + exempt;
         var purchaseBase = report.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode == "INPUT").Sum(l => l.IncomeAmount);
 
