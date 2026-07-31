@@ -11391,16 +11391,22 @@ public class DocumentService : IDocumentService
         {
             var vehicleKw = new[] { "น้ำมัน", "เบนซิน", "ดีเซล", "ค่าซ่อม", "อะไหล่",
                 "ค่าเช่ารถ", "ค่าน้ำมันรถ", "fuel", "gasoline", "diesel" };
-            var passengerKw = new[] { "รถยนต์", "รถเก๋ง", "sedan", "passenger" };
+            // ระบุชัดว่าเป็นรถบรรทุก/กระบะ/เครื่องจักร → เคลมได้แน่นอน ไม่ต้องเตือน
+            var truckKw = new[] { "กระบะ", "บรรทุก", "หกล้อ", "สิบล้อ", "แม็คโคร",
+                "แมคโคร", "แบคโฮ", "แบ็คโฮ", "รถขุด", "รถตัก", "รถไถ", "โฟล์คลิฟ",
+                "forklift", "เครน", "truck", "pickup", "รถตู้" };
             foreach (var line in doc.Lines ?? new List<DocumentLine>())
             {
                 var d = (line.Description ?? "").ToLowerInvariant();
                 if (line.IsVatClaimable
                     && line.VatAmount > 0
                     && vehicleKw.Any(k => d.Contains(k.ToLowerInvariant()))
-                    && (passengerKw.Any(k => d.Contains(k.ToLowerInvariant())) || vehicleKw.Any(k => d.Contains(k))))
+                    && !truckKw.Any(k => d.Contains(k.ToLowerInvariant())))
                 {
-                    warnings.Add($"§82/5(6): '{line.Description}' — ถ้าเป็นรถยนต์นั่ง ≤10 ที่นั่ง ภาษีซื้อ {line.VatAmount:N2} เคลมไม่ได้ ติ๊กออก '✓ เคลม VAT' ที่บรรทัดนี้ (ยกเว้นบริษัทเป็น vehicle dealer)");
+                    warnings.Add($"§82/5(6): '{line.Description}' — เคลมภาษีซื้อ {line.VatAmount:N2} ได้เฉพาะเมื่อ"
+                        + "เป็นรถที่ไม่ใช่ \"รถยนต์นั่ง\": รถกระบะตอนเดียว/แค็บ, รถบรรทุก, รถตู้เกิน 10 ที่นั่ง, เครื่องจักร → เคลมได้. "
+                        + "รถเก๋ง/กระบะ 4 ประตู (จัดเป็นรถยนต์นั่งตามพิกัดสรรพสามิต) → เคลมไม่ได้ ให้ติ๊กออก '✓ เคลม VAT' ที่บรรทัดนี้. "
+                        + "แนะนำระบุชนิดรถในรายละเอียด เช่น \"ค่าน้ำมันรถกระบะทะเบียน...\" เพื่อเป็นหลักฐานตอนสรรพากรตรวจ");
                     break;
                 }
             }
