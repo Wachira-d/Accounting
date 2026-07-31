@@ -4301,6 +4301,44 @@ public class DocumentService : IDocumentService
             catch (Exception ex) { _logger.LogWarning(ex, "Group unwind for voided document {DocId} failed", documentId); }
         }
 
+        // บรรทัด ภ.พ.30 งวดที่ยังไม่ยื่น (Draft/อื่น) ที่อ้างใบนี้ → ติ๊กออก +
+        // ป้ายเตือนอัตโนมัติ (best-effort, post-commit) — เดิม void แล้วบรรทัด
+        // ยัง active จนกว่าจะมีคน regen เอง = ยื่นทั้งอย่างนั้นได้ (เคลม VAT ของ
+        // ใบที่ยกเลิกแล้ว §82/5(1)); ตัวยื่น (FileTaxReportAsync) ก็ revalidate
+        // ซ้ำอีกชั้น — สองชั้นกันหลุด
+        try
+        {
+            var vatLines = await _db.TaxReportLines
+                .Include(l => l.TaxReport)
+                .Where(l => l.DocumentId == documentId && !l.IsExcluded
+                    && l.TaxReport.CompanyId == companyId
+                    && l.TaxReport.TaxType == TaxType.VAT
+                    && l.TaxReport.Status != TaxReportStatus.Filed)
+                .ToListAsync();
+            if (vatLines.Count > 0)
+            {
+                var touchedReports = new HashSet<Guid>();
+                foreach (var vl in vatLines)
+                {
+                    vl.IsExcluded = true;
+                    vl.Description = "⚠️ [เอกสารถูกยกเลิก] " + (vl.Description ?? "");
+                    vl.UpdatedAt = DateTime.UtcNow;
+                    touchedReports.Add(vl.TaxReportId);
+                }
+                foreach (var rid in touchedReports)
+                {
+                    var rep = await _db.TaxReports.Include(r => r.Lines)
+                        .FirstOrDefaultAsync(r => r.Id == rid);
+                    if (rep != null) { TaxService.RecalcVatTotals(rep); rep.UpdatedAt = DateTime.UtcNow; }
+                }
+                await _db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Void {DocId}: อัปเดตบรรทัด ภ.พ.30 งวด Draft ไม่สำเร็จ", documentId);
+        }
+
         // Fire DocumentVoided notification (best-effort, post-commit). Cascades
         // through the per-user matrix to Accounting / Owner recipients per
         // their configured channels (in-app, LINE, email).
