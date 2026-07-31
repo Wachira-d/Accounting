@@ -1373,6 +1373,29 @@ public class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft)
             throw new InvalidOperationException("แก้ไขได้เฉพาะเอกสาร Draft เท่านั้น");
 
+        // §86/4: เอกสารที่ "ออกเลขจริงไปแล้ว" ห้ามแก้ย้อนหลัง — ต้องออกใบยกเลิก +
+        // ใบใหม่. Draft ปกติถือเลข placeholder "DRAFT-{guid}" แต่ใบที่ถูก restore
+        // จาก Voided กลับมาเป็น Draft ทั้งที่ยัง "ถือเลขจริงเดิม" (re-approve คงเลข)
+        // → ถ้าไม่กันตรงนี้ ผู้ใช้แก้ยอด/วันที่/คู่ค้า แล้วอนุมัติใหม่ด้วยเลขเดิมได้
+        // = แก้ใบกำกับภาษีที่เคยออกไปแล้ว. อนุญาตเฉพาะ field ที่ไม่กระทบเงิน/ภาษี
+        var isRestoredWithRealNumber = !doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal);
+        if (isRestoredWithRealNumber)
+        {
+            var blocked = new List<string>();
+            if (request.DocumentDate.HasValue && request.DocumentDate.Value.Date != doc.DocumentDate.Date)
+                blocked.Add("วันที่เอกสาร");
+            if (request.ContactId.HasValue && request.ContactId.Value != doc.ContactId) blocked.Add("ผู้ติดต่อ");
+            if (request.Lines != null) blocked.Add("รายการสินค้า/บริการ");
+            if (request.BillDiscountPercent.HasValue) blocked.Add("ส่วนลดท้ายบิล");
+            if (request.BillDiscountAmount.HasValue) blocked.Add("ส่วนลดท้ายบิล");
+            if (request.PricesIncludeVat.HasValue) blocked.Add("รูปแบบราคารวม VAT");
+            if (blocked.Count > 0)
+                throw new InvalidOperationException(
+                    $"เอกสาร {doc.DocumentNumber} เคยออกเลขจริงแล้ว (กู้คืนจากการยกเลิก) — "
+                    + $"ห้ามแก้ {string.Join(", ", blocked.Distinct())} ย้อนหลังตามมาตรา 86/4. "
+                    + "หากต้องแก้ยอด/วันที่ ให้ยกเลิกใบนี้ถาวรแล้วออกใบใหม่ (หรือออกใบลดหนี้/เพิ่มหนี้)");
+        }
+
         if (request.DocumentDate.HasValue) doc.DocumentDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DocumentDate.Value);
         if (request.DueDate.HasValue) doc.DueDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DueDate.Value);
         if (request.ContactId.HasValue) doc.ContactId = request.ContactId.Value;
@@ -1916,13 +1939,20 @@ public class DocumentService : IDocumentService
         if (doc.Status == DocumentStatus.Draft || doc.Status == DocumentStatus.Voided)
             throw new InvalidOperationException("รับรู้รายได้ได้เฉพาะมัดจำที่อนุมัติแล้ว");
 
-        // ฐาน (ไม่รวม VAT) คงค้างที่ยังรับรู้ไม่ได้
-        var outstanding = doc.SubTotal - doc.DepositRealizedAmount;
+        // ฐาน (ไม่รวม VAT) คงค้างที่ยังรับรู้ไม่ได้ — ต้องหัก "ส่วนที่คืนลูกค้าไปแล้ว"
+        // ด้วย (สูตรเดียวกับ RefundDepositAsync/ApplyDepositToInvoiceAsync): เดิมหัก
+        // แค่ DepositRealizedAmount → มัดจำที่คืนครบแล้ว (217xx = 0) ยังรับรู้รายได้
+        // ได้อีกรอบ → 217xx ติดลบ, รายได้+ภาษีขายเกินจริงใน ภ.พ.30
+        var realizeVatPortion = doc.TotalAmount > 0 ? doc.VatAmount / doc.TotalAmount : 0m;
+        var realizeRefundedBase = Math.Round(
+            doc.DepositRefundedAmount * (1 - realizeVatPortion), 2, MidpointRounding.AwayFromZero);
+        var outstanding = doc.SubTotal - doc.DepositRealizedAmount - realizeRefundedBase;
         if (request.Amount <= 0)
             throw new InvalidOperationException("จำนวนเงินที่รับรู้ต้องมากกว่า 0");
         if (request.Amount > outstanding + 0.005m)
             throw new InvalidOperationException(
-                $"รับรู้เกินยอดมัดจำคงค้าง (คงค้าง {outstanding:N2}, ขอรับรู้ {request.Amount:N2})");
+                $"รับรู้เกินยอดมัดจำคงค้าง (คงค้าง {Math.Max(0, outstanding):N2}, ขอรับรู้ {request.Amount:N2}) — "
+                + $"รับรู้แล้ว {doc.DepositRealizedAmount:N2}, คืนแล้ว {realizeRefundedBase:N2}");
 
         // GL-driven: Dr ผังหนี้สินมัดจำจริงที่ใบนี้ Cr ไว้ (เช่น 21510) — ไม่เดา 21712
         var deferredAcc = await ResolveDepositBaseAccountAsync(companyId, doc.Id)
@@ -2538,17 +2568,56 @@ public class DocumentService : IDocumentService
         return updated;
     }
 
+    /// <summary>นำมัดจำมาตัดชำระใบแจ้งหนี้ — ห่อ transaction + ล็อกแถวทั้งใบมัดจำและ
+    /// ใบแจ้งหนี้ก่อนอ่านยอด: guard over-apply อ่าน DepositRealizedAmount/BalanceDue
+    /// แล้วเขียนทีหลัง ถ้าไม่ล็อก สองคำขอพร้อมกัน (กดปุ่มซ้ำ/สองแท็บ) จะผ่าน guard
+    /// ทั้งคู่ → 217xx ติดลบ + PaidAmount เกินยอดใบ. อีกทั้ง GetNextJournalEntryNumberAsync
+    /// ใช้ pg_advisory_xact_lock ซึ่งปล่อยทันทีเมื่อไม่มี transaction → เลข JV ซ้ำ</summary>
     public async Task<DocumentResponse> ApplyDepositToInvoiceAsync(
+        Guid companyId, Guid invoiceId, ApplyDepositRequest request, string actor)
+    {
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                // ล็อกทั้งสองแถวเรียงตาม Id คงที่ (กัน deadlock เมื่อสองคำขอสลับคู่กัน)
+                var lockIds = new[] { invoiceId, request.DepositDocumentId }
+                    .OrderBy(x => x).ToArray();
+                foreach (var lid in lockIds)
+                {
+                    await _db.Database.ExecuteSqlRawAsync(
+                        "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                        lid, companyId);
+                }
+
+                var result = await ApplyDepositToInvoiceCoreAsync(companyId, invoiceId, request, actor);
+                await tx.CommitAsync();
+                return result;
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        });
+    }
+
+    private async Task<DocumentResponse> ApplyDepositToInvoiceCoreAsync(
         Guid companyId, Guid invoiceId, ApplyDepositRequest request, string actor)
     {
         var invoice = await _db.Documents
             .FirstOrDefaultAsync(d => d.Id == invoiceId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบแจ้งหนี้");
+        // อ่านค่าล่าสุดใต้ lock — entity อาจถูก track ไว้ก่อนเปิด transaction
+        await _db.Entry(invoice).ReloadAsync();
         await _db.HydrateContactAsync(companyId, invoice);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
         var deposit = await _db.Documents
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == request.DepositDocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสารมัดจำ");
+        await _db.Entry(deposit).ReloadAsync();   // ยอด Realized/Refunded ล่าสุดใต้ lock
         await _db.HydrateContactAsync(companyId, deposit);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
         if (!deposit.IsDeposit)
             throw new InvalidOperationException("เอกสารที่อ้างไม่ใช่เงินมัดจำ");
@@ -4205,13 +4274,43 @@ public class DocumentService : IDocumentService
                 // 1) Void linked Payments first — each reverses its own JE + restores doc balance
                 //    (We void *all* payments inside this transaction; the document gets voided
                 //    after, so payment-balance recalculation here is intermediate only.)
-                var payments = await _db.Payments
-                    .Where(p => p.DocumentId == documentId && p.CompanyId == companyId && !p.IsDeleted)
+                // ⚠️ ต้องหา payment ที่ผูกใบนี้ "ผ่าน PaymentAllocation" ด้วย —
+                // multi-doc payment ตั้ง Payment.DocumentId = ใบแรกเท่านั้น ใบที่ 2
+                // เป็นต้นไปผูกผ่าน allocation: เดิมหาไม่เจอ → ข้าม reverse → ยอด
+                // ธนาคารค้างสูงถาวรทั้งที่ GL ฝั่งเอกสารถูกกลับไปแล้ว
+                var allocPaymentIds = await _db.PaymentAllocations
+                    .Where(a => a.DocumentId == documentId && a.CompanyId == companyId && !a.IsDeleted)
+                    .Select(a => a.PaymentId)
+                    .Distinct()
                     .ToListAsync();
+
+                var payments = await _db.Payments
+                    .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                        && (p.DocumentId == documentId || allocPaymentIds.Contains(p.Id)))
+                    .ToListAsync();
+
                 foreach (var payment in payments)
                 {
-                    await ReversePaymentInternalAsync(companyId, payment, doc,
-                        $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}");
+                    // เงินก้อนเดียวจัดสรรหลายใบ: ยกเลิกใบเดียวแล้วแกะเงินออกบางส่วน
+                    // ทำให้ยอดเช็ค/allocation ที่เหลือไม่ตรงกับเงินที่รับ-จ่ายจริง
+                    // → บังคับให้ยกเลิก "การชำระเงินทั้งใบ" ก่อน แล้วค่อยจัดสรรใหม่
+                    // (ทางบัญชี: เงินยังอยู่ ต้องคืนเข้ากองเงินรอจัดสรร ไม่ใช่หายไป)
+                    var otherDocs = await _db.PaymentAllocations
+                        .CountAsync(a => a.PaymentId == payment.Id && a.CompanyId == companyId
+                            && !a.IsDeleted && a.DocumentId != documentId);
+                    if (otherDocs > 0)
+                        throw new InvalidOperationException(
+                            $"เอกสารนี้ถูกชำระร่วมกับเอกสารอื่นในใบรับ/จ่ายเงินเดียวกัน ({payment.PaymentNumber}) — "
+                            + "กรุณายกเลิกการชำระเงินใบนั้นทั้งใบก่อน แล้วจึงยกเลิกเอกสารและจัดสรรเงินใหม่");
+
+                    var hasOwnAllocations = await _db.PaymentAllocations
+                        .AnyAsync(a => a.PaymentId == payment.Id && a.CompanyId == companyId && !a.IsDeleted);
+                    if (hasOwnAllocations)
+                        await ReverseMultiDocPaymentInternalAsync(companyId, payment,
+                            $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}");
+                    else
+                        await ReversePaymentInternalAsync(companyId, payment, doc,
+                            $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}");
                 }
 
                 // 2) Reverse linked Posted JEs via AccountingService (proper linkage:
@@ -5308,7 +5407,16 @@ public class DocumentService : IDocumentService
                     return;
                 }
 
-                await ReversePaymentInternalAsync(companyId, locked, doc, "ยกเลิกการชำระเงิน");
+                // Multi-doc payment (เงินก้อนเดียวจัดสรรหลายใบ) ต้องใช้ path เฉพาะ:
+                // JE ใช้ Reference "{PayNo}/{i}" และยอดต้องคืนรายใบตาม allocation —
+                // เดิมวิ่งเข้า path ใบเดียวแล้วหา JE ไม่เจอ → throw หรือหักยอดใบแรก
+                // ด้วยยอดเช็คทั้งใบ
+                var hasAllocations = await _db.PaymentAllocations
+                    .AnyAsync(a => a.PaymentId == locked.Id && a.CompanyId == companyId && !a.IsDeleted);
+                if (hasAllocations)
+                    await ReverseMultiDocPaymentInternalAsync(companyId, locked, "ยกเลิกการชำระเงิน");
+                else
+                    await ReversePaymentInternalAsync(companyId, locked, doc, "ยกเลิกการชำระเงิน");
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
             }
@@ -5468,11 +5576,16 @@ public class DocumentService : IDocumentService
     {
         // Reverse linked JEs created from this payment.
         // Payment JEs are linked via SourceDocumentId = doc.Id with a Reference matching payment.PaymentNumber.
+        // รองรับ Reference แบบมี suffix "{PayNo}/{i}" ด้วย — ข้อมูลเก่าที่เคยเป็น
+        // multi-doc payment แล้ว allocation ถูกลบไปแล้วยังเหลือ JE รูปแบบนั้นอยู่
         var paymentJournals = await _db.JournalEntries
             .Where(j => j.SourceDocumentId == doc.Id
                 && j.CompanyId == companyId
                 && j.Status == JournalEntryStatus.Posted
-                && j.Reference == payment.PaymentNumber)
+                && j.OriginalEntryId == null
+                && j.Reference != null
+                && (j.Reference == payment.PaymentNumber
+                    || j.Reference.StartsWith(payment.PaymentNumber + "/")))
             .Select(j => j.Id)
             .ToListAsync();
 
@@ -5574,6 +5687,143 @@ public class DocumentService : IDocumentService
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Internal: กลับรายการ "ใบรับ/จ่ายเงินที่จัดสรรหลายเอกสาร" (multi-doc payment)
+    /// ภายใน transaction ที่เปิดไว้แล้ว — ต่างจาก <see cref="ReversePaymentInternalAsync"/>
+    /// ตรงที่เงิน 1 ก้อนผูกหลายใบผ่าน <c>PaymentAllocation</c>:
+    /// <list type="bullet">
+    /// <item>JE ของแต่ละ allocation ใช้ Reference <c>{PaymentNumber}/{index}</c> และ JE
+    /// เงินส่วนเกินใช้ <c>{PaymentNumber}</c> เปล่า — ต้องกลับทั้งสองแบบ</item>
+    /// <item>คืนยอด <c>PaidAmount</c> ให้แต่ละเอกสาร "ตามยอด allocation ของใบนั้น"
+    /// ไม่ใช่ยอดเช็คทั้งใบ</item>
+    /// <item>คืนยอดธนาคารครั้งเดียวด้วยยอด THB รวม (คำนวณด้วยสูตรเดียวกับตอนสร้าง)</item>
+    /// </list>
+    /// Caller รับผิดชอบ transaction + SaveChangesAsync.
+    /// </summary>
+    private async Task ReverseMultiDocPaymentInternalAsync(Guid companyId, Payment payment, string reason)
+    {
+        var allocations = await _db.PaymentAllocations
+            .Where(a => a.PaymentId == payment.Id && a.CompanyId == companyId && !a.IsDeleted)
+            .ToListAsync();
+
+        var docIds = allocations.Select(a => a.DocumentId).Distinct().ToList();
+        var docs = await _db.Documents
+            .Where(d => docIds.Contains(d.Id) && d.CompanyId == companyId)
+            .ToListAsync();
+        var docMap = docs.ToDictionary(d => d.Id);
+
+        // 1) กลับ JE ทุกใบของ payment นี้ — ทั้งราย allocation ({PayNo}/{i})
+        //    และ JE เงินส่วนเกินยังไม่จัดสรร ({PayNo} เปล่า ซึ่งไม่มี SourceDocumentId
+        //    จึงหลุด selection ที่กรองด้วย SourceDocumentId). กรอง OriginalEntryId
+        //    == null กันการกลับ "รายการกลับ" ซ้ำ
+        var pn = payment.PaymentNumber;
+        var journalIds = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted
+                && j.OriginalEntryId == null
+                && j.Reference != null
+                && (j.Reference == pn || j.Reference.StartsWith(pn + "/")))
+            .Select(j => j.Id)
+            .ToListAsync();
+
+        foreach (var jeId in journalIds)
+        {
+            await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                reversalDate: DateTime.UtcNow.Date,
+                description: $"{reason} - {pn}",
+                systemTriggered: true);
+        }
+
+        // 2) คืนยอดธนาคาร — ยอด THB รวมคำนวณด้วยสูตรเดียวกับ CreateMultiDocPaymentAsync
+        //    (แปลง FX ราย allocation แล้วบวกส่วนเกินที่ยังไม่จัดสรร) มิฉะนั้นยอด
+        //    ธนาคารกลับไม่เท่าที่บวกไว้ตอนรับ/จ่าย
+        if (payment.BankAccountId.HasValue && docs.Count > 0)
+        {
+            decimal thbMoved = 0m;
+            decimal allocSum = 0m;
+            foreach (var alloc in allocations)
+            {
+                if (!docMap.TryGetValue(alloc.DocumentId, out var ad)) continue;
+                var fx = payment.ExchangeRate ?? ad.ExchangeRate;
+                thbMoved += fx == 1m
+                    ? alloc.AllocatedAmount
+                    : Math.Round(alloc.AllocatedAmount * fx, 2, MidpointRounding.AwayFromZero);
+                allocSum += alloc.AllocatedAmount;
+            }
+            var unapplied = payment.Amount - allocSum;
+            if (unapplied > 0.005m)
+            {
+                var upFx = payment.ExchangeRate ?? docs[0].ExchangeRate;
+                thbMoved += upFx == 1m
+                    ? unapplied
+                    : Math.Round(unapplied * upFx, 2, MidpointRounding.AwayFromZero);
+            }
+
+            var isInflow = await IsCashInflowDocAsync(companyId, docs[0]);
+            var delta = isInflow ? -thbMoved : thbMoved;
+            await _db.BankAccounts
+                .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + delta));
+        }
+
+        // 3) คืนยอดค้างชำระ "ตามยอด allocation ของแต่ละใบ"
+        foreach (var alloc in allocations)
+        {
+            if (!docMap.TryGetValue(alloc.DocumentId, out var ad)) continue;
+            ad.PaidAmount = Math.Max(0m, ad.PaidAmount - alloc.AllocatedAmount);
+            ad.BalanceDue = ad.TotalAmount - ad.PaidAmount;
+            if (ad.Status != DocumentStatus.Voided)
+            {
+                ad.Status = ad.PaidAmount <= 0 ? DocumentStatus.Approved
+                    : ad.BalanceDue <= 0 ? DocumentStatus.Paid
+                    : DocumentStatus.PartiallyPaid;
+            }
+            ad.UpdatedAt = DateTime.UtcNow;
+            alloc.IsDeleted = true;
+            alloc.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // 4) ใบเสร็จหลักฐานที่ออกคู่กับการชำระ (evidence-only ไม่มี JE)
+        if (payment.ReceiptDocumentId.HasValue)
+        {
+            var rcpt = await _db.Documents.FirstOrDefaultAsync(d =>
+                d.Id == payment.ReceiptDocumentId.Value && d.CompanyId == companyId);
+            if (rcpt is { IsSettlementReceipt: true })
+            {
+                rcpt.Status = DocumentStatus.Voided;
+                rcpt.IsDeleted = true;
+                rcpt.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        // 5) 50 ทวิ ที่ auto-สร้างจากการจ่ายนี้ — Draft ยกเลิกได้, Issued ต้องแจ้ง
+        if (payment.WithholdingTaxAmount > 0)
+        {
+            var certs = await _db.WithholdingTaxCerts
+                .Where(w => w.CompanyId == companyId && w.DocumentId != null
+                    && docIds.Contains(w.DocumentId.Value)
+                    && w.Status != WithholdingTaxCertStatus.Voided)
+                .ToListAsync();
+            foreach (var cert in certs)
+            {
+                if (cert.Status == WithholdingTaxCertStatus.Draft)
+                {
+                    cert.Status = WithholdingTaxCertStatus.Voided;
+                    cert.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "VoidPayment {PayNo}: หนังสือรับรอง 50 ทวิ {Cert} สถานะ {Status} ยังไม่ถูกยกเลิก — ออกให้ผู้ถูกหักแล้ว กรุณายกเลิก/ออกใหม่ด้วยตนเอง",
+                        pn, cert.CertificateNumber, cert.Status);
+                }
+            }
+        }
+
+        payment.IsDeleted = true;
+        payment.UpdatedAt = DateTime.UtcNow;
     }
 
     /// <summary>
