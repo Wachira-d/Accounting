@@ -350,6 +350,11 @@
         const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const dstr = s => { try { return s ? new Date(s).toLocaleDateString('th-TH') : ''; } catch { return ''; } };
         const sideOf = ln => { const c = ln.incomeTypeCode; if (c === 'INPUT' || c === 'JE_INPUT') return 'input'; if (c === 'EXEMPT' || c === 'VAT_CREDIT_CF') return 'summary'; return 'output'; };
+        // §87: แบบพิมพ์ราชการต้องเรียงตามวันที่ใบกำกับ — server เรียง LineOrder
+        // ให้แล้ว แต่ sort ซ้ำฝั่ง client เพื่อให้รายงานเก่า (generate ก่อนแก้)
+        // พิมพ์ออกมาถูกลำดับทันทีโดยไม่ต้อง regenerate
+        const byDate = rows => rows.slice().sort((a, b) =>
+          new Date(a.transactionDate || 0) - new Date(b.transactionDate || 0));
         const lines = (d.lines || []).filter(l => !l.isExcluded);
         const formTable = (title, rows, partyLabel) => {
           let i = 0, sumBase = 0, sumTax = 0;
@@ -375,8 +380,8 @@
           .print-btn{margin:10px 0;padding:8px 18px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px}
           @media print{.noprint{display:none}}</style></head><body>
           <div class="noprint"><button class="print-btn" onclick="window.print()">🖨 พิมพ์ / บันทึกเป็น PDF</button></div>
-          ${formTable('รายงานภาษีขาย', lines.filter(l => sideOf(l) === 'output'), 'ชื่อผู้ซื้อสินค้า/ผู้รับบริการ')}
-          ${formTable('รายงานภาษีซื้อ', lines.filter(l => sideOf(l) === 'input'), 'ชื่อผู้ขายสินค้า/ผู้ให้บริการ')}
+          ${formTable('รายงานภาษีขาย', byDate(lines.filter(l => sideOf(l) === 'output')), 'ชื่อผู้ซื้อสินค้า/ผู้รับบริการ')}
+          ${formTable('รายงานภาษีซื้อ', byDate(lines.filter(l => sideOf(l) === 'input')), 'ชื่อผู้ขายสินค้า/ผู้ให้บริการ')}
           <scr` + `ipt>window.onload=function(){setTimeout(function(){try{window.print()}catch(e){}},400)}</scr` + `ipt></body></html>`;
         const w = window.open('', '_blank');
         if (!w) { Layout.toast('เปิดหน้าต่างพิมพ์ไม่ได้ — กรุณาอนุญาต popup', 'error'); return; }
@@ -501,7 +506,12 @@
                 ['summary', '➖ รายการยกเว้น / เครดิตยกมา', '#64748b'],
               ];
               for (const [key, title, color] of groups) {
-                const rows = d.lines.filter(l => sideOf(l) === key);
+                let rows = d.lines.filter(l => sideOf(l) === key);
+                // §87 ลำดับเวลา — sort ซ้ำฝั่ง client ให้รายงานเก่าที่ generate
+                // ก่อนแก้แสดงถูกลำดับทันที (บรรทัดสรุปคงลำดับเดิม)
+                if (key !== 'summary')
+                  rows = rows.slice().sort((a, b) =>
+                    new Date(a.transactionDate || 0) - new Date(b.transactionDate || 0));
                 if (!rows.length) continue;
                 // ภาษีขาย/ภาษีซื้อ → ฟอร์มราชการ §87; รายการยกเว้น/เครดิต → ตารางย่อ
                 html += (key === 'summary') ? renderTable(title, color, rows) : renderVatTable(title, color, rows);

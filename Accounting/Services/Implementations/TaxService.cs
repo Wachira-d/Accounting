@@ -74,6 +74,7 @@ public partial class TaxService : ITaxService
             {
                 await GenerateVatReport(companyId, startDate, endDate, report);
                 await ApplyVatDeferralsAsync(companyId, request.Year, request.Month, report);
+                NormalizeReportLineOrder(report);   // §87 — deferral เพิ่มบรรทัดหลัง generate
             }
             else if (request.TaxType == TaxType.WithholdingTax3
                   || request.TaxType == TaxType.WithholdingTax53
@@ -1154,6 +1155,41 @@ public partial class TaxService : ITaxService
         report.OutputVat = outputVat;
         report.InputVat = inputVat + vatCreditCarryforward;
         report.NetVat = outputVat - inputVat - vatCreditCarryforward;
+
+        // §87: รายงานภาษีซื้อ/ขายต้องลงตาม "ลำดับเวลา" — เรียง + renumber ท้ายสุด
+        NormalizeReportLineOrder(report);
+    }
+
+    /// <summary>§87 (ป.รัษฎากร): รายงานภาษีขาย/ซื้อต้องลงรายการ "ตามลำดับ
+    /// วันที่" ห้ามสลับ — เดิม LineOrder ไล่ตามลำดับที่ query คืนเอกสารมา
+    /// (ไม่มี OrderBy) → หน้าจอ/Excel/CSV แสดงวันที่สลับไปมา ผิดรูปแบบรายงาน
+    /// ตามกฎหมาย. เรียงเป็นกลุ่ม: ภาษีขาย → ภาษีซื้อ → บรรทัดสรุป (ยกเว้นภาษี/
+    /// เครดิตยกมา/สรุป) แต่ละกลุ่มเรียงตามวันที่ (ties = ลำดับเดิม เพื่อความ
+    /// เสถียร regenerate ได้ผลเดิม). ใช้กับ ภ.พ.30 + ภ.ง.ด.3/53 (CIT ข้าม —
+    /// บรรทัดเป็นชุดสรุปที่ลำดับมีความหมายเอง).</summary>
+    internal static void NormalizeReportLineOrder(TaxReport report)
+    {
+        if (report.Lines == null || report.Lines.Count == 0) return;
+        if (report.TaxType == TaxType.CorporateIncomeTax) return;
+
+        static int Rank(TaxReportLine l) => l.IncomeTypeCode switch
+        {
+            "EXEMPT" or "VAT_CREDIT_CF" or "SUMMARY" or "TAX_CREDIT" => 2,  // ท้ายสุด
+            "INPUT" or "JE_INPUT" => 1,                                      // ภาษีซื้อ
+            _ => 0,                                                          // ภาษีขาย/WHT
+        };
+
+        var ordered = report.Lines
+            .Select((Line, Idx) => (Line, Idx))
+            .OrderBy(x => Rank(x.Line))
+            // บรรทัดสรุปไม่มีวันที่จริง → คงลำดับเดิม (ไม่เอา MinValue ไปเรียง)
+            .ThenBy(x => Rank(x.Line) == 2 ? 0L : x.Line.TransactionDate.Date.Ticks)
+            .ThenBy(x => x.Idx)
+            .Select(x => x.Line)
+            .ToList();
+
+        var n = 1;
+        foreach (var l in ordered) l.LineOrder = n++;
     }
 
     /// <summary>คำนวณรายงานภาษีมูลค่าเพิ่ม (ภ.พ.30) เป็น TaxReport ชั่วคราว
@@ -1179,6 +1215,7 @@ public partial class TaxService : ITaxService
         // Deferral ต้องเข้าไฟล์ยื่นด้วย (จอกับไฟล์ต้องตรงกัน) — โหมด preview:
         // markClaims=false ห้ามไป stamp ClaimedAt กับ report ชั่วคราวที่ไม่ persist
         await ApplyVatDeferralsAsync(companyId, year, month, report, markClaims: false);
+        NormalizeReportLineOrder(report);   // §87 ลำดับเวลา (ไฟล์ยื่น = จอ)
         return report;
     }
 
@@ -1304,6 +1341,8 @@ public partial class TaxService : ITaxService
 
         report.TotalIncome = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.IncomeAmount);
         report.TotalTaxWithheld = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.TaxAmount);
+        // ใบแนบ ภ.ง.ด.3/53 เรียงตามวันที่จ่ายเหมือนกัน (ตรวจง่าย + ตรงแบบยื่น)
+        NormalizeReportLineOrder(report);
     }
 
     private async Task GenerateCitReport(Guid companyId, int year, TaxReport report)
@@ -2178,6 +2217,7 @@ public partial class TaxService : ITaxService
         });
 
         RecalcVatTotals(report);
+        NormalizeReportLineOrder(report);   // §87 — แทรกบรรทัดที่ดึงมาให้ตรงลำดับวันที่
         report.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return MapToResponse(report);
@@ -2351,6 +2391,7 @@ public partial class TaxService : ITaxService
                 if (changed)
                 {
                     RecalcVatTotals(fresh);
+                    NormalizeReportLineOrder(fresh);   // §87 — บรรทัด pull ที่คืนมาต้องเข้าลำดับวันที่
                     fresh.UpdatedAt = DateTime.UtcNow;
                     await _db.SaveChangesAsync();
                     return MapToResponse(fresh);
