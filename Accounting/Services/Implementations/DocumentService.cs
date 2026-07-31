@@ -6960,6 +6960,17 @@ public class DocumentService : IDocumentService
         var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
 
+        // ⚠️ ชื่อ/เลขภาษี = "ตัวตน" ของคู่ค้า ไม่ใช่ข้อมูลติดต่อธรรมดา: รายงาน
+        // ภาษีซื้อ/ขายถ่าย snapshot จาก contact ตอน generate ดังนั้นการแก้ 2 field
+        // นี้ทำให้ "เอกสารเก่าทุกใบ" ของรายนี้เปลี่ยนชื่อ/เลขภาษีตามย้อนหลัง และ
+        // รายงานที่ regenerate ใหม่จะไม่ตรงกับกระดาษที่ยื่นไปแล้ว (§87). เดิมแก้
+        // ได้เงียบ ๆ ไม่มีร่องรอย → สอบสวนย้อนหลังไม่ได้ว่าใครเปลี่ยนเมื่อไร
+        var identityBefore = new { contact.Name, contact.TaxId, contact.BranchCode };
+        var identityChanged =
+            (request.Name != null && request.Name != contact.Name)
+            || (request.TaxId != null && NormalizeTaxDigits(request.TaxId) != NormalizeTaxDigits(contact.TaxId))
+            || (request.BranchCode != null && NormalizeBranchCode(request.BranchCode) != NormalizeBranchCode(contact.BranchCode));
+
         if (request.Name != null) contact.Name = request.Name;
         if (request.TaxId != null) contact.TaxId = request.TaxId;
         if (request.BranchCode != null) contact.BranchCode = request.BranchCode;
@@ -7004,6 +7015,28 @@ public class DocumentService : IDocumentService
             contact.PaymentDueDays = request.PaymentDueDays.Value < 0 ? null : request.PaymentDueDays.Value;
         if (request.PaymentTerms != null)
             contact.PaymentTerms = string.IsNullOrWhiteSpace(request.PaymentTerms) ? null : request.PaymentTerms.Trim();
+
+        // ร่องรอยการเปลี่ยน "ตัวตน" — append-only ตาม cross-cutting invariant
+        // (ดู CLAUDE.md §M) พร้อมจำนวนเอกสารที่ได้รับผลกระทบย้อนหลัง
+        if (identityChanged)
+        {
+            var affected = await _db.Documents.AsNoTracking()
+                .CountAsync(d => d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted);
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                Action = AuditAction.Update,
+                EntityType = "ContactIdentity",
+                EntityId = contactId.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(identityBefore),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                { contact.Name, contact.TaxId, contact.BranchCode, documentsAffected = affected }),
+                Timestamp = DateTime.UtcNow,
+            });
+            _logger.LogWarning("Contact identity changed {Id}: '{OldName}'/{OldTax} → '{NewName}'/{NewTax} "
+                + "— กระทบเอกสารย้อนหลัง {N} ใบ",
+                contactId, identityBefore.Name, identityBefore.TaxId, contact.Name, contact.TaxId, affected);
+        }
 
         await _db.SaveChangesAsync();
         // Reload with nav properties so MapContactToResponse can emit

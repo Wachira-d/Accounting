@@ -57,3 +57,10 @@ SELECT d."DocumentNumber", d."DocumentDate", c."Name", c."IsDeleted"
 FROM "Documents" d JOIN "Contacts" c ON c."Id" = d."ContactId"
 WHERE d."CompanyId" = :CID AND c."IsDeleted" = true
 ORDER BY d."DocumentDate" DESC LIMIT 30;
+
+-- 8) ⭐ ใครเปลี่ยน "ชื่อ/เลขภาษี" ของผู้ติดต่อ และกระทบเอกสารกี่ใบ
+--    (มีข้อมูลตั้งแต่ commit ที่เพิ่ม audit นี้เป็นต้นไป — เคสเก่าดู UpdatedAt/UpdatedBy ใน query 5)
+SELECT "Timestamp", "EntityId" AS contact_id, "OldValues", "NewValues"
+FROM "AuditLogs"
+WHERE "CompanyId" = :CID AND "EntityType" = 'ContactIdentity'
+ORDER BY "Timestamp" DESC;
