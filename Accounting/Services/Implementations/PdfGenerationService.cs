@@ -1007,6 +1007,24 @@ public partial class PdfGenerationService : IPdfGenerationService
     ///   • มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ (ไม่ upgrade เป็นใบกำกับ)
     ///   • มัดจำ → ต่อท้าย "(เงินมัดจำ)"
     /// ทุกหัว (พื้นฐาน + เงื่อนไข) override ได้ผ่าน CompanySettings.DocumentTitleOverridesJson</summary>
+    /// <summary>ภาษาของเอกสารที่ออก เรียงตามความจำเพาะ: คำขอครั้งนี้ →
+    /// ตรึงไว้กับใบ → เทมเพลต → ค่าตั้งต้นของบริษัท → ไทย.
+    /// ศูนย์กลางเดียว — ทุก renderer ต้องเรียกตัวนี้ ห้ามคำนวณเอง</summary>
+    internal static string ResolveDocumentLanguage(
+        string? requestLanguage, Document? doc, DocumentTemplate? template, CompanySettings? settings)
+    {
+        static string? Clean(string? s)
+        {
+            var v = s?.Trim().ToLowerInvariant();
+            return v is "th" or "en" ? v : null;
+        }
+        return Clean(requestLanguage)
+            ?? Clean(doc?.DocumentLanguage)
+            ?? Clean(template?.Language)
+            ?? Clean(settings?.DocumentLanguage)
+            ?? "th";
+    }
+
     internal static string ComputeDocumentTitle(Document doc, DocumentTemplate template, CompanySettings? settings, string lang)
     {
         var isEn = lang == "en";
@@ -1061,6 +1079,17 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         if (doc.IsDeposit)
             title += isEn ? " (Deposit)" : " " + Ov("DepositSuffix", "(เงินมัดจำ)");
+
+        // §86/4 บังคับให้เอกสารที่ใช้เคลมภาษีซื้อในไทยมีคำว่า "ใบกำกับภาษี" เป็น
+        // ภาษาไทยบนหัวกระดาษ — โหมดอังกฤษจึงพิมพ์สองภาษา "English / ไทย" ไม่ใช่
+        // ตัดไทยทิ้ง (ตัดทิ้ง = ใบกำกับไม่สมบูรณ์ ผู้ซื้อเคลมไม่ได้ §82/5(1)).
+        // ใบที่ไม่ใช่เอกสารภาษี (ใบเสนอราคา/ใบสั่งซื้อ ฯลฯ) ใช้อังกฤษล้วนได้
+        if (isEn && doc.VatAmount > 0)
+        {
+            var thaiTitle = ComputeDocumentTitle(doc, template, settings, "th");
+            if (thaiTitle.Contains("ใบกำกับภาษี") && !title.Contains("ใบกำกับภาษี"))
+                title = $"{title} / {thaiTitle}";
+        }
         return title;
     }
 
@@ -1155,7 +1184,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
         IReadOnlyList<(string RefNo, decimal Amount)>? depositApplies = null)
     {
-        var lang = langOverride ?? template.Language;
+        var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
+        var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
         var sb = new StringBuilder();
 
         var layout = SanitizeLayout(template.LayoutStyle);
@@ -1257,10 +1287,10 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         // Document Info
         sb.AppendLine("<div class='doc-info'>");
-        if (template.ShowDocumentNumber) sb.AppendLine($"<div>เลขที่: {doc.DocumentNumber}</div>");
-        if (template.ShowDocumentDate) sb.AppendLine($"<div>วันที่: {doc.DocumentDate:dd/MM/yyyy}</div>");
-        if (template.ShowDueDate && doc.DueDate.HasValue) sb.AppendLine($"<div>ครบกำหนด: {doc.DueDate:dd/MM/yyyy}</div>");
-        if (template.ShowReference && doc.DisplayReference != null) sb.AppendLine($"<div>อ้างอิง: {doc.DisplayReference}</div>");
+        if (template.ShowDocumentNumber) sb.AppendLine($"<div>{L.DocNumber}: {doc.DocumentNumber}</div>");
+        if (template.ShowDocumentDate) sb.AppendLine($"<div>{L.DocDate}: {L.Date(doc.DocumentDate)}</div>");
+        if (template.ShowDueDate && doc.DueDate.HasValue) sb.AppendLine($"<div>{L.DueDate}: {L.Date(doc.DueDate!.Value)}</div>");
+        if (template.ShowReference && doc.DisplayReference != null) sb.AppendLine($"<div>{L.Reference}: {doc.DisplayReference}</div>");
         sb.AppendLine("</div>");
 
         // Contact — หัวกล่องตามประเภทเอกสาร (PV = "ผู้รับเงิน" ไม่ใช่ "ลูกค้า")
@@ -1317,18 +1347,18 @@ public partial class PdfGenerationService : IPdfGenerationService
             var adjOrigDate = doc.AdjustmentOriginalDate?.ToString("dd/MM/yyyy") ?? "-";
             sb.AppendLine("<div style='margin:8px 0;padding:6px 10px;border:1px solid #D1D5DB;background:#FFFBEB;font-size:11px'>");
             sb.AppendLine($"<div style='font-weight:bold'>อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{(isCnBox ? "10" : "9")})</div>");
-            sb.AppendLine($"<div>เลขที่ {WebUtility.HtmlEncode(doc.AdjustmentOriginalNumber)}  ลงวันที่ {adjOrigDate}</div>");
+            sb.AppendLine($"<div>{string.Format(L.CnOriginalNumber, WebUtility.HtmlEncode(doc.AdjustmentOriginalNumber), adjOrigDate)}</div>");
             sb.AppendLine($"<div>มูลค่าตามใบเดิม: {adjOrigBase:N2} &nbsp;|&nbsp; มูลค่าที่ถูกต้อง: {adjCorrected:N2} &nbsp;|&nbsp; <b>ผลต่าง ({(isCnBox ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}</b></div>");
             sb.AppendLine("</div>");
         }
 
         sb.AppendLine("<table class='items-table'><thead><tr>");
         if (template.ShowLineNumber) sb.AppendLine("<th class='center'>#</th>");
-        sb.AppendLine("<th>รายการ</th>");
-        sb.AppendLine("<th class='right'>จำนวน</th>");
-        if (template.ShowUnit) sb.AppendLine("<th class='center'>หน่วย</th>");
+        sb.AppendLine($"<th>{L.ColItem}</th>");
+        sb.AppendLine($"<th class='right'>{L.ColQty}</th>");
+        if (template.ShowUnit) sb.AppendLine($"<th class='center'>{L.ColUnit}</th>");
         sb.AppendLine($"<th class='right'>{priceLbl}</th>");
-        if (template.ShowDiscount) sb.AppendLine("<th class='right'>ส่วนลด</th>");
+        if (template.ShowDiscount) sb.AppendLine($"<th class='right'>{L.ColDiscount}</th>");
         sb.AppendLine($"<th class='right'>{amountLbl}</th>");
         sb.AppendLine("</tr></thead><tbody>");
 
@@ -1369,27 +1399,27 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ส่วนลดท้ายบิล: SubTotal เก็บเป็นยอด "หลังหักท้ายบิล" → แสดง "ยอดรวมก่อน VAT"
         // เป็นยอดก่อนหัก (SubTotal + BillDiscount) แล้วโชว์บรรทัด "ส่วนลดท้ายบิล"
         var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
-        if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{preBillSubTotal:N2}</span></div>");
-        if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดรวม</span><span>{doc.DiscountAmount:N2}</span></div>");
+        if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{L.TotalSubtotal}</span><span>{preBillSubTotal:N2}</span></div>");
+        if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalDiscount}</span><span>{doc.DiscountAmount:N2}</span></div>");
         if (doc.BillDiscountAmount > 0)
         {
-            sb.AppendLine($"<div class='sum-row'><span>ส่วนลดท้ายบิล</span><span>({doc.BillDiscountAmount:N2})</span></div>");
+            sb.AppendLine($"<div class='sum-row'><span>{L.TotalBillDiscount}</span><span>({doc.BillDiscountAmount:N2})</span></div>");
             // ยอดหลังหักส่วนลด = ฐานภาษี — ให้เห็นชัดว่า VAT/WHT คิดจากยอดนี้
             if (!hideVatBreakdown)
-                sb.AppendLine($"<div class='sum-row'><span>ยอดหลังหักส่วนลด (ฐานภาษี)</span><span>{doc.SubTotal:N2}</span></div>");
+                sb.AppendLine($"<div class='sum-row'><span>{L.TotalAfterDiscountBase}</span><span>{doc.SubTotal:N2}</span></div>");
         }
-        if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
-        if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีหัก ณ ที่จ่าย</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
+        if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{L.TotalVat} 7%</span><span>{doc.VatAmount:N2}</span></div>");
+        if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalWht}</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
         // หักเงินมัดจำ (display-only): ยอดรวมทั้งสิ้น → หักมัดจำ (แตกบรรทัดต่อใบถ้า
         // หลายใบ ยอดต่อใบจาก apply JE จริง) → ยอดชำระสุทธิ
         if (doc.DepositAppliedAmount > 0)
         {
-            sb.AppendLine($"<div class='sum-row'><span>ยอดรวมทั้งสิ้น</span><span>{doc.TotalAmount:N2}</span></div>");
+            sb.AppendLine($"<div class='sum-row'><span>{L.TotalGrand}</span><span>{doc.TotalAmount:N2}</span></div>");
             if (depositApplies != null && depositApplies.Count > 1)
             {
                 // หลายใบ → บรรทัดต่อใบ (เลข + ยอดต่อใบจาก apply JE จริง)
                 foreach (var da in depositApplies)
-                    sb.AppendLine($"<div class='sum-row'><span>หักเงินมัดจำ ({WebUtility.HtmlEncode(da.RefNo)})</span><span>({da.Amount:N2})</span></div>");
+                    sb.AppendLine($"<div class='sum-row'><span>{L.TotalDepositApplied} ({WebUtility.HtmlEncode(da.RefNo)})</span><span>({da.Amount:N2})</span></div>");
             }
             else
             {
@@ -1397,10 +1427,10 @@ public partial class PdfGenerationService : IPdfGenerationService
                 var depLabel = string.IsNullOrWhiteSpace(doc.DepositAppliedRef) ? "หักเงินมัดจำ" : $"หักเงินมัดจำ ({WebUtility.HtmlEncode(doc.DepositAppliedRef)})";
                 sb.AppendLine($"<div class='sum-row'><span>{depLabel}</span><span>({doc.DepositAppliedAmount:N2})</span></div>");
             }
-            sb.AppendLine($"<div class='sum-row total'><span>ยอดชำระสุทธิ</span><span>{doc.TotalAmount - doc.DepositAppliedAmount:N2}</span></div>");
+            sb.AppendLine($"<div class='sum-row total'><span>{L.TotalNetPayable}</span><span>{doc.TotalAmount - doc.DepositAppliedAmount:N2}</span></div>");
         }
         else
-            sb.AppendLine($"<div class='sum-row total'><span>ยอดรวมสุทธิ</span><span>{doc.TotalAmount:N2}</span></div>");
+            sb.AppendLine($"<div class='sum-row total'><span>{L.TotalNet}</span><span>{doc.TotalAmount:N2}</span></div>");
 
         if (template.ShowAmountInWords)
         {
@@ -1421,7 +1451,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (!string.IsNullOrWhiteSpace(doc.CertificateReason))
                 sb.AppendLine($"<div><strong>เหตุผลที่ไม่ได้รับใบเสร็จ:</strong> {WebUtility.HtmlEncode(doc.CertificateReason)}</div>");
             if (doc.PaymentDate.HasValue)
-                sb.AppendLine($"<div><strong>วันที่จ่ายเงิน:</strong> {doc.PaymentDate:dd/MM/yyyy}</div>");
+                sb.AppendLine($"<div><strong>{L.PaymentDate}:</strong> {doc.PaymentDate:dd/MM/yyyy}</div>");
             sb.AppendLine("<div style='display:flex;gap:40px;margin-top:16px;'>");
             sb.AppendLine("<div style='flex:1;'>");
             sb.AppendLine($"<div><strong>ผู้รับรอง:</strong> {WebUtility.HtmlEncode(doc.CertifierName ?? "")}</div>");
@@ -1451,7 +1481,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // pre-line ให้ \n แสดงเป็นหลายบรรทัด
         var cleanNotesHtml = SanitizeNotesForPrint(doc.Notes);
         if (!string.IsNullOrWhiteSpace(cleanNotesHtml))
-            sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'><strong>หมายเหตุ:</strong> {System.Net.WebUtility.HtmlEncode(cleanNotesHtml)}</div>");
+            sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'><strong>{L.Notes}:</strong> {System.Net.WebUtility.HtmlEncode(cleanNotesHtml)}</div>");
 
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
             ? doc.CustomFooterNotes
@@ -1460,7 +1490,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine($"<div class='footer-notes'>{footerNotes}</div>");
 
         if (!string.IsNullOrWhiteSpace(doc.CustomTermsAndConditions))
-            sb.AppendLine($"<div class='terms-conditions'><strong>เงื่อนไข:</strong><br/>{doc.CustomTermsAndConditions}</div>");
+            sb.AppendLine($"<div class='terms-conditions'><strong>{L.Terms}:</strong><br/>{doc.CustomTermsAndConditions}</div>");
 
         // Signatures — slot[0] = creator, slot[1] = approver. Each slot
         // overlays the user's saved signature image on the line and prints

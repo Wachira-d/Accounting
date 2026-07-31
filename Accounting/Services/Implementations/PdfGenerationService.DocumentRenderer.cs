@@ -32,7 +32,8 @@ public partial class PdfGenerationService
         bool pdfA = false, string? pdfTitle = null, string? pdfAuthor = null)
     {
         EnsureThaiFontsRegistered();
-        var lang = langOverride ?? template.Language ?? "th";
+        var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
+        var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
         // ตราประทับบริษัท: ประทับเฉพาะเอกสารที่อนุมัติแล้ว (ผู้มีอำนาจอนุมัติ = ประทับตรา)
         // — เงื่อนไขเดียวกับช่องลายเซ็นผู้อนุมัติ (Draft/รออนุมัติ/ถูกปฏิเสธ = ไม่ประทับ)
         var stampAllowed = doc.Status is not (Accounting.Models.Enums.DocumentStatus.Draft
@@ -50,8 +51,8 @@ public partial class PdfGenerationService
         // หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) จาก resolver กลาง —
         // ตั้งเองได้ผ่าน settings; ใช้ร่วมกับ HTML renderer กัน logic drift
         var titleText = ComputeDocumentTitle(doc, template, settings, lang);
-        // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบกำกับ/ใบเสร็จภาษี. สำเนา
-        // ใช้ WatermarkOverride ("สำเนา") ตอนสั่งพิมพ์สำเนา → ไม่ต้องมีป้ายซ้อน.
+        // §86/4 เอกสารออกเป็นชุด — ระบุ ต้นฉบับ บนใบกำกับ/ใบเสร็จภาษี. สำเนา
+        // ใช้ WatermarkOverride (สำเนา) ตอนสั่งพิมพ์สำเนา → ไม่ต้องมีป้ายซ้อน.
         var isRd864Doc = doc.DocumentType is Accounting.Models.Enums.DocumentType.TaxInvoice
                 or Accounting.Models.Enums.DocumentType.DebitNote
                 or Accounting.Models.Enums.DocumentType.CreditNote
@@ -66,14 +67,13 @@ public partial class PdfGenerationService
         string? cornerLabel = null;
         if (cornerMode)
         {
-            if (isCopyPrint) cornerLabel = lang == "en" ? "COPY" : "สำเนา";
-            else cornerLabel = lang == "en" ? "Original" : "ต้นฉบับ";
+            cornerLabel = isCopyPrint ? L.CopyDuplicate : L.CopyOriginal;
         }
-        // ป้าย "ต้นฉบับ" แสดงทุกประเภทเอกสาร (กฎหมายบังคับเฉพาะเอกสารชุด
+        // ป้าย ต้นฉบับ แสดงทุกประเภทเอกสาร (กฎหมายบังคับเฉพาะเอกสารชุด
         // §86/4 แต่แนวปฏิบัติ PEAK/Flow พิมพ์ทุกใบ — ผู้ใช้แยกต้นฉบับ/สำเนา
         // ได้ทันทีโดยไม่ต้องเดา); custom title ยังต่อท้ายให้เว้นแต่โหมดมุม
         if (!isCopyPrint && cornerLabel == null)
-            titleText += lang == "en" ? "  (Original)" : "  (ต้นฉบับ)";
+            titleText += $"  ({L.CopyOriginal})";
         _ = isRd864Doc; // คงตัวแปรไว้ให้อ่าน context ด้านบนง่าย
 
         try
@@ -94,7 +94,7 @@ public partial class PdfGenerationService
                     var bodyFont = float.TryParse(template.BodyFontSize, out var bf) ? bf : 10f;
                     page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(bodyFont).FontColor(primary));
 
-                    // เอกสารที่ถูกยกเลิก (Voided) — ประทับตรา "ยกเลิก" สีแดง
+                    // เอกสารที่ถูกยกเลิก (Voided) — ประทับตรา ยกเลิก สีแดง
                     // **Foreground = ทับบนเนื้อหา** เหมือนตราประทับจริง (เดิมใช้
                     // Background → ตราไปอยู่หลังสุด ข้อมูลทับตรา = ดูเหมือนไม่ถูก
                     // ประทับ). สีโปร่ง 20% (#33) → เนื้อหายังอ่านทะลุได้ เก็บเป็น
@@ -104,7 +104,7 @@ public partial class PdfGenerationService
                         try
                         {
                             page.Foreground().AlignCenter().AlignMiddle()
-                                .Text("ยกเลิก").FontSize(96).FontColor("#33DC2626").Bold();
+                                .Text(L.StatusVoided).FontSize(96).FontColor("#33DC2626").Bold();
                         }
                         catch { }
                     }
@@ -144,14 +144,14 @@ public partial class PdfGenerationService
                                     .PaddingVertical(1).PaddingHorizontal(12)
                                     .Text(cornerLabel).FontSize(11).Bold().FontColor(accent);
                             });
-                        Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText));
-                        Safe(() => ComposeContact(col, doc, template, accent));
-                        Safe(() => ComposeAdjustmentRef(col, doc, accent));
-                        Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, layout, accent));
-                        Safe(() => ComposeSummary(col, doc, template, accent, layout));
-                        Safe(() => ComposeFooter(col, doc, template, accent));
+                        Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L));
+                        Safe(() => ComposeContact(col, doc, template, accent, L));
+                        Safe(() => ComposeAdjustmentRef(col, doc, accent, L));
+                        Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, L, layout, accent));
+                        Safe(() => ComposeSummary(col, doc, template, accent, layout, L));
+                        Safe(() => ComposeFooter(col, doc, template, accent, L));
                         Safe(() => ComposeSignatures(col, template, b, signers));
-                        Safe(() => ComposeGlPosting(col, gl, lang));
+                        Safe(() => ComposeGlPosting(col, gl, lang, L));
                     });
 
                     page.Footer().AlignRight().Text(t =>
@@ -229,7 +229,7 @@ public partial class PdfGenerationService
     // ─────────────────────────────────────────────────────────────────
     private static void ComposeHeaderAndTitle(ColumnDescriptor col, string layout,
         EntDoc doc, EntCompany company, EntTemplate template, PdfBranding b,
-        string accent, string headerBg, string headerText, string titleText)
+        string accent, string headerBg, string headerText, string titleText, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         // cap title ที่ 18pt กันชื่อเอกสารใหญ่เกิน (เดิม 22/20 ใหญ่ไป — ผู้ใช้ขอเล็กลง)
         var titleFontSize = float.TryParse(template.TitleFontSize, out var tf) ? Math.Min(tf, 18f) : 17f;
@@ -250,12 +250,12 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText, L));
                 });
                 col.Item().PaddingTop(10).AlignCenter()
                     .Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
                 col.Item().PaddingTop(3).PaddingBottom(2).LineHorizontal(1).LineColor(accent);
-                col.Item().PaddingTop(6).AlignCenter().Row(r => RenderDocInfoSpans(r, doc, template, accent));
+                col.Item().PaddingTop(6).AlignCenter().Row(r => RenderDocInfoSpans(r, doc, template, accent, L));
                 break;
 
             case "BoldHeader":
@@ -268,10 +268,10 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
                 });
                 col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Grey.Lighten1);
-                ComposeDocInfo(col, doc, template, accent, alignRight: false);
+                ComposeDocInfo(col, doc, template, accent, false, L);
                 break;
 
             case "Letterhead":
@@ -280,12 +280,12 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { c.Item().AlignCenter().Height(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    RenderCompanyLines(c, company, template, "#222", center: true);
+                    RenderCompanyLines(c, company, template, "#222", L, center: true);
                 });
                 col.Item().PaddingVertical(4).LineHorizontal(2.5f).LineColor(accent);
                 col.Item().PaddingTop(8).Text(titleText)
                     .FontSize(titleFontSize).Bold().FontColor(accent);
-                ComposeDocInfo(col, doc, template, accent, alignRight: false);
+                ComposeDocInfo(col, doc, template, accent, false, L);
                 break;
 
             case "CenteredFormal":
@@ -293,12 +293,12 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { c.Item().AlignCenter().Height(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    RenderCompanyLines(c, company, template, "#222", center: true);
+                    RenderCompanyLines(c, company, template, "#222", L, center: true);
                 });
                 col.Item().PaddingTop(10).AlignCenter().BorderTop(2.5f).BorderBottom(2.5f).BorderColor(accent)
                     .PaddingVertical(6)
                     .Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
-                col.Item().PaddingTop(6).AlignCenter().Row(r => RenderDocInfoSpans(r, doc, template, accent));
+                col.Item().PaddingTop(6).AlignCenter().Row(r => RenderDocInfoSpans(r, doc, template, accent, L));
                 break;
 
             case "ModernLeft":
@@ -307,11 +307,11 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
                 });
                 col.Item().PaddingTop(12).BorderLeft(6).BorderColor(accent).PaddingLeft(10)
                     .Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
-                ComposeDocInfo(col, doc, template, accent, alignRight: false);
+                ComposeDocInfo(col, doc, template, accent, false, L);
                 break;
 
             case "SidebarAccent":
@@ -319,12 +319,12 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText, L));
                 });
                 col.Item().PaddingTop(10).Background("#F1F5F9").BorderLeft(6).BorderColor(accent)
                     .PaddingVertical(8).PaddingHorizontal(12)
                     .Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
-                ComposeDocInfo(col, doc, template, accent, alignRight: false);
+                ComposeDocInfo(col, doc, template, accent, false, L);
                 break;
 
             case "SplitHeader":
@@ -332,7 +332,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
                 });
                 col.Item().PaddingTop(10).Row(r =>
                 {
@@ -340,12 +340,12 @@ public partial class PdfGenerationService
                     r.ConstantItem(180).Background("#F8FAFC").BorderLeft(4).BorderColor(accent)
                         .PaddingVertical(8).PaddingHorizontal(10).Column(c =>
                         {
-                            if (template.ShowDocumentNumber) c.Item().Text($"เลขที่: {doc.DocumentNumber}").FontSize(10);
-                            if (template.ShowDocumentDate) c.Item().Text($"วันที่: {doc.DocumentDate:dd/MM/yyyy}").FontSize(10);
+                            if (template.ShowDocumentNumber) c.Item().Text($"{L.DocNumber}: {doc.DocumentNumber}").FontSize(10);
+                            if (template.ShowDocumentDate) c.Item().Text($"{L.DocDate}: {L.Date(doc.DocumentDate)}").FontSize(10);
                             if (template.ShowDueDate && doc.DueDate.HasValue)
-                                c.Item().Text($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}").FontSize(10);
+                                c.Item().Text($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}").FontSize(10);
                             if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference))
-                                c.Item().Text($"อ้างอิง: {doc.DisplayReference}").FontSize(10);
+                                c.Item().Text($"{L.Reference}: {doc.DisplayReference}").FontSize(10);
                         });
                 });
                 break;
@@ -356,14 +356,14 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
                 });
                 col.Item().PaddingTop(layout == "Compact" ? 6 : 14)
                     .Text(titleText).FontSize(titleFontSize)
                     .Bold().FontColor(layout == "Minimal" ? "#111" : accent);
                 if (layout == "Minimal")
                     col.Item().PaddingTop(2).LineHorizontal(1).LineColor("#111");
-                ComposeDocInfo(col, doc, template, accent, alignRight: false);
+                ComposeDocInfo(col, doc, template, accent, false, L);
                 break;
 
             default: // Classic
@@ -376,7 +376,7 @@ public partial class PdfGenerationService
                     {
                         if (b.LogoBytes is { Length: > 0 })
                             try { rr.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                        rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
+                        rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
                     });
                     r.ConstantItem(220).Column(rc =>
                     {
@@ -393,17 +393,17 @@ public partial class PdfGenerationService
                 col.Item().PaddingTop(8).AlignRight().Text(tt =>
                 {
                     if (template.ShowDocumentDate)
-                        tt.Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}   ").FontSize(10).FontColor("#374151");
+                        tt.Span($"{L.DocDate}: {L.Date(doc.DocumentDate)}   ").FontSize(10).FontColor("#374151");
                     if (template.ShowDueDate && doc.DueDate.HasValue)
-                        tt.Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}   ").FontSize(10).FontColor("#374151");
+                        tt.Span($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}   ").FontSize(10).FontColor("#374151");
                     if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference))
-                        tt.Span($"อ้างอิง: {doc.DisplayReference}").FontSize(10).FontColor("#374151");
+                        tt.Span($"{L.Reference}: {doc.DisplayReference}").FontSize(10).FontColor("#374151");
                 });
                 break;
         }
     }
 
-    private static void RenderCompanyLines(ColumnDescriptor c, EntCompany co, EntTemplate t, string color, bool center = false)
+    private static void RenderCompanyLines(ColumnDescriptor c, EntCompany co, EntTemplate t, string color, Accounting.Services.Implementations.Pdf.DocumentLabels L, bool center = false)
     {
         void Line(string s, int size = 10, bool bold = false)
         {
@@ -423,15 +423,15 @@ public partial class PdfGenerationService
         if (t.ShowCompanyTaxId && !string.IsNullOrWhiteSpace(co.TaxId))
         {
             var coBranch = FormatBranch(co.BranchCode, co.BranchName, "th");
-            Line($"เลขประจำตัวผู้เสียภาษี: {co.TaxId} ({coBranch})");
+            Line($"{L.TaxId}: {co.TaxId} ({coBranch})");
         }
         if (t.ShowCompanyPhone && !string.IsNullOrWhiteSpace(co.Phone))
-            Line($"โทร: {co.Phone}");
+            Line($"{L.Phone}: {co.Phone}");
         if (t.ShowCompanyEmail && !string.IsNullOrWhiteSpace(co.Email))
             Line($"Email: {co.Email}");
     }
 
-    private static void ComposeDocInfo(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, bool alignRight)
+    private static void ComposeDocInfo(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, bool alignRight, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         // ใช้ Text(...) inline spans ปลายทาง content method ชัดเจน +
         // AlignRight ที่ outer container — แทน Row + RelativeItem pusher
@@ -442,59 +442,59 @@ public partial class PdfGenerationService
         item.Text(tt =>
         {
             if (t.ShowDocumentNumber)
-                tt.Span($"เลขที่: {doc.DocumentNumber}   ").FontSize(10);
+                tt.Span($"{L.DocNumber}: {doc.DocumentNumber}   ").FontSize(10);
             if (t.ShowDocumentDate)
-                tt.Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}   ").FontSize(10);
+                tt.Span($"{L.DocDate}: {L.Date(doc.DocumentDate)}   ").FontSize(10);
             if (t.ShowDueDate && doc.DueDate.HasValue)
-                tt.Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}   ").FontSize(10);
+                tt.Span($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}   ").FontSize(10);
             if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference))
-                tt.Span($"อ้างอิง: {doc.DisplayReference}").FontSize(10);
+                tt.Span($"{L.Reference}: {doc.DisplayReference}").FontSize(10);
         });
     }
 
-    private static void RenderDocInfoSpans(RowDescriptor r, EntDoc doc, EntTemplate t, string accent)
+    private static void RenderDocInfoSpans(RowDescriptor r, EntDoc doc, EntTemplate t, string accent, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         void Span(string s) => r.AutoItem().PaddingHorizontal(10).Text(s).FontSize(10);
-        if (t.ShowDocumentNumber) Span($"เลขที่: {doc.DocumentNumber}");
-        if (t.ShowDocumentDate) Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}");
-        if (t.ShowDueDate && doc.DueDate.HasValue) Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}");
-        if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference)) Span($"อ้างอิง: {doc.DisplayReference}");
+        if (t.ShowDocumentNumber) Span($"{L.DocNumber}: {doc.DocumentNumber}");
+        if (t.ShowDocumentDate) Span($"{L.DocDate}: {L.Date(doc.DocumentDate)}");
+        if (t.ShowDueDate && doc.DueDate.HasValue) Span($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}");
+        if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference)) Span($"{L.Reference}: {doc.DisplayReference}");
     }
 
     // ─────────────────────────────────────────────────────────────────
     //  Shared section composers (contact / table / summary / etc.)
     // ─────────────────────────────────────────────────────────────────
     /// <summary>Per-doc-type fallback label สำหรับ contact section ใน PDF.
-    /// เอกสารฝั่งซื้อ (PV/PO/PI/Expense) ใช้ "ผู้รับเงิน" / "ผู้ขาย" — ไม่ใช่
-    /// "ลูกค้า" ที่ทำให้ผู้อ่านสับสน. Sales side ยังคง "ลูกค้า" ตามเดิม. ค่า
+    /// เอกสารฝั่งซื้อ (PV/PO/PI/Expense) ใช้ ผู้รับเงิน / ผู้ขาย — ไม่ใช่
+    /// ลูกค้า ที่ทำให้ผู้อ่านสับสน. Sales side ยังคง ลูกค้า ตามเดิม. ค่า
     /// override ที่ template ตั้งไว้ (ContactSectionTitle) มี priority สูงกว่า.</summary>
-    private static string DefaultContactLabelFor(Accounting.Models.Enums.DocumentType type) => type switch
+    private static string DefaultContactLabelFor(Accounting.Models.Enums.DocumentType type, Accounting.Services.Implementations.Pdf.DocumentLabels L) => type switch
     {
-        Accounting.Models.Enums.DocumentType.PaymentVoucher => "ผู้รับเงิน",
-        Accounting.Models.Enums.DocumentType.PurchaseOrder => "ผู้ขาย",
-        Accounting.Models.Enums.DocumentType.PurchaseInvoice => "ผู้ขาย",
-        Accounting.Models.Enums.DocumentType.Expense => "ผู้ขาย/ผู้รับเงิน",
-        _ => "ลูกค้า",
+        Accounting.Models.Enums.DocumentType.PaymentVoucher => L.PartyPayee,
+        Accounting.Models.Enums.DocumentType.PurchaseOrder => L.PartyVendor,
+        Accounting.Models.Enums.DocumentType.PurchaseInvoice => L.PartyVendor,
+        Accounting.Models.Enums.DocumentType.Expense => L.PartyVendorOrPayee,
+        _ => L.PartyCustomer,
     };
 
-    private static void ComposeContact(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent)
+    private static void ComposeContact(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         var c = doc.Contact;
         if (c == null) return;
         // Boxed contact section: left accent stripe (เลียนแบบ HTML view
-        // "ลูกค้า" box) + section title สี accent ตัวหนา → ดูเด่นชัดขึ้น
+        // ลูกค้า box) + section title สี accent ตัวหนา → ดูเด่นชัดขึ้น
         // กว่าเดิมที่เป็นเส้นกรอบบางๆ
         // กระชับขึ้น: padding เล็กลง + ชื่อลูกค้าเล็กลง (ผู้ใช้ขอ) ให้ได้พื้นที่คืน
         col.Item().PaddingTop(8).BorderLeft(3).BorderColor(accent).Background("#F8FAFC")
             .PaddingVertical(6).PaddingHorizontal(9).Column(cc =>
         {
-            // Template override > smart per-doc-type fallback > "ลูกค้า"
-            // ใบสำคัญจ่ายเป็น "ผู้รับเงิน" ไม่ใช่ "ลูกค้า" — เพราะ PV คือ
+            // Template override > smart per-doc-type fallback > ลูกค้า
+            // ใบสำคัญจ่ายเป็น ผู้รับเงิน ไม่ใช่ ลูกค้า — เพราะ PV คือ
             // เราซื้อ/จ่ายจากเขา ไม่ใช่เขาเป็นลูกค้าเรา.
             var label = !string.IsNullOrWhiteSpace(t.ContactSectionTitle)
-                && t.ContactSectionTitle != "ลูกค้า"
+                && t.ContactSectionTitle != L.PartyCustomer
                 ? t.ContactSectionTitle
-                : DefaultContactLabelFor(doc.DocumentType);
+                : DefaultContactLabelFor(doc.DocumentType, L);
             cc.Item().Text(label).FontSize(9.5f).Bold().FontColor(accent);
             cc.Item().Text(c.Name ?? "").FontSize(11.5f).Bold().FontColor("#111827");
             if (t.ShowContactTaxId && !string.IsNullOrWhiteSpace(c.TaxId))
@@ -506,7 +506,7 @@ public partial class PdfGenerationService
                     || (!string.IsNullOrWhiteSpace(c.BranchCode)
                         && c.BranchCode!.Trim().TrimStart('0').Length > 0);
                 var cBranch = showBranch ? $" ({FormatBranch(c.BranchCode, c.BranchName, "th")})" : "";
-                cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId}{cBranch}").FontSize(9).FontColor("#374151");
+                cc.Item().Text($"{L.TaxIdShort}: {c.TaxId}{cBranch}").FontSize(9).FontColor("#374151");
             }
             if (t.ShowContactAddress)
             {
@@ -515,7 +515,7 @@ public partial class PdfGenerationService
                 if (!string.IsNullOrWhiteSpace(addr)) cc.Item().Text(addr).FontSize(9).FontColor("#374151");
             }
             if (t.ShowContactPhone && !string.IsNullOrWhiteSpace(c.Phone))
-                cc.Item().Text($"โทร: {c.Phone}").FontSize(9).FontColor("#374151");
+                cc.Item().Text($"{L.Phone}: {c.Phone}").FontSize(9).FontColor("#374151");
             if (t.ShowContactEmail && !string.IsNullOrWhiteSpace(c.Email))
                 cc.Item().Text($"Email: {c.Email}").FontSize(9).FontColor("#374151");
         });
@@ -525,7 +525,7 @@ public partial class PdfGenerationService
     /// เลขที่+วันที่ใบกำกับเดิม, มูลค่าตามใบเดิม, มูลค่าที่ถูกต้อง, ผลต่าง (+VAT
     /// ผลต่างอยู่ในตารางสรุปของใบอยู่แล้ว). ข้อมูลจาก transient AdjustmentOriginal*
     /// (โหลดใน ResolveServedAsReceiptAsync) — ใบที่ไม่มี ref จะไม่มีกล่อง.</summary>
-    private static void ComposeAdjustmentRef(ColumnDescriptor col, EntDoc doc, string accent)
+    private static void ComposeAdjustmentRef(ColumnDescriptor col, EntDoc doc, string accent, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         if (doc.DocumentType is not (Accounting.Models.Enums.DocumentType.CreditNote
             or Accounting.Models.Enums.DocumentType.DebitNote)) return;
@@ -543,19 +543,19 @@ public partial class PdfGenerationService
         {
             cc.Item().Text($"อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{(isCn ? "10" : "9")})")
                 .FontSize(9.5f).Bold().FontColor(accent);
-            cc.Item().Text($"เลขที่ {doc.AdjustmentOriginalNumber}  ลงวันที่ {origDate}")
+            cc.Item().Text(string.Format(L.CnOriginalNumber, doc.AdjustmentOriginalNumber, origDate))
                 .FontSize(9.5f).FontColor("#374151");
             cc.Item().Row(r =>
             {
-                r.RelativeItem().Text($"มูลค่าตามใบเดิม: {origBase:N2}").FontSize(9).FontColor("#374151");
-                r.RelativeItem().Text($"มูลค่าที่ถูกต้อง: {corrected:N2}").FontSize(9).FontColor("#374151");
-                r.RelativeItem().Text($"ผลต่าง ({(isCn ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}").FontSize(9).Bold().FontColor("#374151");
+                r.RelativeItem().Text($"{L.CnOriginalValue}: {origBase:N2}").FontSize(9).FontColor("#374151");
+                r.RelativeItem().Text($"{L.CnCorrectedValue}: {corrected:N2}").FontSize(9).FontColor("#374151");
+                r.RelativeItem().Text($"ผลต่าง ({(isCn ? "ลด" : L.CnIncrease)}): {doc.SubTotal:N2}").FontSize(9).Bold().FontColor("#374151");
             });
         });
     }
 
     private static void ComposeItemsTable(ColumnDescriptor col, EntDoc doc, EntTemplate t,
-        string headerBg, string headerText, string stripe, string layout = "Classic", string accent = "#1F2937")
+        string headerBg, string headerText, string stripe, Accounting.Services.Implementations.Pdf.DocumentLabels L, string layout = "Classic", string accent = "#1F2937")
     {
         // Minimal & Letterhead use a borderless header — no fill, accent-coloured
         // text and a single rule underneath — to match their on-screen look.
@@ -591,12 +591,12 @@ public partial class PdfGenerationService
                 // ผู้อ่านงงเพราะคำนวณยังไงก็ไม่ตรง.
                 var inclVat = doc.PricesIncludeVat;
                 if (t.ShowLineNumber) Th("#", "center");
-                Th("รายการ");
-                Th("จำนวน", "right");
-                if (t.ShowUnit) Th("หน่วย", "center");
-                Th(inclVat ? "ราคา/หน่วย (รวม VAT)" : "ราคา/หน่วย", "right");
-                if (t.ShowDiscount) Th("ส่วนลด", "right");
-                Th(inclVat ? "จำนวนเงิน (รวม VAT)" : "จำนวนเงิน", "right");
+                Th(L.ColItem);
+                Th(L.ColQty, "right");
+                if (t.ShowUnit) Th(L.ColUnit, "center");
+                Th(inclVat ? L.ColUnitPriceIncl : L.ColUnitPrice, "right");
+                if (t.ShowDiscount) Th(L.ColDiscount, "right");
+                Th(inclVat ? L.ColAmountIncl : L.ColAmount, "right");
             });
 
             // TableBorderStyle ตาม template: Full = กรอบทุกด้าน, HeaderOnly
@@ -632,8 +632,8 @@ public partial class PdfGenerationService
                     : doc.PricesIncludeVat
                         ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
                         : line.Amount;
-                // ส่วนลดท้ายบิล: line.Amount เก็บยอด "หลังเฉลี่ยส่วนลด" (สำหรับ GL/
-                // VAT) แต่บนกระดาษต้องโชว์ยอด "ก่อนหักท้ายบิล" — ไม่งั้นบรรทัดขัด
+                // ส่วนลดท้ายบิล: line.Amount เก็บยอด L.AfterDiscountAlloc (สำหรับ GL/
+                // VAT) แต่บนกระดาษต้องโชว์ยอด L.TotalBeforeBillDiscount — ไม่งั้นบรรทัดขัด
                 // กันเอง (1 × 19,650 − ส่วนลด 0 = 17,526.76 ??) และไม่ตรงหน้าแก้ไข.
                 // scale กลับด้วยสัดส่วนเดียวกับที่เฉลี่ยลง (Σก่อนหัก / Σหลังหัก) —
                 // ส่วนลดท้ายบิลแสดงเป็นแถวเดียวในสรุปท้ายบิล
@@ -658,7 +658,7 @@ public partial class PdfGenerationService
         });
     }
 
-    private static void ComposeSummary(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, string layout)
+    private static void ComposeSummary(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, string layout, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         // Layouts ที่ไม่ใช่ Minimal / Letterhead จะใช้ filled accent bar
         // สำหรับ Grand Total — match HTML view ที่มี orange bar เด่นชัด
@@ -690,33 +690,33 @@ public partial class PdfGenerationService
             var hideVatBreakdown = IsDeferredVatDeposit(doc);
             // ส่วนลดท้ายบิล: SubTotal = หลังหักท้ายบิล → โชว์ยอดก่อนหัก + บรรทัดส่วนลด
             var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
-            if (t.ShowSubTotal && !hideVatBreakdown) Row("ยอดรวมก่อน VAT", preBillSubTotal.ToString("N2"));
+            if (t.ShowSubTotal && !hideVatBreakdown) Row(L.TotalSubtotal, preBillSubTotal.ToString("N2"));
             if (t.ShowDiscountTotal && doc.DiscountAmount > 0)
-                Row("ส่วนลดรวม", doc.DiscountAmount.ToString("N2"));
+                Row(L.TotalDiscount, doc.DiscountAmount.ToString("N2"));
             if (doc.BillDiscountAmount > 0)
             {
-                Row("ส่วนลดท้ายบิล", $"({doc.BillDiscountAmount:N2})");
+                Row(L.TotalBillDiscount, $"({doc.BillDiscountAmount:N2})");
                 // ยอดหลังหักส่วนลด = ฐานภาษี — ให้เห็นชัดว่า VAT/WHT คิดจากยอดนี้
                 // (ลำดับถูกหลักบัญชี: รวม → หักส่วนลด → ฐานภาษี → VAT → WHT → สุทธิ)
                 if (!hideVatBreakdown)
-                    Row("ยอดหลังหักส่วนลด (ฐานภาษี)", doc.SubTotal.ToString("N2"));
+                    Row(L.TotalAfterDiscountBase, doc.SubTotal.ToString("N2"));
             }
             if (t.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown)
                 Row("ภาษีมูลค่าเพิ่ม 7%", doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
-                Row("ภาษีหัก ณ ที่จ่าย", $"({doc.WithholdingTaxAmount:N2})");
+                Row(L.TotalWht, $"({doc.WithholdingTaxAmount:N2})");
             // หักเงินมัดจำ (display-only): แสดง ยอดรวม → หักมัดจำ → ยอดชำระสุทธิ
             // JE ไม่เกี่ยว (การรับรู้มัดจำทำแยกแล้ว) — บรรทัดขายยังเต็มจำนวน
             if (doc.DepositAppliedAmount > 0)
             {
-                Row("ยอดรวมทั้งสิ้น", doc.TotalAmount.ToString("N2"));
+                Row(L.TotalGrand, doc.TotalAmount.ToString("N2"));
                 var depLabel = string.IsNullOrWhiteSpace(doc.DepositAppliedRef)
-                    ? "หักเงินมัดจำ" : $"หักเงินมัดจำ ({doc.DepositAppliedRef})";
+                    ? L.TotalDepositApplied : $"หักเงินมัดจำ ({doc.DepositAppliedRef})";
                 Row(depLabel, $"({doc.DepositAppliedAmount:N2})");
-                Row("ยอดชำระสุทธิ", (doc.TotalAmount - doc.DepositAppliedAmount).ToString("N2"), total: true);
+                Row(L.TotalNetPayable, (doc.TotalAmount - doc.DepositAppliedAmount).ToString("N2"), total: true);
             }
             else
-                Row("ยอดรวมสุทธิ", doc.TotalAmount.ToString("N2"), total: true);
+                Row(L.TotalNet, doc.TotalAmount.ToString("N2"), total: true);
         });
 
         // มัดจำ VAT พักรอ — แจ้งชัดว่าไม่ใช่ใบกำกับภาษี (ใบกำกับออกตอนใช้บริการ)
@@ -735,7 +735,7 @@ public partial class PdfGenerationService
 
     /// <summary>
     /// กัน OCR diagnostic trace หลุดไปพิมพ์บนเอกสารจริง. เอกสารเก่าที่ handoff
-    /// flow เคยยัด processingNotes ทั้งก้อนลง Notes (prefix "(จาก OCR)" +
+    /// flow เคยยัด processingNotes ทั้งก้อนลง Notes (prefix L.FromOcr +
     /// marker [Zone Analysis]/[Field Confidence]/[Reasoning]/[VendorIntel]/
     /// [AI/DeepSeek] ฯลฯ) จะถูกตัดออกตอน render — เหลือเฉพาะหมายเหตุจริง.
     /// ถ้าทั้งก้อนเป็น diagnostic → คืน null (ไม่พิมพ์ส่วนหมายเหตุเลย).
@@ -744,7 +744,7 @@ public partial class PdfGenerationService
     {
         if (string.IsNullOrWhiteSpace(notes)) return null;
         var text = notes.Trim();
-        // Fast path: OCR dump ขึ้นต้นด้วย "(จาก OCR)" หรือมี marker วงเล็บเหลี่ยม
+        // Fast path: OCR dump ขึ้นต้นด้วย L.FromOcr หรือมี marker วงเล็บเหลี่ยม
         // ที่เป็น diagnostic ภายใน — ตัดตั้งแต่ marker ตัวแรกเป็นต้นไป
         var markerRx = new System.Text.RegularExpressions.Regex(
             @"\(จาก OCR\)|\[Zone Analysis\]|\[Field Confidence\]|\[Reasoning\]|\[VendorIntel\]|\[AI/DeepSeek\]|\[Azure DI|\[Buyer\]|\[Role\]|\[Category\]|\[NaiveBayes\]|\[Enrich\]|\[DBD\]|\[Handwriting\]|\[Tier \d|\[AmountTriple\]|\[SmartExtract\]|\[Gateway\]|\[ImagePrep\]|\[RequestPlan\]|\[Swap\]");
@@ -754,7 +754,7 @@ public partial class PdfGenerationService
         return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
-    private static void ComposeFooter(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent)
+    private static void ComposeFooter(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         // CertificateInLieu — เอกสารใบรับรองการจ่ายเงินแทนใบเสร็จ
         // (กรณีจ่ายให้คนไม่จด VAT / ไม่ออกใบเสร็จ) มี metadata block
@@ -765,17 +765,17 @@ public partial class PdfGenerationService
         {
             col.Item().PaddingTop(14).Border(1).BorderColor("#333").Padding(12).Column(cc =>
             {
-                cc.Item().Text("ข้อมูลการรับรอง").FontSize(12).Bold().FontColor(accent);
+                cc.Item().Text(L.CertInfo).FontSize(12).Bold().FontColor(accent);
                 if (!string.IsNullOrWhiteSpace(doc.CertificateReason))
                     cc.Item().PaddingTop(4).Text(t =>
                     {
-                        t.Span("เหตุผลที่ไม่ได้รับใบเสร็จ: ").Bold().FontSize(10);
+                        t.Span(L.CertReason + ": ").Bold().FontSize(10);
                         t.Span(doc.CertificateReason!).FontSize(10);
                     });
                 if (doc.PaymentDate.HasValue)
                     cc.Item().PaddingTop(2).Text(t =>
                     {
-                        t.Span("วันที่จ่ายเงิน: ").Bold().FontSize(10);
+                        t.Span(L.PaymentDate + ": ").Bold().FontSize(10);
                         t.Span($"{doc.PaymentDate:dd/MM/yyyy}").FontSize(10);
                     });
                 cc.Item().PaddingTop(8).Row(r =>
@@ -783,16 +783,16 @@ public partial class PdfGenerationService
                     r.RelativeItem().Column(c =>
                     {
                         if (!string.IsNullOrWhiteSpace(doc.CertifierName))
-                            c.Item().Text(tt => { tt.Span("ผู้รับรอง: ").Bold().FontSize(10); tt.Span(doc.CertifierName!).FontSize(10); });
+                            c.Item().Text(tt => { tt.Span(L.CertCertifier + ": ").Bold().FontSize(10); tt.Span(doc.CertifierName!).FontSize(10); });
                         if (!string.IsNullOrWhiteSpace(doc.CertifierPosition))
-                            c.Item().Text(tt => { tt.Span("ตำแหน่ง: ").Bold().FontSize(10); tt.Span(doc.CertifierPosition!).FontSize(10); });
+                            c.Item().Text(tt => { tt.Span(L.CertPosition + ": ").Bold().FontSize(10); tt.Span(doc.CertifierPosition!).FontSize(10); });
                     });
                     if (!string.IsNullOrWhiteSpace(doc.WitnessName))
                         r.RelativeItem().Column(c =>
                         {
-                            c.Item().Text(tt => { tt.Span("พยาน: ").Bold().FontSize(10); tt.Span(doc.WitnessName!).FontSize(10); });
+                            c.Item().Text(tt => { tt.Span(L.CertWitness + ": ").Bold().FontSize(10); tt.Span(doc.WitnessName!).FontSize(10); });
                             if (!string.IsNullOrWhiteSpace(doc.WitnessPosition))
-                                c.Item().Text(tt => { tt.Span("ตำแหน่ง: ").Bold().FontSize(10); tt.Span(doc.WitnessPosition!).FontSize(10); });
+                                c.Item().Text(tt => { tt.Span(L.CertPosition + ": ").Bold().FontSize(10); tt.Span(doc.WitnessPosition!).FontSize(10); });
                         });
                 });
             });
@@ -805,7 +805,7 @@ public partial class PdfGenerationService
         if (t.ShowBankDetails && !string.IsNullOrWhiteSpace(t.BankDetailsText))
             col.Item().PaddingTop(12).Background("#F8F9FA").Padding(10).Text(tt =>
             {
-                tt.Span("ข้อมูลชำระเงิน: ").Bold().FontSize(10);
+                tt.Span(L.PaymentInfo + ": ").Bold().FontSize(10);
                 tt.Span(t.BankDetailsText!).FontSize(10);
             });
 
@@ -816,7 +816,7 @@ public partial class PdfGenerationService
         if (!string.IsNullOrWhiteSpace(cleanNotes))
             col.Item().PaddingTop(8).Text(tt =>
             {
-                tt.Span("หมายเหตุ: ").Bold().FontSize(10).FontColor("#555");
+                tt.Span(L.Notes + ": ").Bold().FontSize(10).FontColor("#555");
                 tt.Span(cleanNotes).FontSize(10).FontColor("#555");
             });
 
@@ -825,12 +825,12 @@ public partial class PdfGenerationService
             col.Item().PaddingTop(8).Text(footerNotes).FontSize(10).FontColor("#555");
 
         // T&C override per-document (HTML BuildDocumentHtml บรรทัด 653) —
-        // section "เงื่อนไข" คั่นด้วย border-top + padding ปกติ (ไม่ stack
+        // section เงื่อนไข คั่นด้วย border-top + padding ปกติ (ไม่ stack
         // PaddingTop ซ้ำ เพื่อตัดความเสี่ยง QuestPDF API edge case).
         if (!string.IsNullOrWhiteSpace(doc.CustomTermsAndConditions))
             col.Item().PaddingTop(14).BorderTop(0.5f).BorderColor("#EEE").Padding(6).Column(cc =>
             {
-                cc.Item().Text("เงื่อนไข").Bold().FontSize(10).FontColor("#555");
+                cc.Item().Text(L.Terms).Bold().FontSize(10).FontColor("#555");
                 cc.Item().Text(doc.CustomTermsAndConditions!).FontSize(10).FontColor("#555");
             });
     }
@@ -914,18 +914,18 @@ public partial class PdfGenerationService
     /// <summary>การลงบัญชี (Dr./Cr.) summary at the foot of the document — for
     /// internal audit. Rendered only when the company enabled it AND the doc
     /// has a posted journal entry.</summary>
-    private static void ComposeGlPosting(ColumnDescriptor col, GlPostingSummary? gl, string lang)
+    private static void ComposeGlPosting(ColumnDescriptor col, GlPostingSummary? gl, string lang, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         if (gl == null || gl.Lines.Count == 0) return;
         var en = lang == "en";
-        // "การบันทึกบัญชี" ขึ้นหน้าใหม่เสมอ — กัน Dr/Cr ถูกตัดคนละหน้า และแยก
+        // การบันทึกบัญชี ขึ้นหน้าใหม่เสมอ — กัน Dr/Cr ถูกตัดคนละหน้า และแยก
         // หน้าเอกสารลูกค้า (หน้า 1) ออกจากส่วนบันทึกบัญชีภายใน (หน้า 2)
         col.Item().PageBreak();
         col.Item().PaddingTop(14).BorderTop(0.6f).BorderColor("#CBD5E1").PaddingTop(5).Column(c =>
         {
             c.Item().Text(t =>
             {
-                t.Span($"{(en ? "Posting" : "การบันทึกบัญชี")} ").FontSize(8.5f).Bold().FontColor("#64748B");
+                t.Span($"{(en ? "Posting" : L.GlPosting)} ").FontSize(8.5f).Bold().FontColor("#64748B");
                 t.Span($"{gl.EntryNumber} · {gl.EntryDate:dd/MM/yy}").FontSize(8.5f).FontColor("#94A3B8");
             });
             foreach (var l in gl.Lines)

@@ -303,6 +303,21 @@
             </span>
           </label>
         </div>
+        <div class="form-group" style="grid-column:1/3">
+          <label class="form-label">ภาษาของเอกสารที่ออก</label>
+          <select class="form-input" id="sDocumentLanguage" style="max-width:320px">
+            <option value="th">ไทย (Thai)</option>
+            <option value="en">อังกฤษ (English)</option>
+          </select>
+          <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+            ใช้กับเอกสารที่พิมพ์/ส่งออกทุกใบ (ใบเสนอราคา ใบแจ้งหนี้ ใบกำกับภาษี ใบเสร็จ ฯลฯ) —
+            ตั้งทับรายใบหรือรายเทมเพลตได้<br>
+            <span style="color:#92400e">หมายเหตุตามกฎหมาย:</span> โหมดอังกฤษจะพิมพ์หัวเอกสาร
+            <b>สองภาษา</b> เช่น "Tax Invoice / ใบกำกับภาษี" เพราะมาตรา 86/4 บังคับให้มีคำว่า
+            "ใบกำกับภาษี" เป็นภาษาไทย มิฉะนั้นผู้ซื้อจะเคลมภาษีซื้อไม่ได้ (มาตรา 82/5(1)).
+            แบบฟอร์มราชการ (50 ทวิ, ภ.ง.ด., ภ.พ.30) คงเป็นภาษาไทยเสมอ
+          </div>
+        </div>
         <div class="form-group advanced-only" style="grid-column:1/3">
           <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
             <input type="checkbox" id="sShowGlEntryOnDocument" style="margin-top:3px">
@@ -1833,6 +1848,7 @@
           document.getElementById('sInvoiceFooter').value = s.invoiceFooter || '';
           document.getElementById('sReceiptFooter').value = s.receiptFooter || '';
           document.getElementById('sShowGlEntryOnDocument').checked = !!s.showGlEntryOnDocument;
+          document.getElementById('sDocumentLanguage').value = s.documentLanguage || 'th';
           document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
           document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
           document.getElementById('sUseCustomSignatory').checked = !!s.useCustomAuthorizedSignatory;
@@ -1986,6 +2002,7 @@
             invoiceFooter: document.getElementById('sInvoiceFooter').value || null,
             receiptFooter: document.getElementById('sReceiptFooter').value || null,
             showGlEntryOnDocument: document.getElementById('sShowGlEntryOnDocument').checked,
+            documentLanguage: document.getElementById('sDocumentLanguage').value,
             showProjectOnDocuments: document.getElementById('sShowProjectOnDocuments').checked,
             showCostCenterOnDocuments: document.getElementById('sShowCostCenterOnDocuments').checked,
             useCustomAuthorizedSignatory: document.getElementById('sUseCustomSignatory').checked,

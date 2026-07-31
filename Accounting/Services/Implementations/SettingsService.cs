@@ -53,6 +53,12 @@ public class SettingsService : ISettingsService
         if (request.AuthorizedSignatorySignatureBase64 != null) settings.AuthorizedSignatorySignatureBase64 = string.IsNullOrWhiteSpace(request.AuthorizedSignatorySignatureBase64) ? null : request.AuthorizedSignatorySignatureBase64.Trim();
         if (request.DocumentTitleOverridesJson != null)
             settings.DocumentTitleOverridesJson = string.IsNullOrWhiteSpace(request.DocumentTitleOverridesJson) ? null : request.DocumentTitleOverridesJson;
+        // ภาษาเอกสาร — รับเฉพาะ th/en (ค่าอื่น = ไม่แก้ กันค่าขยะจาก client)
+        if (request.DocumentLanguage != null)
+        {
+            var langReq = request.DocumentLanguage.Trim().ToLowerInvariant();
+            if (langReq is "th" or "en") settings.DocumentLanguage = langReq;
+        }
         if (request.LeaveQuotasJson != null) settings.LeaveQuotasJson = request.LeaveQuotasJson;
         if (request.EnforceManagerApproval.HasValue) settings.EnforceManagerApproval = request.EnforceManagerApproval.Value;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
@@ -545,6 +551,7 @@ public class SettingsService : ISettingsService
         // Print layout
         s.ShowGlEntryOnDocument,
         s.DocumentTitleOverridesJson,
+        string.IsNullOrWhiteSpace(s.DocumentLanguage) ? "th" : s.DocumentLanguage,
         // HR
         s.LeaveQuotasJson,
         s.EnforceManagerApproval,

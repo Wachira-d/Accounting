@@ -724,6 +724,8 @@ public class DocumentService : IDocumentService
                     : request.SupplierBranchCode,
                 CreditDays = request.CreditDays,
                 PaymentTerms = request.PaymentTerms,
+                DocumentLanguage = request.DocumentLanguage?.Trim().ToLowerInvariant() is "th" or "en"
+                    ? request.DocumentLanguage!.Trim().ToLowerInvariant() : null,
                 // เงินมัดจำ/รับล่วงหน้า — เฉพาะใบเสร็จ/ใบสำคัญรับ
                 IsDeposit = request.IsDeposit
                     && (request.DocumentType == DocumentType.Receipt
@@ -1412,6 +1414,12 @@ public class DocumentService : IDocumentService
         if (request.SupplierBranchCode != null) doc.SupplierBranchCode = request.SupplierBranchCode;
         if (request.CreditDays.HasValue) doc.CreditDays = request.CreditDays.Value;
         if (request.PaymentTerms != null) doc.PaymentTerms = request.PaymentTerms;
+        // ภาษาเอกสาร — รับเฉพาะ th/en; "" = ล้างกลับไปใช้ค่าตั้งต้นของบริษัท
+        if (request.DocumentLanguage != null)
+        {
+            var dl = request.DocumentLanguage.Trim().ToLowerInvariant();
+            doc.DocumentLanguage = dl is "th" or "en" ? dl : null;
+        }
 
         // Tax Point §78 inputs (Draft edit)
         if (request.DeliveryDate.HasValue) doc.DeliveryDate = request.DeliveryDate.Value;

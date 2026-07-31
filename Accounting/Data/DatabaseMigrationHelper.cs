@@ -4472,6 +4472,9 @@ public static class DatabaseMigrationHelper
 
             // ===== หัวเรื่องเอกสารตั้งเอง (ต่อประเภท + เงื่อนไข) =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentTitleOverridesJson" text NULL;""",
+            // ภาษาเอกสารที่ออก (th/en) — ค่าตั้งต้นระดับบริษัท + override รายใบ
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NOT NULL DEFAULT 'th';""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NULL;""",
 
             // ===== ลูกค้าเงินสดไม่ประสงค์รับใบกำกับ (ผู้ซื้อกลางของใบกำกับขายปลีก) =====
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "IsWalkInCustomer" boolean NOT NULL DEFAULT false;""",
