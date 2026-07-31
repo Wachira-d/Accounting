@@ -1968,6 +1968,35 @@ public class PayrollService : IPayrollService
                         (await ReqAcct("54124", "541", "สำรองเลี้ยงชีพ", "กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง (ค่าใช้จ่าย)")).Id,
                         run.TotalProvidentFundEmployer, 0, "กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง"));
 
+                // ── Cr: หักเงินกู้พนักงาน + หักอื่น ๆ (ขาดงาน/มาสาย/ค่าปรับ/หักจาก
+                // import ภายนอก เช่น TakeTime) ──
+                // ⚠️ เดิมสองช่องนี้ "ไม่มีขา Cr เลย": NetPay ถูกหักแล้ว (Cr เงินสด
+                // ลดลง) แต่ Dr ค่าใช้จ่ายยังตั้ง gross → JE ไม่ balance เท่ายอดหัก
+                // พอดี (เคสจริง: Dr=77,678 Cr=77,226 ต่าง 452 = OtherDeductions
+                // ของพนักงาน 1 คนที่ import มา) → กด "จ่าย" พังทุกครั้งที่มียอดหัก
+                var loanDeductTotal = run.Details.Sum(d => d.LoanDeduction);
+                var otherDeductTotal = run.Details.Sum(d => d.OtherDeductions);
+                if (loanDeductTotal > 0)
+                {
+                    // ตัดลูกหนี้เงินกู้พนักงาน (asset) ถ้ามีผัง — ไม่มีก็รวมเข้าขาหักอื่น
+                    var loanAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+                        && (a.AccountName.Contains("เงินกู้พนักงาน")
+                            || a.AccountName.Contains("เงินให้กู้ยืมพนักงาน")
+                            || a.AccountName.Contains("ลูกหนี้พนักงาน")));
+                    if (loanAcc != null)
+                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                            loanAcc.Id, 0, loanDeductTotal, "หักคืนเงินกู้พนักงาน"));
+                    else
+                        otherDeductTotal += loanDeductTotal;
+                }
+                if (otherDeductTotal > 0 && salaryAccount != null)
+                    // ลดค่าใช้จ่ายเงินเดือน (contra) — หักขาดงาน/มาสาย/ค่าปรับ =
+                    // ต้นทุนเงินเดือนจริงต่ำกว่า gross ที่ตั้ง
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        salaryAccount.Id, 0, otherDeductTotal,
+                        "รายการหักอื่นจากพนักงาน (ลดค่าใช้จ่ายเงินเดือน)"));
+
                 // ── Advance recovery: clear outstanding salary advances ──
                 // For each employee, recover MonthlyDeduction (or the full
                 // outstanding balance when MonthlyDeduction is 0), capped at
@@ -2073,8 +2102,35 @@ public class PayrollService : IPayrollService
                     var totalDebit = lines.Sum(l => l.DebitAmount);
                     var totalCredit = lines.Sum(l => l.CreditAmount);
                     if (totalDebit != totalCredit)
+                    {
+                        // วินิจฉัยให้ผู้ใช้แก้ถูกจุด — เช็ค identity รายคน:
+                        // รายได้รวม − (ภาษี+ปกส.+PVD+เงินกู้+หักอื่น) = สุทธิ
+                        // (ข้อมูล import ภายนอกอาจส่งสุทธิที่ไม่ตรงส่วนประกอบมา)
+                        var brokenRows = run.Details
+                            .Select(d => new
+                            {
+                                d.EmployeeId,
+                                Name = d.Employee != null
+                                    ? ($"{d.Employee.FirstNameTh} {d.Employee.LastNameTh}").Trim()
+                                    : d.EmployeeId.ToString().Substring(0, 8),
+                                Diff = Math.Round(d.GrossIncome
+                                    - d.WithholdingTax - d.SocialSecurityEmployee
+                                    - d.ProvidentFundEmployee - d.LoanDeduction
+                                    - d.OtherDeductions - d.NetPay, 2)
+                            })
+                            .Where(x => Math.Abs(x.Diff) > 0.01m)
+                            .Take(5).ToList();
+                        var hint = brokenRows.Count > 0
+                            ? " — ยอดรายคนไม่ลงตัว: "
+                              + string.Join(", ", brokenRows.Select(b => $"{b.Name} (ต่าง {b.Diff:N2})"))
+                              + " · เปิดรอบเงินเดือน → กด \"✏️ แก้ยอด\" ที่แถวพนักงานคนนั้น "
+                              + "ปรับให้ รายได้รวม − รายการหัก = สุทธิ แล้วกด \"จ่าย\" ใหม่"
+                            : " — ตรวจว่าผังบัญชี เงินเดือน (541xx) / ประกันสังคม (54120, 21815) / "
+                              + "ภ.ง.ด.1 (21914) ครบและเปิดใช้งานอยู่";
                         throw new InvalidOperationException(
-                            $"Payroll journal unbalanced: Dr={totalDebit:N2} Cr={totalCredit:N2}");
+                            $"ลงบัญชีเงินเดือนไม่ได้: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2} "
+                            + $"(ต่าง {Math.Abs(totalDebit - totalCredit):N2}){hint}");
+                    }
 
                     var entry = await _accountingService.CreateJournalEntryAsync(companyId,
                         new Models.DTOs.Accounting.CreateJournalEntryRequest(
