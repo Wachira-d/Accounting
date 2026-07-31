@@ -276,11 +276,17 @@ public class TaxFilingExportService : ITaxFilingExportService
         // CSV escape: ห่อ "..." ถ้ามี , หรือ " หรือขึ้นบรรทัด — RD parser ปฏิบัติตาม RFC 4180.
         static string Csv(string s) => s.Contains(',') || s.Contains('"') || s.Contains('\n')
             ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
-        string Date(DateTime t) => $"{t.Day:D2}/{t.Month:D2}/{thaiYear}";
+        // ใช้ปีของ "วันที่เอกสารจริง" ไม่ใช่ปีของงวด — ใบกำกับยกมาข้ามปี
+        // (§82/3 ภายใน 6 เดือน) เช่นใบ ธ.ค. 2568 เคลมงวด ม.ค. 2569 ต้องพิมพ์
+        // 15/12/2568 ไม่ใช่ 15/12/2569
+        string Date(DateTime t) => $"{t.Day:D2}/{t.Month:D2}/{t.Year + 543}";
 
         // แยกฝั่งด้วยตัวจัด side ตัวเดียวกับ Excel (TaxService.LineSide) — กัน
-        // CN/DN ฝั่งซื้อหลุดไปฝั่งขาย. ตัด §82/5 (IsExcluded) ออกจากไฟล์ยื่น.
-        var saleLines = lines.Where(l => TaxService.LineSide(l) == "output").ToList();
+        // CN/DN ฝั่งซื้อหลุดไปฝั่งขาย. ตัด IsExcluded ออกจากไฟล์ยื่นทั้งสองฝั่ง:
+        // ฝั่งขายมีบรรทัดเตือน/audit (เช่น "ยื่นงวดก่อนแล้ว") ที่ไม่ใช่รายการขาย
+        // ของงวด — เดิมกรองแค่ฝั่งซื้อ ทำให้ Sale.csv มีแถวเกินและไม่ reconcile
+        // กับยอดสรุป ภ.พ.30
+        var saleLines = lines.Where(l => TaxService.LineSide(l) == "output" && !l.IsExcluded).ToList();
         var purchaseLines = lines.Where(l => TaxService.LineSide(l) == "input" && !l.IsExcluded).ToList();
 
         var sale = new StringBuilder();

@@ -1333,6 +1333,23 @@ public partial class PosService
 
     private async Task AddItemToOrder(PosOrder order, CreateOrderItemRequest req, int lineOrder, decimal vatRate)
     {
+        // ProductId/ServicePackageId มาจาก client — ต้องเป็นของบริษัทเดียวกับ
+        // order เท่านั้น: ปลายทาง (Complete/Void/Refund) ใช้ FindAsync ตัดสต๊อก/
+        // อ่านต้นทุนโดยไม่กรอง tenant ถ้าปล่อยผ่านตรงนี้ user บริษัท A จะตัด
+        // สต๊อกและอ่านต้นทุนสินค้าของบริษัท B ได้
+        if (req.ProductId.HasValue)
+        {
+            var okProduct = await _db.Products.AsNoTracking()
+                .AnyAsync(p => p.Id == req.ProductId.Value && p.CompanyId == order.CompanyId);
+            if (!okProduct) throw new KeyNotFoundException("ไม่พบสินค้าในบริษัทนี้");
+        }
+        if (req.ServicePackageId.HasValue)
+        {
+            var okPackage = await _db.ServicePackages.AsNoTracking()
+                .AnyAsync(p => p.Id == req.ServicePackageId.Value && p.CompanyId == order.CompanyId);
+            if (!okPackage) throw new KeyNotFoundException("ไม่พบแพ็กเกจบริการในบริษัทนี้");
+        }
+
         var item = new PosOrderItem
         {
             OrderId = order.Id,

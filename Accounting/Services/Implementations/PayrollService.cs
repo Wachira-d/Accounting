@@ -327,7 +327,9 @@ public class PayrollService : IPayrollService
             .ToListAsync();
 
         return new PagedResponse<EmployeeResponse>(
-            items.Select(e => MapToEmployeeResponse(e, includePii)).ToList(),
+            // ตกพารามิเตอร์ includeSalary ไม่ได้ — default = true จะเปิดฐานเงินเดือน
+            // ทั้งบริษัทให้ user ที่ไม่มีสิทธิ์ดู payroll ผ่าน list endpoint
+            items.Select(e => MapToEmployeeResponse(e, includePii, includeSalary)).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }

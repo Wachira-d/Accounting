@@ -156,11 +156,16 @@ public partial class TaxService : ITaxService
         // in ANOTHER VAT report must not be claimed again here. This both
         // prevents accidental double-claiming and lets the "pull document"
         // feature move an invoice into a different period safely.
+        // ⚠️ ต้องตัดรายงาน "งวดเดียวกัน" ออกจาก dedup ด้วย — ComputeVatReportAsync
+        // สร้าง report ชั่วคราว (Id ใหม่) เพื่อ export/e-Filing: ถ้าเทียบแค่ Id
+        // รายงานงวดเดียวกันที่ผู้ใช้บันทึกไว้แล้วจะทำให้เอกสารทั้งงวดถูกมองว่า
+        // "เคลมที่อื่นแล้ว" → ไฟล์ยื่น RD แทบว่าง (ภาษีขายนำส่งขาดทั้งงวด)
         var claimedElsewhere = (await _db.TaxReportLines
             .Where(l => l.DocumentId != null && !l.IsExcluded
                 && l.TaxReportId != report.Id
                 && l.TaxReport.CompanyId == companyId
-                && l.TaxReport.TaxType == TaxType.VAT)
+                && l.TaxReport.TaxType == TaxType.VAT
+                && !(l.TaxReport.Year == report.Year && l.TaxReport.Month == report.Month))
             .Select(l => l.DocumentId!.Value)
             .ToListAsync())
             .ToHashSet();
@@ -1221,14 +1226,44 @@ public partial class TaxService : ITaxService
 
     private async Task GenerateWhtReport(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
     {
+        // ภ.ง.ด.1 = เงินเดือน ม.40(1) จาก payroll เท่านั้น (ExportPnd1Async อ่าน
+        // PayrollDetail) — ห้ามดึงจากเอกสารซื้อ: เดิม generator เดียวใช้ทุกแบบ
+        // ทำให้ ภ.ง.ด.1 มีค่าบริการผู้ขายปนแทนเงินเดือน
+        if (report.TaxType == TaxType.WithholdingTax1) return;
+
+        // เฉพาะเอกสาร "ฝั่งซื้อ" ที่เราเป็นผู้หัก — ใบขาย (Invoice/Receipt/...)
+        // ที่ลูกค้าหักเราไว้ (Dr 11910 เครดิตภาษีเรา) ห้ามเข้าแบบนำส่ง ไม่งั้น
+        // นำส่งภาษีที่เราถูกหักซ้ำอีกรอบ (ตรงกับ filter ของ WithholdingTaxCertService)
+        var purchaseSide = new[] { DocumentType.PurchaseInvoice, DocumentType.Expense,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+
         var docs = await _db.Documents
             .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดแถว ภ.ง.ด.3/53)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && purchaseSide.Contains(d.DocumentType)
                 && d.WithholdingTaxAmount != 0)
             .ToListAsync();
         await _db.HydrateContactsAsync(companyId, docs);
+
+        // แยกผู้ถูกหักตามแบบ (ท.ป.4/2528): ภ.ง.ด.3 = บุคคลธรรมดาไทย,
+        // ภ.ง.ด.53 = นิติบุคคลไทย, ภ.ง.ด.54 = ผู้รับต่างประเทศ (ม.70) —
+        // เดิมไม่กรองเลย ทำให้ 3 กับ 53 ของงวดเดียวกันเป็นรายงานฝาแฝด
+        // ยอดนำส่งรวมเป็น 2 เท่าของที่หักจริง
+        bool PayeeInScope(Contact? c)
+        {
+            var foreign = c != null && !string.IsNullOrWhiteSpace(c.CountryCode)
+                && !string.Equals(c.CountryCode, "TH", StringComparison.OrdinalIgnoreCase);
+            return report.TaxType switch
+            {
+                TaxType.WithholdingTax54 => foreign,
+                TaxType.WithholdingTax53 => !foreign && c != null && WithholdingTaxCertService.DetectJuristic(c),
+                TaxType.WithholdingTax3 => !foreign && (c == null || !WithholdingTaxCertService.DetectJuristic(c)),
+                _ => true,
+            };
+        }
+        docs = docs.Where(d => PayeeInScope(d.Contact)).ToList();
 
         var lineOrder = 1;
         foreach (var doc in docs)

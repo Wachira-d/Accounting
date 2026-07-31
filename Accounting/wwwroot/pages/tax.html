@@ -435,7 +435,8 @@
               if (c === 'EXEMPT' || c === 'VAT_CREDIT_CF') return 'summary';
               return 'output';
             };
-            const esc = (s) => (s || '').replace(/"/g, '&quot;');
+            // escape ครบทุกอักขระ ไม่ใช่แค่ quote — ใช้ทั้งใน attribute และ text node
+            const esc = (s) => (s || '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
             const renderRow = (ln) => {
               const ex = !!ln.isExcluded;
               const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';
@@ -446,7 +447,7 @@
                 <td class="text-center">${chk}</td>
                 <td>${ln.lineOrder}</td>
                 <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${esc(ln.description)}" style="min-width:160px">` : (ln.description || '-')}</td>
-                <td class="text-xs">${ln.taxPayerName || '-'}</td>
+                <td class="text-xs">${esc(ln.taxPayerName) || '-'}</td>
                 <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:100px">` : Layout.money(ln.incomeAmount)}</td>
                 <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxRate" value="${ln.taxRate}" step="0.01" style="width:64px">` : ln.taxRate}</td>
                 <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:100px">` : Layout.money(ln.taxAmount)}</td>
@@ -520,7 +521,7 @@
               html += renderTable('รายการ', '#334155', d.lines);
             }
           }
-          html += `<div class="form-group" style="margin-top:12px"><label class="form-label text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</label>${editable ? `<textarea class="form-input" id="taxNotes" rows="2" placeholder="หมายเหตุ...">${d.notes || ''}</textarea>` : `<div>${d.notes || '-'}</div>`}</div>`;
+          html += `<div class="form-group" style="margin-top:12px"><label class="form-label text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</label>${editable ? `<textarea class="form-input" id="taxNotes" rows="2" placeholder="หมายเหตุ...">${Layout.esc(d.notes || '')}</textarea>` : `<div>${Layout.esc(d.notes || '-')}</div>`}</div>`;
           if (d.filingReference) {
             html += `<div style="margin-top:12px"><span class="text-gray-500 text-xs">เลขอ้างอิงการยื่น</span><div class="font-medium">${d.filingReference}</div></div>`;
           }

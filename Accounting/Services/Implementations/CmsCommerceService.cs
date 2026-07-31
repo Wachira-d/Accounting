@@ -439,8 +439,19 @@ public class CmsCommerceService : ICmsCommerceService
         return await MapCartResponse(cart.Id);
     }
 
+    /// <summary>Storefront เป็น [AllowAnonymous] — ทุกเมธอดตะกร้าต้องตรวจว่า
+    /// cartId เป็นของ (companyId, siteId) จริงก่อนแตะข้อมูล (แบบเดียวกับ
+    /// ClearCartAsync) ไม่งั้นผู้ไม่ล็อกอินเดา guid ข้าม tenant ได้.</summary>
+    private async Task EnsureCartScopeAsync(Guid companyId, Guid siteId, Guid cartId)
+    {
+        var ok = await _db.SiteCarts.AsNoTracking()
+            .AnyAsync(c => c.Id == cartId && c.SiteId == siteId && c.CompanyId == companyId);
+        if (!ok) throw new KeyNotFoundException("Cart not found.");
+    }
+
     public async Task<CartResponse> AddToCartAsync(Guid companyId, Guid siteId, Guid cartId, AddToCartRequest request)
     {
+        await EnsureCartScopeAsync(companyId, siteId, cartId);
         var existing = await _db.SiteCartItems.FirstOrDefaultAsync(i => i.CartId == cartId && i.SiteProductId == request.SiteProductId);
         if (existing != null)
         {
@@ -449,7 +460,11 @@ public class CmsCommerceService : ICmsCommerceService
         }
         else
         {
-            var sp = await _db.SiteProducts.Include(p => p.Product).FirstOrDefaultAsync(p => p.Id == request.SiteProductId)
+            // สินค้าต้องอยู่ใน site เดียวกัน — กันฉีด SiteProductId ข้าม tenant
+            // มาดึงราคา/ผูกสินค้าของบริษัทอื่นเข้าตะกร้า
+            var sp = await _db.SiteProducts.Include(p => p.Product)
+                .FirstOrDefaultAsync(p => p.Id == request.SiteProductId
+                    && p.SiteId == siteId && p.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("Product not found.");
 
             var unitPrice = sp.OverrideSellingPrice ?? sp.Product.SellingPrice;
@@ -469,6 +484,7 @@ public class CmsCommerceService : ICmsCommerceService
 
     public async Task<CartResponse> UpdateCartItemAsync(Guid companyId, Guid siteId, Guid cartId, Guid itemId, UpdateCartItemRequest request)
     {
+        await EnsureCartScopeAsync(companyId, siteId, cartId);
         var item = await _db.SiteCartItems.FirstOrDefaultAsync(i => i.Id == itemId && i.CartId == cartId)
             ?? throw new KeyNotFoundException("Cart item not found.");
 
@@ -481,6 +497,7 @@ public class CmsCommerceService : ICmsCommerceService
 
     public async Task<CartResponse> RemoveFromCartAsync(Guid companyId, Guid siteId, Guid cartId, Guid itemId)
     {
+        await EnsureCartScopeAsync(companyId, siteId, cartId);
         var item = await _db.SiteCartItems.FirstOrDefaultAsync(i => i.Id == itemId && i.CartId == cartId);
         if (item != null)
         {

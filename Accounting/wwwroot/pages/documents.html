@@ -4093,7 +4093,7 @@
             <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
-            <td>${d.contact?.name || '-'}</td>
+            <td>${Layout.esc(d.contact?.name || '-')}</td>
             <td class="text-right">${Layout.money(d.totalAmount)}${(Number(d.depositAppliedAmount) > 0)
                 ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400" title="ยอดรวมคือยอดขายเต็ม; หักมัดจำที่รับไว้ก่อนแล้ว → เงินรับเพิ่มครั้งนี้">หักมัดจำ ${Layout.money(d.depositAppliedAmount)} · รับสุทธิ ${Layout.money((Number(d.totalAmount)||0) - (Number(d.depositAppliedAmount)||0))}</div>`
                 : ''}</td>
@@ -5597,7 +5597,7 @@
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400">— ยังไม่ออกเลข (รออนุมัติ) —</span>' : d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
-              <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${d.contact.name}</a>` : '-'}</div></div>
+              <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${Layout.esc(d.contact.name)}</a>` : '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${(d.bookingNumber || d.reference) ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${Layout.esc(d.bookingNumber || d.reference)}</div></div>` : ''}
               ${d.supplierInvoiceNumber ? `<div><div class="text-xs text-gray-500">เลขใบกำกับผู้ขาย</div><div class="font-medium">${this.escapeHtml(d.supplierInvoiceNumber)}</div></div>` : ''}
@@ -7470,7 +7470,7 @@
           <div style="display:flex;justify-content:space-between;padding:16px;background:#F8F9FA;border-radius:8px;margin-bottom:20px">
             <div>
               <div style="font-size:12px;color:#666">ลูกค้า / ผู้ติดต่อ</div>
-              <div style="font-weight:600">${d.contact?.name || '-'}</div>
+              <div style="font-weight:600">${Layout.esc(d.contact?.name || '-')}</div>
               ${d.contact?.taxId ? `<div style="font-size:12px;color:#666">เลขผู้เสียภาษี: ${d.contact.taxId}</div>` : ''}
               ${d.contact?.address ? `<div style="font-size:12px;color:#666">${d.contact.address}</div>` : ''}
             </div>
@@ -7498,7 +7498,7 @@
             <tbody>
               ${(d.lines||[]).map((l,i) => `<tr style="border-bottom:1px solid #E5E7EB">
                 <td style="padding:10px 8px;font-size:13px">${i+1}</td>
-                <td style="padding:10px 8px;font-size:13px">${l.description}</td>
+                <td style="padding:10px 8px;font-size:13px">${Layout.esc(l.description)}</td>
                 <td style="padding:10px 8px;text-align:right;font-size:13px">${l.quantity}</td>
                 <td style="padding:10px 8px;text-align:right;font-size:13px">${Layout.money(l.unitPrice)}</td>
                 ${hasVat ? `<td style="padding:10px 8px;text-align:right;font-size:13px">${Layout.money(l.vatAmount||0)}</td>` : ''}

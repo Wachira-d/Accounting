@@ -125,6 +125,15 @@ public partial class TaxService
             ?? throw new InvalidOperationException(
                 $"ไม่พบรายงาน {formType} ของงวด {year}/{month:D2} — กรุณา generate ก่อน");
 
+        // เฉพาะบรรทัดรายการจริง — บรรทัด "[สรุป]" (IncomeTypeCode=SUMMARY เป็น
+        // ยอดรวมซ้ำต่อผู้ขาย) และบรรทัดที่ผู้ทำบัญชีติ๊กออก (IsExcluded เช่น
+        // เอกสารยกเลิก) ห้ามลงไฟล์ยื่น — เดิมยิงทุกบรรทัด ทำให้ผู้ขายที่มี
+        // หลายรายการถูกนับ 2 เท่าและรายการที่ตัดออกยังถูกนำส่ง
+        var detailLines = report.Lines
+            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded)
+            .OrderBy(x => x.LineOrder)
+            .ToList();
+
         var sb = new StringBuilder();
         // Header row — RD pipe layout (Company TaxId | Branch | FormType | Year | Month).
         // Some forms have extra header fields; the spec varies per release so
@@ -135,13 +144,13 @@ public partial class TaxService
             formType,
             year.ToString(),
             month.ToString("D2"),
-            report.Lines.Count.ToString(),
+            detailLines.Count.ToString(),
             F(report.TotalIncome),
             F(report.TotalTaxWithheld)
         )).Append("\r\n");
 
         int order = 1;
-        foreach (var l in report.Lines.OrderBy(x => x.LineOrder))
+        foreach (var l in detailLines)
         {
             // Detail row per Thai RD: ลำดับ|เลขผู้เสียภาษี|คำนำหน้า|ชื่อ|นามสกุล|วันที่จ่าย|ประเภทเงินได้|ยอด|อัตรา|ภาษีหัก
             sb.Append(string.Join("|",
