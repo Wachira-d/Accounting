@@ -74,6 +74,7 @@ public partial class TaxService : ITaxService
             {
                 await GenerateVatReport(companyId, startDate, endDate, report);
                 await ApplyVatDeferralsAsync(companyId, request.Year, request.Month, report);
+                NormalizeReportLineOrder(report);   // §87 — deferral เพิ่มบรรทัดหลัง generate
             }
             else if (request.TaxType == TaxType.WithholdingTax3
                   || request.TaxType == TaxType.WithholdingTax53
@@ -710,9 +711,11 @@ public partial class TaxService : ITaxService
                             prohibitedVat += l.VatAmount;
                             continue;
                         }
-                        // (c) §82/5(6) keyword — รถยนต์นั่ง/น้ำมัน/ซ่อมรถ (เว้น vehicle dealer)
-                        if (!isVehicleDealer && IsProhibitedVehicleExpense(l.Description))
-                            prohibitedVat += l.VatAmount;
+                        // (c) §82/5(6) keyword-guess ถูกถอดออก — นโยบาย: "ตัด/เคลม
+                        // เป็นดุลพินิจผู้กรอก" ระบบห้ามเดาจากข้อความไปตัดสิทธิ
+                        // (เคยตัด "ค่าน้ำมัน" ทั้งที่เป็นรถกระบะที่เคลมได้). เหลือ
+                        // เฉพาะสัญญาณที่ผู้ใช้ตั้งใจ: flag รายบรรทัด (a) + ผังบัญชี
+                        // ต้องห้ามที่ตั้งเอง (b); ฝั่งเตือนมีตอนอนุมัติ/ตอนติ๊กแทน
                     }
                 }
                 var claimableVat = doc.VatAmount - prohibitedVat;
@@ -1152,6 +1155,41 @@ public partial class TaxService : ITaxService
         report.OutputVat = outputVat;
         report.InputVat = inputVat + vatCreditCarryforward;
         report.NetVat = outputVat - inputVat - vatCreditCarryforward;
+
+        // §87: รายงานภาษีซื้อ/ขายต้องลงตาม "ลำดับเวลา" — เรียง + renumber ท้ายสุด
+        NormalizeReportLineOrder(report);
+    }
+
+    /// <summary>§87 (ป.รัษฎากร): รายงานภาษีขาย/ซื้อต้องลงรายการ "ตามลำดับ
+    /// วันที่" ห้ามสลับ — เดิม LineOrder ไล่ตามลำดับที่ query คืนเอกสารมา
+    /// (ไม่มี OrderBy) → หน้าจอ/Excel/CSV แสดงวันที่สลับไปมา ผิดรูปแบบรายงาน
+    /// ตามกฎหมาย. เรียงเป็นกลุ่ม: ภาษีขาย → ภาษีซื้อ → บรรทัดสรุป (ยกเว้นภาษี/
+    /// เครดิตยกมา/สรุป) แต่ละกลุ่มเรียงตามวันที่ (ties = ลำดับเดิม เพื่อความ
+    /// เสถียร regenerate ได้ผลเดิม). ใช้กับ ภ.พ.30 + ภ.ง.ด.3/53 (CIT ข้าม —
+    /// บรรทัดเป็นชุดสรุปที่ลำดับมีความหมายเอง).</summary>
+    internal static void NormalizeReportLineOrder(TaxReport report)
+    {
+        if (report.Lines == null || report.Lines.Count == 0) return;
+        if (report.TaxType == TaxType.CorporateIncomeTax) return;
+
+        static int Rank(TaxReportLine l) => l.IncomeTypeCode switch
+        {
+            "EXEMPT" or "VAT_CREDIT_CF" or "SUMMARY" or "TAX_CREDIT" => 2,  // ท้ายสุด
+            "INPUT" or "JE_INPUT" => 1,                                      // ภาษีซื้อ
+            _ => 0,                                                          // ภาษีขาย/WHT
+        };
+
+        var ordered = report.Lines
+            .Select((Line, Idx) => (Line, Idx))
+            .OrderBy(x => Rank(x.Line))
+            // บรรทัดสรุปไม่มีวันที่จริง → คงลำดับเดิม (ไม่เอา MinValue ไปเรียง)
+            .ThenBy(x => Rank(x.Line) == 2 ? 0L : x.Line.TransactionDate.Date.Ticks)
+            .ThenBy(x => x.Idx)
+            .Select(x => x.Line)
+            .ToList();
+
+        var n = 1;
+        foreach (var l in ordered) l.LineOrder = n++;
     }
 
     /// <summary>คำนวณรายงานภาษีมูลค่าเพิ่ม (ภ.พ.30) เป็น TaxReport ชั่วคราว
@@ -1177,6 +1215,7 @@ public partial class TaxService : ITaxService
         // Deferral ต้องเข้าไฟล์ยื่นด้วย (จอกับไฟล์ต้องตรงกัน) — โหมด preview:
         // markClaims=false ห้ามไป stamp ClaimedAt กับ report ชั่วคราวที่ไม่ persist
         await ApplyVatDeferralsAsync(companyId, year, month, report, markClaims: false);
+        NormalizeReportLineOrder(report);   // §87 ลำดับเวลา (ไฟล์ยื่น = จอ)
         return report;
     }
 
@@ -1302,6 +1341,8 @@ public partial class TaxService : ITaxService
 
         report.TotalIncome = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.IncomeAmount);
         report.TotalTaxWithheld = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.TaxAmount);
+        // ใบแนบ ภ.ง.ด.3/53 เรียงตามวันที่จ่ายเหมือนกัน (ตรวจง่าย + ตรงแบบยื่น)
+        NormalizeReportLineOrder(report);
     }
 
     private async Task GenerateCitReport(Guid companyId, int year, TaxReport report)
@@ -2016,25 +2057,11 @@ public partial class TaxService : ITaxService
 
     // Document types eligible to be pulled into a VAT return, and whether
     // each posts to the input (ภาษีซื้อ) side.
-    /// <summary>§82/5(6) — รถยนต์นั่ง ≤10 ที่นั่ง + ค่าน้ำมัน/ซ่อม/เช่าซื้อ
-    /// เคลมภาษีซื้อไม่ได้ (ประกาศอธิบดีฯ ฉบับที่ 42). ตรวจ keyword บน
-    /// description. คืน true = น่าจะเป็นรายจ่ายรถยนต์นั่งต้องห้าม. ระวัง
-    /// false-positive (รถบรรทุก/รถตู้ >10 ที่นั่งเคลมได้) — keyword จับเฉพาะ
-    /// ที่ชัดว่าเป็นรถนั่งส่วนบุคคล + น้ำมัน; user override ได้ด้วย IsVatClaimable.</summary>
-    private static bool IsProhibitedVehicleExpense(string? description)
-    {
-        if (string.IsNullOrWhiteSpace(description)) return false;
-        var d = description.ToLowerInvariant();
-        // น้ำมันเชื้อเพลิง (รถนั่ง) — เบนซิน/ดีเซล/แก๊สโซฮอล์
-        string[] fuel = { "น้ำมันเชื้อเพลิง", "ค่าน้ำมัน", "เบนซิน", "ดีเซล",
-            "แก๊สโซฮอล", "gasohol", "diesel", "เติมน้ำมัน", "ค่าเชื้อเพลิง" };
-        // รถยนต์นั่ง + บริการที่เกี่ยวข้อง
-        string[] car = { "รถยนต์นั่ง", "รถเก๋ง", "ซ่อมรถ", "ค่าซ่อมรถยนต์",
-            "เช่าซื้อรถ", "ค่าเช่ารถยนต์", "ประดับยนต์", "อะไหล่รถ", "ยางรถยนต์" };
-        foreach (var k in fuel) if (d.Contains(k)) return true;
-        foreach (var k in car) if (d.Contains(k)) return true;
-        return false;
-    }
+    // หมายเหตุ §82/5(6): ตัวตัดอัตโนมัติจาก keyword (IsProhibitedVehicleExpense)
+    // ถูกถอดออกตามนโยบาย "เคลม/ไม่เคลมเป็นดุลพินิจผู้กรอก ระบบเตือนอย่างเดียว"
+    // — การตัดสิทธิใช้เฉพาะ flag รายบรรทัด (IsVatClaimable) + ผังบัญชีต้องห้าม
+    // ที่บริษัทตั้งเอง; คำเตือนกฎรถยนต์นั่ง (ประกาศ 42) อยู่ที่ approve warning
+    // ของ DocumentService + ตอนติ๊กเคลมในหน้าเอกสาร
 
     /// <summary>ประเภทเอกสารที่ "ดึงเข้ารายงาน ภ.พ.30" ด้วยมือได้ + ฝั่งภาษี
     /// (true = ภาษีซื้อ). ต้องครอบคลุมทุกประเภทที่ loop หลักนับเป็น VAT — เดิม
@@ -2190,6 +2217,7 @@ public partial class TaxService : ITaxService
         });
 
         RecalcVatTotals(report);
+        NormalizeReportLineOrder(report);   // §87 — แทรกบรรทัดที่ดึงมาให้ตรงลำดับวันที่
         report.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return MapToResponse(report);
@@ -2363,6 +2391,7 @@ public partial class TaxService : ITaxService
                 if (changed)
                 {
                     RecalcVatTotals(fresh);
+                    NormalizeReportLineOrder(fresh);   // §87 — บรรทัด pull ที่คืนมาต้องเข้าลำดับวันที่
                     fresh.UpdatedAt = DateTime.UtcNow;
                     await _db.SaveChangesAsync();
                     return MapToResponse(fresh);

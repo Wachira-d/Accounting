@@ -334,7 +334,20 @@
     <div class="modal-overlay" id="payslipModal">
       <div class="modal" style="max-width:800px">
         <div class="modal-header"><h3 class="modal-title">สลิปเงินเดือน</h3><button class="modal-close" onclick="Layout.closeModal('payslipModal')">&times;</button></div>
-        <div class="modal-body" style="padding:0"><iframe id="payslipFrame" style="width:100%;height:70vh;border:none"></iframe></div>
+        <div class="modal-body" style="padding:0">
+          <iframe id="payslipFrame" style="width:100%;height:70vh;border:none"></iframe>
+          <!-- มือถือ (Android/iOS Chrome) ไม่มี PDF viewer ฝังใน iframe —
+               โชว์ทางเลือกแทน icon เอกสารเสียเปล่า ๆ -->
+          <div id="payslipMobileFallback" style="display:none;padding:48px 24px;text-align:center">
+            <div style="font-size:44px">📄</div>
+            <div style="font-weight:600;margin:10px 0 4px">เบราว์เซอร์บนมือถือแสดงตัวอย่าง PDF ในหน้านี้ไม่ได้</div>
+            <div class="text-sm text-gray-500" style="margin-bottom:18px">กด "เปิดดูสลิป" เพื่อเปิดด้วยแอปอ่าน PDF ของเครื่อง หรือดาวน์โหลดเก็บไว้</div>
+            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+              <button class="btn btn-primary" onclick="Page.openPayslipTab()">🔍 เปิดดูสลิป</button>
+              <button class="btn btn-secondary" onclick="Page.downloadPayslip()">⬇ ดาวน์โหลด</button>
+            </div>
+          </div>
+        </div>
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Page.downloadPayslip()">⬇️ ดาวน์โหลด</button><button class="btn btn-primary" onclick="Page.printPayslip()" data-i18n="common.print">พิมพ์</button></div>
       </div>
     </div>
@@ -1162,13 +1175,40 @@ const Page = {
     } finally { if (btn) { btn.disabled = false; btn.textContent = 'บันทึก'; } }
   },
 
+  // เบราว์เซอร์นี้ render PDF ใน iframe ได้ไหม — Android/iOS Chrome = false
+  // (navigator.pdfViewerEnabled เป็น standard ตั้งแต่ Chrome 94/Firefox 99);
+  // browser เก่าไม่มี property → เดาจาก UA มือถือ
+  _canInlinePdf() {
+    if (typeof navigator.pdfViewerEnabled === 'boolean') return navigator.pdfViewerEnabled;
+    return !/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || '');
+  },
   showPayslip(runId, empId) {
     const api = Layout.api(); if (!api) return;
     this._slip = { runId, empId };
     const token = localStorage.getItem('token');
-    // inline render (server ส่ง Content-Disposition: inline)
-    document.getElementById('payslipFrame').src = api.getPayslip(runId, empId) + '?token=' + token;
+    const url = api.getPayslip(runId, empId) + '?token=' + token;
+    const frame = document.getElementById('payslipFrame');
+    const fb = document.getElementById('payslipMobileFallback');
+    if (this._canInlinePdf()) {
+      if (fb) fb.style.display = 'none';
+      frame.style.display = '';
+      // inline render (server ส่ง Content-Disposition: inline)
+      frame.src = url;
+    } else {
+      // มือถือ: iframe จะขึ้น icon เอกสารเสีย — ซ่อนแล้วโชว์ปุ่มทางเลือกแทน
+      frame.src = 'about:blank';
+      frame.style.display = 'none';
+      if (fb) fb.style.display = '';
+    }
     Layout.openModal('payslipModal');
+  },
+
+  openPayslipTab() {
+    const api = Layout.api(); if (!api || !this._slip) return;
+    const token = localStorage.getItem('token');
+    // เปิดแท็บใหม่ → มือถือส่งต่อให้แอปอ่าน PDF ของเครื่อง/ดาวน์โหลดเปิดเอง
+    window.open(api.getPayslip(this._slip.runId, this._slip.empId) + '?token=' + token,
+      '_blank', 'noopener');
   },
 
   downloadPayslip() {
@@ -1182,6 +1222,8 @@ const Page = {
   },
 
   printPayslip() {
+    // มือถือ: iframe ไม่มีเนื้อหาให้พิมพ์ — เปิดแท็บใหม่ให้แอป PDF ของเครื่องพิมพ์แทน
+    if (!this._canInlinePdf()) { this.openPayslipTab(); return; }
     try { document.getElementById('payslipFrame').contentWindow.print(); }
     catch { Layout.toast('พิมพ์ไม่ได้ — ลองดาวน์โหลดแล้วเปิดพิมพ์แทน', 'error'); }
   },

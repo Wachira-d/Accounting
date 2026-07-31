@@ -248,6 +248,8 @@ public partial class TaxService
             {
                 TaxReportId = report.Id,
                 LineOrder = deferLineOrder++,
+                // ให้ตัวเรียง §87 วางบรรทัดนี้ท้ายงวด (ไม่ใช่ 01/01/0001)
+                TransactionDate = new DateTime(year, month, 1).AddMonths(1).AddDays(-1),
                 Description = $"[เลื่อนเคลมออกจากงวดนี้] ภาษีซื้อเลื่อนไปงวดหน้า -{subtract:N2}",
                 IncomeAmount = 0,
                 TaxRate = 0,
@@ -262,6 +264,8 @@ public partial class TaxService
             {
                 TaxReportId = report.Id,
                 LineOrder = deferLineOrder++,
+                // ให้ตัวเรียง §87 วางบรรทัดนี้ท้ายงวด (ไม่ใช่ 01/01/0001)
+                TransactionDate = new DateTime(year, month, 1).AddMonths(1).AddDays(-1),
                 Description = $"[เคลมที่เลื่อนมาจากเดือนก่อน] ภาษีซื้อยกเข้า +{add:N2}",
                 IncomeAmount = 0,
                 TaxRate = 0,
