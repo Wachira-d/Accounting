@@ -729,6 +729,13 @@ public class OcrService : IOcrService
             // pick the value up correctly on the initial run.
             scanResult.BuyerName = extractedData.BuyerName;
             scanResult.BuyerTaxId = extractedData.BuyerTaxId;
+            // §86/4 สาขา + ที่อยู่ที่อ่านได้จากใบใบนี้ (กฎเหล็ก #3) — เดิมมีแต่ใน
+            // OcrExtractedData ที่อยู่ในหน่วยความจำ พอ reload หน้าค่าหาย และตอน
+            // สร้างเอกสารต้องไปหยิบ Contact.BranchCode ซึ่งอาจเป็นสาขาอื่น
+            scanResult.VendorBranchCode = extractedData.VendorBranchCode;
+            scanResult.VendorAddress = extractedData.VendorAddress;
+            scanResult.BuyerBranchCode = extractedData.BuyerBranchCode;
+            scanResult.BuyerAddress = extractedData.BuyerAddress;
             if (extractedData.FieldConfidence.Count > 0)
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
                     string.Join("\n", extractedData.FieldConfidence.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
@@ -3950,10 +3957,16 @@ public class OcrService : IOcrService
         // แล้ว (VendorBranchRegex → Contact.BranchCode) — ใช้ค่านั้นก่อน ค่อย
         // fallback 00000. เดิม hardcode "00000" ทับ → ใบสาขา 00003 ขึ้นรายงาน
         // ภาษีซื้อเป็นสำนักงานใหญ่ผิด (ประกาศฯ 199/§86/4) แบบเงียบ
+        // ⚠️ ลำดับที่ถูกต้อง: สาขาที่พิมพ์อยู่ "บนใบใบนี้" ต้องมาก่อน Contact —
+        // ผู้ขายหลายสาขาใช้ Contact เดียวกัน ถ้าอ่านจาก Contact จะได้สาขาของใบที่
+        // สแกนครั้งก่อน (เช่นใบนี้สาขา 00003 แต่ Contact ค้าง 00000) ขึ้นรายงาน
+        // ภาษีซื้อผิดสาขาแบบเงียบ (ประกาศฯ 199 / §86/4)
         var vendorBranchForBook = bookSupplierInvoice
-            ? await _db.Contacts.AsNoTracking()
-                .Where(c => c.Id == contactId.Value && c.CompanyId == companyId)
-                .Select(c => c.BranchCode).FirstOrDefaultAsync()
+            ? (!string.IsNullOrWhiteSpace(result.VendorBranchCode)
+                ? result.VendorBranchCode
+                : await _db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == contactId.Value && c.CompanyId == companyId)
+                    .Select(c => c.BranchCode).FirstOrDefaultAsync())
             : null;
         var document = new Document
         {
@@ -5436,7 +5449,13 @@ public class OcrService : IOcrService
             // หลีกเลี่ยง DB call ต่อ scan)
             GlAccountAiSuggestedCode: r.GlAccountAiSuggestedCode,
             GlAccountAiSuggestedName: null,
-            GlAccountAiConfidence: r.GlAccountAiConfidence);
+            GlAccountAiConfidence: r.GlAccountAiConfidence,
+            // §86/4 (กฎเหล็ก #3): ค่าจาก scan ล่าสุดก่อน แล้ว fallback ค่าที่เก็บไว้
+            // — สาขาต้องมีค่าเสมอ ("00000" = สำนักงานใหญ่) ห้ามปล่อย null ให้ UI
+            VendorBranchCode: data?.VendorBranchCode ?? r.VendorBranchCode ?? "00000",
+            VendorAddress: data?.VendorAddress ?? r.VendorAddress,
+            BuyerBranchCode: data?.BuyerBranchCode ?? r.BuyerBranchCode ?? "00000",
+            BuyerAddress: data?.BuyerAddress ?? r.BuyerAddress);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)

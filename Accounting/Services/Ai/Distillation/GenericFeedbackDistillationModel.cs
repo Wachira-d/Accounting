@@ -240,6 +240,19 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
 
     private static readonly System.Text.RegularExpressions.Regex _taxIdRe =
         new(@"\b\d{13}\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+    // ⚠️ รูปแบบ "หลัง mask" ของ AiPromptSanitizer ต้อง normalise ให้เป็น token
+    // เดียวกับค่าดิบ — แถว feedback ถูกบันทึกด้วย prompt ที่ sanitize แล้ว
+    // (AiStripPiiInPrompts=true) ขณะที่ตอนทำนายใช้ prompt ดิบ ถ้าไม่ทำให้ตรงกัน
+    // fingerprint จะไม่มีวันชนกัน → Tier-1 exact-memory ของ student ตายสนิท
+    private static readonly System.Text.RegularExpressions.Regex _taxIdMaskedRe =
+        new(@"\b(?:\dx{10}\d|x{13})\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex _phoneRe =
+        new(@"\b0\d{1,2}[-\s]?\d{3}[-\s]?\d{4}\b|\b0\d{8,9}\b",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex _phoneMaskedRe =
+        new(@"\b(?:\d{2}x{4}\d{2}|0x{6})\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex _piiHashRe =
+        new(@"""h:[0-9a-f]{6,}""", System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex _docNumRe =
         new(@"\b(?:INV|TXN|REF|PV|RV|BIL|TAX|IV)[-_/]?\d{4,}\b",
             System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
@@ -254,21 +267,61 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
     {
         // Best-effort: re-serialise to canonical JSON so key ordering /
         // whitespace don't affect the fingerprint; fall back to raw on parse error.
+        // พร้อมกันนี้ทำให้ field ที่ sanitizer แทนด้วย hash ("*_pii"/"*_personal")
+        // กลายเป็น token คงที่ทั้งฝั่งบันทึกและฝั่งทำนาย
         var t = s;
         try
         {
-            using var doc = JsonDocument.Parse(s);
-            t = JsonSerializer.Serialize(doc.RootElement);
+            var node = System.Text.Json.Nodes.JsonNode.Parse(s);
+            if (node != null)
+            {
+                MaskPiiKeys(node);
+                t = node.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+            }
         }
         catch { /* not JSON — fingerprint the raw text */ }
 
         t = t.ToLowerInvariant();
+        t = _piiHashRe.Replace(t, "\"<pii>\"");
+        // masked ก่อน raw: ค่าที่ถูก mask แล้วมีตัวอักษร x ปน ถ้าปล่อยให้ _amountRe
+        // จับก่อนจะได้ "<amt>xxxx<amt>" ซึ่งไม่ตรงกับค่าดิบที่ได้ "<phone>"
+        t = _taxIdMaskedRe.Replace(t, "<taxid>");
         t = _taxIdRe.Replace(t, "<taxid>");
+        t = _phoneMaskedRe.Replace(t, "<phone>");
+        t = _phoneRe.Replace(t, "<phone>");
         t = _docNumRe.Replace(t, "<docnum>");
         t = _dateRe.Replace(t, "<date>");
         t = _amountRe.Replace(t, "<amt>");
         t = _wsRe.Replace(t, " ").Trim();
         return t;
+    }
+
+    /// <summary>แทนค่าของ field ที่เป็น PII ตาม convention ของ AiPromptSanitizer
+    /// ("*_pii" / "*_personal") ด้วย token คงที่ — ฝั่งบันทึกเก็บเป็น "h:{hash}"
+    /// ฝั่งทำนายเป็นค่าดิบ ถ้าไม่ทำให้เหมือนกัน fingerprint จะไม่ตรงกันตลอดไป</summary>
+    private static void MaskPiiKeys(System.Text.Json.Nodes.JsonNode node)
+    {
+        if (node is System.Text.Json.Nodes.JsonObject obj)
+        {
+            foreach (var key in obj.Select(kvp => kvp.Key).ToList())
+            {
+                var val = obj[key];
+                if (key.EndsWith("_pii", StringComparison.OrdinalIgnoreCase)
+                    || key.EndsWith("_personal", StringComparison.OrdinalIgnoreCase))
+                {
+                    obj[key] = "<pii>";
+                }
+                else if (val is System.Text.Json.Nodes.JsonObject or System.Text.Json.Nodes.JsonArray)
+                {
+                    MaskPiiKeys(val);
+                }
+            }
+        }
+        else if (node is System.Text.Json.Nodes.JsonArray arr)
+        {
+            foreach (var item in arr.Where(i => i != null))
+                MaskPiiKeys(item!);
+        }
     }
 
     private sealed record Cand(string Answer, int Confirmed, int Overridden, decimal WilsonScore);

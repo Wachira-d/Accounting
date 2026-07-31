@@ -188,6 +188,16 @@ public class OcrScanResult : TenantEntity
     public string? BuyerName { get; set; }
     public string? BuyerTaxId { get; set; }
 
+    // ─── §86/4 ที่อยู่ + รหัสสาขา (กฎเหล็ก #3: pre-fill ครบทุก field) ───
+    // OCR แกะค่าเหล่านี้ได้อยู่แล้วแต่เดิมไม่มีที่เก็บ → ตอนสร้างเอกสารต้อง
+    // ไปอ่าน Contact.BranchCode แทน ทำให้ใบของผู้ขายหลายสาขาได้สาขาผิด
+    // (ใบสาขา 00003 แต่ Contact เก็บ 00000 จาก scan ก่อนหน้า) และหน้า review
+    // ไม่มีช่องให้ผู้ใช้แก้เพราะ DTO ไม่ได้ส่งค่าออกมา
+    public string? VendorBranchCode { get; set; }
+    public string? VendorAddress { get; set; }
+    public string? BuyerBranchCode { get; set; }
+    public string? BuyerAddress { get; set; }
+
     // ─── Document role inference ──────────────────────────────────────
     // Thai-accounting workflow separates THREE distinct concepts:
     //   • ScannedDocumentType — the physical paper we OCR'd (e.g. "Receipt")

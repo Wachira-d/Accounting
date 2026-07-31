@@ -123,14 +123,27 @@ public class ImportAiAugmenter : IImportAiAugmenter
             var req = ImportPrompts.BuildDataReview(companyId, sessionId, entityType,
                 targets, mappedColumnOrder, sampleRows, existingSlice);
             var resp = await _orchestrator.AskAsync(req, ct);
+            // ไม่มีคำตอบจาก provider (ปิด AI / เกินงบ / timeout / feature disabled)
+            // → ใช้ตัวตรวจ rule-based แทน ห้ามคืน list ว่าง (กฎเหล็ก #1: local ต้อง
+            // ทดแทนได้ 100% และ UI ต้องแยกออกว่า "ไม่มีปัญหา" ≠ "AI ไม่ทำงาน")
             if (string.IsNullOrWhiteSpace(resp.RawResponseJson))
-                return EmptyResult(usedAi: false);
+                return ImportReviewHeuristics.Review(
+                    entityType, targets, mappedColumnOrder, sampleRows, existingSlice);
             return ParseDataReviewResponse(resp.RawResponseJson!, usedAi: resp.UsedAi);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Import data-review AI augmenter failed");
-            return EmptyResult(usedAi: false);
+            _logger.LogWarning(ex, "Import data-review AI augmenter failed — ใช้ตัวตรวจ rule-based แทน");
+            try
+            {
+                return ImportReviewHeuristics.Review(
+                    entityType, targets, mappedColumnOrder, sampleRows, existingSlice);
+            }
+            catch (Exception hex)
+            {
+                _logger.LogWarning(hex, "Import data-review heuristics failed");
+                return EmptyResult(usedAi: false);
+            }
         }
     }
 

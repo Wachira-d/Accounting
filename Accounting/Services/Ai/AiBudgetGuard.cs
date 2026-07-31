@@ -70,8 +70,17 @@ public class AiBudgetGuard : IAiBudgetGuard
                 var todayUtc = now.Date;
                 var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
+                // นับเฉพาะ call ที่ "ยิง provider จริง" — ทุก path ของ orchestrator
+                // เขียนแถว feedback หมด (local short-circuit, cache hit, skip,
+                // budget-exceeded, synthetic child rows ของ bulk match) ถ้านับทั้งหมด
+                // cap จะถูกกินโดยงานที่ไม่ได้เสียเงิน และยิ่ง local model แม่นขึ้น
+                // (ยิง provider น้อยลง) cap ยิ่งเต็มเร็วขึ้น — ตรงข้ามกับเจตนา
+                var billableStatuses = new[]
+                {
+                    AiCallStatus.Success, AiCallStatus.Failed, AiCallStatus.InvalidResponse,
+                };
                 callsToday = await _db.AiSuggestionFeedbacks
-                    .Where(f => f.CreatedAt >= todayUtc)
+                    .Where(f => f.CreatedAt >= todayUtc && billableStatuses.Contains(f.Status))
                     .CountAsync(ct);
                 costMonth = await _db.AiSuggestionFeedbacks
                     .Where(f => f.CreatedAt >= monthStart && f.CostUsd != null)

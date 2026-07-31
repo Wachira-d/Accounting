@@ -1814,6 +1814,11 @@ public static class DatabaseMigrationHelper
             """,
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerName" varchar(500) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerTaxId" varchar(20) NULL;""",
+            // §86/4 สาขา + ที่อยู่ที่อ่านได้จากใบ (กฎเหล็ก #3 — pre-fill ครบทุก field)
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorBranchCode" varchar(10) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorAddress" varchar(1000) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerBranchCode" varchar(10) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerAddress" varchar(1000) NULL;""",
             // AI GL suggestion transparency — เก็บ AI primary แม้ถูก confidence guard ปฏิเสธ
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiSuggestedCode" varchar(20) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiConfidence" numeric(5,4) NULL;""",
