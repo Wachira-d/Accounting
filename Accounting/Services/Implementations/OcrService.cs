@@ -1397,13 +1397,33 @@ public class OcrService : IOcrService
                 }
             }
 
-            if (!scanResult.MatchedContactId.HasValue && !string.IsNullOrEmpty(extractedData.VendorName))
+            // ⚠️ จับคู่ด้วย "ชื่อ" เป็นเส้นเสี่ยงที่สุด — ผูกเอกสารผิดรายได้ทั้งใบ
+            // (เคสจริง: ใบกำกับของบริษัทหนึ่งไปโผล่ใต้ชื่ออีกราย). กติกา:
+            //   • ชื่อที่ OCR อ่านได้ต้องยาวพอ (≥6 ตัวอักษรหลังตัดช่องว่าง) —
+            //     เดิมไม่มีขั้นต่ำ: ถ้า OCR ได้ "นาย"/"บริษัท" จะ Contains ตรงกับ
+            //     ผู้ติดต่อจำนวนมาก แล้ว FirstOrDefault (ไม่มี OrderBy) หยิบมั่ว
+            //   • หยิบตัวที่ "ใกล้เคียงที่สุด" แบบ deterministic ไม่ใช่แถวแรกที่ DB คืน
+            var ocrVendorName = (extractedData.VendorName ?? "").Trim();
+            var ocrVendorNameKey = new string(ocrVendorName.Where(ch => !char.IsWhiteSpace(ch)).ToArray());
+            if (!scanResult.MatchedContactId.HasValue && ocrVendorNameKey.Length >= 6)
             {
-                // First try the cheap substring match
-                var matchedContact = await _db.Contacts
-                    .FirstOrDefaultAsync(c => c.CompanyId == companyId
-                        && c.Name.Contains(extractedData.VendorName) && !c.IsDeleted);
-                scanResult.MatchedContactId = matchedContact?.Id;
+                // substring match — โหลด candidate มาเลือกในหน่วยความจำ (deterministic)
+                var subMatches = await _db.Contacts.AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                        && c.Name.Contains(ocrVendorName))
+                    .Select(c => new { c.Id, c.Name })
+                    .Take(50)
+                    .ToListAsync();
+                var subPick = subMatches
+                    .Select(c => new { c.Id, c.Name, Sim = Ocr.FuzzyMatcher.Similarity(c.Name, ocrVendorName) })
+                    .OrderByDescending(x => x.Sim)
+                    .ThenBy(x => x.Name.Length)     // ชื่อสั้นสุด = ตรงตัวสุด
+                    .ThenBy(x => x.Id)
+                    .FirstOrDefault();
+                if (subMatches.Count > 1)
+                    extractedData.ReasoningTrace.Add(
+                        $"[Match] ชื่อผู้ขาย '{ocrVendorName}' ตรงแบบ substring {subMatches.Count} ราย — เลือก '{subPick!.Name}' (ใกล้เคียงสุด) โปรดตรวจสอบ");
+                scanResult.MatchedContactId = subPick?.Id;
 
                 // When substring misses, fall back to Levenshtein-based fuzzy
                 // match against every supplier contact. This catches the
@@ -1420,6 +1440,7 @@ public class OcrService : IOcrService
                     var best = allSuppliers
                         .Select(c => new { c.Id, c.Name, Sim = Ocr.FuzzyMatcher.Similarity(c.Name, extractedData.VendorName) })
                         .OrderByDescending(x => x.Sim)
+                        .ThenBy(x => x.Id)       // tie → deterministic (สแกนซ้ำได้ผลเดิม)
                         .FirstOrDefault();
                     if (best != null && best.Sim >= 0.85)
                     {
@@ -1639,9 +1660,26 @@ public class OcrService : IOcrService
                 if (existing != null)
                 {
                     bool changed = false;
-                    // (1) TaxId — unconditional fill ถ้าว่าง
-                    if (string.IsNullOrWhiteSpace(existing.TaxId) && !string.IsNullOrEmpty(extractedData.VendorTaxId))
-                    { existing.TaxId = extractedData.VendorTaxId; changed = true; }
+                    // (1) TaxId — เขียนได้เฉพาะเมื่อ "มั่นใจว่าเป็นรายเดียวกันจริง"
+                    // ⚠️ contact ตัวนี้อาจถูกจับคู่มาด้วย "ชื่อ" (substring/fuzzy)
+                    // การประทับเลขภาษีจากกระดาษลงไปทันทีจะ "เปลี่ยนตัวตน" ของ
+                    // ผู้ติดต่อรายนั้นถาวร → เอกสารเก่าทุกใบของรายนั้นเปลี่ยนเลข
+                    // ภาษีตาม + รายงานภาษีเพี้ยน. เงื่อนไข: ชื่อบนกระดาษต้อง
+                    // ใกล้เคียงชื่อ contact จริง ๆ (≥0.90) และเลขต้องครบ 13 หลัก
+                    var enrichNameSim = string.IsNullOrWhiteSpace(extractedData.VendorName)
+                        ? 0d
+                        : Ocr.FuzzyMatcher.Similarity(existing.Name, extractedData.VendorName!);
+                    var enrichTaxDigits = DocumentService.NormalizeTaxDigits(extractedData.VendorTaxId);
+                    if (string.IsNullOrWhiteSpace(existing.TaxId) && enrichTaxDigits.Length == 13)
+                    {
+                        if (enrichNameSim >= 0.90)
+                        { existing.TaxId = extractedData.VendorTaxId; changed = true; }
+                        else
+                            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                                + $"\n[Enrich] ไม่เติมเลขภาษี {enrichTaxDigits} ให้ '{existing.Name}' — ชื่อบนกระดาษ"
+                                + $" ('{extractedData.VendorName}') ต่างจากผู้ติดต่อที่จับคู่ไว้ (ความใกล้เคียง {enrichNameSim:P0})"
+                                + " โปรดตรวจว่าเป็นผู้ขายรายเดียวกันก่อนแก้ข้อมูลผู้ติดต่อเอง";
+                    }
                     // (2) DBD / phone / address enrichment — gated ตามเดิม
                     var hasDbdOrContacts = extractedData.DbdCanonicalName != null
                         || !string.IsNullOrWhiteSpace(extractedData.DbdAddress)

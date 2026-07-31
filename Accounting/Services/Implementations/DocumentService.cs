@@ -6653,6 +6653,30 @@ public class DocumentService : IDocumentService
         if (losers.Count != mergeIds.Count)
             throw new InvalidOperationException("บางรายการไม่พบ/ถูกลบแล้ว — โหลดรายการซ้ำใหม่อีกครั้ง");
 
+        // 🛡️ ตาข่ายกันรวม "คนละราย" (ป้องกันเอกสารเก่าเปลี่ยนคู่ค้ายกชุด) —
+        // ถ้าทั้งสองฝั่งมีเลขภาษี 13 หลักที่ valid และ "ต่างกัน" = คนละนิติบุคคล/
+        // บุคคลแน่นอน ห้ามรวมไม่ว่า UI จะส่งอะไรมา (กลุ่ม dedup ผิด/กดพลาด/
+        // เรียก API ตรง). เคสชื่อคล้ายกันแต่คนละเลขภาษีเป็นเรื่องปกติมาก
+        var keepTaxDigits = NormalizeTaxDigits(keep.TaxId);
+        foreach (var l in losers)
+        {
+            var loserTaxDigits = NormalizeTaxDigits(l.TaxId);
+            if (keepTaxDigits.Length == 13 && loserTaxDigits.Length == 13
+                && keepTaxDigits != loserTaxDigits)
+                throw new InvalidOperationException(
+                    $"รวมไม่ได้ — \"{keep.Name}\" (เลขภาษี {keepTaxDigits}) กับ \"{l.Name}\" "
+                    + $"(เลขภาษี {loserTaxDigits}) เป็นคนละราย. การรวมจะทำให้เอกสารเก่าของทั้งสองราย"
+                    + "เปลี่ยนคู่ค้าและรายงานภาษีผิด — ถ้าเลขภาษีรายใดผิด ให้แก้ที่ข้อมูลผู้ติดต่อก่อน");
+        }
+
+        // เก็บ "ก่อนแก้" ไว้ใน audit ให้ย้อนได้จริง: เอกสารที่กำลังจะถูกย้าย +
+        // ตัวตนเดิมของ contact ที่ถูกยุบ (เดิมบันทึกแค่จำนวนแถว = ตรวจย้อนไม่ได้)
+        var affectedDocs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && mergeIds.Contains(d.ContactId))
+            .Select(d => new { d.Id, d.DocumentNumber, d.ContactId })
+            .Take(1000)
+            .ToListAsync();
+
         // เติมข้อมูลที่ตัวเก็บยังว่างจากตัวที่ถูกรวม (ไม่ overwrite ของเดิม)
         foreach (var l in losers)
         {
@@ -6708,8 +6732,19 @@ public class DocumentService : IDocumentService
                 Action = AuditAction.Update,
                 EntityType = "ContactMerge",
                 EntityId = keepId.ToString(),
+                // "ก่อนแก้" — ตัวตนเดิมของ contact ที่ถูกยุบ + เอกสารที่ผูกอยู่
+                // (ใช้ย้อนกลับได้จริงถ้ารวมผิด: UPDATE ContactId กลับตามรายการนี้)
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    losers = losers.Select(l => new { l.Id, l.Name, l.TaxId, l.BranchCode }),
+                    documents = affectedDocs.Select(d => new { d.Id, d.DocumentNumber, previousContactId = d.ContactId }),
+                }),
                 NewValues = System.Text.Json.JsonSerializer.Serialize(new
-                { keepId, merged = mergeIds, rowsRepointed = repointed }),
+                {
+                    keepId, keepName = keep.Name, keepTaxId = keep.TaxId,
+                    merged = mergeIds, rowsRepointed = repointed,
+                    documentsMoved = affectedDocs.Count,
+                }),
                 Timestamp = DateTime.UtcNow
             });
             await _db.SaveChangesAsync();
