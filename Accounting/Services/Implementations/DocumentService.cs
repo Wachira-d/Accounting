@@ -748,6 +748,25 @@ public class DocumentService : IDocumentService
             if (request.RelatedDocumentId.HasValue)
                 doc.RelatedDocumentId = request.RelatedDocumentId;
 
+            // CN/DN สกุลต่างประเทศที่อ้างใบเดิม: ใช้เรทของใบเดิม (ไม่ใช่เรท BOT
+            // วันออก CN) — ตัด AR/AP ต้องเท่ายอดที่ตั้งไว้เป๊ะ ไม่งั้นเศษเรทค้าง
+            // ในลูกหนี้/เจ้าหนี้ถาวรโดยไม่มีขา FX gain/loss (convert flow copy
+            // เรทมาให้อยู่แล้ว — เส้นนี้ครอบเคสสร้างตรง/เลือกจาก dropdown)
+            if ((request.DocumentType == DocumentType.CreditNote
+                    || request.DocumentType == DocumentType.DebitNote)
+                && doc.RelatedDocumentId.HasValue
+                && !string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase))
+            {
+                var srcFxInfo = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => new { d.Currency, d.ExchangeRate })
+                    .FirstOrDefaultAsync();
+                if (srcFxInfo != null
+                    && string.Equals(srcFxInfo.Currency, doc.Currency, StringComparison.OrdinalIgnoreCase)
+                    && srcFxInfo.ExchangeRate > 0)
+                    doc.ExchangeRate = srcFxInfo.ExchangeRate;
+            }
+
             if (request.DocumentType == DocumentType.PaymentVoucher)
             {
                 // A standalone PV must represent real cash leaving the company.
@@ -1387,9 +1406,11 @@ public class DocumentService : IDocumentService
             if (!projectOk)
                 throw new InvalidOperationException("ไม่พบโครงการในบริษัทนี้");
             doc.ProjectId = request.ProjectId.Value;
+        }
+        // DimensionId เป็นเงื่อนไขอิสระ — เดิมซ้อนใน block ProjectId ทำให้แก้
+        // dimension โดยไม่ส่ง project = ค่าหายเงียบ
         if (request.DimensionId.HasValue)
             doc.DimensionId = request.DimensionId.Value == Guid.Empty ? null : request.DimensionId.Value;
-        }
 
         if (request.BankAccountId.HasValue)
             doc.BankAccountId = request.BankAccountId.Value;
@@ -1600,10 +1621,23 @@ public class DocumentService : IDocumentService
             doc.SupplierBranchCode = request.SupplierBranchCode;
         // override: "" = ล้าง (กลับ default 11610/11640); null = ไม่แตะ; ค่าอื่น = pin
         if (request.InputVatAccountCodeOverride != null)
+        {
+            // ล้าง override บนใบที่ VAT ลงผัง override ไปแล้วตอน approve
+            // (PostedAsUndue=false — ไม่มี JE 11640 ให้ reclassify): การล้างเฉย ๆ
+            // = ร่องรอยหาย + ภ.พ.30 อาจนับเป็นเคลมได้ทั้งที่ GL ลงต้นทุนไปแล้ว
+            // → ต้อง void แล้วออกใหม่เท่านั้น
+            if (request.InputVatAccountCodeOverride.Length == 0
+                && !string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride)
+                && !doc.InputVatPostedAsUndue)
+                throw new InvalidOperationException(
+                    $"เอกสารนี้ลงภาษีซื้อเข้าผัง {doc.InputVatAccountCodeOverride} (override) ตั้งแต่อนุมัติแล้ว — "
+                    + "ล้าง override ไม่ได้เพราะไม่มียอดพักใน 11640 ให้ย้าย. หากต้องการเคลม ภ.พ.30 "
+                    + "ให้ยกเลิกเอกสารแล้วบันทึกใหม่โดยไม่ตั้ง override");
             doc.InputVatAccountCodeOverride =
                 request.InputVatAccountCodeOverride.Length == 0
                     ? null
                     : request.InputVatAccountCodeOverride;
+        }
 
         // ถ้าข้อมูลครบแล้ว + เดิมค้าง 11640 → gen adjusting JE 11640→11610
         var reclassified = await ReclassifyUndueInputVatAsync(companyId, doc, actor);
@@ -2163,6 +2197,16 @@ public class DocumentService : IDocumentService
         if (request.Amount <= 0)
             throw new InvalidOperationException("จำนวนเงินคืนต้องมากกว่า 0");
 
+        // กัน double-click/2 requests พร้อมกัน: เดิมไม่มี transaction เลย —
+        // (1) guard "คืนเกินคงเหลือ" อ่านค่าเก่าพร้อมกันผ่านทั้งคู่ → คืนเกิน +
+        //     JE/CN สองชุด, (2) pg_advisory_xact_lock ของ generator เลข CN หลุด
+        //     ทันทีที่ statement จบ (auto-commit) → เลข CN ซ้ำได้.
+        // lock แถวมัดจำ + reload ยอดใต้ lock แล้วทำทั้งหมดใน transaction เดียว
+        await using var refundTx = await _db.Database.BeginTransactionAsync();
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} FOR UPDATE", documentId);
+        await _db.Entry(doc).ReloadAsync();   // DepositRefunded/Realized ล่าสุดใต้ lock
+
         // แยกฐาน + VAT จากยอด gross ที่จะคืน (ตามสัดส่วนเดิมของใบ)
         var vatPortion = doc.TotalAmount > 0 ? doc.VatAmount / doc.TotalAmount : 0m;
         var refundVat = Math.Round(request.Amount * vatPortion, 2, MidpointRounding.AwayFromZero);
@@ -2273,6 +2317,7 @@ public class DocumentService : IDocumentService
         }
 
         await _db.SaveChangesAsync();
+        await refundTx.CommitAsync();
         var updated = await GetDocumentAsync(companyId, documentId);
         await FireWebhookAsync(companyId, "deposit.refunded", updated);
         return updated;
@@ -3892,6 +3937,28 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"ยกเลิกไม่ได้ — เอกสารนี้มีเอกสารลูก {activeChild.DocumentType} ({activeChild.DocumentNumber}) " +
                 "อ้างอิงอยู่ (เช่นใบกำกับภาษี/ใบเสร็จที่แปลงไป). กรุณายกเลิกเอกสารลูกก่อน");
+
+        // CN/DN legacy ที่อ้างใบนี้ด้วย "เลขที่" ในช่องอ้างอิง (text — ก่อนระบบ
+        // resolve เป็น RelatedDocumentId ตอน approve) ก็ต้องกัน void เหมือนกัน —
+        // ไม่งั้นใบเดิมถูกยกเลิกทั้งที่ใบลดหนี้ยัง active = ภ.พ.30 หักจากใบที่หายไป
+        var docNumber = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => d.DocumentNumber).FirstOrDefaultAsync();
+        if (!string.IsNullOrWhiteSpace(docNumber))
+        {
+            var textRefChild = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote)
+                    && d.RelatedDocumentId == null && d.Reference == docNumber
+                    && d.Status != DocumentStatus.Draft
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                .Select(d => new { d.DocumentNumber, d.DocumentType })
+                .FirstOrDefaultAsync();
+            if (textRefChild != null)
+                throw new InvalidOperationException(
+                    $"ยกเลิกไม่ได้ — มี{(textRefChild.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")} " +
+                    $"{textRefChild.DocumentNumber} อ้างเลขที่ใบนี้อยู่ (§86/9-10) — ยกเลิกใบนั้นก่อน");
+        }
 
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
@@ -7741,6 +7808,16 @@ public class DocumentService : IDocumentService
         if (doc.IsForeignService) return false;
         // เคย reclassify ไปแล้ว → ไม่ทำซ้ำ (idempotent)
         if (doc.InputVatBecameClaimableAt.HasValue) return false;
+        // job §82/3 ล้างเป็นค่าใช้จ่ายไปแล้ว (พ้น 6 เดือน) — ห้ามย้ายเข้า 11610
+        // อีก ไม่งั้น 11640 ติดลบ + เคลม ภ.พ.30 หลังหมดสิทธิ์ + ค่าใช้จ่ายเบิ้ล
+        if (doc.InputVatExpiredAt.HasValue) return false;
+        // §82/3: กรอบ 6 เดือนนับจากเดือนภาษีของใบกำกับ (สูตรเดียวกับ expiry job)
+        // — เกินแล้วห้ามย้ายเข้า 11610 แม้ใบจะครบ §86/4 ทีหลัง; ผลต้องไม่ขึ้นกับ
+        // ว่า nightly job หรือ user มาถึงก่อน
+        var claimBaseDate = doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
+        var claimWindowEnd = new DateTime(claimBaseDate.Year, claimBaseDate.Month, 1)
+            .AddMonths(7).AddDays(-1);
+        if (DateTime.UtcNow.AddHours(7).Date > claimWindowEnd) return false;
         // มี override → user ตั้งใจไม่เคลม VAT → ไม่ reclassify
         if (!string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride)) return false;
         // ต้องเป็นเอกสารที่ approved แล้ว (Draft ไม่มี JE ให้ adjust)
@@ -7805,6 +7882,11 @@ public class DocumentService : IDocumentService
         // InputVatPostedAsUndue คงไว้ true เป็น historical marker —
         // ใช้คู่ BecameClaimableAt เพื่อบอก ภ.พ.30 ว่าใช้ period ของ
         // BecameClaimableAt (ไม่ใช่ DocumentDate) เป็น tax point
+        // PV: เปิดธง "ใช้งานใบกำกับภาษี" ให้ ภ.พ.30 นับแถวด้วย — ข้อมูลใบกำกับ
+        // ครบ §86/4 แล้วโดยนิยาม. ไม่งั้น GL มี Dr 11610 แต่รายงานไม่มีแถว
+        // (branch ฝั่ง input รับ PV เฉพาะ HasTaxInvoiceReference) = ไม่ reconcile
+        if (doc.DocumentType == DocumentType.PaymentVoucher)
+            doc.HasTaxInvoiceReference = true;
         return true;
     }
 
@@ -7819,6 +7901,10 @@ public class DocumentService : IDocumentService
             .Where(d => d.CompanyId == companyId && d.InputVatPostedAsUndue
                 && d.InputVatBecameClaimableAt == null && d.InputVatExpiredAt == null
                 && (d.InputVatAccountCodeOverride == null || d.InputVatAccountCodeOverride == "")
+                // ภ.พ.36 (§83/6): พัก 11640 ด้วยเหตุ "รอนำส่ง" ไม่ใช่ใบกำกับไม่ครบ
+                // — วงจรหมดสิทธิ์คนละเหตุ ห้ามล้างเป็นค่าใช้จ่ายด้วยกรอบ §82/3 นี้
+                // (ล้างแล้ว RecognizePp36 ทีหลังจะ Dr 11610 ซ้อน → 11640 ติดลบ)
+                && !d.IsForeignService
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
             .ToListAsync();
 
@@ -8979,6 +9065,20 @@ public class DocumentService : IDocumentService
             // Resolve the source side by inspecting RelatedDocumentId. Default is
             // sales-side (most common case + back-compat with previous behavior).
             Document? source = null;
+            // เลขใบเดิมที่กรอกเป็น text (ช่อง "อ้างอิง") — ถ้าตรงกับเลขเอกสารจริงใน
+            // tenant ให้ resolve เป็น RelatedDocumentId ก่อนลงบัญชี. ไม่งั้น CN ที่
+            // อ้างด้วย text จะหลุดทุก guard: cap §86/10, void-protection, ฝั่ง
+            // ภ.พ.30, FOR UPDATE — ลดหนี้เกินยอด/void ใบเดิมทั้งที่ CN ค้างได้
+            if (!doc.RelatedDocumentId.HasValue && !string.IsNullOrWhiteSpace(doc.Reference))
+            {
+                var refNo = doc.Reference.Trim();
+                var refMatchId = await _db.Documents
+                    .Where(d => d.CompanyId == companyId && d.DocumentNumber == refNo
+                        && d.Id != doc.Id && !d.IsDeleted)
+                    .Select(d => (Guid?)d.Id)
+                    .FirstOrDefaultAsync();
+                if (refMatchId.HasValue) doc.RelatedDocumentId = refMatchId;
+            }
             if (doc.RelatedDocumentId.HasValue)
             {
                 source = await _db.Documents
@@ -9027,6 +9127,62 @@ public class DocumentService : IDocumentService
                     throw new InvalidOperationException(
                         $"{source.DocumentNumber} เป็นใบสำคัญจ่ายที่จ่ายชำระ {pvSettles.DocumentNumber} — "
                         + $"ใบลดหนี้/ใบเพิ่มหนี้จากผู้ขายต้องอ้าง {pvSettles.DocumentNumber} (เอกสารตั้งหนี้) โดยตรง (§86/10)");
+            }
+
+            // GRN ไม่ใช่เอกสารตั้งหนี้/ใบกำกับ (แค่รับของ) — CN/DN ต้องอ้าง PI ที่
+            // ออกจาก GRN นั้นแทน. ปล่อยผ่านจะตกฝั่งขาย (Cr ลูกหนี้/Dr รายได้) +
+            // restock ผิดทิศ + ภ.พ.30 ลดภาษีขาย — ผิดทุกงบ
+            if (source != null && source.DocumentType == DocumentType.GoodsReceiptNote)
+                throw new InvalidOperationException(
+                    $"{source.DocumentNumber} เป็นใบรับสินค้า (GRN) ไม่ใช่เอกสารตั้งหนี้ — "
+                    + "ใบลดหนี้/ใบเพิ่มหนี้จากผู้ขายต้องอ้างใบแจ้งหนี้ซื้อ (PI) ที่ออกจาก GRN นี้แทน (§86/10)");
+
+            // CN Return: กันคืนของเกินจำนวนที่ซื้อ/ขายจริง + กันสินค้านอกใบเดิม —
+            // cap §86/10 คุมแค่ยอดเงิน แต่ stock/COGS เดินตาม qty บนบรรทัด CN
+            if (doc.DocumentType == DocumentType.CreditNote
+                && doc.CreditNoteReason == Models.Enums.CreditNoteReason.Return
+                && source != null && doc.Lines != null)
+            {
+                var cnStockLines = doc.Lines
+                    .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+                    .GroupBy(l => l.ProductCode!.Trim())
+                    .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantity));
+                if (cnStockLines.Count > 0)
+                {
+                    var srcQty = await _db.DocumentLines.AsNoTracking()
+                        .Where(l => l.DocumentId == source.Id && l.ProductCode != null)
+                        .GroupBy(l => l.ProductCode!)
+                        .Select(g => new { Code = g.Key, Qty = g.Sum(l => l.Quantity) })
+                        .ToListAsync();
+                    var srcQtyMap = srcQty.ToDictionary(x => x.Code.Trim(), x => x.Qty);
+                    var siblingQty = await _db.DocumentLines.AsNoTracking()
+                        .Where(l => l.Document.CompanyId == companyId
+                            && l.Document.RelatedDocumentId == source.Id
+                            && l.Document.Id != doc.Id
+                            && l.Document.DocumentType == DocumentType.CreditNote
+                            && l.Document.CreditNoteReason == Models.Enums.CreditNoteReason.Return
+                            && l.Document.Status != DocumentStatus.Voided
+                            && l.Document.Status != DocumentStatus.Draft
+                            && l.Document.Status != DocumentStatus.Rejected
+                            && !l.Document.IsDeleted
+                            && l.ProductCode != null)
+                        .GroupBy(l => l.ProductCode!)
+                        .Select(g => new { Code = g.Key, Qty = g.Sum(l => l.Quantity) })
+                        .ToListAsync();
+                    var siblingMap = siblingQty.ToDictionary(x => x.Code.Trim(), x => x.Qty);
+                    foreach (var (code, qty) in cnStockLines)
+                    {
+                        if (!srcQtyMap.TryGetValue(code, out var soldQty))
+                            throw new InvalidOperationException(
+                                $"ใบลดหนี้คืนสินค้า \"{code}\" ซึ่งไม่อยู่ในเอกสารต้นฉบับ {source.DocumentNumber} — "
+                                + "คืนได้เฉพาะสินค้าที่ซื้อ/ขายในใบเดิม (§86/10)");
+                        var cumulative = qty + siblingMap.GetValueOrDefault(code, 0m);
+                        if (cumulative > soldQty + 0.0001m)
+                            throw new InvalidOperationException(
+                                $"คืนสินค้า \"{code}\" รวม {cumulative:N2} เกินจำนวนในใบเดิม {source.DocumentNumber} "
+                                + $"({soldQty:N2}) — สต๊อก/ต้นทุนขายจะคลาดเกินจริง");
+                    }
+                }
             }
 
             // PaymentVoucher = PV standalone จ่ายทันที (ตั้งหนี้+จ่ายในใบเดียว) —
@@ -9113,8 +9269,35 @@ public class DocumentService : IDocumentService
             if (doc.VatAmount > 0)
             {
                 // Sales: Output VAT 21911 (liability), Purchase: Input VAT 116 (asset)
-                var vatCode = isPurchaseSide ? "116" : "21911";
-                var vatAcc = await FindAccountAsync(companyId, vatCode);
+                // ⚠️ เคส VAT ใบเดิมยัง "พัก" อยู่บัญชีรอ (undue): CN/DN ต้องกลับ
+                // รายการที่บัญชีเดียวกับที่ใบเดิมพักไว้ — ไม่งั้นบัญชีจริง (21911/
+                // 11610) ติดลบทั้งที่ไม่เคยถูกลง และบัญชีพัก (21913/11640) ค้างเกิน
+                var vatCode = isPurchaseSide ? "11610" : "21911";
+                if (isPurchaseSide && source != null
+                    && source.InputVatPostedAsUndue && source.InputVatBecameClaimableAt == null)
+                {
+                    vatCode = "11640";   // PI/Expense/PV ยังพักภาษีซื้อรอใบกำกับครบ
+                }
+                else if (!isPurchaseSide && source != null
+                    && source.DocumentType == DocumentType.Invoice
+                    && source.OutputVatDueAt == null)
+                {
+                    // ใบแจ้งหนี้บริการที่ VAT ยังพัก 21913 (ยังไม่รับเงิน §78/1) —
+                    // ตัดสิน GL-driven: ยอด Cr สุทธิบน 21913 ของ JE ใบเดิม > 0
+                    var src21913Net = await (from l in _db.JournalEntryLines.AsNoTracking()
+                                             join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                                             join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                                             where j.CompanyId == companyId && j.SourceDocumentId == source.Id
+                                                   && !j.IsDeleted && !l.IsDeleted
+                                                   && j.Status == JournalEntryStatus.Posted
+                                                   && a.AccountCode == "21913"
+                                             select (decimal?)(l.CreditAmount - l.DebitAmount))
+                        .SumAsync() ?? 0m;
+                    if (src21913Net > 0.005m) vatCode = "21913";
+                }
+                var vatAcc = await FindAccountAsync(companyId, vatCode)
+                    ?? (vatCode == "11640" ? await FindAccountAsync(companyId, "11630") : null)
+                    ?? await FindAccountAsync(companyId, isPurchaseSide ? "116" : "21911");
                 if (vatAcc != null)
                 {
                     // Same direction rule as revenue/expense lines
@@ -9122,7 +9305,8 @@ public class DocumentService : IDocumentService
                     AddLine(vatAcc.Id,
                         vatIsDebit ? doc.VatAmount : 0,
                         vatIsDebit ? 0 : doc.VatAmount,
-                        $"{typeLabel} ภาษี{(isPurchaseSide ? "ซื้อ" : "ขาย")}");
+                        $"{typeLabel} ภาษี{(isPurchaseSide ? "ซื้อ" : "ขาย")}"
+                        + (vatCode is "21913" or "11640" ? " (กลับรายการบัญชีพัก undue)" : ""));
                 }
             }
 
@@ -10597,10 +10781,18 @@ public class DocumentService : IDocumentService
         if (d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null)
         {
             undueBlockers = new List<string>();
-            if (d.IsForeignService)
+            if (d.InputVatExpiredAt.HasValue)
+                undueBlockers.Add($"พ้นกรอบ 6 เดือน §82/3 — ระบบล้างภาษีซื้อเป็นค่าใช้จ่ายแล้วเมื่อ "
+                    + $"{d.InputVatExpiredAt:dd/MM/yyyy} (เคลม ภ.พ.30 ไม่ได้อีก)");
+            else if (d.IsForeignService)
                 undueBlockers.Add("บริการต่างประเทศ (§83/6) — เคลมผ่านหน้านำส่งภาษี ภ.พ.36 (ไม่ใช่การเติมใบกำกับ)");
             else
             {
+                var cwBase = d.SupplierTaxInvoiceDate ?? d.DocumentDate;
+                var cwEnd = new DateTime(cwBase.Year, cwBase.Month, 1).AddMonths(7).AddDays(-1);
+                if (DateTime.UtcNow.AddHours(7).Date > cwEnd)
+                    undueBlockers.Add($"ใบกำกับเกินกรอบ 6 เดือน §82/3 (หมดสิทธิ์ {cwEnd:dd/MM/yyyy}) — "
+                        + "เคลม ภ.พ.30 ไม่ได้แล้ว รอระบบล้างเป็นค่าใช้จ่าย");
                 var cti = TaxInvoiceCompletenessChecker.Evaluate(d, d.Contact);
                 foreach (var f in cti.MissingFields) undueBlockers.Add("ขาด: " + f);
                 if (!string.IsNullOrWhiteSpace(d.InputVatAccountCodeOverride))
@@ -10693,6 +10885,7 @@ public class DocumentService : IDocumentService
         InputVatPostedAsUndue: d.InputVatPostedAsUndue,
         InputVatBecameClaimableAt: d.InputVatBecameClaimableAt,
         InputVatAccountCodeOverride: d.InputVatAccountCodeOverride,
+        InputVatExpiredAt: d.InputVatExpiredAt,
         IsDeposit: d.IsDeposit,
         DepositRealizedAmount: d.DepositRealizedAmount,
         DepositRealizedAt: d.DepositRealizedAt,
@@ -11247,7 +11440,9 @@ public class DocumentService : IDocumentService
         //     = ภ.พ.30 งวดนั้นถูกยื่นไปแล้วโดยไม่มีแถวนี้ → ต้องยื่นเพิ่มเติม
         if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote)
         {
-            var now = DateTime.UtcNow;
+            // เทียบ "เดือนภาษี" ต้องใช้เวลาไทย (UTC+7) — ใช้ UTC ดิบทำให้ช่วง
+            // เช้ามืดวันที่ 1 (เวลาไทย) ยังนับเป็นเดือนก่อน → warning หายผิดจังหวะ
+            var now = DateTime.UtcNow.AddHours(7);
             var monthsBack = (now.Year - doc.DocumentDate.Year) * 12 + (now.Month - doc.DocumentDate.Month);
             if (monthsBack > 1 && string.IsNullOrWhiteSpace(doc.LateReason))
                 warnings.Add(

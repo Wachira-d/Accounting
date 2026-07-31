@@ -564,6 +564,9 @@ public record DocumentResponse(
     // ยังค้าง 11640 รอเติมข้อมูล.
     DateTime? InputVatBecameClaimableAt = null,
     string? InputVatAccountCodeOverride = null,
+    // job §82/3 ล้างภาษีซื้อที่พ้น 6 เดือนเป็นค่าใช้จ่ายแล้วเมื่อ — UI ใช้ซ่อน
+    // ฟอร์มเติมใบกำกับ (เติมไปก็เคลมไม่ได้แล้ว) + โชว์เหตุผล
+    DateTime? InputVatExpiredAt = null,
     // ===== เงินมัดจำ/รับล่วงหน้า =====
     bool IsDeposit = false,
     decimal DepositRealizedAmount = 0m,
