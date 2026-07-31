@@ -682,11 +682,24 @@ public class SubscriptionService : ISubscriptionService
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null) return false;
 
+        // CheckUsageLimitAsync เป็น method "อ่าน" ที่มี write แฝง 2 จุด (self-heal
+        // + monthly reset ซึ่ง SaveChanges). DbContext เป็น scoped ตัวเดียวกับ
+        // caller — ถ้า caller มี entity ค้างสถานะ Added/Modified อยู่ (เช่นเช็ค
+        // สิทธิ์กลางการประกอบเอกสารก่อน save เอง) SaveChanges ที่นี่จะ flush ของ
+        // caller ลง DB ก่อนเวลา → partial write ถ้า caller ตัดสินใจ abort ทีหลัง.
+        // Guard: เขียนเฉพาะตอน tracker สะอาด (ไม่มี pending อื่น) — รอบที่ข้าม
+        // จะถูกซ่อมในการเช็คครั้งถัดไปที่ tracker สะอาดแทน
+        var trackerClean = !_db.ChangeTracker.Entries()
+            .Any(e => e.State is Microsoft.EntityFrameworkCore.EntityState.Added
+                or Microsoft.EntityFrameworkCore.EntityState.Modified
+                or Microsoft.EntityFrameworkCore.EntityState.Deleted);
+
         // Self-heal: subscription ที่ถูกสร้างช่วงบั๊ก "แพ็กเกจฟรีถาวรดึง Trial*"
         // ค้าง limit = 0 → สร้างเอกสาร/ลงบัญชีไม่ได้เลยตั้งแต่สมัคร. sync จาก
         // template ทันทีที่มีการเช็คสิทธิ์ — ลูกค้าเก่าหายเองหลัง deploy ไม่ต้อง
         // รอ admin ไล่แก้มือทีละราย
-        if ((sub.MaxDocumentsPerMonth <= 0 || sub.MaxJournalEntriesPerMonth <= 0
+        if (trackerClean
+            && (sub.MaxDocumentsPerMonth <= 0 || sub.MaxJournalEntriesPerMonth <= 0
                 || sub.MaxUsers <= 0 || sub.MaxStorageBytes <= 0)
             && (sub.Status == SubscriptionStatus.Trial || sub.Status == SubscriptionStatus.Active))
         {
@@ -701,7 +714,10 @@ public class SubscriptionService : ISubscriptionService
             sub.CurrentMonthDocuments = 0;
             sub.CurrentMonthJournalEntries = 0;
             sub.UsageResetDate = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(1);
-            await _db.SaveChangesAsync();
+            // persist เฉพาะตอน tracker สะอาด (ดู trackerClean ด้านบน) — ค่าใน
+            // memory ถูก reset แล้ว การเช็คด้านล่างใช้ค่าใหม่ถูกต้องเสมอ; แถวจะ
+            // ถูก save จริงในรอบถัดไป/ตอน caller save เอง (sub เป็น tracked entity)
+            if (trackerClean) await _db.SaveChangesAsync();
         }
 
         // Account Plan path — aggregate across every Company under the same

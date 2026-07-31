@@ -11539,6 +11539,33 @@ public class DocumentService : IDocumentService
             if (doc.DocumentType == DocumentType.DebitNote && string.IsNullOrWhiteSpace(doc.Notes))
                 warnings.Add("§86/9: ใบเพิ่มหนี้ควรระบุสาเหตุการเพิ่มหนี้ในช่อง \"หมายเหตุ\" "
                     + "(เช่น ราคาสินค้าปรับขึ้น/คำนวณต่ำกว่าจริง/ค่าขนส่งเพิ่ม) — ข้อความนี้จะพิมพ์บนใบให้ลูกค้า");
+
+            // 3e. ใบเดิม "นอกระบบ" (อ้างด้วยเลข text ที่ไม่ match เอกสารในระบบ —
+            //     ถ้า match ระบบ resolve เป็น RelatedDocumentId ตอนอนุมัติแล้วเข้า
+            //     cap §86/10 ปกติ): cap อัตโนมัติทำไม่ได้เพราะไม่รู้ยอดใบเดิม →
+            //     เตือนยอด CN สะสมต่อเลขอ้างอิงเดียวกัน ให้นักบัญชีเทียบกับกระดาษเอง
+            if (doc.DocumentType == DocumentType.CreditNote
+                && doc.RelatedDocumentId == null && !string.IsNullOrWhiteSpace(doc.Reference))
+            {
+                var extRef = doc.Reference.Trim();
+                var refMatchesInternal = await _db.Documents.AsNoTracking().AnyAsync(d =>
+                    d.CompanyId == companyId && d.DocumentNumber == extRef && d.Id != doc.Id && !d.IsDeleted);
+                if (!refMatchesInternal)
+                {
+                    var siblingSum = await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId && d.Id != doc.Id
+                            && d.DocumentType == DocumentType.CreditNote
+                            && d.RelatedDocumentId == null && d.Reference == extRef
+                            && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                            && d.Status != DocumentStatus.Rejected && !d.IsDeleted)
+                        .SumAsync(d => (decimal?)d.TotalAmount) ?? 0m;
+                    if (siblingSum > 0)
+                        warnings.Add(
+                            $"§86/10: มีใบลดหนี้อื่นอ้างเลขใบกำกับนอกระบบ \"{extRef}\" อยู่แล้วรวม {siblingSum:N2} บาท "
+                            + $"— รวมใบนี้เป็น {siblingSum + doc.TotalAmount:N2} บาท. ระบบตรวจ cap อัตโนมัติไม่ได้ "
+                            + "(ใบเดิมอยู่นอกระบบ) กรุณาเทียบกับยอดใบกำกับจริงว่าลดหนี้รวมไม่เกินยอดเดิม");
+                }
+            }
         }
 
         // 4. Cash-settled Payment Voucher (จ่ายทันที) must NOT post to a
