@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Ai;

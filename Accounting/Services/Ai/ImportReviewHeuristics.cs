@@ -134,8 +134,8 @@ public static class ImportReviewHeuristics
                     {
                         best = ex; bestScore = 1m; break;
                     }
-                    var score = (decimal)CharNgramSimilarity.Similarity(label, ex.Label);
-                    if (score > bestScore) { bestScore = score; best = ex; }
+                    var sim = (decimal)CharNgramSimilarity.Similarity(label, ex.Label);
+                    if (sim > bestScore) { bestScore = sim; best = ex; }
                 }
                 if (best != null && bestScore >= DuplicateThreshold)
                 {
