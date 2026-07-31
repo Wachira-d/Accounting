@@ -178,14 +178,34 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
             // For CN/DN, load original document for OriginalDocumentReference per ETDA spec
             Document? originalDoc = null;
+            decimal priorCnDnNet = 0m;
             if ((document.DocumentType == DocumentType.CreditNote || document.DocumentType == DocumentType.DebitNote)
                 && document.RelatedDocumentId.HasValue)
             {
                 originalDoc = await _db.Documents.FirstOrDefaultAsync(d =>
                     d.Id == document.RelatedDocumentId.Value && d.CompanyId == companyId);
+                // มูลค่า "ตามใบเดิม" บน XML ต้องสะท้อน CN/DN ที่ออกก่อนหน้าแล้ว
+                // (§86/9-10: ใบที่สองแสดงมูลค่าหลังปรับใบแรก ไม่ใช่ฐานดิบ) —
+                // net = ΣCN ก่อนหน้า (ลด) − ΣDN ก่อนหน้า (เพิ่ม)
+                if (originalDoc != null)
+                {
+                    var priorAdjusts = await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId
+                            && d.RelatedDocumentId == originalDoc.Id
+                            && d.Id != document.Id
+                            && (d.DocumentType == DocumentType.CreditNote
+                                || d.DocumentType == DocumentType.DebitNote)
+                            && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                            && d.Status != DocumentStatus.Draft && !d.IsDeleted
+                            && d.CreatedAt < document.CreatedAt)
+                        .Select(d => new { d.DocumentType, d.SubTotal })
+                        .ToListAsync();
+                    priorCnDnNet = priorAdjusts.Sum(a =>
+                        a.DocumentType == DocumentType.CreditNote ? a.SubTotal : -a.SubTotal);
+                }
             }
 
-            var xml = BuildEtaxXml(document, company, etaxRef, originalDoc);
+            var xml = BuildEtaxXml(document, company, etaxRef, originalDoc, priorCnDnNet);
 
             var etax = new EtaxInvoice
             {
@@ -606,7 +626,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     // Schema: UN/CEFACT Cross Industry Invoice (CII) D16B subset
     // Validation: สรรพากร Schematron + XSD
 
-    private string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null)
+    private string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null,
+        decimal priorCnDnNet = 0m)
     {
         // Document-type-specific root element + RAM namespace prefix.
         // Per ETDA Schematron rules:
@@ -665,11 +686,24 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             DocumentType.CreditNote => "ใบลดหนี้",
             _ => "ใบกำกับภาษี"
         };
-        // PurposeCode per ETDA ThaiMessageFunctionCode (rd1225) — required for CN/DN
+        // PurposeCode per ETDA ThaiMessageFunctionCode (rd1225) — required for CN/DN.
+        // ต้อง map ตามเหตุผลจริงของใบ (สินค้า CDNG* / บริการ CDNS*) — เดิม hardcode
+        // CDNG01 ทุกใบ ทำให้ CN คืนสินค้าแจ้ง RD เป็น "ลดราคา" ผิดประเภท
+        var cnIsGoods = doc.Lines.Any(l => !string.IsNullOrWhiteSpace(l.ProductCode));
         var purposeCode = doc.DocumentType switch
         {
-            DocumentType.CreditNote => "CDNG01", // ปรับปรุงราคาสินค้า/บริการที่ออกใบกำกับ
-            DocumentType.DebitNote => "DBNG01",
+            DocumentType.CreditNote => (doc.CreditNoteReason, cnIsGoods) switch
+            {
+                (CreditNoteReason.Return, _) => "CDNG05",       // รับคืนสินค้า
+                (CreditNoteReason.Discount, true) => "CDNG01",  // ลดราคาสินค้า
+                (CreditNoteReason.Discount, false) => "CDNS01", // ลดราคาค่าบริการ
+                (CreditNoteReason.Adjustment, true) => "CDNG04",  // คำนวณราคาสูงกว่าจริง
+                (CreditNoteReason.Adjustment, false) => "CDNS03",
+                (CreditNoteReason.Writeoff, true) => "CDNG99",  // เหตุอื่น
+                (CreditNoteReason.Writeoff, false) => "CDNS99",
+                _ => cnIsGoods ? "CDNG99" : "CDNS99"
+            },
+            DocumentType.DebitNote => cnIsGoods ? "DBNG01" : "DBNS01",  // มูลค่าจริงสูงกว่าที่ระบุ
             _ => (string?)null
         };
 
@@ -710,7 +744,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // For CN/DN: include OriginalInformationAmount + DifferenceInformationAmount
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
-            var originalAmount = originalDoc?.SubTotal ?? doc.SubTotal;
+            // มูลค่าตามใบเดิม "หลังปรับ CN/DN ก่อนหน้า" (§86/9-10) — ใบที่สอง
+            // ต้องไม่แสดงฐานดิบซ้ำ ไม่งั้น Original − Difference ≠ ยอดคงเหลือจริง
+            var originalAmount = Math.Max(0m, (originalDoc?.SubTotal ?? doc.SubTotal) - priorCnDnNet);
             summationElements.Add(new XElement(ram + "OriginalInformationAmount",
                 originalAmount.ToString("0.##", CultureInfo.InvariantCulture)));
         }

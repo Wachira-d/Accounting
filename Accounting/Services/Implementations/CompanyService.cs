@@ -139,6 +139,10 @@ public class CompanyService : ICompanyService
 
                 if (!seeded)
                 {
+                    // StartTrialAsync ที่ fail อาจทิ้ง entity สถานะ Added ค้างใน
+                    // change tracker (DbContext scoped ตัวเดียวกัน) → SaveChanges
+                    // ของ stub จะพยายาม insert ของเสียซ้ำแล้วล้มตาม. ล้างก่อน
+                    _db.ChangeTracker.Clear();
                     // last-resort stub — กัน usage counter NRE เมื่อ template/DB มีปัญหา
                     _db.Subscriptions.Add(new Subscription
                     {

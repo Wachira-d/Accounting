@@ -64,6 +64,63 @@ public class SubscriptionService : ISubscriptionService
         if (existing != null)
             throw new InvalidOperationException("บริษัทนี้มี subscription อยู่แล้ว");
 
+        // แถว soft-deleted ค้าง: global filter มองไม่เห็น แต่ unique index บน
+        // CompanyId ยังครองคีย์อยู่ → insert ใหม่จะ DbUpdateException เสมอ
+        // (แล้ว stub fallback ของ caller ก็ล้มซ้ำเพราะ tracker ค้าง entity เดิม)
+        // = บริษัทติดสภาพไร้ subscription ถาวร. ทางแก้ที่ถูก: restore แถวเดิม
+        // แล้ว resync จาก template เหมือนเริ่มใหม่
+        var softDeleted = await _db.Subscriptions.IgnoreQueryFilters()
+            .Include(s => s.TrialConfig)
+            .FirstOrDefaultAsync(s => s.CompanyId == request.CompanyId && s.IsDeleted);
+        if (softDeleted != null)
+        {
+            softDeleted.IsDeleted = false;
+            softDeleted.Plan = request.TargetPlan;
+            softDeleted.Status = SubscriptionStatus.Trial;   // จะถูก override ด้านล่างถ้าฟรีถาวร
+            await ResyncZeroLimitsFromTemplateAsync(softDeleted);
+            // เดินต่อด้วยแถวเดิมแทน insert — sync สถานะ/วันที่ตาม template
+            var tpl = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == request.TargetPlan && p.IsActive);
+            var permFree = tpl?.IsPermanentFree ?? false;
+            var days = permFree ? 36500 : (request.TrialDays ?? tpl?.TrialDurationDays ?? 30);
+            softDeleted.Status = permFree ? SubscriptionStatus.Active : SubscriptionStatus.Trial;
+            softDeleted.IsPermanentFree = permFree;
+            softDeleted.StartDate = DateTime.UtcNow;
+            softDeleted.EndDate = DateTime.UtcNow.AddDays(days);
+            // GetTrialStatusAsync ต้องมี TrialConfig — แถวเก่าอาจไม่มี/ถูกลบตาม
+            if (softDeleted.TrialConfig == null)
+            {
+                _db.TrialConfigs.Add(new TrialConfig
+                {
+                    SubscriptionId = softDeleted.Id,
+                    TrialStatus = TrialStatus.Active,
+                    TrialStartDate = softDeleted.StartDate,
+                    TrialEndDate = softDeleted.EndDate,
+                    TrialDurationDays = days,
+                    TrialMaxUsers = softDeleted.MaxUsers,
+                    TrialMaxDocumentsPerMonth = softDeleted.MaxDocumentsPerMonth,
+                    TrialMaxJournalEntriesPerMonth = softDeleted.MaxJournalEntriesPerMonth,
+                    TrialMaxCompanies = 1,
+                    CreatedBy = performedBy
+                });
+            }
+            else
+            {
+                softDeleted.TrialConfig.TrialStatus = TrialStatus.Active;
+                softDeleted.TrialConfig.TrialEndDate = softDeleted.EndDate;
+            }
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = softDeleted.Id,
+                Action = "RestoredFromSoftDelete",
+                ToPlan = request.TargetPlan,
+                ToStatus = softDeleted.Status,
+                Notes = "Subscription เดิมถูกลบ (soft) — restore + resync จาก template แทน insert ใหม่",
+                PerformedBy = performedBy
+            });
+            await _db.SaveChangesAsync();
+            return await GetTrialStatusAsync(request.CompanyId);
+        }
+
         // Get plan template for trial settings
         var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == request.TargetPlan && p.IsActive);
 
@@ -153,10 +210,14 @@ public class SubscriptionService : ISubscriptionService
         _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
             SubscriptionId = subscription.Id,
-            Action = "TrialStarted",
+            // ฟรีถาวรไม่ใช่ trial — audit ต้องตรง state จริง (เดิม hardcode
+            // TrialStarted/Trial → รายงาน admin ตีความลูกค้าฟรีถาวรผิด)
+            Action = isPermanentFree ? "FreePlanStarted" : "TrialStarted",
             ToPlan = request.TargetPlan,
-            ToStatus = SubscriptionStatus.Trial,
-            Notes = $"Trial started for {trialDays} days",
+            ToStatus = subscription.Status,
+            Notes = isPermanentFree
+                ? "แพ็กเกจฟรีถาวร (ไม่หมดอายุ)"
+                : $"Trial started for {trialDays} days",
             PerformedBy = performedBy
         });
 
@@ -493,6 +554,9 @@ public class SubscriptionService : ISubscriptionService
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ subscription");
 
+        // เก็บสถานะเดิม "ก่อน" mutate — เดิมอ่านหลังตั้ง Cancelled ทำให้ history
+        // ได้ From=Cancelled→Cancelled ทุกครั้ง audit สืบสถานะก่อนยกเลิกไม่ได้
+        var cancelFromStatus = sub.Status;
         sub.Status = SubscriptionStatus.Cancelled;
         sub.CancelledAt = DateTime.UtcNow;
 
@@ -500,7 +564,7 @@ public class SubscriptionService : ISubscriptionService
         {
             SubscriptionId = sub.Id,
             Action = "Cancelled",
-            FromStatus = sub.Status,
+            FromStatus = cancelFromStatus,
             ToStatus = SubscriptionStatus.Cancelled,
             PerformedBy = performedBy
         });
@@ -618,11 +682,24 @@ public class SubscriptionService : ISubscriptionService
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null) return false;
 
+        // CheckUsageLimitAsync เป็น method "อ่าน" ที่มี write แฝง 2 จุด (self-heal
+        // + monthly reset ซึ่ง SaveChanges). DbContext เป็น scoped ตัวเดียวกับ
+        // caller — ถ้า caller มี entity ค้างสถานะ Added/Modified อยู่ (เช่นเช็ค
+        // สิทธิ์กลางการประกอบเอกสารก่อน save เอง) SaveChanges ที่นี่จะ flush ของ
+        // caller ลง DB ก่อนเวลา → partial write ถ้า caller ตัดสินใจ abort ทีหลัง.
+        // Guard: เขียนเฉพาะตอน tracker สะอาด (ไม่มี pending อื่น) — รอบที่ข้าม
+        // จะถูกซ่อมในการเช็คครั้งถัดไปที่ tracker สะอาดแทน
+        var trackerClean = !_db.ChangeTracker.Entries()
+            .Any(e => e.State is Microsoft.EntityFrameworkCore.EntityState.Added
+                or Microsoft.EntityFrameworkCore.EntityState.Modified
+                or Microsoft.EntityFrameworkCore.EntityState.Deleted);
+
         // Self-heal: subscription ที่ถูกสร้างช่วงบั๊ก "แพ็กเกจฟรีถาวรดึง Trial*"
         // ค้าง limit = 0 → สร้างเอกสาร/ลงบัญชีไม่ได้เลยตั้งแต่สมัคร. sync จาก
         // template ทันทีที่มีการเช็คสิทธิ์ — ลูกค้าเก่าหายเองหลัง deploy ไม่ต้อง
         // รอ admin ไล่แก้มือทีละราย
-        if ((sub.MaxDocumentsPerMonth <= 0 || sub.MaxJournalEntriesPerMonth <= 0
+        if (trackerClean
+            && (sub.MaxDocumentsPerMonth <= 0 || sub.MaxJournalEntriesPerMonth <= 0
                 || sub.MaxUsers <= 0 || sub.MaxStorageBytes <= 0)
             && (sub.Status == SubscriptionStatus.Trial || sub.Status == SubscriptionStatus.Active))
         {
@@ -637,7 +714,10 @@ public class SubscriptionService : ISubscriptionService
             sub.CurrentMonthDocuments = 0;
             sub.CurrentMonthJournalEntries = 0;
             sub.UsageResetDate = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(1);
-            await _db.SaveChangesAsync();
+            // persist เฉพาะตอน tracker สะอาด (ดู trackerClean ด้านบน) — ค่าใน
+            // memory ถูก reset แล้ว การเช็คด้านล่างใช้ค่าใหม่ถูกต้องเสมอ; แถวจะ
+            // ถูก save จริงในรอบถัดไป/ตอน caller save เอง (sub เป็น tracked entity)
+            if (trackerClean) await _db.SaveChangesAsync();
         }
 
         // Account Plan path — aggregate across every Company under the same
@@ -775,6 +855,7 @@ public class SubscriptionService : ISubscriptionService
             .FirstOrDefaultAsync(a => a.Id == accountSubscriptionId && !a.IsDeleted);
         if (acct == null) return null;
 
+        var aggNow = DateTime.UtcNow;
         var subs = await _db.Subscriptions.AsNoTracking()
             .Where(s => s.AccountSubscriptionId == accountSubscriptionId && !s.IsDeleted)
             .Select(s => new {
@@ -782,17 +863,22 @@ public class SubscriptionService : ISubscriptionService
                 s.CurrentMonthJournalEntries,
                 s.CurrentStorageUsed,
                 s.CurrentMonthOcrPages,
+                s.UsageResetDate,
             })
             .ToListAsync();
 
+        // counter รายเดือนของบริษัทพี่น้องที่ "ยังไม่ถูก reset" (เดือนใหม่แล้วแต่
+        // ไม่มีใครเรียกเช็ค limit ของบริษัทนั้น) ห้ามนับรวม — ไม่งั้น usage ตกค้าง
+        // เดือนก่อนกินโควตาเดือนนี้ → ผู้ใช้โดน block ทั้งที่โควตาว่าง
+        bool Stale(DateTime resetAt) => aggNow >= resetAt;
         return new AggregateUsage(
-            Documents: subs.Sum(s => s.CurrentMonthDocuments),
+            Documents: subs.Sum(s => Stale(s.UsageResetDate) ? 0 : s.CurrentMonthDocuments),
             MaxDocuments: acct.MaxDocumentsPerMonth,
-            JournalEntries: subs.Sum(s => s.CurrentMonthJournalEntries),
+            JournalEntries: subs.Sum(s => Stale(s.UsageResetDate) ? 0 : s.CurrentMonthJournalEntries),
             MaxJournalEntries: acct.MaxJournalEntriesPerMonth,
-            StorageBytes: subs.Sum(s => s.CurrentStorageUsed),
+            StorageBytes: subs.Sum(s => s.CurrentStorageUsed),   // storage ไม่ใช่รายเดือน — นับเสมอ
             MaxStorageBytes: acct.MaxStorageBytes,
-            OcrPages: subs.Sum(s => s.CurrentMonthOcrPages),
+            OcrPages: subs.Sum(s => Stale(s.UsageResetDate) ? 0 : s.CurrentMonthOcrPages),
             MaxOcrPages: acct.MaxOcrPagesPerMonth,
             CompaniesUsed: subs.Count,
             MaxCompanies: acct.MaxCompanies);

@@ -983,29 +983,50 @@ const Page = {
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">พนักงาน</div><div class="font-medium">${r.employeeCount||details.length} คน</div></div>
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ยอดจ่ายสุทธิ</div><div class="font-medium text-primary">${Layout.money(r.totalNetPay||r.totalAmount)}</div></div>
         </div>
-        <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right">สุทธิ</th><th>แหล่งจ่าย</th><th></th><th>สลิป</th></tr></thead>
+        ${(() => {
+          // ตรวจ identity รายคนก่อนจ่าย: รายได้รวม − (ภาษี+ปกส.+PVD+เงินกู้+หักอื่น)
+          // ต้อง = สุทธิ — ไม่ลงตัว (เช่นข้อมูล import จากภายนอก) กด "จ่าย" แล้ว
+          // JE จะไม่ balance. โชว์เตือน + ชี้วิธีแก้ตั้งแต่ยังไม่กด
+          const broken = details.filter(d => {
+            const diff = (d.grossIncome||0) - (d.withholdingTax||0) - (d.socialSecurityEmployee||0)
+              - (d.providentFundEmployee||0) - (d.loanDeduction||0) - (d.otherDeductions||0) - (d.netPay||0);
+            return Math.abs(Math.round(diff * 100) / 100) > 0.01;
+          });
+          this._brokenEmpIds = new Set(broken.map(d => d.employeeId || d.id));
+          return broken.length ? `
+            <div style="margin-bottom:12px;padding:10px 14px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:13px;color:#991b1b">
+              ⚠️ <b>พบ ${broken.length} รายการที่ยอดไม่ลงตัว</b> (รายได้รวม − รายการหัก ≠ สุทธิ) — กด "จ่าย" จะลงบัญชีไม่ได้<br>
+              <span style="font-size:12px">วิธีแก้: กด "✏️ แก้ยอด" ที่แถวที่มีป้ายเตือน แล้วปรับตัวเลขให้เงินได้สุทธิในหน้าต่างแก้ยอดตรงกับยอดที่จ่ายจริง (ระบบคำนวณสุทธิให้สด ๆ ระหว่างพิมพ์) — มักเกิดจากข้อมูล import ที่ส่ง "สุทธิ" มาไม่ตรงส่วนประกอบ เช่น มียอดหักที่ไม่ได้ส่งรายละเอียดมา ให้ใส่ยอดนั้นในช่อง "หักอื่น ๆ"</span>
+            </div>` : '';
+        })()}
+        <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right" title="กองทุนสำรองฯ + เงินกู้ + หักอื่น ๆ">หักอื่น</th><th class="text-right">สุทธิ</th><th>แหล่งจ่าย</th><th></th><th>สลิป</th></tr></thead>
         <tbody>${details.length ? details.map(d => {
           const empId = d.employeeId||d.id;
           const cur = d.netPaymentAccountCode || '';
+          const otherDed = (d.providentFundEmployee||0) + (d.loanDeduction||0) + (d.otherDeductions||0);
+          const rowDiff = Math.round(((d.grossIncome||0) - (d.withholdingTax||0) - (d.socialSecurityEmployee||0)
+            - otherDed - (d.netPay||0)) * 100) / 100;
+          const rowBroken = Math.abs(rowDiff) > 0.01;
           const payCell = payEditable
             ? `<select class="form-input" style="font-size:12px;padding:4px 6px;min-width:170px" data-prev="${Layout.esc(cur)}" onchange="Page.setPayAccount('${id}','${empId}',this)">${payOpts(cur)}</select>`
             : (cur
                 ? `<span class="text-xs">${Layout.esc(cur)}</span>`
                 : `<span class="text-xs text-gray-400">ค่าเริ่มต้น</span>`);
-          return `<tr>
+          return `<tr${rowBroken ? ' style="background:#fef2f2"' : ''}>
           <td>${d.employeeName || (d.firstName+' '+d.lastName) || '-'}</td>
           <td class="text-right">${Layout.money(d.baseSalary||d.salary||0)}</td>
           <td class="text-right">${Layout.money((d.grossIncome||0) - (d.baseSalary||0))}</td>
           <td class="text-right">${Layout.money(d.withholdingTax||d.tax||d.incomeTax||0)}</td>
           <td class="text-right">${Layout.money(d.socialSecurityEmployee||d.socialSecurity||d.sso||0)}</td>
-          <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary||0)}</td>
+          <td class="text-right">${Layout.money(otherDed)}</td>
+          <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary||0)}${rowBroken ? `<div style="font-size:11px;color:#dc2626;white-space:nowrap" title="รายได้รวม − รายการหัก ≠ สุทธิ — กดแก้ยอดเพื่อปรับ">⚠️ ไม่ลงตัว ${rowDiff > 0 ? '+' : ''}${Layout.money(rowDiff)}</div>` : ''}</td>
           <td>${payCell}</td>
-          <td>${payEditable ? `<button class="btn btn-sm btn-secondary" onclick="Page.openEditDetail('${empId}')" title="แก้ยอดรายคน">✏️ แก้ยอด</button>` : ''}</td>
+          <td>${payEditable ? `<button class="btn btn-sm ${rowBroken ? 'btn-primary' : 'btn-secondary'}" onclick="Page.openEditDetail('${empId}')" title="แก้ยอดรายคน">✏️ แก้ยอด</button>` : ''}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${empId}')">ดูสลิป</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.sendPayslipLine('${id}','${empId}')" title="ส่งสลิปนี้ให้พนักงานทาง LINE">📤 LINE</button>
           </td>
-        </tr>`;}).join('') : '<tr><td colspan="9" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>
+        </tr>`;}).join('') : '<tr><td colspan="10" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>
         ${payEditable && details.length ? '<div class="text-xs text-gray-400" style="margin-top:6px">💡 เลือกแหล่งจ่ายรายคนได้ — ตอนกด "จ่าย" ระบบจะแยกเครดิตเงินสด/ธนาคารตามบัญชีของแต่ละคน (ว่าง = ใช้บัญชีเริ่มต้นของบริษัท)</div>' : ''}`;
       const jeBtn = r.journalEntryId
         ? `<a class="btn btn-secondary" href="/pages/journals.html?entryId=${r.journalEntryId}" title="ดู JE ที่ลงบัญชีตอนจ่ายเงินเดือน (Dr เงินเดือน / Cr ปกส.+ภงด.1+ธนาคาร)">🧾 ดูรายการบัญชี (JE)</a>`
@@ -1088,8 +1109,11 @@ const Page = {
       <div style="border-top:1px solid #e2e8f0;margin-top:10px;padding-top:10px;font-size:14px">
         <div style="display:flex;justify-content:space-between"><span>รวมรายได้</span><b id="edGross">-</b></div>
         <div style="display:flex;justify-content:space-between"><span>รวมรายการหัก</span><b id="edDed">-</b></div>
-        <div style="display:flex;justify-content:space-between;font-size:16px;margin-top:4px"><span>เงินได้สุทธิ</span><b id="edNet" style="color:#2563eb">-</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:16px;margin-top:4px"><span>เงินได้สุทธิ (คำนวณใหม่)</span><b id="edNet" style="color:#2563eb">-</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:#64748b;margin-top:4px"><span>สุทธิที่บันทึกไว้เดิม</span><span id="edNetOld">-</span></div>
+        <div id="edDiffHint" style="font-size:12px;margin-top:6px;line-height:1.5"></div>
       </div>`;
+    this._edOldNet = num(d.netPay);
     this._edRecalc();
     Layout.openModal('editDetailModal');
   },
@@ -1097,12 +1121,29 @@ const Page = {
   _edRecalc() {
     const inc = ['baseSalary','overtimePay','allowances','commission','bonus','otherIncome'].reduce((s,k)=>s+this._edVal(k),0);
     const ded = ['socialSecurityEmployee','withholdingTax','providentFundEmployee','loanDeduction','otherDeductions'].reduce((s,k)=>s+this._edVal(k),0);
-    const net = inc - ded;
+    const net = Math.round((inc - ded) * 100) / 100;
     document.getElementById('edGross').textContent = Layout.money(inc);
     document.getElementById('edDed').textContent = Layout.money(ded);
     const netEl = document.getElementById('edNet');
     netEl.textContent = Layout.money(net);
     netEl.style.color = net < 0 ? '#dc2626' : '#2563eb';
+    // เทียบกับสุทธิที่บันทึกไว้เดิม + แนะนำวิธีปรับให้ลงตัว — บันทึกแล้วระบบ
+    // จะใช้ "สุทธิที่คำนวณใหม่" นี้ลงบัญชี (identity ลงตัวเสมอ)
+    const oldEl = document.getElementById('edNetOld');
+    if (oldEl) oldEl.textContent = Layout.money(this._edOldNet || 0);
+    const hintEl = document.getElementById('edDiffHint');
+    if (hintEl) {
+      const diff = Math.round((net - (this._edOldNet || 0)) * 100) / 100;
+      if (Math.abs(diff) <= 0.01) {
+        hintEl.innerHTML = '<span style="color:#16a34a">✓ ยอดคำนวณตรงกับสุทธิเดิม — บันทึกได้เลย</span>';
+      } else {
+        hintEl.innerHTML = `<span style="color:#b45309">ยอดคำนวณ${diff > 0 ? 'สูง' : 'ต่ำ'}กว่าสุทธิเดิม ${Layout.money(Math.abs(diff))}</span>`
+          + `<br><span style="color:#64748b">ถ้ายอดที่จ่ายจริงคือ "สุทธิเดิม": ${diff > 0
+              ? 'ใส่ส่วนต่างเพิ่มในช่อง "หักอื่น ๆ" (เช่น หักขาดงาน/มาสาย/รายการหักที่ import ไม่ได้ส่งรายละเอียดมา)'
+              : 'ตรวจช่องรายได้ว่าครบ (OT/เบี้ยเลี้ยง/โบนัส) หรือลดยอดช่องรายการหักที่เกินจริง'} · `
+          + `ถ้ายอดคำนวณใหม่คือยอดที่ถูกต้อง: บันทึกได้เลย ระบบจะใช้ยอดนี้จ่าย/ลงบัญชี</span>`;
+      }
+    }
   },
   async saveEditDetail() {
     const api = Layout.api(); if (!api || !this._curRun || !this._editEmp) return;

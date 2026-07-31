@@ -220,7 +220,8 @@ public partial class TaxService
     ///      earlier months.
     /// Recomputes report.InputVat + NetVat after both passes.
     /// </summary>
-    private async Task ApplyVatDeferralsAsync(Guid companyId, int year, int month, TaxReport report)
+    private async Task ApplyVatDeferralsAsync(Guid companyId, int year, int month, TaxReport report,
+        bool markClaims = true)
     {
         var period = year * 100 + month;
         var deferrals = await _db.VatDeferrals.AsNoTracking()
@@ -236,28 +237,57 @@ public partial class TaxService
             .Where(d => d.DeferredToPeriod == period && d.ClaimedAt == null)
             .Sum(d => d.DeferredAmount);
 
+        // ⚠️ ต้องเป็น "บรรทัด" ไม่ใช่บวก/ลบ scalar — RecalcVatTotals คำนวณยอด
+        // จาก lines ล้วน: การแก้ scalar ตรง ๆ จะถูกเขียนทับหายทันทีที่ผู้ใช้
+        // ติ๊กบรรทัดใดก็ตาม (auto-save → RecalcVatTotals). ใช้ IncomeTypeCode
+        // "INPUT" ยอด +/- ให้ Recalc นับได้เองทุกครั้ง
+        var deferLineOrder = report.Lines.Count == 0 ? 1 : report.Lines.Max(l => l.LineOrder) + 1;
         if (subtract > 0)
         {
-            report.InputVat -= subtract;
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = deferLineOrder++,
+                Description = $"[เลื่อนเคลมออกจากงวดนี้] ภาษีซื้อเลื่อนไปงวดหน้า -{subtract:N2}",
+                IncomeAmount = 0,
+                TaxRate = 0,
+                TaxAmount = -subtract,
+                IncomeTypeCode = "INPUT"
+            });
             report.Notes = (report.Notes ?? "") + $"\n[VAT Deferred OUT] -{subtract:N2} (เลื่อนการเคลม)";
         }
         if (add > 0)
         {
-            report.InputVat += add;
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = deferLineOrder++,
+                Description = $"[เคลมที่เลื่อนมาจากเดือนก่อน] ภาษีซื้อยกเข้า +{add:N2}",
+                IncomeAmount = 0,
+                TaxRate = 0,
+                TaxAmount = add,
+                IncomeTypeCode = "INPUT"
+            });
             report.Notes = (report.Notes ?? "") + $"\n[VAT Deferred IN] +{add:N2} (เคลมจากเดือนก่อน)";
             // Mark the incoming deferrals as claimed so they don't pile up.
-            var incoming = deferrals.Where(d => d.DeferredToPeriod == period && d.ClaimedAt == null).ToList();
-            foreach (var d in incoming)
+            // (preview/export: markClaims=false — report ชั่วคราวห้าม stamp)
+            if (markClaims)
             {
-                var tracked = await _db.VatDeferrals.FirstOrDefaultAsync(x => x.Id == d.Id);
-                if (tracked != null)
+                var incoming = deferrals.Where(d => d.DeferredToPeriod == period && d.ClaimedAt == null).ToList();
+                foreach (var d in incoming)
                 {
-                    tracked.ClaimedAt = DateTime.UtcNow;
-                    tracked.ClaimedTaxReportId = report.Id;
+                    var tracked = await _db.VatDeferrals.FirstOrDefaultAsync(x => x.Id == d.Id);
+                    if (tracked != null)
+                    {
+                        tracked.ClaimedAt = DateTime.UtcNow;
+                        tracked.ClaimedTaxReportId = report.Id;
+                    }
                 }
             }
         }
-        // Recompute net.
+        // Recompute จาก lines (สูตรกลางเดียวกับ toggle/regenerate)
+        report.InputVat += subtract > 0 ? -subtract : 0m;
+        report.InputVat += add > 0 ? add : 0m;
         report.NetVat = report.OutputVat - report.InputVat;
     }
 }

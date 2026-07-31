@@ -3908,6 +3908,15 @@ public class OcrService : IOcrService
         // (§86/4 compliance).
         await using var txn = await _db.Database.BeginTransactionAsync();
         var docNumber = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
+        // สาขาผู้ขาย: Contact ถูก enrich ด้วยสาขาที่ OCR แกะจากกระดาษตอน scan
+        // แล้ว (VendorBranchRegex → Contact.BranchCode) — ใช้ค่านั้นก่อน ค่อย
+        // fallback 00000. เดิม hardcode "00000" ทับ → ใบสาขา 00003 ขึ้นรายงาน
+        // ภาษีซื้อเป็นสำนักงานใหญ่ผิด (ประกาศฯ 199/§86/4) แบบเงียบ
+        var vendorBranchForBook = bookSupplierInvoice
+            ? await _db.Contacts.AsNoTracking()
+                .Where(c => c.Id == contactId.Value && c.CompanyId == companyId)
+                .Select(c => c.BranchCode).FirstOrDefaultAsync()
+            : null;
         var document = new Document
         {
             CompanyId = companyId,
@@ -3949,7 +3958,9 @@ public class OcrService : IOcrService
             HasTaxInvoiceReference = bookSupplierInvoice && docType == DocumentType.PaymentVoucher,
             SupplierInvoiceNumber = bookSupplierInvoice ? result.ExtractedDocumentNumber : null,
             SupplierTaxInvoiceDate = bookSupplierInvoice ? result.ExtractedDate : null,
-            SupplierBranchCode = bookSupplierInvoice ? "00000" : null,
+            SupplierBranchCode = bookSupplierInvoice
+                ? (string.IsNullOrWhiteSpace(vendorBranchForBook) ? "00000" : vendorBranchForBook)
+                : null,
             // หมวดค่าใช้จ่ายระดับเอกสาร = ผังเดบิตที่ AI/ผู้ใช้เลือก
             ExpenseCategoryId = !isSalesSide ? scanDebitAccountId : null,
             // แหล่งเงิน/ช่องทางชำระ = ผังเครดิตที่เลือกใน review (ฝั่งซื้อ)
@@ -4176,6 +4187,22 @@ public class OcrService : IOcrService
                 // แนบ feedbackId ระดับ scan ไว้ ให้ approve เรียนรู้ผัง GL.
                 GlAccountAiFeedbackId = scanDebitAccountId.HasValue ? result.GlAccountAiFeedbackId : null,
             });
+        }
+
+        // เอกสารที่ scan ตรวจว่า "เคลมภาษีซื้อไม่ได้" ([VAT-CLAIM] เช่นใบกำกับ
+        // อย่างย่อ §82/5(2) / ใบเสร็จไม่ใช่ใบกำกับเต็มรูป §82/5(1)) — ต้องปิด
+        // เคลมที่ระดับบรรทัดด้วย: default IsVatClaimable=true จะพา VAT ไปพัก
+        // 11640 แล้วกล่องเติมใบกำกับชวนผู้ใช้กรอกเลขสลิป POS ดันเข้า 11610 =
+        // ทำผิดกฎหมายทั้งที่ตั้งใจดี. ปิดแล้ว VAT fold เข้าค่าใช้จ่ายตอน approve
+        // ตามที่กฎหมายกำหนดทันที
+        if (!isSalesSide && vatNotClaimable)
+        {
+            foreach (var dl in document.Lines)
+            {
+                dl.IsVatClaimable = false;
+                dl.VatNonClaimableReason ??=
+                    "เอกสารต้นทางเคลมภาษีซื้อไม่ได้ (ใบกำกับอย่างย่อ/ไม่ใช่ใบกำกับเต็มรูป §82/5) — ขอใบกำกับเต็มรูปจากผู้ขายหากต้องการเคลม";
+            }
         }
 
         _db.Documents.Add(document);

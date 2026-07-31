@@ -518,6 +518,18 @@
             </div>
           </div>
 
+          <!-- CN/DN: อ้างอิงใบกำกับ/เอกสารต้นฉบับ — §86/9-10 บังคับระบุเลขที่+วันที่
+               ใบเดิม. เลือกจากในระบบ (กระดาษพิมพ์ มูลค่าเดิม/ที่ถูกต้อง/ผลต่าง ให้)
+               หรือกรอกเลขใบเดิมนอกระบบ (ก่อนย้ายข้อมูล) -->
+          <div id="cnSourceSection" style="margin-bottom:12px;background:#fff7ed;border:1px solid #fb923c;border-radius:8px;padding:10px 14px;display:none">
+            <div style="font-weight:600;color:#9a3412;font-size:13px">📎 อ้างอิงใบกำกับ/เอกสารต้นฉบับ * <span style="font-weight:400;font-size:12px">(§86/9-10 ใบลดหนี้/เพิ่มหนี้ต้องระบุใบเดิม)</span></div>
+            <select id="fCnSourceDoc" class="form-select" style="margin-top:6px" onchange="Page.onCnSourceSelect()">
+              <option value="">— เลือกเอกสารเดิมของคู่ค้ารายนี้ —</option>
+            </select>
+            <input type="text" id="fCnExternalRef" class="form-input" style="margin-top:6px" placeholder="หรือกรอกเลขที่ใบกำกับเดิม (กรณีใบเดิมอยู่นอกระบบ/ก่อนย้ายข้อมูล)" oninput="if(this.value){document.getElementById('fCnSourceDoc').value='';Page._cnSourceId=null;const h=document.getElementById('cnSourceHint');if(h)h.style.display='none';}">
+            <div id="cnSourceHint" style="display:none;color:#9a3412;font-size:12px;margin-top:6px;line-height:1.6"></div>
+          </div>
+
           <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
                Only "คืนสินค้า" restocks; the other 3 reasons are pure
                financial adjustments with no stock impact. -->
@@ -2056,6 +2068,8 @@
         }
         // ใบเสร็จรับเงิน: reload รายการใบค้าง (AR) ของลูกค้าที่เพิ่งเลือก
         this._loadReceiptSourceDocs();
+        // ใบลดหนี้/เพิ่มหนี้: reload รายการใบกำกับ/เอกสารต้นฉบับของคู่ค้าที่เพิ่งเลือก
+        this._loadCnSourceDocs();
         // For a Payment Voucher, ask the local model whether this supplier is
         // usually paid Cash (จ่ายทันที) or Credit (เครดิต) and pre-select it.
         if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
@@ -3083,6 +3097,20 @@
             this._loadReceiptSourceDocs();
           }
         }
+        // ใบลดหนี้/ใบเพิ่มหนี้: ตัวเลือกใบกำกับ/เอกสารต้นฉบับ (§86/9-10)
+        const cnSrcSection = document.getElementById('cnSourceSection');
+        if (cnSrcSection) {
+          const showCnSrc = (docType === 'CreditNote' || docType === 'DebitNote');
+          cnSrcSection.style.display = showCnSrc ? '' : 'none';
+          if (!showCnSrc) {
+            this._cnSourceId = null;
+            const s = document.getElementById('fCnSourceDoc'); if (s) s.value = '';
+            const x = document.getElementById('fCnExternalRef'); if (x) x.value = '';
+            const h = document.getElementById('cnSourceHint'); if (h) h.style.display = 'none';
+          } else {
+            this._loadCnSourceDocs();
+          }
+        }
         // "ออกเป็นใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" — แสดง checkbox เฉพาะฝั่งขาย
         // ที่ออกใบกำกับได้ (Invoice/TaxInvoice). ติ๊กแล้ว save จะ force type=
         // TaxInvoice + combinedInvoiceTaxInvoice=true เพื่อพิมพ์หัวรวม.
@@ -3469,6 +3497,95 @@
         const refEl = document.getElementById('fRef');
         if (refEl && !refEl.value) refEl.value = d.documentNumber;
         Layout.toast(`ผูกกับ ${d.documentNumber} แล้ว — อนุมัติใบเสร็จ = ตัดลูกหนี้ (แก้ยอดเพื่อรับบางส่วนได้)`, 'info', 6000);
+      },
+
+      // ===== ใบลดหนี้/ใบเพิ่มหนี้: เลือกใบกำกับ/เอกสารต้นฉบับ (§86/9-10) =====
+      _cnSourceId: null,
+      _cnSourceCache: {},
+
+      async _loadCnSourceDocs() {
+        const section = document.getElementById('cnSourceSection');
+        const sel = document.getElementById('fCnSourceDoc');
+        if (!section || !sel || section.style.display === 'none') return;
+        const contactId = document.getElementById('fContactId')?.value;
+        this._cnSourceCache = {};
+        this._cnSourceId = null;
+        sel.innerHTML = '<option value="">— เลือกเอกสารเดิมของคู่ค้ารายนี้ —</option>';
+        const h = document.getElementById('cnSourceHint'); if (h) h.style.display = 'none';
+        if (!contactId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getDocuments(`?contactId=${contactId}&pageSize=100`);
+          // เงื่อนไขเดียวกับ ValidConversions + guard ฝั่ง server:
+          // ขาย = ใบกำกับ/ใบรวม + ใบเสร็จที่เป็นใบกำกับในตัว (มี VAT หรือ standalone)
+          // ซื้อ = PI/Expense + PV standalone (จ่ายทันที ไม่ได้อ้างใบตั้งหนี้)
+          // ตัด: มัดจำ (ใช้เมนูคืนมัดจำ), ใบเสร็จหลักฐานรับเงินเปล่า, PV settlement
+          const items = (res.data?.items || res.data || []).filter(d => {
+            if (!['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'].includes(d.status)) return false;
+            if (d.isDeposit) return false;
+            if (d.documentType === 'TaxInvoice') return true;
+            if (['Receipt', 'ReceiptVoucher'].includes(d.documentType))
+              return Number(d.vatAmount) > 0.005 || !d.relatedDocumentId;
+            if (['PurchaseInvoice', 'Expense'].includes(d.documentType)) return true;
+            if (d.documentType === 'PaymentVoucher') return !d.relatedDocumentId;
+            return false;
+          });
+          items.forEach(d => {
+            this._cnSourceCache[d.id] = d;
+            const o = document.createElement('option');
+            o.value = d.id;
+            o.textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber} · ${Layout.money(d.totalAmount)} (${Layout.date(d.documentDate)})`;
+            sel.appendChild(o);
+          });
+          if (!items.length) {
+            const o = document.createElement('option');
+            o.disabled = true;
+            o.textContent = '(ไม่มีใบกำกับ/เอกสารที่อ้างได้ในระบบ — กรอกเลขใบเดิมในช่องด้านล่างแทน)';
+            sel.appendChild(o);
+          }
+        } catch { /* best-effort */ }
+      },
+
+      async onCnSourceSelect() {
+        const id = document.getElementById('fCnSourceDoc')?.value || '';
+        const h = document.getElementById('cnSourceHint');
+        this._cnSourceId = id || null;
+        if (!id) { if (h) h.style.display = 'none'; return; }
+        const x = document.getElementById('fCnExternalRef'); if (x) x.value = '';
+        let d = this._cnSourceCache[id];
+        // list ไม่มี lines — ดึง detail มาเติมบรรทัดให้แก้เป็นยอดลด/เพิ่มจริง
+        try {
+          const api = Layout.api();
+          const r = await api.getDocument(id);
+          if (r?.data) d = r.data;
+        } catch { /* ใช้ข้อมูลจาก list ต่อ (ไม่เติมบรรทัด) */ }
+        if (!d) return;
+        const isCn = document.getElementById('fDocType')?.value === 'CreditNote';
+        if (h) {
+          h.style.display = '';
+          h.innerHTML = `✅ อ้างอิง <b>${Layout.esc(d.documentNumber)}</b> · มูลค่าใบเดิม (ฐาน) ${Layout.money(d.subTotal)} + VAT ${Layout.money(d.vatAmount)}<br>`
+            + `บรรทัดถูกเติมด้วยยอดเต็มใบเดิม — <b>แก้เป็นยอดที่${isCn ? 'ลด' : 'เพิ่ม'}จริง</b>ก่อนบันทึก `
+            + `(กระดาษจะพิมพ์กล่อง มูลค่าเดิม/มูลค่าที่ถูกต้อง/ผลต่าง ให้อัตโนมัติ${isCn ? ' + ระบบกันยอดลดรวมเกินใบเดิม' : ''})`;
+        }
+        if (Array.isArray(d.lines) && d.lines.length) {
+          document.getElementById('linesBody').innerHTML = '';
+          this.lineCount = 0;
+          d.lines.forEach(l => {
+            this.addLine();
+            const row = document.getElementById('linesBody').lastElementChild;
+            const set = (f, v) => { const el = row.querySelector(`[data-f="${f}"]`); if (el) { el.value = v; el.__grow?.(); } };
+            set('desc', l.description || '');
+            set('qty', l.quantity || 1);
+            set('unit', l.unit || 'ชิ้น');
+            set('price', l.unitPrice || 0);
+            set('vat', String(l.vatRate ?? 0));
+            set('wht', l.withholdingTaxRate || 0);
+          });
+          this.calcSum?.();
+        }
+        const refEl = document.getElementById('fRef');
+        if (refEl && !refEl.value) refEl.value = d.documentNumber;
+        Layout.toast(`อ้างอิง ${d.documentNumber} แล้ว — แก้บรรทัดเป็นยอดที่${isCn ? 'ลด' : 'เพิ่ม'}จริงก่อนบันทึก`, 'info', 6000);
       },
 
       _fillSupplierTaxIdFromContact(force = false) {
@@ -4170,7 +4287,12 @@
         // Thai practice. This mirrors the backend ComputeLineAmounts so the
         // on-screen totals match what gets saved.
         const inclVat = document.getElementById('fPricesIncludeVat')?.checked || false;
-        const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
+        // half-up away-from-zero แบบเดียวกับ backend (Math.Round AwayFromZero):
+        // epsilon ต้อง scale ตามค่า — Number.EPSILON เล็กเกินจะดัน float ที่ต่ำกว่า
+        // midpoint ~1e-14 (เช่น 213.50×1% = 2.1349999...98) ข้ามเส้น → UI โชว์
+        // 2.13 แต่ DB บันทึก 2.14 ผู้ใช้ดีดเครื่องคิดเลขจับได้
+        const r2 = x => x === 0 ? 0
+          : Math.sign(x) * Math.round(Math.abs(x) * (1 + 1e-12) * 100) / 100;
         // เก็บรายบรรทัดก่อน แล้วคิดภาษีท้ายบิลแบบ "กลุ่มอัตรา" — mirror backend
         // (AllocateBillDiscount + ComputeLineAmounts + ReconcileTaxRounding) เป๊ะ ๆ
         // เดิม frontend scale VAT ด้วย ratio แต่ backend ปัดรายบรรทัด → ยอดก่อน
@@ -4218,6 +4340,22 @@
           });
           if (lastIdx >= 0 && running !== billDisc)
             rows[lastIdx].alloc = r2((rows[lastIdx].alloc || 0) + (billDisc - running));
+          // mirror backend: เศษที่ล้นบรรทัดจิ๋วเกลี่ยไปบรรทัดที่ยังรับได้ —
+          // Σalloc ต้องเท่ายอดที่หักจริงเสมอ (กัน "รวมก่อนหักท้ายบิล" เกิน 1 สตางค์)
+          for (let guard = 0; guard < rows.length; guard++) {
+            const oi = rows.findIndex(r => r.net > 0 && (r.alloc || 0) > r.net);
+            if (oi < 0) break;
+            let overflow = r2((rows[oi].alloc || 0) - rows[oi].net);
+            rows[oi].alloc = rows[oi].net;
+            for (let i = 0; i < rows.length && overflow > 0; i++) {
+              if (i === oi || rows[i].net <= 0) continue;
+              const capacity = r2(rows[i].net - (rows[i].alloc || 0));
+              if (capacity <= 0) continue;
+              const take = Math.min(capacity, overflow);
+              rows[i].alloc = r2((rows[i].alloc || 0) + take);
+              overflow = r2(overflow - take);
+            }
+          }
           rows.forEach(r => {
             if (!r.alloc || r.net <= 0) return;
             r.net = r2(r.net - Math.min(r.alloc, r.net));
@@ -4843,11 +4981,12 @@
           if (strict && desc && !row.dataset.productCode) {
             strictViolators.push({ idx: idx + 1, desc });
           }
-          // VAT sentinel: -1 = "ยกเว้น" (Exempt) — แปลงเป็น 0 ส่งให้
-          // backend เพราะ schema vatRate เป็น decimal ที่ 0-100 + ตั้ง
-          // isVatClaimable=false เพื่อ flag ว่าไม่นำเข้า ภพ.30. server
-          // จะอ่าน vatRate=0 + isVatClaimable=false เป็นกรณี Exempt
-          // (ต่างจาก 0% export ที่ isVatClaimable=true).
+          // VAT sentinel: -1 = "ยกเว้น" (Exempt) — ส่ง -1 ตรง ๆ (backend รับ
+          // และเก็บลง DocumentLine.VatRate จริง). ⚠️ เดิมแปลงเป็น 0 โดยอ้างว่า
+          // server จะอ่าน 0+!claimable เป็น Exempt — server ไม่มีโค้ดนั้น:
+          // TaxService นับยอดยกเว้น (แถว "ยอดขาย/ซื้อยกเว้นภาษี" ภ.พ.30 + คอลัมน์
+          // ยกเว้น §87) ด้วย VatRate == -1 เท่านั้น → บรรทัดยกเว้นที่บันทึกผ่าน
+          // ฟอร์มหายจากรายงาน + แยกไม่ออกจาก 0% ส่งออก
           const rawVat = parseFloat(row.querySelector('[data-f="vat"]').value);
           const isVatExempt = rawVat === -1;
           // ส่วนลด: โหมด ฿ → ส่ง discountAmount (ยอดเงิน), โหมด % → discountPercent
@@ -4860,7 +4999,7 @@
             unitPrice: parseFloat(row.querySelector('[data-f="price"]').value) || 0,
             discountPercent: discMode === 'pct' ? discVal : 0,
             discountAmount: discMode === 'amt' ? discVal : null,
-            vatRate: isVatExempt ? 0 : (rawVat || 0),
+            vatRate: isVatExempt ? -1 : (rawVat || 0),
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           };
           // Persist the product linkage when the user picked one via the typeahead.
@@ -5001,6 +5140,10 @@
           ...((!this.editingId && this._receiptSourceId
               && (_effectiveDocType === 'Receipt' || _effectiveDocType === 'ReceiptVoucher'))
             ? { relatedDocumentId: this._receiptSourceId } : {}),
+          // ใบลดหนี้/เพิ่มหนี้ที่เลือกใบกำกับ/เอกสารต้นฉบับจาก dropdown (§86/9-10)
+          ...((!this.editingId && this._cnSourceId
+              && (_effectiveDocType === 'CreditNote' || _effectiveDocType === 'DebitNote'))
+            ? { relatedDocumentId: this._cnSourceId } : {}),
           buyerDeclinedTaxInvoice: document.getElementById('fBuyerDeclinedTaxInvoice')?.checked || false,
           // ส่วนลดท้ายบิล (จากยอดรวม) — โหมด % → billDiscountPercent, โหมด ฿ → billDiscountAmount
           billDiscountPercent: (document.getElementById('fBillDiscountMode')?.value === 'pct')
@@ -5014,7 +5157,10 @@
           serviceUsedDate: document.getElementById('fServiceUsedDate')?.value || null,
           bookingNumber: document.getElementById('fBookingNumber')?.value.trim() || null,
           contactId,
-          reference: document.getElementById('fRef').value || null,
+          // เลขใบกำกับเดิมนอกระบบ (CN/DN) ชนะช่องอ้างอิงทั่วไป — ใช้ผ่าน hard gate
+          // §86/9-10 และพิมพ์บนกระดาษ
+          reference: (document.getElementById('fCnExternalRef')?.value || '').trim()
+            || document.getElementById('fRef').value || null,
           notes: document.getElementById('fNotes').value || null,
           customAppendix: document.getElementById('fCustomAppendix').value || null,
           customFooterNotes: document.getElementById('fCustomFooterNotes').value || null,
@@ -5469,7 +5615,11 @@
                 <div style="font-size:12px;color:#1d4ed8;margin-bottom:10px">ผู้ขายต่างประเทศ<b>ไม่มีใบกำกับภาษีไทย</b> — เคลมภาษีซื้อผ่าน §86/4 <b>ไม่ได้</b>. ภาษีซื้อก้อนนี้เคลมได้เมื่อ (1) นำส่ง ภ.พ.36 (2) ได้รับใบเสร็จกรมสรรพากร → กด "🧾 รับรู้ภาษีซื้อ" ที่<b>หน้านำส่งภาษี</b> ระบบจะย้าย 11640 → 11610 + เข้า ภ.พ.30 ให้เอง (§77/2)</div>
                 <a class="btn btn-sm btn-primary" href="/pages/tax-remittance.html">ไปหน้านำส่งภาษี (ภ.พ.36) →</a>
               </div>` : ''}
-            ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.isForeignService) ? `
+            ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && d.inputVatExpiredAt) ? `
+              <div style="margin-bottom:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b">
+                ⛔ ภาษีซื้อใบนี้พ้นกรอบ 6 เดือน (§82/3) — ระบบล้างเป็นค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" แล้วเมื่อ ${Layout.date(d.inputVatExpiredAt)} เคลม ภ.พ.30 ไม่ได้อีก (เติมเลขใบกำกับก็ไม่เปลี่ยนผล)
+              </div>` : ''}
+            ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.isForeignService && !d.inputVatExpiredAt) ? `
               <div style="margin-bottom:12px;padding:12px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">
                 <div style="font-size:13px;font-weight:700;color:#6d28d9;margin-bottom:4px">⏳ ภาษีซื้อยังไม่ถึงกำหนด (พักไว้ที่บัญชี 11640)</div>
                 <div style="font-size:12px;color:#6b21a8;margin-bottom:8px">ใบกำกับภาษีซื้อยังไม่ครบตาม §86/4 — ภาษีซื้อยังเคลม ภ.พ.30 ไม่ได้ เมื่อข้อมูลครบ ระบบจะย้ายเข้า "ภาษีซื้อ ภ.พ.30" (11610) อัตโนมัติ และนับเข้ารายงานภาษีซื้อในเดือนที่ปรับ</div>

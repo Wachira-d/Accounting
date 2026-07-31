@@ -1263,14 +1263,29 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowReference && doc.DisplayReference != null) sb.AppendLine($"<div>อ้างอิง: {doc.DisplayReference}</div>");
         sb.AppendLine("</div>");
 
-        // Contact
-        sb.AppendLine($"<div class='contact-section'><div class='section-title'>{template.ContactSectionTitle}</div>");
+        // Contact — หัวกล่องตามประเภทเอกสาร (PV = "ผู้รับเงิน" ไม่ใช่ "ลูกค้า")
+        // เหมือน QuestPDF renderer: template override ชนะเฉพาะเมื่อตั้งค่าไม่ใช่
+        // default "ลูกค้า"
+        var contactSectionLabel = !string.IsNullOrWhiteSpace(template.ContactSectionTitle)
+            && template.ContactSectionTitle != "ลูกค้า"
+            ? template.ContactSectionTitle
+            : DefaultContactLabelFor(doc.DocumentType);
+        sb.AppendLine($"<div class='contact-section'><div class='section-title'>{contactSectionLabel}</div>");
         sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
-        // แสดงสาขาเฉพาะเมื่อมีเลขภาษี (สาขาเป็นเรื่องนิติบุคคลผู้จด VAT) — กันบุคคล
-        // ธรรมดาที่ไม่มีเลขภาษีขึ้น "(สำนักงานใหญ่)" เกินจำเป็น. ตรงกับ QuestPDF
-        // renderer (DocumentRenderer.cs:499) + บล็อกผู้ขายด้านบน (IsNullOrWhiteSpace)
+        // "(สำนักงานใหญ่/สาขาที่ x)" เป็นเรื่องของนิติบุคคล (ประกาศฯ 199) —
+        // บุคคลธรรมดาแสดงเฉพาะเมื่อตั้งรหัสสาขาไว้จริง (บุคคลจด VAT มีสาขาได้)
+        // ไม่งั้นเลขบัตรประชาชนโดนต่อท้าย "(สำนักงานใหญ่)" ผิดความจริง
         if (template.ShowContactTaxId && !string.IsNullOrWhiteSpace(doc.Contact.TaxId))
-            sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId} ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})</div>");
+        {
+            // บุคคลธรรมดา: แสดงเฉพาะสาขาจริง (ไม่ใช่ 00000 ที่หลุดมาจาก default
+            // ของ OCR/integration) — บุคคลจด VAT ที่มีสาขาย่อยจริงยังแสดงถูก
+            var showContactBranch = doc.Contact.ContactType != Models.Enums.ContactType.Individual
+                || (!string.IsNullOrWhiteSpace(doc.Contact.BranchCode)
+                    && doc.Contact.BranchCode!.Trim().TrimStart('0').Length > 0);
+            sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId}"
+                + (showContactBranch ? $" ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})" : "")
+                + "</div>");
+        }
         if (template.ShowContactAddress)
         {
             var caddr = FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,

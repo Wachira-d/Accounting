@@ -499,8 +499,14 @@ public partial class PdfGenerationService
             cc.Item().Text(c.Name ?? "").FontSize(11.5f).Bold().FontColor("#111827");
             if (t.ShowContactTaxId && !string.IsNullOrWhiteSpace(c.TaxId))
             {
-                var cBranch = FormatBranch(c.BranchCode, c.BranchName, "th");
-                cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId} ({cBranch})").FontSize(9).FontColor("#374151");
+                // สาขาเป็นเรื่องนิติบุคคล (ประกาศฯ 199) — บุคคลธรรมดาแสดงเฉพาะ
+                // เมื่อตั้งรหัสสาขาไว้จริง (บุคคลจด VAT) กันเลขบัตรประชาชนขึ้น
+                // "(สำนักงานใหญ่)" ผิดความจริง
+                var showBranch = c.ContactType != Accounting.Models.Enums.ContactType.Individual
+                    || (!string.IsNullOrWhiteSpace(c.BranchCode)
+                        && c.BranchCode!.Trim().TrimStart('0').Length > 0);
+                var cBranch = showBranch ? $" ({FormatBranch(c.BranchCode, c.BranchName, "th")})" : "";
+                cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId}{cBranch}").FontSize(9).FontColor("#374151");
             }
             if (t.ShowContactAddress)
             {

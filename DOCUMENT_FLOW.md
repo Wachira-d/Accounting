@@ -275,6 +275,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ต้องมี RelatedDocumentId หรือกรอกเลขใบกำกับเดิมในช่อง "อ้างอิง" (ใบเดิมนอก
   ระบบ/ก่อน migrate) ไม่งั้น block; warning เมื่ออ้าง "ใบแจ้งหนี้" (ไม่ใช่ใบกำกับ
   — ถ้าคู่ขายมี TIV/ใบเสร็จถือ VAT ต้องอ้างใบนั้น); DN ไม่กรอกหมายเหตุสาเหตุ → warn
+- **ฟอร์มสร้าง CN/DN ตรง** (documents.html `cnSourceSection`): dropdown เลือก
+  ใบกำกับ/เอกสารต้นฉบับของคู่ค้า (filter เงื่อนไขเดียวกับ ValidConversions —
+  ตัดมัดจำ/ใบเสร็จเปล่า/PV settlement) → เลือกแล้วเติมบรรทัดจากใบเดิมให้แก้เป็น
+  ยอดลด/เพิ่มจริง + ผูก `relatedDocumentId`; หรือช่องกรอกเลขใบเดิมนอกระบบ →
+  `reference`. เส้นสร้างตรงมี guard ซ้ำตอน approve (AutoPost CN/DN block:
+  มัดจำ/ใบเสร็จเปล่า/PV settlement) — กติกาเดียวกับ convert ทั้งสองทาง
 - **PV → CN/DN**: PV standalone (จ่ายทันที = ตั้งหนี้+จ่ายในใบเดียว ไม่มี PI/Expense
   ให้อ้าง) — ผู้ขายส่งของพร้อมใบลดหนี้ทีหลังอ้าง PV ได้. PV แบบ settlement (อ้าง
   PI/Expense/CIL) → `ValidateConversionAsync` block พร้อมชี้ให้ออก CN อ้างเอกสาร
@@ -923,7 +929,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | --- | --- | --- |
 | §86/4 completeness (PI/Expense/PV) | `TaxInvoiceCompletenessChecker` | ถ้าไม่ครบ → input VAT ลง 11640 (undue) |
 | §82/5 prohibited input VAT | `ChartOfAccount.InputVatClaimable` + per-line `IsVatClaimable` | flag claim=false, แยกออกจาก ภ.พ.30 + แสดง "🚫 §82/5" line |
-| §82/5(1)(2) non-full-tax-invoice | `OcrDocumentRoleInferrer.Infer` → `InputVatClaimable/InputVatClaimWarning` | OCR ตรวจ "ใบกำกับภาษีอย่างย่อ §86/6" หรือ "ใบเสร็จ/บิลเงินสด ไม่ใช่ §86/4" + มี VAT → เขียน `[VAT-CLAIM]` ลง ProcessingNotes; review UI + form แสดง banner แดง "เคลม VAT ไม่ได้ — ขอใบกำกับเต็มรูป"; ไม่ auto-ติ๊ก "ขอเครดิตภาษีซื้อ" |
+| §82/5(1)(2) non-full-tax-invoice | `OcrDocumentRoleInferrer.Infer` → `InputVatClaimable/InputVatClaimWarning` | OCR ตรวจ "ใบกำกับภาษีอย่างย่อ §86/6" หรือ "ใบเสร็จ/บิลเงินสด ไม่ใช่ §86/4" + มี VAT → เขียน `[VAT-CLAIM]` ลง ProcessingNotes; review UI + form แสดง banner แดง "เคลม VAT ไม่ได้ — ขอใบกำกับเต็มรูป"; ไม่ auto-ติ๊ก "ขอเครดิตภาษีซื้อ". กัน false positive 2 ชั้น: `ContainsAnyNotNegated` (ข้ามข้อความปฏิเสธ "ไม่ใช่...อย่างย่อ" จาก vision model) + เลขภาษีผู้ซื้อ 13 หลักถูกสกัดได้ = ใบเต็มรูปเสมอ (§86/6 ใบอย่างย่อไม่มีข้อมูลผู้ซื้อ) override คำที่เจอบนกระดาษ |
 | §82/3 6-month window | `TaxFilingExportService.ExportPp30Async` + `GenerateVatReport` | เกิน 6 เดือน → block claim หรือ require `LateReason` |
 | §86/9–86/10 CN/DN | `CreditNote/DebitNote` flow | required `RelatedDocumentId` + `CreditNoteReason` (CN); cap ≤ original |
 | §78 / §78/1 tax point | `TaxPointResolver` | snapshot ตอน approve |
@@ -1313,6 +1319,18 @@ _GenerateVatReport ดึงบรรทัด INPUT ที่ IsExcluded ใน
 _ยังไม่ถูกใช้/ยังไม่ undue/ไม่ voided) มาเป็นบรรทัด "ยกมา §82/3" (default ติ๊กออก) →
 _ผู้ใช้ติ๊กใช้เดือนไหนก็เคลมเดือนนั้น (RecalcVatTotals นับตอนบันทึก). กันเครดิต
 _ภาษีซื้อที่เลื่อนไว้หายถาวร._
+_รอบ 96 (เอกสารมาช้าหลังปิดงวด): carry-forward รอบ 95 ครอบเฉพาะใบที่ "เคยมี
+_บรรทัดแล้วถูกติ๊กออก" — ใบกำกับ มิ.ย. ที่เพิ่งบันทึกตอน ก.ค. (งวด มิ.ย. Filed
+_แล้ว regenerate ไม่ได้) ไม่เคยอยู่ในรายงานไหนเลย → tax point = มิ.ย. หลุดทั้ง
+_query งวด ก.ค. และ carry-forward = ภาษีซื้อหายเงียบ. GenerateVatReport เพิ่ม
+_late-arrival sweep: ใบ tax point ในงวดก่อน (≤6 เดือน) ที่ไม่มีบรรทัดในรายงาน
+_VAT ใดเลย + (งวดนั้น Filed **หรือ** CreatedAt หลังเดือน tax point จบ) →
+_ฝั่งซื้อใส่บรรทัด opt-in "[ใบกำกับซื้อมาช้า]" (IsExcluded, ยอด = เฉพาะส่วน
+_เคลมได้หลังหัก §82/5) / ฝั่งขายใส่บรรทัดเตือน "ต้องยื่น ภ.พ.30 เพิ่มเติมงวดนั้น"
+_(ภาษีขายเลื่อนงวดไม่ได้). + PullableVatTypes เดิมขาด **PaymentVoucher** (loop
+_หลักนับเป็นภาษีซื้อเมื่อ HasTaxInvoiceReference) + ใบขายที่ไม่ใช่ TaxInvoice →
+_ปุ่ม "ดึงเอกสาร" ดึง PV ไม่ได้เลย; เพิ่มแล้ว + guard PV ที่ไม่ติ๊กใช้ใบกำกับ +
+_hard block §82/3 เกิน 6 เดือนตามงวดปลายทาง (เดิมเช็คจากวันนี้ = เตือนอย่างเดียว)._
 _รอบ 94 (ภ.พ.36 ครบวงจร §83/6): (A) AutoPost แก้ JE บริการต่างประเทศ — เดิม Cr
 _เจ้าหนี้/เงินสด "รวม VAT" (จ่ายผู้ขาย ตปท. เกิน 7% + งบไม่มีหนี้ ภ.พ.36). ใหม่:
 _Cr ผู้ขาย/เงินสด = ฐาน + Cr 21912 เจ้าหนี้ ภ.พ.36 = VAT ประเมินเอง + Dr 11640
@@ -1434,8 +1452,16 @@ _(เข้า ภ.พ.30) หัว upgrade เป็น "ใบกำกับ
 _ถูก apply เข้าใบปลายทาง (ใบปลายทางคือใบกำกับ กันกระดาษซ้ำ). ข้อยกเว้น invariant_
 _ที่ตั้งใจ: ใบแจ้งหนี้สินค้า/legacy + ผู้ซื้อปฏิเสธใบกำกับ (ขายปลีก) = อยู่ในรายงาน_
 _โดยกระดาษไม่มีหัวใบกำกับ (นำส่งครบตามกฎหมาย มี approval warning ชี้ทางแล้ว)._
-_Last verified against codebase: 2026-07-30 (CN/DN ครบวงจร: PV เป็นต้นทางฝั่งซื้อ,_
-_e-Tax gate + DifferenceInformationAmount, กล่อง §86/9-10 บน PDF) — รอบ 13-14: OCR API=web UI,_
+_Last verified against codebase: 2026-07-31 (audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
+_แก้ 43 บั๊ก 3 ชุด: CN/DN text-ref resolve+undue VAT accounts+GRN block+qty cap+_
+_FX rate+refund txn; ภ.พ.30 regen snapshot ticks+double-tick guard+warn-line_
+_guard+CF นอกลูป+pastWindow ตามงวด+void→exclude+credit CF on file+deferral เป็น_
+_บรรทัด+override exclude; e-Tax purpose code ตาม reason+original หัก CN ก่อนหน้า;_
+_rounding: exempt -1 passthrough, r2 midpoint, billdisc clamp, partial-convert_
+_ratio ex-VAT; subscription: trial expiry scheduler, soft-delete restore,_
+_aggregate stale counters; OCR: checksum guard, negation suffix, abbrev→ปิด_
+_IsVatClaimable, สาขาผู้ขายจาก contact; branch label เฉพาะนิติบุคคล) —_
+_รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
 _รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
