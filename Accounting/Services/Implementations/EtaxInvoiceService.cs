@@ -166,6 +166,13 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             document.Contact.TaxId = buyerTaxClean;
             await _db.SaveChangesAsync();
         }
+        // ต้องครบ 13 หลักเหมือนฝั่ง seller (หรือ 18 = TaxId+สาขาที่ผู้ใช้ต่อมาเอง)
+        // — ถ้าปล่อยผ่าน ComposeTxId จะ "เติมศูนย์แต่งเลขให้ครบ 13" แล้วยื่นเลข
+        // ประจำตัวผู้เสียภาษีปลอมไปกรมสรรพากร ซึ่งแก้ย้อนหลังไม่ได้
+        if (buyerTaxClean.Length != 13 && buyerTaxClean.Length != 18)
+            throw new InvalidOperationException(
+                $"เลขประจำตัวผู้เสียภาษีของผู้ซื้อ \"{document.Contact.Name}\" ต้องเป็นตัวเลข 13 หลัก "
+                + $"(ปัจจุบัน {buyerTaxClean.Length} หลัก: \"{document.Contact.TaxId}\") — แก้ที่ข้อมูลผู้ติดต่อก่อนออก e-Tax");
 
         if (string.IsNullOrWhiteSpace(company.Address) && string.IsNullOrWhiteSpace(company.SubDistrict))
             throw new InvalidOperationException("กรุณาตั้งค่าที่อยู่บริษัทก่อนสร้าง e-Tax (ต้องมีอย่างน้อย ตำบล อำเภอ จังหวัด รหัสไปรษณีย์)");
@@ -786,8 +793,11 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             new XElement(ram + "TypeCode", "VAT"),
             new XElement(ram + "CalculatedRate",
                 vatRate.ToString("0.##", CultureInfo.InvariantCulture)),
+            // SubTotal = Σ line.NetAmount (หักส่วนลดรายบรรทัด+ท้ายบิลแล้ว) —
+            // ห้ามหัก DiscountAmount ซ้ำ ไม่งั้น BasisAmount ≠ TaxBasisTotalAmount
+            // และ CalculatedAmount ≠ Basis×Rate → Schematron TIV reject
             new XElement(ram + "BasisAmount",
-                (doc.SubTotal - doc.DiscountAmount).ToString("0.##", CultureInfo.InvariantCulture)),
+                doc.SubTotal.ToString("0.##", CultureInfo.InvariantCulture)),
             new XElement(ram + "CalculatedAmount",
                 doc.VatAmount.ToString("0.##", CultureInfo.InvariantCulture)));
 
@@ -874,9 +884,16 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         return xml.ToString();
     }
 
-    /// <summary>ISO 8601 with 3-digit fractional seconds — matches ETDA reference samples.</summary>
-    private static string FormatIso(DateTime dt) =>
-        dt.ToString("yyyy-MM-ddTHH:mm:ss.fff", CultureInfo.InvariantCulture);
+    /// <summary>ISO 8601 เวลาไทยพร้อม offset +07:00 (ขมธอ.3-2560 บังคับ) —
+    /// ค่าที่เก็บในระบบเป็น UTC (กฎโปรเจกต์) จึงต้องบวก 7 ชม. ก่อน format
+    /// ไม่งั้นเอกสารที่ออกช่วง 00:00-07:00 น. จะได้วันที่ "เมื่อวาน" และ
+    /// CreationDateTime (UtcNow) จะเพี้ยนจาก IssueDateTime 7 ชม.</summary>
+    private static string FormatIso(DateTime dt)
+    {
+        var th = (dt.Kind == DateTimeKind.Utc ? dt : DateTime.SpecifyKind(dt, DateTimeKind.Utc))
+            .AddHours(7);
+        return th.ToString("yyyy-MM-ddTHH:mm:ss.fff", CultureInfo.InvariantCulture) + "+07:00";
+    }
 
     /// <summary>ram:DefinedTradeContact (email + โทร) ตาม ETDA — ตรงกับ TakeTime.
     /// null เมื่อไม่มีทั้ง email/phone (ผู้เรียกใส่เป็น content แล้ว null จะถูกข้าม).

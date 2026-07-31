@@ -31,8 +31,11 @@ public partial class EtaxInvoiceService
             _ => "TaxInvoice_CrossIndustryInvoice"
         };
 
+        // ต้อง match TypeCode-name pairing ของ XML (T03/T02/388)
         var docTypeNameTh = etax.Document.DocumentType switch
         {
+            DocumentType.TaxInvoice when etax.Document.IssuedAsCashReceipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",
+            DocumentType.TaxInvoice when etax.Document.CombinedInvoiceTaxInvoice => "ใบแจ้งหนี้/ใบกำกับภาษี",
             DocumentType.TaxInvoice => "ใบกำกับภาษี",
             DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",
             DocumentType.DebitNote => "ใบเพิ่มหนี้",
