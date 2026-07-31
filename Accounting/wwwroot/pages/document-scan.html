@@ -1771,7 +1771,12 @@
                 </div>
               </div>`;
           } else if (isPdf) {
-            imagePreview = `
+            // มือถือ (Android/iOS) ไม่มี PDF viewer ฝังใน iframe → โชว์การ์ด
+            // เปิดแท็บใหม่/ดาวน์โหลดแทน icon เอกสารเสีย
+            const canInlinePdf = typeof navigator.pdfViewerEnabled === 'boolean'
+              ? navigator.pdfViewerEnabled
+              : !/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || '');
+            imagePreview = canInlinePdf ? `
               <div class="image-preview-container">
                 <iframe src="${fileUrl}#view=FitH" type="application/pdf"
                         style="width:100%;height:520px;border:1px solid var(--gray-200);border-radius:8px;background:#fff"
@@ -1779,6 +1784,14 @@
                 <div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center">
                   <span style="font-size:12px;color:var(--gray-500)">📄 ${Layout.esc(scan.originalFileName || 'PDF')}</span>
                   <a href="${fileUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary);text-decoration:underline">🔍 เปิดไฟล์เต็มในแท็บใหม่</a>
+                </div>
+              </div>` : `
+              <div class="image-preview-container">
+                <div style="padding:36px 16px;text-align:center;border:1px solid var(--gray-200);border-radius:8px;background:#fff">
+                  <div style="font-size:36px">📄</div>
+                  <div style="font-size:13px;font-weight:600;margin:6px 0">${Layout.esc(scan.originalFileName || 'PDF')}</div>
+                  <div style="font-size:12px;color:var(--gray-500);margin-bottom:12px">เบราว์เซอร์มือถือแสดงตัวอย่าง PDF ในหน้าไม่ได้</div>
+                  <a class="btn btn-primary btn-sm" href="${fileUrl}" target="_blank" rel="noopener">🔍 เปิดดูไฟล์</a>
                 </div>
               </div>`;
           } else {
