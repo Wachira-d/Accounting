@@ -1259,13 +1259,21 @@ public partial class TaxService : ITaxService
         {
             var foreign = c != null && !string.IsNullOrWhiteSpace(c.CountryCode)
                 && !string.Equals(c.CountryCode, "TH", StringComparison.OrdinalIgnoreCase);
-            return report.TaxType switch
-            {
-                TaxType.WithholdingTax54 => foreign,
-                TaxType.WithholdingTax53 => !foreign && c != null && WithholdingTaxCertService.DetectJuristic(c),
-                TaxType.WithholdingTax3 => !foreign && (c == null || !WithholdingTaxCertService.DetectJuristic(c)),
-                _ => true,
-            };
+
+            // ม.70: ผู้รับเงินต่างประเทศอยู่ ภ.ง.ด.54 เท่านั้น
+            if (report.TaxType == TaxType.WithholdingTax54) return foreign;
+            if (foreign) return false;
+
+            if (report.TaxType is not (TaxType.WithholdingTax3 or TaxType.WithholdingTax53))
+                return true;
+
+            // ใช้ resolver ตัวเดียวกับที่ออก 50 ทวิ (ResolveWhtFormType) — สำคัญ 2 อย่าง:
+            // (1) รายงานกับหนังสือรับรองต้องลงแบบเดียวกันเสมอ ไม่งั้นยอดไม่ตรง
+            // (2) DetectJuristic คืน null ได้เมื่อ "ไม่มีสัญญาณชัด" — ถ้ากรองด้วยค่านั้น
+            //     ตรง ๆ ผู้รับกลุ่มนี้จะหายจากทั้ง ภ.ง.ด.3 และ 53 (ไม่ถูกนำส่งเลย)
+            //     ส่วน resolver มี fallback DetermineTaxFormType ให้ลงแบบใดแบบหนึ่งเสมอ
+            var (form, _, _) = WithholdingTaxCertService.ResolveWhtFormType(c, null);
+            return report.TaxType == form;
         }
         docs = docs.Where(d => PayeeInScope(d.Contact)).ToList();
 

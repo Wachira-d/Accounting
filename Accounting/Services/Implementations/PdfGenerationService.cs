@@ -1299,7 +1299,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var contactSectionLabel = !string.IsNullOrWhiteSpace(template.ContactSectionTitle)
             && template.ContactSectionTitle != "ลูกค้า"
             ? template.ContactSectionTitle
-            : DefaultContactLabelFor(doc.DocumentType);
+            : DefaultContactLabelFor(doc.DocumentType, L);
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{contactSectionLabel}</div>");
         sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
         // "(สำนักงานใหญ่/สาขาที่ x)" เป็นเรื่องของนิติบุคคล (ประกาศฯ 199) —
