@@ -14,8 +14,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | 55 เคส / 7 ไฟล์ — pure-logic ทั้งหมด (ไม่มี DB) |
-| ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard |
+| เทสต์ที่มี | **83 เคส / 9 ไฟล์** — pure-logic ทั้งหมด (ไม่มี DB) |
+| ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ❌ ยังไม่มี (ดู ROADMAP Phase 0.2) |
@@ -242,4 +242,21 @@
 4. เทสต์ fail ต้องอ่าน assertion message แล้วรู้ทันทีว่าธุรกิจผิดตรงไหน
 
 ---
-Last updated: 2026-07-31 — สร้างครั้งแรกจาก audit session (Fable 5)
+### เคสที่เพิ่มจากรอบแก้บั๊ก multi-team audit (ยังไม่มีเทสต์ — ต้องใช้ DB)
+
+| รหัส | เคส | หมายเหตุ |
+| --- | --- | --- |
+| DOC-I-11 | void ใบที่ 2 ของ multi-doc payment | ยอดธนาคาร/PaidAmount/JE กลับครบ; ยกเลิกใบเดียวในกลุ่ม → ต้อง block |
+| DOC-I-12 | restore ใบ voided แล้วพยายามแก้ยอด/วันที่ | block ตาม §86/4 (แก้ได้เฉพาะหมายเหตุ) |
+| DOC-I-13 | void → restore → approve ใหม่ | ต้อง post JE ชุดใหม่ (guard ไม่นับ reversal) และ stock ไม่ตัดซ้ำ |
+| DOC-I-14 | ApplyDepositToInvoice 2 requests พร้อมกัน | สำเร็จ 1 ล้มเหลว 1, เลข JV ไม่ซ้ำ |
+| WHT-I-04 | จ่าย 40%/60% สองเดือน | 50 ทวิ 2 ใบ ยอดตามงวดจริง; Σ = ยอดหักทั้งเอกสาร |
+| WHT-I-05 | void PV ที่หักภาษี | บรรทัด ภ.ง.ด. ถูกติ๊กออก + ยอดหัวรายงาน recalc |
+| TAX-I-08 | export ภ.พ.30 งวดที่มีรายงานบันทึกไว้แล้ว | CSV ต้องมีรายการครบ ไม่ว่าง |
+| TAX-I-09 | ใบกำกับซื้อยกมาข้ามปี (§82/3) | คอลัมน์วันที่ในไฟล์ยื่นเป็นปี พ.ศ. ของใบจริง |
+| BNK-I-02 | ส่ง AllocatedAmount เกินยอดจริง | 400 พร้อมข้อความชัดเจน |
+| JE-I-04 | ค่าเสื่อม/ตีราคาในงวดที่ปิดแล้ว | block + JE มี FiscalPeriodId |
+| FE-S-05 | ตั้งภาษาเอกสาร = อังกฤษ แล้วออกใบกำกับ | หัวเป็นสองภาษา, ฟอร์มราชการยังเป็นไทย |
+
+---
+Last updated: 2026-07-31 — สร้างจาก audit session; อัปเดตหลังแก้เฟส 1-3 + ฟีเจอร์ภาษาเอกสาร

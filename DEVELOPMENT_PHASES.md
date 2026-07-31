@@ -1,8 +1,11 @@
 # DEVELOPMENT_PHASES.md — แผนพัฒนาต่อ (handoff สำหรับ AI agent / ทีมถัดไป)
 
 > สร้างจาก **full-system audit** (2026-07-31): ทีมตรวจ 8 โดเมนอ่านโค้ดจริงทั้งระบบ
-> พบ ~46 ประเด็น → **แก้แล้ว 25 ข้อ** (commits `af6abb7`..`9a5cab0` บน branch
-> `claude/fix-errors-638kW`) → **ค้าง 21 ข้อ** จัดเป็นเฟสด้านล่าง
+> พบ ~46 ประเด็น → **แก้ครบแล้ว 45 ข้อ** บน branch `claude/fix-errors-638kW`
+> (เฟส 1-3 ปิดหมดในรอบเดียวกัน) → **ค้างงานจริง 1 ข้อ + งานโครงสร้าง (เฟส 4-5)**
+>
+> **ค้างข้อเดียวที่เป็นบั๊ก**: XAdES-BES ของ e-Tax — ต้องทดสอบกับ ETDA validator
+> จริงก่อน จึงไม่แก้ในรอบนี้ (ดู Phase 2)
 > ใช้คู่กับ `TEST_PLAN.md` (รหัสเคสทดสอบ) และ `DOCUMENT_FLOW.md` (behavior)
 >
 > **กติกาสำหรับผู้ทำต่อ**: ทุกข้อมี file:line + root cause + แนวแก้ ที่ตรวจสอบ
@@ -13,6 +16,11 @@
 ---
 
 ## สิ่งที่แก้ไปแล้ว (อย่าแก้ซ้ำ — regression test คือหน้าที่เฟส 4)
+
+> เพิ่มเติมรอบนี้: **ฟีเจอร์ภาษาเอกสาร (ไทย/อังกฤษ)** — `Pdf/DocumentLabels.cs`
+> + `ResolveDocumentLanguage` + `CompanySettings.DocumentLanguage` +
+> `Document.DocumentLanguage` + UI ตั้งค่า. มีเทสต์ครอบ 10 เคส
+> (`DocumentLabelsTests`) และ import heuristics 18 เคส (`ImportReviewHeuristicsTests`)
 
 | โดเมน | สรุป | commit |
 | --- | --- | --- |
@@ -27,7 +35,18 @@
 
 ---
 
-## Phase 1 — เงินหาย/บัญชีผิดที่ยังเปิดอยู่ (ทำก่อน ห้ามข้าม)
+## ✅ Phase 1 — เสร็จแล้ว (commit ชุด "เฟส 1")
+
+ทั้ง 5 ข้อแก้แล้ว: multi-doc payment void (เพิ่ม `ReverseMultiDocPaymentInternalAsync`
++ block การยกเลิกใบเดียวในกลุ่ม), RealizeDeposit หักส่วนที่คืนแล้ว, bank
+reconciliation ตรวจยอดจริงจาก DB (`ResolveItemAmountAsync`), UpdateDocument
+บล็อกการแก้ใบที่ restore แล้วถือเลขจริง, ApplyDepositToInvoice ห่อ transaction +
+`FOR UPDATE` เรียงตาม Id กัน deadlock.
+**ยังไม่มี regression test** (ต้องใช้ Testcontainers — ดู Phase 4)
+
+<details><summary>รายละเอียดเดิม (เก็บไว้อ้างอิง)</summary>
+
+### Phase 1 — เงินหาย/บัญชีผิด (แก้แล้ว)
 
 ### 1.1 Void เอกสารที่ชำระด้วย multi-doc payment ไม่คืนเงินธนาคาร ⚠️ CRITICAL
 - **ที่**: `DocumentService.cs` `VoidDocumentAsync` (~4201) + `ReversePaymentInternalAsync` (~5468)
@@ -76,7 +95,24 @@
   และ invoice ก่อนอ่านยอด (copy pattern จาก `RefundDepositAsync` ~2415 ที่แก้แล้ว)
 - **Acceptance**: เคส concurrency 2 requests พร้อมกัน — สำเร็จ 1 ล้มเหลว 1
 
-## Phase 2 — Compliance ที่ต้องมี runtime validation
+</details>
+
+## ✅ Phase 2 — เสร็จแล้ว ยกเว้น XAdES-BES
+
+แก้แล้ว: void ติ๊กบรรทัดรายงานทุกแบบ + `RecalcWhtTotals`, 50 ทวิ ตามงวดจ่าย
+(`SourcePaymentId` + pro-rate + idempotency ต่องวด), ภ.พ.30 โครงยอด 3 จุด
+(InputVat ไม่รวม CF, PDF แยก 0%/ยกเว้นด้วย IncomeTypeCode, ฐาน = `VatableBase`),
+ค่าเสื่อม/ตีราคาเช็คงวดปิด + `FiscalPeriodId`
+
+> ⚠️ **ค้างข้อเดียว: XAdES-BES (2.1 เดิม)** — ลายเซ็น e-Tax ยังเป็น XMLDSig เปล่า
+> ต้อง implement `QualifyingProperties`/`SignedProperties` + Reference ชี้
+> SignedProperties **และทดสอบกับ ETDA validator จริงก่อน production**
+> (env นี้ทดสอบไม่ได้ จึงไม่แตะ — เดารูปแบบแล้วปล่อยขึ้น production อันตรายกว่า
+> การคงสถานะเดิมที่รู้ตัวว่ายังไม่ผ่าน)
+
+<details><summary>รายละเอียดเดิม (เก็บไว้อ้างอิง)</summary>
+
+### Phase 2 — compliance (แก้แล้ว ยกเว้น 2.1)
 
 ### 2.1 XAdES-BES สำหรับ e-Tax (ตอนนี้เป็น XMLDSig เปล่า — RD reject ทุกใบ)
 - **ที่**: `EtaxInvoiceService.cs` `SignXmlWithCertificate` (~363-402)
@@ -117,7 +153,17 @@
   → throw; ตั้ง `FiscalPeriodId` ลง JE (copy pattern `AutoPostToJournalAsync` ~10711)
 - **Acceptance**: JE-I-02 ครอบ depreciation path
 
-## Phase 3 — AI mandate + OCR (กฎเหล็ก #1/#3)
+</details>
+
+## ✅ Phase 3 — เสร็จแล้วทั้ง 4 ข้อ
+
+fingerprint ตรงกันเมื่อเปิด PII strip, `ImportReviewHeuristics` เป็น local path
+ของ ImportDataReview (kill-switch ผ่าน), OCR เก็บ/ส่งออกสาขา+ที่อยู่ และใช้สาขา
+บนใบก่อน Contact, `DailyCallCap` นับเฉพาะ call ที่ยิง provider จริง
+
+<details><summary>รายละเอียดเดิม (เก็บไว้อ้างอิง)</summary>
+
+### Phase 3 — AI mandate (แก้แล้ว)
 
 ### 3.1 Fingerprint mismatch: student ไม่มีวันจำได้เมื่อเปิด PII strip
 - **ที่**: `GenericFeedbackDistillationModel.cs` 84-108/232-272 vs `AiOrchestrator.cs` 250/261
@@ -147,7 +193,9 @@
   ไม่นับ Skipped/Cached/local) — ยิ่ง local เก่ง cap ต้องยิ่งเหลือ ไม่ใช่ยิ่งหมด
 - **Acceptance**: AI-U-03
 
-## Phase 4 — โครงสร้างพื้นฐานคุณภาพ (จาก ROADMAP Phase 0 — ยังไม่เริ่ม)
+</details>
+
+## Phase 4 — โครงสร้างพื้นฐานคุณภาพ (งานหลักที่เหลือ)
 
 1. **Testcontainers PostgreSQL harness** + เขียนเทสต์ P0 ทั้งหมดใน `TEST_PLAN.md`
    (TAX-I-04/05, JE-U-01, WHT-U-02/03, DOC-I-01/02, SEC-I-01, SEC-U-01) —
@@ -163,6 +211,14 @@
    (PayrollDetail) แทน report ว่างที่ generator คืนตอนนี้ (หลังแก้ `3480d38`)
 6. **JE fallback ในรายงาน WHT**: บรรทัดจาก manual JE (ไม่มีเอกสาร/contact) ยังใส่ทุกแบบ
    3/53 — ต้องให้ผู้ใช้ระบุประเภทผู้ถูกหักตอนบันทึก JE หรือตัดออกจากแบบอัตโนมัติ
+
+7. **แยกบรรทัดรายงานภาษีต่ออัตรา** — ใบที่ผสม 7% กับ 0% (§80/1) ยังรวมเป็น
+   บรรทัดเดียวที่อัตราสูงสุด (`TaxService.VatableBase` มีหมายเหตุไว้). ควรแยก
+   บรรทัดต่ออัตราเพื่อให้คอลัมน์ 7%/0%/ยกเว้น ตรงเป๊ะทุกเคส
+8. **ภาษาเอกสาร — ส่วนที่ยังไม่ครอบ**: `PdfGenerationService.WhtCert.cs` และ
+   รายงานภาษี (`PdfGenerationService.TaxReport.cs`) ตั้งใจคงไทย (ฟอร์มราชการ);
+   ถ้าต้องการ "ใบแนบภาษาอังกฤษ" สำหรับผู้บริหารต่างชาติ ให้ทำเป็นเอกสารแยก
+   ไม่ใช่แปลฟอร์มยื่น. อีเมล/ชื่อไฟล์แนบยังเป็นไทยล้วน — แปลได้ถ้าต้องการ
 
 ## Phase 5 — ตามแผนเดิม (ROADMAP.md/DEVELOPMENT_PLAN.md)
 
