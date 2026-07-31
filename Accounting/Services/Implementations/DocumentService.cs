@@ -368,6 +368,29 @@ public class DocumentService : IDocumentService
         }
         if (lastIdx >= 0 && running != billDisc)
             alloc[lastIdx] += billDisc - running;   // เก็บเศษปัดที่บรรทัดสุดท้าย
+
+        // เศษที่ยัดบรรทัดสุดท้ายอาจ "ล้น" ยอดบรรทัด (บรรทัดจิ๋ว) — ComputeLineAmounts
+        // จะ clamp ทิ้งเงียบ ทำให้ Σหักจริง < BillDiscountAmount ที่บันทึก →
+        // "รวมก่อนหักท้ายบิล" บน PDF เกินจริง. เกลี่ยส่วนล้นไปบรรทัดที่ยังรับได้
+        // (billDisc ≤ totalBase เสมอ → เกลี่ยลงได้หมดแน่นอน)
+        for (int guard = 0; guard < lines.Count; guard++)
+        {
+            int overIdx = -1;
+            for (int i = 0; i < lines.Count; i++)
+                if (alloc[i] > baseNet[i]) { overIdx = i; break; }
+            if (overIdx < 0) break;
+            var overflow = alloc[overIdx] - baseNet[overIdx];
+            alloc[overIdx] = baseNet[overIdx];
+            for (int i = 0; i < lines.Count && overflow > 0m; i++)
+            {
+                if (i == overIdx || baseNet[i] <= 0m) continue;
+                var capacity = baseNet[i] - alloc[i];
+                if (capacity <= 0m) continue;
+                var take = Math.Min(capacity, overflow);
+                alloc[i] += take;
+                overflow -= take;
+            }
+        }
         return alloc;
     }
 
@@ -5962,13 +5985,18 @@ public class DocumentService : IDocumentService
             // VAT ซ้ำ (+7%) → ยอดสูงกว่าที่ตกลงกับลูกค้า + ภาษีขายเกินจริง
             PricesIncludeVat: source.PricesIncludeVat,
             BillDiscountPercent: source.BillDiscountPercent > 0 ? source.BillDiscountPercent : null,
-            // โหมดยอดบาท + partial convert: เฉลี่ยส่วนลดตามสัดส่วน gross ที่ยกไป
-            // (ยกครบ = เต็มจำนวน) — % scale ตัวเองอยู่แล้ว
+            // โหมดยอดบาท + partial convert: เฉลี่ยส่วนลดตามสัดส่วน "ฐาน ex-VAT"
+            // ที่ยกไป — line.Amount เป็น ex-VAT หลังส่วนลด (สัดส่วนตรงกับฐานก่อน
+            // หักท้ายบิลเพราะ allocation เป็น pro-rata เชิงเส้น). เดิมตัวเศษใช้
+            // qty×UnitPrice (gross รวม VAT เมื่อ PricesIncludeVat + ไม่หักส่วนลด
+            // บาท) หารด้วยฐาน ex-VAT → ยกส่วนลดเกินสัดส่วน ~7% ทุกครั้ง →
+            // Σส่วนลดใบลูก > ต้นทาง + ฐานภาษีใบลูกต่ำเกินจริง
             BillDiscountAmount: source.BillDiscountPercent <= 0 && source.BillDiscountAmount > 0
                 ? Math.Round(source.BillDiscountAmount * Math.Min(1m,
-                    (source.SubTotal + source.BillDiscountAmount) > 0
-                        ? spec.Sum(s => s.Qty * s.Line.UnitPrice * (1 - s.Line.DiscountPercent / 100m))
-                          / (source.SubTotal + source.BillDiscountAmount)
+                    source.SubTotal > 0
+                        ? spec.Sum(s => s.Line.Amount
+                            * (s.Line.Quantity > 0 ? s.Qty / s.Line.Quantity : 1m))
+                          / source.SubTotal
                         : 1m), 2)
                 : null,
             // ลิงก์ต้นทางต้องเข้าไปตั้งแต่ create — PV ที่ settle ใบแจ้งหนี้ซื้อ

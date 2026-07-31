@@ -187,12 +187,15 @@ public static class OcrDocumentRoleInferrer
         //       สกัดเลขภาษีผู้ซื้อ 13 หลักได้ = ใบเต็มรูปแน่นอน ต่อให้เจอคำนี้
         //       ที่อื่นบนกระดาษก็ห้ามตีเป็นอย่างย่อ (เคลมภาษีซื้อได้ ห้ามปัดตก)
         var hasAbbrevTaxInvoice = ContainsAnyNotNegated(text, "ใบกำกับภาษีอย่างย่อ", "abbreviated tax invoice");
-        var buyerTaxIdIs13 = !string.IsNullOrEmpty(buyerTaxId)
-            && buyerTaxId.Count(char.IsDigit) == 13;
-        if (hasAbbrevTaxInvoice && buyerTaxIdIs13)
+        // ปลด marker เฉพาะเมื่อเลขผู้ซื้อ "จริง" — ต้องผ่าน mod-11 checksum ไม่ใช่
+        // แค่นับ 13 หลัก (vision model hallucinate เลข 13 หลักได้ง่าย → ใบอย่างย่อ
+        // แท้หลุดไปเคลม ภ.พ.30 ผิด §82/5(2))
+        var buyerTaxIdVerified =
+            Tax.TaxInvoiceCompletenessChecker.IsValidThaiTaxId(buyerTaxId);
+        if (hasAbbrevTaxInvoice && buyerTaxIdVerified)
         {
             hasAbbrevTaxInvoice = false;
-            reasons.Add("พบคำ \"อย่างย่อ\" บนกระดาษ แต่ใบระบุเลขผู้เสียภาษีผู้ซื้อครบ 13 หลัก "
+            reasons.Add("พบคำ \"อย่างย่อ\" บนกระดาษ แต่ใบระบุเลขผู้เสียภาษีผู้ซื้อครบ 13 หลัก (checksum ผ่าน) "
                 + "(ใบอย่างย่อตาม §86/6 ไม่มีข้อมูลผู้ซื้อ) → ตีเป็นใบกำกับภาษีเต็มรูป เคลมภาษีซื้อได้");
         }
         // Explicit paid stamps on the paper.
@@ -405,9 +408,19 @@ public static class OcrDocumentRoleInferrer
             {
                 var start = Math.Max(0, idx - 14);
                 var prefix = text.Substring(start, idx - start);
+                // ปฏิเสธนำหน้า: "ไม่ใช่/ห้าม(ออก)ใบกำกับภาษีอย่างย่อ"
                 var negated = prefix.Contains("ไม่ใช่") || prefix.Contains("ไม่เป็น")
                     || prefix.Contains("มิใช่") || prefix.Contains("ไม่ออก")
+                    || prefix.Contains("ห้าม")
                     || prefix.Contains("not ") || prefix.Contains("no ");
+                // ปฏิเสธตามหลัง: "ออกใบกำกับภาษีอย่างย่อไม่ได้/ไม่ให้..."
+                if (!negated)
+                {
+                    var sufEnd = Math.Min(text.Length, idx + n.Length + 10);
+                    var suffix = text.Substring(idx + n.Length, sufEnd - (idx + n.Length));
+                    negated = suffix.StartsWith("ไม่ได้") || suffix.StartsWith("ไม่ให้")
+                        || suffix.Contains("ไม่ได้");
+                }
                 if (!negated) return true;
                 idx += n.Length;
             }

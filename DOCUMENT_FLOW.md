@@ -1452,8 +1452,16 @@ _(เข้า ภ.พ.30) หัว upgrade เป็น "ใบกำกับ
 _ถูก apply เข้าใบปลายทาง (ใบปลายทางคือใบกำกับ กันกระดาษซ้ำ). ข้อยกเว้น invariant_
 _ที่ตั้งใจ: ใบแจ้งหนี้สินค้า/legacy + ผู้ซื้อปฏิเสธใบกำกับ (ขายปลีก) = อยู่ในรายงาน_
 _โดยกระดาษไม่มีหัวใบกำกับ (นำส่งครบตามกฎหมาย มี approval warning ชี้ทางแล้ว)._
-_Last verified against codebase: 2026-07-30 (CN/DN ครบวงจร: PV เป็นต้นทางฝั่งซื้อ,_
-_e-Tax gate + DifferenceInformationAmount, กล่อง §86/9-10 บน PDF) — รอบ 13-14: OCR API=web UI,_
+_Last verified against codebase: 2026-07-31 (audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
+_แก้ 43 บั๊ก 3 ชุด: CN/DN text-ref resolve+undue VAT accounts+GRN block+qty cap+_
+_FX rate+refund txn; ภ.พ.30 regen snapshot ticks+double-tick guard+warn-line_
+_guard+CF นอกลูป+pastWindow ตามงวด+void→exclude+credit CF on file+deferral เป็น_
+_บรรทัด+override exclude; e-Tax purpose code ตาม reason+original หัก CN ก่อนหน้า;_
+_rounding: exempt -1 passthrough, r2 midpoint, billdisc clamp, partial-convert_
+_ratio ex-VAT; subscription: trial expiry scheduler, soft-delete restore,_
+_aggregate stale counters; OCR: checksum guard, negation suffix, abbrev→ปิด_
+_IsVatClaimable, สาขาผู้ขายจาก contact; branch label เฉพาะนิติบุคคล) —_
+_รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
 _รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_

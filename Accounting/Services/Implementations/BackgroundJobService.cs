@@ -68,6 +68,28 @@ public class BackgroundJobService : BackgroundService
 
         // 7. OCR self-correction loop: prune stale patterns, cap inflation, GC
         await ProcessOcrSelfCorrection(scope, ct);
+
+        // 8. Trial ที่พ้น EndDate → expire อัตโนมัติ — เดิมมีแต่ endpoint admin
+        //    กดมือ (ไม่มี scheduler เรียกเลย) = trial ทุกแผนใช้ฟรีตลอดกาล
+        await ProcessExpiredTrials(scope, ct);
+    }
+
+    private async Task ProcessExpiredTrials(IServiceScope scope, CancellationToken ct)
+    {
+        try
+        {
+            var subSvc = scope.ServiceProvider.GetService<ISubscriptionService>();
+            if (subSvc == null) return;
+            // idempotent — filter Status==Trial && EndDate<now && !IsPermanentFree
+            await subSvc.ProcessExpiredTrialsAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process expired trials");
+            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
+            if (errorLogService != null)
+                await errorLogService.LogErrorAsync(ex, "BackgroundJob.ExpiredTrials");
+        }
     }
 
     private async Task ProcessOcrSelfCorrection(IServiceScope scope, CancellationToken ct)
