@@ -1662,14 +1662,206 @@ public class DocumentService : IDocumentService
                     : request.InputVatAccountCodeOverride;
         }
 
+        // ===== ติ๊กเคลมเข้า/ออกหลังอนุมัติ (ดุลพินิจผู้กรอก) =====
+        if (request.ClaimInputVat == false)
+            await UnclaimInputVatAsync(companyId, doc, actor);
+        else if (request.ClaimInputVat == true
+                 && !string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride)
+                 && !doc.InputVatAccountCodeOverride.StartsWith("116"))
+            await ReclaimInputVatAsync(companyId, doc, actor);
+
         // ถ้าข้อมูลครบแล้ว + เดิมค้าง 11640 → gen adjusting JE 11640→11610
-        var reclassified = await ReclassifyUndueInputVatAsync(companyId, doc, actor);
+        // (รวมเคส ClaimInputVat=true บนใบที่ยังพัก 11640 — เส้นเดิมจัดการให้)
+        var reclassified = request.ClaimInputVat == false
+            ? false
+            : await ReclassifyUndueInputVatAsync(companyId, doc, actor);
+
+        // PV ที่ VAT อยู่ 11610 แล้วแต่ธง "ใช้งานใบกำกับภาษี" ยังปิด (เช่นอนุมัติ
+        // โดยไม่ติ๊ก) — ติ๊กเคลม = เปิดธงให้ ภ.พ.30 นับ (ไม่ต้องมี JE เพิ่ม)
+        if (request.ClaimInputVat == true
+            && doc.DocumentType == DocumentType.PaymentVoucher
+            && (string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride)
+                || doc.InputVatAccountCodeOverride.StartsWith("116")))
+            doc.HasTaxInvoiceReference = true;
 
         await _db.SaveChangesAsync();
         var updated = await GetDocumentAsync(companyId, documentId);
         await FireWebhookAsync(companyId,
             reclassified ? "document.input_vat_reclassified" : "document.updated", updated);
         return updated;
+    }
+
+    /// <summary>ติ๊ก "ไม่เคลม" ภาษีซื้อหลังอนุมัติ — ย้าย VAT จากที่พัก/เคลมอยู่
+    /// (11640 หรือ 11610) เข้า ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" + ตั้ง
+    /// InputVatAccountCodeOverride เป็นผังค่าใช้จ่ายนั้น (marker เดียวที่
+    /// ภ.พ.30/blockers รู้จักอยู่แล้ว → ใบหลุดจากรายงานถูกต้อง). PV ปิดธง
+    /// HasTaxInvoiceReference ด้วย. Idempotent — ไม่เคลมอยู่แล้ว = no-op.</summary>
+    private async Task UnclaimInputVatAsync(Guid companyId, Document doc, string actor)
+    {
+        if (doc.VatAmount <= 0) return;
+        if (doc.IsForeignService)
+            throw new InvalidOperationException(
+                "บริการต่างประเทศ (ภ.พ.36 §83/6) — จัดการการเคลมที่หน้านำส่งภาษีเท่านั้น");
+        // ไม่เคลมอยู่แล้ว (override นอก 116) → no-op
+        if (!string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride)
+            && !doc.InputVatAccountCodeOverride.StartsWith("116")) return;
+
+        // ห้ามถอนเคลมจากงวดที่ "ยื่นแล้ว" — ต้องยื่น ภ.พ.30 เพิ่มเติมของงวดนั้น
+        var filedIn = await _db.TaxReportLines.AsNoTracking()
+            .Where(l => l.DocumentId == doc.Id && !l.IsExcluded
+                && l.TaxReport.CompanyId == companyId
+                && l.TaxReport.TaxType == TaxType.VAT
+                && l.TaxReport.Status == TaxReportStatus.Filed)
+            .Select(l => new { l.TaxReport.Year, l.TaxReport.Month })
+            .FirstOrDefaultAsync();
+        if (filedIn != null)
+            throw new InvalidOperationException(
+                $"ภาษีซื้อใบนี้ถูกเคลมในงวด {filedIn.Month:D2}/{filedIn.Year} ที่ยื่นแล้ว — เลิกเคลมในระบบ"
+                + "ไม่ได้ ต้องยื่น ภ.พ.30 เพิ่มเติมของงวดนั้นกับสรรพากรก่อน");
+
+        var vatMove = doc.Lines?.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount) ?? 0m;
+        if (vatMove <= 0) vatMove = doc.VatAmount;
+
+        // ผังค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" — resolve แบบเดียวกับ expiry job
+        var expenseAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+                && a.AccountCode.StartsWith("5")
+                && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")))
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+                && a.AccountCode.StartsWith("53"))
+            ?? throw new InvalidOperationException(
+                "ไม่พบผังค่าใช้จ่าย (5xxxx) สำหรับพักภาษีซื้อที่ไม่เคลม — เพิ่มผังก่อน");
+
+        // VAT อยู่ที่ไหนตอนนี้: พัก 11640 (undue ยังไม่ reclass) หรือ 11610 (เคลมได้)
+        var pendingUndue = doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null;
+        var srcAcc = pendingUndue
+            ? (await FindAccountAsync(companyId, "11640") ?? await FindAccountAsync(companyId, "11630"))
+            : (await FindAccountAsync(companyId, "11610") ?? await FindAccountAsync(companyId, "116"));
+        if (srcAcc == null)
+            throw new InvalidOperationException("ไม่พบผังภาษีซื้อ (11610/11640) ในผังบัญชี");
+
+        var now = DateTime.UtcNow;
+        var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
+        var period = await ResolveFiscalPeriodAsync(companyId, now);
+        var je = new JournalEntry
+        {
+            CompanyId = companyId, EntryNumber = entryNumber, EntryDate = now,
+            JournalType = JournalType.General,
+            Description = $"เลิกเคลมภาษีซื้อ (ดุลพินิจผู้บันทึก) - {doc.DocumentNumber}",
+            Reference = doc.DocumentNumber, Status = JournalEntryStatus.Posted,
+            TotalDebit = vatMove, TotalCredit = vatMove,
+            CreatedBy = actor, IsAutoGenerated = true, SourceDocumentId = doc.Id,
+            FiscalPeriodId = period?.Id, ProjectId = doc.ProjectId,
+        };
+        _db.JournalEntries.Add(je);
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = expenseAcc.Id,
+            DebitAmount = vatMove, CreditAmount = 0,
+            Description = "ภาษีซื้อขอคืนไม่ได้ (เลือกไม่เคลม)", LineOrder = 1,
+        });
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = srcAcc.Id,
+            DebitAmount = 0, CreditAmount = vatMove,
+            Description = pendingUndue ? "ล้างภาษีซื้อยังไม่ถึงกำหนด" : "กลับภาษีซื้อ ภ.พ.30", LineOrder = 2,
+        });
+
+        doc.InputVatAccountCodeOverride = expenseAcc.AccountCode;   // marker "ไม่เคลม"
+        if (doc.DocumentType == DocumentType.PaymentVoucher)
+            doc.HasTaxInvoiceReference = false;
+
+        // บรรทัดในรายงานงวด Draft ที่ยัง active → ติ๊กออก + recalc (เหมือนตอน void)
+        var draftLines = await _db.TaxReportLines
+            .Include(l => l.TaxReport)
+            .Where(l => l.DocumentId == doc.Id && !l.IsExcluded
+                && l.TaxReport.CompanyId == companyId
+                && l.TaxReport.TaxType == TaxType.VAT
+                && l.TaxReport.Status != TaxReportStatus.Filed)
+            .ToListAsync();
+        foreach (var dl in draftLines)
+        {
+            dl.IsExcluded = true;
+            dl.Description = "⚠️ [ผู้ใช้เลิกเคลม] " + (dl.Description ?? "");
+            dl.UpdatedAt = DateTime.UtcNow;
+        }
+        foreach (var rid in draftLines.Select(l => l.TaxReportId).Distinct())
+        {
+            var rep = await _db.TaxReports.Include(r => r.Lines).FirstOrDefaultAsync(r => r.Id == rid);
+            if (rep != null) { TaxService.RecalcVatTotals(rep); rep.UpdatedAt = DateTime.UtcNow; }
+        }
+    }
+
+    /// <summary>ติ๊ก "กลับมาเคลม" หลังเคยเลิกเคลม (override เป็นผังค่าใช้จ่าย) —
+    /// ต้องครบ §86/4 + อยู่ในกรอบ 6 เดือน §82/3. JE ย้อน: Dr 11610 / Cr ผัง
+    /// ค่าใช้จ่ายเดิม แล้วล้าง override + เปิดธง PV + stamp BecameClaimableAt
+    /// (ภ.พ.30 นับงวดปัจจุบัน — งวดเดิมอาจยื่นไปแล้ว).</summary>
+    private async Task ReclaimInputVatAsync(Guid companyId, Document doc, string actor)
+    {
+        if (doc.VatAmount <= 0) return;
+        if (doc.IsForeignService)
+            throw new InvalidOperationException(
+                "บริการต่างประเทศ (ภ.พ.36 §83/6) — จัดการการเคลมที่หน้านำส่งภาษีเท่านั้น");
+        var overrideCode = doc.InputVatAccountCodeOverride!;
+        // §82/3 กรอบ 6 เดือน
+        var baseDate = doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
+        var windowEnd = new DateTime(baseDate.Year, baseDate.Month, 1).AddMonths(7).AddDays(-1);
+        if (DateTime.UtcNow.AddHours(7).Date > windowEnd)
+            throw new InvalidOperationException(
+                $"ใบกำกับลงวันที่ {baseDate:dd/MM/yyyy} พ้นกรอบ 6 เดือน §82/3 แล้ว — กลับมาเคลมไม่ได้");
+        // §86/4 ต้องครบ
+        if (doc.Contact == null)
+            doc.Contact = await _db.Contacts.FirstOrDefaultAsync(c =>
+                c.Id == doc.ContactId && c.CompanyId == companyId) ?? doc.Contact!;
+        var completeness = TaxInvoiceCompletenessChecker.Evaluate(doc, doc.Contact);
+        if (!completeness.IsClaimable)
+            throw new InvalidOperationException(
+                $"กลับมาเคลมไม่ได้ — ใบกำกับยังไม่ครบ §86/4: {completeness.MissingSummary}");
+
+        var prevExpenseAcc = await FindAccountAsync(companyId, overrideCode)
+            ?? throw new InvalidOperationException($"ไม่พบผัง {overrideCode} ที่เคยพักภาษีซื้อไว้");
+        var claimAcc = await FindAccountAsync(companyId, "11610")
+            ?? await FindAccountAsync(companyId, "116")
+            ?? throw new InvalidOperationException("ไม่พบผังภาษีซื้อ (11610) ในผังบัญชี");
+
+        var vatMove = doc.Lines?.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount) ?? 0m;
+        if (vatMove <= 0) vatMove = doc.VatAmount;
+
+        var now = DateTime.UtcNow;
+        var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
+        var period = await ResolveFiscalPeriodAsync(companyId, now);
+        var je = new JournalEntry
+        {
+            CompanyId = companyId, EntryNumber = entryNumber, EntryDate = now,
+            JournalType = JournalType.General,
+            Description = $"กลับมาเคลมภาษีซื้อ - {doc.DocumentNumber}",
+            Reference = doc.DocumentNumber, Status = JournalEntryStatus.Posted,
+            TotalDebit = vatMove, TotalCredit = vatMove,
+            CreatedBy = actor, IsAutoGenerated = true, SourceDocumentId = doc.Id,
+            FiscalPeriodId = period?.Id, ProjectId = doc.ProjectId,
+        };
+        _db.JournalEntries.Add(je);
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = claimAcc.Id,
+            DebitAmount = vatMove, CreditAmount = 0,
+            Description = "ภาษีซื้อ ภ.พ.30 (กลับมาเคลม)", LineOrder = 1,
+        });
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = prevExpenseAcc.Id,
+            DebitAmount = 0, CreditAmount = vatMove,
+            Description = "กลับรายการภาษีซื้อขอคืนไม่ได้", LineOrder = 2,
+        });
+
+        doc.InputVatAccountCodeOverride = null;
+        // งวด ภ.พ.30 = เดือนที่กลับมาเคลม (งวดใบเดิมอาจยื่นแล้ว) — ใช้กลไก
+        // BecameClaimableAt เดิม: query หลักดึงใบเข้างวดนี้ให้เอง
+        doc.InputVatPostedAsUndue = true;
+        doc.InputVatBecameClaimableAt = now;
+        if (doc.DocumentType == DocumentType.PaymentVoucher)
+            doc.HasTaxInvoiceReference = true;
     }
 
     /// <summary>หาผัง "หนี้สินมัดจำ" ที่ใบมัดจำนี้ Cr ไว้จริง (215/217 ยอด Cr สูงสุด

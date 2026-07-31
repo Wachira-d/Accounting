@@ -710,9 +710,11 @@ public partial class TaxService : ITaxService
                             prohibitedVat += l.VatAmount;
                             continue;
                         }
-                        // (c) §82/5(6) keyword — รถยนต์นั่ง/น้ำมัน/ซ่อมรถ (เว้น vehicle dealer)
-                        if (!isVehicleDealer && IsProhibitedVehicleExpense(l.Description))
-                            prohibitedVat += l.VatAmount;
+                        // (c) §82/5(6) keyword-guess ถูกถอดออก — นโยบาย: "ตัด/เคลม
+                        // เป็นดุลพินิจผู้กรอก" ระบบห้ามเดาจากข้อความไปตัดสิทธิ
+                        // (เคยตัด "ค่าน้ำมัน" ทั้งที่เป็นรถกระบะที่เคลมได้). เหลือ
+                        // เฉพาะสัญญาณที่ผู้ใช้ตั้งใจ: flag รายบรรทัด (a) + ผังบัญชี
+                        // ต้องห้ามที่ตั้งเอง (b); ฝั่งเตือนมีตอนอนุมัติ/ตอนติ๊กแทน
                     }
                 }
                 var claimableVat = doc.VatAmount - prohibitedVat;
@@ -2016,33 +2018,11 @@ public partial class TaxService : ITaxService
 
     // Document types eligible to be pulled into a VAT return, and whether
     // each posts to the input (ภาษีซื้อ) side.
-    /// <summary>§82/5(6) — ต้องห้ามเฉพาะ "รถยนต์นั่ง/รถโดยสาร ≤10 ที่นั่ง"
-    /// (นิยามตามพิกัดสรรพสามิต — ประกาศอธิบดีฯ ฉบับที่ 42) รวมค่าน้ำมัน/ซ่อม/
-    /// เช่าซื้อของรถประเภทนั้น. รถกระบะบรรทุก (ตอนเดียว/แค็บ) / รถบรรทุก /
-    /// เครื่องจักร **เคลมได้** — เคสหลักของ SME ไทย (รับเหมา/ขนส่ง/ค้าขาย).
-    /// ⚠️ เดิมตัดสินจากคำว่า "ค่าน้ำมัน" คำเดียว → ค่าน้ำมันรถกระบะผู้รับเหมา
-    /// โดนตัดจาก ภ.พ.30 เงียบ ๆ = under-claim ทั้งที่กฎหมายให้เคลม.
-    /// หลักใหม่: ตัดอัตโนมัติเฉพาะเมื่อ description "ระบุชัด" ว่าเป็นรถนั่ง —
-    /// คำกำกวม (น้ำมันเฉย ๆ/ซ่อมรถเฉย ๆ) ไม่ตัด แต่มี approval warning ให้
-    /// ผู้ใช้ตัดสินเอง (ติ๊ก "เคลม VAT" ออกรายบรรทัดได้ถ้าเป็นรถเก๋งจริง).</summary>
-    private static bool IsProhibitedVehicleExpense(string? description)
-    {
-        if (string.IsNullOrWhiteSpace(description)) return false;
-        var d = description.ToLowerInvariant();
-        // ระบุชัดว่าเป็นรถบรรทุก/เครื่องจักร → เคลมได้แน่นอน ไม่ตัด
-        string[] exempt = { "กระบะ", "บรรทุก", "หกล้อ", "สิบล้อ", "เทรลเลอร์",
-            "แม็คโคร", "แมคโคร", "แบคโฮ", "แบ็คโฮ", "รถขุด", "รถตัก", "รถไถ",
-            "โฟล์คลิฟท์", "โฟล์คลิฟต์", "forklift", "รถเครน", "เครน", "truck",
-            "pickup", "รถตู้" };
-        foreach (var k in exempt) if (d.Contains(k)) return false;
-        // ระบุชัดว่าเป็นรถยนต์นั่ง → ต้องห้าม (น้ำมัน/ซ่อม/เช่าซื้อของรถนั้น)
-        string[] passenger = { "รถยนต์นั่ง", "รถเก๋ง", "เก๋ง", "sedan",
-            "รถประจำตำแหน่ง", "เช่าซื้อรถยนต์นั่ง" };
-        foreach (var k in passenger) if (d.Contains(k)) return true;
-        // น้ำมัน/ซ่อมเฉย ๆ ไม่ระบุชนิดรถ = กำกวม → ไม่ตัดอัตโนมัติ (ผู้ใช้
-        // ตัดสินผ่าน IsVatClaimable รายบรรทัด + มี warning ตอนอนุมัติ)
-        return false;
-    }
+    // หมายเหตุ §82/5(6): ตัวตัดอัตโนมัติจาก keyword (IsProhibitedVehicleExpense)
+    // ถูกถอดออกตามนโยบาย "เคลม/ไม่เคลมเป็นดุลพินิจผู้กรอก ระบบเตือนอย่างเดียว"
+    // — การตัดสิทธิใช้เฉพาะ flag รายบรรทัด (IsVatClaimable) + ผังบัญชีต้องห้าม
+    // ที่บริษัทตั้งเอง; คำเตือนกฎรถยนต์นั่ง (ประกาศ 42) อยู่ที่ approve warning
+    // ของ DocumentService + ตอนติ๊กเคลมในหน้าเอกสาร
 
     /// <summary>ประเภทเอกสารที่ "ดึงเข้ารายงาน ภ.พ.30" ด้วยมือได้ + ฝั่งภาษี
     /// (true = ภาษีซื้อ). ต้องครอบคลุมทุกประเภทที่ loop หลักนับเป็น VAT — เดิม

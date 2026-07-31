@@ -237,7 +237,12 @@ public record CompleteSupplierTaxInvoiceRequest(
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
     string? SupplierBranchCode = null,
-    string? InputVatAccountCodeOverride = null);
+    string? InputVatAccountCodeOverride = null,
+    // ติ๊กเคลมภาษีซื้อเข้า/ออกหลังอนุมัติ (ดุลพินิจผู้กรอก — ระบบสร้าง JE ปรับ
+    // 11640/11610 ↔ ค่าใช้จ่ายให้): false = เลิกเคลม (VAT ลงค่าใช้จ่าย
+    // "ภาษีซื้อขอคืนไม่ได้"), true = กลับมาเคลม (ต้องครบ §86/4 + ในกรอบ §82/3),
+    // null = ไม่แตะสถานะเคลม (พฤติกรรมเดิม)
+    bool? ClaimInputVat = null);
 
 /// <summary>รับรู้รายได้จากเงินมัดจำ (ตัด "ขายรอรับรู้" 217xx → รายได้) เมื่อ
 /// ส่งมอบสินค้า/บริการจริง. Amount = ฐานไม่รวม VAT ที่จะรับรู้ (รองรับบางส่วน);

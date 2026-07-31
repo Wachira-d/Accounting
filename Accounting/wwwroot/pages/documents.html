@@ -5640,6 +5640,41 @@
               <div style="margin-bottom:12px;padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;font-size:12px;color:#15803d">
                 ✓ ภาษีซื้อถึงกำหนดแล้ว — ย้ายจาก 11640 เข้า "ภาษีซื้อ ภ.พ.30" (11610) เมื่อ ${Layout.date(d.inputVatBecameClaimableAt)} (เข้ารายงานภาษีซื้อเดือนนั้น)
               </div>` : ''}
+            ${(['PaymentVoucher','Expense','PurchaseInvoice'].includes(d.documentType)
+               && ['Approved','Sent','PartiallyPaid','Paid'].includes(d.status)
+               && (d.vatAmount||0) > 0 && !d.isForeignService) ? (() => {
+              // แผงเคลมภาษีซื้อ — "เคลม/ไม่เคลมเป็นดุลพินิจผู้บันทึก" ติ๊กเข้า/ออก
+              // ได้แม้อนุมัติแล้ว (ระบบสร้าง JE ปรับ + กันถอนจากงวดที่ยื่นแล้ว)
+              const vatUnclaimed = d.inputVatAccountCodeOverride
+                && !String(d.inputVatAccountCodeOverride).startsWith('116');
+              const vatPendingUndue = d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.inputVatExpiredAt;
+              const vatClaiming = !vatUnclaimed && !d.inputVatExpiredAt
+                && (d.documentType !== 'PaymentVoucher' || d.hasTaxInvoiceReference || vatPendingUndue);
+              const vatState = vatUnclaimed
+                ? `<span style="color:#b45309">ไม่เคลม — VAT ลงค่าใช้จ่าย (${Layout.esc(d.inputVatAccountCodeOverride)})</span>`
+                : d.inputVatExpiredAt ? '<span style="color:#991b1b">พ้นกรอบ 6 เดือน §82/3 — เคลมไม่ได้แล้ว</span>'
+                : vatPendingUndue ? '<span style="color:#6d28d9">รอใบกำกับครบ (VAT พัก 11640)</span>'
+                : vatClaiming ? '<span style="color:#15803d">✓ เคลมเข้า ภ.พ.30</span>'
+                : '<span style="color:#b45309">ยังไม่ได้เปิดเคลม (ไม่ขึ้น ภ.พ.30)</span>';
+              return `
+              <div style="margin-bottom:12px;padding:10px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                  <div style="font-size:13px"><b>ภาษีซื้อ ${Layout.money(d.vatAmount)}</b> · ${vatState}</div>
+                  ${d.inputVatExpiredAt ? '' : `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;font-weight:600">
+                    <input type="checkbox" ${vatClaiming ? 'checked' : ''} onchange="Page.toggleVatClaim('${d.id}', this.checked, this)">
+                    เคลมภาษีซื้อ (ภ.พ.30)
+                  </label>`}
+                </div>
+                ${(!vatPendingUndue && !d.inputVatExpiredAt) ? `
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+                  <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เลขจากกระดาษ"></div>
+                  <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
+                  <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" maxlength="5"></div>
+                </div>
+                <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="Page.completeTaxInvoice('${d.id}')">💾 บันทึกข้อมูลใบกำกับ</button>` : ''}
+                <div class="text-xs text-gray-400" style="margin-top:6px">การเคลม/ไม่เคลมเป็นดุลพินิจผู้บันทึก — ระบบสร้าง JE ปรับบัญชีให้อัตโนมัติ และกันการถอนเคลมจากงวด ภ.พ.30 ที่ยื่นแล้ว</div>
+              </div>`;
+            })() : ''}
             ${(d.nonDeductibleAmount > 0) ? `
               <div style="margin-bottom:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px">
                 <div style="font-size:13px;font-weight:700;color:#991b1b;margin-bottom:4px">⚠️ รายจ่ายต้องห้าม §65 ตรี — บวกกลับ ภ.ง.ด.50: ${Layout.money(d.nonDeductibleAmount)}</div>
@@ -6288,6 +6323,38 @@
           setTimeout(() => this.edit(j.data.newDocumentId), 300);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      /** ติ๊กเคลม/เลิกเคลมภาษีซื้อหลังอนุมัติ — ดุลพินิจผู้บันทึก + คำเตือนกฎ
+       *  รถยนต์นั่ง §82/5(6) ตอนติ๊กเข้า (ระบบไม่เดาไปตัดสิทธิเอง) */
+      async toggleVatClaim(id, claim, el) {
+        const d = this._currentDoc || {};
+        const revert = () => { if (el) el.checked = !claim; };
+        if (claim) {
+          const vehicleKw = ['น้ำมัน','เบนซิน','ดีเซล','ค่าซ่อม','อะไหล่','ค่าเช่ารถ','fuel','gasoline','diesel'];
+          const truckKw = ['กระบะ','บรรทุก','หกล้อ','สิบล้อ','แม็คโคร','แมคโคร','แบคโฮ','แบ็คโฮ','รถขุด','รถตัก','รถไถ','โฟล์คลิฟ','forklift','เครน','truck','pickup','รถตู้'];
+          const risky = (d.lines || []).some(l => {
+            const s = (l.description || '').toLowerCase();
+            return vehicleKw.some(k => s.includes(k)) && !truckKw.some(k => s.includes(k));
+          });
+          if (risky && !confirm('⚠️ §82/5(6) — พบรายการน้ำมัน/ค่าซ่อม/อะไหล่รถ:\n\n'
+            + '• รถกระบะตอนเดียว/แค็บ, รถบรรทุก, รถตู้เกิน 10 ที่นั่ง, เครื่องจักร → เคลมได้\n'
+            + '• รถเก๋ง / กระบะ 4 ประตู (นับเป็นรถยนต์นั่งตามพิกัดสรรพสามิต) → เคลมไม่ได้\n\n'
+            + 'แนะนำระบุชนิดรถ+ทะเบียนในรายละเอียดบรรทัดเป็นหลักฐาน\n\n'
+            + 'ยืนยันว่าเป็นรถประเภทที่เคลมได้ และเปิดเคลมภาษีซื้อใบนี้?')) { revert(); return; }
+        } else {
+          if (!confirm('เลิกเคลมภาษีซื้อใบนี้?\n\nระบบจะสร้าง JE ย้าย VAT ออกจากภาษีซื้อ (11610/11640) '
+            + 'ไปลงค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" และใบนี้จะไม่ขึ้น ภ.พ.30\n(กลับมาติ๊กเคลมใหม่ได้'
+            + 'ภายในกรอบ 6 เดือน §82/3)')) { revert(); return; }
+        }
+        try {
+          await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`,
+            { claimInputVat: claim });
+          Layout.toast(claim ? 'เปิดเคลมภาษีซื้อแล้ว — เข้า ภ.พ.30 งวดปัจจุบัน'
+            : 'เลิกเคลมแล้ว — VAT ย้ายลงค่าใช้จ่าย (สร้าง JE ให้แล้ว)', 'success');
+          this.detail(id);
+          await this.load();
+        } catch (e) { revert(); Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); }
+      },
+
       async completeTaxInvoice(id) {
         // เติมใบกำกับภาษีซื้อหลังอนุมัติ → backend ย้าย 11640 → 11610 (§82/3)
         const inv = document.getElementById('ctiInvoiceNo')?.value.trim() || '';
