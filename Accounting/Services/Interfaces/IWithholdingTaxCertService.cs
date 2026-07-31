@@ -20,7 +20,11 @@ public interface IWithholdingTaxCertService
     Task<List<WithholdingTaxCertResponse>> GetByContactAsync(Guid companyId, Guid contactId, int? year = null);
 
     // Auto-generate from document/payment
-    Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null);
+    /// <param name="sourcePaymentId">งวดการจ่ายที่ทำให้เกิดใบนี้ — ระบุเมื่อจ่ายเป็นงวด
+    /// (ภ.ง.ด.3/53 = cash basis) เพื่อให้ออกใบได้งวดละใบและกันออกซ้ำต่องวด</param>
+    /// <param name="paymentWhtAmount">ยอดภาษีหักของ "งวดนั้น" — ถ้าน้อยกว่ายอดทั้งเอกสาร
+    /// ระบบจะเฉลี่ยยอดรายบรรทัดตามสัดส่วน</param>
+    Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null, Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null);
     Task<List<PendingWhtDocumentResponse>> GetPendingDocumentsAsync(Guid companyId, int? year = null, int? month = null);
     Task<BulkGenerateWhtResponse> BulkGenerateAsync(Guid companyId, BulkGenerateWhtRequest request, string createdBy);
     /// <summary>Dismiss a document from the "waiting to issue cert" list — the

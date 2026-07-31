@@ -4843,6 +4843,10 @@ public static class DatabaseMigrationHelper
             // monthly auto-issue + idempotency check (re-post payroll = re-issue cert).
             """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "SourcePayrollRunId" uuid NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_WithholdingTaxCerts_SourcePayrollRunId" ON "WithholdingTaxCerts" ("SourcePayrollRunId") WHERE "SourcePayrollRunId" IS NOT NULL;""",
+            // 50 ทวิ ต่อ "งวดการจ่าย" (ภ.ง.ด.3/53 = cash basis) — เอกสารที่ทยอยจ่าย
+            // มีใบละงวด ยอดตามที่หักจริงของงวดนั้น; ใช้เป็น idempotency key
+            """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "SourcePaymentId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_WithholdingTaxCerts_SourcePaymentId" ON "WithholdingTaxCerts" ("SourcePaymentId") WHERE "SourcePaymentId" IS NOT NULL;""",
 
             // ===== PayrollDetails: TaxableGross — รายได้ที่ใช้คำนวณ WHT
             """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "TaxableGross" numeric(18,2) NOT NULL DEFAULT 0;""",

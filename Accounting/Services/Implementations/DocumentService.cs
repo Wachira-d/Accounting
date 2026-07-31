@@ -4629,11 +4629,17 @@ public class DocumentService : IDocumentService
         // ซ้ำอีกชั้น — สองชั้นกันหลุด
         try
         {
+            // ครอบทุกแบบ ไม่ใช่แค่ ภ.พ.30 — บรรทัด ภ.ง.ด.3/53/54 ที่อ้างใบนี้
+            // (TaxService ตั้ง DocumentId ไว้เหมือนกัน) เดิมไม่ถูกแตะเลย → ยกเลิก
+            // PV/Expense ที่หักภาษีแล้ว แต่ยอดนำส่งในแบบยังอยู่ครบ = นำส่งภาษีของ
+            // รายการจ่ายที่ไม่มีอยู่จริง (cert ถูก void ไปแล้วแต่รายงานไม่ตาม)
+            var reportTaxTypes = new[] { TaxType.VAT, TaxType.WithholdingTax1,
+                TaxType.WithholdingTax3, TaxType.WithholdingTax53, TaxType.WithholdingTax54 };
             var vatLines = await _db.TaxReportLines
                 .Include(l => l.TaxReport)
                 .Where(l => l.DocumentId == documentId && !l.IsExcluded
                     && l.TaxReport.CompanyId == companyId
-                    && l.TaxReport.TaxType == TaxType.VAT
+                    && reportTaxTypes.Contains(l.TaxReport.TaxType)
                     && l.TaxReport.Status != TaxReportStatus.Filed)
                 .ToListAsync();
             if (vatLines.Count > 0)
@@ -4650,7 +4656,12 @@ public class DocumentService : IDocumentService
                 {
                     var rep = await _db.TaxReports.Include(r => r.Lines)
                         .FirstOrDefaultAsync(r => r.Id == rid);
-                    if (rep != null) { TaxService.RecalcVatTotals(rep); rep.UpdatedAt = DateTime.UtcNow; }
+                    if (rep != null)
+                    {
+                        TaxService.RecalcVatTotals(rep);   // no-op ถ้าไม่ใช่ ภ.พ.30
+                        TaxService.RecalcWhtTotals(rep);   // no-op ถ้าไม่ใช่ ภ.ง.ด.
+                        rep.UpdatedAt = DateTime.UtcNow;
+                    }
                 }
                 await _db.SaveChangesAsync();
             }
@@ -7754,9 +7765,16 @@ public class DocumentService : IDocumentService
                 try
                 {
                     // ส่งวันจ่ายจริง (audit F13): ภ.ง.ด.3/53 เป็น cash basis — cert
-                    // ต้องลงเดือนที่จ่าย ไม่ใช่เดือนวันที่เอกสารตั้งหนี้
+                    // ต้องลงเดือนที่จ่าย ไม่ใช่เดือนวันที่เอกสารตั้งหนี้.
+                    // ส่ง paymentId + ยอด WHT ของ "งวดนี้" ด้วย (คำนวณ pro-rata ไว้
+                    // แล้วที่ payment.WithholdingTaxAmount) — เดิมออกใบด้วยยอดเต็ม
+                    // ทั้งเอกสารตั้งแต่งวดแรก แล้ว guard กันซ้ำทำให้งวดถัดไปไม่ออกอีก
+                    // → นำส่งเกินในเดือนแรกและขาดในเดือนที่จ่ายส่วนที่เหลือ
                     await _whtService.AutoGenerateFromDocumentAsync(
-                        companyId, doc.Id, false, createdBy, payment.PaymentDate);
+                        companyId, doc.Id, false, createdBy, payment.PaymentDate,
+                        sourcePaymentId: payment.Id,
+                        paymentWhtAmount: payment.WithholdingTaxAmount > 0
+                            ? payment.WithholdingTaxAmount : null);
                 }
                 catch (Exception ex)
                 {

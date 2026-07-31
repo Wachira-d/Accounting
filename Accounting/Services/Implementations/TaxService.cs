@@ -420,7 +420,7 @@ public partial class TaxService : ITaxService
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = invTxDate,
                     Description = doc.DocumentNumber,
-                    IncomeAmount = doc.SubTotal,
+                    IncomeAmount = VatableBase(doc),
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = doc.VatAmount,
                     DocumentId = doc.Id
@@ -495,7 +495,7 @@ public partial class TaxService : ITaxService
                     Description = doc.IsDeposit
                         ? $"[มัดจำ] {doc.DocumentNumber}"
                         : doc.DocumentNumber,
-                    IncomeAmount = doc.SubTotal,
+                    IncomeAmount = VatableBase(doc),
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = doc.VatAmount,
                     DocumentId = doc.Id
@@ -595,7 +595,7 @@ public partial class TaxService : ITaxService
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"⚠️ [ใบเพิ่มหนี้ — ใบเดิมยังไม่ถึง tax point (VAT พักอยู่)] {doc.DocumentNumber}",
-                        IncomeAmount = doc.SubTotal,
+                        IncomeAmount = VatableBase(doc),
                         TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = doc.VatAmount,
                         DocumentId = doc.Id,
@@ -613,7 +613,7 @@ public partial class TaxService : ITaxService
                         TaxPayerId = doc.Contact?.TaxId, TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"[ใบเพิ่มหนี้-ภาษีซื้อ] {doc.DocumentNumber}",
-                        IncomeAmount = doc.SubTotal, TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                        IncomeAmount = VatableBase(doc), TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = doc.VatAmount, DocumentId = doc.Id, IncomeTypeCode = "INPUT"
                     });
                 }
@@ -626,7 +626,7 @@ public partial class TaxService : ITaxService
                         TaxPayerId = doc.Contact?.TaxId, TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"[ใบเพิ่มหนี้-ภาษีขาย] {doc.DocumentNumber}",
-                        IncomeAmount = doc.SubTotal, TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                        IncomeAmount = VatableBase(doc), TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = doc.VatAmount, DocumentId = doc.Id
                     });
                 }
@@ -660,7 +660,7 @@ public partial class TaxService : ITaxService
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"[รอใบกำกับ §82/3] {doc.DocumentNumber} — ใบกำกับซื้อยังไม่ครบ ยังเคลมไม่ได้ (VAT พักที่ 11640)",
-                        IncomeAmount = doc.SubTotal,
+                        IncomeAmount = VatableBase(doc),
                         TaxRate = 7,
                         TaxAmount = doc.VatAmount,
                         DocumentId = doc.Id,
@@ -783,7 +783,7 @@ public partial class TaxService : ITaxService
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = desc,
-                        IncomeAmount = doc.SubTotal,
+                        IncomeAmount = VatableBase(doc),
                         TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = claimableVat,
                         DocumentId = doc.Id,
@@ -1157,8 +1157,12 @@ public partial class TaxService : ITaxService
             });
         }
 
+        // InputVat = ภาษีซื้อ "ของงวดนี้" ล้วน ๆ — เครดิตยกมาไม่ใช่ภาษีซื้อ แต่เป็น
+        // ยอดหักจาก NetVat คนละช่องในแบบ (สูตรเดียวกับ RecalcVatTotals ไม่งั้นค่า
+        // เปลี่ยนทันทีที่ผู้ใช้ติ๊กบรรทัดใด ๆ แล้ว auto-save → recalc; และไฟล์
+        // e-Filing/CSV/PDF จะรายงานภาษีซื้อเกินจริงเท่ากับเครดิตยกมา)
         report.OutputVat = outputVat;
-        report.InputVat = inputVat + vatCreditCarryforward;
+        report.InputVat = inputVat;
         report.NetVat = outputVat - inputVat - vatCreditCarryforward;
 
         // §87: รายงานภาษีซื้อ/ขายต้องลงตาม "ลำดับเวลา" — เรียง + renumber ท้ายสุด
@@ -2090,6 +2094,35 @@ public partial class TaxService : ITaxService
         report.NetVat = report.OutputVat - report.InputVat - creditCf;
     }
 
+    /// <summary>Recompute TotalIncome/TotalTaxWithheld ของแบบ ภ.ง.ด. จากบรรทัด —
+    /// ไม่นับบรรทัด [สรุป] (SUMMARY เป็นยอดรวมซ้ำต่อผู้ขาย) และบรรทัดที่ติ๊กออก.
+    /// internal: DocumentService เรียกตอน void เอกสารที่มีภาษีหัก ณ ที่จ่าย —
+    /// ต้องใช้สูตรเดียวกันเพื่อไม่ให้ยอดหัวรายงาน drift จากบรรทัดจริง.</summary>
+    /// <summary>ฐาน "มูลค่าสินค้า/บริการที่คิดภาษี" ของเอกสาร = SubTotal หักบรรทัด
+    /// ยกเว้น (VatRate == -1) ออก — ยอดยกเว้นถูกนับแยกไว้ที่บรรทัด EXEMPT อยู่แล้ว
+    /// (vatExemptAmount) การใช้ doc.SubTotal ทั้งใบจึงนับยอดยกเว้นซ้ำสองที่ และทำ
+    /// ให้ "ฐาน × 7% ≠ ภาษีขาย" ในรายงาน/ไฟล์ยื่น (RD cross-check ไม่ผ่าน).
+    /// ใบที่ไม่มีบรรทัดยกเว้นจะได้ค่าเท่า SubTotal เหมือนเดิม.
+    /// หมายเหตุ: ใบที่ผสม 7% กับ 0% (§80/1) ยังรวมเป็นบรรทัดเดียวที่อัตราสูงสุด —
+    /// การแยกบรรทัดต่ออัตราเป็นงานเฟสถัดไป (ดู DEVELOPMENT_PHASES.md)</summary>
+    internal static decimal VatableBase(Document doc)
+    {
+        if (doc.Lines == null || doc.Lines.Count == 0) return doc.SubTotal;
+        var exempt = doc.Lines.Where(l => l.VatRate == -1).Sum(l => l.Amount);
+        return exempt == 0m ? doc.SubTotal : doc.SubTotal - exempt;
+    }
+
+    internal static void RecalcWhtTotals(TaxReport report)
+    {
+        if (report.TaxType is not (TaxType.WithholdingTax1 or TaxType.WithholdingTax3
+            or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)) return;
+        var active = report.Lines
+            .Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY")
+            .ToList();
+        report.TotalIncome = active.Sum(l => l.IncomeAmount);
+        report.TotalTaxWithheld = active.Sum(l => l.TaxAmount);
+    }
+
     // Document types eligible to be pulled into a VAT return, and whether
     // each posts to the input (ภาษีซื้อ) side.
     // หมายเหตุ §82/5(6): ตัวตัดอัตโนมัติจาก keyword (IsProhibitedVehicleExpense)
@@ -2244,7 +2277,7 @@ public partial class TaxService : ITaxService
             TaxPayerName = doc.Contact?.Name ?? "",
             TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
             Description = desc,
-            IncomeAmount = doc.SubTotal,
+            IncomeAmount = VatableBase(doc),
             TaxRate = taxRate,
             TaxAmount = doc.VatAmount,
             IncomeTypeCode = isInput ? "INPUT" : "OUTPUT",
