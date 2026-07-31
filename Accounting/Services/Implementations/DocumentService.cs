@@ -3357,11 +3357,18 @@ public class DocumentService : IDocumentService
                     }
                 }
 
-                // Idempotency guard INSIDE transaction to prevent race condition
+                // Idempotency guard INSIDE transaction to prevent race condition.
+                // นับเฉพาะ JE ที่ "ยังมีผลจริง": ไม่ใช่ reversal (OriginalEntryId
+                // null) และยังไม่ถูกกลับรายการ (ReversedByEntryId null) — เดิมนับ
+                // ทุก Posted ทำให้ void → restore → re-approve เจอคู่ JE เดิม+
+                // reversal (net ศูนย์) แล้วข้ามการ post ใหม่: เอกสาร Approved
+                // แต่ GL ไม่มี AR/รายได้/VAT เลย ขณะที่ stock ถูกตัดซ้ำ
                 var hasExistingJournal = await _db.JournalEntries.AnyAsync(j =>
                     j.SourceDocumentId == documentId
                     && j.CompanyId == companyId
-                    && j.Status == JournalEntryStatus.Posted);
+                    && j.Status == JournalEntryStatus.Posted
+                    && j.OriginalEntryId == null
+                    && j.ReversedByEntryId == null);
 
                 // Credit-limit enforcement on sales-side credit documents —
                 // blocks approval if customer is over their ContactCreditSetting
@@ -10682,7 +10689,11 @@ public class DocumentService : IDocumentService
         // บรรทัดยอดสูงสุด (มักเป็นลูกหนี้/เงินสด) กัน throw "ไม่สมดุล" จากการปัดเศษ.
         // ผลต่างใหญ่เกิน tolerance = imbalance จริง → ปล่อย throw ด้านล่าง.
         var balDiff = Math.Round(totalDebit - totalCredit, 2, MidpointRounding.AwayFromZero);
-        var roundingTol = 0.01m * pendingLines.Count + 0.01m;
+        // เปิด squeeze เฉพาะเอกสารต่างสกุลเงิน — เอกสาร THB (fx=1) Conv() ไม่ปัด
+        // อะไรเลย ผลต่างที่เจอ = template ผิดจริง ต้อง throw ไม่ใช่ดูดเข้าลูกหนี้
+        var fxSqueezeEligible = doc.ExchangeRate != 1m
+            && !string.IsNullOrEmpty(doc.Currency) && doc.Currency != "THB";
+        var roundingTol = fxSqueezeEligible ? 0.01m * pendingLines.Count + 0.01m : 0m;
         if (balDiff != 0m && Math.Abs(balDiff) <= roundingTol && pendingLines.Count > 0)
         {
             int idx = 0; decimal maxMag = -1m;

@@ -647,6 +647,13 @@ public class FixedAssetService : IFixedAssetService
                 continue;
             }
 
+            // สินทรัพย์ที่ยังไม่ผูกบัญชีค่าเสื่อม/ค่าเสื่อมสะสม: ห้าม mutate ตัวเลข
+            // ทะเบียน — แถวจะไม่มีวันถูก stamp IsPosted (stamp เฉพาะ toPost ที่ต้อง
+            // มี GL mapping) ทำให้รันซ้ำ/cron หัก NBV ซ้ำทุกรอบ และทะเบียนวิ่งหนี
+            // GL โดยไม่มี JE ใด ๆ — ข้ามไว้จนกว่าผู้ใช้จะผูกบัญชีแล้วรันงวดนี้ใหม่
+            if (!asset.DepreciationExpenseAccountId.HasValue || !asset.AccumulatedDepreciationAccountId.HasValue)
+                continue;
+
             asset.AccumulatedDepreciation += monthlyDepreciation;
             asset.NetBookValue -= monthlyDepreciation;
 

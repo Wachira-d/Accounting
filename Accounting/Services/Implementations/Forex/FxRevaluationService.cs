@@ -118,9 +118,17 @@ public class FxRevaluationService : IFxRevaluationService
         // AR side — open Invoice / TaxInvoice / BillingNote in non-base
         // currency. BalanceDue is in document currency; ExchangeRate
         // captures the booked rate.
+        // เฉพาะเอกสารที่เป็น monetary item ใน GL จริง (AR: ใบแจ้งหนี้/ใบกำกับ/
+        // ใบวางบิล, AP: ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย) — TFRS NPAEs บทที่ 19 revalue
+        // เฉพาะ monetary items. เดิมไม่กรอง DocumentType เลย: Quotation/PO/GRN/
+        // DeliveryNote สกุลต่างประเทศ (ไม่เคยลง GL) ถูก revalue เป็นลูกหนี้ปลอม
+        // + FX P&L ปลอม แล้วทบต้นทุก period ผ่าน priorVariance
+        var monetaryTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice,
+            DocumentType.BillingNote, DocumentType.PurchaseInvoice, DocumentType.Expense };
         var docs = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                         && d.BalanceDue > 0
+                        && monetaryTypes.Contains(d.DocumentType)
                         && d.Currency != null && d.Currency != "THB"
                         && d.DocumentDate <= asOf
                         && d.Status != DocumentStatus.Voided
