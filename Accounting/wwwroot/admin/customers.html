@@ -253,8 +253,19 @@
                   <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="updateCompanyStatus('${c.id}')">อัพเดท</button>
                 </div>
                 <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #e2e8f0">
-                  <div style="font-size:12px;color:#64748b;margin-bottom:6px">🕵️ เข้าดูข้อมูลในนามลูกค้าแบบอ่านอย่างเดียว (support) — เปิด session 15 นาที + ลง audit (ต้องเปิด Impersonation:Enabled)</div>
-                  <button class="admin-btn admin-btn-sm admin-btn-outline" onclick="impersonate('${c.id}')">เข้าดูในนามลูกค้า (read-only)</button>
+                  <div style="font-size:12px;color:#64748b;margin-bottom:6px">🕵️ เข้าดูข้อมูลในนามลูกค้าแบบอ่านอย่างเดียว (support) — เปิด session 15 นาที + ลง audit</div>
+                  ${d.platform?.impersonationEnabled
+                    ? `<button class="admin-btn admin-btn-sm admin-btn-outline" onclick="impersonate('${c.id}')">เข้าดูในนามลูกค้า (read-only)</button>`
+                    : `<button class="admin-btn admin-btn-sm admin-btn-outline" disabled
+                         style="opacity:.5;cursor:not-allowed"
+                         title="ปิดที่ appsettings.json → Impersonation.Enabled">เข้าดูในนามลูกค้า (read-only)</button>
+                       <div style="font-size:12px;color:#b45309;margin-top:6px;line-height:1.6">
+                         ⚙️ ฟีเจอร์นี้ <strong>ปิดอยู่ที่การตั้งค่าเซิร์ฟเวอร์</strong> (ไม่เกี่ยวกับสิทธิ์บัญชีของคุณ) —
+                         เปิดโดยตั้ง <code style="background:#fef3c7;padding:1px 5px;border-radius:4px">Impersonation.Enabled = true</code>
+                         ใน <code style="background:#fef3c7;padding:1px 5px;border-radius:4px">appsettings.json</code>
+                         (หรือ env <code style="background:#fef3c7;padding:1px 5px;border-radius:4px">Impersonation__Enabled=true</code>) แล้ว restart —
+                         ปิดไว้โดยตั้งใจจนกว่าจะผ่าน security review เพราะเป็นการเข้าดูข้อมูลลูกค้า
+                       </div>`}
                 </div>
                 <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #fecaca">
                   <div style="font-size:12px;color:#b91c1c;margin-bottom:6px">⛔ ลบบริษัทถาวรจากรายการ (soft-delete — ข้อมูลบัญชีเก็บตามกฎหมาย 5 ปี) ทุก user สลับเข้าไม่ได้อีก</div>

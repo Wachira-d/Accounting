@@ -20,7 +20,19 @@ const AdminAPI = {
       window.location.href = '/admin/login.html';
       throw new Error('Unauthorized');
     }
-    if (res.status === 403) throw new Error('ไม่มีสิทธิ์เข้าถึง (ต้องเป็น System Admin)');
+    // 403 มี 2 ความหมายที่ต่างกันมาก:
+    //   (ก) ASP.NET ปฏิเสธเพราะ role ไม่ใช่ SystemAdmin → ไม่มี body JSON
+    //   (ข) endpoint ตอบเองพร้อมเหตุผลจริง เช่น "ฟีเจอร์เข้าดูในนามลูกค้าถูกปิดอยู่
+    //       (เปิด Impersonation:Enabled)" ซึ่งไม่เกี่ยวกับสิทธิ์เลย
+    // เดิมเหมาว่าเป็น (ก) เสมอ → admin ตัวจริงเห็น "ต้องเป็น System Admin" แล้วไป
+    // ไล่หาปัญหาสิทธิ์ที่ไม่มีอยู่ ทั้งที่ server บอกวิธีแก้มาให้แล้ว
+    if (res.status === 403) {
+      let msg = '';
+      try { msg = (await res.clone().json())?.message || ''; } catch { /* ไม่ใช่ JSON */ }
+      const finalMsg = msg || 'ไม่มีสิทธิ์เข้าถึง (ต้องเป็น System Admin)';
+      this.logError(method, path, 403, finalMsg);
+      throw new Error(finalMsg);
+    }
 
     // Check content-type to avoid parsing HTML as JSON
     const contentType = res.headers.get('content-type') || '';

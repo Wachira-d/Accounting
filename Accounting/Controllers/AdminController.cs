@@ -424,7 +424,8 @@ public class AdminController : ControllerBase
     }
 
     [HttpGet("customers/{companyId:guid}")]
-    public async Task<ActionResult<ApiResponse<object>>> GetCustomerDetail(Guid companyId)
+    public async Task<ActionResult<ApiResponse<object>>> GetCustomerDetail(
+        Guid companyId, [FromServices] IConfiguration config)
     {
         var company = await _db.Companies
             .Include(c => c.CompanyUsers).ThenInclude(cu => cu.User)
@@ -518,6 +519,13 @@ public class AdminController : ControllerBase
             integrations,
             recentActivity,
             accountPlan,
+            // ให้ UI รู้ล่วงหน้าว่าฟีเจอร์ระดับ platform ไหนเปิดอยู่ — จะได้ไม่โชว์ปุ่ม
+            // ที่กดแล้วได้ 403 เสมอ (ผู้ใช้อ่านว่า "ไม่มีสิทธิ์" แล้วเข้าใจผิดว่าบัญชี
+            // ตัวเองมีปัญหา ทั้งที่เป็นสวิตช์ config ฝั่งเซิร์ฟเวอร์)
+            platform = new
+            {
+                impersonationEnabled = config.GetValue<bool>("Impersonation:Enabled"),
+            },
             trial = trial == null ? null : new
             {
                 trial.TrialStartDate, trial.TrialEndDate, trial.ExtensionsUsed,
