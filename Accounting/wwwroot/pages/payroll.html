@@ -275,6 +275,15 @@
             <input type="text" class="form-input" id="settleSsoFilingNumber" placeholder="เช่น SSO-2026-0001">
             <div style="font-size:11px;color:#94a3b8;margin-top:4px">กรอกหลังยื่นผ่าน e-Filing portal แล้วได้เลขรับ — ใช้สำหรับ audit trail</div>
           </div>
+          <div class="form-group">
+            <label class="form-label">แนบสลิปโอนเงิน / ใบเสร็จ สปส. (ถ้ามี)</label>
+            <input type="file" class="form-input" id="settleSsoSlip"
+                   accept="image/*,application/pdf" multiple>
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px">
+              สลิปโอน/ใบเสร็จรับเงินจากสำนักงานประกันสังคม — เก็บเป็นหลักฐานการจ่ายจริง
+              (พ.ร.บ.การบัญชี ม.10 ต้องเก็บ 5 ปี) แนบทีหลังได้ที่หน้ารายละเอียดรอบ
+            </div>
+          </div>
           <div id="settleSsoLateFee" style="font-size:12px;color:#dc2626;margin-bottom:8px;display:none"></div>
           <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
             ⚠️ ระบบจะสร้าง JE: <b>Dr 21815 ประกันสังคมค้างจ่าย / Cr Bank</b> ลงงวดเดือนที่เลือก — ล้างหนี้ 21815 จากการจ่ายเงินเดือน
@@ -947,11 +956,118 @@ const Page = {
         bankGlAccountId,
         filingNumber: document.getElementById('settleSsoFilingNumber').value.trim() || null,
       });
-      Layout.toast('นำส่งประกันสังคมสำเร็จ — JE Dr 21815 / Cr Bank ลงแล้ว', 'success');
+      // แนบสลิป/ใบเสร็จ (ถ้าเลือกไว้) — ผูกกับรอบเงินเดือนเป็นหลักฐานการจ่ายจริง
+      // ทำหลังนำส่งสำเร็จ และล้มเหลวได้โดยไม่ย้อนการนำส่ง (JE ลงไปแล้ว) —
+      // แจ้งให้ผู้ใช้แนบซ้ำที่หน้ารายละเอียดรอบแทน
+      const slipInput = document.getElementById('settleSsoSlip');
+      const slips = slipInput?.files ? Array.from(slipInput.files) : [];
+      let slipFailed = 0;
+      for (const f of slips) {
+        try {
+          const fd = new FormData();
+          fd.append('file', f);
+          await api.uploadAttachment('PayrollRun', ctx.runId, fd);
+        } catch (e) { slipFailed++; console.error('upload slip failed:', e); }
+      }
+      if (slips.length && slipFailed === 0)
+        Layout.toast(`นำส่งประกันสังคมสำเร็จ — JE ลงแล้ว + แนบหลักฐาน ${slips.length} ไฟล์`, 'success');
+      else if (slipFailed)
+        Layout.toast(`นำส่งสำเร็จ (JE ลงแล้ว) แต่แนบไฟล์ไม่สำเร็จ ${slipFailed} ไฟล์ — `
+          + 'แนบใหม่ได้ที่หน้ารายละเอียดรอบเงินเดือน', 'warning', 9000);
+      else
+        Layout.toast('นำส่งประกันสังคมสำเร็จ — JE Dr 21815 / Cr Bank ลงแล้ว', 'success');
+      if (slipInput) slipInput.value = '';
       Layout.closeModal('settleSsoModal');
       this._ssoCtx = null;
       this.loadRuns();
     } catch (err) { Layout.toast('นำส่งไม่สำเร็จ: ' + err.message, 'error', 8000); }
+  },
+
+  /** ไฟล์แนบของรอบเงินเดือน — สลิปโอนเงินเดือน/สลิปนำส่ง สปส./ใบเสร็จสรรพากร
+   *  ใช้ endpoint แนบไฟล์กลาง (entityType = "PayrollRun") */
+  async renderRunAttachments(runId) {
+    const host = document.getElementById(`runFiles-${runId}`);
+    if (!host) return;
+    const api = Layout.api(); if (!api) return;
+    let files = [];
+    try {
+      const r = await api.getAttachments('PayrollRun', runId);
+      files = r?.data || r || [];
+    } catch (e) { console.error('load attachments:', e); }
+
+    const rows = files.length
+      ? files.map(f => {
+          const name = f.originalFileName || f.fileName || 'ไฟล์แนบ';
+          return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #eef2f7">
+          <span>📎</span>
+          <span style="flex:1;font-size:13px;word-break:break-all">${Layout.esc(name)}</span>
+          <span class="text-xs text-gray-400">${f.createdAt ? Layout.date(f.createdAt) : ''}</span>
+          <button class="btn btn-sm btn-outline" title="ดาวน์โหลด"
+            onclick="Page.downloadRunAttachment('${f.id}', ${JSON.stringify(name).replace(/"/g, '&quot;')})">⬇</button>
+          <button class="btn btn-sm btn-outline" style="color:var(--danger)" title="ลบ"
+            onclick="Page.deleteRunAttachment('${runId}','${f.id}')">🗑</button>
+        </div>`;
+        }).join('')
+      : '<div class="text-xs text-gray-400">ยังไม่มีไฟล์แนบ — แนบสลิปโอนเงิน/ใบเสร็จ สปส. เพื่อเก็บเป็นหลักฐาน</div>';
+
+    host.innerHTML = `
+      <div style="font-weight:700;font-size:14px;margin-bottom:8px">📎 หลักฐานการจ่าย/นำส่ง (${files.length})</div>
+      <div style="margin-bottom:10px">${rows}</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="runFileInput-${runId}" accept="image/*,application/pdf" multiple class="form-input" style="flex:1;min-width:200px">
+        <button class="btn btn-sm btn-primary" onclick="Page.uploadRunAttachments('${runId}')">อัปโหลด</button>
+      </div>
+      <div class="text-xs text-gray-400" style="margin-top:6px">
+        สลิปโอนเงินเดือน · สลิป/ใบเสร็จนำส่งประกันสังคม (สปส.1-10) · ใบเสร็จภาษี —
+        พ.ร.บ.การบัญชี ม.10 กำหนดให้เก็บหลักฐาน 5 ปี
+      </div>`;
+  },
+
+  async uploadRunAttachments(runId) {
+    const input = document.getElementById(`runFileInput-${runId}`);
+    const files = input?.files ? Array.from(input.files) : [];
+    if (!files.length) { Layout.toast('เลือกไฟล์ก่อน', 'error'); return; }
+    const api = Layout.api(); if (!api) return;
+    let ok = 0, fail = 0;
+    for (const f of files) {
+      try {
+        const fd = new FormData();
+        fd.append('file', f);
+        await api.uploadAttachment('PayrollRun', runId, fd);
+        ok++;
+      } catch (e) { fail++; console.error('upload:', e); }
+    }
+    Layout.toast(fail ? `อัปโหลดสำเร็จ ${ok} ไฟล์ ล้มเหลว ${fail} ไฟล์` : `แนบไฟล์สำเร็จ ${ok} ไฟล์`,
+      fail ? 'warning' : 'success');
+    if (input) input.value = '';
+    this.renderRunAttachments(runId);
+  },
+
+  /** ดาวน์โหลดผ่าน endpoint ที่ต้องมี JWT — ไม่เปิด URL ตรงเพื่อกันลิงก์หลุด
+   *  ทาง browser history / server log (หลักฐานการจ่ายมีข้อมูลพนักงาน) */
+  async downloadRunAttachment(attachmentId, originalFileName) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(api.downloadAttachmentUrl(attachmentId),
+        { headers: token ? { 'Authorization': 'Bearer ' + token } : {} });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const objUrl = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = objUrl; a.download = originalFileName || 'attachment';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
+    } catch (e) { Layout.toast('ดาวน์โหลดไม่สำเร็จ: ' + (e.message || e), 'error'); }
+  },
+
+  async deleteRunAttachment(runId, attachmentId) {
+    if (!confirm('ลบไฟล์แนบนี้?\n\nหลักฐานการจ่ายต้องเก็บ 5 ปีตาม พ.ร.บ.การบัญชี ม.10 — ลบเฉพาะไฟล์ที่แนบผิด')) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.deleteAttachment(attachmentId);
+      Layout.toast('ลบไฟล์แนบแล้ว');
+      this.renderRunAttachments(runId);
+    } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
   },
 
   async viewRun(id) {
@@ -1048,6 +1164,15 @@ const Page = {
         ? `<button class="btn btn-secondary" onclick="Page.sendAllPayslipLine('${id}')" title="ส่งสลิปให้พนักงานทุกคนที่ผูก LINE แล้ว">📤 ส่งสลิปทั้งงวดทาง LINE</button>`
         : '';
       document.getElementById('runDetailFooter').innerHTML = `${lineAllBtn}${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
+      // หลักฐานการจ่าย/นำส่ง (สลิปโอน, ใบเสร็จ สปส., ใบเสร็จสรรพากร) — เก็บ 5 ปี
+      // ตาม พ.ร.บ.การบัญชี ม.10 แนบเพิ่ม/ดู/ลบได้ที่นี่
+      const filesHost = document.createElement('div');
+      filesHost.id = `runFiles-${id}`;
+      filesHost.style.cssText = 'margin-top:20px;padding:16px;background:#fafbfc;border-radius:8px;border:1px solid #e5e7eb';
+      filesHost.innerHTML = '<div class="text-xs text-gray-400">กำลังโหลดไฟล์แนบ…</div>';
+      document.getElementById('runDetailContent').appendChild(filesHost);
+      this.renderRunAttachments(id);
+
       // Comments + activity timeline (#23) — HR ทีมแชร์ note ระหว่าง run
       const commentsHost = document.createElement('div');
       commentsHost.id = `runComments-${id}`;
