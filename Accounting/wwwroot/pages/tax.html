@@ -121,7 +121,16 @@
       <div class="modal" style="max-width:760px">
         <div class="modal-header"><h3 class="modal-title">ดึงเอกสารเข้ารายงาน</h3><button class="modal-close" onclick="Layout.closeModal('pullDocModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="text-xs text-gray-400" style="margin-bottom:8px">เอกสารที่มี VAT จากงวดอื่นซึ่งยังไม่ถูกใช้ในรายงานภาษีใด — เลือกดึงเข้ารายงานงวดนี้</div>
+          <div style="margin-bottom:10px;padding:9px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:12px;color:#1e40af;line-height:1.6">
+            แสดงเฉพาะเอกสารที่ <b>ดึงเข้างวดนี้ได้จริง</b> — ยังไม่ถูกใช้ในรายงานงวดใด,
+            ยังไม่มีบรรทัดในงวดนี้, และอยู่ในกรอบเวลาที่ถูกต้อง
+            (ไม่ย้อนก่อนเดือนของเอกสาร · ฝั่งซื้อไม่เกิน 6 เดือน ตามมาตรา 82/3)
+            <div style="margin-top:6px;color:#1d4ed8">
+              💡 <b>ใบที่เคยติ๊กออกในงวดก่อน</b> ระบบยกมาให้อัตโนมัติแล้วตอนกด "สร้างใหม่"
+              (บรรทัดขึ้นต้นว่า <b>[ยกมา §82/3]</b> และติ๊กออกไว้) — ให้ติ๊กช่อง "ใช้"
+              ที่บรรทัดนั้นแล้วกด "บันทึก" <u>แทนการดึงซ้ำที่นี่</u> จึงจะไม่ได้บรรทัดซ้ำ
+            </div>
+          </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
             <input class="form-input form-input-sm" id="pullSearch" placeholder="🔍 ค้นหาเลขที่/ชื่อผู้ติดต่อ" style="flex:1;min-width:160px" onkeydown="if(event.key==='Enter')Page.loadPullable()">
             <input type="date" class="form-input form-input-sm" id="pullFrom" title="ตั้งแต่วันที่">

@@ -2193,6 +2193,16 @@ public partial class TaxService : ITaxService
             .ToListAsync())
             .ToHashSet();
 
+        // ใบที่มีบรรทัดอยู่ใน "รายงานงวดนี้" แล้ว — รวมบรรทัดที่ยังติ๊กออก เช่น
+        // "[ยกมา §82/3]" ที่ระบบยกมาให้ตอนสร้างรายงาน. ต้องซ่อนจากรายการดึง
+        // ไม่งั้นผู้ใช้กดแล้วเจอ error และถ้าหลุดผ่านจะได้บรรทัดซ้ำในงวดเดียวกัน
+        // (ทางที่ถูกคือติ๊ก "ใช้" ที่บรรทัดเดิมแล้วบันทึก)
+        var alreadyInThisReport = (await _db.TaxReportLines.AsNoTracking()
+            .Where(l => l.TaxReportId == reportId && l.DocumentId != null)
+            .Select(l => l.DocumentId!.Value)
+            .ToListAsync())
+            .ToHashSet();
+
         // ไม่ Include Contact (required nav → INNER JOIN ตัดใบที่ contact ถูกลบ).
         // ค้นด้วยเลขเอกสารใน SQL; ค้นด้วยชื่อ contact ทำ client-side หลัง hydrate
         var s = search?.Trim();
@@ -2233,7 +2243,14 @@ public partial class TaxService : ITaxService
 
         return docs
             .Where(d => !claimed.Contains(d.Id))
+            .Where(d => !alreadyInThisReport.Contains(d.Id))
             .Where(IsPullable)
+            // งวดต้องถูกต้องตามเวลา (ไม่ย้อนก่อนเดือนใบ / ไม่เกิน 6 เดือน §82/3)
+            // — ตัวตัดสินเดียวกับตอนดึงจริง
+            .Where(d => EvaluateClaimPeriod(
+                ClaimBasisDate(d),
+                PullableVatTypes.TryGetValue(d.DocumentType, out var inp) && inp,
+                report.Year, report.Month).Ok)
             .Where(d => string.IsNullOrWhiteSpace(s)
                 || d.DocumentNumber.Contains(s)
                 || (d.Contact?.Name?.Contains(s) ?? false))
@@ -2243,6 +2260,45 @@ public partial class TaxService : ITaxService
                 d.Contact?.Name ?? "-", d.SubTotal, d.VatAmount,
                 PullableVatTypes.TryGetValue(d.DocumentType, out var isIn) && isIn))
             .ToList();
+    }
+
+    /// <summary>วันที่ใช้เป็น "เดือนภาษี" ของเอกสารเวลาตัดสินสิทธิ์เคลม —
+    /// ฝั่งซื้อยึดวันที่ใบกำกับของผู้ขายก่อน (อาจต่างจากวันที่เราบันทึก)
+    /// แล้วค่อย tax point / วันที่เอกสาร</summary>
+    internal static DateTime ClaimBasisDate(Document d)
+        => d.SupplierTaxInvoiceDate ?? d.TaxPointDate ?? d.DocumentDate;
+
+    /// <summary>ตัดสินว่าเอกสารเดือนภาษี <paramref name="basis"/> ดึงเข้ารายงานงวด
+    /// (<paramref name="reportYear"/>/<paramref name="reportMonth"/>) ได้หรือไม่ —
+    /// **ตัวตัดสินกลาง** ใช้ทั้งตอนสร้างรายการ "ดึงเอกสาร" และตอนดึงจริง เพื่อให้
+    /// สิ่งที่โชว์กับสิ่งที่กดได้ตรงกันเสมอ (เดิม list โชว์ใบที่กดแล้ว error).
+    ///
+    /// กฎ: (1) ห้ามย้อนก่อนเดือนภาษีของใบ — ใบเดือน ก.ค. นำไปยื่นในแบบเดือน มิ.ย.
+    /// ไม่ได้ทั้งฝั่งซื้อและฝั่งขาย (2) ฝั่งซื้อเคลมได้ภายใน 6 เดือนนับจากเดือน
+    /// ภาษีของใบกำกับ (§82/3) — เกินแล้วต้องลงเป็นค่าใช้จ่ายแทน
+    /// </summary>
+    internal static (bool Ok, string? Reason) EvaluateClaimPeriod(
+        DateTime basis, bool isInput, int reportYear, int reportMonth)
+    {
+        var docPeriod = new DateTime(basis.Year, basis.Month, 1);
+        var periodStart = new DateTime(reportYear, reportMonth, 1);
+
+        if (periodStart < docPeriod)
+            return (false,
+                $"เอกสารลงวันที่ {basis:dd/MM/yyyy} (เดือนภาษี {docPeriod:MM/yyyy}) — "
+                + $"ดึงเข้างวด {reportMonth:D2}/{reportYear} ซึ่งเก่ากว่าไม่ได้ "
+                + "(นำไปยื่นในแบบของเดือนก่อนวันที่เอกสารไม่ได้)");
+
+        if (isInput)
+        {
+            var claimLimit = docPeriod.AddMonths(7);   // เดือนใบ + 6 เดือนถัดไป
+            if (periodStart >= claimLimit)
+                return (false,
+                    $"ใบกำกับลงวันที่ {basis:dd/MM/yyyy} — เกินกรอบ 6 เดือนตาม §82/3 "
+                    + $"(เคลมได้ถึงงวด {claimLimit.AddMonths(-1):MM/yyyy}) จึงดึงเข้างวด "
+                    + $"{reportMonth:D2}/{reportYear} ไม่ได้ ต้องบันทึก VAT เป็นค่าใช้จ่ายแทน");
+        }
+        return (true, null);
     }
 
     public async Task<TaxReportResponse> PullDocumentIntoReportAsync(Guid companyId, Guid reportId, Guid documentId)
@@ -2280,20 +2336,21 @@ public partial class TaxService : ITaxService
             throw new InvalidOperationException(
                 $"ใบสำคัญจ่าย {doc.DocumentNumber} ยังไม่ได้ติ๊ก \"ใช้งานใบกำกับภาษี\" (ขอเครดิตภาษีซื้อ) — "
                 + "เปิดเอกสารแล้วติ๊ก + กรอกเลขที่/วันที่ใบกำกับของผู้ขายก่อน จึงจะดึงเข้า ภ.พ.30 ได้ (§86/4)");
-        // §82/3: เกิน 6 เดือนนับจากเดือนภาษีของใบกำกับ → เคลมไม่ได้แล้ว (ฝั่งซื้อ)
-        if (isInput)
-        {
-            var claimBase = doc.SupplierTaxInvoiceDate ?? doc.TaxPointDate ?? doc.DocumentDate;
-            var claimLimit = new DateTime(claimBase.Year, claimBase.Month, 1).AddMonths(7);
-            var periodStart = new DateTime(report.Year, report.Month, 1);
-            if (periodStart >= claimLimit)
-                throw new InvalidOperationException(
-                    $"ใบกำกับลงวันที่ {claimBase:dd/MM/yyyy} — เกินกรอบ 6 เดือนตาม §82/3 "
-                    + $"(เคลมได้ถึงงวด {claimLimit.AddMonths(-1):MM/yyyy}) จึงดึงเข้างวด "
-                    + $"{report.Month:D2}/{report.Year} ไม่ได้ ต้องบันทึก VAT เป็นค่าใช้จ่ายแทน");
-        }
-        if (report.Lines.Any(l => l.DocumentId == documentId))
-            throw new InvalidOperationException("เอกสารนี้อยู่ในรายงานนี้แล้ว");
+        // งวดที่ดึงเข้าต้องถูกต้องตามเวลา: ห้ามย้อนก่อนเดือนภาษีของใบ และฝั่งซื้อ
+        // ห้ามเกินกรอบ 6 เดือน §82/3 — ใช้ตัวตัดสินกลางร่วมกับรายการ "ดึงเอกสาร"
+        // เพื่อไม่ให้ list โชว์ใบที่กดแล้ว error
+        var window = EvaluateClaimPeriod(
+            ClaimBasisDate(doc), isInput, report.Year, report.Month);
+        if (!window.Ok)
+            throw new InvalidOperationException(window.Reason!);
+
+        var existingLine = report.Lines.FirstOrDefault(l => l.DocumentId == documentId);
+        if (existingLine != null)
+            throw new InvalidOperationException(existingLine.IsExcluded
+                ? $"เอกสาร {doc.DocumentNumber} มีบรรทัดรออยู่ในรายงานงวดนี้แล้ว "
+                  + "(บรรทัดที่ยังไม่ได้ติ๊ก \"ใช้\") — ให้ติ๊กช่อง \"ใช้\" ที่บรรทัดนั้นแล้วกด \"บันทึก\" "
+                  + "แทนการดึงซ้ำ มิฉะนั้นจะได้บรรทัดซ้ำในงวดเดียวกัน"
+                : $"เอกสาร {doc.DocumentNumber} อยู่ในรายงานงวดนี้แล้ว");
 
         // Block double-claiming — the document must not be an active line in
         // another VAT report.

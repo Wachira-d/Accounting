@@ -653,6 +653,37 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   "🧾 เคลม ภ.พ.30 / ✕ พ้น 6 เดือน / ไม่มี VAT" จาก flag ฝั่งเบา. ใบฝั่งซื้อ
   ที่ `VatAmount = 0` ได้แผงอธิบาย + คำนวณ 7/107 แทนการซ่อนแผงเคลมเงียบ ๆ
 
+### 3.6b ดึงเอกสารเข้ารายงาน ภ.พ.30 + ยกยอดข้ามงวด (§82/3)
+
+เอกสารที่ยัง "ไม่ถูกใช้" ในรายงานงวดใด เข้ารายงานได้ **2 ทาง**:
+
+1. **อัตโนมัติ (แนะนำ)** — `GenerateVatReport` กวาดบรรทัด `INPUT` ที่ถูกติ๊กออก
+   (`IsExcluded=true`) จากรายงาน 6 เดือนย้อนหลัง แล้วยกมาเป็นบรรทัดใหม่ในงวดนี้
+   ป้าย `[ยกมา §82/3 — ติ๊ก 'ใช้' เพื่อเคลมเดือนนี้]` **ติ๊กออกไว้ก่อน** ผู้ใช้ติ๊ก
+   "ใช้" + บันทึกจึงนับเข้ายอด. dedup: ข้ามใบที่มีบรรทัด active อยู่แล้วในรายงานใด
+   (`usedDocIds`), มีบรรทัดสดในงวดนี้ (`freshDocIds`), หรือยังพัก 11640 (`stillUndue`)
+2. **ด้วยมือ** — `PullDocumentIntoReportAsync` (ปุ่ม "ดึงเอกสาร")
+
+**ตัวตัดสินกลาง `TaxService.EvaluateClaimPeriod(basis, isInput, year, month)`** —
+ใช้ทั้งการสร้างรายการที่แสดง (`GetPullableDocumentsAsync`) และตอนดึงจริง เพื่อให้
+"สิ่งที่โชว์ = สิ่งที่กดได้" (เดิม list โชว์ใบที่กดแล้ว error):
+- ห้ามดึงเข้างวดที่ **เก่ากว่าเดือนภาษีของเอกสาร** (ทั้งฝั่งซื้อ/ขาย)
+- ฝั่งซื้อ: เคลมได้ในเดือนใบ + 6 เดือนถัดไป (§82/3) — เกินแล้วลงค่าใช้จ่ายแทน
+- ฝั่งขาย: ไม่มีกรอบ 6 เดือน (นำส่งช้าได้)
+- เดือนภาษีอ้างจาก `ClaimBasisDate` = `SupplierTaxInvoiceDate ?? TaxPointDate ?? DocumentDate`
+
+**การกันซ้ำในรายการ "ดึงเอกสาร"** (`GetPullableDocumentsAsync` กรองออกทั้งหมด):
+- `claimed` — มีบรรทัด active (`!IsExcluded`) ในรายงาน VAT ใดก็ตาม
+- `alreadyInThisReport` — มีบรรทัดในงวดนี้แล้ว **รวมที่ติ๊กออก** (เช่น `[ยกมา]`)
+  → กันบรรทัดซ้ำในงวดเดียวกัน; ทางที่ถูกคือติ๊ก "ใช้" ที่บรรทัดเดิม
+- `IsPullable` — PV ต้องติ๊ก "ใช้งานใบกำกับภาษี", ไม่มี override ผังนอก 116,
+  ไม่ใช่ VAT ที่ยังพัก 11640
+- นอกกรอบเวลาตาม `EvaluateClaimPeriod`
+
+**การเขียนตอนดึง** (สำคัญ — เคยพังด้วย `DbUpdateConcurrencyException`): อ่านทุกอย่าง
+`AsNoTracking`, เขียนจริงแค่ INSERT บรรทัดใหม่ 1 แถว + `ExecuteUpdateAsync` ยอดรวม
+รายงาน, จัดลำดับ §87 ทำท้ายสุดแบบ best-effort (อัปเดตเฉพาะแถวที่ลำดับเปลี่ยน)
+
 ### 3.7 มัดจำ (Deposit lifecycle)
 - เปิด Receipt/ReceiptVoucher ที่ `IsDeposit = true`:
   - **`DepositOutputVatDeferred = false`** (default): Cr Output VAT 21911
