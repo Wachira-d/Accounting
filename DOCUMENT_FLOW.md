@@ -645,6 +645,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (missing fields จาก `TaxInvoiceCompletenessChecker` + override/ไม่มีบรรทัด
   เคลม VAT/§83/6) — กล่องเติมใบกำกับใน documents.html โชว์ checklist นี้
   + prefill รหัสสาขาจาก `Contact.BranchCode` (fallback 00000 สนญ.)
+- UI badge "เคลมแล้วงวดไหน" — `DocumentResponse.InputVatPp30Month/Year/`
+  `ReportStatus` (populate เฉพาะ `GetDocumentAsync` จาก `TaxReportLines`
+  ฝั่งซื้อ !IsExcluded ของใบนั้น) = **ความจริงจากรายงาน ภ.พ.30** ไม่ใช่เดา
+  จาก flag: modal โชว์ "✓ เคลมแล้ว · งวด MM/พ.ศ. (ยื่นแล้ว/ร่าง)"; งวด Filed
+  → toggle เคลมถูกล็อก (ตรงกับ guard `UnclaimInputVatAsync`). list มี chip
+  "🧾 เคลม ภ.พ.30 / ✕ พ้น 6 เดือน / ไม่มี VAT" จาก flag ฝั่งเบา. ใบฝั่งซื้อ
+  ที่ `VatAmount = 0` ได้แผงอธิบาย + คำนวณ 7/107 แทนการซ่อนแผงเคลมเงียบ ๆ
 
 ### 3.7 มัดจำ (Deposit lifecycle)
 - เปิด Receipt/ReceiptVoucher ที่ `IsDeposit = true`:

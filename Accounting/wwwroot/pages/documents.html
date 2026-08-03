@@ -4088,9 +4088,24 @@
                 ? `<span title="ภาษีซื้อ ภ.พ.36 (บริการต่างประเทศ §83/6) — พักไว้ที่ 11640 เคลมได้หลังนำส่ง ภ.พ.36 + ได้ใบเสร็จ RD (กด 'รับรู้ภาษีซื้อ' ที่หน้านำส่งภาษี)" style="margin-left:6px;padding:1px 6px;background:#2563eb;color:#fff;border-radius:6px;font-size:10px;font-weight:600">🌐 ภ.พ.36 รอรับรู้</span>`
                 : `<span title="ใบกำกับภาษีซื้อยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่ 11640 'ยังไม่ถึงกำหนด' ยังเคลม ภ.พ.30 ไม่ได้ กด 'ดู' เพื่อเติมข้อมูลใบกำกับ" style="margin-left:6px;padding:1px 6px;background:#7c3aed;color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ รอใบกำกับ</span>`;
             }
+            // ป้ายเคลมภาษีซื้อ (ฝั่งซื้อ) — บอกใน list ทันทีว่าใบไหนเคลม ภ.พ.30 ได้
+            // (รายละเอียด "เคลมแล้วงวดไหน" ดูใน modal ซึ่งอ่านจากรายงานจริง)
+            let vatClaimBadge = '';
+            if (['PaymentVoucher','Expense','PurchaseInvoice'].includes(d.documentType)
+                && !['Draft','Voided','Rejected'].includes(d.status) && !d.isForeignService) {
+              const claimOff = d.inputVatAccountCodeOverride && !String(d.inputVatAccountCodeOverride).startsWith('116');
+              if ((d.vatAmount||0) > 0 && d.inputVatExpiredAt) {
+                vatClaimBadge = `<span title="พ้นกรอบ 6 เดือน §82/3 — เคลม ภ.พ.30 ไม่ได้แล้ว (VAT ถูกล้างเป็นค่าใช้จ่าย)" style="margin-left:6px;padding:1px 6px;background:#fee2e2;color:#991b1b;border-radius:6px;font-size:10px;font-weight:600">✕ พ้น 6 เดือน</span>`;
+              } else if ((d.vatAmount||0) > 0 && !claimOff
+                  && (d.inputVatBecameClaimableAt || d.hasTaxInvoiceReference || !d.inputVatPostedAsUndue)) {
+                vatClaimBadge = `<span title="ใบสำคัญจ่ายนี้มีใบกำกับภาษีซื้อ — เคลม ภ.พ.30 ได้ (เปิดดูเพื่อเช็คว่าเข้ารายงานงวดไหนแล้ว)" style="margin-left:6px;padding:1px 6px;background:#dcfce7;color:#166534;border-radius:6px;font-size:10px;font-weight:600">🧾 เคลม ภ.พ.30</span>`;
+              } else if ((d.vatAmount||0) === 0) {
+                vatClaimBadge = `<span title="บันทึกแบบไม่มี VAT — ไม่มีภาษีซื้อให้เคลม (ถ้าใบกำกับจริงมี VAT เปิดดูใบเพื่อดูวิธีแก้)" style="margin-left:6px;padding:1px 6px;background:#f1f5f9;color:#64748b;border-radius:6px;font-size:10px;font-weight:600">ไม่มี VAT</span>`;
+              }
+            }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}</td>
+            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}${vatClaimBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${Layout.esc(d.contact?.name || '-')}</td>
@@ -5650,17 +5665,28 @@
               const vatPendingUndue = d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.inputVatExpiredAt;
               const vatClaiming = !vatUnclaimed && !d.inputVatExpiredAt
                 && (d.documentType !== 'PaymentVoucher' || d.hasTaxInvoiceReference || vatPendingUndue);
-              const vatState = vatUnclaimed
+              // Badge "ความจริงจากรายงาน" — inputVatPp30Month/Year/ReportStatus มาจาก
+              // TaxReportLines จริง (backend) จึงตรงกับหน้า ภ.พ.30 เสมอ ไม่ใช่เดาจาก flag
+              const pp30Period = d.inputVatPp30Month
+                ? `${String(d.inputVatPp30Month).padStart(2,'0')}/${d.inputVatPp30Year + 543}` : null;
+              const pp30Filed = d.inputVatPp30ReportStatus === 'Filed' || d.inputVatPp30ReportStatus === 'Submitted';
+              const vatState = pp30Period
+                ? (pp30Filed
+                    ? `<span style="background:#dcfce7;color:#166534;padding:2px 10px;border-radius:99px;font-weight:700">✓ เคลมแล้ว · ภ.พ.30 งวด ${pp30Period} (ยื่นแล้ว)</span>`
+                    : `<span style="background:#ecfdf5;color:#047857;padding:2px 10px;border-radius:99px;font-weight:600">✓ อยู่ใน ภ.พ.30 งวด ${pp30Period} (ร่าง)</span>`)
+                : vatUnclaimed
                 ? `<span style="color:#b45309">ไม่เคลม — VAT ลงค่าใช้จ่าย (${Layout.esc(d.inputVatAccountCodeOverride)})</span>`
                 : d.inputVatExpiredAt ? '<span style="color:#991b1b">พ้นกรอบ 6 เดือน §82/3 — เคลมไม่ได้แล้ว</span>'
                 : vatPendingUndue ? '<span style="color:#6d28d9">รอใบกำกับครบ (VAT พัก 11640)</span>'
-                : vatClaiming ? '<span style="color:#15803d">✓ เคลมเข้า ภ.พ.30</span>'
+                : vatClaiming ? '<span style="background:#fef9c3;color:#854d0e;padding:2px 10px;border-radius:99px;font-weight:600">เคลมได้ — รอสร้างรายงาน ภ.พ.30</span>'
                 : '<span style="color:#b45309">ยังไม่ได้เปิดเคลม (ไม่ขึ้น ภ.พ.30)</span>';
               return `
               <div style="margin-bottom:12px;padding:10px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px">
                 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
                   <div style="font-size:13px"><b>ภาษีซื้อ ${Layout.money(d.vatAmount)}</b> · ${vatState}</div>
-                  ${d.inputVatExpiredAt ? '' : `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;font-weight:600">
+                  ${d.inputVatExpiredAt ? ''
+                    : pp30Filed ? `<span style="font-size:12px;color:#6b7280">🔒 ยื่นแบบงวด ${pp30Period} แล้ว — แก้การเคลมไม่ได้ (ต้องยื่นเพิ่มเติม)</span>`
+                    : `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;font-weight:600">
                     <input type="checkbox" ${vatClaiming ? 'checked' : ''} onchange="Page.toggleVatClaim('${d.id}', this.checked, this)">
                     เคลมภาษีซื้อ (ภ.พ.30)
                   </label>`}
@@ -5669,10 +5695,43 @@
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
                   <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เลขจากกระดาษ"></div>
                   <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
-                  <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" maxlength="5"></div>
+                  <div><div class="text-xs text-gray-500">รหัสสาขา</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" maxlength="5">
+                    <div style="font-size:10px;color:#9333ea;margin-top:2px">⚙️ ${d.supplierBranchCode ? 'จากใบนี้' : (d.contact?.branchCode ? 'ดึงจากผู้ติดต่อ' : 'สำนักงานใหญ่')} — แก้เฉพาะถ้าใบกำกับระบุสาขาอื่น</div></div>
                 </div>
+                ${(d.undueInputVatBlockers || []).length ? `
+                <div style="margin-top:8px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#991b1b">
+                  <b>ยังเคลม ภ.พ.30 ไม่ได้ — ขาดข้อมูลนี้:</b>
+                  <ul style="margin:4px 0 0 18px;padding:0">${d.undueInputVatBlockers.map(b => `<li>${this.escapeHtml(b)}</li>`).join('')}</ul>
+                  ${d.undueInputVatBlockers.some(b => b.includes('ผู้ขาย')) ? `<div style="margin-top:6px">ชื่อ/เลขภาษี/ที่อยู่/สาขา<b>ของผู้ขาย</b> ดึงจากผู้ติดต่อ ไม่ได้กรอกในหน้านี้ → <a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary);font-weight:700">แก้ข้อมูลผู้ติดต่อ</a> (มักขาด "ที่อยู่") แล้วกลับมากด "บันทึกข้อมูลใบกำกับ" อีกครั้ง</div>` : ''}
+                </div>` : ''}
                 <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="Page.completeTaxInvoice('${d.id}')">💾 บันทึกข้อมูลใบกำกับ</button>` : ''}
-                <div class="text-xs text-gray-400" style="margin-top:6px">การเคลม/ไม่เคลมเป็นดุลพินิจผู้บันทึก — ระบบสร้าง JE ปรับบัญชีให้อัตโนมัติ และกันการถอนเคลมจากงวด ภ.พ.30 ที่ยื่นแล้ว</div>
+                <div class="text-xs text-gray-400" style="margin-top:6px">ชื่อ/ที่อยู่/เลขภาษี/สาขาผู้ขาย ดึงจาก "ผู้ติดต่อ" อัตโนมัติ (ไม่ต้องกรอกซ้ำ) — หน้านี้กรอกเฉพาะเลขที่/วันที่ใบกำกับของผู้ขาย · การเคลม/ไม่เคลมเป็นดุลพินิจผู้บันทึก ระบบสร้าง JE ปรับให้อัตโนมัติ + กันถอนเคลมจากงวดที่ยื่นแล้ว</div>
+              </div>`;
+            })() : ''}
+            ${(['PaymentVoucher','Expense','PurchaseInvoice'].includes(d.documentType)
+               && (d.vatAmount||0) === 0 && !d.isForeignService
+               && !['Voided','Rejected'].includes(d.status)) ? (() => {
+              // ใบฝั่งซื้อที่บันทึก VAT = 0 — เดิมแผงเคลมถูกซ่อนทั้งแผงแบบเงียบ ๆ
+              // ผู้ใช้หา "ที่ติ๊ก/กรอกใบกำกับ" ไม่เจอโดยไม่รู้เหตุผล. แสดงเหตุผล
+              // ตรง ๆ + คำนวณ 7/107 ให้เห็นเลยว่าถ้ายอดนี้จริง ๆ รวม VAT ควรแยก
+              // เป็นเท่าไร (เช่น 513.60 = 480.00 + VAT 33.60)
+              const total = d.totalAmount || 0;
+              const base = Math.round((total / 1.07) * 100) / 100;
+              const vat7 = Math.round((total - base) * 100) / 100;
+              const isDraft = d.status === 'Draft';
+              return `
+              <div style="margin-bottom:12px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px">
+                <div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:4px">
+                  ℹ️ ใบนี้บันทึกแบบ "ไม่มี VAT" — เคลมภาษีซื้อ ภ.พ.30 ไม่ได้
+                </div>
+                <div style="font-size:12px;color:#78350f;line-height:1.6">
+                  ผู้ขายไม่จด VAT หรือใบเสร็จไม่มีภาษี = ถูกต้องแล้ว ไม่ต้องทำอะไรต่อ<br>
+                  แต่ถ้า<b>ใบกำกับภาษีตัวจริงมี VAT</b> (ยอด ${Layout.money(total)} มักเป็นยอดรวม VAT
+                  = ฐาน <b>${Layout.money(base)}</b> + VAT 7% <b>${Layout.money(vat7)}</b>) —
+                  ${isDraft
+                    ? `<a href="#" onclick="Layout.closeModal('detailModal');Page.edit('${d.id}');return false" style="color:#b45309;font-weight:700;text-decoration:underline">แก้ไขใบนี้</a> แล้วติ๊ก "ราคารวม VAT" หรือใส่อัตรา VAT 7% รายบรรทัด แล้วติ๊ก "มีใบกำกับภาษีซื้อ"`
+                    : `ใบนี้อนุมัติ/ลงบัญชีแล้ว แก้ยอดไม่ได้ — ให้<b>ยกเลิกใบนี้</b>แล้วบันทึกใหม่แบบแยกฐาน/VAT พร้อมติ๊ก "มีใบกำกับภาษีซื้อ" จึงจะเคลม ภ.พ.30 ได้`}
+                </div>
               </div>`;
             })() : ''}
             ${(d.nonDeductibleAmount > 0) ? `

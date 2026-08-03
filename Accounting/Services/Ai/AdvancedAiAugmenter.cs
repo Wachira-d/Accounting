@@ -274,12 +274,59 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 };
             }
 
+            // ประวัติการชำระต่อคู่ค้า (12 เดือน) — prompt สั่งให้แยก "ค้างแต่จ่าย
+            // ตรงเวลาเสมอ" ออกจาก "เสี่ยงจริง" ซึ่งทำไม่ได้ถ้าไม่มีข้อมูลนี้
+            // (เดิมส่ง new{} ว่างเปล่า → AI มโนล้วน). ดึงจาก Payments ย้อน 12 เดือน
+            // join เอกสาร คำนวณ avg วันจ่าย + นับตรง/ช้า ต่อคู่ค้า top 15
+            var yearAgo = today.AddYears(-1);
+            var arTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt };
+            var apTypes = new[] { DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher };
+
+            async Task<object> PayHistoryAsync(DocumentType[] types)
+            {
+                // ดึงวันดิบมาคำนวณ client-side — DateDiffDay เป็นของ SQL Server
+                // ไม่ใช่ PostgreSQL (Npgsql แปลไม่ได้)
+                var raw = await (from p in _db.Payments.AsNoTracking()
+                                 join d in _db.Documents.AsNoTracking() on p.DocumentId equals d.Id
+                                 where d.CompanyId == companyId && !p.IsDeleted && !d.IsDeleted
+                                       && types.Contains(d.DocumentType)
+                                       && p.PaymentDate >= yearAgo
+                                       && d.ContactId != null
+                                 select new
+                                 {
+                                     ContactName = d.Contact != null ? d.Contact.Name : "(unknown)",
+                                     d.DocumentDate,
+                                     p.PaymentDate,
+                                     CreditDays = d.CreditDays ?? 30,
+                                 }).ToListAsync(ct);
+                return raw
+                    .Select(r => new
+                    {
+                        r.ContactName,
+                        DaysToPay = (int)(r.PaymentDate.Date - r.DocumentDate.Date).TotalDays,
+                        r.CreditDays,
+                    })
+                    .GroupBy(r => r.ContactName)
+                    .Select(g => new
+                    {
+                        contact = g.Key,
+                        payments = g.Count(),
+                        avg_days_to_pay = (int)Math.Round(g.Average(x => (double)x.DaysToPay)),
+                        on_time = g.Count(x => x.DaysToPay <= x.CreditDays),
+                        late = g.Count(x => x.DaysToPay > x.CreditDays),
+                        worst_days = g.Max(x => x.DaysToPay),
+                    })
+                    .OrderByDescending(x => x.payments)
+                    .Take(15)
+                    .ToList();
+            }
+
             var req = ArApAnalysisPrompt.Build(
                 companyId,
                 arAging: Aging(arDocs),
                 apAging: Aging(apDocs),
-                customerPaymentHistory: new { },
-                vendorPaymentHistory: new { });
+                customerPaymentHistory: await PayHistoryAsync(arTypes),
+                vendorPaymentHistory: await PayHistoryAsync(apTypes));
             var resp = await _orchestrator.AskAsync(req, ct);
             // Local-First: when AI didn't run (disabled / over budget / down),
             // don't hand back an empty panel — build the same risk_buckets +

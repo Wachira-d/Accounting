@@ -1033,13 +1033,26 @@ public class OcrService : IOcrService
                     // resolver เดา "ค่าที่ปรึกษากฎหมาย/บัญชี" → AI ตอบ 54620
                     // มั่นใจ 0.95 ทั้งที่ซื้อของ). รายการหลายบรรทัดส่ง 3 บรรทัด
                     // แรกให้ AI เห็นภาพรวมตะกร้า ไม่ใช่ชิ้นแรกชิ้นเดียว
+                    // แนบ "ยอดต่อบรรทัด" ไว้ใน description ด้วย — เดิมส่ง TotalAmount
+                    // ทั้งใบเป็น amount ทำให้กฎ capitalize (≥฿50,000/ชิ้น) ตัดสินบน
+                    // ตัวเลขผิด (บิล Makro รวม 60,000 ที่มีปริ้นเตอร์ 4,500 → AI เห็น
+                    // 60,000 เลยสั่ง capitalize ทั้งตะกร้า)
                     var itemDescs = extractedData.Items
                         .Where(i => !string.IsNullOrWhiteSpace(i.Description))
-                        .Select(i => i.Description!.Trim())
+                        .Select(i => i.Amount.HasValue && i.Amount.Value > 0
+                            ? $"{i.Description!.Trim()} (฿{i.Amount.Value:N0})"
+                            : i.Description!.Trim())
                         .Take(3).ToList();
                     var aiLineDesc = itemDescs.Count > 0
                         ? string.Join(" | ", itemDescs)
                         : extractedData.VendorName ?? "";
+                    // amount ตัวแทน = บรรทัดที่แพงสุด (ตัวตัดสิน capitalize ต่อชิ้น)
+                    // — ไม่ใช่ยอดรวมทั้งใบ; ไม่มีรายบรรทัด → ใช้ยอดใบตามเดิม
+                    var aiLineAmount = extractedData.Items
+                        .Where(i => i.Amount.HasValue && i.Amount.Value > 0)
+                        .Select(i => i.Amount!.Value)
+                        .DefaultIfEmpty(extractedData.TotalAmount ?? 0m)
+                        .Max();
                     if (!string.IsNullOrWhiteSpace(aiLineDesc))
                     {
                         var localConf = (decimal)extractedData.FieldConfidence.GetValueOrDefault("DebitAccount", 0);
@@ -1055,7 +1068,7 @@ public class OcrService : IOcrService
                             companyId, scanResult.Id,
                             extractedData.VendorName, extractedData.VendorTaxId,
                             extractedData.DbdJuristicType,   // ประเภทนิติบุคคลผู้ขาย (ถ้า DBD เจอ) มิฉะนั้น null
-                            aiLineDesc, extractedData.TotalAmount ?? 0m, "THB",
+                            aiLineDesc, aiLineAmount, "THB",
                             extractedData.DebitAccountCode, localConf,
                             glCts.Token);
 

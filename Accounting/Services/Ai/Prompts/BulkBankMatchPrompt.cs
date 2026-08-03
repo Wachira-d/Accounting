@@ -313,6 +313,7 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
                 reference = p.Reference,
                 contact = p.ContactName,
                 contact_tax_id = p.ContactTaxId,
+                contact_phone = p.ContactPhone,   // กฎ C3 PromptPay ใช้เบอร์ใน memo — query มาแล้วแต่เดิมไม่ serialize
                 contact_bank_acct = p.BankAccountNumber,
                 outstanding = p.OutstandingAmount,
                 wht = p.WithholdingTax,
@@ -360,6 +361,7 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
                 {
                     name = j.ContactName,
                     tax_id = j.ContactTaxId,
+                    phone = j.ContactPhone,   // PromptPay memo matching (C3)
                 },
             }),
         };

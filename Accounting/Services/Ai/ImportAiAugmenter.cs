@@ -46,7 +46,8 @@ public interface IImportAiAugmenter
         IReadOnlyList<string> mappedColumnOrder,
         IReadOnlyList<Dictionary<string, string?>> sampleRows,
         IReadOnlyList<ImportPrompts.ExistingEntityRef> existingSlice,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        int? totalRowCount = null);
 }
 
 public sealed record ImportColumnAiSuggestion(
@@ -116,12 +117,13 @@ public class ImportAiAugmenter : IImportAiAugmenter
         IReadOnlyList<string> mappedColumnOrder,
         IReadOnlyList<Dictionary<string, string?>> sampleRows,
         IReadOnlyList<ImportPrompts.ExistingEntityRef> existingSlice,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int? totalRowCount = null)
     {
         try
         {
             var req = ImportPrompts.BuildDataReview(companyId, sessionId, entityType,
-                targets, mappedColumnOrder, sampleRows, existingSlice);
+                targets, mappedColumnOrder, sampleRows, existingSlice, totalRowCount);
             var resp = await _orchestrator.AskAsync(req, ct);
             // ไม่มีคำตอบจาก provider (ปิด AI / เกินงบ / timeout / feature disabled)
             // → ใช้ตัวตรวจ rule-based แทน ห้ามคืน list ว่าง (กฎเหล็ก #1: local ต้อง

@@ -161,7 +161,7 @@ Respond ONLY as JSON:
             {
                 rules = new[]
                 {
-                    "Fixed asset threshold: ≥฿15,000 + life >1 year → capitalize (Thai Revenue Department guidance).",
+                    "Fixed asset threshold: ≥฿50,000 + life >1 year → capitalize (นโยบายระบบ — ให้ตรงกับ rule 7; ต่ำกว่านั้นแต่เป็นเครื่องใช้ทนก็ capitalize).",
                     "Input VAT (ภาษีซื้อ) booked to 1531 only if vendor issued valid Tax Invoice per §86.",
                     "WHT asset (ภาษีถูกหัก ณ ที่จ่าย) booked at " + (whtRecognitionBasis ?? "tenant's chosen basis: Cash (§50) or Accrual"),
                     "Match the company's IndustryType — different sectors have sector-specific accounts (Hotel: 11830/21510 ห้องพัก, Restaurant: cost-of-food 51xxx etc.). Prefer accounts that match top_accounts_used pattern.",

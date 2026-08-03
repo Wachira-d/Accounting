@@ -1893,7 +1893,8 @@ public class ImportExportService : IImportExportService
             f.FieldName, f.DisplayName, f.DataType, f.IsRequired, f.Description)).ToList();
 
         var review = await _ai.ReviewImportAsync(companyId, sessionId, session.EntityType,
-            targets, mappings.Select(m => m.TargetField!).ToList(), sampleRows, existingSlice);
+            targets, mappings.Select(m => m.TargetField!).ToList(), sampleRows, existingSlice,
+            totalRowCount: dataRows.Count);   // จำนวนแถวจริงของไฟล์ ไม่ใช่ sample 50
 
         return new ImportAiReviewResponse(sessionId, review.UsedAi, review.Summary, review.OverallQualityScore,
             review.Normalizations.Select(n => new ImportAiNormalizationDto(n.RowIndex, n.Field, n.Original, n.Normalized, n.Reason)).ToList(),

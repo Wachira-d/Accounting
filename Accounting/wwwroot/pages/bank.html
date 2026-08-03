@@ -122,7 +122,15 @@
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px">
           <div>
             <div style="font-size:12px;color:#64748b">บัญชีที่กำลังกระทบยอด</div>
-            <div style="font-weight:700;font-size:16px" id="reconAccountName">ยังไม่ได้เลือก</div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span style="font-weight:700;font-size:16px" id="reconAccountName">ยังไม่ได้เลือก</span>
+              <!-- สลับบัญชีได้จากแท็บนี้เลย ไม่ต้องเด้งกลับแท็บแรก — ตัวเลือกถูกเติม
+                   โดย selectAccount/loadAccounts; ปุ่มส่งออกใช้บัญชีเดียวกันนี้เสมอ -->
+              <select id="reconAccountSwitch" class="form-input" style="width:auto;max-width:260px;font-size:12px;padding:4px 8px;display:none"
+                      onchange="Page.selectAccount(this.value)" title="สลับบัญชีที่กำลังกระทบยอด"></select>
+              <button class="btn btn-sm btn-secondary" onclick="Page.exportReconciliationReport()"
+                      title="ส่งออกรายงานกระทบยอดของบัญชีนี้เป็น Excel">📊 ส่งออกบัญชีนี้</button>
+            </div>
             <div style="font-size:11px;color:#94a3b8" id="reconAccountHint">เลือกจากแท็บ "บัญชีธนาคาร" ก่อน</div>
           </div>
           <div style="display:flex;gap:16px;flex-wrap:wrap">
@@ -792,9 +800,23 @@
         const acct = this.accounts.find(a => a.id === id);
         if (!acct) return;
         this.selectedAccount = acct;
+        // ⚠️ ต้อง sync ตัวแปรนี้ด้วย — exportReconciliationReport/refresh อ่าน
+        // selectedAccountId ซึ่งเดิมไม่เคยถูก set เลย → export ตกไปใช้บัญชีแรก
+        // ในลิสต์เสมอ (เลือกกสิกรแต่ได้รายงานกรุงไทย)
+        this.selectedAccountId = id;
         document.getElementById('transSection').style.display = 'block';
         document.getElementById('transTitle').textContent = `รายการเคลื่อนไหว - ${acct.accountName}`;
         document.getElementById('reconAccountName').textContent = acct.accountName;
+        // hint บอกธนาคาร+เลขบัญชีของบัญชีที่เลือก (แทนข้อความ "เลือกจากแท็บ...")
+        // + dropdown สลับบัญชีจากแท็บกระทบยอดได้เลย
+        const hintEl = document.getElementById('reconAccountHint');
+        if (hintEl) hintEl.textContent = `${acct.bankName || ''} ${acct.accountNumber || ''}`.trim();
+        const sw = document.getElementById('reconAccountSwitch');
+        if (sw && (this.accounts?.length || 0) > 1) {
+          sw.style.display = '';
+          sw.innerHTML = this.accounts.map(a =>
+            `<option value="${a.id}" ${a.id === id ? 'selected' : ''}>${Layout.esc(a.accountName)} — ${Layout.esc(a.bankName || '')}</option>`).join('');
+        }
         await this.loadAccounts();
         this.transPage = 1;
         await this.loadTransactions();
@@ -2684,12 +2706,15 @@
               const target = (this.accounts || []).find(a => a.id === accountId);
               if (target) {
                 this.selectedAccount = target;
+                this.selectedAccountId = target.id;   // sync — export/refresh อ่านตัวนี้
                 const ts = document.getElementById('transSection');
                 if (ts) ts.style.display = 'block';
                 const tt = document.getElementById('transTitle');
                 if (tt) tt.textContent = `รายการเคลื่อนไหว - ${target.accountName}`;
                 const ra = document.getElementById('reconAccountName');
                 if (ra) ra.textContent = target.accountName;
+                const rh = document.getElementById('reconAccountHint');
+                if (rh) rh.textContent = `${target.bankName || ''} ${target.accountNumber || ''}`.trim();
                 this.transPage = 1;
 
                 // 3) Clear date/status/search filters — imported rows may be outside
@@ -2789,11 +2814,25 @@
         GroupReconcile.open(accId, this.accounts || []);
       },
       async exportReconciliationReport() {
-        const accId = this.selectedAccountId || this.accounts?.[0]?.id;
-        if (!accId) { Layout.toast('เลือกบัญชีธนาคารก่อน', 'error'); return; }
+        // ใช้บัญชีที่ผู้ใช้ "เลือกจริง" เท่านั้น — ห้าม fallback ไปบัญชีแรกเงียบ ๆ
+        // (เดิมทำแบบนั้น: เลือกกสิกรแต่ได้รายงานกรุงไทยเพราะกรุงไทยอยู่หัวลิสต์).
+        // มีบัญชีเดียว = ใช้ได้เลยไม่ต้องบังคับคลิก
+        const acct = this.selectedAccount
+          || (this.accounts?.length === 1 ? this.accounts[0] : null);
+        if (!acct) {
+          Layout.toast('เลือกบัญชีก่อน — คลิกการ์ดบัญชีในแท็บ "บัญชีธนาคาร" แล้วค่อยกดส่งออกรายงาน', 'warning', 6000);
+          document.querySelectorAll('.tab')[0]?.click();
+          return;
+        }
         const cid = Layout.getCompanyId();
-        const url = `/api/companies/${cid}/bank/accounts/${accId}/reconciliation-report.xlsx`;
-        // Use anchor + temp click so the auth cookie / bearer flow ใช้ session ปัจจุบัน
+        // ส่งช่วงวันที่ที่ผู้ใช้กรองไว้ (ถ้ามี) — ไม่งั้น backend ใช้ 3 เดือนล่าสุด
+        const qs = new URLSearchParams();
+        const from = document.getElementById('transFrom')?.value;
+        const to = document.getElementById('transTo')?.value;
+        if (from) qs.set('fromDate', from);
+        if (to) qs.set('toDate', to);
+        const url = `/api/companies/${cid}/bank/accounts/${acct.id}/reconciliation-report.xlsx`
+          + (qs.toString() ? `?${qs}` : '');
         const token = localStorage.getItem('token');
         try {
           const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
@@ -2801,10 +2840,13 @@
           const blob = await res.blob();
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = `reconciliation-${new Date().toISOString().slice(0,10)}.xlsx`;
+          // ชื่อไฟล์บอกธนาคาร+เลขบัญชี — เปิดทีหลังรู้ทันทีว่าไฟล์ไหนของบัญชีไหน
+          const acctTag = `${acct.bankName || ''}-${(acct.accountNumber || '').replace(/\D/g, '').slice(-4)}`
+            .replace(/[\\/:*?"<>|\s]+/g, '');
+          a.download = `กระทบยอด-${acctTag}-${new Date().toISOString().slice(0,10)}.xlsx`;
           a.click();
           URL.revokeObjectURL(a.href);
-          Layout.toast('ดาวน์โหลดรายงานสำเร็จ');
+          Layout.toast(`ดาวน์โหลดรายงานกระทบยอด — ${acct.accountName} (${acct.bankName})`);
         } catch (e) { Layout.toast(e.message, 'error'); }
       }
     };

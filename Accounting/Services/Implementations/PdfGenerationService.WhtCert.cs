@@ -45,15 +45,19 @@ public partial class PdfGenerationService
         // can embed — a corrupt base64 must never blank the whole page.
         var sigImg = LooksLikeImage(signatureBytes) ? signatureBytes : null;
 
-        var fullAddress = string.Join(" ", new[] {
-            company.Address, company.SubDistrict, company.District,
-            company.Province, company.PostalCode
-        }.Where(s => !string.IsNullOrWhiteSpace(s)));
-        var payeeAddr = string.Join(" ", new[] {
-            cert.PayeeContact.Address, cert.PayeeContact.SubDistrict,
-            cert.PayeeContact.District, cert.PayeeContact.Province,
-            cert.PayeeContact.PostalCode
-        }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        // ที่อยู่ต้องติดคำนำหน้า ต./อ./จ. (หรือ แขวง/เขต สำหรับ กทม.) — เอกสาร
+        // 50 ทวิ เป็นเอกสารราชการ ที่อยู่ต้องอ่านออกชัดว่าส่วนไหนตำบล/อำเภอ/จังหวัด.
+        // ใช้ FormatThaiAddress ตัวเดียวกับ HTML renderer + เอกสารอื่น (เดิม QuestPDF
+        // native path นี้ join ด้วยช่องว่างเฉย ๆ → ที่อยู่ไม่มีคำนำหน้า ผู้ตรวจ/
+        // สรรพากรอ่านไม่ออก) — helper จัดการ กทม.→แขวง/เขต + กันซ้ำ + parse free-text
+        var fullAddress = FormatThaiAddress(
+            company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
+            company.SubDistrict, company.District, company.Province, company.PostalCode);
+        var payeeAddr = FormatThaiAddress(
+            cert.PayeeContact.Address, cert.PayeeContact.BuildingNumber, cert.PayeeContact.BuildingName,
+            cert.PayeeContact.Moo, cert.PayeeContact.StreetName,
+            cert.PayeeContact.SubDistrict, cert.PayeeContact.District,
+            cert.PayeeContact.Province, cert.PayeeContact.PostalCode);
 
         var pdf = QuestPDF.Fluent.Document.Create(container =>
         {

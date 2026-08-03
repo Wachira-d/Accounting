@@ -403,7 +403,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: acct.Id.ToString(), LocalModelConfidence: confidence,
                 LocalModelVersion: "slot-heuristic-v1",
                 SourceEntityType: "ChartOfAccount", SourceEntityId: acct.Id,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.None,
                 ModelVersion: "slot-heuristic", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -557,7 +557,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelVersion: "heuristic-v1",
                 SourceEntityType: "DocumentLine",
                 SourceEntityId: req.ContactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.None,
                 ModelVersion: "heuristic", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1505,7 +1505,7 @@ public class AiSuggestionController : ControllerBase
                 AiConfidence: 0.80m, LocalModelAnswer: net.ToString("0"),
                 LocalModelConfidence: 0.80m, LocalModelVersion: "template-v1",
                 SourceEntityType: "CashFlowForecast", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.None,
                 ModelVersion: "template", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2789,7 +2789,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: memo, LocalModelConfidence: 0.75m,
                 LocalModelVersion: "template-v1",
                 SourceEntityType: "Document", SourceEntityId: req.ContactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.None,
                 ModelVersion: "template", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }

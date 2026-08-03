@@ -377,79 +377,180 @@ public partial class BankService
             .OrderBy(g => g.ReconciledDate)
             .ToListAsync();
 
-        // MiniExcel multi-sheet export: each sheet is a Dictionary<string,object>
-        // entry where the value is a List of row dictionaries. MiniExcel writes
-        // ordered columns based on the first row's key order; we use ordered
-        // dictionaries to lock the column sequence per sheet.
         var groupNumberById = groups.ToDictionary(g => g.Id, g => g.GroupNumber);
 
-        var sheet1 = txns.Select(t =>
+        // ── Resolve "จับคู่กับ" เป็นเลขเอกสาร/JE ที่คนอ่านออก (เดิมพิมพ์ GUID
+        //    ซึ่งใช้ตรวจอะไรไม่ได้เลย) — batch lookup 3 ตาราง ─────────────────
+        var payIds = txns.Where(t => t.MatchedPaymentId.HasValue).Select(t => t.MatchedPaymentId!.Value)
+            .Concat(groups.SelectMany(g => g.Items.Where(i => i.ItemType == ReconciliationItemType.Payment).Select(i => i.ItemId)))
+            .Distinct().ToList();
+        var jeIds = txns.Where(t => t.MatchedJournalEntryId.HasValue).Select(t => t.MatchedJournalEntryId!.Value)
+            .Concat(groups.SelectMany(g => g.Items.Where(i => i.ItemType == ReconciliationItemType.JournalEntry).Select(i => i.ItemId)))
+            .Distinct().ToList();
+        var docIds = groups.SelectMany(g => g.Items.Where(i => i.ItemType == ReconciliationItemType.Document).Select(i => i.ItemId))
+            .Distinct().ToList();
+        var payNo = new Dictionary<Guid, string>();
+        if (payIds.Count > 0)
+            payNo = await _db.Set<Payment>().AsNoTracking().IgnoreQueryFilters()
+                .Where(p => payIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.PaymentNumber);
+        var jeNo = new Dictionary<Guid, string>();
+        if (jeIds.Count > 0)
+            jeNo = await _db.JournalEntries.AsNoTracking().IgnoreQueryFilters()
+                .Where(j => jeIds.Contains(j.Id)).ToDictionaryAsync(j => j.Id, j => j.EntryNumber);
+        var docNo = new Dictionary<Guid, string>();
+        if (docIds.Count > 0)
+            docNo = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .Where(d => docIds.Contains(d.Id)).ToDictionaryAsync(d => d.Id, d => d.DocumentNumber);
+
+        static string TypeTh(BankTransactionType t) => t switch
         {
-            var matchType = t.ReconciliationGroupId.HasValue ? "Group" :
-                t.MatchedPaymentId.HasValue ? "Payment" :
-                t.MatchedJournalEntryId.HasValue ? "JournalEntry" :
-                !string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson) ? "AI-Aggregate" : "";
-            var groupNum = t.ReconciliationGroupId.HasValue && groupNumberById.TryGetValue(t.ReconciliationGroupId.Value, out var gn) ? gn : "";
-            return new Dictionary<string, object?>
+            BankTransactionType.Deposit => "เงินเข้า",
+            BankTransactionType.Withdrawal => "เงินออก",
+            BankTransactionType.Transfer => "โอน",
+            BankTransactionType.Fee => "ค่าธรรมเนียม",
+            BankTransactionType.Interest => "ดอกเบี้ย",
+            _ => t.ToString(),
+        };
+        static string StatusTh(ReconciliationStatus s) => s switch
+        {
+            ReconciliationStatus.Matched => "กระทบแล้ว",
+            ReconciliationStatus.Unmatched => "ค้างกระทบ",
+            ReconciliationStatus.Excluded => "ไม่นับ",
+            ReconciliationStatus.Suggested => "AI เสนอ (รอยืนยัน)",
+            _ => s.ToString(),
+        };
+        static bool IsInflow(BankTransaction t) =>
+            t.TransactionType is BankTransactionType.Deposit or BankTransactionType.Interest;
+
+        // ── ยอดตามบัญชี (GL) ของผังที่ผูกไว้ — ให้รายงานเป็น "งบกระทบยอด" จริง
+        //    (ยอดธนาคาร vs ยอดตามบัญชี + ผลต่าง) ไม่ใช่แค่ list รายการ ─────────
+        decimal? bookBalance = null;
+        if (account.LinkedAccountId.HasValue)
+        {
+            bookBalance = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => !l.IsDeleted && l.AccountId == account.LinkedAccountId.Value
+                    && _db.JournalEntries.Any(j => j.Id == l.JournalEntryId
+                        && j.CompanyId == companyId && !j.IsDeleted
+                        && j.Status == JournalEntryStatus.Posted))
+                .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
+        }
+
+        string MatchedLabel(BankTransaction t)
+        {
+            if (t.ReconciliationGroupId.HasValue)
+                return groupNumberById.TryGetValue(t.ReconciliationGroupId.Value, out var gn) ? $"กลุ่ม {gn}" : "กลุ่ม";
+            if (t.MatchedPaymentId.HasValue)
+                return payNo.TryGetValue(t.MatchedPaymentId.Value, out var pn) ? pn : "ใบรับ/จ่ายเงิน";
+            if (t.MatchedJournalEntryId.HasValue)
+                return jeNo.TryGetValue(t.MatchedJournalEntryId.Value, out var jn) ? jn : "สมุดรายวัน";
+            if (!string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson)) return "หลายรายการ (AI)";
+            return "";
+        }
+
+        // MiniExcel: sheet = List<Dictionary> — ลำดับคอลัมน์ตาม key ของแถวแรก,
+        // ลำดับ sheet ตามลำดับใส่ dict → "สรุป" ต้องมาก่อนให้เปิดมาเจอภาพรวมทันที
+        var matched = txns.Where(t => t.ReconciliationStatus == ReconciliationStatus.Matched).ToList();
+        var pending = txns.Where(t => t.ReconciliationStatus is ReconciliationStatus.Unmatched or ReconciliationStatus.Suggested).ToList();
+        var inflow = txns.Where(IsInflow).Sum(t => Math.Abs(t.Amount));
+        var outflow = txns.Where(t => !IsInflow(t)).Sum(t => Math.Abs(t.Amount));
+        var pendingIn = pending.Where(IsInflow).Sum(t => Math.Abs(t.Amount));
+        var pendingOut = pending.Where(t => !IsInflow(t)).Sum(t => Math.Abs(t.Amount));
+        var today = DateTime.UtcNow.Date;
+
+        var summary = new List<Dictionary<string, object?>>
+        {
+            new() { ["รายการ"] = "บัญชี", ["ค่า"] = account.AccountName },
+            new() { ["รายการ"] = "ธนาคาร / เลขบัญชี", ["ค่า"] = $"{account.BankName} {account.AccountNumber}" },
+            new() { ["รายการ"] = "ช่วงเวลา", ["ค่า"] = $"{from:dd/MM/yyyy} – {to.AddDays(-1):dd/MM/yyyy}" },
+            new() { ["รายการ"] = "จัดทำเมื่อ", ["ค่า"] = DateTime.UtcNow.AddHours(7).ToString("dd/MM/yyyy HH:mm") + " น." },
+            new() { ["รายการ"] = "", ["ค่า"] = "" },
+            new() { ["รายการ"] = "ยอดเงินตามธนาคาร (Statement)", ["ค่า"] = account.CurrentBalance },
+            new() { ["รายการ"] = "ยอดเงินตามบัญชี (GL)", ["ค่า"] = (object?)bookBalance ?? "ยังไม่ผูกผังบัญชี" },
+            new() { ["รายการ"] = "ผลต่าง ธนาคาร − บัญชี", ["ค่า"] = bookBalance.HasValue ? account.CurrentBalance - bookBalance.Value : (object?)"—" },
+            new() { ["รายการ"] = "", ["ค่า"] = "" },
+            new() { ["รายการ"] = $"รายการในช่วง ({txns.Count} รายการ)", ["ค่า"] = $"เงินเข้า {inflow:#,##0.00} · เงินออก {outflow:#,##0.00}" },
+            new() { ["รายการ"] = $"กระทบยอดแล้ว ({matched.Count})", ["ค่า"] = matched.Sum(t => Math.Abs(t.Amount)) },
+            new() { ["รายการ"] = $"ค้างกระทบ ({pending.Count})", ["ค่า"] = $"เงินเข้า {pendingIn:#,##0.00} · เงินออก {pendingOut:#,##0.00}" },
+            new() { ["รายการ"] = "กลุ่มกระทบยอด", ["ค่า"] = $"{groups.Count} กลุ่ม (สมดุล {groups.Count(g => g.IsBalanced)} · ไม่สมดุล {groups.Count(g => !g.IsBalanced)})" },
+        };
+
+        var txSheet = txns.Select(t => new Dictionary<string, object?>
+        {
+            ["วันที่"] = t.TransactionDate.ToString("dd/MM/yyyy"),
+            ["ประเภท"] = TypeTh(t.TransactionType),
+            ["เงินเข้า"] = IsInflow(t) ? Math.Abs(t.Amount) : (object?)"",
+            ["เงินออก"] = IsInflow(t) ? (object?)"" : Math.Abs(t.Amount),
+            ["ยอดคงเหลือ"] = t.BalanceAfter,
+            ["รายละเอียด"] = t.Description ?? "",
+            ["อ้างอิง"] = t.Reference ?? "",
+            ["ผู้รับ/ผู้จ่าย"] = t.Payee ?? "",
+            ["สถานะ"] = StatusTh(t.ReconciliationStatus),
+            ["จับคู่กับ"] = MatchedLabel(t),
+            ["วันที่กระทบ"] = t.ReconciledAt?.ToString("dd/MM/yyyy") ?? "",
+        }).ToList();
+
+        // ค้างกระทบ เรียงเก่าสุดก่อน + อายุ — คือ list งานที่นักบัญชีต้องตามล้าง
+        var pendingSheet = pending
+            .OrderBy(t => t.TransactionDate)
+            .Select(t => new Dictionary<string, object?>
             {
-                ["วันที่"] = t.TransactionDate.ToString("yyyy-MM-dd"),
-                ["ประเภท"] = t.TransactionType.ToString(),
-                ["จำนวนเงิน"] = t.Amount,
-                ["ยอดคงเหลือ"] = t.BalanceAfter,
+                ["วันที่"] = t.TransactionDate.ToString("dd/MM/yyyy"),
+                ["อายุ (วัน)"] = Math.Max(0, (today - t.TransactionDate.Date).Days),
+                ["ประเภท"] = TypeTh(t.TransactionType),
+                ["เงินเข้า"] = IsInflow(t) ? Math.Abs(t.Amount) : (object?)"",
+                ["เงินออก"] = IsInflow(t) ? (object?)"" : Math.Abs(t.Amount),
                 ["รายละเอียด"] = t.Description ?? "",
                 ["อ้างอิง"] = t.Reference ?? "",
-                ["ผู้รับ/ผู้จ่าย"] = t.Payee ?? "",
-                ["สถานะกระทบยอด"] = t.ReconciliationStatus.ToString(),
-                ["Match Type"] = matchType,
-                ["Matched #"] = t.MatchedPaymentId?.ToString() ?? t.MatchedJournalEntryId?.ToString() ?? "",
-                ["เลขกลุ่ม"] = groupNum,
-                ["วันที่กระทบยอด"] = t.ReconciledAt?.ToString("yyyy-MM-dd") ?? "",
-            };
-        }).ToList();
+                ["สถานะ"] = StatusTh(t.ReconciliationStatus),
+            }).ToList();
 
-        var sheet2 = groups.Select(g => new Dictionary<string, object?>
+        var groupSheet = groups.Select(g => new Dictionary<string, object?>
         {
             ["เลขกลุ่ม"] = g.GroupNumber,
-            ["วันที่"] = g.ReconciledDate.ToString("yyyy-MM-dd"),
-            ["Bank Total"] = g.TotalBankAmount,
-            ["Matched Total"] = g.TotalMatchedAmount,
+            ["วันที่"] = g.ReconciledDate.ToString("dd/MM/yyyy"),
+            ["ยอดฝั่งธนาคาร"] = g.TotalBankAmount,
+            ["ยอดฝั่งเอกสาร"] = g.TotalMatchedAmount,
             ["ผลต่าง"] = g.TotalBankAmount - g.TotalMatchedAmount,
-            ["สมดุล"] = g.IsBalanced ? "✓" : "✗",
+            ["สมดุล"] = g.IsBalanced ? "สมดุล" : "ไม่สมดุล",
             ["บันทึกย่อ"] = g.Notes ?? "",
-            ["ผู้ทำรายการ"] = g.CreatedBy ?? "",
         }).ToList();
 
-        var sheet3 = groups.SelectMany(g =>
+        var itemSheet = groups.SelectMany(g =>
             g.Items
                 .OrderBy(i => i.ItemType).ThenByDescending(i => Math.Abs(i.AllocatedAmount))
                 .Select(it => new Dictionary<string, object?>
                 {
                     ["เลขกลุ่ม"] = g.GroupNumber,
-                    ["ประเภทรายการ"] = it.ItemType.ToString(),
-                    ["Item ID"] = it.ItemId.ToString(),
-                    ["จำนวนเงิน (signed)"] = it.AllocatedAmount,
+                    ["ประเภท"] = it.ItemType switch
+                    {
+                        ReconciliationItemType.Payment => "ใบรับ/จ่ายเงิน",
+                        ReconciliationItemType.JournalEntry => "สมุดรายวัน",
+                        ReconciliationItemType.Document => "เอกสาร",
+                        _ => it.ItemType.ToString(),
+                    },
+                    ["เลขที่"] = it.ItemType switch
+                    {
+                        ReconciliationItemType.Payment => payNo.GetValueOrDefault(it.ItemId, it.ItemId.ToString("N")[..8]),
+                        ReconciliationItemType.JournalEntry => jeNo.GetValueOrDefault(it.ItemId, it.ItemId.ToString("N")[..8]),
+                        ReconciliationItemType.Document => docNo.GetValueOrDefault(it.ItemId, it.ItemId.ToString("N")[..8]),
+                        _ => it.ItemId.ToString("N")[..8],
+                    },
+                    ["จำนวนเงิน (+รับ/−จ่าย)"] = it.AllocatedAmount,
                     ["หมายเหตุ"] = it.Notes ?? "",
                 })
         ).ToList();
 
-        var sheet4 = new List<Dictionary<string, object?>>
-        {
-            new() { ["รายการ"] = "บัญชี", ["ค่า"] = $"{account.AccountName} ({account.BankName} {account.AccountNumber})" },
-            new() { ["รายการ"] = "ช่วงเวลา", ["ค่า"] = $"{from:yyyy-MM-dd} ถึง {to.AddDays(-1):yyyy-MM-dd}" },
-            new() { ["รายการ"] = "ยอดธนาคารปัจจุบัน", ["ค่า"] = account.CurrentBalance.ToString("#,##0.00") },
-            new() { ["รายการ"] = "รวมรายการในช่วงนี้", ["ค่า"] = txns.Count },
-            new() { ["รายการ"] = "กระทบยอดแล้ว", ["ค่า"] = txns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Matched) },
-            new() { ["รายการ"] = "ยังไม่กระทบยอด", ["ค่า"] = txns.Count(t => t.ReconciliationStatus == ReconciliationStatus.Unmatched) },
-            new() { ["รายการ"] = "จำนวนกลุ่มกระทบยอด", ["ค่า"] = groups.Count },
-            new() { ["รายการ"] = "กลุ่มที่สมดุล", ["ค่า"] = groups.Count(g => g.IsBalanced) },
-        };
+        // sheet ว่าง = ไฟล์ดูเหมือนพัง — ใส่แถวบอกสถานะแทน
+        static List<Dictionary<string, object?>> OrEmpty(List<Dictionary<string, object?>> rows, string note)
+            => rows.Count > 0 ? rows : new() { new() { ["หมายเหตุ"] = note } };
 
         var sheets = new Dictionary<string, object>
         {
-            ["Transactions"] = sheet1,
-            ["Groups"] = sheet2,
-            ["Group Items"] = sheet3,
-            ["Summary"] = sheet4,
+            ["สรุป"] = summary,
+            ["รายการเดินบัญชี"] = OrEmpty(txSheet, "ไม่มีรายการเดินบัญชีในช่วงเวลานี้ — นำเข้า Statement ก่อน หรือขยายช่วงเวลา"),
+            ["ค้างกระทบยอด"] = OrEmpty(pendingSheet, "ไม่มีรายการค้างกระทบ 🎉"),
+            ["กลุ่มกระทบยอด"] = OrEmpty(groupSheet, "ไม่มีกลุ่มกระทบยอดในช่วงเวลานี้"),
+            ["รายการในกลุ่ม"] = OrEmpty(itemSheet, "ไม่มีรายการในกลุ่ม"),
         };
 
         using var ms = new MemoryStream();
