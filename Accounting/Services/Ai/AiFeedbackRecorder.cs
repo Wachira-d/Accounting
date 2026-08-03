@@ -270,11 +270,58 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
             mem.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
         }
+        catch (DbUpdateException dup) when (IsUniqueViolation(dup))
+        {
+            // แข่งกันเขียน: สองคำขอ (เช่นผู้ใช้ยืนยันหลายช่องรวดเดียว) หา null
+            // พร้อมกันแล้ว insert ทั้งคู่ → ชน unique index (company, feature, input).
+            // ทิ้งตัวที่ insert ไม่สำเร็จ แล้วรวมยอดเข้าแถวที่มีอยู่จริงแทน
+            DetachPendingMemories();
+            try
+            {
+                var existing = await _db.AiSuggestionMemories.FirstOrDefaultAsync(
+                    m => m.CompanyId == companyId && m.FeatureKey == featureKey && m.InputKey == inputKey, ct);
+                if (existing != null)
+                {
+                    if (string.Equals(existing.LearnedAnswer, chosenAnswer, StringComparison.Ordinal))
+                        existing.AcceptCount++;
+                    else
+                        existing.OverrideCount++;
+                    var t = existing.AcceptCount + existing.OverrideCount;
+                    existing.Confidence = t > 0 ? Math.Round((decimal)existing.AcceptCount / t, 4) : 1m;
+                    existing.LastLearnedAt = DateTime.UtcNow;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                    await _db.SaveChangesAsync(ct);
+                }
+            }
+            catch (Exception retryEx)
+            {
+                _logger.LogWarning(retryEx, "Online-learning merge-after-race failed feature={Feature}", featureKey);
+                DetachPendingMemories();
+            }
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Online-learning upsert failed feature={Feature} key={Key}", featureKey, inputKey);
+            DetachPendingMemories();
         }
     }
+
+    /// <summary>SaveChanges ที่ล้มเหลว **ไม่** ย้อนสถานะ ChangeTracker ให้ — entity ที่
+    /// insert/update ไม่สำเร็จยังค้างเป็น Added/Modified อยู่ ทำให้ SaveChanges ครั้ง
+    /// ถัดไปในคำขอเดียวกัน (เช่น AuditMiddleware ตอนจบ request) พยายามเขียนซ้ำแล้ว
+    /// พังเป็น 500 ให้ผู้ใช้ ทั้งที่การเรียนรู้ของ AI เป็นงานเบื้องหลังที่ล้มเหลวได้.
+    /// ตัดออกจาก tracker เสมอเมื่อ save ไม่ผ่าน.</summary>
+    private void DetachPendingMemories()
+    {
+        foreach (var e in _db.ChangeTracker.Entries<AiSuggestionMemory>().ToList())
+            if (e.State is EntityState.Added or EntityState.Modified)
+                e.State = EntityState.Detached;
+    }
+
+    private static bool IsUniqueViolation(DbUpdateException ex)
+        => ex.InnerException?.GetType().Name == "PostgresException"
+           && (ex.InnerException.Message.Contains("23505")
+               || ex.InnerException.Message.Contains("duplicate key value"));
 
     private async Task UpsertDailyRollupAsync(AiFeedbackRecord record, CancellationToken ct)
     {

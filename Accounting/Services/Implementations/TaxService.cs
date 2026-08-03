@@ -2242,7 +2242,10 @@ public partial class TaxService : ITaxService
         if (report.Status == TaxReportStatus.Filed)
             throw new InvalidOperationException("ไม่สามารถแก้ไขได้ — รายงานนี้ถูกยื่นแล้ว");
 
-        var doc = await _db.Documents
+        // AsNoTracking — เมธอดนี้ "อ่าน" เอกสารอย่างเดียว (ไม่แก้) การ track ไว้
+        // ทำให้ Document/DocumentLine/Contact ที่ hydrate เข้ามาถูกดึงเข้า
+        // ChangeTracker แล้วถูกเขียนพ่วงไปกับ SaveChanges ของรายงานโดยไม่ตั้งใจ
+        var doc = await _db.Documents.AsNoTracking()
             .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ทำ doc = null)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
@@ -2314,9 +2317,43 @@ public partial class TaxService : ITaxService
         });
 
         RecalcVatTotals(report);
-        NormalizeReportLineOrder(report);   // §87 — แทรกบรรทัดที่ดึงมาให้ตรงลำดับวันที่
         report.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+
+        // บันทึก "บรรทัดใหม่ + ยอดรวม" ก่อน — ขั้นตอนนี้คือหัวใจของการดึงเอกสาร
+        // (การจัดลำดับ §87 เป็นเรื่องการแสดงผล ทำแยกทีหลังได้)
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            // "expected to affect 1 row but affected 0" = EF พยายาม UPDATE แถวที่ไม่มี
+            // อยู่จริงแล้ว. ถ้าเป็นแถวของ "รายงานนี้" แปลว่าถูกลบ/สร้างใหม่ระหว่างทาง
+            // ผู้ใช้ต้องรีเฟรช; ถ้าเป็นแถวอื่น (entity ค้างจาก operation ก่อนหน้าใน
+            // request เดียวกันที่ save ไม่ผ่านแล้ว EF ไม่ล้าง tracker ให้) = ไม่เกี่ยว
+            // กับงานนี้ → ตัดออกแล้วบันทึกใหม่ ไม่ให้พาลงานผู้ใช้ล้มไปด้วย
+            var ownRowStale = ex.Entries.Any(e => e.Entity is TaxReport or TaxReportLine);
+            if (ownRowStale)
+                throw new InvalidOperationException(
+                    "รายงานภาษีงวดนี้ถูกแก้ไข/สร้างใหม่ระหว่างที่เปิดหน้าอยู่ — "
+                    + "กรุณารีเฟรชหน้าแล้วกด \"ดึงเอกสาร\" อีกครั้ง");
+
+            foreach (var e in ex.Entries) e.State = EntityState.Detached;
+            await _db.SaveChangesAsync();
+        }
+
+        // §87 — จัดลำดับตามวันที่ (best-effort): ล้มเหลวได้โดยไม่กระทบผลการดึง
+        try
+        {
+            NormalizeReportLineOrder(report);
+            if (_db.ChangeTracker.HasChanges()) await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            foreach (var e in _db.ChangeTracker.Entries<TaxReportLine>().ToList())
+                if (e.State == EntityState.Modified) e.State = EntityState.Unchanged;
+        }
+
         return MapToResponse(report);
     }
 
