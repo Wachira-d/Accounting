@@ -125,7 +125,7 @@ public static class StockDecisionPrompt
 Categories per Thai tax law:
 - Inventory (สินค้าคงเหลือ) → debit 1140 series, COGS on sale
 - Supplies / Consumables (วัสดุสิ้นเปลือง) → expense immediately (5xxx)
-- Fixed Asset (สินทรัพย์ถาวร) → ≥฿15,000 + life >1 year → capitalize (1500-1699)
+- Fixed Asset (สินทรัพย์ถาวร) → ≥฿50,000 + life >1 year → capitalize (1500-1699); เครื่องใช้ทน (computer/printer) ต่ำกว่านั้นก็ capitalize
 - Service → expense (5xxx)
 
 For each line, classify:
@@ -178,7 +178,7 @@ Respond ONLY as JSON:
             product_catalog = productCatalog,
             thai_tax_rules = new[]
             {
-                "Fixed asset threshold: ≥฿15,000 + life >1 year",
+                "Fixed asset threshold: ≥฿50,000 + life >1 year (durable goods below that still capitalize)",
                 "Input VAT (1531) only with §86 valid tax invoice",
                 "Inventory (สินค้า) vs Supply (วัสดุสิ้นเปลือง) — supply = expense immediately",
             },

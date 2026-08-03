@@ -146,6 +146,9 @@ Strict JSON (NO prose outside JSON):
             SourceEntityType = "Document",
             SourceEntityId = documentId,
             CacheTtlOverrideDays = 1,
+            // response root = {root_cause, fixes} ไม่มี primary/alternatives —
+            // ไม่ตั้ง RawPlanResponse orchestrator จะทิ้งคำตอบเป็น schema mismatch
+            RawPlanResponse = true,
             MaxTokensOverride = Math.Clamp(250 + 120 * warnings.Count, 400, 1800),
         };
     }

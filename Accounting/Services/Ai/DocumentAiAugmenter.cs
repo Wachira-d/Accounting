@@ -718,7 +718,22 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             // ที่ "แต่งขึ้น" หรือของ tenant อื่น. ตรวจว่า id ที่ตอบมีจริง + เป็นของ
             // บริษัทนี้ + contact เดียวกัน ก่อนบอกผู้ใช้ว่า "ซ้ำกับใบนี้". ถ้า id ไม่ผ่าน
             // → ไม่ยืนยันว่าซ้ำ (คืน null) กันเตือนผิด/ลิงก์ไปเอกสารที่ไม่มีอยู่.
-            if (!Guid.TryParse(resp.PrimaryAnswer?.Trim(), out var matchedId))
+            // PrimaryAnswer มี 2 รูป: GUID เปล่า (คำตอบจาก AI) หรือ JSON blob
+            // {"id":...,"documentNumber":...,"score":...} (จาก
+            // DuplicateDocumentDistillationModel) — เดิม Guid.TryParse กับ blob
+            // ไม่ผ่านเสมอ → local เจอใบซ้ำแต่ระบบไม่เคยเตือนเลย
+            var answerText = resp.PrimaryAnswer?.Trim() ?? "";
+            if (answerText.StartsWith('{'))
+            {
+                try
+                {
+                    using var blob = System.Text.Json.JsonDocument.Parse(answerText);
+                    if (blob.RootElement.TryGetProperty("id", out var idEl))
+                        answerText = idEl.GetString() ?? idEl.GetRawText().Trim('"');
+                }
+                catch (System.Text.Json.JsonException) { return null; }
+            }
+            if (!Guid.TryParse(answerText, out var matchedId))
                 return null;
             var exists = await _db.Documents.AsNoTracking().AnyAsync(d =>
                 d.Id == matchedId && d.CompanyId == companyId

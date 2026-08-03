@@ -1173,6 +1173,11 @@ public enum WhtRecognitionBasis
 
 public enum AiProviderType
 {
+    /// <summary>ไม่ได้เรียก provider ภายนอกเลย — heuristic / template / local
+    /// rule ที่บันทึก feedback ไว้เพื่อ training เท่านั้น. ต้องแยกจาก DeepSeek
+    /// ไม่งั้นสถิติต้นทุน/จำนวน call ของ admin นับ local เป็นค่าใช้จ่าย provider.</summary>
+    None = 0,
+
     /// <summary>DeepSeek chat API (https://api.deepseek.com/v1/chat/completions).
     /// First and default provider — pricing ~10× cheaper than GPT-4o-mini
     /// for similar quality on accounting-domain prompts.</summary>

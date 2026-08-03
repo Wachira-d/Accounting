@@ -153,6 +153,11 @@ Strict JSON output (NO prose outside JSON):
             SourceEntityType = "Document",
             SourceEntityId = sourceInvoiceId,
             CacheTtlOverrideDays = 7,
+            // ⚠️ response root คือ {lines, cross_line_observations, warnings} ไม่มี
+            // primary/alternatives — ต้องบอก orchestrator ว่าเป็น raw-plan ไม่งั้น
+            // TryParseFeatureResponse มองเป็น "Schema mismatch" แล้วทิ้งคำตอบ AI
+            // ทั้งก้อน → ทุกบรรทัดตกไป local เงียบ ๆ ทั้งที่จ่ายค่า token ไปแล้ว
+            RawPlanResponse = true,
             // Response includes one entry per line — scale tokens by
             // line count, cap at sane upper bound.
             MaxTokensOverride = Math.Clamp(200 + 80 * lines.Count, 400, 2400),

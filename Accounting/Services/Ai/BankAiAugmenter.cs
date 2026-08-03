@@ -67,6 +67,9 @@ public class BankAiAugmenter : IBankAiAugmenter
                             && d.DocumentDate >= dateLow && d.DocumentDate <= dateHigh
                             && d.BalanceDue > 0
                             && d.BalanceDue >= amountLow && d.BalanceDue <= amountHigh
+                            // สกุลเงินต้องตรงกับ statement — เดิมไม่กรอง ทำให้
+                            // บัญชี USD จับคู่ใบ THB ที่ "ตัวเลข" เท่ากันได้
+                            && (d.Currency ?? "THB") == (currency ?? "THB")
                             && (d.Status == DocumentStatus.Approved
                                 || d.Status == DocumentStatus.PartiallyPaid))
                 .Take(prefetchLimit)

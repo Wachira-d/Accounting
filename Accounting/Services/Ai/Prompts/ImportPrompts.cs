@@ -163,7 +163,8 @@ Strict JSON output (NO prose outside JSON). Empty arrays are valid:
         IReadOnlyList<TargetField> targets,
         IReadOnlyList<string> mappedColumnOrder,
         IReadOnlyList<Dictionary<string, string?>> sampleRows,
-        IReadOnlyList<ExistingEntityRef> existingSlice)
+        IReadOnlyList<ExistingEntityRef> existingSlice,
+        int? totalRowCount = null)
     {
         var payload = new
         {
@@ -177,7 +178,10 @@ Strict JSON output (NO prose outside JSON). Empty arrays are valid:
                 data_type = f.DataType,
                 is_required = f.IsRequired,
             }),
-            row_count = sampleRows.Count,
+            // จำนวนแถวจริงของไฟล์ (ไม่ใช่ sample) — batch_patterns เช่น "ทุก 247
+            // แถวมาจาก supplier เดียวกัน" ต้องอ้างจำนวนจริง ไม่ใช่ 50 ที่เห็น
+            total_row_count = totalRowCount ?? sampleRows.Count,
+            sample_row_count = sampleRows.Count,
             rows = sampleRows.Select((r, i) => new { row_index = i, fields = r }),
             existing_entities_sample = existingSlice.Select(e => new
             {
