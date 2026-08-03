@@ -618,7 +618,17 @@ public record DocumentResponse(
     // รายการภาษาไทยบอกตรง ๆ ว่า "ขาดอะไร" (จาก TaxInvoiceCompletenessChecker
     // + guard อื่นของ ReclassifyUndueInputVatAsync เช่น override/ไม่มีบรรทัดเคลม
     // VAT) เพื่อให้ UI โชว์เหตุผลจริงแทนข้อความ generic ที่ทำให้ผู้ใช้งง
-    List<string>? UndueInputVatBlockers = null);
+    List<string>? UndueInputVatBlockers = null,
+    // ===== สถานะเคลมภาษีซื้อ "จากรายงาน ภ.พ.30 จริง" (source of truth) =====
+    // Populated เฉพาะ GetDocumentAsync (detail) — จาก TaxReportLines ที่อ้างใบนี้
+    // (TaxType=VAT ฝั่งซื้อ !IsExcluded). null = ยังไม่อยู่ในรายงานงวดใด.
+    // ต่างจาก flag บนเอกสาร (HasTaxInvoiceReference ฯลฯ) ซึ่งบอกแค่ "ควรเคลมได้"
+    // — field ชุดนี้บอกว่า "เคลมเข้ารายงานแล้วจริง งวดไหน ยื่นหรือยัง" ให้ badge
+    // บน UI ตรงกับ ภ.พ.30 เสมอ
+    int? InputVatPp30Month = null,
+    int? InputVatPp30Year = null,
+    // TaxReportStatus ของรายงานงวดนั้น: "Draft" | "Filed" | "Submitted"
+    string? InputVatPp30ReportStatus = null);
 
 public record ProjectCostBrief(
     Guid ProjectId,

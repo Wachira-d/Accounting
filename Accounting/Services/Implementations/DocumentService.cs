@@ -1109,10 +1109,32 @@ public class DocumentService : IDocumentService
             .GroupBy(r => r.DocumentLineId!.Value)
             .ToDictionary(g => g.Key, g => g.First().Id);
 
-        return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId),
+        // สถานะเคลมภาษีซื้อจาก "รายงาน ภ.พ.30 จริง" — badge บน UI ต้องตรงกับ
+        // รายงาน ไม่ใช่เดาจาก flag บนเอกสาร. เอาบรรทัดฝั่งซื้อที่ active ล่าสุด
+        // (ใบหนึ่งอยู่ได้งวดเดียวเพราะ dedup claimedElsewhere แต่กันเคสข้อมูลเก่า
+        // ด้วย OrderByDescending)
+        var pp30 = doc.VatAmount == 0 ? null
+            : await _db.TaxReportLines.AsNoTracking()
+                .Where(l => l.DocumentId == documentId && !l.IsExcluded
+                    && (l.IncomeTypeCode == "INPUT" || l.IncomeTypeCode == "JE_INPUT")
+                    && l.TaxReport.CompanyId == companyId
+                    && l.TaxReport.TaxType == TaxType.VAT)
+                .OrderByDescending(l => l.TaxReport.Year).ThenByDescending(l => l.TaxReport.Month)
+                .Select(l => new { l.TaxReport.Month, l.TaxReport.Year, l.TaxReport.Status })
+                .FirstOrDefaultAsync();
+
+        var resp = MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId),
             upstream, downstream, pct, status,
             pceRows.Count > 0, pceRows.Count, pceRows.Sum(r => r.Amount), bookedByProject,
             pceByLine);
+        if (pp30 != null)
+            resp = resp with
+            {
+                InputVatPp30Month = pp30.Month,
+                InputVatPp30Year = pp30.Year,
+                InputVatPp30ReportStatus = pp30.Status.ToString(),
+            };
+        return resp;
     }
 
     /// <summary>Compute completion percent across child docs for the
