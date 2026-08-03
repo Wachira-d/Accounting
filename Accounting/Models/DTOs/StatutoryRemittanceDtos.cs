@@ -65,3 +65,63 @@ public record RemitResult(
     decimal Amount,
     decimal LateFee,
     string Message);
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ปฏิทินนำส่ง (Filing calendar) — "เดือนไหนยื่นแล้ว/ยัง" แบบตาราง แบบ × เดือน
+//
+//  ต่างจาก RemittanceDashboardResponse ตรงที่ dashboard ตอบว่า "ยังค้างเท่าไร"
+//  จึงตัดงวดที่ยอด = 0 ทิ้ง แต่กฎหมายไทยบังคับให้ยื่น **แม้ไม่มียอด**:
+//    • ภ.พ.30  — ผู้จด VAT ต้องยื่นทุกเดือนแม้ไม่มีรายรับ (§83) ไม่ยื่น = ปรับอาญา
+//    • สปส.1-10 — นายจ้างที่ขึ้นทะเบียนต้องยื่นทุกเดือนแม้ไม่มีค่าจ้าง
+//    • ภ.ง.ด.1 — ยื่นทุกเดือนที่มีการจ่ายเงินได้ 40(1)(2) แม้ภาษีหัก = 0
+//  ปฏิทินนี้จึงต้องแสดง "ต้องยื่นแต่ยอด 0" (IsNil) และ "ระบบยังไม่มีข้อมูล"
+//  (Unknown) เป็นสถานะของตัวเอง ไม่ใช่ปล่อยให้หายไปเงียบ ๆ
+// ══════════════════════════════════════════════════════════════════════════
+
+/// <summary>1 ช่องในปฏิทิน = แบบ 1 ชนิด × งวด 1 เดือน.</summary>
+public record FilingCalendarCell(
+    int Year,
+    int Month,
+    // Filed | Partial | Pending | Unknown | NotRequired
+    string Status,
+    decimal Amount,               // ยอดที่ต้องนำส่ง (ติดลบ = ขอคืน)
+    decimal LateFee,              // เงินเพิ่มประมาณการถ้าจ่ายวันนี้ (ปกส.)
+    DateTime PaperDueDate,
+    DateTime EFilingDueDate,
+    bool Overdue,                 // เลยกำหนด e-Filing และยังไม่ครบ
+    int DaysToDue,                // ติดลบ = เลยมาแล้วกี่วัน
+    bool FormFiled,               // ยื่นแบบแล้ว (TaxReport.Status = Filed)
+    DateTime? FiledAt,
+    bool Remitted,                // จ่ายเงินแล้ว (StatutoryRemittance / SsoSettledAt)
+    DateTime? RemittedAt,
+    string? FilingNumber,
+    bool HasReceipt,              // แนบใบเสร็จ/หลักฐานแล้ว
+    bool IsNil,                   // ยอด 0 → ต้องยื่น "แบบเปล่า"
+    string Hint,                  // สิ่งที่ต้องทำ / เหตุผลที่ยังไม่รู้ยอด
+    string? ActionUrl);           // ลิงก์ไปหน้าที่ทำงานนั้นได้ทันที
+
+/// <summary>1 แถว = แบบยื่น 1 ชนิด ตลอดช่วงเดือนที่ขอ.</summary>
+public record FilingCalendarRow(
+    string RemittanceType,
+    string FormCode,
+    string TypeLabel,
+    string LegalNote,             // อ้างมาตรา/กฎที่บังคับให้ยื่น
+    bool AlwaysRequired,          // ต้องยื่นทุกเดือนแม้ยอด 0
+    bool Applicable,              // บริษัทนี้อยู่ในข่ายต้องยื่นแบบนี้ไหม
+    string? NotApplicableReason,
+    List<FilingCalendarCell> Cells);
+
+/// <summary>ปฏิทินนำส่งทั้งตาราง + สรุปหัวข้อสำหรับ dashboard.</summary>
+public record FilingCalendarResponse(
+    List<string> Periods,         // "2026-07" เรียงเก่า→ใหม่
+    List<FilingCalendarRow> Rows,
+    int OverdueCount,
+    decimal OverdueAmount,
+    decimal OverdueLateFee,
+    int DueSoonCount,             // ครบกำหนดภายใน 7 วัน
+    int UnknownCount,             // ต้องยื่นแต่ระบบยังไม่มีข้อมูล
+    int FiledCount,
+    int RequiredCount,            // ช่องที่ต้องยื่นทั้งหมดในช่วง
+    DateTime? NextDueDate,
+    string? NextDueLabel,
+    string Headline);             // ข้อความสรุป 1 บรรทัดสำหรับ dashboard

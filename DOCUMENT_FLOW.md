@@ -868,6 +868,37 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 > Dr 21815 / Cr Bank + เงินเพิ่ม §49 2%/เดือน. **Deadline tracker:** ตอนสร้าง/
 > เลิกจ้างพนักงาน → `TrackSsoEmployeeFilingAsync` สร้าง `ComplianceFiling`
 > (SSO_NewEmployee due+30วัน / SSO_Termination due วันที่15เดือนถัดไป).
+> **หลักฐานการจ่าย:** โมดัลนำส่ง (`payroll.html`) + กล่อง "หลักฐานการจ่าย/นำส่ง"
+> ในหน้ารายละเอียดรอบ แนบสลิป/ใบเสร็จผ่าน `FileAttachment` entityType
+> `"PayrollRun"` (เก็บ 5 ปี ตาม พ.ร.บ.การบัญชี ม.10).
+
+#### 5.3b ปฏิทินนำส่ง (Filing calendar) — วิดเจ็ต dashboard
+
+- **Service**: `StatutoryRemittanceService.GetFilingCalendarAsync`
+- **Endpoint**: `GET /api/companies/{id}/remittances/calendar?months=12`
+- **UI**: `app.html` widget `filingCalendar` (ตาราง แบบ × เดือน) + action alert
+  แถบแดงบนสุดเมื่อมีงวดเลยกำหนด; คลิกช่อง → deep-link
+  `tax-remittance.html?type=&year=&month=` เปิดฟอร์มนำส่งงวดนั้นทันที
+
+ต่างจาก `GetDashboardAsync` (ยอดค้าง) ตรงที่ปฏิทิน **ไม่ตัดงวดที่ยอด 0 ทิ้ง**
+เพราะกฎหมายบังคับยื่นแม้ไม่มียอด — สถานะต่อช่อง:
+
+| สถานะ | ความหมาย | ที่มา |
+| --- | --- | --- |
+| `Filed` | จ่ายครบ (หรือยอด 0 + ยื่นแบบแล้ว) | `StatutoryRemittance` / `PayrollRun.SsoSettledAt` / `TaxReport.Status=Filed` |
+| `Partial` | ยื่นแล้วยังไม่จ่าย หรือจ่ายไม่ครบ | remitted < amount |
+| `Pending` | ต้องยื่น ยังไม่ครบ (`Overdue=true` เมื่อเลยกำหนด e-Filing) | — |
+| `Unknown` | ต้องยื่นแต่ระบบยังไม่ทราบยอด — **ยังไม่ได้สร้างรายงาน ภ.พ.30 / ยังไม่ได้รันเงินเดือน** | ไม่มี `TaxReport` / ไม่มี `PayrollRun` ของงวด |
+| `NotRequired` | ไม่ต้องยื่น (ภ.ง.ด.3/53/ภ.พ.36 เดือนที่ไม่มีรายการ, ไม่ได้จดทะเบียน, งวดก่อนเริ่มใช้ระบบ) | — |
+
+- แบบที่ **ต้องยื่นทุกเดือนแม้ยอด 0** (`FilingRule().Always`): ภ.พ.30 (§83),
+  สปส.1-10 (§47), ภ.ง.ด.1 (ท.ป.4/2528) — ที่เหลือยื่นตามเหตุการณ์
+- กำหนดยื่น (`DueDates`): ปกส. 15/15 · ภ.พ.30 กระดาษ 15 e-Filing 23 ·
+  ภ.ง.ด. กระดาษ 7 e-Filing 15 (ของเดือนถัดจากงวด)
+- ใช้เวลาไทย (`UtcNow.AddHours(7)`) ตัดสินวันครบกำหนด ไม่ใช่ UTC
+- งวดก่อน `Company.CreatedAt` และไม่มีร่องรอยในระบบ → `NotRequired` ไม่ขึ้นแดง
+  (ระบบไม่มีข้อมูลจริง การเดาแล้วเตือนผิดทำให้ผู้ใช้เลิกเชื่อทั้งวิดเจ็ต)
+- Unit test: `Accounting.Tests/FilingCalendarRulesTests.cs`
 
 ### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
 - **Service**: `WithholdingTaxCertService`
@@ -1019,6 +1050,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แก้รายงาน ภ.พ.30 (จอ) | `TaxService.GenerateVatReport :119` |
 | แก้รายงาน ภ.พ.30 (CSV ยื่น) | `TaxFilingExportService.ExportPp30Async :243` — ดึงจาก `ComputeVatReportAsync` |
 | แก้ ภ.ง.ด.50 | `TaxService.GenerateCitReport :731` |
+| แก้ปฏิทินนำส่ง (dashboard) | `StatutoryRemittanceService.GetFilingCalendarAsync` + `BuildCell` / UI: `app.html` widget `filingCalendar` |
+| แก้กำหนดยื่น/กฎยื่นแบบเปล่า | `StatutoryRemittanceService.DueDates` / `FilingRule` (มี unit test) |
 | แก้ WHT cert auto-issue | `WithholdingTaxCertService` |
 | แก้ PDF template | `PdfGenerationService.DocumentRenderer.cs` / `HtmlRenderer.cs` |
 | แก้ e-Tax XML | `EtaxInvoiceService.GenerateAsync :87` |
@@ -1521,6 +1554,9 @@ _ชื่อเอกสาร PDF=XML; AI: fingerprint ตรงกันเ�
 _มี local heuristics, DailyCallCap นับเฉพาะ provider call, OCR เก็บสาขา/ที่อยู่;_
 _tenant: CMS cart scope, POS ProductId, payroll includeSalary; XSS 4 หน้า;_
 _import: พ.ศ.→ค.ศ. ทุกจุด + JE/bank dedup. **ใหม่: ภาษาเอกสาร th/en**)_
+
+_Last updated: 2026-08-03 — ปฏิทินนำส่งภาษี/ประกันสังคมบน dashboard (§5.3b)_
+_+ แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน (FileAttachment entityType "PayrollRun")_
 
 _Last verified against codebase: 2026-07-31 (audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
 _แก้ 43 บั๊ก 3 ชุด: CN/DN text-ref resolve+undue VAT accounts+GRN block+qty cap+_

@@ -141,6 +141,24 @@
       </div>
     </div>
 
+    <!-- ปฏิทินนำส่งภาษี/ประกันสังคม — "เดือนไหนยื่นแล้ว/ยัง" -->
+    <div class="card dash-widget" data-widget="filingCalendar" style="margin-top:24px">
+      <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h3 class="card-title" style="margin:0">🗓️ ปฏิทินนำส่งภาษี / ประกันสังคม</h3>
+        <span class="text-xs text-gray-500" id="filingHeadline" style="flex:1;min-width:180px"></span>
+        <select id="filingMonths" class="form-input" style="width:auto;padding:4px 8px;font-size:12px"
+                onchange="Dashboard.loadFilingCalendar()">
+          <option value="6">6 เดือน</option>
+          <option value="12" selected>12 เดือน</option>
+          <option value="24">24 เดือน</option>
+        </select>
+        <a href="/pages/tax-remittance.html" class="btn btn-sm btn-outline">ไปหน้านำส่ง →</a>
+      </div>
+      <div id="filingCalendarContent" style="padding:16px">
+        <div class="text-center text-gray-400">กำลังโหลด...</div>
+      </div>
+    </div>
+
     <!-- VAT/WHT Summary -->
     <div class="card dash-widget" data-widget="taxSummary" style="margin-top:24px">
       <div class="card-header"><h3 class="card-title">สรุปภาษี (VAT/WHT)</h3></div>
@@ -191,6 +209,7 @@
         charts: 'กราฟแนวโน้มและกระแสเงินสด',
         topTables: 'ลูกค้า/ค่าใช้จ่ายสูงสุด',
         overdue: 'เกินกำหนด/ถึงกำหนด',
+        filingCalendar: 'ปฏิทินนำส่งภาษี/ประกันสังคม',
         taxSummary: 'สรุปภาษี VAT/WHT',
         fiscalStatus: 'สถานะงวดบัญชี',
         subscription: 'การใช้งานแพ็กเกจ',
@@ -358,6 +377,30 @@
             cta: 'ดูคิวส่งซ้ำ →'
           });
         }
+        // เลยกำหนดยื่นแบบ/นำส่ง — เร่งด่วนที่สุดบนแดชบอร์ด เพราะมีเบี้ยปรับ+เงินเพิ่ม
+        // เดินทุกวัน (ปกส. 2%/เดือน §49, VAT เบี้ยปรับ 1-2 เท่า + เงินเพิ่ม 1.5%/เดือน)
+        // ใช้ cache ร่วมกับวิดเจ็ตปฏิทินด้านล่าง — ยิง endpoint ครั้งเดียว
+        const filing = await this.filingData(12);
+        if (filing && filing.overdueCount > 0) {
+          const fee = filing.overdueLateFee > 0
+            ? ` + เงินเพิ่มประมาณ ${Layout.money(filing.overdueLateFee)} บาท` : '';
+          alerts.push({
+            icon: '🗓️', tone: 'danger',
+            title: `เลยกำหนดยื่นแบบ/นำส่ง ${filing.overdueCount} งวด`,
+            body: `ยอดรวม ${Layout.money(filing.overdueAmount)} บาท${fee} — ยิ่งช้ายิ่งเพิ่มทุกเดือน`,
+            href: '/pages/tax-remittance.html',
+            cta: 'นำส่งเลย →'
+          });
+        } else if (filing && filing.unknownCount > 0) {
+          alerts.push({
+            icon: '❓', tone: 'warning',
+            title: `${filing.unknownCount} งวดที่ยังไม่ทราบยอดต้องยื่น`,
+            body: 'ยังไม่ได้สร้างรายงาน ภ.พ.30 หรือยังไม่ได้รันเงินเดือนของงวดนั้น — '
+                + 'ระบบจึงบอกไม่ได้ว่าต้องยื่นเท่าไร (ไม่ได้แปลว่าไม่ต้องยื่น)',
+            href: '/pages/tax.html',
+            cta: 'สร้างรายงาน →'
+          });
+        }
         const undueList = undue?.data || [];
         if (Array.isArray(undueList) && undueList.length > 0) {
           alerts.push({
@@ -388,6 +431,142 @@
             <a href="${a.href}" class="btn btn-sm" style="background:#fff;color:${c.color};border:1px solid ${c.border};white-space:nowrap">${a.cta}</a>
           </div>`;
         }).join('');
+      },
+
+      // ══════════════════════════════════════════════════════════════════
+      //  ปฏิทินนำส่งภาษี/ประกันสังคม
+      //  ดึงครั้งเดียวแล้วใช้ร่วมกันทั้ง action alert (แถบแดงบนสุด) และตาราง
+      //  ปฏิทิน — ไม่งั้นยิง endpoint เดียวกันสองรอบและ innerHTML ทับกันเอง
+      // ══════════════════════════════════════════════════════════════════
+      _filingCache: null,
+      _filingCacheMonths: null,
+      filingData(months) {
+        if (!this._filingCache || this._filingCacheMonths !== months) {
+          const api = Layout.api();
+          if (!api) return Promise.resolve(null);
+          this._filingCacheMonths = months;
+          this._filingCache = api.getFilingCalendar(months)
+            .then(r => (r && r.data) || null)
+            .catch(e => { console.warn('filing calendar:', e); return null; });
+        }
+        return this._filingCache;
+      },
+
+      THAI_MONTHS: ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
+
+      // สถานะ → สี/ไอคอน/คำอธิบาย (ใช้ทั้งในช่องตารางและ legend)
+      FILING_STYLE: {
+        Filed:       { icon: '✓', bg: '#dcfce7', fg: '#15803d', bd: '#86efac', label: 'ยื่น/นำส่งแล้ว' },
+        Partial:     { icon: '◑', bg: '#fef3c7', fg: '#b45309', bd: '#fcd34d', label: 'ยังไม่ครบ' },
+        Pending:     { icon: '●', bg: '#dbeafe', fg: '#1d4ed8', bd: '#93c5fd', label: 'รอยื่น (ยังไม่ถึงกำหนด)' },
+        Overdue:     { icon: '✕', bg: '#fee2e2', fg: '#b91c1c', bd: '#fca5a5', label: 'เลยกำหนด' },
+        Unknown:     { icon: '?', bg: '#f1f5f9', fg: '#64748b', bd: '#cbd5e1', label: 'ยังไม่ทราบยอด' },
+        NotRequired: { icon: '–', bg: 'transparent', fg: '#cbd5e1', bd: 'transparent', label: 'ไม่ต้องยื่น' },
+      },
+      filingStyle(cell) {
+        return this.FILING_STYLE[cell.overdue ? 'Overdue' : cell.status] || this.FILING_STYLE.NotRequired;
+      },
+
+      async loadFilingCalendar() {
+        const host = document.getElementById('filingCalendarContent');
+        if (!host) return;
+        const sel = document.getElementById('filingMonths');
+        const months = parseInt(sel && sel.value, 10) || 12;
+        if (this._filingCacheMonths !== months) this._filingCache = null;
+        host.innerHTML = '<div class="text-center text-gray-400">กำลังโหลด...</div>';
+        const d = await this.filingData(months);
+        if (!d) {
+          host.innerHTML = '<div class="text-center text-gray-400">โหลดปฏิทินนำส่งไม่สำเร็จ '
+            + '<button class="btn btn-sm btn-outline" onclick="Dashboard._filingCache=null;Dashboard.loadFilingCalendar()">↻ ลองใหม่</button></div>';
+          return;
+        }
+        const hl = document.getElementById('filingHeadline');
+        if (hl) {
+          hl.textContent = d.headline || '';
+          hl.style.color = d.overdueCount > 0 ? '#b91c1c' : (d.unknownCount > 0 ? '#b45309' : '#64748b');
+          hl.style.fontWeight = d.overdueCount > 0 ? '700' : '400';
+        }
+
+        const rows = d.rows || [];
+        if (!rows.length) {
+          host.innerHTML = '<div class="text-center text-gray-400">ยังไม่มีภาระยื่นแบบ — '
+            + 'ตั้งค่าการจดทะเบียน VAT / ประกันสังคมที่ <a href="/pages/settings.html" class="text-primary">ข้อมูลบริษัท</a></div>';
+          return;
+        }
+        const periods = (d.periods || []).map(p => {
+          const [y, m] = p.split('-').map(Number);
+          return { y, m, label: `${this.THAI_MONTHS[m]}${String((y + 543) % 100).padStart(2, '0')}` };
+        });
+        const thisY = new Date().getFullYear(), thisM = new Date().getMonth() + 1;
+
+        const head = `<tr>
+          <th style="position:sticky;left:0;background:#fff;z-index:2;text-align:left;min-width:160px">แบบยื่น</th>
+          ${periods.map(p => `<th style="text-align:center;font-size:11px;padding:4px 2px;white-space:nowrap;${p.y === thisY && p.m === thisM ? 'color:var(--primary);font-weight:800' : ''}">${p.label}</th>`).join('')}
+        </tr>`;
+
+        const body = rows.map(r => `<tr>
+          <td style="position:sticky;left:0;background:#fff;z-index:1;padding:6px 8px">
+            <div style="font-weight:600;font-size:13px">${Layout.esc(r.formCode)}</div>
+            <div class="text-xs text-gray-400" title="${Layout.esc(r.legalNote)}">${Layout.esc(r.typeLabel)}</div>
+          </td>
+          ${r.cells.map(c => {
+            const s = this.filingStyle(c);
+            const tip = `${r.formCode} ${String(c.month).padStart(2, '0')}/${c.year}\n${c.hint}`
+              + (c.amount ? `\nยอด: ${Layout.money(c.amount)} บาท` : '')
+              + (c.lateFee ? `\nเงินเพิ่มประมาณ: ${Layout.money(c.lateFee)} บาท` : '')
+              + (c.hasReceipt ? '\n📎 แนบใบเสร็จแล้ว' : '');
+            const click = c.actionUrl ? `onclick="location.href='${c.actionUrl}'" style="cursor:pointer;"` : '';
+            return `<td style="text-align:center;padding:3px 2px">
+              <div ${click} title="${Layout.esc(tip)}"
+                style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;
+                       border-radius:8px;background:${s.bg};color:${s.fg};border:1px solid ${s.bd};
+                       font-weight:700;font-size:13px;${c.actionUrl ? 'cursor:pointer' : ''}">${s.icon}</div>
+              ${c.hasReceipt ? '<div style="font-size:9px;line-height:1;margin-top:1px">📎</div>' : ''}
+            </td>`;
+          }).join('')}
+        </tr>`).join('');
+
+        // "ต้องทำตอนนี้" — เรียงตามความเร่งด่วน แล้วตัดมา 6 อันดับแรก
+        const todo = [];
+        rows.forEach(r => r.cells.forEach(c => {
+          if (c.status === 'Filed' || c.status === 'NotRequired') return;
+          todo.push({ r, c, rank: c.overdue ? 0 : (c.status === 'Unknown' ? 2 : 1) });
+        }));
+        todo.sort((a, b) => a.rank - b.rank || a.c.daysToDue - b.c.daysToDue);
+        const todoHtml = todo.length ? `
+          <div style="margin-top:16px;border-top:1px solid var(--gray-200);padding-top:12px">
+            <div style="font-weight:700;font-size:13px;margin-bottom:8px">ต้องทำตอนนี้ (${todo.length} รายการ)</div>
+            ${todo.slice(0, 6).map(t => {
+              const s = this.filingStyle(t.c);
+              return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9">
+                <span style="width:22px;height:22px;border-radius:6px;background:${s.bg};color:${s.fg};border:1px solid ${s.bd};display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none">${s.icon}</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:600">${Layout.esc(t.r.formCode)} งวด ${String(t.c.month).padStart(2, '0')}/${t.c.year + 543}</div>
+                  <div class="text-xs" style="color:${s.fg}">${Layout.esc(t.c.hint)}</div>
+                </div>
+                ${t.c.actionUrl ? `<a href="${t.c.actionUrl}" class="btn btn-sm btn-outline" style="flex:none">จัดการ →</a>` : ''}
+              </div>`;
+            }).join('')}
+            ${todo.length > 6 ? `<div class="text-xs text-gray-400" style="margin-top:8px">และอีก ${todo.length - 6} รายการ — <a href="/pages/tax-remittance.html" class="text-primary">ดูทั้งหมด</a></div>` : ''}
+          </div>` : '<div style="margin-top:14px;padding:10px;background:#f0fdf4;border-radius:8px;color:#15803d;font-size:13px;text-align:center">✓ ไม่มีงวดค้างยื่น/ค้างนำส่ง</div>';
+
+        const legend = Object.entries(this.FILING_STYLE).map(([, s]) =>
+          `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px">
+             <span style="width:16px;height:16px;border-radius:4px;background:${s.bg};color:${s.fg};border:1px solid ${s.bd};display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${s.icon}</span>
+             ${s.label}</span>`).join('');
+
+        host.innerHTML = `
+          <div style="overflow-x:auto">
+            <table class="table" style="min-width:100%;border-collapse:separate;border-spacing:0">
+              <thead>${head}</thead><tbody>${body}</tbody>
+            </table>
+          </div>
+          <div class="text-xs text-gray-500" style="margin-top:10px">${legend}</div>
+          <div class="text-xs text-gray-400" style="margin-top:6px">
+            💡 ภ.พ.30 · สปส.1-10 · ภ.ง.ด.1 ต้องยื่น <b>ทุกเดือน</b> แม้ยอดเป็น 0 (ยื่นแบบเปล่า) —
+            ช่อง <b>?</b> คือเดือนที่ระบบยังไม่ทราบยอดเพราะยังไม่ได้สร้างรายงาน/รันเงินเดือน ไม่ใช่ "ไม่ต้องยื่น"
+          </div>
+          ${todoHtml}`;
       },
 
       async loadFiscalStatus(api) {
@@ -486,6 +665,8 @@
           // §82/3 ใบช้า ภพ.30 รอยื่น, e-Tax retry queue, undue VAT
           // กฎเหล็ก #3 + UX: ต้องไม่ noisy — แสดงเฉพาะที่ actionable
           this.loadActionAlerts().catch(() => {});
+          // ปฏิทินนำส่ง — โหลดแยกไม่ให้บล็อกตัวเลข KPI ที่ผู้ใช้เห็นก่อน
+          this.loadFilingCalendar().catch(() => {});
 
           // Cash flow
           const cf = d.cashFlow || {};

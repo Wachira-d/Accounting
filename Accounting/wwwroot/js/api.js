@@ -547,6 +547,8 @@ const API = {
       settleSso: (id, body) => API.post(`${base}/payroll/runs/${id}/settle-sso`, body),
       // ── นำส่งภาษี/ประกันสังคมรวม (สปส.1-10 + ภงด.1/3/53 + ภพ.30) ──
       getRemittances: (monthsBack = 12) => API.get(`${base}/remittances?monthsBack=${monthsBack}`),
+      // ปฏิทินนำส่ง "แบบ × เดือน" — ใช้บน dashboard (รวมงวดยอด 0 ที่ยังต้องยื่นแบบเปล่า)
+      getFilingCalendar: (months = 12) => API.get(`${base}/remittances/calendar?months=${months}`),
       remitPreview: (type, year, month, payDate) => API.get(`${base}/remittances/preview?type=${encodeURIComponent(type)}&year=${year}&month=${month}${payDate ? '&payDate=' + encodeURIComponent(payDate) : ''}`),
       remit: (d) => API.post(`${base}/remittances`, d),
       uploadRemittanceReceipt: (id, formData) => API.upload(`${base}/remittances/${id}/receipt`, formData),

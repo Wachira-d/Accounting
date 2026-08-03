@@ -16,6 +16,14 @@ public interface IStatutoryRemittanceService
     /// ที่มีรอบผูก. idempotent ต่อ (Type, งวด) — นำส่งซ้ำงวดเดิม block.</summary>
     Task<RemitResult> RemitAsync(Guid companyId, RemitRequest request, string performedBy);
 
+    /// <summary>ปฏิทินนำส่ง "แบบ × เดือน" — ตอบคำถาม "เดือนไหนยื่นแล้ว/ยัง" สำหรับ
+    /// dashboard. ต่างจาก GetDashboardAsync ตรงที่ **ไม่ตัดงวดที่ยอด = 0 ทิ้ง**
+    /// เพราะ ภ.พ.30 / สปส.1-10 / ภ.ง.ด.1 ต้องยื่นแม้ไม่มียอด (แบบเปล่า) และแยก
+    /// สถานะ "ระบบยังไม่มีข้อมูล" (ยังไม่สร้างรายงาน / ยังไม่รันเงินเดือน) ออกจาก
+    /// "ไม่ต้องยื่น" — สองอย่างนี้หน้าตาเหมือนกันถ้าดูแค่ยอดค้าง แต่ผลทางกฎหมาย
+    /// ต่างกันสิ้นเชิง.</summary>
+    Task<FilingCalendarResponse> GetFilingCalendarAsync(Guid companyId, int months = 12);
+
     /// <summary>ประมาณการยอด + เงินเพิ่มของงวดหนึ่งก่อนกดจ่าย (ให้ UI preview).</summary>
     Task<PendingRemittanceItem?> PreviewAsync(Guid companyId, string remittanceType,
         int periodYear, int periodMonth, DateTime payDate);

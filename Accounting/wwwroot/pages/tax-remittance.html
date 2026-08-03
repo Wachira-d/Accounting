@@ -89,10 +89,34 @@
           this.renderKpis();
           this.renderPending();
           this.renderHistory();
+          this.applyDeepLink();
         } catch (e) {
           pc.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}
             <div style="margin-top:12px"><button class="btn btn-secondary" onclick="Page.load()">↻ ลองใหม่</button></div></div>`;
         }
+      },
+
+      /** มาจากปฏิทินนำส่งบนแดชบอร์ด (?type=&year=&month=) — เปิดฟอร์มนำส่งงวดนั้น
+       *  ให้เลย ผู้ใช้ไม่ต้องไล่หาแถวเองในตารางที่มีหลายสิบรายการ.
+       *  ทำครั้งเดียวต่อการเข้าหน้า (ล้าง flag) — ไม่งั้นกด "นำส่ง" เสร็จแล้ว
+       *  load() รอบใหม่จะเด้งโมดัลเดิมขึ้นมาซ้ำไม่รู้จบ */
+      applyDeepLink() {
+        if (this._deepLinkDone) return;
+        this._deepLinkDone = true;
+        const q = new URLSearchParams(location.search);
+        const type = q.get('type'), year = parseInt(q.get('year'), 10), month = parseInt(q.get('month'), 10);
+        if (!type || !year || !month) return;
+        const i = (this._data.pending || []).findIndex(r =>
+          r.remittanceType === type && r.periodYear === year && r.periodMonth === month);
+        if (i >= 0) { this.openPay(i); return; }
+        // ไม่เจอในรายการรอนำส่ง = นำส่งไปแล้ว หรือยอดเป็น 0 (ต้องยื่นแบบเปล่า
+        // ซึ่งไม่ต้องจ่ายเงิน) — บอกให้ชัดแทนที่จะเงียบเหมือนลิงก์เสีย
+        const done = (this._data.recentHistory || []).find(r =>
+          r.remittanceType === type && r.periodYear === year && r.periodMonth === month);
+        Layout.toast(done
+          ? `งวด ${String(month).padStart(2, '0')}/${year} นำส่งไปแล้วเมื่อ ${Layout.date(done.payDate)} — ดูในประวัติด้านล่าง`
+          : `งวด ${String(month).padStart(2, '0')}/${year} ไม่มียอดต้องจ่าย — แต่ยังต้องยื่นแบบเปล่าที่ e-Filing กรมสรรพากร/ประกันสังคม`,
+          done ? 'info' : 'warning', 9000);
       },
 
       renderKpis() {
