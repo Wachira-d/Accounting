@@ -220,6 +220,56 @@ fingerprint ตรงกันเมื่อเปิด PII strip, `ImportRevi
    ถ้าต้องการ "ใบแนบภาษาอังกฤษ" สำหรับผู้บริหารต่างชาติ ให้ทำเป็นเอกสารแยก
    ไม่ใช่แปลฟอร์มยื่น. อีเมล/ชื่อไฟล์แนบยังเป็นไทยล้วน — แปลได้ถ้าต้องการ
 
+## Phase 6 — คุณภาพ AI prompt (จาก audit prompt ทั้ง 30 features)
+
+> แก้แล้วรอบนี้: RawPlanResponse (bulk PV/warning), FuzzyDup parse blob, GL
+> amount ต่อบรรทัด, เกณฑ์ capitalize ฿50k, bank currency filter, ContactPhone
+> ลง payload, Agingexplanation payment history, ImportReview total_row_count,
+> ProviderUsed=None สำหรับ heuristic/template. **ที่เหลือ (เรียง impact):**
+
+### 6.1 นำ few-shot จาก AiSuggestionFeedback เข้า prompt (ยังไม่มี feature ใดทำ)
+- ตาราง `AiSuggestionFeedback.UserChosenAnswer` = ตัวอย่างที่ user แก้/ยืนยันจริง
+  ถูกใช้แค่ใน distillation ไม่เคยเข้า prompt → GL/WHT/CN reason ควรแนบ 3-5
+  ตัวอย่างล่าสุดของ vendor/หมวดเดียวกัน (few-shot ให้ผลกว่าคำอธิบายกฎยาว ๆ)
+
+### 6.2 candidate set ไม่ปิด + guard ไม่สม่ำเสมอ
+- `GlCandidateBuilder.Take(150)` หลังเรียง RecentUse → บริษัทผัง >150 ที่ไม่เคยลง
+  Fixed Asset ไม่มี 12xxx ใน candidate แต่ prompt สั่งตอบ 12xxx → การันตี quota
+  ต่อหมวด (Expense/Asset/Liability) ก่อน cap; ตัด `is_active` (hardcode true)
+- anti-hallucination guard มีแค่ 2 จุด (account code, document id) — CN reason,
+  WHT code, matched_product_id, PV path ใน AiSuggestionController ยังไม่ validate
+  candidate → ย้าย guard เข้า Parse* ทุกตัว
+
+### 6.3 field ที่ query แล้ว/ประกาศแล้วแต่ไม่ส่ง (dead schema)
+- WhtCategoryPrompt: `vendorWhtHistory/vendorIndustry/vendorAvg6Months/
+  wht3ThresholdReached` มี param แต่ augmenter ไม่ส่ง → query PND/50ทวิ 24 เดือน
+- BankStatementMatch per-txn: `ContactTaxId/PriorPaymentsFromSameContact/
+  AvgPaymentDelayDays/TypicalMemoPattern` ไม่มี caller ใส่ → 1 query GROUP BY contact
+- AnomalyExplanation: `seasonality/trend/recentMonthlyTotals/madZScore` ไม่ส่ง
+  (detector คำนวณอยู่แล้ว) + `peer_average=""` ควรตัดถ้าไม่มีข้อมูล
+- ApprovalWarning: `vendorHistory=null` เสมอ ทั้งที่ prompt สั่งเทียบ avg/max
+
+### 6.4 OcrFullReview ถูกบังคับให้เดา
+- ไม่ส่ง `ExtractedItemsJson` (line items ที่ pipeline แกะแล้ว) → AI แกะ raw ใหม่
+- ไม่ส่งผังบัญชี แต่ขอ `suggested_account_code` → hallucinate แน่นอน
+- `rawText[..3500]` เอาแต่หัว — ยอด/VAT/WHT ใบเสร็จไทยอยู่ท้าย → head 2000 + tail 1500
+
+### 6.5 อื่น ๆ
+- VendorCanon: `AiStripPiiInPrompts=true` mask tax_id ทั้ง OCR+candidate → กฎ
+  "TIN มาก่อน" เป็นโมฆะ + เสี่ยง false match → whitelist ไม่ mask ในฟีเจอร์นี้
+  (หรือ hash deterministic ทั้งสองฝั่ง); เพิ่ม address+nameEn ใน candidate
+- BulkBankMatch: JE window ±5 วัน ขัดกฎ C2b(T−45)/C10(T−60)/C12(T+90) ใน prompt
+  เดียวกัน → candidate โดนกรองก่อนถึง AI; ส่ง excluded_pairs + historical match
+- OcrProjectMatch: caller ไม่เช็ค confidence → รับ 0.2 มาผูกโครงการ; เรียกทีละ
+  บรรทัดใน loop → รวมเป็น bulk call เดียว + บังคับ threshold ≥0.6
+- ManualJournalSuggestion(21)/PaymentMethodSuggestion(15)/CurrencyAndFxSuggestion(16)/
+  LineItemStructuredParse(6)/DocumentRoleInference(4)/DocumentTypeClassification(3)/
+  TaxFilingPreCheck(18): มี enum แต่ **ไม่มี prompt builder/caller** — ยังไม่ implement
+  (DOCUMENT_FLOW/CLAUDE.md อ้างถึงเหมือนใช้ได้ = doc drift)
+- CompanyBusinessContext: `_companyContextCache` ไม่มี TTL จริง (คอมเมนต์บอก 5 นาที)
+  → แก้ IndustryType แล้ว prompt ไม่เปลี่ยนจน restart; ส่งซ้ำใน GL/BulkPV payload
+  (มี block ท้าย system prompt อยู่แล้ว) → ตัด `company=` ออก
+
 ## Phase 5 — ตามแผนเดิม (ROADMAP.md/DEVELOPMENT_PLAN.md)
 
 หลัง Phase 1-4 เสถียร: caching/performance, mobile, BI dashboard, XBRL DBD,
