@@ -43,7 +43,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     };
 
     // กำหนดยื่น: (กระดาษวันที่, e-Filing วันที่) ของเดือนถัดจากงวด
-    private static (DateTime Paper, DateTime EFiling) DueDates(string type, int year, int month)
+    internal static (DateTime Paper, DateTime EFiling) DueDates(string type, int year, int month)
     {
         var next = new DateTime(year, month, 1).AddMonths(1);
         DateTime D(int day) => new DateTime(next.Year, next.Month, day);
@@ -212,6 +212,412 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         return new PendingRemittanceItem(type, label, form, year, month, amount,
             paper, efiling, overdue, lateFee, code,
             employee, employer, payeeCount, outputVat, inputVat, relatedRunId);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  ปฏิทินนำส่ง — "เดือนไหนยื่นแล้ว/ยัง" (ใช้บน dashboard)
+    //
+    //  ทำไมไม่ reuse GetDashboardAsync: อันนั้นตอบ "ค้างเท่าไร" จึง `continue`
+    //  ทุกงวดที่ยอด ≤ 0 ผลคือเดือนที่ไม่มีรายการ **หายไปจากจอ** ทั้งที่ยังต้อง
+    //  ยื่นแบบเปล่า (ภ.พ.30 §83 / สปส.1-10 / ภ.ง.ด.1) และเดือนที่ยังไม่ได้กด
+    //  "สร้างรายงาน ภ.พ.30" ก็หายไปเหมือนกัน — ผู้ใช้เห็นจอว่างแล้วเข้าใจว่า
+    //  "ไม่มีอะไรต้องทำ" ซึ่งเป็นความเข้าใจผิดที่มีค่าปรับตามมา. ปฏิทินนี้จึง
+    //  ไล่ "ทุกเดือน × ทุกแบบ" แล้วให้สถานะครบ 5 แบบ:
+    //     Filed / Partial / Pending / Unknown / NotRequired
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// <summary>แบบที่ต้องยื่นทุกเดือนแม้ยอด 0 + มาตราที่บังคับ</summary>
+    internal static (bool Always, string Legal) FilingRule(string type) => type switch
+    {
+        "VatPp30"   => (true,  "ผู้ประกอบการจด VAT ต้องยื่นทุกเดือนแม้ไม่มีรายรับ (ป.รัษฎากร §83)"),
+        "SsoSps110" => (true,  "นายจ้างที่ขึ้นทะเบียนต้องยื่นทุกเดือนแม้ไม่มีค่าจ้าง (พ.ร.บ.ประกันสังคม §47)"),
+        "WhtPnd1"   => (true,  "ยื่นทุกเดือนที่มีการจ่ายเงินได้ ม.40(1)(2) แม้ภาษีหัก = 0 (ท.ป.4/2528)"),
+        "WhtPnd3"   => (false, "ยื่นเฉพาะเดือนที่มีการหักภาษีบุคคลธรรมดา (ท.ป.4/2528)"),
+        "WhtPnd53"  => (false, "ยื่นเฉพาะเดือนที่มีการหักภาษีนิติบุคคล (ท.ป.4/2528)"),
+        "VatPp36"   => (false, "ยื่นเฉพาะเดือนที่จ่ายค่าบริการต่างประเทศ (ป.รัษฎากร §83/6)"),
+        _           => (false, "")
+    };
+
+    // snapshot ที่อ่านมาครั้งเดียวแล้วส่งต่อให้ BuildCell — ใช้ record แทน tuple
+    // ยาว ๆ เพื่อให้ชื่อฟิลด์ถูกบังคับตอน compile (tuple ชื่อไม่ตรงจะเงียบ)
+    private sealed record ReportSnap(TaxType Type, int Year, int Month, bool Filed,
+        DateTime? FiledAt, decimal NetVat);
+    private sealed record RunSnap(int Year, int Month, decimal Emp, decimal Empr, decimal Wht,
+        DateTime? SsoSettledAt, string? SsoFiling);
+    private sealed record WhtSnap(int Year, int Month, decimal Wht, bool Juristic);
+    private sealed record FsSnap(int Year, int Month, decimal Vat);
+
+    /// <summary>map ชนิดนำส่ง → TaxType ของรายงานภาษีในระบบ (ใช้เช็ค "ยื่นแบบแล้ว")</summary>
+    private static TaxType? ReportTypeOf(string type) => type switch
+    {
+        "VatPp30"   => TaxType.VAT,
+        "WhtPnd1"   => TaxType.WithholdingTax1,
+        "WhtPnd3"   => TaxType.WithholdingTax3,
+        "WhtPnd53"  => TaxType.WithholdingTax53,
+        "SsoSps110" => TaxType.SocialSecurity,
+        "VatPp36"   => TaxType.VatPp36,
+        _           => null
+    };
+
+    public async Task<FilingCalendarResponse> GetFilingCalendarAsync(Guid companyId, int months = 12)
+    {
+        months = Math.Clamp(months, 3, 24);
+        // กำหนดยื่นเป็นเวลาไทย — ใช้ UTC ตรง ๆ จะเพี้ยน 1 วันช่วงเย็น (UTC+7)
+        // และวันที่ 15 คือเส้นตายจริง คลาดเคลื่อนวันเดียว = แจ้งเตือนผิด
+        var today = DateTime.UtcNow.AddHours(7).Date;
+        var thisMonth = new DateTime(today.Year, today.Month, 1);
+        var startMonth = thisMonth.AddMonths(-(months - 1));
+        var periods = Enumerable.Range(0, months).Select(i => startMonth.AddMonths(i)).ToList();
+
+        // ── บริษัทอยู่ในข่ายต้องยื่นแบบไหนบ้าง ──
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.IsVatRegistered, c.IsSocialSecurityRegistered, c.CreatedAt })
+            .FirstOrDefaultAsync();
+        var vatRegistered = company?.IsVatRegistered ?? false;
+        var ssoRegistered = company?.IsSocialSecurityRegistered ?? false;
+        // เดือนก่อนเปิดบริษัทในระบบ ระบบไม่มีทางรู้ว่ายื่นหรือยัง — ขึ้น "เลยกำหนด"
+        // ทั้งแถวจะเป็นการเตือนเท็จที่ทำให้ผู้ใช้เลิกเชื่อปฏิทินนี้ทั้งอัน
+        var systemStart = company == null
+            ? startMonth
+            : new DateTime(company.CreatedAt.Year, company.CreatedAt.Month, 1);
+
+        var activeEmployees = 0;
+        try
+        {
+            activeEmployees = await _db.Employees.AsNoTracking()
+                .CountAsync(e => e.CompanyId == companyId && !e.IsDeleted && e.IsActive);
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "นับพนักงาน active ไม่สำเร็จ"); }
+
+        // ── หลักฐาน "จ่ายเงินแล้ว" ──
+        var remits = new List<StatutoryRemittance>();
+        try
+        {
+            remits = await _db.Set<StatutoryRemittance>().AsNoTracking()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                    && (r.PeriodYear > startMonth.Year
+                        || (r.PeriodYear == startMonth.Year && r.PeriodMonth >= startMonth.Month)))
+                .ToListAsync();
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลด StatutoryRemittances ไม่สำเร็จ"); }
+
+        // ── หลักฐาน "ยื่นแบบแล้ว" (คนละเหตุการณ์กับจ่ายเงิน — งวดขอคืน/ยอด 0
+        //    ยื่นแต่ไม่ได้จ่าย) ──
+        var reports = new List<ReportSnap>();
+        try
+        {
+            reports = (await _db.TaxReports.AsNoTracking()
+                .Where(t => t.CompanyId == companyId && !t.IsDeleted
+                    && (t.Year > startMonth.Year || (t.Year == startMonth.Year && t.Month >= startMonth.Month)))
+                .Select(t => new { t.TaxType, t.Year, t.Month, t.Status, t.FiledDate, t.NetVat })
+                .ToListAsync())
+                .Select(t => new ReportSnap(t.TaxType, t.Year, t.Month,
+                    t.Status == TaxReportStatus.Filed, t.FiledDate, t.NetVat))
+                .ToList();
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลด TaxReports ไม่สำเร็จ"); }
+
+        // ── ฐานยอดที่ต้องนำส่ง ──
+        var runs = new List<RunSnap>();
+        try
+        {
+            runs = (await _db.PayrollRuns.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.Status == "Paid")
+                .Select(r => new { r.Year, r.Month, r.TotalSocialSecurityEmployee,
+                    r.TotalSocialSecurityEmployer, r.TotalWithholdingTax, r.SsoSettledAt, r.SsoFilingNumber })
+                .ToListAsync())
+                .Select(r => new RunSnap(r.Year, r.Month, r.TotalSocialSecurityEmployee,
+                    r.TotalSocialSecurityEmployer, r.TotalWithholdingTax, r.SsoSettledAt, r.SsoFilingNumber))
+                .ToList();
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลด PayrollRuns ไม่สำเร็จ"); }
+
+        var whtDocs = new List<WhtSnap>();
+        var fsDocs = new List<FsSnap>();
+        try
+        {
+            var docs = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && (d.WithholdingTaxAmount > 0 || (d.IsForeignService && d.VatAmount > 0))
+                    && (d.PaymentDate ?? d.DocumentDate) >= startMonth
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                .Select(d => new { d.WithholdingTaxAmount, d.VatAmount, d.IsForeignService,
+                    d.PaymentDate, d.DocumentDate,
+                    CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual })
+                .ToListAsync();
+            foreach (var d in docs)
+            {
+                var dt = d.PaymentDate ?? d.DocumentDate;
+                if (d.WithholdingTaxAmount > 0)
+                    whtDocs.Add(new WhtSnap(dt.Year, dt.Month, d.WithholdingTaxAmount,
+                        d.CType == ContactType.JuristicPerson));
+                if (d.IsForeignService && d.VatAmount > 0)
+                    fsDocs.Add(new FsSnap(dt.Year, dt.Month, d.VatAmount));
+            }
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลดเอกสารหัก ณ ที่จ่าย/บริการต่างประเทศ ไม่สำเร็จ"); }
+
+        // ── ประกอบเป็นตาราง ──
+        var rows = new List<FilingCalendarRow>();
+        var order = new[] { "VatPp30", "WhtPnd1", "SsoSps110", "WhtPnd3", "WhtPnd53", "VatPp36" };
+        foreach (var type in order)
+        {
+            var (label, form, _) = Meta(type);
+            var (always, legal) = FilingRule(type);
+            var reportType = ReportTypeOf(type);
+
+            // บริษัทอยู่ในข่ายไหม
+            bool applicable = true; string? naReason = null;
+            if (type == "VatPp30" && !vatRegistered)
+            { applicable = false; naReason = "บริษัทยังไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม"; }
+            else if (type == "SsoSps110" && !ssoRegistered)
+            { applicable = false; naReason = "บริษัทยังไม่ได้ขึ้นทะเบียนนายจ้างกับประกันสังคม"; }
+            else if (type == "WhtPnd1" && activeEmployees == 0 && runs.Count == 0)
+            { applicable = false; naReason = "ยังไม่มีพนักงานในระบบ"; }
+
+            var cells = new List<FilingCalendarCell>();
+            foreach (var p in periods)
+            {
+                cells.Add(applicable
+                    ? BuildCell(type, form, always, p, today, systemStart, remits, reports, reportType,
+                        runs, whtDocs, fsDocs, activeEmployees)
+                    : new FilingCalendarCell(p.Year, p.Month, "NotRequired", 0, 0,
+                        DueDates(type, p.Year, p.Month).Paper, DueDates(type, p.Year, p.Month).EFiling,
+                        false, 0, false, null, false, null, null, false, false,
+                        naReason ?? "ไม่อยู่ในข่ายต้องยื่น", null));
+            }
+
+            // ซ่อนแถวที่ไม่เกี่ยวเลย (ไม่มีเดือนไหนต้องยื่น + ไม่เคยยื่น) — ลด noise
+            var meaningful = applicable
+                && cells.Any(c => c.Status != "NotRequired" || c.Remitted || c.FormFiled);
+            if (!meaningful && !always) continue;
+
+            rows.Add(new FilingCalendarRow(type, form, label, legal, always,
+                applicable, naReason, cells));
+        }
+
+        // ── สรุปหัวข้อ ──
+        var all = rows.SelectMany(r => r.Cells).ToList();
+        var overdue = all.Where(c => c.Overdue).ToList();
+        var required = all.Where(c => c.Status is "Filed" or "Partial" or "Pending" or "Unknown").ToList();
+        var filed = all.Count(c => c.Status == "Filed");
+        var dueSoon = all.Count(c => !c.Overdue && (c.Status is "Pending" or "Partial")
+            && c.DaysToDue >= 0 && c.DaysToDue <= 7);
+        var unknown = all.Count(c => c.Status == "Unknown");
+
+        // จับคู่ cell กับแถวเจ้าของไว้ตั้งแต่แรก — FilingCalendarCell เป็น record
+        // (value equality) การไล่หาแถวย้อนหลังด้วย Contains จะจับแถวผิดได้เมื่อสอง
+        // แบบมีช่องที่ค่าเท่ากันทุกฟิลด์ (เช่น NotRequired เดือนเดียวกัน)
+        var next = rows
+            .SelectMany(r => r.Cells.Select(c => new { Row = r, Cell = c }))
+            .Where(x => (x.Cell.Status is "Pending" or "Partial" or "Unknown") && x.Cell.DaysToDue >= 0)
+            .OrderBy(x => x.Cell.EFilingDueDate).ThenBy(x => x.Row.FormCode)
+            .FirstOrDefault();
+        string? nextLabel = next == null ? null
+            : $"{next.Row.FormCode} งวด {next.Cell.Month:D2}/{next.Cell.Year} — ครบกำหนด {next.Cell.EFilingDueDate:dd/MM/yyyy}"
+              + (next.Cell.DaysToDue == 0 ? " (วันนี้!)" : $" (อีก {next.Cell.DaysToDue} วัน)");
+
+        var headline = overdue.Count > 0
+            ? $"⚠️ เลยกำหนดยื่น {overdue.Count} งวด — ยอด {overdue.Sum(c => c.Amount):N2} บาท"
+              + (overdue.Sum(c => c.LateFee) > 0 ? $" + เงินเพิ่มประมาณ {overdue.Sum(c => c.LateFee):N2} บาท" : "")
+            : unknown > 0
+                ? $"มี {unknown} งวดที่ระบบยังไม่ทราบยอด — สร้างรายงาน/รันเงินเดือนก่อนถึงจะรู้ว่าต้องยื่นเท่าไร"
+                : dueSoon > 0
+                    ? $"ครบกำหนดยื่นภายใน 7 วัน {dueSoon} งวด" + (nextLabel != null ? $" — {nextLabel}" : "")
+                    : required.Count == 0
+                        ? "ยังไม่มีภาระยื่นแบบในช่วงนี้"
+                        : $"✓ ยื่นครบทุกงวดที่ถึงกำหนด ({filed}/{required.Count})";
+
+        return new FilingCalendarResponse(
+            Periods: periods.Select(p => $"{p.Year}-{p.Month:D2}").ToList(),
+            Rows: rows,
+            OverdueCount: overdue.Count,
+            OverdueAmount: overdue.Sum(c => c.Amount),
+            OverdueLateFee: overdue.Sum(c => c.LateFee),
+            DueSoonCount: dueSoon,
+            UnknownCount: unknown,
+            FiledCount: filed,
+            RequiredCount: required.Count,
+            NextDueDate: next?.Cell.EFilingDueDate,
+            NextDueLabel: nextLabel,
+            Headline: headline);
+    }
+
+    private FilingCalendarCell BuildCell(string type, string form, bool alwaysRequired,
+        DateTime period, DateTime today, DateTime systemStart,
+        List<StatutoryRemittance> remits,
+        List<ReportSnap> reports,
+        TaxType? reportType,
+        List<RunSnap> runs,
+        List<WhtSnap> whtDocs,
+        List<FsSnap> fsDocs,
+        int activeEmployees)
+    {
+        int y = period.Year, m = period.Month;
+        var (paper, efiling) = DueDates(type, y, m);
+        var daysToDue = (int)(efiling.Date - today).TotalDays;
+        var isCurrentPeriod = period.Year == today.Year && period.Month == today.Month;
+
+        // ── หลักฐานที่มี ──
+        var myRemits = remits.Where(r => r.RemittanceType == type && r.PeriodYear == y && r.PeriodMonth == m).ToList();
+        var remittedAmount = myRemits.Sum(r => r.Amount);
+        // regenerate ทำให้มีได้หลายรายงานต่อเดือน — เอาใบที่ "ยื่นแล้ว" ก่อนเสมอ
+        // ไม่งั้นหยิบ Draft ที่สร้างทีหลังมาแล้วรายงานว่ายังไม่ได้ยื่น
+        var rep = reportType.HasValue
+            ? reports.Where(r => r.Type == reportType.Value && r.Year == y && r.Month == m)
+                     .OrderByDescending(r => r.Filed).FirstOrDefault()
+            : null;
+        var hasReport = rep != null;
+        var monthRuns = runs.Where(r => r.Year == y && r.Month == m).ToList();
+
+        // ── ยอดที่ต้องนำส่ง + "รู้ยอดหรือยัง" ──
+        decimal amount; bool known = true; string unknownHint = ""; string? unknownUrl = null;
+        switch (type)
+        {
+            case "VatPp30":
+                // ยอดมาจากรายงาน ภ.พ.30 ที่ผู้ใช้กด "สร้างรายงาน" ไว้ — ไม่คำนวณสด
+                // หลายเดือนในหน้านี้ (เคยทำให้หน้าค้าง)
+                amount = rep?.NetVat ?? 0m;
+                known = hasReport;
+                unknownHint = "ยังไม่ได้สร้างรายงาน ภ.พ.30 ของงวดนี้ — สร้างก่อนถึงจะรู้ยอดที่ต้องชำระ";
+                unknownUrl = $"/pages/tax.html?type=VAT&year={y}&month={m}";
+                break;
+            case "SsoSps110":
+                amount = monthRuns.Sum(r => r.Emp + r.Empr);
+                known = monthRuns.Count > 0 || activeEmployees == 0;
+                unknownHint = "ยังไม่ได้รันเงินเดือนงวดนี้ — เงินสมทบยังคำนวณไม่ได้";
+                unknownUrl = "/pages/payroll.html";
+                break;
+            case "WhtPnd1":
+                amount = monthRuns.Sum(r => r.Wht);
+                known = monthRuns.Count > 0 || activeEmployees == 0;
+                unknownHint = "ยังไม่ได้รันเงินเดือนงวดนี้ — ภาษีหัก ณ ที่จ่ายยังคำนวณไม่ได้";
+                unknownUrl = "/pages/payroll.html";
+                break;
+            case "WhtPnd3":
+                amount = whtDocs.Where(d => d.Year == y && d.Month == m && !d.Juristic).Sum(d => d.Wht);
+                break;
+            case "WhtPnd53":
+                amount = whtDocs.Where(d => d.Year == y && d.Month == m && d.Juristic).Sum(d => d.Wht);
+                break;
+            case "VatPp36":
+                amount = fsDocs.Where(d => d.Year == y && d.Month == m).Sum(d => d.Vat);
+                break;
+            default:
+                amount = 0m;
+                break;
+        }
+
+        var formFiled = rep?.Filed == true;
+        var filedAt = formFiled ? rep!.FiledAt : null;
+        // ปกส. นำส่งจากหน้า payroll จะ stamp PayrollRun.SsoSettledAt โดยไม่สร้างแถว
+        // StatutoryRemittance — ถ้าเช็คแค่ตารางเดียวจะรายงานว่า "ยังไม่นำส่ง" ทั้งที่จ่ายแล้ว
+        var ssoStamped = type == "SsoSps110" && monthRuns.Any(r => r.SsoSettledAt != null);
+        var remitted = myRemits.Count > 0 || ssoStamped;
+        DateTime? remittedAt = myRemits.Count > 0
+            ? myRemits.Max(r => r.PayDate)
+            : (ssoStamped ? monthRuns.Where(r => r.SsoSettledAt != null).Max(r => r.SsoSettledAt) : null);
+        var filingNumber = myRemits.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.FilingNumber))?.FilingNumber
+            ?? monthRuns.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.SsoFiling))?.SsoFiling;
+        var hasReceipt = myRemits.Any(r => r.ReceiptAttachmentId != null);
+
+        // รอบที่ปิดจากหน้า payroll ไม่มียอดในตาราง remittance — ถ้าไม่บวกกลับ ช่องจะ
+        // ขึ้น "นำส่งแล้ว 0.00 จาก X" (Partial) ทั้งที่จ่ายครบแล้ว. ใช้ MAX ไม่ใช่ผลรวม
+        // เพราะ RemitAsync สร้างแถว remittance *และ* stamp run พร้อมกัน = นับซ้ำ
+        if (ssoStamped)
+        {
+            var settledFromRuns = monthRuns.Where(r => r.SsoSettledAt != null).Sum(r => r.Emp + r.Empr);
+            remittedAmount = Math.Max(remittedAmount, settledFromRuns);
+        }
+
+        var isNil = known && Math.Abs(amount) <= 0.009m;
+        var requiredThisMonth = alwaysRequired || amount > 0.009m || !known || remitted || formFiled;
+
+        // งวดก่อนเปิดบริษัทในระบบ + ไม่มีร่องรอยใด ๆ → ไม่เตือน (ระบบไม่รู้จริง ๆ
+        // ว่ายื่นหรือยัง การขึ้นแดงคือเดาแล้วเดาผิด) แต่ยังบอกให้ไปตรวจย้อนหลังเอง
+        var beforeSystem = period < systemStart && !remitted && !formFiled && !hasReport && monthRuns.Count == 0;
+        if (beforeSystem)
+            return new FilingCalendarCell(y, m, "NotRequired", 0, 0, paper, efiling,
+                false, daysToDue, false, null, false, null, null, false, false,
+                "งวดก่อนเริ่มใช้ระบบ — ระบบไม่มีข้อมูล กรุณาตรวจการยื่นย้อนหลังจากเอกสารเดิม", null);
+
+        // ── ตัดสินสถานะ ──
+        string status, hint; string? url;
+        var remittanceUrl = $"/pages/tax-remittance.html?type={type}&year={y}&month={m}";
+
+        if (!requiredThisMonth)
+        {
+            status = "NotRequired";
+            hint = $"เดือนนี้ไม่มีรายการที่ต้องยื่น {form}";
+            url = null;
+        }
+        else if (!known)
+        {
+            // ต้องยื่นแน่ ๆ แต่ระบบยังบอกยอดไม่ได้ — งวดปัจจุบันถือว่าปกติ
+            status = "Unknown";
+            hint = isCurrentPeriod ? unknownHint + " (งวดยังไม่ปิด ถือว่าปกติ)" : unknownHint;
+            url = unknownUrl;
+        }
+        else if (amount > 0.009m)
+        {
+            // มียอดต้องจ่าย → ถือว่าเสร็จเมื่อ "จ่ายครบ" (การจ่ายเกิดพร้อมการยื่น)
+            if (remitted && remittedAmount + 0.009m >= amount)
+            {
+                status = "Filed";
+                hint = $"นำส่งแล้ว {remittedAmount:N2} บาท"
+                    + (remittedAt.HasValue ? $" เมื่อ {remittedAt:dd/MM/yyyy}" : "")
+                    + (string.IsNullOrWhiteSpace(filingNumber) ? "" : $" · เลขรับ {filingNumber}");
+                url = remittanceUrl;
+            }
+            else if (remitted || formFiled)
+            {
+                status = "Partial";
+                hint = formFiled && !remitted
+                    ? $"ยื่นแบบแล้วแต่ยังไม่ได้บันทึกการจ่าย {amount:N2} บาท"
+                    : $"นำส่งแล้วบางส่วน {remittedAmount:N2} จาก {amount:N2} บาท — ยังค้าง {amount - remittedAmount:N2}";
+                url = remittanceUrl;
+            }
+            else
+            {
+                status = "Pending";
+                hint = $"ต้องนำส่ง {amount:N2} บาท ภายใน {efiling:dd/MM/yyyy} (e-Filing) / {paper:dd/MM/yyyy} (กระดาษ)";
+                url = remittanceUrl;
+            }
+        }
+        else
+        {
+            // ยอด 0 หรือขอคืน → ไม่มีเงินจ่าย แต่ยัง "ต้องยื่นแบบ"
+            if (formFiled || remitted)
+            {
+                status = "Filed";
+                hint = amount < -0.009m
+                    ? $"ยื่นแล้ว — งวดนี้ขอคืน/ยกไป {Math.Abs(amount):N2} บาท"
+                    : "ยื่นแบบเปล่าแล้ว (ไม่มียอดต้องชำระ)";
+                url = remittanceUrl;
+            }
+            else
+            {
+                status = "Pending";
+                hint = amount < -0.009m
+                    ? $"งวดนี้ภาษีซื้อมากกว่าภาษีขาย {Math.Abs(amount):N2} บาท — ยังต้องยื่นแบบเพื่อขอคืน/ยกไปงวดหน้า"
+                    : $"ไม่มียอดต้องชำระ แต่ยังต้อง “ยื่นแบบเปล่า” ภายใน {efiling:dd/MM/yyyy}";
+                url = remittanceUrl;
+            }
+        }
+
+        var incomplete = status is "Pending" or "Partial" or "Unknown";
+        var overdueFlag = incomplete && today > efiling.Date;
+        var lateFee = (overdueFlag && type == "SsoSps110" && amount > 0)
+            ? PayrollService.ComputeSsoLateFee(y, m, today, amount)
+            : 0m;
+        if (overdueFlag)
+            hint += $" · เลยกำหนดมาแล้ว {Math.Abs(daysToDue)} วัน";
+
+        return new FilingCalendarCell(y, m, status, amount, lateFee, paper, efiling,
+            overdueFlag, daysToDue, formFiled, filedAt, remitted, remittedAt,
+            filingNumber, hasReceipt, isNil, hint, url);
     }
 
     public async Task<PendingRemittanceItem?> PreviewAsync(Guid companyId, string remittanceType,

@@ -34,6 +34,14 @@ public class StatutoryRemittanceController : ControllerBase
         => Ok(new ApiResponse<RemittanceDashboardResponse>(true,
             await _service.GetDashboardAsync(companyId, monthsBack)));
 
+    /// <summary>ปฏิทินนำส่ง "แบบ × เดือน" สำหรับ dashboard — ตอบว่าเดือนไหนยื่นแล้ว/ยัง
+    /// รวมงวดที่ยอด 0 (ต้องยื่นแบบเปล่า) และงวดที่ระบบยังไม่ทราบยอด.</summary>
+    [HttpGet("calendar")]
+    public async Task<ActionResult<ApiResponse<FilingCalendarResponse>>> Calendar(
+        Guid companyId, [FromQuery] int months = 12)
+        => Ok(new ApiResponse<FilingCalendarResponse>(true,
+            await _service.GetFilingCalendarAsync(companyId, months)));
+
     /// <summary>preview ยอด + เงินเพิ่มของงวดหนึ่ง (ตามวันที่จ่ายที่เลือก).</summary>
     [HttpGet("preview")]
     public async Task<ActionResult<ApiResponse<PendingRemittanceItem>>> Preview(

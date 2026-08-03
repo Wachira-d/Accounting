@@ -32,7 +32,9 @@ public class FileAttachmentController : ControllerBase
         // "ExpenseClaim" added 2026 for the §65 ทวิ "ไม่มีใบเสร็จ" flow
         // — employee must attach evidence (photo of goods, taxi meter,
         // CC slip, etc.) before Submit can fire when NoReceipt = true.
-        var allowedEntityTypes = new[] { "Document", "Contact", "Payment", "JournalEntry", "FixedAsset", "Expense", "ExpenseClaim", "Product", "Project" };
+        // "PayrollRun" — สลิปโอนเงิน/ใบเสร็จ สปส. + ใบเสร็จ ภ.ง.ด.1 ของงวดเงินเดือน
+        // เป็นหลักฐานการจ่ายที่ต้องเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10)
+        var allowedEntityTypes = new[] { "Document", "Contact", "Payment", "JournalEntry", "FixedAsset", "Expense", "ExpenseClaim", "Product", "Project", "PayrollRun" };
         if (!allowedEntityTypes.Contains(entityType))
             return BadRequest(new ApiResponse<FileAttachmentResponse>(false, null!, "ประเภทไม่ถูกต้อง"));
 
@@ -44,7 +46,7 @@ public class FileAttachmentController : ControllerBase
         if (_images.IsProcessableImage(file.ContentType))
         {
             // Choose profile by entity type — slip-like things stay readable, the rest get the generic cap.
-            var profile = entityType is "Payment" or "Document" ? ImageProfile.Slip : ImageProfile.Generic;
+            var profile = entityType is "Payment" or "Document" or "PayrollRun" ? ImageProfile.Slip : ImageProfile.Generic;
             await using var s = file.OpenReadStream();
             var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, storageDir, $"/uploads/attachments/{companyId}", profile);
             fileName = Path.GetFileName(processed.AbsolutePath);
