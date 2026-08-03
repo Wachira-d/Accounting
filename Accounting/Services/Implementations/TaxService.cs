@@ -2077,7 +2077,21 @@ public partial class TaxService : ITaxService
         }
 
         report.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            // บรรทัดที่ถูกลบไปแล้วจากที่อื่น (เช่น "สร้างใหม่" ในอีกแท็บ) ไม่ควรทำให้
+            // การติ๊ก/แก้บรรทัดอื่นทั้งชุดล้มตาม — ตัดเฉพาะแถวที่หายแล้วบันทึกต่อ.
+            // ถ้าตัวรายงานเองหาย = แก้ต่อไม่ได้จริง ต้องบอกให้ผู้ใช้รีเฟรช
+            if (ex.Entries.Any(e => e.Entity is TaxReport))
+                throw new InvalidOperationException(
+                    "รายงานภาษีงวดนี้ถูกลบ/สร้างใหม่ระหว่างที่เปิดหน้าอยู่ — กรุณารีเฟรชหน้าแล้วบันทึกอีกครั้ง");
+            foreach (var e in ex.Entries) e.State = EntityState.Detached;
+            await _db.SaveChangesAsync();
+        }
         return MapToResponse(report);
     }
 
@@ -2233,7 +2247,12 @@ public partial class TaxService : ITaxService
 
     public async Task<TaxReportResponse> PullDocumentIntoReportAsync(Guid companyId, Guid reportId, Guid documentId)
     {
-        var report = await _db.TaxReports
+        // ⚠️ AsNoTracking ทั้งการอ่าน — งานนี้ "เขียนจริง" แค่ 2 อย่าง: บรรทัดใหม่
+        // 1 แถว (INSERT) กับยอดรวมรายงาน (UPDATE แบบ set-based) การ track รายงาน +
+        // บรรทัดเดิมทั้งชุดไว้ทำให้ SaveChanges พ่วง UPDATE แถวเดิมทุกแถวออกไปด้วย
+        // ซึ่งเป็นต้นเหตุ DbUpdateConcurrencyException ("expected 1 row, affected 0")
+        // ที่ผู้ใช้เจอทุกครั้งกับทุกรายงาน
+        var report = await _db.TaxReports.AsNoTracking()
             .Include(r => r.Lines)
             .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
@@ -2301,7 +2320,8 @@ public partial class TaxService : ITaxService
         if (pastWindow)
             desc = "⚠️ " + desc + " — ใบกำกับเกิน 6 เดือน อาจเครดิตภาษีซื้อไม่ได้";
 
-        report.Lines.Add(new TaxReportLine
+        // ── เขียนจริงขั้นที่ 1: INSERT บรรทัดใหม่แถวเดียว ──────────────────
+        var newLine = new TaxReportLine
         {
             TaxReportId = report.Id,
             LineOrder = nextOrder,
@@ -2314,47 +2334,61 @@ public partial class TaxService : ITaxService
             TaxAmount = doc.VatAmount,
             IncomeTypeCode = isInput ? "INPUT" : "OUTPUT",
             DocumentId = doc.Id
-        });
-
-        RecalcVatTotals(report);
-        report.UpdatedAt = DateTime.UtcNow;
-
-        // บันทึก "บรรทัดใหม่ + ยอดรวม" ก่อน — ขั้นตอนนี้คือหัวใจของการดึงเอกสาร
-        // (การจัดลำดับ §87 เป็นเรื่องการแสดงผล ทำแยกทีหลังได้)
+        };
+        _db.TaxReportLines.Add(newLine);
         try
         {
             await _db.SaveChangesAsync();
         }
         catch (DbUpdateConcurrencyException ex)
         {
-            // "expected to affect 1 row but affected 0" = EF พยายาม UPDATE แถวที่ไม่มี
-            // อยู่จริงแล้ว. ถ้าเป็นแถวของ "รายงานนี้" แปลว่าถูกลบ/สร้างใหม่ระหว่างทาง
-            // ผู้ใช้ต้องรีเฟรช; ถ้าเป็นแถวอื่น (entity ค้างจาก operation ก่อนหน้าใน
-            // request เดียวกันที่ save ไม่ผ่านแล้ว EF ไม่ล้าง tracker ให้) = ไม่เกี่ยว
-            // กับงานนี้ → ตัดออกแล้วบันทึกใหม่ ไม่ให้พาลงานผู้ใช้ล้มไปด้วย
-            var ownRowStale = ex.Entries.Any(e => e.Entity is TaxReport or TaxReportLine);
-            if (ownRowStale)
-                throw new InvalidOperationException(
-                    "รายงานภาษีงวดนี้ถูกแก้ไข/สร้างใหม่ระหว่างที่เปิดหน้าอยู่ — "
-                    + "กรุณารีเฟรชหน้าแล้วกด \"ดึงเอกสาร\" อีกครั้ง");
-
-            foreach (var e in ex.Entries) e.State = EntityState.Detached;
+            // เราไม่ได้ track รายงาน/บรรทัดเดิมแล้ว → แถวที่ค้างจึงเป็นของงานอื่น
+            // ใน request เดียวกัน (SaveChanges ที่ล้มเหลวก่อนหน้าไม่ล้าง tracker ให้)
+            // → ตัดออกแล้วบันทึกใหม่ ไม่ให้พาลงานของผู้ใช้ล้มไปด้วย
+            foreach (var e in ex.Entries)
+                if (!ReferenceEquals(e.Entity, newLine)) e.State = EntityState.Detached;
             await _db.SaveChangesAsync();
         }
 
-        // §87 — จัดลำดับตามวันที่ (best-effort): ล้มเหลวได้โดยไม่กระทบผลการดึง
+        // ── เขียนจริงขั้นที่ 2: ยอดรวมรายงาน (set-based ไม่ผ่าน change tracker) ──
+        var allLines = await _db.TaxReportLines.AsNoTracking()
+            .Where(l => l.TaxReportId == report.Id)
+            .ToListAsync();
+        var totals = new TaxReport { TaxType = report.TaxType, Lines = allLines };
+        RecalcVatTotals(totals);
+        await _db.TaxReports.Where(r => r.Id == report.Id && r.CompanyId == companyId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.OutputVat, totals.OutputVat)
+                .SetProperty(r => r.InputVat, totals.InputVat)
+                .SetProperty(r => r.NetVat, totals.NetVat)
+                .SetProperty(r => r.UpdatedAt, DateTime.UtcNow));
+
+        // ── §87 จัดลำดับตามวันที่ (best-effort) — ล้มเหลวได้โดยไม่กระทบผลการดึง ──
         try
         {
-            NormalizeReportLineOrder(report);
-            if (_db.ChangeTracker.HasChanges()) await _db.SaveChangesAsync();
+            var before = allLines.ToDictionary(l => l.Id, l => l.LineOrder);
+            var ordered = new TaxReport { TaxType = report.TaxType, Lines = allLines };
+            NormalizeReportLineOrder(ordered);
+            // อัปเดตเฉพาะแถวที่ลำดับเปลี่ยนจริง (ปกติไม่กี่แถว) — ไม่ยิงทั้งรายงาน
+            foreach (var l in allLines.Where(l => before[l.Id] != l.LineOrder))
+            {
+                var order = l.LineOrder;
+                await _db.TaxReportLines.Where(x => x.Id == l.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.LineOrder, order));
+            }
         }
-        catch (DbUpdateConcurrencyException)
+        catch (Exception ex)
         {
-            foreach (var e in _db.ChangeTracker.Entries<TaxReportLine>().ToList())
-                if (e.State == EntityState.Modified) e.State = EntityState.Unchanged;
+            // ลำดับเป็นเรื่องการแสดงผลล้วน — ดึงเอกสารสำเร็จไปแล้ว ห้าม throw ทับ
+            System.Diagnostics.Trace.TraceWarning(
+                $"NormalizeReportLineOrder failed for report {report.Id}: {ex.Message}");
         }
 
-        return MapToResponse(report);
+        // อ่านรายงานใหม่จาก DB เพื่อคืนสถานะล่าสุดให้ UI
+        var fresh = await _db.TaxReports.AsNoTracking()
+            .Include(r => r.Lines)
+            .FirstAsync(r => r.Id == report.Id && r.CompanyId == companyId);
+        return MapToResponse(fresh);
     }
 
     public async Task<object> GetVatDebugAsync(Guid companyId, int year, int month)
