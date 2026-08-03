@@ -11413,7 +11413,17 @@ public class DocumentService : IDocumentService
         // ReclassifyUndueInputVatAsync เพื่อให้ UI บอกผู้ใช้ตรง ๆ ว่าขาดอะไร
         // (ก่อนหน้านี้ UI เดาว่า "เลขภาษีผู้ขายไม่ถูก" เสมอ → ผู้ใช้งง)
         List<string>? undueBlockers = null;
-        if (d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null)
+        // แสดงเหตุผลที่ยังเคลมไม่ได้ 2 กรณี:
+        //   (ก) พักอยู่ 11640 (undue) ยังไม่เคลม — เคสเดิม
+        //   (ข) เอกสารซื้อที่มี VAT แต่ยัง "ไม่ได้เข้า ภ.พ.30 จริง" (BecameClaimableAt
+        //       ยังว่าง) และ §86/4 ไม่ครบ — เดิมกรณีนี้ list ว่าง ทำให้ UI ขึ้น
+        //       ข้อความ generic "ใบกำกับยังไม่ครบ" โดยไม่บอก field ที่ขาด (เคสผู้ใช้
+        //       รายงาน: PV VAT ลง 11610 ตรง ๆ ตอนอนุมัติ ไม่ใช่ 11640)
+        var isPurchaseVatDoc = (d.DocumentType is DocumentType.PurchaseInvoice
+                or DocumentType.Expense or DocumentType.PaymentVoucher)
+            && d.VatAmount > 0;
+        var undueUnclaimed = d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null;
+        if (undueUnclaimed || (isPurchaseVatDoc && d.InputVatBecameClaimableAt == null))
         {
             undueBlockers = new List<string>();
             if (d.InputVatExpiredAt.HasValue)
@@ -11430,12 +11440,15 @@ public class DocumentService : IDocumentService
                         + "เคลม ภ.พ.30 ไม่ได้แล้ว รอระบบล้างเป็นค่าใช้จ่าย");
                 var cti = TaxInvoiceCompletenessChecker.Evaluate(d, d.Contact);
                 foreach (var f in cti.MissingFields) undueBlockers.Add("ขาด: " + f);
-                if (!string.IsNullOrWhiteSpace(d.InputVatAccountCodeOverride))
+                if (!string.IsNullOrWhiteSpace(d.InputVatAccountCodeOverride)
+                    && !d.InputVatAccountCodeOverride.StartsWith("116"))
                     undueBlockers.Add($"ตั้งผังภาษีซื้อ override ไว้ ({d.InputVatAccountCodeOverride}) = ตั้งใจไม่เคลม VAT — ต้องล้าง override ก่อนจึงย้ายเข้า 11610 ได้");
                 var claimableVat = d.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
                 if (claimableVat <= 0)
                     undueBlockers.Add("ไม่มีบรรทัดที่เคลมภาษีซื้อได้ (ทุกบรรทัดถูกปิด \"เคลม VAT\" หรือยอด VAT = 0) — ไม่มียอดให้ย้ายเข้า 11610");
             }
+            // §86/4 ครบ + ไม่มี blocker อื่น = ไม่ต้องแสดงอะไร (คืน null ให้ UI เงียบ)
+            if (undueBlockers.Count == 0) undueBlockers = null;
         }
         return new(
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,

@@ -5695,10 +5695,17 @@
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
                   <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เลขจากกระดาษ"></div>
                   <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
-                  <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" maxlength="5"></div>
+                  <div><div class="text-xs text-gray-500">รหัสสาขา</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" maxlength="5">
+                    <div style="font-size:10px;color:#9333ea;margin-top:2px">⚙️ ${d.supplierBranchCode ? 'จากใบนี้' : (d.contact?.branchCode ? 'ดึงจากผู้ติดต่อ' : 'สำนักงานใหญ่')} — แก้เฉพาะถ้าใบกำกับระบุสาขาอื่น</div></div>
                 </div>
+                ${(d.undueInputVatBlockers || []).length ? `
+                <div style="margin-top:8px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#991b1b">
+                  <b>ยังเคลม ภ.พ.30 ไม่ได้ — ขาดข้อมูลนี้:</b>
+                  <ul style="margin:4px 0 0 18px;padding:0">${d.undueInputVatBlockers.map(b => `<li>${this.escapeHtml(b)}</li>`).join('')}</ul>
+                  ${d.undueInputVatBlockers.some(b => b.includes('ผู้ขาย')) ? `<div style="margin-top:6px">ชื่อ/เลขภาษี/ที่อยู่/สาขา<b>ของผู้ขาย</b> ดึงจากผู้ติดต่อ ไม่ได้กรอกในหน้านี้ → <a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary);font-weight:700">แก้ข้อมูลผู้ติดต่อ</a> (มักขาด "ที่อยู่") แล้วกลับมากด "บันทึกข้อมูลใบกำกับ" อีกครั้ง</div>` : ''}
+                </div>` : ''}
                 <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="Page.completeTaxInvoice('${d.id}')">💾 บันทึกข้อมูลใบกำกับ</button>` : ''}
-                <div class="text-xs text-gray-400" style="margin-top:6px">การเคลม/ไม่เคลมเป็นดุลพินิจผู้บันทึก — ระบบสร้าง JE ปรับบัญชีให้อัตโนมัติ และกันการถอนเคลมจากงวด ภ.พ.30 ที่ยื่นแล้ว</div>
+                <div class="text-xs text-gray-400" style="margin-top:6px">ชื่อ/ที่อยู่/เลขภาษี/สาขาผู้ขาย ดึงจาก "ผู้ติดต่อ" อัตโนมัติ (ไม่ต้องกรอกซ้ำ) — หน้านี้กรอกเฉพาะเลขที่/วันที่ใบกำกับของผู้ขาย · การเคลม/ไม่เคลมเป็นดุลพินิจผู้บันทึก ระบบสร้าง JE ปรับให้อัตโนมัติ + กันถอนเคลมจากงวดที่ยื่นแล้ว</div>
               </div>`;
             })() : ''}
             ${(['PaymentVoucher','Expense','PurchaseInvoice'].includes(d.documentType)
