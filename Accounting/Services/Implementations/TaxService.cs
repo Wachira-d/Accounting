@@ -2197,8 +2197,29 @@ public partial class TaxService : ITaxService
         if (!string.IsNullOrWhiteSpace(s) && byNumber.Count == 0)
             docs = await q.OrderByDescending(d => d.DocumentDate).Take(500).ToListAsync();
         await _db.HydrateContactsAsync(companyId, docs);
+
+        // แสดงเฉพาะเอกสารที่ "ดึงได้จริง" — ต้องผ่านกฎเดียวกับ PullDocumentIntoReport
+        // ไม่งั้นรายการที่โชว์กดแล้ว error (เคสผู้ใช้รายงาน): PV ที่ยังไม่ติ๊ก
+        // "ใช้งานใบกำกับภาษี", VAT ที่ override ลงต้นทุน (ไม่เคลม), หรือภาษีซื้อ
+        // ที่ยังพัก 11640 (ใบกำกับ §86/4 ไม่ครบ) — ยังเคลม ภ.พ.30 ไม่ได้
+        static bool IsPullable(Document d)
+        {
+            // PV ต้องอ้างใบกำกับซื้อ (ขอเครดิต) — ไม่งั้นจ่ายเฉย ๆ §82/5(1)
+            if (d.DocumentType == DocumentType.PaymentVoucher && !d.HasTaxInvoiceReference)
+                return false;
+            // override ผังภาษีซื้อนอก 116 = ตั้งใจไม่เคลม (ลงต้นทุน)
+            if (!string.IsNullOrWhiteSpace(d.InputVatAccountCodeOverride)
+                && !d.InputVatAccountCodeOverride.StartsWith("116"))
+                return false;
+            // VAT ยังพัก 11640 (ใบกำกับ §86/4 ไม่ครบ) — เคลมยังไม่ได้จนกว่าจะเติมครบ
+            if (d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null)
+                return false;
+            return true;
+        }
+
         return docs
             .Where(d => !claimed.Contains(d.Id))
+            .Where(IsPullable)
             .Where(d => string.IsNullOrWhiteSpace(s)
                 || d.DocumentNumber.Contains(s)
                 || (d.Contact?.Name?.Contains(s) ?? false))
