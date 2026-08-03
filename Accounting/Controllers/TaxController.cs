@@ -80,8 +80,20 @@ public class TaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> PullDocument(
         Guid companyId, Guid reportId, [FromBody] PullDocumentRequest request)
     {
-        var result = await _taxService.PullDocumentIntoReportAsync(companyId, reportId, request.DocumentId);
-        return Ok(new ApiResponse<TaxReportResponse>(true, result, "ดึงเอกสารเข้ารายงานสำเร็จ"));
+        try
+        {
+            var result = await _taxService.PullDocumentIntoReportAsync(companyId, reportId, request.DocumentId);
+            return Ok(new ApiResponse<TaxReportResponse>(true, result, "ดึงเอกสารเข้ารายงานสำเร็จ"));
+        }
+        catch (Exception ex) when (ex is not KeyNotFoundException and not InvalidOperationException
+            and not UnauthorizedAccessException)
+        {
+            // exception ที่ไม่ใช่ business rule (null-ref/DB/ฯลฯ) เดิมตกไป generic
+            // 500 "เกิดข้อผิดพลาดภายในระบบ" ไม่บอกอะไร → คืนข้อความจริงพอให้ผู้ใช้/
+            // ซัพพอร์ตเห็น (ยังคง log เต็มผ่าน ExceptionMiddleware → ErrorLogs เดิม)
+            throw new InvalidOperationException(
+                $"ดึงเอกสารเข้ารายงานไม่สำเร็จ: {ex.Message} — แจ้งทีมงานพร้อมเลขเอกสารได้เลย");
+        }
     }
 
     /// <summary>ส่งออกรายงานภาษีเป็นไฟล์ Excel (.xlsx)</summary>

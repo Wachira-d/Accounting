@@ -318,7 +318,14 @@
           <td>${r.year}</td>
           <td>${this.monthNames[r.month]}</td>
           <td class="text-right">${Layout.money(r.outputVat)}</td>
-          <td class="text-right">${Layout.money(r.inputVat)}</td>
+          <td class="text-right">${Layout.money(r.inputVat)}${
+            // รายงานภาษี = snapshot สร้างครั้งเดียว ไม่ refresh เอง — ใบที่บันทึก/
+            // ติ๊กเคลมหลัง generate จะไม่ขึ้นจนกด "สร้างใหม่". เตือนเมื่อยัง draft
+            // และยอดทั้งขาย/ซื้อ = 0 (มักคือรายงานว่างที่ยังไม่ได้ดึงเอกสารเข้า)
+            (r.status !== 'Filed' && String(r.taxType).toLowerCase().includes('vat')
+              && Number(r.outputVat||0) === 0 && Number(r.inputVat||0) === 0)
+              ? `<div style="font-size:10px;color:#b45309;margin-top:2px" title="รายงานเป็น snapshot ไม่อัปเดตเองเมื่อมีเอกสารใหม่ — กด 'สร้างใหม่' เพื่อดึงเอกสารในงวดนี้เข้ารายงาน">⚠️ ว่าง — กด "สร้างใหม่"?</div>`
+              : ''}</td>
           <td class="text-right font-semibold ${r.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(r.netVat)}</td>
           <td>${Layout.statusBadge(r.status)}</td>
           <td>${r.filedDate ? Layout.date(r.filedDate) : '-'}</td>
