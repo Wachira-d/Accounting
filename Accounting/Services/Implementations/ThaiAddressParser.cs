@@ -40,6 +40,27 @@ public static class ThaiAddressParser
     private static readonly Regex ProvinceRegex = new(
         @"(?:จังหวัด|จ\.)\s*([^\s,\d]+)",
         RegexOptions.Compiled);
+
+    // 77 จังหวัด — ชื่อทุกจังหวัดเป็น token เดียว (ไม่มีช่องว่าง) จึง match
+    // แบบ exact token ได้แม่นยำ. ใช้เป็น fallback เมื่อที่อยู่ไม่มีคำนำหน้า
+    // "จ." (เคสจริง: contact/company ที่ import/OCR เก็บที่อยู่เป็นก้อนเดียว
+    // "44 หมู่ 9 หนองเทียง พนัสนิคม ชลบุรี 20140" → parser เดิมแยกไม่ได้เลย
+    // เพราะทุก regex ต้องมี marker นำ).
+    private static readonly HashSet<string> ProvinceNames = new()
+    {
+        "กรุงเทพมหานคร", "กระบี่", "กาญจนบุรี", "กาฬสินธุ์", "กำแพงเพชร", "ขอนแก่น",
+        "จันทบุรี", "ฉะเชิงเทรา", "ชลบุรี", "ชัยนาท", "ชัยภูมิ", "ชุมพร", "เชียงราย",
+        "เชียงใหม่", "ตรัง", "ตราด", "ตาก", "นครนายก", "นครปฐม", "นครพนม",
+        "นครราชสีมา", "นครศรีธรรมราช", "นครสวรรค์", "นนทบุรี", "นราธิวาส", "น่าน",
+        "บึงกาฬ", "บุรีรัมย์", "ปทุมธานี", "ประจวบคีรีขันธ์", "ปราจีนบุรี", "ปัตตานี",
+        "พระนครศรีอยุธยา", "พะเยา", "พังงา", "พัทลุง", "พิจิตร", "พิษณุโลก",
+        "เพชรบุรี", "เพชรบูรณ์", "แพร่", "ภูเก็ต", "มหาสารคาม", "มุกดาหาร",
+        "แม่ฮ่องสอน", "ยโสธร", "ยะลา", "ร้อยเอ็ด", "ระนอง", "ระยอง", "ราชบุรี",
+        "ลพบุรี", "ลำปาง", "ลำพูน", "เลย", "ศรีสะเกษ", "สกลนคร", "สงขลา", "สตูล",
+        "สมุทรปราการ", "สมุทรสงคราม", "สมุทรสาคร", "สระแก้ว", "สระบุรี", "สิงห์บุรี",
+        "สุโขทัย", "สุพรรณบุรี", "สุราษฎร์ธานี", "สุรินทร์", "หนองคาย", "หนองบัวลำภู",
+        "อ่างทอง", "อำนาจเจริญ", "อุดรธานี", "อุตรดิตถ์", "อุทัยธานี", "อุบลราชธานี",
+    };
     // หยุดจับเมื่อ token ถัดไปเป็น marker เขตปกครอง — เดิมจับ "บางนาตราด ตำบล
     // บางนา" รวมชื่อตำบลเข้ามาในชื่อถนน.
     private static readonly Regex StreetRegex = new(
@@ -87,6 +108,43 @@ public static class ThaiAddressParser
             // Special case: "กรุงเทพฯ" or "กรุงเทพมหานคร" without จ. prefix
             if (text.Contains("กรุงเทพมหานคร")) province = "กรุงเทพมหานคร";
             else if (text.Contains("กรุงเทพฯ") || text.Contains("กทม")) province = "กรุงเทพมหานคร";
+        }
+
+        // Fallback: ที่อยู่ไม่มีคำนำหน้าเลย (ไม่มี ต./อ./จ./แขวง/เขต) — เคสจริงจาก
+        // contact/company ที่ import/OCR เก็บเป็นก้อนเดียว. ยึด "ชื่อจังหวัด" ที่รู้จัก
+        // (77 จังหวัด) เป็นหลัก แล้วอนุมานอำเภอ/ตำบลจากลำดับ token มาตรฐานที่อยู่ไทย:
+        //   ... <ตำบล> <อำเภอ> <จังหวัด> <รหัสไปรษณีย์>
+        // ทำงานเฉพาะเมื่อ "ไม่พบ marker ใด ๆ" เพื่อไม่รบกวนที่อยู่ที่มีคำนำหน้าถูกอยู่แล้ว.
+        var noMarkers = !subDistMatch.Success && !distMatch.Success && !provMatch.Success
+            && province == null;
+        if (noMarkers)
+        {
+            // ตัดส่วนที่รู้แน่ (บ้านเลขที่/หมู่/รหัสไปรษณีย์/ถนน/เลขที่/อาคาร) ออก
+            // เหลือเฉพาะ token ที่เป็นชื่อเขตปกครอง แล้วยึดจังหวัดจากท้าย.
+            var cleaned = text;
+            cleaned = Regex.Replace(cleaned, @"(?:อาคาร|Building)\s+\S+", " ");
+            cleaned = Regex.Replace(cleaned, @"(?:ถนน|ถ\.|Road|Rd\.?)\s*\S+", " ");
+            cleaned = Regex.Replace(cleaned, @"(?:หมู่ที่|หมู่|ม\.)\s*[0-9๐-๙]+", " ");
+            cleaned = Regex.Replace(cleaned, @"(?:ซอย|ซ\.)\s*\S+", " ");
+            cleaned = Regex.Replace(cleaned, @"เลขที่", " ");
+            cleaned = Regex.Replace(cleaned, @"\b\d[\d/\-]*\b", " ");   // เลขทุกชุด (บ้านเลขที่/ไปรษณีย์)
+            var tokens = cleaned.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t.Trim().TrimEnd('ฯ'))
+                .Where(t => t.Length > 0)
+                .ToList();
+
+            // จังหวัด = token สุดท้ายที่ตรงกับรายชื่อ 77 จังหวัด
+            var provIdx = -1;
+            for (var i = tokens.Count - 1; i >= 0; i--)
+                if (ProvinceNames.Contains(tokens[i])) { provIdx = i; break; }
+
+            if (provIdx >= 0)
+            {
+                province = tokens[provIdx];
+                // อำเภอ = token ก่อนจังหวัด, ตำบล = token ก่อนอำเภอ (ลำดับ TH มาตรฐาน)
+                if (provIdx - 1 >= 0) district = tokens[provIdx - 1];
+                if (provIdx - 2 >= 0) subDistrict = tokens[provIdx - 2];
+            }
         }
 
         return new ParsedAddressResponse(
