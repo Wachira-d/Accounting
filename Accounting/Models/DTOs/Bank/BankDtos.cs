@@ -341,7 +341,14 @@ public record UnmatchedItem(
     DateTime Date,
     string? Description,
     decimal Amount,         // unsigned magnitude; sign convention up to the workbench
-    string? ContactName);
+    string? ContactName,
+    /// <summary>ยอด "ขาที่วิ่งผ่านบัญชีธนาคารนี้" ของรายการ แบบมีเครื่องหมาย
+    /// (+ เงินเข้า / − เงินออก). สำคัญกับ JE หลายขา: JV เงินเดือน footing
+    /// 77,678 แต่ขาที่ออกจากธนาคารจริงคือ 70,110 (ที่เหลือคือ ปกส./ภงด.1
+    /// ค้างจ่ายที่ยังไม่ได้จ่ายออก) — ตัวเลขที่ต้องตรงกับสเตทเมนต์คือขาธนาคาร
+    /// ไม่ใช่ footing. null = รายการนี้ไม่มีขาที่แตะผังบัญชีของธนาคารนี้เลย
+    /// (จับคู่ได้แต่ต้องระวัง — ระบบเตือนใน UI)</summary>
+    decimal? BankLegAmount = null);
 
 // ===== Learning-backed suggestion =====
 

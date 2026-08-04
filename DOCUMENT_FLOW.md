@@ -1104,7 +1104,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แก้ chatbot (public/tenant/admin) | `ChatbotService` + `KnowledgeBaseService` + `ChatAnswerDistillationModel` — สถาปัตยกรรม+แผนอยู่ `CHATBOT_PLAN.md` |
 | แก้ rate limit / purge ของแชท | `ChatRateLimiter` (ตาราง `ChatRateBuckets`) / `ChatRetentionPurgeJob` |
 | แก้คลังความรู้ chatbot (admin) | `AdminChatController` (kb/*, metrics) + UI `/admin/chat-kb.html` |
-| แก้จับคู่ธนาคาร M:N (หลายโอน → เอกสารเดียว) | `BankService.CreateReconciliationGroupAsync` / UI: `bank.html` `GroupReconcile` (`applyPreselect`, `autoFillBankToMatch`) |
+| แก้จับคู่ธนาคาร M:N (หลายโอน → เอกสารเดียว) | `BankService.CreateReconciliationGroupAsync` / UI: `bank.html` `GroupReconcile` (`applyPreselect`, `autoFillBankToMatch`, `signItemsToBankSide`) |
+| แก้ยอด JE ที่ใช้กระทบยอด (ขาธนาคาร vs footing) | `BankService.GetUnmatchedItemsAsync` (`jeBankLeg`) + `ResolveItemAmountAsync` — ใช้ `BankAccount.LinkedAccountId` หาบรรทัดที่แตะธนาคารจริง |
 | แก้กำหนดยื่น/กฎยื่นแบบเปล่า | `StatutoryRemittanceService.DueDates` / `FilingRule` (มี unit test) |
 | แก้ WHT cert auto-issue | `WithholdingTaxCertService` |
 | แก้ PDF template | `PdfGenerationService.DocumentRenderer.cs` / `HtmlRenderer.cs` |
