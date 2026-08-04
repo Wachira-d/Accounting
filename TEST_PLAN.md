@@ -179,6 +179,13 @@
 | CIL-U-03 | U | target CertificateInLieu ไม่มีเลขที่บนกระดาษ | ผ่าน critical-fields gate (เลขที่ไม่บังคับ); ยังบังคับวันที่+ยอด |
 | CIL-I-01 | I | auto-create CertInLieu จาก LINE | เอกสารมี CertificateReason + CertifierName + รูปบิล relink เป็นไฟล์แนบ |
 | CIL-S-01 | S | ถ่ายบิลแม่ค้าตลาดจริงส่งเข้า LINE | ได้ใบรับรองแทนใบเสร็จร่าง พิมพ์ PDF ได้ ฟอร์มครบช่องผู้รับรอง/พยาน |
+| LNE-I-08 | I | สร้างเอกสารสำเร็จ → Flex card | มีปุ่มอนุมัติ (postback) + ปุ่มตรวจ (uri); flex push fail → fallback ข้อความธรรมดา |
+| LNE-I-09 | I | postback approve จาก role Staff/Viewer/Auditor | ปฏิเสธพร้อมคำอธิบาย — เอกสารยังเป็นร่าง |
+| LNE-I-10 | I | postback approve ด้วย docId ของบริษัทอื่น (data ปลอม) | ปฏิเสธ (tenant guard) — ไม่แตะเอกสาร |
+| LNE-I-11 | I | postback approve ซ้ำ / เอกสาร Approved-Paid-Voided แล้ว | ตอบสถานะปัจจุบัน ไม่ approve ซ้ำ |
+| LNE-I-12 | I | postback approve สำเร็จ | เลขเอกสารจริงออก + reply เลขที่; JE/ภาษีลงครบเหมือน approve หน้าเว็บ |
+| LNE-I-13 | I | นักบัญชีอนุมัติบนเว็บ เอกสารที่มาจาก LINE | ผู้ส่งบิลได้ LINE แจ้ง (เลขที่/ยอด); ผู้อนุมัติ=ผู้ส่ง → ไม่แจ้งซ้ำ |
+| LNE-I-14 | I | ส่งอัลบั้มหลายรูปรวดเดียว | ทุกใบถูกประมวลผลแยกกัน — 1 รูป = 1 scan = 1 การ์ด |
 
 ---
 

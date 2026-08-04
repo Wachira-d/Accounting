@@ -47,27 +47,39 @@ public class LineWebhookController : ControllerBase
             foreach (var ev in events.EnumerateArray())
             {
                 var type = ev.TryGetProperty("type", out var t) ? t.GetString() : null;
-                if (type != "message") continue;
+                if (type is not ("message" or "postback")) continue;
                 var src = ev.GetProperty("source");
                 if (src.GetProperty("type").GetString() != "user") continue; // ignore group/room for now
                 var userId = src.GetProperty("userId").GetString() ?? "";
 
-                var msg = ev.GetProperty("message");
-                var msgType = msg.GetProperty("type").GetString();
                 string? reply = null;
-                if (msgType == "text")
+                if (type == "postback")
                 {
-                    reply = await _bot.HandleMessageAsync(userId, msg.GetProperty("text").GetString() ?? "");
+                    // ปุ่มกดใน Flex card (เช่น "✅ อนุมัติเลย")
+                    var data = ev.TryGetProperty("postback", out var pb)
+                        && pb.TryGetProperty("data", out var pd) ? pd.GetString() : null;
+                    if (!string.IsNullOrEmpty(data))
+                        reply = await _bot.HandlePostbackAsync(userId, data);
                 }
-                else if (msgType is "image" or "file")
+                else
                 {
-                    // "โยนบิลเข้าไลน์" — รูปถ่ายใบเสร็จ หรือไฟล์ PDF → OCR →
-                    // สร้างเอกสารให้ทันที (เดิม path นี้ถูก drop เงียบ ๆ ผู้ใช้
-                    // ส่งรูปมาแล้วไม่มีอะไรตอบกลับเลย)
-                    var messageId = msg.TryGetProperty("id", out var mid) ? mid.GetString() : null;
-                    var fileName = msg.TryGetProperty("fileName", out var fn) ? fn.GetString() : null;
-                    if (!string.IsNullOrEmpty(messageId))
-                        reply = await _bot.HandleImageAsync(userId, messageId, fileName);
+                    var msg = ev.GetProperty("message");
+                    var msgType = msg.GetProperty("type").GetString();
+                    if (msgType == "text")
+                    {
+                        reply = await _bot.HandleMessageAsync(userId, msg.GetProperty("text").GetString() ?? "");
+                    }
+                    else if (msgType is "image" or "file")
+                    {
+                        // "โยนบิลเข้าไลน์" — รูปถ่ายใบเสร็จ หรือไฟล์ PDF → OCR →
+                        // สร้างเอกสารให้ทันที (เดิม path นี้ถูก drop เงียบ ๆ ผู้ใช้
+                        // ส่งรูปมาแล้วไม่มีอะไรตอบกลับเลย). อัลบั้มหลายรูป = LINE
+                        // ส่งทีละ event → วน loop นี้ประมวลผลครบทุกใบอยู่แล้ว
+                        var messageId = msg.TryGetProperty("id", out var mid) ? mid.GetString() : null;
+                        var fileName = msg.TryGetProperty("fileName", out var fn) ? fn.GetString() : null;
+                        if (!string.IsNullOrEmpty(messageId))
+                            reply = await _bot.HandleImageAsync(userId, messageId, fileName);
+                    }
                 }
                 if (!string.IsNullOrEmpty(reply))
                     await _bot.ReplyAsync(userId, reply);

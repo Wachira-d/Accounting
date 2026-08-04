@@ -417,10 +417,14 @@ public class LineBotService : ILineBotService
         }
 
         // ── 6) OCR + auto-create (ฉบับร่าง) — path เดียวกับหน้าเว็บ ──
+        // metadata ฝัง lineUserId ไว้กับ scan → ตอนนักบัญชีอนุมัติบนเว็บ
+        // ApproveDocumentAsync จะแจ้งกลับผู้ส่งบิลทางไลน์ได้ (ปิดลูปให้ผู้ส่ง
+        // รู้ผลโดยไม่ต้องเปิดแอป)
+        var lineMeta = JsonSerializer.Serialize(new { sourceChannel = "line", lineUserId });
         Models.DTOs.Ocr.OcrResultResponse result;
         try
         {
-            result = await _ocr.ScanAsync(companyId, attachmentId, null, null, autoCreate: true);
+            result = await _ocr.ScanAsync(companyId, attachmentId, null, lineMeta, autoCreate: true);
         }
         catch (Exception ex)
         {
@@ -433,7 +437,179 @@ public class LineBotService : ILineBotService
         if (result.IsDuplicate || result.ScanStatus != "Completed" || result.OcrEngine == "EtaxXml")
             await _ocrQuota.RefundAsync(companyId);
 
+        // สร้างเอกสารสำเร็จ → ส่งการ์ด Flex พร้อมปุ่ม "อนุมัติเลย" กดจบในแชท
+        // (ส่งไม่ผ่านก็ตกลงมาใช้ข้อความธรรมดา — ผู้ใช้ต้องได้คำตอบเสมอ)
+        if (result.CreatedDocumentId.HasValue && !result.IsDuplicate
+            && await TrySendCreatedDocFlexAsync(lineUserId, result))
+            return null;
+
         return await BuildScanReplyAsync(companyId, result);
+    }
+
+    /// <summary>การ์ดสรุปเอกสารที่สร้าง + ปุ่ม "✅ อนุมัติเลย" (postback) และ
+    /// "🔍 ตรวจ/แก้ไข" (ลิงก์หน้า review). คืน false เมื่อส่งไม่สำเร็จเพื่อให้
+    /// caller ตกลงมาใช้ text reply.</summary>
+    private async Task<bool> TrySendCreatedDocFlexAsync(string lineUserId, Models.DTOs.Ocr.OcrResultResponse r)
+    {
+        try
+        {
+            var doc = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == r.CreatedDocumentId!.Value)
+                .Select(d => new { d.DocumentType, d.TotalAmount, d.VatAmount })
+                .FirstOrDefaultAsync();
+            if (doc == null) return false;
+
+            var baseUrl = (await _db.SiteSettings.AsNoTracking()
+                .Select(s => s.AppBaseUrl).FirstOrDefaultAsync())?.TrimEnd('/');
+            var vendor = string.IsNullOrWhiteSpace(r.ExtractedVendorName) ? "ไม่ทราบผู้ขาย" : r.ExtractedVendorName;
+            var isCert = doc.DocumentType == Models.Enums.DocumentType.CertificateInLieu;
+
+            var bodyRows = new List<object>
+            {
+                new { type = "text", text = ThaiDocTypeName(doc.DocumentType), weight = "bold", size = "lg", color = "#1e40af" },
+                new { type = "text", text = "ฉบับร่าง — เลขที่จริงออกตอนอนุมัติ", size = "xs", color = "#94a3b8" },
+                new { type = "text", text = vendor!, size = "md", margin = "md", wrap = true },
+                new
+                {
+                    type = "box", layout = "baseline", margin = "sm", contents = new object[]
+                    {
+                        new { type = "text", text = "ยอดรวม", color = "#666666", size = "sm", flex = 0 },
+                        new { type = "text", text = $"฿{doc.TotalAmount:N2}", weight = "bold", size = "xl", align = "end" },
+                    }
+                },
+            };
+            if (doc.VatAmount > 0)
+                bodyRows.Add(new { type = "text", text = $"VAT {doc.VatAmount:N2} ฿", size = "sm", color = "#666666" });
+            if (isCert)
+                bodyRows.Add(new
+                {
+                    type = "text", size = "xs", color = "#b45309", wrap = true, margin = "md",
+                    text = "📌 บิลไม่มีเลขผู้เสียภาษี — ออกใบรับรองแทนใบเสร็จรับเงินให้ พร้อมแนบรูปเป็นหลักฐาน (§65 ตรี)",
+                });
+
+            var buttons = new List<object>
+            {
+                new
+                {
+                    type = "button", style = "primary", color = "#16a34a", height = "sm",
+                    action = new
+                    {
+                        type = "postback", label = "✅ อนุมัติเลย",
+                        data = $"approve:{r.CreatedDocumentId!.Value}",
+                        displayText = "อนุมัติเอกสาร",
+                    }
+                },
+            };
+            if (!string.IsNullOrEmpty(baseUrl))
+                buttons.Add(new
+                {
+                    type = "button", style = "secondary", height = "sm",
+                    action = new
+                    {
+                        type = "uri", label = "🔍 ตรวจ / แก้ไขก่อน",
+                        uri = $"{baseUrl}/pages/document-scan.html?reviewScan={r.Id}",
+                    }
+                });
+
+            var bubble = new
+            {
+                type = "bubble",
+                body = new { type = "box", layout = "vertical", spacing = "sm", contents = bodyRows.ToArray() },
+                footer = new { type = "box", layout = "vertical", spacing = "sm", contents = buttons.ToArray() },
+            };
+            return await PushFlexAsync(lineUserId,
+                $"สร้าง{ThaiDocTypeName(doc.DocumentType)} {vendor} ฿{doc.TotalAmount:N2} — กดอนุมัติได้เลย", bubble);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LINE flex card failed — falling back to text reply");
+            return false;
+        }
+    }
+
+    /// <summary>postback จากปุ่มใน Flex card — "approve:{documentId}".
+    /// data ปลอมได้ (ไม่ได้มาจาก UI เสมอ) → ตรวจ binding + tenant + role
+    /// ทุกครั้งก่อนแตะเอกสาร.</summary>
+    public async Task<string?> HandlePostbackAsync(string lineUserId, string data)
+    {
+        if (string.IsNullOrWhiteSpace(data) || !data.StartsWith("approve:")) return null;
+        if (!Guid.TryParse(data["approve:".Length..], out var docId))
+            return null;
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.LineUserId == lineUserId);
+        if (user == null)
+            return "👋 ยังไม่ได้เชื่อมต่อบัญชี — ผูกบัญชีก่อนแล้วลองใหม่ (ส่ง: ผูก {รหัส 6 หลัก})";
+
+        var doc = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == docId && !d.IsDeleted)
+            .Select(d => new { d.Id, d.CompanyId, d.Status, d.DocumentNumber, d.DocumentType, d.TotalAmount })
+            .FirstOrDefaultAsync();
+        if (doc == null) return "❌ ไม่พบเอกสาร — อาจถูกลบไปแล้ว";
+
+        // tenant guard: ต้องเป็นสมาชิกบริษัทเจ้าของเอกสาร
+        var membership = await _db.CompanyUsers.AsNoTracking()
+            .FirstOrDefaultAsync(cu => cu.CompanyId == doc.CompanyId && cu.UserId == user.Id);
+        if (membership == null) return "❌ คุณไม่มีสิทธิ์ในบริษัทของเอกสารนี้";
+
+        // role guard: การอนุมัติ = ออกเลขจริง + ลง JE/ภาษี — ให้เฉพาะ role
+        // ที่อนุมัติในระบบได้ (Staff/Viewer/Auditor สร้างหรือดูได้ แต่อนุมัติไม่ได้)
+        if (membership.Role is not (Models.Enums.UserRole.Owner or Models.Enums.UserRole.Accountant
+            or Models.Enums.UserRole.ExternalAccountant or Models.Enums.UserRole.SystemAdmin))
+            return "❌ สิทธิ์ของคุณอนุมัติเอกสารไม่ได้ — เอกสารบันทึกเป็นฉบับร่างไว้แล้ว แจ้งเจ้าของกิจการ/นักบัญชีให้อนุมัติในระบบ";
+
+        if (doc.Status is not (Models.Enums.DocumentStatus.Draft or Models.Enums.DocumentStatus.WaitingApproval))
+        {
+            var statusTh = doc.Status switch
+            {
+                Models.Enums.DocumentStatus.Approved => "อนุมัติแล้ว",
+                Models.Enums.DocumentStatus.Paid => "ชำระแล้ว",
+                Models.Enums.DocumentStatus.Voided => "ถูกยกเลิก",
+                _ => doc.Status.ToString(),
+            };
+            return $"ℹ️ เอกสาร {doc.DocumentNumber} {statusTh}ไปแล้ว — ไม่ต้องทำซ้ำ";
+        }
+
+        try
+        {
+            await _docService.ApproveDocumentAsync(doc.CompanyId, doc.Id, user.Email);
+            var number = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.Id).Select(d => d.DocumentNumber).FirstOrDefaultAsync();
+            return $"✅ อนุมัติแล้ว — {ThaiDocTypeName(doc.DocumentType)} เลขที่ {number}\n"
+                + $"💰 {doc.TotalAmount:N2} ฿ ลงบัญชี + รายงานภาษีให้เรียบร้อย";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LINE postback approve failed for doc {DocId}", doc.Id);
+            return "❌ อนุมัติไม่สำเร็จ: " + ex.Message + "\nเปิดดู/แก้ไขได้ที่หน้าเว็บ";
+        }
+    }
+
+    /// <summary>push flex ผ่าน channel ของบอทเอง (token เดียวกับ ReplyAsync) —
+    /// ผู้ใช้แชทกับบอทช่องนี้ ใช้ token บริษัท (LINE Notify OA) จะส่งไม่ถึง.</summary>
+    private async Task<bool> PushFlexAsync(string lineUserId, string altText, object contents)
+    {
+        var token = _config["Line:ChannelAccessToken"];
+        if (string.IsNullOrEmpty(token)) return false;
+        var client = _httpFactory.CreateClient();
+        client.DefaultRequestHeaders.Add("Authorization", "Bearer " + token);
+        var payload = JsonSerializer.Serialize(new
+        {
+            to = lineUserId,
+            messages = new object[] { new { type = "flex", altText, contents } }
+        });
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+        try
+        {
+            var res = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
+            if (!res.IsSuccessStatusCode)
+                _logger.LogWarning("LINE flex push returned {Status} for {User}", res.StatusCode, lineUserId);
+            return res.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "LINE flex push failed");
+            return false;
+        }
     }
 
     /// <summary>สรุปผลสแกนเป็นข้อความ LINE ที่คนไม่ใช่นักบัญชีอ่านรู้เรื่อง —

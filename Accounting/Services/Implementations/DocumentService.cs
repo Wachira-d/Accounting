@@ -3687,6 +3687,41 @@ public class DocumentService : IDocumentService
         }
         catch (Exception ex) { _logger.LogWarning(ex, "LINE notification failed for document {DocNum}", doc.DocumentNumber); }
 
+        // แจ้งกลับ "ผู้ส่งบิลทางไลน์" — เอกสารที่เกิดจากโยนรูปเข้า LINE bot ฝัง
+        // lineUserId ไว้ใน scan metadata ตอน intake. ผู้ส่ง (มักเป็นพนักงาน
+        // หน้างาน) ควรรู้ว่านักบัญชีอนุมัติแล้วโดยไม่ต้องเปิดแอปมาเช็คเอง.
+        // ข้ามเมื่อผู้อนุมัติคือผู้ส่งเอง (เพิ่งกดปุ่มในแชท — ได้คำตอบจาก
+        // postback อยู่แล้ว). ใช้ companyId=null → token ของบอท (ผู้ใช้แชทกับ
+        // ช่องบอท ส่งจาก OA อื่นของบริษัทจะไม่ถึง). best-effort เสมอ.
+        try
+        {
+            var lineScanMeta = await _db.Set<OcrScanResult>().AsNoTracking()
+                .Where(s => s.CompanyId == companyId && s.CreatedDocumentId == doc.Id
+                    && s.ExternalMetadataJson != null && s.ExternalMetadataJson.Contains("lineUserId"))
+                .Select(s => s.ExternalMetadataJson)
+                .FirstOrDefaultAsync();
+            if (!string.IsNullOrEmpty(lineScanMeta))
+            {
+                using var metaJson = System.Text.Json.JsonDocument.Parse(lineScanMeta);
+                var submitterLineId = metaJson.RootElement.TryGetProperty("lineUserId", out var lu)
+                    ? lu.GetString() : null;
+                if (!string.IsNullOrEmpty(submitterLineId))
+                {
+                    var approverLineId = await _db.Users.AsNoTracking()
+                        .Where(u => u.Email == approvedBy)
+                        .Select(u => u.LineUserId)
+                        .FirstOrDefaultAsync();
+                    if (approverLineId != submitterLineId)
+                        await _lineNotify.PushToUserAsync(null, submitterLineId,
+                            $"✅ บิลที่คุณส่งเข้าไลน์ได้รับการอนุมัติแล้ว\n"
+                            + $"📄 {doc.DocumentNumber} · {contactName}\n"
+                            + $"💰 {doc.TotalAmount:N2} บาท — ลงบัญชีเรียบร้อย");
+                }
+            }
+        }
+        catch (Exception ex)
+        { _logger.LogWarning(ex, "LINE submitter notify failed for doc {DocId}", doc.Id); }
+
         // New per-user / per-channel dispatch via the notification engine —
         // resolves Accounting / Owner recipients per the configured matrix.
         if (_notify != null)

@@ -164,6 +164,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   active company (หลายบริษัท → ให้เลือกก่อนแล้วส่งรูปใหม่)
 - **Quota refund**: กติกาเดียวกับหน้าเว็บ — duplicate / scan fail / e-Tax XML
   ฝังไฟล์ (ไม่ได้ใช้ OCR engine) คืนเครดิต
+- **Flex card + อนุมัติในแชท**: สร้างเอกสารสำเร็จ → ส่ง Flex bubble (ประเภท/
+  ร้าน/ยอด/VAT) พร้อมปุ่ม **"✅ อนุมัติเลย"** (postback `approve:{docId}`) และ
+  **"🔍 ตรวจ/แก้ไขก่อน"** (ลิงก์ reviewScan); ส่ง Flex ไม่ผ่าน → fallback ข้อความ
+  ธรรมดาเสมอ. postback → `HandlePostbackAsync`: **ตรวจ binding + tenant
+  (สมาชิกบริษัทเจ้าของเอกสาร) + role (Owner/Accountant/ExternalAccountant/
+  SystemAdmin เท่านั้น — data ปลอมได้)** → `ApproveDocumentAsync` (เลขจริงออก
+  ที่นี่) → ตอบเลขเอกสาร; ซ้ำ/สถานะเลยแล้ว → บอกสถานะ ไม่ทำซ้ำ
+- **แจ้งกลับผู้ส่ง**: intake ฝัง `{sourceChannel:"line", lineUserId}` ลง
+  `ExternalMetadataJson` ของ scan → ตอนเอกสารถูกอนุมัติ (โดยคนอื่น เช่น
+  นักบัญชีบนเว็บ) `ApproveDocumentAsync` push LINE กลับหาผู้ส่งบิล
+  (best-effort, ใช้ token บอทเสมอ — companyId:null); ผู้อนุมัติ = ผู้ส่ง →
+  ไม่แจ้งซ้ำ (ได้ reply จาก postback แล้ว)
+- **อัลบั้มหลายรูป**: LINE ส่งเป็นคนละ event → loop เดิมประมวลผลครบทุกใบ
+  (1 รูป = 1 scan = 1 เอกสาร/การ์ด)
 
 ### 2.2c ใบรับรองแทนใบเสร็จรับเงิน — routing บิลไม่เป็นทางการ (§65 ตรี)
 
@@ -1591,7 +1605,8 @@ _มี local heuristics, DailyCallCap นับเฉพาะ provider call, O
 _tenant: CMS cart scope, POS ProductId, payroll includeSalary; XSS 4 หน้า;_
 _import: พ.ศ.→ค.ศ. ทุกจุด + JE/bank dedup. **ใหม่: ภาษาเอกสาร th/en**)_
 
-_Last updated: 2026-08-04 — LINE bot รับรูปใบเสร็จ → OCR → เอกสารทันที (§2.2b)_
+_Last updated: 2026-08-04 — LINE bot รับรูปใบเสร็จ → OCR → เอกสารทันที (§2.2b:_
+_รวม Flex ปุ่มอนุมัติในแชท + postback guard + แจ้งกลับผู้ส่งเมื่ออนุมัติ)_
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
