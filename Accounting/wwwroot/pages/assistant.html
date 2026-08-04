@@ -34,6 +34,8 @@
     </div>
 
     <div class="as-wrap">
+      <div id="asDocCtx" style="display:none;margin-bottom:10px;padding:10px 14px;background:#eff6ff;
+           border:1px solid #bfdbfe;border-radius:10px;font-size:13px;color:#1e3a5f"></div>
       <div class="as-body" id="asBody"></div>
       <div class="as-chips" id="asChips">
         <span class="as-chip" onclick="Page.quick('ค่าน้ำมันรถส่งของ ควรลงหมวดบัญชีไหน')">ค่าน้ำมันลงหมวดไหน</span>
@@ -60,9 +62,16 @@
     const Page = {
       sending: false,
 
+      docId: null,
+
       init() {
         if (!Layout.init('assistant')) return;
         Layout.setTitle('ผู้ช่วยบัญชี AI');
+        // มาจากปุ่ม "ถามผู้ช่วย" ในหน้าเอกสาร/สแกน → ผูกบริบทใบนั้นกับทุก
+        // คำถามในหน้านี้ จนกว่าผู้ใช้จะกดเลิกผูก
+        const q = new URLSearchParams(location.search);
+        this.docId = q.get('documentId') || null;
+        if (this.docId) this.renderDocContext(q.get('docNo'));
         const input = document.getElementById('asInput');
         input.addEventListener('keydown', e => {
           if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
@@ -72,6 +81,29 @@
       },
 
       quick(q) { document.getElementById('asInput').value = q; this.send(); },
+
+      renderDocContext(docNo) {
+        const host = document.getElementById('asDocCtx');
+        if (!host) return;
+        host.style.display = '';
+        host.innerHTML = `📎 กำลังถามเกี่ยวกับเอกสาร <b>${docNo ? Layout.esc(docNo) : 'ที่เลือก'}</b>
+          — ผู้ช่วยเห็นรายละเอียดใบนี้ (คู่ค้า ยอด รายการ ผังที่ใช้อยู่) ประกอบการตอบ
+          <button class="btn btn-sm btn-outline" style="margin-left:8px" onclick="Page.clearDocContext()">เลิกผูกเอกสาร</button>`;
+        // เปลี่ยนคำถามลัดให้ตรงกับบริบทเอกสาร
+        const chips = document.getElementById('asChips');
+        if (chips) chips.innerHTML = `
+          <span class="as-chip" onclick="Page.quick('เอกสารใบนี้ควรลงบัญชีหมวดไหน เพราะอะไร')">ใบนี้ลงหมวดไหน</span>
+          <span class="as-chip" onclick="Page.quick('ใบนี้ต้องหัก ณ ที่จ่ายไหม เท่าไหร่ และใช้แบบไหน')">ต้องหัก ณ ที่จ่ายไหม</span>
+          <span class="as-chip" onclick="Page.quick('ใบนี้เคลมภาษีซื้อได้ไหม ติดข้อห้ามอะไรหรือเปล่า')">เคลม VAT ได้ไหม</span>
+          <span class="as-chip" onclick="Page.quick('ใบนี้ควรบันทึกเป็นค่าใช้จ่ายหรือสินทรัพย์')">ค่าใช้จ่ายหรือสินทรัพย์</span>`;
+      },
+
+      clearDocContext() {
+        this.docId = null;
+        const host = document.getElementById('asDocCtx');
+        if (host) host.style.display = 'none';
+        Layout.toast('เลิกผูกเอกสารแล้ว — ถามทั่วไปได้ตามปกติ');
+      },
 
       add(kind, text, opts = {}) {
         const body = document.getElementById('asBody');
@@ -115,7 +147,8 @@
         document.getElementById('asBody').appendChild(thinking);
         try {
           const cid = Layout.getCompanyId();
-          const res = await API.post(`/api/companies/${cid}/assistant/ask`, { message: text });
+          const res = await API.post(`/api/companies/${cid}/assistant/ask`,
+            { message: text, documentId: this.docId || null });
           thinking.remove();
           const d = res.data;
           this.add('bot', d.answer, { usedAi: d.usedAi, messageId: d.messageId });

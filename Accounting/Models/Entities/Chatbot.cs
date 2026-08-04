@@ -50,6 +50,10 @@ public class ChatConversation : BaseEntity
     /// <summary>PDPA retention — nightly job ลบห้อง public ที่เลยกำหนด
     /// (default สร้าง+90 วัน)</summary>
     public DateTime? PurgeAfter { get; set; }
+
+    /// <summary>คำตอบของโจทย์ challenge ที่ค้างอยู่ (เช่น "12") — ตั้งเมื่อ
+    /// session ชนเพดานซ้ำหลายครั้ง; ต้องตอบให้ถูกก่อนถามต่อ. null = ไม่มีโจทย์</summary>
+    public string? PendingChallenge { get; set; }
 }
 
 /// <summary>ข้อความ 1 บรรทัดในห้อง — role แยกคนตอบชัดเจนเพื่อป้ายซื่อสัตย์
@@ -82,6 +86,11 @@ public class ChatMessage : BaseEntity
 
     /// <summary>โหวตจากผู้ถาม: 1 = 👍, -1 = 👎, null = ยังไม่โหวต</summary>
     public int? HelpfulVote { get; set; }
+
+    /// <summary>retrieval ไม่เจอชิ้นความรู้ที่เกี่ยวเลย — สัญญาณตรงว่าคลัง
+    /// ความรู้ยังขาดเรื่องนี้ (หน้า admin เอาไปทำรายการ "คำถามที่ตอบไม่ได้"
+    /// เพื่อเขียนบทความเพิ่ม)</summary>
+    public bool NoContextFound { get; set; }
 }
 
 /// <summary>ชิ้นความรู้ 1 ก้อนใน RAG — global (CompanyId null) จากไฟล์ .md /

@@ -40,6 +40,8 @@ public sealed class ChatAnswerDistillationModel : ILocalDistillationModel
     private sealed record Memory(Guid CompanyId, string Question, float[] Vector, string Answer, int Upvotes);
     private readonly List<Memory> _memory = new();
     private readonly object _lock = new();
+    private DateTime _lastLoadedAt = DateTime.MinValue;
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     /// <summary>public chat ใช้ CompanyId = Guid.Empty (ไม่มีบริษัท) —
     /// ความจำ public จึงแชร์กันทุก visitor; tenant แยกต่อบริษัท</summary>
@@ -52,7 +54,24 @@ public sealed class ChatAnswerDistillationModel : ILocalDistillationModel
         _logger = logger;
     }
 
+    /// <summary>รีบิลด์ความจำ. หมายเหตุ: โมเดลนี้ไม่แยกตามบริษัทตอนโหลด
+    /// (โหลดทีเดียวทุกแถวของ feature แล้วค่อยกรองตอน predict) — nightly job
+    /// เรียกทีละบริษัทวนหลายรอบ จึงกันการโหลดซ้ำภายใน 5 นาทีไว้ ไม่งั้น
+    /// tenant 300 บริษัท = query ตารางเดียวกัน 300 รอบต่อคืนโดยเปล่าประโยชน์</summary>
     public async Task LoadFromFeedbackAsync(Guid companyId, CancellationToken ct)
+    {
+        if (DateTime.UtcNow - _lastLoadedAt < TimeSpan.FromMinutes(5)) return;
+        await _loadGate.WaitAsync(ct);
+        try
+        {
+            if (DateTime.UtcNow - _lastLoadedAt < TimeSpan.FromMinutes(5)) return;
+            await LoadCoreAsync(ct);
+            _lastLoadedAt = DateTime.UtcNow;
+        }
+        finally { _loadGate.Release(); }
+    }
+
+    private async Task LoadCoreAsync(CancellationToken ct)
     {
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
@@ -101,10 +120,20 @@ public sealed class ChatAnswerDistillationModel : ILocalDistillationModel
         _logger.LogInformation("{Feature} chat memory loaded: {N} q/a pairs", key, kept.Count);
     }
 
-    public Task<LocalPrediction?> PredictAsync(Guid companyId, string inputJson, CancellationToken ct)
+    public async Task<LocalPrediction?> PredictAsync(Guid companyId, string inputJson, CancellationToken ct)
     {
         var question = ExtractQuestion(inputJson);
-        if (string.IsNullOrWhiteSpace(question)) return Task.FromResult<LocalPrediction?>(null);
+        if (string.IsNullOrWhiteSpace(question)) return null;
+
+        // โหลดครั้งแรกแบบ lazy — nightly job เรียกเฉพาะบริษัทที่มี "แถวที่ผู้ใช้
+        // ยืนยันแล้ว" ถ้ายังไม่มีใครกด 👍 เลย ความจำจะไม่เคยถูกโหลด ทั้งที่มี
+        // คำตอบ teacher confidence สูงพอจะเรียนได้แล้ว
+        if (_lastLoadedAt == DateTime.MinValue)
+        {
+            try { await LoadFromFeedbackAsync(companyId, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "lazy load chat memory failed"); }
+        }
+
         var qv = _embed.Embed(Normalize(question));
 
         Memory? best = null; double bestScore = 0;
@@ -119,13 +148,12 @@ public sealed class ChatAnswerDistillationModel : ILocalDistillationModel
                 if (dot > bestScore) { bestScore = dot; best = m; }
             }
         }
-        if (best == null || bestScore < 0.90) return Task.FromResult<LocalPrediction?>(null);
+        if (best == null || bestScore < 0.90) return null;
 
         // ความมั่นใจตามความใกล้ + จำนวนการยืนยัน — คำถามตรงเป๊ะที่เคย 👍
         // ทะลุ 0.85 → short-circuit ไม่จ่าย DeepSeek ซ้ำ
         var conf = Math.Min(0.97m, (decimal)bestScore * (best.Upvotes >= 2 ? 1.0m : 0.93m));
-        return Task.FromResult<LocalPrediction?>(new LocalPrediction(
-            best.Answer, conf, Array.Empty<string>(), best.Upvotes, Version));
+        return new LocalPrediction(best.Answer, conf, Array.Empty<string>(), best.Upvotes, Version);
     }
 
     /// <summary>prompt ของ chat คือ {"question":"...","context":[...]} — สนใจ

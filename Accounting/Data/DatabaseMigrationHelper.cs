@@ -5157,6 +5157,20 @@ public static class DatabaseMigrationHelper
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_KnowledgeChunks_Key" ON "KnowledgeChunks" ("SourceKey") WHERE "CompanyId" IS NULL;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_KnowledgeChunks_TenantKey" ON "KnowledgeChunks" ("CompanyId", "SourceKey") WHERE "CompanyId" IS NOT NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_KnowledgeChunks_Audience" ON "KnowledgeChunks" ("Audience", "IsActive") WHERE "IsDeleted" = false;""",
+            // ตัวนับ rate limit ที่ใช้ร่วมกันข้าม instance (atomic upsert)
+            """
+            CREATE TABLE IF NOT EXISTS "ChatRateBuckets" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "BucketKey" varchar(120) NOT NULL,
+                "WindowStart" timestamp NOT NULL,
+                "Count" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_ChatRateBuckets_Key" ON "ChatRateBuckets" ("BucketKey", "WindowStart");""",
+            """CREATE INDEX IF NOT EXISTS "IX_ChatRateBuckets_Window" ON "ChatRateBuckets" ("WindowStart");""",
+            // challenge (กันบอทยิงรัวซ้ำ) + คำถามที่ตอบไม่ได้ (feed หา KB gap)
+            """ALTER TABLE "ChatConversations" ADD COLUMN IF NOT EXISTS "PendingChallenge" varchar(20) NULL;""",
+            """ALTER TABLE "ChatMessages" ADD COLUMN IF NOT EXISTS "NoContextFound" boolean NOT NULL DEFAULT false;""",
         };
 
         foreach (var sql in statements)

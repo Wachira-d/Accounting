@@ -25,9 +25,10 @@ public interface IChatbotService
         string? visitorName, string? visitorEmail, CancellationToken ct = default);
 
     /// <summary>tenant assistant — ผู้ใช้ล็อกอิน ถามในบริบทบริษัทตัวเอง
-    /// (RAG ย่อย refresh อัตโนมัติเมื่อ stale).</summary>
+    /// (RAG ย่อย refresh อัตโนมัติเมื่อ stale). documentId = ถามจากหน้าเอกสาร
+    /// ใบใดใบหนึ่ง → แนบสรุปใบนั้นเป็น context ให้คำตอบตรงใบจริง.</summary>
     Task<ChatAskResult> AskTenantAsync(Guid companyId, Guid userId, string userEmail,
-        string message, CancellationToken ct = default);
+        string message, Guid? documentId = null, CancellationToken ct = default);
 
     /// <summary>ขอคุยกับเจ้าหน้าที่ — เปลี่ยนสถานะห้องเป็น WaitingAgent.</summary>
     Task<bool> RequestAgentAsync(Guid conversationId, string? sessionToken,
@@ -42,10 +43,39 @@ public interface IChatbotService
     Task<bool> VoteAsync(Guid messageId, string? sessionToken, Guid? companyId,
         int vote, CancellationToken ct = default);
 
+    /// <summary>ให้คะแนนความพอใจหลังจบสนทนา (1-5) — public ใช้ sessionToken
+    /// ยืนยันตัว, tenant ใช้ companyId.</summary>
+    Task<bool> RateConversationAsync(Guid conversationId, string? sessionToken,
+        Guid? companyId, int score, CancellationToken ct = default);
+
     // ── ฝั่ง admin console ──
     Task<List<ChatConversation>> ListConversationsAsync(string? status, string? channel,
         int page, int pageSize, CancellationToken ct = default);
     Task<List<ChatHistoryItem>> GetConversationMessagesAsync(Guid conversationId, CancellationToken ct = default);
     Task<bool> AgentReplyAsync(Guid conversationId, string agentName, string content, CancellationToken ct = default);
     Task<bool> CloseConversationAsync(Guid conversationId, string agentName, CancellationToken ct = default);
+
+    /// <summary>ตัวชี้วัดคุณภาพ chatbot สำหรับ admin — อัตราการใช้ AI จริง
+    /// (ยิ่งลด = student ยิ่งเก่ง), คะแนนโหวต, คำถามที่ตอบไม่ได้ (ควรเขียน
+    /// บทความเพิ่ม), ปริมาณ/สถานะห้อง.</summary>
+    Task<ChatMetricsDto> GetMetricsAsync(int days, CancellationToken ct = default);
 }
+
+public record ChatMetricsDto(
+    int Days,
+    int Conversations,
+    int PublicConversations,
+    int TenantConversations,
+    int WaitingAgent,
+    int AssistantMessages,
+    int AiAnsweredMessages,          // UsedAi = true
+    decimal AiUsageRate,             // AiAnswered / Assistant (เป้าหมาย: ลดลงเรื่อย ๆ)
+    int Upvotes,
+    int Downvotes,
+    decimal? AvgSatisfaction,
+    int KnowledgeChunksActive,
+    List<ChatGapItem> UnansweredQuestions,   // retrieval ไม่เจอ context
+    List<ChatDailyPoint> Daily);
+
+public record ChatGapItem(string Question, string Channel, DateTime AskedAt);
+public record ChatDailyPoint(DateTime Day, int Messages, int AiMessages);

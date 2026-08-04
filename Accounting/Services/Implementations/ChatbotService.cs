@@ -31,6 +31,8 @@ public class ChatbotService : IChatbotService
     private readonly IKnowledgeBaseService _kb;
     private readonly IAiOrchestrator _ai;
     private readonly IAiFeedbackRecorder _feedback;
+    private readonly IChatRateLimiter _rate;
+    private readonly ILineNotifyService _lineNotify;
     private readonly ILogger<ChatbotService> _logger;
 
     /// <summary>public chat ไม่มีบริษัท — ใช้ sentinel นี้เป็น CompanyId ของ
@@ -38,40 +40,16 @@ public class ChatbotService : IChatbotService
     private static readonly Guid PublicCompanyId = Guid.Empty;
 
     public ChatbotService(AccountingDbContext db, IKnowledgeBaseService kb,
-        IAiOrchestrator ai, IAiFeedbackRecorder feedback, ILogger<ChatbotService> logger)
+        IAiOrchestrator ai, IAiFeedbackRecorder feedback, IChatRateLimiter rate,
+        ILineNotifyService lineNotify, ILogger<ChatbotService> logger)
     {
-        _db = db; _kb = kb; _ai = ai; _feedback = feedback; _logger = logger;
+        _db = db; _kb = kb; _ai = ai; _feedback = feedback;
+        _rate = rate; _lineNotify = lineNotify; _logger = logger;
     }
 
-    // ═══════════ rate limiting (in-memory sliding window) ═══════════
-    // หมายเหตุ multi-instance: ตัวนับอยู่ในหน่วยความจำต่อ process — deploy
-    // หลาย instance ต้องย้ายลง Redis/DB (บันทึกใน CHATBOT_PLAN.md Phase 2)
-    private static readonly ConcurrentDictionary<string, List<DateTime>> _hits = new();
-    private static DateTime _lastSweep = DateTime.UtcNow;
-
-    private static bool Allow(string key, int perMinute, int perDay)
-    {
-        var now = DateTime.UtcNow;
-        var list = _hits.GetOrAdd(key, _ => new List<DateTime>());
-        lock (list)
-        {
-            list.RemoveAll(t => t < now.AddDays(-1));
-            if (list.Count(t => t >= now.AddMinutes(-1)) >= perMinute) return false;
-            if (list.Count >= perDay) return false;
-            list.Add(now);
-        }
-        // sweep กัน dictionary โตไม่หยุด (คีย์ IP ที่เงียบไปแล้ว)
-        if (now - _lastSweep > TimeSpan.FromHours(1))
-        {
-            _lastSweep = now;
-            foreach (var k in _hits.Keys.ToList())
-                if (_hits.TryGetValue(k, out var l) && (l.Count == 0 || l[^1] < now.AddDays(-1)))
-                    _hits.TryRemove(k, out _);
-        }
-        return true;
-    }
-
-    // คำตอบล่าสุดต่อ (session, normalized question) — L3 กันถามซ้ำถี่
+    // คำตอบล่าสุดต่อ (session, normalized question) — L3 กันถามซ้ำถี่.
+    // in-memory พอ: พลาดข้าม instance แค่ทำให้เสีย AI call เพิ่ม 1 ครั้ง
+    // (ไม่ใช่ช่องโหว่ความปลอดภัย) ต่างจากตัวนับ rate ที่ต้องแม่นจริง
     private static readonly ConcurrentDictionary<string, (string Answer, DateTime At)> _recentAnswers = new();
 
     // ═══════════ public chat ═══════════
@@ -87,12 +65,33 @@ public class ChatbotService : IChatbotService
         if (message.Length > 1000)
             return Fail(sessionToken, "คำถามยาวเกิน 1,000 ตัวอักษร — ช่วยย่อหน่อยครับ");
 
-        // L2 — sliding window ต่อ IP และต่อ session
-        if (!Allow("ip:" + ipHash, perMinute: 6, perDay: 60)
-            || (!string.IsNullOrEmpty(sessionToken) && !Allow("ss:" + sessionToken, perMinute: 4, perDay: 40)))
+        // L2 — เพดานต่อ IP และต่อ session (นับใน DB → ตรงข้าม instance)
+        var overIp = !await _rate.TryConsumeAsync("ip:" + ipHash, 6, 60, ct);
+        var overSession = !string.IsNullOrEmpty(sessionToken)
+            && !await _rate.TryConsumeAsync("ss:" + sessionToken, 4, 40, ct);
+        if (overIp || overSession)
+        {
+            // ชนซ้ำหลายครั้งใน 1 ชม. = พฤติกรรมสคริปต์ ไม่ใช่คนพิมพ์เร็ว →
+            // ยกระดับเป็นโจทย์ challenge แทนการรอเฉย ๆ (คนตอบได้ บอทไม่ตอบ)
+            var strikes = await _rate.RecordStrikeAsync("st:" + (sessionToken ?? ipHash), ct);
+            if (strikes >= 3 && !string.IsNullOrWhiteSpace(sessionToken))
+            {
+                var conv0 = await _db.ChatConversations
+                    .FirstOrDefaultAsync(c => c.SessionToken == sessionToken && !c.IsDeleted, ct);
+                if (conv0 != null && string.IsNullOrEmpty(conv0.PendingChallenge))
+                {
+                    var (q, a) = NewChallenge();
+                    conv0.PendingChallenge = a;
+                    await _db.SaveChangesAsync(ct);
+                    return Fail(sessionToken,
+                        $"ระบบตรวจพบการส่งข้อความถี่ผิดปกติ 🤔\nช่วยตอบคำถามนี้เพื่อยืนยันว่าเป็นคนจริง ๆ ครับ: {q}",
+                        rateLimited: true);
+                }
+            }
             return Fail(sessionToken,
                 "ถามเร็วเกินไปครับ 🙏 กรุณารอสักครู่แล้วถามใหม่ หรือฝากอีเมลไว้ให้ทีมงานติดต่อกลับ",
                 rateLimited: true);
+        }
 
         // ห้อง (สร้างใหม่เมื่อยังไม่มี) — token ใหม่ฝั่ง server เท่านั้น
         var token = string.IsNullOrWhiteSpace(sessionToken)
@@ -101,6 +100,20 @@ public class ChatbotService : IChatbotService
 
         var conv = await _db.ChatConversations
             .FirstOrDefaultAsync(c => c.SessionToken == token && !c.IsDeleted, ct);
+
+        // มีโจทย์ challenge ค้างอยู่ → ข้อความนี้ต้องเป็นคำตอบเท่านั้น
+        if (conv != null && !string.IsNullOrEmpty(conv.PendingChallenge))
+        {
+            var given = new string(message.Where(char.IsDigit).ToArray());
+            if (given == conv.PendingChallenge)
+            {
+                conv.PendingChallenge = null;
+                await _db.SaveChangesAsync(ct);
+                return new ChatAskResult(conv.Id, token, null,
+                    "ขอบคุณครับ ✅ ถามคำถามต่อได้เลย", false, conv.Status);
+            }
+            return Fail(token, "คำตอบยังไม่ถูกครับ — ลองใหม่อีกครั้ง (ตอบเป็นตัวเลข)", rateLimited: true);
+        }
         if (conv == null)
         {
             conv = new ChatConversation
@@ -150,6 +163,7 @@ public class ChatbotService : IChatbotService
             };
             _db.ChatMessages.Add(ack);
             await _db.SaveChangesAsync(ct);
+            await NotifyAgentNeededAsync(conv, message, ct);
             return new ChatAskResult(conv.Id, token, ack.Id, ack.Content, false, conv.Status);
         }
 
@@ -164,15 +178,15 @@ public class ChatbotService : IChatbotService
             return new ChatAskResult(conv.Id, token, cachedMsg.Id, prev.Answer, false, conv.Status);
         }
 
-        var (answer, usedAi, conf, feedbackId, chunksJson) =
+        var (answer, usedAi, conf, feedbackId, chunksJson, noContext) =
             await AnswerAsync(message, "Public", null, PublicCompanyId,
-                AiFeatureKey.PublicFaqChat, PublicSystemPrompt, ct);
+                AiFeatureKey.PublicFaqChat, PublicSystemPrompt, null, ct);
 
         var botMsg = new ChatMessage
         {
             ConversationId = conv.Id, Role = "Assistant", Content = answer,
             UsedAi = usedAi, AiConfidence = conf, AiFeedbackId = feedbackId,
-            RetrievedChunksJson = chunksJson,
+            RetrievedChunksJson = chunksJson, NoContextFound = noContext,
         };
         _db.ChatMessages.Add(botMsg);
         conv.MessageCount++; conv.LastMessageAt = DateTime.UtcNow;
@@ -184,12 +198,12 @@ public class ChatbotService : IChatbotService
     // ═══════════ tenant assistant ═══════════
 
     public async Task<ChatAskResult> AskTenantAsync(Guid companyId, Guid userId, string userEmail,
-        string message, CancellationToken ct = default)
+        string message, Guid? documentId = null, CancellationToken ct = default)
     {
         message = (message ?? "").Trim();
         if (message.Length == 0) return Fail(null, "พิมพ์คำถามก่อนครับ");
         if (message.Length > 2000) return Fail(null, "คำถามยาวเกิน 2,000 ตัวอักษร");
-        if (!Allow($"tn:{companyId}:{userId}", perMinute: 10, perDay: 200))
+        if (!await _rate.TryConsumeAsync($"tn:{companyId}:{userId}", 10, 200, ct))
             return Fail(null, "ถามถี่เกินไป — รอสักครู่ครับ", rateLimited: true);
 
         // RAG ย่อยของบริษัท — rebuild อัตโนมัติเมื่อเก่ากว่า 6 ชม. ("อัพเดทตลอด")
@@ -214,15 +228,20 @@ public class ChatbotService : IChatbotService
         { ConversationId = conv.Id, Role = "User", Content = message, CreatedBy = userEmail });
         conv.MessageCount++; conv.LastMessageAt = DateTime.UtcNow;
 
-        var (answer, usedAi, conf, feedbackId, chunksJson) =
+        // ถามจากหน้าเอกสาร/OCR → แนบสรุปใบนั้นเป็น context (ผ่าน tenant guard
+        // ของ companyId เสมอ) ทำให้ "ใบนี้ควรลงยังไง" ตอบตรงใบจริงไม่ใช่ทั่วไป
+        var docContext = documentId.HasValue
+            ? await BuildDocumentContextAsync(companyId, documentId.Value, ct) : null;
+
+        var (answer, usedAi, conf, feedbackId, chunksJson, noContext) =
             await AnswerAsync(message, "Tenant", companyId, companyId,
-                AiFeatureKey.TenantAssistantChat, TenantSystemPrompt, ct);
+                AiFeatureKey.TenantAssistantChat, TenantSystemPrompt, docContext, ct);
 
         var botMsg = new ChatMessage
         {
             ConversationId = conv.Id, Role = "Assistant", Content = answer,
             UsedAi = usedAi, AiConfidence = conf, AiFeedbackId = feedbackId,
-            RetrievedChunksJson = chunksJson,
+            RetrievedChunksJson = chunksJson, NoContextFound = noContext,
         };
         _db.ChatMessages.Add(botMsg);
         conv.MessageCount++; conv.LastMessageAt = DateTime.UtcNow;
@@ -230,26 +249,71 @@ public class ChatbotService : IChatbotService
         return new ChatAskResult(conv.Id, "", botMsg.Id, answer, usedAi, conv.Status);
     }
 
+    /// <summary>สรุปเอกสาร 1 ใบเป็นข้อความสั้นให้ AI อ่าน — เอาเฉพาะที่จำเป็น
+    /// ต่อการแนะนำการลงบัญชี ไม่ยัดทั้ง entity (ยิ่งข้อมูลเยอะยิ่งเสี่ยงหลุด
+    /// PII และเปลืองโทเคนโดยไม่ช่วยคุณภาพ)</summary>
+    private async Task<string?> BuildDocumentContextAsync(Guid companyId, Guid documentId, CancellationToken ct)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => new
+            {
+                d.DocumentNumber, d.DocumentType, d.DocumentDate, d.Status,
+                d.SubTotal, d.VatAmount, d.WithholdingTaxAmount, d.TotalAmount,
+                ContactName = d.Contact != null ? d.Contact.Name : null,
+                ContactTaxId = d.Contact != null ? d.Contact.TaxId : null,
+                ContactType = d.Contact != null ? (ContactType?)d.Contact.ContactType : null,
+                Lines = d.Lines.Where(l => !l.IsDeleted)
+                    .Select(l => new { l.Description, l.Quantity, l.UnitPrice, l.LineTotal,
+                        AccountCode = l.Account != null ? l.Account.AccountCode : null,
+                        AccountName = l.Account != null ? l.Account.AccountName : null })
+                    .Take(20).ToList(),
+            })
+            .FirstOrDefaultAsync(ct);
+        if (doc == null) return null;
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"เอกสารที่ผู้ใช้กำลังดู: {doc.DocumentType} เลขที่ {doc.DocumentNumber} "
+            + $"วันที่ {doc.DocumentDate:dd/MM/yyyy} สถานะ {doc.Status}");
+        sb.AppendLine($"คู่ค้า: {doc.ContactName ?? "-"}"
+            + (doc.ContactType.HasValue ? $" ({(doc.ContactType == ContactType.JuristicPerson ? "นิติบุคคล" : "บุคคลธรรมดา")})" : "")
+            + (string.IsNullOrWhiteSpace(doc.ContactTaxId) ? " · ไม่มีเลขผู้เสียภาษี" : " · มีเลขผู้เสียภาษี"));
+        sb.AppendLine($"ยอด: ก่อน VAT {doc.SubTotal:N2} · VAT {doc.VatAmount:N2} · "
+            + $"หัก ณ ที่จ่าย {doc.WithholdingTaxAmount:N2} · รวมสุทธิ {doc.TotalAmount:N2} บาท");
+        if (doc.Lines.Count > 0)
+        {
+            sb.AppendLine("รายการในเอกสาร:");
+            foreach (var l in doc.Lines)
+                sb.AppendLine($"  • {l.Description} · {l.Quantity:N2} × {l.UnitPrice:N2} = {l.LineTotal:N2}"
+                    + (l.AccountCode != null ? $" · ผังปัจจุบัน {l.AccountCode} {l.AccountName}" : " · ยังไม่ระบุผัง"));
+        }
+        return sb.ToString();
+    }
+
     // ═══════════ แกนตอบ (ใช้ร่วม 2 ช่อง) ═══════════
 
-    private async Task<(string Answer, bool UsedAi, decimal? Conf, Guid? FeedbackId, string ChunksJson)>
+    private async Task<(string Answer, bool UsedAi, decimal? Conf, Guid? FeedbackId, string ChunksJson, bool NoContext)>
         AnswerAsync(string question, string audience, Guid? kbCompanyId, Guid aiCompanyId,
-            AiFeatureKey featureKey, string systemPrompt, CancellationToken ct)
+            AiFeatureKey featureKey, string systemPrompt, string? extraContext, CancellationToken ct)
     {
         // 1) retrieval
         var chunks = await _kb.SearchAsync(question, audience, kbCompanyId, topK: 4, ct);
         var chunksJson = JsonSerializer.Serialize(
             chunks.Select(c => new { c.Chunk.Id, c.Chunk.Title, score = Math.Round(c.Score, 3) }));
+        // "ไม่เจอความรู้ที่เกี่ยว" = ช่องว่างของคลังความรู้ ไม่ใช่ความผิดผู้ถาม
+        // — บันทึกไว้ให้หน้า admin รวมเป็นรายการ "ควรเขียนบทความเพิ่ม"
+        var noContext = chunks.Count == 0 && string.IsNullOrEmpty(extraContext);
 
         // 2) local fallback = retrieval-only (kill-switch แล้วยังตอบได้)
         var localAnswer = BuildRetrievalAnswer(question, chunks, audience);
 
         // 3) orchestrator (student-first → provider → fallback local)
-        var payload = JsonSerializer.Serialize(new
-        {
-            question,
-            context = chunks.Select(c => new { title = c.Chunk.Title, content = Truncate(c.Chunk.Content, 2500) }),
-        });
+        var contextList = chunks
+            .Select(c => new { title = c.Chunk.Title, content = Truncate(c.Chunk.Content, 2500) })
+            .ToList();
+        if (!string.IsNullOrEmpty(extraContext))
+            contextList.Insert(0, new { title = "เอกสารที่ผู้ใช้กำลังดูอยู่", content = Truncate(extraContext, 2500) });
+        var payload = JsonSerializer.Serialize(new { question, context = contextList });
         try
         {
             var resp = await _ai.AskAsync(new AiRequest
@@ -270,15 +334,44 @@ public class ChatbotService : IChatbotService
             var answer = FirstNonEmpty(resp.RawResponseJson, resp.PrimaryAnswer, localAnswer);
             answer = ScrubInternalRefs(StripJsonWrapper(answer));
             var usedAi = resp.Status == AiCallStatus.Success && resp.UsedAi;
-            return (answer, usedAi, resp.Confidence, resp.FeedbackId, chunksJson);
+            return (answer, usedAi, resp.Confidence, resp.FeedbackId, chunksJson, noContext);
         }
         catch (Exception ex)
         {
             // orchestrator มี fallback ภายในแล้ว — ถึงนี่ = พังหนักจริง →
             // ยังตอบ retrieval-only เงียบ ๆ (ห้าม error ขึ้นหา user)
             _logger.LogError(ex, "chat AnswerAsync failed — serving retrieval-only");
-            return (localAnswer, false, null, null, chunksJson);
+            return (localAnswer, false, null, null, chunksJson, noContext);
         }
+    }
+
+    /// <summary>โจทย์ challenge ง่าย ๆ ฝั่ง server (คนตอบได้ใน 2 วินาที
+    /// สคริปต์ที่ยิงตาม pattern ตอบไม่ได้) — ไม่พึ่งบริการ CAPTCHA ภายนอก
+    /// เพราะจะกลายเป็น dependency ใหม่ที่ล่มแล้วแชทใช้ไม่ได้ทั้งระบบ</summary>
+    private static (string Question, string Answer) NewChallenge()
+    {
+        var a = Random.Shared.Next(2, 9);
+        var b = Random.Shared.Next(2, 9);
+        return ($"{a} + {b} = ?", (a + b).ToString());
+    }
+
+    /// <summary>แจ้งทีมงานทันทีเมื่อมีคนขอคุยกับเจ้าหน้าที่ — เดิม admin ต้อง
+    /// เปิดหน้า console เองถึงจะรู้ (ลูกค้ารออยู่โดยไม่มีใครเห็น).
+    /// best-effort เสมอ: แจ้งไม่ได้ต้องไม่ทำให้คำขอของลูกค้าล้ม</summary>
+    private async Task NotifyAgentNeededAsync(ChatConversation conv, string lastMessage, CancellationToken ct)
+    {
+        try
+        {
+            var who = !string.IsNullOrWhiteSpace(conv.VisitorName) ? conv.VisitorName
+                : conv.Channel == "Tenant" ? "ผู้ใช้ในระบบ" : "ผู้เยี่ยมชมเว็บไซต์";
+            await _lineNotify.SendMessageAsync(
+                $"💬 มีลูกค้าขอคุยกับเจ้าหน้าที่\n"
+                + $"👤 {who}"
+                + (string.IsNullOrWhiteSpace(conv.VisitorEmail) ? "" : $" ({conv.VisitorEmail})")
+                + $"\n❓ {Truncate(lastMessage, 200)}\n"
+                + $"🔗 ตอบที่หน้า Admin → แชทลูกค้า");
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "แจ้งเตือน admin (WaitingAgent) ไม่สำเร็จ"); }
     }
 
     /// <summary>คำตอบจาก retrieval ล้วน — ใช้เมื่อ AI ปิด/ล่ม/เกินงบ.
@@ -336,6 +429,7 @@ public class ChatbotService : IChatbotService
         if (!string.IsNullOrWhiteSpace(visitorEmail)) conv.VisitorEmail = visitorEmail.Trim();
         conv.LastMessageAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+        await NotifyAgentNeededAsync(conv, conv.Title ?? "(กดปุ่มติดต่อเจ้าหน้าที่)", ct);
         return true;
     }
 
@@ -429,6 +523,88 @@ public class ChatbotService : IChatbotService
         });
         await _db.SaveChangesAsync(ct);
         return true;
+    }
+
+    public async Task<bool> RateConversationAsync(Guid conversationId, string? sessionToken,
+        Guid? companyId, int score, CancellationToken ct = default)
+    {
+        if (score is < 1 or > 5) return false;
+        var conv = await _db.ChatConversations
+            .FirstOrDefaultAsync(c => c.Id == conversationId && !c.IsDeleted, ct);
+        if (conv == null) return false;
+        var authorized = conv.Channel == "Public"
+            ? !string.IsNullOrEmpty(sessionToken) && conv.SessionToken == sessionToken
+            : conv.CompanyId == companyId;
+        if (!authorized) return false;
+        conv.SatisfactionScore = score;
+        conv.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<ChatMetricsDto> GetMetricsAsync(int days, CancellationToken ct = default)
+    {
+        days = Math.Clamp(days, 1, 180);
+        var since = DateTime.UtcNow.Date.AddDays(-(days - 1));
+
+        var convs = await _db.ChatConversations.AsNoTracking()
+            .Where(c => c.CreatedAt >= since && !c.IsDeleted)
+            .Select(c => new { c.Channel, c.Status, c.SatisfactionScore })
+            .ToListAsync(ct);
+
+        var msgs = await _db.ChatMessages.AsNoTracking()
+            .Where(m => m.CreatedAt >= since && !m.IsDeleted && m.Role == "Assistant")
+            .Select(m => new { m.UsedAi, m.HelpfulVote, m.CreatedAt })
+            .ToListAsync(ct);
+
+        var assistant = msgs.Count;
+        var aiAnswered = msgs.Count(m => m.UsedAi);
+
+        // คำถามที่ retrieval ไม่เจอความรู้เลย = ช่องว่างที่ควรเขียนบทความเพิ่ม
+        // (ดึงข้อความ "ของผู้ใช้" ที่อยู่ก่อนหน้าคำตอบที่ไม่มี context)
+        var gapConvIds = await _db.ChatMessages.AsNoTracking()
+            .Where(m => m.CreatedAt >= since && !m.IsDeleted && m.NoContextFound)
+            .OrderByDescending(m => m.CreatedAt).Take(60)
+            .Select(m => new { m.ConversationId, m.CreatedAt })
+            .ToListAsync(ct);
+        var gaps = new List<ChatGapItem>();
+        foreach (var g in gapConvIds.Take(25))
+        {
+            var q = await _db.ChatMessages.AsNoTracking()
+                .Where(m => m.ConversationId == g.ConversationId && m.Role == "User"
+                    && m.CreatedAt <= g.CreatedAt && !m.IsDeleted)
+                .OrderByDescending(m => m.CreatedAt)
+                .Select(m => m.Content).FirstOrDefaultAsync(ct);
+            var channel = await _db.ChatConversations.AsNoTracking()
+                .Where(c => c.Id == g.ConversationId).Select(c => c.Channel).FirstOrDefaultAsync(ct);
+            if (!string.IsNullOrWhiteSpace(q))
+                gaps.Add(new ChatGapItem(Truncate(q, 180), channel ?? "Public", g.CreatedAt));
+        }
+
+        var daily = msgs.GroupBy(m => m.CreatedAt.Date)
+            .OrderBy(g => g.Key)
+            .Select(g => new ChatDailyPoint(g.Key, g.Count(), g.Count(x => x.UsedAi)))
+            .ToList();
+
+        var chunks = await _db.KnowledgeChunks.AsNoTracking()
+            .CountAsync(k => k.IsActive && !k.IsDeleted, ct);
+        var scores = convs.Where(c => c.SatisfactionScore.HasValue).Select(c => c.SatisfactionScore!.Value).ToList();
+
+        return new ChatMetricsDto(
+            Days: days,
+            Conversations: convs.Count,
+            PublicConversations: convs.Count(c => c.Channel == "Public"),
+            TenantConversations: convs.Count(c => c.Channel == "Tenant"),
+            WaitingAgent: convs.Count(c => c.Status == "WaitingAgent"),
+            AssistantMessages: assistant,
+            AiAnsweredMessages: aiAnswered,
+            AiUsageRate: assistant == 0 ? 0 : Math.Round((decimal)aiAnswered / assistant, 4),
+            Upvotes: msgs.Count(m => m.HelpfulVote == 1),
+            Downvotes: msgs.Count(m => m.HelpfulVote == -1),
+            AvgSatisfaction: scores.Count == 0 ? null : Math.Round((decimal)scores.Average(), 2),
+            KnowledgeChunksActive: chunks,
+            UnansweredQuestions: gaps,
+            Daily: daily);
     }
 
     public async Task<bool> CloseConversationAsync(Guid conversationId, string agentName, CancellationToken ct = default)

@@ -162,6 +162,52 @@ public class KnowledgeBaseService : IKnowledgeBaseService
                 "ผู้ขายประจำ + ผังบัญชีที่เคยใช้", body, "Tenant", ct, forceTouch: true);
         }
 
+        // ── สถานะภาษี/นำส่งล่าสุด — ตอบ "เดือนนี้ต้องยื่นอะไรบ้าง" ได้จากของจริง ──
+        try
+        {
+            var vatRows = await _db.TaxReports.AsNoTracking()
+                .Where(t => t.CompanyId == companyId && !t.IsDeleted
+                    && t.TaxType == Models.Enums.TaxType.VAT)
+                .OrderByDescending(t => t.Year).ThenByDescending(t => t.Month)
+                .Select(t => new { t.Year, t.Month, t.OutputVat, t.InputVat, t.NetVat, t.Status })
+                .Take(6).ToListAsync(ct);
+            if (vatRows.Count > 0)
+            {
+                var body = "สถานะภาษีมูลค่าเพิ่ม (ภ.พ.30) ย้อนหลังของกิจการ:\n"
+                    + string.Join("\n", vatRows.Select(v =>
+                        $"งวด {v.Month:D2}/{v.Year}: ภาษีขาย {v.OutputVat:N2} − ภาษีซื้อ {v.InputVat:N2} "
+                        + $"= สุทธิ {v.NetVat:N2} บาท · สถานะรายงาน {(v.Status == Models.Enums.TaxReportStatus.Filed ? "ยื่นแล้ว" : "ยังไม่ยื่น (ฉบับร่าง)")}"))
+                    + "\nหมายเหตุ: ผู้จด VAT ต้องยื่น ภ.พ.30 ทุกเดือนแม้ยอดเป็นศูนย์ (§83)";
+                await UpsertChunkAsync(companyId, "TenantSnapshot", "tenant:vat-status",
+                    "สถานะ ภ.พ.30 ล่าสุด", body, "Tenant", ct, forceTouch: true);
+            }
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "tenant KB: VAT snapshot ข้าม"); }
+
+        // ── ค่าตั้งต้นของกิจการที่ผู้ใช้มักถาม (งวดบัญชี/ภาษาเอกสาร/ผังเริ่มต้น) ──
+        try
+        {
+            var cs = await _db.Set<CompanySettings>().AsNoTracking()
+                .Where(s => s.CompanyId == companyId && !s.IsDeleted)
+                .Select(s => new { s.VatRegistered, s.VatRegistrationDate, s.DefaultPaymentAccountId })
+                .FirstOrDefaultAsync(ct);
+            var openPeriod = await _db.FiscalPeriods.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted)
+                .OrderByDescending(p => p.StartDate)
+                .Select(p => new { p.StartDate, p.EndDate, p.Status })
+                .FirstOrDefaultAsync(ct);
+            var sb = new StringBuilder("การตั้งค่าของกิจการที่เกี่ยวกับการบันทึกบัญชี:\n");
+            if (cs != null)
+                sb.AppendLine($"- จดทะเบียน VAT ในระบบ: {(cs.VatRegistered ? "ใช่" : "ไม่")}"
+                    + (string.IsNullOrWhiteSpace(cs.VatRegistrationDate) ? "" : $" (ตั้งแต่ {cs.VatRegistrationDate})"));
+            if (openPeriod != null)
+                sb.AppendLine($"- งวดบัญชีล่าสุด: {openPeriod.StartDate:dd/MM/yyyy} – {openPeriod.EndDate:dd/MM/yyyy} "
+                    + $"สถานะ {openPeriod.Status} (งวดที่ปิดแล้วบันทึกย้อนหลังไม่ได้)");
+            await UpsertChunkAsync(companyId, "TenantSnapshot", "tenant:settings",
+                "การตั้งค่ากิจการ", sb.ToString(), "Tenant", ct, forceTouch: true);
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "tenant KB: settings snapshot ข้าม"); }
+
         _logger.LogInformation("Tenant KB rebuilt for {CompanyId} ({Coa} accounts, {Vg} vendor mappings)",
             companyId, accounts.Count, vendorGl.Count);
         return true;
@@ -198,6 +244,54 @@ public class KnowledgeBaseService : IKnowledgeBaseService
         }
 
         return results.OrderByDescending(r => r.Item2).Take(topK).ToList();
+    }
+
+    public async Task<Guid?> UpsertManualChunkAsync(Guid? id, string title, string content,
+        string audience, CancellationToken ct = default)
+    {
+        KnowledgeChunk? row = null;
+        if (id.HasValue)
+        {
+            row = await _db.KnowledgeChunks
+                .FirstOrDefaultAsync(k => k.Id == id.Value && k.CompanyId == null && !k.IsDeleted, ct);
+            if (row == null) return null;
+            // ชิ้นจากไฟล์ .md จะถูก RefreshGlobalAsync เขียนทับด้วยเนื้อหาไฟล์
+            // ทุกครั้ง — ให้แก้ที่นี่ = แก้แล้วหายเงียบ ๆ จึงบล็อกไปเลย
+            if (row.SourceType == "File") return null;
+        }
+        else
+        {
+            row = new KnowledgeChunk
+            {
+                CompanyId = null,
+                SourceType = "Manual",
+                SourceKey = $"manual:{Guid.NewGuid():N}",
+            };
+            _db.KnowledgeChunks.Add(row);
+        }
+
+        row.Title = title;
+        row.Content = content;
+        row.Audience = audience;
+        row.ContentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+        row.EmbeddingJson = JsonSerializer.Serialize(_embed.Embed(title + "\n" + content));
+        row.IsActive = true;
+        row.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        InvalidateGlobalCache();      // ไม่งั้นบทความใหม่จะยังไม่ถูกหยิบจนกว่าจะ restart
+        return row.Id;
+    }
+
+    public async Task<bool> SetChunkActiveAsync(Guid id, bool active, CancellationToken ct = default)
+    {
+        var row = await _db.KnowledgeChunks
+            .FirstOrDefaultAsync(k => k.Id == id && k.CompanyId == null && !k.IsDeleted, ct);
+        if (row == null) return false;
+        row.IsActive = active;
+        row.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        InvalidateGlobalCache();
+        return true;
     }
 
     // ═══════════════ internals ═══════════════

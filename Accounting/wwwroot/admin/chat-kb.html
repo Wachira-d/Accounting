@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คลังความรู้ Chatbot - NextAcc Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .kb-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px}
+    .kb-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px}
+    .kb-card .l{font-size:12px;color:#64748b}
+    .kb-card .v{font-size:22px;font-weight:800;margin-top:4px}
+    .kb-tabs{display:flex;gap:8px;margin-bottom:14px;border-bottom:2px solid #e2e8f0}
+    .kb-tab{padding:8px 16px;cursor:pointer;font-size:14px;font-weight:600;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px}
+    .kb-tab.on{color:#1e40af;border-bottom-color:#1e40af}
+    .kb-row{display:flex;align-items:flex-start;gap:12px;padding:10px 12px;border-bottom:1px solid #f1f5f9}
+    .kb-row:hover{background:#f8fafc}
+    .kb-badge{font-size:10px;padding:1px 8px;border-radius:10px;font-weight:700;white-space:nowrap}
+    .kb-badge.Public{background:#dcfce7;color:#15803d}
+    .kb-badge.Tenant{background:#dbeafe;color:#1d4ed8}
+    .kb-badge.Internal{background:#f1f5f9;color:#64748b}
+    .kb-badge.File{background:#fef3c7;color:#b45309}
+    .kb-form input,.kb-form select,.kb-form textarea{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;margin-bottom:10px}
+    .kb-form textarea{min-height:220px;resize:vertical}
+    .gap-item{padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:13px}
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <h2 style="margin:0 0 16px">📚 คลังความรู้ Chatbot + คุณภาพการตอบ</h2>
+
+    <div class="kb-kpi" id="kbKpi"></div>
+
+    <div class="kb-tabs">
+      <div class="kb-tab on" data-tab="articles" onclick="switchTab('articles',this)">บทความในคลัง</div>
+      <div class="kb-tab" data-tab="gaps" onclick="switchTab('gaps',this)">❓ คำถามที่ตอบไม่ได้</div>
+      <div class="kb-tab" data-tab="preview" onclick="switchTab('preview',this)">🔍 ทดลองค้น</div>
+      <div class="kb-tab" data-tab="editor" onclick="switchTab('editor',this)">✏️ เขียนบทความ</div>
+    </div>
+
+    <!-- บทความ -->
+    <div id="tab-articles">
+      <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <select id="fAud" onchange="loadArticles()" style="padding:7px 10px;border-radius:8px;border:1px solid #cbd5e1">
+          <option value="">ทุกกลุ่มผู้อ่าน</option>
+          <option value="Public">Public (บอทหน้าแรกเห็น)</option>
+          <option value="Tenant">Tenant (ผู้ใช้ในระบบเห็น)</option>
+          <option value="Internal">Internal (ไม่เสิร์ฟผ่านบอท)</option>
+        </select>
+        <input id="fSearch" placeholder="🔍 ค้นหัวข้อ/เนื้อหา" oninput="debouncedLoad()"
+          style="flex:1;min-width:180px;padding:7px 12px;border-radius:8px;border:1px solid #cbd5e1">
+        <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="refreshKb()"
+          title="อ่านไฟล์คู่มือ .md + seed FAQ ใหม่ (เฉพาะชิ้นที่เปลี่ยน)">↻ อัปเดตจากไฟล์</button>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px" id="kbList">
+        <div style="padding:24px;text-align:center;color:#94a3b8">กำลังโหลด…</div>
+      </div>
+    </div>
+
+    <!-- คำถามที่ตอบไม่ได้ -->
+    <div id="tab-gaps" style="display:none">
+      <div style="font-size:13px;color:#64748b;margin-bottom:10px">
+        คำถามที่ระบบ<b>ค้นไม่เจอความรู้ที่เกี่ยวเลย</b> — คือช่องว่างของคลังโดยตรง
+        กด "เขียนบทความจากคำถามนี้" เพื่อเติมความรู้ให้ตอบได้ในครั้งถัดไป
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px" id="gapList"></div>
+    </div>
+
+    <!-- ทดลองค้น -->
+    <div id="tab-preview" style="display:none">
+      <div style="font-size:13px;color:#64748b;margin-bottom:10px">
+        ทดลองว่าคำถามหนึ่งจะดึงบทความไหนมาตอบ พร้อมคะแนนความใกล้เคียง —
+        ใช้ตรวจว่าบทความที่เพิ่งเขียนถูกหยิบจริงก่อนปล่อยให้ลูกค้าถาม
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <input id="pvQ" placeholder="เช่น สแกนบิลอัตโนมัติได้ไหม" onkeydown="if(event.key==='Enter')runPreview()"
+          style="flex:1;min-width:200px;padding:9px 12px;border-radius:8px;border:1px solid #cbd5e1">
+        <select id="pvAud" style="padding:7px 10px;border-radius:8px;border:1px solid #cbd5e1">
+          <option value="Public">มุมมองบอทหน้าแรก (Public)</option>
+          <option value="Tenant">มุมมองผู้ใช้ในระบบ (Tenant)</option>
+        </select>
+        <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="runPreview()">ค้นดู</button>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px" id="pvResult"></div>
+    </div>
+
+    <!-- เขียนบทความ -->
+    <div id="tab-editor" style="display:none">
+      <div class="kb-form" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;max-width:820px">
+        <input type="hidden" id="edId">
+        <label style="font-size:12px;color:#64748b">หัวข้อ</label>
+        <input id="edTitle" placeholder="เช่น รองรับการนำเข้าข้อมูลจากโปรแกรมเดิมไหม">
+        <label style="font-size:12px;color:#64748b">กลุ่มผู้อ่าน</label>
+        <select id="edAud">
+          <option value="Public">Public — บอทหน้าแรกใช้ตอบผู้สนใจ</option>
+          <option value="Tenant">Tenant — ผู้ช่วยในระบบใช้ตอบผู้ใช้ที่ล็อกอิน</option>
+          <option value="Internal">Internal — เก็บไว้ ไม่เสิร์ฟผ่านบอทใด ๆ</option>
+        </select>
+        <label style="font-size:12px;color:#64748b">เนื้อหา (เขียนเป็นภาษาที่ลูกค้าอ่านรู้เรื่อง — บอทจะอ้างข้อความนี้ตรง ๆ)</label>
+        <textarea id="edContent" placeholder="อธิบายให้ครบในย่อหน้าเดียว…"></textarea>
+        <div style="display:flex;gap:8px">
+          <button class="admin-btn admin-btn-primary" onclick="saveArticle()">บันทึกบทความ</button>
+          <button class="admin-btn admin-btn-outline" onclick="clearEditor()">ล้างฟอร์ม</button>
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:10px">
+          💡 บทความที่มาจากไฟล์คู่มือ (.md) แก้ที่นี่ไม่ได้ — ต้องแก้ที่ไฟล์ต้นทางแล้วกด "อัปเดตจากไฟล์"
+          มิฉะนั้นการแก้จะถูกเขียนทับรอบถัดไป
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('chat-kb');
+    const esc = s => { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; };
+    const dt = s => new Date(s).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    let metrics = null, debounceT = null;
+
+    function switchTab(name, el) {
+      document.querySelectorAll('.kb-tab').forEach(t => t.classList.remove('on'));
+      el.classList.add('on');
+      ['articles', 'gaps', 'preview', 'editor'].forEach(t =>
+        document.getElementById('tab-' + t).style.display = t === name ? '' : 'none');
+      if (name === 'gaps') renderGaps();
+    }
+    function debouncedLoad() { clearTimeout(debounceT); debounceT = setTimeout(loadArticles, 350); }
+
+    async function loadMetrics() {
+      try {
+        const res = await AdminAPI.get('/chats/metrics?days=30');
+        metrics = res.data;
+        const m = metrics;
+        // อัตราการใช้ AI: ยิ่งต่ำยิ่งดี = student จำคำตอบได้แล้ว ไม่ต้องจ่าย provider
+        const aiPct = Math.round((m.aiUsageRate || 0) * 100);
+        document.getElementById('kbKpi').innerHTML = `
+          <div class="kb-card"><div class="l">บทสนทนา (30 วัน)</div><div class="v">${m.conversations}</div>
+            <div class="l">หน้าเว็บ ${m.publicConversations} · ในระบบ ${m.tenantConversations}</div></div>
+          <div class="kb-card"><div class="l">รอเจ้าหน้าที่</div>
+            <div class="v" style="color:${m.waitingAgent ? '#b91c1c' : '#15803d'}">${m.waitingAgent}</div>
+            <div class="l">${m.waitingAgent ? 'มีลูกค้ารออยู่' : 'ไม่มีคิวค้าง'}</div></div>
+          <div class="kb-card"><div class="l">ตอบด้วย AI จริง</div><div class="v">${aiPct}%</div>
+            <div class="l">${m.aiAnsweredMessages}/${m.assistantMessages} — ยิ่งต่ำยิ่งดี (local จำได้แล้ว)</div></div>
+          <div class="kb-card"><div class="l">โหวตคำตอบ</div>
+            <div class="v">👍 ${m.upvotes} · 👎 ${m.downvotes}</div>
+            <div class="l">${m.avgSatisfaction != null ? 'คะแนนเฉลี่ย ' + m.avgSatisfaction + '/5' : 'ยังไม่มีคะแนน'}</div></div>
+          <div class="kb-card"><div class="l">บทความในคลัง</div><div class="v">${m.knowledgeChunksActive}</div>
+            <div class="l">ตอบไม่ได้ ${(m.unansweredQuestions || []).length} คำถาม</div></div>`;
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+    }
+
+    async function loadArticles() {
+      const aud = document.getElementById('fAud').value;
+      const s = document.getElementById('fSearch').value.trim();
+      try {
+        const res = await AdminAPI.get(`/chats/kb?audience=${aud}&search=${encodeURIComponent(s)}`);
+        const rows = res.data || [];
+        document.getElementById('kbList').innerHTML = rows.length ? rows.map(r => `
+          <div class="kb-row">
+            <span class="kb-badge ${r.audience}">${r.audience}</span>
+            ${r.sourceType === 'File' ? '<span class="kb-badge File">จากไฟล์</span>' : ''}
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px">${esc(r.title)}</div>
+              <div style="font-size:12px;color:#64748b;margin-top:2px">${esc(r.preview)}</div>
+              <div style="font-size:11px;color:#94a3b8;margin-top:3px">
+                ${r.length} ตัวอักษร · ${esc(r.sourceKey)} · แก้ล่าสุด ${dt(r.updatedAt || r.createdAt)}
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex:none">
+              ${r.sourceType !== 'File'
+                ? `<button class="admin-btn admin-btn-sm admin-btn-outline" onclick="editArticle('${r.id}')">แก้ไข</button>` : ''}
+              <button class="admin-btn admin-btn-sm admin-btn-outline"
+                onclick="toggleArticle('${r.id}', ${!r.isActive})">${r.isActive ? 'ปิดใช้' : 'เปิดใช้'}</button>
+            </div>
+          </div>`).join('')
+          : '<div style="padding:24px;text-align:center;color:#94a3b8">ไม่พบบทความ</div>';
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+    }
+
+    function renderGaps() {
+      const gaps = (metrics && metrics.unansweredQuestions) || [];
+      document.getElementById('gapList').innerHTML = gaps.length ? gaps.map(g => `
+        <div class="gap-item">
+          <div style="display:flex;gap:10px;align-items:flex-start">
+            <span class="kb-badge ${g.channel === 'Tenant' ? 'Tenant' : 'Public'}">${g.channel}</span>
+            <div style="flex:1">${esc(g.question)}
+              <div style="font-size:11px;color:#94a3b8;margin-top:2px">${dt(g.askedAt)}</div></div>
+            <button class="admin-btn admin-btn-sm admin-btn-primary" style="flex:none"
+              onclick="writeFromGap(${JSON.stringify(g.question).replace(/"/g,'&quot;')}, '${g.channel}')">เขียนบทความจากคำถามนี้</button>
+          </div>
+        </div>`).join('')
+        : '<div style="padding:24px;text-align:center;color:#15803d">✓ ไม่มีคำถามที่ตอบไม่ได้ใน 30 วันล่าสุด</div>';
+    }
+
+    function writeFromGap(question, channel) {
+      clearEditor();
+      document.getElementById('edTitle').value = question.slice(0, 120);
+      document.getElementById('edAud').value = channel === 'Tenant' ? 'Tenant' : 'Public';
+      document.getElementById('edContent').value = '';
+      switchTab('editor', document.querySelector('.kb-tab[data-tab="editor"]'));
+      document.getElementById('edContent').focus();
+    }
+
+    async function runPreview() {
+      const q = document.getElementById('pvQ').value.trim();
+      if (!q) return;
+      const aud = document.getElementById('pvAud').value;
+      try {
+        const res = await AdminAPI.get(`/chats/kb/preview?q=${encodeURIComponent(q)}&audience=${aud}`);
+        const rows = res.data || [];
+        document.getElementById('pvResult').innerHTML = rows.length ? rows.map((r, i) => `
+          <div class="kb-row">
+            <span style="font-weight:800;color:#94a3b8">#${i + 1}</span>
+            <span class="kb-badge ${r.audience}">${r.audience}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px">${esc(r.title)}</div>
+              <div style="font-size:12px;color:#64748b">${esc(r.preview)}</div>
+            </div>
+            <div style="font-weight:800;color:${r.score > 0.5 ? '#15803d' : '#b45309'}">${r.score}</div>
+          </div>`).join('')
+          : '<div style="padding:24px;text-align:center;color:#b91c1c">ไม่เจอบทความที่เกี่ยวเลย — บอทจะตอบว่าไม่แน่ใจ ควรเขียนบทความเพิ่ม</div>';
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+    }
+
+    async function editArticle(id) {
+      try {
+        const res = await AdminAPI.get(`/chats/kb/${id}`);
+        const d = res.data;
+        document.getElementById('edId').value = d.id;
+        document.getElementById('edTitle').value = d.title;
+        document.getElementById('edAud').value = d.audience;
+        document.getElementById('edContent').value = d.content;
+        switchTab('editor', document.querySelector('.kb-tab[data-tab="editor"]'));
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+    }
+
+    function clearEditor() {
+      document.getElementById('edId').value = '';
+      document.getElementById('edTitle').value = '';
+      document.getElementById('edContent').value = '';
+    }
+
+    async function saveArticle() {
+      const id = document.getElementById('edId').value || null;
+      const title = document.getElementById('edTitle').value.trim();
+      const content = document.getElementById('edContent').value.trim();
+      const audience = document.getElementById('edAud').value;
+      if (!title || !content) { AdminLayout.toast('ใส่หัวข้อและเนื้อหาก่อน', 'error'); return; }
+      try {
+        const res = await AdminAPI.post('/chats/kb', { id, title, content, audience });
+        AdminLayout.toast(res.message || 'บันทึกแล้ว');
+        clearEditor();
+        await loadArticles(); await loadMetrics();
+        switchTab('articles', document.querySelector('.kb-tab[data-tab="articles"]'));
+      } catch (e) { AdminLayout.toast(e.message, 'error', 8000); }
+    }
+
+    async function toggleArticle(id, active) {
+      try {
+        await AdminAPI.post(`/chats/kb/${id}/toggle?active=${active}`, {});
+        await loadArticles();
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+    }
+
+    async function refreshKb() {
+      try {
+        const res = await AdminAPI.post('/chats/kb/refresh', {});
+        AdminLayout.toast(res.message || 'อัปเดตแล้ว');
+        await loadArticles(); await loadMetrics();
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+    }
+
+    loadMetrics().then(loadArticles);
+  </script>
+</body>
+</html>

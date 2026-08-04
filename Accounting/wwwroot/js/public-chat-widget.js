@@ -95,6 +95,8 @@
         </div>
         <div style="text-align:center">
           <button class="nxc-agentbtn" onclick="NxChat.requestAgent()">🙋 ติดต่อเจ้าหน้าที่</button>
+          <span style="color:#cbd5e1">·</span>
+          <button class="nxc-agentbtn" onclick="NxChat.rate()">⭐ ให้คะแนน</button>
         </div>
         <div class="nxc-note">บอทตอบจากข้อมูลระบบ — ข้อความถูกเก็บเพื่อปรับปรุงบริการ (ลบอัตโนมัติใน 90 วัน)</div>
       </div>`;
@@ -242,7 +244,27 @@
     if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
   }
 
-  window.NxChat = { toggle, requestAgent };
+  /// ให้คะแนน 1-5 — วัดคุณภาพบอท/เจ้าหน้าที่ (โชว์ในหน้า admin)
+  async function rate() {
+    if (!state.conversationId) {
+      addMsg('bot', 'คุยกันสักหน่อยก่อนนะครับ แล้วค่อยให้คะแนนได้เลย 🙂', { noTag: true });
+      return;
+    }
+    const raw = prompt('ให้คะแนนการช่วยเหลือครั้งนี้ (1 = แย่ ถึง 5 = ดีมาก):', '5');
+    if (raw === null) return;
+    const score = parseInt(raw, 10);
+    if (!(score >= 1 && score <= 5)) { addMsg('bot', 'ใส่ตัวเลข 1-5 นะครับ', { noTag: true }); return; }
+    try {
+      const res = await fetch(API + '/rate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: state.conversationId, sessionToken: state.sessionToken, score }),
+      });
+      const j = await res.json().catch(() => null);
+      addMsg('bot', (j && j.message) || 'ขอบคุณสำหรับคะแนนครับ 🙏', { noTag: true });
+    } catch (e) { addMsg('bot', 'บันทึกคะแนนไม่สำเร็จครับ', { noTag: true }); }
+  }
+
+  window.NxChat = { toggle, requestAgent, rate };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', build);
   else build();
 })();

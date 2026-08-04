@@ -23,6 +23,7 @@ public class PublicChatController : ControllerBase
     public record AskRequest(string? SessionToken, string Message, string? Name, string? Email);
     public record AgentRequest(Guid ConversationId, string? SessionToken, string? Name, string? Email);
     public record VoteRequest(Guid MessageId, string? SessionToken, int Vote);
+    public record RateRequest(Guid ConversationId, string? SessionToken, int Score);
 
     private string IpHash()
     {
@@ -70,5 +71,13 @@ public class PublicChatController : ControllerBase
     {
         var ok = await _chat.VoteAsync(req.MessageId, req.SessionToken, null, req.Vote);
         return Ok(new ApiResponse<bool>(ok, ok));
+    }
+
+    /// <summary>ให้ดาว 1-5 หลังจบสนทนา — วัดคุณภาพบอท/เจ้าหน้าที่</summary>
+    [HttpPost("rate")]
+    public async Task<ActionResult<ApiResponse<bool>>> Rate([FromBody] RateRequest req)
+    {
+        var ok = await _chat.RateConversationAsync(req.ConversationId, req.SessionToken, null, req.Score);
+        return Ok(new ApiResponse<bool>(ok, ok, ok ? "ขอบคุณสำหรับคะแนนครับ" : "บันทึกคะแนนไม่สำเร็จ"));
     }
 }

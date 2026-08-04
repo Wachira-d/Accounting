@@ -22,4 +22,13 @@ public interface IKnowledgeBaseService
     /// ชิ้นของบริษัทตัวเอง. cosine (IEmbeddingService) + keyword bonus.</summary>
     Task<List<(KnowledgeChunk Chunk, double Score)>> SearchAsync(
         string query, string audience, Guid? companyId, int topK = 4, CancellationToken ct = default);
+
+    /// <summary>เพิ่ม/แก้บทความที่ admin เขียนเอง (SourceType = "Manual").
+    /// คืน null เมื่อ id ที่ส่งมาเป็นชิ้นจากไฟล์ .md — แก้ที่นี่ไม่ได้เพราะ
+    /// refresh รอบถัดไปจะเขียนทับ (ต้องแก้ที่ไฟล์ต้นทาง).</summary>
+    Task<Guid?> UpsertManualChunkAsync(Guid? id, string title, string content,
+        string audience, CancellationToken ct = default);
+
+    /// <summary>เปิด/ปิดการใช้งานชิ้นความรู้ (ปิด = retrieval ไม่หยิบมาตอบ).</summary>
+    Task<bool> SetChunkActiveAsync(Guid id, bool active, CancellationToken ct = default);
 }

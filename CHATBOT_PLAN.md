@@ -104,56 +104,67 @@ Program.cs                                    DI + startup KB refresh (backgroun
 
 ## 3. แผนพัฒนาต่อ (Opus 5) — เรียงตามคุณค่า/ความเสี่ยง
 
-### Phase 2 — ความทนทาน production (ทำก่อน launch จริง)
-1. **Purge job (PDPA)** — nightly job ลบ/anonymize `ChatConversations` ที่
-   `PurgeAfter < now` (ดู pattern job เดิมใน `Services/Jobs/`). รวม
-   `VisitorEmail/VisitorName/IpHash` ต้องหายจริง. **hard requirement ก่อนเปิด
-   public** (ตอนนี้มีแค่ field ยังไม่มี job)
-2. **Rate limit ข้าม instance** — ตัวนับใน `ChatbotService` เป็น in-memory
-   ต่อ process; deploy หลาย instance ต้องย้ายลงตาราง/Redis (คีย์: ip-hash,
-   sliding window). จุดแก้เดียว: `ChatbotService.Allow()`
-3. **Training job ผูก ChatAnswerDistillationModel** — ตรวจว่า nightly
-   `AiFeedbackTrainingJob` เรียก `LoadFromFeedbackAsync` ของ 2 instance ใหม่
-   (loop `IEnumerable<ILocalDistillationModel>` เดิมควรครอบอยู่แล้ว — ยืนยัน +
-   เพิ่ม first-use lazy load ถ้ายังไม่ ready)
-4. **แจ้งเตือน admin เมื่อมีห้อง WaitingAgent** — hook NotificationEngine/LINE
-   ของ admin (ตอนนี้ admin ต้องเปิดหน้า console เอง; list โพลทุก 30 วิ)
-5. **CAPTCHA เบา ๆ เมื่อโดน rate limit ซ้ำ** — session ที่ชน L2 เกิน N ครั้ง
-   ใน 1 ชม. → ต้องตอบ challenge (คณิตง่าย ๆ ฝั่ง server) ก่อนถามต่อ
+### ✅ Phase 2 — ความทนทาน production (เสร็จแล้ว)
+1. **Purge job (PDPA)** — `ChatRetentionPurgeJob` (24 ชม.): ห้อง Public ที่เลย
+   `PurgeAfter` → **ลบข้อความทิ้งจริง** (hard delete ไม่ใช่ soft) + ล้าง
+   `VisitorName/VisitorEmail/IpHash/SessionToken/PendingChallenge` แล้ว mark
+   ห้องเป็น deleted; คงสถิติที่ระบุตัวบุคคลไม่ได้ไว้วัดคุณภาพ. ห้อง Tenant
+   ไม่แตะ (เป็นบันทึกการทำงานของกิจการ ลบผ่าน DSR ของบริษัท) + ล้าง
+   `ChatRateBuckets` > 2 วันในรอบเดียวกัน
+2. **Rate limit ข้าม instance** — `IChatRateLimiter` / `ChatRateLimiter` บน
+   ตาราง `ChatRateBuckets` ใช้ `INSERT … ON CONFLICT DO UPDATE … RETURNING`
+   (atomic คำสั่งเดียว) — fixed window (นาที/วัน/ชม.) **fail-open** เมื่อ DB
+   มีปัญหา เพราะตารางนับพังไม่ใช่เหตุผลที่จะปิดบริการ (ด่านอื่นยังทำงาน)
+3. **Training** — `AiFeedbackTrainingJob` loop `ILocalDistillationModel` เดิม
+   ครอบ 2 instance ใหม่อยู่แล้ว; เพิ่ม **lazy first-load ใน `PredictAsync`**
+   (ไม่งั้นถ้ายังไม่มีใครกด 👍 เลย ความจำจะไม่เคยโหลดทั้งที่มี teacher answer
+   ให้เรียนแล้ว) + กันโหลดซ้ำภายใน 5 นาที (job เรียกทีละบริษัท N รอบ)
+4. **แจ้งเตือน admin เมื่อ WaitingAgent** — `NotifyAgentNeededAsync` push LINE
+   ทันทีทั้งจาก intent ในข้อความและปุ่ม request-agent (best-effort)
+5. **Challenge เมื่อยิงรัวซ้ำ** — ชนเพดาน ≥ 3 ครั้ง/ชม. → โจทย์บวกเลขฝั่ง
+   server เก็บใน `ChatConversation.PendingChallenge`; ตอบถูกจึงถามต่อได้
+   (ไม่พึ่ง CAPTCHA ภายนอก — จะกลายเป็น dependency ที่ล่มแล้วแชทตายทั้งระบบ)
 
-### Phase 3 — คุณภาพคำตอบ tenant (คุณค่าสูงสุดต่อผู้ใช้จริง)
-1. **Context เอกสารเฉพาะใบ** — จากหน้าเอกสาร/OCR review ส่ง `documentId` มา
-   กับคำถาม → `ChatbotService` โหลดสรุปใบนั้น (ผ่าน `AiPromptSanitizer`
-   stripPii) แนบเป็น context → "เอกสารนี้ควรลงยังไง" ตอบตรงใบจริง
-   (จุดเกี่ยว: `AskTenantAsync` + ปุ่ม "ถามผู้ช่วย" ใน documents.html/
-   document-scan.html)
-2. **Action links ในคำตอบ** — บอทตอบพร้อมลิงก์ deep-link ที่ทำได้เลย เช่น
-   "สร้างค่าใช้จ่ายหมวด 53xx → /pages/expense.html?create=..." (มี pattern
-   deep-link เดิมหลายหน้าแล้ว)
-3. **RAG ย่อยเพิ่มชั้นข้อมูล** — สรุป ภ.พ.30 งวดล่าสุด, ปฏิทินนำส่ง (มี
-   endpoint แล้ว), นโยบายบริษัท (CompanySettings) → tenant snapshot chunks
-   เพิ่มใน `RefreshTenantAsync`
-4. **ประวัติสนทนาหลายห้อง** — ตอนนี้ tenant มีห้องเดียวต่อ user; เพิ่ม
-   "เริ่มหัวข้อใหม่" + รายการห้องเก่า (สคีมารองรับแล้ว — งาน UI + endpoint list)
+### ✅ Phase 3 — คุณภาพคำตอบ tenant (เสร็จแล้ว)
+1. **Context เอกสารเฉพาะใบ** — `AskTenantAsync(…, documentId)` →
+   `BuildDocumentContextAsync` สรุปใบนั้น (ประเภท/เลข/วันที่/คู่ค้า+มีเลข
+   ผู้เสียภาษีไหม/ยอด/บรรทัด+ผังปัจจุบัน) แนบเป็น context อันแรก;
+   ปุ่ม **"💬 ถามผู้ช่วย"** ในหน้ารายละเอียดเอกสาร → `assistant.html?documentId=`
+   ซึ่งขึ้นแถบบริบท + เปลี่ยนคำถามลัดให้ตรงใบ (ลงหมวดไหน / หัก ณ ที่จ่าย /
+   เคลม VAT / ค่าใช้จ่ายหรือสินทรัพย์)
+2. **RAG ย่อยเพิ่มชั้น** — snapshot เพิ่ม: สถานะ ภ.พ.30 ย้อนหลัง 6 งวด
+   (ยื่นแล้ว/ยังไม่ยื่น + ยอดสุทธิ) และการตั้งค่ากิจการ/งวดบัญชีล่าสุด
+3. **ยังไม่ทำ** — action deep-links ในคำตอบ (ให้บอทแนบลิงก์ที่กดทำงานต่อได้)
+   และ "หลายห้องต่อ user" (สคีมารองรับแล้ว เหลืองาน UI + endpoint list)
 
-### Phase 4 — Admin KB management + วัดผล
-1. **หน้า admin จัดการ KnowledgeChunk** — CRUD บทความ Manual (audience
-   Public/Tenant), preview retrieval ("ลองถาม แล้วชิ้นไหนถูกหยิบ"), toggle
-   IsActive. Endpoint list/upsert เพิ่มใน `AdminChatController`
-2. **Dashboard คุณภาพ** — อัตรา UsedAi ต่อวัน (ยิ่งลด = student ยิ่งฉลาด),
-   คะแนน 👍/👎, top คำถามที่ตอบไม่ได้ (chunks ว่าง) → ป้อนกลับเป็นบทความใหม่,
-   ต้นทุน AI ของ 2 feature key (มีข้อมูลใน AiSuggestionFeedback ครบแล้ว)
-3. **Satisfaction survey** — หลังปิดห้อง ถาม 1-5 ดาว (field
-   `SatisfactionScore` มีแล้ว)
+### ✅ Phase 4 — Admin KB management + วัดผล (เสร็จแล้ว)
+1. **หน้า `/admin/chat-kb.html`** — 4 แท็บ: บทความในคลัง (กรอง audience/ค้น,
+   เปิด-ปิดใช้งาน, แก้ไข), ❓ คำถามที่ตอบไม่ได้, 🔍 ทดลองค้น (เห็นว่าคำถาม
+   หนึ่งดึงบทความไหน + คะแนน), ✏️ เขียนบทความ.
+   **ชิ้นที่มาจากไฟล์ .md แก้ที่นี่ไม่ได้** (จะถูกเขียนทับตอน refresh) —
+   `UpsertManualChunkAsync` คืน null แล้ว UI บอกให้ไปแก้ไฟล์ต้นทาง
+2. **Metrics** — `GET /api/admin/chats/metrics?days=30` → จำนวนห้อง (แยก
+   public/tenant), ห้องรอเจ้าหน้าที่, **อัตราตอบด้วย AI จริง** (เป้าหมาย:
+   ลดลงเรื่อย ๆ = student จำได้แล้ว), 👍/👎, คะแนนเฉลี่ย, จำนวนบทความ,
+   คำถามที่ตอบไม่ได้ (จาก `ChatMessage.NoContextFound`), กราฟรายวัน
+3. **Survey** — `RateConversationAsync` 1-5 + ปุ่ม "⭐ ให้คะแนน" ใน widget
 
-### Phase 5 — ขยายช่องทาง
-1. **LINE bot ต่อ tenant assistant** — คำสั่ง "ถาม {คำถาม}" ใน LineBotService
-   → `AskTenantAsync` (โครง LINE + binding มีครบแล้ว — งานเชื่อม ~50 บรรทัด)
-2. **Streaming คำตอบ** (SSE) — ตอบยาวขึ้นโดย UX ไม่หน่วง; แตะ
-   `IAiProvider`/orchestrator ต้องมี streaming path — งานกลาง-ใหญ่ ประเมินก่อน
-3. **อัปเกรด embedding** — สลับ `HashingEmbeddingService` →
-   `OnnxSentenceEmbeddingService` (MiniLM multilingual) ใน DI จุดเดียว —
-   retrieval แม่นขึ้นโดยไม่แก้ call site (ไฟล์ onnx ต้อง ship + วัด RAM)
+### ✅/⏳ Phase 5 — ขยายช่องทาง
+1. **✅ LINE bot ต่อ tenant assistant** — คำสั่ง `ถาม {คำถาม}` / `ask …` →
+   `AskTenantAsync` ของบริษัทที่ active อยู่ ตอบพร้อมป้าย 🤖/⚙️ (help + ข้อความ
+   ตอนผูกบัญชีอัปเดตแล้ว)
+2. **⏳ Streaming คำตอบ (SSE)** — ยังไม่ทำ: ต้องมี streaming path ใน
+   `IAiProvider`/orchestrator ก่อน (งานกลาง-ใหญ่ กระทบ contract ที่ feature
+   อื่นใช้ร่วม — ประเมินผลกระทบก่อนลงมือ)
+3. **⏳ อัปเกรด embedding** — สลับ `HashingEmbeddingService` →
+   `OnnxSentenceEmbeddingService` ใน DI จุดเดียว; ติดที่ต้อง ship ไฟล์ .onnx
+   (~100MB) + วัด RAM/latency ก่อน — retrieval แม่นขึ้นโดยไม่แก้ call site
+
+### งานที่เหลือ (สรุปสำหรับ agent ถัดไป)
+- Action deep-links ในคำตอบของบอท (Phase 3.2)
+- หลายห้องสนทนาต่อ user + รายการห้องเก่า (Phase 3.4)
+- SSE streaming (Phase 5.2) · ONNX embedding (Phase 5.3)
+- ทดสอบจริง: kill-switch, audience wall, purge job, challenge, LINE `ถาม`
 
 ### กับดักที่รู้แล้ว (อ่านก่อนแก้)
 - `RawPlanResponse=true` → คำตอบอยู่ `RawResponseJson` ไม่ใช่ `PrimaryAnswer`
@@ -174,4 +185,5 @@ Program.cs                                    DI + startup KB refresh (backgroun
       ในคอมมิตเดียวกัน
 
 ---
-_Last updated: 2026-08-04 — Phase 1 implemented (this commit)_
+_Last updated: 2026-08-04 — Phase 1-4 + Phase 5.1 implemented; เหลือ deep-links,_
+_หลายห้องต่อ user, SSE streaming, ONNX embedding_

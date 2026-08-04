@@ -26,15 +26,16 @@ public class LineBotService : ILineBotService
     private readonly IPayslipLineDeliveryService _payslipLine;
     private readonly IOcrService _ocr;
     private readonly IOcrQuotaService _ocrQuota;
+    private readonly IChatbotService _chat;
 
     public LineBotService(AccountingDbContext db, IConfiguration config,
         IHttpClientFactory httpFactory, ILogger<LineBotService> logger,
         IDocumentService docService, IPayslipLineDeliveryService payslipLine,
-        IOcrService ocr, IOcrQuotaService ocrQuota)
+        IOcrService ocr, IOcrQuotaService ocrQuota, IChatbotService chat)
     {
         _db = db; _config = config; _httpFactory = httpFactory;
         _logger = logger; _docService = docService; _payslipLine = payslipLine;
-        _ocr = ocr; _ocrQuota = ocrQuota;
+        _ocr = ocr; _ocrQuota = ocrQuota; _chat = chat;
     }
 
     public async Task<string> IssueBindCodeAsync(Guid userId)
@@ -106,6 +107,7 @@ public class LineBotService : ILineBotService
                    "ลองใช้งาน:\n" +
                    "• 📷 ส่งรูปใบเสร็จมาได้เลย — ระบบอ่านและสร้างเอกสารให้ทันที\n" +
                    "• บันทึก เซเว่น 250 — บันทึกค่าใช้จ่ายด้วยข้อความ\n" +
+                   "• ถาม ค่าน้ำมันลงหมวดไหน — ปรึกษาผู้ช่วยบัญชี AI\n" +
                    "• ดูยอด — ดูเงินเข้า/ออกเดือนนี้\n" +
                    "• ช่วยเหลือ — ดูคำสั่งทั้งหมด";
         }
@@ -190,10 +192,31 @@ public class LineBotService : ILineBotService
             return "📖 คำสั่งที่ใช้ได้:\n" +
                    "• 📷 ส่งรูปใบเสร็จ/บิล (หรือไฟล์ PDF) — ระบบอ่านและสร้างเอกสารให้ทันที\n" +
                    "  บิลไม่มีเลขผู้เสียภาษี → ออกใบรับรองแทนใบเสร็จให้อัตโนมัติ\n" +
+                   "• ถาม {คำถาม} — ผู้ช่วยบัญชี AI เช่น 'ถาม ค่าน้ำมันลงหมวดไหน'\n" +
                    "• บันทึก {ร้าน} {จำนวน} — เช่น 'บันทึก เซเว่น 250'\n" +
                    "• ดูยอด — เงินเข้า/ออกเดือนนี้\n" +
                    (companies.Count > 1 ? "• เลือกบริษัท {เลข} — สลับบริษัท\n" : "") +
                    "• ผูก {รหัส} — เชื่อมบัญชีใหม่";
+        }
+
+        // 4b) "ถาม {คำถาม}" — ผู้ช่วยบัญชีตัวเดียวกับในเว็บ (RAG ของบริษัทนี้)
+        //     ต้องเช็คก่อน "บันทึก" ไม่ได้ชนกัน แต่วางไว้ก่อนเพื่อความชัด
+        if (msg.StartsWith("ถาม", StringComparison.OrdinalIgnoreCase)
+         || msg.StartsWith("ask ", StringComparison.OrdinalIgnoreCase))
+        {
+            var q = msg.StartsWith("ถาม") ? msg[3..].Trim() : msg[4..].Trim();
+            if (string.IsNullOrWhiteSpace(q))
+                return "พิมพ์: ถาม {คำถาม}\nเช่น \"ถาม ค่าน้ำมันรถส่งของลงหมวดไหน\"";
+            try
+            {
+                var res = await _chat.AskTenantAsync(companyId, user.Id, user.Email, q, null, default);
+                return (res.UsedAi ? "🤖 " : "⚙️ ") + res.Answer;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "LINE assistant ask failed");
+                return "❌ ตอบไม่ได้ตอนนี้ — ลองใหม่อีกครั้ง หรือถามในเว็บที่เมนู \"ผู้ช่วยบัญชี AI\"";
+            }
         }
 
         // 5) "บันทึก {vendor} {amount}" — quick expense.
