@@ -2654,6 +2654,34 @@ public class DocumentService : IDocumentService
         if (deposit.ContactId != invoice.ContactId)
             throw new InvalidOperationException("มัดจำกับใบแจ้งหนี้ต้องเป็นลูกค้ารายเดียวกัน");
 
+        // ── กัน VAT ซ้ำ: มัดจำที่ "ยื่น ภ.พ.30 ไปแล้ว" ห้ามหักเข้าใบกำกับเต็มจำนวน ──
+        // การหักมัดจำเข้าใบปลายทางลง JE กลับ Dr 21911 ("ล้าง VAT มัดจำ") แล้วให้
+        // ใบปลายทาง Cr 21911 เต็มจำนวน — สมมติฐานคือ "VAT ของมัดจำยังไม่ถูกนำส่ง"
+        // ถ้างวดของใบมัดจำยื่นไปแล้ว ภาษีก้อนนั้นจ่ายกรมสรรพากรไปแล้ว จะกลับใน GL
+        // ไม่ได้ (GL จะไม่ตรงกับแบบที่ยื่น) และใบปลายทางจะรายงานซ้ำอีกรอบ
+        // ทางออกที่ถูกต้องมี 2 ทาง — บอกไว้ในข้อความ ผู้ใช้ไม่ตัน
+        var depositVatReported = !deposit.DepositOutputVatDeferred && deposit.VatAmount > 0.005m;
+        if (depositVatReported)
+        {
+            var depTaxPoint = deposit.TaxPointDate ?? deposit.DocumentDate;
+            var filedPeriod = await _db.TaxReports.AsNoTracking()
+                .Where(t => t.CompanyId == companyId && !t.IsDeleted
+                    && t.TaxType == TaxType.VAT
+                    && t.Status == TaxReportStatus.Filed
+                    && t.Year == depTaxPoint.Year && t.Month == depTaxPoint.Month)
+                .AnyAsync();
+            if (filedPeriod)
+                throw new InvalidOperationException(
+                    $"⛔ ใบมัดจำ {deposit.DocumentNumber} ออกเป็นใบกำกับภาษีและนำส่ง ภ.พ.30 "
+                    + $"งวด {depTaxPoint:MM/yyyy} ไปแล้ว — หักเข้าใบกำกับเต็มจำนวนไม่ได้ "
+                    + "เพราะจะรายงาน VAT ซ้ำและ GL ไม่ตรงกับแบบที่ยื่น\n"
+                    + "ทางที่ถูก เลือกอย่างใดอย่างหนึ่ง:\n"
+                    + "① ออกใบกำกับภาษีใบนี้ \"เฉพาะยอดคงเหลือ\" (หักมัดจำที่ออกใบกำกับไปแล้วออกจากฐาน) "
+                    + "แล้วบันทึกมัดจำเป็นการรับชำระ ไม่ต้องกดหักมัดจำ\n"
+                    + "② ถ้าต้องการใบกำกับใบเดียวเต็มจำนวน ต้องออกใบลดหนี้ (§86/10) "
+                    + "ยกเลิกใบกำกับมัดจำเดิมก่อน แล้วค่อยออกใบเต็ม");
+        }
+
         // Multi-currency guard — IAS 21: ถ้าสกุล/rate ของมัดจำกับใบแจ้งหนี้
         // ต่างกัน ต้องคำนวณกำไรขาดทุนอัตราแลกเปลี่ยน. ระบบนี้ยังไม่ post FX
         // gain/loss JE อัตโนมัติ → block ไว้ก่อน + แนะนำให้บันทึก JE manual

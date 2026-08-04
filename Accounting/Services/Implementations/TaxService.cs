@@ -478,6 +478,15 @@ public partial class TaxService : ITaxService
                     // มัดจำ immediate (VAT ลง 21911 ตั้งแต่รับเงิน): tax point =
                     // วันรับเงิน ต้องอยู่ในงวดนี้ (กัน candidate ที่ merge เข้ามา
                     // จาก deferredRecognized แต่จริง ๆ ไม่ใช่ deferred)
+                    //
+                    // ถูก "หักเข้าใบปลายทาง" แล้ว → ข้าม เหมือนเคส deferred:
+                    // ApplyDepositToInvoice ลง JE กลับ Dr 21911 ("ล้าง VAT มัดจำ —
+                    // รับรู้ที่ใบกำกับแล้ว") และใบปลายทาง Cr 21911 เต็มจำนวน
+                    // ถ้ายังนับใบมัดจำอยู่ = ภ.พ.30 เกินจริงตามยอดมัดจำ และไม่ตรง
+                    // กับความเคลื่อนไหวจริงของ 21911 ใน GL
+                    // (งวดของใบมัดจำที่ "ยื่นไปแล้ว" ถูกกันไม่ให้ apply ตั้งแต่ต้นทาง
+                    //  ใน DocumentService — ที่นี่จึงเหลือเฉพาะงวดที่ยัง regenerate ได้)
+                    if (doc.DepositAppliedToDocumentId.HasValue) continue;
                     var tp = doc.TaxPointDate ?? doc.DocumentDate;
                     if (tp < startDate || tp > endDate) continue;
                 }
