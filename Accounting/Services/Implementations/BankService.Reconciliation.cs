@@ -102,6 +102,10 @@ public partial class BankService
             totalBank += amount;
         }
 
+        // ผังบัญชีของธนาคารนี้ — ใช้หา "ขาที่วิ่งผ่านบัญชีนี้" ของ JE หลายขา
+        // (เพดานการจัดสรรต้องเป็นขาธนาคาร ไม่ใช่ footing ทั้งใบ)
+        var bankGlAccountId = account.LinkedAccountId;
+
         // Validate + accumulate match-side items. Polymorphic FK resolution.
         decimal totalMatched = 0m;
         foreach (var item in request.MatchItems)
@@ -120,7 +124,7 @@ public partial class BankService
             // (ใบใหญ่ทยอยตัด) แต่ห้ามเกิน. เดิมเชื่อ AllocatedAmount จาก client
             // ทั้งสองฝั่ง → ยิง payload ให้สองฝั่งเท่ากันเองแล้วผ่าน balance check
             // ได้ทันที (เช็ค 5,000 จับคู่ใบเสร็จ 50 บาท) และยอดที่เก็บลง DB ปลอม
-            var realAmount = await ResolveItemAmountAsync(companyId, itemType, item.ItemId);
+            var realAmount = await ResolveItemAmountAsync(companyId, itemType, item.ItemId, bankGlAccountId);
             if (realAmount > 0 && Math.Abs(item.AllocatedAmount) > realAmount + 0.01m)
                 throw new InvalidOperationException(
                     $"ยอดจัดสรรของ {itemType} ({item.AllocatedAmount:N2}) เกินยอดจริงของรายการ ({realAmount:N2}) — "
@@ -578,7 +582,8 @@ public partial class BankService
     /// <summary>ยอดจริงของรายการฝั่งที่นำมากระทบ (absolute) — ใช้เป็นเพดานของ
     /// AllocatedAmount ที่ client ส่งมา. คืน 0 เมื่อหาไม่ได้ (ผู้เรียกจะข้ามการ
     /// ตรวจ ไม่ block งานที่ยังจับคู่ได้จริง).</summary>
-    private async Task<decimal> ResolveItemAmountAsync(Guid companyId, ReconciliationItemType type, Guid id)
+    private async Task<decimal> ResolveItemAmountAsync(Guid companyId, ReconciliationItemType type, Guid id,
+        Guid? bankGlAccountId = null)
     {
         switch (type)
         {
@@ -593,7 +598,24 @@ public partial class BankService
                     .Select(d => d.TotalAmount).FirstOrDefaultAsync();
 
             case ReconciliationItemType.JournalEntry:
-                // JE สมดุลเสมอ → ใช้ TotalDebit เป็นขนาดของรายการ
+                // "ขนาด" ของ JE ในบริบทกระทบยอด = ขาที่วิ่งผ่านบัญชีธนาคารนี้
+                // ไม่ใช่ footing ทั้งใบ (JV เงินเดือน footing 77,678 แต่ออกจาก
+                // ธนาคารจริง 70,110) — ใช้ footing เป็นเพดานคือปล่อยให้จัดสรร
+                // เกินยอดที่แตะธนาคารจริงได้ 7,568 บาทโดยไม่มีอะไรค้าน
+                if (bankGlAccountId.HasValue)
+                {
+                    var leg = await _db.JournalEntryLines.AsNoTracking()
+                        .Where(l => l.JournalEntryId == id && l.AccountId == bankGlAccountId.Value)
+                        .Select(l => l.DebitAmount - l.CreditAmount)
+                        .ToListAsync();
+                    if (leg.Count > 0)
+                    {
+                        var net = Math.Abs(leg.Sum());
+                        if (net > 0.009m) return net;
+                    }
+                }
+                // ไม่มีขาที่แตะธนาคารนี้ (หรือยังไม่ได้ผูกผังกับบัญชี) → คงพฤติกรรม
+                // เดิมด้วย footing เพื่อไม่บล็อกการจับคู่ที่เคยทำได้
                 return await _db.JournalEntries.AsNoTracking()
                     .Where(j => j.Id == id && j.CompanyId == companyId)
                     .Select(j => j.TotalDebit).FirstOrDefaultAsync();
@@ -731,12 +753,46 @@ public partial class BankService
                 j.EntryNumber.ToLower().Contains(q)
                 || (j.Description != null && j.Description.ToLower().Contains(q))
                 || (j.Reference != null && j.Reference.ToLower().Contains(q)));
-        var jes = await jesQuery
+        var jeRows = await jesQuery
             .OrderByDescending(j => j.EntryDate).Take(200)
-            .Select(j => new UnmatchedItem(
-                "JournalEntry", j.Id, j.EntryNumber, j.EntryDate,
-                j.Description, j.TotalDebit, null))
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.Description, j.TotalDebit })
             .ToListAsync();
+
+        // ── ยอดที่ต้องตรงกับสเตทเมนต์ = "ขาที่วิ่งผ่านบัญชีธนาคารนี้" ──
+        // เดิมใช้ TotalDebit (footing ของ JE ทั้งใบ) ซึ่งผิดกับ JE หลายขา:
+        //   JV เงินเดือน  Dr เงินเดือน 77,678
+        //                   Cr ประกันสังคมค้างจ่าย  3,750
+        //                   Cr ภ.ง.ด.1 ค้างจ่าย     3,818
+        //                   Cr ธนาคาร             70,110   ← ตัวนี้เท่านั้นที่ออกจริง
+        // การโชว์ 77,678 ทำให้ผู้ใช้เข้าใจว่า "JE ลงไม่ตรงกับที่จ่ายจริง"
+        // ทั้งที่ JE ถูกต้อง — ส่วนต่างคือหนี้ค้างจ่ายที่ยังไม่ถึงกำหนดนำส่ง
+        var jeBankLeg = new Dictionary<Guid, decimal>();
+        if (account.LinkedAccountId.HasValue && jeRows.Count > 0)
+        {
+            var jeIdList = jeRows.Select(j => j.Id).ToList();
+            var legRows = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => jeIdList.Contains(l.JournalEntryId)
+                    && l.AccountId == account.LinkedAccountId.Value)
+                .GroupBy(l => l.JournalEntryId)
+                .Select(g => new { JeId = g.Key, Net = g.Sum(x => x.DebitAmount) - g.Sum(x => x.CreditAmount) })
+                .ToListAsync();
+            foreach (var r in legRows) jeBankLeg[r.JeId] = r.Net;   // + เงินเข้า / − เงินออก
+        }
+
+        var jes = jeRows.Select(j =>
+        {
+            var hasLeg = jeBankLeg.TryGetValue(j.Id, out var leg) && Math.Abs(leg) > 0.009m;
+            return new UnmatchedItem(
+                "JournalEntry", j.Id, j.EntryNumber, j.EntryDate,
+                // เมื่อ footing ต่างจากขาธนาคาร บอกให้เห็นในบรรทัดเลย ไม่ต้อง
+                // ให้ผู้ใช้เปิด JE ไปนั่งไล่หาว่าทำไมตัวเลขไม่ตรง
+                hasLeg && Math.Abs(Math.Abs(leg) - j.TotalDebit) > 0.009m
+                    ? $"{j.Description} · ยอด JE ทั้งใบ {j.TotalDebit:N2} (ส่วนต่างเป็นรายการค้างจ่าย/หักกลบในใบเดียวกัน)"
+                    : j.Description,
+                hasLeg ? Math.Abs(leg) : j.TotalDebit,
+                null,
+                hasLeg ? leg : null);
+        }).ToList();
 
         // ----- Documents (Approved receipts / payment vouchers without payment record yet) -----
         var docExclude = usedDocIds.ToList();

@@ -3017,11 +3017,20 @@
           //    items from across the whole pool.
           const u = await api.getUnmatchedItems(this.accountId);
           const data = u?.data || { payments: [], journalEntries: [], documents: [] };
+          // _alloc ต้องมี "เครื่องหมาย" เหมือนฝั่งธนาคาร (+ เข้า / − ออก)
+          // ไม่งั้นผลรวมสองฝั่งเทียบกันไม่ได้ — เดิมฝั่งนี้เป็นบวกเสมอ ทำให้
+          // จ่ายออก 70,110 เทียบกับ JE 77,678 ได้ผลต่าง −147,788 (บวกกันแทน
+          // ที่จะหักกัน) และ backend ปฏิเสธเพราะสองฝั่งไม่ตรงกันเสมอ
+          //   • JE: ใช้ bankLegAmount ที่ backend คำนวณจากขาที่แตะบัญชีนี้จริง
+          //   • Payment/Document: ยังไม่มีทิศในตัว → ให้ signItemsToBankSide()
+          //     เซ็นตามทิศของรายการธนาคารที่เลือกอยู่
           const map = arr => arr.map(it => ({
             type: it.itemType, id: it.id, number: it.number,
             date: it.date, description: it.description || it.contactName || '',
             defaultAmount: it.amount,
-            _selected: false, _alloc: it.amount,
+            bankLeg: (it.bankLegAmount === null || it.bankLegAmount === undefined) ? null : it.bankLegAmount,
+            _selected: false,
+            _alloc: (it.bankLegAmount === null || it.bankLegAmount === undefined) ? it.amount : it.bankLegAmount,
           }));
           this.items = [...map(data.payments || []), ...map(data.journalEntries || []), ...map(data.documents || [])];
           this.renderBank();
@@ -3080,7 +3089,10 @@
               </div>
               <div style="text-align:right">
                 <div style="font-size:13px;color:#64748b">ยอด: ${Layout.money(Math.abs(it.defaultAmount))}</div>
-                ${it._selected ? `<input type="number" step="0.01" value="${it._alloc.toFixed(2)}" onchange="GroupReconcile.setItemAlloc(${i}, this.value)" onclick="event.preventDefault()" title="เครื่องหมายลบ = หักล้าง" style="margin-top:4px;width:110px;font-size:11px;padding:2px 6px;text-align:right;border:1px solid ${color};color:${color}">` : ''}
+                ${it.type === 'JournalEntry' && it.bankLeg === null
+                  ? '<div style="font-size:10px;color:#b45309" title="JE ใบนี้ไม่มีบรรทัดที่ลงผังบัญชีของบัญชีธนาคารนี้ — ตรวจก่อนจับคู่ว่าเป็นใบที่ถูกต้อง">⚠️ ไม่มีขาที่แตะบัญชีนี้</div>'
+                  : ''}
+                ${it._selected ? `<input type="number" step="0.01" value="${it._alloc.toFixed(2)}" onchange="GroupReconcile.setItemAlloc(${i}, this.value)" onclick="event.preventDefault()" title="เครื่องหมายลบ = เงินออก (หักล้าง)" style="margin-top:4px;width:110px;font-size:11px;padding:2px 6px;text-align:right;border:1px solid ${color};color:${color}">` : ''}
               </div>
             </label>`;
         }).join('');
@@ -3114,10 +3126,40 @@
           Layout.toast(totalApplied > 0 ? `ติ๊กรายการที่ AI แนะนำ ${totalApplied} รายการ` : 'ยังไม่มี pattern ที่เรียนรู้ — ลองจับคู่ด้วยมือสัก 2-3 ครั้งก่อน', totalApplied > 0 ? 'success' : 'info');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      toggleBank(i, on) { this.bankTxns[i]._selected = on; this.renderBank(); this.recalc(); },
-      toggleItem(i, on) { this.items[i]._selected = on; this.renderItems(); this.recalc(); },
+      toggleBank(i, on) {
+        this.bankTxns[i]._selected = on;
+        this.signItemsToBankSide();
+        this.renderBank(); this.renderItems(); this.recalc();
+      },
+      toggleItem(i, on) {
+        this.items[i]._selected = on;
+        this.signItemsToBankSide();
+        this.renderItems(); this.recalc();
+      },
+
+      /// รายการที่ไม่รู้ทิศในตัว (Payment / Document — และ JE ที่ไม่มีขาแตะ
+      /// บัญชีนี้) ให้เซ็นตามทิศของรายการธนาคารที่เลือกอยู่: เลือกแต่รายการ
+      /// จ่ายออก → ฝั่งรายการก็ต้องเป็นลบ ผลรวมสองฝั่งจึงหักกันได้จริง
+      /// ไม่แตะรายการที่ผู้ใช้พิมพ์ตัวเลขเอง (_manual) และไม่แตะ JE ที่รู้ทิศ
+      /// จากขาธนาคารแล้ว (bankLeg)
+      signItemsToBankSide() {
+        const sel = this.bankTxns.filter(t => t._selected);
+        if (!sel.length) return;
+        const net = sel.reduce((s, t) => s + t._alloc, 0);
+        const sign = net < 0 ? -1 : 1;
+        for (const it of this.items) {
+          if (it._manual || it.bankLeg !== null) continue;
+          const mag = Math.abs(it._alloc || it.defaultAmount || 0);
+          it._alloc = sign * mag;
+        }
+      },
       setBankAlloc(i, v) { this.bankTxns[i]._alloc = parseFloat(v) || 0; this.recalc(); },
-      setItemAlloc(i, v) { this.items[i]._alloc = parseFloat(v) || 0; this.recalc(); },
+      setItemAlloc(i, v) {
+        // พิมพ์เองแล้วห้ามระบบเซ็นทับ (ผู้ใช้อาจจงใจใส่ทิศตรงข้ามเพื่อหักกลบ)
+        this.items[i]._alloc = parseFloat(v) || 0;
+        this.items[i]._manual = true;
+        this.recalc();
+      },
       recalc() {
         const bSel = this.bankTxns.filter(t => t._selected);
         const iSel = this.items.filter(it => it._selected);
