@@ -942,6 +942,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - `GrandTotalAmount = SubTotal + VAT` (ไม่ใช่ `doc.TotalAmount` ที่หัก WHT —
     WHT แยกตอนจ่าย ไม่ใช่ face value ใบกำกับ)
   - invariant: `LineTotal − Allowance = TaxBasis` และ `TaxBasis + Tax = Grand` ✓
+- **Receipt gate (`GenerateAsync`)** — e-Tax คือ "ใบกำกับภาษีในรูปอิเล็กทรอนิกส์"
+  ใบที่**ตั้งใจไม่ให้เป็นใบกำกับ**จึงส่งไม่ได้ (Receipt/ReceiptVoucher ถูก map เป็น
+  `T03 "ใบเสร็จรับเงิน/ใบกำกับภาษี"` เสมอ = ประกาศต่อ RD ว่าเป็นใบกำกับ):
+  - **มัดจำ VAT รอเรียกเก็บ** (`DepositOutputVatDeferred` + ยังไม่ recognize) → block
+    (ปล่อยผ่าน = XML บอก RD ว่าเป็นใบกำกับ ทั้งที่ ภ.พ.30 ยังไม่มียอดนี้ → ผู้ซื้อ
+    เคลมภาษีซื้อจากใบที่ผู้ขายไม่เคยนำส่ง ทั้งสองฝั่งโดนประเมิน)
+  - **ไม่ใช่ใบกำกับเต็มรูป** (`TaxService.NotFullTaxInvoice`: ข้อมูลผู้ซื้อไม่ครบ /
+    walk-in / ติ๊กไม่ประสงค์รับใบกำกับ) → block พร้อมบอก field ที่ขาด
+  - ทั้งสองเคสข้อความบอกทางไปต่อ (ออก e-Tax ที่ใบกำกับตอนส่งมอบ / เติมข้อมูลผู้ซื้อ)
 - **CN/DN gate (`GenerateAsync`)**: (1) ต้องมี `RelatedDocumentId` — Schematron
   DCN บังคับเลขที่+วันที่+มูลค่าใบเดิม; (2) **ฝั่งซื้อ block** — CN/DN ที่อ้าง
   PI/Expense/CIL/PV คือใบที่ผู้ขายออก เราเป็นผู้บันทึก ห้ามสร้าง/เซ็น e-Tax แทน.
