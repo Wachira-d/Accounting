@@ -11877,6 +11877,37 @@ public class DocumentService : IDocumentService
         if (vatTypes.Contains(doc.DocumentType) && doc.Contact != null && string.IsNullOrWhiteSpace(doc.Contact.TaxId))
             warnings.Add($"ผู้ติดต่อ '{doc.Contact.Name}' ไม่มีเลขผู้เสียภาษี — e-Tax XML จะใช้รูปแบบ Non-VAT ผู้รับใช้เป็นหลักฐาน Input VAT ไม่ได้");
 
+        // ── §86: เก็บ VAT แล้วต้องออกใบกำกับภาษีให้ผู้ซื้อ "ทุกครั้ง" ──
+        // เอกสารที่ VAT เข้ารายงานภาษีขาย/ภ.พ.30 แต่หัวกระดาษไม่มีคำว่า
+        // "ใบกำกับภาษี" ทำให้เกิดสภาพที่อธิบายกับสรรพากรลำบาก:
+        //   • ฝั่งเรา — นำส่ง VAT ครบ (ภาระเกิดจาก tax point ไม่ใช่หัวกระดาษ)
+        //   • ฝั่งลูกค้า — เคลมภาษีซื้อไม่ได้ (§82/5(1) ไม่ใช่ใบกำกับเต็มรูป)
+        //   • และเราเองมีหน้าที่ตาม §86 ต้องออกใบกำกับทันทีที่ tax point เกิด
+        //     ไม่ออก = เบี้ยปรับ 2 เท่าของภาษีตามใบ (§89(5)) + ปรับอาญา
+        // เดิมระบบ "auto ติ๊กไม่ประสงค์รับใบกำกับ" ให้เงียบ ๆ เมื่อข้อมูลผู้ซื้อ
+        // ไม่ครบ → ผู้ใช้ไม่มีทางรู้ว่าใบนี้ลูกค้าเอาไปใช้ไม่ได้ จึงยกขึ้นมาเตือน
+        // (warning ไม่ block — ขายปลีกที่ลูกค้าไม่ขอใบกำกับเป็นเคสปกติ)
+        var vatBearingSalesDoc = doc.VatAmount > 0.005m
+            && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+                or DocumentType.TaxInvoice;
+        // มัดจำที่ VAT ยังพักรอ (21913) ยังไม่เข้ารายงาน → ยังไม่ถึงเวลาต้องออกใบกำกับ
+        var deferredDeposit = doc.IsDeposit && doc.DepositOutputVatDeferred
+            && doc.DepositOutputVatRecognizedAt == null;
+        if (vatBearingSalesDoc && !deferredDeposit && doc.Contact != null
+            && !doc.Contact.IsWalkInCustomer && !doc.BuyerDeclinedTaxInvoice)
+        {
+            var missingBuyer = Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(doc.Contact);
+            if (missingBuyer.Count > 0)
+                warnings.Add(
+                    $"⚠️ §86: ใบนี้เก็บ VAT {doc.VatAmount:N2} บาท และจะเข้ารายงานภาษีขาย/ภ.พ.30 "
+                    + $"แต่ข้อมูลผู้ซื้อยังขาด {string.Join(", ", missingBuyer)} → หัวเอกสารจะพิมพ์ว่า "
+                    + "\"ใบเสร็จรับเงิน\" ไม่ใช่ใบกำกับภาษี. **เรานำส่ง VAT ครบ แต่ลูกค้าเคลมภาษีซื้อ"
+                    + "ไม่ได้** (§82/5(1)) และเรามีหน้าที่ออกใบกำกับให้ทุกครั้งที่เก็บ VAT (§86). "
+                    + "เติมข้อมูลผู้ซื้อให้ครบ → หัวจะเป็น \"ใบกำกับภาษี/ใบเสร็จรับเงิน\" ใบเดียวจบ "
+                    + "(ไม่ต้องออกใบกำกับแยกอีกใบ); หรือถ้าลูกค้าไม่ต้องการใบกำกับจริง ๆ "
+                    + "ให้ติ๊ก \"ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี\" เพื่อบันทึกเจตนาไว้เป็นหลักฐาน");
+        }
+
         // §81/1 — ผู้ที่ไม่ได้จด VAT ห้ามออกใบกำกับภาษี + เก็บ VAT. ถ้าบริษัท
         // VatRegistered=false แต่กำลังออกใบกำกับ/ใบเพิ่ม-ลดหนี้ที่มี VAT → เตือน
         // (ออกใบกำกับโดยไม่จด VAT = ความผิด §90/2 + ต้องนำส่ง VAT ที่เรียกเก็บ).

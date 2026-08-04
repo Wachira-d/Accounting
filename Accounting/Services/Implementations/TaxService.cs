@@ -501,9 +501,12 @@ public partial class TaxService : ITaxService
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = taxPoint,
-                    Description = doc.IsDeposit
-                        ? $"[มัดจำ] {doc.DocumentNumber}"
-                        : doc.DocumentNumber,
+                    // ติดธง "ไม่ใช่ใบกำกับเต็มรูป" ให้เห็นในรายงาน — ใบพวกนี้เรา
+                    // นำส่ง VAT ครบแต่ลูกค้าเคลมภาษีซื้อไม่ได้ (§82/5(1)) และเรา
+                    // ยังมีหน้าที่ออกใบกำกับตาม §86 นักบัญชีจะได้เห็นทั้งงวดใน
+                    // ที่เดียวว่ามีกี่ใบต้องตามแก้ แทนที่จะรู้ตอนลูกค้าโทรมาทวง
+                    Description = (doc.IsDeposit ? $"[มัดจำ] {doc.DocumentNumber}" : doc.DocumentNumber)
+                        + (NotFullTaxInvoice(doc) ? " [ไม่ใช่ใบกำกับเต็มรูป — ลูกค้าเคลมภาษีซื้อไม่ได้]" : ""),
                     IncomeAmount = VatableBase(doc),
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = doc.VatAmount,
@@ -2136,6 +2139,20 @@ public partial class TaxService : ITaxService
     /// ใบที่ไม่มีบรรทัดยกเว้นจะได้ค่าเท่า SubTotal เหมือนเดิม.
     /// หมายเหตุ: ใบที่ผสม 7% กับ 0% (§80/1) ยังรวมเป็นบรรทัดเดียวที่อัตราสูงสุด —
     /// การแยกบรรทัดต่ออัตราเป็นงานเฟสถัดไป (ดู DEVELOPMENT_PHASES.md)</summary>
+    /// <summary>ใบนี้ "ไม่ใช่ใบกำกับภาษีเต็มรูป" หรือไม่ — เกณฑ์เดียวกับที่
+    /// PdfGenerationService ใช้ตัดสินหัวเอกสาร (ผู้ซื้อ walk-in / ติ๊กไม่ประสงค์
+    /// รับใบกำกับ / ข้อมูล §86/4 ไม่ครบ). ใบแบบนี้ยังต้องนำส่ง VAT ตามปกติ
+    /// (ภาระเกิดจาก tax point ไม่ใช่หัวกระดาษ) แต่ผู้ซื้อเคลมภาษีซื้อไม่ได้ —
+    /// จึงติดธงไว้ในรายงานให้ตามแก้ได้ทั้งงวด</summary>
+    internal static bool NotFullTaxInvoice(Document doc)
+    {
+        if (doc.VatAmount <= 0.005m) return false;
+        if (doc.BuyerDeclinedTaxInvoice) return true;
+        if (doc.Contact == null) return true;
+        if (doc.Contact.IsWalkInCustomer) return true;
+        return Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(doc.Contact).Count > 0;
+    }
+
     internal static decimal VatableBase(Document doc)
     {
         if (doc.Lines == null || doc.Lines.Count == 0) return doc.SubTotal;
