@@ -145,6 +145,42 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - (D) OCR ขาด — `grossSum < subtotal` → ปล่อยให้ user แก้
 - **Quota refund**: ถ้า re-OCR (retry) ไม่ใช้ quota ใหม่ (`OcrService.cs`)
 
+### 2.2b LINE bot — "โยนบิลเข้าไลน์" (Paypers-style)
+
+- **Flow**: ผู้ใช้ส่ง **รูปถ่ายใบเสร็จ / ไฟล์ PDF** เข้า LINE bot →
+  `LineWebhookController` (message type `image`/`file`) →
+  `LineBotService.HandleImageAsync` → ดาวน์โหลดจาก LINE Content API
+  (`api-data.line.me/v2/bot/message/{id}/content`) → **pipeline เดียวกับ
+  อัปโหลดหน้าเว็บทุกขั้น**: `OcrPreprocessor.Check` (ตรวจคุณภาพก่อนตัดโควต้า)
+  → SHA-256 dedup (10 นาที — LINE ชอบกดส่งซ้ำ) → `IOcrQuotaService.TryConsume`
+  → `OcrService.ScanAsync(autoCreate: true)` → ตอบกลับทาง LINE
+- **Reply**: สร้างเอกสารสำเร็จ → ประเภท+ผู้ขาย+ยอด+ลิงก์ตรวจ/อนุมัติ
+  (`document-scan.html?reviewScan={id}`); safety gate ระงับ → สรุปที่อ่านได้
+  + ลิงก์หน้า review ที่ pre-fill แล้ว; ซ้ำ/ล้มเหลว/โควต้าหมด → บอกเหตุผลตรง ๆ
+- **กฎเหล็ก #3 ยังคุม**: เอกสารที่สร้างเป็น **ฉบับร่าง** เสมอ (เลขจริงออกตอน
+  Approve) + safety gate ครบชุดของ `ScanAsync` (confidence ≥ 0.85, field สำคัญ
+  ครบ, ระงับเมื่อเจอลายมือ/สินทรัพย์, กันใบซ้ำ) — LINE ไม่ได้ bypass อะไร
+- **ผูกบัญชี**: ใช้กลไก bind เดิม ("ผูก {รหัส 6 หลัก}") + `LineUserState`
+  active company (หลายบริษัท → ให้เลือกก่อนแล้วส่งรูปใหม่)
+- **Quota refund**: กติกาเดียวกับหน้าเว็บ — duplicate / scan fail / e-Tax XML
+  ฝังไฟล์ (ไม่ได้ใช้ OCR engine) คืนเครดิต
+
+### 2.2c ใบรับรองแทนใบเสร็จรับเงิน — routing บิลไม่เป็นทางการ (§65 ตรี)
+
+- **กติกา** (`OcrService.ScanAsync` ก่อน re-sync block): ฝั่งซื้อ (`OurRole ==
+  "Buyer"`) + กระดาษเป็น `Receipt` + **ไม่มีเลขผู้เสียภาษี 13 หลัก** + **ไม่มี
+  VAT** + target เดิมเป็น Expense/PaymentVoucher → เปลี่ยน
+  `TargetDocumentType = CertificateInLieu` + ลง ReasoningTrace อ้าง §65 ตรี(9)(18)
+- **เหตุผล**: บิลเงินสดแม่ค้า/วินฯ ระบุตัวผู้รับเงินไม่ได้ → เสี่ยงโดนบวกกลับ;
+  แนวปฏิบัติกรมสรรพากรให้จัดทำ "ใบรับรองแทนใบเสร็จรับเงิน" ประกอบ — ฟอร์มมี
+  ผู้รับรอง/เหตุผล (`CertificateReason`, `CertifierName` เติมอัตโนมัติใน
+  `CreateDocumentFromScanAsync`) + รูปบิลเดิม relink เป็นไฟล์แนบเอกสาร
+- **ใบมี VAT แต่ไม่มีเลขผู้เสียภาษี** (ใบกำกับอย่างย่อ) ไม่เข้ากติกานี้ —
+  มีเส้นทาง §82/5(2) ของตัวเอง (เตือนเคลมภาษีซื้อไม่ได้)
+- **Auto-create gate ผ่อนเลขที่เอกสาร**: target = CertificateInLieu ไม่บังคับ
+  `DocumentNumber` จากกระดาษ (บิลพวกนี้มักไม่มีเลขที่ — เลขจริงคือเลขใบรับรอง
+  ที่ระบบออกตอน Approve); ยังบังคับ วันที่ + ยอดรวม + contact match เหมือนเดิม
+
 ### 2.3 Integration ภายนอก
 - **Controller**: `IntegrationController.cs` — manage config + API key issuance
 - **เข้าทาง** `/api/companies/{id}/documents` (ทาง standard) พร้อม
@@ -1555,8 +1591,9 @@ _มี local heuristics, DailyCallCap นับเฉพาะ provider call, O
 _tenant: CMS cart scope, POS ProductId, payroll includeSalary; XSS 4 หน้า;_
 _import: พ.ศ.→ค.ศ. ทุกจุด + JE/bank dedup. **ใหม่: ภาษาเอกสาร th/en**)_
 
-_Last updated: 2026-08-03 — ปฏิทินนำส่งภาษี/ประกันสังคมบน dashboard (§5.3b)_
-_+ แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน (FileAttachment entityType "PayrollRun")_
+_Last updated: 2026-08-04 — LINE bot รับรูปใบเสร็จ → OCR → เอกสารทันที (§2.2b)_
+_+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
+_ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
 _Last verified against codebase: 2026-07-31 (audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
 _แก้ 43 บั๊ก 3 ชุด: CN/DN text-ref resolve+undue VAT accounts+GRN block+qty cap+_
