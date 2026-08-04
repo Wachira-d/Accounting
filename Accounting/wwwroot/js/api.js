@@ -211,6 +211,9 @@ const API = {
       getMemberPermissions: (userId) => API.get(`${base}/users/${userId}/permissions`),
       getDepositDiagnostics: () => API.get(`${base}/document/deposits/diagnostics`),
       realizeDeposit: (id, body) => API.post(`${base}/document/${id}/realize-deposit`, body),
+      // รับรู้ภาษีขายรอเรียกเก็บของมัดจำ (21913 → 21911) โดยไม่แตะรายได้ —
+      // ใช้เมื่อจุดรับผิด §78 เกิดก่อนส่งมอบ (ลูกค้าขอใบกำกับ ฯลฯ)
+      recognizeDepositVat: (id, body) => API.post(`${base}/document/${id}/recognize-deposit-vat`, body ?? {}),
       refundDeposit: (id, body) => API.post(`${base}/document/${id}/refund-deposit`, body),
       applyDeposit: (invoiceId, body) => API.post(`${base}/document/${invoiceId}/apply-deposit`, body),
       searchJournalDeposits: (q) => API.get(`${base}/document/journal-deposits${q ? ('?q=' + encodeURIComponent(q)) : ''}`),
