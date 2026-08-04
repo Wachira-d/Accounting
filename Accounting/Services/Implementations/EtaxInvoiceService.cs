@@ -108,6 +108,44 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         if (await _db.EtaxInvoices.AnyAsync(e => e.DocumentId == document.Id && e.CompanyId == companyId && e.Status != EtaxStatus.Error))
             throw new InvalidOperationException("เอกสารนี้มี e-Tax Invoice แล้ว");
 
+        // ===== e-Tax = "ใบกำกับภาษีในรูปอิเล็กทรอนิกส์" — ใบที่ไม่ใช่ใบกำกับ ห้ามส่ง =====
+        // DocumentType.Receipt ถูก map เป็น TypeCode T03 "ใบเสร็จรับเงิน/ใบกำกับภาษี"
+        // เสมอ ซึ่งประกาศต่อกรมสรรพากรว่าใบนี้ "เป็นใบกำกับภาษี" ถ้าปล่อยให้ใบที่
+        // ตั้งใจไม่ให้เป็นใบกำกับหลุดออกไป จะขัดกันเองสามทาง:
+        //   • กระดาษ/PDF พิมพ์หัวว่า "ใบเสร็จรับเงิน" (ไม่มีคำว่าใบกำกับภาษี)
+        //   • ภ.พ.30 ยังไม่มี VAT ก้อนนี้ (มัดจำ deferred พักที่ 21913)
+        //   • แต่ XML บอก RD ว่าเป็นใบกำกับ T03 → ผู้ซื้อเคลมภาษีซื้อจาก e-Tax
+        //     ที่ผู้ขายไม่เคยนำส่ง = ทั้งสองฝั่งโดนประเมิน
+        if (document.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
+        {
+            // มัดจำที่ VAT ยังพักรอ (tax point ยังไม่เกิด) — ใบกำกับตัวจริงจะออก
+            // ตอนส่งมอบ/รับรู้ ค่อยสร้าง e-Tax ที่ใบนั้น
+            if (document.IsDeposit && document.DepositOutputVatDeferred
+                && document.DepositOutputVatRecognizedAt == null)
+                throw new InvalidOperationException(
+                    $"ใบมัดจำ {document.DocumentNumber} ตั้งค่าเป็น \"VAT รอเรียกเก็บ\" (ยังไม่ถึงจุดรับผิด §78) "
+                    + "จึงยังไม่ใช่ใบกำกับภาษี — ออก e-Tax ไม่ได้. "
+                    + "e-Tax จะออกที่ใบกำกับภาษีตอนส่งมอบ/รับรู้รายได้ "
+                    + "(หรือเปลี่ยนใบนี้เป็นมัดจำที่เก็บ VAT ทันที ถ้าเป็นการรับชำระราคาจริง)");
+
+            // ใบที่ข้อมูลผู้ซื้อไม่ครบ §86/4 / ผู้ซื้อไม่ประสงค์รับใบกำกับ →
+            // หัวกระดาษไม่มีคำว่าใบกำกับ ส่ง T03 ไม่ได้เช่นกัน
+            if (document.VatAmount > 0.005m && TaxService.NotFullTaxInvoice(document))
+            {
+                var missing = document.Contact == null
+                    ? "ข้อมูลผู้ซื้อ"
+                    : string.Join(", ", Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(document.Contact));
+                throw new InvalidOperationException(
+                    $"เอกสาร {document.DocumentNumber} ยังไม่ใช่ใบกำกับภาษีเต็มรูป "
+                    + (document.BuyerDeclinedTaxInvoice
+                        ? "(ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี)"
+                        : $"— ขาด {missing}")
+                    + " — e-Tax คือใบกำกับภาษีในรูปอิเล็กทรอนิกส์ จึงส่งไม่ได้. "
+                    + "เติมข้อมูลผู้ซื้อให้ครบแล้วสร้างใหม่ (หัวเอกสารจะเป็น "
+                    + "\"ใบกำกับภาษี/ใบเสร็จรับเงิน\" เอง)");
+            }
+        }
+
         // ===== CN/DN gate: ต้องมีใบอ้างอิง + ต้องเป็นฝั่งขายเท่านั้น =====
         // §86/9-10 + Schematron DCN-AdditionalReferencedDocument: ใบลดหนี้/เพิ่มหนี้
         // ต้องอ้างเลขที่+วันที่ใบกำกับเดิม — ไม่มี ref = XML ใส่ "-" + มูลค่าเดิมเท็จ

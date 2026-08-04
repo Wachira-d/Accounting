@@ -1105,17 +1105,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         var c = doc.Contact;
         if (c == null) return true;                    // ไม่มีข้อมูลผู้ซื้อ
         if (c.IsWalkInCustomer) return true;
-        var tid = new string((c.TaxId ?? "").Where(char.IsDigit).ToArray());
-        if (tid.Length != 13) return true;
-        if (string.IsNullOrWhiteSpace(c.Address)) return true;
-        var isJuristic = c.ContactType == ContactType.JuristicPerson
-            || (tid.Length == 13 && tid.StartsWith("0"));
-        if (isJuristic)
-        {
-            var br = new string((c.BranchCode ?? "").Where(char.IsDigit).ToArray());
-            if (br.Length != 5) return true;
-        }
-        return false;
+        // เกณฑ์เดียวกับ gate ตอนอนุมัติ (แหล่งเดียว ไม่ให้ drift):
+        // บุคคลธรรมดาต้องการแค่ชื่อ+ที่อยู่ — เลขภาษี/สาขาบังคับเฉพาะนิติบุคคล
+        return Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(c).Count > 0;
     }
 
     /// <summary>ตั้ง doc.ServedAsReceipt: ใบกำกับภาษีที่ชำระครบ ณ วันออก (cash

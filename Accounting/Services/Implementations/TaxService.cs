@@ -478,6 +478,15 @@ public partial class TaxService : ITaxService
                     // มัดจำ immediate (VAT ลง 21911 ตั้งแต่รับเงิน): tax point =
                     // วันรับเงิน ต้องอยู่ในงวดนี้ (กัน candidate ที่ merge เข้ามา
                     // จาก deferredRecognized แต่จริง ๆ ไม่ใช่ deferred)
+                    //
+                    // ถูก "หักเข้าใบปลายทาง" แล้ว → ข้าม เหมือนเคส deferred:
+                    // ApplyDepositToInvoice ลง JE กลับ Dr 21911 ("ล้าง VAT มัดจำ —
+                    // รับรู้ที่ใบกำกับแล้ว") และใบปลายทาง Cr 21911 เต็มจำนวน
+                    // ถ้ายังนับใบมัดจำอยู่ = ภ.พ.30 เกินจริงตามยอดมัดจำ และไม่ตรง
+                    // กับความเคลื่อนไหวจริงของ 21911 ใน GL
+                    // (งวดของใบมัดจำที่ "ยื่นไปแล้ว" ถูกกันไม่ให้ apply ตั้งแต่ต้นทาง
+                    //  ใน DocumentService — ที่นี่จึงเหลือเฉพาะงวดที่ยัง regenerate ได้)
+                    if (doc.DepositAppliedToDocumentId.HasValue) continue;
                     var tp = doc.TaxPointDate ?? doc.DocumentDate;
                     if (tp < startDate || tp > endDate) continue;
                 }
@@ -492,9 +501,12 @@ public partial class TaxService : ITaxService
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = taxPoint,
-                    Description = doc.IsDeposit
-                        ? $"[มัดจำ] {doc.DocumentNumber}"
-                        : doc.DocumentNumber,
+                    // ติดธง "ไม่ใช่ใบกำกับเต็มรูป" ให้เห็นในรายงาน — ใบพวกนี้เรา
+                    // นำส่ง VAT ครบแต่ลูกค้าเคลมภาษีซื้อไม่ได้ (§82/5(1)) และเรา
+                    // ยังมีหน้าที่ออกใบกำกับตาม §86 นักบัญชีจะได้เห็นทั้งงวดใน
+                    // ที่เดียวว่ามีกี่ใบต้องตามแก้ แทนที่จะรู้ตอนลูกค้าโทรมาทวง
+                    Description = (doc.IsDeposit ? $"[มัดจำ] {doc.DocumentNumber}" : doc.DocumentNumber)
+                        + (NotFullTaxInvoice(doc) ? " [ไม่ใช่ใบกำกับเต็มรูป — ลูกค้าเคลมภาษีซื้อไม่ได้]" : ""),
                     IncomeAmount = VatableBase(doc),
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = doc.VatAmount,
@@ -1164,6 +1176,44 @@ public partial class TaxService : ITaxService
         report.OutputVat = outputVat;
         report.InputVat = inputVat;
         report.NetVat = outputVat - inputVat - vatCreditCarryforward;
+
+        // ── เตือน "ภาษีขายรอเรียกเก็บค้างนาน" ตอนเปิดรายงานเพื่อยื่น ──
+        // วิธี B (มัดจำ VAT รอเรียกเก็บ) มีความเสี่ยงเฉพาะตัว: เราเก็บ VAT จาก
+        // ลูกค้าไปแล้วแต่ค้างที่ 21913 ถ้าไม่มีใครกดรับรู้ (ลูกค้าเงียบ/งานยืด/
+        // ลืม) เงินก้อนนั้นจะไม่ถูกนำส่งตลอดไป — สรรพากรตรวจเจอ = เรียกเก็บ VAT
+        // ที่เก็บจากลูกค้าแล้วไม่นำส่ง + เบี้ยปรับ/เงินเพิ่ม
+        // จังหวะที่เตือนได้ผลที่สุดคือ "ตอนเปิดรายงานเพื่อยื่น" ไม่ใช่ log เงียบ ๆ
+        try
+        {
+            var agingCutoff = endDate.AddDays(-90);
+            var stale = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.IsDeposit && d.DepositOutputVatDeferred
+                    && d.DepositOutputVatRecognizedAt == null
+                    && d.DepositAppliedToDocumentId == null
+                    && d.VatAmount > 0.005m
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                    && (d.TaxPointDate ?? d.DocumentDate) <= agingCutoff)
+                .Select(d => new { d.DocumentNumber, d.VatAmount, Dt = d.TaxPointDate ?? d.DocumentDate })
+                .OrderBy(d => d.Dt).Take(20)
+                .ToListAsync();
+            if (stale.Count > 0)
+            {
+                var note = $"⚠️ มีเงินมัดจำที่ \"ภาษีขายรอเรียกเก็บ\" (21913) ค้างเกิน 90 วัน "
+                    + $"{stale.Count} ใบ รวม VAT {stale.Sum(s => s.VatAmount):N2} บาท — "
+                    + "ยังไม่เข้า ภ.พ.30 งวดใด ตรวจว่าจุดรับผิดเกิดแล้วหรือยัง (§78: ส่งมอบ/"
+                    + "โอนกรรมสิทธิ์/รับชำระราคา/ออกใบกำกับ อย่างใดเกิดก่อน) ถ้าเกิดแล้วให้กด "
+                    + "\"รับรู้ภาษีขาย\" ที่ใบมัดจำเพื่อนำส่งในงวดที่ถูกต้อง: "
+                    + string.Join(", ", stale.Take(5).Select(s => $"{s.DocumentNumber} ({s.Dt:dd/MM/yy} {s.VatAmount:N2})"))
+                    + (stale.Count > 5 ? $" และอีก {stale.Count - 5} ใบ" : "");
+                report.Notes = string.IsNullOrWhiteSpace(report.Notes) ? note : report.Notes + "\n" + note;
+            }
+        }
+        catch (Exception ex)
+        {
+            // เตือนไม่ได้ต้องไม่ทำให้สร้างรายงานไม่ได้
+            System.Diagnostics.Trace.TraceWarning($"deferred-VAT deposit aging check failed: {ex.Message}");
+        }
 
         // §87: รายงานภาษีซื้อ/ขายต้องลงตาม "ลำดับเวลา" — เรียง + renumber ท้ายสุด
         NormalizeReportLineOrder(report);
@@ -2127,6 +2177,20 @@ public partial class TaxService : ITaxService
     /// ใบที่ไม่มีบรรทัดยกเว้นจะได้ค่าเท่า SubTotal เหมือนเดิม.
     /// หมายเหตุ: ใบที่ผสม 7% กับ 0% (§80/1) ยังรวมเป็นบรรทัดเดียวที่อัตราสูงสุด —
     /// การแยกบรรทัดต่ออัตราเป็นงานเฟสถัดไป (ดู DEVELOPMENT_PHASES.md)</summary>
+    /// <summary>ใบนี้ "ไม่ใช่ใบกำกับภาษีเต็มรูป" หรือไม่ — เกณฑ์เดียวกับที่
+    /// PdfGenerationService ใช้ตัดสินหัวเอกสาร (ผู้ซื้อ walk-in / ติ๊กไม่ประสงค์
+    /// รับใบกำกับ / ข้อมูล §86/4 ไม่ครบ). ใบแบบนี้ยังต้องนำส่ง VAT ตามปกติ
+    /// (ภาระเกิดจาก tax point ไม่ใช่หัวกระดาษ) แต่ผู้ซื้อเคลมภาษีซื้อไม่ได้ —
+    /// จึงติดธงไว้ในรายงานให้ตามแก้ได้ทั้งงวด</summary>
+    internal static bool NotFullTaxInvoice(Document doc)
+    {
+        if (doc.VatAmount <= 0.005m) return false;
+        if (doc.BuyerDeclinedTaxInvoice) return true;
+        if (doc.Contact == null) return true;
+        if (doc.Contact.IsWalkInCustomer) return true;
+        return Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(doc.Contact).Count > 0;
+    }
+
     internal static decimal VatableBase(Document doc)
     {
         if (doc.Lines == null || doc.Lines.Count == 0) return doc.SubTotal;
