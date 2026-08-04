@@ -81,6 +81,13 @@
 | TAX-U-03 | §82/3: invoice เดือน M, ยื่นเดือน M+6 พอดี | ยัง claim ได้ (=6 ไม่เกิน); M+7 → block |
 | TAX-U-04 | §82/5(6): หมวดรถยนต์นั่ง + IsVehicleDealer=true | dealer claim ได้; ปกติ block พร้อม RuleCode `RD-82/5(6)` |
 | TAX-U-05 | ใบกำกับอย่างย่อฝั่งซื้อ | `InputVatBlocked=true` ไม่เข้า PurchaseVatReport |
+| TAX-U-06 | ✅ มีแล้ว: §86/4(3) ข้อมูลผู้ซื้อขั้นต่ำ | `BuyerTaxInvoiceFieldsTests` — บุคคลธรรมดาต้องการแค่ชื่อ+ที่อยู่; นิติบุคคลต้องมีเลขภาษี+สาขา |
+| TAX-U-07 | มัดจำ tax point: `DepositOutputVatDeferred=false` | VAT เข้า ภ.พ.30 งวดที่รับเงิน (§78/§78/1) |
+| TAX-U-08 | มัดจำ tax point: `DepositOutputVatDeferred=true` ยังไม่ recognize | ไม่เข้า ภ.พ.30 (พักที่ 21913); หัวเอกสารไม่มีคำ "ใบกำกับภาษี" |
+| TAX-I-10 | มัดจำ deferred → recognize (RealizeDeposit) | เข้า ภ.พ.30 งวดที่ recognize + หัว upgrade เป็นใบกำกับ |
+| TAX-I-11 | มัดจำถูกหักเข้าใบปลายทาง (`DepositAppliedToDocumentId`) | ใบมัดจำ**ไม่**ขึ้นรายงานซ้ำ (ใบปลายทางรายงานเต็มใบ) |
+| TAX-I-12 | ขายให้บุคคลธรรมดา (ชื่อ+ที่อยู่ครบ ไม่มีเลขภาษี) มี VAT | อนุมัติผ่าน + หัวเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" (ไม่ downgrade) |
+| TAX-I-13 | ขายให้นิติบุคคลที่ขาดเลขภาษี/สาขา | block พร้อมชี้ทางออก (เติมข้อมูล / ติ๊กไม่ประสงค์รับใบกำกับ) |
 
 ### Integration
 | รหัส | เคส | คาดหวัง |

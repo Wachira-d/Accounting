@@ -3272,22 +3272,14 @@ public class DocumentService : IDocumentService
             && !doc.Contact.IsWalkInCustomer && !isDeferredVatDeposit
             && !doc.BuyerDeclinedTaxInvoice)
         {
-            var missing = new List<string>();
-            var taxIdDigits = new string((doc.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
-            if (taxIdDigits.Length != 13) missing.Add("เลขผู้เสียภาษีผู้ซื้อ 13 หลัก");
-            if (string.IsNullOrWhiteSpace(doc.Contact.Address)) missing.Add("ที่อยู่ผู้ซื้อ");
-            // รหัสสาขา (00000=สนญ. / สาขาที่ NNNNN) เป็นแนวคิดของ "นิติบุคคล"
-            // เท่านั้น — บุคคลธรรมดาไม่มีสาขา จึงบังคับเฉพาะผู้ซื้อนิติบุคคล
-            // (ContactType.JuristicPerson หรือเลขภาษี 13 หลักขึ้นต้น 0 = เลข
-            // ทะเบียนนิติบุคคล; บัตร ปชช. บุคคลธรรมดาขึ้นต้น 1-8).
-            var isJuristicBuyer = doc.Contact.ContactType == ContactType.JuristicPerson
-                || (taxIdDigits.Length == 13 && taxIdDigits.StartsWith("0"));
-            if (isJuristicBuyer)
-            {
-                var buyerBr = doc.Contact.BranchCode ?? "";
-                var buyerBrDigits = new string(buyerBr.Where(char.IsDigit).ToArray());
-                if (buyerBrDigits.Length != 5) missing.Add("รหัสสาขาผู้ซื้อ 5 หลัก (00000=สนญ.)");
-            }
+            // เกณฑ์กลาง (แหล่งเดียวกับที่ PdfGenerationService ใช้ตัดสินหัวเอกสาร
+            // — เดิมเป็นโค้ดคนละชุดจึง drift ได้): §86/4(3) บังคับแค่ชื่อ+ที่อยู่
+            // ผู้ซื้อ; เลขภาษี + สาขา บังคับเฉพาะผู้ซื้อที่เป็นผู้ประกอบการจด
+            // ทะเบียน (ประกาศอธิบดีฯ 194/199) — บุคคลธรรมดาที่ให้ชื่อ+ที่อยู่ครบ
+            // **ออกใบกำกับภาษีเต็มรูปให้ได้** ไม่ต้อง downgrade เป็นใบเสร็จ
+            var missing = Tax.TaxInvoiceCompletenessChecker
+                .MissingBuyerFields(doc.Contact).ToList();
+            var isJuristicBuyer = Tax.TaxInvoiceCompletenessChecker.IsJuristicBuyer(doc.Contact);
             if (missing.Count > 0)
             {
                 // หลักบัญชี: "เอกสารที่ §86/4 ไม่ครบ = ไม่ใช่ใบกำกับภาษีเต็มรูป จึง
