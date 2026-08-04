@@ -2,11 +2,23 @@ name: CI
 
 # Build + test ทุก push / PR — จับ compile error และ money-math regression
 # (JE balancing, VAT/WHT, §65 ตรี add-back ฯลฯ) ก่อน merge. เดิมไม่มี CI เลย.
+# ปิดการรันอัตโนมัติบน branch งาน (claude/**) ตามที่เจ้าของโปรเจกต์สั่ง —
+# ระหว่างพัฒนา agent commit ถี่ ทุก commit ที่ยัง build ไม่ผ่านจะส่งเมลแจ้ง
+# ทุกครั้ง กลายเป็นเสียงรบกวนมากกว่าสัญญาณ
+#
+# ยังทำงานเต็มรูปตรงจุดที่สำคัญจริง: **ทุก PR เข้า main/master** (กันโค้ดที่
+# build/test ไม่ผ่านหลุดเข้า main) และ push ตรงเข้า main/master
+# สั่งรันเองระหว่างพัฒนาได้ที่แท็บ Actions → CI → "Run workflow"
+# (workflow_dispatch) โดยไม่ต้องแก้ไฟล์นี้
+#
+# ถ้าอยากให้กลับมารันทุก push ของ branch งาน: เพิ่ม "claude/**" กลับเข้า
+# รายการ branches ของ push ด้านล่าง
 on:
   push:
-    branches: [ main, master, "claude/**" ]
+    branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build-and-test:
