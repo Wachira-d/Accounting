@@ -3090,7 +3090,7 @@
               <div style="text-align:right">
                 <div style="font-size:13px;color:#64748b">ยอด: ${Layout.money(Math.abs(it.defaultAmount))}</div>
                 ${it.type === 'JournalEntry' && it.bankLeg === null
-                  ? '<div style="font-size:10px;color:#b45309" title="JE ใบนี้ไม่มีบรรทัดที่ลงผังบัญชีของบัญชีธนาคารนี้ — ตรวจก่อนจับคู่ว่าเป็นใบที่ถูกต้อง">⚠️ ไม่มีขาที่แตะบัญชีนี้</div>'
+                  ? '<div style="font-size:10px;color:#b45309" title="JE ใบนี้ไม่มีบรรทัดที่ลงผังเงินสด/ธนาคาร (111x) เลย — ยอดที่แสดงคือ footing ทั้งใบ ตรวจก่อนจับคู่">⚠️ ไม่มีขาเงินสด/ธนาคาร</div>'
                   : ''}
                 ${it._selected ? `<input type="number" step="0.01" value="${it._alloc.toFixed(2)}" onchange="GroupReconcile.setItemAlloc(${i}, this.value)" onclick="event.preventDefault()" title="เครื่องหมายลบ = เงินออก (หักล้าง)" style="margin-top:4px;width:110px;font-size:11px;padding:2px 6px;text-align:right;border:1px solid ${color};color:${color}">` : ''}
               </div>

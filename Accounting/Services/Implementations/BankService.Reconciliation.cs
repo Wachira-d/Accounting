@@ -602,20 +602,26 @@ public partial class BankService
                 // ไม่ใช่ footing ทั้งใบ (JV เงินเดือน footing 77,678 แต่ออกจาก
                 // ธนาคารจริง 70,110) — ใช้ footing เป็นเพดานคือปล่อยให้จัดสรร
                 // เกินยอดที่แตะธนาคารจริงได้ 7,568 บาทโดยไม่มีอะไรค้าน
-                if (bankGlAccountId.HasValue)
+                // ต้องหาแบบเดียวกับ GetUnmatchedItemsAsync ทุกประการ (2 ชั้น:
+                // ผังที่ผูกกับบัญชีนี้ → ผังเงินสด/ธนาคารใด ๆ 111x) ไม่งั้น
+                // ตัวเลขที่โชว์กับเพดานที่ตรวจจะคนละตัว = ผู้ใช้เห็นยอดถูกแต่
+                // กดยืนยันแล้วโดนปฏิเสธ
+                var cashLegs = await _db.JournalEntryLines.AsNoTracking()
+                    .Where(l => l.JournalEntryId == id
+                        && (l.Account.AccountCode.StartsWith("111")
+                            || (bankGlAccountId != null && l.AccountId == bankGlAccountId)))
+                    .Select(l => new { l.AccountId, Net = l.DebitAmount - l.CreditAmount })
+                    .ToListAsync();
+                if (cashLegs.Count > 0)
                 {
-                    var leg = await _db.JournalEntryLines.AsNoTracking()
-                        .Where(l => l.JournalEntryId == id && l.AccountId == bankGlAccountId.Value)
-                        .Select(l => l.DebitAmount - l.CreditAmount)
-                        .ToListAsync();
-                    if (leg.Count > 0)
-                    {
-                        var net = Math.Abs(leg.Sum());
-                        if (net > 0.009m) return net;
-                    }
+                    var exact = bankGlAccountId.HasValue
+                        ? cashLegs.Where(l => l.AccountId == bankGlAccountId.Value).ToList()
+                        : new();
+                    var net = Math.Abs((exact.Count > 0 ? exact : cashLegs).Sum(l => l.Net));
+                    if (net > 0.009m) return net;
                 }
-                // ไม่มีขาที่แตะธนาคารนี้ (หรือยังไม่ได้ผูกผังกับบัญชี) → คงพฤติกรรม
-                // เดิมด้วย footing เพื่อไม่บล็อกการจับคู่ที่เคยทำได้
+                // ไม่มีขาเงินสด/ธนาคารเลย → คงพฤติกรรมเดิมด้วย footing
+                // (ไม่บล็อกการจับคู่ที่เคยทำได้ แต่ UI ขึ้นป้ายเตือนไว้แล้ว)
                 return await _db.JournalEntries.AsNoTracking()
                     .Where(j => j.Id == id && j.CompanyId == companyId)
                     .Select(j => j.TotalDebit).FirstOrDefaultAsync();
@@ -766,29 +772,63 @@ public partial class BankService
         //                   Cr ธนาคาร             70,110   ← ตัวนี้เท่านั้นที่ออกจริง
         // การโชว์ 77,678 ทำให้ผู้ใช้เข้าใจว่า "JE ลงไม่ตรงกับที่จ่ายจริง"
         // ทั้งที่ JE ถูกต้อง — ส่วนต่างคือหนี้ค้างจ่ายที่ยังไม่ถึงกำหนดนำส่ง
+        // หา 2 ชั้น เพราะ JE จำนวนมากไม่ได้ลงผังของบัญชีธนาคารนี้ตรง ๆ:
+        //   ชั้น 1 — บรรทัดที่ลงผังที่ผูกกับบัญชีธนาคารนี้ (LinkedAccountId) = แม่นสุด
+        //   ชั้น 2 — บรรทัดที่ลงผังเงินสด/ธนาคารใด ๆ (รหัสขึ้นต้น 111) เมื่อชั้น 1
+        //     ไม่เจอ. เคสจริง: JE เงินเดือนที่ยิงมาจากระบบภายนอกมัก Cr ผัง
+        //     "เงินฝากธนาคาร" กลาง ไม่ใช่ผังของบัญชีรายตัว — ถ้าไม่รองรับชั้นนี้
+        //     ยอดจะตกกลับไปเป็น footing ทั้งใบซึ่งไม่มีวันตรงกับสเตทเมนต์
+        // เก็บผังที่ใช้จริงไว้ด้วย เพื่อบอกผู้ใช้ว่า JE ลงบัญชีไหน (แก้ที่ต้นทาง
+        // หรือผูกผังให้ถูกได้) แทนที่จะบอกแค่ "ไม่ตรง"
         var jeBankLeg = new Dictionary<Guid, decimal>();
-        if (account.LinkedAccountId.HasValue && jeRows.Count > 0)
+        var jeLegAccount = new Dictionary<Guid, string>();
+        var jeLegIsExact = new HashSet<Guid>();
+        if (jeRows.Count > 0)
         {
             var jeIdList = jeRows.Select(j => j.Id).ToList();
-            var legRows = await _db.JournalEntryLines.AsNoTracking()
+            var cashLines = await _db.JournalEntryLines.AsNoTracking()
                 .Where(l => jeIdList.Contains(l.JournalEntryId)
-                    && l.AccountId == account.LinkedAccountId.Value)
-                .GroupBy(l => l.JournalEntryId)
-                .Select(g => new { JeId = g.Key, Net = g.Sum(x => x.DebitAmount) - g.Sum(x => x.CreditAmount) })
+                    && (l.Account.AccountCode.StartsWith("111")
+                        || (account.LinkedAccountId != null && l.AccountId == account.LinkedAccountId)))
+                .Select(l => new
+                {
+                    l.JournalEntryId, l.AccountId, l.DebitAmount, l.CreditAmount,
+                    l.Account.AccountCode, l.Account.AccountName,
+                })
                 .ToListAsync();
-            foreach (var r in legRows) jeBankLeg[r.JeId] = r.Net;   // + เงินเข้า / − เงินออก
+
+            foreach (var g in cashLines.GroupBy(l => l.JournalEntryId))
+            {
+                var exact = account.LinkedAccountId.HasValue
+                    ? g.Where(l => l.AccountId == account.LinkedAccountId.Value).ToList()
+                    : new();
+                var use = exact.Count > 0 ? exact : g.ToList();
+                var net = use.Sum(l => l.DebitAmount - l.CreditAmount);   // + เงินเข้า / − เงินออก
+                if (Math.Abs(net) <= 0.009m) continue;
+                jeBankLeg[g.Key] = net;
+                var acc = use[0];
+                jeLegAccount[g.Key] = $"{acc.AccountCode} {acc.AccountName}";
+                if (exact.Count > 0) jeLegIsExact.Add(g.Key);
+            }
         }
 
         var jes = jeRows.Select(j =>
         {
-            var hasLeg = jeBankLeg.TryGetValue(j.Id, out var leg) && Math.Abs(leg) > 0.009m;
+            var hasLeg = jeBankLeg.TryGetValue(j.Id, out var leg);
+            var note = "";
+            if (hasLeg)
+            {
+                // ส่วนต่างจาก footing = ขาอื่นในใบเดียวกัน (ค้างจ่าย/หักกลบ)
+                // บอกที่มาไว้ในบรรทัดเลย ผู้ใช้จะได้ไม่ต้องเปิด JE ไปไล่เอง
+                if (Math.Abs(Math.Abs(leg) - j.TotalDebit) > 0.009m)
+                    note += $" · ยอด JE ทั้งใบ {j.TotalDebit:N2} (ส่วนต่างเป็นรายการค้างจ่าย/หักกลบในใบเดียวกัน)";
+                // ลงผังเงินสด/ธนาคารตัวอื่น ไม่ใช่ผังของบัญชีนี้ — actionable
+                if (!jeLegIsExact.Contains(j.Id) && jeLegAccount.TryGetValue(j.Id, out var accName))
+                    note += $" · ขาเงินสด/ธนาคารในใบนี้ลงผัง {accName}";
+            }
             return new UnmatchedItem(
                 "JournalEntry", j.Id, j.EntryNumber, j.EntryDate,
-                // เมื่อ footing ต่างจากขาธนาคาร บอกให้เห็นในบรรทัดเลย ไม่ต้อง
-                // ให้ผู้ใช้เปิด JE ไปนั่งไล่หาว่าทำไมตัวเลขไม่ตรง
-                hasLeg && Math.Abs(Math.Abs(leg) - j.TotalDebit) > 0.009m
-                    ? $"{j.Description} · ยอด JE ทั้งใบ {j.TotalDebit:N2} (ส่วนต่างเป็นรายการค้างจ่าย/หักกลบในใบเดียวกัน)"
-                    : j.Description,
+                j.Description + note,
                 hasLeg ? Math.Abs(leg) : j.TotalDebit,
                 null,
                 hasLeg ? leg : null);
