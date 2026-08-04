@@ -70,6 +70,9 @@
         </div>
         <div id="bulkActionBar" style="display:none;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-bottom:8px;align-items:center;gap:12px">
           <span class="font-medium" id="bulkSelectedCount">0 รายการที่เลือก</span>
+          <button class="btn btn-sm btn-primary" onclick="Page.groupMatchSelected()"
+            title="รวมรายการโอนที่เลือกให้จับคู่กับเอกสาร/JE ใบเดียว (เช่น โอนเงินเดือนรายคน 5 รายการ = JV เงินเดือน 1 ใบ)">
+            🔗 จับคู่รวมเป็นเอกสารเดียว</button>
           <button class="btn btn-sm btn-danger" onclick="Page.deleteSelectedTransactions()">ลบที่เลือกทั้งหมด</button>
           <button class="btn btn-sm btn-ghost" onclick="Page.clearTransSelection()" data-i18n="common.cancel">ยกเลิก</button>
         </div>
@@ -581,6 +584,9 @@
               </div>
               <div id="rSelectionDiff" style="margin-left:auto;font-size:13px;font-weight:700"></div>
             </div>
+            <!-- เคส "1 เอกสาร ครอบหลายรายการโอน" — ทางออกไปโหมด M:N -->
+            <div id="rReverseHint" style="display:none;margin-top:10px;padding:10px 12px;background:#eff6ff;
+                 border:1px solid #bfdbfe;border-radius:8px;font-size:12px;color:#1e3a5f;line-height:1.7"></div>
           </div>
         </div>
         <div class="modal-footer" style="justify-content:space-between">
@@ -662,6 +668,11 @@
         </div>
         <div class="modal-footer" style="justify-content:space-between">
           <button class="btn btn-secondary" onclick="Layout.closeModal('groupReconcileModal')">ยกเลิก</button>
+          <button class="btn btn-sm" onclick="GroupReconcile.autoFillBankToMatch()" type="button"
+            style="background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8"
+            title="เลือกเอกสาร/JE ฝั่งขวาก่อน แล้วกดปุ่มนี้ — ระบบจะไล่หารายการโอนฝั่งซ้ายที่รวมกันได้พอดีกับยอดนั้น (เช่น JV เงินเดือน 1 ใบ = โอนรายคนหลายรายการ)">
+            🎯 หารายการโอนที่รวมได้พอดี
+          </button>
           <button class="btn btn-primary" id="grConfirmBtn" onclick="GroupReconcile.confirm()" disabled
             style="background:linear-gradient(135deg,#10b981,#059669);border:none">
             ✓ ยืนยันการกระทบยอด <span id="grConfirmCounts" style="font-weight:400;font-size:12px"></span>
@@ -2304,6 +2315,22 @@
         } else {
           diffEl.innerHTML = `<span style="color:#dc2626">ต่าง ฿${Layout.money(Math.abs(diff))} (เลือกเกิน)</span>`;
         }
+        // "เลือกเกิน" มักไม่ใช่การเลือกผิด แต่เป็นเคส **1 เอกสาร ครอบหลายรายการโอน**
+        // (เช่น JV เงินเดือน 1 ใบ = โอนเข้าบัญชีพนักงานทีละคน 5 รายการในสเตทเมนต์)
+        // หน้าต่างนี้จับได้แค่ 1 ธนาคาร : N เอกสาร — เคสนี้ต้องไปโหมด M:N
+        // จึงยื่นทางออกให้ตรงจุดแทนที่จะปล่อยให้ผู้ใช้เห็นแค่ "ต่าง … (เลือกเกิน)"
+        const hint = document.getElementById('rReverseHint');
+        if (hint) {
+          const overshoot = diff < -0.01 && sel.length === 1;
+          hint.style.display = overshoot ? 'block' : 'none';
+          if (overshoot) {
+            hint.innerHTML = `💡 <b>${this.esc(sel[0].number || 'รายการนี้')}</b> ยอดใหญ่กว่ารายการโอนนี้ ฿${Layout.money(Math.abs(diff))}
+              — ถ้าเอกสารใบเดียวนี้ครอบ<b>หลายรายการโอน</b>ในสเตทเมนต์ (เช่น จ่ายเงินเดือนทีละคน)
+              ให้ใช้โหมดจับคู่กลุ่ม แล้วเลือกรายการโอนที่เหลือมารวมกัน
+              <button class="btn btn-sm btn-primary" style="margin-left:8px"
+                onclick="Page.switchToGroupMatch()">🔗 หารายการโอนที่เหลือให้อัตโนมัติ</button>`;
+          }
+        }
         bar.style.display = 'block';
         btn.disabled = false;
         cntText.textContent = sel.length === 1
@@ -2808,10 +2835,34 @@
       },
 
       // ===== Group Reconciliation (M:N + Net-off) launchers =====
-      openGroupReconcile() {
+      openGroupReconcile(preselect) {
         const accId = this.selectedAccountId || this.accounts?.[0]?.id;
         if (!accId) { Layout.toast('เลือกบัญชีธนาคารก่อน', 'error'); return; }
-        GroupReconcile.open(accId, this.accounts || []);
+        GroupReconcile.open(accId, this.accounts || [], preselect);
+      },
+
+      /// จากหน้าต่างจับคู่ 1:N → สลับไปโหมดกลุ่ม M:N พร้อมตั้งต้นให้:
+      /// รายการโอนที่กำลังดู + เอกสาร/JE ที่เลือกไว้ ติ๊กมาแล้ว จากนั้นให้
+      /// ระบบไล่หา "รายการโอนอื่นที่รวมแล้วเท่ากับยอดเอกสาร" ให้อัตโนมัติ
+      /// (เคสจ่ายเงินเดือน: JV ใบเดียว = โอนรายคน 5 รายการในสเตทเมนต์)
+      switchToGroupMatch() {
+        const sel = (this._pickerSelected || [])[0];
+        const txnId = document.getElementById('rTransId')?.value;
+        if (!sel || !txnId) return;
+        Layout.closeModal('reconcileModal');
+        this.openGroupReconcile({
+          bankTxnIds: [txnId],
+          item: { type: sel.type, id: sel.id },
+          autoFill: true,
+        });
+      },
+
+      /// เลือกหลายรายการในตารางสเตทเมนต์ → จับคู่รวมเป็นเอกสาร/JE เดียว
+      groupMatchSelected() {
+        const ids = Array.from(this.selectedTxnIds || []);
+        if (ids.length < 1) return;
+        this.openGroupReconcile({ bankTxnIds: ids });
+        this.clearTransSelection();
       },
       async exportReconciliationReport() {
         // ใช้บัญชีที่ผู้ใช้ "เลือกจริง" เท่านั้น — ห้าม fallback ไปบัญชีแรกเงียบ ๆ
@@ -2863,7 +2914,7 @@
       items: [],              // [{type, id, number, date, description, amount, _selected, _alloc}]
       bankFilter: '',
       itemFilter: '',
-      async open(accountId, accounts) {
+      async open(accountId, accounts, preselect) {
         this.accountId = accountId;
         this.bankFilter = '';
         this.itemFilter = '';
@@ -2875,6 +2926,77 @@
         document.getElementById('grItemSearch').value = '';
         await this.reload();
         Layout.openModal('groupReconcileModal');
+        if (preselect) this.applyPreselect(preselect);
+      },
+
+      /// ตั้งต้นจากหน้าจอก่อนหน้า (ปุ่มในหน้าต่างจับคู่ 1:N หรือติ๊กหลายแถวใน
+      /// ตารางสเตทเมนต์) — ผู้ใช้ไม่ต้องไล่หารายการเดิมซ้ำในลิสต์ที่มีเป็นร้อย
+      applyPreselect(p) {
+        let touched = 0;
+        for (const id of p.bankTxnIds || []) {
+          const t = this.bankTxns.find(x => x.id === id);
+          if (t) { t._selected = true; touched++; }
+        }
+        if (p.item) {
+          const it = this.items.find(x => x.id === p.item.id && x.type === p.item.type);
+          if (it) it._selected = true;
+        }
+        this.renderBank(); this.renderItems(); this.recalc();
+        if (p.autoFill) this.autoFillBankToMatch(true);
+        else if (touched) Layout.toast(`ตั้งต้นให้ ${touched} รายการโอนแล้ว — เลือกเอกสาร/JE ฝั่งขวาที่จะจับคู่`, 'info', 6000);
+      },
+
+      /// **หัวใจของการแมพย้อนกลับ**: รู้ยอดเอกสาร/JE ที่เลือกไว้แล้ว ไล่หา
+      /// ชุดรายการโอนที่ "รวมกันได้พอดี" กับยอดนั้น
+      ///
+      /// วิธี: greedy จากรายการที่ติ๊กไว้แล้วเป็นฐาน แล้วเติมทีละใบจากรายการ
+      /// ที่ยอด ≤ ส่วนที่ยังขาด โดยจัดลำดับตาม "วันเดียวกัน/ใกล้กัน" ก่อน —
+      /// เงินเดือนโอนวันเดียวกันทั้งชุด จึงเจอไวและไม่หยิบข้ามเดือนมามั่ว
+      /// (subset-sum เต็มรูปเป็น NP — จำกัดที่ 40 ใบ/ทิศเดียวกันพอสำหรับงานจริง)
+      autoFillBankToMatch(silent) {
+        const iSel = this.items.filter(it => it._selected);
+        if (!iSel.length) {
+          if (!silent) Layout.toast('เลือกเอกสาร/JE ฝั่งขวาก่อน แล้วกดหารายการโอนที่รวมได้พอดี', 'warning');
+          return;
+        }
+        const target = Math.abs(iSel.reduce((s, it) => s + it._alloc, 0));
+        const already = this.bankTxns.filter(t => t._selected);
+        let remaining = target - Math.abs(already.reduce((s, t) => s + t._alloc, 0));
+        if (remaining <= 0.01) {
+          if (!silent) Layout.toast('ยอดรายการโอนที่เลือกครบแล้ว', 'success');
+          return;
+        }
+        // ทิศต้องเดียวกับที่เลือกไว้ (จ่ายออกทั้งชุด/รับเข้าทั้งชุด) — ไม่งั้น
+        // จะหยิบเงินเข้ามาหักล้างให้ยอดพอดีแบบไม่มีความหมายทางบัญชี
+        const sign = already.length ? Math.sign(already[0]._alloc) : -Math.sign(iSel[0]._alloc || 1);
+        const anchorDate = already.length ? new Date(already[0].date).getTime()
+          : new Date(iSel[0].date).getTime();
+        const pool = this.bankTxns
+          .filter(t => !t._selected && Math.sign(t._alloc) === sign && Math.abs(t._alloc) <= remaining + 0.01)
+          .sort((a, b) => {
+            const da = Math.abs(new Date(a.date).getTime() - anchorDate);
+            const db = Math.abs(new Date(b.date).getTime() - anchorDate);
+            if (da !== db) return da - db;                    // ใกล้วันอ้างอิงก่อน
+            return Math.abs(b._alloc) - Math.abs(a._alloc);   // แล้วค่อยใบใหญ่ก่อน
+          })
+          .slice(0, 40);
+
+        const picked = [];
+        for (const t of pool) {
+          if (remaining <= 0.01) break;
+          if (Math.abs(t._alloc) <= remaining + 0.01) { picked.push(t); remaining -= Math.abs(t._alloc); }
+        }
+        if (!picked.length) {
+          Layout.toast('ไม่พบรายการโอนที่รวมเข้ากับยอดนี้ได้ — เลือกเองจากรายการฝั่งซ้ายได้เลย', 'warning', 7000);
+          return;
+        }
+        picked.forEach(t => { t._selected = true; });
+        this.renderBank(); this.recalc();
+        const exact = remaining <= 0.01;
+        Layout.toast(exact
+          ? `พบแล้ว — เพิ่มรายการโอนอีก ${picked.length} รายการ รวมยอดตรงพอดี ✓ ตรวจแล้วกดยืนยันได้เลย`
+          : `เพิ่มให้ ${picked.length} รายการ แต่ยังขาดอีก ฿${Layout.money(remaining)} — เลือกเพิ่มเองจากฝั่งซ้าย`,
+          exact ? 'success' : 'warning', 8000);
       },
       async reload() {
         this.accountId = document.getElementById('grAccount').value || this.accountId;
