@@ -263,8 +263,11 @@ public class ChatbotService : IChatbotService
                 ContactName = d.Contact != null ? d.Contact.Name : null,
                 ContactTaxId = d.Contact != null ? d.Contact.TaxId : null,
                 ContactType = d.Contact != null ? (ContactType?)d.Contact.ContactType : null,
+                // Amount = ยอดบรรทัดหลังส่วนลด (ก่อน VAT) — ชื่อฟิลด์จริงใน
+                // DocumentLine ไม่ใช่ LineTotal
                 Lines = d.Lines.Where(l => !l.IsDeleted)
-                    .Select(l => new { l.Description, l.Quantity, l.UnitPrice, l.LineTotal,
+                    .Select(l => new { l.Description, l.Quantity, l.UnitPrice, l.Amount,
+                        l.VatRate, l.WithholdingTaxRate,
                         AccountCode = l.Account != null ? l.Account.AccountCode : null,
                         AccountName = l.Account != null ? l.Account.AccountName : null })
                     .Take(20).ToList(),
@@ -284,7 +287,9 @@ public class ChatbotService : IChatbotService
         {
             sb.AppendLine("รายการในเอกสาร:");
             foreach (var l in doc.Lines)
-                sb.AppendLine($"  • {l.Description} · {l.Quantity:N2} × {l.UnitPrice:N2} = {l.LineTotal:N2}"
+                sb.AppendLine($"  • {l.Description} · {l.Quantity:N2} × {l.UnitPrice:N2} = {l.Amount:N2}"
+                    + (l.VatRate == -1 ? " · ยกเว้น VAT" : l.VatRate == 0 ? " · VAT 0%" : $" · VAT {l.VatRate:N0}%")
+                    + (l.WithholdingTaxRate > 0 ? $" · หัก ณ ที่จ่าย {l.WithholdingTaxRate:N0}%" : "")
                     + (l.AccountCode != null ? $" · ผังปัจจุบัน {l.AccountCode} {l.AccountName}" : " · ยังไม่ระบุผัง"));
         }
         return sb.ToString();
