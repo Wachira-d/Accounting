@@ -439,6 +439,34 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "รับรู้รายได้จากมัดจำสำเร็จ"));
     }
 
+    public record RecognizeDepositVatRequest(DateTime? RecognizeDate);
+
+    /// <summary>รับรู้ "ภาษีขายรอเรียกเก็บ" ของใบมัดจำ (21913 → 21911) โดยไม่แตะ
+    /// รายได้ — ใช้เมื่อจุดรับผิด VAT เกิดก่อนส่งมอบ (§78: ออกใบกำกับตามคำขอ
+    /// ลูกค้า / ทบทวนแล้วพบว่าเป็นการรับชำระราคาจริง). หลังเรียก ใบเข้า ภ.พ.30
+    /// งวดที่ระบุ และหัวเอกสาร upgrade เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน".</summary>
+    [HttpPost("{documentId:guid}/recognize-deposit-vat")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> RecognizeDepositVat(
+        Guid companyId, Guid documentId, [FromBody] RecognizeDepositVatRequest? request = null)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>("ไม่มีสิทธิ์รับรู้ภาษีขายของมัดจำ (กระทบ ภ.พ.30)");
+        try
+        {
+            var result = await _documentService.RecognizeDepositOutputVatAsync(
+                companyId, documentId, request?.RecognizeDate, userIdGuid.ToString());
+            return Ok(new ApiResponse<DocumentResponse>(true, result,
+                "รับรู้ภาษีขายเข้า ภ.พ.30 แล้ว — พิมพ์เอกสารใหม่จะได้หัว \"ใบกำกับภาษี/ใบเสร็จรับเงิน\""));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<DocumentResponse>(false, null, ex.Message));
+        }
+    }
+
     [HttpPost("{documentId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<object>>> ApproveDocument(Guid companyId, Guid documentId, [FromBody] ApproveDocumentRequest? request = null)
     {

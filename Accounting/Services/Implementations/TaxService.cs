@@ -1177,6 +1177,44 @@ public partial class TaxService : ITaxService
         report.InputVat = inputVat;
         report.NetVat = outputVat - inputVat - vatCreditCarryforward;
 
+        // ── เตือน "ภาษีขายรอเรียกเก็บค้างนาน" ตอนเปิดรายงานเพื่อยื่น ──
+        // วิธี B (มัดจำ VAT รอเรียกเก็บ) มีความเสี่ยงเฉพาะตัว: เราเก็บ VAT จาก
+        // ลูกค้าไปแล้วแต่ค้างที่ 21913 ถ้าไม่มีใครกดรับรู้ (ลูกค้าเงียบ/งานยืด/
+        // ลืม) เงินก้อนนั้นจะไม่ถูกนำส่งตลอดไป — สรรพากรตรวจเจอ = เรียกเก็บ VAT
+        // ที่เก็บจากลูกค้าแล้วไม่นำส่ง + เบี้ยปรับ/เงินเพิ่ม
+        // จังหวะที่เตือนได้ผลที่สุดคือ "ตอนเปิดรายงานเพื่อยื่น" ไม่ใช่ log เงียบ ๆ
+        try
+        {
+            var agingCutoff = endDate.AddDays(-90);
+            var stale = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.IsDeposit && d.DepositOutputVatDeferred
+                    && d.DepositOutputVatRecognizedAt == null
+                    && d.DepositAppliedToDocumentId == null
+                    && d.VatAmount > 0.005m
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                    && (d.TaxPointDate ?? d.DocumentDate) <= agingCutoff)
+                .Select(d => new { d.DocumentNumber, d.VatAmount, Dt = d.TaxPointDate ?? d.DocumentDate })
+                .OrderBy(d => d.Dt).Take(20)
+                .ToListAsync();
+            if (stale.Count > 0)
+            {
+                var note = $"⚠️ มีเงินมัดจำที่ \"ภาษีขายรอเรียกเก็บ\" (21913) ค้างเกิน 90 วัน "
+                    + $"{stale.Count} ใบ รวม VAT {stale.Sum(s => s.VatAmount):N2} บาท — "
+                    + "ยังไม่เข้า ภ.พ.30 งวดใด ตรวจว่าจุดรับผิดเกิดแล้วหรือยัง (§78: ส่งมอบ/"
+                    + "โอนกรรมสิทธิ์/รับชำระราคา/ออกใบกำกับ อย่างใดเกิดก่อน) ถ้าเกิดแล้วให้กด "
+                    + "\"รับรู้ภาษีขาย\" ที่ใบมัดจำเพื่อนำส่งในงวดที่ถูกต้อง: "
+                    + string.Join(", ", stale.Take(5).Select(s => $"{s.DocumentNumber} ({s.Dt:dd/MM/yy} {s.VatAmount:N2})"))
+                    + (stale.Count > 5 ? $" และอีก {stale.Count - 5} ใบ" : "");
+                report.Notes = string.IsNullOrWhiteSpace(report.Notes) ? note : report.Notes + "\n" + note;
+            }
+        }
+        catch (Exception ex)
+        {
+            // เตือนไม่ได้ต้องไม่ทำให้สร้างรายงานไม่ได้
+            System.Diagnostics.Trace.TraceWarning($"deferred-VAT deposit aging check failed: {ex.Message}");
+        }
+
         // §87: รายงานภาษีซื้อ/ขายต้องลงตาม "ลำดับเวลา" — เรียง + renumber ท้ายสุด
         NormalizeReportLineOrder(report);
     }

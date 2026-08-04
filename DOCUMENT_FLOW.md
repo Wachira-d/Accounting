@@ -327,6 +327,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     - ตัดสิน deferred แบบ **GL-first**: flag หรือมีขา Cr 21913 จริงใน JE ใบนั้น
       (กันเคสที่ flag ไม่ได้ตั้งแต่ GL ลง 21913 ไปแล้ว)
 
+    **ตาข่ายกันพลาดของวิธี B (มัดจำ deferred)** — วิธีนี้เก็บ VAT จากลูกค้าแล้ว
+    แต่ยังไม่นำส่ง จึงต้องมีตัวไล่ให้จบ ไม่งั้นกลายเป็น "เก็บแล้วไม่ส่ง":
+    | ความเสี่ยง | ตัวกัน |
+    | --- | --- |
+    | VAT ค้าง 21913 ไม่มีใครตาม (ลูกค้าเงียบ/งานยืด/ลืม) | `GenerateVatReport` ใส่ `report.Notes` เตือนใบที่ค้างเกิน 90 วัน + ยอด VAT รวม + เลขใบ — เตือน**ตอนเปิดรายงานเพื่อยื่น** ซึ่งเป็นจังหวะที่แก้ได้ทัน |
+    | tax point เกิดก่อนส่งมอบ (ลูกค้าขอใบกำกับกลางทาง §78) | `RecognizeDepositOutputVatAsync` — Dr 21913 / Cr 21911 **โดยไม่แตะรายได้** (TFRS 15 แยกจากภาระ VAT) → เข้า ภ.พ.30 งวดที่ระบุ + หัวเอกสาร upgrade เป็นใบกำกับทันที (`POST /documents/{id}/recognize-deposit-vat`) |
+    | รับรู้เข้างวดที่ยื่น/ปิดไปแล้ว | block: งวดต้อง `Open` และยังไม่ Filed |
+    | รับรู้ซ้ำ / รับรู้ทั้งที่หักเข้าใบปลายทางแล้ว | block (idempotent ผ่าน `DepositOutputVatRecognizedAt` + เช็ค `DepositAppliedToDocumentId`) |
+    | ส่ง e-Tax จากใบมัดจำที่ยังไม่ใช่ใบกำกับ | block ที่ `EtaxInvoiceService.GenerateAsync` (§5.2 Receipt gate) |
+    | หักมัดจำเกินยอดคงเหลือ/เกินยอดค้างใบปลายทาง | guard เดิมใน `ApplyDepositToInvoiceCoreAsync` (over-apply 3 ชั้น) |
+
 ### 2.4 Convert (แปลงเอกสาร)
 - **Method**: `DocumentService.ConvertDocumentAsync` (full) / `ConvertDocumentPartialAsync`
   (partial — qty subset) — `DocumentService.cs:3082` / `:3122`

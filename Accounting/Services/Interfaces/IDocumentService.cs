@@ -32,6 +32,19 @@ public interface IDocumentService
     /// <summary>รายการเงินมัดจำคงค้าง/ที่รับรู้แล้ว สำหรับหน้าจัดการมัดจำ.
     /// status: "Outstanding" | "Partial" | "Realized" (null = ทั้งหมด).</summary>
     Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null);
+
+    /// <summary>รับรู้ "ภาษีขายรอเรียกเก็บ" (21913 → 21911) ของใบมัดจำ **โดยไม่
+    /// แตะรายได้** — ใช้เมื่อจุดรับผิด VAT เกิดก่อนการส่งมอบ/รับรู้รายได้ ซึ่ง
+    /// §78 เปิดช่องไว้ชัด (tax point = เหตุการณ์แรกใน ส่งมอบ/โอนกรรมสิทธิ์/
+    /// รับชำระราคา/**ออกใบกำกับภาษี**) เคสที่เจอบ่อย:
+    ///   • ลูกค้าขอใบกำกับภาษีระหว่างทาง (ออกใบกำกับ = tax point ทันที)
+    ///   • ผู้ทำบัญชีทบทวนแล้วเห็นว่ามัดจำก้อนนี้เป็นการรับชำระราคาจริงตั้งแต่ต้น
+    ///     → ต้องนำส่ง VAT ย้อนเข้างวดที่ถูกต้อง ไม่ปล่อยค้าง 21913
+    /// รายได้ยังรอรับรู้ตาม TFRS 15 ต่อไป (คนละเรื่องกับภาระ VAT).
+    /// หลังเรียก: เข้า ภ.พ.30 งวดของ <paramref name="recognizeDate"/> และหัวเอกสาร
+    /// upgrade เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" (พิมพ์ใหม่ให้ลูกค้าได้ทันที).</summary>
+    Task<DocumentResponse> RecognizeDepositOutputVatAsync(Guid companyId, Guid depositId,
+        DateTime? recognizeDate, string actor);
     /// <summary>วินิจฉัยหน้าเงินมัดจำ — บอกสาเหตุเมื่อ dashboard โชว์ 0.</summary>
     Task<DepositDiagnostics> GetDepositDiagnosticsAsync(Guid companyId);
     Task<DepositCenterResponse> GetDepositCenterAsync(Guid companyId);
