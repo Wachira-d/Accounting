@@ -1124,6 +1124,30 @@ public class OcrService : IOcrService
                 }
             }
 
+            // ── บิลเงินสด/ใบเสร็จไม่เป็นทางการ → "ใบรับรองแทนใบเสร็จรับเงิน" ──
+            // ใบเสร็จที่ไม่มีเลขผู้เสียภาษี 13 หลัก (แม่ค้าตลาด, วินมอเตอร์ไซค์,
+            // ร้านไม่จด VAT) ระบุตัวผู้รับเงินไม่ได้ → §65 ตรี(9)(18) เสี่ยงโดน
+            // บวกกลับเป็นรายจ่ายต้องห้าม. แนวปฏิบัติกรมสรรพากร (คู่มือเอกสาร
+            // ประกอบการลงบัญชีฯ) ให้จัดทำ "ใบรับรองแทนใบเสร็จรับเงิน" ประกอบ
+            // โดยแนบหลักฐานการจ่าย → target จึงเปลี่ยนจาก Expense/PV เป็น
+            // CertificateInLieu (ฟอร์มมีช่องผู้รับรอง/เหตุผล ครบตามที่สรรพากร
+            // ต้องการ + แนบรูปบิลเดิมเป็นหลักฐานอัตโนมัติ). เฉพาะใบไม่มี VAT —
+            // ใบมี VAT แต่ไม่มีเลขผู้เสียภาษีคือใบกำกับอย่างย่อ ซึ่งมีเส้นทาง
+            // §82/5(2) ของตัวเองอยู่แล้ว (เตือนเคลมภาษีซื้อไม่ได้ ด้านบน)
+            if (extractedData.OurRole == "Buyer"
+                && string.Equals(extractedData.DocumentType, "Receipt", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(extractedData.VendorTaxId)
+                && (extractedData.VatAmount ?? 0m) <= 0m
+                && extractedData.TargetDocumentType
+                    is null or nameof(DocumentType.Expense) or nameof(DocumentType.PaymentVoucher))
+            {
+                extractedData.TargetDocumentType = nameof(DocumentType.CertificateInLieu);
+                extractedData.ReasoningTrace.Add(
+                    "[CertInLieu] บิลไม่มีเลขผู้เสียภาษี 13 หลักและไม่มี VAT — หลักฐานยังไม่พอเป็นรายจ่าย"
+                    + "ทางภาษี (§65 ตรี(9)(18)) → จัดทำ \"ใบรับรองแทนใบเสร็จรับเงิน\" แนบรูปบิลเป็นหลักฐาน"
+                    + "ตามแนวทางกรมสรรพากร");
+            }
+
             // ───── Re-sync mutable fields (extractedData → scanResult) ─────
             // Persist mutations from VendorIntel / Learner / role inferrer
             // back to OcrScanResult so they reach MapToResponse() and
@@ -1903,7 +1927,12 @@ public class OcrService : IOcrService
             // document is just noise the user has to delete + redo.
             var hasUsableTotal = (extractedData.TotalAmount ?? 0) > 0m;
             var hasUsableDate = extractedData.DocumentDate.HasValue;
-            var hasUsableDocNumber = !string.IsNullOrWhiteSpace(extractedData.DocumentNumber);
+            // ใบรับรองแทนใบเสร็จ: บิลต้นทาง (แม่ค้าตลาด/วินฯ) มักไม่มีเลขที่
+            // เอกสารเลย — เลขจริงคือเลขของ "ใบรับรอง" ที่เราออกเองตอน Approve.
+            // บังคับเลขที่กับ target นี้ = ปิด auto-create กับเคสที่ฟีเจอร์นี้
+            // เกิดมาเพื่อรองรับพอดี
+            var hasUsableDocNumber = !string.IsNullOrWhiteSpace(extractedData.DocumentNumber)
+                || extractedData.TargetDocumentType == nameof(DocumentType.CertificateInLieu);
             var criticalFieldsOk = hasUsableTotal && hasUsableDate && hasUsableDocNumber;
 
             // AUTO-CREATE GATING — the business flow now mandates that web /

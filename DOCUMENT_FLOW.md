@@ -145,6 +145,56 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - (D) OCR ขาด — `grossSum < subtotal` → ปล่อยให้ user แก้
 - **Quota refund**: ถ้า re-OCR (retry) ไม่ใช้ quota ใหม่ (`OcrService.cs`)
 
+### 2.2b LINE bot — "โยนบิลเข้าไลน์" (Paypers-style)
+
+- **Flow**: ผู้ใช้ส่ง **รูปถ่ายใบเสร็จ / ไฟล์ PDF** เข้า LINE bot →
+  `LineWebhookController` (message type `image`/`file`) →
+  `LineBotService.HandleImageAsync` → ดาวน์โหลดจาก LINE Content API
+  (`api-data.line.me/v2/bot/message/{id}/content`) → **pipeline เดียวกับ
+  อัปโหลดหน้าเว็บทุกขั้น**: `OcrPreprocessor.Check` (ตรวจคุณภาพก่อนตัดโควต้า)
+  → SHA-256 dedup (10 นาที — LINE ชอบกดส่งซ้ำ) → `IOcrQuotaService.TryConsume`
+  → `OcrService.ScanAsync(autoCreate: true)` → ตอบกลับทาง LINE
+- **Reply**: สร้างเอกสารสำเร็จ → ประเภท+ผู้ขาย+ยอด+ลิงก์ตรวจ/อนุมัติ
+  (`document-scan.html?reviewScan={id}`); safety gate ระงับ → สรุปที่อ่านได้
+  + ลิงก์หน้า review ที่ pre-fill แล้ว; ซ้ำ/ล้มเหลว/โควต้าหมด → บอกเหตุผลตรง ๆ
+- **กฎเหล็ก #3 ยังคุม**: เอกสารที่สร้างเป็น **ฉบับร่าง** เสมอ (เลขจริงออกตอน
+  Approve) + safety gate ครบชุดของ `ScanAsync` (confidence ≥ 0.85, field สำคัญ
+  ครบ, ระงับเมื่อเจอลายมือ/สินทรัพย์, กันใบซ้ำ) — LINE ไม่ได้ bypass อะไร
+- **ผูกบัญชี**: ใช้กลไก bind เดิม ("ผูก {รหัส 6 หลัก}") + `LineUserState`
+  active company (หลายบริษัท → ให้เลือกก่อนแล้วส่งรูปใหม่)
+- **Quota refund**: กติกาเดียวกับหน้าเว็บ — duplicate / scan fail / e-Tax XML
+  ฝังไฟล์ (ไม่ได้ใช้ OCR engine) คืนเครดิต
+- **Flex card + อนุมัติในแชท**: สร้างเอกสารสำเร็จ → ส่ง Flex bubble (ประเภท/
+  ร้าน/ยอด/VAT) พร้อมปุ่ม **"✅ อนุมัติเลย"** (postback `approve:{docId}`) และ
+  **"🔍 ตรวจ/แก้ไขก่อน"** (ลิงก์ reviewScan); ส่ง Flex ไม่ผ่าน → fallback ข้อความ
+  ธรรมดาเสมอ. postback → `HandlePostbackAsync`: **ตรวจ binding + tenant
+  (สมาชิกบริษัทเจ้าของเอกสาร) + role (Owner/Accountant/ExternalAccountant/
+  SystemAdmin เท่านั้น — data ปลอมได้)** → `ApproveDocumentAsync` (เลขจริงออก
+  ที่นี่) → ตอบเลขเอกสาร; ซ้ำ/สถานะเลยแล้ว → บอกสถานะ ไม่ทำซ้ำ
+- **แจ้งกลับผู้ส่ง**: intake ฝัง `{sourceChannel:"line", lineUserId}` ลง
+  `ExternalMetadataJson` ของ scan → ตอนเอกสารถูกอนุมัติ (โดยคนอื่น เช่น
+  นักบัญชีบนเว็บ) `ApproveDocumentAsync` push LINE กลับหาผู้ส่งบิล
+  (best-effort, ใช้ token บอทเสมอ — companyId:null); ผู้อนุมัติ = ผู้ส่ง →
+  ไม่แจ้งซ้ำ (ได้ reply จาก postback แล้ว)
+- **อัลบั้มหลายรูป**: LINE ส่งเป็นคนละ event → loop เดิมประมวลผลครบทุกใบ
+  (1 รูป = 1 scan = 1 เอกสาร/การ์ด)
+
+### 2.2c ใบรับรองแทนใบเสร็จรับเงิน — routing บิลไม่เป็นทางการ (§65 ตรี)
+
+- **กติกา** (`OcrService.ScanAsync` ก่อน re-sync block): ฝั่งซื้อ (`OurRole ==
+  "Buyer"`) + กระดาษเป็น `Receipt` + **ไม่มีเลขผู้เสียภาษี 13 หลัก** + **ไม่มี
+  VAT** + target เดิมเป็น Expense/PaymentVoucher → เปลี่ยน
+  `TargetDocumentType = CertificateInLieu` + ลง ReasoningTrace อ้าง §65 ตรี(9)(18)
+- **เหตุผล**: บิลเงินสดแม่ค้า/วินฯ ระบุตัวผู้รับเงินไม่ได้ → เสี่ยงโดนบวกกลับ;
+  แนวปฏิบัติกรมสรรพากรให้จัดทำ "ใบรับรองแทนใบเสร็จรับเงิน" ประกอบ — ฟอร์มมี
+  ผู้รับรอง/เหตุผล (`CertificateReason`, `CertifierName` เติมอัตโนมัติใน
+  `CreateDocumentFromScanAsync`) + รูปบิลเดิม relink เป็นไฟล์แนบเอกสาร
+- **ใบมี VAT แต่ไม่มีเลขผู้เสียภาษี** (ใบกำกับอย่างย่อ) ไม่เข้ากติกานี้ —
+  มีเส้นทาง §82/5(2) ของตัวเอง (เตือนเคลมภาษีซื้อไม่ได้)
+- **Auto-create gate ผ่อนเลขที่เอกสาร**: target = CertificateInLieu ไม่บังคับ
+  `DocumentNumber` จากกระดาษ (บิลพวกนี้มักไม่มีเลขที่ — เลขจริงคือเลขใบรับรอง
+  ที่ระบบออกตอน Approve); ยังบังคับ วันที่ + ยอดรวม + contact match เหมือนเดิม
+
 ### 2.3 Integration ภายนอก
 - **Controller**: `IntegrationController.cs` — manage config + API key issuance
 - **เข้าทาง** `/api/companies/{id}/documents` (ทาง standard) พร้อม
@@ -1051,6 +1101,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แก้รายงาน ภ.พ.30 (CSV ยื่น) | `TaxFilingExportService.ExportPp30Async :243` — ดึงจาก `ComputeVatReportAsync` |
 | แก้ ภ.ง.ด.50 | `TaxService.GenerateCitReport :731` |
 | แก้ปฏิทินนำส่ง (dashboard) | `StatutoryRemittanceService.GetFilingCalendarAsync` + `BuildCell` / UI: `app.html` widget `filingCalendar` |
+| แก้ chatbot (public/tenant/admin) | `ChatbotService` + `KnowledgeBaseService` + `ChatAnswerDistillationModel` — สถาปัตยกรรม+แผนอยู่ `CHATBOT_PLAN.md` |
+| แก้ rate limit / purge ของแชท | `ChatRateLimiter` (ตาราง `ChatRateBuckets`) / `ChatRetentionPurgeJob` |
+| แก้คลังความรู้ chatbot (admin) | `AdminChatController` (kb/*, metrics) + UI `/admin/chat-kb.html` |
+| แก้จับคู่ธนาคาร M:N (หลายโอน → เอกสารเดียว) | `BankService.CreateReconciliationGroupAsync` / UI: `bank.html` `GroupReconcile` (`applyPreselect`, `autoFillBankToMatch`) |
 | แก้กำหนดยื่น/กฎยื่นแบบเปล่า | `StatutoryRemittanceService.DueDates` / `FilingRule` (มี unit test) |
 | แก้ WHT cert auto-issue | `WithholdingTaxCertService` |
 | แก้ PDF template | `PdfGenerationService.DocumentRenderer.cs` / `HtmlRenderer.cs` |
@@ -1555,8 +1609,13 @@ _มี local heuristics, DailyCallCap นับเฉพาะ provider call, O
 _tenant: CMS cart scope, POS ProductId, payroll includeSalary; XSS 4 หน้า;_
 _import: พ.ศ.→ค.ศ. ทุกจุด + JE/bank dedup. **ใหม่: ภาษาเอกสาร th/en**)_
 
-_Last updated: 2026-08-03 — ปฏิทินนำส่งภาษี/ประกันสังคมบน dashboard (§5.3b)_
-_+ แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน (FileAttachment entityType "PayrollRun")_
+_Last updated: 2026-08-04 — Chatbot Phase 1-5.1 (public FAQ + tenant assistant_
+_+ admin console + คลังความรู้/metrics + PDPA purge + rate limit ข้าม instance_
+_+ ถามผ่าน LINE — รายละเอียด/งานที่เหลืออยู่ CHATBOT_PLAN.md); ก่อนหน้า:_
+_LINE bot รับรูปใบเสร็จ → OCR → เอกสารทันที (§2.2b:_
+_รวม Flex ปุ่มอนุมัติในแชท + postback guard + แจ้งกลับผู้ส่งเมื่ออนุมัติ)_
+_+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
+_ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
 _Last verified against codebase: 2026-07-31 (audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
 _แก้ 43 บั๊ก 3 ชุด: CN/DN text-ref resolve+undue VAT accounts+GRN block+qty cap+_

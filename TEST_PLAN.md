@@ -164,6 +164,61 @@
 | OCR-S-01 | S | อัปโหลดรูปจริง → ยืนยัน 1 คลิก → Approve | เอกสารสมบูรณ์โดยผู้ใช้ไม่พิมพ์อะไรเลย |
 | OCR-S-02 | S | kill-switch: ปิด AI provider ทุกตัวแล้วสแกน | flow เดินจบด้วย local path — ไม่มี error ถึงผู้ใช้ |
 
+### LINE bot รับรูปใบเสร็จ (§2.2b) + ใบรับรองแทนใบเสร็จ (§2.2c)
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| LNE-I-01 | I | ส่งรูปโดยยังไม่ผูกบัญชี | ตอบวิธีผูก — ไม่เงียบ, ไม่ crash |
+| LNE-I-02 | I | ผู้ใช้หลายบริษัท ยังไม่เลือก active → ส่งรูป | ตอบเมนูเลือกบริษัท; รูปไม่ถูกประมวลผล, ไม่เสียโควต้า |
+| LNE-I-03 | I | รูปชัด ใบกำกับสมบูรณ์ confidence ≥ 0.85 | สร้างเอกสารร่าง + reply ประเภท/ผู้ขาย/ยอด/ลิงก์ reviewScan |
+| LNE-I-04 | I | รูปเบลอ/ไฟล์เล็กเกิน (preflight fail) | ตอบคำแนะนำถ่ายใหม่ — **ไม่เสียโควต้า** |
+| LNE-I-05 | I | ส่งรูปเดิมซ้ำใน 10 นาที (LINE double-send) | ตอบ "ส่งไปแล้ว + เลขเอกสารเดิม" — ไม่สแกนซ้ำ ไม่เสียโควต้า |
+| LNE-I-06 | I | โควต้า OCR หมด | ตอบยอดใช้/เพดาน + ทางเลือกบันทึกด้วยข้อความ |
+| LNE-I-07 | I | scan fail / duplicate / e-Tax XML | โควต้าถูก refund (กติกาเดียวกับหน้าเว็บ) |
+| CIL-U-01 | U | บิลฝั่งซื้อ ไม่มี TaxId + ไม่มี VAT + target Expense/PV | target เปลี่ยนเป็น CertificateInLieu + ReasoningTrace อ้าง §65 ตรี |
+| CIL-U-02 | U | ใบกำกับอย่างย่อ (มี VAT, ไม่มี TaxId ผู้ซื้อ) | **ไม่**เข้ากติกา CertInLieu — คงเส้นทาง §82/5(2) |
+| CIL-U-03 | U | target CertificateInLieu ไม่มีเลขที่บนกระดาษ | ผ่าน critical-fields gate (เลขที่ไม่บังคับ); ยังบังคับวันที่+ยอด |
+| CIL-I-01 | I | auto-create CertInLieu จาก LINE | เอกสารมี CertificateReason + CertifierName + รูปบิล relink เป็นไฟล์แนบ |
+| CIL-S-01 | S | ถ่ายบิลแม่ค้าตลาดจริงส่งเข้า LINE | ได้ใบรับรองแทนใบเสร็จร่าง พิมพ์ PDF ได้ ฟอร์มครบช่องผู้รับรอง/พยาน |
+| LNE-I-08 | I | สร้างเอกสารสำเร็จ → Flex card | มีปุ่มอนุมัติ (postback) + ปุ่มตรวจ (uri); flex push fail → fallback ข้อความธรรมดา |
+| LNE-I-09 | I | postback approve จาก role Staff/Viewer/Auditor | ปฏิเสธพร้อมคำอธิบาย — เอกสารยังเป็นร่าง |
+| LNE-I-10 | I | postback approve ด้วย docId ของบริษัทอื่น (data ปลอม) | ปฏิเสธ (tenant guard) — ไม่แตะเอกสาร |
+| LNE-I-11 | I | postback approve ซ้ำ / เอกสาร Approved-Paid-Voided แล้ว | ตอบสถานะปัจจุบัน ไม่ approve ซ้ำ |
+| LNE-I-12 | I | postback approve สำเร็จ | เลขเอกสารจริงออก + reply เลขที่; JE/ภาษีลงครบเหมือน approve หน้าเว็บ |
+| LNE-I-13 | I | นักบัญชีอนุมัติบนเว็บ เอกสารที่มาจาก LINE | ผู้ส่งบิลได้ LINE แจ้ง (เลขที่/ยอด); ผู้อนุมัติ=ผู้ส่ง → ไม่แจ้งซ้ำ |
+| LNE-I-14 | I | ส่งอัลบั้มหลายรูปรวดเดียว | ทุกใบถูกประมวลผลแยกกัน — 1 รูป = 1 scan = 1 การ์ด |
+
+---
+
+### Chatbot 2 ช่อง (CHATBOT_PLAN.md)
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| CHT-U-01 | U | `ChunkMarkdown` หั่นไฟล์ตาม ##/### + ก้อน >3500 | ทุกชิ้น ≤3500 ตัวอักษร, key ไม่ซ้ำ |
+| CHT-U-02 | U | `WantsHuman` จับ intent "ติดต่อเจ้าหน้าที่"/"คุยกับคน" | true; ประโยคทั่วไป → false |
+| CHT-U-03 | U | `ScrubInternalRefs` ลบ path/บรรทัดโค้ดจากคำตอบ | "Foo.cs:123" หายจากข้อความ |
+| CHT-U-04 | U | `StripJsonWrapper` แกะ {"answer":"..."} / "..." | ได้ plain text; ไม่ใช่ JSON → คงเดิม |
+| CHT-I-01 | I | public ถามเกิน 6/นาที ต่อ IP | 429 + ข้อความสุภาพ — ไม่เรียก AI |
+| CHT-I-02 | I | คำถามเดิมซ้ำใน 10 นาที | คำตอบเดิม UsedAi=false — ไม่จ่าย AI ซ้ำ |
+| CHT-I-03 | I | audience wall: public ถามเรื่องที่อยู่เฉพาะชิ้น Tenant/Internal | คำตอบไม่มีเนื้อหาชิ้นนั้น (retrieval ไม่หยิบ) |
+| CHT-I-04 | I | kill-switch: ปิด provider ทุกตัว | บอทตอบ retrieval-only (⚙️ ระบบตอบ) ไม่ error |
+| CHT-I-05 | I | "ติดต่อเจ้าหน้าที่" → admin ตอบ → widget poll | สถานะ WaitingAgent→AgentHandling; ข้อความ Agent ถึง widget; บอทหยุดตอบห้องนั้น |
+| CHT-I-06 | I | 👍 บนคำตอบ → ถามคำถามเดิมอีกครั้ง (หลัง retrain) | student ตอบ local (short-circuit) — UsedAi=false |
+| CHT-I-07 | I | tenant ถาม "ค่าน้ำมันลงหมวดไหน" | คำตอบอ้างเลขผังจากผังบัญชีของบริษัทตัวเองเท่านั้น |
+| CHT-I-08 | I | tenant ของบริษัท A ถามข้อมูลบริษัท B | ไม่มีข้อมูล B ในคำตอบ (KB scope ต่อ companyId) |
+| CHT-I-09 | I | user ที่ไม่ใช่สมาชิกบริษัทเรียก /assistant/ask | 403 |
+| CHT-S-01 | S | flow เต็ม: ถามหน้าแรก → บอทตอบ → ขอเจ้าหน้าที่ → admin ตอบ → ปิดห้อง | ทุกขั้นทำงาน + ประวัติครบใน admin console |
+| CHT-I-10 | I | rate limit: 2 instance ยิงพร้อมกัน (DB-backed) | เพดานรวมไม่คูณจำนวน instance |
+| CHT-I-11 | I | ตาราง ChatRateBuckets ใช้ไม่ได้ (DB error) | fail-open — ยังตอบได้ ไม่ล็อกทั้งระบบ; ด่านห้อง/วัน + budget ยังคุม |
+| CHT-I-12 | I | ชนเพดาน ≥3 ครั้ง/ชม. | ได้โจทย์บวกเลข; ตอบผิด = ถามต่อไม่ได้, ตอบถูก = ปลดล็อก |
+| CHT-I-13 | I | purge job กับห้อง Public ที่เลย PurgeAfter | ข้อความหายจริงจาก DB + ชื่อ/อีเมล/IpHash เป็น null; ห้อง Tenant ไม่ถูกแตะ |
+| CHT-I-14 | I | ขอคุยเจ้าหน้าที่ (intent + ปุ่ม) | LINE แจ้งทีมงานทั้งสองทาง; แจ้งล้มเหลวไม่ทำให้คำขอล้ม |
+| CHT-I-15 | I | ยังไม่มีใครโหวตเลย แล้วถามคำถามซ้ำ | student โหลด lazy จาก teacher answer — ไม่ต้องรอ 👍 ก่อน |
+| CHT-I-16 | I | ถามพร้อม documentId ของบริษัทอื่น | ไม่มี context ใบนั้น (tenant guard ใน BuildDocumentContextAsync) |
+| CHT-I-17 | I | ถามพร้อม documentId ของบริษัทตัวเอง | คำตอบอ้างคู่ค้า/ยอด/ผังของใบจริง |
+| CHT-I-18 | I | admin แก้บทความที่มาจากไฟล์ .md | ถูกปฏิเสธพร้อมบอกให้แก้ไฟล์ต้นทาง (กันแก้แล้วหายตอน refresh) |
+| CHT-I-19 | I | admin เพิ่มบทความใหม่ แล้วทดลองค้นทันที | บทความถูกหยิบโดยไม่ต้อง restart (cache invalidate) |
+| CHT-I-20 | I | LINE: "ถาม ค่าน้ำมันลงหมวดไหน" | ตอบจากผู้ช่วยของบริษัทที่ active พร้อมป้าย 🤖/⚙️ |
+| CHT-I-21 | I | metrics: อัตรา UsedAi หลัง student จำคำตอบได้ | ค่าลดลงเทียบกับก่อนหน้า (ตัวชี้วัดความพร้อม) |
+
 ---
 
 ## 6. AI — Distillation loop (กฎเหล็ก #1)
@@ -223,6 +278,12 @@
 | --- | --- | --- | --- |
 | BNK-U-01 | U | statement matching: ยอดตรงหลายใบ, วันที่เหลื่อม | จับคู่ตาม tolerance ที่กำหนด; ambiguous → เสนอไม่ auto-match |
 | BNK-I-01 | I | reconcile แล้ว unreconcile | สถานะกลับครบ ไม่ทิ้ง orphan |
+| BNK-U-02 | U | `autoFillBankToMatch`: JV 77,678 + โอน 5 รายการวันเดียวกันที่รวมพอดี | เลือกครบทั้ง 5 ผลต่าง = 0 |
+| BNK-U-03 | U | pool มีเงินเข้าปนอยู่ | ไม่หยิบเงินเข้ามาหักล้างให้ยอดพอดี (ทิศเดียวกันเท่านั้น) |
+| BNK-U-04 | U | รวมได้ไม่พอดี (ขาด/ไม่มีชุดที่ลงตัว) | เติมเท่าที่ได้ + แจ้งยอดที่ยังขาด ไม่ยืนยันเงียบ |
+| BNK-I-02 | I | หลายรายการโอน → JE เดียว ผ่านกลุ่มกระทบยอด M:N | ทุกรายการโอนเป็น Matched, JE ถูกใช้ครั้งเดียว, ยอดกลุ่มสมดุล |
+| BNK-I-03 | I | ปุ่ม "หารายการโอนที่เหลือ" จากหน้าต่างจับคู่ 1:N | เปิดโหมดกลุ่มพร้อม preselect รายการเดิม + เอกสารเดิม |
+| BNK-I-04 | I | unreconcile กลุ่ม M:N | รายการโอนทุกใบกลับเป็น Unmatched, JE ปลดล็อกใช้ใหม่ได้ |
 | IMP-U-01 | U | parse ตัวเลขไทย "1,234.50", วันที่ พ.ศ./ค.ศ. ปนกัน | แปลงถูก; พ.ศ. detect จากปี > 2400 |
 | IMP-I-01 | I | import ไฟล์เดิมซ้ำ (opening balance) | idempotent — ไม่ duplicate (refresh in place) |
 | IMP-I-02 | I | ไฟล์ header สลับคอลัมน์/มีแถวขยะ | ColumnMatch (AI+local) จับได้ หรือ reject พร้อมบอกแถว |

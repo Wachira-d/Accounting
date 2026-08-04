@@ -423,6 +423,11 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteFormSubmission> SiteFormSubmissions => Set<SiteFormSubmission>();
     public DbSet<SiteCustomerMerge> SiteCustomerMerges => Set<SiteCustomerMerge>();
 
+    // ===== Chatbot (public FAQ + tenant assistant) =====
+    public DbSet<ChatConversation> ChatConversations => Set<ChatConversation>();
+    public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
+    public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

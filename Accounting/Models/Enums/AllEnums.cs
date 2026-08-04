@@ -1539,6 +1539,15 @@ public enum AiFeatureKey
     /// every slot so all COA pickers learn through the same loop.</summary>
     GlAccountSlotSuggestion = 53,
 
+    /// <summary>Public chatbot หน้าแรก — ตอบคำถามฟีเจอร์/ข้อสงสัยจาก RAG
+    /// (audience Public เท่านั้น). Student = ChatAnswerDistillationModel
+    /// (จับคู่คำถามเดิมที่เคยตอบดีแล้ว); fallback = retrieval-only.</summary>
+    PublicFaqChat = 54,
+
+    /// <summary>Tenant assistant — ผู้ใช้ล็อกอินถามวิธีลงบัญชี/เลือกหมวด
+    /// โดยมี RAG ย่อยของบริษัท (ผังบัญชี/ผู้ขาย/การตั้งค่า) ประกอบ.</summary>
+    TenantAssistantChat = 55,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

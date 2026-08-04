@@ -5085,6 +5085,92 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_ProductLots_Product" ON "ProductLots" ("CompanyId", "ProductId") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_ProductLots_Expiry" ON "ProductLots" ("CompanyId", "ExpirationDate") WHERE "ExpirationDate" IS NOT NULL AND "QuantityOnHand" > 0;""",
+
+            // ===== Chatbot: public FAQ + tenant assistant (CHATBOT_PLAN.md) =====
+            """
+            CREATE TABLE IF NOT EXISTS "ChatConversations" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "Channel" varchar(20) NOT NULL DEFAULT 'Public',
+                "CompanyId" uuid NULL,
+                "UserId" uuid NULL,
+                "SessionToken" varchar(64) NULL,
+                "VisitorName" varchar(200) NULL,
+                "VisitorEmail" varchar(200) NULL,
+                "IpHash" varchar(64) NULL,
+                "Status" varchar(20) NOT NULL DEFAULT 'AiHandling',
+                "Title" varchar(300) NULL,
+                "MessageCount" integer NOT NULL DEFAULT 0,
+                "LastMessageAt" timestamp NOT NULL DEFAULT now(),
+                "AgentJoinedAt" timestamp NULL,
+                "AgentName" varchar(200) NULL,
+                "SatisfactionScore" integer NULL,
+                "PurgeAfter" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_ChatConversations_Session" ON "ChatConversations" ("SessionToken") WHERE "SessionToken" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ChatConversations_Status" ON "ChatConversations" ("Status", "LastMessageAt") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ChatConversations_Company" ON "ChatConversations" ("CompanyId", "UserId") WHERE "CompanyId" IS NOT NULL;""",
+            """
+            CREATE TABLE IF NOT EXISTS "ChatMessages" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "ConversationId" uuid NOT NULL,
+                "Role" varchar(20) NOT NULL DEFAULT 'User',
+                "Content" text NOT NULL DEFAULT '',
+                "UsedAi" boolean NOT NULL DEFAULT false,
+                "AiConfidence" decimal(5,4) NULL,
+                "AiFeedbackId" uuid NULL,
+                "RetrievedChunksJson" text NULL,
+                "FlaggedForReview" boolean NOT NULL DEFAULT false,
+                "HelpfulVote" integer NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ChatMessages_Conversation" ON "ChatMessages" ("ConversationId", "CreatedAt");""",
+            """
+            CREATE TABLE IF NOT EXISTS "KnowledgeChunks" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NULL,
+                "SourceType" varchar(30) NOT NULL DEFAULT 'File',
+                "SourceKey" varchar(300) NOT NULL DEFAULT '',
+                "Title" varchar(400) NOT NULL DEFAULT '',
+                "Content" text NOT NULL DEFAULT '',
+                "Audience" varchar(20) NOT NULL DEFAULT 'Internal',
+                "EmbeddingJson" text NULL,
+                "ContentHash" varchar(64) NOT NULL DEFAULT '',
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_KnowledgeChunks_Key" ON "KnowledgeChunks" ("SourceKey") WHERE "CompanyId" IS NULL;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_KnowledgeChunks_TenantKey" ON "KnowledgeChunks" ("CompanyId", "SourceKey") WHERE "CompanyId" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_KnowledgeChunks_Audience" ON "KnowledgeChunks" ("Audience", "IsActive") WHERE "IsDeleted" = false;""",
+            // ตัวนับ rate limit ที่ใช้ร่วมกันข้าม instance (atomic upsert)
+            """
+            CREATE TABLE IF NOT EXISTS "ChatRateBuckets" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "BucketKey" varchar(120) NOT NULL,
+                "WindowStart" timestamp NOT NULL,
+                "Count" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_ChatRateBuckets_Key" ON "ChatRateBuckets" ("BucketKey", "WindowStart");""",
+            """CREATE INDEX IF NOT EXISTS "IX_ChatRateBuckets_Window" ON "ChatRateBuckets" ("WindowStart");""",
+            // challenge (กันบอทยิงรัวซ้ำ) + คำถามที่ตอบไม่ได้ (feed หา KB gap)
+            """ALTER TABLE "ChatConversations" ADD COLUMN IF NOT EXISTS "PendingChallenge" varchar(20) NULL;""",
+            """ALTER TABLE "ChatMessages" ADD COLUMN IF NOT EXISTS "NoContextFound" boolean NOT NULL DEFAULT false;""",
         };
 
         foreach (var sql in statements)

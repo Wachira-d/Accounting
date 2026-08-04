@@ -10,6 +10,17 @@ public interface ILineBotService
     /// to send back to the user (or null to ignore).</summary>
     Task<string?> HandleMessageAsync(string lineUserId, string text);
 
+    /// <summary>"โยนบิลเข้าไลน์" — รับรูป/ไฟล์ใบเสร็จจาก LINE, ดึง content จาก
+    /// LINE Content API แล้ววิ่งเข้า OCR pipeline เดียวกับหน้าเว็บ (preflight →
+    /// dedup → quota → ScanAsync autoCreate) → ตอบกลับผลลัพธ์: เอกสารที่สร้าง
+    /// (ฉบับร่าง) หรือลิงก์หน้าตรวจสอบเมื่อระบบไม่มั่นใจพอจะสร้างเอง.</summary>
+    Task<string?> HandleImageAsync(string lineUserId, string messageId, string? fileName = null);
+
+    /// <summary>ปุ่มกดใน Flex message (postback event) — ตอนนี้รองรับ
+    /// "approve:{documentId}" = อนุมัติเอกสารที่สร้างจากบิลที่ส่งเข้าไลน์
+    /// (ตรวจ tenant + role ก่อนเสมอ — postback data ปลอมได้).</summary>
+    Task<string?> HandlePostbackAsync(string lineUserId, string data);
+
     /// <summary>Verify the X-Line-Signature header matches the body
     /// signed by the channel secret. Used by the webhook controller.</summary>
     bool VerifySignature(string body, string? headerSignature);

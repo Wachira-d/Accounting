@@ -5924,6 +5924,11 @@
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
             actions += ` <button class="btn btn-danger" onclick="Page.purgeDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
           }
+          // ถามผู้ช่วย AI เกี่ยวกับ "ใบนี้" — ส่ง documentId ไปเป็น context
+          // ให้คำตอบอ้างคู่ค้า/ยอด/ผังของใบจริง ไม่ใช่คำแนะนำทั่วไป
+          actions += ` <button class="btn btn-secondary"
+            onclick="window.location.href='/pages/assistant.html?documentId=${d.id}&docNo=${encodeURIComponent(d.documentNumber || '')}'"
+            title="ถามผู้ช่วย AI เรื่องการลงบัญชี/ภาษีของเอกสารใบนี้ — ผู้ช่วยเห็นรายละเอียดใบนี้ประกอบการตอบ">💬 ถามผู้ช่วย</button>`;
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
 

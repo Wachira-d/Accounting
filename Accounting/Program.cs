@@ -289,6 +289,10 @@ builder.Services.AddScoped<ICommissionService, CommissionService>();
 // Phase 4: Intelligence
 builder.Services.AddScoped<IAiService, AiService>();
 builder.Services.AddScoped<IOcrService, OcrService>();
+// Chatbot 2 ช่อง (public FAQ หน้าแรก + tenant assistant) — CHATBOT_PLAN.md
+builder.Services.AddScoped<IKnowledgeBaseService, KnowledgeBaseService>();
+builder.Services.AddScoped<IChatbotService, ChatbotService>();
+builder.Services.AddScoped<IChatRateLimiter, ChatRateLimiter>();
 builder.Services.AddScoped<IOcrQuotaService, OcrQuotaService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AzureDocumentIntelligenceService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.OcrSelfCorrectionService>();
@@ -395,6 +399,21 @@ foreach (var genericFeatureKey in new[]
         new Accounting.Services.Ai.Distillation.GenericFeedbackDistillationModel(
             fk, sp,
             sp.GetRequiredService<ILogger<Accounting.Services.Ai.Distillation.GenericFeedbackDistillationModel>>()));
+}
+// Chatbot students (free-form Q→A — จับคู่คำถามด้วย embedding ไม่ใช่
+// fingerprint ตรงตัว จึงต้องเป็น bespoke model ตามกฎเหล็ก #1 ข้อ 2)
+foreach (var chatFeatureKey in new[]
+{
+    Accounting.Models.Enums.AiFeatureKey.PublicFaqChat,
+    Accounting.Models.Enums.AiFeatureKey.TenantAssistantChat,
+})
+{
+    var cfk = chatFeatureKey;
+    builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel>(sp =>
+        new Accounting.Services.Ai.Distillation.ChatAnswerDistillationModel(
+            cfk, sp,
+            sp.GetRequiredService<Accounting.Services.Ai.Embedding.IEmbeddingService>(),
+            sp.GetRequiredService<ILogger<Accounting.Services.Ai.Distillation.ChatAnswerDistillationModel>>()));
 }
 // Risk scoring & smart approval routing — surfaces decisions the
 // admin/AR/AP teams use directly + feeds the corresponding AI narrative
@@ -503,6 +522,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJ
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnifiedPaymentQueryService,
     Accounting.Services.Implementations.Payments.UnifiedPaymentQueryService>();
@@ -1601,6 +1621,23 @@ try
     // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);
     await SeedAdminUser.SeedAsync(db, app.Configuration);
+
+    // Chatbot knowledge base — ingest .md + seed FAQ เป็น background (hash-diff
+    // จึง idempotent ทุก start = ไฟล์เอกสารเปลี่ยนแล้ว KB ตามทันเอง)
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            using var kbScope = app.Services.CreateScope();
+            var kb = kbScope.ServiceProvider.GetRequiredService<IKnowledgeBaseService>();
+            await kb.RefreshGlobalAsync();
+        }
+        catch (Exception ex)
+        {
+            app.Services.GetRequiredService<ILogger<Program>>()
+                .LogWarning(ex, "Chatbot KB refresh on startup failed (non-fatal)");
+        }
+    });
 
     // Cold-start OCR knowledge seed: only runs on the very first startup
     // after the tables exist (i.e. when SystemOcrAssociationRules is empty).
