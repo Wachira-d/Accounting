@@ -189,6 +189,26 @@
 
 ---
 
+### Chatbot 2 ช่อง (CHATBOT_PLAN.md)
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| CHT-U-01 | U | `ChunkMarkdown` หั่นไฟล์ตาม ##/### + ก้อน >3500 | ทุกชิ้น ≤3500 ตัวอักษร, key ไม่ซ้ำ |
+| CHT-U-02 | U | `WantsHuman` จับ intent "ติดต่อเจ้าหน้าที่"/"คุยกับคน" | true; ประโยคทั่วไป → false |
+| CHT-U-03 | U | `ScrubInternalRefs` ลบ path/บรรทัดโค้ดจากคำตอบ | "Foo.cs:123" หายจากข้อความ |
+| CHT-U-04 | U | `StripJsonWrapper` แกะ {"answer":"..."} / "..." | ได้ plain text; ไม่ใช่ JSON → คงเดิม |
+| CHT-I-01 | I | public ถามเกิน 6/นาที ต่อ IP | 429 + ข้อความสุภาพ — ไม่เรียก AI |
+| CHT-I-02 | I | คำถามเดิมซ้ำใน 10 นาที | คำตอบเดิม UsedAi=false — ไม่จ่าย AI ซ้ำ |
+| CHT-I-03 | I | audience wall: public ถามเรื่องที่อยู่เฉพาะชิ้น Tenant/Internal | คำตอบไม่มีเนื้อหาชิ้นนั้น (retrieval ไม่หยิบ) |
+| CHT-I-04 | I | kill-switch: ปิด provider ทุกตัว | บอทตอบ retrieval-only (⚙️ ระบบตอบ) ไม่ error |
+| CHT-I-05 | I | "ติดต่อเจ้าหน้าที่" → admin ตอบ → widget poll | สถานะ WaitingAgent→AgentHandling; ข้อความ Agent ถึง widget; บอทหยุดตอบห้องนั้น |
+| CHT-I-06 | I | 👍 บนคำตอบ → ถามคำถามเดิมอีกครั้ง (หลัง retrain) | student ตอบ local (short-circuit) — UsedAi=false |
+| CHT-I-07 | I | tenant ถาม "ค่าน้ำมันลงหมวดไหน" | คำตอบอ้างเลขผังจากผังบัญชีของบริษัทตัวเองเท่านั้น |
+| CHT-I-08 | I | tenant ของบริษัท A ถามข้อมูลบริษัท B | ไม่มีข้อมูล B ในคำตอบ (KB scope ต่อ companyId) |
+| CHT-I-09 | I | user ที่ไม่ใช่สมาชิกบริษัทเรียก /assistant/ask | 403 |
+| CHT-S-01 | S | flow เต็ม: ถามหน้าแรก → บอทตอบ → ขอเจ้าหน้าที่ → admin ตอบ → ปิดห้อง | ทุกขั้นทำงาน + ประวัติครบใน admin console |
+
+---
+
 ## 6. AI — Distillation loop (กฎเหล็ก #1)
 
 | รหัส | ชั้น | เคส | คาดหวัง |

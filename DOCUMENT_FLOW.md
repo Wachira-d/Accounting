@@ -1101,6 +1101,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แก้รายงาน ภ.พ.30 (CSV ยื่น) | `TaxFilingExportService.ExportPp30Async :243` — ดึงจาก `ComputeVatReportAsync` |
 | แก้ ภ.ง.ด.50 | `TaxService.GenerateCitReport :731` |
 | แก้ปฏิทินนำส่ง (dashboard) | `StatutoryRemittanceService.GetFilingCalendarAsync` + `BuildCell` / UI: `app.html` widget `filingCalendar` |
+| แก้ chatbot (public/tenant/admin) | `ChatbotService` + `KnowledgeBaseService` + `ChatAnswerDistillationModel` — สถาปัตยกรรม+แผนอยู่ `CHATBOT_PLAN.md` |
 | แก้กำหนดยื่น/กฎยื่นแบบเปล่า | `StatutoryRemittanceService.DueDates` / `FilingRule` (มี unit test) |
 | แก้ WHT cert auto-issue | `WithholdingTaxCertService` |
 | แก้ PDF template | `PdfGenerationService.DocumentRenderer.cs` / `HtmlRenderer.cs` |
@@ -1605,7 +1606,9 @@ _มี local heuristics, DailyCallCap นับเฉพาะ provider call, O
 _tenant: CMS cart scope, POS ProductId, payroll includeSalary; XSS 4 หน้า;_
 _import: พ.ศ.→ค.ศ. ทุกจุด + JE/bank dedup. **ใหม่: ภาษาเอกสาร th/en**)_
 
-_Last updated: 2026-08-04 — LINE bot รับรูปใบเสร็จ → OCR → เอกสารทันที (§2.2b:_
+_Last updated: 2026-08-04 — Chatbot 2 ช่อง Phase 1 (public FAQ + tenant_
+_assistant + admin console — สถาปัตยกรรม/แผนอยู่ CHATBOT_PLAN.md); ก่อนหน้า:_
+_LINE bot รับรูปใบเสร็จ → OCR → เอกสารทันที (§2.2b:_
 _รวม Flex ปุ่มอนุมัติในแชท + postback guard + แจ้งกลับผู้ส่งเมื่ออนุมัติ)_
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_

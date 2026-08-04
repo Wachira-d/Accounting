@@ -905,6 +905,8 @@ const Layout = {
       description: 'สแกนใบเสร็จ-ใบกำกับด้วยกล้อง · Azure DI + Tesseract · RD compliance check' },
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools',
       description: 'auto-categorize · anomaly · cash-flow forecast · vendor canon · GL suggestion' },
+    { id: 'assistant', label: 'ผู้ช่วยบัญชี AI', icon: '💬', href: '/pages/assistant.html', feature: 'AI_Features',
+      description: 'ถามวิธีลงบันทึก เลือกหมวดบัญชี ภาษี — ผู้ช่วยรู้จักผังบัญชีของกิจการคุณ' },
     { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
       description: 'นำเข้า Excel ทีละ batch · ส่งออกข้อมูลเป็น CSV/Excel · backup' },
     { id: 'migrate-competitor', label: 'ย้ายจาก Express/PEAK/FlowAccount', icon: '🔁', href: '/pages/migrate-competitor.html', feature: 'BulkImport',

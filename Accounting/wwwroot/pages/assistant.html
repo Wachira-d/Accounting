@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ผู้ช่วยบัญชี AI - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .as-wrap{max-width:860px;margin:0 auto;display:flex;flex-direction:column;height:calc(100vh - 160px);min-height:420px}
+    .as-body{flex:1;overflow-y:auto;padding:20px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0}
+    .as-msg{margin-bottom:14px;display:flex;flex-direction:column}
+    .as-msg .b{max-width:80%;padding:12px 16px;border-radius:14px;font-size:14px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+    .as-msg.user{align-items:flex-end}
+    .as-msg.user .b{background:var(--primary);color:#fff;border-bottom-right-radius:4px}
+    .as-msg.bot .b{background:#fff;border:1px solid #e2e8f0;border-bottom-left-radius:4px}
+    .as-tag{font-size:11px;color:#94a3b8;margin-top:4px;display:flex;gap:10px;align-items:center}
+    .as-vote{cursor:pointer;opacity:.55}
+    .as-vote:hover,.as-vote.on{opacity:1}
+    .as-foot{display:flex;gap:10px;margin-top:14px}
+    .as-in{flex:1;border:1px solid #cbd5e1;border-radius:12px;padding:12px 14px;font-size:14px;font-family:inherit;resize:none;max-height:120px}
+    .as-chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .as-chip{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;border-radius:16px;padding:5px 12px;font-size:12px;cursor:pointer}
+    .as-chip:hover{background:#dbeafe}
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">🤖 ผู้ช่วยบัญชี AI</h2>
+        <p class="page-subtitle">ถามวิธีลงบันทึก เลือกหมวดบัญชี ภาษี และการใช้งานระบบ — ผู้ช่วยรู้จักผังบัญชีและประวัติของกิจการคุณ</p>
+      </div>
+    </div>
+
+    <div class="as-wrap">
+      <div class="as-body" id="asBody"></div>
+      <div class="as-chips" id="asChips">
+        <span class="as-chip" onclick="Page.quick('ค่าน้ำมันรถส่งของ ควรลงหมวดบัญชีไหน')">ค่าน้ำมันลงหมวดไหน</span>
+        <span class="as-chip" onclick="Page.quick('จ่ายค่าบริการ 5,000 บาท ต้องหัก ณ ที่จ่ายเท่าไหร่')">หัก ณ ที่จ่ายค่าบริการ</span>
+        <span class="as-chip" onclick="Page.quick('บิลเงินสดไม่มีเลขผู้เสียภาษี ลงบันทึกยังไงให้ใช้เป็นรายจ่ายได้')">บิลไม่มีเลขผู้เสียภาษี</span>
+        <span class="as-chip" onclick="Page.quick('ใบกำกับภาษีซื้อเดือนก่อน ยังเคลม VAT ได้ไหม')">เคลม VAT ย้อนหลัง</span>
+      </div>
+      <div class="as-foot">
+        <textarea class="as-in" id="asInput" rows="2" maxlength="2000"
+          placeholder="พิมพ์คำถาม… เช่น 'ซื้อโน้ตบุ๊ก 25,000 ลงเป็นค่าใช้จ่ายหรือสินทรัพย์' (Enter เพื่อส่ง)"></textarea>
+        <button class="btn btn-primary" id="asSend" style="align-self:flex-end">ส่ง</button>
+      </div>
+      <div class="text-xs text-gray-400" style="margin-top:8px;text-align:center">
+        คำแนะนำจาก AI ใช้ประกอบการตัดสินใจ — เรื่องเงินก้อนใหญ่/ก้ำกึ่งควรตรวจกับนักบัญชีของกิจการอีกครั้ง
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      sending: false,
+
+      init() {
+        if (!Layout.init('assistant')) return;
+        Layout.setTitle('ผู้ช่วยบัญชี AI');
+        const input = document.getElementById('asInput');
+        input.addEventListener('keydown', e => {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
+        });
+        document.getElementById('asSend').onclick = () => this.send();
+        this.add('bot', 'สวัสดีครับ 👋 ผมเป็นผู้ช่วยบัญชีของกิจการคุณ\nถามได้เลย เช่น เอกสารนี้ควรลงหมวดไหน · หัก ณ ที่จ่ายยังไง · เคลม VAT ได้ไหม\nผมรู้จักผังบัญชีและประวัติการลงบัญชีของกิจการคุณแล้วครับ', { noTag: true });
+      },
+
+      quick(q) { document.getElementById('asInput').value = q; this.send(); },
+
+      add(kind, text, opts = {}) {
+        const body = document.getElementById('asBody');
+        const wrap = document.createElement('div');
+        wrap.className = 'as-msg ' + kind;
+        const b = document.createElement('div');
+        b.className = 'b'; b.textContent = text;
+        wrap.appendChild(b);
+        if (!opts.noTag && kind === 'bot') {
+          const tag = document.createElement('div');
+          tag.className = 'as-tag';
+          const lbl = document.createElement('span');
+          lbl.textContent = opts.usedAi ? '🤖 AI แนะนำ' : '⚙️ ระบบแนะนำ';
+          tag.appendChild(lbl);
+          if (opts.messageId) {
+            const up = document.createElement('span'); up.className = 'as-vote'; up.textContent = '👍';
+            const dn = document.createElement('span'); dn.className = 'as-vote'; dn.textContent = '👎';
+            up.onclick = () => this.vote(opts.messageId, 1, up, dn);
+            dn.onclick = () => this.vote(opts.messageId, -1, dn, up);
+            tag.appendChild(up); tag.appendChild(dn);
+          }
+          wrap.appendChild(tag);
+        }
+        body.appendChild(wrap);
+        body.scrollTop = body.scrollHeight;
+      },
+
+      async send() {
+        if (this.sending) return;
+        const input = document.getElementById('asInput');
+        const text = (input.value || '').trim();
+        if (!text) return;
+        const api = Layout.api(); if (!api) return;
+        this.sending = true;
+        document.getElementById('asSend').disabled = true;
+        input.value = '';
+        this.add('user', text);
+        const thinking = document.createElement('div');
+        thinking.className = 'as-msg bot';
+        thinking.innerHTML = '<div class="b" style="color:#94a3b8">กำลังคิด…</div>';
+        document.getElementById('asBody').appendChild(thinking);
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.post(`/api/companies/${cid}/assistant/ask`, { message: text });
+          thinking.remove();
+          const d = res.data;
+          this.add('bot', d.answer, { usedAi: d.usedAi, messageId: d.messageId });
+        } catch (e) {
+          thinking.remove();
+          this.add('bot', e.message || 'ขออภัย ระบบขัดข้อง — ลองใหม่อีกครั้งครับ', { noTag: true });
+        } finally {
+          this.sending = false;
+          document.getElementById('asSend').disabled = false;
+        }
+      },
+
+      async vote(messageId, v, onEl, offEl) {
+        onEl.classList.add('on'); offEl.classList.remove('on');
+        try {
+          const cid = Layout.getCompanyId();
+          await API.post(`/api/companies/${cid}/assistant/vote`, { messageId, vote: v });
+          if (v === 1) Layout.toast('ขอบคุณครับ — ระบบจะจำคำตอบนี้ไว้');
+        } catch (e) { /* best-effort */ }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>
