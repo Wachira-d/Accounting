@@ -1,17 +1,18 @@
 namespace Accounting.Models.Entities;
 
 /// <summary>
-/// Snapshot ของใบเสนอราคา "ก่อนถูกแก้" 1 ครั้ง — ประวัติการต่อรองที่เปิดดู
-/// ย้อนหลังได้ (Rev.0 เสนอ 100,000 → Rev.1 ลดเหลือ 95,000 → ...).
+/// Snapshot ของเอกสาร "ก่อนถูกแก้" 1 ครั้ง — ประวัติที่เปิดดูย้อนหลังได้
+/// (Rev.0 เสนอ 100,000 → Rev.1 ลดเหลือ 95,000 → ...). ใช้กับเอกสาร operational
+/// ที่ revision ได้ (ดู DocumentService.RevisableTypes).
 ///
 /// ทำไมเป็น snapshot JSON ไม่ใช่ clone เอกสาร: clone จะเปลืองเลขเอกสาร
 /// (running number ต้อง gap-free) + โผล่ในรายการ/รายงานให้สับสน ขณะที่
 /// revision เก่าเป็นแค่ "หลักฐานว่าเคยเสนออะไร" ไม่มีผลทางบัญชี/ภาษีใด ๆ
-/// (Quotation เป็นเอกสาร operational — ไม่มี JE/สต๊อก/VAT).
+/// (เอกสาร operational — ไม่มี JE/สต๊อก/VAT).
 ///
 /// สร้างเมื่อ: แก้ใบเสนอราคาที่อนุมัติ/ส่งแล้ว (UpdateDocumentAsync เส้นทาง
 /// revision) — snapshot สภาพปัจจุบันก่อน apply การแก้ แล้วค่อยบวก
-/// Document.QuotationRevision. ถ้าลูกค้าเคยกดยอมรับออนไลน์ หลักฐานการยอมรับ
+/// Document.RevisionNumber. ถ้าคู่ค้าเคยยอมรับ/เซ็นรับของออนไลน์ หลักฐาน
 /// (เวลา/ชื่อ) ถูกเก็บลง snapshot ด้วยก่อน reset — ไม่มีวันหาย.
 /// </summary>
 public class DocumentRevision : TenantEntity
@@ -23,7 +24,7 @@ public class DocumentRevision : TenantEntity
     public int RevisionNumber { get; set; }
 
     /// <summary>สภาพเอกสารทั้งใบ ณ ตอนนั้น (header + lines) — JSON โครงคงที่
-    /// (ดู BuildQuotationSnapshot ใน DocumentService)</summary>
+    /// (ดู BuildDocumentSnapshot ใน DocumentService)</summary>
     public string SnapshotJson { get; set; } = "";
 
     /// <summary>ยอดรวมของ revision นั้น (denormalized — ให้ list ประวัติโชว์

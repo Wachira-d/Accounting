@@ -636,12 +636,20 @@ public record DocumentResponse(
     int? InputVatPp30Year = null,
     // TaxReportStatus ของรายงานงวดนั้น: "Draft" | "Filed" | "Submitted"
     string? InputVatPp30ReportStatus = null,
-    // ===== Quotation revision =====
+    // ===== Document revision (เอกสาร operational) =====
     // ครั้งที่แก้ไข (0 = ฉบับแรก) — UI โชว์ "Rev.N" + เปิดประวัติได้
-    int QuotationRevision = 0,
+    int RevisionNumber = 0,
+    // แก้ไขแบบออก Rev ใหม่ได้ไหม (server ตัดสินจากชนิด+สถานะ+เอกสารปลายทาง) —
+    // UI ใช้ตัดสินว่าจะโชว์ปุ่ม "แก้ไข (Rev ใหม่)" ไหม โดยไม่ต้องรู้กติกาเอง
+    bool CanRevise = false,
+    string? CannotReviseReason = null,
     // หลักฐานการยอมรับออนไลน์ (echo ให้ UI เตือนก่อนแก้ + โชว์สถานะ)
     DateTime? QuotationAcceptedAt = null,
-    string? QuotationAcceptedBy = null);
+    string? QuotationAcceptedBy = null,
+    // หลักฐานเซ็นรับของ (POD) บนใบส่งของ — ผูกพันเท่าการยอมรับใบเสนอราคา
+    // UI ใช้เตือนก่อนแก้ว่า Rev ใหม่จะทำให้ลายเซ็นเดิมใช้ไม่ได้
+    DateTime? DeliverySignedAt = null,
+    string? DeliverySignedBy = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 public record DocumentRevisionListItem(

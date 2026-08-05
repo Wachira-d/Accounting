@@ -135,13 +135,16 @@ public class Document : TenantEntity
     /// <summary>ชื่อผู้กดยอมรับ (ลูกค้าพิมพ์เอง — บันทึกเป็นหลักฐาน).</summary>
     public string? QuotationAcceptedBy { get; set; }
 
-    /// <summary>ครั้งที่แก้ไขของใบเสนอราคา (Rev.) — 0 = ฉบับแรก. เพิ่มทีละ 1
-    /// ทุกครั้งที่แก้ใบเสนอราคาที่ "อนุมัติ/ส่งแล้ว" (เลขที่เอกสารคงเดิม —
-    /// ธรรมเนียมการค้า: QT-xxx Rev.2 คือใบเดิมที่ต่อรองราคาแล้ว ไม่ใช่ใบใหม่).
-    /// สภาพก่อนแก้ทุกครั้งถูก snapshot ลง DocumentRevisions ให้เปิดดู/พิมพ์
-    /// ย้อนหลังได้ว่าเคยเสนออะไรไป. ใช้กับ Quotation เท่านั้น — เอกสารภาษี
-    /// (§86/4) ห้ามแก้ย้อนหลัง ต้องใช้ใบลดหนี้/ยกเลิกออกใหม่ตามเดิม.</summary>
-    public int QuotationRevision { get; set; }
+    /// <summary>ครั้งที่แก้ไข (Rev.) — 0 = ฉบับแรก. เพิ่มทีละ 1 ทุกครั้งที่แก้
+    /// **เอกสาร operational** ที่ "อนุมัติ/ส่งแล้ว" โดยคงเลขที่เดิม (ธรรมเนียม
+    /// การค้า: QT-xxx Rev.2 = ใบเดิมที่ต่อรองแล้ว ไม่ใช่ใบใหม่). สภาพก่อนแก้
+    /// ถูก snapshot ลง DocumentRevisions ทุกครั้ง เปิดดูย้อนหลังได้.
+    ///
+    /// ใช้ได้เฉพาะชนิดที่ **ไม่มี JE / ไม่ขยับสต๊อก / ไม่เข้ารายงานภาษี** —
+    /// Quotation, PurchaseOrder, PurchaseRequisition, BillingNote, DeliveryNote
+    /// (ดู DocumentService.RevisableTypes). เอกสารภาษี §86/4 และเอกสารที่ลง
+    /// บัญชีแล้วห้ามแก้ย้อนหลัง ต้องยกเลิก/ออกใบลดหนี้ตามเดิม.</summary>
+    public int RevisionNumber { get; set; }
 
     /// <summary>Capability token ลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (Proof of
     /// Delivery) — ใช้กับใบส่งของ (DeliveryNote): ลูกค้าเปิดลิงก์บนมือถือ

@@ -339,28 +339,51 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     | ส่ง e-Tax จากใบมัดจำที่ยังไม่ใช่ใบกำกับ | block ที่ `EtaxInvoiceService.GenerateAsync` (§5.2 Receipt gate) |
     | หักมัดจำเกินยอดคงเหลือ/เกินยอดค้างใบปลายทาง | guard เดิมใน `ApplyDepositToInvoiceCoreAsync` (over-apply 3 ชั้น) |
 
-### 2.3b Quotation revision (Rev.) — แก้ใบเสนอราคาที่อนุมัติ/ส่งแล้ว
+### 2.3b Document revision (Rev.) — แก้เอกสาร operational ที่อนุมัติ/ส่งแล้ว
 
-- **หลัก**: Quotation เป็นเอกสาร operational (ไม่มี JE/สต๊อก/VAT — ไม่ใช่เอกสาร
-  ภาษี §86/4) จึงแก้หลังอนุมัติได้ตามธรรมเนียมการค้า: **เลขที่คงเดิม + Rev
-  เพิ่มทีละ 1** (`Document.QuotationRevision`, 0 = ฉบับแรก) — ไม่ใช่ออกใบใหม่
-- **เส้นทาง**: `UpdateDocumentAsync` เดิม (PUT /document/{id}) — เมื่อ doc เป็น
-  Quotation + Approved/Sent จะเข้าโหมด revision อัตโนมัติ:
+- **หลัก**: เอกสาร operational (ไม่มี JE / ไม่ขยับสต๊อก / ไม่เข้ารายงานภาษี —
+  ไม่ใช่เอกสารภาษี §86/4) แก้หลังอนุมัติได้ตามธรรมเนียมการค้า: **เลขที่คงเดิม +
+  Rev เพิ่มทีละ 1** (`Document.RevisionNumber`, 0 = ฉบับแรก) — ไม่ใช่ออกใบใหม่
+  (การออกใบใหม่จะกินเลข running ที่ต้อง gap-free และทำให้คู่ค้าสับสนว่าใบไหนจริง)
+- **ชนิดที่แก้ได้** — `DocumentService.RevisableTypes` (เกณฑ์เดียว: ไม่มี JE +
+  ไม่ขยับสต๊อก + ไม่เข้ารายงานภาษี ครบทั้ง 3 ข้อ):
+
+  | ชนิด | ทำไมต้องแก้ได้ | เหตุผลที่ปลอดภัย |
+  | --- | --- | --- |
+  | `Quotation` ใบเสนอราคา | ลูกค้าต่อราคา / เปลี่ยน spec | ยังไม่มีภาระผูกพันทางบัญชี |
+  | `PurchaseOrder` ใบสั่งซื้อ | vendor แจ้งราคาใหม่ / ของขาด | ยอด commitment คำนวณสดจาก PO ที่เปิดอยู่ (`CheckBudgetCommitmentAsync`) → แก้แล้วยอดตามทันที ไม่มี ledger ให้กลับรายการ |
+  | `PurchaseRequisition` ใบขอซื้อ | ผู้อนุมัติสั่งลดจำนวน/งบ | เอกสารภายใน ไม่แตะ GL |
+  | `BillingNote` ใบวางบิล | ลูกค้าทักว่ามีใบที่ไม่ใช่ของตน | เป็นใบรวมยอดเรียกเก็บ ไม่ใช่เอกสารภาษี — ตัวหนี้จริงอยู่ที่ Invoice |
+  | `DeliveryNote` ใบส่งของ | แก้รายการ/จำนวนก่อนส่งจริง | ไม่ขยับสต๊อก (สต๊อกขยับที่ Invoice/TaxInvoice — ดู §4.2) |
+
+  **ห้ามใส่เพิ่ม** โดยไม่ตรวจ 3 เงื่อนไข: `Invoice`/`TaxInvoice`/`Receipt`/
+  `CreditNote`/`DebitNote`/`PurchaseInvoice`/`Expense`/`PaymentVoucher`/
+  `GoodsReceiptNote` — ทุกตัวมี JE และ/หรือเข้ารายงานภาษี/สต๊อก ต้องยกเลิก+ออกใบใหม่
+  หรือออกใบลดหนี้/เพิ่มหนี้ตาม §86/9-10 เท่านั้น
+- **เส้นทาง**: `UpdateDocumentAsync` เดิม (PUT /document/{id}) — เมื่อ doc อยู่ใน
+  `RevisableTypes` + สถานะ Approved/Sent จะเข้าโหมด revision อัตโนมัติ:
   1. **Guard แปลงแล้ว** — มีเอกสารปลายทาง (RelatedDocumentId ชี้มา, ไม่ Voided)
-     → block (ดีลจบแล้ว เงื่อนไขใหม่ = ใบเสนอราคาใบใหม่)
-  2. **Guard การยอมรับออนไลน์** — `QuotationAcceptedAt` ตั้งแล้วต้องส่ง
-     `acknowledgeRevisionResetsAcceptance=true` ยืนยัน (ข้อเสนอเปลี่ยน =
-     การยอมรับเดิมใช้ไม่ได้) — หลักฐานเดิมเก็บลง snapshot ก่อน reset เสมอ
-  3. **Snapshot ก่อนแก้** → `DocumentRevisions` (header+lines+หลักฐานยอมรับ,
-     JSON) + `TotalAmount` denormalized — commit ใน SaveChanges เดียวกับการแก้
-  4. Rev++ · reset acceptance + ลิงก์ยอมรับ (ขอลิงก์ใหม่ให้ลูกค้ายอมรับ Rev ปัจจุบัน)
-  5. เส้นทาง revision **ข้าม** block "เลขจริงห้ามแก้" (ใบเสนอราคาไม่ใช่เอกสารภาษี)
-- **PDF**: `DisplayDocNumber` — Rev > 0 พิมพ์ `QT-xxx (Rev.N)` ทุก renderer
-  (QuestPDF 3 จุด + HTML)
+     → block พร้อมบอกเลขใบปลายทาง (ดีลจบแล้ว เงื่อนไขใหม่ = เอกสารใบใหม่)
+  2. **Guard หลักฐานผูกพัน** — `QuotationAcceptedAt` (ลูกค้ากดยอมรับ QT) **หรือ**
+     `DeliverySignedAt` (ลูกค้าเซ็นรับของ POD บน DN) ตั้งแล้ว → ต้องส่ง
+     `acknowledgeRevisionResetsAcceptance=true` ยืนยัน (ข้อตกลงเปลี่ยน =
+     หลักฐานเดิมใช้ไม่ได้) — หลักฐานเดิมเก็บลง snapshot ก่อน reset เสมอ
+  3. **Snapshot ก่อนแก้** → `DocumentRevisions` (header+lines+หลักฐานผูกพัน,
+     JSON จาก `BuildDocumentSnapshot`) + `TotalAmount` denormalized — commit ใน
+     SaveChanges เดียวกับการแก้
+  4. Rev++ · reset ทั้ง acceptance token (QT) และ POD sign token/ลายเซ็น (DN)
+     → ขอลิงก์ใหม่ให้คู่ค้ายืนยัน Rev ปัจจุบัน
+  5. เส้นทาง revision **ข้าม** block "เลขจริงห้ามแก้" (เอกสาร operational ไม่ใช่
+     เอกสารภาษี — เลขที่จึงคงเดิมได้)
+- **PDF**: `DisplayDocNumber` (`PdfGenerationService.cs`) — Rev > 0 พิมพ์
+  `<เลขที่> (Rev.N)` ทุก renderer (QuestPDF 3 จุด + HTML) ทุกชนิด
 - **ประวัติ**: `GET /document/{id}/revisions` (list) + `/revisions/{n}` (snapshot
   เต็ม); UI: กล่องเหลืองในหน้า detail + ปุ่ม "ดู" เปิด snapshot
-- **UI**: ปุ่ม "✏️ แก้ไข (Rev ใหม่)" ใน detail ของ QT ที่ Approved/Sent →
-  ถามเหตุผล (ลงประวัติ) + confirm ถ้าลูกค้าเคยยอมรับ → ฟอร์มแก้ไขเดิม
+- **UI**: `DocumentResponse.CanRevise` / `CannotReviseReason` — server ตัดสินจาก
+  ชนิด+สถานะ+เอกสารปลายทาง หน้าเว็บ **ไม่ hard-code รายชื่อชนิด** (เพิ่มชนิดใหม่ใน
+  `RevisableTypes` แล้วปุ่มขึ้นเอง). ปุ่ม "✏️ แก้ไข (Rev ใหม่)" ใน detail →
+  ถามเหตุผล (ลงประวัติ) + confirm ถ้าคู่ค้าเคยยืนยัน → ฟอร์มแก้ไขเดิม;
+  รายการเอกสารมีป้าย `Rev.N` ให้เห็นตั้งแต่ list
 
 ### 2.4 Convert (แปลงเอกสาร)
 - **Method**: `DocumentService.ConvertDocumentAsync` (full) / `ConvertDocumentPartialAsync`
@@ -1198,7 +1221,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แก้คลังความรู้ chatbot (admin) | `AdminChatController` (kb/*, metrics) + UI `/admin/chat-kb.html` |
 | แก้จับคู่ธนาคาร M:N (หลายโอน → เอกสารเดียว) | `BankService.CreateReconciliationGroupAsync` / UI: `bank.html` `GroupReconcile` (`applyPreselect`, `autoFillBankToMatch`, `signItemsToBankSide`) |
 | แก้ยอด JE ที่ใช้กระทบยอด (ขาธนาคาร vs footing) | `BankService.GetUnmatchedItemsAsync` (`jeBankLeg`) + `ResolveItemAmountAsync` — ใช้ `BankAccount.LinkedAccountId` หาบรรทัดที่แตะธนาคารจริง |
-| แก้ quotation revision (Rev.) | `DocumentService.UpdateDocumentAsync` (โหมด revision) + `BuildQuotationSnapshot` / PDF: `DisplayDocNumber` — ดู §2.3b |
+| แก้เอกสาร operational แบบ Rev. (QT/PO/PR/BN/DN) | `DocumentService.RevisableTypes` + `UpdateDocumentAsync` (โหมด revision) + `BuildDocumentSnapshot` / PDF: `DisplayDocNumber` — ดู §2.3b |
 | แก้กำหนดยื่น/กฎยื่นแบบเปล่า | `StatutoryRemittanceService.DueDates` / `FilingRule` (มี unit test) |
 | แก้ WHT cert auto-issue | `WithholdingTaxCertService` |
 | แก้ PDF template | `PdfGenerationService.DocumentRenderer.cs` / `HtmlRenderer.cs` |
