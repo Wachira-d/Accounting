@@ -340,7 +340,7 @@ public partial class PdfGenerationService
                     r.ConstantItem(180).Background("#F8FAFC").BorderLeft(4).BorderColor(accent)
                         .PaddingVertical(8).PaddingHorizontal(10).Column(c =>
                         {
-                            if (template.ShowDocumentNumber) c.Item().Text($"{L.DocNumber}: {doc.DocumentNumber}").FontSize(10);
+                            if (template.ShowDocumentNumber) c.Item().Text($"{L.DocNumber}: {DisplayDocNumber(doc)}").FontSize(10);
                             if (template.ShowDocumentDate) c.Item().Text($"{L.DocDate}: {L.Date(doc.DocumentDate)}").FontSize(10);
                             if (template.ShowDueDate && doc.DueDate.HasValue)
                                 c.Item().Text($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}").FontSize(10);
@@ -382,7 +382,7 @@ public partial class PdfGenerationService
                     {
                         rc.Item().AlignRight().Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
                         if (template.ShowDocumentNumber)
-                            rc.Item().AlignRight().Text(doc.DocumentNumber).FontSize(13).Bold().FontColor(accent);
+                            rc.Item().AlignRight().Text(DisplayDocNumber(doc)).FontSize(13).Bold().FontColor(accent);
                     });
                 });
                 col.Item().PaddingTop(6).LineHorizontal(2).LineColor(accent);
@@ -442,7 +442,7 @@ public partial class PdfGenerationService
         item.Text(tt =>
         {
             if (t.ShowDocumentNumber)
-                tt.Span($"{L.DocNumber}: {doc.DocumentNumber}   ").FontSize(10);
+                tt.Span($"{L.DocNumber}: {DisplayDocNumber(doc)}   ").FontSize(10);
             if (t.ShowDocumentDate)
                 tt.Span($"{L.DocDate}: {L.Date(doc.DocumentDate)}   ").FontSize(10);
             if (t.ShowDueDate && doc.DueDate.HasValue)
@@ -455,7 +455,7 @@ public partial class PdfGenerationService
     private static void RenderDocInfoSpans(RowDescriptor r, EntDoc doc, EntTemplate t, string accent, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         void Span(string s) => r.AutoItem().PaddingHorizontal(10).Text(s).FontSize(10);
-        if (t.ShowDocumentNumber) Span($"{L.DocNumber}: {doc.DocumentNumber}");
+        if (t.ShowDocumentNumber) Span($"{L.DocNumber}: {DisplayDocNumber(doc)}");
         if (t.ShowDocumentDate) Span($"{L.DocDate}: {L.Date(doc.DocumentDate)}");
         if (t.ShowDueDate && doc.DueDate.HasValue) Span($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}");
         if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference)) Span($"{L.Reference}: {doc.DisplayReference}");

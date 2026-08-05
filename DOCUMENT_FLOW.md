@@ -339,6 +339,29 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     | ส่ง e-Tax จากใบมัดจำที่ยังไม่ใช่ใบกำกับ | block ที่ `EtaxInvoiceService.GenerateAsync` (§5.2 Receipt gate) |
     | หักมัดจำเกินยอดคงเหลือ/เกินยอดค้างใบปลายทาง | guard เดิมใน `ApplyDepositToInvoiceCoreAsync` (over-apply 3 ชั้น) |
 
+### 2.3b Quotation revision (Rev.) — แก้ใบเสนอราคาที่อนุมัติ/ส่งแล้ว
+
+- **หลัก**: Quotation เป็นเอกสาร operational (ไม่มี JE/สต๊อก/VAT — ไม่ใช่เอกสาร
+  ภาษี §86/4) จึงแก้หลังอนุมัติได้ตามธรรมเนียมการค้า: **เลขที่คงเดิม + Rev
+  เพิ่มทีละ 1** (`Document.QuotationRevision`, 0 = ฉบับแรก) — ไม่ใช่ออกใบใหม่
+- **เส้นทาง**: `UpdateDocumentAsync` เดิม (PUT /document/{id}) — เมื่อ doc เป็น
+  Quotation + Approved/Sent จะเข้าโหมด revision อัตโนมัติ:
+  1. **Guard แปลงแล้ว** — มีเอกสารปลายทาง (RelatedDocumentId ชี้มา, ไม่ Voided)
+     → block (ดีลจบแล้ว เงื่อนไขใหม่ = ใบเสนอราคาใบใหม่)
+  2. **Guard การยอมรับออนไลน์** — `QuotationAcceptedAt` ตั้งแล้วต้องส่ง
+     `acknowledgeRevisionResetsAcceptance=true` ยืนยัน (ข้อเสนอเปลี่ยน =
+     การยอมรับเดิมใช้ไม่ได้) — หลักฐานเดิมเก็บลง snapshot ก่อน reset เสมอ
+  3. **Snapshot ก่อนแก้** → `DocumentRevisions` (header+lines+หลักฐานยอมรับ,
+     JSON) + `TotalAmount` denormalized — commit ใน SaveChanges เดียวกับการแก้
+  4. Rev++ · reset acceptance + ลิงก์ยอมรับ (ขอลิงก์ใหม่ให้ลูกค้ายอมรับ Rev ปัจจุบัน)
+  5. เส้นทาง revision **ข้าม** block "เลขจริงห้ามแก้" (ใบเสนอราคาไม่ใช่เอกสารภาษี)
+- **PDF**: `DisplayDocNumber` — Rev > 0 พิมพ์ `QT-xxx (Rev.N)` ทุก renderer
+  (QuestPDF 3 จุด + HTML)
+- **ประวัติ**: `GET /document/{id}/revisions` (list) + `/revisions/{n}` (snapshot
+  เต็ม); UI: กล่องเหลืองในหน้า detail + ปุ่ม "ดู" เปิด snapshot
+- **UI**: ปุ่ม "✏️ แก้ไข (Rev ใหม่)" ใน detail ของ QT ที่ Approved/Sent →
+  ถามเหตุผล (ลงประวัติ) + confirm ถ้าลูกค้าเคยยอมรับ → ฟอร์มแก้ไขเดิม
+
 ### 2.4 Convert (แปลงเอกสาร)
 - **Method**: `DocumentService.ConvertDocumentAsync` (full) / `ConvertDocumentPartialAsync`
   (partial — qty subset) — `DocumentService.cs:3082` / `:3122`
@@ -1175,6 +1198,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แก้คลังความรู้ chatbot (admin) | `AdminChatController` (kb/*, metrics) + UI `/admin/chat-kb.html` |
 | แก้จับคู่ธนาคาร M:N (หลายโอน → เอกสารเดียว) | `BankService.CreateReconciliationGroupAsync` / UI: `bank.html` `GroupReconcile` (`applyPreselect`, `autoFillBankToMatch`, `signItemsToBankSide`) |
 | แก้ยอด JE ที่ใช้กระทบยอด (ขาธนาคาร vs footing) | `BankService.GetUnmatchedItemsAsync` (`jeBankLeg`) + `ResolveItemAmountAsync` — ใช้ `BankAccount.LinkedAccountId` หาบรรทัดที่แตะธนาคารจริง |
+| แก้ quotation revision (Rev.) | `DocumentService.UpdateDocumentAsync` (โหมด revision) + `BuildQuotationSnapshot` / PDF: `DisplayDocNumber` — ดู §2.3b |
 | แก้กำหนดยื่น/กฎยื่นแบบเปล่า | `StatutoryRemittanceService.DueDates` / `FilingRule` (มี unit test) |
 | แก้ WHT cert auto-issue | `WithholdingTaxCertService` |
 | แก้ PDF template | `PdfGenerationService.DocumentRenderer.cs` / `HtmlRenderer.cs` |

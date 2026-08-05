@@ -4719,8 +4719,45 @@
         this.onDocTypeChange();
         Layout.openModal('formModal');
       },
+      /// เปิดดู snapshot ของ revision เก่า — เห็นว่า Rev นั้นเสนอราคา/รายการอะไร
+      async showRevisionSnapshot(docId, rev) {
+        try {
+          const res = await API.get(`/api/companies/${Layout.getCompanyId()}/document/${docId}/revisions/${rev}`);
+          const s = res?.data; if (!s) return;
+          const lines = (s.lines || []).map(l =>
+            `  • ${l.description} — ${Number(l.quantity).toLocaleString()} ${l.unit || ''} × ${Layout.money(l.unitPrice)} = ${Layout.money(l.amount)}`).join('\n');
+          alert(`ใบเสนอราคา ${s.documentNumber} (Rev.${s.revisionNumber})\n`
+            + `วันที่ ${new Date(s.documentDate).toLocaleDateString('th-TH')} · ลูกค้า ${s.contactName || '-'}\n`
+            + `${'-'.repeat(42)}\n${lines}\n${'-'.repeat(42)}\n`
+            + `รวมก่อน VAT ${Layout.money(s.subTotal)} · VAT ${Layout.money(s.vatAmount)} · สุทธิ ${Layout.money(s.totalAmount)}`
+            + (s.acceptedAt ? `\n\n✅ ลูกค้ายอมรับฉบับนี้เมื่อ ${new Date(s.acceptedAt).toLocaleString('th-TH')} โดย ${s.acceptedBy || '-'}` : ''));
+        } catch (e) { Layout.toast(e.message || 'เปิดประวัติไม่ได้', 'error'); }
+      },
+
+      /// แก้ใบเสนอราคาที่อนุมัติ/ส่งแล้ว → ออก Rev ใหม่ (เลขที่คงเดิม).
+      /// ถามเหตุผล + ถ้าลูกค้าเคยกดยอมรับออนไลน์ ให้ยืนยันชัดเจนก่อนว่า
+      /// การแก้จะ reset การยอมรับ (หลักฐานเดิมเก็บในประวัติ ไม่หาย)
+      async reviseQuotation(id) {
+        const d = this._currentDoc && this._currentDoc.id === id ? this._currentDoc : null;
+        if (d && d.quotationAcceptedAt) {
+          const ok = confirm(
+            `⚠️ ลูกค้า (${d.quotationAcceptedBy || 'ไม่ระบุชื่อ'}) กดยอมรับใบเสนอราคานี้แล้วเมื่อ `
+            + `${new Date(d.quotationAcceptedAt).toLocaleString('th-TH')}\n\n`
+            + 'การแก้ไขจะทำให้การยอมรับเดิมใช้ไม่ได้ และต้องส่งลิงก์ให้ลูกค้ากดยอมรับ Rev ใหม่อีกครั้ง\n'
+            + '(หลักฐานการยอมรับเดิมถูกเก็บไว้ในประวัติ revision — ไม่หาย)\n\nยืนยันแก้ไข?');
+          if (!ok) return;
+        }
+        const reason = prompt('เหตุผลการแก้ไข (บันทึกลงประวัติ — เช่น "ลูกค้าต่อราคา"):') ;
+        if (reason === null) return;   // กด Cancel = ไม่แก้
+        this._revisionPending = { reason: reason.trim() || null, ack: true };
+        await this.openEdit(id);
+      },
+
       async openEdit(id) {
         const api = Layout.api(); if (!api) return;
+        // revision ctx ใช้ครั้งเดียวจาก reviseQuotation — เคลียร์กันรั่วไปแก้ใบอื่น
+        this._revisionCtx = this._revisionPending || null;
+        this._revisionPending = null;
         try {
           const res = await api.getDocument(id);
           const d = res.data;
@@ -5270,8 +5307,17 @@
           let savedDocId = this.editingId;
           let savedStatus = null;   // ใช้ตัดสินว่าต้อง approve ก่อนส่งเมลไหม
           if (this.editingId) {
+            // แก้ใบเสนอราคาที่อนุมัติ/ส่งแล้ว = ออก Rev ใหม่ — แนบเหตุผล + คำยืนยัน
+            // reset การยอมรับ (ตั้งไว้ใน reviseQuotation ก่อนเปิดฟอร์ม)
+            if (this._revisionCtx) {
+              payload.revisionReason = this._revisionCtx.reason || null;
+              payload.acknowledgeRevisionResetsAcceptance = this._revisionCtx.ack === true;
+            }
             await api.updateDocument(this.editingId, payload);
-            Layout.toast('แก้ไขเอกสารสำเร็จ');
+            Layout.toast(this._revisionCtx
+              ? 'บันทึกแล้ว — ออกเป็นฉบับแก้ไข (Rev) ใหม่ สภาพเดิมเก็บไว้ในประวัติ'
+              : 'แก้ไขเอกสารสำเร็จ');
+            this._revisionCtx = null;
           } else {
             const cr = await api.createDocument(payload);
             savedDocId = cr.data?.id;
@@ -5550,7 +5596,10 @@
           const d = res.data;
           this._currentDoc = d;
           const displayNum = (d.documentNumber || '').startsWith('DRAFT-') ? '(ยังไม่ออกเลข)' : d.documentNumber;
-          document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${displayNum}`;
+          // ใบเสนอราคาที่ถูกแก้แล้ว — โชว์ Rev ในหัว modal ให้ตรงกับกระดาษ
+          const revSuffix = d.documentType === 'Quotation' && (d.quotationRevision || 0) > 0
+            ? ` (Rev.${d.quotationRevision})` : '';
+          document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${displayNum}${revSuffix}`;
           // ERP upgrade banners — surface RD compliance + aging + VAT defer at top
           let banners = '';
           if (d.ocrTenantMismatchFlag) {
@@ -5867,6 +5916,9 @@
             actions += ` <button class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
             if (d.documentType === 'Quotation') {
               actions += ` <button class="btn btn-secondary" onclick="Page.quotationAcceptLink('${d.id}')" title="สร้างลิงก์สาธารณะให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ (อายุ 30 วัน) — คัดลอกลิงก์อัตโนมัติ">🔗 ลิงก์ยอมรับ</button>`;
+              // ต่อรองราคา/แก้เงื่อนไข — แก้ได้แม้อนุมัติแล้ว เลขที่คงเดิม Rev เพิ่ม
+              // (block ฝั่ง server ถ้าแปลงเป็นใบแจ้งหนี้ไปแล้ว)
+              actions += ` <button class="btn btn-warning" onclick="Page.reviseQuotation('${d.id}')" title="แก้ไขใบเสนอราคาที่ส่งแล้ว — เลขที่เดิม Rev เพิ่มทีละ 1 สภาพก่อนแก้ถูกเก็บเป็นประวัติเปิดดูย้อนหลังได้">✏️ แก้ไข (Rev ใหม่)</button>`;
             }
             if (d.documentType === 'DeliveryNote') {
               actions += ` <button class="btn btn-secondary" onclick="Page.deliverySignLink('${d.id}')" title="สร้างลิงก์ให้ลูกค้าเซ็นรับสินค้าออนไลน์ (POD — อายุ 14 วัน) ลายเซ็นประทับลงช่อง ผู้รับของ บน PDF อัตโนมัติ">✍️ ลิงก์เซ็นรับ</button>`;
@@ -5931,6 +5983,29 @@
             title="ถามผู้ช่วย AI เรื่องการลงบัญชี/ภาษีของเอกสารใบนี้ — ผู้ช่วยเห็นรายละเอียดใบนี้ประกอบการตอบ">💬 ถามผู้ช่วย</button>`;
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
+
+          // ประวัติ revision ของใบเสนอราคา (async ไม่ block การเปิด modal) —
+          // โชว์เฉพาะเมื่อเคยแก้จริง (Rev > 0) ให้เห็นว่าราคาต่อรองมากี่รอบ
+          if (d.documentType === 'Quotation' && (d.quotationRevision || 0) > 0) {
+            (async () => {
+              try {
+                const rres = await API.get(`/api/companies/${Layout.getCompanyId()}/document/${d.id}/revisions`);
+                const revs = rres?.data || [];
+                if (!revs.length) return;
+                const host = document.createElement('div');
+                host.style.cssText = 'margin-top:16px;padding:12px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px';
+                host.innerHTML = `<div style="font-weight:700;font-size:13px;margin-bottom:8px">🕓 ประวัติการแก้ไข (ปัจจุบัน Rev.${d.quotationRevision})</div>`
+                  + revs.map(r => `
+                    <div style="display:flex;gap:10px;align-items:center;padding:5px 0;border-bottom:1px solid #fef3c7;font-size:12.5px">
+                      <span style="font-weight:700;flex:none">Rev.${r.revisionNumber}</span>
+                      <span style="flex:1">${Layout.money(r.totalAmount)} บาท${r.reason ? ' · ' + Layout.esc(r.reason) : ''}${r.wasAccepted ? ' · <b style="color:#15803d">ลูกค้าเคยยอมรับฉบับนี้</b>' : ''}</span>
+                      <span style="color:#94a3b8;flex:none">${new Date(r.revisedAt).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                      <button class="btn btn-sm btn-outline" style="flex:none" onclick="Page.showRevisionSnapshot('${d.id}', ${r.revisionNumber})">ดู</button>
+                    </div>`).join('');
+                document.getElementById('detailContent').appendChild(host);
+              } catch (e) { /* ประวัติโหลดไม่ได้ — ไม่กระทบ detail หลัก */ }
+            })();
+          }
 
           // OCR linkage probe (async, non-blocking). When this document was
           // created from an OCR scan, prepend a "📦 นำเข้าสต๊อก" button to

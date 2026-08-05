@@ -423,6 +423,9 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteFormSubmission> SiteFormSubmissions => Set<SiteFormSubmission>();
     public DbSet<SiteCustomerMerge> SiteCustomerMerges => Set<SiteCustomerMerge>();
 
+    // ===== Quotation revision history =====
+    public DbSet<DocumentRevision> DocumentRevisions => Set<DocumentRevision>();
+
     // ===== Chatbot (public FAQ + tenant assistant) =====
     public DbSet<ChatConversation> ChatConversations => Set<ChatConversation>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();

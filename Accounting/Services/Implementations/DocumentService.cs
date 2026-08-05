@@ -1394,15 +1394,78 @@ public class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        if (doc.Status != DocumentStatus.Draft)
-            throw new InvalidOperationException("แก้ไขได้เฉพาะเอกสาร Draft เท่านั้น");
+        // ── Quotation revision: ใบเสนอราคาที่อนุมัติ/ส่งแล้ว "แก้ได้" โดยออก Rev ใหม่ ──
+        // Quotation เป็นเอกสาร operational — ไม่มี JE/สต๊อก/VAT (AutoPostToJournal
+        // ข้าม) จึงแก้หลังอนุมัติได้โดยไม่กระทบบัญชี ต่างจากเอกสารภาษีที่ §86/4
+        // ห้ามแก้ย้อนหลัง. ธรรมเนียมการค้า: เลขที่คงเดิม + Rev เพิ่มทีละ 1
+        // (QT-xxx Rev.2 = ใบเดิมที่ต่อรองแล้ว) + snapshot สภาพก่อนแก้ไว้ดูย้อนหลัง
+        var isQuotationRevision = doc.DocumentType == DocumentType.Quotation
+            && doc.Status is DocumentStatus.Approved or DocumentStatus.Sent;
+
+        if (doc.Status != DocumentStatus.Draft && !isQuotationRevision)
+            throw new InvalidOperationException(
+                doc.DocumentType == DocumentType.Quotation
+                    ? "ใบเสนอราคาสถานะนี้แก้ไขไม่ได้ (แก้ได้เฉพาะ Draft/Approved/Sent)"
+                    : "แก้ไขได้เฉพาะเอกสาร Draft เท่านั้น");
+
+        if (isQuotationRevision)
+        {
+            // (1) แปลงเป็นใบแจ้งหนี้/เอกสารถัดไปแล้ว = ดีลจบแล้ว — แก้ใบเสนอราคา
+            //     ย้อนหลังจะทำให้ต้นทางไม่ตรงกับเอกสารขายจริง (ดีลใหม่ = ใบใหม่)
+            var converted = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == documentId
+                    && !d.IsDeleted && d.Status != DocumentStatus.Voided)
+                .Select(d => d.DocumentNumber).FirstOrDefaultAsync();
+            if (converted != null)
+                throw new InvalidOperationException(
+                    $"ใบเสนอราคานี้ถูกแปลงเป็น {converted} แล้ว — แก้ไขย้อนหลังไม่ได้ "
+                    + "(เงื่อนไขใหม่ให้สร้างใบเสนอราคาใบใหม่)");
+
+            // (2) ลูกค้ากดยอมรับออนไลน์แล้ว = มีหลักฐานผูกพันกับ "ข้อเสนอเดิม" —
+            //     การแก้ทำให้การยอมรับใช้ไม่ได้ ต้องยืนยันรับทราบชัดเจน. หลักฐาน
+            //     เดิมถูกเก็บลง snapshot ด้านล่างก่อน reset เสมอ (ไม่มีวันหาย)
+            if (doc.QuotationAcceptedAt.HasValue
+                && request.AcknowledgeRevisionResetsAcceptance != true)
+                throw new InvalidOperationException(
+                    $"ลูกค้า ({doc.QuotationAcceptedBy}) กดยอมรับใบเสนอราคานี้แล้วเมื่อ "
+                    + $"{doc.QuotationAcceptedAt:dd/MM/yyyy HH:mm} — การแก้ไขจะทำให้การยอมรับเดิม"
+                    + "ใช้ไม่ได้ และลูกค้าต้องกดยอมรับ Rev ใหม่อีกครั้ง. "
+                    + "ยืนยันการแก้ไขโดยส่ง acknowledgeRevisionResetsAcceptance = true "
+                    + "(หลักฐานการยอมรับเดิมถูกเก็บไว้ในประวัติ revision)");
+
+            // (3) snapshot สภาพปัจจุบัน "ก่อนแก้" — commit พร้อมการแก้ใน
+            //     SaveChanges เดียว (apply ล้มเหลว = ไม่มีอะไรถูกบันทึกเลย)
+            _db.DocumentRevisions.Add(new DocumentRevision
+            {
+                CompanyId = companyId,
+                DocumentId = doc.Id,
+                RevisionNumber = doc.QuotationRevision,
+                TotalAmount = doc.TotalAmount,
+                Reason = string.IsNullOrWhiteSpace(request.RevisionReason)
+                    ? null : request.RevisionReason.Trim(),
+                SnapshotJson = BuildQuotationSnapshot(doc),
+            });
+            doc.QuotationRevision++;
+
+            // (4) reset การยอมรับ + ลิงก์ยอมรับเดิม — ข้อเสนอเปลี่ยนแล้ว ลิงก์/
+            //     การยอมรับของ Rev เก่าต้องใช้ต่อไม่ได้ (ผู้ใช้ขอลิงก์ใหม่ให้
+            //     ลูกค้ากดยอมรับ Rev ปัจจุบัน)
+            doc.QuotationAcceptedAt = null;
+            doc.QuotationAcceptedBy = null;
+            doc.QuotationAcceptToken = null;
+            doc.QuotationAcceptTokenExpiresAt = null;
+        }
 
         // §86/4: เอกสารที่ "ออกเลขจริงไปแล้ว" ห้ามแก้ย้อนหลัง — ต้องออกใบยกเลิก +
         // ใบใหม่. Draft ปกติถือเลข placeholder "DRAFT-{guid}" แต่ใบที่ถูก restore
         // จาก Voided กลับมาเป็น Draft ทั้งที่ยัง "ถือเลขจริงเดิม" (re-approve คงเลข)
         // → ถ้าไม่กันตรงนี้ ผู้ใช้แก้ยอด/วันที่/คู่ค้า แล้วอนุมัติใหม่ด้วยเลขเดิมได้
         // = แก้ใบกำกับภาษีที่เคยออกไปแล้ว. อนุญาตเฉพาะ field ที่ไม่กระทบเงิน/ภาษี
-        var isRestoredWithRealNumber = !doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal);
+        // — ใบเสนอราคาไม่ใช่เอกสารภาษี §86/4 → เส้นทาง revision ข้าม block นี้
+        // (เลขจริงคงเดิมโดยเจตนา นั่นคือหัวใจของ Rev)
+        var isRestoredWithRealNumber = !doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal)
+            && !isQuotationRevision
+            && doc.DocumentType != DocumentType.Quotation;
         if (isRestoredWithRealNumber)
         {
             var blocked = new List<string>();
@@ -1921,6 +1984,68 @@ public class DocumentService : IDocumentService
     /// จาก JE จริง) — ใช้แทนการเดา DepositDeferredAccountCode ?? "21712" ที่ Dr ผิด
     /// ผังเมื่อมัดจำลง 21510/21610 (native หรือ integration) → ผังเดิมค้าง Cr ถาวร +
     /// 21712 ติดลบ. null = ใบไม่มีขา 215/217 (ให้ caller fallback field/217).</summary>
+    /// <summary>snapshot สภาพใบเสนอราคาทั้งใบเป็น JSON โครงคงที่ — เก็บลง
+    /// DocumentRevisions ก่อน apply การแก้ทุกครั้ง. รวมหลักฐานการยอมรับออนไลน์
+    /// (ถ้ามี) เพราะกำลังจะถูก reset — หลักฐานทางการค้าห้ามหาย.</summary>
+    internal static string BuildQuotationSnapshot(Document doc)
+        => System.Text.Json.JsonSerializer.Serialize(new
+        {
+            documentNumber = doc.DocumentNumber,
+            revisionNumber = doc.QuotationRevision,
+            documentDate = doc.DocumentDate,
+            dueDate = doc.DueDate,
+            contactId = doc.ContactId,
+            contactName = doc.Contact?.Name,
+            reference = doc.Reference,
+            notes = doc.Notes,
+            customTermsAndConditions = doc.CustomTermsAndConditions,
+            customFooterNotes = doc.CustomFooterNotes,
+            pricesIncludeVat = doc.PricesIncludeVat,
+            subTotal = doc.SubTotal,
+            discountAmount = doc.DiscountAmount,
+            billDiscountPercent = doc.BillDiscountPercent,
+            billDiscountAmount = doc.BillDiscountAmount,
+            vatAmount = doc.VatAmount,
+            withholdingTaxAmount = doc.WithholdingTaxAmount,
+            totalAmount = doc.TotalAmount,
+            currency = doc.Currency,
+            // หลักฐานการยอมรับของ revision นี้ (กำลังถูก reset — เก็บไว้ที่นี่)
+            acceptedAt = doc.QuotationAcceptedAt,
+            acceptedBy = doc.QuotationAcceptedBy,
+            lines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).Select(l => new
+            {
+                l.LineOrder, l.ProductCode, l.Description, l.Quantity, l.Unit,
+                l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount,
+                l.VatRate, l.VatAmount,
+                whtRate = l.WithholdingTaxRate,
+            }),
+        });
+
+    /// <summary>ประวัติ revision ของใบเสนอราคา (ใหม่→เก่า). RevisedBy/At ของแถว
+    /// snapshot = ใครแก้และเมื่อไร (คนที่สร้าง Rev ถัดไป).</summary>
+    public async Task<List<DocumentRevisionListItem>> GetQuotationRevisionsAsync(Guid companyId, Guid documentId)
+    {
+        var rows = await _db.DocumentRevisions.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.DocumentId == documentId && !r.IsDeleted)
+            .OrderByDescending(r => r.RevisionNumber)
+            .Select(r => new { r.RevisionNumber, r.TotalAmount, r.Reason, r.CreatedBy, r.CreatedAt, r.SnapshotJson })
+            .ToListAsync();
+        return rows.Select(r => new DocumentRevisionListItem(
+            r.RevisionNumber, r.TotalAmount, r.Reason, r.CreatedBy, r.CreatedAt,
+            // WasAccepted อ่านจาก snapshot — ไม่ต้อง parse ทั้งก้อน แค่เช็ค key
+            WasAccepted: r.SnapshotJson.Contains("\"acceptedAt\":\"", StringComparison.Ordinal)
+        )).ToList();
+    }
+
+    /// <summary>snapshot เต็มของ revision หนึ่ง (JSON) — ให้ UI เปิดดูว่า Rev นั้น
+    /// เสนออะไรไป. null = ไม่พบ.</summary>
+    public async Task<string?> GetQuotationRevisionSnapshotAsync(Guid companyId, Guid documentId, int revisionNumber)
+        => await _db.DocumentRevisions.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.DocumentId == documentId
+                && r.RevisionNumber == revisionNumber && !r.IsDeleted)
+            .Select(r => r.SnapshotJson)
+            .FirstOrDefaultAsync();
+
     /// <summary>รับรู้ภาษีขายรอเรียกเก็บของใบมัดจำ (21913 → 21911) โดยไม่แตะรายได้
     /// — ดู doc ที่ IDocumentService. GL-critical: JE สมดุลเสมอ (Dr 21913 / Cr 21911)
     /// idempotent ผ่าน DepositOutputVatRecognizedAt (เรียกซ้ำ = ปฏิเสธ).</summary>
@@ -11712,7 +11837,10 @@ public class DocumentService : IDocumentService
         CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice,
         DepositAppliedAmount: d.DepositAppliedAmount,
         IsSettlementReceipt: d.IsSettlementReceipt,
-        UndueInputVatBlockers: undueBlockers);
+        UndueInputVatBlockers: undueBlockers,
+        QuotationRevision: d.QuotationRevision,
+        QuotationAcceptedAt: d.QuotationAcceptedAt,
+        QuotationAcceptedBy: d.QuotationAcceptedBy);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

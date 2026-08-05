@@ -439,6 +439,25 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "รับรู้รายได้จากมัดจำสำเร็จ"));
     }
 
+    /// <summary>ประวัติ revision ของใบเสนอราคา — ทุกครั้งที่แก้ใบที่อนุมัติ/ส่ง
+    /// แล้ว ระบบ snapshot สภาพก่อนแก้ + เพิ่ม Rev อัตโนมัติ.</summary>
+    [HttpGet("{documentId:guid}/revisions")]
+    public async Task<ActionResult<ApiResponse<List<DocumentRevisionListItem>>>> GetRevisions(
+        Guid companyId, Guid documentId)
+        => Ok(new ApiResponse<List<DocumentRevisionListItem>>(true,
+            await _documentService.GetQuotationRevisionsAsync(companyId, documentId)));
+
+    /// <summary>snapshot เต็มของ revision หนึ่ง (JSON) — ดูว่า Rev นั้นเสนออะไรไป.</summary>
+    [HttpGet("{documentId:guid}/revisions/{revisionNumber:int}")]
+    public async Task<ActionResult> GetRevisionSnapshot(
+        Guid companyId, Guid documentId, int revisionNumber)
+    {
+        var json = await _documentService.GetQuotationRevisionSnapshotAsync(companyId, documentId, revisionNumber);
+        if (json == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบ revision นี้"));
+        return Content($"{{\"success\":true,\"data\":{json}}}", "application/json");
+    }
+
     public record RecognizeDepositVatRequest(DateTime? RecognizeDate);
 
     /// <summary>รับรู้ "ภาษีขายรอเรียกเก็บ" ของใบมัดจำ (21913 → 21911) โดยไม่แตะ

@@ -5086,6 +5086,26 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_ProductLots_Product" ON "ProductLots" ("CompanyId", "ProductId") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_ProductLots_Expiry" ON "ProductLots" ("CompanyId", "ExpirationDate") WHERE "ExpirationDate" IS NOT NULL AND "QuantityOnHand" > 0;""",
 
+            // ===== Quotation revision (Rev.) — เลขแก้ไข + snapshot ประวัติ =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationRevision" integer NOT NULL DEFAULT 0;""",
+            """
+            CREATE TABLE IF NOT EXISTS "DocumentRevisions" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "DocumentId" uuid NOT NULL,
+                "RevisionNumber" integer NOT NULL DEFAULT 0,
+                "SnapshotJson" text NOT NULL DEFAULT '',
+                "TotalAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "Reason" varchar(500) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_DocumentRevisions_Doc" ON "DocumentRevisions" ("DocumentId", "RevisionNumber");""",
+
             // ===== Chatbot: public FAQ + tenant assistant (CHATBOT_PLAN.md) =====
             """
             CREATE TABLE IF NOT EXISTS "ChatConversations" (
