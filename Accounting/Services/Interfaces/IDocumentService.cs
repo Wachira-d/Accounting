@@ -33,6 +33,14 @@ public interface IDocumentService
     /// status: "Outstanding" | "Partial" | "Realized" (null = ทั้งหมด).</summary>
     Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null);
 
+    /// <summary>ประวัติ revision ของเอกสาร (ใหม่→เก่า) — สร้างอัตโนมัติทุกครั้ง
+    /// ที่แก้เอกสาร operational ที่อนุมัติ/ส่งแล้วผ่าน UpdateDocumentAsync.</summary>
+    Task<List<DocumentRevisionListItem>> GetDocumentRevisionsAsync(Guid companyId, Guid documentId);
+
+    /// <summary>snapshot เต็ม (JSON) ของ revision หนึ่ง — เปิดดูว่า Rev นั้นมี
+    /// รายการ/ยอดอะไร (header + lines + หลักฐานที่ผูกพันถ้ามี). null = ไม่พบ.</summary>
+    Task<string?> GetDocumentRevisionSnapshotAsync(Guid companyId, Guid documentId, int revisionNumber);
+
     /// <summary>รับรู้ "ภาษีขายรอเรียกเก็บ" (21913 → 21911) ของใบมัดจำ **โดยไม่
     /// แตะรายได้** — ใช้เมื่อจุดรับผิด VAT เกิดก่อนการส่งมอบ/รับรู้รายได้ ซึ่ง
     /// §78 เปิดช่องไว้ชัด (tax point = เหตุการณ์แรกใน ส่งมอบ/โอนกรรมสิทธิ์/

@@ -150,6 +150,38 @@
     </div>
   </div>
 
+  <!-- รับรู้ภาษีขายรอเรียกเก็บ (21913 → 21911) โดยไม่แตะรายได้ -->
+  <div class="modal-overlay" id="recVatModal">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <h3 class="modal-title">🧾 รับรู้ภาษีขาย (นำเข้า ภ.พ.30)</h3>
+        <button class="modal-close" onclick="Layout.closeModal('recVatModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="recVatInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.7;color:#92400e;margin-bottom:14px">
+          ใช้เมื่อ <b>จุดรับผิด VAT (§78) เกิดแล้ว</b> แต่ยังไม่ส่งมอบ/ยังไม่รับรู้รายได้ เช่น
+          <b>ลูกค้าขอใบกำกับภาษี</b> (ออกใบกำกับ = จุดรับผิดเกิดทันที) หรือทบทวนแล้วพบว่า
+          เงินก้อนนี้เป็นการรับชำระราคาจริงตั้งแต่ต้น<br>
+          ระบบจะลง <b>Dr 21913 / Cr 21911</b> เท่ายอด VAT — <b>ไม่แตะรายได้</b>
+          (รายได้ยังรอรับรู้ตามการส่งมอบ) แล้วใบนี้จะเข้า ภ.พ.30 งวดที่เลือก
+          และหัวเอกสารจะเปลี่ยนเป็น <b>"ใบกำกับภาษี/ใบเสร็จรับเงิน"</b> พิมพ์ส่งลูกค้าได้ทันที
+        </div>
+        <div class="form-group">
+          <label class="form-label">วันที่จุดรับผิดเกิด (กำหนดงวด ภ.พ.30)</label>
+          <input type="date" class="form-input" id="recVatDate">
+          <div style="font-size:11.5px;color:#64748b;margin-top:4px">
+            งวดต้องยังเปิดอยู่และยังไม่ยื่น ภ.พ.30 — ไม่งั้นระบบจะปฏิเสธพร้อมบอกเหตุผล
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('recVatModal')">ยกเลิก</button>
+        <button class="btn btn-primary" id="recVatGo" onclick="Page.submitRecognizeVat()">ยืนยันรับรู้ VAT</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Refund modal -->
   <div class="modal-overlay" id="refundModal">
     <div class="modal" style="max-width:460px">
@@ -303,9 +335,16 @@
       },
       vatChip(r) {
         if (!r.vatAmount || r.vatAmount <= 0) return '';
-        return r.outputVatDeferred && !r.outputVatRecognizedAt
-          ? '<span class="dc-badge vat13" title="VAT พักที่ 21913 — ยังไม่เข้า ภ.พ.30 จนกว่าจะรับรู้">VAT พักรอ</span>'
-          : '<span class="dc-badge vat11" title="VAT เข้า ภ.พ.30 แล้ว/ถึงกำหนด">VAT รายงานแล้ว</span>';
+        if (!this.vatPending(r))
+          return '<span class="dc-badge vat11" title="VAT เข้า ภ.พ.30 แล้ว/ถึงกำหนด">VAT รายงานแล้ว</span>';
+        // ค้างนาน = ความเสี่ยง "เก็บ VAT จากลูกค้าแล้วไม่นำส่ง" → ทำให้เห็นชัด
+        const stale = (r.ageDays || 0) > 90;
+        return `<span class="dc-badge vat13" title="VAT ${Layout.money(r.vatAmount)} พักที่ 21913 — ยังไม่เข้า ภ.พ.30 จนกว่าจะรับรู้${stale ? ' (ค้างเกิน 90 วัน — ตรวจว่าจุดรับผิดเกิดแล้วหรือยัง §78)' : ''}">VAT พักรอ${stale ? ' ⚠️' : ''}</span>`;
+      },
+
+      /// ใบนี้ยังมี VAT ค้างที่ 21913 รอรับรู้หรือไม่ (เงื่อนไขโชว์ปุ่ม "รับรู้ VAT")
+      vatPending(r) {
+        return !!(r.vatAmount > 0 && r.outputVatDeferred && !r.outputVatRecognizedAt);
       },
       statusChip(st) {
         const m = { Outstanding: ['out', 'คงค้าง'], Partial: ['part', 'รับรู้บางส่วน'], Realized: ['done', 'ครบแล้ว'] };
@@ -353,6 +392,9 @@
             ${isDocless ? '' : `<div class="dc-actions">
               ${r.status !== 'Realized' ? `<button class="btn btn-primary" onclick="Page.openRealize('${r.id}')">รับรู้รายได้</button>
               <button class="btn btn-secondary" onclick="Page.openRefund('${r.id}')">คืนเงิน</button>` : ''}
+              ${this.vatPending(r) ? `<button class="btn" style="background:#fef3c7;border:1px solid #fcd34d;color:#92400e"
+                onclick="Page.openRecognizeVat('${r.id}')"
+                title="ลูกค้าขอใบกำกับ หรือจุดรับผิด §78 เกิดแล้ว → นำ VAT เข้า ภ.พ.30 (ไม่แตะรายได้)">🧾 รับรู้ VAT</button>` : ''}
               <button class="btn btn-secondary" onclick="location.href='/pages/documents.html?view=${r.id}'">เปิดเอกสาร</button>
             </div>`}
           </div>`;
@@ -373,6 +415,8 @@
             <td style="white-space:nowrap">${isDocless ? '' : `
               ${r.status !== 'Realized' ? `<button class="btn btn-primary" style="padding:5px 10px;font-size:12px" onclick="Page.openRealize('${r.id}')">รับรู้</button>
               <button class="btn btn-secondary" style="padding:5px 10px;font-size:12px" onclick="Page.openRefund('${r.id}')">คืน</button>` : ''}
+              ${this.vatPending(r) ? `<button class="btn" style="padding:5px 10px;font-size:12px;background:#fef3c7;border:1px solid #fcd34d;color:#92400e"
+                onclick="Page.openRecognizeVat('${r.id}')" title="นำ VAT เข้า ภ.พ.30 (ไม่แตะรายได้)">🧾 VAT</button>` : ''}
               <button class="btn btn-secondary" style="padding:5px 10px;font-size:12px" onclick="location.href='/pages/documents.html?view=${r.id}'">เปิด</button>`}</td>
           </tr>`;
         }).join('');
@@ -407,6 +451,38 @@
           this.load();
         } catch (e) { Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); }
       },
+      openRecognizeVat(id) {
+        const r = this.row(id); if (!r) return;
+        this._recVatId = id;
+        const stale = (r.ageDays || 0) > 90;
+        document.getElementById('recVatInfo').innerHTML =
+          `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>`
+          + `VAT ที่จะนำเข้า ภ.พ.30: <b style="font-size:15px">${Layout.money(r.vatAmount)}</b> บาท `
+          + `<span style="color:#64748b">(พักอยู่ที่ผัง 21913 มา ${r.ageDays} วัน)</span>`
+          + (stale ? '<br><span style="color:#b91c1c">⚠️ ค้างเกิน 90 วัน — ถ้าจุดรับผิดเกิดไปแล้ว การนำส่งช้ามีเบี้ยปรับ/เงินเพิ่ม</span>' : '');
+        document.getElementById('recVatDate').value = new Date().toISOString().slice(0, 10);
+        Layout.openModal('recVatModal');
+      },
+
+      async submitRecognizeVat() {
+        const api = Layout.api(); if (!api || !this._recVatId) return;
+        const btn = document.getElementById('recVatGo');
+        const dateRaw = document.getElementById('recVatDate').value;
+        btn.disabled = true; btn.textContent = 'กำลังลง JE…';
+        try {
+          const res = await api.recognizeDepositVat(this._recVatId,
+            { recognizeDate: dateRaw ? new Date(dateRaw).toISOString() : null });
+          Layout.closeModal('recVatModal');
+          Layout.toast(res?.message || 'รับรู้ภาษีขายเข้า ภ.พ.30 แล้ว ✓', 'success', 9000);
+          this.load();
+        } catch (e) {
+          // ข้อความจาก backend บอกเหตุผล + ทางแก้อยู่แล้ว (งวดยื่นแล้ว/ปิด/รับรู้ซ้ำ)
+          Layout.toast(e.message || 'รับรู้ VAT ไม่สำเร็จ', 'error', 10000);
+        } finally {
+          btn.disabled = false; btn.textContent = 'ยืนยันรับรู้ VAT';
+        }
+      },
+
       openRefund(id) {
         const r = this.row(id); if (!r) return;
         this._refundId = id;

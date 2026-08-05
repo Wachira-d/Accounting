@@ -991,6 +991,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
         && (doc.DepositOutputVatRecognizedAt == null || doc.DepositAppliedToDocumentId != null);
 
+    /// <summary>เลขเอกสารที่แสดงบนกระดาษ — เอกสารที่ถูกแก้แล้วต่อท้าย "(Rev.N)"
+    /// ให้คู่ค้ารู้ว่ากำลังดูฉบับแก้ไขครั้งไหน (เลขที่จริงคงเดิม). Rev.0 (ฉบับแรก)
+    /// และเอกสารที่แก้ไม่ได้ = เลขเดิมล้วน.</summary>
+    internal static string DisplayDocNumber(Document doc)
+        => doc.RevisionNumber > 0
+            ? $"{doc.DocumentNumber} (Rev.{doc.RevisionNumber})"
+            : doc.DocumentNumber;
+
     private static Dictionary<string, string> ParseTitleOverrides(CompanySettings? settings)
     {
         var json = settings?.DocumentTitleOverridesJson;
@@ -1279,7 +1287,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         // Document Info
         sb.AppendLine("<div class='doc-info'>");
-        if (template.ShowDocumentNumber) sb.AppendLine($"<div>{L.DocNumber}: {doc.DocumentNumber}</div>");
+        if (template.ShowDocumentNumber) sb.AppendLine($"<div>{L.DocNumber}: {DisplayDocNumber(doc)}</div>");
         if (template.ShowDocumentDate) sb.AppendLine($"<div>{L.DocDate}: {L.Date(doc.DocumentDate)}</div>");
         if (template.ShowDueDate && doc.DueDate.HasValue) sb.AppendLine($"<div>{L.DueDate}: {L.Date(doc.DueDate!.Value)}</div>");
         if (template.ShowReference && doc.DisplayReference != null) sb.AppendLine($"<div>{L.Reference}: {doc.DisplayReference}</div>");

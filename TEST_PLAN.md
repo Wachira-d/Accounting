@@ -110,6 +110,36 @@
 | DEP-I-08 | I | สร้างรายงาน ภ.พ.30 ขณะมีมัดจำ deferred ค้าง > 90 วัน | `report.Notes` เตือน + ระบุเลขใบ/ยอด VAT รวม |
 | DEP-I-09 | I | มัดจำ deferred ค้าง < 90 วัน | ไม่เตือน (ไม่ noisy) |
 | DEP-S-01 | S | flow เต็มวิธี B: มัดจำ 3 งวด → ส่งมอบ → ใบกำกับเต็ม → หัก 3 ใบ | 21913 = 0 · ภ.พ.30 รวมทั้งโครงการ = VAT ใบกำกับ ไม่ซ้ำไม่ขาด · e-Tax 1 ใบ |
+| DEP-U-01 | U | ปุ่ม "🧾 รับรู้ VAT" ในหน้าจัดการมัดจำ | โชว์เฉพาะใบ deferred ที่ยังไม่รับรู้ (ไม่โชว์กับ immediate / รับรู้แล้ว / ใบจาก GL ที่ไม่มี document) |
+| DEP-U-02 | U | ป้าย VAT พักรอ อายุ > 90 วัน | ขึ้น "VAT พักรอ ⚠️" + tooltip เตือน §78; ≤ 90 วัน = ป้ายปกติ |
+| DEP-I-10 | I | กดรับรู้ VAT แล้ว reload หน้า | ป้ายเปลี่ยนเป็น "VAT รายงานแล้ว" · ปุ่มรับรู้ VAT หายไป |
+| DEP-I-11 | I | backend ปฏิเสธ (งวดยื่นแล้ว/ปิด/รับรู้ซ้ำ) | toast แสดงข้อความจาก backend ครบ (มีเหตุผล + ทางแก้) ปุ่มกลับมากดได้ |
+
+### Document revision (Rev.) — QT / PO / PR / BN / DN
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| QTR-I-01 | I | แก้ QT ที่ Approved (เปลี่ยนราคา) | Rev 0→1 · เลขที่เดิม · snapshot Rev.0 ถูกเก็บ (ยอด/รายการเดิมครบ) |
+| QTR-I-02 | I | แก้ซ้ำอีกรอบ | Rev 1→2 · ประวัติมี 2 แถว เรียงใหม่→เก่า |
+| QTR-I-03 | I | แก้ QT ที่แปลงเป็น Invoice แล้ว | block พร้อมบอกเลขใบปลายทาง |
+| QTR-I-04 | I | แก้ QT ที่ลูกค้ากดยอมรับออนไลน์ โดยไม่ส่ง acknowledge | block — บอกชื่อ/เวลาที่ยอมรับ + วิธียืนยัน |
+| QTR-I-05 | I | แก้พร้อม acknowledge=true | สำเร็จ · acceptance+token ถูก reset · หลักฐานการยอมรับอยู่ใน snapshot (acceptedAt/acceptedBy) |
+| QTR-I-06 | I | ลิงก์ยอมรับเดิมหลัง revise | ใช้ไม่ได้ (token ถูกล้าง) — ขอลิงก์ใหม่ได้ ลูกค้ายอมรับ Rev ปัจจุบัน |
+| QTR-I-07 | I | แก้ QT Draft | ไม่บวก Rev ไม่สร้าง snapshot (ฉบับร่างยังไม่เคยส่งใคร) |
+| QTR-I-08 | I | แก้เอกสารภาษี (TaxInvoice/Invoice/Receipt/CN/DN/PurchaseInvoice/Expense/PV/GRN) ที่ Approved | ยัง block ตามเดิม — ไม่อยู่ใน `RevisableTypes` (มี JE/สต๊อก/รายงานภาษี) |
+| QTR-I-09 | I | แก้ PO ที่ Approved (ลดจำนวน) | Rev 0→1 · เลขที่เดิม · ยอด commitment งบประมาณของโปรเจกต์ลดตามทันที (คำนวณสดจาก PO ที่เปิดอยู่ ไม่มี ledger ค้าง) |
+| QTR-I-10 | I | แก้ PO ที่มี GRN/PurchaseInvoice อ้างถึงแล้ว | block พร้อมบอกเลขใบปลายทาง |
+| QTR-I-11 | I | แก้ PR ที่ Approved | Rev++ · snapshot เก็บ · ไม่มี JE ใด ๆ เกิด |
+| QTR-I-12 | I | แก้ BN ที่ Sent | Rev++ · Invoice ที่ถูกรวมยอดไม่ถูกแตะ · ไม่มีผลต่อ AR |
+| QTR-I-13 | I | แก้ DN ที่ลูกค้าเซ็นรับของ (POD) แล้ว โดยไม่ส่ง acknowledge | block — บอกชื่อ/เวลาที่เซ็น + วิธียืนยัน |
+| QTR-I-14 | I | แก้ DN พร้อม acknowledge=true | สำเร็จ · `DeliverySignedAt/By/Token/SignatureBase64` ถูกล้าง · ลายเซ็นเดิมอยู่ใน snapshot · สต๊อกไม่ขยับ |
+| QTR-I-15 | I | ลิงก์เซ็นรับเดิมหลัง revise DN | ใช้ไม่ได้ (token ถูกล้าง) — ขอลิงก์ใหม่ให้เซ็น Rev ปัจจุบัน |
+| QTR-U-01 | U | PDF ของ QT Rev.2 | เลขที่พิมพ์ "QT-xxx (Rev.2)" ทุก renderer; Rev.0 = เลขเดิมล้วน |
+| QTR-U-02 | U | PDF ของ PO/DN ที่ Rev > 0 | ต่อท้าย "(Rev.N)" เหมือนกัน — `DisplayDocNumber` ไม่ผูกกับชนิด |
+| QTR-U-03 | U | `CanRevise` / `CannotReviseReason` ใน DocumentResponse | Approved QT ไม่มีปลายทาง = true; QT ที่แปลงแล้ว = false + เหตุผลบอกเลขใบปลายทาง; Invoice = false + เหตุผล null (ไม่ใช่ชนิดที่ revise ได้ — UI ไม่โชว์ปุ่ม) |
+| QTR-U-04 | U | UI list + detail | ป้าย `Rev.N` ขึ้นในรายการทุกชนิดที่ Rev > 0; ปุ่ม "แก้ไข (Rev ใหม่)" ขึ้นตาม `canRevise` ไม่ใช่ตามชนิด |
+| QTR-M-01 | I | รัน migration บน DB ที่มีคอลัมน์ `QuotationRevision` เดิม | rename เป็น `RevisionNumber` ค่าเดิมคงอยู่; รันซ้ำไม่ error; DB ใหม่สร้างคอลัมน์ตรง ๆ |
+| QTR-S-01 | S | ต่อรอง 3 รอบ → ลูกค้ายอมรับ → แปลงเป็น Invoice | Invoice ใช้ราคาสุดท้าย · ประวัติดูได้ครบ 3 Rev · แก้ต่อไม่ได้แล้ว |
+| QTR-S-02 | S | PR → PO (แก้ PO 2 รอบตาม vendor) → GRN → PurchaseInvoice | GRN/PI ใช้ยอด Rev สุดท้าย · หลัง GRN แก้ PO ไม่ได้ · ประวัติ PO ครบ 2 Rev |
 | TAX-I-12 | ขายให้บุคคลธรรมดา (ชื่อ+ที่อยู่ครบ ไม่มีเลขภาษี) มี VAT | อนุมัติผ่าน + หัวเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" (ไม่ downgrade) |
 | TAX-I-13 | ขายให้นิติบุคคลที่ขาดเลขภาษี/สาขา | block พร้อมชี้ทางออก (เติมข้อมูล / ติ๊กไม่ประสงค์รับใบกำกับ) |
 

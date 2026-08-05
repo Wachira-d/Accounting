@@ -233,7 +233,14 @@ public record UpdateDocumentRequest(
     // X-Acting-User ไม่พอ). → ช่อง "ผู้จัดทำ/ผู้รับเงิน" (slot 0) priority เหนือ
     // CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1 = กรรมการ) คงเดิม. null = ไม่แตะ.
     string? PreparerName = null,
-    string? PreparerSignatureBase64 = null);
+    string? PreparerSignatureBase64 = null,
+    // ===== Quotation revision =====
+    // แก้ใบเสนอราคาที่ "ลูกค้ากดยอมรับออนไลน์แล้ว" = ข้อเสนอเปลี่ยน การยอมรับ
+    // เดิมใช้ไม่ได้ — ต้องส่ง true ยืนยันว่ารับทราบ (หลักฐานการยอมรับเดิมถูก
+    // เก็บลง snapshot ก่อน reset เสมอ ไม่หาย). ใบที่ยังไม่ถูกยอมรับ = ไม่ต้องส่ง
+    bool? AcknowledgeRevisionResetsAcceptance = null,
+    // เหตุผลการแก้ (บันทึกลงประวัติ revision — เช่น "ลูกค้าต่อราคา")
+    string? RevisionReason = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -628,7 +635,30 @@ public record DocumentResponse(
     int? InputVatPp30Month = null,
     int? InputVatPp30Year = null,
     // TaxReportStatus ของรายงานงวดนั้น: "Draft" | "Filed" | "Submitted"
-    string? InputVatPp30ReportStatus = null);
+    string? InputVatPp30ReportStatus = null,
+    // ===== Document revision (เอกสาร operational) =====
+    // ครั้งที่แก้ไข (0 = ฉบับแรก) — UI โชว์ "Rev.N" + เปิดประวัติได้
+    int RevisionNumber = 0,
+    // แก้ไขแบบออก Rev ใหม่ได้ไหม (server ตัดสินจากชนิด+สถานะ+เอกสารปลายทาง) —
+    // UI ใช้ตัดสินว่าจะโชว์ปุ่ม "แก้ไข (Rev ใหม่)" ไหม โดยไม่ต้องรู้กติกาเอง
+    bool CanRevise = false,
+    string? CannotReviseReason = null,
+    // หลักฐานการยอมรับออนไลน์ (echo ให้ UI เตือนก่อนแก้ + โชว์สถานะ)
+    DateTime? QuotationAcceptedAt = null,
+    string? QuotationAcceptedBy = null,
+    // หลักฐานเซ็นรับของ (POD) บนใบส่งของ — ผูกพันเท่าการยอมรับใบเสนอราคา
+    // UI ใช้เตือนก่อนแก้ว่า Rev ใหม่จะทำให้ลายเซ็นเดิมใช้ไม่ได้
+    DateTime? DeliverySignedAt = null,
+    string? DeliverySignedBy = null);
+
+/// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
+public record DocumentRevisionListItem(
+    int RevisionNumber,
+    decimal TotalAmount,
+    string? Reason,
+    string? RevisedBy,       // ผู้แก้ (= ผู้สร้าง revision ถัดไป)
+    DateTime RevisedAt,
+    bool WasAccepted);       // revision นั้นเคยถูกลูกค้ายอมรับหรือไม่
 
 public record ProjectCostBrief(
     Guid ProjectId,
