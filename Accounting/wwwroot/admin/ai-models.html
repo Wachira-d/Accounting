@@ -94,6 +94,11 @@
 
   </div>
 
+  <!-- admin-api.js ต้องมาก่อน admin-layout.js เสมอ — AdminLayout.init อ้าง
+       AdminAPI.token ถ้าไฟล์นี้ไม่ถูกโหลดจะ throw ReferenceError กลางคัน
+       ทำให้ render() ไม่ถูกเรียก = เข้ามาแล้ว "เมนูหาย" (หน้านี้ยิง fetch เอง
+       ไม่ผ่าน AdminAPI จึงยังโหลดข้อมูลได้ เลยดูเหมือนหน้าปกติที่ไม่มีเมนู) -->
+  <script src="/admin/admin-api.js?v=20260114"></script>
   <script src="/admin/admin-layout.js?v=20260114b"></script>
   <script>
     const Page = {

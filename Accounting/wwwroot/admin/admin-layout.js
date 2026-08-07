@@ -31,16 +31,37 @@ const AdminLayout = {
     { id: 'background-jobs', label: 'งานเบื้องหลัง (Jobs)', icon: '🛠️', href: '/admin/background-jobs.html' },
   ],
 
+  /// เรนเดอร์ sidebar+topbar ครอบ #pageContent. pageName = id ใน navItems
+  /// (ใช้ไฮไลต์เมนูที่กำลังเปิด) — ส่งมาผิด/ไม่ส่ง เมนูยังขึ้นครบ แค่ไม่ไฮไลต์
   init(pageName) {
-    this.currentPage = pageName;
+    if (this._rendered) return true;          // กันเรียกซ้ำจากหลายที่ในหน้าเดียว
+    this.currentPage = pageName || this.inferPageId();
     const token = localStorage.getItem('admin_token');
     const user = JSON.parse(localStorage.getItem('admin_user') || 'null');
     if (!token || !user || !user.isSystemAdmin) {
       window.location.href = '/admin/login.html';
-      return;
+      return false;
     }
-    AdminAPI.token = token;
+    // AdminAPI มาจาก admin-api.js ซึ่งต้องถูกโหลดก่อนไฟล์นี้. ถ้าหน้าไหนลืม
+    // ใส่ <script src="admin-api.js"> การอ้างตรง ๆ จะ throw ReferenceError
+    // ตรงนี้ แล้ว render() ข้างล่างไม่ถูกเรียก = "เมนูหาย" แบบเงียบ ๆ
+    // (เคยเกิดกับ ai-models.html) — เช็คก่อนแล้วเตือนดัง ๆ แทนการพังเงียบ
+    if (typeof AdminAPI === 'undefined') {
+      console.error('[AdminLayout] admin-api.js ยังไม่ถูกโหลด — ต้องใส่ก่อน admin-layout.js');
+    } else {
+      AdminAPI.token = token;
+    }
     this.render(user);
+    this._rendered = true;
+    return true;
+  },
+
+  /// เดา id เมนูจาก URL — ใช้เป็นค่าสำรองให้ auto-init ด้านล่าง
+  inferPageId() {
+    const file = (location.pathname.split('/').pop() || '').replace(/\.html$/, '');
+    if (!file || file === 'index') return 'dashboard';
+    const hit = this.navItems.find(n => n.href && n.href.endsWith(`/${file}.html`));
+    return hit ? hit.id : file;
   },
 
   render(user) {
@@ -156,3 +177,37 @@ const AdminLayout = {
     setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 3000);
   }
 };
+
+// ─────────────────────────────────────────────────────────────────
+//  Safety net — หน้าไหนลืมเรียก AdminLayout.init() เมนูจะขึ้นเองอยู่ดี
+//
+//  เคสจริง: ai-config.html ไม่เคยเรียก init() เลย ทั้งที่โหลดไฟล์นี้แล้ว
+//  ผลคือหน้าโหลดข้อมูลได้ปกติทุกอย่าง มีแค่ "เมนูหาย" ซึ่งไม่มี error ให้
+//  เห็นทั้งใน console และ Network — ผู้ใช้เจอก่อนเราเสมอ
+//
+//  แทนที่จะไล่แก้ทีละหน้าแล้วรอพลาดอีก ให้ไฟล์นี้ self-heal: หลัง DOM พร้อม
+//  ถ้ายังไม่มีใครเรียก init และหน้ามี #pageContent (= ตั้งใจใช้ layout นี้)
+//  ก็ init ให้เอง โดยเดา id เมนูจาก URL. หน้าใหม่ที่เขียนต่อจากนี้จึงมีเมนู
+//  ครบตั้งแต่แรกแม้ผู้เขียนจะลืม
+//
+//  **ต้องยิงให้เร็วที่สุด ห้ามหน่วง** — render() ทำ
+//  `main.innerHTML = pageContent.innerHTML` ซึ่ง re-parse HTML ใหม่ทั้งก้อน
+//  element เดิมถูกทิ้ง property ที่ตั้งด้วย JS (เช่น checkbox.checked ที่
+//  loadSettings เพิ่งเซ็ต) จะหายไปด้วยเพราะเป็น DOM property ไม่ใช่ attribute
+//  ถ้ายิงช้ากว่าที่หน้าโหลดข้อมูลเสร็จ ค่าที่โหลดมาจะถูกล้าง
+//
+//  DOMContentLoaded ปลอดภัยเพราะ: inline script ท้ายหน้าที่เรียก Page.init()
+//  เองจะรัน **ก่อน** event นี้อยู่แล้ว → หน้าที่เขียนถูกต้องชนะเสมอ ตัวนี้
+//  ทำงานเฉพาะหน้าที่ลืมจริง ๆ และ _rendered guard กันเรนเดอร์ซ้ำอีกชั้น
+function __adminLayoutAutoInit() {
+  if (AdminLayout._rendered) return;
+  if (!document.getElementById('pageContent')) return;   // หน้า login/standalone
+  console.warn('[AdminLayout] หน้านี้ไม่ได้เรียก AdminLayout.init() — เรนเดอร์เมนูให้อัตโนมัติ '
+    + `(เดา id = "${AdminLayout.inferPageId()}") กรุณาเพิ่มการเรียกให้ถูกต้องในหน้านั้น`);
+  AdminLayout.init();
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', __adminLayoutAutoInit);
+} else {
+  __adminLayoutAutoInit();
+}
