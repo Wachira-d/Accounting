@@ -89,6 +89,9 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | **`/api/v1/ocr`** | `Controllers/V1/OcrV1Controller.cs` | ✅ `scan` (คิดเงินหลังสำเร็จเท่านั้น) + `confirm` (ปิดลูปเรียนรู้ §7.3) |
 | **`/api/v1/bank`** | `Controllers/V1/BankV1Controller.cs` | ✅ `statements` (dedupe ด้วย ExternalId, คิดตามบรรทัดที่ประมวลผล) + `matches/confirm` |
 | **Portal `/connect`** | `wwwroot/connect/index.html` | ✅ ภาพรวม+ขั้นตอนเริ่มต้น · เลือกฟีเจอร์ (ยืนยันพร้อมราคา) · usage รายเดือน · ยอดรวมกลุ่ม — **ยิงเฉพาะ API สาธารณะ** |
+| **Workbench** | `wwwroot/connect/workbench.html` | ✅ โต๊ะทำงานจริง: โยนเอกสาร→OCR→ตรวจ→สร้างใบสำคัญจ่าย · วาง statement (รับ พ.ศ.)→จับคู่→ยืนยัน · ผูกรหัสผู้ติดต่อ |
+| **`/api/v1/contacts`** | `Controllers/V1/ContactsV1Controller.cs` | ✅ `sync` (upsert ด้วย ExternalId) · `unmapped` · `map` · `resolve` (เลขภาษีชนะชื่อ, ชื่อใช้ตัวเทียบข้ามภาษา) |
+| **`/api/v1/documents`** | `Controllers/V1/DocumentsV1Controller.cs` | ✅ สร้างเอกสาร (resolve ผู้ติดต่อ 4 ชั้น) + `approve` (ออกเลข gap-free) + คืน `contact.needsMapping` |
 
 **Migration + backfill** (`DatabaseMigrationHelper.cs` บล็อก "BillingAccount"): additive
 ล้วน — `CREATE TABLE IF NOT EXISTS` + `ADD COLUMN IF NOT EXISTS` (nullable/มี default
@@ -398,7 +401,8 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-07 (rev 8 — portal /connect หน้าแรกใช้งานได้; rev 7 — §9.4 บางส่วน: ApiKey ขยาย +_
+_Last verified against codebase: 2026-08-07 (rev 9 — contact sync + /api/v1/documents +_
+_workbench (เอกสาร→PV, statement→จับคู่, ผูกรหัสผู้ติดต่อ); rev 8 — portal /connect หน้าแรกใช้งานได้; rev 7 — §9.4 บางส่วน: ApiKey ขยาย +_
 _/api/v1 ocr/bank + ด่าน scope + ผูก UsageEvent ทุก call; rev 6 — §9.3 ลงโค้ด: Metering ครบชุด_
 _(ApiFeature/CompanyFeature/ApiPricingPlan/UsageEvent + service + admin/tenant API); rev 5 — §9.1 ลงโค้ดจริงแล้ว: BillingAccount/_
 _BillingAccountAdmin + Company FK 3 ตัว + migration backfill 1:1 → §3.1 ✅; rev 4 — §7.3 AI mandate ฝั่ง API: ปิดลูป_
