@@ -30,6 +30,10 @@ public class AccountingDbContext : DbContext
     public DbSet<AccountSubscription> AccountSubscriptions => Set<AccountSubscription>();
     public DbSet<BillingAccount> BillingAccounts => Set<BillingAccount>();
     public DbSet<BillingAccountAdmin> BillingAccountAdmins => Set<BillingAccountAdmin>();
+    public DbSet<ApiFeature> ApiFeatures => Set<ApiFeature>();
+    public DbSet<CompanyFeature> CompanyFeatures => Set<CompanyFeature>();
+    public DbSet<ApiPricingPlan> ApiPricingPlans => Set<ApiPricingPlan>();
+    public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
     public DbSet<TrialConfig> TrialConfigs => Set<TrialConfig>();
     public DbSet<SubscriptionHistory> SubscriptionHistories => Set<SubscriptionHistory>();
     public DbSet<PlanTemplate> PlanTemplates => Set<PlanTemplate>();
@@ -544,6 +548,52 @@ public class AccountingDbContext : DbContext
             e.Property(a => a.PostpaidCreditLimit).HasPrecision(18, 2);
             e.HasIndex(a => a.TaxId);
             e.HasQueryFilter(a => !a.IsDeleted);
+        });
+
+        // ===== Metering: ฟีเจอร์ / ราคา / การใช้งาน (ACCOUNT_STRUCTURE.md §6) =====
+        modelBuilder.Entity<ApiFeature>(e =>
+        {
+            e.Property(x => x.FeatureCode).HasMaxLength(60);
+            e.Property(x => x.Name).HasMaxLength(200);
+            e.Property(x => x.NameEn).HasMaxLength(200);
+            e.Property(x => x.UnitLabel).HasMaxLength(50);
+            e.Property(x => x.RequiredScopes).HasMaxLength(300);
+            e.HasIndex(x => x.FeatureCode).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<CompanyFeature>(e =>
+        {
+            e.Property(x => x.FeatureCode).HasMaxLength(60);
+            e.Property(x => x.EnabledBy).HasMaxLength(200);
+            e.Property(x => x.DisabledBy).HasMaxLength(200);
+            e.Property(x => x.AcceptedUnitPrice).HasPrecision(18, 4);
+            e.HasIndex(x => new { x.CompanyId, x.FeatureCode }).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<ApiPricingPlan>(e =>
+        {
+            e.Property(x => x.FeatureCode).HasMaxLength(60);
+            e.Property(x => x.AdminNote).HasMaxLength(500);
+            // 4 ตำแหน่ง — ราคาต่อหน่วยของงาน AI อยู่ระดับสตางค์ย่อย
+            e.Property(x => x.UnitPrice).HasPrecision(18, 4);
+            e.HasIndex(x => new { x.FeatureCode, x.EffectiveFrom });
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<UsageEvent>(e =>
+        {
+            e.Property(x => x.FeatureCode).HasMaxLength(60);
+            e.Property(x => x.IdempotencyKey).HasMaxLength(200);
+            e.Property(x => x.RefEntityType).HasMaxLength(100);
+            e.Property(x => x.BilledPeriod).HasMaxLength(7);
+            e.Property(x => x.UnitPriceSnapshot).HasPrecision(18, 4);
+            e.Property(x => x.ChargedAmount).HasPrecision(18, 2);
+            // รายงาน/บิลอ่านตามช่วงเวลาเสมอ — index นำด้วยวันที่
+            e.HasIndex(x => new { x.CompanyId, x.OccurredAt });
+            e.HasIndex(x => new { x.BillingAccountId, x.OccurredAt });
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         modelBuilder.Entity<BillingAccountAdmin>(e =>

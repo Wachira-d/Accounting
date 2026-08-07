@@ -76,6 +76,14 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | **`Company.CompanyKind`** | `Models/Enums/AllEnums.cs` | ✅ `Full`(1, default = พฤติกรรมเดิม) \| `Connected`(2) |
 | **`AccountSubscription.BillingAccountId`** | `Models/Entities/AccountSubscription.cs` | ✅ nullable — backfill 1:1 แล้ว; `OwnerUserId` เดิมยังอยู่ (เส้นทาง resolve เดิมไม่ถูกแตะ) |
 | enum `BillingMode`/`PaymentModel`/`BillingAccountStatus` | `Models/Enums/AllEnums.cs` | ✅ |
+| **`ApiFeature`** | `Models/Entities/Metering.cs` | ✅ แคตตาล็อกฟีเจอร์ + `UnitLabel`/`RequiredScopes`/`IsPublished`; seed 5 ฟีเจอร์ตั้งต้น |
+| **`CompanyFeature`** | `Models/Entities/Metering.cs` | ✅ ลูกค้า opt-in รายบริษัท + audit `EnabledBy/At` + `AcceptedUnitPrice` (ราคาที่เห็นตอนกดเปิด) |
+| **`ApiPricingPlan`** | `Models/Entities/Metering.cs` | ✅ `PricingMethod` 4 แบบ + free quota + `TierJson` + `EffectiveFrom/To` + ราคาเฉพาะกลุ่ม (`BillingAccountId`) |
+| **`UsageEvent`** | `Models/Entities/Metering.cs` | ✅ append-only + snapshot ราคา + `BranchId`/`ApiClientId` + idempotency (unique index) + `BilledPeriod` |
+| **`IUsageMeteringService`** | `Services/Implementations/UsageMeteringService.cs` | ✅ record/คิดราคา/หักโควตาฟรี/ตัดเครดิต · toggle ฟีเจอร์ · สรุปราย บริษัท+กลุ่ม |
+| **API ฝั่ง admin** | `Controllers/MeteringAdminController.cs` | ✅ `/api/admin/metering/features`, `/plans`, `/plans/{code}` (ประวัติราคา), `/usage` |
+| **API ฝั่งลูกค้า** | `Controllers/MeteringController.cs` | ✅ `/api/companies/{id}/metering/features` (เห็นราคาก่อนเปิด), toggle, `/usage`, `/usage/account` (ต้องเป็น AccountAdmin) |
+| enum `PricingMethod`/`ErpConnectorType` | `Models/Enums/AllEnums.cs` | ✅ |
 
 **Migration + backfill** (`DatabaseMigrationHelper.cs` บล็อก "BillingAccount"): additive
 ล้วน — `CREATE TABLE IF NOT EXISTS` + `ADD COLUMN IF NOT EXISTS` (nullable/มี default
@@ -85,9 +93,15 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 + ผูกบริษัททุกใบใต้แพลนนั้นเข้ากลุ่ม — **ลูกค้าเก่าไม่ต้องทำอะไรและไม่รู้สึกอะไร**
 รันซ้ำได้ (ทุก statement มี `IS NULL`/`NOT EXISTS` guard)
 
-> **สถานะพฤติกรรม**: ณ ตอนนี้เป็น *โครงข้อมูลเปล่า* — ยังไม่มี service/endpoint ใด
-> อ่านมันเลย ระบบเดิม resolve โควตาผ่าน `Subscription.AccountSubscriptionId` ต่อไป
-> เหมือนเดิม 100% (zero behavior change โดยเจตนา — จะย้ายทีละจุดในขั้นถัดไป)
+**Metering** (`Metering.cs` + `UsageMeteringService` + 2 controller): แยกจากระบบ
+subscription เดิมโดยสิ้นเชิง — โควตารายเดือนของแพลน (docs/journals/OCR pages) ยังวิ่ง
+ผ่าน `SubscriptionService` เส้นเดิม ส่วน `UsageEvent` เป็นการนับ **รายหน่วยเพื่อคิดเงิน
+ตามการใช้จริง** ของผลิตภัณฑ์ API คนละเรื่องกัน ไม่ทับกัน
+
+> **สถานะพฤติกรรม**: ระบบเดิมยังไม่ถูกแตะเลย — resolve โควตายังผ่าน
+> `Subscription.AccountSubscriptionId` เหมือนเดิม 100% และยังไม่มี call site ไหน
+> เรียก `RecordAsync` (จะต่อพร้อม `/api/v1` ในขั้นถัดไป). ฟีเจอร์ทุกตัว default
+> **ปิด** → ต่อให้ต่อ endpoint แล้วก็ยังไม่มีใครถูกคิดเงินจนกว่าจะกดเปิดเอง
 
 ### 3.2 ออกแบบใหม่ (ยังไม่ทำ) 📋
 
@@ -112,50 +126,6 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
     public bool IsSandbox; public bool IsActive;
 }
 
-// การใช้งานที่คิดเงินได้ — append-only ห้าม UPDATE/DELETE
-public class UsageEvent : TenantEntity     // CompanyId = ผู้ใช้งานจริง
-{
-    public Guid? BillingAccountId;         // denormalize ตอนเกิด (กัน detach ย้อนบิลเก่า)
-    public Guid? BranchId;                 // attribution รายสาขา (breakdown ไม่ใช่บิล)
-    public Guid? ApiClientId;              // มาจาก key ไหน (null = ใช้ผ่าน UI ปกติ)
-    public string FeatureCode;             // "ocr.scan" | "bank.line" | "etax.doc" | ...
-    public int Quantity = 1;
-    public decimal UnitPriceSnapshot;      // ราคา ณ วันเกิด — เปลี่ยนราคาแล้วบิลเก่าห้ามขยับ
-    public string? IdempotencyKey;         // unique ต่อ client — retry ไม่โดนเก็บซ้ำ
-    public string? RefEntityType; public Guid? RefEntityId;  // ชี้กลับเอกสาร/scan ที่เกิด
-}
-
-// แคตตาล็อกฟีเจอร์ที่เปิดขายผ่าน API — admin คุมทั้งการมีอยู่และวิธีคิดเงิน
-public class ApiFeature : BaseEntity
-{
-    public string FeatureCode;             // "ocr.scan" | "bank.recon" | "etax.generate" | ...
-    public string Name; public string NameEn; public string? Description;
-    public bool IsPublished;               // ปิด = หายจากหน้าเลือกของลูกค้าทันที (ที่สมัครแล้วใช้ต่อได้)
-    public string RequiredScopes;          // scope ที่ key ต้องมีเมื่อเปิดฟีเจอร์นี้
-}
-
-// ฟีเจอร์ที่ "บริษัทนี้" เลือกเปิด — ลูกค้ากดเปิด/ปิดเองใน portal (self-service)
-public class CompanyFeature : TenantEntity
-{
-    public string FeatureCode;
-    public bool IsEnabled;                 // ปิด = /api/v1 ของฟีเจอร์นั้นตอบ 403 ทันที + หยุดคิดเงิน
-    public DateTime EnabledAt; public string EnabledBy;   // audit ว่าใครกดเปิด (มีผลเรื่องเงิน)
-}
-
-public class ApiPricingPlan : BaseEntity
-{
-    public string FeatureCode;
-    // วิธีคิดเงิน — admin เลือกต่อฟีเจอร์ ไม่ hard-code:
-    //   PerUnit     = ต่อหน่วยงาน (ต่อเอกสาร OCR / ต่อบรรทัด statement)
-    //   Tiered      = ต่อหน่วยแบบขั้นบันได (TierJson, นับรวมทั้ง account)
-    //   FlatMonthly = เหมา/เดือน ไม่จำกัดจำนวน
-    //   PerCall     = ต่อ request (ฟีเจอร์เบา ๆ เช่น validate เลขภาษี)
-    public PricingMethod Method;
-    public decimal UnitPrice;              // ความหมายตาม Method
-    public int FreeQuotaPerMonth;
-    public string? TierJson;               // [{fromQty, unitPrice}]
-    public DateTime EffectiveFrom; public DateTime? EffectiveTo;   // ราคามีอายุ — audit ได้
-}
 ```
 
 หลักที่ฝังในดีไซน์:
@@ -400,8 +370,9 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
    `Company.BillingAccountId/ParentCompanyId/CompanyKind` + migration + backfill 1:1
    (owner เดิมกลายเป็นผู้ดูแลหลัก) **ลูกค้าเก่าไม่รู้สึกอะไรเลย · zero behavior change**
 2. เปลี่ยนสมอ `AccountSubscription` → `BillingAccountId` + จุดเดียวใน `CheckUsageLimitAsync`
-3. `UsageEvent` + `ApiFeature`/`CompanyFeature`/`ApiPricingPlan` + rollup + หน้า usage
-   + หน้า admin "ฟีเจอร์ & ราคา API"
+3. ✅ **เสร็จแล้ว** — `UsageEvent` + `ApiFeature`/`CompanyFeature`/`ApiPricingPlan`
+   + `IUsageMeteringService` + API admin (`/api/admin/metering`) และลูกค้า
+   (`/api/companies/{id}/metering`). เหลือ: หน้าเว็บ admin + rollup รายวัน
 4. `ApiClient` (ยกระดับ ExternalIntegration: scopes/branch/HMAC/sandbox/ConnectorType)
    + `/api/v1` area + onboarding wizard (§7.1)
 5. Billing สิ้นเดือน → ใบแจ้งหนี้/ใบกำกับอัตโนมัติผ่าน pipeline เอกสารเดิม (2 โหมด)
@@ -420,7 +391,8 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-07 (rev 5 — §9.1 ลงโค้ดจริงแล้ว: BillingAccount/_
+_Last verified against codebase: 2026-08-07 (rev 6 — §9.3 ลงโค้ด: Metering ครบชุด_
+_(ApiFeature/CompanyFeature/ApiPricingPlan/UsageEvent + service + admin/tenant API); rev 5 — §9.1 ลงโค้ดจริงแล้ว: BillingAccount/_
 _BillingAccountAdmin + Company FK 3 ตัว + migration backfill 1:1 → §3.1 ✅; rev 4 — §7.3 AI mandate ฝั่ง API: ปิดลูป_
 _โดยดีไซน์ (feedbackId ทุก response, workflow ปกติ=feedback, endpoint แก้ย้อนหลัง,_
 _UsedAi rate ราย tenant); rev 3 — เพิ่ม §8.1 โดเมน (subdomain/custom_

@@ -364,6 +364,27 @@
 | ACC-I-02 | I | ลบบริษัทแม่ที่มีบริษัทลูกชี้อยู่ (`ParentCompanyId`) | ถูก block (`RESTRICT`) — กันผังเครือชี้ไปที่ว่าง |
 | ACC-I-03 | I | เพิ่ม user เดิมเป็นผู้ดูแล account เดียวซ้ำ | ถูก block ด้วย unique index `(BillingAccountId, UserId)` |
 
+### นับ/คิดเงินการใช้งาน — `UsageMeteringService` (ACCOUNT_STRUCTURE.md §9.3)
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| MTR-U-01 | U | เรียกฟีเจอร์ที่บริษัท**ยังไม่เปิด** | `Recorded=false` · ไม่เกิด UsageEvent · ไม่คิดเงิน |
+| MTR-U-02 | U | ส่ง `IdempotencyKey` ซ้ำ | `Duplicate=true` · คืน event เดิม · **ยอดรวมไม่เพิ่ม** |
+| MTR-U-03 | U | 2 request พร้อมกันด้วย key เดียวกัน (race) | unique index ปฏิเสธใบที่ 2 → service คืน `Duplicate=true` ไม่ throw |
+| MTR-U-04 | U | ยังไม่ตั้งราคาฟีเจอร์นั้น | บันทึก event ที่ราคา 0 (ไม่ปฏิเสธงาน) — admin ตั้งราคาย้อนหลังแล้วเห็นปริมาณจริง |
+| MTR-U-05 | U | โควตาฟรี 100/เดือน · ใช้ครั้งที่ 95 จำนวน 10 | คิดเงินเฉพาะ 5 หน่วยที่เกิน |
+| MTR-U-06 | U | โควตาฟรีนับ**รวมทั้งกลุ่ม** (2 บริษัทใต้ account เดียว) | บริษัท B กินโควตาที่ A ใช้ไปแล้ว — ไม่ใช่ต่างคนต่างได้เต็ม |
+| MTR-U-07 | U | `Tiered` — qty ข้ามชั้น | ใช้ราคาชั้นที่ครอบจำนวนนั้นคูณทั้งก้อน |
+| MTR-U-08 | U | `FlatMonthly` | ChargedAmount = 0 ต่อ event (ค่าเหมาเก็บที่รอบบิล) |
+| MTR-U-09 | U | account เป็น sandbox | `IsSandbox=true` · charged 0 · ยังบันทึก event เพื่อดูพฤติกรรม |
+| MTR-U-10 | U | Prepaid | `CreditBalance` ลดลงเท่า ChargedAmount ในธุรกรรมเดียวกัน |
+| MTR-U-11 | U | DB ล่ม/exception ระหว่างบันทึก | คืน `Recorded=false` **ไม่ throw** — งานหลักของลูกค้าต้องไม่พัง |
+| MTR-I-01 | I | ขึ้นราคา (`POST /plans`) | แผนเดิมถูกปิด (`EffectiveTo=now`) + สร้างแผนใหม่ · **UsageEvent เก่าไม่เปลี่ยน** (snapshot) |
+| MTR-I-02 | I | ราคาเฉพาะกลุ่ม (ดีลพิเศษ) + ราคามาตรฐาน | ราคาเฉพาะกลุ่มชนะเสมอ — ตรงกันทั้ง service และหน้าลูกค้า |
+| MTR-I-03 | I | ลูกค้ากดเปิดฟีเจอร์ | บันทึก `EnabledBy/EnabledAt` + `AcceptedUnitPrice` = ราคาที่เห็นตอนนั้น |
+| MTR-I-04 | I | admin `unpublish` ฟีเจอร์ที่มีคนใช้อยู่ | ผู้ใช้เดิมยังใช้ต่อ+ปิดเองได้ · ผู้ใช้ใหม่กดเปิดไม่ได้ |
+| MTR-I-05 | I | ดู `/usage/account` โดยไม่ใช่ AccountAdmin | 403 — เป็นพนักงานบริษัทหนึ่งในกลุ่มไม่ให้สิทธิ์เห็นยอดบริษัทอื่น |
+| MTR-I-06 | I | บริษัทถูกลบ แต่มี UsageEvent เดือนก่อน | รายงานยังแสดงแถวนั้น (hydrate แยก ไม่ใช้ INNER JOIN) — ประวัติบิลห้ามหาย |
+
 ### จับคู่ชื่อผู้โอน (ข้ามภาษา / ถูกตัด) — `CounterpartyNameMatcher`
 | รหัส | ชั้น | เคส | คาดหวัง |
 | --- | --- | --- | --- |

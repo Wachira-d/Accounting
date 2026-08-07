@@ -5239,6 +5239,113 @@ public static class DatabaseMigrationHelper
             END $$;
             """,
 
+            // ===== Metering: ฟีเจอร์ / ราคา / การใช้งาน (ACCOUNT_STRUCTURE.md §6) =====
+            """
+            CREATE TABLE IF NOT EXISTS "ApiFeatures" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "FeatureCode" varchar(60) NOT NULL,
+                "Name" varchar(200) NOT NULL DEFAULT '',
+                "NameEn" varchar(200) NULL,
+                "Description" text NULL,
+                "UnitLabel" varchar(50) NOT NULL DEFAULT 'รายการ',
+                "IsPublished" boolean NOT NULL DEFAULT true,
+                "RequiredScopes" varchar(300) NOT NULL DEFAULT '',
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_ApiFeatures_Code" ON "ApiFeatures" ("FeatureCode") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "CompanyFeatures" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "FeatureCode" varchar(60) NOT NULL,
+                "IsEnabled" boolean NOT NULL DEFAULT false,
+                "EnabledAt" timestamp NULL,
+                "EnabledBy" varchar(200) NULL,
+                "DisabledAt" timestamp NULL,
+                "DisabledBy" varchar(200) NULL,
+                "AcceptedUnitPrice" decimal(18,4) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CompanyFeatures_Company_Code" ON "CompanyFeatures" ("CompanyId", "FeatureCode") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "ApiPricingPlans" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "FeatureCode" varchar(60) NOT NULL,
+                "BillingAccountId" uuid NULL,
+                "Method" integer NOT NULL DEFAULT 1,
+                "UnitPrice" decimal(18,4) NOT NULL DEFAULT 0,
+                "FreeQuotaPerMonth" integer NOT NULL DEFAULT 0,
+                "TierJson" text NULL,
+                "EffectiveFrom" timestamp NOT NULL DEFAULT now(),
+                "EffectiveTo" timestamp NULL,
+                "AdminNote" varchar(500) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ApiPricingPlans_Feature_From" ON "ApiPricingPlans" ("FeatureCode", "EffectiveFrom") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "UsageEvents" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "BillingAccountId" uuid NULL,
+                "BranchId" uuid NULL,
+                "ApiClientId" uuid NULL,
+                "FeatureCode" varchar(60) NOT NULL,
+                "Quantity" integer NOT NULL DEFAULT 1,
+                "UnitPriceSnapshot" decimal(18,4) NOT NULL DEFAULT 0,
+                "ChargedAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "CoveredByFreeQuota" boolean NOT NULL DEFAULT false,
+                "IsSandbox" boolean NOT NULL DEFAULT false,
+                "IdempotencyKey" varchar(200) NULL,
+                "RefEntityType" varchar(100) NULL,
+                "RefEntityId" uuid NULL,
+                "BilledPeriod" varchar(7) NULL,
+                "BilledDocumentId" uuid NULL,
+                "OccurredAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_UsageEvents_Company_At" ON "UsageEvents" ("CompanyId", "OccurredAt") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_UsageEvents_Account_At" ON "UsageEvents" ("BillingAccountId", "OccurredAt") WHERE "IsDeleted" = false;""",
+            // กันเก็บเงินซ้ำที่ระดับฐานข้อมูล — เช็คในโค้ดอย่างเดียวไม่พอเมื่อ
+            // 2 request ของ client ชนกันพอดี (service จับ DbUpdateException แล้ว
+            // คืนผลว่าเป็น duplicate ตามเจตนาของ idempotency)
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_UsageEvents_Idem" ON "UsageEvents" ("CompanyId", "IdempotencyKey") WHERE "IdempotencyKey" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // Seed แคตตาล็อกฟีเจอร์ตั้งต้น — ไม่ตั้งราคาให้ (ApiPricingPlan ว่าง)
+            // เพราะราคาเป็นการตัดสินใจทางธุรกิจที่ admin ต้องกรอกเอง; ระบบจะนับ
+            // การใช้งานไว้ที่ราคา 0 จนกว่าจะตั้งราคา แล้วเห็นปริมาณจริงก่อนตั้งได้
+            """
+            INSERT INTO "ApiFeatures" ("Id","FeatureCode","Name","NameEn","UnitLabel","RequiredScopes","SortOrder","Description","CreatedBy")
+            SELECT * FROM (VALUES
+                (gen_random_uuid(),'ocr.scan','สแกนเอกสารด้วย AI (OCR)','AI Document OCR','เอกสาร','ocr:write',10,'อ่านใบกำกับ/ใบเสร็จ แล้วคืนข้อมูลครบตาม §86/4 พร้อมระดับความมั่นใจรายฟิลด์','seed'),
+                (gen_random_uuid(),'bank.recon','กระทบยอดธนาคารอัตโนมัติ','Bank Reconciliation','บรรทัด','bank:write',20,'จับคู่รายการใน statement กับเอกสาร/JE รวมถึงแบบหลายรายการรวมเป็นหนึ่ง','seed'),
+                (gen_random_uuid(),'document.create','สร้างเอกสารผ่าน API','Create Document via API','ฉบับ','documents:write',30,'สร้างใบกำกับ/ใบเสร็จ/ใบสำคัญจ่าย พร้อมเลขที่ gap-free และลง JE ให้','seed'),
+                (gen_random_uuid(),'etax.generate','ออก e-Tax Invoice','e-Tax Invoice','ฉบับ','etax:write',40,'สร้าง XML ETDA + ลงลายมือชื่อดิจิทัล และนำส่งกรมสรรพากร','seed'),
+                (gen_random_uuid(),'assistant.ask','ผู้ช่วย AI ตอบคำถามบัญชี','AI Accounting Assistant','คำถาม','assistant:read',50,'ถามข้อมูลในระบบและกฎบัญชี/ภาษีไทย พร้อมอ้างอิงเอกสารจริง','seed')
+            ) AS v("Id","FeatureCode","Name","NameEn","UnitLabel","RequiredScopes","SortOrder","Description","CreatedBy")
+            WHERE NOT EXISTS (SELECT 1 FROM "ApiFeatures" f WHERE f."FeatureCode" = v."FeatureCode");
+            """,
+
             // ===== Chatbot: public FAQ + tenant assistant (CHATBOT_PLAN.md) =====
             """
             CREATE TABLE IF NOT EXISTS "ChatConversations" (

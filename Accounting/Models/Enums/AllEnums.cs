@@ -74,6 +74,36 @@ public enum BillingAccountStatus
     Closed = 3
 }
 
+/// <summary>วิธีคิดเงินต่อฟีเจอร์ — admin เลือกได้อิสระ ไม่ hard-code ในโค้ด</summary>
+public enum PricingMethod
+{
+    /// <summary>ต่อหน่วยงานที่สำเร็จ (ต่อเอกสาร OCR / ต่อบรรทัด statement)
+    /// — แบบที่แนะนำ เพราะผูกกับคุณค่าที่ลูกค้าได้ ไม่ใช่ต้นทุนของเรา</summary>
+    PerUnit = 1,
+    /// <summary>ต่อหน่วยแบบขั้นบันได ยิ่งใช้เยอะยิ่งถูก (นับรวมทั้งกลุ่ม)</summary>
+    Tiered = 2,
+    /// <summary>เหมาต่อเดือน ใช้เท่าไรก็ได้</summary>
+    FlatMonthly = 3,
+    /// <summary>ต่อ request — ใช้กับฟีเจอร์เบาที่ 1 call = 1 งาน
+    /// (เช่น validate เลขผู้เสียภาษี)</summary>
+    PerCall = 4
+}
+
+/// <summary>ระบบบัญชี/ERP ปลายทางที่ลูกค้าเชื่อมเข้ามา</summary>
+public enum ErpConnectorType
+{
+    /// <summary>ยิง REST ตาม contract กลางของเราตรง ๆ — ไม่ต้องมีปลั๊กแปลง
+    /// (ค่าเริ่มต้น ครอบคลุมทุก ERP ที่เขียนโค้ดฝั่งตัวเองได้)</summary>
+    GenericRest = 0,
+    Dynamics365 = 1,
+    SapBusinessOne = 2,
+    Xero = 3,
+    Odoo = 4,
+    QuickBooks = 5,
+    Express = 6,          // Express Accounting (ไทย)
+    FormulaErp = 7        // Formula (ไทย)
+}
+
 /// <summary>ประเภทผู้ติดต่อ — ใช้กำหนดแบบ ภ.ง.ด. อัตโนมัติ</summary>
 public enum ContactType
 {
