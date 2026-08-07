@@ -104,6 +104,10 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
     public int RateLimitPerMinute = 60;
     public string? IpAllowlistCsv;
     public string? WebhookUrl; public string? WebhookSecret;  // HMAC-SHA256 sign
+    // ระบบบัญชีปลายทางที่ลูกค้าเลือกตอน onboard — กำหนดว่า connector ปลั๊กไหน
+    // แปลง payload (GenericRest = ยิง contract กลางของเราเองตรง ๆ ไม่ต้องมีปลั๊ก)
+    public ErpConnectorType ConnectorType; // GenericRest | Dynamics365 | SapB1 | Xero | Odoo | ...
+    public string? ConnectorConfigJson;    // ค่าเชื่อมต่อเฉพาะ ERP นั้น (endpoint/tenant id — ไม่เก็บ secret ตรง ๆ)
     public bool IsSandbox; public bool IsActive;
 }
 
@@ -120,11 +124,35 @@ public class UsageEvent : TenantEntity     // CompanyId = ผู้ใช้ง�
     public string? RefEntityType; public Guid? RefEntityId;  // ชี้กลับเอกสาร/scan ที่เกิด
 }
 
+// แคตตาล็อกฟีเจอร์ที่เปิดขายผ่าน API — admin คุมทั้งการมีอยู่และวิธีคิดเงิน
+public class ApiFeature : BaseEntity
+{
+    public string FeatureCode;             // "ocr.scan" | "bank.recon" | "etax.generate" | ...
+    public string Name; public string NameEn; public string? Description;
+    public bool IsPublished;               // ปิด = หายจากหน้าเลือกของลูกค้าทันที (ที่สมัครแล้วใช้ต่อได้)
+    public string RequiredScopes;          // scope ที่ key ต้องมีเมื่อเปิดฟีเจอร์นี้
+}
+
+// ฟีเจอร์ที่ "บริษัทนี้" เลือกเปิด — ลูกค้ากดเปิด/ปิดเองใน portal (self-service)
+public class CompanyFeature : TenantEntity
+{
+    public string FeatureCode;
+    public bool IsEnabled;                 // ปิด = /api/v1 ของฟีเจอร์นั้นตอบ 403 ทันที + หยุดคิดเงิน
+    public DateTime EnabledAt; public string EnabledBy;   // audit ว่าใครกดเปิด (มีผลเรื่องเงิน)
+}
+
 public class ApiPricingPlan : BaseEntity
 {
-    public string FeatureCode; public decimal UnitPrice;
+    public string FeatureCode;
+    // วิธีคิดเงิน — admin เลือกต่อฟีเจอร์ ไม่ hard-code:
+    //   PerUnit     = ต่อหน่วยงาน (ต่อเอกสาร OCR / ต่อบรรทัด statement)
+    //   Tiered      = ต่อหน่วยแบบขั้นบันได (TierJson, นับรวมทั้ง account)
+    //   FlatMonthly = เหมา/เดือน ไม่จำกัดจำนวน
+    //   PerCall     = ต่อ request (ฟีเจอร์เบา ๆ เช่น validate เลขภาษี)
+    public PricingMethod Method;
+    public decimal UnitPrice;              // ความหมายตาม Method
     public int FreeQuotaPerMonth;
-    public string? TierJson;               // [{fromQty, unitPrice}] ลดตามปริมาณ (นับรวมทั้ง account)
+    public string? TierJson;               // [{fromQty, unitPrice}]
     public DateTime EffectiveFrom; public DateTime? EffectiveTo;   // ราคามีอายุ — audit ได้
 }
 ```
@@ -157,6 +185,9 @@ public class ApiPricingPlan : BaseEntity
 | Webhook + secret | — | — | — | ✔ | ปิด |
 | Sandbox | ✔ ทั้ง account | — | — | ✔ ราย key | ปิด |
 | AI budget cap | ✔ (ต่อยอด AiBudgetGuard จาก global → ราย account) 📋 | ✔ optional | — | — | ตามแพลน |
+| เปิด/ปิดฟีเจอร์ (`CompanyFeature`) | — | ✔ **ลูกค้ากดเองใน portal** | — | — | ปิดทุกตัว (opt-in) |
+| วิธีคิดเงิน+ราคาต่อฟีเจอร์ (`ApiPricingPlan`) | — | — | — | — | **admin เท่านั้น** (หน้า `/admin`) |
+| ระบบบัญชีที่เชื่อม (`ConnectorType`) | — | — | — | ✔ ลูกค้าเลือกตอนสร้าง key | GenericRest |
 
 ---
 
@@ -235,6 +266,36 @@ public class ApiPricingPlan : BaseEntity
 - **กฎเหล็ก #1 ยังบังคับเต็ม** — ทุก endpoint ที่แตะ AI ผ่าน orchestrator + kill-switch;
   ลูกค้า API ได้ local-first อัตโนมัติ = ต้นทุนต่อ transaction ลดเรื่อย ๆ ราคาขายคงที่
 
+### 7.1 Self-service onboarding 📋 — ลูกค้าสร้างการเข้าถึงเองครบวงจร ไม่ต้องรอ admin
+
+```
+สมัคร (User เดิมของระบบ)
+ → สร้าง BillingAccount (ชื่อกลุ่ม, ข้อมูลออกใบกำกับ)
+ → เพิ่ม Company (Connected) + สาขาถ้ามี
+ → เลือกฟีเจอร์ (ติ๊กจาก ApiFeature ที่ IsPublished — เห็นราคา/วิธีคิดเงินก่อนเปิด)
+ → เลือกระบบบัญชีที่จะเชื่อม (ConnectorType + คู่มือเฉพาะ ERP นั้น)
+ → ได้ API key (sandbox ก่อนเสมอ) → ทดสอบ → เติมเครดิต → สลับ production
+```
+
+- ทุกขั้นทำเองใน portal `/connect` — admin เข้ามาเกี่ยวเฉพาะ (ก) กำหนดราคา/วิธี
+  คิดเงินใน `ApiPricingPlan` (ข) อนุมัติ Postpaid/วงเงิน (ค) ปิด `ApiFeature`
+  ทั้งระบบเมื่อจำเป็น
+- **ราคาที่โชว์ตอนลูกค้ากดเปิดฟีเจอร์ = แผนที่ active ณ วันนั้น** และการกดเปิดถูก
+  audit (`CompanyFeature.EnabledBy/At`) — กันข้อพิพาท "ไม่เคยเปิด/ไม่รู้ราคา"
+- ฟีเจอร์ที่ปิดอยู่ = endpoint ตอบ 403 + **ไม่เกิด UsageEvent** — เปิด/ปิดคือ
+  สวิตช์เงินจริง ไม่ใช่แค่ซ่อนเมนู
+
+### 7.2 ฟีเจอร์กลาง = ระบบเก่งขึ้นเรื่อย ๆ (สองชั้น — ห้ามสับสนกัน)
+
+- **ชั้น per-tenant**: feedback จากทุก call (OCR แก้ field, ยืนยัน bank match)
+  เทรน distillation model **ของบริษัทนั้น** — ข้อมูลลูกค้าไม่ข้าม tenant (PDPA;
+  `AiResponseCache`/`AiSuggestionFeedback` tenant-isolated อยู่แล้ว)
+- **ชั้นกลางที่แชร์ได้**: seed corpus, `SystemOcr*` mappings, rule resolver,
+  prompt/โค้ดที่แก้จาก edge case ที่ลูกค้าเจอ — ยิ่งมีลูกค้า Connected มาก
+  ชั้นนี้ยิ่งแข็งให้ทุกคนโดยไม่แตะข้อมูลใคร
+- ผลเชิงธุรกิจ: local ตอบแทน AI มากขึ้น → ต้นทุน/transaction ลด → ราคาขายคงที่
+  → margin โตเอง (เหตุผลที่คิดเงินตาม "งานสำเร็จ" ไม่ใช่ token)
+
 ## 8. Portal `/connect` 📋
 
 - โฟลเดอร์ใหม่ `wwwroot/connect/` — **อยู่ใน deployment เดียวกัน** (แบบ `/admin`)
@@ -245,8 +306,13 @@ public class ApiPricingPlan : BaseEntity
   /connect (login User เดิม → role AccountAdmin)
    ├─ ภาพรวมกลุ่ม: usage ทุกบริษัท · บิลค้าง · เครดิตคงเหลือ · สถานะ key
    ├─ [บริษัท] usage รายสาขา/ฟีเจอร์ · API keys · webhook · log · เอกสารที่สร้างผ่าน API
+   │           · **เลือกฟีเจอร์** (เปิด/ปิด CompanyFeature เห็นราคาก่อนเปิด)
+   │           · **เลือก connector** (ConnectorType + config + คู่มือ ERP)
+   ├─ onboarding wizard (§7.1) — สร้าง account/บริษัท/key ครบวงจรด้วยตัวเอง
    └─ บิล & ชำระเงิน (ระดับ account) · ซื้อเครดิต · ประวัติ
   ```
+- ฝั่ง admin (`/admin`): หน้าใหม่ "ฟีเจอร์ & ราคา API" — CRUD `ApiFeature` +
+  `ApiPricingPlan` (วิธีคิดเงิน 4 แบบ, ราคา, free quota, tier, วันมีผล) 📋
 - Governance: `AccountAdmin` จัดการกลุ่ม/บิล/key ได้ แต่**เปิดสมุดบัญชีบริษัทใดต้องมี
   `CompanyUser` ของบริษัทนั้น** — งบรวมไปทาง ConsolidationGroup (opt-in) เท่านั้น
 
@@ -258,8 +324,10 @@ public class ApiPricingPlan : BaseEntity
    — migration สร้าง BillingAccount ห่อ `AccountSubscription.OwnerUserId` เดิม 1:1 อัตโนมัติ
    (owner เดิมกลายเป็น AccountAdmin คนแรก) **ลูกค้าเก่าไม่รู้สึกอะไรเลย**
 2. เปลี่ยนสมอ `AccountSubscription` → `BillingAccountId` + จุดเดียวใน `CheckUsageLimitAsync`
-3. `UsageEvent` + `ApiPricingPlan` + rollup + หน้า usage
-4. `ApiClient` (ยกระดับ ExternalIntegration: scopes/branch/HMAC/sandbox) + `/api/v1` area
+3. `UsageEvent` + `ApiFeature`/`CompanyFeature`/`ApiPricingPlan` + rollup + หน้า usage
+   + หน้า admin "ฟีเจอร์ & ราคา API"
+4. `ApiClient` (ยกระดับ ExternalIntegration: scopes/branch/HMAC/sandbox/ConnectorType)
+   + `/api/v1` area + onboarding wizard (§7.1)
 5. Billing สิ้นเดือน → ใบแจ้งหนี้/ใบกำกับอัตโนมัติผ่าน pipeline เอกสารเดิม (2 โหมด)
 6. Portal `/connect`
 7. เปิด 2 ฟีเจอร์แรก: OCR→DTO, statement→matching; Connector Dynamics เมื่อมีลูกค้าจริง
@@ -275,5 +343,7 @@ public class ApiPricingPlan : BaseEntity
 
 ---
 
-_Last verified against codebase: 2026-08-07 — สถานะ: §3.1 ✅ ตรวจกับโค้ดแล้ว ·
+_Last verified against codebase: 2026-08-07 (rev 2 — เพิ่ม self-service onboarding §7.1,_
+_ฟีเจอร์กลาง/การเรียนรู้ 2 ชั้น §7.2, ApiFeature/CompanyFeature/PricingMethod/ConnectorType) —_
+_สถานะ: §3.1 ✅ ตรวจกับโค้ดแล้ว ·
 §3.2, §4 (คอลัมน์ Account/ApiClient), §6, §7 (`/api/v1`), §8, §9 = 📋 ออกแบบ ยังไม่มีโค้ด_
