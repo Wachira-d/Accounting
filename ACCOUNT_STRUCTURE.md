@@ -299,6 +299,34 @@ public class ApiPricingPlan : BaseEntity
 - ผลเชิงธุรกิจ: local ตอบแทน AI มากขึ้น → ต้นทุน/transaction ลด → ราคาขายคงที่
   → margin โตเอง (เหตุผลที่คิดเงินตาม "งานสำเร็จ" ไม่ใช่ token)
 
+### 7.3 AI mandate สำหรับผลิตภัณฑ์ API — ปิดลูปโดยดีไซน์ (hard requirement) 📋
+
+> **กับดัก**: ผู้ใช้ UI กดยืนยัน/แก้บนหน้าจอเรา → `RecordUserChoiceAsync` เก็บ
+> feedback อัตโนมัติ แต่ลูกค้า API แก้ผลลัพธ์**ในระบบเขา** (Dynamics) — เราไม่เห็น
+> ถ้าไม่บังคับใน contract ทุก call ของ Connected = "ยิงทิ้ง" ผิดกฎเหล็ก #1
+> ทั้งผลิตภัณฑ์: จ่าย token ฟรี local model ของ tenant นั้นไม่มีวันโต
+
+**กฎ 4 ข้อ ทุก endpoint ใน `/api/v1` ที่มี AI เกี่ยวข้อง:**
+
+1. **Response แนบ `feedbackId`** — ทุก field ที่ AI/local เสนอ (DTO ใช้ pattern
+   `<Feature>AiFeedbackId` เดิมของระบบ) + `usedAi`/`confidence` ให้ลูกค้าโชว์
+   ป้ายซื่อสัตย์ฝั่งเขาได้ด้วย
+2. **การใช้งานปกติของลูกค้า = feedback โดยธรรมชาติ — ห้ามพึ่งความสมัครใจ**:
+   ลูกค้าไม่มีแรงจูงใจส่ง feedback แยก ดังนั้นออกแบบให้ workflow ปกติปิดลูปเอง —
+   • OCR: ขั้น "ยืนยันสร้างเอกสาร" ลูกค้า POST ค่าสุดท้ายกลับมาอยู่แล้ว →
+     ระบบ diff ค่าสุดท้าย vs ที่เสนอ = feedback ครบทุก field อัตโนมัติ
+   • Bank recon: การ POST ยืนยันจับคู่ (เลือกชุดไหน) คือ feedback ในตัว
+   → ลูกค้าไม่ต้องทำอะไรพิเศษ แต่ลูปปิดทุก transaction
+3. **Endpoint feedback เสริม** (`POST /api/v1/feedback/{feedbackId}`) — สำหรับ
+   เคสที่แก้ทีหลังในระบบเขา (นักบัญชีแก้เลขบัญชีอีก 3 วันถัดมา) — connector
+   สำเร็จรูป (Dynamics) ต้อง sync การแก้กลับมาทางนี้อัตโนมัติ
+4. **วัดความพร้อมราย tenant** — `<Feature>UsedAi` rate ต่อบริษัทลดลงเรื่อย ๆ
+   = local โตจริง; โชว์ใน `/admin` (มี accuracy dashboard แล้ว — เพิ่มมิติ
+   ต่อบริษัท) และใช้เป็นตัวพิสูจน์ margin ที่โตขึ้นต่อ investor/ตัวเอง
+
+**Kill-switch ยังบังคับเต็ม**: provider ดับ → ทุก endpoint API ตอบจาก local
+ครบ 100% เงียบ ๆ — SLA ของลูกค้า Connected ต้องไม่ผูกกับ uptime ของ DeepSeek
+
 ## 8. Portal `/connect` 📋
 
 - โฟลเดอร์ใหม่ `wwwroot/connect/` — **อยู่ใน deployment เดียวกัน** (แบบ `/admin`)
@@ -391,7 +419,9 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-07 (rev 3 — เพิ่ม §8.1 โดเมน (subdomain/custom_
+_Last verified against codebase: 2026-08-07 (rev 4 — §7.3 AI mandate ฝั่ง API: ปิดลูป_
+_โดยดีไซน์ (feedbackId ทุก response, workflow ปกติ=feedback, endpoint แก้ย้อนหลัง,_
+_UsedAi rate ราย tenant); rev 3 — เพิ่ม §8.1 โดเมน (subdomain/custom_
 _domain ยกแบบจาก CmsSite ที่มีจริง) + §8.2 auth (local/Google/FB ✅ · LINE/Microsoft 365 📋);_
 _rev 2 — self-service onboarding §7.1,_
 _ฟีเจอร์กลาง/การเรียนรู้ 2 ชั้น §7.2, ApiFeature/CompanyFeature/PricingMethod/ConnectorType) —_
