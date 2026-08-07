@@ -188,6 +188,9 @@ public class ApiPricingPlan : BaseEntity
 | เปิด/ปิดฟีเจอร์ (`CompanyFeature`) | — | ✔ **ลูกค้ากดเองใน portal** | — | — | ปิดทุกตัว (opt-in) |
 | วิธีคิดเงิน+ราคาต่อฟีเจอร์ (`ApiPricingPlan`) | — | — | — | — | **admin เท่านั้น** (หน้า `/admin`) |
 | ระบบบัญชีที่เชื่อม (`ConnectorType`) | — | — | — | ✔ ลูกค้าเลือกตอนสร้าง key | GenericRest |
+| Subdomain (`{slug}.nextacc.app`) | ✔ ตั้งเองทันที | — | — | — | auto จากชื่อ account |
+| Custom domain (โดเมนตัวเอง) | ✔ + ต้อง verify DNS TXT | — | — | — | ไม่มี |
+| วิธี login ที่อนุญาต (`AllowedAuthMethods`) | ✔ (เช่นบังคับ O365 อย่างเดียว) | — | — | — | ทุกวิธี |
 
 ---
 
@@ -313,6 +316,50 @@ public class ApiPricingPlan : BaseEntity
   ```
 - ฝั่ง admin (`/admin`): หน้าใหม่ "ฟีเจอร์ & ราคา API" — CRUD `ApiFeature` +
   `ApiPricingPlan` (วิธีคิดเงิน 4 แบบ, ราคา, free quota, tier, วันมีผล) 📋
+
+### 8.1 การเข้าถึงผ่านโดเมน 📋 — subdomain ให้ฟรี / โดเมนตัวเองก็ชี้เข้าได้
+
+ยกแบบมาจากของที่มีจริงแล้วใน CMS (`CmsSite.Subdomain`/`CustomDomain` +
+`SiteDomain` + `DomainType` — `CmsSite.cs:17,171`) — pattern พิสูจน์แล้ว ไม่ออกแบบใหม่:
+
+```csharp
+public class AccountDomain : BaseEntity          // ผูกระดับ BillingAccount
+{
+    public Guid BillingAccountId;
+    public string Domain;                        // "abcgroup.nextacc.app" | "erp.abcgroup.co.th"
+    public DomainType DomainType;                // Subdomain | CustomDomain
+    // CustomDomain ต้องพิสูจน์ความเป็นเจ้าของก่อนใช้ — กัน host-header hijack:
+    public string VerificationToken;             // ลูกค้าตั้ง DNS TXT ตาม token นี้
+    public DateTime? VerifiedAt;                 // null = ยังใช้ไม่ได้
+    public bool IsPrimary;
+}
+```
+
+- **Subdomain**: ตั้งเองใน portal ได้ทันที (`{slug}.nextacc.app` — ตรวจ slug ซ้ำ/คำสงวน)
+- **Custom domain**: ลูกค้าเพิ่มโดเมน → ระบบให้ TXT record → ตั้ง DNS → กด verify →
+  ใช้ได้ (TLS อัตโนมัติผ่าน reverse proxy/Let's Encrypt — งาน infra ไม่ใช่งานโค้ด)
+- **Middleware resolve host → BillingAccountId** → portal ขึ้นแบรนด์ของ account นั้น
+  (โลโก้/ชื่อ/สี — white-label ให้ partner ได้ในตัว); host ที่ไม่รู้จัก → หน้า
+  กลาง `/connect` ปกติ. Cookie/JWT audience ผูกต่อ host กัน token ข้ามโดเมน
+
+### 8.2 Authentication — ในระบบเอง + LINE + Microsoft 365
+
+| วิธี | สถานะ | หมายเหตุ |
+| --- | --- | --- |
+| Email + password (ในระบบ) | ✅ | `AuthController` login/refresh/forgot/reset ครบ |
+| Google / Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) |
+| **LINE Login** (OAuth2) | 📋 | คนละอย่างกับ LINE bot binding ที่มีแล้ว (`User.LineUserId` + `LineBindCode`) — แต่ login แล้ว map เข้า `LineUserId` เดิมได้เลย บัญชีเดียวทั้ง login และ bot |
+| **Microsoft Entra ID (Office 365)** | 📋 | OIDC มาตรฐาน; ตลาดเดียวกับลูกค้า Dynamics พอดี — บริษัทที่ใช้ Dynamics มี M365 อยู่แล้วเกือบ 100% |
+
+- `AuthProvider` เพิ่มค่า `"Line"`, `"Microsoft"` — โครงเดิมรองรับอยู่แล้ว
+- **ตั้งค่าที่ระดับ BillingAccount**: `AllowedAuthMethodsCsv` — องค์กรบังคับได้ว่า
+  user ใต้ account ต้อง login วิธีไหน (เช่น enterprise บังคับ O365 เท่านั้น
+  ปิด password login) + `EnforceSsoForAccountUsers`
+- **JIT provisioning**: login ผ่าน IdP ครั้งแรก → สร้าง User อัตโนมัติ →
+  เข้ากลุ่มด้วย invite เท่านั้น (**ห้าม auto-join จาก email domain** — โดเมน
+  อีเมลปลอมง่าย ไม่ใช่หลักฐานความเป็นสมาชิกองค์กร)
+- ทุกวิธี login จบที่ JWT เดิมของระบบ → ชั้นสิทธิ์ (`CompanyUser`/`AccountAdmin`)
+  ไม่ต้องรู้ว่า login มาจากไหน
 - Governance: `AccountAdmin` จัดการกลุ่ม/บิล/key ได้ แต่**เปิดสมุดบัญชีบริษัทใดต้องมี
   `CompanyUser` ของบริษัทนั้น** — งบรวมไปทาง ConsolidationGroup (opt-in) เท่านั้น
 
@@ -329,7 +376,8 @@ public class ApiPricingPlan : BaseEntity
 4. `ApiClient` (ยกระดับ ExternalIntegration: scopes/branch/HMAC/sandbox/ConnectorType)
    + `/api/v1` area + onboarding wizard (§7.1)
 5. Billing สิ้นเดือน → ใบแจ้งหนี้/ใบกำกับอัตโนมัติผ่าน pipeline เอกสารเดิม (2 โหมด)
-6. Portal `/connect`
+6. Portal `/connect` + `AccountDomain` (subdomain → custom domain + verify) +
+   LINE Login / Microsoft Entra ID (§8.1–8.2)
 7. เปิด 2 ฟีเจอร์แรก: OCR→DTO, statement→matching; Connector Dynamics เมื่อมีลูกค้าจริง
 
 ## 10. การบ้านที่งอกจากดีไซน์ (ยังไม่ทำ)
@@ -343,7 +391,9 @@ public class ApiPricingPlan : BaseEntity
 
 ---
 
-_Last verified against codebase: 2026-08-07 (rev 2 — เพิ่ม self-service onboarding §7.1,_
+_Last verified against codebase: 2026-08-07 (rev 3 — เพิ่ม §8.1 โดเมน (subdomain/custom_
+_domain ยกแบบจาก CmsSite ที่มีจริง) + §8.2 auth (local/Google/FB ✅ · LINE/Microsoft 365 📋);_
+_rev 2 — self-service onboarding §7.1,_
 _ฟีเจอร์กลาง/การเรียนรู้ 2 ชั้น §7.2, ApiFeature/CompanyFeature/PricingMethod/ConnectorType) —_
 _สถานะ: §3.1 ✅ ตรวจกับโค้ดแล้ว ·
 §3.2, §4 (คอลัมน์ Account/ApiClient), §6, §7 (`/api/v1`), §8, §9 = 📋 ออกแบบ ยังไม่มีโค้ด_
