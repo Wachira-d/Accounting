@@ -385,6 +385,25 @@
 | MTR-I-05 | I | ดู `/usage/account` โดยไม่ใช่ AccountAdmin | 403 — เป็นพนักงานบริษัทหนึ่งในกลุ่มไม่ให้สิทธิ์เห็นยอดบริษัทอื่น |
 | MTR-I-06 | I | บริษัทถูกลบ แต่มี UsageEvent เดือนก่อน | รายงานยังแสดงแถวนั้น (hydrate แยก ไม่ใช้ INNER JOIN) — ประวัติบิลห้ามหาย |
 
+### ผลิตภัณฑ์ API `/api/v1` (ACCOUNT_STRUCTURE.md §9.4)
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| V1-S-01 | S | **คีย์เก่าที่มีอยู่ก่อน** ยิง `/api/v1/ocr/scan` | 403 — `Scopes` เป็น NULL จึงไม่มีสิทธิ์ (ต้องตั้งใจให้สิทธิ์เท่านั้น ไม่ได้มาจากอัปเกรดระบบ) |
+| V1-S-02 | S | คีย์เก่ายิง endpoint เดิม (`/api/integration/*`, `/api/companies/...`) | ทำงานเหมือนเดิมทุกประการ — ไม่มี regression |
+| V1-I-01 | I | key มี `ocr:write` แต่บริษัทยังไม่เปิดฟีเจอร์ | 403 + ข้อความบอกวิธีเปิด · **ไม่เกิด UsageEvent** |
+| V1-I-02 | I | scope wildcard `ocr:*` | ผ่านด่าน `ocr:write` |
+| V1-I-03 | I | scan สำเร็จ | เกิด UsageEvent 1 แถว · response มี `billing.charged` |
+| V1-I-04 | I | scan ล้มเหลว (ไฟล์เสีย/engine error) | 500 + **ไม่มี UsageEvent** (ล้มแล้วห้ามคิดเงิน) |
+| V1-I-05 | I | ส่ง `Idempotency-Key` เดิมซ้ำ | ไม่เกิด event ใหม่ · `billing.duplicate=true` |
+| V1-I-06 | I | นำเข้า statement ที่มี `ExternalId` ซ้ำทั้งไฟล์ | `imported=0, skipped=N` · ไม่คิดเงิน |
+| V1-I-07 | I | นำเข้า 500 บรรทัด จับคู่ได้ 300 | คิดเงิน **500** (ตามบรรทัดที่ประมวลผล ไม่ใช่ที่จับคู่สำเร็จ) |
+| V1-I-08 | I | บรรทัดหนึ่งจับคู่ throw | บรรทัดอื่นยังได้ผลครบ · แถวนั้น `found=false` |
+| V1-I-09 | I | ส่งเกิน 2,000 บรรทัด | 400 พร้อมบอกให้แบ่งชุด |
+| V1-I-10 | I | key ที่ `IsSandbox=true` | UsageEvent `IsSandbox=true` · `charged=0` |
+| V1-I-11 | I | key ผูก `BranchId` | UsageEvent มี BranchId → รายงานแตกรายสาขาได้ |
+| V1-I-12 | I | `POST /ocr/confirm` พร้อม feedbackId | บันทึก feedback ครบ · **ไม่คิดเงินซ้ำ** |
+| V1-I-13 | I | `confirm` แต่ feedback บันทึกล้ม | ยัง 200 (ลูกค้ายืนยันเอกสารไปแล้ว) + log warning |
+
 ### จับคู่ชื่อผู้โอน (ข้ามภาษา / ถูกตัด) — `CounterpartyNameMatcher`
 | รหัส | ชั้น | เคส | คาดหวัง |
 | --- | --- | --- | --- |

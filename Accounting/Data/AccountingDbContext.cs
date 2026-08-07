@@ -1170,6 +1170,10 @@ public class AccountingDbContext : DbContext
             e.Property(k => k.KeyPrefix).HasMaxLength(20);
             e.HasOne(k => k.Company).WithMany().HasForeignKey(k => k.CompanyId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(k => k.CreatedByUser).WithMany().HasForeignKey(k => k.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
+            // ฟิลด์ /api/v1 (ACCOUNT_STRUCTURE.md §7) — ไม่ผูก FK navigation
+            // เพื่อไม่ให้ query เดิมของ ApiKey ลากตารางเพิ่มโดยไม่จำเป็น
+            e.Property(k => k.Scopes).HasMaxLength(300);
+            e.Property(k => k.WebhookUrl).HasMaxLength(500);
         });
 
         // ===== DocumentTemplate =====

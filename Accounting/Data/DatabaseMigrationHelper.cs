@@ -5346,6 +5346,19 @@ public static class DatabaseMigrationHelper
             WHERE NOT EXISTS (SELECT 1 FROM "ApiFeatures" f WHERE f."FeatureCode" = v."FeatureCode");
             """,
 
+            // ===== ApiKey — ขยายให้รองรับ /api/v1 (ACCOUNT_STRUCTURE.md §7) =====
+            // ต่อยอดตารางเดิมแทนการสร้าง ApiClient ใหม่แข่งกัน — key ที่ลูกค้าใช้อยู่
+            // ทำงานเหมือนเดิมทุกประการ. Scopes เป็น NULL สำหรับคีย์เก่าทุกใบ
+            // = **ถูกกันออกจาก /api/v1 โดยอัตโนมัติ** ต้องตั้งใจให้สิทธิ์เท่านั้น
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "BillingAccountId" uuid NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "BranchId" uuid NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "Scopes" varchar(300) NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "WebhookUrl" varchar(500) NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "WebhookSecret" text NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "ConnectorType" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "ConnectorConfigJson" text NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "IsSandbox" boolean NOT NULL DEFAULT false;""",
+
             // ===== Chatbot: public FAQ + tenant assistant (CHATBOT_PLAN.md) =====
             """
             CREATE TABLE IF NOT EXISTS "ChatConversations" (

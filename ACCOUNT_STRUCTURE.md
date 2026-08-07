@@ -84,6 +84,10 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | **API ฝั่ง admin** | `Controllers/MeteringAdminController.cs` | ✅ `/api/admin/metering/features`, `/plans`, `/plans/{code}` (ประวัติราคา), `/usage` |
 | **API ฝั่งลูกค้า** | `Controllers/MeteringController.cs` | ✅ `/api/companies/{id}/metering/features` (เห็นราคาก่อนเปิด), toggle, `/usage`, `/usage/account` (ต้องเป็น AccountAdmin) |
 | enum `PricingMethod`/`ErpConnectorType` | `Models/Enums/AllEnums.cs` | ✅ |
+| **`ApiKey` ขยาย** | `Models/Entities/ApiKey.cs` | ✅ `Scopes`/`BranchId`/`BillingAccountId`/`WebhookUrl`/`WebhookSecret`/`ConnectorType`/`ConnectorConfigJson`/`IsSandbox` — **ต่อยอดตารางเดิม ไม่สร้าง `ApiClient` แข่ง** |
+| **`/api/v1` base** | `Controllers/V1/PublicApiControllerBase.cs` | ✅ ด่าน 3 ชั้นรวมเมธอดเดียว (key → scope → ฟีเจอร์เปิด) + `MeterAsync` อ่าน `Idempotency-Key` header อัตโนมัติ |
+| **`/api/v1/ocr`** | `Controllers/V1/OcrV1Controller.cs` | ✅ `scan` (คิดเงินหลังสำเร็จเท่านั้น) + `confirm` (ปิดลูปเรียนรู้ §7.3) |
+| **`/api/v1/bank`** | `Controllers/V1/BankV1Controller.cs` | ✅ `statements` (dedupe ด้วย ExternalId, คิดตามบรรทัดที่ประมวลผล) + `matches/confirm` |
 
 **Migration + backfill** (`DatabaseMigrationHelper.cs` บล็อก "BillingAccount"): additive
 ล้วน — `CREATE TABLE IF NOT EXISTS` + `ADD COLUMN IF NOT EXISTS` (nullable/มี default
@@ -373,8 +377,10 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 3. ✅ **เสร็จแล้ว** — `UsageEvent` + `ApiFeature`/`CompanyFeature`/`ApiPricingPlan`
    + `IUsageMeteringService` + API admin (`/api/admin/metering`) และลูกค้า
    (`/api/companies/{id}/metering`). เหลือ: หน้าเว็บ admin + rollup รายวัน
-4. `ApiClient` (ยกระดับ ExternalIntegration: scopes/branch/HMAC/sandbox/ConnectorType)
-   + `/api/v1` area + onboarding wizard (§7.1)
+4. 🔨 **บางส่วนแล้ว** — ขยาย `ApiKey` เดิม (scopes/branch/sandbox/ConnectorType/
+   webhook) + `/api/v1/ocr` + `/api/v1/bank` พร้อมด่าน scope + metering ครบ.
+   เหลือ: ส่ง webhook จริง (HMAC), async job/batch, `/api/v1/documents`,
+   onboarding wizard (§7.1)
 5. Billing สิ้นเดือน → ใบแจ้งหนี้/ใบกำกับอัตโนมัติผ่าน pipeline เอกสารเดิม (2 โหมด)
 6. Portal `/connect` + `AccountDomain` (subdomain → custom domain + verify) +
    LINE Login / Microsoft Entra ID (§8.1–8.2)
@@ -391,7 +397,8 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-07 (rev 6 — §9.3 ลงโค้ด: Metering ครบชุด_
+_Last verified against codebase: 2026-08-07 (rev 7 — §9.4 บางส่วน: ApiKey ขยาย +_
+_/api/v1 ocr/bank + ด่าน scope + ผูก UsageEvent ทุก call; rev 6 — §9.3 ลงโค้ด: Metering ครบชุด_
 _(ApiFeature/CompanyFeature/ApiPricingPlan/UsageEvent + service + admin/tenant API); rev 5 — §9.1 ลงโค้ดจริงแล้ว: BillingAccount/_
 _BillingAccountAdmin + Company FK 3 ตัว + migration backfill 1:1 → §3.1 ✅; rev 4 — §7.3 AI mandate ฝั่ง API: ปิดลูป_
 _โดยดีไซน์ (feedbackId ทุก response, workflow ปกติ=feedback, endpoint แก้ย้อนหลัง,_
