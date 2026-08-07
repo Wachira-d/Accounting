@@ -28,6 +28,8 @@ public class AccountingDbContext : DbContext
     // Subscription & Trial
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<AccountSubscription> AccountSubscriptions => Set<AccountSubscription>();
+    public DbSet<BillingAccount> BillingAccounts => Set<BillingAccount>();
+    public DbSet<BillingAccountAdmin> BillingAccountAdmins => Set<BillingAccountAdmin>();
     public DbSet<TrialConfig> TrialConfigs => Set<TrialConfig>();
     public DbSet<SubscriptionHistory> SubscriptionHistories => Set<SubscriptionHistory>();
     public DbSet<PlanTemplate> PlanTemplates => Set<PlanTemplate>();
@@ -451,6 +453,14 @@ public class AccountingDbContext : DbContext
             e.Property(c => c.Name).HasMaxLength(500);
             e.Property(c => c.TaxId).HasMaxLength(13);
             e.Property(c => c.BaseCurrency).HasMaxLength(3);
+            // สังกัดกลุ่มผู้จ่ายเงิน — SetNull เมื่อกลุ่มถูกลบ: บริษัทต้องไม่หาย
+            // ไปกับกลุ่ม (ข้อมูลบัญชี/ภาษีเป็นของนิติบุคคล ไม่ใช่ของผู้จ่าย)
+            e.HasOne(c => c.BillingAccount).WithMany(a => a.Companies)
+                .HasForeignKey(c => c.BillingAccountId).OnDelete(DeleteBehavior.SetNull);
+            // ผังเครือ — Restrict กันลบบริษัทแม่ทิ้งแล้วลูกชี้ไปที่ว่าง
+            e.HasOne(c => c.ParentCompany).WithMany()
+                .HasForeignKey(c => c.ParentCompanyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(c => c.BillingAccountId);
             e.HasQueryFilter(c => !c.IsDeleted);
         });
 
@@ -515,9 +525,36 @@ public class AccountingDbContext : DbContext
         {
             e.HasOne(a => a.Owner).WithMany().HasForeignKey(a => a.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(a => a.PlanTemplate).WithMany().HasForeignKey(a => a.PlanTemplateId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(a => a.BillingAccount).WithMany().HasForeignKey(a => a.BillingAccountId).OnDelete(DeleteBehavior.SetNull);
             e.Property(a => a.MonthlyPrice).HasPrecision(18, 2);
             e.Property(a => a.AnnualPrice).HasPrecision(18, 2);
             e.HasQueryFilter(a => !a.IsDeleted);
+        });
+
+        // ===== BillingAccount (ACCOUNT_STRUCTURE.md §3.2) =====
+        modelBuilder.Entity<BillingAccount>(e =>
+        {
+            e.Property(a => a.Name).HasMaxLength(200);
+            e.Property(a => a.TaxId).HasMaxLength(13);
+            e.Property(a => a.BillingBranchCode).HasMaxLength(5);
+            e.Property(a => a.BillingEmail).HasMaxLength(200);
+            e.Property(a => a.ContactPhone).HasMaxLength(50);
+            e.Property(a => a.SuspendReason).HasMaxLength(500);
+            e.Property(a => a.CreditBalance).HasPrecision(18, 2);
+            e.Property(a => a.PostpaidCreditLimit).HasPrecision(18, 2);
+            e.HasIndex(a => a.TaxId);
+            e.HasQueryFilter(a => !a.IsDeleted);
+        });
+
+        modelBuilder.Entity<BillingAccountAdmin>(e =>
+        {
+            e.HasOne(x => x.BillingAccount).WithMany(a => a.Admins)
+                .HasForeignKey(x => x.BillingAccountId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.User).WithMany()
+                .HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            // คนเดียวเป็นผู้ดูแล account เดียวกันซ้ำไม่ได้
+            e.HasIndex(x => new { x.BillingAccountId, x.UserId }).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         // ===== TrialConfig =====

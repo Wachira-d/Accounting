@@ -18,6 +18,31 @@ public class Company : BaseEntity
     /// <summary>เวลาที่ถูกระงับ (UTC) — audit + แสดงใน admin.</summary>
     public DateTime? SuspendedAt { get; set; }
 
+    // ===== โครงลูกค้า/กลุ่มบริษัท (ACCOUNT_STRUCTURE.md §1) =====
+    // ทั้ง 3 field เป็น optional ล้วน — บริษัทเดิมที่ไม่ได้อยู่กลุ่มไหน
+    // ทำงานเหมือนเดิมทุกประการ ไม่มี behavior change
+
+    /// <summary>กลุ่ม/องค์กรผู้จ่ายเงินที่บริษัทนี้สังกัด. null = จ่ายเอง
+    /// (subscription ของตัวเอง หรือ trial) — เส้นทางเดิมของระบบ.
+    ///
+    /// **สำคัญ**: เป็นความสัมพันธ์เรื่อง *เงิน* เท่านั้น ห้ามใช้เป็นทางลัด
+    /// query ข้ามบริษัท — tenant isolation ยังอยู่ที่ CompanyId ทุก query</summary>
+    public Guid? BillingAccountId { get; set; }
+    public BillingAccount? BillingAccount { get; set; }
+
+    /// <summary>บริษัทแม่ในผังเครือ (holding). null = ไม่มีแม่ / เป็นบริษัทแม่เอง.
+    ///
+    /// ใช้ **แสดงผังและอ้างอิงตอนทำงบรวมเท่านั้น** — ไม่มีผลต่อสิทธิ์, โควตา,
+    /// หรือการมองเห็นข้อมูลใด ๆ ทั้งสิ้น. กลุ่มบริษัทพี่น้องแนวขนาน (เจ้าของ
+    /// เดียวกันแต่ไม่มีใครถือหุ้นใคร) ปล่อย null ได้ — billing เหมือนกันเป๊ะ.
+    /// สัดส่วนถือหุ้น/วิธีรวมงบอยู่ที่ <see cref="ConsolidationMember"/></summary>
+    public Guid? ParentCompanyId { get; set; }
+    public Company? ParentCompany { get; set; }
+
+    /// <summary>ใช้ระบบผ่านหน้าเว็บ (Full) หรือเชื่อม API จาก ERP อื่น (Connected).
+    /// default Full = พฤติกรรมเดิมของทุกบริษัทที่มีอยู่</summary>
+    public CompanyKind CompanyKind { get; set; } = CompanyKind.Full;
+
     // Thai Business Registration (ข้อมูลตามกฎหมายไทย)
     public string? JuristicId { get; set; }              // เลขทะเบียนนิติบุคคล (DBD)
     public bool IsVatRegistered { get; set; }            // จดทะเบียนภาษีมูลค่าเพิ่ม

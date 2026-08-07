@@ -28,6 +28,52 @@ public enum CompanyStatus
     Suspended = 3
 }
 
+// ==================== โครงลูกค้า/กลุ่มบริษัท (ACCOUNT_STRUCTURE.md) ====================
+
+/// <summary>บริษัทนี้ใช้ NextAcc แบบไหน — คุมว่ามี UI/login ให้ไหม
+/// (ข้อมูลบัญชี/ภาษีเหมือนกันทุกประการทั้งสองแบบ ต่างแค่ทางเข้า)</summary>
+public enum CompanyKind
+{
+    /// <summary>ลูกค้าปกติ — เข้าหน้าเว็บทำบัญชีเองครบทุกฟีเจอร์</summary>
+    Full = 1,
+    /// <summary>ใช้ระบบบัญชีอื่นอยู่ (Dynamics/SAP) แล้วยิง API มาใช้ฟีเจอร์
+    /// ของเรา — ไม่มี user login เข้าหน้าบัญชี จัดการผ่าน portal /connect
+    /// + API key. เปลี่ยนกลับเป็น Full ได้ทันทีเมื่อลูกค้าย้ายมาใช้เต็มตัว
+    /// (ข้อมูลอยู่ครบแล้ว — upsell path ในตัว)</summary>
+    Connected = 2
+}
+
+/// <summary>ออกใบกำกับภาษีค่าบริการอย่างไรสำหรับกลุ่มบริษัท</summary>
+public enum BillingMode
+{
+    /// <summary>ใบเดียวต่อเดือนให้ผู้จ่ายของกลุ่ม แยกบรรทัดต่อบริษัทย่อย
+    /// (ให้นักบัญชีกลุ่มเอาไป charge back ภายในได้)</summary>
+    Centralized = 1,
+    /// <summary>แยกใบต่อนิติบุคคลตามการใช้จริง — ต้นทุนลงตรงบริษัทที่ใช้
+    /// (ผู้สอบบัญชีบางเจ้าขอ) แลกกับตามเก็บหลายทาง + 50 ทวิ หลายใบ</summary>
+    PerCompany = 2
+}
+
+/// <summary>จ่ายก่อนใช้ หรือใช้ก่อนจ่าย</summary>
+public enum PaymentModel
+{
+    /// <summary>เติมเครดิตล่วงหน้า — default สำหรับตลาดไทย ลูกค้าคุมงบเองได้
+    /// และเราไม่ต้องตามเก็บเงิน</summary>
+    Prepaid = 1,
+    /// <summary>ใช้ก่อนแล้วออกบิลสิ้นเดือน — เฉพาะลูกค้าที่มีสัญญาและวงเงิน
+    /// ที่ admin อนุมัติ</summary>
+    Postpaid = 2
+}
+
+public enum BillingAccountStatus
+{
+    Active = 1,
+    /// <summary>ค้างชำระเกิน grace — บริษัทใต้กลุ่มถูกจำกัดการใช้งาน</summary>
+    Suspended = 2,
+    /// <summary>ปิดบัญชีถาวร (ยกเลิกสัญญา) — ข้อมูลยังอยู่ตาม retention</summary>
+    Closed = 3
+}
+
 /// <summary>ประเภทผู้ติดต่อ — ใช้กำหนดแบบ ภ.ง.ด. อัตโนมัติ</summary>
 public enum ContactType
 {

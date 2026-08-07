@@ -69,29 +69,30 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | `ConsolidationGroup/Member` | `DimensionalAccounting.cs:122` | งบรวม + %ถือหุ้น — **เรื่องการเงิน แยกจาก billing เด็ดขาด** |
 | `ExternalIntegration` + `ApiKeyMiddleware` | `Models/Entities/`, `Middleware/` | ต้นแบบของ ApiClient (TakeTime ใช้อยู่) |
 | `CompanyUser` | `Models/Entities/User.cs:75` | สิทธิ์ราย user รายบริษัท |
+| **`BillingAccount`** | `Models/Entities/BillingAccount.cs` | ✅ องค์กรผู้จ่ายเงิน — Name/TaxId/BillingMode/PaymentModel/CreditBalance/PostpaidCreditLimit/GracePeriodDays/IsSandbox/Status |
+| **`BillingAccountAdmin`** | `Models/Entities/BillingAccount.cs` | ✅ M:N account↔user + `IsPrimary`; unique ต่อ (account,user) |
+| **`Company.BillingAccountId`** | `Models/Entities/Company.cs` | ✅ nullable FK (`ON DELETE SET NULL` — ลบกลุ่มแล้วบริษัทต้องไม่หาย) |
+| **`Company.ParentCompanyId`** | `Models/Entities/Company.cs` | ✅ nullable self-FK (`RESTRICT`) — ผังเครือ/แสดงผลเท่านั้น ไม่มีผลต่อสิทธิ์ |
+| **`Company.CompanyKind`** | `Models/Enums/AllEnums.cs` | ✅ `Full`(1, default = พฤติกรรมเดิม) \| `Connected`(2) |
+| **`AccountSubscription.BillingAccountId`** | `Models/Entities/AccountSubscription.cs` | ✅ nullable — backfill 1:1 แล้ว; `OwnerUserId` เดิมยังอยู่ (เส้นทาง resolve เดิมไม่ถูกแตะ) |
+| enum `BillingMode`/`PaymentModel`/`BillingAccountStatus` | `Models/Enums/AllEnums.cs` | ✅ |
 
-### 3.2 ออกแบบใหม่ 📋
+**Migration + backfill** (`DatabaseMigrationHelper.cs` บล็อก "BillingAccount"): additive
+ล้วน — `CREATE TABLE IF NOT EXISTS` + `ADD COLUMN IF NOT EXISTS` (nullable/มี default
+ตรงพฤติกรรมเดิม) + FK ห่อ `DO $$ … pg_constraint guard` (Postgres ไม่มี
+`ADD CONSTRAINT IF NOT EXISTS`) + **backfill 1:1**: ทุก `AccountSubscription` ที่ยัง
+ไม่มีกลุ่ม → สร้าง `BillingAccount` (ชื่อ/อีเมลจาก owner) + ตั้ง owner เป็นผู้ดูแลหลัก
++ ผูกบริษัททุกใบใต้แพลนนั้นเข้ากลุ่ม — **ลูกค้าเก่าไม่ต้องทำอะไรและไม่รู้สึกอะไร**
+รันซ้ำได้ (ทุก statement มี `IS NULL`/`NOT EXISTS` guard)
+
+> **สถานะพฤติกรรม**: ณ ตอนนี้เป็น *โครงข้อมูลเปล่า* — ยังไม่มี service/endpoint ใด
+> อ่านมันเลย ระบบเดิม resolve โควตาผ่าน `Subscription.AccountSubscriptionId` ต่อไป
+> เหมือนเดิม 100% (zero behavior change โดยเจตนา — จะย้ายทีละจุดในขั้นถัดไป)
+
+### 3.2 ออกแบบใหม่ (ยังไม่ทำ) 📋
 
 ```csharp
-// องค์กรผู้จ่ายเงิน — ไม่ใช่คน (คนเป็นแค่ผู้ดูแล ถอด/เพิ่มได้)
-public class BillingAccount : BaseEntity
-{
-    public string Name;                    // "เครือ ABC กรุ๊ป"
-    public string? TaxId;                  // นิติบุคคลผู้รับใบกำกับ (โหมดรวมศูนย์)
-    public string? BillingAddress;
-    public string BillingEmail;
-    public BillingMode BillingMode;        // Centralized | PerCompany   (§6.1)
-    public PaymentModel PaymentModel;      // Prepaid | Postpaid         (§6.2)
-    public decimal CreditBalance;          // เครดิตคงเหลือ (Prepaid)
-    public int GraceDays = 7;
-    public bool IsSandbox;                 // ทั้ง account เป็น sandbox (ทดสอบก่อนเซ็น)
-}
-public class BillingAccountAdmin { Guid BillingAccountId; Guid UserId; }  // M:N
-
-// Company เพิ่ม:
-//   Guid? BillingAccountId   — สังกัดกระเป๋าเงินไหน (null = จ่ายเอง/trial)
-//   Guid? ParentCompanyId    — ผังเครือ (แสดงผล + consolidation เท่านั้น ไม่เกี่ยวเงิน)
-//   CompanyKind CompanyKind  — Full | Connected
+// Company เพิ่ม (ยังไม่ทำ):
 //   bool VatFilingConsolidated — ยื่น ภ.พ.30 รวมสาขา (ต้องมีอนุมัติสรรพากร)
 
 // API key ราย client — ยกระดับจาก ExternalIntegration
@@ -395,9 +396,9 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ## 9. แผน migrate จากปัจจุบัน (ลำดับทำจริง)
 
-1. `BillingAccount` + `BillingAccountAdmin` + `Company.BillingAccountId/ParentCompanyId/CompanyKind`
-   — migration สร้าง BillingAccount ห่อ `AccountSubscription.OwnerUserId` เดิม 1:1 อัตโนมัติ
-   (owner เดิมกลายเป็น AccountAdmin คนแรก) **ลูกค้าเก่าไม่รู้สึกอะไรเลย**
+1. ✅ **เสร็จแล้ว** — `BillingAccount` + `BillingAccountAdmin` +
+   `Company.BillingAccountId/ParentCompanyId/CompanyKind` + migration + backfill 1:1
+   (owner เดิมกลายเป็นผู้ดูแลหลัก) **ลูกค้าเก่าไม่รู้สึกอะไรเลย · zero behavior change**
 2. เปลี่ยนสมอ `AccountSubscription` → `BillingAccountId` + จุดเดียวใน `CheckUsageLimitAsync`
 3. `UsageEvent` + `ApiFeature`/`CompanyFeature`/`ApiPricingPlan` + rollup + หน้า usage
    + หน้า admin "ฟีเจอร์ & ราคา API"
@@ -419,11 +420,12 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-07 (rev 4 — §7.3 AI mandate ฝั่ง API: ปิดลูป_
+_Last verified against codebase: 2026-08-07 (rev 5 — §9.1 ลงโค้ดจริงแล้ว: BillingAccount/_
+_BillingAccountAdmin + Company FK 3 ตัว + migration backfill 1:1 → §3.1 ✅; rev 4 — §7.3 AI mandate ฝั่ง API: ปิดลูป_
 _โดยดีไซน์ (feedbackId ทุก response, workflow ปกติ=feedback, endpoint แก้ย้อนหลัง,_
 _UsedAi rate ราย tenant); rev 3 — เพิ่ม §8.1 โดเมน (subdomain/custom_
 _domain ยกแบบจาก CmsSite ที่มีจริง) + §8.2 auth (local/Google/FB ✅ · LINE/Microsoft 365 📋);_
 _rev 2 — self-service onboarding §7.1,_
 _ฟีเจอร์กลาง/การเรียนรู้ 2 ชั้น §7.2, ApiFeature/CompanyFeature/PricingMethod/ConnectorType) —_
-_สถานะ: §3.1 ✅ ตรวจกับโค้ดแล้ว ·
-§3.2, §4 (คอลัมน์ Account/ApiClient), §6, §7 (`/api/v1`), §8, §9 = 📋 ออกแบบ ยังไม่มีโค้ด_
+_สถานะ: §3.1 ✅ ตรวจกับโค้ดแล้ว (รวม BillingAccount/BillingAccountAdmin/Company FK ที่เพิ่งลง) ·_
+_§3.2 (ApiClient/UsageEvent/ApiFeature/Pricing), §4 คอลัมน์ ApiClient, §6, §7, §8, §9 ข้อ 2-7 = 📋_

@@ -351,6 +351,19 @@
 | BNK-I-08 | I | JE ที่ไม่มีบรรทัดลงผังเงินสด/ธนาคารเลย (111x) | ยังเลือกได้ (ไม่บล็อก) ใช้ footing + ป้าย "⚠️ ไม่มีขาเงินสด/ธนาคาร" |
 | BNK-I-10 | I | JE เงินเดือนที่ Cr ผังธนาคารกลาง (ไม่ใช่ผังของบัญชีที่กำลังกระทบยอด) | ใช้ขาเงินสด/ธนาคารนั้นเป็นยอด (70,110) + บอกว่า "ขาเงินสด/ธนาคารในใบนี้ลงผัง 111xx …" |
 
+### โครงลูกค้า/กลุ่มบริษัท — `BillingAccount` (ACCOUNT_STRUCTURE.md §9.1)
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| ACC-M-01 | I | รัน migration บน DB ที่มี `AccountSubscription` อยู่แล้ว | ทุกแถวได้ `BillingAccountId` · เกิด `BillingAccount` 1 แถว/แพลน (ชื่อ+อีเมลจาก owner) · owner เป็น `IsPrimary=true` |
+| ACC-M-02 | I | บริษัทใต้แพลนกลุ่มเดิม (`Subscription.AccountSubscriptionId` ชี้อยู่) | `Company.BillingAccountId` ถูกผูกให้อัตโนมัติทุกใบ |
+| ACC-M-03 | I | รัน migration ซ้ำอีกรอบ | ไม่เกิด BillingAccount ซ้ำ · ไม่ error (guard ด้วย `IS NULL` + `pg_constraint`) |
+| ACC-M-04 | I | บริษัทเดี่ยวที่ไม่มีแพลนกลุ่ม | `BillingAccountId` ยังเป็น null · ทำงานเหมือนเดิมทุกประการ |
+| ACC-M-05 | I | **เช็ค zero behavior change** — โควตา/quota check ก่อนและหลัง migrate | ผลลัพธ์เท่ากันทุกเคส (resolve ยังผ่าน `Subscription.AccountSubscriptionId` เส้นเดิม) |
+| ACC-U-01 | U | default ของ `Company.CompanyKind` | `Full` — บริษัทเดิมทุกใบต้องไม่กลายเป็น Connected |
+| ACC-I-01 | I | ลบ `BillingAccount` ที่มีบริษัทสังกัดอยู่ | บริษัท**ไม่ถูกลบ** — `BillingAccountId` กลายเป็น null (`ON DELETE SET NULL`) ข้อมูลบัญชี/ภาษีอยู่ครบ |
+| ACC-I-02 | I | ลบบริษัทแม่ที่มีบริษัทลูกชี้อยู่ (`ParentCompanyId`) | ถูก block (`RESTRICT`) — กันผังเครือชี้ไปที่ว่าง |
+| ACC-I-03 | I | เพิ่ม user เดิมเป็นผู้ดูแล account เดียวซ้ำ | ถูก block ด้วย unique index `(BillingAccountId, UserId)` |
+
 ### จับคู่ชื่อผู้โอน (ข้ามภาษา / ถูกตัด) — `CounterpartyNameMatcher`
 | รหัส | ชั้น | เคส | คาดหวัง |
 | --- | --- | --- | --- |
