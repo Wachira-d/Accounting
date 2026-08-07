@@ -88,6 +88,7 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | **`/api/v1` base** | `Controllers/V1/PublicApiControllerBase.cs` | ✅ ด่าน 3 ชั้นรวมเมธอดเดียว (key → scope → ฟีเจอร์เปิด) + `MeterAsync` อ่าน `Idempotency-Key` header อัตโนมัติ |
 | **`/api/v1/ocr`** | `Controllers/V1/OcrV1Controller.cs` | ✅ `scan` (คิดเงินหลังสำเร็จเท่านั้น) + `confirm` (ปิดลูปเรียนรู้ §7.3) |
 | **`/api/v1/bank`** | `Controllers/V1/BankV1Controller.cs` | ✅ `statements` (dedupe ด้วย ExternalId, คิดตามบรรทัดที่ประมวลผล) + `matches/confirm` |
+| **Portal `/connect`** | `wwwroot/connect/index.html` | ✅ ภาพรวม+ขั้นตอนเริ่มต้น · เลือกฟีเจอร์ (ยืนยันพร้อมราคา) · usage รายเดือน · ยอดรวมกลุ่ม — **ยิงเฉพาะ API สาธารณะ** |
 
 **Migration + backfill** (`DatabaseMigrationHelper.cs` บล็อก "BillingAccount"): additive
 ล้วน — `CREATE TABLE IF NOT EXISTS` + `ADD COLUMN IF NOT EXISTS` (nullable/มี default
@@ -382,7 +383,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
    เหลือ: ส่ง webhook จริง (HMAC), async job/batch, `/api/v1/documents`,
    onboarding wizard (§7.1)
 5. Billing สิ้นเดือน → ใบแจ้งหนี้/ใบกำกับอัตโนมัติผ่าน pipeline เอกสารเดิม (2 โหมด)
-6. Portal `/connect` + `AccountDomain` (subdomain → custom domain + verify) +
+6. 🔨 Portal `/connect` (หน้าหลักเสร็จแล้ว) + `AccountDomain` (subdomain → custom domain + verify) +
    LINE Login / Microsoft Entra ID (§8.1–8.2)
 7. เปิด 2 ฟีเจอร์แรก: OCR→DTO, statement→matching; Connector Dynamics เมื่อมีลูกค้าจริง
 
@@ -397,7 +398,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-07 (rev 7 — §9.4 บางส่วน: ApiKey ขยาย +_
+_Last verified against codebase: 2026-08-07 (rev 8 — portal /connect หน้าแรกใช้งานได้; rev 7 — §9.4 บางส่วน: ApiKey ขยาย +_
 _/api/v1 ocr/bank + ด่าน scope + ผูก UsageEvent ทุก call; rev 6 — §9.3 ลงโค้ด: Metering ครบชุด_
 _(ApiFeature/CompanyFeature/ApiPricingPlan/UsageEvent + service + admin/tenant API); rev 5 — §9.1 ลงโค้ดจริงแล้ว: BillingAccount/_
 _BillingAccountAdmin + Company FK 3 ตัว + migration backfill 1:1 → §3.1 ✅; rev 4 — §7.3 AI mandate ฝั่ง API: ปิดลูป_
