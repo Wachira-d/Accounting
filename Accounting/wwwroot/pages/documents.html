@@ -2761,6 +2761,10 @@
       // เป็น ground-truth ให้ AI เรียน
       onVatTypeChange(sel) {
         sel.dataset.userTouched = '1';
+        // เปลี่ยนอัตรา VAT → ช่อง "เคลม VAT" ต้องตามทันที ไม่งั้นค่าที่ค้างอยู่
+        // จะกลายเป็นการตัดสินใจที่ไม่มีใครตั้งใจ (0% ✓ → เปลี่ยนเป็น 7% แล้ว
+        // ยัง ✓ = เคลมภาษีซื้อโดยที่ผู้ใช้ไม่เคยเลือก)
+        this.syncVatClaimWithRate(sel.closest('.line-card'));
         // Ground-truth feedback (best-effort).
         const fbId = sel.dataset.aiFeedbackId;
         if (fbId) {
@@ -4510,7 +4514,47 @@
       // Click ไอคอนสลับ ✓ ↔ 🚫 ต่อบรรทัด. 🚫 = VAT ไม่ขึ้น ภพ.30
       // (รวมเป็น cost แทน). User override จะ "ล็อค" ไม่ให้ heuristic
       // เปลี่ยนตามคำในรายการ.
+      /** ซิงก์ช่อง "เคลม VAT" ให้ตรงกับอัตรา VAT ของบรรทัดนั้นเสมอ
+       *
+       * บรรทัดที่ VAT = 0% หรือ "ยกเว้น" ไม่มีภาษีซื้อให้เคลม การโชว์ ✓ ไว้
+       * คือการบอกสถานะที่เป็นไปไม่ได้ — และเป็นกับดักจริงตอนผู้ใช้เปลี่ยน
+       * อัตรากลับเป็น 7% ภายหลัง (ค่า ✓ ที่ค้างอยู่จะกลายเป็น "เคลม" ทันที
+       * โดยไม่มีใครตั้งใจ). server บังคับซ้ำอีกชั้นตอนบันทึก
+       */
+      syncVatClaimWithRate(row) {
+        const claimEl = row?.querySelector('[data-f="vatClaim"]');
+        const vatSel = row?.querySelector('[data-f="vat"]');
+        if (!claimEl || !vatSel) return;
+        const rate = parseFloat(vatSel.value);
+        const hasVat = !isNaN(rate) && rate > 0;
+
+        claimEl.dataset.noVat = hasVat ? '' : '1';
+        if (!hasVat) {
+          // จำค่าที่ผู้ใช้เลือกไว้ก่อนหน้า เพื่อคืนให้ตอนกลับมาเป็น 7%
+          if (claimEl.dataset.claim !== 'false') claimEl.dataset.prevClaim = claimEl.dataset.claim || 'true';
+          claimEl.dataset.claim = 'false';
+          claimEl.textContent = '—';
+          claimEl.style.color = '#9ca3af';
+          claimEl.style.cursor = 'default';
+          claimEl.title = rate === -1
+            ? 'ยกเว้น VAT (§81) — ไม่มีภาษีซื้อให้เคลม'
+            : 'อัตรา 0% — ไม่มีภาษีซื้อให้เคลม';
+        } else {
+          claimEl.style.cursor = 'pointer';
+          // คืนสถานะเดิม: ถ้าเคยติ๊กออกเพราะเป็นภาษีซื้อต้องห้าม ต้องคงไว้
+          const restore = claimEl.dataset.reason ? 'false' : (claimEl.dataset.prevClaim || 'true');
+          claimEl.dataset.claim = restore;
+          claimEl.textContent = restore === 'true' ? '✓' : '🚫';
+          claimEl.style.color = restore === 'true' ? '' : '#dc2626';
+          claimEl.title = restore === 'true'
+            ? 'VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ'
+            : `VAT ต้องห้าม — ไม่นำเข้า ภพ.30 (${claimEl.dataset.reason || 'ผู้ใช้กำหนดเอง'})`;
+        }
+      },
+
       toggleVatClaim(el) {
+        // บรรทัดที่ไม่มี VAT กดติ๊กไม่ได้ — ไม่มีอะไรให้เคลม
+        if (el.dataset.noVat === '1') return;
         const cur = el.dataset.claim === 'true';
         const nxt = !cur;
         el.dataset.claim = nxt ? 'true' : 'false';
@@ -4880,6 +4924,9 @@
               claimEl.textContent = claim ? '✓' : '🚫';
               claimEl.style.color = claim ? '' : '#dc2626';
               claimEl.title = claim ? 'VAT เคลมได้' : `VAT ต้องห้าม — ${l.vatNonClaimableReason || 'ไม่นำเข้า ภพ.30'}`;
+              // เอกสารเก่าที่บันทึกก่อนมีกฎนี้อาจเก็บ claim=true ทั้งที่ VAT=0
+              // → แสดงเป็น "—" ให้ตรงความจริง (server จะ normalize ตอนบันทึกครั้งถัดไป)
+              this.syncVatClaimWithRate(row);
             }
             // Per-line account picker — hydrate จาก server + AI feedback
             const accInp = row.querySelector('[data-f="accountCode"]');

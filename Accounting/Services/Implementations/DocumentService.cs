@@ -958,6 +958,19 @@ public class DocumentService : IDocumentService
                     enforcedClaimable = false;
                     enforcedReason ??= "บริษัทไม่ได้จดทะเบียน VAT — เคลมภาษีซื้อไม่ได้ (รวมเป็นต้นทุน)";
                 }
+                // ไม่มี VAT บนบรรทัด = ไม่มีอะไรให้เคลม → บังคับ false เสมอ
+                // ตัวเลขไม่เปลี่ยน (ทุกสูตรคูณ/บวกกับ VatAmount ซึ่งเป็น 0 อยู่แล้ว)
+                // แต่ **ห้ามเก็บ state ที่เป็นไปไม่ได้ลงฐาน**: แถวที่
+                // IsVatClaimable=true แต่ VatAmount=0 ทำให้ UI โชว์ "✓ เคลม VAT"
+                // ทั้งที่ไม่มีภาษีให้เคลม (ผู้ใช้เข้าใจผิด) และถ้าวันหนึ่งมีโค้ด
+                // ใหม่นับ "จำนวนบรรทัดที่เคลมได้" แทนผลรวมยอด จะได้ตัวเลขผิดทันที
+                // เหตุผล = null โดยตั้งใจ — นี่ไม่ใช่ภาษีซื้อต้องห้าม §82/5
+                // จึงไม่ควรขึ้นป้ายเตือนสีแดงให้ผู้ใช้ตกใจ
+                if (amt.VatAmount <= 0)
+                {
+                    enforcedClaimable = false;
+                    enforcedReason = null;
+                }
                 _db.DocumentLines.Add(new DocumentLine
                 {
                     DocumentId = doc.Id,
@@ -1653,6 +1666,19 @@ public class DocumentService : IDocumentService
                 {
                     enforcedClaimable = false;
                     enforcedReason ??= "บริษัทไม่ได้จดทะเบียน VAT — เคลมภาษีซื้อไม่ได้ (รวมเป็นต้นทุน)";
+                }
+                // ไม่มี VAT บนบรรทัด = ไม่มีอะไรให้เคลม → บังคับ false เสมอ
+                // ตัวเลขไม่เปลี่ยน (ทุกสูตรคูณ/บวกกับ VatAmount ซึ่งเป็น 0 อยู่แล้ว)
+                // แต่ **ห้ามเก็บ state ที่เป็นไปไม่ได้ลงฐาน**: แถวที่
+                // IsVatClaimable=true แต่ VatAmount=0 ทำให้ UI โชว์ "✓ เคลม VAT"
+                // ทั้งที่ไม่มีภาษีให้เคลม (ผู้ใช้เข้าใจผิด) และถ้าวันหนึ่งมีโค้ด
+                // ใหม่นับ "จำนวนบรรทัดที่เคลมได้" แทนผลรวมยอด จะได้ตัวเลขผิดทันที
+                // เหตุผล = null โดยตั้งใจ — นี่ไม่ใช่ภาษีซื้อต้องห้าม §82/5
+                // จึงไม่ควรขึ้นป้ายเตือนสีแดงให้ผู้ใช้ตกใจ
+                if (amt.VatAmount <= 0)
+                {
+                    enforcedClaimable = false;
+                    enforcedReason = null;
                 }
                 _db.DocumentLines.Add(new DocumentLine
                 {
