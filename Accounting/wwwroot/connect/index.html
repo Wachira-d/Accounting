@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NextAcc Connect — พอร์ทัลลูกค้า API</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{--primary:#4F46E5;--primary-dark:#4338CA;--success:#059669;--warning:#D97706;--danger:#DC2626;
+    --g50:#F9FAFB;--g100:#F3F4F6;--g200:#E5E7EB;--g300:#D1D5DB;--g500:#6B7280;--g600:#4B5563;--g700:#374151;--g900:#111827;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Noto Sans Thai','Sarabun',Tahoma,sans-serif;background:var(--g100);color:var(--g900)}
+  .topbar{background:#fff;border-bottom:1px solid var(--g200);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .brand{font-weight:800;font-size:17px;color:var(--primary)}
+  .brand small{font-weight:500;color:var(--g500);font-size:12px;margin-left:6px}
+  .wrap{max-width:1200px;margin:0 auto;padding:20px}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--g200);margin-bottom:20px;flex-wrap:wrap}
+  .tab{padding:10px 16px;cursor:pointer;border:none;background:none;font-family:inherit;font-size:14px;color:var(--g600);border-bottom:2px solid transparent}
+  .tab.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+  .card{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:16px}
+  .card p.sub{margin:0 0 14px;font-size:13px;color:var(--g500)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:14px}
+  .kpi .v{font-size:22px;font-weight:700}
+  .kpi .l{font-size:12px;color:var(--g500);margin-top:2px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--g100)}
+  th{font-size:12px;color:var(--g500);font-weight:600;background:var(--g50)}
+  .right{text-align:right}
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:inherit}
+  .btn-primary{background:var(--primary);color:#fff}
+  .btn-primary:hover{background:var(--primary-dark)}
+  .btn-ghost{background:#fff;color:var(--g700);border:1px solid var(--g300)}
+  .btn-danger{background:#fff;color:var(--danger);border:1px solid #FCA5A5}
+  .btn:disabled{opacity:.55;cursor:not-allowed}
+  select,input{padding:8px 10px;border:1px solid var(--g300);border-radius:8px;font-family:inherit;font-size:13px}
+  .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+  .b-on{background:#DCFCE7;color:#166534}.b-off{background:var(--g100);color:var(--g500)}
+  .b-warn{background:#FEF3C7;color:#92400E}.b-info{background:#DBEAFE;color:#1E40AF}
+  .feat{display:flex;gap:14px;align-items:flex-start;padding:14px;border:1px solid var(--g200);border-radius:10px;margin-bottom:10px}
+  .feat .body{flex:1;min-width:0}
+  .feat .name{font-weight:600;font-size:14px}
+  .feat .desc{font-size:12.5px;color:var(--g600);margin-top:3px}
+  .feat .price{font-size:13px;margin-top:6px;font-weight:600;color:var(--primary)}
+  .switch{position:relative;width:46px;height:26px;flex:none}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:var(--g300);border-radius:99px;cursor:pointer;transition:.2s}
+  .slider:before{content:"";position:absolute;height:20px;width:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+  input:checked+.slider{background:var(--success)}
+  input:checked+.slider:before{transform:translateX(20px)}
+  input:disabled+.slider{opacity:.5;cursor:not-allowed}
+  .empty{padding:32px;text-align:center;color:var(--g500);font-size:13px}
+  .note{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#1E3A8A;margin-bottom:14px}
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--g900);color:#fff;padding:12px 18px;border-radius:8px;font-size:13px;z-index:99;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1}
+  .toast.err{background:var(--danger)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div><span class="brand">NextAcc Connect</span><small>พอร์ทัลลูกค้าที่เชื่อมผ่าน API</small></div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <select id="companySel" onchange="App.switchCompany()"></select>
+    <a href="/connect/workbench.html" class="btn btn-primary">🧰 โต๊ะทำงาน</a>
+    <a href="/pages/dashboard.html" class="btn btn-ghost">กลับระบบหลัก</a>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="tabs">
+    <button class="tab active" data-tab="overview" onclick="App.tab('overview')">ภาพรวม</button>
+    <button class="tab" data-tab="features" onclick="App.tab('features')">ฟีเจอร์ &amp; ราคา</button>
+    <button class="tab" data-tab="usage" onclick="App.tab('usage')">การใช้งาน</button>
+    <button class="tab" data-tab="account" onclick="App.tab('account')">ยอดรวมกลุ่ม</button>
+  </div>
+
+  <div id="tab-overview">
+    <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <h2>เริ่มต้นใช้งาน</h2>
+      <p class="sub">4 ขั้นตอน — ทำเองได้ทั้งหมด ไม่ต้องรอผู้ดูแลระบบ</p>
+      <div id="steps"></div>
+    </div>
+  </div>
+
+  <div id="tab-features" style="display:none">
+    <div class="note">
+      เปิด/ปิดได้เองตลอดเวลา — <b>ปิดแล้วหยุดคิดค่าบริการทันที</b> และการเรียก API ของฟีเจอร์นั้นจะถูกปฏิเสธ
+      · ราคาที่แสดงคือราคาที่มีผลกับบัญชีของคุณ ณ ตอนนี้
+    </div>
+    <div class="card"><div id="featureList"><div class="empty">กำลังโหลด…</div></div></div>
+  </div>
+
+  <div id="tab-usage" style="display:none">
+    <div class="card">
+      <h2>การใช้งานของบริษัทนี้</h2>
+      <p class="sub">นับตามงานที่สำเร็จจริง — งานที่ล้มเหลวไม่ถูกคิดค่าบริการ</p>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <select id="usageMonth" onchange="App.loadUsage()"></select>
+      </div>
+      <div id="usageTable"><div class="empty">กำลังโหลด…</div></div>
+    </div>
+  </div>
+
+  <div id="tab-account" style="display:none">
+    <div class="card">
+      <h2>ยอดรวมทุกบริษัทในกลุ่ม</h2>
+      <p class="sub">เห็นได้เฉพาะผู้ดูแลกลุ่ม — การเป็นสมาชิกบริษัทหนึ่งไม่ให้สิทธิ์เห็นยอดของบริษัทอื่น</p>
+      <div id="accountBox"><div class="empty">กำลังโหลด…</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/**
+ * พอร์ทัลลูกค้า API (ACCOUNT_STRUCTURE.md §8)
+ *
+ * **กฎเหล็กของหน้านี้**: ยิงได้เฉพาะ API สาธารณะ (/api/companies/{id}/metering)
+ * ห้ามแตะ endpoint ภายในและห้ามเก็บข้อมูลของตัวเอง — ทำให้เราเป็นลูกค้ารายแรก
+ * ของ API ตัวเอง (ช่องโหว่ของ API จะโผล่ให้เราเห็นก่อนลูกค้าเจอ) และวันไหน
+ * อยากย้ายไปโฮสต์แยก/เขียนใหม่เป็น React ก็ยกโฟลเดอร์นี้ออกไปได้ทั้งก้อน
+ */
+const App = {
+  companies: [], companyId: null, features: [],
+
+  async init() {
+    const t = localStorage.getItem('token');
+    if (!t) { location.href = '/index.html'; return; }
+    try {
+      // GET /api/company = บริษัทที่ user นี้เป็นสมาชิก (CompanyController.GetMyCompanies)
+      const me = await this.get('/api/company');
+      this.companies = me?.data || [];
+      if (!this.companies.length) { this.toast('บัญชีนี้ยังไม่มีบริษัท', true); return; }
+      this.companyId = localStorage.getItem('companyId') || this.companies[0].id;
+      document.getElementById('companySel').innerHTML =
+        this.companies.map(c => `<option value="${c.id}" ${c.id === this.companyId ? 'selected' : ''}>${this.esc(c.name)}</option>`).join('');
+      this.buildMonths();
+      await this.loadAll();
+    } catch (e) { this.toast(e.message || 'โหลดข้อมูลไม่สำเร็จ', true); }
+  },
+
+  buildMonths() {
+    const sel = document.getElementById('usageMonth');
+    const now = new Date();
+    let html = '';
+    // ย้อนหลัง 12 เดือน — ตรงกับ retention ที่ลูกค้าต้องใช้ตรวจบิล
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      html += `<option value="${v}">${d.toLocaleDateString('th-TH', { year: 'numeric', month: 'long' })}</option>`;
+    }
+    sel.innerHTML = html;
+  },
+
+  switchCompany() {
+    this.companyId = document.getElementById('companySel').value;
+    localStorage.setItem('companyId', this.companyId);
+    this.loadAll();
+  },
+
+  tab(name) {
+    ['overview', 'features', 'usage', 'account'].forEach(t => {
+      document.getElementById('tab-' + t).style.display = t === name ? '' : 'none';
+      document.querySelector(`.tab[data-tab="${t}"]`).classList.toggle('active', t === name);
+    });
+    if (name === 'account') this.loadAccount();
+  },
+
+  async loadAll() { await Promise.all([this.loadFeatures(), this.loadUsage()]); },
+
+  // ─── ฟีเจอร์ ───────────────────────────────────────────────
+  async loadFeatures() {
+    try {
+      const r = await this.get(`/api/companies/${this.companyId}/metering/features`);
+      this.features = r?.data || [];
+      this.renderFeatures();
+      this.renderOverview();
+    } catch (e) {
+      document.getElementById('featureList').innerHTML = `<div class="empty">${this.esc(e.message)}</div>`;
+    }
+  },
+
+  renderFeatures() {
+    const el = document.getElementById('featureList');
+    if (!this.features.length) { el.innerHTML = '<div class="empty">ยังไม่มีฟีเจอร์เปิดขาย</div>'; return; }
+    el.innerHTML = this.features.map(f => {
+      const p = f.pricing;
+      // แสดงราคาให้ตรงกับวิธีคิดเงินจริง — ผู้ใช้ต้องเข้าใจก่อนกดเปิด
+      let price = f.priceNote || 'ยังไม่ได้กำหนดราคา';
+      if (p) {
+        const m = p.method;
+        if (m === 'FlatMonthly') price = `เหมา ${this.money(p.unitPrice)} บาท/เดือน`;
+        else if (m === 'Tiered') price = `เริ่มต้น ${this.money(p.unitPrice)} บาท/${f.unitLabel} (ยิ่งใช้มากยิ่งถูก)`;
+        else price = `${this.money(p.unitPrice)} บาท/${f.unitLabel}`;
+        if (p.freeQuotaPerMonth > 0) price += ` · ฟรี ${p.freeQuotaPerMonth} ${f.unitLabel}แรกของเดือน`;
+      }
+      // ฟีเจอร์ที่ปิดรับผู้ใช้ใหม่แล้ว แต่บริษัทนี้เปิดอยู่ → ใช้ต่อได้ ปิดเองได้
+      const retired = !f.isPublished;
+      return `<div class="feat">
+        <label class="switch">
+          <input type="checkbox" ${f.isEnabled ? 'checked' : ''} ${(retired && !f.isEnabled) ? 'disabled' : ''}
+                 onchange="App.toggle('${f.featureCode}', this)">
+          <span class="slider"></span>
+        </label>
+        <div class="body">
+          <div class="name">${this.esc(f.name)}
+            ${f.isEnabled ? '<span class="badge b-on">เปิดใช้</span>' : '<span class="badge b-off">ปิด</span>'}
+            ${retired ? '<span class="badge b-warn">ปิดรับผู้ใช้ใหม่</span>' : ''}
+          </div>
+          <div class="desc">${this.esc(f.description || '')}</div>
+          <div class="price">${this.esc(price)}</div>
+          ${f.enabledAt ? `<div class="desc" style="color:var(--g500);margin-top:4px">เปิดเมื่อ ${new Date(f.enabledAt).toLocaleString('th-TH')} โดย ${this.esc(f.enabledBy || '-')}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  },
+
+  async toggle(code, input) {
+    const on = input.checked;
+    const f = this.features.find(x => x.featureCode === code);
+    // การกดเปิด = ยอมรับค่าใช้จ่าย จึงต้องยืนยันพร้อมแสดงราคาอีกครั้ง
+    if (on && f?.pricing) {
+      const unit = f.pricing.method === 'FlatMonthly'
+        ? `${this.money(f.pricing.unitPrice)} บาท/เดือน`
+        : `${this.money(f.pricing.unitPrice)} บาท/${f.unitLabel}`;
+      if (!confirm(`เปิดใช้ "${f.name}"\n\nอัตราค่าบริการ: ${unit}`
+        + (f.pricing.freeQuotaPerMonth > 0 ? `\nฟรี ${f.pricing.freeQuotaPerMonth} ${f.unitLabel}แรกของทุกเดือน` : '')
+        + `\n\nปิดได้เองตลอดเวลา — ปิดแล้วหยุดคิดค่าบริการทันที\n\nยืนยันเปิดใช้?`)) {
+        input.checked = false; return;
+      }
+    }
+    input.disabled = true;
+    try {
+      const r = await this.post(`/api/companies/${this.companyId}/metering/features/${code}`, { enabled: on });
+      this.toast(r?.message || 'บันทึกแล้ว');
+      await this.loadFeatures();
+    } catch (e) {
+      input.checked = !on;
+      this.toast(e.message || 'เปลี่ยนสถานะไม่สำเร็จ', true);
+    } finally { input.disabled = false; }
+  },
+
+  // ─── การใช้งาน ─────────────────────────────────────────────
+  async loadUsage() {
+    const el = document.getElementById('usageTable');
+    const [y, m] = (document.getElementById('usageMonth').value || '').split('-');
+    try {
+      const r = await this.get(`/api/companies/${this.companyId}/metering/usage?year=${y}&month=${m}`);
+      const items = r?.data?.items || [];
+      if (!items.length) { el.innerHTML = '<div class="empty">ยังไม่มีการใช้งานในเดือนนี้</div>'; return; }
+      el.innerHTML = `<table>
+        <tr><th>ฟีเจอร์</th><th class="right">จำนวน</th><th class="right">ในโควตาฟรี</th><th class="right">ค่าบริการ (บาท)</th></tr>
+        ${items.map(i => `<tr>
+          <td>${this.esc(i.featureName)}</td>
+          <td class="right">${i.totalQuantity.toLocaleString()} ${this.esc(i.unitLabel)}</td>
+          <td class="right">${i.freeQuantity ? i.freeQuantity.toLocaleString() : '-'}</td>
+          <td class="right"><b>${this.money(i.totalCharged)}</b></td>
+        </tr>`).join('')}
+        <tr><td colspan="3" class="right"><b>รวม</b></td><td class="right"><b>${this.money(r.data.totalCharged)}</b></td></tr>
+      </table>`;
+      this.renderOverview(r.data.totalCharged);
+    } catch (e) { el.innerHTML = `<div class="empty">${this.esc(e.message)}</div>`; }
+  },
+
+  async loadAccount() {
+    const el = document.getElementById('accountBox');
+    const [y, m] = (document.getElementById('usageMonth').value || '').split('-');
+    try {
+      const r = await this.get(`/api/companies/${this.companyId}/metering/usage/account?year=${y}&month=${m}`);
+      const d = r?.data || {};
+      const groups = d.byCompany || [];
+      el.innerHTML = `
+        <div class="kpis">
+          <div class="kpi"><div class="v">${this.esc(d.accountName || '-')}</div><div class="l">กลุ่มผู้จ่ายเงิน</div></div>
+          <div class="kpi"><div class="v">${this.esc(d.paymentModel === 'Prepaid' ? 'เติมเครดิตล่วงหน้า' : 'ใช้ก่อนจ่ายทีหลัง')}</div><div class="l">รูปแบบชำระ</div></div>
+          ${d.paymentModel === 'Prepaid' ? `<div class="kpi"><div class="v">${this.money(d.creditBalance)}</div><div class="l">เครดิตคงเหลือ (บาท)</div></div>` : ''}
+          <div class="kpi"><div class="v">${this.money(d.totalCharged)}</div><div class="l">ค่าบริการเดือนนี้ (บาท)</div></div>
+        </div>
+        ${groups.length ? `<table>
+          <tr><th>บริษัท</th><th>ฟีเจอร์</th><th class="right">จำนวน</th><th class="right">ค่าบริการ</th></tr>
+          ${groups.map(g => g.items.map((i, idx) => `<tr>
+            <td>${idx === 0 ? this.esc(g.companyName) : ''}</td>
+            <td>${this.esc(i.featureName)}</td>
+            <td class="right">${i.totalQuantity.toLocaleString()} ${this.esc(i.unitLabel)}</td>
+            <td class="right">${this.money(i.totalCharged)}</td>
+          </tr>`).join('')).join('')}
+        </table>` : '<div class="empty">ยังไม่มีการใช้งานในเดือนนี้</div>'}`;
+    } catch (e) {
+      el.innerHTML = `<div class="empty">${this.esc(e.message)}</div>`;
+    }
+  },
+
+  renderOverview(charged) {
+    const on = this.features.filter(f => f.isEnabled).length;
+    document.getElementById('kpis').innerHTML = `
+      <div class="kpi"><div class="v">${on}/${this.features.length}</div><div class="l">ฟีเจอร์ที่เปิดใช้</div></div>
+      <div class="kpi"><div class="v">${charged != null ? this.money(charged) : '—'}</div><div class="l">ค่าบริการเดือนนี้ (บาท)</div></div>`;
+
+    const steps = [
+      { ok: true, t: 'สร้างบัญชีและบริษัท', d: 'เสร็จแล้ว' },
+      { ok: on > 0, t: 'เลือกฟีเจอร์ที่จะใช้', d: on > 0 ? `เปิดแล้ว ${on} ฟีเจอร์` : 'ยังไม่ได้เปิดฟีเจอร์ใดเลย — ไปที่แท็บ "ฟีเจอร์ & ราคา"' },
+      { ok: false, t: 'สร้าง API key + กำหนดสิทธิ์ (scope)', d: 'จัดการที่หน้า Integration ของระบบหลัก — คีย์ต้องมี scope จึงจะเรียก /api/v1 ได้' },
+      { ok: false, t: 'ทดสอบด้วยคีย์ sandbox แล้วสลับ production', d: 'งานที่ยิงด้วยคีย์ sandbox จะไม่ถูกคิดค่าบริการ' },
+    ];
+    document.getElementById('steps').innerHTML = steps.map((s, i) => `
+      <div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--g100)">
+        <div style="flex:none;width:24px;height:24px;border-radius:99px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;
+             background:${s.ok ? '#DCFCE7' : 'var(--g100)'};color:${s.ok ? '#166534' : 'var(--g500)'}">${s.ok ? '✓' : i + 1}</div>
+        <div><div style="font-weight:600;font-size:13.5px">${s.t}</div>
+             <div style="font-size:12.5px;color:var(--g600)">${s.d}</div></div>
+      </div>`).join('');
+  },
+
+  // ─── helpers ──────────────────────────────────────────────
+  async req(url, opt = {}) {
+    const res = await fetch(url, {
+      ...opt,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}`, ...(opt.headers || {}) },
+    });
+    if (res.status === 401) { location.href = '/index.html'; throw new Error('เซสชันหมดอายุ'); }
+    let j = null;
+    try { j = await res.json(); } catch { /* body ว่าง */ }
+    if (!res.ok || j?.success === false) throw new Error(j?.message || `เกิดข้อผิดพลาด (${res.status})`);
+    return j;
+  },
+  get(u) { return this.req(u); },
+  post(u, b) { return this.req(u, { method: 'POST', body: JSON.stringify(b) }); },
+
+  money(v) { return Number(v || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+  esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
+  toast(msg, err) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
+    setTimeout(() => t.className = 'toast' + (err ? ' err' : ''), 3200);
+  },
+};
+App.init();
+</script>
+</body>
+</html>

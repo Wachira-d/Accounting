@@ -83,5 +83,17 @@ public class AccountSubscription : BaseEntity
     /// Reset when EndDate moves forward (renewal flow).</summary>
     public int ExpiryRemindersSentMask { get; set; } = 0;
 
+    /// <summary>กลุ่ม/องค์กรที่เป็นเจ้าของแพลนนี้ (ACCOUNT_STRUCTURE.md §3.2).
+    ///
+    /// เพิ่มมาเพื่อย้ายสมอจาก "คน" (<see cref="OwnerUserId"/>) ไปเป็น "องค์กร" —
+    /// เจ้าของลาออก/เปลี่ยนมือแล้วสัญญาไม่หลุด และใบกำกับภาษีออกให้นิติบุคคลได้
+    ///
+    /// **ยังคง `OwnerUserId` ไว้** โดยเจตนา: เป็นเส้นทางที่ระบบเดิมใช้ resolve
+    /// โควตาอยู่ (`Subscription.AccountSubscriptionId` → แถวนี้) — การลบทิ้งจะ
+    /// กระทบ flow ที่ทำงานอยู่โดยไม่จำเป็น. migration backfill ให้ทุกแถวมี
+    /// BillingAccount 1:1 แล้ว จึงเปลี่ยนมาอ่านทางนี้ทีละจุดได้อย่างปลอดภัย</summary>
+    public Guid? BillingAccountId { get; set; }
+    public BillingAccount? BillingAccount { get; set; }
+
     public ICollection<Subscription> CompanySubscriptions { get; set; } = new List<Subscription>();
 }

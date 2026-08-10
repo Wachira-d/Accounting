@@ -5122,6 +5122,243 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_DocumentRevisions_Doc" ON "DocumentRevisions" ("DocumentId", "RevisionNumber");""",
 
+            // ===== BillingAccount — ชั้นผู้จ่ายเงินเหนือ Company (ACCOUNT_STRUCTURE.md §3.2) =====
+            // Additive ล้วน: ทุกคอลัมน์ที่เพิ่มบน Companies/AccountSubscriptions เป็น
+            // nullable หรือมี default ตรงกับพฤติกรรมเดิม → ระบบที่รันอยู่ไม่เปลี่ยนอะไรเลย
+            """
+            CREATE TABLE IF NOT EXISTS "BillingAccounts" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "Name" varchar(200) NOT NULL DEFAULT '',
+                "TaxId" varchar(13) NULL,
+                "BillingAddress" text NULL,
+                "BillingBranchCode" varchar(5) NULL DEFAULT '00000',
+                "BillingEmail" varchar(200) NULL,
+                "ContactPhone" varchar(50) NULL,
+                "BillingMode" integer NOT NULL DEFAULT 1,
+                "PaymentModel" integer NOT NULL DEFAULT 1,
+                "CreditBalance" decimal(18,2) NOT NULL DEFAULT 0,
+                "PostpaidCreditLimit" decimal(18,2) NOT NULL DEFAULT 0,
+                "GracePeriodDays" integer NOT NULL DEFAULT 7,
+                "IsSandbox" boolean NOT NULL DEFAULT false,
+                "Status" integer NOT NULL DEFAULT 1,
+                "SuspendReason" varchar(500) NULL,
+                "SuspendedAt" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_BillingAccounts_TaxId" ON "BillingAccounts" ("TaxId") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "BillingAccountAdmins" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "BillingAccountId" uuid NOT NULL,
+                "UserId" uuid NOT NULL,
+                "IsPrimary" boolean NOT NULL DEFAULT false,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "FK_BillingAccountAdmins_Account" FOREIGN KEY ("BillingAccountId")
+                    REFERENCES "BillingAccounts"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_BillingAccountAdmins_User" FOREIGN KEY ("UserId")
+                    REFERENCES "Users"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_BillingAccountAdmins_Account_User" ON "BillingAccountAdmins" ("BillingAccountId", "UserId") WHERE "IsDeleted" = false;""",
+
+            // FK บน Companies — nullable ทั้งคู่ บริษัทเดิมที่ไม่ได้อยู่กลุ่มไหนไม่กระทบ
+            """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "BillingAccountId" uuid NULL;""",
+            """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "ParentCompanyId" uuid NULL;""",
+            // CompanyKind default 1 = Full = พฤติกรรมเดิมของทุกบริษัทที่มีอยู่
+            """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "CompanyKind" integer NOT NULL DEFAULT 1;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Companies_BillingAccount" ON "Companies" ("BillingAccountId") WHERE "IsDeleted" = false;""",
+            """ALTER TABLE "AccountSubscriptions" ADD COLUMN IF NOT EXISTS "BillingAccountId" uuid NULL;""",
+
+            // FK แยกจาก ADD COLUMN + guard ด้วย pg_constraint — ALTER TABLE ADD
+            // CONSTRAINT ไม่มี IF NOT EXISTS ใน Postgres รันซ้ำจะ error
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_Companies_BillingAccount') THEN
+                    ALTER TABLE "Companies" ADD CONSTRAINT "FK_Companies_BillingAccount"
+                        FOREIGN KEY ("BillingAccountId") REFERENCES "BillingAccounts"("Id") ON DELETE SET NULL;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_Companies_ParentCompany') THEN
+                    ALTER TABLE "Companies" ADD CONSTRAINT "FK_Companies_ParentCompany"
+                        FOREIGN KEY ("ParentCompanyId") REFERENCES "Companies"("Id") ON DELETE RESTRICT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_AccountSubscriptions_BillingAccount') THEN
+                    ALTER TABLE "AccountSubscriptions" ADD CONSTRAINT "FK_AccountSubscriptions_BillingAccount"
+                        FOREIGN KEY ("BillingAccountId") REFERENCES "BillingAccounts"("Id") ON DELETE SET NULL;
+                END IF;
+            END $$;
+            """,
+
+            // ===== Backfill: AccountSubscription เดิม 1 แถว → BillingAccount 1 แถว =====
+            // ลูกค้าเก่าต้องไม่รู้สึกอะไรเลย — แพลนกลุ่มที่มีอยู่ได้ "องค์กรผู้จ่าย"
+            // ทันทีโดยไม่ต้องให้ใครมากรอกอะไร เจ้าของเดิมกลายเป็นผู้ดูแลหลัก
+            // และบริษัททุกใบใต้แพลนนั้นถูกผูกเข้ากลุ่มให้เอง
+            //
+            // idempotent: ทุก statement มี NOT EXISTS/IS NULL guard รันซ้ำได้ไม่ซ้ำซ้อน
+            """
+            DO $$
+            DECLARE r RECORD;
+                    newId uuid;
+            BEGIN
+                FOR r IN
+                    SELECT a."Id" AS acct_id, a."OwnerUserId", u."FullName", u."Email"
+                    FROM "AccountSubscriptions" a
+                    JOIN "Users" u ON u."Id" = a."OwnerUserId"
+                    WHERE a."BillingAccountId" IS NULL AND a."IsDeleted" = false
+                LOOP
+                    newId := gen_random_uuid();
+                    INSERT INTO "BillingAccounts" ("Id", "Name", "BillingEmail", "CreatedBy")
+                    VALUES (newId,
+                            COALESCE(NULLIF(r."FullName", ''), r."Email", 'บัญชีผู้ใช้'),
+                            r."Email",
+                            'migration:billing-account-backfill');
+
+                    INSERT INTO "BillingAccountAdmins" ("Id", "BillingAccountId", "UserId", "IsPrimary", "CreatedBy")
+                    VALUES (gen_random_uuid(), newId, r."OwnerUserId", true,
+                            'migration:billing-account-backfill');
+
+                    UPDATE "AccountSubscriptions" SET "BillingAccountId" = newId WHERE "Id" = r.acct_id;
+
+                    -- บริษัททุกใบที่ subscription ชี้มาที่แพลนกลุ่มนี้ → เข้ากลุ่มเดียวกัน
+                    UPDATE "Companies" c SET "BillingAccountId" = newId
+                    FROM "Subscriptions" s
+                    WHERE s."CompanyId" = c."Id"
+                      AND s."AccountSubscriptionId" = r.acct_id
+                      AND s."IsDeleted" = false
+                      AND c."BillingAccountId" IS NULL;
+                END LOOP;
+            END $$;
+            """,
+
+            // ===== Metering: ฟีเจอร์ / ราคา / การใช้งาน (ACCOUNT_STRUCTURE.md §6) =====
+            """
+            CREATE TABLE IF NOT EXISTS "ApiFeatures" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "FeatureCode" varchar(60) NOT NULL,
+                "Name" varchar(200) NOT NULL DEFAULT '',
+                "NameEn" varchar(200) NULL,
+                "Description" text NULL,
+                "UnitLabel" varchar(50) NOT NULL DEFAULT 'รายการ',
+                "IsPublished" boolean NOT NULL DEFAULT true,
+                "RequiredScopes" varchar(300) NOT NULL DEFAULT '',
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_ApiFeatures_Code" ON "ApiFeatures" ("FeatureCode") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "CompanyFeatures" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "FeatureCode" varchar(60) NOT NULL,
+                "IsEnabled" boolean NOT NULL DEFAULT false,
+                "EnabledAt" timestamp NULL,
+                "EnabledBy" varchar(200) NULL,
+                "DisabledAt" timestamp NULL,
+                "DisabledBy" varchar(200) NULL,
+                "AcceptedUnitPrice" decimal(18,4) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CompanyFeatures_Company_Code" ON "CompanyFeatures" ("CompanyId", "FeatureCode") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "ApiPricingPlans" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "FeatureCode" varchar(60) NOT NULL,
+                "BillingAccountId" uuid NULL,
+                "Method" integer NOT NULL DEFAULT 1,
+                "UnitPrice" decimal(18,4) NOT NULL DEFAULT 0,
+                "FreeQuotaPerMonth" integer NOT NULL DEFAULT 0,
+                "TierJson" text NULL,
+                "EffectiveFrom" timestamp NOT NULL DEFAULT now(),
+                "EffectiveTo" timestamp NULL,
+                "AdminNote" varchar(500) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ApiPricingPlans_Feature_From" ON "ApiPricingPlans" ("FeatureCode", "EffectiveFrom") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "UsageEvents" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "BillingAccountId" uuid NULL,
+                "BranchId" uuid NULL,
+                "ApiClientId" uuid NULL,
+                "FeatureCode" varchar(60) NOT NULL,
+                "Quantity" integer NOT NULL DEFAULT 1,
+                "UnitPriceSnapshot" decimal(18,4) NOT NULL DEFAULT 0,
+                "ChargedAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "CoveredByFreeQuota" boolean NOT NULL DEFAULT false,
+                "IsSandbox" boolean NOT NULL DEFAULT false,
+                "IdempotencyKey" varchar(200) NULL,
+                "RefEntityType" varchar(100) NULL,
+                "RefEntityId" uuid NULL,
+                "BilledPeriod" varchar(7) NULL,
+                "BilledDocumentId" uuid NULL,
+                "OccurredAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_UsageEvents_Company_At" ON "UsageEvents" ("CompanyId", "OccurredAt") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_UsageEvents_Account_At" ON "UsageEvents" ("BillingAccountId", "OccurredAt") WHERE "IsDeleted" = false;""",
+            // กันเก็บเงินซ้ำที่ระดับฐานข้อมูล — เช็คในโค้ดอย่างเดียวไม่พอเมื่อ
+            // 2 request ของ client ชนกันพอดี (service จับ DbUpdateException แล้ว
+            // คืนผลว่าเป็น duplicate ตามเจตนาของ idempotency)
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_UsageEvents_Idem" ON "UsageEvents" ("CompanyId", "IdempotencyKey") WHERE "IdempotencyKey" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // Seed แคตตาล็อกฟีเจอร์ตั้งต้น — ไม่ตั้งราคาให้ (ApiPricingPlan ว่าง)
+            // เพราะราคาเป็นการตัดสินใจทางธุรกิจที่ admin ต้องกรอกเอง; ระบบจะนับ
+            // การใช้งานไว้ที่ราคา 0 จนกว่าจะตั้งราคา แล้วเห็นปริมาณจริงก่อนตั้งได้
+            """
+            INSERT INTO "ApiFeatures" ("Id","FeatureCode","Name","NameEn","UnitLabel","RequiredScopes","SortOrder","Description","CreatedBy")
+            SELECT * FROM (VALUES
+                (gen_random_uuid(),'ocr.scan','สแกนเอกสารด้วย AI (OCR)','AI Document OCR','เอกสาร','ocr:write',10,'อ่านใบกำกับ/ใบเสร็จ แล้วคืนข้อมูลครบตาม §86/4 พร้อมระดับความมั่นใจรายฟิลด์','seed'),
+                (gen_random_uuid(),'bank.recon','กระทบยอดธนาคารอัตโนมัติ','Bank Reconciliation','บรรทัด','bank:write',20,'จับคู่รายการใน statement กับเอกสาร/JE รวมถึงแบบหลายรายการรวมเป็นหนึ่ง','seed'),
+                (gen_random_uuid(),'document.create','สร้างเอกสารผ่าน API','Create Document via API','ฉบับ','documents:write',30,'สร้างใบกำกับ/ใบเสร็จ/ใบสำคัญจ่าย พร้อมเลขที่ gap-free และลง JE ให้','seed'),
+                (gen_random_uuid(),'etax.generate','ออก e-Tax Invoice','e-Tax Invoice','ฉบับ','etax:write',40,'สร้าง XML ETDA + ลงลายมือชื่อดิจิทัล และนำส่งกรมสรรพากร','seed'),
+                (gen_random_uuid(),'assistant.ask','ผู้ช่วย AI ตอบคำถามบัญชี','AI Accounting Assistant','คำถาม','assistant:read',50,'ถามข้อมูลในระบบและกฎบัญชี/ภาษีไทย พร้อมอ้างอิงเอกสารจริง','seed')
+            ) AS v("Id","FeatureCode","Name","NameEn","UnitLabel","RequiredScopes","SortOrder","Description","CreatedBy")
+            WHERE NOT EXISTS (SELECT 1 FROM "ApiFeatures" f WHERE f."FeatureCode" = v."FeatureCode");
+            """,
+
+            // ===== ApiKey — ขยายให้รองรับ /api/v1 (ACCOUNT_STRUCTURE.md §7) =====
+            // ต่อยอดตารางเดิมแทนการสร้าง ApiClient ใหม่แข่งกัน — key ที่ลูกค้าใช้อยู่
+            // ทำงานเหมือนเดิมทุกประการ. Scopes เป็น NULL สำหรับคีย์เก่าทุกใบ
+            // = **ถูกกันออกจาก /api/v1 โดยอัตโนมัติ** ต้องตั้งใจให้สิทธิ์เท่านั้น
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "BillingAccountId" uuid NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "BranchId" uuid NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "Scopes" varchar(300) NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "WebhookUrl" varchar(500) NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "WebhookSecret" text NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "ConnectorType" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "ConnectorConfigJson" text NULL;""",
+            """ALTER TABLE "ApiKeys" ADD COLUMN IF NOT EXISTS "IsSandbox" boolean NOT NULL DEFAULT false;""",
+
             // ===== Chatbot: public FAQ + tenant assistant (CHATBOT_PLAN.md) =====
             """
             CREATE TABLE IF NOT EXISTS "ChatConversations" (

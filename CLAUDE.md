@@ -516,3 +516,14 @@ return Ok(dto);  // UI โชว์ → user กด "ยืนยัน" จบ
 แปลว่า **doc ผิด** (โค้ดเป็น ground truth). ให้แก้ doc ทันทีในคอมมิต
 เดียวกับงานที่กำลังทำ — ห้ามรอ
 
+## 📗 ACCOUNT_STRUCTURE.md — โครงสร้างลูกค้า/กลุ่มบริษัท/สาขา/บิลลิ่ง/API
+
+`ACCOUNT_STRUCTURE.md` (root) คือ single source of truth ของชั้น
+**BillingAccount → Company → Branch**, ผลิตภัณฑ์ Connected (`/api/v1`),
+`UsageEvent`/pricing, portal `/connect` — ใช้กฎการดูแล**ชุดเดียวกับ
+DOCUMENT_FLOW.md ทุกข้อ**: แตะ entity/พฤติกรรมที่ไฟล์นั้นครอบ (Company,
+Branch, AccountSubscription, Subscription, ExternalIntegration/ApiClient,
+billing, quota resolution) → อัปเดตไฟล์ + ป้ายสถานะ (✅/🔨/📋) + บรรทัด
+`Last verified` ในคอมมิตเดียวกัน. ไฟล์นี้แยกส่วน "มีจริง" กับ "ออกแบบไว้"
+ชัดเจน — ห้ามปล่อยให้ 📋 ที่สร้างเสร็จแล้วยังติดป้ายเดิม
+

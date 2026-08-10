@@ -28,6 +28,12 @@ public class AccountingDbContext : DbContext
     // Subscription & Trial
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<AccountSubscription> AccountSubscriptions => Set<AccountSubscription>();
+    public DbSet<BillingAccount> BillingAccounts => Set<BillingAccount>();
+    public DbSet<BillingAccountAdmin> BillingAccountAdmins => Set<BillingAccountAdmin>();
+    public DbSet<ApiFeature> ApiFeatures => Set<ApiFeature>();
+    public DbSet<CompanyFeature> CompanyFeatures => Set<CompanyFeature>();
+    public DbSet<ApiPricingPlan> ApiPricingPlans => Set<ApiPricingPlan>();
+    public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
     public DbSet<TrialConfig> TrialConfigs => Set<TrialConfig>();
     public DbSet<SubscriptionHistory> SubscriptionHistories => Set<SubscriptionHistory>();
     public DbSet<PlanTemplate> PlanTemplates => Set<PlanTemplate>();
@@ -451,6 +457,14 @@ public class AccountingDbContext : DbContext
             e.Property(c => c.Name).HasMaxLength(500);
             e.Property(c => c.TaxId).HasMaxLength(13);
             e.Property(c => c.BaseCurrency).HasMaxLength(3);
+            // สังกัดกลุ่มผู้จ่ายเงิน — SetNull เมื่อกลุ่มถูกลบ: บริษัทต้องไม่หาย
+            // ไปกับกลุ่ม (ข้อมูลบัญชี/ภาษีเป็นของนิติบุคคล ไม่ใช่ของผู้จ่าย)
+            e.HasOne(c => c.BillingAccount).WithMany(a => a.Companies)
+                .HasForeignKey(c => c.BillingAccountId).OnDelete(DeleteBehavior.SetNull);
+            // ผังเครือ — Restrict กันลบบริษัทแม่ทิ้งแล้วลูกชี้ไปที่ว่าง
+            e.HasOne(c => c.ParentCompany).WithMany()
+                .HasForeignKey(c => c.ParentCompanyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(c => c.BillingAccountId);
             e.HasQueryFilter(c => !c.IsDeleted);
         });
 
@@ -515,9 +529,82 @@ public class AccountingDbContext : DbContext
         {
             e.HasOne(a => a.Owner).WithMany().HasForeignKey(a => a.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(a => a.PlanTemplate).WithMany().HasForeignKey(a => a.PlanTemplateId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(a => a.BillingAccount).WithMany().HasForeignKey(a => a.BillingAccountId).OnDelete(DeleteBehavior.SetNull);
             e.Property(a => a.MonthlyPrice).HasPrecision(18, 2);
             e.Property(a => a.AnnualPrice).HasPrecision(18, 2);
             e.HasQueryFilter(a => !a.IsDeleted);
+        });
+
+        // ===== BillingAccount (ACCOUNT_STRUCTURE.md §3.2) =====
+        modelBuilder.Entity<BillingAccount>(e =>
+        {
+            e.Property(a => a.Name).HasMaxLength(200);
+            e.Property(a => a.TaxId).HasMaxLength(13);
+            e.Property(a => a.BillingBranchCode).HasMaxLength(5);
+            e.Property(a => a.BillingEmail).HasMaxLength(200);
+            e.Property(a => a.ContactPhone).HasMaxLength(50);
+            e.Property(a => a.SuspendReason).HasMaxLength(500);
+            e.Property(a => a.CreditBalance).HasPrecision(18, 2);
+            e.Property(a => a.PostpaidCreditLimit).HasPrecision(18, 2);
+            e.HasIndex(a => a.TaxId);
+            e.HasQueryFilter(a => !a.IsDeleted);
+        });
+
+        // ===== Metering: ฟีเจอร์ / ราคา / การใช้งาน (ACCOUNT_STRUCTURE.md §6) =====
+        modelBuilder.Entity<ApiFeature>(e =>
+        {
+            e.Property(x => x.FeatureCode).HasMaxLength(60);
+            e.Property(x => x.Name).HasMaxLength(200);
+            e.Property(x => x.NameEn).HasMaxLength(200);
+            e.Property(x => x.UnitLabel).HasMaxLength(50);
+            e.Property(x => x.RequiredScopes).HasMaxLength(300);
+            e.HasIndex(x => x.FeatureCode).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<CompanyFeature>(e =>
+        {
+            e.Property(x => x.FeatureCode).HasMaxLength(60);
+            e.Property(x => x.EnabledBy).HasMaxLength(200);
+            e.Property(x => x.DisabledBy).HasMaxLength(200);
+            e.Property(x => x.AcceptedUnitPrice).HasPrecision(18, 4);
+            e.HasIndex(x => new { x.CompanyId, x.FeatureCode }).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<ApiPricingPlan>(e =>
+        {
+            e.Property(x => x.FeatureCode).HasMaxLength(60);
+            e.Property(x => x.AdminNote).HasMaxLength(500);
+            // 4 ตำแหน่ง — ราคาต่อหน่วยของงาน AI อยู่ระดับสตางค์ย่อย
+            e.Property(x => x.UnitPrice).HasPrecision(18, 4);
+            e.HasIndex(x => new { x.FeatureCode, x.EffectiveFrom });
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<UsageEvent>(e =>
+        {
+            e.Property(x => x.FeatureCode).HasMaxLength(60);
+            e.Property(x => x.IdempotencyKey).HasMaxLength(200);
+            e.Property(x => x.RefEntityType).HasMaxLength(100);
+            e.Property(x => x.BilledPeriod).HasMaxLength(7);
+            e.Property(x => x.UnitPriceSnapshot).HasPrecision(18, 4);
+            e.Property(x => x.ChargedAmount).HasPrecision(18, 2);
+            // รายงาน/บิลอ่านตามช่วงเวลาเสมอ — index นำด้วยวันที่
+            e.HasIndex(x => new { x.CompanyId, x.OccurredAt });
+            e.HasIndex(x => new { x.BillingAccountId, x.OccurredAt });
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<BillingAccountAdmin>(e =>
+        {
+            e.HasOne(x => x.BillingAccount).WithMany(a => a.Admins)
+                .HasForeignKey(x => x.BillingAccountId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.User).WithMany()
+                .HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            // คนเดียวเป็นผู้ดูแล account เดียวกันซ้ำไม่ได้
+            e.HasIndex(x => new { x.BillingAccountId, x.UserId }).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         // ===== TrialConfig =====
@@ -1083,6 +1170,10 @@ public class AccountingDbContext : DbContext
             e.Property(k => k.KeyPrefix).HasMaxLength(20);
             e.HasOne(k => k.Company).WithMany().HasForeignKey(k => k.CompanyId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(k => k.CreatedByUser).WithMany().HasForeignKey(k => k.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
+            // ฟิลด์ /api/v1 (ACCOUNT_STRUCTURE.md §7) — ไม่ผูก FK navigation
+            // เพื่อไม่ให้ query เดิมของ ApiKey ลากตารางเพิ่มโดยไม่จำเป็น
+            e.Property(k => k.Scopes).HasMaxLength(300);
+            e.Property(k => k.WebhookUrl).HasMaxLength(500);
         });
 
         // ===== DocumentTemplate =====

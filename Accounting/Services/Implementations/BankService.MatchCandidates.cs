@@ -12,10 +12,17 @@ public partial class BankService
     /// Find ranked match candidates (Payments + JournalEntries) for a bank transaction.
     /// Used by the manual reconciliation picker UI so the user doesn't have to type a UUID.
     ///
-    /// Scoring (0–100):
-    ///  - Amount equality:  exact = 60, ±0.5% = 50, ±1% = 40, ±2% = 25, else 0
-    ///  - Date proximity:   same day = 30, ±1d = 25, ±3d = 20, ±7d = 15, ±14d = 8, ±30d = 3
-    ///  - Reference / desc: keyword overlap = +10
+    /// Scoring (ตัดที่ 100):
+    ///  - ยอดเงิน:       ตรงเป๊ะ = 60, ±0.5% = 50, ±1% = 40, ±2% = 25, อื่น = 0
+    ///  - วันที่:        วันเดียวกัน = 30, ±1d = 25, ±3d = 20, ±7d = 15, ±14d = 8, ±30d = 3
+    ///  - เลขอ้างอิง:    ตรงตัวอักษร = +10
+    ///  - ชื่อผู้โอน:    มั่นใจ = +22, ใกล้เคียง = +8..17 ตามระดับความมั่นใจ
+    ///                  (<see cref="Matching.CounterpartyNameMatcher"/> — เทียบข้ามภาษา
+    ///                   ไทย↔อังกฤษ + ทนชื่อถูกตัด/ปิดบัง/สลับชื่อ-สกุล)
+    ///
+    /// ชื่อผู้โอนมีน้ำหนักมากกว่าเลขอ้างอิงโดยตั้งใจ — แบงก์ไทยส่งชื่อผู้โอนมา
+    /// เกือบทุกบรรทัดแต่แทบไม่เคยส่งเลขเอกสาร และชื่อเป็นสัญญาณเดียวที่แยก
+    /// รายการที่ "ยอดเท่ากัน + วันเดียวกัน" ออกจากกันได้
     /// </summary>
     public async Task<MatchCandidatesResponse> GetMatchCandidatesAsync(Guid companyId, Guid bankTransactionId)
     {
@@ -27,6 +34,9 @@ public partial class BankService
         var bankDate = bankTxn.TransactionDate.Date;
         var bankDescLower = (bankTxn.Description ?? "").ToLowerInvariant();
         var bankRefLower = (bankTxn.Reference ?? "").ToLowerInvariant();
+        // ชื่อผู้โอนอยู่ได้ 2 ที่แล้วแต่แบงก์/รูปแบบไฟล์ — ส่งไปทั้งคู่ให้
+        // ตัวเทียบชื่อ (มันตัดขยะช่องทางเองอยู่แล้ว ใส่เกินไม่เสียหาย)
+        var bankPayee = bankTxn.Payee ?? "";
 
         // ===== Build "already matched" exclusion sets =====
         // Walk every Matched bank transaction (other than the current one) and collect
@@ -176,7 +186,7 @@ public partial class BankService
                 var dateDiff = (int)Math.Abs((p.PaymentDate.Date - bankDate).TotalDays);
                 var (score, reason) = ScoreCandidate(p.Amount, bankAmount, p.PaymentDate.Date, bankDate,
                     p.Reference, p.Notes, p.Document?.DocumentNumber, p.Document?.Contact?.Name,
-                    bankDescLower, bankRefLower);
+                    bankDescLower, bankRefLower, bankPayee);
 
                 // Deposit info: derive from PaymentMethod + BankAccount field on Payment.
                 var (depLabel, depCat) = DerivePaymentDeposit(p);
@@ -221,6 +231,28 @@ public partial class BankService
                      && !jeExclude.Contains(j.Id))
             .ToListAsync();
 
+        // ชื่อคู่ค้าของ JE — JE ไม่ได้เก็บ contact ตรง ๆ ต้องวิ่งผ่านเอกสารต้นทาง
+        // (SourceDocumentId). ก่อนหน้านี้ส่ง null เข้า ScoreCandidate ทำให้
+        // **ฝั่ง Journal ไม่เคยได้คะแนนจากชื่อผู้โอนเลย** ทั้งที่เป็นแท็บที่
+        // ผู้ใช้ใช้จับคู่จริงบ่อยที่สุด (RV-xxx auto-post จากใบเสร็จ)
+        var jeSourceDocIds = jeCandidates
+            .Where(j => j.SourceDocumentId.HasValue)
+            .Select(j => j.SourceDocumentId!.Value).Distinct().ToList();
+        var docContactNames = jeSourceDocIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && jeSourceDocIds.Contains(d.Id))
+                // อ่าน ContactId แล้ว join แยก — Include(Contact) เป็น INNER JOIN
+                // ตัดเอกสารที่ contact ถูกลบทิ้งไปทั้งแถว (บั๊กที่เคยเจอทั้งระบบ)
+                .Select(d => new { d.Id, d.ContactId })
+                .Join(_db.Contacts.AsNoTracking().Where(c => c.CompanyId == companyId),
+                      d => d.ContactId, c => c.Id, (d, c) => new { d.Id, c.Name })
+                .ToDictionaryAsync(x => x.Id, x => x.Name);
+        var jeContactNames = jeCandidates
+            .Where(j => j.SourceDocumentId.HasValue
+                && docContactNames.ContainsKey(j.SourceDocumentId!.Value))
+            .ToDictionary(j => j.Id, j => docContactNames[j.SourceDocumentId!.Value]);
+
         var bankTxnIsDeposit2 = bankTxn.TransactionType == BankTransactionType.Deposit
             || bankTxn.TransactionType == BankTransactionType.Interest;
 
@@ -232,8 +264,8 @@ public partial class BankService
                 var amountDiff = Math.Abs(jeAmount - bankAmount);
                 var dateDiff = (int)Math.Abs((j.EntryDate.Date - bankDate).TotalDays);
                 var (score, reason) = ScoreCandidate(jeAmount, bankAmount, j.EntryDate.Date, bankDate,
-                    j.Reference, j.Description, null, null,
-                    bankDescLower, bankRefLower);
+                    j.Reference, j.Description, null, jeContactNames.GetValueOrDefault(j.Id),
+                    bankDescLower, bankRefLower, bankPayee);
 
                 // Deposit info from JE lines: which 11xx asset account(s) received the money
                 jeLinesByEntry.TryGetValue(j.Id, out var lines);
@@ -251,7 +283,7 @@ public partial class BankService
                     Date: j.EntryDate,
                     Amount: jeAmount,
                     Description: j.Description ?? "",
-                    CounterpartyName: null,
+                    CounterpartyName: jeContactNames.GetValueOrDefault(j.Id),
                     Reference: j.Reference,
                     DateDiffDays: dateDiff,
                     AmountDiff: amountDiff,
@@ -382,7 +414,10 @@ public partial class BankService
         DateTime candidateDate, DateTime bankDate,
         string? candidateRef, string? candidateNotes,
         string? candidateDocNumber, string? candidateName,
-        string bankDescLower, string bankRefLower)
+        string bankDescLower, string bankRefLower,
+        // ช่อง Payee ของ statement — บางแบงก์ใส่ชื่อผู้โอนไว้ที่นี่แทน
+        // Description ถ้าไม่ส่งเข้ามาจะเสียสัญญาณชื่อไปทั้งดุ้น
+        string bankPayee = "")
     {
         int score = 0;
         var reasons = new List<string>();
@@ -407,27 +442,46 @@ public partial class BankService
         else if (dateDiff <= 14) { score += 8; }
         else if (dateDiff <= 30) { score += 3; }
 
-        // === Text match (max 10) ===
-        bool textMatch = false;
+        // === เลขอ้างอิง / เลขเอกสาร (max 10) ===
+        // หลักฐานแบบ "ตรงตัวอักษร" — เจอเมื่อไรแทบไม่มีทางผิด แต่เจอไม่บ่อย
+        // เพราะแบงก์ไทยไม่ค่อยส่งเลขเอกสารมาใน statement
+        bool refMatch = false;
         var allCandidateText = ($"{candidateRef} {candidateNotes} {candidateDocNumber} {candidateName}").ToLowerInvariant();
 
-        // Reference exact match
         if (!string.IsNullOrWhiteSpace(candidateRef) && !string.IsNullOrWhiteSpace(bankRefLower)
-            && allCandidateText.Contains(bankRefLower)) textMatch = true;
+            && allCandidateText.Contains(bankRefLower)) refMatch = true;
 
-        // Document number appears in bank desc
         if (!string.IsNullOrWhiteSpace(candidateDocNumber)
-            && bankDescLower.Contains(candidateDocNumber.ToLowerInvariant())) textMatch = true;
+            && bankDescLower.Contains(candidateDocNumber.ToLowerInvariant())) refMatch = true;
 
-        // Counterparty name appears in bank desc (split words, look for >= 2 char tokens)
+        if (refMatch) { score += 10; reasons.Add("เลขอ้างอิงตรงกัน"); }
+
+        // === ชื่อผู้โอน (max 22) ===
+        // เดิมเป็น bool จาก substring ธรรมดา — พังทุกครั้งที่ statement เป็น
+        // อังกฤษแต่ contact เก็บเป็นไทย (คนละ code point ไม่มีทาง Contains กันได้)
+        // หรือแบงก์ตัดชื่อกลางคำ. ตอนนี้ใช้ตัวเทียบข้ามภาษา/ทนการตัดคำ
+        // (CounterpartyNameMatcher) แล้วให้คะแนนตามระดับความมั่นใจ ไม่ใช่ 0/1
+        //
+        // ให้น้ำหนักสูงกว่าเลขอ้างอิงเพราะ **มีข้อมูลให้ใช้จริงเกือบทุกบรรทัด**
+        // (แบงก์ส่งชื่อผู้โอนมาเสมอ) — เป็นสัญญาณเดียวที่แยกใบที่ยอด+วันที่
+        // เท่ากันเป๊ะออกจากกันได้
         if (!string.IsNullOrWhiteSpace(candidateName))
         {
-            var tokens = candidateName.ToLowerInvariant().Split(new[] { ' ', '-', '_', ',', '.' },
-                StringSplitOptions.RemoveEmptyEntries);
-            if (tokens.Any(t => t.Length >= 2 && bankDescLower.Contains(t))) textMatch = true;
+            var nm = Matching.CounterpartyNameMatcher.Match(
+                $"{bankDescLower} {bankPayee}", candidateName);
+            if (nm.Score >= Matching.CounterpartyNameMatcher.ConfidentThreshold)
+            {
+                score += 22;
+                reasons.Add("ชื่อผู้โอนตรงกัน" + (nm.CrossScript ? " (ข้ามภาษา)" : ""));
+            }
+            else if (nm.Score >= Matching.CounterpartyNameMatcher.MinimumUsefulThreshold)
+            {
+                // 0.45–0.79 → 8–17 คะแนน ไล่ตามความมั่นใจ ไม่กระโดด
+                var partial = (int)Math.Round(8 + 9 * (nm.Score - 0.45) / 0.35);
+                score += Math.Clamp(partial, 8, 17);
+                reasons.Add($"ชื่อผู้โอนใกล้เคียง ({nm.Reason})");
+            }
         }
-
-        if (textMatch) { score += 10; reasons.Add("คำอธิบาย/ชื่อตรงกัน"); }
 
         return (Math.Min(score, 100), reasons.Count > 0 ? string.Join(", ", reasons) : "");
     }

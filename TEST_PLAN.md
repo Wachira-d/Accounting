@@ -350,6 +350,77 @@
 | BNK-I-07 | I | จัดสรร JE เกินยอดขาธนาคาร (เช่นใส่ 77,678 ทั้งที่ขาธนาคาร 70,110) | backend ปฏิเสธ — เพดานคือขาธนาคาร ไม่ใช่ footing |
 | BNK-I-08 | I | JE ที่ไม่มีบรรทัดลงผังเงินสด/ธนาคารเลย (111x) | ยังเลือกได้ (ไม่บล็อก) ใช้ footing + ป้าย "⚠️ ไม่มีขาเงินสด/ธนาคาร" |
 | BNK-I-10 | I | JE เงินเดือนที่ Cr ผังธนาคารกลาง (ไม่ใช่ผังของบัญชีที่กำลังกระทบยอด) | ใช้ขาเงินสด/ธนาคารนั้นเป็นยอด (70,110) + บอกว่า "ขาเงินสด/ธนาคารในใบนี้ลงผัง 111xx …" |
+
+### โครงลูกค้า/กลุ่มบริษัท — `BillingAccount` (ACCOUNT_STRUCTURE.md §9.1)
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| ACC-M-01 | I | รัน migration บน DB ที่มี `AccountSubscription` อยู่แล้ว | ทุกแถวได้ `BillingAccountId` · เกิด `BillingAccount` 1 แถว/แพลน (ชื่อ+อีเมลจาก owner) · owner เป็น `IsPrimary=true` |
+| ACC-M-02 | I | บริษัทใต้แพลนกลุ่มเดิม (`Subscription.AccountSubscriptionId` ชี้อยู่) | `Company.BillingAccountId` ถูกผูกให้อัตโนมัติทุกใบ |
+| ACC-M-03 | I | รัน migration ซ้ำอีกรอบ | ไม่เกิด BillingAccount ซ้ำ · ไม่ error (guard ด้วย `IS NULL` + `pg_constraint`) |
+| ACC-M-04 | I | บริษัทเดี่ยวที่ไม่มีแพลนกลุ่ม | `BillingAccountId` ยังเป็น null · ทำงานเหมือนเดิมทุกประการ |
+| ACC-M-05 | I | **เช็ค zero behavior change** — โควตา/quota check ก่อนและหลัง migrate | ผลลัพธ์เท่ากันทุกเคส (resolve ยังผ่าน `Subscription.AccountSubscriptionId` เส้นเดิม) |
+| ACC-U-01 | U | default ของ `Company.CompanyKind` | `Full` — บริษัทเดิมทุกใบต้องไม่กลายเป็น Connected |
+| ACC-I-01 | I | ลบ `BillingAccount` ที่มีบริษัทสังกัดอยู่ | บริษัท**ไม่ถูกลบ** — `BillingAccountId` กลายเป็น null (`ON DELETE SET NULL`) ข้อมูลบัญชี/ภาษีอยู่ครบ |
+| ACC-I-02 | I | ลบบริษัทแม่ที่มีบริษัทลูกชี้อยู่ (`ParentCompanyId`) | ถูก block (`RESTRICT`) — กันผังเครือชี้ไปที่ว่าง |
+| ACC-I-03 | I | เพิ่ม user เดิมเป็นผู้ดูแล account เดียวซ้ำ | ถูก block ด้วย unique index `(BillingAccountId, UserId)` |
+
+### นับ/คิดเงินการใช้งาน — `UsageMeteringService` (ACCOUNT_STRUCTURE.md §9.3)
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| MTR-U-01 | U | เรียกฟีเจอร์ที่บริษัท**ยังไม่เปิด** | `Recorded=false` · ไม่เกิด UsageEvent · ไม่คิดเงิน |
+| MTR-U-02 | U | ส่ง `IdempotencyKey` ซ้ำ | `Duplicate=true` · คืน event เดิม · **ยอดรวมไม่เพิ่ม** |
+| MTR-U-03 | U | 2 request พร้อมกันด้วย key เดียวกัน (race) | unique index ปฏิเสธใบที่ 2 → service คืน `Duplicate=true` ไม่ throw |
+| MTR-U-04 | U | ยังไม่ตั้งราคาฟีเจอร์นั้น | บันทึก event ที่ราคา 0 (ไม่ปฏิเสธงาน) — admin ตั้งราคาย้อนหลังแล้วเห็นปริมาณจริง |
+| MTR-U-05 | U | โควตาฟรี 100/เดือน · ใช้ครั้งที่ 95 จำนวน 10 | คิดเงินเฉพาะ 5 หน่วยที่เกิน |
+| MTR-U-06 | U | โควตาฟรีนับ**รวมทั้งกลุ่ม** (2 บริษัทใต้ account เดียว) | บริษัท B กินโควตาที่ A ใช้ไปแล้ว — ไม่ใช่ต่างคนต่างได้เต็ม |
+| MTR-U-07 | U | `Tiered` — qty ข้ามชั้น | ใช้ราคาชั้นที่ครอบจำนวนนั้นคูณทั้งก้อน |
+| MTR-U-08 | U | `FlatMonthly` | ChargedAmount = 0 ต่อ event (ค่าเหมาเก็บที่รอบบิล) |
+| MTR-U-09 | U | account เป็น sandbox | `IsSandbox=true` · charged 0 · ยังบันทึก event เพื่อดูพฤติกรรม |
+| MTR-U-10 | U | Prepaid | `CreditBalance` ลดลงเท่า ChargedAmount ในธุรกรรมเดียวกัน |
+| MTR-U-11 | U | DB ล่ม/exception ระหว่างบันทึก | คืน `Recorded=false` **ไม่ throw** — งานหลักของลูกค้าต้องไม่พัง |
+| MTR-I-01 | I | ขึ้นราคา (`POST /plans`) | แผนเดิมถูกปิด (`EffectiveTo=now`) + สร้างแผนใหม่ · **UsageEvent เก่าไม่เปลี่ยน** (snapshot) |
+| MTR-I-02 | I | ราคาเฉพาะกลุ่ม (ดีลพิเศษ) + ราคามาตรฐาน | ราคาเฉพาะกลุ่มชนะเสมอ — ตรงกันทั้ง service และหน้าลูกค้า |
+| MTR-I-03 | I | ลูกค้ากดเปิดฟีเจอร์ | บันทึก `EnabledBy/EnabledAt` + `AcceptedUnitPrice` = ราคาที่เห็นตอนนั้น |
+| MTR-I-04 | I | admin `unpublish` ฟีเจอร์ที่มีคนใช้อยู่ | ผู้ใช้เดิมยังใช้ต่อ+ปิดเองได้ · ผู้ใช้ใหม่กดเปิดไม่ได้ |
+| MTR-I-05 | I | ดู `/usage/account` โดยไม่ใช่ AccountAdmin | 403 — เป็นพนักงานบริษัทหนึ่งในกลุ่มไม่ให้สิทธิ์เห็นยอดบริษัทอื่น |
+| MTR-I-06 | I | บริษัทถูกลบ แต่มี UsageEvent เดือนก่อน | รายงานยังแสดงแถวนั้น (hydrate แยก ไม่ใช้ INNER JOIN) — ประวัติบิลห้ามหาย |
+
+### ผลิตภัณฑ์ API `/api/v1` (ACCOUNT_STRUCTURE.md §9.4)
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| V1-S-01 | S | **คีย์เก่าที่มีอยู่ก่อน** ยิง `/api/v1/ocr/scan` | 403 — `Scopes` เป็น NULL จึงไม่มีสิทธิ์ (ต้องตั้งใจให้สิทธิ์เท่านั้น ไม่ได้มาจากอัปเกรดระบบ) |
+| V1-S-02 | S | คีย์เก่ายิง endpoint เดิม (`/api/integration/*`, `/api/companies/...`) | ทำงานเหมือนเดิมทุกประการ — ไม่มี regression |
+| V1-I-01 | I | key มี `ocr:write` แต่บริษัทยังไม่เปิดฟีเจอร์ | 403 + ข้อความบอกวิธีเปิด · **ไม่เกิด UsageEvent** |
+| V1-I-02 | I | scope wildcard `ocr:*` | ผ่านด่าน `ocr:write` |
+| V1-I-03 | I | scan สำเร็จ | เกิด UsageEvent 1 แถว · response มี `billing.charged` |
+| V1-I-04 | I | scan ล้มเหลว (ไฟล์เสีย/engine error) | 500 + **ไม่มี UsageEvent** (ล้มแล้วห้ามคิดเงิน) |
+| V1-I-05 | I | ส่ง `Idempotency-Key` เดิมซ้ำ | ไม่เกิด event ใหม่ · `billing.duplicate=true` |
+| V1-I-06 | I | นำเข้า statement ที่มี `ExternalId` ซ้ำทั้งไฟล์ | `imported=0, skipped=N` · ไม่คิดเงิน |
+| V1-I-07 | I | นำเข้า 500 บรรทัด จับคู่ได้ 300 | คิดเงิน **500** (ตามบรรทัดที่ประมวลผล ไม่ใช่ที่จับคู่สำเร็จ) |
+| V1-I-08 | I | บรรทัดหนึ่งจับคู่ throw | บรรทัดอื่นยังได้ผลครบ · แถวนั้น `found=false` |
+| V1-I-09 | I | ส่งเกิน 2,000 บรรทัด | 400 พร้อมบอกให้แบ่งชุด |
+| V1-I-10 | I | key ที่ `IsSandbox=true` | UsageEvent `IsSandbox=true` · `charged=0` |
+| V1-I-11 | I | key ผูก `BranchId` | UsageEvent มี BranchId → รายงานแตกรายสาขาได้ |
+| V1-I-12 | I | `POST /ocr/confirm` พร้อม feedbackId | บันทึก feedback ครบ · **ไม่คิดเงินซ้ำ** |
+| V1-I-13 | I | `confirm` แต่ feedback บันทึกล้ม | ยัง 200 (ลูกค้ายืนยันเอกสารไปแล้ว) + log warning |
+
+### จับคู่ชื่อผู้โอน (ข้ามภาษา / ถูกตัด) — `CounterpartyNameMatcher`
+| รหัส | ชั้น | เคส | คาดหวัง |
+| --- | --- | --- | --- |
+| NAM-U-01 | U | `WACHIRA DILOKSAMPHAN` ↔ `วชิระ ดิลกสัมพันธ์` | ≥0.80 · `CrossScript=true` (เดิม Levenshtein ได้ 0) |
+| NAM-U-02 | U | ถอดเสียงคนละสำนัก `VACHIRA` / `WATCHIRA` / `WACHIRAA` | โครงพยัญชนะเท่ากันหมด → ≥0.80 |
+| NAM-U-03 | U | สลับชื่อ-สกุล `DILOKSAMPHAN WACHIRA` | ≥0.80 (จับคู่ token ไม่สนลำดับ) |
+| NAM-U-04 | U | มีคำนำหน้า `MR.` / `นาย` / `บริษัท…จำกัด` / `CO., LTD.` | ตัดทิ้งก่อนเทียบ — คะแนนเท่าไม่มีคำนำหน้า |
+| NAM-U-05 | U | แบงก์ตัดกลางคำ `WACHI` ↔ `วชิระ` | 0.45–0.79 (เจอแต่ไม่ฟันธง) · `Truncated=true` |
+| NAM-U-06 | U | ปิดบัง `WACHIRA D***` · ย่อ `W. DILOKSAMPHAN` | ≥0.45 · `Truncated=true` · ไม่ทะลุ 0.80 จากอักษรแรกอย่างเดียว |
+| NAM-U-07 | U | ตัดท้ายฝั่งไทย `นาย วชิระ ดิลกสั` | ≥0.45 ผ่านกฎ prefix ของโครงพยัญชนะ |
+| NAM-U-08 | U | ชื่อบริษัททับศัพท์ `TAKE TIME NATURE RESORT` ↔ `บริษัท เทค ไทม์ เนเจอร์ รีสอร์ท จำกัด` | ≥0.45 (3/4 คำตรง — เนเจอร์↔NATURE เพี้ยนจริง) |
+| NAM-U-09 | U | **ขยะช่องทางต้องไม่ปั่นคะแนน** — `Thai QR Payment`/`EDC`/`MYQR`/เลขบัญชี อยู่ทุกบรรทัด | คนละคนต้องได้ <0.45 (ถ้าไม่ตัดขยะจะ "ตรง" ทุกคู่) |
+| NAM-U-10 | U | คนละคนจริง `SOMCHAI JAIDEE` ↔ `วชิระ ดิลกสัมพันธ์` | <0.45 |
+| NAM-U-11 | U | โครงพยัญชนะแยกคนละชื่อได้ (วชิระ≠สมชาย, ศิริพร≠ประเสริฐ) | คีย์ต้องไม่เท่ากัน — กันกฎยุบเสียงหลวมจนทุกชื่อชนกัน |
+| NAM-U-12 | U | input ว่าง/null/มีแต่เลขบัญชี `KB000001813229 064-1-70621-3` | 0.0 ไม่ throw |
+| NAM-I-01 | I | statement อังกฤษ + contact ไทย ยอด+วันที่เท่ากัน 2 ใบ | ใบที่ชื่อผู้โอนตรงได้คะแนนสูงกว่า (+22) → ขึ้นก่อน |
+| NAM-I-02 | I | แท็บ Journal (RV auto-post จากใบเสร็จ) | ได้คะแนนจากชื่อผู้โอนด้วย — resolve ผ่าน `SourceDocumentId` → Contact (เดิมส่ง null ทำให้ฝั่ง JE ไม่เคยได้คะแนนชื่อเลย) |
 | BNK-I-11 | I | JE มีทั้งขาผังของบัญชีนี้และผัง 111x อื่น | ใช้ขาของบัญชีนี้ก่อน (exact ชนะ fallback) |
 | BNK-I-12 | I | ยอดที่ลิสต์แสดง vs เพดานที่ backend ตรวจ | ต้องเป็นตัวเลขเดียวกันทุกเคส (แสดงถูกแล้วกดยืนยันต้องผ่าน) |
 | BNK-I-09 | I | ผู้ใช้พิมพ์ยอดจัดสรรเอง แล้วติ๊กรายการธนาคารเพิ่ม | ระบบไม่เซ็นทับค่าที่พิมพ์เอง (_manual) |

@@ -147,6 +147,9 @@ builder.Services.AddScoped<Accounting.Services.Interfaces.ILineBotService, Accou
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
+// นับ/คิดเงินการใช้งานรายหน่วย (ACCOUNT_STRUCTURE.md §6) — ไม่ throw ทุกกรณี
+// เพื่อไม่ให้ระบบเก็บเงินทำให้งานหลักของลูกค้าพัง
+builder.Services.AddScoped<IUsageMeteringService, UsageMeteringService>();
 builder.Services.AddSingleton<IJobRunRecorder, JobRunRecorder>();
 builder.Services.AddScoped<ISlipOcrAssistService, SlipOcrAssistService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();

@@ -258,6 +258,12 @@
       markDirty() { this._dirty = true; document.getElementById('settingsStatus').textContent = '* ยังไม่ได้บันทึก'; },
 
       async init() {
+        // ต้องเรียกก่อนโหลดข้อมูลเสมอ — AdminLayout.init คือตัวที่ห่อ #pageContent
+        // ด้วย sidebar + topbar และตั้ง AdminAPI.token จาก localStorage. ก่อนหน้านี้
+        // หน้านี้ข้ามบรรทัดนี้ไปเลย → เข้ามาแล้ว "เมนูหาย" (หน้าโหลดข้อมูลได้ปกติ
+        // เพราะ AdminAPI อ่าน token เองตอน request แรก จึงไม่มี error ให้เห็น
+        // — อาการเดียวที่โผล่คือเมนูไม่ขึ้น)
+        AdminLayout.init('ai-config');
         try { await Promise.all([this.loadSettings(), this.loadUsage(), this.loadProviders(), this.loadAccuracy(), this.loadFeedback()]); }
         catch (e) { console.error(e); }
       },

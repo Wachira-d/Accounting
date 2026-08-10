@@ -436,7 +436,7 @@
     // ===== Tab Switching =====
     function switchTab(tab) {
       const labels = { branding: 'แบรนด์', contact: 'ข้อมูลติดต่อ', services: 'แพ็กเกจบริการ', system: 'ระบบ', billing: 'ผู้ขาย' };
-      document.querySelectorAll('.tab-nav button').forEach((btn) => btn.classList.toggle('active', btn.textContent.includes(labels[tab] || ' ')));
+      document.querySelectorAll('.tab-nav button').forEach((btn) => btn.classList.toggle('active', btn.textContent.includes(labels[tab] || '')));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       document.getElementById('tab-' + tab).classList.add('active');
       // แท็บ billing มีปุ่มบันทึกของตัวเอง → ซ่อนปุ่มบันทึก site-settings หลัก

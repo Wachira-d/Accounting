@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NextAcc Connect — โต๊ะทำงาน</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{--primary:#4F46E5;--primary-dark:#4338CA;--success:#059669;--warning:#D97706;--danger:#DC2626;
+    --g50:#F9FAFB;--g100:#F3F4F6;--g200:#E5E7EB;--g300:#D1D5DB;--g500:#6B7280;--g600:#4B5563;--g700:#374151;--g900:#111827;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Noto Sans Thai','Sarabun',Tahoma,sans-serif;background:var(--g100);color:var(--g900)}
+  .topbar{background:#fff;border-bottom:1px solid var(--g200);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .brand{font-weight:800;font-size:17px;color:var(--primary)}
+  .wrap{max-width:1280px;margin:0 auto;padding:20px}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--g200);margin-bottom:20px;flex-wrap:wrap}
+  .tab{padding:10px 16px;cursor:pointer;border:none;background:none;font-family:inherit;font-size:14px;color:var(--g600);border-bottom:2px solid transparent}
+  .tab.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+  .card{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:16px}
+  .card p.sub{margin:0 0 14px;font-size:13px;color:var(--g500)}
+  .drop{border:2px dashed var(--g300);border-radius:12px;padding:34px;text-align:center;cursor:pointer;transition:.15s;background:var(--g50)}
+  .drop:hover,.drop.over{border-color:var(--primary);background:#EEF2FF}
+  .drop .big{font-size:32px}
+  .drop .t{font-weight:600;margin-top:6px}
+  .drop .s{font-size:12.5px;color:var(--g500);margin-top:3px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--g100);vertical-align:top}
+  th{font-size:12px;color:var(--g500);font-weight:600;background:var(--g50)}
+  .right{text-align:right}
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:inherit}
+  .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-dark)}
+  .btn-success{background:var(--success);color:#fff}
+  .btn-ghost{background:#fff;color:var(--g700);border:1px solid var(--g300)}
+  .btn-sm{padding:5px 10px;font-size:12px}
+  .btn:disabled{opacity:.55;cursor:not-allowed}
+  input,select,textarea{padding:7px 9px;border:1px solid var(--g300);border-radius:7px;font-family:inherit;font-size:13px;width:100%}
+  .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+  .b-ok{background:#DCFCE7;color:#166534}.b-warn{background:#FEF3C7;color:#92400E}
+  .b-err{background:#FEE2E2;color:#991B1B}.b-info{background:#DBEAFE;color:#1E40AF}
+  .low{background:#FFFBEB!important;border-left:3px solid var(--warning)}
+  .empty{padding:32px;text-align:center;color:var(--g500);font-size:13px}
+  .note{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#1E3A8A;margin-bottom:14px}
+  .warnbox{background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#92400E;margin-bottom:14px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .fld label{display:block;font-size:11.5px;font-weight:600;color:var(--g600);margin-bottom:3px}
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--g900);color:#fff;padding:12px 18px;border-radius:8px;font-size:13px;z-index:99;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1}.toast.err{background:var(--danger)}
+  @media(max-width:700px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div><span class="brand">NextAcc Connect</span> <span style="color:var(--g500);font-size:13px">· โต๊ะทำงาน</span></div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <select id="companySel" onchange="WB.switchCompany()" style="width:auto"></select>
+    <a href="/connect/index.html" class="btn btn-ghost">ตั้งค่า &amp; การใช้งาน</a>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="tabs">
+    <button class="tab active" data-tab="doc" onclick="WB.tab('doc')">📄 อัปโหลดเอกสาร → ใบสำคัญจ่าย</button>
+    <button class="tab" data-tab="bank" onclick="WB.tab('bank')">🏦 กระทบยอดธนาคาร</button>
+    <button class="tab" data-tab="contacts" onclick="WB.tab('contacts')">👥 ผู้ติดต่อรอผูกรหัส</button>
+  </div>
+
+  <!-- ── เอกสาร → ใบสำคัญจ่าย ── -->
+  <div id="tab-doc">
+    <div class="card">
+      <h2>โยนเอกสารเข้ามา</h2>
+      <p class="sub">ใบกำกับภาษี / ใบเสร็จ / บิลเงินสด — ระบบอ่านให้ครบทุกช่องแล้วให้คุณกดยืนยัน</p>
+      <div class="drop" id="drop" onclick="document.getElementById('file').click()">
+        <div class="big">📄</div>
+        <div class="t">คลิกเพื่อเลือกไฟล์ หรือลากมาวางตรงนี้</div>
+        <div class="s">รองรับ JPG / PNG / PDF · ครั้งละหลายไฟล์ได้</div>
+      </div>
+      <input type="file" id="file" multiple accept="image/*,application/pdf" style="display:none" onchange="WB.upload(this.files)">
+      <div id="uploadStatus" style="margin-top:10px;font-size:13px;color:var(--g600)"></div>
+    </div>
+    <div id="docResults"></div>
+  </div>
+
+  <!-- ── ธนาคาร ── -->
+  <div id="tab-bank" style="display:none">
+    <div class="card">
+      <h2>อัปโหลด statement</h2>
+      <p class="sub">วางข้อมูลจาก Excel/CSV ได้เลย — ระบบจับคู่กับเอกสารในระบบให้อัตโนมัติ</p>
+      <div class="fld" style="margin-bottom:10px">
+        <label>บัญชีธนาคาร</label>
+        <select id="bankAcct"></select>
+      </div>
+      <div class="fld" style="margin-bottom:10px">
+        <label>วางข้อมูล (คอลัมน์: วันที่ ⇥ จำนวนเงิน ⇥ เข้า/ออก ⇥ รายละเอียด ⇥ เลขอ้างอิง)</label>
+        <textarea id="stmtPaste" rows="8" placeholder="2569-07-02	1500.00	เข้า	Thai QR Payment | Take Time Nature Resort	KB000001813229"></textarea>
+      </div>
+      <button class="btn btn-primary" onclick="WB.importStatement()">นำเข้าและจับคู่</button>
+      <span id="stmtStatus" style="margin-left:10px;font-size:13px;color:var(--g600)"></span>
+    </div>
+    <div id="bankResults"></div>
+  </div>
+
+  <!-- ── ผู้ติดต่อ ── -->
+  <div id="tab-contacts" style="display:none">
+    <div class="card">
+      <h2>ผู้ติดต่อที่ยังไม่มีรหัสในระบบบัญชีของคุณ</h2>
+      <p class="sub">
+        ระบบพบผู้ขายรายใหม่จากเอกสารที่อ่าน — ใส่รหัสเจ้าหนี้ในระบบของคุณเพื่อให้
+        <b>เอกสารที่ยิงกลับไปอ้างรหัสถูกต้อง</b> ไม่สร้างเจ้าหนี้ซ้ำ
+      </p>
+      <div id="contactList"><div class="empty">กำลังโหลด…</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/**
+ * โต๊ะทำงานของลูกค้า Connected (ACCOUNT_STRUCTURE.md §8)
+ *
+ * ลูกค้าที่ใช้ ERP อื่นยัง **ต้องการหน้าจอทำงานจริง** — การให้เขาไปสร้าง UI
+ * เองใน Dynamics แพงและช้า และคุณค่าหลักของเรา (OCR/จับคู่) อยู่ตรงขั้นที่คน
+ * ตรวจสอบ ซึ่งต้องมีหน้าจอที่ออกแบบมาเพื่อการนั้นโดยเฉพาะ
+ *
+ * ยิงเฉพาะ API สาธารณะเหมือนหน้า /connect อื่น ๆ
+ */
+const WB = {
+  companyId: null, companies: [], scans: [],
+
+  async init() {
+    if (!localStorage.getItem('token')) { location.href = '/index.html'; return; }
+    try {
+      const r = await this.get('/api/company');
+      this.companies = r?.data || [];
+      if (!this.companies.length) { this.toast('บัญชีนี้ยังไม่มีบริษัท', true); return; }
+      this.companyId = localStorage.getItem('companyId') || this.companies[0].id;
+      document.getElementById('companySel').innerHTML =
+        this.companies.map(c => `<option value="${c.id}" ${c.id === this.companyId ? 'selected' : ''}>${this.esc(c.name)}</option>`).join('');
+      this.initDrop();
+      await this.loadBankAccounts();
+    } catch (e) { this.toast(e.message, true); }
+  },
+
+  switchCompany() {
+    this.companyId = document.getElementById('companySel').value;
+    localStorage.setItem('companyId', this.companyId);
+    this.scans = [];
+    document.getElementById('docResults').innerHTML = '';
+    this.loadBankAccounts();
+  },
+
+  tab(n) {
+    ['doc', 'bank', 'contacts'].forEach(t => {
+      document.getElementById('tab-' + t).style.display = t === n ? '' : 'none';
+      document.querySelector(`.tab[data-tab="${t}"]`).classList.toggle('active', t === n);
+    });
+    if (n === 'contacts') this.loadContacts();
+  },
+
+  initDrop() {
+    const d = document.getElementById('drop');
+    ['dragenter', 'dragover'].forEach(e => d.addEventListener(e, ev => { ev.preventDefault(); d.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(e => d.addEventListener(e, ev => { ev.preventDefault(); d.classList.remove('over'); }));
+    d.addEventListener('drop', ev => this.upload(ev.dataTransfer.files));
+  },
+
+  // ─── เอกสาร ───────────────────────────────────────────────
+  async upload(files) {
+    if (!files || !files.length) return;
+    const st = document.getElementById('uploadStatus');
+    let done = 0;
+    for (const f of files) {
+      st.textContent = `กำลังอ่าน ${f.name} (${done + 1}/${files.length})…`;
+      try {
+        const fd = new FormData();
+        fd.append('file', f);
+        const res = await fetch(`/api/companies/${this.companyId}/ocr/upload`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+          body: fd,
+        });
+        const j = await res.json();
+        if (!res.ok || j?.success === false) throw new Error(j?.message || `อ่านไม่สำเร็จ (${res.status})`);
+        this.scans.unshift({ file: f.name, data: j.data });
+        this.renderDocs();
+      } catch (e) {
+        this.toast(`${f.name}: ${e.message}`, true);
+      }
+      done++;
+    }
+    st.textContent = `อ่านเสร็จ ${done}/${files.length} ไฟล์`;
+  },
+
+  renderDocs() {
+    const el = document.getElementById('docResults');
+    if (!this.scans.length) { el.innerHTML = ''; return; }
+    el.innerHTML = this.scans.map((s, i) => {
+      const d = s.data || {};
+      // ต่ำกว่า 0.85 = ไฮไลต์ให้ตรวจ แต่ **ยังต้องมีค่าเติมไว้แล้ว** ไม่ปล่อยว่าง
+      const low = (d.confidence ?? 0) < 0.85;
+      return `<div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+          <div>
+            <h2 style="margin:0">${this.esc(s.file)}</h2>
+            <p class="sub" style="margin:2px 0 0">
+              ${d.documentType ? this.esc(d.documentType) : 'ไม่ระบุชนิด'} ·
+              ความมั่นใจ ${Math.round((d.confidence ?? 0) * 100)}%
+              ${low ? '<span class="badge b-warn">ควรตรวจสอบ</span>' : '<span class="badge b-ok">อ่านได้ชัด</span>'}
+            </p>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-success btn-sm" onclick="WB.createPv(${i})">✓ สร้างใบสำคัญจ่าย</button>
+          </div>
+        </div>
+        ${low ? '<div class="warnbox" style="margin-top:12px">บางช่องอ่านได้ไม่ชัด — ตรวจก่อนกดสร้าง แล้วระบบจะจำไว้ให้ครั้งหน้าแม่นขึ้น</div>' : ''}
+        <div class="grid2" style="margin-top:12px">
+          <div class="fld"><label>ผู้ขาย</label><input id="f${i}_vendor" value="${this.esc(d.extractedVendorName || '')}" class="${low ? 'low' : ''}"></div>
+          <div class="fld"><label>เลขผู้เสียภาษีผู้ขาย</label><input id="f${i}_taxid" value="${this.esc(d.extractedVendorTaxId || '')}" class="${low ? 'low' : ''}"></div>
+          <div class="fld"><label>เลขที่เอกสาร</label><input id="f${i}_docno" value="${this.esc(d.extractedDocumentNumber || '')}"></div>
+          <div class="fld"><label>วันที่</label><input type="date" id="f${i}_date" value="${d.extractedDate ? String(d.extractedDate).slice(0, 10) : ''}"></div>
+          <div class="fld"><label>ยอดก่อน VAT</label><input type="number" step="0.01" id="f${i}_sub" value="${d.extractedSubTotal ?? ''}"></div>
+          <div class="fld"><label>VAT</label><input type="number" step="0.01" id="f${i}_vat" value="${d.extractedVatAmount ?? ''}"></div>
+          <div class="fld"><label>ยอดรวม</label><input type="number" step="0.01" id="f${i}_total" value="${d.extractedTotalAmount ?? ''}"></div>
+          <div class="fld"><label>รหัสเจ้าหนี้ในระบบคุณ</label>
+            <input id="f${i}_extid" placeholder="กด &quot;ค้นหา&quot; เพื่อให้ระบบจับคู่ให้" value="">
+            <button class="btn btn-ghost btn-sm" style="margin-top:5px" onclick="WB.resolveContact(${i})">🔍 ค้นหาจากทะเบียน</button>
+            <span id="f${i}_resolve" style="font-size:12px;margin-left:6px"></span>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  },
+
+  async resolveContact(i) {
+    const name = document.getElementById(`f${i}_vendor`).value;
+    const taxId = document.getElementById(`f${i}_taxid`).value;
+    const out = document.getElementById(`f${i}_resolve`);
+    out.textContent = 'กำลังค้นหา…';
+    try {
+      const r = await this.post(`/api/v1/contacts/resolve`, { name, taxId });
+      const d = r?.data || {};
+      if (!d.contactId) { out.innerHTML = '<span style="color:var(--g500)">ไม่พบในทะเบียน — จะสร้างรายใหม่ให้</span>'; return; }
+      document.getElementById(`f${i}_extid`).value = d.externalId || '';
+      const pct = Math.round((d.confidence || 0) * 100);
+      out.innerHTML = d.matched
+        ? `<span style="color:var(--success)">✓ ${this.esc(d.name)} (${pct}%)</span>`
+        : `<span style="color:var(--warning)">⚠ น่าจะเป็น ${this.esc(d.name)} (${pct}%) — ${this.esc(d.reason || '')} โปรดตรวจสอบ</span>`;
+    } catch (e) { out.innerHTML = `<span style="color:var(--danger)">${this.esc(e.message)}</span>`; }
+  },
+
+  async createPv(i) {
+    const g = id => document.getElementById(`f${i}_${id}`)?.value || '';
+    if (!g('vendor')) { this.toast('กรุณาระบุผู้ขาย', true); return; }
+    if (!g('total')) { this.toast('กรุณาระบุยอดรวม', true); return; }
+
+    // เอกสารสร้างในระบบเรา (เลข gap-free + JE) แล้วคืนข้อมูลให้ยิงกลับ ERP
+    const body = {
+      documentType: 'PaymentVoucher',
+      documentDate: g('date') || new Date().toISOString().slice(0, 10),
+      reference: g('docno'),
+      supplierInvoiceNumber: g('docno'),
+      contactName: g('vendor'),
+      contactTaxId: g('taxid'),
+      contactExternalId: g('extid'),
+      lines: [{
+        description: `ตามเอกสาร ${g('docno') || '-'}`,
+        quantity: 1,
+        unitPrice: Number(g('sub') || g('total')),
+        vatRate: Number(g('vat')) > 0 ? 7 : 0,
+      }],
+    };
+    try {
+      const r = await this.post(`/api/v1/documents`, body);
+      this.toast(r?.message || 'สร้างใบสำคัญจ่ายแล้ว');
+      this.scans.splice(i, 1);
+      this.renderDocs();
+    } catch (e) { this.toast(e.message, true); }
+  },
+
+  // ─── ธนาคาร ───────────────────────────────────────────────
+  async loadBankAccounts() {
+    try {
+      const r = await this.get(`/api/companies/${this.companyId}/bank/accounts`);
+      const list = r?.data || [];
+      document.getElementById('bankAcct').innerHTML = list.length
+        ? list.map(a => `<option value="${a.id}">${this.esc(a.bankName || '')} ${this.esc(a.accountNumber || '')} — ${this.esc(a.accountName || '')}</option>`).join('')
+        : '<option value="">— ยังไม่มีบัญชีธนาคาร —</option>';
+    } catch { document.getElementById('bankAcct').innerHTML = '<option value="">โหลดไม่สำเร็จ</option>'; }
+  },
+
+  /** แปลงข้อความที่ paste จาก Excel เป็นรายการ — รับทั้ง tab และ comma */
+  parseStatement(text) {
+    const out = [];
+    for (const raw of text.split('\n')) {
+      const line = raw.trim();
+      if (!line) continue;
+      const c = line.includes('\t') ? line.split('\t') : line.split(',');
+      if (c.length < 2) continue;
+      const amount = parseFloat(String(c[1]).replace(/[^\d.-]/g, ''));
+      if (isNaN(amount)) continue;   // ข้ามหัวตาราง
+      const dir = (c[2] || '').trim();
+      out.push({
+        transactionDate: this.parseDate(c[0]),
+        amount: Math.abs(amount),
+        direction: /เข้า|in|deposit|cr/i.test(dir) || (!dir && amount > 0) ? 'In' : 'Out',
+        description: (c[3] || '').trim(),
+        externalId: (c[4] || '').trim() || null,
+      });
+    }
+    return out;
+  },
+
+  /** รับ พ.ศ. ด้วย — statement ไทยหลายแบงก์ส่งปี 2569 มา ถ้าไม่แปลงจะเพี้ยน 543 ปี */
+  parseDate(s) {
+    const t = String(s || '').trim();
+    const m = t.match(/^(\d{1,4})[-/](\d{1,2})[-/](\d{1,4})$/);
+    if (!m) return new Date().toISOString().slice(0, 10);
+    let [, a, b, c] = m;
+    let y, mo, d;
+    if (a.length === 4) { y = +a; mo = +b; d = +c; } else { d = +a; mo = +b; y = +c; }
+    if (y > 2400) y -= 543;                       // พ.ศ. → ค.ศ.
+    if (y < 100) y += 2000;
+    return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  },
+
+  async importStatement() {
+    const acct = document.getElementById('bankAcct').value;
+    if (!acct) { this.toast('กรุณาเลือกบัญชีธนาคาร', true); return; }
+    const lines = this.parseStatement(document.getElementById('stmtPaste').value);
+    if (!lines.length) { this.toast('ไม่พบรายการที่อ่านได้', true); return; }
+
+    const st = document.getElementById('stmtStatus');
+    st.textContent = `กำลังนำเข้าและจับคู่ ${lines.length} รายการ…`;
+    try {
+      const r = await this.post('/api/v1/bank/statements', { bankAccountId: acct, lines });
+      const d = r?.data || {};
+      st.textContent = `นำเข้า ${d.imported} · ข้ามซ้ำ ${d.skipped} · จับคู่ได้ ${d.matched}`;
+      this.renderBank(d.matches || []);
+    } catch (e) { st.textContent = ''; this.toast(e.message, true); }
+  },
+
+  renderBank(matches) {
+    const el = document.getElementById('bankResults');
+    if (!matches.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="card"><h2>ผลการจับคู่</h2>
+      <p class="sub">รายการที่ระบบมั่นใจจะติ๊กไว้ให้แล้ว — ตรวจแล้วกดยืนยัน ระบบจะจดจำรูปแบบเพื่อให้ครั้งหน้าแม่นขึ้น</p>
+      <table>
+        <tr><th>อ้างอิง</th><th>ผลจับคู่</th><th class="right">ยอดที่จับได้</th><th class="right">ผลต่าง</th><th></th></tr>
+        ${matches.map((m, i) => `<tr class="${m.found ? '' : 'low'}">
+          <td>${this.esc(m.externalId || '-')}</td>
+          <td>${m.found ? `<span class="badge b-ok">พบ ${m.suggestedIds.length} รายการ</span>` : '<span class="badge b-warn">ยังไม่พบคู่</span>'}
+              <div style="font-size:12px;color:var(--g600);margin-top:3px">${this.esc(m.message || '')}</div></td>
+          <td class="right">${this.money(m.suggestedTotal)}</td>
+          <td class="right">${m.difference ? this.money(m.difference) : '-'}</td>
+          <td>${m.found ? `<button class="btn btn-success btn-sm" onclick="WB.confirmMatch('${m.bankTransactionId}', ${JSON.stringify(m.suggestedIds).replace(/"/g, '&quot;')}, this)">ยืนยัน</button>` : ''}</td>
+        </tr>`).join('')}
+      </table></div>`;
+  },
+
+  async confirmMatch(txnId, ids, btn) {
+    btn.disabled = true;
+    try {
+      await this.post('/api/v1/bank/matches/confirm', { bankTransactionId: txnId, entryIds: ids });
+      btn.outerHTML = '<span class="badge b-ok">ยืนยันแล้ว</span>';
+    } catch (e) { btn.disabled = false; this.toast(e.message, true); }
+  },
+
+  // ─── ผู้ติดต่อ ────────────────────────────────────────────
+  async loadContacts() {
+    const el = document.getElementById('contactList');
+    try {
+      const r = await this.get('/api/v1/contacts/unmapped');
+      const rows = r?.data || [];
+      if (!rows.length) { el.innerHTML = '<div class="empty">ผู้ติดต่อทุกรายมีรหัสครบแล้ว 🎉</div>'; return; }
+      el.innerHTML = `<table>
+        <tr><th>ชื่อ</th><th>เลขผู้เสียภาษี</th><th>พบเมื่อ</th><th>รหัสในระบบคุณ</th><th></th></tr>
+        ${rows.map(c => `<tr>
+          <td>${this.esc(c.name)}</td>
+          <td>${this.esc(c.taxId || '-')}</td>
+          <td>${new Date(c.discoveredAt).toLocaleDateString('th-TH')}</td>
+          <td><input id="map_${c.contactId}" placeholder="เช่น V-00123" style="width:150px"></td>
+          <td><button class="btn btn-primary btn-sm" onclick="WB.mapContact('${c.contactId}', this)">ผูกรหัส</button></td>
+        </tr>`).join('')}
+      </table>`;
+    } catch (e) { el.innerHTML = `<div class="empty">${this.esc(e.message)}</div>`; }
+  },
+
+  async mapContact(id, btn) {
+    const v = document.getElementById(`map_${id}`)?.value?.trim();
+    if (!v) { this.toast('กรุณาใส่รหัส', true); return; }
+    btn.disabled = true;
+    try {
+      await this.post('/api/v1/contacts/map', { contactId: id, externalId: v });
+      this.toast('ผูกรหัสเรียบร้อย');
+      this.loadContacts();
+    } catch (e) { btn.disabled = false; this.toast(e.message, true); }
+  },
+
+  // ─── helpers ──────────────────────────────────────────────
+  async req(url, opt = {}) {
+    const res = await fetch(url, {
+      ...opt,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}`, ...(opt.headers || {}) },
+    });
+    if (res.status === 401) { location.href = '/index.html'; throw new Error('เซสชันหมดอายุ'); }
+    let j = null; try { j = await res.json(); } catch { }
+    if (!res.ok || j?.success === false) throw new Error(j?.message || `เกิดข้อผิดพลาด (${res.status})`);
+    return j;
+  },
+  get(u) { return this.req(u); },
+  post(u, b) { return this.req(u, { method: 'POST', body: JSON.stringify(b) }); },
+  money(v) { return Number(v || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+  esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
+  toast(msg, err) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
+    setTimeout(() => t.className = 'toast' + (err ? ' err' : ''), 3500);
+  },
+};
+WB.init();
+</script>
+</body>
+</html>
