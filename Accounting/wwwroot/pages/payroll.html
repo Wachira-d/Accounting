@@ -998,12 +998,22 @@ const Page = {
     const rows = files.length
       ? files.map(f => {
           const name = f.originalFileName || f.fileName || 'ไฟล์แนบ';
+          // สลิปโอน/ใบเสร็จ สปส. เกือบทั้งหมดเป็นรูปถ่าย — ต้องเห็นทันทีว่าใช่ใบไหน
+          // โดยไม่ต้องโหลดลงเครื่องทีละไฟล์
+          const ct = f.contentType || '';
+          const canPreview = ct.startsWith('image/') || ct === 'application/pdf'
+                          || /\.(jpe?g|png|gif|webp|pdf)$/i.test(name);
+          const jsName = JSON.stringify(name).replace(/"/g, '&quot;');
           return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #eef2f7">
-          <span>📎</span>
-          <span style="flex:1;font-size:13px;word-break:break-all">${Layout.esc(name)}</span>
+          <div data-att-thumb="${f.id}" ${canPreview ? `onclick="Page.previewRunAttachment('${f.id}', ${jsName})" style="cursor:zoom-in"` : ''}
+            style="flex:none;width:40px;height:40px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:#f8fafc;border:1px solid #e2e8f0;overflow:hidden">📎</div>
+          <span style="flex:1;font-size:13px;word-break:break-all"
+            ${canPreview ? `onclick="Page.previewRunAttachment('${f.id}', ${jsName})" style="flex:1;font-size:13px;word-break:break-all;cursor:pointer;color:var(--primary)"` : ''}>${Layout.esc(name)}</span>
           <span class="text-xs text-gray-400">${f.createdAt ? Layout.date(f.createdAt) : ''}</span>
+          ${canPreview ? `<button class="btn btn-sm btn-outline" title="ดูไฟล์"
+            onclick="Page.previewRunAttachment('${f.id}', ${jsName})">👁</button>` : ''}
           <button class="btn btn-sm btn-outline" title="ดาวน์โหลด"
-            onclick="Page.downloadRunAttachment('${f.id}', ${JSON.stringify(name).replace(/"/g, '&quot;')})">⬇</button>
+            onclick="Page.downloadRunAttachment('${f.id}', ${jsName})">⬇</button>
           <button class="btn btn-sm btn-outline" style="color:var(--danger)" title="ลบ"
             onclick="Page.deleteRunAttachment('${runId}','${f.id}')">🗑</button>
         </div>`;
@@ -1021,6 +1031,8 @@ const Page = {
         สลิปโอนเงินเดือน · สลิป/ใบเสร็จนำส่งประกันสังคม (สปส.1-10) · ใบเสร็จภาษี —
         พ.ร.บ.การบัญชี ม.10 กำหนดให้เก็บหลักฐาน 5 ปี
       </div>`;
+
+    this.hydrateRunAttThumbs(files);
   },
 
   async uploadRunAttachments(runId) {
@@ -1041,6 +1053,76 @@ const Page = {
       fail ? 'warning' : 'success');
     if (input) input.value = '';
     this.renderRunAttachments(runId);
+  },
+
+  /** ดึงไฟล์เป็น blob URL + cache — endpoint กันด้วย JWT จึงใช้ <img src> ตรงไม่ได้
+   *  (เบราว์เซอร์ไม่ส่ง Authorization header ให้) */
+  async _runAttBlob(attachmentId) {
+    this._attBlobs = this._attBlobs || new Map();
+    if (this._attBlobs.has(attachmentId)) return this._attBlobs.get(attachmentId);
+    const api = Layout.api(); if (!api) return null;
+    const token = localStorage.getItem('token');
+    const res = await fetch(api.downloadAttachmentUrl(attachmentId),
+      { headers: token ? { 'Authorization': 'Bearer ' + token } : {} });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const entry = { url: URL.createObjectURL(blob), type: blob.type || '' };
+    this._attBlobs.set(attachmentId, entry);
+    return entry;
+  },
+
+  /** แทนไอคอน 📎 ด้วยรูปย่อจริง — ไม่ block การแสดงรายการ */
+  hydrateRunAttThumbs(files) {
+    const MAX = 8 * 1024 * 1024;   // ไฟล์ใหญ่กว่านี้ไม่ย่อ (เปลืองเน็ต/แรม) แต่ยังกดดูได้
+    (files || []).forEach(async f => {
+      const ct = f.contentType || '';
+      const isImg = ct.startsWith('image/')
+                 || (!ct && /\.(jpe?g|png|gif|webp)$/i.test(f.originalFileName || f.fileName || ''));
+      if (!isImg || (f.fileSize || 0) > MAX) return;
+      try {
+        const e = await this._runAttBlob(f.id);
+        const box = document.querySelector(`[data-att-thumb="${f.id}"]`);
+        if (!e || !box) return;
+        box.innerHTML = `<img src="${e.url}" alt="" style="width:100%;height:100%;object-fit:cover">`;
+      } catch { /* ย่อไม่ได้ = คงไอคอนเดิม */ }
+    });
+  },
+
+  /** เปิดดูสลิป/ใบเสร็จในหน้าเลย ไม่ต้องโหลดลงเครื่องก่อน */
+  async previewRunAttachment(attachmentId, fileName) {
+    let ov = document.getElementById('runAttOverlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'runAttOverlay';
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.88);z-index:12000;display:flex;flex-direction:column;padding:16px;gap:10px';
+      ov.addEventListener('click', ev => { if (ev.target === ov) Page.closeRunAttPreview(); });
+      document.addEventListener('keydown', ev => { if (ev.key === 'Escape') Page.closeRunAttPreview(); });
+      document.body.appendChild(ov);
+    }
+    ov.style.display = 'flex';
+    ov.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;color:#fff;flex:none">
+        <div style="flex:1;min-width:0;font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Layout.esc(fileName || 'ไฟล์แนบ')}</div>
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff" onclick="Page.closeRunAttPreview()">✕ ปิด</button>
+      </div>
+      <div id="runAttBody" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px">กำลังเปิดไฟล์…</div>`;
+    try {
+      const e = await this._runAttBlob(attachmentId);
+      const body = document.getElementById('runAttBody');
+      if (!e || !body) return;
+      const isPdf = e.type === 'application/pdf' || /\.pdf$/i.test(fileName || '');
+      body.innerHTML = isPdf
+        ? `<iframe src="${e.url}" style="width:100%;height:100%;border:0;background:#fff;border-radius:8px"></iframe>`
+        : `<img src="${e.url}" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;background:#fff">`;
+    } catch (err) {
+      const body = document.getElementById('runAttBody');
+      if (body) body.textContent = 'เปิดไฟล์ไม่สำเร็จ: ' + (err.message || err);
+    }
+  },
+
+  closeRunAttPreview() {
+    const o = document.getElementById('runAttOverlay');
+    if (o) { o.style.display = 'none'; o.innerHTML = ''; }
   },
 
   /** ดาวน์โหลดผ่าน endpoint ที่ต้องมี JWT — ไม่เปิด URL ตรงเพื่อกันลิงก์หลุด

@@ -7098,6 +7098,9 @@
         const api = Layout.api(); if (!api) return;
         const container = document.getElementById('docAttachments_' + documentId);
         if (!container) return;
+        // คืน blob ของรอบก่อนก่อนวาดใหม่ — ไม่งั้นเปิด/ปิดเอกสารหลายใบแล้ว
+        // object URL ค้างสะสมจนกินหน่วยความจำ (ไฟล์แนบเป็นรูปหลาย MB)
+        this._releaseAttachmentBlobs();
 
         let attachments = [];
         try {
@@ -7124,18 +7127,31 @@
         };
         const list = attachments.length === 0
           ? `<div style="padding:12px;text-align:center;color:var(--gray-400);font-size:13px;background:var(--gray-50);border-radius:8px;border:1px dashed var(--gray-200)">ยังไม่มีไฟล์แนบ</div>`
-          : attachments.map(a => `
+          : attachments.map(a => {
+              // เปิดดูในหน้าได้เลยเฉพาะชนิดที่เบราว์เซอร์ render เองได้ —
+              // Excel/Word ต้องดาวน์โหลดไปเปิดโปรแกรมอื่นอยู่ดี จึงไม่หลอกให้กด
+              const canPreview = (a.contentType || '').startsWith('image/')
+                              || a.contentType === 'application/pdf';
+              const safeName = this.escapeHtml(a.originalFileName || '');
+              const jsName = (a.originalFileName || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+              return `
               <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:#fff;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:6px">
-                <span style="font-size:24px">${fileIcon(a.contentType)}</span>
+                <div data-att-thumb="${a.id}"
+                     ${canPreview ? `onclick="Page.previewAttachment('${a.id}','${jsName}')" style="cursor:zoom-in"` : ''}
+                     title="${canPreview ? 'คลิกเพื่อดู' : ''}"
+                     style="flex:none;width:46px;height:46px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:24px;background:var(--gray-50);border:1px solid var(--gray-200);overflow:hidden">${fileIcon(a.contentType)}</div>
                 <div style="flex:1;min-width:0">
-                  <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(a.originalFileName)}</div>
+                  <div ${canPreview ? `onclick="Page.previewAttachment('${a.id}','${jsName}')" style="cursor:pointer;color:var(--primary)"` : ''}
+                       class="att-name" style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${safeName}</div>
                   <div style="font-size:11px;color:var(--gray-500)">
                     ${fmtSize(a.fileSize)} • ${this.escapeHtml(a.uploadedByName || 'ไม่ระบุ')} • ${Layout.date(a.createdAt)}
                   </div>
                 </div>
-                <button class="btn btn-sm btn-outline" onclick="Page.downloadAttachment('${a.id}', '${this.escapeHtml(a.originalFileName).replace(/'/g, "\\'")}')" title="ดาวน์โหลด">⬇</button>
+                ${canPreview ? `<button class="btn btn-sm btn-outline" onclick="Page.previewAttachment('${a.id}','${jsName}')" title="ดูไฟล์">👁</button>` : ''}
+                <button class="btn btn-sm btn-outline" onclick="Page.downloadAttachment('${a.id}', '${jsName}')" title="ดาวน์โหลด">⬇</button>
                 <button class="btn btn-sm btn-outline" onclick="Page.deleteAttachment('${a.id}', '${documentId}')" title="ลบ" style="color:var(--danger)">🗑</button>
-              </div>`).join('');
+              </div>`;
+            }).join('');
 
         container.innerHTML = `
           <h4 style="font-size:14px;margin-bottom:8px;display:flex;align-items:center;gap:8px">
@@ -7154,6 +7170,9 @@
               </div>
             </div>
           </div>`;
+
+        // แทนไอคอนด้วยรูปย่อจริง (ไม่ block — รายการขึ้นก่อน รูปตามมา)
+        this.hydrateAttachmentThumbs(attachments);
 
         // Wire up drag-drop + click-to-pick
         const dropZone = document.getElementById('dropZone_' + documentId);
@@ -7202,6 +7221,110 @@
         }
         // Re-render list after all uploads finish
         await this.renderAttachmentSection(documentId);
+      },
+
+      /**
+       * ดึงไฟล์แนบเป็น blob URL (cache ไว้ต่อ session)
+       *
+       * endpoint /download ถูกกันด้วย JWT จึงใช้ <img src="..."> ตรง ๆ ไม่ได้
+       * (เบราว์เซอร์ไม่ส่ง Authorization header ให้) ต้อง fetch เองแล้วแปลงเป็น
+       * object URL. cache ไว้เพราะ thumbnail กับ preview ใช้ไฟล์เดียวกัน —
+       * ไม่ควรโหลดซ้ำ 2 รอบ
+       */
+      async _attachmentBlobUrl(attachmentId) {
+        this._attBlobs = this._attBlobs || new Map();
+        if (this._attBlobs.has(attachmentId)) return this._attBlobs.get(attachmentId);
+
+        const api = Layout.api(); if (!api) return null;
+        const token = localStorage.getItem('token');
+        const res = await fetch(api.downloadAttachmentUrl(attachmentId),
+          { headers: token ? { 'Authorization': 'Bearer ' + token } : {} });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        // เก็บ type จาก blob จริง ไม่เดาจากนามสกุลไฟล์ — ผู้ใช้เปลี่ยนชื่อไฟล์
+        // ได้ตามใจ แต่ Content-Type มาจากตอนอัปโหลดซึ่งเชื่อถือได้กว่า
+        const entry = { url: URL.createObjectURL(blob), type: blob.type || '' };
+        this._attBlobs.set(attachmentId, entry);
+        return entry;
+      },
+
+      /** คืนหน่วยความจำ blob ทั้งหมด — เรียกก่อน render รายการใหม่ */
+      _releaseAttachmentBlobs() {
+        // ปิด preview ก่อน — ถ้าเปิดค้างอยู่แล้ว revoke URL ใต้เท้า
+        // รูป/PDF ที่กำลังดูจะกลายเป็นช่องว่างโดยไม่มีคำอธิบาย
+        this.closeAttachmentPreview();
+        if (!this._attBlobs) return;
+        for (const e of this._attBlobs.values()) { try { URL.revokeObjectURL(e.url); } catch { } }
+        this._attBlobs.clear();
+      },
+
+      /**
+       * แทน emoji ด้วยรูปย่อจริงสำหรับไฟล์รูป
+       *
+       * ทำหลัง render และแบบ **ไม่ block** — รายการไฟล์ต้องขึ้นทันที ไม่ต้องรอ
+       * โหลดรูปเสร็จ. ไฟล์ใหญ่เกิน 8MB ข้าม (โหลดมาย่อไม่คุ้ม เปลืองเน็ตผู้ใช้
+       * และหน่วยความจำ) — ยังกดดูเต็มจอได้อยู่
+       */
+      hydrateAttachmentThumbs(attachments) {
+        const MAX_THUMB_BYTES = 8 * 1024 * 1024;
+        (attachments || [])
+          .filter(a => (a.contentType || '').startsWith('image/') && (a.fileSize || 0) <= MAX_THUMB_BYTES)
+          .forEach(async a => {
+            try {
+              const e = await this._attachmentBlobUrl(a.id);
+              const box = document.querySelector(`[data-att-thumb="${a.id}"]`);
+              // ผู้ใช้อาจปิด modal ไปแล้วระหว่างโหลด — เช็คก่อนเขียน DOM
+              if (!e || !box) return;
+              box.innerHTML = `<img src="${e.url}" alt="" style="width:100%;height:100%;object-fit:cover">`;
+            } catch { /* โหลดรูปย่อไม่ได้ = คงไอคอนเดิม ไม่รบกวนผู้ใช้ */ }
+          });
+      },
+
+      /**
+       * เปิดดูไฟล์แนบในหน้าเลย ไม่ต้องดาวน์โหลดก่อน
+       * รูป → แสดงเต็มจอ · PDF → ฝัง iframe (เบราว์เซอร์มี viewer ในตัว)
+       */
+      async previewAttachment(attachmentId, fileName) {
+        let overlay = document.getElementById('attPreviewOverlay');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.id = 'attPreviewOverlay';
+          overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.88);z-index:12000;'
+            + 'display:flex;flex-direction:column;padding:16px;gap:10px';
+          // คลิกพื้นหลัง (ไม่ใช่ตัวไฟล์) เพื่อปิด
+          overlay.addEventListener('click', ev => { if (ev.target === overlay) Page.closeAttachmentPreview(); });
+          document.body.appendChild(overlay);
+          // Esc ปิด — ผูกครั้งเดียวตอนสร้าง overlay
+          this._attEsc = (ev) => { if (ev.key === 'Escape') Page.closeAttachmentPreview(); };
+          document.addEventListener('keydown', this._attEsc);
+        }
+        overlay.style.display = 'flex';
+        overlay.innerHTML = `
+          <div style="display:flex;align-items:center;gap:12px;color:#fff;flex:none">
+            <div style="flex:1;min-width:0;font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(fileName || 'ไฟล์แนบ')}</div>
+            <button class="btn btn-sm" style="background:#fff;color:#111"
+              onclick="Page.downloadAttachment('${attachmentId}','${(fileName || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')">⬇ ดาวน์โหลด</button>
+            <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff" onclick="Page.closeAttachmentPreview()">✕ ปิด</button>
+          </div>
+          <div id="attPreviewBody" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px">กำลังเปิดไฟล์…</div>`;
+
+        try {
+          const e = await this._attachmentBlobUrl(attachmentId);
+          const body = document.getElementById('attPreviewBody');
+          if (!e || !body) return;
+          const isPdf = e.type === 'application/pdf' || /\.pdf$/i.test(fileName || '');
+          body.innerHTML = isPdf
+            ? `<iframe src="${e.url}" style="width:100%;height:100%;border:0;background:#fff;border-radius:8px"></iframe>`
+            : `<img src="${e.url}" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;background:#fff">`;
+        } catch (e) {
+          const body = document.getElementById('attPreviewBody');
+          if (body) body.textContent = 'เปิดไฟล์ไม่สำเร็จ: ' + (e.message || e);
+        }
+      },
+
+      closeAttachmentPreview() {
+        const o = document.getElementById('attPreviewOverlay');
+        if (o) { o.style.display = 'none'; o.innerHTML = ''; }
       },
 
       async downloadAttachment(attachmentId, originalFileName) {
