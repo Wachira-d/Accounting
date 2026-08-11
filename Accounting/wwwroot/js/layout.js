@@ -1059,8 +1059,39 @@ const Layout = {
     appLayout.appendChild(overlay);
     appLayout.appendChild(mainContent);
 
+    // เก็บ element อื่นใน <body> ที่ไม่ใช่ pageContent ไว้ก่อนล้าง
+    //
+    // เดิมบรรทัดถัดไปทำ body.innerHTML = '' โดยกู้เฉพาะ #pageContent (ที่ถูก
+    // ย้ายเข้า mainContent ไปแล้ว) — element ที่เป็น **พี่น้อง** ของ
+    // pageContent จึงถูกลบทิ้งทั้งหมดอย่างเงียบ ๆ ซึ่งในทางปฏิบัติคือ
+    // **modal ทุกตัว** ของหน้าที่วาง modal ไว้นอก pageContent
+    //
+    // ผลที่เกิดจริง (เคสผู้ใช้รายงาน — หน้าลายเซ็น): #uploadModal พร้อม
+    // <canvas> หายไปจาก DOM → setupCanvas() หา element ไม่เจอ → this.ctx
+    // ค้างเป็น null → กดปุ่ม "อัพโหลดลายเซ็น" แล้ว clearCanvas() ระเบิด
+    // "Cannot read properties of null (reading 'clearRect')" และ modal
+    // ไม่มีวันเปิด. กวาดทั้งโปรเจกต์พบ 8 หน้าที่โดนแบบเดียวกัน
+    // (signatures, deposits, deposit-center, financial-mgmt, leave,
+    //  leave-types, supplies, undue-vat)
+    //
+    // แก้ที่นี่จุดเดียวแทนการไล่ย้าย modal ทีละหน้า เพราะหน้าใหม่ที่เขียน
+    // ต่อจากนี้จะโดนกับดักเดิมอีกถ้าไม่แก้ต้นเหตุ. ข้าม <script> เพราะรันไป
+    // แล้ว (spec: script ที่ execute แล้วจะไม่รันซ้ำเมื่อถูก re-insert
+    // แต่ไม่มีเหตุต้องเก็บไว้ให้รก)
+    const preserved = Array.from(document.body.children)
+      .filter(n => n !== pageContent && n.tagName !== 'SCRIPT');
+
     document.body.innerHTML = '';
     document.body.appendChild(appLayout);
+
+    // คืน element ที่กู้ไว้ — event listener ที่ผูกด้วย addEventListener
+    // ติดไปกับ node เอง จึงยังทำงานหลังย้ายที่
+    if (preserved.length) {
+      preserved.forEach(n => document.body.appendChild(n));
+      console.info(`[Layout] กู้ ${preserved.length} element ที่อยู่นอก #pageContent `
+        + `(${preserved.map(n => n.id || n.className || n.tagName).join(', ')}) — `
+        + 'แนะนำให้ย้าย modal เข้าไปไว้ใน #pageContent');
+    }
 
     // Toast container
     const tc = document.createElement('div');

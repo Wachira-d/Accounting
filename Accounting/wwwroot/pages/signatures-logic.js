@@ -72,10 +72,23 @@ const Page = {
   },
 
   // ===== Canvas Drawing =====
+  /** คืน ctx ที่ใช้ได้เสมอ — เตรียมให้ตอนแรกไม่สำเร็จก็ลองใหม่ตอนใช้จริง
+   *
+   *  เดิม setupCanvas() ทำงานครั้งเดียวตอน init ถ้าตอนนั้นหา canvas ไม่เจอ
+   *  (เช่น modal ถูกลบ/ยังไม่ถูก render) this.ctx จะค้างเป็น null ตลอดอายุ
+   *  หน้า แล้วทุกฟังก์ชันที่เรียก this.ctx.* พังหมด — ผู้ใช้เห็นแค่ error
+   *  ดิบ ๆ ไม่รู้ว่าต้องทำอะไร */
+  ensureCtx() {
+    if (this.ctx) return this.ctx;
+    this.setupCanvas();
+    return this.ctx;
+  },
+
   setupCanvas() {
     const canvas = document.getElementById('sigCanvas');
     if (!canvas) return;
     this.ctx = canvas.getContext('2d');
+    if (!this.ctx) return;
     this.ctx.strokeStyle = '#000';
     this.ctx.lineWidth = 2;
     this.ctx.lineCap = 'round';
@@ -93,7 +106,10 @@ const Page = {
 
   clearCanvas() {
     const canvas = document.getElementById('sigCanvas');
-    this.ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const ctx = this.ensureCtx();
+    // ไม่มี canvas ก็แค่รีเซ็ตสถานะ — ห้าม throw เพราะ showUploadModal()
+    // เรียกตัวนี้ก่อนเปิด modal ถ้าพังตรงนี้ modal จะไม่มีวันเปิดเลย
+    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
     this.hasDrawn = false;
     this.fileData = null;
   },
@@ -106,10 +122,14 @@ const Page = {
       const img = new Image();
       img.onload = () => {
         const canvas = document.getElementById('sigCanvas');
-        this.ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const ctx = this.ensureCtx();
+        // แสดงตัวอย่างบน canvas ไม่ได้ก็ไม่เป็นไร — fileData ถูกเก็บไว้แล้ว
+        // ด้านล่าง การอัปโหลดจึงยังทำงานได้ (อย่าให้พรีวิวพังการอัปโหลด)
+        if (!canvas || !ctx) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
         const w = img.width * scale, h = img.height * scale;
-        this.ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+        ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
         this.hasDrawn = true;
       };
       img.src = ev.target.result;
@@ -133,6 +153,7 @@ const Page = {
       data = this.fileData;
     } else if (this.hasDrawn) {
       const canvas = document.getElementById('sigCanvas');
+      if (!canvas) { alert('ไม่พบพื้นที่วาดลายเซ็น — กรุณารีเฟรชหน้าแล้วลองใหม่'); return; }
       data = canvas.toDataURL('image/png').split(',')[1];
     } else {
       alert('กรุณาวาดหรืออัพโหลดลายเซ็น');
