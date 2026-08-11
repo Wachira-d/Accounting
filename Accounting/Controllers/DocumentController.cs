@@ -439,6 +439,15 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "รับรู้รายได้จากมัดจำสำเร็จ"));
     }
 
+    /// <summary>สายการแปลงเอกสารทั้งเส้น (ต้นน้ำ→ปลายน้ำ) — ให้ UI วาด stepper
+    /// QT → INV → REC โดยผู้ใช้ไม่ต้องไล่เปิดทีละใบเพื่อจับคู่เลขเอง.
+    /// เดินขึ้นตาม RelatedDocumentId จนถึงต้นทาง แล้วเดินลงหา "ทายาท" ทุกใบ.</summary>
+    [HttpGet("{documentId:guid}/chain")]
+    public async Task<ActionResult<ApiResponse<List<DocumentChainNode>>>> GetChain(
+        Guid companyId, Guid documentId)
+        => Ok(new ApiResponse<List<DocumentChainNode>>(true,
+            await _documentService.GetDocumentChainAsync(companyId, documentId)));
+
     /// <summary>ประวัติ revision ของเอกสาร — ทุกครั้งที่แก้เอกสาร operational
     /// ที่อนุมัติ/ส่งแล้ว ระบบ snapshot สภาพก่อนแก้ + เพิ่ม Rev อัตโนมัติ.</summary>
     [HttpGet("{documentId:guid}/revisions")]

@@ -76,6 +76,10 @@ public record CreateDocumentTemplateRequest(
     bool? ShowBankDetails,
     string? BankDetailsText,
     string? BankDetailsTextEn,
+    // ค่าเริ่มต้นฝั่ง "ฟอร์มสร้างเอกสาร" ต่อชนิด (pre-fill ตอนช่องยังว่าง)
+    Guid? DefaultPaymentAccountId,
+    string? DefaultPaymentTerms,
+    int? DefaultCreditDays,
 
     // Signature
     bool? ShowSignature,
@@ -189,6 +193,10 @@ public record UpdateDocumentTemplateRequest(
     bool? ShowBankDetails,
     string? BankDetailsText,
     string? BankDetailsTextEn,
+    // ค่าเริ่มต้นฝั่ง "ฟอร์มสร้างเอกสาร" ต่อชนิด (pre-fill ตอนช่องยังว่าง)
+    Guid? DefaultPaymentAccountId,
+    string? DefaultPaymentTerms,
+    int? DefaultCreditDays,
 
     bool? ShowSignature,
     int? SignatureCount,
@@ -254,6 +262,9 @@ public record DocumentTemplateResponse(
     string? FooterNotes,
     bool ShowPaymentTerms,
     bool ShowBankDetails,
+    Guid? DefaultPaymentAccountId,
+    string? DefaultPaymentTerms,
+    int? DefaultCreditDays,
     bool ShowSignature,
     int SignatureCount,
     bool ShowQrCode,

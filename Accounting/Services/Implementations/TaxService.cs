@@ -268,6 +268,45 @@ public partial class TaxService : ITaxService
                 .ToDictionary(x => x.Id, x => (Type: x.DocumentType, x.OutputVatDueAt,
                     InputVatPendingUndue: x.Pending));
         var relatedDocTypes = relatedDocInfos.ToDictionary(kv => kv.Key, kv => kv.Value.Type);
+
+        // ===== ฝั่งของ CN/DN จาก GL (ความจริงสุดท้าย) =====
+        //
+        // เดิมตัดสินฝั่งจาก RelatedDocumentId อย่างเดียว → ใบลดหนี้ที่ **ไม่มี
+        // ใบอ้างอิงผูกไว้** (อ้างด้วยข้อความ/สร้างตรง/นำเข้า API) จะตกไปฝั่งขาย
+        // เสมอ ผลคือ:
+        //   • ไม่ไปหักภาษีซื้อในรายงานภาษีซื้อ (อาการที่ผู้ใช้เจอ)
+        //   • **และหักภาษีขายแทน** → นำส่งภาษีขายขาดไป = เบี้ยปรับ/เงินเพิ่ม
+        // ซึ่งอันตรายกว่าอาการที่เห็น เพราะดูเผิน ๆ เหมือนแค่ "ไม่ขึ้นรายงาน"
+        //
+        // JE ตอนอนุมัติลงบัญชีภาษีไปแล้วตามฝั่งจริง (ฝั่งซื้อ Cr 116x /
+        // ฝั่งขาย Dr 2191x — ดู DocumentService AutoPost) จึงใช้ GL เป็น
+        // ตัวตัดสินที่เชื่อถือได้ที่สุดเมื่อ FK หาย
+        var cnDnIds = docs
+            .Where(d => d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote)
+            .Select(d => d.Id).ToList();
+        // docId → true = ฝั่งซื้อ (แตะผังภาษีซื้อ 116x), false = ฝั่งขาย (2191x)
+        var cnDnSideFromGl = new Dictionary<Guid, bool>();
+        if (cnDnIds.Count > 0)
+        {
+            var vatLines = await (from l in _db.JournalEntryLines.AsNoTracking()
+                                  join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                                  join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                                  where !l.IsDeleted && !j.IsDeleted
+                                        && j.CompanyId == companyId
+                                        && j.Status != JournalEntryStatus.Voided
+                                        && j.SourceDocumentId != null
+                                        && cnDnIds.Contains(j.SourceDocumentId!.Value)
+                                        && (a.AccountCode.StartsWith("116") || a.AccountCode.StartsWith("2191"))
+                                  select new { DocId = j.SourceDocumentId!.Value, a.AccountCode })
+                                 .ToListAsync();
+            foreach (var g in vatLines.GroupBy(x => x.DocId))
+            {
+                var touchedInput = g.Any(x => x.AccountCode.StartsWith("116"));
+                var touchedOutput = g.Any(x => x.AccountCode.StartsWith("2191"));
+                // แตะทั้งสองฝั่ง = ผิดปกติ ไม่เดา ปล่อยให้ตรรกะเดิม/บรรทัดเตือนจัดการ
+                if (touchedInput != touchedOutput) cnDnSideFromGl[g.Key] = touchedInput;
+            }
+        }
         // ใบแจ้งหนี้ (ต้นทาง CN/DN) ที่ VAT ยังพัก 21913 — CN/DN ต้องไม่หัก/เพิ่ม
         // ยอด ภ.พ.30 จนกว่าใบเดิมจะถึง tax point (GL-driven เหมือน branch Invoice)
         var relatedInvoicePendingIds = relatedDocInfos
@@ -522,12 +561,16 @@ public partial class TaxService : ITaxService
                 // as sales side (under-reducing input VAT on ภ.พ.30).
                 // PaymentVoucher = PV standalone จ่ายทันที (ตั้งหนี้+จ่ายในใบเดียว)
                 // — CN ที่อ้างต้องลดภาษีซื้อ ไม่ใช่ภาษีขาย (คู่กับ AutoPost ฝั่งซื้อ)
-                var isPurchaseSide = doc.RelatedDocumentId.HasValue
-                    && relatedDocTypes.TryGetValue(doc.RelatedDocumentId.Value, out var rtype)
-                    && (rtype == DocumentType.PurchaseInvoice
-                        || rtype == DocumentType.Expense
-                        || rtype == DocumentType.CertificateInLieu
-                        || rtype == DocumentType.PaymentVoucher);
+                // ลำดับความน่าเชื่อถือ: FK ใบต้นทาง → GL (ผังภาษีที่ JE ลงจริง)
+                // ไม่มีทั้งคู่ = คงพฤติกรรมเดิม (ฝั่งขาย) แต่ติดธงไว้เตือนด้านล่าง
+                var sideResolvedByFk = doc.RelatedDocumentId.HasValue
+                    && relatedDocTypes.ContainsKey(doc.RelatedDocumentId.Value);
+                var isPurchaseSide = sideResolvedByFk
+                    ? (relatedDocTypes[doc.RelatedDocumentId!.Value] is DocumentType.PurchaseInvoice
+                        or DocumentType.Expense or DocumentType.CertificateInLieu
+                        or DocumentType.PaymentVoucher)
+                    : cnDnSideFromGl.GetValueOrDefault(doc.Id, false);
+                var sideUnknown = !sideResolvedByFk && !cnDnSideFromGl.ContainsKey(doc.Id);
                 // ใบเดิมยังไม่ถึง tax point (VAT พัก 21913/11640 — ยังไม่เคยเข้า
                 // ภ.พ.30) → CN ห้ามหักยอดงวดนี้ (จะเป็นการขอคืน VAT ที่ไม่เคยนำส่ง/
                 // ไม่เคยเคลม) — ใส่บรรทัดเตือน excluded คู่ไว้ ยอดสุทธิจะถูกนับตอน
@@ -565,6 +608,11 @@ public partial class TaxService : ITaxService
                     outputVat -= doc.VatAmount;
                     label = "[ใบลดหนี้-ภาษีขาย]";
                 }
+                // แยกฝั่งไม่ได้เลย = ข้อมูลไม่ครบ ไม่ใช่เรื่องปกติ — ต้องให้ผู้ใช้
+                // เห็นบนรายงาน ไม่ใช่เงียบแล้วไปหักผิดฝั่ง (หักภาษีขายเกินจริง =
+                // นำส่งขาด เบี้ยปรับ §89)
+                if (sideUnknown)
+                    label = "⚠️ [ใบลดหนี้-แยกฝั่งไม่ได้ ตรวจสอบใบอ้างอิง]";
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id,
@@ -586,12 +634,16 @@ public partial class TaxService : ITaxService
             else if (doc.DocumentType == DocumentType.DebitNote)
             {
                 // Same cross-period fix as CreditNote. (+ PV standalone ฝั่งซื้อ)
-                var isPurchaseSide = doc.RelatedDocumentId.HasValue
-                    && relatedDocTypes.TryGetValue(doc.RelatedDocumentId.Value, out var rtype)
-                    && (rtype == DocumentType.PurchaseInvoice
-                        || rtype == DocumentType.Expense
-                        || rtype == DocumentType.CertificateInLieu
-                        || rtype == DocumentType.PaymentVoucher);
+                // และ fallback GL แบบเดียวกัน — DN ฝั่งซื้อที่ไม่มี FK เดิมจะไป
+                // **เพิ่มภาษีขาย** แทนที่จะเพิ่มภาษีซื้อ = นำส่งเกินจริง
+                var dnSideByFk = doc.RelatedDocumentId.HasValue
+                    && relatedDocTypes.ContainsKey(doc.RelatedDocumentId.Value);
+                var isPurchaseSide = dnSideByFk
+                    ? (relatedDocTypes[doc.RelatedDocumentId!.Value] is DocumentType.PurchaseInvoice
+                        or DocumentType.Expense or DocumentType.CertificateInLieu
+                        or DocumentType.PaymentVoucher)
+                    : cnDnSideFromGl.GetValueOrDefault(doc.Id, false);
+                var dnSideUnknown = !dnSideByFk && !cnDnSideFromGl.ContainsKey(doc.Id);
                 // ใบเดิมยังไม่ถึง tax point (VAT พัก 21913/11640) — เหมือน CN
                 if (doc.RelatedDocumentId.HasValue
                     && relatedDocInfos.TryGetValue(doc.RelatedDocumentId.Value, out var dnRelInfo)
@@ -624,7 +676,8 @@ public partial class TaxService : ITaxService
                         TaxReportId = report.Id, LineOrder = lineOrder++,
                         TaxPayerId = doc.Contact?.TaxId, TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
-                        Description = $"[ใบเพิ่มหนี้-ภาษีซื้อ] {doc.DocumentNumber}",
+                        Description = $"[ใบเพิ่มหนี้-ภาษีซื้อ] {doc.DocumentNumber}"
+                            + (dnSideUnknown ? " ⚠️ แยกฝั่งไม่ได้ ตรวจสอบใบอ้างอิง" : ""),
                         IncomeAmount = VatableBase(doc), TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = doc.VatAmount, DocumentId = doc.Id, IncomeTypeCode = "INPUT"
                     });
@@ -637,7 +690,8 @@ public partial class TaxService : ITaxService
                         TaxReportId = report.Id, LineOrder = lineOrder++,
                         TaxPayerId = doc.Contact?.TaxId, TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
-                        Description = $"[ใบเพิ่มหนี้-ภาษีขาย] {doc.DocumentNumber}",
+                        Description = $"[ใบเพิ่มหนี้-ภาษีขาย] {doc.DocumentNumber}"
+                            + (dnSideUnknown ? " ⚠️ แยกฝั่งไม่ได้ ตรวจสอบใบอ้างอิง" : ""),
                         IncomeAmount = VatableBase(doc), TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = doc.VatAmount, DocumentId = doc.Id
                     });

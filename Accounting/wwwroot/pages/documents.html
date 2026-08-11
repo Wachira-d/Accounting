@@ -401,6 +401,11 @@
               <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภพ.30 ที่จะเคลมภาษีซื้อ (อาจต่างจากวันที่เราบันทึก)">วันที่ใบกำกับของผู้ขาย</label>
               <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
             </div>
+            <div class="form-group">
+              <label class="form-label" data-help="เลือกงวด ภพ.30 ที่จะเคลมภาษีซื้อใบนี้ — ว่าง = เคลมตามเดือนเอกสารปกติ · เลื่อนได้ไม่เกิน 6 เดือนตาม §82/3 · ถ้าใบถูกใช้ในรายงานงวดใดแล้ว รายงานนั้นชนะ (ต้องติ๊กออกจากรายงานก่อนจึงย้ายได้)">งวดที่เคลมภาษีซื้อ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ว่าง = ตามเดือนเอกสาร)</span></label>
+              <input type="month" class="form-input" id="fVatClaimPeriod">
+              <div id="fVatClaimLocked" style="display:none;font-size:11px;color:#b45309;margin-top:3px"></div>
+            </div>
           </div>
           <!-- วันเครดิต (3 digit) + เทอม (free text) → 1:2 ratio -->
           <div class="form-row-1-2 supplier-invoice-only" style="display:none">
@@ -3005,10 +3010,47 @@
           banner.innerHTML = `<div style="color:#dc2626;font-size:13px">ขอแนะนำไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
         }
       },
+      /**
+       * ดึงค่าเริ่มต้นต่อชนิดเอกสาร (จาก template default ของชนิดนั้น) มา
+       * pre-fill ช่องที่ยังว่าง — แหล่งเงิน/เงื่อนไขชำระ/วันเครดิต
+       *
+       * กติกาสำคัญ: **เติมเฉพาะช่องว่าง และเฉพาะตอนสร้างใหม่** — ตอนแก้เอกสาร
+       * (editingId มีค่า) ห้ามยุ่ง เพราะค่าที่บันทึกไว้คือการตัดสินใจของผู้ใช้แล้ว
+       * ผู้ใช้พิมพ์ทับ default ได้เสมอ (เป็นค่าตั้งต้น ไม่ใช่ค่าบังคับ)
+       */
+      async applyDocTypeDefaults(docType) {
+        if (this.editingId) return;
+        try {
+          this._typeDefaults = this._typeDefaults || {};
+          if (!(docType in this._typeDefaults)) {
+            const res = await API.get(`/api/companies/${Layout.getCompanyId()}/document-templates/default/${docType}`);
+            this._typeDefaults[docType] = res?.data || null;   // cache — เปลี่ยนชนิดไปมาไม่ยิงซ้ำ
+          }
+          const t = this._typeDefaults[docType];
+          if (!t) return;
+
+          const pay = document.getElementById('fPaymentChannel');
+          if (t.defaultPaymentAccountId && pay && !pay.value) {
+            // เลือกได้เฉพาะเมื่อ option มีจริง (ผังอาจถูกปิดใช้งานไปแล้ว)
+            const opt = [...pay.options].find(o => o.value === t.defaultPaymentAccountId);
+            if (opt) { pay.value = t.defaultPaymentAccountId; pay.dispatchEvent(new Event('change')); }
+          }
+          const terms = document.getElementById('fPaymentTerms');
+          if (t.defaultPaymentTerms && terms && !terms.value) terms.value = t.defaultPaymentTerms;
+          const days = document.getElementById('fCreditDays');
+          if (t.defaultCreditDays && days && !days.value) {
+            days.value = t.defaultCreditDays;
+            days.dispatchEvent(new Event('input'));   // ให้ตัวคำนวณวันครบกำหนดทำงาน
+          }
+        } catch (e) { /* default โหลดไม่ได้ = ฟอร์มเปล่าตามเดิม ไม่รบกวนผู้ใช้ */ }
+      },
+
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
         this._refreshNoApproveHint();
+        const dtSel0 = document.getElementById('fDocType');
+        if (dtSel0?.value) this.applyDocTypeDefaults(dtSel0.value);
         // 💡 Live tooltip — pull the `title` attribute from the
         // currently-selected option into the hint line below the select.
         // We do this rather than relying on browser-native option tooltips
@@ -4768,6 +4810,64 @@
         this.onDocTypeChange();
         Layout.openModal('formModal');
       },
+      /**
+       * วาด stepper สายเอกสารไว้บนสุดของ detail modal
+       *
+       * หลักการออกแบบ:
+       *  • เรียงซ้าย→ขวาตามขั้นของ flow (Depth) — อ่านเหมือนเส้นเวลา
+       *  • ใบที่เปิดอยู่ = กรอบม่วงหนา ("คุณอยู่ที่นี่")
+       *  • สีบอกสถานะโดยไม่ต้องอ่าน: เขียว=จ่ายครบ น้ำเงิน=อนุมัติ
+       *    เทา=ร่าง แดงขีดฆ่า=ยกเลิก (ใบยกเลิกไม่หายจากสาย — ต้องเห็น
+       *    ว่าเคยแปลงแล้วโดนยกเลิก จะได้รู้ว่าแปลงใหม่ได้)
+       *  • depth เดียวกันหลายใบ (แตก partial) ซ้อนเป็นกลุ่มในขั้นเดียวกัน
+       *  • คลิกใบไหน = เปิด detail ใบนั้นทันที
+       */
+      renderChainStepper(nodes, currentId) {
+        if (!nodes || nodes.length < 2) return;   // ใบเดี่ยว — ไม่มีสายให้วาด
+        const host = document.createElement('div');
+        host.id = 'chainStepper';
+        host.style.cssText = 'margin:0 0 14px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow-x:auto';
+
+        const stColor = s => s === 'Paid' ? '#059669'
+          : s === 'PartiallyPaid' ? '#0891b2'
+          : (s === 'Approved' || s === 'Sent') ? '#2563eb'
+          : s === 'Voided' ? '#dc2626'
+          : '#94a3b8';
+        const stLabel = s => ({ Paid: 'จ่ายครบ', PartiallyPaid: 'จ่ายบางส่วน', Approved: 'อนุมัติ', Sent: 'ส่งแล้ว', Draft: 'ร่าง', WaitingApproval: 'รออนุมัติ', Voided: 'ยกเลิก', Rejected: 'ตีกลับ' }[s] || s);
+
+        // จัดกลุ่มตามขั้น (depth) — ขั้นหนึ่งมีได้หลายใบ (แตก partial/settlement)
+        const byDepth = new Map();
+        nodes.forEach(n => {
+          if (!byDepth.has(n.depth)) byDepth.set(n.depth, []);
+          byDepth.get(n.depth).push(n);
+        });
+        const depths = [...byDepth.keys()].sort((a, b) => a - b);
+
+        host.innerHTML = `<div style="font-weight:700;font-size:12.5px;margin-bottom:8px;color:#475569">🔗 สายเอกสาร (${nodes.length} ใบ)</div>
+          <div style="display:flex;align-items:flex-start;gap:0;min-width:max-content">` +
+          depths.map((dep, i) => {
+            const cards = byDepth.get(dep).map(n => {
+              const cur = n.id === currentId;
+              const voided = n.status === 'Voided';
+              return `<div onclick="${cur ? '' : `Page.detail('${n.id}')`}" title="${stLabel(n.status)} · ${Layout.money(n.totalAmount)} บาท${n.paidAmount > 0 ? ` · รับแล้ว ${Layout.money(n.paidAmount)}` : ''}"
+                style="min-width:132px;padding:7px 10px;background:#fff;border:2px solid ${cur ? 'var(--primary)' : '#e2e8f0'};border-radius:8px;cursor:${cur ? 'default' : 'pointer'};margin-bottom:4px;${cur ? 'box-shadow:0 0 0 3px rgba(79,70,229,.12);' : ''}">
+                <div style="font-size:10.5px;color:#64748b">${Layout.docTypeLabel(n.documentType)}${cur ? ' <b style="color:var(--primary)">◀ ใบนี้</b>' : ''}</div>
+                <div style="font-size:12px;font-weight:700;${voided ? 'text-decoration:line-through;color:#dc2626' : ''}">${Layout.esc(n.documentNumber)}</div>
+                <div style="font-size:10.5px;display:flex;justify-content:space-between;gap:6px">
+                  <span style="color:${stColor(n.status)};font-weight:600">● ${stLabel(n.status)}</span>
+                  <span style="color:#64748b">${Layout.money(n.totalAmount)}</span>
+                </div>
+              </div>`;
+            }).join('');
+            const arrow = i < depths.length - 1
+              ? `<div style="align-self:center;padding:0 6px;color:#94a3b8;font-size:16px;flex:none">→</div>` : '';
+            return `<div style="display:flex;flex-direction:column;flex:none">${cards}</div>${arrow}`;
+          }).join('') + `</div>`;
+
+        const dc = document.getElementById('detailContent');
+        if (dc) dc.prepend(host);
+      },
+
       /// เปิดดู snapshot ของ revision เก่า — เห็นว่า Rev นั้นเสนอราคา/รายการอะไร
       async showRevisionSnapshot(docId, rev) {
         try {
@@ -4847,6 +4947,24 @@
           if (fSin) fSin.value = d.supplierInvoiceNumber || '';
           const fStd = document.getElementById('fSupplierTaxInvoiceDate');
           if (fStd) fStd.value = d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '';
+          // งวดเคลมภาษีซื้อ — โชว์เจตนาปัจจุบัน และถ้าใบถูกใช้ในรายงานงวดใด
+          // แล้ว (inputVatPp30Month มาจาก TaxReportLines จริง) ให้ **ล็อกช่อง**
+          // พร้อมบอกงวด: รายงานชนะเจตนาเสมอ และผู้ใช้ต้องเห็นกติกานี้บนจอ
+          const fVcp = document.getElementById('fVatClaimPeriod');
+          const fVcpLock = document.getElementById('fVatClaimLocked');
+          if (fVcp) {
+            fVcp.value = d.inputVatBecameClaimableAt ? String(d.inputVatBecameClaimableAt).slice(0, 7) : '';
+            const claimed = d.inputVatPp30Month && d.inputVatPp30Year;
+            fVcp.disabled = !!claimed;
+            if (fVcpLock) {
+              fVcpLock.style.display = claimed ? '' : 'none';
+              if (claimed) fVcpLock.textContent =
+                `🔒 ใบนี้อยู่ในรายงานภาษีซื้องวด ${String(d.inputVatPp30Month).padStart(2, '0')}/${d.inputVatPp30Year}` +
+                (d.inputVatPp30ReportStatus === 'Filed'
+                  ? ' (ยื่นแล้ว — ย้ายงวดต้องยื่นแบบเพิ่มเติม)'
+                  : ' แล้ว — ย้ายงวดโดยติ๊กใบนี้ออกจากรายงานงวดนั้นก่อน');
+            }
+          }
           // PV: เติมกล่อง "ใช้งานใบกำกับภาษี" ตอนแก้ไขเอกสารเก่า
           const fHtr = document.getElementById('fHasTaxInvoiceRef');
           if (fHtr) {
@@ -5308,6 +5426,13 @@
             const pv = document.getElementById('fSupplierTaxInvoiceDatePV')?.value;
             const isPV = document.getElementById('fDocType').value === 'PaymentVoucher';
             return isPV && document.getElementById('fHasTaxInvoiceRef')?.checked ? (pv || null) : (main || null);
+          })(),
+          // งวดเคลมภาษีซื้อ (push): ค่า input type=month คือ "yyyy-MM" อยู่แล้ว
+          // ส่งเสมอตอนแก้ไข ("" = ล้างกลับปกติ) แต่ตอนสร้างส่งเฉพาะมีค่า
+          inputVatClaimPeriod: (() => {
+            const el = document.getElementById('fVatClaimPeriod');
+            if (!el || el.disabled) return null;          // ถูกล็อก (มีบรรทัดรายงานแล้ว) = ไม่ส่ง
+            return this.editingId ? (el.value || '') : (el.value || null);
           })(),
           hasTaxInvoiceReference: document.getElementById('fDocType').value === 'PaymentVoucher'
             && document.getElementById('fHasTaxInvoiceRef')?.checked || false,
@@ -6050,6 +6175,19 @@
             title="ถามผู้ช่วย AI เรื่องการลงบัญชี/ภาษีของเอกสารใบนี้ — ผู้ช่วยเห็นรายละเอียดใบนี้ประกอบการตอบ">💬 ถามผู้ช่วย</button>`;
           document.getElementById('detailActions').innerHTML = actions;
           Layout.openModal('detailModal');
+
+          // ── สายเอกสาร (chain stepper) — async ไม่ block การเปิด modal ──
+          // มีเอกสารเกี่ยวข้อง (แม่หรือลูก) เมื่อไร ให้วาดทั้งเส้นบนสุดของ modal
+          // ผู้ใช้เห็นทันทีว่าใบนี้อยู่ขั้นไหนของ flow และคลิกกระโดดไปใบไหนก็ได้
+          // — จบปัญหา "ต้องจดเลขแล้วไปค้นเอง"
+          if (d.relatedDocumentId || (d.convertedToDocuments && d.convertedToDocuments.length)) {
+            (async () => {
+              try {
+                const cres = await API.get(`/api/companies/${Layout.getCompanyId()}/document/${d.id}/chain`);
+                this.renderChainStepper(cres?.data || [], d.id);
+              } catch (e) { /* สายโหลดไม่ได้ — ไม่กระทบ detail หลัก */ }
+            })();
+          }
 
           // ประวัติ revision ของเอกสาร (async ไม่ block การเปิด modal) —
           // โชว์เฉพาะเมื่อเคยแก้จริง (Rev > 0) ให้เห็นว่าต่อรอง/แก้มากี่รอบ
@@ -7847,7 +7985,12 @@
             </div>
           </div>
 
-          ${(() => { const n = this.cleanNotes(d.notes); return n ? `<div style="margin-top:20px;padding:12px;background:#F8F9FA;border-radius:6px;font-size:12px"><strong>หมายเหตุ:</strong> ${this.escapeHtml(n)}</div>` : ''; })()}
+          ${d.customAppendix ? `<div style="margin-top:16px;font-size:12px;white-space:pre-wrap">${this.escapeHtml(d.customAppendix)}</div>` : ''}
+          ${d.paymentTerms || d.creditDays ? `<div style="margin-top:12px;padding:10px 12px;background:#F8F9FA;border-radius:6px;font-size:12px"><strong>เงื่อนไขการชำระเงิน:</strong> ${this.escapeHtml(d.paymentTerms || '')}${d.creditDays ? ` (เครดิต ${d.creditDays} วัน)` : ''}</div>` : ''}
+          ${(() => { const n = this.cleanNotes(d.notes); return n ? `<div style="margin-top:12px;padding:12px;background:#F8F9FA;border-radius:6px;font-size:12px"><strong>หมายเหตุ:</strong> ${this.escapeHtml(n)}</div>` : ''; })()}
+          ${d.customFooterNotes ? `<div style="margin-top:10px;font-size:12px;color:#555;white-space:pre-wrap">${this.escapeHtml(d.customFooterNotes)}</div>` : ''}
+          ${d.customTermsAndConditions ? `<div style="margin-top:14px;padding-top:10px;border-top:1px solid #E5E7EB;font-size:11.5px;color:#555;white-space:pre-wrap"><strong>เงื่อนไข:</strong>
+${this.escapeHtml(d.customTermsAndConditions)}</div>` : ''}
 
           <!-- Signature -->
           <div style="display:flex;justify-content:space-between;margin-top:48px;padding-top:16px;gap:12px">

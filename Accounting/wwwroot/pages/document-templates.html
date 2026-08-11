@@ -381,6 +381,21 @@
             <div class="editor-row single">
               <label>ข้อความบัญชีธนาคาร</label><textarea id="bankDetailsText" rows="3" onchange="Page.markDirty()"></textarea>
             </div>
+
+            <!-- ค่าเริ่มต้นของฟอร์มสร้างเอกสารชนิดนี้ — ไม่ใช่เรื่องหน้ากระดาษ
+                 แต่วางไว้ที่นี่เพราะ template คือ "ที่ตั้งค่าต่อชนิดเอกสาร"
+                 ที่เดียวของระบบ (ตั้งที่ template default ของชนิดนั้น) -->
+            <div style="margin-top:12px;padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px">
+              <div style="font-weight:600;font-size:12.5px;margin-bottom:8px">⚡ ค่าเริ่มต้นตอนสร้างเอกสารชนิดนี้ <span style="font-weight:400;color:#64748b">(เติมให้อัตโนมัติเมื่อช่องยังว่าง — ผู้ใช้แก้ทับได้เสมอ)</span></div>
+              <div class="editor-row single">
+                <label>บัญชีรับ/จ่ายเงิน (แหล่งเงิน) ที่เลือกให้อัตโนมัติ</label>
+                <select id="defaultPaymentAccountId" onchange="Page.markDirty()"><option value="">— ไม่กำหนด (เงินสด) —</option></select>
+              </div>
+              <div class="editor-row">
+                <div><label>เงื่อนไขการชำระเงิน</label><input id="defaultPaymentTerms" placeholder="เช่น ชำระภายใน 30 วันนับจากวันที่ในเอกสาร" onchange="Page.markDirty()"></div>
+                <div><label>วันเครดิต (วัน)</label><input id="defaultCreditDays" type="number" min="0" max="365" placeholder="เช่น 30" onchange="Page.markDirty()"></div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -483,6 +498,15 @@
         this._renderPresets();
         this._renderGlobalLooks();
         await this.loadTemplates();   // populates this.templates (no auto-open)
+        // ผังเงินสด/ธนาคาร (111x) สำหรับ "บัญชีรับเงิน default ต่อชนิดเอกสาร"
+        // — โหลดล่วงหน้าครั้งเดียว ใช้ตัวเลือกเดียวกับช่องแหล่งเงินในฟอร์มเอกสาร
+        try {
+          const ar = await API.c(Layout.getCompanyId()).getAccounts();
+          const accs = (ar?.data || []).filter(a => (a.accountCode || '').startsWith('111') && a.isActive !== false);
+          const sel = document.getElementById('defaultPaymentAccountId');
+          if (sel) sel.innerHTML = '<option value="">— ไม่กำหนด (เงินสด) —</option>'
+            + accs.map(a => `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
+        } catch (e) { /* โหลดผังไม่ได้ — ช่องยังใช้งานได้แบบไม่กำหนด */ }
         await this._seedGlobalCustomColors();   // เติมช่อง "กำหนดสีเอง" จากค่าที่บันทึกจริง
         this.showOverview();
         // sample docs are only needed for the editor's live preview
@@ -872,6 +896,7 @@
          'watermarkText','watermarkOpacity','copyLabelPosition',
          'customTitle','customTitleEn',
          'footerNotes','footerNotesEn','bankDetailsText',
+         'defaultPaymentAccountId','defaultPaymentTerms','defaultCreditDays',
          'paperSize','orientation','marginTop','marginBottom','marginLeft','marginRight',
         ].forEach(spec => {
           const [id, prop] = spec.includes(':') ? spec.split(':') : [spec, spec];
@@ -1004,6 +1029,9 @@
           showPaymentTerms: getCheck('showPaymentTerms'),
           showBankDetails: getCheck('showBankDetails'),
           bankDetailsText: get('bankDetailsText') || null,
+          defaultPaymentAccountId: get('defaultPaymentAccountId') || null,
+          defaultPaymentTerms: get('defaultPaymentTerms') || null,
+          defaultCreditDays: Number(get('defaultCreditDays')) || null,
           paperSize: get('paperSize'),
           orientation: get('orientation'),
           marginTop: getNum('marginTop'),

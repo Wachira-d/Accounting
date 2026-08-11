@@ -133,4 +133,22 @@ public class DocumentTemplate : TenantEntity
     // ===== Copy Settings =====
     public int DefaultCopies { get; set; } = 1;
     public string? CopyLabels { get; set; }                  // JSON: ["ต้นฉบับ","สำเนา 1","สำเนา 2"]
+
+    // ===== ค่าเริ่มต้นของ "ฟอร์มสร้างเอกสาร" ต่อชนิด =====
+    // template เป็น per-DocumentType + IsDefault อยู่แล้ว จึงเป็นบ้านธรรมชาติ
+    // ของ default ฝั่งฟอร์มด้วย — ไม่ต้องมี entity ใหม่ให้ผู้ใช้ตั้งค่า 2 ที่.
+    // ฟอร์มดึง template default ของชนิดนั้นมา pre-fill เมื่อช่องยังว่าง
+    // (ผู้ใช้พิมพ์ทับได้เสมอ — เป็นค่าตั้งต้น ไม่ใช่ค่าบังคับ)
+
+    /// <summary>ผังบัญชีเงินรับ/จ่าย (แหล่งเงิน) ที่เลือกให้อัตโนมัติ เช่น
+    /// ใบเสนอราคา/ใบแจ้งหนี้ตั้งบัญชีธนาคารรับเงินประจำ — โยงกับกล่อง
+    /// ShowBankDetails/BankDetailsText ฝั่ง PDF ให้เล่าเรื่องเดียวกัน</summary>
+    public Guid? DefaultPaymentAccountId { get; set; }
+
+    /// <summary>เงื่อนไขการชำระเงิน default เช่น "ชำระภายใน 30 วัน" —
+    /// ขึ้นทั้งบนฟอร์ม (ช่อง PaymentTerms) และบน PDF</summary>
+    public string? DefaultPaymentTerms { get; set; }
+
+    /// <summary>จำนวนวันเครดิต default — ฟอร์มคำนวณวันครบกำหนดให้ทันที</summary>
+    public int? DefaultCreditDays { get; set; }
 }

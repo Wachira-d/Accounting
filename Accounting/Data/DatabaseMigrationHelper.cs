@@ -4481,6 +4481,11 @@ public static class DatabaseMigrationHelper
 
             // ===== ตำแหน่งป้าย ต้นฉบับ/สำเนา บน PDF (ลายน้ำกลางหน้า หรือป้ายมุมบน) =====
             """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "CopyLabelPosition" varchar(20) NOT NULL DEFAULT 'Watermark';""",
+            // ค่าเริ่มต้นฝั่ง "ฟอร์มสร้างเอกสาร" ต่อชนิด — บ้านคือ template
+            // (per-DocumentType + IsDefault อยู่แล้ว) ไม่สร้าง entity ใหม่ให้ตั้ง 2 ที่
+            """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "DefaultPaymentAccountId" uuid NULL;""",
+            """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "DefaultPaymentTerms" varchar(300) NULL;""",
+            """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "DefaultCreditDays" integer NULL;""",
 
             // ===== Snapshot ยอดจริงจาก statement ล่าสุด (แสดงคู่ยอด GL ให้เห็นผลต่าง) =====
             """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalance" numeric(18,2) NULL;""",
