@@ -2131,6 +2131,90 @@ public class DocumentService : IDocumentService
 
     /// <summary>ประวัติ revision ของใบเสนอราคา (ใหม่→เก่า). RevisedBy/At ของแถว
     /// snapshot = ใครแก้และเมื่อไร (คนที่สร้าง Rev ถัดไป).</summary>
+    /// <summary>
+    /// สายการแปลงทั้งเส้นของเอกสาร — ต้นน้ำถึงปลายน้ำ เรียงพร้อมความลึก
+    ///
+    /// วิธีเดิน:
+    ///   1. ขึ้น: ตาม RelatedDocumentId จนสุด (จำกัด 15 ชั้น + กัน cycle —
+    ///      ข้อมูลที่ import มาอาจชี้วนกันได้ ห้าม loop ตาย)
+    ///   2. ลง: BFS หาใบที่ RelatedDocumentId ชี้มาหาใบในสาย (จำกัดรวม 60 ใบ —
+    ///      ใบวางบิลใบเดียวแตกเป็น settlement ได้หลายสิบใบ ต้องมีเพดาน)
+    ///
+    /// ใบ Voided ยังอยู่ในสาย — ผู้ใช้ต้องเห็นว่าเคยแปลงไปแล้วถูกยกเลิก
+    /// ไม่ใช่หายไปเฉย ๆ (UI แสดงขีดฆ่า)
+    /// </summary>
+    public async Task<List<DocumentChainNode>> GetDocumentChainAsync(Guid companyId, Guid documentId)
+    {
+        // ── ขึ้นหาราก ──
+        var current = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.Id == documentId)
+            .Select(d => new { d.Id, d.RelatedDocumentId })
+            .FirstOrDefaultAsync();
+        if (current == null) return new List<DocumentChainNode>();
+
+        var visited = new HashSet<Guid> { current.Id };
+        var rootId = current.Id;
+        var parentId = current.RelatedDocumentId;
+        for (var hop = 0; parentId.HasValue && hop < 15; hop++)
+        {
+            if (!visited.Add(parentId.Value)) break;   // cycle — หยุดตรงนี้
+            var parent = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.Id == parentId.Value)
+                .Select(d => new { d.Id, d.RelatedDocumentId })
+                .FirstOrDefaultAsync();
+            if (parent == null) break;                  // FK ชี้ไปใบที่ถูกลบ
+            rootId = parent.Id;
+            parentId = parent.RelatedDocumentId;
+        }
+
+        // ── ลงจากราก (BFS ทีละชั้น — query ต่อชั้น ไม่ใช่ต่อใบ) ──
+        var nodes = new List<DocumentChainNode>();
+        var frontier = new List<Guid> { rootId };
+        var seen = new HashSet<Guid> { rootId };
+        var parentOf = new Dictionary<Guid, Guid?> { [rootId] = null };
+        var depthOf = new Dictionary<Guid, int> { [rootId] = 0 };
+
+        for (var depth = 0; frontier.Count > 0 && depth < 10 && seen.Count < 60; depth++)
+        {
+            var layer = frontier;
+            frontier = new List<Guid>();
+            var children = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.RelatedDocumentId.HasValue && layer.Contains(d.RelatedDocumentId.Value))
+                .Select(d => new { d.Id, ParentId = d.RelatedDocumentId!.Value })
+                .ToListAsync();
+            foreach (var c in children)
+            {
+                if (!seen.Add(c.Id)) continue;
+                parentOf[c.Id] = c.ParentId;
+                depthOf[c.Id] = depthOf[c.ParentId] + 1;
+                frontier.Add(c.Id);
+            }
+        }
+
+        var ids = seen.ToList();
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && ids.Contains(d.Id))
+            .Select(d => new
+            {
+                d.Id, d.DocumentNumber, d.DocumentType, d.Status,
+                d.DocumentDate, d.TotalAmount, d.PaidAmount,
+            })
+            .ToListAsync();
+
+        foreach (var d in docs)
+            nodes.Add(new DocumentChainNode(
+                d.Id, d.DocumentNumber, d.DocumentType, d.Status,
+                d.DocumentDate, d.TotalAmount, d.PaidAmount,
+                depthOf.GetValueOrDefault(d.Id),
+                parentOf.GetValueOrDefault(d.Id),
+                d.Id == documentId));
+
+        // เรียง: ตามลึกก่อน แล้ววันที่/เลขที่ — อ่านเป็นเส้นเวลาได้ทันที
+        return nodes.OrderBy(n => n.Depth).ThenBy(n => n.DocumentDate)
+            .ThenBy(n => n.DocumentNumber, StringComparer.Ordinal).ToList();
+    }
+
     public async Task<List<DocumentRevisionListItem>> GetDocumentRevisionsAsync(Guid companyId, Guid documentId)
     {
         var rows = await _db.DocumentRevisions.AsNoTracking()

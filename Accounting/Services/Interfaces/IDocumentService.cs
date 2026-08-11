@@ -37,6 +37,10 @@ public interface IDocumentService
     /// ที่แก้เอกสาร operational ที่อนุมัติ/ส่งแล้วผ่าน UpdateDocumentAsync.</summary>
     Task<List<DocumentRevisionListItem>> GetDocumentRevisionsAsync(Guid companyId, Guid documentId);
 
+    /// <summary>สายการแปลงทั้งเส้น (ต้นน้ำ→ปลายน้ำ) ของเอกสาร — ให้ UI วาด
+    /// stepper โดยผู้ใช้ไม่ต้องไล่จับคู่เลขเอง</summary>
+    Task<List<DocumentChainNode>> GetDocumentChainAsync(Guid companyId, Guid documentId);
+
     /// <summary>snapshot เต็ม (JSON) ของ revision หนึ่ง — เปิดดูว่า Rev นั้นมี
     /// รายการ/ยอดอะไร (header + lines + หลักฐานที่ผูกพันถ้ามี). null = ไม่พบ.</summary>
     Task<string?> GetDocumentRevisionSnapshotAsync(Guid companyId, Guid documentId, int revisionNumber);

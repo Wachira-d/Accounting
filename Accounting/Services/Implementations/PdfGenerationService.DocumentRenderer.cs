@@ -809,6 +809,18 @@ public partial class PdfGenerationService
                 tt.Span(t.BankDetailsText!).FontSize(10);
             });
 
+        // เงื่อนไขการชำระเงินของใบนี้ — mirror ของ HTML renderer (เดิม
+        // ShowPaymentTerms ไม่ถูก render ที่ไหนเลยทั้งสองตัว) เพื่อให้ draft
+        // preview กับ PDF ตอนอนุมัติตรงกันทุกจุด
+        if (t.ShowPaymentTerms
+            && (!string.IsNullOrWhiteSpace(doc.PaymentTerms) || doc.CreditDays > 0))
+            col.Item().PaddingTop(8).Background("#F8F9FA").Padding(10).Text(tt =>
+            {
+                tt.Span("เงื่อนไขการชำระเงิน: ").Bold().FontSize(10);
+                tt.Span((doc.PaymentTerms ?? "")
+                    + (doc.CreditDays > 0 ? $" (เครดิต {doc.CreditDays} วัน)" : "")).FontSize(10);
+            });
+
         // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — เดิมไม่ถูก
         // render บน PDF (แสดงแต่ CustomFooterNotes). QuestPDF Text รองรับ \n →
         // หมายเหตุหลายบรรทัดแสดงครบ.

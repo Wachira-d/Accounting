@@ -205,6 +205,9 @@ public class DocumentTemplateService : IDocumentTemplateService
             ShowBankDetails = source.ShowBankDetails,
             BankDetailsText = source.BankDetailsText,
             BankDetailsTextEn = source.BankDetailsTextEn,
+            DefaultPaymentAccountId = source.DefaultPaymentAccountId,
+            DefaultPaymentTerms = source.DefaultPaymentTerms,
+            DefaultCreditDays = source.DefaultCreditDays,
             ShowSignature = source.ShowSignature,
             SignatureCount = source.SignatureCount,
             SignatureLabel1 = source.SignatureLabel1,
@@ -333,6 +336,9 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.ShowBankDetails.HasValue) t.ShowBankDetails = r.ShowBankDetails.Value;
         if (r.BankDetailsText != null) t.BankDetailsText = r.BankDetailsText;
         if (r.BankDetailsTextEn != null) t.BankDetailsTextEn = r.BankDetailsTextEn;
+        if (r.DefaultPaymentAccountId.HasValue) t.DefaultPaymentAccountId = r.DefaultPaymentAccountId;
+        if (r.DefaultPaymentTerms != null) t.DefaultPaymentTerms = string.IsNullOrWhiteSpace(r.DefaultPaymentTerms) ? null : r.DefaultPaymentTerms.Trim();
+        if (r.DefaultCreditDays.HasValue) t.DefaultCreditDays = r.DefaultCreditDays.Value <= 0 ? null : r.DefaultCreditDays.Value;
         if (r.ShowSignature.HasValue) t.ShowSignature = r.ShowSignature.Value;
         if (r.SignatureCount.HasValue) t.SignatureCount = r.SignatureCount.Value;
         if (r.SignatureLabel1 != null) t.SignatureLabel1 = r.SignatureLabel1;
@@ -419,6 +425,9 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.ShowBankDetails.HasValue) t.ShowBankDetails = r.ShowBankDetails.Value;
         if (r.BankDetailsText != null) t.BankDetailsText = r.BankDetailsText;
         if (r.BankDetailsTextEn != null) t.BankDetailsTextEn = r.BankDetailsTextEn;
+        if (r.DefaultPaymentAccountId.HasValue) t.DefaultPaymentAccountId = r.DefaultPaymentAccountId;
+        if (r.DefaultPaymentTerms != null) t.DefaultPaymentTerms = string.IsNullOrWhiteSpace(r.DefaultPaymentTerms) ? null : r.DefaultPaymentTerms.Trim();
+        if (r.DefaultCreditDays.HasValue) t.DefaultCreditDays = r.DefaultCreditDays.Value <= 0 ? null : r.DefaultCreditDays.Value;
         if (r.ShowSignature.HasValue) t.ShowSignature = r.ShowSignature.Value;
         if (r.SignatureCount.HasValue) t.SignatureCount = r.SignatureCount.Value;
         if (r.SignatureLabel1 != null) t.SignatureLabel1 = r.SignatureLabel1;
@@ -457,6 +466,7 @@ public class DocumentTemplateService : IDocumentTemplateService
         t.ShowLineNumber, t.ShowUnit, t.ShowDiscount, t.ShowVatPerLine, t.ShowWithholdingTax,
         t.TableHeaderColor, t.TableBorderStyle, t.ShowAmountInWords,
         t.FooterNotes, t.ShowPaymentTerms, t.ShowBankDetails,
+        t.DefaultPaymentAccountId, t.DefaultPaymentTerms, t.DefaultCreditDays,
         t.ShowSignature, t.SignatureCount, t.ShowQrCode, t.QrCodeType, t.PromptPayId,
         t.LayoutStyle, t.FontFamily, t.Language, t.ShowBilingual,
         t.IsEtaxTemplate, t.AutoGenerateEtaxXml, t.DefaultCopies, t.CreatedAt,

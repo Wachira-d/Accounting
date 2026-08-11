@@ -1477,6 +1477,17 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowBankDetails && template.BankDetailsText != null)
             sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{template.BankDetailsText}</div>");
 
+        // เงื่อนไขการชำระเงินของใบนี้ (doc.PaymentTerms/CreditDays) — เดิม flag
+        // ShowPaymentTerms มีอยู่แต่ไม่มี renderer ตัวไหน render เลย ผู้ใช้กรอก
+        // ในฟอร์มแล้วหายไปจากกระดาษเงียบ ๆ (ต้นเหตุ "draft กับตัวจริงไม่ตรงกัน")
+        if (template.ShowPaymentTerms
+            && (!string.IsNullOrWhiteSpace(doc.PaymentTerms) || doc.CreditDays > 0))
+        {
+            var termsTxt = System.Net.WebUtility.HtmlEncode(doc.PaymentTerms ?? "");
+            var creditTxt = doc.CreditDays > 0 ? $" (เครดิต {doc.CreditDays} วัน)" : "";
+            sb.AppendLine($"<div class='bank-details'><strong>เงื่อนไขการชำระเงิน:</strong> {termsTxt}{creditTxt}</div>");
+        }
+
         // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — white-space:
         // pre-line ให้ \n แสดงเป็นหลายบรรทัด
         var cleanNotesHtml = SanitizeNotesForPrint(doc.Notes);

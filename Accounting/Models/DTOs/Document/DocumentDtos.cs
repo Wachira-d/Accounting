@@ -652,6 +652,20 @@ public record DocumentResponse(
     string? DeliverySignedBy = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
+/// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)
+/// เรียงจากต้นน้ำ → ปลายน้ำ; Depth 0 = รากของสาย</summary>
+public record DocumentChainNode(
+    Guid Id,
+    string DocumentNumber,
+    DocumentType DocumentType,
+    DocumentStatus Status,
+    DateTime DocumentDate,
+    decimal TotalAmount,
+    decimal PaidAmount,
+    int Depth,               // ระยะจากราก (0 = ต้นทางสุด)
+    Guid? ParentId,          // ใบก่อนหน้าในสาย (null = ราก)
+    bool IsCurrent);         // ใบที่ผู้ใช้กำลังเปิดอยู่
+
 public record DocumentRevisionListItem(
     int RevisionNumber,
     decimal TotalAmount,

@@ -1213,6 +1213,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แก้ผัง 11640 ↔ 11610 reclassify | `DocumentService.ReclassifyUndueInputVatAsync :1137` |
 | แก้ deposit Realize/Refund/Apply | `DocumentService.cs` ค้นหา `RealizeDepositAsync` / `RefundDepositAsync` / `ApplyDepositToInvoiceAsync` |
 | แก้รายงาน ภ.พ.30 (จอ) | `TaxService.GenerateVatReport :119` |
+| ดูสายการแปลงทั้งเส้นของเอกสาร (chain stepper) | `DocumentService.GetDocumentChainAsync` — ขึ้นตาม RelatedDocumentId (กัน cycle, 15 ชั้น) แล้ว BFS ลง (เพดาน 60 ใบ); ใบ Voided คงอยู่ในสาย (UI ขีดฆ่า) / UI: `documents.html renderChainStepper` บนสุดของ detail modal |
+| ค่าเริ่มต้นฟอร์มต่อชนิดเอกสาร (แหล่งเงิน/เงื่อนไขชำระ/วันเครดิต) | `DocumentTemplate.DefaultPaymentAccountId/DefaultPaymentTerms/DefaultCreditDays` — ตั้งใน template default ของชนิดนั้น (`document-templates.html` กล่อง "⚡ ค่าเริ่มต้น") / ฟอร์มดึงผ่าน `GET document-templates/default/{type}` เติมเฉพาะช่องว่าง+เฉพาะสร้างใหม่ (`applyDocTypeDefaults`) |
+| เงื่อนไขการชำระเงินบนกระดาษ (`doc.PaymentTerms/CreditDays`) | render ทั้ง 2 ตัว (HTML `BuildDocumentHtml` + QuestPDF `DocumentRenderer`) เมื่อ `template.ShowPaymentTerms` — เดิม flag มีแต่ไม่มีใคร render = กรอกแล้วหายจากกระดาษเงียบ ๆ |
 | แก้การแยกฝั่ง CN/DN ใน ภ.พ.30 (ซื้อ vs ขาย) | `TaxService.GenerateVatReport` — ลำดับ: `RelatedDocumentId` → **GL fallback** (`cnDnSideFromGl`: JE แตะ 116x = ซื้อ / 2191x = ขาย) → แยกไม่ได้ = ขึ้นบรรทัด ⚠️ ไม่เงียบ. CN/DN ที่ไม่มี FK เดิม**ตกไปฝั่งขายเสมอ** ทำให้ไม่หักภาษีซื้อ **และหักภาษีขายเกิน** (นำส่งขาด §89) |
 | แก้รายงาน ภ.พ.30 (CSV ยื่น) | `TaxFilingExportService.ExportPp30Async :243` — ดึงจาก `ComputeVatReportAsync` |
 | แก้ ภ.ง.ด.50 | `TaxService.GenerateCitReport :731` |
