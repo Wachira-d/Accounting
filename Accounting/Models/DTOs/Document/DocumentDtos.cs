@@ -71,6 +71,12 @@ public record CreateDocumentRequest(
     // capture the agreed payment window for DSO/DPO + DueDate auto-fill.
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
+    // งวด ภ.พ.30 ที่ตั้งใจเคลมภาษีซื้อ (push จากตัวเอกสาร) — "yyyy-MM",
+    // "" = ล้างกลับเป็นปกติ (เคลมตามเดือนเอกสาร), null = ไม่แตะ.
+    // กติกาใครชนะใคร: บรรทัดในรายงานจริงชนะเสมอ (มีบรรทัดแล้วต้องไปติ๊กออก
+    // จากรายงานงวดนั้นก่อน) / flow ใบกำกับไม่ครบ 11640 ชนะเจตนา / ช่องนี้
+    // เป็นแค่ "เจตนาเริ่มต้น" ให้ generation หยิบเข้างวดที่เลือก
+    string? InputVatClaimPeriod = null,
     // ใบสำคัญจ่าย ติ๊ก "ใช้งานใบกำกับภาษี" → flag + snapshot สาขาผู้ขาย
     // (อ้างอิงใบกำกับซื้อ ขอเครดิตภาษีซื้อ — RD §86/4 + §86/14).
     bool HasTaxInvoiceReference = false,
@@ -193,6 +199,12 @@ public record UpdateDocumentRequest(
     DateTime? PaymentDate = null,
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
+    // งวด ภ.พ.30 ที่ตั้งใจเคลมภาษีซื้อ (push จากตัวเอกสาร) — "yyyy-MM",
+    // "" = ล้างกลับเป็นปกติ (เคลมตามเดือนเอกสาร), null = ไม่แตะ.
+    // กติกาใครชนะใคร: บรรทัดในรายงานจริงชนะเสมอ (มีบรรทัดแล้วต้องไปติ๊กออก
+    // จากรายงานงวดนั้นก่อน) / flow ใบกำกับไม่ครบ 11640 ชนะเจตนา / ช่องนี้
+    // เป็นแค่ "เจตนาเริ่มต้น" ให้ generation หยิบเข้างวดที่เลือก
+    string? InputVatClaimPeriod = null,
     // PV: ใช้งานใบกำกับภาษี (nullable → omit ไม่แตะค่าเดิม).
     bool? HasTaxInvoiceReference = null,
     string? SupplierBranchCode = null,

@@ -401,6 +401,11 @@
               <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภพ.30 ที่จะเคลมภาษีซื้อ (อาจต่างจากวันที่เราบันทึก)">วันที่ใบกำกับของผู้ขาย</label>
               <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
             </div>
+            <div class="form-group">
+              <label class="form-label" data-help="เลือกงวด ภพ.30 ที่จะเคลมภาษีซื้อใบนี้ — ว่าง = เคลมตามเดือนเอกสารปกติ · เลื่อนได้ไม่เกิน 6 เดือนตาม §82/3 · ถ้าใบถูกใช้ในรายงานงวดใดแล้ว รายงานนั้นชนะ (ต้องติ๊กออกจากรายงานก่อนจึงย้ายได้)">งวดที่เคลมภาษีซื้อ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ว่าง = ตามเดือนเอกสาร)</span></label>
+              <input type="month" class="form-input" id="fVatClaimPeriod">
+              <div id="fVatClaimLocked" style="display:none;font-size:11px;color:#b45309;margin-top:3px"></div>
+            </div>
           </div>
           <!-- วันเครดิต (3 digit) + เทอม (free text) → 1:2 ratio -->
           <div class="form-row-1-2 supplier-invoice-only" style="display:none">
@@ -4942,6 +4947,24 @@
           if (fSin) fSin.value = d.supplierInvoiceNumber || '';
           const fStd = document.getElementById('fSupplierTaxInvoiceDate');
           if (fStd) fStd.value = d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '';
+          // งวดเคลมภาษีซื้อ — โชว์เจตนาปัจจุบัน และถ้าใบถูกใช้ในรายงานงวดใด
+          // แล้ว (inputVatPp30Month มาจาก TaxReportLines จริง) ให้ **ล็อกช่อง**
+          // พร้อมบอกงวด: รายงานชนะเจตนาเสมอ และผู้ใช้ต้องเห็นกติกานี้บนจอ
+          const fVcp = document.getElementById('fVatClaimPeriod');
+          const fVcpLock = document.getElementById('fVatClaimLocked');
+          if (fVcp) {
+            fVcp.value = d.inputVatBecameClaimableAt ? String(d.inputVatBecameClaimableAt).slice(0, 7) : '';
+            const claimed = d.inputVatPp30Month && d.inputVatPp30Year;
+            fVcp.disabled = !!claimed;
+            if (fVcpLock) {
+              fVcpLock.style.display = claimed ? '' : 'none';
+              if (claimed) fVcpLock.textContent =
+                `🔒 ใบนี้อยู่ในรายงานภาษีซื้องวด ${String(d.inputVatPp30Month).padStart(2, '0')}/${d.inputVatPp30Year}` +
+                (d.inputVatPp30ReportStatus === 'Filed'
+                  ? ' (ยื่นแล้ว — ย้ายงวดต้องยื่นแบบเพิ่มเติม)'
+                  : ' แล้ว — ย้ายงวดโดยติ๊กใบนี้ออกจากรายงานงวดนั้นก่อน');
+            }
+          }
           // PV: เติมกล่อง "ใช้งานใบกำกับภาษี" ตอนแก้ไขเอกสารเก่า
           const fHtr = document.getElementById('fHasTaxInvoiceRef');
           if (fHtr) {
@@ -5403,6 +5426,13 @@
             const pv = document.getElementById('fSupplierTaxInvoiceDatePV')?.value;
             const isPV = document.getElementById('fDocType').value === 'PaymentVoucher';
             return isPV && document.getElementById('fHasTaxInvoiceRef')?.checked ? (pv || null) : (main || null);
+          })(),
+          // งวดเคลมภาษีซื้อ (push): ค่า input type=month คือ "yyyy-MM" อยู่แล้ว
+          // ส่งเสมอตอนแก้ไข ("" = ล้างกลับปกติ) แต่ตอนสร้างส่งเฉพาะมีค่า
+          inputVatClaimPeriod: (() => {
+            const el = document.getElementById('fVatClaimPeriod');
+            if (!el || el.disabled) return null;          // ถูกล็อก (มีบรรทัดรายงานแล้ว) = ไม่ส่ง
+            return this.editingId ? (el.value || '') : (el.value || null);
           })(),
           hasTaxInvoiceReference: document.getElementById('fDocType').value === 'PaymentVoucher'
             && document.getElementById('fHasTaxInvoiceRef')?.checked || false,

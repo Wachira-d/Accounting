@@ -868,6 +868,12 @@ public class DocumentService : IDocumentService
                     doc.RevenueContractId = contracts[0];
             }
 
+            // เจตนางวดเคลมภาษีซื้อ (push) — validate §82/3 ตั้งแต่สร้าง
+            // (ใบใหม่ยังไม่มีบรรทัดรายงาน กติกา 1 ผ่านแน่ ส่วน undue ถ้า
+            // ภายหลังลงเป็น 11640 ตอนอนุมัติ เจตนาจะถูกล้างที่จุด post)
+            if (!string.IsNullOrWhiteSpace(request.InputVatClaimPeriod))
+                await ApplyInputVatClaimPeriodAsync(companyId, doc, request.InputVatClaimPeriod);
+
             _db.Documents.Add(doc);
 
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
@@ -1154,6 +1160,89 @@ public class DocumentService : IDocumentService
     /// source doc passed in. Returns null when the doc has no source
     /// lines (i.e. nothing consumable) so the UI can hide the badge.
     /// </summary>
+    /// <summary>
+    /// ตั้ง "งวดที่ตั้งใจเคลมภาษีซื้อ" จากตัวเอกสาร (push) — เขียนลง
+    /// InputVatBecameClaimableAt ซึ่ง GenerateVatReport มีกลไก "นับเฉพาะงวด
+    /// ที่กำหนด" รองรับครบอยู่แล้ว (query OR-include + skip งวดอื่น)
+    ///
+    /// **ลำดับใครชนะใคร (ตัดสินใจแล้ว — ห้ามเปลี่ยนเงียบ ๆ):**
+    ///   1. บรรทัดในรายงานจริง (non-excluded) ชนะเสมอ — รายงานคือสิ่งที่ยื่น
+    ///      สรรพากร การแก้เอกสารห้ามไปย้ายบรรทัดของรายงานเงียบ ๆ (งวดนั้น
+    ///      อาจยื่นแล้ว) → block พร้อมบอกงวด/สถานะ ให้ไปติ๊กออกจากรายงานก่อน
+    ///   2. flow ใบกำกับไม่ครบ (11640/undue) ชนะเจตนา — งวดถูกกำหนดโดยการ
+    ///      "เติมใบกำกับครบ §86/4" เท่านั้น
+    ///   3. เจตนาบนเอกสาร = ค่าเริ่มต้นให้ generation หยิบเข้างวดที่เลือก
+    ///
+    /// ทำไมไม่ใช่ "action ล่าสุดชนะ": สอง action มีน้ำหนักไม่เท่ากัน —
+    /// การดึงเข้ารายงานสร้างหลักฐานที่ยื่นจริง ส่วนช่องนี้เป็นแค่คำสั่งให้
+    /// generation ถ้าล่าสุดชนะ การแก้เอกสารธรรมดาจะ mutate รายงานงวดอื่น
+    /// โดยผู้ใช้ไม่รู้ตัว และทำไม่ได้เลยเมื่องวดนั้น Filed แล้ว
+    /// </summary>
+    private async Task ApplyInputVatClaimPeriodAsync(Guid companyId, Document doc, string? raw)
+    {
+        if (raw == null) return;                       // null = ไม่แตะ
+
+        var isPurchaseDoc = doc.DocumentType is DocumentType.PurchaseInvoice
+            or DocumentType.Expense or DocumentType.PaymentVoucher
+            or DocumentType.CertificateInLieu;
+        if (!isPurchaseDoc)
+            throw new InvalidOperationException("งวดเคลมภาษีซื้อตั้งได้เฉพาะเอกสารฝั่งซื้อ");
+
+        // กติกา 2 — undue flow ชนะเจตนา
+        if (doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null)
+            throw new InvalidOperationException(
+                "ใบนี้พักภาษีซื้อไว้ (ใบกำกับยังไม่ครบ §86/4) — งวดเคลมจะถูกกำหนด"
+                + "อัตโนมัติเมื่อกด \"เติมใบกำกับครบ\" ไม่สามารถเลือกงวดเองที่นี่ได้");
+
+        // แปลงค่า: "" = ล้างกลับปกติ, "yyyy-MM" = งวดที่เลือก
+        DateTime? period = null;
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            var parts = raw.Trim().Split('-');
+            if (parts.Length != 2 || !int.TryParse(parts[0], out var y) || !int.TryParse(parts[1], out var m)
+                || m < 1 || m > 12 || y < 2000 || y > 2200)
+                throw new InvalidOperationException("รูปแบบงวดไม่ถูกต้อง — ต้องเป็น yyyy-MM เช่น 2026-09");
+            // รับ พ.ศ. ด้วย (ผู้ใช้ไทยพิมพ์ 2569-09 ได้) — เกิน 2400 = พ.ศ.
+            if (y > 2400) y -= 543;
+            period = new DateTime(y, m, 1, 0, 0, 0, DateTimeKind.Utc);
+        }
+
+        var current = doc.InputVatBecameClaimableAt.HasValue
+            ? new DateTime(doc.InputVatBecameClaimableAt.Value.Year, doc.InputVatBecameClaimableAt.Value.Month, 1)
+            : (DateTime?)null;
+        if (period == current) return;                 // ไม่เปลี่ยน = จบ
+
+        // กติกา 1 — มีบรรทัดรายงานจริงแล้ว = รายงานชนะ (block พร้อมชี้ทางแก้)
+        var claimedIn = await _db.TaxReportLines.AsNoTracking()
+            .Where(l => l.DocumentId == doc.Id && !l.IsExcluded && !l.IsDeleted
+                && l.TaxReport.CompanyId == companyId
+                && l.TaxReport.TaxType == TaxType.VAT
+                && l.IncomeTypeCode == "INPUT")
+            .Select(l => new { l.TaxReport.Month, l.TaxReport.Year, l.TaxReport.Status })
+            .FirstOrDefaultAsync();
+        if (claimedIn != null)
+        {
+            var filed = claimedIn.Status == TaxReportStatus.Filed;
+            throw new InvalidOperationException(
+                $"ใบนี้ถูกใช้ในรายงานภาษีซื้องวด {claimedIn.Month:D2}/{claimedIn.Year} แล้ว"
+                + (filed
+                    ? " และงวดนั้น **ยื่นแล้ว** — ย้ายงวดไม่ได้ ต้องยื่นแบบเพิ่มเติมกับสรรพากร"
+                    : " — ถ้าต้องการย้ายงวด ให้เปิดรายงานงวดนั้นแล้วติ๊กใบนี้ออก (หรือลบบรรทัด) ก่อน จึงกลับมาตั้งงวดใหม่ที่นี่ได้"));
+        }
+
+        if (period.HasValue)
+        {
+            // §82/3 — กรอบเดียวกับปุ่ม "ดึงเอกสาร" (ตัวตัดสินกลางเดียวกัน
+            // สิ่งที่ตั้งได้ = สิ่งที่ดึงได้ ไม่มีวันขัดกัน)
+            var basis = doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
+            var (ok, reason) = TaxService.EvaluateClaimPeriod(basis, isInput: true,
+                period.Value.Year, period.Value.Month);
+            if (!ok) throw new InvalidOperationException(reason!);
+        }
+
+        doc.InputVatBecameClaimableAt = period;
+    }
+
     private async Task<(decimal? Pct, string? Status)> ComputeConversionStatusAsync(Guid companyId, Document source)
     {
         if (source.Lines == null || source.Lines.Count == 0) return (null, null);
@@ -1522,6 +1611,7 @@ public class DocumentService : IDocumentService
         if (request.PerformanceObligationId.HasValue) doc.PerformanceObligationId = request.PerformanceObligationId.Value;
         if (request.SupplierInvoiceNumber != null) doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;
         if (request.SupplierTaxInvoiceDate.HasValue) doc.SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate.Value;
+        await ApplyInputVatClaimPeriodAsync(companyId, doc, request.InputVatClaimPeriod);
         if (request.HasTaxInvoiceReference.HasValue) doc.HasTaxInvoiceReference = request.HasTaxInvoiceReference.Value;
         if (request.SupplierBranchCode != null) doc.SupplierBranchCode = request.SupplierBranchCode;
         if (request.CreditDays.HasValue) doc.CreditDays = request.CreditDays.Value;
@@ -10621,6 +10711,13 @@ public class DocumentService : IDocumentService
                                         ? $"VAT → {vatInputAccount.AccountCode} {vatInputAccount.AccountName} (override)"
                                         : "ภาษีซื้อ (เคลมได้)"));
                 doc.InputVatPostedAsUndue = postedAsUndue;
+                // ใบที่ลงเป็น undue (พัก 11640) — งวดเคลมถูกกำหนดโดย flow
+                // "เติมใบกำกับครบ §86/4" เท่านั้น: "เจตนางวดเคลม" ที่ผู้ใช้
+                // ตั้งไว้ตอนสร้าง (BecameClaimableAt) ต้องล้างทิ้ง มิฉะนั้น
+                // รายงานจะมองว่า "ถึงกำหนดแล้ว" ทั้งที่ใบกำกับยังไม่ครบ
+                // = เคลมภาษีซื้อที่ยังไม่มีสิทธิ์ (ลำดับชนะ: flow 11640 >
+                // เจตนาบนเอกสาร)
+                if (postedAsUndue) doc.InputVatBecameClaimableAt = null;
             }
 
             // Cr: payable — role-separated (หลักบัญชีไทย):
