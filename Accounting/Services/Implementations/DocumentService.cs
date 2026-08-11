@@ -10274,6 +10274,27 @@ public class DocumentService : IDocumentService
                         && d.Id != doc.Id && !d.IsDeleted)
                     .Select(d => (Guid?)d.Id)
                     .FirstOrDefaultAsync();
+                // ไม่ตรงเลขเอกสารของเรา → ลอง **เลขใบกำกับของผู้ขาย**
+                // (SupplierInvoiceNumber บนใบซื้อ) — พฤติกรรมจริงของผู้ใช้:
+                // CN คืนของให้ supplier จะกรอกช่องอ้างอิงเป็นเลขใบของผู้ขาย
+                // (เช่น RT69/00013) เพราะนั่นคือเลขบนกระดาษที่ถืออยู่ ไม่ใช่
+                // เลข PI-xxxx ของเรา. เดิม resolver เทียบ DocumentNumber
+                // อย่างเดียว → หาไม่เจอ → default ฝั่งขาย → JE ลง Dr 21911
+                // แทน Cr 11610 และ ภ.พ.30 ตามผิดทั้งเส้น (เคสจริง
+                // CN-20260721-0002). จำกัดที่คู่ค้าเดียวกัน — เลขใบผู้ขาย
+                // ซ้ำข้าม supplier ได้ (ต่างคนต่างรันเลขของตัวเอง)
+                if (!refMatchId.HasValue)
+                    refMatchId = await _db.Documents
+                        .Where(d => d.CompanyId == companyId && d.Id != doc.Id && !d.IsDeleted
+                            && d.ContactId == doc.ContactId
+                            && d.SupplierInvoiceNumber == refNo
+                            && (d.DocumentType == DocumentType.PurchaseInvoice
+                                || d.DocumentType == DocumentType.Expense
+                                || d.DocumentType == DocumentType.PaymentVoucher
+                                || d.DocumentType == DocumentType.CertificateInLieu))
+                        .OrderByDescending(d => d.DocumentDate)
+                        .Select(d => (Guid?)d.Id)
+                        .FirstOrDefaultAsync();
                 if (refMatchId.HasValue) doc.RelatedDocumentId = refMatchId;
             }
             if (doc.RelatedDocumentId.HasValue)
@@ -10390,6 +10411,27 @@ public class DocumentService : IDocumentService
                 || source.DocumentType == DocumentType.Expense
                 || source.DocumentType == DocumentType.CertificateInLieu
                 || source.DocumentType == DocumentType.PaymentVoucher);
+            // ไม่มีใบต้นทางให้ดูเลย (FK ก็ไม่มี text ref ก็ resolve ไม่ติด) —
+            // เดิม default ฝั่งขายเงียบ ๆ เสมอ ทำให้ CN คืนของ supplier ที่อ้าง
+            // เลขนอกระบบ ลง Dr 21911 (ลดภาษีขาย) แทน Cr 11610 (ลดภาษีซื้อ)
+            // = นำส่งภาษีขายขาด + เคลมภาษีซื้อเกิน พร้อมกัน. ใช้บทบาทคู่ค้า
+            // เป็นสัญญาณสุดท้าย: คู่ค้าที่เป็น "ผู้ขายอย่างเดียว" (supplier
+            // ไม่ใช่ลูกค้า) → CN/DN ใบนี้คือฝั่งซื้อแน่นอน — เราไม่มีทางออก
+            // ใบลดหนี้ "การขาย" ให้คนที่ไม่เคยเป็นลูกค้า
+            if (!isPurchaseSide && source == null)
+            {
+                var contactRole = await _db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == doc.ContactId)
+                    .Select(c => new { c.IsSupplier, c.IsCustomer })
+                    .FirstOrDefaultAsync();
+                if (contactRole is { IsSupplier: true, IsCustomer: false })
+                {
+                    isPurchaseSide = true;
+                    _logger.LogInformation(
+                        "CN/DN {Doc} ไม่มีใบต้นทาง — จัดฝั่งซื้อจากบทบาทคู่ค้า (supplier-only)",
+                        doc.DocumentNumber);
+                }
+            }
             var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
             var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
 
