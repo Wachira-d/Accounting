@@ -1213,6 +1213,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แก้ผัง 11640 ↔ 11610 reclassify | `DocumentService.ReclassifyUndueInputVatAsync :1137` |
 | แก้ deposit Realize/Refund/Apply | `DocumentService.cs` ค้นหา `RealizeDepositAsync` / `RefundDepositAsync` / `ApplyDepositToInvoiceAsync` |
 | แก้รายงาน ภ.พ.30 (จอ) | `TaxService.GenerateVatReport :119` |
+| แก้การแยกฝั่ง CN/DN ใน ภ.พ.30 (ซื้อ vs ขาย) | `TaxService.GenerateVatReport` — ลำดับ: `RelatedDocumentId` → **GL fallback** (`cnDnSideFromGl`: JE แตะ 116x = ซื้อ / 2191x = ขาย) → แยกไม่ได้ = ขึ้นบรรทัด ⚠️ ไม่เงียบ. CN/DN ที่ไม่มี FK เดิม**ตกไปฝั่งขายเสมอ** ทำให้ไม่หักภาษีซื้อ **และหักภาษีขายเกิน** (นำส่งขาด §89) |
 | แก้รายงาน ภ.พ.30 (CSV ยื่น) | `TaxFilingExportService.ExportPp30Async :243` — ดึงจาก `ComputeVatReportAsync` |
 | แก้ ภ.ง.ด.50 | `TaxService.GenerateCitReport :731` |
 | แก้ปฏิทินนำส่ง (dashboard) | `StatutoryRemittanceService.GetFilingCalendarAsync` + `BuildCell` / UI: `app.html` widget `filingCalendar` |
