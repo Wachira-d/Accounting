@@ -9738,11 +9738,27 @@ public class DocumentService : IDocumentService
             if (srcType is DocumentType.PurchaseInvoice or DocumentType.Expense
                 or DocumentType.CertificateInLieu)
                 direction = -1;
-            // PV/Receipt/RV ไม่เคยขยับสต๊อกตอนขาย/ซื้อ (ไม่อยู่ใน switch ข้างบน)
-            // → CN ที่อ้างห้าม restock/ตัดออก ไม่งั้นสต๊อกคลาดโดยไม่มีขาแรก
+            // PV/Receipt/RV ไม่เคยขยับสต๊อกตอนซื้อ/ขาย (IN มีแค่ GRN/PI,
+            // OUT มีแค่ Invoice/TaxInvoice) → CN ที่อ้างห้าม restock (+1)
+            // และห้ามตัดออก (−1) — ไม่มีขาแรกให้กลับ. เดิม comment บอก
+            // "ไม่แตะ stock" แต่โค้ดปล่อย +1 จาก switch ค้างไว้ → CN Return
+            // ที่อ้าง PV เพิ่มสต๊อกผี
             else if (srcType is DocumentType.PaymentVoucher
                 or DocumentType.Receipt or DocumentType.ReceiptVoucher)
                 direction = 0;
+        }
+        // CN ที่ "ไม่มีใบต้นทางเลย" แต่คู่ค้าเป็น supplier อย่างเดียว
+        // (= ฝั่งซื้อแน่นอน ตามชั้นสุดท้ายของ AutoPost): ห้าม +1 รับของเข้า
+        // (เราคืนของให้ผู้ขาย ไม่ใช่รับคืนจากลูกค้า) และห้าม −1 ด้วย —
+        // ไม่มีขา IN ในระบบให้กลับ (ของอาจไม่เคยเข้าสต๊อกผ่านระบบ)
+        // → ไม่แตะสต๊อก; JE/VAT ยังลงฝั่งซื้อครบตาม AutoPost
+        else if (doc.DocumentType == DocumentType.CreditNote)
+        {
+            var supplierOnly = await _db.Contacts.AsNoTracking()
+                .Where(c => c.Id == doc.ContactId)
+                .Select(c => (bool?)(c.IsSupplier && !c.IsCustomer))
+                .FirstOrDefaultAsync() ?? false;
+            if (supplierOnly) direction = 0;
         }
         if (direction == 0) return;
 
@@ -10283,11 +10299,15 @@ public class DocumentService : IDocumentService
                 // แทน Cr 11610 และ ภ.พ.30 ตามผิดทั้งเส้น (เคสจริง
                 // CN-20260721-0002). จำกัดที่คู่ค้าเดียวกัน — เลขใบผู้ขาย
                 // ซ้ำข้าม supplier ได้ (ต่างคนต่างรันเลขของตัวเอง)
+                var refNoLower = refNo.ToLower();
                 if (!refMatchId.HasValue)
                     refMatchId = await _db.Documents
                         .Where(d => d.CompanyId == companyId && d.Id != doc.Id && !d.IsDeleted
                             && d.ContactId == doc.ContactId
-                            && d.SupplierInvoiceNumber == refNo
+                            && d.SupplierInvoiceNumber != null
+                            // เทียบแบบไม่สนตัวพิมพ์ — ผู้ใช้พิมพ์ rt69/00013
+                            // ขณะที่ใบซื้อเก็บ RT69/00013 ต้องยังจับคู่ได้
+                            && d.SupplierInvoiceNumber.ToLower() == refNoLower
                             && (d.DocumentType == DocumentType.PurchaseInvoice
                                 || d.DocumentType == DocumentType.Expense
                                 || d.DocumentType == DocumentType.PaymentVoucher
