@@ -78,6 +78,22 @@ public class WhtCreditController : ControllerBase
         return Ok(new ApiResponse<bool>(true, true, "ลบแล้ว"));
     }
 
+    public record SettleBody(int TaxYear, decimal UsedAgainstCit, decimal RefundRequested,
+        decimal WriteOff, string? Reason);
+
+    /// <summary>ปิดปีภาษี — ลง JE ล้างยอดเครดิตออกจากบัญชี 11910 ตามที่ใช้จริง
+    /// (ใช้หักภาษี / ขอคืน / ตัดสูญ) · ยกไปปีหน้าไม่ต้องเรียก (คงยอดไว้เฉย ๆ)</summary>
+    [HttpPost("settle-year-end")]
+    public async Task<ActionResult<ApiResponse<string>>> SettleYearEnd(
+        Guid companyId, [FromBody] SettleBody b)
+    {
+        var actor = User?.Identity?.Name ?? "system";
+        var je = await _service.SettleYearEndAsync(companyId,
+            new WhtCreditService.SettleRequest(b.TaxYear, b.UsedAgainstCit, b.RefundRequested,
+                b.WriteOff, b.Reason), actor);
+        return Ok(new ApiResponse<string>(true, je, $"ลง JE ปิดปีแล้ว ({je})"));
+    }
+
     private static WhtCreditService.UpsertRequest Map(UpsertBody b) => new(
         b.TaxYear, b.CertificateNumber, b.CertificateDate, b.PayerContactId, b.PayerName,
         b.PayerTaxId, b.PayerFormType, b.IncomeTypeCode, b.IncomeAmount, b.WhtRate,
