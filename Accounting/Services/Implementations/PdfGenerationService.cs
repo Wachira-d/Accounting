@@ -1296,9 +1296,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Contact — หัวกล่องตามประเภทเอกสาร (PV = "ผู้รับเงิน" ไม่ใช่ "ลูกค้า")
         // เหมือน QuestPDF renderer: template override ชนะเฉพาะเมื่อตั้งค่าไม่ใช่
         // default "ลูกค้า"
-        var contactSectionLabel = !string.IsNullOrWhiteSpace(template.ContactSectionTitle)
-            && template.ContactSectionTitle != "ลูกค้า"
-            ? template.ContactSectionTitle
+        // หัวข้อกล่องคู่ค้า — ใช้ค่า (EN) ที่ผู้ใช้ตั้งไว้เมื่อพิมพ์ภาษาอังกฤษ
+        // (เดิมช่อง (EN) ในหน้าปรับแต่งไม่มี renderer ไหนอ่านเลย)
+        var contactTitleForLang = PickLangText(template.ContactSectionTitle,
+            template.ContactSectionTitleEn, lang);
+        var contactSectionLabel = !string.IsNullOrWhiteSpace(contactTitleForLang)
+            && contactTitleForLang != "ลูกค้า"
+            ? contactTitleForLang
             : DefaultContactLabelFor(doc.DocumentType, L);
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{contactSectionLabel}</div>");
         sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
@@ -1487,8 +1491,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (!string.IsNullOrWhiteSpace(doc.CustomAppendix))
             sb.AppendLine($"<div class='custom-appendix'>{doc.CustomAppendix}</div>");
 
-        if (template.ShowBankDetails && template.BankDetailsText != null)
-            sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{template.BankDetailsText}</div>");
+        var bankTextForLang = PickLangText(template.BankDetailsText, template.BankDetailsTextEn, lang);
+        if (template.ShowBankDetails && bankTextForLang != null)
+            sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{bankTextForLang}</div>");
 
         // เงื่อนไขการชำระเงินของใบนี้ (doc.PaymentTerms/CreditDays) — เดิม flag
         // ShowPaymentTerms มีอยู่แต่ไม่มี renderer ตัวไหน render เลย ผู้ใช้กรอก
@@ -1524,7 +1529,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
             ? doc.CustomFooterNotes
-            : template.FooterNotes;
+            : PickLangText(template.FooterNotes, template.FooterNotesEn, lang);
         if (!string.IsNullOrWhiteSpace(footerNotes))
             sb.AppendLine($"<div class='footer-notes'>{footerNotes}</div>");
 
@@ -1578,9 +1583,13 @@ public partial class PdfGenerationService : IPdfGenerationService
                     sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(s.Title!)}</div>");
                 sb.AppendLine("</div>");
             }
-            if (template.SignatureLabel1 != null) Box(template.SignatureLabel1, sigAt(0));
-            if (template.SignatureLabel2 != null) Box(template.SignatureLabel2, sigAt(1));
-            if (template.SignatureCount >= 3 && template.SignatureLabel3 != null) Box(template.SignatureLabel3, sigAt(2));
+            // ป้ายลายเซ็น (EN) ที่ผู้ใช้ตั้งไว้ — ใช้เมื่อพิมพ์เอกสารภาษาอังกฤษ
+            var sigL1 = PickLangText(template.SignatureLabel1, template.SignatureLabel1En, lang);
+            var sigL2 = PickLangText(template.SignatureLabel2, template.SignatureLabel2En, lang);
+            var sigL3 = PickLangText(template.SignatureLabel3, template.SignatureLabel3En, lang);
+            if (sigL1 != null) Box(sigL1, sigAt(0));
+            if (sigL2 != null) Box(sigL2, sigAt(1));
+            if (template.SignatureCount >= 3 && sigL3 != null) Box(sigL3, sigAt(2));
             sb.AppendLine("</div>");
         }
 

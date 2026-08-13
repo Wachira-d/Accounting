@@ -26,6 +26,31 @@ using EntLine = Accounting.Models.Entities.DocumentLine;
 /// </summary>
 public partial class PdfGenerationService
 {
+    /// <summary>ขนาด/แนวกระดาษตามที่ตั้งไว้ในเทมเพลต — เดิม QuestPDF hardcode
+    /// <c>PageSizes.A4</c> ทั้งไฟล์ ทำให้ตั้ง A5/Letter/แนวนอน แล้ว preview (HTML)
+    /// เปลี่ยนตาม แต่ PDF จริงยังเป็น A4 แนวตั้ง — ผิดกฎ "ร่าง = ตัวจริง" และ
+    /// กระทบของจริงแน่นอนกับเอกสาร e-Tax (เส้นทางนั้นใช้ QuestPDF เสมอ)
+    /// รวมถึงตอน Chromium ใช้ไม่ได้แล้ว fallback มา QuestPDF</summary>
+    internal static PageSize ResolvePageSize(EntTemplate t)
+    {
+        var size = (t.PaperSize ?? "A4").Trim().ToUpperInvariant() switch
+        {
+            "A5" => PageSizes.A5,
+            "LETTER" => PageSizes.Letter,
+            _ => PageSizes.A4,
+        };
+        return string.Equals((t.Orientation ?? "").Trim(), "Landscape", StringComparison.OrdinalIgnoreCase)
+            ? size.Landscape()
+            : size;
+    }
+
+    /// <summary>เลือกข้อความตามภาษาเอกสาร — ใช้ค่าภาษาอังกฤษที่ผู้ใช้ตั้งไว้
+    /// เมื่อพิมพ์เอกสารภาษาอังกฤษ ถ้าไม่ได้ตั้งไว้ค่อยตกกลับภาษาไทย.
+    /// เดิมช่อง "(EN)" ในหน้าปรับแต่ง (หัวข้อคู่ค้า / หมายเหตุท้าย / ป้ายลายเซ็น)
+    /// ไม่มี renderer ตัวไหนอ่านเลย — กรอกไปก็ไม่เคยขึ้นบนกระดาษ</summary>
+    internal static string? PickLangText(string? th, string? en, string lang)
+        => lang == "en" && !string.IsNullOrWhiteSpace(en) ? en : th;
+
     internal byte[] RenderDocumentPdfNative(EntDoc doc, EntCompany company,
         EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
@@ -82,7 +107,7 @@ public partial class PdfGenerationService
             {
                 container.Page(page =>
                 {
-                    page.Size(PageSizes.A4);
+                    page.Size(ResolvePageSize(template));
                     // QuestPDF 2024 accepts a single Margin call; use the average
                     // of the template's per-side margins so the result is close to
                     // the configured page without relying on side-specific APIs
@@ -150,7 +175,7 @@ public partial class PdfGenerationService
                         Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, L, layout, accent));
                         Safe(() => ComposeSummary(col, doc, template, accent, layout, L));
                         Safe(() => ComposeFooter(col, doc, template, accent, L));
-                        Safe(() => ComposeSignatures(col, template, b, signers));
+                        Safe(() => ComposeSignatures(col, template, b, signers, lang));
                         Safe(() => ComposeGlPosting(col, gl, lang, L));
                     });
 
@@ -196,7 +221,7 @@ public partial class PdfGenerationService
                 {
                     container.Page(page =>
                     {
-                        page.Size(PageSizes.A4);
+                        page.Size(ResolvePageSize(template));
                         page.Margin(20, Unit.Millimetre);
                         page.PageColor(Colors.White);
                         page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(10));
@@ -491,9 +516,11 @@ public partial class PdfGenerationService
             // Template override > smart per-doc-type fallback > ลูกค้า
             // ใบสำคัญจ่ายเป็น ผู้รับเงิน ไม่ใช่ ลูกค้า — เพราะ PV คือ
             // เราซื้อ/จ่ายจากเขา ไม่ใช่เขาเป็นลูกค้าเรา.
-            var label = !string.IsNullOrWhiteSpace(t.ContactSectionTitle)
-                && t.ContactSectionTitle != L.PartyCustomer
-                ? t.ContactSectionTitle
+            var customContactTitle = PickLangText(t.ContactSectionTitle, t.ContactSectionTitleEn,
+                L.IsEnglish ? "en" : "th");
+            var label = !string.IsNullOrWhiteSpace(customContactTitle)
+                && customContactTitle != L.PartyCustomer
+                ? customContactTitle
                 : DefaultContactLabelFor(doc.DocumentType, L);
             cc.Item().Text(label).FontSize(9.5f).Bold().FontColor(accent);
             cc.Item().Text(c.Name ?? "").FontSize(11.5f).Bold().FontColor("#111827");
@@ -820,11 +847,12 @@ public partial class PdfGenerationService
         if (!string.IsNullOrWhiteSpace(doc.CustomAppendix))
             col.Item().PaddingTop(12).Text(doc.CustomAppendix!).FontSize(10).FontColor("#333");
 
-        if (t.ShowBankDetails && !string.IsNullOrWhiteSpace(t.BankDetailsText))
+        var bankTxt = PickLangText(t.BankDetailsText, t.BankDetailsTextEn, L.IsEnglish ? "en" : "th");
+        if (t.ShowBankDetails && !string.IsNullOrWhiteSpace(bankTxt))
             col.Item().PaddingTop(12).Background("#F8F9FA").Padding(10).Text(tt =>
             {
                 tt.Span(L.PaymentInfo + ": ").Bold().FontSize(10);
-                tt.Span(t.BankDetailsText!).FontSize(10);
+                tt.Span(bankTxt!).FontSize(10);
             });
 
         // เงื่อนไขการชำระเงินของใบนี้ — mirror ของ HTML renderer (เดิม
@@ -869,7 +897,10 @@ public partial class PdfGenerationService
                 tt.Span(cleanNotes).FontSize(10).FontColor("#555");
             });
 
-        var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes) ? doc.CustomFooterNotes : t.FooterNotes;
+        // หมายเหตุท้ายเอกสาร: ของใบนี้ชนะ > ของเทมเพลต (เลือกภาษาตามเอกสาร)
+        var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
+            ? doc.CustomFooterNotes
+            : PickLangText(t.FooterNotes, t.FooterNotesEn, L.IsEnglish ? "en" : "th");
         if (!string.IsNullOrWhiteSpace(footerNotes))
             col.Item().PaddingTop(8).Text(footerNotes).FontSize(10).FontColor("#555");
 
@@ -885,13 +916,18 @@ public partial class PdfGenerationService
     }
 
     private static void ComposeSignatures(ColumnDescriptor col, EntTemplate t, PdfBranding b,
-        IReadOnlyList<DocumentSigner>? signers)
+        IReadOnlyList<DocumentSigner>? signers, string lang = "th")
     {
         if (!t.ShowSignature) return;
+        // ป้ายลายเซ็นภาษาอังกฤษที่ผู้ใช้ตั้งไว้ — เดิมไม่เคยถูกอ่าน เอกสารภาษา
+        // อังกฤษจึงพิมพ์ป้ายไทยเสมอ (ช่อง "(EN)" ในหน้าปรับแต่งเป็นช่องลม)
         var labels = new List<string>();
-        if (!string.IsNullOrWhiteSpace(t.SignatureLabel1)) labels.Add(t.SignatureLabel1!);
-        if (t.SignatureCount >= 2 && !string.IsNullOrWhiteSpace(t.SignatureLabel2)) labels.Add(t.SignatureLabel2!);
-        if (t.SignatureCount >= 3 && !string.IsNullOrWhiteSpace(t.SignatureLabel3)) labels.Add(t.SignatureLabel3!);
+        var l1 = PickLangText(t.SignatureLabel1, t.SignatureLabel1En, lang);
+        var l2 = PickLangText(t.SignatureLabel2, t.SignatureLabel2En, lang);
+        var l3 = PickLangText(t.SignatureLabel3, t.SignatureLabel3En, lang);
+        if (!string.IsNullOrWhiteSpace(l1)) labels.Add(l1!);
+        if (t.SignatureCount >= 2 && !string.IsNullOrWhiteSpace(l2)) labels.Add(l2!);
+        if (t.SignatureCount >= 3 && !string.IsNullOrWhiteSpace(l3)) labels.Add(l3!);
         if (labels.Count == 0) return;
 
         // เส้นบางๆ แบ่ง summary จาก signature area — HTML view มี
