@@ -809,6 +809,12 @@ public class DocumentService : IDocumentService
             if (request.RelatedDocumentId.HasValue)
                 doc.RelatedDocumentId = request.RelatedDocumentId;
 
+            // ฝั่งภาษีของ CN/DN ที่ผู้ใช้เลือกไว้บนฟอร์ม — เก็บตั้งแต่สร้าง
+            // AutoPost/รายงานภาษีอ่านค่านี้เป็นชั้นแรก จึงไม่ต้องเดาอีกต่อไป
+            if (request.CnDnPurchaseSideOverride.HasValue
+                && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote)
+                doc.CnDnPurchaseSideOverride = request.CnDnPurchaseSideOverride;
+
             // CN/DN สกุลต่างประเทศที่อ้างใบเดิม: ใช้เรทของใบเดิม (ไม่ใช่เรท BOT
             // วันออก CN) — ตัด AR/AP ต้องเท่ายอดที่ตั้งไว้เป๊ะ ไม่งั้นเศษเรทค้าง
             // ในลูกหนี้/เจ้าหนี้ถาวรโดยไม่มีขา FX gain/loss (convert flow copy
@@ -1682,6 +1688,12 @@ public class DocumentService : IDocumentService
         // CreditNoteReason (§86/10), IsForeignService (ภ.พ.36/ภ.ง.ด.54), และชุดเงินมัดจำ.
         // ทุก field ใช้ HasValue / != null → omit = คงค่าเดิม.
         if (request.CreditNoteReason.HasValue) doc.CreditNoteReason = request.CreditNoteReason.Value;
+        // ฝั่งภาษี CN/DN — แก้ได้ระหว่างยังเป็นร่าง (หลังอนุมัติต้องใช้ "ย้ายฝั่ง"
+        // ที่กลับ JE ให้ด้วย ไม่ใช่แก้ field เฉย ๆ ซึ่งจะทำให้ GL กับรายงานไม่ตรงกัน)
+        if (request.CnDnPurchaseSideOverride.HasValue
+            && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+            && doc.Status == DocumentStatus.Draft)
+            doc.CnDnPurchaseSideOverride = request.CnDnPurchaseSideOverride;
         if (request.IsForeignService.HasValue) doc.IsForeignService = request.IsForeignService.Value;
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();

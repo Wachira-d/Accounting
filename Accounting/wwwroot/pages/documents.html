@@ -546,6 +546,19 @@
             </select>
             <input type="text" id="fCnExternalRef" class="form-input" style="margin-top:6px" placeholder="หรือกรอกเลขที่ใบกำกับเดิม (กรณีใบเดิมอยู่นอกระบบ/ก่อนย้ายข้อมูล)" oninput="if(this.value){document.getElementById('fCnSourceDoc').value='';Page._cnSourceId=null;const h=document.getElementById('cnSourceHint');if(h)h.style.display='none';}">
             <div id="cnSourceHint" style="display:none;color:#9a3412;font-size:12px;margin-top:6px;line-height:1.6"></div>
+            <!-- ฝั่งภาษีของใบลดหนี้/เพิ่มหนี้ — เลือกให้ชัดตั้งแต่ตอนสร้าง
+                 แทนที่จะให้ระบบเดาตอนอนุมัติ (การเดาผิดทำให้ JE ลงผิดฝั่งถาวร
+                 แล้วยอดไปโผล่ผิดฝั่งใน ภ.พ.30 — แก้ทีหลังต้องกลับ JE) -->
+            <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #fdba74">
+              <div style="font-weight:600;color:#9a3412;font-size:12.5px;margin-bottom:4px">ใบนี้เป็นฝั่งไหน *</div>
+              <label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;margin-right:16px;cursor:pointer">
+                <input type="radio" name="fCnSide" value="sales" checked onchange="Page.onCnSideChange()"> ขาย — เราออกให้ลูกค้า (ลดภาษีขาย)
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;cursor:pointer">
+                <input type="radio" name="fCnSide" value="purchase" onchange="Page.onCnSideChange()"> ซื้อ — ผู้ขายลดหนี้ให้เรา (ลดภาษีซื้อ)
+              </label>
+              <div id="cnSideHint" style="font-size:11px;color:#9a3412;margin-top:3px"></div>
+            </div>
           </div>
 
           <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
@@ -3404,6 +3417,9 @@
         if (cnSrcSection) {
           const showCnSrc = (docType === 'CreditNote' || docType === 'DebitNote');
           cnSrcSection.style.display = showCnSrc ? '' : 'none';
+          // ฝั่งตั้งต้นตามแท็บที่ผู้ใช้กำลังทำอยู่ (รายจ่าย → ฝั่งซื้อ) —
+          // เปลี่ยนเองได้ และจะถูกตั้งใหม่ให้อัตโนมัติเมื่อเลือกใบต้นทาง
+          if (showCnSrc && !this.editingId) this._setCnSide(this.side === 'expense');
           if (!showCnSrc) {
             this._cnSourceId = null;
             const s = document.getElementById('fCnSourceDoc'); if (s) s.value = '';
@@ -3876,6 +3892,27 @@
         } catch { /* best-effort */ }
       },
 
+      /** ฝั่งภาษีที่ผู้ใช้เลือกไว้บนฟอร์ม (true = ฝั่งซื้อ) */
+      _cnSideIsPurchase() {
+        return document.querySelector('input[name="fCnSide"]:checked')?.value === 'purchase';
+      },
+      _setCnSide(isPurchase, note) {
+        const el = document.querySelector(`input[name="fCnSide"][value="${isPurchase ? 'purchase' : 'sales'}"]`);
+        if (el) el.checked = true;
+        this.onCnSideChange(note);
+      },
+      onCnSideChange(note) {
+        const h = document.getElementById('cnSideHint');
+        if (!h) return;
+        const isPurchase = this._cnSideIsPurchase();
+        h.textContent = note || (isPurchase
+          ? 'ลงบัญชี: ลดภาษีซื้อ (Cr 11610) → ยอดเข้ารายงานภาษีซื้อ ภ.พ.30 แบบติดลบ'
+          : 'ลงบัญชี: ลดภาษีขาย (Dr 21911) → ยอดเข้ารายงานภาษีขาย ภ.พ.30 แบบติดลบ');
+        // ฝั่งซื้อ = ตารางรายการใช้ราคาทุน + คอลัมน์เคลม VAT ต้องโผล่
+        const tbl = document.getElementById('linesTable');
+        if (tbl) tbl.dataset.docSide = isPurchase ? 'expense' : 'revenue';
+      },
+
       async onCnSourceSelect() {
         const id = document.getElementById('fCnSourceDoc')?.value || '';
         const h = document.getElementById('cnSourceHint');
@@ -3922,10 +3959,43 @@
           });
           this.calcSum?.();
         }
+        // ฝั่งภาษีต้องตามใบเดิมเสมอ — ใบเดิมเป็นใบซื้อ ใบลดหนี้ก็ต้องฝั่งซื้อ
+        // (ตั้งให้อัตโนมัติ ไม่ปล่อยให้ระบบไปเดาตอนอนุมัติ)
+        this._setCnSide(srcIsPurchase,
+          `ตั้งตามใบต้นทาง (${Layout.docTypeLabel(d.documentType)}) — ` +
+          (srcIsPurchase ? 'ลดภาษีซื้อ' : 'ลดภาษีขาย'));
+
         const refEl = document.getElementById('fRef');
         // ช่อง "อ้างอิง" เติมด้วยเลขเดียวกับที่จะพิมพ์บนกระดาษ/ยื่น ภ.พ.30
         // (ฝั่งซื้อ = เลขใบกำกับผู้ขาย) — ไม่งั้นหน้าจอกับกระดาษอ้างคนละเลข
         if (refEl && !refEl.value) refEl.value = printedRef;
+
+        // ── สืบทอดค่าจากใบเดิมที่ "ต้องตรงกัน" มิฉะนั้นตัวเลข/บัญชีจะเพี้ยน ──
+        // สกุลเงิน+อัตรา: ใบลดหนี้ของใบ USD ต้องเป็น USD อัตราเดียวกัน ไม่งั้น
+        // ยอดที่ลดไม่ตรงกับใบเดิมเลย (และ FX gain/loss หลอน)
+        const setIfEmpty = (id, v) => {
+          const el = document.getElementById(id);
+          if (el && v != null && v !== '' && !el.value) { el.value = v; return true; }
+          return false;
+        };
+        if (d.currency) {
+          const cur = document.getElementById('fCurrency');
+          if (cur && cur.value !== d.currency) { cur.value = d.currency; cur.dispatchEvent(new Event('change')); }
+        }
+        setIfEmpty('fExchangeRate', d.exchangeRate && Number(d.exchangeRate) !== 1 ? d.exchangeRate : '');
+        // ราคารวม VAT: ต้องเหมือนใบเดิม ไม่งั้นฐาน/VAT ที่ลดคำนวณคนละวิธีกับใบเดิม
+        const piv = document.getElementById('fPricesIncludeVat');
+        if (piv) piv.checked = !!d.pricesIncludeVat;
+        // โครงการ / มิติ / หมวดค่าใช้จ่าย — การลดหนี้ต้องกลับเข้าที่เดิมที่ลงไว้
+        setIfEmpty('fProject', d.projectId);
+        setIfEmpty('fDimension', d.dimensionId);
+        setIfEmpty('fExpenseCategory', d.expenseCategoryId);
+        // ฝั่งซื้อ: ข้อมูลใบกำกับของผู้ขาย = ใบเดิมที่กำลังลดหนี้ให้
+        if (srcIsPurchase) {
+          setIfEmpty('fSupplierInvoiceNumber', d.supplierInvoiceNumber);
+          setIfEmpty('fSupplierTaxInvoiceDate', d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '');
+          setIfEmpty('fSupplierBranchCode', d.supplierBranchCode);
+        }
         // แหล่งเงินตั้งต้น = แหล่งเงินของใบเดิม — ใบลดหนี้/เพิ่มหนี้คือการปรับ
         // รายการเดียวกัน เงินจึงควรวิ่งเข้า/ออกช่องทางเดิม (คืนเงินเข้าบัญชีที่
         // จ่ายไป) ผู้ใช้เปลี่ยนเองได้ เติมเฉพาะตอนช่องยังว่าง
@@ -5055,6 +5125,13 @@
           expGroup.style.display = isExpense ? '' : 'none';
           expGroup.querySelectorAll('option').forEach(o => { o.hidden = !isExpense; o.disabled = !isExpense; });
         }
+        // ใบลดหนี้/ใบเพิ่มหนี้ใช้ได้ทั้ง 2 ฝั่ง (เราออกให้ลูกค้า / ผู้ขายออกให้เรา)
+        // เดิมอยู่แต่ฝั่งรายรับ → คนทำใบลดหนี้ "ซื้อ" ต้องไปสร้างในแท็บรายรับ
+        // แล้วระบบต้องเดาฝั่งเอง = รากของปัญหายอดไปโผล่ผิดฝั่งใน ภ.พ.30
+        if (revGroup) {
+          revGroup.querySelectorAll('option[value="CreditNote"], option[value="DebitNote"]')
+            .forEach(o => { o.hidden = false; o.disabled = false; });
+        }
         // Pre-select first option of the correct side
         sel.value = isExpense ? 'PurchaseRequisition' : 'Quotation';
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
@@ -5312,6 +5389,18 @@
               const fBr = document.getElementById('fSupplierBranchCode');
               if (fBr) fBr.value = d.supplierBranchCode || '00000';
               setTimeout(() => { this._fillSupplierTaxIdFromContact(); this._loadTaxInvoiceSourceDocs(); }, 50);
+            }
+          }
+          // ใบลดหนี้/เพิ่มหนี้ที่บันทึกไว้แล้ว — ฟอร์มต้องสะท้อนฝั่งที่เก็บไว้จริง
+          // (ไม่งั้นกดบันทึกซ้ำแล้วฝั่งเปลี่ยนเงียบ ๆ เป็นค่า default ของแท็บ)
+          if (d.documentType === 'CreditNote' || d.documentType === 'DebitNote') {
+            if (d.cnDnPurchaseSideOverride != null) this._setCnSide(!!d.cnDnPurchaseSideOverride);
+            else {
+              // ใบเก่าที่ยังไม่เคยระบุฝั่ง — เดาจากใบต้นทางให้ผู้ใช้เห็น แล้วให้ยืนยัน
+              const relType = d.relatedDocument?.documentType;
+              const purchase = ['PurchaseInvoice','Expense','PaymentVoucher','CertificateInLieu']
+                .includes(relType || '');
+              this._setCnSide(purchase, 'ใบนี้ยังไม่เคยระบุฝั่ง — ตรวจสอบแล้วกดบันทึกเพื่อยืนยัน');
             }
           }
           const fCd = document.getElementById('fCreditDays');
@@ -5718,6 +5807,10 @@
           ...((!this.editingId && this._cnSourceId
               && (_effectiveDocType === 'CreditNote' || _effectiveDocType === 'DebitNote'))
             ? { relatedDocumentId: this._cnSourceId } : {}),
+          // ฝั่งภาษีที่ผู้ใช้เลือกไว้ชัดเจน — ระบบจะได้ไม่ต้องเดาตอนอนุมัติ
+          // (การเดาผิด = JE ลงผิดฝั่งถาวร ยอดไปโผล่ผิดฝั่งใน ภ.พ.30)
+          ...((_effectiveDocType === 'CreditNote' || _effectiveDocType === 'DebitNote')
+            ? { cnDnPurchaseSideOverride: this._cnSideIsPurchase() } : {}),
           buyerDeclinedTaxInvoice: document.getElementById('fBuyerDeclinedTaxInvoice')?.checked || false,
           // ส่วนลดท้ายบิล (จากยอดรวม) — โหมด % → billDiscountPercent, โหมด ฿ → billDiscountAmount
           billDiscountPercent: (document.getElementById('fBillDiscountMode')?.value === 'pct')
