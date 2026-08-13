@@ -97,6 +97,100 @@ public class DocumentService : IDocumentService
         catch (Exception ex) { _logger.LogWarning(ex, "Webhook {Event} fire-and-forget failed", eventType); }
     }
 
+    /// <summary>บันทึก "ภาษีที่เราถูกหัก" ลงทะเบียนเครดิต ภ.ง.ด.50/51 อัตโนมัติ
+    ///
+    /// <para><b>ยึด GL เป็นตัวตัดสิน</b> — ดูว่า JE ของเอกสารนี้ Dr 11910 จริงหรือไม่
+    /// แทนการไล่ hook ทีละจุดที่ post WHT (มี 5 จุด: accrual ตอนออกใบ, เกณฑ์เงินสด
+    /// ตอนรับเงิน, ใบเสร็จ, มัดจำ, per-payment) — วิธีนี้ครอบทุกเส้นทางรวมถึงเส้นทาง
+    /// ที่จะเพิ่มในอนาคต และตัวเลขตรงกับบัญชีเสมอ</para>
+    ///
+    /// <para>สร้างเป็นสถานะ <b>Pending</b> (ถูกหักแล้วแต่ยังไม่ได้รับหนังสือรับรอง)
+    /// — กฎหมายให้เครดิตเฉพาะเมื่อมีใบจริง ผู้ใช้ต้องตามทวงแล้วมาแนบใบทีหลัง</para>
+    ///
+    /// <para>ไม่ throw — ทะเบียนภาษีล้มเหลวต้องไม่ทำให้อนุมัติเอกสารพัง</para></summary>
+    private async Task SyncWhtCreditReceivedAsync(Guid companyId, Document doc)
+    {
+        try
+        {
+            // ฝั่งซื้อ = เราหักเขา (หนี้ที่ต้องนำส่ง) — คนละเรื่องกับเครดิตของเรา
+            if (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu
+                or DocumentType.PurchaseOrder or DocumentType.PurchaseRequisition
+                or DocumentType.GoodsReceiptNote) return;
+
+            // ยอดที่ Dr 11910 จริงจาก JE ของเอกสารนี้ (ตัด JE ที่ถูกกลับรายการแล้ว)
+            var whtDebit = await (from l in _db.JournalEntryLines.AsNoTracking()
+                                  join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                                  join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                                  where j.CompanyId == companyId && j.SourceDocumentId == doc.Id
+                                        && !j.IsDeleted && !l.IsDeleted
+                                        && j.Status == JournalEntryStatus.Posted
+                                        && j.ReversedByEntryId == null
+                                        && a.AccountCode.StartsWith("11910")
+                                  select l.DebitAmount - l.CreditAmount).ToListAsync();
+            var amount = whtDebit.Sum();
+
+            var existing = await _db.WhtCreditsReceived
+                .FirstOrDefaultAsync(w => w.CompanyId == companyId && w.DocumentId == doc.Id);
+
+            if (amount <= 0.005m)
+            {
+                // WHT ถูกกลับ/แก้เป็นศูนย์ → ลบแถวที่ยังไม่ได้ใช้เครดิตทิ้ง
+                if (existing != null && existing.Status is WhtCreditStatus.Pending or WhtCreditStatus.Received)
+                {
+                    existing.IsDeleted = true;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                    await _db.SaveChangesAsync();
+                }
+                return;
+            }
+
+            // ปีภาษี = ปีของ "รอบบัญชี" ที่เอกสารตกอยู่ (รองรับรอบไม่ตรงปีปฏิทิน)
+            var startMonth = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId).Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
+            if (startMonth is < 1 or > 12) startMonth = 1;
+            var taxYear = doc.DocumentDate.Month >= startMonth
+                ? doc.DocumentDate.Year : doc.DocumentDate.Year - 1;
+
+            var baseAmount = doc.SubTotal > 0 ? doc.SubTotal : amount;
+            var rate = baseAmount > 0 ? Math.Round(amount / baseAmount * 100m, 2) : 0m;
+
+            if (existing != null)
+            {
+                // ใช้เครดิตไปแล้ว = ห้ามแก้ยอดเงียบ ๆ (แบบยื่นอ้างตัวเลขนี้ไปแล้ว)
+                if (existing.Status is WhtCreditStatus.Claimed or WhtCreditStatus.Expired) return;
+                existing.WhtAmount = amount;
+                existing.IncomeAmount = baseAmount;
+                existing.WhtRate = rate;
+                existing.TaxYear = taxYear;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _db.WhtCreditsReceived.Add(new WhtCreditReceived
+                {
+                    CompanyId = companyId,
+                    TaxYear = taxYear,
+                    PayerContactId = doc.ContactId,
+                    PayerName = doc.Contact?.Name ?? "",
+                    PayerTaxId = doc.Contact?.TaxId,
+                    PayerFormType = WhtPayerFormType.Pnd53,
+                    IncomeAmount = baseAmount,
+                    WhtRate = rate,
+                    WhtAmount = amount,
+                    Status = WhtCreditStatus.Pending,
+                    DocumentId = doc.Id,
+                    Notes = $"สร้างอัตโนมัติจาก {doc.DocumentNumber}",
+                });
+            }
+            await _db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SyncWhtCreditReceived ล้มเหลวสำหรับเอกสาร {Doc}", doc.Id);
+        }
+    }
+
     /// <summary>Auto-populate ProjectCostEntry from an approved
     /// expense-side document. Cost-bearing types only — Sales-side
     /// docs feed Project.ActualRevenue separately. Idempotent on
@@ -4399,6 +4493,8 @@ public class DocumentService : IDocumentService
         try
         {
             await SyncProjectCostEntriesAsync(companyId, doc);
+            // ภาษีที่ถูกหักจากใบนี้ → ลงทะเบียนเครดิต ภ.ง.ด.50/51 (อ่านจาก GL จริง)
+            await SyncWhtCreditReceivedAsync(companyId, doc);
         }
         catch (Exception ex)
         {
@@ -8503,6 +8599,10 @@ public class DocumentService : IDocumentService
             await CreatePaymentJournalAsync(companyId, doc, payment, createdBy);
 
             await _db.SaveChangesAsync();
+
+            // เกณฑ์เงินสด: WHT ถูกรับรู้ตอนรับเงินจริง (ไม่ใช่ตอนออกใบ) →
+            // ต้อง sync ทะเบียนเครดิตอีกครั้งหลังลง JE ของการรับชำระ
+            await SyncWhtCreditReceivedAsync(companyId, doc);
 
             // ออกใบเสร็จรับเงิน "หลักฐาน" คู่กับการชำระ (default เปิด) — เฉพาะฝั่งขาย
             // (ลูกค้าจ่ายเรา). Payment ลง JE/ตัด AR แล้ว → ใบนี้ evidence-only ไม่ลง JE

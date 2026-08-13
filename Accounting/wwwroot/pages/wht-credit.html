@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ภาษีถูกหัก ณ ที่จ่าย (เครดิต ภ.ง.ด.50) - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .kpi { background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px }
+    .kpi .lbl { font-size:11.5px;color:#64748b }
+    .kpi .val { font-size:19px;font-weight:700;margin-top:2px }
+    .st { font-size:11px;padding:2px 8px;border-radius:999px;font-weight:600;white-space:nowrap }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ภาษีถูกหัก ณ ที่จ่าย</h2>
+        <p class="page-subtitle">หนังสือรับรอง 50 ทวิ ที่ลูกค้าออกให้เรา — ใช้เป็นเครดิตใน ภ.ง.ด.51 / ภ.ง.ด.50</p>
+      </div>
+      <div class="flex gap-2">
+        <select id="fYear" class="form-select" style="width:130px" onchange="Page.load()"></select>
+        <button class="btn btn-primary" onclick="Page.openNew()">+ บันทึกหนังสือรับรอง</button>
+      </div>
+    </div>
+
+    <!-- ต่างจากใบที่ "เราออกให้ผู้อื่น" — กันผู้ใช้เข้าใจผิดว่าเป็นหน้าเดียวกัน -->
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:9px 14px;border-radius:8px;margin-bottom:12px;font-size:12.5px">
+      ℹ️ หน้านี้คือใบที่ <b>ลูกค้าหักเราแล้วออกให้เรา</b> (เครดิตภาษีของเรา) ·
+      ส่วนใบที่ <b>เราหักผู้อื่น</b> แล้วต้องนำส่ง ภ.ง.ด.3/53 อยู่ที่เมนู "หนังสือรับรองหัก ณ ที่จ่าย"
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:14px">
+      <div class="kpi"><div class="lbl">เครดิตที่ใช้ได้ (มีใบแล้ว)</div><div class="val" id="kReceived" style="color:#15803d">-</div></div>
+      <div class="kpi"><div class="lbl">รอหนังสือรับรอง</div><div class="val" id="kPending" style="color:#b45309">-</div></div>
+      <div class="kpi"><div class="lbl">ใช้ไปแล้วในแบบยื่น</div><div class="val" id="kClaimed" style="color:#0369a1">-</div></div>
+      <div class="kpi"><div class="lbl">ยอดบัญชี 11910</div><div class="val" id="kGl">-</div></div>
+      <div class="kpi"><div class="lbl">ผลต่าง ทะเบียน − บัญชี</div><div class="val" id="kDiff">-</div></div>
+    </div>
+
+    <div id="alertBox"></div>
+
+    <div class="card">
+      <div class="flex gap-2" style="margin-bottom:10px;flex-wrap:wrap">
+        <select id="fStatus" class="form-select" style="width:200px" onchange="Page.load()">
+          <option value="">ทุกสถานะ</option>
+          <option value="Pending">รอหนังสือรับรอง</option>
+          <option value="Received">ได้รับใบแล้ว (ใช้ได้)</option>
+          <option value="Claimed">ใช้เครดิตแล้ว</option>
+          <option value="Expired">ตัดสูญ</option>
+        </select>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="table" id="tbl">
+          <thead><tr>
+            <th>สถานะ</th><th>เลขที่หนังสือ</th><th>วันที่</th><th>ผู้จ่าย (ผู้หักเรา)</th>
+            <th>ประเภทเงินได้</th><th class="text-right">ฐานเงินได้</th>
+            <th class="text-right">อัตรา</th><th class="text-right">ภาษีถูกหัก</th>
+            <th>เอกสาร</th><th></th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- บันทึก/แก้ไขหนังสือรับรอง -->
+  <div class="modal-overlay" id="editModal">
+    <div class="modal" style="max-width:620px">
+      <div class="modal-header">
+        <h3 class="modal-title" id="mTitle">บันทึกหนังสือรับรอง</h3>
+        <button class="modal-close" onclick="Layout.closeModal('editModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">ปีภาษี *</label><input type="number" class="form-input" id="mYear"></div>
+          <div class="form-group"><label class="form-label">แบบที่ผู้จ่ายยื่น</label>
+            <select class="form-select" id="mForm"><option value="53">ภ.ง.ด.53 (จ่ายให้นิติบุคคล)</option><option value="3">ภ.ง.ด.3 (จ่ายให้บุคคล)</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">เลขที่หนังสือรับรอง</label>
+            <input class="form-input" id="mCertNo" placeholder="เลขที่บนใบของผู้จ่าย">
+            <div class="form-help">เว้นว่าง = ยังไม่ได้รับใบ (จะยังเครดิตไม่ได้)</div>
+          </div>
+          <div class="form-group"><label class="form-label">วันที่บนหนังสือ</label><input type="date" class="form-input" id="mCertDate"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">ชื่อผู้จ่าย *</label><input class="form-input" id="mPayer"></div>
+          <div class="form-group"><label class="form-label">เลขผู้เสียภาษีผู้จ่าย</label><input class="form-input" id="mPayerTax" maxlength="13"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">ประเภทเงินได้</label>
+            <select class="form-select" id="mIncomeType">
+              <option value="">— ไม่ระบุ —</option>
+              <option value="40(2)">40(2) ค่าบริการ/รับจ้างทำของ (3%)</option>
+              <option value="40(3)">40(3) ค่าสิทธิ (3%)</option>
+              <option value="40(4)">40(4) ดอกเบี้ย/เงินปันผล (1%)</option>
+              <option value="40(5)">40(5) ค่าเช่า (5%)</option>
+              <option value="40(6)">40(6) วิชาชีพอิสระ (3%)</option>
+              <option value="40(7)">40(7) รับเหมา (3%)</option>
+              <option value="40(8)">40(8) อื่น ๆ (3%)</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">อัตราที่ถูกหัก (%)</label><input type="number" step="0.01" class="form-input" id="mRate" oninput="Page.calc()"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">ฐานเงินได้</label><input type="number" step="0.01" class="form-input" id="mBase" oninput="Page.calc()"></div>
+          <div class="form-group"><label class="form-label">ภาษีที่ถูกหัก *</label><input type="number" step="0.01" class="form-input" id="mAmt"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">แนบสแกนหนังสือรับรอง <span style="color:var(--gray-500);font-weight:400;font-size:11px">(ต้องเก็บ 5 ปี ตาม พ.ร.บ.บัญชี ม.10)</span></label>
+          <input type="file" id="mFile" accept="image/*,application/pdf">
+          <div id="mFileNote" style="font-size:11px;color:#64748b;margin-top:3px"></div>
+        </div>
+        <div class="form-group"><label class="form-label">หมายเหตุ</label><input class="form-input" id="mNotes"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('editModal')">ยกเลิก</button>
+        <button class="btn btn-primary" id="mSave" onclick="Page.save()">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      rows: [], editingId: null,
+
+      async init() {
+        if (!Layout.init('wht-credit')) return;
+        Layout.setTitle('ภาษีถูกหัก ณ ที่จ่าย');
+        const y = new Date().getFullYear();
+        const sel = document.getElementById('fYear');
+        for (let i = y + 1; i >= y - 5; i--) sel.innerHTML += `<option value="${i}">ปีภาษี ${i + 543}</option>`;
+        sel.value = y;
+        await this.load();
+      },
+
+      _year() { return parseInt(document.getElementById('fYear').value, 10); },
+
+      async load() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const year = this._year();
+        const st = document.getElementById('fStatus').value;
+        try {
+          const [listRes, sumRes] = await Promise.all([
+            API.get(`/api/companies/${cid}/wht-credits?taxYear=${year}${st ? '&status=' + st : ''}`),
+            API.get(`/api/companies/${cid}/wht-credits/summary?taxYear=${year}`),
+          ]);
+          this.rows = listRes.data || [];
+          this.renderSummary(sumRes.data || {});
+          this.renderRows();
+        } catch (e) { Layout.toast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      renderSummary(s) {
+        const m = v => Layout.money(v || 0);
+        document.getElementById('kReceived').textContent = m(s.receivedAmount);
+        document.getElementById('kPending').textContent = m(s.pendingAmount);
+        document.getElementById('kClaimed').textContent = m(s.claimedAmount);
+        document.getElementById('kGl').textContent = m(s.glBalance);
+        const diff = Number(s.difference || 0);
+        const dEl = document.getElementById('kDiff');
+        dEl.textContent = m(diff);
+        dEl.style.color = Math.abs(diff) < 0.01 ? '#15803d' : '#b91c1c';
+
+        // เตือน 2 เรื่องที่ทำให้ยื่นแบบผิด: ยอดไม่ตรงบัญชี / ยังไม่ได้ใบรับรอง
+        let html = '';
+        if (Math.abs(diff) >= 0.01) {
+          html += `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;padding:9px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+            ⚠️ <b>ทะเบียนไม่ตรงกับบัญชี 11910</b> ต่างกัน ${m(Math.abs(diff))} —
+            แปลว่ามีรายการที่ลงบัญชีแล้วแต่ไม่อยู่ในทะเบียน (หรือกลับกัน)
+            <div style="margin-top:3px;color:#334155;background:rgba(255,255,255,.7);border-radius:5px;padding:4px 7px;font-size:11.5px">
+              👉 <b>ต้องทำ:</b> ตรวจก่อนยื่นแบบ — ยอดเครดิตที่ยื่นต้องกระทบกับสมุดบัญชีได้
+            </div></div>`;
+        }
+        if (Number(s.pendingAmount || 0) > 0) {
+          html += `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:9px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+            ⏳ มี <b>${s.pendingCount} รายการ</b> รวม <b>${m(s.pendingAmount)}</b> ที่ถูกหักแล้วแต่<b>ยังไม่ได้รับหนังสือรับรอง</b>
+            <div style="margin-top:3px;color:#334155;background:rgba(255,255,255,.7);border-radius:5px;padding:4px 7px;font-size:11.5px">
+              👉 <b>ต้องทำ:</b> กฎหมายให้เครดิตเฉพาะรายการที่มีใบจริง — ตามทวงจากลูกค้าก่อนยื่น ภ.ง.ด.50
+              ไม่งั้นเสียสิทธิ์ทั้งจำนวนนี้
+            </div></div>`;
+        }
+        document.getElementById('alertBox').innerHTML = html;
+      },
+
+      _badge(st) {
+        const map = {
+          Pending:  ['รอใบรับรอง', '#fef3c7', '#92400e'],
+          Received: ['ใช้เครดิตได้', '#dcfce7', '#15803d'],
+          Claimed:  ['ใช้ไปแล้ว', '#e0f2fe', '#0369a1'],
+          Expired:  ['ตัดสูญ', '#fee2e2', '#991b1b'],
+        };
+        const [t, bg, c] = map[st] || [st, '#f1f5f9', '#334155'];
+        return `<span class="st" style="background:${bg};color:${c}">${t}</span>`;
+      },
+
+      renderRows() {
+        const tb = document.getElementById('tbody');
+        if (!this.rows.length) {
+          tb.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:22px">ยังไม่มีรายการในปีภาษีนี้</td></tr>';
+          return;
+        }
+        tb.innerHTML = this.rows.map(r => `
+          <tr>
+            <td>${this._badge(r.status)}</td>
+            <td>${Layout.esc(r.certificateNumber || '—')}</td>
+            <td>${r.certificateDate ? Layout.date(r.certificateDate) : '—'}</td>
+            <td>${Layout.esc(r.payerName || '—')}<div style="font-size:11px;color:#64748b">${Layout.esc(r.payerTaxId || '')} · ${Layout.esc(r.payerFormType)}</div></td>
+            <td>${Layout.esc(r.incomeTypeCode || '—')}${r.rateWarning ? `<div style="font-size:11px;color:#b45309">⚠️ ${Layout.esc(r.rateWarning)}</div>` : ''}</td>
+            <td class="text-right">${Layout.money(r.incomeAmount)}</td>
+            <td class="text-right">${Number(r.whtRate || 0).toFixed(2)}%</td>
+            <td class="text-right"><b>${Layout.money(r.whtAmount)}</b></td>
+            <td>${r.documentNumber ? Layout.esc(r.documentNumber) : '—'}</td>
+            <td style="white-space:nowrap">
+              ${r.status === 'Claimed' ? '' : `<button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${r.id}')">แก้ไข</button>`}
+              ${r.status === 'Pending' ? `<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="Page.expire('${r.id}')">ตัดสูญ</button>` : ''}
+            </td>
+          </tr>`).join('');
+      },
+
+      calc() {
+        const b = parseFloat(document.getElementById('mBase').value) || 0;
+        const r = parseFloat(document.getElementById('mRate').value) || 0;
+        const amt = document.getElementById('mAmt');
+        // เติมให้เฉพาะตอนยังไม่ได้กรอกเอง — ใบจริงอาจปัดเศษต่างจากสูตร
+        if (b > 0 && r > 0 && !amt.dataset.touched) amt.value = (b * r / 100).toFixed(2);
+      },
+
+      openNew() {
+        this.editingId = null;
+        document.getElementById('mTitle').textContent = 'บันทึกหนังสือรับรอง';
+        ['mCertNo','mCertDate','mPayer','mPayerTax','mBase','mRate','mAmt','mNotes'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('mIncomeType').value = '';
+        document.getElementById('mForm').value = '53';
+        document.getElementById('mYear').value = this._year();
+        document.getElementById('mFile').value = '';
+        document.getElementById('mFileNote').textContent = '';
+        document.getElementById('mAmt').dataset.touched = '';
+        document.getElementById('mAmt').oninput = e => { e.target.dataset.touched = '1'; };
+        Layout.openModal('editModal');
+      },
+
+      openEdit(id) {
+        const r = this.rows.find(x => x.id === id); if (!r) return;
+        this.editingId = id;
+        document.getElementById('mTitle').textContent = 'แก้ไขรายการภาษีถูกหัก';
+        document.getElementById('mYear').value = r.taxYear;
+        document.getElementById('mCertNo').value = r.certificateNumber || '';
+        document.getElementById('mCertDate').value = r.certificateDate ? Layout.dateInput(r.certificateDate) : '';
+        document.getElementById('mPayer').value = r.payerName || '';
+        document.getElementById('mPayerTax').value = r.payerTaxId || '';
+        document.getElementById('mIncomeType').value = r.incomeTypeCode || '';
+        document.getElementById('mRate').value = r.whtRate || '';
+        document.getElementById('mBase').value = r.incomeAmount || '';
+        document.getElementById('mAmt').value = r.whtAmount || '';
+        document.getElementById('mAmt').dataset.touched = '1';
+        document.getElementById('mNotes').value = r.notes || '';
+        document.getElementById('mForm').value = r.payerFormType === 'ภ.ง.ด.3' ? '3' : '53';
+        document.getElementById('mFile').value = '';
+        document.getElementById('mFileNote').textContent = r.attachmentId ? 'มีไฟล์แนบแล้ว — เลือกไฟล์ใหม่เพื่อแทนที่' : '';
+        Layout.openModal('editModal');
+      },
+
+      async save() {
+        const cid = Layout.getCompanyId();
+        const btn = document.getElementById('mSave');
+        const amt = parseFloat(document.getElementById('mAmt').value) || 0;
+        if (amt <= 0) { Layout.toast('กรุณากรอกยอดภาษีที่ถูกหัก', 'error'); return; }
+        const payer = document.getElementById('mPayer').value.trim();
+        if (!payer) { Layout.toast('กรุณากรอกชื่อผู้จ่าย', 'error'); return; }
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก…';
+        try {
+          // แนบไฟล์ก่อน (ถ้ามี) แล้วค่อยผูก id เข้ากับรายการ
+          let attachmentId = null;
+          const f = document.getElementById('mFile').files?.[0];
+          if (f) {
+            const fd = new FormData(); fd.append('file', f);
+            const up = await API.upload(`/api/companies/${cid}/attachments/WhtCredit/${this.editingId || '00000000-0000-0000-0000-000000000000'}`, fd);
+            attachmentId = up?.data?.id || null;
+          }
+          const body = {
+            taxYear: parseInt(document.getElementById('mYear').value, 10) || this._year(),
+            certificateNumber: document.getElementById('mCertNo').value.trim() || null,
+            certificateDate: document.getElementById('mCertDate').value || null,
+            payerContactId: null,
+            payerName: payer,
+            payerTaxId: document.getElementById('mPayerTax').value.trim() || null,
+            payerFormType: parseInt(document.getElementById('mForm').value, 10),
+            incomeTypeCode: document.getElementById('mIncomeType').value || null,
+            incomeAmount: parseFloat(document.getElementById('mBase').value) || 0,
+            whtRate: parseFloat(document.getElementById('mRate').value) || 0,
+            whtAmount: amt,
+            documentId: null,
+            attachmentId,
+            notes: document.getElementById('mNotes').value.trim() || null,
+          };
+          if (this.editingId) await API.put(`/api/companies/${cid}/wht-credits/${this.editingId}`, body);
+          else await API.post(`/api/companies/${cid}/wht-credits`, body);
+          Layout.closeModal('editModal');
+          Layout.toast('บันทึกแล้ว', 'success');
+          await this.load();
+        } catch (e) { Layout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
+        finally { btn.disabled = false; btn.textContent = 'บันทึก'; }
+      },
+
+      async expire(id) {
+        const reason = prompt('เหตุผลที่ตัดรายการนี้ออกจากเครดิต (เช่น ไม่ได้รับใบจนพ้นกำหนด):');
+        if (reason === null) return;
+        try {
+          await API.post(`/api/companies/${Layout.getCompanyId()}/wht-credits/${id}/expire`, { reason: reason.trim() || null });
+          Layout.toast('ตัดรายการแล้ว', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

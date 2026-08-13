@@ -788,6 +788,8 @@ const Layout = {
       description: 'เอกสารที่ภาษีซื้อพักไว้ 11640 รอใบกำกับครบ §86/4 — เตือนก่อนหมดสิทธิเคลม 6 เดือน (§82/3) · เติมข้อมูลแล้วย้ายเข้า ภ.พ.30' },
     { id: 'wht', label: 'หัก ณ ที่จ่าย (ภงด.)', icon: '📜', href: '/pages/wht.html', feature: 'TaxManagement', _i18nKey: 'nav.wht',
       description: 'ภงด.1/3/53/54 · สร้างหนังสือรับรองหัก ณ ที่จ่าย · Export ยื่นออนไลน์' },
+    { id: 'wht-credit', label: 'ภาษีถูกหัก (เครดิต ภงด.50)', icon: '🧾', href: '/pages/wht-credit.html', feature: 'TaxManagement',
+      description: 'หนังสือรับรอง 50 ทวิ ที่ลูกค้าออกให้เรา · เครดิตใน ภ.ง.ด.51/50 · กระทบยอดบัญชี 11910 · เตือนใบที่ยังไม่ได้รับ' },
     { id: 'tax-remittance', label: 'นำส่งภาษี / ประกันสังคม', icon: '💸', href: '/pages/tax-remittance.html', feature: 'TaxManagement',
       description: 'ยอดรอนำส่งรวม — สปส.1-10 · ภงด.1/3/53 · ภพ.30 · กำหนดชำระ/เลยกำหนด · ทำจ่าย (ลง JE) · แนบใบเสร็จ' },
     { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html', feature: 'TaxManagement', _i18nKey: 'nav.taxCalendar',

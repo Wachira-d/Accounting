@@ -1647,6 +1647,27 @@ public partial class TaxService : ITaxService
         // Apply tax credit carryforward
         var netCitAmount = Math.Max(0, citAmount - taxCreditCarryforward);
 
+        // ===== เครดิตภาษีที่ "เราถูกหัก ณ ที่จ่าย" (ภ.ง.ด.50/51) =====
+        // เดิม ภ.ง.ด.50 คำนวณจบที่ "ภาษีที่ต้องเสีย" โดยไม่หักเครดิตนี้เลย ผู้ใช้
+        // ต้องไปหักเองนอกระบบ ทั้งที่ยอดอยู่ในบัญชี 11910 อยู่แล้ว
+        //
+        // ⚠️ นับเฉพาะรายการที่ "มีหนังสือรับรองจริง" (Received/Claimed) —
+        // รายการ Pending คือถูกหักแล้วแต่ยังไม่ได้ใบ ซึ่งกฎหมายยังเครดิตไม่ได้
+        // (ดู WHT_CREDIT_PLAN.md ข้อ L1) การเอา Pending มารวมจะทำให้ยื่นเกินสิทธิ์
+        var whtCreditRows = await _db.WhtCreditsReceived.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && w.TaxYear == year
+                && (w.Status == WhtCreditStatus.Received || w.Status == WhtCreditStatus.Claimed))
+            .Select(w => w.WhtAmount).ToListAsync();
+        var whtCredit = whtCreditRows.Sum();
+        var whtPendingRows = await _db.WhtCreditsReceived.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && w.TaxYear == year
+                && w.Status == WhtCreditStatus.Pending)
+            .Select(w => w.WhtAmount).ToListAsync();
+        var whtPending = whtPendingRows.Sum();
+
+        // ภาษีที่ต้องชำระเพิ่ม (ติดลบ = ชำระเกิน → ขอคืน/ยกไปปีหน้า ตาม L4)
+        var citPayable = netCitAmount - whtCredit;
+
         report.TotalIncome = totalRevenue;
         report.TotalTaxWithheld = netCitAmount;
         report.NetVat = netProfitBeforeTax; // Reuse field for net profit
@@ -1742,6 +1763,43 @@ public partial class TaxService : ITaxService
                 IncomeTypeCode = "TAX_CREDIT"
             });
         }
+
+        // ===== เครดิต "ภาษีที่ถูกหัก ณ ที่จ่าย" + ยอดสรุปที่ต้องชำระ/ขอคืน =====
+        if (whtCredit > 0)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = "หัก: ภาษีถูกหัก ณ ที่จ่าย (มีหนังสือรับรอง)",
+                IncomeAmount = whtCredit,
+                TaxAmount = -whtCredit,
+                IncomeTypeCode = "WHT_CREDIT"
+            });
+        }
+        // เตือนยอดที่ "ยังไม่ได้ใบรับรอง" — เครดิตไม่ได้ตามกฎหมาย ต้องรีบทวงลูกค้า
+        // ก่อนยื่นแบบ ไม่งั้นเสียสิทธิ์ทั้งจำนวน (ไม่นับรวมในยอดภาษี → TaxAmount = 0)
+        if (whtPending > 0)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = "⚠️ ถูกหักแล้วแต่ยังไม่ได้รับหนังสือรับรอง — ยังเครดิตไม่ได้ (ตามทวงจากลูกค้า)",
+                IncomeAmount = whtPending,
+                TaxAmount = 0,
+                IncomeTypeCode = "WHT_PENDING"
+            });
+        }
+        report.Lines.Add(new TaxReportLine
+        {
+            TaxReportId = report.Id,
+            LineOrder = lineOrder++,
+            Description = citPayable >= 0 ? "ภาษีที่ต้องชำระเพิ่ม" : "ชำระเกิน — ขอคืน/ยกไปปีถัดไป",
+            IncomeAmount = Math.Abs(citPayable),
+            TaxAmount = citPayable,
+            IncomeTypeCode = "CIT_PAYABLE"
+        });
     }
 
     /// <summary>
