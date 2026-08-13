@@ -1182,17 +1182,13 @@ public class DocumentService : IDocumentService
     {
         if (raw == null) return;                       // null = ไม่แตะ
 
-        var isPurchaseDoc = doc.DocumentType is DocumentType.PurchaseInvoice
-            or DocumentType.Expense or DocumentType.PaymentVoucher
-            or DocumentType.CertificateInLieu;
-        if (!isPurchaseDoc)
-            throw new InvalidOperationException("งวดเคลมภาษีซื้อตั้งได้เฉพาะเอกสารฝั่งซื้อ");
-
-        // กติกา 2 — undue flow ชนะเจตนา
-        if (doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null)
-            throw new InvalidOperationException(
-                "ใบนี้พักภาษีซื้อไว้ (ใบกำกับยังไม่ครบ §86/4) — งวดเคลมจะถูกกำหนด"
-                + "อัตโนมัติเมื่อกด \"เติมใบกำกับครบ\" ไม่สามารถเลือกงวดเองที่นี่ได้");
+        // ⚠️ ลำดับสำคัญ: แปลงค่า + เทียบของเดิม **ก่อน** guard ทุกตัว
+        //
+        // บั๊กจริงที่เกิด: UI ส่ง "" มาเสมอตอนแก้ไข (เพื่อรองรับการล้างค่า)
+        // แต่เวอร์ชันแรกเช็ค "ต้องเป็นเอกสารฝั่งซื้อ" ก่อนดูว่าค่าเปลี่ยนจริง
+        // ไหม → แก้ใบเสนอราคาที่ไม่เกี่ยวอะไรเลยก็ throw ("Clone ใบเสนอราคา
+        // แล้วบันทึกไม่ได้"). และ throw ใส่ใบ undue ที่ผู้ใช้ไม่ได้แตะช่องนี้
+        // ด้วย. no-op ต้องเป็น no-op เสมอ — guard มีไว้กันการ "เปลี่ยน" เท่านั้น
 
         // แปลงค่า: "" = ล้างกลับปกติ, "yyyy-MM" = งวดที่เลือก
         DateTime? period = null;
@@ -1210,7 +1206,19 @@ public class DocumentService : IDocumentService
         var current = doc.InputVatBecameClaimableAt.HasValue
             ? new DateTime(doc.InputVatBecameClaimableAt.Value.Year, doc.InputVatBecameClaimableAt.Value.Month, 1)
             : (DateTime?)null;
-        if (period == current) return;                 // ไม่เปลี่ยน = จบ
+        if (period == current) return;                 // ไม่เปลี่ยน = จบ ไม่มี guard ไหนยิง
+
+        var isPurchaseDoc = doc.DocumentType is DocumentType.PurchaseInvoice
+            or DocumentType.Expense or DocumentType.PaymentVoucher
+            or DocumentType.CertificateInLieu;
+        if (!isPurchaseDoc)
+            throw new InvalidOperationException("งวดเคลมภาษีซื้อตั้งได้เฉพาะเอกสารฝั่งซื้อ");
+
+        // กติกา 2 — undue flow ชนะเจตนา (บังคับเฉพาะตอน "เปลี่ยน" จริง)
+        if (doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null)
+            throw new InvalidOperationException(
+                "ใบนี้พักภาษีซื้อไว้ (ใบกำกับยังไม่ครบ §86/4) — งวดเคลมจะถูกกำหนด"
+                + "อัตโนมัติเมื่อกด \"เติมใบกำกับครบ\" ไม่สามารถเลือกงวดเองที่นี่ได้");
 
         // กติกา 1 — มีบรรทัดรายงานจริงแล้ว = รายงานชนะ (block พร้อมชี้ทางแก้)
         var claimedIn = await _db.TaxReportLines.AsNoTracking()

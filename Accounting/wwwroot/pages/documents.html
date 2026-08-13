@@ -5428,8 +5428,14 @@
             return isPV && document.getElementById('fHasTaxInvoiceRef')?.checked ? (pv || null) : (main || null);
           })(),
           // งวดเคลมภาษีซื้อ (push): ค่า input type=month คือ "yyyy-MM" อยู่แล้ว
-          // ส่งเสมอตอนแก้ไข ("" = ล้างกลับปกติ) แต่ตอนสร้างส่งเฉพาะมีค่า
+          // ส่ง **เฉพาะเอกสารฝั่งซื้อ** เท่านั้น — เอกสารฝั่งขาย (QT/INV/…) ต้อง
+          // ได้ null เสมอ ไม่ใช่ "" (บั๊กจริง: clone ใบเสนอราคาแล้วบันทึกไม่ได้
+          // เพราะ "" ถูกส่งไปให้ validator ฝั่งซื้อ). ตอนแก้ไขส่ง "" ได้เพื่อ
+          // รองรับการล้างค่ากลับเป็น "ตามเดือนเอกสาร"
           inputVatClaimPeriod: (() => {
+            const isPurchase = ['PurchaseInvoice', 'Expense', 'PaymentVoucher', 'CertificateInLieu']
+              .includes(document.getElementById('fDocType').value);
+            if (!isPurchase) return null;
             const el = document.getElementById('fVatClaimPeriod');
             if (!el || el.disabled) return null;          // ถูกล็อก (มีบรรทัดรายงานแล้ว) = ไม่ส่ง
             return this.editingId ? (el.value || '') : (el.value || null);
