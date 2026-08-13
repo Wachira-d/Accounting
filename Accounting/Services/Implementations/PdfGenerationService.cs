@@ -1152,12 +1152,29 @@ public partial class PdfGenerationService : IPdfGenerationService
             {
                 var orig = await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
-                    .Select(d => new { d.DocumentNumber, d.DocumentDate, d.SubTotal })
+                    .Select(d => new { d.DocumentNumber, d.DocumentDate, d.SubTotal,
+                        d.DocumentType, d.SupplierInvoiceNumber, d.SupplierTaxInvoiceDate })
                     .FirstOrDefaultAsync();
                 if (orig != null)
                 {
-                    doc.AdjustmentOriginalNumber = orig.DocumentNumber;
-                    doc.AdjustmentOriginalDate = orig.DocumentDate;
+                    // ⚠️ ใบเดิมเป็นเอกสาร "ฝั่งซื้อ" (ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย/ใบสำคัญจ่าย):
+                    // ใบกำกับภาษีตัวจริงคือ **ใบของผู้ขาย** เลขที่ที่ต้องอ้างตาม §86/9-10
+                    // จึงเป็น SupplierInvoiceNumber ไม่ใช่ DocumentNumber ซึ่งเป็นเลขรัน
+                    // ภายในของเราเอง (สรรพากร/ผู้ขายไม่รู้จักเลขนั้น และจับคู่กับใบกำกับ
+                    // ในระบบผู้ขายไม่ได้). วันที่ก็ต้องเป็นวันที่บนใบกำกับของผู้ขายเช่นกัน
+                    // — ตรงกับที่รายงาน ภ.พ.30 ฝั่งซื้อใช้อยู่แล้ว (TaxService) ทำให้
+                    // กระดาษกับแบบยื่นอ้างเลขเดียวกัน
+                    var origIsPurchase = orig.DocumentType is DocumentType.PurchaseInvoice
+                        or DocumentType.Expense or DocumentType.PaymentVoucher
+                        or DocumentType.CertificateInLieu;
+                    doc.AdjustmentOriginalNumber =
+                        origIsPurchase && !string.IsNullOrWhiteSpace(orig.SupplierInvoiceNumber)
+                            ? orig.SupplierInvoiceNumber
+                            : orig.DocumentNumber;
+                    doc.AdjustmentOriginalDate =
+                        origIsPurchase && orig.SupplierTaxInvoiceDate.HasValue
+                            ? orig.SupplierTaxInvoiceDate
+                            : orig.DocumentDate;
                     doc.AdjustmentOriginalSubTotal = orig.SubTotal;
                 }
             }
@@ -1307,6 +1324,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         // เอกสารสกุลเงินต่างประเทศ — เดิมพิมพ์ตัวเลขเปล่า ๆ ไม่บอกสกุลเงินเลย
         // ผู้อ่านแยกไม่ออกว่า 1,000 คือบาทหรือดอลลาร์ (และ TFRS บทที่ 19 ต้องเห็น
         // อัตราที่ใช้แปลงค่าด้วย)
+        // เอกสารฝั่งซื้อ: ใบกำกับภาษีตัวจริงเป็นของผู้ขาย — เลขที่/วันที่ของเขาคือ
+        // ตัวที่ใช้อ้างกับสรรพากร (ตรงกับคอลัมน์ในรายงานภาษีซื้อ ภ.พ.30) เดิมกระดาษ
+        // พิมพ์แต่เลขรันภายในของเรา ซึ่งจับคู่กับใบกำกับของผู้ขายไม่ได้
+        if (IsPurchaseSideDocType(doc.DocumentType)
+            && !string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber))
+            sb.AppendLine($"<div>{L.SupplierInvoiceLabel}: <b>{WebUtility.HtmlEncode(doc.SupplierInvoiceNumber!)}</b>"
+                + (doc.SupplierTaxInvoiceDate.HasValue ? $" · {L.Date(doc.SupplierTaxInvoiceDate.Value)}" : "")
+                + "</div>");
         if (!string.IsNullOrWhiteSpace(doc.Currency)
             && !string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase))
             sb.AppendLine($"<div><b>{L.CurrencyLabel}: {WebUtility.HtmlEncode(doc.Currency!)}</b>"
@@ -2256,6 +2281,13 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         if (c[0] != '#') c = "#" + c;
         return Regex.IsMatch(c, "^#[0-9A-Fa-f]{6}$") ? c.ToUpperInvariant() : null;
     }
+
+    /// <summary>เอกสารฝั่งซื้อที่ "ใบกำกับภาษีตัวจริงเป็นของผู้ขาย" — เลขที่/วันที่
+    /// ที่มีผลทางภาษีคือ SupplierInvoiceNumber/SupplierTaxInvoiceDate ไม่ใช่เลขรัน
+    /// ภายในของเรา (ใช้ทั้งกล่องอ้างอิง §86/9-10 และบรรทัดบนหัวเอกสารฝั่งซื้อ)</summary>
+    internal static bool IsPurchaseSideDocType(DocumentType t) =>
+        t is DocumentType.PurchaseInvoice or DocumentType.Expense
+          or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu;
 
     /// <summary>เหตุผลการลดหนี้เป็นข้อความ — §86/10 บังคับให้ใบลดหนี้ระบุ
     /// "เหตุผลในการออกใบลดหนี้" บนตัวเอกสาร. ผู้ใช้เลือกไว้ตอนสร้าง (บังคับก่อน

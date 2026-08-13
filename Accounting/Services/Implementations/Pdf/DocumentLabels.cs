@@ -80,6 +80,7 @@ public sealed class DocumentLabels
     public string CnOriginalNumber => this["cn_original_number"];
     public string CnOriginalValue => this["cn_original_value"];
     public string CnReason => this["cn_reason"];
+    public string SupplierInvoiceLabel => this["supplier_invoice_no"];
     public string CurrencyLabel => this["currency_label"];
     public string FxRateLabel => this["fx_rate_label"];
     public string CnRefOriginal => this["cn_ref_original"];
@@ -188,6 +189,7 @@ public sealed class DocumentLabels
         ["cn_original_number"] = "เลขที่ {0}  ลงวันที่ {1}",
         ["cn_original_value"] = "มูลค่าตามใบเดิม",
         ["cn_reason"] = "เหตุผล",
+        ["supplier_invoice_no"] = "เลขที่ใบกำกับภาษีของผู้ขาย",
         ["cn_reason_return"] = "คืนสินค้า",
         ["cn_reason_discount"] = "ส่วนลด / ลดราคา",
         ["cn_reason_adjustment"] = "ปรับยอด / ค่าสินค้าน้อยกว่าที่ตกลง",
@@ -268,6 +270,7 @@ public sealed class DocumentLabels
         ["cn_original_number"] = "No. {0} dated {1}",
         ["cn_original_value"] = "Original value",
         ["cn_reason"] = "Reason",
+        ["supplier_invoice_no"] = "Supplier tax invoice no.",
         ["cn_reason_return"] = "Goods return",
         ["cn_reason_discount"] = "Discount / price reduction",
         ["cn_reason_adjustment"] = "Adjustment",
