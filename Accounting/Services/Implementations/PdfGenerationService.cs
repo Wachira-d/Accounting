@@ -1296,9 +1296,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Contact — หัวกล่องตามประเภทเอกสาร (PV = "ผู้รับเงิน" ไม่ใช่ "ลูกค้า")
         // เหมือน QuestPDF renderer: template override ชนะเฉพาะเมื่อตั้งค่าไม่ใช่
         // default "ลูกค้า"
-        var contactSectionLabel = !string.IsNullOrWhiteSpace(template.ContactSectionTitle)
-            && template.ContactSectionTitle != "ลูกค้า"
-            ? template.ContactSectionTitle
+        // หัวข้อกล่องคู่ค้า — ใช้ค่า (EN) ที่ผู้ใช้ตั้งไว้เมื่อพิมพ์ภาษาอังกฤษ
+        // (เดิมช่อง (EN) ในหน้าปรับแต่งไม่มี renderer ไหนอ่านเลย)
+        var contactTitleForLang = PickLangText(template.ContactSectionTitle,
+            template.ContactSectionTitleEn, lang);
+        var contactSectionLabel = !string.IsNullOrWhiteSpace(contactTitleForLang)
+            && contactTitleForLang != "ลูกค้า"
+            ? contactTitleForLang
             : DefaultContactLabelFor(doc.DocumentType, L);
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{contactSectionLabel}</div>");
         sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
@@ -1309,9 +1313,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         {
             // บุคคลธรรมดา: แสดงเฉพาะสาขาจริง (ไม่ใช่ 00000 ที่หลุดมาจาก default
             // ของ OCR/integration) — บุคคลจด VAT ที่มีสาขาย่อยจริงยังแสดงถูก
-            var showContactBranch = doc.Contact.ContactType != Models.Enums.ContactType.Individual
-                || (!string.IsNullOrWhiteSpace(doc.Contact.BranchCode)
-                    && doc.Contact.BranchCode!.Trim().TrimStart('0').Length > 0);
+            // + ต้องเคารพติ๊ก ShowContactBranch ด้วย (เดิมติ๊กออกแล้วสาขายังขึ้น)
+            // ยกเว้นใบกำกับภาษีเต็มรูป §86/4 ที่กฎหมายบังคับ — ติ๊กปิดไม่ได้
+            var showContactBranch = (template.ShowContactBranch || RequiresBuyerBranchOnPrint(doc.DocumentType))
+                && (doc.Contact.ContactType != Models.Enums.ContactType.Individual
+                    || (!string.IsNullOrWhiteSpace(doc.Contact.BranchCode)
+                        && doc.Contact.BranchCode!.Trim().TrimStart('0').Length > 0));
             sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId}"
                 + (showContactBranch ? $" ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})" : "")
                 + "</div>");
@@ -1354,11 +1361,17 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         sb.AppendLine("<table class='items-table'><thead><tr>");
         if (template.ShowLineNumber) sb.AppendLine("<th class='center'>#</th>");
+        // รหัสสินค้า / VAT ต่อรายการ / WHT ต่อรายการ — เดิม 3 ติ๊กนี้ไม่มี
+        // renderer ตัวไหนอ่านเลย (ติ๊กแล้วหน้ากระดาษไม่เปลี่ยน) ต้อง mirror กับ
+        // QuestPDF ให้ลำดับคอลัมน์ตรงกันเป๊ะ — ร่างกับตัวจริงต้องเหมือนกัน
+        if (template.ShowItemCode) sb.AppendLine($"<th>{L.ColItemCode}</th>");
         sb.AppendLine($"<th>{L.ColItem}</th>");
         sb.AppendLine($"<th class='right'>{L.ColQty}</th>");
         if (template.ShowUnit) sb.AppendLine($"<th class='center'>{L.ColUnit}</th>");
         sb.AppendLine($"<th class='right'>{priceLbl}</th>");
         if (template.ShowDiscount) sb.AppendLine($"<th class='right'>{L.ColDiscount}</th>");
+        if (template.ShowVatPerLine) sb.AppendLine($"<th class='right'>{L.ColVatPerLine}</th>");
+        if (template.ShowWithholdingTax) sb.AppendLine($"<th class='right'>{L.ColWhtPerLine}</th>");
         sb.AppendLine($"<th class='right'>{amountLbl}</th>");
         sb.AppendLine("</tr></thead><tbody>");
 
@@ -1381,11 +1394,15 @@ public partial class PdfGenerationService : IPdfGenerationService
             var isDescriptiveLine = line.UnitPrice == 0 && line.Amount == 0 && line.VatAmount == 0;
             sb.AppendLine("<tr>");
             if (template.ShowLineNumber) sb.AppendLine($"<td class='center'>{lineNum++}</td>");
+            if (template.ShowItemCode) sb.AppendLine($"<td>{WebUtility.HtmlEncode(line.ProductCode ?? "")}</td>");
             sb.AppendLine($"<td style='white-space:pre-line'>{line.Description}</td>");
             sb.AppendLine($"<td class='right'>{(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"))}</td>");
             if (template.ShowUnit) sb.AppendLine($"<td class='center'>{line.Unit}</td>");
             sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"))}</td>");
             if (template.ShowDiscount) sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"))}</td>");
+            // VatRate = -1 คือ "ยกเว้น" (sentinel) — ใช้ helper ตัวเดียวกับ QuestPDF
+            if (template.ShowVatPerLine) sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : FormatLineVatRate(line.VatRate, L))}</td>");
+            if (template.ShowWithholdingTax) sb.AppendLine($"<td class='right'>{(isDescriptiveLine || line.WithholdingTaxRate <= 0 ? "" : line.WithholdingTaxRate.ToString("0.##") + "%")}</td>");
             sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : printedAmount.ToString("N2"))}</td>");
             sb.AppendLine("</tr>");
         }
@@ -1474,8 +1491,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (!string.IsNullOrWhiteSpace(doc.CustomAppendix))
             sb.AppendLine($"<div class='custom-appendix'>{doc.CustomAppendix}</div>");
 
-        if (template.ShowBankDetails && template.BankDetailsText != null)
-            sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{template.BankDetailsText}</div>");
+        var bankTextForLang = PickLangText(template.BankDetailsText, template.BankDetailsTextEn, lang);
+        if (template.ShowBankDetails && bankTextForLang != null)
+            sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{bankTextForLang}</div>");
 
         // เงื่อนไขการชำระเงินของใบนี้ (doc.PaymentTerms/CreditDays) — เดิม flag
         // ShowPaymentTerms มีอยู่แต่ไม่มี renderer ตัวไหน render เลย ผู้ใช้กรอก
@@ -1484,10 +1502,23 @@ public partial class PdfGenerationService : IPdfGenerationService
             && (!string.IsNullOrWhiteSpace(doc.PaymentTerms) || doc.CreditDays > 0))
         {
             // PaymentTerms เป็นได้หลายบรรทัด (1 เงื่อนไข/บรรทัด — ฟอร์มให้เพิ่ม/
-            // ลบรายข้อ) → white-space:pre-line ให้ขึ้นบรรทัดตามที่ผู้ใช้ตั้ง
-            var termsTxt = System.Net.WebUtility.HtmlEncode(doc.PaymentTerms ?? "");
+            // ลบรายข้อ). ต้อง render **แบบเดียวกับ QuestPDF เป๊ะ ๆ**: บรรทัดเดียว
+            // = ต่อท้ายหัวข้อ, หลายบรรทัด = หัวข้อ + bullet รายข้อ — ไม่งั้น
+            // preview/ร่าง กับ PDF ตอนอนุมัติหน้าตาไม่ตรงกัน (กฎ "ร่าง = ตัวจริง")
             var creditTxt = doc.CreditDays > 0 ? $" (เครดิต {doc.CreditDays} วัน)" : "";
-            sb.AppendLine($"<div class='bank-details'><strong>เงื่อนไขการชำระเงิน:{creditTxt}</strong><div style='white-space:pre-line'>{termsTxt}</div></div>");
+            var termLines = (doc.PaymentTerms ?? "")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (termLines.Length <= 1)
+            {
+                var one = System.Net.WebUtility.HtmlEncode(termLines.FirstOrDefault() ?? "");
+                sb.AppendLine($"<div class='bank-details'><strong>เงื่อนไขการชำระเงิน:</strong> {one}{creditTxt}</div>");
+            }
+            else
+            {
+                var bullets = string.Join("", termLines.Select(ln =>
+                    $"<div>• {System.Net.WebUtility.HtmlEncode(ln)}</div>"));
+                sb.AppendLine($"<div class='bank-details'><strong>เงื่อนไขการชำระเงิน:{creditTxt}</strong>{bullets}</div>");
+            }
         }
 
         // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — white-space:
@@ -1498,7 +1529,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
             ? doc.CustomFooterNotes
-            : template.FooterNotes;
+            : PickLangText(template.FooterNotes, template.FooterNotesEn, lang);
         if (!string.IsNullOrWhiteSpace(footerNotes))
             sb.AppendLine($"<div class='footer-notes'>{footerNotes}</div>");
 
@@ -1552,9 +1583,13 @@ public partial class PdfGenerationService : IPdfGenerationService
                     sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(s.Title!)}</div>");
                 sb.AppendLine("</div>");
             }
-            if (template.SignatureLabel1 != null) Box(template.SignatureLabel1, sigAt(0));
-            if (template.SignatureLabel2 != null) Box(template.SignatureLabel2, sigAt(1));
-            if (template.SignatureCount >= 3 && template.SignatureLabel3 != null) Box(template.SignatureLabel3, sigAt(2));
+            // ป้ายลายเซ็น (EN) ที่ผู้ใช้ตั้งไว้ — ใช้เมื่อพิมพ์เอกสารภาษาอังกฤษ
+            var sigL1 = PickLangText(template.SignatureLabel1, template.SignatureLabel1En, lang);
+            var sigL2 = PickLangText(template.SignatureLabel2, template.SignatureLabel2En, lang);
+            var sigL3 = PickLangText(template.SignatureLabel3, template.SignatureLabel3En, lang);
+            if (sigL1 != null) Box(sigL1, sigAt(0));
+            if (sigL2 != null) Box(sigL2, sigAt(1));
+            if (template.SignatureCount >= 3 && sigL3 != null) Box(sigL3, sigAt(2));
             sb.AppendLine("</div>");
         }
 
@@ -1890,15 +1925,43 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             Phone = "02-123-4567",
             Email = "ar@customer-example.co.th",
         };
+        // ข้อมูลตัวอย่างต้อง "ออกกำลัง" ทุกติ๊กในหน้าปรับแต่ง — ไม่งั้นติ๊กที่ระบบ
+        // ทำงานถูกอยู่แล้วก็ยังดูเหมือนพัง เพราะตัวอย่างไม่มีข้อมูลให้แสดง
+        // (เดิม: ส่วนลด = 0 → "ส่วนลดรวม" ไม่ขึ้น, WHT = 0 → "WHT รวม" ไม่ขึ้น,
+        //  ไม่มีรหัสสินค้า → คอลัมน์รหัสว่างเปล่า)
+        // ตัวเลขผูกกันให้ถูกต้อง: 10,000 + (5,000−500) = 14,500 · VAT 7% = 1,015
+        //                        · รวม 15,515 · WHT 3% ของ 4,500 = 135
         var lines = new List<DocumentLine>
         {
             new() { LineOrder = 1, Description = lang == "en" ? "Sample product A" : "สินค้าตัวอย่าง A",
+                    ProductCode = "P-001",
                     Quantity = 10, Unit = lang == "en" ? "pcs" : "ชิ้น", UnitPrice = 1000, DiscountAmount = 0,
-                    Amount = 10000, VatRate = 7 },
+                    Amount = 10000, VatRate = 7, VatAmount = 700 },
             new() { LineOrder = 2, Description = lang == "en" ? "Sample service B" : "บริการตัวอย่าง B",
-                    Quantity = 1, Unit = lang == "en" ? "job" : "งาน", UnitPrice = 5000, DiscountAmount = 0,
-                    Amount = 5000, VatRate = 7 },
+                    ProductCode = "S-002",
+                    Quantity = 1, Unit = lang == "en" ? "job" : "งาน", UnitPrice = 5000, DiscountAmount = 500,
+                    Amount = 4500, VatRate = 7, VatAmount = 315,
+                    WithholdingTaxRate = 3, WithholdingTaxAmount = 135 },
         };
+        // เงื่อนไขการชำระเงิน + วันเครดิต: renderer พิมพ์ก็ต่อเมื่อ **เอกสาร** มีค่า
+        // (ไม่ใช่แค่ template ติ๊ก ShowPaymentTerms) — เอกสารตัวอย่างเดิมไม่เคยมี
+        // 2 ค่านี้ ผู้ใช้จึงตั้งค่า default แล้วกดดู preview ไม่เห็นอะไรเลย
+        // ทั้งที่ของจริงขึ้น. ตัวอย่างต้องสะท้อน "ค่าเริ่มต้นตอนสร้างเอกสารชนิดนี้"
+        // ที่ตั้งไว้บน template ตัวเดียวกัน — คือสิ่งที่เอกสารจริงจะได้รับไปจริง ๆ
+        var sampleTerms = template.DefaultPaymentTerms;
+        var sampleCreditDays = template.DefaultCreditDays;
+        if (template.ShowPaymentTerms
+            && string.IsNullOrWhiteSpace(sampleTerms) && (sampleCreditDays ?? 0) <= 0)
+        {
+            // ติ๊ก "แสดง payment terms" ไว้แต่ยังไม่ได้ตั้งค่าเริ่มต้น → โชว์ข้อความ
+            // ตัวอย่างให้เห็นว่าบล็อกนี้จะไปโผล่ตรงไหนบนกระดาษ (ไม่งั้นติ๊กแล้ว
+            // หน้าจอนิ่ง ผู้ใช้เข้าใจว่าระบบพัง)
+            sampleTerms = lang == "en"
+                ? "(sample) Payment within 30 days of invoice date"
+                : "(ตัวอย่าง) ชำระภายใน 30 วันนับจากวันที่ในเอกสาร";
+            sampleCreditDays = 30;
+        }
+
         var doc = new Document
         {
             DocumentNumber = "DOC-202603-0001",
@@ -1908,12 +1971,14 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             Reference = "PO-2026-0001",
             Contact = contact,
             Lines = lines,
-            SubTotal = 15000m,
-            DiscountAmount = 0m,
-            VatAmount = 1050m,
-            WithholdingTaxAmount = 0m,
-            TotalAmount = 16050m,
-            BalanceDue = 16050m,
+            SubTotal = 14500m,
+            DiscountAmount = 500m,
+            VatAmount = 1015m,
+            WithholdingTaxAmount = 135m,
+            TotalAmount = 15515m,
+            BalanceDue = 15515m,
+            PaymentTerms = sampleTerms,
+            CreditDays = sampleCreditDays,
         };
         return BuildDocumentHtml(doc, company, settings, template, null, lang);
     }
@@ -2160,6 +2225,22 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         if (c[0] != '#') c = "#" + c;
         return Regex.IsMatch(c, "^#[0-9A-Fa-f]{6}$") ? c.ToUpperInvariant() : null;
     }
+
+    /// <summary>เอกสารที่เป็น "ใบกำกับภาษีเต็มรูป" ตาม §86/4 (รวมใบเพิ่ม/ลดหนี้
+    /// §86/9-10 ที่ต้องมีรายการเดียวกัน) — เอกสารกลุ่มนี้ <b>บังคับ</b>แสดงสาขา
+    /// ของผู้ซื้อ (ประกาศอธิบดีฯ 199) ติ๊ก "แสดงสาขา" ในเทมเพลตปิดไม่ได้
+    /// มิฉะนั้นใบกำกับไม่สมบูรณ์ → ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(1)</summary>
+    internal static bool RequiresBuyerBranchOnPrint(DocumentType type) =>
+        type is DocumentType.TaxInvoice or DocumentType.CreditNote or DocumentType.DebitNote;
+
+    /// <summary>อัตรา VAT ต่อบรรทัดสำหรับคอลัมน์ "VAT" (เปิดด้วย
+    /// <c>ShowVatPerLine</c>). VatRate = -1 คือ sentinel "ยกเว้น" ที่ใช้ทั้งฟอร์ม
+    /// และ backend — ห้ามพิมพ์ออกมาเป็น "-1%". ใช้ร่วมกันทั้ง HTML และ QuestPDF
+    /// เพื่อให้ร่างกับตัวจริงเขียนเหมือนกันเป๊ะ</summary>
+    internal static string FormatLineVatRate(decimal vatRate, Pdf.DocumentLabels? labels = null)
+        => vatRate < 0 ? (labels?.VatExemptShort ?? "ยกเว้น")
+         : vatRate == 0 ? "0%"
+         : vatRate.ToString("0.##") + "%";
 
     /// <summary>ประกอบที่อยู่ไทยฉบับพิมพ์ลงเอกสาร — delegate ไปที่
     /// <see cref="ThaiAddressFormatter"/> ซึ่งเป็น "ตัวประกอบที่อยู่ตัวเดียวของ

@@ -422,6 +422,13 @@
               <input type="hidden" id="fPaymentTerms">
               <div id="ptList"></div>
               <button type="button" class="btn btn-sm btn-secondary" onclick="Page.addPaymentTermRow('', {focus:true})" style="margin-top:4px">+ เพิ่มเงื่อนไข</button>
+              <!-- ยังไม่เคยตั้งค่าเริ่มต้นของชนิดเอกสารนี้ → ชวนตั้งตรงนี้เลย
+                   ไม่ต้องให้ผู้ใช้ไปหาเองที่หน้าเทมเพลต (โผล่เฉพาะตอนสร้างใหม่
+                   และเฉพาะเมื่อยังไม่มี default จริง ๆ) -->
+              <div id="ptSetupHint" style="display:none;margin-top:6px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:11.5px;color:#1e40af">
+                <span id="ptSetupHintText"></span>
+                <button type="button" class="btn btn-sm btn-primary" style="margin-left:6px;padding:3px 10px;font-size:11.5px" onclick="Page.openPaymentTermsSetup()">⚡ ตั้งค่าเริ่มต้น</button>
+              </div>
             </div>
           </div>
           <!-- ตัวเลือกขั้นสูง: เปลี่ยนผังบัญชีปลายทางของ VAT (กรณีไม่เคลม VAT —
@@ -916,6 +923,39 @@
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('reclassifyLineModal')">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.submitReclassifyLine()">บันทึก + Post JE</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ตั้งค่าเริ่มต้น "เงื่อนไขการชำระเงิน" ต่อชนิดเอกสาร — ตั้งจากหน้าสร้างได้เลย
+         (เบื้องหลังบันทึกลงเทมเพลตค่าเริ่มต้นของชนิดนั้น ที่เดียวกับหน้า
+         "เทมเพลตเอกสาร PDF" → ปรับแต่ง — ไม่ได้สร้างที่เก็บใหม่ให้ตั้งค่า 2 ที่) -->
+    <div class="modal-overlay" id="paymentTermsSetupModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="ptSetupTitle">ตั้งค่าเริ่มต้น — เงื่อนไขการชำระเงิน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('paymentTermsSetupModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="font-size:12px;color:#475569;margin-bottom:10px">
+            ตั้งครั้งเดียว — เอกสาร<b id="ptSetupTypeName">ชนิดนี้</b>ทุกใบถัดไปจะเติมให้อัตโนมัติ (แก้ทับได้ทุกใบ)
+          </div>
+          <div class="form-group">
+            <label class="form-label">เงื่อนไขการชำระเงิน <span style="color:var(--gray-500);font-weight:normal;font-size:11px">— 1 ข้อ/บรรทัด</span></label>
+            <textarea class="form-input" id="ptSetupTerms" rows="4" placeholder="เช่น&#10;ชำระภายใน 30 วันนับจากวันที่ในเอกสาร&#10;โอนเข้าบัญชีบริษัทเท่านั้น&#10;ราคานี้ยืนยัน 15 วัน"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">วันเครดิต (วัน)</label>
+            <input type="number" class="form-input" id="ptSetupCreditDays" min="0" max="365" placeholder="เช่น 30">
+          </div>
+          <div style="font-size:11px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;padding:8px;border-radius:6px">
+            ลำดับที่ระบบใช้: <b>ที่พิมพ์ในใบนี้</b> › <b>เครดิตที่ตั้งไว้กับลูกค้ารายนั้น</b> › <b>ค่าที่ตั้งตรงนี้</b><br>
+            แก้ทีหลังได้ที่เมนู <b>เทมเพลตเอกสาร PDF</b> → เลือกชนิดเอกสาร → ปรับแต่ง
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('paymentTermsSetupModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="ptSetupSaveBtn" onclick="Page.savePaymentTermsSetup()">บันทึกเป็นค่าเริ่มต้น</button>
         </div>
       </div>
     </div>
@@ -3099,6 +3139,88 @@
         const h = document.getElementById('fPaymentTerms');
         if (h) { h.dataset.userTouched = '1'; delete h.dataset.autoSrc; }
       },
+
+      /**
+       * ปุ่ม "ตั้งค่าเริ่มต้น" ในหน้าสร้างเอกสาร — โผล่เฉพาะตอน**สร้างใหม่**และ
+       * ชนิดเอกสารนี้**ยังไม่เคยตั้ง**ค่าเริ่มต้นไว้เลย เพื่อไม่ให้ผู้ใช้ต้องไปหา
+       * เองว่าตั้งที่ไหน (เดิมอยู่ลึกที่ เทมเพลตเอกสาร PDF → ปรับแต่ง)
+       * ตั้งแล้วป้ายหายไปเอง ไม่มารบกวนอีก
+       */
+      _refreshPaymentTermsSetupHint(docType) {
+        const box = document.getElementById('ptSetupHint');
+        if (!box) return;
+        const t = (this._typeDefaults || {})[docType];
+        // แก้เอกสารเดิม = ไม่ชวนตั้งค่า (คนละเรื่องกับการสร้างใบใหม่)
+        // โหลด default ไม่สำเร็จ (t === undefined) ก็ไม่ชวน — กันชวนผิดเพราะเน็ตหลุด
+        const hasDefault = !!t && (!!t.defaultPaymentTerms || (t.defaultCreditDays ?? 0) > 0);
+        const show = !this.editingId && t !== undefined && !hasDefault;
+        box.style.display = show ? '' : 'none';
+        if (show) {
+          const label = this._docTypeLabel(docType);
+          document.getElementById('ptSetupHintText').textContent =
+            `ยังไม่ได้ตั้งค่าเริ่มต้นของ"${label}" — ตั้งครั้งเดียว ใบถัดไปเติมให้เอง`;
+        }
+      },
+      /** ชื่อไทยของชนิดเอกสารจาก dropdown (ไม่ต้อง hardcode ตารางซ้ำอีกชุด) */
+      _docTypeLabel(docType) {
+        const sel = document.getElementById('fDocType');
+        const opt = sel ? [...sel.options].find(o => o.value === docType) : null;
+        return (opt?.textContent || docType || '').split('(')[0].trim();
+      },
+      openPaymentTermsSetup() {
+        const docType = document.getElementById('fDocType')?.value;
+        if (!docType) return;
+        this._ptSetupType = docType;
+        document.getElementById('ptSetupTypeName').textContent = this._docTypeLabel(docType);
+        // เติมค่าจากที่ผู้ใช้เพิ่งพิมพ์ในใบนี้ให้เลย — "จำค่าที่ฉันพิมพ์ไว้ใช้ครั้งหน้า"
+        // คือเหตุผลที่คนกดปุ่มนี้จริง ๆ ไม่ใช่มานั่งพิมพ์ใหม่
+        document.getElementById('ptSetupTerms').value =
+          document.getElementById('fPaymentTerms')?.value || '';
+        document.getElementById('ptSetupCreditDays').value =
+          document.getElementById('fCreditDays')?.value || '';
+        Layout.openModal('paymentTermsSetupModal');
+      },
+      async savePaymentTermsSetup() {
+        const docType = this._ptSetupType;
+        if (!docType) return;
+        const btn = document.getElementById('ptSetupSaveBtn');
+        const terms = document.getElementById('ptSetupTerms').value.trim();
+        const daysRaw = document.getElementById('ptSetupCreditDays').value;
+        const days = parseInt(daysRaw, 10);
+        if (!terms && !(days > 0)) {
+          Layout.toast('กรอกเงื่อนไข หรือวันเครดิต อย่างน้อยหนึ่งอย่าง', 'error');
+          return;
+        }
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก…';
+        try {
+          const cid = Layout.getCompanyId();
+          // เทมเพลตค่าเริ่มต้นของชนิดนี้ — endpoint นี้สร้างให้อัตโนมัติถ้ายังไม่มี
+          const tplRes = await API.get(`/api/companies/${cid}/document-templates/default/${docType}`);
+          const tplId = tplRes?.data?.id;
+          if (!tplId) throw new Error('ไม่พบเทมเพลตของชนิดเอกสารนี้');
+          // partial update — ส่งเฉพาะ 2 ค่านี้ ค่าอื่นบนเทมเพลตไม่ถูกแตะ
+          // (ส่ง "" = ล้างค่า, ส่ง 0 = ล้างวันเครดิต ตาม convention ฝั่ง server)
+          await API.put(`/api/companies/${cid}/document-templates/${tplId}`, {
+            defaultPaymentTerms: terms,
+            defaultCreditDays: Number.isFinite(days) && days > 0 ? days : 0,
+          });
+          // cache ในหน้านี้ต้องตามให้ทัน ไม่งั้นป้ายยังโชว์ว่า "ยังไม่ได้ตั้ง"
+          this._typeDefaults = this._typeDefaults || {};
+          this._typeDefaults[docType] = Object.assign({}, this._typeDefaults[docType] || {}, {
+            defaultPaymentTerms: terms || null,
+            defaultCreditDays: Number.isFinite(days) && days > 0 ? days : null,
+          });
+          Layout.closeModal('paymentTermsSetupModal');
+          this._refreshPaymentTermsSetupHint(docType);
+          // เติมลงใบที่กำลังทำอยู่ให้ด้วย ถ้ายังว่าง (ผู้ใช้ที่พิมพ์เองไว้แล้วไม่โดนทับ)
+          this.applyDocTypeDefaults(docType);
+          Layout.toast(`ตั้งค่าเริ่มต้นของ"${this._docTypeLabel(docType)}"แล้ว — ใบถัดไปเติมให้อัตโนมัติ`, 'success', 6000);
+        } catch (e) {
+          Layout.toast('บันทึกไม่สำเร็จ: ' + (e.message || ''), 'error');
+        } finally {
+          btn.disabled = false; btn.textContent = 'บันทึกเป็นค่าเริ่มต้น';
+        }
+      },
       /** วันเครดิต: พิมพ์เอง = ล็อกไม่ให้ autofill ทับ + คำนวณวันครบกำหนดให้
        *  (เดิม dispatch 'input' ไว้แต่ไม่มี listener จริง — วันครบกำหนดไม่ขยับ) */
       onCreditDaysInput(ev) {
@@ -3137,7 +3259,11 @@
        *   ผู้ใช้พิมพ์เอง > เครดิตของลูกค้า (Contact) > เทมเพลตชนิดเอกสาร > AI
        */
       async applyDocTypeDefaults(docType) {
-        if (this.editingId) return;
+        if (this.editingId) {
+          // แก้เอกสารเดิม — ไม่เติม default และไม่ชวนตั้งค่า
+          this._refreshPaymentTermsSetupHint(docType);
+          return;
+        }
         try {
           this._typeDefaults = this._typeDefaults || {};
           if (!(docType in this._typeDefaults)) {
@@ -3145,6 +3271,9 @@
             this._typeDefaults[docType] = res?.data || null;   // cache — เปลี่ยนชนิดไปมาไม่ยิงซ้ำ
           }
           const t = this._typeDefaults[docType];
+          // ชวนตั้งค่าเริ่มต้นเมื่อชนิดนี้ยังไม่เคยตั้ง (เช็คหลังโหลด default เสมอ
+          // — วางไว้ก่อน early-return ไม่งั้นเคส t === null จะไม่ได้อัปเดตป้าย)
+          this._refreshPaymentTermsSetupHint(docType);
           if (!t) return;
 
           const pay = document.getElementById('fPaymentChannel');
@@ -3164,7 +3293,12 @@
             this._showCreditSrcHint('⚡ ค่าเริ่มต้นจากเทมเพลตชนิดเอกสาร — แก้ทับได้');
             this.onCreditDaysInput();   // คำนวณวันครบกำหนดจริง (เดิม dispatch เปล่า)
           }
-        } catch (e) { /* default โหลดไม่ได้ = ฟอร์มเปล่าตามเดิม ไม่รบกวนผู้ใช้ */ }
+        } catch (e) {
+          // default โหลดไม่ได้ = ฟอร์มเปล่าตามเดิม ไม่รบกวนผู้ใช้ — และต้อง
+          // ซ่อนป้ายชวนตั้งค่าด้วย ไม่งั้นป้ายของชนิดก่อนหน้าค้างอยู่ผิด ๆ
+          const box = document.getElementById('ptSetupHint');
+          if (box) box.style.display = 'none';
+        }
       },
 
       onDocTypeChange() {
@@ -5967,7 +6101,11 @@
           let banners = '';
           if (d.ocrTenantMismatchFlag) {
             banners += `<div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
-              ⚠️ <strong>เลขผู้ซื้อในเอกสารไม่ตรงกับบริษัทนี้</strong> — กรุณาตรวจสอบว่าอัพโหลดถูกบริษัทหรือไม่
+              ⚠️ <strong>เลขผู้ซื้อในเอกสารไม่ตรงกับบริษัทนี้</strong>
+              <div style="margin-top:3px;color:#334155;background:rgba(255,255,255,.65);border-radius:5px;padding:4px 7px;font-size:11.5px">
+                👉 <b>ต้องทำ:</b> สลับบริษัทที่มุมขวาบนให้ตรงกับใบนี้แล้วอัปโหลดใหม่ ·
+                ถ้าใบนี้เป็นของบริษัทนี้จริง ให้แก้เลขผู้เสียภาษีที่ <b>ตั้งค่า → ข้อมูลบริษัท</b>
+              </div>
             </div>`;
           }
           if (d.rdComplianceStatus && d.rdComplianceStatus !== 'Pending' && d.rdComplianceStatus !== 'Valid' && d.rdComplianceStatus !== 'Approved') {
@@ -5975,9 +6113,16 @@
             const bg = d.rdComplianceStatus === 'Failed' ? '#fee2e2' : '#fef3c7';
             let issues = [];
             try { issues = JSON.parse(d.rdComplianceIssuesJson || '[]'); } catch(_) {}
+            // ทุกข้อที่เตือน ต้องบอก "ต้องไปทำอะไรที่ไหน" ต่อท้ายเสมอ —
+            // คำเตือนที่บอกแค่ว่าผิดแต่ไม่บอกทางออก ผู้ใช้แก้ไม่ได้ก็เท่ากับ
+            // ไม่มีประโยชน์ (validator ส่ง action มาให้ในฟิลด์ i.action)
+            const statusLabel = d.rdComplianceStatus === 'Failed'
+              ? 'ต้องแก้ก่อนใช้เคลมภาษี' : 'มีข้อควรตรวจสอบ';
             banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
-              🛡️ <strong>RD Compliance: ${d.rdComplianceStatus}</strong>
-              ${issues.length ? '<ul style="margin:6px 0 0 18px;font-size:12px">' + issues.map(i => `<li>${Layout.esc(i.message || i.rule)}</li>`).join('') + '</ul>' : ''}
+              🛡️ <strong>ตรวจความครบถ้วนตามกรมสรรพากร: ${statusLabel}</strong>
+              ${issues.length ? '<ul style="margin:6px 0 0 18px;font-size:12px;padding-left:0">' + issues.map(i => `<li style="margin-bottom:5px">${Layout.esc(i.message || i.rule)}${
+                i.action ? `<div style="margin-top:2px;color:#334155;background:rgba(255,255,255,.65);border-radius:5px;padding:4px 7px;font-size:11.5px">👉 <b>ต้องทำ:</b> ${Layout.esc(i.action)}</div>` : ''
+              }</li>`).join('') + '</ul>' : ''}
             </div>`;
           }
           // Same gate as the list-row aging chip — never bother the user

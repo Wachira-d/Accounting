@@ -84,6 +84,14 @@ public class SecurityMiddleware
             "font-src 'self' https://fonts.gstatic.com; " +
             "img-src 'self' data: blob: https:; " +
             "connect-src 'self' wss: ws:; " +
+            // frame-src/object-src: ไฟล์แนบ (PDF) เปิดดูในหน้าโดยดึงผ่าน fetch
+            // พร้อม JWT แล้วทำเป็น blob: URL ใส่ <iframe> — ลิงก์ตรงใช้ไม่ได้
+            // เพราะ endpoint ต้องมี Authorization header.
+            // เดิม **ไม่มี 2 directive นี้เลย** จึงตกไปใช้ default-src 'self'
+            // ซึ่งไม่ครอบ blob: → Chrome บล็อกและขึ้น "This content is blocked"
+            // (img-src มี blob: อยู่แล้ว รูปภาพแนบจึงเปิดได้ แต่ PDF เปิดไม่ได้)
+            "frame-src 'self' blob: data:; " +
+            "object-src 'self' blob: data:; " +
             // 'self' (not 'none') — the modern equivalent of X-Frame-Options
             // SAMEORIGIN; lets first-party pages embed the OCR PDF/image
             // preview iframe while still blocking cross-origin embedding.

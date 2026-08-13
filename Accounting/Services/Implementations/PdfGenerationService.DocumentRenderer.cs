@@ -26,6 +26,31 @@ using EntLine = Accounting.Models.Entities.DocumentLine;
 /// </summary>
 public partial class PdfGenerationService
 {
+    /// <summary>ขนาด/แนวกระดาษตามที่ตั้งไว้ในเทมเพลต — เดิม QuestPDF hardcode
+    /// <c>PageSizes.A4</c> ทั้งไฟล์ ทำให้ตั้ง A5/Letter/แนวนอน แล้ว preview (HTML)
+    /// เปลี่ยนตาม แต่ PDF จริงยังเป็น A4 แนวตั้ง — ผิดกฎ "ร่าง = ตัวจริง" และ
+    /// กระทบของจริงแน่นอนกับเอกสาร e-Tax (เส้นทางนั้นใช้ QuestPDF เสมอ)
+    /// รวมถึงตอน Chromium ใช้ไม่ได้แล้ว fallback มา QuestPDF</summary>
+    internal static PageSize ResolvePageSize(EntTemplate t)
+    {
+        var size = (t.PaperSize ?? "A4").Trim().ToUpperInvariant() switch
+        {
+            "A5" => PageSizes.A5,
+            "LETTER" => PageSizes.Letter,
+            _ => PageSizes.A4,
+        };
+        return string.Equals((t.Orientation ?? "").Trim(), "Landscape", StringComparison.OrdinalIgnoreCase)
+            ? size.Landscape()
+            : size;
+    }
+
+    /// <summary>เลือกข้อความตามภาษาเอกสาร — ใช้ค่าภาษาอังกฤษที่ผู้ใช้ตั้งไว้
+    /// เมื่อพิมพ์เอกสารภาษาอังกฤษ ถ้าไม่ได้ตั้งไว้ค่อยตกกลับภาษาไทย.
+    /// เดิมช่อง "(EN)" ในหน้าปรับแต่ง (หัวข้อคู่ค้า / หมายเหตุท้าย / ป้ายลายเซ็น)
+    /// ไม่มี renderer ตัวไหนอ่านเลย — กรอกไปก็ไม่เคยขึ้นบนกระดาษ</summary>
+    internal static string? PickLangText(string? th, string? en, string lang)
+        => lang == "en" && !string.IsNullOrWhiteSpace(en) ? en : th;
+
     internal byte[] RenderDocumentPdfNative(EntDoc doc, EntCompany company,
         EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
@@ -82,7 +107,7 @@ public partial class PdfGenerationService
             {
                 container.Page(page =>
                 {
-                    page.Size(PageSizes.A4);
+                    page.Size(ResolvePageSize(template));
                     // QuestPDF 2024 accepts a single Margin call; use the average
                     // of the template's per-side margins so the result is close to
                     // the configured page without relying on side-specific APIs
@@ -150,7 +175,7 @@ public partial class PdfGenerationService
                         Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, L, layout, accent));
                         Safe(() => ComposeSummary(col, doc, template, accent, layout, L));
                         Safe(() => ComposeFooter(col, doc, template, accent, L));
-                        Safe(() => ComposeSignatures(col, template, b, signers));
+                        Safe(() => ComposeSignatures(col, template, b, signers, lang));
                         Safe(() => ComposeGlPosting(col, gl, lang, L));
                     });
 
@@ -196,7 +221,7 @@ public partial class PdfGenerationService
                 {
                     container.Page(page =>
                     {
-                        page.Size(PageSizes.A4);
+                        page.Size(ResolvePageSize(template));
                         page.Margin(20, Unit.Millimetre);
                         page.PageColor(Colors.White);
                         page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(10));
@@ -491,9 +516,11 @@ public partial class PdfGenerationService
             // Template override > smart per-doc-type fallback > ลูกค้า
             // ใบสำคัญจ่ายเป็น ผู้รับเงิน ไม่ใช่ ลูกค้า — เพราะ PV คือ
             // เราซื้อ/จ่ายจากเขา ไม่ใช่เขาเป็นลูกค้าเรา.
-            var label = !string.IsNullOrWhiteSpace(t.ContactSectionTitle)
-                && t.ContactSectionTitle != L.PartyCustomer
-                ? t.ContactSectionTitle
+            var customContactTitle = PickLangText(t.ContactSectionTitle, t.ContactSectionTitleEn,
+                L.IsEnglish ? "en" : "th");
+            var label = !string.IsNullOrWhiteSpace(customContactTitle)
+                && customContactTitle != L.PartyCustomer
+                ? customContactTitle
                 : DefaultContactLabelFor(doc.DocumentType, L);
             cc.Item().Text(label).FontSize(9.5f).Bold().FontColor(accent);
             cc.Item().Text(c.Name ?? "").FontSize(11.5f).Bold().FontColor("#111827");
@@ -502,9 +529,13 @@ public partial class PdfGenerationService
                 // สาขาเป็นเรื่องนิติบุคคล (ประกาศฯ 199) — บุคคลธรรมดาแสดงเฉพาะ
                 // เมื่อตั้งรหัสสาขาไว้จริง (บุคคลจด VAT) กันเลขบัตรประชาชนขึ้น
                 // "(สำนักงานใหญ่)" ผิดความจริง
-                var showBranch = c.ContactType != Accounting.Models.Enums.ContactType.Individual
-                    || (!string.IsNullOrWhiteSpace(c.BranchCode)
-                        && c.BranchCode!.Trim().TrimStart('0').Length > 0);
+                // + ต้องเคารพติ๊ก ShowContactBranch (เดิมติ๊กออกแล้วสาขายังขึ้น
+                // ทั้งสอง renderer — ติ๊กนี้ไม่เคยถูกอ่านเลย) ยกเว้นใบกำกับภาษี
+                // เต็มรูป §86/4 ที่กฎหมายบังคับให้มี — ติ๊กปิดไม่ได้
+                var showBranch = (t.ShowContactBranch || RequiresBuyerBranchOnPrint(doc.DocumentType))
+                    && (c.ContactType != Accounting.Models.Enums.ContactType.Individual
+                        || (!string.IsNullOrWhiteSpace(c.BranchCode)
+                            && c.BranchCode!.Trim().TrimStart('0').Length > 0));
                 var cBranch = showBranch ? $" ({FormatBranch(c.BranchCode, c.BranchName, "th")})" : "";
                 cc.Item().Text($"{L.TaxIdShort}: {c.TaxId}{cBranch}").FontSize(9).FontColor("#374151");
             }
@@ -566,11 +597,17 @@ public partial class PdfGenerationService
             table.ColumnsDefinition(cols =>
             {
                 if (t.ShowLineNumber) cols.ConstantColumn(28);
+                // รหัสสินค้า / VAT ต่อรายการ / WHT ต่อรายการ — 3 ติ๊กนี้เคยเป็น
+                // "ติ๊กแล้วไม่มีอะไรเกิดขึ้น" (ไม่มี renderer ตัวไหนอ่านเลย ทั้ง
+                // HTML และ QuestPDF) ผู้ใช้ตั้งค่าแล้วเข้าใจว่าระบบพัง
+                if (t.ShowItemCode) cols.ConstantColumn(62);
                 cols.RelativeColumn(4);
                 cols.ConstantColumn(50);
                 if (t.ShowUnit) cols.ConstantColumn(45);
                 cols.ConstantColumn(70);
                 if (t.ShowDiscount) cols.ConstantColumn(60);
+                if (t.ShowVatPerLine) cols.ConstantColumn(46);
+                if (t.ShowWithholdingTax) cols.ConstantColumn(46);
                 cols.ConstantColumn(80);
             });
 
@@ -591,11 +628,14 @@ public partial class PdfGenerationService
                 // ผู้อ่านงงเพราะคำนวณยังไงก็ไม่ตรง.
                 var inclVat = doc.PricesIncludeVat;
                 if (t.ShowLineNumber) Th("#", "center");
+                if (t.ShowItemCode) Th(L.ColItemCode);
                 Th(L.ColItem);
                 Th(L.ColQty, "right");
                 if (t.ShowUnit) Th(L.ColUnit, "center");
                 Th(inclVat ? L.ColUnitPriceIncl : L.ColUnitPrice, "right");
                 if (t.ShowDiscount) Th(L.ColDiscount, "right");
+                if (t.ShowVatPerLine) Th(L.ColVatPerLine, "right");
+                if (t.ShowWithholdingTax) Th(L.ColWhtPerLine, "right");
                 Th(inclVat ? L.ColAmountIncl : L.ColAmount, "right");
             });
 
@@ -647,11 +687,16 @@ public partial class PdfGenerationService
                 // (เช่น งานหลัก 5,000 + งานย่อย 4 บรรทัดบอกขอบเขต) คง จำนวน/หน่วย ไว้
                 var isDescriptiveLine = line.UnitPrice == 0 && line.Amount == 0 && line.VatAmount == 0;
                 if (t.ShowLineNumber) Td(idx.ToString(), "center");
+                if (t.ShowItemCode) Td(line.ProductCode ?? "");
                 Td(line.Description ?? "");
                 Td(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"), "right");
                 if (t.ShowUnit) Td(line.Unit ?? "", "center");
                 Td(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"), "right");
                 if (t.ShowDiscount) Td(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"), "right");
+                // VatRate = -1 คือ "ยกเว้น" (sentinel เดียวกับฟอร์ม) ไม่ใช่ -1%
+                if (t.ShowVatPerLine) Td(isDescriptiveLine ? "" : FormatLineVatRate(line.VatRate, L), "right");
+                if (t.ShowWithholdingTax) Td(isDescriptiveLine || line.WithholdingTaxRate <= 0
+                    ? "" : line.WithholdingTaxRate.ToString("0.##") + "%", "right");
                 Td(isDescriptiveLine ? "" : printedAmount.ToString("N2"), "right");
                 idx++;
             }
@@ -802,11 +847,12 @@ public partial class PdfGenerationService
         if (!string.IsNullOrWhiteSpace(doc.CustomAppendix))
             col.Item().PaddingTop(12).Text(doc.CustomAppendix!).FontSize(10).FontColor("#333");
 
-        if (t.ShowBankDetails && !string.IsNullOrWhiteSpace(t.BankDetailsText))
+        var bankTxt = PickLangText(t.BankDetailsText, t.BankDetailsTextEn, L.IsEnglish ? "en" : "th");
+        if (t.ShowBankDetails && !string.IsNullOrWhiteSpace(bankTxt))
             col.Item().PaddingTop(12).Background("#F8F9FA").Padding(10).Text(tt =>
             {
                 tt.Span(L.PaymentInfo + ": ").Bold().FontSize(10);
-                tt.Span(t.BankDetailsText!).FontSize(10);
+                tt.Span(bankTxt!).FontSize(10);
             });
 
         // เงื่อนไขการชำระเงินของใบนี้ — mirror ของ HTML renderer (เดิม
@@ -851,7 +897,10 @@ public partial class PdfGenerationService
                 tt.Span(cleanNotes).FontSize(10).FontColor("#555");
             });
 
-        var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes) ? doc.CustomFooterNotes : t.FooterNotes;
+        // หมายเหตุท้ายเอกสาร: ของใบนี้ชนะ > ของเทมเพลต (เลือกภาษาตามเอกสาร)
+        var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
+            ? doc.CustomFooterNotes
+            : PickLangText(t.FooterNotes, t.FooterNotesEn, L.IsEnglish ? "en" : "th");
         if (!string.IsNullOrWhiteSpace(footerNotes))
             col.Item().PaddingTop(8).Text(footerNotes).FontSize(10).FontColor("#555");
 
@@ -867,13 +916,18 @@ public partial class PdfGenerationService
     }
 
     private static void ComposeSignatures(ColumnDescriptor col, EntTemplate t, PdfBranding b,
-        IReadOnlyList<DocumentSigner>? signers)
+        IReadOnlyList<DocumentSigner>? signers, string lang = "th")
     {
         if (!t.ShowSignature) return;
+        // ป้ายลายเซ็นภาษาอังกฤษที่ผู้ใช้ตั้งไว้ — เดิมไม่เคยถูกอ่าน เอกสารภาษา
+        // อังกฤษจึงพิมพ์ป้ายไทยเสมอ (ช่อง "(EN)" ในหน้าปรับแต่งเป็นช่องลม)
         var labels = new List<string>();
-        if (!string.IsNullOrWhiteSpace(t.SignatureLabel1)) labels.Add(t.SignatureLabel1!);
-        if (t.SignatureCount >= 2 && !string.IsNullOrWhiteSpace(t.SignatureLabel2)) labels.Add(t.SignatureLabel2!);
-        if (t.SignatureCount >= 3 && !string.IsNullOrWhiteSpace(t.SignatureLabel3)) labels.Add(t.SignatureLabel3!);
+        var l1 = PickLangText(t.SignatureLabel1, t.SignatureLabel1En, lang);
+        var l2 = PickLangText(t.SignatureLabel2, t.SignatureLabel2En, lang);
+        var l3 = PickLangText(t.SignatureLabel3, t.SignatureLabel3En, lang);
+        if (!string.IsNullOrWhiteSpace(l1)) labels.Add(l1!);
+        if (t.SignatureCount >= 2 && !string.IsNullOrWhiteSpace(l2)) labels.Add(l2!);
+        if (t.SignatureCount >= 3 && !string.IsNullOrWhiteSpace(l3)) labels.Add(l3!);
         if (labels.Count == 0) return;
 
         // เส้นบางๆ แบ่ง summary จาก signature area — HTML view มี
