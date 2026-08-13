@@ -83,7 +83,11 @@ public sealed class DocumentLabels
     public string ColAmount => this["col_amount"];
     public string ColAmountIncl => this["col_amount_incl"];
     public string ColDiscount => this["col_discount"];
+    public string VatExemptShort => this["vat_exempt_short"];
     public string ColItem => this["col_item"];
+    public string ColItemCode => this["col_item_code"];
+    public string ColVatPerLine => this["col_vat_per_line"];
+    public string ColWhtPerLine => this["col_wht_per_line"];
     public string ColQty => this["col_qty"];
     public string ColUnit => this["col_unit"];
     public string ColUnitPrice => this["col_unit_price"];
@@ -149,11 +153,15 @@ public sealed class DocumentLabels
 
         // ── ตารางรายการ ──
         ["col_item"] = "รายการ",
+        ["col_item_code"] = "รหัสสินค้า",
+        ["col_vat_per_line"] = "VAT",
+        ["col_wht_per_line"] = "หัก ณ ที่จ่าย",
         ["col_qty"] = "จำนวน",
         ["col_unit"] = "หน่วย",
         ["col_unit_price"] = "ราคา/หน่วย",
         ["col_unit_price_incl"] = "ราคา/หน่วย (รวม VAT)",
         ["col_discount"] = "ส่วนลด",
+        ["vat_exempt_short"] = "ยกเว้น",
         ["col_amount"] = "จำนวนเงิน",
         ["col_amount_incl"] = "จำนวนเงิน (รวม VAT)",
 
@@ -220,11 +228,15 @@ public sealed class DocumentLabels
         ["party_vendor_or_payee"] = "Vendor / Payee",
 
         ["col_item"] = "Description",
+        ["col_item_code"] = "Code",
+        ["col_vat_per_line"] = "VAT",
+        ["col_wht_per_line"] = "WHT",
         ["col_qty"] = "Qty",
         ["col_unit"] = "Unit",
         ["col_unit_price"] = "Unit price",
         ["col_unit_price_incl"] = "Unit price (incl. VAT)",
         ["col_discount"] = "Discount",
+        ["vat_exempt_short"] = "Exempt",
         ["col_amount"] = "Amount",
         ["col_amount_incl"] = "Amount (incl. VAT)",
 

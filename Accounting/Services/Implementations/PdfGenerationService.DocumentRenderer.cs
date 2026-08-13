@@ -502,9 +502,13 @@ public partial class PdfGenerationService
                 // สาขาเป็นเรื่องนิติบุคคล (ประกาศฯ 199) — บุคคลธรรมดาแสดงเฉพาะ
                 // เมื่อตั้งรหัสสาขาไว้จริง (บุคคลจด VAT) กันเลขบัตรประชาชนขึ้น
                 // "(สำนักงานใหญ่)" ผิดความจริง
-                var showBranch = c.ContactType != Accounting.Models.Enums.ContactType.Individual
-                    || (!string.IsNullOrWhiteSpace(c.BranchCode)
-                        && c.BranchCode!.Trim().TrimStart('0').Length > 0);
+                // + ต้องเคารพติ๊ก ShowContactBranch (เดิมติ๊กออกแล้วสาขายังขึ้น
+                // ทั้งสอง renderer — ติ๊กนี้ไม่เคยถูกอ่านเลย) ยกเว้นใบกำกับภาษี
+                // เต็มรูป §86/4 ที่กฎหมายบังคับให้มี — ติ๊กปิดไม่ได้
+                var showBranch = (t.ShowContactBranch || RequiresBuyerBranchOnPrint(doc.DocumentType))
+                    && (c.ContactType != Accounting.Models.Enums.ContactType.Individual
+                        || (!string.IsNullOrWhiteSpace(c.BranchCode)
+                            && c.BranchCode!.Trim().TrimStart('0').Length > 0));
                 var cBranch = showBranch ? $" ({FormatBranch(c.BranchCode, c.BranchName, "th")})" : "";
                 cc.Item().Text($"{L.TaxIdShort}: {c.TaxId}{cBranch}").FontSize(9).FontColor("#374151");
             }
@@ -566,11 +570,17 @@ public partial class PdfGenerationService
             table.ColumnsDefinition(cols =>
             {
                 if (t.ShowLineNumber) cols.ConstantColumn(28);
+                // รหัสสินค้า / VAT ต่อรายการ / WHT ต่อรายการ — 3 ติ๊กนี้เคยเป็น
+                // "ติ๊กแล้วไม่มีอะไรเกิดขึ้น" (ไม่มี renderer ตัวไหนอ่านเลย ทั้ง
+                // HTML และ QuestPDF) ผู้ใช้ตั้งค่าแล้วเข้าใจว่าระบบพัง
+                if (t.ShowItemCode) cols.ConstantColumn(62);
                 cols.RelativeColumn(4);
                 cols.ConstantColumn(50);
                 if (t.ShowUnit) cols.ConstantColumn(45);
                 cols.ConstantColumn(70);
                 if (t.ShowDiscount) cols.ConstantColumn(60);
+                if (t.ShowVatPerLine) cols.ConstantColumn(46);
+                if (t.ShowWithholdingTax) cols.ConstantColumn(46);
                 cols.ConstantColumn(80);
             });
 
@@ -591,11 +601,14 @@ public partial class PdfGenerationService
                 // ผู้อ่านงงเพราะคำนวณยังไงก็ไม่ตรง.
                 var inclVat = doc.PricesIncludeVat;
                 if (t.ShowLineNumber) Th("#", "center");
+                if (t.ShowItemCode) Th(L.ColItemCode);
                 Th(L.ColItem);
                 Th(L.ColQty, "right");
                 if (t.ShowUnit) Th(L.ColUnit, "center");
                 Th(inclVat ? L.ColUnitPriceIncl : L.ColUnitPrice, "right");
                 if (t.ShowDiscount) Th(L.ColDiscount, "right");
+                if (t.ShowVatPerLine) Th(L.ColVatPerLine, "right");
+                if (t.ShowWithholdingTax) Th(L.ColWhtPerLine, "right");
                 Th(inclVat ? L.ColAmountIncl : L.ColAmount, "right");
             });
 
@@ -647,11 +660,16 @@ public partial class PdfGenerationService
                 // (เช่น งานหลัก 5,000 + งานย่อย 4 บรรทัดบอกขอบเขต) คง จำนวน/หน่วย ไว้
                 var isDescriptiveLine = line.UnitPrice == 0 && line.Amount == 0 && line.VatAmount == 0;
                 if (t.ShowLineNumber) Td(idx.ToString(), "center");
+                if (t.ShowItemCode) Td(line.ProductCode ?? "");
                 Td(line.Description ?? "");
                 Td(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"), "right");
                 if (t.ShowUnit) Td(line.Unit ?? "", "center");
                 Td(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"), "right");
                 if (t.ShowDiscount) Td(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"), "right");
+                // VatRate = -1 คือ "ยกเว้น" (sentinel เดียวกับฟอร์ม) ไม่ใช่ -1%
+                if (t.ShowVatPerLine) Td(isDescriptiveLine ? "" : FormatLineVatRate(line.VatRate, L), "right");
+                if (t.ShowWithholdingTax) Td(isDescriptiveLine || line.WithholdingTaxRate <= 0
+                    ? "" : line.WithholdingTaxRate.ToString("0.##") + "%", "right");
                 Td(isDescriptiveLine ? "" : printedAmount.ToString("N2"), "right");
                 idx++;
             }
