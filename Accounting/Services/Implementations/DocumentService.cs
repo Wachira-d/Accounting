@@ -217,6 +217,42 @@ public class DocumentService : IDocumentService
             p.ActualCost = Math.Max(0, p.ActualCost - perProject[p.Id]);
     }
 
+    // ชนิดเอกสารที่อยู่ฝั่งเดียวแน่นอน — ใช้ตรวจว่าผังบัญชีรายบรรทัดอยู่ถูกฝั่ง.
+    // CreditNote/DebitNote จงใจไม่อยู่ทั้งสอง list (เป็นได้ทั้งฝั่งขายและซื้อ
+    // ตามใบต้นทาง — ดู resolver ใน AutoPostToJournalAsync)
+    private static readonly DocumentType[] PureSalesSideTypes = {
+        DocumentType.Quotation, DocumentType.Invoice, DocumentType.TaxInvoice,
+        DocumentType.Receipt, DocumentType.ReceiptVoucher,
+        DocumentType.BillingNote, DocumentType.DeliveryNote,
+    };
+    private static readonly DocumentType[] PurePurchaseSideTypes = {
+        DocumentType.PurchaseRequisition, DocumentType.PurchaseOrder,
+        DocumentType.GoodsReceiptNote, DocumentType.PurchaseInvoice,
+        DocumentType.Expense, DocumentType.PaymentVoucher,
+        DocumentType.CertificateInLieu,
+    };
+
+    /// <summary>กันผังบัญชีรายบรรทัดข้ามฝั่ง: เอกสารขายที่ผูกผังหมวด "ค่าใช้จ่าย"
+    /// จะทำให้ JE ตอนอนุมัติ (หรือหลังแปลงเป็นใบแจ้งหนี้) Cr รายได้เข้าบัญชี
+    /// 5xxxx — งบกำไรขาดทุนเพี้ยนทั้งสองขา. ฝั่งซื้อผูกผังหมวด "รายได้" ก็ผิด
+    /// สมมาตรกัน (Dr ค่าใช้จ่ายเข้าบัญชี 4xxxx). โยน error ภาษาไทยชัด ๆ ตั้งแต่
+    /// ตอนบันทึก — ดีกว่าปล่อยผ่านแล้วไปพังใน GL. ฝั่งขายยังใช้ผังหนี้สิน/
+    /// สินทรัพย์ได้ (มัดจำ, รับล่วงหน้า) — บล็อกเฉพาะหมวดค่าใช้จ่าย.</summary>
+    private static void EnsureLineAccountMatchesDocSide(
+        DocumentType docType, string? lineDescription, ChartOfAccount acct)
+    {
+        if (PureSalesSideTypes.Contains(docType) && acct.AccountType == AccountType.Expense)
+            throw new InvalidOperationException(
+                $"รายการ '{lineDescription}' เลือกผังบัญชี {acct.AccountCode} {acct.AccountName} (หมวดค่าใช้จ่าย) " +
+                "ซึ่งใช้กับเอกสารฝั่งขายไม่ได้ — กรุณาเลือกผังหมวดรายได้ (4xxxx) " +
+                "หรือเว้นว่างเพื่อใช้บัญชีรายได้มาตรฐานของระบบ");
+        if (PurePurchaseSideTypes.Contains(docType) && acct.AccountType == AccountType.Revenue)
+            throw new InvalidOperationException(
+                $"รายการ '{lineDescription}' เลือกผังบัญชี {acct.AccountCode} {acct.AccountName} (หมวดรายได้) " +
+                "ซึ่งใช้กับเอกสารฝั่งซื้อไม่ได้ — กรุณาเลือกผังหมวดค่าใช้จ่าย/สินทรัพย์/หนี้สิน " +
+                "หรือเว้นว่างเพื่อใช้บัญชีตั้งต้นของระบบ");
+    }
+
     /// <summary>Resolve THB exchange rate for a document. THB → 1. Explicit
     /// override wins; otherwise auto-fetch the BoT mid-rate at DocumentDate.
     /// Throws if BoT lookup fails — silent fallback to 1 on non-THB would
@@ -910,11 +946,12 @@ public class DocumentService : IDocumentService
                 }
             }
             var accountIds = resolvedAccountIds.Values.Distinct().ToList();
-            var accountFlags = accountIds.Count == 0
-                ? new Dictionary<Guid, bool>()
+            var accountMeta = accountIds.Count == 0
+                ? new Dictionary<Guid, ChartOfAccount>()
                 : await _db.ChartOfAccounts.AsNoTracking()
                     .Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
-                    .ToDictionaryAsync(a => a.Id, a => a.InputVatClaimable);
+                    .ToDictionaryAsync(a => a.Id);
+            var accountFlags = accountMeta.ToDictionary(kv => kv.Key, kv => kv.Value.InputVatClaimable);
 
             // บริษัทไม่จด VAT → เคลมภาษีซื้อไม่ได้ทุกบรรทัด — VAT ที่จ่ายผู้ขาย
             // รวมเป็นต้นทุน/ค่าใช้จ่าย ไม่เข้า 11610/11640 (เช็คครั้งเดียว)
@@ -947,6 +984,9 @@ public class DocumentService : IDocumentService
                 totalWht += amt.WhtAmount;
 
                 var lineAccountId = resolvedAccountIds.TryGetValue(lineIdx, out var rid) ? (Guid?)rid : null;
+                // ผังรายบรรทัดต้องอยู่ฝั่งเดียวกับเอกสาร (กัน JE Cr รายได้เข้า 5xxxx)
+                if (lineAccountId.HasValue && accountMeta.TryGetValue(lineAccountId.Value, out var lineAcct))
+                    EnsureLineAccountMatchesDocSide(doc.DocumentType, line.Description, lineAcct);
                 // ภาษีซื้อต้องห้าม: ถ้าบัญชีตั้งเป็น InputVatClaimable=false
                 // (เช่น ค่ารับรอง) → บังคับ line.IsVatClaimable=false
                 // ไม่ว่า request จะส่งอะไรมา — รักษา consistency กับ chart
@@ -1720,11 +1760,12 @@ public class DocumentService : IDocumentService
 
             // VAT-claimability enforcement ตามผังบัญชี (เหมือนใน Create)
             var updAccountIds = updResolvedAccountIds.Values.Distinct().ToList();
-            var accountFlags = updAccountIds.Count == 0
-                ? new Dictionary<Guid, bool>()
+            var updAccountMeta = updAccountIds.Count == 0
+                ? new Dictionary<Guid, ChartOfAccount>()
                 : await _db.ChartOfAccounts.AsNoTracking()
                     .Where(a => a.CompanyId == companyId && updAccountIds.Contains(a.Id))
-                    .ToDictionaryAsync(a => a.Id, a => a.InputVatClaimable);
+                    .ToDictionaryAsync(a => a.Id);
+            var accountFlags = updAccountMeta.ToDictionary(kv => kv.Key, kv => kv.Value.InputVatClaimable);
 
             var companyVatReg = await _db.CompanySettings.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && !c.IsDeleted)
@@ -1753,6 +1794,9 @@ public class DocumentService : IDocumentService
                 totalWht += amt.WhtAmount;
 
                 var lineAccountId = updResolvedAccountIds.TryGetValue(updLineIdx, out var rid2) ? (Guid?)rid2 : null;
+                // ผังรายบรรทัดต้องอยู่ฝั่งเดียวกับเอกสาร (กัน JE Cr รายได้เข้า 5xxxx)
+                if (lineAccountId.HasValue && updAccountMeta.TryGetValue(lineAccountId.Value, out var updLineAcct))
+                    EnsureLineAccountMatchesDocSide(doc.DocumentType, line.Description, updLineAcct);
                 var enforcedClaimable = line.IsVatClaimable;
                 string? enforcedReason = line.VatNonClaimableReason;
                 if (lineAccountId.HasValue && accountFlags.TryGetValue(lineAccountId.Value, out var acctClaimable) && !acctClaimable)
@@ -7704,15 +7748,17 @@ public class DocumentService : IDocumentService
         return MapContactToResponse(contact);
     }
 
+    /// <summary>ประกอบ Contact.Address (free-text) จาก structured fields — ค่านี้
+    /// ถูก "บันทึกลงฐาน" และไหลไปทุกเอกสาร/รายงาน/e-Tax ต่อ จึงต้องมีคำนำหน้า
+    /// ต./อ./จ. (หรือ แขวง/เขต สำหรับ กทม.) ตั้งแต่ตอนเขียน — เดิม join ด้วย
+    /// ช่องว่างเปล่า ๆ ทำให้ที่อยู่ไม่มีคำนำหน้าถูกฝังลงฐานถาวร แล้วโผล่บน
+    /// หนังสือรับรองหัก ณ ที่จ่าย / ใบกำกับภาษี ผิดข้อกำหนดเอกสารราชการ</summary>
     private static string? ComposeAddress(Contact c)
     {
-        var parts = new[] { c.BuildingNumber, c.BuildingName,
-            string.IsNullOrEmpty(c.Moo) ? null : "หมู่ " + c.Moo,
-            string.IsNullOrEmpty(c.StreetName) ? null : "ถ." + c.StreetName,
-            c.SubDistrict, c.District, c.Province, c.PostalCode }
-            .Where(s => !string.IsNullOrWhiteSpace(s));
-        var joined = string.Join(" ", parts);
-        return string.IsNullOrEmpty(joined) ? null : joined;
+        var joined = ThaiAddressFormatter.Format(
+            null, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
+            c.SubDistrict, c.District, c.Province, c.PostalCode);
+        return string.IsNullOrWhiteSpace(joined) ? null : joined;
     }
 
     private static bool NeedsAutoParse(CreateContactRequest r) =>
@@ -10089,6 +10135,30 @@ public class DocumentService : IDocumentService
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
 
+        // Safety net ขา Cr รายได้: บรรทัดที่ผูกผังหมวด "ค่าใช้จ่าย" มาแต่เดิม
+        // (เอกสารเก่าก่อนมี guard ตอนบันทึก หรือลอก AccountId มาตอนแปลงเอกสาร)
+        // ห้ามรับรายได้เข้า 5xxxx — ตกกลับบัญชีรายได้มาตรฐาน + log ให้ตามแก้.
+        // ใช้เฉพาะจุดที่ลงขา "รายได้" (ฝั่งขาย) — ขาค่าใช้จ่ายฝั่งซื้อไม่แตะ
+        var docLineAcctIds = doc.Lines.Where(l => l.AccountId.HasValue)
+            .Select(l => l.AccountId!.Value).Distinct().ToList();
+        var expenseTypedLineAccts = docLineAcctIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && docLineAcctIds.Contains(a.Id)
+                    && a.AccountType == AccountType.Expense)
+                .Select(a => a.Id).ToListAsync()).ToHashSet();
+        Guid? RevenueLegAccountId(DocumentLine l)
+        {
+            if (l.AccountId.HasValue && expenseTypedLineAccts.Contains(l.AccountId.Value))
+            {
+                _logger.LogWarning(
+                    "เอกสาร {DocNo} บรรทัด '{Desc}' ผูกผังหมวดค่าใช้จ่ายไว้บนขารายได้ — ตกกลับบัญชีรายได้มาตรฐานแทน",
+                    doc.DocumentNumber, l.Description);
+                return defaultRevenue?.Id;
+            }
+            return l.AccountId ?? defaultRevenue?.Id;
+        }
+
         // Use document-level expense category if specified, otherwise fallback to default
         ChartOfAccount? defaultExpense = null;
         if (doc.ExpenseCategoryId.HasValue)
@@ -10178,10 +10248,11 @@ public class DocumentService : IDocumentService
                     AddLine(whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)");
             }
 
-            // Cr: บัญชีรายได้ตามแต่ละบรรทัด (default = 411)
+            // Cr: บัญชีรายได้ตามแต่ละบรรทัด (default = 411) — ผังหมวดค่าใช้จ่าย
+            // ที่หลงมาบนขานี้ถูกกรองตกกลับ default โดย RevenueLegAccountId
             foreach (var docLine in doc.Lines)
             {
-                var revenueAccountId = docLine.AccountId ?? defaultRevenue?.Id;
+                var revenueAccountId = RevenueLegAccountId(docLine);
                 if (revenueAccountId.HasValue)
                     AddLine(revenueAccountId.Value, 0, docLine.Amount, docLine.Description, docLine.ProjectId);
             }
@@ -10515,7 +10586,9 @@ public class DocumentService : IDocumentService
                 if (isPurchaseSide)
                     lineAccId = resolveCnDnLineAcc!(docLine);
                 else
-                    lineAccId = docLine.AccountId ?? defaultRevenue?.Id;
+                    // ขา revenue ของ CN/DN ฝั่งขาย — ผังหมวดค่าใช้จ่ายที่หลงมา
+                    // ตกกลับบัญชีรายได้มาตรฐาน (safety net เดียวกับใบแจ้งหนี้)
+                    lineAccId = RevenueLegAccountId(docLine);
 
                 if (!lineAccId.HasValue) continue;
 
@@ -11332,9 +11405,10 @@ public class DocumentService : IDocumentService
                 foreach (var docLine in doc.Lines)
                 {
                     // มัดจำ → ขายรอรับรู้; ปกติ → รายได้ (line account หรือ default)
+                    // — ผังหมวดค่าใช้จ่ายที่หลงมาบนขานี้ตกกลับ default (safety net)
                     var creditAccountId = doc.IsDeposit
-                        ? (deferredAcc?.Id ?? docLine.AccountId ?? defaultRevenue?.Id)
-                        : (docLine.AccountId ?? defaultRevenue?.Id);
+                        ? (deferredAcc?.Id ?? RevenueLegAccountId(docLine))
+                        : RevenueLegAccountId(docLine);
                     if (creditAccountId.HasValue)
                         AddLine(creditAccountId.Value, 0, docLine.Amount,
                             doc.IsDeposit ? $"รับมัดจำ/รับล่วงหน้า - {docLine.Description}" : docLine.Description,

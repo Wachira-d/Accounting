@@ -613,6 +613,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      → รายงาน P&L ต่อมิติ (`getDimensionPnl`) มีข้อมูลจากเอกสารซื้อ-ขายจริง
    - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
      deposit deferred)
+   - **ผังบัญชีรายบรรทัดต้องอยู่ถูกฝั่ง** — create/update validate ผ่าน
+     `EnsureLineAccountMatchesDocSide` (`DocumentService.cs:241`): เอกสาร
+     ฝั่งขายล้วน (QT/INV/TaxInv/REC/RV/BN/DN-ส่งของ) ห้ามผูกผังหมวด
+     ค่าใช้จ่าย, ฝั่งซื้อล้วนห้ามผูกผังหมวดรายได้ (CN/DN ยกเว้น — สองฝั่ง);
+     ขา Cr รายได้ใน JE มี safety net `RevenueLegAccountId` — บรรทัดเก่า/
+     บรรทัดที่ลอกมาจากการแปลงเอกสารซึ่งติดผังหมวดค่าใช้จ่าย ตกกลับบัญชี
+     รายได้มาตรฐาน + log warning (กัน Cr รายได้เข้า 5xxxx). UI: per-line
+     picker ใช้ datalist ตามฝั่ง (`coaList` ซื้อ / `coaListRevenue` ขาย —
+     `documents.html _syncVatClaimColumn`)
    - **มัดจำ VAT พักรอ (21913) — การแสดงผล ≠ การลงบัญชี**: ใบเสร็จ/ใบสำคัญรับ
      ที่ `IsDeposit && DepositOutputVatDeferred` ยังไม่ใช่ใบกำกับภาษี (tax point
      ยังไม่เกิด §78) → PDF/HTML **ซ่อนบรรทัด "ยอดก่อน VAT" + "VAT 7%"**, หัวเรื่อง
@@ -1215,7 +1224,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แก้รายงาน ภ.พ.30 (จอ) | `TaxService.GenerateVatReport :119` |
 | ดูสายการแปลงทั้งเส้นของเอกสาร (chain stepper) | `DocumentService.GetDocumentChainAsync` — ขึ้นตาม RelatedDocumentId (กัน cycle, 15 ชั้น) แล้ว BFS ลง (เพดาน 60 ใบ); ใบ Voided คงอยู่ในสาย (UI ขีดฆ่า) / UI: `documents.html renderChainStepper` บนสุดของ detail modal |
 | ค่าเริ่มต้นฟอร์มต่อชนิดเอกสาร (แหล่งเงิน/เงื่อนไขชำระ/วันเครดิต) | `DocumentTemplate.DefaultPaymentAccountId/DefaultPaymentTerms/DefaultCreditDays` — ตั้งใน template default ของชนิดนั้น (`document-templates.html` กล่อง "⚡ ค่าเริ่มต้น") / ฟอร์มดึงผ่าน `GET document-templates/default/{type}` เติมเฉพาะช่องว่าง+เฉพาะสร้างใหม่ (`applyDocTypeDefaults`) |
-| เงื่อนไขการชำระเงินบนกระดาษ (`doc.PaymentTerms/CreditDays`) | render ทั้ง 2 ตัว (HTML `BuildDocumentHtml` + QuestPDF `DocumentRenderer`) เมื่อ `template.ShowPaymentTerms` — เดิม flag มีแต่ไม่มีใคร render = กรอกแล้วหายจากกระดาษเงียบ ๆ |
+| **ลำดับค่าเริ่มต้นเทอมชำระเงิน/วันเครดิต** | **ผู้ใช้พิมพ์เอง > เครดิตของลูกค้า (`Contact.PaymentDueDays/PaymentTerms`) > เทมเพลตชนิดเอกสาร > AI (`/ai/payment-terms/suggest`)** — ติดตามที่มาผ่าน `dataset.autoSrc` ('template'\|'contact') + `dataset.userTouched` บน `#fCreditDays`/`#fPaymentTerms` (`documents.html`): ชั้นที่แคบกว่าทับชั้นที่กว้างกว่าได้ แต่ห้ามทับค่าที่ผู้ใช้แตะแล้ว; ตอนแก้เอกสาร (`openEdit`) ค่าที่บันทึกไว้ถือเป็น userTouched เสมอ. ช่องแสดงทุกชนิดเอกสาร (เดิมซ่อนใน `.supplier-invoice-only` → ใบเสนอราคาแก้เทอมไม่ได้) |
+| เงื่อนไขการชำระเงินบนกระดาษ (`doc.PaymentTerms/CreditDays`) | render ทั้ง 2 ตัว (HTML `BuildDocumentHtml` + QuestPDF `DocumentRenderer`) เมื่อ `template.ShowPaymentTerms` — เดิม flag มีแต่ไม่มีใคร render = กรอกแล้วหายจากกระดาษเงียบ ๆ. **`PaymentTerms` เก็บได้หลายบรรทัด** (1 เงื่อนไข/บรรทัด — ฟอร์มเพิ่ม/ลบรายข้อผ่าน `#ptList`, sync ลง hidden `#fPaymentTerms`): HTML ใช้ `white-space:pre-line`, PDF แตกเป็น bullet เมื่อ >1 บรรทัด |
+| **ที่อยู่บนเอกสารทุกชนิด (ต./อ./จ. · แขวง/เขต)** | `ThaiAddressFormatter.Format` — **ตัวประกอบที่อยู่ตัวเดียวของทั้งระบบ** ห้ามเขียน `string.Join` เอง. เดิมมี 5 ตัวแยกกัน (PdfGeneration / WithholdingTaxCert / DocumentService.ComposeAddress / CompanyService.ComposeAddress / EtaxInvoice PdfA3) และ 4 ตัวไม่ใส่คำนำหน้า → 50 ทวิ + ใบกำกับพิมพ์ "44 หมู่ 9 หนองเหียง พนัสนิคม ชลบุรี 20140" ผิดข้อกำหนดเอกสารราชการ. ตอนนี้ทุกตัว delegate มาที่นี่หมด. ความสามารถ: เติมคำนำหน้า · กทม.→แขวง/เขต + ไม่มี "จ." · parse free-text ที่ไม่มีคำนำหน้ากลับเป็น structured · **กู้จังหวัดจากรหัสไปรษณีย์** ผ่าน `ThaiAdminCodes` เมื่อที่อยู่ไม่ได้เขียนชื่อจังหวัดไว้เลย (ลอง token รองสุดท้าย = ตำบลก่อน — อำเภอที่มีตำบลชื่อเดียวกันจะไม่กลืนชื่อตำบลจริง) · กันพิมพ์ตำบล/จังหวัดซ้ำ · ยุบ "กทม กรุงเทพมหานคร". เทสต์: `Accounting.Tests/ThaiAddressFormatterTests.cs` |
+| หน้าปรับแต่งเทมเพลตติ๊กไม่ตรงค่าจริง | `DocumentTemplateResponse` ต้องส่ง **ทุก field ที่ editor ใช้** — เดิมขาดกลุ่มคู่ค้า/บริษัท/สรุปยอด/ลายเซ็น/ตราประทับ/ขอบกระดาษ → `_fillForm` อ่าน undefined → checkbox หลุดหมด และกดบันทึกทับ = ปิดข้อมูลบน PDF จริง. เพิ่ม field ใหม่ในเทมเพลต **ต้องเพิ่ม 4 ที่**: entity → Create/Update DTO → `ApplyRequestToTemplate`+`ApplyUpdateToTemplate` → `MapToResponse` (+`DuplicateAsync` ถ้าต้องคัดลอกด้วย) |
 | เลือกงวดเคลมภาษีซื้อจากตัวเอกสาร (push) | ช่อง "งวดที่เคลมภาษีซื้อ" บนฟอร์มใบซื้อ → `ApplyInputVatClaimPeriodAsync` เขียนลง `InputVatBecameClaimableAt` (reuse กลไก "นับเฉพาะงวดที่กำหนด" เดิมของ GenerateVatReport ทั้ง query+skip). **ลำดับใครชนะใคร**: (1) บรรทัดรายงานจริงชนะเสมอ — มีบรรทัด non-excluded แล้ว block การเปลี่ยน ชี้ให้ติ๊กออกจากรายงานก่อน (Filed = ต้องยื่นเพิ่มเติม) (2) flow 11640 ชนะเจตนา — post เป็น undue จะล้างเจตนาทิ้ง (3) เจตนา = ค่าเริ่มต้นให้ generation. §82/3 validate ด้วย `TaxService.EvaluateClaimPeriod` ตัวเดียวกับปุ่ม "ดึงเอกสาร" — ตั้งได้ = ดึงได้ ไม่มีวันขัดกัน. UI ล็อกช่อง+บอกงวดเมื่อถูกใช้แล้ว (`fVatClaimLocked`) |
 | แก้การแยกฝั่ง CN/DN ใน ภ.พ.30 (ซื้อ vs ขาย) | `TaxService.GenerateVatReport` — ลำดับ: `RelatedDocumentId` → **GL fallback** (`cnDnSideFromGl`: JE แตะ 116x = ซื้อ / 2191x = ขาย) → แยกไม่ได้ = ขึ้นบรรทัด ⚠️ ไม่เงียบ. CN/DN ที่ไม่มี FK เดิม**ตกไปฝั่งขายเสมอ** ทำให้ไม่หักภาษีซื้อ **และหักภาษีขายเกิน** (นำส่งขาด §89) |
 | แก้รายงาน ภ.พ.30 (CSV ยื่น) | `TaxFilingExportService.ExportPp30Async :243` — ดึงจาก `ComputeVatReportAsync` |
@@ -1739,7 +1751,15 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-07-31 (audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
+_Last verified against codebase: 2026-08-13 (รอบ 3: ThaiAddressFormatter —_
+_ตัวประกอบที่อยู่ตัวเดียวของระบบ ที่อยู่บนเอกสารราชการมี ต./อ./จ. ครบทุกเส้นทาง)_
+_· รอบ 2: เทมเพลตเอกสาร response_
+_ครบทุก field — ติ๊กในหน้าปรับแต่งตรงกับ PDF จริง; เทอมชำระเงินหลายข้อ +_
+_ลำดับ default ผู้ใช้>ลูกค้า>เทมเพลต) · รอบ 1: per-line account side guard:_
+_`EnsureLineAccountMatchesDocSide` create/update + `RevenueLegAccountId` JE_
+_safety net + datalist แยกฝั่งใน documents.html — แก้ "ทำใบเสนอราคาแล้วเจอ_
+_ผังค่าใช้จ่ายตอนเพิ่ม item / JE Cr รายได้เข้า 5xxxx") ก่อนหน้า: 2026-07-31_
+_(audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
 _แก้ 43 บั๊ก 3 ชุด: CN/DN text-ref resolve+undue VAT accounts+GRN block+qty cap+_
 _FX rate+refund txn; ภ.พ.30 regen snapshot ticks+double-tick guard+warn-line_
 _guard+CF นอกลูป+pastWindow ตามงวด+void→exclude+credit CF on file+deferral เป็น_

@@ -702,39 +702,21 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         return (correct, corrected, reason);
     }
 
+    /// <summary>ที่อยู่บนหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ใช้ตัวประกอบกลาง
+    /// <see cref="ThaiAddressFormatter"/> ตัวเดียวกับ PDF/HTML ทุกเส้นทาง
+    ///
+    /// เดิมฟังก์ชันนี้เขียนเอง 2 สาขาและ<b>ผิดทั้งคู่</b>:
+    ///   1. free-text ที่ "ดูครบ" (มีรหัสไปรษณีย์/ชื่อจังหวัด) → คืนดิบ ๆ ทันที
+    ///      → ที่อยู่ที่ผู้ใช้พิมพ์แบบไม่มีคำนำหน้า ("44 หมู่ 9 หนองเหียง พนัสนิคม
+    ///      ชลบุรี 20140") ถูกพิมพ์ลงเอกสารราชการทั้งอย่างนั้น
+    ///   2. structured fallback → join ด้วยช่องว่างเปล่า ๆ ไม่มี ต./อ./จ. เลย
+    ///      และไม่รู้จัก กทม. (ต้องเป็น แขวง/เขต)
+    /// 50 ทวิ เป็นเอกสารยื่นสรรพากร — ที่อยู่ต้องอ่านออกว่าส่วนไหนตำบล/อำเภอ/
+    /// จังหวัด ตามข้อความกำกับในแบบฟอร์มเอง</summary>
     private static string ComposeFullAddress(string? address, string? subDistrict, string? district, string? province, string? postalCode,
         string? moo = null, string? buildingNumber = null, string? streetName = null, string? buildingName = null)
-    {
-        // Many contacts have BOTH a free-form Address (already typed as a full
-        // address by the user, e.g. "44/75 ม.3 ต.สุรศักดิ์ อ.ศรีราชา จ.ชลบุรี 20110")
-        // AND structured fields (SubDistrict/District/Province/PostalCode).
-        // Naively joining all of them produced duplicate text on the WHT cert.
-        // Trust the free-form Address when it already looks complete (contains
-        // the postal code, the province name, or a "จ." marker); otherwise
-        // build the address from the structured fields.
-        var addr = (address ?? string.Empty).Trim();
-        if (!string.IsNullOrEmpty(addr))
-        {
-            bool looksComplete =
-                (!string.IsNullOrEmpty(postalCode) && addr.Contains(postalCode!)) ||
-                (!string.IsNullOrEmpty(province)   && addr.Contains(province!))   ||
-                addr.Contains("จ.") || addr.Contains("จังหวัด");
-            if (looksComplete) return addr;
-        }
-        // Structured fallback — include Moo + BuildingNumber + StreetName so a
-        // payee whose free-form Address is empty but structured fields are set
-        // doesn't end up with a half-printed cert.
-        return string.Join(" ", new[]
-            {
-                addr,
-                buildingNumber,
-                buildingName,   // ชื่ออาคาร — เดิมตกหล่นจาก structured fallback
-                string.IsNullOrEmpty(moo) ? null : $"หมู่ {moo}",
-                string.IsNullOrEmpty(streetName) ? null : $"ถ.{streetName}",
-                subDistrict, district, province, postalCode
-            }
-            .Where(s => !string.IsNullOrEmpty(s)));
-    }
+        => ThaiAddressFormatter.Format(address, buildingNumber, buildingName, moo, streetName,
+            subDistrict, district, province, postalCode);
 
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(
         w.Id, w.CertificateNumber, w.CompanyId,

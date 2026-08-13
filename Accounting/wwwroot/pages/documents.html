@@ -407,15 +407,21 @@
               <div id="fVatClaimLocked" style="display:none;font-size:11px;color:#b45309;margin-top:3px"></div>
             </div>
           </div>
-          <!-- วันเครดิต (3 digit) + เทอม (free text) → 1:2 ratio -->
-          <div class="form-row-1-2 supplier-invoice-only" style="display:none">
+          <!-- วันเครดิต + เงื่อนไขการชำระเงิน — แสดงทุกชนิดเอกสาร (เดิมซ่อนใน
+               .supplier-invoice-only → ใบเสนอราคา/ใบแจ้งหนี้แก้เทอมไม่ได้ทั้งที่
+               ค่าขึ้นบน PDF). ค่าเริ่มต้นไหลมา 3 ชั้น: ผู้ใช้พิมพ์เอง > เครดิต
+               ของลูกค้า (Contact.PaymentDueDays) > เทมเพลตชนิดเอกสาร -->
+          <div class="form-row-1-2" id="paymentTermsRow">
             <div class="form-group">
-              <label class="form-label" data-help="จำนวนวันเครดิตที่ตกลง — ถ้ากรอกแต่ไม่ใส่ 'วันครบกำหนด' ระบบจะคำนวณให้อัตโนมัติ (วันที่เอกสาร + วันเครดิต)">วันเครดิต</label>
-              <input type="number" class="form-input" id="fCreditDays" min="0" max="365" placeholder="เช่น 30">
+              <label class="form-label" data-help="จำนวนวันเครดิต — ค่าเริ่มต้นดึงจากที่ตั้งไว้กับลูกค้า (ถ้ามี) หรือเทมเพลตชนิดเอกสาร แก้ทับได้รายใบ · ถ้าไม่ใส่ 'วันครบกำหนด' ระบบคำนวณให้ (วันที่เอกสาร + วันเครดิต)">วันเครดิต</label>
+              <input type="number" class="form-input" id="fCreditDays" min="0" max="365" placeholder="เช่น 30" oninput="Page.onCreditDaysInput(event)">
+              <div id="fCreditDaysSrc" style="display:none;font-size:11px;color:var(--gray-500);margin-top:2px"></div>
             </div>
             <div class="form-group">
-              <label class="form-label" data-help="ข้อความบรรยายเทอมจ่าย ใช้พิมพ์บนเอกสาร เช่น Net 30 / 2/10 Net 30 / EOM+15">เทอมจ่าย (label)</label>
-              <input type="text" class="form-input" id="fPaymentTerms" placeholder="เช่น Net 30">
+              <label class="form-label" data-help="เงื่อนไข/เทอมการชำระเงิน พิมพ์บนเอกสาร — เพิ่มได้หลายข้อ ลบแยกรายข้อได้ ค่าเริ่มต้นมาจากเทมเพลตชนิดเอกสาร (ตั้งได้ที่ เทมเพลตเอกสาร → ปรับแต่ง)">เงื่อนไขการชำระเงิน</label>
+              <input type="hidden" id="fPaymentTerms">
+              <div id="ptList"></div>
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.addPaymentTermRow('', {focus:true})" style="margin-top:4px">+ เพิ่มเงื่อนไข</button>
             </div>
           </div>
           <!-- ตัวเลือกขั้นสูง: เปลี่ยนผังบัญชีปลายทางของ VAT (กรณีไม่เคลม VAT —
@@ -679,6 +685,9 @@
             <div id="aiAccSuggestBanner" style="display:none;margin-top:10px;padding:12px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px"></div>
             <!-- Shared CoA datalist (โหลด 1 ครั้งตอนเปิดฟอร์ม) -->
             <datalist id="coaList"></datalist>
+            <!-- ฝั่งขายใช้ datalist แยก — เฉพาะผังหมวดรายได้ (4xxxx) กันเคส
+                 ใบเสนอราคา/ใบแจ้งหนี้เลือกผังค่าใช้จ่ายแล้ว JE ลงรายได้ผิดหมวด -->
+            <datalist id="coaListRevenue"></datalist>
             <div class="table-container" id="linesTable" data-doc-side="revenue" style="border:none;padding:0;overflow:visible">
               <div id="linesBody"></div>
               <div id="linesHint" style="font-size:11px;color:var(--gray-500);margin-top:8px">
@@ -1208,15 +1217,21 @@
         // needed to offer them. Grouped with <optgroup> so Expense stays on
         // top and the rest are findable.
         try {
-          const [exRes, liRes, asRes] = await Promise.all([
+          const [exRes, liRes, asRes, rvRes] = await Promise.all([
             api.getAccounts('?type=Expense&pageSize=300'),
             api.getAccounts('?type=Liability&pageSize=300'),
             api.getAccounts('?type=Asset&pageSize=300'),
+            api.getAccounts('?type=Revenue&pageSize=300'),
           ]);
           const pick = (r) => (r?.data?.items || r?.data || []).filter(a => a.accountCode)
             .sort((x, y) => (x.accountCode || '').localeCompare(y.accountCode || ''));
           const expense = pick(exRes), liab = pick(liRes), asset = pick(asRes);
           this.expenseCategories = [...expense, ...liab, ...asset];
+          // ผังหมวดรายได้ (4xxxx) — ใช้กับ per-line picker ของเอกสารฝั่งขาย
+          // (เดิม datalist เดียวมีแต่ค่าใช้จ่าย/หนี้สิน/สินทรัพย์ → ผู้ใช้ทำ
+          // ใบเสนอราคาแล้วเจอรายการ "ค่าใช้จ่าย" เด้งขึ้นมาตอนเพิ่ม item
+          // และถ้าเผลอเลือก JE ของใบแจ้งหนี้ที่แปลงต่อจะ Cr รายได้เข้าผัง 5xxxx)
+          this.revenueAccounts = pick(rvRes);
           const sel = document.getElementById('fExpenseCategory');
           const opt = a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`;
           const group = (label, list) => list.length
@@ -1226,16 +1241,24 @@
             + group('หนี้สิน (เช่น คืนเงินทดรองกรรมการ, ชำระเงินกู้)', liab)
             + group('สินทรัพย์ (เช่น เงินมัดจำ, เงินทดรองจ่าย)', asset);
           // เติม datalist สำหรับ per-line account picker — code → name lookup
-          // map ใช้ใน badge "AI: xxxx" ในแต่ละบรรทัด
+          // map ใช้ใน badge "AI: xxxx" ในแต่ละบรรทัด (รวมผังรายได้ด้วย เพื่อให้
+          // badge แสดงชื่อผังของเอกสารฝั่งขายได้)
           this.coaByCode = {};
-          this.expenseCategories.forEach(a => { this.coaByCode[a.accountCode] = a; });
+          [...this.expenseCategories, ...this.revenueAccounts].forEach(a => { this.coaByCode[a.accountCode] = a; });
           const dl = document.getElementById('coaList');
           if (dl) {
             dl.innerHTML = this.expenseCategories.map(a =>
               `<option value="${Layout.esc(a.accountCode)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`
             ).join('');
           }
-        } catch(e) { this.expenseCategories = []; this.coaByCode = {}; }
+          // datalist แยกของฝั่งขาย — มีเฉพาะผังหมวดรายได้ (4xxxx)
+          const dlRev = document.getElementById('coaListRevenue');
+          if (dlRev) {
+            dlRev.innerHTML = this.revenueAccounts.map(a =>
+              `<option value="${Layout.esc(a.accountCode)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`
+            ).join('');
+          }
+        } catch(e) { this.expenseCategories = []; this.revenueAccounts = []; this.coaByCode = {}; }
         // Check if email is configured for this company
         try {
           const ec = await api.getEmailConfig();
@@ -1984,18 +2007,31 @@
           try { const r = await Layout.api()?.getContact(contactId); contact = r?.data || contact; }
           catch { contact = c; }
         }
-        // เครดิตเทอมต่อลูกค้า → เติมวันครบกำหนด = วันที่เอกสาร + PaymentDueDays
-        // (ไม่ override ถ้า user แก้เองแล้ว — เติมเฉพาะตอนช่องยังว่าง)
+        // เครดิตเทอมต่อลูกค้า → เติม "วันเครดิต" + วันครบกำหนดให้อัตโนมัติ
+        // กติกา: ค่าเฉพาะลูกค้า **ชนะ** ค่าเริ่มต้นของเทมเพลตชนิดเอกสาร
+        // (specific > generic) แต่ **ห้ามทับ** ค่าที่ผู้ใช้พิมพ์เอง
         const days = contact?.paymentDueDays;
         if (typeof days === 'number' && days >= 0) {
+          const cdEl = document.getElementById('fCreditDays');
+          if (cdEl && !cdEl.dataset.userTouched
+              && (!cdEl.value || cdEl.dataset.autoSrc === 'template')) {
+            cdEl.value = days;
+            cdEl.dataset.autoSrc = 'contact';
+            this._showCreditSrcHint(`👤 เครดิตตามที่ตั้งไว้กับลูกค้ารายนี้ (${days} วัน) — แก้ทับได้`);
+            this.onCreditDaysInput();   // คำนวณวันครบกำหนด = วันที่เอกสาร + เครดิต
+          }
           const dueEl = document.getElementById('fDueDate');
           const dateEl = document.getElementById('fDate');
-          const termsEl = document.getElementById('fPaymentTerms');
           if (dueEl && !dueEl.value && dateEl?.value) {
             const d = new Date(dateEl.value); d.setDate(d.getDate() + days);
-            if (!isNaN(d.getTime())) dueEl.value = d.toISOString().slice(0, 10);
+            if (!isNaN(d.getTime())) { dueEl.value = d.toISOString().slice(0, 10); dueEl.dataset.autoCalc = '1'; }
           }
-          if (termsEl && !termsEl.value) termsEl.value = contact?.paymentTerms || `Net ${days}`;
+          // ป้ายเทอมของลูกค้า (เช่น "Net 30") — เติมเฉพาะตอนยังไม่มีเงื่อนไขใดเลย
+          // (ถ้าเทมเพลตเติมชุดเงื่อนไขไว้แล้ว ไม่ทับ — เครดิตวันคือตัวที่ลูกค้าชนะ)
+          const termsHidden = document.getElementById('fPaymentTerms');
+          if (termsHidden && !termsHidden.value && !termsHidden.dataset.userTouched) {
+            this.renderPaymentTerms(contact?.paymentTerms || `Net ${days}`, 'contact');
+          }
         }
         if (!contact?.defaultIssueTaxInvoice) return;
         const sel = document.getElementById('fDocType');
@@ -3010,6 +3046,85 @@
           banner.innerHTML = `<div style="color:#dc2626;font-size:13px">ขอแนะนำไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
         }
       },
+      // ───── เงื่อนไขการชำระเงินแบบหลายข้อ (เพิ่ม/ลบแยกรายข้อ) ─────
+      // เก็บจริงใน hidden #fPaymentTerms เป็นข้อความหลายบรรทัด (1 ข้อ/บรรทัด)
+      // → save/hydrate/PDF ใช้ field เดิมทั้งหมด ไม่ต้องแก้ schema. #ptList
+      // เป็นแค่ view; ทุกการพิมพ์ sync กลับลง hidden ทันที.
+      // Provenance บน dataset: autoSrc = 'template'|'contact' (เติมอัตโนมัติ),
+      // userTouched = ผู้ใช้แก้เองแล้ว (ห้าม autofill ทับตลอดชีพของฟอร์มนี้)
+      _syncPaymentTermsHidden() {
+        const h = document.getElementById('fPaymentTerms');
+        if (!h) return;
+        h.value = [...document.querySelectorAll('#ptList .pt-row-input')]
+          .map(i => i.value.trim()).filter(Boolean).join('\n');
+      },
+      addPaymentTermRow(text, opts = {}) {
+        const list = document.getElementById('ptList');
+        if (!list) return;
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:6px;margin-bottom:4px;align-items:center';
+        row.className = 'pt-row';
+        row.innerHTML = `<input type="text" class="form-input pt-row-input" placeholder="เช่น ชำระภายใน 30 วันนับจากวันที่ในเอกสาร" style="flex:1;font-size:13px">
+          <button type="button" title="ลบเงื่อนไขนี้" style="background:none;border:none;cursor:pointer;color:#94a3b8;font-size:14px;padding:2px 6px">✕</button>`;
+        const inp = row.querySelector('input');
+        inp.value = text || '';
+        inp.addEventListener('input', (e) => {
+          if (e.isTrusted) this._markTermsTouched();
+          this._syncPaymentTermsHidden();
+        });
+        row.querySelector('button').addEventListener('click', () => {
+          row.remove();
+          this._markTermsTouched();
+          this._syncPaymentTermsHidden();
+        });
+        list.appendChild(row);
+        if (opts.focus) inp.focus();
+        this._syncPaymentTermsHidden();
+      },
+      /** เซ็ตเงื่อนไขทั้งชุดแบบ programmatic (hydrate/autofill) — ไม่นับเป็น
+       *  การแก้ของผู้ใช้. src = 'template'|'contact'|null (null = ค่าของใบเอง) */
+      renderPaymentTerms(value, src) {
+        const h = document.getElementById('fPaymentTerms');
+        if (!h) return;
+        if (src) h.dataset.autoSrc = src; else delete h.dataset.autoSrc;
+        const list = document.getElementById('ptList');
+        if (list) {
+          list.innerHTML = '';
+          (value || '').split('\n').map(s => s.trim()).filter(Boolean)
+            .forEach(t => this.addPaymentTermRow(t));
+        }
+        h.value = value || '';   // กันเคส #ptList ไม่อยู่ใน DOM
+      },
+      _markTermsTouched() {
+        const h = document.getElementById('fPaymentTerms');
+        if (h) { h.dataset.userTouched = '1'; delete h.dataset.autoSrc; }
+      },
+      /** วันเครดิต: พิมพ์เอง = ล็อกไม่ให้ autofill ทับ + คำนวณวันครบกำหนดให้
+       *  (เดิม dispatch 'input' ไว้แต่ไม่มี listener จริง — วันครบกำหนดไม่ขยับ) */
+      onCreditDaysInput(ev) {
+        const cd = document.getElementById('fCreditDays');
+        if (!cd) return;
+        if (ev?.isTrusted) { cd.dataset.userTouched = '1'; delete cd.dataset.autoSrc; this._hideCreditSrcHint(); }
+        const days = parseInt(cd.value, 10);
+        const dateEl = document.getElementById('fDate');
+        const dueEl = document.getElementById('fDueDate');
+        // คำนวณทับได้เมื่อ due date ว่าง หรือค่าเดิมมาจากการคำนวณอัตโนมัติ
+        if (Number.isFinite(days) && days >= 0 && dateEl?.value && dueEl
+            && (!dueEl.value || dueEl.dataset.autoCalc === '1')) {
+          const d = new Date(dateEl.value);
+          d.setDate(d.getDate() + days);
+          if (!isNaN(d.getTime())) { dueEl.value = d.toISOString().slice(0, 10); dueEl.dataset.autoCalc = '1'; }
+        }
+      },
+      _showCreditSrcHint(text) {
+        const el = document.getElementById('fCreditDaysSrc');
+        if (el) { el.textContent = text; el.style.display = ''; }
+      },
+      _hideCreditSrcHint() {
+        const el = document.getElementById('fCreditDaysSrc');
+        if (el) el.style.display = 'none';
+      },
+
       /**
        * ดึงค่าเริ่มต้นต่อชนิดเอกสาร (จาก template default ของชนิดนั้น) มา
        * pre-fill ช่องที่ยังว่าง — แหล่งเงิน/เงื่อนไขชำระ/วันเครดิต
@@ -3017,6 +3132,9 @@
        * กติกาสำคัญ: **เติมเฉพาะช่องว่าง และเฉพาะตอนสร้างใหม่** — ตอนแก้เอกสาร
        * (editingId มีค่า) ห้ามยุ่ง เพราะค่าที่บันทึกไว้คือการตัดสินใจของผู้ใช้แล้ว
        * ผู้ใช้พิมพ์ทับ default ได้เสมอ (เป็นค่าตั้งต้น ไม่ใช่ค่าบังคับ)
+       *
+       * ลำดับใครชนะใคร (ชั้นถัดมาทับได้เฉพาะชั้นก่อนหน้า ไม่ทับมือผู้ใช้):
+       *   ผู้ใช้พิมพ์เอง > เครดิตของลูกค้า (Contact) > เทมเพลตชนิดเอกสาร > AI
        */
       async applyDocTypeDefaults(docType) {
         if (this.editingId) return;
@@ -3036,11 +3154,15 @@
             if (opt) { pay.value = t.defaultPaymentAccountId; pay.dispatchEvent(new Event('change')); }
           }
           const terms = document.getElementById('fPaymentTerms');
-          if (t.defaultPaymentTerms && terms && !terms.value) terms.value = t.defaultPaymentTerms;
+          if (t.defaultPaymentTerms && terms && !terms.value && !terms.dataset.userTouched) {
+            this.renderPaymentTerms(t.defaultPaymentTerms, 'template');
+          }
           const days = document.getElementById('fCreditDays');
-          if (t.defaultCreditDays && days && !days.value) {
+          if (t.defaultCreditDays && days && !days.value && !days.dataset.userTouched) {
             days.value = t.defaultCreditDays;
-            days.dispatchEvent(new Event('input'));   // ให้ตัวคำนวณวันครบกำหนดทำงาน
+            days.dataset.autoSrc = 'template';
+            this._showCreditSrcHint('⚡ ค่าเริ่มต้นจากเทมเพลตชนิดเอกสาร — แก้ทับได้');
+            this.onCreditDaysInput();   // คำนวณวันครบกำหนดจริง (เดิม dispatch เปล่า)
           }
         } catch (e) { /* default โหลดไม่ได้ = ฟอร์มเปล่าตามเดิม ไม่รบกวนผู้ใช้ */ }
       },
@@ -3324,8 +3446,25 @@
         // ในฟอร์มเดียว (เช่นเปิดรายรับแล้วเปลี่ยนเป็น PurchaseInvoice) คอลัมน์
         // "เคลม VAT" §82/5 หายไป → ติ๊กภาษีซื้อต้องห้ามรายบรรทัดไม่ได้ (ลงบัญชีผิด)
         const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice',
-          'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
-        if (docType) tbl.dataset.docSide = expenseTypes.includes(docType) ? 'expense' : 'revenue';
+          'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu',
+          'GoodsReceiptNote'];
+        // CreditNote/DebitNote เป็นได้ทั้งสองฝั่งตามใบต้นทาง — คงค่า docSide
+        // ที่ openCreate(side)/openEdit ตั้งไว้ (เจตนาผู้ใช้) ไม่ force ทับ
+        const twoSidedTypes = ['CreditNote', 'DebitNote'];
+        if (docType && !twoSidedTypes.includes(docType))
+          tbl.dataset.docSide = expenseTypes.includes(docType) ? 'expense' : 'revenue';
+        // per-line "ผังบัญชี" picker ต้องชี้ datalist ให้ตรงฝั่งเสมอ —
+        // ฝั่งซื้อ = coaList (ค่าใช้จ่าย/หนี้สิน/สินทรัพย์), ฝั่งขาย =
+        // coaListRevenue (รายได้ 4xxxx). ครอบคลุมทั้งแถวที่มีอยู่แล้วตอน
+        // ผู้ใช้สลับชนิดเอกสารกลางฟอร์ม และแถวที่ hydrate ตอนแก้ไข
+        {
+          const isExp = tbl.dataset.docSide === 'expense';
+          tbl.querySelectorAll('.lc-acc-input').forEach(inp => {
+            inp.setAttribute('list', isExp ? 'coaList' : 'coaListRevenue');
+            inp.placeholder = isExp ? 'เลือก/ค้นหาผังบัญชี…'
+              : 'ผังรายได้ (เว้นว่าง = รายได้มาตรฐาน 41000)';
+          });
+        }
         let off = false;
         if (docType === 'PaymentVoucher') {
           off = !document.getElementById('fHasTaxInvoiceRef')?.checked;
@@ -4292,11 +4431,15 @@
           <!-- Per-line GL account picker — พิมพ์ code หรือชื่อเพื่อค้นจาก
                datalist; AI ปุ่ม "🤖 AI แนะนำผังบัญชี" จะ populate ค่าให้พร้อม
                badge "AI: xxx" และเก็บ feedbackId เพื่อปิดลูปการสอน. ผังที่ AI
-               แนะนำต้องมีจริงใน CoA (server-side guard). -->
+               แนะนำต้องมีจริงใน CoA (server-side guard).
+               datalist เลือกตามฝั่งเอกสาร: ฝั่งซื้อ = coaList (ค่าใช้จ่าย/
+               หนี้สิน/สินทรัพย์), ฝั่งขาย = coaListRevenue (รายได้ 4xxxx) —
+               เดิมทุกฝั่งใช้ coaList → ใบเสนอราคาเพิ่ม item แล้วเจอแต่รายการ
+               "ค่าใช้จ่าย" (_syncVatClaimColumn สลับ list ให้เมื่อเปลี่ยนชนิดเอกสาร) -->
           <div class="lc-acc-row" style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:12px">
-            <label style="color:#475569;min-width:64px">ผังบัญชี</label>
-            <input type="text" class="form-input lc-acc-input" data-f="accountCode" list="coaList"
-                   placeholder="เลือก/ค้นหาผังบัญชี…"
+            <label style="color:#475569;min-width:64px" data-f="accountLabel">ผังบัญชี</label>
+            <input type="text" class="form-input lc-acc-input" data-f="accountCode" list="${(document.getElementById('linesTable')?.dataset.docSide === 'expense') ? 'coaList' : 'coaListRevenue'}"
+                   placeholder="${(document.getElementById('linesTable')?.dataset.docSide === 'expense') ? 'เลือก/ค้นหาผังบัญชี…' : 'ผังรายได้ (เว้นว่าง = รายได้มาตรฐาน 41000)'}"
                    oninput="Page.onLineAccountInput(this)"
                    style="flex:1;font-size:13px">
             <span class="lc-acc-badge" data-f="accountBadge" style="display:none;font-size:11px;padding:2px 8px;border-radius:8px;font-weight:600"></span>
@@ -4752,6 +4895,17 @@
          // เอกสารใหม่ยังค้างเลขผู้เสียภาษี/เลขที่/วันที่ใบกำกับของใบก่อนหน้า
          'fSupplierTaxIdReadonly','fSupplierInvoiceNumberPV','fSupplierTaxInvoiceDatePV']
           .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        // ล้างสถานะเทอมชำระเงิน/วันเครดิตของฟอร์มก่อนหน้า (list UI + provenance)
+        this.renderPaymentTerms('', null);
+        {
+          const _pt = document.getElementById('fPaymentTerms');
+          if (_pt) { delete _pt.dataset.userTouched; delete _pt.dataset.autoSrc; }
+          const _cd = document.getElementById('fCreditDays');
+          if (_cd) { delete _cd.dataset.userTouched; delete _cd.dataset.autoSrc; }
+          const _du = document.getElementById('fDueDate');
+          if (_du) delete _du.dataset.autoCalc;
+          this._hideCreditSrcHint();
+        }
         // รหัสสาขาผู้ขาย: reset กลับ default 00000 (สำนักงานใหญ่)
         { const br = document.getElementById('fSupplierBranchCode'); if (br) br.value = '00000'; }
         // ล้าง contact cache ที่ใช้เติมเลขผู้เสียภาษีผู้ขาย เพื่อไม่ให้ใบใหม่ค้างของเก่า
@@ -4929,8 +5083,16 @@
           // Re-tag the line table for selling-vs-cost defaults on the typeahead.
           const linesTbl = document.getElementById('linesTable');
           if (linesTbl) {
-            const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
-            linesTbl.dataset.docSide = expenseTypes.has(d.documentType) ? 'expense' : 'revenue';
+            const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu']);
+            // CN/DN เป็นได้ทั้งสองฝั่ง — ตัดสินจากใบต้นทางที่อ้าง (FK) ก่อน
+            // (อ้าง PI/PO/Expense/PV = ฝั่งซื้อ) ถ้าไม่มีค่อยดูบทบาทคู่ค้า
+            // (supplier-only = ซื้อ) — สอดคล้อง resolver ฝั่ง server
+            if (d.documentType === 'CreditNote' || d.documentType === 'DebitNote') {
+              const relType = d.relatedDocument?.documentType;
+              linesTbl.dataset.docSide = (relType && expenseTypes.has(relType)) ? 'expense' : 'revenue';
+            } else {
+              linesTbl.dataset.docSide = expenseTypes.has(d.documentType) ? 'expense' : 'revenue';
+            }
           }
           if (this._contactAC) this._contactAC.setValue(d.contactId || d.contact?.id || '', d.contactName || d.contact?.name || '');
           document.getElementById('fDate').value = Layout.dateInput(d.documentDate);
@@ -4982,9 +5144,17 @@
             }
           }
           const fCd = document.getElementById('fCreditDays');
-          if (fCd) fCd.value = d.creditDays ?? '';
-          const fPt = document.getElementById('fPaymentTerms');
-          if (fPt) fPt.value = d.paymentTerms || '';
+          if (fCd) {
+            fCd.value = d.creditDays ?? '';
+            // ค่าที่บันทึกไว้ = การตัดสินใจของผู้ใช้แล้ว — ล็อกไม่ให้ autofill ทับ
+            fCd.dataset.userTouched = '1'; delete fCd.dataset.autoSrc;
+            this._hideCreditSrcHint();
+          }
+          this.renderPaymentTerms(d.paymentTerms || '', null);
+          {
+            const fPt = document.getElementById('fPaymentTerms');
+            if (fPt) fPt.dataset.userTouched = '1';
+          }
           const fPayType = document.getElementById('fPaymentType');
           if (fPayType && d.paymentType) fPayType.value = d.paymentType;
           const fPiv = document.getElementById('fPricesIncludeVat');
@@ -5859,7 +6029,7 @@
               ${(d.bookingNumber || d.reference) ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${Layout.esc(d.bookingNumber || d.reference)}</div></div>` : ''}
               ${d.supplierInvoiceNumber ? `<div><div class="text-xs text-gray-500">เลขใบกำกับผู้ขาย</div><div class="font-medium">${this.escapeHtml(d.supplierInvoiceNumber)}</div></div>` : ''}
               ${d.supplierTaxInvoiceDate ? `<div><div class="text-xs text-gray-500">วันที่ใบกำกับผู้ขาย</div><div>${Layout.date(d.supplierTaxInvoiceDate)}</div></div>` : ''}
-              ${d.paymentTerms || d.creditDays ? `<div><div class="text-xs text-gray-500">เทอมจ่าย</div><div>${this.escapeHtml(d.paymentTerms || '')}${d.creditDays ? ' (' + d.creditDays + ' วัน)' : ''}</div></div>` : ''}
+              ${d.paymentTerms || d.creditDays ? `<div><div class="text-xs text-gray-500">เงื่อนไขการชำระเงิน</div><div style="white-space:pre-line">${this.escapeHtml(d.paymentTerms || '')}${d.creditDays ? ' (เครดิต ' + d.creditDays + ' วัน)' : ''}</div></div>` : ''}
               ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
               ${d.relatedDocument ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocument.id}');return false" style="color:var(--primary);font-weight:600" title="${Layout.docTypeLabel(d.relatedDocument.documentType)} · ${Layout.money(d.relatedDocument.totalAmount)}">⬅ ${d.relatedDocument.documentNumber}</a></div></div>` : (d.relatedDocumentId ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:var(--primary);font-weight:600">⬅ เอกสารต้นทาง</a></div></div>` : '')}
               ${d.conversionStatus && d.conversionStatus !== 'None' ? `<div><div class="text-xs text-gray-500">สถานะการแปลง</div><div class="font-medium" style="color:${d.conversionStatus === 'Full' ? '#15803d' : '#92400e'}">${d.conversionStatus === 'Full' ? '✓ แปลงครบ' : `◐ แปลง ${(d.conversionCompletionPercent || 0).toFixed(0)}%`}</div></div>` : ''}
@@ -7992,7 +8162,7 @@
           </div>
 
           ${d.customAppendix ? `<div style="margin-top:16px;font-size:12px;white-space:pre-wrap">${this.escapeHtml(d.customAppendix)}</div>` : ''}
-          ${d.paymentTerms || d.creditDays ? `<div style="margin-top:12px;padding:10px 12px;background:#F8F9FA;border-radius:6px;font-size:12px"><strong>เงื่อนไขการชำระเงิน:</strong> ${this.escapeHtml(d.paymentTerms || '')}${d.creditDays ? ` (เครดิต ${d.creditDays} วัน)` : ''}</div>` : ''}
+          ${d.paymentTerms || d.creditDays ? `<div style="margin-top:12px;padding:10px 12px;background:#F8F9FA;border-radius:6px;font-size:12px"><strong>เงื่อนไขการชำระเงิน:</strong> <span style="white-space:pre-line">${this.escapeHtml(d.paymentTerms || '')}</span>${d.creditDays ? ` (เครดิต ${d.creditDays} วัน)` : ''}</div>` : ''}
           ${(() => { const n = this.cleanNotes(d.notes); return n ? `<div style="margin-top:12px;padding:12px;background:#F8F9FA;border-radius:6px;font-size:12px"><strong>หมายเหตุ:</strong> ${this.escapeHtml(n)}</div>` : ''; })()}
           ${d.customFooterNotes ? `<div style="margin-top:10px;font-size:12px;color:#555;white-space:pre-wrap">${this.escapeHtml(d.customFooterNotes)}</div>` : ''}
           ${d.customTermsAndConditions ? `<div style="margin-top:14px;padding-top:10px;border-top:1px solid #E5E7EB;font-size:11.5px;color:#555;white-space:pre-wrap"><strong>เงื่อนไข:</strong>

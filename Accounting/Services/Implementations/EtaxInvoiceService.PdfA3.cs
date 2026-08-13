@@ -90,7 +90,12 @@ public partial class EtaxInvoiceService
             SellerName: etax.SellerName,
             SellerTaxId: etax.SellerTaxId,
             SellerBranch: company.BranchCode ?? "00000",
-            SellerAddress: $"{company.Address ?? ""} {company.SubDistrict ?? ""} {company.District ?? ""} {company.Province ?? ""} {company.PostalCode ?? ""}".Trim(),
+            // ที่อยู่ผู้ขายบน e-Tax PDF/A-3 — ใช้ตัวประกอบกลาง (เดิม interpolate
+            // ต่อกันดื้อ ๆ ได้ "... หนองเหียง พนัสนิคม ชลบุรี 20140" ไม่มีคำนำหน้า
+            // และซ้ำกับที่อยู่ที่อยู่ใน Address อยู่แล้ว)
+            SellerAddress: ThaiAddressFormatter.Format(
+                company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
+                company.SubDistrict, company.District, company.Province, company.PostalCode),
             SellerPhone: company.Phone,
             SellerEmail: company.Email,
             BuyerName: etax.BuyerName,

@@ -145,6 +145,40 @@ public static class ThaiAddressParser
                 if (provIdx - 1 >= 0) district = tokens[provIdx - 1];
                 if (provIdx - 2 >= 0) subDistrict = tokens[provIdx - 2];
             }
+            else if (!string.IsNullOrWhiteSpace(postcode) && tokens.Count > 0)
+            {
+                // ไม่มีแม้แต่ชื่อจังหวัดในข้อความ (เช่น "44 หมู่ 9 หนองเหียง พนัสนิคม
+                // 20140") — รหัสไปรษณีย์ชี้จังหวัดได้แน่นอนจากทะเบียนราชการ ไม่ต้องเดา
+                //
+                // ⚠ ลำดับการลองสำคัญมาก: เมื่อไม่มีชื่อจังหวัด ลำดับที่อยู่ไทยคือ
+                // "... <ตำบล> <อำเภอ> <รหัส>" → **token รองสุดท้ายคือตำบล** ต้องลอง
+                // ก่อน. ถ้าลอง token สุดท้าย (= อำเภอ) ก่อน จะพลาดในอำเภอที่มีตำบล
+                // ชื่อเดียวกัน — เคสจริง: อ.พนัสนิคม มี ต.พนัสนิคม อยู่ด้วย (20140)
+                // → จะได้ "ต.พนัสนิคม" แล้วชื่อตำบลจริง (หนองเหียง) หายไปเงียบ ๆ
+                ThaiAdminCodes.AdminEntry? hit = null;
+                if (tokens.Count > 1) hit = ThaiAdminCodes.Lookup(null, null, tokens[^2], postcode);
+                // เขียนแค่ตำบลไม่มีอำเภอ ("... หนองเหียง 20140") → token ท้ายคือตำบล
+                hit ??= ThaiAdminCodes.Lookup(null, null, tokens[^1], postcode);
+                if (hit != null)
+                {
+                    // ตรงทะเบียน → ใช้ชื่อทางการทั้งชุด (กันสะกดเพี้ยนบนเอกสารด้วย)
+                    province = hit.Province;
+                    district = hit.District;
+                    subDistrict = hit.SubDistrict;
+                }
+                else
+                {
+                    // ไม่ตรงทะเบียนเลย — ยึดเฉพาะ "จังหวัด" จากรหัสไปรษณีย์
+                    // (deterministic) ส่วนตำบล/อำเภอ ใช้ลำดับ token ตามปกติ
+                    var byPost = ThaiAdminCodes.Lookup(null, null, null, postcode);
+                    if (byPost != null)
+                    {
+                        province = byPost.Province;
+                        district = tokens[^1];
+                        if (tokens.Count > 1) subDistrict = tokens[^2];
+                    }
+                }
+            }
         }
 
         return new ParsedAddressResponse(
@@ -196,29 +230,15 @@ public static class ThaiAddressParser
         return sb.ToString();
     }
 
-    /// <summary>Compose a free-text Address line from structured fields (for display)</summary>
+    /// <summary>Compose a free-text Address line from structured fields (for display).
+    /// Delegate ไปที่ <see cref="ThaiAddressFormatter"/> — ตัวประกอบที่อยู่ตัวเดียว
+    /// ของทั้งระบบ. เดิมเขียนซ้ำที่นี่และพลาด 2 เคส: กทม. ที่เขียนว่า "กทม"/
+    /// "กรุงเทพฯ" (เทียบ == "กรุงเทพมหานคร" เท่านั้น) จะได้ "ต./อ." แทน
+    /// "แขวง/เขต", และจังหวัดกรุงเทพฯ ถูกเติม "จ." นำหน้าซึ่งไม่ถูกต้อง</summary>
     public static string Compose(
         string? buildingNumber, string? buildingName, string? streetName,
         string? subDistrict, string? district, string? province, string? postalCode,
         string? moo = null)
-    {
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(buildingNumber)) parts.Add(buildingNumber);
-        if (!string.IsNullOrWhiteSpace(buildingName)) parts.Add($"อาคาร{buildingName}");
-        if (!string.IsNullOrWhiteSpace(moo)) parts.Add($"หมู่ {moo}");
-        if (!string.IsNullOrWhiteSpace(streetName)) parts.Add($"ถ.{streetName}");
-        if (!string.IsNullOrWhiteSpace(subDistrict))
-        {
-            var prefix = (province ?? "") == "กรุงเทพมหานคร" ? "แขวง" : "ต.";
-            parts.Add($"{prefix}{subDistrict}");
-        }
-        if (!string.IsNullOrWhiteSpace(district))
-        {
-            var prefix = (province ?? "") == "กรุงเทพมหานคร" ? "เขต" : "อ.";
-            parts.Add($"{prefix}{district}");
-        }
-        if (!string.IsNullOrWhiteSpace(province)) parts.Add($"จ.{province}");
-        if (!string.IsNullOrWhiteSpace(postalCode)) parts.Add(postalCode);
-        return string.Join(' ', parts);
-    }
+        => ThaiAddressFormatter.Format(null, buildingNumber, buildingName, moo, streetName,
+            subDistrict, district, province, postalCode);
 }

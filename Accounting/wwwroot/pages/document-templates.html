@@ -392,8 +392,12 @@
                 <select id="defaultPaymentAccountId" onchange="Page.markDirty()"><option value="">— ไม่กำหนด (เงินสด) —</option></select>
               </div>
               <div class="editor-row">
-                <div><label>เงื่อนไขการชำระเงิน</label><input id="defaultPaymentTerms" placeholder="เช่น ชำระภายใน 30 วันนับจากวันที่ในเอกสาร" onchange="Page.markDirty()"></div>
+                <div><label>เงื่อนไขการชำระเงิน <span style="color:#64748b;font-weight:400;font-size:10.5px">— 1 ข้อ/บรรทัด</span></label>
+                  <textarea id="defaultPaymentTerms" rows="3" placeholder="เช่น&#10;ชำระภายใน 30 วันนับจากวันที่ในเอกสาร&#10;โอนเข้าบัญชีบริษัทเท่านั้น&#10;ราคานี้ยืนยัน 15 วัน" onchange="Page.markDirty()"></textarea></div>
                 <div><label>วันเครดิต (วัน)</label><input id="defaultCreditDays" type="number" min="0" max="365" placeholder="เช่น 30" onchange="Page.markDirty()"></div>
+              </div>
+              <div style="font-size:11px;color:#64748b;margin-top:2px">
+                ลำดับค่าเริ่มต้นตอนสร้างเอกสาร: <b>ผู้ใช้พิมพ์เอง</b> › <b>เครดิตที่ตั้งไว้กับลูกค้ารายนั้น</b> › <b>ค่าที่ตั้งตรงนี้</b> — ทุกใบแก้ทับได้เสมอ
               </div>
             </div>
           </div>
@@ -1111,9 +1115,12 @@
 
       async duplicateCurrent() {
         if (!this.current) return;
+        // endpoint ต้องการ ?newName= (query) — เดิมส่ง body ว่างเปล่า → 400 ทุกครั้ง
+        const newName = prompt('ชื่อเทมเพลตสำเนา', `${this.current.name} (สำเนา)`);
+        if (!newName) return;
         try {
           const cid = Layout.getCompanyId();
-          const r = await API.post(`/api/companies/${cid}/document-templates/${this.current.id}/duplicate`, {});
+          const r = await API.post(`/api/companies/${cid}/document-templates/${this.current.id}/duplicate?newName=${encodeURIComponent(newName)}`, {});
           await this.loadTemplates();
           if (r.data?.id) {
             document.getElementById('tplSelect').value = r.data.id;
