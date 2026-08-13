@@ -2469,6 +2469,67 @@ public class OcrService : IOcrService
             data.ReasoningTrace.Add($"[Azure DI KV] {azure.KeyValuePairs.Count} key-value pairs scanned for fallback");
     }
 
+    /// <summary>สร้างรายการทะเบียน "ภาษีถูกหัก ณ ที่จ่าย" จากหนังสือรับรองที่สแกน
+    ///
+    /// <para>เข้าเงื่อนไขเมื่อบริษัทเราอยู่ช่อง <b>ผู้ถูกหักภาษี</b> บนกระดาษ —
+    /// สถานะเป็น <b>Received</b> ทันที (มีใบจริงอยู่ในมือแล้ว ต่างจากแถวที่ระบบ
+    /// สร้างเองตอนรับเงินซึ่งเป็น Pending เพราะยังไม่มีใบ)</para>
+    ///
+    /// <para>ผูกไฟล์สแกนไว้กับรายการเพื่อให้ครบตาม พ.ร.บ.บัญชี ม.10 (เก็บ 5 ปี)</para></summary>
+    private async Task EnsureWhtCreditFromCertAsync(Guid companyId, OcrScanResult result, Guid? documentId)
+    {
+        // OcrScanResult ไม่มีช่อง "ยอดภาษีที่ถูกหัก" ตรง ๆ — มีแค่ HasWht/WhtRate
+        // จึงคำนวณจากฐาน × อัตรา ถ้าครบ; ไม่ครบค่อยใช้ยอดรวมที่อ่านได้เป็นตัวตั้ง
+        // แล้วให้ผู้ใช้ยืนยันในหน้าทะเบียน (เขียนกำกับไว้ใน Notes)
+        var baseFromScan = result.ExtractedSubTotal ?? 0m;
+        var rateFromScan = result.WhtRate ?? 0m;
+        var derived = baseFromScan > 0 && rateFromScan > 0
+            ? Math.Round(baseFromScan * rateFromScan / 100m, 2) : 0m;
+        var whtAmount = derived > 0 ? derived : (result.ExtractedTotalAmount ?? 0m);
+        if (whtAmount <= 0) return;
+        var needsReview = derived <= 0;
+
+        // กันซ้ำ: สแกนใบเดิมอีกรอบไม่ควรได้เครดิตสองเท่า
+        var certNo = result.ExtractedDocumentNumber?.Trim();
+        var dup = await _db.WhtCreditsReceived.AnyAsync(w => w.CompanyId == companyId
+            && ((documentId != null && w.DocumentId == documentId)
+                || (certNo != null && w.CertificateNumber == certNo)));
+        if (dup) return;
+
+        var docDate = result.ExtractedDate ?? DateTime.UtcNow.Date;
+        var startMonth = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
+        if (startMonth is < 1 or > 12) startMonth = 1;
+        var taxYear = docDate.Month >= startMonth ? docDate.Year : docDate.Year - 1;
+
+        var baseAmount = result.ExtractedSubTotal ?? 0m;
+        _db.WhtCreditsReceived.Add(new WhtCreditReceived
+        {
+            CompanyId = companyId,
+            TaxYear = taxYear,
+            CertificateNumber = certNo,
+            CertificateDate = result.ExtractedDate,
+            PayerContactId = result.MatchedContactId,
+            // ผู้จ่าย = ผู้ที่หักเรา — บนใบคือคู่ค้าที่ OCR อ่านได้
+            PayerName = result.ExtractedVendorName ?? "",
+            PayerTaxId = result.ExtractedVendorTaxId,
+            PayerFormType = WhtPayerFormType.Pnd53,
+            IncomeAmount = baseAmount,
+            WhtRate = rateFromScan > 0 ? rateFromScan
+                : (baseAmount > 0 ? Math.Round(whtAmount / baseAmount * 100m, 2) : 0m),
+            WhtAmount = whtAmount,
+            // มีใบจริงอยู่ในมือแล้ว (นี่คือตัวใบที่เพิ่งสแกน) → ใช้เครดิตได้เลย
+            Status = WhtCreditStatus.Received,
+            DocumentId = documentId,
+            AttachmentId = result.FileAttachmentId,
+            Notes = $"สร้างจากการสแกนหนังสือรับรอง ({result.OriginalFileName})"
+                + (needsReview ? " — ⚠️ อ่านอัตรา/ฐานภาษีไม่ครบ กรุณาตรวจยอดก่อนใช้เครดิต" : ""),
+        });
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("บันทึกเครดิตภาษีถูกหักจากหนังสือรับรองที่สแกน {Amount} (scan {Id})",
+            whtAmount, result.Id);
+    }
+
     private static string MapAzureDocType(string? azureDocType, string? modelId)
     {
         if (modelId?.Contains("receipt", StringComparison.OrdinalIgnoreCase) == true)
@@ -4015,6 +4076,14 @@ public class OcrService : IOcrService
             CompanyId = companyId,
             DocumentNumber = docNumber,
             DocumentType = docType,
+            // ใบลดหนี้/เพิ่มหนี้: role inferrer รู้อยู่แล้วว่าเราเป็นผู้ซื้อหรือผู้ขาย
+            // ของใบนี้ (จากเลขผู้เสียภาษีบนกระดาษเทียบกับบริษัทเรา) — เดิมข้อมูลนี้
+            // ถูกทิ้ง ทำให้ระบบต้องไป "เดา" ฝั่งภาษีอีกครั้งตอนอนุมัติ ทั้งที่รู้แล้ว
+            // (เดาผิด = JE ลงผิดฝั่งถาวร ยอดไปโผล่ผิดฝั่งใน ภ.พ.30)
+            CnDnPurchaseSideOverride =
+                docType is DocumentType.CreditNote or DocumentType.DebitNote
+                    ? string.Equals(result.OurRole, "Buyer", StringComparison.OrdinalIgnoreCase)
+                    : null,
             Status = DocumentStatus.Draft,
             DocumentDate = docDate,
             DueDate = dueDate,
@@ -4313,6 +4382,26 @@ public class OcrService : IOcrService
         // created document (Task 5 of ERP upgrade). Failures don't roll
         // back the document creation — they surface as
         // Document.RdComplianceStatus badges + OcrValidationLog rows.
+        // ── หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่ "เราถูกหัก" ──────────────
+        // ทิศทางดูจากช่อง "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" vs "ผู้ถูกหักภาษี ณ ที่จ่าย"
+        // ว่าเลขผู้เสียภาษีของบริษัทเราอยู่ช่องไหน — เราอยู่ช่องผู้ถูกหัก = ได้เครดิต
+        // ภาษีใช้ใน ภ.ง.ด.50/51 → ลงทะเบียนให้เลย (ดู WHT_CREDIT_PLAN.md)
+        try
+        {
+            var ourTaxId = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
+            var weAreWithheld = Ocr.OcrDocumentRoleInferrer.InferWhtCertWeAreWithheld(
+                result.RawTextContent, ourTaxId);
+            if (weAreWithheld == true && (result.ExtractedTotalAmount ?? 0) > 0)
+            {
+                await EnsureWhtCreditFromCertAsync(companyId, result, document.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "บันทึกทะเบียนภาษีถูกหักจากหนังสือรับรองไม่สำเร็จ (scan {Id})", result.Id);
+        }
+
         if (_rdComplianceValidator != null)
         {
             try

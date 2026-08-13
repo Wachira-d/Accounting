@@ -34,6 +34,73 @@ public static class OcrDocumentRoleInferrer
         // คำแนะนำผู้ใช้เมื่อเคลมไม่ได้ — อธิบายว่าทำไม + ต้องทำอย่างไร
         string? InputVatClaimWarning = null);
 
+    /// <summary>อ่านหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) แล้วบอกว่า "ใครหักใคร"
+    ///
+    /// <para>บนแบบ 50 ทวิ มี 2 ช่องคู่กันเสมอ: <b>ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</b>
+    /// (คนที่หัก) และ <b>ผู้ถูกหักภาษี ณ ที่จ่าย</b> (คนที่โดนหัก) — ดูว่าเลขผู้เสียภาษี
+    /// ของบริษัทเราไปอยู่ช่องไหน ก็รู้ทิศทางทันที ไม่ต้องเดา:</para>
+    /// <list type="bullet">
+    /// <item>เราอยู่ช่อง "ผู้มีหน้าที่หัก" → <b>เราหักเขา</b> = หนี้ที่ต้องนำส่ง ภ.ง.ด.3/53</item>
+    /// <item>เราอยู่ช่อง "ผู้ถูกหัก" → <b>เราถูกหัก</b> = เครดิตภาษีใช้ใน ภ.ง.ด.50/51</item>
+    /// </list>
+    /// คืน null เมื่อไม่ใช่หนังสือรับรอง หรือแยกทิศทางไม่ได้ (ไม่เดา)
+    /// </summary>
+    public static bool? InferWhtCertWeAreWithheld(string? rawText, string? companyTaxId)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
+        var text = rawText;
+        var lower = text.ToLowerInvariant();
+        // ⚠️ marker ต้องตรงกับกระดาษจริง: หัวเรื่องเขียนว่า "หนังสือรับรองการหัก
+        // ภาษี ณ ที่จ่าย" — คำว่า "หัก ณ ที่จ่าย" (หัก ติดกับ ณ) **ไม่เคยปรากฏ**
+        // เพราะมี "ภาษี" คั่นอยู่เสมอ ใช้ "ณ ที่จ่าย" + "รับรอง" แทน
+        var isWhtCert = ContainsAll(lower, "ณ ที่จ่าย", "รับรอง")
+                     || lower.Contains("50 ทวิ")
+                     || lower.Contains("withholding tax certificate");
+        if (!isWhtCert) return null;
+
+        var companyTax = new string((companyTaxId ?? "").Where(char.IsDigit).ToArray());
+        if (companyTax.Length != 13) return null;
+
+        // ตำแหน่งของหัวข้อทั้งสองช่องบนกระดาษ
+        int payerIdx = IndexOfAny(text, "ผู้มีหน้าที่หักภาษี", "ผู้มีหน้าที่หัก", "ผู้จ่ายเงิน");
+        int payeeIdx = IndexOfAny(text, "ผู้ถูกหักภาษี", "ผู้ถูกหัก", "ผู้รับเงิน");
+        if (payerIdx < 0 && payeeIdx < 0) return null;
+
+        // เลขผู้เสียภาษีของบริษัทเราปรากฏที่ตำแหน่งไหนบ้าง (รองรับรูปแบบมีขีดคั่น)
+        var ourPositions = new List<int>();
+        foreach (System.Text.RegularExpressions.Match m in
+                 System.Text.RegularExpressions.Regex.Matches(text, @"[\d\s-]{13,}"))
+        {
+            var digits = new string(m.Value.Where(char.IsDigit).ToArray());
+            if (digits.Contains(companyTax, StringComparison.Ordinal)) ourPositions.Add(m.Index);
+        }
+        if (ourPositions.Count == 0) return null;
+
+        // เลขของเราอยู่ "ใต้หัวข้อไหน" — หัวข้อที่อยู่ก่อนหน้าและใกล้ที่สุดคือเจ้าของช่อง
+        bool? weAreWithheld = null;
+        foreach (var pos in ourPositions)
+        {
+            var underPayer = payerIdx >= 0 && payerIdx < pos;
+            var underPayee = payeeIdx >= 0 && payeeIdx < pos;
+            if (underPayer && underPayee) weAreWithheld = payeeIdx > payerIdx;   // ช่องล่างสุดชนะ
+            else if (underPayee) weAreWithheld = true;
+            else if (underPayer) weAreWithheld = false;
+            if (weAreWithheld.HasValue) break;
+        }
+        return weAreWithheld;
+    }
+
+    private static int IndexOfAny(string text, params string[] needles)
+    {
+        var best = -1;
+        foreach (var n in needles)
+        {
+            var i = text.IndexOf(n, StringComparison.Ordinal);
+            if (i >= 0 && (best < 0 || i < best)) best = i;
+        }
+        return best;
+    }
+
     public static InferenceResult Infer(
         string rawText,
         string? vendorTaxId,
@@ -110,7 +177,11 @@ public static class OcrDocumentRoleInferrer
 
             // Heuristic 1 — WHT-cert presence biases Seller (we issued the
             // underlying invoice whose payment got withheld).
-            var whtCertHint = ContainsAll(text, "หัก ณ ที่จ่าย", "รับรอง")
+            // marker เดิม "หัก ณ ที่จ่าย" ไม่เคย match เอกสารจริง (กระดาษเขียน
+            // "หนังสือรับรองการหักภาษี ณ ที่จ่าย" — มี "ภาษี" คั่น) heuristic นี้
+            // จึงไม่เคยทำงานเลย → ใช้ marker ที่ปรากฏจริง
+            var whtCertHint = ContainsAll(text, "ณ ที่จ่าย", "รับรอง")
+                          || text.Contains("50 ทวิ")
                           || text.Contains("withholding tax certificate");
             if (whtCertHint && role == "Buyer" && roleConf < 0.7m)
             {
