@@ -2530,6 +2530,60 @@ public class OcrService : IOcrService
             whtAmount, result.Id);
     }
 
+    /// <summary>อ่านสกุลเงินจากข้อความบนกระดาษ — คืน null เมื่อไม่พบ (ถือเป็นบาท)
+    ///
+    /// <para>เอกสารสกุลต่างประเทศที่ถูกบันทึกเป็นบาทคือความผิดพลาดแบบ "เงียบ":
+    /// ตัวเลขถูกเก็บเท่าเดิมแต่ความหมายต่างกันหลายสิบเท่า และไม่มีอะไรเตือน
+    /// — ตรวจไว้ดีกว่าปล่อยผ่าน (ตั้ง Currency แล้ว approve จะบังคับให้ระบุ
+    /// อัตราแลกเปลี่ยนเอง ซึ่งเป็นการล้มแบบดังกว่าการเงียบ)</para>
+    ///
+    /// <para>ระวัง false positive: "$" อย่างเดียวไม่พอ (บางใบพิมพ์ THB ด้วย $)
+    /// จึงต้องเจอรหัสสกุลเป็นคำเต็มหรือคู่กับตัวเลข</para></summary>
+    internal static string? InferCurrency(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
+        var t = rawText.ToUpperInvariant();
+        // มีคำว่าบาท/THB ชัดเจน = บาทแน่นอน ไม่ต้องเดาต่อ
+        if (t.Contains("THB") || rawText.Contains("บาท")) return null;
+        foreach (var (code, words) in new[]
+        {
+            ("USD", new[] { "USD", "US DOLLAR", "U.S. DOLLAR" }),
+            ("EUR", new[] { "EUR", "EURO" }),
+            ("JPY", new[] { "JPY", "YEN" }),
+            ("CNY", new[] { "CNY", "RMB", "YUAN" }),
+            ("GBP", new[] { "GBP", "POUND STERLING" }),
+            ("SGD", new[] { "SGD", "SINGAPORE DOLLAR" }),
+        })
+        {
+            foreach (var w in words)
+                if (System.Text.RegularExpressions.Regex.IsMatch(t, $@"\b{System.Text.RegularExpressions.Regex.Escape(w)}\b"))
+                    return code;
+        }
+        return null;
+    }
+
+    /// <summary>อ่าน "เหตุผลการลดหนี้" จากข้อความบนกระดาษ (§86/10 บังคับระบุ)
+    ///
+    /// <para>คืน null เมื่อไม่พบคำบ่งชี้ชัดเจน — ปล่อยให้ผู้ใช้เลือกเอง ดีกว่าเดา
+    /// ผิดแล้วลงบัญชีผิด (เฉพาะ "คืนสินค้า" เท่านั้นที่กระทบสต๊อก อีก 3 แบบไม่กระทบ)</para></summary>
+    internal static CreditNoteReason? InferCreditNoteReason(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
+        var t = rawText.ToLowerInvariant();
+        // เรียงตามความจำเพาะ: คืนสินค้าเป็นเคสเดียวที่กระทบสต๊อก จึงต้องชัดจริงก่อน
+        if (t.Contains("คืนสินค้า") || t.Contains("รับคืนสินค้า") || t.Contains("สินค้าคืน")
+            || t.Contains("goods return") || t.Contains("sales return"))
+            return CreditNoteReason.Return;
+        if (t.Contains("ส่วนลด") || t.Contains("ลดราคา") || t.Contains("discount"))
+            return CreditNoteReason.Discount;
+        if (t.Contains("ตัดหนี้สูญ") || t.Contains("หนี้สูญ") || t.Contains("write-off") || t.Contains("write off"))
+            return CreditNoteReason.Writeoff;
+        if (t.Contains("ปรับปรุงยอด") || t.Contains("ปรับยอด") || t.Contains("คลาดเคลื่อน")
+            || t.Contains("ไม่ครบตามจำนวน") || t.Contains("adjustment"))
+            return CreditNoteReason.Adjustment;
+        return null;   // ไม่เดา — ผู้ใช้เลือกเองบนฟอร์ม
+    }
+
     private static string MapAzureDocType(string? azureDocType, string? modelId)
     {
         if (modelId?.Contains("receipt", StringComparison.OrdinalIgnoreCase) == true)
@@ -4080,6 +4134,15 @@ public class OcrService : IOcrService
             // ของใบนี้ (จากเลขผู้เสียภาษีบนกระดาษเทียบกับบริษัทเรา) — เดิมข้อมูลนี้
             // ถูกทิ้ง ทำให้ระบบต้องไป "เดา" ฝั่งภาษีอีกครั้งตอนอนุมัติ ทั้งที่รู้แล้ว
             // (เดาผิด = JE ลงผิดฝั่งถาวร ยอดไปโผล่ผิดฝั่งใน ภ.พ.30)
+            // สกุลเงินบนกระดาษ — เดิมไม่เคยอ่าน ใบ USD จึงถูกบันทึกเป็นบาทเงียบ ๆ
+            // (ตัวเลขเท่าเดิมแต่ความหมายผิด = ยอดผิดหลายสิบเท่า) ตรวจจากสัญลักษณ์/
+            // รหัสสกุลบนเอกสาร ไม่พบ = THB ตามเดิม
+            Currency = InferCurrency(result.RawTextContent) ?? "THB",
+            // เหตุผลการลดหนี้ (§86/10) — บังคับก่อนอนุมัติ เดิม OCR ไม่เคยเซ็ต
+            // ใบลดหนี้ที่สแกนมาจึงติดบล็อก "ต้องระบุเหตุผล" ทุกใบ 100%
+            // กระดาษมักพิมพ์เหตุผลไว้อยู่แล้ว → อ่านจากข้อความ ถ้าไม่พบค่อยให้ผู้ใช้เลือก
+            CreditNoteReason = docType == DocumentType.CreditNote
+                ? InferCreditNoteReason(result.RawTextContent) : null,
             CnDnPurchaseSideOverride =
                 docType is DocumentType.CreditNote or DocumentType.DebitNote
                     ? string.Equals(result.OurRole, "Buyer", StringComparison.OrdinalIgnoreCase)
