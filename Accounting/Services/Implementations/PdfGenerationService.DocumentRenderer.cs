@@ -172,6 +172,7 @@ public partial class PdfGenerationService
                         Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L));
                         Safe(() => ComposeContact(col, doc, template, accent, L));
                         Safe(() => ComposeAdjustmentRef(col, doc, accent, L));
+                        Safe(() => ComposeCurrencyNote(col, doc, accent, L));
                         Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, L, layout, accent));
                         Safe(() => ComposeSummary(col, doc, template, accent, layout, L));
                         Safe(() => ComposeFooter(col, doc, template, accent, L));
@@ -556,6 +557,23 @@ public partial class PdfGenerationService
     /// เลขที่+วันที่ใบกำกับเดิม, มูลค่าตามใบเดิม, มูลค่าที่ถูกต้อง, ผลต่าง (+VAT
     /// ผลต่างอยู่ในตารางสรุปของใบอยู่แล้ว). ข้อมูลจาก transient AdjustmentOriginal*
     /// (โหลดใน ResolveServedAsReceiptAsync) — ใบที่ไม่มี ref จะไม่มีกล่อง.</summary>
+    /// <summary>บรรทัด "สกุลเงิน" สำหรับเอกสารที่ไม่ใช่บาท — เดิม PDF พิมพ์ตัวเลข
+    /// เปล่า ๆ ไม่บอกสกุลเงินเลย ผู้อ่านแยกไม่ออกว่า 1,000 คือบาทหรือดอลลาร์
+    /// (และ TFRS บทที่ 19 ต้องเห็นอัตราที่ใช้แปลงค่าด้วย)
+    ///
+    /// วางเป็นบล็อกเดียวในสายหลัก ไม่ยัดเข้า doc-info ของแต่ละเลย์เอาต์ (มี 4 จุด)
+    /// เพื่อให้ขึ้น "ครั้งเดียว" เสมอไม่ว่าเลือกเลย์เอาต์ไหน</summary>
+    private static void ComposeCurrencyNote(ColumnDescriptor col, EntDoc doc, string accent,
+        Accounting.Services.Implementations.Pdf.DocumentLabels L)
+    {
+        if (string.IsNullOrWhiteSpace(doc.Currency)
+            || string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase)) return;
+        var rate = doc.ExchangeRate > 0 && doc.ExchangeRate != 1m
+            ? $"  ·  {L.FxRateLabel} {doc.ExchangeRate:N4}" : "";
+        col.Item().PaddingTop(4).Text($"{L.CurrencyLabel}: {doc.Currency}{rate}")
+            .FontSize(9.5f).Bold().FontColor(accent);
+    }
+
     private static void ComposeAdjustmentRef(ColumnDescriptor col, EntDoc doc, string accent, Accounting.Services.Implementations.Pdf.DocumentLabels L)
     {
         if (doc.DocumentType is not (Accounting.Models.Enums.DocumentType.CreditNote
@@ -589,6 +607,10 @@ public partial class PdfGenerationService
             else
                 cc.Item().Text($"มูลค่าที่{(isCn ? "ลด" : "เพิ่ม")}: {doc.SubTotal:N2}")
                     .FontSize(9).Bold().FontColor("#374151");
+            // §86/10 บังคับระบุเหตุผลการลดหนี้บนตัวเอกสาร (mirror ฝั่ง HTML)
+            var reasonTxt = CreditNoteReasonText(doc.CreditNoteReason, L);
+            if (isCn && !string.IsNullOrWhiteSpace(reasonTxt))
+                cc.Item().Text($"{L.CnReason}: {reasonTxt}").FontSize(9).FontColor("#374151");
         });
     }
 
