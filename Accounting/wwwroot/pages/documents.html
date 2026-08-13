@@ -6101,7 +6101,11 @@
           let banners = '';
           if (d.ocrTenantMismatchFlag) {
             banners += `<div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
-              ⚠️ <strong>เลขผู้ซื้อในเอกสารไม่ตรงกับบริษัทนี้</strong> — กรุณาตรวจสอบว่าอัพโหลดถูกบริษัทหรือไม่
+              ⚠️ <strong>เลขผู้ซื้อในเอกสารไม่ตรงกับบริษัทนี้</strong>
+              <div style="margin-top:3px;color:#334155;background:rgba(255,255,255,.65);border-radius:5px;padding:4px 7px;font-size:11.5px">
+                👉 <b>ต้องทำ:</b> สลับบริษัทที่มุมขวาบนให้ตรงกับใบนี้แล้วอัปโหลดใหม่ ·
+                ถ้าใบนี้เป็นของบริษัทนี้จริง ให้แก้เลขผู้เสียภาษีที่ <b>ตั้งค่า → ข้อมูลบริษัท</b>
+              </div>
             </div>`;
           }
           if (d.rdComplianceStatus && d.rdComplianceStatus !== 'Pending' && d.rdComplianceStatus !== 'Valid' && d.rdComplianceStatus !== 'Approved') {
@@ -6109,9 +6113,16 @@
             const bg = d.rdComplianceStatus === 'Failed' ? '#fee2e2' : '#fef3c7';
             let issues = [];
             try { issues = JSON.parse(d.rdComplianceIssuesJson || '[]'); } catch(_) {}
+            // ทุกข้อที่เตือน ต้องบอก "ต้องไปทำอะไรที่ไหน" ต่อท้ายเสมอ —
+            // คำเตือนที่บอกแค่ว่าผิดแต่ไม่บอกทางออก ผู้ใช้แก้ไม่ได้ก็เท่ากับ
+            // ไม่มีประโยชน์ (validator ส่ง action มาให้ในฟิลด์ i.action)
+            const statusLabel = d.rdComplianceStatus === 'Failed'
+              ? 'ต้องแก้ก่อนใช้เคลมภาษี' : 'มีข้อควรตรวจสอบ';
             banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
-              🛡️ <strong>RD Compliance: ${d.rdComplianceStatus}</strong>
-              ${issues.length ? '<ul style="margin:6px 0 0 18px;font-size:12px">' + issues.map(i => `<li>${Layout.esc(i.message || i.rule)}</li>`).join('') + '</ul>' : ''}
+              🛡️ <strong>ตรวจความครบถ้วนตามกรมสรรพากร: ${statusLabel}</strong>
+              ${issues.length ? '<ul style="margin:6px 0 0 18px;font-size:12px;padding-left:0">' + issues.map(i => `<li style="margin-bottom:5px">${Layout.esc(i.message || i.rule)}${
+                i.action ? `<div style="margin-top:2px;color:#334155;background:rgba(255,255,255,.65);border-radius:5px;padding:4px 7px;font-size:11.5px">👉 <b>ต้องทำ:</b> ${Layout.esc(i.action)}</div>` : ''
+              }</li>`).join('') + '</ul>' : ''}
             </div>`;
           }
           // Same gate as the list-row aging chip — never bother the user
