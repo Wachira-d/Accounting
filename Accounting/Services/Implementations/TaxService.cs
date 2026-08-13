@@ -571,6 +571,13 @@ public partial class TaxService : ITaxService
                         or DocumentType.PaymentVoucher)
                     : cnDnSideFromGl.GetValueOrDefault(doc.Id, false);
                 var sideUnknown = !sideResolvedByFk && !cnDnSideFromGl.ContainsKey(doc.Id);
+                // ชั้นสุดท้าย (ตรงกับ AutoPost): คู่ค้าเป็น supplier อย่างเดียว
+                // = ฝั่งซื้อแน่นอน — เราไม่ออกใบลดหนี้การขายให้คนที่ไม่เคยเป็นลูกค้า
+                if (sideUnknown && doc.Contact is { IsSupplier: true, IsCustomer: false })
+                {
+                    isPurchaseSide = true;
+                    sideUnknown = false;
+                }
                 // ใบเดิมยังไม่ถึง tax point (VAT พัก 21913/11640 — ยังไม่เคยเข้า
                 // ภ.พ.30) → CN ห้ามหักยอดงวดนี้ (จะเป็นการขอคืน VAT ที่ไม่เคยนำส่ง/
                 // ไม่เคยเคลม) — ใส่บรรทัดเตือน excluded คู่ไว้ ยอดสุทธิจะถูกนับตอน
@@ -589,7 +596,7 @@ public partial class TaxService : ITaxService
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"⚠️ [ใบลดหนี้ — ใบเดิมยังไม่ถึง tax point (VAT พักอยู่)] {doc.DocumentNumber}",
-                        IncomeAmount = -doc.SubTotal,
+                        IncomeAmount = -VatableBase(doc),
                         TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = -doc.VatAmount,
                         DocumentId = doc.Id,
@@ -621,7 +628,7 @@ public partial class TaxService : ITaxService
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                     Description = $"{label} {doc.DocumentNumber}",
-                    IncomeAmount = -doc.SubTotal,
+                    IncomeAmount = -VatableBase(doc),
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = -doc.VatAmount,
                     DocumentId = doc.Id,
@@ -644,6 +651,12 @@ public partial class TaxService : ITaxService
                         or DocumentType.PaymentVoucher)
                     : cnDnSideFromGl.GetValueOrDefault(doc.Id, false);
                 var dnSideUnknown = !dnSideByFk && !cnDnSideFromGl.ContainsKey(doc.Id);
+                // ชั้นสุดท้าย (ตรงกับ AutoPost) — supplier-only = ฝั่งซื้อ
+                if (dnSideUnknown && doc.Contact is { IsSupplier: true, IsCustomer: false })
+                {
+                    isPurchaseSide = true;
+                    dnSideUnknown = false;
+                }
                 // ใบเดิมยังไม่ถึง tax point (VAT พัก 21913/11640) — เหมือน CN
                 if (doc.RelatedDocumentId.HasValue
                     && relatedDocInfos.TryGetValue(doc.RelatedDocumentId.Value, out var dnRelInfo)

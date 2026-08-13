@@ -1182,17 +1182,13 @@ public class DocumentService : IDocumentService
     {
         if (raw == null) return;                       // null = ไม่แตะ
 
-        var isPurchaseDoc = doc.DocumentType is DocumentType.PurchaseInvoice
-            or DocumentType.Expense or DocumentType.PaymentVoucher
-            or DocumentType.CertificateInLieu;
-        if (!isPurchaseDoc)
-            throw new InvalidOperationException("งวดเคลมภาษีซื้อตั้งได้เฉพาะเอกสารฝั่งซื้อ");
-
-        // กติกา 2 — undue flow ชนะเจตนา
-        if (doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null)
-            throw new InvalidOperationException(
-                "ใบนี้พักภาษีซื้อไว้ (ใบกำกับยังไม่ครบ §86/4) — งวดเคลมจะถูกกำหนด"
-                + "อัตโนมัติเมื่อกด \"เติมใบกำกับครบ\" ไม่สามารถเลือกงวดเองที่นี่ได้");
+        // ⚠️ ลำดับสำคัญ: แปลงค่า + เทียบของเดิม **ก่อน** guard ทุกตัว
+        //
+        // บั๊กจริงที่เกิด: UI ส่ง "" มาเสมอตอนแก้ไข (เพื่อรองรับการล้างค่า)
+        // แต่เวอร์ชันแรกเช็ค "ต้องเป็นเอกสารฝั่งซื้อ" ก่อนดูว่าค่าเปลี่ยนจริง
+        // ไหม → แก้ใบเสนอราคาที่ไม่เกี่ยวอะไรเลยก็ throw ("Clone ใบเสนอราคา
+        // แล้วบันทึกไม่ได้"). และ throw ใส่ใบ undue ที่ผู้ใช้ไม่ได้แตะช่องนี้
+        // ด้วย. no-op ต้องเป็น no-op เสมอ — guard มีไว้กันการ "เปลี่ยน" เท่านั้น
 
         // แปลงค่า: "" = ล้างกลับปกติ, "yyyy-MM" = งวดที่เลือก
         DateTime? period = null;
@@ -1210,7 +1206,19 @@ public class DocumentService : IDocumentService
         var current = doc.InputVatBecameClaimableAt.HasValue
             ? new DateTime(doc.InputVatBecameClaimableAt.Value.Year, doc.InputVatBecameClaimableAt.Value.Month, 1)
             : (DateTime?)null;
-        if (period == current) return;                 // ไม่เปลี่ยน = จบ
+        if (period == current) return;                 // ไม่เปลี่ยน = จบ ไม่มี guard ไหนยิง
+
+        var isPurchaseDoc = doc.DocumentType is DocumentType.PurchaseInvoice
+            or DocumentType.Expense or DocumentType.PaymentVoucher
+            or DocumentType.CertificateInLieu;
+        if (!isPurchaseDoc)
+            throw new InvalidOperationException("งวดเคลมภาษีซื้อตั้งได้เฉพาะเอกสารฝั่งซื้อ");
+
+        // กติกา 2 — undue flow ชนะเจตนา (บังคับเฉพาะตอน "เปลี่ยน" จริง)
+        if (doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null)
+            throw new InvalidOperationException(
+                "ใบนี้พักภาษีซื้อไว้ (ใบกำกับยังไม่ครบ §86/4) — งวดเคลมจะถูกกำหนด"
+                + "อัตโนมัติเมื่อกด \"เติมใบกำกับครบ\" ไม่สามารถเลือกงวดเองที่นี่ได้");
 
         // กติกา 1 — มีบรรทัดรายงานจริงแล้ว = รายงานชนะ (block พร้อมชี้ทางแก้)
         var claimedIn = await _db.TaxReportLines.AsNoTracking()
@@ -9738,11 +9746,27 @@ public class DocumentService : IDocumentService
             if (srcType is DocumentType.PurchaseInvoice or DocumentType.Expense
                 or DocumentType.CertificateInLieu)
                 direction = -1;
-            // PV/Receipt/RV ไม่เคยขยับสต๊อกตอนขาย/ซื้อ (ไม่อยู่ใน switch ข้างบน)
-            // → CN ที่อ้างห้าม restock/ตัดออก ไม่งั้นสต๊อกคลาดโดยไม่มีขาแรก
+            // PV/Receipt/RV ไม่เคยขยับสต๊อกตอนซื้อ/ขาย (IN มีแค่ GRN/PI,
+            // OUT มีแค่ Invoice/TaxInvoice) → CN ที่อ้างห้าม restock (+1)
+            // และห้ามตัดออก (−1) — ไม่มีขาแรกให้กลับ. เดิม comment บอก
+            // "ไม่แตะ stock" แต่โค้ดปล่อย +1 จาก switch ค้างไว้ → CN Return
+            // ที่อ้าง PV เพิ่มสต๊อกผี
             else if (srcType is DocumentType.PaymentVoucher
                 or DocumentType.Receipt or DocumentType.ReceiptVoucher)
                 direction = 0;
+        }
+        // CN ที่ "ไม่มีใบต้นทางเลย" แต่คู่ค้าเป็น supplier อย่างเดียว
+        // (= ฝั่งซื้อแน่นอน ตามชั้นสุดท้ายของ AutoPost): ห้าม +1 รับของเข้า
+        // (เราคืนของให้ผู้ขาย ไม่ใช่รับคืนจากลูกค้า) และห้าม −1 ด้วย —
+        // ไม่มีขา IN ในระบบให้กลับ (ของอาจไม่เคยเข้าสต๊อกผ่านระบบ)
+        // → ไม่แตะสต๊อก; JE/VAT ยังลงฝั่งซื้อครบตาม AutoPost
+        else if (doc.DocumentType == DocumentType.CreditNote)
+        {
+            var supplierOnly = await _db.Contacts.AsNoTracking()
+                .Where(c => c.Id == doc.ContactId)
+                .Select(c => (bool?)(c.IsSupplier && !c.IsCustomer))
+                .FirstOrDefaultAsync() ?? false;
+            if (supplierOnly) direction = 0;
         }
         if (direction == 0) return;
 
@@ -10274,6 +10298,31 @@ public class DocumentService : IDocumentService
                         && d.Id != doc.Id && !d.IsDeleted)
                     .Select(d => (Guid?)d.Id)
                     .FirstOrDefaultAsync();
+                // ไม่ตรงเลขเอกสารของเรา → ลอง **เลขใบกำกับของผู้ขาย**
+                // (SupplierInvoiceNumber บนใบซื้อ) — พฤติกรรมจริงของผู้ใช้:
+                // CN คืนของให้ supplier จะกรอกช่องอ้างอิงเป็นเลขใบของผู้ขาย
+                // (เช่น RT69/00013) เพราะนั่นคือเลขบนกระดาษที่ถืออยู่ ไม่ใช่
+                // เลข PI-xxxx ของเรา. เดิม resolver เทียบ DocumentNumber
+                // อย่างเดียว → หาไม่เจอ → default ฝั่งขาย → JE ลง Dr 21911
+                // แทน Cr 11610 และ ภ.พ.30 ตามผิดทั้งเส้น (เคสจริง
+                // CN-20260721-0002). จำกัดที่คู่ค้าเดียวกัน — เลขใบผู้ขาย
+                // ซ้ำข้าม supplier ได้ (ต่างคนต่างรันเลขของตัวเอง)
+                var refNoLower = refNo.ToLower();
+                if (!refMatchId.HasValue)
+                    refMatchId = await _db.Documents
+                        .Where(d => d.CompanyId == companyId && d.Id != doc.Id && !d.IsDeleted
+                            && d.ContactId == doc.ContactId
+                            && d.SupplierInvoiceNumber != null
+                            // เทียบแบบไม่สนตัวพิมพ์ — ผู้ใช้พิมพ์ rt69/00013
+                            // ขณะที่ใบซื้อเก็บ RT69/00013 ต้องยังจับคู่ได้
+                            && d.SupplierInvoiceNumber.ToLower() == refNoLower
+                            && (d.DocumentType == DocumentType.PurchaseInvoice
+                                || d.DocumentType == DocumentType.Expense
+                                || d.DocumentType == DocumentType.PaymentVoucher
+                                || d.DocumentType == DocumentType.CertificateInLieu))
+                        .OrderByDescending(d => d.DocumentDate)
+                        .Select(d => (Guid?)d.Id)
+                        .FirstOrDefaultAsync();
                 if (refMatchId.HasValue) doc.RelatedDocumentId = refMatchId;
             }
             if (doc.RelatedDocumentId.HasValue)
@@ -10390,6 +10439,27 @@ public class DocumentService : IDocumentService
                 || source.DocumentType == DocumentType.Expense
                 || source.DocumentType == DocumentType.CertificateInLieu
                 || source.DocumentType == DocumentType.PaymentVoucher);
+            // ไม่มีใบต้นทางให้ดูเลย (FK ก็ไม่มี text ref ก็ resolve ไม่ติด) —
+            // เดิม default ฝั่งขายเงียบ ๆ เสมอ ทำให้ CN คืนของ supplier ที่อ้าง
+            // เลขนอกระบบ ลง Dr 21911 (ลดภาษีขาย) แทน Cr 11610 (ลดภาษีซื้อ)
+            // = นำส่งภาษีขายขาด + เคลมภาษีซื้อเกิน พร้อมกัน. ใช้บทบาทคู่ค้า
+            // เป็นสัญญาณสุดท้าย: คู่ค้าที่เป็น "ผู้ขายอย่างเดียว" (supplier
+            // ไม่ใช่ลูกค้า) → CN/DN ใบนี้คือฝั่งซื้อแน่นอน — เราไม่มีทางออก
+            // ใบลดหนี้ "การขาย" ให้คนที่ไม่เคยเป็นลูกค้า
+            if (!isPurchaseSide && source == null)
+            {
+                var contactRole = await _db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == doc.ContactId)
+                    .Select(c => new { c.IsSupplier, c.IsCustomer })
+                    .FirstOrDefaultAsync();
+                if (contactRole is { IsSupplier: true, IsCustomer: false })
+                {
+                    isPurchaseSide = true;
+                    _logger.LogInformation(
+                        "CN/DN {Doc} ไม่มีใบต้นทาง — จัดฝั่งซื้อจากบทบาทคู่ค้า (supplier-only)",
+                        doc.DocumentNumber);
+                }
+            }
             var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
             var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
 
