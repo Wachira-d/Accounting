@@ -15,7 +15,8 @@ namespace Accounting.Services.Implementations.Ocr;
 /// Document.RdComplianceIssuesJson (fast UI lookup).
 ///
 /// Validation rules (Task 5 of ERP upgrade):
-///   1. "ใบกำกับภาษี" / "Tax Invoice" keyword present in raw OCR text.
+///   1. หัวเรื่องตามชนิดเอกสาร: ใบกำกับภาษี §86/4 / ใบลดหนี้ §86/10 /
+///      ใบเพิ่มหนี้ §86/9 — ข้ามเมื่อเอกสารไม่มี VAT หรืออ่านกระดาษไม่ได้.
 ///   2. Seller Tax ID populated and validated as Thai 13-digit format.
 ///   3. Buyer Tax ID populated (mandatory on tax invoices ≥ 1,000 THB
 ///      after-VAT — RD rule).
@@ -59,7 +60,7 @@ public class RdComplianceValidator
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
         if (doc == null) throw new KeyNotFoundException("Document not found");
 
-        var results = RunRules(ocrResult, rawOcrText, company);
+        var results = RunRules(ocrResult, rawOcrText, company, doc);
 
         // Persist one OcrValidationLog row per rule; replaces any previous
         // results for this document (each evaluation supersedes the last).
@@ -101,20 +102,45 @@ public class RdComplianceValidator
         return status;
     }
 
-    private static List<RuleResult> RunRules(OcrResultResponse o, string? rawText, Company company)
+    private static List<RuleResult> RunRules(OcrResultResponse o, string? rawText, Company company, Document doc)
     {
         var results = new List<RuleResult>();
         var raw = (rawText ?? "").ToLowerInvariant();
+        // ข้อความ OCR สั้น/ว่าง = "ตรวจไม่ได้" ไม่ใช่ "กระดาษไม่มี" — เครื่องอ่านบาง
+        // ตัว (vision AI) คืนเฉพาะฟิลด์ที่สกัดได้ ไม่ได้คืนข้อความทั้งหน้า ถ้าเอา
+        // ความว่างมาสรุปว่าเอกสารไม่ครบ จะเตือนผิดทุกใบที่ใช้เครื่องอ่านแบบนั้น
+        var canReadPaper = raw.Trim().Length >= 40;
 
-        // Rule 1: Tax Invoice keyword
-        bool hasTaxKw = raw.Contains("ใบกำกับภาษี") || raw.Contains("tax invoice");
-        results.Add(new("TAX_INVOICE_KEYWORD", hasTaxKw, hasTaxKw ? "Info" : "Warning",
-            hasTaxKw ? "พบคำว่า 'ใบกำกับภาษี' / 'Tax Invoice' ในเอกสาร"
-                     : "ไม่พบคำว่า 'ใบกำกับภาษี' / 'Tax Invoice' — อาจไม่ใช่ใบกำกับภาษีตามมาตรฐาน RD",
-            null,
-            hasTaxKw ? null
-                : "เปิด 'ไฟล์แนบ' ด้านล่างดูกระดาษจริง — ถ้าเป็นใบกำกับภาษีจริงแต่สแกนไม่ชัด "
-                  + "ให้สแกนใหม่ให้คมขึ้น · ถ้าเป็นบิลเงินสด/ใบเสร็จธรรมดา ให้ติ๊ก 'ไม่เคลมภาษีซื้อ' ที่บรรทัดรายการ"));
+        // Rule 1: คำที่กฎหมายบังคับให้มีบนหัวเอกสาร — **ต่างกันตามชนิดเอกสาร**
+        //   ใบกำกับภาษี §86/4  → "ใบกำกับภาษี"
+        //   ใบลดหนี้   §86/10 → "ใบลดหนี้"   (ไม่ใช่ "ใบกำกับภาษี")
+        //   ใบเพิ่มหนี้ §86/9  → "ใบเพิ่มหนี้"
+        // เดิมบังคับหาคำว่า "ใบกำกับภาษี" กับเอกสารทุกชนิด → ใบลดหนี้โดนเตือนทุกใบ
+        // ทั้งที่กระดาษถูกต้องตามกฎหมายอยู่แล้ว
+        var needsKeyword = doc.VatAmount > 0m;   // ไม่มี VAT = ไม่ใช่เอกสารภาษี ไม่ต้องบังคับ
+        var (kwList, kwLabel) = doc.DocumentType switch
+        {
+            DocumentType.CreditNote  => (new[] { "ใบลดหนี้", "credit note", "ใบกำกับภาษี" }, "ใบลดหนี้ (§86/10)"),
+            DocumentType.DebitNote   => (new[] { "ใบเพิ่มหนี้", "debit note", "ใบกำกับภาษี" }, "ใบเพิ่มหนี้ (§86/9)"),
+            _                        => (new[] { "ใบกำกับภาษี", "tax invoice" }, "ใบกำกับภาษี (§86/4)"),
+        };
+        var hasTaxKw = kwList.Any(k => raw.Contains(k));
+        if (!needsKeyword || !canReadPaper || hasTaxKw)
+        {
+            results.Add(new("TAX_INVOICE_KEYWORD", true, "Info",
+                !needsKeyword ? "เอกสารไม่มี VAT — ไม่ต้องมีหัวเรื่องเอกสารภาษี"
+                : !canReadPaper ? "เครื่องอ่านไม่ได้คืนข้อความทั้งหน้า — ข้ามการตรวจหัวเรื่อง (ไม่ได้แปลว่าเอกสารผิด)"
+                : $"พบหัวเรื่อง {kwLabel} ในเอกสาร",
+                null));
+        }
+        else
+        {
+            results.Add(new("TAX_INVOICE_KEYWORD", false, "Warning",
+                $"ไม่พบคำว่า \"{kwList[0]}\" บนเอกสาร — {kwLabel} ต้องมีคำนี้บนหัวเอกสาร",
+                null,
+                "เปิด 'ไฟล์แนบ' ด้านล่างดูกระดาษจริง — ถ้ามีคำนี้อยู่แต่สแกนไม่ชัด ให้สแกนใหม่ให้คมขึ้น "
+                + "· ถ้ากระดาษไม่มีจริง ให้ขอเอกสารที่ถูกต้องจากผู้ขาย"));
+        }
 
         // Rule 2: Seller Tax ID format
         var sellerOk = IsThaiTaxId(o.ExtractedVendorTaxId);
@@ -158,6 +184,13 @@ public class RdComplianceValidator
                 "ยังไม่ได้ตั้งเลขผู้เสียภาษีของบริษัท — ระบบตรวจใบกำกับเต็มรูป (§86/4) ให้ไม่ได้",
                 company.TaxId,
                 "ไปที่ เมนู ตั้งค่า → ข้อมูลบริษัท → กรอก 'เลขผู้เสียภาษี' 13 หลัก แล้วกดสแกน/ตรวจใหม่อีกครั้ง"));
+        }
+        else if (!canReadPaper)
+        {
+            // เครื่องอ่านไม่ได้คืนข้อความทั้งหน้า → ตรวจไม่ได้ ห้ามสรุปว่ากระดาษไม่มี
+            results.Add(new("BUYER_TAX_ID_FORMAT", true, "Info",
+                "เครื่องอ่านไม่ได้คืนข้อความทั้งหน้า — ตรวจเลขผู้เสียภาษีผู้ซื้อบนกระดาษอัตโนมัติไม่ได้ "
+                + "(ไม่ได้แปลว่าเอกสารไม่ครบ)", company.TaxId));
         }
         else
         {

@@ -5109,6 +5109,10 @@ public static class DatabaseMigrationHelper
             END $$;
             """,
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RevisionNumber" integer NOT NULL DEFAULT 0;""",
+            // ใบลดหนี้/ใบเพิ่มหนี้: บังคับฝั่งด้วยมือ (true=ซื้อ, false=ขาย, NULL=ให้ระบบ
+            // ตัดสินเอง) — ใช้ตอนผู้ใช้กด "ย้ายฝั่ง" เพราะใบถูกจัดฝั่งผิดตั้งแต่อนุมัติ
+            // แล้ว JE ลงผิดฝั่งถาวร ทำให้ยอดไปโผล่ผิดฝั่งใน ภ.พ.30
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CnDnPurchaseSideOverride" boolean NULL;""",
             """
             CREATE TABLE IF NOT EXISTS "DocumentRevisions" (
                 "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),

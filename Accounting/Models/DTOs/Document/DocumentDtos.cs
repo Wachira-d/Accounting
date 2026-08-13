@@ -549,6 +549,9 @@ public record DocumentResponse(
     // already carries the upstream id; the populated brief lets the UI render
     // "แปลงมาจาก QT-0042" without a second round-trip.
     DocumentBrief? RelatedDocument = null,
+    /// <summary>ใบลดหนี้/เพิ่มหนี้ที่ผู้ใช้สั่งย้ายฝั่งเอง — true=ซื้อ, false=ขาย,
+    /// null=ระบบตัดสินเอง (UI ใช้แสดงสถานะปัจจุบันของปุ่ม "ย้ายฝั่ง")</summary>
+    bool? CnDnPurchaseSideOverride = null,
     // Target-side view (other docs created from this one): list of children
     // spawned via ConvertCoreAsync — populated server-side from the
     // (CompanyId, RelatedDocumentId) index so the source doc can render
@@ -795,6 +798,10 @@ public record ReclassifyLineRequest(Guid LineId, Guid NewAccountId, string? Reas
 /// (Dr ผังเก่า/Cr ผังใหม่) อัตโนมัติ.</summary>
 public record ReclassifyPaymentSourceRequest(
     Guid? NewBankAccountId, Guid? NewPaymentAccountId, string? Reason);
+
+/// <summary>ย้ายฝั่งใบลดหนี้/ใบเพิ่มหนี้ — true = ฝั่งซื้อ (ลดภาษีซื้อ),
+/// false = ฝั่งขาย (ลดภาษีขาย)</summary>
+public record ReclassifyCnDnSideRequest(bool ToPurchaseSide, string? Reason);
 
 /// <summary>Returned on the first approve attempt when pre-approval checks
 /// produced soft warnings (legal/correct but unusual). Operator reviews the

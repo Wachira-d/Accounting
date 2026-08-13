@@ -4554,6 +4554,125 @@ public class DocumentService : IDocumentService
 
     /// <summary>
     /// เปลี่ยน "แหล่งเงิน" (บัญชี Cr เงินสด/ธนาคาร) ของเอกสารจ่าย/รับสดที่
+    /// <summary>ย้าย "ฝั่ง" ของใบลดหนี้/ใบเพิ่มหนี้ (ซื้อ ↔ ขาย) หลังอนุมัติแล้ว
+    ///
+    /// <para><b>ทำไมต้องมี:</b> CN/DN ที่อ้างเลขใบกำกับนอกระบบ (ผู้ขายพิมพ์เลขของ
+    /// เขามาในช่อง "อ้างอิง") อาจถูกจัดฝั่งผิดตั้งแต่ตอนอนุมัติ → JE ลง Dr 21911
+    /// (ลดภาษีขาย) แทน Cr 11610 (ลดภาษีซื้อ). รายงาน ภ.พ.30 <b>ยึด GL เป็นความจริง</b>
+    /// จึงตามไปแสดงในรายงานภาษีขายด้วย และการกด "สร้างรายงานใหม่" ไม่ช่วย เพราะ
+    /// รายงานไม่ได้ผิด — GL ต่างหากที่ผิด</para>
+    ///
+    /// <para><b>วิธีแก้ที่ถูก:</b> กลับ JE เดิมทั้งใบ → ตั้งค่า override → ลง JE ใหม่
+    /// ให้ถูกฝั่ง. ผลคือ GL กับรายงานตรงกันเสมอ (ถ้าย้ายแต่ตัวเลขในรายงาน งบการเงิน
+    /// กับแบบยื่นภาษีจะขัดกันเอง ตรวจสอบย้อนหลังไม่ได้ — ห้ามทำ)</para>
+    ///
+    /// ผ่าน gate ชุดเดียวกับ reclassify อื่น: งวดบัญชียังเปิด, ไม่มีเอกสารปลายทาง,
+    /// ยังไม่อยู่ในรายงานภาษีที่ยื่นแล้ว, ยังไม่ได้ส่ง e-Tax
+    /// </summary>
+    public async Task<DocumentResponse> ReclassifyCnDnSideAsync(
+        Guid companyId, Guid documentId, bool toPurchaseSide, string? reason, string actor)
+    {
+        var doc = await _db.Documents.Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (doc.DocumentType is not (DocumentType.CreditNote or DocumentType.DebitNote))
+            throw new InvalidOperationException("ย้ายฝั่งได้เฉพาะใบลดหนี้/ใบเพิ่มหนี้");
+
+        if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
+                       or DocumentStatus.Rejected or DocumentStatus.WaitingApproval)
+            throw new InvalidOperationException(
+                $"เอกสารสถานะ {doc.Status} ยังไม่ได้ลงบัญชี — แก้ที่ฟอร์มปกติ (เลือกใบต้นทางให้ถูก) แล้วค่อยอนุมัติ");
+
+        // ===== gate ชุดเดียวกับ reclassify แหล่งเงิน/ผังบัญชี =====
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
+            p.CompanyId == companyId
+            && p.StartDate <= doc.DocumentDate && p.EndDate >= doc.DocumentDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"วันที่เอกสารอยู่ในงวด '{period.Name}' ที่ปิดแล้ว ({period.Status}) — ย้ายฝั่งไม่ได้");
+
+        var hasDownstream = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.RelatedDocumentId == documentId
+            && d.Status != DocumentStatus.Voided && !d.IsDeleted);
+        if (hasDownstream)
+            throw new InvalidOperationException(
+                "มีเอกสารปลายทางอ้างเอกสารนี้แล้ว — ยกเลิกเอกสารปลายทางก่อน");
+
+        var inSubmittedReport = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
+            l.DocumentId == documentId && l.TaxReport.CompanyId == companyId
+            && (l.TaxReport.Status == TaxReportStatus.Submitted
+                || l.TaxReport.Status == TaxReportStatus.Filed));
+        if (inSubmittedReport)
+            throw new InvalidOperationException(
+                "เอกสารอยู่ในรายงานภาษีที่ยื่นสรรพากรแล้ว — ต้องยื่นแบบเพิ่มเติมแทนการย้ายฝั่ง");
+
+        var hasSubmittedEtax = await _db.EtaxInvoices.AsNoTracking().AnyAsync(e =>
+            e.DocumentId == documentId && e.SubmittedAt != null);
+        if (hasSubmittedEtax)
+            throw new InvalidOperationException("เอกสารนี้ส่ง e-Tax XML ไปสรรพากรแล้ว — ย้ายฝั่งไม่ได้");
+
+        if (doc.CnDnPurchaseSideOverride == toPurchaseSide)
+            throw new InvalidOperationException(
+                $"เอกสารนี้ถูกกำหนดเป็นฝั่ง{(toPurchaseSide ? "ซื้อ" : "ขาย")}อยู่แล้ว");
+
+        var sideLabel = toPurchaseSide ? "ซื้อ (ลดภาษีซื้อ)" : "ขาย (ลดภาษีขาย)";
+
+        using var txn = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // 1) กลับ JE เดิมของเอกสารนี้ทั้งหมด (เฉพาะตัวจริง ไม่ใช่ตัว reversal)
+            var postedJeIds = await _db.JournalEntries
+                .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
+                    && j.Status == JournalEntryStatus.Posted
+                    && j.OriginalEntryId == null && j.ReversedByEntryId == null)
+                .Select(j => j.Id).ToListAsync();
+            foreach (var jeId in postedJeIds)
+            {
+                await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                    reversalDate: DateTime.UtcNow.Date,
+                    description: $"ย้ายฝั่งใบลดหนี้/เพิ่มหนี้ {doc.DocumentNumber} → ฝั่ง{sideLabel}",
+                    systemTriggered: true);
+            }
+
+            // 2) ตั้ง override แล้วลง JE ใหม่ให้ถูกฝั่ง (AutoPost อ่าน override เป็นชั้นแรก)
+            doc.CnDnPurchaseSideOverride = toPurchaseSide;
+            await _db.SaveChangesAsync();
+            await AutoPostToJournalAsync(companyId, doc, actor);
+            await _db.SaveChangesAsync();
+
+            // 3) audit — append-only ตาม cross-cutting invariant (CLAUDE.md §M)
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                Action = AuditAction.Update,
+                EntityType = "Document",
+                EntityId = documentId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "ReclassifyCnDnSide",
+                    documentNumber = doc.DocumentNumber,
+                    toPurchaseSide,
+                    sideLabel,
+                    reason,
+                    actor,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            await txn.CommitAsync();
+        }
+        catch
+        {
+            await txn.RollbackAsync();
+            throw;
+        }
+
+        _logger.LogInformation("CN/DN {Doc} ย้ายฝั่งเป็น {Side} โดย {Actor}",
+            doc.DocumentNumber, sideLabel, actor);
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
     /// approve แล้ว — คู่กับ ReclassifyLineAccountAsync (ที่แก้ฝั่ง Dr). ใช้แก้
     /// เคส OCR/auto-create เลือกธนาคารผิด (กรุงไทย → กสิกร) โดยไม่ต้อง void.
     /// ระบบ post correcting-JE: Dr {ผังเก่า} / Cr {ผังใหม่} ขนาด = PaidAmount
@@ -10510,6 +10629,10 @@ public class DocumentService : IDocumentService
                 || source.DocumentType == DocumentType.Expense
                 || source.DocumentType == DocumentType.CertificateInLieu
                 || source.DocumentType == DocumentType.PaymentVoucher);
+            // ผู้ใช้สั่งย้ายฝั่งเอง (ReclassifyCnDnSideAsync) → ชนะทุกการเดา
+            // ต้องอยู่ก่อน fallback ทุกชั้น ไม่งั้นระบบเดาทับเจตนาผู้ใช้
+            if (doc.CnDnPurchaseSideOverride.HasValue)
+                isPurchaseSide = doc.CnDnPurchaseSideOverride.Value;
             // ไม่มีใบต้นทางให้ดูเลย (FK ก็ไม่มี text ref ก็ resolve ไม่ติด) —
             // เดิม default ฝั่งขายเงียบ ๆ เสมอ ทำให้ CN คืนของ supplier ที่อ้าง
             // เลขนอกระบบ ลง Dr 21911 (ลดภาษีขาย) แทน Cr 11610 (ลดภาษีซื้อ)
@@ -10517,7 +10640,7 @@ public class DocumentService : IDocumentService
             // เป็นสัญญาณสุดท้าย: คู่ค้าที่เป็น "ผู้ขายอย่างเดียว" (supplier
             // ไม่ใช่ลูกค้า) → CN/DN ใบนี้คือฝั่งซื้อแน่นอน — เราไม่มีทางออก
             // ใบลดหนี้ "การขาย" ให้คนที่ไม่เคยเป็นลูกค้า
-            if (!isPurchaseSide && source == null)
+            if (!isPurchaseSide && source == null && !doc.CnDnPurchaseSideOverride.HasValue)
             {
                 var contactRole = await _db.Contacts.AsNoTracking()
                     .Where(c => c.Id == doc.ContactId)
@@ -12261,6 +12384,7 @@ public class DocumentService : IDocumentService
         PricesIncludeVat: d.PricesIncludeVat,
         IsForeignService: d.IsForeignService,
         RelatedDocument: upstream,
+        CnDnPurchaseSideOverride: d.CnDnPurchaseSideOverride,
         ConvertedToDocuments: downstream,
         ConversionCompletionPercent: conversionPercent,
         ConversionStatus: conversionStatus,

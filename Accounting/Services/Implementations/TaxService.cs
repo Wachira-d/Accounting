@@ -563,14 +563,17 @@ public partial class TaxService : ITaxService
                 // — CN ที่อ้างต้องลดภาษีซื้อ ไม่ใช่ภาษีขาย (คู่กับ AutoPost ฝั่งซื้อ)
                 // ลำดับความน่าเชื่อถือ: FK ใบต้นทาง → GL (ผังภาษีที่ JE ลงจริง)
                 // ไม่มีทั้งคู่ = คงพฤติกรรมเดิม (ฝั่งขาย) แต่ติดธงไว้เตือนด้านล่าง
+                // ผู้ใช้สั่งย้ายฝั่งเอง = ชนะทุกชั้น (ตอนสั่งย้าย ระบบกลับ JE เดิม
+                // แล้วลงใหม่ให้ตรงฝั่งด้วย รายงานกับ GL จึงยังตรงกันเสมอ)
+                var sideForced = doc.CnDnPurchaseSideOverride;
                 var sideResolvedByFk = doc.RelatedDocumentId.HasValue
                     && relatedDocTypes.ContainsKey(doc.RelatedDocumentId.Value);
-                var isPurchaseSide = sideResolvedByFk
+                var isPurchaseSide = sideForced ?? (sideResolvedByFk
                     ? (relatedDocTypes[doc.RelatedDocumentId!.Value] is DocumentType.PurchaseInvoice
                         or DocumentType.Expense or DocumentType.CertificateInLieu
                         or DocumentType.PaymentVoucher)
-                    : cnDnSideFromGl.GetValueOrDefault(doc.Id, false);
-                var sideUnknown = !sideResolvedByFk && !cnDnSideFromGl.ContainsKey(doc.Id);
+                    : cnDnSideFromGl.GetValueOrDefault(doc.Id, false));
+                var sideUnknown = !sideForced.HasValue && !sideResolvedByFk && !cnDnSideFromGl.ContainsKey(doc.Id);
                 // ชั้นสุดท้าย (ตรงกับ AutoPost): คู่ค้าเป็น supplier อย่างเดียว
                 // = ฝั่งซื้อแน่นอน — เราไม่ออกใบลดหนี้การขายให้คนที่ไม่เคยเป็นลูกค้า
                 if (sideUnknown && doc.Contact is { IsSupplier: true, IsCustomer: false })
@@ -645,12 +648,14 @@ public partial class TaxService : ITaxService
                 // **เพิ่มภาษีขาย** แทนที่จะเพิ่มภาษีซื้อ = นำส่งเกินจริง
                 var dnSideByFk = doc.RelatedDocumentId.HasValue
                     && relatedDocTypes.ContainsKey(doc.RelatedDocumentId.Value);
-                var isPurchaseSide = dnSideByFk
+                // ผู้ใช้สั่งย้ายฝั่งเอง = ชนะทุกชั้น (เหมือนฝั่ง CN)
+                var dnSideForced = doc.CnDnPurchaseSideOverride;
+                var isPurchaseSide = dnSideForced ?? (dnSideByFk
                     ? (relatedDocTypes[doc.RelatedDocumentId!.Value] is DocumentType.PurchaseInvoice
                         or DocumentType.Expense or DocumentType.CertificateInLieu
                         or DocumentType.PaymentVoucher)
-                    : cnDnSideFromGl.GetValueOrDefault(doc.Id, false);
-                var dnSideUnknown = !dnSideByFk && !cnDnSideFromGl.ContainsKey(doc.Id);
+                    : cnDnSideFromGl.GetValueOrDefault(doc.Id, false));
+                var dnSideUnknown = !dnSideForced.HasValue && !dnSideByFk && !cnDnSideFromGl.ContainsKey(doc.Id);
                 // ชั้นสุดท้าย (ตรงกับ AutoPost) — supplier-only = ฝั่งซื้อ
                 if (dnSideUnknown && doc.Contact is { IsSupplier: true, IsCustomer: false })
                 {
