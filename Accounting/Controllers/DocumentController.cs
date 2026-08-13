@@ -572,6 +572,29 @@ public class DocumentController : ControllerBase
             "เปลี่ยนแหล่งเงินสำเร็จ (สร้าง JE คู่ใหม่ลงงวดเดิม)"));
     }
 
+    /// <summary>ย้ายฝั่งใบลดหนี้/ใบเพิ่มหนี้ (ซื้อ ↔ ขาย) หลังอนุมัติ — ใช้เมื่อ
+    /// ใบถูกจัดฝั่งผิดตั้งแต่อนุมัติ ทำให้ยอดไปโผล่ผิดฝั่งในรายงาน ภ.พ.30.
+    /// ระบบกลับ JE เดิมแล้วลงใหม่ให้ถูกฝั่ง (ไม่ใช่ย้ายแค่ตัวเลขในรายงาน —
+    /// ไม่งั้น GL กับแบบยื่นภาษีจะขัดกันเอง). ดู gate ใน
+    /// DocumentService.ReclassifyCnDnSideAsync</summary>
+    [HttpPost("{documentId:guid}/reclassify-cn-side")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ReclassifyCnDnSide(
+        Guid companyId, Guid documentId, [FromBody] ReclassifyCnDnSideRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        // GL + ภ.พ.30 impact → ใช้ permission ระดับเดียวกับ Approve
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์ย้ายฝั่งเอกสาร {docType} (ต้องการ Document.Approve)");
+        var result = await _documentService.ReclassifyCnDnSideAsync(
+            companyId, documentId, request.ToPurchaseSide, request.Reason, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result,
+            $"ย้ายไปฝั่ง{(request.ToPurchaseSide ? "ซื้อ" : "ขาย")}แล้ว — กลับ JE เดิมและลงใหม่ให้ถูกฝั่ง "
+            + "(สร้างรายงานภาษีงวดนี้ใหม่เพื่อให้ยอดตรง)"));
+    }
+
     // ===== Adjusting Journal Lines (Option 1: 3 Dr/1 Cr, 1 Dr/3 Cr, ฯลฯ) =====
     public sealed record AdjustingLineDto(Guid AccountId, decimal DebitAmount,
         decimal CreditAmount, string? Description, Guid? ProjectId, string? Reason);

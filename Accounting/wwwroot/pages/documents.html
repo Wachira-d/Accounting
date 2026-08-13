@@ -3904,6 +3904,21 @@
         }
         const refEl = document.getElementById('fRef');
         if (refEl && !refEl.value) refEl.value = d.documentNumber;
+        // แหล่งเงินตั้งต้น = แหล่งเงินของใบเดิม — ใบลดหนี้/เพิ่มหนี้คือการปรับ
+        // รายการเดียวกัน เงินจึงควรวิ่งเข้า/ออกช่องทางเดิม (คืนเงินเข้าบัญชีที่
+        // จ่ายไป) ผู้ใช้เปลี่ยนเองได้ เติมเฉพาะตอนช่องยังว่าง
+        const payEl = document.getElementById('fPaymentChannel');
+        if (payEl && !payEl.value) {
+          const want = d.paymentAccountId ? `account:${d.paymentAccountId}`
+            : d.bankAccountId ? `bank:${d.bankAccountId}` : '';
+          const opt = want ? [...payEl.options].find(o => o.value === want) : null;
+          if (opt) {
+            payEl.value = want;
+            payEl.dispatchEvent(new Event('change'));
+            const srcName = (opt.textContent || '').trim();
+            Layout.toast(`ตั้งแหล่งเงินตามใบเดิม: ${srcName} (เปลี่ยนได้)`, 'info', 5000);
+          }
+        }
         Layout.toast(`อ้างอิง ${d.documentNumber} แล้ว — แก้บรรทัดเป็นยอดที่${isCn ? 'ลด' : 'เพิ่ม'}จริงก่อนบันทึก`, 'info', 6000);
       },
 
@@ -6142,6 +6157,33 @@
           // it the user issues a Tax Invoice + sees status=Approved and
           // assumes the workflow is done; they don't realize a Receipt
           // still needs to be generated when the customer eventually pays.
+          // ── ใบลดหนี้/เพิ่มหนี้: ผูกใบเดิม + ฝั่งภาษี ──────────────────
+          // §86/9-10 บังคับให้อ้างเลขที่+วันที่ใบกำกับเดิม — ถ้าไม่ผูก FK ไว้
+          // PDF ก็จะไม่มีบรรทัดอ้างอิงนั้นด้วย และระบบต้อง "เดา" ว่าเป็นฝั่งซื้อ
+          // หรือขาย (เดาผิด = ยอดไปโผล่ผิดฝั่งใน ภ.พ.30) จึงต้องบอกให้ชัด
+          if (d.documentType === 'CreditNote' || d.documentType === 'DebitNote') {
+            const typeTh = d.documentType === 'CreditNote' ? 'ใบลดหนี้' : 'ใบเพิ่มหนี้';
+            const sec = d.documentType === 'CreditNote' ? '§86/10' : '§86/9';
+            if (!d.relatedDocumentId) {
+              banners += `<div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
+                ⚠️ <strong>${typeTh}นี้ยังไม่ได้ผูกกับใบกำกับเดิม</strong> — ${sec} บังคับให้อ้างเลขที่+วันที่ใบเดิม
+                <div style="margin-top:3px;color:#334155;background:rgba(255,255,255,.65);border-radius:5px;padding:4px 7px;font-size:11.5px">
+                  👉 <b>ต้องทำ:</b> ช่อง "อ้างอิง" ที่กรอกไว้ (${Layout.esc(d.reference || '-')}) เป็นข้อความเฉย ๆ ไม่ใช่การผูกเอกสาร ·
+                  PDF จะไม่มีบรรทัดอ้างอิงใบเดิมด้วย · ระบบจึงต้องเดาว่าเป็นฝั่งซื้อหรือขาย →
+                  ถ้ายอดไปโผล่ผิดฝั่งใน ภ.พ.30 ให้กด <b>"ย้ายฝั่ง"</b> ด้านล่าง
+                </div>
+              </div>`;
+            }
+            const forced = d.cnDnPurchaseSideOverride;
+            const sideTxt = forced === true ? 'ฝั่งซื้อ (ลดภาษีซื้อ)'
+              : forced === false ? 'ฝั่งขาย (ลดภาษีขาย)' : 'ระบบตัดสินเอง';
+            banners += `<div style="background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span>🧾 ฝั่งภาษีของใบนี้: <b>${sideTxt}</b></span>
+              <button class="btn btn-sm btn-secondary" style="padding:3px 10px;font-size:11.5px"
+                onclick="Page.openCnSideMove('${d.id}', ${forced === true})">↔ ย้ายฝั่ง</button>
+              <span style="color:#64748b;font-size:11px">ระบบจะกลับ JE เดิมแล้วลงใหม่ให้ถูกฝั่ง — งบกับ ภ.พ.30 จึงตรงกันเสมอ</span>
+            </div>`;
+          }
           banners += this._nextStepBanner(d);
           if (d.ocrConfidenceScore != null) {
             const conf = Math.round(d.ocrConfidenceScore * 100);
@@ -7778,6 +7820,37 @@
         } catch (e) {
           const body = document.getElementById('attPreviewBody');
           if (body) body.textContent = 'เปิดไฟล์ไม่สำเร็จ: ' + (e.message || e);
+        }
+      },
+
+      /**
+       * ย้ายฝั่งใบลดหนี้/ใบเพิ่มหนี้ (ซื้อ ↔ ขาย)
+       *
+       * ย้าย "ฝั่ง" ไม่ใช่แค่ย้ายตัวเลขในรายงาน — ฝั่ง server จะกลับ JE เดิม
+       * แล้วลงใหม่ให้ถูกฝั่ง เพื่อให้งบการเงินกับ ภ.พ.30 ตรงกันเสมอ
+       * (ถ้าย้ายแต่รายงาน ตรวจสอบย้อนหลังจะพบว่างบไม่ตรงแบบยื่น)
+       */
+      async openCnSideMove(docId, currentlyPurchase) {
+        const target = !currentlyPurchase;   // สลับไปอีกฝั่ง
+        const targetTxt = target ? 'ฝั่งซื้อ (ลดภาษีซื้อ)' : 'ฝั่งขาย (ลดภาษีขาย)';
+        if (!confirm(
+          `ย้ายเอกสารนี้ไป "${targetTxt}" ?\n\n`
+          + 'ระบบจะ:\n'
+          + '  1) กลับรายการบัญชี (JE) เดิมของใบนี้\n'
+          + '  2) ลงบัญชีใหม่ให้ถูกฝั่ง\n\n'
+          + 'หลังจากนั้นให้กด "สร้างรายงานภาษีใหม่" ของงวดนี้ เพื่อให้ยอดตรง\n'
+          + '(ทำไม่ได้ถ้างวดบัญชีปิดแล้ว / ยื่น ภ.พ.30 แล้ว / ส่ง e-Tax แล้ว)')) return;
+        const reason = prompt('เหตุผลการย้ายฝั่ง (บันทึกลง audit log):', 'ใบถูกจัดฝั่งผิดตอนอนุมัติ');
+        if (reason === null) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/document/${docId}/reclassify-cn-side`,
+            { toPurchaseSide: target, reason: reason.trim() || null });
+          Layout.toast(r?.message || 'ย้ายฝั่งสำเร็จ', 'success', 8000);
+          await this.detail(docId);
+          await this.load();
+        } catch (e) {
+          Layout.toast('ย้ายฝั่งไม่สำเร็จ: ' + (e.message || ''), 'error', 9000);
         }
       },
 

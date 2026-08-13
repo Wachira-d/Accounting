@@ -130,6 +130,12 @@ public interface IDocumentService
     Task<DocumentResponse> ReclassifyPaymentSourceAsync(Guid companyId, Guid documentId,
         Guid? newBankAccountId, Guid? newPaymentAccountId, string? reason, string actor);
 
+    /// <summary>ย้ายฝั่งใบลดหนี้/ใบเพิ่มหนี้ (ซื้อ ↔ ขาย) หลังอนุมัติ — กลับ JE เดิม
+    /// แล้วลงใหม่ให้ถูกฝั่ง เพื่อให้ GL กับรายงาน ภ.พ.30 ตรงกันเสมอ
+    /// (ย้ายแต่ในรายงานอย่างเดียวไม่ได้ — งบกับแบบยื่นจะขัดกันเอง)</summary>
+    Task<DocumentResponse> ReclassifyCnDnSideAsync(Guid companyId, Guid documentId,
+        bool toPurchaseSide, string? reason, string actor);
+
     // ===== Adjusting Journal Lines (Option 1: 3 Dr / 1 Cr และอื่น ๆ) =====
     /// <summary>List adjusting JE lines ที่ผูกกับเอกสาร (sorted by LineOrder)</summary>
     Task<List<Models.Entities.DocumentAdjustingJournalLine>> ListAdjustingJournalLinesAsync(

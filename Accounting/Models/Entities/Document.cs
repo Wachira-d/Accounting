@@ -292,6 +292,17 @@ public class Document : TenantEntity
 
     public Guid? RelatedDocumentId { get; set; }  // e.g. Quotation → Invoice
 
+    /// <summary>ใบลดหนี้/ใบเพิ่มหนี้: บังคับฝั่งด้วยมือ — <c>true</c> = ฝั่งซื้อ
+    /// (ลดภาษีซื้อ 116x), <c>false</c> = ฝั่งขาย (ลดภาษีขาย 2191x),
+    /// <c>null</c> = ให้ระบบตัดสินเอง (ใบต้นทาง → GL → บทบาทคู่ค้า)
+    ///
+    /// <para>มีไว้เพราะ CN/DN ที่ผู้ขายอ้างเลขใบกำกับนอกระบบ อาจถูกจัดฝั่งผิด
+    /// ตั้งแต่ตอนอนุมัติ แล้ว JE ลงผิดฝั่งถาวร — รายงาน ภ.พ.30 ยึด GL เป็นความจริง
+    /// จึงตามไปผิดด้วย และ "สร้างรายงานใหม่" ไม่ช่วย. ค่านี้ให้ผู้ใช้ย้ายฝั่งได้
+    /// โดย <b>ระบบกลับ JE เดิมแล้วลงใหม่ให้ถูกฝั่ง</b> — ไม่ใช่แค่ย้ายตัวเลขใน
+    /// รายงาน (ถ้าย้ายแต่รายงาน งบกับแบบยื่นจะไม่ตรงกัน ตรวจสอบย้อนหลังไม่ได้)</para></summary>
+    public bool? CnDnPurchaseSideOverride { get; set; }
+
     /// <summary>Required when DocumentType = CreditNote — distinguishes the
     /// legal/accounting reason per ประมวลรัษฎากร §82/10. Determines whether
     /// the CN restocks goods (Return only) or is a pure financial adjustment
