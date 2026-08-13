@@ -403,9 +403,14 @@ public class WhtCreditService
         if (string.IsNullOrWhiteSpace(incomeType) || rate <= 0) return null;
         var expected = incomeType.Replace(" ", "") switch
         {
+            // อัตราพิเศษต้องตรวจ "ก่อน" กลุ่มหลัก มิฉะนั้นจะถูก 40(8) กลืนแล้วเตือนผิด
+            var t when t.Contains("โฆษณา") => 2m,                                  // ท.ป.4/2528 ข้อ 10
+            var t when t.Contains("ขนส่ง") => 1m,                                  // ข้อ 12/1 (ไม่ใช่ขนส่งสาธารณะ)
+            var t when t.Contains("40(4)(ข)") || t.Contains("เงินปันผล") => 10m,   // ปันผล ≠ ดอกเบี้ย
             var t when t.Contains("40(2)") || t.Contains("40(7)") || t.Contains("40(8)") => 3m,
             var t when t.Contains("40(3)") || t.Contains("40(6)") => 3m,
             var t when t.Contains("40(5)") => 5m,
+            // 40(4)(ก) ดอกเบี้ย — ผู้รับเป็นนิติบุคคล 1% (บุคคลธรรมดา 15% ไม่ใช่เคสของบริษัท)
             var t when t.Contains("40(4)") => 1m,
             _ => 0m,
         };

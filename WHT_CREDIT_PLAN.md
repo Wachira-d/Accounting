@@ -190,4 +190,4 @@ Notes
 | 4 กระทบยอด 11910 + เตือน | ✅ | `SummaryAsync` (ทะเบียน − GL) + แบนเนอร์เตือน 2 แบบบนหน้าจอ |
 | 5 JE ปิดปี (ใช้เครดิต/ขอคืน/ยกไป/ตัดสูญ) | ✅ | `SettleYearEndAsync` + `POST /wht-credits/settle-year-end` — ลง JE ล้าง 11910 ตามที่ใช้จริง พร้อม guard ห้ามล้างเกินยอดคงเหลือ (ยกไปปีหน้า = ไม่ต้องเรียก) |
 
-_Last verified against codebase: 2026-08-13 — สร้างครบทั้ง 5 เฟส_
+_Last verified against codebase: 2026-08-13 — สร้างครบทั้ง 5 เฟส + OCR 50 ทวิ อ่านประเภทเงินได้_

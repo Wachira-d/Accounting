@@ -2514,6 +2514,8 @@ public class OcrService : IOcrService
             PayerName = result.ExtractedVendorName ?? "",
             PayerTaxId = result.ExtractedVendorTaxId,
             PayerFormType = WhtPayerFormType.Pnd53,
+            // ประเภทเงินได้ — ป้อนให้ CheckRate ตรวจอัตรากับ ท.ป.4/2528 ได้
+            IncomeTypeCode = InferIncomeTypeCode(result.RawTextContent),
             IncomeAmount = baseAmount,
             WhtRate = rateFromScan > 0 ? rateFromScan
                 : (baseAmount > 0 ? Math.Round(whtAmount / baseAmount * 100m, 2) : 0m),
@@ -2582,6 +2584,45 @@ public class OcrService : IOcrService
             || t.Contains("ไม่ครบตามจำนวน") || t.Contains("adjustment"))
             return CreditNoteReason.Adjustment;
         return null;   // ไม่เดา — ผู้ใช้เลือกเองบนฟอร์ม
+    }
+
+    /// <summary>อ่าน "ประเภทเงินได้" จากหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)
+    ///
+    /// <para>ค่านี้เป็น input ของตัวตรวจอัตรา <c>WhtCreditService.CheckRate</c>
+    /// (ท.ป.4/2528) — ถ้าไม่มี ตัวตรวจจะเงียบ แปลว่าผู้จ่ายหักผิดอัตราแล้ว
+    /// ไม่มีอะไรเตือน จนไปเจอตอนกระทบยอดกับ ภ.ง.ด.50</para>
+    ///
+    /// <para><b>กับดัก:</b> แบบ 50 ทวิ ที่เป็นฟอร์มพิมพ์สำเร็จมีหัวข้อ 1–6
+    /// ครบทุกประเภทอยู่บนกระดาษอยู่แล้ว การจับคำตรง ๆ จะเจอทุกประเภทพร้อมกัน
+    /// จึงคืนค่าเฉพาะตอนที่เจอ "กลุ่มเดียว" เท่านั้น — เจอหลายกลุ่ม = อ่านฟอร์ม
+    /// เปล่า ไม่ใช่รายการจริง → คืน null</para>
+    ///
+    /// <para><b>ห้ามเดาจากอัตราที่หัก</b> เพราะจะทำให้ CheckRate ตรวจกับตัวเอง
+    /// แล้วผ่านทุกครั้ง = ปิดตัวตรวจโดยไม่รู้ตัว</para></summary>
+    internal static string? InferIncomeTypeCode(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
+        var t = rawText.ToLowerInvariant().Replace(" ", "");
+
+        // (รหัสที่คืน, คำบ่งชี้) — รหัสต้องอยู่ในรูปที่ CheckRate อ่านออก
+        var families = new (string Code, string[] Markers)[]
+        {
+            ("40(1) เงินเดือน",      new[] { "40(1)", "เงินเดือน", "ค่าจ้าง" }),
+            ("40(2) ค่านายหน้า",     new[] { "40(2)", "ค่านายหน้า", "ค่าธรรมเนียม", "คอมมิชชั่น", "คอมมิชชัน" }),
+            ("40(3) ค่าสิทธิ",       new[] { "40(3)", "ค่าแห่งลิขสิทธิ์", "ค่าสิทธิ", "royalty" }),
+            ("40(4)(ก) ดอกเบี้ย",    new[] { "40(4)(ก)", "ดอกเบี้ย" }),
+            ("40(4)(ข) เงินปันผล",   new[] { "40(4)(ข)", "เงินปันผล", "dividend" }),
+            ("40(5) ค่าเช่า",        new[] { "40(5)", "ค่าเช่า" }),
+            ("40(6) วิชาชีพอิสระ",   new[] { "40(6)", "วิชาชีพอิสระ" }),
+            ("40(7) ค่ารับเหมา",     new[] { "40(7)", "รับเหมา" }),
+            ("40(8) ค่าโฆษณา",       new[] { "ค่าโฆษณา" }),
+            ("40(8) ค่าขนส่ง",       new[] { "ค่าขนส่ง" }),
+            ("40(8) ค่าบริการ",      new[] { "40(8)", "ค่าบริการ", "ค่าจ้างทำของ" }),
+        };
+
+        var hits = families.Where(f => f.Markers.Any(m => t.Contains(m))).Select(f => f.Code).ToList();
+        // เจอกลุ่มเดียวเท่านั้นจึงเชื่อได้ — หลายกลุ่ม = ข้อความหัวฟอร์ม
+        return hits.Count == 1 ? hits[0] : null;
     }
 
     private static string MapAzureDocType(string? azureDocType, string? modelId)
