@@ -613,6 +613,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      → รายงาน P&L ต่อมิติ (`getDimensionPnl`) มีข้อมูลจากเอกสารซื้อ-ขายจริง
    - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
      deposit deferred)
+   - **ผังบัญชีรายบรรทัดต้องอยู่ถูกฝั่ง** — create/update validate ผ่าน
+     `EnsureLineAccountMatchesDocSide` (`DocumentService.cs:241`): เอกสาร
+     ฝั่งขายล้วน (QT/INV/TaxInv/REC/RV/BN/DN-ส่งของ) ห้ามผูกผังหมวด
+     ค่าใช้จ่าย, ฝั่งซื้อล้วนห้ามผูกผังหมวดรายได้ (CN/DN ยกเว้น — สองฝั่ง);
+     ขา Cr รายได้ใน JE มี safety net `RevenueLegAccountId` — บรรทัดเก่า/
+     บรรทัดที่ลอกมาจากการแปลงเอกสารซึ่งติดผังหมวดค่าใช้จ่าย ตกกลับบัญชี
+     รายได้มาตรฐาน + log warning (กัน Cr รายได้เข้า 5xxxx). UI: per-line
+     picker ใช้ datalist ตามฝั่ง (`coaList` ซื้อ / `coaListRevenue` ขาย —
+     `documents.html _syncVatClaimColumn`)
    - **มัดจำ VAT พักรอ (21913) — การแสดงผล ≠ การลงบัญชี**: ใบเสร็จ/ใบสำคัญรับ
      ที่ `IsDeposit && DepositOutputVatDeferred` ยังไม่ใช่ใบกำกับภาษี (tax point
      ยังไม่เกิด §78) → PDF/HTML **ซ่อนบรรทัด "ยอดก่อน VAT" + "VAT 7%"**, หัวเรื่อง
@@ -1739,7 +1748,11 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-07-31 (audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
+_Last verified against codebase: 2026-08-13 (per-line account side guard:_
+_`EnsureLineAccountMatchesDocSide` create/update + `RevenueLegAccountId` JE_
+_safety net + datalist แยกฝั่งใน documents.html — แก้ "ทำใบเสนอราคาแล้วเจอ_
+_ผังค่าใช้จ่ายตอนเพิ่ม item / JE Cr รายได้เข้า 5xxxx") ก่อนหน้า: 2026-07-31_
+_(audit ทีมคิดเคส/ทีมทดสอบ 65 เคส →_
 _แก้ 43 บั๊ก 3 ชุด: CN/DN text-ref resolve+undue VAT accounts+GRN block+qty cap+_
 _FX rate+refund txn; ภ.พ.30 regen snapshot ticks+double-tick guard+warn-line_
 _guard+CF นอกลูป+pastWindow ตามงวด+void→exclude+credit CF on file+deferral เป็น_
