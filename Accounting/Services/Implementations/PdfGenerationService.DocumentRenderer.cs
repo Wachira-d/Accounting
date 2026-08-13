@@ -172,6 +172,7 @@ public partial class PdfGenerationService
                         Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L));
                         Safe(() => ComposeContact(col, doc, template, accent, L));
                         Safe(() => ComposeAdjustmentRef(col, doc, accent, L));
+                        Safe(() => ComposeSupplierInvoiceNote(col, doc, accent, L));
                         Safe(() => ComposeCurrencyNote(col, doc, accent, L));
                         Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, L, layout, accent));
                         Safe(() => ComposeSummary(col, doc, template, accent, layout, L));
@@ -557,6 +558,20 @@ public partial class PdfGenerationService
     /// เลขที่+วันที่ใบกำกับเดิม, มูลค่าตามใบเดิม, มูลค่าที่ถูกต้อง, ผลต่าง (+VAT
     /// ผลต่างอยู่ในตารางสรุปของใบอยู่แล้ว). ข้อมูลจาก transient AdjustmentOriginal*
     /// (โหลดใน ResolveServedAsReceiptAsync) — ใบที่ไม่มี ref จะไม่มีกล่อง.</summary>
+    /// <summary>บรรทัด "เลขที่ใบกำกับภาษีของผู้ขาย" บนเอกสารฝั่งซื้อ — ใบกำกับตัวจริง
+    /// เป็นของผู้ขาย เลขที่ที่ใช้อ้างกับสรรพากร (และที่พิมพ์ในรายงานภาษีซื้อ ภ.พ.30)
+    /// คือเลขของเขา ไม่ใช่เลขรันภายในของเรา — เดิมกระดาษไม่เคยพิมพ์เลขนี้เลย
+    /// จับคู่กับใบกำกับของผู้ขายไม่ได้. mirror ฝั่ง HTML</summary>
+    private static void ComposeSupplierInvoiceNote(ColumnDescriptor col, EntDoc doc, string accent,
+        Accounting.Services.Implementations.Pdf.DocumentLabels L)
+    {
+        if (!IsPurchaseSideDocType(doc.DocumentType)) return;
+        if (string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber)) return;
+        var dt = doc.SupplierTaxInvoiceDate.HasValue ? $"  ·  {L.Date(doc.SupplierTaxInvoiceDate.Value)}" : "";
+        col.Item().PaddingTop(4).Text($"{L.SupplierInvoiceLabel}: {doc.SupplierInvoiceNumber}{dt}")
+            .FontSize(9.5f).Bold().FontColor(accent);
+    }
+
     /// <summary>บรรทัด "สกุลเงิน" สำหรับเอกสารที่ไม่ใช่บาท — เดิม PDF พิมพ์ตัวเลข
     /// เปล่า ๆ ไม่บอกสกุลเงินเลย ผู้อ่านแยกไม่ออกว่า 1,000 คือบาทหรือดอลลาร์
     /// (และ TFRS บทที่ 19 ต้องเห็นอัตราที่ใช้แปลงค่าด้วย)
