@@ -6164,13 +6164,29 @@
           if (d.documentType === 'CreditNote' || d.documentType === 'DebitNote') {
             const typeTh = d.documentType === 'CreditNote' ? 'ใบลดหนี้' : 'ใบเพิ่มหนี้';
             const sec = d.documentType === 'CreditNote' ? '§86/10' : '§86/9';
-            if (!d.relatedDocumentId) {
+            // อ้างอิงใบเดิมตาม §86/9-10 — แสดงเสมอ (ผูกในระบบ / เลขนอกระบบ / ไม่มีเลย)
+            // ให้ตรงกับสิ่งที่พิมพ์ลงกระดาษจริง ผู้ใช้จะได้ไม่ต้องเปิด PDF มาเทียบ
+            const extRef = (d.reference || '').trim();
+            if (d.relatedDocumentId) {
+              banners += `<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+                🔗 อ้างอิงใบเดิม (${sec}): <a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:#047857;font-weight:700">${Layout.esc(d.relatedDocument?.documentNumber || 'เปิดใบต้นทาง')}</a>
+                ${d.relatedDocument?.documentDate ? ` · ลงวันที่ ${Layout.date(d.relatedDocument.documentDate)}` : ''}
+                <span style="color:#047857">— พิมพ์ลงกระดาษให้แล้ว</span>
+              </div>`;
+            } else if (extRef) {
+              banners += `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:9px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+                🔗 อ้างอิงใบเดิม (${sec}): <b>${Layout.esc(extRef)}</b> <span style="color:#b45309">(ใบเดิมอยู่นอกระบบ — พิมพ์เลขที่ลงกระดาษให้แล้ว)</span>
+                <div style="margin-top:3px;color:#334155;background:rgba(255,255,255,.7);border-radius:5px;padding:4px 7px;font-size:11.5px">
+                  👉 ถ้าใบเดิมอยู่ในระบบ แนะนำให้ผูกจริง (แก้ไข → เลือกใบกำกับเดิม) จะได้ทั้งวันที่+มูลค่าใบเดิมบนกระดาษ
+                  และระบบไม่ต้องเดาฝั่งภาษี
+                </div>
+              </div>`;
+            } else {
               banners += `<div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
-                ⚠️ <strong>${typeTh}นี้ยังไม่ได้ผูกกับใบกำกับเดิม</strong> — ${sec} บังคับให้อ้างเลขที่+วันที่ใบเดิม
+                ⚠️ <strong>${typeTh}นี้ไม่มีการอ้างอิงใบกำกับเดิมเลย</strong> — ${sec} บังคับให้ระบุเลขที่ใบเดิม
                 <div style="margin-top:3px;color:#334155;background:rgba(255,255,255,.65);border-radius:5px;padding:4px 7px;font-size:11.5px">
-                  👉 <b>ต้องทำ:</b> ช่อง "อ้างอิง" ที่กรอกไว้ (${Layout.esc(d.reference || '-')}) เป็นข้อความเฉย ๆ ไม่ใช่การผูกเอกสาร ·
-                  PDF จะไม่มีบรรทัดอ้างอิงใบเดิมด้วย · ระบบจึงต้องเดาว่าเป็นฝั่งซื้อหรือขาย →
-                  ถ้ายอดไปโผล่ผิดฝั่งใน ภ.พ.30 ให้กด <b>"ย้ายฝั่ง"</b> ด้านล่าง
+                  👉 <b>ต้องทำ:</b> กด "แก้ไข" → เลือกใบกำกับเดิมในระบบ หรือกรอกเลขที่ใบเดิม (กรณีอยู่นอกระบบ) ·
+                  ตอนนี้กระดาษยังไม่มีบรรทัดอ้างอิง = เอกสารไม่สมบูรณ์ตามกฎหมาย
                 </div>
               </div>`;
             }

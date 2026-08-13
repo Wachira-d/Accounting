@@ -1146,18 +1146,31 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         // ใบลดหนี้/ใบเพิ่มหนี้: โหลดเลขที่+วันที่+มูลค่าใบต้นฉบับ — §86/9-10 บังคับ
         // กระดาษต้องแสดง มูลค่าตามใบเดิม + มูลค่าที่ถูกต้อง + ผลต่าง (ไม่ใช่แค่เลขอ้างอิง)
-        if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
-            && doc.RelatedDocumentId.HasValue)
+        if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote)
         {
-            var orig = await _db.Documents.AsNoTracking()
-                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
-                .Select(d => new { d.DocumentNumber, d.DocumentDate, d.SubTotal })
-                .FirstOrDefaultAsync();
-            if (orig != null)
+            if (doc.RelatedDocumentId.HasValue)
             {
-                doc.AdjustmentOriginalNumber = orig.DocumentNumber;
-                doc.AdjustmentOriginalDate = orig.DocumentDate;
-                doc.AdjustmentOriginalSubTotal = orig.SubTotal;
+                var orig = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => new { d.DocumentNumber, d.DocumentDate, d.SubTotal })
+                    .FirstOrDefaultAsync();
+                if (orig != null)
+                {
+                    doc.AdjustmentOriginalNumber = orig.DocumentNumber;
+                    doc.AdjustmentOriginalDate = orig.DocumentDate;
+                    doc.AdjustmentOriginalSubTotal = orig.SubTotal;
+                }
+            }
+            // ใบเดิม "อยู่นอกระบบ" (ผู้ขายออกใบกำกับของเขา / ข้อมูลก่อนย้ายระบบ) —
+            // ผู้ใช้กรอกเลขไว้ในช่องอ้างอิง. เดิมกล่อง §86/9-10 ขึ้นเฉพาะตอนมี FK
+            // → ใบกลุ่มนี้พิมพ์ออกมา **ไม่มีบรรทัดอ้างอิงใบเดิมเลย** ซึ่งผิดกฎหมาย
+            // (§86/9-10 บังคับให้ระบุเลขที่ใบเดิม ไม่ได้บังคับว่าใบเดิมต้องอยู่ในระบบเรา)
+            // วันที่/มูลค่าใบเดิมไม่รู้ → ปล่อย null ให้ renderer ซ่อนบรรทัดยอดแทน
+            // การพิมพ์ 0.00 ที่ไม่เป็นความจริง
+            if (string.IsNullOrWhiteSpace(doc.AdjustmentOriginalNumber)
+                && !string.IsNullOrWhiteSpace(doc.Reference))
+            {
+                doc.AdjustmentOriginalNumber = doc.Reference!.Trim();
             }
         }
 
@@ -1349,13 +1362,19 @@ public partial class PdfGenerationService : IPdfGenerationService
             && !string.IsNullOrWhiteSpace(doc.AdjustmentOriginalNumber))
         {
             var isCnBox = doc.DocumentType == DocumentType.CreditNote;
+            // รู้มูลค่าใบเดิมเฉพาะตอนใบเดิมอยู่ในระบบ — ใบนอกระบบพิมพ์เฉพาะเลขที่
+            // (พิมพ์ "มูลค่าตามใบเดิม 0.00" คือการพิมพ์ข้อมูลเท็จลงเอกสารภาษี)
+            var hasOrigAmounts = doc.AdjustmentOriginalSubTotal.HasValue;
             var adjOrigBase = doc.AdjustmentOriginalSubTotal ?? 0m;
             var adjCorrected = isCnBox ? adjOrigBase - doc.SubTotal : adjOrigBase + doc.SubTotal;
             var adjOrigDate = doc.AdjustmentOriginalDate?.ToString("dd/MM/yyyy") ?? "-";
             sb.AppendLine("<div style='margin:8px 0;padding:6px 10px;border:1px solid #D1D5DB;background:#FFFBEB;font-size:11px'>");
             sb.AppendLine($"<div style='font-weight:bold'>อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{(isCnBox ? "10" : "9")})</div>");
             sb.AppendLine($"<div>{string.Format(L.CnOriginalNumber, WebUtility.HtmlEncode(doc.AdjustmentOriginalNumber), adjOrigDate)}</div>");
-            sb.AppendLine($"<div>มูลค่าตามใบเดิม: {adjOrigBase:N2} &nbsp;|&nbsp; มูลค่าที่ถูกต้อง: {adjCorrected:N2} &nbsp;|&nbsp; <b>ผลต่าง ({(isCnBox ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}</b></div>");
+            if (hasOrigAmounts)
+                sb.AppendLine($"<div>มูลค่าตามใบเดิม: {adjOrigBase:N2} &nbsp;|&nbsp; มูลค่าที่ถูกต้อง: {adjCorrected:N2} &nbsp;|&nbsp; <b>ผลต่าง ({(isCnBox ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}</b></div>");
+            else
+                sb.AppendLine($"<div><b>มูลค่าที่{(isCnBox ? "ลด" : "เพิ่ม")}: {doc.SubTotal:N2}</b></div>");
             sb.AppendLine("</div>");
         }
 

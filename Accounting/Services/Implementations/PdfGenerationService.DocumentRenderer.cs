@@ -563,6 +563,9 @@ public partial class PdfGenerationService
         if (string.IsNullOrWhiteSpace(doc.AdjustmentOriginalNumber)) return;
 
         var isCn = doc.DocumentType == Accounting.Models.Enums.DocumentType.CreditNote;
+        // ใบเดิมอยู่นอกระบบ = รู้แค่เลขที่ ไม่รู้มูลค่า → ซ่อนแถวยอด แทนการพิมพ์
+        // 0.00 (ข้อมูลเท็จบนเอกสารภาษี) — mirror ฝั่ง HTML
+        var hasOrigAmounts = doc.AdjustmentOriginalSubTotal.HasValue;
         var origBase = doc.AdjustmentOriginalSubTotal ?? 0m;
         var corrected = isCn ? origBase - doc.SubTotal : origBase + doc.SubTotal;
         var origDate = doc.AdjustmentOriginalDate.HasValue
@@ -576,12 +579,16 @@ public partial class PdfGenerationService
                 .FontSize(9.5f).Bold().FontColor(accent);
             cc.Item().Text(string.Format(L.CnOriginalNumber, doc.AdjustmentOriginalNumber, origDate))
                 .FontSize(9.5f).FontColor("#374151");
-            cc.Item().Row(r =>
-            {
-                r.RelativeItem().Text($"{L.CnOriginalValue}: {origBase:N2}").FontSize(9).FontColor("#374151");
-                r.RelativeItem().Text($"{L.CnCorrectedValue}: {corrected:N2}").FontSize(9).FontColor("#374151");
-                r.RelativeItem().Text($"ผลต่าง ({(isCn ? "ลด" : L.CnIncrease)}): {doc.SubTotal:N2}").FontSize(9).Bold().FontColor("#374151");
-            });
+            if (hasOrigAmounts)
+                cc.Item().Row(r =>
+                {
+                    r.RelativeItem().Text($"{L.CnOriginalValue}: {origBase:N2}").FontSize(9).FontColor("#374151");
+                    r.RelativeItem().Text($"{L.CnCorrectedValue}: {corrected:N2}").FontSize(9).FontColor("#374151");
+                    r.RelativeItem().Text($"ผลต่าง ({(isCn ? "ลด" : L.CnIncrease)}): {doc.SubTotal:N2}").FontSize(9).Bold().FontColor("#374151");
+                });
+            else
+                cc.Item().Text($"มูลค่าที่{(isCn ? "ลด" : "เพิ่ม")}: {doc.SubTotal:N2}")
+                    .FontSize(9).Bold().FontColor("#374151");
         });
     }
 
