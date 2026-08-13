@@ -79,6 +79,9 @@ public sealed class DocumentLabels
     public string CnIncrease => this["cn_increase"];
     public string CnOriginalNumber => this["cn_original_number"];
     public string CnOriginalValue => this["cn_original_value"];
+    public string CnReason => this["cn_reason"];
+    public string CurrencyLabel => this["currency_label"];
+    public string FxRateLabel => this["fx_rate_label"];
     public string CnRefOriginal => this["cn_ref_original"];
     public string ColAmount => this["col_amount"];
     public string ColAmountIncl => this["col_amount_incl"];
@@ -184,6 +187,13 @@ public sealed class DocumentLabels
         ["cn_ref_original"] = "อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{0})",
         ["cn_original_number"] = "เลขที่ {0}  ลงวันที่ {1}",
         ["cn_original_value"] = "มูลค่าตามใบเดิม",
+        ["cn_reason"] = "เหตุผล",
+        ["cn_reason_return"] = "คืนสินค้า",
+        ["cn_reason_discount"] = "ส่วนลด / ลดราคา",
+        ["cn_reason_adjustment"] = "ปรับยอด / ค่าสินค้าน้อยกว่าที่ตกลง",
+        ["cn_reason_writeoff"] = "ตัดยอด / ตัดหนี้สูญบางส่วน",
+        ["currency_label"] = "สกุลเงิน",
+        ["fx_rate_label"] = "อัตราแลกเปลี่ยน",
         ["cn_corrected_value"] = "มูลค่าที่ถูกต้อง",
         ["cn_difference"] = "ผลต่าง",
         ["cn_increase"] = "เพิ่ม",
@@ -257,6 +267,13 @@ public sealed class DocumentLabels
         ["cn_ref_original"] = "Reference to original tax invoice (Section 86/{0})",
         ["cn_original_number"] = "No. {0} dated {1}",
         ["cn_original_value"] = "Original value",
+        ["cn_reason"] = "Reason",
+        ["cn_reason_return"] = "Goods return",
+        ["cn_reason_discount"] = "Discount / price reduction",
+        ["cn_reason_adjustment"] = "Adjustment",
+        ["cn_reason_writeoff"] = "Write-off",
+        ["currency_label"] = "Currency",
+        ["fx_rate_label"] = "Exchange rate",
         ["cn_corrected_value"] = "Corrected value",
         ["cn_difference"] = "Difference",
         ["cn_increase"] = "increase",

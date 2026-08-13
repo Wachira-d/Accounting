@@ -1304,6 +1304,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowDocumentDate) sb.AppendLine($"<div>{L.DocDate}: {L.Date(doc.DocumentDate)}</div>");
         if (template.ShowDueDate && doc.DueDate.HasValue) sb.AppendLine($"<div>{L.DueDate}: {L.Date(doc.DueDate!.Value)}</div>");
         if (template.ShowReference && doc.DisplayReference != null) sb.AppendLine($"<div>{L.Reference}: {doc.DisplayReference}</div>");
+        // เอกสารสกุลเงินต่างประเทศ — เดิมพิมพ์ตัวเลขเปล่า ๆ ไม่บอกสกุลเงินเลย
+        // ผู้อ่านแยกไม่ออกว่า 1,000 คือบาทหรือดอลลาร์ (และ TFRS บทที่ 19 ต้องเห็น
+        // อัตราที่ใช้แปลงค่าด้วย)
+        if (!string.IsNullOrWhiteSpace(doc.Currency)
+            && !string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase))
+            sb.AppendLine($"<div><b>{L.CurrencyLabel}: {WebUtility.HtmlEncode(doc.Currency!)}</b>"
+                + (doc.ExchangeRate > 0 && doc.ExchangeRate != 1m ? $" · {L.FxRateLabel} {doc.ExchangeRate:N4}" : "")
+                + "</div>");
         sb.AppendLine("</div>");
 
         // Contact — หัวกล่องตามประเภทเอกสาร (PV = "ผู้รับเงิน" ไม่ใช่ "ลูกค้า")
@@ -1375,6 +1383,10 @@ public partial class PdfGenerationService : IPdfGenerationService
                 sb.AppendLine($"<div>มูลค่าตามใบเดิม: {adjOrigBase:N2} &nbsp;|&nbsp; มูลค่าที่ถูกต้อง: {adjCorrected:N2} &nbsp;|&nbsp; <b>ผลต่าง ({(isCnBox ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}</b></div>");
             else
                 sb.AppendLine($"<div><b>มูลค่าที่{(isCnBox ? "ลด" : "เพิ่ม")}: {doc.SubTotal:N2}</b></div>");
+            // §86/10 บังคับระบุเหตุผลการลดหนี้บนตัวเอกสาร
+            var cnReasonTxt = CreditNoteReasonText(doc.CreditNoteReason, L);
+            if (isCnBox && !string.IsNullOrWhiteSpace(cnReasonTxt))
+                sb.AppendLine($"<div>{L.CnReason}: {WebUtility.HtmlEncode(cnReasonTxt)}</div>");
             sb.AppendLine("</div>");
         }
 
@@ -2244,6 +2256,20 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         if (c[0] != '#') c = "#" + c;
         return Regex.IsMatch(c, "^#[0-9A-Fa-f]{6}$") ? c.ToUpperInvariant() : null;
     }
+
+    /// <summary>เหตุผลการลดหนี้เป็นข้อความ — §86/10 บังคับให้ใบลดหนี้ระบุ
+    /// "เหตุผลในการออกใบลดหนี้" บนตัวเอกสาร. ผู้ใช้เลือกไว้ตอนสร้าง (บังคับก่อน
+    /// อนุมัติ) และเก็บลงฐานแล้ว แต่เดิม<b>ไม่มี renderer ตัวไหนพิมพ์ออกมาเลย</b>
+    /// → กระดาษไม่ครบตามกฎหมายทั้งที่ข้อมูลมีอยู่</summary>
+    internal static string? CreditNoteReasonText(Models.Enums.CreditNoteReason? reason, Pdf.DocumentLabels L)
+        => reason switch
+        {
+            Models.Enums.CreditNoteReason.Return => L["cn_reason_return"],
+            Models.Enums.CreditNoteReason.Discount => L["cn_reason_discount"],
+            Models.Enums.CreditNoteReason.Adjustment => L["cn_reason_adjustment"],
+            Models.Enums.CreditNoteReason.Writeoff => L["cn_reason_writeoff"],
+            _ => null,
+        };
 
     /// <summary>เอกสารที่เป็น "ใบกำกับภาษีเต็มรูป" ตาม §86/4 (รวมใบเพิ่ม/ลดหนี้
     /// §86/9-10 ที่ต้องมีรายการเดียวกัน) — เอกสารกลุ่มนี้ <b>บังคับ</b>แสดงสาขา
