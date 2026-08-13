@@ -814,12 +814,31 @@ public partial class PdfGenerationService
         // preview กับ PDF ตอนอนุมัติตรงกันทุกจุด
         if (t.ShowPaymentTerms
             && (!string.IsNullOrWhiteSpace(doc.PaymentTerms) || doc.CreditDays > 0))
-            col.Item().PaddingTop(8).Background("#F8F9FA").Padding(10).Text(tt =>
+        {
+            // PaymentTerms เก็บได้หลายบรรทัด (1 เงื่อนไข/บรรทัด — ฟอร์มให้เพิ่ม/
+            // ลบรายข้อ) บรรทัดเดียวคงรูปแบบเดิม, หลายบรรทัดแตกเป็น bullet ให้
+            // อ่านง่ายเท่าฝั่ง HTML (draft preview ต้องตรงกับ PDF ตัวจริง)
+            var creditTxt = doc.CreditDays > 0 ? $" (เครดิต {doc.CreditDays} วัน)" : "";
+            var termLines = (doc.PaymentTerms ?? "")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            col.Item().PaddingTop(8).Background("#F8F9FA").Padding(10).Column(pc =>
             {
-                tt.Span("เงื่อนไขการชำระเงิน: ").Bold().FontSize(10);
-                tt.Span((doc.PaymentTerms ?? "")
-                    + (doc.CreditDays > 0 ? $" (เครดิต {doc.CreditDays} วัน)" : "")).FontSize(10);
+                if (termLines.Length <= 1)
+                {
+                    pc.Item().Text(tt =>
+                    {
+                        tt.Span("เงื่อนไขการชำระเงิน: ").Bold().FontSize(10);
+                        tt.Span((termLines.FirstOrDefault() ?? "") + creditTxt).FontSize(10);
+                    });
+                }
+                else
+                {
+                    pc.Item().Text($"เงื่อนไขการชำระเงิน:{creditTxt}").Bold().FontSize(10);
+                    foreach (var ln in termLines)
+                        pc.Item().Text("• " + ln).FontSize(10);
+                }
             });
+        }
 
         // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — เดิมไม่ถูก
         // render บน PDF (แสดงแต่ CustomFooterNotes). QuestPDF Text รองรับ \n →

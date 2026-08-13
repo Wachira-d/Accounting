@@ -292,7 +292,50 @@ public record DocumentTemplateResponse(
     string? HeaderBackgroundColor = null,
     string? TableStripedColor = null,
     string? TitleFontSize = null,
-    string? BodyFontSize = null);
+    string? BodyFontSize = null,
+    // โรคเดียวกันรอบสอง (checkbox คราวนี้): response ขาด field กลุ่มข้อมูล
+    // คู่ค้า/บริษัท/สรุปยอด/ลายเซ็น/ตราประทับ/ขอบกระดาษ → หน้าปรับแต่งโหลด
+    // undefined → checkbox หลุดหมด "ไม่ตรงกับเอกสารจริง" และถ้ากดบันทึกทับ
+    // = ปิดการแสดงข้อมูลบน PDF จริงโดยไม่ตั้งใจ. ใส่ให้ **ครบทุก field ที่
+    // entity มีและฟอร์มใช้** — field ใหม่ต้องต่อท้ายเป็น optional เสมอ
+    bool ShowCompanyNameEn = false,
+    bool ShowCompanyPhone = true,
+    bool ShowCompanyEmail = true,
+    bool ShowContactTaxId = true,
+    bool ShowContactBranch = true,
+    bool ShowContactAddress = true,
+    bool ShowContactPhone = true,
+    bool ShowContactEmail = true,
+    string? ContactSectionTitle = null,
+    string? ContactSectionTitleEn = null,
+    bool ShowItemCode = false,
+    bool ShowSubTotal = true,
+    bool ShowDiscountTotal = true,
+    bool ShowVatSummary = true,
+    bool ShowWithholdingTaxSummary = true,
+    string? AmountInWordsLanguage = null,
+    string? FooterNotesEn = null,
+    string? BankDetailsText = null,
+    string? BankDetailsTextEn = null,
+    string? SignatureLabel1 = null,
+    string? SignatureLabel2 = null,
+    string? SignatureLabel3 = null,
+    string? SignatureLabel1En = null,
+    string? SignatureLabel2En = null,
+    string? SignatureLabel3En = null,
+    bool ShowCompanyStamp = true,
+    string? StampImagePath = null,
+    decimal LogoWidth = 60,
+    decimal LogoHeight = 30,
+    decimal MarginTop = 15,
+    decimal MarginBottom = 15,
+    decimal MarginLeft = 15,
+    decimal MarginRight = 15,
+    string? HeaderTextColor = null,
+    bool ShowDocumentNumber = true,
+    bool ShowDocumentDate = true,
+    bool ShowDueDate = true,
+    bool ShowReference = true);
 
 public record DocumentTemplateListResponse(
     Guid Id,

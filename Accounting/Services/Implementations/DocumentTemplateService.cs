@@ -213,6 +213,9 @@ public class DocumentTemplateService : IDocumentTemplateService
             SignatureLabel1 = source.SignatureLabel1,
             SignatureLabel2 = source.SignatureLabel2,
             SignatureLabel3 = source.SignatureLabel3,
+            SignatureLabel1En = source.SignatureLabel1En,
+            SignatureLabel2En = source.SignatureLabel2En,
+            SignatureLabel3En = source.SignatureLabel3En,
             ShowCompanyStamp = source.ShowCompanyStamp,
             StampImagePath = source.StampImagePath,
             ShowWatermark = source.ShowWatermark,
@@ -227,9 +230,12 @@ public class DocumentTemplateService : IDocumentTemplateService
             Language = source.Language,
             ShowBilingual = source.ShowBilingual,
             IsEtaxTemplate = source.IsEtaxTemplate,
+            EtaxServiceProvider = source.EtaxServiceProvider,
+            AutoGenerateEtaxXml = source.AutoGenerateEtaxXml,
             ShowQrCode = source.ShowQrCode,
             QrCodeType = source.QrCodeType,
             PromptPayId = source.PromptPayId,
+            QrCodeCustomData = source.QrCodeCustomData,
             DefaultCopies = source.DefaultCopies,
             CopyLabels = source.CopyLabels
         };
@@ -344,6 +350,10 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.SignatureLabel1 != null) t.SignatureLabel1 = r.SignatureLabel1;
         if (r.SignatureLabel2 != null) t.SignatureLabel2 = r.SignatureLabel2;
         if (r.SignatureLabel3 != null) t.SignatureLabel3 = r.SignatureLabel3;
+        // ป้ายลายเซ็นภาษาอังกฤษ — DTO รับมาแต่เดิมไม่เคย apply → ตั้งค่าแล้วหาย
+        if (r.SignatureLabel1En != null) t.SignatureLabel1En = r.SignatureLabel1En;
+        if (r.SignatureLabel2En != null) t.SignatureLabel2En = r.SignatureLabel2En;
+        if (r.SignatureLabel3En != null) t.SignatureLabel3En = r.SignatureLabel3En;
         if (r.ShowCompanyStamp.HasValue) t.ShowCompanyStamp = r.ShowCompanyStamp.Value;
         // Empty string clears the stamp; null = no change (partial-update convention).
         if (r.StampImagePath != null) t.StampImagePath = string.IsNullOrWhiteSpace(r.StampImagePath) ? null : r.StampImagePath.Trim();
@@ -433,6 +443,10 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.SignatureLabel1 != null) t.SignatureLabel1 = r.SignatureLabel1;
         if (r.SignatureLabel2 != null) t.SignatureLabel2 = r.SignatureLabel2;
         if (r.SignatureLabel3 != null) t.SignatureLabel3 = r.SignatureLabel3;
+        // ป้ายลายเซ็นภาษาอังกฤษ — DTO รับมาแต่เดิมไม่เคย apply → ตั้งค่าแล้วหาย
+        if (r.SignatureLabel1En != null) t.SignatureLabel1En = r.SignatureLabel1En;
+        if (r.SignatureLabel2En != null) t.SignatureLabel2En = r.SignatureLabel2En;
+        if (r.SignatureLabel3En != null) t.SignatureLabel3En = r.SignatureLabel3En;
         if (r.ShowCompanyStamp.HasValue) t.ShowCompanyStamp = r.ShowCompanyStamp.Value;
         // Empty string clears the stamp; null = no change (partial-update convention).
         if (r.StampImagePath != null) t.StampImagePath = string.IsNullOrWhiteSpace(r.StampImagePath) ? null : r.StampImagePath.Trim();
@@ -472,5 +486,21 @@ public class DocumentTemplateService : IDocumentTemplateService
         t.IsEtaxTemplate, t.AutoGenerateEtaxXml, t.DefaultCopies, t.CreatedAt,
         t.ShowWatermark, t.WatermarkText, t.WatermarkOpacity, t.CopyLabelPosition,
         t.PrimaryColor, t.AccentColor, t.TableHeaderTextColor, t.HeaderBackgroundColor,
-        t.TableStripedColor, t.TitleFontSize, t.BodyFontSize);
+        t.TableStripedColor, t.TitleFontSize, t.BodyFontSize,
+        // ส่งครบทุก field ที่หน้า editor ใช้ — ดู comment ใน DTO
+        t.ShowCompanyNameEn, t.ShowCompanyPhone, t.ShowCompanyEmail,
+        t.ShowContactTaxId, t.ShowContactBranch, t.ShowContactAddress,
+        t.ShowContactPhone, t.ShowContactEmail,
+        t.ContactSectionTitle, t.ContactSectionTitleEn,
+        t.ShowItemCode,
+        t.ShowSubTotal, t.ShowDiscountTotal, t.ShowVatSummary,
+        t.ShowWithholdingTaxSummary, t.AmountInWordsLanguage,
+        t.FooterNotesEn, t.BankDetailsText, t.BankDetailsTextEn,
+        t.SignatureLabel1, t.SignatureLabel2, t.SignatureLabel3,
+        t.SignatureLabel1En, t.SignatureLabel2En, t.SignatureLabel3En,
+        t.ShowCompanyStamp, t.StampImagePath,
+        t.LogoWidth, t.LogoHeight,
+        t.MarginTop, t.MarginBottom, t.MarginLeft, t.MarginRight,
+        t.HeaderTextColor,
+        t.ShowDocumentNumber, t.ShowDocumentDate, t.ShowDueDate, t.ShowReference);
 }

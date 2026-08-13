@@ -1483,9 +1483,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowPaymentTerms
             && (!string.IsNullOrWhiteSpace(doc.PaymentTerms) || doc.CreditDays > 0))
         {
+            // PaymentTerms เป็นได้หลายบรรทัด (1 เงื่อนไข/บรรทัด — ฟอร์มให้เพิ่ม/
+            // ลบรายข้อ) → white-space:pre-line ให้ขึ้นบรรทัดตามที่ผู้ใช้ตั้ง
             var termsTxt = System.Net.WebUtility.HtmlEncode(doc.PaymentTerms ?? "");
             var creditTxt = doc.CreditDays > 0 ? $" (เครดิต {doc.CreditDays} วัน)" : "";
-            sb.AppendLine($"<div class='bank-details'><strong>เงื่อนไขการชำระเงิน:</strong> {termsTxt}{creditTxt}</div>");
+            sb.AppendLine($"<div class='bank-details'><strong>เงื่อนไขการชำระเงิน:{creditTxt}</strong><div style='white-space:pre-line'>{termsTxt}</div></div>");
         }
 
         // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — white-space:
