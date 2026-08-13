@@ -3849,11 +3849,22 @@
             if (d.documentType === 'PaymentVoucher') return !d.relatedDocumentId;
             return false;
           });
+          // เอกสารฝั่งซื้อ: ใบกำกับภาษีตัวจริงเป็นของผู้ขาย ผู้ใช้จำ/ค้นด้วย
+          // "เลขใบกำกับผู้ขาย" (เช่น RT69/00013) ไม่ใช่เลขรันภายในเรา (EXP-…)
+          // และเลขนั้นคือเลขที่จะถูกพิมพ์อ้างอิงบนใบลดหนี้ตาม §86/9-10 ด้วย
+          const purchaseTypes = ['PurchaseInvoice', 'Expense', 'PaymentVoucher', 'CertificateInLieu'];
           items.forEach(d => {
             this._cnSourceCache[d.id] = d;
             const o = document.createElement('option');
             o.value = d.id;
-            o.textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber} · ${Layout.money(d.totalAmount)} (${Layout.date(d.documentDate)})`;
+            let supplierPart = '';
+            if (purchaseTypes.includes(d.documentType)) {
+              supplierPart = d.supplierInvoiceNumber
+                ? ` · ใบกำกับผู้ขาย ${d.supplierInvoiceNumber}`
+                : ' · (ยังไม่ได้ระบุเลขใบกำกับผู้ขาย)';
+            }
+            o.textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}${supplierPart}`
+              + ` · ${Layout.money(d.totalAmount)} (${Layout.date(d.documentDate)})`;
             sel.appendChild(o);
           });
           if (!items.length) {
@@ -3880,9 +3891,18 @@
         } catch { /* ใช้ข้อมูลจาก list ต่อ (ไม่เติมบรรทัด) */ }
         if (!d) return;
         const isCn = document.getElementById('fDocType')?.value === 'CreditNote';
+        // เลขที่จะถูกพิมพ์อ้างอิงบนกระดาษจริง: ฝั่งซื้อใช้เลขใบกำกับของผู้ขาย
+        // (ใบกำกับตัวจริงเป็นของเขา) — ตรงกับที่ยื่นในรายงานภาษีซื้อ ภ.พ.30
+        const srcIsPurchase = ['PurchaseInvoice', 'Expense', 'PaymentVoucher', 'CertificateInLieu']
+          .includes(d.documentType);
+        const printedRef = (srcIsPurchase && d.supplierInvoiceNumber)
+          ? d.supplierInvoiceNumber : d.documentNumber;
         if (h) {
           h.style.display = '';
-          h.innerHTML = `✅ อ้างอิง <b>${Layout.esc(d.documentNumber)}</b> · มูลค่าใบเดิม (ฐาน) ${Layout.money(d.subTotal)} + VAT ${Layout.money(d.vatAmount)}<br>`
+          const _refNote = (srcIsPurchase && d.supplierInvoiceNumber)
+            ? ` <span style="color:#64748b">(เลขใบกำกับของผู้ขาย — เลขที่พิมพ์อ้างอิงบนใบนี้และในรายงานภาษีซื้อ)</span>`
+            : (srcIsPurchase ? ` <span style="color:#b45309">(ใบเดิมยังไม่ได้ระบุเลขใบกำกับผู้ขาย — กระดาษจะอ้างเลขภายในของเราแทน)</span>` : '');
+          h.innerHTML = `✅ อ้างอิง <b>${Layout.esc(printedRef)}</b>${_refNote} · มูลค่าใบเดิม (ฐาน) ${Layout.money(d.subTotal)} + VAT ${Layout.money(d.vatAmount)}<br>`
             + `บรรทัดถูกเติมด้วยยอดเต็มใบเดิม — <b>แก้เป็นยอดที่${isCn ? 'ลด' : 'เพิ่ม'}จริง</b>ก่อนบันทึก `
             + `(กระดาษจะพิมพ์กล่อง มูลค่าเดิม/มูลค่าที่ถูกต้อง/ผลต่าง ให้อัตโนมัติ${isCn ? ' + ระบบกันยอดลดรวมเกินใบเดิม' : ''})`;
         }
@@ -3903,7 +3923,9 @@
           this.calcSum?.();
         }
         const refEl = document.getElementById('fRef');
-        if (refEl && !refEl.value) refEl.value = d.documentNumber;
+        // ช่อง "อ้างอิง" เติมด้วยเลขเดียวกับที่จะพิมพ์บนกระดาษ/ยื่น ภ.พ.30
+        // (ฝั่งซื้อ = เลขใบกำกับผู้ขาย) — ไม่งั้นหน้าจอกับกระดาษอ้างคนละเลข
+        if (refEl && !refEl.value) refEl.value = printedRef;
         // แหล่งเงินตั้งต้น = แหล่งเงินของใบเดิม — ใบลดหนี้/เพิ่มหนี้คือการปรับ
         // รายการเดียวกัน เงินจึงควรวิ่งเข้า/ออกช่องทางเดิม (คืนเงินเข้าบัญชีที่
         // จ่ายไป) ผู้ใช้เปลี่ยนเองได้ เติมเฉพาะตอนช่องยังว่าง
@@ -3919,7 +3941,7 @@
             Layout.toast(`ตั้งแหล่งเงินตามใบเดิม: ${srcName} (เปลี่ยนได้)`, 'info', 5000);
           }
         }
-        Layout.toast(`อ้างอิง ${d.documentNumber} แล้ว — แก้บรรทัดเป็นยอดที่${isCn ? 'ลด' : 'เพิ่ม'}จริงก่อนบันทึก`, 'info', 6000);
+        Layout.toast(`อ้างอิง ${printedRef} แล้ว — แก้บรรทัดเป็นยอดที่${isCn ? 'ลด' : 'เพิ่ม'}จริงก่อนบันทึก`, 'info', 6000);
       },
 
       _fillSupplierTaxIdFromContact(force = false) {
