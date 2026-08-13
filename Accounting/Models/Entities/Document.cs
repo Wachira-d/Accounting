@@ -116,6 +116,25 @@ public class Document : TenantEntity
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public decimal? AdjustmentOriginalSubTotal { get; set; }
 
+    /// <summary>Transient — เลขเอกสารต้นทาง "ในระบบเรา" (เช่น EXP-20260721-0001)
+    /// เมื่อมันไม่ใช่ตัวเดียวกับเลขที่อ้างตามกฎหมาย
+    ///
+    /// <para>ฝั่งซื้อ เลขที่อ้างตาม §86/9-10 คือ<b>เลขใบกำกับของผู้ขาย</b> แต่คนทำบัญชี
+    /// ยังต้องตามรอยกลับมาที่เอกสารในระบบเราได้ด้วย จึงพิมพ์ทั้งสองเลข:
+    /// บรรทัดบน = เลขตามกฎหมาย, บรรทัดล่าง = เลขในระบบ (audit trail)</para>
+    ///
+    /// <para>null เมื่อทั้งสองเป็นเลขเดียวกัน (ฝั่งขาย หรือใบซื้อที่ไม่มีใบกำกับ)</para></summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? AdjustmentOriginalOurNumber { get; set; }
+
+    /// <summary>Transient — ใบต้นทางมี VAT หรือไม่ (ตัดสินหัวเรื่องกล่องอ้างอิง)
+    ///
+    /// <para>ใบซื้อที่ไม่มี VAT ไม่มี "ใบกำกับภาษี" ให้อ้าง — การพิมพ์หัวว่า
+    /// "อ้างอิงใบกำกับภาษีเดิม (§86/10)" จึงไม่จริง ต้องใช้ "อ้างอิงเอกสารต้นฉบับ"
+    /// แทน (§86/10 บังคับเฉพาะใบลดหนี้ที่เกี่ยวกับภาษีมูลค่าเพิ่ม)</para></summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public bool AdjustmentOriginalHasVat { get; set; }
+
     /// <summary>ขายเงินสด B2B (integration isCashSale) — ใบกำกับภาษีที่รับชำระครบ
     /// พร้อมออก ทำหน้าที่เป็น "ใบเสร็จรับเงิน/ใบกำกับภาษี" ในตัว. persist (ต่างจาก
     /// ServedAsReceipt ที่คำนวณตอน render) เพราะ e-Tax generator ต้องรู้ตอน export

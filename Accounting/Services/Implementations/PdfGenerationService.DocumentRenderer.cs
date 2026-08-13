@@ -608,10 +608,17 @@ public partial class PdfGenerationService
         col.Item().PaddingTop(6).Border(1).BorderColor("#D1D5DB").Background("#FFFBEB")
             .PaddingVertical(5).PaddingHorizontal(9).Column(cc =>
         {
-            cc.Item().Text($"อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{(isCn ? "10" : "9")})")
+            // มี VAT = อ้างใบกำกับภาษีตาม §86/9-10; ไม่มี VAT = ไม่มีใบกำกับให้อ้าง
+            // → "เอกสารต้นฉบับ" (mirror ฝั่ง HTML — ห้ามพิมพ์คำว่าใบกำกับทั้งที่ไม่มี)
+            cc.Item().Text(doc.AdjustmentOriginalHasVat
+                    ? $"อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{(isCn ? "10" : "9")})"
+                    : "อ้างอิงเอกสารต้นฉบับ")
                 .FontSize(9.5f).Bold().FontColor(accent);
             cc.Item().Text(string.Format(L.CnOriginalNumber, doc.AdjustmentOriginalNumber, origDate))
                 .FontSize(9.5f).FontColor("#374151");
+            if (!string.IsNullOrWhiteSpace(doc.AdjustmentOriginalOurNumber))
+                cc.Item().Text($"{L.OurDocRefLabel}: {doc.AdjustmentOriginalOurNumber}")
+                    .FontSize(9).FontColor("#4B5563");
             if (hasOrigAmounts)
                 cc.Item().Row(r =>
                 {

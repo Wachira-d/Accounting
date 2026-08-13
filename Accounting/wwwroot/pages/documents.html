@@ -544,12 +544,12 @@
             <select id="fCnSourceDoc" class="form-select" style="margin-top:6px" onchange="Page.onCnSourceSelect()">
               <option value="">— เลือกเอกสารเดิมของคู่ค้ารายนี้ —</option>
             </select>
-            <input type="text" id="fCnExternalRef" class="form-input" style="margin-top:6px" placeholder="หรือกรอกเลขที่ใบกำกับเดิม (กรณีใบเดิมอยู่นอกระบบ/ก่อนย้ายข้อมูล)" oninput="if(this.value){document.getElementById('fCnSourceDoc').value='';Page._cnSourceId=null;const h=document.getElementById('cnSourceHint');if(h)h.style.display='none';}">
+            <input type="text" id="fCnExternalRef" class="form-input" style="margin-top:6px" placeholder="หรือกรอกเลขที่ใบกำกับเดิม (กรณีใบเดิมอยู่นอกระบบ/ก่อนย้ายข้อมูล)" oninput="if(this.value){document.getElementById('fCnSourceDoc').value='';Page._cnSourceId=null;const h=document.getElementById('cnSourceHint');if(h)h.style.display='none';Page._refreshCnSideEditability();}">
             <div id="cnSourceHint" style="display:none;color:#9a3412;font-size:12px;margin-top:6px;line-height:1.6"></div>
             <!-- ฝั่งภาษีของใบลดหนี้/เพิ่มหนี้ — เลือกให้ชัดตั้งแต่ตอนสร้าง
                  แทนที่จะให้ระบบเดาตอนอนุมัติ (การเดาผิดทำให้ JE ลงผิดฝั่งถาวร
                  แล้วยอดไปโผล่ผิดฝั่งใน ภ.พ.30 — แก้ทีหลังต้องกลับ JE) -->
-            <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #fdba74">
+            <div id="cnSideBox" style="margin-top:8px;padding-top:8px;border-top:1px dashed #fdba74">
               <div style="font-weight:600;color:#9a3412;font-size:12.5px;margin-bottom:4px">ใบนี้เป็นฝั่งไหน *</div>
               <label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;margin-right:16px;cursor:pointer">
                 <input type="radio" name="fCnSide" value="sales" checked onchange="Page.onCnSideChange()"> ขาย — เราออกให้ลูกค้า (ลดภาษีขาย)
@@ -3912,6 +3912,19 @@
         if (el) el.checked = true;
         this.onCnSideChange(note, opts);
       },
+      /** ฝั่งถูกกำหนดโดยใบต้นทางแล้วหรือยัง — ถ้าใช่ ไม่ต้องให้ผู้ใช้เลือกซ้ำ
+       *  (ใบต้นทางเป็นใบซื้อ ใบลดหนี้ก็เป็นฝั่งซื้อเสมอ ไม่มีทางเป็นอย่างอื่น) */
+      _refreshCnSideEditability() {
+        const box = document.getElementById('cnSideBox');
+        if (!box) return;
+        const locked = !!this._cnSourceId;   // เลือกใบต้นทางในระบบไว้แล้ว
+        box.querySelectorAll('input[name="fCnSide"]').forEach(r => { r.disabled = locked; });
+        box.style.opacity = locked ? '.75' : '';
+        const title = box.querySelector('div');
+        if (title) title.textContent = locked
+          ? 'ฝั่งของใบนี้ (ตั้งตามใบต้นทางอัตโนมัติ)'
+          : 'ใบนี้เป็นฝั่งไหน *';
+      },
       onCnSideChange(note, opts = {}) {
         const h = document.getElementById('cnSideHint');
         if (!h) return;
@@ -3932,13 +3945,18 @@
         // ฝั่งซื้อ = ตารางรายการใช้ราคาทุน + คอลัมน์เคลม VAT ต้องโผล่
         const tbl = document.getElementById('linesTable');
         if (tbl) tbl.dataset.docSide = isPurchase ? 'expense' : 'revenue';
+        this._refreshCnSideEditability();
       },
 
       async onCnSourceSelect() {
         const id = document.getElementById('fCnSourceDoc')?.value || '';
         const h = document.getElementById('cnSourceHint');
         this._cnSourceId = id || null;
-        if (!id) { if (h) h.style.display = 'none'; return; }
+        if (!id) {
+          if (h) h.style.display = 'none';
+          this._refreshCnSideEditability();   // ไม่มีใบต้นทางแล้ว → เลือกฝั่งเองได้
+          return;
+        }
         const x = document.getElementById('fCnExternalRef'); if (x) x.value = '';
         let d = this._cnSourceCache[id];
         // list ไม่มี lines — ดึง detail มาเติมบรรทัดให้แก้เป็นยอดลด/เพิ่มจริง
