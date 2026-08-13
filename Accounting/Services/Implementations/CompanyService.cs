@@ -592,14 +592,15 @@ public class CompanyService : ICompanyService
             c.FiscalYearStartMonth, c.IsSetupComplete, sub);
     }
 
+    /// <summary>ประกอบ Company.Address (free-text) จาก structured fields — ที่อยู่
+    /// บริษัทคือ "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" บน 50 ทวิ และผู้ขายบนใบกำกับ §86/4
+    /// จึงต้องมีคำนำหน้า ต./อ./จ. (แขวง/เขต สำหรับ กทม.) ตั้งแต่ตอนเขียนลงฐาน
+    /// — เดิม join ด้วยช่องว่างเปล่า ๆ (ดู <see cref="ThaiAddressFormatter"/>)</summary>
     private static string? ComposeAddress(Company c)
     {
-        var parts = new[] { c.BuildingNumber, c.BuildingName,
-            string.IsNullOrEmpty(c.Moo) ? null : "หมู่ " + c.Moo,
-            string.IsNullOrEmpty(c.StreetName) ? null : "ถ." + c.StreetName,
-            c.SubDistrict, c.District, c.Province, c.PostalCode }
-            .Where(s => !string.IsNullOrWhiteSpace(s));
-        var joined = string.Join(" ", parts);
-        return string.IsNullOrEmpty(joined) ? null : joined;
+        var joined = ThaiAddressFormatter.Format(
+            null, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
+            c.SubDistrict, c.District, c.Province, c.PostalCode);
+        return string.IsNullOrWhiteSpace(joined) ? null : joined;
     }
 }

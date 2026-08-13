@@ -7748,15 +7748,17 @@ public class DocumentService : IDocumentService
         return MapContactToResponse(contact);
     }
 
+    /// <summary>ประกอบ Contact.Address (free-text) จาก structured fields — ค่านี้
+    /// ถูก "บันทึกลงฐาน" และไหลไปทุกเอกสาร/รายงาน/e-Tax ต่อ จึงต้องมีคำนำหน้า
+    /// ต./อ./จ. (หรือ แขวง/เขต สำหรับ กทม.) ตั้งแต่ตอนเขียน — เดิม join ด้วย
+    /// ช่องว่างเปล่า ๆ ทำให้ที่อยู่ไม่มีคำนำหน้าถูกฝังลงฐานถาวร แล้วโผล่บน
+    /// หนังสือรับรองหัก ณ ที่จ่าย / ใบกำกับภาษี ผิดข้อกำหนดเอกสารราชการ</summary>
     private static string? ComposeAddress(Contact c)
     {
-        var parts = new[] { c.BuildingNumber, c.BuildingName,
-            string.IsNullOrEmpty(c.Moo) ? null : "หมู่ " + c.Moo,
-            string.IsNullOrEmpty(c.StreetName) ? null : "ถ." + c.StreetName,
-            c.SubDistrict, c.District, c.Province, c.PostalCode }
-            .Where(s => !string.IsNullOrWhiteSpace(s));
-        var joined = string.Join(" ", parts);
-        return string.IsNullOrEmpty(joined) ? null : joined;
+        var joined = ThaiAddressFormatter.Format(
+            null, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
+            c.SubDistrict, c.District, c.Province, c.PostalCode);
+        return string.IsNullOrWhiteSpace(joined) ? null : joined;
     }
 
     private static bool NeedsAutoParse(CreateContactRequest r) =>
