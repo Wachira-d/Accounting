@@ -3855,14 +3855,23 @@
           // ขาย = ใบกำกับ/ใบรวม + ใบเสร็จที่เป็นใบกำกับในตัว (มี VAT หรือ standalone)
           // ซื้อ = PI/Expense + PV standalone (จ่ายทันที ไม่ได้อ้างใบตั้งหนี้)
           // ตัด: มัดจำ (ใช้เมนูคืนมัดจำ), ใบเสร็จหลักฐานรับเงินเปล่า, PV settlement
+          // ⚠️ ต้องกรองตาม "ฝั่ง" ที่เลือกไว้ด้วย — เดิมลิสต์รวมทั้งใบขายและใบซื้อ
+          // ปนกัน ทำให้ใบลดหนี้ฝั่งขายเลือกอ้างใบกำกับ "ซื้อ" ได้ (เอกสารขัดกันเอง:
+          // JE ลงฝั่งหนึ่ง แต่ใบต้นทางอยู่อีกฝั่ง → ภ.พ.30 หักผิดฝั่ง)
+          const wantPurchase = this._cnSideIsPurchase();
           const items = (res.data?.items || res.data || []).filter(d => {
             if (!['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'].includes(d.status)) return false;
             if (d.isDeposit) return false;
+            if (wantPurchase) {
+              // ฝั่งซื้อ: ใบกำกับของผู้ขายที่เราบันทึกไว้ (PI/Expense/PV จ่ายทันที)
+              if (['PurchaseInvoice', 'Expense'].includes(d.documentType)) return true;
+              if (d.documentType === 'PaymentVoucher') return !d.relatedDocumentId;
+              return false;
+            }
+            // ฝั่งขาย: ใบกำกับที่เราออกเอง + ใบเสร็จที่เป็นใบกำกับในตัว
             if (d.documentType === 'TaxInvoice') return true;
             if (['Receipt', 'ReceiptVoucher'].includes(d.documentType))
               return Number(d.vatAmount) > 0.005 || !d.relatedDocumentId;
-            if (['PurchaseInvoice', 'Expense'].includes(d.documentType)) return true;
-            if (d.documentType === 'PaymentVoucher') return !d.relatedDocumentId;
             return false;
           });
           // เอกสารฝั่งซื้อ: ใบกำกับภาษีตัวจริงเป็นของผู้ขาย ผู้ใช้จำ/ค้นด้วย
@@ -3886,7 +3895,9 @@
           if (!items.length) {
             const o = document.createElement('option');
             o.disabled = true;
-            o.textContent = '(ไม่มีใบกำกับ/เอกสารที่อ้างได้ในระบบ — กรอกเลขใบเดิมในช่องด้านล่างแทน)';
+            o.textContent = wantPurchase
+              ? '(ไม่มีใบกำกับซื้อของคู่ค้ารายนี้ในระบบ — กรอกเลขใบกำกับของผู้ขายในช่องด้านล่างแทน)'
+              : '(ไม่มีใบกำกับขายของคู่ค้ารายนี้ในระบบ — กรอกเลขใบเดิมในช่องด้านล่างแทน)';
             sel.appendChild(o);
           }
         } catch { /* best-effort */ }
@@ -3896,15 +3907,25 @@
       _cnSideIsPurchase() {
         return document.querySelector('input[name="fCnSide"]:checked')?.value === 'purchase';
       },
-      _setCnSide(isPurchase, note) {
+      _setCnSide(isPurchase, note, opts = {}) {
         const el = document.querySelector(`input[name="fCnSide"][value="${isPurchase ? 'purchase' : 'sales'}"]`);
         if (el) el.checked = true;
-        this.onCnSideChange(note);
+        this.onCnSideChange(note, opts);
       },
-      onCnSideChange(note) {
+      onCnSideChange(note, opts = {}) {
         const h = document.getElementById('cnSideHint');
         if (!h) return;
         const isPurchase = this._cnSideIsPurchase();
+        // ผู้ใช้สลับฝั่งเอง → ใบต้นทางที่เลือกไว้อาจคนละฝั่งแล้ว ต้องล้าง+โหลดใหม่
+        // (ถ้าไม่ล้าง จะบันทึกเป็นเอกสารที่ฝั่งไม่ตรงใบต้นทาง — server ปฏิเสธ)
+        if (!opts.fromSource) {
+          this._cnSourceId = null;
+          const srcSel = document.getElementById('fCnSourceDoc');
+          if (srcSel) srcSel.value = '';
+          const srcHint = document.getElementById('cnSourceHint');
+          if (srcHint) srcHint.style.display = 'none';
+          this._loadCnSourceDocs();
+        }
         h.textContent = note || (isPurchase
           ? 'ลงบัญชี: ลดภาษีซื้อ (Cr 11610) → ยอดเข้ารายงานภาษีซื้อ ภ.พ.30 แบบติดลบ'
           : 'ลงบัญชี: ลดภาษีขาย (Dr 21911) → ยอดเข้ารายงานภาษีขาย ภ.พ.30 แบบติดลบ');
@@ -3963,7 +3984,7 @@
         // (ตั้งให้อัตโนมัติ ไม่ปล่อยให้ระบบไปเดาตอนอนุมัติ)
         this._setCnSide(srcIsPurchase,
           `ตั้งตามใบต้นทาง (${Layout.docTypeLabel(d.documentType)}) — ` +
-          (srcIsPurchase ? 'ลดภาษีซื้อ' : 'ลดภาษีขาย'));
+          (srcIsPurchase ? 'ลดภาษีซื้อ' : 'ลดภาษีขาย'), { fromSource: true });
 
         const refEl = document.getElementById('fRef');
         // ช่อง "อ้างอิง" เติมด้วยเลขเดียวกับที่จะพิมพ์บนกระดาษ/ยื่น ภ.พ.30

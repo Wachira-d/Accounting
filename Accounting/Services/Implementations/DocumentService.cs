@@ -623,8 +623,8 @@ public class DocumentService : IDocumentService
 
         var revenueDocTypes = new[] {
             DocumentType.Quotation, DocumentType.Invoice, DocumentType.TaxInvoice,
-            DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.DebitNote,
-            DocumentType.CreditNote, DocumentType.DeliveryNote, DocumentType.BillingNote
+            DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.DeliveryNote, DocumentType.BillingNote
         };
         var purchaseDocTypes = new[] {
             DocumentType.PurchaseRequisition, DocumentType.PurchaseOrder,
@@ -632,9 +632,17 @@ public class DocumentService : IDocumentService
             DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher,
             DocumentType.CertificateInLieu
         };
-        if (revenueDocTypes.Contains(request.DocumentType) && !contact.IsCustomer)
+        // ⚠️ CN/DN เป็นเอกสาร "สองฝั่ง" — เดิมถูกใส่ไว้ใน revenueDocTypes ตายตัว
+        // ทำให้ใบลดหนี้ฝั่งซื้อ (ผู้ขายลดหนี้ให้เรา) ถูกปฏิเสธด้วยข้อความว่า
+        // "ผู้ติดต่อไม่ได้ตั้งค่าเป็นลูกค้า" ทั้งที่คู่ค้ารายนั้นคือผู้ขาย ไม่ใช่ลูกค้า
+        // → ตรวจตามฝั่งที่ผู้ใช้เลือกจริง
+        var isTwoSidedAdj = request.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote;
+        var adjIsPurchase = isTwoSidedAdj && request.CnDnPurchaseSideOverride == true;
+        if ((revenueDocTypes.Contains(request.DocumentType) || (isTwoSidedAdj && !adjIsPurchase))
+            && !contact.IsCustomer)
             throw new InvalidOperationException($"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นลูกค้า — กรุณาเปิดสถานะ 'ลูกค้า' ก่อนออกเอกสารขาย");
-        if (purchaseDocTypes.Contains(request.DocumentType) && !contact.IsSupplier)
+        if ((purchaseDocTypes.Contains(request.DocumentType) || adjIsPurchase)
+            && !contact.IsSupplier)
             throw new InvalidOperationException($"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นผู้จำหน่าย — กรุณาเปิดสถานะ 'ผู้จำหน่าย' ก่อนออกเอกสารซื้อ");
 
         // Validate project tags belong to this company (security: prevent cross-tenant tagging)
@@ -814,6 +822,34 @@ public class DocumentService : IDocumentService
             if (request.CnDnPurchaseSideOverride.HasValue
                 && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote)
                 doc.CnDnPurchaseSideOverride = request.CnDnPurchaseSideOverride;
+
+            // ── กันเอกสารที่ขัดแย้งกันเอง ──────────────────────────────
+            // ใบลดหนี้ "ฝั่งขาย" ห้ามอ้างใบกำกับ "ซื้อ" และกลับกัน — ถ้าปล่อยผ่าน
+            // JE จะลงฝั่งหนึ่งแต่ใบต้นทางอยู่อีกฝั่ง → ภ.พ.30 หักยอดผิดฝั่ง และ
+            // กระดาษอ้างใบที่ไม่เกี่ยวกัน (§86/9-10 ต้องอ้างใบกำกับ "ของรายการนั้น")
+            if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+                && doc.RelatedDocumentId.HasValue)
+            {
+                var srcType = await _db.Documents.AsNoTracking()
+                    .Where(x => x.Id == doc.RelatedDocumentId.Value && x.CompanyId == companyId)
+                    .Select(x => (DocumentType?)x.DocumentType)
+                    .FirstOrDefaultAsync();
+                if (srcType.HasValue)
+                {
+                    var srcIsPurchase = srcType.Value is DocumentType.PurchaseInvoice
+                        or DocumentType.Expense or DocumentType.PaymentVoucher
+                        or DocumentType.CertificateInLieu;
+                    // ไม่ได้ระบุฝั่งมา → ยึดฝั่งของใบต้นทาง (ชัดเจนที่สุด ไม่ต้องเดา)
+                    if (!doc.CnDnPurchaseSideOverride.HasValue)
+                        doc.CnDnPurchaseSideOverride = srcIsPurchase;
+                    else if (doc.CnDnPurchaseSideOverride.Value != srcIsPurchase)
+                        throw new InvalidOperationException(
+                            $"ฝั่งของเอกสารไม่ตรงกับใบต้นทาง — เลือกไว้เป็นฝั่ง"
+                            + $"{(doc.CnDnPurchaseSideOverride.Value ? "ซื้อ" : "ขาย")} "
+                            + $"แต่ใบที่อ้างอิงเป็นเอกสารฝั่ง{(srcIsPurchase ? "ซื้อ" : "ขาย")} "
+                            + "— เลือกใบต้นทางให้ตรงฝั่ง หรือเปลี่ยนฝั่งของใบนี้ให้ตรงกับใบต้นทาง");
+                }
+            }
 
             // CN/DN สกุลต่างประเทศที่อ้างใบเดิม: ใช้เรทของใบเดิม (ไม่ใช่เรท BOT
             // วันออก CN) — ตัด AR/AP ต้องเท่ายอดที่ตั้งไว้เป๊ะ ไม่งั้นเศษเรทค้าง
