@@ -34,6 +34,14 @@ public class WhtCreditController : ControllerBase
         => Ok(new ApiResponse<List<WhtCreditService.WhtCreditRow>>(true,
             await _service.ListAsync(companyId, taxYear, status)));
 
+    /// <summary>ตรวจย้อนหลัง: ใบที่ปิดยอดแล้วแต่ WHT บันทึกไม่ครบ → เหลือลูกหนี้
+    /// ค้างใน GL + เสียเครดิตภาษี (เกิดจากใบเสร็จตัดลูกหนี้ด้วยยอดเงินที่รับจริง
+    /// แทนยอดก่อนหักภาษี — มี guard กันตอนอนุมัติแล้ว แต่ใบเก่าต้องตามเก็บ)</summary>
+    [HttpGet("stranded-ar")]
+    public async Task<ActionResult<ApiResponse<List<WhtCreditService.StrandedArRow>>>> StrandedAr(Guid companyId)
+        => Ok(new ApiResponse<List<WhtCreditService.StrandedArRow>>(true,
+            await _service.FindStrandedArFromMissingWhtAsync(companyId)));
+
     /// <summary>สรุปยอดต่อปีภาษี + กระทบกับยอดบัญชี 11910 จริง</summary>
     [HttpGet("summary")]
     public async Task<ActionResult<ApiResponse<WhtCreditService.WhtCreditSummary>>> Summary(

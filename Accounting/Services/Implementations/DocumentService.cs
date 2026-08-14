@@ -6884,6 +6884,45 @@ public class DocumentService : IDocumentService
                         "— โปรดแก้ไข WHT บนเอกสารฉบับนี้ก่อนอนุมัติ");
             }
 
+            // ===== กัน "ลูกหนี้ค้างเพราะ WHT หาย" (เกณฑ์ Cash เท่านั้น) =====
+            //
+            // เกณฑ์ Cash: ใบต้นทางตั้งลูกหนี้ไว้ **gross** (TotalAmount + WHT)
+            // แล้ว JE ใบเสร็จ Cr AR = TotalAmount ของใบเสร็จ + WHT ของใบเสร็จ
+            // ⇒ ถ้าใบเสร็จปิดยอดใบต้นทางจนหมด (BalanceDue→0) แต่ WHT สะสมไม่ครบ
+            // ตามที่ใบต้นทางระบุ จะเหลือลูกหนี้ค้างใน GL เท่ากับส่วนที่ขาด —
+            // ขณะที่ระดับเอกสารขึ้นว่า "ชำระครบ" (BalanceDue คิดจาก TotalAmount
+            // ที่หัก WHT ไปแล้ว) ⇒ งบดุลกับสถานะเอกสารขัดกันเงียบ ๆ และเครดิต
+            // ภาษี (11910) ที่ควรได้ก็หายไปด้วย ใช้ใน ภ.ง.ด.50 ไม่ได้
+            //
+            // เคสจริงที่เจอ: ใบแจ้งหนี้ 3,600 หัก 3% → ตัวเติมอัตโนมัติของใบเสร็จ
+            // ใส่ยอด 3,492 + WHT 0% ⇒ Cr AR แค่ 3,492 เหลือค้าง 108 ถาวร
+            if (source.WithholdingTaxAmount > 0m
+                && await IsWhtCashBasisAsync(companyId)
+                && source.PaidAmount + doc.TotalAmount >= source.TotalAmount - 0.01m)
+            {
+                var siblingTypes2 = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+                var whtDocs = await _db.Documents.AsNoTracking()
+                    .Where(r => r.RelatedDocumentId == source.Id && r.Id != doc.Id
+                        && siblingTypes2.Contains(r.DocumentType)
+                        && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
+                        && r.Status != DocumentStatus.Rejected && !r.IsDeleted)
+                    .SumAsync(r => (decimal?)r.WithholdingTaxAmount) ?? 0m;
+                var whtPays = await _db.Payments.AsNoTracking()
+                    .Where(p => p.DocumentId == source.Id && !p.IsDeleted)
+                    .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
+                var whtTotal = whtDocs + whtPays + doc.WithholdingTaxAmount;
+                var missing = source.WithholdingTaxAmount - whtTotal;
+                if (missing > 0.01m)
+                    throw new InvalidOperationException(
+                        $"ใบนี้จะปิดยอด {source.DocumentNumber} จนหมด แต่ภาษีหัก ณ ที่จ่ายที่บันทึกไว้รวม "
+                        + $"{whtTotal:N2} บาท ขาดไป {missing:N2} บาท จากที่เอกสารต้นทางระบุ "
+                        + $"({source.WithholdingTaxAmount:N2} บาท) — อนุมัติแบบนี้จะเหลือ**ลูกหนี้ค้างใน GL "
+                        + $"{missing:N2} บาท** ทั้งที่เอกสารขึ้นว่าชำระครบ และเสียเครดิตภาษีใน ภ.ง.ด.50 ไปด้วย"
+                        + "\n👉 ต้องทำ: แก้ช่อง \"หัก ณ ที่จ่าย %\" ในบรรทัดของใบนี้ให้ได้ยอด "
+                        + $"{missing:N2} บาท (ยอดบรรทัดต้องเป็นยอดก่อนหักภาษี ไม่ใช่ยอดเงินที่รับจริง)"
+                        + $"\n• ถ้าลูกค้าไม่ได้หักภาษีจริง ให้แก้ WHT ที่ใบต้นทาง {source.DocumentNumber} เป็น 0 ก่อน");
+            }
+
             source.PaidAmount += doc.TotalAmount;
         }
         else if (isCreditNote)
@@ -7141,6 +7180,17 @@ public class DocumentService : IDocumentService
     /// <summary>Public accessor used by API endpoint to surface valid targets to UI.</summary>
     public static IReadOnlyList<DocumentType> GetValidConversionTargets(DocumentType source) =>
         ValidConversions.TryGetValue(source, out var targets) ? targets : Array.Empty<DocumentType>();
+
+    /// <summary>เกณฑ์รับรู้ WHT เป็นแบบ Cash หรือไม่ (ค่าเริ่มต้นของระบบ = Cash)
+    ///
+    /// <para>Cash = ใบแจ้งหนี้ตั้งลูกหนี้ไว้ <b>gross</b> (ยังไม่แตะ 11910) แล้วรับรู้
+    /// WHT ตอนรับเงินจริง ⇒ ใบเสร็จต้องตัดลูกหนี้ที่ยอด gross ไม่ใช่ยอดเงินที่รับ</para></summary>
+    private async Task<bool> IsWhtCashBasisAsync(Guid companyId) =>
+        (await _db.CompanySettings.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => (Models.Enums.WhtRecognitionBasis?)c.WhtRecognitionBasis)
+            .FirstOrDefaultAsync() ?? Models.Enums.WhtRecognitionBasis.Cash)
+        == Models.Enums.WhtRecognitionBasis.Cash;
 
     /// <summary>บริษัทนี้จดทะเบียน VAT อยู่หรือไม่ — ไม่เคยตั้งค่า = ถือว่าจด
     /// (บริษัทเดิมที่ยังไม่ได้แตะหน้าตั้งค่าจะไม่ถูกบล็อกโดยไม่รู้ตัว)</summary>

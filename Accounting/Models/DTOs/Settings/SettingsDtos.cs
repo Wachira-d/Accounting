@@ -20,6 +20,8 @@ public record UpdateCompanySettingsRequest(
     decimal? DefaultVatRate,
     bool? VatRegistered,
     string? VatRegistrationDate,
+    // เกณฑ์รับรู้ภาษีหัก ณ ที่จ่าย — มีผลกับ JE โดยตรง (ดู AutoPostToJournalAsync)
+    Accounting.Models.Enums.WhtRecognitionBasis? WhtRecognitionBasis,
 
     // Email
     string? EmailFromName,
@@ -137,6 +139,7 @@ public record CompanySettingsResponse(
     decimal DefaultVatRate,
     bool VatRegistered,
     string? VatRegistrationDate,
+    Accounting.Models.Enums.WhtRecognitionBasis WhtRecognitionBasis,
     // Security
     bool RequireApprovalForDocuments,
     decimal? ApprovalThresholdAmount,

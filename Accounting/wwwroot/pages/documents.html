@@ -1234,6 +1234,9 @@
         try {
           const sr = await api.getSettings();
           this._vatRegistered = sr?.data?.vatRegistered !== false;
+          // เกณฑ์รับรู้ WHT — ตัดสินว่าใบเสร็จที่ตัดลูกหนี้ต้องเติมยอด gross
+          // (Cash: ใบแจ้งหนี้ตั้ง AR ไว้ gross) หรือ net (Accrual)
+          this._whtBasis = sr?.data?.whtRecognitionBasis || 'Cash';
           // แกนวิเคราะห์ เปิด/ปิดต่อบริษัท — ปิดแล้วซ่อนช่องทั้ง form + filter
           // (ฟอร์มเบาลงสำหรับบริษัทที่ไม่ใช้ ข้อมูลเดิมไม่หาย)
           this._showProject = sr?.data?.showProjectOnDocuments !== false;
@@ -4114,7 +4117,34 @@
         const d = this._receiptSourceCache[id];
         if (!d) return;
         if (h) h.style.display = '';
-        // เติมบรรทัดรับชำระ (VAT 0 — VAT รับรู้ที่ใบต้นทางแล้ว) ยอด = คงค้างทั้งใบ
+        // ── ยอดที่ต้องเติม ต้อง "ตัดลูกหนี้ให้หมด" ตามเกณฑ์รับรู้ WHT ของบริษัท ──
+        //
+        // เกณฑ์ Cash (ค่าเริ่มต้นของระบบ): ใบแจ้งหนี้ตั้งลูกหนี้ไว้แบบ **gross**
+        //   Dr AR 3,600 / Cr รายได้ 3,600   (ยังไม่แตะ 11910)
+        // ใบเสร็จจึงต้องตัด 3,600 = เงินสด 3,492 + ภาษีถูกหัก 108
+        //   → บรรทัดต้องเป็น **ยอด gross + อัตรา WHT ของใบต้นทาง**
+        // เดิมเติม "คงค้าง (net 3,492) + WHT 0%" ⇒ Cr AR แค่ 3,492
+        //   → ลูกหนี้ค้าง 108 ถาวร (แต่เอกสารขึ้นว่าชำระครบ) และ 11910 ไม่เคยถูก Dr
+        //   ⇒ เครดิตภาษีหายไป ใช้ใน ภ.ง.ด.50 ไม่ได้
+        //
+        // เกณฑ์ Accrual: ใบแจ้งหนี้ตั้ง AR แบบ net และ Dr 11910 ไปแล้วตั้งแต่ออกใบ
+        //   → ใบเสร็จตัด net เฉย ๆ WHT = 0 (พฤติกรรมเดิมถูกอยู่แล้ว)
+        const cashWhtBasis = this._whtBasis !== 'Accrual';
+        const srcWht = Number(d.withholdingTaxAmount) || 0;
+        const srcTotal = Number(d.totalAmount) || 0;
+        const netDue = Number(d.balanceDue) || 0;
+        // WHT ที่ยังไม่ถูกตัดไปกับใบเสร็จใบก่อน ๆ — คิดตามสัดส่วนที่ยังค้าง
+        // (รับบางส่วนหลายงวด ⇒ WHT ต้องเฉลี่ยตามงวด ไม่ใช่ยัดทั้งก้อนงวดแรก)
+        const ratio = srcTotal > 0 ? Math.min(1, netDue / srcTotal) : 1;
+        const whtShare = cashWhtBasis && srcWht > 0
+          ? Math.round(srcWht * ratio * 100) / 100 : 0;
+        const grossDue = Math.round((netDue + whtShare) * 100) / 100;
+        // อัตราที่กรอกลงบรรทัด — คำนวณกลับจากยอด เพื่อให้ WHT ที่ได้เท่ากับ
+        // ที่ใบต้นทางระบุไว้เป๊ะ (กันเศษสตางค์จากการปัดอัตรา)
+        const whtRate = whtShare > 0 && grossDue > 0
+          ? Math.round(whtShare / grossDue * 10000) / 100 : 0;
+
+        // เติมบรรทัดรับชำระ (VAT 0 — VAT รับรู้ที่ใบต้นทางแล้ว)
         // แก้เป็นบางส่วนได้ (server กันเกินคงค้างตอนอนุมัติ) — ใช้โมเดล DOM
         // เดียวกับ OCR fill (linesBody + addLine + data-f)
         document.getElementById('linesBody').innerHTML = '';
@@ -4125,13 +4155,23 @@
         if (descEl) { descEl.value = `รับชำระเงินตาม${Layout.docTypeLabel(d.documentType)}เลขที่ ${d.documentNumber}`; descEl.__grow?.(); }
         const qtyEl = row.querySelector('[data-f="qty"]'); if (qtyEl) qtyEl.value = 1;
         const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = 'รายการ';
-        const priceEl = row.querySelector('[data-f="price"]'); if (priceEl) priceEl.value = Number(d.balanceDue) || 0;
+        const priceEl = row.querySelector('[data-f="price"]'); if (priceEl) priceEl.value = grossDue;
         const vatSel = row.querySelector('[data-f="vat"]'); if (vatSel) vatSel.value = '0';
-        const whtEl = row.querySelector('[data-f="wht"]'); if (whtEl) whtEl.value = 0;
+        const whtEl = row.querySelector('[data-f="wht"]'); if (whtEl) whtEl.value = whtRate;
         this.calcSum?.();
         const refEl = document.getElementById('fRef');
         if (refEl && !refEl.value) refEl.value = d.documentNumber;
-        Layout.toast(`ผูกกับ ${d.documentNumber} แล้ว — อนุมัติใบเสร็จ = ตัดลูกหนี้ (แก้ยอดเพื่อรับบางส่วนได้)`, 'info', 6000);
+        if (whtShare > 0 && h) {
+          h.innerHTML = `✅ ผูกกับ <b>${Layout.esc(d.documentNumber)}</b> — ใบนี้จะ <b>ตัดลูกหนี้ ${Layout.money(grossDue)}</b> `
+            + `(เงินรับจริง ${Layout.money(grossDue - whtShare)} + ภาษีถูกหัก ณ ที่จ่าย ${Layout.money(whtShare)})`
+            + `<br>👉 ลูกค้าต้องออก <b>หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)</b> ให้ — เก็บไว้ใช้เครดิตใน ภ.ง.ด.50 `
+            + `(ระบบบันทึกเข้าทะเบียนให้อัตโนมัติเมื่ออนุมัติ)`;
+        }
+        Layout.toast(
+          whtShare > 0
+            ? `ผูกกับ ${d.documentNumber} แล้ว — ตัดลูกหนี้ ${Layout.money(grossDue)} (รับจริง ${Layout.money(grossDue - whtShare)} + ถูกหัก ${Layout.money(whtShare)})`
+            : `ผูกกับ ${d.documentNumber} แล้ว — อนุมัติใบเสร็จ = ตัดลูกหนี้ (แก้ยอดเพื่อรับบางส่วนได้)`,
+          'info', 7000);
       },
 
       // ===== ใบลดหนี้/ใบเพิ่มหนี้: เลือกใบกำกับ/เอกสารต้นฉบับ (§86/9-10) =====
