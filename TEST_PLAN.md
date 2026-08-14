@@ -18,10 +18,26 @@
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
-| CI | ❌ ยังไม่มี (ดู ROADMAP Phase 0.2) |
+| CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
 
 **ข้อจำกัด env ปัจจุบันของ agent**: ไม่มี dotnet SDK → agent เขียนเทสต์ได้แต่รันไม่ได้
 ผู้ใช้/CI ต้องเป็นคนรัน `dotnet test` — ทุก PR ที่เพิ่มเทสต์ต้องระบุในคำอธิบายว่า "ยังไม่ได้รัน"
+
+### Static checker — ตาข่ายกัน compile error ในเมื่อ agent build ไม่ได้
+
+เพราะ agent ไม่มี .NET SDK จึงมี error 2 ชนิดที่ **หลุดไปถึงเครื่องผู้ใช้มาแล้ว**
+เขียน checker เป็น Python ไว้แทน (รันเร็ว ไม่ต้อง restore) — agent **ต้องรันทั้ง 2
+ตัวก่อน commit** และ CI รันซ้ำเป็น gate
+
+| เครื่องมือ | จับอะไร | เคสจริงที่เคยหลุด |
+| --- | --- | --- |
+| `tools/di_cycle_check.py` | วงกลมใน DI graph (`ValidateOnBuild` จับตอน runtime — `dotnet build` ไม่จับ) | `PlatformBillingDocumentIssuer` ↔ `DocumentService` → แอป start ไม่ขึ้นเลย |
+| `tools/nullable_arg_check.py` | CS1503 ส่ง `int?`/`Guid?` เข้าพารามิเตอร์ที่ไม่รับ null | `L.CreditDaysText(doc.CreditDays)` โดย `CreditDays` เป็น `int?` |
+
+`nullable_arg_check` จงใจตั้ง scope แคบเพื่อ **เตือนน้อยแต่เตือนถูก**: จะ flag
+ก็ต่อเมื่อชื่อ property นั้นถูกประกาศเป็น nullable **ทุกที่ในโปรเจกต์** (ทั้ง
+`{ get; }` และ positional record) — ถ้ามีที่ไหนประกาศไม่ nullable ด้วย ถือว่า
+กำกวมแล้วข้าม เพราะ checker ไม่ได้ resolve ชนิดของ receiver จริง
 
 ### หลักการเลือกชั้นทดสอบ
 

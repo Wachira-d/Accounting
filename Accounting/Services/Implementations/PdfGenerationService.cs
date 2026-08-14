@@ -1589,7 +1589,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             // ลบรายข้อ). ต้อง render **แบบเดียวกับ QuestPDF เป๊ะ ๆ**: บรรทัดเดียว
             // = ต่อท้ายหัวข้อ, หลายบรรทัด = หัวข้อ + bullet รายข้อ — ไม่งั้น
             // preview/ร่าง กับ PDF ตอนอนุมัติหน้าตาไม่ตรงกัน (กฎ "ร่าง = ตัวจริง")
-            var creditTxt = doc.CreditDays > 0 ? $" ({L.CreditDaysText(doc.CreditDays)})" : "";
+            // `doc.CreditDays` เป็น int? — เงื่อนไข `> 0` การันตีว่าไม่ null แล้ว
+            // (lifted comparison: null > 0 เป็น false) จึงใช้ .Value ได้ปลอดภัย
+            var creditTxt = doc.CreditDays > 0 ? $" ({L.CreditDaysText(doc.CreditDays.Value)})" : "";
             var termLines = (doc.PaymentTerms ?? "")
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (termLines.Length <= 1)
