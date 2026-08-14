@@ -1227,6 +1227,22 @@ public enum CreditNoteReason
     Writeoff = 4,
 }
 
+/// <summary>เหตุผลการออกใบเพิ่มหนี้ (§86/9) — กฎหมายบังคับระบุ "สาเหตุ" บนใบ
+/// เช่นเดียวกับใบลดหนี้ §86/10. รายการปิด (closed list) เพื่อให้พิมพ์บนกระดาษ
+/// ได้เป็นข้อความมาตรฐานและ map เข้า e-Tax ได้ — ไม่ปล่อยให้พิมพ์อิสระ
+/// (ข้อความอิสระ = สรรพากรตีความไม่ได้ + แต่ละคนเขียนคนละแบบ)</summary>
+public enum DebitNoteReason
+{
+    /// <summary>ราคาสินค้า/บริการเพิ่มขึ้นจากที่ตกลง (คำนวณราคาผิดต่ำไป)</summary>
+    PriceIncrease = 1,
+    /// <summary>ส่งสินค้าเกินกว่าที่ตกลง / ให้บริการเพิ่มจากสัญญา — กระทบสต๊อก</summary>
+    ExtraGoods = 2,
+    /// <summary>ค่าใช้จ่ายเพิ่มเติมที่เรียกเก็บภายหลัง (ค่าขนส่ง/ติดตั้ง/ค่าปรับ)</summary>
+    AdditionalCharge = 3,
+    /// <summary>คำนวณยอด/ภาษีคลาดเคลื่อนต่ำไป — ปรับยอดให้ถูกต้อง</summary>
+    Adjustment = 4,
+}
+
 public enum WhtRecognitionBasis
 {
     /// <summary>Recognize WHT-Asset / WHT-Payable at the moment of payment

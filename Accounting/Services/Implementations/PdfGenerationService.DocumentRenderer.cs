@@ -649,9 +649,12 @@ public partial class PdfGenerationService
             else
                 cc.Item().Text($"มูลค่าที่{(isCn ? "ลด" : "เพิ่ม")}: {doc.SubTotal:N2}")
                     .FontSize(9).Bold().FontColor("#374151");
-            // §86/10 บังคับระบุเหตุผลการลดหนี้บนตัวเอกสาร (mirror ฝั่ง HTML)
-            var reasonTxt = CreditNoteReasonText(doc.CreditNoteReason, L);
-            if (isCn && !string.IsNullOrWhiteSpace(reasonTxt))
+            // §86/10 (ลดหนี้) และ §86/9 (เพิ่มหนี้) บังคับระบุเหตุผลบนตัวเอกสาร
+            // (mirror ฝั่ง HTML — สองตัวนี้ต้องพิมพ์เหมือนกันเป๊ะ)
+            var reasonTxt = isCn
+                ? CreditNoteReasonText(doc.CreditNoteReason, L)
+                : DebitNoteReasonText(doc.DebitNoteReason, L);
+            if (!string.IsNullOrWhiteSpace(reasonTxt))
                 cc.Item().Text($"{L.CnReason}: {reasonTxt}").FontSize(9).FontColor("#374151");
         });
     }

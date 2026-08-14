@@ -65,6 +65,8 @@ public record CreateDocumentRequest(
     // CreditNote reason — required when DocumentType=CreditNote. Determines
     // whether stock restocks (Return only) vs pure financial adjustment.
     CreditNoteReason? CreditNoteReason = null,
+    // DebitNote reason — required when DocumentType=DebitNote (§86/9 บังคับระบุสาเหตุ)
+    DebitNoteReason? DebitNoteReason = null,
     // ===== Supplier-side tax invoice metadata (PurchaseInvoice / supplier-issued docs) =====
     // SupplierInvoiceNumber = partner's own running number (distinct from
     // our DocumentNumber) — needed for VAT-audit reconciliation against
@@ -230,6 +232,7 @@ public record UpdateDocumentRequest(
     // CreditNoteReason: เหตุผลใบลดหนี้ (§86/10). IsForeignService: ภ.พ.36/ภ.ง.ด.54.
     // IsDeposit + DepositDeferredAccountCode + DepositOutputVatDeferred: เงินมัดจำ.
     CreditNoteReason? CreditNoteReason = null,
+    DebitNoteReason? DebitNoteReason = null,
     // ฝั่งภาษีของใบลดหนี้/เพิ่มหนี้ (true = ซื้อ) — แก้ได้ตอนยังเป็นร่าง
     // ถ้าไม่รับตรงนี้ ผู้ใช้เปลี่ยนฝั่งบนฟอร์มแล้วกดบันทึก ค่าจะถูกทิ้งเงียบ ๆ
     bool? CnDnPurchaseSideOverride = null,
@@ -536,6 +539,7 @@ public record DocumentResponse(
     // display "ลดราคา" / "คืนสินค้า" etc. Drives whether ApplyStockMovements
     // restocks on approval (only Return does).
     CreditNoteReason? CreditNoteReason = null,
+    DebitNoteReason? DebitNoteReason = null,
     // Supplier-side tax invoice metadata for PurchaseInvoice rows.
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,

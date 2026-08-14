@@ -1434,10 +1434,12 @@ public partial class PdfGenerationService : IPdfGenerationService
                 sb.AppendLine($"<div>มูลค่าตามใบเดิม: {adjOrigBase:N2} &nbsp;|&nbsp; มูลค่าที่ถูกต้อง: {adjCorrected:N2} &nbsp;|&nbsp; <b>ผลต่าง ({(isCnBox ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}</b></div>");
             else
                 sb.AppendLine($"<div><b>มูลค่าที่{(isCnBox ? "ลด" : "เพิ่ม")}: {doc.SubTotal:N2}</b></div>");
-            // §86/10 บังคับระบุเหตุผลการลดหนี้บนตัวเอกสาร
-            var cnReasonTxt = CreditNoteReasonText(doc.CreditNoteReason, L);
-            if (isCnBox && !string.IsNullOrWhiteSpace(cnReasonTxt))
-                sb.AppendLine($"<div>{L.CnReason}: {WebUtility.HtmlEncode(cnReasonTxt)}</div>");
+            // §86/10 (ลดหนี้) และ §86/9 (เพิ่มหนี้) บังคับระบุเหตุผลบนตัวเอกสาร
+            var reasonTxt = isCnBox
+                ? CreditNoteReasonText(doc.CreditNoteReason, L)
+                : DebitNoteReasonText(doc.DebitNoteReason, L);
+            if (!string.IsNullOrWhiteSpace(reasonTxt))
+                sb.AppendLine($"<div>{L.CnReason}: {WebUtility.HtmlEncode(reasonTxt)}</div>");
             sb.AppendLine("</div>");
         }
 
@@ -2343,6 +2345,17 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             Models.Enums.CreditNoteReason.Discount => L["cn_reason_discount"],
             Models.Enums.CreditNoteReason.Adjustment => L["cn_reason_adjustment"],
             Models.Enums.CreditNoteReason.Writeoff => L["cn_reason_writeoff"],
+            _ => null,
+        };
+
+    /// <summary>ข้อความ "เหตุผล" ของใบเพิ่มหนี้ §86/9 — คู่ขนานกับ CN §86/10</summary>
+    internal static string? DebitNoteReasonText(Models.Enums.DebitNoteReason? reason, Pdf.DocumentLabels L)
+        => reason switch
+        {
+            Models.Enums.DebitNoteReason.PriceIncrease => L["dn_reason_price"],
+            Models.Enums.DebitNoteReason.ExtraGoods => L["dn_reason_extra"],
+            Models.Enums.DebitNoteReason.AdditionalCharge => L["dn_reason_charge"],
+            Models.Enums.DebitNoteReason.Adjustment => L["dn_reason_adjustment"],
             _ => null,
         };
 

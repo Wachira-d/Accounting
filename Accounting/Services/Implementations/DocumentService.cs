@@ -880,6 +880,10 @@ public class DocumentService : IDocumentService
                 CreditNoteReason = request.DocumentType == DocumentType.CreditNote
                     ? request.CreditNoteReason
                     : null,
+                // เหตุผลใบเพิ่มหนี้ (§86/9) — เก็บเฉพาะตอนเป็น DN จริง ๆ เหมือนฝั่ง CN
+                DebitNoteReason = request.DocumentType == DocumentType.DebitNote
+                    ? request.DebitNoteReason
+                    : null,
                 // Counterparty tax-invoice metadata — only meaningful for
                 // supplier-issued doc types (PurchaseInvoice, CertificateInLieu).
                 // Stored unconditionally though so partner sync can round-trip.
@@ -1878,6 +1882,7 @@ public class DocumentService : IDocumentService
         // CreditNoteReason (§86/10), IsForeignService (ภ.พ.36/ภ.ง.ด.54), และชุดเงินมัดจำ.
         // ทุก field ใช้ HasValue / != null → omit = คงค่าเดิม.
         if (request.CreditNoteReason.HasValue) doc.CreditNoteReason = request.CreditNoteReason.Value;
+        if (request.DebitNoteReason.HasValue) doc.DebitNoteReason = request.DebitNoteReason.Value;
         // ฝั่งภาษี CN/DN — แก้ได้ระหว่างยังเป็นร่าง (หลังอนุมัติต้องใช้ "ย้ายฝั่ง"
         // ที่กลับ JE ให้ด้วย ไม่ใช่แก้ field เฉย ๆ ซึ่งจะทำให้ GL กับรายงานไม่ตรงกัน)
         if (request.CnDnPurchaseSideOverride.HasValue
@@ -3963,6 +3968,13 @@ public class DocumentService : IDocumentService
         if (doc.DocumentType == DocumentType.CreditNote && doc.CreditNoteReason == null)
             throw new InvalidOperationException(
                 "ใบลดหนี้ต้องระบุเหตุผล (คืนสินค้า / ส่วนลด / ปรับยอด / ตัดยอด) ก่อนอนุมัติ");
+
+        // ใบเพิ่มหนี้ก็ต้องระบุสาเหตุเช่นกัน — §86/9 บังคับคู่ขนานกับ §86/10
+        // ของใบลดหนี้ (เดิมมีแต่ฝั่ง CN ⇒ ใบเพิ่มหนี้ออกได้โดยไม่มีสาเหตุบนกระดาษ
+        // = รายการไม่ครบตามกฎหมาย และผู้ซื้อใช้เป็นหลักฐานภาษีซื้อไม่ได้)
+        if (doc.DocumentType == DocumentType.DebitNote && doc.DebitNoteReason == null)
+            throw new InvalidOperationException(
+                "ใบเพิ่มหนี้ต้องระบุเหตุผล (ราคาเพิ่มขึ้น / ส่งสินค้าเกิน / ค่าใช้จ่ายเพิ่มเติม / ปรับยอด) ก่อนอนุมัติ");
 
         // §86/9-10: CN/DN ที่มี VAT = เอกสารภาษี — กระดาษต้องระบุ เลขที่+วันที่
         // ใบกำกับภาษีเดิม (รายการบังคับตามกฎหมาย ไม่ใช่ optional). ไม่มีทั้ง ref
@@ -10224,9 +10236,32 @@ public class DocumentService : IDocumentService
             // stay flat. The CreditNoteReason field is required by Create
             // for CN; older grandfathered rows with NULL fall to 0 (no move).
             DocumentType.CreditNote when doc.CreditNoteReason == Models.Enums.CreditNoteReason.Return => +1,
+            // ใบเพิ่มหนี้ขยับสต๊อกเฉพาะเหตุผล "ส่งสินค้า/บริการเกินกว่าที่ตกลง"
+            // (ของเคลื่อนจริง) — สมมาตรกับ CN Return. ราคาเพิ่ม/ค่าใช้จ่ายเพิ่ม/
+            // ปรับยอด เป็นการปรับตัวเงินล้วน ของไม่ได้ขยับ สต๊อกต้องนิ่ง.
+            // ใบเก่าที่ยังไม่มีเหตุผล (NULL) ตกที่ 0 → พฤติกรรมเดิมไม่เปลี่ยน
+            DocumentType.DebitNote when doc.DebitNoteReason == Models.Enums.DebitNoteReason.ExtraGoods => -1,
             _ => 0,
         };
         if (direction == 0) return;
+
+        // ใบเพิ่มหนี้ "ฝั่งซื้อ" แบบผู้ขายส่งของเกิน (source = PI/Expense/CIL):
+        // ของเข้าสต๊อกเราเพิ่ม (+1) ตรงข้ามกับฝั่งขายที่ของออก (−1).
+        // อ้าง PV/Receipt/RV → ไม่แตะสต๊อก (ไม่มีขาแรกให้ต่อ เหมือนกติกาของ CN)
+        if (doc.DocumentType == DocumentType.DebitNote && doc.RelatedDocumentId.HasValue)
+        {
+            var dnSrcType = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync();
+            if (dnSrcType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                or DocumentType.CertificateInLieu)
+                direction = +1;
+            else if (dnSrcType is DocumentType.PaymentVoucher
+                or DocumentType.Receipt or DocumentType.ReceiptVoucher)
+                direction = 0;
+            if (direction == 0) return;
+        }
 
         // ใบลดหนี้ "ฝั่งซื้อ" แบบรับคืน (source = PI/Expense/CIL):
         // เราคืนของให้ vendor → ของออกจากสต๊อกเรา (−1) ไม่ใช่รับเข้า (+1).
@@ -12705,6 +12740,7 @@ public class DocumentService : IDocumentService
         ExchangeRate: d.ExchangeRate,
         Sensitivity: d.Sensitivity,
         CreditNoteReason: d.CreditNoteReason,
+        DebitNoteReason: d.DebitNoteReason,
         SupplierInvoiceNumber: d.SupplierInvoiceNumber,
         SupplierTaxInvoiceDate: d.SupplierTaxInvoiceDate,
         HasTaxInvoiceReference: d.HasTaxInvoiceReference,
