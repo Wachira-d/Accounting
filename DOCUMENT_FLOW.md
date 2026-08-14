@@ -975,6 +975,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ดาวน์โหลด HTML — และ reset ทุกครั้งที่เปิด modal ใบใหม่
   - `DocumentResponse.DocumentLanguage` echo กลับมาให้ฟอร์ม hydrate ตอนแก้ไข
     (เดิมไม่มีใน response ⇒ เปิดแก้ใบอังกฤษแล้วกดบันทึก ภาษาถูกล้างเงียบ ๆ)
+  - **ชื่อ/ที่อยู่บริษัทบนใบโหมด en**: `Company.NameEn` เป็นชื่อหลัก (ไม่มี →
+    คงชื่อไทย **ห้ามถอดอักษรชื่อบริษัท/บุคคลเอง** — การสะกดชื่อเฉพาะเป็นสิทธิ์
+    ของเจ้าของชื่อ) · ที่อยู่ใช้ `Company.AddressEn` ก่อน ไม่มี → ถอดอักษร
+    อัตโนมัติด้วย `ThaiRomanizer.ComposeEnglishAddress` (จังหวัด = ตารางสะกด
+    ทางการ 77 ชื่อ; ตำบล/อำเภอ/ถนน = RTGS rule-based; ชิ้นที่เป็นละตินอยู่แล้ว
+    ผ่านตามเดิม) · ที่อยู่**ลูกค้า**ถอดอัตโนมัติเช่นกัน (ไม่มี field ต่อ contact)
+    · ตั้งค่า: ตั้งค่าบริษัท → "ที่อยู่ภาษาอังกฤษ" + ปุ่ม "✨ แปลงจากที่อยู่ไทย"
+    (`POST /api/company/{cid}/romanize-address` — **route เอกพจน์** ต่างจาก
+    controller อื่น) แปลงจากค่าบนฟอร์ม เติมให้ตรวจแก้ก่อนบันทึกเอง · แบบราชการ
+    (50 ทวิ ฯลฯ) คงที่อยู่ไทยเสมอ ไม่แตะ
 
 - **หัวเรื่องเอกสาร — resolver กลาง `ComputeDocumentTitle`** (ใช้ทั้ง QuestPDF
   native + HTML กัน logic drift). ครอบทุกเคสจริงทางบัญชี:
@@ -1793,7 +1803,10 @@ _ครั้งเดียว `#pdfLangMode`) · แก้ `DocumentResponse` 
 _ภาษาหาย) · แก้ metadata Title ของ PDF/A-3 คำนวณภาษาเองข้าม resolver กลาง ·_
 _รอบตาม: สืบทอดภาษาใบต้นทาง 5 ทาง — convert/clone/settlement receipt/CN คืนมัดจำ/_
 _recurring generator · รอบตาม 2: ภาษาเริ่มต้นรายผู้ติดต่อ `Contact.DocumentLanguage` —_
-_ประทับตอนสร้างใบ ไม่ resolve ตอนพิมพ์ · ฟอร์ม+server fallback คู่ขนานแบบเครดิตเทอม) ·_
+_ประทับตอนสร้างใบ ไม่ resolve ตอนพิมพ์ · ฟอร์ม+server fallback คู่ขนานแบบเครดิตเทอม ·_
+_รอบตาม 3: ชื่อ/ที่อยู่บริษัทภาษาอังกฤษ — NameEn เป็นชื่อหลักโหมด en, AddressEn ใหม่_
+_+ ThaiRomanizer ถอด RTGS อัตโนมัติเมื่อไม่ได้กรอก, ที่อยู่ลูกค้าถอดอัตโนมัติ,_
+_ปุ่มแปลงในตั้งค่า) ·_
 _รอบ 20: เอกสารภาษาอังกฤษ — HTML renderer_
 _ฝังคำไทยตาย 20 จุดทั้งที่ label มีครบและ QuestPDF ใช้อยู่ (เอกสารปนไทย + หน้าตาต่างกัน_
 _ตาม renderer) แก้ครบ + เทสต์กันซ้ำ · เปิด ValidateOnBuild ทุก environment + CI ตรวจ_

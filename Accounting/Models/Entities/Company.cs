@@ -58,6 +58,9 @@ public class Company : BaseEntity
 
     // Address (ที่อยู่ตามใบทะเบียน) — structured per ETDA Schematron
     public string? Address { get; set; }                  // free-text fallback / display
+    /// <summary>ที่อยู่ภาษาอังกฤษ (free-text) — พิมพ์บนเอกสารโหมด en แทนที่อยู่ไทย
+    /// null = ระบบถอดอักษรอัตโนมัติจาก structured fields (ThaiRomanizer)</summary>
+    public string? AddressEn { get; set; }
     public string? BuildingNumber { get; set; }           // บ้านเลขที่ (required by ETDA)
     public string? BuildingName { get; set; }             // ชื่ออาคาร
     public string? Moo { get; set; }                      // หมู่ที่ (provincial / rural addresses)

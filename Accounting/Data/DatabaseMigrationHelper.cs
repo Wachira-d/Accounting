@@ -84,6 +84,8 @@ public static class DatabaseMigrationHelper
             // ภาษาเอกสารเริ่มต้นต่อผู้ติดต่อ (th/en, null = ตามค่าบริษัท) — ประทับ
             // ลงใบตอนสร้าง ไม่ resolve ตอนพิมพ์ (ดู comment ที่ Contact entity)
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NULL;""",
+            // ที่อยู่บริษัทภาษาอังกฤษ (เอกสารโหมด en) — null = ถอดอักษรอัตโนมัติ
+            """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "AddressEn" varchar(500) NULL;""",
             // Integration external id — match ผู้ติดต่อเดิมเวลา sync กัน contact ซ้ำ
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "ExternalId" varchar(200) NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "ExternalSystem" varchar(100) NULL;""",

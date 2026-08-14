@@ -1294,12 +1294,24 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
 
         sb.AppendLine("<div class='company-info'>");
-        if (template.ShowCompanyName) sb.AppendLine($"<div class='company-name'>{company.Name}</div>");
-        if (template.ShowCompanyNameEn && company.NameEn != null) sb.AppendLine($"<div class='company-name-en'>{company.NameEn}</div>");
+        // โหมด en: NameEn เป็นชื่อหลัก (ไม่มี NameEn → คงชื่อไทย ห้ามถอดอักษรชื่อ
+        // บริษัทเอง — การสะกดชื่อเป็นสิทธิ์ของเจ้าของชื่อ) + ไม่พิมพ์บรรทัด EN ซ้ำ
+        var isEnDoc = lang == "en";
+        var coPrimaryName = isEnDoc && !string.IsNullOrWhiteSpace(company.NameEn) ? company.NameEn! : company.Name;
+        if (template.ShowCompanyName) sb.AppendLine($"<div class='company-name'>{coPrimaryName}</div>");
+        if (template.ShowCompanyNameEn && company.NameEn != null && coPrimaryName != company.NameEn)
+            sb.AppendLine($"<div class='company-name-en'>{company.NameEn}</div>");
         if (template.ShowCompanyAddress)
         {
-            var fullAddr = FormatThaiAddress(company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
-                company.SubDistrict, company.District, company.Province, company.PostalCode);
+            // en: AddressEn ที่ผู้ใช้กรอก > ถอดอักษรอัตโนมัติ (ThaiRomanizer) > ไทย
+            var fullAddr = isEnDoc
+                ? (!string.IsNullOrWhiteSpace(company.AddressEn)
+                    ? company.AddressEn!
+                    : ThaiRomanizer.ComposeEnglishAddress(company.BuildingNumber, company.BuildingName,
+                        company.Moo, company.StreetName, company.SubDistrict, company.District,
+                        company.Province, company.PostalCode, company.Address))
+                : FormatThaiAddress(company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
+                    company.SubDistrict, company.District, company.Province, company.PostalCode);
             if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{fullAddr}</div>");
         }
         if (template.ShowCompanyTaxId)
@@ -1393,8 +1405,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         if (template.ShowContactAddress)
         {
-            var caddr = FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,
-                doc.Contact.SubDistrict, doc.Contact.District, doc.Contact.Province, doc.Contact.PostalCode);
+            // en: ผู้ติดต่อไม่มีช่องที่อยู่อังกฤษ → ถอดอักษรอัตโนมัติ (ที่อยู่ที่เป็น
+            // ละตินอยู่แล้ว เช่นลูกค้าต่างชาติ ผ่านตามเดิมไม่ถูกแตะ)
+            var caddr = lang == "en"
+                ? ThaiRomanizer.ComposeEnglishAddress(doc.Contact.BuildingNumber, doc.Contact.BuildingName,
+                    doc.Contact.Moo, doc.Contact.StreetName, doc.Contact.SubDistrict, doc.Contact.District,
+                    doc.Contact.Province, doc.Contact.PostalCode, doc.Contact.Address)
+                : FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,
+                    doc.Contact.SubDistrict, doc.Contact.District, doc.Contact.Province, doc.Contact.PostalCode);
             if (!string.IsNullOrWhiteSpace(caddr)) sb.AppendLine($"<div>{caddr}</div>");
         }
         if (template.ShowContactPhone && doc.Contact.Phone != null) sb.AppendLine($"<div>{L.Phone}: {doc.Contact.Phone}</div>");

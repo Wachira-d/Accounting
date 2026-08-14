@@ -214,6 +214,16 @@
           <div class="form-group"><label class="form-label">จังหวัด *</label><input type="text" id="cProvince" class="form-input"></div>
           <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#64748b;font-size:11px">(5 หลัก)</span></label><input type="text" id="cPostalCode" class="form-input" maxlength="5" inputmode="numeric"></div>
         </div>
+        <div class="form-group" style="margin-top:6px">
+          <label class="form-label">ที่อยู่ภาษาอังกฤษ (สำหรับเอกสารโหมดอังกฤษ)
+            <span style="font-weight:normal;color:#64748b;font-size:11px">— ว่าง = ระบบถอดอักษรจากที่อยู่ไทยให้อัตโนมัติ</span>
+          </label>
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <textarea id="cAddressEn" class="form-textarea" rows="2" style="flex:1" placeholder="เช่น 44 Moo 9, Nong Hiang, Phanat Nikhom, Chon Buri 20140"></textarea>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.suggestAddressEn()" title="ถอดอักษรจากที่อยู่ไทยด้านบน (RTGS) — สร้างมาให้แก้ต่อได้">✨ แปลงจากที่อยู่ไทย</button>
+          </div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:4px">ชื่อจังหวัดใช้สะกดทางการเสมอ · ชื่อตำบล/ถนนถอดเสียงอัตโนมัติ โปรดตรวจก่อนบันทึก — ใช้พิมพ์บนใบกำกับ/ใบแจ้งหนี้เมื่อเลือกภาษาอังกฤษ</div>
+        </div>
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
@@ -907,6 +917,32 @@
         await this.loadCompanyProfile();
         await this.loadSettings();
       },
+      /** ถอดที่อยู่ไทย (ค่าที่กำลังกรอกบนฟอร์ม — ไม่ใช่ค่าที่บันทึกแล้ว) เป็น
+       *  อังกฤษผ่าน ThaiRomanizer ฝั่ง server แล้วเติมลง textarea ให้แก้ต่อ
+       *  — เป็น "ตัวช่วยร่าง" ไม่บันทึกอัตโนมัติ ผู้ใช้ตรวจ/แก้แล้วกดบันทึกเอง */
+      async suggestAddressEn() {
+        try {
+          const g = id => document.getElementById(id)?.value || null;
+          // หมายเหตุ: CompanyController route คือ /api/company (เอกพจน์) ไม่ใช่
+          // /api/companies เหมือน controller ส่วนใหญ่
+          const res = await fetch(`/api/company/${Layout.getCompanyId()}/romanize-address`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              buildingNumber: g('cBuildingNumber'), buildingName: g('cBuildingName'),
+              moo: g('cMoo'), streetName: g('cStreetName'), subDistrict: g('cSubDistrict'),
+              district: g('cDistrict'), province: g('cProvince'), postalCode: g('cPostalCode'),
+              address: g('cAddress'),
+            }),
+          });
+          const j = await res.json();
+          if (!res.ok || !j?.success) throw new Error(j?.message || 'แปลงไม่สำเร็จ');
+          const out = j.data || '';
+          if (!out) { Layout.toast('ยังไม่มีที่อยู่ไทยให้แปลง — กรอกที่อยู่ด้านบนก่อน', 'error'); return; }
+          document.getElementById('cAddressEn').value = out;
+          Layout.toast('แปลงแล้ว — โปรดตรวจการสะกดก่อนบันทึก (ชื่อเฉพาะบางคำระบบเดาจากเสียง)', 'info');
+        } catch (e) { Layout.toast(e.message || 'แปลงไม่สำเร็จ', 'error'); }
+      },
       async init() {
         if (!Layout.init('settings')) return;
         Layout.setTitle('ตั้งค่า');
@@ -1549,6 +1585,7 @@
           this._companyData = c;
           document.getElementById('cName').value = c.name || '';
           document.getElementById('cNameEn').value = c.nameEn || '';
+          document.getElementById('cAddressEn').value = c.addressEn || '';
           document.getElementById('cTaxId').value = c.taxId || '';
           document.getElementById('cBranchCode').value = c.branchCode || '00000';
           document.getElementById('cBranchName').value = c.branchName || '';
@@ -1805,6 +1842,8 @@
             district: document.getElementById('cDistrict').value || null,
             province: document.getElementById('cProvince').value || null,
             postalCode: document.getElementById('cPostalCode').value || null,
+            // "" = ล้าง (server ตีความเป็น "กลับไปใช้ตัวถอดอัตโนมัติ") จึงส่งตรง ๆ
+            addressEn: document.getElementById('cAddressEn').value,
             phone: document.getElementById('cPhone').value || null,
             fax: document.getElementById('cFax').value || null,
             email: document.getElementById('cEmail').value || null,

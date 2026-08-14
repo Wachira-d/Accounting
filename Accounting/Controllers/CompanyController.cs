@@ -55,6 +55,22 @@ public class CompanyController : ControllerBase
         return Ok(new ApiResponse<CompanyResponse>(true, result));
     }
 
+    public sealed record RomanizeAddressRequest(
+        string? BuildingNumber, string? BuildingName, string? Moo, string? StreetName,
+        string? SubDistrict, string? District, string? Province, string? PostalCode, string? Address);
+
+    /// <summary>ถอดที่อยู่ไทย → อังกฤษ (RTGS approximation) สำหรับปุ่ม
+    /// "✨ แปลงจากที่อยู่ไทย" ในหน้าตั้งค่า — รับค่าจากฟอร์ม (ไม่อ่านจาก DB)
+    /// เพื่อให้แปลงค่าที่ผู้ใช้เพิ่งแก้แต่ยังไม่บันทึกได้ถูก. เป็น pure function
+    /// ไม่เขียนอะไร — ผู้ใช้ตรวจแล้วบันทึกผ่าน PUT ปกติ</summary>
+    [HttpPost("{companyId:guid}/romanize-address")]
+    public ActionResult<ApiResponse<string>> RomanizeAddress(Guid companyId, [FromBody] RomanizeAddressRequest r)
+        => Ok(new ApiResponse<string>(true,
+            Services.Implementations.ThaiRomanizer.ComposeEnglishAddress(
+                r.BuildingNumber, r.BuildingName, r.Moo, r.StreetName,
+                r.SubDistrict, r.District, r.Province, r.PostalCode, r.Address),
+            "ok"));
+
     [HttpGet("{companyId:guid}/users")]
     public async Task<ActionResult<ApiResponse<List<CompanyMemberResponse>>>> GetMembers(Guid companyId)
     {
