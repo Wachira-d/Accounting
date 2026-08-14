@@ -36,6 +36,11 @@ public interface IOcrService
     /// was created empty (pre line-building fix). Looked up by documentId.</summary>
     Task<OcrResultResponse> RepopulateDocumentLinesFromScanAsync(Guid companyId, Guid documentId, string performedBy);
 
+    /// <summary>ตรวจความครบถ้วนตามกรมสรรพากร (RD compliance) ซ้ำ จากผลสแกน
+    /// ที่เก็บไว้ — ผลตรวจถูก persist ตอนสแกนครั้งเดียว validator ที่ฉลาดขึ้น
+    /// ภายหลังไม่ช่วยใบเก่า จึงต้องมีทางประเมินใหม่โดยไม่ต้องสแกนซ้ำ</summary>
+    Task<(string Status, string IssuesJson)> RecheckRdComplianceAsync(Guid companyId, Guid documentId);
+
     /// <summary>ผูกไฟล์ scan ของ OCR เข้ากับเอกสารที่สร้างผ่าน path อื่น
     /// (UI handoff: OCR review → ฟอร์มเอกสาร → POST /documents). กัน file
     /// ค้างที่ EntityType="OcrScan" จนผู้ใช้เปิดเอกสารแล้วไม่เห็นไฟล์ต้นฉบับ.

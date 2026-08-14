@@ -2067,43 +2067,32 @@
       /** ลูกค้าที่ตั้งค่า Contact.DefaultIssueTaxInvoice=true → ถ้าชนิดเอกสาร
        *  ปัจจุบันเป็น "ใบแจ้งหนี้" ให้เปลี่ยนเป็น "ใบกำกับภาษี" อัตโนมัติ +
        *  เตือนถ้าข้อมูล §86/4 (เลขภาษี/สาขา/ที่อยู่) ไม่ครบ. */
-      async maybePreselectTaxInvoice(contactId, c) {
+      /** โหลด contact ให้มี field ครบ (defaultIssueTaxInvoice + paymentDueDays +
+       *  paymentTerms) แล้ว cache ไว้ — ทั้งฝั่งขายและฝั่งซื้อใช้ตัวเดียวกัน
+       *  ยิง getContact อย่างมากครั้งเดียวต่อผู้ติดต่อหนึ่งราย */
+      async _ensureFullContact(contactId, c) {
+        if (!contactId) return null;
+        if (this._fullContactCache?.id === contactId) return this._fullContactCache;
         let contact = c;
-        // ต้องมี field ครบ (defaultIssueTaxInvoice + paymentDueDays) — ถ้า cache
-        // ไม่มี ให้ fetch contact เต็ม 1 ครั้ง
-        if ((contact?.defaultIssueTaxInvoice === undefined || contact?.paymentDueDays === undefined) && contactId) {
+        if (contact?.defaultIssueTaxInvoice === undefined || contact?.paymentDueDays === undefined) {
           try { const r = await Layout.api()?.getContact(contactId); contact = r?.data || contact; }
           catch { contact = c; }
         }
-        // เครดิตเทอมต่อลูกค้า → เติม "วันเครดิต" + วันครบกำหนดให้อัตโนมัติ
-        // กติกา: ค่าเฉพาะลูกค้า **ชนะ** ค่าเริ่มต้นของเทมเพลตชนิดเอกสาร
-        // (specific > generic) แต่ **ห้ามทับ** ค่าที่ผู้ใช้พิมพ์เอง
-        const days = contact?.paymentDueDays;
-        // เติมเครดิต/วันครบกำหนดของลูกค้า เฉพาะชนิดเอกสารที่มีช่องพวกนี้จริง
-        // (ใบลดหนี้/ใบเสร็จ ฯลฯ ซ่อนไว้ — เติมไป = ค่าล่องหนรั่วเข้า payload)
-        const prof = this._docFieldProfile(document.getElementById('fDocType')?.value);
-        if (typeof days === 'number' && days >= 0 && prof.credit) {
-          const cdEl = document.getElementById('fCreditDays');
-          if (cdEl && !cdEl.dataset.userTouched
-              && (!cdEl.value || cdEl.dataset.autoSrc === 'template')) {
-            cdEl.value = days;
-            cdEl.dataset.autoSrc = 'contact';
-            this._showCreditSrcHint(`👤 เครดิตตามที่ตั้งไว้กับลูกค้ารายนี้ (${days} วัน) — แก้ทับได้`);
-            this.onCreditDaysInput();   // คำนวณวันครบกำหนด = วันที่เอกสาร + เครดิต
-          }
-          const dueEl = document.getElementById('fDueDate');
-          const dateEl = document.getElementById('fDate');
-          if (dueEl && !dueEl.value && dateEl?.value) {
-            const d = new Date(dateEl.value); d.setDate(d.getDate() + days);
-            if (!isNaN(d.getTime())) { dueEl.value = d.toISOString().slice(0, 10); dueEl.dataset.autoCalc = '1'; }
-          }
-          // ป้ายเทอมของลูกค้า (เช่น "Net 30") — เติมเฉพาะตอนยังไม่มีเงื่อนไขใดเลย
-          // (ถ้าเทมเพลตเติมชุดเงื่อนไขไว้แล้ว ไม่ทับ — เครดิตวันคือตัวที่ลูกค้าชนะ)
-          const termsHidden = document.getElementById('fPaymentTerms');
-          if (termsHidden && !termsHidden.value && !termsHidden.dataset.userTouched) {
-            this.renderPaymentTerms(contact?.paymentTerms || `Net ${days}`, 'contact');
-          }
+        if (contact) {
+          this._fullContactCache = contact;
+          // จำไว้ใช้ซ้ำตอนสลับชนิดเอกสารมาเป็นชนิดที่มีช่องเครดิต — ไม่ต้อง
+          // fetch ใหม่ และไม่ต้องให้ผู้ใช้เลือกคู่ค้าซ้ำ
+          this._creditTermsContact = contact;
         }
+        return contact || null;
+      },
+
+      async maybePreselectTaxInvoice(contactId, c) {
+        const contact = await this._ensureFullContact(contactId, c);
+        // เครดิตเทอมต่อลูกค้า → เติม "วันเครดิต" + เงื่อนไข + วันครบกำหนด
+        // กติกา: ค่าเฉพาะลูกค้า **ชนะ** ค่าเริ่มต้นของเทมเพลตชนิดเอกสารและ AI
+        // (specific > generic) แต่ **ห้ามทับ** ค่าที่ผู้ใช้พิมพ์เอง — ดู _canAutoFill
+        this.applyContactCreditTerms(contact);
         if (!contact?.defaultIssueTaxInvoice) return;
         const sel = document.getElementById('fDocType');
         if (sel && sel.value === 'Invoice') {
@@ -2192,7 +2181,15 @@
         // Auto-suggest payment terms (Net X) จาก history ของผู้ติดต่อรายนี้
         // — ไม่เกี่ยวกับ doc type, ใช้ได้ทั้ง sales (Invoice/Quotation) +
         // purchase (PurchaseInvoice). ไม่ override ถ้า user เคย touch แล้ว.
+        if (!contactId) { this._creditTermsContact = null; this._fullContactCache = null; }
         if (contactId) {
+          // เทอมเครดิตที่ตั้งไว้กับ "คู่ค้า" ใช้ได้ทั้ง 2 ฝั่ง — ฝั่งซื้อคือเครดิต
+          // ที่ผู้ขายให้เรา (ใบแจ้งหนี้ซื้อ/ใบบันทึกค่าใช้จ่าย/PO). เดิมเรียก
+          // เฉพาะใน maybePreselectTaxInvoice ซึ่งทำงานฝั่งขายอย่างเดียว ⇒ ฝั่งซื้อ
+          // มีแต่ AI เดาจาก history เติมให้ ทั้งที่ค่าที่ตั้งไว้กับผู้ขายชัดเจนกว่า
+          this._ensureFullContact(contactId, c)
+            .then(ct => this.applyContactCreditTerms(ct))
+            .catch(() => {});
           this.suggestPaymentTerms(contactId);
           // Project allocation: เลือกโครงการให้ทุกบรรทัดที่ยังว่าง
           this.suggestProjectAllocation(contactId);
@@ -2727,8 +2724,12 @@
             { headers: { 'Authorization': 'Bearer ' + token } });
           const j = await r.json();
           if (!j.success || !j.data) return;
-          if (j.data.creditDays && !cdEl.value) {
+          // AI อยู่ชั้นล่างสุด — ทับได้เฉพาะช่องว่าง ห้ามชนะค่าของลูกค้า/เทมเพลต
+          // (เดิมเช็คแค่ `!cdEl.value` และไม่ประทับที่มา ทำให้ถ้า AI ตอบมาก่อน
+          // ค่าที่ตั้งไว้กับลูกค้าจะทับไม่ได้ = AI ชนะ ทั้งที่ออกแบบให้อยู่ล่างสุด)
+          if (j.data.creditDays && this._canAutoFill(cdEl, 'ai')) {
             cdEl.value = j.data.creditDays;
+            cdEl.dataset.autoSrc = 'ai';
             cdEl.dataset.aiFeedbackId = j.data.feedbackId || '';
             cdEl.title = this._aiHint(j.data);
             // อัปเดต fDueDate ถ้ามี + ยังว่าง
@@ -3272,6 +3273,102 @@
           if (!isNaN(d.getTime())) { dueEl.value = d.toISOString().slice(0, 10); dueEl.dataset.autoCalc = '1'; }
         }
       },
+      /** ลำดับความสำคัญของ "ที่มา" ค่าเทอมการชำระเงิน — ตัวเลขสูงกว่าทับตัวต่ำกว่าได้
+       *
+       *  เดิมทุกชั้นใช้กติกา "เติมเฉพาะตอนช่องว่าง" ซึ่งกลายเป็น **ใครมาถึงก่อนชนะ**
+       *  (ทั้งหมดเป็น async): AI ตอบเร็วกว่า → ชนะค่าที่ตั้งไว้กับลูกค้า, เทมเพลตถูก
+       *  เติมตอนเปิดฟอร์ม → ชนะข้อความเงื่อนไขของลูกค้าเสมอ ผลลัพธ์ไม่แน่นอนและ
+       *  กลับลำดับที่ออกแบบไว้ ตอนนี้ทุกชั้นประทับ `autoSrc` แล้วเทียบลำดับกันจริง
+       *  จึงได้ผลเดิมเสมอไม่ว่าใครตอบก่อน */
+      _srcRank: { ai: 1, template: 2, contact: 3 },
+
+      /** ชั้น `src` มีสิทธิ์เขียนทับค่าปัจจุบันของช่องนี้หรือไม่ */
+      _canAutoFill(el, src) {
+        if (!el || el.dataset.userTouched) return false;   // ผู้ใช้พิมพ์เอง = สูงสุดเสมอ
+        if (!el.value) return true;                        // ว่าง = ใครเติมก็ได้
+        const cur = el.dataset.autoSrc;
+        // มีค่าแต่ไม่รู้ที่มา (โหลดจากเอกสารเดิม / OCR handoff) = ถือเป็นของผู้ใช้
+        if (!cur) return false;
+        return (this._srcRank[src] || 0) > (this._srcRank[cur] || 0);
+      },
+
+      /** เติม "วันเครดิต + เงื่อนไขการชำระเงิน" จากค่าที่ตั้งไว้กับผู้ติดต่อ
+       *
+       *  แยกออกมาเป็นเมธอดของตัวเอง เพราะต้องเรียกได้ 2 ทาง: ตอนเลือกผู้ติดต่อ
+       *  และตอน**สลับชนิดเอกสาร**มาเป็นชนิดที่มีช่องเครดิต (เลือกลูกค้าไว้ตอน
+       *  อยู่บนใบเสร็จ/ใบลดหนี้ซึ่งซ่อนช่องพวกนี้ แล้วค่อยสลับมาใบเสนอราคา —
+       *  เดิมค่าของลูกค้าจะหายไปเลย เหลือแต่ค่าเทมเพลต) */
+      applyContactCreditTerms(contact) {
+        if (!contact) return;
+        const prof = this._docFieldProfile(document.getElementById('fDocType')?.value);
+        if (!prof.credit) return;
+        const days = contact.paymentDueDays;
+        if (typeof days !== 'number' || days < 0) return;
+
+        const cdEl = document.getElementById('fCreditDays');
+        if (this._canAutoFill(cdEl, 'contact')) {
+          cdEl.value = days;
+          cdEl.dataset.autoSrc = 'contact';
+          this._showCreditSrcHint(`👤 เครดิตตามที่ตั้งไว้กับลูกค้ารายนี้ (${days} วัน) — แก้ทับได้`);
+          this.onCreditDaysInput();   // คำนวณวันครบกำหนด = วันที่เอกสาร + เครดิต
+        }
+        const dueEl = document.getElementById('fDueDate');
+        const dateEl = document.getElementById('fDate');
+        if (dueEl && !dueEl.value && dateEl?.value) {
+          const d = new Date(dateEl.value); d.setDate(d.getDate() + days);
+          if (!isNaN(d.getTime())) { dueEl.value = d.toISOString().slice(0, 10); dueEl.dataset.autoCalc = '1'; }
+        }
+        this._applyContactPaymentTermsText(contact, days);
+      },
+
+      /** ข้อความเงื่อนไขการชำระเงินที่ "พิมพ์ลงกระดาษ" ต้องไม่ขัดกับวันเครดิตที่ใช้จริง
+       *
+       *  เคสที่พัง: เทมเพลตใบเสนอราคาตั้ง "ชำระภายใน 30 วัน" + ลูกค้าตั้งเครดิต 45
+       *  → วันครบกำหนดคิด 45 วัน แต่กระดาษพิมพ์ 30 วัน = เอกสารขัดกันเองในใบเดียว
+       *
+       *  วิธีแก้ตามลำดับ (ไม่ทิ้งเนื้อหาของเทมเพลตโดยไม่จำเป็น):
+       *   1. ลูกค้ามีข้อความเงื่อนไขของตัวเอง → ใช้ทั้งชุด (specific ชนะ generic)
+       *   2. ลูกค้ามีแต่จำนวนวัน + ข้อความเทมเพลตอ้างจำนวนวันของเทมเพลตอยู่ →
+       *      แก้เฉพาะ "ตัวเลขวัน" ในบรรทัดที่พูดถึงการชำระ เก็บบรรทัดอื่นไว้ครบ
+       *   3. ข้อความเทมเพลตไม่ได้อ้างจำนวนวันเลย → ไม่มีอะไรขัดกัน ปล่อยไว้
+       *   4. ไม่มีข้อความเทมเพลต → ใช้ "Net {days}" */
+      _applyContactPaymentTermsText(contact, days) {
+        const h = document.getElementById('fPaymentTerms');
+        if (!h) return;
+        const own = (contact.paymentTerms || '').trim();
+        if (own) {
+          if (this._canAutoFill(h, 'contact')) this.renderPaymentTerms(own, 'contact');
+          return;
+        }
+        if (!h.value) { this.renderPaymentTerms(`Net ${days}`, 'contact'); return; }
+        if (!this._canAutoFill(h, 'contact')) return;
+        const tplDays = this._typeDefaults?.[document.getElementById('fDocType')?.value]?.defaultCreditDays;
+        const merged = this._rewriteCreditDaysInTerms(h.value, tplDays, days);
+        // merged === null = ข้อความไม่ได้พูดถึงจำนวนวันของเทมเพลต → ไม่มีข้อขัดแย้ง
+        if (merged !== null) this.renderPaymentTerms(merged, 'contact');
+      },
+
+      /** แทนที่ "จำนวนวันเครดิตของเทมเพลต" ด้วยจำนวนวันของลูกค้า เฉพาะบรรทัดที่
+       *  พูดถึงการชำระเงินจริง — คืน null เมื่อไม่เจอ (แปลว่าไม่มีอะไรขัดกัน)
+       *
+       *  จำกัดขอบเขต 2 ชั้นกันแก้ตัวเลขผิดตัว: (1) ตัวเลขต้องเท่ากับค่า default
+       *  ของเทมเพลตเท่านั้น (2) บรรทัดต้องมีคำที่เกี่ยวกับการชำระ — ไม่งั้น
+       *  "รับประกันสินค้า 30 วัน" จะโดนแก้ตามไปด้วย */
+      _rewriteCreditDaysInTerms(text, tplDays, newDays) {
+        if (!text || !Number.isFinite(tplDays) || tplDays <= 0 || tplDays === newDays) return null;
+        const payWords = /(ชำระ|จ่าย|เครดิต|net\b|credit|due|payment|term)/i;
+        const from = String(tplDays), to = String(newDays);
+        let hit = false;
+        // จับ "ก้อนตัวเลข" ทั้งก้อนแล้วเทียบเต็มค่า — ได้ขอบเขตเลขฟรีโดยไม่ต้องใช้
+        // lookbehind (Safari รุ่นเก่า throw SyntaxError ตอนคอมไพล์ regex)
+        // เช่น tplDays=30 จะไม่ไปโดน "130" หรือ "300"
+        const out = text.split('\n').map(line => {
+          if (!payWords.test(line)) return line;
+          return line.replace(/\d+/g, m => { if (m !== from) return m; hit = true; return to; });
+        }).join('\n');
+        return hit ? out : null;
+      },
+
       _showCreditSrcHint(text) {
         const el = document.getElementById('fCreditDaysSrc');
         if (el) { el.textContent = text; el.style.display = ''; }
@@ -3322,16 +3419,19 @@
           }
           if (!prof.credit) return;
           const terms = document.getElementById('fPaymentTerms');
-          if (t.defaultPaymentTerms && terms && !terms.value && !terms.dataset.userTouched) {
+          if (t.defaultPaymentTerms && this._canAutoFill(terms, 'template')) {
             this.renderPaymentTerms(t.defaultPaymentTerms, 'template');
           }
           const days = document.getElementById('fCreditDays');
-          if (t.defaultCreditDays && days && !days.value && !days.dataset.userTouched) {
+          if (t.defaultCreditDays && this._canAutoFill(days, 'template')) {
             days.value = t.defaultCreditDays;
             days.dataset.autoSrc = 'template';
             this._showCreditSrcHint('⚡ ค่าเริ่มต้นจากเทมเพลตชนิดเอกสาร — แก้ทับได้');
             this.onCreditDaysInput();   // คำนวณวันครบกำหนดจริง (เดิม dispatch เปล่า)
           }
+          // ลูกค้าถูกเลือกไว้ก่อนแล้ว (หรือเพิ่งสลับชนิดเอกสารมา) → ให้ชั้นที่
+          // สูงกว่าได้ทับค่าเทมเพลตที่เพิ่งเติมไป ไม่ว่าลำดับการ fetch จะเป็นยังไง
+          if (this._creditTermsContact) this.applyContactCreditTerms(this._creditTermsContact);
         } catch (e) {
           // default โหลดไม่ได้ = ฟอร์มเปล่าตามเดิม ไม่รบกวนผู้ใช้ — และต้อง
           // ซ่อนป้ายชวนตั้งค่าด้วย ไม่งั้นป้ายของชนิดก่อนหน้าค้างอยู่ผิด ๆ
@@ -3427,6 +3527,11 @@
           payGroup.style.display = prof.pay ? '' : 'none';
           if (!prof.pay && payEl) payEl.value = '';
         }
+        // เพิ่งสลับมาเป็นชนิดที่ "มี" ช่องเครดิต และเลือกคู่ค้าไว้แล้ว → เติมเทอม
+        // ของคู่ค้าให้ตอนนี้ (ตอนเลือกคู่ค้าถูกข้ามไปเพราะชนิดก่อนหน้าไม่มีช่องนี้
+        // — เช่นเปิดใบเสร็จ เลือกลูกค้า แล้วค่อยสลับเป็นใบเสนอราคา)
+        if (prof.credit && !this.editingId && this._creditTermsContact)
+          this.applyContactCreditTerms(this._creditTermsContact);
       },
 
       onDocTypeChange() {
@@ -3543,7 +3648,8 @@
           if (!showCnSrc) {
             this._cnSourceId = null;
             const s = document.getElementById('fCnSourceDoc'); if (s) s.value = '';
-            const x = document.getElementById('fCnExternalRef'); if (x) x.value = '';
+            const x = document.getElementById('fCnExternalRef');
+            if (x) { x.value = ''; x.style.display = ''; }
             const h = document.getElementById('cnSourceHint'); if (h) h.style.display = 'none';
           } else {
             this._loadCnSourceDocs();
@@ -3985,6 +4091,8 @@
         this._cnSourceId = null;
         sel.innerHTML = '<option value="">— เลือกเอกสารเดิมของคู่ค้ารายนี้ —</option>';
         const h = document.getElementById('cnSourceHint'); if (h) h.style.display = 'none';
+        // โหลดลิสต์ใหม่ = การเลือกเดิมหาย → ช่องกรอกเลขนอกระบบต้องกลับมา
+        const xr = document.getElementById('fCnExternalRef'); if (xr) xr.style.display = '';
         if (!contactId) return;
         const api = Layout.api(); if (!api) return;
         try {
@@ -4102,12 +4210,17 @@
         const id = document.getElementById('fCnSourceDoc')?.value || '';
         const h = document.getElementById('cnSourceHint');
         this._cnSourceId = id || null;
+        // ช่อง "กรอกเลขใบเดิมนอกระบบ" เป็นทางเลือก**สำรอง**ของ dropdown —
+        // เลือกใบในระบบแล้วต้องหายไป (โชว์ค้าง = ชวนกรอกซ้ำ/ขัดกับใบที่เลือก)
+        // ยกเลิกการเลือก → กลับมาให้กรอกได้
+        const x = document.getElementById('fCnExternalRef');
         if (!id) {
           if (h) h.style.display = 'none';
+          if (x) x.style.display = '';
           this._refreshCnSideEditability();   // ไม่มีใบต้นทางแล้ว → เลือกฝั่งเองได้
           return;
         }
-        const x = document.getElementById('fCnExternalRef'); if (x) x.value = '';
+        if (x) { x.value = ''; x.style.display = 'none'; }
         let d = this._cnSourceCache[id];
         // list ไม่มี lines — ดึง detail มาเติมบรรทัดให้แก้เป็นยอดลด/เพิ่มจริง
         try {
@@ -5297,6 +5410,10 @@
 
       openCreate(side) {
         this.editingId = null;
+        // ล้าง contact ที่จำไว้สำหรับเทอมเครดิต — ไม่งั้นเทอมของลูกค้ารายก่อน
+        // ตามมาเติมในเอกสารใบใหม่ที่ยังไม่ได้เลือกคู่ค้า
+        this._creditTermsContact = null;
+        this._fullContactCache = null;
         const isExpense = side === 'expense';
         document.querySelector('#formModal .modal-title').textContent = isExpense ? 'สร้างเอกสารรายจ่าย' : 'สร้างเอกสารรายรับ';
         // Tag the line table so ProductLookup knows whether to fill selling
@@ -6413,12 +6530,28 @@
         return '';
       },
 
-      async detail(id) {
+      async detail(id, _skipRdRecheck) {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getDocument(id);
           const d = res.data;
           this._currentDoc = d;
+          // ผลตรวจ RD ถูก persist ตอนสแกนครั้งเดียว — validator ที่ฉลาดขึ้น
+          // ภายหลังไม่ช่วยใบเก่า (คำเตือนเก่าค้างใน rdComplianceIssuesJson
+          // ตลอดไป ทั้งที่กระดาษครบจริง) → ใบ OCR ที่ยังติดเตือน ให้ตรวจซ้ำ
+          // เบื้องหลังหนึ่งครั้งก่อนแสดง ถ้าผลเปลี่ยนค่อยโหลดใหม่ (ผู้ใช้เห็น
+          // ผลล่าสุดเสมอ ไม่ต้องสแกนใหม่) — best-effort: ตรวจไม่ได้ = แสดงของเดิม
+          if (!_skipRdRecheck && d.ocrConfidenceScore != null
+              && ['Warning', 'Failed'].includes(d.rdComplianceStatus)) {
+            try {
+              const r = await API.post(
+                `/api/companies/${Layout.getCompanyId()}/ocr/documents/${id}/recheck-compliance`);
+              const fresh = r?.data;
+              if (fresh && (fresh.status !== d.rdComplianceStatus
+                  || (fresh.issuesJson || '[]') !== (d.rdComplianceIssuesJson || '[]')))
+                return this.detail(id, true);
+            } catch { /* endpoint ไม่พร้อม/ใบไม่ได้มาจาก OCR — แสดงผลเดิม */ }
+          }
           const displayNum = (d.documentNumber || '').startsWith('DRAFT-') ? '(ยังไม่ออกเลข)' : d.documentNumber;
           // ใบเสนอราคาที่ถูกแก้แล้ว — โชว์ Rev ในหัว modal ให้ตรงกับกระดาษ
           const revSuffix = (d.revisionNumber || 0) > 0 ? ` (Rev.${d.revisionNumber})` : '';

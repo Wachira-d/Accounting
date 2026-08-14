@@ -4523,6 +4523,34 @@ public class OcrService : IOcrService
         return MapToResponse(result);
     }
 
+    /// <summary>ตรวจ RD compliance ซ้ำจากผลสแกนเดิม (ไม่ต้องสแกนใหม่)
+    ///
+    /// <para>ทำไมต้องมี: ผลตรวจถูก persist ลง <c>RdComplianceIssuesJson</c>
+    /// ตอนสแกน "ครั้งเดียว" — เมื่อ validator ฉลาดขึ้นภายหลัง (เช่น Rule 3
+    /// เปลี่ยนจากดูช่อง BuyerTaxId ว่าง → ค้นเลขบริษัทใน raw text ทั้งหน้า)
+    /// ใบที่สแกนไว้ก่อนหน้ายังโชว์คำเตือนเก่าตลอดไป ทั้งที่กระดาษครบจริง
+    /// (เคสจริง: ใบกำกับปั๊มน้ำมันมี TAX ID ผู้ซื้อบรรทัดล่างสุด OCR แยกช่อง
+    /// ไม่ได้ แต่เลขอยู่ใน raw text — ตรวจซ้ำแล้วหายเตือนเอง)</para></summary>
+    public async Task<(string Status, string IssuesJson)> RecheckRdComplianceAsync(
+        Guid companyId, Guid documentId)
+    {
+        if (_rdComplianceValidator == null)
+            throw new InvalidOperationException("ตัวตรวจความครบถ้วนตามกรมสรรพากรยังไม่ได้เปิดใช้งาน");
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
+            ?? throw new KeyNotFoundException(
+                "ไม่พบผลสแกน OCR ของเอกสารนี้ — ตรวจซ้ำได้เฉพาะเอกสารที่สร้างจากการสแกน");
+        var dto = MapToResponse(scan);
+        var status = await _rdComplianceValidator.EvaluateAndPersistAsync(
+            companyId, documentId, dto, scan.RawTextContent);
+        var issues = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => d.RdComplianceIssuesJson)
+            .FirstOrDefaultAsync();
+        _logger.LogInformation("ตรวจ RD compliance ซ้ำ doc {DocId} → {Status}", documentId, status);
+        return (status.ToString(), issues ?? "[]");
+    }
+
     /// <summary>
     /// Re-populate the line items of a document that was created from an OCR
     /// scan but ended up with no lines (e.g. created before the line-building
