@@ -12794,7 +12794,8 @@ public class DocumentService : IDocumentService
         QuotationAcceptedAt: d.QuotationAcceptedAt,
         QuotationAcceptedBy: d.QuotationAcceptedBy,
         DeliverySignedAt: d.DeliverySignedAt,
-        DeliverySignedBy: d.DeliverySignedBy);
+        DeliverySignedBy: d.DeliverySignedBy,
+        DocumentLanguage: d.DocumentLanguage);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack
