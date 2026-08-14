@@ -315,13 +315,16 @@
           <div id="vatClaimWarnBanner" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#991b1b;line-height:1.7"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
-            <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
+            <!-- ป้าย + การแสดงของช่องนี้เปลี่ยนตามชนิดเอกสาร (_docFieldProfile):
+                 ใบเสนอราคา = "ยืนราคาถึงวันที่" · PO = "กำหนดส่งมอบ" · ใบเสร็จ/
+                 ใบลดหนี้ = ซ่อน (เงินรับแล้ว/ไม่มีเครดิตใหม่) -->
+            <div class="form-group" id="fDueDateGroup"><label class="form-label" id="fDueDateLabel" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
           <!-- เลขจอง (Booking) — ผูกเอกสารหลายใบเข้าด้วยกัน (มัดจำ→ใบสุดท้าย→ใบเสร็จ).
                PMS โรงแรม / POS ร้าน / CRM ส่ง booking key มา; ระบบ index ไว้
                สำหรับ query รวมเอกสาร. ใช้ .fg-mid จำกัดความกว้าง 360px —
                booking key ปกติ 10-15 อักษร, ไม่ต้องยืดเต็มแถว -->
-          <div class="form-row">
+          <div class="form-row" id="bookingRow">
             <div class="form-group fg-mid">
               <label class="form-label" data-help="เลข booking/จองจากระบบภายนอก เช่น PMS โรงแรม / POS / CRM งานแต่ง. เอกสารที่มี booking เดียวกันจะถูก link เข้า booking เดียว (มัดจำ→ใบสุดท้าย→ใบเสร็จ) สำหรับ query รวม">เลขจอง (Booking) <span style="color:var(--gray-500);font-size:11px">— optional</span></label>
               <input type="text" class="form-input" id="fBookingNumber" placeholder="เช่น BK-2026-001, RSV-12345" onchange="Page.onBookingNumberChange()" onblur="Page.onBookingNumberChange()">
@@ -407,10 +410,14 @@
               <div id="fVatClaimLocked" style="display:none;font-size:11px;color:#b45309;margin-top:3px"></div>
             </div>
           </div>
-          <!-- วันเครดิต + เงื่อนไขการชำระเงิน — แสดงทุกชนิดเอกสาร (เดิมซ่อนใน
-               .supplier-invoice-only → ใบเสนอราคา/ใบแจ้งหนี้แก้เทอมไม่ได้ทั้งที่
-               ค่าขึ้นบน PDF). ค่าเริ่มต้นไหลมา 3 ชั้น: ผู้ใช้พิมพ์เอง > เครดิต
-               ของลูกค้า (Contact.PaymentDueDays) > เทมเพลตชนิดเอกสาร -->
+          <!-- วันเครดิต + เงื่อนไขการชำระเงิน — แสดงเฉพาะชนิดเอกสารที่ "มีหนี้
+               รอเก็บ/รอจ่าย" (_docFieldProfile.credit): QT/INV/TaxInv/วางบิล/DN/
+               PO/PI/Expense. ซ่อนกับใบที่เงินเคลื่อนแล้วหรือเป็นการปรับหนี้เดิม
+               (ใบเสร็จ/ใบสำคัญรับ/มัดจำ/ใบลดหนี้/PV/ใบแทนใบเสร็จ/ใบส่งของ/PR)
+               — เดิมแสดงทุกชนิด ทำให้ใบลดหนี้มี "วันเครดิต 30 วัน" ทั้งที่มันคือ
+               การลดหนี้เดิม ไม่ใช่การให้เครดิตใหม่. ค่าเริ่มต้นไหลมา 3 ชั้น:
+               ผู้ใช้พิมพ์เอง > เครดิตของลูกค้า (Contact.PaymentDueDays) >
+               เทมเพลตชนิดเอกสาร -->
           <div class="form-row-1-2" id="paymentTermsRow">
             <div class="form-group">
               <label class="form-label" data-help="จำนวนวันเครดิต — ค่าเริ่มต้นดึงจากที่ตั้งไว้กับลูกค้า (ถ้ามี) หรือเทมเพลตชนิดเอกสาร แก้ทับได้รายใบ · ถ้าไม่ใส่ 'วันครบกำหนด' ระบบคำนวณให้ (วันที่เอกสาร + วันเครดิต)">วันเครดิต</label>
@@ -1445,8 +1452,9 @@
         }
         // Due date — from the OCR-derived credit terms (documentDate + Net N).
         // Fall back to computing it here if the handoff only carried the term.
+        // ชนิดที่ไม่มีช่องวันครบกำหนด (ใบเสร็จ/ใบลดหนี้) — ข้าม ช่องถูกซ่อนอยู่
         const dueEl = document.getElementById('fDueDate');
-        if (dueEl) {
+        if (dueEl && this._docFieldProfile(document.getElementById('fDocType')?.value).due) {
           if (payload.dueDate) {
             try { dueEl.value = Layout.dateInput(payload.dueDate); } catch (e) {}
           } else if (payload.documentDate && payload.paymentTermsDays) {
@@ -2064,7 +2072,10 @@
         // กติกา: ค่าเฉพาะลูกค้า **ชนะ** ค่าเริ่มต้นของเทมเพลตชนิดเอกสาร
         // (specific > generic) แต่ **ห้ามทับ** ค่าที่ผู้ใช้พิมพ์เอง
         const days = contact?.paymentDueDays;
-        if (typeof days === 'number' && days >= 0) {
+        // เติมเครดิต/วันครบกำหนดของลูกค้า เฉพาะชนิดเอกสารที่มีช่องพวกนี้จริง
+        // (ใบลดหนี้/ใบเสร็จ ฯลฯ ซ่อนไว้ — เติมไป = ค่าล่องหนรั่วเข้า payload)
+        const prof = this._docFieldProfile(document.getElementById('fDocType')?.value);
+        if (typeof days === 'number' && days >= 0 && prof.credit) {
           const cdEl = document.getElementById('fCreditDays');
           if (cdEl && !cdEl.dataset.userTouched
               && (!cdEl.value || cdEl.dataset.autoSrc === 'template')) {
@@ -2700,6 +2711,9 @@
         try {
           const cdEl = document.getElementById('fCreditDays');
           if (!cdEl || cdEl.dataset.userTouched === '1') return;
+          // ชนิดเอกสารไม่มีช่องเครดิต (ใบลดหนี้/ใบเสร็จ/PV ฯลฯ) — ไม่ต้องถาม AI
+          // (ประหยัด call + กันเติมค่าลงช่องที่ซ่อนอยู่)
+          if (!this._docFieldProfile(document.getElementById('fDocType')?.value).credit) return;
           const cid = Layout.getCompanyId();
           const token = localStorage.getItem('token');
           const r = await fetch(`/api/companies/${cid}/ai/payment-terms/suggest?contactId=${contactId}`,
@@ -3295,6 +3309,10 @@
             const opt = [...pay.options].find(o => o.value === t.defaultPaymentAccountId);
             if (opt) { pay.value = t.defaultPaymentAccountId; pay.dispatchEvent(new Event('change')); }
           }
+          // ชนิดที่ไม่มีช่องเครดิต/เงื่อนไข (ใบลดหนี้ ฯลฯ) — ห้ามเติม default
+          // (fetch เป็น async: ช่องถูกซ่อน+ล้างไปแล้ว การเติมทีหลังจะยัดค่า
+          // ลงช่องที่มองไม่เห็น แล้วรั่วเข้า payload ตอนบันทึก)
+          if (!this._docFieldProfile(docType).credit) return;
           const terms = document.getElementById('fPaymentTerms');
           if (t.defaultPaymentTerms && terms && !terms.value && !terms.dataset.userTouched) {
             this.renderPaymentTerms(t.defaultPaymentTerms, 'template');
@@ -3311,6 +3329,84 @@
           // ซ่อนป้ายชวนตั้งค่าด้วย ไม่งั้นป้ายของชนิดก่อนหน้าค้างอยู่ผิด ๆ
           const box = document.getElementById('ptSetupHint');
           if (box) box.style.display = 'none';
+        }
+      },
+
+      /**
+       * โปรไฟล์ช่องกรอกต่อชนิดเอกสาร — single source of truth ว่าชนิดไหน
+       * "มีช่องอะไร" (ไม่ใช่ฟอร์มเดียวใช้เหมือนกันหมด):
+       *   • due    — ช่องวันที่ตัวที่สอง: false = ซ่อน, string = ป้ายชื่อตามชนิด
+       *              (ใบเสนอราคา = "ยืนราคาถึงวันที่", PO = "กำหนดส่งมอบ", ฯลฯ)
+       *   • credit — วันเครดิต + เงื่อนไขการชำระเงิน: เฉพาะใบที่ก่อ "หนี้ใหม่
+       *              รอเก็บ/รอจ่าย" เท่านั้น. ใบเสร็จ/ใบสำคัญรับ/มัดจำ = เงินรับ
+       *              แล้ว; ใบลดหนี้ = ลดหนี้เดิม ไม่ใช่ให้เครดิตใหม่; PV = จ่ายจริง
+       *              (เครดิตของมันคือ dropdown ประเภทการจ่าย ไม่ใช่เทอม)
+       *   • booking — เลขจองใช้ผูกสายเอกสารฝั่งขาย (มัดจำ→ใบสุดท้าย→ใบเสร็จ);
+       *              CN/DN ผูกผ่านใบต้นทาง (§86/9-10) อยู่แล้ว, ฝั่งซื้อไม่มี booking
+       * ค่าที่ซ่อน = ถูกล้างทิ้งด้วย (กันค่าค้างจากชนิดก่อนหน้ารั่วเข้า payload —
+       * เคสจริง: เปิดฟอร์ม Invoice เครดิต 30 → สลับเป็นใบลดหนี้ → 30 ติดไปด้วย)
+       */
+      _docFieldProfile(docType) {
+        const DUE_PAY = 'วันครบกำหนดชำระ', DUE_PAY_HELP = 'วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ · ว่าง = ระบบคำนวณจาก วันที่เอกสาร + วันเครดิต';
+        const DUE_AP = 'วันครบกำหนดจ่าย', DUE_AP_HELP = 'วันที่เราต้องจ่ายผู้ขาย — ตามเครดิตที่ผู้ขายให้ ใช้เรียงคิวจ่ายเงิน';
+        const map = {
+          Quotation: { due: 'ยืนราคาถึงวันที่', dueHelp: 'ราคาที่เสนอมีผลถึงวันไหน — เลยวันนี้แล้วต้องยืนยันราคาใหม่ก่อนตกลง', credit: true, booking: true },
+          Invoice: { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true },
+          TaxInvoice: { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true },
+          BillingNote: { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true },
+          DebitNote: { due: DUE_PAY, dueHelp: 'วันครบกำหนดของยอดที่เรียกเก็บเพิ่ม — ตั้งเทอมของส่วนเพิ่มนี้เองได้', credit: true, booking: false },
+          // ใบลดหนี้ = ลดยอดหนี้ของใบเดิม — ไม่มีเครดิตใหม่ ไม่มีวันครบกำหนดของตัวเอง
+          CreditNote: { due: false, credit: false, booking: false },
+          Receipt: { due: false, credit: false, booking: true },
+          ReceiptVoucher: { due: false, credit: false, booking: true },
+          Deposit: { due: false, credit: false, booking: true },
+          DeliveryNote: { due: false, credit: false, booking: true },
+          PurchaseRequisition: { due: 'วันที่ต้องการรับของ', dueHelp: 'ของต้องถึงเมื่อไร — ให้ฝ่ายจัดซื้อใช้เร่ง/เรียงลำดับการสั่ง', credit: false, booking: false },
+          PurchaseOrder: { due: 'กำหนดส่งมอบ', dueHelp: 'วันที่ผู้ขายต้องส่งของถึงเรา — พิมพ์บน PO เป็นเงื่อนไขการสั่ง', credit: true, booking: false },
+          PurchaseInvoice: { due: DUE_AP, dueHelp: DUE_AP_HELP, credit: true, booking: false },
+          Expense: { due: DUE_AP, dueHelp: DUE_AP_HELP, credit: true, booking: false },
+          // PV: การแสดงช่องวันครบกำหนดจ่าย คุมโดย onPaymentTypeChange (Cash = ซ่อน)
+          PaymentVoucher: { due: DUE_AP, dueHelp: DUE_AP_HELP, credit: false, booking: false },
+          CertificateInLieu: { due: false, credit: false, booking: false },
+        };
+        return map[docType] || { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true };
+      },
+
+      /** ปรับฟอร์มตามโปรไฟล์ชนิดเอกสาร — ซ่อน/โชว์ + เปลี่ยนป้าย + ล้างค่าที่ซ่อน */
+      _applyDocFieldProfile(docType) {
+        const prof = this._docFieldProfile(docType);
+        this._fieldProfile = prof;
+        const dueGroup = document.getElementById('fDueDateGroup');
+        const dueLabel = document.getElementById('fDueDateLabel');
+        const due = document.getElementById('fDueDate');
+        if (dueGroup) {
+          dueGroup.style.display = prof.due ? '' : 'none';
+          if (prof.due && dueLabel) {
+            dueLabel.textContent = prof.due;
+            if (prof.dueHelp) dueLabel.setAttribute('data-help', prof.dueHelp);
+          }
+          if (!prof.due && due) { due.value = ''; delete due.dataset.autoCalc; }
+        }
+        const ptRow = document.getElementById('paymentTermsRow');
+        if (ptRow) {
+          ptRow.style.display = prof.credit ? '' : 'none';
+          if (!prof.credit) {
+            const cd = document.getElementById('fCreditDays');
+            if (cd) { cd.value = ''; delete cd.dataset.userTouched; delete cd.dataset.autoSrc; }
+            const h = document.getElementById('fPaymentTerms');
+            if (h) { h.value = ''; delete h.dataset.userTouched; }
+            const list = document.getElementById('ptList');
+            if (list) list.innerHTML = '';
+            this._hideCreditSrcHint();
+          }
+        }
+        const bkRow = document.getElementById('bookingRow');
+        if (bkRow) {
+          bkRow.style.display = prof.booking ? '' : 'none';
+          if (!prof.booking) {
+            const bk = document.getElementById('fBookingNumber');
+            if (bk) bk.value = '';
+          }
         }
       },
 
@@ -3332,6 +3428,9 @@
           hint.style.display = opt.title ? '' : 'none';
         }
         const docType = sel?.value;
+        // ช่องกรอกต่อชนิดเอกสาร (วันครบกำหนด/เครดิต/เงื่อนไข/เลขจอง) — ต้องมา
+        // ก่อน onPaymentTypeChange ของ PV ด้านล่าง (PV Cash ซ่อน due ทับอีกชั้น)
+        this._applyDocFieldProfile(docType);
         // JV มัดจำ (ไม่มีเอกสาร) — โชว์เฉพาะฝั่งขายที่ตั้งลูกหนี้ (หักมัดจำได้)
         const jvBox = document.getElementById('jvDepositBox');
         if (jvBox) jvBox.style.display = ['Invoice', 'TaxInvoice'].includes(docType) ? '' : 'none';
@@ -6380,7 +6479,7 @@
               })()}</div></div>
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400">— ยังไม่ออกเลข (รออนุมัติ) —</span>' : d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
-              <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
+              ${d.dueDate ? `<div><div class="text-xs text-gray-500">${({Quotation:'ยืนราคาถึง',PurchaseOrder:'กำหนดส่งมอบ',PurchaseRequisition:'วันที่ต้องการรับของ'})[d.documentType] || 'วันครบกำหนด'}</div><div>${Layout.date(d.dueDate)}</div></div>` : ''}
               <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${Layout.esc(d.contact.name)}</a>` : '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${(d.bookingNumber || d.reference) ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${Layout.esc(d.bookingNumber || d.reference)}</div></div>` : ''}
