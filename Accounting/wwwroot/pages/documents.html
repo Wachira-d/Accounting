@@ -313,6 +313,50 @@
           <!-- §82/5 — เตือนเมื่อเอกสารต้นทางเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/
                ใบเสร็จ ที่ไม่ใช่ใบกำกับเต็มรูป §86/4). มาจาก OCR handoff. -->
           <div id="vatClaimWarnBanner" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#991b1b;line-height:1.7"></div>
+          <!-- 🧭 ลำดับตามขั้นตอนงานจริง: เลือกชนิด+คู่ค้าแล้ว "ใบอ้างอิง"
+               ต้องมาก่อนช่องอื่นทั้งหมด — เอกสารสายอ้างอิง (ใบเสร็จตัดใบค้าง,
+               ใบลดหนี้/เพิ่มหนี้ §86/9-10) ดึงค่าจากใบต้นทางมาเติมให้เกือบทุกช่อง
+               (บรรทัด/สกุลเงิน/แหล่งเงิน/ฝั่งภาษี) ผู้ใช้ควรเลือกก่อนถึงไม่ต้องกรอกซ้ำ -->
+          <!-- ใบเสร็จรับเงิน: ดึงใบค้างของลูกหนี้มา "รับชำระ" (ตัดลูกหนี้ ไม่ลง
+               รายได้ซ้ำ) — ไม่เลือก = ใบเสร็จอิสระ (ขายสด ลงรายได้+VAT) -->
+          <div id="receiptSourceSection" style="margin-bottom:12px;background:#fefce8;border:1px solid #eab308;border-radius:8px;padding:10px 14px;display:none">
+            <div style="font-weight:600;color:#854d0e;font-size:13px">📥 รับชำระใบค้างของลูกค้ารายนี้ (ตัดลูกหนี้)</div>
+            <select id="fReceiptSourceDoc" class="form-select" style="margin-top:6px" onchange="Page.onReceiptSourceSelect()">
+              <option value="">— ใบเสร็จอิสระ (ขายสด: ลงรายได้ + VAT) —</option>
+            </select>
+            <div id="receiptSourceHint" style="display:none;color:#854d0e;font-size:12px;margin-top:6px;line-height:1.6">
+              ✅ ใบเสร็จนี้จะ <b>ตัดลูกหนี้</b> ของใบที่เลือก (Dr เงินสด / Cr ลูกหนี้) —
+              <b>ไม่ลงรายได้/VAT ซ้ำ</b> (รับรู้ที่ใบต้นทางแล้ว) · แก้ยอดในบรรทัดเพื่อ
+              <b>รับบางส่วน</b>ได้ (ระบบกันเกินยอดคงค้าง) · ใบแจ้งหนี้บริการที่ต้องการ
+              ใบกำกับเต็มรูป ณ วันรับเงิน แนะนำ "แปลงเอกสาร" หรือ "บันทึกชำระ" เต็มยอดแทน
+            </div>
+          </div>
+
+          <!-- CN/DN: อ้างอิงใบกำกับ/เอกสารต้นฉบับ — §86/9-10 บังคับระบุเลขที่+วันที่
+               ใบเดิม. เลือกจากในระบบ (กระดาษพิมพ์ มูลค่าเดิม/ที่ถูกต้อง/ผลต่าง ให้)
+               หรือกรอกเลขใบเดิมนอกระบบ (ก่อนย้ายข้อมูล) -->
+          <div id="cnSourceSection" style="margin-bottom:12px;background:#fff7ed;border:1px solid #fb923c;border-radius:8px;padding:10px 14px;display:none">
+            <div style="font-weight:600;color:#9a3412;font-size:13px">📎 อ้างอิงใบกำกับ/เอกสารต้นฉบับ * <span style="font-weight:400;font-size:12px">(§86/9-10 ใบลดหนี้/เพิ่มหนี้ต้องระบุใบเดิม)</span></div>
+            <select id="fCnSourceDoc" class="form-select" style="margin-top:6px" onchange="Page.onCnSourceSelect()">
+              <option value="">— เลือกเอกสารเดิมของคู่ค้ารายนี้ —</option>
+            </select>
+            <input type="text" id="fCnExternalRef" class="form-input" style="margin-top:6px" placeholder="หรือกรอกเลขที่ใบกำกับเดิม (กรณีใบเดิมอยู่นอกระบบ/ก่อนย้ายข้อมูล)" oninput="if(this.value){document.getElementById('fCnSourceDoc').value='';Page._cnSourceId=null;const h=document.getElementById('cnSourceHint');if(h)h.style.display='none';Page._refreshCnSideEditability();}">
+            <div id="cnSourceHint" style="display:none;color:#9a3412;font-size:12px;margin-top:6px;line-height:1.6"></div>
+            <!-- ฝั่งภาษีของใบลดหนี้/เพิ่มหนี้ — เลือกให้ชัดตั้งแต่ตอนสร้าง
+                 แทนที่จะให้ระบบเดาตอนอนุมัติ (การเดาผิดทำให้ JE ลงผิดฝั่งถาวร
+                 แล้วยอดไปโผล่ผิดฝั่งใน ภ.พ.30 — แก้ทีหลังต้องกลับ JE) -->
+            <div id="cnSideBox" style="margin-top:8px;padding-top:8px;border-top:1px dashed #fdba74">
+              <div style="font-weight:600;color:#9a3412;font-size:12.5px;margin-bottom:4px">ใบนี้เป็นฝั่งไหน *</div>
+              <label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;margin-right:16px;cursor:pointer">
+                <input type="radio" name="fCnSide" value="sales" checked onchange="Page.onCnSideChange()"> ขาย — เราออกให้ลูกค้า (ลดภาษีขาย)
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;cursor:pointer">
+                <input type="radio" name="fCnSide" value="purchase" onchange="Page.onCnSideChange()"> ซื้อ — ผู้ขายลดหนี้ให้เรา (ลดภาษีซื้อ)
+              </label>
+              <div id="cnSideHint" style="font-size:11px;color:#9a3412;margin-top:3px"></div>
+            </div>
+          </div>
+
           <div class="form-row">
             <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
             <!-- ป้าย + การแสดงของช่องนี้เปลี่ยนตามชนิดเอกสาร (_docFieldProfile):
@@ -526,46 +570,6 @@
                 </div>
               </div>
             </label>
-          </div>
-
-          <!-- ใบเสร็จรับเงิน: ดึงใบค้างของลูกหนี้มา "รับชำระ" (ตัดลูกหนี้ ไม่ลง
-               รายได้ซ้ำ) — ไม่เลือก = ใบเสร็จอิสระ (ขายสด ลงรายได้+VAT) -->
-          <div id="receiptSourceSection" style="margin-bottom:12px;background:#fefce8;border:1px solid #eab308;border-radius:8px;padding:10px 14px;display:none">
-            <div style="font-weight:600;color:#854d0e;font-size:13px">📥 รับชำระใบค้างของลูกค้ารายนี้ (ตัดลูกหนี้)</div>
-            <select id="fReceiptSourceDoc" class="form-select" style="margin-top:6px" onchange="Page.onReceiptSourceSelect()">
-              <option value="">— ใบเสร็จอิสระ (ขายสด: ลงรายได้ + VAT) —</option>
-            </select>
-            <div id="receiptSourceHint" style="display:none;color:#854d0e;font-size:12px;margin-top:6px;line-height:1.6">
-              ✅ ใบเสร็จนี้จะ <b>ตัดลูกหนี้</b> ของใบที่เลือก (Dr เงินสด / Cr ลูกหนี้) —
-              <b>ไม่ลงรายได้/VAT ซ้ำ</b> (รับรู้ที่ใบต้นทางแล้ว) · แก้ยอดในบรรทัดเพื่อ
-              <b>รับบางส่วน</b>ได้ (ระบบกันเกินยอดคงค้าง) · ใบแจ้งหนี้บริการที่ต้องการ
-              ใบกำกับเต็มรูป ณ วันรับเงิน แนะนำ "แปลงเอกสาร" หรือ "บันทึกชำระ" เต็มยอดแทน
-            </div>
-          </div>
-
-          <!-- CN/DN: อ้างอิงใบกำกับ/เอกสารต้นฉบับ — §86/9-10 บังคับระบุเลขที่+วันที่
-               ใบเดิม. เลือกจากในระบบ (กระดาษพิมพ์ มูลค่าเดิม/ที่ถูกต้อง/ผลต่าง ให้)
-               หรือกรอกเลขใบเดิมนอกระบบ (ก่อนย้ายข้อมูล) -->
-          <div id="cnSourceSection" style="margin-bottom:12px;background:#fff7ed;border:1px solid #fb923c;border-radius:8px;padding:10px 14px;display:none">
-            <div style="font-weight:600;color:#9a3412;font-size:13px">📎 อ้างอิงใบกำกับ/เอกสารต้นฉบับ * <span style="font-weight:400;font-size:12px">(§86/9-10 ใบลดหนี้/เพิ่มหนี้ต้องระบุใบเดิม)</span></div>
-            <select id="fCnSourceDoc" class="form-select" style="margin-top:6px" onchange="Page.onCnSourceSelect()">
-              <option value="">— เลือกเอกสารเดิมของคู่ค้ารายนี้ —</option>
-            </select>
-            <input type="text" id="fCnExternalRef" class="form-input" style="margin-top:6px" placeholder="หรือกรอกเลขที่ใบกำกับเดิม (กรณีใบเดิมอยู่นอกระบบ/ก่อนย้ายข้อมูล)" oninput="if(this.value){document.getElementById('fCnSourceDoc').value='';Page._cnSourceId=null;const h=document.getElementById('cnSourceHint');if(h)h.style.display='none';Page._refreshCnSideEditability();}">
-            <div id="cnSourceHint" style="display:none;color:#9a3412;font-size:12px;margin-top:6px;line-height:1.6"></div>
-            <!-- ฝั่งภาษีของใบลดหนี้/เพิ่มหนี้ — เลือกให้ชัดตั้งแต่ตอนสร้าง
-                 แทนที่จะให้ระบบเดาตอนอนุมัติ (การเดาผิดทำให้ JE ลงผิดฝั่งถาวร
-                 แล้วยอดไปโผล่ผิดฝั่งใน ภ.พ.30 — แก้ทีหลังต้องกลับ JE) -->
-            <div id="cnSideBox" style="margin-top:8px;padding-top:8px;border-top:1px dashed #fdba74">
-              <div style="font-weight:600;color:#9a3412;font-size:12.5px;margin-bottom:4px">ใบนี้เป็นฝั่งไหน *</div>
-              <label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;margin-right:16px;cursor:pointer">
-                <input type="radio" name="fCnSide" value="sales" checked onchange="Page.onCnSideChange()"> ขาย — เราออกให้ลูกค้า (ลดภาษีขาย)
-              </label>
-              <label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;cursor:pointer">
-                <input type="radio" name="fCnSide" value="purchase" onchange="Page.onCnSideChange()"> ซื้อ — ผู้ขายลดหนี้ให้เรา (ลดภาษีซื้อ)
-              </label>
-              <div id="cnSideHint" style="font-size:11px;color:#9a3412;margin-top:3px"></div>
-            </div>
           </div>
 
           <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
@@ -3954,49 +3958,60 @@
           // ขาย = ใบกำกับ/ใบรวม + ใบเสร็จที่เป็นใบกำกับในตัว (มี VAT หรือ standalone)
           // ซื้อ = PI/Expense + PV standalone (จ่ายทันที ไม่ได้อ้างใบตั้งหนี้)
           // ตัด: มัดจำ (ใช้เมนูคืนมัดจำ), ใบเสร็จหลักฐานรับเงินเปล่า, PV settlement
-          // ⚠️ ต้องกรองตาม "ฝั่ง" ที่เลือกไว้ด้วย — เดิมลิสต์รวมทั้งใบขายและใบซื้อ
-          // ปนกัน ทำให้ใบลดหนี้ฝั่งขายเลือกอ้างใบกำกับ "ซื้อ" ได้ (เอกสารขัดกันเอง:
-          // JE ลงฝั่งหนึ่ง แต่ใบต้นทางอยู่อีกฝั่ง → ภ.พ.30 หักผิดฝั่ง)
-          const wantPurchase = this._cnSideIsPurchase();
-          const items = (res.data?.items || res.data || []).filter(d => {
-            if (!['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'].includes(d.status)) return false;
-            if (d.isDeposit) return false;
-            if (wantPurchase) {
-              // ฝั่งซื้อ: ใบกำกับของผู้ขายที่เราบันทึกไว้ (PI/Expense/PV จ่ายทันที)
-              if (['PurchaseInvoice', 'Expense'].includes(d.documentType)) return true;
-              if (d.documentType === 'PaymentVoucher') return !d.relatedDocumentId;
-              return false;
-            }
-            // ฝั่งขาย: ใบกำกับที่เราออกเอง + ใบเสร็จที่เป็นใบกำกับในตัว
-            if (d.documentType === 'TaxInvoice') return true;
-            if (['Receipt', 'ReceiptVoucher'].includes(d.documentType))
-              return Number(d.vatAmount) > 0.005 || !d.relatedDocumentId;
-            return false;
-          });
+          //
+          // 🧭 โหลด **ทั้งสองฝั่ง** เสมอ แยกเป็น optgroup — ใบที่ผู้ใช้เลือกคือตัว
+          // กำหนดฝั่งของใบลดหนี้/เพิ่มหนี้ (ไม่ใช่ให้ radio กรองรายการ): เดิมกรอง
+          // ตาม radio ทำให้เปิดจากแท็บรายรับแล้วหาใบซื้อของคู่ค้าไม่เจอเลย ("หา
+          // ไม่เจอทั้งที่เคยเห็น") ทั้งที่ผู้ใช้แค่อยากอ้างใบของคู่ค้ารายนี้ —
+          // ต้องรู้จัก "ฝั่ง" ก่อนถึงจะเห็นรายการ = ลำดับกลับหัวจากงานจริง.
+          // radio ฝั่งยังอยู่ ใช้เฉพาะกรณีไม่มีใบในระบบ (อ้างเลขนอกระบบ)
+          const items = (res.data?.items || res.data || []).filter(d =>
+            ['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'].includes(d.status) && !d.isDeposit);
+          const sales = [], purchase = [];
+          for (const d of items) {
+            if (['PurchaseInvoice', 'Expense'].includes(d.documentType)) { purchase.push(d); continue; }
+            if (d.documentType === 'PaymentVoucher') { if (!d.relatedDocumentId) purchase.push(d); continue; }
+            // ใบแจ้งหนี้ (ยังไม่ใช่ใบกำกับ) ก็อ้างได้ — ลดหนี้ AR ที่ตั้งไว้
+            // (เคสบริการ §78/1 VAT รอเรียกเก็บ / เคสไม่มี VAT) server รับทุกชนิด
+            if (['TaxInvoice', 'Invoice'].includes(d.documentType)) { sales.push(d); continue; }
+            if (['Receipt', 'ReceiptVoucher'].includes(d.documentType)
+                && (Number(d.vatAmount) > 0.005 || !d.relatedDocumentId)) sales.push(d);
+          }
           // เอกสารฝั่งซื้อ: ใบกำกับภาษีตัวจริงเป็นของผู้ขาย ผู้ใช้จำ/ค้นด้วย
           // "เลขใบกำกับผู้ขาย" (เช่น RT69/00013) ไม่ใช่เลขรันภายในเรา (EXP-…)
           // และเลขนั้นคือเลขที่จะถูกพิมพ์อ้างอิงบนใบลดหนี้ตาม §86/9-10 ด้วย
           const purchaseTypes = ['PurchaseInvoice', 'Expense', 'PaymentVoucher', 'CertificateInLieu'];
-          items.forEach(d => {
-            this._cnSourceCache[d.id] = d;
-            const o = document.createElement('option');
-            o.value = d.id;
-            let supplierPart = '';
-            if (purchaseTypes.includes(d.documentType)) {
-              supplierPart = d.supplierInvoiceNumber
-                ? ` · ใบกำกับผู้ขาย ${d.supplierInvoiceNumber}`
-                : ' · (ยังไม่ได้ระบุเลขใบกำกับผู้ขาย)';
-            }
-            o.textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}${supplierPart}`
-              + ` · ${Layout.money(d.totalAmount)} (${Layout.date(d.documentDate)})`;
-            sel.appendChild(o);
-          });
-          if (!items.length) {
+          const addGroup = (label, docs) => {
+            if (!docs.length) return;
+            const g = document.createElement('optgroup');
+            g.label = label;
+            docs.forEach(d => {
+              this._cnSourceCache[d.id] = d;
+              const o = document.createElement('option');
+              o.value = d.id;
+              let supplierPart = '';
+              if (purchaseTypes.includes(d.documentType)) {
+                supplierPart = d.supplierInvoiceNumber
+                  ? ` · ใบกำกับผู้ขาย ${d.supplierInvoiceNumber}`
+                  : ' · (ยังไม่ได้ระบุเลขใบกำกับผู้ขาย)';
+              }
+              o.textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}${supplierPart}`
+                + ` · ${Layout.money(d.totalAmount)} (${Layout.date(d.documentDate)})`;
+              g.appendChild(o);
+            });
+            sel.appendChild(g);
+          };
+          // ฝั่งของแท็บที่เปิดอยู่ขึ้นก่อน (เปิดจากรายจ่าย = กลุ่มใบซื้ออยู่บน)
+          const groups = [
+            ['🔵 ฝั่งขาย — ใบที่เราออกให้ลูกค้า (เลือกแล้วใบนี้จะลดภาษีขาย)', sales],
+            ['🟠 ฝั่งซื้อ — ใบของผู้ขาย (เลือกแล้วใบนี้จะลดภาษีซื้อ)', purchase],
+          ];
+          if (this._cnSideIsPurchase()) groups.reverse();
+          groups.forEach(([label, docs]) => addGroup(label, docs));
+          if (!sales.length && !purchase.length) {
             const o = document.createElement('option');
             o.disabled = true;
-            o.textContent = wantPurchase
-              ? '(ไม่มีใบกำกับซื้อของคู่ค้ารายนี้ในระบบ — กรอกเลขใบกำกับของผู้ขายในช่องด้านล่างแทน)'
-              : '(ไม่มีใบกำกับขายของคู่ค้ารายนี้ในระบบ — กรอกเลขใบเดิมในช่องด้านล่างแทน)';
+            o.textContent = '(ไม่มีเอกสารที่อ้างอิงได้ของคู่ค้ารายนี้ในระบบ — เลือกฝั่งด้านล่าง แล้วกรอกเลขใบเดิมแทน)';
             sel.appendChild(o);
           }
         } catch { /* best-effort */ }
@@ -4028,15 +4043,16 @@
         const h = document.getElementById('cnSideHint');
         if (!h) return;
         const isPurchase = this._cnSideIsPurchase();
-        // ผู้ใช้สลับฝั่งเอง → ใบต้นทางที่เลือกไว้อาจคนละฝั่งแล้ว ต้องล้าง+โหลดใหม่
-        // (ถ้าไม่ล้าง จะบันทึกเป็นเอกสารที่ฝั่งไม่ตรงใบต้นทาง — server ปฏิเสธ)
-        if (!opts.fromSource) {
+        // ลิสต์ใบต้นทางมีทั้งสองฝั่งเสมอ (optgroup แยก) — สลับ radio จึง**ไม่ต้อง**
+        // โหลดใหม่. แต่ถ้ามีใบต้นทางค้างอยู่คนละฝั่งกับที่เพิ่งเลือก ต้องล้างทิ้ง
+        // (จะบันทึกเป็นเอกสารที่ฝั่งไม่ตรงใบต้นทาง — server ปฏิเสธ) ปกติเกิดไม่ได้
+        // เพราะ radio ถูก disable ตอนมีใบต้นทาง — เป็น guard เผื่อ path อื่น
+        if (!opts.fromSource && this._cnSourceId) {
           this._cnSourceId = null;
           const srcSel = document.getElementById('fCnSourceDoc');
           if (srcSel) srcSel.value = '';
           const srcHint = document.getElementById('cnSourceHint');
           if (srcHint) srcHint.style.display = 'none';
-          this._loadCnSourceDocs();
         }
         h.textContent = note || (isPurchase
           ? 'ลงบัญชี: ลดภาษีซื้อ (Cr 11610) → ยอดเข้ารายงานภาษีซื้อ ภ.พ.30 แบบติดลบ'
