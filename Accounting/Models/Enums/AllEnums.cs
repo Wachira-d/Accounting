@@ -1691,3 +1691,26 @@ public enum AiFeatureRoutingMode
     /// supervision signal per call.</summary>
     AlwaysTeach = 4,
 }
+
+/// <summary>สถานะหนังสือรับรองหัก ณ ที่จ่ายที่ "เราได้รับ" (เครดิต ภ.ง.ด.50/51)</summary>
+public enum WhtCreditStatus
+{
+    /// <summary>ถูกหักแล้ว (มียอดใน 11910) แต่<b>ยังไม่ได้รับหนังสือรับรอง</b> —
+    /// กฎหมายยังเครดิตไม่ได้ ต้องตามทวงจากลูกค้า</summary>
+    Pending = 0,
+    /// <summary>ได้รับหนังสือรับรองแล้ว — พร้อมใช้เครดิต</summary>
+    Received = 1,
+    /// <summary>ใช้เครดิตไปแล้วในแบบ ภ.ง.ด.51 หรือ 50 (กันใช้ซ้ำ)</summary>
+    Claimed = 2,
+    /// <summary>พ้นกำหนดขอคืน 3 ปี หรือไม่ได้รับใบจนต้องตัดทิ้ง</summary>
+    Expired = 3,
+}
+
+/// <summary>แบบที่ "ผู้จ่าย" ใช้ยื่นเมื่อหักภาษีเรา</summary>
+public enum WhtPayerFormType
+{
+    /// <summary>ภ.ง.ด.3 — ผู้จ่ายหักจากบุคคลธรรมดา</summary>
+    Pnd3 = 3,
+    /// <summary>ภ.ง.ด.53 — ผู้จ่ายหักจากนิติบุคคล (เคสปกติของบริษัท)</summary>
+    Pnd53 = 53,
+}

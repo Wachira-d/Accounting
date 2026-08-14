@@ -2469,6 +2469,162 @@ public class OcrService : IOcrService
             data.ReasoningTrace.Add($"[Azure DI KV] {azure.KeyValuePairs.Count} key-value pairs scanned for fallback");
     }
 
+    /// <summary>สร้างรายการทะเบียน "ภาษีถูกหัก ณ ที่จ่าย" จากหนังสือรับรองที่สแกน
+    ///
+    /// <para>เข้าเงื่อนไขเมื่อบริษัทเราอยู่ช่อง <b>ผู้ถูกหักภาษี</b> บนกระดาษ —
+    /// สถานะเป็น <b>Received</b> ทันที (มีใบจริงอยู่ในมือแล้ว ต่างจากแถวที่ระบบ
+    /// สร้างเองตอนรับเงินซึ่งเป็น Pending เพราะยังไม่มีใบ)</para>
+    ///
+    /// <para>ผูกไฟล์สแกนไว้กับรายการเพื่อให้ครบตาม พ.ร.บ.บัญชี ม.10 (เก็บ 5 ปี)</para></summary>
+    private async Task EnsureWhtCreditFromCertAsync(Guid companyId, OcrScanResult result, Guid? documentId)
+    {
+        // OcrScanResult ไม่มีช่อง "ยอดภาษีที่ถูกหัก" ตรง ๆ — มีแค่ HasWht/WhtRate
+        // จึงคำนวณจากฐาน × อัตรา ถ้าครบ; ไม่ครบค่อยใช้ยอดรวมที่อ่านได้เป็นตัวตั้ง
+        // แล้วให้ผู้ใช้ยืนยันในหน้าทะเบียน (เขียนกำกับไว้ใน Notes)
+        var baseFromScan = result.ExtractedSubTotal ?? 0m;
+        var rateFromScan = result.WhtRate ?? 0m;
+        var derived = baseFromScan > 0 && rateFromScan > 0
+            ? Math.Round(baseFromScan * rateFromScan / 100m, 2) : 0m;
+        var whtAmount = derived > 0 ? derived : (result.ExtractedTotalAmount ?? 0m);
+        if (whtAmount <= 0) return;
+        var needsReview = derived <= 0;
+
+        // กันซ้ำ: สแกนใบเดิมอีกรอบไม่ควรได้เครดิตสองเท่า
+        var certNo = result.ExtractedDocumentNumber?.Trim();
+        var dup = await _db.WhtCreditsReceived.AnyAsync(w => w.CompanyId == companyId
+            && ((documentId != null && w.DocumentId == documentId)
+                || (certNo != null && w.CertificateNumber == certNo)));
+        if (dup) return;
+
+        var docDate = result.ExtractedDate ?? DateTime.UtcNow.Date;
+        var startMonth = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
+        if (startMonth is < 1 or > 12) startMonth = 1;
+        var taxYear = docDate.Month >= startMonth ? docDate.Year : docDate.Year - 1;
+
+        var baseAmount = result.ExtractedSubTotal ?? 0m;
+        _db.WhtCreditsReceived.Add(new WhtCreditReceived
+        {
+            CompanyId = companyId,
+            TaxYear = taxYear,
+            CertificateNumber = certNo,
+            CertificateDate = result.ExtractedDate,
+            PayerContactId = result.MatchedContactId,
+            // ผู้จ่าย = ผู้ที่หักเรา — บนใบคือคู่ค้าที่ OCR อ่านได้
+            PayerName = result.ExtractedVendorName ?? "",
+            PayerTaxId = result.ExtractedVendorTaxId,
+            PayerFormType = WhtPayerFormType.Pnd53,
+            // ประเภทเงินได้ — ป้อนให้ CheckRate ตรวจอัตรากับ ท.ป.4/2528 ได้
+            IncomeTypeCode = InferIncomeTypeCode(result.RawTextContent),
+            IncomeAmount = baseAmount,
+            WhtRate = rateFromScan > 0 ? rateFromScan
+                : (baseAmount > 0 ? Math.Round(whtAmount / baseAmount * 100m, 2) : 0m),
+            WhtAmount = whtAmount,
+            // มีใบจริงอยู่ในมือแล้ว (นี่คือตัวใบที่เพิ่งสแกน) → ใช้เครดิตได้เลย
+            Status = WhtCreditStatus.Received,
+            DocumentId = documentId,
+            AttachmentId = result.FileAttachmentId,
+            Notes = $"สร้างจากการสแกนหนังสือรับรอง ({result.OriginalFileName})"
+                + (needsReview ? " — ⚠️ อ่านอัตรา/ฐานภาษีไม่ครบ กรุณาตรวจยอดก่อนใช้เครดิต" : ""),
+        });
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("บันทึกเครดิตภาษีถูกหักจากหนังสือรับรองที่สแกน {Amount} (scan {Id})",
+            whtAmount, result.Id);
+    }
+
+    /// <summary>อ่านสกุลเงินจากข้อความบนกระดาษ — คืน null เมื่อไม่พบ (ถือเป็นบาท)
+    ///
+    /// <para>เอกสารสกุลต่างประเทศที่ถูกบันทึกเป็นบาทคือความผิดพลาดแบบ "เงียบ":
+    /// ตัวเลขถูกเก็บเท่าเดิมแต่ความหมายต่างกันหลายสิบเท่า และไม่มีอะไรเตือน
+    /// — ตรวจไว้ดีกว่าปล่อยผ่าน (ตั้ง Currency แล้ว approve จะบังคับให้ระบุ
+    /// อัตราแลกเปลี่ยนเอง ซึ่งเป็นการล้มแบบดังกว่าการเงียบ)</para>
+    ///
+    /// <para>ระวัง false positive: "$" อย่างเดียวไม่พอ (บางใบพิมพ์ THB ด้วย $)
+    /// จึงต้องเจอรหัสสกุลเป็นคำเต็มหรือคู่กับตัวเลข</para></summary>
+    internal static string? InferCurrency(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
+        var t = rawText.ToUpperInvariant();
+        // มีคำว่าบาท/THB ชัดเจน = บาทแน่นอน ไม่ต้องเดาต่อ
+        if (t.Contains("THB") || rawText.Contains("บาท")) return null;
+        foreach (var (code, words) in new[]
+        {
+            ("USD", new[] { "USD", "US DOLLAR", "U.S. DOLLAR" }),
+            ("EUR", new[] { "EUR", "EURO" }),
+            ("JPY", new[] { "JPY", "YEN" }),
+            ("CNY", new[] { "CNY", "RMB", "YUAN" }),
+            ("GBP", new[] { "GBP", "POUND STERLING" }),
+            ("SGD", new[] { "SGD", "SINGAPORE DOLLAR" }),
+        })
+        {
+            foreach (var w in words)
+                if (System.Text.RegularExpressions.Regex.IsMatch(t, $@"\b{System.Text.RegularExpressions.Regex.Escape(w)}\b"))
+                    return code;
+        }
+        return null;
+    }
+
+    /// <summary>อ่าน "เหตุผลการลดหนี้" จากข้อความบนกระดาษ (§86/10 บังคับระบุ)
+    ///
+    /// <para>คืน null เมื่อไม่พบคำบ่งชี้ชัดเจน — ปล่อยให้ผู้ใช้เลือกเอง ดีกว่าเดา
+    /// ผิดแล้วลงบัญชีผิด (เฉพาะ "คืนสินค้า" เท่านั้นที่กระทบสต๊อก อีก 3 แบบไม่กระทบ)</para></summary>
+    internal static CreditNoteReason? InferCreditNoteReason(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
+        var t = rawText.ToLowerInvariant();
+        // เรียงตามความจำเพาะ: คืนสินค้าเป็นเคสเดียวที่กระทบสต๊อก จึงต้องชัดจริงก่อน
+        if (t.Contains("คืนสินค้า") || t.Contains("รับคืนสินค้า") || t.Contains("สินค้าคืน")
+            || t.Contains("goods return") || t.Contains("sales return"))
+            return CreditNoteReason.Return;
+        if (t.Contains("ส่วนลด") || t.Contains("ลดราคา") || t.Contains("discount"))
+            return CreditNoteReason.Discount;
+        if (t.Contains("ตัดหนี้สูญ") || t.Contains("หนี้สูญ") || t.Contains("write-off") || t.Contains("write off"))
+            return CreditNoteReason.Writeoff;
+        if (t.Contains("ปรับปรุงยอด") || t.Contains("ปรับยอด") || t.Contains("คลาดเคลื่อน")
+            || t.Contains("ไม่ครบตามจำนวน") || t.Contains("adjustment"))
+            return CreditNoteReason.Adjustment;
+        return null;   // ไม่เดา — ผู้ใช้เลือกเองบนฟอร์ม
+    }
+
+    /// <summary>อ่าน "ประเภทเงินได้" จากหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)
+    ///
+    /// <para>ค่านี้เป็น input ของตัวตรวจอัตรา <c>WhtCreditService.CheckRate</c>
+    /// (ท.ป.4/2528) — ถ้าไม่มี ตัวตรวจจะเงียบ แปลว่าผู้จ่ายหักผิดอัตราแล้ว
+    /// ไม่มีอะไรเตือน จนไปเจอตอนกระทบยอดกับ ภ.ง.ด.50</para>
+    ///
+    /// <para><b>กับดัก:</b> แบบ 50 ทวิ ที่เป็นฟอร์มพิมพ์สำเร็จมีหัวข้อ 1–6
+    /// ครบทุกประเภทอยู่บนกระดาษอยู่แล้ว การจับคำตรง ๆ จะเจอทุกประเภทพร้อมกัน
+    /// จึงคืนค่าเฉพาะตอนที่เจอ "กลุ่มเดียว" เท่านั้น — เจอหลายกลุ่ม = อ่านฟอร์ม
+    /// เปล่า ไม่ใช่รายการจริง → คืน null</para>
+    ///
+    /// <para><b>ห้ามเดาจากอัตราที่หัก</b> เพราะจะทำให้ CheckRate ตรวจกับตัวเอง
+    /// แล้วผ่านทุกครั้ง = ปิดตัวตรวจโดยไม่รู้ตัว</para></summary>
+    internal static string? InferIncomeTypeCode(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
+        var t = rawText.ToLowerInvariant().Replace(" ", "");
+
+        // (รหัสที่คืน, คำบ่งชี้) — รหัสต้องอยู่ในรูปที่ CheckRate อ่านออก
+        var families = new (string Code, string[] Markers)[]
+        {
+            ("40(1) เงินเดือน",      new[] { "40(1)", "เงินเดือน", "ค่าจ้าง" }),
+            ("40(2) ค่านายหน้า",     new[] { "40(2)", "ค่านายหน้า", "ค่าธรรมเนียม", "คอมมิชชั่น", "คอมมิชชัน" }),
+            ("40(3) ค่าสิทธิ",       new[] { "40(3)", "ค่าแห่งลิขสิทธิ์", "ค่าสิทธิ", "royalty" }),
+            ("40(4)(ก) ดอกเบี้ย",    new[] { "40(4)(ก)", "ดอกเบี้ย" }),
+            ("40(4)(ข) เงินปันผล",   new[] { "40(4)(ข)", "เงินปันผล", "dividend" }),
+            ("40(5) ค่าเช่า",        new[] { "40(5)", "ค่าเช่า" }),
+            ("40(6) วิชาชีพอิสระ",   new[] { "40(6)", "วิชาชีพอิสระ" }),
+            ("40(7) ค่ารับเหมา",     new[] { "40(7)", "รับเหมา" }),
+            ("40(8) ค่าโฆษณา",       new[] { "ค่าโฆษณา" }),
+            ("40(8) ค่าขนส่ง",       new[] { "ค่าขนส่ง" }),
+            ("40(8) ค่าบริการ",      new[] { "40(8)", "ค่าบริการ", "ค่าจ้างทำของ" }),
+        };
+
+        var hits = families.Where(f => f.Markers.Any(m => t.Contains(m))).Select(f => f.Code).ToList();
+        // เจอกลุ่มเดียวเท่านั้นจึงเชื่อได้ — หลายกลุ่ม = ข้อความหัวฟอร์ม
+        return hits.Count == 1 ? hits[0] : null;
+    }
+
     private static string MapAzureDocType(string? azureDocType, string? modelId)
     {
         if (modelId?.Contains("receipt", StringComparison.OrdinalIgnoreCase) == true)
@@ -4015,6 +4171,23 @@ public class OcrService : IOcrService
             CompanyId = companyId,
             DocumentNumber = docNumber,
             DocumentType = docType,
+            // ใบลดหนี้/เพิ่มหนี้: role inferrer รู้อยู่แล้วว่าเราเป็นผู้ซื้อหรือผู้ขาย
+            // ของใบนี้ (จากเลขผู้เสียภาษีบนกระดาษเทียบกับบริษัทเรา) — เดิมข้อมูลนี้
+            // ถูกทิ้ง ทำให้ระบบต้องไป "เดา" ฝั่งภาษีอีกครั้งตอนอนุมัติ ทั้งที่รู้แล้ว
+            // (เดาผิด = JE ลงผิดฝั่งถาวร ยอดไปโผล่ผิดฝั่งใน ภ.พ.30)
+            // สกุลเงินบนกระดาษ — เดิมไม่เคยอ่าน ใบ USD จึงถูกบันทึกเป็นบาทเงียบ ๆ
+            // (ตัวเลขเท่าเดิมแต่ความหมายผิด = ยอดผิดหลายสิบเท่า) ตรวจจากสัญลักษณ์/
+            // รหัสสกุลบนเอกสาร ไม่พบ = THB ตามเดิม
+            Currency = InferCurrency(result.RawTextContent) ?? "THB",
+            // เหตุผลการลดหนี้ (§86/10) — บังคับก่อนอนุมัติ เดิม OCR ไม่เคยเซ็ต
+            // ใบลดหนี้ที่สแกนมาจึงติดบล็อก "ต้องระบุเหตุผล" ทุกใบ 100%
+            // กระดาษมักพิมพ์เหตุผลไว้อยู่แล้ว → อ่านจากข้อความ ถ้าไม่พบค่อยให้ผู้ใช้เลือก
+            CreditNoteReason = docType == DocumentType.CreditNote
+                ? InferCreditNoteReason(result.RawTextContent) : null,
+            CnDnPurchaseSideOverride =
+                docType is DocumentType.CreditNote or DocumentType.DebitNote
+                    ? string.Equals(result.OurRole, "Buyer", StringComparison.OrdinalIgnoreCase)
+                    : null,
             Status = DocumentStatus.Draft,
             DocumentDate = docDate,
             DueDate = dueDate,
@@ -4313,6 +4486,26 @@ public class OcrService : IOcrService
         // created document (Task 5 of ERP upgrade). Failures don't roll
         // back the document creation — they surface as
         // Document.RdComplianceStatus badges + OcrValidationLog rows.
+        // ── หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่ "เราถูกหัก" ──────────────
+        // ทิศทางดูจากช่อง "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" vs "ผู้ถูกหักภาษี ณ ที่จ่าย"
+        // ว่าเลขผู้เสียภาษีของบริษัทเราอยู่ช่องไหน — เราอยู่ช่องผู้ถูกหัก = ได้เครดิต
+        // ภาษีใช้ใน ภ.ง.ด.50/51 → ลงทะเบียนให้เลย (ดู WHT_CREDIT_PLAN.md)
+        try
+        {
+            var ourTaxId = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
+            var weAreWithheld = Ocr.OcrDocumentRoleInferrer.InferWhtCertWeAreWithheld(
+                result.RawTextContent, ourTaxId);
+            if (weAreWithheld == true && (result.ExtractedTotalAmount ?? 0) > 0)
+            {
+                await EnsureWhtCreditFromCertAsync(companyId, result, document.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "บันทึกทะเบียนภาษีถูกหักจากหนังสือรับรองไม่สำเร็จ (scan {Id})", result.Id);
+        }
+
         if (_rdComplianceValidator != null)
         {
             try

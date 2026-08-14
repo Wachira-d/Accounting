@@ -154,6 +154,8 @@ builder.Services.AddSingleton<IJobRunRecorder, JobRunRecorder>();
 builder.Services.AddScoped<ISlipOcrAssistService, SlipOcrAssistService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
+// ทะเบียนภาษีที่เราถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.51/50 (WHT_CREDIT_PLAN.md)
+builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();
 builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
 
 // New modules

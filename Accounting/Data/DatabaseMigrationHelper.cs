@@ -5113,6 +5113,61 @@ public static class DatabaseMigrationHelper
             // ตัดสินเอง) — ใช้ตอนผู้ใช้กด "ย้ายฝั่ง" เพราะใบถูกจัดฝั่งผิดตั้งแต่อนุมัติ
             // แล้ว JE ลงผิดฝั่งถาวร ทำให้ยอดไปโผล่ผิดฝั่งใน ภ.พ.30
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CnDnPurchaseSideOverride" boolean NULL;""",
+            // ── ทะเบียนหนังสือรับรองหัก ณ ที่จ่ายที่ "เราได้รับ" (เครดิต ภ.ง.ด.50/51) ──
+            // แยกตารางจาก WithholdingTaxCerts (ใบที่เราออกให้ผู้อื่น) เพราะเป็นเอกสาร
+            // คนละชนิดทางกฎหมาย — ดู WHT_CREDIT_PLAN.md
+            """
+            CREATE TABLE IF NOT EXISTS "WhtCreditsReceived" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "TaxYear" integer NOT NULL DEFAULT 0,
+                "CertificateNumber" varchar(50) NULL,
+                "CertificateDate" timestamptz NULL,
+                "PayerContactId" uuid NULL,
+                "PayerName" varchar(300) NOT NULL DEFAULT '',
+                "PayerTaxId" varchar(20) NULL,
+                "PayerFormType" integer NOT NULL DEFAULT 53,
+                "IncomeTypeCode" varchar(20) NULL,
+                "IncomeAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "WhtRate" decimal(9,4) NOT NULL DEFAULT 0,
+                "WhtAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "Status" integer NOT NULL DEFAULT 0,
+                "DocumentId" uuid NULL,
+                "PaymentId" uuid NULL,
+                "AttachmentId" uuid NULL,
+                "ClaimedInTaxReportId" uuid NULL,
+                "ClaimedAt" timestamptz NULL,
+                "CarriedFromTaxYear" integer NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamptz NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_WhtCreditsReceived_Year" ON "WhtCreditsReceived" ("CompanyId", "TaxYear", "Status") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_WhtCreditsReceived_Doc" ON "WhtCreditsReceived" ("CompanyId", "DocumentId") WHERE "DocumentId" IS NOT NULL AND "IsDeleted" = false;""",
+            // กันสร้างซ้ำจากเอกสารเดียวกัน (approve ซ้ำ/regenerate)
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_WhtCreditsReceived_Doc" ON "WhtCreditsReceived" ("CompanyId", "DocumentId") WHERE "DocumentId" IS NOT NULL AND "IsDeleted" = false;""",
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_WhtCreditsReceived_Companies') THEN
+                    ALTER TABLE "WhtCreditsReceived"
+                        ADD CONSTRAINT "FK_WhtCreditsReceived_Companies"
+                        FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_WhtCreditsReceived_Documents') THEN
+                    ALTER TABLE "WhtCreditsReceived"
+                        ADD CONSTRAINT "FK_WhtCreditsReceived_Documents"
+                        FOREIGN KEY ("DocumentId") REFERENCES "Documents"("Id") ON DELETE SET NULL;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_WhtCreditsReceived_Contacts') THEN
+                    ALTER TABLE "WhtCreditsReceived"
+                        ADD CONSTRAINT "FK_WhtCreditsReceived_Contacts"
+                        FOREIGN KEY ("PayerContactId") REFERENCES "Contacts"("Id") ON DELETE SET NULL;
+                END IF;
+            END $$;
+            """,
             """
             CREATE TABLE IF NOT EXISTS "DocumentRevisions" (
                 "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -183,6 +183,9 @@ public class AccountingDbContext : DbContext
 
     // Withholding Tax Certificates
     public DbSet<WithholdingTaxCert> WithholdingTaxCerts => Set<WithholdingTaxCert>();
+    /// <summary>หนังสือรับรองหัก ณ ที่จ่ายที่ "เราได้รับ" — เครดิต ภ.ง.ด.50/51
+    /// (คนละตัวกับ WithholdingTaxCerts ที่เป็นใบที่เราออกให้ผู้อื่น)</summary>
+    public DbSet<WhtCreditReceived> WhtCreditsReceived => Set<WhtCreditReceived>();
     public DbSet<WithholdingTaxCertLine> WithholdingTaxCertLines => Set<WithholdingTaxCertLine>();
 
     // API Keys
@@ -2156,6 +2159,7 @@ public class AccountingDbContext : DbContext
         // Project & Revenue Recognition
         modelBuilder.Entity<ProjectTask>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ProjectCostEntry>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<WhtCreditReceived>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<PerformanceObligation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<RevenueSchedule>().HasQueryFilter(e => !e.IsDeleted);
 

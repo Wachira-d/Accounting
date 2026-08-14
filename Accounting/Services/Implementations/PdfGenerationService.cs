@@ -1153,7 +1153,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                 var orig = await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
                     .Select(d => new { d.DocumentNumber, d.DocumentDate, d.SubTotal,
-                        d.DocumentType, d.SupplierInvoiceNumber, d.SupplierTaxInvoiceDate })
+                        d.DocumentType, d.SupplierInvoiceNumber, d.SupplierTaxInvoiceDate,
+                        d.VatAmount })
                     .FirstOrDefaultAsync();
                 if (orig != null)
                 {
@@ -1164,18 +1165,25 @@ public partial class PdfGenerationService : IPdfGenerationService
                     // ในระบบผู้ขายไม่ได้). วันที่ก็ต้องเป็นวันที่บนใบกำกับของผู้ขายเช่นกัน
                     // — ตรงกับที่รายงาน ภ.พ.30 ฝั่งซื้อใช้อยู่แล้ว (TaxService) ทำให้
                     // กระดาษกับแบบยื่นอ้างเลขเดียวกัน
-                    var origIsPurchase = orig.DocumentType is DocumentType.PurchaseInvoice
-                        or DocumentType.Expense or DocumentType.PaymentVoucher
-                        or DocumentType.CertificateInLieu;
-                    doc.AdjustmentOriginalNumber =
-                        origIsPurchase && !string.IsNullOrWhiteSpace(orig.SupplierInvoiceNumber)
-                            ? orig.SupplierInvoiceNumber
-                            : orig.DocumentNumber;
-                    doc.AdjustmentOriginalDate =
-                        origIsPurchase && orig.SupplierTaxInvoiceDate.HasValue
-                            ? orig.SupplierTaxInvoiceDate
-                            : orig.DocumentDate;
+                    var origIsPurchase = IsPurchaseSideDocType(orig.DocumentType);
+                    // ใบซื้อที่ "ไม่มี VAT" (จ่ายผู้ขายที่ไม่จด VAT / ไม่มีใบกำกับ)
+                    // จะไม่มีเลขใบกำกับผู้ขายให้อ้าง — ต้องอ้างเอกสารในระบบเราแทน
+                    // และหัวกล่องต้องไม่พูดว่า "ใบกำกับภาษี" (ไม่มีใบกำกับให้อ้างจริง)
+                    var origHasSupplierTaxInv = origIsPurchase
+                        && !string.IsNullOrWhiteSpace(orig.SupplierInvoiceNumber);
+                    doc.AdjustmentOriginalNumber = origHasSupplierTaxInv
+                        ? orig.SupplierInvoiceNumber
+                        : orig.DocumentNumber;
+                    doc.AdjustmentOriginalDate = origHasSupplierTaxInv && orig.SupplierTaxInvoiceDate.HasValue
+                        ? orig.SupplierTaxInvoiceDate
+                        : orig.DocumentDate;
+                    // พิมพ์เลขในระบบเราคู่ไว้ด้วยเมื่อเป็นคนละเลข — คนทำบัญชีต้อง
+                    // ตามรอยกลับมาที่เอกสารต้นทางในระบบได้ (audit trail)
+                    doc.AdjustmentOriginalOurNumber = origHasSupplierTaxInv
+                        ? orig.DocumentNumber
+                        : null;
                     doc.AdjustmentOriginalSubTotal = orig.SubTotal;
+                    doc.AdjustmentOriginalHasVat = orig.VatAmount > 0m;
                 }
             }
             // ใบเดิม "อยู่นอกระบบ" (ผู้ขายออกใบกำกับของเขา / ข้อมูลก่อนย้ายระบบ) —
@@ -1188,6 +1196,9 @@ public partial class PdfGenerationService : IPdfGenerationService
                 && !string.IsNullOrWhiteSpace(doc.Reference))
             {
                 doc.AdjustmentOriginalNumber = doc.Reference!.Trim();
+                // ไม่มีใบต้นทางในระบบ → ยึด VAT ของใบลดหนี้เองเป็นตัวบอกว่า
+                // รายการนี้เกี่ยวกับภาษีมูลค่าเพิ่มหรือไม่
+                doc.AdjustmentOriginalHasVat = doc.VatAmount > 0m;
             }
         }
 
@@ -1401,9 +1412,18 @@ public partial class PdfGenerationService : IPdfGenerationService
             var adjOrigBase = doc.AdjustmentOriginalSubTotal ?? 0m;
             var adjCorrected = isCnBox ? adjOrigBase - doc.SubTotal : adjOrigBase + doc.SubTotal;
             var adjOrigDate = doc.AdjustmentOriginalDate?.ToString("dd/MM/yyyy") ?? "-";
+            // หัวกล่อง: มี VAT = อ้างใบกำกับภาษีตาม §86/9-10; ไม่มี VAT = ไม่มี
+            // ใบกำกับให้อ้าง (เช่นจ่ายผู้ขายที่ไม่จด VAT) → ใช้คำว่า "เอกสารต้นฉบับ"
+            // การพิมพ์ "ใบกำกับภาษีเดิม" ทั้งที่ไม่มีใบกำกับ = ข้อความเท็จบนเอกสาร
+            var boxTitle = doc.AdjustmentOriginalHasVat
+                ? $"อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{(isCnBox ? "10" : "9")})"
+                : "อ้างอิงเอกสารต้นฉบับ";
             sb.AppendLine("<div style='margin:8px 0;padding:6px 10px;border:1px solid #D1D5DB;background:#FFFBEB;font-size:11px'>");
-            sb.AppendLine($"<div style='font-weight:bold'>อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{(isCnBox ? "10" : "9")})</div>");
+            sb.AppendLine($"<div style='font-weight:bold'>{boxTitle}</div>");
             sb.AppendLine($"<div>{string.Format(L.CnOriginalNumber, WebUtility.HtmlEncode(doc.AdjustmentOriginalNumber), adjOrigDate)}</div>");
+            // เลขเอกสารในระบบเรา (คนละเลขกับใบกำกับผู้ขาย) — ไว้ตามรอยย้อนกลับ
+            if (!string.IsNullOrWhiteSpace(doc.AdjustmentOriginalOurNumber))
+                sb.AppendLine($"<div style='color:#4B5563'>{L.OurDocRefLabel}: {WebUtility.HtmlEncode(doc.AdjustmentOriginalOurNumber!)}</div>");
             if (hasOrigAmounts)
                 sb.AppendLine($"<div>มูลค่าตามใบเดิม: {adjOrigBase:N2} &nbsp;|&nbsp; มูลค่าที่ถูกต้อง: {adjCorrected:N2} &nbsp;|&nbsp; <b>ผลต่าง ({(isCnBox ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}</b></div>");
             else

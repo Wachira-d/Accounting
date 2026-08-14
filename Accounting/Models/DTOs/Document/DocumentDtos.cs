@@ -17,6 +17,9 @@ public record CreateDocumentRequest(
     // เอกสารต้นทาง (convert chain) — ต้องรู้ตั้งแต่ create เพราะ PaymentType
     // inference / cash-settle / PV auto-approve แยกพฤติกรรมด้วย field นี้
     Guid? RelatedDocumentId = null,
+    // ใบลดหนี้/เพิ่มหนี้: ฝั่งภาษีที่ผู้ใช้เลือกชัดเจนตั้งแต่สร้าง (true = ฝั่งซื้อ)
+    // — ระบบจะได้ไม่ต้องเดาตอนอนุมัติ (เดาผิด = JE ลงผิดฝั่งถาวร ยอดผิดฝั่งใน ภ.พ.30)
+    bool? CnDnPurchaseSideOverride = null,
     // หักเงินมัดจำบนใบรับเงินสุดท้าย (display-only — ไม่กระทบ JE): ยอดมัดจำ
     // ที่หัก (รวม VAT) + เลขใบมัดจำอ้างอิง → renderer แสดง "หักเงินมัดจำ" +
     // "ยอดชำระสุทธิ". line ยังเป็นการขายเต็มจำนวน (ห้าม line ติดลบ)
@@ -227,6 +230,9 @@ public record UpdateDocumentRequest(
     // CreditNoteReason: เหตุผลใบลดหนี้ (§86/10). IsForeignService: ภ.พ.36/ภ.ง.ด.54.
     // IsDeposit + DepositDeferredAccountCode + DepositOutputVatDeferred: เงินมัดจำ.
     CreditNoteReason? CreditNoteReason = null,
+    // ฝั่งภาษีของใบลดหนี้/เพิ่มหนี้ (true = ซื้อ) — แก้ได้ตอนยังเป็นร่าง
+    // ถ้าไม่รับตรงนี้ ผู้ใช้เปลี่ยนฝั่งบนฟอร์มแล้วกดบันทึก ค่าจะถูกทิ้งเงียบ ๆ
+    bool? CnDnPurchaseSideOverride = null,
     bool? IsForeignService = null,
     bool? IsDeposit = null,
     string? DepositDeferredAccountCode = null,
