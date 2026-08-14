@@ -459,12 +459,21 @@ public partial class PdfGenerationService
             var text = item.Text(s).FontSize(size).FontColor(color);
             if (bold) text.Bold();
         }
-        if (t.ShowCompanyName) Line(co.Name ?? "", 14, true);
-        if (t.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(co.NameEn)) Line(co.NameEn!, 11);
+        // โหมด en: NameEn เป็นชื่อหลัก (ไม่ถอดอักษรชื่อบริษัทเอง — สิทธิ์ของเจ้าของ
+        // ชื่อ; ไม่มี NameEn → คงชื่อไทย) + ไม่พิมพ์บรรทัด EN ซ้ำ — ต้องตรงกับ
+        // HTML renderer (กฎ "สอง renderer ห้าม drift")
+        var coPrimaryName = L.IsEnglish && !string.IsNullOrWhiteSpace(co.NameEn) ? co.NameEn! : (co.Name ?? "");
+        if (t.ShowCompanyName) Line(coPrimaryName, 14, true);
+        if (t.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(co.NameEn) && coPrimaryName != co.NameEn) Line(co.NameEn!, 11);
         if (t.ShowCompanyAddress)
         {
-            var addr = FormatThaiAddress(co.Address, co.BuildingNumber, co.BuildingName, co.Moo, co.StreetName,
-                co.SubDistrict, co.District, co.Province, co.PostalCode);
+            var addr = L.IsEnglish
+                ? (!string.IsNullOrWhiteSpace(co.AddressEn)
+                    ? co.AddressEn!
+                    : ThaiRomanizer.ComposeEnglishAddress(co.BuildingNumber, co.BuildingName, co.Moo,
+                        co.StreetName, co.SubDistrict, co.District, co.Province, co.PostalCode, co.Address))
+                : FormatThaiAddress(co.Address, co.BuildingNumber, co.BuildingName, co.Moo, co.StreetName,
+                    co.SubDistrict, co.District, co.Province, co.PostalCode);
             if (!string.IsNullOrWhiteSpace(addr)) Line(addr);
         }
         if (t.ShowCompanyTaxId && !string.IsNullOrWhiteSpace(co.TaxId))
@@ -563,8 +572,13 @@ public partial class PdfGenerationService
             }
             if (t.ShowContactAddress)
             {
-                var addr = FormatThaiAddress(c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
-                    c.SubDistrict, c.District, c.Province, c.PostalCode);
+                // en: ถอดอักษรที่อยู่ลูกค้าอัตโนมัติ (ละตินอยู่แล้วผ่านตามเดิม) —
+                // ตรงกับ HTML renderer
+                var addr = L.IsEnglish
+                    ? ThaiRomanizer.ComposeEnglishAddress(c.BuildingNumber, c.BuildingName, c.Moo,
+                        c.StreetName, c.SubDistrict, c.District, c.Province, c.PostalCode, c.Address)
+                    : FormatThaiAddress(c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
+                        c.SubDistrict, c.District, c.Province, c.PostalCode);
                 if (!string.IsNullOrWhiteSpace(addr)) cc.Item().Text(addr).FontSize(9).FontColor("#374151");
             }
             if (t.ShowContactPhone && !string.IsNullOrWhiteSpace(c.Phone))

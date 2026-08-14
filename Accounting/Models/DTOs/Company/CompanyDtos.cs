@@ -60,7 +60,10 @@ public record UpdateCompanyRequest(
     string? Email,
     string? Website,
     int? FiscalYearStartMonth,
-    bool? IsSetupComplete);
+    bool? IsSetupComplete,
+    // ที่อยู่ภาษาอังกฤษ (โหมดเอกสาร en) — null = ไม่เปลี่ยน, "" = ล้าง (กลับไป
+    // ใช้ตัวถอดอักษรอัตโนมัติ), อื่น ๆ = ตั้งค่า
+    string? AddressEn = null);
 
 public record CompanyResponse(
     Guid Id,
@@ -94,7 +97,8 @@ public record CompanyResponse(
     int FiscalYearStartMonth,
     bool IsSetupComplete,
     SubscriptionSummary? Subscription,
-    string? MyRole = null);  // current requesting user's role in this company
+    string? MyRole = null,   // current requesting user's role in this company
+    string? AddressEn = null);
 
 public record SubscriptionSummary(
     SubscriptionPlan Plan,

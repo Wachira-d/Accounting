@@ -258,6 +258,9 @@ public class CompanyService : ICompanyService
         if (request.Province != null) company.Province = request.Province;
         if (request.PostalCode != null) company.PostalCode = request.PostalCode;
         company.Address = request.Address ?? ComposeAddress(company);
+        // "" = ล้างกลับไปใช้ตัวถอดอักษรอัตโนมัติ · null = ไม่เปลี่ยน
+        if (request.AddressEn != null)
+            company.AddressEn = string.IsNullOrWhiteSpace(request.AddressEn) ? null : request.AddressEn.Trim();
         if (request.Phone != null) company.Phone = request.Phone;
         if (request.Fax != null) company.Fax = request.Fax;
         if (request.Email != null) company.Email = request.Email;
@@ -589,7 +592,8 @@ public class CompanyService : ICompanyService
             c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
             c.SubDistrict, c.District, c.Province,
             c.PostalCode, c.Phone, c.Fax, c.Email, c.Website,
-            c.FiscalYearStartMonth, c.IsSetupComplete, sub);
+            c.FiscalYearStartMonth, c.IsSetupComplete, sub,
+            AddressEn: c.AddressEn);
     }
 
     /// <summary>ประกอบ Company.Address (free-text) จาก structured fields — ที่อยู่
