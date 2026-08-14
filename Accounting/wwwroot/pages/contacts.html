@@ -109,6 +109,20 @@
               <input type="number" class="form-input" id="fPaymentDueDays" step="1" min="0" placeholder="เช่น 30 (Net 30)">
               <div style="font-size:11px;color:#64748b;margin-top:4px">ตอนสร้างเอกสารขาย ระบบจะเติม "วันครบกำหนด" = วันที่เอกสาร + จำนวนวันนี้ ให้อัตโนมัติ</div>
             </div>
+            <div class="form-group" style="flex:1">
+              <label class="form-label">ภาษาเอกสารของผู้ติดต่อรายนี้
+                <span style="color:#64748b;font-size:11px;font-weight:normal">— ว่าง = ใช้ค่าบริษัท</span>
+              </label>
+              <select class="form-input" id="fDocLang">
+                <option value="">— ตามค่าบริษัท —</option>
+                <option value="th">ไทย (Thai)</option>
+                <option value="en">อังกฤษ (English)</option>
+              </select>
+              <div style="font-size:11px;color:#64748b;margin-top:4px">
+                เลือกผู้ติดต่อรายนี้ตอนสร้างเอกสาร → ช่อง "ภาษาของเอกสารใบนี้" ถูกตั้งให้อัตโนมัติ
+                (แก้ทับรายใบได้เสมอ) · <b>ไม่กระทบใบเก่า</b>ที่ออกไปแล้ว
+              </div>
+            </div>
           </div>
           <!-- สลับที่อยู่ไทย ↔ ต่างประเทศ — vendor/ลูกค้าต่างชาติ (เช่น
                Booking.com B.V.) ไม่มีจังหวัด/รหัสไปรษณีย์ไทย → ติ๊กเพื่อกรอก
@@ -743,6 +757,7 @@
         });
         const taxInvChk = document.getElementById('fDefaultIssueTaxInvoice'); if (taxInvChk) taxInvChk.checked = false;
         const dueDaysEl = document.getElementById('fPaymentDueDays'); if (dueDaysEl) dueDaysEl.value = '';
+        const docLangEl = document.getElementById('fDocLang'); if (docLangEl) docLangEl.value = '';
         // reset ที่อยู่ต่างประเทศ → default = ที่อยู่ไทย
         document.getElementById('fIsForeign').checked = false;
         document.getElementById('fCountryCode').value = '';
@@ -848,6 +863,8 @@
         if (taxInvChk) taxInvChk.checked = !!c.defaultIssueTaxInvoice;
         const dueDaysEl = document.getElementById('fPaymentDueDays');
         if (dueDaysEl) dueDaysEl.value = (c.paymentDueDays ?? '') === '' ? '' : c.paymentDueDays;
+        const docLangEl2 = document.getElementById('fDocLang');
+        if (docLangEl2) docLangEl2.value = c.documentLanguage || '';
         document.getElementById('fJuristicId').value = '';
         document.getElementById('fJuristicType').value = '';
         document.getElementById('fRegisteredCapital').value = '';
@@ -977,6 +994,9 @@
           defaultIrGrAccountId: document.getElementById('fDefaultIrGrAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
           defaultIssueTaxInvoice: !!document.getElementById('fDefaultIssueTaxInvoice')?.checked,
           paymentDueDays: document.getElementById('fPaymentDueDays')?.value !== '' ? parseInt(document.getElementById('fPaymentDueDays').value) : null,
+          // ส่งค่าตรง ๆ เสมอ: "" = ล้างกลับ "ตามค่าบริษัท" (update จับ != null),
+          // th/en = ตั้งค่า — ต่างจาก field อื่นที่ null = ไม่เปลี่ยน
+          documentLanguage: document.getElementById('fDocLang')?.value ?? null,
         };
         try {
           let savedId = id;

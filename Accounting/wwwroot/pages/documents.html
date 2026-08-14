@@ -572,6 +572,26 @@
               </div>
             </div>
           </div>
+          <!-- ภาษาที่พิมพ์บนเอกสารใบนี้ — ตรึงไว้กับใบ (Document.DocumentLanguage)
+               ลำดับความสำคัญ: คำขอพิมพ์ครั้งนี้ > ใบนี้ > เทมเพลต > ค่าตั้งต้นบริษัท
+               ไม่ใส่ class advanced-only โดยตั้งใจ: ร้านเล็ก (Simple mode) ที่มี
+               ลูกค้าต่างชาติรายเดียวก็ต้องเข้าถึงได้ ไม่งั้นต้องไปสลับค่าทั้งบริษัท
+               ซึ่งทำให้ใบเก่าทุกใบเปลี่ยนภาษาตามไปด้วยตอนพิมพ์ซ้ำ -->
+          <div class="form-row-1-2" id="docLanguageRow">
+            <div class="form-group">
+              <label class="form-label" data-help="ภาษาที่พิมพ์บนเอกสารใบนี้ใบเดียว — ไม่กระทบใบอื่นและไม่กระทบค่าตั้งต้นของบริษัท · หัวเอกสารภาษีจะพิมพ์สองภาษาเสมอ (เช่น 'Tax Invoice / ใบกำกับภาษี') เพราะ §86/4 บังคับให้มีคำไทย มิฉะนั้นผู้ซื้อเคลมภาษีซื้อไม่ได้ (§82/5(1))">ภาษาของเอกสารใบนี้</label>
+              <select class="form-select" id="fDocumentLanguage" onchange="this.dataset.userTouched='1';delete this.dataset.autoSrc;Page.onDocLanguageChange()">
+                <option value="">— ตามค่าเริ่มต้นของบริษัท —</option>
+                <option value="th">ไทย (Thai)</option>
+                <option value="en">อังกฤษ (English)</option>
+              </select>
+            </div>
+            <!-- คำอธิบายอยู่คอลัมน์กว้าง (2fr) — ข้อความยาว ถ้าไว้ใต้ select
+                 (คอลัมน์ 1fr) จะตัดบรรทัดถี่จนอ่านยาก -->
+            <div class="form-group" style="display:flex;align-items:flex-end">
+              <div id="fDocLanguageHint" style="display:none;font-size:11px;line-height:1.5;padding-bottom:9px;color:#1e40af"></div>
+            </div>
+          </div>
           <!-- ตัวเลือกขั้นสูง: เปลี่ยนผังบัญชีปลายทางของ VAT (กรณีไม่เคลม VAT —
                ลงเป็นต้นทุน/ค่าใช้จ่ายแทน ตาม §82/5). ย้ายออกจากกล่อง "ใช้งานใบ
                กำกับภาษี/เคลม VAT" มาเป็น block อิสระระดับเอกสาร (.input-vat-only)
@@ -1092,6 +1112,14 @@
             <select id="pdfCopyMode" class="form-select" style="height:32px;font-size:12px;min-width:200px;width:auto;padding:0 28px 0 10px;text-overflow:unset" onchange="Page._refreshPdfPreview()" title="ต้นฉบับ = ให้ลูกค้า · สำเนา = ผู้ขายเก็บเข้าแฟ้ม (พิมพ์คำว่า 'สำเนา' บนเอกสาร)">
               <option value="">ต้นฉบับ (Original)</option>
               <option value="สำเนา (COPY)">สำเนา (Copy)</option>
+            </select>
+            <!-- พิมพ์ภาษาอื่น "ครั้งนี้ครั้งเดียว" — ไม่แตะตัวเอกสาร จึงใช้กับใบที่
+                 อนุมัติ/ปิดแล้ว (แก้ไขไม่ได้) ได้ด้วย เช่นลูกค้าโทรมาขอฉบับอังกฤษ
+                 ทีหลัง. ถ้าอยากให้ติดถาวรกับใบ ใช้ช่อง "ภาษาของเอกสารใบนี้" ในฟอร์ม -->
+            <select id="pdfLangMode" class="form-select" style="height:32px;font-size:12px;min-width:190px;width:auto;padding:0 28px 0 10px;text-overflow:unset" onchange="Page._refreshPdfPreview()" title="เปลี่ยนภาษาเฉพาะการพิมพ์/ดาวน์โหลดครั้งนี้ — ไม่บันทึกลงเอกสาร และไม่กระทบค่าตั้งต้นของบริษัท">
+              <option value="">ภาษาตามเอกสาร</option>
+              <option value="th">พิมพ์เป็นไทย</option>
+              <option value="en">พิมพ์เป็นอังกฤษ</option>
             </select>
             <button class="btn btn-sm btn-primary" onclick="Page.printPdf()" title="พิมพ์ PDF ตัวเดียวกับปุ่ม 'ดาวน์โหลด PDF' (QuestPDF) — หน้าตาเหมือนกันเป๊ะ">🖨️ พิมพ์</button>
             <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF — เอกสารที่ผ่าน e-Tax flow แล้วจะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติ (ใช้ยื่นภาษีได้ทันที), เอกสารอื่นได้ PDF ปกติ">📥 ดาวน์โหลด PDF</button>
@@ -2120,6 +2148,7 @@
         // กติกา: ค่าเฉพาะลูกค้า **ชนะ** ค่าเริ่มต้นของเทมเพลตชนิดเอกสารและ AI
         // (specific > generic) แต่ **ห้ามทับ** ค่าที่ผู้ใช้พิมพ์เอง — ดู _canAutoFill
         this.applyContactCreditTerms(contact);
+        this.applyContactDocLanguage(contact);
         if (!contact?.defaultIssueTaxInvoice) return;
         const sel = document.getElementById('fDocType');
         if (sel && sel.value === 'Invoice') {
@@ -2220,7 +2249,7 @@
           // เฉพาะใน maybePreselectTaxInvoice ซึ่งทำงานฝั่งขายอย่างเดียว ⇒ ฝั่งซื้อ
           // มีแต่ AI เดาจาก history เติมให้ ทั้งที่ค่าที่ตั้งไว้กับผู้ขายชัดเจนกว่า
           this._ensureFullContact(contactId, c)
-            .then(ct => this.applyContactCreditTerms(ct))
+            .then(ct => { this.applyContactCreditTerms(ct); this.applyContactDocLanguage(ct); })
             .catch(() => {});
           this.suggestPaymentTerms(contactId);
           // Project allocation: เลือกโครงการให้ทุกบรรทัดที่ยังว่าง
@@ -3408,6 +3437,58 @@
       _hideCreditSrcHint() {
         const el = document.getElementById('fCreditDaysSrc');
         if (el) el.style.display = 'none';
+      },
+
+      /**
+       * ป้ายเตือนใต้ช่อง "ภาษาของเอกสารใบนี้" — โผล่เฉพาะตอนตั้งค่าทับ
+       * (ไม่ใช่ "ตามค่าบริษัท") เพื่อให้เห็นชัดว่าใบนี้ไม่เหมือนใบอื่น
+       * ปล่อยเงียบตอนใช้ค่า default = ไม่รบกวนงานปกติ 95% ของเคส
+       */
+      onDocLanguageChange() {
+        const sel = document.getElementById('fDocumentLanguage');
+        const hint = document.getElementById('fDocLanguageHint');
+        if (!sel || !hint) return;
+        // ที่มาของค่า — บอกผู้ใช้ตรง ๆ ว่าระบบตั้งให้จากผู้ติดต่อ (แก้ทับได้)
+        const fromContact = sel.dataset.autoSrc === 'contact'
+          ? ' · ค่าเริ่มต้นจากการตั้งค่าของผู้ติดต่อรายนี้ — แก้ทับได้' : '';
+        if (sel.value === 'en') {
+          hint.innerHTML = '🌐 ใบนี้จะพิมพ์เป็น <b>ภาษาอังกฤษ</b> เฉพาะใบเดียว '
+            + '— หัวเอกสารภาษีคงพิมพ์สองภาษา (§86/4) และแบบฟอร์มราชการ (50 ทวิ, ภ.ง.ด., ภ.พ.30) ยังเป็นไทย'
+            + fromContact;
+          hint.style.color = '#1e40af';
+          hint.style.display = '';
+        } else if (sel.value === 'th') {
+          hint.textContent = '🇹🇭 ใบนี้ตรึงเป็นภาษาไทย — ไม่เปลี่ยนตามค่าบริษัทที่อาจถูกแก้ภายหลัง' + fromContact;
+          hint.style.color = 'var(--gray-500)';
+          hint.style.display = '';
+        } else {
+          hint.style.display = 'none';
+        }
+      },
+
+      /** เติม "ภาษาของเอกสารใบนี้" จากค่าที่ตั้งไว้กับผู้ติดต่อ
+       *
+       *  จงใจ**ไม่ใช้** _canAutoFill เพราะกติกาต่างกัน 2 ข้อ:
+       *   1. select ค่า '' (ตามค่าบริษัท) คือ "ยังไม่ได้เลือก" ไม่ใช่ค่าของผู้ใช้
+       *   2. สลับผู้ติดต่อ = ต้อง refresh ได้ (contact ทับ contact) **รวมถึงล้าง
+       *      กลับเป็น ''** เมื่อผู้ติดต่อใหม่ไม่ได้ตั้งภาษา — _canAutoFill ไม่ยอม
+       *      ให้ rank เท่ากันทับกัน ⇒ ภาษาของลูกค้าคนเก่าจะค้าง แล้วลูกค้าไทย
+       *      รายใหม่ได้ใบอังกฤษเงียบ ๆ
+       *  ค่าที่ผู้ใช้แตะเอง (dataset.userTouched) ชนะเสมอ · โหมดแก้ไขไม่เติมเลย
+       *  (ค่าที่บันทึกไว้ = การตัดสินใจแล้ว) */
+      applyContactDocLanguage(contact) {
+        if (this.editingId) return;
+        const el = document.getElementById('fDocumentLanguage');
+        if (!el || el.dataset.userTouched) return;
+        // มีค่าที่ไม่ได้มาจาก contact (เช่น สืบทอดจากใบต้นทางตอน convert-หน้าฟอร์ม)
+        // → ไม่แตะ
+        if (el.value && el.dataset.autoSrc !== 'contact') return;
+        const v = (contact?.documentLanguage === 'en' || contact?.documentLanguage === 'th')
+          ? contact.documentLanguage : '';
+        if (el.value === v) { this.onDocLanguageChange(); return; }
+        el.value = v;
+        if (v) el.dataset.autoSrc = 'contact'; else delete el.dataset.autoSrc;
+        this.onDocLanguageChange();
       },
 
       /**
@@ -5600,6 +5681,16 @@
           if (_du) delete _du.dataset.autoCalc;
           this._hideCreditSrcHint();
         }
+        // ภาษาเอกสาร: ใบใหม่กลับไปใช้ค่าเริ่มต้นของบริษัทเสมอ — ห้ามค้าง "en"
+        // จากใบก่อนหน้า ไม่งั้นลูกค้าไทยรายถัดไปได้ใบภาษาอังกฤษเงียบ ๆ
+        {
+          const fLang = document.getElementById('fDocumentLanguage');
+          if (fLang) {
+            fLang.value = '';
+            delete fLang.dataset.userTouched; delete fLang.dataset.autoSrc;
+            this.onDocLanguageChange();
+          }
+        }
         // รหัสสาขาผู้ขาย: reset กลับ default 00000 (สำนักงานใหญ่)
         { const br = document.getElementById('fSupplierBranchCode'); if (br) br.value = '00000'; }
         // ล้าง contact cache ที่ใช้เติมเลขผู้เสียภาษีผู้ขาย เพื่อไม่ให้ใบใหม่ค้างของเก่า
@@ -5865,6 +5956,17 @@
           {
             const fPt = document.getElementById('fPaymentTerms');
             if (fPt) fPt.dataset.userTouched = '1';
+          }
+          {
+            // ภาษาที่ตรึงไว้กับใบ — null/ไม่มี = "ตามค่าเริ่มต้นของบริษัท"
+            // ค่าที่บันทึกไว้ = การตัดสินใจของผู้ใช้แล้ว → userTouched กัน
+            // ตัวเติมจาก contact (ที่ยิง async ตอน hydrate ผู้ติดต่อ) มาทับ
+            const fLang = document.getElementById('fDocumentLanguage');
+            if (fLang) {
+              fLang.value = d.documentLanguage || '';
+              fLang.dataset.userTouched = '1'; delete fLang.dataset.autoSrc;
+              this.onDocLanguageChange();
+            }
           }
           const fPayType = document.getElementById('fPaymentType');
           if (fPayType && d.paymentType) fPayType.value = d.paymentType;
@@ -6339,6 +6441,13 @@
             document.getElementById('fInputVatAccountCodeOverride')?.value.trim() || null,
           creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
+          // ภาษาที่ตรึงไว้กับใบนี้ — "" (ตามค่าบริษัท) ต้องส่งเป็น null ไม่ใช่ ""
+          // ตอนสร้าง; ตอนแก้ไขส่ง "" ได้เพื่อ "ล้างกลับไปใช้ค่าบริษัท"
+          // (server กรองเหลือ th/en เท่านั้น ค่าอื่นกลายเป็น null)
+          documentLanguage: (() => {
+            const v = document.getElementById('fDocumentLanguage')?.value || '';
+            return v || (this.editingId ? '' : null);
+          })(),
           // Only send paymentType for Payment Voucher (the only type whose
           // form exposes the selector); null elsewhere.
           paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
@@ -8836,6 +8945,9 @@
       /** ต้นฉบับ (null) หรือ สำเนา (watermark "สำเนา (COPY)") — จาก dropdown ใน
        *  pdfModal. server พิมพ์ลายน้ำ "สำเนา" + ตัดป้าย "(ต้นฉบับ)" ออกให้ */
       _pdfWatermark() { return document.getElementById('pdfCopyMode')?.value || null; },
+      /** override ภาษาเฉพาะการพิมพ์ครั้งนี้ (null = ใช้ภาษาที่ resolve จากเอกสาร/
+       *  เทมเพลต/บริษัท ตาม PdfGenerationService.ResolveDocumentLanguage) */
+      _pdfLanguage() { return document.getElementById('pdfLangMode')?.value || null; },
       async _refreshPdfPreview() {
         const d = this._currentPdfDoc; if (!d) return;
         try {
@@ -8845,7 +8957,7 @@
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ documentId: d.id, templateId: null,
-              watermarkOverride: this._pdfWatermark(), copyNumber: null, language: null }),
+              watermarkOverride: this._pdfWatermark(), copyNumber: null, language: this._pdfLanguage() }),
           });
           if (res.ok) document.getElementById('pdfContent').innerHTML = await res.text();
         } catch (_) { /* keep current preview */ }
@@ -8857,6 +8969,9 @@
           const d = res.data;
           this._currentPdfDoc = d;
           const _cm = document.getElementById('pdfCopyMode'); if (_cm) _cm.value = '';   // เปิดใหม่ = ต้นฉบับ
+          // ภาษาก็ต้อง reset ด้วย — ไม่งั้นเปิดใบถัดไปแล้วยังค้าง "พิมพ์เป็นอังกฤษ"
+          // ของใบก่อนหน้า (เป็น one-off override ไม่ใช่ค่าที่ผูกกับใบ)
+          const _lm = document.getElementById('pdfLangMode'); if (_lm) _lm.value = '';
           const company = JSON.parse(localStorage.getItem('currentCompany') || '{}');
           // Try to get full company info
           let companyInfo = company;
@@ -8899,7 +9014,7 @@
               method: 'POST',
               headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ documentId: d.id, templateId: null,
-                watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: null }),
+                watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: Page._pdfLanguage() }),
             });
             if (res.ok) renderedHtml = await res.text();
           } catch (_) { /* fall through to client render */ }
@@ -9161,7 +9276,7 @@ ${this.escapeHtml(d.customTermsAndConditions)}</div>` : ''}
           const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: null })
+            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: Page._pdfLanguage() })
           });
           if (!resp.ok) {
             let msg = '';
@@ -9203,7 +9318,7 @@ ${this.escapeHtml(d.customTermsAndConditions)}</div>` : ''}
           const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: null })
+            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: Page._pdfLanguage() })
           });
           if (!resp.ok) {
             let msg = '';

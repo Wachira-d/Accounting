@@ -732,6 +732,13 @@ public class Contact : TenantEntity
     /// override; ถ้าว่างระบบสร้างจาก PaymentDueDays ("Net {n}").</summary>
     public string? PaymentTerms { get; set; }
 
+    /// <summary>ภาษาเอกสารเริ่มต้นของผู้ติดต่อรายนี้ ("th"/"en") — null = ตามค่า
+    /// บริษัท. semantic = "ค่าตั้งต้นตอนสร้างใบ": ประทับลง Document.DocumentLanguage
+    /// ณ ตอนสร้าง (ฟอร์ม + server fallback ใน CreateDocumentAsync) ไม่ใช่ตอนพิมพ์
+    /// — แก้ค่านี้ภายหลังจึง**ไม่**เปลี่ยนภาษาใบเก่าที่ออกไปแล้ว (ต่างจากค่าบริษัท
+    /// ซึ่ง resolve ตอนพิมพ์) และผู้ใช้เปลี่ยนภาษารายใบทับได้เสมอ.</summary>
+    public string? DocumentLanguage { get; set; }
+
     /// <summary>Loyalty points balance — earned per POS sale, redeemable next visit.
     /// Default earn rate = 1 point per ฿100, set on the company config later.</summary>
     public int LoyaltyPoints { get; set; } = 0;

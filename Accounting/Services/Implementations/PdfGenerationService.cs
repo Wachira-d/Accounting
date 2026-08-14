@@ -108,7 +108,12 @@ public partial class PdfGenerationService : IPdfGenerationService
                 var etaxPdf = RenderDocumentPdfNative(document, company, settings, template,
                     request.WatermarkOverride, request.Language, signers, gl, freeCredit,
                     pdfA: true,
-                    pdfTitle: $"{GetDocumentTitle(document.DocumentType, request.Language ?? template.Language ?? "th")} {document.DocumentNumber}",
+                    // ต้องใช้ resolver กลางเท่านั้น — เดิมคำนวณเองเป็น
+                    // `request.Language ?? template.Language ?? "th"` ซึ่ง **ข้าม**
+                    // ทั้งภาษาที่ตรึงกับใบ (Document.DocumentLanguage) และค่าตั้งต้น
+                    // ของบริษัท ⇒ ใบที่ตั้งเป็นอังกฤษได้เนื้อเอกสารอังกฤษ แต่ metadata
+                    // Title ของ PDF/A-3 เป็นไทย (ไม่ตรงกันในไฟล์เดียว)
+                    pdfTitle: $"{GetDocumentTitle(document.DocumentType, ResolveDocumentLanguage(request.Language, document, template, settings))} {document.DocumentNumber}",
                     pdfAuthor: company.Name);
                 var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
                 // ชื่อไฟล์ XML แนบต้องเป็น ETDA-invoice.xml (ETDA spec) — ดู EtdaEmbeddedXmlFileName

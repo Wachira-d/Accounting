@@ -674,7 +674,11 @@ public record DocumentResponse(
     // หลักฐานเซ็นรับของ (POD) บนใบส่งของ — ผูกพันเท่าการยอมรับใบเสนอราคา
     // UI ใช้เตือนก่อนแก้ว่า Rev ใหม่จะทำให้ลายเซ็นเดิมใช้ไม่ได้
     DateTime? DeliverySignedAt = null,
-    string? DeliverySignedBy = null);
+    string? DeliverySignedBy = null,
+    /// <summary>ภาษาที่ตรึงไว้กับใบนี้ ("th"/"en") — null = ใช้ค่าเริ่มต้นของ
+    /// เทมเพลต/บริษัท. echo กลับมาเพื่อ hydrate ฟอร์มตอนแก้ไข ไม่งั้นเปิดแก้ใบ
+    /// ภาษาอังกฤษแล้วกดบันทึก ภาษาจะถูกล้างกลับเป็นค่าบริษัทเงียบ ๆ</summary>
+    string? DocumentLanguage = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)
@@ -872,7 +876,10 @@ public record CreateContactRequest(
     bool DefaultIssueTaxInvoice = false,
     // เครดิตเทอมต่อลูกค้า (วันเครดิต + ป้ายกำกับ)
     int? PaymentDueDays = null,
-    string? PaymentTerms = null);
+    string? PaymentTerms = null,
+    // ภาษาเอกสารเริ่มต้นของผู้ติดต่อ ("th"/"en", null = ตามค่าบริษัท) —
+    // ประทับลงใบตอนสร้าง เปลี่ยนรายใบทับได้เสมอ
+    string? DocumentLanguage = null);
 
 public record UpdateContactRequest(
     [property: StringLength(200)] string? Name,
@@ -902,7 +909,9 @@ public record UpdateContactRequest(
     decimal? CreditLimit = null,
     bool? DefaultIssueTaxInvoice = null,
     int? PaymentDueDays = null,
-    string? PaymentTerms = null);
+    string? PaymentTerms = null,
+    // null = ไม่เปลี่ยน · "" = ล้างกลับเป็น "ตามค่าบริษัท" · th/en = ตั้งค่า
+    string? DocumentLanguage = null);
 
 /// <summary>
 /// Result of attempting to delete a contact. May be a hard delete or
@@ -955,7 +964,10 @@ public record ContactResponse(
     decimal? CreditLimit = null,
     bool DefaultIssueTaxInvoice = false,
     int? PaymentDueDays = null,
-    string? PaymentTerms = null);
+    string? PaymentTerms = null,
+    // echo กลับเสมอ — ฟอร์มแก้ไข contact ต้อง hydrate ได้ ไม่งั้นเปิดแก้แล้ว
+    // กดบันทึกค่าจะหาย (defect class เดียวกับ DocumentResponse.DocumentLanguage)
+    string? DocumentLanguage = null);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);

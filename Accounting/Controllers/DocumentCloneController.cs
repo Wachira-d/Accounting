@@ -63,6 +63,9 @@ public class DocumentCloneController : ControllerBase
             exchangeRate = src.ExchangeRate,
             paymentType = src.PaymentType,
             pricesIncludeVat = src.PricesIncludeVat,
+            // ภาษาที่ตรึงกับใบต้นแบบตามไปด้วย — ลูกค้าประจำที่ใช้ใบอังกฤษ
+            // คือกลุ่มเดียวกับที่ใช้ clone บ่อยที่สุด (ออกบิลซ้ำทุกเดือน)
+            documentLanguage = src.DocumentLanguage,
             reference = $"คัดลอกจาก {src.DocumentNumber}",
             projectId = src.ProjectId,
             lines = src.Lines.OrderBy(l => l.LineOrder).Select(l => new
@@ -124,7 +127,10 @@ public class DocumentCloneController : ControllerBase
             Currency: src.Currency,
             ExchangeRate: src.ExchangeRate,
             PaymentType: src.PaymentType,
-            PricesIncludeVat: src.PricesIncludeVat
+            PricesIncludeVat: src.PricesIncludeVat,
+            // ภาษาที่ตรึงกับใบต้นแบบต้องตามมา — เดิมหาย ⇒ clone ใบอังกฤษของ
+            // ลูกค้าต่างชาติแล้วใบใหม่กลับเป็นไทยเงียบ ๆ
+            DocumentLanguage: src.DocumentLanguage
         );
 
         // ResolveSignersAsync (PDF ผู้จัดทำ) parse CreatedBy เป็น user GUID —

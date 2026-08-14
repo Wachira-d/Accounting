@@ -1057,16 +1057,26 @@ public class DocumentService : IDocumentService
             // ที่สร้างผ่าน API/integration/งาน recurring ที่ไม่ได้ส่ง CreditDays มา
             // จะไม่ได้เครดิตของคู่ค้าเลย (ใบเดียวกันสร้างคนละทางได้เทอมไม่เท่ากัน)
             // ที่นี่เติมเฉพาะตอน caller ไม่ได้ระบุมา — ผู้เรียกยังชนะเสมอ
-            if (!doc.CreditDays.HasValue && doc.ContactId != Guid.Empty)
+            // (เงื่อนไขครอบขยาย: ภาษาเอกสารต่อผู้ติดต่อใช้ fallback ก้อนเดียวกัน —
+            // ต้องรันแม้ CreditDays ถูกระบุมาแล้ว)
+            if ((!doc.CreditDays.HasValue || doc.DocumentLanguage == null) && doc.ContactId != Guid.Empty)
             {
                 var partner = await _db.Contacts.AsNoTracking()
                     .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
-                    .Select(c => new { c.PaymentDueDays, c.PaymentTerms })
+                    .Select(c => new { c.PaymentDueDays, c.PaymentTerms, c.DocumentLanguage })
                     .FirstOrDefaultAsync();
-                if (partner?.PaymentDueDays is > 0) doc.CreditDays = partner.PaymentDueDays;
-                if (string.IsNullOrWhiteSpace(doc.PaymentTerms)
-                    && !string.IsNullOrWhiteSpace(partner?.PaymentTerms))
-                    doc.PaymentTerms = partner!.PaymentTerms;
+                if (!doc.CreditDays.HasValue)
+                {
+                    if (partner?.PaymentDueDays is > 0) doc.CreditDays = partner.PaymentDueDays;
+                    if (string.IsNullOrWhiteSpace(doc.PaymentTerms)
+                        && !string.IsNullOrWhiteSpace(partner?.PaymentTerms))
+                        doc.PaymentTerms = partner!.PaymentTerms;
+                }
+                // ภาษาเริ่มต้นของผู้ติดต่อ — เติมเฉพาะตอน caller ไม่ได้ระบุ (ผู้เรียก
+                // ชนะเสมอ) เพื่อให้ใบที่สร้างผ่าน API/recurring ได้ภาษาเดียวกับใบ
+                // ที่สร้างผ่านฟอร์ม (กติกาเดียวกับเครดิตเทอมข้างบน)
+                if (doc.DocumentLanguage == null && partner?.DocumentLanguage is "th" or "en")
+                    doc.DocumentLanguage = partner.DocumentLanguage;
             }
 
             // เทอมเครดิตมีความหมายเฉพาะชนิดที่ก่อ "หนี้ใหม่รอเก็บ/รอจ่าย" —
@@ -3338,6 +3348,8 @@ public class DocumentService : IDocumentService
                 RelatedDocumentId = doc.Id,
                 CreditNoteReason = CreditNoteReason.Adjustment,   // คืนเงินมัดจำ/ยกเลิกจอง — ไม่กระทบสต๊อก
                 Reference = doc.DocumentNumber,
+                // CN คืนมัดจำออกให้ลูกค้าคนเดิม — ภาษาตามใบเสร็จมัดจำต้นทาง
+                DocumentLanguage = doc.DocumentLanguage,
                 SubTotal = refundBase,
                 VatAmount = refundVat,
                 TotalAmount = request.Amount,
@@ -7534,6 +7546,10 @@ public class DocumentService : IDocumentService
         if (created != null)
         {
             created.RelatedDocumentId = source.Id;
+            // ภาษาที่ตรึงกับใบต้นทางต้องตามไปทั้งสาย (QT en → INV → REC) —
+            // ลูกค้าต่างชาติที่ได้ใบเสนอราคาอังกฤษ ต้องได้ใบแจ้งหนี้/ใบเสร็จ
+            // อังกฤษด้วยโดยไม่ต้องตั้งซ้ำทุกใบ (null = ตามค่าบริษัท ก็คงเป็น null)
+            created.DocumentLanguage = source.DocumentLanguage;
             created.CustomAppendix = source.CustomAppendix;
             created.CustomFooterNotes = source.CustomFooterNotes;
             created.CustomTermsAndConditions = source.CustomTermsAndConditions;
@@ -8156,6 +8172,9 @@ public class DocumentService : IDocumentService
             DefaultIssueTaxInvoice = request.DefaultIssueTaxInvoice,
             PaymentDueDays = request.PaymentDueDays,
             PaymentTerms = request.PaymentTerms,
+            // กรองเหลือ th/en เท่านั้น — ค่าขยะจาก API ภายนอกกลายเป็น null
+            DocumentLanguage = request.DocumentLanguage?.Trim().ToLowerInvariant() is "th" or "en"
+                ? request.DocumentLanguage!.Trim().ToLowerInvariant() : null,
         };
 
         contact.Address = request.Address ?? ComposeAddress(contact);
@@ -8351,6 +8370,12 @@ public class DocumentService : IDocumentService
             contact.PaymentDueDays = request.PaymentDueDays.Value < 0 ? null : request.PaymentDueDays.Value;
         if (request.PaymentTerms != null)
             contact.PaymentTerms = string.IsNullOrWhiteSpace(request.PaymentTerms) ? null : request.PaymentTerms.Trim();
+        if (request.DocumentLanguage != null)
+        {
+            // "" = ล้างกลับเป็น "ตามค่าบริษัท" · th/en = ตั้ง · ค่าอื่น = null (กันขยะ)
+            var cl = request.DocumentLanguage.Trim().ToLowerInvariant();
+            contact.DocumentLanguage = cl is "th" or "en" ? cl : null;
+        }
 
         // ร่องรอยการเปลี่ยน "ตัวตน" — append-only ตาม cross-cutting invariant
         // (ดู CLAUDE.md §M) พร้อมจำนวนเอกสารที่ได้รับผลกระทบย้อนหลัง
@@ -8494,6 +8519,9 @@ public class DocumentService : IDocumentService
             PaymentType = Models.Enums.PaymentType.Cash,
             Currency = invoice.Currency,
             ExchangeRate = invoice.ExchangeRate,
+            // ใบเสร็จอัตโนมัติออกให้ลูกค้าคนเดียวกับใบกำกับต้นทาง — ภาษาต้องตามใบ
+            // ต้นทาง (ใบแจ้งหนี้อังกฤษ → ใบเสร็จอังกฤษ โดยผู้ใช้ไม่ต้องทำอะไร)
+            DocumentLanguage = invoice.DocumentLanguage,
             ProjectId = invoice.ProjectId,
             SubTotal = carryVatFromSource ? invoice.SubTotal : payment.Amount,
             DiscountAmount = carryVatFromSource ? invoice.DiscountAmount : 0m,
@@ -12794,7 +12822,8 @@ public class DocumentService : IDocumentService
         QuotationAcceptedAt: d.QuotationAcceptedAt,
         QuotationAcceptedBy: d.QuotationAcceptedBy,
         DeliverySignedAt: d.DeliverySignedAt,
-        DeliverySignedBy: d.DeliverySignedBy);
+        DeliverySignedBy: d.DeliverySignedBy,
+        DocumentLanguage: d.DocumentLanguage);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack
@@ -12938,7 +12967,8 @@ public class DocumentService : IDocumentService
         CreditLimit: c.CreditLimit,
         DefaultIssueTaxInvoice: c.DefaultIssueTaxInvoice,
         PaymentDueDays: c.PaymentDueDays,
-        PaymentTerms: c.PaymentTerms);
+        PaymentTerms: c.PaymentTerms,
+        DocumentLanguage: c.DocumentLanguage);
 
     // ==================== Smart Defaults ====================
 
