@@ -95,7 +95,9 @@ public static class ThaiRomanizer
     {
         if (string.IsNullOrWhiteSpace(thai)) return "";
         var syllables = new List<string>();
-        var s = thai.Trim();
+        // normalize: เเ (เ สองตัว — typo พบบ่อยมากแทน แ) → แ · ฤๅ → ฤ (ลากข้าง
+        // ตามหลัง ฤ อ่านเหมือนกัน และกันตัว ๅ หลุดไปโผล่ใน output)
+        var s = thai.Trim().Replace("เเ", "แ").Replace("ฤๅ", "ฤ");
         var i = 0;
         var latin = new StringBuilder();   // สะสมอักษรที่ไม่ใช่ไทย (เลขที่/ชื่ออังกฤษปน)
 
@@ -274,6 +276,8 @@ public static class ThaiRomanizer
             }
             else if (vowel == "") vowel = "a";   // พยัญชนะเดี่ยวท้าย token (สระลดรูป)
 
+            // กัน i ซ้ำ: สระลงท้าย i + ตัวสะกด ย (=i) เช่น ไทย ต้องเป็น Thai ไม่ใช่ Thaii
+            if (fin == "i" && vowel.EndsWith("i")) fin = "";
             var syl = init + vowel + (tailI ? "i" : "") + fin;
             if (syl.Length > 0) syllables.Add(syl);
         }
