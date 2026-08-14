@@ -13,6 +13,10 @@ public interface IApprovalService
     // Requests
     Task<ApprovalRequestResponse> SubmitForApprovalAsync(Guid companyId, string entityType, Guid entityId, Guid requestedByUserId);
     Task<ApprovalRequestResponse> GetApprovalRequestAsync(Guid companyId, Guid requestId);
+
+    /// <summary>คำขออนุมัติล่าสุดของเอกสาร/รายการนั้น (null = ยังไม่เคยส่ง) —
+    /// ให้หน้าจอบอกได้ว่า "ตอนนี้รอใครอยู่ ขั้นที่เท่าไร" โดยไม่ต้องรู้ requestId</summary>
+    Task<ApprovalRequestResponse?> GetLatestForEntityAsync(Guid companyId, string entityType, Guid entityId);
     Task<List<ApprovalRequestResponse>> GetPendingApprovalsAsync(Guid companyId, Guid userId);
     Task<ApprovalRequestResponse> SubmitActionAsync(Guid companyId, Guid requestId, Guid userId, SubmitApprovalActionRequest request);
 

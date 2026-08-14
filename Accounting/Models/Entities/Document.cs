@@ -327,6 +327,9 @@ public class Document : TenantEntity
     /// the CN restocks goods (Return only) or is a pure financial adjustment
     /// (Discount / Writeoff / OtherAdjustment).</summary>
     public CreditNoteReason? CreditNoteReason { get; set; }
+    /// <summary>เหตุผลการออกใบเพิ่มหนี้ (§86/9 บังคับระบุสาเหตุบนใบ เช่นเดียวกับ
+    /// §86/10 ของใบลดหนี้) — "ส่งสินค้าเกิน" เป็นเคสเดียวที่กระทบสต๊อก</summary>
+    public DebitNoteReason? DebitNoteReason { get; set; }
 
     // Project tagging — header default; lines can override per-line.
     // Used to attribute revenue/cost on auto-posted journal entries to a Project,

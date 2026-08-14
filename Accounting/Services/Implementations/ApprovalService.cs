@@ -283,6 +283,20 @@ public class ApprovalService : IApprovalService
         return MapRequestToResponse(request);
     }
 
+    /// <summary>คำขออนุมัติล่าสุดของ entity — ใช้ให้หน้าจอบอกสถานะ "รอใคร ขั้นไหน"
+    /// และตัดสินว่าปุ่มควรเป็น "ส่งขออนุมัติ" หรือ "ส่งซ้ำ/เตือนผู้อนุมัติ"</summary>
+    public async Task<ApprovalRequestResponse?> GetLatestForEntityAsync(
+        Guid companyId, string entityType, Guid entityId)
+    {
+        var request = await _db.ApprovalRequests
+            .Include(r => r.RequestedByUser)
+            .Include(r => r.Actions).ThenInclude(a => a.ApproverUser)
+            .Where(r => r.CompanyId == companyId && r.EntityType == entityType && r.EntityId == entityId)
+            .OrderByDescending(r => r.RequestedAt)
+            .FirstOrDefaultAsync();
+        return request == null ? null : MapRequestToResponse(request);
+    }
+
     public async Task<List<ApprovalRequestResponse>> GetPendingApprovalsAsync(Guid companyId, Guid userId)
     {
         var requests = await _db.ApprovalRequests

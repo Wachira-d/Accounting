@@ -109,4 +109,71 @@ public class DocumentLabelsTests
         Assert.Equal("09/01/2026", DocumentLabels.For("th").Date(d));
         Assert.Equal("09 Jan 2026", DocumentLabels.For("en").Date(d));
     }
+
+    // ───────────────────────────────────────────────────────────────
+    //  เอกสารภาษาอังกฤษต้องไม่มีคำไทยหลุด (audit "ใช้ได้ 100% ไหม")
+    // ───────────────────────────────────────────────────────────────
+
+    /// <summary>ไทยกับอังกฤษต้องมี key ชุดเดียวกัน — ตกฝั่งไหน เอกสารภาษานั้น
+    /// จะพิมพ์ "ชื่อ key" ดิบ ๆ ออกไปให้ลูกค้าเห็น (indexer คืน key เมื่อไม่พบ)</summary>
+    [Fact]
+    public void Thai_and_english_have_identical_key_sets()
+    {
+        var th = DocumentLabels.For("th").Keys.OrderBy(k => k).ToList();
+        var en = DocumentLabels.For("en").Keys.OrderBy(k => k).ToList();
+        Assert.Equal(th, en);
+    }
+
+    /// <summary>ทุก label ฝั่งอังกฤษต้องไม่มีอักษรไทยปน — ยกเว้นหัวเอกสารตาม
+    /// §86/4 ที่ต้องคงคำไทยไว้ (พิมพ์สองภาษา ทดสอบแยกที่ LegalTitle)</summary>
+    [Fact]
+    public void English_labels_contain_no_thai_characters()
+    {
+        var en = DocumentLabels.For("en");
+        foreach (var key in en.Keys)
+        {
+            var v = en[key];
+            Assert.DoesNotContain(v, c => c >= '\u0E00' && c <= '\u0E7F');
+        }
+    }
+
+    /// <summary>ไม่มี key ไหนที่ indexer คืนชื่อ key กลับมา (= ค่าหาย)</summary>
+    [Theory]
+    [InlineData("th")]
+    [InlineData("en")]
+    public void Every_key_resolves_to_real_text(string lang)
+    {
+        var L = DocumentLabels.For(lang);
+        foreach (var key in L.Keys)
+            Assert.NotEqual(key, L[key]);
+    }
+
+    /// <summary>"เครดิต N วัน" เรียงคำถูกตามภาษา (ไทยนำหน้า / อังกฤษต่อท้าย)</summary>
+    [Fact]
+    public void Credit_days_text_is_localised()
+    {
+        Assert.Equal("เครดิต 30 วัน", DocumentLabels.For("th").CreditDaysText(30));
+        Assert.Equal("30 days credit", DocumentLabels.For("en").CreditDaysText(30));
+    }
+
+    /// <summary>ป้ายวันที่ตัวที่สองแปลตามชนิดเอกสารด้วย (ใบเสนอราคา/PO/PR)</summary>
+    [Fact]
+    public void DueDateFor_is_localised_per_document_type()
+    {
+        var en = DocumentLabels.For("en");
+        Assert.Equal("Valid until", en.DueDateFor(Accounting.Models.Enums.DocumentType.Quotation));
+        Assert.Equal("Delivery date", en.DueDateFor(Accounting.Models.Enums.DocumentType.PurchaseOrder));
+        Assert.Equal("Due date", en.DueDateFor(Accounting.Models.Enums.DocumentType.Invoice));
+    }
+
+    /// <summary>หัวเอกสารโหมดอังกฤษต้องยัง "มีคำไทย" อยู่ — §86/4 บังคับ
+    /// (ตัดไทยทิ้ง = ใบกำกับไม่สมบูรณ์ ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(1))</summary>
+    [Fact]
+    public void Legal_title_keeps_thai_in_english_mode()
+    {
+        var t = DocumentLabels.For("en").LegalTitle("ใบกำกับภาษี", "Tax Invoice");
+        Assert.Contains("ใบกำกับภาษี", t);
+        Assert.Contains("Tax Invoice", t);
+    }
+
 }

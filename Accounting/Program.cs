@@ -17,6 +17,21 @@ QuestPDF.Settings.License = LicenseType.Community;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ตรวจ DI graph "ทุก environment" ไม่ใช่เฉพาะ Development
+//
+// ค่าเริ่มต้นของ ASP.NET เปิด ValidateOnBuild/ValidateScopes เฉพาะตอน
+// Development ⇒ ปัญหาแบบวงกลม (circular dependency) หรือ singleton ที่ถือ
+// scoped ไว้ (captive dependency) จะ **ไม่ล้มตอน start บน production** แต่ไป
+// โผล่ตอน request แรกที่ resolve service นั้นแทน — คือรู้ตอนลูกค้าเจอ ไม่ใช่
+// ตอน deploy. บังคับให้ทุก environment ตรวจเหมือนกัน = ถ้าจะพัง ให้พังตอน
+// deploy ซึ่งย้อนกลับได้ทันที (dev ตรวจอยู่แล้ว การเปิดที่ prod จึงไม่เพิ่ม
+// ความเสี่ยงใหม่ — แค่ทำให้สองที่พฤติกรรมตรงกัน)
+builder.Host.UseDefaultServiceProvider(o =>
+{
+    o.ValidateOnBuild = true;
+    o.ValidateScopes = true;
+});
+
 // PostgreSQL: Allow DateTime without explicit UTC Kind (legacy timestamp behavior)
 // This prevents "Cannot write DateTime with Kind=Unspecified" and
 // "Cannot apply binary operation on timestamp with/without time zone" errors

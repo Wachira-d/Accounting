@@ -34,6 +34,10 @@ public sealed class DocumentLabels
     /// <summary>ข้อความตาม key — คืน key เองถ้าไม่พบ (ทำให้เห็นทันทีว่าตกหล่น)</summary>
     public string this[string key] => _map.TryGetValue(key, out var v) ? v : key;
 
+    /// <summary>key ทั้งหมดที่พจนานุกรมภาษานี้มี — ใช้ตรวจอัตโนมัติว่าไทย/อังกฤษ
+    /// ครบเท่ากันและไม่มีคำไทยหลุดในฝั่งอังกฤษ (ดู DocumentLabelsTests)</summary>
+    public IEnumerable<string> Keys => _map.Keys;
+
     public static DocumentLabels For(string? lang)
     {
         var isEn = string.Equals(lang, "en", StringComparison.OrdinalIgnoreCase);
@@ -130,6 +134,13 @@ public sealed class DocumentLabels
     public string PartyVendorOrPayee => this["party_vendor_or_payee"];
     public string PaymentDate => this["payment_date"];
     public string PaymentInfo => this["payment_info"];
+    public string PaymentTermsLabel => this["payment_terms"];
+
+    /// <summary>"เครดิต N วัน" / "N days credit" — ประกอบเป็นข้อความเพราะรูปประโยค
+    /// ต่างกันคนละภาษา (ไทยเอาคำนำหน้า อังกฤษเอาต่อท้าย) จะใช้ label เดี่ยวไม่ได้</summary>
+    public string CreditDaysText(int days) => IsEnglish
+        ? $"{days} days credit"
+        : $"เครดิต {days} วัน";
     public string Phone => this["phone"];
     public string Reference => this["reference"];
     public string StatusVoided => this["status_voided"];
@@ -212,6 +223,11 @@ public sealed class DocumentLabels
         ["cn_reason_discount"] = "ส่วนลด / ลดราคา",
         ["cn_reason_adjustment"] = "ปรับยอด / ค่าสินค้าน้อยกว่าที่ตกลง",
         ["cn_reason_writeoff"] = "ตัดยอด / ตัดหนี้สูญบางส่วน",
+        // เหตุผลใบเพิ่มหนี้ §86/9 (ใช้ป้าย "เหตุผล" ตัวเดียวกับ CN)
+        ["dn_reason_price"] = "ราคาสินค้า/บริการเพิ่มขึ้นจากที่ตกลง",
+        ["dn_reason_extra"] = "ส่งสินค้า/ให้บริการเกินกว่าที่ตกลง",
+        ["dn_reason_charge"] = "ค่าใช้จ่ายเพิ่มเติมที่เรียกเก็บภายหลัง",
+        ["dn_reason_adjustment"] = "ปรับยอดให้ถูกต้อง (คำนวณคลาดเคลื่อน)",
         ["currency_label"] = "สกุลเงิน",
         ["fx_rate_label"] = "อัตราแลกเปลี่ยน",
         ["cn_corrected_value"] = "มูลค่าที่ถูกต้อง",
@@ -221,6 +237,7 @@ public sealed class DocumentLabels
 
         // ── ส่วนท้าย / อื่น ๆ ──
         ["payment_info"] = "ข้อมูลชำระเงิน",
+        ["payment_terms"] = "เงื่อนไขการชำระเงิน",
         ["terms"] = "เงื่อนไข",
         ["notes"] = "หมายเหตุ",
         ["gl_posting"] = "การบันทึกบัญชี",
@@ -294,6 +311,10 @@ public sealed class DocumentLabels
         ["cn_reason_discount"] = "Discount / price reduction",
         ["cn_reason_adjustment"] = "Adjustment",
         ["cn_reason_writeoff"] = "Write-off",
+        ["dn_reason_price"] = "Price increase from agreed amount",
+        ["dn_reason_extra"] = "Goods / services delivered in excess",
+        ["dn_reason_charge"] = "Additional charges billed afterwards",
+        ["dn_reason_adjustment"] = "Adjustment (under-calculated)",
         ["currency_label"] = "Currency",
         ["fx_rate_label"] = "Exchange rate",
         ["cn_corrected_value"] = "Corrected value",
@@ -302,6 +323,7 @@ public sealed class DocumentLabels
         ["cn_decrease"] = "decrease",
 
         ["payment_info"] = "Payment details",
+        ["payment_terms"] = "Payment terms",
         ["terms"] = "Terms",
         ["notes"] = "Notes",
         ["gl_posting"] = "Journal entry",

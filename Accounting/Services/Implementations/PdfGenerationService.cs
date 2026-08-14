@@ -1263,12 +1263,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         // เอกสารยกเลิก → ลายน้ำ "ยกเลิก" สีแดงเด่น (priority เหนือ watermark ปกติ)
         if (doc.Status == DocumentStatus.Voided)
         {
-            sb.AppendLine("<div class='watermark watermark-void'>ยกเลิก</div>");
+            sb.AppendLine($"<div class='watermark watermark-void'>{L.StatusVoided}</div>");
         }
         else if (copyCornerMode && isCopyPrintWm)
         {
             // ป้าย "สำเนา" มุมบนแทนลายน้ำ (ตามตั้งค่าเทมเพลต)
-            sb.AppendLine(CornerBadge(lang == "en" ? "COPY" : "สำเนา"));
+            sb.AppendLine(CornerBadge(L.CopyDuplicate));
         }
         else if (template.ShowWatermark || watermark != null)
         {
@@ -1305,9 +1305,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             var brc = string.IsNullOrWhiteSpace(company.TaxId)
                 ? ""
                 : $" ({FormatBranch(company.BranchCode, company.BranchName, lang)})";
-            sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {company.TaxId}{brc}</div>");
+            sb.AppendLine($"<div>{L.TaxId}: {company.TaxId}{brc}</div>");
         }
-        if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>โทร: {company.Phone}</div>");
+        if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>{L.Phone}: {company.Phone}</div>");
         if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");
         sb.AppendLine("</div></div>");
 
@@ -1325,9 +1325,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (!isCopyPrint)
         {
             if (copyCornerMode)
-                sb.AppendLine(CornerBadge(lang == "en" ? "Original" : "ต้นฉบับ"));
+                sb.AppendLine(CornerBadge(L.CopyOriginal));
             else
-                title += lang == "en" ? " (Original)" : " (ต้นฉบับ)";
+                title += $" ({L.CopyOriginal})";
         }
         _ = isRd864Doc;
         sb.AppendLine($"<div class='doc-title'>{title}</div>");
@@ -1382,7 +1382,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 && (doc.Contact.ContactType != Models.Enums.ContactType.Individual
                     || (!string.IsNullOrWhiteSpace(doc.Contact.BranchCode)
                         && doc.Contact.BranchCode!.Trim().TrimStart('0').Length > 0));
-            sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId}"
+            sb.AppendLine($"<div>{L.TaxIdShort}: {doc.Contact.TaxId}"
                 + (showContactBranch ? $" ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})" : "")
                 + "</div>");
         }
@@ -1392,7 +1392,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 doc.Contact.SubDistrict, doc.Contact.District, doc.Contact.Province, doc.Contact.PostalCode);
             if (!string.IsNullOrWhiteSpace(caddr)) sb.AppendLine($"<div>{caddr}</div>");
         }
-        if (template.ShowContactPhone && doc.Contact.Phone != null) sb.AppendLine($"<div>โทร: {doc.Contact.Phone}</div>");
+        if (template.ShowContactPhone && doc.Contact.Phone != null) sb.AppendLine($"<div>{L.Phone}: {doc.Contact.Phone}</div>");
         if (template.ShowContactEmail && doc.Contact.Email != null) sb.AppendLine($"<div>Email: {doc.Contact.Email}</div>");
         sb.AppendLine("</div>");
 
@@ -1431,13 +1431,15 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (!string.IsNullOrWhiteSpace(doc.AdjustmentOriginalOurNumber))
                 sb.AppendLine($"<div style='color:#4B5563'>{L.OurDocRefLabel}: {WebUtility.HtmlEncode(doc.AdjustmentOriginalOurNumber!)}</div>");
             if (hasOrigAmounts)
-                sb.AppendLine($"<div>มูลค่าตามใบเดิม: {adjOrigBase:N2} &nbsp;|&nbsp; มูลค่าที่ถูกต้อง: {adjCorrected:N2} &nbsp;|&nbsp; <b>ผลต่าง ({(isCnBox ? "ลด" : "เพิ่ม")}): {doc.SubTotal:N2}</b></div>");
+                sb.AppendLine($"<div>{L.CnOriginalValue}: {adjOrigBase:N2} &nbsp;|&nbsp; {L.CnCorrectedValue}: {adjCorrected:N2} &nbsp;|&nbsp; <b>{L.CnDifference} ({(isCnBox ? L.CnDecrease : L.CnIncrease)}): {doc.SubTotal:N2}</b></div>");
             else
-                sb.AppendLine($"<div><b>มูลค่าที่{(isCnBox ? "ลด" : "เพิ่ม")}: {doc.SubTotal:N2}</b></div>");
-            // §86/10 บังคับระบุเหตุผลการลดหนี้บนตัวเอกสาร
-            var cnReasonTxt = CreditNoteReasonText(doc.CreditNoteReason, L);
-            if (isCnBox && !string.IsNullOrWhiteSpace(cnReasonTxt))
-                sb.AppendLine($"<div>{L.CnReason}: {WebUtility.HtmlEncode(cnReasonTxt)}</div>");
+                sb.AppendLine($"<div><b>{(isCnBox ? L.CnDecrease : L.CnIncrease)}: {doc.SubTotal:N2}</b></div>");
+            // §86/10 (ลดหนี้) และ §86/9 (เพิ่มหนี้) บังคับระบุเหตุผลบนตัวเอกสาร
+            var reasonTxt = isCnBox
+                ? CreditNoteReasonText(doc.CreditNoteReason, L)
+                : DebitNoteReasonText(doc.DebitNoteReason, L);
+            if (!string.IsNullOrWhiteSpace(reasonTxt))
+                sb.AppendLine($"<div>{L.CnReason}: {WebUtility.HtmlEncode(reasonTxt)}</div>");
             sb.AppendLine("</div>");
         }
 
@@ -1539,30 +1541,30 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine($"<div class='amount-words'>({words})</div>");
         }
         if (hideVatBreakdown)
-            sb.AppendLine("<div style='margin-top:8px;font-size:11px;color:#555;font-style:italic'>* เอกสารนี้ไม่ใช่ใบกำกับภาษี — ใบกำกับภาษีจะออกให้เมื่อมีการใช้บริการ/ชำระครบถ้วน</div>");
+            sb.AppendLine($"<div style='margin-top:8px;font-size:11px;color:#555;font-style:italic'>* {L.NotTaxInvoiceNote}</div>");
         sb.AppendLine("</div>");
 
         // CertificateInLieu — reason, certifier, witness, payment date
         if (doc.DocumentType == DocumentType.CertificateInLieu)
         {
             sb.AppendLine("<div class='cert-section' style='margin-top:16px;padding:12px;border:1px solid #333;'>");
-            sb.AppendLine($"<div style='font-weight:700;font-size:14px;margin-bottom:8px;'>ข้อมูลการรับรอง</div>");
+            sb.AppendLine($"<div style='font-weight:700;font-size:14px;margin-bottom:8px;'>{L.CertInfo}</div>");
             if (!string.IsNullOrWhiteSpace(doc.CertificateReason))
-                sb.AppendLine($"<div><strong>เหตุผลที่ไม่ได้รับใบเสร็จ:</strong> {WebUtility.HtmlEncode(doc.CertificateReason)}</div>");
+                sb.AppendLine($"<div><strong>{L.CertReason}:</strong> {WebUtility.HtmlEncode(doc.CertificateReason)}</div>");
             if (doc.PaymentDate.HasValue)
                 sb.AppendLine($"<div><strong>{L.PaymentDate}:</strong> {doc.PaymentDate:dd/MM/yyyy}</div>");
             sb.AppendLine("<div style='display:flex;gap:40px;margin-top:16px;'>");
             sb.AppendLine("<div style='flex:1;'>");
-            sb.AppendLine($"<div><strong>ผู้รับรอง:</strong> {WebUtility.HtmlEncode(doc.CertifierName ?? "")}</div>");
+            sb.AppendLine($"<div><strong>{L.CertCertifier}:</strong> {WebUtility.HtmlEncode(doc.CertifierName ?? "")}</div>");
             if (!string.IsNullOrWhiteSpace(doc.CertifierPosition))
-                sb.AppendLine($"<div><strong>ตำแหน่ง:</strong> {WebUtility.HtmlEncode(doc.CertifierPosition)}</div>");
+                sb.AppendLine($"<div><strong>{L.CertPosition}:</strong> {WebUtility.HtmlEncode(doc.CertifierPosition)}</div>");
             sb.AppendLine("</div>");
             if (!string.IsNullOrWhiteSpace(doc.WitnessName))
             {
                 sb.AppendLine("<div style='flex:1;'>");
-                sb.AppendLine($"<div><strong>พยาน:</strong> {WebUtility.HtmlEncode(doc.WitnessName)}</div>");
+                sb.AppendLine($"<div><strong>{L.CertWitness}:</strong> {WebUtility.HtmlEncode(doc.WitnessName)}</div>");
                 if (!string.IsNullOrWhiteSpace(doc.WitnessPosition))
-                    sb.AppendLine($"<div><strong>ตำแหน่ง:</strong> {WebUtility.HtmlEncode(doc.WitnessPosition)}</div>");
+                    sb.AppendLine($"<div><strong>{L.CertPosition}:</strong> {WebUtility.HtmlEncode(doc.WitnessPosition)}</div>");
                 sb.AppendLine("</div>");
             }
             sb.AppendLine("</div></div>");
@@ -1575,7 +1577,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var bankTextForLang = PickLangText(template.BankDetailsText, template.BankDetailsTextEn, lang);
         if (template.ShowBankDetails && bankTextForLang != null)
-            sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{bankTextForLang}</div>");
+            sb.AppendLine($"<div class='bank-details'><strong>{L.PaymentInfo}:</strong><br/>{bankTextForLang}</div>");
 
         // เงื่อนไขการชำระเงินของใบนี้ (doc.PaymentTerms/CreditDays) — เดิม flag
         // ShowPaymentTerms มีอยู่แต่ไม่มี renderer ตัวไหน render เลย ผู้ใช้กรอก
@@ -1587,19 +1589,19 @@ public partial class PdfGenerationService : IPdfGenerationService
             // ลบรายข้อ). ต้อง render **แบบเดียวกับ QuestPDF เป๊ะ ๆ**: บรรทัดเดียว
             // = ต่อท้ายหัวข้อ, หลายบรรทัด = หัวข้อ + bullet รายข้อ — ไม่งั้น
             // preview/ร่าง กับ PDF ตอนอนุมัติหน้าตาไม่ตรงกัน (กฎ "ร่าง = ตัวจริง")
-            var creditTxt = doc.CreditDays > 0 ? $" (เครดิต {doc.CreditDays} วัน)" : "";
+            var creditTxt = doc.CreditDays > 0 ? $" ({L.CreditDaysText(doc.CreditDays)})" : "";
             var termLines = (doc.PaymentTerms ?? "")
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (termLines.Length <= 1)
             {
                 var one = System.Net.WebUtility.HtmlEncode(termLines.FirstOrDefault() ?? "");
-                sb.AppendLine($"<div class='bank-details'><strong>เงื่อนไขการชำระเงิน:</strong> {one}{creditTxt}</div>");
+                sb.AppendLine($"<div class='bank-details'><strong>{L.PaymentTermsLabel}:</strong> {one}{creditTxt}</div>");
             }
             else
             {
                 var bullets = string.Join("", termLines.Select(ln =>
                     $"<div>• {System.Net.WebUtility.HtmlEncode(ln)}</div>"));
-                sb.AppendLine($"<div class='bank-details'><strong>เงื่อนไขการชำระเงิน:{creditTxt}</strong>{bullets}</div>");
+                sb.AppendLine($"<div class='bank-details'><strong>{L.PaymentTermsLabel}:{creditTxt}</strong>{bullets}</div>");
             }
         }
 
@@ -2343,6 +2345,17 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             Models.Enums.CreditNoteReason.Discount => L["cn_reason_discount"],
             Models.Enums.CreditNoteReason.Adjustment => L["cn_reason_adjustment"],
             Models.Enums.CreditNoteReason.Writeoff => L["cn_reason_writeoff"],
+            _ => null,
+        };
+
+    /// <summary>ข้อความ "เหตุผล" ของใบเพิ่มหนี้ §86/9 — คู่ขนานกับ CN §86/10</summary>
+    internal static string? DebitNoteReasonText(Models.Enums.DebitNoteReason? reason, Pdf.DocumentLabels L)
+        => reason switch
+        {
+            Models.Enums.DebitNoteReason.PriceIncrease => L["dn_reason_price"],
+            Models.Enums.DebitNoteReason.ExtraGoods => L["dn_reason_extra"],
+            Models.Enums.DebitNoteReason.AdditionalCharge => L["dn_reason_charge"],
+            Models.Enums.DebitNoteReason.Adjustment => L["dn_reason_adjustment"],
             _ => null,
         };
 

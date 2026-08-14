@@ -393,6 +393,30 @@
             </div>
           </div>
 
+          <!-- DebitNote reason — §86/9 บังคับระบุสาเหตุบนใบเพิ่มหนี้ เช่นเดียวกับ
+               §86/10 ของใบลดหนี้. "ส่งสินค้าเกิน" เป็นเคสเดียวที่กระทบสต๊อก -->
+          <div id="debitNoteReasonSection" style="display:none;margin-bottom:12px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:12px">
+            <div style="font-weight:600;color:#9a3412;font-size:13px;margin-bottom:8px">เหตุผลการออกใบเพิ่มหนี้ * <span style="font-weight:400;font-size:12px">(§86/9 ต้องระบุสาเหตุบนเอกสาร)</span></div>
+            <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fDebitNoteReason" value="PriceIncrease" style="margin-top:3px">
+                <span><strong>ราคาเพิ่มขึ้น (Price increase)</strong> — ราคาสินค้า/บริการสูงกว่าที่ตกลงไว้ <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fDebitNoteReason" value="ExtraGoods" style="margin-top:3px">
+                <span><strong>ส่งสินค้า/บริการเกิน (Extra goods)</strong> — ส่งมากกว่าที่ตกลง <span style="color:#c2410c">→ สต๊อกจะถูกตัดเพิ่ม</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fDebitNoteReason" value="AdditionalCharge" style="margin-top:3px">
+                <span><strong>ค่าใช้จ่ายเพิ่มเติม (Additional charge)</strong> — ค่าขนส่ง/ติดตั้ง/ค่าปรับ ที่เรียกเก็บภายหลัง <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fDebitNoteReason" value="Adjustment" style="margin-top:3px">
+                <span><strong>ปรับยอด (Adjustment)</strong> — คำนวณยอด/ภาษีคลาดเคลื่อนต่ำไป <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+            </div>
+          </div>
+
           <!-- CertificateInLieu-specific fields -->
           <div id="certInLieuSection" style="display:none;margin-bottom:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:12px">
             <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
@@ -3609,6 +3633,12 @@
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
         // Show/hide CreditNote reason picker — required field on approve.
+        const dnSection = document.getElementById('debitNoteReasonSection');
+        if (dnSection) {
+          dnSection.style.display = docType === 'DebitNote' ? '' : 'none';
+          if (dnSection.style.display === 'none')
+            document.querySelectorAll('input[name="fDebitNoteReason"]').forEach(r => r.checked = false);
+        }
         const cnSection = document.getElementById('creditNoteReasonSection');
         if (cnSection) cnSection.style.display = docType === 'CreditNote' ? '' : 'none';
         if (cnSection && cnSection.style.display === 'none') {
@@ -5982,6 +6012,10 @@
             const cnRadio = document.querySelector(`input[name="fCreditNoteReason"][value="${d.creditNoteReason}"]`);
             if (cnRadio) cnRadio.checked = true;
           }
+          if (d.debitNoteReason) {
+            const dnRadio = document.querySelector(`input[name="fDebitNoteReason"][value="${d.debitNoteReason}"]`);
+            if (dnRadio) dnRadio.checked = true;
+          }
           // Re-apply แหล่งเงิน + หมวดค่าใช้จ่าย หลัง onDocTypeChange + หลัง
           // async suggest (setValue→onContactChange) settle — ค่าที่บันทึก
           // ต้องชนะ suggestion เสมอ
@@ -6267,6 +6301,7 @@
           witnessPosition: document.getElementById('fWitnessPosition')?.value || null,
           paymentDate: document.getElementById('fPaymentDate')?.value || null,
           creditNoteReason: (document.querySelector('input[name="fCreditNoteReason"]:checked')?.value) || null,
+          debitNoteReason: (document.querySelector('input[name="fDebitNoteReason"]:checked')?.value) || null,
           // PI/Expense/CertInLieu — supplier invoice fields from main row.
           // PV เมื่อติ๊ก "ใช้งานใบกำกับภาษี" ใช้ field คู่ขนานในกล่องเหลือง
           // (fSupplierInvoiceNumberPV / fSupplierTaxInvoiceDatePV) แทน.
@@ -6665,7 +6700,8 @@
           const revSuffix = (d.revisionNumber || 0) > 0 ? ` (Rev.${d.revisionNumber})` : '';
           document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${displayNum}${revSuffix}`;
           // ERP upgrade banners — surface RD compliance + aging + VAT defer at top
-          let banners = '';
+          // แผงสถานะคำขออนุมัติ (เติมทีหลังแบบ async — ไม่หน่วงการเปิด modal)
+          let banners = '<div id="approvalStatusBox" style="display:none"></div>';
           if (d.ocrTenantMismatchFlag) {
             banners += `<div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
               ⚠️ <strong>เลขผู้ซื้อในเอกสารไม่ตรงกับบริษัทนี้</strong>
@@ -6782,6 +6818,7 @@
               <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${Layout.esc(d.contact.name)}</a>` : '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${(d.bookingNumber || d.reference) ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${Layout.esc(d.bookingNumber || d.reference)}</div></div>` : ''}
+              ${d.debitNoteReason ? `<div><div class="text-xs text-gray-500">เหตุผลการเพิ่มหนี้ (§86/9)</div><div>${Layout.esc({PriceIncrease:'ราคาเพิ่มขึ้นจากที่ตกลง',ExtraGoods:'ส่งสินค้า/บริการเกินกว่าที่ตกลง',AdditionalCharge:'ค่าใช้จ่ายเพิ่มเติมที่เรียกเก็บภายหลัง',Adjustment:'ปรับยอดให้ถูกต้อง'}[d.debitNoteReason] || d.debitNoteReason)}</div></div>` : ''}
               ${d.creditNoteReason ? `<div><div class="text-xs text-gray-500">เหตุผลการลดหนี้ (§86/10)</div><div>${Layout.esc({Return:'คืนสินค้า',Discount:'ส่วนลด / ลดราคา',Adjustment:'ปรับยอด / ค่าสินค้าน้อยกว่าที่ตกลง',Writeoff:'ตัดยอด / ตัดหนี้สูญบางส่วน'}[d.creditNoteReason] || d.creditNoteReason)}</div></div>` : ''}
               ${(d.currency && d.currency !== 'THB') ? `<div><div class="text-xs text-gray-500">สกุลเงิน</div><div><b>${Layout.esc(d.currency)}</b>${d.exchangeRate && Number(d.exchangeRate) !== 1 ? ` · อัตรา ${Number(d.exchangeRate).toLocaleString('th-TH',{minimumFractionDigits:4})}` : ''}</div></div>` : ''}
               ${d.supplierInvoiceNumber ? `<div><div class="text-xs text-gray-500">เลขใบกำกับผู้ขาย</div><div class="font-medium">${this.escapeHtml(d.supplierInvoiceNumber)}</div></div>` : ''}
@@ -7023,6 +7060,8 @@
 
           // Document chain — render parent + siblings + children
           this.loadDocumentChain(d.id, d.relatedDocumentId);
+          // "รออนุมัติจากใคร" — โหลดขนานกับ chain (best-effort ไม่ block)
+          this.loadApprovalStatus(d.id);
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
@@ -7031,6 +7070,14 @@
             actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')" data-i18n="common.edit">แก้ไข</button>`;
             actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
             actions += ` <button class="btn btn-danger" onclick="Page.deleteDoc('${d.id}')" title="ลบถาวร — เฉพาะเอกสารฉบับร่างที่ยังไม่กระทบบัญชี">🗑 ลบถาวร</button>`;
+          }
+          // ส่งขออนุมัติ / ส่งซ้ำ — เดิมส่งได้ทางเดียวคือกด "อนุมัติ" แล้วโดน
+          // workflow gate ปฏิเสธ ค่อยมี confirm ให้ส่ง (ผู้ขอที่ไม่มีสิทธิ์อนุมัติ
+          // จึงไม่มีทางส่งเลย) ตอนนี้มีปุ่มตรง ๆ ทั้งตอนยังเป็นร่างและตอนรออนุมัติ
+          // (รออนุมัติ = ส่งซ้ำเพื่อเตือนผู้อนุมัติคนที่ค้างอยู่)
+          if (d.status === 'Draft' || d.status === 'WaitingApproval' || d.status === 'Rejected') {
+            const again = d.status === 'WaitingApproval';
+            actions += ` <button class="btn btn-primary" onclick="Page.submitApproval('${d.id}')" title="${again ? 'ส่งเตือนผู้อนุมัติที่ค้างอยู่อีกครั้ง' : 'ส่งเข้าคิวขออนุมัติตามกฎวงเงิน/ประเภทเอกสาร — ผู้อนุมัติจะได้รับแจ้งเตือน'}">📤 ${again ? 'ส่งขออนุมัติอีกครั้ง' : 'ส่งขออนุมัติ'}</button>`;
           }
           if (d.status === 'Approved' || d.status === 'Sent') {
             actions += ` <button class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
@@ -8528,6 +8575,70 @@
         Expense:          ['PaymentVoucher']
         // Terminal: Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
       },
+      /** ส่ง/ส่งซ้ำคำขออนุมัติของเอกสารนี้ แล้วบอกให้ชัดว่า "ไปถึงใคร"
+       *
+       *  ผู้อนุมัติมาจาก "กฎอนุมัติตามวงเงิน (Workflow)" — จับคู่ด้วย ยอดเงิน +
+       *  ชนิดเอกสาร + โครงการ ตามกฎที่ตั้งไว้ที่เมนู กฎอนุมัติตามวงเงิน
+       *  ถ้ายังไม่ตั้งกฎ = ไม่มีใครต้องอนุมัติ (อนุมัติเองได้เลย) */
+      async submitApproval(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.submitForApproval('Document', id);
+          const r = res.data || {};
+          const steps = (r.actions || []).slice().sort((a, b) => a.stepOrder - b.stepOrder);
+          const cur = r.currentStep || 1;
+          const waiting = steps.filter(a => a.stepOrder === cur && a.status === 'Pending')
+            .map(a => a.approverName).filter(Boolean);
+          const chain = steps.length
+            ? steps.map(a => `ขั้น ${a.stepOrder}: ${Layout.esc(a.approverName || '-')}`
+                + (a.status === 'Approved' ? ' ✅' : a.status === 'Rejected' ? ' ❌' : '')).join(' → ')
+            : '';
+          Layout.toast(
+            (waiting.length ? `ส่งแล้ว — รออนุมัติจาก ${waiting.join(', ')}` : 'ส่งคำขออนุมัติแล้ว')
+            + (chain ? `\nลำดับผู้อนุมัติ: ${chain}` : '')
+            + '\nติดตามได้ที่เมนู "กฎอนุมัติตามวงเงิน (Workflow)"', 'success', 9000);
+          Layout.closeModal('detailModal');
+          await this.load();
+        } catch (e) {
+          // ไม่มีกฎที่ตรงกับเอกสารนี้ = ไม่ต้องผ่าน workflow — บอกให้ชัดแทน
+          // ที่จะโยน error ดิบ ๆ ซึ่งผู้ใช้ตีความไม่ออกว่าต้องทำอะไรต่อ
+          const m = e.message || '';
+          if (m.includes('ไม่พบกฎ') || m.includes('no matching rule') || m.includes('ไม่เข้ากฎ')) {
+            Layout.toast('เอกสารนี้ไม่เข้ากฎอนุมัติใด — กด "อนุมัติ" ได้เลย '
+              + '(ถ้าต้องการให้ผ่านผู้อนุมัติก่อน ตั้งกฎที่เมนู "กฎอนุมัติตามวงเงิน (Workflow)")', 'info', 9000);
+            return;
+          }
+          Layout.toast('ส่งขออนุมัติไม่สำเร็จ: ' + m, 'error');
+        }
+      },
+
+      /** แผง "รออนุมัติจากใคร" ในหน้ารายละเอียด — โหลดหลัง render (best-effort)
+       *  เอกสารที่ไม่เคยส่งขอ/ไม่มีกฎ จะไม่ขึ้นอะไรเลย */
+      async loadApprovalStatus(docId) {
+        const box = document.getElementById('approvalStatusBox');
+        if (!box) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.get(`/api/companies/${cid}/approval/for-entity?entityType=Document&entityId=${docId}`);
+          const r = res?.data;
+          if (!r) return;
+          const steps = (r.actions || []).slice().sort((a, b) => a.stepOrder - b.stepOrder);
+          const done = r.overallStatus === 'Approved', rejected = r.overallStatus === 'Rejected';
+          const bg = done ? '#ecfdf5' : rejected ? '#fef2f2' : '#eff6ff';
+          const bd = done ? '#6ee7b7' : rejected ? '#fca5a5' : '#bfdbfe';
+          const fg = done ? '#065f46' : rejected ? '#991b1b' : '#1e40af';
+          box.innerHTML = `<div style="background:${bg};border:1px solid ${bd};border-radius:8px;padding:9px 14px;margin-bottom:8px;font-size:12.5px;color:${fg}">
+            🧾 <b>คำขออนุมัติ</b> — ส่งโดย ${Layout.esc(r.requestedByName || '-')} เมื่อ ${Layout.date(r.requestedAt)} ·
+            สถานะ <b>${done ? 'อนุมัติครบแล้ว' : rejected ? 'ถูกตีกลับ' : 'รออนุมัติ (ขั้น ' + (r.currentStep || 1) + ')'}</b>
+            <div style="margin-top:4px">${steps.map(a =>
+              `<span style="display:inline-block;margin-right:10px">${a.stepOrder}. ${Layout.esc(a.approverName || '-')} ` +
+              (a.status === 'Approved' ? '✅' : a.status === 'Rejected' ? '❌' : '⏳') +
+              (a.comments ? ` <span style="color:#64748b">(${Layout.esc(a.comments)})</span>` : '') + '</span>').join('')}</div>
+          </div>`;
+          box.style.display = '';
+        } catch { /* ไม่มีคำขอ/endpoint ไม่พร้อม — ไม่ต้องแสดงอะไร */ }
+      },
+
       async openConvert(id) {
         document.getElementById('convertDocId').value = id;
         const doc = this._currentDoc;

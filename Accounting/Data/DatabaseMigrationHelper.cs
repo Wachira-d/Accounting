@@ -438,6 +438,10 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceDocumentId" uuid NULL;
             """,
+            // §86/9 เหตุผลใบเพิ่มหนี้ (คู่กับ CreditNoteReason ของ §86/10)
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DebitNoteReason" integer NULL;
+            """,
 
             // ===== Subscriptions: renewal invoice (WP-B1) =====
             """

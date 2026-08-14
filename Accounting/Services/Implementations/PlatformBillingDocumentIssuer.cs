@@ -37,12 +37,22 @@ public sealed record PlatformDocResult(Guid DocumentId, string DocumentNumber, b
 public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
 {
     private readonly AccountingDbContext _db;
-    private readonly IDocumentService _documents;
     private readonly ILogger<PlatformBillingDocumentIssuer> _logger;
+    /// <summary>resolve <see cref="IDocumentService"/> ตอนเรียกใช้ ไม่ใช่ตอน ctor
+    /// — inject ตรง ๆ จะเกิดวงกลม (DI ปฏิเสธตั้งแต่ตอน start):
+    /// <c>IDocumentService → ISubscriptionService → ISaasBillingDocumentService
+    /// → IPlatformBillingDocumentIssuer → IDocumentService</c>
+    /// (pattern เดียวกับ <see cref="ApprovalService"/> ที่เจอวงกลมแบบเดียวกัน).
+    /// ทุกตัวเป็น Scoped และ resolve จาก provider ของ scope เดิม ⇒ ได้ instance
+    /// เดียวกับที่ request นี้ใช้อยู่ (DbContext/transaction เดียวกัน)</summary>
+    private readonly IServiceProvider _services;
 
-    public PlatformBillingDocumentIssuer(AccountingDbContext db, IDocumentService documents,
+    public PlatformBillingDocumentIssuer(AccountingDbContext db, IServiceProvider services,
         ILogger<PlatformBillingDocumentIssuer> logger)
-    { _db = db; _documents = documents; _logger = logger; }
+    { _db = db; _services = services; _logger = logger; }
+
+    private IDocumentService Documents =>
+        (IDocumentService)_services.GetService(typeof(IDocumentService))!;
 
     private const string Actor = "platform-billing";
 
@@ -108,8 +118,8 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 IssuedAsCashReceipt: isVat ? true : null,
                 PaymentAccountId: await ResolveCashAccountIdAsync(tenantId.Value, settings));
 
-            var created = await _documents.CreateDocumentAsync(tenantId.Value, req, Actor);
-            var approved = await _documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
+            var created = await Documents.CreateDocumentAsync(tenantId.Value, req, Actor);
+            var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
             _logger.LogInformation(
                 "ออกเอกสารค่าบริการใน tenant ผู้ให้บริการ {DocNo} (payment {PaymentNo} · ฐาน {Base} · VAT {Vat} · WHT {Wht})",
                 approved.DocumentNumber, payment.PaymentNumber, baseAmount, isVat, wht);
@@ -161,8 +171,8 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                             ? "41000" : settings.PlatformRevenueAccountCode)
                 });
 
-            var created = await _documents.CreateDocumentAsync(tenantId.Value, req, Actor);
-            var approved = await _documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
+            var created = await Documents.CreateDocumentAsync(tenantId.Value, req, Actor);
+            var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
             return new PlatformDocResult(approved.Id, approved.DocumentNumber, isVat);
         }
         catch (Exception ex)
