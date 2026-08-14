@@ -3543,7 +3543,8 @@
           if (!showCnSrc) {
             this._cnSourceId = null;
             const s = document.getElementById('fCnSourceDoc'); if (s) s.value = '';
-            const x = document.getElementById('fCnExternalRef'); if (x) x.value = '';
+            const x = document.getElementById('fCnExternalRef');
+            if (x) { x.value = ''; x.style.display = ''; }
             const h = document.getElementById('cnSourceHint'); if (h) h.style.display = 'none';
           } else {
             this._loadCnSourceDocs();
@@ -3985,6 +3986,8 @@
         this._cnSourceId = null;
         sel.innerHTML = '<option value="">— เลือกเอกสารเดิมของคู่ค้ารายนี้ —</option>';
         const h = document.getElementById('cnSourceHint'); if (h) h.style.display = 'none';
+        // โหลดลิสต์ใหม่ = การเลือกเดิมหาย → ช่องกรอกเลขนอกระบบต้องกลับมา
+        const xr = document.getElementById('fCnExternalRef'); if (xr) xr.style.display = '';
         if (!contactId) return;
         const api = Layout.api(); if (!api) return;
         try {
@@ -4102,12 +4105,17 @@
         const id = document.getElementById('fCnSourceDoc')?.value || '';
         const h = document.getElementById('cnSourceHint');
         this._cnSourceId = id || null;
+        // ช่อง "กรอกเลขใบเดิมนอกระบบ" เป็นทางเลือก**สำรอง**ของ dropdown —
+        // เลือกใบในระบบแล้วต้องหายไป (โชว์ค้าง = ชวนกรอกซ้ำ/ขัดกับใบที่เลือก)
+        // ยกเลิกการเลือก → กลับมาให้กรอกได้
+        const x = document.getElementById('fCnExternalRef');
         if (!id) {
           if (h) h.style.display = 'none';
+          if (x) x.style.display = '';
           this._refreshCnSideEditability();   // ไม่มีใบต้นทางแล้ว → เลือกฝั่งเองได้
           return;
         }
-        const x = document.getElementById('fCnExternalRef'); if (x) x.value = '';
+        if (x) { x.value = ''; x.style.display = 'none'; }
         let d = this._cnSourceCache[id];
         // list ไม่มี lines — ดึง detail มาเติมบรรทัดให้แก้เป็นยอดลด/เพิ่มจริง
         try {
