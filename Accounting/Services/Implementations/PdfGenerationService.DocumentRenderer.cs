@@ -938,7 +938,7 @@ public partial class PdfGenerationService
             // PaymentTerms เก็บได้หลายบรรทัด (1 เงื่อนไข/บรรทัด — ฟอร์มให้เพิ่ม/
             // ลบรายข้อ) บรรทัดเดียวคงรูปแบบเดิม, หลายบรรทัดแตกเป็น bullet ให้
             // อ่านง่ายเท่าฝั่ง HTML (draft preview ต้องตรงกับ PDF ตัวจริง)
-            var creditTxt = doc.CreditDays > 0 ? $" (เครดิต {doc.CreditDays} วัน)" : "";
+            var creditTxt = doc.CreditDays > 0 ? $" ({L.CreditDaysText(doc.CreditDays)})" : "";
             var termLines = (doc.PaymentTerms ?? "")
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             col.Item().PaddingTop(8).Background("#F8F9FA").Padding(10).Column(pc =>
@@ -947,13 +947,13 @@ public partial class PdfGenerationService
                 {
                     pc.Item().Text(tt =>
                     {
-                        tt.Span("เงื่อนไขการชำระเงิน: ").Bold().FontSize(10);
+                        tt.Span($"{L.PaymentTermsLabel}: ").Bold().FontSize(10);
                         tt.Span((termLines.FirstOrDefault() ?? "") + creditTxt).FontSize(10);
                     });
                 }
                 else
                 {
-                    pc.Item().Text($"เงื่อนไขการชำระเงิน:{creditTxt}").Bold().FontSize(10);
+                    pc.Item().Text($"{L.PaymentTermsLabel}:{creditTxt}").Bold().FontSize(10);
                     foreach (var ln in termLines)
                         pc.Item().Text("• " + ln).FontSize(10);
                 }

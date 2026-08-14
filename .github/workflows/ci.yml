@@ -31,6 +31,12 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # DI graph — `dotnet build` จับวงกลมไม่ได้ (เป็น runtime validation ตอน
+      # BuildServiceProvider) เคยหลุดมาแล้วครั้งหนึ่ง: คอมไพล์ผ่าน แต่แอป start
+      # ไม่ขึ้นเลย. ตรวจก่อน build เพราะเร็วกว่ามากและ fail ตรงจุด
+      - name: ตรวจวงกลม DI (circular dependency)
+        run: python3 tools/di_cycle_check.py
+
       - name: Restore
         run: dotnet restore Accounting.sln
 
