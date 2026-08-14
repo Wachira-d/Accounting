@@ -1047,6 +1047,24 @@ public class DocumentService : IDocumentService
             }
             var isCashSettled = doc.PaymentType == Models.Enums.PaymentType.Cash;
 
+            // เทอมเครดิตที่ตั้งไว้กับคู่ค้า — ชั้น fallback ของ **ฝั่ง server**
+            //
+            // เดิมลำดับ "ผู้ใช้ > คู่ค้า > เทมเพลต" อยู่บนหน้าจออย่างเดียว ⇒ เอกสาร
+            // ที่สร้างผ่าน API/integration/งาน recurring ที่ไม่ได้ส่ง CreditDays มา
+            // จะไม่ได้เครดิตของคู่ค้าเลย (ใบเดียวกันสร้างคนละทางได้เทอมไม่เท่ากัน)
+            // ที่นี่เติมเฉพาะตอน caller ไม่ได้ระบุมา — ผู้เรียกยังชนะเสมอ
+            if (!doc.CreditDays.HasValue && doc.ContactId != Guid.Empty)
+            {
+                var partner = await _db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
+                    .Select(c => new { c.PaymentDueDays, c.PaymentTerms })
+                    .FirstOrDefaultAsync();
+                if (partner?.PaymentDueDays is > 0) doc.CreditDays = partner.PaymentDueDays;
+                if (string.IsNullOrWhiteSpace(doc.PaymentTerms)
+                    && !string.IsNullOrWhiteSpace(partner?.PaymentTerms))
+                    doc.PaymentTerms = partner!.PaymentTerms;
+            }
+
             // เทอมเครดิตมีความหมายเฉพาะชนิดที่ก่อ "หนี้ใหม่รอเก็บ/รอจ่าย" —
             // ชนิดอื่นล้างทิ้งก่อน (กันค่าหลุดจาก API ภายนอก/OCR/ค่าค้างบนฟอร์ม
             // ไปโผล่บน PDF และทำรายงาน DSO/DPO เพี้ยน)
