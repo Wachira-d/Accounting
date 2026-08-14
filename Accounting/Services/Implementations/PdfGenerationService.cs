@@ -2563,14 +2563,23 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     // ───────────────────────────────────────────────────────────────
     //  เครดิตท้ายเอกสารของบัญชีฟรี
     // ───────────────────────────────────────────────────────────────
-    /// <summary>บริษัทนี้อยู่บนแพ็กเกจ "ฟรี" หรือไม่ — ใช้ตัดสินว่าจะพิมพ์เครดิต
-    /// NextAcc ท้ายเอกสารไหม
+    /// <summary>บริษัทนี้ "ไม่ได้จ่ายเงิน" หรือไม่ — ใช้ตัดสินว่าจะพิมพ์เครดิต
+    /// NextAcc ท้ายเอกสารไหม (ทดลองใช้ + ฟรีตลอดชีพ = พิมพ์)
     ///
-    /// <para><b>กติกา: `Plan == FreeTrial` เท่านั้น</b> (ดูจาก License ของผู้ใช้ก่อน
-    /// ถ้าบริษัทอยู่ใต้ License มิฉะนั้นดู subscription ของบริษัทเอง) — จงใจ
-    /// <b>ไม่</b>ใช้ธง <c>IsPermanentFree</c> เป็นตัวตัดสิน เพราะข้อมูลจริงมีแถว
-    /// แพ็กเกจเสียเงินที่ธงนี้ค้างอยู่ (บั๊ก sync ที่เพิ่งแก้ไป) ⇒ ถ้าใช้ธงนั้น
-    /// ลูกค้าที่จ่ายเงินแล้วจะมีโฆษณาโผล่บนใบกำกับของเขา ซึ่งยอมให้เกิดไม่ได้</para>
+    /// <para><b>เข้าเงื่อนไขเมื่อข้อใดข้อหนึ่งจริง:</b></para>
+    /// <list type="number">
+    /// <item>แพ็กเกจ = <c>FreeTrial</c> (ทดลองใช้)</item>
+    /// <item><c>PlanTemplate.IsPermanentFree</c> — ตัว<b>แพ็กเกจ</b>ถูกตั้งเป็นฟรีตลอดชีพ
+    /// (ค่านี้คือความจริงระดับแพ็กเกจที่ admin ตั้งเอง เชื่อถือได้)</item>
+    /// <item>ธงบนแถว subscription <b>+ ราคาต่อรอบ = 0</b> — ดีลฟรีเฉพาะราย</item>
+    /// </list>
+    ///
+    /// <para><b>ทำไมข้อ 3 ต้องมีเงื่อนไข "ราคา = 0" ประกบ:</b> ธง
+    /// <c>IsPermanentFree</c> บน<b>แถว subscription</b> เชื่อไม่ได้ลำพัง — ข้อมูลจริง
+    /// มีแถวแพ็กเกจเสียเงินที่ธงนี้ค้างอยู่ (บั๊ก sync ที่แก้ไปแล้ว แต่แถวเก่ายังค้าง)
+    /// ถ้าเชื่อธงเดี่ยว ๆ ลูกค้า Enterprise ที่เพิ่งจ่ายเงินจะมีโฆษณาโผล่บนใบกำกับ
+    /// ของเขา. แถวที่ค้างเหล่านั้นมี <c>PricePerCycle &gt; 0</c> เสมอ (ตั้งตอนอนุมัติ
+    /// การชำระ) ⇒ เงื่อนไขราคาคัดออกให้พอดี ขณะที่ดีลฟรีจริงราคาเป็น 0 อยู่แล้ว</para>
     ///
     /// <para>อ่านไม่ได้/ไม่มีข้อมูล → คืน <c>false</c> (ไม่พิมพ์) — พลาดฝั่ง
     /// "ไม่โฆษณา" ปลอดภัยกว่าพลาดฝั่ง "โฆษณาใส่ลูกค้าที่จ่ายเงิน"</para></summary>
@@ -2580,21 +2589,38 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         {
             var sub = await _db.Subscriptions.AsNoTracking()
                 .Where(s => s.CompanyId == companyId && !s.IsDeleted)
-                .Select(s => new { s.Plan, s.AccountSubscriptionId })
+                .Select(s => new { s.Plan, s.AccountSubscriptionId, s.IsPermanentFree, s.PricePerCycle })
                 .FirstOrDefaultAsync();
             if (sub == null) return false;
 
             // อยู่ใต้ License ของผู้ใช้ → แพ็กเกจจริงอยู่ที่ชั้นนั้น
             if (sub.AccountSubscriptionId.HasValue)
             {
-                var acctPlan = await _db.AccountSubscriptions.AsNoTracking()
+                var acct = await _db.AccountSubscriptions.AsNoTracking()
                     .Where(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted)
-                    .Select(a => (SubscriptionPlan?)a.PlanTemplate.Plan)
+                    .Select(a => new
+                    {
+                        a.PlanTemplate.Plan,
+                        a.PlanTemplate.IsPermanentFree,
+                        // ราคาที่ตกลงกับ License นี้ (0 = ดีลฟรี)
+                        Price = a.MonthlyPrice + a.AnnualPrice,
+                    })
                     .FirstOrDefaultAsync();
-                // หา License ไม่เจอ = ข้อมูลกำกวม → ไม่พิมพ์
-                return acctPlan == SubscriptionPlan.FreeTrial;
+                if (acct == null) return false;   // หา License ไม่เจอ = กำกวม → ไม่พิมพ์
+                return acct.Plan == SubscriptionPlan.FreeTrial
+                    || acct.IsPermanentFree
+                    || acct.Price <= 0m;
             }
-            return sub.Plan == SubscriptionPlan.FreeTrial;
+
+            if (sub.Plan == SubscriptionPlan.FreeTrial) return true;
+            // แพ็กเกจนี้ถูกตั้งเป็น "ฟรีตลอดชีพ" ที่ตัว template หรือไม่
+            var tplFree = await _db.PlanTemplates.AsNoTracking()
+                .Where(t => t.Plan == sub.Plan && t.IsActive)
+                .Select(t => (bool?)t.IsPermanentFree)
+                .FirstOrDefaultAsync();
+            if (tplFree == true) return true;
+            // ดีลฟรีเฉพาะราย — เชื่อธงบนแถวได้ต่อเมื่อไม่ได้ถูกเรียกเก็บเงินจริง
+            return sub.IsPermanentFree && sub.PricePerCycle <= 0m;
         }
         catch
         {
