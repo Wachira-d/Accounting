@@ -4025,6 +4025,52 @@
       _receiptSourceId: null,
       _receiptSourceCache: {},
 
+      /** เอกสารต้นทางที่ผูกไว้แล้ว (ตอนแก้ไขเอกสาร) — เซ็ตใน openEdit */
+      _pinnedSourceId: null,
+      _pinnedSourceDoc: null,
+
+      /** เติมใบต้นทางที่ผูกไว้กลับเข้า dropdown หลังลิสต์โหลดเสร็จ
+       *
+       *  <p>ปัญหาเดิม 3 ชั้นซ้อนกัน ทำให้เปิดแก้ใบเสร็จที่แปลงมาจากใบแจ้งหนี้
+       *  แล้วช่องนี้โชว์ "ใบเสร็จอิสระ (ขายสด: ลงรายได้ + VAT)" ซึ่ง**บอกวิธี
+       *  ลงบัญชีผิดจากความจริง** (ใบนี้ตัดลูกหนี้ ไม่ได้ลงรายได้ใหม่):</p>
+       *  <ol>
+       *   <li>`openEdit` ไม่เคย hydrate ค่านี้จาก `relatedDocumentId` เลย</li>
+       *   <li>ตัวโหลดลิสต์กรองเฉพาะใบที่ **ยังค้างชำระ** — พอใบเสร็จถูกอนุมัติ
+       *       ใบต้นทางกลายเป็นชำระครบ จึงหายจากลิสต์ ⇒ ต่อให้ set ค่าก็ไม่มี option</li>
+       *   <li>ตัวโหลดเป็น async และล้าง select ทุกครั้ง ⇒ ค่าที่เซ็ตไว้ก่อนถูกล้าง</li>
+       *  </ol>
+       *
+       *  <p>ล็อกไว้ไม่ให้แก้ตอนแก้ไขเอกสาร เพราะ `UpdateDocumentAsync` ไม่รับ
+       *  `RelatedDocumentId` (รับเฉพาะตอนสร้าง) — เดิมเลือกเปลี่ยนได้แต่กดบันทึก
+       *  แล้วไม่มีผลอะไรเลย เงียบ ๆ ซึ่งแย่กว่าการล็อกแล้วบอกเหตุผล</p> */
+      _applyPinnedSource(sel, hintId) {
+        if (!sel) return;
+        const rid = this._pinnedSourceId;
+        if (!this.editingId || !rid) { sel.disabled = false; return; }
+        if (![...sel.options].some(o => o.value === rid)) {
+          const src = this._pinnedSourceDoc;
+          const o = document.createElement('option');
+          o.value = rid;
+          o.textContent = src
+            ? `${Layout.docTypeLabel(src.documentType)} ${src.documentNumber}`
+              + (src.documentDate ? ` (${Layout.date(src.documentDate)})` : '')
+            : 'เอกสารต้นทางที่ผูกไว้';
+          sel.appendChild(o);
+        }
+        sel.value = rid;
+        sel.disabled = true;
+        this._receiptSourceId = null;   // ไม่ส่งซ้ำตอนบันทึก (ผูกไว้แล้วในฐานข้อมูล)
+        this._cnSourceId = null;
+        const h = document.getElementById(hintId);
+        if (h) {
+          h.style.display = '';
+          h.innerHTML = '🔗 <b>ผูกกับใบต้นทางนี้ไว้แล้ว</b> — เปลี่ยนใบต้นทางที่นี่ไม่ได้ '
+            + '(การผูกเกิดตอนสร้าง/แปลงเอกสาร และมีผลกับการตัดลูกหนี้ที่ลงบัญชีไปแล้ว)'
+            + '<br>👉 <b>ต้องเปลี่ยน:</b> ยกเลิกใบนี้แล้วสร้างใหม่จากใบต้นทางที่ถูกต้อง';
+        }
+      },
+
       async _loadReceiptSourceDocs() {
         const section = document.getElementById('receiptSourceSection');
         const sel = document.getElementById('fReceiptSourceDoc');
@@ -4056,6 +4102,8 @@
             sel.appendChild(o);
           }
         } catch { /* best-effort */ }
+        // ต้องอยู่นอก try — ใบต้นทางที่ผูกไว้ต้องกลับมาแสดงแม้โหลดลิสต์ไม่สำเร็จ
+        this._applyPinnedSource(sel, 'receiptSourceHint');
       },
 
       onReceiptSourceSelect() {
@@ -4166,6 +4214,8 @@
             sel.appendChild(o);
           }
         } catch { /* best-effort */ }
+        // ต้องอยู่นอก try — ใบต้นทางที่ผูกไว้ต้องกลับมาแสดงแม้โหลดลิสต์ไม่สำเร็จ
+        this._applyPinnedSource(sel, 'cnSourceHint');
       },
 
       /** ฝั่งภาษีที่ผู้ใช้เลือกไว้บนฟอร์ม (true = ฝั่งซื้อ) */
@@ -4182,7 +4232,9 @@
       _refreshCnSideEditability() {
         const box = document.getElementById('cnSideBox');
         if (!box) return;
-        const locked = !!this._cnSourceId;   // เลือกใบต้นทางในระบบไว้แล้ว
+        // ล็อกเมื่อ "มีใบต้นทาง" — ทั้งที่เพิ่งเลือกในฟอร์ม และที่ผูกไว้แล้วในฐาน
+        // ข้อมูล (ตอนแก้ไขเอกสาร) ฝั่งต้องตามใบต้นทางเสมอ เลือกเองไม่ได้
+        const locked = !!(this._cnSourceId || (this.editingId && this._pinnedSourceId));
         box.querySelectorAll('input[name="fCnSide"]').forEach(r => { r.disabled = locked; });
         box.style.opacity = locked ? '.75' : '';
         const title = box.querySelector('div');
@@ -5422,6 +5474,9 @@
         // ตามมาเติมในเอกสารใบใหม่ที่ยังไม่ได้เลือกคู่ค้า
         this._creditTermsContact = null;
         this._fullContactCache = null;
+        // ใบต้นทางที่ปักหมุดไว้ตอนแก้ไขใบก่อนหน้า — ต้องไม่ตามมาที่ใบใหม่
+        this._pinnedSourceId = null;
+        this._pinnedSourceDoc = null;
         const isExpense = side === 'expense';
         document.querySelector('#formModal .modal-title').textContent = isExpense ? 'สร้างเอกสารรายจ่าย' : 'สร้างเอกสารรายรับ';
         // Tag the line table so ProductLookup knows whether to fill selling
@@ -5645,6 +5700,11 @@
           const res = await api.getDocument(id);
           const d = res.data;
           this.editingId = id;
+          // ปักหมุด "ใบต้นทาง" ที่ผูกไว้ **ก่อน** ตัวโหลดลิสต์ตัวไหนจะเริ่มทำงาน
+          // (setValue ผู้ติดต่อ → onContactChange → _loadReceiptSourceDocs เป็น
+          //  async และล้าง select ทิ้งทุกครั้ง — เซ็ตค่าไว้เฉย ๆ จะถูกล้าง)
+          this._pinnedSourceId = d.relatedDocumentId || null;
+          this._pinnedSourceDoc = d.relatedDocument || null;
           Layout.closeModal('detailModal');
           document.querySelector('#formModal .modal-title').textContent = 'แก้ไขเอกสาร';
           document.getElementById('fDocType').value = d.documentType;
