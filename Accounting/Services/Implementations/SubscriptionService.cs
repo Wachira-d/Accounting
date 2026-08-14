@@ -1650,6 +1650,13 @@ public class SubscriptionService : ISubscriptionService
                     _ => template.MonthlyPrice
                 };
                 sub.PricePerCycle = price;
+
+                // ธง "ฟรีถาวร" ต้องตามแพ็กเกจใหม่เสมอ — เส้นนี้ sync โควตาครบทุก
+                // ตัวแต่เดิม**ลืมธงนี้** (UpgradeAsync sync ถูก): บริษัทที่เคยอยู่
+                // แพ็กเกจฟรีถาวรแล้วจ่ายเงินอัปเกรด/ต่ออายุ Enterprise จะติดธงเก่า
+                // ⇒ หน้า admin โชว์ "Enterprise · ไม่หมดอายุ (ฟรีถาวร)" ทั้งที่เพิ่ง
+                // เก็บเงินไป และงานตัดหมดอายุจะไม่เคยตัด (ลูกค้าหยุดจ่ายก็ใช้ต่อฟรี)
+                sub.IsPermanentFree = template.IsPermanentFree;
             }
 
             payment.SubscriptionExtendedTo = newEndDate;
@@ -1815,6 +1822,8 @@ public class SubscriptionService : ISubscriptionService
             RequestedBillingCycle = request.RequestedBillingCycle,
             RequestedPeriodMonths = request.RequestedPeriodMonths,
             Kind = request.IsWaived ? SubscriptionPaymentKind.Waived : SubscriptionPaymentKind.ManualByAdmin,
+            // ยกเว้นค่าบริการ = ไม่มีเงิน ไม่มีการหักภาษี
+            WithholdingTaxAmount = request.IsWaived ? 0m : Math.Max(0m, request.WithholdingTaxAmount),
             WaiveReason = request.IsWaived ? request.WaiveReason : null,
             CustomerNotes = request.Notes,
             Status = SubscriptionPaymentStatus.Pending,

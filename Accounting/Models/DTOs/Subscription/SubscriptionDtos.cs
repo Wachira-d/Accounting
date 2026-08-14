@@ -237,7 +237,11 @@ public record RecordManualPaymentRequest(
     bool IsWaived,
     SubscriptionWaiveReason? WaiveReason,
     string? TransferReference,
-    string? Notes);
+    string? Notes,
+    /// <summary>ภาษีหัก ณ ที่จ่ายที่ลูกค้าหักจากค่าบริการงวดนี้ (นิติบุคคลหักบริการ 3%
+    /// ตาม ท.ป.4/2528). <c>Amount</c> = เงินที่ได้รับจริง ⇒ ยอดตามใบกำกับ = Amount + ตัวนี้.
+    /// ไม่ระบุ = ไม่ถูกหัก</summary>
+    decimal WithholdingTaxAmount = 0m);
 
 public record SubscriptionPaymentResponse(
     Guid Id,

@@ -1749,16 +1749,28 @@ public class AdminController : ControllerBase
     public sealed record PlatformBillingSettingsDto(
         string? PlatformSellerName, string? PlatformSellerTaxId, string? PlatformSellerBranchCode,
         string? PlatformSellerAddress, string? PlatformSellerPhone, string? PlatformSellerEmail,
-        bool PlatformIsVatRegistered, bool PlatformPriceIncludesVat);
+        bool PlatformIsVatRegistered, bool PlatformPriceIncludesVat,
+        // ออกเอกสารผ่าน tenant ของผู้ให้บริการ (ACCOUNT_STRUCTURE §6.1)
+        Guid? PlatformCompanyId = null,
+        string? PlatformRevenueAccountCode = null,
+        string? PlatformCashAccountCode = null,
+        // read-only — ให้หน้า admin โชว์ว่ากำลังใช้ tenant ไหนอยู่
+        string? PlatformCompanyName = null);
 
     [HttpGet("platform-billing-settings")]
     public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> GetPlatformBilling()
     {
         var s = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt).FirstOrDefaultAsync();
+        var tenantName = s?.PlatformCompanyId == null ? null
+            : await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == s.PlatformCompanyId.Value)
+                .Select(c => c.Name).FirstOrDefaultAsync();
         return Ok(new ApiResponse<PlatformBillingSettingsDto>(true, new PlatformBillingSettingsDto(
             s?.PlatformSellerName, s?.PlatformSellerTaxId, s?.PlatformSellerBranchCode ?? "00000",
             s?.PlatformSellerAddress, s?.PlatformSellerPhone, s?.PlatformSellerEmail,
-            s?.PlatformIsVatRegistered ?? false, s?.PlatformPriceIncludesVat ?? true)));
+            s?.PlatformIsVatRegistered ?? false, s?.PlatformPriceIncludesVat ?? true,
+            s?.PlatformCompanyId, s?.PlatformRevenueAccountCode, s?.PlatformCashAccountCode,
+            tenantName)));
     }
 
     [HttpPut("platform-billing-settings")]
@@ -1781,6 +1793,21 @@ public class AdminController : ControllerBase
         s.PlatformSellerEmail = request.PlatformSellerEmail?.Trim();
         s.PlatformIsVatRegistered = request.PlatformIsVatRegistered;
         s.PlatformPriceIncludesVat = request.PlatformPriceIncludesVat;
+        // tenant ผู้ให้บริการ — ต้องมีอยู่จริงและยังไม่ถูกลบ (ไม่งั้นออกเอกสารตอน
+        // อนุมัติเงินจะล้มเงียบทุกครั้ง โดยไม่มีใครรู้จนกว่าจะไปดู log)
+        if (request.PlatformCompanyId.HasValue)
+        {
+            var exists = await _db.Companies
+                .AnyAsync(c => c.Id == request.PlatformCompanyId.Value && !c.IsDeleted);
+            if (!exists)
+                return BadRequest(new ApiResponse<PlatformBillingSettingsDto>(false, null,
+                    "ไม่พบบริษัทที่เลือกเป็น tenant ผู้ให้บริการ (หรือถูกลบไปแล้ว)"));
+        }
+        s.PlatformCompanyId = request.PlatformCompanyId;
+        s.PlatformRevenueAccountCode = string.IsNullOrWhiteSpace(request.PlatformRevenueAccountCode)
+            ? null : request.PlatformRevenueAccountCode.Trim();
+        s.PlatformCashAccountCode = string.IsNullOrWhiteSpace(request.PlatformCashAccountCode)
+            ? null : request.PlatformCashAccountCode.Trim();
         s.UpdatedAt = DateTime.UtcNow;
         s.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         await _db.SaveChangesAsync();

@@ -1,0 +1,261 @@
+using Accounting.Data;
+using Accounting.Models.DTOs.Document;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Services.Implementations;
+
+/// <summary>ออกเอกสารค่าบริการ SaaS ผ่าน <b>tenant ของผู้ให้บริการเอง</b>
+/// (ACCOUNT_STRUCTURE §6.1) — บริษัทผู้ให้บริการเป็นลูกค้าของระบบตัวเอง
+///
+/// <para><b>ทำไมต้องมี:</b> เดิม <see cref="SaasBillingDocumentService"/> ปั้น PDF
+/// เดี่ยว ๆ พร้อมเลขรันของตัวเอง (RCPT-yyyyMM-####) ⇒ (1) รายได้ค่าบริการไม่เคยลง
+/// GL ของบริษัทเรา (2) ไม่เข้ารายงานภาษีขาย/ภ.พ.30 — ผิดกฎหมายถ้าจด VAT
+/// (3) ออก e-Tax ไม่ได้ (4) เลขไม่ได้อยู่ในชุด gap-free ตาม §86/4. เส้นนี้ทำให้
+/// ทุกบาทที่เก็บได้กลายเป็นเอกสารจริง + JE จริง โดยไม่ต้องเขียนระบบบิลใหม่</para>
+///
+/// <para><b>กฎเหล็ก:</b> ห้าม throw ขึ้นไปทำให้การอนุมัติเงินพัง — ล้มเหลวคืน null
+/// แล้วให้ผู้เรียกตกกลับไปโหมด PDF เดิม (เงินเข้าแล้วต้องบันทึกได้เสมอ)</para></summary>
+public interface IPlatformBillingDocumentIssuer
+{
+    /// <summary>ออก "ใบกำกับภาษี/ใบเสร็จรับเงิน" (ขายเงินสด) ใน tenant ผู้ให้บริการ
+    /// สำหรับเงินค่าบริการที่รับแล้ว — คืน null ถ้ายังไม่ได้ตั้งค่า tenant/ทำไม่สำเร็จ</summary>
+    Task<PlatformDocResult?> IssuePaidReceiptAsync(SubscriptionPayment payment, Company buyer);
+
+    /// <summary>ออก "ใบแจ้งหนี้" ต่ออายุล่วงหน้า (ยังไม่รับเงิน) ใน tenant ผู้ให้บริการ</summary>
+    Task<PlatformDocResult?> IssueRenewalInvoiceAsync(Guid buyerCompanyId, string description,
+        decimal amountNet, DateTime issueDate, DateTime dueDate, string reference);
+
+    /// <summary>tenant ผู้ให้บริการถูกตั้งค่าไว้แล้วหรือยัง (ใช้เลือกเส้นทาง)</summary>
+    Task<bool> IsEnabledAsync();
+}
+
+public sealed record PlatformDocResult(Guid DocumentId, string DocumentNumber, bool IsTaxInvoice);
+
+public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
+{
+    private readonly AccountingDbContext _db;
+    private readonly IDocumentService _documents;
+    private readonly ILogger<PlatformBillingDocumentIssuer> _logger;
+
+    public PlatformBillingDocumentIssuer(AccountingDbContext db, IDocumentService documents,
+        ILogger<PlatformBillingDocumentIssuer> logger)
+    { _db = db; _documents = documents; _logger = logger; }
+
+    private const string Actor = "platform-billing";
+
+    public async Task<bool> IsEnabledAsync()
+    {
+        var s = await LoadSettingsAsync();
+        return s?.PlatformCompanyId != null;
+    }
+
+    private Task<SiteSettings?> LoadSettingsAsync() => _db.SiteSettings.AsNoTracking()
+        .OrderBy(x => x.CreatedAt).FirstOrDefaultAsync();
+
+    public async Task<PlatformDocResult?> IssuePaidReceiptAsync(SubscriptionPayment payment, Company buyer)
+    {
+        try
+        {
+            var (settings, tenantId) = await ResolveTenantAsync();
+            if (settings == null || tenantId == null) return null;
+
+            var contactId = await EnsureContactAsync(tenantId.Value, buyer);
+            if (contactId == null) return null;
+
+            // ยอดที่ได้รับจริง = payment.Amount (สุทธิหลังถูกหักภาษี ณ ที่จ่าย)
+            // ยอดตามใบกำกับ = สุทธิ + WHT ที่ลูกค้าหักไว้ — ต้องออกใบเต็มยอด
+            // ไม่งั้นรายได้ต่ำไปและเครดิตภาษี 3% ที่ควรได้คืนหายไป
+            var net = payment.Amount;
+            var wht = payment.WithholdingTaxAmount;
+            var grossBeforeWht = decimal.Round(net + wht, 2, MidpointRounding.AwayFromZero);
+            if (grossBeforeWht <= 0m) return null;   // ยกเว้นค่าบริการ (0 บาท) ไม่ต้องออกใบ
+
+            var isVat = settings.PlatformIsVatRegistered && IsValidTaxId(settings.PlatformSellerTaxId);
+            // ฐานก่อน VAT: ถ้าราคาที่ตั้งไว้รวม VAT แล้ว ต้องถอดออกก่อน เพราะบรรทัด
+            // เอกสารเก็บราคา ex-VAT (PricesIncludeVat ของ document ใช้เส้นทางคนละแบบ)
+            var baseAmount = isVat && settings.PlatformPriceIncludesVat
+                ? decimal.Round(grossBeforeWht * 100m / 107m, 2, MidpointRounding.AwayFromZero)
+                : grossBeforeWht;
+            // อัตรา WHT คำนวณกลับจากยอดจริง — ให้ยอดหักตรงกับที่ลูกค้าหักเป๊ะ
+            // (กันเศษสตางค์จากการปัดอัตรา 3.00%)
+            var whtRate = wht > 0m && baseAmount > 0m
+                ? decimal.Round(wht / baseAmount * 100m, 4, MidpointRounding.AwayFromZero) : 0m;
+
+            var desc = BuildServiceDescription(payment, buyer);
+            var req = new CreateDocumentRequest(
+                DocumentType: isVat ? DocumentType.TaxInvoice : DocumentType.Receipt,
+                DocumentDate: payment.PaymentDate == default ? DateTime.UtcNow : payment.PaymentDate,
+                DueDate: null,
+                ContactId: contactId.Value,
+                Reference: payment.PaymentNumber,
+                Notes: $"ค่าบริการระบบบัญชีออนไลน์ · {payment.PaymentNumber}"
+                     + (string.IsNullOrWhiteSpace(payment.TransferReference) ? "" : $" · อ้างอิงโอน {payment.TransferReference}"),
+                Lines: new List<DocumentLineRequest>
+                {
+                    new(Description: desc, Quantity: 1m, Unit: "รายการ",
+                        UnitPrice: baseAmount, DiscountPercent: 0m,
+                        VatRate: isVat ? 7m : 0m, WithholdingTaxRate: whtRate,
+                        AccountId: null,
+                        AccountCode: string.IsNullOrWhiteSpace(settings.PlatformRevenueAccountCode)
+                            ? "41000" : settings.PlatformRevenueAccountCode)
+                },
+                // เงินรับแล้ว → ออกใบเดียวจบแบบขายเงินสด (Dr เงินสด/ธนาคาร ไม่ตั้งลูกหนี้)
+                // ใบกำกับ = T03 หัว "ใบเสร็จรับเงิน/ใบกำกับภาษี". Receipt ธรรมดา
+                // (ไม่จด VAT) ก็ลง Dr เงินสด / Cr รายได้ อยู่แล้ว
+                IssuedAsCashReceipt: isVat ? true : null,
+                PaymentAccountId: await ResolveCashAccountIdAsync(tenantId.Value, settings));
+
+            var created = await _documents.CreateDocumentAsync(tenantId.Value, req, Actor);
+            var approved = await _documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
+            _logger.LogInformation(
+                "ออกเอกสารค่าบริการใน tenant ผู้ให้บริการ {DocNo} (payment {PaymentNo} · ฐาน {Base} · VAT {Vat} · WHT {Wht})",
+                approved.DocumentNumber, payment.PaymentNumber, baseAmount, isVat, wht);
+            return new PlatformDocResult(approved.Id, approved.DocumentNumber, isVat);
+        }
+        catch (Exception ex)
+        {
+            // เงินเข้าแล้วต้องบันทึกได้เสมอ — ล้มตรงนี้ให้ตกกลับไปโหมด PDF เดิม
+            _logger.LogError(ex, "ออกเอกสารค่าบริการผ่าน tenant ไม่สำเร็จ (payment {PaymentId}) — ใช้โหมด PDF เดิมแทน",
+                payment.Id);
+            return null;
+        }
+    }
+
+    public async Task<PlatformDocResult?> IssueRenewalInvoiceAsync(Guid buyerCompanyId, string description,
+        decimal amountNet, DateTime issueDate, DateTime dueDate, string reference)
+    {
+        try
+        {
+            var (settings, tenantId) = await ResolveTenantAsync();
+            if (settings == null || tenantId == null || amountNet <= 0m) return null;
+
+            var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == buyerCompanyId);
+            if (buyer == null) return null;
+            var contactId = await EnsureContactAsync(tenantId.Value, buyer);
+            if (contactId == null) return null;
+
+            var isVat = settings.PlatformIsVatRegistered && IsValidTaxId(settings.PlatformSellerTaxId);
+            var baseAmount = isVat && settings.PlatformPriceIncludesVat
+                ? decimal.Round(amountNet * 100m / 107m, 2, MidpointRounding.AwayFromZero)
+                : amountNet;
+
+            // ใบแจ้งหนี้ = ยังไม่รับเงิน ⇒ ไม่ระบุ WHT (ลูกค้าหักตอนจ่ายจริง
+            // ระบบจะบันทึกตอนออกใบเสร็จ) และไม่ใช่ IssuedAsCashReceipt
+            var req = new CreateDocumentRequest(
+                DocumentType: DocumentType.Invoice,
+                DocumentDate: issueDate,
+                DueDate: dueDate,
+                ContactId: contactId.Value,
+                Reference: reference,
+                Notes: "ใบแจ้งหนี้ค่าบริการต่ออายุระบบบัญชีออนไลน์",
+                Lines: new List<DocumentLineRequest>
+                {
+                    new(Description: description, Quantity: 1m, Unit: "รายการ",
+                        UnitPrice: baseAmount, DiscountPercent: 0m,
+                        VatRate: isVat ? 7m : 0m, WithholdingTaxRate: 0m,
+                        AccountId: null,
+                        AccountCode: string.IsNullOrWhiteSpace(settings.PlatformRevenueAccountCode)
+                            ? "41000" : settings.PlatformRevenueAccountCode)
+                });
+
+            var created = await _documents.CreateDocumentAsync(tenantId.Value, req, Actor);
+            var approved = await _documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
+            return new PlatformDocResult(approved.Id, approved.DocumentNumber, isVat);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ออกใบแจ้งหนี้ต่ออายุผ่าน tenant ไม่สำเร็จ (company {CompanyId})", buyerCompanyId);
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task<(SiteSettings? Settings, Guid? TenantId)> ResolveTenantAsync()
+    {
+        var s = await LoadSettingsAsync();
+        if (s?.PlatformCompanyId == null) return (s, null);
+        var alive = await _db.Companies.AsNoTracking()
+            .AnyAsync(c => c.Id == s.PlatformCompanyId.Value && !c.IsDeleted);
+        if (!alive)
+        {
+            _logger.LogWarning("tenant ผู้ให้บริการที่ตั้งไว้ ({Id}) ไม่มีอยู่/ถูกลบ — ข้ามการออกเอกสารจริง",
+                s.PlatformCompanyId);
+            return (s, null);
+        }
+        return (s, s.PlatformCompanyId);
+    }
+
+    /// <summary>หา/สร้าง Contact ของบริษัทลูกค้าในผังผู้ติดต่อของ tenant ผู้ให้บริการ
+    ///
+    /// <para>จับคู่ด้วย <b>เลขผู้เสียภาษี</b> ก่อน (ตัวตนตามกฎหมาย) แล้วค่อยชื่อ —
+    /// กันสร้างผู้ติดต่อซ้ำทุกครั้งที่ลูกค้าจ่ายเงิน ซึ่งจะทำให้รายงานลูกหนี้/
+    /// ยอดขายรายลูกค้าของเราเองแตกเป็นหลายราย</para></summary>
+    private async Task<Guid?> EnsureContactAsync(Guid tenantId, Company buyer)
+    {
+        var taxId = string.IsNullOrWhiteSpace(buyer.TaxId) ? null : buyer.TaxId.Trim();
+        var existing = await _db.Contacts
+            .Where(c => c.CompanyId == tenantId && !c.IsDeleted
+                && ((taxId != null && c.TaxId == taxId) || (taxId == null && c.Name == buyer.Name)))
+            .OrderByDescending(c => c.IsCustomer)
+            .FirstOrDefaultAsync();
+        if (existing != null)
+        {
+            // ผู้ติดต่อเดิมอาจถูกสร้างไว้เป็นผู้ขายอย่างเดียว — ต้องเป็นลูกค้าด้วย
+            // ไม่งั้นสร้างเอกสารฝั่งขายไม่ผ่าน validation บทบาทคู่ค้า
+            if (!existing.IsCustomer) { existing.IsCustomer = true; await _db.SaveChangesAsync(); }
+            return existing.Id;
+        }
+
+        var contact = new Contact
+        {
+            CompanyId = tenantId,
+            Name = buyer.Name,
+            TaxId = taxId,
+            BranchCode = string.IsNullOrWhiteSpace(buyer.BranchCode) ? "00000" : buyer.BranchCode,
+            ContactType = taxId != null && taxId.Length == 13 && taxId.StartsWith('0')
+                ? ContactType.JuristicPerson : ContactType.Individual,
+            IsCustomer = true,
+            Address = buyer.Address,
+            SubDistrict = buyer.SubDistrict,
+            District = buyer.District,
+            Province = buyer.Province,
+            PostalCode = buyer.PostalCode,
+            Phone = buyer.Phone,
+            Email = buyer.Email,
+            CountryCode = "TH",
+            // ผูกกลับไปยัง tenant ลูกค้า — ตามรอยได้ว่าผู้ติดต่อรายนี้คือบริษัทไหนในระบบ
+            ExternalSystem = "NextAccTenant",
+            ExternalId = buyer.Id.ToString(),
+            CreatedBy = Actor,
+        };
+        _db.Contacts.Add(contact);
+        await _db.SaveChangesAsync();
+        return contact.Id;
+    }
+
+    /// <summary>ผังเงินสด/ธนาคารที่จะรับเงินค่าบริการ — null = ให้ DocumentService
+    /// ใช้ค่าเริ่มต้นของมันเอง (เงินสด)</summary>
+    private async Task<Guid?> ResolveCashAccountIdAsync(Guid tenantId, SiteSettings s)
+    {
+        var code = s.PlatformCashAccountCode;
+        if (string.IsNullOrWhiteSpace(code)) return null;
+        return await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == tenantId && a.AccountCode == code.Trim() && a.IsActive)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync();
+    }
+
+    private static string BuildServiceDescription(SubscriptionPayment payment, Company buyer)
+    {
+        var months = payment.RequestedPeriodMonths > 0 ? payment.RequestedPeriodMonths : 1;
+        return $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {payment.RequestedPlan} "
+             + $"({months} เดือน) — {buyer.Name}";
+    }
+
+    private static bool IsValidTaxId(string? taxId)
+        => !string.IsNullOrWhiteSpace(taxId) && taxId.Length == 13 && taxId.All(char.IsDigit);
+}

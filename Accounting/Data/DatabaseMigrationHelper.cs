@@ -419,6 +419,26 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformPriceIncludesVat" boolean NOT NULL DEFAULT true;
             """,
 
+            // ===== ออกเอกสารค่าบริการผ่าน tenant ของผู้ให้บริการ (ACCOUNT_STRUCTURE §6.1) =====
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformCompanyId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformRevenueAccountCode" text NULL;
+            """,
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "PlatformCashAccountCode" text NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "PlatformDocumentId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WithholdingTaxAmount" numeric(18,2) NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceDocumentId" uuid NULL;
+            """,
+
             // ===== Subscriptions: renewal invoice (WP-B1) =====
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceNumber" text NULL;

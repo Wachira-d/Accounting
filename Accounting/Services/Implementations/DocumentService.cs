@@ -9680,6 +9680,46 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>ใบนี้เป็น "การซื้อสินค้าล้วน" หรือไม่ — ใช้ปิดคำเตือนหัก ณ ที่จ่าย
+    /// (§3 เตรส ใช้กับค่าบริการ/เช่า/ขนส่ง/โฆษณา/จ้างทำของ — <b>ซื้อสินค้าไม่ต้องหัก</b>)
+    ///
+    /// <para>ตัดสินจากสัญญาณที่เชื่อถือได้เท่านั้น ไม่เดาจากคำในรายการ:
+    /// ทุกบรรทัดที่มียอด ต้อง (ก) ผูกสินค้าที่ตัดสต๊อก หรือ (ข) ลงผังบัญชี
+    /// สินค้าคงเหลือ/ต้นทุนสินค้า. บรรทัดยอด 0 (ของแถม/บริการหยิบของฟรี)
+    /// ไม่นับ — ไม่งั้นใบซื้อของที่มีบรรทัดแถมจะถูกมองว่ามีบริการปน</para>
+    ///
+    /// <para>เจอสัญญาณไม่พอ = คืน false (เตือนตามเดิม) — พลาดฝั่ง "เตือนเกิน"
+    /// ดีกว่าพลาดฝั่ง "ไม่เตือนตอนต้องหักจริง" ซึ่งบริษัทต้องรับผิดภาษีแทน</para></summary>
+    private async Task<bool> IsPureGoodsPurchaseAsync(Guid companyId, Document doc)
+    {
+        var priced = doc.Lines.Where(l => l.Amount > 0m).ToList();
+        if (priced.Count == 0) return false;
+
+        // (ก) ผูกสินค้าที่ตัดสต๊อก = สินค้าแน่นอน
+        var codes = priced.Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+            .Select(l => l.ProductCode!).Distinct().ToList();
+        var stockCodes = codes.Count == 0
+            ? new HashSet<string>()
+            : (await _db.Products.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                    && codes.Contains(p.Code) && p.TrackStock)
+                .Select(p => p.Code).ToListAsync()).ToHashSet();
+
+        // (ข) ผังบัญชีสินค้าคงเหลือ (115x) / ต้นทุนสินค้า (51xxx)
+        var accIds = priced.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value)
+            .Distinct().ToList();
+        var goodsAcc = accIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => accIds.Contains(a.Id)
+                    && (a.AccountCode.StartsWith("115") || a.AccountCode.StartsWith("51")))
+                .Select(a => a.Id).ToListAsync()).ToHashSet();
+
+        return priced.All(l =>
+            (l.ProductCode != null && stockCodes.Contains(l.ProductCode))
+            || (l.AccountId.HasValue && goodsAcc.Contains(l.AccountId.Value)));
+    }
+
     /// <summary>WHT threshold §50: ไม่หักถ้ายอดสัญญา < 1,000 บาท แต่ถ้ารวม
     /// ทุกครั้งที่จ่ายให้ผู้รับเดียวกัน (per contact, per income type, per
     /// ปีภาษี) ≥ 1,000 ต้องหักย้อนหลัง. method นี้คืน "ต้องหักเพิ่ม" boolean +
@@ -13099,14 +13139,19 @@ public class DocumentService : IDocumentService
              || doc.DocumentType == DocumentType.PurchaseInvoice)
             && doc.WithholdingTaxAmount == 0m && doc.SubTotal > 0)
         {
+            // §3 เตรส หัก ณ ที่จ่ายใช้กับ "ค่าบริการ/ค่าเช่า/ขนส่ง/โฆษณา/จ้างทำของ"
+            // — **การซื้อสินค้าไม่ต้องหัก**. เตือนทุกใบที่ ≥1,000 โดยไม่ดูว่าซื้อ
+            // อะไร = เตือนผิดแทบทุกใบซื้อของ (เคสจริง: ซื้อปลอกหมอนจาก IKEA)
+            // ผู้ใช้จะชินกับการกดข้ามคำเตือน แล้ววันที่เตือนถูกจริงก็ข้ามไปด้วย
+            var looksLikeGoods = await IsPureGoodsPurchaseAsync(companyId, doc);
             var (required, ytd) = await CheckWhtThresholdAsync(
                 companyId, doc.ContactId, doc.DocumentDate, doc.SubTotal);
-            if (required)
+            if (required && !looksLikeGoods)
             {
                 if (doc.SubTotal < 1000m)
-                    warnings.Add($"⚠️ §50 threshold: ยอดสะสมจ่ายให้ '{doc.Contact?.Name}' ในปีนี้ {ytd:N2} บาท ≥ 1,000 — แม้ใบนี้ {doc.SubTotal:N2} (<1,000) ต้องหัก ณ ที่จ่ายทุกงวด");
+                    warnings.Add($"⚠️ §50 threshold: ยอดสะสมจ่ายให้ '{doc.Contact?.Name}' ในปีนี้ {ytd:N2} บาท ≥ 1,000 — แม้ใบนี้ {doc.SubTotal:N2} (<1,000) ต้องหัก ณ ที่จ่ายทุกงวด (เฉพาะกรณีเป็นค่าบริการ/เช่า/ขนส่ง/โฆษณา — ซื้อสินค้าไม่ต้องหัก)");
                 else
-                    warnings.Add($"⚠️ ใบนี้ {doc.SubTotal:N2} ≥ 1,000 บาท แต่ไม่ได้กรอกหัก ณ ที่จ่าย — ตรวจประเภทเงินได้ (ค่าบริการ 3% / ค่าเช่า 5% / ค่าโฆษณา 2% / ขนส่ง 1%) §3 เตรส");
+                    warnings.Add($"⚠️ ใบนี้ {doc.SubTotal:N2} ≥ 1,000 บาท และยังไม่ได้กรอกหัก ณ ที่จ่าย — **ถ้าเป็นค่าบริการ/จ้างทำของ 3% · ค่าเช่า 5% · ค่าโฆษณา 2% · ขนส่ง 1%** ต้องหัก (§3 เตรส) · ถ้าใบนี้เป็น **การซื้อสินค้า** ไม่ต้องหัก — ข้ามคำเตือนนี้ได้");
             }
         }
 

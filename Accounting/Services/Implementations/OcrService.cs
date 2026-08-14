@@ -4408,7 +4408,19 @@ public class OcrService : IOcrService
                         ? Math.Round((item.UnitPrice ?? item.Amount ?? 0) * (item.Quantity ?? 1m)
                             - amount, 2)
                         : 0m,
-                    Amount = amount,
+                    // ⚠️ Case A (ราคา/หน่วยรวม VAT แล้ว): `DocumentLine.Amount` ต้องเป็น
+                    // ยอด **ก่อน VAT** ตาม convention ของ DocumentService
+                    // (`Amount = ComputeLineAmounts(...).NetAmount` — UnitPrice คงเป็นราคา
+                    // รวม VAT ส่วน Amount เป็น net) เดิมเก็บยอดรวม VAT ลงตรง ๆ ⇒
+                    //   Σ Line.Amount = ยอดรวม VAT   แต่   Document.SubTotal = ยอด net
+                    // สองค่านี้ขัดกันในใบเดียว และตอนอนุมัติ JE ฝั่งซื้อลง
+                    //   Dr ค่าใช้จ่าย = Σ Line.Amount (รวม VAT) + Dr ภาษีซื้อ (VAT อีกรอบ)
+                    //   Cr เจ้าหนี้    = TotalAmount (net + VAT)
+                    // ⇒ เดบิตเกินเครดิตเท่ายอด VAT พอดี = "การบันทึกบัญชีไม่สมดุล"
+                    // (เคสจริง: IKEA 1,396 รวม VAT 91.32 → Dr 1,487.32 ≠ Cr 1,396)
+                    // หักออกแล้วยอดตรงกับที่ ComputeLineAmounts คำนวณเป๊ะ ⇒ เปิดแก้ไข
+                    // เอกสารแล้วบันทึกใหม่ ตัวเลขไม่ขยับ
+                    Amount = document.PricesIncludeVat ? Math.Round(amount - lineVat, 2) : amount,
                     VatRate = headerVat > 0 ? 7 : 0,
                     VatAmount = lineVat,
                     // WHT read off the paper → pre-fill rate + baht per line so

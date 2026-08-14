@@ -146,6 +146,9 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Import.IDuplicate
 builder.Services.AddScoped<Accounting.Services.Interfaces.ILineBotService, Accounting.Services.Implementations.LineBotService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
+// ออกเอกสารค่าบริการผ่าน tenant ของผู้ให้บริการเอง (ACCOUNT_STRUCTURE §6.1) —
+// ต้อง register ก่อน SaasBillingDocumentService ที่รับตัวนี้เป็น optional dependency
+builder.Services.AddScoped<IPlatformBillingDocumentIssuer, PlatformBillingDocumentIssuer>();
 builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
 // นับ/คิดเงินการใช้งานรายหน่วย (ACCOUNT_STRUCTURE.md §6) — ไม่ throw ทุกกรณี
 // เพื่อไม่ให้ระบบเก็บเงินทำให้งานหลักของลูกค้าพัง

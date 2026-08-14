@@ -39,6 +39,8 @@ public class Subscription : BaseEntity
     public string? RenewalInvoiceNumber { get; set; }
     public DateTime? RenewalInvoiceIssuedAt { get; set; }
     public DateTime? RenewalInvoiceForEndDate { get; set; }
+    /// <summary>เอกสารใบแจ้งหนี้จริงใน tenant ผู้ให้บริการ (ถ้าออกผ่าน pipeline เอกสาร)</summary>
+    public Guid? RenewalInvoiceDocumentId { get; set; }
 
     // Trial Management (ควบคุมการทดลองใช้อย่างละเอียด)
     public TrialConfig? TrialConfig { get; set; }
@@ -300,6 +302,17 @@ public class SubscriptionPayment : BaseEntity
     public Guid? ReceiptAttachmentId { get; set; }        // FileAttachment ของ PDF ที่ gen
     public DateTime? ReceiptIssuedAt { get; set; }
     public bool ReceiptIsTaxInvoice { get; set; }         // true = ใบกำกับภาษี §86/4 (platform จด VAT)
+
+    /// <summary>เอกสารจริงใน tenant ของผู้ให้บริการ (ACCOUNT_STRUCTURE §6.1) —
+    /// มีค่าเมื่อระบบออกใบผ่าน pipeline เอกสารจริง (ได้ JE + เข้า ภ.พ.30 + e-Tax)
+    /// null = ใบเสร็จโหมดเดิม (PDF เดี่ยว ไม่ลงบัญชี)</summary>
+    public Guid? PlatformDocumentId { get; set; }
+
+    /// <summary>ภาษีหัก ณ ที่จ่ายที่ลูกค้าหักจากค่าบริการงวดนี้ (ท.ป.4/2528 — บริการ 3%).
+    /// <para><c>Amount</c> = เงินที่ได้รับจริง (สุทธิ) ⇒ ยอดตามใบกำกับ = Amount + ตัวนี้.
+    /// ไม่เก็บไว้ = เอกสารที่ออกจะมีแต่ยอดสุทธิ ⇒ รายได้ต่ำไป และเครดิตภาษี 3%
+    /// ที่ควรได้คืนหายไป (เคสเดียวกับที่เจอในฝั่งเอกสารลูกค้า)</para></summary>
+    public decimal WithholdingTaxAmount { get; set; }
 
     // WP-C3: ผล OCR สลิป (local Tesseract + rule-based) — advisory ช่วย admin review
     // ไม่ auto-approve (admin ยืนยันเอง). null = ยังไม่ได้อ่าน/อ่านไม่ได้.

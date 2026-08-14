@@ -95,6 +95,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         // หักมัดจำหลายใบ → breakdown ต่อใบสำหรับ PDF (บรรทัดต่อใบ)
         var depositApplies = document.DepositAppliedAmount > 0
             ? await LoadDepositApplyBreakdownAsync(companyId, document) : null;
+        // แพ็กเกจฟรี → พิมพ์เครดิต NextAcc มุมขวาล่าง (คิดครั้งเดียว ใช้ทุก renderer
+        // ทั้ง e-Tax / Chromium / QuestPDF เพื่อให้ทุกทางออกได้ผลเหมือนกัน)
+        var freeCredit = await IsFreeTierAsync(companyId);
 
         // e-Tax path: render template-styled (สีส้ม) + PDF/A conformance →
         // inject XML. ผลลัพธ์ = หน้าตาเหมือน preview + ฝัง XML ยื่นภาษีได้.
@@ -103,7 +106,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             try
             {
                 var etaxPdf = RenderDocumentPdfNative(document, company, settings, template,
-                    request.WatermarkOverride, request.Language, signers, gl,
+                    request.WatermarkOverride, request.Language, signers, gl, freeCredit,
                     pdfA: true,
                     pdfTitle: $"{GetDocumentTitle(document.DocumentType, request.Language ?? template.Language ?? "th")} {document.DocumentNumber}",
                     pdfAuthor: company.Name);
@@ -128,10 +131,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         byte[]? pdfBytes = null;
         if (_htmlPdf is { Enabled: true })
         {
-            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, depositApplies);
+            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, depositApplies, freeCredit);
             pdfBytes = await _htmlPdf.TryRenderAsync(html);
         }
-        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
+        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, freeCredit);
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
@@ -173,7 +176,8 @@ public partial class PdfGenerationService : IPdfGenerationService
             ? await LoadGlPostingAsync(companyId, document) : null;
         var depositApplies = document.DepositAppliedAmount > 0
             ? await LoadDepositApplyBreakdownAsync(companyId, document) : null;
-        return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, depositApplies);
+        return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride,
+            request.Language, signers, gl, depositApplies, await IsFreeTierAsync(companyId));
     }
 
     /// <summary>Build a printable 50 ทวิ from an IN-MEMORY (un-saved) cert
@@ -312,7 +316,8 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
-        var html = BuildPreviewHtml(company, settings, template, request.Language);
+        var html = BuildPreviewHtml(company, settings, template, request.Language,
+            await IsFreeTierAsync(companyId));
         return ConvertHtmlToPdf(html, template);
     }
 
@@ -343,7 +348,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
-        return BuildPreviewHtml(company, settings, template, language);
+        return BuildPreviewHtml(company, settings, template, language, await IsFreeTierAsync(companyId));
     }
 
     /// <summary>
@@ -356,7 +361,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         draft.CompanyId = companyId;
-        return BuildPreviewHtml(company, settings, draft, draft.Language);
+        return BuildPreviewHtml(company, settings, draft, draft.Language, await IsFreeTierAsync(companyId));
     }
 
     public byte[] ConvertHtmlToPdfBytes(string html) => ConvertHtmlToPdf(html, null);
@@ -1223,7 +1228,8 @@ public partial class PdfGenerationService : IPdfGenerationService
     private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
         DocumentTemplate template, string? watermark, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
-        IReadOnlyList<(string RefNo, decimal Amount)>? depositApplies = null)
+        IReadOnlyList<(string RefNo, decimal Amount)>? depositApplies = null,
+        bool showFreeTierCredit = false)
     {
         var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
         var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
@@ -1698,9 +1704,24 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine("</div>");
         }
 
+        // เครดิต NextAcc มุมขวาล่าง — เฉพาะบัญชีแพ็กเกจฟรี (ดู IsFreeTierAsync)
+        // position:fixed → Chromium พิมพ์ซ้ำทุกหน้าตอนแปลงเป็น PDF; @media print
+        // ไม่ต้องแยกเพราะทั้งไฟล์ถูก render เพื่อพิมพ์อยู่แล้ว
+        if (showFreeTierCredit) sb.AppendLine(FreeTierCreditHtml());
+
         sb.AppendLine("</div></body></html>");
         return sb.ToString();
     }
+
+    /// <summary>แถบเครดิตเล็ก ๆ มุมขวาล่าง — ตัวอักษรจาง ขนาดเล็ก ไม่แย่งสายตา
+    /// จากเนื้อหาเอกสาร และเว้นระยะจากขอบกระดาษให้เครื่องพิมพ์ตัดไม่โดน</summary>
+    private static string FreeTierCreditHtml() =>
+        "<div class='nextacc-credit' style=\"position:fixed;right:10mm;bottom:6mm;"
+        + "font-size:7.5pt;line-height:1.25;color:#94a3b8;text-align:right;"
+        + "letter-spacing:.02em;pointer-events:none\">"
+        + "จัดทำด้วย <span style='color:#64748b;font-weight:600'>NextAcc</span> · ระบบบัญชีออนไลน์"
+        + "<br/><span style='color:#64748b'>เริ่มใช้ฟรีที่ www.nextacc.net</span>"
+        + "</div>";
 
     private string BuildWithholdingTaxCertHtml(WithholdingTaxCert cert, Company company,
         string? sigBase64 = null, string? sigName = null)
@@ -1982,7 +2003,8 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         return sb.ToString();
     }
 
-    private string BuildPreviewHtml(Company company, CompanySettings? settings, DocumentTemplate template, string? lang)
+    private string BuildPreviewHtml(Company company, CompanySettings? settings, DocumentTemplate template, string? lang,
+        bool showFreeTierCredit = false)
     {
         // Render the preview through the SAME path real documents use, so every
         // toggle (show company/contact fields, line columns, summary rows,
@@ -2056,7 +2078,8 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             PaymentTerms = sampleTerms,
             CreditDays = sampleCreditDays,
         };
-        return BuildDocumentHtml(doc, company, settings, template, null, lang);
+        return BuildDocumentHtml(doc, company, settings, template, null, lang,
+            showFreeTierCredit: showFreeTierCredit);
     }
 
     // ===== CSS Builder =====
@@ -2533,7 +2556,60 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         byte[]? LogoBytes = null, string? LogoPosition = null, float LogoHeightMm = 18f,
         bool ShowSignature = false, string[]? SignatureLabels = null,
         byte[]? StampBytes = null, float StampWidthMm = 32f, float StampHeightMm = 32f,
-        string? StampAlign = "Right");
+        string? StampAlign = "Right",
+        // เครดิตท้ายเอกสารสำหรับบัญชีแพ็กเกจฟรี (ดู IsFreeTierAsync)
+        bool ShowFreeTierCredit = false);
+
+    // ───────────────────────────────────────────────────────────────
+    //  เครดิตท้ายเอกสารของบัญชีฟรี
+    // ───────────────────────────────────────────────────────────────
+    /// <summary>บริษัทนี้อยู่บนแพ็กเกจ "ฟรี" หรือไม่ — ใช้ตัดสินว่าจะพิมพ์เครดิต
+    /// NextAcc ท้ายเอกสารไหม
+    ///
+    /// <para><b>เกณฑ์เดียว: ราคารายเดือนของแพ็กเกจ = 0</b> (แพ็กเกจฟรี ไม่ว่าจะเป็น
+    /// ทดลองใช้หรือฟรีตลอดชีพ). ตั้งใจ<b>ไม่</b>ไปดูว่าบริษัทนี้เคยจ่ายเงินจริงไหม
+    /// หรือธง <c>IsPermanentFree</c> บนแถว subscription เป็นอะไร — ราคาแพ็กเกจ
+    /// บอกครบแล้ว และเป็นค่าที่ admin ตั้งเองในหน้าจัดการแพ็กเกจ ไม่เพี้ยนตาม
+    /// ประวัติการจ่ายเงินของแต่ละราย (ธงบนแถวเคยค้างผิดมาแล้ว)</para>
+    ///
+    /// <para>บริษัทที่อยู่ใต้ License ของผู้ใช้ → ใช้แพ็กเกจของ License นั้น
+    /// (subscription ของบริษัทเป็นแค่ที่เก็บตัวนับ ไม่ใช่แพ็กเกจจริง)</para>
+    ///
+    /// <para>หาแพ็กเกจไม่เจอ/อ่านข้อมูลไม่ได้ → คืน <c>false</c> (ไม่พิมพ์) — พลาด
+    /// ฝั่ง "ไม่โฆษณา" ปลอดภัยกว่าพลาดฝั่ง "โฆษณาใส่ลูกค้าที่จ่ายเงิน"</para></summary>
+    private async Task<bool> IsFreeTierAsync(Guid companyId)
+    {
+        try
+        {
+            var sub = await _db.Subscriptions.AsNoTracking()
+                .Where(s => s.CompanyId == companyId && !s.IsDeleted)
+                .Select(s => new { s.Plan, s.AccountSubscriptionId })
+                .FirstOrDefaultAsync();
+            if (sub == null) return false;
+
+            // อยู่ใต้ License ของผู้ใช้ → ราคาแพ็กเกจอยู่ที่ template ของ License
+            if (sub.AccountSubscriptionId.HasValue)
+            {
+                var acctMonthly = await _db.AccountSubscriptions.AsNoTracking()
+                    .Where(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted)
+                    .Select(a => (decimal?)a.PlanTemplate.MonthlyPrice)
+                    .FirstOrDefaultAsync();
+                return acctMonthly is <= 0m;   // null = หา License ไม่เจอ → ไม่พิมพ์
+            }
+
+            var monthly = await _db.PlanTemplates.AsNoTracking()
+                .Where(t => t.Plan == sub.Plan && t.IsActive)
+                .Select(t => (decimal?)t.MonthlyPrice)
+                .FirstOrDefaultAsync();
+            // ไม่มี template ของแพ็กเกจนี้ — ทดลองใช้ถือว่าฟรีเสมอ ที่เหลือไม่พิมพ์
+            return monthly is <= 0m
+                || (monthly == null && sub.Plan == SubscriptionPlan.FreeTrial);
+        }
+        catch
+        {
+            return false;   // อ่านไม่ได้ → ไม่พิมพ์เครดิต
+        }
+    }
 
     private enum HtmlBlockType { Title, Header, Text, BoldText, TableHeader, TableRow, Separator, Space }
 

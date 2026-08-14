@@ -17,14 +17,19 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
     private readonly IFileAttachmentService _files;
     private readonly IEmailService? _email;
     private readonly ILogger<SaasBillingDocumentService> _logger;
+    // ออกเอกสารผ่าน tenant ผู้ให้บริการ (ACCOUNT_STRUCTURE §6.1) — optional
+    // เพื่อให้ระบบเดิมยังทำงานได้ถ้ายังไม่ได้ตั้งค่า/ยังไม่ register
+    private readonly IPlatformBillingDocumentIssuer? _issuer;
+    private readonly IPdfGenerationService? _docPdf;
 
     private const string EntityType = "SubscriptionReceipt";
 
     public SaasBillingDocumentService(AccountingDbContext db, IPdfGenerationService pdf,
         IFileAttachmentService files, ILogger<SaasBillingDocumentService> logger,
-        IEmailService? email = null)
+        IEmailService? email = null, IPlatformBillingDocumentIssuer? issuer = null)
     {
         _db = db; _pdf = pdf; _files = files; _logger = logger; _email = email;
+        _issuer = issuer; _docPdf = pdf;
     }
 
     public async Task GenerateReceiptForApprovedPaymentAsync(Guid paymentId)
@@ -46,6 +51,30 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
             var settings = await _db.Set<SiteSettings>().AsNoTracking()
                 .OrderBy(s => s.CreatedAt).FirstOrDefaultAsync();
+
+            // ─── ทางหลัก: ออกเอกสารจริงใน tenant ของผู้ให้บริการ ───
+            // ได้เลข gap-free ตามชุดเอกสารจริง + JE รายได้ + เข้ารายงานภาษีขาย/
+            // ภ.พ.30 + ออก e-Tax ได้ (โหมด PDF เดี่ยวด้านล่างทำไม่ได้สักอย่าง)
+            if (_issuer != null && await _issuer.IsEnabledAsync())
+            {
+                var issued = await _issuer.IssuePaidReceiptAsync(payment, buyer);
+                if (issued != null)
+                {
+                    var t = await _db.SubscriptionPayments.FirstAsync(p => p.Id == paymentId);
+                    t.PlatformDocumentId = issued.DocumentId;
+                    t.ReceiptNumber = issued.DocumentNumber;
+                    t.ReceiptIssuedAt = DateTime.UtcNow;
+                    t.ReceiptIsTaxInvoice = issued.IsTaxInvoice;
+                    // ไม่ต้องแนบไฟล์ — PDF ดึงสด ๆ จากเอกสารจริงตอนดาวน์โหลด
+                    // (แนบไว้จะกลายเป็นสำเนาที่ค้างเมื่อเอกสารถูกแก้/ยกเลิก)
+                    t.ReceiptAttachmentId = null;
+                    await _db.SaveChangesAsync();
+                    await SendEmailAsync(companyId, issued.DocumentNumber, issued.IsTaxInvoice);
+                    return;
+                }
+                // ออกไม่สำเร็จ → ตกลงไปโหมด PDF เดิม (เงินเข้าแล้วต้องมีหลักฐานเสมอ)
+                _logger.LogWarning("ออกเอกสารจริงไม่สำเร็จ (payment {PaymentId}) — ใช้ PDF เดี่ยวแทน", paymentId);
+            }
 
             var isTaxInvoice = settings != null
                 && settings.PlatformIsVatRegistered
@@ -101,6 +130,31 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             .FirstOrDefaultAsync(p => p.Id == paymentId);
         if (payment == null) return null;
         var companyId = payment.Subscription.CompanyId;
+
+        // ออกเป็นเอกสารจริงใน tenant ผู้ให้บริการ → เรนเดอร์จากเอกสารนั้นโดยตรง
+        // (ได้เทมเพลต/ลายเซ็น/ตราประทับชุดเดียวกับเอกสารอื่นของบริษัทเรา และ
+        //  สะท้อนการแก้ไขล่าสุดเสมอ ไม่ใช่สำเนาที่ค้างไว้)
+        if (payment.PlatformDocumentId.HasValue && _docPdf != null)
+        {
+            var doc = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == payment.PlatformDocumentId.Value && !d.IsDeleted)
+                .Select(d => new { d.CompanyId, d.DocumentNumber })
+                .FirstOrDefaultAsync();
+            if (doc != null)
+            {
+                try
+                {
+                    var gen = await _docPdf.GenerateDocumentPdfAsync(doc.CompanyId,
+                        new Models.DTOs.DocumentTemplate.GeneratePdfRequest(
+                            payment.PlatformDocumentId.Value, null, null, null, null));
+                    return (gen.PdfData, gen.FileName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "เรนเดอร์ PDF เอกสารค่าบริการ {DocNo} ไม่สำเร็จ", doc.DocumentNumber);
+                }
+            }
+        }
 
         // ไฟล์ที่เก็บไว้
         if (payment.ReceiptAttachmentId.HasValue)
@@ -224,8 +278,30 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
             var settings = await _db.Set<SiteSettings>().AsNoTracking().OrderBy(s => s.CreatedAt).FirstOrDefaultAsync();
             var now = DateTime.UtcNow;
-            var number = await NextInvoiceNumberAsync(now);
             var months = MonthsFor(sub.BillingCycle);
+
+            // ─── ทางหลัก: ออกใบแจ้งหนี้จริงใน tenant ของผู้ให้บริการ ───
+            // ได้ลูกหนี้ใน GL ของเราเอง (ตามเก็บได้จริง) + เลขในชุดเดียวกับเอกสารอื่น
+            if (_issuer != null && await _issuer.IsEnabledAsync())
+            {
+                var invoiced = await _issuer.IssueRenewalInvoiceAsync(sub.CompanyId,
+                    $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {sub.Plan} ({months} เดือน) "
+                        + $"— รอบถัดไปถึง {sub.EndDate.AddMonths(months):dd/MM/yyyy}",
+                    amount, now, sub.EndDate, $"RENEW-{sub.Id.ToString()[..8].ToUpper()}");
+                if (invoiced != null)
+                {
+                    sub.RenewalInvoiceNumber = invoiced.DocumentNumber;
+                    sub.RenewalInvoiceIssuedAt = now;
+                    sub.RenewalInvoiceForEndDate = sub.EndDate;
+                    sub.RenewalInvoiceDocumentId = invoiced.DocumentId;
+                    await _db.SaveChangesAsync();
+                    await SendInvoiceEmailAsync(sub.CompanyId, invoiced.DocumentNumber, amount, sub.EndDate);
+                    return invoiced.DocumentNumber;
+                }
+                _logger.LogWarning("ออกใบแจ้งหนี้ต่ออายุจริงไม่สำเร็จ (sub {Sub}) — ใช้ PDF เดี่ยวแทน", subscriptionId);
+            }
+
+            var number = await NextInvoiceNumberAsync(now);
 
             var html = BuildInvoiceHtml(buyer, settings, number, now, sub.EndDate, amount, sub.Plan, sub.BillingCycle, months);
             byte[] pdfBytes;
@@ -262,6 +338,28 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
     {
         var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == subscriptionId);
         if (sub == null || string.IsNullOrEmpty(sub.RenewalInvoiceNumber)) return null;
+
+        // ออกเป็นเอกสารจริง → เรนเดอร์จากเอกสารนั้น (เหมือนเส้นใบเสร็จ)
+        if (sub.RenewalInvoiceDocumentId.HasValue && _docPdf != null)
+        {
+            var docCompanyId = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == sub.RenewalInvoiceDocumentId.Value && !d.IsDeleted)
+                .Select(d => (Guid?)d.CompanyId).FirstOrDefaultAsync();
+            if (docCompanyId.HasValue)
+            {
+                try
+                {
+                    var gen = await _docPdf.GenerateDocumentPdfAsync(docCompanyId.Value,
+                        new Models.DTOs.DocumentTemplate.GeneratePdfRequest(
+                            sub.RenewalInvoiceDocumentId.Value, null, null, null, null));
+                    return (gen.PdfData, gen.FileName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "เรนเดอร์ PDF ใบแจ้งหนี้ต่ออายุไม่สำเร็จ (sub {Sub})", subscriptionId);
+                }
+            }
+        }
 
         // หาไฟล์ที่เก็บไว้
         var atts = await _files.GetByEntityAsync(sub.CompanyId, "SubscriptionInvoice", sub.Id);
