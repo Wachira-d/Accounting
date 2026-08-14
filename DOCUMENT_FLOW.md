@@ -966,6 +966,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     | ชั้น | ตั้งที่ไหน | ขอบเขต |
     | --- | --- | --- |
     | ทั้งบริษัท | ตั้งค่าบริษัท → "ภาษาของเอกสารที่ออก" (`settings.html`) | ทุกใบที่ไม่ได้ตรึงภาษาไว้ |
+    | รายผู้ติดต่อ | หน้าผู้ติดต่อ → "ภาษาเอกสารของผู้ติดต่อรายนี้" (`Contact.DocumentLanguage`) | **ค่าตั้งต้นตอนสร้างใบ** — ประทับลง `Document.DocumentLanguage` ตอนสร้าง (ฟอร์ม `applyContactDocLanguage` + server fallback ใน `CreateDocumentAsync` กติกาเดียวกับเครดิตเทอม) **ไม่ใช่ชั้น resolve ตอนพิมพ์** ⇒ แก้ค่าผู้ติดต่อภายหลังไม่กระทบใบเก่า และผู้ใช้แก้ทับรายใบได้เสมอ (userTouched ชนะ) · ตัวเติมฝั่งฟอร์มจงใจไม่ใช้ `_canAutoFill` เพราะต้อง refresh/ล้างได้ตอนสลับผู้ติดต่อ (contact ทับ contact ซึ่ง rank เท่ากัน) |
     | รายใบ (ตรึงถาวร) | ฟอร์มสร้าง/แก้เอกสาร → "ภาษาของเอกสารใบนี้" (`fDocumentLanguage`) | ใบนั้นใบเดียว ทุกครั้งที่พิมพ์ |
     | ครั้งนี้ครั้งเดียว | modal ดูตัวอย่าง → dropdown ข้าง ต้นฉบับ/สำเนา (`pdfLangMode`) | เฉพาะการพิมพ์/ดาวน์โหลดรอบนั้น ไม่บันทึกลงใบ |
   - ชั้น "ครั้งนี้ครั้งเดียว" ส่งเป็น `GeneratePdfRequest.Language` → ใช้กับใบที่
@@ -1791,7 +1792,8 @@ _เติมทางเข้า UI 2 ชั้นที่ resolver รอง
 _ครั้งเดียว `#pdfLangMode`) · แก้ `DocumentResponse` ไม่คืน `DocumentLanguage` (เปิดแก้แล้ว_
 _ภาษาหาย) · แก้ metadata Title ของ PDF/A-3 คำนวณภาษาเองข้าม resolver กลาง ·_
 _รอบตาม: สืบทอดภาษาใบต้นทาง 5 ทาง — convert/clone/settlement receipt/CN คืนมัดจำ/_
-_recurring generator) ·_
+_recurring generator · รอบตาม 2: ภาษาเริ่มต้นรายผู้ติดต่อ `Contact.DocumentLanguage` —_
+_ประทับตอนสร้างใบ ไม่ resolve ตอนพิมพ์ · ฟอร์ม+server fallback คู่ขนานแบบเครดิตเทอม) ·_
 _รอบ 20: เอกสารภาษาอังกฤษ — HTML renderer_
 _ฝังคำไทยตาย 20 จุดทั้งที่ label มีครบและ QuestPDF ใช้อยู่ (เอกสารปนไทย + หน้าตาต่างกัน_
 _ตาม renderer) แก้ครบ + เทสต์กันซ้ำ · เปิด ValidateOnBuild ทุก environment + CI ตรวจ_

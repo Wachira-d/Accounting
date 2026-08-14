@@ -580,7 +580,7 @@
           <div class="form-row-1-2" id="docLanguageRow">
             <div class="form-group">
               <label class="form-label" data-help="ภาษาที่พิมพ์บนเอกสารใบนี้ใบเดียว — ไม่กระทบใบอื่นและไม่กระทบค่าตั้งต้นของบริษัท · หัวเอกสารภาษีจะพิมพ์สองภาษาเสมอ (เช่น 'Tax Invoice / ใบกำกับภาษี') เพราะ §86/4 บังคับให้มีคำไทย มิฉะนั้นผู้ซื้อเคลมภาษีซื้อไม่ได้ (§82/5(1))">ภาษาของเอกสารใบนี้</label>
-              <select class="form-select" id="fDocumentLanguage" onchange="Page.onDocLanguageChange()">
+              <select class="form-select" id="fDocumentLanguage" onchange="this.dataset.userTouched='1';delete this.dataset.autoSrc;Page.onDocLanguageChange()">
                 <option value="">— ตามค่าเริ่มต้นของบริษัท —</option>
                 <option value="th">ไทย (Thai)</option>
                 <option value="en">อังกฤษ (English)</option>
@@ -2148,6 +2148,7 @@
         // กติกา: ค่าเฉพาะลูกค้า **ชนะ** ค่าเริ่มต้นของเทมเพลตชนิดเอกสารและ AI
         // (specific > generic) แต่ **ห้ามทับ** ค่าที่ผู้ใช้พิมพ์เอง — ดู _canAutoFill
         this.applyContactCreditTerms(contact);
+        this.applyContactDocLanguage(contact);
         if (!contact?.defaultIssueTaxInvoice) return;
         const sel = document.getElementById('fDocType');
         if (sel && sel.value === 'Invoice') {
@@ -2248,7 +2249,7 @@
           // เฉพาะใน maybePreselectTaxInvoice ซึ่งทำงานฝั่งขายอย่างเดียว ⇒ ฝั่งซื้อ
           // มีแต่ AI เดาจาก history เติมให้ ทั้งที่ค่าที่ตั้งไว้กับผู้ขายชัดเจนกว่า
           this._ensureFullContact(contactId, c)
-            .then(ct => this.applyContactCreditTerms(ct))
+            .then(ct => { this.applyContactCreditTerms(ct); this.applyContactDocLanguage(ct); })
             .catch(() => {});
           this.suggestPaymentTerms(contactId);
           // Project allocation: เลือกโครงการให้ทุกบรรทัดที่ยังว่าง
@@ -3447,18 +3448,47 @@
         const sel = document.getElementById('fDocumentLanguage');
         const hint = document.getElementById('fDocLanguageHint');
         if (!sel || !hint) return;
+        // ที่มาของค่า — บอกผู้ใช้ตรง ๆ ว่าระบบตั้งให้จากผู้ติดต่อ (แก้ทับได้)
+        const fromContact = sel.dataset.autoSrc === 'contact'
+          ? ' · ค่าเริ่มต้นจากการตั้งค่าของผู้ติดต่อรายนี้ — แก้ทับได้' : '';
         if (sel.value === 'en') {
           hint.innerHTML = '🌐 ใบนี้จะพิมพ์เป็น <b>ภาษาอังกฤษ</b> เฉพาะใบเดียว '
-            + '— หัวเอกสารภาษีคงพิมพ์สองภาษา (§86/4) และแบบฟอร์มราชการ (50 ทวิ, ภ.ง.ด., ภ.พ.30) ยังเป็นไทย';
+            + '— หัวเอกสารภาษีคงพิมพ์สองภาษา (§86/4) และแบบฟอร์มราชการ (50 ทวิ, ภ.ง.ด., ภ.พ.30) ยังเป็นไทย'
+            + fromContact;
           hint.style.color = '#1e40af';
           hint.style.display = '';
         } else if (sel.value === 'th') {
-          hint.textContent = '🇹🇭 ใบนี้ตรึงเป็นภาษาไทย — ไม่เปลี่ยนตามค่าบริษัทที่อาจถูกแก้ภายหลัง';
+          hint.textContent = '🇹🇭 ใบนี้ตรึงเป็นภาษาไทย — ไม่เปลี่ยนตามค่าบริษัทที่อาจถูกแก้ภายหลัง' + fromContact;
           hint.style.color = 'var(--gray-500)';
           hint.style.display = '';
         } else {
           hint.style.display = 'none';
         }
+      },
+
+      /** เติม "ภาษาของเอกสารใบนี้" จากค่าที่ตั้งไว้กับผู้ติดต่อ
+       *
+       *  จงใจ**ไม่ใช้** _canAutoFill เพราะกติกาต่างกัน 2 ข้อ:
+       *   1. select ค่า '' (ตามค่าบริษัท) คือ "ยังไม่ได้เลือก" ไม่ใช่ค่าของผู้ใช้
+       *   2. สลับผู้ติดต่อ = ต้อง refresh ได้ (contact ทับ contact) **รวมถึงล้าง
+       *      กลับเป็น ''** เมื่อผู้ติดต่อใหม่ไม่ได้ตั้งภาษา — _canAutoFill ไม่ยอม
+       *      ให้ rank เท่ากันทับกัน ⇒ ภาษาของลูกค้าคนเก่าจะค้าง แล้วลูกค้าไทย
+       *      รายใหม่ได้ใบอังกฤษเงียบ ๆ
+       *  ค่าที่ผู้ใช้แตะเอง (dataset.userTouched) ชนะเสมอ · โหมดแก้ไขไม่เติมเลย
+       *  (ค่าที่บันทึกไว้ = การตัดสินใจแล้ว) */
+      applyContactDocLanguage(contact) {
+        if (this.editingId) return;
+        const el = document.getElementById('fDocumentLanguage');
+        if (!el || el.dataset.userTouched) return;
+        // มีค่าที่ไม่ได้มาจาก contact (เช่น สืบทอดจากใบต้นทางตอน convert-หน้าฟอร์ม)
+        // → ไม่แตะ
+        if (el.value && el.dataset.autoSrc !== 'contact') return;
+        const v = (contact?.documentLanguage === 'en' || contact?.documentLanguage === 'th')
+          ? contact.documentLanguage : '';
+        if (el.value === v) { this.onDocLanguageChange(); return; }
+        el.value = v;
+        if (v) el.dataset.autoSrc = 'contact'; else delete el.dataset.autoSrc;
+        this.onDocLanguageChange();
       },
 
       /**
@@ -5655,7 +5685,11 @@
         // จากใบก่อนหน้า ไม่งั้นลูกค้าไทยรายถัดไปได้ใบภาษาอังกฤษเงียบ ๆ
         {
           const fLang = document.getElementById('fDocumentLanguage');
-          if (fLang) { fLang.value = ''; this.onDocLanguageChange(); }
+          if (fLang) {
+            fLang.value = '';
+            delete fLang.dataset.userTouched; delete fLang.dataset.autoSrc;
+            this.onDocLanguageChange();
+          }
         }
         // รหัสสาขาผู้ขาย: reset กลับ default 00000 (สำนักงานใหญ่)
         { const br = document.getElementById('fSupplierBranchCode'); if (br) br.value = '00000'; }
@@ -5925,8 +5959,14 @@
           }
           {
             // ภาษาที่ตรึงไว้กับใบ — null/ไม่มี = "ตามค่าเริ่มต้นของบริษัท"
+            // ค่าที่บันทึกไว้ = การตัดสินใจของผู้ใช้แล้ว → userTouched กัน
+            // ตัวเติมจาก contact (ที่ยิง async ตอน hydrate ผู้ติดต่อ) มาทับ
             const fLang = document.getElementById('fDocumentLanguage');
-            if (fLang) { fLang.value = d.documentLanguage || ''; this.onDocLanguageChange(); }
+            if (fLang) {
+              fLang.value = d.documentLanguage || '';
+              fLang.dataset.userTouched = '1'; delete fLang.dataset.autoSrc;
+              this.onDocLanguageChange();
+            }
           }
           const fPayType = document.getElementById('fPaymentType');
           if (fPayType && d.paymentType) fPayType.value = d.paymentType;

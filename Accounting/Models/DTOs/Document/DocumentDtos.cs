@@ -876,7 +876,10 @@ public record CreateContactRequest(
     bool DefaultIssueTaxInvoice = false,
     // เครดิตเทอมต่อลูกค้า (วันเครดิต + ป้ายกำกับ)
     int? PaymentDueDays = null,
-    string? PaymentTerms = null);
+    string? PaymentTerms = null,
+    // ภาษาเอกสารเริ่มต้นของผู้ติดต่อ ("th"/"en", null = ตามค่าบริษัท) —
+    // ประทับลงใบตอนสร้าง เปลี่ยนรายใบทับได้เสมอ
+    string? DocumentLanguage = null);
 
 public record UpdateContactRequest(
     [property: StringLength(200)] string? Name,
@@ -906,7 +909,9 @@ public record UpdateContactRequest(
     decimal? CreditLimit = null,
     bool? DefaultIssueTaxInvoice = null,
     int? PaymentDueDays = null,
-    string? PaymentTerms = null);
+    string? PaymentTerms = null,
+    // null = ไม่เปลี่ยน · "" = ล้างกลับเป็น "ตามค่าบริษัท" · th/en = ตั้งค่า
+    string? DocumentLanguage = null);
 
 /// <summary>
 /// Result of attempting to delete a contact. May be a hard delete or
@@ -959,7 +964,10 @@ public record ContactResponse(
     decimal? CreditLimit = null,
     bool DefaultIssueTaxInvoice = false,
     int? PaymentDueDays = null,
-    string? PaymentTerms = null);
+    string? PaymentTerms = null,
+    // echo กลับเสมอ — ฟอร์มแก้ไข contact ต้อง hydrate ได้ ไม่งั้นเปิดแก้แล้ว
+    // กดบันทึกค่าจะหาย (defect class เดียวกับ DocumentResponse.DocumentLanguage)
+    string? DocumentLanguage = null);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);
