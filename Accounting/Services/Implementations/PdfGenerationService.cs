@@ -1330,7 +1330,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         sb.AppendLine("<div class='doc-info'>");
         if (template.ShowDocumentNumber) sb.AppendLine($"<div>{L.DocNumber}: {DisplayDocNumber(doc)}</div>");
         if (template.ShowDocumentDate) sb.AppendLine($"<div>{L.DocDate}: {L.Date(doc.DocumentDate)}</div>");
-        if (template.ShowDueDate && doc.DueDate.HasValue) sb.AppendLine($"<div>{L.DueDate}: {L.Date(doc.DueDate!.Value)}</div>");
+        if (template.ShowDueDate && doc.DueDate.HasValue) sb.AppendLine($"<div>{L.DueDateFor(doc.DocumentType)}: {L.Date(doc.DueDate!.Value)}</div>");
         if (template.ShowReference && doc.DisplayReference != null) sb.AppendLine($"<div>{L.Reference}: {doc.DisplayReference}</div>");
         // เอกสารสกุลเงินต่างประเทศ — เดิมพิมพ์ตัวเลขเปล่า ๆ ไม่บอกสกุลเงินเลย
         // ผู้อ่านแยกไม่ออกว่า 1,000 คือบาทหรือดอลลาร์ (และ TFRS บทที่ 19 ต้องเห็น

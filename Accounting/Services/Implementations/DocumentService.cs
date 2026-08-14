@@ -326,6 +326,38 @@ public class DocumentService : IDocumentService
         DocumentType.CertificateInLieu,
     };
 
+    /// <summary>ล้างเทอมเครดิต/วันครบกำหนดที่ไม่มีความหมายกับชนิดเอกสารนั้น —
+    /// เรียกทั้งตอน create และ update (ฟอร์มซ่อนช่องเหล่านี้ตามชนิดแล้ว แต่
+    /// API ภายนอก/OCR/เอกสารเก่ายุคฟอร์มเหมารวม ยังยัดค่าเข้ามาได้)
+    ///
+    /// <para>หลักคิด: เครดิตเทอมมีได้เฉพาะใบที่ก่อ "หนี้ใหม่รอเก็บ/รอจ่าย".
+    /// ใบเสร็จ/ใบสำคัญรับ = เงินรับแล้ว · ใบลดหนี้ = ปรับหนี้ของใบเดิม (เทอม
+    /// เป็นของใบเดิม ไม่ใช่ของใบลด) · ใบส่งของ/GRN = โลจิสติกส์ · ใบแทน
+    /// ใบเสร็จ = จ่ายไปแล้วถึงต้องออกใบแทน. ส่วน PV คงวันครบกำหนดไว้ได้
+    /// (โหมดเครดิตตัดหนี้ใบตั้งหนี้) และ PR คงไว้เป็น "วันที่ต้องการรับของ"
+    /// — สองชนิดนี้ล้างเฉพาะเครดิตเทอม.</para></summary>
+    private static void NormalizeCreditTermFields(Document doc)
+    {
+        switch (doc.DocumentType)
+        {
+            case DocumentType.CreditNote:
+            case DocumentType.Receipt:
+            case DocumentType.ReceiptVoucher:
+            case DocumentType.CertificateInLieu:
+            case DocumentType.DeliveryNote:
+            case DocumentType.GoodsReceiptNote:
+                doc.CreditDays = null;
+                doc.PaymentTerms = null;
+                doc.DueDate = null;
+                break;
+            case DocumentType.PaymentVoucher:
+            case DocumentType.PurchaseRequisition:
+                doc.CreditDays = null;
+                doc.PaymentTerms = null;
+                break;
+        }
+    }
+
     /// <summary>กันผังบัญชีรายบรรทัดข้ามฝั่ง: เอกสารขายที่ผูกผังหมวด "ค่าใช้จ่าย"
     /// จะทำให้ JE ตอนอนุมัติ (หรือหลังแปลงเป็นใบแจ้งหนี้) Cr รายได้เข้าบัญชี
     /// 5xxxx — งบกำไรขาดทุนเพี้ยนทั้งสองขา. ฝั่งซื้อผูกผังหมวด "รายได้" ก็ผิด
@@ -1014,6 +1046,11 @@ public class DocumentService : IDocumentService
                 doc.PaymentType = request.PaymentType;
             }
             var isCashSettled = doc.PaymentType == Models.Enums.PaymentType.Cash;
+
+            // เทอมเครดิตมีความหมายเฉพาะชนิดที่ก่อ "หนี้ใหม่รอเก็บ/รอจ่าย" —
+            // ชนิดอื่นล้างทิ้งก่อน (กันค่าหลุดจาก API ภายนอก/OCR/ค่าค้างบนฟอร์ม
+            // ไปโผล่บน PDF และทำรายงาน DSO/DPO เพี้ยน)
+            NormalizeCreditTermFields(doc);
 
             // Auto-fill DueDate from CreditDays when caller didn't provide one
             // explicitly. Keeps DSO/DPO reports working even when the partner
@@ -1813,6 +1850,11 @@ public class DocumentService : IDocumentService
         if (request.ServiceUsedDate.HasValue) doc.ServiceUsedDate = request.ServiceUsedDate.Value;
         if (request.BookingNumber != null) doc.BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim();
         if (request.InputVatAccountCodeOverride != null) doc.InputVatAccountCodeOverride = string.IsNullOrWhiteSpace(request.InputVatAccountCodeOverride) ? null : request.InputVatAccountCodeOverride.Trim();
+        // ล้างเทอมเครดิต/วันครบกำหนดที่ไม่เข้ากับชนิดเอกสาร — สำคัญตอน update
+        // เป็นพิเศษ เพราะ semantics "omit = คงค่าเดิม" ทำให้ client ที่ซ่อนช่อง
+        // แล้วส่ง null มา **ไม่สามารถ** ล้างค่าเก่าที่เคยหลุดเข้าไปได้เอง
+        // (เช่น ใบลดหนี้เก่าที่มี CreditDays=30 ค้างจากยุคฟอร์มเหมารวม)
+        NormalizeCreditTermFields(doc);
 
         // ===== Fields ที่เดิม "เงียบหาย" ตอนแก้ Draft (เคยมีเฉพาะตอน Create) =====
         // CreditNoteReason (§86/10), IsForeignService (ภ.พ.36/ภ.ง.ด.54), และชุดเงินมัดจำ.

@@ -102,6 +102,22 @@ public sealed class DocumentLabels
     public string DocDate => this["doc_date"];
     public string DocNumber => this["doc_number"];
     public string DueDate => this["due_date"];
+
+    /// <summary>ป้ายวันที่ตัวที่สองตามชนิดเอกสาร — ใบเสนอราคายังไม่มีหนี้จึงไม่มี
+    /// "ครบกำหนด" มีแต่ "ยืนราคาถึง"; PO คือกำหนดส่งมอบของ ไม่ใช่กำหนดชำระ.
+    /// ต้องตรงกับป้ายบนฟอร์มสร้างเอกสาร (documents.html `_docFieldProfile`) —
+    /// จอกรอกว่า "ยืนราคาถึงวันที่" แต่กระดาษพิมพ์ "ครบกำหนด" = ผู้อ่านตีความ
+    /// วันเดียวกันเป็นคนละเรื่อง</summary>
+    public string DueDateFor(Accounting.Models.Enums.DocumentType type) => type switch
+    {
+        Accounting.Models.Enums.DocumentType.Quotation
+            => IsEnglish ? "Valid until" : "ยืนราคาถึง",
+        Accounting.Models.Enums.DocumentType.PurchaseOrder
+            => IsEnglish ? "Delivery date" : "กำหนดส่งมอบ",
+        Accounting.Models.Enums.DocumentType.PurchaseRequisition
+            => IsEnglish ? "Required by" : "วันที่ต้องการรับของ",
+        _ => DueDate,
+    };
     public string FromOcr => this["from_ocr"];
     public string GlPosting => this["gl_posting"];
     public string InclVatSuffix => this["incl_vat_suffix"];

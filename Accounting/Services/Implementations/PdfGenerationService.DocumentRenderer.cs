@@ -370,7 +370,7 @@ public partial class PdfGenerationService
                             if (template.ShowDocumentNumber) c.Item().Text($"{L.DocNumber}: {DisplayDocNumber(doc)}").FontSize(10);
                             if (template.ShowDocumentDate) c.Item().Text($"{L.DocDate}: {L.Date(doc.DocumentDate)}").FontSize(10);
                             if (template.ShowDueDate && doc.DueDate.HasValue)
-                                c.Item().Text($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}").FontSize(10);
+                                c.Item().Text($"{L.DueDateFor(doc.DocumentType)}: {L.Date(doc.DueDate!.Value)}").FontSize(10);
                             if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference))
                                 c.Item().Text($"{L.Reference}: {doc.DisplayReference}").FontSize(10);
                         });
@@ -422,7 +422,7 @@ public partial class PdfGenerationService
                     if (template.ShowDocumentDate)
                         tt.Span($"{L.DocDate}: {L.Date(doc.DocumentDate)}   ").FontSize(10).FontColor("#374151");
                     if (template.ShowDueDate && doc.DueDate.HasValue)
-                        tt.Span($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}   ").FontSize(10).FontColor("#374151");
+                        tt.Span($"{L.DueDateFor(doc.DocumentType)}: {L.Date(doc.DueDate!.Value)}   ").FontSize(10).FontColor("#374151");
                     if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference))
                         tt.Span($"{L.Reference}: {doc.DisplayReference}").FontSize(10).FontColor("#374151");
                 });
@@ -473,7 +473,7 @@ public partial class PdfGenerationService
             if (t.ShowDocumentDate)
                 tt.Span($"{L.DocDate}: {L.Date(doc.DocumentDate)}   ").FontSize(10);
             if (t.ShowDueDate && doc.DueDate.HasValue)
-                tt.Span($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}   ").FontSize(10);
+                tt.Span($"{L.DueDateFor(doc.DocumentType)}: {L.Date(doc.DueDate!.Value)}   ").FontSize(10);
             if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference))
                 tt.Span($"{L.Reference}: {doc.DisplayReference}").FontSize(10);
         });
@@ -484,7 +484,7 @@ public partial class PdfGenerationService
         void Span(string s) => r.AutoItem().PaddingHorizontal(10).Text(s).FontSize(10);
         if (t.ShowDocumentNumber) Span($"{L.DocNumber}: {DisplayDocNumber(doc)}");
         if (t.ShowDocumentDate) Span($"{L.DocDate}: {L.Date(doc.DocumentDate)}");
-        if (t.ShowDueDate && doc.DueDate.HasValue) Span($"{L.DueDate}: {L.Date(doc.DueDate!.Value)}");
+        if (t.ShowDueDate && doc.DueDate.HasValue) Span($"{L.DueDateFor(doc.DocumentType)}: {L.Date(doc.DueDate!.Value)}");
         if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.DisplayReference)) Span($"{L.Reference}: {doc.DisplayReference}");
     }
 
