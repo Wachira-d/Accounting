@@ -2135,6 +2135,11 @@
       },
       applyVatRegistrationLock() {
         if (this._vatRegistered) return;
+        // "แปลงทั้งหมด" (batch) — เอาใบกำกับภาษีออกจากตัวเลือกด้วย ไม่งั้นเลือก
+        // เอกสารหลายใบแล้วแปลงรวดเดียว จะไปตายที่ server ทั้งชุด
+        const batchSel = document.getElementById('batchConvertTarget');
+        const batchOpt = batchSel && [...batchSel.options].find(o => o.value === 'TaxInvoice');
+        if (batchOpt) batchOpt.remove();
         const sel = document.getElementById('fDocType');
         if (!sel) return;
         // ใบกำกับภาษี เป็นเอกสาร VAT ขายโดยตรง → ปิด. ใบเพิ่ม/ลดหนี้ (ฝั่งขาย)
@@ -3660,7 +3665,10 @@
         // TaxInvoice + combinedInvoiceTaxInvoice=true เพื่อพิมพ์หัวรวม.
         const combinedRow = document.getElementById('fCombinedTaxRow');
         if (combinedRow) {
-          const canCombine = docType === 'Invoice' || docType === 'TaxInvoice';
+          // ติ๊กนี้ force ชนิดเป็น TaxInvoice ตอนบันทึก ⇒ บริษัทที่ไม่จด VAT
+          // ต้องไม่เห็นเลย (ไม่งั้นเป็นอีกทางลัดไปสู่ error ตอนอนุมัติ §90/2)
+          const canCombine = (docType === 'Invoice' || docType === 'TaxInvoice')
+            && this._vatRegistered !== false;
           combinedRow.style.display = canCombine ? 'flex' : 'none';
           if (!canCombine) {
             const cb = document.getElementById('fCombinedTaxInvoice');
@@ -8437,6 +8445,10 @@
             if (Array.isArray(res.data)) allowed = res.data;
           }
         } catch { /* keep the offline fallback */ }
+        // §90/2 — บริษัทไม่จด VAT ออกใบกำกับภาษีไม่ได้ (server กรองให้แล้วและ
+        // บล็อกตอนแปลงจริงอีกชั้น; อันนี้กันเคส fallback offline/backend เก่า
+        // ไม่ให้โชว์ตัวเลือกที่กดแล้วต้องเจอ error)
+        if (this._vatRegistered === false) allowed = allowed.filter(t => t !== 'TaxInvoice');
 
         let firstVisible = null;
         Array.from(select.options).forEach(opt => {

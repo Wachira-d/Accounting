@@ -7142,6 +7142,27 @@ public class DocumentService : IDocumentService
     public static IReadOnlyList<DocumentType> GetValidConversionTargets(DocumentType source) =>
         ValidConversions.TryGetValue(source, out var targets) ? targets : Array.Empty<DocumentType>();
 
+    /// <summary>บริษัทนี้จดทะเบียน VAT อยู่หรือไม่ — ไม่เคยตั้งค่า = ถือว่าจด
+    /// (บริษัทเดิมที่ยังไม่ได้แตะหน้าตั้งค่าจะไม่ถูกบล็อกโดยไม่รู้ตัว)</summary>
+    private async Task<bool> IsCompanyVatRegisteredAsync(Guid companyId) =>
+        await _db.CompanySettings.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => (bool?)c.VatRegistered)
+            .FirstOrDefaultAsync() ?? true;
+
+    /// <summary>รายการชนิดปลายทางที่แปลงได้ **จริง** สำหรับบริษัทนี้ — กรองชนิดที่
+    /// ติดข้อจำกัดระดับบริษัทออก (ตอนนี้: ใบกำกับภาษีเมื่อยังไม่จด VAT §90/2)
+    /// เพื่อให้กล่อง "แปลงเอกสาร" ไม่โชว์ตัวเลือกที่กดแล้วต้องเจอ error</summary>
+    public async Task<IReadOnlyList<DocumentType>> GetValidConversionTargetsAsync(
+        Guid companyId, DocumentType source)
+    {
+        var targets = GetValidConversionTargets(source);
+        if (targets.Contains(DocumentType.TaxInvoice)
+            && !await IsCompanyVatRegisteredAsync(companyId))
+            return targets.Where(t => t != DocumentType.TaxInvoice).ToList();
+        return targets;
+    }
+
     // ===================================================================
     // Flexible / partial document composition
     //
@@ -7240,6 +7261,18 @@ public class DocumentService : IDocumentService
                 $"ไม่สามารถแปลง {source.DocumentType} → {targetType} ได้ตามมาตรฐานบัญชี " +
                 $"(แปลงได้เฉพาะ: {(allowedNames.Length > 0 ? allowedNames : "ไม่มี — เอกสารนี้เป็นปลายทาง")})");
         }
+
+        // ===== §90/2 — บริษัทไม่จด VAT แปลงเป็น "ใบกำกับภาษี" ไม่ได้ =====
+        // ตัวใบกำกับภาษีคือการออกเอกสารเรียกเก็บ VAT โดยตรง ผู้ไม่จดทะเบียนออก
+        // ไม่ได้เลย (มีโทษตาม §90/2). เดิมบล็อกไว้ที่ approve อย่างเดียว ⇒ ผู้ใช้
+        // แปลงเป็น Draft ได้ กรอกครบ แล้วไปเจอ error ตอนกดอนุมัติ (เสียงานเปล่า
+        // + ฟอร์มสร้างเอกสารปิดตัวเลือกนี้ไว้แล้ว แต่ทางแปลงเอกสารยังเปิดอยู่)
+        if (targetType == DocumentType.TaxInvoice
+            && !await IsCompanyVatRegisteredAsync(companyId))
+            throw new InvalidOperationException(
+                "บริษัทยังไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม — ออกใบกำกับภาษีไม่ได้ (§90/2) "
+                + "· แปลงเป็น \"ใบแจ้งหนี้\" หรือ \"ใบเสร็จรับเงิน\" แทน "
+                + "· ถ้าจด VAT แล้ว เปิดที่ ตั้งค่า → ภาษี → จดทะเบียนภาษีมูลค่าเพิ่ม");
 
         // Receipt/RV → CN/DN เปิดเฉพาะใบเสร็จที่ "เป็นใบกำกับภาษีในตัว":
         //   • ใบมัดจำ → ใช้เมนู "คืนมัดจำ" (RefundDepositAsync ออกใบลดหนี้ + กลับ
