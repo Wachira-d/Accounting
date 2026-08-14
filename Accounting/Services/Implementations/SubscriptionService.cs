@@ -1822,6 +1822,8 @@ public class SubscriptionService : ISubscriptionService
             RequestedBillingCycle = request.RequestedBillingCycle,
             RequestedPeriodMonths = request.RequestedPeriodMonths,
             Kind = request.IsWaived ? SubscriptionPaymentKind.Waived : SubscriptionPaymentKind.ManualByAdmin,
+            // ยกเว้นค่าบริการ = ไม่มีเงิน ไม่มีการหักภาษี
+            WithholdingTaxAmount = request.IsWaived ? 0m : Math.Max(0m, request.WithholdingTaxAmount),
             WaiveReason = request.IsWaived ? request.WaiveReason : null,
             CustomerNotes = request.Notes,
             Status = SubscriptionPaymentStatus.Pending,

@@ -403,6 +403,34 @@
           </div>
         </div>
       </div>
+
+      <div class="admin-card" style="margin-top:16px">
+        <div class="section-title">📗 ออกเอกสารผ่านบริษัทของเราเอง (แนะนำ)</div>
+        <div class="help-text" style="margin-bottom:12px;line-height:1.7">
+          เลือกบริษัทใน<strong>ระบบนี้</strong>ที่เป็นผู้ให้บริการ → เวลาลูกค้าจ่ายค่าบริการ
+          ระบบจะออก <strong>ใบกำกับภาษี/ใบเสร็จรับเงินตัวจริง</strong>ในบริษัทนั้นให้อัตโนมัติ:
+          ได้เลขที่รันต่อเนื่องชุดเดียวกับเอกสารอื่น (§86/4 gap-free) ·
+          <strong>ลงบัญชี (JE) รายได้ให้อัตโนมัติ</strong> · เข้ารายงานภาษีขาย/ภ.พ.30 · ออก e-Tax ได้
+          <br>เว้นว่าง = ใช้โหมดเดิม (PDF ใบเดี่ยว — <strong>ไม่ลงบัญชี ไม่เข้ารายงานภาษี</strong>)
+        </div>
+        <div class="form-group">
+          <label>บริษัทผู้ให้บริการ (tenant ของเราเอง)</label>
+          <select id="pbTenant"><option value="">— ไม่ใช้ (โหมด PDF เดิม) —</option></select>
+          <div class="help-text" id="pbTenantHint"></div>
+        </div>
+        <div style="display:flex;gap:12px">
+          <div class="form-group" style="flex:1">
+            <label>ผังบัญชีรายได้ค่าบริการ</label>
+            <input type="text" id="pbRevenueAcc" placeholder="41000">
+            <div class="help-text">เว้นว่าง = 41000 (รายได้จากการขาย)</div>
+          </div>
+          <div class="form-group" style="flex:1">
+            <label>ผังบัญชีเงินสด/ธนาคารที่รับเงิน</label>
+            <input type="text" id="pbCashAcc" placeholder="เช่น 11210">
+            <div class="help-text">เว้นว่าง = เงินสด (ค่าเริ่มต้นของระบบ)</div>
+          </div>
+        </div>
+      </div>
       <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:16px">
         <button class="btn-save" id="pbSaveBtn" onclick="savePlatformBilling()">บันทึกข้อมูลผู้ขาย</button>
       </div>
@@ -767,8 +795,37 @@
         document.getElementById('pbBranch').value = d.platformSellerBranchCode || '00000';
         document.getElementById('pbIsVat').checked = !!d.platformIsVatRegistered;
         document.getElementById('pbPriceInclVat').checked = d.platformPriceIncludesVat !== false;
+        document.getElementById('pbRevenueAcc').value = d.platformRevenueAccountCode || '';
+        document.getElementById('pbCashAcc').value = d.platformCashAccountCode || '';
+        await pbLoadTenants(d.platformCompanyId, d.platformCompanyName);
         pbToggleVat();
       } catch (e) { /* first-load empty is fine */ }
+    }
+
+    // โหลดรายชื่อบริษัทให้เลือกเป็น tenant ผู้ให้บริการ — ถ้าค่าที่บันทึกไว้ไม่อยู่
+    // ในหน้าแรก (บริษัทเยอะ) ให้เติม option กลับเข้าไป ไม่งั้น select จะเด้งกลับ
+    // เป็น "ไม่ใช้" แล้วผู้ใช้กดบันทึกทับโดยไม่รู้ตัว
+    async function pbLoadTenants(selectedId, selectedName) {
+      const sel = document.getElementById('pbTenant');
+      if (!sel) return;
+      try {
+        const r = await AdminAPI.customers('?pageSize=200');
+        const items = r.data?.items || [];
+        sel.innerHTML = '<option value="">— ไม่ใช้ (โหมด PDF เดิม) —</option>'
+          + items.map(c => `<option value="${c.id}">${c.name}${c.taxId ? ' (' + c.taxId + ')' : ''}</option>`).join('');
+      } catch { /* โหลดไม่ได้ — เหลือตัวเลือกว่าง */ }
+      if (selectedId) {
+        if (![...sel.options].some(o => o.value === selectedId)) {
+          const o = document.createElement('option');
+          o.value = selectedId; o.textContent = (selectedName || 'บริษัทที่ตั้งไว้') + ' (ตั้งไว้แล้ว)';
+          sel.appendChild(o);
+        }
+        sel.value = selectedId;
+      }
+      const hint = document.getElementById('pbTenantHint');
+      if (hint) hint.innerHTML = sel.value
+        ? '✅ เอกสารค่าบริการจะถูกออกในบริษัทนี้ พร้อมลงบัญชีรายได้ให้อัตโนมัติ'
+        : '⚠️ ตอนนี้ใช้โหมด PDF ใบเดี่ยว — รายได้ค่าบริการ<strong>ไม่ถูกลงบัญชี</strong>และไม่เข้ารายงานภาษีขาย';
     }
 
     async function savePlatformBilling() {
@@ -784,6 +841,9 @@
           platformSellerEmail: document.getElementById('pbSellerEmail').value || null,
           platformIsVatRegistered: document.getElementById('pbIsVat').checked,
           platformPriceIncludesVat: document.getElementById('pbPriceInclVat').checked,
+          platformCompanyId: document.getElementById('pbTenant').value || null,
+          platformRevenueAccountCode: document.getElementById('pbRevenueAcc').value || null,
+          platformCashAccountCode: document.getElementById('pbCashAcc').value || null,
         };
         const res = await AdminAPI.updatePlatformBilling(payload);
         AdminLayout.toast(res.message || 'บันทึกสำเร็จ');

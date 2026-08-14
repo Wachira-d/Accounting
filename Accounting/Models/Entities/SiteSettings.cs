@@ -206,4 +206,17 @@ public class SiteSettings : BaseEntity
     /// <summary>true = ราคาแพ็กเกจรวม VAT แล้ว (คำนวณ VAT = amount×7/107);
     /// false = ราคายังไม่รวม VAT (VAT = amount×7%). ใช้เฉพาะเมื่อจด VAT.</summary>
     public bool PlatformPriceIncludesVat { get; set; } = true;
+
+    // ===== ออกเอกสารค่าบริการผ่าน "tenant ของบริษัทเราเอง" (ACCOUNT_STRUCTURE §6.1) =====
+    // เดิมใบเสร็จค่าบริการถูก gen เป็น PDF เดี่ยว ๆ พร้อมเลขรันของตัวเอง
+    // (RCPT-yyyyMM-####) ⇒ รายได้ค่าบริการ **ไม่เคยลง GL ของบริษัทเรา**, ไม่เข้า
+    // รายงานภาษีขาย/ภ.พ.30 (ผิดกฎหมายถ้าจด VAT), ออก e-Tax ไม่ได้ และเลขไม่ได้
+    // อยู่ในชุดเดียวกับเอกสารจริง. ตั้งค่านี้ = ให้ระบบออกเอกสารผ่าน pipeline
+    // เอกสารของ tenant เราเอง (บริษัทผู้ให้บริการเป็นลูกค้าของระบบตัวเอง)
+    /// <summary>Company (tenant) ที่เป็น "ผู้ให้บริการ" — ว่าง = ใช้โหมดเดิม (PDF เดี่ยว)</summary>
+    public Guid? PlatformCompanyId { get; set; }
+    /// <summary>ผังบัญชีรายได้ค่าบริการในผังของ tenant ผู้ให้บริการ (ว่าง = 41000)</summary>
+    public string? PlatformRevenueAccountCode { get; set; }
+    /// <summary>ผังเงินสด/ธนาคารที่รับเงินค่าบริการ (ว่าง = ให้ระบบเลือกตามค่าเริ่มต้น)</summary>
+    public string? PlatformCashAccountCode { get; set; }
 }
