@@ -54,6 +54,7 @@ public partial class PdfGenerationService
     internal byte[] RenderDocumentPdfNative(EntDoc doc, EntCompany company,
         EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
+        bool showFreeTierCredit = false,
         bool pdfA = false, string? pdfTitle = null, string? pdfAuthor = null)
     {
         EnsureThaiFontsRegistered();
@@ -181,11 +182,27 @@ public partial class PdfGenerationService
                         Safe(() => ComposeGlPosting(col, gl, lang, L));
                     });
 
-                    page.Footer().AlignRight().Text(t =>
+                    page.Footer().AlignRight().Column(f =>
                     {
-                        t.CurrentPageNumber().FontSize(8).FontColor(Colors.Grey.Medium);
-                        t.Span(" / ").FontSize(8).FontColor(Colors.Grey.Medium);
-                        t.TotalPages().FontSize(8).FontColor(Colors.Grey.Medium);
+                        // เครดิต NextAcc — เฉพาะบัญชีแพ็กเกจฟรี. วางเหนือเลขหน้า
+                        // มุมขวาล่าง สีจางขนาดเล็ก ไม่แย่งสายตาจากเนื้อหาเอกสาร
+                        if (showFreeTierCredit)
+                        {
+                            f.Item().AlignRight().Text(t =>
+                            {
+                                t.Span("จัดทำด้วย ").FontSize(7).FontColor(Colors.Grey.Medium);
+                                t.Span("NextAcc").FontSize(7).SemiBold().FontColor(Colors.Grey.Darken1);
+                                t.Span(" · ระบบบัญชีออนไลน์").FontSize(7).FontColor(Colors.Grey.Medium);
+                            });
+                            f.Item().AlignRight().PaddingBottom(2).Text(t =>
+                                t.Span("เริ่มใช้ฟรีที่ www.nextacc.net").FontSize(7).FontColor(Colors.Grey.Darken1));
+                        }
+                        f.Item().AlignRight().Text(t =>
+                        {
+                            t.CurrentPageNumber().FontSize(8).FontColor(Colors.Grey.Medium);
+                            t.Span(" / ").FontSize(8).FontColor(Colors.Grey.Medium);
+                            t.TotalPages().FontSize(8).FontColor(Colors.Grey.Medium);
+                        });
                     });
                 });
             });
@@ -245,7 +262,10 @@ public partial class PdfGenerationService
             }
             catch
             {
-                var html = BuildDocumentHtml(doc, company, settings, template, watermarkOverride, langOverride);
+                // เส้นสำรองสุดท้ายก็ต้องพิมพ์เครดิตด้วย ไม่งั้นบัญชีฟรีจะหลุด
+                // เครดิตไปเงียบ ๆ เฉพาะตอน composition พัง
+                var html = BuildDocumentHtml(doc, company, settings, template, watermarkOverride, langOverride,
+                    showFreeTierCredit: showFreeTierCredit);
                 return ConvertHtmlToPdf(html, template, b);
             }
         }
