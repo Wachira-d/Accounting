@@ -6421,12 +6421,28 @@
         return '';
       },
 
-      async detail(id) {
+      async detail(id, _skipRdRecheck) {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getDocument(id);
           const d = res.data;
           this._currentDoc = d;
+          // ผลตรวจ RD ถูก persist ตอนสแกนครั้งเดียว — validator ที่ฉลาดขึ้น
+          // ภายหลังไม่ช่วยใบเก่า (คำเตือนเก่าค้างใน rdComplianceIssuesJson
+          // ตลอดไป ทั้งที่กระดาษครบจริง) → ใบ OCR ที่ยังติดเตือน ให้ตรวจซ้ำ
+          // เบื้องหลังหนึ่งครั้งก่อนแสดง ถ้าผลเปลี่ยนค่อยโหลดใหม่ (ผู้ใช้เห็น
+          // ผลล่าสุดเสมอ ไม่ต้องสแกนใหม่) — best-effort: ตรวจไม่ได้ = แสดงของเดิม
+          if (!_skipRdRecheck && d.ocrConfidenceScore != null
+              && ['Warning', 'Failed'].includes(d.rdComplianceStatus)) {
+            try {
+              const r = await API.post(
+                `/api/companies/${Layout.getCompanyId()}/ocr/documents/${id}/recheck-compliance`);
+              const fresh = r?.data;
+              if (fresh && (fresh.status !== d.rdComplianceStatus
+                  || (fresh.issuesJson || '[]') !== (d.rdComplianceIssuesJson || '[]')))
+                return this.detail(id, true);
+            } catch { /* endpoint ไม่พร้อม/ใบไม่ได้มาจาก OCR — แสดงผลเดิม */ }
+          }
           const displayNum = (d.documentNumber || '').startsWith('DRAFT-') ? '(ยังไม่ออกเลข)' : d.documentNumber;
           // ใบเสนอราคาที่ถูกแก้แล้ว — โชว์ Rev ในหัว modal ให้ตรงกับกระดาษ
           const revSuffix = (d.revisionNumber || 0) > 0 ? ` (Rev.${d.revisionNumber})` : '';

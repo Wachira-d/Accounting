@@ -266,6 +266,16 @@ public class OcrController : ControllerBase
             await _service.RepopulateDocumentLinesFromScanAsync(companyId, documentId, User.Identity?.Name ?? ""),
             "ดึงรายการจาก OCR สำเร็จ"));
 
+    /// <summary>ตรวจความครบถ้วนตามกรมสรรพากรซ้ำ จากผลสแกนที่เก็บไว้ —
+    /// ใช้ล้างคำเตือนค้างของใบที่สแกนก่อน validator จะถูกปรับปรุง
+    /// (ไม่ต้องอัปโหลด/สแกนใหม่)</summary>
+    [HttpPost("documents/{documentId:guid}/recheck-compliance")]
+    public async Task<ActionResult<ApiResponse<object>>> RecheckCompliance(Guid companyId, Guid documentId)
+    {
+        var (status, issuesJson) = await _service.RecheckRdComplianceAsync(companyId, documentId);
+        return Ok(new ApiResponse<object>(true, new { status, issuesJson }, "ตรวจซ้ำแล้ว"));
+    }
+
     /// <summary>ผูกไฟล์ scan เข้ากับเอกสารที่สร้างผ่าน UI handoff (documents.html
     /// save()) — เรียกหลัง POST /documents สำเร็จ. แก้ปัญหา file ค้างที่
     /// EntityType="OcrScan" ทำให้เปิดเอกสารแล้วไม่เห็นไฟล์แนบ</summary>
