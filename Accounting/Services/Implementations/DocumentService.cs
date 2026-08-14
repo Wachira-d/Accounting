@@ -3338,6 +3338,8 @@ public class DocumentService : IDocumentService
                 RelatedDocumentId = doc.Id,
                 CreditNoteReason = CreditNoteReason.Adjustment,   // คืนเงินมัดจำ/ยกเลิกจอง — ไม่กระทบสต๊อก
                 Reference = doc.DocumentNumber,
+                // CN คืนมัดจำออกให้ลูกค้าคนเดิม — ภาษาตามใบเสร็จมัดจำต้นทาง
+                DocumentLanguage = doc.DocumentLanguage,
                 SubTotal = refundBase,
                 VatAmount = refundVat,
                 TotalAmount = request.Amount,
@@ -7534,6 +7536,10 @@ public class DocumentService : IDocumentService
         if (created != null)
         {
             created.RelatedDocumentId = source.Id;
+            // ภาษาที่ตรึงกับใบต้นทางต้องตามไปทั้งสาย (QT en → INV → REC) —
+            // ลูกค้าต่างชาติที่ได้ใบเสนอราคาอังกฤษ ต้องได้ใบแจ้งหนี้/ใบเสร็จ
+            // อังกฤษด้วยโดยไม่ต้องตั้งซ้ำทุกใบ (null = ตามค่าบริษัท ก็คงเป็น null)
+            created.DocumentLanguage = source.DocumentLanguage;
             created.CustomAppendix = source.CustomAppendix;
             created.CustomFooterNotes = source.CustomFooterNotes;
             created.CustomTermsAndConditions = source.CustomTermsAndConditions;
@@ -8494,6 +8500,9 @@ public class DocumentService : IDocumentService
             PaymentType = Models.Enums.PaymentType.Cash,
             Currency = invoice.Currency,
             ExchangeRate = invoice.ExchangeRate,
+            // ใบเสร็จอัตโนมัติออกให้ลูกค้าคนเดียวกับใบกำกับต้นทาง — ภาษาต้องตามใบ
+            // ต้นทาง (ใบแจ้งหนี้อังกฤษ → ใบเสร็จอังกฤษ โดยผู้ใช้ไม่ต้องทำอะไร)
+            DocumentLanguage = invoice.DocumentLanguage,
             ProjectId = invoice.ProjectId,
             SubTotal = carryVatFromSource ? invoice.SubTotal : payment.Amount,
             DiscountAmount = carryVatFromSource ? invoice.DiscountAmount : 0m,

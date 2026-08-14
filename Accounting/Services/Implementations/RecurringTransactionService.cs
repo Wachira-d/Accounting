@@ -423,7 +423,12 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // ราคารวม VAT ถูกบวก VAT ซ้ำ (+7%) และส่วนลดหาย
                 PricesIncludeVat: root.TryGetProperty("pricesIncludeVat", out var piv) && piv.ValueKind == JsonValueKind.True,
                 BillDiscountPercent: root.TryGetProperty("billDiscountPercent", out var bdp) && bdp.ValueKind == JsonValueKind.Number ? bdp.GetDecimal() : null,
-                BillDiscountAmount: root.TryGetProperty("billDiscountAmount", out var bda) && bda.ValueKind == JsonValueKind.Number ? bda.GetDecimal() : null
+                BillDiscountAmount: root.TryGetProperty("billDiscountAmount", out var bda) && bda.ValueKind == JsonValueKind.Number ? bda.GetDecimal() : null,
+                // ภาษาเอกสารรายใบ (th/en) — template เก่าไม่มี key นี้ → null =
+                // ตามค่าบริษัท (พฤติกรรมเดิมเป๊ะ). CreateDocumentAsync กรองค่า
+                // ขยะให้อีกชั้นอยู่แล้ว จึงส่งผ่านตรง ๆ ได้
+                DocumentLanguage: root.TryGetProperty("documentLanguage", out var dl)
+                    && dl.ValueKind == JsonValueKind.String ? dl.GetString() : null
             );
 
             var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy);
