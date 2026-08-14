@@ -27,6 +27,10 @@
   <script>
     AdminLayout.init('users');
     let currentPage = 1;
+    // เก็บ user ทั้งหน้าไว้เป็น map — ปุ่มต่าง ๆ ส่งแค่ userId แล้วมาเปิดจากนี่
+    // (ห้ามยัด JSON ผ่าน onclick attribute: browser decode &quot; กลับเป็น "
+    // ทำให้ argument กลายเป็น object ไม่ใช่ string → โค้ดที่รอ string พังเงียบ)
+    let _userCache = {};
 
     async function loadUsers(page = 1) {
       currentPage = page;
@@ -37,6 +41,7 @@
       try {
         const res = await AdminAPI.users(params);
         const d = res.data;
+        _userCache = Object.fromEntries((d.items || []).map(u => [u.id, u]));
 
         if (d.items.length === 0) {
           document.getElementById('userList').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">ไม่พบข้อมูล</div>';
@@ -85,7 +90,7 @@
                       </select>
                       <button class="admin-btn admin-btn-sm admin-btn-primary"
                               style="background:#0ea5e9;border-color:#0ea5e9"
-                              onclick="openLicense('${u.id}','${(u.fullName||'').replace(/'/g,'&apos;')}','${u.email}',${u.accountPlan ? JSON.stringify(u.accountPlan).replace(/"/g,'&quot;') : 'null'})">
+                              onclick="openLicense('${u.id}')">
                         🎫 จัดการ License
                       </button>
                       <button class="admin-btn admin-btn-sm ${u.isSystemAdmin ? 'admin-btn-danger' : 'admin-btn-outline'}"
@@ -339,11 +344,17 @@
       }
       return _planTemplates;
     }
-    async function openLicense(userId, fullName, email, apStr) {
-      // Decode the JSON-stringified accountPlan (may be null when user has no
-      // plan yet). Defensive: any parse error → treat as no-plan.
-      let ap = null;
-      try { ap = (apStr && apStr !== 'null') ? JSON.parse(apStr.replace(/&quot;/g,'"')) : null; } catch { ap = null; }
+    async function openLicense(userId) {
+      // อ่านจาก cache ของหน้า — เดิมส่ง accountPlan เป็น JSON ผ่าน onclick
+      // attribute: JSON.stringify แล้ว escape เป็น &quot; พอ browser parse
+      // attribute มัน decode กลับเป็น " ⇒ argument ตัวที่ 4 กลายเป็น **object**
+      // แล้ว `apStr.replace(...)` โยน TypeError → ตัว catch ตีความว่า "ไม่มี
+      // License" ⇒ user ที่มี Enterprise อยู่เต็ม ๆ เห็นแต่ฟอร์มสร้างใหม่
+      // (แก้วันหมดอายุ/ต่ออายุของเดิมไม่ได้เลย ทั้งที่ปุ่มมีอยู่แล้วในโหมด hasPlan)
+      const u = _userCache[userId];
+      if (!u) { AdminLayout.toast('โหลดข้อมูลผู้ใช้ใหม่อีกครั้ง', 'error'); return; }
+      const fullName = u.fullName || '', email = u.email || '';
+      const ap = u.accountPlan || null;
       const tpls = await _ensurePlanTemplates();
 
       const ov = document.createElement('div');
@@ -415,7 +426,15 @@
             <h3 style="margin:0;font-size:16px">🎫 จัดการ License ของ ${fullName} <span style="color:#94a3b8;font-size:12px;font-weight:400">${email}</span></h3>
             <button onclick="this.closest('div').parentElement.parentElement.remove()" style="background:transparent;border:none;font-size:22px;cursor:pointer;color:#64748b">&times;</button>
           </div>
-          <div style="padding:16px 20px;overflow-y:auto">${summary}</div>
+          <div style="padding:16px 20px;overflow-y:auto">
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:11.5px;color:#475569;line-height:1.6">
+              🗺️ <b>โครงสร้าง 3 ชั้น:</b> 💎 แพ็กเกจ (template ราคา/โควตา — หน้า <a href="/admin/plans.html">จัดการแพ็กเกจ</a>)
+              → 🎫 <b>License ของ "ผู้ใช้"</b> (หน้านี้ — ครอบได้หลายบริษัท)
+              → 🏢 Subscription ของ "แต่ละบริษัท" (หน้า <a href="/admin/customers.html">ลูกค้า/บริษัท</a>)<br>
+              💰 การรับเงิน/ต่ออายุ บันทึกที่หน้า <a href="/admin/payments.html">ตรวจสอบการชำระ</a>
+              — ผูกกับ "บริษัท" แล้วระบบ cascade มายืดอายุ License ให้อัตโนมัติ
+            </div>
+            ${summary}</div>
         </div>`;
       document.body.appendChild(ov);
       window._licenseOverlay = ov;
@@ -447,7 +466,11 @@
     function _luRefresh() { if (window._licenseOverlay) window._licenseOverlay.remove(); loadUsers(); }
 
     async function luExtend(apId, currentEnd) {
-      const cur = new Date(currentEnd); cur.setDate(cur.getDate()+30);
+      // endDate อาจว่าง/เพี้ยน (License เก่าที่ไม่เคยตั้ง) — ตกไปตั้งต้นจากวันนี้
+      // แทนที่จะเสนอ 1970 จาก new Date(null)
+      let cur = new Date(currentEnd);
+      if (isNaN(cur.getTime()) || cur.getFullYear() < 2000) cur = new Date();
+      cur.setDate(cur.getDate()+30);
       const v = prompt('⏰ ขยายอายุ License — วันสิ้นสุดใหม่ (YYYY-MM-DD)', cur.toISOString().slice(0,10));
       if (!v) return;
       try {

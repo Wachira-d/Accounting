@@ -463,10 +463,16 @@
       btn.setAttribute('disabled', 'disabled'); btn.textContent = 'กำลังบันทึก...';
       try {
         const res = await AdminAPI.recordManualPayment(companyId, body);
-        AdminLayout.toast(res.message || 'บันทึกสำเร็จ');
         closeRecord();
-        loadPending();
-        if (currentTab === 'all') loadAllPayments();
+        // บันทึก manual = อนุมัติอัตโนมัติทันที (วิ่งเข้าเส้น approve เดิม) จึง
+        // **ไม่มีวันโผล่ในแท็บ "รอตรวจสอบ"** — เดิมบันทึกเสร็จแล้วหน้ายังค้าง
+        // แท็บ pending ที่ว่างเปล่า ผู้ใช้เข้าใจว่า "กดแล้วไม่ขึ้นอะไรเลย"
+        // → สลับไปแท็บ "ทั้งหมด" ให้เห็นแถวที่เพิ่งบันทึกทันที
+        const rec = res.data || {};
+        AdminLayout.toast((res.message || 'บันทึกสำเร็จ')
+          + ` — อนุมัติ+ต่ออายุให้แล้ว${rec.paymentNumber ? ' (' + rec.paymentNumber + ')' : ''} ดูได้ในแท็บ "ทั้งหมด"`);
+        loadPending();          // KPI รอตรวจสอบ refresh
+        switchTab('all');       // พาไปดูแถวที่เพิ่งเกิด ไม่ปล่อยให้จอว่าง
       } catch (err) {
         AdminLayout.toast(err.message, 'error');
         btn.removeAttribute('disabled'); btn.textContent = 'บันทึก + ต่ออายุ';

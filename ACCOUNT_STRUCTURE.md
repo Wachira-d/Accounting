@@ -392,6 +392,17 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ## 10. การบ้านที่งอกจากดีไซน์ (ยังไม่ทำ)
 
+### จาก audit หน้า Admin จัดการ License (2026-08-14)
+
+- [ ] **ออกใบเสร็จ/ใบกำกับค่าบริการผ่าน tenant ของบริษัทเราเอง** — ตอนนี้การ
+      อนุมัติ payment ใน admin สร้าง "ใบเสร็จ PDF" ของตัวเอง (`receiptNumber` +
+      ปุ่มดาวน์โหลด) แยกจากระบบบัญชี ⇒ รายได้ค่าบริการไม่ลง GL ของบริษัทเรา
+      อัตโนมัติ. ทางที่ออกแบบไว้แล้วใน §6.1 คือ gen ผ่าน pipeline เอกสารของ
+      NextAcc เอง (บริษัทผู้ให้บริการ = tenant ของตัวเอง — มีอยู่แล้ว: "บริษัท
+      เน็ก แอค จำกัด") → ได้เลข gap-free + e-Tax + JE รายได้ครบโดยไม่เขียน
+      ระบบบิลใหม่. ระหว่างนี้ใช้วิธี: ออกเอกสารในบริษัท เน็ก แอค เองคู่กัน
+      (สร้างแยก) หรือรอ integration ชั้นนี้
+
 - [ ] ตรวจ `TaxService` ว่ารายงาน ภ.พ.30 กรอง/แยกตามสาขาได้จริงครบไหม + gate
       `VatFilingConsolidated` (ยื่นรวมต้องมีอนุมัติ)
 - [ ] `AiBudgetGuard` จาก global → ราย BillingAccount/Company (ผูกตาราง §4)
@@ -401,7 +412,20 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-07 (rev 9 — contact sync + /api/v1/documents +_
+_Last verified against codebase: 2026-08-14 (rev 10 — audit จอ Admin License:_
+_(1) modal 🎫 ใน users.html เคยส่ง accountPlan เป็น JSON ผ่าน onclick attribute —_
+_browser decode &quot; กลับเป็น " ทำให้ argument เป็น object แล้ว .replace โยน_
+_TypeError → catch ตีความว่า "ไม่มี License" ทั้งที่มี ⇒ ต่ออายุ/แก้วันหมดของเดิม_
+_ไม่ได้เลย; แก้เป็นส่ง userId แล้วอ่านจาก cache + เพิ่มกล่องอธิบายโครงสร้าง 3 ชั้น_
+_ในตัว modal. (2) "บันทึกรับเงิน manual" อนุมัติอัตโนมัติ (วิ่งเข้าเส้น approve)_
+_จึงไม่โผล่ในแท็บ "รอตรวจสอบ" ที่ค้างอยู่ — ผู้ใช้เข้าใจว่ากดแล้วไม่เกิดอะไร;_
+_แก้ให้สลับไปแท็บ "ทั้งหมด" + toast บอกเลขที่. (3) `ReviewPaymentAsync` sync_
+_โควตาจาก template ครบทุกตัวแต่ลืมธง `IsPermanentFree` — บริษัทที่เคยอยู่แพ็กเกจ_
+_ฟรีถาวรแล้วจ่ายอัปเกรด Enterprise จะติดป้าย "ไม่หมดอายุ (ฟรีถาวร)" ค้าง และงาน_
+_ตัดหมดอายุไม่เคยตัด; แก้ให้ sync ตาม template ใหม่ — แถวเก่าที่ติดค้างแล้วล้างได้_
+_ด้วยปุ่ม resync ของแต่ละแพ็กเกจในหน้า plans. เส้น cascade ต่ออายุ Subscription →_
+_AccountSubscription ตรวจแล้วถูกต้องอยู่แล้ว)_
+_· rev 9 — contact sync + /api/v1/documents +_
 _workbench (เอกสาร→PV, statement→จับคู่, ผูกรหัสผู้ติดต่อ); rev 8 — portal /connect หน้าแรกใช้งานได้; rev 7 — §9.4 บางส่วน: ApiKey ขยาย +_
 _/api/v1 ocr/bank + ด่าน scope + ผูก UsageEvent ทุก call; rev 6 — §9.3 ลงโค้ด: Metering ครบชุด_
 _(ApiFeature/CompanyFeature/ApiPricingPlan/UsageEvent + service + admin/tenant API); rev 5 — §9.1 ลงโค้ดจริงแล้ว: BillingAccount/_
