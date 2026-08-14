@@ -69,6 +69,14 @@ public class ApprovalController : ControllerBase
         return Ok(new ApiResponse<ApprovalRequestResponse>(true, result));
     }
 
+    /// <summary>สถานะคำขออนุมัติล่าสุดของเอกสารนั้น — หน้าจอใช้บอกว่า "รอใครอยู่"
+    /// และเลือกป้ายปุ่มระหว่าง "ส่งขออนุมัติ" กับ "ส่งซ้ำ/เตือน"</summary>
+    [HttpGet("for-entity")]
+    public async Task<ActionResult<ApiResponse<ApprovalRequestResponse?>>> GetForEntity(
+        Guid companyId, [FromQuery] string entityType, [FromQuery] Guid entityId)
+        => Ok(new ApiResponse<ApprovalRequestResponse?>(true,
+            await _approvalService.GetLatestForEntityAsync(companyId, entityType, entityId)));
+
     [HttpGet("pending")]
     public async Task<ActionResult<ApiResponse<List<ApprovalRequestResponse>>>> GetPending(Guid companyId)
     {
