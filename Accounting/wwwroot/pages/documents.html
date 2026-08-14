@@ -1234,6 +1234,9 @@
         try {
           const sr = await api.getSettings();
           this._vatRegistered = sr?.data?.vatRegistered !== false;
+          // เกณฑ์รับรู้ WHT — ตัดสินว่าใบเสร็จที่ตัดลูกหนี้ต้องเติมยอด gross
+          // (Cash: ใบแจ้งหนี้ตั้ง AR ไว้ gross) หรือ net (Accrual)
+          this._whtBasis = sr?.data?.whtRecognitionBasis || 'Cash';
           // แกนวิเคราะห์ เปิด/ปิดต่อบริษัท — ปิดแล้วซ่อนช่องทั้ง form + filter
           // (ฟอร์มเบาลงสำหรับบริษัทที่ไม่ใช้ ข้อมูลเดิมไม่หาย)
           this._showProject = sr?.data?.showProjectOnDocuments !== false;
@@ -2135,6 +2138,11 @@
       },
       applyVatRegistrationLock() {
         if (this._vatRegistered) return;
+        // "แปลงทั้งหมด" (batch) — เอาใบกำกับภาษีออกจากตัวเลือกด้วย ไม่งั้นเลือก
+        // เอกสารหลายใบแล้วแปลงรวดเดียว จะไปตายที่ server ทั้งชุด
+        const batchSel = document.getElementById('batchConvertTarget');
+        const batchOpt = batchSel && [...batchSel.options].find(o => o.value === 'TaxInvoice');
+        if (batchOpt) batchOpt.remove();
         const sel = document.getElementById('fDocType');
         if (!sel) return;
         // ใบกำกับภาษี เป็นเอกสาร VAT ขายโดยตรง → ปิด. ใบเพิ่ม/ลดหนี้ (ฝั่งขาย)
@@ -3660,7 +3668,10 @@
         // TaxInvoice + combinedInvoiceTaxInvoice=true เพื่อพิมพ์หัวรวม.
         const combinedRow = document.getElementById('fCombinedTaxRow');
         if (combinedRow) {
-          const canCombine = docType === 'Invoice' || docType === 'TaxInvoice';
+          // ติ๊กนี้ force ชนิดเป็น TaxInvoice ตอนบันทึก ⇒ บริษัทที่ไม่จด VAT
+          // ต้องไม่เห็นเลย (ไม่งั้นเป็นอีกทางลัดไปสู่ error ตอนอนุมัติ §90/2)
+          const canCombine = (docType === 'Invoice' || docType === 'TaxInvoice')
+            && this._vatRegistered !== false;
           combinedRow.style.display = canCombine ? 'flex' : 'none';
           if (!canCombine) {
             const cb = document.getElementById('fCombinedTaxInvoice');
@@ -4017,6 +4028,52 @@
       _receiptSourceId: null,
       _receiptSourceCache: {},
 
+      /** เอกสารต้นทางที่ผูกไว้แล้ว (ตอนแก้ไขเอกสาร) — เซ็ตใน openEdit */
+      _pinnedSourceId: null,
+      _pinnedSourceDoc: null,
+
+      /** เติมใบต้นทางที่ผูกไว้กลับเข้า dropdown หลังลิสต์โหลดเสร็จ
+       *
+       *  <p>ปัญหาเดิม 3 ชั้นซ้อนกัน ทำให้เปิดแก้ใบเสร็จที่แปลงมาจากใบแจ้งหนี้
+       *  แล้วช่องนี้โชว์ "ใบเสร็จอิสระ (ขายสด: ลงรายได้ + VAT)" ซึ่ง**บอกวิธี
+       *  ลงบัญชีผิดจากความจริง** (ใบนี้ตัดลูกหนี้ ไม่ได้ลงรายได้ใหม่):</p>
+       *  <ol>
+       *   <li>`openEdit` ไม่เคย hydrate ค่านี้จาก `relatedDocumentId` เลย</li>
+       *   <li>ตัวโหลดลิสต์กรองเฉพาะใบที่ **ยังค้างชำระ** — พอใบเสร็จถูกอนุมัติ
+       *       ใบต้นทางกลายเป็นชำระครบ จึงหายจากลิสต์ ⇒ ต่อให้ set ค่าก็ไม่มี option</li>
+       *   <li>ตัวโหลดเป็น async และล้าง select ทุกครั้ง ⇒ ค่าที่เซ็ตไว้ก่อนถูกล้าง</li>
+       *  </ol>
+       *
+       *  <p>ล็อกไว้ไม่ให้แก้ตอนแก้ไขเอกสาร เพราะ `UpdateDocumentAsync` ไม่รับ
+       *  `RelatedDocumentId` (รับเฉพาะตอนสร้าง) — เดิมเลือกเปลี่ยนได้แต่กดบันทึก
+       *  แล้วไม่มีผลอะไรเลย เงียบ ๆ ซึ่งแย่กว่าการล็อกแล้วบอกเหตุผล</p> */
+      _applyPinnedSource(sel, hintId) {
+        if (!sel) return;
+        const rid = this._pinnedSourceId;
+        if (!this.editingId || !rid) { sel.disabled = false; return; }
+        if (![...sel.options].some(o => o.value === rid)) {
+          const src = this._pinnedSourceDoc;
+          const o = document.createElement('option');
+          o.value = rid;
+          o.textContent = src
+            ? `${Layout.docTypeLabel(src.documentType)} ${src.documentNumber}`
+              + (src.documentDate ? ` (${Layout.date(src.documentDate)})` : '')
+            : 'เอกสารต้นทางที่ผูกไว้';
+          sel.appendChild(o);
+        }
+        sel.value = rid;
+        sel.disabled = true;
+        this._receiptSourceId = null;   // ไม่ส่งซ้ำตอนบันทึก (ผูกไว้แล้วในฐานข้อมูล)
+        this._cnSourceId = null;
+        const h = document.getElementById(hintId);
+        if (h) {
+          h.style.display = '';
+          h.innerHTML = '🔗 <b>ผูกกับใบต้นทางนี้ไว้แล้ว</b> — เปลี่ยนใบต้นทางที่นี่ไม่ได้ '
+            + '(การผูกเกิดตอนสร้าง/แปลงเอกสาร และมีผลกับการตัดลูกหนี้ที่ลงบัญชีไปแล้ว)'
+            + '<br>👉 <b>ต้องเปลี่ยน:</b> ยกเลิกใบนี้แล้วสร้างใหม่จากใบต้นทางที่ถูกต้อง';
+        }
+      },
+
       async _loadReceiptSourceDocs() {
         const section = document.getElementById('receiptSourceSection');
         const sel = document.getElementById('fReceiptSourceDoc');
@@ -4048,6 +4105,8 @@
             sel.appendChild(o);
           }
         } catch { /* best-effort */ }
+        // ต้องอยู่นอก try — ใบต้นทางที่ผูกไว้ต้องกลับมาแสดงแม้โหลดลิสต์ไม่สำเร็จ
+        this._applyPinnedSource(sel, 'receiptSourceHint');
       },
 
       onReceiptSourceSelect() {
@@ -4058,7 +4117,34 @@
         const d = this._receiptSourceCache[id];
         if (!d) return;
         if (h) h.style.display = '';
-        // เติมบรรทัดรับชำระ (VAT 0 — VAT รับรู้ที่ใบต้นทางแล้ว) ยอด = คงค้างทั้งใบ
+        // ── ยอดที่ต้องเติม ต้อง "ตัดลูกหนี้ให้หมด" ตามเกณฑ์รับรู้ WHT ของบริษัท ──
+        //
+        // เกณฑ์ Cash (ค่าเริ่มต้นของระบบ): ใบแจ้งหนี้ตั้งลูกหนี้ไว้แบบ **gross**
+        //   Dr AR 3,600 / Cr รายได้ 3,600   (ยังไม่แตะ 11910)
+        // ใบเสร็จจึงต้องตัด 3,600 = เงินสด 3,492 + ภาษีถูกหัก 108
+        //   → บรรทัดต้องเป็น **ยอด gross + อัตรา WHT ของใบต้นทาง**
+        // เดิมเติม "คงค้าง (net 3,492) + WHT 0%" ⇒ Cr AR แค่ 3,492
+        //   → ลูกหนี้ค้าง 108 ถาวร (แต่เอกสารขึ้นว่าชำระครบ) และ 11910 ไม่เคยถูก Dr
+        //   ⇒ เครดิตภาษีหายไป ใช้ใน ภ.ง.ด.50 ไม่ได้
+        //
+        // เกณฑ์ Accrual: ใบแจ้งหนี้ตั้ง AR แบบ net และ Dr 11910 ไปแล้วตั้งแต่ออกใบ
+        //   → ใบเสร็จตัด net เฉย ๆ WHT = 0 (พฤติกรรมเดิมถูกอยู่แล้ว)
+        const cashWhtBasis = this._whtBasis !== 'Accrual';
+        const srcWht = Number(d.withholdingTaxAmount) || 0;
+        const srcTotal = Number(d.totalAmount) || 0;
+        const netDue = Number(d.balanceDue) || 0;
+        // WHT ที่ยังไม่ถูกตัดไปกับใบเสร็จใบก่อน ๆ — คิดตามสัดส่วนที่ยังค้าง
+        // (รับบางส่วนหลายงวด ⇒ WHT ต้องเฉลี่ยตามงวด ไม่ใช่ยัดทั้งก้อนงวดแรก)
+        const ratio = srcTotal > 0 ? Math.min(1, netDue / srcTotal) : 1;
+        const whtShare = cashWhtBasis && srcWht > 0
+          ? Math.round(srcWht * ratio * 100) / 100 : 0;
+        const grossDue = Math.round((netDue + whtShare) * 100) / 100;
+        // อัตราที่กรอกลงบรรทัด — คำนวณกลับจากยอด เพื่อให้ WHT ที่ได้เท่ากับ
+        // ที่ใบต้นทางระบุไว้เป๊ะ (กันเศษสตางค์จากการปัดอัตรา)
+        const whtRate = whtShare > 0 && grossDue > 0
+          ? Math.round(whtShare / grossDue * 10000) / 100 : 0;
+
+        // เติมบรรทัดรับชำระ (VAT 0 — VAT รับรู้ที่ใบต้นทางแล้ว)
         // แก้เป็นบางส่วนได้ (server กันเกินคงค้างตอนอนุมัติ) — ใช้โมเดล DOM
         // เดียวกับ OCR fill (linesBody + addLine + data-f)
         document.getElementById('linesBody').innerHTML = '';
@@ -4069,13 +4155,23 @@
         if (descEl) { descEl.value = `รับชำระเงินตาม${Layout.docTypeLabel(d.documentType)}เลขที่ ${d.documentNumber}`; descEl.__grow?.(); }
         const qtyEl = row.querySelector('[data-f="qty"]'); if (qtyEl) qtyEl.value = 1;
         const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = 'รายการ';
-        const priceEl = row.querySelector('[data-f="price"]'); if (priceEl) priceEl.value = Number(d.balanceDue) || 0;
+        const priceEl = row.querySelector('[data-f="price"]'); if (priceEl) priceEl.value = grossDue;
         const vatSel = row.querySelector('[data-f="vat"]'); if (vatSel) vatSel.value = '0';
-        const whtEl = row.querySelector('[data-f="wht"]'); if (whtEl) whtEl.value = 0;
+        const whtEl = row.querySelector('[data-f="wht"]'); if (whtEl) whtEl.value = whtRate;
         this.calcSum?.();
         const refEl = document.getElementById('fRef');
         if (refEl && !refEl.value) refEl.value = d.documentNumber;
-        Layout.toast(`ผูกกับ ${d.documentNumber} แล้ว — อนุมัติใบเสร็จ = ตัดลูกหนี้ (แก้ยอดเพื่อรับบางส่วนได้)`, 'info', 6000);
+        if (whtShare > 0 && h) {
+          h.innerHTML = `✅ ผูกกับ <b>${Layout.esc(d.documentNumber)}</b> — ใบนี้จะ <b>ตัดลูกหนี้ ${Layout.money(grossDue)}</b> `
+            + `(เงินรับจริง ${Layout.money(grossDue - whtShare)} + ภาษีถูกหัก ณ ที่จ่าย ${Layout.money(whtShare)})`
+            + `<br>👉 ลูกค้าต้องออก <b>หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)</b> ให้ — เก็บไว้ใช้เครดิตใน ภ.ง.ด.50 `
+            + `(ระบบบันทึกเข้าทะเบียนให้อัตโนมัติเมื่ออนุมัติ)`;
+        }
+        Layout.toast(
+          whtShare > 0
+            ? `ผูกกับ ${d.documentNumber} แล้ว — ตัดลูกหนี้ ${Layout.money(grossDue)} (รับจริง ${Layout.money(grossDue - whtShare)} + ถูกหัก ${Layout.money(whtShare)})`
+            : `ผูกกับ ${d.documentNumber} แล้ว — อนุมัติใบเสร็จ = ตัดลูกหนี้ (แก้ยอดเพื่อรับบางส่วนได้)`,
+          'info', 7000);
       },
 
       // ===== ใบลดหนี้/ใบเพิ่มหนี้: เลือกใบกำกับ/เอกสารต้นฉบับ (§86/9-10) =====
@@ -4158,6 +4254,8 @@
             sel.appendChild(o);
           }
         } catch { /* best-effort */ }
+        // ต้องอยู่นอก try — ใบต้นทางที่ผูกไว้ต้องกลับมาแสดงแม้โหลดลิสต์ไม่สำเร็จ
+        this._applyPinnedSource(sel, 'cnSourceHint');
       },
 
       /** ฝั่งภาษีที่ผู้ใช้เลือกไว้บนฟอร์ม (true = ฝั่งซื้อ) */
@@ -4174,7 +4272,9 @@
       _refreshCnSideEditability() {
         const box = document.getElementById('cnSideBox');
         if (!box) return;
-        const locked = !!this._cnSourceId;   // เลือกใบต้นทางในระบบไว้แล้ว
+        // ล็อกเมื่อ "มีใบต้นทาง" — ทั้งที่เพิ่งเลือกในฟอร์ม และที่ผูกไว้แล้วในฐาน
+        // ข้อมูล (ตอนแก้ไขเอกสาร) ฝั่งต้องตามใบต้นทางเสมอ เลือกเองไม่ได้
+        const locked = !!(this._cnSourceId || (this.editingId && this._pinnedSourceId));
         box.querySelectorAll('input[name="fCnSide"]').forEach(r => { r.disabled = locked; });
         box.style.opacity = locked ? '.75' : '';
         const title = box.querySelector('div');
@@ -5414,6 +5514,9 @@
         // ตามมาเติมในเอกสารใบใหม่ที่ยังไม่ได้เลือกคู่ค้า
         this._creditTermsContact = null;
         this._fullContactCache = null;
+        // ใบต้นทางที่ปักหมุดไว้ตอนแก้ไขใบก่อนหน้า — ต้องไม่ตามมาที่ใบใหม่
+        this._pinnedSourceId = null;
+        this._pinnedSourceDoc = null;
         const isExpense = side === 'expense';
         document.querySelector('#formModal .modal-title').textContent = isExpense ? 'สร้างเอกสารรายจ่าย' : 'สร้างเอกสารรายรับ';
         // Tag the line table so ProductLookup knows whether to fill selling
@@ -5637,6 +5740,11 @@
           const res = await api.getDocument(id);
           const d = res.data;
           this.editingId = id;
+          // ปักหมุด "ใบต้นทาง" ที่ผูกไว้ **ก่อน** ตัวโหลดลิสต์ตัวไหนจะเริ่มทำงาน
+          // (setValue ผู้ติดต่อ → onContactChange → _loadReceiptSourceDocs เป็น
+          //  async และล้าง select ทิ้งทุกครั้ง — เซ็ตค่าไว้เฉย ๆ จะถูกล้าง)
+          this._pinnedSourceId = d.relatedDocumentId || null;
+          this._pinnedSourceDoc = d.relatedDocument || null;
           Layout.closeModal('detailModal');
           document.querySelector('#formModal .modal-title').textContent = 'แก้ไขเอกสาร';
           document.getElementById('fDocType').value = d.documentType;
@@ -8437,6 +8545,10 @@
             if (Array.isArray(res.data)) allowed = res.data;
           }
         } catch { /* keep the offline fallback */ }
+        // §90/2 — บริษัทไม่จด VAT ออกใบกำกับภาษีไม่ได้ (server กรองให้แล้วและ
+        // บล็อกตอนแปลงจริงอีกชั้น; อันนี้กันเคส fallback offline/backend เก่า
+        // ไม่ให้โชว์ตัวเลือกที่กดแล้วต้องเจอ error)
+        if (this._vatRegistered === false) allowed = allowed.filter(t => t !== 'TaxInvoice');
 
         let firstVisible = null;
         Array.from(select.options).forEach(opt => {

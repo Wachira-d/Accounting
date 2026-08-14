@@ -63,6 +63,11 @@ public class SettingsService : ISettingsService
         if (request.EnforceManagerApproval.HasValue) settings.EnforceManagerApproval = request.EnforceManagerApproval.Value;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
         if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
+        // เกณฑ์รับรู้ WHT — เปลี่ยนแล้วมีผลกับ JE ของ "เอกสารที่อนุมัติหลังจากนี้"
+        // เท่านั้น (ใบเก่าที่ post ไปแล้วไม่ถูกแก้ย้อนหลัง — ถ้าจะย้ายเกณฑ์กลางปี
+        // ต้องกลับรายการใบเก่าเอง) จึงไม่ทำ migration อัตโนมัติที่นี่
+        if (request.WhtRecognitionBasis.HasValue)
+            settings.WhtRecognitionBasis = request.WhtRecognitionBasis.Value;
         // Sync กลับไปที่ Company.IsVatRegistered/VatRate — flag คู่ที่ POS/
         // ECommerce/AI อ่าน ต้องตรงกับ CompanySettings เสมอ (ดูหมายเหตุใน
         // CompanyService.UpdateCompany) มิฉะนั้นบางช่องทางคิด VAT บางช่องบล็อก
@@ -526,7 +531,7 @@ public class SettingsService : ISettingsService
         // Email
         s.EmailFromName, s.EmailReplyTo, s.InvoiceEmailSubject, s.InvoiceEmailBody,
         // Tax
-        s.DefaultVatRate, s.VatRegistered, s.VatRegistrationDate,
+        s.DefaultVatRate, s.VatRegistered, s.VatRegistrationDate, s.WhtRecognitionBasis,
         // Security
         s.RequireApprovalForDocuments, s.ApprovalThresholdAmount,
         s.EnableApiAccess, s.MaxApiKeys,

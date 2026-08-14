@@ -160,6 +160,10 @@ public interface IDocumentService
     Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId,
         bool forceOverrideRetention, string? overrideReason);
     Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy);
+
+    /// <summary>ชนิดปลายทางที่แปลงได้จริงสำหรับบริษัทนี้ — กรองชนิดที่ติดข้อจำกัด
+    /// ระดับบริษัทออกแล้ว (ใบกำกับภาษีเมื่อยังไม่จด VAT §90/2)</summary>
+    Task<IReadOnlyList<DocumentType>> GetValidConversionTargetsAsync(Guid companyId, DocumentType source);
     /// <summary>แปลงเอกสารบางส่วน — เลือกเฉพาะบางรายการ/บางจำนวน (เช่น แยก PO เดียวเป็นหลายใบส่งของ/หลาย Invoice)</summary>
     Task<DocumentResponse> ConvertDocumentPartialAsync(Guid companyId, Guid documentId, DocumentType targetType, PartialConvertRequest request, string createdBy);
     /// <summary>สถานะการแปลง/ส่งมอบรายบรรทัด — จำนวนสั่ง/ส่งแล้ว/วางบิลแล้ว/คงเหลือ</summary>

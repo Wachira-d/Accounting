@@ -45,6 +45,69 @@ public class WhtCreditService
 
     // ═══════════ อ่าน ═══════════
 
+    /// <summary>ใบต้นทางที่ "ปิดยอดแล้ว แต่ WHT ที่บันทึกไว้ไม่ครบ" — ตรวจย้อนหลัง
+    ///
+    /// <para>เกิดจากใบเสร็จที่ตัดลูกหนี้ด้วย <b>ยอดเงินที่รับจริง</b> (net) แทน
+    /// <b>ยอด gross</b> ใต้เกณฑ์ Cash ⇒ Cr AR ขาดไปเท่ากับ WHT ⇒ ลูกหนี้ค้างใน GL
+    /// ทั้งที่เอกสารขึ้นว่าชำระครบ และเครดิตภาษี (11910) ไม่เคยถูกบันทึก
+    /// ⇒ ใช้ใน ภ.ง.ด.50 ไม่ได้. ตอนนี้มี guard กันตอนอนุมัติแล้ว แต่ใบที่ออกไป
+    /// ก่อนหน้าต้องตามเก็บเอง — ตัวนี้ไว้หาว่ามีใบไหนบ้าง</para></summary>
+    public record StrandedArRow(Guid DocumentId, string DocumentNumber, DateTime DocumentDate,
+        string ContactName, decimal SourceWht, decimal RecordedWht, decimal StrandedAr);
+
+    public async Task<List<StrandedArRow>> FindStrandedArFromMissingWhtAsync(Guid companyId)
+    {
+        var basis = await _db.CompanySettings.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => (WhtRecognitionBasis?)c.WhtRecognitionBasis)
+            .FirstOrDefaultAsync() ?? WhtRecognitionBasis.Cash;
+        // เกณฑ์ Accrual ตั้ง AR ไว้ net อยู่แล้ว — ไม่มีเคสนี้
+        if (basis != WhtRecognitionBasis.Cash) return new List<StrandedArRow>();
+
+        var settled = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.WithholdingTaxAmount > 0m
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.DebitNote)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Rejected
+                && d.PaidAmount >= d.TotalAmount - 0.01m)
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.WithholdingTaxAmount,
+                ContactName = d.Contact != null ? d.Contact.Name : "" })
+            .ToListAsync();
+        if (settled.Count == 0) return new List<StrandedArRow>();
+
+        var ids = settled.Select(x => x.Id).ToList();
+        var settleTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+        var viaDocs = (await _db.Documents.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                && r.RelatedDocumentId != null && ids.Contains(r.RelatedDocumentId.Value)
+                && settleTypes.Contains(r.DocumentType)
+                && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
+                && r.Status != DocumentStatus.Rejected)
+            .GroupBy(r => r.RelatedDocumentId!.Value)
+            .Select(g => new { Id = g.Key, Wht = g.Sum(x => x.WithholdingTaxAmount) })
+            .ToListAsync()).ToDictionary(x => x.Id, x => x.Wht);
+        var viaPays = (await _db.Payments.AsNoTracking()
+            .Where(p => !p.IsDeleted && ids.Contains(p.DocumentId))
+            .GroupBy(p => p.DocumentId)
+            .Select(g => new { Id = g.Key, Wht = g.Sum(x => x.WithholdingTaxAmount) })
+            .ToListAsync()).ToDictionary(x => x.Id, x => x.Wht);
+
+        var rows = new List<StrandedArRow>();
+        foreach (var d in settled)
+        {
+            var recorded = (viaDocs.TryGetValue(d.Id, out var a) ? a : 0m)
+                         + (viaPays.TryGetValue(d.Id, out var b) ? b : 0m);
+            var stranded = Math.Round(d.WithholdingTaxAmount - recorded, 2);
+            if (stranded > 0.01m)
+                rows.Add(new StrandedArRow(d.Id, d.DocumentNumber, d.DocumentDate,
+                    d.ContactName, d.WithholdingTaxAmount, recorded, stranded));
+        }
+        return rows.OrderByDescending(r => r.StrandedAr).ToList();
+    }
+
     public async Task<List<WhtCreditRow>> ListAsync(Guid companyId, int? taxYear, WhtCreditStatus? status)
     {
         var q = _db.WhtCreditsReceived.AsNoTracking().Where(w => w.CompanyId == companyId);

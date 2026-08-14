@@ -527,23 +527,28 @@
       // Open the per-document editor for ONE document type. Edits the type's
       // default template, creating one first if it doesn't exist yet.
       async openEditorForType(docType) {
-        let tpl = this._defaultTemplateFor(docType);
-        if (!tpl) {
-          try {
-            const cid = Layout.getCompanyId();
-            const body = { name: `${this._typeLabel(docType)} — เริ่มต้น`, documentType: docType, isDefault: true, isActive: true };
-            const r = await API.post(`/api/companies/${cid}/document-templates`, body);
-            tpl = r.data;
-            this.templates.push(tpl);
-          } catch (e) { Layout.toast('สร้างเทมเพลตไม่สำเร็จ: ' + e.message, 'error'); return; }
-        }
-        // list endpoint ส่งแค่ field ย่อ — ดึงตัวเต็มก่อนเติมฟอร์ม ไม่งั้น
-        // watermark/ตำแหน่งป้าย/ค่าอื่นโหลดว่างแล้วโดนบันทึกทับ
+        // ⚠️ ต้องถาม **server** ว่าเทมเพลตเริ่มต้นของชนิดนี้คือใบไหน ห้ามเดาเอง
+        //
+        // ฝั่ง server (`GetDefaultTemplateAsync`) ใช้กติกา `IsDefault && IsActive`
+        // แล้วสร้างให้ถ้าไม่มี — ใบนั้นคือใบที่ปุ่ม "⚡ ตั้งค่าเริ่มต้น" ในหน้าสร้าง
+        // เอกสารเขียนลง และเป็นใบที่ PDF ใช้จริง. ส่วนหน้านี้เคยเดาเองด้วย
+        // `list.find(isDefault) || list[0]` ซึ่ง **ไม่ดู isActive และตกมาที่ใบแรก**
+        // ⇒ ถ้าเทมเพลตเริ่มต้นถูกปิดใช้งาน (หรือยังไม่มีเลย) สองฝั่งจะไปคนละใบ:
+        // ผู้ใช้กดตั้งค่าเงื่อนไขชำระเงินจากหน้าสร้างเอกสาร แล้วมาเปิดหน้านี้
+        // กลับไม่เห็นค่าที่เพิ่งตั้ง เพราะกำลังแก้คนละใบกัน
+        let tpl = null;
         try {
-          const cid2 = Layout.getCompanyId();
-          const full = await API.get(`/api/companies/${cid2}/document-templates/${tpl.id}`);
-          if (full.data) tpl = full.data;
-        } catch (e) { /* ใช้ตัวย่อไปก่อน */ }
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/document-templates/default/${docType}`);
+          tpl = r?.data || null;
+          if (tpl) {
+            // endpoint นี้สร้างใบใหม่ให้ได้ → sync ลิสต์ในหน้าให้ตรงความจริง
+            const i = (this.templates || []).findIndex(t => t.id === tpl.id);
+            if (i >= 0) this.templates[i] = { ...this.templates[i], ...tpl };
+            else this.templates.push(tpl);
+          }
+        } catch (e) { Layout.toast('เปิดเทมเพลตไม่สำเร็จ: ' + e.message, 'error'); return; }
+        if (!tpl) { Layout.toast('เปิดเทมเพลตไม่สำเร็จ', 'error'); return; }
         this.current = tpl;
         this._fillForm(tpl);
         document.getElementById('tplDocType').value = docType;
@@ -556,9 +561,16 @@
         await this.refreshPreview();
       },
 
+      /** เทมเพลตเริ่มต้นของชนิดนี้ (ใช้โชว์การ์ด/พรีวิวในหน้ารวมเท่านั้น)
+       *
+       *  ต้องใช้กติกาเดียวกับ `DocumentTemplateService.GetDefaultTemplateAsync`
+       *  คือ **isDefault && isActive** — เดิมไม่ดู isActive และตกมาที่ `list[0]`
+       *  ทำให้การ์ดพรีวิวชี้คนละใบกับที่ PDF/ปุ่มตั้งค่าใช้จริง
+       *  (คืน null เมื่อไม่มีจริง ๆ — ตอนกดเปิด `openEditorForType` จะให้ server
+       *   สร้างให้ ไม่ใช่เดาเอาใบอื่นมาแก้) */
       _defaultTemplateFor(docType) {
-        const list = (this.templates || []).filter(t => t.documentType === docType);
-        return list.find(t => t.isDefault) || list[0] || null;
+        return (this.templates || []).find(
+          t => t.documentType === docType && t.isDefault && t.isActive !== false) || null;
       },
 
       _selectSampleForType(docType) {
@@ -1034,8 +1046,11 @@
           showBankDetails: getCheck('showBankDetails'),
           bankDetailsText: get('bankDetailsText') || null,
           defaultPaymentAccountId: get('defaultPaymentAccountId') || null,
-          defaultPaymentTerms: get('defaultPaymentTerms') || null,
-          defaultCreditDays: Number(get('defaultCreditDays')) || null,
+          // ส่ง "" / 0 (ไม่ใช่ null) ตอนช่องว่าง — server ใช้ convention
+          // "null = ไม่ได้ส่งมา คงค่าเดิม" ⇒ ส่ง null จะ **ล้างค่าไม่ได้เลย**
+          // (ลบข้อความทิ้งแล้วกดบันทึก ค่าเก่ายังอยู่ กลับมาดูเหมือนไม่ได้บันทึก)
+          defaultPaymentTerms: get('defaultPaymentTerms'),
+          defaultCreditDays: Number(get('defaultCreditDays')) || 0,
           paperSize: get('paperSize'),
           orientation: get('orientation'),
           marginTop: getNum('marginTop'),

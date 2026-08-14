@@ -723,7 +723,9 @@ public class DocumentController : ControllerBase
         if (docType == null)
             return NotFound(new ApiResponse<List<DocumentType>>(false, null, "ไม่พบเอกสาร"));
 
-        var targets = DocumentService.GetValidConversionTargets(docType.Value).ToList();
+        // กรองตามข้อจำกัดของบริษัทด้วย (ไม่จด VAT → ไม่มี "ใบกำกับภาษี" ให้เลือก)
+        // — กล่องแปลงเอกสารอ่านรายการนี้ จึงไม่โชว์ตัวเลือกที่กดแล้วต้องเจอ error
+        var targets = (await _documentService.GetValidConversionTargetsAsync(companyId, docType.Value)).ToList();
         return Ok(new ApiResponse<List<DocumentType>>(true, targets));
     }
 
