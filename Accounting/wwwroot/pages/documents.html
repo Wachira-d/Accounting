@@ -357,6 +357,72 @@
             </div>
           </div>
 
+          <!-- ส่วน "หัวใจของชนิดเอกสาร" อยู่ติดกับกล่องอ้างอิง — เหตุผลใบลดหนี้
+               (§86/10) ต้องตัดสินใจทันทีหลังเลือกใบต้นทาง (คืนสินค้า = กระทบสต๊อก)
+               และข้อมูลใบรับรองแทนใบเสร็จคือสาระหลักของใบนั้น ไม่ใช่ของแถมท้ายฟอร์ม -->
+          <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
+               Only "คืนสินค้า" restocks; the other 3 reasons are pure
+               financial adjustments with no stock impact. -->
+          <div id="creditNoteReasonSection" style="display:none;margin-bottom:12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <div style="font-weight:600;color:#991b1b;font-size:13px">เหตุผลการออกใบลดหนี้ *</div>
+              <!-- 🤖 AI ขอความเห็นเลือก CN reason. ปรากฏเฉพาะตอนกำลังแก้
+                   CN ที่มีอยู่ (มี id) — สำหรับ CN ใหม่ที่ยังไม่ save ปุ่มจะ
+                   no-op เพราะ AI ต้องอ่าน lines + original invoice. -->
+              <button type="button" id="cnReasonAiBtn" class="btn-ai" onclick="Page.askAiCnReason(event)">
+                🤖 ให้ AI ช่วย
+              </button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Return" style="margin-top:3px">
+                <span><strong>คืนสินค้า (Return)</strong> — ลูกค้าส่งสินค้าคืน <span style="color:#dc2626">→ สต๊อกจะถูกเพิ่มกลับ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Discount" style="margin-top:3px">
+                <span><strong>ส่วนลด / ลดราคา (Discount)</strong> — ลดยอด VAT ขาย <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Adjustment" style="margin-top:3px">
+                <span><strong>ปรับยอด (Adjustment)</strong> — ค่าสินค้าน้อยกว่าที่ตกลง <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="fCreditNoteReason" value="Writeoff" style="margin-top:3px">
+                <span><strong>ตัดยอด / ตัดหนี้สูญบางส่วน (Writeoff)</strong> <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
+              </label>
+            </div>
+          </div>
+
+          <!-- CertificateInLieu-specific fields -->
+          <div id="certInLieuSection" style="display:none;margin-bottom:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:12px">
+            <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
+            <!-- เหตุผล (ยาว) + วันที่ (สั้น) → 2-1 ratio แทน flex:2 inline -->
+            <div class="form-row-2-1">
+              <div class="form-group"><label class="form-label">เหตุผลที่ไม่ได้รับใบเสร็จ <span class="req">*</span></label>
+                <input type="text" class="form-input" id="fCertReason" placeholder="เช่น ผู้ขายไม่สามารถออกใบเสร็จได้ / จ่ายค่าเดินทางให้บุคคลภายนอก">
+              </div>
+              <div class="form-group"><label class="form-label">วันที่จ่ายเงิน</label>
+                <input type="date" class="form-input" id="fPaymentDate">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ชื่อผู้รับรอง <span class="req">*</span></label>
+                <input type="text" class="form-input" id="fCertifierName" placeholder="ชื่อ-นามสกุล">
+              </div>
+              <div class="form-group"><label class="form-label">ตำแหน่งผู้รับรอง</label>
+                <input type="text" class="form-input" id="fCertifierPosition" placeholder="เช่น ผู้จัดการฝ่ายบัญชี">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ชื่อพยาน</label>
+                <input type="text" class="form-input" id="fWitnessName" placeholder="ชื่อ-นามสกุล (ถ้ามี)">
+              </div>
+              <div class="form-group"><label class="form-label">ตำแหน่งพยาน</label>
+                <input type="text" class="form-input" id="fWitnessPosition" placeholder="เช่น พนักงานบัญชี">
+              </div>
+            </div>
+          </div>
+
           <div class="form-row">
             <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
             <!-- ป้าย + การแสดงของช่องนี้เปลี่ยนตามชนิดเอกสาร (_docFieldProfile):
@@ -570,69 +636,6 @@
                 </div>
               </div>
             </label>
-          </div>
-
-          <!-- CreditNote-specific fields — required per ประมวลรัษฎากร §82/10.
-               Only "คืนสินค้า" restocks; the other 3 reasons are pure
-               financial adjustments with no stock impact. -->
-          <div id="creditNoteReasonSection" style="display:none;margin-bottom:12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <div style="font-weight:600;color:#991b1b;font-size:13px">เหตุผลการออกใบลดหนี้ *</div>
-              <!-- 🤖 AI ขอความเห็นเลือก CN reason. ปรากฏเฉพาะตอนกำลังแก้
-                   CN ที่มีอยู่ (มี id) — สำหรับ CN ใหม่ที่ยังไม่ save ปุ่มจะ
-                   no-op เพราะ AI ต้องอ่าน lines + original invoice. -->
-              <button type="button" id="cnReasonAiBtn" class="btn-ai" onclick="Page.askAiCnReason(event)">
-                🤖 ให้ AI ช่วย
-              </button>
-            </div>
-            <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
-              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
-                <input type="radio" name="fCreditNoteReason" value="Return" style="margin-top:3px">
-                <span><strong>คืนสินค้า (Return)</strong> — ลูกค้าส่งสินค้าคืน <span style="color:#dc2626">→ สต๊อกจะถูกเพิ่มกลับ</span></span>
-              </label>
-              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
-                <input type="radio" name="fCreditNoteReason" value="Discount" style="margin-top:3px">
-                <span><strong>ส่วนลด / ลดราคา (Discount)</strong> — ลดยอด VAT ขาย <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
-              </label>
-              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
-                <input type="radio" name="fCreditNoteReason" value="Adjustment" style="margin-top:3px">
-                <span><strong>ปรับยอด (Adjustment)</strong> — ค่าสินค้าน้อยกว่าที่ตกลง <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
-              </label>
-              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
-                <input type="radio" name="fCreditNoteReason" value="Writeoff" style="margin-top:3px">
-                <span><strong>ตัดยอด / ตัดหนี้สูญบางส่วน (Writeoff)</strong> <span style="color:#64748b">สต๊อกไม่กระทบ</span></span>
-              </label>
-            </div>
-          </div>
-
-          <!-- CertificateInLieu-specific fields -->
-          <div id="certInLieuSection" style="display:none;margin-bottom:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:12px">
-            <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
-            <!-- เหตุผล (ยาว) + วันที่ (สั้น) → 2-1 ratio แทน flex:2 inline -->
-            <div class="form-row-2-1">
-              <div class="form-group"><label class="form-label">เหตุผลที่ไม่ได้รับใบเสร็จ <span class="req">*</span></label>
-                <input type="text" class="form-input" id="fCertReason" placeholder="เช่น ผู้ขายไม่สามารถออกใบเสร็จได้ / จ่ายค่าเดินทางให้บุคคลภายนอก">
-              </div>
-              <div class="form-group"><label class="form-label">วันที่จ่ายเงิน</label>
-                <input type="date" class="form-input" id="fPaymentDate">
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label class="form-label">ชื่อผู้รับรอง <span class="req">*</span></label>
-                <input type="text" class="form-input" id="fCertifierName" placeholder="ชื่อ-นามสกุล">
-              </div>
-              <div class="form-group"><label class="form-label">ตำแหน่งผู้รับรอง</label>
-                <input type="text" class="form-input" id="fCertifierPosition" placeholder="เช่น ผู้จัดการฝ่ายบัญชี">
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label class="form-label">ชื่อพยาน</label>
-                <input type="text" class="form-input" id="fWitnessName" placeholder="ชื่อ-นามสกุล (ถ้ามี)">
-              </div>
-              <div class="form-group"><label class="form-label">ตำแหน่งพยาน</label>
-                <input type="text" class="form-input" id="fWitnessPosition" placeholder="เช่น พนักงานบัญชี">
-              </div>
-            </div>
           </div>
 
           <details class="advanced-only" style="margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
@@ -3307,16 +3310,17 @@
           this._refreshPaymentTermsSetupHint(docType);
           if (!t) return;
 
+          // ชนิดที่ไม่มีช่องนั้น ๆ — ห้ามเติม default (fetch เป็น async: ช่องถูก
+          // ซ่อน+ล้างไปแล้ว การเติมทีหลังจะยัดค่าลงช่องที่มองไม่เห็น แล้วรั่ว
+          // เข้า payload ตอนบันทึก)
+          const prof = this._docFieldProfile(docType);
           const pay = document.getElementById('fPaymentChannel');
-          if (t.defaultPaymentAccountId && pay && !pay.value) {
+          if (prof.pay && t.defaultPaymentAccountId && pay && !pay.value) {
             // เลือกได้เฉพาะเมื่อ option มีจริง (ผังอาจถูกปิดใช้งานไปแล้ว)
             const opt = [...pay.options].find(o => o.value === t.defaultPaymentAccountId);
             if (opt) { pay.value = t.defaultPaymentAccountId; pay.dispatchEvent(new Event('change')); }
           }
-          // ชนิดที่ไม่มีช่องเครดิต/เงื่อนไข (ใบลดหนี้ ฯลฯ) — ห้ามเติม default
-          // (fetch เป็น async: ช่องถูกซ่อน+ล้างไปแล้ว การเติมทีหลังจะยัดค่า
-          // ลงช่องที่มองไม่เห็น แล้วรั่วเข้า payload ตอนบันทึก)
-          if (!this._docFieldProfile(docType).credit) return;
+          if (!prof.credit) return;
           const terms = document.getElementById('fPaymentTerms');
           if (t.defaultPaymentTerms && terms && !terms.value && !terms.dataset.userTouched) {
             this.renderPaymentTerms(t.defaultPaymentTerms, 'template');
@@ -3347,6 +3351,10 @@
        *              (เครดิตของมันคือ dropdown ประเภทการจ่าย ไม่ใช่เทอม)
        *   • booking — เลขจองใช้ผูกสายเอกสารฝั่งขาย (มัดจำ→ใบสุดท้าย→ใบเสร็จ);
        *              CN/DN ผูกผ่านใบต้นทาง (§86/9-10) อยู่แล้ว, ฝั่งซื้อไม่มี booking
+       *   • pay    — "แหล่งเงิน / ช่องทางชำระ": เฉพาะใบที่มีเงินเคลื่อน (หรือจะ
+       *              เคลื่อนจากใบนี้ตรง ๆ เช่น Invoice + ติ๊กจ่ายแล้ว). เอกสาร
+       *              pre-revenue/ภายใน (ใบเสนอราคา/PR/PO/ใบส่งของ/ใบวางบิล)
+       *              ไม่มีเงินเข้าออก — โชว์ไป = ชวนตั้งค่าที่ไม่มีผลอะไร
        * ค่าที่ซ่อน = ถูกล้างทิ้งด้วย (กันค่าค้างจากชนิดก่อนหน้ารั่วเข้า payload —
        * เคสจริง: เปิดฟอร์ม Invoice เครดิต 30 → สลับเป็นใบลดหนี้ → 30 ติดไปด้วย)
        */
@@ -3354,26 +3362,27 @@
         const DUE_PAY = 'วันครบกำหนดชำระ', DUE_PAY_HELP = 'วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ · ว่าง = ระบบคำนวณจาก วันที่เอกสาร + วันเครดิต';
         const DUE_AP = 'วันครบกำหนดจ่าย', DUE_AP_HELP = 'วันที่เราต้องจ่ายผู้ขาย — ตามเครดิตที่ผู้ขายให้ ใช้เรียงคิวจ่ายเงิน';
         const map = {
-          Quotation: { due: 'ยืนราคาถึงวันที่', dueHelp: 'ราคาที่เสนอมีผลถึงวันไหน — เลยวันนี้แล้วต้องยืนยันราคาใหม่ก่อนตกลง', credit: true, booking: true },
-          Invoice: { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true },
-          TaxInvoice: { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true },
-          BillingNote: { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true },
-          DebitNote: { due: DUE_PAY, dueHelp: 'วันครบกำหนดของยอดที่เรียกเก็บเพิ่ม — ตั้งเทอมของส่วนเพิ่มนี้เองได้', credit: true, booking: false },
+          Quotation: { due: 'ยืนราคาถึงวันที่', dueHelp: 'ราคาที่เสนอมีผลถึงวันไหน — เลยวันนี้แล้วต้องยืนยันราคาใหม่ก่อนตกลง', credit: true, booking: true, pay: false },
+          Invoice: { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true, pay: true },
+          TaxInvoice: { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true, pay: true },
+          BillingNote: { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true, pay: false },
+          DebitNote: { due: DUE_PAY, dueHelp: 'วันครบกำหนดของยอดที่เรียกเก็บเพิ่ม — ตั้งเทอมของส่วนเพิ่มนี้เองได้', credit: true, booking: false, pay: true },
           // ใบลดหนี้ = ลดยอดหนี้ของใบเดิม — ไม่มีเครดิตใหม่ ไม่มีวันครบกำหนดของตัวเอง
-          CreditNote: { due: false, credit: false, booking: false },
-          Receipt: { due: false, credit: false, booking: true },
-          ReceiptVoucher: { due: false, credit: false, booking: true },
-          Deposit: { due: false, credit: false, booking: true },
-          DeliveryNote: { due: false, credit: false, booking: true },
-          PurchaseRequisition: { due: 'วันที่ต้องการรับของ', dueHelp: 'ของต้องถึงเมื่อไร — ให้ฝ่ายจัดซื้อใช้เร่ง/เรียงลำดับการสั่ง', credit: false, booking: false },
-          PurchaseOrder: { due: 'กำหนดส่งมอบ', dueHelp: 'วันที่ผู้ขายต้องส่งของถึงเรา — พิมพ์บน PO เป็นเงื่อนไขการสั่ง', credit: true, booking: false },
-          PurchaseInvoice: { due: DUE_AP, dueHelp: DUE_AP_HELP, credit: true, booking: false },
-          Expense: { due: DUE_AP, dueHelp: DUE_AP_HELP, credit: true, booking: false },
+          // (pay คงไว้: เงินคืนควรออกช่องทางเดิมของใบต้นทาง — ถูกเติมอัตโนมัติ)
+          CreditNote: { due: false, credit: false, booking: false, pay: true },
+          Receipt: { due: false, credit: false, booking: true, pay: true },
+          ReceiptVoucher: { due: false, credit: false, booking: true, pay: true },
+          Deposit: { due: false, credit: false, booking: true, pay: true },
+          DeliveryNote: { due: false, credit: false, booking: true, pay: false },
+          PurchaseRequisition: { due: 'วันที่ต้องการรับของ', dueHelp: 'ของต้องถึงเมื่อไร — ให้ฝ่ายจัดซื้อใช้เร่ง/เรียงลำดับการสั่ง', credit: false, booking: false, pay: false },
+          PurchaseOrder: { due: 'กำหนดส่งมอบ', dueHelp: 'วันที่ผู้ขายต้องส่งของถึงเรา — พิมพ์บน PO เป็นเงื่อนไขการสั่ง', credit: true, booking: false, pay: false },
+          PurchaseInvoice: { due: DUE_AP, dueHelp: DUE_AP_HELP, credit: true, booking: false, pay: true },
+          Expense: { due: DUE_AP, dueHelp: DUE_AP_HELP, credit: true, booking: false, pay: true },
           // PV: การแสดงช่องวันครบกำหนดจ่าย คุมโดย onPaymentTypeChange (Cash = ซ่อน)
-          PaymentVoucher: { due: DUE_AP, dueHelp: DUE_AP_HELP, credit: false, booking: false },
-          CertificateInLieu: { due: false, credit: false, booking: false },
+          PaymentVoucher: { due: DUE_AP, dueHelp: DUE_AP_HELP, credit: false, booking: false, pay: true },
+          CertificateInLieu: { due: false, credit: false, booking: false, pay: true },
         };
-        return map[docType] || { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true };
+        return map[docType] || { due: DUE_PAY, dueHelp: DUE_PAY_HELP, credit: true, booking: true, pay: true };
       },
 
       /** ปรับฟอร์มตามโปรไฟล์ชนิดเอกสาร — ซ่อน/โชว์ + เปลี่ยนป้าย + ล้างค่าที่ซ่อน */
@@ -3412,6 +3421,12 @@
             if (bk) bk.value = '';
           }
         }
+        const payEl = document.getElementById('fPaymentChannel');
+        const payGroup = payEl?.closest('.form-group');
+        if (payGroup) {
+          payGroup.style.display = prof.pay ? '' : 'none';
+          if (!prof.pay && payEl) payEl.value = '';
+        }
       },
 
       onDocTypeChange() {
@@ -3442,10 +3457,11 @@
         const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
         const ecField = document.getElementById('fExpenseCategory')?.closest('.form-group');
         if (ecField) ecField.style.display = expenseTypes.includes(docType) ? '' : 'none';
-        // Supplier-side tax invoice metadata — only PI / Expense / CertInLieu
-        // (where partner issues source invoice). Hidden on PO / PR / PV
-        // since those don't carry a supplier's tax invoice number.
-        const supplierIssuedTypes = ['PurchaseInvoice', 'Expense', 'CertificateInLieu'];
+        // Supplier-side tax invoice metadata — only PI / Expense (where the
+        // partner issues a source invoice). Hidden on PO / PR / PV — and on
+        // CertInLieu ด้วย: ใบรับรองแทนใบเสร็จใช้เมื่อผู้ขาย "ออกใบเสร็จไม่ได้"
+        // — ไม่มีเลขใบกำกับผู้ขายให้กรอกโดยนิยาม (เดิมโชว์ช่องนี้ = ชวนให้งง)
+        const supplierIssuedTypes = ['PurchaseInvoice', 'Expense'];
         document.querySelectorAll('.supplier-invoice-only').forEach(el => {
           el.style.display = supplierIssuedTypes.includes(docType) ? '' : 'none';
         });
@@ -3469,9 +3485,10 @@
         if (isPV) this.onPaymentTypeChange();
         // (onPaymentTypeChange defined on Page — see below)
         // ตัวเลือกขั้นสูง "เปลี่ยนผังบัญชี VAT กรณีไม่เคลม" — แสดงสำหรับเอกสาร
-        // ฝั่งซื้อทุกชนิดที่มี input VAT (PI/Expense/PV/CertInLieu) ไม่ผูกกับ
-        // การติ๊กเคลม VAT (override นี้ใช้ "ตอนไม่เคลม" จึงต้องเข้าถึงได้เสมอ)
-        const inputVatTypes = ['PurchaseInvoice', 'Expense', 'PaymentVoucher', 'CertificateInLieu'];
+        // ฝั่งซื้อที่มี input VAT ได้จริง (PI/Expense/PV) ไม่ผูกกับการติ๊กเคลม
+        // VAT (override นี้ใช้ "ตอนไม่เคลม" จึงต้องเข้าถึงได้เสมอ).
+        // CertInLieu ไม่มีใบกำกับ → ไม่มี input VAT ให้จัดการตั้งแต่ต้น
+        const inputVatTypes = ['PurchaseInvoice', 'Expense', 'PaymentVoucher'];
         document.querySelectorAll('.input-vat-only').forEach(el => {
           el.style.display = inputVatTypes.includes(docType) ? '' : 'none';
         });
@@ -3559,12 +3576,27 @@
         }
         // Tax Point §78/§78/1 — แสดงเฉพาะเอกสารที่กระทบ VAT (ขาย/ซื้อ)
         // Quotation/PR/PO/DN/BillingNote ไม่ตกในงวด VAT จึงไม่ต้องโชว์
+        // CertInLieu ก็ไม่โชว์ — ไม่มีใบกำกับ = ไม่มี VAT เข้า ภ.พ.30 เลย
         const taxPointSec = document.getElementById('taxPointSection');
         if (taxPointSec) {
           const vatBearing = ['Invoice', 'TaxInvoice', 'Receipt', 'ReceiptVoucher',
-            'PurchaseInvoice', 'Expense', 'PaymentVoucher', 'CertificateInLieu',
+            'PurchaseInvoice', 'Expense', 'PaymentVoucher',
             'CreditNote', 'DebitNote'];
           taxPointSec.style.display = vatBearing.includes(docType) ? '' : 'none';
+        }
+
+        // ภ.พ.36/ภ.ง.ด.54 "บริการต่างประเทศ §83/6" — เกิดเฉพาะฝั่งซื้อบริการ
+        // (PI/Expense/PV) เท่านั้น เดิมโชว์ทุกชนิดรวมใบเสนอราคา/ใบเสร็จขาย
+        // ซึ่งไม่มีทางเป็นการซื้อบริการจากต่างประเทศ
+        const fsWrap = document.getElementById('fIsForeignServiceWrap');
+        if (fsWrap) {
+          const fsTypes = ['PurchaseInvoice', 'Expense', 'PaymentVoucher'];
+          const showFs = fsTypes.includes(docType);
+          fsWrap.style.display = showFs ? 'inline-flex' : 'none';
+          if (!showFs) {
+            const cb = document.getElementById('fIsForeignService');
+            if (cb) cb.checked = false;
+          }
         }
 
         // AI แนะนำผังบัญชี GL — เฉพาะเอกสารฝั่งซื้อ (Expense / PI / PV) ที่มี
@@ -3722,6 +3754,9 @@
         if (docType === 'PaymentVoucher') {
           off = !document.getElementById('fHasTaxInvoiceRef')?.checked;
         }
+        // ใบรับรองแทนใบเสร็จ: ไม่มีใบกำกับภาษี → เคลมภาษีซื้อไม่ได้ตาม
+        // §82/5(1) เสมอ — ปิดคอลัมน์เคลมทั้งตาราง ไม่ให้ติ๊กแล้วเข้าใจผิด
+        if (docType === 'CertificateInLieu') off = true;
         tbl.classList.toggle('vat-claim-off', off);
       },
       onTaxInvoiceRefToggle() {
@@ -4846,6 +4881,13 @@
             <span class="lc-total-val" data-f="lineTotal">0.00</span>
           </div>`;
         document.getElementById('linesBody').appendChild(row);
+        // ใบรับรองแทนใบเสร็จ: ใช้เมื่อผู้ขายออกใบเสร็จ/ใบกำกับไม่ได้ (ส่วนใหญ่
+        // ไม่จด VAT) — ตั้งต้นบรรทัดเป็น "ยกเว้น" แทน 7% (แก้ได้ แต่เคลมไม่ได้
+        // อยู่ดีเพราะไม่มีใบกำกับ §82/5(1))
+        if (document.getElementById('fDocType')?.value === 'CertificateInLieu') {
+          const v = row.querySelector('[data-f="vat"]');
+          if (v) v.value = '-1';
+        }
         const descInput = row.querySelector('[data-f="desc"]');
         // auto-grow textarea (รองรับรายละเอียดหลายบรรทัด) — ขยายสูงตามเนื้อหา
         const _growDesc = () => { descInput.style.height = 'auto'; descInput.style.height = descInput.scrollHeight + 'px'; };
