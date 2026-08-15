@@ -5537,6 +5537,24 @@ public static class DatabaseMigrationHelper
             // challenge (กันบอทยิงรัวซ้ำ) + คำถามที่ตอบไม่ได้ (feed หา KB gap)
             """ALTER TABLE "ChatConversations" ADD COLUMN IF NOT EXISTS "PendingChallenge" varchar(20) NULL;""",
             """ALTER TABLE "ChatMessages" ADD COLUMN IF NOT EXISTS "NoContextFound" boolean NOT NULL DEFAULT false;""",
+            // Idempotency-Key ที่ใช้ร่วมกันข้าม instance — เดิมเก็บใน IMemoryCache
+            // (in-process) ⇒ deploy 2 node แล้ว partner retry ไปโดนคนละ node =
+            // ลงเอกสาร/รับเงินซ้ำเงียบ ๆ. "Status" = InFlight/Done ใช้กัน request
+            // ที่เข้าพร้อมกันด้วยคีย์เดียวกัน (ตัวที่สองได้ 409 ไม่ใช่ยิงซ้ำ)
+            """
+            CREATE TABLE IF NOT EXISTS "IdempotencyRecords" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CacheKey" varchar(400) NOT NULL,
+                "Status" varchar(16) NOT NULL DEFAULT 'InFlight',
+                "StatusCode" integer NOT NULL DEFAULT 0,
+                "ContentType" varchar(200) NULL,
+                "Body" bytea NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+                "CompletedAt" timestamptz NULL
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_IdempotencyRecords_Key" ON "IdempotencyRecords" ("CacheKey");""",
+            """CREATE INDEX IF NOT EXISTS "IX_IdempotencyRecords_CreatedAt" ON "IdempotencyRecords" ("CreatedAt");""",
         };
 
         foreach (var sql in statements)

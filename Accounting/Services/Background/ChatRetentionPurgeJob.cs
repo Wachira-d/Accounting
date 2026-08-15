@@ -89,9 +89,22 @@ public class ChatRetentionPurgeJob : BackgroundService
         var rate = scope.ServiceProvider.GetRequiredService<IChatRateLimiter>();
         var buckets = await rate.PurgeOldAsync(ct);
 
-        if (expired.Count > 0 || buckets > 0)
+        // Idempotency-Key ที่หมดอายุแล้ว (เกิน retention ที่ประกาศกับ partner) —
+        // ตารางนี้เก็บ response body จึงโตเร็ว ต้องล้างทิ้งไม่งั้นกิน disk
+        // (เกาะรอบเดียวกับ purge อื่นเพื่อไม่ต้องเพิ่ม hosted service ตัวใหม่)
+        var idem = 0;
+        try
+        {
+            var idemCutoff = DateTime.UtcNow - Accounting.Middleware.IdempotencyMiddleware.Retention;
+            idem = await db.Database.ExecuteSqlRawAsync(
+                """DELETE FROM "IdempotencyRecords" WHERE "CreatedAt" < {0};""",
+                new object[] { idemCutoff }, ct);
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "ล้าง IdempotencyRecords ไม่สำเร็จ"); }
+
+        if (expired.Count > 0 || buckets > 0 || idem > 0)
             _logger.LogInformation(
-                "Chat purge: {Conv} ห้อง / {Msg} ข้อความ / {Bucket} rate-bucket",
-                expired.Count, purgedMessages, buckets);
+                "Chat purge: {Conv} ห้อง / {Msg} ข้อความ / {Bucket} rate-bucket / {Idem} idempotency",
+                expired.Count, purgedMessages, buckets, idem);
     }
 }
