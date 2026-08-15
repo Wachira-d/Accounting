@@ -571,6 +571,10 @@ builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerif
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
+// §82/3 — ล้างภาษีซื้อที่ค้าง 11640 พ้น 6 เดือนเป็นค่าใช้จ่าย.
+// ReclassifyExpiredUndueInputVatAsync มีมาตั้งแต่ต้นแต่ไม่มีใครเรียก ⇒ ยอด
+// 11640 ค้างเป็นสินทรัพย์ลอยในงบตลอดไป (พบโดย task force รอบตรวจระบบ)
+builder.Services.AddHostedService<Accounting.Services.Background.UndueInputVatExpiryJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();
