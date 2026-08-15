@@ -24,7 +24,10 @@ public record TaxReportResponse(
     // ── ข้อมูลผู้ประกอบการ (สำหรับ header ฟอร์มราชการ §87) — เติมตอน GetTaxReportAsync ──
     string? CompanyName = null,
     string? CompanyTaxId = null,
-    string? CompanyBranchCode = null);
+    string? CompanyBranchCode = null,
+    /// <summary>ภาษีเงินได้นิติบุคคล (ภ.ง.ด.50/51) — null สำหรับรายงานชนิดอื่น.
+    /// แยกจาก TotalTaxWithheld ที่เป็นยอดหัก ณ ที่จ่าย</summary>
+    decimal? CitAmount = null);
 
 public record UpdateTaxReportRequest(
     string? Notes,
