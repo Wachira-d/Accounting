@@ -985,6 +985,25 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (`POST /api/company/{cid}/romanize-address` — **route เอกพจน์** ต่างจาก
     controller อื่น) แปลงจากค่าบนฟอร์ม เติมให้ตรวจแก้ก่อนบันทึกเอง · แบบราชการ
     (50 ทวิ ฯลฯ) คงที่อยู่ไทยเสมอ ไม่แตะ
+  - **ช่องทางส่งถึงลูกค้า ตามภาษาใบด้วยแล้ว** (audit 3 ทีม รอบ 22):
+    เนื้ออีเมล default ทั้ง manual (`DocumentEmailService.BuildDefaultTemplate`)
+    และ scheduled reminder (`EmailScheduleService.DefaultDocSubject/Body` —
+    เฉพาะ fallback; template ที่ผู้ใช้เขียนเองไม่ถูกแตะ) + LINE flex
+    (`DocumentLineDeliveryService`) — ทุกตัวใช้ชั้น `doc.DocumentLanguage ??
+    CompanySettings.DocumentLanguage` และ `NameEn` เมื่อ en · **บั๊กที่แก้พ่วง**:
+    ปุ่มส่งอีเมล manual ไม่เคยแนบ PDF จริง ("omit for now") ทั้งที่ UI ส่ง
+    `attachPdf:true` → แนบผ่าน `GenerateDocumentPdfAsync` แล้ว (ล้ม = ไม่ส่ง
+    อีเมล ห้ามส่งอีเมลที่บอกว่ามีไฟล์แนบแต่ไม่มี) · LINE ปุ่ม "ดูเอกสาร"
+    hardcode `app.example.com` (ลิงก์ตาย) → ใช้ `App:BaseUrl` + portal จริง ·
+    e-Tax by Email ตอนสร้างไฟล์ on-demand ใช้ renderer รวม (ตรงกับปุ่ม
+    ดาวน์โหลดปกติ + ภาษาถูก) fallback ตัวเดิม; ไฟล์ที่ persist แล้วคงเดิม
+  - **รู้แล้วแต่ยังไม่ทำ (จัดลำดับไว้)**: `portal.html` UI ไทยล้วน + ไม่ใช้
+    NameEn (ต้องทำ portal สองภาษาเป็นงานแยก) · POS ใบเสร็จ client-side ไทย
+    (ใบกำกับอย่างย่อหน้าร้าน — รับได้ แต่ไม่แชร์ label กลาง = drift risk) ·
+    ปุ่ม PDF/A-3 ใน etax.html + artifact ที่ persist ยังเป็น renderer แยก
+    layout ไทยตายตัว (`EtaxInvoiceService.PdfA3`) — เอกสารที่เคยออกต้องนิ่ง
+    จึงไม่ย้อนแก้; งานถัดไปคือ unify ตอน generate ใหม่ ·
+    `SendDunningLetterAsync` (AdvancedArAp) mark ว่าส่งแล้วโดยไม่ส่งจริง
 
 - **หัวเรื่องเอกสาร — resolver กลาง `ComputeDocumentTitle`** (ใช้ทั้ง QuestPDF
   native + HTML กัน logic drift). ครอบทุกเคสจริงทางบัญชี:
@@ -1797,7 +1816,10 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-14 (รอบ 21: ออกเอกสารเป็นอังกฤษ "เฉพาะใบเดียว" —_
+_Last verified against codebase: 2026-08-15 (รอบ 22: audit 3 ทีม (คำแปล/adversarial/_
+_process) — เนื้ออีเมล+LINE ตามภาษาใบ · แนบ PDF อีเมล manual ที่หายไป · ลิงก์ LINE_
+_จริงแทน example.com · e-Tax by Email on-demand ใช้ renderer รวม · RTGS fuzz 29 เคส_
+_+ แก้ เเ/ไทย/ฤๅ · รอบ 21: ออกเอกสารเป็นอังกฤษ "เฉพาะใบเดียว" —_
 _เติมทางเข้า UI 2 ชั้นที่ resolver รองรับอยู่แล้วแต่กดไม่ได้ (รายใบ `#fDocumentLanguage` +_
 _ครั้งเดียว `#pdfLangMode`) · แก้ `DocumentResponse` ไม่คืน `DocumentLanguage` (เปิดแก้แล้ว_
 _ภาษาหาย) · แก้ metadata Title ของ PDF/A-3 คำนวณภาษาเองข้าม resolver กลาง ·_

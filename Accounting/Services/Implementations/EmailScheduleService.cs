@@ -487,9 +487,17 @@ public class EmailScheduleService : IEmailScheduleService
             && q.IdempotencyKey == idem && !q.IsDeleted, ct)) return false;
 
         var sendUtc = overrideSendUtc ?? ScheduledUtc(BangkokNow().Date.AddDays(daysOffset), rule.SendAtHour);
-        var company = await _db.Companies.AsNoTracking()
+        var companyRow = await _db.Companies.AsNoTracking()
             .Where(c => c.Id == doc.CompanyId)
-            .Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
+            .Select(c => new { c.Name, c.NameEn }).FirstOrDefaultAsync(ct);
+        // ภาษาเนื้ออีเมล default ตามชั้นเดียวกับเอกสารแนบ: ตรึงกับใบ > ค่าบริษัท
+        // (rule ที่ผู้ใช้เขียน template เองไม่ถูกแตะ — เฉพาะ default fallback)
+        var coLang = await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == doc.CompanyId)
+            .Select(s => s.DocumentLanguage).FirstOrDefaultAsync(ct);
+        var isEn = (doc.DocumentLanguage ?? coLang) == "en";
+        var company = (isEn && !string.IsNullOrWhiteSpace(companyRow?.NameEn)
+            ? companyRow!.NameEn : companyRow?.Name) ?? "";
         var ctx = new Dictionary<string, string?>
         {
             ["DocNumber"] = doc.DocumentNumber,
@@ -508,8 +516,8 @@ public class EmailScheduleService : IEmailScheduleService
             EntityId = doc.Id,
             ToEmail = email!,
             BccEmail = rule.BccEmails,
-            Subject = Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger), ctx),
-            Body = Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger), ctx),
+            Subject = Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger, isEn), ctx),
+            Body = Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, isEn), ctx),
             AttachPdf = true,
             ScheduledFor = sendUtc,
             IdempotencyKey = idem,
@@ -527,24 +535,33 @@ public class EmailScheduleService : IEmailScheduleService
         return result;
     }
 
-    private static string DefaultDocSubject(string trigger) => trigger switch
+    // default (ตอน rule ไม่มี template ของตัวเอง) เลือกภาษาตามใบ — เนื้ออีเมล
+    // ไทยครอบไฟล์แนบอังกฤษ = ลูกค้าต่างชาติอ่านไม่ออกว่าโดนทวงอะไร
+    private static string DefaultDocSubject(string trigger, bool isEn = false) => trigger switch
     {
-        "DocumentDueSoon" => "ครบกำหนดชำระเร็ว ๆ นี้: {DocNumber}",
-        "DocumentOverdue" => "เกินกำหนดชำระ: {DocNumber}",
-        _ => "เอกสาร {DocNumber}",
+        "DocumentDueSoon" => isEn ? "Payment due soon: {DocNumber}" : "ครบกำหนดชำระเร็ว ๆ นี้: {DocNumber}",
+        "DocumentOverdue" => isEn ? "Payment overdue: {DocNumber}" : "เกินกำหนดชำระ: {DocNumber}",
+        _ => isEn ? "Document {DocNumber}" : "เอกสาร {DocNumber}",
     };
 
-    private static string DefaultDocBody(string trigger)
+    private static string DefaultDocBody(string trigger, bool isEn = false)
     {
         var heading = trigger switch
         {
-            "DocumentDueSoon" => "เรียน คุณ{ContactName}<br>เอกสารเลขที่ {DocNumber} ใกล้ครบกำหนดชำระวันที่ {DueDate}<br>ยอดค้างชำระ <strong>{BalanceDue} บาท</strong>",
-            "DocumentOverdue" => "เรียน คุณ{ContactName}<br>เอกสารเลขที่ {DocNumber} เกินกำหนดชำระตั้งแต่ {DueDate}<br>ยอดค้างชำระ <strong>{BalanceDue} บาท</strong> กรุณาดำเนินการชำระโดยเร็ว",
-            _ => "เรียน คุณ{ContactName}<br>แนบเอกสารเลขที่ {DocNumber} ยอดรวม {Amount} บาท",
+            "DocumentDueSoon" => isEn
+                ? "Dear {ContactName},<br>Document {DocNumber} is due on {DueDate}.<br>Outstanding balance: <strong>THB {BalanceDue}</strong>"
+                : "เรียน คุณ{ContactName}<br>เอกสารเลขที่ {DocNumber} ใกล้ครบกำหนดชำระวันที่ {DueDate}<br>ยอดค้างชำระ <strong>{BalanceDue} บาท</strong>",
+            "DocumentOverdue" => isEn
+                ? "Dear {ContactName},<br>Document {DocNumber} has been overdue since {DueDate}.<br>Outstanding balance: <strong>THB {BalanceDue}</strong>. Please arrange payment at your earliest convenience."
+                : "เรียน คุณ{ContactName}<br>เอกสารเลขที่ {DocNumber} เกินกำหนดชำระตั้งแต่ {DueDate}<br>ยอดค้างชำระ <strong>{BalanceDue} บาท</strong> กรุณาดำเนินการชำระโดยเร็ว",
+            _ => isEn
+                ? "Dear {ContactName},<br>Please find attached document {DocNumber} for a total of THB {Amount}."
+                : "เรียน คุณ{ContactName}<br>แนบเอกสารเลขที่ {DocNumber} ยอดรวม {Amount} บาท",
         };
+        var footer = isEn ? "Sent automatically by {CompanyName}" : "ส่งโดย {CompanyName} โดยอัตโนมัติ";
         return $@"<div style='font-family:sans-serif;max-width:600px'>
             <p>{heading}</p>
-            <p style='color:#64748b;font-size:13px'>ส่งโดย {{CompanyName}} โดยอัตโนมัติ</p>
+            <p style='color:#64748b;font-size:13px'>{footer}</p>
         </div>";
     }
 
