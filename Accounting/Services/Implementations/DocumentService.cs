@@ -9827,7 +9827,28 @@ public class DocumentService : IDocumentService
                     || l.Description.Contains("เลี้ยงรับรอง")))
             .SumAsync(l => (decimal?)(l.Amount + l.VatAmount)) ?? 0m;
 
-        var ctx = new Section65TerValidator.Context(annualRevenue, company?.PaidUpCapital, priorEntertainment);
+        // context เพิ่มสำหรับอนุมาตราที่เพิ่งเปิดใช้ — ส่งเฉพาะที่รู้จริง
+        // (null = ไม่ตรวจ) เพื่อไม่ให้เตือนจากการเดา
+        //   (9)  มีเอกสารต้นฉบับไหม — ฝั่งซื้อดูจากเลขใบกำกับผู้ขาย หรือไฟล์แนบ
+        //   (10) รอบบัญชีปัจจุบันเริ่มเมื่อไร (yearStart คำนวณไว้แล้วข้างบน)
+        //   (13) เลขผู้เสียภาษีของบริษัทเอง — จับเคสจ่ายค่าเช่าให้ตัวเอง
+        //   (19) รายจ่ายต่างประเทศเชื่อมกิจการไทยไหม — ยังไม่มี field เก็บ
+        //        เจตนาผู้ใช้ จึงส่ง null (ไม่ตรวจ) จนกว่าจะเพิ่มช่องบนฟอร์ม
+        // FileAttachment ผูกแบบ polymorphic (EntityType/EntityId) ไม่ใช่ FK ตรง
+        var hasAttachment = await _db.FileAttachments.AsNoTracking()
+            .AnyAsync(a => a.CompanyId == companyId
+                && a.EntityType == "Document" && a.EntityId == doc.Id && !a.IsDeleted);
+        var isPurchaseSide = doc.DocumentType is DocumentType.PurchaseInvoice
+            or DocumentType.Expense or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu;
+        bool? hasSourceDoc = isPurchaseSide
+            ? (!string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber) || hasAttachment)
+            : null;
+
+        var ctx = new Section65TerValidator.Context(
+            annualRevenue, company?.PaidUpCapital, priorEntertainment,
+            CurrentFiscalYearStart: yearStart,
+            CompanyTaxId: company?.TaxId,
+            HasSourceDocument: hasSourceDoc);
         var payeeName = doc.Contact?.Name;
         var payeeTaxId = doc.Contact?.TaxId;
 
