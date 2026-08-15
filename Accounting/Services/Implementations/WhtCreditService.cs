@@ -169,9 +169,16 @@ public class WhtCreditService
         var lines = await (from l in _db.JournalEntryLines.AsNoTracking()
                            join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
                            join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                           // ต้องนับ **ทั้ง Posted และ Reversed** ให้ telescope เป็น 0
+                           // (pattern เดียวกับ AccountingService.GetGeneralLedgerAsync):
+                           // เดิม `Posted && ReversedByEntryId==null` ตัดใบต้นฉบับออก
+                           // (Status→Reversed) แต่ **นับใบ reversal เข้า** (Status=Posted,
+                           // ReversedByEntryId=null) ⇒ net = −X แทน 0 ⇒ ยอด GL 11910
+                           // ที่ใช้กระทบทะเบียน WHT เพี้ยน (variance หลอก / ปิดบัง
+                           // mismatch จริง) ก่อนยื่นเครดิต ภ.ง.ด.50/51
                            where j.CompanyId == companyId && !j.IsDeleted && !l.IsDeleted
-                                 && j.Status == JournalEntryStatus.Posted
-                                 && j.ReversedByEntryId == null
+                                 && (j.Status == JournalEntryStatus.Posted
+                                     || j.Status == JournalEntryStatus.Reversed)
                                  && j.EntryDate >= start && j.EntryDate <= end
                                  && a.AccountCode.StartsWith("11910")
                            select l.DebitAmount - l.CreditAmount).ToListAsync();
