@@ -449,6 +449,10 @@ public class Document : TenantEntity
     public DateTime? OwnershipTransferDate { get; set; }
     /// <summary>วันที่ใช้บริการ/บริการเสร็จ (input ของ tax point §78/1 บริการ).</summary>
     public DateTime? ServiceUsedDate { get; set; }
+    /// <summary>วันที่ชำระอากรขาเข้า — tax point ของ **การนำเข้า** ตาม §78/2
+    /// (ไม่ใช่ MIN ของหลายวันเหมือนสินค้า/บริการ แต่ใช้วันนี้ตรง ๆ).
+    /// มีค่า = ถือว่าเอกสารนี้เป็นการนำเข้า</summary>
+    public DateTime? CustomsDutyPaidDate { get; set; }
     /// <summary>จุดความรับผิดในการเสีย VAT ที่ระบบคำนวณ (TaxPointResolver):
     /// <para>• ขายสินค้า §78 = MIN(DeliveryDate, OwnershipTransferDate, PaymentDate, IssueDate)</para>
     /// <para>• บริการ §78/1 = MIN(PaymentDate, IssueDate, ServiceUsedDate)</para>

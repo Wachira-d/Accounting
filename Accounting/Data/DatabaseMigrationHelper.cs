@@ -5553,6 +5553,9 @@ public static class DatabaseMigrationHelper
                 "CompletedAt" timestamptz NULL
             );
             """,
+            // tax point การนำเข้า §78/2 — วันชำระอากรขาเข้า (เดิมไม่มีที่เก็บเลย
+            // ทำให้ VAT นำเข้าตกไปใช้ issueDate = เข้า ภ.พ.30 ผิดงวดได้)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomsDutyPaidDate" timestamptz NULL;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_IdempotencyRecords_Key" ON "IdempotencyRecords" ("CacheKey");""",
             """CREATE INDEX IF NOT EXISTS "IX_IdempotencyRecords_CreatedAt" ON "IdempotencyRecords" ("CreatedAt");""",
         };

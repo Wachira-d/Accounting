@@ -12,7 +12,8 @@ namespace Accounting.Services.Implementations.Tax;
 /// กฎ:
 ///   • ขายสินค้า §78        = MIN(DeliveryDate, OwnershipTransferDate, PaymentDate, IssueDate)
 ///   • บริการ §78/1         = MIN(PaymentDate, IssueDate, ServiceUsedDate)
-///   • นำเข้า §78/2         = customsDutyPaidDate (ไม่ครอบคลุมที่นี่ — handled แยก)
+///   • นำเข้า §78/2         = CustomsDutyPaidDate (วันชำระอากรขาเข้า — ใช้วันนี้
+///                            **ตรง ๆ ไม่ใช่ MIN** ต่างจากอีกสองกรณี)
 ///
 /// "IssueDate" = DocumentDate (วันที่ออกเอกสาร/ใบกำกับของเรา). สำหรับเอกสารฝั่ง
 /// ซื้อ (PurchaseInvoice/Expense) ใช้ SupplierTaxInvoiceDate ของผู้ขายเป็น issue
@@ -20,19 +21,46 @@ namespace Accounting.Services.Implementations.Tax;
 /// </summary>
 public static class TaxPointResolver
 {
-    /// <summary>คืน tax point ตามชนิดเอกสาร. ถ้าไม่มี signal ใด ๆ เลย →
-    /// fallback = issueDate (DocumentDate/SupplierTaxInvoiceDate).</summary>
-    public static DateTime Resolve(Document doc)
+    /// <summary>ประเภทธุรกรรมสำหรับเลือกกฎ tax point</summary>
+    public enum SupplyKind
+    {
+        /// <summary>ให้ระบบเดาจาก field ที่ผู้ใช้กรอก (พฤติกรรมเดิม)</summary>
+        Auto = 0,
+        /// <summary>ขายสินค้า §78</summary>
+        Goods = 1,
+        /// <summary>บริการ §78/1</summary>
+        Service = 2,
+        /// <summary>นำเข้า §78/2</summary>
+        Import = 3,
+    }
+
+    /// <summary>คืน tax point ตามชนิดธุรกรรม
+    ///
+    /// <para><paramref name="kind"/> = Auto (ค่าเริ่มต้น) ให้ระบบเดาจาก field:
+    /// มี CustomsDutyPaidDate → นำเข้า · มี ServiceUsedDate → บริการ · ที่เหลือ
+    /// = สินค้า. การเดานี้ปลอดภัยเพราะ field ที่ไม่เกี่ยวจะเป็น null และไม่เข้า
+    /// MIN อยู่แล้ว **ยกเว้นเคสเดียว**: เอกสารขายสินค้าที่ผู้ใช้ดันกรอก
+    /// ServiceUsedDate ไว้ จะข้าม Delivery/OwnershipTransfer — caller ที่รู้
+    /// ชนิดแน่นอนควรส่ง kind มาแทนการปล่อยให้เดา</para>
+    ///
+    /// <para>ถ้าไม่มี signal ใด ๆ เลย → fallback = issueDate</para></summary>
+    public static DateTime Resolve(Document doc, SupplyKind kind = SupplyKind.Auto)
     {
         // issue date — ใบกำกับของผู้ขาย (ซื้อ) หรือวันที่เอกสารเรา (ขาย)
         var issueDate = doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
 
-        // เลือกชนิด tax point ตามว่าเป็นบริการหรือสินค้า — heuristic:
-        // มี ServiceUsedDate = บริการ; ไม่งั้นถือเป็นสินค้า. (เอกสารส่วนใหญ่
-        // ไม่ได้แยก goods/service ชัด — ใช้ field ที่ผู้ใช้กรอกเป็นตัวบอก)
-        var candidates = new List<DateTime?>();
+        var resolved = kind != SupplyKind.Auto ? kind
+            : doc.CustomsDutyPaidDate.HasValue ? SupplyKind.Import
+            : doc.ServiceUsedDate.HasValue ? SupplyKind.Service
+            : SupplyKind.Goods;
 
-        if (doc.ServiceUsedDate.HasValue)
+        // §78/2 นำเข้า — จุดรับผิดคือ "วันชำระอากรขาเข้า" ตัวเดียว ไม่ใช่ MIN
+        // ของหลายเหตุการณ์ (ถ้าไม่ได้กรอกวันไว้ ตกกลับไปใช้ issueDate)
+        if (resolved == SupplyKind.Import)
+            return doc.CustomsDutyPaidDate ?? issueDate;
+
+        var candidates = new List<DateTime?>();
+        if (resolved == SupplyKind.Service)
         {
             // §78/1 บริการ: MIN(PaymentDate, IssueDate, ServiceUsedDate)
             candidates.Add(doc.PaymentDate);
