@@ -810,6 +810,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (missing fields จาก `TaxInvoiceCompletenessChecker` + override/ไม่มีบรรทัด
   เคลม VAT/§83/6) — กล่องเติมใบกำกับใน documents.html โชว์ checklist นี้
   + prefill รหัสสาขาจาก `Contact.BranchCode` (fallback 00000 สนญ.)
+- **หมดอายุ 6 เดือนแล้วไม่มีใครเติมใบกำกับ** → `UndueInputVatExpiryJob`
+  (รายวัน) เรียก `ReclassifyExpiredUndueInputVatAsync` ล้าง 11640 เป็น
+  ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" (Dr ค่าใช้จ่าย / Cr 11640) — เมธอดนี้เขียน
+  ไว้ตั้งแต่ต้นแต่ **ไม่เคยมีใครเรียก** จนถึงรอบ audit 23 ⇒ ยอด 11640 ค้างเป็น
+  สินทรัพย์ลอยในงบตลอดไป. job กันรันซ้ำข้าม instance ด้วย `pg_advisory_xact_lock`
+  และเลือกเฉพาะบริษัทที่มีเอกสารค้างจริง (ไม่สแกนทั้งฐาน)
 - UI badge "เคลมแล้วงวดไหน" — `DocumentResponse.InputVatPp30Month/Year/`
   `ReportStatus` (populate เฉพาะ `GetDocumentAsync` จาก `TaxReportLines`
   ฝั่งซื้อ !IsExcluded ของใบนั้น) = **ความจริงจากรายงาน ภ.พ.30** ไม่ใช่เดา
@@ -1229,8 +1235,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | §82/5(1)(2) non-full-tax-invoice | `OcrDocumentRoleInferrer.Infer` → `InputVatClaimable/InputVatClaimWarning` | OCR ตรวจ "ใบกำกับภาษีอย่างย่อ §86/6" หรือ "ใบเสร็จ/บิลเงินสด ไม่ใช่ §86/4" + มี VAT → เขียน `[VAT-CLAIM]` ลง ProcessingNotes; review UI + form แสดง banner แดง "เคลม VAT ไม่ได้ — ขอใบกำกับเต็มรูป"; ไม่ auto-ติ๊ก "ขอเครดิตภาษีซื้อ". กัน false positive 2 ชั้น: `ContainsAnyNotNegated` (ข้ามข้อความปฏิเสธ "ไม่ใช่...อย่างย่อ" จาก vision model) + เลขภาษีผู้ซื้อ 13 หลักถูกสกัดได้ = ใบเต็มรูปเสมอ (§86/6 ใบอย่างย่อไม่มีข้อมูลผู้ซื้อ) override คำที่เจอบนกระดาษ |
 | §82/3 6-month window | `TaxFilingExportService.ExportPp30Async` + `GenerateVatReport` | เกิน 6 เดือน → block claim หรือ require `LateReason` |
 | §86/9–86/10 CN/DN | `CreditNote/DebitNote` flow | required `RelatedDocumentId` + `CreditNoteReason` (CN); cap ≤ original |
-| §78 / §78/1 tax point | `TaxPointResolver` | snapshot ตอน approve |
-| §65 ตรี รายจ่ายต้องห้าม | `Section65TerValidator` | `NonDeductibleAmount + RuleJson` → ภ.ง.ด.50 |
+| §78 / §78/1 / **§78/2** tax point | `TaxPointResolver` | snapshot ตอน approve · นำเข้าใช้ `Document.CustomsDutyPaidDate` **ตรง ๆ ไม่ใช่ MIN** · `SupplyKind` ให้ caller ระบุชนิดแทนการเดา (Auto = พฤติกรรมเดิม) |
+| §65 ตรี รายจ่ายต้องห้าม | `Section65TerValidator` | `NonDeductibleAmount + RuleJson` → ภ.ง.ด.50 · ครอบ **16 กลุ่มอนุมาตรา** (เดิม 8): เพิ่ม (8)(9)(10)(12)(13)(14)(15)(19) — context ใหม่ทุกตัว optional default = "ไม่ตรวจ" จึงไม่เดาแทนผู้ใช้ |
+| ภ.ง.ด.50/51 ยอด CIT | `TaxReport.CitAmount` | **แยกจาก `TotalTaxWithheld`** (เดิม reuse field ผิดความหมาย ทำให้ยอด CIT ปนกับ WHT เวลารวมข้ามรายงาน) · ผู้อ่านใช้ `CitAmount ?? TotalTaxWithheld` รองรับรายงานเก่า |
 | §65 ตรี(4) cap per fiscal year | `Section65TerValidator.Context.PriorYtdEntertainmentExpense` | sum YTD entertainment of Approved docs → excess บวกกลับใบปัจจุบัน |
 | §82/5(6) vehicle dealer override | `CompanySettings.IsVehicleDealer` | bypass warning เมื่อรถเป็น inventory (ประกาศอธิบดี 42) |
 | §87 ลำดับเวลาในรายงาน | `TaxService.NormalizeReportLineOrder` | เรียง + renumber `LineOrder` ท้ายการ generate ทุกครั้ง (ขาย → ซื้อ → บรรทัดสรุป; แต่ละกลุ่มตาม `TransactionDate`, ties = ลำดับเดิมเพื่อ deterministic). เรียกจาก GenerateVatReport / หลัง ApplyVatDeferrals / ComputeVatReport (ไฟล์ยื่น) / GenerateWhtReport / PullDocumentIntoReport / regenerate re-apply. `tax.html` sort ซ้ำฝั่ง client (จอ + แบบพิมพ์ §87) ให้รายงานเก่าถูกลำดับโดยไม่ต้อง regenerate — เดิม LineOrder ไล่ตามลำดับที่ query คืนเอกสาร = วันที่สลับไปมา |
@@ -1816,7 +1823,14 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-15 (รอบ 22: audit 3 ทีม (คำแปล/adversarial/_
+_Last verified against codebase: 2026-08-15 (รอบ 23: ลงมือตาม roadmap task force —_
+_P0: audit hash canonical เดียว + เทสต์ round-trip · WHT GL นับ reversal ถูก · lockout key ·_
+_prod config (ลบ placeholder JWT, PG VerifyFull). P1: CMS XSS allowlist sanitizer +_
+_ถอด unsafe-eval · idempotency ย้ายขึ้น PostgreSQL + กัน race ด้วย InFlight ·_
+_BusinessRuleException หยุด framework error รั่วถึง client. P2: §65 ตรี 8→16 กลุ่ม_
+_อนุมาตรา + เลิก over-add-back (cap=0, VAT เคลมได้) · tax point §78/2 นำเข้า ·_
+_แยก CitAmount ออกจาก TotalTaxWithheld · เปิด job §82/3 ที่เขียนไว้แต่ไม่มีใครเรียก) ·_
+_รอบ 22: audit 3 ทีม (คำแปล/adversarial/_
 _process) — เนื้ออีเมล+LINE ตามภาษาใบ · แนบ PDF อีเมล manual ที่หายไป · ลิงก์ LINE_
 _จริงแทน example.com · e-Tax by Email on-demand ใช้ renderer รวม · RTGS fuzz 29 เคส_
 _+ แก้ เเ/ไทย/ฤๅ · รอบ 21: ออกเอกสารเป็นอังกฤษ "เฉพาะใบเดียว" —_

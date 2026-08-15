@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **92 เคส / 11 ไฟล์** — pure-logic ทั้งหมด (ไม่มี DB) |
+| เทสต์ที่มี | **~150 เคส / 19 ไฟล์** — pure-logic ทั้งหมด (ไม่มี DB) |
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -38,6 +38,19 @@
 ก็ต่อเมื่อชื่อ property นั้นถูกประกาศเป็น nullable **ทุกที่ในโปรเจกต์** (ทั้ง
 `{ get; }` และ positional record) — ถ้ามีที่ไหนประกาศไม่ nullable ด้วย ถือว่า
 กำกวมแล้วข้าม เพราะ checker ไม่ได้ resolve ชนิดของ receiver จริง
+
+### ชุดเทสต์ที่เพิ่มจากรอบ audit task force (รอบ 23)
+
+| ไฟล์ | ครอบอะไร | ที่มา |
+| --- | --- | --- |
+| `AuditHashChainTests` (8) | write→verify chain ผ่าน · แก้แถวกลางจับได้ · ลบแถวจับได้จาก PrevHash ขาดตอน · **แก้แล้วคำนวณ hash ใหม่ให้เนียนก็ยังจับได้จากแถวถัดไป** · Action/OldValues/PrevHash ต้องอยู่ใน canonical | control ตาม พ.ร.บ.บัญชี ม.11 ทวิ ที่เคยพังเงียบ (verify ≠ insert) — ทีม QA จัดอันดับ 1 |
+| `CmsHtmlSanitizerTests` (22+6) | XSS payload จริง: script ซ้อน, onerror, `javascript:` หลายรูป (entity/whitespace/ตัวพิมพ์), svg/onload, `data:text/html`, meta refresh, base/link injection · เนื้อหาปกติ (ตาราง/ลิสต์/ลิงก์/รูป) ต้องไม่พัง | CMS storefront เคยฉีด HTML ดิบ + sanitizer เดิมเป็น dead code |
+| `Section65TerExtendedTests` (20) | อนุมาตราใหม่ (8)(9)(10)(12)(13)(14)(15)(19) · **เคสไม่ over-add-back**: cap=0 เมื่อไม่มีฐาน, VAT ที่เคลมได้ต้องไม่นับเป็นต้นทุน · โหมด strict payee | worksheet บวกกลับ ภ.ง.ด.50 เคยขาด 11 อนุมาตรา |
+| `TaxPointImportTests` (5) | §78/2 นำเข้าใช้วันชำระอากร **ไม่ใช่ MIN** · `SupplyKind` ที่ระบุชัดชนะการเดา · ไม่ regress เคสเดิม | resolver เคยไม่รองรับนำเข้าเลย |
+
+**ยังไม่ได้รันด้วย `dotnet test`** — env ของ agent ไม่มี .NET SDK; ทุกชุดยืนยัน
+ตรรกะด้วย port เป็น Python/Node ก่อน commit (hash chain, sanitizer 28 เคส,
+ตัวเลข §65 ตรี, heuristic exception) รบกวนผู้ใช้/CI รันจริงอีกครั้ง
 
 ### หลักการเลือกชั้นทดสอบ
 
