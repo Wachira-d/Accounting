@@ -1297,10 +1297,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         // โหมด en: NameEn เป็นชื่อหลัก (ไม่มี NameEn → คงชื่อไทย ห้ามถอดอักษรชื่อ
         // บริษัทเอง — การสะกดชื่อเป็นสิทธิ์ของเจ้าของชื่อ) + ไม่พิมพ์บรรทัด EN ซ้ำ
         var isEnDoc = lang == "en";
+        // XSS: ทุก field ที่ผู้ใช้/OCR/partner API คุมได้ ต้อง HtmlEncode ก่อนต่อ
+        // เข้า HTML (renderer นี้คืน text/html ที่ browser + Chromium รัน). ชื่อ/
+        // ที่อยู่บริษัทตั้งโดย tenant, line มาจาก OCR/API ภายนอกได้ → เป็น stored
+        // XSS sink (JWT เก็บใน localStorage ⇒ script รัน = ขโมย token/takeover)
         var coPrimaryName = isEnDoc && !string.IsNullOrWhiteSpace(company.NameEn) ? company.NameEn! : company.Name;
-        if (template.ShowCompanyName) sb.AppendLine($"<div class='company-name'>{coPrimaryName}</div>");
+        if (template.ShowCompanyName) sb.AppendLine($"<div class='company-name'>{WebUtility.HtmlEncode(coPrimaryName)}</div>");
         if (template.ShowCompanyNameEn && company.NameEn != null && coPrimaryName != company.NameEn)
-            sb.AppendLine($"<div class='company-name-en'>{company.NameEn}</div>");
+            sb.AppendLine($"<div class='company-name-en'>{WebUtility.HtmlEncode(company.NameEn)}</div>");
         if (template.ShowCompanyAddress)
         {
             // en: AddressEn ที่ผู้ใช้กรอก > ถอดอักษรอัตโนมัติ (ThaiRomanizer) > ไทย
@@ -1312,7 +1316,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                         company.Province, company.PostalCode, company.Address))
                 : FormatThaiAddress(company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
                     company.SubDistrict, company.District, company.Province, company.PostalCode);
-            if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{fullAddr}</div>");
+            if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{WebUtility.HtmlEncode(fullAddr)}</div>");
         }
         if (template.ShowCompanyTaxId)
         {
@@ -1321,11 +1325,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             // renderer ไม่ให้บุคคล/กิจการไม่มีเลขภาษีขึ้น "สำนักงานใหญ่" เกินจำเป็น
             var brc = string.IsNullOrWhiteSpace(company.TaxId)
                 ? ""
-                : $" ({FormatBranch(company.BranchCode, company.BranchName, lang)})";
+                : $" ({WebUtility.HtmlEncode(FormatBranch(company.BranchCode, company.BranchName, lang))})";
             sb.AppendLine($"<div>{L.TaxId}: {company.TaxId}{brc}</div>");
         }
-        if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>{L.Phone}: {company.Phone}</div>");
-        if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");
+        if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>{L.Phone}: {WebUtility.HtmlEncode(company.Phone)}</div>");
+        if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {WebUtility.HtmlEncode(company.Email)}</div>");
         sb.AppendLine("</div></div>");
 
         // Document Title — หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) คำนวณจาก
@@ -1385,7 +1389,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             ? contactTitleForLang
             : DefaultContactLabelFor(doc.DocumentType, L);
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{contactSectionLabel}</div>");
-        sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
+        sb.AppendLine($"<div class='contact-name'>{WebUtility.HtmlEncode(doc.Contact.Name)}</div>");
         // "(สำนักงานใหญ่/สาขาที่ x)" เป็นเรื่องของนิติบุคคล (ประกาศฯ 199) —
         // บุคคลธรรมดาแสดงเฉพาะเมื่อตั้งรหัสสาขาไว้จริง (บุคคลจด VAT มีสาขาได้)
         // ไม่งั้นเลขบัตรประชาชนโดนต่อท้าย "(สำนักงานใหญ่)" ผิดความจริง
@@ -1400,7 +1404,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                     || (!string.IsNullOrWhiteSpace(doc.Contact.BranchCode)
                         && doc.Contact.BranchCode!.Trim().TrimStart('0').Length > 0));
             sb.AppendLine($"<div>{L.TaxIdShort}: {doc.Contact.TaxId}"
-                + (showContactBranch ? $" ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})" : "")
+                + (showContactBranch ? $" ({WebUtility.HtmlEncode(FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang))})" : "")
                 + "</div>");
         }
         if (template.ShowContactAddress)
@@ -1413,10 +1417,10 @@ public partial class PdfGenerationService : IPdfGenerationService
                     doc.Contact.Province, doc.Contact.PostalCode, doc.Contact.Address)
                 : FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,
                     doc.Contact.SubDistrict, doc.Contact.District, doc.Contact.Province, doc.Contact.PostalCode);
-            if (!string.IsNullOrWhiteSpace(caddr)) sb.AppendLine($"<div>{caddr}</div>");
+            if (!string.IsNullOrWhiteSpace(caddr)) sb.AppendLine($"<div>{WebUtility.HtmlEncode(caddr)}</div>");
         }
-        if (template.ShowContactPhone && doc.Contact.Phone != null) sb.AppendLine($"<div>{L.Phone}: {doc.Contact.Phone}</div>");
-        if (template.ShowContactEmail && doc.Contact.Email != null) sb.AppendLine($"<div>Email: {doc.Contact.Email}</div>");
+        if (template.ShowContactPhone && doc.Contact.Phone != null) sb.AppendLine($"<div>{L.Phone}: {WebUtility.HtmlEncode(doc.Contact.Phone)}</div>");
+        if (template.ShowContactEmail && doc.Contact.Email != null) sb.AppendLine($"<div>Email: {WebUtility.HtmlEncode(doc.Contact.Email)}</div>");
         sb.AppendLine("</div>");
 
         // Line Items Table — ถ้าราคารวม VAT (pricesIncludeVat) ทั้งคอลัมน์
@@ -1502,9 +1506,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine("<tr>");
             if (template.ShowLineNumber) sb.AppendLine($"<td class='center'>{lineNum++}</td>");
             if (template.ShowItemCode) sb.AppendLine($"<td>{WebUtility.HtmlEncode(line.ProductCode ?? "")}</td>");
-            sb.AppendLine($"<td style='white-space:pre-line'>{line.Description}</td>");
+            sb.AppendLine($"<td style='white-space:pre-line'>{WebUtility.HtmlEncode(line.Description)}</td>");
             sb.AppendLine($"<td class='right'>{(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"))}</td>");
-            if (template.ShowUnit) sb.AppendLine($"<td class='center'>{line.Unit}</td>");
+            if (template.ShowUnit) sb.AppendLine($"<td class='center'>{WebUtility.HtmlEncode(line.Unit)}</td>");
             sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"))}</td>");
             if (template.ShowDiscount) sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"))}</td>");
             // VatRate = -1 คือ "ยกเว้น" (sentinel) — ใช้ helper ตัวเดียวกับ QuestPDF
@@ -1596,7 +1600,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Footer — per-document custom values override the template/global default.
         // Order: Custom appendix → bank details → footer notes (custom or template) → T&C
         if (!string.IsNullOrWhiteSpace(doc.CustomAppendix))
-            sb.AppendLine($"<div class='custom-appendix'>{doc.CustomAppendix}</div>");
+            sb.AppendLine($"<div class='custom-appendix' style='white-space:pre-line'>{System.Net.WebUtility.HtmlEncode(doc.CustomAppendix)}</div>");
 
         var bankTextForLang = PickLangText(template.BankDetailsText, template.BankDetailsTextEn, lang);
         if (template.ShowBankDetails && bankTextForLang != null)
@@ -1640,10 +1644,10 @@ public partial class PdfGenerationService : IPdfGenerationService
             ? doc.CustomFooterNotes
             : PickLangText(template.FooterNotes, template.FooterNotesEn, lang);
         if (!string.IsNullOrWhiteSpace(footerNotes))
-            sb.AppendLine($"<div class='footer-notes'>{footerNotes}</div>");
+            sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'>{System.Net.WebUtility.HtmlEncode(footerNotes)}</div>");
 
         if (!string.IsNullOrWhiteSpace(doc.CustomTermsAndConditions))
-            sb.AppendLine($"<div class='terms-conditions'><strong>{L.Terms}:</strong><br/>{doc.CustomTermsAndConditions}</div>");
+            sb.AppendLine($"<div class='terms-conditions' style='white-space:pre-line'><strong>{L.Terms}:</strong><br/>{System.Net.WebUtility.HtmlEncode(doc.CustomTermsAndConditions)}</div>");
 
         // Signatures — slot[0] = creator, slot[1] = approver. Each slot
         // overlays the user's saved signature image on the line and prints
@@ -2017,11 +2021,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'/>");
         sb.AppendLine("<style>body{font-family:'THSarabunNew',sans-serif;font-size:14px;}</style>");
         sb.AppendLine("</head><body>");
-        sb.AppendLine($"<div style='text-align:center;font-size:18px;font-weight:bold;'>{company.Name}</div>");
+        sb.AppendLine($"<div style='text-align:center;font-size:18px;font-weight:bold;'>{WebUtility.HtmlEncode(company.Name)}</div>");
         sb.AppendLine($"<div style='text-align:center;font-size:16px;'>ใบเสร็จรับเงิน</div>");
         sb.AppendLine($"<div>เลขที่: {payment.PaymentNumber}</div>");
         sb.AppendLine($"<div>วันที่: {payment.PaymentDate:dd/MM/yyyy}</div>");
-        sb.AppendLine($"<div>ลูกค้า: {payment.Document.Contact.Name}</div>");
+        sb.AppendLine($"<div>ลูกค้า: {WebUtility.HtmlEncode(payment.Document.Contact.Name)}</div>");
         sb.AppendLine($"<div>เอกสารอ้างอิง: {payment.Document.DocumentNumber}</div>");
         sb.AppendLine($"<div>จำนวนเงิน: {payment.Amount:N2} บาท</div>");
         sb.AppendLine($"<div>วิธีการชำระ: {payment.PaymentMethod}</div>");
