@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;   // AuditAction (AuditLog.Action) — คนละ namespace กับ entity
 
 namespace Accounting.Helpers;
 

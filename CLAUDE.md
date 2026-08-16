@@ -520,9 +520,15 @@ return Ok(dto);  // UI โชว์ → user กด "ยืนยัน" จบ
 ```
 python3 tools/di_cycle_check.py        # วงกลม DI (dotnet build จับไม่ได้)
 python3 tools/nullable_arg_check.py    # CS1503 nullable→non-nullable
+python3 tools/using_check.py           # CS0246 ลืม using ของ type ในเรพ
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
+- **CS0246 = ล้มทั้ง solution** — โปรเจกต์ `Accounting` คอมไพล์ไม่ผ่าน ทำให้
+  `Accounting.Tests` พังตามด้วย CS0006 "Metadata file Accounting.dll could not
+  be found" (error ที่สองไม่ใช่บั๊กแยก — หายเองเมื่อแก้ตัวแรก) _(ที่มา:
+  `AuditHashChain.cs` ใช้ `AuditAction` (Models.Enums) แต่ import แค่
+  Models.Entities — enum กับ entity อยู่คนละ namespace ในเรพนี้)_
 - checker ใหม่ทุกตัวต้องผ่าน **negative test** ก่อนเชื่อ: ใส่บั๊กที่ตั้งใจจับ
   กลับเข้าไปแล้วยืนยันว่า checker จับได้จริง (เคยมี checker ที่ regex ผิด
   จนไม่จับเคสหลักของตัวเอง)
