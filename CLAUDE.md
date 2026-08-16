@@ -441,6 +441,111 @@ return Ok(dto);  // UI โชว์ → user กด "ยืนยัน" จบ
 
 ---
 
+## 🚨 กฎเหล็ก #4 — Engineering Discipline (บทเรียนจากบั๊กจริง)
+
+> ทุกข้อมีบั๊กที่เคยหลุดถึงผู้ใช้เป็นที่มา — ไม่ใช่ best practice ลอย ๆ
+> ผิดคลาสเดิมซ้ำ = ยังไม่ผ่าน review
+
+### A. Defect classes ที่ห้ามเกิดซ้ำ — checklist ก่อน commit
+
+- [ ] **สอง renderer ห้าม drift** — แก้เอกสารที่พิมพ์ = แก้ทั้ง HTML
+  (`PdfGenerationService`) + QuestPDF (`.DocumentRenderer`) ในคอมมิตเดียว;
+  ข้อความบนเอกสารผ่าน `DocumentLabels` เท่านั้น ห้าม string literal
+  _(ที่มา: โหมด en เอกสารปนไทย 20 จุดเพราะ HTML renderer ฝัง literal)_
+- [ ] **เก็บแล้วต้อง echo กลับ** — field ที่รับใน Create/Update ต้องอยู่ใน
+  Response DTO + hydrate ฟอร์มตอนแก้ไข มิฉะนั้น "เปิดแก้แล้วบันทึก ค่าหาย
+  เงียบ ๆ" _(ที่มา: `DocumentLanguage` ทั้งบน Document และ Contact)_
+- [ ] **Resolver กลาง ห้ามคำนวณเอง** — ค่าที่มีลำดับชั้น (ภาษา/ที่อยู่/
+  หัวเอกสาร/เครดิตเทอม) ต้องผ่านฟังก์ชันกลางตัวเดียว ห้าม inline `??` เอง
+  _(ที่มา: PDF/A-3 Title คำนวณภาษาเองแล้วไม่ตรงเนื้อเอกสารในไฟล์เดียว)_
+- [ ] **ห้าม "ใครมาก่อนชนะ"** — ตัวเติมฟอร์ม async ทุกตัวใช้
+  `dataset.autoSrc` + `userTouched`: ค่าผู้ใช้ชนะเสมอ, specific ชนะ generic,
+  ผลลัพธ์ห้ามขึ้นกับลำดับ response _(ที่มา: เทอมชำระเงิน 4 ตัวเติมแข่งกัน)_
+- [ ] **เอกสารลูกต้องสืบทอด** — field ระดับเอกสารที่ลูกค้าเห็น ต้องไหลตาม:
+  convert → clone → settlement receipt → CN อัตโนมัติ → recurring
+  (สืบทอด null เป็น null — ห้ามแปลงเป็นค่า default ตอนสืบทอด)
+  _(ที่มา: ภาษาเอกสารหลุด 5 ทางเข้าอนุพันธ์)_
+- [ ] **ห้าม silent no-op** — ถ้า server ไม่รับ field ตอน update → UI ต้อง
+  ล็อกช่อง + บอกเหตุผล ห้ามให้กดบันทึกแล้วไม่มีผลเงียบ ๆ
+  _(ที่มา: เปลี่ยนใบต้นทางตอนแก้ไขแล้วไม่มีผลอะไรเลย)_
+
+### B. Checklist "เพิ่ม field ใหม่ระดับเอกสาร" (ไล่ตามลำดับ ครบทุกข้อ)
+
+```
+ฟอร์ม (markup+id) → payload (สร้าง: ว่าง=null · แก้ไข: ""=ล้างค่า)
+→ CreateDocumentRequest + UpdateDocumentRequest → entity
+→ DatabaseMigrationHelper (ADD COLUMN IF NOT EXISTS) → DocumentResponse
+→ hydrate ตอน openEdit → reset ตอนฟอร์มใหม่ (ห้ามค้างค่าใบก่อน)
+→ renderer ×2 (ถ้าพิมพ์) → เอกสารลูกสืบทอด (ข้อ A)
+→ DOCUMENT_FLOW.md + TEST_PLAN.md ในคอมมิตเดียวกัน
+```
+
+### C. Security (จากผล security audit — บั๊กจริงทั้งหมด)
+
+- [ ] **HtmlEncode ทุก field ที่ผู้ใช้/OCR/partner API คุมได้** ก่อนต่อเข้า
+  HTML — renderer คืน text/html ที่ browser + Chromium รัน, JWT อยู่ใน
+  localStorage ⇒ XSS = token theft _(ที่มา: XSS ใน line.Description/ชื่อบริษัท)_
+- [ ] **Secret/key ใหม่ทุกตัว fail-fast ใน production** — throw เมื่อว่าง
+  หรือเป็น placeholder (แบบ `JWT_SECRET`/`ENCRYPTION_KEY` ใน `Program.cs`)
+  ห้าม fallback dev key เงียบ ๆ _(ที่มา: PII เข้ารหัสด้วย dev key ใน source)_
+- [ ] **Hash/signature มี canonical function เดียว** ใช้ร่วมทั้งฝั่งเขียน
+  และฝั่ง verify — ห้ามเขียน format string สองที่
+  _(ที่มา: audit hash-chain verify ไม่มีวันผ่านเพราะ format ต่างกัน)_
+- [ ] query ใหม่ทุกอันมี `CompanyId == companyId` (ย้ำจากกฎ M — raw SQL
+  ไม่ผ่าน global query filter ต้องใส่เองเสมอ)
+
+### D. Multi-instance readiness (ก่อน scale จะสายเกินแก้)
+
+- ห้ามสร้าง state ข้าม request เป็น `static` dict / `IMemoryCache` โดยไม่มี
+  แผน multi-node — ใช้ pattern DB-upsert แบบ `ChatRateLimiter` ที่มีอยู่แล้ว
+- Background job ใหม่ต้องกันรันซ้ำข้าม instance (`pg_advisory_lock` ต่อ
+  job run — pattern มีใน `FinancialManagementService`) + งานสแกนทั้งฐาน
+  ต้องมี watermark ต่อบริษัท
+- ไฟล์ห้ามเขียน local disk ตรง — ผ่าน abstraction กลาง
+
+### E. เงิน/ภาษี — วินัยเชิงตัวเลข
+
+- `Math.Round` ระบุ `MidpointRounding.AwayFromZero` เสมอ (default =
+  banker's rounding — OCR เคยหลุด) · เงินเป็น `decimal` เท่านั้น
+- **ห้าม reuse field ผิดความหมาย** — สร้าง field ใหม่ ไม่ยืม field เดิมเก็บ
+  ค่าคนละเรื่อง _(ที่มา: `TotalTaxWithheld` เก็บ CIT ทำ aggregate เพี้ยนทุกจุด)_
+- Business error โยน exception ชนิดเฉพาะ (ข้อความไทยถึงผู้ใช้ได้) — อย่าใช้
+  `InvalidOperationException` ปนกับ framework แล้วปล่อย middleware echo
+- **ห้าม `catch {}` กลืน error ใน payment/stock/JE path** — fail loud
+  เท่านั้น _(ที่มา: ConfirmPayment กลืน error แล้ว order "สำเร็จ" ทั้งที่
+  stock/เงินไม่ลง)_
+
+### F. เครื่องมือบังคับก่อน commit (env นี้ไม่มี .NET SDK — คอมไพล์ไม่ได้)
+
+```
+python3 tools/di_cycle_check.py        # วงกลม DI (dotnet build จับไม่ได้)
+python3 tools/nullable_arg_check.py    # CS1503 nullable→non-nullable
+node --check                           # ทุก <script> ใน .html ที่แก้
+awk brace-balance                      # ทุก .cs ที่แก้
+```
+- checker ใหม่ทุกตัวต้องผ่าน **negative test** ก่อนเชื่อ: ใส่บั๊กที่ตั้งใจจับ
+  กลับเข้าไปแล้วยืนยันว่า checker จับได้จริง (เคยมี checker ที่ regex ผิด
+  จนไม่จับเคสหลักของตัวเอง)
+- แจ้งผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ — รบกวน rebuild ฝั่งคุณ"
+
+### G. Testing mandate (ช่องโหว่ใหญ่สุดของระบบ)
+
+- Logic เงิน/ภาษีใหม่ → extract เป็น pure class (แบบ `TaxPointResolver`,
+  `Section65TerValidator`) + เทสต์ในคอมมิตเดียวกัน
+- แก้บั๊กที่ผู้ใช้รายงาน → reproduce เป็นเทสต์/simulation ให้เห็นตัวเลขตรง
+  กับที่รายงานก่อน แล้วค่อยแก้ (ยืนยันว่าแก้ถูกตัว)
+- **Control เชิง compliance (hash chain, retention, encryption) ต้องมี
+  round-trip test — control ที่ไม่มีเทสต์ยืนยัน = ไม่มี control**
+  _(ที่มา: hash chain พังเงียบ ๆ เพราะไม่มีเทสต์เดียวที่ write→verify)_
+
+### Litmus test ก่อน commit (engineering)
+
+> "บั๊กนี้/โค้ดนี้อยู่ใน defect class ที่เคยเกิดแล้วหรือไม่ — ถ้าใช่
+> อะไรคือกลไก (checker/test/pattern) ที่กันไม่ให้เกิดตัวที่สาม?"
+> ตอบไม่ได้ = แก้เสร็จแต่ยังไม่จบ
+
+---
+
 ## กฎอื่นในโปรเจกต์
 
 - **ฐานข้อมูล** PostgreSQL, schema migrate ด้วย `DatabaseMigrationHelper.ApplyMissingColumns`

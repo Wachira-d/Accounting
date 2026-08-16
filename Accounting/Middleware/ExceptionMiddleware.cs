@@ -82,15 +82,49 @@ public class ExceptionMiddleware
     {
         context.Response.ContentType = "application/json";
 
+        // ข้อความที่จะส่งออกไปต้องเป็น "ข้อความที่ตั้งใจสื่อสารกับผู้ใช้" เท่านั้น
+        //
+        // ปัญหาเดิม: โค้ดโยน InvalidOperationException/ArgumentException สำหรับกฎ
+        // ธุรกิจ (ข้อความไทย) แต่ EF/LINQ/framework ก็โยนชนิดเดียวกัน ("Sequence
+        // contains no elements", "Nullable object must have a value") ⇒ ข้อความ
+        // ภายในระบบรั่วถึง client เป็น HTTP 400 และผู้ใช้เห็น error ที่ไม่มีความหมาย
+        //
+        // ทางแก้ระยะยาว = BusinessRuleException (โค้ดใหม่ใช้ตัวนี้)
+        // ทางแก้ที่ครอบโค้ดเดิมทั้งหมดโดยไม่ต้องแก้ throw หลายร้อยจุด: ใช้กติกา
+        // ของโปรเจกต์เองเป็นตัวแยก — CLAUDE.md กำหนดว่า UI string เป็นภาษาไทย
+        // และ ErrorMessageTranslator ก็ออกแบบบนสมมติฐาน "ข้อความ backend เป็นไทย"
+        // ⇒ ข้อความที่ไม่มีอักษรไทยเลย ถือว่าเป็น framework error → ปิดบัง
+        static bool LooksUserFacing(string? m) =>
+            !string.IsNullOrWhiteSpace(m) && m.Any(ch => ch is >= '฀' and <= '๿');
+
         var (statusCode, message) = exception switch
         {
-            UnauthorizedAccessException => (HttpStatusCode.Unauthorized, exception.Message),
-            KeyNotFoundException => (HttpStatusCode.NotFound, exception.Message),
-            InvalidOperationException => (HttpStatusCode.BadRequest, exception.Message),
-            ArgumentException => (HttpStatusCode.BadRequest, exception.Message),
+            // กฎธุรกิจที่ประกาศชัด — ส่งข้อความออกเสมอ ไม่ต้องเดา
+            Accounting.Helpers.BusinessRuleException bre
+                => ((HttpStatusCode)bre.StatusCode, bre.Message),
+            UnauthorizedAccessException => (HttpStatusCode.Unauthorized,
+                LooksUserFacing(exception.Message) ? exception.Message : "ไม่มีสิทธิ์เข้าถึงรายการนี้"),
+            KeyNotFoundException => (HttpStatusCode.NotFound,
+                LooksUserFacing(exception.Message) ? exception.Message : "ไม่พบข้อมูลที่ร้องขอ"),
+            InvalidOperationException => (HttpStatusCode.BadRequest,
+                LooksUserFacing(exception.Message) ? exception.Message : "ไม่สามารถดำเนินการนี้ได้ในสถานะปัจจุบัน"),
+            ArgumentException => (HttpStatusCode.BadRequest,
+                LooksUserFacing(exception.Message) ? exception.Message : "ข้อมูลที่ส่งมาไม่ถูกต้อง"),
             FormatException => (HttpStatusCode.BadRequest, "ข้อมูลไม่ถูกต้อง"),
             _ => (HttpStatusCode.InternalServerError, "เกิดข้อผิดพลาดภายในระบบ")
         };
+
+        // ข้อความที่ถูกปิดบังยังต้องตามรอยได้ — log ไว้ให้ dev เห็นว่าเกิดอะไรจริง
+        // (ตัวเต็มลง ErrorLogs อยู่แล้วจากขั้นก่อนหน้า ตรงนี้ทำให้ค้นง่ายขึ้น)
+        if (exception is not Accounting.Helpers.BusinessRuleException
+            && !LooksUserFacing(exception.Message)
+            && statusCode != HttpStatusCode.InternalServerError)
+        {
+            context.RequestServices.GetService<ILogger<ExceptionMiddleware>>()?
+                .LogWarning(exception,
+                    "ปิดบังข้อความ exception ภายในระบบไม่ให้ส่งออก ({Type} → {Status})",
+                    exception.GetType().Name, (int)statusCode);
+        }
 
         var locale = ErrorMessageTranslator.ResolveLocale(context.Request.Headers["Accept-Language"].ToString());
         var translatedMessage = ErrorMessageTranslator.Translate(message, locale);

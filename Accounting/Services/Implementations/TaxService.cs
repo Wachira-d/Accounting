@@ -1637,8 +1637,9 @@ public partial class TaxService : ITaxService
         if (previousYearCit != null && previousYearCit.NetVat < 0)
         {
             // NetVat is reused for net profit; negative means overpayment
-            // TotalTaxWithheld has the CIT amount; if net profit was negative, there's a credit
-            taxCreditCarryforward = Math.Abs(previousYearCit.TotalTaxWithheld);
+            // อ่านจาก CitAmount ก่อน — ตกกลับไป TotalTaxWithheld สำหรับรายงานเก่า
+            // ที่สร้างก่อนมี field นี้ (backfill ครอบให้แล้วแต่กันไว้อีกชั้น)
+            taxCreditCarryforward = Math.Abs(previousYearCit.CitAmount ?? previousYearCit.TotalTaxWithheld);
         }
 
         // Thai CIT progressive rates (for SME companies)
@@ -1669,6 +1670,9 @@ public partial class TaxService : ITaxService
         var citPayable = netCitAmount - whtCredit;
 
         report.TotalIncome = totalRevenue;
+        // CIT มีที่เก็บของตัวเองแล้ว (CitAmount) — ยังเขียน TotalTaxWithheld คู่ไว้
+        // เพื่อไม่ให้ผู้อ่านเดิม (export/e-Filing/รายงานเก่า) พังระหว่างทยอยย้าย
+        report.CitAmount = netCitAmount;
         report.TotalTaxWithheld = netCitAmount;
         report.NetVat = netProfitBeforeTax; // Reuse field for net profit
 
@@ -2890,5 +2894,8 @@ public partial class TaxService : ITaxService
             l.TransactionDate, l.Description, l.IncomeAmount,
             l.TaxRate, l.TaxAmount, l.IncomeTypeCode, l.IsExcluded,
             l.DocumentId)).ToList(),
-        r.Notes);
+        r.Notes,
+        // echo CitAmount กลับด้วย (กฎ "เก็บแล้วต้อง echo กลับ") — UI/รายงานจะได้
+        // แยกยอด CIT ออกจากยอดหัก ณ ที่จ่ายได้โดยไม่ต้องเดาจากชนิดรายงาน
+        CitAmount: r.CitAmount);
 }

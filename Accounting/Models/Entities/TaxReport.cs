@@ -20,7 +20,18 @@ public class TaxReport : TenantEntity
 
     // WHT (ภงด.3/53)
     public decimal TotalIncome { get; set; }
+    /// <summary>ภาษีหัก ณ ที่จ่ายรวม (ภ.ง.ด.1/2/3/53)
+    /// <para>⚠️ ในรายงาน **ภ.ง.ด.50/51 (CIT)** field นี้ถูกใช้เก็บ "ภาษีเงินได้
+    /// นิติบุคคล" มาแต่เดิม ซึ่งคนละความหมายกับชื่อ field ⇒ ทุกจุดที่รวมยอด WHT
+    /// ข้ามชนิดรายงาน (dashboard/สรุป) จะปน CIT เข้ามาด้วย. โค้ดใหม่ให้เขียน/อ่าน
+    /// CIT ผ่าน <see cref="CitAmount"/> แทน — ที่นี่ยังเขียนคู่ไว้เพื่อความเข้ากัน
+    /// ได้กับข้อมูลเดิมที่มีอยู่ในฐาน (ดู CLAUDE.md กฎเหล็ก #4 E "ห้าม reuse
+    /// field ผิดความหมาย")</para></summary>
     public decimal TotalTaxWithheld { get; set; }
+    /// <summary>ภาษีเงินได้นิติบุคคลสุทธิของรอบ (ภ.ง.ด.50/51) — null สำหรับ
+    /// รายงานชนิดอื่น. แยกจาก <see cref="TotalTaxWithheld"/> เพื่อไม่ให้ยอด CIT
+    /// ปนกับยอดหัก ณ ที่จ่ายเวลารวมข้ามรายงาน</summary>
+    public decimal? CitAmount { get; set; }
 
     public string? Notes { get; set; }
 

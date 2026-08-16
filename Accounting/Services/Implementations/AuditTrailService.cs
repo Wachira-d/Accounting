@@ -113,10 +113,10 @@ public class AuditTrailService : IAuditTrailService
             var r = rows[i];
             if (r.PrevHash != prev)
                 return new AuditChainVerifyResult(rows.Count, i, r.Id.ToString(), r.Timestamp, false);
-            var payload = $"{r.Timestamp:O}|{r.UserId}|{r.UserEmail}|{r.Action}|{r.EntityType}|{r.EntityId}|{r.NewValues}|{r.PrevHash}";
-            var expected = Convert.ToHexString(
-                System.Security.Cryptography.SHA256.HashData(
-                    System.Text.Encoding.UTF8.GetBytes(payload)));
+            // ใช้ฟังก์ชันกลางตัวเดียวกับฝั่งเขียน (Helpers/AuditHashChain) —
+            // ห้ามเขียน format string ซ้ำที่นี่ เดิมทำแบบนั้นแล้ว drift จนตรวจ
+            // ไม่มีวันผ่าน (ดู comment ใน AuditHashChain)
+            var expected = Accounting.Helpers.AuditHashChain.ComputeRowHash(r);
             if (!string.Equals(expected, r.RowHash, StringComparison.OrdinalIgnoreCase))
                 return new AuditChainVerifyResult(rows.Count, i, r.Id.ToString(), r.Timestamp, false);
             prev = r.RowHash;

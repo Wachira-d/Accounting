@@ -5537,6 +5537,38 @@ public static class DatabaseMigrationHelper
             // challenge (กันบอทยิงรัวซ้ำ) + คำถามที่ตอบไม่ได้ (feed หา KB gap)
             """ALTER TABLE "ChatConversations" ADD COLUMN IF NOT EXISTS "PendingChallenge" varchar(20) NULL;""",
             """ALTER TABLE "ChatMessages" ADD COLUMN IF NOT EXISTS "NoContextFound" boolean NOT NULL DEFAULT false;""",
+            // Idempotency-Key ที่ใช้ร่วมกันข้าม instance — เดิมเก็บใน IMemoryCache
+            // (in-process) ⇒ deploy 2 node แล้ว partner retry ไปโดนคนละ node =
+            // ลงเอกสาร/รับเงินซ้ำเงียบ ๆ. "Status" = InFlight/Done ใช้กัน request
+            // ที่เข้าพร้อมกันด้วยคีย์เดียวกัน (ตัวที่สองได้ 409 ไม่ใช่ยิงซ้ำ)
+            """
+            CREATE TABLE IF NOT EXISTS "IdempotencyRecords" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CacheKey" varchar(400) NOT NULL,
+                "Status" varchar(16) NOT NULL DEFAULT 'InFlight',
+                "StatusCode" integer NOT NULL DEFAULT 0,
+                "ContentType" varchar(200) NULL,
+                "Body" bytea NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+                "CompletedAt" timestamptz NULL
+            );
+            """,
+            // tax point การนำเข้า §78/2 — วันชำระอากรขาเข้า (เดิมไม่มีที่เก็บเลย
+            // ทำให้ VAT นำเข้าตกไปใช้ issueDate = เข้า ภ.พ.30 ผิดงวดได้)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomsDutyPaidDate" timestamptz NULL;""",
+            // ภาษีเงินได้นิติบุคคล แยกออกจาก TotalTaxWithheld (ซึ่งชื่อคือ "หัก ณ
+            // ที่จ่าย") — เดิม ภ.ง.ด.50/51 ยัด CIT ลง field นั้นทำให้ยอด CIT ปนกับ
+            // WHT ทุกครั้งที่รวมข้ามชนิดรายงาน
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "CitAmount" numeric(18,2) NULL;""",
+            // backfill ข้อมูลเดิม: รายงาน CIT ที่มีอยู่ให้ CitAmount = ค่าที่เคย
+            // เก็บไว้ใน TotalTaxWithheld (idempotent — รันซ้ำได้)
+            // TaxType 6 = CorporateIncomeTax (ภ.ง.ด.50/51) เก็บเป็น int ในฐาน
+            """
+            UPDATE "TaxReports" SET "CitAmount" = "TotalTaxWithheld"
+             WHERE "CitAmount" IS NULL AND "TaxType" = 6;
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_IdempotencyRecords_Key" ON "IdempotencyRecords" ("CacheKey");""",
+            """CREATE INDEX IF NOT EXISTS "IX_IdempotencyRecords_CreatedAt" ON "IdempotencyRecords" ("CreatedAt");""",
         };
 
         foreach (var sql in statements)

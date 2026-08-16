@@ -77,9 +77,20 @@ public class SecurityMiddleware
         headers.Append("X-Permitted-Cross-Domain-Policies", "none");
 
         // Content Security Policy
+        //
+        // ⚠️ หนี้ที่รู้ตัว: script-src ยังมี 'unsafe-inline' — ถอดไม่ได้ตอนนี้เพราะ
+        // frontend เป็น vanilla HTML ไม่มี build step ทุกหน้าใช้ <script> inline
+        // (documents.html ก้อนเดียว ~9,000 บรรทัด). การถอดต้องทำ nonce injection
+        // middleware ที่ rewrite ทุก HTML response + ย้าย handler แบบ onclick=""
+        // ออกจาก markup ซึ่งเป็นงานแยก — ตราบใดที่ยังมี 'unsafe-inline' CSP
+        // **ไม่ใช่ชั้นกัน XSS** ต้องพึ่ง output encoding ที่ต้นทางเป็นหลัก
+        // (ดู CLAUDE.md กฎเหล็ก #4 C — HtmlEncode ทุก field ที่ผู้ใช้คุมได้)
+        //
+        // 'unsafe-eval' ถอดออกแล้ว: grep ทั้ง wwwroot ไม่มี eval()/new Function()
+        // ใช้เลย จึงไม่มีอะไรพัง และตัดช่องทาง payload ที่ต้องพึ่ง eval ทิ้งได้ฟรี
         headers.Append("Content-Security-Policy",
             "default-src 'self'; " +
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
+            "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
             "font-src 'self' https://fonts.gstatic.com; " +
             "img-src 'self' data: blob: https:; " +

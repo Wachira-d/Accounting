@@ -99,7 +99,15 @@ public static class TaxInvoiceCompletenessChecker
         if (IsJuristicBuyer(buyer))
         {
             if (Digits(buyer.TaxId).Length != 13) missing.Add("เลขผู้เสียภาษีผู้ซื้อ 13 หลัก");
-            if (Digits(buyer.BranchCode).Length != 5) missing.Add("รหัสสาขาผู้ซื้อ 5 หลัก (00000=สนญ.)");
+            // สาขา**ว่าง** = ถือเป็น "00000 สำนักงานใหญ่" (ค่าเริ่มต้นสากล) — ไม่ถือ
+            // ว่าขาด. เดิม null/ว่าง = ขาด ⇒ ใบกำกับที่ผู้ซื้อไม่กรอกสาขาถูก
+            // downgrade หัวเป็น "ใบเสร็จรับเงิน" ทั้งที่ renderer แสดง "(สำนักงาน
+            // ใหญ่)" อยู่แล้ว = display กับ title ขัดกัน + ข้ามติ๊ก IssuedAsCash
+            // Receipt/Combined ของผู้ใช้ไปเงียบ ๆ. ตรงกับที่ระบบ default ฝั่งขาย
+            // (SupplierBranchCode ?? "00000") และฝั่งพิมพ์ (FormatBranch) ทำอยู่แล้ว
+            // — flag เฉพาะเมื่อกรอกมาแล้วผิดรูป (ไม่ใช่ 5 หลัก)
+            var br = Digits(buyer.BranchCode);
+            if (br.Length > 0 && br.Length != 5) missing.Add("รหัสสาขาผู้ซื้อ 5 หลัก (00000=สนญ.)");
         }
         return missing;
     }

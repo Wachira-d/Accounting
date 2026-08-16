@@ -41,7 +41,9 @@ public class AuthService : IAuthService
         _companyService = companyService;
         _logger = logger;
         _maxFailedAttempts = int.Parse(config["Security:MaxLoginAttemptsBeforeLockout"] ?? "5");
-        _lockoutMinutes = int.Parse(config["Security:_lockoutMinutes"] ?? "15");
+        // key ต้องตรงกับ appsettings ("Security:LockoutMinutes") — เดิมมี underscore
+        // นำหน้า ทำให้อ่านไม่เจอและใช้ default 15 เสมอ ต่อให้ผู้ดูแลตั้งค่าไว้
+        _lockoutMinutes = int.Parse(config["Security:LockoutMinutes"] ?? "15");
     }
 
     public async Task<LoginResponse> RegisterAsync(RegisterRequest request)

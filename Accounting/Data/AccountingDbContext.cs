@@ -3283,7 +3283,6 @@ public class AccountingDbContext : DbContext
         var byCompany = newEntries
             .Select((e, i) => new { Entry = e, Order = i })
             .GroupBy(x => x.Entry.CompanyId ?? Guid.Empty);
-        using var sha = System.Security.Cryptography.SHA256.Create();
         foreach (var grp in byCompany)
         {
             // โหลด PrevHash ล่าสุดของบริษัทนี้จาก DB — chain ต่อจากเดิม
@@ -3296,9 +3295,9 @@ public class AccountingDbContext : DbContext
             {
                 var e = x.Entry;
                 e.PrevHash = lastHash;
-                var canonical = $"{e.Timestamp:O}|{e.UserId}|{e.UserEmail}|{(int)e.Action}|{e.EntityType}|{e.EntityId}|{e.NewValues}|{e.OldValues}|{lastHash}";
-                var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(canonical));
-                e.RowHash = Convert.ToHexString(bytes);
+                // canonical + hash มาจากฟังก์ชันกลางตัวเดียว (Helpers/AuditHashChain)
+                // ที่ฝั่ง verify ใช้ตัวเดียวกัน — ห้ามเขียน format string ที่นี่อีก
+                e.RowHash = Accounting.Helpers.AuditHashChain.ComputeRowHash(e);
                 lastHash = e.RowHash;
             }
         }

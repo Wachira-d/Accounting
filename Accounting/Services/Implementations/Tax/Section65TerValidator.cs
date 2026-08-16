@@ -49,7 +49,35 @@ public static class Section65TerValidator
         /// — ใช้คำนวณ cap §65 ตรี(4) ที่เป็น per-fiscal-year ไม่ใช่ per-doc.
         /// ถ้าไม่ส่งมา (null) → fallback คำนวณ cap เฉพาะ entertainment ใน
         /// เอกสารปัจจุบัน (legacy behavior, อาจ under-report ส่วนเกิน).</summary>
-        decimal? PriorYtdEntertainmentExpense = null);
+        decimal? PriorYtdEntertainmentExpense = null,
+        // ───── context เพิ่มสำหรับอนุมาตราที่เดิมไม่ได้ตรวจ ─────
+        // ทุกตัวเป็น optional + default = "ไม่ตรวจ" เพื่อไม่เปลี่ยนพฤติกรรมของ
+        // caller เดิมจนกว่าจะส่งข้อมูลมาจริง
+        /// <summary>วันเริ่มรอบบัญชีปัจจุบัน — ใช้ตรวจ (10) รายจ่ายของรอบก่อน</summary>
+        DateTime? CurrentFiscalYearStart = null,
+        /// <summary>เลขผู้เสียภาษีของบริษัทเอง — ใช้ตรวจ (13) เช่าทรัพย์สินตัวเอง</summary>
+        string? CompanyTaxId = null,
+        /// <summary>เอกสารนี้มีหลักฐานการจ่ายจริงแนบ/บันทึกแล้วหรือไม่ —
+        /// null = ไม่ทราบ (ไม่ตรวจ (8))</summary>
+        bool? HasPaymentEvidence = null,
+        /// <summary>มีต้นฉบับเอกสารจากผู้ขาย (ใบเสร็จ/ใบกำกับ/ไฟล์แนบ) หรือไม่ —
+        /// null = ไม่ทราบ (ไม่ตรวจ (9))</summary>
+        bool? HasSourceDocument = null,
+        /// <summary>ผู้ใช้ยืนยันว่ารายจ่ายเกี่ยวกับกิจการหรือไม่ —
+        /// false = ไม่เกี่ยว → บวกกลับ (14); null = ไม่ทราบ</summary>
+        bool? RelatedToBusiness = null,
+        /// <summary>คู่ค้าเป็นบุคคล/นิติบุคคลที่เกี่ยวโยงกัน — ใช้เตือน (15)
+        /// transfer pricing ให้ทบทวนราคา</summary>
+        bool IsRelatedParty = false,
+        /// <summary>รายจ่ายต่างประเทศนี้เชื่อมโยงกับกิจการในไทยหรือไม่ —
+        /// false + เอกสารเป็นบริการต่างประเทศ → บวกกลับ (19)</summary>
+        bool? LinkedToThaiOperation = null,
+        /// <summary>true = บังคับตาม CLAUDE.md L(11)(18) เต็มรูป คือ **ขาดชื่อ
+        /// หรือขาดเลขผู้เสียภาษีอย่างใดอย่างหนึ่งก็ block**. default = false
+        /// (block เฉพาะตอนขาดทั้งคู่ ส่วนขาดเลขภาษีเป็นคำเตือน) เพราะการ
+        /// เปิดเต็มรูปจะบล็อกค่าใช้จ่ายเงินสดรายย่อยจำนวนมากที่ไม่มีเลขภาษี
+        /// — เจ้าของระบบเปิดได้เมื่อพร้อมบังคับนโยบาย</summary>
+        bool StrictPayeeIdentification = false);
 
     /// <summary>accountInfo: map AccountId → (code, name) สำหรับตรวจชนิดบัญชี.
     /// payeeName/payeeTaxId: ชื่อ+เลขผู้รับเงิน (จาก Contact ของเอกสารซื้อ).</summary>
@@ -71,6 +99,64 @@ public static class Section65TerValidator
                 0m, "ต้องระบุผู้รับเงิน (ชื่อหรือเลขผู้เสียภาษี) — รายจ่ายที่ไม่ระบุผู้รับเป็นรายจ่ายต้องห้าม",
                 HardBlock: true, NeedsConfirmation: false));
         }
+        // ระบุชื่อแต่ไม่มีเลขผู้เสียภาษี — สรรพากรถือว่าพิสูจน์ผู้รับไม่ได้เช่นกัน
+        // default = เตือน (กันบล็อกค่าใช้จ่ายเงินสดรายย่อยจำนวนมาก),
+        // เปิด StrictPayeeIdentification เพื่อบังคับตาม CLAUDE.md L(11)(18) เต็มรูป
+        else if (doc.TotalAmount > 0 && string.IsNullOrWhiteSpace(payeeTaxId))
+        {
+            findings.Add(new("RD-65ter(11)(18)", "ป.รัษฎากร §65 ตรี (11)(18)",
+                0m, "ไม่มีเลขประจำตัวผู้เสียภาษีของผู้รับเงิน — เสี่ยงถูกถือเป็นรายจ่ายต้องห้าม โปรดเพิ่มก่อนปิดรอบ",
+                HardBlock: ctx.StrictPayeeIdentification, NeedsConfirmation: true));
+        }
+
+        // (8) รายจ่ายไม่ได้จ่ายจริง — ตรวจเมื่อ caller ส่งข้อมูลมาเท่านั้น
+        if (ctx.HasPaymentEvidence == false && doc.TotalAmount > 0)
+        {
+            findings.Add(new("RD-65ter(8)", "ป.รัษฎากร §65 ตรี (8)",
+                0m, "ยังไม่มีหลักฐานการจ่ายเงินจริง — รายจ่ายที่จ่ายไม่จริงเป็นรายจ่ายต้องห้าม (แนบหลักฐานก่อนปิดรอบ)",
+                HardBlock: false, NeedsConfirmation: true));
+        }
+
+        // (9) ไม่มีเอกสารต้นฉบับจากผู้ขาย
+        if (ctx.HasSourceDocument == false && doc.TotalAmount > 0)
+        {
+            findings.Add(new("RD-65ter(9)", "ป.รัษฎากร §65 ตรี (9)",
+                0m, "ไม่มีเอกสารต้นฉบับ (ใบเสร็จ/ใบกำกับจากผู้ขาย) — รายจ่ายที่ไม่มีหลักฐานเป็นรายจ่ายต้องห้าม",
+                HardBlock: false, NeedsConfirmation: true));
+        }
+
+        // (10) รายจ่ายของรอบบัญชีก่อน — ต้องบวกกลับรอบนี้ (ไปหักในรอบที่เกิดจริง)
+        if (ctx.CurrentFiscalYearStart is { } fyStart && doc.DocumentDate.Date < fyStart.Date)
+        {
+            findings.Add(new("RD-65ter(10)", "ป.รัษฎากร §65 ตรี (10)",
+                0m, $"วันที่เอกสาร {doc.DocumentDate:dd/MM/yyyy} อยู่ก่อนรอบบัญชีปัจจุบัน ({fyStart:dd/MM/yyyy}) — รายจ่ายรอบก่อนหักในรอบนี้ไม่ได้ โปรดระบุเหตุผล",
+                HardBlock: false, NeedsConfirmation: true));
+        }
+
+        // (14) ไม่เกี่ยวกับกิจการ — ผู้ใช้ติ๊กเองว่าไม่เกี่ยว → บวกกลับเต็มจำนวน
+        if (ctx.RelatedToBusiness == false && doc.TotalAmount > 0)
+        {
+            findings.Add(new("RD-65ter(14)", "ป.รัษฎากร §65 ตรี (14)",
+                doc.TotalAmount, $"ระบุว่าไม่เกี่ยวกับกิจการ — บวกกลับเต็มจำนวน ({doc.TotalAmount:N2})",
+                HardBlock: false, NeedsConfirmation: false));
+        }
+
+        // (15) ราคาโอนระหว่างผู้เกี่ยวโยงกัน — ระบบไม่มีราคาตลาดอ้างอิง จึงเตือน
+        // ให้ทบทวน ไม่บวกกลับเอง (บวกกลับผิด = ลูกค้าเสียภาษีเกิน)
+        if (ctx.IsRelatedParty && doc.TotalAmount > 0)
+        {
+            findings.Add(new("RD-65ter(15)", "ป.รัษฎากร §65 ตรี (15)",
+                0m, "คู่ค้าเป็นผู้เกี่ยวโยงกัน — ต้องพิสูจน์ว่าราคาเป็นราคาตลาด (transfer pricing) มิฉะนั้นส่วนที่สูงเกินสมควรเป็นรายจ่ายต้องห้าม",
+                HardBlock: false, NeedsConfirmation: true));
+        }
+
+        // (19) รายจ่ายต่างประเทศที่ไม่เชื่อมโยงกิจการในไทย
+        if (doc.IsForeignService && ctx.LinkedToThaiOperation == false && doc.TotalAmount > 0)
+        {
+            findings.Add(new("RD-65ter(19)", "ป.รัษฎากร §65 ตรี (19)",
+                doc.TotalAmount, $"รายจ่ายต่างประเทศที่ไม่เชื่อมโยงกิจการในไทย — บวกกลับเต็มจำนวน ({doc.TotalAmount:N2})",
+                HardBlock: false, NeedsConfirmation: false));
+        }
 
         decimal entertainmentTotal = 0m;
         foreach (var line in doc.Lines)
@@ -79,7 +165,10 @@ public static class Section65TerValidator
             if (line.AccountId.HasValue && accountInfo.TryGetValue(line.AccountId.Value, out var ai))
             { code = ai.Code; name = ai.Name; }
             var hay = $"{name} {line.Description}".ToLowerInvariant();
-            var lineAmt = line.Amount + line.VatAmount;  // รวม VAT (ส่วนที่เป็นต้นทุนจริง)
+            // ยอดบวกกลับ = ต้นทุนจริงของบรรทัด. รวม VAT **เฉพาะตอนเคลมไม่ได้**
+            // (VAT ที่เคลมได้ไปอยู่ในภาษีซื้อ ไม่ได้เป็นค่าใช้จ่าย — เดิมรวมเสมอ
+            // ทำให้บวกกลับเกินจริงในบรรทัดที่เคลม VAT ได้)
+            var lineAmt = line.Amount + (line.IsVatClaimable ? 0m : line.VatAmount);
 
             // (6) เบี้ยปรับ / เงินเพิ่ม / ค่าปรับอาญา — auto nonDeductible, no override
             if (hay.Contains("ค่าปรับ") || hay.Contains("เบี้ยปรับ") || hay.Contains("เงินเพิ่ม")
@@ -140,6 +229,31 @@ public static class Section65TerValidator
                 continue;
             }
 
+            // (12) ดอกเบี้ยของเงินทุน/เงินสำรองของตนเอง — บวกกลับเต็ม
+            // (ดอกเบี้ยที่กิจการ "จ่ายให้ตัวเอง" ไม่ใช่รายจ่ายจริง)
+            if (hay.Contains("ดอกเบี้ยเงินทุน") || hay.Contains("ดอกเบี้ยส่วนของเจ้าของ")
+                || hay.Contains("ดอกเบี้ยเงินกองทุนตนเอง") || hay.Contains("interest on capital")
+                || hay.Contains("interest on owner"))
+            {
+                findings.Add(new("RD-65ter(12)", "ป.รัษฎากร §65 ตรี (12)",
+                    lineAmt, $"ดอกเบี้ยของเงินทุน/เงินสำรองของตนเอง — บวกกลับเต็มจำนวน ({lineAmt:N2})",
+                    HardBlock: false, NeedsConfirmation: false));
+                continue;
+            }
+
+            // (13) ค่าเช่าทรัพย์สินที่กิจการเป็นเจ้าของเอง — จ่ายให้ตัวเอง
+            // ตรวจจากเลขผู้เสียภาษีผู้รับเงิน == เลขของบริษัทเอง
+            if (!string.IsNullOrWhiteSpace(ctx.CompanyTaxId)
+                && !string.IsNullOrWhiteSpace(payeeTaxId)
+                && string.Equals(ctx.CompanyTaxId.Trim(), payeeTaxId.Trim(), StringComparison.Ordinal)
+                && (hay.Contains("ค่าเช่า") || hay.Contains("rent")))
+            {
+                findings.Add(new("RD-65ter(13)", "ป.รัษฎากร §65 ตรี (13)",
+                    lineAmt, $"ค่าเช่าทรัพย์สินของกิจการเอง (ผู้รับเงินคือบริษัทเดียวกัน) — บวกกลับเต็มจำนวน ({lineAmt:N2})",
+                    HardBlock: false, NeedsConfirmation: false));
+                continue;
+            }
+
             // (5) Capex — มูลค่าสูง + ลงเป็นค่าใช้จ่าย → ควร capitalize (warning)
             if (lineAmt >= capexThreshold && code.StartsWith("5"))
             {
@@ -154,7 +268,17 @@ public static class Section65TerValidator
         // — cap เป็น "per fiscal year". รวม YTD ที่อนุมัติไปก่อนหน้ากับยอด
         // entertainment ในเอกสารนี้ → คำนวณ excess รวม แล้วเฉลี่ยส่วนเกินที่
         // เป็นของเอกสารนี้ (clamp ไม่ให้เกิน entertainmentTotal ของ doc)
-        if (entertainmentTotal > 0)
+        // ไม่มีฐานคำนวณเลย (ยังไม่ปิดรอบ/ไม่ได้ส่ง context) → **ห้ามคิด cap = 0**
+        // เพราะจะบวกกลับค่ารับรองทั้งก้อน = ลูกค้าเสียภาษีเกิน. เตือนให้ไปคำนวณ
+        // ตอนปิดรอบแทน
+        if (entertainmentTotal > 0
+            && (ctx.AnnualRevenue ?? 0m) <= 0m && (ctx.PaidUpCapital ?? 0m) <= 0m)
+        {
+            findings.Add(new("RD-65ter(4)", "ป.รัษฎากร §65 ตรี (4) + กฎกระทรวง 143",
+                0m, $"ค่ารับรอง {entertainmentTotal:N2} — ยังไม่มีฐานรายได้/ทุนจดทะเบียนสำหรับคำนวณเพดาน (0.3%) โปรดตรวจส่วนเกินตอนปิดรอบบัญชี",
+                HardBlock: false, NeedsConfirmation: true));
+        }
+        else if (entertainmentTotal > 0)
         {
             var cap = Math.Min(
                 Math.Max((ctx.AnnualRevenue ?? 0m) * 0.003m, (ctx.PaidUpCapital ?? 0m) * 0.003m),

@@ -57,10 +57,23 @@ builder.Services.AddDbContext<AccountingDbContext>(options =>
 // JWT secret: MUST be set via env var in production. Config file fallback for dev only.
 var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET")
     ?? builder.Configuration["Jwt:Secret"];
-if (string.IsNullOrEmpty(jwtSecret))
+// ค่า placeholder ที่ commit ไว้ใน appsettings.Production.json — ต้องปฏิเสธด้วย
+// ไม่งั้น guard `IsNullOrEmpty` ผ่าน (ค่าไม่ว่าง) แล้ว boot ด้วยกุญแจเซ็น JWT
+// ที่รู้กันทั้งโลก = ปลอม token เป็น SystemAdmin ข้าม tenant ได้ทั้งหมด
+var jwtPlaceholders = new[]
+{
+    "CHANGE_THIS_TO_A_STRONG_SECRET_KEY_AT_LEAST_32_CHARS!!",
+    "your-secret-key", "changeme", "secret",
+};
+var jwtIsPlaceholder = !string.IsNullOrEmpty(jwtSecret)
+    && (jwtPlaceholders.Contains(jwtSecret) || jwtSecret.Length < 32);
+if (string.IsNullOrEmpty(jwtSecret) || jwtIsPlaceholder)
 {
     if (builder.Environment.IsProduction())
-        throw new InvalidOperationException("JWT_SECRET environment variable is required in production!");
+        throw new InvalidOperationException(
+            jwtIsPlaceholder
+                ? "JWT_SECRET เป็นค่า placeholder/สั้นเกินไป — ตั้ง env var JWT_SECRET (≥32 อักษร สุ่มจริง) ใน production"
+                : "JWT_SECRET environment variable is required in production!");
     // Dev-only auto-generated secret (changes each restart — tokens won't persist)
     jwtSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
     Console.WriteLine("⚠ WARNING: Using auto-generated JWT secret. Set JWT_SECRET env var for persistent sessions.");
@@ -72,8 +85,22 @@ builder.Configuration["Jwt:Secret"] = jwtSecret;
 // เพื่อให้ EF ValueConverter ใช้ key จริง (มิฉะนั้น default dev key)
 var encryptionKey = Environment.GetEnvironmentVariable("ENCRYPTION_KEY")
     ?? builder.Configuration["Security:EncryptionKey"];
-if (!string.IsNullOrWhiteSpace(encryptionKey))
+// fail-fast ใน production เหมือน JWT — เดิมถ้าไม่ตั้ง key จะเงียบ ๆ ตกไปใช้
+// dev key ("default-dev-key-change-in-production") ที่อยู่ใน source ⇒ PII ตาม
+// PDPA ม.26 (เลขบัตร ปชช./passport/บัญชีธนาคาร) ถูกเข้ารหัสด้วยกุญแจสาธารณะ =
+// เท่ากับ plaintext ถ้าฐานข้อมูลรั่ว. ไม่ตั้ง key ใน prod = ต้อง boot ไม่ขึ้น
+if (string.IsNullOrWhiteSpace(encryptionKey))
+{
+    if (builder.Environment.IsProduction())
+        throw new InvalidOperationException(
+            "ENCRYPTION_KEY environment variable is required in production (PDPA ม.26 — " +
+            "ห้ามเข้ารหัส PII ด้วย dev key ที่อยู่ใน source)");
+    Console.WriteLine("⚠ WARNING: ENCRYPTION_KEY not set — PII columns use the built-in DEV key. Set ENCRYPTION_KEY in production.");
+}
+else
+{
     Accounting.Helpers.EncryptedColumnConverter.Configure(encryptionKey);
+}
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -544,6 +571,10 @@ builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerif
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
+// §82/3 — ล้างภาษีซื้อที่ค้าง 11640 พ้น 6 เดือนเป็นค่าใช้จ่าย.
+// ReclassifyExpiredUndueInputVatAsync มีมาตั้งแต่ต้นแต่ไม่มีใครเรียก ⇒ ยอด
+// 11640 ค้างเป็นสินทรัพย์ลอยในงบตลอดไป (พบโดย task force รอบตรวจระบบ)
+builder.Services.AddHostedService<Accounting.Services.Background.UndueInputVatExpiryJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();

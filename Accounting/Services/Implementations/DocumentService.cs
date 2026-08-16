@@ -1742,6 +1742,19 @@ public class DocumentService : IDocumentService
                     .First());
     }
 
+    /// <summary>ใบนี้แปลงมาจากเอกสาร "ขายเครดิต" (ใบแจ้งหนี้/วางบิล) หรือไม่ —
+    /// ใช้บล็อกโหมดขายเงินสด (IssuedAsCashReceipt) ที่จะลง Dr เงินสดเต็มทั้งที่
+    /// ยังไม่รับเงินจริง</summary>
+    private async Task<bool> IsConvertedFromCreditSaleAsync(Guid companyId, Document doc)
+    {
+        if (!doc.RelatedDocumentId.HasValue) return false;
+        var srcType = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+            .Select(d => (DocumentType?)d.DocumentType)
+            .FirstOrDefaultAsync();
+        return srcType is DocumentType.Invoice or DocumentType.BillingNote;
+    }
+
     public async Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request)
     {
         var doc = await _db.Documents
@@ -1757,11 +1770,14 @@ public class DocumentService : IDocumentService
         var isDocRevision = RevisableTypes.Contains(doc.DocumentType)
             && doc.Status is DocumentStatus.Approved or DocumentStatus.Sent;
 
-        if (doc.Status != DocumentStatus.Draft && !isDocRevision)
+        // Rejected แก้ได้เหมือน Draft — ใบที่ถูกตีกลับยังไม่ posted (ไม่มี JE/เลขจริง)
+        // เดิมห้ามแก้ ⇒ ทางตัน: ถูกตีกลับแล้วทำได้แค่ "ส่งใบเดิมซ้ำ" โดยแก้เหตุ
+        // ที่โดนตีกลับไม่ได้เลย (พบใน UX audit — ผู้อนุมัติตีกลับก็เพื่อให้แก้)
+        if (doc.Status is not (DocumentStatus.Draft or DocumentStatus.Rejected) && !isDocRevision)
             throw new InvalidOperationException(
                 RevisableTypes.Contains(doc.DocumentType)
-                    ? $"{DocTypeLabel(doc.DocumentType)}สถานะนี้แก้ไขไม่ได้ (แก้ได้เฉพาะ Draft/Approved/Sent)"
-                    : "แก้ไขได้เฉพาะเอกสาร Draft เท่านั้น");
+                    ? $"{DocTypeLabel(doc.DocumentType)}สถานะนี้แก้ไขไม่ได้ (แก้ได้เฉพาะ ร่าง/ถูกตีกลับ หรือออก Rev ใหม่จาก Approved/Sent)"
+                    : "แก้ไขได้เฉพาะเอกสารร่างหรือใบที่ถูกตีกลับเท่านั้น");
 
         if (isDocRevision)
         {
@@ -1911,6 +1927,16 @@ public class DocumentService : IDocumentService
         if (request.CombinedInvoiceTaxInvoice.HasValue)
             doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
                 && doc.DocumentType == DocumentType.TaxInvoice;
+        // IssuedAsCashReceipt — เดิม update ไม่รับ ⇒ ติ๊ก "ออกใบกำกับภาษี/ใบเสร็จ
+        // รับเงิน ใบเดียว (ขายเงินสด)" ตอนแก้ไขแล้วไม่มีผลเงียบ ๆ (silent no-op)
+        // โดยเฉพาะเคสแปลง INV→TaxInvoice แล้วมาติ๊กภายหลัง (convert ไม่ตั้ง flag นี้)
+        if (request.IssuedAsCashReceipt.HasValue)
+            doc.IssuedAsCashReceipt = request.IssuedAsCashReceipt.Value
+                && doc.DocumentType == DocumentType.TaxInvoice
+                // guard: ใบที่แปลงมาจากใบแจ้งหนี้/วางบิล (ขายเครดิต) ห้ามลงแบบขาย
+                // เงินสด — จะได้ Dr เงินสดเต็มทั้งที่ยังไม่รับเงินจริง (เงินสดปลอม
+                // + ไม่มีลูกหนี้). ต้องรับเงินผ่าน "บันทึกชำระเงิน" ตามปกติ
+                && !await IsConvertedFromCreditSaleAsync(companyId, doc);
         // ผู้จัดทำจริงจากระบบต้นทาง (เคส OCR PV: NextAcc สร้าง Draft เอง → partner
         // ยัดผู้จัดทำผ่าน PUT). null = ไม่แตะ; "" = ล้าง; ค่า = ตั้ง. PDF slot 0
         // (ผู้จัดทำ/ผู้รับเงิน) จะ priority ค่านี้เหนือ CreatedBy (ResolveSignersAsync)
@@ -7109,6 +7135,8 @@ public class DocumentService : IDocumentService
     /// Anything not listed is rejected to prevent illogical flows like
     /// Quotation→CreditNote (CN must reference Invoice/TaxInvoice/sale).
     /// </summary>
+    // ⚠️ มี MIRROR ฝั่ง frontend: documents.html `_validConversions` (ใช้ตัดสิน
+    // ว่าจะโชว์ปุ่ม/ตัวเลือก "แปลงเอกสาร") — แก้ตารางนี้ต้องแก้ที่นั่นคู่กัน
     private static readonly Dictionary<DocumentType, DocumentType[]> ValidConversions = new()
     {
         // Sales side
@@ -9827,7 +9855,28 @@ public class DocumentService : IDocumentService
                     || l.Description.Contains("เลี้ยงรับรอง")))
             .SumAsync(l => (decimal?)(l.Amount + l.VatAmount)) ?? 0m;
 
-        var ctx = new Section65TerValidator.Context(annualRevenue, company?.PaidUpCapital, priorEntertainment);
+        // context เพิ่มสำหรับอนุมาตราที่เพิ่งเปิดใช้ — ส่งเฉพาะที่รู้จริง
+        // (null = ไม่ตรวจ) เพื่อไม่ให้เตือนจากการเดา
+        //   (9)  มีเอกสารต้นฉบับไหม — ฝั่งซื้อดูจากเลขใบกำกับผู้ขาย หรือไฟล์แนบ
+        //   (10) รอบบัญชีปัจจุบันเริ่มเมื่อไร (yearStart คำนวณไว้แล้วข้างบน)
+        //   (13) เลขผู้เสียภาษีของบริษัทเอง — จับเคสจ่ายค่าเช่าให้ตัวเอง
+        //   (19) รายจ่ายต่างประเทศเชื่อมกิจการไทยไหม — ยังไม่มี field เก็บ
+        //        เจตนาผู้ใช้ จึงส่ง null (ไม่ตรวจ) จนกว่าจะเพิ่มช่องบนฟอร์ม
+        // FileAttachment ผูกแบบ polymorphic (EntityType/EntityId) ไม่ใช่ FK ตรง
+        var hasAttachment = await _db.FileAttachments.AsNoTracking()
+            .AnyAsync(a => a.CompanyId == companyId
+                && a.EntityType == "Document" && a.EntityId == doc.Id && !a.IsDeleted);
+        var isPurchaseSide = doc.DocumentType is DocumentType.PurchaseInvoice
+            or DocumentType.Expense or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu;
+        bool? hasSourceDoc = isPurchaseSide
+            ? (!string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber) || hasAttachment)
+            : null;
+
+        var ctx = new Section65TerValidator.Context(
+            annualRevenue, company?.PaidUpCapital, priorEntertainment,
+            CurrentFiscalYearStart: yearStart,
+            CompanyTaxId: company?.TaxId,
+            HasSourceDocument: hasSourceDoc);
         var payeeName = doc.Contact?.Name;
         var payeeTaxId = doc.Contact?.TaxId;
 
@@ -12813,6 +12862,7 @@ public class DocumentService : IDocumentService
         DepositAppliedToDocumentId: d.DepositAppliedToDocumentId,
         BookingNumber: d.BookingNumber,
         CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice,
+        IssuedAsCashReceipt: d.IssuedAsCashReceipt,
         DepositAppliedAmount: d.DepositAppliedAmount,
         IsSettlementReceipt: d.IsSettlementReceipt,
         UndueInputVatBlockers: undueBlockers,

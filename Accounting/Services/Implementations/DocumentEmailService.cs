@@ -14,17 +14,20 @@ public class DocumentEmailService : IDocumentEmailService
     private readonly IEmailSenderFactory _senderFactory;
     private readonly IEtaxInvoiceService _etaxService;
     private readonly ILogger<DocumentEmailService> _logger;
+    private readonly IPdfGenerationService? _pdf;
 
     public DocumentEmailService(
         AccountingDbContext db,
         IEmailSenderFactory senderFactory,
         IEtaxInvoiceService etaxService,
-        ILogger<DocumentEmailService> logger)
+        ILogger<DocumentEmailService> logger,
+        IPdfGenerationService? pdf = null)
     {
         _db = db;
         _senderFactory = senderFactory;
         _etaxService = etaxService;
         _logger = logger;
+        _pdf = pdf;
     }
 
     public async Task<DocumentEmailLog> SendDocumentEmailAsync(Guid companyId, Guid documentId,
@@ -83,8 +86,31 @@ public class DocumentEmailService : IDocumentEmailService
         };
         AddRecipients(msg, req.To, req.Cc, req.Bcc);
 
-        // PDF/XML attachment generation for non-eTax flow is best-effort
-        // (PDF generation would need a separate document renderer service - omit for now)
+        // แนบ PDF ตามที่ผู้ใช้ติ๊ก — เดิม "omit for now" ทั้งที่ UI ส่ง attachPdf:true
+        // ⇒ เนื้ออีเมลบอก "ตามไฟล์แนบ" แต่ไม่มีไฟล์แนบจริง (ลูกค้าได้อีเมลเปล่า).
+        // ใช้ GenerateDocumentPdfAsync ตัวเดียวกับปุ่มดาวน์โหลด — เคารพชั้นภาษา/
+        // เทมเพลต/ภาษีครบ และถ้าใบผ่าน e-Tax แล้วจะได้ PDF/A-3 ฝัง XML อัตโนมัติ
+        if (req.AttachPdf && _pdf != null)
+        {
+            try
+            {
+                var pdfResp = await _pdf.GenerateDocumentPdfAsync(companyId,
+                    new Models.DTOs.DocumentTemplate.GeneratePdfRequest(doc.Id, null, null, null, null));
+                msg.Attachments.Add(new EmailAttachment
+                {
+                    FileName = pdfResp.FileName,
+                    ContentType = "application/pdf",
+                    Content = pdfResp.PdfData,
+                });
+            }
+            catch (Exception ex)
+            {
+                // แนบไม่ได้ = ห้ามส่งอีเมลที่โกหกว่า "ตามไฟล์แนบ" — fail loud ให้
+                // ผู้ใช้รู้และแก้ ดีกว่าลูกค้าได้อีเมลไม่ครบเงียบ ๆ
+                _logger.LogError(ex, "แนบ PDF ไม่สำเร็จ doc={DocId}", doc.Id);
+                throw new InvalidOperationException("สร้าง PDF แนบอีเมลไม่สำเร็จ — ยังไม่ส่งอีเมล โปรดลองใหม่", ex);
+            }
+        }
 
         var result = await sender.SendAsync(msg);
         log.Status = result.Success ? EmailLogStatus.Sent : EmailLogStatus.Failed;
@@ -196,9 +222,32 @@ public class DocumentEmailService : IDocumentEmailService
                 // ถ้าสร้างไม่สำเร็จ ต้อง "ล้มการส่ง" ไม่ใช่ส่งอีเมลเปล่าไม่มีเอกสาร
                 // (เดิม swallow → ส่งอีเมลที่ไม่ครบตามกฎหมายเงียบ ๆ). fail loud ให้
                 // ผู้ใช้แก้ต้นเหตุ (เช่น XML ว่าง) ก่อนส่ง
-                var (generatedPdf, _) = await _etaxService.GeneratePdfA3Async(companyId, etaxInvoiceId);
-                pdfBytes = generatedPdf;
-                log.PdfFilePath = etax.PdfFilePath;
+                //
+                // สร้างผ่าน GenerateDocumentPdfAsync ก่อน (renderer รวม: template-
+                // styled + เคารพภาษาใบ + ฝัง XML อัตโนมัติเมื่อมี e-Tax) — เดิมใช้
+                // GeneratePdfA3Async ซึ่งเป็น renderer แยก layout ตายตัวไทยล้วน ⇒
+                // ลูกค้าที่ตั้งใบเป็นอังกฤษได้ไฟล์แนบหน้าตาไม่ตรง preview/ปุ่ม
+                // ดาวน์โหลดปกติ. ไฟล์ที่ persist ไว้แล้ว (สาขา if ข้างบน) คงเดิม —
+                // เอกสารที่เก็บถาวร/เคยส่งแล้วต้องนิ่ง
+                if (_pdf != null && etax.DocumentId != Guid.Empty)
+                {
+                    try
+                    {
+                        var gen = await _pdf.GenerateDocumentPdfAsync(companyId,
+                            new Models.DTOs.DocumentTemplate.GeneratePdfRequest(etax.DocumentId, null, null, null, null));
+                        pdfBytes = gen.PdfData;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "unified PDF/A-3 render failed etax={Id} — fallback GeneratePdfA3Async", etaxInvoiceId);
+                    }
+                }
+                if (pdfBytes == null || pdfBytes.Length == 0)
+                {
+                    var (generatedPdf, _) = await _etaxService.GeneratePdfA3Async(companyId, etaxInvoiceId);
+                    pdfBytes = generatedPdf;
+                    log.PdfFilePath = etax.PdfFilePath;
+                }
             }
 
             if (pdfBytes == null || pdfBytes.Length == 0)
@@ -275,29 +324,52 @@ public class DocumentEmailService : IDocumentEmailService
 
     public EmailTemplate BuildDefaultTemplate(Document doc, CompanySettings settings, bool isEtaxByEmail)
     {
+        // เนื้ออีเมลต้องภาษาเดียวกับเอกสารแนบ — เดิมไทยตายตัว ⇒ ลูกค้าต่างชาติ
+        // ได้ "เรียน คุณ..." ครอบ PDF อังกฤษ. ใช้ชั้นภาษาเดียวกับ renderer:
+        // ตรึงกับใบ > ค่าบริษัท (template ไม่เกี่ยวเพราะอีเมลไม่ได้ผูก template)
+        var isEn = (doc.DocumentLanguage ?? settings.DocumentLanguage) == "en";
+
         var docTypeText = doc.DocumentType switch
         {
-            DocumentType.TaxInvoice => "ใบกำกับภาษี",
-            DocumentType.Receipt => "ใบเสร็จรับเงิน",
-            DocumentType.Invoice => "ใบแจ้งหนี้",
-            DocumentType.Quotation => "ใบเสนอราคา",
-            DocumentType.CreditNote => "ใบลดหนี้",
-            DocumentType.DebitNote => "ใบเพิ่มหนี้",
-            _ => "เอกสาร"
+            DocumentType.TaxInvoice => isEn ? "Tax Invoice" : "ใบกำกับภาษี",
+            DocumentType.Receipt => isEn ? "Receipt" : "ใบเสร็จรับเงิน",
+            DocumentType.Invoice => isEn ? "Invoice" : "ใบแจ้งหนี้",
+            DocumentType.Quotation => isEn ? "Quotation" : "ใบเสนอราคา",
+            DocumentType.CreditNote => isEn ? "Credit Note" : "ใบลดหนี้",
+            DocumentType.DebitNote => isEn ? "Debit Note" : "ใบเพิ่มหนี้",
+            _ => isEn ? "Document" : "เอกสาร"
         };
 
         var subject = isEtaxByEmail
-            ? $"[e-Tax] {docTypeText} เลขที่ {doc.DocumentNumber}"
-            : $"{docTypeText} เลขที่ {doc.DocumentNumber}";
+            ? (isEn ? $"[e-Tax] {docTypeText} No. {doc.DocumentNumber}" : $"[e-Tax] {docTypeText} เลขที่ {doc.DocumentNumber}")
+            : (isEn ? $"{docTypeText} No. {doc.DocumentNumber}" : $"{docTypeText} เลขที่ {doc.DocumentNumber}");
 
-        var customerName = doc.Contact?.Name ?? "ลูกค้า";
+        var customerName = doc.Contact?.Name ?? (isEn ? "Customer" : "ลูกค้า");
+        // หมายเหตุ e-Tax คงไทยเสมอ (สาระทางกฎหมายไทย — timestamp ETDA/สรรพากร)
+        // แต่โหมด en เติมสรุปอังกฤษให้ผู้รับต่างชาติเข้าใจว่าห้ามลบอีเมล
         var rdNote = isEtaxByEmail
             ? "<p style='background:#fef3c7;padding:12px;border-radius:8px;font-size:13px;margin-top:16px'>" +
               "ℹ️ อีเมลนี้เป็น e-Tax Invoice & Receipt by Email ซึ่งกรมสรรพากรจะลงเวลาประทับ (Time Stamp) " +
-              "ผ่านระบบของ ETDA โปรดเก็บอีเมลฉบับนี้และไฟล์แนบไว้เป็นหลักฐาน</p>"
+              "ผ่านระบบของ ETDA โปรดเก็บอีเมลฉบับนี้และไฟล์แนบไว้เป็นหลักฐาน" +
+              (isEn ? "<br>This is an official Thai e-Tax document, time-stamped via ETDA. Please keep this e-mail and its attachments as evidence." : "") +
+              "</p>"
             : "";
 
-        var html = $@"<div style='font-family:sans-serif;max-width:600px;margin:0 auto;color:#1e293b'>
+        var html = isEn
+            ? $@"<div style='font-family:sans-serif;max-width:600px;margin:0 auto;color:#1e293b'>
+            <h2 style='color:#4F46E5;border-bottom:2px solid #4F46E5;padding-bottom:8px'>{docTypeText}</h2>
+            <p>Dear {customerName},</p>
+            <p>Please find attached {docTypeText} No. <strong>{doc.DocumentNumber}</strong> dated <strong>{doc.DocumentDate:dd/MM/yyyy}</strong>
+            for the amount of <strong>THB {doc.TotalAmount:N2}</strong>.</p>
+            <table style='width:100%;border-collapse:collapse;margin-top:16px'>
+                <tr><td style='padding:8px;background:#f1f5f9'>Document No.</td><td style='padding:8px'>{doc.DocumentNumber}</td></tr>
+                <tr><td style='padding:8px;background:#f1f5f9'>Date</td><td style='padding:8px'>{doc.DocumentDate:dd/MM/yyyy}</td></tr>
+                <tr><td style='padding:8px;background:#f1f5f9'>Total amount</td><td style='padding:8px'><strong>THB {doc.TotalAmount:N2}</strong></td></tr>
+            </table>
+            {rdNote}
+            <p style='color:#64748b;font-size:13px;margin-top:24px'>If you have any questions, simply reply to this e-mail.</p>
+        </div>"
+            : $@"<div style='font-family:sans-serif;max-width:600px;margin:0 auto;color:#1e293b'>
             <h2 style='color:#4F46E5;border-bottom:2px solid #4F46E5;padding-bottom:8px'>{docTypeText}</h2>
             <p>เรียน คุณ{customerName}</p>
             <p>โปรดตรวจสอบ {docTypeText} เลขที่ <strong>{doc.DocumentNumber}</strong> ลงวันที่ <strong>{doc.DocumentDate:dd/MM/yyyy}</strong>

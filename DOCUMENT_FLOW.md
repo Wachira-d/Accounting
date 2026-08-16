@@ -810,6 +810,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (missing fields จาก `TaxInvoiceCompletenessChecker` + override/ไม่มีบรรทัด
   เคลม VAT/§83/6) — กล่องเติมใบกำกับใน documents.html โชว์ checklist นี้
   + prefill รหัสสาขาจาก `Contact.BranchCode` (fallback 00000 สนญ.)
+- **หมดอายุ 6 เดือนแล้วไม่มีใครเติมใบกำกับ** → `UndueInputVatExpiryJob`
+  (รายวัน) เรียก `ReclassifyExpiredUndueInputVatAsync` ล้าง 11640 เป็น
+  ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" (Dr ค่าใช้จ่าย / Cr 11640) — เมธอดนี้เขียน
+  ไว้ตั้งแต่ต้นแต่ **ไม่เคยมีใครเรียก** จนถึงรอบ audit 23 ⇒ ยอด 11640 ค้างเป็น
+  สินทรัพย์ลอยในงบตลอดไป. job กันรันซ้ำข้าม instance ด้วย `pg_advisory_xact_lock`
+  และเลือกเฉพาะบริษัทที่มีเอกสารค้างจริง (ไม่สแกนทั้งฐาน)
 - UI badge "เคลมแล้วงวดไหน" — `DocumentResponse.InputVatPp30Month/Year/`
   `ReportStatus` (populate เฉพาะ `GetDocumentAsync` จาก `TaxReportLines`
   ฝั่งซื้อ !IsExcluded ของใบนั้น) = **ความจริงจากรายงาน ภ.พ.30** ไม่ใช่เดา
@@ -985,6 +991,25 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (`POST /api/company/{cid}/romanize-address` — **route เอกพจน์** ต่างจาก
     controller อื่น) แปลงจากค่าบนฟอร์ม เติมให้ตรวจแก้ก่อนบันทึกเอง · แบบราชการ
     (50 ทวิ ฯลฯ) คงที่อยู่ไทยเสมอ ไม่แตะ
+  - **ช่องทางส่งถึงลูกค้า ตามภาษาใบด้วยแล้ว** (audit 3 ทีม รอบ 22):
+    เนื้ออีเมล default ทั้ง manual (`DocumentEmailService.BuildDefaultTemplate`)
+    และ scheduled reminder (`EmailScheduleService.DefaultDocSubject/Body` —
+    เฉพาะ fallback; template ที่ผู้ใช้เขียนเองไม่ถูกแตะ) + LINE flex
+    (`DocumentLineDeliveryService`) — ทุกตัวใช้ชั้น `doc.DocumentLanguage ??
+    CompanySettings.DocumentLanguage` และ `NameEn` เมื่อ en · **บั๊กที่แก้พ่วง**:
+    ปุ่มส่งอีเมล manual ไม่เคยแนบ PDF จริง ("omit for now") ทั้งที่ UI ส่ง
+    `attachPdf:true` → แนบผ่าน `GenerateDocumentPdfAsync` แล้ว (ล้ม = ไม่ส่ง
+    อีเมล ห้ามส่งอีเมลที่บอกว่ามีไฟล์แนบแต่ไม่มี) · LINE ปุ่ม "ดูเอกสาร"
+    hardcode `app.example.com` (ลิงก์ตาย) → ใช้ `App:BaseUrl` + portal จริง ·
+    e-Tax by Email ตอนสร้างไฟล์ on-demand ใช้ renderer รวม (ตรงกับปุ่ม
+    ดาวน์โหลดปกติ + ภาษาถูก) fallback ตัวเดิม; ไฟล์ที่ persist แล้วคงเดิม
+  - **รู้แล้วแต่ยังไม่ทำ (จัดลำดับไว้)**: `portal.html` UI ไทยล้วน + ไม่ใช้
+    NameEn (ต้องทำ portal สองภาษาเป็นงานแยก) · POS ใบเสร็จ client-side ไทย
+    (ใบกำกับอย่างย่อหน้าร้าน — รับได้ แต่ไม่แชร์ label กลาง = drift risk) ·
+    ปุ่ม PDF/A-3 ใน etax.html + artifact ที่ persist ยังเป็น renderer แยก
+    layout ไทยตายตัว (`EtaxInvoiceService.PdfA3`) — เอกสารที่เคยออกต้องนิ่ง
+    จึงไม่ย้อนแก้; งานถัดไปคือ unify ตอน generate ใหม่ ·
+    `SendDunningLetterAsync` (AdvancedArAp) mark ว่าส่งแล้วโดยไม่ส่งจริง
 
 - **หัวเรื่องเอกสาร — resolver กลาง `ComputeDocumentTitle`** (ใช้ทั้ง QuestPDF
   native + HTML กัน logic drift). ครอบทุกเคสจริงทางบัญชี:
@@ -1210,8 +1235,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | §82/5(1)(2) non-full-tax-invoice | `OcrDocumentRoleInferrer.Infer` → `InputVatClaimable/InputVatClaimWarning` | OCR ตรวจ "ใบกำกับภาษีอย่างย่อ §86/6" หรือ "ใบเสร็จ/บิลเงินสด ไม่ใช่ §86/4" + มี VAT → เขียน `[VAT-CLAIM]` ลง ProcessingNotes; review UI + form แสดง banner แดง "เคลม VAT ไม่ได้ — ขอใบกำกับเต็มรูป"; ไม่ auto-ติ๊ก "ขอเครดิตภาษีซื้อ". กัน false positive 2 ชั้น: `ContainsAnyNotNegated` (ข้ามข้อความปฏิเสธ "ไม่ใช่...อย่างย่อ" จาก vision model) + เลขภาษีผู้ซื้อ 13 หลักถูกสกัดได้ = ใบเต็มรูปเสมอ (§86/6 ใบอย่างย่อไม่มีข้อมูลผู้ซื้อ) override คำที่เจอบนกระดาษ |
 | §82/3 6-month window | `TaxFilingExportService.ExportPp30Async` + `GenerateVatReport` | เกิน 6 เดือน → block claim หรือ require `LateReason` |
 | §86/9–86/10 CN/DN | `CreditNote/DebitNote` flow | required `RelatedDocumentId` + `CreditNoteReason` (CN); cap ≤ original |
-| §78 / §78/1 tax point | `TaxPointResolver` | snapshot ตอน approve |
-| §65 ตรี รายจ่ายต้องห้าม | `Section65TerValidator` | `NonDeductibleAmount + RuleJson` → ภ.ง.ด.50 |
+| §78 / §78/1 / **§78/2** tax point | `TaxPointResolver` | snapshot ตอน approve · นำเข้าใช้ `Document.CustomsDutyPaidDate` **ตรง ๆ ไม่ใช่ MIN** · `SupplyKind` ให้ caller ระบุชนิดแทนการเดา (Auto = พฤติกรรมเดิม) |
+| §65 ตรี รายจ่ายต้องห้าม | `Section65TerValidator` | `NonDeductibleAmount + RuleJson` → ภ.ง.ด.50 · ครอบ **16 กลุ่มอนุมาตรา** (เดิม 8): เพิ่ม (8)(9)(10)(12)(13)(14)(15)(19) — context ใหม่ทุกตัว optional default = "ไม่ตรวจ" จึงไม่เดาแทนผู้ใช้ |
+| ภ.ง.ด.50/51 ยอด CIT | `TaxReport.CitAmount` | **แยกจาก `TotalTaxWithheld`** (เดิม reuse field ผิดความหมาย ทำให้ยอด CIT ปนกับ WHT เวลารวมข้ามรายงาน) · ผู้อ่านใช้ `CitAmount ?? TotalTaxWithheld` รองรับรายงานเก่า |
 | §65 ตรี(4) cap per fiscal year | `Section65TerValidator.Context.PriorYtdEntertainmentExpense` | sum YTD entertainment of Approved docs → excess บวกกลับใบปัจจุบัน |
 | §82/5(6) vehicle dealer override | `CompanySettings.IsVehicleDealer` | bypass warning เมื่อรถเป็น inventory (ประกาศอธิบดี 42) |
 | §87 ลำดับเวลาในรายงาน | `TaxService.NormalizeReportLineOrder` | เรียง + renumber `LineOrder` ท้ายการ generate ทุกครั้ง (ขาย → ซื้อ → บรรทัดสรุป; แต่ละกลุ่มตาม `TransactionDate`, ties = ลำดับเดิมเพื่อ deterministic). เรียกจาก GenerateVatReport / หลัง ApplyVatDeferrals / ComputeVatReport (ไฟล์ยื่น) / GenerateWhtReport / PullDocumentIntoReport / regenerate re-apply. `tax.html` sort ซ้ำฝั่ง client (จอ + แบบพิมพ์ §87) ให้รายงานเก่าถูกลำดับโดยไม่ต้อง regenerate — เดิม LineOrder ไล่ตามลำดับที่ query คืนเอกสาร = วันที่สลับไปมา |
@@ -1797,7 +1823,50 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-14 (รอบ 21: ออกเอกสารเป็นอังกฤษ "เฉพาะใบเดียว" —_
+_Last verified against codebase: 2026-08-16 (รอบ 26b: dropdown เป็นตัวควบคุมเดี่ยว —_
+_ซ่อนกล่องติ๊กซ้ำ "💰 ลูกค้าจ่ายเงินแล้ว" + "🧾 ขายเงินสด" เมื่อ dropdown แสดง (โหมด_
+_ตั้ง flag ให้เอง; บริษัทไม่จด VAT ที่ไม่มี dropdown ยังใช้กล่องเขียวเดิม; reset ปลดติ๊ก_
+_เฉพาะ "ชนิดเอกสารใช้ไม่ได้จริง" ไม่อิง display — กันล้าง flag ที่โหมดเพิ่งตั้ง) ·_
+_`receipt_only` เป็นโหมดรับเงินในตัว (paid:true — ใบเสร็จ = หลักฐานรับเงิน ม.105;_
+_เดิมเลือกหัวใบเสร็จได้โดยไม่บันทึกรับเงิน = กระดาษ/บัญชีขัดกัน) + hydrate ใบ declined_
+_เดิม sync จะ arm paid ให้ตรง hint (กัน silent no-op) · hint โชว์บรรทัด "💰 เงินเข้า:_
+_<ช่องทาง>" สำหรับโหมด paid/cash และ refresh เมื่อเปลี่ยนแหล่งเงิน; รอบ 26: โหมด `tax_paid` "ใบกำกับภาษี/_
+_ใบเสร็จรับเงิน — รับเงินครบแล้ว" สำหรับใบที่แปลงจากขายเครดิต (INV/BN → TIV เท่านั้น;_
+_standalone ใช้ tax_receipt/3-in-1 เดิม): ตั้ง fPaidOnIssue → chain อนุมัติ (Supersede_
+_กลับ JE ใบต้นทาง) + บันทึกชำระเต็มยอด (backend หัก WHT งวดปิดยอดอัตโนมัติ =_
+_remainingCap; ไม่ออกใบเสร็จแยก → ServedAsReceipt จัดหัวรวม) · ปลดล็อก paid-chain_
+_ให้ทำงานตอน "แก้ไขร่าง/ใบถูกปฏิเสธ" ด้วย (เดิม !editingId เท่านั้น ⇒ ใบแปลงติ๊กจ่าย_
+_แล้วกดอนุมัติ = silent no-op ไม่บันทึกชำระ; revision ใบอนุมัติแล้ว/สถานะไม่รู้ ไม่ยิง_
+_fail-safe) · สลับออกจากโหมด paid → ปลดติ๊กที่โหมดตั้งให้ (ติ๊กมือผู้ใช้ไม่แตะ) ·_
+_doConvert INV/BN→TIV เปิดฟอร์มร่างทันที + hint ใน convert modal บอกทางเลือก 2 แบบ ·_
+_ยืนยันพฤติกรรมลบร่างใบแปลง: DeleteDocument (Draft, no JE/payment/e-Tax) = hard delete_
+_→ ใบต้นทางไม่ถูกแตะ (supersede เกิดตอน approve เท่านั้น) + guard กันแปลงซ้ำ/consumption_
+_มองไม่เห็นแถวที่ลบ → แปลงใหม่ได้ทันที; รอบ 25: dropdown "เอกสารที่จะออกให้ลูกค้า"_
+_6 ตัวเลือกแทน 4 checkbox (รวม 3-in-1 ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน — ตั้ง_
+_combined+paid ให้ chain อนุมัติ+ชำระรันเอง) · sync `_validConversions` frontend ให้ตรง_
+_backend ValidConversions (เดิม drift หลายรุ่น: PO→Expense เลิกแล้ว, ขาด GRN/PV/Receipt/_
+_CertInLieu ทั้งชุด ⇒ ปุ่มแปลงหาย/ตัวเลือกผี) + comment ชี้ mirror สองทิศ · openConvert_
+_ใช้ API getConversionTargets เป็นหลัก map เป็น offline fallback · รอบ 24: UX audit ปุ่ม/ป้าย/ฟอร์มทุกชนิด×สถานะ —_
+_ปุ่มรับเงิน/ตัดหนี้สูญ เพิ่ม type gate (เดิมโผล่บน QT/DN/PO/PR/CN) · แปลงเอกสารกรองชนิด_
+_ที่มีปลายทางจริง + เปิดตอน PartiallyPaid/Paid/Overdue · Rejected แก้ไขได้ (backend ปลด_
+_พร้อมกัน — ใบตีกลับยังไม่ posted) · e-Tax/อีเมล รวม Overdue + ส่ง PO ให้ vendor ได้ ·_
+_AgingDays นับจาก DueDate ไม่ใช่ DocumentDate (ป้าย "ค้างชำระ" เดิมโกหกใบเครดิตยาว) ·_
+_banner ค้างชำระมีปุ่มส่งทวง · confirm รับเงิน INV มี VAT เป็น 2 ขั้น (dismiss = ยกเลิกจริง_
+_ไม่ใช่เลือกไม่ออกใบกำกับ) · detail: escape description (XSS), แถวส่วนลดท้ายบิล/หักมัดจำ,_
+_ซ่อน WHT -0.00, ส่วนลดบาทไม่โชว์ 0% · badge เคลม ภ.พ.30 ไม่ขึ้นคู่ "รอใบกำกับ" ·_
+_stale เงียบเมื่อ aging โชว์ · decline-TIV เช็คจด VAT · PR/PO ปิดคอลัมน์เคลม VAT ·_
+_dialog void ไม่พูดถึง Reversal JE เมื่อใบยังไม่ posted) ·_
+_รอบ 23: ลงมือตาม roadmap task force —_
+_P0: audit hash canonical เดียว + เทสต์ round-trip · WHT GL นับ reversal ถูก · lockout key ·_
+_prod config (ลบ placeholder JWT, PG VerifyFull). P1: CMS XSS allowlist sanitizer +_
+_ถอด unsafe-eval · idempotency ย้ายขึ้น PostgreSQL + กัน race ด้วย InFlight ·_
+_BusinessRuleException หยุด framework error รั่วถึง client. P2: §65 ตรี 8→16 กลุ่ม_
+_อนุมาตรา + เลิก over-add-back (cap=0, VAT เคลมได้) · tax point §78/2 นำเข้า ·_
+_แยก CitAmount ออกจาก TotalTaxWithheld · เปิด job §82/3 ที่เขียนไว้แต่ไม่มีใครเรียก) ·_
+_รอบ 22: audit 3 ทีม (คำแปล/adversarial/_
+_process) — เนื้ออีเมล+LINE ตามภาษาใบ · แนบ PDF อีเมล manual ที่หายไป · ลิงก์ LINE_
+_จริงแทน example.com · e-Tax by Email on-demand ใช้ renderer รวม · RTGS fuzz 29 เคส_
+_+ แก้ เเ/ไทย/ฤๅ · รอบ 21: ออกเอกสารเป็นอังกฤษ "เฉพาะใบเดียว" —_
 _เติมทางเข้า UI 2 ชั้นที่ resolver รองรับอยู่แล้วแต่กดไม่ได้ (รายใบ `#fDocumentLanguage` +_
 _ครั้งเดียว `#pdfLangMode`) · แก้ `DocumentResponse` ไม่คืน `DocumentLanguage` (เปิดแก้แล้ว_
 _ภาษาหาย) · แก้ metadata Title ของ PDF/A-3 คำนวณภาษาเองข้าม resolver กลาง ·_

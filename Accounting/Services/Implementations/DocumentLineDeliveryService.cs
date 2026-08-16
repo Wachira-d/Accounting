@@ -23,13 +23,15 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
     private readonly AccountingDbContext _db;
     private readonly ILineNotifyService _line;
     private readonly ILogger<DocumentLineDeliveryService> _logger;
+    private readonly IConfiguration? _config;
 
     public DocumentLineDeliveryService(AccountingDbContext db, ILineNotifyService line,
-        ILogger<DocumentLineDeliveryService> logger)
+        ILogger<DocumentLineDeliveryService> logger, IConfiguration? config = null)
     {
         _db = db;
         _line = line;
         _logger = logger;
+        _config = config;
     }
 
     public async Task<bool> SendDocumentLineAsync(Guid companyId, Guid documentId,
@@ -48,20 +50,27 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
             return false;
         }
 
+        // ข้อความ LINE ภาษาเดียวกับเอกสาร (ชั้น: ตรึงกับใบ > ค่าบริษัท) —
+        // ลูกค้าต่างชาติที่ได้ใบ en ต้องอ่านข้อความแจ้งได้ด้วย
+        var coLang = await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => s.DocumentLanguage).FirstOrDefaultAsync(ct);
+        var isEn = (doc.DocumentLanguage ?? coLang) == "en";
+
         var typeLabel = doc.DocumentType switch
         {
-            Models.Enums.DocumentType.Invoice => "ใบแจ้งหนี้",
-            Models.Enums.DocumentType.TaxInvoice => "ใบกำกับภาษี",
-            Models.Enums.DocumentType.Receipt => "ใบเสร็จรับเงิน",
-            Models.Enums.DocumentType.Quotation => "ใบเสนอราคา",
-            Models.Enums.DocumentType.CreditNote => "ใบลดหนี้",
-            Models.Enums.DocumentType.DebitNote => "ใบเพิ่มหนี้",
-            _ => "เอกสาร",
+            Models.Enums.DocumentType.Invoice => isEn ? "Invoice" : "ใบแจ้งหนี้",
+            Models.Enums.DocumentType.TaxInvoice => isEn ? "Tax Invoice" : "ใบกำกับภาษี",
+            Models.Enums.DocumentType.Receipt => isEn ? "Receipt" : "ใบเสร็จรับเงิน",
+            Models.Enums.DocumentType.Quotation => isEn ? "Quotation" : "ใบเสนอราคา",
+            Models.Enums.DocumentType.CreditNote => isEn ? "Credit Note" : "ใบลดหนี้",
+            Models.Enums.DocumentType.DebitNote => isEn ? "Debit Note" : "ใบเพิ่มหนี้",
+            _ => isEn ? "Document" : "เอกสาร",
         };
 
         var dueText = doc.DueDate.HasValue
-            ? $"กำหนดชำระ {doc.DueDate.Value:dd/MM/yyyy}"
-            : "ชำระทันที";
+            ? (isEn ? $"Due {doc.DueDate.Value:dd/MM/yyyy}" : $"กำหนดชำระ {doc.DueDate.Value:dd/MM/yyyy}")
+            : (isEn ? "Due on receipt" : "ชำระทันที");
 
         var flex = new
         {
@@ -79,7 +88,7 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
                             new {
                                 type = "box", layout = "baseline", contents = new object[]
                                 {
-                                    new { type = "text", text = "ยอดรวม", color = "#666", size = "sm", flex = 0 },
+                                    new { type = "text", text = isEn ? "Total" : "ยอดรวม", color = "#666", size = "sm", flex = 0 },
                                     new { type = "text", text = $"฿{doc.TotalAmount:N2}",
                                           weight = "bold", size = "md", align = "end" },
                                 }
@@ -101,8 +110,11 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
                     new {
                         type = "button", style = "primary", color = "#1e40af",
                         action = new {
-                            type = "uri", label = "ดูเอกสาร / ชำระเงิน",
-                            uri = $"https://app.example.com/p/{doc.Id}"
+                            type = "uri", label = isEn ? "View document / Pay" : "ดูเอกสาร / ชำระเงิน",
+                            // เดิม hardcode https://app.example.com/... = ลิงก์ตาย
+                            // จริงใน prod — ใช้ App:BaseUrl (ตัวเดียวกับ payslip
+                            // LINE) ชี้เข้า portal ลูกค้าของบริษัทนั้น
+                            uri = $"{(_config?["App:BaseUrl"] ?? "https://app.nextacc.com").TrimEnd('/')}/portal.html?company={doc.CompanyId}"
                         }
                     }
                 }
@@ -112,7 +124,8 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
         try
         {
             await _line.PushFlexToUserAsync(companyId, lineId,
-                $"{typeLabel} {doc.DocumentNumber} ยอดรวม ฿{doc.TotalAmount:N2}", flex);
+                isEn ? $"{typeLabel} {doc.DocumentNumber} — Total ฿{doc.TotalAmount:N2}"
+                     : $"{typeLabel} {doc.DocumentNumber} ยอดรวม ฿{doc.TotalAmount:N2}", flex);
             _logger.LogInformation("LINE delivery sent for doc {DocId} → LineUserId {Line}",
                 documentId, lineId);
             return true;

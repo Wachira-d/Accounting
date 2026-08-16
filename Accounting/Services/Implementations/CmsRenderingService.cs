@@ -344,7 +344,10 @@ public class CmsRenderingService : ICmsRenderingService
 
     private static string RenderRichTextBlock(JsonElement config, string cls)
     {
-        var content = GetProp(config, "content");
+        // เนื้อหาจาก WYSIWYG = HTML โดยเจตนา จึง escape ทั้งก้อนไม่ได้ → ผ่าน
+        // sanitizer แบบ allowlist. เดิมฉีดดิบ = stored XSS บนหน้าสาธารณะของทุก
+        // ผู้เข้าชม (ผู้แก้ไข CMS ฝัง <script> ได้ตรง ๆ)
+        var content = Accounting.Helpers.CmsHtmlSanitizer.Sanitize(GetProp(config, "content"));
         return $"<div class=\"cms-block cms-richtext{cls}\">{content}</div>";
     }
 
@@ -429,7 +432,8 @@ public class CmsRenderingService : ICmsRenderingService
 
     private static string RenderHtmlBlock(JsonElement config, string cls)
     {
-        var html = GetProp(config, "html");
+        // block นี้ตั้งใจให้ใส่ HTML ได้ แต่ต้องอยู่ใน allowlist — ไม่ใช่ passthrough
+        var html = Accounting.Helpers.CmsHtmlSanitizer.Sanitize(GetProp(config, "html"));
         return $"<div class=\"cms-block cms-html{cls}\">{html}</div>";
     }
 
