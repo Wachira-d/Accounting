@@ -279,7 +279,7 @@
                        ใบต้นทาง) → บันทึกชำระเต็มยอดทันที → หัวพิมพ์รวมใบเดียว -->
                   <option value="tax_paid" hidden>ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบแล้ว ใบเดียวจบ</option>
                   <option value="tax_receipt">ใบกำกับภาษี/ใบเสร็จรับเงิน — ขายสด รับเงินแล้ว ใบเดียวจบ</option>
-                  <option value="receipt_only">ใบเสร็จรับเงิน — ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี</option>
+                  <option value="receipt_only">ใบเสร็จรับเงิน — รับเงินแล้ว ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี</option>
                 </select>
                 <div id="issueModeHint" style="margin-top:6px;padding:8px 12px;background:#f0fdf4;border-left:3px solid #16a34a;border-radius:6px;font-size:12px;color:#166534;line-height:1.6"></div>
               </div>
@@ -3097,8 +3097,11 @@
           hint: 'รับเงินครบแล้ว — กด "บันทึกและอนุมัติ" ระบบอนุมัติ (กลับรายการใบแจ้งหนี้ต้นทางให้) + บันทึกชำระเต็มยอด (หัก ณ ที่จ่าย ตามเอกสารอัตโนมัติ) + ออกใบเดียวหัว "ใบกำกับภาษี/ใบเสร็จรับเงิน" ไม่ออกใบเสร็จแยก · เงินเข้าตาม "แหล่งเงิน/ช่องทางชำระ" ที่เลือกด้านล่าง' },
         tax_receipt:  { type: 'TaxInvoice', combined: false, cash: true,  declined: false,
           hint: 'ลูกค้าจ่ายแล้ว ณ วันออก — ลง Dr เงินสด/ธนาคาร ไม่ตั้งลูกหนี้ · ปิดสถานะ "ชำระครบ" ทันที · ไม่ออกใบเสร็จแยก · e-Tax T03' },
-        receipt_only: { type: 'TaxInvoice', combined: false, cash: false, declined: true,
-          hint: 'VAT ขายยังลงรายงานภาษีขาย/ภ.พ.30 ครบ (นำส่งภาษีปกติ) · แต่ผู้ซื้อเคลมภาษีซื้อไม่ได้ · ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อครบ' },
+        // ใบเสร็จรับเงิน = หลักฐานรับเงิน (ม.105) — เลือกหัวนี้คือรับเงินแล้ว
+        // ในตัว ไม่ต้องติ๊ก "จ่ายแล้ว" ซ้ำอีกช่อง (เดิมเลือกหัวใบเสร็จได้ทั้งที่
+        // ไม่บันทึกรับเงิน = กระดาษบอกรับเงินแล้วแต่บัญชีตั้งลูกหนี้ค้าง — ขัดกันเอง)
+        receipt_only: { type: 'TaxInvoice', combined: false, cash: false, declined: true, paid: true,
+          hint: 'รับเงินแล้ว ณ วันออก (ใบเสร็จ = หลักฐานรับเงิน ม.105) — กด "บันทึกและอนุมัติ" ระบบบันทึกชำระให้อัตโนมัติ · VAT ขายยังลงรายงานภาษีขาย/ภ.พ.30 ครบ (นำส่งภาษีปกติ) · แต่ผู้ซื้อเคลมภาษีซื้อไม่ได้ · ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อครบ' },
       },
 
       /** ผู้ใช้เลือกหัวเอกสาร → ตั้ง flag เบื้องหลัง (flag ยังเป็น source of truth) */
@@ -3138,7 +3141,16 @@
         const box = document.getElementById('issueModeHint');
         if (!sel || !box) return;
         const m = this._ISSUE_MODES[sel.value];
-        box.textContent = m ? m.hint : '';
+        let text = m ? m.hint : '';
+        // โหมดที่รับเงินในตัว (paid/cash) → โชว์ปลายทางเงินตรงนี้เลย เพราะกล่อง
+        // ติ๊ก "จ่ายแล้ว/ขายสด" ถูกซ่อนเมื่อ dropdown แสดง — ผู้ใช้ต้องเห็นว่า
+        // เงินจะเข้าบัญชีไหนก่อนกดอนุมัติ (derive จาก "แหล่งเงิน/ช่องทางชำระ")
+        if (m && (m.paid || m.cash)) {
+          const ch = this._deriveMethodFromChannel?.();
+          if (ch?.label) text += `\n💰 เงินเข้า: ${ch.label} — เปลี่ยนได้ที่ "แหล่งเงิน / ช่องทางชำระ"`;
+        }
+        box.style.whiteSpace = 'pre-line';
+        box.textContent = text;
       },
 
       /** ซิงก์ dropdown จาก flag จริง — ใช้ตอน hydrate ใบเดิม/สลับชนิดเอกสาร
@@ -3183,6 +3195,17 @@
         // option ที่ถูกซ่อนไว้ เลือกไม่ได้ → ตกกลับ "ใบกำกับภาษี"
         const opt = sel.querySelector(`option[value="${mode}"]`);
         sel.value = (opt && !opt.hidden) ? mode : 'tax';
+        // โหมดที่ resolve แล้ว "รับเงินในตัว" (เช่น receipt_only — ใบเสร็จ =
+        // หลักฐานรับเงิน ม.105) → ติ๊ก "จ่ายแล้ว" ให้ตรงกับ hint. เคสสำคัญ:
+        // เปิดแก้ใบ declined เดิม (flag paid ไม่ persist) — ถ้าไม่ arm chain
+        // จะ no-op เงียบทั้งที่ hint บอก "ระบบบันทึกชำระให้" (defect class
+        // silent no-op). ใบ Approved/revision ไม่กระทบ — chain มี fail-safe
+        // ยิงเฉพาะร่าง/ถูกปฏิเสธอยู่แล้ว
+        const _resolved = this._ISSUE_MODES[sel.value];
+        if (_resolved?.paid) {
+          const p = document.getElementById('fPaidOnIssue');
+          if (p && !p.checked) { p.checked = true; this._syncPaidOnIssueMethod?.(); }
+        }
         // baseline สำหรับ logic "ออกจากโหมด paid แล้วปลดติ๊ก" ใน onIssueModeChange
         this._lastIssueMode = sel.value;
         this._refreshIssueModeHint();
@@ -3197,6 +3220,8 @@
       },
 
       _syncPaidOnIssueMethod() {
+        // ช่องทางชำระเปลี่ยน → บรรทัด "เงินเข้า:" ใน hint ของ dropdown ต้องตามด้วย
+        this._refreshIssueModeHint?.();
         // ติ๊ก "จ่ายแล้ว (2 ใบ)" → ปลด "ใบเดียว" (mutually exclusive)
         const paid = document.getElementById('fPaidOnIssue');
         const cr = document.getElementById('fIssuedAsCashReceipt');
@@ -3894,8 +3919,14 @@
         // BillingNote are pre-revenue, Receipt already IS the receipt, the
         // expense side has its own flow.
         const cashShortcutTypes = ['Invoice', 'TaxInvoice'];
+        const paidApplicable = cashShortcutTypes.includes(docType);
+        // dropdown "เอกสารที่จะออกให้ลูกค้า" ครอบการตัดสินใจ "จ่ายแล้ว/ขายสด"
+        // แล้ว (โหมด *_paid / tax_receipt / receipt_only ตั้ง flag ให้เอง) →
+        // ซ่อนกล่องติ๊กซ้ำ — ผู้ใช้ไม่ต้องติ๊กให้ "สอดคล้องกับหัวเอกสาร" เองอีก.
+        // บริษัทไม่จด VAT (dropdown ไม่แสดง) ยังใช้กล่องติ๊กเขียวตามเดิม
+        const _issueDropdownApplies = paidApplicable && this._vatRegistered !== false;
         const paidSection = document.getElementById('paidOnIssueSection');
-        if (paidSection) paidSection.style.display = cashShortcutTypes.includes(docType) ? '' : 'none';
+        if (paidSection) paidSection.style.display = (paidApplicable && !_issueDropdownApplies) ? '' : 'none';
         // "ใบกำกับภาษี/ใบเสร็จรับเงิน ใบเดียว (ขายเงินสด)" — เฉพาะ TaxInvoice (ต้องออก
         // ใบกำกับได้ + T03). ซ่อน + reset เมื่อไม่ใช่
         const cashRcptSection = document.getElementById('cashReceiptSection');
@@ -3907,9 +3938,13 @@
           // (ออกใบเสร็จ settlement + ServedAsReceipt จัดหัว "ใบกำกับ/ใบเสร็จ" ให้เอง)
           const _cvSrc = this._pinnedSourceDoc?.documentType;
           const _cvFromInvoice = _cvSrc === 'Invoice' || _cvSrc === 'BillingNote';
-          const showCr = docType === 'TaxInvoice' && !_cvFromInvoice;
+          const _crValid = docType === 'TaxInvoice' && !_cvFromInvoice;
+          // dropdown แสดงอยู่ → โหมด tax_receipt ทำหน้าที่แทนกล่องติ๊กนี้ (ซ่อน
+          // แต่ **ห้ามปลดติ๊ก** — flag ยังถูกตั้งผ่าน onIssueModeChange อยู่;
+          // ปลดเฉพาะเมื่อใช้ไม่ได้จริง: ไม่ใช่ TaxInvoice / เป็นใบแปลงจากเครดิต)
+          const showCr = _crValid && !_issueDropdownApplies;
           cashRcptSection.style.display = showCr ? '' : 'none';
-          if (!showCr) { const c = document.getElementById('fIssuedAsCashReceipt'); if (c) c.checked = false; }
+          if (!_crValid) { const c = document.getElementById('fIssuedAsCashReceipt'); if (c) c.checked = false; }
           const _crNote = document.getElementById('cashReceiptConvertedNote');
           if (_crNote) {
             _crNote.style.display = (docType === 'TaxInvoice' && _cvFromInvoice) ? '' : 'none';
@@ -4046,9 +4081,10 @@
           if (cb) cb.checked = isDepositType ? true : (isReceipt ? cb.checked : false);
           this.onDepositToggle();
         }
-        // Reset checkbox when the section hides so a stale "paid" state
-        // doesn't fire on the next save of a non-applicable type.
-        if (paidSection && paidSection.style.display === 'none') {
+        // Reset checkbox เมื่อ "ชนิดเอกสารใช้ paid ไม่ได้จริง" — ห้ามอิงจาก
+        // display (ตอนนี้กล่องถูกซ่อนเพราะ dropdown ทำหน้าที่แทนด้วย ถ้าปลดตาม
+        // display จะล้างติ๊กที่โหมด *_paid/receipt_only เพิ่งตั้ง = chain เงียบ)
+        if (paidSection && !paidApplicable) {
           const cb = document.getElementById('fPaidOnIssue');
           if (cb) cb.checked = false;
           const row = document.getElementById('fPaidOnIssueDerivedRow');
