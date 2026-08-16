@@ -64,9 +64,15 @@ public class DocumentAgingBackgroundService : BackgroundService
         // Overdue=7 — the posted-but-unpaid states that should age. (The old
         // code used Status=1, which is WaitingApproval — a bug: approved
         // unpaid invoices never aged.)
+        // นับจาก **วันครบกำหนด** (DueDate) ไม่ใช่วันที่เอกสาร — เดิมนับจาก
+        // DocumentDate ⇒ ใบเครดิต Net-60 อายุ 30 วัน (ยังไม่ถึงกำหนดด้วยซ้ำ)
+        // ขึ้นป้ายแดง "ค้างชำระ 30 วัน" ทั้งใน list และ banner = ป้ายโกหก
+        // ทวงลูกค้าที่ยังไม่ผิดนัด. ใบที่ไม่มี DueDate (ขายสด/ไม่ระบุเครดิต)
+        // ตกกลับไปนับจาก DocumentDate ตามเดิม. ค่าติดลบ (ยังไม่ถึงกำหนด) = 0
         var sqlUpdate = """
             UPDATE "Documents"
-               SET "AgingDays" = EXTRACT(DAY FROM (CURRENT_DATE - "DocumentDate"))::int,
+               SET "AgingDays" = GREATEST(0,
+                       EXTRACT(DAY FROM (CURRENT_DATE - COALESCE("DueDate", "DocumentDate")))::int),
                    "AgingLastEvaluatedAt" = NOW()
              WHERE "IsDeleted" = false
                AND "Status" IN (2, 3, 4, 7)

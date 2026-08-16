@@ -3815,7 +3815,9 @@
         // "ผู้ซื้อไม่ประสงค์รับใบกำกับ" — เฉพาะเอกสารฝั่งขายที่มี VAT (ออกใบกำกับได้)
         const declineRow = document.getElementById('fDeclineTaxRow');
         if (declineRow) {
-          const canDecline = ['TaxInvoice', 'Receipt', 'ReceiptVoucher'].includes(docType);
+          // บริษัทไม่จด VAT ออกใบกำกับไม่ได้อยู่แล้ว — checkbox นี้ไม่มีความหมาย
+          const canDecline = ['TaxInvoice', 'Receipt', 'ReceiptVoucher'].includes(docType)
+            && this._vatRegistered !== false;
           declineRow.style.display = canDecline ? 'flex' : 'none';
           if (!canDecline) {
             const cb = document.getElementById('fBuyerDeclinedTaxInvoice');
@@ -4005,6 +4007,9 @@
         // ใบรับรองแทนใบเสร็จ: ไม่มีใบกำกับภาษี → เคลมภาษีซื้อไม่ได้ตาม
         // §82/5(1) เสมอ — ปิดคอลัมน์เคลมทั้งตาราง ไม่ให้ติ๊กแล้วเข้าใจผิด
         if (docType === 'CertificateInLieu') off = true;
+        // PR/PO เป็นเอกสารก่อนการซื้อ — ยังไม่มีใบกำกับ/ภาษีซื้อให้เคลม
+        // (สอดคล้อง taxPointSection ที่ตัด PR/PO ออกแล้ว)
+        if (docType === 'PurchaseRequisition' || docType === 'PurchaseOrder') off = true;
         tbl.classList.toggle('vat-claim-off', off);
       },
       onTaxInvoiceRefToggle() {
@@ -5028,9 +5033,12 @@
             // Stale badge — document parked in a non-terminal status too long
             // (e.g. a PO left for months). Independent of payment aging.
             let staleBadge = '';
-            if (d.staleDays) {
+            // ระงับเมื่อ aging badge โชว์อยู่ — ทั้งคู่นับจาก DocumentDate
+            // ใบค้าง 95 วันจะขึ้น "⏳ 90+d" กับ "🕒 คงค้าง 95d" ซ้อนกัน (เลขเดียว
+            // กันสองป้ายแดง = noise)
+            if (d.staleDays && !agingBadge) {
               const sc = d.staleDays >= 180 ? '#b91c1c' : (d.staleDays >= 90 ? '#dc2626' : '#ea580c');
-              staleBadge = `<span title="เอกสารคงค้างในสถานะนี้มา ${d.staleDays} วัน — ควรตรวจสอบ/อัปเดต" style="margin-left:6px;padding:1px 6px;background:${sc};color:#fff;border-radius:6px;font-size:10px;font-weight:600">🕒 คงค้าง ${d.staleDays}d</span>`;
+              staleBadge = `<span title="เอกสารอายุ ${d.staleDays} วันแล้วยังไม่จบขั้นตอน — ควรตรวจสอบ/อัปเดต" style="margin-left:6px;padding:1px 6px;background:${sc};color:#fff;border-radius:6px;font-size:10px;font-weight:600">🕒 คงค้าง ${d.staleDays}d</span>`;
             }
             // RD compliance dot (small).
             let rdBadge = '';
@@ -5055,7 +5063,7 @@
               const claimOff = d.inputVatAccountCodeOverride && !String(d.inputVatAccountCodeOverride).startsWith('116');
               if ((d.vatAmount||0) > 0 && d.inputVatExpiredAt) {
                 vatClaimBadge = `<span title="พ้นกรอบ 6 เดือน §82/3 — เคลม ภ.พ.30 ไม่ได้แล้ว (VAT ถูกล้างเป็นค่าใช้จ่าย)" style="margin-left:6px;padding:1px 6px;background:#fee2e2;color:#991b1b;border-radius:6px;font-size:10px;font-weight:600">✕ พ้น 6 เดือน</span>`;
-              } else if ((d.vatAmount||0) > 0 && !claimOff
+              } else if ((d.vatAmount||0) > 0 && !claimOff && !undueVatBadge
                   && (d.inputVatBecameClaimableAt || d.hasTaxInvoiceReference || !d.inputVatPostedAsUndue)) {
                 vatClaimBadge = `<span title="ใบสำคัญจ่ายนี้มีใบกำกับภาษีซื้อ — เคลม ภ.พ.30 ได้ (เปิดดูเพื่อเช็คว่าเข้ารายงานงวดไหนแล้ว)" style="margin-left:6px;padding:1px 6px;background:#dcfce7;color:#166534;border-radius:6px;font-size:10px;font-weight:600">🧾 เคลม ภ.พ.30</span>`;
               } else if ((d.vatAmount||0) === 0) {
@@ -6865,8 +6873,12 @@
           if (!_agingSuppress && d.agingDays && d.agingDays >= 30) {
             const bg = d.agingDays >= 90 ? '#fee2e2' : (d.agingDays >= 60 ? '#fed7aa' : '#fef3c7');
             const color = d.agingDays >= 90 ? '#991b1b' : (d.agingDays >= 60 ? '#9a3412' : '#92400e');
-            banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
-              ⏳ ค้างชำระมาแล้ว <strong>${d.agingDays} วัน</strong> (เกินกำหนด ${d.agingDays >= 90 ? '90+' : d.agingDays >= 60 ? '60+' : '30+'} วัน)
+            // banner ต้องมีทางไปต่อ ไม่ใช่ข้อความเปล่า — ปุ่มส่งทวงใช้ modal
+            // ส่งอีเมลที่มีอยู่แล้ว (เฉพาะเอกสารขายที่ส่งอีเมลได้)
+            const _canDun = ['Invoice','TaxInvoice','BillingNote','DebitNote'].includes(d.documentType);
+            banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span>⏳ เกินกำหนดชำระมาแล้ว <strong>${d.agingDays} วัน</strong></span>
+              ${_canDun ? `<button class="btn btn-sm" style="background:${color};color:#fff;padding:3px 10px;font-size:12px" onclick="Page.openSendEmailModal('${d.id}', false, false)">📧 ส่งทวง/แจ้งเตือนลูกค้า</button>` : ''}
             </div>`;
           }
           // "Next step" banner — explains where this document sits in the
@@ -7114,15 +7126,27 @@
                 const acctCell = l.accountCode
                   ? `<span style="font-family:ui-monospace,monospace;font-size:11px"><b>${this.escapeHtml(l.accountCode)}</b>${l.accountName ? ' ' + this.escapeHtml(l.accountName.substring(0,20)) : ''}</span>${canReclassify ? ` <button class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:10px" onclick="Page.openReclassifyLine('${d.id}', '${l.id}', '${this.escapeHtml(l.accountCode)}', '${this.escapeHtml((l.description||'').replace(/'/g, '&#39;'))}', ${l.amount})" title="เปลี่ยนผังบัญชี (ระบบจะสร้าง JE คู่ใหม่ Dr ผังใหม่/Cr ผังเก่า — ไม่แก้เอกสารต้นฉบับ)">✏️</button>` : ''}`
                   : '<span style="color:#cbd5e1">—</span>';
-                return `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td>${acctCell}</td><td>${projectCell}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`;
+                // escape description (มาจากผู้ใช้/OCR — ช่องอื่นในแถว escape หมดแล้ว เว้นช่องนี้
+                // = XSS + layout พัง, กฎเหล็ก #4 C) · ส่วนลดโหมดบาท (percent=null,
+                // discountAmount>0) เดิมโชว์ "0%" ทั้งที่ลดจริง → โชว์เป็นจำนวนเงิน
+                const discCell = (!l.discountPercent && Number(l.discountAmount || 0) > 0)
+                  ? `฿${Layout.money(l.discountAmount)}` : `${l.discountPercent || 0}%`;
+                return `<tr><td>${l.lineOrder}</td><td>${this.escapeHtml(l.description || '')}</td><td>${acctCell}</td><td>${projectCell}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${discCell}</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`;
               }).join('')}</tbody></table>
             </div>
             <div id="docFulfillment_${d.id}" style="margin-top:14px"></div>
             <div style="margin-top:16px;text-align:right;padding:16px;background:var(--gray-50);border-radius:8px">
-              <div class="text-sm">ยอดรวมก่อน VAT: <strong>${Layout.money(d.subTotal)}</strong></div>
+              ${Number(d.billDiscountAmount || 0) > 0 ? `
+              <div class="text-sm">ยอดรวมก่อนส่วนลดท้ายบิล: <strong>${Layout.money(Number(d.subTotal) + Number(d.billDiscountAmount))}</strong></div>
+              <div class="text-sm">ส่วนลดท้ายบิล${Number(d.billDiscountPercent || 0) > 0 ? ` (${d.billDiscountPercent}%)` : ''}: <strong>-${Layout.money(d.billDiscountAmount)}</strong></div>` : ''}
+              <div class="text-sm">ยอดรวมก่อน VAT${Number(d.billDiscountAmount || 0) > 0 ? ' (หลังส่วนลด)' : ''}: <strong>${Layout.money(d.subTotal)}</strong></div>
               <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>
-              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong>${d.withholdingTaxAmount > 0 ? ` <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a>` : ''}</div>
+              ${Number(d.withholdingTaxAmount || 0) > 0 ? `
+              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong> <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a></div>` : ''}
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
+              ${Number(d.depositAppliedAmount || 0) > 0 ? `
+              <div class="text-sm" style="color:#0369a1">หักเงินมัดจำที่รับไว้: <strong>-${Layout.money(d.depositAppliedAmount)}</strong></div>
+              <div class="text-sm font-semibold" style="color:#0369a1">รับชำระสุทธิ: ${Layout.money(Number(d.totalAmount) - Number(d.depositAppliedAmount))}</div>` : ''}
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
             ${(() => { const n = this.cleanNotes(d.notes); return n ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${this.escapeHtml(n)}</div></div>` : ''; })()}
@@ -7200,6 +7224,11 @@
             actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
             actions += ` <button class="btn btn-danger" onclick="Page.deleteDoc('${d.id}')" title="ลบถาวร — เฉพาะเอกสารฉบับร่างที่ยังไม่กระทบบัญชี">🗑 ลบถาวร</button>`;
           }
+          // ใบถูกตีกลับ = แก้ได้ (ยังไม่ posted ไม่มี JE) — เดิมเป็นทางตัน:
+          // ตีกลับแล้วทำได้แค่ส่งใบเดิมซ้ำโดยแก้เหตุที่โดนตีกลับไม่ได้เลย
+          if (d.status === 'Rejected') {
+            actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')" title="แก้ตามเหตุผลที่ถูกตีกลับ แล้วส่งขออนุมัติใหม่">แก้ไข</button>`;
+          }
           // ส่งขออนุมัติ / ส่งซ้ำ — เดิมส่งได้ทางเดียวคือกด "อนุมัติ" แล้วโดน
           // workflow gate ปฏิเสธ ค่อยมี confirm ให้ส่ง (ผู้ขอที่ไม่มีสิทธิ์อนุมัติ
           // จึงไม่มีทางส่งเลย) ตอนนี้มีปุ่มตรง ๆ ทั้งตอนยังเป็นร่างและตอนรออนุมัติ
@@ -7208,8 +7237,19 @@
             const again = d.status === 'WaitingApproval';
             actions += ` <button class="btn btn-primary" onclick="Page.submitApproval('${d.id}')" title="${again ? 'ส่งเตือนผู้อนุมัติที่ค้างอยู่อีกครั้ง' : 'ส่งเข้าคิวขออนุมัติตามกฎวงเงิน/ประเภทเอกสาร — ผู้อนุมัติจะได้รับแจ้งเตือน'}">📤 ${again ? 'ส่งขออนุมัติอีกครั้ง' : 'ส่งขออนุมัติ'}</button>`;
           }
-          if (d.status === 'Approved' || d.status === 'Sent') {
+          // แปลงเอกสาร: (1) เฉพาะชนิดที่มีปลายทางจริง — เดิมโชว์บนใบปลายทาง
+          // (Receipt/CN/PV/GRN/CertInLieu) แล้วกดจบที่ toast error
+          // (2) เปิดตอน PartiallyPaid/Paid ด้วย — backend อนุญาตอยู่แล้ว (block
+          // เฉพาะ Voided/Rejected) เดิมใบ TaxInvoice ที่จ่ายครบแต่ผู้ใช้เคยกด
+          // ข้าม "ออกใบเสร็จ" ไป จะไม่มีทางออกใบเสร็จจาก modal อีกเลย
+          // รวม 'Overdue' ด้วย — ใบแจ้งหนี้เกินกำหนดยังต้องแปลง/ออกใบเสร็จได้
+          // (บั๊กเดิม: เงื่อนไข Approved/Sent อย่างเดียว ทำให้ใบ Overdue กดแปลงไม่ได้)
+          const convertibleStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'];
+          const hasConvertTargets = (this._validConversions?.[d.documentType] || []).length > 0;
+          if (convertibleStatuses.includes(d.status) && hasConvertTargets) {
             actions += ` <button class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
+          }
+          if (d.status === 'Approved' || d.status === 'Sent') {
             if (d.documentType === 'Quotation') {
               actions += ` <button class="btn btn-secondary" onclick="Page.quotationAcceptLink('${d.id}')" title="สร้างลิงก์สาธารณะให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ (อายุ 30 วัน) — คัดลอกลิงก์อัตโนมัติ">🔗 ลิงก์ยอมรับ</button>`;
             }
@@ -7231,8 +7271,9 @@
           // an e-Tax XML payload.
           const etaxEligibleTypes = ['TaxInvoice', 'Receipt', 'DebitNote', 'CreditNote'];
           const hasEtaxId = !!d.etaxInvoiceId && d.etaxInvoiceId !== '00000000-0000-0000-0000-000000000000';
+          const _postedStates = ['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'];
           if (etaxEligibleTypes.includes(d.documentType)
-              && (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid')
+              && _postedStates.includes(d.status)
               && !hasEtaxId) {
             actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
           }
@@ -7241,7 +7282,9 @@
           // เมื่อชนิดเอกสารออก e-Tax ได้ (§86) — ติ๊กแล้วระบบสร้าง e-Tax + แนบ XML ให้
           const salesEmailTypes = ['Invoice', 'TaxInvoice', 'Receipt', 'ReceiptVoucher',
             'Quotation', 'BillingNote', 'CreditNote', 'DebitNote', 'DeliveryNote'];
-          const _approvedForEmail = (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid');
+          // รวม PurchaseOrder — ส่ง PO ให้ vendor เป็นงานปกติที่เดิมทำไม่ได้
+          salesEmailTypes.push('PurchaseOrder');
+          const _approvedForEmail = _postedStates.includes(d.status);
           if (salesEmailTypes.includes(d.documentType) && _approvedForEmail) {
             const _etaxOk = etaxEligibleTypes.includes(d.documentType);
             actions += ` <button class="btn btn-secondary" onclick="Page.openSendEmailModal('${d.id}', ${_etaxOk}, false)" title="ส่งเอกสารให้ลูกค้าทางอีเมล — กรอกข้อมูล + เลือกส่งแบบ e-Tax ได้">📧 ส่งอีเมล</button>`;
@@ -7251,8 +7294,18 @@
           // ด้านบนแล้วเลือก "ดาวน์โหลด PDF" → ได้ PDF/A-3 อัตโนมัติ
           // ไม่ต้องมีปุ่มแยก.
           // Payment recording: for approved+ docs with balance due
+          // 'Overdue' เป็นสถานะจริง (enum=7, BackgroundJobService flip ให้เมื่อ
+          // Invoice/TaxInvoice เลย DueDate) — ใบ Overdue คือใบที่ต้องการปุ่ม
+          // รับเงิน/ตัดหนี้สูญที่สุด ห้ามหลุดจากรายการนี้
           const payableStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
-          if (payableStatuses.includes(d.status) && Number(d.balanceDue || 0) > 0.01) {
+          // เฉพาะเอกสารการเงินที่มี "หนี้ให้ตัด" จริง — เดิมไม่กรองชนิด ⇒
+          // ใบเสนอราคา/ใบส่งของ/PO/PR/ใบลดหนี้ ที่ Approved ก็มีปุ่มรับเงิน
+          // (backend ตั้ง BalanceDue = TotalAmount ให้ทุกใบ) กดแล้วออกใบเสร็จ
+          // จากเอกสารที่ไม่ใช่ตัวตั้งหนี้
+          const payableTypes = ['Invoice', 'TaxInvoice', 'BillingNote', 'DebitNote',
+            'PurchaseInvoice', 'Expense', 'PaymentVoucher'];
+          if (payableStatuses.includes(d.status) && payableTypes.includes(d.documentType)
+              && Number(d.balanceDue || 0) > 0.01) {
             // Emoji prefix matches the next-step banner above so the user
             // can trace the guidance "→ ปุ่มไหน" without hunting.
             actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)}, '${d.documentType}', ${Number(d.vatAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
@@ -7267,7 +7320,7 @@
             actions += ` <button class="btn btn-warning" onclick="Page.writeOffBadDebt('${d.id}')" title="ตัดหนี้สูญ — สร้าง JE: Dr หนี้สูญ, Cr ลูกหนี้">💸 ตัดหนี้สูญ</button>`;
           }
           if (d.status !== 'Voided' && d.status !== 'Draft') {
-            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>`;
+            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" title="ยกเลิกเอกสารฉบับนี้ (Void) — เอกสารที่ลงบัญชีแล้วระบบจะกลับรายการให้">ยกเลิกเอกสาร</button>`;
           }
           // เอกสารที่ยกเลิกผิด → กู้คืนเป็นฉบับร่าง (เลขเดิม) แล้วอนุมัติใหม่ได้
           if (d.status === 'Voided') {
@@ -7848,9 +7901,15 @@
         const extra = linkedCount > 0
           ? `<br><strong style="color:#dc2626">มีใบสำคัญทางบัญชี ${linkedCount} รายการที่เชื่อมโยงกับเอกสารนี้ — จะถูกยกเลิกอัตโนมัติพร้อมกัน</strong>`
           : '';
+        // ข้อความต้องตรงความจริง — ใบ WaitingApproval/Rejected ยังไม่ posted
+        // ไม่มี JE ให้กลับ (เดิมพูดถึง "Reversal JE" เสมอ = โกหกสถานการณ์)
+        const hasJe = linkedCount > 0;
         if (!(await Layout.confirmDanger({
           title: 'ยกเลิกเอกสาร',
-          message: 'ระบบจะสร้างรายการกลับบัญชี (Reversal JE) อัตโนมัติ เก็บเอกสารเดิมไว้ในระบบเพื่อการตรวจสอบ (audit trail)' + extra,
+          message: (hasJe
+              ? 'ระบบจะสร้างรายการกลับบัญชี (Reversal JE) อัตโนมัติ '
+              : 'เอกสารนี้ยังไม่ได้ลงบัญชี — ยกเลิกได้โดยไม่กระทบสมุดบัญชี ')
+            + 'เก็บเอกสารเดิมไว้ในระบบเพื่อการตรวจสอบ (audit trail)' + extra,
           mode: 'math'
         }))) return;
         try { await api.voidDocument(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load(); }
@@ -7987,11 +8046,17 @@
         // "ก่อน" รับเงิน + เสนอแปลงเป็นใบกำกับให้เลย (ทางที่ถูก: แปลงก่อน แล้ว
         // ค่อยรับเงินที่ใบกำกับ → ได้ใบกำกับ+ใบเสร็จครบ)
         if (docType === 'Invoice' && docVat > 0) {
+          // การตัดสินใจ 3 ทาง (แปลงก่อน / รับเงินไม่ออกใบกำกับ / ยกเลิก) ใน
+          // confirm เดียวทำไม่ได้ — เดิมยัด "Cancel = รับเงินโดยไม่ออกใบกำกับ"
+          // ⇒ ผู้ใช้ที่กด Cancel เพื่อ "ถอยออกมาก่อน" กลายเป็นเลือกผลทางภาษี
+          // ถาวรโดยไม่รู้ตัว (แปลงย้อนหลังไม่ได้เมื่อรับเงินแล้ว). แยกเป็น 2 ขั้น:
+          // dismiss ของทุกขั้น = ยกเลิกเฉย ๆ เสมอ การเดินหน้าแบบไม่ออกใบกำกับ
+          // ต้องกด OK ยืนยันชัด ๆ เท่านั้น
           const goConvert = confirm(
             'ใบแจ้งหนี้นี้มี VAT และยังไม่ได้ออกใบกำกับภาษี\n\n' +
             'ตามกฎหมาย (§78/§78-1) เมื่อรับเงินต้องออกใบกำกับภาษี — และจะแปลงเป็นใบกำกับ "หลังรับเงิน" ไม่ได้\n\n' +
-            'กด OK = แปลงเป็นใบกำกับภาษีก่อน (แนะนำ — แล้วค่อยบันทึกรับเงินที่ใบกำกับ)\n' +
-            'กด Cancel = รับเงินต่อโดยไม่ออกใบกำกับ (ลูกค้าเคลมภาษีซื้อไม่ได้)');
+            'กด OK = แปลงเป็นใบกำกับภาษีก่อน (แนะนำ)\n' +
+            'กด Cancel = ดูทางเลือกอื่น');
           if (goConvert) {
             const api = Layout.api(); if (!api) return;
             try {
@@ -8001,6 +8066,13 @@
             } catch (e) { Layout.toast('แปลงไม่สำเร็จ: ' + e.message, 'error', 8000); }
             return;
           }
+          const proceedNoTiv = confirm(
+            '⚠️ ยืนยันรับเงินโดยไม่ออกใบกำกับภาษี?\n\n' +
+            '• ลูกค้าจะเคลมภาษีซื้อจากใบนี้ไม่ได้\n' +
+            '• แปลงเป็นใบกำกับย้อนหลังไม่ได้อีก (รับเงินแล้ว supersede ถูกบล็อก)\n\n' +
+            'กด OK = รับเงินต่อโดยไม่ออกใบกำกับ\n' +
+            'กด Cancel = ยกเลิก ไม่ทำอะไรทั้งสิ้น');
+          if (!proceedNoTiv) return;
         }
         // Inline payment-recording modal. The previous prompt-based flow
         // hardcoded paymentMethod='Transfer' which didn't match the

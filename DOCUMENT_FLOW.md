@@ -1823,7 +1823,17 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-15 (รอบ 23: ลงมือตาม roadmap task force —_
+_Last verified against codebase: 2026-08-16 (รอบ 24: UX audit ปุ่ม/ป้าย/ฟอร์มทุกชนิด×สถานะ —_
+_ปุ่มรับเงิน/ตัดหนี้สูญ เพิ่ม type gate (เดิมโผล่บน QT/DN/PO/PR/CN) · แปลงเอกสารกรองชนิด_
+_ที่มีปลายทางจริง + เปิดตอน PartiallyPaid/Paid/Overdue · Rejected แก้ไขได้ (backend ปลด_
+_พร้อมกัน — ใบตีกลับยังไม่ posted) · e-Tax/อีเมล รวม Overdue + ส่ง PO ให้ vendor ได้ ·_
+_AgingDays นับจาก DueDate ไม่ใช่ DocumentDate (ป้าย "ค้างชำระ" เดิมโกหกใบเครดิตยาว) ·_
+_banner ค้างชำระมีปุ่มส่งทวง · confirm รับเงิน INV มี VAT เป็น 2 ขั้น (dismiss = ยกเลิกจริง_
+_ไม่ใช่เลือกไม่ออกใบกำกับ) · detail: escape description (XSS), แถวส่วนลดท้ายบิล/หักมัดจำ,_
+_ซ่อน WHT -0.00, ส่วนลดบาทไม่โชว์ 0% · badge เคลม ภ.พ.30 ไม่ขึ้นคู่ "รอใบกำกับ" ·_
+_stale เงียบเมื่อ aging โชว์ · decline-TIV เช็คจด VAT · PR/PO ปิดคอลัมน์เคลม VAT ·_
+_dialog void ไม่พูดถึง Reversal JE เมื่อใบยังไม่ posted) ·_
+_รอบ 23: ลงมือตาม roadmap task force —_
 _P0: audit hash canonical เดียว + เทสต์ round-trip · WHT GL นับ reversal ถูก · lockout key ·_
 _prod config (ลบ placeholder JWT, PG VerifyFull). P1: CMS XSS allowlist sanitizer +_
 _ถอด unsafe-eval · idempotency ย้ายขึ้น PostgreSQL + กัน race ด้วย InFlight ·_

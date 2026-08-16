@@ -1757,11 +1757,14 @@ public class DocumentService : IDocumentService
         var isDocRevision = RevisableTypes.Contains(doc.DocumentType)
             && doc.Status is DocumentStatus.Approved or DocumentStatus.Sent;
 
-        if (doc.Status != DocumentStatus.Draft && !isDocRevision)
+        // Rejected แก้ได้เหมือน Draft — ใบที่ถูกตีกลับยังไม่ posted (ไม่มี JE/เลขจริง)
+        // เดิมห้ามแก้ ⇒ ทางตัน: ถูกตีกลับแล้วทำได้แค่ "ส่งใบเดิมซ้ำ" โดยแก้เหตุ
+        // ที่โดนตีกลับไม่ได้เลย (พบใน UX audit — ผู้อนุมัติตีกลับก็เพื่อให้แก้)
+        if (doc.Status is not (DocumentStatus.Draft or DocumentStatus.Rejected) && !isDocRevision)
             throw new InvalidOperationException(
                 RevisableTypes.Contains(doc.DocumentType)
-                    ? $"{DocTypeLabel(doc.DocumentType)}สถานะนี้แก้ไขไม่ได้ (แก้ได้เฉพาะ Draft/Approved/Sent)"
-                    : "แก้ไขได้เฉพาะเอกสาร Draft เท่านั้น");
+                    ? $"{DocTypeLabel(doc.DocumentType)}สถานะนี้แก้ไขไม่ได้ (แก้ได้เฉพาะ ร่าง/ถูกตีกลับ หรือออก Rev ใหม่จาก Approved/Sent)"
+                    : "แก้ไขได้เฉพาะเอกสารร่างหรือใบที่ถูกตีกลับเท่านั้น");
 
         if (isDocRevision)
         {
