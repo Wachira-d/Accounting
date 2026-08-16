@@ -258,6 +258,31 @@
                    tooltips on <option> are unreliable across browsers
                    (Safari doesn't show them); this hint line is guaranteed. -->
               <div id="docTypeHint" class="hint" style="margin-top:6px;padding:8px 12px;background:#eff6ff;border-left:3px solid #3b82f6;border-radius:6px;font-size:12px;color:#1e40af;line-height:1.5"></div>
+              <!-- ══ ตัวเลือกเดียวแทน 4 ติ๊กที่กระจายอยู่ ══
+                   เดิมผู้ใช้ต้องประกอบเอกสารเองจาก 4 checkbox (ใบเดียวรวมหัว /
+                   ไม่ประสงค์รับใบกำกับ / จ่ายแล้ว / ขายเงินสด) ที่อยู่คนละที่และ
+                   เกี่ยวพันกันเอง = 16 ชุดค่าที่ถูกจริงแค่ 5 → เลือกผิดง่ายมาก
+                   (เคสจริง: ผู้ใช้ติ๊กแล้วยังได้หัว "ใบเสร็จรับเงิน" เฉย ๆ)
+                   dropdown นี้ถามคำถามเดียว "จะให้กระดาษใบนี้เป็นอะไร" แล้ว
+                   **ตั้ง flag เบื้องหลังให้เอง** — flag เดิมยังเป็น source of truth
+                   (payload/แปลง/JE ไม่เปลี่ยน) จึงไม่กระทบ backend -->
+              <div id="issueModeRow" style="display:none;margin-top:10px">
+                <label class="form-label" style="font-size:12.5px;margin-bottom:4px">เอกสารที่จะออกให้ลูกค้า (หัวกระดาษ) *</label>
+                <select class="form-select" id="fIssueMode" onchange="Page.onIssueModeChange()">
+                  <option value="invoice">ใบแจ้งหนี้ — ขายเครดิต ยังไม่ออกใบกำกับภาษี</option>
+                  <option value="invoice_tax">ใบแจ้งหนี้/ใบกำกับภาษี — ขายเครดิต ออกใบกำกับเลย</option>
+                  <option value="tax">ใบกำกับภาษี — ออกใบกำกับ ตั้งลูกหนี้รอเก็บเงิน</option>
+                  <option value="tax_receipt">ใบกำกับภาษี/ใบเสร็จรับเงิน — ขายสด รับเงินแล้ว ใบเดียวจบ</option>
+                  <option value="receipt_only">ใบเสร็จรับเงิน — ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี</option>
+                </select>
+                <div id="issueModeHint" style="margin-top:6px;padding:8px 12px;background:#f0fdf4;border-left:3px solid #16a34a;border-radius:6px;font-size:12px;color:#166534;line-height:1.6"></div>
+              </div>
+              <!-- checkbox ชุดเดิม — คงไว้เป็น source of truth ที่ payload อ่าน
+                   (dropdown ข้างบนเป็นตัวตั้งค่าให้) และเป็นทางออกเมื่อต้องการ
+                   ผสมแบบที่ dropdown ไม่มี. ซ่อนไว้ใต้ "ตัวเลือกขั้นสูง" เพื่อไม่ให้
+                   ผู้ใช้ทั่วไปต้องตัดสินใจซ้ำสองที่ -->
+              <details id="issueFlagsAdvanced" style="display:none;margin-top:8px">
+                <summary style="cursor:pointer;font-size:12px;color:#64748b;user-select:none">⚙️ ตัวเลือกขั้นสูง — ตั้งค่าเอกสารแบบละเอียด</summary>
               <label id="fCombinedTaxRow" style="display:none;margin-top:8px;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer">
                 <input type="checkbox" id="fCombinedTaxInvoice" style="margin-top:3px">
                 <span>ออกเป็น <b>"ใบแจ้งหนี้/ใบกำกับภาษี"</b> ใบเดียว — ทำงานเป็นใบกำกับภาษีเต็มรูป (ลง VAT/ภพ.30 · ออก e-Tax ได้) แต่พิมพ์หัวรวม
@@ -273,6 +298,7 @@
                   </span>
                 </span>
               </label>
+              </details>
               <!-- เหตุผลที่ไม่มีติ๊ก "ใบเดียวรวมหัว" ให้เลือก เมื่อใบนี้แปลงมาจาก
                    ใบแจ้งหนี้ (ห้ามหายไปเฉย ๆ — กฎ "ห้าม silent no-op") -->
               <div id="combinedConvertedNote" style="display:none;margin-top:8px;padding:8px 12px;background:#f0f9ff;border-left:3px solid #0ea5e9;border-radius:6px;font-size:12px;color:#075985;line-height:1.5"></div>
@@ -3032,6 +3058,98 @@
       },
       /** ติ๊ก "ใบเดียว (ขายเงินสด)" → ปลด "ลูกค้าจ่ายเงินแล้ว (2 ใบ)" อัตโนมัติ
        *  (mutually exclusive — คนละโมเดล GL). กลับกันก็ปลดตัวนี้. */
+      /** ══ รูปแบบการออกเอกสารฝั่งขาย — ตัวเลือกเดียวแทน 4 checkbox ══
+       *
+       *  ปรัชญา: ผู้ใช้คิดเป็น "กระดาษที่จะยื่นให้ลูกค้า" ไม่ได้คิดเป็น flag
+       *  ทางบัญชี → ให้เลือกหัวเอกสาร แล้วระบบแปลเป็น flag ให้เอง
+       *
+       *  **สำคัญ**: หัวเอกสารบางแบบ "ไม่ใช่สิ่งที่เลือกได้อิสระ" เพราะขึ้นกับ
+       *  เหตุการณ์จริงด้วย — ใบกำกับที่ตั้งลูกหนี้ไว้ พอรับเงินครบวันเดียวกัน
+       *  ระบบจะ upgrade หัวเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ให้เอง
+       *  (ServedAsReceipt คำนวณตอน render) และถ้าข้อมูลผู้ซื้อไม่ครบ §86/4
+       *  หัวจะถูก downgrade เป็นใบเสร็จโดยอัตโนมัติ. dropdown จึงเลือก
+       *  "เจตนาตอนออก" ส่วนหัวจริงบนกระดาษอาจดีกว่าที่เลือกได้เมื่อรับเงินจริง
+       *  — hint ด้านล่างบอกเรื่องนี้ให้ผู้ใช้รู้ล่วงหน้า
+       */
+      _ISSUE_MODES: {
+        invoice:      { type: 'Invoice',    combined: false, cash: false, declined: false,
+          hint: 'ตั้งลูกหนี้รอเก็บเงิน · ยังไม่ต้องนำส่ง VAT จนกว่ารับเงิน (§78/1 งานบริการ) · รับเงินเต็มงวดเดียวเมื่อไร ระบบออก "ใบกำกับภาษี/ใบเสร็จรับเงิน" ให้อัตโนมัติ' },
+        invoice_tax:  { type: 'TaxInvoice', combined: true,  cash: false, declined: false,
+          hint: 'ตั้งลูกหนี้รอเก็บเงิน แต่ VAT นำส่ง ภ.พ.30 ทันที (ออกใบกำกับ = tax point เกิดแล้ว) · ลูกค้าเคลมภาษีซื้อได้เลย · จ่ายครบเมื่อไร หัวเปลี่ยนเป็น "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน"' },
+        tax:          { type: 'TaxInvoice', combined: false, cash: false, declined: false,
+          hint: 'ตั้งลูกหนี้ + VAT เข้า ภ.พ.30 ทันที · รับเงินครบวันเดียวกัน หัวจะเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ให้เอง · รับเงินภายหลัง ระบบออกใบเสร็จแยกให้' },
+        tax_receipt:  { type: 'TaxInvoice', combined: false, cash: true,  declined: false,
+          hint: 'ลูกค้าจ่ายแล้ว ณ วันออก — ลง Dr เงินสด/ธนาคาร ไม่ตั้งลูกหนี้ · ปิดสถานะ "ชำระครบ" ทันที · ไม่ออกใบเสร็จแยก · e-Tax T03' },
+        receipt_only: { type: 'TaxInvoice', combined: false, cash: false, declined: true,
+          hint: 'VAT ขายยังลงรายงานภาษีขาย/ภ.พ.30 ครบ (นำส่งภาษีปกติ) · แต่ผู้ซื้อเคลมภาษีซื้อไม่ได้ · ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อครบ' },
+      },
+
+      /** ผู้ใช้เลือกหัวเอกสาร → ตั้ง flag เบื้องหลัง (flag ยังเป็น source of truth) */
+      onIssueModeChange() {
+        const sel = document.getElementById('fIssueMode');
+        const m = this._ISSUE_MODES[sel?.value];
+        if (!m) return;
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v; };
+        set('fCombinedTaxInvoice', m.combined);
+        set('fIssuedAsCashReceipt', m.cash);
+        set('fBuyerDeclinedTaxInvoice', m.declined);
+        // ขายเงินสด (ใบเดียว) กับ "จ่ายแล้ว (2 ใบ)" ใช้ร่วมกันไม่ได้
+        if (m.cash) set('fPaidOnIssue', false);
+        const dt = document.getElementById('fDocType');
+        if (dt && dt.value !== m.type
+            && (dt.value === 'Invoice' || dt.value === 'TaxInvoice')) {
+          dt.value = m.type;
+          this.onDocTypeChange?.();          // ซิงก์ section ที่ผูกกับชนิดเอกสาร
+        }
+        this._refreshIssueModeHint();
+      },
+
+      _refreshIssueModeHint() {
+        const sel = document.getElementById('fIssueMode');
+        const box = document.getElementById('issueModeHint');
+        if (!sel || !box) return;
+        const m = this._ISSUE_MODES[sel.value];
+        box.textContent = m ? m.hint : '';
+      },
+
+      /** ซิงก์ dropdown จาก flag จริง — ใช้ตอน hydrate ใบเดิม/สลับชนิดเอกสาร
+       *  และตัดตัวเลือกที่ใช้ไม่ได้ในสถานะนั้นออก (ไม่ใช่ปล่อยให้เลือกแล้วพัง) */
+      _syncIssueModeUi() {
+        const row = document.getElementById('issueModeRow');
+        const sel = document.getElementById('fIssueMode');
+        if (!row || !sel) return;
+        const dt = document.getElementById('fDocType')?.value;
+        // เฉพาะเอกสารขายที่ตัดสินใจเรื่องใบกำกับได้ + บริษัทต้องจด VAT
+        const applies = (dt === 'Invoice' || dt === 'TaxInvoice') && this._vatRegistered !== false;
+        row.style.display = applies ? '' : 'none';
+        const adv = document.getElementById('issueFlagsAdvanced');
+        if (adv) adv.style.display = applies ? '' : 'none';
+        if (!applies) return;
+
+        // ตัวเลือก "ขายสด ใบเดียว" ใช้ไม่ได้กับใบที่แปลงมาจากใบแจ้งหนี้เครดิต
+        // (จะลง Dr เงินสดทั้งที่ยังไม่รับเงินจริง) — ซ่อนไปเลย ไม่ให้เลือกแล้วพัง
+        const srcT = this._pinnedSourceDoc?.documentType;
+        const fromCredit = srcT === 'Invoice' || srcT === 'BillingNote';
+        const optCash = sel.querySelector('option[value="tax_receipt"]');
+        if (optCash) optCash.hidden = fromCredit;
+        // ใบที่แปลงมาแล้ว ไม่ต้องมีตัวเลือก "ใบเดียวรวมหัว" (ใบแจ้งหนี้ออกไปแล้ว)
+        const optComb = sel.querySelector('option[value="invoice_tax"]');
+        if (optComb) optComb.hidden = fromCredit;
+        const optInv = sel.querySelector('option[value="invoice"]');
+        if (optInv) optInv.hidden = fromCredit;
+
+        // อ่าน flag ปัจจุบัน → เลือก option ที่ตรง
+        const on = id => !!document.getElementById(id)?.checked;
+        let mode = dt === 'Invoice' ? 'invoice' : 'tax';
+        if (on('fBuyerDeclinedTaxInvoice')) mode = 'receipt_only';
+        else if (on('fIssuedAsCashReceipt')) mode = 'tax_receipt';
+        else if (on('fCombinedTaxInvoice')) mode = 'invoice_tax';
+        // option ที่ถูกซ่อนไว้ เลือกไม่ได้ → ตกกลับ "ใบกำกับภาษี"
+        const opt = sel.querySelector(`option[value="${mode}"]`);
+        sel.value = (opt && !opt.hidden) ? mode : 'tax';
+        this._refreshIssueModeHint();
+      },
+
       onCashReceiptToggle() {
         const cr = document.getElementById('fIssuedAsCashReceipt');
         if (cr?.checked) {
@@ -3836,6 +3954,8 @@
           // บริษัทไม่จด VAT ออกใบกำกับไม่ได้อยู่แล้ว — checkbox นี้ไม่มีความหมาย
           const canDecline = ['TaxInvoice', 'Receipt', 'ReceiptVoucher'].includes(docType)
             && this._vatRegistered !== false;
+          // ซิงก์ dropdown "เอกสารที่จะออกให้ลูกค้า" ทุกครั้งที่ชนิดเอกสารเปลี่ยน
+          setTimeout(() => this._syncIssueModeUi?.(), 0);
           declineRow.style.display = canDecline ? 'flex' : 'none';
           if (!canDecline) {
             const cb = document.getElementById('fBuyerDeclinedTaxInvoice');
@@ -6142,6 +6262,9 @@
           if (fCash) { fCash.checked = !!d.issuedAsCashReceipt; this.onCashReceiptToggle?.(); }
           const fDecl = document.getElementById('fBuyerDeclinedTaxInvoice');
           if (fDecl) fDecl.checked = !!d.buyerDeclinedTaxInvoice;
+          // flag ครบแล้ว → ตั้ง dropdown ให้ตรงกับใบจริง (ไม่งั้นเปิดแก้แล้ว
+          // dropdown โชว์ค่า default ที่ไม่ตรงกับเอกสาร)
+          this._syncIssueModeUi?.();
           // ส่วนลดท้ายบิล — % → โหมด pct; ไม่งั้นโหมด ฿ (ยอด ex-VAT ที่หักจริง)
           const fBillD = document.getElementById('fBillDiscount');
           const fBillM = document.getElementById('fBillDiscountMode');
