@@ -681,7 +681,13 @@ public record DocumentResponse(
     /// <summary>ภาษาที่ตรึงไว้กับใบนี้ ("th"/"en") — null = ใช้ค่าเริ่มต้นของ
     /// เทมเพลต/บริษัท. echo กลับมาเพื่อ hydrate ฟอร์มตอนแก้ไข ไม่งั้นเปิดแก้ใบ
     /// ภาษาอังกฤษแล้วกดบันทึก ภาษาจะถูกล้างกลับเป็นค่าบริษัทเงียบ ๆ</summary>
-    string? DocumentLanguage = null);
+    string? DocumentLanguage = null,
+    /// <summary>ขายเงินสด "ใบเดียวจบ" (Dr เงินสด/ไม่ตั้งลูกหนี้, e-Tax T03,
+    /// หัว "ใบกำกับภาษี/ใบเสร็จรับเงิน"). echo กลับเพื่อ hydrate ฟอร์มตอนแก้ไข
+    /// — defect class เดียวกับ DocumentLanguage: รับค่าใน Create/Update แล้ว
+    /// ไม่คืนใน Response ⇒ เปิดแก้ใบที่เคยติ๊กไว้ กล่องกลับว่าง กดบันทึกซ้ำ
+    /// ค่าหายเงียบ ๆ (CLAUDE.md กฎเหล็ก #4 A "เก็บแล้วต้อง echo กลับ")</summary>
+    bool IssuedAsCashReceipt = false);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

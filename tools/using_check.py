@@ -82,7 +82,10 @@ FRAMEWORK_MEMBERS = {
 
 
 def strip_noise(src: str) -> str:
-    return _STRIP.sub(' ', src)
+    """ลบ comment/string แต่ **คงจำนวนบรรทัดเดิม** เพื่อให้เลขบรรทัดที่รายงาน
+    ตรงกับที่ compiler ชี้ (comment /* */ หลายบรรทัดถ้ายุบเป็นช่องว่างเดียว
+    บรรทัดจะเลื่อนทั้งไฟล์)"""
+    return _STRIP.sub(lambda m: '\n' * m.group(0).count('\n') or ' ', src)
 
 
 def file_namespace(src: str) -> str:
