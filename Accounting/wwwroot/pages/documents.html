@@ -273,6 +273,9 @@
                   </span>
                 </span>
               </label>
+              <!-- เหตุผลที่ไม่มีติ๊ก "ใบเดียวรวมหัว" ให้เลือก เมื่อใบนี้แปลงมาจาก
+                   ใบแจ้งหนี้ (ห้ามหายไปเฉย ๆ — กฎ "ห้าม silent no-op") -->
+              <div id="combinedConvertedNote" style="display:none;margin-top:8px;padding:8px 12px;background:#f0f9ff;border-left:3px solid #0ea5e9;border-radius:6px;font-size:12px;color:#075985;line-height:1.5"></div>
               <label id="fDeclineTaxRow" style="display:none;margin-top:8px;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer">
                 <input type="checkbox" id="fBuyerDeclinedTaxInvoice" style="margin-top:3px">
                 <span>ผู้ซื้อ <b>ไม่ประสงค์รับใบกำกับภาษี</b> — ออกเป็น <b>"ใบเสร็จรับเงิน"</b> (ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อครบ)
@@ -3781,9 +3784,26 @@
         if (combinedRow) {
           // ติ๊กนี้ force ชนิดเป็น TaxInvoice ตอนบันทึก ⇒ บริษัทที่ไม่จด VAT
           // ต้องไม่เห็นเลย (ไม่งั้นเป็นอีกทางลัดไปสู่ error ตอนอนุมัติ §90/2)
+          //
+          // **ห้ามโชว์เมื่อใบนี้แปลงมาจากใบแจ้งหนี้** — "ใบเดียวรวมหัว" มีไว้สำหรับ
+          // กรณีที่ยังไม่เคยออกใบแจ้งหนี้แยก. ถ้าแปลงมาจาก INV แล้วยังติ๊กได้
+          // จะเกิดเอกสาร 2 ใบที่ต่างก็พิมพ์หัว "ใบแจ้งหนี้" ของการขายรายการเดียว
+          // ⇒ ลูกค้าได้ใบเรียกเก็บซ้ำ + ผู้ตรวจงงว่าใบไหนคือตัวจริง
+          const srcType = this._pinnedSourceDoc?.documentType;
+          const convertedFromInvoice = srcType === 'Invoice' || srcType === 'BillingNote';
           const canCombine = (docType === 'Invoice' || docType === 'TaxInvoice')
-            && this._vatRegistered !== false;
+            && this._vatRegistered !== false
+            && !convertedFromInvoice;
           combinedRow.style.display = canCombine ? 'flex' : 'none';
+          // แจ้งเหตุผลแทนการหายไปเฉย ๆ (กฎ "ห้าม silent no-op")
+          const cvNote = document.getElementById('combinedConvertedNote');
+          if (cvNote) {
+            cvNote.style.display = convertedFromInvoice
+              && (docType === 'Invoice' || docType === 'TaxInvoice') ? '' : 'none';
+            if (convertedFromInvoice && this._pinnedSourceDoc?.documentNumber)
+              cvNote.textContent = 'ℹ️ ใบนี้แปลงมาจาก ' + this._pinnedSourceDoc.documentNumber
+                + ' — ใบแจ้งหนี้ออกไปแล้ว จึงไม่ต้องออกเป็น "ใบเดียวรวมหัว" อีก';
+          }
           if (!canCombine) {
             const cb = document.getElementById('fCombinedTaxInvoice');
             if (cb) { cb.checked = false; cb.disabled = false; }
