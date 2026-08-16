@@ -1742,6 +1742,19 @@ public class DocumentService : IDocumentService
                     .First());
     }
 
+    /// <summary>ใบนี้แปลงมาจากเอกสาร "ขายเครดิต" (ใบแจ้งหนี้/วางบิล) หรือไม่ —
+    /// ใช้บล็อกโหมดขายเงินสด (IssuedAsCashReceipt) ที่จะลง Dr เงินสดเต็มทั้งที่
+    /// ยังไม่รับเงินจริง</summary>
+    private async Task<bool> IsConvertedFromCreditSaleAsync(Guid companyId, Document doc)
+    {
+        if (!doc.RelatedDocumentId.HasValue) return false;
+        var srcType = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+            .Select(d => (DocumentType?)d.DocumentType)
+            .FirstOrDefaultAsync();
+        return srcType is DocumentType.Invoice or DocumentType.BillingNote;
+    }
+
     public async Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request)
     {
         var doc = await _db.Documents
@@ -1919,7 +1932,11 @@ public class DocumentService : IDocumentService
         // โดยเฉพาะเคสแปลง INV→TaxInvoice แล้วมาติ๊กภายหลัง (convert ไม่ตั้ง flag นี้)
         if (request.IssuedAsCashReceipt.HasValue)
             doc.IssuedAsCashReceipt = request.IssuedAsCashReceipt.Value
-                && doc.DocumentType == DocumentType.TaxInvoice;
+                && doc.DocumentType == DocumentType.TaxInvoice
+                // guard: ใบที่แปลงมาจากใบแจ้งหนี้/วางบิล (ขายเครดิต) ห้ามลงแบบขาย
+                // เงินสด — จะได้ Dr เงินสดเต็มทั้งที่ยังไม่รับเงินจริง (เงินสดปลอม
+                // + ไม่มีลูกหนี้). ต้องรับเงินผ่าน "บันทึกชำระเงิน" ตามปกติ
+                && !await IsConvertedFromCreditSaleAsync(companyId, doc);
         // ผู้จัดทำจริงจากระบบต้นทาง (เคส OCR PV: NextAcc สร้าง Draft เอง → partner
         // ยัดผู้จัดทำผ่าน PUT). null = ไม่แตะ; "" = ล้าง; ค่า = ตั้ง. PDF slot 0
         // (ผู้จัดทำ/ผู้รับเงิน) จะ priority ค่านี้เหนือ CreatedBy (ResolveSignersAsync)

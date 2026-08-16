@@ -684,6 +684,9 @@
               </div>
             </label>
           </div>
+          <!-- เหตุผลที่ไม่มีโหมด "ขายเงินสด" ให้เลือก เมื่อใบแปลงมาจากใบแจ้งหนี้
+               เครดิต (ห้าม silent — กฎเหล็ก #4 A) -->
+          <div id="cashReceiptConvertedNote" style="display:none;margin-bottom:12px;padding:8px 12px;background:#f0f9ff;border-left:3px solid #0ea5e9;border-radius:6px;font-size:12px;color:#075985;line-height:1.5"></div>
 
           <details class="advanced-only" style="margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
             <summary style="cursor:pointer;font-weight:600;color:#475569;font-size:13px">📝 หมายเหตุท้ายเอกสาร / เงื่อนไขเฉพาะฉบับนี้ (override ค่าเริ่มต้นจากบริษัท)</summary>
@@ -3741,9 +3744,24 @@
         // ใบกำกับได้ + T03). ซ่อน + reset เมื่อไม่ใช่
         const cashRcptSection = document.getElementById('cashReceiptSection');
         if (cashRcptSection) {
-          const showCr = docType === 'TaxInvoice';
+          // ห้ามโชว์เมื่อใบนี้แปลงมาจากใบแจ้งหนี้ (เครดิต) — IssuedAsCashReceipt
+          // ลง Dr เงินสดเต็ม + ปิด Paid ทันที (ถือว่ารับเงินแล้ว) แต่ใบที่มาจาก
+          // INV คือ "ขายเครดิต" ยังไม่รับเงินจริง ⇒ ติ๊กแล้วอนุมัติ = เงินสดปลอม
+          // ในบัญชี + ไม่มีลูกหนี้ให้ตาม. เส้นที่ถูกคือ อนุมัติ → บันทึกรับเงิน
+          // (ออกใบเสร็จ settlement + ServedAsReceipt จัดหัว "ใบกำกับ/ใบเสร็จ" ให้เอง)
+          const _cvSrc = this._pinnedSourceDoc?.documentType;
+          const _cvFromInvoice = _cvSrc === 'Invoice' || _cvSrc === 'BillingNote';
+          const showCr = docType === 'TaxInvoice' && !_cvFromInvoice;
           cashRcptSection.style.display = showCr ? '' : 'none';
           if (!showCr) { const c = document.getElementById('fIssuedAsCashReceipt'); if (c) c.checked = false; }
+          const _crNote = document.getElementById('cashReceiptConvertedNote');
+          if (_crNote) {
+            _crNote.style.display = (docType === 'TaxInvoice' && _cvFromInvoice) ? '' : 'none';
+            if (_cvFromInvoice && this._pinnedSourceDoc?.documentNumber)
+              _crNote.textContent = 'ℹ️ ใบนี้แปลงมาจาก ' + this._pinnedSourceDoc.documentNumber
+                + ' (ขายเครดิต) — อนุมัติแล้วกด "บันทึกชำระเงิน" เมื่อรับเงินจริง ระบบจะออกใบเสร็จให้ '
+                + 'และจัดหัวเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" อัตโนมัติ ไม่ต้องใช้โหมดขายเงินสด';
+          }
         }
         // ใบเสร็จ/ใบสำคัญรับ: ตัวดึงใบค้างลูกหนี้ (ตัดลูกหนี้ ไม่ลงรายได้ซ้ำ)
         // — ไม่โชว์กับใบมัดจำ (pseudo-type Deposit ลงเป็น Receipt แต่คนละ semantics)
