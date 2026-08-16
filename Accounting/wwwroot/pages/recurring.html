@@ -42,6 +42,10 @@
               <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
                 <option value="Invoice">ใบแจ้งหนี้</option>
                 <option value="TaxInvoice">ใบกำกับภาษี</option>
+                <!-- pseudo (frontend เท่านั้น): policy "เลือกตามหัวกระดาษ" — บิล
+                     รายเดือนหัวรวมคือเคสหลักของ recurring ไทย. save จะ map เป็น
+                     documentType=TaxInvoice + templateData.combinedInvoiceTaxInvoice -->
+                <option value="TaxInvoiceCombined">ใบแจ้งหนี้/ใบกำกับภาษี (ใบเดียว หัวรวม)</option>
                 <option value="Receipt">ใบเสร็จรับเงิน</option>
                 <option value="Expense">ค่าใช้จ่าย</option>
                 <option value="PurchaseOrder">ใบสั่งซื้อ</option>
@@ -368,14 +372,19 @@ const Page = {
       paymentAccountId: paymentAccountId,
       expenseCategoryId: expenseCategoryId,
       autoGenerateWht: document.getElementById('fAutoWht').checked,
-      dueDays: 30
+      dueDays: 30,
+      // หัวรวม "ใบแจ้งหนี้/ใบกำกับภาษี" — backend อ่าน key นี้ตอน generate
+      // (RecurringTransactionService) แล้วส่งเข้า CreateDocumentRequest
+      combinedInvoiceTaxInvoice: document.getElementById('fDocType').value === 'TaxInvoiceCombined'
     });
 
+    // pseudo "TaxInvoiceCombined" → ชนิดจริงคือ TaxInvoice (enum backend ไม่รู้จัก pseudo)
+    const _selDocType = document.getElementById('fDocType').value;
     const data = {
       name,
       description,
       templateType: 'Document',
-      documentType: document.getElementById('fDocType').value,
+      documentType: _selDocType === 'TaxInvoiceCombined' ? 'TaxInvoice' : _selDocType,
       frequency: document.getElementById('fFrequency').value,
       startDate,
       endDate: document.getElementById('fEndDate').value || null,
@@ -403,9 +412,10 @@ const Page = {
       const r = res.data;
       const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',Yearly:'รายปี'};
       document.getElementById('detailTitle').textContent = r.name || 'รายละเอียด';
-      let tdPaymentName = 'เงินสด (ค่าเริ่มต้น)', tdExpenseName = '-';
+      let tdPaymentName = 'เงินสด (ค่าเริ่มต้น)', tdExpenseName = '-', tdCombined = false;
       try {
         const td = JSON.parse(r.templateData || '{}');
+        tdCombined = !!td.combinedInvoiceTaxInvoice;
         if (td.paymentAccountId && this.paymentChannels) {
           const pa = this.paymentChannels.find(a => a.id === td.paymentAccountId);
           if (pa) tdPaymentName = `${pa.accountCode} - ${pa.accountName}`;
@@ -420,7 +430,7 @@ const Page = {
       } catch {}
       document.getElementById('detailContent').innerHTML = `
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div><span class="text-gray-500 text-sm">ประเภทเอกสาร:</span><br><strong>${Layout.docTypeLabel(r.documentType||r.type)}</strong></div>
+          <div><span class="text-gray-500 text-sm">ประเภทเอกสาร:</span><br><strong>${tdCombined ? 'ใบแจ้งหนี้/ใบกำกับภาษี (ใบเดียว หัวรวม)' : Layout.docTypeLabel(r.documentType||r.type)}</strong></div>
           <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${freqMap[r.frequency]||r.frequency}</strong></div>
           <div><span class="text-gray-500 text-sm">วันเริ่มต้น:</span><br><strong>${Layout.date(r.startDate)}</strong></div>
           <div><span class="text-gray-500 text-sm">วันสิ้นสุด:</span><br><strong>${r.endDate ? Layout.date(r.endDate) : 'ไม่กำหนด'}</strong></div>
@@ -473,6 +483,10 @@ const Page = {
         if (td.paymentAccountId) savedPaymentChannelVal = 'account:' + td.paymentAccountId;
         else if (td.bankAccountId) savedPaymentChannelVal = 'bank:' + td.bankAccountId;
         savedExpenseCategoryId = td.expenseCategoryId || '';
+        // template หัวรวม → เลือก pseudo option กลับ (ไม่งั้นเปิดแก้แล้วเห็น
+        // "ใบกำกับภาษี" เฉย ๆ กดบันทึกซ้ำ = flag หัวรวมหายเงียบ)
+        if (td.combinedInvoiceTaxInvoice && (r.documentType || r.type) === 'TaxInvoice')
+          document.getElementById('fDocType').value = 'TaxInvoiceCombined';
       } catch {}
 
       await this.loadFormData();

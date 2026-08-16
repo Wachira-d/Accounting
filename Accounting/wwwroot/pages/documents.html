@@ -1183,7 +1183,13 @@
             <select class="form-select" id="convertTarget" onchange="Page.onConvertTargetChange()">
               <optgroup label="📥 ฝั่งรายรับ">
                 <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้">ใบแจ้งหนี้</option>
-                <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้+VAT — เข้า ภพ.30">ใบกำกับภาษี</option>
+                <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้+VAT — เข้า ภพ.30 · รับเงินทีหลังค่อยกด 'บันทึกชำระเงิน'">ใบกำกับภาษี</option>
+                <!-- pseudo-target (frontend เท่านั้น — backend ยังเป็น TaxInvoice):
+                     policy "เลือกตามหัวกระดาษ" — ผู้ใช้คิดเป็นกระดาษที่จะยื่นให้
+                     ลูกค้า ไม่ใช่ชนิดเอกสาร+ติ๊ก. เลือกอันนี้ = แปลงเป็นใบกำกับภาษี
+                     ทั้งฉบับ + เปิดฟอร์มพร้อมโหมด tax_paid (อนุมัติ→กลับ JE ใบ
+                     ต้นทาง→บันทึกชำระเต็ม→หัวรวม) ให้เลย -->
+                <option value="TaxInvoicePaid" hidden title="รับเงินครบแล้ว — ระบบอนุมัติ + กลับรายการใบต้นทาง + บันทึกชำระเต็มยอด (หัก ณ ที่จ่าย อัตโนมัติ) + พิมพ์ใบเดียวหัว 'ใบกำกับภาษี/ใบเสร็จรับเงิน' ไม่ออกใบเสร็จแยก">ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบแล้ว ใบเดียวจบ</option>
                 <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR">ใบเสร็จรับเงิน</option>
                 <option value="DeliveryNote" title="ส่งของแล้ว แต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL">ใบส่งของ</option>
                 <option value="BillingNote" title="ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว — ไม่ลง GL">ใบวางบิล</option>
@@ -9120,6 +9126,14 @@
           opt.hidden = !allowed.includes(opt.value) || opt.value === doc.documentType;
           if (!opt.hidden && firstVisible === null) firstVisible = opt.value;
         });
+        // pseudo-target "ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบแล้ว" (ไม่อยู่ใน
+        // allowed ของ backend เพราะเป็นแค่ TaxInvoice + โหมด tax_paid ฝั่ง UI) —
+        // เปิดเฉพาะแหล่งขายเครดิต (INV/BN) ที่แปลงเป็นใบกำกับได้. policy: ผู้ใช้
+        // เลือก "หัวกระดาษ" ที่จะได้ ไม่ต้องรู้จัก flag/ติ๊กภายใน
+        const optPaidCombo = select.querySelector('option[value="TaxInvoicePaid"]');
+        if (optPaidCombo)
+          optPaidCombo.hidden = !(allowed.includes('TaxInvoice')
+            && (doc.documentType === 'Invoice' || doc.documentType === 'BillingNote'));
         if (firstVisible) select.value = firstVisible;
         if (!allowed.length) {
           Layout.toast(`เอกสารประเภท ${doc.documentType} เป็นเอกสารปลายทาง ไม่สามารถแปลงต่อได้`, 'error');
@@ -9151,12 +9165,12 @@
         const targetHint = document.getElementById('convertTargetHint');
         if (targetHint && targetOpt) {
           let hintText = targetOpt.title || '';
-          // ขายเครดิต → ใบกำกับภาษี: บอกล่วงหน้าว่าหลังแปลงเลือกหัวเอกสารได้
-          // 2 แบบในใบร่าง (แยกรับเงินทีหลัง / รวมใบเสร็จเมื่อรับเงินครบแล้ว)
+          // ขายเครดิต → ใบกำกับภาษี: ชี้ทางไปตัวเลือกหัวรวมที่อยู่ถัดลงไป
+          // ในรายการเดียวกัน (policy เลือกตามหัวกระดาษ — ไม่ต้องไปติ๊กในฟอร์ม)
           const _cvSrcT = this._currentDoc?.documentType;
           if (target === 'TaxInvoice' && (_cvSrcT === 'Invoice' || _cvSrcT === 'BillingNote'))
             hintText = (hintText ? hintText + ' · ' : '')
-              + 'แปลงแล้วเลือกในใบร่างได้: "ใบกำกับภาษี" (รับเงินทีหลัง) หรือ "ใบกำกับภาษี/ใบเสร็จรับเงิน" (รับเงินครบแล้ว ใบเดียวจบ)';
+              + 'รับเงินครบแล้ว? เลือก "ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบแล้ว" ในรายการแทน (ใบเดียวจบ)';
           targetHint.textContent = hintText;
           targetHint.style.display = hintText ? '' : 'none';
         }
@@ -9217,6 +9231,12 @@
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('convertDocId').value;
         const target = document.getElementById('convertTarget').value;
+        // pseudo-target หัวรวม → ตัวจริงคือ TaxInvoice ทั้งฉบับ + preset โหมด
+        // tax_paid ในฟอร์ม. axis ของ pseudo = null โดยตั้งใจ (convertAxis ไม่
+        // รู้จัก) — ห้ามให้เลือกบางบรรทัด เพราะ "รับเงินครบ ใบเดียวจบ" ต้องยอด
+        // เท่าใบต้นทางเป๊ะ (supersede บล็อกถ้าไม่เท่า)
+        const isPaidCombo = target === 'TaxInvoicePaid';
+        const realTarget = isPaidCombo ? 'TaxInvoice' : target;
         const axis = this.convertAxis(target);
         const srcType = this._currentDoc?.documentType;
         try {
@@ -9232,21 +9252,35 @@
               Layout.toast('กรุณาระบุจำนวนที่จะแปลงอย่างน้อย 1 รายการ', 'error');
               return;
             }
-            converted = await api.convertDocumentPartial(id, target, { lines });
+            converted = await api.convertDocumentPartial(id, realTarget, { lines });
           } else {
-            converted = await api.convertDocument(id, target);
+            converted = await api.convertDocument(id, realTarget);
           }
           Layout.closeModal('convertModal'); Layout.closeModal('detailModal');
-          Layout.toast(`แปลงเอกสารเป็น${Layout.docTypeLabel(target)}สำเร็จ`);
+          Layout.toast(isPaidCombo
+            ? 'แปลงเป็นใบกำกับภาษี/ใบเสร็จรับเงิน (รับเงินครบแล้ว) สำเร็จ'
+            : `แปลงเอกสารเป็น${Layout.docTypeLabel(realTarget)}สำเร็จ`);
           await this.load();
-          // ขายเครดิต → ใบกำกับภาษี: การตัดสินใจถัดไปอยู่ในฟอร์มร่าง ("ใบกำกับ
-          // ภาษี" รับเงินทีหลัง หรือ "ใบกำกับภาษี/ใบเสร็จรับเงิน" รับเงินครบแล้ว)
-          // → เปิดฟอร์มให้เลย ไม่ปล่อยผู้ใช้หาใบร่างในลิสต์เอง แล้วงงว่าต้องทำไงต่อ
+          // แหล่งขาย → ใบแจ้งหนี้/ใบกำกับภาษี: การตัดสินใจ "หัวกระดาษ" อยู่ใน
+          // ฟอร์มร่าง (dropdown "เอกสารที่จะออกให้ลูกค้า") → เปิดฟอร์มให้เลย
+          // ไม่ปล่อยผู้ใช้หาใบร่างในลิสต์เองแล้วงงว่าต้องทำไงต่อ. ครอบ QT ด้วย:
+          // QT → TIV/INV ได้ชุดโหมดเต็ม (รวม ใบแจ้งหนี้/ใบกำกับภาษี + 3-in-1)
           const newId = converted?.data?.id;
-          if (newId && target === 'TaxInvoice'
-              && (srcType === 'Invoice' || srcType === 'BillingNote')) {
+          if (newId && (realTarget === 'TaxInvoice' || realTarget === 'Invoice')
+              && (srcType === 'Invoice' || srcType === 'BillingNote' || srcType === 'Quotation')) {
             await this.openEdit(newId);
-            Layout.toast('เลือก "เอกสารที่จะออกให้ลูกค้า": รับเงินทีหลัง = ใบกำกับภาษี · รับเงินครบแล้ว = ใบกำกับภาษี/ใบเสร็จรับเงิน แล้วกด "บันทึกและอนุมัติ"', 'info', 10000);
+            if (isPaidCombo) {
+              // ผู้ใช้เลือกหัวรวมตั้งแต่ตอนแปลง → ตั้งโหมด tax_paid ให้เลย
+              // (onIssueModeChange ติ๊ก "จ่ายแล้ว" + sync ช่องทางเงินให้ครบ —
+              //  _syncIssueModeUi รอบ async ใด ๆ ที่ตามมาอ่าน flag แล้วคงโหมดนี้ไว้)
+              const sel = document.getElementById('fIssueMode');
+              if (sel) { sel.value = 'tax_paid'; this.onIssueModeChange(); }
+              Layout.toast('ตรวจข้อมูล + เลือก "แหล่งเงิน/ช่องทางชำระ" แล้วกด "บันทึกและอนุมัติ" — ระบบอนุมัติ + บันทึกชำระเต็มยอด + ออกใบเดียวหัว "ใบกำกับภาษี/ใบเสร็จรับเงิน" ให้จบ', 'info', 10000);
+            } else if (srcType === 'Quotation') {
+              Layout.toast('เลือก "เอกสารที่จะออกให้ลูกค้า" (หัวกระดาษ) ในฟอร์ม — ใบแจ้งหนี้ / ใบแจ้งหนี้+ใบกำกับ / ใบกำกับ / รับเงินแล้วใบเดียวจบ — แล้วกด "บันทึกและอนุมัติ"', 'info', 10000);
+            } else {
+              Layout.toast('เลือก "เอกสารที่จะออกให้ลูกค้า": รับเงินทีหลัง = ใบกำกับภาษี · รับเงินครบแล้ว = ใบกำกับภาษี/ใบเสร็จรับเงิน แล้วกด "บันทึกและอนุมัติ"', 'info', 10000);
+            }
           }
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
