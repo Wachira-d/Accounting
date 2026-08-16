@@ -1823,7 +1823,18 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-16 (รอบ 25: dropdown "เอกสารที่จะออกให้ลูกค้า"_
+_Last verified against codebase: 2026-08-16 (รอบ 26: โหมด `tax_paid` "ใบกำกับภาษี/_
+_ใบเสร็จรับเงิน — รับเงินครบแล้ว" สำหรับใบที่แปลงจากขายเครดิต (INV/BN → TIV เท่านั้น;_
+_standalone ใช้ tax_receipt/3-in-1 เดิม): ตั้ง fPaidOnIssue → chain อนุมัติ (Supersede_
+_กลับ JE ใบต้นทาง) + บันทึกชำระเต็มยอด (backend หัก WHT งวดปิดยอดอัตโนมัติ =_
+_remainingCap; ไม่ออกใบเสร็จแยก → ServedAsReceipt จัดหัวรวม) · ปลดล็อก paid-chain_
+_ให้ทำงานตอน "แก้ไขร่าง/ใบถูกปฏิเสธ" ด้วย (เดิม !editingId เท่านั้น ⇒ ใบแปลงติ๊กจ่าย_
+_แล้วกดอนุมัติ = silent no-op ไม่บันทึกชำระ; revision ใบอนุมัติแล้ว/สถานะไม่รู้ ไม่ยิง_
+_fail-safe) · สลับออกจากโหมด paid → ปลดติ๊กที่โหมดตั้งให้ (ติ๊กมือผู้ใช้ไม่แตะ) ·_
+_doConvert INV/BN→TIV เปิดฟอร์มร่างทันที + hint ใน convert modal บอกทางเลือก 2 แบบ ·_
+_ยืนยันพฤติกรรมลบร่างใบแปลง: DeleteDocument (Draft, no JE/payment/e-Tax) = hard delete_
+_→ ใบต้นทางไม่ถูกแตะ (supersede เกิดตอน approve เท่านั้น) + guard กันแปลงซ้ำ/consumption_
+_มองไม่เห็นแถวที่ลบ → แปลงใหม่ได้ทันที; รอบ 25: dropdown "เอกสารที่จะออกให้ลูกค้า"_
 _6 ตัวเลือกแทน 4 checkbox (รวม 3-in-1 ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน — ตั้ง_
 _combined+paid ให้ chain อนุมัติ+ชำระรันเอง) · sync `_validConversions` frontend ให้ตรง_
 _backend ValidConversions (เดิม drift หลายรุ่น: PO→Expense เลิกแล้ว, ขาด GRN/PV/Receipt/_
