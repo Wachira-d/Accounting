@@ -271,6 +271,7 @@
                 <select class="form-select" id="fIssueMode" onchange="Page.onIssueModeChange()">
                   <option value="invoice">ใบแจ้งหนี้ — ขายเครดิต ยังไม่ออกใบกำกับภาษี</option>
                   <option value="invoice_tax">ใบแจ้งหนี้/ใบกำกับภาษี — ขายเครดิต ออกใบกำกับเลย</option>
+                  <option value="invoice_tax_paid">ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินแล้ว ใบเดียวจบ (3-in-1)</option>
                   <option value="tax">ใบกำกับภาษี — ออกใบกำกับ ตั้งลูกหนี้รอเก็บเงิน</option>
                   <option value="tax_receipt">ใบกำกับภาษี/ใบเสร็จรับเงิน — ขายสด รับเงินแล้ว ใบเดียวจบ</option>
                   <option value="receipt_only">ใบเสร็จรับเงิน — ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี</option>
@@ -3076,6 +3077,10 @@
           hint: 'ตั้งลูกหนี้รอเก็บเงิน · ยังไม่ต้องนำส่ง VAT จนกว่ารับเงิน (§78/1 งานบริการ) · รับเงินเต็มงวดเดียวเมื่อไร ระบบออก "ใบกำกับภาษี/ใบเสร็จรับเงิน" ให้อัตโนมัติ' },
         invoice_tax:  { type: 'TaxInvoice', combined: true,  cash: false, declined: false,
           hint: 'ตั้งลูกหนี้รอเก็บเงิน แต่ VAT นำส่ง ภ.พ.30 ทันที (ออกใบกำกับ = tax point เกิดแล้ว) · ลูกค้าเคลมภาษีซื้อได้เลย · จ่ายครบเมื่อไร หัวเปลี่ยนเป็น "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน"' },
+        // 3-in-1: combined + "ลูกค้าจ่ายเงินแล้ว" → กด "บันทึกและอนุมัติ" ระบบ
+        // อนุมัติ + บันทึกชำระ + จบในคลิกเดียว หัวพิมพ์ 3 หน้าที่ (ServedAsReceipt)
+        invoice_tax_paid: { type: 'TaxInvoice', combined: true, cash: false, declined: false, paid: true,
+          hint: 'รับเงินครบแล้ว ณ วันออก — ระบบอนุมัติ + บันทึกชำระ + ออกใบเดียวหัว "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน" ในคลิกเดียว (ไม่ออกใบเสร็จแยก) · เงินเข้าตาม "แหล่งเงิน/ช่องทางชำระ" ที่เลือกด้านล่าง' },
         tax:          { type: 'TaxInvoice', combined: false, cash: false, declined: false,
           hint: 'ตั้งลูกหนี้ + VAT เข้า ภ.พ.30 ทันที · รับเงินครบวันเดียวกัน หัวจะเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ให้เอง · รับเงินภายหลัง ระบบออกใบเสร็จแยกให้' },
         tax_receipt:  { type: 'TaxInvoice', combined: false, cash: true,  declined: false,
@@ -3095,6 +3100,9 @@
         set('fBuyerDeclinedTaxInvoice', m.declined);
         // ขายเงินสด (ใบเดียว) กับ "จ่ายแล้ว (2 ใบ)" ใช้ร่วมกันไม่ได้
         if (m.cash) set('fPaidOnIssue', false);
+        // 3-in-1 = combined + จ่ายแล้ว → เปิด chain อนุมัติ+ชำระ (โหมดอื่นไม่แตะ
+        // ค่า paid ที่ผู้ใช้ติ๊กเอง — เช่นเลือก "ใบกำกับภาษี" + ติ๊กจ่ายแล้ว ก็ยังได้)
+        if (m.paid) { set('fPaidOnIssue', true); this._syncPaidOnIssueMethod?.(); }
         const dt = document.getElementById('fDocType');
         if (dt && dt.value !== m.type
             && (dt.value === 'Invoice' || dt.value === 'TaxInvoice')) {
@@ -3135,6 +3143,8 @@
         // ใบที่แปลงมาแล้ว ไม่ต้องมีตัวเลือก "ใบเดียวรวมหัว" (ใบแจ้งหนี้ออกไปแล้ว)
         const optComb = sel.querySelector('option[value="invoice_tax"]');
         if (optComb) optComb.hidden = fromCredit;
+        const optComb3 = sel.querySelector('option[value="invoice_tax_paid"]');
+        if (optComb3) optComb3.hidden = fromCredit;
         const optInv = sel.querySelector('option[value="invoice"]');
         if (optInv) optInv.hidden = fromCredit;
 
@@ -3143,7 +3153,7 @@
         let mode = dt === 'Invoice' ? 'invoice' : 'tax';
         if (on('fBuyerDeclinedTaxInvoice')) mode = 'receipt_only';
         else if (on('fIssuedAsCashReceipt')) mode = 'tax_receipt';
-        else if (on('fCombinedTaxInvoice')) mode = 'invoice_tax';
+        else if (on('fCombinedTaxInvoice')) mode = on('fPaidOnIssue') ? 'invoice_tax_paid' : 'invoice_tax';
         // option ที่ถูกซ่อนไว้ เลือกไม่ได้ → ตกกลับ "ใบกำกับภาษี"
         const opt = sel.querySelector(`option[value="${mode}"]`);
         sel.value = (opt && !opt.hidden) ? mode : 'tax';
@@ -8915,6 +8925,11 @@
       // Mirror of server-side ValidConversions in DocumentService.cs.
       // Keep these in sync — server is source of truth and will reject invalid
       // conversions, but pre-filtering improves UX.
+      // ⚠️ MIRROR ของ DocumentService.ValidConversions (backend, ~line 7138) —
+      // แก้ที่โน่นต้องแก้ที่นี่คู่กันเสมอ. drift ที่เคยเกิด: frontend เก่ากว่า
+      // backend หลายรุ่น (PO→Expense ที่ backend เลิกไปแล้ว, ขาด GRN/CN/DN
+      // ทั้งชุด) ⇒ ปุ่ม "แปลงเอกสาร" หายบน GRN/PV/Receipt ทั้งที่แปลงได้จริง
+      // และโชว์ตัวเลือกที่กดแล้ว error
       _validConversions: {
         Quotation:        ['Invoice','TaxInvoice','BillingNote','DeliveryNote','Receipt'],
         BillingNote:      ['Invoice','TaxInvoice','Receipt'],
@@ -8923,10 +8938,18 @@
         TaxInvoice:       ['Receipt','ReceiptVoucher','CreditNote','DebitNote'],
         DebitNote:        ['Receipt','ReceiptVoucher'],
         PurchaseRequisition: ['PurchaseOrder'],
-        PurchaseOrder:    ['PurchaseInvoice','Expense'],
-        PurchaseInvoice:  ['PaymentVoucher'],
-        Expense:          ['PaymentVoucher']
-        // Terminal: Receipt, ReceiptVoucher, CreditNote, PaymentVoucher
+        // role separation: สาย PO ลง "ใบแจ้งหนี้ซื้อ" (เจ้าหนี้การค้า 21210)
+        // เท่านั้น — Expense เป็นสายเบิกค่าใช้จ่าย (21220) ไม่อยู่ในสาย PO
+        PurchaseOrder:    ['GoodsReceiptNote','PurchaseInvoice'],
+        GoodsReceiptNote: ['PurchaseInvoice'],
+        PurchaseInvoice:  ['PaymentVoucher','CreditNote','DebitNote'],
+        Expense:          ['PaymentVoucher','CreditNote','DebitNote','CertificateInLieu'],
+        CertificateInLieu: ['PaymentVoucher'],
+        // PV standalone / ใบเสร็จที่เป็นใบกำกับในตัว — ผู้ขาย/เราออก CN/DN อ้างได้
+        PaymentVoucher:   ['CreditNote','DebitNote'],
+        Receipt:          ['CreditNote','DebitNote'],
+        ReceiptVoucher:   ['CreditNote','DebitNote']
+        // Terminal: CreditNote เท่านั้น
       },
       /** ส่ง/ส่งซ้ำคำขออนุมัติของเอกสารนี้ แล้วบอกให้ชัดว่า "ไปถึงใคร"
        *

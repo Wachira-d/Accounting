@@ -1823,7 +1823,12 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-16 (รอบ 24: UX audit ปุ่ม/ป้าย/ฟอร์มทุกชนิด×สถานะ —_
+_Last verified against codebase: 2026-08-16 (รอบ 25: dropdown "เอกสารที่จะออกให้ลูกค้า"_
+_6 ตัวเลือกแทน 4 checkbox (รวม 3-in-1 ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน — ตั้ง_
+_combined+paid ให้ chain อนุมัติ+ชำระรันเอง) · sync `_validConversions` frontend ให้ตรง_
+_backend ValidConversions (เดิม drift หลายรุ่น: PO→Expense เลิกแล้ว, ขาด GRN/PV/Receipt/_
+_CertInLieu ทั้งชุด ⇒ ปุ่มแปลงหาย/ตัวเลือกผี) + comment ชี้ mirror สองทิศ · openConvert_
+_ใช้ API getConversionTargets เป็นหลัก map เป็น offline fallback · รอบ 24: UX audit ปุ่ม/ป้าย/ฟอร์มทุกชนิด×สถานะ —_
 _ปุ่มรับเงิน/ตัดหนี้สูญ เพิ่ม type gate (เดิมโผล่บน QT/DN/PO/PR/CN) · แปลงเอกสารกรองชนิด_
 _ที่มีปลายทางจริง + เปิดตอน PartiallyPaid/Paid/Overdue · Rejected แก้ไขได้ (backend ปลด_
 _พร้อมกัน — ใบตีกลับยังไม่ posted) · e-Tax/อีเมล รวม Overdue + ส่ง PO ให้ vendor ได้ ·_

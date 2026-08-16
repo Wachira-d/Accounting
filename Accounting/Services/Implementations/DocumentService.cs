@@ -7135,6 +7135,8 @@ public class DocumentService : IDocumentService
     /// Anything not listed is rejected to prevent illogical flows like
     /// Quotation→CreditNote (CN must reference Invoice/TaxInvoice/sale).
     /// </summary>
+    // ⚠️ มี MIRROR ฝั่ง frontend: documents.html `_validConversions` (ใช้ตัดสิน
+    // ว่าจะโชว์ปุ่ม/ตัวเลือก "แปลงเอกสาร") — แก้ตารางนี้ต้องแก้ที่นั่นคู่กัน
     private static readonly Dictionary<DocumentType, DocumentType[]> ValidConversions = new()
     {
         // Sales side
