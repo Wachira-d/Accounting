@@ -1914,6 +1914,12 @@ public class DocumentService : IDocumentService
         if (request.CombinedInvoiceTaxInvoice.HasValue)
             doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
                 && doc.DocumentType == DocumentType.TaxInvoice;
+        // IssuedAsCashReceipt — เดิม update ไม่รับ ⇒ ติ๊ก "ออกใบกำกับภาษี/ใบเสร็จ
+        // รับเงิน ใบเดียว (ขายเงินสด)" ตอนแก้ไขแล้วไม่มีผลเงียบ ๆ (silent no-op)
+        // โดยเฉพาะเคสแปลง INV→TaxInvoice แล้วมาติ๊กภายหลัง (convert ไม่ตั้ง flag นี้)
+        if (request.IssuedAsCashReceipt.HasValue)
+            doc.IssuedAsCashReceipt = request.IssuedAsCashReceipt.Value
+                && doc.DocumentType == DocumentType.TaxInvoice;
         // ผู้จัดทำจริงจากระบบต้นทาง (เคส OCR PV: NextAcc สร้าง Draft เอง → partner
         // ยัดผู้จัดทำผ่าน PUT). null = ไม่แตะ; "" = ล้าง; ค่า = ตั้ง. PDF slot 0
         // (ผู้จัดทำ/ผู้รับเงิน) จะ priority ค่านี้เหนือ CreatedBy (ResolveSignersAsync)
@@ -12837,6 +12843,7 @@ public class DocumentService : IDocumentService
         DepositAppliedToDocumentId: d.DepositAppliedToDocumentId,
         BookingNumber: d.BookingNumber,
         CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice,
+        IssuedAsCashReceipt: d.IssuedAsCashReceipt,
         DepositAppliedAmount: d.DepositAppliedAmount,
         IsSettlementReceipt: d.IsSettlementReceipt,
         UndueInputVatBlockers: undueBlockers,

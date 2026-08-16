@@ -6117,6 +6117,11 @@
           // onDocTypeChange; แค่ติ๊กกล่องคืน).
           const fComb = document.getElementById('fCombinedTaxInvoice');
           if (fComb) fComb.checked = !!d.combinedInvoiceTaxInvoice;
+          // ขายเงินสด ใบเดียว (IssuedAsCashReceipt) — เดิมไม่ hydrate ⇒ เปิดแก้
+          // ใบที่เคยติ๊กไว้ กล่องกลับว่าง กดบันทึกซ้ำแล้วค่าหาย (defect class
+          // "เก็บแล้วไม่ echo กลับ"). onCashReceiptToggle ซิงก์ UI ที่เกี่ยวข้อง
+          const fCash = document.getElementById('fIssuedAsCashReceipt');
+          if (fCash) { fCash.checked = !!d.issuedAsCashReceipt; this.onCashReceiptToggle?.(); }
           const fDecl = document.getElementById('fBuyerDeclinedTaxInvoice');
           if (fDecl) fDecl.checked = !!d.buyerDeclinedTaxInvoice;
           // ส่วนลดท้ายบิล — % → โหมด pct; ไม่งั้นโหมด ฿ (ยอด ex-VAT ที่หักจริง)

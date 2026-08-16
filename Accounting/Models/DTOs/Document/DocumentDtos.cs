@@ -242,6 +242,9 @@ public record UpdateDocumentRequest(
     bool? DepositOutputVatDeferred = null,
     // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — แก้ได้ตอน Draft เท่านั้น.
     bool? CombinedInvoiceTaxInvoice = null,
+    // ขายเงินสด ใบเดียว (ใบกำกับภาษี/ใบเสร็จรับเงิน) — เดิม UpdateRequest ไม่มี
+    // ⇒ ติ๊กตอนแก้ไขแล้วไม่มีผล (silent no-op); null = ไม่แตะ
+    bool? IssuedAsCashReceipt = null,
     decimal? DepositAppliedAmount = null,
     string? DepositAppliedRef = null,
     bool? DepositAppliedDrivesJournal = null,
