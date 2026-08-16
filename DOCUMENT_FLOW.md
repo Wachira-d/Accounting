@@ -1823,7 +1823,16 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-16 (รอบ 26c: convert modal พูดภาษา "หัวกระดาษ"_
+_Last verified against codebase: 2026-08-16 (รอบ 26d: ไล่ปิด "ทางเข้าที่หลุด policy_
+_หัวกระดาษ" ครบทุกทาง — (1) Clone (`DocumentCloneController`): สืบทอด Combined/_
+_Declined/IssuedAsCashReceipt + CustomAppendix/Footer/Terms (เดิมสืบทอดแค่ภาษา ⇒_
+_clone ใบหัวรวมได้ใบหัวเดี่ยวเงียบ ๆ) — ส่ง flag เฉพาะเมื่อไม่ override ชนิด; (2)_
+_Recurring: template UI มีตัวเลือก "ใบแจ้งหนี้/ใบกำกับภาษี (ใบเดียว หัวรวม)"_
+_(pseudo → TaxInvoice + templateData.combinedInvoiceTaxInvoice) + backend อ่าน_
+_combined/declined จาก template (ไม่รองรับ cash โดยเจตนา — auto-gen รายเดือน_
+_โดยไม่มีเงินเข้าจริง = เงินสดปลอม) + hydrate/detail แสดงหัวรวมถูก; (3) convert_
+_เปิดฟอร์มร่างหลังแปลงครอบ QT→INV/TIV ด้วย (เดิมเฉพาะ INV/BN→TIV) ให้เลือก_
+_หัวกระดาษต่อทันทีทุกเส้น; รอบ 26c: convert modal พูดภาษา "หัวกระดาษ"_
 _— เพิ่ม pseudo-target `TaxInvoicePaid` "ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบแล้ว"_
 _ใน dropdown แปลงเอกสาร (เฉพาะแหล่ง INV/BN ที่แปลงเป็น TIV ได้; backend ไม่รู้จัก —_
 _frontend แปลงเป็น TaxInvoice ทั้งฉบับ + เปิดฟอร์มพร้อม preset โหมด tax_paid ให้เลย);_

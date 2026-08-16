@@ -66,6 +66,10 @@ public class DocumentCloneController : ControllerBase
             // ภาษาที่ตรึงกับใบต้นแบบตามไปด้วย — ลูกค้าประจำที่ใช้ใบอังกฤษ
             // คือกลุ่มเดียวกับที่ใช้ clone บ่อยที่สุด (ออกบิลซ้ำทุกเดือน)
             documentLanguage = src.DocumentLanguage,
+            // flag หัวเอกสาร — ให้ preview/prefill ตรงกับที่ POST /clone สร้างจริง
+            combinedInvoiceTaxInvoice = src.CombinedInvoiceTaxInvoice,
+            buyerDeclinedTaxInvoice = src.BuyerDeclinedTaxInvoice,
+            issuedAsCashReceipt = src.IssuedAsCashReceipt,
             reference = $"คัดลอกจาก {src.DocumentNumber}",
             projectId = src.ProjectId,
             lines = src.Lines.OrderBy(l => l.LineOrder).Select(l => new
@@ -113,6 +117,10 @@ public class DocumentCloneController : ControllerBase
         )).ToList();
 
         var docDate = options?.OverrideDate ?? DateTime.UtcNow.Date;
+        // flag หัวเอกสารผูกความหมายกับชนิดต้นแบบ — override เป็นชนิดอื่นแล้ว
+        // ห้ามพ่วง flag ไป (combined บน Invoice เปล่า ๆ ไม่มีความหมาย)
+        var cloneSameType = options?.OverrideType == null
+            || options.OverrideType == src.DocumentType;
         var req = new CreateDocumentRequest(
             DocumentType: options?.OverrideType ?? src.DocumentType,
             DocumentDate: docDate,
@@ -130,7 +138,18 @@ public class DocumentCloneController : ControllerBase
             PricesIncludeVat: src.PricesIncludeVat,
             // ภาษาที่ตรึงกับใบต้นแบบต้องตามมา — เดิมหาย ⇒ clone ใบอังกฤษของ
             // ลูกค้าต่างชาติแล้วใบใหม่กลับเป็นไทยเงียบ ๆ
-            DocumentLanguage: src.DocumentLanguage
+            DocumentLanguage: src.DocumentLanguage,
+            // ── flag หัวเอกสาร (policy "ทำงานตามหัวกระดาษ") ต้องตามต้นแบบ ──
+            // เดิมหาย ⇒ clone ใบ "ใบแจ้งหนี้/ใบกำกับภาษี" ที่ออกซ้ำทุกเดือน แล้ว
+            // ใบใหม่กลายเป็นใบกำกับหัวเดี่ยวเงียบ ๆ / ใบ "ไม่ประสงค์รับใบกำกับ"
+            // กลับพิมพ์หัวใบกำกับ (defect class "เอกสารลูกต้องสืบทอด")
+            CombinedInvoiceTaxInvoice: cloneSameType && src.CombinedInvoiceTaxInvoice,
+            BuyerDeclinedTaxInvoice: cloneSameType ? src.BuyerDeclinedTaxInvoice : (bool?)null,
+            IssuedAsCashReceipt: cloneSameType ? src.IssuedAsCashReceipt : (bool?)null,
+            // ข้อความเฉพาะฉบับที่ลูกค้าเห็นบนกระดาษ — สืบทอดเช่นเดียวกับ convert
+            CustomAppendix: src.CustomAppendix,
+            CustomFooterNotes: src.CustomFooterNotes,
+            CustomTermsAndConditions: src.CustomTermsAndConditions
         );
 
         // ResolveSignersAsync (PDF ผู้จัดทำ) parse CreatedBy เป็น user GUID —

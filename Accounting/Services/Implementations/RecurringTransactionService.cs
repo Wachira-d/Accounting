@@ -428,7 +428,17 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // ตามค่าบริษัท (พฤติกรรมเดิมเป๊ะ). CreateDocumentAsync กรองค่า
                 // ขยะให้อีกชั้นอยู่แล้ว จึงส่งผ่านตรง ๆ ได้
                 DocumentLanguage: root.TryGetProperty("documentLanguage", out var dl)
-                    && dl.ValueKind == JsonValueKind.String ? dl.GetString() : null
+                    && dl.ValueKind == JsonValueKind.String ? dl.GetString() : null,
+                // flag หัวเอกสาร (policy "ทำงานตามหัวกระดาษ") — บิลรายเดือนแบบ
+                // "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" คือเคสหลักของ recurring ใน
+                // ไทย. template เก่าไม่มี key = false/null (พฤติกรรมเดิม).
+                // ไม่รองรับ issuedAsCashReceipt โดยเจตนา — โหมดขายสดลง Dr
+                // เงินสดทันที การ auto-generate รายเดือนโดยไม่มีเงินเข้าจริง
+                // = เงินสดปลอมในบัญชีทุกเดือน
+                CombinedInvoiceTaxInvoice: root.TryGetProperty("combinedInvoiceTaxInvoice", out var citEl)
+                    && citEl.ValueKind == JsonValueKind.True,
+                BuyerDeclinedTaxInvoice: root.TryGetProperty("buyerDeclinedTaxInvoice", out var bdtEl)
+                    && bdtEl.ValueKind == JsonValueKind.True ? true : (bool?)null
             );
 
             var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy);
