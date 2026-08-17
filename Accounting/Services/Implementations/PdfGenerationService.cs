@@ -1244,6 +1244,15 @@ public partial class PdfGenerationService : IPdfGenerationService
     ///
     /// + ตั้ง doc.SettlesTaxInvoiceSource: ใบเสร็จ/ใบสำคัญรับที่อ้าง TaxInvoice
     /// (ใบกำกับรายงาน VAT ไปแล้ว) → หัวห้ามมีคำ "ใบกำกับภาษี" ซ้ำ (กันเคลมซ้ำ).</summary>
+    /// <summary>มีใบเสร็จ/ใบสำคัญรับที่ยัง active อ้างใบนี้อยู่ไหม — เงื่อนไข
+    /// เดียวที่ใช้ร่วมทุกจุด (กฎเหล็ก #4 C ห้ามเขียนซ้ำสองที่)</summary>
+    private Task<bool> HasSeparateReceiptAsync(Guid companyId, Guid documentId) =>
+        _db.Documents.AsNoTracking().AnyAsync(r =>
+            r.CompanyId == companyId && r.RelatedDocumentId == documentId
+            && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
+            && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
+            && r.Status != DocumentStatus.Rejected && !r.IsDeleted);
+
     private async Task ResolveServedAsReceiptAsync(Guid companyId, Document doc)
     {
         doc.ServedAsReceipt = false;
@@ -1331,19 +1340,17 @@ public partial class PdfGenerationService : IPdfGenerationService
         // — แก้ที่ใดที่หนึ่งต้องแก้อีกที่เสมอ)
         if (doc.Status == DocumentStatus.Draft)
         {
-            doc.ServedAsReceipt = doc.PaidOnIssue;
+            // ต้องเช็คใบเสร็จแยกด้วย ให้ตรงกับ ComputeServedAsReceipt ฝั่ง API
+            // (เคสจริง: ใบที่ถูกคืนชีพเป็นร่างแต่มีใบเสร็จลูกยัง active — หน้าจอ
+            //  ขึ้น "ใบกำกับภาษี" แต่ PDF พิมพ์หัวรวม ทั้งที่ใบเสร็จตัวจริงออกแยกแล้ว)
+            doc.ServedAsReceipt = doc.PaidOnIssue && !await HasSeparateReceiptAsync(companyId, doc.Id);
             return;
         }
         if (doc.BalanceDue > 0.01m || doc.PaidAmount <= 0.005m) return;
         if (doc.Status is DocumentStatus.Voided
             or DocumentStatus.Rejected or DocumentStatus.WaitingApproval) return;
         // ชำระผ่านการออกใบเสร็จแยก (Receipt/RV อ้างใบนี้) → ใบเสร็จคือคนละใบ
-        var hasSeparateReceipt = await _db.Documents.AsNoTracking().AnyAsync(r =>
-            r.CompanyId == companyId && r.RelatedDocumentId == doc.Id
-            && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
-            && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
-            && r.Status != DocumentStatus.Rejected && !r.IsDeleted);
-        doc.ServedAsReceipt = !hasSeparateReceipt;
+        doc.ServedAsReceipt = !await HasSeparateReceiptAsync(companyId, doc.Id);
     }
 
     private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,

@@ -4983,6 +4983,41 @@ public class DocumentService : IDocumentService
         if (original.ReversedByEntryId != null)
             throw new InvalidOperationException("ใบนี้ถูกกลับรายการไปแล้ว");
 
+        // ⚠️ X-3: กันปรับปรุง "ซ้อน" บนใบหลักใบเดิม — Adjust ไม่แก้ใบเดิมเลย
+        // (ลงใบปรับปรุงใหม่แทน) ⇒ เปิดแผงอีกครั้งยังเห็นผังเดิม แล้วคำนวณผลต่าง
+        // จากใบเดิมอีกรอบ. ปรับสองครั้งบนใบเดียว = ผังเก่าติดลบ + ผังใหม่สองตัว
+        // ต่างเต็มจำนวน (ยอดรวมยังตรง Dr=Cr ยังสมดุล ⇒ ไม่มีด่านไหนจับ)
+        // ต้องกลับใบปรับปรุงเดิมก่อน แล้วค่อยปรับใหม่จากสถานะจริง
+        var priorAdjustment = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
+                && j.Status == JournalEntryStatus.Posted
+                && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                && !j.IsDeleted
+                && j.Description != null && j.Description.Contains("ปรับปรุงผังบัญชีของ"))
+            .Select(j => j.EntryNumber)
+            .FirstOrDefaultAsync();
+        if (priorAdjustment != null)
+            throw new InvalidOperationException(
+                $"เอกสารนี้มีใบสำคัญปรับปรุงค้างอยู่แล้ว ({priorAdjustment}) — " +
+                "ปรับซ้อนจะทำให้ผังบัญชีเพี้ยน (ผังเดิมติดลบ ผังใหม่ซ้ำสองตัว) " +
+                "กรุณากลับรายการใบปรับปรุงนั้นก่อน แล้วค่อยปรับใหม่จากสถานะปัจจุบัน");
+
+        // ⚠️ X-4: gate ให้ครบชุดเดียวกับ reclassify (คอมเมนต์เดิมอ้างว่า "ชุด
+        // เดียวกัน" แต่จริง ๆ แคบกว่า) — เอกสารที่มีใบปลายทางแล้ว การ supersede
+        // /convert จะกลับ "ทุก JE ที่ OriginalEntryId == null" ซึ่งรวมใบปรับปรุง
+        // ด้วย แล้วลง JE ใหม่จาก doc.Lines ⇒ เจตนาปรับปรุงหายเงียบ
+        var adjHasDownstream = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.RelatedDocumentId == documentId
+            && d.Status != DocumentStatus.Voided && !d.IsDeleted
+            && !d.IsSettlementReceipt);
+        if (adjHasDownstream)
+            throw new InvalidOperationException(
+                "มีเอกสารปลายทางอ้างเอกสารนี้แล้ว — การแปลง/แทนที่จะกลับใบปรับปรุงทิ้ง " +
+                "ทำให้ผังที่แก้ไว้หายไปเงียบ ๆ กรุณาแก้ที่เอกสารปลายทางแทน");
+        if (doc.IsDeposit)
+            throw new InvalidOperationException(
+                "ใบมัดจำมีวงจรบัญชีของตัวเอง (รับ → ตัด/คืน) — ปรับปรุงผังบัญชีตรง ๆ ไม่ได้");
+
         var wanted = request.Lines ?? new List<AdjustJournalLineDto>();
         if (wanted.Count < 2)
             throw new InvalidOperationException("ต้องมีอย่างน้อย 2 บรรทัด (เดบิต + เครดิต)");
@@ -6273,6 +6308,34 @@ public class DocumentService : IDocumentService
                 doc.AgingDays = null;
                 doc.AgingLastEvaluatedAt = DateTime.UtcNow;
                 doc.UpdatedAt = DateTime.UtcNow;
+
+                // 7-supersede) ใบกำกับที่ "แทนที่" ใบแจ้งหนี้ไว้ ถูกยกเลิกเอง →
+                // ปลุกใบแจ้งหนี้ต้นทางกลับมาเป็นร่าง (S-6). ถ้าไม่ทำ: ใบแจ้งหนี้
+                // ถูก void ตอน supersede ไปแล้ว + ใบกำกับเพิ่ง void ⇒ **ไม่เหลือ
+                // เอกสารที่รับรู้รายได้เลย** ทั้งที่ของส่งไปแล้ว และไม่มีใครเห็น
+                // (ทั้งคู่หลุดจากรายการค้างรับและรายงานภาษี) จับได้ตอนกระทบยอด
+                // ปลายงวดเท่านั้น. คืนเป็น Draft ไม่ใช่ Approved — ผู้ใช้ต้อง
+                // ตัดสินใจเองว่าจะออกใบใหม่หรือปล่อยยกเลิกทั้งคู่ (เลข §86/4 เดิม
+                // ถูกใช้ไปแล้ว การ re-approve จะคงเลขเดิมตามกฎ gap-free)
+                if (doc.DocumentType == DocumentType.TaxInvoice && doc.RelatedDocumentId.HasValue)
+                {
+                    var supersededSrc = await _db.Documents.FirstOrDefaultAsync(d =>
+                        d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId
+                        && d.DocumentType == DocumentType.Invoice
+                        && d.Status == DocumentStatus.Voided
+                        && d.Notes != null && d.Notes.Contains($"[แทนที่ด้วยใบกำกับภาษี {doc.DocumentNumber}]"));
+                    if (supersededSrc != null)
+                    {
+                        supersededSrc.Status = DocumentStatus.Draft;
+                        supersededSrc.Notes = ((supersededSrc.Notes ?? "")
+                            + $" [ใบกำกับ {doc.DocumentNumber} ถูกยกเลิก — คืนใบนี้เป็นร่าง กรุณาตรวจแล้วอนุมัติใหม่หรือยกเลิกถาวร]").Trim();
+                        supersededSrc.UpdatedAt = DateTime.UtcNow;
+                        supersededSrc.UpdatedBy = doc.UpdatedBy;
+                        _logger.LogWarning(
+                            "Void {Tax}: คืนใบแจ้งหนี้ต้นทาง {Src} เป็นร่าง — ไม่งั้นรายได้หายทั้งก้อน",
+                            doc.DocumentNumber, supersededSrc.DocumentNumber);
+                    }
+                }
 
                 // 7-asset) Cascade FixedAsset ที่ AutoRegister มาจาก doc นี้:
                 //   • ยังไม่ยืนยัน (NeedsReview=true) + ไม่มี posted dep → ลบ
@@ -10944,10 +11007,19 @@ public class DocumentService : IDocumentService
                 "การแทนที่ต้องยอดตรงกันทั้งใบ (ตรวจราคาต่อบรรทัดของใบกำกับ: พบเคสราคาหลุดเป็น 0). " +
                 "ถ้าต้องการออกใบกำกับบางส่วน ให้ยกเลิกใบแจ้งหนี้เดิมแล้วออกใบแจ้งหนี้ใหม่ตามยอดจริงก่อน");
         if (src.PaidAmount > 0.01m)
+        {
+            // ยอดที่ปิดไปอาจมาจาก "หักมัดจำ" ซึ่งไม่มี Payment row ให้ยกเลิก —
+            // ข้อความเดิมบอกให้ "ยกเลิกการชำระ" ทำให้ผู้ใช้หาปุ่มไม่เจอ (S-4)
+            var srcFromDeposit = src.DepositAppliedAmount > 0.01m;
             throw new InvalidOperationException(
-                $"ใบแจ้งหนี้ต้นทาง {src.DocumentNumber} มีการชำระแล้ว ({src.PaidAmount:N2} บาท) — " +
+                $"ใบแจ้งหนี้ต้นทาง {src.DocumentNumber} ปิดยอดไปแล้ว ({src.PaidAmount:N2} บาท" +
+                (srcFromDeposit ? $" — มาจากการหักมัดจำ {src.DepositAppliedAmount:N2}" : "") + ") — " +
                 "การแปลงเป็นใบกำกับภาษีแล้วอนุมัติจะลงรายได้/ภาษีขายซ้ำกับใบแจ้งหนี้เดิม. " +
-                "ให้ออกใบกำกับภาษีจาก 'ใบเสร็จรับเงิน' ที่รับชำระแทน หรือยกเลิกการชำระ/ใบแจ้งหนี้เดิมก่อน");
+                (srcFromDeposit
+                    ? "ให้ยกเลิกการหักมัดจำที่ใบมัดจำต้นทางก่อน (ไม่ใช่ที่ 'บันทึกชำระเงิน' — ใบนี้ไม่มีรายการรับเงิน) "
+                    : "ให้ยกเลิกการชำระก่อน ") +
+                "หรือออกใบกำกับภาษีจาก 'ใบเสร็จรับเงิน' ที่รับชำระแทน");
+        }
         var otherActiveChild = await _db.Documents.AsNoTracking().AnyAsync(d =>
             d.CompanyId == companyId && d.RelatedDocumentId == src.Id && d.Id != taxInvoice.Id
             && !d.IsDeleted && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);

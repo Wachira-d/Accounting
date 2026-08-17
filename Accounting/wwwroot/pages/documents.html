@@ -7417,10 +7417,16 @@
                   amount: balance,
                   paymentMethod: method,
                   notes: 'รับเงินพร้อมออกใบกำกับ (cash sale)',
+                  // ⚠️ ต้องส่ง false ชัด ๆ — ฝั่ง server default เป็น **true**
+                  // (IssueReceiptDocument ?? true) และเงื่อนไข "ใบรวมทำหน้าที่
+                  // ใบเสร็จเอง" ต้องการ CombinedInvoiceTaxInvoice ซึ่งโหมด
+                  // tax_paid ตั้งเป็น false ⇒ เดิมเกิดใบเสร็จแยกขึ้นมาอีกใบ
+                  // แล้วหัวใบกลับเป็น "ใบกำกับภาษี" เฉย ๆ ขัดกับที่ผู้ใช้เลือก
+                  issueReceiptDocument: false,
                 });
                 Layout.toast(cashDepRes && cashDepRes.okCount
                   ? `สร้างเอกสาร + หักมัดจำ ${cashDepRes.okCount} ใบ (${Layout.money(cashDepRes.okAmt)}) + รับชำระส่วนที่เหลือ ${Layout.money(balance)} สำเร็จ`
-                  // chain ไม่ออกใบเสร็จแยก (issueReceiptDocument ไม่ส่ง = false) —
+                  // chain ไม่ออกใบเสร็จแยก (ส่ง issueReceiptDocument: false ชัดเจน) —
                   // ใบนี้พิมพ์หัวรวมทำหน้าที่ใบเสร็จในตัว (ServedAsReceipt)
                   : 'อนุมัติ + บันทึกชำระครบยอดแล้ว — ใบนี้ทำหน้าที่ใบเสร็จในตัว (หัวพิมพ์รวม "ใบเสร็จรับเงิน")', 'success', 7000);
               } else {
