@@ -142,6 +142,62 @@ public class JournalAnomalyService
                 "ยกเลิกเอกสารแล้วอนุมัติใหม่ (ระบบจะลง JE ให้) หรือคีย์ JE เองในหน้าสมุดรายวันอ้างเลขเอกสาร",
                 d.Id, d.DocumentNumber, null, null, d.DocumentDate.Date));
 
+        // ── 3) ใบปรับปรุงผังบัญชีที่ "หายไปตอนอนุมัติใหม่" (X-6) ──────────────
+        // Adjust ไม่แก้ document line เลย — เจตนาผู้ใช้อยู่ใน **JE ปรับปรุง**
+        // ใบเดียว. ยกเลิกเอกสารแล้วคืนชีพ+อนุมัติใหม่ → ใบปรับปรุงถูกกลับไปพร้อม
+        // JE หลัก แต่ AutoPost ลง JE ใหม่จาก doc.Lines (ผังเดิม) ⇒ ผังที่ผู้ใช้
+        // แก้ไว้หายเงียบ ๆ ไม่มีอะไรเตือน และ Dr=Cr ยังสมดุลทุกใบ
+        const string AdjustMarker = "ปรับปรุงผังบัญชีของ";
+        var adjustJournals = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && !j.IsDeleted
+                && j.SourceDocumentId != null
+                && j.Description != null && j.Description.Contains(AdjustMarker))
+            .Select(j => new
+            {
+                DocId = j.SourceDocumentId!.Value,
+                j.EntryNumber, j.EntryDate, j.Status, j.ReversedByEntryId, j.OriginalEntryId,
+            })
+            .ToListAsync();
+
+        foreach (var g in adjustJournals.Where(a => a.OriginalEntryId == null).GroupBy(a => a.DocId))
+        {
+            // ยังมีใบปรับปรุงที่ยังไม่ถูกกลับ = เจตนายังอยู่ในบัญชี → ไม่ต้องเตือน
+            if (g.Any(a => a.Status == JournalEntryStatus.Posted && a.ReversedByEntryId == null))
+                continue;
+            var lastReversed = g.Where(a => a.ReversedByEntryId != null)
+                .OrderByDescending(a => a.EntryDate).FirstOrDefault();
+            if (lastReversed == null) continue;
+
+            // มี JE หลักที่ active อยู่ = เอกสารถูกอนุมัติใหม่แล้ว (ถ้าไม่มี แปลว่า
+            // ยังยกเลิกอยู่ ซึ่งถูกต้องแล้ว ไม่ใช่ความผิดปกติ)
+            var repostedAt = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.CompanyId == companyId && j.SourceDocumentId == g.Key
+                    && !j.IsDeleted && j.Status == JournalEntryStatus.Posted
+                    && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                    && (j.Description == null || !j.Description.Contains(AdjustMarker)))
+                .OrderByDescending(j => j.CreatedAt)
+                .Select(j => (DateTime?)j.CreatedAt)
+                .FirstOrDefaultAsync();
+            if (repostedAt == null) continue;
+
+            var docRow = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == g.Key && d.CompanyId == companyId && !d.IsDeleted)
+                .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate })
+                .FirstOrDefaultAsync();
+            if (docRow == null) continue;
+            if (docRow.DocumentDate.Date < from || docRow.DocumentDate.Date > to) continue;
+
+            anomalies.Add(new Anomaly(
+                "DOC-ADJUST-LOST", "Warning",
+                $"เอกสาร {docRow.DocumentNumber} เคยมีใบสำคัญปรับปรุงผังบัญชี ({lastReversed.EntryNumber}) " +
+                "ที่ถูกกลับรายการไปแล้ว และเอกสารถูกลงบัญชีใหม่ด้วยผังเดิม — " +
+                "ผังที่แก้ไว้ไม่ได้ถูกนำกลับมาใช้ (เครื่องมือปรับปรุงเก็บเจตนาไว้ในใบสำคัญ ไม่ได้แก้ตัวเอกสาร)",
+                "เปิดเอกสาร → แผง 📒 รายการบัญชี → ปรับปรุงผังบัญชีอีกครั้ง " +
+                "(หรือแก้ผังที่บรรทัดเอกสารด้วย ✏️ เปลี่ยนผัง เพื่อให้อยู่ถาวร)",
+                docRow.Id, docRow.DocumentNumber, null, lastReversed.EntryNumber,
+                lastReversed.EntryDate.Date));
+        }
+
         return new ScanResult(from, to, journals.Count, docs.Count,
             anomalies
                 .OrderBy(a => a.Severity == "Error" ? 0 : 1)

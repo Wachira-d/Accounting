@@ -6288,16 +6288,24 @@ public class DocumentService : IDocumentService
                 // ขั้น 1 reverse JE ของ payment สร้าง REV1 (Posted + SourceDocumentId=
                 // doc) → ขั้นนี้จับ REV1 มา reverse ซ้ำ → เงินสดค้างบนบัญชี + AR ติดลบ
                 // เงียบ ๆ (งบยัง balance). กรอง OriginalEntryId==null กันเคสนี้.
-                var postedJournalIds = await _db.JournalEntries
+                var postedJournals = await _db.JournalEntries
                     .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
                         && j.Status == JournalEntryStatus.Posted
                         && j.OriginalEntryId == null)
-                    .Select(j => j.Id)
+                    .Select(j => new { j.Id, j.EntryDate })
                     .ToListAsync();
-                foreach (var jeId in postedJournalIds)
+                foreach (var je in postedJournals)
                 {
-                    await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
-                        reversalDate: effectiveReversalDate,
+                    // ⚠️ ตัวกลับต้องตกงวดเดียวกับ "ใบที่มันกลับ" ไม่ใช่งวดของเอกสาร
+                    // ทั้งก้อน (X-7): ใบสำคัญปรับปรุงผังบัญชีเลือกวันที่เองได้ (เช่น
+                    // ใบเดือน ก.ค. แต่ปรับปรุงลงเดือน ส.ค.) ถ้ากลับที่วันของเอกสาร
+                    // ⇒ ก.ค. มีตัวกลับที่ไม่มีคู่ (ต่ำไป) และ ส.ค. ยังมีใบปรับปรุง
+                    // ค้าง (สูงไป) — ผิดสองเดือนพร้อมกัน เหมือนบทเรียน X-1
+                    var perEntryDate = je.EntryDate.Date == doc.DocumentDate.Date
+                        ? effectiveReversalDate
+                        : (await ResolveReversalDateAsync(companyId, je.EntryDate)).Date;
+                    await _accountingService.ReverseJournalEntryAsync(companyId, je.Id,
+                        reversalDate: perEntryDate,
                         description: $"ยกเลิกเอกสาร {doc.DocumentNumber}",
                         systemTriggered: true);
                 }
