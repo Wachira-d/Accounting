@@ -228,6 +228,9 @@ const API = {
       // แก้ใบที่ยกเลิกไปแล้วตอนระบบยังใช้ "วันที่กด" — ย้าย JE กลับรายการเข้างวดที่ถูก
       redateVoidReversal: (id, newDate) => API.post(
         `${base}/document/${id}/redate-void-reversal${newDate ? `?newDate=${newDate}` : ''}`),
+      // ดูก่อนย้าย — เอกสารใบเดียวมีตัวกลับได้หลายใบ ต้องเห็นว่าใบไหนย้ายไปวันไหน
+      previewRedateVoidReversal: (id, newDate) => API.get(
+        `${base}/document/${id}/redate-void-reversal/preview${newDate ? `?newDate=${newDate}` : ''}`),
       restoreDocument: (id) => API.post(`${base}/document/${id}/restore`),
       reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
       reclassifyPaymentSource: (id, body) => API.post(`${base}/document/${id}/reclassify-payment-source`, body),

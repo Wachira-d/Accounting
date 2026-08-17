@@ -5276,15 +5276,6 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "เอกสารนี้ยังไม่ถูกยกเลิก — เครื่องมือนี้ใช้แก้วันที่ของ 'รายการกลับบัญชี' เท่านั้น");
 
-        // ไม่ระบุวันที่ → ใช้วันที่ของเอกสารเอง (พฤติกรรมเดียวกับ void แบบใหม่)
-        var target = (newDate == default ? doc.DocumentDate : newDate).Date;
-
-        var targetPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
-            f.CompanyId == companyId && f.StartDate <= target && f.EndDate >= target);
-        if (targetPeriod != null && targetPeriod.Status != FiscalPeriodStatus.Open)
-            throw new InvalidOperationException(
-                $"งวด {targetPeriod.Name} ปิดแล้ว — เปิดงวดก่อน จึงจะย้ายรายการกลับบัญชีเข้าไปได้");
-
         // ตัวกลับของเอกสารนี้ (Posted เท่านั้น — ตัวที่ยังมีผลต่อ GL)
         var reversals = await _db.JournalEntries
             .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
@@ -5293,10 +5284,24 @@ public class DocumentService : IDocumentService
             .ToListAsync();
         if (reversals.Count == 0) return 0;
 
+        var originals = await LoadReversalOriginalsAsync(companyId, reversals);
+
         var moved = 0;
         foreach (var rev in reversals)
         {
+            // เอกสาร 1 ใบมักมีตัวกลับหลายใบและ **คนละวัน** (ใบซื้อ 1 ก.ค. +
+            // ใบจ่ายชำระ 17 ก.ค.) — ยัดทุกใบไปวันเดียวกันคือย้ายรายการจ่ายไป
+            // อยู่ผิดวัน. ค่าเริ่มต้นจึงเป็น "วันที่ของใบต้นฉบับที่ตัวเองกลับ"
+            // (ตกกลับวันที่เอกสารเมื่อหาใบต้นฉบับไม่เจอ) · ระบุวันที่มาเอง =
+            // บังคับทุกใบไปวันนั้น (ใช้ตอนต้องการรวมทุกอย่างไว้วันเดียว)
+            var target = ResolveRedateTarget(rev, newDate, doc.DocumentDate, originals);
             if (rev.EntryDate.Date == target) continue;
+
+            var targetPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+                f.CompanyId == companyId && f.StartDate <= target && f.EndDate >= target);
+            if (targetPeriod != null && targetPeriod.Status != FiscalPeriodStatus.Open)
+                throw new InvalidOperationException(
+                    $"งวด {targetPeriod.Name} ปิดแล้ว — เปิดงวดก่อน จึงจะย้ายรายการกลับบัญชีเข้าไปได้");
 
             var currentPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
                 f.CompanyId == companyId
@@ -5310,7 +5315,7 @@ public class DocumentService : IDocumentService
             rev.EntryDate = target;
             rev.FiscalPeriodId = targetPeriod?.Id;
             rev.Description = (rev.Description ?? "") +
-                $" [แก้วันที่จาก {from:dd/MM/yyyy} → {target:dd/MM/yyyy} ให้อยู่งวดเดียวกับเอกสาร]";
+                $" [แก้วันที่จาก {from:dd/MM/yyyy} → {target:dd/MM/yyyy} ให้อยู่งวดเดียวกับใบต้นฉบับ]";
             rev.UpdatedAt = DateTime.UtcNow;
             rev.UpdatedBy = actor;
             moved++;
@@ -5320,10 +5325,99 @@ public class DocumentService : IDocumentService
         {
             await _db.SaveChangesAsync();
             _logger.LogInformation(
-                "RedateVoidReversal: ย้าย {Count} ใบสำคัญของเอกสาร {DocNo} ไปวันที่ {Date}",
-                moved, doc.DocumentNumber, target);
+                "RedateVoidReversal: ย้าย {Count} ใบสำคัญของเอกสาร {DocNo}",
+                moved, doc.DocumentNumber);
         }
         return moved;
+    }
+
+    /// <summary>โหลดใบต้นฉบับของตัวกลับแต่ละใบ (เลขที่ + วันที่) — ใช้ทั้งตอน
+    /// preview และตอนย้ายจริง เพื่อให้ "วันที่ที่โชว์" กับ "วันที่ที่ลงจริง"
+    /// มาจากฟังก์ชันเดียวกัน (กฎเหล็ก #4 A "resolver กลาง ห้ามคำนวณเอง")</summary>
+    private async Task<Dictionary<Guid, (string Number, DateTime Date)>> LoadReversalOriginalsAsync(
+        Guid companyId, List<JournalEntry> reversals)
+    {
+        var ids = reversals.Where(r => r.OriginalEntryId.HasValue)
+            .Select(r => r.OriginalEntryId!.Value).Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<Guid, (string, DateTime)>();
+        return await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && ids.Contains(j.Id))
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate })
+            .ToDictionaryAsync(j => j.Id, j => (j.EntryNumber, j.EntryDate.Date));
+    }
+
+    /// <summary>วันที่ปลายทางของตัวกลับ 1 ใบ: ระบุมา = ใช้ตามนั้น ·
+    /// ไม่ระบุ = วันที่ใบต้นฉบับ · หาใบต้นฉบับไม่เจอ = วันที่เอกสาร</summary>
+    private static DateTime ResolveRedateTarget(
+        JournalEntry reversal, DateTime explicitDate, DateTime documentDate,
+        Dictionary<Guid, (string Number, DateTime Date)> originals)
+    {
+        if (explicitDate != default) return explicitDate.Date;
+        if (reversal.OriginalEntryId.HasValue
+            && originals.TryGetValue(reversal.OriginalEntryId.Value, out var o))
+            return o.Date;
+        return documentDate.Date;
+    }
+
+    /// <summary>ดูก่อนกด — เอกสาร 1 ใบมีตัวกลับได้หลายใบ ผู้ใช้ต้องเห็นว่า
+    /// **ใบไหนบ้าง** จะถูกย้ายจากวันไหนไปวันไหน ก่อนยืนยัน</summary>
+    public async Task<VoidReversalRedatePreview> PreviewVoidReversalRedateAsync(
+        Guid companyId, Guid documentId, DateTime? newDate)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var reversals = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
+                && j.OriginalEntryId != null && j.Status == JournalEntryStatus.Posted
+                && !j.IsDeleted)
+            .OrderBy(j => j.EntryDate).ThenBy(j => j.EntryNumber)
+            .ToListAsync();
+
+        var originals = await LoadReversalOriginalsAsync(companyId, reversals);
+
+        // งวดที่เกี่ยวข้องทั้งหมด (ต้นทาง + ปลายทาง) — โหลดรอบเดียว ไม่ยิงราย
+        // บรรทัด แล้วบอกเหตุผลที่ย้ายไม่ได้ตั้งแต่หน้า preview ไม่ใช่ตอนกดยืนยัน
+        var periods = await _db.FiscalPeriods.AsNoTracking()
+            .Where(f => f.CompanyId == companyId)
+            .Select(f => new { f.Name, f.StartDate, f.EndDate, f.Status })
+            .ToListAsync();
+        string? ClosedPeriodName(DateTime d)
+        {
+            var p = periods.FirstOrDefault(x => x.StartDate <= d && x.EndDate >= d);
+            return p != null && p.Status != FiscalPeriodStatus.Open ? p.Name : null;
+        }
+
+        var rows = new List<VoidReversalRedateRow>();
+        foreach (var rev in reversals)
+        {
+            var target = ResolveRedateTarget(rev, newDate ?? default, doc.DocumentDate, originals);
+            (string Number, DateTime Date)? orig = rev.OriginalEntryId.HasValue
+                && originals.TryGetValue(rev.OriginalEntryId.Value, out var o) ? o : null;
+
+            string? block = null;
+            if (rev.EntryDate.Date == target) block = "วันที่ตรงอยู่แล้ว";
+            else if (ClosedPeriodName(rev.EntryDate.Date) is string cFrom)
+                block = $"อยู่ในงวด {cFrom} ที่ปิดแล้ว — ย้ายออกไม่ได้";
+            else if (ClosedPeriodName(target) is string cTo)
+                block = $"งวดปลายทาง {cTo} ปิดแล้ว — เปิดงวดก่อน";
+
+            rows.Add(new VoidReversalRedateRow(
+                JournalEntryId: rev.Id,
+                EntryNumber: rev.EntryNumber,
+                JournalType: rev.JournalType.ToString(),
+                CurrentDate: rev.EntryDate.Date,
+                SuggestedDate: target,
+                OriginalEntryNumber: orig?.Number,
+                OriginalEntryDate: orig?.Date,
+                Amount: rev.TotalDebit,
+                WillMove: block == null,
+                BlockReason: block));
+        }
+
+        return new VoidReversalRedatePreview(
+            doc.Id, doc.DocumentNumber, doc.DocumentDate.Date, rows);
     }
 
     /// <summary>หา "วันที่ลงรายการกลับบัญชี" ที่ใช้ได้จริง — ถ้างวดของวันที่ที่

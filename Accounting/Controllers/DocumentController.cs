@@ -661,6 +661,19 @@ public class DocumentController : ControllerBase
                 : "ไม่มีรายการกลับบัญชีที่ต้องย้าย (วันที่ตรงอยู่แล้ว)"));
     }
 
+    /// <summary>ดูก่อนย้าย — เอกสาร 1 ใบมีตัวกลับได้หลายใบ (ใบซื้อ/ขาย +
+    /// รับ-จ่ายชำระ + มัดจำ) endpoint นี้บอกว่าใบไหนบ้างจะถูกย้ายจากวันไหนไป
+    /// วันไหน และใบไหนย้ายไม่ได้เพราะอะไร. อ่านอย่างเดียว ไม่แก้ข้อมูล</summary>
+    [HttpGet("{documentId:guid}/redate-void-reversal/preview")]
+    public async Task<ActionResult<ApiResponse<VoidReversalRedatePreview>>> PreviewRedateVoidReversal(
+        Guid companyId, Guid documentId, [FromQuery] DateTime? newDate = null)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<VoidReversalRedatePreview>(false, null, "ไม่พบเอกสาร"));
+        var preview = await _documentService.PreviewVoidReversalRedateAsync(companyId, documentId, newDate);
+        return Ok(new ApiResponse<VoidReversalRedatePreview>(true, preview, null));
+    }
+
     /// <summary>กู้คืนเอกสารที่ "ยกเลิกผิด" → คืนเป็นฉบับร่าง (Draft) คงเลขเดิม
     /// แล้วผู้ใช้กดอนุมัติใหม่. gate เข้ม: e-Tax Accepted / เดือนภาษียื่นแล้ว →
     /// บล็อก. สิทธิ์เท่ากับการยกเลิก (Document.Void — เป็น operation คู่กัน).</summary>

@@ -833,6 +833,28 @@ public record ReclassifyPaymentSourceRequest(
 /// false = ฝั่งขาย (ลดภาษีขาย)</summary>
 public record ReclassifyCnDnSideRequest(bool ToPurchaseSide, string? Reason);
 
+/// <summary>รายการ "ตัวกลับ" 1 ใบที่เครื่องมือแก้วันที่กลับบัญชีจะย้าย —
+/// ใช้โชว์ให้ผู้ใช้เห็นก่อนกดยืนยันว่า **ใบไหนบ้าง** จะถูกย้ายจากวันไหนไปวันไหน
+/// (เอกสารหนึ่งใบมักมีตัวกลับหลายใบ: ใบซื้อ/ใบขาย + การรับ-จ่ายชำระ + มัดจำ)</summary>
+public record VoidReversalRedateRow(
+    Guid JournalEntryId,
+    string EntryNumber,
+    string JournalType,
+    DateTime CurrentDate,
+    DateTime SuggestedDate,
+    string? OriginalEntryNumber,
+    DateTime? OriginalEntryDate,
+    decimal Amount,
+    bool WillMove,
+    string? BlockReason);
+
+/// <summary>ผลตรวจก่อนย้ายวันที่รายการกลับบัญชี</summary>
+public record VoidReversalRedatePreview(
+    Guid DocumentId,
+    string DocumentNumber,
+    DateTime DocumentDate,
+    IReadOnlyList<VoidReversalRedateRow> Rows);
+
 /// <summary>Returned on the first approve attempt when pre-approval checks
 /// produced soft warnings (legal/correct but unusual). Operator reviews the
 /// list and retries with AcknowledgeWarnings=true to proceed. Hard errors

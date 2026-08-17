@@ -104,7 +104,16 @@ public interface IDocumentService
     /// <summary>ย้ายวันที่ JE กลับรายการของเอกสารที่ยกเลิกไปแล้ว ให้ไปอยู่งวดที่
     /// ถูกต้อง — สำหรับใบที่ถูกยกเลิกก่อนระบบใช้ "วันที่เอกสาร" เป็นค่าเริ่มต้น
     /// (รายการกลับไปตกเดือนที่กด). คืนจำนวน JE ที่ย้าย</summary>
+    /// <param name="newDate">default = ให้ตัวกลับแต่ละใบไปอยู่ **วันที่ของใบ
+    /// ต้นฉบับที่ตัวเองกลับ** (เอกสารใบเดียวมักมีตัวกลับหลายใบคนละวัน) ·
+    /// ระบุค่า = บังคับทุกใบไปวันนั้น</param>
     Task<int> RedateVoidReversalAsync(Guid companyId, Guid documentId, DateTime newDate, string actor);
+
+    /// <summary>ดูรายการ "ตัวกลับ" ที่จะถูกย้ายก่อนกดยืนยัน — เอกสาร 1 ใบมี
+    /// ตัวกลับได้หลายใบ (ใบซื้อ/ขาย + รับ-จ่ายชำระ + มัดจำ) ผู้ใช้ต้องเห็นว่า
+    /// ใบไหนย้ายจากวันไหนไปวันไหน และใบไหนย้ายไม่ได้เพราะอะไร</summary>
+    Task<VoidReversalRedatePreview> PreviewVoidReversalRedateAsync(
+        Guid companyId, Guid documentId, DateTime? newDate);
 
     /// <summary>โพสต์ JE "ขายเงินสด" (integration isCashSale) — TaxInvoice ที่
     /// IssuedAsCashReceipt=true ลง Dr เงินสด + กลับมัดจำ 217xx/21913 / Cr รายได้ +
