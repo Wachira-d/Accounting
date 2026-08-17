@@ -234,7 +234,7 @@ public partial class TaxService
     private static List<Dictionary<string, object?>> BuildSummarySheet(TaxReport report, Company? company)
     {
         const int W = 2;
-        return new List<Dictionary<string, object?>>
+        var rows = new List<Dictionary<string, object?>>
         {
             Row(W, "รายการ", "ค่า"),
             Row(W, "ผู้ประกอบการ", company?.Name ?? ""),
@@ -243,10 +243,32 @@ public partial class TaxService
             Row(W, "ประเภทรายงาน", report.TaxType.ToString()),
             Row(W, "งวดภาษี", $"{report.Month:D2}/{report.Year}"),
             Row(W, "สถานะ", report.Status.ToString()),
-            Row(W, "ภาษีขาย (Output VAT)", Round2(report.OutputVat)),
-            Row(W, "ภาษีซื้อ (Input VAT)", Round2(report.InputVat)),
-            Row(W, "ภาษีสุทธิ", Round2(report.NetVat)),
         };
+        // ยอดตามชนิดแบบ — เดิม hardcode ภาษีขาย/ซื้อ/สุทธิ (field ของ VAT) ทุก
+        // ชนิด ⇒ Excel ของ ภงด. โชว์ 0/0/0 และของ CIT โชว์ 0/0/"กำไรสุทธิ"
+        // (NetVat ของ CIT ถูก reuse เก็บกำไรก่อนภาษี) โดยไม่มียอดภาษีจริงเลย
+        switch (report.TaxType)
+        {
+            case TaxType.WithholdingTax3 or TaxType.WithholdingTax53 or TaxType.WithholdingTax54:
+                rows.Add(Row(W, "เงินได้ที่จ่าย (ฐานหัก)", Round2(report.TotalIncome)));
+                rows.Add(Row(W, "ภาษีหัก ณ ที่จ่ายนำส่ง", Round2(report.TotalTaxWithheld)));
+                break;
+            case TaxType.CorporateIncomeTax:
+                rows.Add(Row(W, "รายได้รวมทั้งปี", Round2(report.TotalIncome)));
+                rows.Add(Row(W, "กำไรสุทธิก่อนภาษี", Round2(report.NetVat)));
+                rows.Add(Row(W, "ภาษีนิติบุคคล (หลังเครดิต)", Round2(report.CitAmount ?? report.TotalTaxWithheld)));
+                break;
+            case TaxType.VatPp36:
+                rows.Add(Row(W, "ฐานค่าบริการต่างประเทศ", Round2(report.TotalIncome)));
+                rows.Add(Row(W, "VAT นำส่ง ภ.พ.36 (ประเมินเอง)", Round2(report.OutputVat)));
+                break;
+            default:
+                rows.Add(Row(W, "ภาษีขาย (Output VAT)", Round2(report.OutputVat)));
+                rows.Add(Row(W, "ภาษีซื้อ (Input VAT)", Round2(report.InputVat)));
+                rows.Add(Row(W, "ภาษีสุทธิ", Round2(report.NetVat)));
+                break;
+        }
+        return rows;
     }
 
     private static List<Dictionary<string, object?>> BuildGenericLineSheet(IEnumerable<TaxReportLine> lines)

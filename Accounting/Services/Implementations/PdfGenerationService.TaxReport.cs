@@ -97,7 +97,12 @@ public partial class PdfGenerationService
         // เฉพาะรายการที่นับจริง (ไม่รวม excluded / summary carry-forward)
         var lines = report.Lines
             .Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY")
-            .Where(l => isSales ? l.IncomeTypeCode != "INPUT" : l.IncomeTypeCode == "INPUT")
+            // JE_INPUT = ภาษีซื้อจาก JV เช่นกัน — เดิมเทียบแค่ "INPUT" ⇒ JE_INPUT
+            // หลุดไปโผล่ในรายงานภาษีขาย + หายจากรายงานภาษีซื้อ (Excel/CSV/จอ
+            // จัดฝั่งถูกหมด — PDF ตกที่เดียว)
+            .Where(l => isSales
+                ? l.IncomeTypeCode != "INPUT" && l.IncomeTypeCode != "JE_INPUT"
+                : l.IncomeTypeCode == "INPUT" || l.IncomeTypeCode == "JE_INPUT")
             .OrderBy(l => l.TransactionDate).ThenBy(l => l.LineOrder)
             .ToList();
         var sumBase = lines.Sum(l => l.IncomeAmount);
@@ -182,7 +187,8 @@ public partial class PdfGenerationService
         var zero = salesLines.Where(l => l.TaxRate < 6.5m && l.IncomeTypeCode != "EXEMPT")
             .Sum(l => l.IncomeAmount);
         var totalSales = std + zero + exempt;
-        var purchaseBase = report.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode == "INPUT").Sum(l => l.IncomeAmount);
+        var purchaseBase = report.Lines.Where(l => !l.IsExcluded
+            && (l.IncomeTypeCode == "INPUT" || l.IncomeTypeCode == "JE_INPUT")).Sum(l => l.IncomeAmount);
 
         string M(decimal v) => v.ToString("N2");
         var payable = report.NetVat >= 0 ? report.NetVat : 0;

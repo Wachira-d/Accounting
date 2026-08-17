@@ -289,9 +289,12 @@ public partial class TaxService
                 }
             }
         }
-        // Recompute จาก lines (สูตรกลางเดียวกับ toggle/regenerate)
-        report.InputVat += subtract > 0 ? -subtract : 0m;
-        report.InputVat += add > 0 ? add : 0m;
-        report.NetVat = report.OutputVat - report.InputVat;
+        // ใช้สูตรกลางจริง (RecalcVatTotals) — เดิมคำนวณ scalar เอง
+        // `NetVat = Output − Input` ซึ่ง**ทิ้งเครดิตภาษีซื้อยกมา (VAT_CREDIT_CF)**
+        // ที่ generate เพิ่งหักไว้ ⇒ งวดที่มีทั้งเครดิตยกมา + deferral ได้ NetVat
+        // สูงเกินเท่าเครดิตยกมา (จ่ายเกิน) และพอผู้ใช้ติ๊กบรรทัดใดก็ตาม
+        // RecalcVatTotals ของ auto-save จะคำนวณแบบมีเครดิต → ยอด "เปลี่ยนเอง"
+        // ทั้งที่ไม่ได้แก้อะไร (สูตรเดียวกันต้องมีที่เดียว)
+        RecalcVatTotals(report);
     }
 }

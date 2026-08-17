@@ -1823,7 +1823,30 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-16 (รอบ 28d: fallback "สแกน JE ไร้เอกสาร"_
+_Last verified against codebase: 2026-08-17 (รอบ 29 — audit 3 ทีมรายงานภาษีทุกชนิด,_
+_แก้ 20 จุด: **ภ.พ.30** ApplyVatDeferrals ใช้ RecalcVatTotals จริง (เดิม scalar ทิ้ง_
+_เครดิตยกมา = ยอดยื่นเกิน + เปลี่ยนเองหลังติ๊ก) · JE-fallback matcher แคบ (ตัด 21912/_
+_21913/21914/21915/21918, prefix 114/115 เงินกู้-สต๊อก, 11620/11630, ผัง 5xxxx ชื่อ_
+_ภาษีซื้อ) · ทั้งสอง fallback ข้าม JE ที่ถูกกลับรายการ · ExportPp30 ใช้รายงาน persisted_
+_ที่ผู้ใช้ติ๊กแล้ว (เดิม recompute ทิ้งติ๊กทั้งหมด) · endStampExclusive กัน timestamp_
+_วันสุดท้ายหลุดทุกงวด (5 จุด) · PV settlement/CIL ห้ามเคลม-ห้ามดึง + pull เคารพ_
+_§82/5 · PDF ภ.พ.30 JE_INPUT จัดฝั่งถูก · **ภงด.** fallback ฐาน=ΣDr (เดิมลบ WHT_
+_ซ้ำ อัตราเพี้ยนทุกแถว) + ExtractTaxpayer + 50 ทวิ payee ตปท. → ภงด.54 (เดิมได้แค่_
+_3/53 = นำส่งซ้ำสองแบบ) + cert query เลิก Include INNER-JOIN (payee ถูกลบแล้วจอขาด)_
+_· **CIT** กด "บันทึก" ไม่ทับหัวรายงานแล้ว + detail/Excel โชว์ รายได้/กำไร/CIT จริง ·_
+_**ภ.พ.36** ฐาน header-only ใช้ SubTotal (เดิม dead-fallback = 0) + update ยอด Output/_
+_Net ตามติ๊ก + BuildPp36 กรอง IsExcluded + recompute header · **ภงด.1/สปส.** block_
+_การสร้างรายงานว่าง (ชี้ไปหน้า e-Filing payroll) · **ภงด.91** โชว์ยอดถูก (typeMap/_
+_list/detail) · AutoRefresh ปลด VatDeferral ก่อนลบ · tax.html หัวคอลัมน์ per-tab +_
+_kpi ids (หัวรายงานอัปเดตหลังติ๊ก) + คำเตือน 🚫/⚠️ ไม่ถูกเลขใบกำกับทับ._
+_**Backlog (ยังไม่แก้ — บันทึกไว้):** manual cert ไม่มี DocumentId นับซ้ำกับแถวเตือน;_
+_cert เต็มใบ+รายงวด ซ้ำ (idempotency ข้ามสาขา); Accrual PI/cert ข้ามเดือนซ้ำ;_
+_Regenerate ภงด. ไม่ snapshot ติ๊ก + ล้าง audit fields + ไม่ atomic; ExportPnd54_
+_ยัง doc-mined (13 ความต่าง); ภงด.51 คนละฐานกับ 50; ขาดทุนยกมา 5 ปีไม่หักใน CIT;_
+_ค่าเสื่อม CIT ปีปฏิทิน vs รอบบัญชี; CIT unique รายเดือน (สร้างได้ 12 ใบ/ปี); ภงด.91_
+_สร้างจาก UI ไม่ได้ + ประชากร payroll จอ≠ไฟล์; RecalcVatTotals default-to-output;_
+_§82/3 ฐานวันที่ generate≠pull; Receipt ที่ต้นทาง soft-deleted VAT หาย; auto-save_
+_ภงด. all-or-nothing; รอบ 28d: fallback "สแกน JE ไร้เอกสาร"_
 _ของรายงานภาษี เลิกจับด้วย prefix หลวม — ภงด.3/53: เดิม prefix "2191" กวาดบัญชี VAT_
 _21911/21912/21913 (JV auto-reconcile มัดจำโผล่เป็นแถว "REC..." VAT 7% ใน ภงด.53)_
 _+ "11910 ถูกหัก" คือเครดิตเราไม่ใช่ยอดนำส่ง + ไม่แยกแบบ (แถวเดียวเข้าทั้ง 3 และ 53)_

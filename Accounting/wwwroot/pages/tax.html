@@ -89,8 +89,6 @@
               <option value="WithholdingTax3">หัก ณ ที่จ่าย (ภ.ง.ด.3)</option>
               <option value="WithholdingTax53">หัก ณ ที่จ่าย (ภ.ง.ด.53)</option>
               <option value="VatPp36">ภ.พ.36 — นำส่ง VAT แทนผู้ขายต่างประเทศ (§83/6)</option>
-              <option value="WithholdingTax1">หัก ณ ที่จ่าย (ภ.ง.ด.1)</option>
-              <option value="SocialSecurity">ประกันสังคม</option>
               <option value="CorporateIncomeTax">ภาษีนิติบุคคล</option>
             </select>
           </div>
@@ -160,7 +158,7 @@
       page: 1, taxType: '',
       allReports: [],
       selectedTax: new Set(),
-      typeMap: { VAT: 'ภ.พ.30', WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1', WithholdingTax54: 'ภ.ง.ด.54', VatPp36: 'ภ.พ.36', SocialSecurity: 'ประกันสังคม', CorporateIncomeTax: 'ภาษีนิติบุคคล' },
+      typeMap: { VAT: 'ภ.พ.30', WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1', WithholdingTax54: 'ภ.ง.ด.54', VatPp36: 'ภ.พ.36', SocialSecurity: 'ประกันสังคม', CorporateIncomeTax: 'ภาษีนิติบุคคล', PersonalIncomeTax91: 'ภ.ง.ด.91' },
       monthNames: ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'],
       onTaxCheck(cb) {
         if (cb.checked) this.selectedTax.add(cb.dataset.id); else this.selectedTax.delete(cb.dataset.id);
@@ -351,11 +349,12 @@
         // netVat (ของ VAT) ⇒ เดิม list โชว์ 0.00 ทุกแถว ภงด. แม้รายงานมีข้อมูล
         // (ผู้ใช้เข้าใจว่ารายงานว่าง ทั้งที่หนังสือรับรอง 50 ทวิ ออกครบ)
         const _isWht = t => String(t).startsWith('WithholdingTax');
-        const _netOf = r => _isWht(r.taxType) ? (r.totalTaxWithheld || 0)
+        const _netOf = r => _isWht(r.taxType) || r.taxType === 'PersonalIncomeTax91'
+          ? (r.totalTaxWithheld || 0)
           : (r.taxType === 'CorporateIncomeTax' ? (r.citAmount ?? r.totalTaxWithheld ?? 0) : (r.netVat || 0));
         // คอลัมน์ A/B ต่อชนิด: ภงด. = ฐานเงินได้/— · ภ.พ.36 = ฐานบริการ/— ·
         // CIT = —/— · VAT = ภาษีขาย/ภาษีซื้อ (ให้ตรงกับหัวคอลัมน์ per-tab)
-        const _colA = r => _isWht(r.taxType)
+        const _colA = r => _isWht(r.taxType) || r.taxType === 'PersonalIncomeTax91'
           ? `<span title="เงินได้ที่จ่าย (ฐานหัก ณ ที่จ่าย)">${Layout.money(r.totalIncome)}</span>`
           : r.taxType === 'VatPp36'
             ? `<span title="ฐานค่าบริการต่างประเทศ (§83/6)">${Layout.money(r.totalIncome)}</span>`
@@ -421,7 +420,7 @@
           let i = 0, sumBase = 0, sumTax = 0;
           const body = rows.map(ln => {
             i++; sumBase += Number(ln.incomeAmount || 0); sumTax += Number(ln.taxAmount || 0);
-            return `<tr><td class="c">${i}</td><td class="c">${dstr(ln.transactionDate)}</td><td>${esc(ln.invoiceNumber || ln.description || '')}</td><td class="c">${esc(ln.taxPayerId || '')}</td><td class="c">${branch(ln.branchCode)}</td><td>${esc(ln.taxPayerName || '')}</td><td class="r">${money(ln.incomeAmount)}</td><td class="r">${money(ln.taxAmount)}</td></tr>`;
+            return `<tr><td class="c">${i}</td><td class="c">${dstr(ln.transactionDate)}</td><td>${esc((/^(🚫|⚠️|\[รอใบกำกับ|\[ดึงเข้างวด)/.test(ln.description || '') ? ln.description : (ln.invoiceNumber || ln.description)) || '')}</td><td class="c">${esc(ln.taxPayerId || '')}</td><td class="c">${branch(ln.branchCode)}</td><td>${esc(ln.taxPayerName || '')}</td><td class="r">${money(ln.incomeAmount)}</td><td class="r">${money(ln.taxAmount)}</td></tr>`;
           }).join('');
           return `<div class="form"><div class="ftitle">${title}</div>
             <div class="fsub">ตามประกาศอธิบดีกรมสรรพากร เกี่ยวกับภาษีมูลค่าเพิ่ม (ฉบับที่ 104)</div>
@@ -473,10 +472,18 @@
                 <div><span class="text-gray-500 text-xs">เงินได้ที่จ่าย (ฐานหัก)</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
                 <div><span class="text-gray-500 text-xs">จำนวนผู้ถูกหัก/รายการ</span><div class="text-lg font-bold">${(d.lines || []).filter(l => l.incomeTypeCode !== 'SUMMARY').length}</div></div>
                 <div><span class="text-gray-500 text-xs">ภาษีนำส่ง</span><div class="text-lg font-bold ${d.totalTaxWithheld > 0 ? 'text-danger' : ''}">${Layout.money(d.totalTaxWithheld)}</div><div class="text-xs text-gray-400">ยื่นภายในวันที่ 7 (e-Filing 15) เดือนถัดไป</div></div>
+                ` : d.taxType === 'CorporateIncomeTax' ? `
+                <div><span class="text-gray-500 text-xs">รายได้รวมทั้งปี</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
+                <div><span class="text-gray-500 text-xs">กำไรสุทธิก่อนภาษี</span><div class="text-lg font-bold">${Layout.money(d.netVat)}</div></div>
+                <div><span class="text-gray-500 text-xs">ภาษีนิติบุคคล (ภ.ง.ด.50)</span><div class="text-lg font-bold ${(d.citAmount ?? d.totalTaxWithheld) > 0 ? 'text-danger' : 'text-success'}">${Layout.money(d.citAmount ?? d.totalTaxWithheld)}</div><div class="text-xs text-gray-400">หลังหักเครดิตภาษีถูกหัก ณ ที่จ่าย</div></div>
+                ` : d.taxType === 'PersonalIncomeTax91' ? `
+                <div><span class="text-gray-500 text-xs">เงินได้พนักงานทั้งปี</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
+                <div><span class="text-gray-500 text-xs">ภาษีหักนำส่งแล้ว (ทั้งปี)</span><div class="text-lg font-bold">${Layout.money(d.totalTaxWithheld)}</div></div>
+                <div><span class="text-gray-500 text-xs">ประกันสังคม (ทั้งปี)</span><div class="text-lg font-bold">${Layout.money(d.outputVat)}</div></div>
                 ` : `
-                <div><span class="text-gray-500 text-xs">${d.taxType === 'VatPp36' ? 'ฐานค่าบริการ ตปท.' : 'ภาษีขาย (Output VAT)'}</span><div class="text-lg font-bold">${Layout.money(d.taxType === 'VatPp36' ? d.totalIncome : d.outputVat)}</div></div>
-                <div><span class="text-gray-500 text-xs">${d.taxType === 'VatPp36' ? 'VAT ประเมินเอง 7%' : 'ภาษีซื้อ (Input VAT)'}</span><div class="text-lg font-bold">${Layout.money(d.taxType === 'VatPp36' ? d.outputVat : d.inputVat)}</div></div>
-                <div><span class="text-gray-500 text-xs">${d.taxType === 'VatPp36' ? 'ยอดนำส่ง ภ.พ.36' : 'ภาษีสุทธิ'}</span><div class="text-lg font-bold ${d.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(d.netVat)}</div><div class="text-xs text-gray-400">${d.taxType === 'VatPp36' ? 'นำส่งแล้วเคลมเป็นภาษีซื้อ ภ.พ.30 ได้' : (d.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน')}</div></div>
+                <div><span class="text-gray-500 text-xs">${d.taxType === 'VatPp36' ? 'ฐานค่าบริการ ตปท.' : 'ภาษีขาย (Output VAT)'}</span><div class="text-lg font-bold" id="kpiOutputVat">${Layout.money(d.taxType === 'VatPp36' ? d.totalIncome : d.outputVat)}</div></div>
+                <div><span class="text-gray-500 text-xs">${d.taxType === 'VatPp36' ? 'VAT ประเมินเอง 7%' : 'ภาษีซื้อ (Input VAT)'}</span><div class="text-lg font-bold" id="kpiInputVat">${Layout.money(d.taxType === 'VatPp36' ? d.outputVat : d.inputVat)}</div></div>
+                <div><span class="text-gray-500 text-xs">${d.taxType === 'VatPp36' ? 'ยอดนำส่ง ภ.พ.36' : 'ภาษีสุทธิ'}</span><div class="text-lg font-bold ${d.netVat > 0 ? 'text-danger' : 'text-success'}" id="kpiNetVat">${Layout.money(d.netVat)}</div><div class="text-xs text-gray-400">${d.taxType === 'VatPp36' ? 'นำส่งแล้วเคลมเป็นภาษีซื้อ ภ.พ.30 ได้' : (d.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน')}</div></div>
                 `}
               </div>
             </div>
@@ -544,7 +551,7 @@
                 <td class="text-center">${chk}</td>
                 <td>${ln.lineOrder}${cf ? ' <span title="ยกมาจากเดือนก่อน (§82/3 ยังไม่เกิน 6 เดือน) — ติ๊กใช้เพื่อเคลมเดือนนี้" style="color:#d97706">↩</span>' : ''}</td>
                 <td class="text-xs">${dstr(ln.transactionDate)}</td>
-                <td class="text-xs">${esc(ln.invoiceNumber || ln.description || '-')}</td>
+                <td class="text-xs">${esc((/^(🚫|⚠️|\[รอใบกำกับ|\[ดึงเข้างวด)/.test(ln.description || '') ? ln.description : (ln.invoiceNumber || ln.description)) || '-')}</td>
                 <td class="text-xs">${esc(ln.taxPayerId || '-')}</td>
                 <td class="text-center text-xs">${branchLabel(ln.branchCode)}</td>
                 <td class="text-xs">${esc(ln.taxPayerName || '-')}</td>

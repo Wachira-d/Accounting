@@ -259,12 +259,17 @@ public class TaxFilingExportService : ITaxFilingExportService
     {
         var thaiYear = year + 543;
 
-        // ⬇️ Single source of truth: ใช้ตรรกะการคำนวณ ภ.พ.30 ตัวเดียวกับหน้าจอ +
-        // Excel export (TaxService.ComputeVatReportAsync) แทนการ re-implement
-        // การคัดเอกสารเองในนี้ — เดิม 2 ทางต่างกัน (CSV นับ Invoice/ไม่หัก §82/5/
-        // ไม่รวม CN-DN/filter VatAmount>0) ทำให้ "ไฟล์ที่ยื่น ≠ ที่ผู้ใช้เห็น".
-        // ตอนนี้ทั้งคู่ดึงจาก TaxReportLine ชุดเดียวกัน → ตรงกัน 100%.
-        var report = await _taxService.ComputeVatReportAsync(companyId, year, month);
+        // ⬇️ Single source of truth: **รายงานที่ผู้ใช้บันทึก/ติ๊กไว้จริง** ก่อน —
+        // เดิมเรียก ComputeVatReportAsync (คำนวณสดจากศูนย์) เสมอ ⇒ สิ่งที่ผู้ใช้
+        // ทำบนจอ (ติ๊ก "ใช้" บรรทัดยกมา §82/3, ดึงเอกสารเข้า, ติ๊กใบซ้ำออก)
+        // **ไม่มีผลต่อไฟล์ที่ยื่น RD เลย**: บรรทัดยกมากลับเป็น excluded → ภาษีซื้อ
+        // ขาด, ใบที่ดึงเข้าหายทั้งใบ, ใบที่ติ๊กออกกลับมา. compute สดเฉพาะเมื่อ
+        // งวดนั้นยังไม่เคยสร้างรายงาน
+        var persisted = await _db.TaxReports.AsNoTracking()
+            .Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId
+                && r.TaxType == TaxType.VAT && r.Year == year && r.Month == month);
+        var report = persisted ?? await _taxService.ComputeVatReportAsync(companyId, year, month);
         var lines = report.Lines.OrderBy(l => l.LineOrder).ToList();
 
         // เติมเลขใบกำกับผู้ขาย + สาขา จาก Document (TaxReportLine เก็บแต่ DocumentId).

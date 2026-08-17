@@ -690,6 +690,16 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             && requested.Value != TaxType.WithholdingTax53)
             return (requested.Value, false, "");
 
+        // ผู้รับต่างประเทศ (ม.70) → ภ.ง.ด.54 เท่านั้น — เดิม resolver คืนได้แค่
+        // 3/53 ⇒ 50 ทวิ ของ payee ต่างประเทศถูกออกเป็น ภงด.3/53 → เข้ารายงาน+
+        // ไฟล์ 3/53 ขณะที่ ภงด.54 (doc-mined) ก็นับเอกสารเดิม = นำส่งซ้ำสองแบบ
+        var isForeignPayee = contact != null
+            && !string.IsNullOrWhiteSpace(contact.CountryCode)
+            && !string.Equals(contact.CountryCode, "TH", StringComparison.OrdinalIgnoreCase);
+        if (isForeignPayee)
+            return (TaxType.WithholdingTax54, requested.HasValue && requested.Value != TaxType.WithholdingTax54,
+                "payee ต่างประเทศ (ม.70 → ภ.ง.ด.54)");
+
         var juristic = DetectJuristic(contact);
         TaxType correct;
         string reason;

@@ -211,6 +211,13 @@ public partial class TaxService
             ?? throw new InvalidOperationException(
                 $"ไม่พบรายงาน ภพ.36 ของงวด {year}/{month:D2}");
 
+        // เฉพาะบรรทัดที่ผู้ทำบัญชียัง "ใช้" — เดิมวนทุกบรรทัด + header ใช้ยอด
+        // persist ⇒ บรรทัดที่ติ๊กออกยังถูกส่ง RD และยอด H-row ไม่ตรงรายละเอียด.
+        // recompute H-row จากบรรทัดที่ใช้จริง (กันยอดหัว stale จากรายงานเก่า)
+        var pp36Lines = report.Lines.Where(l => !l.IsExcluded).OrderBy(x => x.LineOrder).ToList();
+        var pp36Base = pp36Lines.Sum(l => l.IncomeAmount);
+        var pp36Vat = pp36Lines.Sum(l => l.TaxAmount);
+
         var sb = new StringBuilder();
         // PP.36 (Foreign Service VAT — the buyer is the filer paying the VAT)
         // Header: TaxId | Branch | Form | Year | Month | LineCount | TotalForeignAmount | TotalVat
@@ -220,13 +227,13 @@ public partial class TaxService
             "PP36",
             year.ToString(),
             month.ToString("D2"),
-            report.Lines.Count.ToString(),
-            F(report.TotalIncome),
-            F(report.OutputVat)
+            pp36Lines.Count.ToString(),
+            F(pp36Base),
+            F(pp36Vat)
         )).Append("\r\n");
 
         int order = 1;
-        foreach (var l in report.Lines.OrderBy(x => x.LineOrder))
+        foreach (var l in pp36Lines)
         {
             // ลำดับ|ชื่อผู้ให้บริการต่างประเทศ|วันที่จ่าย|ประเภทเงินได้|ยอด|อัตราภาษี|ภาษี
             sb.Append(string.Join("|",
@@ -241,7 +248,7 @@ public partial class TaxService
             order++;
         }
 
-        return (sb.ToString(), report.TotalIncome, report.OutputVat, report.Lines.Count);
+        return (sb.ToString(), pp36Base, pp36Vat, pp36Lines.Count);
     }
 
     private async Task<(string body, decimal amount, decimal tax, int lines)> BuildCitAsync(
