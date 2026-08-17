@@ -1350,6 +1350,20 @@ public partial class TaxService : ITaxService
         return report;
     }
 
+    /// <summary>ภ.พ.36 แบบ transient (ไม่บันทึก) — ให้ e-Filing/preview ใช้ชุด
+    /// เดียวกับรายงานบนจอ (pattern เดียวกับ ComputeVatReportAsync ของ ภ.พ.30)</summary>
+    public async Task<TaxReport> ComputePp36ReportAsync(Guid companyId, int year, int month)
+    {
+        var report = new TaxReport
+        {
+            CompanyId = companyId, TaxType = TaxType.VatPp36,
+            Year = year, Month = month, Status = TaxReportStatus.Draft,
+        };
+        var start = new DateTime(year, month, 1);
+        await GeneratePp36Report(companyId, start, start.AddMonths(1).AddDays(-1), report);
+        return report;
+    }
+
     /// <summary>ภ.พ.36 — นำส่ง VAT แทนผู้ขายต่างประเทศ (§83/6 reverse charge).
     /// เอกสารซื้อที่ IsForeignService=true (JE ตอนอนุมัติ Cr 21912 เจ้าหนี้
     /// ภ.พ.36 แล้ว): ฐาน = ค่าบริการ, ยอดนำส่ง = VAT ประเมินเอง. นำส่ง+ได้
@@ -1554,12 +1568,40 @@ public partial class TaxService : ITaxService
                 }
             }
 
-            // เอกสารที่ถูก cert active ใบใดก็ตามครอบแล้ว (เดือนไหนก็ตาม — จ่าย
-            // ก.ค. ใบตั้งหนี้ มิ.ย. แถวจริงอยู่เดือนของ cert) → ไม่ mine ซ้ำ
+            // cert "ร่าง" ของงวด — โชว์เป็นบรรทัดติ๊กออก (IsExcluded) ให้เห็นว่า
+            // มีใบค้างออก แต่ไม่นับเข้ายอดนำส่งจนกว่าจะกดออกใบจริงแล้ว regenerate
+            // (สอดคล้อง e-Filing ที่ export เฉพาะ Issued/Printed)
+            var draftCerts = await _db.WithholdingTaxCerts
+                .Include(c => c.PayeeContact)
+                .Where(c => c.CompanyId == companyId
+                    && c.TaxFormType == report.TaxType
+                    && c.TaxYear == report.Year && c.TaxMonth == report.Month
+                    && c.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Draft)
+                .ToListAsync();
+            foreach (var cert in draftCerts.OrderBy(c => c.CertificateNumber))
+            {
+                report.Lines.Add(new TaxReportLine
+                {
+                    TaxReportId = report.Id, LineOrder = lineOrder++,
+                    TaxPayerId = cert.PayeeContact?.TaxId,
+                    TaxPayerName = cert.PayeeContact?.Name ?? "",
+                    TransactionDate = new DateTime(cert.TaxYear, cert.TaxMonth, 1),
+                    Description = $"⚠️ หนังสือรับรองยังเป็นร่าง — {cert.CertificateNumber} (ออกใบก่อนยื่น)",
+                    IncomeAmount = cert.TotalIncomeAmount,
+                    TaxRate = cert.TotalIncomeAmount > 0
+                        ? Math.Round(cert.TotalTaxAmount / cert.TotalIncomeAmount * 100m, 2, MidpointRounding.AwayFromZero)
+                        : 0m,
+                    TaxAmount = cert.TotalTaxAmount, DocumentId = cert.DocumentId,
+                    IncomeTypeCode = "40(8)", IsExcluded = true,
+                });
+            }
+
+            // เอกสารที่มี cert ใบใดก็ตามครอบแล้ว (ทุกสถานะยกเว้น Voided, เดือนไหน
+            // ก็ตาม — จ่าย ก.ค. ใบตั้งหนี้ มิ.ย. แถวจริงอยู่เดือนของ cert; cert
+            // ร่างก็มีบรรทัดเตือนของตัวเองแล้ว) → ไม่ mine จากเอกสารซ้ำ
             var certCoveredDocIds = (await _db.WithholdingTaxCerts.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && c.DocumentId != null
-                    && (c.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Issued
-                        || c.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Printed))
+                    && c.Status != Models.DTOs.Tax.WithholdingTaxCertStatus.Voided)
                 .Select(c => c.DocumentId!.Value)
                 .ToListAsync())
                 .ToHashSet();
@@ -1619,9 +1661,10 @@ public partial class TaxService : ITaxService
             }
         }
 
-        // Group by vendor (TaxPayerId) and add summary lines
+        // Group by vendor (TaxPayerId) and add summary lines — ไม่รวมบรรทัดที่
+        // ติ๊กออก (เช่น cert ร่าง) ไม่งั้นยอด [สรุป] โป่งเกินยอดที่นำส่งจริง
         var vendorGroups = report.Lines
-            .Where(l => !string.IsNullOrEmpty(l.TaxPayerId))
+            .Where(l => !string.IsNullOrEmpty(l.TaxPayerId) && !l.IsExcluded)
             .GroupBy(l => l.TaxPayerId)
             .Where(g => g.Count() > 1)
             .ToList();
@@ -1701,8 +1744,14 @@ public partial class TaxService : ITaxService
             }
         }
 
-        report.TotalIncome = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.IncomeAmount);
-        report.TotalTaxWithheld = report.Lines.Where(l => l.IncomeTypeCode != "SUMMARY").Sum(l => l.TaxAmount);
+        // สูตรเดียวกับ RecalcPndTotals (ไม่นับ SUMMARY + บรรทัดที่ติ๊กออก) —
+        // เดิมตรงนี้ไม่กรอง IsExcluded ⇒ ยอดหัวตอน generate กับตอน recalc หลัง
+        // ติ๊กบรรทัด ใช้คนละสูตร (defect class "สูตรเดียวกันต้องมีที่เดียว") —
+        // สำคัญขึ้นเมื่อรายงานมีบรรทัด cert ร่างที่ excluded ตั้งแต่ generate
+        report.TotalIncome = report.Lines
+            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded).Sum(l => l.IncomeAmount);
+        report.TotalTaxWithheld = report.Lines
+            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded).Sum(l => l.TaxAmount);
         // ใบแนบ ภ.ง.ด.3/53 เรียงตามวันที่จ่ายเหมือนกัน (ตรวจง่าย + ตรงแบบยื่น)
         NormalizeReportLineOrder(report);
     }

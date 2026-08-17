@@ -106,7 +106,11 @@ public class TaxFilingExportService : ITaxFilingExportService
             .Where(w => w.CompanyId == companyId
                 && w.TaxFormType == TaxType.WithholdingTax3
                 && w.TaxYear == year && w.TaxMonth == month
-                && w.Status != WithholdingTaxCertStatus.Voided)
+                // เฉพาะใบที่ "ออกแล้ว" — เดิม != Voided ทำให้ใบร่าง (ยังไม่ออกให้
+                // ผู้ถูกหัก) หลุดเข้าไฟล์ยื่น RD ⇒ นำส่งภาษีของใบที่อาจถูกทิ้ง +
+                // ยอดไฟล์ไม่ตรงรายงานบนจอ (รายงานนับเฉพาะ Issued/Printed)
+                && (w.Status == WithholdingTaxCertStatus.Issued
+                    || w.Status == WithholdingTaxCertStatus.Printed))
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
 
@@ -152,7 +156,10 @@ public class TaxFilingExportService : ITaxFilingExportService
             .Where(w => w.CompanyId == companyId
                 && w.TaxFormType == TaxType.WithholdingTax53
                 && w.TaxYear == year && w.TaxMonth == month
-                && w.Status != WithholdingTaxCertStatus.Voided)
+                // เฉพาะใบที่ "ออกแล้ว" — เดิม != Voided ทำให้ใบร่างหลุดเข้าไฟล์ยื่น
+                // RD + ยอดไฟล์ไม่ตรงรายงานบนจอ (รายงานนับเฉพาะ Issued/Printed)
+                && (w.Status == WithholdingTaxCertStatus.Issued
+                    || w.Status == WithholdingTaxCertStatus.Printed))
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
 
@@ -753,53 +760,58 @@ public class TaxFilingExportService : ITaxFilingExportService
         var company = await GetCompanyAsync(companyId);
         var thaiYear = year + 543;
         var period = $"{thaiYear:D4}{month:D2}";
-        var monthStart = new DateTime(year, month, 1);
-        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
 
-        var docs = await _db.Documents.AsNoTracking()
-            // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ ภ.พ.36)
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && d.IsForeignService
-                && d.DocumentDate >= monthStart && d.DocumentDate <= monthEnd
-                && (d.DocumentType == Models.Enums.DocumentType.PurchaseInvoice
-                    || d.DocumentType == Models.Enums.DocumentType.Expense)
-                && d.Status != Models.Enums.DocumentStatus.Voided
-                && d.Status != Models.Enums.DocumentStatus.Draft)
-            .OrderBy(d => d.DocumentDate)
-            .ToListAsync();
-        await _db.HydrateContactsAsync(companyId, docs);
+        // ⬇️ Single source: ใช้ตัวคำนวณเดียวกับรายงานบนจอ (GeneratePp36Report ผ่าน
+        // ComputePp36ReportAsync) — เดิม export คัดเอกสารเองด้วยเงื่อนไขคนละชุด
+        // (DocumentDate แทน tax point / ไม่มี PV·CIL / ไม่กัน Rejected / ไม่ dedup
+        // งวดอื่น) ⇒ "ไฟล์ที่ยื่น ≠ ที่ผู้ใช้เห็น" — defect class เดียวกับที่
+        // ภ.พ.30 เคยแก้ (ดู ExportPp30Async)
+        var report = await _taxService.ComputePp36ReportAsync(companyId, year, month);
+        var lines = report.Lines.Where(l => !l.IsExcluded).OrderBy(l => l.LineOrder).ToList();
+
+        // hydrate เลขเอกสาร + ประเทศผู้ขาย สำหรับ D-row (line เก็บ DocumentId)
+        var pp36DocIds = lines.Where(l => l.DocumentId.HasValue)
+            .Select(l => l.DocumentId!.Value).Distinct().ToList();
+        var pp36Docs = pp36DocIds.Count == 0
+            ? new Dictionary<Guid, (string No, string? Country, string? Note)>()
+            : await (from d in _db.Documents.AsNoTracking()
+                     where d.CompanyId == companyId && pp36DocIds.Contains(d.Id)
+                     join c in _db.Contacts.AsNoTracking() on d.ContactId equals c.Id into cj
+                     from c in cj.DefaultIfEmpty()
+                     select new { d.Id, d.DocumentNumber, Country = c != null ? c.Province : null, d.Notes, d.Reference })
+                .ToDictionaryAsync(x => x.Id, x => (
+                    No: x.DocumentNumber, Country: (string?)x.Country,
+                    Note: (string?)(x.Notes ?? x.Reference)));
 
         var sb = new System.Text.StringBuilder();
-        var totalServiceAmount = docs.Sum(d => d.SubTotal);
-        // §83/6: self-assessed VAT = อัตรามาตรฐาน × ฐานบริการ. ใช้ Company.VatRate
-        // (default 7%) แทน hardcode 0.07 เพื่อให้สอดคล้องกับการคำนวณ VAT ทั้งระบบ
-        // (gross-up หากในเอกสารมี VAT แล้ว → ใช้ d.VatAmount โดยตรง)
-        var vatRate = (company.VatRate > 0 ? company.VatRate : 7m) / 100m;
-        var totalSelfVat = docs.Sum(d => d.VatAmount > 0 ? d.VatAmount : Math.Round(d.SubTotal * vatRate, 2));
+        var totalServiceAmount = report.TotalIncome;
+        var totalSelfVat = report.OutputVat;
 
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.พ.36|{period}|{docs.Count}|{totalServiceAmount:F2}|{totalSelfVat:F2}");
+        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.พ.36|{period}|{lines.Count}|{totalServiceAmount:F2}|{totalSelfVat:F2}");
         int seq = 1;
-        foreach (var d in docs)
+        foreach (var l in lines)
         {
-            var docDate = $"{d.DocumentDate.Day:D2}/{d.DocumentDate.Month:D2}/{d.DocumentDate.Year + 543}";
-            var serviceAmt = d.SubTotal;
-            var vatAmt = d.VatAmount > 0 ? d.VatAmount : Math.Round(serviceAmt * vatRate, 2);
-            var supplierName = d.Contact?.Name ?? "—";
-            var country = d.Contact?.Province ?? "Foreign";
+            var info = l.DocumentId.HasValue && pp36Docs.TryGetValue(l.DocumentId.Value, out var x)
+                ? x : (No: "", Country: null, Note: null);
+            var docDate = $"{l.TransactionDate:dd/MM/}{l.TransactionDate.Year + 543}";
             // D|Seq|SupplierName|SupplierCountry|InvoiceDate|InvoiceNumber|ServiceAmount|VatAmount|Description
-            sb.AppendLine($"D|{seq++}|{Esc(supplierName)}|{Esc(country)}|{docDate}|{Esc(d.DocumentNumber)}|{serviceAmt:F2}|{vatAmt:F2}|{Esc(d.Notes ?? d.Reference ?? "")}");
+            sb.AppendLine($"D|{seq++}|{Esc(l.TaxPayerName)}|{Esc(info.Country ?? "Foreign")}|{docDate}|{Esc(info.No)}|{l.IncomeAmount:F2}|{l.TaxAmount:F2}|{Esc(info.Note ?? "")}");
         }
-        sb.AppendLine($"T|{docs.Count}|{totalServiceAmount:F2}|{totalSelfVat:F2}");
+        sb.AppendLine($"T|{lines.Count}|{totalServiceAmount:F2}|{totalSelfVat:F2}");
 
         return new TaxFilingExportResult(
             "PP36", "ภ.พ.36", $"PP36_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
-            docs.Count, totalServiceAmount, totalSelfVat,
-            $"ภ.พ.36 เดือน {month}/{year} ซื้อบริการต่างประเทศ {docs.Count} รายการ VAT self-assess {totalSelfVat:N2} บาท");
+            lines.Count, totalServiceAmount, totalSelfVat,
+            $"ภ.พ.36 เดือน {month}/{year} ซื้อบริการต่างประเทศ {lines.Count} รายการ VAT self-assess {totalSelfVat:N2} บาท");
     }
 
     /// <summary>ภ.ง.ด.54 — Foreign-vendor WHT. รวม PI/Expense ที่
     /// IsForeignService=true + WithholdingTaxAmount > 0 ในเดือน → text format
-    /// ตาม RD spec. Income type 6 = §40(3)(4) ค่าสิทธิ์/ดอกเบี้ย/ปันผล.</summary>
+    /// ตาม RD spec. Income type 6 = §40(3)(4) ค่าสิทธิ์/ดอกเบี้ย/ปันผล.
+    /// ⚠️ ยัง mine จากเอกสารตรง ๆ ขณะที่รายงาน ภงด.54 บนจอเปลี่ยนเป็นอ่านจาก
+    /// ทะเบียนหนังสือรับรองแล้ว (GenerateWhtReport) — สองแหล่งอาจต่างกันได้เมื่อ
+    /// cert กับเอกสารไม่ตรงเดือน. เคสต่างประเทศเกิดน้อย ยังไม่รวมแหล่ง — ถ้าย้าย
+    /// ให้ใช้ pattern เดียวกับ ExportPnd3/53Async (อ่าน cert Issued/Printed)</summary>
     public async Task<TaxFilingExportResult> ExportPnd54Async(Guid companyId, int year, int month)
     {
         var company = await GetCompanyAsync(companyId);
