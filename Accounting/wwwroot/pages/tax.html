@@ -543,8 +543,15 @@
             const renderVatRow = (ln) => {
               const ex = !!ln.isExcluded;
               const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';
+              // B14: บรรทัดที่ server ปฏิเสธการ "ติ๊กใช้" อยู่แล้ว (🚫 เกิน 6 เดือน /
+              // ⚠️ ข้ามงวด / [รอใบกำกับ) → **ล็อก checkbox** ไม่ให้กดตั้งแต่แรก.
+              // เดิมกดได้ทุกบรรทัด แล้ว auto-save (ส่งทั้งหน้าเป็นคำขอเดียว) ถูก
+              // rollback ทั้งชุด — การติ๊กที่ถูกต้องอีก N บรรทัดหายไปด้วย
+              const blocked = /^(🚫|⚠️|\[รอใบกำกับ)/.test(ln.description || '');
               const chk = editable
-                ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} onchange="Page.onVatLineToggle(this)" title="ใช้รายการนี้ในรายงาน">`
+                ? (blocked && ex
+                    ? `<span title="บรรทัดเตือน/ต้องห้าม — ติ๊กใช้ไม่ได้ (เกิน §82/3 / ข้ามงวด / รอใบกำกับ)" style="cursor:not-allowed;opacity:.5">🚫</span>`
+                    : `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} onchange="Page.onVatLineToggle(this)" title="ใช้รายการนี้ในรายงาน">`)
                 : (ex ? '✗' : '✓');
               const cf = /ยกมา §82\/3/.test(ln.description || '');
               return `<tr style="${rowStyle}" data-vatrow${cf ? ' data-cf="1"' : ''}>

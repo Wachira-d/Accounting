@@ -132,6 +132,20 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             .Max() + 1;
         var certNumber = $"{whtPrefix}{whtSeq:D4}";
 
+        if (request.DocumentId.HasValue)
+        {
+            var docOk = await _db.Documents.AsNoTracking().AnyAsync(d =>
+                d.Id == request.DocumentId.Value && d.CompanyId == companyId && !d.IsDeleted);
+            if (!docOk)
+                throw new InvalidOperationException("ไม่พบเอกสารต้นทางที่อ้างถึง (หรืออยู่คนละบริษัท)");
+            var dupDoc = await _db.WithholdingTaxCerts.AnyAsync(w =>
+                w.CompanyId == companyId && w.DocumentId == request.DocumentId.Value
+                && w.Status != WithholdingTaxCertStatus.Voided);
+            if (dupDoc)
+                throw new InvalidOperationException(
+                    "เอกสารนี้มีหนังสือรับรองหัก ณ ที่จ่ายแล้ว — เปิดใบเดิมเพื่อแก้ไข หรือยกเลิกใบเดิมก่อนออกใหม่");
+        }
+
         var cert = new WithholdingTaxCert
         {
             CompanyId = companyId,
@@ -141,6 +155,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             TaxYear = request.TaxYear,
             TaxMonth = request.TaxMonth,
             CertificateType = request.CertificateType,
+            // B1: ผูกเอกสารต้นทาง (ถ้าผู้ใช้ระบุ) — รายงาน ภ.ง.ด. ใช้ field นี้
+            // ตัดสินว่าเอกสารนั้นออกใบแล้ว จึงไม่ขึ้นแถว "ยังไม่ออกหนังสือรับรอง"
+            // ซ้ำกับแถว cert. ตรวจว่าเอกสารเป็นของ tenant นี้จริงก่อนผูก
+            DocumentId = request.DocumentId,
             CreatedBy = createdBy
         };
 
@@ -407,6 +425,19 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     && w.Status != WithholdingTaxCertStatus.Voided);
             if (dupPayment)
                 throw new InvalidOperationException("งวดการจ่ายนี้มีหนังสือรับรองหัก ณ ที่จ่ายแล้ว");
+
+            // B2: ถ้าเอกสารนี้ "ออกใบเต็มจำนวนไปแล้ว" (cert ที่ไม่ผูกงวดจ่าย —
+            // ออกตอน approve) ห้ามออกใบรายงวดทับอีก ⇒ ยอดเดียวนำส่ง 2 ครั้ง
+            // ทั้งบนรายงานและในไฟล์ยื่น. เดิมสองสาขาเช็คคนละ key จึงลอดกันได้
+            // (ทิศกลับกันถูกบล็อกอยู่แล้วที่สาขา else)
+            var fullDocCert = await _db.WithholdingTaxCerts.AsNoTracking()
+                .AnyAsync(w => w.CompanyId == companyId && w.DocumentId == documentId
+                    && w.SourcePaymentId == null
+                    && w.Status != WithholdingTaxCertStatus.Voided);
+            if (fullDocCert)
+                throw new InvalidOperationException(
+                    "เอกสารนี้ออกหนังสือรับรองเต็มจำนวนไปแล้ว — ออกใบรายงวดเพิ่มจะทำให้นำส่งซ้ำ "
+                    + "(ยกเลิกใบเต็มจำนวนก่อน ถ้าต้องการออกเป็นรายงวดแทน)");
         }
         else
         {

@@ -9,7 +9,11 @@ public record CreateWithholdingTaxCertRequest(
     int TaxYear,
     int TaxMonth,
     WithholdingTaxCertType CertificateType,
-    List<WithholdingTaxCertLineRequest> Lines);
+    List<WithholdingTaxCertLineRequest> Lines,
+    /// <summary>เอกสารต้นทางที่ใบนี้ครอบ (ถ้ามี) — จำเป็นเพื่อให้รายงาน ภ.ง.ด.
+    /// รู้ว่าเอกสารนั้น "ออกหนังสือรับรองแล้ว" และไม่ขึ้นแถวเตือนซ้ำอีกแถว
+    /// (B1: cert ที่คีย์มือเดิมไม่มี DocumentId ⇒ ยอดเดียวได้ 2 บรรทัด)</summary>
+    Guid? DocumentId = null);
 
 public record WithholdingTaxCertLineRequest(
     string IncomeTypeCode,

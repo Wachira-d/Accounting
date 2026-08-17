@@ -277,9 +277,14 @@ public partial class TaxService : ITaxService
             .Select(d => d.RelatedDocumentId!.Value)
             .Distinct()
             .ToList();
+        // B13: `IgnoreQueryFilters` — ใบต้นทางที่ถูก soft-delete ไปแล้วยังต้อง
+        // "รู้ชนิด" ได้ ไม่งั้น global filter (!IsDeleted) ตัดแถวทิ้ง ⇒ ใบเสร็จที่
+        // อ้างใบนั้นตกเงื่อนไขทั้งหมด → **output VAT หายจากรายงานเงียบ ๆ** ทั้งที่
+        // JE ลง Cr 21911 ไปแล้ว (นำส่งขาด). เรากรอง CompanyId เองอยู่แล้วจึงยัง
+        // ปลอดภัยเรื่อง tenant isolation
         var relatedDocInfos = relatedDocIds.Count == 0
             ? new Dictionary<Guid, (DocumentType Type, DateTime? OutputVatDueAt, bool InputVatPendingUndue)>()
-            : (await _db.Documents.AsNoTracking()
+            : (await _db.Documents.AsNoTracking().IgnoreQueryFilters()
                 .Where(d => d.CompanyId == companyId && relatedDocIds.Contains(d.Id))
                 .Select(d => new { d.Id, d.DocumentType, d.OutputVatDueAt,
                     Pending = d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null })
@@ -844,7 +849,13 @@ public partial class TaxService : ITaxService
                 // ของใบเอง (backfill) ต้องยังเคลมได้เสมอตามกฎหมาย; ยอดรายงานต้อง
                 // deterministic (regen วันไหนก็ได้ผลเดิม). สูตรเดียวกับ
                 // PullDocumentIntoReportAsync: งวดรายงาน >= เดือนใบ+7 = หมดสิทธิ์
-                var claimLimitStart = new DateTime(doc.DocumentDate.Year, doc.DocumentDate.Month, 1)
+                // B12: ฐานนับ 6 เดือน = **วันที่ใบกำกับของผู้ขาย** (ClaimBasisDate
+                // ตัวเดียวกับปุ่ม "ดึงเอกสาร") — เดิมที่นี่ใช้ DocumentDate ⇒ ใบ
+                // เดียวกันได้คำตอบ "หมดสิทธิ์/ไม่หมด" ต่างกันแล้วแต่ทางเข้า
+                // (ใบกำกับผู้ขาย ม.ค. แต่เราบันทึก มิ.ย. → generate ปล่อยผ่าน
+                //  แต่ pull ปฏิเสธ)
+                var claimBasis = ClaimBasisDate(doc);
+                var claimLimitStart = new DateTime(claimBasis.Year, claimBasis.Month, 1)
                     .AddMonths(7);
                 var pastWindow = startDate >= claimLimitStart;
 
@@ -1544,30 +1555,25 @@ public partial class TaxService : ITaxService
         //     ยังแสดงจากใบตั้งหนี้ตามเดิม)
         //   Accrual: WHT เกิดตอนตั้งหนี้ → ใบตั้งหนี้คือแถวจริง; PV ที่ผูก
         //     ใบต้นทางข้าม (PV standalone ไม่มีต้นทาง ยังแสดง)
-        var whtBasis = await _db.CompanySettings.AsNoTracking()
-            .Where(s => s.CompanyId == companyId)
-            .Select(s => (Models.Enums.WhtRecognitionBasis?)s.WhtRecognitionBasis)
-            .FirstOrDefaultAsync() ?? Models.Enums.WhtRecognitionBasis.Cash;
-        if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
-        {
-            var settledSourceIds = (await _db.Documents.AsNoTracking()
-                .Where(x => x.CompanyId == companyId
-                    && x.DocumentType == DocumentType.PaymentVoucher
-                    && x.RelatedDocumentId != null && !x.IsDeleted
-                    && x.WithholdingTaxAmount != 0
-                    && x.Status != DocumentStatus.Draft && x.Status != DocumentStatus.Voided
-                    && x.Status != DocumentStatus.Rejected)
-                .Select(x => x.RelatedDocumentId!.Value)
-                .ToListAsync())
-                .ToHashSet();
-            docs = docs.Where(d => d.DocumentType == DocumentType.PaymentVoucher
-                || !settledSourceIds.Contains(d.Id)).ToList();
-        }
-        else
-        {
-            docs = docs.Where(d => d.DocumentType != DocumentType.PaymentVoucher
-                || d.RelatedDocumentId == null).ToList();
-        }
+        // B3: **เดือนนำส่ง ภ.ง.ด. = เดือนที่จ่ายเงินเสมอ** (ท.ป.4/2528 — ภาระ
+        // หักและนำส่งเกิดที่การจ่าย) ⇒ ใบสำคัญจ่ายคือแถวจริงเสมอ ไม่ขึ้นกับ
+        // `WhtRecognitionBasis` ซึ่งเป็นการเลือก **ทางบัญชี** ว่าจะตั้งหนี้ WHT
+        // ตอนไหนใน GL — คนละเรื่องกับเดือนที่ยื่นแบบ. เดิมสลับตาม basis:
+        // Accrual → เก็บใบตั้งหนี้ไว้เดือน accrual ขณะที่ cert ของ PV อยู่เดือน
+        // จ่าย ⇒ เงินก้อนเดียวโผล่ 2 เดือน. ใบตั้งหนี้ที่จ่ายผ่าน "บันทึกชำระ
+        // เงิน" (ไม่มี PV) ยังแสดงจากตัวเอกสารเองตามเดิม
+        var settledSourceIds = (await _db.Documents.AsNoTracking()
+            .Where(x => x.CompanyId == companyId
+                && x.DocumentType == DocumentType.PaymentVoucher
+                && x.RelatedDocumentId != null && !x.IsDeleted
+                && x.WithholdingTaxAmount != 0
+                && x.Status != DocumentStatus.Draft && x.Status != DocumentStatus.Voided
+                && x.Status != DocumentStatus.Rejected)
+            .Select(x => x.RelatedDocumentId!.Value)
+            .ToListAsync())
+            .ToHashSet();
+        docs = docs.Where(d => d.DocumentType == DocumentType.PaymentVoucher
+            || !settledSourceIds.Contains(d.Id)).ToList();
 
         // ═════ แหล่งหลัก: หนังสือรับรอง 50 ทวิ ที่ออกแล้ว (ทะเบียน = ความจริง) ═════
         // ภงด.3/53 ยื่นตามที่ "หักจริง ณ เดือนจ่าย" = ตรงกับใบ 50 ทวิ ที่ออกให้ผู้ถูกหัก
@@ -2547,15 +2553,20 @@ public partial class TaxService : ITaxService
                 {
                     // (1) บรรทัดเตือน/ต้องห้าม (🚫 เกิน 6 เดือน / ⚠️ ขายข้ามงวด /
                     //     รอใบกำกับ) — ติ๊กใช้ = เคลมเกินสิทธิ์/ภาษีขายผิดงวดทันที
+                    // B14: ข้อความต้องบอก **ลำดับบรรทัด** — auto-save ส่งทั้งหน้า
+                    // เป็นคำขอเดียว ติ๊กผิด 1 บรรทัด rollback ทั้งชุด ผู้ใช้ต้องรู้ว่า
+                    // บรรทัดไหนถึงจะแก้ได้ (เดิมบอกแค่ข้อความ 60 ตัวแรก)
                     var descHead = line.Description ?? "";
                     if (descHead.StartsWith("🚫") || descHead.StartsWith("⚠️"))
                         throw new InvalidOperationException(
-                            $"บรรทัด \"{descHead[..Math.Min(60, descHead.Length)]}...\" เป็นบรรทัดเตือน/ต้องห้าม — "
-                            + "นำมาคำนวณยอดงวดนี้ไม่ได้ (เกินกรอบ §82/3 หรือภาษีขายต้องยื่นเพิ่มเติมของงวดเดิม)");
+                            $"บรรทัดที่ {line.LineOrder}: \"{descHead[..Math.Min(60, descHead.Length)]}...\" "
+                            + "เป็นบรรทัดเตือน/ต้องห้าม — นำมาคำนวณยอดงวดนี้ไม่ได้ "
+                            + "(เกินกรอบ §82/3 หรือภาษีขายต้องยื่นเพิ่มเติมของงวดเดิม) · "
+                            + "ติ๊กบรรทัดนั้นออกแล้วบันทึกใหม่");
                     if (descHead.StartsWith("[รอใบกำกับ"))
                         throw new InvalidOperationException(
-                            "ใบนี้ภาษีซื้อยังพักที่ 11640 (ใบกำกับยังไม่ครบ §86/4) — เติมข้อมูลใบกำกับ"
-                            + "ที่หน้าเอกสารก่อน จึงจะเคลม ภ.พ.30 ได้");
+                            $"บรรทัดที่ {line.LineOrder}: ภาษีซื้อยังพักที่ 11640 (ใบกำกับยังไม่ครบ §86/4) — "
+                            + "เติมข้อมูลใบกำกับที่หน้าเอกสารก่อน จึงจะเคลม ภ.พ.30 ได้");
                     // (2) เอกสารเดียวกันถูก "ใช้" ในรายงาน VAT งวดอื่นอยู่แล้ว →
                     //     ติ๊กซ้ำ = เคลม 2 งวด (§82/3) — guard เดียวกับตอน pull
                     if (line.DocumentId.HasValue)
@@ -2654,8 +2665,12 @@ public partial class TaxService : ITaxService
         // → JE_INPUT หลุดไปรวมใน OutputVat (!= "INPUT") + หายจาก InputVat = ภาษีขาย
         // เกินจริง + ภาษีซื้อขาด → NetVat ผิด (นำส่งเกิน). สอดคล้องกับ LineSide (บรรทัด
         // 1360) ที่ถือ "INPUT" or "JE_INPUT" เป็นฝั่งซื้ออยู่แล้ว.
+        // B11: allow-list **สองฝั่ง** — เดิมฝั่งขายเป็น "ทุกอย่างที่ไม่ใช่ INPUT"
+        // (default-to-output) ⇒ IncomeTypeCode ใหม่/สะกดผิดในอนาคตไหลเข้าภาษีขาย
+        // เงียบ ๆ แล้วนำส่งเกิน (บั๊ก JE_INPUT ที่เพิ่งแก้ก็มาจากรูปแบบนี้)
         bool IsInputLine(TaxReportLine l) => l.IncomeTypeCode is "INPUT" or "JE_INPUT";
-        report.OutputVat = nonSummary.Where(l => !IsInputLine(l)).Sum(l => l.TaxAmount);
+        bool IsOutputLine(TaxReportLine l) => l.IncomeTypeCode is "OUTPUT" or "JE_OUTPUT" or null or "";
+        report.OutputVat = nonSummary.Where(IsOutputLine).Sum(l => l.TaxAmount);
         report.InputVat = nonSummary.Where(IsInputLine).Sum(l => l.TaxAmount);
         var creditCf = active.Where(l => l.IncomeTypeCode == "VAT_CREDIT_CF").Sum(l => Math.Abs(l.TaxAmount));
         report.NetVat = report.OutputVat - report.InputVat - creditCf;
@@ -2931,7 +2946,8 @@ public partial class TaxService : ITaxService
         var nextOrder = report.Lines.Count == 0 ? 1 : report.Lines.Max(l => l.LineOrder) + 1;
 
         // 6-month claim-window check (advisory).
-        var windowEnd = new DateTime(doc.DocumentDate.Year, doc.DocumentDate.Month, 1).AddMonths(7).AddDays(-1);
+        var pullBasis = ClaimBasisDate(doc);
+        var windowEnd = new DateTime(pullBasis.Year, pullBasis.Month, 1).AddMonths(7).AddDays(-1);
         var pastWindow = DateTime.UtcNow.Date > windowEnd;
 
         var sideLabel = isInput ? "ภาษีซื้อ" : "ภาษีขาย";
@@ -3105,10 +3121,26 @@ public partial class TaxService : ITaxService
         // ===== Snapshot ก่อนลบ — state ที่ผู้ใช้ทำมือแล้ว regen ห้ามหายเงียบ =====
         // (1) ติ๊ก "ใช้" บนบรรทัดที่มี DocumentId (carry-forward/pull/ยกมามาช้า)
         // (2) บรรทัดที่ pull ด้วยมือ (จะ re-apply ถ้ารอบใหม่ไม่มี)
-        var tickSnapshot = existing.TaxType == TaxType.VAT
-            ? existing.Lines.Where(l => l.DocumentId.HasValue && !l.IsExcluded)
-                .Select(l => l.DocumentId!.Value).ToHashSet()
-            : new HashSet<Guid>();
+        // B4: snapshot ติ๊กของ **ทุกชนิดรายงาน** — เดิมทำเฉพาะ VAT ⇒ ภ.ง.ด.
+        // ที่นักบัญชีติ๊กบรรทัดเตือน "ยังไม่ออกหนังสือรับรอง" กลับเข้ามือ
+        // (ตั้งใจนำส่งก่อนออกใบ) เสียงานทุกครั้งที่กด "สร้างใหม่"
+        var tickSnapshot = existing.Lines.Where(l => l.DocumentId.HasValue && !l.IsExcluded)
+            .Select(l => l.DocumentId!.Value).ToHashSet();
+        // ฟิลด์ audit/สถานะการยื่นที่ "ไม่ใช่ผลของการคำนวณ" — สร้างรายงานใหม่
+        // ต้องไม่ลบร่องรอยการยื่น/ถูกปฏิเสธ/RD ack (เส้น ปลดล็อก → แก้ →
+        // สร้างใหม่ เคยล้างทิ้งหมดรวมทั้งตัวชี้ JE กลับรายการ)
+        var keepNotes = existing.Notes;
+        var keepEfAt = existing.EFilingExportedAt;
+        var keepEfRef = existing.EFilingReferenceNumber;
+        var keepRdAck = existing.RdAckNumber;
+        var keepRdAckAt = existing.RdAcknowledgedAt;
+        var keepRdStatus = existing.RdSubmissionStatus;
+        var keepRdReject = existing.RdRejectionReason;
+        var keepRdDoc = existing.RdAcknowledgementDocumentUrl;
+        var keepRejReason = existing.RejectionReason;
+        var keepRejAt = existing.RejectedAt;
+        var keepRejBy = existing.RejectedBy;
+        var keepReversalJe = existing.ReversalJournalEntryId;
         var pulledSnapshot = existing.TaxType == TaxType.VAT
             ? existing.Lines.Where(l => l.DocumentId.HasValue
                     && (l.Description ?? "").StartsWith("[ดึงเข้างวด"))
@@ -3133,8 +3165,28 @@ public partial class TaxService : ITaxService
 
         var response = await GenerateTaxReportAsync(companyId, request);
 
+        // ===== คืนฟิลด์ audit/สถานะการยื่นที่ไม่เกี่ยวกับการคำนวณ (B4) =====
+        var freshForAudit = await _db.TaxReports
+            .FirstOrDefaultAsync(r => r.Id == response.Id && r.CompanyId == companyId);
+        if (freshForAudit != null)
+        {
+            freshForAudit.Notes = keepNotes;
+            freshForAudit.EFilingExportedAt = keepEfAt;
+            freshForAudit.EFilingReferenceNumber = keepEfRef;
+            freshForAudit.RdAckNumber = keepRdAck;
+            freshForAudit.RdAcknowledgedAt = keepRdAckAt;
+            freshForAudit.RdSubmissionStatus = keepRdStatus;
+            freshForAudit.RdRejectionReason = keepRdReject;
+            freshForAudit.RdAcknowledgementDocumentUrl = keepRdDoc;
+            freshForAudit.RejectionReason = keepRejReason;
+            freshForAudit.RejectedAt = keepRejAt;
+            freshForAudit.RejectedBy = keepRejBy;
+            freshForAudit.ReversalJournalEntryId = keepReversalJe;
+            await _db.SaveChangesAsync();
+        }
+
         // ===== Re-apply state ผู้ใช้บนรายงานรอบใหม่ =====
-        if (existing.TaxType == TaxType.VAT && (tickSnapshot.Count > 0 || pulledSnapshot is { Count: > 0 }))
+        if (tickSnapshot.Count > 0 || pulledSnapshot is { Count: > 0 })
         {
             var fresh = await _db.TaxReports.Include(r => r.Lines)
                 .FirstOrDefaultAsync(r => r.Id == response.Id && r.CompanyId == companyId);
@@ -3146,8 +3198,13 @@ public partial class TaxService : ITaxService
                 {
                     if (!line.DocumentId.HasValue || !line.IsExcluded) continue;
                     if (!tickSnapshot.Contains(line.DocumentId.Value)) continue;
+                    // ข้ามบรรทัดต้องห้าม **เฉพาะ ภ.พ.30** — guard ฝั่ง server ที่
+                    // ปฏิเสธการติ๊กก็ผูกกับ VAT เท่านั้น. ภ.ง.ด. แถว "⚠️ ยังไม่ออก
+                    // หนังสือรับรอง" ติ๊กกลับเข้ามือได้ตามเจตนา (A2) ⇒ regenerate
+                    // ต้องคืนให้ ไม่งั้นงานที่ตั้งใจติ๊กหายทุกครั้งที่กดสร้างใหม่
                     var dsc = line.Description ?? "";
-                    if (dsc.StartsWith("🚫") || dsc.StartsWith("⚠️") || dsc.StartsWith("[รอใบกำกับ")) continue;
+                    if (existing.TaxType == TaxType.VAT
+                        && (dsc.StartsWith("🚫") || dsc.StartsWith("⚠️") || dsc.StartsWith("[รอใบกำกับ"))) continue;
                     line.IsExcluded = false;
                     changed = true;
                 }
