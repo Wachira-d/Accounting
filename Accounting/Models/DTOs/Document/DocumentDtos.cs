@@ -863,6 +863,26 @@ public record VoidReversalRedatePreview(
     DateTime DocumentDate,
     IReadOnlyList<VoidReversalRedateRow> Rows);
 
+/// <summary>เอกสารที่อาจเป็น "ใบเดียวกันที่บันทึกไปแล้ว" — ใช้เตือนก่อนสร้าง
+/// จากสแกน (สแกนใบเดิมซ้ำ = ค่าใช้จ่าย/ภาษีซื้อเบิ้ล)</summary>
+public record DuplicateDocumentCandidate(
+    Guid Id,
+    string DocumentNumber,
+    string DocumentType,
+    DateTime DocumentDate,
+    decimal TotalAmount,
+    string Status,
+    string? SupplierInvoiceNumber,
+    string? ContactName,
+    /// <summary>"SupplierInvoiceNumber" = เลขใบกำกับผู้ขายตรงกัน (แน่นอนสุด) ·
+    /// "SameContactAndAmount" = คู่ค้า+ยอด+ช่วงวันใกล้กัน (น่าสงสัย)</summary>
+    string MatchReason,
+    bool IsStrong);
+
+public record DuplicateCheckResult(
+    bool HasStrongMatch,
+    IReadOnlyList<DuplicateDocumentCandidate> Candidates);
+
 /// <summary>บรรทัด JE ของเอกสาร (อ่านจาก GL จริง) — ใช้ในแผง "ตรวจสอบ/แก้ไข
 /// รายการบัญชี" บนหน้าเอกสาร. <c>IsControlAccount</c> = บัญชีคุมที่ยอดเคลื่อนไหว
 /// ห้ามเปลี่ยน (ภาษีซื้อ-ขาย/ลูกหนี้-เจ้าหนี้/มัดจำ) เพราะรายงานภาษี/อายุหนี้อ่านอยู่</summary>

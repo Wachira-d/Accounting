@@ -235,6 +235,8 @@ const API = {
       restoreDocument: (id) => API.post(`${base}/document/${id}/restore`),
       reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
       reclassifyPaymentSource: (id, body) => API.post(`${base}/document/${id}/reclassify-payment-source`, body),
+      // ตรวจ "ใบนี้เคยบันทึกไปแล้วหรือยัง" ก่อนสร้างจากสแกน (กันภาษีซื้อเบิ้ล)
+      checkDuplicateDocument: (q) => API.get(`${base}/document/duplicate-check${q}`),
       // ตรวจสอบ/แก้ไขรายการบัญชี (JE) ของเอกสารที่อนุมัติแล้ว
       getDocumentJournalEntries: (id) => API.get(`${base}/document/${id}/journal-entries`),
       adjustDocumentJournalEntry: (id, jeId, body) => API.post(

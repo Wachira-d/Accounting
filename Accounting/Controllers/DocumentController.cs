@@ -663,6 +663,26 @@ public class DocumentController : ControllerBase
                 : "ไม่มีรายการกลับบัญชีที่ต้องย้าย (วันที่ตรงอยู่แล้ว)"));
     }
 
+    /// <summary>ตรวจก่อนสร้างจากสแกน: ใบนี้เคยบันทึกไปแล้วหรือยัง — เลขใบกำกับ
+    /// ผู้ขายตรงกัน = แน่นอน, คู่ค้า+ยอด+ช่วงวัน = น่าสงสัย. อ่านอย่างเดียว
+    /// ไม่บล็อกอะไร (ผู้ขายขายของชุดเดิมซ้ำได้จริง — false positive ที่บล็อก
+    /// แรงกว่าปัญหาที่กัน)</summary>
+    [HttpGet("duplicate-check")]
+    public async Task<ActionResult<ApiResponse<DuplicateCheckResult>>> DuplicateCheck(
+        Guid companyId,
+        [FromQuery] Guid? contactId = null,
+        [FromQuery] string? supplierInvoiceNumber = null,
+        [FromQuery] DocumentType? documentType = null,
+        [FromQuery] decimal amount = 0,
+        [FromQuery] DateTime? documentDate = null,
+        [FromQuery] Guid? excludeDocumentId = null)
+    {
+        var result = await _documentService.CheckDuplicateAsync(
+            companyId, contactId, supplierInvoiceNumber, documentType, amount,
+            documentDate ?? DateTime.UtcNow.Date, excludeDocumentId);
+        return Ok(new ApiResponse<DuplicateCheckResult>(true, result, null));
+    }
+
     /// <summary>รายการบัญชี (JE) ของเอกสาร พร้อมบรรทัดจริงจาก GL — แผง
     /// "ตรวจสอบ/แก้ไขรายการบัญชี" บนหน้าเอกสาร. อ่านอย่างเดียว</summary>
     [HttpGet("{documentId:guid}/journal-entries")]

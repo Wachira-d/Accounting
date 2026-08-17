@@ -4777,6 +4777,92 @@ public class DocumentService : IDocumentService
         => !string.IsNullOrWhiteSpace(accountCode)
            && ReclassifyProtectedCodes.Contains(accountCode!.Trim());
 
+    /// <summary>
+    /// หา "ใบเดียวกันที่บันทึกไปแล้ว" ก่อนสร้างเอกสารจากสแกน — สแกนใบเดิมซ้ำ
+    /// (ส่งไลน์ซ้ำ / ถ่ายสองครั้ง / คนละคนอัปโหลด) = ค่าใช้จ่ายและภาษีซื้อเบิ้ล
+    /// แบบเงียบ ๆ เพราะเลขเอกสารของเราต่างกันทุกใบ
+    ///
+    /// สองระดับความมั่นใจ:
+    ///   • <b>แน่นอน</b> — เลขใบกำกับของผู้ขายตรงกัน + คู่ค้าเดียวกัน
+    ///     (เลขนี้ไม่ซ้ำในระบบผู้ขาย ⇒ ตรงกัน = ใบเดียวกันแทบ 100%)
+    ///   • <b>น่าสงสัย</b> — คู่ค้า+ยอดเท่ากัน (±0.5%) ในช่วง ±60 วัน
+    ///     (ผู้ขายอาจขายของชุดเดิมซ้ำจริง ⇒ เตือนอย่างเดียว ห้ามบล็อก)
+    ///
+    /// อ่านอย่างเดียว ไม่แก้ข้อมูล — ผู้เรียกตัดสินใจเอง (กฎ "ห้าม block
+    /// สิ่งที่อาจถูกต้อง" — false positive ที่บล็อกแรงกว่าปัญหาที่กัน)
+    /// </summary>
+    public async Task<DuplicateCheckResult> CheckDuplicateAsync(
+        Guid companyId, Guid? contactId, string? supplierInvoiceNumber,
+        DocumentType? documentType, decimal amount, DateTime documentDate,
+        Guid? excludeDocumentId = null)
+    {
+        var candidates = new List<DuplicateDocumentCandidate>();
+        var seen = new HashSet<Guid>();
+        if (excludeDocumentId.HasValue) seen.Add(excludeDocumentId.Value);
+
+        var baseQuery = _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);
+
+        // ── ระดับ "แน่นอน": เลขใบกำกับผู้ขายตรงกัน ─────────────────────────
+        var sin = supplierInvoiceNumber?.Trim();
+        if (!string.IsNullOrWhiteSpace(sin))
+        {
+            var sinLower = sin.ToLowerInvariant();
+            var strong = await baseQuery
+                .Where(d => d.SupplierInvoiceNumber != null
+                    && d.SupplierInvoiceNumber.ToLower() == sinLower
+                    && (contactId == null || d.ContactId == contactId))
+                .OrderByDescending(d => d.DocumentDate)
+                .Select(d => new
+                {
+                    d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate,
+                    d.TotalAmount, d.Status, d.SupplierInvoiceNumber,
+                    ContactName = d.Contact != null ? d.Contact.Name : null,
+                })
+                .Take(5).ToListAsync();
+            foreach (var d in strong)
+            {
+                if (!seen.Add(d.Id)) continue;
+                candidates.Add(new DuplicateDocumentCandidate(
+                    d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate.Date,
+                    d.TotalAmount, d.Status.ToString(), d.SupplierInvoiceNumber,
+                    d.ContactName, "SupplierInvoiceNumber", IsStrong: true));
+            }
+        }
+
+        // ── ระดับ "น่าสงสัย": คู่ค้า + ยอด + ช่วงวัน ────────────────────────
+        if (contactId.HasValue && amount > 0.01m)
+        {
+            var from = documentDate.AddDays(-60);
+            var to = documentDate.AddDays(60);
+            var tol = amount * 0.005m;
+            var weak = await baseQuery
+                .Where(d => d.ContactId == contactId.Value
+                    && d.DocumentDate >= from && d.DocumentDate <= to
+                    && (documentType == null || d.DocumentType == documentType)
+                    && d.TotalAmount >= amount - tol && d.TotalAmount <= amount + tol)
+                .OrderByDescending(d => d.DocumentDate)
+                .Select(d => new
+                {
+                    d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate,
+                    d.TotalAmount, d.Status, d.SupplierInvoiceNumber,
+                    ContactName = d.Contact != null ? d.Contact.Name : null,
+                })
+                .Take(5).ToListAsync();
+            foreach (var d in weak)
+            {
+                if (!seen.Add(d.Id)) continue;
+                candidates.Add(new DuplicateDocumentCandidate(
+                    d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate.Date,
+                    d.TotalAmount, d.Status.ToString(), d.SupplierInvoiceNumber,
+                    d.ContactName, "SameContactAndAmount", IsStrong: false));
+            }
+        }
+
+        return new DuplicateCheckResult(candidates.Any(c => c.IsStrong), candidates);
+    }
+
     /// <summary>รายการบัญชี (JE) ทั้งหมดของเอกสาร พร้อมบรรทัดจริงจาก GL และ
     /// สิทธิ์ว่า "ปรับปรุงได้ไหม" — ใช้ในแผงตรวจสอบ/แก้ไข JE บนหน้าเอกสาร
     /// (คำถามผู้ใช้: "ยังไม่เจอปุ่มให้แก้ผังบัญชีที่ลง JE")</summary>
