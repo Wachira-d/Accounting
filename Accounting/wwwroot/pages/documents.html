@@ -1190,7 +1190,7 @@
                      ทั้งฉบับ + เปิดฟอร์มพร้อมโหมด tax_paid (อนุมัติ→กลับ JE ใบ
                      ต้นทาง→บันทึกชำระเต็ม→หัวรวม) ให้เลย -->
                 <option value="TaxInvoicePaid" hidden title="รับเงินครบแล้ว — ระบบอนุมัติ + กลับรายการใบต้นทาง + บันทึกชำระเต็มยอด (หัก ณ ที่จ่าย อัตโนมัติ) + พิมพ์ใบเดียวหัว 'ใบกำกับภาษี/ใบเสร็จรับเงิน' ไม่ออกใบเสร็จแยก">ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบแล้ว ใบเดียวจบ</option>
-                <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR">ใบเสร็จรับเงิน</option>
+                <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR · เอกสารที่ตั้งหนี้แล้ว (ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้) จะเปิดหน้า 'บันทึกชำระเงิน' ให้ (ผลเหมือนกัน + รองรับจ่ายบางส่วน/หัก ณ ที่จ่าย)">ใบเสร็จรับเงิน</option>
                 <option value="DeliveryNote" title="ส่งของแล้ว แต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL">ใบส่งของ</option>
                 <option value="BillingNote" title="ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว — ไม่ลง GL">ใบวางบิล</option>
                 <option value="ReceiptVoucher" title="รับเงินที่ไม่ออกใบเสร็จ (มัดจำ) — Dr Cash / Cr รายได้รับล่วงหน้า">ใบสำคัญรับ</option>
@@ -5296,7 +5296,7 @@
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
             <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${revBadge}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}${vatClaimBadge}</td>
-            <td>${Layout.docTypeLabel(d.documentType)}</td>
+            <td>${Layout.docHeaderBadge(d)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${Layout.esc(d.contact?.name || '-')}</td>
             <td class="text-right">${Layout.money(d.totalAmount)}${(Number(d.depositAppliedAmount) > 0)
@@ -7074,7 +7074,9 @@
           const displayNum = (d.documentNumber || '').startsWith('DRAFT-') ? '(ยังไม่ออกเลข)' : d.documentNumber;
           // ใบเสนอราคาที่ถูกแก้แล้ว — โชว์ Rev ในหัว modal ให้ตรงกับกระดาษ
           const revSuffix = (d.revisionNumber || 0) > 0 ? ` (Rev.${d.revisionNumber})` : '';
-          document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${displayNum}${revSuffix}`;
+          // หัว modal ใช้ชื่อหัวกระดาษจริง — ใบ combined/ขายสด/ทำหน้าที่ใบเสร็จ
+          // จะเห็นได้ทันทีโดยไม่ต้องเปิดแก้ไขหรือกดพิมพ์ (TODO A4)
+          document.getElementById('detailTitle').textContent = `${Layout.docHeaderLabel(d)} ${displayNum}${revSuffix}`;
           // ERP upgrade banners — surface RD compliance + aging + VAT defer at top
           // แผงสถานะคำขออนุมัติ (เติมทีหลังแบบ async — ไม่หน่วงการเปิด modal)
           let banners = '<div id="approvalStatusBox" style="display:none"></div>';
@@ -8418,16 +8420,22 @@
           if (_rpDt === 'Invoice' && docVat > 0 && fullFirst) {
             rpIssueCb.checked = true;
             if (rpIssueHint) rpIssueHint.textContent =
-              'จ่ายครบทั้งใบในงวดเดียว → ระบบออก "ใบกำกับภาษี/ใบเสร็จรับเงิน" ใบเดียวให้ (§78/1) · ลูกค้าเคลมภาษีซื้อได้';
+              '➕ สร้างใบใหม่ 1 ใบ: "ใบกำกับภาษี/ใบเสร็จรับเงิน" (§78/1 — ลูกค้าเคลมภาษีซื้อได้จากใบนี้) · ใบแจ้งหนี้เดิมคงอยู่เป็นเอกสารตั้งหนี้';
             return;
           }
           // ใบกำกับภาษี (TaxInvoice) จ่ายเต็มงวดเดียว → ใบกำกับทำหน้าที่ใบเสร็จเอง
-          // (ServedAsReceipt) → ไม่ต้องออกใบเสร็จแยก
+          // (ServedAsReceipt) → ไม่ต้องออกใบเสร็จแยก.
+          // ⚠️ ข้อความต้องตอบคำถามเดียวที่ผู้ใช้สงสัย: "จะมีเอกสารใหม่เกิดไหม"
+          // และชื่อหัวต้องเป็นหัว **ของใบนี้จริง ๆ** — ใบ combined จ่ายครบได้หัว
+          // 3-in-1 ไม่ใช่ "ใบกำกับภาษี/ใบเสร็จรับเงิน" (เดิมเขียนตายตัว ผู้ใช้ที่
+          // ถือใบ combined อ่านแล้วนึกว่าระบบจะสร้างใบกำกับใหม่อีกใบ)
           const tivFull = _rpDt === 'TaxInvoice' && fullFirst;
           rpIssueCb.checked = !tivFull;
+          const _paidHeader = Layout.docHeaderLabel(
+            Object.assign({}, this._currentDoc, { servedAsReceipt: true }));
           if (rpIssueHint) rpIssueHint.textContent = tivFull
-            ? 'จ่ายครบทั้งใบในงวดเดียว → ใบกำกับนี้จะเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ในตัว ไม่ต้องออกใบเสร็จแยก (ติ๊กได้ถ้าลูกค้าขอใบเสร็จแยก)'
-            : 'ใบเสร็จอ้างอิงใบกำกับ/ใบแจ้งหนี้เดิม · VAT รับรู้ที่ใบกำกับแล้วไม่คิดซ้ำ · ไม่ลง JE ซ้ำ (จ่ายบางส่วน/ผ่อนหลายงวดต้องออกใบเสร็จต่องวด)';
+            ? `✔ ไม่สร้างเอกสารใหม่ — ใบนี้ใบเดียวทำหน้าที่ครบ หัวพิมพ์จะเปลี่ยนเป็น "${_paidHeader}" (ติ๊กเฉพาะเมื่อลูกค้าขอใบเสร็จเป็นกระดาษแยก)`
+            : '➕ สร้างใบเสร็จรับเงินเพิ่ม 1 ใบ (หลักฐานรับเงิน — อ้างอิงใบเดิม ไม่ลงบัญชี/VAT ซ้ำ) · จ่ายบางส่วน/ผ่อนหลายงวดต้องออกใบเสร็จต่องวด';
         };
         _refreshIssueDefault();
         amountEl.oninput = _refreshIssueDefault;
@@ -9245,6 +9253,26 @@
         const realTarget = isPaidCombo ? 'TaxInvoice' : target;
         const axis = this.convertAxis(target);
         const srcType = this._currentDoc?.documentType;
+
+        // ══ "สองประตู ห้องเดียว" (TODO A5) ══════════════════════════════════
+        // ผู้ใช้สายกระดาษมองหา "แปลงเอกสาร → ใบเสร็จรับเงิน" ส่วนสายเงินกด
+        // "บันทึกชำระเงิน" — ทั้งสองคือเรื่องเดียวกันเมื่อเอกสารตั้งหนี้แล้ว
+        // (มีลูกหนี้ให้ตัด). แทนที่จะซ่อนประตูใดประตูหนึ่ง (สายนั้นชนกำแพง)
+        // ให้ประตูนี้พาไปห้องเดียวกัน: เปิด modal บันทึกชำระ prefilled แทน
+        // การเรียก Convert API — ผลบัญชี/เอกสารเหมือนกัน 100% และทำได้มากกว่า
+        // (จ่ายบางส่วน / หัก ณ ที่จ่าย / หักมัดจำ / ค่าธรรมเนียม / FX)
+        const _arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
+        if ((target === 'Receipt' || target === 'ReceiptVoucher')
+            && _arTypes.includes(srcType)) {
+          const d = this._currentDoc || {};
+          Layout.closeModal('convertModal');
+          Layout.toast('การรับเงิน + ออกใบเสร็จ ทำที่หน้านี้ — ผลลัพธ์เหมือนกันทุกทาง', 'info', 6000);
+          this.recordPayment(d.id, Number(d.balanceDue ?? 0), Number(d.withholdingTaxAmount ?? 0),
+            Number(d.totalAmount ?? 0), d.currency || 'THB', Number(d.exchangeRate ?? 1),
+            d.documentType, Number(d.vatAmount ?? 0));
+          return;
+        }
+
         try {
           let converted;
           if (axis && this._convertFulfillment) {

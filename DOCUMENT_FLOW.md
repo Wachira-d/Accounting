@@ -1823,7 +1823,16 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 30 — TODO_OPUS A1/A2/B5: ไฟล์ยื่น_
+_Last verified against codebase: 2026-08-17 (รอบ 31 — TODO_OPUS A4/A5 "ระบบพูดภาษา_
+_หัวกระดาษ": `DocumentResponse.ServedAsReceipt` (read-only, batch query 1 ครั้ง/หน้า_
+_ไม่ใช่ N+1; mirror `ResolveServedAsReceiptAsync` ผ่าน `ComputeServedAsReceipt`) →_
+_`Layout.docHeaderLabel/docHeaderBadge` ตั้งป้ายตามหัวจริงบน list + หัว detail modal_
+_(ใบ combined เห็นได้ทันทีโดยไม่ต้องเปิดแก้/พิมพ์) · A5 "สองประตู ห้องเดียว":_
+_เอกสารตั้งหนี้แล้ว (INV/TIV/DN) เลือก "ใบเสร็จ/ใบสำคัญรับ" ในหน้าแปลง → เปิด modal_
+_บันทึกชำระเงิน prefilled แทนการเรียก Convert API (ผลบัญชี+เอกสารเหมือนกัน 100% และ_
+_ทำได้มากกว่า: จ่ายบางส่วน/WHT/มัดจำ/FX); QT/BN ยัง convert จริง (ขายสด ไม่มี AR) ·_
+_ข้อความติ๊กใบเสร็จเขียนใหม่ให้ตอบ "จะมีเอกสารใหม่ไหม" + ใช้หัวจริงของใบนั้น_
+_(ใบ combined จ่ายครบ = 3-in-1 — เดิมเขียนตายตัวผิด); รอบ 30 — TODO_OPUS A1/A2/B5: ไฟล์ยื่น_
 _ภ.ง.ด.3/53/54 (.txt) เปลี่ยนเป็น **detail rows ล้วน ไม่มี H|/T|** ตามหน้า import_
 _ของสรรพากร (Helpers/PndTextFileFormat.cs = format กลางตัวเดียว ใช้ทั้งเมนูส่งออก_
 _และปุ่ม e-Filing ในหน้ารายงาน — กันสองปุ่มได้ไฟล์คนละหน้าตา): 11 คอลัมน์ Col1 ลำดับ /_

@@ -1387,10 +1387,17 @@ public class DocumentService : IDocumentService
                 .Select(l => new { l.TaxReport.Month, l.TaxReport.Year, l.TaxReport.Status })
                 .FirstOrDefaultAsync();
 
+        // ใบเสร็จแยกที่อ้างใบนี้ (จาก downstream ที่โหลดไว้แล้ว) → ตัดสิน
+        // ServedAsReceipt ให้ UI ตั้งป้ายหัวเอกสารตรงกับที่จะพิมพ์
+        var hasSeparateReceiptDoc = (downstream ?? new List<DocumentBrief>()).Any(x =>
+            (x.DocumentType == DocumentType.Receipt || x.DocumentType == DocumentType.ReceiptVoucher)
+            && x.Status != DocumentStatus.Voided && x.Status != DocumentStatus.Draft
+            && x.Status != DocumentStatus.Rejected);
         var resp = MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId),
             upstream, downstream, pct, status,
             pceRows.Count > 0, pceRows.Count, pceRows.Sum(r => r.Amount), bookedByProject,
-            pceByLine);
+            pceByLine,
+            servedAsReceipt: ComputeServedAsReceipt(doc, hasSeparateReceiptDoc));
         if (pp30 != null)
             resp = resp with
             {
@@ -1703,11 +1710,29 @@ public class DocumentService : IDocumentService
             .Select(g => new { DocId = g.Key, Count = g.Count(), Amount = g.Sum(c => c.Amount) })
             .ToDictionaryAsync(g => g.DocId, g => (g.Count, g.Amount));
 
+        // ใบกำกับในหน้านี้ที่มี "ใบเสร็จแยก" อ้างอยู่ — batch เดียวต่อหน้า
+        // (ไม่ใช่ N+1) เพื่อให้ป้ายประเภทเอกสารบน list ตรงกับหัวที่พิมพ์จริง
+        var tivIdsOnPage = items.Where(d => d.DocumentType == DocumentType.TaxInvoice)
+            .Select(d => d.Id).ToList();
+        var tivWithReceipt = tivIdsOnPage.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.Documents.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.RelatedDocumentId != null
+                    && tivIdsOnPage.Contains(r.RelatedDocumentId.Value)
+                    && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
+                    && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
+                    && r.Status != DocumentStatus.Rejected)
+                .Select(r => r.RelatedDocumentId!.Value)
+                .Distinct()
+                .ToListAsync())
+                .ToHashSet();
+
         return new PagedResponse<DocumentResponse>(
             items.Select(d => {
                 var (pceCount, pceAmount) = pceSummary.GetValueOrDefault(d.Id);
                 return MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id),
-                    hasPce: pceCount > 0, pceCount: pceCount, pceAmount: pceAmount);
+                    hasPce: pceCount > 0, pceCount: pceCount, pceAmount: pceAmount,
+                    servedAsReceipt: ComputeServedAsReceipt(d, tivWithReceipt.Contains(d.Id)));
             }).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
@@ -12721,12 +12746,27 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>ใบกำกับ "ทำหน้าที่ใบเสร็จในตัว" ไหม — mirror ของกติกาใน
+    /// <c>PdfGenerationService.ResolveServedAsReceiptAsync</c> (เจ้าของกฎตอน
+    /// render): TaxInvoice + ยอดคงเหลือ ≈ 0 + เคยรับเงินจริง + ลงบัญชีแล้ว +
+    /// ไม่มีใบเสร็จแยกอ้างถึง. แก้ที่ใดที่หนึ่งต้องแก้อีกที่เสมอ ไม่งั้นป้าย
+    /// บนหน้าจอจะไม่ตรงกับหัวที่พิมพ์ออกมา (defect class "สอง renderer ห้าม drift")</summary>
+    internal static bool ComputeServedAsReceipt(Document d, bool hasSeparateReceipt)
+    {
+        if (d.DocumentType != DocumentType.TaxInvoice) return false;
+        if (d.BalanceDue > 0.01m || d.PaidAmount <= 0.005m) return false;
+        if (d.Status is DocumentStatus.Draft or DocumentStatus.Voided
+            or DocumentStatus.Rejected or DocumentStatus.WaitingApproval) return false;
+        return !hasSeparateReceipt;
+    }
+
     private static DocumentResponse MapDocumentToResponse(Document d, (Guid EtaxId, EtaxStatus Status)? etax = null,
         DocumentBrief? upstream = null, List<DocumentBrief>? downstream = null,
         decimal? conversionPercent = null, string? conversionStatus = null,
         bool hasPce = false, int pceCount = 0, decimal pceAmount = 0,
         List<ProjectCostBrief>? bookedProjects = null,
-        Dictionary<Guid, Guid>? pceByLine = null)
+        Dictionary<Guid, Guid>? pceByLine = null,
+        bool servedAsReceipt = false)
     {
         var (lifecycle, reason) = ComputeLifecycle(d, conversionPercent, downstream);
         // เหตุผลจริงที่ภาษีซื้อยังค้าง 11640 — คำนวณจาก checker + guard เดียวกับ
@@ -12910,7 +12950,8 @@ public class DocumentService : IDocumentService
         QuotationAcceptedBy: d.QuotationAcceptedBy,
         DeliverySignedAt: d.DeliverySignedAt,
         DeliverySignedBy: d.DeliverySignedBy,
-        DocumentLanguage: d.DocumentLanguage);
+        DocumentLanguage: d.DocumentLanguage,
+        ServedAsReceipt: servedAsReceipt);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack
