@@ -67,6 +67,33 @@
       <button class="btn btn-secondary btn-sm" onclick="Page.clearSelection()" data-i18n="common.deselectAll">ยกเลิกการเลือก</button>
     </div>
 
+    <!-- คู่มือปุ่ม — นักบัญชีเปิดหน้านี้แล้วเจอปุ่มหลายตัวที่ชื่อคล้ายกัน
+         ("กลับ-แก้" / "กลับรายการ" / "แก้ไข") อธิบายให้จบในที่เดียว -->
+    <div style="margin-bottom:12px">
+      <button class="btn btn-ghost btn-sm" onclick="Page.toggleButtonHelp()"
+              style="color:var(--gray-600)" id="btnHelpToggle">❓ ปุ่มไหนใช้ตอนไหน</button>
+      <div id="buttonHelp" style="display:none;margin-top:8px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;line-height:1.75;color:var(--gray-700)">
+        <div style="font-weight:700;margin-bottom:8px;color:var(--gray-800)">รายการบัญชีมี 2 แบบ — ปุ่มที่ใช้ได้ต่างกัน</div>
+        <div style="padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:10px">
+          <b>1) ใบที่ระบบลงให้จากเอกสาร</b> (มีป้าย <span class="badge badge-info" style="font-size:10px;padding:1px 5px">จากเอกสาร</span>) —
+          เช่น อนุมัติใบสำคัญจ่าย/ใบแจ้งหนี้ แล้วระบบลงบัญชีให้เอง<br>
+          ใบพวกนี้ <b>แก้ที่นี่ไม่ได้ทั้งหมด</b> เพราะบัญชีต้องตรงกับเอกสารเสมอ —
+          ปุ่มที่มีให้จึงเหลือ <b>ดู</b> กับ <b>📄 เปิดเอกสารต้นทาง</b><br>
+          <span style="color:var(--gray-600)">• ลงผังบัญชีผิด → เปิดเอกสาร → กดปุ่ม <b>เปลี่ยนผัง</b> ท้ายบรรทัดที่ผิด (ระบบลง JE ย้ายบัญชีให้ในงวดเดิม เอกสารเดิมไม่ถูกแก้)<br>
+          • รายการไม่ควรมีอยู่เลย → เปิดเอกสาร → <b>ยกเลิกเอกสาร</b> (ระบบกลับบัญชีให้พร้อมกัน)</span>
+        </div>
+        <div style="padding:10px 12px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px">
+          <b>2) ใบที่คีย์เองในหน้านี้</b> — แก้ได้เต็มที่<br>
+          <span style="color:var(--gray-600)">
+          • <b>แก้ไข</b> = แก้ตัวเลข/ผังบัญชีในใบเดิมทับไปเลย (ไม่เหลือร่องรอยของเก่า) ใช้ตอนเพิ่งคีย์ผิด<br>
+          • <b>กลับ-แก้</b> = ระบบกลับใบเดิมให้ผลเป็นศูนย์ แล้ว <b>copy เป็นร่างใหม่</b> ให้แก้ผังบัญชี/ยอด แล้วค่อยผ่านรายการ —
+            ได้ทั้งใบที่ถูกและร่องรอยครบ (ใช้เมื่อใบเดิมผ่านรายการไปแล้วและมีคนเห็นงบไปแล้ว)<br>
+          • <b>กลับรายการ</b> = ล้างผลของใบเดิมอย่างเดียว <b>ไม่มีใบใหม่</b> ใช้เมื่อรายการนั้นไม่ควรมีอยู่ตั้งแต่แรก<br>
+          • <b>ลบ</b> = เอาออกจากระบบ ใช้เฉพาะข้อมูลที่ยิงเข้ามาผิด ไม่ใช่การยกเลิกรายการทางธุรกิจ</span>
+        </div>
+      </div>
+    </div>
+
     <div class="table-container">
       <table class="table">
         <thead><tr>
@@ -230,6 +257,11 @@
           this.accounts = res.data?.items || res.data || [];
         } catch(e) {}
         this.renderHeaderActions();
+        // คู่มือปุ่ม: เปิดค้างไว้ให้คนที่เคยเปิด (และเปิดให้อัตโนมัติครั้งแรก
+        // ที่เข้าหน้านี้ — ปุ่มชุดนี้เป็นจุดที่นักบัญชีสับสนบ่อยที่สุด)
+        try {
+          if ((localStorage.getItem('journals.btnHelp') ?? '1') === '1') this.toggleButtonHelp();
+        } catch {}
         await this.loadDimensionFilters();
         const params = new URLSearchParams(window.location.search);
         const urlType = params.get('type');
@@ -456,28 +488,39 @@
             return;
           }
           tbody.innerHTML = items.map(j => {
-            const canSelect = j.status !== 'Reversed';
+            // batch = ลบทั้งชุด — ใบที่ผูกเอกสารต้นทางลบไม่ได้ และ batchDelete
+            // ฝั่ง server "ปฏิเสธทั้งชุด" ถ้ามีใบต้องห้ามปนมา ⇒ ต้องกันตั้งแต่ติ๊ก
+            const canSelect = j.status !== 'Reversed' && !j.sourceDocumentId;
             const isChecked = this.selected.has(j.id);
             const statusBadge = j.status === 'Reversed'
               ? '<span class="badge" style="background:#7c3aed15;color:#7c3aed">กลับรายการแล้ว</span>'
               : Layout.statusBadge(j.status);
+            // ปุ่มต้อง "กดแล้วได้ผล" เท่านั้น — ฝั่ง server บล็อกใบที่ผูกเอกสาร
+            // ต้นทางไว้ทั้ง Update / Reverse / Correct / Void / Delete
+            // (AccountingService: UpdateJournalEntryAsync, ReverseJournalEntryAsync
+            //  guard SourceDocumentId, VoidJournalEntryAsync, DeleteJournalEntryAsync)
+            // เดิมแสดงครบทุกปุ่ม ⇒ นักบัญชีกดแล้วเจอ error 4 ใน 5 ปุ่ม
+            // (ที่มา: กฎเหล็ก #4 A "ห้าม silent no-op / ห้ามโชว์ปุ่มที่กดแล้วพัง")
+            const isDocSourced = !!j.sourceDocumentId;
+            const isReversal = !!j.originalEntryId;   // ใบ REV — กลับซ้ำไม่ได้
             let actBtns = `<button class="btn btn-sm btn-ghost" onclick="Page.detail('${j.id}')" data-i18n="common.view">ดู</button>`;
-            // Direct edit on the row — backend allows any status; document-sourced
-            // entries are skipped (edit at the document instead).
-            if (!j.sourceDocumentId) {
-              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.openEdit('${j.id}')" title="แก้ไขตัวเลข/ผังบัญชี">แก้ไข</button>`;
+            if (isDocSourced) {
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.openSourceDoc('${j.sourceDocumentId}')" title="รายการนี้ระบบลงให้อัตโนมัติจากเอกสาร — แก้ที่หน้านี้ไม่ได้ (บัญชีต้องตรงกับเอกสารเสมอ)&#10;เปิดเอกสารเพื่อ: เปลี่ยนผังบัญชี (ปุ่มท้ายบรรทัด) หรือ ยกเลิกเอกสาร">📄 เปิดเอกสารต้นทาง</button>`;
             } else {
-              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.editAtSource('${j.sourceDocumentId}')" title="รายการนี้สร้างจากเอกสาร — แก้ไขที่เอกสารต้นทาง">✏️ แก้ที่เอกสาร</button>`;
+              if (j.status === 'Draft') {
+                actBtns += `<button class="btn btn-sm btn-ghost" style="color:#16a34a" onclick="Page.post('${j.id}')" title="ผ่านรายการ — ยืนยันลงบัญชีจริง (หลังจากนี้แก้ทับไม่ได้ ต้องใช้ กลับ-แก้)">ผ่านรายการ</button>`;
+              }
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#2563eb" onclick="Page.openEdit('${j.id}')" title="แก้ตัวเลข/ผังบัญชีในใบเดิมทับไปเลย — ใช้ตอนเพิ่งคีย์ผิด (ไม่เหลือร่องรอยของเก่า)">แก้ไข</button>`;
+              if (j.status === 'Posted' && !isReversal) {
+                actBtns += `<button class="btn btn-sm btn-ghost" style="color:#d97706" onclick="Page.correctEntry('${j.id}')" title="กลับใบเดิมให้เป็นศูนย์ แล้ว copy เป็นร่างใหม่ให้แก้ผังบัญชี/ยอด — ได้ทั้งใบที่ถูกและร่องรอยครบ">กลับ-แก้</button>`;
+                actBtns += `<button class="btn btn-sm btn-ghost" style="color:#7c3aed" onclick="Page.reverseEntry('${j.id}')" title="ล้างผลของใบเดิมอย่างเดียว ไม่มีใบใหม่ — ใช้เมื่อรายการนี้ไม่ควรมีอยู่ตั้งแต่แรก">กลับรายการ</button>`;
+              }
+              // Delete now allowed on any status (soft-delete; GL filter cascades).
+              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#ef4444" onclick="Page.deleteEntry('${j.id}')" title="เอาออกจากระบบ — ใช้เฉพาะข้อมูลที่ยิงเข้ามาผิด ไม่ใช่การยกเลิกรายการทางธุรกิจ" data-i18n="common.delete">ลบ</button>`;
             }
-            if (j.status === 'Posted') {
-              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#d97706" onclick="Page.correctEntry('${j.id}')" title="แก้ไขด้วยการกลับรายการ (audit-safe)">กลับ-แก้</button>`;
-              actBtns += `<button class="btn btn-sm btn-ghost" style="color:#7c3aed" onclick="Page.reverseEntry('${j.id}')" title="กลับรายการ (สร้างรายการตรงข้าม)">กลับรายการ</button>`;
-            }
-            // Delete now allowed on any status (soft-delete; GL filter cascades).
-            actBtns += `<button class="btn btn-sm btn-ghost" style="color:#ef4444" onclick="Page.deleteEntry('${j.id}')" title="ลบออกจากระบบ" data-i18n="common.delete">ลบ</button>`;
             return `<tr${isChecked ? ' style="background:#fffbeb"' : ''}>
               <td><input type="checkbox" class="row-check" data-id="${j.id}" ${canSelect ? '' : 'disabled'} ${isChecked ? 'checked' : ''} onchange="Page.toggleRow('${j.id}',this.checked)"></td>
-              <td class="font-medium">${j.entryNumber}${j.isAutoGenerated ? ' <span class="badge badge-info" style="font-size:10px;padding:1px 5px">API</span>' : ''}${j.originalEntryId ? ' <span class="badge" style="background:#7c3aed15;color:#7c3aed;font-size:10px;padding:1px 5px">REV</span>' : ''}</td>
+              <td class="font-medium">${j.entryNumber}${isDocSourced ? ` <span class="badge badge-info" style="font-size:10px;padding:1px 5px" title="ระบบลงให้อัตโนมัติจากเอกสาร ${Layout.esc(j.sourceDocumentNumber || '')} — แก้ที่เอกสารต้นทางเท่านั้น">จากเอกสาร</span>` : (j.isAutoGenerated ? ' <span class="badge badge-info" style="font-size:10px;padding:1px 5px" title="สร้างผ่าน API/ระบบอัตโนมัติ">API</span>' : '')}${j.originalEntryId ? ' <span class="badge" style="background:#7c3aed15;color:#7c3aed;font-size:10px;padding:1px 5px" title="ใบกลับรายการ — สร้างขึ้นเพื่อหักล้างใบต้นฉบับ">REV</span>' : ''}</td>
               <td>${this.journalTypeBadge(j.journalType)}</td>
               <td>${Layout.date(j.entryDate)}</td>
               <td>${j.description || '-'}</td>
@@ -488,12 +531,22 @@
               <td>${actBtns}</td>
             </tr>`;
           }).join('');
-          const allCheckable = items.filter(j => j.status !== 'Reversed');
+          const allCheckable = items.filter(j => j.status !== 'Reversed' && !j.sourceDocumentId);
           document.getElementById('checkAll').checked = allCheckable.length > 0 && allCheckable.every(j => this.selected.has(j.id));
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
+      // คู่มือปุ่ม — จำสถานะไว้ใน localStorage เพื่อคนที่เพิ่งเริ่มใช้เปิดค้างได้
+      toggleButtonHelp() {
+        const box = document.getElementById('buttonHelp');
+        const btn = document.getElementById('btnHelpToggle');
+        if (!box) return;
+        const open = box.style.display === 'none';
+        box.style.display = open ? 'block' : 'none';
+        if (btn) btn.textContent = open ? '❎ ปิดคำอธิบายปุ่ม' : '❓ ปุ่มไหนใช้ตอนไหน';
+        try { localStorage.setItem('journals.btnHelp', open ? '1' : '0'); } catch {}
+      },
       accountSelect(id) {
         return `<select class="form-select" id="${id}" style="font-size:13px">
           <option value="">เลือกบัญชี</option>
@@ -603,11 +656,14 @@
         this.calcTotals();
         Layout.openModal('formModal');
       },
-      // A document-sourced JE mirrors its document — it cannot be edited
-      // directly; jump to the document and open it for editing instead.
-      editAtSource(documentId) {
+      // ใบสำคัญที่ผูกเอกสารต้นทาง = ภาพสะท้อนของเอกสาร แก้ที่นี่ไม่ได้เลย
+      // → พาไปที่ **หน้ารายละเอียดเอกสาร** (ไม่ใช่ฟอร์มแก้ไข: ใบที่อนุมัติแล้ว
+      // เปิดฟอร์มไปก็แก้อะไรไม่ได้ ผู้ใช้จะงงว่า "กดแล้วไม่มีอะไรให้ทำ")
+      // หน้ารายละเอียดมีทางแก้ที่ใช้ได้จริงครบ: ปุ่ม "เปลี่ยนผัง" ท้ายบรรทัด
+      // (สร้าง JE ย้ายบัญชีในงวดเดิม) และ "ยกเลิกเอกสาร"
+      openSourceDoc(documentId) {
         if (!documentId) return;
-        window.location.href = `/pages/documents.html?editDoc=${encodeURIComponent(documentId)}`;
+        window.location.href = `/pages/documents.html?openDoc=${encodeURIComponent(documentId)}`;
       },
       async openEdit(id) {
         const api = Layout.api(); if (!api) return;
@@ -727,7 +783,33 @@
               <a href="#" onclick="Page.detail('${j.originalEntryId}');return false" class="btn btn-sm" style="background:#d97706;color:#fff">ดูใบต้นฉบับ →</a>
             </div>`;
           }
+          // ใบที่ระบบลงให้จากเอกสาร — บอกให้ชัดว่า "แก้ที่นี่ไม่ได้ แก้ที่ไหนแทน"
+          // (คำถามจริงจากผู้ใช้: "จะแก้ผังบัญชีที่ลง JE ไปแล้ว แก้ตรงไหน")
+          let sourceBanner = '';
+          if (j.sourceDocumentId) {
+            // "เปลี่ยนผัง" รายบรรทัดเปิดเฉพาะเอกสารฝั่งซื้อ/จ่าย (mirror ของ
+            // documents.html canReclassify + DocumentService.ReclassifyLineAccountAsync)
+            // ประเภทอื่นต้องยกเลิกแล้วออกใหม่ — ห้ามบอกทางที่กดไปแล้วไม่มีปุ่ม
+            const canReclass = ['Expense', 'PurchaseInvoice', 'PaymentVoucher']
+              .includes(j.sourceDocumentType || '');
+            const howTo = canReclass
+              ? `• <b>ลงผังบัญชีผิด</b> → เปิดเอกสาร → กดปุ่ม <b>✏️ เปลี่ยนผัง</b> ท้ายบรรทัดที่ผิด
+                 (ระบบลงรายการย้ายบัญชีให้ในงวดเดิม เอกสารเดิมไม่ถูกแก้)<br>`
+              : `• <b>ลงผังบัญชีผิด</b> → เอกสารประเภทนี้ยังเปลี่ยนผังรายบรรทัดไม่ได้
+                 ต้อง <b>ยกเลิกเอกสาร</b> แล้วออกใบใหม่ให้ถูก<br>`;
+            sourceBanner = `<div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:12px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.7">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="font-size:18px">📄</span>
+                <div style="flex:1"><strong>ระบบลงรายการนี้ให้อัตโนมัติจากเอกสาร ${Layout.esc(j.sourceDocumentNumber || '')}</strong></div>
+                <button class="btn btn-sm" style="background:#2563eb;color:#fff" onclick="Page.openSourceDoc('${j.sourceDocumentId}')">เปิดเอกสารต้นทาง →</button>
+              </div>
+              แก้ที่หน้าสมุดรายวันไม่ได้ เพราะบัญชีต้องตรงกับเอกสารเสมอ — ให้แก้ที่เอกสารแทน:<br>
+              ${howTo}
+              • <b>ไม่ควรมีรายการนี้เลย</b> → เปิดเอกสาร → <b>ยกเลิกเอกสาร</b> (ระบบกลับบัญชีให้พร้อมกัน)
+            </div>`;
+          }
           document.getElementById('detailContent').innerHTML = `
+            ${sourceBanner}
             ${reversalBanner}
             <div class="detail-list" style="margin-bottom:20px">
               <div class="detail-item"><span class="detail-label">เลขที่</span><span class="detail-value">${j.entryNumber}${j.isAutoGenerated ? ' <span class="badge badge-info" style="font-size:10px;padding:2px 6px">สร้างจาก API</span>' : ''}${j.originalEntryId ? ' <span class="badge" style="background:#7c3aed15;color:#7c3aed;font-size:10px;padding:2px 6px">รายการกลับรายการ</span>' : ''}</span></div>
@@ -735,7 +817,7 @@
               <div class="detail-item"><span class="detail-label" data-i18n="common.date">วันที่</span><span class="detail-value">${Layout.date(j.entryDate)}</span></div>
               <div class="detail-item"><span class="detail-label" data-i18n="common.status">สถานะ</span><span class="detail-value">${statusBadge}</span></div>
               <div class="detail-item"><span class="detail-label" data-i18n="common.reference">อ้างอิง</span><span class="detail-value">${j.reference || '-'}</span></div>
-              ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value"><a href="/pages/documents.html?search=${encodeURIComponent(j.sourceDocumentNumber)}" style="color:var(--primary)">${j.sourceDocumentNumber}</a>${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${j.sourceDocumentType}</span>` : ''}</span></div>` : ''}
+              ${j.sourceDocumentNumber ? `<div class="detail-item"><span class="detail-label">เอกสารต้นทาง</span><span class="detail-value"><a href="#" onclick="Page.openSourceDoc('${j.sourceDocumentId}');return false" style="color:var(--primary)">${Layout.esc(j.sourceDocumentNumber)}</a>${j.sourceDocumentType ? ` <span class="badge badge-info" style="font-size:10px;padding:2px 6px">${Layout.esc(j.sourceDocumentType)}</span>` : ''}</span></div>` : ''}
               ${reversalInfo}
             </div>
             <p class="text-sm text-gray-600" style="margin-bottom:16px">${j.description || ''}</p>
@@ -752,23 +834,22 @@
             </div>`;
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button class="btn btn-secondary" onclick="Layout.showEntityTimeline('JournalEntry','${j.id}','${Layout.esc(j.entryNumber)}')" title="ประวัติการสร้าง / ผ่านรายการ / กลับรายการ / แก้ไข ของรายการบัญชี">📜 ประวัติ</button>`;
-          // Direct edit — works in any status; backend blocks only auto-generated
-          // (document-sourced) entries. For audit-safe edits on Posted, the
-          // existing "แก้ไข (กลับรายการ)" button still uses Reverse+Draft.
-          if (!j.sourceDocumentId) {
-            actions += ` <button class="btn btn-primary" onclick="Page.openEdit('${j.id}')">✏️ แก้ไขตัวเลข/ผังบัญชี</button>`;
+          // ชุดปุ่มต้องตรงกับสิ่งที่ server ยอมให้ทำจริง (ดูคอมเมนต์ที่แถวลิสต์)
+          // ใบที่ผูกเอกสาร: แก้/กลับ/ลบ ถูกบล็อกหมด เหลือทางเดียวคือไปที่เอกสาร
+          if (j.sourceDocumentId) {
+            actions += ` <button class="btn btn-primary" onclick="Page.openSourceDoc('${j.sourceDocumentId}')" title="แก้ผังบัญชี / ยกเลิกรายการ ต้องทำที่เอกสารต้นทาง">📄 เปิดเอกสารต้นทาง</button>`;
           } else {
-            actions += ` <button class="btn btn-primary" onclick="Page.editAtSource('${j.sourceDocumentId}')">✏️ แก้ไขที่เอกสารต้นทาง</button>`;
+            if (j.status === 'Draft') {
+              actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')" title="ยืนยันลงบัญชีจริง — หลังจากนี้แก้ทับไม่ได้ ต้องใช้ 'กลับ-แก้'">ผ่านรายการ</button>`;
+            }
+            actions += ` <button class="btn btn-primary" onclick="Page.openEdit('${j.id}')" title="แก้ตัวเลข/ผังบัญชีในใบเดิมทับไปเลย (ไม่เหลือร่องรอยของเก่า)">✏️ แก้ไขตัวเลข/ผังบัญชี</button>`;
+            if (j.status === 'Posted' && !j.originalEntryId) {
+              actions += ` <button class="btn btn-warning" onclick="Page.correctEntry('${j.id}')" title="กลับใบเดิมให้เป็นศูนย์ แล้ว copy เป็นร่างใหม่ให้แก้ — ร่องรอยครบ">กลับ-แก้ (กลับใบเดิม + ร่างใหม่)</button>`;
+              actions += ` <button class="btn" style="background:#7c3aed;color:white" onclick="Page.reverseEntry('${j.id}')" title="ล้างผลของใบเดิมอย่างเดียว ไม่มีใบใหม่">กลับรายการ</button>`;
+            }
+            // Delete is now allowed in any status (backend soft-deletes).
+            actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')" title="เอาออกจากระบบ — ใช้เฉพาะข้อมูลที่ยิงเข้ามาผิด" data-i18n="common.delete">ลบ</button>`;
           }
-          if (j.status === 'Draft') {
-            actions += ` <button class="btn btn-success" onclick="Page.post('${j.id}')">ผ่านรายการ</button>`;
-          }
-          if (j.status === 'Posted') {
-            actions += ` <button class="btn btn-warning" onclick="Page.correctEntry('${j.id}')">แก้ไข (กลับรายการ)</button>`;
-            actions += ` <button class="btn" style="background:#7c3aed;color:white" onclick="Page.reverseEntry('${j.id}')">กลับรายการ</button>`;
-          }
-          // Delete is now allowed in any status (backend soft-deletes).
-          actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')" data-i18n="common.delete">ลบ</button>`;
           document.getElementById('detailActions').innerHTML = actions;
           // Comments + activity timeline (#23)
           const commentsHost = document.createElement('div');

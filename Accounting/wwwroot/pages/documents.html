@@ -1434,6 +1434,17 @@
           const tc = await api.getEtaxConfig();
           this._etaxConfig = tc?.data || null;
         } catch(e) { this._etaxConfig = null; }
+        // ?search=<เลขที่เอกสาร> — ลิงก์ "ดูเอกสาร" จากหน้าอื่น (สมุดรายวัน,
+        // แยกประเภท, ธนาคาร, ภาษีหัก ณ ที่จ่าย) ส่งเลขที่มาทาง query แต่หน้านี้
+        // ไม่เคยอ่านค่า ⇒ ทุกลิงก์ตกมาที่ลิสต์เปล่า ๆ เหมือนไม่มีอะไรเกิดขึ้น
+        // (defect class "ห้าม silent no-op" — กฎเหล็ก #4 A). เติมลงช่องค้นหา
+        // ก่อน load() รอบแรก เพื่อให้ลิสต์ที่ขึ้นมาเป็นผลการค้นหาจริง
+        const searchParam = params.get('search');
+        if (searchParam) {
+          const si = document.getElementById('searchInput');
+          if (si) si.value = searchParam;
+        }
+
         // Auto-set side filter from URL
         if (sideParam) this.setSide(sideParam);
         else { this.loadPeriods(); await this.load(); }
@@ -1498,6 +1509,18 @@
         const editDocId = params.get('editDoc');
         if (editDocId) {
           try { await this.openEdit(editDocId); }
+          catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
+        }
+
+        // "เปิดเอกสารต้นทาง" จากหน้าสมุดรายวัน — เปิด **หน้ารายละเอียด** ของใบนั้น
+        // (ไม่ใช่ฟอร์มแก้ไข: ใบที่อนุมัติแล้วแก้ในฟอร์มไม่ได้ ผู้ใช้จะงงว่า
+        // "กดแล้วแก้อะไรไม่ได้เลย"). ในหน้ารายละเอียดมีปุ่มที่ใช้ได้จริงครบ —
+        // เปลี่ยนผังบัญชี / ยกเลิกเอกสาร / ดู JE.
+        // (ที่มา: ลิงก์เดิมใช้ ?search=<เลขที่> แต่หน้านี้ไม่เคยอ่าน ?search=
+        //  → ตกมาที่ลิสต์เอกสารเปล่า ๆ = "กดแล้วไม่เด้งอะไรขึ้นมา")
+        const openDocId = params.get('openDoc');
+        if (openDocId) {
+          try { await this.detail(openDocId); }
           catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
         }
 
@@ -7399,7 +7422,10 @@
                   && ['Approved','Sent','PartiallyPaid','Paid'].includes(d.status)
                   && l.accountCode;
                 const acctCell = l.accountCode
-                  ? `<span style="font-family:ui-monospace,monospace;font-size:11px"><b>${this.escapeHtml(l.accountCode)}</b>${l.accountName ? ' ' + this.escapeHtml(l.accountName.substring(0,20)) : ''}</span>${canReclassify ? ` <button class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:10px" onclick="Page.openReclassifyLine('${d.id}', '${l.id}', '${this.escapeHtml(l.accountCode)}', '${this.escapeHtml((l.description||'').replace(/'/g, '&#39;'))}', ${l.amount})" title="เปลี่ยนผังบัญชี (ระบบจะสร้าง JE คู่ใหม่ Dr ผังใหม่/Cr ผังเก่า — ไม่แก้เอกสารต้นฉบับ)">✏️</button>` : ''}`
+                  // ปุ่มเดิมเป็น "✏️" เปล่า ๆ ขนาด 10px — ไม่มีใครรู้ว่ากดได้ ทั้งที่นี่
+                  // คือทางเดียวที่แก้ผังบัญชีของใบที่อนุมัติแล้วได้ (คำถามจริงจาก
+                  // ผู้ใช้: "จะแก้ผังบัญชีที่ลง JE ไปแล้ว แก้ตรงไหน") → ใส่ข้อความกำกับ
+                  ? `<span style="font-family:ui-monospace,monospace;font-size:11px"><b>${this.escapeHtml(l.accountCode)}</b>${l.accountName ? ' ' + this.escapeHtml(l.accountName.substring(0,20)) : ''}</span>${canReclassify ? ` <button class="btn btn-sm" style="padding:1px 7px;font-size:10px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe" onclick="Page.openReclassifyLine('${d.id}', '${l.id}', '${this.escapeHtml(l.accountCode)}', '${this.escapeHtml((l.description||'').replace(/'/g, '&#39;'))}', ${l.amount})" title="ลงผังบัญชีผิด? กดที่นี่เพื่อย้ายไปผังที่ถูก — ระบบลงรายการย้ายบัญชีให้ในงวดเดิม (Dr ผังใหม่ / Cr ผังเก่า) เอกสารต้นฉบับไม่ถูกแก้">✏️ เปลี่ยนผัง</button>` : ''}`
                   : '<span style="color:#cbd5e1">—</span>';
                 // escape description (มาจากผู้ใช้/OCR — ช่องอื่นในแถว escape หมดแล้ว เว้นช่องนี้
                 // = XSS + layout พัง, กฎเหล็ก #4 C) · ส่วนลดโหมดบาท (percent=null,

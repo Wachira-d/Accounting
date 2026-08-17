@@ -1082,6 +1082,17 @@ public partial class AccountingService : IAccountingService
         if (original.ReversedByEntryId.HasValue)
             throw new InvalidOperationException("รายการนี้ถูกกลับรายการไปแล้ว");
 
+        // ใบที่ผูกเอกสารต้นทาง: ReverseJournalEntryAsync จะโยนทิ้งอยู่แล้วในขั้น
+        // ถัดไป แต่ข้อความจะเป็นของ "กลับรายการ" ซึ่งไม่ตอบคำถามที่ผู้ใช้กำลังถาม
+        // ("ลงผังบัญชีผิด จะแก้ตรงไหน") — ดักตั้งแต่ต้นทางพร้อมบอกทางที่ใช้ได้จริง
+        // (UI ซ่อนปุ่มนี้ให้แล้ว กันไว้อีกชั้นสำหรับ API/สคริปต์)
+        if (original.SourceDocumentId.HasValue)
+            throw new InvalidOperationException(
+                "รายการนี้ระบบลงให้อัตโนมัติจากเอกสารต้นทาง — แก้ที่สมุดรายวันไม่ได้ " +
+                "เพราะบัญชีต้องตรงกับเอกสารเสมอ · ลงผังบัญชีผิด ให้เปิดเอกสารแล้วกด " +
+                "'เปลี่ยนผัง' ท้ายบรรทัดที่ผิด (ระบบลงรายการย้ายบัญชีให้ในงวดเดิม) · " +
+                "ถ้าไม่ควรมีรายการนี้เลย ให้ใช้ 'ยกเลิกเอกสาร'");
+
         // Step 1: Reverse the original entry
         var reversalEntry = await ReverseJournalEntryAsync(companyId, entryId, null,
             $"แก้ไข (กลับรายการ) {original.EntryNumber}");
