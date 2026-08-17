@@ -1050,17 +1050,25 @@
         </div>
         <div class="modal-body">
           <div id="rvdInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px"></div>
-          <div class="form-group">
-            <label class="form-label" data-help="ค่าเริ่มต้น: ตัวกลับแต่ละใบไปอยู่วันเดียวกับ 'ใบต้นฉบับ' ที่ตัวเองกลับ — เหมาะกับเอกสารที่มีทั้งใบซื้อและใบจ่ายชำระคนละวัน">วันที่ปลายทาง</label>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px">
-              <input type="radio" name="rvdMode" value="perEntry" checked onchange="Page.onRedateModeChange()">
-              <span>ตามใบต้นฉบับของแต่ละใบ <b>(แนะนำ)</b></span>
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px">
-              <input type="radio" name="rvdMode" value="fixed" onchange="Page.onRedateModeChange()">
-              <span>ใช้วันเดียวกันทุกใบ:</span>
-              <input type="date" class="form-input" id="rvdDate" style="width:170px" disabled onchange="Page.loadRedatePreview()">
-            </label>
+          <!-- ตอบคำถามที่ถามบ่อย: "ใบเดียวทำไมมีตั้งหลายรายการ" -->
+          <div style="font-size:11px;color:#475569;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.7">
+            💡 <b>ทำไมใบเดียวมีหลายรายการ?</b> ระบบลงบัญชีแยกตาม “เหตุการณ์” ไม่ใช่ตามใบ —
+            ตอนอนุมัติเอกสารลง 1 รายการ, ตอนรับ/จ่ายเงินลงอีก 1 รายการ (และมัดจำ/ภาษีหัก ณ ที่จ่าย
+            อาจมีอีก) พอกดยกเลิก ระบบจะสร้าง “ตัวกลับ” ให้ <b>ทุกรายการ</b> ⇒
+            2 เหตุการณ์ = 4 รายการ (ต้นฉบับ 2 + ตัวกลับ 2). ตารางนี้แสดงเฉพาะ
+            <b>ตัวกลับ</b> ที่ย้ายได้ ใบต้นฉบับไม่ถูกแตะ
+          </div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px;font-size:12px">
+            <span class="text-gray-500">ตั้งวันที่ให้ทุกใบพร้อมกัน:</span>
+            <button class="btn btn-sm btn-secondary" onclick="Page.rvdSetAll('first')"
+                    title="ใช้วันที่ของใบสำคัญต้นฉบับที่เก่าที่สุด (วันที่สร้างใบแรก)">📌 วันที่ใบแรก</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.rvdSetAll('doc')"
+                    title="ใช้วันที่บนตัวเอกสาร">วันที่เอกสาร</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.rvdSetAll('own')"
+                    title="แต่ละใบกลับไปวันเดียวกับใบต้นฉบับของตัวเอง — ตรงตามเหตุการณ์ที่สุด">ตามใบต้นฉบับของแต่ละใบ</button>
+            <input type="date" class="form-input" id="rvdDate" style="width:160px"
+                   title="เลือกวันแล้วกด 'ใช้วันนี้ทุกใบ'">
+            <button class="btn btn-sm btn-secondary" onclick="Page.rvdSetAll('custom')">ใช้วันนี้ทุกใบ</button>
           </div>
           <div id="rvdRows"></div>
           <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px;margin-top:12px">
@@ -8306,73 +8314,135 @@
       // ไม่บอกว่าจะไปแตะใบไหนบ้าง ทั้งที่เอกสารใบเดียวมีตัวกลับได้หลายใบ)
       async redateVoidReversal(id) {
         this._redateDocId = id;
+        this._redateRows = [];
         const dateEl = document.getElementById('rvdDate');
-        const modeEl = document.querySelector('input[name="rvdMode"][value="perEntry"]');
-        if (modeEl) modeEl.checked = true;
-        if (dateEl) {
-          dateEl.value = Layout.dateInput(this._currentDoc?.documentDate) || '';
-          dateEl.disabled = true;
-        }
+        if (dateEl) dateEl.value = Layout.dateInput(this._currentDoc?.documentDate) || '';
         document.getElementById('rvdRows').innerHTML =
           '<div class="text-gray-400" style="padding:16px;text-align:center">กำลังตรวจสอบ...</div>';
         Layout.openModal('redateReversalModal');
         await this.loadRedatePreview();
       },
 
-      onRedateModeChange() {
-        const fixed = document.querySelector('input[name="rvdMode"]:checked')?.value === 'fixed';
-        const dateEl = document.getElementById('rvdDate');
-        if (dateEl) dateEl.disabled = !fixed;
-        this.loadRedatePreview();
-      },
-
-      _redateChosenDate() {
-        const fixed = document.querySelector('input[name="rvdMode"]:checked')?.value === 'fixed';
-        const d = document.getElementById('rvdDate')?.value || '';
-        return fixed && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
-      },
-
       async loadRedatePreview() {
         const api = Layout.api(); if (!api || !this._redateDocId) return;
         const host = document.getElementById('rvdRows');
         try {
-          const r = await api.previewRedateVoidReversal(this._redateDocId, this._redateChosenDate());
+          // preview แบบไม่บังคับวันที่ = ระบบเสนอ "วันของใบต้นฉบับแต่ละใบ"
+          const r = await api.previewRedateVoidReversal(this._redateDocId, null);
           const p = r?.data;
-          const rows = p?.rows || [];
-          document.getElementById('rvdInfo').innerHTML =
-            `<div>เอกสาร: <b>${this.escapeHtml(p?.documentNumber || '')}</b> · วันที่เอกสาร <b>${Layout.date(p?.documentDate)}</b></div>` +
-            `<div>พบใบสำคัญ "ตัวกลับ" ที่ยังมีผลต่อบัญชี <b>${rows.length}</b> ใบ` +
-            ` · จะถูกย้าย <b>${rows.filter(x => x.willMove).length}</b> ใบ</div>`;
-          if (!rows.length) {
-            host.innerHTML = '<div style="padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#64748b">ไม่พบรายการกลับบัญชีของเอกสารนี้ — ไม่มีอะไรต้องย้าย</div>';
-            document.getElementById('rvdSubmit').disabled = true;
-            return;
-          }
-          host.innerHTML = `<div class="table-container"><table class="table" style="font-size:12px">
-            <thead><tr><th>ใบสำคัญ (ตัวกลับ)</th><th>ประเภท</th><th class="text-right">จำนวนเงิน</th><th>วันที่ตอนนี้</th><th>→ วันที่ใหม่</th><th>อ้างใบต้นฉบับ</th></tr></thead>
-            <tbody>${rows.map(x => `<tr${x.willMove ? '' : ' style="opacity:.55"'}>
-              <td class="font-medium">${this.escapeHtml(x.entryNumber)}</td>
-              <td>${this.escapeHtml(x.journalType)}</td>
-              <td class="text-right">${Layout.money(x.amount)}</td>
-              <td>${Layout.date(x.currentDate)}</td>
-              <td>${x.willMove
-                ? `<b style="color:#15803d">${Layout.date(x.suggestedDate)}</b>`
-                : `<span style="color:#92400e">${this.escapeHtml(x.blockReason || 'ไม่ย้าย')}</span>`}</td>
-              <td class="text-gray-500">${x.originalEntryNumber
-                ? `${this.escapeHtml(x.originalEntryNumber)} · ${Layout.date(x.originalEntryDate)}`
-                : '<span style="color:#cbd5e1">—</span>'}</td>
-            </tr>`).join('')}</tbody></table></div>`;
-          document.getElementById('rvdSubmit').disabled = !rows.some(x => x.willMove);
+          this._redatePreview = p;
+          this._redateRows = p?.rows || [];
+          this.renderRedateRows();
         } catch (e) {
           host.innerHTML = `<div style="padding:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c">ตรวจสอบไม่สำเร็จ: ${this.escapeHtml(e.message)}</div>`;
           document.getElementById('rvdSubmit').disabled = true;
         }
       },
 
+      // ทุกแถวมีช่องวันที่ของตัวเอง — แก้ทีละใบได้เลย ไม่ต้องเลือกโหมดก่อน
+      renderRedateRows() {
+        const host = document.getElementById('rvdRows');
+        const rows = this._redateRows || [];
+        const p = this._redatePreview;
+        document.getElementById('rvdInfo').innerHTML =
+          `<div>เอกสาร: <b>${this.escapeHtml(p?.documentNumber || '')}</b> · วันที่เอกสาร <b>${Layout.date(p?.documentDate)}</b></div>` +
+          `<div>ใบสำคัญ "ตัวกลับ" ที่ยังมีผลต่อบัญชี <b>${rows.length}</b> ใบ — แก้วันที่ได้ทีละใบในช่องด้านล่าง</div>`;
+        if (!rows.length) {
+          host.innerHTML = '<div style="padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#64748b">ไม่พบรายการกลับบัญชีของเอกสารนี้ — ไม่มีอะไรต้องย้าย</div>';
+          document.getElementById('rvdSubmit').disabled = true;
+          return;
+        }
+        host.innerHTML = `<div class="table-container"><table class="table" style="font-size:12px">
+          <thead><tr><th>ใบสำคัญ (ตัวกลับ)</th><th>ประเภท</th><th class="text-right">จำนวนเงิน</th><th>วันที่ตอนนี้</th><th style="width:170px">→ วันที่ใหม่</th><th>อ้างใบต้นฉบับ</th></tr></thead>
+          <tbody>${rows.map((x, i) => `<tr>
+            <td class="font-medium">${this.escapeHtml(x.entryNumber)}</td>
+            <td>${this.escapeHtml(x.journalType)}</td>
+            <td class="text-right">${Layout.money(x.amount)}</td>
+            <td>${Layout.date(x.currentDate)}</td>
+            <td><input type="date" class="form-input rvd-row-date" data-idx="${i}"
+                       value="${Layout.dateInput(x.newDate ?? x.suggestedDate) || ''}"
+                       style="font-size:12px;padding:4px 6px" onchange="Page.rvdRowDateChanged(${i}, this.value)">
+                <div style="font-size:10px;margin-top:2px" id="rvdHint_${i}"></div></td>
+            <td class="text-gray-500">${x.originalEntryNumber
+              ? `${this.escapeHtml(x.originalEntryNumber)} · ${Layout.date(x.originalEntryDate)}`
+              : '<span style="color:#cbd5e1">—</span>'}</td>
+          </tr>`).join('')}</tbody></table></div>`;
+        rows.forEach((_, i) => this.rvdUpdateHint(i));
+        this.rvdUpdateSubmit();
+      },
+
+      rvdRowDateChanged(i, value) {
+        const row = (this._redateRows || [])[i];
+        if (!row) return;
+        row.newDate = value || row.suggestedDate;
+        this.rvdUpdateHint(i);
+        this.rvdUpdateSubmit();
+      },
+
+      rvdUpdateHint(i) {
+        const row = (this._redateRows || [])[i];
+        const el = document.getElementById(`rvdHint_${i}`);
+        if (!row || !el) return;
+        const chosen = Layout.dateInput(row.newDate ?? row.suggestedDate);
+        const current = Layout.dateInput(row.currentDate);
+        if (chosen === current) {
+          el.style.color = '#94a3b8';
+          el.textContent = 'วันที่ตรงอยู่แล้ว — ไม่ย้าย';
+        } else if (row.blockReason && !row.willMove
+                   && Layout.dateInput(row.suggestedDate) === chosen) {
+          // เหตุผลจาก server (งวดปิด) ยังใช้ได้เมื่อวันที่ยังเป็นค่าที่ server ตรวจให้
+          el.style.color = '#b45309';
+          el.textContent = row.blockReason;
+        } else {
+          el.style.color = '#15803d';
+          el.textContent = 'จะย้าย';
+        }
+      },
+
+      rvdUpdateSubmit() {
+        const rows = this._redateRows || [];
+        const willMove = rows.filter(x =>
+          Layout.dateInput(x.newDate ?? x.suggestedDate) !== Layout.dateInput(x.currentDate));
+        const btn = document.getElementById('rvdSubmit');
+        if (!btn) return;
+        btn.disabled = willMove.length === 0;
+        btn.textContent = willMove.length ? `ย้ายวันที่ ${willMove.length} ใบ` : 'ไม่มีใบที่ต้องย้าย';
+      },
+
+      /** ตั้งวันที่ให้ทุกแถวพร้อมกัน — 'first' = วันที่ใบต้นฉบับที่เก่าที่สุด
+       *  (วันที่สร้างใบแรก) · 'doc' = วันที่เอกสาร · 'own' = ตามต้นฉบับของแต่ละใบ
+       *  · 'custom' = วันที่ในช่องด้านบน */
+      rvdSetAll(mode) {
+        const rows = this._redateRows || [];
+        if (!rows.length) return;
+        const docDate = Layout.dateInput(this._redatePreview?.documentDate);
+        let fixedDate = null;
+        if (mode === 'doc') fixedDate = docDate;
+        else if (mode === 'custom') {
+          fixedDate = document.getElementById('rvdDate')?.value || '';
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(fixedDate)) {
+            Layout.toast('กรุณาเลือกวันที่ก่อน', 'error'); return;
+          }
+        } else if (mode === 'first') {
+          // "ใบแรก" = ใบสำคัญต้นฉบับที่วันที่เก่าที่สุดในชุดนี้ (ตกกลับวันที่เอกสาร)
+          const dates = rows.map(x => Layout.dateInput(x.originalEntryDate)).filter(Boolean).sort();
+          fixedDate = dates[0] || docDate;
+        }
+        rows.forEach(x => {
+          x.newDate = mode === 'own' ? x.suggestedDate : fixedDate;
+        });
+        this.renderRedateRows();
+      },
+
       async submitRedateVoidReversal() {
         const api = Layout.api(); if (!api || !this._redateDocId) return;
+        const rows = this._redateRows || [];
+        const entries = rows.map(x => ({
+          journalEntryId: x.journalEntryId,
+          newDate: Layout.dateInput(x.newDate ?? x.suggestedDate),
+        })).filter(e => e.newDate);
         try {
-          const r = await api.redateVoidReversal(this._redateDocId, this._redateChosenDate());
+          const r = await api.redateVoidReversal(this._redateDocId, null, { entries });
           Layout.toast(r?.message || 'ย้ายวันที่สำเร็จ', 'success', 7000);
           Layout.closeModal('redateReversalModal');
           Layout.closeModal('detailModal');

@@ -107,7 +107,10 @@ public interface IDocumentService
     /// <param name="newDate">default = ให้ตัวกลับแต่ละใบไปอยู่ **วันที่ของใบ
     /// ต้นฉบับที่ตัวเองกลับ** (เอกสารใบเดียวมักมีตัวกลับหลายใบคนละวัน) ·
     /// ระบุค่า = บังคับทุกใบไปวันนั้น</param>
-    Task<int> RedateVoidReversalAsync(Guid companyId, Guid documentId, DateTime newDate, string actor);
+    /// <param name="entryDates">วันที่ที่ผู้ใช้กำหนดเอง **รายใบ** จากตารางในหน้าจอ —
+    /// ชนะทุกค่าเริ่มต้น; id ที่ไม่ใช่ตัวกลับของเอกสารนี้จะถูกปฏิเสธ</param>
+    Task<int> RedateVoidReversalAsync(Guid companyId, Guid documentId, DateTime newDate, string actor,
+        IReadOnlyList<RedateEntryDate>? entryDates = null);
 
     /// <summary>ดูรายการ "ตัวกลับ" ที่จะถูกย้ายก่อนกดยืนยัน — เอกสาร 1 ใบมี
     /// ตัวกลับได้หลายใบ (ใบซื้อ/ขาย + รับ-จ่ายชำระ + มัดจำ) ผู้ใช้ต้องเห็นว่า

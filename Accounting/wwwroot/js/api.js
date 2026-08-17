@@ -226,8 +226,9 @@ const API = {
       voidDocument: (id, reversalDate) => API.post(
         `${base}/document/${id}/void${reversalDate ? `?reversalDate=${reversalDate}` : ''}`),
       // แก้ใบที่ยกเลิกไปแล้วตอนระบบยังใช้ "วันที่กด" — ย้าย JE กลับรายการเข้างวดที่ถูก
-      redateVoidReversal: (id, newDate) => API.post(
-        `${base}/document/${id}/redate-void-reversal${newDate ? `?newDate=${newDate}` : ''}`),
+      // body.entries = [{journalEntryId, newDate}] กำหนดวันที่รายใบจากตารางในหน้าจอ
+      redateVoidReversal: (id, newDate, body) => API.post(
+        `${base}/document/${id}/redate-void-reversal${newDate ? `?newDate=${newDate}` : ''}`, body),
       // ดูก่อนย้าย — เอกสารใบเดียวมีตัวกลับได้หลายใบ ต้องเห็นว่าใบไหนย้ายไปวันไหน
       previewRedateVoidReversal: (id, newDate) => API.get(
         `${base}/document/${id}/redate-void-reversal/preview${newDate ? `?newDate=${newDate}` : ''}`),

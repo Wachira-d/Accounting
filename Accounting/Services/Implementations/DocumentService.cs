@@ -5348,7 +5348,8 @@ public class DocumentService : IDocumentService
     ///   • เอกสารต้องอยู่สถานะยกเลิกจริง
     /// </summary>
     public async Task<int> RedateVoidReversalAsync(
-        Guid companyId, Guid documentId, DateTime newDate, string actor)
+        Guid companyId, Guid documentId, DateTime newDate, string actor,
+        IReadOnlyList<RedateEntryDate>? entryDates = null)
     {
         var doc = await _db.Documents.AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
@@ -5367,15 +5368,28 @@ public class DocumentService : IDocumentService
 
         var originals = await LoadReversalOriginalsAsync(companyId, reversals);
 
+        // วันที่ที่ผู้ใช้พิมพ์เองรายบรรทัดจากตารางในหน้าจอ — ชนะทุกค่าเริ่มต้น
+        // (ห้ามรับ id ที่ไม่ใช่ตัวกลับของเอกสารนี้ ไม่งั้นกลายเป็นช่องแก้วันที่
+        //  ของ JE ใบไหนก็ได้ในบริษัท)
+        var explicitById = new Dictionary<Guid, DateTime>();
+        foreach (var e in entryDates ?? Array.Empty<RedateEntryDate>())
+        {
+            if (!reversals.Any(r => r.Id == e.JournalEntryId))
+                throw new InvalidOperationException(
+                    "มีรายการที่ไม่ใช่ 'ตัวกลับ' ของเอกสารนี้ปนมา — โหลดหน้าใหม่แล้วลองอีกครั้ง");
+            explicitById[e.JournalEntryId] = e.NewDate.Date;
+        }
+
         var moved = 0;
         foreach (var rev in reversals)
         {
             // เอกสาร 1 ใบมักมีตัวกลับหลายใบและ **คนละวัน** (ใบซื้อ 1 ก.ค. +
             // ใบจ่ายชำระ 17 ก.ค.) — ยัดทุกใบไปวันเดียวกันคือย้ายรายการจ่ายไป
-            // อยู่ผิดวัน. ค่าเริ่มต้นจึงเป็น "วันที่ของใบต้นฉบับที่ตัวเองกลับ"
-            // (ตกกลับวันที่เอกสารเมื่อหาใบต้นฉบับไม่เจอ) · ระบุวันที่มาเอง =
-            // บังคับทุกใบไปวันนั้น (ใช้ตอนต้องการรวมทุกอย่างไว้วันเดียว)
-            var target = ResolveRedateTarget(rev, newDate, doc.DocumentDate, originals);
+            // อยู่ผิดวัน. ลำดับการตัดสินวันที่: ผู้ใช้ระบุรายใบ → ระบุวันเดียว
+            // ทั้งชุด → วันที่ของใบต้นฉบับที่ตัวเองกลับ → วันที่เอกสาร
+            var target = explicitById.TryGetValue(rev.Id, out var chosen)
+                ? chosen
+                : ResolveRedateTarget(rev, newDate, doc.DocumentDate, originals);
             if (rev.EntryDate.Date == target) continue;
 
             var targetPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>

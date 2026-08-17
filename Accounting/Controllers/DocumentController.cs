@@ -645,7 +645,8 @@ public class DocumentController : ControllerBase
     /// สิทธิ์เท่ากับการยกเลิก และงวดปลายทางต้องเปิดอยู่</summary>
     [HttpPost("{documentId:guid}/redate-void-reversal")]
     public async Task<ActionResult<ApiResponse<object>>> RedateVoidReversal(
-        Guid companyId, Guid documentId, [FromQuery] DateTime? newDate = null)
+        Guid companyId, Guid documentId, [FromQuery] DateTime? newDate = null,
+        [FromBody] RedateVoidReversalRequest? request = null)
     {
         var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
         var docType = await GetDocumentTypeAsync(companyId, documentId);
@@ -654,7 +655,8 @@ public class DocumentController : ControllerBase
             return Forbid403<object>("ไม่มีสิทธิ์แก้วันที่รายการกลับบัญชีของเอกสารนี้");
 
         var moved = await _documentService.RedateVoidReversalAsync(
-            companyId, documentId, newDate ?? default, userIdGuid.ToString());
+            companyId, documentId, newDate ?? default, userIdGuid.ToString(),
+            request?.Entries);
         return Ok(new ApiResponse<object>(true, new { moved },
             moved > 0
                 ? $"ย้ายวันที่รายการกลับบัญชี {moved} ใบสำคัญเรียบร้อย"

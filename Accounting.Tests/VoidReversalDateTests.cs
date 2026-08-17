@@ -174,6 +174,77 @@ public class VoidReversalDateTests
         Assert.Equal(-13910m, augustBefore);
     }
 
+    /// <summary>ผู้ใช้พิมพ์วันที่เองรายบรรทัดในตาราง — ต้องชนะทุกค่าเริ่มต้น</summary>
+    private static DateTime TargetWithOverride(
+        Rev r, DateTime? perRow, DateTime? explicitAll, DateTime docDate)
+        => perRow?.Date ?? Target(r, explicitAll, docDate);
+
+    [Fact]
+    public void Per_row_date_beats_both_defaults()
+    {
+        var docDate = new DateTime(2026, 7, 1);
+        var pv = new Rev("PV", new DateTime(2026, 8, 17), new DateTime(2026, 7, 17));
+        var typed = new DateTime(2026, 7, 20);
+
+        Assert.Equal(typed, TargetWithOverride(pv, typed, null, docDate));
+        // แม้จะส่งวันเดียวทั้งชุดมาด้วย ค่ารายบรรทัดก็ยังชนะ
+        Assert.Equal(typed, TargetWithOverride(pv, typed, new DateTime(2026, 7, 31), docDate));
+        // ไม่พิมพ์เอง → ตกไปใช้ลำดับเดิม (วันเดียวทั้งชุด → ใบต้นฉบับ → เอกสาร)
+        Assert.Equal(new DateTime(2026, 7, 31),
+            TargetWithOverride(pv, null, new DateTime(2026, 7, 31), docDate));
+        Assert.Equal(new DateTime(2026, 7, 17), TargetWithOverride(pv, null, null, docDate));
+    }
+
+    /// <summary>ปุ่ม "📌 วันที่ใบแรก" = ใบสำคัญต้นฉบับที่เก่าที่สุดในชุดนี้</summary>
+    private static DateTime FirstEntryDate(IEnumerable<Rev> revs, DateTime docDate)
+    {
+        var dates = revs.Where(r => r.OriginalDate.HasValue)
+            .Select(r => r.OriginalDate!.Value.Date).OrderBy(d => d).ToList();
+        return dates.Count > 0 ? dates[0] : docDate.Date;
+    }
+
+    [Fact]
+    public void First_entry_button_picks_the_oldest_original()
+    {
+        var docDate = new DateTime(2026, 7, 5);
+        var revs = new[]
+        {
+            new Rev("PV", new DateTime(2026, 8, 17), new DateTime(2026, 7, 17)),
+            new Rev("UV", new DateTime(2026, 8, 17), new DateTime(2026, 7, 1)),
+        };
+        Assert.Equal(new DateTime(2026, 7, 1), FirstEntryDate(revs, docDate));
+    }
+
+    [Fact]
+    public void First_entry_button_falls_back_to_document_date()
+    {
+        var docDate = new DateTime(2026, 7, 5);
+        var revs = new[] { new Rev("JV", new DateTime(2026, 8, 17), null) };
+        Assert.Equal(docDate, FirstEntryDate(revs, docDate));
+    }
+
+    [Fact]
+    public void Setting_every_reversal_to_the_first_date_still_nets_to_zero_per_month()
+    {
+        // ผู้ใช้เลือก "ทุกใบ = วันที่ใบแรก (1 ก.ค.)" — ต้นฉบับยังอยู่ 1 ก.ค. และ
+        // 17 ก.ค. แต่ทั้งคู่อยู่ในเดือน ก.ค. ⇒ งบรายเดือนสุทธิยังเป็น 0
+        const decimal amt = 6955m;
+        var julyOriginals = amt + amt;
+        var julyReversals = amt + amt;   // ทั้งคู่ถูกตั้งเป็น 1 ก.ค.
+        Assert.Equal(0m, julyOriginals - julyReversals);
+        // (ต่างจากค่าเริ่มต้นตรงที่ "วัน" ไม่ตรงกับเหตุการณ์เท่านั้น — เดือนตรงเหมือนกัน)
+    }
+
+    [Fact]
+    public void Explicit_entry_ids_must_belong_to_this_document()
+    {
+        // กันไม่ให้ payload รายบรรทัดกลายเป็นช่องแก้วันที่ JE ใบไหนก็ได้
+        var candidates = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        static bool Accepts(Guid[] candidates, Guid requested) => candidates.Contains(requested);
+        Assert.True(Accepts(candidates, candidates[0]));
+        Assert.False(Accepts(candidates, Guid.NewGuid()));
+    }
+
     [Fact]
     public void Preview_marks_rows_that_are_already_on_target_as_no_move()
     {

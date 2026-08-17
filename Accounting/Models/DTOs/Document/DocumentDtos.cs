@@ -855,6 +855,14 @@ public record VoidReversalRedatePreview(
     DateTime DocumentDate,
     IReadOnlyList<VoidReversalRedateRow> Rows);
 
+/// <summary>กำหนดวันที่ให้ตัวกลับ "รายใบ" — ผู้ใช้แก้วันที่ในตารางได้ทีละบรรทัด
+/// (บางเคสอยากให้ทุกใบไปวันเดียวกับใบแรก บางเคสอยากให้แต่ละใบตามต้นฉบับตัวเอง)</summary>
+public record RedateEntryDate(Guid JournalEntryId, DateTime NewDate);
+
+/// <summary>ย้ายวันที่รายการกลับบัญชีแบบระบุรายใบ — ว่าง/ไม่ส่ง = ใช้ค่าเริ่มต้น
+/// (วันที่ของใบต้นฉบับที่ตัวเองกลับ)</summary>
+public record RedateVoidReversalRequest(List<RedateEntryDate>? Entries);
+
 /// <summary>Returned on the first approve attempt when pre-approval checks
 /// produced soft warnings (legal/correct but unusual). Operator reviews the
 /// list and retries with AcknowledgeWarnings=true to proceed. Hard errors
