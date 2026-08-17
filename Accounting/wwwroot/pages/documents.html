@@ -9176,7 +9176,13 @@
         }
         const wrap = document.getElementById('convertLinesWrap');
         const axis = this.convertAxis(target);
-        if (!axis || !id) { wrap.style.display = 'none'; this._convertFulfillment = null; return; }
+        // Invoice → TaxInvoice = อัปเกรดทั้งฉบับเสมอ (backend wholeDocRevenueUpgrade
+        // + Supersede บังคับยอดเท่าใบต้นทาง) — ถ้าเปิดตารางให้แบ่งจำนวน ผู้ใช้จะ
+        // สร้างใบกำกับยอดบางส่วนที่ "อนุมัติไม่ผ่านตลอดกาล" (dead end). รับเงิน
+        // บางส่วน = ออกใบกำกับเต็ม แล้วบันทึกชำระเป็นงวดที่ใบกำกับแทน
+        const _wholeDocUpgrade = target === 'TaxInvoice'
+          && this._currentDoc?.documentType === 'Invoice';
+        if (!axis || !id || _wholeDocUpgrade) { wrap.style.display = 'none'; this._convertFulfillment = null; return; }
         const api = Layout.api();
         if (!api) { wrap.style.display = 'none'; return; }
         try {

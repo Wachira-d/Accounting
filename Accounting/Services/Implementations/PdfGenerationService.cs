@@ -603,6 +603,105 @@ public partial class PdfGenerationService : IPdfGenerationService
                 .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
             return a != null ? (a.AccountCode, a.AccountName) : (code, fallbackName);
         }
+        // ลองหลาย code ตามลำดับ (mirror FindAccountAsync ที่มี primary/secondary)
+        async Task<(string Code, string Name)> ByCodeChain(string[] codes, string fallbackName)
+        {
+            foreach (var c in codes)
+            {
+                var a = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(x => x.CompanyId == companyId && x.AccountCode == c)
+                    .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+                if (a != null) return (a.AccountCode, a.AccountName);
+            }
+            return (codes[0], fallbackName);
+        }
+        // WHT payable — mirror DocumentService.ResolveWhtPayableAccountAsync:
+        // นิติบุคคล → 21917 (ภ.ง.ด.53) ก่อน, บุคคลธรรมดา → 21916 (ภ.ง.ด.3) ก่อน
+        async Task<(string Code, string Name)> WhtPayableAsync()
+        {
+            var preferJuristic = doc.Contact?.ContactType == ContactType.JuristicPerson;
+            return await ByCodeChain(
+                preferJuristic ? new[] { "21917", "21916" } : new[] { "21916", "21917" },
+                preferJuristic ? "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 53" : "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 3");
+        }
+        // ขาเงินออก/เข้า (ธนาคาร > ผังที่เลือก > เงินสด) — ใช้ร่วม PV settlement
+        async Task<(string Code, string Name)> MoneyAccountAsync()
+        {
+            if (doc.BankAccountId.HasValue)
+            {
+                var b = await _db.BankAccounts.AsNoTracking()
+                    .Where(x => x.Id == doc.BankAccountId.Value)
+                    .Select(x => new { x.AccountName }).FirstOrDefaultAsync();
+                return ("", b?.AccountName ?? "เงินฝากธนาคาร");
+            }
+            if (doc.PaymentAccountId.HasValue)
+            {
+                var p = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(x => x.Id == doc.PaymentAccountId.Value)
+                    .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+                if (p != null) return (p.AccountCode, p.AccountName);
+            }
+            // ผังมาตรฐานเงินสด = 11111 (11110 ไม่มีในผัง — เดิม fallback แสดง
+            // เลขที่ไม่มีอยู่จริง); 11110 คงไว้เผื่อผังเก่า/กำหนดเอง
+            return await ByCodeChain(new[] { "11111", "11110" }, "เงินสด");
+        }
+        // เจ้าหนี้ — mirror DocumentService.ResolvePayableAccountAsync:
+        // pinned DefaultApAccount ของผู้ติดต่อชนะ > Expense → 21220 เจ้าหนี้อื่น
+        // > ตระกูล 212 เจ้าหนี้การค้า
+        async Task<(string Code, string Name)> PayableAsync(DocumentType sourceType)
+        {
+            if (doc.Contact?.DefaultApAccountId is Guid pinnedApId)
+            {
+                var p = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(x => x.Id == pinnedApId && x.CompanyId == companyId && x.IsActive)
+                    .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+                if (p != null) return (p.AccountCode, p.AccountName);
+            }
+            if (sourceType == DocumentType.Expense)
+                return await ByCodeChain(new[] { "21220", "21210" }, "เจ้าหนี้อื่น");
+            return await ByCode("21210", "เจ้าหนี้การค้า");
+        }
+
+        // ═════ ใบสำคัญจ่ายที่ผูกใบตั้งหนี้ (แปลงเอกสาร/ดึงใบค้าง) = settlement ═════
+        // ⚠️ mirror ของ AutoPostToJournalAsync branch "PaymentVoucher + RelatedDocumentId"
+        // (DocumentService — แก้ที่นั่นต้องแก้ที่นี่ด้วย): Dr เจ้าหนี้ (ตามชนิดใบต้นทาง)
+        // / Cr เงินสด-ธนาคาร (ยอดจ่ายสุทธิ) / Cr ภาษีหัก ณ ที่จ่ายค้างจ่าย (Cash basis:
+        // ตัดเจ้าหนี้ gross = จ่าย + WHT). **ไม่มี** ขาค่าใช้จ่าย/VAT — สองขานั้นลง
+        // ตอนอนุมัติใบตั้งหนี้แล้ว. เดิมพรีวิวใช้สูตร standalone (Dr ค่าใช้จ่าย +
+        // Cr WHT ที่ hardcode "21510" ซึ่งผังมาตรฐานคือ "เงินมัดจำรับล่วงหน้าค่า
+        // ห้องพัก") กับใบ settlement ด้วย ⇒ ผู้ใช้เห็น "ค่าใช้จ่ายลงซ้ำ + WHT เข้า
+        // บัญชีมัดจำ" ทั้งที่ JE จริงถูกต้อง — พรีวิว GL คือ renderer ที่สองของ
+        // AutoPostToJournalAsync (defect class "สอง renderer ห้าม drift")
+        if (doc.DocumentType == DocumentType.PaymentVoucher && doc.RelatedDocumentId.HasValue)
+        {
+            var pvSrcType = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync() ?? DocumentType.PurchaseInvoice;
+            var whtBasisCash = (await _db.CompanySettings.AsNoTracking()
+                .Where(s => s.CompanyId == companyId)
+                .Select(s => (WhtRecognitionBasis?)s.WhtRecognitionBasis)
+                .FirstOrDefaultAsync() ?? WhtRecognitionBasis.Cash) == WhtRecognitionBasis.Cash;
+            // Cash basis: WHT รับรู้ตอนจ่าย (ใบนี้) / Accrual: รับรู้ไปแล้วตอนตั้งหนี้
+            var pvWht = whtBasisCash ? doc.WithholdingTaxAmount : 0m;
+
+            var ap = await PayableAsync(pvSrcType);
+            var payFrom = await MoneyAccountAsync();
+            var pvLines = new List<GlPostingLine>
+            {
+                new GlPostingLine(ap.Code, ap.Name, doc.TotalAmount + pvWht, 0m),
+            };
+            if (pvWht > 0)
+            {
+                var w = await WhtPayableAsync();
+                pvLines.Add(new GlPostingLine(w.Code, w.Name, 0m, pvWht));
+            }
+            pvLines.Add(new GlPostingLine(payFrom.Code, payFrom.Name, 0m, doc.TotalAmount));
+
+            var pvCons = ConsolidateGlLines(pvLines);
+            return new GlPostingSummary("(ประมาณการ — ก่อนอนุมัติ)", doc.DocumentDate,
+                pvCons, pvCons.Sum(l => l.Debit), pvCons.Sum(l => l.Credit));
+        }
 
         var lines = new List<GlPostingLine>();
         decimal lineNet = 0m;
@@ -641,7 +740,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         {
             if (isPurchase)
             {
-                var w = await ByCode("21510", "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+                // เดิม hardcode "21510" — ในผังมาตรฐาน (ChartOfAccountTemplates)
+                // 21510 คือ "เงินมัดจำรับล่วงหน้าค่าห้องพัก" ⇒ พรีวิวโชว์ WHT
+                // เข้าบัญชีมัดจำ ทั้งที่ JE จริงลง 21916/21917 ถูกต้อง
+                var w = await WhtPayableAsync();
                 lines.Add(new GlPostingLine(w.Code, w.Name, 0m, doc.WithholdingTaxAmount));
             }
             else
@@ -700,9 +802,13 @@ public partial class PdfGenerationService : IPdfGenerationService
             contra = p != null ? (p.AccountCode, p.AccountName) : ("", "เงินสด");
         }
         else if (doc.PaymentType == PaymentType.Credit || (doc.PaymentType == null && isSales))
-            contra = isPurchase ? await ByCode("21210", "เจ้าหนี้การค้า") : await ByCode("11210", "ลูกหนี้การค้า");
+            // ฝั่งซื้อ: mirror ResolvePayableAccountAsync — ใบบันทึกค่าใช้จ่าย
+            // ตั้ง "เจ้าหนี้อื่น 21220" ไม่ใช่เจ้าหนี้การค้า (เดิมพรีวิวโชว์ 21210
+            // ทุกชนิด = ไม่ตรง JE จริงของ Expense)
+            contra = isPurchase ? await PayableAsync(doc.DocumentType)
+                : await ByCode("11210", "ลูกหนี้การค้า");
         else
-            contra = await ByCode("11110", "เงินสด");
+            contra = await ByCodeChain(new[] { "11111", "11110" }, "เงินสด");
         lines.Add(new GlPostingLine(contra.Code, contra.Name,
             isSales ? contraAmt : 0m, isPurchase ? contraAmt : 0m));
 

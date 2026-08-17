@@ -88,12 +88,12 @@ public partial class TaxService : ITaxService
             }
             else if (request.TaxType == TaxType.VatPp36)
             {
-                // PP.36 — foreign service VAT. Treat like VAT report but
-                // pulled only from documents flagged as foreign-supplier
-                // (heuristic: contact has non-Thai TaxId or is marked
-                // ForeignSupplier). For now reuse the VAT generator;
-                // ApplyVatDeferralsAsync skips this branch.
-                await GenerateVatReport(companyId, startDate, endDate, report);
+                // ภ.พ.36 — VAT ประเมินเองแทนผู้ขายต่างประเทศ (§83/6). ห้าม reuse
+                // GenerateVatReport (ภ.พ.30): (1) มันดึงเอกสาร VAT ในประเทศทั้งหมด
+                // ไม่ใช่เฉพาะ IsForeignService (2) dedup ข้ามรายงานเทียบกับ ภ.พ.30
+                // — งวดที่ออก ภ.พ.30 ก่อน เอกสารถูกมองว่า "เคลมแล้ว" ทั้งชุด ⇒
+                // ภ.พ.36 ว่าง/ยอด 0 ตลอด (บั๊กที่ผู้ใช้เจอ)
+                await GeneratePp36Report(companyId, startDate, endDate, report);
             }
             else if (request.TaxType == TaxType.CorporateIncomeTax)
             {
@@ -1350,6 +1350,71 @@ public partial class TaxService : ITaxService
         return report;
     }
 
+    /// <summary>ภ.พ.36 — นำส่ง VAT แทนผู้ขายต่างประเทศ (§83/6 reverse charge).
+    /// เอกสารซื้อที่ IsForeignService=true (JE ตอนอนุมัติ Cr 21912 เจ้าหนี้
+    /// ภ.พ.36 แล้ว): ฐาน = ค่าบริการ, ยอดนำส่ง = VAT ประเมินเอง. นำส่ง+ได้
+    /// ใบเสร็จ RD แล้วจึงเคลมเป็นภาษีซื้อ ภ.พ.30 (11620/RecognizePp36) —
+    /// จึง**ไม่ dedup กับ ภ.พ.30** (คนละแบบ คนละหน้าที่).</summary>
+    private async Task GeneratePp36Report(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
+    {
+        var purchaseSide = new[] { DocumentType.PurchaseInvoice, DocumentType.Expense,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+        var docs = await _db.Documents
+            .Include(d => d.Lines)
+            .Where(d => d.CompanyId == companyId
+                && d.IsForeignService && d.VatAmount > 0
+                && purchaseSide.Contains(d.DocumentType)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Rejected
+                && (d.TaxPointDate ?? d.DocumentDate) >= startDate
+                && (d.TaxPointDate ?? d.DocumentDate) <= endDate)
+            .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
+
+        // กันนำส่งซ้ำ: เอกสารที่อยู่ในรายงาน ภ.พ.36 งวดอื่นแล้ว (pattern เดียวกับ
+        // ภ.พ.30 แต่เทียบเฉพาะ TaxType.VatPp36 ด้วยกันเอง)
+        var remittedElsewhere = (await _db.TaxReportLines
+            .Where(l => l.DocumentId != null && !l.IsExcluded
+                && l.TaxReportId != report.Id
+                && l.TaxReport.CompanyId == companyId
+                && l.TaxReport.TaxType == TaxType.VatPp36
+                && !(l.TaxReport.Year == report.Year && l.TaxReport.Month == report.Month))
+            .Select(l => l.DocumentId!.Value)
+            .ToListAsync())
+            .ToHashSet();
+        if (remittedElsewhere.Count > 0)
+            docs = docs.Where(d => !remittedElsewhere.Contains(d.Id)).ToList();
+
+        var lineOrder = 1;
+        foreach (var doc in docs.OrderBy(d => d.TaxPointDate ?? d.DocumentDate))
+        {
+            var baseAmount = doc.Lines?.Sum(l => l.Amount) ?? (doc.TotalAmount - doc.VatAmount);
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                TaxPayerId = doc.Contact?.TaxId,
+                TaxPayerName = doc.Contact?.Name ?? "(ผู้ขายต่างประเทศ)",
+                TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
+                Description = $"{doc.DocumentNumber} — บริการจากต่างประเทศ (§83/6)",
+                IncomeAmount = baseAmount,
+                TaxRate = baseAmount > 0
+                    ? Math.Round(doc.VatAmount / baseAmount * 100m, 2, MidpointRounding.AwayFromZero)
+                    : 7m,
+                TaxAmount = doc.VatAmount,
+                DocumentId = doc.Id,
+                IncomeTypeCode = "PP36",
+            });
+        }
+
+        // ยอดแบบ: ภ.พ.36 คือ "นำส่ง VAT" (ไม่มีขาภาษีซื้อหักในแบบเดียวกัน —
+        // สิทธิเคลมเกิดหลังนำส่งแล้วไปเข้า ภ.พ.30 งวดถัดไป)
+        report.TotalIncome = report.Lines.Sum(l => l.IncomeAmount);
+        report.OutputVat = report.Lines.Sum(l => l.TaxAmount);
+        report.InputVat = 0;
+        report.NetVat = report.OutputVat;
+    }
+
     private async Task GenerateWhtReport(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
     {
         // ภ.ง.ด.1 = เงินเดือน ม.40(1) จาก payroll เท่านั้น (ExportPnd1Async อ่าน
@@ -1398,6 +1463,40 @@ public partial class TaxService : ITaxService
             return report.TaxType == form;
         }
         docs = docs.Where(d => PayeeInScope(d.Contact)).ToList();
+
+        // ── กันนับซ้ำสาย "ตั้งหนี้ → ใบสำคัญจ่าย" — ทั้ง PI/Expense และ PV ที่
+        // แปลง/ผูกกัน ถือ WithholdingTaxAmount บนเอกสารทั้งคู่ ⇒ เดิมเข้ารายงาน
+        // ทั้งสองใบ = นำส่ง 2 เท่า (คนละเดือนถ้าจ่ายข้ามเดือน). แถวจริงตาม
+        // WhtRecognitionBasis ของบริษัท:
+        //   Cash (default): WHT เกิดตอนจ่าย → PV คือแถวจริง; ใบตั้งหนี้ที่มี PV
+        //     active แล้วข้าม (ใบตั้งหนี้ที่จ่ายผ่าน "บันทึกชำระเงิน" ไม่มี PV →
+        //     ยังแสดงจากใบตั้งหนี้ตามเดิม)
+        //   Accrual: WHT เกิดตอนตั้งหนี้ → ใบตั้งหนี้คือแถวจริง; PV ที่ผูก
+        //     ใบต้นทางข้าม (PV standalone ไม่มีต้นทาง ยังแสดง)
+        var whtBasis = await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (Models.Enums.WhtRecognitionBasis?)s.WhtRecognitionBasis)
+            .FirstOrDefaultAsync() ?? Models.Enums.WhtRecognitionBasis.Cash;
+        if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
+        {
+            var settledSourceIds = (await _db.Documents.AsNoTracking()
+                .Where(x => x.CompanyId == companyId
+                    && x.DocumentType == DocumentType.PaymentVoucher
+                    && x.RelatedDocumentId != null && !x.IsDeleted
+                    && x.WithholdingTaxAmount != 0
+                    && x.Status != DocumentStatus.Draft && x.Status != DocumentStatus.Voided
+                    && x.Status != DocumentStatus.Rejected)
+                .Select(x => x.RelatedDocumentId!.Value)
+                .ToListAsync())
+                .ToHashSet();
+            docs = docs.Where(d => d.DocumentType == DocumentType.PaymentVoucher
+                || !settledSourceIds.Contains(d.Id)).ToList();
+        }
+        else
+        {
+            docs = docs.Where(d => d.DocumentType != DocumentType.PaymentVoucher
+                || d.RelatedDocumentId == null).ToList();
+        }
 
         var lineOrder = 1;
         foreach (var doc in docs)
