@@ -98,7 +98,9 @@ public class JournalAnomalyService
             var facts = doc != null
                 ? new JournalPostingGuard.DocFacts(
                     doc.DocumentType, doc.SubTotal, doc.VatAmount,
-                    doc.WithholdingTaxAmount, doc.TotalAmount, doc.IsDeposit)
+                    doc.WithholdingTaxAmount, doc.TotalAmount, doc.IsDeposit,
+                    // JE หลักของ AutoPost ลงเป็นบาทผ่าน Conv() ⇒ แปลงยอดเอกสารก่อนเทียบ
+                    ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate)
                 : null;
 
             foreach (var f in JournalPostingGuard.Validate(lines, facts))

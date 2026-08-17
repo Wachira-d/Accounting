@@ -5142,11 +5142,17 @@ public class DocumentService : IDocumentService
                 "ใบมัดจำมีวงจรของตัวเอง (รับ → ตัด/คืน) — เปลี่ยนผังบัญชีรายบรรทัดไม่ได้ " +
                 "ให้ใช้การคืน/ตัดมัดจำตามปกติ");
 
+        // ⚠️ WaitingApproval ต้องอยู่ในลิสต์ด้วย — ใบที่รออนุมัติ **ยังไม่มี JE**
+        // ถ้าปล่อยผ่าน: reclassify ลง JE คู่ (Dr ผังใหม่/Cr ผังเก่า) + เปลี่ยน
+        // line.AccountId → พออนุมัติ AutoPost ลง Dr ผังใหม่อีกรอบ ⇒ ค่าใช้จ่าย
+        // เบิ้ล 2 เท่า และผังเก่าติดลบ โดย Dr=Cr ยังสมดุลจึงไม่มี guard ตัวไหนจับ
+        // (UI ใช้ whitelist Approved/Sent/PartiallyPaid/Paid อยู่แล้ว — ช่องนี้
+        //  เปิดเฉพาะทาง API; defect class "guard UI ไม่ตรง server")
         if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
-                       or DocumentStatus.Rejected)
+                       or DocumentStatus.Rejected or DocumentStatus.WaitingApproval)
             throw new InvalidOperationException(
                 $"เอกสาร Status={doc.Status} ไม่อยู่ในขั้นที่ reclassify ได้ " +
-                "(Draft = แก้ผ่านฟอร์มปกติ, Voided/Rejected = สร้างใหม่)");
+                "(Draft/รออนุมัติ = แก้ผ่านฟอร์มปกติ, Voided/Rejected = สร้างใหม่)");
 
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
             p.CompanyId == companyId
@@ -5338,6 +5344,18 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "มีเอกสารปลายทางอ้างเอกสารนี้แล้ว — ยกเลิกเอกสารปลายทางก่อน");
 
+        // ⚠️ ใบที่รับ/จ่ายชำระแล้ว: ขั้นที่ 1 ด้านล่างกลับ "ทุก JE ที่ผูกเอกสารนี้"
+        // ซึ่งรวม **JE การชำระเงิน** (SourceDocumentId = doc, OriginalEntryId = null)
+        // แต่ขั้นที่ 2 (AutoPost) ลงคืนเฉพาะ JE ใบหลัก ⇒ เงินที่รับ/จ่ายจริงหาย
+        // จาก GL ถาวร ขณะที่ Payment row + PaidAmount ยังอยู่เต็ม (subledger ว่า
+        // จ่ายแล้ว / GL ว่ายังค้าง). ใช้ guard เดียวกับ ReclassifyPaymentSourceAsync
+        var hasPayments = await _db.Payments.AsNoTracking().AnyAsync(p =>
+            p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted);
+        if (hasPayments)
+            throw new InvalidOperationException(
+                "เอกสารนี้มีการรับ/จ่ายชำระแล้ว — ย้ายฝั่งจะทำให้รายการชำระหายจากบัญชี " +
+                "กรุณายกเลิกการชำระก่อน แล้วค่อยย้ายฝั่ง");
+
         var inSubmittedReport = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
             l.DocumentId == documentId && l.TaxReport.CompanyId == companyId
             && (l.TaxReport.Status == TaxReportStatus.Submitted
@@ -5368,8 +5386,13 @@ public class DocumentService : IDocumentService
                 .Select(j => j.Id).ToListAsync();
             foreach (var jeId in postedJeIds)
             {
+                // วันที่ตัวกลับต้องเป็น **วันที่เอกสารเอง** ไม่ใช่วันที่กด — ขั้นที่ 2
+                // ลง JE ใหม่ที่ doc.DocumentDate เสมอ (AutoPost) ถ้าตัวกลับไปตกวันนี้
+                // งวดของเอกสารจะมีทั้ง JE เก่าและใหม่พร้อมกัน (ผิด +ยอดทั้งใบ) และ
+                // งวดปัจจุบันมียอดกลับลอย (ผิด −ยอดทั้งใบ) — บทเรียนรอบ 60 ที่
+                // VoidDocumentAsync แก้ไปแล้ว แต่เส้นนี้เขียนทีหลังและพลาดซ้ำ
                 await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
-                    reversalDate: DateTime.UtcNow.Date,
+                    reversalDate: doc.DocumentDate.Date,
                     description: $"ย้ายฝั่งใบลดหนี้/เพิ่มหนี้ {doc.DocumentNumber} → ฝั่ง{sideLabel}",
                     systemTriggered: true);
             }
@@ -5444,11 +5467,12 @@ public class DocumentService : IDocumentService
                 "เอกสารนี้ไม่มีแหล่งเงิน (บัญชี Cr เงินสด/ธนาคาร) ที่ระบุไว้ — " +
                 "ถ้าเป็นใบตั้งหนี้ เงินจะไหลตอนสร้างใบสำคัญจ่าย ให้แก้แหล่งเงินที่ใบนั้น");
 
+        // WaitingApproval เช่นกัน — ยังไม่มี JE ให้แก้ (ดูเหตุผลเต็มที่ reclassify-line)
         if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
-                       or DocumentStatus.Rejected)
+                       or DocumentStatus.Rejected or DocumentStatus.WaitingApproval)
             throw new InvalidOperationException(
                 $"เอกสาร Status={doc.Status} ไม่อยู่ในขั้นที่แก้แหล่งเงินแบบ reclassify ได้ " +
-                "(Draft = แก้ผ่านฟอร์มปกติ, Voided/Rejected = สร้างใหม่)");
+                "(Draft/รออนุมัติ = แก้ผ่านฟอร์มปกติ, Voided/Rejected = สร้างใหม่)");
 
         // ===== gate compliance เดียวกับ reclassify-line =====
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
@@ -5698,6 +5722,15 @@ public class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Voided)
             throw new InvalidOperationException(
                 "เอกสารนี้ยังไม่ถูกยกเลิก — เครื่องมือนี้ใช้แก้วันที่ของ 'รายการกลับบัญชี' เท่านั้น");
+
+        // ⚠️ งวดบัญชีเปิดอยู่ ≠ ยื่นภาษีได้ — ย้ายตัวกลับเข้าเดือนที่ ภ.พ.30/ภ.ง.ด.
+        // ยื่นไปแล้วทำให้ GL ของเดือนนั้นไม่ตรงกับแบบที่ยื่น (และเดือนต้นทางเหลือ
+        // ยอดลอยที่ไม่มีแถวรองรับ) — เพี้ยนสองเดือนพร้อมกัน. เครื่องมือพี่น้อง
+        // (Void / Adjust / ReclassifyLine) เช็คข้อนี้ครบแล้ว เส้นนี้ตกหล่น
+        if (_taxService != null && await _taxService.IsDocumentFilingLockedAsync(companyId, documentId))
+            throw new InvalidOperationException(
+                "เอกสารนี้อยู่ในรายงานภาษีที่ยื่นสรรพากรแล้ว — ย้ายวันที่รายการกลับบัญชีไม่ได้ " +
+                "(GL จะไม่ตรงกับแบบที่ยื่น) ถ้าจำเป็นต้องแก้ ให้ยื่นแบบเพิ่มเติม/ปรับปรุงแทน");
 
         // ตัวกลับของเอกสารนี้ (Posted เท่านั้น — ตัวที่ยังมีผลต่อ GL)
         var reversals = await _db.JournalEntries
@@ -13052,10 +13085,13 @@ public class DocumentService : IDocumentService
                     guardAccts[l.AccountId].AccountCode, guardAccts[l.AccountId].AccountType,
                     l.Debit, l.Credit))
                 .ToList();
+            // ยอดบนเอกสารเป็น "สกุลเอกสาร" แต่ pendingLines ผ่าน Conv() เป็นบาทแล้ว
+            // ⇒ ต้องบอกเรทให้ guard แปลงก่อนเทียบ ไม่งั้นใบ USD@35 จะ block ทุกใบ
             var guardFindings = JournalPostingGuard.Validate(guardLines,
                 new JournalPostingGuard.DocFacts(
                     doc.DocumentType, doc.SubTotal, doc.VatAmount,
-                    doc.WithholdingTaxAmount, doc.TotalAmount, doc.IsDeposit));
+                    doc.WithholdingTaxAmount, doc.TotalAmount, doc.IsDeposit,
+                    ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate));
             var guardError = JournalPostingGuard.ErrorSummary(guardFindings, doc.DocumentNumber);
             if (guardError != null)
                 throw new InvalidOperationException(guardError);

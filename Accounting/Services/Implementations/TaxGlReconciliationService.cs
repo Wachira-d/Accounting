@@ -85,6 +85,13 @@ public class TaxGlReconciliationService
             join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
             where j.CompanyId == companyId
                 && j.Status == JournalEntryStatus.Posted
+                // ⚠️ ต้องกรอง "คู่กลับรายการ" ออกทั้งคู่ ไม่ใช่ข้างเดียว:
+                // ReverseJournalEntryAsync ตั้งใบต้นฉบับเป็น Reversed (หลุดจาก
+                // Posted อยู่แล้ว) แต่ตัวกลับยังเป็น Posted ⇒ นับข้างเดียวได้
+                // ยอดติดลบทั้งก้อน. เคสจริง: ใบขาย VAT 700 void ในเดือนเดียวกัน
+                // → GL แสดง −700 เทียบรายงาน 0 → ผลต่าง −700 ที่ไล่สาเหตุไม่เจอ
+                // (ตกที่ UNKNOWN ทุกครั้ง). สูตรเดียวกับ TaxService fallback
+                && j.OriginalEntryId == null && j.ReversedByEntryId == null
                 && !j.IsDeleted && !l.IsDeleted
                 && j.EntryDate >= start && j.EntryDate < endExclusive
             select new { a.AccountCode, l.DebitAmount, l.CreditAmount, j.SourceDocumentId })

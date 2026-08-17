@@ -1554,10 +1554,13 @@ public class IntegrationService : IIntegrationService
                 accts[l.AccountId].AccountCode, accts[l.AccountId].AccountType,
                 l.DebitAmount, l.CreditAmount))
             .ToList();
+        // เส้น integration ลง JE ด้วยยอดเดียวกับเอกสารตรง ๆ (ไม่มี Conv) ⇒ rate 1
+        // ระบุชัดไว้กันคนแก้ทีหลังเผลอใส่ doc.ExchangeRate แล้วเทียบผิดหน่วย
         var guardFindings = JournalPostingGuard.Validate(guardLines,
             new JournalPostingGuard.DocFacts(
                 document.DocumentType, document.SubTotal, document.VatAmount,
-                document.WithholdingTaxAmount, document.TotalAmount, document.IsDeposit));
+                document.WithholdingTaxAmount, document.TotalAmount, document.IsDeposit,
+                ExchangeRate: 1m));
         var guardError = JournalPostingGuard.ErrorSummary(guardFindings, document.DocumentNumber);
         if (guardError != null)
         {

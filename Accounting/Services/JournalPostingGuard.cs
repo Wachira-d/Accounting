@@ -25,13 +25,19 @@ public static class JournalPostingGuard
 
     /// <summary>ข้อเท็จจริงจากเอกสารต้นทาง — null ได้ (JE ที่ไม่ผูกเอกสาร
     /// จะตรวจเฉพาะกฎโครงสร้างที่ไม่ต้องรู้บริบท)</summary>
+    /// <param name="ExchangeRate">เรทแปลงเป็นหน่วยเดียวกับ GL — ยอดบนเอกสาร
+    /// สกุลต่างประเทศเก็บเป็นสกุลเอกสาร แต่ AutoPost ลง GL เป็นบาท (Conv) ⇒
+    /// ต้องคูณก่อนเทียบ ไม่งั้นใบ USD@35 โดน JE-VAT-OVER/JE-WHT-DOC block ทุกใบ
+    /// (เคสจริงจากทีมจำลอง P-1). เส้นที่ JE ลงหน่วยเดียวกับเอกสารอยู่แล้ว
+    /// (integration) ใช้ 1</param>
     public sealed record DocFacts(
         DocumentType DocumentType,
         decimal SubTotal,
         decimal VatAmount,
         decimal WithholdingTaxAmount,
         decimal TotalAmount,
-        bool IsDeposit = false);
+        bool IsDeposit = false,
+        decimal ExchangeRate = 1m);
 
     public sealed record Finding(string RuleCode, bool IsError, string Message);
 
@@ -67,52 +73,66 @@ public static class JournalPostingGuard
         // ตามกฎหมายสูงสุด 15% (ท.ป.4/2528) ถ้าเกินมาก = เครดิตผิดบัญชีแน่นอน
         // (เคสจริง: ทั้งใบ 19,142.30 ลง 21917 = 107% ของฐาน)
         var whtCr = Rnd(lines.Where(l => IsWhtPayable(l.AccountCode)).Sum(l => l.Credit));
-        var expenseBase = Rnd(lines
-            .Where(l => l.AccountType is AccountType.Expense or AccountType.Asset
-                        && !IsInputVat(l.AccountCode))
+        // ฐานเทียบ = **ทุกขา Dr ที่ไม่ใช่บัญชีภาษี** ไม่ใช่เฉพาะหมวดค่าใช้จ่าย/
+        // สินทรัพย์ — เพราะ JE ที่มี WHT มีได้หลายทรง:
+        //   ตั้งหนี้  Dr ค่าใช้จ่าย  / Cr เจ้าหนี้ + Cr WHT
+        //   จ่ายชำระ Dr เจ้าหนี้(หนี้สิน) + Dr ผลต่างอัตราแลกเปลี่ยน / Cr เงิน + Cr WHT
+        // เดิมนับเฉพาะ Expense/Asset ⇒ JE จ่ายชำระเหลือฐานแค่ขา FX เล็ก ๆ แล้ว
+        // ฟ้อง Error เท็จทุกใบ (X-8ข) · และถ้าบรรทัดถูกลงผังหมวดรายได้ผิดฝั่ง
+        // ฐานจะเป็น 0 จนกฎถูกข้ามทั้งข้อ — ยิ่งผิดยิ่งเงียบ (P-8)
+        var whtBase = Rnd(lines
+            .Where(l => !IsAnyVatOrWht(l.AccountCode))
             .Sum(l => l.Debit));
-        if (whtCr > 0 && expenseBase > 0 && whtCr > Rnd(expenseBase * 0.155m) + 1m)
+        if (whtCr > 0 && whtBase > 0 && whtCr > Rnd(whtBase * 0.155m) + 1m)
             findings.Add(new Finding("JE-WHT-RATIO", true,
                 $"ยอดภาษีหัก ณ ที่จ่าย ({whtCr:N2}) สูงเกินอัตราสูงสุด 15% ของฐาน " +
-                $"({expenseBase:N2}) — น่าจะเครดิตผิดบัญชี (ขาเจ้าหนี้/เงินไปลงบัญชี WHT)"));
+                $"({whtBase:N2}) — น่าจะเครดิตผิดบัญชี (ขาเจ้าหนี้/เงินไปลงบัญชี WHT)"));
 
         if (doc == null || doc.IsDeposit) return findings;
 
         // ── กฎที่เทียบกับเอกสารต้นทาง ─────────────────────────────────────
+        // ยอดเอกสารแปลงเป็นหน่วยเดียวกับ GL ก่อนเทียบเสมอ (P-1) — เผื่อค่า
+        // ความคลาดเคลื่อนจากการปัดรายบรรทัด (Conv ปัดต่อบรรทัด + fx squeeze)
+        var rate = doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate;
+        var docVat = Rnd(doc.VatAmount * rate);
+        var docWht = Rnd(doc.WithholdingTaxAmount * rate);
+        var docTotal = Rnd(doc.TotalAmount * rate);
+        var tol = rate == 1m ? 1m : 1m + Rnd(0.02m * rate);
+
         // 1) ยอด WHT ใน GL ต้องตรงกับยอดบนเอกสาร
-        if (whtCr > 0 && Math.Abs(whtCr - Rnd(doc.WithholdingTaxAmount)) > 1m)
+        if (whtCr > 0 && Math.Abs(whtCr - docWht) > tol)
             findings.Add(new Finding("JE-WHT-DOC", true,
                 $"ยอดภาษีหัก ณ ที่จ่ายใน JE ({whtCr:N2}) ไม่ตรงกับเอกสาร " +
-                $"({doc.WithholdingTaxAmount:N2})"));
-        if (whtCr == 0 && doc.WithholdingTaxAmount > 1m && IsPurchaseFamily(doc.DocumentType))
+                $"({docWht:N2})"));
+        if (whtCr == 0 && docWht > 1m && IsPurchaseFamily(doc.DocumentType))
             findings.Add(new Finding("JE-WHT-MISSING", false,
-                $"เอกสารมีภาษีหัก ณ ที่จ่าย {doc.WithholdingTaxAmount:N2} " +
+                $"เอกสารมีภาษีหัก ณ ที่จ่าย {docWht:N2} " +
                 "แต่ JE ไม่มีบรรทัดบัญชี WHT ค้างจ่าย (21916/21917/21918)"));
 
         // 2) VAT ใน GL ต้องไม่ "เกิน" เอกสาร (น้อยกว่าได้ — เคสไม่เคลม/พักรอใบกำกับ)
         var inputVatDr = Rnd(lines.Where(l => IsInputVat(l.AccountCode)).Sum(l => l.Debit - l.Credit));
         var outputVatCr = Rnd(lines.Where(l => IsOutputVat(l.AccountCode)).Sum(l => l.Credit - l.Debit));
-        if (inputVatDr > Rnd(doc.VatAmount) + 1m)
+        if (inputVatDr > docVat + tol)
             findings.Add(new Finding("JE-VAT-OVER", true,
-                $"ภาษีซื้อใน JE ({inputVatDr:N2}) มากกว่า VAT บนเอกสาร ({doc.VatAmount:N2})"));
-        if (outputVatCr > Rnd(doc.VatAmount) + 1m)
+                $"ภาษีซื้อใน JE ({inputVatDr:N2}) มากกว่า VAT บนเอกสาร ({docVat:N2})"));
+        if (outputVatCr > docVat + tol)
             findings.Add(new Finding("JE-VAT-OVER", true,
-                $"ภาษีขายใน JE ({outputVatCr:N2}) มากกว่า VAT บนเอกสาร ({doc.VatAmount:N2})"));
+                $"ภาษีขายใน JE ({outputVatCr:N2}) มากกว่า VAT บนเอกสาร ({docVat:N2})"));
 
         // 3) ฝั่งซื้อ: "เงินของใบนี้ต้องไปอยู่ที่ไหนสักแห่งที่ไม่ใช่บัญชีภาษี" —
         //    ขา Cr ที่ไม่ใช่ VAT/WHT ต้องรองรับยอด TotalAmount (เจ้าหนี้/เงินสด/
         //    ธนาคาร/เจ้าหนี้กรรมการ/แหล่งเงินใดก็ได้ที่ผู้ใช้เลือก — ไม่ fix รหัส
         //    เพื่อไม่ block แหล่งเงินที่ถูกกฎหมายอื่น ๆ) ถ้าเงินทั้งใบไปกองใน
         //    บัญชีภาษี = ผิดแน่ (เคสจริง: Cr ที่ไม่ใช่ภาษี = 0)
-        if (IsPurchaseFamily(doc.DocumentType) && doc.TotalAmount > 1m)
+        if (IsPurchaseFamily(doc.DocumentType) && docTotal > 1m)
         {
             var counterpartCr = Rnd(lines
                 .Where(l => !IsAnyVatOrWht(l.AccountCode))
                 .Sum(l => l.Credit));
-            if (counterpartCr < Rnd(doc.TotalAmount) - 1m)
+            if (counterpartCr < docTotal - tol)
                 findings.Add(new Finding("JE-NO-COUNTERPART", true,
                     $"ขาเครดิตเจ้าหนี้/เงินสด/ธนาคาร ({counterpartCr:N2}) ไม่ครบยอดเอกสาร " +
-                    $"({doc.TotalAmount:N2}) — เงินของใบนี้ไปกองอยู่ในบัญชีภาษีแทน"));
+                    $"({docTotal:N2}) — เงินของใบนี้ไปกองอยู่ในบัญชีภาษีแทน"));
         }
 
         return findings;
