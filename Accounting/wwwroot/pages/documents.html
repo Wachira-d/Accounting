@@ -834,6 +834,10 @@
                 <span style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
                 <span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht" style="text-align:right">0.00</strong>
               </div>
+              <!-- ใบเก่า/ใบที่นำเข้ามาอาจเก็บ VAT ที่ต่างจากการคิดจากฐานรวมอยู่
+                   ระดับสตางค์ — ระบบคง "ยอดที่บันทึกไว้" ไว้ (ไม่แก้เงียบ ๆ)
+                   แต่ต้องบอกผู้ใช้ว่าต่างเท่าไรและกดอะไรถึงจะคิดใหม่ -->
+              <div id="sumVatKeptNote" style="display:none;font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 8px;margin-top:6px;line-height:1.6"></div>
               <div style="display:grid;grid-template-columns:1fr auto;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--gray-200);font-size:18px;font-weight:700;color:var(--primary)">
                 <span>ยอดสุทธิ</span><span id="sumTotal" style="text-align:right">0.00</span>
               </div>
@@ -1025,13 +1029,61 @@
             <input type="text" class="form-input" id="rclReason" placeholder="เช่น ลงผังผิด ควรเป็นค่าน้ำมัน ไม่ใช่ค่าซ่อม">
           </div>
           <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
-            ⚠️ ระบบจะสร้าง JE คู่ใหม่ <b>Dr ผังใหม่ / Cr ผังเก่า</b> ลงงวดเดียวกับเอกสาร — ไม่แก้ตัวเอกสารต้นฉบับ.
-            ใช้ได้เฉพาะเมื่อ: งวดบัญชียังไม่ปิด, ภพ.30 ยังไม่ยื่น, ไม่มีเอกสารปลายทาง, ไม่มี Payment.
+            ⚠️ ระบบจะสร้าง <b>JE ย้ายบัญชีคู่ใหม่</b> ลงงวดเดียวกับเอกสาร โดยกลับด้านที่ลงไว้จริง
+            (บรรทัดค่าใช้จ่าย = Dr ผังใหม่ / Cr ผังเก่า · บรรทัดรายได้ = Dr ผังเก่า / Cr ผังใหม่)
+            — ไม่แก้ตัวเอกสารต้นฉบับ ยอดบนใบกำกับและยอด VAT ไม่เปลี่ยน.<br>
+            ใช้ได้เฉพาะเมื่อ: งวดบัญชียังไม่ปิด, ภ.พ.30 ยังไม่ยื่น, ยังไม่ส่ง e-Tax, ไม่มีเอกสารปลายทาง.
+            ห้ามย้ายเข้า/ออกบัญชีคุม (ภาษีซื้อ-ขาย, ลูกหนี้-เจ้าหนี้, มัดจำ).
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('reclassifyLineModal')">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.submitReclassifyLine()">บันทึก + Post JE</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- แก้วันที่รายการกลับบัญชี — เอกสาร 1 ใบมีตัวกลับได้หลายใบ (ใบซื้อ/ขาย +
+         รับ-จ่ายชำระ + มัดจำ) ผู้ใช้ต้องเห็นก่อนกดว่า "ใบไหนย้ายจากวันไหนไปวันไหน"
+         เดิมใช้ prompt() ถามวันเดียวโดยไม่บอกว่าจะไปแตะใบไหนบ้าง -->
+    <div class="modal-overlay" id="redateReversalModal">
+      <div class="modal" style="max-width:720px">
+        <div class="modal-header">
+          <h3 class="modal-title">แก้วันที่รายการกลับบัญชี</h3>
+          <button class="modal-close" onclick="Layout.closeModal('redateReversalModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="rvdInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px"></div>
+          <!-- ตอบคำถามที่ถามบ่อย: "ใบเดียวทำไมมีตั้งหลายรายการ" -->
+          <div style="font-size:11px;color:#475569;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.7">
+            💡 <b>ทำไมใบเดียวมีหลายรายการ?</b> ระบบลงบัญชีแยกตาม “เหตุการณ์” ไม่ใช่ตามใบ —
+            ตอนอนุมัติเอกสารลง 1 รายการ, ตอนรับ/จ่ายเงินลงอีก 1 รายการ (และมัดจำ/ภาษีหัก ณ ที่จ่าย
+            อาจมีอีก) พอกดยกเลิก ระบบจะสร้าง “ตัวกลับ” ให้ <b>ทุกรายการ</b> ⇒
+            2 เหตุการณ์ = 4 รายการ (ต้นฉบับ 2 + ตัวกลับ 2). ตารางนี้แสดงเฉพาะ
+            <b>ตัวกลับ</b> ที่ย้ายได้ ใบต้นฉบับไม่ถูกแตะ
+          </div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px;font-size:12px">
+            <span class="text-gray-500">ตั้งวันที่ให้ทุกใบพร้อมกัน:</span>
+            <button class="btn btn-sm btn-secondary" onclick="Page.rvdSetAll('first')"
+                    title="ใช้วันที่ของใบสำคัญต้นฉบับที่เก่าที่สุด (วันที่สร้างใบแรก)">📌 วันที่ใบแรก</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.rvdSetAll('doc')"
+                    title="ใช้วันที่บนตัวเอกสาร">วันที่เอกสาร</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.rvdSetAll('own')"
+                    title="แต่ละใบกลับไปวันเดียวกับใบต้นฉบับของตัวเอง — ตรงตามเหตุการณ์ที่สุด">ตามใบต้นฉบับของแต่ละใบ</button>
+            <input type="date" class="form-input" id="rvdDate" style="width:160px"
+                   title="เลือกวันแล้วกด 'ใช้วันนี้ทุกใบ'">
+            <button class="btn btn-sm btn-secondary" onclick="Page.rvdSetAll('custom')">ใช้วันนี้ทุกใบ</button>
+          </div>
+          <div id="rvdRows"></div>
+          <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px;margin-top:12px">
+            ⚠️ ย้ายเฉพาะ <b>ใบสำคัญ "ตัวกลับ"</b> เท่านั้น — ใบต้นฉบับไม่ถูกแตะ
+            ⇒ ยอดเดบิต/เครดิตรวมเท่าเดิม เปลี่ยนแค่ว่าอยู่งวดไหน.
+            งวดต้นทางและปลายทางต้องเปิดอยู่ทั้งคู่
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('redateReversalModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="rvdSubmit" onclick="Page.submitRedateVoidReversal()">ย้ายวันที่</button>
         </div>
       </div>
     </div>
@@ -1805,6 +1857,19 @@
       /** กฎเหล็ก #3 — highlight field ที่ OCR confidence ต่ำกว่า 0.85 ด้วย
        * กรอบเหลือง + tooltip "🤖 ตรวจสอบอีกครั้ง". field ที่ ≥0.85 ปล่อย
        * normal. ลบ highlight เมื่อ user แตะ (input event) — แปลว่ายืนยันแล้ว */
+      // mirror ของ DocumentService: ชนิดเอกสารที่เปลี่ยนผังรายบรรทัดได้ +
+      // บัญชีคุมที่ห้ามย้ายเข้า/ออก (ระบบอื่นอ่านยอดบัญชีพวกนี้เป็นความจริง:
+      // ภ.พ.30 อ่านภาษีซื้อ/ขาย · อายุหนี้อ่านลูกหนี้/เจ้าหนี้ · หน้ามัดจำอ่าน 215/217)
+      RECLASSIFIABLE_TYPES: ['Expense', 'PurchaseInvoice', 'PaymentVoucher',
+                             'Invoice', 'TaxInvoice', 'Receipt', 'CreditNote', 'DebitNote'],
+      // เทียบตรงรหัส (ไม่ใช่ prefix) — mirror ของ ReclassifyProtectedCodes
+      PROTECTED_ACCOUNT_CODES: ['11310', '11610', '11640', '21210',
+                                '21510', '21520', '21610', '21711', '21712', '21713',
+                                '21911', '21912', '21913', '21916', '21917', '21918'],
+      isProtectedAccountCode(code) {
+        return this.PROTECTED_ACCOUNT_CODES.includes(String(code || '').trim());
+      },
+
       /** Option 1 reclassify: เปลี่ยนผังบัญชี (line.AccountId) ของเอกสารที่
        * approved แล้ว — Expense/PI/PV เท่านั้น. ระบบจะ post reclassify-JE
        * คู่ใหม่ (Dr ผังใหม่ / Cr ผังเก่า) ใต้ฉาก. ไม่แก้เอกสารต้นฉบับ */
@@ -1822,7 +1887,8 @@
         const dl = document.getElementById('rclAccountList');
         if (dl && this.coaByCode) {
           dl.innerHTML = Object.values(this.coaByCode)
-            .filter(a => a.accountCode !== oldAccountCode)
+            .filter(a => a.accountCode !== oldAccountCode
+              && !this.isProtectedAccountCode(a.accountCode))
             .slice(0, 200)
             .map(a => `<option value="${this.escapeHtml(a.accountCode)} ${this.escapeHtml(a.accountName)}">`).join('');
         }
@@ -5553,6 +5619,22 @@
         if (mode === 'amt') return Math.min(Math.max(disc, 0), gross);
         return gross * (disc / 100);
       },
+      /** ลายนิ้วมือของ "ฐานที่ใช้คิด VAT" ของบรรทัด — เปลี่ยนเมื่อไรแปลว่า
+       *  ยอดที่เก็บไว้ใช้ไม่ได้แล้ว ต้องคิดใหม่ */
+      _vatBasisKey(row) {
+        const g = f => (row.querySelector(`[data-f="${f}"]`)?.value ?? '').trim();
+        const incl = document.getElementById('fPricesIncludeVat')?.checked ? '1' : '0';
+        return [g('qty'), g('price'), g('disc'), g('discMode'), g('vat'), incl].join('|');
+      },
+
+      /** VAT ที่บันทึกไว้ของบรรทัดนี้ ถ้ายังใช้ได้อยู่ (ผู้ใช้ไม่ได้แก้ฐาน) */
+      _keptVat(row) {
+        if (row.dataset.storedVat == null || row.dataset.storedVat === '') return null;
+        if (row.dataset.storedVatBasis !== this._vatBasisKey(row)) return null;
+        const v = parseFloat(row.dataset.storedVat);
+        return Number.isFinite(v) ? v : null;
+      },
+
       calcSum() {
         // "ราคารวมภาษี" (fPricesIncludeVat): when ticked, the price/unit
         // entered is GROSS (VAT already included), so we strip VAT out to get
@@ -5583,8 +5665,15 @@
           const whtR = parseFloat(row.querySelector('[data-f="wht"]').value) || 0;
           const grossLine = qty * price;
           const entered = grossLine - this._lineDiscountAmt(row, grossLine);
+          // VAT ที่บันทึกไว้จริง (ถ้าผู้ใช้ยังไม่แตะฐาน) ชนะการคิดใหม่ — mirror
+          // ของ backend ที่ honor VatAmountOverride ตรง ๆ. ไม่งั้นเปิดฟอร์มใบที่
+          // มาจาก OCR แล้วกดบันทึก ยอดขยับเงียบ ๆ 1 สตางค์
+          const keptVat = this._keptVat(row);
           let net, lineVat;
-          if (inclVat && vatR > 0) {
+          if (keptVat != null) {
+            lineVat = keptVat;
+            net = inclVat && vatR > 0 ? r2(entered - keptVat) : r2(entered);
+          } else if (inclVat && vatR > 0) {
             net = r2(entered / (1 + vatR / 100));   // back out the VAT
             lineVat = r2(entered - net);
           } else {
@@ -5594,7 +5683,8 @@
           // Per-line total (net + VAT) — แสดงให้ user เห็นยอดต่อแถวชัดเจน
           const lineTotalEl = row.querySelector('[data-f="lineTotal"]');
           if (lineTotalEl) lineTotalEl.textContent = Layout.money(net + lineVat);
-          rows.push({ net, vat: lineVat, wht: r2(net * whtR / 100), vatR, whtR });
+          rows.push({ net, vat: lineVat, wht: r2(net * whtR / 100), vatR, whtR,
+                      keepVat: keptVat != null });
         });
         let sub = r2(rows.reduce((s, r) => s + r.net, 0));
         // ส่วนลดท้ายบิล (จากยอดรวม) — เฉลี่ย pro-rata ex-VAT ลงบรรทัด (เศษปัดเก็บ
@@ -5632,16 +5722,21 @@
           rows.forEach(r => {
             if (!r.alloc || r.net <= 0) return;
             r.net = r2(r.net - Math.min(r.alloc, r.net));
-            r.vat = r.vatR > 0 ? r2(r.net * r.vatR / 100) : 0;
+            // บรรทัดที่ใช้ VAT ที่บันทึกไว้ — คง VAT เดิม (ตรงกับ backend ที่
+            // ไม่คิด VAT ใหม่เมื่อมี VatAmountOverride)
+            if (!r.keepVat) r.vat = r.vatR > 0 ? r2(r.net * r.vatR / 100) : 0;
             r.wht = r2(r.net * r.whtR / 100);
           });
         }
         // กระทบยอดเศษสตางค์ต่อกลุ่มอัตรา (mirror ReconcileTaxRounding): ΣVAT/WHT
         // ของแต่ละอัตรา = round(Σฐานกลุ่ม × อัตรา) — ตรงเครื่องคิดเลข; เศษเกลี่ย
         // เข้าบรรทัดฐานสูงสุด. โหมดราคารวม VAT ขยับ net สวนทางคง gross ที่กรอก
+        // บรรทัดที่ใช้ VAT ที่บันทึกไว้ไม่เข้ากระบวนการกระทบยอด — ตรงกับ backend
+        // ที่ ReconcileTaxRounding ข้ามบรรทัดที่มี VatAmountOverride
         const reconcile = (rateKey, amtKey, shiftNet) => {
           const groups = {};
           rows.forEach((r, i) => {
+            if (amtKey === 'vat' && r.keepVat) return;
             if (r[rateKey] > 0 && r.net !== 0) (groups[r[rateKey]] = groups[r[rateKey]] || []).push(i);
           });
           Object.entries(groups).forEach(([rate, idxs]) => {
@@ -5677,6 +5772,25 @@
         }
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
+        // บอกตรง ๆ เมื่อยอด VAT ที่แสดง = "ค่าที่บันทึกไว้" และต่างจากการคิดจาก
+        // ฐานรวม — ผู้ใช้จะได้ไม่งงว่าดีดเครื่องคิดเลขแล้วไม่ตรง และรู้ว่าต้องทำ
+        // อะไรถ้าอยากให้คิดใหม่ (แก้ช่องใดช่องหนึ่งของบรรทัด)
+        const keptNote = document.getElementById('sumVatKeptNote');
+        if (keptNote) {
+          const keptRows = rows.filter(r => r.keepVat && r.vatR > 0);
+          const recomputed = r2(rows.filter(r => r.vatR > 0)
+            .reduce((s, r) => s + r2(r.net * r.vatR / 100), 0));
+          const gap = r2(vat - recomputed);
+          if (keptRows.length && Math.abs(gap) >= 0.01) {
+            keptNote.style.display = '';
+            keptNote.innerHTML = `ยอด VAT นี้ใช้ <b>ค่าที่บันทึกไว้เดิม</b>ของเอกสาร ` +
+              `(ต่างจากการคิดจากฐานรวม ${Layout.money(Math.abs(gap))} บาท) — ` +
+              `คงไว้เพื่อให้ตรงกับใบที่ออกไปแล้ว. ถ้าต้องการให้ระบบคิดใหม่ ` +
+              `ให้แก้ จำนวน/ราคา/ส่วนลด/อัตราภาษี ของบรรทัดนั้น`;
+          } else {
+            keptNote.style.display = 'none';
+          }
+        }
         const totalCalc = (sub - billDisc) + vat - wht;
         document.getElementById('sumTotal').textContent = Layout.money(totalCalc);
         // #10 — amount in words (Thai baht) ใต้ยอดสุทธิ
@@ -6350,6 +6464,15 @@
             // Carry the conversion-traceability link so editing this document
             // never breaks its partial-fulfilment accounting.
             if (l.sourceLineId) row.dataset.sourceLineId = l.sourceLineId;
+            // ยอด VAT ที่ "บันทึกไว้จริง" ของบรรทัดนี้ — เอกสารที่มาจาก OCR/
+            // integration เก็บ VAT ที่คิดมาแล้ว ซึ่งอาจต่างจากการคิดใหม่จากอัตรา
+            // ระดับสตางค์. ถ้าเปิดฟอร์มแล้วกดบันทึกโดยไม่แตะบรรทัด ยอดต้องไม่ขยับ
+            // (กฎเหล็ก #4 A "เก็บแล้วต้อง echo กลับ") → จำค่าไว้พร้อม "ฐานที่ใช้คิด"
+            // ถ้าผู้ใช้แก้ จำนวน/ราคา/ส่วนลด/อัตรา เมื่อไร ฐานเปลี่ยน → กลับไปคิดใหม่
+            if (l.vatAmount != null) {
+              row.dataset.storedVat = String(l.vatAmount);
+              row.dataset.storedVatBasis = this._vatBasisKey(row);
+            }
             // Per-line project — empty value means "inherit header's project".
             const pSel = row.querySelector('[data-f="project"]');
             if (pSel) pSel.value = l.projectId || '';
@@ -6541,6 +6664,10 @@
           // user-facing immutable identifier in DocumentLine.
           if (row.dataset.productCode) line.productCode = row.dataset.productCode;
           if (row.dataset.sourceLineId) line.sourceLineId = row.dataset.sourceLineId;
+          // ส่ง VAT ที่บันทึกไว้กลับไปเมื่อผู้ใช้ไม่ได้แก้ฐานของบรรทัด — เปิดฟอร์ม
+          // แล้วกดบันทึกต้องได้ยอดเดิมเป๊ะ ไม่ใช่ถูกคิดใหม่จนขยับสตางค์
+          const keptVat = this._keptVat(row);
+          if (keptVat != null && line.vatRate > 0) line.vatAmountOverride = keptVat;
           // Per-line project override (null = inherit header's project).
           // Empty string means inherit; otherwise the GUID flows through to
           // DocumentLine.ProjectId and feeds SyncProjectCostEntriesAsync.
@@ -7417,10 +7544,15 @@
                 const projectCell = l.projectId
                   ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px"><b>${this.escapeHtml(l.projectCode || '')}</b> ${this.escapeHtml(l.projectName || '')}${l.hasProjectCostEntry ? ' <span title="auto-posted to ProjectCostEntry" style="color:#15803d;font-weight:600">🏗️</span>' : ''}</span>`
                   : '<span style="color:#cbd5e1">—</span>';
-                // เปลี่ยนผังบัญชีหลัง approved: เฉพาะ Expense/PI/PV ใน status ที่ JE ลงแล้ว
-                const canReclassify = ['Expense','PurchaseInvoice','PaymentVoucher'].includes(d.documentType)
+                // เปลี่ยนผังบัญชีหลัง approved — mirror ของ
+                // DocumentService.ReclassifyLineAccountAsync (allowedTypes +
+                // ReclassifyProtectedPrefixes). ฝั่งขายเปิดด้วย: รหัสผังบัญชีไม่ได้
+                // อยู่บนใบกำกับตาม §86/4 การย้ายรายได้ 41100→41200 จึงไม่แตะเอกสาร
+                const canReclassify = Page.RECLASSIFIABLE_TYPES.includes(d.documentType)
                   && ['Approved','Sent','PartiallyPaid','Paid'].includes(d.status)
-                  && l.accountCode;
+                  && !d.isDeposit
+                  && l.accountCode
+                  && !Page.isProtectedAccountCode(l.accountCode);
                 const acctCell = l.accountCode
                   // ปุ่มเดิมเป็น "✏️" เปล่า ๆ ขนาด 10px — ไม่มีใครรู้ว่ากดได้ ทั้งที่นี่
                   // คือทางเดียวที่แก้ผังบัญชีของใบที่อนุมัติแล้วได้ (คำถามจริงจาก
@@ -7629,7 +7761,7 @@
             // ใบที่ยกเลิกก่อนระบบใช้ "วันที่เอกสาร" เป็นค่าเริ่มต้น → รายการกลับ
             // บัญชีตกเดือนที่กด (ข้ามงวด) — ปุ่มนี้ย้ายกลับเข้างวดที่ถูกโดยไม่
             // ต้องกู้คืน/ยกเลิกใหม่
-            actions += ` <button class="btn btn-secondary" onclick="Page.redateVoidReversal('${d.id}')" title="ย้ายวันที่ 'รายการกลับบัญชี' ให้อยู่งวดเดียวกับเอกสาร — ใช้กับใบที่ยกเลิกแล้วรายการกลับไปตกเดือนอื่น (ยอดสุทธิไม่เปลี่ยน เปลี่ยนแค่งวด)">📅 แก้วันที่กลับบัญชี</button>`;
+            actions += ` <button class="btn btn-secondary" onclick="Page.redateVoidReversal('${d.id}')" title="ใช้กับใบที่ยกเลิกแล้วรายการกลับบัญชีไปตกเดือนอื่น — จะแสดงตารางให้ดูก่อนว่าใบสำคัญ 'ตัวกลับ' ใบไหนบ้างจะถูกย้ายจากวันไหนไปวันไหน (ใบต้นฉบับไม่ถูกแตะ ยอดรวมเท่าเดิม)">📅 แก้วันที่กลับบัญชี</button>`;
           }
           const myRole = await Layout.ensureMyRole();
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
@@ -8242,24 +8374,144 @@
       },
       /** ย้ายวันที่ JE กลับรายการของใบที่ "ยกเลิกไปแล้ว" ให้เข้างวดที่ถูก —
        *  ใช้กับใบที่ยกเลิกก่อนระบบเปลี่ยน default เป็นวันที่เอกสาร */
+      // เปิดตัวช่วยแก้วันที่รายการกลับบัญชี — โชว์ตารางว่าใบไหนจะถูกย้ายจาก
+      // วันไหนไปวันไหนก่อน แล้วค่อยให้กดยืนยัน (เดิมเป็น prompt() ถามวันเดียว
+      // ไม่บอกว่าจะไปแตะใบไหนบ้าง ทั้งที่เอกสารใบเดียวมีตัวกลับได้หลายใบ)
       async redateVoidReversal(id) {
-        const api = Layout.api(); if (!api) return;
-        const docDate = Layout.dateInput(this._currentDoc?.documentDate) || '';
-        const input = prompt(
-          'ย้ายรายการกลับบัญชีไปวันที่ (YYYY-MM-DD)\n\n' +
-          `ค่าเริ่มต้น = วันที่ของเอกสาร (${docDate})\n` +
-          'ระบบย้ายเฉพาะ "ใบสำคัญตัวกลับ" ไม่แตะใบต้นฉบับ ⇒ ยอดสุทธิเท่าเดิม เปลี่ยนแค่งวด\n' +
-          'งวดต้นทางและปลายทางต้องเปิดอยู่ทั้งคู่',
-          docDate);
-        if (input === null) return;
-        const d = (input || '').trim() || docDate;
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
-          Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)', 'error'); return;
-        }
+        this._redateDocId = id;
+        this._redateRows = [];
+        const dateEl = document.getElementById('rvdDate');
+        if (dateEl) dateEl.value = Layout.dateInput(this._currentDoc?.documentDate) || '';
+        document.getElementById('rvdRows').innerHTML =
+          '<div class="text-gray-400" style="padding:16px;text-align:center">กำลังตรวจสอบ...</div>';
+        Layout.openModal('redateReversalModal');
+        await this.loadRedatePreview();
+      },
+
+      async loadRedatePreview() {
+        const api = Layout.api(); if (!api || !this._redateDocId) return;
+        const host = document.getElementById('rvdRows');
         try {
-          const r = await api.redateVoidReversal(id, d);
+          // preview แบบไม่บังคับวันที่ = ระบบเสนอ "วันของใบต้นฉบับแต่ละใบ"
+          const r = await api.previewRedateVoidReversal(this._redateDocId, null);
+          const p = r?.data;
+          this._redatePreview = p;
+          this._redateRows = p?.rows || [];
+          this.renderRedateRows();
+        } catch (e) {
+          host.innerHTML = `<div style="padding:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c">ตรวจสอบไม่สำเร็จ: ${this.escapeHtml(e.message)}</div>`;
+          document.getElementById('rvdSubmit').disabled = true;
+        }
+      },
+
+      // ทุกแถวมีช่องวันที่ของตัวเอง — แก้ทีละใบได้เลย ไม่ต้องเลือกโหมดก่อน
+      renderRedateRows() {
+        const host = document.getElementById('rvdRows');
+        const rows = this._redateRows || [];
+        const p = this._redatePreview;
+        document.getElementById('rvdInfo').innerHTML =
+          `<div>เอกสาร: <b>${this.escapeHtml(p?.documentNumber || '')}</b> · วันที่เอกสาร <b>${Layout.date(p?.documentDate)}</b></div>` +
+          `<div>ใบสำคัญ "ตัวกลับ" ที่ยังมีผลต่อบัญชี <b>${rows.length}</b> ใบ — แก้วันที่ได้ทีละใบในช่องด้านล่าง</div>`;
+        if (!rows.length) {
+          host.innerHTML = '<div style="padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#64748b">ไม่พบรายการกลับบัญชีของเอกสารนี้ — ไม่มีอะไรต้องย้าย</div>';
+          document.getElementById('rvdSubmit').disabled = true;
+          return;
+        }
+        host.innerHTML = `<div class="table-container"><table class="table" style="font-size:12px">
+          <thead><tr><th>ใบสำคัญ (ตัวกลับ)</th><th>ประเภท</th><th class="text-right">จำนวนเงิน</th><th>วันที่ตอนนี้</th><th style="width:170px">→ วันที่ใหม่</th><th>อ้างใบต้นฉบับ</th></tr></thead>
+          <tbody>${rows.map((x, i) => `<tr>
+            <td class="font-medium">${this.escapeHtml(x.entryNumber)}</td>
+            <td>${this.escapeHtml(x.journalType)}</td>
+            <td class="text-right">${Layout.money(x.amount)}</td>
+            <td>${Layout.date(x.currentDate)}</td>
+            <td><input type="date" class="form-input rvd-row-date" data-idx="${i}"
+                       value="${Layout.dateInput(x.newDate ?? x.suggestedDate) || ''}"
+                       style="font-size:12px;padding:4px 6px" onchange="Page.rvdRowDateChanged(${i}, this.value)">
+                <div style="font-size:10px;margin-top:2px" id="rvdHint_${i}"></div></td>
+            <td class="text-gray-500">${x.originalEntryNumber
+              ? `${this.escapeHtml(x.originalEntryNumber)} · ${Layout.date(x.originalEntryDate)}`
+              : '<span style="color:#cbd5e1">—</span>'}</td>
+          </tr>`).join('')}</tbody></table></div>`;
+        rows.forEach((_, i) => this.rvdUpdateHint(i));
+        this.rvdUpdateSubmit();
+      },
+
+      rvdRowDateChanged(i, value) {
+        const row = (this._redateRows || [])[i];
+        if (!row) return;
+        row.newDate = value || row.suggestedDate;
+        this.rvdUpdateHint(i);
+        this.rvdUpdateSubmit();
+      },
+
+      rvdUpdateHint(i) {
+        const row = (this._redateRows || [])[i];
+        const el = document.getElementById(`rvdHint_${i}`);
+        if (!row || !el) return;
+        const chosen = Layout.dateInput(row.newDate ?? row.suggestedDate);
+        const current = Layout.dateInput(row.currentDate);
+        if (chosen === current) {
+          el.style.color = '#94a3b8';
+          el.textContent = 'วันที่ตรงอยู่แล้ว — ไม่ย้าย';
+        } else if (row.blockReason && !row.willMove
+                   && Layout.dateInput(row.suggestedDate) === chosen) {
+          // เหตุผลจาก server (งวดปิด) ยังใช้ได้เมื่อวันที่ยังเป็นค่าที่ server ตรวจให้
+          el.style.color = '#b45309';
+          el.textContent = row.blockReason;
+        } else {
+          el.style.color = '#15803d';
+          el.textContent = 'จะย้าย';
+        }
+      },
+
+      rvdUpdateSubmit() {
+        const rows = this._redateRows || [];
+        const willMove = rows.filter(x =>
+          Layout.dateInput(x.newDate ?? x.suggestedDate) !== Layout.dateInput(x.currentDate));
+        const btn = document.getElementById('rvdSubmit');
+        if (!btn) return;
+        btn.disabled = willMove.length === 0;
+        btn.textContent = willMove.length ? `ย้ายวันที่ ${willMove.length} ใบ` : 'ไม่มีใบที่ต้องย้าย';
+      },
+
+      /** ตั้งวันที่ให้ทุกแถวพร้อมกัน — 'first' = วันที่ใบต้นฉบับที่เก่าที่สุด
+       *  (วันที่สร้างใบแรก) · 'doc' = วันที่เอกสาร · 'own' = ตามต้นฉบับของแต่ละใบ
+       *  · 'custom' = วันที่ในช่องด้านบน */
+      rvdSetAll(mode) {
+        const rows = this._redateRows || [];
+        if (!rows.length) return;
+        const docDate = Layout.dateInput(this._redatePreview?.documentDate);
+        let fixedDate = null;
+        if (mode === 'doc') fixedDate = docDate;
+        else if (mode === 'custom') {
+          fixedDate = document.getElementById('rvdDate')?.value || '';
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(fixedDate)) {
+            Layout.toast('กรุณาเลือกวันที่ก่อน', 'error'); return;
+          }
+        } else if (mode === 'first') {
+          // "ใบแรก" = ใบสำคัญต้นฉบับที่วันที่เก่าที่สุดในชุดนี้ (ตกกลับวันที่เอกสาร)
+          const dates = rows.map(x => Layout.dateInput(x.originalEntryDate)).filter(Boolean).sort();
+          fixedDate = dates[0] || docDate;
+        }
+        rows.forEach(x => {
+          x.newDate = mode === 'own' ? x.suggestedDate : fixedDate;
+        });
+        this.renderRedateRows();
+      },
+
+      async submitRedateVoidReversal() {
+        const api = Layout.api(); if (!api || !this._redateDocId) return;
+        const rows = this._redateRows || [];
+        const entries = rows.map(x => ({
+          journalEntryId: x.journalEntryId,
+          newDate: Layout.dateInput(x.newDate ?? x.suggestedDate),
+        })).filter(e => e.newDate);
+        try {
+          const r = await api.redateVoidReversal(this._redateDocId, null, { entries });
           Layout.toast(r?.message || 'ย้ายวันที่สำเร็จ', 'success', 7000);
+          Layout.closeModal('redateReversalModal');
           Layout.closeModal('detailModal');
+          this._redateDocId = null;
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error', 8000); }
       },

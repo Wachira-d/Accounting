@@ -4747,6 +4747,27 @@ public class DocumentService : IDocumentService
     /// - ไม่มี Payment ลงแล้ว
     /// - ไม่อยู่ใน TaxReport ที่ Status=Submitted หรือ Filed (ภพ.30 ยื่นแล้ว)
     /// - ไม่ได้ submit e-Tax (EtaxInvoice.SubmittedAt != null)</summary>
+    /// <summary>บัญชีคุมที่ห้ามย้ายเข้า/ออกด้วยเครื่องมือ reclassify รายบรรทัด —
+    /// ระบบอื่นอ่านยอดของบัญชีเหล่านี้เป็นความจริง (ภ.พ.30 อ่านภาษีซื้อ/ขาย,
+    /// รายงานอายุหนี้อ่านลูกหนี้/เจ้าหนี้, หน้ามัดจำอ่าน 215xx/217xx/21913)</summary>
+    /// เทียบแบบ **ตรงรหัส** ไม่ใช่ prefix — prefix กว้างเกินจะเผลอล็อกบัญชี
+    /// ค้างจ่ายธรรมดาที่อยู่ช่วงเดียวกัน (เช่น "215" กิน 21511 ค่าไฟฟ้าค้างจ่าย,
+    /// "217" กิน 21714 ดอกเบี้ยค้างจ่าย ซึ่งเป็นผังปกติที่ควรย้ายได้)
+    private static readonly HashSet<string> ReclassifyProtectedCodes = new(StringComparer.Ordinal)
+    {
+        "11310",                    // ลูกหนี้การค้า (รายงานอายุหนี้/ยอดค้างรับ)
+        "11610", "11640",           // ภาษีซื้อ ภ.พ.30 / ภาษีซื้อยังไม่ถึงกำหนด
+        "21210",                    // เจ้าหนี้การค้า (ยอดค้างจ่าย)
+        "21510", "21520", "21610",  // มัดจำรับล่วงหน้า / รายได้รับล่วงหน้า / เงินมัดจำรับ
+        "21711", "21712", "21713",  // ค่าเช่า/สินค้า/บริการ รับล่วงหน้า (วงจรมัดจำ)
+        "21911", "21912", "21913",  // ภาษีขาย ภ.พ.30 / ภ.พ.36 / ภาษีขายรอเรียกเก็บ
+        "21916", "21917", "21918",  // ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.3/53/54)
+    };
+
+    private static bool IsReclassifyProtectedAccount(string? accountCode)
+        => !string.IsNullOrWhiteSpace(accountCode)
+           && ReclassifyProtectedCodes.Contains(accountCode!.Trim());
+
     public async Task<DocumentResponse> ReclassifyLineAccountAsync(
         Guid companyId, Guid documentId, Guid lineId,
         Guid newAccountId, string? reason, string actor)
@@ -4756,13 +4777,29 @@ public class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
+        // เดิมอนุญาตเฉพาะฝั่งซื้อ/จ่าย โดยอ้าง §86/4 ว่าใบกำกับแก้ไม่ได้ — อ้างผิด
+        // มาตรา: §86/4 บังคับ **สิ่งที่พิมพ์บนใบกำกับ** (ชื่อ/เลขผู้เสียภาษี/รายการ/
+        // จำนวน/ราคา/VAT) ซึ่ง **ไม่มีรหัสผังบัญชีอยู่บนเอกสารเลย** การย้ายรายได้
+        // จาก 41100 → 41200 ไม่แตะตัวเลขบนใบ ไม่แตะยอด VAT ไม่แตะ ภ.พ.30 —
+        // เป็นการจัดประเภททางบัญชีภายในล้วน ๆ. ผลของการห้ามคือใบขายที่ลงผังผิด
+        // "ไม่มีทางแก้เลย" ต้องยกเลิกใบกำกับที่ออกไปแล้วทั้งใบ ซึ่งอันตรายกว่ามาก
+        // (ที่มา: ผู้ใช้เปิดใบขายที่รับเงินแล้ว — ไม่มีปุ่มแก้ผังบัญชีให้เลย)
         var allowedTypes = new[] {
-            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher
+            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher,
+            DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt,
+            DocumentType.CreditNote, DocumentType.DebitNote,
         };
         if (!allowedTypes.Contains(doc.DocumentType))
             throw new InvalidOperationException(
-                $"เอกสารประเภท {doc.DocumentType} ห้ามแก้ผังบัญชีหลังอนุมัติ — " +
-                "ใบกำกับ/ใบเสร็จ/ใบเพิ่ม-ลดหนี้ ตาม §86/4 ต้องยกเลิกแล้วออกใบใหม่");
+                $"เอกสารประเภท {doc.DocumentType} ยังไม่รองรับการเปลี่ยนผังบัญชีรายบรรทัด — " +
+                "ยกเลิกแล้วออกใบใหม่แทน");
+
+        // มัดจำมี lifecycle ผูกกับบัญชีของตัวเอง (217xx/21913 → realize/refund/apply)
+        // ย้ายผังบรรทัดจะทำให้ยอดคงเหลือมัดจำกับ GL ไม่ตรงกัน
+        if (doc.IsDeposit)
+            throw new InvalidOperationException(
+                "ใบมัดจำมีวงจรของตัวเอง (รับ → ตัด/คืน) — เปลี่ยนผังบัญชีรายบรรทัดไม่ได้ " +
+                "ให้ใช้การคืน/ตัดมัดจำตามปกติ");
 
         if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
                        or DocumentStatus.Rejected)
@@ -4778,19 +4815,24 @@ public class DocumentService : IDocumentService
                 $"วันที่เอกสารอยู่ในงวด '{period.Name}' ที่ปิดแล้ว ({period.Status}) — " +
                 "ผังบัญชีของงวดที่ปิดแก้ไม่ได้ (กัน trial balance ย้อนหลังพัง)");
 
+        // ใบเสร็จหลักฐานการรับชำระ (IsSettlementReceipt) เป็นเอกสาร **evidence-only**
+        // ไม่ลง JE ไม่ตัดหนี้ซ้ำ — ไม่มีอะไรใน GL ให้ขัดกับการย้ายผัง จึงไม่นับ
+        // เป็น "เอกสารปลายทาง" (ไม่งั้นใบขายที่รับเงินแล้วทุกใบจะถูกล็อกอัตโนมัติ)
         var hasDownstream = await _db.Documents.AsNoTracking().AnyAsync(d =>
             d.CompanyId == companyId && d.RelatedDocumentId == documentId
-            && d.Status != DocumentStatus.Voided && !d.IsDeleted);
+            && d.Status != DocumentStatus.Voided && !d.IsDeleted
+            && !d.IsSettlementReceipt);
         if (hasDownstream)
             throw new InvalidOperationException(
                 "มีเอกสารปลายทาง (เช่น ใบสำคัญจ่าย/ใบลดหนี้) อ้างเอกสารนี้แล้ว — " +
                 "ยกเลิกเอกสารปลายทางก่อน หรือใช้วิธี void+ออกใบใหม่แทน");
 
-        var hasPayments = await _db.Payments.AsNoTracking().AnyAsync(p =>
-            p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted);
-        if (hasPayments)
-            throw new InvalidOperationException(
-                "เอกสารนี้มีการบันทึกชำระเงินไปแล้ว — ยกเลิกการชำระก่อนถึงจะแก้ผังได้");
+        // หมายเหตุ: เดิมบล็อกเมื่อ "มีการรับ/จ่ายชำระแล้ว" — ไม่จำเป็นและทำให้ใบที่
+        // เก็บเงินแล้วแก้ผังไม่ได้เลย. JE ของการชำระเงินแตะเฉพาะ เงินสด/ธนาคาร ↔
+        // ลูกหนี้/เจ้าหนี้ ซึ่งไม่ใช่ผังของ "บรรทัดสินค้า/บริการ" ที่เครื่องมือนี้ย้าย
+        // (ย้าย Dr ผังใหม่ / Cr ผังเก่า เท่ายอดฐานก่อน VAT) ⇒ ยอดค้างชำระ อายุหนี้
+        // และการกระทบยอดธนาคารไม่เปลี่ยน. การเปลี่ยน "แหล่งเงิน" ที่กระทบการชำระ
+        // จริง ๆ อยู่ที่ ReclassifyPaymentSourceAsync ซึ่งมี gate ของตัวเอง
 
         var inSubmittedReport = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
             l.DocumentId == documentId
@@ -4823,6 +4865,18 @@ public class DocumentService : IDocumentService
             .FirstOrDefaultAsync(a => a.Id == line.AccountId.Value)
             ?? throw new InvalidOperationException("ไม่พบผังบัญชีเดิม");
 
+        // บัญชีคุมที่ระบบอื่นยึดเป็นความจริง — ย้ายเข้า/ออกแล้วรายงานจะเพี้ยนเงียบ ๆ
+        // (ภาษีซื้อ/ขาย → ภ.พ.30 · ลูกหนี้/เจ้าหนี้ → อายุหนี้/ยอดค้าง · มัดจำ →
+        // ยอดคงเหลือมัดจำ) การแก้ที่ถูกของบัญชีพวกนี้คือแก้ที่เอกสาร/เครื่องมือเฉพาะ
+        if (IsReclassifyProtectedAccount(oldAccount.AccountCode))
+            throw new InvalidOperationException(
+                $"บรรทัดนี้ลงบัญชีคุม {oldAccount.AccountCode} {oldAccount.AccountName} — " +
+                "ย้ายด้วยเครื่องมือนี้ไม่ได้ (กระทบรายงานภาษี/ยอดค้างชำระ)");
+        if (IsReclassifyProtectedAccount(newAccount.AccountCode))
+            throw new InvalidOperationException(
+                $"ห้ามย้ายเข้าบัญชีคุม {newAccount.AccountCode} {newAccount.AccountName} — " +
+                "บัญชีภาษี/ลูกหนี้/เจ้าหนี้/มัดจำ ระบบลงให้เองตามเอกสาร");
+
         var amount = line.Amount;   // ฐานก่อน VAT — ที่ JE เดิมลงเข้าผังเก่า
         if (amount <= 0.005m)
         {
@@ -4832,6 +4886,26 @@ public class DocumentService : IDocumentService
             return await GetDocumentAsync(companyId, documentId);
         }
 
+        // ทิศของ JE ย้ายบัญชีต้อง **กลับด้านที่ลงไว้จริง** ไม่ใช่สมมติว่าเป็นค่าใช้จ่าย
+        // เสมอ: บรรทัดค่าใช้จ่ายเดิมลง Dr ⇒ ย้าย = Dr ใหม่ / Cr เก่า · บรรทัดรายได้
+        // เดิมลง Cr ⇒ ย้าย = Dr เก่า / Cr ใหม่. ถ้าใช้สูตรเดียวกันทั้งคู่ ใบขายจะกลาย
+        // เป็นรายได้เดิมเพิ่มเป็นสองเท่าและบัญชีใหม่ติดลบ (ที่มา: หลัก "อ่านขาที่ลง
+        // จริงใน GL แล้วกลับตามนั้น" เหมือน drives รอบ 57 — ห้ามเดาจากชนิดเอกสาร)
+        var oldSide = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.AccountId == oldAccount.Id
+                && l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.SourceDocumentId == documentId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsDeleted)
+            .GroupBy(l => 1)
+            .Select(g => new { Debit = g.Sum(x => x.DebitAmount), Credit = g.Sum(x => x.CreditAmount) })
+            .FirstOrDefaultAsync();
+
+        // หา JE ไม่เจอ (ใบเก่า/ลงผ่าน integration) → ตกกลับใช้ธรรมชาติของผังบัญชี
+        var oldWasCredited = oldSide != null
+            ? oldSide.Credit > oldSide.Debit
+            : oldAccount.AccountType is AccountType.Revenue or AccountType.Liability or AccountType.Equity;
+
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -4840,15 +4914,22 @@ public class DocumentService : IDocumentService
             var desc = $"Reclassify ผังบัญชี — {doc.DocumentNumber} " +
                        $"'{line.Description}' ({oldAccount.AccountCode} → {newAccount.AccountCode})" +
                        (string.IsNullOrWhiteSpace(reason) ? "" : $" • {reason}");
-            await Journal.JournalEntryBuilder
+            var builder = Journal.JournalEntryBuilder
                 .For(_db, companyId, doc.DocumentDate)
                 .Description(desc)
                 .Reference(doc.DocumentNumber)
                 .SourceDocument(doc.Id)
-                .Project(doc.ProjectId)
-                .Debit(newAccount.Id, amount, $"Dr {newAccount.AccountCode} — {newAccount.AccountName}")
-                .Credit(oldAccount.Id, amount, $"Cr {oldAccount.AccountCode} — {oldAccount.AccountName} (reclassify)")
-                .PostAsync(actor);
+                .Project(doc.ProjectId);
+            builder = oldWasCredited
+                // เดิมลงฝั่ง Cr (รายได้/หนี้สิน) → ล้างด้วย Dr ผังเก่า แล้ว Cr ผังใหม่
+                ? builder
+                    .Debit(oldAccount.Id, amount, $"Dr {oldAccount.AccountCode} — {oldAccount.AccountName} (reclassify)")
+                    .Credit(newAccount.Id, amount, $"Cr {newAccount.AccountCode} — {newAccount.AccountName}")
+                // เดิมลงฝั่ง Dr (ค่าใช้จ่าย/สินทรัพย์) → Dr ผังใหม่ / Cr ผังเก่า
+                : builder
+                    .Debit(newAccount.Id, amount, $"Dr {newAccount.AccountCode} — {newAccount.AccountName}")
+                    .Credit(oldAccount.Id, amount, $"Cr {oldAccount.AccountCode} — {oldAccount.AccountName} (reclassify)");
+            await builder.PostAsync(actor);
 
             line.AccountId = newAccountId;
             doc.UpdatedAt = DateTime.UtcNow;
@@ -5267,7 +5348,8 @@ public class DocumentService : IDocumentService
     ///   • เอกสารต้องอยู่สถานะยกเลิกจริง
     /// </summary>
     public async Task<int> RedateVoidReversalAsync(
-        Guid companyId, Guid documentId, DateTime newDate, string actor)
+        Guid companyId, Guid documentId, DateTime newDate, string actor,
+        IReadOnlyList<RedateEntryDate>? entryDates = null)
     {
         var doc = await _db.Documents.AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
@@ -5275,15 +5357,6 @@ public class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Voided)
             throw new InvalidOperationException(
                 "เอกสารนี้ยังไม่ถูกยกเลิก — เครื่องมือนี้ใช้แก้วันที่ของ 'รายการกลับบัญชี' เท่านั้น");
-
-        // ไม่ระบุวันที่ → ใช้วันที่ของเอกสารเอง (พฤติกรรมเดียวกับ void แบบใหม่)
-        var target = (newDate == default ? doc.DocumentDate : newDate).Date;
-
-        var targetPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
-            f.CompanyId == companyId && f.StartDate <= target && f.EndDate >= target);
-        if (targetPeriod != null && targetPeriod.Status != FiscalPeriodStatus.Open)
-            throw new InvalidOperationException(
-                $"งวด {targetPeriod.Name} ปิดแล้ว — เปิดงวดก่อน จึงจะย้ายรายการกลับบัญชีเข้าไปได้");
 
         // ตัวกลับของเอกสารนี้ (Posted เท่านั้น — ตัวที่ยังมีผลต่อ GL)
         var reversals = await _db.JournalEntries
@@ -5293,10 +5366,37 @@ public class DocumentService : IDocumentService
             .ToListAsync();
         if (reversals.Count == 0) return 0;
 
+        var originals = await LoadReversalOriginalsAsync(companyId, reversals);
+
+        // วันที่ที่ผู้ใช้พิมพ์เองรายบรรทัดจากตารางในหน้าจอ — ชนะทุกค่าเริ่มต้น
+        // (ห้ามรับ id ที่ไม่ใช่ตัวกลับของเอกสารนี้ ไม่งั้นกลายเป็นช่องแก้วันที่
+        //  ของ JE ใบไหนก็ได้ในบริษัท)
+        var explicitById = new Dictionary<Guid, DateTime>();
+        foreach (var e in entryDates ?? Array.Empty<RedateEntryDate>())
+        {
+            if (!reversals.Any(r => r.Id == e.JournalEntryId))
+                throw new InvalidOperationException(
+                    "มีรายการที่ไม่ใช่ 'ตัวกลับ' ของเอกสารนี้ปนมา — โหลดหน้าใหม่แล้วลองอีกครั้ง");
+            explicitById[e.JournalEntryId] = e.NewDate.Date;
+        }
+
         var moved = 0;
         foreach (var rev in reversals)
         {
+            // เอกสาร 1 ใบมักมีตัวกลับหลายใบและ **คนละวัน** (ใบซื้อ 1 ก.ค. +
+            // ใบจ่ายชำระ 17 ก.ค.) — ยัดทุกใบไปวันเดียวกันคือย้ายรายการจ่ายไป
+            // อยู่ผิดวัน. ลำดับการตัดสินวันที่: ผู้ใช้ระบุรายใบ → ระบุวันเดียว
+            // ทั้งชุด → วันที่ของใบต้นฉบับที่ตัวเองกลับ → วันที่เอกสาร
+            var target = explicitById.TryGetValue(rev.Id, out var chosen)
+                ? chosen
+                : ResolveRedateTarget(rev, newDate, doc.DocumentDate, originals);
             if (rev.EntryDate.Date == target) continue;
+
+            var targetPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+                f.CompanyId == companyId && f.StartDate <= target && f.EndDate >= target);
+            if (targetPeriod != null && targetPeriod.Status != FiscalPeriodStatus.Open)
+                throw new InvalidOperationException(
+                    $"งวด {targetPeriod.Name} ปิดแล้ว — เปิดงวดก่อน จึงจะย้ายรายการกลับบัญชีเข้าไปได้");
 
             var currentPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
                 f.CompanyId == companyId
@@ -5310,7 +5410,7 @@ public class DocumentService : IDocumentService
             rev.EntryDate = target;
             rev.FiscalPeriodId = targetPeriod?.Id;
             rev.Description = (rev.Description ?? "") +
-                $" [แก้วันที่จาก {from:dd/MM/yyyy} → {target:dd/MM/yyyy} ให้อยู่งวดเดียวกับเอกสาร]";
+                $" [แก้วันที่จาก {from:dd/MM/yyyy} → {target:dd/MM/yyyy} ให้อยู่งวดเดียวกับใบต้นฉบับ]";
             rev.UpdatedAt = DateTime.UtcNow;
             rev.UpdatedBy = actor;
             moved++;
@@ -5320,10 +5420,99 @@ public class DocumentService : IDocumentService
         {
             await _db.SaveChangesAsync();
             _logger.LogInformation(
-                "RedateVoidReversal: ย้าย {Count} ใบสำคัญของเอกสาร {DocNo} ไปวันที่ {Date}",
-                moved, doc.DocumentNumber, target);
+                "RedateVoidReversal: ย้าย {Count} ใบสำคัญของเอกสาร {DocNo}",
+                moved, doc.DocumentNumber);
         }
         return moved;
+    }
+
+    /// <summary>โหลดใบต้นฉบับของตัวกลับแต่ละใบ (เลขที่ + วันที่) — ใช้ทั้งตอน
+    /// preview และตอนย้ายจริง เพื่อให้ "วันที่ที่โชว์" กับ "วันที่ที่ลงจริง"
+    /// มาจากฟังก์ชันเดียวกัน (กฎเหล็ก #4 A "resolver กลาง ห้ามคำนวณเอง")</summary>
+    private async Task<Dictionary<Guid, (string Number, DateTime Date)>> LoadReversalOriginalsAsync(
+        Guid companyId, List<JournalEntry> reversals)
+    {
+        var ids = reversals.Where(r => r.OriginalEntryId.HasValue)
+            .Select(r => r.OriginalEntryId!.Value).Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<Guid, (string, DateTime)>();
+        return await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && ids.Contains(j.Id))
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate })
+            .ToDictionaryAsync(j => j.Id, j => (j.EntryNumber, j.EntryDate.Date));
+    }
+
+    /// <summary>วันที่ปลายทางของตัวกลับ 1 ใบ: ระบุมา = ใช้ตามนั้น ·
+    /// ไม่ระบุ = วันที่ใบต้นฉบับ · หาใบต้นฉบับไม่เจอ = วันที่เอกสาร</summary>
+    private static DateTime ResolveRedateTarget(
+        JournalEntry reversal, DateTime explicitDate, DateTime documentDate,
+        Dictionary<Guid, (string Number, DateTime Date)> originals)
+    {
+        if (explicitDate != default) return explicitDate.Date;
+        if (reversal.OriginalEntryId.HasValue
+            && originals.TryGetValue(reversal.OriginalEntryId.Value, out var o))
+            return o.Date;
+        return documentDate.Date;
+    }
+
+    /// <summary>ดูก่อนกด — เอกสาร 1 ใบมีตัวกลับได้หลายใบ ผู้ใช้ต้องเห็นว่า
+    /// **ใบไหนบ้าง** จะถูกย้ายจากวันไหนไปวันไหน ก่อนยืนยัน</summary>
+    public async Task<VoidReversalRedatePreview> PreviewVoidReversalRedateAsync(
+        Guid companyId, Guid documentId, DateTime? newDate)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var reversals = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
+                && j.OriginalEntryId != null && j.Status == JournalEntryStatus.Posted
+                && !j.IsDeleted)
+            .OrderBy(j => j.EntryDate).ThenBy(j => j.EntryNumber)
+            .ToListAsync();
+
+        var originals = await LoadReversalOriginalsAsync(companyId, reversals);
+
+        // งวดที่เกี่ยวข้องทั้งหมด (ต้นทาง + ปลายทาง) — โหลดรอบเดียว ไม่ยิงราย
+        // บรรทัด แล้วบอกเหตุผลที่ย้ายไม่ได้ตั้งแต่หน้า preview ไม่ใช่ตอนกดยืนยัน
+        var periods = await _db.FiscalPeriods.AsNoTracking()
+            .Where(f => f.CompanyId == companyId)
+            .Select(f => new { f.Name, f.StartDate, f.EndDate, f.Status })
+            .ToListAsync();
+        string? ClosedPeriodName(DateTime d)
+        {
+            var p = periods.FirstOrDefault(x => x.StartDate <= d && x.EndDate >= d);
+            return p != null && p.Status != FiscalPeriodStatus.Open ? p.Name : null;
+        }
+
+        var rows = new List<VoidReversalRedateRow>();
+        foreach (var rev in reversals)
+        {
+            var target = ResolveRedateTarget(rev, newDate ?? default, doc.DocumentDate, originals);
+            (string Number, DateTime Date)? orig = rev.OriginalEntryId.HasValue
+                && originals.TryGetValue(rev.OriginalEntryId.Value, out var o) ? o : null;
+
+            string? block = null;
+            if (rev.EntryDate.Date == target) block = "วันที่ตรงอยู่แล้ว";
+            else if (ClosedPeriodName(rev.EntryDate.Date) is string cFrom)
+                block = $"อยู่ในงวด {cFrom} ที่ปิดแล้ว — ย้ายออกไม่ได้";
+            else if (ClosedPeriodName(target) is string cTo)
+                block = $"งวดปลายทาง {cTo} ปิดแล้ว — เปิดงวดก่อน";
+
+            rows.Add(new VoidReversalRedateRow(
+                JournalEntryId: rev.Id,
+                EntryNumber: rev.EntryNumber,
+                JournalType: rev.JournalType.ToString(),
+                CurrentDate: rev.EntryDate.Date,
+                SuggestedDate: target,
+                OriginalEntryNumber: orig?.Number,
+                OriginalEntryDate: orig?.Date,
+                Amount: rev.TotalDebit,
+                WillMove: block == null,
+                BlockReason: block));
+        }
+
+        return new VoidReversalRedatePreview(
+            doc.Id, doc.DocumentNumber, doc.DocumentDate.Date, rows);
     }
 
     /// <summary>หา "วันที่ลงรายการกลับบัญชี" ที่ใช้ได้จริง — ถ้างวดของวันที่ที่
@@ -7699,6 +7888,19 @@ public class DocumentService : IDocumentService
     {
         var companyId = source.CompanyId;
 
+        // ยอดภาษีของใบปลายทางต้อง **ตรงกับใบต้นทางเป๊ะทุกสตางค์** — ลูกค้าถือ
+        // ใบแจ้งหนี้อยู่แล้ว ใบกำกับที่แปลงมาแล้วยอดขยับ 0.01 = เอกสารสองใบของ
+        // รายการเดียวกันไม่ตรงกัน (ตรวจสอบภาษี/กระทบยอดกับลูกค้าพัง)
+        // ที่มา: ใบที่มาจาก OCR/integration เก็บ VAT รายบรรทัดที่ปัดมาแล้ว
+        // (Σ = 44,942.29) แต่การแปลงคิดใหม่จากอัตรา + กระทบยอดรายกลุ่ม
+        // (round(642,032.64 × 7%) = 44,942.28) ⇒ ต่างกัน 1 สตางค์
+        // วิธีแก้: ยก VAT ที่บันทึกไว้จริงไปเป็น VatAmountOverride เมื่อยกทั้ง
+        // บรรทัด (ComputeLineAmounts honor ตรง ๆ และ ReconcileTaxRounding ข้าม)
+        // ยกเว้นโหมด "ราคารวม VAT + ส่วนลดท้ายบิล" ที่การ back-out ทำให้ net
+        // ของใบลูกไม่ตรงกับต้นทางอยู่ดี — เคสนั้นคงพฤติกรรมเดิม (คิดใหม่)
+        var carryStoredVat = !(source.PricesIncludeVat
+            && (source.BillDiscountPercent > 0 || source.BillDiscountAmount > 0));
+
         // SourceLineId travels through the DTO so CreateDocumentAsync stamps
         // it inside its own transaction — every new line is linked 1:1 to the
         // source line it was carried forward from.
@@ -7715,6 +7917,12 @@ public class DocumentService : IDocumentService
                 ? (s.Qty >= s.Line.Quantity ? s.Line.DiscountAmount
                     // partial convert: ส่วนลดบาทเฉลี่ยตามสัดส่วน qty ที่ยกไป
                     : Math.Round(s.Line.DiscountAmount * (s.Line.Quantity > 0 ? s.Qty / s.Line.Quantity : 1m), 2))
+                : null,
+            // ยกทั้งบรรทัด → ใช้ VAT ที่บันทึกไว้จริง (ตรงเป๊ะ) · ยกบางส่วน →
+            // ปล่อยคิดใหม่ + กระทบยอดรายกลุ่มตามปกติ (การเฉลี่ย VAT ตามสัดส่วน
+            // จะสร้างเศษของตัวเองและทำให้ผลรวมของใบย่อยหลายใบไม่ตรงต้นทางอยู่ดี)
+            VatAmountOverride: carryStoredVat && s.Qty >= s.Line.Quantity && s.Line.VatRate > 0
+                ? s.Line.VatAmount
                 : null)).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(

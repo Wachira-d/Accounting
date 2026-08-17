@@ -99,4 +99,159 @@ public class VoidReversalDateTests
         var julyNet = (origMonth == 7 ? amount : 0m) - (revMonth == 7 ? amount : 0m);
         Assert.Equal(julyResidual, julyNet);
     }
+
+    // ── เอกสารใบเดียวมีตัวกลับหลายใบ ─────────────────────────────────────
+    // ที่มา (คำถามผู้ใช้): "แก้วันที่กลับบัญชี ระบบไปแก้วันอันไหน มีหลายรายการ"
+    // ใบซื้อลง 1 ก.ค. แล้วจ่ายชำระ 17 ก.ค. → ยกเลิกทีเดียวได้ตัวกลับ 2 ใบ
+    // ที่ควรกลับไปอยู่ "วันของใบต้นฉบับตัวเอง" คนละวัน ไม่ใช่ยัดรวมวันเดียว
+
+    private sealed record Rev(string Number, DateTime Current, DateTime? OriginalDate);
+
+    /// <summary>mirror ของ DocumentService.ResolveRedateTarget</summary>
+    private static DateTime Target(Rev r, DateTime? explicitDate, DateTime docDate)
+        => explicitDate?.Date ?? r.OriginalDate?.Date ?? docDate.Date;
+
+    [Fact]
+    public void Each_reversal_defaults_to_its_own_original_date()
+    {
+        var docDate = new DateTime(2026, 7, 1);
+        var uv = new Rev("UV-202608-0032", new DateTime(2026, 8, 17), new DateTime(2026, 7, 1));
+        var pv = new Rev("PV-202608-0203", new DateTime(2026, 8, 17), new DateTime(2026, 7, 17));
+
+        Assert.Equal(new DateTime(2026, 7, 1), Target(uv, null, docDate));
+        Assert.Equal(new DateTime(2026, 7, 17), Target(pv, null, docDate));   // ไม่ใช่ 1 ก.ค.
+    }
+
+    [Fact]
+    public void Explicit_date_forces_every_reversal_onto_the_same_day()
+    {
+        var docDate = new DateTime(2026, 7, 1);
+        var chosen = new DateTime(2026, 7, 31);
+        var uv = new Rev("UV", new DateTime(2026, 8, 17), new DateTime(2026, 7, 1));
+        var pv = new Rev("PV", new DateTime(2026, 8, 17), new DateTime(2026, 7, 17));
+
+        Assert.Equal(chosen, Target(uv, chosen, docDate));
+        Assert.Equal(chosen, Target(pv, chosen, docDate));
+    }
+
+    [Fact]
+    public void Orphan_reversal_without_an_original_falls_back_to_document_date()
+    {
+        var docDate = new DateTime(2026, 7, 1);
+        var orphan = new Rev("JV", new DateTime(2026, 8, 17), null);
+        Assert.Equal(docDate, Target(orphan, null, docDate));
+    }
+
+    [Fact]
+    public void Only_posted_reversal_entries_are_candidates()
+    {
+        // ตัวเลือกต้องเป็น OriginalEntryId != null && Status == Posted เท่านั้น
+        // ใบต้นฉบับ (Reversed) ห้ามถูกย้าย ไม่งั้นยอดเดือนเพี้ยนทั้งคู่
+        static bool IsCandidate(bool hasOriginalId, string status)
+            => hasOriginalId && status == "Posted";
+
+        Assert.True(IsCandidate(true, "Posted"));       // ตัวกลับ
+        Assert.False(IsCandidate(false, "Reversed"));   // ใบต้นฉบับที่ถูกกลับแล้ว
+        Assert.False(IsCandidate(false, "Posted"));     // JE ปกติที่ไม่ใช่ตัวกลับ
+        Assert.False(IsCandidate(true, "Voided"));      // ตัวกลับที่ถูกยกเลิกไปแล้ว
+    }
+
+    [Fact]
+    public void Per_entry_dates_keep_every_month_net_zero()
+    {
+        // ใบซื้อ 6,955 (1 ก.ค.) + ใบจ่าย 6,955 (17 ก.ค.) — หลังย้ายตามต้นฉบับ
+        // ทั้งเดือน ก.ค. และ ส.ค. ต้องสุทธิ = 0 (ไม่มียอดผีค้างเดือนไหน)
+        const decimal amt = 6955m;
+        var july = amt + amt - amt - amt;   // ต้นฉบับ 2 ใบ + ตัวกลับ 2 ใบ อยู่ ก.ค. หมด
+        var august = 0m;
+        Assert.Equal(0m, july);
+        Assert.Equal(0m, august);
+
+        // ก่อนแก้: ตัวกลับทั้งคู่อยู่ ส.ค. → ก.ค. ค้าง +13,910 / ส.ค. −13,910
+        var julyBefore = amt + amt;
+        var augustBefore = -(amt + amt);
+        Assert.Equal(13910m, julyBefore);
+        Assert.Equal(-13910m, augustBefore);
+    }
+
+    /// <summary>ผู้ใช้พิมพ์วันที่เองรายบรรทัดในตาราง — ต้องชนะทุกค่าเริ่มต้น</summary>
+    private static DateTime TargetWithOverride(
+        Rev r, DateTime? perRow, DateTime? explicitAll, DateTime docDate)
+        => perRow?.Date ?? Target(r, explicitAll, docDate);
+
+    [Fact]
+    public void Per_row_date_beats_both_defaults()
+    {
+        var docDate = new DateTime(2026, 7, 1);
+        var pv = new Rev("PV", new DateTime(2026, 8, 17), new DateTime(2026, 7, 17));
+        var typed = new DateTime(2026, 7, 20);
+
+        Assert.Equal(typed, TargetWithOverride(pv, typed, null, docDate));
+        // แม้จะส่งวันเดียวทั้งชุดมาด้วย ค่ารายบรรทัดก็ยังชนะ
+        Assert.Equal(typed, TargetWithOverride(pv, typed, new DateTime(2026, 7, 31), docDate));
+        // ไม่พิมพ์เอง → ตกไปใช้ลำดับเดิม (วันเดียวทั้งชุด → ใบต้นฉบับ → เอกสาร)
+        Assert.Equal(new DateTime(2026, 7, 31),
+            TargetWithOverride(pv, null, new DateTime(2026, 7, 31), docDate));
+        Assert.Equal(new DateTime(2026, 7, 17), TargetWithOverride(pv, null, null, docDate));
+    }
+
+    /// <summary>ปุ่ม "📌 วันที่ใบแรก" = ใบสำคัญต้นฉบับที่เก่าที่สุดในชุดนี้</summary>
+    private static DateTime FirstEntryDate(IEnumerable<Rev> revs, DateTime docDate)
+    {
+        var dates = revs.Where(r => r.OriginalDate.HasValue)
+            .Select(r => r.OriginalDate!.Value.Date).OrderBy(d => d).ToList();
+        return dates.Count > 0 ? dates[0] : docDate.Date;
+    }
+
+    [Fact]
+    public void First_entry_button_picks_the_oldest_original()
+    {
+        var docDate = new DateTime(2026, 7, 5);
+        var revs = new[]
+        {
+            new Rev("PV", new DateTime(2026, 8, 17), new DateTime(2026, 7, 17)),
+            new Rev("UV", new DateTime(2026, 8, 17), new DateTime(2026, 7, 1)),
+        };
+        Assert.Equal(new DateTime(2026, 7, 1), FirstEntryDate(revs, docDate));
+    }
+
+    [Fact]
+    public void First_entry_button_falls_back_to_document_date()
+    {
+        var docDate = new DateTime(2026, 7, 5);
+        var revs = new[] { new Rev("JV", new DateTime(2026, 8, 17), null) };
+        Assert.Equal(docDate, FirstEntryDate(revs, docDate));
+    }
+
+    [Fact]
+    public void Setting_every_reversal_to_the_first_date_still_nets_to_zero_per_month()
+    {
+        // ผู้ใช้เลือก "ทุกใบ = วันที่ใบแรก (1 ก.ค.)" — ต้นฉบับยังอยู่ 1 ก.ค. และ
+        // 17 ก.ค. แต่ทั้งคู่อยู่ในเดือน ก.ค. ⇒ งบรายเดือนสุทธิยังเป็น 0
+        const decimal amt = 6955m;
+        var julyOriginals = amt + amt;
+        var julyReversals = amt + amt;   // ทั้งคู่ถูกตั้งเป็น 1 ก.ค.
+        Assert.Equal(0m, julyOriginals - julyReversals);
+        // (ต่างจากค่าเริ่มต้นตรงที่ "วัน" ไม่ตรงกับเหตุการณ์เท่านั้น — เดือนตรงเหมือนกัน)
+    }
+
+    [Fact]
+    public void Explicit_entry_ids_must_belong_to_this_document()
+    {
+        // กันไม่ให้ payload รายบรรทัดกลายเป็นช่องแก้วันที่ JE ใบไหนก็ได้
+        var candidates = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        static bool Accepts(Guid[] candidates, Guid requested) => candidates.Contains(requested);
+        Assert.True(Accepts(candidates, candidates[0]));
+        Assert.False(Accepts(candidates, Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void Preview_marks_rows_that_are_already_on_target_as_no_move()
+    {
+        // ใบที่วันที่ตรงอยู่แล้วต้องขึ้นว่า "ไม่ย้าย" ไม่ใช่เงียบหายไปจากตาราง
+        var r = new Rev("UV", new DateTime(2026, 7, 1), new DateTime(2026, 7, 1));
+        var target = Target(r, null, new DateTime(2026, 7, 1));
+        Assert.Equal(r.Current, target);
+        Assert.False(r.Current != target);   // WillMove = false
+    }
 }

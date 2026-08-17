@@ -645,7 +645,8 @@ public class DocumentController : ControllerBase
     /// สิทธิ์เท่ากับการยกเลิก และงวดปลายทางต้องเปิดอยู่</summary>
     [HttpPost("{documentId:guid}/redate-void-reversal")]
     public async Task<ActionResult<ApiResponse<object>>> RedateVoidReversal(
-        Guid companyId, Guid documentId, [FromQuery] DateTime? newDate = null)
+        Guid companyId, Guid documentId, [FromQuery] DateTime? newDate = null,
+        [FromBody] RedateVoidReversalRequest? request = null)
     {
         var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
         var docType = await GetDocumentTypeAsync(companyId, documentId);
@@ -654,11 +655,25 @@ public class DocumentController : ControllerBase
             return Forbid403<object>("ไม่มีสิทธิ์แก้วันที่รายการกลับบัญชีของเอกสารนี้");
 
         var moved = await _documentService.RedateVoidReversalAsync(
-            companyId, documentId, newDate ?? default, userIdGuid.ToString());
+            companyId, documentId, newDate ?? default, userIdGuid.ToString(),
+            request?.Entries);
         return Ok(new ApiResponse<object>(true, new { moved },
             moved > 0
                 ? $"ย้ายวันที่รายการกลับบัญชี {moved} ใบสำคัญเรียบร้อย"
                 : "ไม่มีรายการกลับบัญชีที่ต้องย้าย (วันที่ตรงอยู่แล้ว)"));
+    }
+
+    /// <summary>ดูก่อนย้าย — เอกสาร 1 ใบมีตัวกลับได้หลายใบ (ใบซื้อ/ขาย +
+    /// รับ-จ่ายชำระ + มัดจำ) endpoint นี้บอกว่าใบไหนบ้างจะถูกย้ายจากวันไหนไป
+    /// วันไหน และใบไหนย้ายไม่ได้เพราะอะไร. อ่านอย่างเดียว ไม่แก้ข้อมูล</summary>
+    [HttpGet("{documentId:guid}/redate-void-reversal/preview")]
+    public async Task<ActionResult<ApiResponse<VoidReversalRedatePreview>>> PreviewRedateVoidReversal(
+        Guid companyId, Guid documentId, [FromQuery] DateTime? newDate = null)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<VoidReversalRedatePreview>(false, null, "ไม่พบเอกสาร"));
+        var preview = await _documentService.PreviewVoidReversalRedateAsync(companyId, documentId, newDate);
+        return Ok(new ApiResponse<VoidReversalRedatePreview>(true, preview, null));
     }
 
     /// <summary>กู้คืนเอกสารที่ "ยกเลิกผิด" → คืนเป็นฉบับร่าง (Draft) คงเลขเดิม
