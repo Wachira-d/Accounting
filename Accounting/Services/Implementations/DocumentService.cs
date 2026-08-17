@@ -3786,9 +3786,84 @@ public class DocumentService : IDocumentService
         await TryReclassifyUndueOutputVatAsync(companyId, invoiceId, DateTime.UtcNow.Date, actor);
 
         await _db.SaveChangesAsync();
+
+        // ── WHT ที่ค้างในลูกหนี้เมื่อมัดจำปิดยอดจนหมด (S-2) ─────────────────
+        // เกณฑ์เงินสด (ค่า default): ตอนอนุมัติใบขาย GL ตั้ง Dr ลูกหนี้ **gross**
+        // (TotalAmount + WHT) ส่วน BalanceDue ของ subledger ใช้ TotalAmount ที่
+        // สุทธิจาก WHT แล้ว ⇒ ปิดยอดด้วยมัดจำจนครบ subledger ว่า "ชำระแล้ว"
+        // แต่ลูกหนี้ใน GL ยังค้างเท่ายอด WHT **ตลอดไป** และไม่มีใครลง 11910
+        // ⇒ เสียเครดิตภาษีทั้งก้อนตอนยื่น ภ.ง.ด.50 + งบดุลมีลูกหนี้ผี
+        // (เส้นรับชำระเงินสดทำถูกอยู่แล้วผ่าน postPerPaymentWht — ขาดเส้นนี้เส้นเดียว)
+        if (invoice.BalanceDue <= 0.005m && invoice.WithholdingTaxAmount > 0.005m)
+            await TryRecognizeSalesWhtOnSettlementAsync(companyId, invoice, when, actor);
+
         var updated = await GetDocumentAsync(companyId, invoiceId);
         await FireWebhookAsync(companyId, "deposit.applied", updated);
         return updated;
+    }
+
+    /// <summary>ปิดยอดใบขายจนครบโดยไม่ผ่านการรับเงินสด (หักมัดจำ) → รับรู้
+    /// "ภาษีถูกหัก ณ ที่จ่าย" ส่วนที่ยังไม่เคยลง: Dr 11910 / Cr ลูกหนี้.
+    /// GL-first + idempotent: อ่านยอดที่ Dr 11910 ไปแล้วจริงของเอกสารนี้ แล้วลง
+    /// เฉพาะส่วนต่าง ⇒ เรียกซ้ำ/ทยอยหักมัดจำหลายรอบไม่ทำให้เกิน. best-effort —
+    /// การหักมัดจำที่สำเร็จแล้วต้องไม่ถูก rollback เพราะขั้นนี้</summary>
+    private async Task TryRecognizeSalesWhtOnSettlementAsync(
+        Guid companyId, Document invoice, DateTime when, string actor)
+    {
+        try
+        {
+            var whtBasis = (await _db.CompanySettings.AsNoTracking()
+                .Where(s => s.CompanyId == companyId)
+                .Select(s => (Models.Enums.WhtRecognitionBasis?)s.WhtRecognitionBasis)
+                .FirstOrDefaultAsync()) ?? Models.Enums.WhtRecognitionBasis.Cash;
+            // เกณฑ์คงค้าง: 11910 ลงตั้งแต่ตอนอนุมัติใบแล้ว และลูกหนี้ตั้งไว้สุทธิ
+            // อยู่แล้ว — ไม่มีอะไรค้าง
+            if (whtBasis != Models.Enums.WhtRecognitionBasis.Cash) return;
+
+            var alreadyRecognized = (await (
+                from l in _db.JournalEntryLines.AsNoTracking()
+                join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                where j.CompanyId == companyId && j.SourceDocumentId == invoice.Id
+                      && !j.IsDeleted && !l.IsDeleted
+                      && j.Status == JournalEntryStatus.Posted
+                      && j.ReversedByEntryId == null
+                      && a.AccountCode.StartsWith("11910")
+                select l.DebitAmount - l.CreditAmount).ToListAsync()).Sum();
+
+            var target = ToGlAmount(invoice, invoice.WithholdingTaxAmount);
+            var remaining = Math.Round(target - alreadyRecognized, 2, MidpointRounding.AwayFromZero);
+            if (remaining <= 0.005m) return;
+
+            var whtAccount = await FindAccountAsync(companyId, "11910");
+            var arAccount = await FindAccountAsync(companyId, "113", invoice.Contact);
+            if (whtAccount == null || arAccount == null)
+            {
+                _logger.LogWarning(
+                    "ปิดยอด {Doc} ด้วยมัดจำแล้วแต่ไม่พบผัง 11910/113 — ลูกหนี้ค้าง {Amount} เท่ายอด WHT",
+                    invoice.DocumentNumber, remaining);
+                return;
+            }
+
+            await Journal.JournalEntryBuilder
+                .For(_db, companyId, when.Date)
+                .Description($"ภาษีถูกหัก ณ ที่จ่าย (ปิดยอดด้วยมัดจำ) - {invoice.DocumentNumber}")
+                .Reference(invoice.DocumentNumber)
+                .SourceDocument(invoice.Id)
+                .Project(invoice.ProjectId)
+                .Debit(whtAccount.Id, remaining, "ภาษีถูกหัก ณ ที่จ่าย (ถูกหัก)")
+                .Credit(arAccount.Id, remaining, $"ตัดลูกหนี้ส่วน WHT - {invoice.DocumentNumber}")
+                .PostAsync(actor);
+
+            // ทะเบียนเครดิตอ่านจาก GL 11910 จริง — เรียกหลัง post ให้แถวตรงยอด
+            await SyncWhtCreditReceivedAsync(companyId, invoice);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "รับรู้ WHT ตอนปิดยอดด้วยมัดจำของ {Doc} ไม่สำเร็จ — " +
+                "ตรวจลูกหนี้คงค้างและทะเบียนเครดิตภาษีของใบนี้ด้วยมือ", invoice.DocumentNumber);
+        }
     }
 
     /// <summary>ค้น "JV มัดจำที่ไม่มีเอกสาร" — สมุดรายวันที่ integration post ตรง
@@ -3959,6 +4034,12 @@ public class DocumentService : IDocumentService
         await TryReclassifyUndueOutputVatAsync(companyId, invoiceId, DateTime.UtcNow.Date, actor);
 
         await _db.SaveChangesAsync();
+
+        // S-2 (เส้น JV): เหมือนหักมัดจำจากเอกสาร — ปิดยอดครบแล้วลูกหนี้ใน GL
+        // ยังค้างเท่ายอด WHT เพราะตั้งไว้ gross ตามเกณฑ์เงินสด
+        if (invoice.BalanceDue <= 0.005m && invoice.WithholdingTaxAmount > 0.005m)
+            await TryRecognizeSalesWhtOnSettlementAsync(companyId, invoice, when, actor);
+
         var updated = await GetDocumentAsync(companyId, invoiceId);
         await FireWebhookAsync(companyId, "deposit.applied", updated);
         return updated;
