@@ -112,6 +112,18 @@ public interface IDocumentService
     Task<int> RedateVoidReversalAsync(Guid companyId, Guid documentId, DateTime newDate, string actor,
         IReadOnlyList<RedateEntryDate>? entryDates = null);
 
+    /// <summary>รายการบัญชี (JE) ของเอกสาร พร้อมบรรทัดจริงจาก GL + สิทธิ์ปรับปรุง —
+    /// ใช้ในแผง "ตรวจสอบ/แก้ไขรายการบัญชี" บนหน้าเอกสาร</summary>
+    Task<List<DocumentJournalEntryDto>> GetDocumentJournalEntriesAsync(Guid companyId, Guid documentId);
+
+    /// <summary>ปรับปรุงผังบัญชีของ JE ที่ผ่านรายการแล้ว โดยส่ง "สถานะปลายทาง"
+    /// ของใบสำคัญมา — ระบบลงใบปรับปรุงใหม่ตามผลต่าง (ไม่แก้ใบเดิม).
+    /// ยอดรวมต้องเท่าเดิม และบัญชีคุม (ภาษี/ลูกหนี้-เจ้าหนี้/มัดจำ) ห้ามขยับ.
+    /// คืนรายการ JE ล่าสุดของเอกสารเพื่อให้ UI refresh ในครั้งเดียว</summary>
+    Task<List<DocumentJournalEntryDto>> AdjustDocumentJournalEntryAsync(
+        Guid companyId, Guid documentId, Guid journalEntryId,
+        AdjustDocumentJournalRequest request, string actor);
+
     /// <summary>ดูรายการ "ตัวกลับ" ที่จะถูกย้ายก่อนกดยืนยัน — เอกสาร 1 ใบมี
     /// ตัวกลับได้หลายใบ (ใบซื้อ/ขาย + รับ-จ่ายชำระ + มัดจำ) ผู้ใช้ต้องเห็นว่า
     /// ใบไหนย้ายจากวันไหนไปวันไหน และใบไหนย้ายไม่ได้เพราะอะไร</summary>

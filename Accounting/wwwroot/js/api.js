@@ -235,6 +235,10 @@ const API = {
       restoreDocument: (id) => API.post(`${base}/document/${id}/restore`),
       reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
       reclassifyPaymentSource: (id, body) => API.post(`${base}/document/${id}/reclassify-payment-source`, body),
+      // ตรวจสอบ/แก้ไขรายการบัญชี (JE) ของเอกสารที่อนุมัติแล้ว
+      getDocumentJournalEntries: (id) => API.get(`${base}/document/${id}/journal-entries`),
+      adjustDocumentJournalEntry: (id, jeId, body) => API.post(
+        `${base}/document/${id}/journal-entries/${jeId}/adjust`, body),
       listAdjustingLines: (id) => API.get(`${base}/document/${id}/adjusting-lines`),
       saveAdjustingLines: (id, body) => API.put(`${base}/document/${id}/adjusting-lines`, body),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),

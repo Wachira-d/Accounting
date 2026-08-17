@@ -663,6 +663,39 @@ public class DocumentController : ControllerBase
                 : "ไม่มีรายการกลับบัญชีที่ต้องย้าย (วันที่ตรงอยู่แล้ว)"));
     }
 
+    /// <summary>รายการบัญชี (JE) ของเอกสาร พร้อมบรรทัดจริงจาก GL — แผง
+    /// "ตรวจสอบ/แก้ไขรายการบัญชี" บนหน้าเอกสาร. อ่านอย่างเดียว</summary>
+    [HttpGet("{documentId:guid}/journal-entries")]
+    public async Task<ActionResult<ApiResponse<List<DocumentJournalEntryDto>>>> GetDocumentJournalEntries(
+        Guid companyId, Guid documentId)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<List<DocumentJournalEntryDto>>(false, null, "ไม่พบเอกสาร"));
+        var list = await _documentService.GetDocumentJournalEntriesAsync(companyId, documentId);
+        return Ok(new ApiResponse<List<DocumentJournalEntryDto>>(true, list, null));
+    }
+
+    /// <summary>ปรับปรุงผังบัญชีของ JE ที่ลงไปแล้ว — ส่ง "สถานะปลายทาง" ของ
+    /// ใบสำคัญมา ระบบลงใบปรับปรุงใหม่ตามผลต่าง. ยอดรวมต้องเท่าเดิม + บัญชีคุม
+    /// ห้ามขยับ. ใช้สิทธิ์เดียวกับ Approve (มีผลต่อ GL เท่ากัน)</summary>
+    [HttpPost("{documentId:guid}/journal-entries/{journalEntryId:guid}/adjust")]
+    public async Task<ActionResult<ApiResponse<List<DocumentJournalEntryDto>>>> AdjustDocumentJournalEntry(
+        Guid companyId, Guid documentId, Guid journalEntryId,
+        [FromBody] AdjustDocumentJournalRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<List<DocumentJournalEntryDto>>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<List<DocumentJournalEntryDto>>(
+                $"ไม่มีสิทธิ์ปรับปรุงรายการบัญชีของเอกสาร {docType}");
+
+        var list = await _documentService.AdjustDocumentJournalEntryAsync(
+            companyId, documentId, journalEntryId, request, User.Identity?.Name ?? userIdGuid.ToString());
+        return Ok(new ApiResponse<List<DocumentJournalEntryDto>>(true, list,
+            "ลงใบสำคัญปรับปรุงเรียบร้อย — ผังบัญชีใน GL ถูกต้องแล้ว"));
+    }
+
     /// <summary>ดูก่อนย้าย — เอกสาร 1 ใบมีตัวกลับได้หลายใบ (ใบซื้อ/ขาย +
     /// รับ-จ่ายชำระ + มัดจำ) endpoint นี้บอกว่าใบไหนบ้างจะถูกย้ายจากวันไหนไป
     /// วันไหน และใบไหนย้ายไม่ได้เพราะอะไร. อ่านอย่างเดียว ไม่แก้ข้อมูล</summary>
