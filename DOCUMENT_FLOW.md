@@ -1823,7 +1823,11 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 38 — Task Force P4/Q3: (P4)_
+_Last verified against codebase: 2026-08-17 (รอบ 39 — Task Force P5-P7 (N+1):_
+_ตรวจรหัสบัญชีของบรรทัดเอกสาร (`ValidateLines`) เดิมยิง AnyAsync **ต่อบรรทัด** —_
+_ใบ 50 บรรทัด = 50 query ทุกครั้งที่สร้าง/แก้ · import เงินเดือนเช็คผัง 2 query/_
+_พนักงาน (200 คน = 400 query) · โพสต์เงินเดือน resolve แหล่งจ่าย 1 query/โค้ด —_
+_ทั้งหมดเปลี่ยนเป็นดึงชุดเดียวก่อนลูปแล้วเทียบใน RAM (query คงที่ 0-1 ครั้ง); รอบ 38 — Task Force P4/Q3: (P4)_
 _`GetGeneralLedgerAsync` รวมยอดยกมาใน SQL (GroupBy+Sum) แทนดึง JournalEntryLine_
 _ทั้งหมดตั้งแต่เปิดบริษัทเข้า RAM เมื่อไม่ได้เลือกบัญชีเจาะจง · (Q3) AuditMiddleware:_
 _ข้าม path ที่เขียนถี่แต่ไม่มีคุณค่าเชิงตรวจสอบ (chat/telemetry/autosave/preview),_

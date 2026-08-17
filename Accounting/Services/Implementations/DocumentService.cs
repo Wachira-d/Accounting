@@ -412,6 +412,20 @@ public class DocumentService : IDocumentService
         if (lines == null || lines.Count == 0)
             throw new InvalidOperationException("ต้องมีรายการสินค้าอย่างน้อย 1 รายการ");
 
+        // P7 (N+1): ตรวจว่ารหัสบัญชีของทุกบรรทัดมีจริง — เดิม AnyAsync **ต่อบรรทัด**
+        // ⇒ เอกสาร 50 บรรทัด = 50 query ทุกครั้งที่สร้าง/แก้ (และ import ที่ยิงหลาย
+        // ใบพร้อมกันคูณเข้าไปอีก). ดึงชุด id ที่ใช้ได้ทีเดียวก่อนลูป
+        var lineAccountIds = lines.Where(l => l.AccountId.HasValue)
+            .Select(l => l.AccountId!.Value).Distinct().ToList();
+        var validLineAccountIds = lineAccountIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.IsActive
+                    && lineAccountIds.Contains(a.Id))
+                .Select(a => a.Id)
+                .ToListAsync())
+                .ToHashSet();
+
         foreach (var line in lines)
         {
             if (line.Quantity <= 0)
@@ -424,14 +438,9 @@ public class DocumentService : IDocumentService
                 throw new InvalidOperationException("อัตราภาษีมูลค่าเพิ่มต้องเป็น 0, 7 หรือ -1 (ยกเว้น)");
             if (line.WithholdingTaxRate < 0 || line.WithholdingTaxRate > 15)
                 throw new InvalidOperationException("อัตราภาษีหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0-15%");
-            if (line.AccountId.HasValue)
-            {
-                var acctExists = await _db.ChartOfAccounts.AnyAsync(a =>
-                    a.Id == line.AccountId.Value && a.CompanyId == companyId && a.IsActive);
-                if (!acctExists)
-                    throw new InvalidOperationException(
-                        $"รหัสบัญชีที่ระบุในรายการ '{line.Description}' ไม่พบในผังบัญชี หรือถูกปิดใช้งาน");
-            }
+            if (line.AccountId.HasValue && !validLineAccountIds.Contains(line.AccountId.Value))
+                throw new InvalidOperationException(
+                    $"รหัสบัญชีที่ระบุในรายการ '{line.Description}' ไม่พบในผังบัญชี หรือถูกปิดใช้งาน");
         }
     }
 

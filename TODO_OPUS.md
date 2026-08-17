@@ -4,7 +4,7 @@
 
 **เสร็จแล้ว:** หมวด A ครบ 6/6 (A1-A6) · หมวด B ครบ 14/14 (B1-B14) ·
 หมวด C: Q5 ConfirmPayment · S9 ForwardedHeaders · S8 ปิด static serving
-ไฟล์ลับ · P4 GL opening balance · Q3 audit middleware
+ไฟล์ลับ · P4 GL opening balance · Q3 audit middleware · P5-P7 N+1
 **เพิ่มใหม่:** เครื่องมือกระทบยอด GL ↔ รายงานภาษี พร้อมไล่หาสาเหตุ
 
 **คงเหลือ (หมวด C เท่านั้น):**
@@ -16,7 +16,7 @@
   rate-limit แบบ distributed · CompanyId บน JournalEntryLine + balance
   snapshot · migration versioning + CREATE INDEX CONCURRENTLY
 - **P3** refresh token (S6) · S10-S14 · ✅ GetGeneralLedgerAsync memory (P4) ·
-  N+1 (P5-P7) · ✅ audit middleware rows (Q3)
+  ✅ N+1 (P5-P7) · ✅ audit middleware rows (Q3)
 - **รอเจ้าของตัดสินใจ** default การรับรู้ VAT มัดจำ (ต้องนักบัญชียืนยัน) ·
   StrictPayeeIdentification switch
 
@@ -271,7 +271,7 @@ error หรือหายเงียบ
   versioning + CREATE INDEX CONCURRENTLY
 - **P3**: refresh token (S6) · ✅ ปิด static serving ไฟล์ลับใต้ /uploads (S8 — ย้าย storage ออกจาก wwwroot ยังค้าง) ·
   ✅ UseForwardedHeaders (S9) · S10-S14 · ✅ GetGeneralLedgerAsync memory (P4) ·
-  N+1 (P5-P7) · ✅ audit middleware rows (Q3) · ✅ ConfirmPaymentAsync catch{} (Q5)
+  ✅ N+1 (P5-P7) · ✅ audit middleware rows (Q3) · ✅ ConfirmPaymentAsync catch{} (Q5)
 - **รอเจ้าของตัดสินใจ**: A1 default การรับรู้ VAT มัดจำ (ต้องนักบัญชียืนยัน) ·
   StrictPayeeIdentification switch
 
