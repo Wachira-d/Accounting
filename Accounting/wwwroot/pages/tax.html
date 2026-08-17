@@ -27,6 +27,7 @@
       <div class="tab" data-type="VAT" onclick="Page.setType(this)">ภาษีมูลค่าเพิ่ม</div>
       <div class="tab" data-type="WithholdingTax3" onclick="Page.setType(this)">หัก ณ ที่จ่าย (ภ.ง.ด.3)</div>
       <div class="tab" data-type="WithholdingTax53" onclick="Page.setType(this)">หัก ณ ที่จ่าย (ภ.ง.ด.53)</div>
+      <div class="tab" data-type="VatPp36" onclick="Page.setType(this)">ภ.พ.36 (บริการต่างประเทศ)</div>
       <div class="tab" data-type="CorporateIncomeTax" onclick="Page.setType(this)">ภาษีนิติบุคคล</div>
     </div>
 
@@ -83,6 +84,7 @@
               <option value="VAT">ภาษีมูลค่าเพิ่ม (ภ.พ.30)</option>
               <option value="WithholdingTax3">หัก ณ ที่จ่าย (ภ.ง.ด.3)</option>
               <option value="WithholdingTax53">หัก ณ ที่จ่าย (ภ.ง.ด.53)</option>
+              <option value="VatPp36">ภ.พ.36 — นำส่ง VAT แทนผู้ขายต่างประเทศ (§83/6)</option>
               <option value="WithholdingTax1">หัก ณ ที่จ่าย (ภ.ง.ด.1)</option>
               <option value="SocialSecurity">ประกันสังคม</option>
               <option value="CorporateIncomeTax">ภาษีนิติบุคคล</option>
@@ -154,7 +156,7 @@
       page: 1, taxType: '',
       allReports: [],
       selectedTax: new Set(),
-      typeMap: { VAT: 'ภ.พ.30', WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1', SocialSecurity: 'ประกันสังคม', CorporateIncomeTax: 'ภาษีนิติบุคคล' },
+      typeMap: { VAT: 'ภ.พ.30', WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1', WithholdingTax54: 'ภ.ง.ด.54', VatPp36: 'ภ.พ.36', SocialSecurity: 'ประกันสังคม', CorporateIncomeTax: 'ภาษีนิติบุคคล' },
       monthNames: ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'],
       onTaxCheck(cb) {
         if (cb.checked) this.selectedTax.add(cb.dataset.id); else this.selectedTax.delete(cb.dataset.id);
@@ -321,21 +323,31 @@
         if (statusF) items = items.filter(r => r.status === statusF);
         const tbody = document.getElementById('tableBody');
         if (!items.length) { tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่มีรายงาน</td></tr>'; return; }
+        // ภงด.3/53/54 เก็บยอดใน totalIncome/totalTaxWithheld — ไม่ใช่ outputVat/
+        // netVat (ของ VAT) ⇒ เดิม list โชว์ 0.00 ทุกแถว ภงด. แม้รายงานมีข้อมูล
+        // (ผู้ใช้เข้าใจว่ารายงานว่าง ทั้งที่หนังสือรับรอง 50 ทวิ ออกครบ)
+        const _isWht = t => String(t).startsWith('WithholdingTax');
+        const _netOf = r => _isWht(r.taxType) ? (r.totalTaxWithheld || 0)
+          : (r.taxType === 'CorporateIncomeTax' ? (r.citAmount ?? r.totalTaxWithheld ?? 0) : (r.netVat || 0));
         tbody.innerHTML = items.map(r => `<tr>
           <td><input type="checkbox" class="tax-check" data-id="${r.id}" ${this.selectedTax?.has(r.id) ? 'checked' : ''} onchange="Page.onTaxCheck(this)"></td>
           <td class="font-medium">${this.typeMap[r.taxType] || r.taxType}</td>
           <td>${r.year}</td>
           <td>${this.monthNames[r.month]}</td>
-          <td class="text-right">${Layout.money(r.outputVat)}</td>
-          <td class="text-right">${Layout.money(r.inputVat)}${
+          <td class="text-right">${_isWht(r.taxType)
+            ? `<span title="เงินได้ที่จ่าย (ฐานหัก ณ ที่จ่าย)">${Layout.money(r.totalIncome)}</span>`
+            : Layout.money(r.outputVat)}</td>
+          <td class="text-right">${_isWht(r.taxType) ? '<span class="text-gray-400">—</span>' : Layout.money(r.inputVat)}${
             // รายงานภาษี = snapshot สร้างครั้งเดียว ไม่ refresh เอง — ใบที่บันทึก/
             // ติ๊กเคลมหลัง generate จะไม่ขึ้นจนกด "สร้างใหม่". เตือนเมื่อยัง draft
-            // และยอดทั้งขาย/ซื้อ = 0 (มักคือรายงานว่างที่ยังไม่ได้ดึงเอกสารเข้า)
-            (r.status !== 'Filed' && String(r.taxType).toLowerCase().includes('vat')
-              && Number(r.outputVat||0) === 0 && Number(r.inputVat||0) === 0)
-              ? `<div style="font-size:10px;color:#b45309;margin-top:2px" title="รายงานเป็น snapshot ไม่อัปเดตเองเมื่อมีเอกสารใหม่ — กด 'สร้างใหม่' เพื่อดึงเอกสารในงวดนี้เข้ารายงาน">⚠️ ว่าง — กด "สร้างใหม่"?</div>`
+            // และยอด = 0 (มักคือรายงานว่างที่ยังไม่ได้ดึงเอกสารเข้า)
+            (r.status !== 'Filed'
+              && ((String(r.taxType).toLowerCase().includes('vat') && !_isWht(r.taxType)
+                    && Number(r.outputVat||0) === 0 && Number(r.inputVat||0) === 0)
+                  || (_isWht(r.taxType) && Number(r.totalTaxWithheld||0) === 0)))
+              ? `<div style="font-size:10px;color:#b45309;margin-top:2px" title="รายงานเป็น snapshot ไม่อัปเดตเองเมื่อมีเอกสาร/หนังสือรับรองใหม่ — กด 'สร้างใหม่' เพื่อดึงข้อมูลงวดนี้เข้ารายงาน">⚠️ ว่าง — กด "สร้างใหม่"?</div>`
               : ''}</td>
-          <td class="text-right font-semibold ${r.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(r.netVat)}</td>
+          <td class="text-right font-semibold ${_netOf(r) > 0 ? 'text-danger' : 'text-success'}">${Layout.money(_netOf(r))}</td>
           <td>${Layout.statusBadge(r.status)}</td>
           <td>${r.filedDate ? Layout.date(r.filedDate) : '-'}</td>
           <td class="flex gap-1" style="flex-wrap:wrap">
@@ -424,9 +436,15 @@
             </div>
             <div class="card" style="background:var(--bg-secondary);margin-bottom:16px">
               <div class="grid grid-3 gap-4">
-                <div><span class="text-gray-500 text-xs">ภาษีขาย (Output VAT)</span><div class="text-lg font-bold">${Layout.money(d.outputVat)}</div></div>
-                <div><span class="text-gray-500 text-xs">ภาษีซื้อ (Input VAT)</span><div class="text-lg font-bold">${Layout.money(d.inputVat)}</div></div>
-                <div><span class="text-gray-500 text-xs">ภาษีสุทธิ</span><div class="text-lg font-bold ${d.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(d.netVat)}</div><div class="text-xs text-gray-400">${d.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน'}</div></div>
+                ${String(d.taxType).startsWith('WithholdingTax') ? `
+                <div><span class="text-gray-500 text-xs">เงินได้ที่จ่าย (ฐานหัก)</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
+                <div><span class="text-gray-500 text-xs">จำนวนผู้ถูกหัก/รายการ</span><div class="text-lg font-bold">${(d.lines || []).filter(l => l.incomeTypeCode !== 'SUMMARY').length}</div></div>
+                <div><span class="text-gray-500 text-xs">ภาษีนำส่ง</span><div class="text-lg font-bold ${d.totalTaxWithheld > 0 ? 'text-danger' : ''}">${Layout.money(d.totalTaxWithheld)}</div><div class="text-xs text-gray-400">ยื่นภายในวันที่ 7 (e-Filing 15) เดือนถัดไป</div></div>
+                ` : `
+                <div><span class="text-gray-500 text-xs">${d.taxType === 'VatPp36' ? 'ฐานค่าบริการ ตปท.' : 'ภาษีขาย (Output VAT)'}</span><div class="text-lg font-bold">${Layout.money(d.taxType === 'VatPp36' ? d.totalIncome : d.outputVat)}</div></div>
+                <div><span class="text-gray-500 text-xs">${d.taxType === 'VatPp36' ? 'VAT ประเมินเอง 7%' : 'ภาษีซื้อ (Input VAT)'}</span><div class="text-lg font-bold">${Layout.money(d.taxType === 'VatPp36' ? d.outputVat : d.inputVat)}</div></div>
+                <div><span class="text-gray-500 text-xs">${d.taxType === 'VatPp36' ? 'ยอดนำส่ง ภ.พ.36' : 'ภาษีสุทธิ'}</span><div class="text-lg font-bold ${d.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(d.netVat)}</div><div class="text-xs text-gray-400">${d.taxType === 'VatPp36' ? 'นำส่งแล้วเคลมเป็นภาษีซื้อ ภ.พ.30 ได้' : (d.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน')}</div></div>
+                `}
               </div>
             </div>
             ${d.taxType === 'VAT' ? `
