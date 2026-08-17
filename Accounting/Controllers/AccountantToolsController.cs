@@ -19,6 +19,7 @@ namespace Accounting.Controllers;
 public class AccountantToolsController : ControllerBase
 {
     private readonly SubLedgerReconciliationService _subRecon;
+    private readonly TaxGlReconciliationService _taxRecon;
     private readonly PreCloseChecklistService _preClose;
     private readonly DocumentCompletenessService _docComplete;
     private readonly GlobalSearchService _search;
@@ -26,12 +27,14 @@ public class AccountantToolsController : ControllerBase
 
     public AccountantToolsController(
         SubLedgerReconciliationService subRecon,
+        TaxGlReconciliationService taxRecon,
         PreCloseChecklistService preClose,
         DocumentCompletenessService docComplete,
         GlobalSearchService search,
         IAuditTrailService audit)
     {
         _subRecon = subRecon;
+        _taxRecon = taxRecon;
         _preClose = preClose;
         _docComplete = docComplete;
         _search = search;
@@ -46,6 +49,20 @@ public class AccountantToolsController : ControllerBase
     {
         var result = await _subRecon.ReconcileAsync(companyId, asOf ?? DateTime.UtcNow.Date, tolerance);
         return Ok(new ApiResponse<SubLedgerReconciliationService.ReconResult>(true, result));
+    }
+
+    /// <summary>กระทบยอด GL ↔ รายงานภาษี ของงวด (ภ.พ.30 / ภ.ง.ด.3-53-54 /
+    /// ภ.พ.36) พร้อม "สาเหตุที่เป็นไปได้" ที่ระบบไล่ตรวจให้จริงเมื่อยอดไม่ตรง —
+    /// ตอบคำถาม "ยอดที่จะยื่นตรงกับที่ลงบัญชีไหม ถ้าไม่ตรงเพราะอะไร"</summary>
+    [HttpGet("tax-gl-recon")]
+    public async Task<ActionResult<ApiResponse<TaxGlReconciliationService.ReconResult>>> TaxGlRecon(
+        Guid companyId, [FromQuery] int year, [FromQuery] int month,
+        [FromQuery] decimal tolerance = 1m)
+    {
+        if (month is < 1 or > 12)
+            return BadRequest(new ApiResponse<object>(false, null, "เดือนต้องอยู่ระหว่าง 1-12"));
+        var result = await _taxRecon.ReconcileAsync(companyId, year, month, tolerance);
+        return Ok(new ApiResponse<TaxGlReconciliationService.ReconResult>(true, result));
     }
 
     /// <summary>Pre-close checklist for a given month — aggregates 8

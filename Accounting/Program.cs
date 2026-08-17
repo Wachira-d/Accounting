@@ -162,6 +162,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.IDbdXbrlExportSer
 builder.Services.AddScoped<IMigrationWizardService, MigrationWizardService>();
 // Accountant tools (Phase I-N)
 builder.Services.AddScoped<SubLedgerReconciliationService>();
+builder.Services.AddScoped<TaxGlReconciliationService>();
 builder.Services.AddScoped<PreCloseChecklistService>();
 builder.Services.AddScoped<DocumentCompletenessService>();
 builder.Services.AddScoped<GlobalSearchService>();
