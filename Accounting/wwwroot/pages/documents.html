@@ -1043,6 +1043,48 @@
       </div>
     </div>
 
+    <!-- ตรวจสอบ/แก้ไขรายการบัญชี (JE) ของเอกสารที่อนุมัติแล้ว — แก้ผังบัญชี
+         เพิ่ม/ลดบรรทัด และเลือกวันที่ลงใบปรับปรุงได้ในที่เดียว. ระบบลง "ใบสำคัญ
+         ปรับปรุง" ใหม่ตามผลต่าง ไม่แก้ใบเดิม (audit trail ครบ) -->
+    <div class="modal-overlay" id="jeAdjustModal">
+      <div class="modal" style="max-width:860px">
+        <div class="modal-header">
+          <h3 class="modal-title">แก้ไขผังบัญชีของรายการบัญชี</h3>
+          <button class="modal-close" onclick="Layout.closeModal('jeAdjustModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="jeaInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:12px;margin-bottom:10px"></div>
+          <div style="font-size:11px;color:#475569;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-bottom:12px;line-height:1.7">
+            💡 แก้ตารางด้านล่างให้เป็น<b>ผังบัญชีที่ถูกต้อง</b> แล้วกดบันทึก —
+            ระบบจะลง <b>ใบสำคัญปรับปรุงใหม่</b> ตามผลต่าง (ใบเดิมไม่ถูกแก้ ประวัติครบ)<br>
+            กติกา: <b>ยอดรวมต้องเท่าเดิม</b> (ยอดผิด = แก้ที่เอกสาร) ·
+            <b>บัญชีคุม</b> (ภาษีซื้อ-ขาย, ลูกหนี้-เจ้าหนี้, มัดจำ, ภาษีหัก ณ ที่จ่าย)
+            ยอดห้ามขยับ — แถวพวกนี้ล็อกช่องจำนวนไว้
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:10px">
+            <div>
+              <label class="form-label" style="font-size:12px">วันที่ลงใบปรับปรุง</label>
+              <input type="date" class="form-input" id="jeaDate" style="width:180px">
+            </div>
+            <div style="flex:1;min-width:220px">
+              <label class="form-label" style="font-size:12px">เหตุผล (บันทึกลงประวัติ)</label>
+              <input type="text" class="form-input" id="jeaReason" placeholder="เช่น ลงผังผิด ควรเป็นค่าที่ปรึกษา ไม่ใช่ค่าโฆษณา">
+            </div>
+          </div>
+          <div id="jeaRows"></div>
+          <datalist id="coaListAll"></datalist>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px">
+            <button class="btn btn-sm btn-secondary" onclick="Page.jeaAddRow()">+ เพิ่มบรรทัด</button>
+            <div id="jeaTotals" style="font-size:12px;text-align:right"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('jeAdjustModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="jeaSubmit" onclick="Page.submitJeAdjust()">บันทึกใบปรับปรุง</button>
+        </div>
+      </div>
+    </div>
+
     <!-- แก้วันที่รายการกลับบัญชี — เอกสาร 1 ใบมีตัวกลับได้หลายใบ (ใบซื้อ/ขาย +
          รับ-จ่ายชำระ + มัดจำ) ผู้ใช้ต้องเห็นก่อนกดว่า "ใบไหนย้ายจากวันไหนไปวันไหน"
          เดิมใช้ prompt() ถามวันเดียวโดยไม่บอกว่าจะไปแตะใบไหนบ้าง -->
@@ -2003,6 +2045,202 @@
       // ===== Adjusting JE Lines (Option 1) =====
 
       _adjState: { docId: null, lines: [] },
+
+      /** แผง "รายการบัญชี (JE)" บนหน้าเอกสาร — กางบรรทัด Dr/Cr จริงจาก GL
+       *  พร้อมปุ่มแก้ผังบัญชีในตัว. เดิมโชว์แค่ยอดรวมต่อใบ ผู้ใช้จึงไม่มีทางเห็น
+       *  ว่าลงผังอะไรไป และไม่มีปุ่มให้แก้ (คำถามผู้ใช้: "ยังไม่เจอปุ่มให้แก้ผัง
+       *  บัญชีที่ลง JE") */
+      async renderDocJournalSection(docId) {
+        const host = document.getElementById('docJournalPanel_' + docId);
+        if (!host) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getDocumentJournalEntries(docId);
+          const entries = res?.data || [];
+          this._docJournals = entries;
+          if (!entries.length) { host.innerHTML = ''; return; }
+          host.innerHTML = `
+            <h4 style="font-size:14px;margin-bottom:8px">📒 รายการบัญชี (${entries.length})</h4>
+            ${entries.map(j => this._renderJeCard(docId, j)).join('')}`;
+        } catch (e) {
+          host.innerHTML = `<div style="color:#dc2626;font-size:12px">โหลดรายการบัญชีไม่สำเร็จ: ${this.escapeHtml(e.message)}</div>`;
+        }
+      },
+
+      _renderJeCard(docId, j) {
+        const statusBadge = j.status === 'Reversed'
+          ? '<span class="badge" style="background:#7c3aed15;color:#7c3aed">กลับรายการแล้ว</span>'
+          : Layout.statusBadge(j.status);
+        const action = j.canAdjust
+          ? `<button class="btn btn-sm btn-primary" onclick="Page.openJeAdjust('${docId}','${j.id}')" title="แก้ผังบัญชี / เพิ่ม-ลดบรรทัด — ระบบลงใบปรับปรุงใหม่ให้">✏️ แก้ผังบัญชี</button>`
+          : `<span style="font-size:11px;color:#92400e" title="${this.escapeHtml(j.blockReason || '')}">🔒 ${this.escapeHtml(j.blockReason || 'แก้ไม่ได้')}</span>`;
+        return `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:12px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+            <div style="font-size:13px">
+              <a href="/pages/journals.html?entryId=${j.id}" style="font-weight:600">${this.escapeHtml(j.entryNumber)}</a>
+              · ${Layout.date(j.entryDate)} · ${this.escapeHtml(j.journalType)}
+              ${j.isReversalEntry ? ' <span class="badge" style="background:#7c3aed15;color:#7c3aed;font-size:10px;padding:1px 5px">ตัวกลับ</span>' : ''}
+              ${statusBadge}
+            </div>
+            ${action}
+          </div>
+          <table class="table" style="font-size:12px">
+            <thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
+            <tbody>${(j.lines || []).map(l => `<tr>
+              <td style="font-family:ui-monospace,monospace">${this.escapeHtml(l.accountCode)}${l.isControlAccount ? ' <span title="บัญชีคุม — ยอดต้องตรงกับเอกสารเสมอ">🔒</span>' : ''}</td>
+              <td>${this.escapeHtml(l.accountName)}</td>
+              <td class="text-right">${l.debitAmount > 0 ? Layout.money(l.debitAmount) : ''}</td>
+              <td class="text-right">${l.creditAmount > 0 ? Layout.money(l.creditAmount) : ''}</td>
+            </tr>`).join('')}</tbody>
+            <tfoot><tr style="background:var(--gray-50);font-weight:700">
+              <td colspan="2" class="text-right">รวม</td>
+              <td class="text-right">${Layout.money(j.totalDebit)}</td>
+              <td class="text-right">${Layout.money(j.totalCredit)}</td>
+            </tr></tfoot>
+          </table>
+        </div>`;
+      },
+
+      // ── แก้ผังบัญชีของ JE ─────────────────────────────────────────────
+      async openJeAdjust(docId, jeId) {
+        const je = (this._docJournals || []).find(x => x.id === jeId);
+        if (!je) return;
+        if (!this.coaByCode || !Object.keys(this.coaByCode).length) {
+          const api = Layout.api();
+          try {
+            const coa = await api.getAccounts();
+            const list = coa?.data?.items || coa?.data || [];
+            this.coaByCode = {};
+            list.forEach(a => { this.coaByCode[a.accountCode] = a; });
+          } catch { this.coaByCode = {}; }
+        }
+        const dl = document.getElementById('coaListAll');
+        if (dl) {
+          dl.innerHTML = Object.values(this.coaByCode)
+            .map(a => `<option value="${Layout.esc(a.accountCode)} ${Layout.esc(a.accountName)}">`).join('');
+        }
+        this._jeaCtx = { docId, jeId, originalTotal: je.totalDebit };
+        this._jeaRows = (je.lines || []).map(l => ({
+          accountCode: l.accountCode, accountName: l.accountName,
+          debit: l.debitAmount, credit: l.creditAmount,
+          locked: l.isControlAccount,
+        }));
+        document.getElementById('jeaInfo').innerHTML =
+          `<div>ใบสำคัญ <b>${this.escapeHtml(je.entryNumber)}</b> · ${Layout.date(je.entryDate)} · ` +
+          `ยอดรวมเดิม <b>${Layout.money(je.totalDebit)}</b></div>`;
+        document.getElementById('jeaDate').value = Layout.dateInput(je.entryDate) || '';
+        document.getElementById('jeaReason').value = '';
+        this.renderJeaRows();
+        Layout.openModal('jeAdjustModal');
+      },
+
+      renderJeaRows() {
+        const rows = this._jeaRows || [];
+        document.getElementById('jeaRows').innerHTML = `<div class="table-container">
+          <table class="table" style="font-size:12px">
+            <thead><tr><th style="min-width:230px">ผังบัญชี</th><th class="text-right" style="width:130px">เดบิต</th><th class="text-right" style="width:130px">เครดิต</th><th style="width:40px"></th></tr></thead>
+            <tbody>${rows.map((r, i) => `<tr>
+              <td><input type="text" class="form-input" list="coaListAll" style="font-size:12px"
+                    value="${Layout.esc(r.accountCode + (r.accountName ? ' ' + r.accountName : ''))}"
+                    ${r.locked ? 'readonly title="บัญชีคุม — เปลี่ยนไม่ได้"' : ''}
+                    onchange="Page.jeaRowChanged(${i},'account',this.value)">
+                  ${r.locked ? '<div style="font-size:10px;color:#92400e">🔒 บัญชีคุม — ยอดต้องตรงกับเอกสาร</div>' : ''}</td>
+              <td><input type="number" step="0.01" min="0" class="form-input text-right" style="font-size:12px"
+                    value="${r.debit || 0}" ${r.locked ? 'readonly' : ''}
+                    onchange="Page.jeaRowChanged(${i},'debit',this.value)"></td>
+              <td><input type="number" step="0.01" min="0" class="form-input text-right" style="font-size:12px"
+                    value="${r.credit || 0}" ${r.locked ? 'readonly' : ''}
+                    onchange="Page.jeaRowChanged(${i},'credit',this.value)"></td>
+              <td>${r.locked ? '' : `<button class="btn btn-sm btn-ghost" style="color:#ef4444" title="ลบบรรทัดนี้" onclick="Page.jeaRemoveRow(${i})">✕</button>`}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>`;
+        this.jeaUpdateTotals();
+      },
+
+      jeaRowChanged(i, field, value) {
+        const r = (this._jeaRows || [])[i];
+        if (!r || r.locked) return;
+        if (field === 'account') {
+          const code = String(value || '').trim().split(/\s+/)[0];
+          const acc = this.coaByCode?.[code];
+          r.accountCode = acc ? acc.accountCode : code;
+          r.accountName = acc ? acc.accountName : '';
+        } else {
+          const v = Math.max(0, parseFloat(value) || 0);
+          r[field] = v;
+          // แต่ละบรรทัดใส่ได้ด้านเดียว — ใส่ Dr แล้ว Cr ต้องเป็น 0 (และกลับกัน)
+          if (v > 0) r[field === 'debit' ? 'credit' : 'debit'] = 0;
+          this.renderJeaRows();
+          return;
+        }
+        this.jeaUpdateTotals();
+      },
+
+      jeaAddRow() {
+        (this._jeaRows = this._jeaRows || []).push(
+          { accountCode: '', accountName: '', debit: 0, credit: 0, locked: false });
+        this.renderJeaRows();
+      },
+
+      jeaRemoveRow(i) {
+        const rows = this._jeaRows || [];
+        if (rows[i]?.locked) return;
+        rows.splice(i, 1);
+        this.renderJeaRows();
+      },
+
+      jeaUpdateTotals() {
+        const rows = this._jeaRows || [];
+        const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
+        const dr = r2(rows.reduce((s, r) => s + (Number(r.debit) || 0), 0));
+        const cr = r2(rows.reduce((s, r) => s + (Number(r.credit) || 0), 0));
+        const orig = r2(this._jeaCtx?.originalTotal || 0);
+        const balanced = dr === cr;
+        const sameTotal = dr === orig;
+        const unknown = rows.filter(r => r.accountCode && !this.coaByCode?.[r.accountCode]);
+        const blank = rows.filter(r => !r.accountCode);
+        const el = document.getElementById('jeaTotals');
+        const problems = [];
+        if (!balanced) problems.push(`เดบิต ${Layout.money(dr)} ≠ เครดิต ${Layout.money(cr)}`);
+        if (!sameTotal) problems.push(`ยอดรวมต้องเท่าเดิม (${Layout.money(orig)})`);
+        if (blank.length) problems.push(`มี ${blank.length} บรรทัดยังไม่เลือกผังบัญชี`);
+        if (unknown.length) problems.push(`ไม่พบผังบัญชี: ${unknown.map(r => r.accountCode).join(', ')}`);
+        if (el) {
+          el.innerHTML = `<div>เดบิต <b>${Layout.money(dr)}</b> · เครดิต <b>${Layout.money(cr)}</b> · เดิม ${Layout.money(orig)}</div>` +
+            (problems.length
+              ? `<div style="color:#dc2626">⚠ ${problems.map(p => this.escapeHtml(p)).join(' · ')}</div>`
+              : '<div style="color:#15803d">✓ พร้อมบันทึก</div>');
+        }
+        const btn = document.getElementById('jeaSubmit');
+        if (btn) btn.disabled = problems.length > 0;
+        return problems.length === 0;
+      },
+
+      async submitJeAdjust() {
+        if (!this.jeaUpdateTotals()) return;
+        const ctx = this._jeaCtx; if (!ctx) return;
+        const api = Layout.api(); if (!api) return;
+        const lines = (this._jeaRows || []).map(r => ({
+          accountId: this.coaByCode?.[r.accountCode]?.id,
+          debitAmount: Number(r.debit) || 0,
+          creditAmount: Number(r.credit) || 0,
+          description: null,
+        }));
+        if (lines.some(l => !l.accountId)) {
+          Layout.toast('มีบรรทัดที่ยังไม่เลือกผังบัญชี', 'error'); return;
+        }
+        try {
+          const res = await api.adjustDocumentJournalEntry(ctx.docId, ctx.jeId, {
+            entryDate: document.getElementById('jeaDate').value || null,
+            reason: document.getElementById('jeaReason').value.trim() || null,
+            lines,
+          });
+          Layout.toast(res?.message || 'ลงใบปรับปรุงเรียบร้อย', 'success', 7000);
+          Layout.closeModal('jeAdjustModal');
+          this._jeaCtx = null;
+          await this.renderDocJournalSection(ctx.docId);
+        } catch (e) { Layout.toast(e.message, 'error', 9000); }
+      },
 
       /** Render section "ปรับปรุงรายการบัญชี" บน detail. Draft → ปุ่มแก้ไข,
        *  Approved+ → read-only display เพื่อให้ user เห็นว่าเอกสารมี adjusting */
@@ -4869,10 +5107,16 @@
         setIfEmpty('fProject', d.projectId);
         setIfEmpty('fDimension', d.dimensionId);
         setIfEmpty('fExpenseCategory', d.expenseCategoryId);
-        // ฝั่งซื้อ: ข้อมูลใบกำกับของผู้ขาย = ใบเดิมที่กำลังลดหนี้ให้
+        // ฝั่งซื้อ: **ห้าม**เอาเลขที่/วันที่ใบกำกับของใบเดิมมาเติม — บนใบลดหนี้/
+        // ใบเพิ่มหนี้ ช่องคู่นี้มีความหมายว่า "เลขที่/วันที่ **ใบลดหนี้** ที่ผู้ขาย
+        // ออกให้" (ดู _syncSupplierInvoiceFields) คนละใบกับใบกำกับที่กำลังอ้างถึง
+        // เติมเลขใบกำกับลงไป = ผู้ใช้เห็นเลขที่ไม่ใช่ของใบนี้แล้วสับสน และถ้ากด
+        // บันทึกต่อ รายงานภาษีซื้อจะโชว์เลขใบกำกับแทนเลขใบลดหนี้จริง
+        // (ใบต้นทางที่อ้างถึงถูกเก็บไว้ที่ลิงก์เอกสารต้นทางอยู่แล้ว ไม่หายไปไหน)
+        // เลขใบลดหนี้ที่ถูกต้องมาจาก 2 ทาง: OCR สแกนใบลดหนี้ (เติมให้อัตโนมัติ)
+        // หรือผู้ใช้พิมพ์เอง
         if (srcIsPurchase) {
-          setIfEmpty('fSupplierInvoiceNumber', d.supplierInvoiceNumber);
-          setIfEmpty('fSupplierTaxInvoiceDate', d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '');
+          // สาขาผู้ขายยังยกมาได้ — เป็นสาขาเดียวกับใบเดิมเสมอ
           setIfEmpty('fSupplierBranchCode', d.supplierBranchCode);
         }
         // แหล่งเงินตั้งต้น = แหล่งเงินของใบเดิม — ใบลดหนี้/เพิ่มหนี้คือการปรับ
@@ -7621,13 +7865,14 @@
                 <tbody>${payments.map(p => `<tr><td>${p.paymentNumber}</td><td>${Layout.date(p.paymentDate)}</td><td class="text-right">${Layout.money(p.amount)}</td><td>${p.paymentMethod||'-'}</td></tr>`).join('')}</tbody></table></div>`;
             }
             if (journals.length) {
-              extraSections += `<div style="margin-top:16px"><h4 style="font-size:14px;margin-bottom:8px">รายการบัญชี (${journals.length})</h4>
-                <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th>ประเภท</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th>สถานะ</th></tr></thead>
-                <tbody>${journals.map(j => `<tr><td><a href="/pages/journals.html?entryId=${j.id}">${j.entryNumber}</a></td><td>${Layout.date(j.entryDate)}</td><td>${j.journalType||'-'}</td><td class="text-right">${Layout.money(j.totalDebit)}</td><td class="text-right">${Layout.money(j.totalCredit)}</td><td>${Layout.statusBadge(j.status)}</td></tr>`).join('')}</tbody></table></div>`;
+              // host ว่างไว้ — เนื้อหาจริงมาจาก renderDocJournalSection() ที่อ่าน
+              // บรรทัด Dr/Cr จาก GL และใส่ปุ่มแก้ผังบัญชีให้ในตัว
+              extraSections += `<div id="docJournalPanel_${d.id}" style="margin-top:16px"></div>`;
             }
             if (extraSections) {
               document.getElementById('detailContent').innerHTML += extraSections;
             }
+            if (journals.length) this.renderDocJournalSection(d.id);
             // #23 Comments widget — mount thread + activity log
             const commentsHost = document.createElement('div');
             commentsHost.id = `commentsMount-${id}`;

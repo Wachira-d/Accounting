@@ -855,6 +855,40 @@ public record VoidReversalRedatePreview(
     DateTime DocumentDate,
     IReadOnlyList<VoidReversalRedateRow> Rows);
 
+/// <summary>บรรทัด JE ของเอกสาร (อ่านจาก GL จริง) — ใช้ในแผง "ตรวจสอบ/แก้ไข
+/// รายการบัญชี" บนหน้าเอกสาร. <c>IsControlAccount</c> = บัญชีคุมที่ยอดเคลื่อนไหว
+/// ห้ามเปลี่ยน (ภาษีซื้อ-ขาย/ลูกหนี้-เจ้าหนี้/มัดจำ) เพราะรายงานภาษี/อายุหนี้อ่านอยู่</summary>
+public record DocumentJournalLineDto(
+    Guid AccountId,
+    string AccountCode,
+    string AccountName,
+    decimal DebitAmount,
+    decimal CreditAmount,
+    string? Description,
+    bool IsControlAccount);
+
+/// <summary>ใบสำคัญ 1 ใบของเอกสาร + สิทธิ์ว่าปรับปรุงได้ไหม (พร้อมเหตุผลถ้าไม่ได้)</summary>
+public record DocumentJournalEntryDto(
+    Guid Id,
+    string EntryNumber,
+    DateTime EntryDate,
+    string JournalType,
+    string Status,
+    decimal TotalDebit,
+    decimal TotalCredit,
+    bool IsReversalEntry,
+    bool CanAdjust,
+    string? BlockReason,
+    IReadOnlyList<DocumentJournalLineDto> Lines);
+
+public record AdjustJournalLineDto(
+    Guid AccountId, decimal DebitAmount, decimal CreditAmount, string? Description);
+
+/// <summary>"สถานะปลายทาง" ของใบสำคัญที่ต้องการ — ระบบคำนวณผลต่างแล้วลง
+/// **ใบปรับปรุงใหม่** ให้ (ไม่แก้ใบเดิม เพื่อรักษา audit trail)</summary>
+public record AdjustDocumentJournalRequest(
+    DateTime? EntryDate, List<AdjustJournalLineDto> Lines, string? Reason);
+
 /// <summary>กำหนดวันที่ให้ตัวกลับ "รายใบ" — ผู้ใช้แก้วันที่ในตารางได้ทีละบรรทัด
 /// (บางเคสอยากให้ทุกใบไปวันเดียวกับใบแรก บางเคสอยากให้แต่ละใบตามต้นฉบับตัวเอง)</summary>
 public record RedateEntryDate(Guid JournalEntryId, DateTime NewDate);

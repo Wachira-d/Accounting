@@ -4768,6 +4768,252 @@ public class DocumentService : IDocumentService
         => !string.IsNullOrWhiteSpace(accountCode)
            && ReclassifyProtectedCodes.Contains(accountCode!.Trim());
 
+    /// <summary>รายการบัญชี (JE) ทั้งหมดของเอกสาร พร้อมบรรทัดจริงจาก GL และ
+    /// สิทธิ์ว่า "ปรับปรุงได้ไหม" — ใช้ในแผงตรวจสอบ/แก้ไข JE บนหน้าเอกสาร
+    /// (คำถามผู้ใช้: "ยังไม่เจอปุ่มให้แก้ผังบัญชีที่ลง JE")</summary>
+    public async Task<List<DocumentJournalEntryDto>> GetDocumentJournalEntriesAsync(
+        Guid companyId, Guid documentId)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var entries = await _db.JournalEntries.AsNoTracking()
+            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId && !j.IsDeleted)
+            .OrderBy(j => j.EntryDate).ThenBy(j => j.EntryNumber)
+            .ToListAsync();
+
+        // เหตุผลที่ปรับปรุงไม่ได้ — คำนวณครั้งเดียวต่อเอกสาร (ทุกใบใช้ร่วมกัน)
+        var docBlock = await ResolveJournalAdjustBlockAsync(companyId, doc);
+
+        return entries.Select(j =>
+        {
+            var block = docBlock;
+            if (block == null && j.Status != JournalEntryStatus.Posted)
+                block = $"ใบสำคัญสถานะ {j.Status} — ปรับปรุงได้เฉพาะใบที่ผ่านรายการแล้ว";
+            if (block == null && j.OriginalEntryId != null)
+                block = "ใบนี้เป็น 'ตัวกลับ' — ปรับปรุงที่ใบต้นฉบับแทน";
+            if (block == null && j.ReversedByEntryId != null)
+                block = "ใบนี้ถูกกลับรายการไปแล้ว";
+
+            return new DocumentJournalEntryDto(
+                j.Id, j.EntryNumber, j.EntryDate.Date, j.JournalType.ToString(),
+                j.Status.ToString(), j.TotalDebit, j.TotalCredit,
+                IsReversalEntry: j.OriginalEntryId != null,
+                CanAdjust: block == null,
+                BlockReason: block,
+                Lines: j.Lines.OrderBy(l => l.LineOrder).Select(l => new DocumentJournalLineDto(
+                    l.AccountId, l.Account.AccountCode, l.Account.AccountName,
+                    l.DebitAmount, l.CreditAmount, l.Description,
+                    IsReclassifyProtectedAccount(l.Account.AccountCode))).ToList());
+        }).ToList();
+    }
+
+    /// <summary>gate ระดับเอกสารสำหรับการปรับปรุง JE — ชุดเดียวกับ reclassify
+    /// (คืน null = ทำได้)</summary>
+    private async Task<string?> ResolveJournalAdjustBlockAsync(Guid companyId, Document doc)
+    {
+        if (doc.Status == DocumentStatus.Voided)
+            return "เอกสารถูกยกเลิกแล้ว — รายการบัญชีถูกกลับไปหมดแล้ว";
+
+        var inSubmittedReport = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
+            l.DocumentId == doc.Id && l.TaxReport.CompanyId == companyId
+            && (l.TaxReport.Status == TaxReportStatus.Submitted
+                || l.TaxReport.Status == TaxReportStatus.Filed));
+        if (inSubmittedReport)
+            return "เอกสารอยู่ในรายงานภาษีที่ยื่นสรรพากรแล้ว — ต้องยื่นแบบเพิ่มเติมแทน";
+
+        var etaxSubmitted = await _db.EtaxInvoices.AsNoTracking()
+            .AnyAsync(e => e.DocumentId == doc.Id && e.SubmittedAt != null);
+        if (etaxSubmitted)
+            return "เอกสารนี้ส่ง e-Tax XML ไปสรรพากรแล้ว";
+
+        return null;
+    }
+
+    /// <summary>
+    /// ปรับปรุงรายการบัญชีของเอกสาร — ผู้ใช้ส่ง "สถานะปลายทาง" ของใบสำคัญมา
+    /// (ผังบัญชีที่ถูก + เพิ่ม/ลดบรรทัดได้) ระบบคำนวณผลต่างแล้วลง **ใบปรับปรุงใหม่**
+    /// ไม่แก้ใบเดิม — audit trail ครบ (ใบเดิม + ใบปรับปรุง อ่านคู่กันได้)
+    ///
+    /// กติกาที่บังคับ (ทำให้เครื่องมือนี้ปลอดภัยพอจะเปิดให้แก้อิสระ):
+    ///   1. Dr = Cr ในสถานะปลายทาง (บัญชีคู่)
+    ///   2. **ยอดรวมห้ามเปลี่ยน** — Σ Dr ปลายทาง = Σ Dr ใบเดิม; ยอดของเอกสาร
+    ///      ต้องแก้ที่เอกสาร ไม่ใช่แอบแก้ผ่าน GL (ไม่งั้นเอกสารกับบัญชีหลุดจากกัน)
+    ///   3. **บัญชีคุมห้ามขยับ** — ภาษีซื้อ/ขาย, ลูกหนี้/เจ้าหนี้, มัดจำ, WHT
+    ///      ยอดเคลื่อนไหวต้องเท่าเดิมทุกบาท (ภ.พ.30 / ภ.ง.ด. / อายุหนี้ อ่านอยู่)
+    ///   4. งวดของวันที่ลงใบปรับปรุงต้องเปิด · เอกสารต้องไม่อยู่ในแบบที่ยื่นแล้ว
+    ///      และไม่ได้ส่ง e-Tax
+    /// </summary>
+    public async Task<List<DocumentJournalEntryDto>> AdjustDocumentJournalEntryAsync(
+        Guid companyId, Guid documentId, Guid journalEntryId,
+        AdjustDocumentJournalRequest request, string actor)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var blocked = await ResolveJournalAdjustBlockAsync(companyId, doc);
+        if (blocked != null) throw new InvalidOperationException(blocked);
+
+        var original = await _db.JournalEntries.AsNoTracking()
+            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .FirstOrDefaultAsync(j => j.Id == journalEntryId && j.CompanyId == companyId
+                && j.SourceDocumentId == documentId && !j.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบใบสำคัญของเอกสารนี้");
+
+        if (original.Status != JournalEntryStatus.Posted)
+            throw new InvalidOperationException("ปรับปรุงได้เฉพาะใบสำคัญที่ผ่านรายการแล้ว");
+        if (original.OriginalEntryId != null)
+            throw new InvalidOperationException("ใบนี้เป็น 'ตัวกลับ' — ปรับปรุงที่ใบต้นฉบับแทน");
+        if (original.ReversedByEntryId != null)
+            throw new InvalidOperationException("ใบนี้ถูกกลับรายการไปแล้ว");
+
+        var wanted = request.Lines ?? new List<AdjustJournalLineDto>();
+        if (wanted.Count < 2)
+            throw new InvalidOperationException("ต้องมีอย่างน้อย 2 บรรทัด (เดบิต + เครดิต)");
+
+        const MidpointRounding R = MidpointRounding.AwayFromZero;
+        foreach (var l in wanted)
+        {
+            if (l.DebitAmount < 0 || l.CreditAmount < 0)
+                throw new InvalidOperationException("ยอดเดบิต/เครดิตต้องไม่ติดลบ");
+            if (l.DebitAmount > 0 && l.CreditAmount > 0)
+                throw new InvalidOperationException("แต่ละบรรทัดใส่ได้ด้านเดียว (เดบิต หรือ เครดิต)");
+        }
+
+        var accountIds = wanted.Select(l => l.AccountId).Distinct().ToList();
+        var accounts = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id);
+        foreach (var id in accountIds)
+        {
+            if (!accounts.TryGetValue(id, out var acc))
+                throw new InvalidOperationException("มีผังบัญชีที่ไม่อยู่ในผังของบริษัทนี้");
+            if (!acc.IsActive)
+                throw new InvalidOperationException($"ผังบัญชี {acc.AccountCode} ถูกปิดใช้งาน");
+        }
+
+        var wantDr = Math.Round(wanted.Sum(l => l.DebitAmount), 2, R);
+        var wantCr = Math.Round(wanted.Sum(l => l.CreditAmount), 2, R);
+        if (wantDr != wantCr)
+            throw new InvalidOperationException(
+                $"ยอดเดบิต ({wantDr:N2}) ไม่เท่ากับยอดเครดิต ({wantCr:N2})");
+
+        var origDr = Math.Round(original.Lines.Sum(l => l.DebitAmount), 2, R);
+        if (wantDr != origDr)
+            throw new InvalidOperationException(
+                $"ยอดรวมต้องเท่าเดิม ({origDr:N2}) — เครื่องมือนี้ใช้ย้าย/จัดผังบัญชีเท่านั้น " +
+                "ถ้ายอดผิดต้องแก้ที่ตัวเอกสาร (หรือยกเลิกแล้วออกใหม่)");
+
+        // ยอดสุทธิ (Dr − Cr) ต่อบัญชี ทั้งของเดิมและที่ต้องการ
+        static Dictionary<Guid, decimal> NetBy<T>(IEnumerable<T> src,
+            Func<T, Guid> id, Func<T, decimal> dr, Func<T, decimal> cr)
+        {
+            var m = new Dictionary<Guid, decimal>();
+            foreach (var x in src)
+                m[id(x)] = m.GetValueOrDefault(id(x)) + dr(x) - cr(x);
+            return m;
+        }
+        var origNet = NetBy(original.Lines, l => l.AccountId, l => l.DebitAmount, l => l.CreditAmount);
+        var wantNet = NetBy(wanted, l => l.AccountId, l => l.DebitAmount, l => l.CreditAmount);
+
+        var origCodes = original.Lines.ToDictionary(l => l.AccountId, l => l.Account);
+        foreach (var id in origNet.Keys.Union(wantNet.Keys))
+        {
+            var code = origCodes.TryGetValue(id, out var a) ? a.AccountCode
+                : accounts.TryGetValue(id, out var b) ? b.AccountCode : null;
+            if (!IsReclassifyProtectedAccount(code)) continue;
+            var before = Math.Round(origNet.GetValueOrDefault(id), 2, R);
+            var after = Math.Round(wantNet.GetValueOrDefault(id), 2, R);
+            if (before != after)
+                throw new InvalidOperationException(
+                    $"บัญชีคุม {code} เปลี่ยนยอดไม่ได้ ({before:N2} → {after:N2}) — " +
+                    "ภาษีซื้อ/ขาย ลูกหนี้/เจ้าหนี้ มัดจำ และภาษีหัก ณ ที่จ่าย " +
+                    "ต้องตรงกับเอกสารเสมอ (แก้ที่เอกสารแทน)");
+        }
+
+        // ผลต่างที่ต้องลงจริง — บวก = ต้อง Dr เพิ่ม, ลบ = ต้อง Cr
+        var deltas = origNet.Keys.Union(wantNet.Keys)
+            .Select(id => (Id: id, Amount: Math.Round(
+                wantNet.GetValueOrDefault(id) - origNet.GetValueOrDefault(id), 2, R)))
+            .Where(d => d.Amount != 0m)
+            .OrderByDescending(d => Math.Abs(d.Amount))
+            .ToList();
+        if (deltas.Count == 0)
+            throw new InvalidOperationException("ไม่มีอะไรเปลี่ยน — ผังบัญชีและยอดเหมือนเดิมทุกบรรทัด");
+
+        var entryDate = (request.EntryDate?.Date ?? original.EntryDate.Date);
+        var period = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId && f.StartDate <= entryDate && f.EndDate >= entryDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"งวด {period.Name} ปิดแล้ว — เลือกวันที่ในงวดที่ยังเปิดอยู่");
+
+        var nameById = new Dictionary<Guid, string>();
+        foreach (var (id, acc) in origCodes) nameById[id] = $"{acc.AccountCode} — {acc.AccountName}";
+        foreach (var (id, acc) in accounts) nameById[id] = $"{acc.AccountCode} — {acc.AccountName}";
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var desc = $"ปรับปรุงผังบัญชีของ {original.EntryNumber} ({doc.DocumentNumber})"
+                + (string.IsNullOrWhiteSpace(request.Reason) ? "" : $" • {request.Reason}");
+            var builder = Journal.JournalEntryBuilder
+                .For(_db, companyId, entryDate)
+                .Type(original.JournalType)
+                .Description(desc)
+                .Reference(doc.DocumentNumber)
+                .SourceDocument(doc.Id)
+                .Project(doc.ProjectId);
+            foreach (var d in deltas)
+            {
+                var label = nameById.GetValueOrDefault(d.Id, "");
+                if (d.Amount > 0) builder = builder.Debit(d.Id, d.Amount, $"Dr {label} (ปรับปรุง)");
+                else builder = builder.Credit(d.Id, -d.Amount, $"Cr {label} (ปรับปรุง)");
+            }
+            await builder.PostAsync(actor);
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                Action = AuditAction.Update,
+                EntityType = "JournalEntry",
+                EntityId = journalEntryId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "AdjustDocumentJournalEntry",
+                    documentNumber = doc.DocumentNumber,
+                    originalEntry = original.EntryNumber,
+                    entryDate,
+                    reason = request.Reason,
+                    deltas = deltas.Select(d => new
+                    {
+                        account = nameById.GetValueOrDefault(d.Id, d.Id.ToString()),
+                        amount = d.Amount,
+                    }),
+                    actor,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        _logger.LogInformation(
+            "AdjustDocumentJournalEntry: {Doc} / {Entry} — {Count} บัญชีถูกย้าย โดย {Actor}",
+            doc.DocumentNumber, original.EntryNumber, deltas.Count, actor);
+
+        return await GetDocumentJournalEntriesAsync(companyId, documentId);
+    }
+
     public async Task<DocumentResponse> ReclassifyLineAccountAsync(
         Guid companyId, Guid documentId, Guid lineId,
         Guid newAccountId, string? reason, string actor)

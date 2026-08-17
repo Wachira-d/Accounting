@@ -3583,6 +3583,15 @@
           && !!(scan.extractedVatAmount || scan.extractedVendorTaxId)
           && !vatNotClaimable;
 
+        // ใบลดหนี้/เพิ่มหนี้ฝั่งซื้อ — ช่องคู่เดียวกันบนฟอร์มเปลี่ยนความหมายเป็น
+        // "เลขที่/วันที่ใบลดหนี้ที่ผู้ขายออกให้" จึงต้องส่งเลขบนกระดาษไปเติมให้
+        // (mirror ของ OcrService.bookSupplierCreditNote) — ไม่ตั้ง
+        // hasTaxInvoiceReference (เป็นของ PV เท่านั้น) และไม่ตั้ง deliveryDate
+        const hasSupplierCreditNote = side === 'expense'
+          && (targetType === 'CreditNote' || targetType === 'DebitNote')
+          && !!scan.extractedDocumentNumber;
+        const hasSupplierRef = hasSupplierInvoice || hasSupplierCreditNote;
+
         // ค่าที่ผู้ใช้/AI เลือกใน review ก่อนกดสร้าง — ดึงจาก dropdown เพื่อ
         // round-trip กลับฟอร์ม. แหล่งเงิน = "บัญชีเครดิต" (revCreditAccount)
         // ที่ผู้ใช้เลือกในหน้า review. BUGFIX: เดิมอ่าน id "revPaymentChannel"
@@ -3629,10 +3638,10 @@
           // Supplier-tax-invoice metadata (PV/PI/Expense ที่อ้างใบกำกับซื้อ) —
           // เติมลง "ใช้งานใบกำกับภาษี" / supplier-invoice-only section
           hasTaxInvoiceReference: hasSupplierInvoice,
-          supplierInvoiceNumber: hasSupplierInvoice ? scan.extractedDocumentNumber : null,
-          supplierTaxInvoiceDate: hasSupplierInvoice ? scan.extractedDate : null,
-          supplierBranchCode: hasSupplierInvoice ? '00000' : null,
-          supplierTaxId: hasSupplierInvoice ? scan.extractedVendorTaxId : null,
+          supplierInvoiceNumber: hasSupplierRef ? scan.extractedDocumentNumber : null,
+          supplierTaxInvoiceDate: hasSupplierRef ? scan.extractedDate : null,
+          supplierBranchCode: hasSupplierRef ? '00000' : null,
+          supplierTaxId: hasSupplierRef ? scan.extractedVendorTaxId : null,
           // AI/review picks — accountCode (string) ฝั่งฟอร์ม resolve → id
           expenseCategoryCode: reviewedDebitAcc || suggestedDebitCode || null,
           paymentChannelCode: reviewedPaymentCh || suggestedCreditCode || null,
