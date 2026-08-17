@@ -624,10 +624,13 @@ public class TaxFilingExportService : ITaxFilingExportService
     public async Task<TaxFilingExportResult> ExportPnd91Async(Guid companyId, int year)
     {
         var company = await GetCompanyAsync(companyId);
+        // B10: ประชากรต้องตรงกับรายงานบนจอ (GeneratePnd91Report ใช้
+        // Approved/Paid เท่านั้น) — เดิมไฟล์ใช้ "ไม่ใช่ Draft/Voided" ⇒ รอบที่
+        // ถูกปฏิเสธ/รออนุมัติหลุดเข้าไฟล์ยื่นทั้งที่จอไม่นับ = จอ ≠ ไฟล์
         var runs = await _db.PayrollRuns
             .Include(p => p.Details).ThenInclude(d => d.Employee)
             .Where(p => p.CompanyId == companyId && p.Year == year
-                        && p.Status != "Draft" && p.Status != "Voided")
+                        && (p.Status == "Approved" || p.Status == "Paid"))
             .ToListAsync();
         if (runs.Count == 0)
             throw new InvalidOperationException($"ไม่มี PayrollRun สำหรับปี {year}");
@@ -891,7 +894,12 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && l.JournalEntry.EntryDate <= halfEnd
                 && l.Account!.AccountType == AccountType.Expense)
             .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
-        var netProfitHalf = revenueHalf - expenseHalf;
+        // B6: บวกกลับ §65 ตรี ของครึ่งปีแรก — ฐานเดียวกับ ภ.ง.ด.50 (เดิม 51
+        // คำนวณจาก JE ล้วน ไม่มีบวกกลับเลย ⇒ ประมาณการกำไรต่ำกว่าจริง เสี่ยง
+        // เงินเพิ่ม 20% ตาม §67 ตรี เมื่อประมาณการขาดเกิน 25%)
+        var addBackHalf = await _taxService.ComputeSection65TerAddBackAsync(
+            companyId, fyStart, halfEnd);
+        var netProfitHalf = revenueHalf - expenseHalf + addBackHalf;
 
         // ประมาณการทั้งปี — วิธี simple × 2 (user แก้ใน portal ก่อนยื่น)
         var estimatedAnnualProfit = netProfitHalf * 2m;

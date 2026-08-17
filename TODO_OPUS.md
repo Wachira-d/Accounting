@@ -224,11 +224,11 @@ error หรือหายเงียบ
 | B3 ✅ | Accrual basis: PI (เดือนตั้งหนี้) + cert ของ PV (เดือนจ่าย) นับซ้ำข้ามเดือน | `GenerateWhtReport` cert block ไม่รู้จัก WhtRecognitionBasis | นิยามเดือนนำส่งตามกฎหมาย = เดือนจ่ายเสมอ — พิจารณาตัด doc-mining เดือน accrual |
 | B4 ✅ | Regenerate ภงด. ไม่ snapshot ติ๊ก/แก้มือ + ล้าง audit fields (RdAck*, EFilingExportedAt, RejectionReason, ReversalJournalEntryId) + ไม่ atomic + `TaxCalendarEvent.TaxReportId` ค้าง | `TaxService.cs` RegenerateTaxReportAsync ~:3006-3032 | snapshot non-VAT ด้วย + preserve audit + transaction เดียว |
 | B5 ✅ | `ExportPnd54Async` ยัง doc-mined — ต่างจากจอ 13 จุด (นิยาม foreign, ชนิดเอกสาร, สถานะ, วันที่, dedup, IsExcluded, income type hardcode "6") | `TaxFilingExportService.cs:815-860` | ย้ายเป็น cert-primary แบบ Pnd3/53 |
-| B6 | ภงด.51 คำนวณจาก JE ล้วน ไม่ใช้ add-back §65 ตรี/เพดานค่ารับรอง — คนละฐานกับ ภงด.50 + ไม่มี TaxType/หน้าจอ | `ExportPnd51Async` (`TaxFilingExportService.cs:876-936`) | |
-| B7 | ขาดทุนยกมา 5 ปี (§65 ตรี(12)) ไม่ถูกหักใน CIT เลย + โค้ดเครดิตยกมาเป็น dead code (`NetVat<0` = ขาดทุน ไม่ใช่ชำระเกิน) | `TaxService.cs` GenerateCitReport ~:1905-1911 | |
-| B8 | ค่าเสื่อมภาษี CIT ดึงตามปีปฏิทิน (`d.Year == year`) ขณะรายได้ตามรอบบัญชี FiscalYearStartMonth | `TaxService.cs:1831-1834` | |
-| B9 | CIT unique ต่อ (ปี+เดือน) — สร้างได้ 12 ใบ/ปี, e-Filing หยิบ `FirstOrDefault(Year)` ใบไหนก็ได้ | `TaxService.cs:45-53`, `EFiling.cs:96-98,254-257` | unique รายปีสำหรับ CIT/PIT91 |
-| B10 | ภงด.91: สร้างจาก UI ไม่ได้ + ไฟล์กับจอใช้ประชากร payroll คนละเงื่อนไข (`Status != Draft/Voided` vs `Approved/Paid`) + ไฟล์ไม่มีบรรทัดชำระเพิ่ม/เกิน | `ExportPnd91Async` (:626-675) vs `GeneratePnd91Report` (:2089+) | |
+| B6 ✅ | ภงด.51 คำนวณจาก JE ล้วน ไม่ใช้ add-back §65 ตรี/เพดานค่ารับรอง — คนละฐานกับ ภงด.50 + ไม่มี TaxType/หน้าจอ | `ExportPnd51Async` (`TaxFilingExportService.cs:876-936`) | |
+| B7 ✅ | ขาดทุนยกมา 5 ปี (§65 ตรี(12)) ไม่ถูกหักใน CIT เลย + โค้ดเครดิตยกมาเป็น dead code (`NetVat<0` = ขาดทุน ไม่ใช่ชำระเกิน) | `TaxService.cs` GenerateCitReport ~:1905-1911 | |
+| B8 ✅ | ค่าเสื่อมภาษี CIT ดึงตามปีปฏิทิน (`d.Year == year`) ขณะรายได้ตามรอบบัญชี FiscalYearStartMonth | `TaxService.cs:1831-1834` | |
+| B9 ✅ | CIT unique ต่อ (ปี+เดือน) — สร้างได้ 12 ใบ/ปี, e-Filing หยิบ `FirstOrDefault(Year)` ใบไหนก็ได้ | `TaxService.cs:45-53`, `EFiling.cs:96-98,254-257` | unique รายปีสำหรับ CIT/PIT91 |
+| B10 ✅ | ภงด.91: สร้างจาก UI ไม่ได้ + ไฟล์กับจอใช้ประชากร payroll คนละเงื่อนไข (`Status != Draft/Voided` vs `Approved/Paid`) + ไฟล์ไม่มีบรรทัดชำระเพิ่ม/เกิน | `ExportPnd91Async` (:626-675) vs `GeneratePnd91Report` (:2089+) | |
 | B11 ✅ | `RecalcVatTotals` default-to-output — IncomeTypeCode ใหม่/สะกดผิดไหลเข้าภาษีขายเงียบ | `TaxService.cs` ~:2564 | เปลี่ยนเป็น allow-list สองฝั่ง + throw เมื่อไม่รู้จัก |
 | B12 ✅ | §82/3 ฐานวันที่ generate (`DocumentDate`) ≠ pull (`SupplierTaxInvoiceDate ?? TaxPointDate ?? DocumentDate`) — เอกสารเดียวตอบต่างกันแล้วแต่ทางเข้า | `TaxService.cs` ~:823-825 vs ~:2734-2765 | ฐานที่ถูก = วันที่ใบกำกับผู้ขาย |
 | B13 ✅ | Receipt ที่ใบต้นทางถูก soft-delete → output VAT หายเงียบ (global filter ตัด relatedDoc) | `TaxService.cs` ~:261-270, 486-493 | IgnoreQueryFilters ตอน resolve + แถวเตือน |

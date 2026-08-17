@@ -48,10 +48,22 @@ public partial class TaxService : ITaxService
                 throw new ArgumentException("เดือนภาษีไม่ถูกต้อง (ต้องอยู่ระหว่าง 1 ถึง 12)");
         }
 
-        if (await _db.TaxReports.AnyAsync(t =>
-            t.CompanyId == companyId && t.TaxType == request.TaxType &&
-            t.Year == request.Year && t.Month == request.Month))
-            throw new InvalidOperationException("รายงานภาษีเดือนนี้มีอยู่แล้ว");
+        // B9: แบบรายปี (ภ.ง.ด.50 / ภ.ง.ด.91) unique ต่อ **ปี** — เดิม unique
+        // ด้วย (ปี+เดือน) ⇒ สร้างได้ 12 ใบ/ปี แล้ว e-Filing หยิบ
+        // FirstOrDefault(Year) ใบไหนก็ได้ (ยอดที่ยื่นไม่แน่นอน)
+        var isAnnualForm = request.TaxType is TaxType.CorporateIncomeTax
+            or TaxType.PersonalIncomeTax91;
+        var dup = isAnnualForm
+            ? await _db.TaxReports.AnyAsync(t => t.CompanyId == companyId
+                && t.TaxType == request.TaxType && t.Year == request.Year)
+            : await _db.TaxReports.AnyAsync(t => t.CompanyId == companyId
+                && t.TaxType == request.TaxType
+                && t.Year == request.Year && t.Month == request.Month);
+        if (dup)
+            throw new InvalidOperationException(isAnnualForm
+                ? $"รายงานปี {request.Year} มีอยู่แล้ว (แบบรายปีมีได้ปีละ 1 ฉบับ) — "
+                  + "เปิดฉบับเดิมแล้วกด \"สร้างใหม่\" ถ้าต้องการคำนวณใหม่"
+                : "รายงานภาษีเดือนนี้มีอยู่แล้ว");
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
@@ -1859,6 +1871,49 @@ public partial class TaxService : ITaxService
         NormalizeReportLineOrder(report);
     }
 
+    /// <summary>ยอด "บวกกลับ" §65 ตรี ของช่วงเวลาหนึ่ง (ไม่รวม (4) ค่ารับรอง ซึ่ง
+    /// คิดเป็น annual cap แยก) — อ่านจาก <c>Document.NonDeductibleAmount</c> +
+    /// breakdown ใน <c>NonDeductibleRuleJson</c> ที่ Section65TerValidator เขียน
+    /// ไว้ตอนอนุมัติ.
+    ///
+    /// public เพื่อให้ **ภ.ง.ด.51 (ประมาณการครึ่งปี)** ใช้ฐานเดียวกับ ภ.ง.ด.50 —
+    /// เดิม 51 คำนวณจาก JE ล้วนไม่มีบวกกลับเลย ⇒ ประมาณการต่ำกว่าความจริง
+    /// เสี่ยงโดนเงินเพิ่ม 20% ตาม §67 ตรี (ประมาณการขาดเกิน 25%)</summary>
+    public async Task<decimal> ComputeSection65TerAddBackAsync(
+        Guid companyId, DateTime fromDate, DateTime toDate)
+    {
+        var nonDeductDocs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId
+                && d.DocumentDate >= fromDate && d.DocumentDate <= toDate
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Rejected
+                && d.NonDeductibleAmount > 0)
+            .Select(d => new { d.NonDeductibleAmount, d.NonDeductibleRuleJson })
+            .ToListAsync();
+        decimal addBack = 0m;
+        foreach (var nd in nonDeductDocs)
+        {
+            if (string.IsNullOrWhiteSpace(nd.NonDeductibleRuleJson))
+            {
+                addBack += nd.NonDeductibleAmount;   // ไม่มี breakdown → บวกทั้งก้อน
+                continue;
+            }
+            try
+            {
+                using var jdoc = System.Text.Json.JsonDocument.Parse(nd.NonDeductibleRuleJson);
+                foreach (var el in jdoc.RootElement.EnumerateArray())
+                {
+                    var code = el.TryGetProperty("RuleCode", out var rc) ? rc.GetString() : null;
+                    if (code == "RD-65ter(4)") continue;   // entertainment คิด annual cap แล้ว
+                    if (el.TryGetProperty("AddBackAmount", out var ab) && ab.TryGetDecimal(out var amt))
+                        addBack += amt;
+                }
+            }
+            catch { addBack += nd.NonDeductibleAmount; }   // JSON เพี้ยน → fallback ทั้งก้อน
+        }
+        return addBack;
+    }
+
     private async Task GenerateCitReport(Guid companyId, int year, TaxReport report)
     {
         // Honour Company.FiscalYearStartMonth — a Jul–Jun FY (start=7) for
@@ -1905,10 +1960,20 @@ public partial class TaxService : ITaxService
         var totalDepreciation = 0m;
         if (activeAssets.Any())
         {
-            totalDepreciation = await _db.Set<AssetDepreciation>()
+            // B8: ค่าเสื่อมต้องอยู่ใน **รอบบัญชีเดียวกับรายได้/ค่าใช้จ่าย** —
+            // เดิมกรอง `d.Year == year` (ปีปฏิทิน) ขณะที่ขาอื่นใช้ startDate..
+            // endDate ที่เคารพ FiscalYearStartMonth ⇒ บริษัทรอบไม่ตรงปีปฏิทิน
+            // (เช่น ก.ค.–มิ.ย.) ได้ค่าเสื่อมผิดรอบทั้งก้อน. AssetDepreciation
+            // เก็บ Year+Month → เทียบเป็น (ปี,เดือน) ตามช่วงรอบจริง
+            var depFrom = (startDate.Year, startDate.Month);
+            var depTo = (endDate.Year, endDate.Month);
+            var depRows = await _db.Set<AssetDepreciation>()
                 .Where(d => activeAssets.Contains(d.FixedAssetId)
-                    && d.Year == year)
-                .SumAsync(d => d.Amount);
+                    && (d.Year > depFrom.Item1 || (d.Year == depFrom.Item1 && d.Month >= depFrom.Item2))
+                    && (d.Year < depTo.Item1 || (d.Year == depTo.Item1 && d.Month <= depTo.Item2)))
+                .Select(d => d.Amount)
+                .ToListAsync();
+            totalDepreciation = depRows.Sum();
         }
 
         // Add depreciation to total expenses
@@ -1937,61 +2002,62 @@ public partial class TaxService : ITaxService
         // เดิม CIT บวกกลับเฉพาะค่ารับรอง (4) annual cap ด้านบน → ข้ออื่นหลุดหมด
         // ทำให้กำไรสุทธิทางภาษีต่ำเกินจริง (เสี่ยงประเมินเพิ่ม + เบี้ยปรับ).
         // ตัด RD-65ter(4) ออกเพราะคิด annual cap ไปแล้ว (กัน double count).
-        var nonDeductDocs = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId
-                && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
-                && d.NonDeductibleAmount > 0)
-            .Select(d => new { d.NonDeductibleAmount, d.NonDeductibleRuleJson })
-            .ToListAsync();
-        decimal section65TerAddBack = 0m;
-        foreach (var nd in nonDeductDocs)
-        {
-            if (string.IsNullOrWhiteSpace(nd.NonDeductibleRuleJson))
-            {
-                section65TerAddBack += nd.NonDeductibleAmount;   // ไม่มี breakdown → บวกทั้งก้อน
-                continue;
-            }
-            try
-            {
-                using var jdoc = System.Text.Json.JsonDocument.Parse(nd.NonDeductibleRuleJson);
-                foreach (var el in jdoc.RootElement.EnumerateArray())
-                {
-                    var code = el.TryGetProperty("RuleCode", out var rc) ? rc.GetString() : null;
-                    if (code == "RD-65ter(4)") continue;   // entertainment คิด annual cap แล้ว
-                    if (el.TryGetProperty("AddBackAmount", out var ab) && ab.TryGetDecimal(out var amt))
-                        section65TerAddBack += amt;
-                }
-            }
-            catch { section65TerAddBack += nd.NonDeductibleAmount; }   // JSON เพี้ยน → fallback ทั้งก้อน
-        }
+        var section65TerAddBack = await ComputeSection65TerAddBackAsync(companyId, startDate, endDate);
 
         // Net profit before tax — เพิ่มส่วนเกิน entertainment + รายจ่ายต้องห้าม §65 ตรี
         // ที่หักไม่ได้ กลับเข้ามา (tax addition / รายการบวกกลับ).
         var netProfitBeforeTax = totalRevenue - totalExpenses + entertainmentExcess + section65TerAddBack;
 
-        // Query previous year's CIT report for tax credit carryforward
-        var previousYearCit = await _db.TaxReports
+        // ===== ผลขาดทุนสุทธิยกมา 5 ปี (§65 ตรี(12)) — B7 =====
+        // เดิมโค้ดตรงนี้เขียนเป็น "เครดิตภาษีปีก่อน" โดยเช็ค `NetVat < 0` แล้ว
+        // เอา CitAmount มาหัก — แต่ NetVat ของ CIT ถูก reuse เก็บ "กำไรสุทธิ
+        // ก่อนภาษี" ⇒ เงื่อนไขจริงคือ "ปีก่อนขาดทุน" ซึ่งปีนั้น CitAmount = 0
+        // เสมอ (CalculateThaiCit คืน 0 เมื่อกำไร ≤ 0) = dead code และ**ผล
+        // ขาดทุนยกมาไม่เคยถูกหักที่ใดเลย** ทั้งที่กฎหมายให้ยกไปได้ 5 รอบบัญชี
+        //
+        // กติกา: ขาดทุนของรอบ Y ใช้ได้ถึงรอบ Y+5 · ปีที่มีกำไรกินโควตาที่เก่า
+        // ที่สุดก่อน (FIFO) · ใช้เฉพาะรายงานที่ "ยื่นแล้ว" (Filed) เป็นฐาน
+        var priorCitReports = await _db.TaxReports.AsNoTracking()
             .Where(t => t.CompanyId == companyId
                 && t.TaxType == TaxType.CorporateIncomeTax
-                && t.Year == year - 1
+                && t.Year >= year - 5 && t.Year < year
                 && t.Status == TaxReportStatus.Filed)
-            .FirstOrDefaultAsync();
+            .OrderBy(t => t.Year)
+            .Select(t => new { t.Year, NetProfit = t.NetVat })
+            .ToListAsync();
 
-        decimal taxCreditCarryforward = 0;
-        if (previousYearCit != null && previousYearCit.NetVat < 0)
+        // pool ของขาดทุนที่ยังไม่ถูกใช้: (ปีที่เกิด, ยอดคงเหลือ)
+        var lossPool = new List<(int Year, decimal Remaining)>();
+        foreach (var pr in priorCitReports)
         {
-            // NetVat is reused for net profit; negative means overpayment
-            // อ่านจาก CitAmount ก่อน — ตกกลับไป TotalTaxWithheld สำหรับรายงานเก่า
-            // ที่สร้างก่อนมี field นี้ (backfill ครอบให้แล้วแต่กันไว้อีกชั้น)
-            taxCreditCarryforward = Math.Abs(previousYearCit.CitAmount ?? previousYearCit.TotalTaxWithheld);
+            // ตัดโควตาที่หมดอายุ (ขาดทุนปี Y ใช้ได้ถึงปี Y+5)
+            lossPool.RemoveAll(x => pr.Year > x.Year + 5);
+            if (pr.NetProfit < 0)
+            {
+                lossPool.Add((pr.Year, Math.Abs(pr.NetProfit)));
+                continue;
+            }
+            // ปีกำไร → กินโควตาเก่าสุดก่อน
+            var profitLeft = pr.NetProfit;
+            for (var i = 0; i < lossPool.Count && profitLeft > 0; i++)
+            {
+                var use = Math.Min(lossPool[i].Remaining, profitLeft);
+                lossPool[i] = (lossPool[i].Year, lossPool[i].Remaining - use);
+                profitLeft -= use;
+            }
+            lossPool.RemoveAll(x => x.Remaining <= 0.005m);
         }
+        lossPool.RemoveAll(x => year > x.Year + 5);   // หมดอายุ ณ ปีที่กำลังคำนวณ
+        var lossCarryForwardAvailable = lossPool.Sum(x => x.Remaining);
+        var lossCarryForwardUsed = netProfitBeforeTax > 0
+            ? Math.Min(lossCarryForwardAvailable, netProfitBeforeTax)
+            : 0m;
 
-        // Thai CIT progressive rates (for SME companies)
-        var citAmount = CalculateThaiCit(netProfitBeforeTax);
-
-        // Apply tax credit carryforward
-        var netCitAmount = Math.Max(0, citAmount - taxCreditCarryforward);
+        // Thai CIT progressive rates (for SME companies) — คิดจากกำไรหลังหัก
+        // ผลขาดทุนยกมาแล้ว (ฐานภาษีจริงตาม §65 ตรี(12))
+        var taxableProfit = netProfitBeforeTax - lossCarryForwardUsed;
+        var citAmount = CalculateThaiCit(taxableProfit);
+        var netCitAmount = citAmount;
 
         // ===== เครดิตภาษีที่ "เราถูกหัก ณ ที่จ่าย" (ภ.ง.ด.50/51) =====
         // เดิม ภ.ง.ด.50 คำนวณจบที่ "ภาษีที่ต้องเสีย" โดยไม่หักเครดิตนี้เลย ผู้ใช้
@@ -2099,16 +2165,18 @@ public partial class TaxService : ITaxService
             TaxRate = netProfitBeforeTax > 0 ? (citAmount / netProfitBeforeTax) * 100 : 0
         });
 
-        // Tax credit carryforward line
-        if (taxCreditCarryforward > 0)
+        // ผลขาดทุนยกมา §65 ตรี(12) — หักจาก "ฐานกำไร" ไม่ใช่หักจากตัวภาษี
+        // (TaxAmount = 0 เพราะบรรทัดนี้ลดฐาน ไม่ใช่ลดภาษีโดยตรง)
+        if (lossCarryForwardUsed > 0)
         {
             report.Lines.Add(new TaxReportLine
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
-                Description = "เครดิตภาษีจากปีก่อน",
-                IncomeAmount = taxCreditCarryforward,
-                TaxAmount = -taxCreditCarryforward,
+                Description = $"หักผลขาดทุนสุทธิยกมา (§65 ตรี(12) — ยกได้ไม่เกิน 5 รอบบัญชี) "
+                    + $"· ใช้ {lossCarryForwardUsed:N2} จากโควตาคงเหลือ {lossCarryForwardAvailable:N2}",
+                IncomeAmount = -lossCarryForwardUsed,
+                TaxAmount = 0m,
                 IncomeTypeCode = "TAX_CREDIT"
             });
         }
