@@ -13249,6 +13249,33 @@ public class DocumentService : IDocumentService
                     + "ให้ติ๊ก \"ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี\" เพื่อบันทึกเจตนาไว้เป็นหลักฐาน");
         }
 
+        // §86/10 — ใบลดหนี้/ใบเพิ่มหนี้ "ฝั่งซื้อ" ที่มี VAT: รายงานภาษีซื้อต้อง
+        // อ้าง **เลขที่ใบของผู้ออก (ผู้ขาย)** ไม่ใช่เลขเอกสารภายในของเรา —
+        // ถ้าไม่กรอก รายงาน/ไฟล์ยื่นจะโชว์เลข CN ของระบบเราซึ่งกระทบยอดกับ
+        // ผู้ขายไม่ได้และสรรพากรตรวจไม่ตรง (soft warning — ใบเก่าก่อนมีช่องนี้
+        // ยังอนุมัติได้ แต่ต้องเห็นเตือน). ฝั่งขายไม่ต้อง — เลขที่ใบคือของเราเอง
+        if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+            && doc.VatAmount != 0
+            && string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber))
+        {
+            var cnIsPurchaseSide = doc.CnDnPurchaseSideOverride
+                ?? (doc.RelatedDocumentId.HasValue
+                    && await _db.Documents.AsNoTracking().AnyAsync(x =>
+                        x.Id == doc.RelatedDocumentId.Value && x.CompanyId == companyId
+                        && (x.DocumentType == DocumentType.PurchaseInvoice
+                            || x.DocumentType == DocumentType.Expense
+                            || x.DocumentType == DocumentType.PaymentVoucher
+                            || x.DocumentType == DocumentType.CertificateInLieu)));
+            if (cnIsPurchaseSide)
+            {
+                var w = doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้";
+                warnings.Add($"⚠️ §86/10: {w}ฝั่งซื้อใบนี้มี VAT {doc.VatAmount:N2} บาท "
+                    + $"แต่ยังไม่ได้กรอก \"เลขที่{w}จากผู้ขาย\" — รายงานภาษีซื้อ/ไฟล์ยื่นจะแสดง"
+                    + "เลขเอกสารภายในของเราแทนเลขจริงของผู้ออก (กระทบยอดกับผู้ขายไม่ได้). "
+                    + $"เปิดเอกสาร → กรอกช่อง \"เลขที่{w}จากผู้ขาย\" ก่อนยื่น ภ.พ.30");
+            }
+        }
+
         // §81/1 — ผู้ที่ไม่ได้จด VAT ห้ามออกใบกำกับภาษี + เก็บ VAT. ถ้าบริษัท
         // VatRegistered=false แต่กำลังออกใบกำกับ/ใบเพิ่ม-ลดหนี้ที่มี VAT → เตือน
         // (ออกใบกำกับโดยไม่จด VAT = ความผิด §90/2 + ต้องนำส่ง VAT ที่เรียกเก็บ).

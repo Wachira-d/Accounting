@@ -1823,7 +1823,13 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 31 — TODO_OPUS A4/A5 "ระบบพูดภาษา_
+_Last verified against codebase: 2026-08-17 (รอบ 32 — TODO_OPUS A3/A6: ใบลดหนี้/_
+_ใบเพิ่มหนี้ **ฝั่งซื้อ** มีช่อง "เลขที่/วันที่ใบจากผู้ขาย" (reuse SupplierInvoice_
+_Number — enrichment รายงานภาษีซื้อหยิบให้อยู่แล้วเพราะบรรทัด CN ฝั่งซื้อ =_
+_IncomeTypeCode "INPUT") + soft warning §86/10 ตอนอนุมัติเมื่อมี VAT แต่เลขว่าง;_
+_`_syncSupplierInvoiceFields` แยกจาก onDocTypeChange เพื่อให้สลับฝั่ง CN เรียกได้_
+_โดยไม่วนซ้ำ · ไฟล์แนบในหน้ารายละเอียดพับไว้เป็นค่าเริ่มต้น + โหลดรูปย่อเฉพาะตอน_
+_กางครั้งแรก (เดิม auto-โหลดทุกไฟล์ ≤8MB ทุกครั้งที่เปิดใบ); รอบ 31 — TODO_OPUS A4/A5 "ระบบพูดภาษา_
 _หัวกระดาษ": `DocumentResponse.ServedAsReceipt` (read-only, batch query 1 ครั้ง/หน้า_
 _ไม่ใช่ N+1; mirror `ResolveServedAsReceiptAsync` ผ่าน `ComputeServedAsReceipt`) →_
 _`Layout.docHeaderLabel/docHeaderBadge` ตั้งป้ายตามหัวจริงบน list + หัว detail modal_

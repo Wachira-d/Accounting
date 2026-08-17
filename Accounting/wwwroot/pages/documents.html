@@ -566,11 +566,11 @@
                based on docType (see togglePurchaseFields below). -->
           <div class="form-row supplier-invoice-only" style="display:none">
             <div class="form-group">
-              <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (ไม่ใช่เลขที่เอกสารของเรา) — ใช้กระทบกับ statement ของผู้ขายและเป็นหลักฐานเคลม VAT ในสรรพากร">เลขใบกำกับของผู้ขาย</label>
+              <label class="form-label" id="fSupplierInvoiceNumberLabel" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (ไม่ใช่เลขที่เอกสารของเรา) — ใช้กระทบกับ statement ของผู้ขายและเป็นหลักฐานเคลม VAT ในสรรพากร">เลขใบกำกับของผู้ขาย</label>
               <input type="text" class="form-input" id="fSupplierInvoiceNumber" placeholder="เช่น INV-2026-0042">
             </div>
             <div class="form-group">
-              <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภพ.30 ที่จะเคลมภาษีซื้อ (อาจต่างจากวันที่เราบันทึก)">วันที่ใบกำกับของผู้ขาย</label>
+              <label class="form-label" id="fSupplierTaxInvoiceDateLabel" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภพ.30 ที่จะเคลมภาษีซื้อ (อาจต่างจากวันที่เราบันทึก)">วันที่ใบกำกับของผู้ขาย</label>
               <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
             </div>
             <div class="form-group">
@@ -3872,10 +3872,7 @@
         // partner issues a source invoice). Hidden on PO / PR / PV — and on
         // CertInLieu ด้วย: ใบรับรองแทนใบเสร็จใช้เมื่อผู้ขาย "ออกใบเสร็จไม่ได้"
         // — ไม่มีเลขใบกำกับผู้ขายให้กรอกโดยนิยาม (เดิมโชว์ช่องนี้ = ชวนให้งง)
-        const supplierIssuedTypes = ['PurchaseInvoice', 'Expense'];
-        document.querySelectorAll('.supplier-invoice-only').forEach(el => {
-          el.style.display = supplierIssuedTypes.includes(docType) ? '' : 'none';
-        });
+        this._syncSupplierInvoiceFields(docType);
         // Payment Voucher: show the เครดิต/จ่ายทันที selector + apply its
         // effect on the due-date field.
         const isPV = docType === 'PaymentVoucher';
@@ -4636,8 +4633,45 @@
           ? 'ฝั่งของใบนี้ (ตั้งตามใบต้นทางอัตโนมัติ)'
           : 'ใบนี้เป็นฝั่งไหน *';
       },
+      /** ช่อง "เลขที่/วันที่ใบของผู้ขาย" — แสดงเมื่อใดและใช้ป้ายอะไร
+       *
+       *  PI/Expense = ใบกำกับของผู้ขาย · **CN/DN ฝั่งซื้อ = เลขที่ใบลดหนี้/
+       *  ใบเพิ่มหนี้ที่ผู้ขายออกให้เรา** (TODO A3): §86/10 บังคับให้รายงานภาษี
+       *  ซื้ออ้างเลขที่ใบของผู้ออก ไม่ใช่เลขเอกสารภายในของเรา — เดิมไม่มีช่อง
+       *  ให้กรอกเลย รายงานจึงโชว์เลข CN ของระบบเราแทน. ใช้ field เดิม
+       *  SupplierInvoiceNumber (entity/DTO/enrichment รองรับครบแล้ว —
+       *  enrichment หยิบให้อัตโนมัติเพราะบรรทัด CN ฝั่งซื้อคือ "INPUT")
+       *
+       *  แยกจาก onDocTypeChange เพื่อให้ onCnSideChange เรียกได้โดยไม่วน
+       *  (onDocTypeChange → _setCnSide → onCnSideChange → onDocTypeChange …) */
+      _syncSupplierInvoiceFields(docType) {
+        docType = docType || document.getElementById('fDocType')?.value;
+        const isCnDn = docType === 'CreditNote' || docType === 'DebitNote';
+        const cnDnPurchase = isCnDn && this._cnSideIsPurchase?.();
+        const show = ['PurchaseInvoice', 'Expense'].includes(docType) || cnDnPurchase;
+        document.querySelectorAll('.supplier-invoice-only').forEach(el => {
+          el.style.display = show ? '' : 'none';
+        });
+        const lbl = document.getElementById('fSupplierInvoiceNumberLabel');
+        const dtLbl = document.getElementById('fSupplierTaxInvoiceDateLabel');
+        const inp = document.getElementById('fSupplierInvoiceNumber');
+        if (cnDnPurchase) {
+          const w = docType === 'CreditNote' ? 'ใบลดหนี้' : 'ใบเพิ่มหนี้';
+          if (lbl) lbl.textContent = `เลขที่${w}จากผู้ขาย`;
+          if (dtLbl) dtLbl.textContent = `วันที่${w}จากผู้ขาย`;
+          if (inp) inp.placeholder = `เลขที่${w}ที่ผู้ขายออกให้ เช่น CN-2026-0007`;
+        } else if (show) {
+          if (lbl) lbl.textContent = 'เลขใบกำกับของผู้ขาย';
+          if (dtLbl) dtLbl.textContent = 'วันที่ใบกำกับของผู้ขาย';
+          if (inp) inp.placeholder = 'เช่น INV-2026-0042';
+        }
+      },
+
       onCnSideChange(note, opts = {}) {
         const h = document.getElementById('cnSideHint');
+        // ช่อง "เลขที่ใบลดหนี้จากผู้ขาย" แสดงเฉพาะฝั่งซื้อ → ประเมินใหม่ทุกครั้ง
+        // ที่สลับฝั่ง (เรียกเมธอดเฉพาะ ไม่ใช่ onDocTypeChange — กันวนซ้ำ)
+        this._syncSupplierInvoiceFields();
         if (!h) return;
         const isPurchase = this._cnSideIsPurchase();
         // ลิสต์ใบต้นทางมีทั้งสองฝั่งเสมอ (optgroup แยก) — สลับ radio จึง**ไม่ต้อง**
@@ -8673,6 +8707,11 @@
         // คืน blob ของรอบก่อนก่อนวาดใหม่ — ไม่งั้นเปิด/ปิดเอกสารหลายใบแล้ว
         // object URL ค้างสะสมจนกินหน่วยความจำ (ไฟล์แนบเป็นรูปหลาย MB)
         this._releaseAttachmentBlobs();
+        // เปลี่ยนเอกสาร = เริ่มพับใหม่ (สถานะกางผูกกับใบที่กำลังดูเท่านั้น)
+        if (this._attachmentsDocId !== documentId) {
+          this._attachmentsDocId = documentId;
+          this._attachmentsExpanded = false;
+        }
 
         let attachments = [];
         try {
@@ -8725,12 +8764,21 @@
               </div>`;
             }).join('');
 
+        // ── พับไว้เป็นค่าเริ่มต้น (TODO A6) ─────────────────────────────────
+        // เดิมกางทุกครั้ง + auto-โหลดรูปย่อของทุกไฟล์ (ไฟล์ละไม่เกิน 8MB) ⇒
+        // หน้ารายละเอียดยืดยาว/รก และดึงข้อมูลหลาย MB ทั้งที่ผู้ใช้ส่วนใหญ่
+        // ไม่ได้จะดูไฟล์. ตอนนี้: แถวรายการอยู่ใน <details> ปิดไว้ —
+        // รูปย่อโหลด "ตอนกางครั้งแรก" เท่านั้น (lazy) และ lightbox เดิมยังใช้ได้
+        const _attOpen = this._attachmentsExpanded === true;
         container.innerHTML = `
-          <h4 style="font-size:14px;margin-bottom:8px;display:flex;align-items:center;gap:8px">
-            📎 ไฟล์แนบ
-            <span style="font-size:11px;font-weight:400;color:var(--gray-500)">(${attachments.length} ไฟล์)</span>
-          </h4>
-          <div>${list}</div>
+          <details id="attDetails_${documentId}" ${_attOpen ? 'open' : ''}
+            style="border:1px solid var(--gray-200);border-radius:8px;padding:8px 12px;background:#fff">
+            <summary style="cursor:pointer;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;user-select:none">
+              📎 ไฟล์แนบ
+              <span style="font-size:11px;font-weight:400;color:var(--gray-500)">(${attachments.length} ไฟล์)</span>
+              <span style="font-size:11px;font-weight:400;color:var(--gray-400);margin-left:auto">คลิกเพื่อ${_attOpen ? 'พับ' : 'ดู/แนบไฟล์'}</span>
+            </summary>
+          <div style="margin-top:8px">${list}</div>
           <div id="dropZone_${documentId}"
             style="margin-top:8px;padding:16px;border:2px dashed var(--gray-300);border-radius:8px;text-align:center;cursor:pointer;background:#fafbfc;transition:all .2s">
             <input type="file" id="attachFile_${documentId}" multiple style="display:none">
@@ -8741,10 +8789,24 @@
                 รองรับ: PDF, รูปภาพ, Excel, Word — สูงสุด 25MB
               </div>
             </div>
-          </div>`;
+          </div>
+          </details>`;
 
-        // แทนไอคอนด้วยรูปย่อจริง (ไม่ block — รายการขึ้นก่อน รูปตามมา)
-        this.hydrateAttachmentThumbs(attachments);
+        // รูปย่อโหลดเฉพาะตอน "กาง" — ปิดไว้ = ไม่มี network request เลย
+        const _attDetails = document.getElementById('attDetails_' + documentId);
+        if (_attDetails) {
+          const _hydrateOnce = () => {
+            if (_attDetails.dataset.thumbsLoaded === '1') return;
+            _attDetails.dataset.thumbsLoaded = '1';
+            this.hydrateAttachmentThumbs(attachments);
+          };
+          if (_attDetails.open) _hydrateOnce();
+          _attDetails.addEventListener('toggle', () => {
+            // จำสถานะไว้ให้ re-render (อัปโหลด/ลบไฟล์) ไม่พับกลับเอง
+            this._attachmentsExpanded = _attDetails.open;
+            if (_attDetails.open) _hydrateOnce();
+          });
+        }
 
         // Wire up drag-drop + click-to-pick
         const dropZone = document.getElementById('dropZone_' + documentId);
