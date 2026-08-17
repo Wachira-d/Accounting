@@ -3633,11 +3633,39 @@ public class DocumentService : IDocumentService
                                     && !j.IsDeleted && !l.IsDeleted
                                     && j.OriginalEntryId == null && j.ReversedByEntryId == null
                                     && j.Status == JournalEntryStatus.Posted
-                              select new { l.AccountId, a.AccountCode, Net = l.CreditAmount - l.DebitAmount })
+                              select new
+                              {
+                                  l.JournalEntryId, l.AccountId, a.AccountCode, a.AccountName,
+                                  l.DebitAmount, l.CreditAmount,
+                              })
             .ToListAsync();
+
+        // ⚠️ นับ "ขา Cr" เฉพาะจาก JE ที่ **สร้างหนี้สินมัดจำ** (ใบเสร็จมัดจำ:
+        // Cr 217xx/21913 หรือ Cr 21911 กรณีไม่ deferred) — ส่วนขา Dr นับจากทุก JE
+        // ที่มา (M-1): มัดจำที่ถูก "รับรู้รายได้บางส่วน" (RealizeDeposit) มี JE
+        //   Dr 217xx / Cr 41xxx  +  Dr 21913 / Cr 21911
+        // ผูก SourceDocumentId = ใบมัดจำเหมือนกัน. ตัวกรองเดิมตัดแค่ผัง 1xxxx ⇒
+        // Cr 41xxx (รายได้ที่รับรู้ไปแล้ว) และ Cr 21911 ของ realize ถูกนับเป็น
+        // "มัดจำคงเหลือ" ⇒ ตอนเอาส่วนที่เหลือไปตัดใบแจ้งหนี้ ระบบลง **Dr 41000
+        // ล้างรายได้ที่รับรู้ถูกต้องไปแล้ว** — งบกำไรขาดทุนหายรายได้เงียบ ๆ
+        // (Dr=Cr ยังสมดุล จึงไม่มี guard ตัวไหนจับ)
+        // 21911 ยังต้องนับได้เมื่อมาจากใบเสร็จมัดจำเอง (มัดจำที่รับรู้ VAT ทันที)
+        // จึงแยกด้วย "JE นี้เครดิตบัญชีมัดจำหรือไม่" ไม่ใช่ด้วยรหัสบัญชี
+        static bool IsDepositLiability(string code, string name)
+            => code.StartsWith("215", StringComparison.Ordinal)
+            || code.StartsWith("217", StringComparison.Ordinal)
+            || name.Contains("มัดจำ") || name.Contains("รับล่วงหน้า") || name.Contains("รอรับรู้");
+
+        var creatingJeIds = famLines
+            .Where(x => x.CreditAmount > 0.005m && IsDepositLiability(x.AccountCode, x.AccountName))
+            .Select(x => x.JournalEntryId)
+            .ToHashSet();
+
         var famLegs = famLines
             .GroupBy(x => new { x.AccountId, x.AccountCode })
-            .Select(g => (g.Key.AccountId, g.Key.AccountCode, Net: g.Sum(x => x.Net)))
+            .Select(g => (g.Key.AccountId, g.Key.AccountCode,
+                Net: g.Where(x => creatingJeIds.Contains(x.JournalEntryId)).Sum(x => x.CreditAmount)
+                     - g.Sum(x => x.DebitAmount)))
             .Where(x => x.Net > 0.005m && !x.AccountCode.StartsWith("1"))
             .OrderByDescending(x => x.Net)
             .ToList();
@@ -5656,6 +5684,47 @@ public class DocumentService : IDocumentService
             throw;
         }
 
+        // ── ปลดการกระทบยอดของบัญชีเดิม (M-8) ────────────────────────────────
+        // เงินย้ายไปออกจากอีกบัญชีแล้ว แต่รายการเดินบัญชีของ**บัญชีเดิม**ที่เคย
+        // จับคู่กับ JE ของเอกสารนี้ยังขึ้นสถานะ "กระทบยอดแล้ว" ⇒ งบกระทบยอด
+        // ของบัญชีเดิมยังนับเงินก้อนที่ GL บอกว่าไม่เคยออกจากบัญชีนั้น และผู้ทำ
+        // บัญชีจะจับคู่รายการจริงของบัญชีใหม่ไม่ได้. ปลดให้กลับไป Unmatched
+        // เพื่อบังคับให้กระทบยอดใหม่กับบัญชีที่ถูก (defect class เดียวกับ M-2)
+        try
+        {
+            var docJeIds = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId && !j.IsDeleted)
+                .Select(j => j.Id)
+                .ToListAsync();
+            if (docJeIds.Count > 0)
+            {
+                var staleTxnIds = await _db.BankTransactions
+                    .Where(t => t.CompanyId == companyId
+                        && t.MatchedJournalEntryId.HasValue
+                        && docJeIds.Contains(t.MatchedJournalEntryId!.Value))
+                    .Select(t => t.Id)
+                    .ToListAsync();
+                if (staleTxnIds.Count > 0)
+                {
+                    await _db.BankTransactions
+                        .Where(t => staleTxnIds.Contains(t.Id))
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(t => t.MatchedJournalEntryId, (Guid?)null)
+                            .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Unmatched)
+                            .SetProperty(t => t.ReconciledAt, (DateTime?)null));
+                    _logger.LogInformation(
+                        "ปลดการกระทบยอด {Count} รายการของ {DocNumber} หลังเปลี่ยนแหล่งเงิน — ต้องจับคู่ใหม่กับบัญชี {NewCode}",
+                        staleTxnIds.Count, doc.DocumentNumber, newGl.Code);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "ปลดการกระทบยอดหลังเปลี่ยนแหล่งเงินของ {DocNumber} ไม่สำเร็จ — " +
+                "ตรวจรายการเดินบัญชีของบัญชีเดิมด้วยมือ", doc.DocumentNumber);
+        }
+
         _logger.LogInformation(
             "Reclassified payment source of {DocNumber}: {OldCode} → {NewCode} (amount {Amount}) by {Actor}",
             doc.DocumentNumber, oldGl.Code, newGl.Code, amount, actor);
@@ -7295,6 +7364,29 @@ public class DocumentService : IDocumentService
         {
             try { await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Payment, paymentId); }
             catch (Exception ex) { _logger.LogWarning(ex, "Group unwind for voided payment {PayId} failed", paymentId); }
+        }
+
+        // ── ปลดการจับคู่แบบ 1:1 ที่ไม่ได้อยู่ในกลุ่ม (M-2) ─────────────────
+        // `MatchAsync` (จับคู่รายการเดินบัญชี ↔ การชำระเงิน) ตั้ง MatchedPaymentId
+        // + สถานะ Matched โดย **ไม่สร้าง ReconciliationGroup** ⇒ unwind ข้างบน
+        // ไม่แตะ. ผลเมื่อยกเลิกการชำระ: รายการเดินบัญชียังขึ้นว่า "กระทบยอดแล้ว"
+        // กับเงินที่ถูกกลับรายการไปแล้ว และจับคู่ใหม่กับการชำระที่แก้แล้วไม่ได้เลย
+        // (auto-match ตัด payment ที่ถูก match ไปแล้วทิ้ง + txn ไม่ได้อยู่สถานะ
+        // Unmatched) — เส้น purge เอกสารทำถูกอยู่แล้ว ขาดแค่เส้นยกเลิกการชำระ
+        try
+        {
+            await _db.BankTransactions
+                .Where(t => t.CompanyId == companyId && t.MatchedPaymentId == paymentId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.MatchedPaymentId, (Guid?)null)
+                    .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Unmatched)
+                    .SetProperty(t => t.ReconciledAt, (DateTime?)null));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "ปลดการจับคู่ธนาคารของการชำระที่ยกเลิก {PayId} ไม่สำเร็จ — " +
+                "ตรวจรายการเดินบัญชีที่ยังค้างสถานะกระทบยอดด้วยมือ", paymentId);
         }
     }
 

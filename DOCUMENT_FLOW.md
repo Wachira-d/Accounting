@@ -894,6 +894,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   5. mark `deposit.DepositAppliedToDocumentId = invoiceId` (1 ใบมัดจำ → 1 ใบ
      ปลายทาง; ถ้า apply หลายใบต้องเรียกหลายครั้ง)
   6. Fire webhook `deposit.applied`
+- **หา "มัดจำคงเหลือ" จาก GL (family-net) — ต้องแยก JE ที่สร้างหนี้สินมัดจำ**:
+  นับขา **Cr เฉพาะจาก JE ที่เครดิตบัญชีมัดจำ** (ใบเสร็จมัดจำ: Cr 217xx/215xx
+  + 21913 หรือ 21911 กรณีไม่ deferred) ส่วนขา **Dr นับจากทุก JE** ที่ผูก
+  `SourceDocumentId = ใบมัดจำ`. ที่มา (M-1): ตัวกรองเดิมตัดแค่ผัง `1xxxx` ⇒
+  มัดจำที่ถูก **รับรู้รายได้บางส่วน** (`RealizeDepositAsync` ลง `Dr 217xx /
+  Cr 41xxx` + `Dr 21913 / Cr 21911` ผูก SourceDocumentId เดียวกัน) ทำให้
+  `Cr 41xxx` และ `Cr 21911` ถูกนับเป็นมัดจำคงเหลือ → ตอนเอาส่วนที่เหลือไปตัด
+  ใบแจ้งหนี้ ระบบลง **Dr 41000 ล้างรายได้ที่รับรู้ถูกต้องไปแล้ว** (Dr=Cr ยัง
+  สมดุล ไม่มี guard ตัวไหนจับ). แยกด้วย "JE ไหน" ไม่ใช่ "รหัสบัญชีอะไร" เพราะ
+  21911 ยังต้องนับได้เมื่อมาจากใบเสร็จมัดจำที่รับรู้ VAT ทันที
 - **Deposit-applied drives-journal** (integration self-contained JE) — ใบรับเงิน
   สุดท้ายส่ง `DepositAppliedAmount` + `DepositAppliedRef` + `DepositAppliedDrivesJournal=true`
   → JE ใบเดียวกลับ deferred ของมัดจำ (ไม่ต้องมี JV reverse แยก).
@@ -1189,6 +1199,31 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ---
 
 ## 6. Cross-cutting
+
+### 6.0b ด่านงวดบัญชีของสมุดรายวัน (X-9)
+
+`AccountingService` ตรวจ **2 ชั้นเสมอ** ที่ Post / Update / Void:
+`ValidateFiscalPeriodOpenAsync(FiscalPeriodId)` (FK ที่เก็บไว้) **และ**
+`ValidateFiscalPeriodOpenForDateAsync(companyId, EntryDate)` (งวดของวันที่จริง)
+
+- FK เป็น `null` ได้ปกติ (JE ที่ลงตอนบริษัทยังไม่ตั้งงวด / resolver หางวดไม่เจอ)
+  ⇒ ด่านที่ดูแต่ FK ปล่อยผ่านทั้งที่งวดของวันนั้นถูกปิดย้อนหลังไปแล้ว
+- **เปลี่ยนวันที่** → ตรวจงวดปลายทางด้วย + **re-resolve `FiscalPeriodId` ตามวันใหม่**
+  (ไม่งั้นรายการค้างชี้งวดเดิม → รายงานรายงวดกับสมุดรายวันไม่ตรงกันถาวร)
+- `PostJournalEntryAsync` เดิมปฏิเสธเฉพาะ `Closed` ⇒ งวด **`Locked`** (งวดที่ยื่น
+  ภ.พ.30/ภ.ง.ด. แล้ว) ยัง post ทับได้ — ตอนนี้ใช้ด่านเดียวกับ Update/Void
+- convention: **ไม่มีแถวงวดครอบวันนั้น = ถือว่าเปิด** (เหมือนที่อื่นทั้งระบบ)
+
+### 6.0c การจับคู่ธนาคารที่ต้องถูกปลดเมื่อเงินเปลี่ยน
+
+| เหตุการณ์ | สิ่งที่ต้องปลด | ที่มา |
+| --- | --- | --- |
+| ลบเอกสารถาวร (purge) | `MatchedPaymentId` ของ payment ที่ถูกลบ | มีอยู่เดิม |
+| **ยกเลิกการชำระ** (`VoidPaymentAsync`) | `MatchedPaymentId` + สถานะ → Unmatched | **M-2** — `MatchAsync` แบบ 1:1 ไม่สร้าง `ReconciliationGroup` ⇒ `UnwindGroupsContainingItemAsync` ไม่แตะ; ผลคือรายการเดินบัญชีค้างสถานะ "กระทบยอดแล้ว" กับเงินที่กลับรายการไปแล้ว **และจับคู่ใหม่ไม่ได้เลย** (auto-match ตัด payment ที่ถูก match แล้ว + txn ไม่อยู่สถานะ Unmatched) |
+| **เปลี่ยนแหล่งเงิน** (`ReclassifyPaymentSourceAsync`) | `MatchedJournalEntryId` ของ JE ที่ผูกเอกสารนี้ + สถานะ → Unmatched | **M-8** — GL บอกว่าเงินไม่เคยออกจากบัญชีเดิม แต่รายการเดินบัญชีของบัญชีเดิมยังกระทบยอดค้าง ⇒ บังคับให้จับคู่ใหม่กับบัญชีที่ถูก |
+
+ทั้งสองเส้นเป็น best-effort หลัง commit (log warning เมื่อพลาด) — การชำระ/การแก้
+ที่สำเร็จแล้วต้องไม่ถูก rollback เพราะงานกระทบยอด
 
 ### 6.1 Audit log (tamper-evident)
 - **Entity**: `AuditLog(actorId, entityType, entityId, before, after, at, ip, reason, prevHash, rowHash)`
@@ -1857,7 +1892,13 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 73 — **จำลองเหตุการณ์ชุด 4:_
+_Last verified against codebase: 2026-08-17 (รอบ 74 — **จำลองเหตุการณ์ชุด 5:_
+_มัดจำที่รับรู้บางส่วน · การจับคู่ธนาคารค้าง · ด่านงวดของสมุดรายวัน**:_
+_family-net ของมัดจำแยก "JE ที่สร้างหนี้สินมัดจำ" ออกจาก JE รับรู้รายได้_
+_(เดิมเอาส่วนที่เหลือไปตัดใบแจ้งหนี้แล้วลง Dr 41000 ล้างรายได้ที่รับรู้แล้ว) ·_
+_ยกเลิกการชำระ/เปลี่ยนแหล่งเงินปลดการจับคู่ธนาคารที่ค้าง (§6.0c) ·_
+_ด่านงวดยึดวันที่ ไม่ใช่แค่ FK + re-resolve เมื่อเปลี่ยนวัน + Post ปฏิเสธงวด_
+_Locked (§6.0b) · เทสต์ `SimulationRound5Tests`; รอบ 73 — **จำลองเหตุการณ์ชุด 4:_
 _เส้น integration + รายจ่ายที่เคลมภาษีซื้อไม่ได้**: ผังบัญชีที่ partner ส่งมาต้อง_
 _อยู่ถูกฝั่งเอกสาร (ฝั่งจ่ายห้ามบัญชีรายได้ — JE แบบนี้สมดุลเป๊ะ guard จับไม่ได้_
 _และกำไรสุทธิไม่ขยับ) · ย้ายผังบัญชีย้าย "ยอดที่ลงจริง" ผ่าน_
