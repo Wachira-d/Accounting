@@ -1319,26 +1319,33 @@ public partial class AccountingService : IAccountingService
                 && j.EntryDate < fromDateStart)
             .Select(j => j.Id);
 
+        // P4: รวมยอดยกมา **ในฐานข้อมูล** ไม่ใช่ดึงทุกบรรทัดมารวมในหน่วยความจำ —
+        // เดิม `.ToListAsync()` ดึง JournalEntryLine **ทั้งหมดตั้งแต่เปิดบริษัท**
+        // (ไม่มีตัวกรองวันที่ล่าง) เข้า RAM เมื่อผู้ใช้ไม่ได้เลือกบัญชีเจาะจง ⇒
+        // บริษัทที่ใช้มา 2-3 ปีมีหลายแสนบรรทัด = ช้า/OOM ทั้งที่ต้องการแค่ยอด
+        // สุทธิต่อบัญชี (1 แถว/บัญชี). GroupBy+Sum แปลเป็น SQL ได้ตรง ๆ
         var openingLineQuery = _db.JournalEntryLines
-            .Include(l => l.Account)
             .Where(l => openingEntryIds.Contains(l.JournalEntryId));
 
         if (accountId.HasValue)
             openingLineQuery = openingLineQuery.Where(l => l.AccountId == accountId.Value);
 
-        var openingLines = await openingLineQuery.ToListAsync();
-
-        var openingBalances = openingLines
+        var openingAgg = await openingLineQuery
             .Where(l => l.Account != null)
-            .GroupBy(l => l.AccountId)
-            .ToDictionary(g => g.Key, g =>
+            .GroupBy(l => new { l.AccountId, l.Account!.AccountType })
+            .Select(g => new
             {
-                var acctType = g.First().Account.AccountType;
-                var debit = g.Sum(l => l.DebitAmount);
-                var credit = g.Sum(l => l.CreditAmount);
-                return (acctType == AccountType.Asset || acctType == AccountType.Expense)
-                    ? debit - credit : credit - debit;
-            });
+                g.Key.AccountId,
+                g.Key.AccountType,
+                Debit = g.Sum(x => x.DebitAmount),
+                Credit = g.Sum(x => x.CreditAmount),
+            })
+            .ToListAsync();
+
+        var openingBalances = openingAgg.ToDictionary(
+            x => x.AccountId,
+            x => (x.AccountType == AccountType.Asset || x.AccountType == AccountType.Expense)
+                ? x.Debit - x.Credit : x.Credit - x.Debit);
 
         // Group by account (filter out lines with missing accounts)
         var grouped = lines

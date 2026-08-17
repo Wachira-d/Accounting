@@ -1823,7 +1823,13 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 37 — เครื่องมือนักบัญชีใหม่:_
+_Last verified against codebase: 2026-08-17 (รอบ 38 — Task Force P4/Q3: (P4)_
+_`GetGeneralLedgerAsync` รวมยอดยกมาใน SQL (GroupBy+Sum) แทนดึง JournalEntryLine_
+_ทั้งหมดตั้งแต่เปิดบริษัทเข้า RAM เมื่อไม่ได้เลือกบัญชีเจาะจง · (Q3) AuditMiddleware:_
+_ข้าม path ที่เขียนถี่แต่ไม่มีคุณค่าเชิงตรวจสอบ (chat/telemetry/autosave/preview),_
+_`Guid.TryParse` แทน `Parse` (subject ที่ไม่ใช่ GUID เคย throw **หลังงานสำเร็จ**_
+_⇒ ผู้ใช้เห็น 500 แล้วกดซ้ำ = เอกสารซ้ำ), ตัด UserAgent ที่ 512 ตัว, และ audit ที่_
+_บันทึกไม่สำเร็จ log เป็น Error แทนทำให้ request 500; รอบ 37 — เครื่องมือนักบัญชีใหม่:_
 _**กระทบยอด GL ↔ รายงานภาษี** (`TaxGlReconciliationService` +_
 _`GET /accountant/tax-gl-recon` + การ์ดในหน้า accountant.html): เทียบยอดเคลื่อนไหว_
 _ใน GL ของงวด (21911 ภาษีขาย / 11610 ภาษีซื้อ / 21916-21917-21918 WHT ค้างจ่าย /_
