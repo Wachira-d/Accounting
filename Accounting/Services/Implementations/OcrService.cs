@@ -4138,6 +4138,17 @@ public class OcrService : IOcrService
             && !string.IsNullOrWhiteSpace(result.ExtractedDocumentNumber)
             && ((result.ExtractedVatAmount ?? 0) > 0 || !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId));
 
+        // ใบลดหนี้/ใบเพิ่มหนี้ฝั่งซื้อ: ช่องคู่เดียวกันนี้เปลี่ยนความหมายเป็น
+        // "เลขที่/วันที่ **ใบลดหนี้** ที่ผู้ขายออกให้" (ดู _syncSupplierInvoiceFields
+        // ฝั่ง UI) — เดิม bookSupplierInvoice ไม่ครอบ CN/DN เลย สแกนใบลดหนี้มา
+        // ช่องนี้จึงว่างเสมอ ทั้งที่เลขอยู่บนกระดาษตรงหน้า (กฎเหล็ก #3 ห้ามปล่อย
+        // field ที่เอกสารมีให้ว่าง). ไม่ผูกกับ vatNotClaimable/มี VAT — เลขที่และ
+        // วันที่ของใบลดหนี้เป็นข้อมูลอ้างอิงตาม §86/10 ไม่ใช่เงื่อนไขการเคลม
+        var bookSupplierCreditNote = !isSalesSide
+            && docType is DocumentType.CreditNote or DocumentType.DebitNote
+            && !string.IsNullOrWhiteSpace(result.ExtractedDocumentNumber);
+        var bookSupplierRef = bookSupplierInvoice || bookSupplierCreditNote;
+
         // Transaction wraps the insert. ก่อนหน้านี้ออก "เลขจริง" ทันทีตอนสร้าง
         // Draft → ผิดกฎ CLAUDE.md ("เลขเอกสารออกตอน Approve เท่านั้น, Draft
         // ใช้ DRAFT-{guid} placeholder") + เป็น root cause ของ DocumentNumber↔
@@ -4159,7 +4170,7 @@ public class OcrService : IOcrService
         // ผู้ขายหลายสาขาใช้ Contact เดียวกัน ถ้าอ่านจาก Contact จะได้สาขาของใบที่
         // สแกนครั้งก่อน (เช่นใบนี้สาขา 00003 แต่ Contact ค้าง 00000) ขึ้นรายงาน
         // ภาษีซื้อผิดสาขาแบบเงียบ (ประกาศฯ 199 / §86/4)
-        var vendorBranchForBook = bookSupplierInvoice
+        var vendorBranchForBook = bookSupplierRef
             ? (!string.IsNullOrWhiteSpace(result.VendorBranchCode)
                 ? result.VendorBranchCode
                 : await _db.Contacts.AsNoTracking()
@@ -4222,9 +4233,11 @@ public class OcrService : IOcrService
             // ใบกำกับภาษีของผู้ขาย — เติมจาก OCR ให้ฟอร์มไม่โชว์ "ขาดเลขใบ"
             // + ภาษีซื้อขึ้น ภพ.30 ได้เลย (ไม่ค้าง 11640 โดยไม่จำเป็น)
             HasTaxInvoiceReference = bookSupplierInvoice && docType == DocumentType.PaymentVoucher,
-            SupplierInvoiceNumber = bookSupplierInvoice ? result.ExtractedDocumentNumber : null,
-            SupplierTaxInvoiceDate = bookSupplierInvoice ? result.ExtractedDate : null,
-            SupplierBranchCode = bookSupplierInvoice
+            // PI/Expense/PV = เลขใบกำกับของผู้ขาย · CN/DN ฝั่งซื้อ = เลขใบลดหนี้/
+            // เพิ่มหนี้ที่ผู้ขายออกให้ (ช่องเดียวกัน ความหมายตามชนิดเอกสาร)
+            SupplierInvoiceNumber = bookSupplierRef ? result.ExtractedDocumentNumber : null,
+            SupplierTaxInvoiceDate = bookSupplierRef ? result.ExtractedDate : null,
+            SupplierBranchCode = bookSupplierRef
                 ? (string.IsNullOrWhiteSpace(vendorBranchForBook) ? "00000" : vendorBranchForBook)
                 : null,
             // หมวดค่าใช้จ่ายระดับเอกสาร = ผังเดบิตที่ AI/ผู้ใช้เลือก

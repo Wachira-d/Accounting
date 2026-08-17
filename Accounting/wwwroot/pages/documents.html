@@ -5107,10 +5107,16 @@
         setIfEmpty('fProject', d.projectId);
         setIfEmpty('fDimension', d.dimensionId);
         setIfEmpty('fExpenseCategory', d.expenseCategoryId);
-        // ฝั่งซื้อ: ข้อมูลใบกำกับของผู้ขาย = ใบเดิมที่กำลังลดหนี้ให้
+        // ฝั่งซื้อ: **ห้าม**เอาเลขที่/วันที่ใบกำกับของใบเดิมมาเติม — บนใบลดหนี้/
+        // ใบเพิ่มหนี้ ช่องคู่นี้มีความหมายว่า "เลขที่/วันที่ **ใบลดหนี้** ที่ผู้ขาย
+        // ออกให้" (ดู _syncSupplierInvoiceFields) คนละใบกับใบกำกับที่กำลังอ้างถึง
+        // เติมเลขใบกำกับลงไป = ผู้ใช้เห็นเลขที่ไม่ใช่ของใบนี้แล้วสับสน และถ้ากด
+        // บันทึกต่อ รายงานภาษีซื้อจะโชว์เลขใบกำกับแทนเลขใบลดหนี้จริง
+        // (ใบต้นทางที่อ้างถึงถูกเก็บไว้ที่ลิงก์เอกสารต้นทางอยู่แล้ว ไม่หายไปไหน)
+        // เลขใบลดหนี้ที่ถูกต้องมาจาก 2 ทาง: OCR สแกนใบลดหนี้ (เติมให้อัตโนมัติ)
+        // หรือผู้ใช้พิมพ์เอง
         if (srcIsPurchase) {
-          setIfEmpty('fSupplierInvoiceNumber', d.supplierInvoiceNumber);
-          setIfEmpty('fSupplierTaxInvoiceDate', d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '');
+          // สาขาผู้ขายยังยกมาได้ — เป็นสาขาเดียวกับใบเดิมเสมอ
           setIfEmpty('fSupplierBranchCode', d.supplierBranchCode);
         }
         // แหล่งเงินตั้งต้น = แหล่งเงินของใบเดิม — ใบลดหนี้/เพิ่มหนี้คือการปรับ
