@@ -97,10 +97,8 @@ public class TaxFilingExportService : ITaxFilingExportService
     // =====================================================================
     public async Task<TaxFilingExportResult> ExportPnd3Async(Guid companyId, int year, int month)
     {
-        var company = await GetCompanyAsync(companyId);
-        var thaiYear = year + 543;
-        var period = $"{thaiYear:D4}{month:D2}";
-
+        // ไฟล์นำเข้าเว็บสรรพากรเป็น detail rows ล้วน — ไม่ต้องใช้ข้อมูลบริษัท/
+        // งวดใน body (อยู่บนหน้าเว็บที่ผู้ใช้เลือกก่อน upload อยู่แล้ว)
         var certs = await _db.WithholdingTaxCerts
             .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัดpayee ภ.ง.ด.3/1ก)
             .Where(w => w.CompanyId == companyId
@@ -114,32 +112,16 @@ public class TaxFilingExportService : ITaxFilingExportService
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
 
-        var sb = new StringBuilder();
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
-        var totalDetailRows = certs.Sum(c => c.Lines.Count);
-
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.3|{period}|{totalDetailRows}|{totalIncome:F2}|{totalTax:F2}");
-
-        int seq = 1;
-        foreach (var cert in certs.OrderBy(c => c.CertificateNumber))
-        {
-            var contact = cert.PayeeContact;
-            // §40(3) บุคคลธรรมดา → คำนำหน้าจาก contact (default "9" อื่นๆ
-            // เพราะ supplier-side ส่วนใหญ่ไม่ได้บันทึก title แยก)
-            var titleCode = TitleCode(null);
-            foreach (var line in cert.Lines.OrderBy(l => l.LineOrder))
-            {
-                var payDateThai = $"{line.PaymentDate.Day:D2}/{line.PaymentDate.Month:D2}/{line.PaymentDate.Year + 543}";
-                sb.AppendLine($"D|{seq++}|{titleCode}|{contact.Name}||{contact.TaxId}|{payDateThai}|{MapIncomeTypeCode(line.IncomeTypeCode)}|{line.IncomeAmount:F2}|{line.TaxRate:F2}|{line.TaxAmount:F2}|{(int)cert.CertificateType}");
-            }
-        }
-        sb.AppendLine($"T|{totalDetailRows}|{totalIncome:F2}|{totalTax:F2}");
+        var rows = BuildPndRows(certs, juristicPayee: false);
+        var body = PndTextFileFormat.Build(rows);
 
         return new TaxFilingExportResult(
-            "PND3", "ภ.ง.ด.3", $"PND3_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
+            "PND3", "ภ.ง.ด.3", $"PND3_{year}{month:D2}.txt", "text/plain", AsBytes(body),
             certs.Count, totalIncome, totalTax,
-            $"ภ.ง.ด.3 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท");
+            $"ภ.ง.ด.3 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท "
+            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)");
     }
 
     // =====================================================================
@@ -147,10 +129,8 @@ public class TaxFilingExportService : ITaxFilingExportService
     // =====================================================================
     public async Task<TaxFilingExportResult> ExportPnd53Async(Guid companyId, int year, int month)
     {
-        var company = await GetCompanyAsync(companyId);
-        var thaiYear = year + 543;
-        var period = $"{thaiYear:D4}{month:D2}";
-
+        // ไฟล์นำเข้าเว็บสรรพากรเป็น detail rows ล้วน — ไม่ต้องใช้ข้อมูลบริษัท/
+        // งวดใน body (อยู่บนหน้าเว็บที่ผู้ใช้เลือกก่อน upload อยู่แล้ว)
         var certs = await _db.WithholdingTaxCerts
             .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัดpayee ภ.ง.ด.53/3ก)
             .Where(w => w.CompanyId == companyId
@@ -163,30 +143,16 @@ public class TaxFilingExportService : ITaxFilingExportService
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
 
-        var sb = new StringBuilder();
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
-        var totalDetailRows = certs.Sum(c => c.Lines.Count);
-
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.53|{period}|{totalDetailRows}|{totalIncome:F2}|{totalTax:F2}");
-
-        int seq = 1;
-        foreach (var cert in certs.OrderBy(c => c.CertificateNumber))
-        {
-            var contact = cert.PayeeContact;
-            foreach (var line in cert.Lines.OrderBy(l => l.LineOrder))
-            {
-                var payDateThai = $"{line.PaymentDate.Day:D2}/{line.PaymentDate.Month:D2}/{line.PaymentDate.Year + 543}";
-                // นิติบุคคล: title code 4 (บริษัท)
-                sb.AppendLine($"D|{seq++}|4|{contact.Name}||{contact.TaxId}|{contact.BranchCode ?? "00000"}|{payDateThai}|{MapIncomeTypeCode(line.IncomeTypeCode)}|{line.IncomeAmount:F2}|{line.TaxRate:F2}|{line.TaxAmount:F2}|{(int)cert.CertificateType}");
-            }
-        }
-        sb.AppendLine($"T|{totalDetailRows}|{totalIncome:F2}|{totalTax:F2}");
+        var rows = BuildPndRows(certs, juristicPayee: true);
+        var body = PndTextFileFormat.Build(rows);
 
         return new TaxFilingExportResult(
-            "PND53", "ภ.ง.ด.53", $"PND53_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
+            "PND53", "ภ.ง.ด.53", $"PND53_{year}{month:D2}.txt", "text/plain", AsBytes(body),
             certs.Count, totalIncome, totalTax,
-            $"ภ.ง.ด.53 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท");
+            $"ภ.ง.ด.53 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท "
+            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)");
     }
 
     // =====================================================================
@@ -611,6 +577,33 @@ public class TaxFilingExportService : ITaxFilingExportService
     /// §40(7) ค่ารับเหมา / §40(8) ค่าบริการ → "6" (ค่าจ้างทำของ/รับเหมา
     /// ภายใต้มาตรา 3 เตรส). §40(5) ค่าเช่าทรัพย์สิน → "5". เดิมรวมทั้ง 3
     /// เป็น "5" ทำให้ RD audit mismatch.</summary>
+    /// <summary>cert (+ บรรทัด) → แถวไฟล์ ภ.ง.ด. — ตัวแปลงเดียวใช้ทั้ง 3/53/54
+    /// เพื่อให้ทุกแบบได้ layout เดียวกัน (PndTextFileFormat)</summary>
+    private static List<PndTextFileFormat.Row> BuildPndRows(
+        IEnumerable<WithholdingTaxCert> certs, bool juristicPayee)
+    {
+        var rows = new List<PndTextFileFormat.Row>();
+        foreach (var cert in certs.OrderBy(c => c.CertificateNumber))
+        {
+            var contact = cert.PayeeContact;
+            // เงื่อนไขการหักภาษี (Col11): 1 = หัก ณ ที่จ่าย, 2 = ออกให้ตลอดไป
+            var condition = (int)cert.CertificateType is 2 ? 2 : 1;
+            foreach (var line in cert.Lines.OrderBy(l => l.LineOrder))
+                rows.Add(new PndTextFileFormat.Row(
+                    PayeeTaxId: contact?.TaxId,
+                    BranchCode: contact?.BranchCode,
+                    PayeeName: contact?.Name,
+                    IsJuristic: juristicPayee,
+                    PayDate: line.PaymentDate,
+                    IncomeTypeCode: MapIncomeTypeCode(line.IncomeTypeCode),
+                    IncomeAmount: line.IncomeAmount,
+                    TaxRate: line.TaxRate,
+                    TaxAmount: line.TaxAmount,
+                    Condition: condition));
+        }
+        return rows;
+    }
+
     private static string MapIncomeTypeCode(string? code) => code switch
     {
         "1" or "40(1)" => "1",
@@ -813,53 +806,36 @@ public class TaxFilingExportService : ITaxFilingExportService
     /// <summary>ภ.ง.ด.54 — Foreign-vendor WHT. รวม PI/Expense ที่
     /// IsForeignService=true + WithholdingTaxAmount > 0 ในเดือน → text format
     /// ตาม RD spec. Income type 6 = §40(3)(4) ค่าสิทธิ์/ดอกเบี้ย/ปันผล.
-    /// ⚠️ ยัง mine จากเอกสารตรง ๆ ขณะที่รายงาน ภงด.54 บนจอเปลี่ยนเป็นอ่านจาก
-    /// ทะเบียนหนังสือรับรองแล้ว (GenerateWhtReport) — สองแหล่งอาจต่างกันได้เมื่อ
-    /// cert กับเอกสารไม่ตรงเดือน. เคสต่างประเทศเกิดน้อย ยังไม่รวมแหล่ง — ถ้าย้าย
-    /// ให้ใช้ pattern เดียวกับ ExportPnd3/53Async (อ่าน cert Issued/Printed)</summary>
+    /// cert-primary เหมือน ภ.ง.ด.3/53 — แหล่งเดียวกับรายงานบนจอ (B5)</summary>
     public async Task<TaxFilingExportResult> ExportPnd54Async(Guid companyId, int year, int month)
     {
-        var company = await GetCompanyAsync(companyId);
-        var thaiYear = year + 543;
-        var period = $"{thaiYear:D4}{month:D2}";
-        var monthStart = new DateTime(year, month, 1);
-        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
-
-        var docs = await _db.Documents.AsNoTracking()
-            // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ ภ.ง.ด.54)
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && d.IsForeignService
-                && d.WithholdingTaxAmount > 0
-                && d.DocumentDate >= monthStart && d.DocumentDate <= monthEnd
-                && (d.DocumentType == Models.Enums.DocumentType.PurchaseInvoice
-                    || d.DocumentType == Models.Enums.DocumentType.Expense
-                    || d.DocumentType == Models.Enums.DocumentType.PaymentVoucher)
-                && d.Status != Models.Enums.DocumentStatus.Voided
-                && d.Status != Models.Enums.DocumentStatus.Draft)
-            .OrderBy(d => d.DocumentDate)
+        // ⬇️ cert-primary เหมือน ภ.ง.ด.3/53 (B5) — เดิม mine เอกสารเองด้วยเงื่อนไข
+        // คนละชุดกับรายงานบนจอ 13 จุด (นิยาม "ต่างประเทศ" ใช้ IsForeignService ซึ่ง
+        // เป็นธง ภ.พ.36 แทน CountryCode, ไม่รวม CIL, ไม่กัน Rejected, ไม่ dedup
+        // PI↔PV, ไม่รู้จัก cert/IsExcluded, income type hardcode "6") ⇒ ยื่นซ้ำ/
+        // ยื่นให้ใบที่ 50 ทวิ ยังไม่ออก. ตอนนี้อ่านทะเบียนหนังสือรับรองชุดเดียว
+        // กับที่รายงานบนจอใช้ (GenerateWhtReport cert-primary)
+        var certs = await _db.WithholdingTaxCerts
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก
+            .Where(w => w.CompanyId == companyId
+                && w.TaxFormType == TaxType.WithholdingTax54
+                && w.TaxYear == year && w.TaxMonth == month
+                && (w.Status == WithholdingTaxCertStatus.Issued
+                    || w.Status == WithholdingTaxCertStatus.Printed))
             .ToListAsync();
-        await _db.HydrateContactsAsync(companyId, docs);
+        await _db.HydratePayeeContactsAsync(companyId, certs);
 
-        var sb = new System.Text.StringBuilder();
-        var totalIncome = docs.Sum(d => d.SubTotal);
-        var totalWht = docs.Sum(d => d.WithholdingTaxAmount);
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.54|{period}|{docs.Count}|{totalIncome:F2}|{totalWht:F2}");
-        int seq = 1;
-        foreach (var d in docs)
-        {
-            var docDate = $"{d.DocumentDate.Day:D2}/{d.DocumentDate.Month:D2}/{d.DocumentDate.Year + 543}";
-            var supplierName = d.Contact?.Name ?? "—";
-            var country = d.Contact?.Province ?? "Foreign";
-            var taxId = d.Contact?.TaxId ?? "—";
-            var rate = d.SubTotal > 0 ? Math.Round(d.WithholdingTaxAmount / d.SubTotal * 100, 2) : 0;
-            sb.AppendLine($"D|{seq++}|{Esc(supplierName)}|{Esc(taxId)}|{Esc(country)}|{docDate}|6|{d.SubTotal:F2}|{rate:F2}|{d.WithholdingTaxAmount:F2}");
-        }
-        sb.AppendLine($"T|{docs.Count}|{totalIncome:F2}|{totalWht:F2}");
+        var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
+        var totalWht = certs.Sum(c => c.TotalTaxAmount);
+        // ผู้รับเงินต่างประเทศตาม ม.70 ส่วนใหญ่เป็นนิติบุคคล → ชื่อเต็มช่องเดียว
+        var rows = BuildPndRows(certs, juristicPayee: true);
+        var body = PndTextFileFormat.Build(rows);
 
         return new TaxFilingExportResult(
-            "PND54", "ภ.ง.ด.54", $"PND54_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
-            docs.Count, totalIncome, totalWht,
-            $"ภ.ง.ด.54 เดือน {month}/{year} จ่ายต่างประเทศ {docs.Count} รายการ WHT {totalWht:N2} บาท");
+            "PND54", "ภ.ง.ด.54", $"PND54_{year}{month:D2}.txt", "text/plain", AsBytes(body),
+            certs.Count, totalIncome, totalWht,
+            $"ภ.ง.ด.54 เดือน {month}/{year} จ่ายต่างประเทศ {certs.Count} ราย WHT {totalWht:N2} บาท "
+            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)");
     }
 
     // =====================================================================

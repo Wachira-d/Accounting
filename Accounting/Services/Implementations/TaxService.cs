@@ -1668,7 +1668,12 @@ public partial class TaxService : ITaxService
             docs = docs.Where(d => !certCoveredDocIds.Contains(d.Id)).ToList();
         }
 
-        // ═════ ส่วนเสริม: เอกสารมี WHT แต่ยังไม่ออกหนังสือรับรอง (เตือนให้ออก) ═════
+        // ═════ ส่วนเสริม: เอกสารมี WHT แต่ยังไม่ออกหนังสือรับรอง ═════
+        // **IsExcluded = true ตั้งแต่ generate** (A2): แบบ ภ.ง.ด. นำส่งตามหนังสือ
+        // รับรอง 50 ทวิ ที่ออกจริง — ไฟล์ e-Filing นับเฉพาะ cert Issued/Printed
+        // อยู่แล้ว ถ้าแถวเตือนนับเข้ายอด ยอดบนจอจะ "เกิน" ไฟล์ยื่นเสมอ (เคสจริง:
+        // Excel ลำดับ 21/27 หนังสือรับรองถูกยกเลิก/ยังไม่ออก แต่สถานะยัง "ใช้").
+        // แถวยังอยู่ให้เห็นว่ามีใบค้างออก + นักบัญชีติ๊กกลับเข้ามือได้เมื่อจงใจ
         foreach (var doc in docs)
         {
             var docWhtLines = doc.Lines.Where(l => l.WithholdingTaxAmount > 0).ToList();
@@ -1688,12 +1693,14 @@ public partial class TaxService : ITaxService
                         TaxPayerId = doc.Contact?.TaxId,
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
-                        Description = $"⚠️ ยังไม่ออกหนังสือรับรอง — {line.Description}",
+                        Description = $"⚠️ ยังไม่ออกหนังสือรับรอง — {line.Description} "
+                            + "(ออกใบที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" แล้วกด \"สร้างใหม่\")",
                         IncomeAmount = line.Amount,
                         TaxRate = whtRate,
                         TaxAmount = line.WithholdingTaxAmount,
                         DocumentId = doc.Id,
-                        IncomeTypeCode = line.IncomeTypeCode ?? "40(8)"
+                        IncomeTypeCode = line.IncomeTypeCode ?? "40(8)",
+                        IsExcluded = true,
                     });
                 }
             }
@@ -1709,14 +1716,16 @@ public partial class TaxService : ITaxService
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
-                    Description = $"⚠️ ยังไม่ออกหนังสือรับรอง — {doc.DocumentNumber}",
+                    Description = $"⚠️ ยังไม่ออกหนังสือรับรอง — {doc.DocumentNumber} "
+                        + "(ออกใบที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" แล้วกด \"สร้างใหม่\")",
                     IncomeAmount = docBase,
                     TaxRate = docBase > 0
                         ? Math.Round(doc.WithholdingTaxAmount / docBase * 100m, 2, MidpointRounding.AwayFromZero)
                         : 0m,
                     TaxAmount = doc.WithholdingTaxAmount,
                     DocumentId = doc.Id,
-                    IncomeTypeCode = "40(8)"
+                    IncomeTypeCode = "40(8)",
+                    IsExcluded = true,
                 });
             }
         }

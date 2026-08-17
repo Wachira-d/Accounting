@@ -134,41 +134,26 @@ public partial class TaxService
             .OrderBy(x => x.LineOrder)
             .ToList();
 
-        var sb = new StringBuilder();
-        // Header row — RD pipe layout (Company TaxId | Branch | FormType | Year | Month).
-        // Some forms have extra header fields; the spec varies per release so
-        // we keep a minimal but conformant header.
-        sb.Append(string.Join("|",
-            company.TaxId ?? "",
-            (company.BranchCode ?? "00000").PadLeft(5, '0'),
-            formType,
-            year.ToString(),
-            month.ToString("D2"),
-            detailLines.Count.ToString(),
-            F(report.TotalIncome),
-            F(report.TotalTaxWithheld)
-        )).Append("\r\n");
+        // ⬇️ layout เดียวกับเมนู "ส่งออกไฟล์ยื่นภาษี" (PndTextFileFormat) —
+        // detail rows ล้วน ไม่มี header/trailer เพราะหน้า import ของสรรพากร
+        // ให้ map คอลัมน์เอง (บรรทัด H|/T| เดิมกลายเป็นแถวขยะที่ผู้ใช้ต้องลบ).
+        // สองปุ่ม (ปุ่มนี้ กับเมนูส่งออก) ต้องได้ไฟล์หน้าตาเดียวกันเสมอ
+        var isJuristicForm = taxType is TaxType.WithholdingTax53 or TaxType.WithholdingTax54;
+        var body = Accounting.Helpers.PndTextFileFormat.Build(detailLines.Select(l =>
+            new Accounting.Helpers.PndTextFileFormat.Row(
+                PayeeTaxId: l.TaxPayerId,
+                BranchCode: null,          // TaxReportLine ไม่เก็บสาขาผู้ถูกหัก → 00000
+                PayeeName: l.TaxPayerName,
+                IsJuristic: isJuristicForm,
+                PayDate: l.TransactionDate,
+                IncomeTypeCode: l.IncomeTypeCode,
+                IncomeAmount: l.IncomeAmount,
+                TaxRate: l.TaxRate,
+                TaxAmount: l.TaxAmount)));
 
-        int order = 1;
-        foreach (var l in detailLines)
-        {
-            // Detail row per Thai RD: ลำดับ|เลขผู้เสียภาษี|คำนำหน้า|ชื่อ|นามสกุล|วันที่จ่าย|ประเภทเงินได้|ยอด|อัตรา|ภาษีหัก
-            sb.Append(string.Join("|",
-                order.ToString(),
-                (l.TaxPayerId ?? "").PadLeft(13, '0'),
-                "",                          // คำนำหน้า — optional in the file
-                EscapePipe(l.TaxPayerName ?? ""),
-                "",                          // นามสกุล — for individuals, splits TaxPayerName. We send full name in field 4.
-                l.TransactionDate.ToString("ddMMyyyy", CultureInfo.InvariantCulture),
-                l.IncomeTypeCode ?? "",
-                F(l.IncomeAmount),
-                F(l.TaxRate),
-                F(l.TaxAmount)
-            )).Append("\r\n");
-            order++;
-        }
-
-        return (sb.ToString(), report.TotalIncome, report.TotalTaxWithheld, report.Lines.Count);
+        var totalIncome = detailLines.Sum(l => l.IncomeAmount);
+        var totalTax = detailLines.Sum(l => l.TaxAmount);
+        return (body, totalIncome, totalTax, detailLines.Count);
     }
 
     private async Task<(string body, decimal amount, decimal tax, int lines)> BuildPp30Async(

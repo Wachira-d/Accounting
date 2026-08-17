@@ -12,7 +12,7 @@
 
 ## A. งานใหม่จาก feedback ล่าสุด (วิเคราะห์เสร็จ พร้อมลงมือ)
 
-### A1. 🔴 ไฟล์ e-Filing ภงด.3/53 (.txt) ให้ import เข้าระบบสรรพากรได้ตรง ๆ
+### A1. ✅ (เสร็จ) ไฟล์ e-Filing ภงด.3/53 (.txt) ให้ import เข้าระบบสรรพากรได้ตรง ๆ
 
 **ปัญหา:** ไฟล์ปัจจุบัน (`TaxFilingExportService.cs` → `ExportPnd3Async` ~:98,
 `ExportPnd53Async` ~:144) มีบรรทัด `H|...` header และ `T|...` trailer ซึ่ง
@@ -38,7 +38,7 @@ import คาด (ผู้ใช้ต้อง map มือและบาง
 (สองทางออกไฟล์ต้องได้ไฟล์เดียวกัน) + เทสต์ format (ห้ามมี H|/T|, วันที่ 8 หลัก,
 ทศนิยม 2 ตำแหน่ง, นิติ → Col5 ว่าง)
 
-### A2. 🔴 แถว "⚠️ ยังไม่ออกหนังสือรับรอง" ต้อง default = ไม่ใช้ (IsExcluded)
+### A2. ✅ (เสร็จ) แถว "⚠️ ยังไม่ออกหนังสือรับรอง" ต้อง default = ไม่ใช้ (IsExcluded)
 
 **เคสจริง:** Excel ภงด. ลำดับ 21, 27 — เอกสารที่หนังสือรับรองถูก**ยกเลิก**/ยังไม่
 ออก กลับมีสถานะ "ใช้" นับเข้ายอดนำส่ง ⇒ ยอดบนจอ**เกิน**ไฟล์ e-Filing (ไฟล์นับ
@@ -223,7 +223,7 @@ error หรือหายเงียบ
 | B2 | cert เต็มใบ (ตอน approve) + cert รายงวด (ตอนจ่าย) ออกซ้ำใบเดียวกัน | `WithholdingTaxCertService.cs:403-418` (idempotency แยกสาขา), call sites `DocumentService.cs:4488, 8930` | สาขา sourcePaymentId ต้องเช็ค cert เต็มใบ active ก่อน |
 | B3 | Accrual basis: PI (เดือนตั้งหนี้) + cert ของ PV (เดือนจ่าย) นับซ้ำข้ามเดือน | `GenerateWhtReport` cert block ไม่รู้จัก WhtRecognitionBasis | นิยามเดือนนำส่งตามกฎหมาย = เดือนจ่ายเสมอ — พิจารณาตัด doc-mining เดือน accrual |
 | B4 | Regenerate ภงด. ไม่ snapshot ติ๊ก/แก้มือ + ล้าง audit fields (RdAck*, EFilingExportedAt, RejectionReason, ReversalJournalEntryId) + ไม่ atomic + `TaxCalendarEvent.TaxReportId` ค้าง | `TaxService.cs` RegenerateTaxReportAsync ~:3006-3032 | snapshot non-VAT ด้วย + preserve audit + transaction เดียว |
-| B5 | `ExportPnd54Async` ยัง doc-mined — ต่างจากจอ 13 จุด (นิยาม foreign, ชนิดเอกสาร, สถานะ, วันที่, dedup, IsExcluded, income type hardcode "6") | `TaxFilingExportService.cs:815-860` | ย้ายเป็น cert-primary แบบ Pnd3/53 |
+| B5 ✅ | `ExportPnd54Async` ยัง doc-mined — ต่างจากจอ 13 จุด (นิยาม foreign, ชนิดเอกสาร, สถานะ, วันที่, dedup, IsExcluded, income type hardcode "6") | `TaxFilingExportService.cs:815-860` | ย้ายเป็น cert-primary แบบ Pnd3/53 |
 | B6 | ภงด.51 คำนวณจาก JE ล้วน ไม่ใช้ add-back §65 ตรี/เพดานค่ารับรอง — คนละฐานกับ ภงด.50 + ไม่มี TaxType/หน้าจอ | `ExportPnd51Async` (`TaxFilingExportService.cs:876-936`) | |
 | B7 | ขาดทุนยกมา 5 ปี (§65 ตรี(12)) ไม่ถูกหักใน CIT เลย + โค้ดเครดิตยกมาเป็น dead code (`NetVat<0` = ขาดทุน ไม่ใช่ชำระเกิน) | `TaxService.cs` GenerateCitReport ~:1905-1911 | |
 | B8 | ค่าเสื่อมภาษี CIT ดึงตามปีปฏิทิน (`d.Year == year`) ขณะรายได้ตามรอบบัญชี FiscalYearStartMonth | `TaxService.cs:1831-1834` | |
