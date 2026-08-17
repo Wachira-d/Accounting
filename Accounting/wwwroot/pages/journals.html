@@ -790,7 +790,8 @@
             // "เปลี่ยนผัง" รายบรรทัดเปิดเฉพาะเอกสารฝั่งซื้อ/จ่าย (mirror ของ
             // documents.html canReclassify + DocumentService.ReclassifyLineAccountAsync)
             // ประเภทอื่นต้องยกเลิกแล้วออกใหม่ — ห้ามบอกทางที่กดไปแล้วไม่มีปุ่ม
-            const canReclass = ['Expense', 'PurchaseInvoice', 'PaymentVoucher']
+            const canReclass = ['Expense', 'PurchaseInvoice', 'PaymentVoucher',
+                                'Invoice', 'TaxInvoice', 'Receipt', 'CreditNote', 'DebitNote']
               .includes(j.sourceDocumentType || '');
             const howTo = canReclass
               ? `• <b>ลงผังบัญชีผิด</b> → เปิดเอกสาร → กดปุ่ม <b>✏️ เปลี่ยนผัง</b> ท้ายบรรทัดที่ผิด

@@ -4747,6 +4747,27 @@ public class DocumentService : IDocumentService
     /// - ไม่มี Payment ลงแล้ว
     /// - ไม่อยู่ใน TaxReport ที่ Status=Submitted หรือ Filed (ภพ.30 ยื่นแล้ว)
     /// - ไม่ได้ submit e-Tax (EtaxInvoice.SubmittedAt != null)</summary>
+    /// <summary>บัญชีคุมที่ห้ามย้ายเข้า/ออกด้วยเครื่องมือ reclassify รายบรรทัด —
+    /// ระบบอื่นอ่านยอดของบัญชีเหล่านี้เป็นความจริง (ภ.พ.30 อ่านภาษีซื้อ/ขาย,
+    /// รายงานอายุหนี้อ่านลูกหนี้/เจ้าหนี้, หน้ามัดจำอ่าน 215xx/217xx/21913)</summary>
+    /// เทียบแบบ **ตรงรหัส** ไม่ใช่ prefix — prefix กว้างเกินจะเผลอล็อกบัญชี
+    /// ค้างจ่ายธรรมดาที่อยู่ช่วงเดียวกัน (เช่น "215" กิน 21511 ค่าไฟฟ้าค้างจ่าย,
+    /// "217" กิน 21714 ดอกเบี้ยค้างจ่าย ซึ่งเป็นผังปกติที่ควรย้ายได้)
+    private static readonly HashSet<string> ReclassifyProtectedCodes = new(StringComparer.Ordinal)
+    {
+        "11310",                    // ลูกหนี้การค้า (รายงานอายุหนี้/ยอดค้างรับ)
+        "11610", "11640",           // ภาษีซื้อ ภ.พ.30 / ภาษีซื้อยังไม่ถึงกำหนด
+        "21210",                    // เจ้าหนี้การค้า (ยอดค้างจ่าย)
+        "21510", "21520", "21610",  // มัดจำรับล่วงหน้า / รายได้รับล่วงหน้า / เงินมัดจำรับ
+        "21711", "21712", "21713",  // ค่าเช่า/สินค้า/บริการ รับล่วงหน้า (วงจรมัดจำ)
+        "21911", "21912", "21913",  // ภาษีขาย ภ.พ.30 / ภ.พ.36 / ภาษีขายรอเรียกเก็บ
+        "21916", "21917", "21918",  // ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.3/53/54)
+    };
+
+    private static bool IsReclassifyProtectedAccount(string? accountCode)
+        => !string.IsNullOrWhiteSpace(accountCode)
+           && ReclassifyProtectedCodes.Contains(accountCode!.Trim());
+
     public async Task<DocumentResponse> ReclassifyLineAccountAsync(
         Guid companyId, Guid documentId, Guid lineId,
         Guid newAccountId, string? reason, string actor)
@@ -4756,13 +4777,29 @@ public class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
+        // เดิมอนุญาตเฉพาะฝั่งซื้อ/จ่าย โดยอ้าง §86/4 ว่าใบกำกับแก้ไม่ได้ — อ้างผิด
+        // มาตรา: §86/4 บังคับ **สิ่งที่พิมพ์บนใบกำกับ** (ชื่อ/เลขผู้เสียภาษี/รายการ/
+        // จำนวน/ราคา/VAT) ซึ่ง **ไม่มีรหัสผังบัญชีอยู่บนเอกสารเลย** การย้ายรายได้
+        // จาก 41100 → 41200 ไม่แตะตัวเลขบนใบ ไม่แตะยอด VAT ไม่แตะ ภ.พ.30 —
+        // เป็นการจัดประเภททางบัญชีภายในล้วน ๆ. ผลของการห้ามคือใบขายที่ลงผังผิด
+        // "ไม่มีทางแก้เลย" ต้องยกเลิกใบกำกับที่ออกไปแล้วทั้งใบ ซึ่งอันตรายกว่ามาก
+        // (ที่มา: ผู้ใช้เปิดใบขายที่รับเงินแล้ว — ไม่มีปุ่มแก้ผังบัญชีให้เลย)
         var allowedTypes = new[] {
-            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher
+            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher,
+            DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt,
+            DocumentType.CreditNote, DocumentType.DebitNote,
         };
         if (!allowedTypes.Contains(doc.DocumentType))
             throw new InvalidOperationException(
-                $"เอกสารประเภท {doc.DocumentType} ห้ามแก้ผังบัญชีหลังอนุมัติ — " +
-                "ใบกำกับ/ใบเสร็จ/ใบเพิ่ม-ลดหนี้ ตาม §86/4 ต้องยกเลิกแล้วออกใบใหม่");
+                $"เอกสารประเภท {doc.DocumentType} ยังไม่รองรับการเปลี่ยนผังบัญชีรายบรรทัด — " +
+                "ยกเลิกแล้วออกใบใหม่แทน");
+
+        // มัดจำมี lifecycle ผูกกับบัญชีของตัวเอง (217xx/21913 → realize/refund/apply)
+        // ย้ายผังบรรทัดจะทำให้ยอดคงเหลือมัดจำกับ GL ไม่ตรงกัน
+        if (doc.IsDeposit)
+            throw new InvalidOperationException(
+                "ใบมัดจำมีวงจรของตัวเอง (รับ → ตัด/คืน) — เปลี่ยนผังบัญชีรายบรรทัดไม่ได้ " +
+                "ให้ใช้การคืน/ตัดมัดจำตามปกติ");
 
         if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
                        or DocumentStatus.Rejected)
@@ -4778,19 +4815,24 @@ public class DocumentService : IDocumentService
                 $"วันที่เอกสารอยู่ในงวด '{period.Name}' ที่ปิดแล้ว ({period.Status}) — " +
                 "ผังบัญชีของงวดที่ปิดแก้ไม่ได้ (กัน trial balance ย้อนหลังพัง)");
 
+        // ใบเสร็จหลักฐานการรับชำระ (IsSettlementReceipt) เป็นเอกสาร **evidence-only**
+        // ไม่ลง JE ไม่ตัดหนี้ซ้ำ — ไม่มีอะไรใน GL ให้ขัดกับการย้ายผัง จึงไม่นับ
+        // เป็น "เอกสารปลายทาง" (ไม่งั้นใบขายที่รับเงินแล้วทุกใบจะถูกล็อกอัตโนมัติ)
         var hasDownstream = await _db.Documents.AsNoTracking().AnyAsync(d =>
             d.CompanyId == companyId && d.RelatedDocumentId == documentId
-            && d.Status != DocumentStatus.Voided && !d.IsDeleted);
+            && d.Status != DocumentStatus.Voided && !d.IsDeleted
+            && !d.IsSettlementReceipt);
         if (hasDownstream)
             throw new InvalidOperationException(
                 "มีเอกสารปลายทาง (เช่น ใบสำคัญจ่าย/ใบลดหนี้) อ้างเอกสารนี้แล้ว — " +
                 "ยกเลิกเอกสารปลายทางก่อน หรือใช้วิธี void+ออกใบใหม่แทน");
 
-        var hasPayments = await _db.Payments.AsNoTracking().AnyAsync(p =>
-            p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted);
-        if (hasPayments)
-            throw new InvalidOperationException(
-                "เอกสารนี้มีการบันทึกชำระเงินไปแล้ว — ยกเลิกการชำระก่อนถึงจะแก้ผังได้");
+        // หมายเหตุ: เดิมบล็อกเมื่อ "มีการรับ/จ่ายชำระแล้ว" — ไม่จำเป็นและทำให้ใบที่
+        // เก็บเงินแล้วแก้ผังไม่ได้เลย. JE ของการชำระเงินแตะเฉพาะ เงินสด/ธนาคาร ↔
+        // ลูกหนี้/เจ้าหนี้ ซึ่งไม่ใช่ผังของ "บรรทัดสินค้า/บริการ" ที่เครื่องมือนี้ย้าย
+        // (ย้าย Dr ผังใหม่ / Cr ผังเก่า เท่ายอดฐานก่อน VAT) ⇒ ยอดค้างชำระ อายุหนี้
+        // และการกระทบยอดธนาคารไม่เปลี่ยน. การเปลี่ยน "แหล่งเงิน" ที่กระทบการชำระ
+        // จริง ๆ อยู่ที่ ReclassifyPaymentSourceAsync ซึ่งมี gate ของตัวเอง
 
         var inSubmittedReport = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
             l.DocumentId == documentId
@@ -4823,6 +4865,18 @@ public class DocumentService : IDocumentService
             .FirstOrDefaultAsync(a => a.Id == line.AccountId.Value)
             ?? throw new InvalidOperationException("ไม่พบผังบัญชีเดิม");
 
+        // บัญชีคุมที่ระบบอื่นยึดเป็นความจริง — ย้ายเข้า/ออกแล้วรายงานจะเพี้ยนเงียบ ๆ
+        // (ภาษีซื้อ/ขาย → ภ.พ.30 · ลูกหนี้/เจ้าหนี้ → อายุหนี้/ยอดค้าง · มัดจำ →
+        // ยอดคงเหลือมัดจำ) การแก้ที่ถูกของบัญชีพวกนี้คือแก้ที่เอกสาร/เครื่องมือเฉพาะ
+        if (IsReclassifyProtectedAccount(oldAccount.AccountCode))
+            throw new InvalidOperationException(
+                $"บรรทัดนี้ลงบัญชีคุม {oldAccount.AccountCode} {oldAccount.AccountName} — " +
+                "ย้ายด้วยเครื่องมือนี้ไม่ได้ (กระทบรายงานภาษี/ยอดค้างชำระ)");
+        if (IsReclassifyProtectedAccount(newAccount.AccountCode))
+            throw new InvalidOperationException(
+                $"ห้ามย้ายเข้าบัญชีคุม {newAccount.AccountCode} {newAccount.AccountName} — " +
+                "บัญชีภาษี/ลูกหนี้/เจ้าหนี้/มัดจำ ระบบลงให้เองตามเอกสาร");
+
         var amount = line.Amount;   // ฐานก่อน VAT — ที่ JE เดิมลงเข้าผังเก่า
         if (amount <= 0.005m)
         {
@@ -4832,6 +4886,26 @@ public class DocumentService : IDocumentService
             return await GetDocumentAsync(companyId, documentId);
         }
 
+        // ทิศของ JE ย้ายบัญชีต้อง **กลับด้านที่ลงไว้จริง** ไม่ใช่สมมติว่าเป็นค่าใช้จ่าย
+        // เสมอ: บรรทัดค่าใช้จ่ายเดิมลง Dr ⇒ ย้าย = Dr ใหม่ / Cr เก่า · บรรทัดรายได้
+        // เดิมลง Cr ⇒ ย้าย = Dr เก่า / Cr ใหม่. ถ้าใช้สูตรเดียวกันทั้งคู่ ใบขายจะกลาย
+        // เป็นรายได้เดิมเพิ่มเป็นสองเท่าและบัญชีใหม่ติดลบ (ที่มา: หลัก "อ่านขาที่ลง
+        // จริงใน GL แล้วกลับตามนั้น" เหมือน drives รอบ 57 — ห้ามเดาจากชนิดเอกสาร)
+        var oldSide = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.AccountId == oldAccount.Id
+                && l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.SourceDocumentId == documentId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsDeleted)
+            .GroupBy(l => 1)
+            .Select(g => new { Debit = g.Sum(x => x.DebitAmount), Credit = g.Sum(x => x.CreditAmount) })
+            .FirstOrDefaultAsync();
+
+        // หา JE ไม่เจอ (ใบเก่า/ลงผ่าน integration) → ตกกลับใช้ธรรมชาติของผังบัญชี
+        var oldWasCredited = oldSide != null
+            ? oldSide.Credit > oldSide.Debit
+            : oldAccount.AccountType is AccountType.Revenue or AccountType.Liability or AccountType.Equity;
+
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -4840,15 +4914,22 @@ public class DocumentService : IDocumentService
             var desc = $"Reclassify ผังบัญชี — {doc.DocumentNumber} " +
                        $"'{line.Description}' ({oldAccount.AccountCode} → {newAccount.AccountCode})" +
                        (string.IsNullOrWhiteSpace(reason) ? "" : $" • {reason}");
-            await Journal.JournalEntryBuilder
+            var builder = Journal.JournalEntryBuilder
                 .For(_db, companyId, doc.DocumentDate)
                 .Description(desc)
                 .Reference(doc.DocumentNumber)
                 .SourceDocument(doc.Id)
-                .Project(doc.ProjectId)
-                .Debit(newAccount.Id, amount, $"Dr {newAccount.AccountCode} — {newAccount.AccountName}")
-                .Credit(oldAccount.Id, amount, $"Cr {oldAccount.AccountCode} — {oldAccount.AccountName} (reclassify)")
-                .PostAsync(actor);
+                .Project(doc.ProjectId);
+            builder = oldWasCredited
+                // เดิมลงฝั่ง Cr (รายได้/หนี้สิน) → ล้างด้วย Dr ผังเก่า แล้ว Cr ผังใหม่
+                ? builder
+                    .Debit(oldAccount.Id, amount, $"Dr {oldAccount.AccountCode} — {oldAccount.AccountName} (reclassify)")
+                    .Credit(newAccount.Id, amount, $"Cr {newAccount.AccountCode} — {newAccount.AccountName}")
+                // เดิมลงฝั่ง Dr (ค่าใช้จ่าย/สินทรัพย์) → Dr ผังใหม่ / Cr ผังเก่า
+                : builder
+                    .Debit(newAccount.Id, amount, $"Dr {newAccount.AccountCode} — {newAccount.AccountName}")
+                    .Credit(oldAccount.Id, amount, $"Cr {oldAccount.AccountCode} — {oldAccount.AccountName} (reclassify)");
+            await builder.PostAsync(actor);
 
             line.AccountId = newAccountId;
             doc.UpdatedAt = DateTime.UtcNow;
