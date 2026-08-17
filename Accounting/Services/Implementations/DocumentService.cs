@@ -6410,6 +6410,7 @@ public class DocumentService : IDocumentService
                 }
 
                 // 4) Unlink BankTransactions matched to this document's journal entries
+                var postedJournalIds = postedJournals.Select(j => j.Id).ToList();
                 if (postedJournalIds.Any())
                 {
                     await _db.BankTransactions
@@ -7719,7 +7720,7 @@ public class DocumentService : IDocumentService
         // SyncWhtCreditReceivedAsync อ่านจาก GL จริงและลบแถวเองเมื่อยอดเป็น 0
         // — ถ้าไม่เรียกหลัง void แถวเครดิตจะค้างเข้า ภ.ง.ด.50 ทั้งที่ JE ถูกกลับ
         // ไปแล้ว (ขอเครดิตภาษีที่ไม่เคยถูกหักจริง)
-        try { await SyncWhtCreditReceivedAsync(companyId, doc.Id); }
+        try { await SyncWhtCreditReceivedAsync(companyId, doc); }
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
@@ -10338,7 +10339,7 @@ public class DocumentService : IDocumentService
                     {
                         await TryReclassifyUndueOutputVatAsync(
                             companyId, allocDocId, payment.PaymentDate, createdBy);
-                        await SyncWhtCreditReceivedAsync(companyId, allocDocId);
+                        await SyncWhtCreditReceivedAsync(companyId, docMap[allocDocId]);
                         // 50 ทวิ ของ "งวดนี้ ใบนี้" — ผูก payment id + ยอดที่หักจริง
                         // ของใบนั้น เหมือนเส้น single-doc (ท.ป.4/2528 cash basis)
                         // เฉพาะฝั่งซื้อ — ฝั่งขายเราเป็น "ผู้ถูกหัก" ลูกค้าเป็นคนออกใบให้
