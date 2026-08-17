@@ -77,17 +77,25 @@ public class JournalAnomalyService
                     l.DebitAmount, l.CreditAmount))
                 .ToList();
 
-            // ตัวกลับ (reversal) มีขาสลับด้านโดยเจตนา — ตรวจเฉพาะกฎโครงสร้าง
-            // (doc=null) ไม่เทียบกับเอกสาร; ใบปกติที่ผูกเอกสารเทียบเต็ม
+            // เทียบกับเอกสารเฉพาะ "JE หลัก" (primary posting ที่ AutoPost/
+            // integration สร้างตอนอนุมัติ — ใบเดียวที่ยอดต้องเท่าเอกสารทั้งใบ)
+            // ใช้ **whitelist ตาม description จริง** ไม่ใช่ blacklist marker:
+            // JE ลูกทุกชนิด (รับ/จ่ายชำระบางส่วน, ตัวกลับ, ใบปรับปรุง, reclassify,
+            // ย้าย VAT พัก 21913→21911, ตัดมัดจำ, settlement) ยอดเป็น "บางส่วน/
+            // ผลต่าง" โดยธรรมชาติ — เทียบทั้งใบเมื่อไรก็ false positive เมื่อนั้น
+            // (เคสจริงจากการ self-review: JE รับชำระงวด 500 ของใบ 1,040 โดนกฎ
+            // JE-NO-COUNTERPART ทั้งที่ถูกต้อง). ตรวจโครงสร้าง (doc=null) ยังทำ
+            // ทุกใบ — กฎ WHT ≤ 15% ของฐานจับ JE เสียแบบเคสจริงได้โดยไม่รู้เอกสาร
             Document? doc = null;
-            if (j.OriginalEntryId == null && j.SourceDocumentId.HasValue)
+            var desc = j.Description ?? "";
+            var isPrimaryPosting = j.OriginalEntryId == null
+                && (desc.StartsWith("Auto-post จาก", StringComparison.Ordinal)
+                    || desc.StartsWith("Auto:", StringComparison.Ordinal)
+                    || desc.Contains("(integration sync)", StringComparison.Ordinal));
+            if (isPrimaryPosting && j.SourceDocumentId.HasValue)
                 docsById.TryGetValue(j.SourceDocumentId.Value, out doc);
-            // JE ปรับปรุง/reclassify (คู่ Dr-Cr ย้ายบัญชี) เทียบกับเอกสารไม่ได้
-            // — ยอดมันคือ "ผลต่าง" ไม่ใช่ทั้งใบ. แยกด้วย description marker
-            var isAdjustment = (j.Description ?? "").Contains("Reclassify")
-                || (j.Description ?? "").Contains("ปรับปรุง");
 
-            var facts = doc != null && !isAdjustment
+            var facts = doc != null
                 ? new JournalPostingGuard.DocFacts(
                     doc.DocumentType, doc.SubTotal, doc.VatAmount,
                     doc.WithholdingTaxAmount, doc.TotalAmount, doc.IsDeposit)
