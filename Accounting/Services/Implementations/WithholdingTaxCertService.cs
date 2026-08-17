@@ -420,8 +420,12 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // และใบแรกก็ระบุยอดเต็มทั้งเอกสารทั้งที่จ่ายไปแค่บางส่วน)
         if (sourcePaymentId.HasValue)
         {
+            // ซ้ำ = "งวดจ่ายเดียวกัน + เอกสารเดียวกัน" — การโอนก้อนเดียวปิดหลายใบ
+            // ใช้ payment id ร่วมกันทุกใบ ถ้าเช็คแค่ payment id ใบที่ 2 เป็นต้นไป
+            // จะออก 50 ทวิ ไม่ได้เลย (นำส่งขาดของผู้ขายรายอื่นในโอนเดียวกัน)
             var dupPayment = await _db.WithholdingTaxCerts
                 .AnyAsync(w => w.CompanyId == companyId && w.SourcePaymentId == sourcePaymentId.Value
+                    && w.DocumentId == documentId
                     && w.Status != WithholdingTaxCertStatus.Voided);
             if (dupPayment)
                 throw new InvalidOperationException("งวดการจ่ายนี้มีหนังสือรับรองหัก ณ ที่จ่ายแล้ว");
@@ -430,14 +434,32 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             // ออกตอน approve) ห้ามออกใบรายงวดทับอีก ⇒ ยอดเดียวนำส่ง 2 ครั้ง
             // ทั้งบนรายงานและในไฟล์ยื่น. เดิมสองสาขาเช็คคนละ key จึงลอดกันได้
             // (ทิศกลับกันถูกบล็อกอยู่แล้วที่สาขา else)
-            var fullDocCert = await _db.WithholdingTaxCerts.AsNoTracking()
-                .AnyAsync(w => w.CompanyId == companyId && w.DocumentId == documentId
+            var fullDocCerts = await _db.WithholdingTaxCerts
+                .Where(w => w.CompanyId == companyId && w.DocumentId == documentId
                     && w.SourcePaymentId == null
-                    && w.Status != WithholdingTaxCertStatus.Voided);
-            if (fullDocCert)
+                    && w.Status != WithholdingTaxCertStatus.Voided)
+                .ToListAsync();
+
+            // ใบ "ฉบับร่าง" ไม่เคยส่งมอบผู้ขายและไม่เข้าแบบยื่น (ภ.ง.ด.3/53 นับ
+            // เฉพาะ Issued/Filed) ⇒ ยกเลิกให้อัตโนมัติแล้วออกรายงวดต่อได้เลย
+            // ที่มา (P-3): integration ตั้งหนี้ค่าใช้จ่ายสร้างใบระดับเอกสารไว้ล่วงหน้า
+            // แล้วบล็อกใบรายงวดตอนจ่ายจริง — ผู้ขายไม่ได้ 50 ทวิ สักใบ
+            var draftFull = fullDocCerts.Where(w => w.Status == WithholdingTaxCertStatus.Draft).ToList();
+            if (draftFull.Count > 0 && draftFull.Count == fullDocCerts.Count)
+            {
+                foreach (var d in draftFull)
+                    d.Status = WithholdingTaxCertStatus.Voided;
+                await _db.SaveChangesAsync();
+                _logger.LogInformation(
+                    "ยกเลิกหนังสือรับรองฉบับร่างระดับเอกสาร {Count} ใบ ของเอกสาร {DocId} — ออกรายงวดแทน",
+                    draftFull.Count, documentId);
+            }
+            else if (fullDocCerts.Count > 0)
+            {
                 throw new InvalidOperationException(
                     "เอกสารนี้ออกหนังสือรับรองเต็มจำนวนไปแล้ว — ออกใบรายงวดเพิ่มจะทำให้นำส่งซ้ำ "
                     + "(ยกเลิกใบเต็มจำนวนก่อน ถ้าต้องการออกเป็นรายงวดแทน)");
+            }
         }
         else
         {

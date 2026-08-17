@@ -4467,8 +4467,15 @@ public class DocumentService : IDocumentService
 
                 // ===== §65 ตรี — รายจ่ายต้องห้าม (บวกกลับ ภ.ง.ด.50) =====
                 // เฉพาะเอกสารฝั่งซื้อ/ค่าใช้จ่ายที่กระทบกำไรสุทธิ.
+                // ใบรับรองแทนใบเสร็จ (CIL) เป็นรายจ่ายที่กระทบกำไรสุทธิเหมือนกัน และ
+                // เป็นเคสที่ §65 ตรี(9)/(18) เล็งตรงที่สุด (ผู้รับเงินออกใบเสร็จไม่ได้)
+                // — ตัว validator รองรับ CIL อยู่แล้ว ขาดแค่ call site นี้ (P-7).
+                // ยกเว้น CIL ที่แปลงมาจากใบตั้งหนี้: ใบต้นทางบวกกลับไปแล้ว ถ้าเรียกซ้ำ
+                // จะบวกกลับสองรอบใน ภ.ง.ด.50
                 if (doc.DocumentType is DocumentType.PurchaseInvoice
-                        or DocumentType.Expense or DocumentType.PaymentVoucher)
+                        or DocumentType.Expense or DocumentType.PaymentVoucher
+                    || (doc.DocumentType == DocumentType.CertificateInLieu
+                        && doc.RelatedDocumentId == null))
                 {
                     await ApplySection65TerAsync(companyId, doc);
                 }
@@ -5277,7 +5284,8 @@ public class DocumentService : IDocumentService
                 $"ห้ามย้ายเข้าบัญชีคุม {newAccount.AccountCode} {newAccount.AccountName} — " +
                 "บัญชีภาษี/ลูกหนี้/เจ้าหนี้/มัดจำ ระบบลงให้เองตามเอกสาร");
 
-        var amount = line.Amount;   // ฐานก่อน VAT — ที่ JE เดิมลงเข้าผังเก่า
+        // ยอดที่บรรทัดนี้ "ลงไว้จริง" ในแยกประเภท — ไม่ใช่ฐานก่อน VAT เสมอ (P-6)
+        var amount = await ResolveLinePostedGlAmountAsync(companyId, doc, line);
         if (amount <= 0.005m)
         {
             // line ที่ Amount=0 ไม่กระทบ GL — แค่อัปเดต field ก็พอ
@@ -9965,6 +9973,10 @@ public class DocumentService : IDocumentService
                 decimal totalWht = 0;
                 decimal thbCashMoved = 0;   // เงินสด THB ที่ลง GL จริง (รวม FX แปลงแล้ว)
                 var allocIndex = 0;
+                // ยอด WHT ที่หักจริง "ต่อเอกสาร" ในการโอนครั้งนี้ — ใช้ออก 50 ทวิ
+                // รายงวดหลัง commit (ก่อนหน้านี้เส้น multi-doc ออกใบด้วยยอดเต็ม
+                // ทั้งเอกสารตั้งแต่งวดแรก → นำส่งเกินเดือนแรก/ขาดเดือนหลัง)
+                var whtByDoc = new Dictionary<Guid, decimal>();
                 foreach (var alloc in request.Allocations)
                 {
                     allocIndex++;
@@ -10007,6 +10019,7 @@ public class DocumentService : IDocumentService
                         CreatedBy = createdBy,
                     });
                     totalWht += whtSlice;
+                    whtByDoc[d.Id] = whtByDoc.GetValueOrDefault(d.Id) + whtSlice;
 
                     // Settle the document
                     d.PaidAmount += alloc.AllocatedAmount;
@@ -10145,9 +10158,18 @@ public class DocumentService : IDocumentService
                         await TryReclassifyUndueOutputVatAsync(
                             companyId, allocDocId, payment.PaymentDate, createdBy);
                         await SyncWhtCreditReceivedAsync(companyId, allocDocId);
-                        if (_whtService != null)
+                        // 50 ทวิ ของ "งวดนี้ ใบนี้" — ผูก payment id + ยอดที่หักจริง
+                        // ของใบนั้น เหมือนเส้น single-doc (ท.ป.4/2528 cash basis)
+                        // เฉพาะฝั่งซื้อ — ฝั่งขายเราเป็น "ผู้ถูกหัก" ลูกค้าเป็นคนออกใบให้
+                        // (เส้น single-doc กรองชนิดเอกสารอยู่แล้ว เส้นนี้เคยไม่กรอง)
+                        var allocType = docMap[allocDocId].DocumentType;
+                        if (_whtService != null && whtByDoc.GetValueOrDefault(allocDocId) > 0.005m
+                            && allocType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                                or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu)
                             await _whtService.AutoGenerateFromDocumentAsync(
-                                companyId, allocDocId, false, createdBy, payment.PaymentDate);
+                                companyId, allocDocId, false, createdBy, payment.PaymentDate,
+                                sourcePaymentId: payment.Id,
+                                paymentWhtAmount: whtByDoc[allocDocId]);
                     }
                     catch (Exception ex)
                     {
@@ -10466,7 +10488,8 @@ public class DocumentService : IDocumentService
         if (doc.Lines == null || doc.Lines.Count == 0)
             doc.Lines = await _db.DocumentLines
                 .Where(l => l.DocumentId == doc.Id).ToListAsync();
-        var vatAmount = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+        // แปลงเป็นหน่วย GL ก่อนเสมอ — ยอดบนบรรทัดเป็นสกุลเอกสาร (P-2)
+        var vatAmount = ToGlAmount(doc, doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount));
         if (vatAmount <= 0) return false;
 
         var claimableAcc = await FindAccountAsync(companyId, "11610")
@@ -10558,7 +10581,7 @@ public class DocumentService : IDocumentService
             var baseDate = doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
             var windowEnd = new DateTime(baseDate.Year, baseDate.Month, 1).AddMonths(7).AddDays(-1);
             if (today <= windowEnd) continue;   // ยังไม่หมดสิทธิ์
-            var vatAmount = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+            var vatAmount = ToGlAmount(doc, doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount));
             if (vatAmount <= 0) { doc.InputVatExpiredAt = DateTime.UtcNow; count++; continue; }
 
             // VAT หมดสิทธิ์เคลม = ต้นทุนของก้อนเงินเดิม (ตามบัญชีบรรทัด) —
@@ -10756,7 +10779,8 @@ public class DocumentService : IDocumentService
                 && l.Document.DocumentDate >= yearStart && l.Document.DocumentDate < yearEnd
                 && (l.Document.DocumentType == DocumentType.PurchaseInvoice
                     || l.Document.DocumentType == DocumentType.Expense
-                    || l.Document.DocumentType == DocumentType.PaymentVoucher)
+                    || l.Document.DocumentType == DocumentType.PaymentVoucher
+                    || l.Document.DocumentType == DocumentType.CertificateInLieu)
                 && (l.Description.Contains("รับรอง") || l.Description.Contains("entertain")
                     || l.Description.Contains("เลี้ยงรับรอง")))
             .SumAsync(l => (decimal?)(l.Amount + l.VatAmount)) ?? 0m;
@@ -11058,6 +11082,51 @@ public class DocumentService : IDocumentService
     /// เกิดทั้งใบ — ผู้ขายมีหน้าที่ออกใบกำกับเต็มยอด ณ วันรับเงินแรกตามปฏิบัติ
     /// (กันภ.พ.30 กระจายหลายงวดจาก partial จนตามยาก). idempotent ผ่าน
     /// OutputVatDueAt. best-effort — ห้าม throw ทำ settlement พัง.</summary>
+    /// <summary>แปลงยอดที่เก็บบนเอกสาร (สกุลเอกสาร) → หน่วยเดียวกับแยกประเภท (บาท)
+    ///
+    /// ที่มา (P-2): JE ปรับปรุงทุกตัว (ย้ายภาษีซื้อพัก→เคลม, §82/3 พ้น 6 เดือน,
+    /// ย้ายผังรายบรรทัด) อ่านยอดจาก DocumentLine ตรง ๆ แล้วเขียนลง GL — ถูกเฉพาะ
+    /// ใบสกุลบาท. ใบ USD@35: AutoPost ลง 11640 = 2,450 บาท แต่ตัวย้ายลงแค่ 70
+    /// ⇒ 11640 ค้าง 2,380 ตลอดกาล + เคลมภาษีซื้อขาด 97% และธง BecameClaimableAt
+    /// ถูกตั้งแล้วจึงแก้ซ้ำไม่ได้ (idempotent guard ปิดทางถาวร)
+    ///
+    /// ใช้สูตรเดียวกับ Conv() ใน AutoPostToJournalAsync — ปัด 2 ตำแหน่ง away-from-zero</summary>
+    private static decimal ToGlAmount(Document doc, decimal docAmount)
+    {
+        var fx = doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate;
+        return fx == 1m ? docAmount
+            : Math.Round(docAmount * fx, 2, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>ยอดที่ "บรรทัดนี้" ลงไว้จริงบนผังบัญชีของตัวเองในแยกประเภท (บาท) —
+    /// ตัวย้ายผังบัญชีต้องย้ายเท่านี้เป๊ะ ๆ ไม่ใช่ฐานก่อน VAT เสมอ.
+    /// <para>ที่มา (P-6): AutoPost ฝั่งซื้อลง <c>Dr = Amount + VatAmount</c> เมื่อ
+    /// บรรทัดเป็นภาษีซื้อต้องห้าม (§82/5 — VAT รวมเป็นต้นทุน) การย้ายแค่ฐานทำให้
+    /// VAT ค้างอยู่ผังเก่า **ถาวร** โดย Dr=Cr ยังสมดุลจึงไม่มี guard ตัวไหนจับ.</para>
+    /// <para>ทางกลับกัน ใบซื้อที่อ้างใบรับของ (GRN) ฐานไปตัด GR-NI ไปแล้ว บรรทัด
+    /// เหลือขา Dr แค่ VAT ต้องห้าม — ย้ายทั้งฐานจะเกินจริงเท่าฐานทั้งก้อน.</para>
+    /// <para>ใบสำคัญจ่ายที่แปลงมาจากใบตั้งหนี้ = settlement (Dr เจ้าหนี้ / Cr เงินสด)
+    /// บรรทัดไม่มีขา Dr เลย → คืน 0 ให้ผู้เรียกแค่เปลี่ยน AccountId ไม่ต้องลง JE.</para>
+    /// หลักเดียวกับ "อ่านขาที่ลงจริงแล้วกลับตามนั้น" — สูตรนี้ต้องเดินคู่กับ
+    /// <c>AutoPostToJournalAsync</c> เสมอ ถ้าที่นั่นเปลี่ยนสูตร Dr ต้องแก้ที่นี่ด้วย</summary>
+    private async Task<decimal> ResolveLinePostedGlAmountAsync(
+        Guid companyId, Document doc, DocumentLine line)
+    {
+        var purchaseSide = doc.DocumentType is DocumentType.PurchaseInvoice
+            or DocumentType.Expense or DocumentType.PaymentVoucher;
+        if (!purchaseSide) return ToGlAmount(doc, line.Amount);
+
+        // ใบสำคัญจ่ายที่ตัดใบตั้งหนี้ต้นทาง — บรรทัดไม่ได้ลง GL
+        if (doc.DocumentType == DocumentType.PaymentVoucher && doc.RelatedDocumentId.HasValue)
+            return 0m;
+
+        // ใบซื้อ/ค่าใช้จ่ายที่อ้างใบรับของ — ฐานตัด GR-NI, บรรทัดเหลือแค่ VAT ต้องห้าม
+        if (await GetReceivedViaGrnAccrualAccountAsync(companyId, doc) != null)
+            return line.IsVatClaimable ? 0m : ToGlAmount(doc, line.VatAmount);
+
+        return ToGlAmount(doc, line.IsVatClaimable ? line.Amount : line.Amount + line.VatAmount);
+    }
+
     /// <summary>กลับรายการ "ภาษีขายถึงกำหนด" เมื่อการรับชำระถูกยกเลิกจนไม่เหลือ
     /// เงินรับเลย — คู่ตรงข้ามของ <see cref="TryReclassifyUndueOutputVatAsync"/>
     ///
@@ -12280,15 +12349,31 @@ public class DocumentService : IDocumentService
             }
             else
             {
+            // VAT เคลมไม่ได้ (§82/4) → รวมเป็นต้นทุนของ **บรรทัดนั้น ๆ** ไม่ใช่
+            // กองรวมที่บัญชีค่าใช้จ่ายทั่วไป (P-7): CIL หลายบรรทัดคนละผัง (ค่าเดินทาง
+            // + ค่าที่พัก) จะได้ต้นทุนเพี้ยนทั้งสองผัง และถ้าบริษัทไม่มี defaultExpense
+            // เลย ขา Dr จะขาดเท่ายอด VAT ทั้งก้อน = JE ไม่สมดุล (โดนตีกลับทั้งใบ)
+            decimal cilVatAssigned = 0m;
+            Guid? cilFirstAccount = null;
             foreach (var docLine in doc.Lines)
             {
                 var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
-                if (expenseAccountId.HasValue)
-                    AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+                if (!expenseAccountId.HasValue) continue;
+                cilFirstAccount ??= expenseAccountId.Value;
+                var cilLineVat = docLine.VatAmount;
+                cilVatAssigned += cilLineVat;
+                AddLine(expenseAccountId.Value, docLine.Amount + cilLineVat, 0,
+                    cilLineVat > 0
+                        ? $"{docLine.Description} (รวมภาษีซื้อที่เคลมไม่ได้)"
+                        : docLine.Description,
+                    docLine.ProjectId);
             }
-            // Non-claimable VAT → fold into expense cost (NOT บัญชีภาษีซื้อ).
-            if (doc.VatAmount > 0 && defaultExpense != null)
-                AddLine(defaultExpense.Id, doc.VatAmount, 0, "ภาษีซื้อที่เคลมไม่ได้ (รวมเป็นต้นทุน) - ใบรับรองแทนใบเสร็จ");
+            // เศษที่หัวเอกสารมีแต่บรรทัดไม่มี (ใบเก่า/กรอก VAT ที่หัวใบ) — ต้องลง
+            // ให้ครบ ไม่งั้น JE ขาด Dr เท่าเศษนั้น
+            var cilVatResidual = Math.Round(doc.VatAmount - cilVatAssigned, 2, MidpointRounding.AwayFromZero);
+            if (cilVatResidual > 0.005m && (cilFirstAccount ?? defaultExpense?.Id) is Guid cilResidualAccount)
+                AddLine(cilResidualAccount, cilVatResidual, 0,
+                    "ภาษีซื้อที่เคลมไม่ได้ (รวมเป็นต้นทุน) - ใบรับรองแทนใบเสร็จ");
 
             if (moneyAccount != null)
                 AddLine(moneyAccount.Id, 0, doc.TotalAmount,

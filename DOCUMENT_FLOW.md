@@ -223,6 +223,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ใบมัดจำจริง (IsDeposit) — เคส A doc / เคส B journal-ref. `DrivesJournal=false`
     = display-only (Dr เงินสดเต็ม, TakeTime กลับมัดจำเอง). void สมมาตรผ่าน 7c
     (`UnrealizeDrivesDepositAsync`).
+  - **ผังบัญชีรายบรรทัดที่ partner ส่งมา (`AccountCode`)**:
+    `BuildDocumentLinesAsync` resolve → `DocumentLine.AccountId` และ
+    **ตรวจฝั่งก่อนเสมอ** — ฝั่งจ่าย (expense / payment_voucher /
+    certificate_in_lieu / resync expense) ห้ามเป็นบัญชี **Revenue**, ฝั่งรับ
+    (CN/DN / resync invoice) ห้ามเป็น **Expense** → โยน error กลับพร้อมรหัส
+    บัญชีที่ผิด (sync log เก็บเหตุผลให้ partner แก้ mapping). ไม่แตะ Asset/
+    Liability เพราะมัดจำ/สินค้าคงเหลือใช้จริง. เหตุผล: JE ที่ Dr บัญชีรายได้
+    **สมดุลเป๊ะและมีขาเจ้าหนี้ครบ** ⇒ `JournalPostingGuard` จับไม่ได้ และกำไร
+    สุทธิไม่ขยับ (รายได้ต่ำไป = ค่าใช้จ่ายต่ำไป) — ไม่มีสัญญาณใดเลย.
+    รหัสที่หาไม่เจอ/ปิดใช้งาน → log warning + ตกไปบัญชีทั่วไปตามเดิม
   - `/integration/journals` + `/integration/daily-summary` → JournalEntry ที่
     **ไม่มี SourceDocumentId** (รายงาน VAT มี fallback ใน `TaxService.cs:436+`
     สแกนหา JE ที่มี VAT account แล้วรวมเข้า ภ.พ.30 ให้)
@@ -601,6 +611,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 6. **§65 ตรี** (`:1773`) — `ApplySection65TerAsync` → `doc.NonDeductibleAmount`
    + breakdown JSON (`NonDeductibleRuleJson`); ไหลเข้า ภ.ง.ด.50 ผ่าน
    `TaxService.GenerateCitReport` (บวกกลับ).
+   **ครอบ**: `PurchaseInvoice` / `Expense` / `PaymentVoucher` / **`CertificateInLieu`
+   ที่ไม่ได้แปลงมาจากใบตั้งหนี้** (`RelatedDocumentId == null`) — ตัว validator
+   รองรับ CIL มาตลอด (`isPurchaseSide` ในเมธอด) แต่ call site เคยตกหล่น ทั้งที่
+   CIL คือเคสที่ §65 ตรี(9)(18) เล็งตรงที่สุด (ผู้รับเงินออกใบเสร็จไม่ได้).
+   CIL ที่แปลงมา = ใบต้นทางบวกกลับไปแล้ว เรียกซ้ำ = บวกกลับสองรอบ.
    **§65 ตรี(4) ค่ารับรอง cap = per fiscal year** (กฎกระทรวง 143) —
    `Section65TerValidator.Context.PriorYtdEntertainmentExpense` ส่ง YTD
    ของเอกสารฝั่งซื้อ/ค่าใช้จ่าย Approved ที่ description มี "รับรอง" →
@@ -942,7 +957,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | `PurchaseInvoice` | Dr Exp + Dr Input VAT / Cr AP | IN (ถ้าไม่มี GRN ก่อน) | input (11610 หรือ 11640) | TaxPointDate; 11640 → `InputVatBecameClaimableAt` | §86/4 completeness gate |
 | `Expense` | Dr Exp + Dr Input VAT / Cr Cash/AP | ❌ (ยกเว้นมี product code) | input | TaxPointDate | §65 ตรี ที่ approve |
 | `PaymentVoucher` | Dr AP/Exp / Cr Cash/Bank | ❌ | input (เฉพาะถ้าเปิด PV master switch + มีใบกำกับ) | DocumentDate | `PaymentType` (Cash/Credit) |
-| `CertificateInLieu` | Dr Exp / Cr Cash | ❌ | input (§86/4 ถ้าครบ) | DocumentDate | บังคับ `CertReason + CertifierName` |
+| `CertificateInLieu` | **standalone**: Dr Exp (รวม VAT เคลมไม่ได้ **รายบรรทัด**) / Cr Cash · **แปลงจาก Expense/PI**: Dr AP / Cr Cash (settlement) | ❌ | **เคลมไม่ได้ §82/4** — VAT พับเข้าต้นทุนบรรทัดนั้น ๆ (เดิมกองรวมที่บัญชีค่าใช้จ่ายทั่วไป → ต้นทุนเพี้ยนทุกผัง และบริษัทที่ไม่มี default expense ได้ JE ไม่สมดุล) | DocumentDate | บังคับ `CertReason + CertifierName` |
 
 ---
 
@@ -1127,6 +1142,25 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Service**: `WithholdingTaxCertService`
 - **Trigger**: ตอน `PaymentVoucher` / `Expense` ที่มี WHT > 0 ถูก approve
   → auto-issue 2 ฉบับ ("สำหรับยื่นแบบ" + "เก็บไว้")
+- **เกณฑ์เงินสด (ท.ป.4/2528) — ออกใบจริงเฉพาะตอน "จ่ายเงินแล้ว"**
+  (`AutoGenerateFromDocumentAsync`):
+  - **จ่ายแล้ว** (PV, ใบที่ `BalanceDue<=0 && PaidAmount>0` ตอน approve,
+    ทุกเส้นรับ/จ่ายชำระ) → cert สถานะ **Issued** ผูก `SourcePaymentId` ของงวดนั้น
+    ยอด = WHT ที่หักจริงงวดนั้น (`paymentWhtAmount` → `whtRatio`)
+  - **ตั้งหนี้ยังไม่จ่าย** (integration `expense.created`, PaymentType.Credit)
+    → cert สถานะ **Draft** เท่านั้น (`TryAutoGenerateWhtAsync(paid: false)`).
+    Draft ไม่เข้าแบบยื่น — `TaxFilingExportService`/`TaxService` นับเฉพาะ
+    Issued/Filed. ถ้าออก Issued ตั้งแต่ตอนตั้งหนี้: ภ.ง.ด.3/53 ของเดือนนั้น
+    นำส่งภาษีที่ยังไม่ได้หักจริง **และ** guard "ออกใบเต็มจำนวนไปแล้ว" จะบล็อก
+    ใบรายงวดตอนจ่ายจริง ⇒ ผู้ขายไม่ได้ใบที่ถูกต้องสักใบ
+  - **Idempotency key** = (`SourcePaymentId`, `DocumentId`) — ไม่ใช่ payment
+    ล้วน เพราะการโอนก้อนเดียวปิดหลายใบใช้ payment id ร่วมกันทุกใบ
+  - เจอ cert ระดับเอกสาร (`SourcePaymentId == null`) ค้างอยู่ตอนจะออกรายงวด:
+    **ทุกใบเป็น Draft → ยกเลิกอัตโนมัติแล้วออกรายงวดต่อ** (ใบร่างไม่เคยส่งมอบ
+    และไม่เคยเข้าแบบยื่น); มีใบ Issued/Filed ปน → บล็อกเหมือนเดิม
+  - ออกได้เฉพาะฝั่งซื้อ (`PurchaseInvoice`/`Expense`/`PaymentVoucher`/
+    `CertificateInLieu`) — ฝั่งขายเราเป็น "ผู้ถูกหัก" ลูกค้าเป็นคนออกใบให้
+    (เส้นรับชำระหลายใบเคยไม่กรองชนิดเอกสาร)
 - **PDF**: `PdfGenerationService.WhtCert.cs`
 - **ประเภทแบบ guard (ภ.ง.ด.3 ↔ 53)**: `ResolveWhtFormType` + `DetectJuristic`
   บังคับที่ **ทุก create path** (`CreateAsync`, `AutoGenerateFromDocumentAsync`,
@@ -1245,7 +1279,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | ติ๊กเคลมภาษีซื้อเข้า/ออกหลังอนุมัติ | `CompleteSupplierTaxInvoiceAsync` + `ClaimInputVat` (Unclaim/ReclaimInputVatAsync) | แผงในหน้า detail ของ PV/Expense/PI (approved, VAT>0): เลิกเคลม → JE Dr ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้"/Cr 11610 หรือ 11640 + set override=ผังค่าใช้จ่าย (marker ที่ ภ.พ.30 exclude อยู่แล้ว) + ติ๊กบรรทัดงวด Draft ออก; block เมื่อเคลมในงวด Filed แล้ว (ต้องยื่นเพิ่มเติม). กลับมาเคลม → require §86/4 ครบ + กรอบ 6 เดือน §82/3 → JE ย้อน + BecameClaimableAt=now (เข้า ภ.พ.30 งวดปัจจุบัน) + PV เปิด HasTaxInvoiceReference. แก้เลขที่/วันที่/สาขาใบกำกับได้ทุกใบจากแผงเดียวกัน |
 | F14 audit hash chain | `AuditTrailService.VerifyHashChainAsync` + `AuditChainVerifyJob` | cron 7 วัน re-compute SHA-256 → notify ถ้า tamper (พ.ร.บ.บัญชี ม.11 ทวิ) |
 | Recurring template validate | `RecurringTransactionService.ValidateTemplateAsync` | fail-fast ตอน Create/Update ก่อนรอ midnight cron — accountId ต้องอยู่ใน CoA, journal balance |
-| Reclassify line GL (post-approve) | `DocumentService.ReclassifyLineAccountAsync` | Expense/PI/PV เท่านั้น (TaxInvoice/Receipt/CN/DN ห้าม §86/4); post JE คู่ใหม่ Dr ผังใหม่/Cr ผังเก่า ลงงวดเดิม + update line.AccountId. gate: period Open + no downstream + no payment + no submitted ภพ.30 + no e-Tax submitted |
+| Reclassify line GL (post-approve) | `DocumentService.ReclassifyLineAccountAsync` | เปิดทั้งฝั่งซื้อและฝั่งขาย (Invoice/TaxInvoice/Receipt/CN/DN ด้วย — §86/4 บังคับ**สิ่งที่พิมพ์บนใบกำกับ** ซึ่งไม่มีรหัสผังบัญชีอยู่เลย); post JE คู่ใหม่ลงงวดเดิม โดย**อ่านขาที่ลงจริงใน GL** (`oldWasCredited`) แล้วกลับตามนั้น + update line.AccountId. **ยอดที่ย้าย = `ResolveLinePostedGlAmountAsync`** ไม่ใช่ `line.Amount` เสมอ: ภาษีซื้อต้องห้าม §82/5 (`IsVatClaimable=false`) → `Amount + VatAmount` เพราะ AutoPost รวม VAT เป็นต้นทุนบรรทัด (ย้ายแค่ฐาน = VAT ค้างผังเก่าถาวร โดย Dr=Cr ยังสมดุล) · ใบที่อ้างใบรับของ GRN → ฐานตัด GR-NI ไปแล้ว บรรทัดเหลือแค่ VAT ต้องห้าม · PV ที่แปลงจากใบตั้งหนี้ (settlement) → 0 (แค่เปลี่ยน AccountId ไม่ลง JE) · ต่างสกุล → คูณ `ExchangeRate` ผ่าน `ToGlAmount`. gate: period Open + no downstream (ไม่นับใบเสร็จ settlement) + not Draft/WaitingApproval/Voided/Rejected + ไม่ใช่ใบมัดจำ + ไม่ใช่บัญชีคุม + no submitted ภพ.30 + no e-Tax submitted |
 | §87(3) chronological | ExportPp30Async summary | นับ doc ที่ tax point ย้อนกลับ → surface ใน Summary.csv |
 | §87/3 retention 5 ปี | `RetentionUntil` | ห้าม hard delete; soft + legal_hold |
 | §85/1 VAT threshold 1.8M | annual revenue check | warning "ต้องจด VAT ภายใน 30 วัน" |
@@ -1823,7 +1857,17 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 69 — **ปิดช่องว่าง OCR D1-D3**:_
+_Last verified against codebase: 2026-08-17 (รอบ 73 — **จำลองเหตุการณ์ชุด 4:_
+_เส้น integration + รายจ่ายที่เคลมภาษีซื้อไม่ได้**: ผังบัญชีที่ partner ส่งมาต้อง_
+_อยู่ถูกฝั่งเอกสาร (ฝั่งจ่ายห้ามบัญชีรายได้ — JE แบบนี้สมดุลเป๊ะ guard จับไม่ได้_
+_และกำไรสุทธิไม่ขยับ) · ย้ายผังบัญชีย้าย "ยอดที่ลงจริง" ผ่าน_
+_`ResolveLinePostedGlAmountAsync` (VAT ต้องห้ามรวมเป็นต้นทุน / ใบอ้าง GRN /_
+_PV settlement / ต่างสกุล) · CIL พับ VAT เคลมไม่ได้เข้าบรรทัดของตัวเองแทนกอง_
+_รวม + §65 ตรี ครอบ CIL แล้ว · 50 ทวิ ยึดเกณฑ์เงินสด ท.ป.4/2528 (ตั้งหนี้ =_
+_ฉบับร่าง, จ่ายจริง = ออกใบ; idempotency key = payment+document) ·_
+_เทสต์ `SimulationRound4Tests`; รอบ 70-72 — **จำลองเหตุการณ์ชุด 1-3**:_
+_guard เทียบยอดข้ามสกุล · ทุกทางปิดยอดยิง tax point §78/1 · 50 ทวิ ผูกงวดจ่าย ·_
+_void ใบกำกับที่แทนที่ใบแจ้งหนี้แล้วคืนใบเดิมเป็นร่าง; รอบ 69 — **ปิดช่องว่าง OCR D1-D3**:_
 _`BranchCodeExtractor` อ่านสาขาผู้ขาย/ผู้ซื้อแยกกัน (เดิมผู้ซื้อไม่เคยถูกอ่าน) ·_
 _pseudo-target `Deposit` สแกนใบมัดจำได้ตรง (ทั้ง UI และ auto-create) ·_
 _`duplicate-check` เตือนก่อนสร้างเมื่อใบเดิมถูกสแกนซ้ำ; รอบ 68 — **PaidOnIssue persist**:_
