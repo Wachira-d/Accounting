@@ -1117,12 +1117,21 @@ public partial class TaxService : ITaxService
                         || l.Account.AccountName.Contains("ภาษีซื้อ")))
                 .ToListAsync();
 
+            // ⚠️ prefix "2191" คลุม 21916/21917 (WHT ค้างจ่าย — ไม่ใช่ภาษีขาย!)
+            // ด้วย — JV ตั้ง WHT แบบ manual จะโผล่เป็นภาษีขายใน ภ.พ.30 (กระจกเงา
+            // ของบั๊ก REC... ใน ภงด.53) — ตัดสองตัวนี้ออกทั้งทาง code และชื่อ
             bool IsOutputVat(Models.Entities.ChartOfAccount a) =>
-                a.AccountCode.StartsWith("2191")
-                || a.AccountName.Contains("ภาษีขาย");
+                (a.AccountCode.StartsWith("2191")
+                    && a.AccountCode != "21916" && a.AccountCode != "21917")
+                || (a.AccountName.Contains("ภาษีขาย")
+                    && !a.AccountName.Contains("หัก ณ ที่จ่าย"));
+            // 11640 "ภาษีซื้อยังไม่ถึงกำหนด" เคลม ภ.พ.30 ไม่ได้จนกว่า reclassify —
+            // JV manual ที่ Dr 11640 ห้ามนับเป็นภาษีซื้อของงวด
             bool IsInputVat(Models.Entities.ChartOfAccount a) =>
-                a.AccountCode.StartsWith("116") || a.AccountCode.StartsWith("114") || a.AccountCode.StartsWith("115")
-                || a.AccountName.Contains("ภาษีซื้อ");
+                ((a.AccountCode.StartsWith("116") && a.AccountCode != "11640")
+                    || a.AccountCode.StartsWith("114") || a.AccountCode.StartsWith("115")
+                    || a.AccountName.Contains("ภาษีซื้อ"))
+                && !a.AccountName.Contains("ยังไม่ถึงกำหนด");
 
             // Group by JournalEntry to aggregate VAT per entry
             var byEntry = vatLines.GroupBy(l => l.JournalEntryId);
@@ -1696,17 +1705,34 @@ public partial class TaxService : ITaxService
             .Select(j => j.Id)
             .ToListAsync();
 
-        if (journalOnlyEntryIds.Any())
+        if (journalOnlyEntryIds.Any()
+            && report.TaxType is TaxType.WithholdingTax3 or TaxType.WithholdingTax53)
         {
-            // WHT accounts: 2191x (payable) or 11910 (receivable) or name contains "หัก ณ ที่จ่าย"
+            // เฉพาะบัญชี WHT ค้างจ่าย "ของแบบนี้" เท่านั้น — เดิม match หลวม 3 ทาง:
+            //   (1) prefix "2191" ⇒ กวาดบัญชี VAT 21911/21912/21913 เข้ามาด้วย —
+            //       JV auto-reconcile มัดจำที่แตะ 21913 (ภาษีขายรอเรียกเก็บ 7%)
+            //       โผล่ใน ภงด.53 เป็นแถว "REC..." 467.29 × 7% = 32.71 ทั้งที่
+            //       เป็น VAT ไม่ใช่หัก ณ ที่จ่าย (บั๊กที่ผู้ใช้เจอ — เลขนำหน้า
+            //       ชนความหมาย คลาสเดียวกับ 21510/53xx)
+            //   (2) "11910" = ภาษี "ถูกหัก" — เครดิตภาษีของเรา (ลูกค้าหักเราไว้)
+            //       คนละฝั่งกับยอดที่เราต้องนำส่ง — ห้ามเข้าแบบนำส่งเด็ดขาด
+            //   (3) ไม่แยกแบบ ⇒ แถวเดียวกันเข้าทั้ง ภงด.3 และ ภงด.53 = ซ้ำ 2 แบบ
+            // ผังแยกแบบให้อยู่แล้ว: 21916 = ภ.ง.ด.3 / 21917 = ภ.ง.ด.53
+            var formCode = report.TaxType == TaxType.WithholdingTax3 ? "21916" : "21917";
+            var formTagSpace = report.TaxType == TaxType.WithholdingTax3 ? "ภ.ง.ด. 3" : "ภ.ง.ด. 53";
+            var formTagTight = report.TaxType == TaxType.WithholdingTax3 ? "ภ.ง.ด.3" : "ภ.ง.ด.53";
             var whtLines = await _db.JournalEntryLines
                 .Include(l => l.Account)
                 .Include(l => l.JournalEntry)
                 .Where(l => journalOnlyEntryIds.Contains(l.JournalEntryId)
                     && l.Account != null
-                    && (l.Account.AccountCode.StartsWith("2191")
-                        || l.Account.AccountCode.StartsWith("11910")
-                        || l.Account.AccountName.Contains("หัก ณ ที่จ่าย")))
+                    && (l.Account.AccountCode == formCode
+                        // ผังกำหนดเอง: ชื่อบอกทั้ง "หัก ณ ที่จ่าย" + เลขแบบ และ
+                        // ต้องไม่ใช่ฝั่ง "ถูกหัก"
+                        || (l.Account.AccountName.Contains("หัก ณ ที่จ่าย")
+                            && !l.Account.AccountName.Contains("ถูกหัก")
+                            && (l.Account.AccountName.Contains(formTagSpace)
+                                || l.Account.AccountName.Contains(formTagTight)))))
                 .ToListAsync();
 
             var byEntry = whtLines.GroupBy(l => l.JournalEntryId);
