@@ -1823,7 +1823,25 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-16 (รอบ 28: ภาษีซื้อไม่เคลม "ตามก้อนเงิน" —_
+_Last verified against codebase: 2026-08-16 (รอบ 28c: ไล่ตรวจ pipeline รายงานภาษี_
+_ทั้งเส้น (generator → MapToResponse → list → detail → e-Filing → Excel) — จุดที่แก้:_
+_(1) สูตรยอดหัวตอน generate ภงด. กรอง SUMMARY+IsExcluded ให้ตรง RecalcPndTotals_
+_(เดิมคนละสูตร); (2) cert "ร่าง" ของงวดขึ้นเป็นบรรทัด IsExcluded "⚠️ ยังเป็นร่าง —_
+_ออกใบก่อนยื่น" (เห็นแต่ไม่นับ) + บรรทัด [สรุป] ต่อผู้ขายไม่รวมแถว excluded;_
+_(3) e-Filing ภงด.3/53 export เฉพาะ cert Issued/Printed (เดิม != Voided ⇒ ใบร่าง_
+_หลุดเข้าไฟล์ยื่น + ไม่ตรงจอ); (4) e-Filing ภ.พ.36 เปลี่ยนเป็น single source_
+_ComputePp36ReportAsync (pattern เดียวกับ ภ.พ.30) — เดิม mine เอกสารเองคนละเงื่อนไข;_
+_ที่ตรวจแล้วถูก: MapToResponse ส่ง totalIncome/totalTaxWithheld/citAmount/lines ครบ,_
+_ภ.พ.30 export single-source อยู่แล้ว, Excel อ่าน report lines, ตาราง detail มีติ๊ก_
+_ใช้/ไม่ใช้; ภงด.54 export ยัง doc-mined (ติด ⚠️ ไว้ — เคสน้อย); รอบ 28b: ภงด.3/53/54 ใช้ทะเบียน_
+_หนังสือรับรอง 50 ทวิ (Issued/Printed งวดนั้น) เป็นแหล่งหลักของรายงาน — เดิม mine_
+_จากบรรทัดเอกสารเท่านั้น: ใบที่ WHT อยู่ระดับเอกสาร/งวดจ่าย (บรรทัดไม่มียอดราย_
+_บรรทัด) ผ่าน filter นอกแต่ inner loop ว่าง ⇒ รายงาน 0 ทั้งที่ cert ออกครบ; เอกสาร_
+_ที่ cert ครอบแล้วไม่ mine ซ้ำ + เอกสารยังไม่ออก cert ขึ้นเป็นแถว "⚠️ ยังไม่ออก_
+_หนังสือรับรอง" (รวมเคส WHT ระดับเอกสาร — เดิมหายทั้งใบ) · หน้า tax.html: แถว ภงด._
+_โชว์ totalIncome/totalTaxWithheld (เดิม bind outputVat/netVat ของ VAT ⇒ 0.00_
+_เสมอ) + แท็บ/ตัวเลือกสร้าง "ภ.พ.36" (เดิมไม่มีที่ดูเลย) + detail modal แยก layout_
+_ตามชนิดแบบ; รอบ 28: ภาษีซื้อไม่เคลม "ตามก้อนเงิน" —_
 _UnclaimInputVatAsync + expiry job §82/3 เลิก fallback "บัญชี 53xx ตัวแรก" (เคยได้_
 _53120 ค่าโฆษณา ทั้งที่ก้อนเงินคือ 54123 สวัสดิการ) → ResolveNonClaimableVatExpense_
 _AccountAsync: บัญชีของบรรทัดที่ VAT เกาะ (VAT มากสุดชนะ; Expense/Asset — capitalize_

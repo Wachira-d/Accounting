@@ -25,6 +25,9 @@ public interface ITaxService
     /// <summary>คำนวณ ภ.พ.30 เป็น TaxReport ชั่วคราว (ไม่ persist) — ใช้ตรรกะ
     /// เดียวกับหน้าจอ/Excel เพื่อให้ไฟล์ยื่น (CSV) ตรงกับที่ผู้ใช้เห็นทุกบรรทัด.</summary>
     Task<Models.Entities.TaxReport> ComputeVatReportAsync(Guid companyId, int year, int month);
+    /// <summary>ภ.พ.36 แบบ transient (ไม่บันทึก) — single source ให้ e-Filing
+    /// ใช้ชุดเดียวกับหน้าจอ (กัน "ไฟล์ที่ยื่น ≠ ที่ผู้ใช้เห็น")</summary>
+    Task<Models.Entities.TaxReport> ComputePp36ReportAsync(Guid companyId, int year, int month);
 
     // Task 4 of ERP upgrade
     Task<Models.Entities.VatDeferral> DeferInputVatAsync(Guid companyId, Guid documentId, int deferredToPeriod, string? reason, string userId);
