@@ -98,7 +98,13 @@ public interface IDocumentService
     /// proceed.</summary>
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings);
     /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>
-    Task VoidDocumentAsync(Guid companyId, Guid documentId);
+    /// <param name="reversalDate">วันที่ลงรายการกลับบัญชี — null = วันที่ของ
+    /// เอกสารเอง (ไม่ใช่วันที่กดยกเลิก) เพื่อให้รายการกลับอยู่งวดเดียวกับต้นฉบับ</param>
+    Task VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null);
+    /// <summary>ย้ายวันที่ JE กลับรายการของเอกสารที่ยกเลิกไปแล้ว ให้ไปอยู่งวดที่
+    /// ถูกต้อง — สำหรับใบที่ถูกยกเลิกก่อนระบบใช้ "วันที่เอกสาร" เป็นค่าเริ่มต้น
+    /// (รายการกลับไปตกเดือนที่กด). คืนจำนวน JE ที่ย้าย</summary>
+    Task<int> RedateVoidReversalAsync(Guid companyId, Guid documentId, DateTime newDate, string actor);
 
     /// <summary>โพสต์ JE "ขายเงินสด" (integration isCashSale) — TaxInvoice ที่
     /// IssuedAsCashReceipt=true ลง Dr เงินสด + กลับมัดจำ 217xx/21913 / Cr รายได้ +

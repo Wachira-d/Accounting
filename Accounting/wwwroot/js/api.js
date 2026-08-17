@@ -222,7 +222,12 @@ const API = {
       getDocumentsByBooking: (bookingNumber) => API.get(`${base}/document/by-booking/${encodeURIComponent(bookingNumber)}`),
       getUndueInputVat: () => API.get(`${base}/document/undue-input-vat`),
       suggestPvAccounting: (body) => API.post(`${base}/document/ai-suggest-pv-accounting`, body),
-      voidDocument: (id) => API.post(`${base}/document/${id}/void`),
+      // reversalDate: วันที่ลงรายการกลับบัญชี (ว่าง = วันที่ของเอกสารเอง)
+      voidDocument: (id, reversalDate) => API.post(
+        `${base}/document/${id}/void${reversalDate ? `?reversalDate=${reversalDate}` : ''}`),
+      // แก้ใบที่ยกเลิกไปแล้วตอนระบบยังใช้ "วันที่กด" — ย้าย JE กลับรายการเข้างวดที่ถูก
+      redateVoidReversal: (id, newDate) => API.post(
+        `${base}/document/${id}/redate-void-reversal${newDate ? `?newDate=${newDate}` : ''}`),
       restoreDocument: (id) => API.post(`${base}/document/${id}/restore`),
       reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
       reclassifyPaymentSource: (id, body) => API.post(`${base}/document/${id}/reclassify-payment-source`, body),

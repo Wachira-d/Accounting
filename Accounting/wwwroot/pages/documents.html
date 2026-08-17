@@ -7600,6 +7600,10 @@
           // เอกสารที่ยกเลิกผิด → กู้คืนเป็นฉบับร่าง (เลขเดิม) แล้วอนุมัติใหม่ได้
           if (d.status === 'Voided') {
             actions += ` <button class="btn btn-secondary" onclick="Page.restoreDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="กู้คืนเอกสารที่ยกเลิกผิด → คืนเป็นฉบับร่าง คงเลขเดิม แล้วกดอนุมัติใหม่ (บล็อกถ้าเดือนภาษียื่นแล้ว/มี e-Tax รับรอง)">↩️ กู้คืน</button>`;
+            // ใบที่ยกเลิกก่อนระบบใช้ "วันที่เอกสาร" เป็นค่าเริ่มต้น → รายการกลับ
+            // บัญชีตกเดือนที่กด (ข้ามงวด) — ปุ่มนี้ย้ายกลับเข้างวดที่ถูกโดยไม่
+            // ต้องกู้คืน/ยกเลิกใหม่
+            actions += ` <button class="btn btn-secondary" onclick="Page.redateVoidReversal('${d.id}')" title="ย้ายวันที่ 'รายการกลับบัญชี' ให้อยู่งวดเดียวกับเอกสาร — ใช้กับใบที่ยกเลิกแล้วรายการกลับไปตกเดือนอื่น (ยอดสุทธิไม่เปลี่ยน เปลี่ยนแค่งวด)">📅 แก้วันที่กลับบัญชี</button>`;
           }
           const myRole = await Layout.ensureMyRole();
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
@@ -8179,17 +8183,61 @@
         // ข้อความต้องตรงความจริง — ใบ WaitingApproval/Rejected ยังไม่ posted
         // ไม่มี JE ให้กลับ (เดิมพูดถึง "Reversal JE" เสมอ = โกหกสถานการณ์)
         const hasJe = linkedCount > 0;
+        // วันที่ลงรายการกลับบัญชี — default = **วันที่ของเอกสาร** ไม่ใช่วันนี้
+        // (ยกเลิกใบเดือนก่อนแล้วรายการกลับไปตกเดือนนี้ = งบผิดสองเดือนพร้อมกัน)
+        const docDate = Layout.dateInput(this._currentDoc?.documentDate) || '';
+        let revDate = docDate;
+        if (hasJe) {
+          const input = prompt(
+            'วันที่ลงรายการกลับบัญชี (YYYY-MM-DD)\n\n' +
+            `ค่าเริ่มต้น = วันที่ของเอกสาร (${docDate}) เพื่อให้รายการกลับอยู่งวดเดียวกัน\n` +
+            'เปลี่ยนได้ถ้าต้องการลงงวดอื่น (เช่น งวดเดิมปิดแล้ว)',
+            docDate);
+          if (input === null) return;                 // กด Cancel = ไม่ยกเลิกเอกสาร
+          revDate = (input || '').trim() || docDate;
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(revDate)) {
+            Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)', 'error');
+            return;
+          }
+        }
         if (!(await Layout.confirmDanger({
           title: 'ยกเลิกเอกสาร',
           message: (hasJe
-              ? 'ระบบจะสร้างรายการกลับบัญชี (Reversal JE) อัตโนมัติ '
+              ? `ระบบจะสร้างรายการกลับบัญชี (Reversal JE) ลงวันที่ <strong>${Layout.esc(revDate)}</strong> `
               : 'เอกสารนี้ยังไม่ได้ลงบัญชี — ยกเลิกได้โดยไม่กระทบสมุดบัญชี ')
             + 'เก็บเอกสารเดิมไว้ในระบบเพื่อการตรวจสอบ (audit trail)' + extra,
           mode: 'math'
         }))) return;
-        try { await api.voidDocument(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load(); }
+        try {
+          await api.voidDocument(id, hasJe ? revDate : null);
+          Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load();
+        }
         catch (e) { Layout.toast(e.message, 'error'); }
       },
+      /** ย้ายวันที่ JE กลับรายการของใบที่ "ยกเลิกไปแล้ว" ให้เข้างวดที่ถูก —
+       *  ใช้กับใบที่ยกเลิกก่อนระบบเปลี่ยน default เป็นวันที่เอกสาร */
+      async redateVoidReversal(id) {
+        const api = Layout.api(); if (!api) return;
+        const docDate = Layout.dateInput(this._currentDoc?.documentDate) || '';
+        const input = prompt(
+          'ย้ายรายการกลับบัญชีไปวันที่ (YYYY-MM-DD)\n\n' +
+          `ค่าเริ่มต้น = วันที่ของเอกสาร (${docDate})\n` +
+          'ระบบย้ายเฉพาะ "ใบสำคัญตัวกลับ" ไม่แตะใบต้นฉบับ ⇒ ยอดสุทธิเท่าเดิม เปลี่ยนแค่งวด\n' +
+          'งวดต้นทางและปลายทางต้องเปิดอยู่ทั้งคู่',
+          docDate);
+        if (input === null) return;
+        const d = (input || '').trim() || docDate;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+          Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)', 'error'); return;
+        }
+        try {
+          const r = await api.redateVoidReversal(id, d);
+          Layout.toast(r?.message || 'ย้ายวันที่สำเร็จ', 'success', 7000);
+          Layout.closeModal('detailModal');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error', 8000); }
+      },
+
       async restoreDoc(id, docNumber) {
         const api = Layout.api(); if (!api) return;
         if (!confirm(`กู้คืนเอกสาร ${docNumber || ''} ที่ยกเลิกผิด?\n\n` +

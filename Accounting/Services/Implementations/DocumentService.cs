@@ -5252,7 +5252,105 @@ public class DocumentService : IDocumentService
     /// Cascade: void linked Payments (with their JE reversals) + void linked EtaxInvoice.
     /// ไม่ลบข้อมูลออกจากฐานข้อมูล — เพื่อรักษา audit trail และตรวจสอบทางภาษี.
     /// </summary>
-    public async Task VoidDocumentAsync(Guid companyId, Guid documentId)
+    /// <summary>ย้ายวันที่ JE "กลับรายการ" ของเอกสารที่ยกเลิกไปแล้ว ให้ไปอยู่
+    /// งวดที่ถูกต้อง — ใช้แก้ใบที่ถูกยกเลิกตอนระบบยังตั้งวันที่กลับรายการเป็น
+    /// "วันที่กด" (รายการจึงข้ามเดือน: เดือนเก่ายังค้างยอด เดือนใหม่มียอดลบ)
+    ///
+    /// ทำอะไร: ย้ายเฉพาะ <b>ตัวกลับ</b> (JE ที่ <c>OriginalEntryId != null</c>) ของ
+    /// เอกสารนี้ — ไม่แตะ JE ต้นฉบับ ไม่สร้าง/ลบรายการใด ๆ ⇒ ยอดสุทธิเท่าเดิม
+    /// เปลี่ยนแค่ "อยู่งวดไหน" (และ FiscalPeriodId ให้ตรงกัน)
+    ///
+    /// เงื่อนไขความปลอดภัย:
+    ///   • งวดปลายทางต้องเปิดอยู่ (ห้ามยัดเข้างวดปิด)
+    ///   • งวดต้นทาง (ที่ JE อยู่ตอนนี้) ต้องเปิดอยู่ด้วย — ย้ายออกจากงวดที่ปิด
+    ///     แล้วเท่ากับแก้งบที่ปิดไปแล้ว
+    ///   • เอกสารต้องอยู่สถานะยกเลิกจริง
+    /// </summary>
+    public async Task<int> RedateVoidReversalAsync(
+        Guid companyId, Guid documentId, DateTime newDate, string actor)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        if (doc.Status != DocumentStatus.Voided)
+            throw new InvalidOperationException(
+                "เอกสารนี้ยังไม่ถูกยกเลิก — เครื่องมือนี้ใช้แก้วันที่ของ 'รายการกลับบัญชี' เท่านั้น");
+
+        // ไม่ระบุวันที่ → ใช้วันที่ของเอกสารเอง (พฤติกรรมเดียวกับ void แบบใหม่)
+        var target = (newDate == default ? doc.DocumentDate : newDate).Date;
+
+        var targetPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId && f.StartDate <= target && f.EndDate >= target);
+        if (targetPeriod != null && targetPeriod.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"งวด {targetPeriod.Name} ปิดแล้ว — เปิดงวดก่อน จึงจะย้ายรายการกลับบัญชีเข้าไปได้");
+
+        // ตัวกลับของเอกสารนี้ (Posted เท่านั้น — ตัวที่ยังมีผลต่อ GL)
+        var reversals = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
+                && j.OriginalEntryId != null && j.Status == JournalEntryStatus.Posted
+                && !j.IsDeleted)
+            .ToListAsync();
+        if (reversals.Count == 0) return 0;
+
+        var moved = 0;
+        foreach (var rev in reversals)
+        {
+            if (rev.EntryDate.Date == target) continue;
+
+            var currentPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+                f.CompanyId == companyId
+                && f.StartDate <= rev.EntryDate.Date && f.EndDate >= rev.EntryDate.Date);
+            if (currentPeriod != null && currentPeriod.Status != FiscalPeriodStatus.Open)
+                throw new InvalidOperationException(
+                    $"ใบสำคัญ {rev.EntryNumber} อยู่ในงวด {currentPeriod.Name} ที่ปิดแล้ว — "
+                    + "ย้ายออกไม่ได้ (ต้องเปิดงวดนั้นก่อน หรือใช้ใบปรับปรุงแทน)");
+
+            var from = rev.EntryDate;
+            rev.EntryDate = target;
+            rev.FiscalPeriodId = targetPeriod?.Id;
+            rev.Description = (rev.Description ?? "") +
+                $" [แก้วันที่จาก {from:dd/MM/yyyy} → {target:dd/MM/yyyy} ให้อยู่งวดเดียวกับเอกสาร]";
+            rev.UpdatedAt = DateTime.UtcNow;
+            rev.UpdatedBy = actor;
+            moved++;
+        }
+
+        if (moved > 0)
+        {
+            await _db.SaveChangesAsync();
+            _logger.LogInformation(
+                "RedateVoidReversal: ย้าย {Count} ใบสำคัญของเอกสาร {DocNo} ไปวันที่ {Date}",
+                moved, doc.DocumentNumber, target);
+        }
+        return moved;
+    }
+
+    /// <summary>หา "วันที่ลงรายการกลับบัญชี" ที่ใช้ได้จริง — ถ้างวดของวันที่ที่
+    /// ต้องการปิด/ล็อกแล้วจะลงไม่ได้ (ReverseJournalEntryAsync throw) ⇒ ตกกลับ
+    /// เป็นวันนี้ พร้อมเหตุผลให้บันทึกไว้บนเอกสาร — ห้ามเงียบ เพราะนักบัญชี
+    /// ต้องรู้ว่ารายการกลับไปอยู่งวดไหน</summary>
+    private async Task<(DateTime Date, string? FallbackReason)> ResolveReversalDateAsync(
+        Guid companyId, DateTime wanted)
+    {
+        var d = wanted.Date;
+        var period = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId && f.StartDate <= d && f.EndDate >= d);
+        if (period == null || period.Status == FiscalPeriodStatus.Open)
+            return (d, null);
+
+        var today = DateTime.UtcNow.Date;
+        return (today,
+            $"งวด {period.Name} ({d:dd/MM/yyyy}) ปิดแล้ว — ลงรายการกลับบัญชีที่วันที่ "
+            + $"{today:dd/MM/yyyy} แทน (เปิดงวดก่อน ถ้าต้องการให้อยู่งวดเดิม)");
+    }
+
+    /// <param name="reversalDate">วันที่ลงรายการกลับบัญชี — **ค่าเริ่มต้น = วันที่
+    /// ของเอกสารเอง** ไม่ใช่วันที่กดยกเลิก: ยกเลิกใบของเดือนก่อนแล้วรายการกลับ
+    /// ไปโผล่เดือนปัจจุบัน ทำให้งบ/ภาษี **ผิดสองเดือนพร้อมกัน** (เดือนเก่ามียอด
+    /// ค้างที่ไม่มีอยู่จริง เดือนใหม่มียอดติดลบที่ไม่มีที่มา). ส่งค่ามาเองได้เมื่อ
+    /// ตั้งใจลงงวดอื่น (เช่น งวดเดิมปิดแล้ว)</param>
+    public async Task VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null)
     {
         // Lines must be Include'd here so ApplyStockMovementsAsync (called
         // during the void transaction below) can iterate them — otherwise
@@ -5335,6 +5433,16 @@ public class DocumentService : IDocumentService
                     $"{textRefChild.DocumentNumber} อ้างเลขที่ใบนี้อยู่ (§86/9-10) — ยกเลิกใบนั้นก่อน");
         }
 
+        // ── วันที่ลงรายการกลับบัญชี ──
+        // default = **วันที่ของเอกสารเอง** ไม่ใช่วันที่กดยกเลิก: ยกเลิกใบของเดือน
+        // ก่อนแล้วรายการกลับไปโผล่เดือนปัจจุบัน ทำให้ผิด **สองเดือนพร้อมกัน**
+        // (เดือนเก่าค้างยอดที่ไม่มีอยู่จริง / เดือนใหม่มียอดติดลบไม่มีที่มา)
+        // และงบเปรียบเทียบรายเดือน + รายงานภาษีของทั้งคู่เพี้ยน
+        var (effectiveReversalDate, reversalDateFallback) =
+            await ResolveReversalDateAsync(companyId, reversalDate ?? doc.DocumentDate);
+        if (reversalDateFallback != null)
+            _logger.LogWarning("VoidDocument {DocNo}: {Reason}", doc.DocumentNumber, reversalDateFallback);
+
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
@@ -5391,10 +5499,12 @@ public class DocumentService : IDocumentService
                         .AnyAsync(a => a.PaymentId == payment.Id && a.CompanyId == companyId && !a.IsDeleted);
                     if (hasOwnAllocations)
                         await ReverseMultiDocPaymentInternalAsync(companyId, payment,
-                            $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}");
+                            $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}",
+                            reversalDate: effectiveReversalDate);
                     else
                         await ReversePaymentInternalAsync(companyId, payment, doc,
-                            $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}");
+                            $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}",
+                            reversalDate: effectiveReversalDate);
                 }
 
                 // 2) Reverse linked Posted JEs via AccountingService (proper linkage:
@@ -5413,7 +5523,7 @@ public class DocumentService : IDocumentService
                 foreach (var jeId in postedJournalIds)
                 {
                     await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
-                        reversalDate: DateTime.UtcNow.Date,
+                        reversalDate: effectiveReversalDate,
                         description: $"ยกเลิกเอกสาร {doc.DocumentNumber}",
                         systemTriggered: true);
                 }
@@ -5466,7 +5576,7 @@ public class DocumentService : IDocumentService
                             && ApplyCodeOf(l.AccountId) == "21913");
                         restoredGross += grossCr;
                         await _accountingService.ReverseJournalEntryAsync(companyId, applyJe.Id,
-                            reversalDate: DateTime.UtcNow.Date,
+                            reversalDate: effectiveReversalDate,
                             description: $"ยกเลิกเอกสาร {doc.DocumentNumber} — คืนมัดจำ {dep.DocumentNumber}",
                             systemTriggered: true);
                         reversedAny = true;
@@ -5494,7 +5604,8 @@ public class DocumentService : IDocumentService
                 //   Cr 113 + Dr 215/217. reverse "ทุกตัว" (เผื่อโดน apply ซ้ำก่อนมี guard
                 //   one-shot รอบ 90) + un-mark JV ต้นทางให้ resync หักใหม่ได้.
                 //   ไม่ทำ → Cr 113/Dr 21510 ของ JV ค้างใน GL หลัง void (AR + 21510 เพี้ยน)
-                var voidJvGross = await ReverseOrphanJvDepositAppliesAsync(companyId, doc.DocumentNumber, deleteMode: false);
+                var voidJvGross = await ReverseOrphanJvDepositAppliesAsync(companyId, doc.DocumentNumber,
+                    deleteMode: false, reversalDate: effectiveReversalDate);
                 if (voidJvGross > 0m)
                 {
                     doc.PaidAmount = Math.Max(0m, doc.PaidAmount - voidJvGross);
@@ -6003,7 +6114,10 @@ public class DocumentService : IDocumentService
     /// (215/217) — ตัด JE ประเภทอื่นที่บังเอิญ Reference ตรงออก. void → reverse (audit
     /// trail); purge → delete (สะอาดพร้อม resync). คืน gross รวมที่กลับ (ให้ caller
     /// ปรับ PaidAmount). รองรับ apply ซ้ำหลายตัว (เคสก่อนมี guard one-shot รอบ 90).</summary>
-    private async Task<decimal> ReverseOrphanJvDepositAppliesAsync(Guid companyId, string docNumber, bool deleteMode)
+    /// <param name="reversalDate">วันที่กลับรายการ — ส่งต่อจาก VoidDocumentAsync
+    /// ให้ JV มัดจำอยู่งวดเดียวกับใบที่ยกเลิก (null = วันนี้ สำหรับ purge)</param>
+    private async Task<decimal> ReverseOrphanJvDepositAppliesAsync(Guid companyId, string docNumber,
+        bool deleteMode, DateTime? reversalDate = null)
     {
         var applyJes = await _db.JournalEntries.Include(j => j.Lines)
             .Where(j => j.CompanyId == companyId && j.SourceDocumentId == null
@@ -6045,7 +6159,7 @@ public class DocumentService : IDocumentService
             else
             {
                 await _accountingService.ReverseJournalEntryAsync(companyId, aj.Id,
-                    reversalDate: DateTime.UtcNow.Date,
+                    reversalDate: (reversalDate ?? DateTime.UtcNow).Date,
                     description: $"ยกเลิกเอกสาร {docNumber} — คืน JV มัดจำ", systemTriggered: true);
             }
         }
@@ -6667,7 +6781,10 @@ public class DocumentService : IDocumentService
     /// - Recalculates doc.Status (Paid → PartiallyPaid → Approved)
     /// Caller is responsible for transaction + final SaveChangesAsync.
     /// </summary>
-    private async Task ReversePaymentInternalAsync(Guid companyId, Payment payment, Document doc, string reason)
+    /// <param name="reversalDate">วันที่กลับรายการ (null = วันนี้) — void ส่ง
+    /// วันที่เอกสารมาให้ JE รับชำระกลับอยู่งวดเดียวกับที่บันทึกรับเงินไว้</param>
+    private async Task ReversePaymentInternalAsync(Guid companyId, Payment payment, Document doc, string reason,
+        DateTime? reversalDate = null)
     {
         // Reverse linked JEs created from this payment.
         // Payment JEs are linked via SourceDocumentId = doc.Id with a Reference matching payment.PaymentNumber.
@@ -6704,7 +6821,7 @@ public class DocumentService : IDocumentService
         foreach (var jeId in paymentJournals)
         {
             await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
-                reversalDate: DateTime.UtcNow.Date,
+                reversalDate: (reversalDate ?? DateTime.UtcNow).Date,
                 description: $"{reason} - {payment.PaymentNumber}",
                 systemTriggered: true);
         }
@@ -6797,7 +6914,9 @@ public class DocumentService : IDocumentService
     /// </list>
     /// Caller รับผิดชอบ transaction + SaveChangesAsync.
     /// </summary>
-    private async Task ReverseMultiDocPaymentInternalAsync(Guid companyId, Payment payment, string reason)
+    /// <param name="reversalDate">วันที่กลับรายการ (null = วันนี้)</param>
+    private async Task ReverseMultiDocPaymentInternalAsync(Guid companyId, Payment payment, string reason,
+        DateTime? reversalDate = null)
     {
         var allocations = await _db.PaymentAllocations
             .Where(a => a.PaymentId == payment.Id && a.CompanyId == companyId && !a.IsDeleted)
@@ -6826,7 +6945,7 @@ public class DocumentService : IDocumentService
         foreach (var jeId in journalIds)
         {
             await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
-                reversalDate: DateTime.UtcNow.Date,
+                reversalDate: (reversalDate ?? DateTime.UtcNow).Date,
                 description: $"{reason} - {pn}",
                 systemTriggered: true);
         }
@@ -10186,7 +10305,7 @@ public class DocumentService : IDocumentService
             .Select(j => j.Id).ToListAsync();
         foreach (var jeId in jeIds)
             await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
-                reversalDate: DateTime.UtcNow.Date,
+                reversalDate: taxInvoice.DocumentDate.Date,
                 description: $"แทนที่ด้วยใบกำกับภาษี {taxInvoice.DocumentNumber}", systemTriggered: true);
         // กลับ stock (sale OUT → คืนเข้า) + project billing (ลด)
         await ApplyStockMovementsAsync(companyId, src, -1, actor);
