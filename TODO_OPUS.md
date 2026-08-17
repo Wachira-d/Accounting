@@ -1,4 +1,30 @@
-# TODO_OPUS.md — งานคงเหลือรวมศูนย์ (รอทีม Opus)
+# TODO_OPUS.md — งานคงเหลือรวมศูนย์
+
+## 📊 สถานะ (อัปเดต 2026-08-17)
+
+**เสร็จแล้ว:** หมวด A ครบ 6/6 (A1-A6) · หมวด B ครบ 14/14 (B1-B14) ·
+หมวด C บางส่วน (Q5 ConfirmPayment, S9 ForwardedHeaders, S8 ปิด static
+serving ไฟล์ลับ)
+
+**คงเหลือ (หมวด C เท่านั้น):**
+- **P1** CSP เลิก unsafe-inline (nonce middleware — แตะ ~115 หน้า) ·
+  test harness WebApplicationFactory/Testcontainers + เทสต์ critical-path
+  (JE posting, tenant isolation, ภ.พ.30 round-trip, payroll)
+- **P2** แตก DocumentService (13.5k บรรทัด) · IFileStorage abstraction +
+  ย้าย storage ออกจาก wwwroot จริง ๆ (S8 ปิดทางเข้าแล้ว แต่ไฟล์ยังอยู่ที่เดิม) ·
+  rate-limit แบบ distributed · CompanyId บน JournalEntryLine + balance
+  snapshot · migration versioning + CREATE INDEX CONCURRENTLY
+- **P3** refresh token (S6) · S10-S14 · GetGeneralLedgerAsync memory (P4) ·
+  N+1 (P5-P7) · audit middleware rows (Q3)
+- **รอเจ้าของตัดสินใจ** default การรับรู้ VAT มัดจำ (ต้องนักบัญชียืนยัน) ·
+  StrictPayeeIdentification switch
+
+> งานที่เหลือทั้งหมดเป็น "โครงสร้าง/สถาปัตยกรรม" ไม่ใช่บั๊กที่ผู้ใช้เจอ —
+> ทำเป็นสปรินต์แยกได้ ไม่บล็อกการใช้งานจริง
+
+---
+
+# TODO_OPUS.md — งานคงเหลือรวมศูนย์
 
 > รวบรวมจาก: (1) feedback ผู้ใช้รอบล่าสุด (หน้า import สรรพากร + Excel + ใบลดหนี้ +
 > ป้ายประเภทเอกสาร) — **วิเคราะห์แล้ว ยังไม่ได้แก้** (2) backlog ภาษี 14 ข้อจาก
