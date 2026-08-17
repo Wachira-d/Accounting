@@ -17,7 +17,9 @@ namespace Accounting.Tests;
 public class ReclassifyLineAccountTests
 {
     // ── ทิศของ JE ย้ายบัญชี ──────────────────────────────────────────────
-    private enum Nature { DebitNatured, CreditNatured }
+    // public เพราะถูกใช้เป็นพารามิเตอร์ของ [Theory] ที่ต้องเป็น public
+    // (private → CS0051 "parameter type is less accessible than method")
+    public enum Nature { DebitNatured, CreditNatured }
 
     /// <summary>mirror ของการเลือกทิศใน ReclassifyLineAccountAsync —
     /// อ่านขาที่ลงจริงใน GL ก่อน ถ้าไม่มี JE จึงตกกลับใช้ธรรมชาติของผัง</summary>

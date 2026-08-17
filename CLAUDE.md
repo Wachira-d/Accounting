@@ -522,6 +522,7 @@ python3 tools/di_cycle_check.py        # วงกลม DI (dotnet build จั
 python3 tools/nullable_arg_check.py    # CS1503 nullable→non-nullable
 python3 tools/using_check.py           # CS0246 ลืม using ของ type ในเรพ
 python3 tools/record_arg_check.py      # CS1739 named arg ที่ record ไม่มี
+python3 tools/accessibility_check.py   # CS0051/CS0050 ชนิด private ในลายเซ็น public
 python3 tools/gl_code_check.py         # เลขผังบัญชี hardcode ชนความหมายผังมาตรฐาน
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
@@ -532,6 +533,11 @@ awk brace-balance                      # ทุก .cs ที่แก้
   `AuditHashChain.cs` ใช้ `AuditAction` (Models.Enums) แต่ import แค่
   Models.Entities; CS1739 `MapDocumentToResponse` ส่ง `IssuedAsCashReceipt:`
   ที่ยังไม่มีใน `DocumentResponse`)_
+- **เทสต์ xUnit ต้อง public — ชนิดช่วยที่รับเป็นพารามิเตอร์ก็ต้อง public ตาม**
+  `[Theory]`/`[Fact]` ต้องเป็น public method; ถ้าพารามิเตอร์เป็น `private enum`/
+  `private record` ที่เขียนไว้ช่วยในคลาสเดียวกัน → **CS0051** ล้มทั้ง solution
+  (ชนิดที่ใช้แค่ในตัว body ไม่เป็นไร — เฉพาะที่อยู่ใน "ลายเซ็น" เท่านั้น)
+  _(ที่มา: `ReclassifyLineAccountTests.Nature` — จับด้วย `tools/accessibility_check.py`)_
 - **เพิ่ม field ระดับเอกสาร = แตะ record ทั้ง 3 ตัวเสมอ** — `CreateDocumentRequest`
   + `UpdateDocumentRequest` + **`DocumentResponse`** (ข้อ B ข้างล่างระบุลำดับไว้แล้ว)
   ลืมตัวใดตัวหนึ่ง: ลืม Response → CS1739 ตอน build; ลืมทั้ง mapper และ Response
