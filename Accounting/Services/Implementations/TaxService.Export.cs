@@ -254,10 +254,28 @@ public partial class TaxService
                 rows.Add(Row(W, "ภาษีหัก ณ ที่จ่ายนำส่ง", Round2(report.TotalTaxWithheld)));
                 break;
             case TaxType.CorporateIncomeTax:
+            {
+                // ⚠️ `CitAmount` เก็บภาษี **ก่อน** หักเครดิตภาษีถูกหัก ณ ที่จ่าย
+                // (GenerateCitReport: `report.CitAmount = netCitAmount` ส่วน
+                // `citPayable = netCitAmount − whtCredit` ไม่ได้ถูกเก็บลง report)
+                // ป้ายเดิมเขียน "หลังเครดิต" ⇒ สรุปในไฟล์ที่ใช้ยื่นสูงเกินจริง
+                // เท่าเครดิตทั้งก้อน และไม่ตรงกับบรรทัด WHT_CREDIT ในรายงานเอง (T-6)
+                // ยึด "บรรทัดของรายงาน" เป็นแหล่งเดียว เหมือนที่อื่นในไฟล์นี้
+                var citBefore = Round2(report.CitAmount ?? report.TotalTaxWithheld);
+                var whtCredit = Round2(-(report.Lines
+                    ?.Where(l => l.IncomeTypeCode == "WHT_CREDIT" && !l.IsExcluded)
+                    .Sum(l => l.TaxAmount) ?? 0m));
                 rows.Add(Row(W, "รายได้รวมทั้งปี", Round2(report.TotalIncome)));
                 rows.Add(Row(W, "กำไรสุทธิก่อนภาษี", Round2(report.NetVat)));
-                rows.Add(Row(W, "ภาษีนิติบุคคล (หลังเครดิต)", Round2(report.CitAmount ?? report.TotalTaxWithheld)));
+                rows.Add(Row(W, "ภาษีนิติบุคคล (ก่อนเครดิต)", citBefore));
+                if (whtCredit != 0m)
+                    rows.Add(Row(W, "หัก: ภาษีถูกหัก ณ ที่จ่าย (มีหนังสือรับรอง)", whtCredit));
+                var citPayable = Round2(citBefore - whtCredit);
+                rows.Add(Row(W,
+                    citPayable >= 0m ? "ภาษีที่ต้องชำระเพิ่ม" : "ภาษีชำระเกิน (ขอคืน/ยกไปปีหน้า)",
+                    Round2(Math.Abs(citPayable))));
                 break;
+            }
             case TaxType.VatPp36:
                 rows.Add(Row(W, "ฐานค่าบริการต่างประเทศ", Round2(report.TotalIncome)));
                 rows.Add(Row(W, "VAT นำส่ง ภ.พ.36 (ประเมินเอง)", Round2(report.OutputVat)));
