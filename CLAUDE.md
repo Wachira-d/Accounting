@@ -523,6 +523,7 @@ python3 tools/nullable_arg_check.py    # CS1503 nullable→non-nullable
 python3 tools/using_check.py           # CS0246 ลืม using ของ type ในเรพ
 python3 tools/record_arg_check.py      # CS1739 named arg ที่ record ไม่มี
 python3 tools/accessibility_check.py   # CS0051/CS0050 ชนิด private ในลายเซ็น public
+python3 tools/arg_type_check.py        # CS1503 ส่ง id เข้าพารามิเตอร์ที่รับ entity
 python3 tools/gl_code_check.py         # เลขผังบัญชี hardcode ชนความหมายผังมาตรฐาน
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
@@ -538,6 +539,20 @@ awk brace-balance                      # ทุก .cs ที่แก้
   `private record` ที่เขียนไว้ช่วยในคลาสเดียวกัน → **CS0051** ล้มทั้ง solution
   (ชนิดที่ใช้แค่ในตัว body ไม่เป็นไร — เฉพาะที่อยู่ใน "ลายเซ็น" เท่านั้น)
   _(ที่มา: `ReclassifyLineAccountTests.Nature` — จับด้วย `tools/accessibility_check.py`)_
+- **ส่ง `xxx.Id` เข้าพารามิเตอร์ที่รับตัว entity = CS1503 ล้มทั้ง solution**
+  helper ที่รับ `(Guid companyId, Document doc)` ถูกเรียกด้วย `(companyId, doc.Id)`
+  และ `(companyId, allocDocId)` — สายตาอ่านผ่านง่ายมากเพราะ "ก็ส่ง id ของเอกสาร
+  ไปนั่นแหละ" แต่คอมไพเลอร์ไม่ยอม. checker เดิมไม่มีตัวไหนดูชนิดอาร์กิวเมนต์เลย
+  (`nullable_arg_check` ดูแค่ nullable→non-nullable) → เพิ่ม `tools/arg_type_check.py`
+  ฟ้องเมื่ออาร์กิวเมนต์เป็นค่า id (`x.Id` หรือตัวแปรลงท้าย `...Id`) แต่พารามิเตอร์
+  เป็นชนิด entity ใน `Models/Entities`
+  _(ที่มา: `SyncWhtCreditReceivedAsync` 2 จุด — ผ่าน checker 6 ตัวเดิมทั้งหมด
+  แล้วไปตายตอน build ฝั่งผู้ใช้)_
+- **เปลี่ยนชื่อตัวแปรต้องไล่ให้ครบทั้งเมธอด = CS0103** เปลี่ยน `postedJournalIds`
+  (list ของ Guid) เป็น `postedJournals` (anonymous type) เพราะต้องใช้ `EntryDate`
+  ด้วย แล้วลืมจุดใช้งานที่อยู่ห่างออกไป ~120 บรรทัดในเมธอดเดียวกัน — เมธอดยาว
+  หลายร้อยบรรทัดทำให้ "อ่านทั้งเมธอด" ไม่เกิดขึ้นจริง: หลังเปลี่ยนชื่อ ให้ grep
+  ชื่อเดิมทั้งไฟล์ทุกครั้ง (`grep -n 'ชื่อเดิม' <file>`) ก่อน commit
 - **เพิ่ม field ระดับเอกสาร = แตะ record ทั้ง 3 ตัวเสมอ** — `CreateDocumentRequest`
   + `UpdateDocumentRequest` + **`DocumentResponse`** (ข้อ B ข้างล่างระบุลำดับไว้แล้ว)
   ลืมตัวใดตัวหนึ่ง: ลืม Response → CS1739 ตอน build; ลืมทั้ง mapper และ Response
