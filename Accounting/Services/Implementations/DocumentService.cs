@@ -7888,6 +7888,19 @@ public class DocumentService : IDocumentService
     {
         var companyId = source.CompanyId;
 
+        // ยอดภาษีของใบปลายทางต้อง **ตรงกับใบต้นทางเป๊ะทุกสตางค์** — ลูกค้าถือ
+        // ใบแจ้งหนี้อยู่แล้ว ใบกำกับที่แปลงมาแล้วยอดขยับ 0.01 = เอกสารสองใบของ
+        // รายการเดียวกันไม่ตรงกัน (ตรวจสอบภาษี/กระทบยอดกับลูกค้าพัง)
+        // ที่มา: ใบที่มาจาก OCR/integration เก็บ VAT รายบรรทัดที่ปัดมาแล้ว
+        // (Σ = 44,942.29) แต่การแปลงคิดใหม่จากอัตรา + กระทบยอดรายกลุ่ม
+        // (round(642,032.64 × 7%) = 44,942.28) ⇒ ต่างกัน 1 สตางค์
+        // วิธีแก้: ยก VAT ที่บันทึกไว้จริงไปเป็น VatAmountOverride เมื่อยกทั้ง
+        // บรรทัด (ComputeLineAmounts honor ตรง ๆ และ ReconcileTaxRounding ข้าม)
+        // ยกเว้นโหมด "ราคารวม VAT + ส่วนลดท้ายบิล" ที่การ back-out ทำให้ net
+        // ของใบลูกไม่ตรงกับต้นทางอยู่ดี — เคสนั้นคงพฤติกรรมเดิม (คิดใหม่)
+        var carryStoredVat = !(source.PricesIncludeVat
+            && (source.BillDiscountPercent > 0 || source.BillDiscountAmount > 0));
+
         // SourceLineId travels through the DTO so CreateDocumentAsync stamps
         // it inside its own transaction — every new line is linked 1:1 to the
         // source line it was carried forward from.
@@ -7904,6 +7917,12 @@ public class DocumentService : IDocumentService
                 ? (s.Qty >= s.Line.Quantity ? s.Line.DiscountAmount
                     // partial convert: ส่วนลดบาทเฉลี่ยตามสัดส่วน qty ที่ยกไป
                     : Math.Round(s.Line.DiscountAmount * (s.Line.Quantity > 0 ? s.Qty / s.Line.Quantity : 1m), 2))
+                : null,
+            // ยกทั้งบรรทัด → ใช้ VAT ที่บันทึกไว้จริง (ตรงเป๊ะ) · ยกบางส่วน →
+            // ปล่อยคิดใหม่ + กระทบยอดรายกลุ่มตามปกติ (การเฉลี่ย VAT ตามสัดส่วน
+            // จะสร้างเศษของตัวเองและทำให้ผลรวมของใบย่อยหลายใบไม่ตรงต้นทางอยู่ดี)
+            VatAmountOverride: carryStoredVat && s.Qty >= s.Line.Quantity && s.Line.VatRate > 0
+                ? s.Line.VatAmount
                 : null)).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
