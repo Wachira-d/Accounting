@@ -12002,6 +12002,10 @@ public class DocumentService : IDocumentService
         // CASH PAYMENTS: PaymentVoucher
         // - Linked to existing PurchaseInvoice: settlement
         // - Standalone: direct cash purchase
+        // ⚠️ mirror: PdfGenerationService.BuildProjectedGlAsync มีพรีวิว
+        //   ("ประมาณการ — ก่อนอนุมัติ") ของ branch settlement นี้แยกต่างหาก —
+        //   เปลี่ยนโครง JE ที่นี่ (ขา/บัญชี/basis) ต้องแก้พรีวิวให้ตรงด้วย
+        //   (เคยหลุด: พรีวิวโชว์ Dr ค่าใช้จ่ายซ้ำ + WHT เข้า 21510 บัญชีมัดจำ)
         // ============================================================
         else if (doc.DocumentType == DocumentType.PaymentVoucher)
         {

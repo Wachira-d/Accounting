@@ -1823,7 +1823,17 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-16 (รอบ 26d: ไล่ปิด "ทางเข้าที่หลุด policy_
+_Last verified against codebase: 2026-08-16 (รอบ 27: พรีวิว GL "ประมาณการ — ก่อน_
+_อนุมัติ" (PdfGenerationService.BuildProjectedGlAsync) เลิก drift จาก JE จริง —_
+_(1) WHT ฝั่งซื้อเคย hardcode 21510 ("เงินมัดจำรับล่วงหน้าค่าห้องพัก" ในผังมาตรฐาน!)_
+_→ mirror ResolveWhtPayableAccountAsync: 21917 (นิติ ภ.ง.ด.53) / 21916 (บุคคล ภ.ง.ด.3);_
+_(2) PV ที่ผูกใบตั้งหนี้ (แปลง/ดึงใบค้าง) เคยพรีวิวแบบ standalone (Dr ค่าใช้จ่ายซ้ำ)_
+_→ mirror settlement branch: Dr เจ้าหนี้ gross (ตามชนิดใบต้นทาง + pinned AP) / Cr_
+_เงิน / Cr WHT (Cash basis) — ไม่มีขาค่าใช้จ่าย/VAT; (3) Expense credit contra →_
+_21220 เจ้าหนี้อื่น (เดิมโชว์ 21210 ทุกชนิด); (4) fallback เงินสด 11111 (11110 ไม่มี_
+_ในผัง). ป้องกัน 3 ชั้น: mirror comment สองฝั่ง + tools/gl_code_check.py (จับ code/_
+_ชื่อไม่ตรงผังมาตรฐาน — negative test จับ 21510 ที่บรรทัดจริง) +_
+_GlAccountTemplateSanityTests (pin ความหมาย code ที่ JE engine พึ่ง); รอบ 26d: ไล่ปิด "ทางเข้าที่หลุด policy_
 _หัวกระดาษ" ครบทุกทาง — (1) Clone (`DocumentCloneController`): สืบทอด Combined/_
 _Declined/IssuedAsCashReceipt + CustomAppendix/Footer/Terms (เดิมสืบทอดแค่ภาษา ⇒_
 _clone ใบหัวรวมได้ใบหัวเดี่ยวเงียบ ๆ) — ส่ง flag เฉพาะเมื่อไม่ override ชนิด; (2)_

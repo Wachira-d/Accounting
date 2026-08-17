@@ -522,6 +522,7 @@ python3 tools/di_cycle_check.py        # วงกลม DI (dotnet build จั
 python3 tools/nullable_arg_check.py    # CS1503 nullable→non-nullable
 python3 tools/using_check.py           # CS0246 ลืม using ของ type ในเรพ
 python3 tools/record_arg_check.py      # CS1739 named arg ที่ record ไม่มี
+python3 tools/gl_code_check.py         # เลขผังบัญชี hardcode ชนความหมายผังมาตรฐาน
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
