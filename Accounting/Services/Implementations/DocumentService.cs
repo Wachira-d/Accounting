@@ -2273,10 +2273,43 @@ public class DocumentService : IDocumentService
         return updated;
     }
 
+    /// <summary>ผังปลายทางของ "ภาษีซื้อที่ไม่เคลม" — หลักภาษี/บัญชี: VAT ที่เคลม
+    /// ไม่ได้ **เป็นต้นทุนของรายการนั้น** (ตามก้อนเงิน) ไม่ใช่ค่าใช้จ่ายลอย ๆ.
+    /// ลำดับ: (1) บัญชีของบรรทัดที่มี VAT (บรรทัด VAT มากสุดชนะเมื่อหลายบัญชี;
+    /// รับทั้ง Expense และ Asset — VAT บนสินค้า/ทรัพย์สิน capitalize เข้าต้นทุน)
+    /// (2) ผังชื่อ "ภาษีซื้อ/ขอคืนไม่ได้" (3) null ให้ caller ตัดสิน.
+    /// ⚠️ เดิม fallback = "บัญชี 53xx ตัวแรกที่เจอ" ⇒ VAT ไปโผล่ 53120
+    /// "ค่าโฆษณาและส่งเสริมการขาย" ทั้งที่ก้อนเงินคือ 54123 สวัสดิการพนักงาน
+    /// (บั๊กคลาสเดียวกับ 21510-WHT: หยิบบัญชีจากเลขนำหน้าโดยไม่ดูความหมาย)</summary>
+    private async Task<ChartOfAccount?> ResolveNonClaimableVatExpenseAccountAsync(
+        Guid companyId, Document doc)
+    {
+        // (1) ตามก้อนเงิน — บัญชีของบรรทัดที่ VAT เกาะอยู่
+        var dominant = (doc.Lines ?? new List<DocumentLine>())
+            .Where(l => l.VatAmount > 0)
+            .GroupBy(l => l.AccountId ?? doc.ExpenseCategoryId)
+            .Where(g => g.Key.HasValue)
+            .OrderByDescending(g => g.Sum(l => l.VatAmount))
+            .FirstOrDefault();
+        if (dominant?.Key is Guid accId)
+        {
+            var acc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.Id == accId && a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                && (a.AccountType == AccountType.Expense || a.AccountType == AccountType.Asset));
+            if (acc != null) return acc;
+        }
+        // (2) ผังเฉพาะ "ภาษีซื้อขอคืนไม่ได้" ถ้าบริษัทตั้งไว้
+        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+            && a.AccountCode.StartsWith("5")
+            && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")));
+    }
+
     /// <summary>ติ๊ก "ไม่เคลม" ภาษีซื้อหลังอนุมัติ — ย้าย VAT จากที่พัก/เคลมอยู่
-    /// (11640 หรือ 11610) เข้า ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" + ตั้ง
-    /// InputVatAccountCodeOverride เป็นผังค่าใช้จ่ายนั้น (marker เดียวที่
-    /// ภ.พ.30/blockers รู้จักอยู่แล้ว → ใบหลุดจากรายงานถูกต้อง). PV ปิดธง
+    /// (11640 หรือ 11610) เข้า "ต้นทุนของก้อนเงินเดิม" (ResolveNonClaimableVat
+    /// ExpenseAccountAsync) + ตั้ง InputVatAccountCodeOverride เป็นผังนั้น
+    /// (marker เดียวที่ ภ.พ.30/blockers รู้จักอยู่แล้ว → ใบหลุดจากรายงานถูกต้อง;
+    /// ReclaimInputVatAsync กลับรายการจากผังเดียวกัน = สมมาตร). PV ปิดธง
     /// HasTaxInvoiceReference ด้วย. Idempotent — ไม่เคลมอยู่แล้ว = no-op.</summary>
     private async Task UnclaimInputVatAsync(Guid companyId, Document doc, string actor)
     {
@@ -2304,16 +2337,12 @@ public class DocumentService : IDocumentService
         var vatMove = doc.Lines?.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount) ?? 0m;
         if (vatMove <= 0) vatMove = doc.VatAmount;
 
-        // ผังค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" — resolve แบบเดียวกับ expiry job
-        var expenseAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
-                && a.AccountCode.StartsWith("5")
-                && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")))
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
-                && a.AccountCode.StartsWith("53"))
+        // ปลายทาง = ต้นทุนของก้อนเงินเดิม (บัญชีบรรทัดที่ VAT เกาะ) — ห้าม
+        // เดาจากเลขนำหน้า (เคยได้ 53120 ค่าโฆษณา ทั้งที่ก้อนเงินคือสวัสดิการพนักงาน)
+        var expenseAcc = await ResolveNonClaimableVatExpenseAccountAsync(companyId, doc)
             ?? throw new InvalidOperationException(
-                "ไม่พบผังค่าใช้จ่าย (5xxxx) สำหรับพักภาษีซื้อที่ไม่เคลม — เพิ่มผังก่อน");
+                "ไม่พบผังปลายทางสำหรับภาษีซื้อที่ไม่เคลม — กำหนดผังบัญชีให้บรรทัด"
+                + "ค่าใช้จ่ายของเอกสารก่อน (VAT ที่ไม่เคลมจะบวกเข้าต้นทุนบัญชีเดียวกับก้อนเงิน)");
 
         // VAT อยู่ที่ไหนตอนนี้: พัก 11640 (undue ยังไม่ reclass) หรือ 11610 (เคลมได้)
         var pendingUndue = doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null;
@@ -9639,18 +9668,16 @@ public class DocumentService : IDocumentService
 
         var undueAcc = await FindAccountAsync(companyId, "11640") ?? await FindAccountAsync(companyId, "11630");
         if (undueAcc == null) return 0;
-        // ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" — หา 5xxx ตามชื่อ ไม่งั้น fallback 5xxx ตัวแรก
-        var expenseAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+        // fallback ระดับบริษัท เมื่อ resolve ตามก้อนเงินรายใบไม่ได้ — ผังชื่อ
+        // "ภาษีซื้อ/ขอคืนไม่ได้" ก่อน แล้วค่อยผังค่าใช้จ่ายใดก็ได้. **ห้าม**
+        // fallback ตามเลขนำหน้า 53 (เคยได้ 53120 ค่าโฆษณา — คนละความหมาย)
+        var companyFallbackAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
                 && a.AccountCode.StartsWith("5")
                 && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")))
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
-                && a.AccountCode.StartsWith("53"))
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
                 && a.AccountType == AccountType.Expense);
-        if (expenseAcc == null) return 0;
 
         var count = 0;
         foreach (var doc in rows)
@@ -9660,6 +9687,12 @@ public class DocumentService : IDocumentService
             if (today <= windowEnd) continue;   // ยังไม่หมดสิทธิ์
             var vatAmount = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
             if (vatAmount <= 0) { doc.InputVatExpiredAt = DateTime.UtcNow; count++; continue; }
+
+            // VAT หมดสิทธิ์เคลม = ต้นทุนของก้อนเงินเดิม (ตามบัญชีบรรทัด) —
+            // ใช้ fallback ระดับบริษัทเฉพาะใบที่บรรทัดไม่มีผัง (job ห้ามล้มทั้งชุด)
+            var expenseAcc = await ResolveNonClaimableVatExpenseAccountAsync(companyId, doc)
+                ?? companyFallbackAcc;
+            if (expenseAcc == null) continue;
 
             var now = DateTime.UtcNow;
             var je = new JournalEntry
