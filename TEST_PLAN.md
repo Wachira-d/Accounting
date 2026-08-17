@@ -1202,5 +1202,15 @@
 | ANN-06 | ภ.ง.ด.51 ของบริษัทที่มีรายจ่ายต้องห้าม | ประมาณการกำไรรวมบวกกลับ §65 ตรี (ฐานเดียวกับ ภ.ง.ด.50) |
 | ANN-07 | PayrollRun สถานะ Rejected ในปีนั้น | ไม่เข้าไฟล์ ภ.ง.ด.91 (ตรงกับจอ) |
 
+### ความปลอดภัยไฟล์แนบ + webhook (S8/S9/Q5)
+| รหัส | เคส | คาดหวัง |
+| --- | --- | --- |
+| SEC-01 | เปิด `/uploads/{companyId}/Document/{file}` ตรง ๆ ไม่ login | **404** (เดิมโหลดได้) — ต้องผ่าน `/attachments/{id}/download` ที่ตรวจ JWT |
+| SEC-02 | เปิด `/uploads/ocr/{guid}.png` ตรง ๆ | 404 (เดิม static handler ตัวแรกเสิร์ฟก่อน guard) |
+| SEC-03 | เปิด `/uploads/logos/x.png`, `/uploads/products/y.jpg` | ยังเสิร์ฟปกติ (ใช้ใน PDF/storefront) |
+| SEC-04 | `/uploads/logosecret/x.png` (ชื่อขึ้นต้นคล้าย public) | 404 — เทียบทีละ segment ไม่ใช่ prefix ดิบ |
+| SEC-05 | เรียก API ผ่าน reverse proxy | AuditLog/PiiAccessLog/rate-limit เห็น IP ผู้ใช้จริง ไม่ใช่ IP ของ proxy |
+| SEC-06 | ConfirmPayment แล้วขั้นตอนตัดสต๊อกล้ม | ออเดอร์ยังยืนยันสำเร็จ **แต่** InternalNotes มีบรรทัด ⚠️ ระบุขั้นที่ล้ม + log ระดับ Error |
+
 ---
 Last updated: 2026-08-16 — เพิ่ม TXP-01..08 (โหมด tax_paid ใบแปลง); ก่อนหน้า 2026-07-31 — สร้างจาก audit session; อัปเดตหลังแก้เฟส 1-3 + ฟีเจอร์ภาษาเอกสาร

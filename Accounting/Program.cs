@@ -765,6 +765,37 @@ app.UseCors();
 // visitor-facing site hosts (subdomain or custom domain).
 app.UseCmsSiteRouting();
 
+// 🔒 /uploads/** เป็น **allow-list** (S8) — เดิมเป็น deny-list ที่บล็อกเฉพาะ
+// "/uploads/attachments" ซึ่ง**ไม่ตรงกับที่ไฟล์เก็บจริงเลย**:
+//   • เอกสารแนบทุกใบอยู่ที่ /uploads/{companyId}/{entityType}/{guid}.ext
+//     (FileAttachmentService: BasePath/companyId/entityType) — ใบกำกับ สัญญา
+//     สลิป และไฟล์ HR ⇒ เดิมโหลดได้ทาง URL ตรงโดยไม่ต้อง login ทุกไฟล์
+//   • สแกน OCR อยู่ wwwroot/uploads/ocr/{guid}.ext → เสิร์ฟโดย static handler
+//     ตัวแรก (wwwroot) ซึ่งทำงาน **ก่อน** middleware บล็อกตัวเดิมเสียอีก
+//   • e-Tax XML/PDF อยู่ uploads/etax/** (มีเลขผู้เสียภาษี/ยอดเงิน)
+// ทั้งหมดนี้ static file ทำงานก่อน UseAuthentication ⇒ ไม่มีการตรวจสิทธิ์เลย.
+// UI โหลดผ่าน /attachments/{id}/download ที่ตรวจ JWT + CompanyId อยู่แล้ว.
+// เปิดเฉพาะโฟลเดอร์ที่ "ตั้งใจให้สาธารณะ" (โลโก้/แบนเนอร์/รูปสินค้า/ตราประทับ/
+// สื่อ CMS ที่ต้องแสดงบน storefront + ฝังใน PDF) และสลิปที่ผู้ซื้อ/ผู้ดูแลเปิดดู
+// ผ่านลิงก์ตรงในหน้าเว็บ (ชื่อไฟล์เป็น GUID)
+var publicUploadPrefixes = new[]
+{
+    "/uploads/logos", "/uploads/banners", "/uploads/products",
+    "/uploads/stamps", "/uploads/cms", "/uploads/signatures",
+    "/uploads/order-slips", "/uploads/portal-slips",
+};
+app.Use(async (ctx, next) =>
+{
+    var path = ctx.Request.Path;
+    if (path.StartsWithSegments("/uploads")
+        && !publicUploadPrefixes.Any(p => path.StartsWithSegments(p)))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    await next();
+});
+
 // Static files (frontend) — no-cache for HTML/JS/CSS to prevent stale content
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions
@@ -804,21 +835,6 @@ catch (Exception ex)
 {
     Console.Error.WriteLine($"[startup] Could not pre-create wwwroot/uploads tree: {ex.Message} — uploads may fail until folder is created manually.");
 }
-// 🔒 บล็อก static serving ของ /uploads/attachments/* — เป็นเอกสารการเงินราย
-// tenant (ใบเสร็จ/สลิป/เอกสารแนบ) ที่เดิมโหลดได้โดยไม่ต้อง login ผ่าน URL ตรง
-// (ไฟล์ static ทำงานก่อน UseAuthentication). UI โหลดผ่าน endpoint
-// /attachments/{id}/download ที่ตรวจ JWT + CompanyId อยู่แล้ว → ตัดทางตรงทิ้ง
-// เพื่อกัน URL รั่ว (browser history/log) ข้าม tenant. subfolder สาธารณะอื่น
-// (logos/banners/products/stamps/cms) ยังเสิร์ฟตามปกติเพราะใช้แสดงใน PDF/storefront.
-app.Use(async (ctx, next) =>
-{
-    if (ctx.Request.Path.StartsWithSegments("/uploads/attachments"))
-    {
-        ctx.Response.StatusCode = StatusCodes.Status404NotFound;
-        return;
-    }
-    await next();
-});
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsPath),

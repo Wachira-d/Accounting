@@ -1823,7 +1823,13 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 35 — Task Force P3 บางส่วน: (Q5)_
+_Last verified against codebase: 2026-08-17 (รอบ 36 — S8: `/uploads/**` เปลี่ยนเป็น_
+_**allow-list** และย้าย guard ไปอยู่**ก่อน static handler ทุกตัว** — ของเดิมบล็อกแค่_
+_`/uploads/attachments` ซึ่งไม่ตรงที่ไฟล์เก็บจริง (เอกสารแนบอยู่_
+_`/uploads/{companyId}/{entityType}/…`, สแกน OCR อยู่ `wwwroot/uploads/ocr/…` ที่_
+_static handler ตัวแรกเสิร์ฟก่อน guard เดิมเสียอีก, e-Tax XML/PDF อยู่ uploads/etax)_
+_⇒ ไฟล์การเงิน/PII โหลดได้ทาง URL ตรงโดยไม่ต้อง login. เปิดเฉพาะ logos/banners/_
+_products/stamps/cms/signatures/order-slips/portal-slips; รอบ 35 — Task Force P3 บางส่วน: (Q5)_
 _`CmsCommerceService.ConfirmPaymentAsync` เลิกกลืน error ใน money/stock path —_
 _สะสมความล้มเหลว (อนุมัติเอกสาร/บันทึกชำระ/ตัดสต๊อก), log เป็น Error, และปักหมุด_
 _ลง `Order.InternalNotes` ให้แอดมินเห็นว่า "เงินเข้าแล้วแต่บัญชี/สต๊อกยังไม่ครบ"_
