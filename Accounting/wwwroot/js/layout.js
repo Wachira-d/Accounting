@@ -2181,6 +2181,47 @@ const Layout = {
   _revenueDocTypes: ['Quotation','Invoice','TaxInvoice','Receipt','DeliveryNote','BillingNote','DebitNote','CreditNote','ReceiptVoucher'],
   _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','Expense','PaymentVoucher','CertificateInLieu'],
 
+  /**
+   * ป้ายเอกสารตาม "หัวกระดาษจริง" — ไม่ใช่แค่ชนิด enum (TODO A4)
+   *
+   * ผู้ใช้ถามว่า "เปิดใบไหนเป็นใบแจ้งหนี้ ใบไหนใบแจ้งหนี้/ใบกำกับภาษี ดูยังไง":
+   * ชนิดเอกสารในฐานข้อมูลของทั้งสองแบบคือ TaxInvoice เหมือนกัน ต่างกันที่ flag
+   * ⇒ ป้ายที่อ่านจาก documentType อย่างเดียวจึงบอกไม่ได้ ต้องรวม flag ด้วย
+   *
+   * ลำดับความสำคัญตรงกับ PdfGenerationService.ComputeDocumentTitle:
+   *   ไม่ประสงค์รับใบกำกับ → ใบเสร็จรับเงิน
+   *   ขายสด (IssuedAsCashReceipt) → ใบกำกับภาษี/ใบเสร็จรับเงิน
+   *   combined + ทำหน้าที่ใบเสร็จแล้ว → ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน
+   *   combined → ใบแจ้งหนี้/ใบกำกับภาษี
+   *   ทำหน้าที่ใบเสร็จแล้ว → ใบกำกับภาษี/ใบเสร็จรับเงิน
+   * @param {object} doc DocumentResponse (ต้องมี documentType + flags)
+   */
+  docHeaderLabel(doc) {
+    if (!doc) return '';
+    const t = doc.documentType;
+    if (t !== 'TaxInvoice') return this.docTypeLabel(t);
+    if (doc.buyerDeclinedTaxInvoice) return 'ใบเสร็จรับเงิน';
+    if (doc.issuedAsCashReceipt) return 'ใบกำกับภาษี/ใบเสร็จรับเงิน';
+    if (doc.combinedInvoiceTaxInvoice)
+      return doc.servedAsReceipt
+        ? 'ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน'
+        : 'ใบแจ้งหนี้/ใบกำกับภาษี';
+    return doc.servedAsReceipt ? 'ใบกำกับภาษี/ใบเสร็จรับเงิน' : 'ใบกำกับภาษี';
+  },
+
+  /** ป้ายหัวเอกสารแบบสั้นสำหรับตาราง — ใบที่หัวรวมจะยาวมาก ตัดให้พอดีคอลัมน์
+   *  พร้อม title เต็มเมื่อ hover */
+  docHeaderBadge(doc) {
+    const full = this.docHeaderLabel(doc);
+    const short = full
+      .replace('ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน', 'ใบแจ้งหนี้/ใบกำกับ/ใบเสร็จ')
+      .replace('ใบแจ้งหนี้/ใบกำกับภาษี', 'ใบแจ้งหนี้/ใบกำกับ')
+      .replace('ใบกำกับภาษี/ใบเสร็จรับเงิน', 'ใบกำกับ/ใบเสร็จ');
+    const combined = short !== full;
+    return `<span title="${this.esc(full)}"${combined
+      ? ' style="color:#7c3aed;font-weight:600"' : ''}>${this.esc(short)}</span>`;
+  },
+
   docTypeLabel(type) {
     const map = {
       Quotation: 'ใบเสนอราคา', Invoice: 'ใบแจ้งหนี้', Receipt: 'ใบเสร็จรับเงิน',

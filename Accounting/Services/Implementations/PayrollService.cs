@@ -1014,6 +1014,24 @@ public class PayrollService : IPayrollService
         var byCitizen = employees.Where(e => !string.IsNullOrEmpty(e.CitizenId))
             .GroupBy(e => DigitsOnly(e.CitizenId)).ToDictionary(g => g.Key, g => g.First());
 
+        // P6 (N+1): เดิมเช็คผังบัญชีด้วย AnyAsync **ในลูปรายบรรทัด** (2 query/
+        // พนักงาน) — import 200 คน = 400 query. โหลดชุดโค้ดที่ใช้ได้จริงทีเดียว
+        // (เฉพาะโค้ดที่ payload อ้างถึง) แล้วเช็คในหน่วยความจำ
+        var requestedAccountCodes = request.Lines
+            .SelectMany(l => new[] { l.SalaryExpenseAccountCode, l.PaymentAccountCode })
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var validAccountCodes = requestedAccountCodes.Count == 0
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                    && requestedAccountCodes.Contains(a.AccountCode))
+                .Select(a => a.AccountCode)
+                .ToListAsync())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         // ── Resolve + validate ทุก line ก่อน (atomic: ผิดคนเดียว reject ทั้ง run) ──
         var resolved = new List<(ImportPayrollLine Line, Employee Emp)>();
         foreach (var (line, idx) in request.Lines.Select((l, i) => (l, i + 1)))
@@ -1045,9 +1063,7 @@ public class PayrollService : IPayrollService
             // ตรวจ account code (ถ้าส่งมา) resolve ได้
             foreach (var code in new[] { line.SalaryExpenseAccountCode, line.PaymentAccountCode })
             {
-                if (!string.IsNullOrWhiteSpace(code)
-                    && !await _db.ChartOfAccounts.AnyAsync(a => a.CompanyId == companyId
-                        && a.AccountCode == code && a.IsActive && !a.IsDeleted))
+                if (!string.IsNullOrWhiteSpace(code) && !validAccountCodes.Contains(code))
                     throw new InvalidOperationException($"บรรทัด {idx}: ผังบัญชี '{code}' ไม่มีในระบบหรือถูกปิดใช้");
             }
             resolved.Add((line, emp));
@@ -2064,16 +2080,23 @@ public class PayrollService : IPayrollService
                 if (defaultCashAccount != null)
                 {
                     // resolve โค้ดแหล่งจ่ายรายคนทั้งหมด (cache ต่อโค้ด) — เฉพาะผังที่ใช้ได้
-                    var codeToAccount = new Dictionary<string, ChartOfAccount>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var code in run.Details
+                    // P5 (N+1): เดิม query ผังบัญชี 1 ครั้ง **ต่อโค้ดแหล่งจ่าย** —
+                    // บริษัทที่จ่ายหลายบัญชี (เงินสด/ธนาคารหลายแห่ง) ยิงหลายสิบ
+                    // query ต่อการโพสต์เงินเดือน 1 รอบ. ดึงทีเดียวแล้ว map ใน RAM
+                    var payCodes = run.Details
                         .Select(d => d.NetPaymentAccountCode)
                         .Where(c => !string.IsNullOrWhiteSpace(c))
-                        .Distinct(StringComparer.OrdinalIgnoreCase))
+                        .Select(c => c!)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    var codeToAccount = new Dictionary<string, ChartOfAccount>(StringComparer.OrdinalIgnoreCase);
+                    if (payCodes.Count > 0)
                     {
-                        var acc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                            a.CompanyId == companyId && a.AccountCode == code
-                            && a.IsActive && !a.IsDeleted && a.Level >= 4);
-                        if (acc != null) codeToAccount[code!] = acc;
+                        var payAccounts = await _db.ChartOfAccounts
+                            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                                && a.Level >= 4 && payCodes.Contains(a.AccountCode))
+                            .ToListAsync();
+                        foreach (var acc in payAccounts) codeToAccount[acc.AccountCode] = acc;
                     }
                     // จับยอดสุทธิรายคน (หลังหักเงินทดรอง) เข้าบัญชีจ่ายของแต่ละคน
                     var byPayAccount = new Dictionary<Guid, (ChartOfAccount Acc, decimal Amt)>();

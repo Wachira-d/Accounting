@@ -71,6 +71,17 @@
       </div>
     </div>
 
+    <!-- GL ↔ Tax report reconciliation (full width) -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <h3>🏛️ GL ↔ รายงานภาษี — ตรวจก่อนยื่น</h3>
+        <span style="font-size:12px;color:var(--gray-500)">ยอดที่จะยื่นตรงกับที่ลงบัญชีไหม · ไม่ตรงเพราะอะไร</span>
+      </div>
+      <div id="taxReconBody" style="padding:0">
+        <div class="text-center text-gray-400" style="padding:32px;font-size:13px">รอตรวจสอบ</div>
+      </div>
+    </div>
+
     <!-- Quick links -->
     <div class="card">
       <div class="card-header"><h3>🔗 ทางลัด</h3></div>
@@ -107,6 +118,7 @@
           this.loadPreClose(year, month),
           this.loadDocComplete(year, month),
           this.loadRecon(),
+          this.loadTaxRecon(year, month),
         ]);
       },
 
@@ -163,6 +175,60 @@
           document.getElementById('docCompleteBody').innerHTML = html;
         } catch (e) {
           document.getElementById('docCompleteBody').innerHTML = `<div style="color:#dc2626;padding:16px">${e.message}</div>`;
+        }
+      },
+
+      /** GL ↔ รายงานภาษี — แต่ละบรรทัดกางดู "สาเหตุที่เป็นไปได้" ที่ backend
+       *  ไล่ตรวจมาให้จริง (ไม่ใช่ข้อความ generic) พร้อมสิ่งที่ต้องทำ */
+      async loadTaxRecon(year, month) {
+        const cid = Layout.getCompanyId();
+        const box = document.getElementById('taxReconBody');
+        try {
+          const res = await API.get(`/api/companies/${cid}/accountant/tax-gl-recon?year=${year}&month=${month}`);
+          const d = res.data;
+          if (!d.lines.length) {
+            box.innerHTML = '<div class="text-center text-gray-400" style="padding:32px">งวดนี้ยังไม่มีรายการภาษีทั้งใน GL และรายงาน</div>';
+            return;
+          }
+          let html = `<div class="recon-row head">
+            <div>แบบ / บัญชีคุมยอด</div>
+            <div class="text-right">ยอดใน GL</div>
+            <div class="text-right">ยอดในแบบ</div>
+            <div class="text-right">ผลต่าง</div>
+            <div></div>
+          </div>`;
+          html += d.lines.map((l, i) => {
+            const causes = (l.causes || []).map(c => `
+              <div style="margin-top:6px;padding:8px 10px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px">
+                <div style="font-size:12px;color:#78350f;line-height:1.6">${Layout.esc(c.message)}</div>
+                <div style="font-size:11px;color:#92400e;margin-top:4px">🔧 ${Layout.esc(c.fix)}</div>
+                ${c.documentIds && c.documentIds.length
+                  ? `<div style="font-size:11px;margin-top:4px"><a href="/pages/documents.html" style="color:#1d4ed8">ดูเอกสารที่เกี่ยวข้อง ${c.documentIds.length} ใบ →</a></div>`
+                  : ''}
+              </div>`).join('');
+            return `<div class="recon-row ${l.isMatched ? 'ok' : 'fail'}" style="align-items:start">
+              <div>
+                <div style="font-weight:600;font-size:13px">${Layout.esc(l.form)}</div>
+                <div style="font-size:11px;color:var(--gray-500)">สถานะแบบ: ${Layout.esc(l.reportStatus || '-')}</div>
+                ${causes}
+              </div>
+              <div class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(l.glAmount)}</div>
+              <div class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(l.reportAmount)}</div>
+              <div class="text-right ${Math.abs(l.variance) < 0.01 ? 'var-zero' : 'var-pos'}" style="font-variant-numeric:tabular-nums;font-weight:600">${l.variance > 0 ? '+' : ''}${Layout.money(l.variance)}</div>
+              <div>${l.isMatched ? '<span style="color:#10b981;font-size:18px">✓</span>' : '<a href="/pages/tax.html" class="btn btn-sm btn-ghost">เปิดรายงาน →</a>'}</div>
+            </div>`;
+          }).join('');
+          const warns = (d.globalWarnings || []).map(w =>
+            `<div style="font-size:12px;color:#92400e;margin-top:6px">⚠️ ${Layout.esc(w)}</div>`).join('');
+          html += `<div style="padding:12px 14px;background:#f8fafc;border-top:2px solid var(--gray-200);font-size:13px">
+            ✓ ตรงกัน: <strong style="color:#10b981">${d.matchedCount}</strong> ·
+            ✗ ไม่ตรง: <strong style="color:#dc2626">${d.varianceCount}</strong>
+            <span style="color:var(--gray-500);margin-left:12px">ยอมรับผลต่างได้ ฿${d.tolerance}</span>
+            ${warns}
+          </div>`;
+          box.innerHTML = html;
+        } catch (e) {
+          box.innerHTML = `<div style="color:#dc2626;padding:16px">${Layout.esc(e.message)}</div>`;
         }
       },
 

@@ -687,7 +687,14 @@ public record DocumentResponse(
     /// — defect class เดียวกับ DocumentLanguage: รับค่าใน Create/Update แล้ว
     /// ไม่คืนใน Response ⇒ เปิดแก้ใบที่เคยติ๊กไว้ กล่องกลับว่าง กดบันทึกซ้ำ
     /// ค่าหายเงียบ ๆ (CLAUDE.md กฎเหล็ก #4 A "เก็บแล้วต้อง echo กลับ")</summary>
-    bool IssuedAsCashReceipt = false);
+    bool IssuedAsCashReceipt = false,
+    /// <summary>ใบกำกับภาษีที่ "ทำหน้าที่ใบเสร็จในตัว" — รับเงินครบแล้วและไม่มี
+    /// ใบเสร็จแยก ⇒ หัวพิมพ์เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" (หรือ 3-in-1 เมื่อ
+    /// combined). read-only คำนวณตอน map — UI ใช้ตั้งป้ายประเภทเอกสารให้ตรงกับ
+    /// หัวกระดาษจริง (Layout.docHeaderLabel) โดยไม่ต้องเปิดพิมพ์ก่อน.
+    /// ⚠️ mirror: PdfGenerationService.ResolveServedAsReceiptAsync คือเจ้าของกฎ
+    /// ตัวจริง (ใช้ตอน render) — แก้ที่นั่นต้องแก้ ComputeServedAsReceipt ด้วย</summary>
+    bool ServedAsReceipt = false);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

@@ -982,6 +982,12 @@ public class CmsCommerceService : ICmsCommerceService
         }
 
         // 3+4. Approve + Record payment (JE auto-post)
+        // ⚠️ CLAUDE.md กฎเหล็ก #4 E — ห้ามกลืน error ใน payment/stock/JE path.
+        // แต่ webhook ของ gateway ก็ throw ไม่ได้ (เงินเข้าจริงแล้ว + gateway จะ
+        // retry วนไม่จบ) ⇒ ทางที่ถูก: **ไม่เงียบ** — สะสมทุกความล้มเหลว, log เป็น
+        // Error (ไม่ใช่ Warning), แล้ว "ปักหมุด" ไว้บนออเดอร์ (InternalNotes +
+        // ErpSyncFailed) ให้แอดมินเห็นว่าเงินเข้าแต่บัญชี/สต๊อกยังไม่ลง
+        var syncFailures = new List<string>();
         if (order.ErpDocumentId.HasValue && _docService != null)
         {
             try
@@ -990,7 +996,10 @@ public class CmsCommerceService : ICmsCommerceService
                     actor, acknowledgeWarnings: true);
             }
             catch (Exception ex)
-            { _logger.LogWarning(ex, "ConfirmPayment: approve doc failed for order {OrderId}", orderId); }
+            {
+                _logger.LogError(ex, "ConfirmPayment: approve doc failed for order {OrderId}", orderId);
+                syncFailures.Add($"อนุมัติเอกสาร ERP ไม่สำเร็จ: {ex.Message}");
+            }
 
             // idempotency: กัน confirm ซ้ำ (เช่น gateway webhook + ยืนยันมือ) สร้าง
             // payment ERP ซ้ำ → เงินสดเกิน/AR ติดลบ. เช็คว่ามี Payment ของเอกสารนี้
@@ -1013,13 +1022,31 @@ public class CmsCommerceService : ICmsCommerceService
                 ), actor);
             }
             catch (Exception ex)
-            { _logger.LogWarning(ex, "ConfirmPayment: record payment failed for order {OrderId}", orderId); }
+            {
+                _logger.LogError(ex, "ConfirmPayment: record payment failed for order {OrderId}", orderId);
+                syncFailures.Add($"บันทึกรับชำระเข้าบัญชีไม่สำเร็จ: {ex.Message}");
+            }
         }
 
         // 5. Stock — ตัด stock ทุก line ที่ยังไม่ได้ตัด (idempotent)
         try { await DeductStockAsync(companyId, siteId, orderId); }
         catch (Exception ex)
-        { _logger.LogWarning(ex, "ConfirmPayment: stock deduct failed for order {OrderId}", orderId); }
+        {
+            _logger.LogError(ex, "ConfirmPayment: stock deduct failed for order {OrderId}", orderId);
+            syncFailures.Add($"ตัดสต๊อกไม่สำเร็จ: {ex.Message}");
+        }
+
+        // ปักหมุดความล้มเหลวไว้บนออเดอร์ — ผู้ดูแลต้องเห็นว่า "เงินเข้าแล้วแต่
+        // บัญชี/สต๊อกยังไม่ครบ" ไม่ใช่เห็นออเดอร์ success เฉย ๆ (เคสจริงที่ทำให้
+        // ตั้งกฎข้อนี้ขึ้นมา)
+        if (syncFailures.Count > 0)
+        {
+            var stamp = $"[{DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC] ⚠️ ยืนยันชำระเงินแล้วแต่ซิงก์ ERP "
+                + $"ไม่ครบ: {string.Join(" · ", syncFailures)}";
+            order.InternalNotes = string.IsNullOrWhiteSpace(order.InternalNotes)
+                ? stamp : order.InternalNotes + "\n" + stamp;
+            await _db.SaveChangesAsync();
+        }
 
         // 6. e-Tax (optional)
         if (order.RequestTaxInvoice && order.ErpDocumentId.HasValue && _etaxService != null)

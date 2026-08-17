@@ -627,7 +627,8 @@ public class DocumentController : ControllerBase
     }
 
     [HttpPost("{documentId:guid}/void")]
-    public async Task<ActionResult<ApiResponse<string>>> VoidDocument(Guid companyId, Guid documentId)
+    public async Task<ActionResult<ApiResponse<string>>> VoidDocument(Guid companyId, Guid documentId,
+        [FromQuery] DateTime? reversalDate = null)
     {
         var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
         var docType = await GetDocumentTypeAsync(companyId, documentId);
@@ -635,8 +636,29 @@ public class DocumentController : ControllerBase
         if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))
             return Forbid403<string>(
                 $"ไม่มีสิทธิ์ยกเลิกเอกสาร {docType} (ต้องการ Document.Void หรือ Document.{(DocumentPermissionHelper.IsRevenue(docType.Value) ? "Revenue" : "Purchase")}.Void)");
-        await _documentService.VoidDocumentAsync(companyId, documentId);
+        await _documentService.VoidDocumentAsync(companyId, documentId, reversalDate);
         return Ok(new ApiResponse<string>(true, null, "ยกเลิกเอกสารสำเร็จ"));
+    }
+
+    /// <summary>ย้ายวันที่ JE กลับรายการของเอกสารที่ยกเลิกไปแล้ว — ใช้แก้ใบที่
+    /// ถูกยกเลิกตอนระบบยังใช้ "วันที่กด" เป็นวันที่กลับรายการ (ข้ามเดือน).
+    /// สิทธิ์เท่ากับการยกเลิก และงวดปลายทางต้องเปิดอยู่</summary>
+    [HttpPost("{documentId:guid}/redate-void-reversal")]
+    public async Task<ActionResult<ApiResponse<object>>> RedateVoidReversal(
+        Guid companyId, Guid documentId, [FromQuery] DateTime? newDate = null)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<object>("ไม่มีสิทธิ์แก้วันที่รายการกลับบัญชีของเอกสารนี้");
+
+        var moved = await _documentService.RedateVoidReversalAsync(
+            companyId, documentId, newDate ?? default, userIdGuid.ToString());
+        return Ok(new ApiResponse<object>(true, new { moved },
+            moved > 0
+                ? $"ย้ายวันที่รายการกลับบัญชี {moved} ใบสำคัญเรียบร้อย"
+                : "ไม่มีรายการกลับบัญชีที่ต้องย้าย (วันที่ตรงอยู่แล้ว)"));
     }
 
     /// <summary>กู้คืนเอกสารที่ "ยกเลิกผิด" → คืนเป็นฉบับร่าง (Draft) คงเลขเดิม

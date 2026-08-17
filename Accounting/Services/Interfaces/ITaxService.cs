@@ -28,6 +28,9 @@ public interface ITaxService
     /// <summary>ภ.พ.36 แบบ transient (ไม่บันทึก) — single source ให้ e-Filing
     /// ใช้ชุดเดียวกับหน้าจอ (กัน "ไฟล์ที่ยื่น ≠ ที่ผู้ใช้เห็น")</summary>
     Task<Models.Entities.TaxReport> ComputePp36ReportAsync(Guid companyId, int year, int month);
+    /// <summary>ยอดบวกกลับ §65 ตรี ของช่วงเวลา — ใช้ร่วมกันระหว่าง ภ.ง.ด.50
+    /// (รายปี) และ ภ.ง.ด.51 (ประมาณการครึ่งปี) เพื่อให้สองแบบใช้ฐานเดียวกัน</summary>
+    Task<decimal> ComputeSection65TerAddBackAsync(Guid companyId, DateTime fromDate, DateTime toDate);
 
     // Task 4 of ERP upgrade
     Task<Models.Entities.VatDeferral> DeferInputVatAsync(Guid companyId, Guid documentId, int deferredToPeriod, string? reason, string userId);

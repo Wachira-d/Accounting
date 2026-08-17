@@ -1082,6 +1082,17 @@ public partial class AccountingService : IAccountingService
         if (original.ReversedByEntryId.HasValue)
             throw new InvalidOperationException("รายการนี้ถูกกลับรายการไปแล้ว");
 
+        // ใบที่ผูกเอกสารต้นทาง: ReverseJournalEntryAsync จะโยนทิ้งอยู่แล้วในขั้น
+        // ถัดไป แต่ข้อความจะเป็นของ "กลับรายการ" ซึ่งไม่ตอบคำถามที่ผู้ใช้กำลังถาม
+        // ("ลงผังบัญชีผิด จะแก้ตรงไหน") — ดักตั้งแต่ต้นทางพร้อมบอกทางที่ใช้ได้จริง
+        // (UI ซ่อนปุ่มนี้ให้แล้ว กันไว้อีกชั้นสำหรับ API/สคริปต์)
+        if (original.SourceDocumentId.HasValue)
+            throw new InvalidOperationException(
+                "รายการนี้ระบบลงให้อัตโนมัติจากเอกสารต้นทาง — แก้ที่สมุดรายวันไม่ได้ " +
+                "เพราะบัญชีต้องตรงกับเอกสารเสมอ · ลงผังบัญชีผิด ให้เปิดเอกสารแล้วกด " +
+                "'เปลี่ยนผัง' ท้ายบรรทัดที่ผิด (ระบบลงรายการย้ายบัญชีให้ในงวดเดิม) · " +
+                "ถ้าไม่ควรมีรายการนี้เลย ให้ใช้ 'ยกเลิกเอกสาร'");
+
         // Step 1: Reverse the original entry
         var reversalEntry = await ReverseJournalEntryAsync(companyId, entryId, null,
             $"แก้ไข (กลับรายการ) {original.EntryNumber}");
@@ -1319,26 +1330,33 @@ public partial class AccountingService : IAccountingService
                 && j.EntryDate < fromDateStart)
             .Select(j => j.Id);
 
+        // P4: รวมยอดยกมา **ในฐานข้อมูล** ไม่ใช่ดึงทุกบรรทัดมารวมในหน่วยความจำ —
+        // เดิม `.ToListAsync()` ดึง JournalEntryLine **ทั้งหมดตั้งแต่เปิดบริษัท**
+        // (ไม่มีตัวกรองวันที่ล่าง) เข้า RAM เมื่อผู้ใช้ไม่ได้เลือกบัญชีเจาะจง ⇒
+        // บริษัทที่ใช้มา 2-3 ปีมีหลายแสนบรรทัด = ช้า/OOM ทั้งที่ต้องการแค่ยอด
+        // สุทธิต่อบัญชี (1 แถว/บัญชี). GroupBy+Sum แปลเป็น SQL ได้ตรง ๆ
         var openingLineQuery = _db.JournalEntryLines
-            .Include(l => l.Account)
             .Where(l => openingEntryIds.Contains(l.JournalEntryId));
 
         if (accountId.HasValue)
             openingLineQuery = openingLineQuery.Where(l => l.AccountId == accountId.Value);
 
-        var openingLines = await openingLineQuery.ToListAsync();
-
-        var openingBalances = openingLines
+        var openingAgg = await openingLineQuery
             .Where(l => l.Account != null)
-            .GroupBy(l => l.AccountId)
-            .ToDictionary(g => g.Key, g =>
+            .GroupBy(l => new { l.AccountId, l.Account!.AccountType })
+            .Select(g => new
             {
-                var acctType = g.First().Account.AccountType;
-                var debit = g.Sum(l => l.DebitAmount);
-                var credit = g.Sum(l => l.CreditAmount);
-                return (acctType == AccountType.Asset || acctType == AccountType.Expense)
-                    ? debit - credit : credit - debit;
-            });
+                g.Key.AccountId,
+                g.Key.AccountType,
+                Debit = g.Sum(x => x.DebitAmount),
+                Credit = g.Sum(x => x.CreditAmount),
+            })
+            .ToListAsync();
+
+        var openingBalances = openingAgg.ToDictionary(
+            x => x.AccountId,
+            x => (x.AccountType == AccountType.Asset || x.AccountType == AccountType.Expense)
+                ? x.Debit - x.Credit : x.Credit - x.Debit);
 
         // Group by account (filter out lines with missing accounts)
         var grouped = lines
