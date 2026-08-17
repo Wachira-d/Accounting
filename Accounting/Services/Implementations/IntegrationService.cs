@@ -1545,6 +1545,31 @@ public class IntegrationService : IIntegrationService
             .Where(a => a.CompanyId == companyId && acctIds.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id);
 
+        // ── JournalPostingGuard: ตรวจโครงสร้างก่อน (กฎชุดเดียวกับ AutoPost) ──
+        // เคสจริง: JE จาก integration สมดุลเป๊ะแต่เครดิตทั้งใบลง 21917 (WHT)
+        // ไม่มีขาเจ้าหนี้เลย — สมดุลผ่าน แต่โครงสร้างผิดแน่ ต้อง block ที่นี่
+        var guardLines = lines
+            .Where(l => accts.ContainsKey(l.AccountId))
+            .Select(l => new JournalPostingGuard.LineFacts(
+                accts[l.AccountId].AccountCode, accts[l.AccountId].AccountType,
+                l.DebitAmount, l.CreditAmount))
+            .ToList();
+        var guardFindings = JournalPostingGuard.Validate(guardLines,
+            new JournalPostingGuard.DocFacts(
+                document.DocumentType, document.SubTotal, document.VatAmount,
+                document.WithholdingTaxAmount, document.TotalAmount, document.IsDeposit));
+        var guardError = JournalPostingGuard.ErrorSummary(guardFindings, document.DocumentNumber);
+        if (guardError != null)
+        {
+            // ไม่โพสต์ — เอกสารยังซิงค์ได้ แต่ JE ที่โครงสร้างผิดห้ามเข้าแยกประเภท
+            // (JournalAnomalyService จะรายงาน "เอกสารอนุมัติแล้วแต่ไม่มี JE" ให้เห็น)
+            _logger.LogError("Integration JE ถูก block โดย posting guard: {Error}", guardError);
+            return false;
+        }
+        foreach (var w in guardFindings.Where(f => !f.IsError))
+            _logger.LogWarning("Integration JE guard เตือน {Doc}: [{Rule}] {Msg}",
+                document.DocumentNumber, w.RuleCode, w.Message);
+
         foreach (var line in lines)
         {
             // 1) บัญชีต้องมีจริง + active
@@ -1947,6 +1972,12 @@ public class IntegrationService : IIntegrationService
         if (built == null) return null;
         var (journalLines, journalType, prefix) = built.Value;
 
+        // ด่านตรวจโครงสร้าง (JournalPostingGuard) — เส้นทางนี้เดิม**ไม่ผ่าน
+        // การตรวจเลย** (ValidateAndAutofix ถูกเรียกเฉพาะ PV path) ⇒ mapping
+        // ของ partner ที่ตั้งบัญชีผิดทำให้เครดิตทั้งใบลง 21917 ได้เงียบ ๆ
+        if (!await ValidateAndAutofixJournalAsync(companyId, journalLines, document))
+            return null;
+
         var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
             f.CompanyId == companyId
             && f.StartDate <= document.DocumentDate
@@ -1994,6 +2025,11 @@ public class IntegrationService : IIntegrationService
         var built = await BuildIntegrationJournalLinesAsync(companyId, integrationId, document, type);
         if (built == null) return null;
         var (newLines, _, _) = built.Value;
+
+        // ด่านตรวจโครงสร้างเดียวกับตอนสร้าง — resync ที่โครงสร้างผิดต้องไม่ทับ
+        // JE เดิมที่ถูกอยู่แล้ว
+        if (!await ValidateAndAutofixJournalAsync(companyId, newLines, document))
+            return null;
 
         var oldLines = await _db.JournalEntryLines
             .Where(l => l.JournalEntryId == original.Id)

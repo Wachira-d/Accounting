@@ -1823,7 +1823,11 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 66 — **ตัวเลือกผังบัญชีบนมือถือ**:_
+_Last verified against codebase: 2026-08-17 (รอบ 67 — **JournalPostingGuard**:_
+_ด่านตรวจโครงสร้าง JE ก่อนบันทึก (WHT ≤ 15% ของฐาน · ขาเจ้าหนี้/เงินครบยอด ·_
+_VAT ไม่เกินเอกสาร) wire เข้า AutoPost + integration 3 จุด · scanner_
+_`journal-anomalies` + การ์ด 🩺 หา JE เสียเก่าและเอกสารที่ไม่มี JE ·_
+_เทสต์ `JournalPostingGuardTests` จากเคสจริง; รอบ 66 — **ตัวเลือกผังบัญชีบนมือถือ**:_
 _เลิกใช้ `<datalist>` (Android Chrome ไม่เด้งรายการ) เปลี่ยนเป็น `<select>` +_
 _`optgroup` ทั้งโมดัลแก้ JE และเปลี่ยนผัง · `_ensureAllAccounts()` โหลดครบ 5 หมวด_
 _รวมส่วนของเจ้าของ · ถือ `accountId` ตรง ๆ แทนการ parse โค้ดจากข้อความ ·_
@@ -2431,6 +2435,29 @@ _เทียบคงเหลือจริง (หัก realized) + **อ�
 _ถูกรายงาน → ภ.พ.30 ลดยอดถูกต้อง. หน้า deposits: หัก refunded, clamp ≥0,_
 _fallback GL net เมื่อ SubTotal=0, DTO เพิ่ม RefundedAmount. create block_
 _IsDeposit+RelatedDocumentId (มัดจำต้อง standalone)._
+_รอบ 67: **ด่านตรวจโครงสร้าง JE ก่อนบันทึก (JournalPostingGuard) + สแกนย้อนหลัง**_
+_ที่มา (เคสจริง UV-202607-0037 จาก EXP integration): Dr ค่าใช้จ่าย 17,890 +_
+_Dr ภาษีซื้อ 1,252.30 / **Cr 21917 ทั้งใบ 19,142.30** — ไม่มีขาเจ้าหนี้เลย และ_
+_WHT = 107% ของฐาน. JE สมดุลเป๊ะจึงผ่าน guard "Dr=Cr" เดิมทุกตัว ⇒ สมดุลไม่พอ_
+_ต้องตรวจ **โครงสร้าง**. เพิ่ม `JournalPostingGuard` (pure class, ไม่มี DB/AI_
+_dependency — kill-switch safe ตามกฎเหล็ก #1): JE-BAL · **JE-WHT-RATIO** (WHT_
+_Cr > 15%+ε ของฐานค่าใช้จ่าย = เครดิตผิดบัญชีแน่ จับได้แม้ไม่รู้เอกสาร) ·_
+_JE-WHT-DOC (≠ ยอดบนเอกสาร) · JE-VAT-OVER (VAT ใน GL เกินเอกสาร — น้อยกว่าได้_
+_เพราะไม่เคลม/พักรอใบกำกับ) · **JE-NO-COUNTERPART** (ฝั่งซื้อ: Cr ที่ไม่ใช่บัญชี_
+_ภาษีต้องรองรับ TotalAmount — ไม่ fix รหัสบัญชีเพื่อไม่ block แหล่งเงินถูกกฎหมาย_
+_อื่น เช่น เจ้าหนี้กรรมการ/หักมัดจำจ่าย 11810) · JE-WHT-MISSING (warning). ตัวกลับ_
+_ตรวจแบบ doc=null (ขาสลับโดยเจตนา) มัดจำข้าม doc-rules. **Wire 4 จุด**: (1)_
+_`AutoPostToJournalAsync` ก่อน save — Error = throw (approve ล้มดังๆ) · (2)(3)(4)_
+_integration `ValidateAndAutofixJournalAsync` (PV path เดิม + เพิ่มใน_
+_`CreateJournalFromMappingsAsync` และ `UpdateJournalInPlaceAsync` ที่เดิม**ไม่_
+_ผ่านการตรวจเลย** — ต้นทางของ JE เสียใบนี้). **Scanner**: `JournalAnomalyService`_
+_รันกฎชุดเดียวกัน (canonical เดียว) กวาด JE posted ทั้งงวด + หา **DOC-NO-JE**_
+_(เอกสารอนุมัติแล้วแต่ไม่มี JE — เส้น integration ที่ refuse แล้วเงียบ) →_
+_`GET /accountant/journal-anomalies` + การ์ด "🩺 ตรวจโครงสร้างรายการบัญชี" ใน_
+_accountant.html พร้อมทางแก้ (เปิดเอกสาร → 📒 แก้ผังบัญชี / ยกเลิกออกใหม่)._
+_AI: ตำแหน่งที่ออกแบบไว้ = second-opinion ความสมเหตุสมผลของผังผ่าน_
+_`IAiOrchestrator` + distillation (ยังไม่เปิด — กฎ rule-based จับ defect class_
+_ที่เกิดจริงได้ 100% โดยไม่พึ่ง AI)._
 _รอบ 66: **ตัวเลือกผังบัญชีบนมือถือไม่เด้งอะไรเลย** — โมดัล "แก้ผังบัญชี" และ_
 _"เปลี่ยนผัง" ใช้ `<input list=...>` + `<datalist>` ซึ่งบนเดสก์ท็อปทำงานปกติ แต่บน_
 _Android Chrome มัก **ไม่แสดงรายการเลย** (และเมื่อช่องมีค่าเต็มอยู่แล้ว เบราว์เซอร์_

@@ -82,6 +82,17 @@
       </div>
     </div>
 
+    <!-- JE structure anomalies (full width) — JE ที่สมดุลแต่ลงผิดกลุ่มบัญชี -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <h3>🩺 ตรวจโครงสร้างรายการบัญชี (JE)</h3>
+        <span style="font-size:12px;color:var(--gray-500)">JE สมดุลแต่ลงผิดบัญชี (เช่น เครดิตทั้งใบลง WHT) · เอกสารอนุมัติแล้วแต่ไม่มี JE</span>
+      </div>
+      <div id="jeAnomalyBody" style="padding:0">
+        <div class="text-center text-gray-400" style="padding:32px;font-size:13px">รอตรวจสอบ</div>
+      </div>
+    </div>
+
     <!-- Quick links -->
     <div class="card">
       <div class="card-header"><h3>🔗 ทางลัด</h3></div>
@@ -119,7 +130,52 @@
           this.loadDocComplete(year, month),
           this.loadRecon(),
           this.loadTaxRecon(year, month),
+          this.loadJeAnomalies(year, month),
         ]);
+      },
+
+      /** ตรวจโครงสร้าง JE — กฎชุดเดียวกับด่านก่อนบันทึก (JournalPostingGuard)
+       *  รันย้อนหลังทั้งงวด: หา JE ที่สมดุลแต่เงินลงผิดกลุ่มบัญชี + เอกสารที่
+       *  อนุมัติแล้วแต่ไม่มี JE เลย พร้อมลิงก์ไปแก้ */
+      async loadJeAnomalies(year, month) {
+        const cid = Layout.getCompanyId();
+        const box = document.getElementById('jeAnomalyBody');
+        try {
+          const from = `${year}-${String(month).padStart(2, '0')}-01`;
+          const lastDay = new Date(year, month, 0).getDate();
+          const to = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
+          const res = await API.get(`/api/companies/${cid}/accountant/journal-anomalies?fromDate=${from}&toDate=${to}`);
+          const d = res.data;
+          if (!d.anomalies.length) {
+            box.innerHTML = `<div style="padding:24px;text-align:center;color:#10b981;font-size:13px">
+              ✓ ตรวจ ${d.journalsScanned} JE + ${d.documentsScanned} เอกสาร — โครงสร้างถูกต้องทั้งหมด</div>`;
+            return;
+          }
+          box.innerHTML = `
+            <div style="padding:10px 14px;font-size:12px;color:var(--gray-500);border-bottom:1px solid var(--gray-200)">
+              ตรวจ ${d.journalsScanned} JE + ${d.documentsScanned} เอกสาร · พบ
+              <b style="color:#dc2626">${d.anomalies.filter(a => a.severity === 'Error').length} ต้องแก้</b> ·
+              ${d.anomalies.filter(a => a.severity === 'Warning').length} เตือน
+            </div>` +
+            d.anomalies.map(a => `
+              <div style="padding:10px 14px;border-bottom:1px solid var(--gray-100);display:flex;gap:10px;align-items:flex-start">
+                <span style="font-size:16px">${a.severity === 'Error' ? '🔴' : '🟡'}</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:600">
+                    ${a.entryNumber ? Layout.esc(a.entryNumber) + ' · ' : ''}${a.documentNumber ? Layout.esc(a.documentNumber) : ''}
+                    <span class="badge badge-gray" style="font-size:10px;padding:1px 6px">${Layout.esc(a.ruleCode)}</span>
+                  </div>
+                  <div style="font-size:12px;color:var(--gray-600);margin-top:2px;line-height:1.6">${Layout.esc(a.message)}</div>
+                  <div style="font-size:11px;color:#92400e;margin-top:2px">🔧 ${Layout.esc(a.fix)}</div>
+                </div>
+                ${a.documentId
+                  ? `<a class="btn btn-sm btn-ghost" href="/pages/documents.html?openDoc=${a.documentId}">เปิดเอกสาร →</a>`
+                  : (a.journalEntryId
+                    ? `<a class="btn btn-sm btn-ghost" href="/pages/journals.html?entryId=${a.journalEntryId}">เปิด JE →</a>` : '')}
+              </div>`).join('');
+        } catch (e) {
+          box.innerHTML = `<div style="color:#dc2626;padding:16px">${Layout.esc(e.message)}</div>`;
+        }
       },
 
       async loadPreClose(year, month) {

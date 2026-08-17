@@ -12940,6 +12940,35 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
 
+        // ── ด่านตรวจโครงสร้าง JE ก่อนบันทึก (JournalPostingGuard) ──────────
+        // สมดุลอย่างเดียวไม่พอ: เคยมี JE ที่ Dr=Cr เป๊ะแต่เครดิตทั้งใบลงบัญชี
+        // WHT (ไม่มีขาเจ้าหนี้เลย) — ตรวจว่าเงินไปลงถูกกลุ่มบัญชี: WHT ≤ 15%
+        // ของฐาน, VAT ไม่เกินเอกสาร, ฝั่งซื้อมีขาเครดิตเจ้าหนี้/เงินครบยอด.
+        // Error = โยนทิ้งก่อน save (approve ล้มดัง ๆ ดีกว่าแยกประเภทผิดเงียบ ๆ)
+        {
+            var guardAcctIds = pendingLines.Select(l => l.AccountId).Distinct().ToList();
+            var guardAccts = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => guardAcctIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode, a.AccountType })
+                .ToDictionaryAsync(a => a.Id);
+            var guardLines = pendingLines
+                .Where(l => guardAccts.ContainsKey(l.AccountId))
+                .Select(l => new JournalPostingGuard.LineFacts(
+                    guardAccts[l.AccountId].AccountCode, guardAccts[l.AccountId].AccountType,
+                    l.Debit, l.Credit))
+                .ToList();
+            var guardFindings = JournalPostingGuard.Validate(guardLines,
+                new JournalPostingGuard.DocFacts(
+                    doc.DocumentType, doc.SubTotal, doc.VatAmount,
+                    doc.WithholdingTaxAmount, doc.TotalAmount, doc.IsDeposit));
+            var guardError = JournalPostingGuard.ErrorSummary(guardFindings, doc.DocumentNumber);
+            if (guardError != null)
+                throw new InvalidOperationException(guardError);
+            foreach (var w in guardFindings.Where(f => !f.IsError))
+                _logger.LogWarning("JE guard เตือน {Doc}: [{Rule}] {Msg}",
+                    doc.DocumentNumber, w.RuleCode, w.Message);
+        }
+
         // Resolve fiscal period — block posting to closed/locked periods per
         // Thai accounting standard (TAS 1: closed period is immutable). If the
         // document falls within a closed period, the user must reopen it first
