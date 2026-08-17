@@ -24,6 +24,7 @@ public class AccountantToolsController : ControllerBase
     private readonly DocumentCompletenessService _docComplete;
     private readonly GlobalSearchService _search;
     private readonly IAuditTrailService _audit;
+    private readonly JournalAnomalyService _jeAnomaly;
 
     public AccountantToolsController(
         SubLedgerReconciliationService subRecon,
@@ -31,7 +32,8 @@ public class AccountantToolsController : ControllerBase
         PreCloseChecklistService preClose,
         DocumentCompletenessService docComplete,
         GlobalSearchService search,
-        IAuditTrailService audit)
+        IAuditTrailService audit,
+        JournalAnomalyService jeAnomaly)
     {
         _subRecon = subRecon;
         _taxRecon = taxRecon;
@@ -39,6 +41,20 @@ public class AccountantToolsController : ControllerBase
         _docComplete = docComplete;
         _search = search;
         _audit = audit;
+        _jeAnomaly = jeAnomaly;
+    }
+
+    /// <summary>ตรวจโครงสร้างรายการบัญชี (JE) ทั้งช่วง — หา JE ที่สมดุลแต่ลงผิด
+    /// กลุ่มบัญชี (เช่น เครดิตทั้งใบลง WHT ไม่มีขาเจ้าหนี้) และเอกสารที่อนุมัติ
+    /// แล้วแต่ไม่มี JE เลย พร้อมทางแก้ที่ทำได้จริงในระบบ</summary>
+    [HttpGet("journal-anomalies")]
+    public async Task<ActionResult<ApiResponse<JournalAnomalyService.ScanResult>>> JournalAnomalies(
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate)
+    {
+        if (toDate < fromDate)
+            return BadRequest(new ApiResponse<object>(false, null, "ช่วงวันที่ไม่ถูกต้อง"));
+        var result = await _jeAnomaly.ScanAsync(companyId, fromDate, toDate);
+        return Ok(new ApiResponse<JournalAnomalyService.ScanResult>(true, result));
     }
 
     /// <summary>Sub-Ledger ↔ GL reconciliation across AR / AP / Inventory /

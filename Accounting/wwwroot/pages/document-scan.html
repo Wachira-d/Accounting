@@ -1943,6 +1943,10 @@
                   <option value="TaxInvoice" ${scan.targetDocumentType === 'TaxInvoice' ? 'selected' : ''}>ใบกำกับภาษี (ขาย)</option>
                   <option value="Receipt" ${scan.targetDocumentType === 'Receipt' ? 'selected' : ''}>ใบเสร็จ (ขาย)</option>
                   <option value="ReceiptVoucher" ${scan.targetDocumentType === 'ReceiptVoucher' ? 'selected' : ''}>ใบสำคัญรับ (รับเงิน)</option>
+                  <!-- pseudo-target: ฟอร์มเอกสารแปลงเป็น Receipt + IsDeposit ให้เอง
+                       เดิมต้องเลือก "ใบเสร็จ" แล้วไปติ๊กมัดจำเองในฟอร์ม — ลืมติ๊ก
+                       = ลงรายได้แทนหนี้สินมัดจำ (217xx) ผิดทั้งงบและ ภ.พ.30 -->
+                  <option value="Deposit" ${scan.targetDocumentType === 'Deposit' ? 'selected' : ''}>💰 ใบมัดจำ / รับเงินล่วงหน้า (ขาย)</option>
                   <option value="Invoice" ${scan.targetDocumentType === 'Invoice' ? 'selected' : ''}>ใบแจ้งหนี้ (ขาย)</option>
                   <option value="BillingNote" ${scan.targetDocumentType === 'BillingNote' ? 'selected' : ''}>ใบวางบิล (ขาย)</option>
                   <option value="Quotation" ${scan.targetDocumentType === 'Quotation' ? 'selected' : ''}>ใบเสนอราคา</option>
@@ -3453,7 +3457,7 @@
         return out;
       },
 
-      openInDocumentForm(overrideType) {
+      async openInDocumentForm(overrideType) {
         const scan = this._reviewScan;
         if (!scan) return;
 
@@ -3469,7 +3473,8 @@
         // Land on the correct side of the documents page based on the CHOSEN
         // type, not just OurRole — so picking a sales type opens the revenue
         // form (whose fDocType lists that option).
-        const salesTypes = new Set(['Quotation', 'Invoice', 'TaxInvoice', 'Receipt',
+        // 'Deposit' = pseudo-target ฝั่งขาย (ฟอร์มแปลงเป็น Receipt + IsDeposit)
+        const salesTypes = new Set(['Quotation', 'Invoice', 'TaxInvoice', 'Receipt', 'Deposit',
           'BillingNote', 'ReceiptVoucher', 'DeliveryNote']);
         const side = salesTypes.has(targetType) ? 'revenue' : 'expense';
 
@@ -3666,6 +3671,38 @@
           })(),
           createdAt: Date.now(),
         };
+
+        // ── กันสแกนใบเดิมซ้ำ ────────────────────────────────────────────
+        // ใบเดียวกันถูกสแกนสองครั้ง (ส่งไลน์ซ้ำ / ถ่ายซ้ำ / คนละคนอัปโหลด) จะ
+        // สร้างเอกสารคนละเลขของเรา ⇒ ค่าใช้จ่าย + ภาษีซื้อเบิ้ลแบบเงียบ ๆ
+        // ตรวจก่อนพาไปหน้าฟอร์ม (ผู้ใช้จะได้ไม่เสียเที่ยว) — เตือนอย่างเดียว
+        // ไม่บล็อก เพราะผู้ขายขายของชุดเดิมซ้ำได้จริง
+        try {
+          const api = Layout.api();
+          const total = Number(scan.extractedTotalAmount || 0);
+          const q = new URLSearchParams();
+          if (handoff.contactId) q.set('contactId', handoff.contactId);
+          if (handoff.supplierInvoiceNumber) q.set('supplierInvoiceNumber', handoff.supplierInvoiceNumber);
+          if (targetType) q.set('documentType', targetType);
+          if (total > 0) q.set('amount', String(total));
+          if (handoff.documentDate) q.set('documentDate', String(handoff.documentDate).slice(0, 10));
+          if (api && (handoff.contactId || handoff.supplierInvoiceNumber)) {
+            const dup = await api.checkDuplicateDocument('?' + q.toString());
+            const cands = dup?.data?.candidates || [];
+            if (cands.length) {
+              const strong = !!dup.data.hasStrongMatch;
+              const lines = cands.slice(0, 3).map(c =>
+                `• ${c.documentNumber} · ${Layout.date(c.documentDate)} · ${Layout.money(c.totalAmount)}`
+                + (c.supplierInvoiceNumber ? ` · เลขผู้ขาย ${c.supplierInvoiceNumber}` : '')).join('\n');
+              const head = strong
+                ? '⚠️ ใบนี้ถูกบันทึกไปแล้ว (เลขใบกำกับของผู้ขายตรงกัน)'
+                : 'ℹ️ พบเอกสารที่คล้ายกันมาก (คู่ค้าและยอดตรงกัน)';
+              if (!confirm(`${head}\n\n${lines}\n\n`
+                  + 'สร้างต่อไปจะทำให้ค่าใช้จ่าย/ภาษีซื้อถูกบันทึกซ้ำ\n'
+                  + 'ยังต้องการสร้างเอกสารใหม่หรือไม่?')) return;
+            }
+          }
+        } catch (e) { /* ตรวจไม่ได้ก็ไม่บล็อกการทำงาน */ }
 
         try {
           sessionStorage.setItem('ocr_handoff_payload', JSON.stringify(handoff));

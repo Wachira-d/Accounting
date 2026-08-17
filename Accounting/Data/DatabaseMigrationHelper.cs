@@ -1338,6 +1338,7 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CombinedInvoiceTaxInvoice" boolean NOT NULL DEFAULT false;""",
             // ขายเงินสด B2B (isCashSale) → e-Tax T03 + หัว "ใบเสร็จรับเงิน/ใบกำกับภาษี"
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IssuedAsCashReceipt" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaidOnIssue" boolean NOT NULL DEFAULT false;""",
             // User override ผัง VAT ปลายทาง (เช่น "51000" = ลงต้นทุนขายแทน)
             // — ใช้ AccountCode (string) เพื่อ portable, validator แปลงเป็น Id ตอน post
             """

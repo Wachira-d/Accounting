@@ -112,6 +112,13 @@ public interface IDocumentService
     Task<int> RedateVoidReversalAsync(Guid companyId, Guid documentId, DateTime newDate, string actor,
         IReadOnlyList<RedateEntryDate>? entryDates = null);
 
+    /// <summary>หา "ใบเดียวกันที่บันทึกไปแล้ว" ก่อนสร้างจากสแกน — เลขใบกำกับ
+    /// ผู้ขายตรงกัน = แน่นอน, คู่ค้า+ยอด+ช่วงวัน = น่าสงสัย. อ่านอย่างเดียว</summary>
+    Task<DuplicateCheckResult> CheckDuplicateAsync(
+        Guid companyId, Guid? contactId, string? supplierInvoiceNumber,
+        DocumentType? documentType, decimal amount, DateTime documentDate,
+        Guid? excludeDocumentId = null);
+
     /// <summary>รายการบัญชี (JE) ของเอกสาร พร้อมบรรทัดจริงจาก GL + สิทธิ์ปรับปรุง —
     /// ใช้ในแผง "ตรวจสอบ/แก้ไขรายการบัญชี" บนหน้าเอกสาร</summary>
     Task<List<DocumentJournalEntryDto>> GetDocumentJournalEntriesAsync(Guid companyId, Guid documentId);

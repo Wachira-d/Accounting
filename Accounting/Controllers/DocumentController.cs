@@ -617,7 +617,13 @@ public class DocumentController : ControllerBase
         var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
         var docType = await GetDocumentTypeAsync(companyId, documentId);
         if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
-        // ใช้ permission เดียวกับ Edit (เพราะแก้ Draft อยู่)
+        // ⚠️ เดิมคอมเมนต์บอกว่า "ใช้ permission เดียวกับ Edit" แต่ **ไม่เคยเช็คจริง**
+        // — ผู้ใช้ระดับดูอย่างเดียวใส่บรรทัด Dr/Cr อะไรก็ได้เข้าเอกสาร Draft ได้
+        // แล้วบรรทัดนั้นเข้า GL ตอนผู้อื่นอนุมัติ (service ไม่ตรวจ balance เอง
+        // โดยตั้งใจ — "การ block จริงอยู่ที่ AutoPost")
+        // สิทธิ์แก้ Draft = สิทธิ์สร้างเอกสารชนิดนั้น (ไม่มี CanEditAsync แยก)
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>($"ไม่มีสิทธิ์แก้ไขเอกสาร {docType}");
         var lines = (request.Lines ?? new()).Select(l =>
             (l.AccountId, l.DebitAmount, l.CreditAmount, l.Description, l.ProjectId, l.Reason));
         var result = await _documentService.SaveAdjustingJournalLinesAsync(
@@ -661,6 +667,26 @@ public class DocumentController : ControllerBase
             moved > 0
                 ? $"ย้ายวันที่รายการกลับบัญชี {moved} ใบสำคัญเรียบร้อย"
                 : "ไม่มีรายการกลับบัญชีที่ต้องย้าย (วันที่ตรงอยู่แล้ว)"));
+    }
+
+    /// <summary>ตรวจก่อนสร้างจากสแกน: ใบนี้เคยบันทึกไปแล้วหรือยัง — เลขใบกำกับ
+    /// ผู้ขายตรงกัน = แน่นอน, คู่ค้า+ยอด+ช่วงวัน = น่าสงสัย. อ่านอย่างเดียว
+    /// ไม่บล็อกอะไร (ผู้ขายขายของชุดเดิมซ้ำได้จริง — false positive ที่บล็อก
+    /// แรงกว่าปัญหาที่กัน)</summary>
+    [HttpGet("duplicate-check")]
+    public async Task<ActionResult<ApiResponse<DuplicateCheckResult>>> DuplicateCheck(
+        Guid companyId,
+        [FromQuery] Guid? contactId = null,
+        [FromQuery] string? supplierInvoiceNumber = null,
+        [FromQuery] DocumentType? documentType = null,
+        [FromQuery] decimal amount = 0,
+        [FromQuery] DateTime? documentDate = null,
+        [FromQuery] Guid? excludeDocumentId = null)
+    {
+        var result = await _documentService.CheckDuplicateAsync(
+            companyId, contactId, supplierInvoiceNumber, documentType, amount,
+            documentDate ?? DateTime.UtcNow.Date, excludeDocumentId);
+        return Ok(new ApiResponse<DuplicateCheckResult>(true, result, null));
     }
 
     /// <summary>รายการบัญชี (JE) ของเอกสาร พร้อมบรรทัดจริงจาก GL — แผง

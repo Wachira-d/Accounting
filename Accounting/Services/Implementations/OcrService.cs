@@ -32,11 +32,12 @@ public class OcrService : IOcrService
     private static readonly Regex VendorEmailRegex = new(
         @"[\w\.\-]+@[\w\.\-]+\.[a-zA-Z]{2,}",
         RegexOptions.Compiled);
-    private static readonly Regex VendorBranchRegex = new(
-        @"(?:สาขา(?:ที่)?|BRANCH)\s*(?:เลข(?:ที่)?\s*)?[:：]?\s*(\d{1,5})",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex HeadOfficeRegex = new(
-        @"สำนักงานใหญ่|HEAD\s*OFFICE",
+    // รหัสสาขา: ย้ายกฎไป BranchCodeExtractor (pure + testable) เพื่ออ่านทั้ง
+    // ฝั่งผู้ขายและผู้ซื้อด้วยกฎเดียวกัน — ห้ามมี regex สาขาซ้ำในไฟล์นี้อีก
+    /// <summary>คำที่บอกว่าเอกสารรับเงินใบนี้เป็น "มัดจำ/รับล่วงหน้า" (ลง 217xx
+    /// ไม่ใช่รายได้). "เงินประกัน" ไม่รวม — เป็นหลักประกันสัญญาคนละบัญชี</summary>
+    private static readonly Regex DepositKeywordRegex = new(
+        @"เงินมัดจำ|ค่ามัดจำ|มัดจำ|รับล่วงหน้า|เงินล่วงหน้า|DEPOSIT|ADVANCE\s*(?:PAYMENT|RECEIVED)|DOWN\s*PAYMENT",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex VendorAddressRegex = new(
         @"(?:ที่อยู่|ADDRESS)\s*[:：]?\s*((?:[^\n]+\n?){1,4}?)(?=\n\s*(?:โทร|TEL|เลขประจำตัว|TAX\s*ID|อีเมล|EMAIL|FAX|$))",
@@ -1146,6 +1147,23 @@ public class OcrService : IOcrService
                     "[CertInLieu] บิลไม่มีเลขผู้เสียภาษี 13 หลักและไม่มี VAT — หลักฐานยังไม่พอเป็นรายจ่าย"
                     + "ทางภาษี (§65 ตรี(9)(18)) → จัดทำ \"ใบรับรองแทนใบเสร็จรับเงิน\" แนบรูปบิลเป็นหลักฐาน"
                     + "ตามแนวทางกรมสรรพากร");
+            }
+
+            // ───── ใบมัดจำ/รับเงินล่วงหน้า (ฝั่งขาย) ─────
+            // เอกสารรับเงินที่ระบุว่าเป็น "มัดจำ/เงินล่วงหน้า" ต้องลง Cr 217xx
+            // (ขายรอรับรู้) ไม่ใช่รายได้ — เดิมไม่มี target นี้ ผู้ใช้ต้องเลือก
+            // "ใบเสร็จ" แล้วไปติ๊กมัดจำเองในฟอร์ม ลืมติ๊ก = รับรู้รายได้เร็วเกิน
+            // (ผิดทั้งงบและงวด ภ.พ.30). "Deposit" เป็น pseudo-target ที่ฟอร์ม
+            // แปลงเป็น Receipt + IsDeposit ให้เอง
+            if (extractedData.OurRole == "Seller"
+                && DepositKeywordRegex.IsMatch(scanResult.RawTextContent ?? "")
+                && extractedData.TargetDocumentType
+                    is null or nameof(DocumentType.Receipt) or nameof(DocumentType.Invoice))
+            {
+                extractedData.TargetDocumentType = "Deposit";
+                extractedData.ReasoningTrace.Add(
+                    "[Deposit] เอกสารระบุ \"มัดจำ/รับล่วงหน้า\" → ตั้งเป้าเป็นใบมัดจำ "
+                    + "(Cr ขายรอรับรู้ 217xx แทนรายได้ — รับรู้รายได้เมื่อส่งมอบ/ออกใบกำกับ)");
             }
 
             // ───── Re-sync mutable fields (extractedData → scanResult) ─────
@@ -3600,11 +3618,15 @@ public class OcrService : IOcrService
             data.VendorEmail = emailMatch.Value.Trim().TrimEnd('.', ',', ';');
 
         // Branch code — e-Tax spec requires 5-digit zero-padded; "00000" = HQ.
-        var branchMatch = VendorBranchRegex.Match(text);
-        if (branchMatch.Success)
-            data.VendorBranchCode = branchMatch.Groups[1].Value.PadLeft(5, '0');
-        else if (HeadOfficeRegex.IsMatch(text))
-            data.VendorBranchCode = "00000";
+        // แยกฝั่งผู้ขาย/ผู้ซื้อด้วย BranchCodeExtractor: เดิมยิง regex ทับทั้งหน้า
+        // แล้วยัดผลเป็นสาขา "ผู้ขาย" ตัวเดียว ⇒ สาขาผู้ซื้อไม่เคยถูกอ่าน (ตกเป็น
+        // 00000 เสมอ) → ขายให้สาขาลูกค้าแล้วรายงานภาษีขายขึ้นสำนักงานใหญ่ผิด
+        // (ประกาศอธิบดีฯ 199 / §86/4)
+        var branches = BranchCodeExtractor.Extract(text);
+        if (!string.IsNullOrWhiteSpace(branches.SellerBranchCode))
+            data.VendorBranchCode = branches.SellerBranchCode;
+        if (!string.IsNullOrWhiteSpace(branches.BuyerBranchCode))
+            data.BuyerBranchCode = branches.BuyerBranchCode;
 
         var addrMatch = VendorAddressRegex.Match(text);
         if (addrMatch.Success)
@@ -3833,8 +3855,20 @@ public class OcrService : IOcrService
         // Document type precedence: explicit caller override (the user's live
         // dropdown pick in the review modal) → persisted inferred
         // TargetDocumentType → fallback mapping off the scanned paper type.
+        // pseudo-target "Deposit" (ใบมัดจำ) — ไม่ใช่ค่าใน enum: ลงเป็น Receipt
+        // + IsDeposit=true (ทรงเดียวกับฟอร์มเอกสาร ห้าม drift สองทาง). ต้อง
+        // ตัดสินก่อน Enum.TryParse ไม่งั้นตกไป fallback แล้วกลายเป็น Expense
+        var wantDeposit = string.Equals(targetTypeOverride, "Deposit", StringComparison.OrdinalIgnoreCase)
+            || (string.IsNullOrWhiteSpace(targetTypeOverride)
+                && string.Equals(result.TargetDocumentType, "Deposit", StringComparison.OrdinalIgnoreCase));
+
         DocumentType docType;
-        if (!string.IsNullOrWhiteSpace(targetTypeOverride)
+        if (wantDeposit)
+        {
+            docType = DocumentType.Receipt;
+            result.TargetDocumentType = "Deposit";
+        }
+        else if (!string.IsNullOrWhiteSpace(targetTypeOverride)
             && Enum.TryParse<DocumentType>(targetTypeOverride, ignoreCase: true, out var overrideTarget))
         {
             docType = overrideTarget;
@@ -3939,12 +3973,27 @@ public class OcrService : IOcrService
                     CompanyId = companyId,
                     Name = buyerNm!,
                     TaxId = buyerTax,
+                    // สาขาผู้ซื้อจากกระดาษ (§86/4 / ประกาศฯ 199) — เดิมไม่เคยเก็บ
+                    // ⇒ ลูกค้าใหม่ทุกรายตกเป็นสำนักงานใหญ่ แม้ใบระบุ "สาขาที่ 3"
+                    BranchCode = result.BuyerBranchCode,
                     IsCustomer = true,
                     IsSupplier = false,
                     CreatedBy = createdBy
                 };
                 _db.Contacts.Add(cust);
                 contactId = cust.Id;
+            }
+            // ลูกค้าที่มีอยู่แล้วแต่ยังไม่มีสาขา — เติมจากกระดาษ (เติมเฉพาะตอน
+            // ว่าง ไม่ทับค่าที่ผู้ใช้ตั้งไว้ — pattern เดียวกับฝั่งผู้ขาย)
+            if (contactId.HasValue && !string.IsNullOrWhiteSpace(result.BuyerBranchCode))
+            {
+                var custRow = await _db.Contacts
+                    .FirstOrDefaultAsync(c => c.Id == contactId.Value && c.CompanyId == companyId);
+                if (custRow != null && string.IsNullOrWhiteSpace(custRow.BranchCode))
+                {
+                    custRow.BranchCode = result.BuyerBranchCode;
+                    custRow.UpdatedBy = "OCR-Enrich";
+                }
             }
             // Last resort so creation doesn't hard-fail when the buyer block
             // was unreadable — the user can re-pick the customer on the doc.
@@ -4163,7 +4212,7 @@ public class OcrService : IOcrService
         await using var txn = await _db.Database.BeginTransactionAsync();
         var docNumber = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
         // สาขาผู้ขาย: Contact ถูก enrich ด้วยสาขาที่ OCR แกะจากกระดาษตอน scan
-        // แล้ว (VendorBranchRegex → Contact.BranchCode) — ใช้ค่านั้นก่อน ค่อย
+        // แล้ว (BranchCodeExtractor → Contact.BranchCode) — ใช้ค่านั้นก่อน ค่อย
         // fallback 00000. เดิม hardcode "00000" ทับ → ใบสาขา 00003 ขึ้นรายงาน
         // ภาษีซื้อเป็นสำนักงานใหญ่ผิด (ประกาศฯ 199/§86/4) แบบเงียบ
         // ⚠️ ลำดับที่ถูกต้อง: สาขาที่พิมพ์อยู่ "บนใบใบนี้" ต้องมาก่อน Contact —
@@ -4193,6 +4242,9 @@ public class OcrService : IOcrService
             // เหตุผลการลดหนี้ (§86/10) — บังคับก่อนอนุมัติ เดิม OCR ไม่เคยเซ็ต
             // ใบลดหนี้ที่สแกนมาจึงติดบล็อก "ต้องระบุเหตุผล" ทุกใบ 100%
             // กระดาษมักพิมพ์เหตุผลไว้อยู่แล้ว → อ่านจากข้อความ ถ้าไม่พบค่อยให้ผู้ใช้เลือก
+            // ใบมัดจำ (pseudo-target "Deposit") → Receipt + IsDeposit: AutoPost
+            // ลง Cr 217xx ขายรอรับรู้ แทนรายได้ (รับรู้เมื่อส่งมอบ/ออกใบกำกับ)
+            IsDeposit = wantDeposit,
             CreditNoteReason = docType == DocumentType.CreditNote
                 ? InferCreditNoteReason(result.RawTextContent) : null,
             CnDnPurchaseSideOverride =

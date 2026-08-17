@@ -6,6 +6,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
 
@@ -14,12 +15,17 @@ public partial class AccountingService : IAccountingService
     private readonly AccountingDbContext _db;
     private readonly IBankService? _bankService;
     private readonly ISensitivityService? _sensitivity;
+    // optional — cleanup ที่เป็น best-effort ต้อง log ได้ ห้ามเงียบสนิท
+    // (ค่า default null เพื่อไม่กระทบจุดที่ new ตรง ๆ ในเทสต์/สคริปต์)
+    private readonly ILogger<AccountingService>? _logger;
 
-    public AccountingService(AccountingDbContext db, IBankService? bankService = null, ISensitivityService? sensitivity = null)
+    public AccountingService(AccountingDbContext db, IBankService? bankService = null,
+        ISensitivityService? sensitivity = null, ILogger<AccountingService>? logger = null)
     {
         _db = db;
         _bankService = bankService;
         _sensitivity = sensitivity;
+        _logger = logger;
     }
 
     // ==================== Chart of Accounts ====================
@@ -622,13 +628,11 @@ public partial class AccountingService : IAccountingService
         if (entry.Status != JournalEntryStatus.Draft)
             throw new InvalidOperationException("สามารถ post ได้เฉพาะใบสำคัญที่เป็น Draft เท่านั้น");
 
-        // Validate fiscal period is Open
-        if (entry.FiscalPeriodId.HasValue)
-        {
-            var period = await _db.FiscalPeriods.FindAsync(entry.FiscalPeriodId.Value);
-            if (period != null && period.Status == FiscalPeriodStatus.Closed)
-                throw new InvalidOperationException("ไม่สามารถ post ได้เนื่องจากงวดบัญชีปิดแล้ว");
-        }
+        // งวดต้องเปิด — เดิมเช็คเฉพาะ Closed ทำให้ **Locked ยัง post ได้** (งวดที่
+        // ยื่นแบบไปแล้วถูกล็อกด้วยสถานะนี้) และเช็คเฉพาะเมื่อมี FK ⇒ JE ที่ยังไม่มี
+        // งวดผูกลอดทั้งด่าน. ยึดวันที่เป็นหลักให้ตรงกับ Update/Void (X-9)
+        await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
+        await ValidateFiscalPeriodOpenForDateAsync(companyId, entry.EntryDate);
 
         entry.Status = JournalEntryStatus.Posted;
         await _db.SaveChangesAsync();
@@ -666,13 +670,25 @@ public partial class AccountingService : IAccountingService
                 "เพื่อให้สถานะของเอกสารกับบัญชีตรงกันเสมอ");
 
         await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
+        // ยึดวันที่เป็นหลักด้วย — FK ที่เก็บไว้เป็น null ได้ (JE ที่ลงตอนยังไม่มีงวด)
+        // แล้วด่านข้างบนจะปล่อยผ่านทั้งที่งวดของวันนั้นถูกปิดไปแล้ว (X-9)
+        await ValidateFiscalPeriodOpenForDateAsync(companyId, entry.EntryDate);
 
         // Scalar updates (only when caller actually sent the field).
         if (request.EntryDate.HasValue)
         {
             if (request.EntryDate.Value > DateTime.UtcNow.Date.AddDays(1))
                 throw new InvalidOperationException("วันที่ลงบัญชีต้องไม่เป็นวันที่ในอนาคต");
-            entry.EntryDate = NormalizeDate(request.EntryDate.Value);
+            var newDate = NormalizeDate(request.EntryDate.Value);
+            if (newDate.Date != entry.EntryDate.Date)
+            {
+                // งวดปลายทางต้องเปิดด้วย ไม่งั้นย้ายรายการเข้างวดที่ปิดแล้วได้
+                await ValidateFiscalPeriodOpenForDateAsync(companyId, newDate);
+                // และ FK ต้องตามวันที่ไป ไม่งั้นรายการค้างชี้งวดเดิม → รายงานราย
+                // งวดกับสมุดรายวันไม่ตรงกันอย่างถาวร
+                entry.FiscalPeriodId = (await FindFiscalPeriodByDateAsync(companyId, newDate))?.Id;
+            }
+            entry.EntryDate = newDate;
         }
         if (request.Description != null) entry.Description = request.Description;
         if (request.Reference != null) entry.Reference = request.Reference;
@@ -775,6 +791,7 @@ public partial class AccountingService : IAccountingService
                 "เพื่อยกเลิกทั้งเอกสารและรายการบัญชีพร้อมกัน");
 
         await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
+        await ValidateFiscalPeriodOpenForDateAsync(companyId, entry.EntryDate);
 
         if (entry.Status == JournalEntryStatus.Posted)
         {
@@ -1052,8 +1069,19 @@ public partial class AccountingService : IAccountingService
             // pointing at a Reversed JE inside a now-imbalanced group.
             if (_bankService != null)
             {
+                // best-effort — cleanup ห้ามทำให้การกลับรายการที่ commit แล้วพัง
+                // แต่ต้อง **ไม่เงียบสนิท**: ถ้า bank service ล้มเป็นระบบ อาการที่
+                // เห็นคือ "bank txn ค้าง Matched กับ JE ที่ถูกกลับไปแล้ว" โดยไม่มี
+                // ร่องรอยให้ตาม (อาการเดียวกับเคส ConfirmPayment ที่เคย catch{} เปล่า)
+                // — จุดอื่นที่ทำงานเดียวกันใน DocumentService log ครบทุกจุดแล้ว
                 try { await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.JournalEntry, original.Id); }
-                catch { /* best-effort — bank cleanup never breaks the reverse */ }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(ex,
+                        "ปลดการจับคู่ธนาคารของใบสำคัญ {Entry} ไม่สำเร็จหลังกลับรายการ — " +
+                        "รายการธนาคารอาจยังชี้ใบที่ถูกกลับแล้ว (ตรวจที่หน้ากระทบยอดธนาคาร)",
+                        original.EntryNumber);
+                }
             }
 
             return await GetJournalEntryAsync(companyId, reversal.Id);
@@ -2657,5 +2685,32 @@ public partial class AccountingService : IAccountingService
         var period = await _db.FiscalPeriods.FindAsync(fiscalPeriodId.Value);
         if (period is { Status: FiscalPeriodStatus.Closed or FiscalPeriodStatus.Locked })
             throw new InvalidOperationException("ไม่สามารถดำเนินการได้เนื่องจากงวดบัญชีปิดแล้ว");
+    }
+
+    /// <summary>ตรวจว่า "วันที่นี้" อยู่ในงวดที่เปิดอยู่ — ยึด **วันที่** เป็นหลัก
+    /// ไม่ใช่ FK ที่เก็บไว้.
+    /// <para>ที่มา (X-9): <c>ValidateFiscalPeriodOpenAsync</c> คืนทันทีเมื่อ
+    /// <c>FiscalPeriodId == null</c> ซึ่งเป็นค่าปกติของ JE ที่ลงตอนบริษัทยังไม่ได้
+    /// ตั้งงวด หรือ JE ที่ resolver หางวดไม่เจอ ⇒ พองวดถูกปิดย้อนหลัง JE เหล่านั้น
+    /// **ยังแก้ได้อยู่** ทั้งที่งบของงวดนั้นออกไปแล้ว. และเมื่อผู้ใช้เปลี่ยนวันที่
+    /// ระบบไม่เคยตรวจงวดของ "วันใหม่" เลย ⇒ ย้าย JE เข้างวดที่ปิดแล้วได้.</para>
+    /// convention เดียวกับที่อื่นในระบบ: ไม่มีแถวงวดครอบวันนั้น = ถือว่าเปิด</summary>
+    private async Task ValidateFiscalPeriodOpenForDateAsync(Guid companyId, DateTime date)
+    {
+        var d = date.Date;
+        var period = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId && f.StartDate <= d && f.EndDate >= d);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"วันที่ {d:dd/MM/yyyy} อยู่ในงวด '{period.Name}' ที่ปิดแล้ว ({period.Status}) — " +
+                "แก้ไขรายการในงวดที่ปิดไม่ได้ (กันงบย้อนหลังเปลี่ยนหลังออกรายงาน)");
+    }
+
+    /// <summary>งวดที่ครอบวันนี้ (null = ไม่มีแถวงวด) — ใช้ตั้ง FK ใหม่เมื่อวันที่เปลี่ยน</summary>
+    private Task<FiscalPeriod?> FindFiscalPeriodByDateAsync(Guid companyId, DateTime date)
+    {
+        var d = date.Date;
+        return _db.FiscalPeriods.FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId && f.StartDate <= d && f.EndDate >= d);
     }
 }

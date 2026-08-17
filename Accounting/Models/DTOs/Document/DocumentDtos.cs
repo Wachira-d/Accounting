@@ -32,6 +32,9 @@ public record CreateDocumentRequest(
     // (Dr เงินสด/Cr รายได้+VAT + กลับมัดจำถ้ามี), e-Tax T03, หัว "ใบเสร็จรับเงิน/
     // ใบกำกับภาษี", สถานะ Paid ทันที. ถ้ามีมัดจำต้องส่ง DepositAppliedDrivesJournal=true
     bool? IssuedAsCashReceipt = null,
+    // เจตนา "รับเงินครบแล้ว ณ วันออก" (โหมด tax_paid ของใบแปลง) — เดินสายเครดิต
+    // เต็มตามเดิม แค่บันทึกเจตนาให้หัวใบร่างพิมพ์รวม + ฟอร์ม echo กลับได้
+    bool? PaidOnIssue = null,
     // ส่วนลดท้ายบิล (จากยอดรวม) — กรอกอย่างใดอย่างหนึ่ง: % หรือ ยอดบาท (ex-VAT).
     // ระบบเฉลี่ย pro-rata ลงบรรทัดให้ VAT ถูกต้อง
     decimal? BillDiscountPercent = null,
@@ -245,6 +248,9 @@ public record UpdateDocumentRequest(
     // ขายเงินสด ใบเดียว (ใบกำกับภาษี/ใบเสร็จรับเงิน) — เดิม UpdateRequest ไม่มี
     // ⇒ ติ๊กตอนแก้ไขแล้วไม่มีผล (silent no-op); null = ไม่แตะ
     bool? IssuedAsCashReceipt = null,
+    // เจตนา "รับเงินครบแล้ว" — ใบแปลงเกิดเป็นร่างเสมอ ผู้ใช้เลือกโหมดตอนแก้ไข
+    // จึงต้องรับที่ update ด้วย; null = ไม่แตะ
+    bool? PaidOnIssue = null,
     decimal? DepositAppliedAmount = null,
     string? DepositAppliedRef = null,
     bool? DepositAppliedDrivesJournal = null,
@@ -688,6 +694,8 @@ public record DocumentResponse(
     /// ไม่คืนใน Response ⇒ เปิดแก้ใบที่เคยติ๊กไว้ กล่องกลับว่าง กดบันทึกซ้ำ
     /// ค่าหายเงียบ ๆ (CLAUDE.md กฎเหล็ก #4 A "เก็บแล้วต้อง echo กลับ")</summary>
     bool IssuedAsCashReceipt = false,
+    // echo เจตนา "รับเงินครบแล้ว" กลับให้ฟอร์ม hydrate โหมด tax_paid ได้
+    bool PaidOnIssue = false,
     /// <summary>ใบกำกับภาษีที่ "ทำหน้าที่ใบเสร็จในตัว" — รับเงินครบแล้วและไม่มี
     /// ใบเสร็จแยก ⇒ หัวพิมพ์เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" (หรือ 3-in-1 เมื่อ
     /// combined). read-only คำนวณตอน map — UI ใช้ตั้งป้ายประเภทเอกสารให้ตรงกับ
@@ -854,6 +862,26 @@ public record VoidReversalRedatePreview(
     string DocumentNumber,
     DateTime DocumentDate,
     IReadOnlyList<VoidReversalRedateRow> Rows);
+
+/// <summary>เอกสารที่อาจเป็น "ใบเดียวกันที่บันทึกไปแล้ว" — ใช้เตือนก่อนสร้าง
+/// จากสแกน (สแกนใบเดิมซ้ำ = ค่าใช้จ่าย/ภาษีซื้อเบิ้ล)</summary>
+public record DuplicateDocumentCandidate(
+    Guid Id,
+    string DocumentNumber,
+    string DocumentType,
+    DateTime DocumentDate,
+    decimal TotalAmount,
+    string Status,
+    string? SupplierInvoiceNumber,
+    string? ContactName,
+    /// <summary>"SupplierInvoiceNumber" = เลขใบกำกับผู้ขายตรงกัน (แน่นอนสุด) ·
+    /// "SameContactAndAmount" = คู่ค้า+ยอด+ช่วงวันใกล้กัน (น่าสงสัย)</summary>
+    string MatchReason,
+    bool IsStrong);
+
+public record DuplicateCheckResult(
+    bool HasStrongMatch,
+    IReadOnlyList<DuplicateDocumentCandidate> Candidates);
 
 /// <summary>บรรทัด JE ของเอกสาร (อ่านจาก GL จริง) — ใช้ในแผง "ตรวจสอบ/แก้ไข
 /// รายการบัญชี" บนหน้าเอกสาร. <c>IsControlAccount</c> = บัญชีคุมที่ยอดเคลื่อนไหว

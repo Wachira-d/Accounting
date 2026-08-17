@@ -25,14 +25,18 @@ public class ExceptionMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unhandled exception: {Message}", ex.Message);
+            // รหัสอ้างอิงสั้น ๆ ผูก response ↔ แถวใน ErrorLogs — ผู้ใช้เจอ 500
+            // แจ้งรหัสนี้มา ก็เปิด ErrorLogs (หน้า admin) หาแถวจริงได้ทันที
+            // (เดิม "เกิดข้อผิดพลาดภายในระบบ" เฉย ๆ ตามรอยไม่ได้เลยว่าใบไหน/บรรทัดไหน)
+            var refCode = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+            _logger.LogError(ex, "Unhandled exception [REF:{Ref}]: {Message}", refCode, ex.Message);
             context.Items["__ErrorLogged"] = true;
-            await SaveErrorLogAsync(context, ex);
-            await HandleExceptionAsync(context, ex);
+            await SaveErrorLogAsync(context, ex, refCode);
+            await HandleExceptionAsync(context, ex, refCode);
         }
     }
 
-    private static async Task SaveErrorLogAsync(HttpContext context, Exception exception)
+    private static async Task SaveErrorLogAsync(HttpContext context, Exception exception, string refCode)
     {
         var statusCode = exception switch
         {
@@ -63,7 +67,7 @@ public class ExceptionMiddleware
             cmd.Parameters.AddWithValue("@q", context.Request.QueryString.ToString());
             cmd.Parameters.AddWithValue("@s", statusCode);
             cmd.Parameters.AddWithValue("@et", exception.GetType().FullName ?? "Unknown");
-            cmd.Parameters.AddWithValue("@msg", exception.Message);
+            cmd.Parameters.AddWithValue("@msg", $"[REF:{refCode}] {exception.Message}");
             cmd.Parameters.AddWithValue("@st", (object?)exception.StackTrace ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@ie", (object?)exception.InnerException?.Message ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@u", (object?)context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? DBNull.Value);
@@ -78,7 +82,7 @@ public class ExceptionMiddleware
         }
     }
 
-    private static async Task HandleExceptionAsync(HttpContext context, Exception exception)
+    private static async Task HandleExceptionAsync(HttpContext context, Exception exception, string refCode)
     {
         context.Response.ContentType = "application/json";
 
@@ -111,7 +115,8 @@ public class ExceptionMiddleware
             ArgumentException => (HttpStatusCode.BadRequest,
                 LooksUserFacing(exception.Message) ? exception.Message : "ข้อมูลที่ส่งมาไม่ถูกต้อง"),
             FormatException => (HttpStatusCode.BadRequest, "ข้อมูลไม่ถูกต้อง"),
-            _ => (HttpStatusCode.InternalServerError, "เกิดข้อผิดพลาดภายในระบบ")
+            _ => (HttpStatusCode.InternalServerError,
+                $"เกิดข้อผิดพลาดภายในระบบ (รหัสอ้างอิง {refCode} — แจ้งรหัสนี้ให้ผู้ดูแลระบบเพื่อดูรายละเอียดใน Error Logs)")
         };
 
         // ข้อความที่ถูกปิดบังยังต้องตามรอยได้ — log ไว้ให้ dev เห็นว่าเกิดอะไรจริง

@@ -1469,7 +1469,14 @@ public class IntegrationService : IIntegrationService
     /// to the sync response message; never throws — the document and its
     /// journal entry are already committed by the time this runs.
     /// </summary>
-    private async Task<string> TryAutoGenerateWhtAsync(Guid companyId, Document document)
+    /// <param name="paid">เอกสารนี้ "จ่ายเงินแล้วจริง" ตอนซิงค์หรือไม่ —
+    /// ใบสำคัญจ่าย (PV) = จ่ายแล้ว ⇒ ออกใบจริง (Issued) ตามวันจ่าย.
+    /// ค่าใช้จ่ายตั้งหนี้ (Credit, PaidAmount = 0) = ยังไม่จ่าย ⇒ ออกเป็น
+    /// **ฉบับร่าง** เท่านั้น. ที่มา (P-3): ท.ป.4/2528 เป็น cash basis —
+    /// ออกใบจริงตอนตั้งหนี้ทำให้ ภ.ง.ด.3/53 ของเดือนนั้นนำส่งภาษีที่ยังไม่ได้
+    /// หักจริง แล้วพอจ่ายจริงเดือนถัดไป guard "ออกใบเต็มจำนวนไปแล้ว" ยัง
+    /// บล็อกใบรายงวดอีก ⇒ ผู้ขายไม่ได้ 50 ทวิ ที่ถูกต้องสักใบ.</param>
+    private async Task<string> TryAutoGenerateWhtAsync(Guid companyId, Document document, bool paid)
     {
         if (document.WithholdingTaxAmount <= 0) return "";
         if (_whtCertService == null)
@@ -1480,10 +1487,12 @@ public class IntegrationService : IIntegrationService
         try
         {
             var cert = await _whtCertService.AutoGenerateFromDocumentAsync(
-                companyId, document.Id, autoIssue: true, "integration-sync");
-            _logger.LogInformation("WHT certificate {CertNo} auto-issued for synced document {DocId}",
-                cert.CertificateNumber, document.Id);
-            return $" + ออกหนังสือรับรองหัก ณ ที่จ่าย {cert.CertificateNumber}";
+                companyId, document.Id, autoIssue: paid, "integration-sync");
+            _logger.LogInformation("WHT certificate {CertNo} auto-{Mode} for synced document {DocId}",
+                cert.CertificateNumber, paid ? "issued" : "drafted", document.Id);
+            return paid
+                ? $" + ออกหนังสือรับรองหัก ณ ที่จ่าย {cert.CertificateNumber}"
+                : $" + เตรียมหนังสือรับรองหัก ณ ที่จ่าย {cert.CertificateNumber} (ฉบับร่าง — ออกจริงเมื่อจ่ายเงิน)";
         }
         catch (Exception ex)
         {
@@ -1545,6 +1554,34 @@ public class IntegrationService : IIntegrationService
             .Where(a => a.CompanyId == companyId && acctIds.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id);
 
+        // ── JournalPostingGuard: ตรวจโครงสร้างก่อน (กฎชุดเดียวกับ AutoPost) ──
+        // เคสจริง: JE จาก integration สมดุลเป๊ะแต่เครดิตทั้งใบลง 21917 (WHT)
+        // ไม่มีขาเจ้าหนี้เลย — สมดุลผ่าน แต่โครงสร้างผิดแน่ ต้อง block ที่นี่
+        var guardLines = lines
+            .Where(l => accts.ContainsKey(l.AccountId))
+            .Select(l => new JournalPostingGuard.LineFacts(
+                accts[l.AccountId].AccountCode, accts[l.AccountId].AccountType,
+                l.DebitAmount, l.CreditAmount))
+            .ToList();
+        // เส้น integration ลง JE ด้วยยอดเดียวกับเอกสารตรง ๆ (ไม่มี Conv) ⇒ rate 1
+        // ระบุชัดไว้กันคนแก้ทีหลังเผลอใส่ doc.ExchangeRate แล้วเทียบผิดหน่วย
+        var guardFindings = JournalPostingGuard.Validate(guardLines,
+            new JournalPostingGuard.DocFacts(
+                document.DocumentType, document.SubTotal, document.VatAmount,
+                document.WithholdingTaxAmount, document.TotalAmount, document.IsDeposit,
+                ExchangeRate: 1m));
+        var guardError = JournalPostingGuard.ErrorSummary(guardFindings, document.DocumentNumber);
+        if (guardError != null)
+        {
+            // ไม่โพสต์ — เอกสารยังซิงค์ได้ แต่ JE ที่โครงสร้างผิดห้ามเข้าแยกประเภท
+            // (JournalAnomalyService จะรายงาน "เอกสารอนุมัติแล้วแต่ไม่มี JE" ให้เห็น)
+            _logger.LogError("Integration JE ถูก block โดย posting guard: {Error}", guardError);
+            return false;
+        }
+        foreach (var w in guardFindings.Where(f => !f.IsError))
+            _logger.LogWarning("Integration JE guard เตือน {Doc}: [{Rule}] {Msg}",
+                document.DocumentNumber, w.RuleCode, w.Message);
+
         foreach (var line in lines)
         {
             // 1) บัญชีต้องมีจริง + active
@@ -1584,8 +1621,20 @@ public class IntegrationService : IIntegrationService
         return true;
     }
 
+    /// <summary>ผังบัญชีที่ partner ส่งมา "อยู่ผิดฝั่ง" หรือไม่ — ฝั่งรายจ่าย
+    /// ห้ามเป็นบัญชีรายได้ และฝั่งรายรับห้ามเป็นบัญชีค่าใช้จ่าย.
+    /// ที่มา (P-8): BuildDocumentLinesAsync รับ AccountCode อะไรก็ได้ที่ active
+    /// ⇒ partner ยิงค่าใช้จ่ายมาพร้อม AccountCode "41000" ได้ → JE เป็น
+    /// Dr 41000 (ล้างรายได้) แทน Dr ค่าใช้จ่าย. JournalPostingGuard จับไม่ได้
+    /// เพราะ Dr=Cr ยังสมดุลและมีขาเจ้าหนี้ครบ ⇒ งบกำไรขาดทุนเพี้ยนทั้งสองบรรทัด
+    /// โดยไม่มีใครเห็น. เช็คเฉพาะชนิดที่ "ผิดแน่นอน" (ไม่แตะ Asset/Liability
+    /// เพราะใบมัดจำ/สินค้าคงเหลือใช้จริง).</summary>
+    private static bool IsWrongSideAccount(AccountType type, bool expenseSide)
+        => expenseSide ? type == AccountType.Revenue : type == AccountType.Expense;
+
     private async Task<List<DocumentLine>> BuildDocumentLinesAsync(
-        Guid companyId, List<InboundInvoiceLineRequest> lines, decimal defaultVatRate = 7)
+        Guid companyId, List<InboundInvoiceLineRequest> lines, decimal defaultVatRate = 7,
+        bool expenseSide = false)
     {
         // Resolve any line-level AccountCode the partner sent → ChartOfAccount
         // id, so the document line carries its real GL account and the JE
@@ -1602,9 +1651,28 @@ public class IntegrationService : IIntegrationService
             var rows = await _db.ChartOfAccounts.AsNoTracking()
                 .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
                             && codes.Contains(a.AccountCode))
-                .Select(a => new { a.AccountCode, a.Id })
+                .Select(a => new { a.AccountCode, a.AccountName, a.AccountType, a.Id })
                 .ToListAsync();
+
+            // ผิดฝั่ง = fail loud (ไม่ใช่เงียบ ๆ fallback) — sync log เก็บเหตุผล
+            // ให้ partner แก้ mapping ฝั่งเขา ดีกว่าปล่อยตัวเลขผิดเข้าแยกประเภท
+            var wrongSide = rows
+                .Where(r => IsWrongSideAccount(r.AccountType, expenseSide))
+                .Select(r => $"{r.AccountCode} {r.AccountName}")
+                .ToList();
+            if (wrongSide.Count > 0)
+                throw new InvalidOperationException(
+                    $"ผังบัญชีที่ส่งมาอยู่ผิดฝั่งเอกสาร ({(expenseSide ? "รายจ่ายห้ามใช้บัญชีรายได้" : "รายรับห้ามใช้บัญชีค่าใช้จ่าย")}): "
+                    + string.Join(", ", wrongSide)
+                    + " — กรุณาแก้ account mapping ฝั่งระบบต้นทาง");
+
             foreach (var r in rows) codeToId[r.AccountCode] = r.Id;
+
+            // รหัสที่หาไม่เจอ/ปิดใช้งาน → บรรทัดจะตกไปบัญชีทั่วไป ต้องเห็นใน log
+            var unresolved = codes.Where(c => !codeToId.ContainsKey(c)).ToList();
+            if (unresolved.Count > 0)
+                _logger.LogWarning("Integration ส่ง AccountCode ที่ไม่พบ/ปิดใช้งาน: {Codes} (company {Cid}) " +
+                    "— บรรทัดเหล่านี้จะลงบัญชีทั่วไปแทน", string.Join(", ", unresolved), companyId);
         }
 
         return lines.Select((line, i) =>
@@ -1947,6 +2015,12 @@ public class IntegrationService : IIntegrationService
         if (built == null) return null;
         var (journalLines, journalType, prefix) = built.Value;
 
+        // ด่านตรวจโครงสร้าง (JournalPostingGuard) — เส้นทางนี้เดิม**ไม่ผ่าน
+        // การตรวจเลย** (ValidateAndAutofix ถูกเรียกเฉพาะ PV path) ⇒ mapping
+        // ของ partner ที่ตั้งบัญชีผิดทำให้เครดิตทั้งใบลง 21917 ได้เงียบ ๆ
+        if (!await ValidateAndAutofixJournalAsync(companyId, journalLines, document))
+            return null;
+
         var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
             f.CompanyId == companyId
             && f.StartDate <= document.DocumentDate
@@ -1994,6 +2068,11 @@ public class IntegrationService : IIntegrationService
         var built = await BuildIntegrationJournalLinesAsync(companyId, integrationId, document, type);
         if (built == null) return null;
         var (newLines, _, _) = built.Value;
+
+        // ด่านตรวจโครงสร้างเดียวกับตอนสร้าง — resync ที่โครงสร้างผิดต้องไม่ทับ
+        // JE เดิมที่ถูกอยู่แล้ว
+        if (!await ValidateAndAutofixJournalAsync(companyId, newLines, document))
+            return null;
 
         var oldLines = await _db.JournalEntryLines
             .Where(l => l.JournalEntryId == original.Id)
@@ -2391,7 +2470,7 @@ public class IntegrationService : IIntegrationService
         var oldLines = await _db.DocumentLines.Where(l => l.DocumentId == existing.Id).ToListAsync();
         _db.DocumentLines.RemoveRange(oldLines);
         var vatRate = request.VatRate ?? 7m;
-        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
+        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true);
         foreach (var l in newLines) l.DocumentId = existing.Id;
         existing.Lines = newLines;
 
@@ -2803,7 +2882,7 @@ public class IntegrationService : IIntegrationService
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.Expense, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             var totalWht = lines.Sum(l => l.WithholdingTaxAmount);
@@ -2858,7 +2937,7 @@ public class IntegrationService : IIntegrationService
                 // Auto-issue the withholding-tax certificate so an int_ key sync is
                 // self-sufficient (no separate manual WHT step). Best-effort — a
                 // failure here must not fail the already-committed expense sync.
-                whtNote = await TryAutoGenerateWhtAsync(companyId, document);
+                whtNote = await TryAutoGenerateWhtAsync(companyId, document, paid: false);
             }
 
             log.Status = "Success";
@@ -2921,7 +3000,7 @@ public class IntegrationService : IIntegrationService
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             var totalWht = lines.Sum(l => l.WithholdingTaxAmount);
@@ -2973,7 +3052,7 @@ public class IntegrationService : IIntegrationService
                 journalEntryId = await CreatePaymentVoucherJournalAsync(companyId, document);
                 // Auto-issue the WHT certificate — a paid voucher with withholding
                 // is exactly when the 50 ทวิ must be handed to the supplier.
-                whtNote = await TryAutoGenerateWhtAsync(companyId, document);
+                whtNote = await TryAutoGenerateWhtAsync(companyId, document, paid: true);
             }
 
             log.Status = "Success";
@@ -3174,7 +3253,7 @@ public class IntegrationService : IIntegrationService
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             var totalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;

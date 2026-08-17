@@ -588,7 +588,34 @@ public class TaxFilingExportService : ITaxFilingExportService
             var contact = cert.PayeeContact;
             // เงื่อนไขการหักภาษี (Col11): 1 = หัก ณ ที่จ่าย, 2 = ออกให้ตลอดไป
             var condition = (int)cert.CertificateType is 2 ? 2 : 1;
-            foreach (var line in cert.Lines.OrderBy(l => l.LineOrder))
+            var certLines = cert.Lines?.OrderBy(l => l.LineOrder).ToList()
+                ?? new List<WithholdingTaxCertLine>();
+
+            if (certLines.Count == 0)
+            {
+                // ⚠️ ใบที่ไม่มีบรรทัดย่อย (เช่นที่ระบบอื่นสร้างจากยอดรวม) เดิม
+                // **ไม่ได้แถวในไฟล์เลย** ทั้งที่หัวสรุปยังนับใบนี้เข้า "จำนวนราย/
+                // ภาษีรวม" และรายงานบนจอ (TaxService) ก็แสดงเป็นบรรทัดปกติ ⇒
+                // ผู้ใช้เห็นยอดตรงบนจอ แต่ไฟล์ที่อัปโหลดเข้าเว็บสรรพากรนำส่งขาด
+                // เงียบ ๆ (T-5). ลงเป็นแถวเดียวจากยอดรวมของใบ ให้ จอ = ไฟล์ = หัวสรุป
+                rows.Add(new PndTextFileFormat.Row(
+                    PayeeTaxId: contact?.TaxId,
+                    BranchCode: contact?.BranchCode,
+                    PayeeName: contact?.Name,
+                    IsJuristic: juristicPayee,
+                    PayDate: cert.IssuedDate ?? new DateTime(cert.TaxYear, cert.TaxMonth, 1),
+                    IncomeTypeCode: MapIncomeTypeCode(null),
+                    IncomeAmount: cert.TotalIncomeAmount,
+                    TaxRate: cert.TotalIncomeAmount > 0
+                        ? Math.Round(cert.TotalTaxAmount / cert.TotalIncomeAmount * 100m,
+                            2, MidpointRounding.AwayFromZero)
+                        : 0m,
+                    TaxAmount: cert.TotalTaxAmount,
+                    Condition: condition));
+                continue;
+            }
+
+            foreach (var line in certLines)
                 rows.Add(new PndTextFileFormat.Row(
                     PayeeTaxId: contact?.TaxId,
                     BranchCode: contact?.BranchCode,
