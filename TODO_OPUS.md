@@ -243,8 +243,8 @@ error หรือหายเงียบ
   distributed · CompanyId บน JournalEntryLine + balance snapshot · migration
   versioning + CREATE INDEX CONCURRENTLY
 - **P3**: refresh token (S6) · ย้าย OCR upload ออกจาก wwwroot (S8) ·
-  UseForwardedHeaders (S9) · S10-S14 · GetGeneralLedgerAsync memory (P4) ·
-  N+1 (P5-P7) · audit middleware rows (Q3) · ConfirmPaymentAsync catch{} (Q5)
+  ✅ UseForwardedHeaders (S9) · S10-S14 · GetGeneralLedgerAsync memory (P4) ·
+  N+1 (P5-P7) · audit middleware rows (Q3) · ✅ ConfirmPaymentAsync catch{} (Q5)
 - **รอเจ้าของตัดสินใจ**: A1 default การรับรู้ VAT มัดจำ (ต้องนักบัญชียืนยัน) ·
   StrictPayeeIdentification switch
 

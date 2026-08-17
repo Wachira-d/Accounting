@@ -1823,7 +1823,14 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 34 — backlog ภาษีครบทั้ง 14 ข้อ:_
+_Last verified against codebase: 2026-08-17 (รอบ 35 — Task Force P3 บางส่วน: (Q5)_
+_`CmsCommerceService.ConfirmPaymentAsync` เลิกกลืน error ใน money/stock path —_
+_สะสมความล้มเหลว (อนุมัติเอกสาร/บันทึกชำระ/ตัดสต๊อก), log เป็น Error, และปักหมุด_
+_ลง `Order.InternalNotes` ให้แอดมินเห็นว่า "เงินเข้าแล้วแต่บัญชี/สต๊อกยังไม่ครบ"_
+_(throw ไม่ได้เพราะเป็น webhook — gateway จะ retry วนไม่จบ) · (S9)_
+_`UseForwardedHeaders` เป็น middleware ตัวแรกสุด: rate limit เคยนับทุกคนเป็น IP_
+_เดียว (IP ของ proxy) และ audit/PiiAccessLog/ลายเซ็นอนุมัติบันทึก IP ผิดคน —_
+_ปิดได้ด้วย `Security:TrustProxyHeaders=false`; รอบ 34 — backlog ภาษีครบทั้ง 14 ข้อ:_
 _(B6) ภ.ง.ด.51 ใช้ฐานเดียวกับ 50 — `ComputeSection65TerAddBackAsync` เป็น helper_
 _ร่วม (เดิม 51 คำนวณจาก JE ล้วนไม่มีบวกกลับ ⇒ ประมาณการต่ำ เสี่ยงเงินเพิ่ม 20%_
 _§67 ตรี) · (B7) **ผลขาดทุนสุทธิยกมา 5 รอบบัญชี §65 ตรี(12)** หักจากฐานกำไรก่อน_

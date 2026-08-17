@@ -708,6 +708,29 @@ var webRoot = app.Environment.WebRootPath ?? Path.Combine(app.Environment.Conten
 
 // ===== Middleware Pipeline (order matters!) =====
 
+// 0. Forwarded headers — ต้องอยู่**ก่อนทุก middleware ที่อ่าน IP/scheme**
+//    (S9): ระบบรันหลัง reverse proxy (nginx/CDN) ⇒ RemoteIpAddress ที่ทุกที่
+//    อ่านอยู่คือ IP ของ proxy ไม่ใช่ของผู้ใช้จริง ⇒
+//      • Rate limit นับรวมทุกคนเป็น IP เดียว (บล็อกทั้งระบบพร้อมกัน / กันไม่ได้จริง)
+//      • PiiAccessLog / AuditLog / ลายเซ็นอนุมัติ บันทึก IP ผิดคน (PDPA ม.37
+//        ต้องระบุตัวผู้เข้าถึงได้)
+//      • UseHttpsRedirection มองว่าเป็น http แล้ว redirect วน
+//    KnownNetworks/KnownProxies ล้างเป็นค่าว่างเพราะ proxy อยู่คนละ subnet ใน
+//    container network — ปลอดภัยเพราะ header เข้าถึงได้เฉพาะจาก proxy ของเรา
+//    (พอร์ต backend ไม่เปิดออกสาธารณะ) ปิดได้ด้วย Security:TrustProxyHeaders=false
+if (builder.Configuration.GetValue("Security:TrustProxyHeaders", true))
+{
+    var fwdOptions = new Microsoft.AspNetCore.Builder.ForwardedHeadersOptions
+    {
+        ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+            | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
+        ForwardLimit = 2,
+    };
+    fwdOptions.KnownNetworks.Clear();
+    fwdOptions.KnownProxies.Clear();
+    app.UseForwardedHeaders(fwdOptions);
+}
+
 // 1. Exception handling (outermost)
 app.UseMiddleware<ExceptionMiddleware>();
 
