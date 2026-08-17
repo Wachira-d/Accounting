@@ -1019,9 +1019,10 @@
         <div class="modal-body">
           <div id="rclInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px"></div>
           <div class="form-group">
-            <label class="form-label" data-help="พิมพ์รหัสหรือชื่อบัญชีจากผังบัญชี (CoA) — ระบบจะ Dr ผังนี้ใน JE คู่ใหม่">ผังบัญชีใหม่ <span class="req">*</span></label>
-            <input type="text" class="form-input" id="rclNewAccount" list="rclAccountList" placeholder="พิมพ์รหัส/ชื่อ เช่น 5401 ค่าน้ำมัน" autocomplete="off">
-            <datalist id="rclAccountList"></datalist>
+            <label class="form-label" data-help="เลือกผังบัญชีปลายทาง — ระบบจะ Dr/Cr ผังนี้ใน JE คู่ใหม่">ผังบัญชีใหม่ <span class="req">*</span></label>
+            <!-- ใช้ <select> ไม่ใช่ <datalist>: บน Android Chrome ตัว datalist
+                 มักไม่เด้งรายการขึ้นมาเลย ⇒ ผู้ใช้กดแล้ว "ไม่มีอะไรให้เลือก" -->
+            <select class="form-select" id="rclNewAccount"></select>
             <div id="rclResolved" style="font-size:11px;color:#64748b;margin-top:4px"></div>
           </div>
           <div class="form-group">
@@ -1055,7 +1056,7 @@
         <div class="modal-body">
           <div id="jeaInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:12px;margin-bottom:10px"></div>
           <div style="font-size:11px;color:#475569;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-bottom:12px;line-height:1.7">
-            💡 แก้ตารางด้านล่างให้เป็น<b>ผังบัญชีที่ถูกต้อง</b> แล้วกดบันทึก —
+            💡 แก้รายการด้านล่างให้เป็น<b>ผังบัญชีที่ถูกต้อง</b> แล้วกดบันทึก —
             ระบบจะลง <b>ใบสำคัญปรับปรุงใหม่</b> ตามผลต่าง (ใบเดิมไม่ถูกแก้ ประวัติครบ)<br>
             กติกา: <b>ยอดรวมต้องเท่าเดิม</b> (ยอดผิด = แก้ที่เอกสาร) ·
             <b>บัญชีคุม</b> (ภาษีซื้อ-ขาย, ลูกหนี้-เจ้าหนี้, มัดจำ, ภาษีหัก ณ ที่จ่าย)
@@ -1072,7 +1073,6 @@
             </div>
           </div>
           <div id="jeaRows"></div>
-          <datalist id="coaListAll"></datalist>
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px">
             <button class="btn btn-sm btn-secondary" onclick="Page.jeaAddRow()">+ เพิ่มบรรทัด</button>
             <div id="jeaTotals" style="font-size:12px;text-align:right"></div>
@@ -1915,39 +1915,47 @@
       /** Option 1 reclassify: เปลี่ยนผังบัญชี (line.AccountId) ของเอกสารที่
        * approved แล้ว — Expense/PI/PV เท่านั้น. ระบบจะ post reclassify-JE
        * คู่ใหม่ (Dr ผังใหม่ / Cr ผังเก่า) ใต้ฉาก. ไม่แก้เอกสารต้นฉบับ */
-      openReclassifyLine(docId, lineId, oldAccountCode, description, amount) {
+      async openReclassifyLine(docId, lineId, oldAccountCode, description, amount) {
         this._reclassifyCtx = { docId, lineId, oldAccountCode };
         document.getElementById('rclInfo').innerHTML =
           `<div>เอกสาร: <b>${this.escapeHtml(this.docs?.find(d => d.id === docId)?.documentNumber || docId.slice(0,8))}</b></div>` +
           `<div>บรรทัด: ${this.escapeHtml(description || '(ไม่มีรายละเอียด)')}</div>` +
           `<div>ยอดที่จะย้าย: <b>${Layout.money(amount)}</b> (ฐานก่อน VAT — VAT คงในผังเดิม)</div>` +
           `<div>ผังเดิม: <b>${this.escapeHtml(oldAccountCode)}</b></div>`;
-        document.getElementById('rclNewAccount').value = '';
         document.getElementById('rclReason').value = '';
         document.getElementById('rclResolved').textContent = '';
-        // เติม datalist จาก coaByCode ที่โหลดไว้แล้ว
-        const dl = document.getElementById('rclAccountList');
-        if (dl && this.coaByCode) {
-          dl.innerHTML = Object.values(this.coaByCode)
-            .filter(a => a.accountCode !== oldAccountCode
-              && !this.isProtectedAccountCode(a.accountCode))
-            .slice(0, 200)
-            .map(a => `<option value="${this.escapeHtml(a.accountCode)} ${this.escapeHtml(a.accountName)}">`).join('');
-        }
         Layout.openModal('reclassifyLineModal');
-        setTimeout(() => document.getElementById('rclNewAccount')?.focus(), 100);
+        // เติมตัวเลือกเป็น <select> (ไม่ใช่ datalist — บนมือถือไม่เด้งรายการ)
+        // ตัดผังเดิมและบัญชีคุมออก
+        await this._ensureAllAccounts();
+        const sel = document.getElementById('rclNewAccount');
+        if (sel) {
+          const label = { Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ',
+                          Revenue: 'รายได้', Expense: 'ค่าใช้จ่าย / ต้นทุน' };
+          const groups = this._accountsByType || {};
+          let html = '<option value="">— เลือกผังบัญชี —</option>';
+          for (const t of ['Expense', 'Asset', 'Liability', 'Revenue', 'Equity']) {
+            const list = (groups[t] || []).filter(a => a.accountCode !== oldAccountCode
+              && !this.isProtectedAccountCode(a.accountCode));
+            if (list.length) {
+              html += `<optgroup label="${label[t]}">` + list.map(a =>
+                `<option value="${a.id}">${Layout.esc(a.accountCode)} — ${Layout.esc(a.accountName)}</option>`
+              ).join('') + '</optgroup>';
+            }
+          }
+          sel.innerHTML = html;
+          sel.value = '';
+        }
       },
 
       async submitReclassifyLine() {
         const ctx = this._reclassifyCtx;
         if (!ctx) return;
-        const raw = document.getElementById('rclNewAccount').value.trim();
-        if (!raw) { Layout.toast('กรุณาเลือกผังบัญชีใหม่', 'error'); return; }
-        // raw รูปแบบ "5401 ค่าน้ำมัน" — ตัด accountCode ตัวแรก
-        const code = raw.split(/\s+/)[0];
-        const newAcc = this.coaByCode?.[code];
+        const accId = document.getElementById('rclNewAccount').value;
+        if (!accId) { Layout.toast('กรุณาเลือกผังบัญชีใหม่', 'error'); return; }
+        const newAcc = (this._allAccounts || []).find(a => a.id === accId);
         if (!newAcc) {
-          Layout.toast(`ไม่พบผังบัญชี ${code} ในระบบ`, 'error');
+          Layout.toast('ไม่พบผังบัญชีที่เลือกในระบบ', 'error');
           return;
         }
         if (newAcc.accountCode === ctx.oldAccountCode) {
@@ -2102,25 +2110,57 @@
       },
 
       // ── แก้ผังบัญชีของ JE ─────────────────────────────────────────────
+      /** ผังบัญชีครบทุกหมวดสำหรับตัวเลือกใน JE (รวมส่วนของเจ้าของ ที่ coaByCode
+       *  เดิมไม่มี — JE แตะได้ทุกหมวด). โหลดครั้งเดียวแล้ว cache */
+      async _ensureAllAccounts() {
+        if (this._allAccounts?.length) return this._allAccounts;
+        const api = Layout.api(); if (!api) { this._allAccounts = []; return []; }
+        const types = ['Asset', 'Liability', 'Equity', 'Revenue', 'Expense'];
+        try {
+          const res = await Promise.all(
+            types.map(t => api.getAccounts(`?type=${t}&pageSize=500`)));
+          const byType = {};
+          res.forEach((r, i) => {
+            byType[types[i]] = (r?.data?.items || r?.data || [])
+              .filter(a => a.accountCode && a.isActive !== false)
+              .sort((x, y) => String(x.accountCode).localeCompare(String(y.accountCode)));
+          });
+          this._accountsByType = byType;
+          this._allAccounts = types.flatMap(t => byType[t]);
+          // เติม coaByCode ให้ครบด้วย — lookup code→account ที่อื่นใช้ร่วมกัน
+          this.coaByCode = this.coaByCode || {};
+          this._allAccounts.forEach(a => { this.coaByCode[a.accountCode] = a; });
+        } catch { this._allAccounts = []; this._accountsByType = {}; }
+        return this._allAccounts;
+      },
+
+      /** ตัวเลือกผังบัญชีแบบ <select> + optgroup — บน Android Chrome ตัว
+       *  <datalist> มักไม่เด้งอะไรขึ้นมาเลย (และถ้าช่องมีค่าเต็มอยู่แล้ว
+       *  เบราว์เซอร์จะกรองจนเหลือรายการเดียว) ⇒ ผู้ใช้กดแล้ว "ไม่มีอะไรให้เลือก"
+       *  select ธรรมดาทำงานเหมือนกันทุกเบราว์เซอร์/ทุกเครื่อง */
+      _accountOptionsHtml(selectedId) {
+        const label = {
+          Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ',
+          Revenue: 'รายได้', Expense: 'ค่าใช้จ่าย / ต้นทุน',
+        };
+        const groups = this._accountsByType || {};
+        const opt = a => `<option value="${a.id}"${a.id === selectedId ? ' selected' : ''}>`
+          + `${Layout.esc(a.accountCode)} — ${Layout.esc(a.accountName)}</option>`;
+        let html = `<option value=""${selectedId ? '' : ' selected'}>— เลือกผังบัญชี —</option>`;
+        for (const t of ['Expense', 'Asset', 'Liability', 'Revenue', 'Equity']) {
+          const list = groups[t] || [];
+          if (list.length) html += `<optgroup label="${label[t]}">${list.map(opt).join('')}</optgroup>`;
+        }
+        return html;
+      },
+
       async openJeAdjust(docId, jeId) {
         const je = (this._docJournals || []).find(x => x.id === jeId);
         if (!je) return;
-        if (!this.coaByCode || !Object.keys(this.coaByCode).length) {
-          const api = Layout.api();
-          try {
-            const coa = await api.getAccounts();
-            const list = coa?.data?.items || coa?.data || [];
-            this.coaByCode = {};
-            list.forEach(a => { this.coaByCode[a.accountCode] = a; });
-          } catch { this.coaByCode = {}; }
-        }
-        const dl = document.getElementById('coaListAll');
-        if (dl) {
-          dl.innerHTML = Object.values(this.coaByCode)
-            .map(a => `<option value="${Layout.esc(a.accountCode)} ${Layout.esc(a.accountName)}">`).join('');
-        }
+        await this._ensureAllAccounts();
         this._jeaCtx = { docId, jeId, originalTotal: je.totalDebit };
         this._jeaRows = (je.lines || []).map(l => ({
+          accountId: l.accountId,
           accountCode: l.accountCode, accountName: l.accountName,
           debit: l.debitAmount, credit: l.creditAmount,
           locked: l.isControlAccount,
@@ -2136,24 +2176,35 @@
 
       renderJeaRows() {
         const rows = this._jeaRows || [];
-        document.getElementById('jeaRows').innerHTML = `<div class="table-container">
-          <table class="table" style="font-size:12px">
-            <thead><tr><th style="min-width:230px">ผังบัญชี</th><th class="text-right" style="width:130px">เดบิต</th><th class="text-right" style="width:130px">เครดิต</th><th style="width:40px"></th></tr></thead>
-            <tbody>${rows.map((r, i) => `<tr>
-              <td><input type="text" class="form-input" list="coaListAll" style="font-size:12px"
-                    value="${Layout.esc(r.accountCode + (r.accountName ? ' ' + r.accountName : ''))}"
-                    ${r.locked ? 'readonly title="บัญชีคุม — เปลี่ยนไม่ได้"' : ''}
-                    onchange="Page.jeaRowChanged(${i},'account',this.value)">
-                  ${r.locked ? '<div style="font-size:10px;color:#92400e">🔒 บัญชีคุม — ยอดต้องตรงกับเอกสาร</div>' : ''}</td>
-              <td><input type="number" step="0.01" min="0" class="form-input text-right" style="font-size:12px"
+        // การ์ดต่อบรรทัด (ไม่ใช่ตาราง 4 คอลัมน์) — บนมือถือตารางต้องเลื่อนแนวนอน
+        // จนช่องเดบิต/เครดิตหลุดออกนอกจอ
+        document.getElementById('jeaRows').innerHTML = rows.map((r, i) => `
+          <div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span style="font-size:11px;color:#94a3b8;min-width:16px">${i + 1}</span>
+              ${r.locked
+                ? `<input type="text" class="form-input" style="flex:1;font-size:13px" readonly
+                        title="บัญชีคุม — เปลี่ยนไม่ได้"
+                        value="${Layout.esc(r.accountCode + (r.accountName ? ' — ' + r.accountName : ''))}">`
+                : `<select class="form-select" style="flex:1;font-size:13px"
+                        onchange="Page.jeaRowChanged(${i},'account',this.value)">${this._accountOptionsHtml(r.accountId)}</select>
+                   <button class="btn btn-sm btn-ghost" style="color:#ef4444" title="ลบบรรทัดนี้"
+                        onclick="Page.jeaRemoveRow(${i})">✕</button>`}
+            </div>
+            ${r.locked ? '<div style="font-size:10px;color:#92400e;margin-bottom:6px">🔒 บัญชีคุม — ยอดต้องตรงกับเอกสาร</div>' : ''}
+            <div style="display:flex;gap:8px">
+              <label style="flex:1;font-size:11px;color:var(--gray-500)">เดบิต
+                <input type="number" step="0.01" min="0" inputmode="decimal"
+                    class="form-input text-right" style="font-size:13px"
                     value="${r.debit || 0}" ${r.locked ? 'readonly' : ''}
-                    onchange="Page.jeaRowChanged(${i},'debit',this.value)"></td>
-              <td><input type="number" step="0.01" min="0" class="form-input text-right" style="font-size:12px"
+                    onchange="Page.jeaRowChanged(${i},'debit',this.value)"></label>
+              <label style="flex:1;font-size:11px;color:var(--gray-500)">เครดิต
+                <input type="number" step="0.01" min="0" inputmode="decimal"
+                    class="form-input text-right" style="font-size:13px"
                     value="${r.credit || 0}" ${r.locked ? 'readonly' : ''}
-                    onchange="Page.jeaRowChanged(${i},'credit',this.value)"></td>
-              <td>${r.locked ? '' : `<button class="btn btn-sm btn-ghost" style="color:#ef4444" title="ลบบรรทัดนี้" onclick="Page.jeaRemoveRow(${i})">✕</button>`}</td>
-            </tr>`).join('')}</tbody>
-          </table></div>`;
+                    onchange="Page.jeaRowChanged(${i},'credit',this.value)"></label>
+            </div>
+          </div>`).join('');
         this.jeaUpdateTotals();
       },
 
@@ -2161,9 +2212,10 @@
         const r = (this._jeaRows || [])[i];
         if (!r || r.locked) return;
         if (field === 'account') {
-          const code = String(value || '').trim().split(/\s+/)[0];
-          const acc = this.coaByCode?.[code];
-          r.accountCode = acc ? acc.accountCode : code;
+          // value = accountId จาก <select> (ไม่ต้อง parse โค้ดจากข้อความอีก)
+          const acc = (this._allAccounts || []).find(a => a.id === value);
+          r.accountId = acc ? acc.id : null;
+          r.accountCode = acc ? acc.accountCode : '';
           r.accountName = acc ? acc.accountName : '';
         } else {
           const v = Math.max(0, parseFloat(value) || 0);
@@ -2178,7 +2230,7 @@
 
       jeaAddRow() {
         (this._jeaRows = this._jeaRows || []).push(
-          { accountCode: '', accountName: '', debit: 0, credit: 0, locked: false });
+          { accountId: null, accountCode: '', accountName: '', debit: 0, credit: 0, locked: false });
         this.renderJeaRows();
       },
 
@@ -2197,14 +2249,15 @@
         const orig = r2(this._jeaCtx?.originalTotal || 0);
         const balanced = dr === cr;
         const sameTotal = dr === orig;
-        const unknown = rows.filter(r => r.accountCode && !this.coaByCode?.[r.accountCode]);
-        const blank = rows.filter(r => !r.accountCode);
+        const blank = rows.filter(r => !r.accountId);
+        const bothSides = rows.filter(r => Number(r.debit) > 0 && Number(r.credit) > 0);
         const el = document.getElementById('jeaTotals');
         const problems = [];
+        if (rows.length < 2) problems.push('ต้องมีอย่างน้อย 2 บรรทัด');
         if (!balanced) problems.push(`เดบิต ${Layout.money(dr)} ≠ เครดิต ${Layout.money(cr)}`);
         if (!sameTotal) problems.push(`ยอดรวมต้องเท่าเดิม (${Layout.money(orig)})`);
         if (blank.length) problems.push(`มี ${blank.length} บรรทัดยังไม่เลือกผังบัญชี`);
-        if (unknown.length) problems.push(`ไม่พบผังบัญชี: ${unknown.map(r => r.accountCode).join(', ')}`);
+        if (bothSides.length) problems.push('แต่ละบรรทัดใส่ได้ด้านเดียว (เดบิต หรือ เครดิต)');
         if (el) {
           el.innerHTML = `<div>เดบิต <b>${Layout.money(dr)}</b> · เครดิต <b>${Layout.money(cr)}</b> · เดิม ${Layout.money(orig)}</div>` +
             (problems.length
@@ -2221,7 +2274,7 @@
         const ctx = this._jeaCtx; if (!ctx) return;
         const api = Layout.api(); if (!api) return;
         const lines = (this._jeaRows || []).map(r => ({
-          accountId: this.coaByCode?.[r.accountCode]?.id,
+          accountId: r.accountId,
           debitAmount: Number(r.debit) || 0,
           creditAmount: Number(r.credit) || 0,
           description: null,
