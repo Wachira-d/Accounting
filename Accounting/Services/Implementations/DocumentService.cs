@@ -3735,8 +3735,12 @@ public class DocumentService : IDocumentService
         // ตัดยอดค้างใบแจ้งหนี้ (gross)
         invoice.PaidAmount += request.Amount;
         invoice.BalanceDue = Math.Max(0m, invoice.TotalAmount - invoice.PaidAmount);
+        // S-7: รวม Sent/Overdue ให้ตรงกับ ApplyJournalDepositToInvoiceAsync —
+        // เดิมใบที่ส่งอีเมลแล้ว/เลยกำหนด หักมัดจำจนครบยอดก็ยังค้างสถานะเดิม
+        // ⇒ งานทวงหนี้/รายงานอายุหนี้ไล่ทวงใบที่จ่ายครบแล้ว
         if (invoice.BalanceDue <= 0.005m
-            && (invoice.Status == DocumentStatus.Approved || invoice.Status == DocumentStatus.PartiallyPaid))
+            && invoice.Status is DocumentStatus.Approved or DocumentStatus.PartiallyPaid
+                or DocumentStatus.Sent or DocumentStatus.Overdue)
             invoice.Status = DocumentStatus.Paid;
         else if (invoice.BalanceDue > 0.005m && invoice.Status == DocumentStatus.Approved)
             invoice.Status = DocumentStatus.PartiallyPaid;   // audit #12
@@ -3745,6 +3749,13 @@ public class DocumentService : IDocumentService
         invoice.DepositAppliedAmount += request.Amount;
         invoice.DepositAppliedRef = MergeDepositRef(invoice.DepositAppliedRef, deposit.DocumentNumber);
         deposit.DepositAppliedToDocumentId = invoiceId;
+
+        // ── tax point §78/1: หักมัดจำ = "ได้รับชำระ" เช่นกัน (S-1) ────────────
+        // ใบแจ้งหนี้บริการที่ VAT พักไว้ 21913 ถ้าปิดยอดด้วยมัดจำ (ไม่ผ่าน
+        // CreatePaymentAsync) จะไม่มีใครย้าย VAT → 21911 ⇒ ใบหายจาก ภ.พ.30
+        // ถาวรทั้งที่รับเงินครบแล้ว (นำส่งภาษีขายขาด). hook นี้ idempotent
+        // ด้วย OutputVatDueAt และเป็น best-effort (ไม่ทำให้การหักมัดจำพัง)
+        await TryReclassifyUndueOutputVatAsync(companyId, invoiceId, DateTime.UtcNow.Date, actor);
 
         await _db.SaveChangesAsync();
         var updated = await GetDocumentAsync(companyId, invoiceId);
@@ -3911,6 +3922,13 @@ public class DocumentService : IDocumentService
             invoice.Status = DocumentStatus.PartiallyPaid;
         invoice.DepositAppliedAmount += gross;
         invoice.DepositAppliedRef = MergeDepositRef(invoice.DepositAppliedRef, jv.EntryNumber);
+
+        // ── tax point §78/1: หักมัดจำ = "ได้รับชำระ" เช่นกัน (S-1) ────────────
+        // ใบแจ้งหนี้บริการที่ VAT พักไว้ 21913 ถ้าปิดยอดด้วยมัดจำ (ไม่ผ่าน
+        // CreatePaymentAsync) จะไม่มีใครย้าย VAT → 21911 ⇒ ใบหายจาก ภ.พ.30
+        // ถาวรทั้งที่รับเงินครบแล้ว (นำส่งภาษีขายขาด). hook นี้ idempotent
+        // ด้วย OutputVatDueAt และเป็น best-effort (ไม่ทำให้การหักมัดจำพัง)
+        await TryReclassifyUndueOutputVatAsync(companyId, invoiceId, DateTime.UtcNow.Date, actor);
 
         await _db.SaveChangesAsync();
         var updated = await GetDocumentAsync(companyId, invoiceId);
@@ -7436,16 +7454,43 @@ public class DocumentService : IDocumentService
         }
         doc.UpdatedAt = DateTime.UtcNow;
 
+        // ── กลับ "ภาษีขายถึงกำหนด" เมื่อไม่เหลือการรับชำระแล้ว (M-6) ──────────
+        // TryReclassifyUndueOutputVatAsync ย้าย VAT ทั้งก้อน 21913 → 21911 ตอน
+        // รับเงินงวดแรก (tax point §78/1) แต่ JE ตัวนั้นใช้ Reference = เลขเอกสาร
+        // ไม่ใช่เลข Payment ⇒ ตัวเลือก JE ด้านบนไม่แตะ ⇒ void การชำระแล้ว VAT
+        // ยังค้างที่ 21911 + OutputVatDueAt ยังตั้ง ⇒ ภ.พ.30 งวดนั้นเก็บภาษีขาย
+        // ของเงินที่ไม่เคยได้รับ และรับชำระใหม่ก็ถูก idempotent guard บล็อกถาวร
+        if (doc.PaidAmount <= 0.005m && doc.OutputVatDueAt != null)
+            await TryUndoUndueOutputVatReclassAsync(companyId, doc, reason);
+
+        // ── ทะเบียนเครดิตภาษีถูกหัก ณ ที่จ่ายฝั่งขาย 11910 (M-4) ─────────────
+        // SyncWhtCreditReceivedAsync อ่านจาก GL จริงและลบแถวเองเมื่อยอดเป็น 0
+        // — ถ้าไม่เรียกหลัง void แถวเครดิตจะค้างเข้า ภ.ง.ด.50 ทั้งที่ JE ถูกกลับ
+        // ไปแล้ว (ขอเครดิตภาษีที่ไม่เคยถูกหักจริง)
+        try { await SyncWhtCreditReceivedAsync(companyId, doc.Id); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "sync ทะเบียนเครดิต WHT หลังยกเลิกการชำระ {Doc} ไม่สำเร็จ", doc.DocumentNumber);
+        }
+
         // 50 ทวิ ที่ auto-สร้างตอนบันทึกจ่าย (audit B5): ยกเลิก payment แล้วเอกสาร
         // กลับเป็นยังไม่จ่าย → cert Draft ของใบนี้ต้อง void ด้วย ไม่งั้นค้างเข้า
         // ภ.ง.ด.3/53 ทั้งที่การจ่ายไม่มีแล้ว. เฉพาะตอนไม่เหลือ payment อื่น (partial
         // อื่นยังจ่ายอยู่ = cert ยังมีมูล). Issued cert → เตือนใน log ให้ยกเลิกมือ
         // (ออกให้ผู้ถูกหักไปแล้ว ห้าม void เงียบ)
-        if (doc.WithholdingTaxAmount > 0 && doc.PaidAmount <= 0.005m)
+        // ⚠️ M-5: cert ที่ผูก "งวดจ่ายนั้น ๆ" (SourcePaymentId) ต้องยกเลิกเสมอ
+        // ไม่ว่าเอกสารจะยังเหลือยอดจ่ายอื่นหรือไม่ — เดิมทั้งบล็อกถูกข้ามเมื่อ
+        // PaidAmount > 0 ⇒ ยกเลิกงวดกลางแล้ว 50 ทวิ ของงวดนั้นยังเข้า ภ.ง.ด.
+        // (นำส่งเกิน). เงื่อนไข PaidAmount <= 0 ยังใช้กับ cert ระดับ "ทั้งใบ"
+        // (SourcePaymentId = null) ที่ยังมีมูลตราบใดที่ยังมีการจ่ายเหลืออยู่
+        if (doc.WithholdingTaxAmount > 0)
         {
             var certs = await _db.WithholdingTaxCerts
                 .Where(w => w.CompanyId == companyId && w.DocumentId == doc.Id
-                    && w.Status != WithholdingTaxCertStatus.Voided)
+                    && w.Status != WithholdingTaxCertStatus.Voided
+                    && (w.SourcePaymentId == payment.Id
+                        || (w.SourcePaymentId == null && doc.PaidAmount <= 0.005m)))
                 .ToListAsync();
             foreach (var cert in certs)
             {
@@ -7578,10 +7623,15 @@ public class DocumentService : IDocumentService
         // 5) 50 ทวิ ที่ auto-สร้างจากการจ่ายนี้ — Draft ยกเลิกได้, Issued ต้องแจ้ง
         if (payment.WithholdingTaxAmount > 0)
         {
+            // ⚠️ ต้องจำกัดที่ "cert ของการจ่ายก้อนนี้" เท่านั้น — เดิมกวาดทุก cert
+            // ของทุกใบใน allocation ⇒ ยกเลิกใบ 50 ทวิ ของงวดอื่นที่ยังจ่ายจริงอยู่
+            // ทิ้งไปด้วย (ทิศตรงข้ามกับบั๊กของ single-doc: ตัวนั้นยกเลิกไม่พอ
+            // ตัวนี้ยกเลิกเกิน — คีย์ที่ถูกคือ SourcePaymentId ทั้งคู่)
             var certs = await _db.WithholdingTaxCerts
                 .Where(w => w.CompanyId == companyId && w.DocumentId != null
                     && docIds.Contains(w.DocumentId.Value)
-                    && w.Status != WithholdingTaxCertStatus.Voided)
+                    && w.Status != WithholdingTaxCertStatus.Voided
+                    && w.SourcePaymentId == payment.Id)
                 .ToListAsync();
             foreach (var cert in certs)
             {
@@ -10019,6 +10069,31 @@ public class DocumentService : IDocumentService
 
                 await transaction.CommitAsync();
 
+                // ── side-effect หลังชำระ ที่เส้น single-doc มีแต่เส้นนี้เคยขาด (M-3) ──
+                // multi-doc เขียนทีหลังโดยลอกเฉพาะแกน "settle + JE" ⇒ ปิดใบ
+                // ด้วยการโอนก้อนเดียวแล้ว VAT ที่พัก 21913 ไม่ถูกย้ายไป 21911
+                // ⇒ ใบหายจาก ภ.พ.30 ถาวร (นำส่งภาษีขายขาด) และฝั่งซื้อไม่มี
+                // 50 ทวิ ออกเลย. ทำนอก transaction (commit แล้ว) แบบ best-effort
+                // ทีละใบ — ล้มใบใดใบหนึ่งต้องไม่ทำให้การรับเงินที่สำเร็จแล้วพัง
+                foreach (var allocDocId in docMap.Keys)
+                {
+                    try
+                    {
+                        await TryReclassifyUndueOutputVatAsync(
+                            companyId, allocDocId, payment.PaymentDate, createdBy);
+                        await SyncWhtCreditReceivedAsync(companyId, allocDocId);
+                        if (_whtService != null)
+                            await _whtService.AutoGenerateFromDocumentAsync(
+                                companyId, allocDocId, false, createdBy, payment.PaymentDate);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "side-effect หลังรับ/จ่ายชำระหลายใบ (เอกสาร {DocId}) ไม่สำเร็จ — " +
+                            "ตรวจ tax point / 50 ทวิ / เครดิต WHT ของใบนี้ด้วยมือ", allocDocId);
+                    }
+                }
+
                 // Re-load PaymentAllocation rows to pick up generated Ids,
                 // then enrich with the docMap (resolved client-side).
                 var rawAllocs = await _db.PaymentAllocations
@@ -10911,6 +10986,54 @@ public class DocumentService : IDocumentService
     /// เกิดทั้งใบ — ผู้ขายมีหน้าที่ออกใบกำกับเต็มยอด ณ วันรับเงินแรกตามปฏิบัติ
     /// (กันภ.พ.30 กระจายหลายงวดจาก partial จนตามยาก). idempotent ผ่าน
     /// OutputVatDueAt. best-effort — ห้าม throw ทำ settlement พัง.</summary>
+    /// <summary>กลับรายการ "ภาษีขายถึงกำหนด" เมื่อการรับชำระถูกยกเลิกจนไม่เหลือ
+    /// เงินรับเลย — คู่ตรงข้ามของ <see cref="TryReclassifyUndueOutputVatAsync"/>
+    ///
+    /// ทำอะไร: กลับ JE ที่ย้าย 21913 → 21911 (เลือกด้วย SourceDocumentId + ขา
+    /// Dr 21913 จริง ไม่ใช่เดาจาก description) แล้วล้าง OutputVatDueAt เพื่อให้
+    /// รับชำระครั้งใหม่ทำ tax point ได้อีก (idempotent guard จะได้ไม่บล็อกถาวร)
+    ///
+    /// best-effort — ห้าม throw ทำการยกเลิกการชำระพัง แต่ต้อง log ให้ตามได้</summary>
+    private async Task TryUndoUndueOutputVatReclassAsync(Guid companyId, Document inv, string reason)
+    {
+        try
+        {
+            // JE ที่ต้องกลับ = JE ของใบนี้ที่มีขา **Dr 21913** (ตัดภาษีขายรอเรียกเก็บ)
+            // และยังไม่ถูกกลับ — อ่านจาก GL จริงตามหลัก "ห้ามเดาจากข้อความ"
+            var reclassJeIds = await (
+                from j in _db.JournalEntries
+                join l in _db.JournalEntryLines on j.Id equals l.JournalEntryId
+                join a in _db.ChartOfAccounts on l.AccountId equals a.Id
+                where j.CompanyId == companyId && j.SourceDocumentId == inv.Id
+                      && j.Status == JournalEntryStatus.Posted
+                      && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                      && !j.IsDeleted && !l.IsDeleted
+                      && a.AccountCode == "21913" && l.DebitAmount > 0
+                select j.Id).Distinct().ToListAsync();
+
+            foreach (var jeId in reclassJeIds)
+                await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                    reversalDate: inv.DocumentDate.Date,
+                    description: $"กลับภาษีขายถึงกำหนด (ยกเลิกการรับชำระ) - {inv.DocumentNumber}",
+                    systemTriggered: true);
+
+            if (reclassJeIds.Count > 0)
+            {
+                inv.OutputVatDueAt = null;   // เปิดทางให้ tax point เกิดใหม่ตอนรับเงินครั้งหน้า
+                _logger.LogInformation(
+                    "กลับภาษีขายถึงกำหนดของ {Doc} ({Count} ใบสำคัญ) เพราะ {Reason}",
+                    inv.DocumentNumber, reclassJeIds.Count, reason);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "กลับภาษีขายถึงกำหนดของ {Doc} ไม่สำเร็จ — VAT อาจค้างที่ 21911 " +
+                "ทั้งที่ยกเลิกการรับชำระแล้ว (ตรวจด้วยเครื่องมือกระทบยอด GL ↔ ภาษี)",
+                inv.DocumentNumber);
+        }
+    }
+
     private async Task TryReclassifyUndueOutputVatAsync(Guid companyId, Guid invoiceId, DateTime when, string actor)
     {
         try

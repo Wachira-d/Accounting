@@ -6,6 +6,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
 
@@ -14,12 +15,17 @@ public partial class AccountingService : IAccountingService
     private readonly AccountingDbContext _db;
     private readonly IBankService? _bankService;
     private readonly ISensitivityService? _sensitivity;
+    // optional — cleanup ที่เป็น best-effort ต้อง log ได้ ห้ามเงียบสนิท
+    // (ค่า default null เพื่อไม่กระทบจุดที่ new ตรง ๆ ในเทสต์/สคริปต์)
+    private readonly ILogger<AccountingService>? _logger;
 
-    public AccountingService(AccountingDbContext db, IBankService? bankService = null, ISensitivityService? sensitivity = null)
+    public AccountingService(AccountingDbContext db, IBankService? bankService = null,
+        ISensitivityService? sensitivity = null, ILogger<AccountingService>? logger = null)
     {
         _db = db;
         _bankService = bankService;
         _sensitivity = sensitivity;
+        _logger = logger;
     }
 
     // ==================== Chart of Accounts ====================
@@ -1052,8 +1058,19 @@ public partial class AccountingService : IAccountingService
             // pointing at a Reversed JE inside a now-imbalanced group.
             if (_bankService != null)
             {
+                // best-effort — cleanup ห้ามทำให้การกลับรายการที่ commit แล้วพัง
+                // แต่ต้อง **ไม่เงียบสนิท**: ถ้า bank service ล้มเป็นระบบ อาการที่
+                // เห็นคือ "bank txn ค้าง Matched กับ JE ที่ถูกกลับไปแล้ว" โดยไม่มี
+                // ร่องรอยให้ตาม (อาการเดียวกับเคส ConfirmPayment ที่เคย catch{} เปล่า)
+                // — จุดอื่นที่ทำงานเดียวกันใน DocumentService log ครบทุกจุดแล้ว
                 try { await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.JournalEntry, original.Id); }
-                catch { /* best-effort — bank cleanup never breaks the reverse */ }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(ex,
+                        "ปลดการจับคู่ธนาคารของใบสำคัญ {Entry} ไม่สำเร็จหลังกลับรายการ — " +
+                        "รายการธนาคารอาจยังชี้ใบที่ถูกกลับแล้ว (ตรวจที่หน้ากระทบยอดธนาคาร)",
+                        original.EntryNumber);
+                }
             }
 
             return await GetJournalEntryAsync(companyId, reversal.Id);
