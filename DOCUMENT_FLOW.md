@@ -1823,7 +1823,10 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
-_Last verified against codebase: 2026-08-17 (รอบ 67 — **JournalPostingGuard**:_
+_Last verified against codebase: 2026-08-17 (รอบ 68 — **PaidOnIssue persist**:_
+_เจตนา "รับเงินครบแล้ว" เก็บลง Document + Draft พิมพ์หัวรวมตามเจตนา / หลังอนุมัติ_
+_ตามชำระจริง (mirror คู่ ComputeServedAsReceipt/ResolveServedAsReceiptAsync) ·_
+_500 มีรหัสอ้างอิงผูก ErrorLogs; รอบ 67 — **JournalPostingGuard**:_
 _ด่านตรวจโครงสร้าง JE ก่อนบันทึก (WHT ≤ 15% ของฐาน · ขาเจ้าหนี้/เงินครบยอด ·_
 _VAT ไม่เกินเอกสาร) wire เข้า AutoPost + integration 3 จุด · scanner_
 _`journal-anomalies` + การ์ด 🩺 หา JE เสียเก่าและเอกสารที่ไม่มี JE ·_
@@ -2435,6 +2438,23 @@ _เทียบคงเหลือจริง (หัก realized) + **อ�
 _ถูกรายงาน → ภ.พ.30 ลดยอดถูกต้อง. หน้า deposits: หัก refunded, clamp ≥0,_
 _fallback GL net เมื่อ SubTotal=0, DTO เพิ่ม RefundedAmount. create block_
 _IsDeposit+RelatedDocumentId (มัดจำต้อง standalone)._
+_รอบ 68: **เจตนา "รับเงินครบแล้ว" (tax_paid) ต้อง persist + 500 ต้องตามรอยได้**_
+_เคสจริง: แปลง INV → เลือก "ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบแล้ว" แต่_
+_(ก) ใบร่างพิมพ์หัว "ใบกำกับภาษี" เฉย ๆ (ข) อนุมัติล้ม "เกิดข้อผิดพลาดภายในระบบ"._
+_วิเคราะห์: โหมด tax_paid เดิมอยู่แค่ในฟอร์ม + chain ฝั่ง client (approve→_
+_createPayment) **ไม่เคยบันทึกลงเอกสาร** ⇒ ปิดฟอร์ม/chain ล้ม = เจตนาหายเงียบ_
+_(defect class "เก็บแล้วต้อง echo กลับ") และ resolver หัวรวมตัดสินจาก "ชำระจริง"_
+_เท่านั้น จึงไม่มีทางรวมบนใบร่าง. แก้: (1) field ใหม่ `Document.PaidOnIssue`_
+_(ครบ checklist B: entity + migration + Create/Update/Response + payload +_
+_hydrate openEdit + reset + mapper) — เก็บเฉพาะ TaxInvoice/Invoice ·_
+_(2) `ComputeServedAsReceipt` + `ResolveServedAsReceiptAsync` (mirror คู่):_
+_**Draft → ใช้เจตนา** (เลข DRAFT ไม่ใช่เอกสารตามกฎหมาย — หลัก Draft PDF =_
+_Approved PDF) / **หลังอนุมัติ → ใช้การชำระจริงเท่านั้น** (อนุมัติแล้ว chain_
+_จ่ายล้ม ห้ามพิมพ์ "ใบเสร็จรับเงิน" = หลักฐานรับเงินเท็จ) · (3) การอนุมัติที่ล้ม:_
+_toast แบบไม่มีคำนำหน้า = 500 ชนิด exception ไม่คาดคิด (middleware ปิดบังข้อความ)_
+_— เพิ่ม **รหัสอ้างอิง 8 หลัก** ใน response 500 + prefix `[REF:xxxx]` ในแถว_
+_ErrorLogs → เกิดซ้ำครั้งหน้าแจ้งรหัสแล้วเปิดดู exception จริงได้ทันที (แก้ blind_
+_ไม่ได้เพราะ log อยู่ฝั่ง production)._
 _รอบ 67: **ด่านตรวจโครงสร้าง JE ก่อนบันทึก (JournalPostingGuard) + สแกนย้อนหลัง**_
 _ที่มา (เคสจริง UV-202607-0037 จาก EXP integration): Dr ค่าใช้จ่าย 17,890 +_
 _Dr ภาษีซื้อ 1,252.30 / **Cr 21917 ทั้งใบ 19,142.30** — ไม่มีขาเจ้าหนี้เลย และ_

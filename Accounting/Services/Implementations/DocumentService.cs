@@ -934,6 +934,10 @@ public class DocumentService : IDocumentService
                 // ไม่ตั้งลูกหนี้ + ไม่ออกใบเสร็จแยก, e-Tax T03. approve ปิดยอด Paid
                 IssuedAsCashReceipt = (request.IssuedAsCashReceipt ?? false)
                     && request.DocumentType == DocumentType.TaxInvoice,
+                // เจตนา "รับเงินครบแล้ว ณ วันออก" (โหมด tax_paid) — เก็บลงเอกสาร
+                // ให้ echo กลับฟอร์ม + หัวใบร่างพิมพ์รวมตรงกับที่เลือก
+                PaidOnIssue = (request.PaidOnIssue ?? false)
+                    && request.DocumentType is DocumentType.TaxInvoice or DocumentType.Invoice,
                 // ผู้จัดทำจากระบบต้นทาง (คนทำจริง) → ช่อง "ผู้จัดทำ/ผู้รับเงิน" บน PDF
                 // แทน CreatedBy user (เหมือน integration PV/invoice)
                 PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
@@ -1971,6 +1975,11 @@ public class DocumentService : IDocumentService
                 // เงินสด — จะได้ Dr เงินสดเต็มทั้งที่ยังไม่รับเงินจริง (เงินสดปลอม
                 // + ไม่มีลูกหนี้). ต้องรับเงินผ่าน "บันทึกชำระเงิน" ตามปกติ
                 && !await IsConvertedFromCreditSaleAsync(companyId, doc);
+        // เจตนา "รับเงินครบแล้ว" (tax_paid) — ใบแปลงเกิดเป็นร่างเสมอ ผู้ใช้เลือก
+        // โหมดตอนเปิดแก้ไข จึงต้องรับที่ update; null = ไม่แตะ (กันทับค่าเดิม)
+        if (request.PaidOnIssue.HasValue)
+            doc.PaidOnIssue = request.PaidOnIssue.Value
+                && doc.DocumentType is DocumentType.TaxInvoice or DocumentType.Invoice;
         // ผู้จัดทำจริงจากระบบต้นทาง (เคส OCR PV: NextAcc สร้าง Draft เอง → partner
         // ยัดผู้จัดทำผ่าน PUT). null = ไม่แตะ; "" = ล้าง; ค่า = ตั้ง. PDF slot 0
         // (ผู้จัดทำ/ผู้รับเงิน) จะ priority ค่านี้เหนือ CreatedBy (ResolveSignersAsync)
@@ -13365,8 +13374,13 @@ public class DocumentService : IDocumentService
     internal static bool ComputeServedAsReceipt(Document d, bool hasSeparateReceipt)
     {
         if (d.DocumentType != DocumentType.TaxInvoice) return false;
+        // ใบร่างที่เลือกโหมด "รับเงินครบแล้ว" → แสดง/พิมพ์หัวรวมตามเจตนา (เลข
+        // DRAFT ไม่ใช่เอกสารตามกฎหมาย — หลัก "Draft PDF = Approved PDF").
+        // หลังอนุมัติ ตัดสินจากการชำระจริงเท่านั้น (อนุมัติแล้วแต่ยังไม่บันทึก
+        // ชำระ = ห้ามพิมพ์ "ใบเสร็จรับเงิน" — จะกลายเป็นหลักฐานรับเงินเท็จ)
+        if (d.Status == DocumentStatus.Draft) return d.PaidOnIssue && !hasSeparateReceipt;
         if (d.BalanceDue > 0.01m || d.PaidAmount <= 0.005m) return false;
-        if (d.Status is DocumentStatus.Draft or DocumentStatus.Voided
+        if (d.Status is DocumentStatus.Voided
             or DocumentStatus.Rejected or DocumentStatus.WaitingApproval) return false;
         return !hasSeparateReceipt;
     }
@@ -13551,6 +13565,7 @@ public class DocumentService : IDocumentService
         BookingNumber: d.BookingNumber,
         CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice,
         IssuedAsCashReceipt: d.IssuedAsCashReceipt,
+        PaidOnIssue: d.PaidOnIssue,
         DepositAppliedAmount: d.DepositAppliedAmount,
         IsSettlementReceipt: d.IsSettlementReceipt,
         UndueInputVatBlockers: undueBlockers,

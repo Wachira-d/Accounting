@@ -1324,8 +1324,18 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Approved/PartiallyPaid (เช่น หักมัดจำผ่าน flow อื่น / rounding) — คำขอ
         // TakeTime key ที่ "BalanceDue = 0". ใช้ BalanceDue≈0 + เคยรับเงินจริง
         // (PaidAmount/มัดจำ > 0) บนใบที่ลงบัญชีแล้ว (ไม่ใช่ Draft/Voided/Rejected).
+        // ใบร่างที่เลือกโหมด "รับเงินครบแล้ว" (PaidOnIssue) → พิมพ์หัวรวมตาม
+        // เจตนา — ใบร่างเลข DRAFT ไม่ใช่เอกสารตามกฎหมาย และหลัก "Draft PDF =
+        // Approved PDF" ต้องให้ตัวอย่างตรงกับใบจริงที่จะออก. หลังอนุมัติตัดสิน
+        // จากการชำระจริงเท่านั้น (mirror: DocumentService.ComputeServedAsReceipt
+        // — แก้ที่ใดที่หนึ่งต้องแก้อีกที่เสมอ)
+        if (doc.Status == DocumentStatus.Draft)
+        {
+            doc.ServedAsReceipt = doc.PaidOnIssue;
+            return;
+        }
         if (doc.BalanceDue > 0.01m || doc.PaidAmount <= 0.005m) return;
-        if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
+        if (doc.Status is DocumentStatus.Voided
             or DocumentStatus.Rejected or DocumentStatus.WaitingApproval) return;
         // ชำระผ่านการออกใบเสร็จแยก (Receipt/RV อ้างใบนี้) → ใบเสร็จคือคนละใบ
         var hasSeparateReceipt = await _db.Documents.AsNoTracking().AnyAsync(r =>

@@ -6822,6 +6822,11 @@
           if (fCash) { fCash.checked = !!d.issuedAsCashReceipt; this.onCashReceiptToggle?.(); }
           const fDecl = document.getElementById('fBuyerDeclinedTaxInvoice');
           if (fDecl) fDecl.checked = !!d.buyerDeclinedTaxInvoice;
+          // เจตนา "รับเงินครบแล้ว" (tax_paid) — เดิมไม่เคย persist/hydrate ⇒
+          // เลือกโหมดแล้วปิดฟอร์ม เปิดใหม่ตัวเลือกหาย + หัวใบร่างไม่รวม
+          // (defect class "เก็บแล้วต้อง echo กลับ" — เคสจริงจากผู้ใช้)
+          const fPaid = document.getElementById('fPaidOnIssue');
+          if (fPaid) { fPaid.checked = !!d.paidOnIssue; if (d.paidOnIssue) this._syncPaidOnIssueMethod?.(); }
           // flag ครบแล้ว → ตั้ง dropdown ให้ตรงกับใบจริง (ไม่งั้นเปิดแก้แล้ว
           // dropdown โชว์ค่า default ที่ไม่ตรงกับเอกสาร)
           this._syncIssueModeUi?.();
@@ -7209,6 +7214,9 @@
         // (หักใน JE เดียว) แทน apply แยกหลัง approve
         const _issuedAsCashReceipt = document.getElementById('fIssuedAsCashReceipt')?.checked || false;
         payload.issuedAsCashReceipt = _issuedAsCashReceipt;
+        // เจตนา "รับเงินครบแล้ว ณ วันออก" ต้อง persist ลงเอกสาร — ไม่ใช่อยู่แค่ใน
+        // chain ฝั่ง client (ปิดฟอร์ม/อนุมัติล้มแล้วเจตนาหาย + หัวใบร่างไม่รวม)
+        payload.paidOnIssue = _paidOnIssueNow;
         if (_issuedAsCashReceipt && (this._pendingDepositApplies || []).length) {
           const refs = []; let depSum = 0;
           for (const ap of this._pendingDepositApplies) {

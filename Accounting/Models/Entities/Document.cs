@@ -143,6 +143,17 @@ public class Document : TenantEntity
     /// TaxInvoice ปกติ (deposit+settle ที่ verified) — flag นี้แค่ classification/หัว.</summary>
     public bool IssuedAsCashReceipt { get; set; }
 
+    /// <summary>เจตนา "รับเงินครบแล้ว ณ วันออกใบ" (โหมด tax_paid ของใบแปลงจากขาย
+    /// เครดิต) — เดิมอยู่แค่ในฟอร์ม+chain ฝั่ง client ไม่เคยบันทึกลงเอกสาร ⇒
+    /// ปิดฟอร์มแล้วตัวเลือกหาย (defect class "เก็บแล้วต้อง echo กลับ") และหัวใบ
+    /// ร่างไม่พิมพ์รวม "ใบเสร็จรับเงิน" ทั้งที่ผู้ใช้เลือกไว้. ต่างจาก
+    /// IssuedAsCashReceipt: ใบนี้ยังเดินสายเครดิตเต็ม (ตั้งลูกหนี้ → supersede ใบ
+    /// แจ้งหนี้ → บันทึกชำระ) — flag นี้เป็นเจตนา/หัวกระดาษ ไม่เปลี่ยนทรง JE.
+    /// หัวรวมจริงหลังอนุมัติยังตัดสินจากการชำระจริง (ServedAsReceipt) เสมอ —
+    /// intent ใช้กับ "ใบร่าง" (เลข DRAFT ไม่ใช่เอกสารตามกฎหมาย) เพื่อให้ตัวอย่าง
+    /// ก่อนพิมพ์ตรงกับของจริง (หลัก "Draft PDF = Approved PDF")</summary>
+    public bool PaidOnIssue { get; set; }
+
     /// <summary>Capability token สำหรับลิงก์ "ลูกค้ากดยอมรับใบเสนอราคาออนไลน์"
     /// — random hex 64 ตัว สร้างเมื่อผู้ใช้ขอลิงก์ (POST accept-link). ผู้ถือ
     /// ลิงก์ดู/ยอมรับใบเสนอราคาได้โดยไม่ต้อง login (read-only + accept เท่านั้น).</summary>
