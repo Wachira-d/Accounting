@@ -909,6 +909,8 @@ const Layout = {
       description: 'auto-categorize · anomaly · cash-flow forecast · vendor canon · GL suggestion' },
     { id: 'assistant', label: 'ผู้ช่วยบัญชี AI', icon: '💬', href: '/pages/assistant.html', feature: 'AI_Features',
       description: 'ถามวิธีลงบันทึก เลือกหมวดบัญชี ภาษี — ผู้ช่วยรู้จักผังบัญชีของกิจการคุณ' },
+    { id: 'ai-usage', label: 'รายงานการใช้งาน AI', icon: '📊', href: '/pages/admin-ai-usage.html', adminOnly: true,
+      description: 'ใครใช้ AI เท่าไร แยกรายลูกค้า/ช่องทาง (หน้าเว็บ vs API) · ต้นทุนจริง · สัดส่วนที่ระบบตอบเองได้' },
     { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
       description: 'นำเข้า Excel ทีละ batch · ส่งออกข้อมูลเป็น CSV/Excel · backup' },
     { id: 'migrate-competitor', label: 'ย้ายจาก Express/PEAK/FlowAccount', icon: '🔁', href: '/pages/migrate-competitor.html', feature: 'BulkImport',

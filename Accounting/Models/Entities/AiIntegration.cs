@@ -201,6 +201,39 @@ public class AiSuggestionFeedback : TenantEntity
     /// <summary>Set when Status = Failed — captures whatever the provider
     /// returned so the orchestrator can decide on retry policy.</summary>
     public string? ErrorMessage { get; set; }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  ป้ายกำกับ "ใครเป็นคนเรียก" — ทำให้รายงานแยกรายลูกค้า/ช่องทางได้
+    //  ยึด semantics ชุดเดียวกับ UsageEvent (มิเตอร์คิดเงิน) เพื่อให้
+    //  "รายงานการใช้ AI" กับ "บิล" พูดภาษาเดียวกัน กระทบยอดกันได้
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>ช่องทางที่ request เข้ามา — Web (หน้า NextAcc) / ApiKey
+    /// (ลูกค้า Connected ยิง API) / Background (งานของระบบเอง).
+    /// นี่คือฟิลด์ที่ตอบว่า "ลูกค้ารายนี้ใช้ผ่านเว็บหรือใช้ API อย่างเดียว"</summary>
+    public AiUsageChannel Channel { get; set; } = AiUsageChannel.Unknown;
+
+    /// <summary>กลุ่มผู้จ่ายเงิน **ณ ขณะที่เรียก** (snapshot ไม่ join สด) —
+    /// เหตุผลเดียวกับ `UsageEvent.BillingAccountId`: บริษัทถูกขายออกจากเครือ
+    /// แล้ว `Company.BillingAccountId` เปลี่ยน รายงานย้อนหลังต้องยังอยู่กับ
+    /// กลุ่มเดิม ไม่ใช่ย้ายตามไปทั้งประวัติ</summary>
+    public Guid? BillingAccountId { get; set; }
+
+    /// <summary>สาขาที่ใช้งาน (ถ้าคีย์/ผู้ใช้ผูกสาขา) — สำหรับ charge-back ภายใน</summary>
+    public Guid? BranchId { get; set; }
+
+    /// <summary>API key ที่ยิงเข้ามา — **null = ใช้ผ่านหน้าเว็บปกติ**
+    /// (นิยามเดียวกับ `UsageEvent.ApiClientId` เป๊ะ ๆ). ลูกค้า API รายเดียว
+    /// อาจมีหลายคีย์ (POS สาขา A, ERP สำนักงานใหญ่) จึงเจาะดูรายคีย์ได้</summary>
+    public Guid? ApiClientId { get; set; }
+
+    /// <summary>ผู้ใช้ที่กด (เฉพาะช่องทาง Web) — ให้ตอบได้ว่าใครในบริษัท
+    /// ใช้ AI มากที่สุด และเวลามีข้อโต้แย้งเรื่องบิลก็ไล่กลับได้</summary>
+    public Guid? UserId { get; set; }
+
+    /// <summary>คีย์ sandbox → นับเพื่อดูพฤติกรรมช่วงทดสอบ แต่ **ไม่เข้าบิล**
+    /// (ตรงกับ `UsageEvent.IsSandbox`)</summary>
+    public bool IsSandbox { get; set; }
 }
 
 /// <summary>
@@ -397,4 +430,83 @@ public class AiUsageDaily : BaseEntity
     /// <summary>Average end-to-end latency including queue. Slow days
     /// surface as a warning on the admin widget.</summary>
     public int AvgLatencyMs { get; set; }
+}
+
+/// <summary>
+/// **สรุปการใช้ AI รายวัน แยกตามลูกค้าและช่องทาง** — ตารางที่ทำให้รายงาน
+/// "ลูกค้ารายไหนใช้ AI เท่าไร" ตอบได้ในคิวรีเดียวโดยไม่ต้องสแกน
+/// <see cref="AiSuggestionFeedback"/> ทั้งปี (แถวระดับ call โตเป็นล้านแถว)
+///
+/// <para><b>ทำไมเป็นตารางใหม่ ไม่เติม CompanyId ลง AiUsageDaily</b>: ตารางเดิม
+/// unique ที่ (วันที่, provider, feature) และวิดเจ็ตแอดมินอ่านอยู่ ถ้าเติมคอลัมน์
+/// แล้วแถวเก่ามี CompanyId = null ปนกับแถวใหม่ที่มีค่า ผลรวมจะ **นับซ้ำ**
+/// ทันที (ทั้งแถวรวมและแถวแยกอยู่ในตารางเดียวกัน). แยกตารางจึงไม่แตะของเดิมเลย</para>
+///
+/// <para><b>ทำไมเก็บ LatencySumMs ไม่ใช่ค่าเฉลี่ย</b>: ค่าเฉลี่ยเอามาเฉลี่ยซ้ำ
+/// ข้ามแถวไม่ได้ (เฉลี่ยของเฉลี่ย ≠ เฉลี่ยจริง เมื่อจำนวน call ต่างกัน) —
+/// รายงานนี้ต้องรวมข้าม feature/ช่องทาง/วัน ตลอดเวลา จึงเก็บผลรวมกับตัวหาร
+/// แล้วค่อยหารตอนแสดง</para>
+///
+/// <para><b>ทำไมนับ CallsLocalServed แยก</b>: ตัวชี้วัดตามกฎเหล็ก #1 คือ
+/// "local โตพอจะยืนเองได้แค่ไหน" — ยิ่ง local ตอบได้เองมาก ยิ่งจ่าย token น้อย
+/// รายงานจึงต้องโชว์ทั้ง "เรียก AI จริงกี่ครั้ง" และ "ประหยัดไปกี่ครั้ง"
+/// ไม่ใช่โชว์แค่ยอดที่จ่ายเงิน</para>
+/// </summary>
+public class AiUsageDailyTenant : BaseEntity
+{
+    /// <summary>วันตามปฏิทิน UTC (date only) — unique ร่วมกับ
+    /// (CompanyId, ProviderType, FeatureKey, Channel)</summary>
+    public DateTime UsageDate { get; set; }
+
+    /// <summary>บริษัทผู้ใช้ (tenant). ไม่ใช้ TenantEntity เพราะแถวนี้เป็น
+    /// ข้อมูลระดับแพลตฟอร์มที่แอดมินอ่านข้ามบริษัท — การอ่านฝั่งลูกค้า
+    /// ต้องใส่ `CompanyId ==` เองตามกฎ M</summary>
+    public Guid CompanyId { get; set; }
+
+    /// <summary>กลุ่มผู้จ่ายเงิน ณ วันนั้น (snapshot) — ให้รวมยอดทั้งเครือได้
+    /// โดยไม่ต้อง join Company สด (ซึ่งจะทำให้ประวัติย้ายตามการขายกิจการ)</summary>
+    public Guid? BillingAccountId { get; set; }
+
+    public AiProviderType ProviderType { get; set; }
+    public string FeatureKey { get; set; } = "";
+    public AiUsageChannel Channel { get; set; } = AiUsageChannel.Unknown;
+
+    // ── ปริมาณ ───────────────────────────────────────────────────────
+    /// <summary>ทุกครั้งที่ orchestrator ถูกเรียก (รวมที่ไม่ได้ยิงออกไปจริง)</summary>
+    public int CallsTotal { get; set; }
+
+    /// <summary>ยิงถึง provider แล้วสำเร็จ = ครั้งที่ **เสียเงินจริง**</summary>
+    public int CallsAi { get; set; }
+
+    /// <summary>ตอบจากแคช — ไม่เสีย token (ประหยัดจากการถามซ้ำ)</summary>
+    public int CallsCached { get; set; }
+
+    /// <summary>local model ตอบเองจนไม่ต้องเรียก AI — ตัวชี้วัด sovereignty</summary>
+    public int CallsLocalServed { get; set; }
+
+    public int CallsFailed { get; set; }
+    public int CallsBudgetBlocked { get; set; }
+    public int CallsNoProvider { get; set; }
+
+    // ── ต้นทุน ───────────────────────────────────────────────────────
+    public long InputTokensTotal { get; set; }
+    public long OutputTokensTotal { get; set; }
+    public decimal CostUsdTotal { get; set; }
+
+    // ── คุณภาพ ───────────────────────────────────────────────────────
+    /// <summary>ผลรวม latency (ms) ของ call ที่วัดได้ — หารด้วย
+    /// <see cref="LatencySamples"/> ตอนแสดงผล</summary>
+    public long LatencySumMs { get; set; }
+    public int LatencySamples { get; set; }
+
+    /// <summary>จำนวน call ที่ผู้ใช้ "ตัดสินใจแล้ว" (ยืนยันหรือแก้) —
+    /// อัปเดตตอน RecordUserChoiceAsync ไม่ใช่ตอนเรียก</summary>
+    public int UserReviewed { get; set; }
+
+    /// <summary>ในจำนวนที่ตัดสินใจแล้ว ผู้ใช้รับคำตอบ AI ไปตรง ๆ กี่ครั้ง —
+    /// UserAcceptedAi / UserReviewed = "AI แม่นแค่ไหนในสายตาผู้ใช้จริง"</summary>
+    public int UserAcceptedAi { get; set; }
+
+    /// <summary>แถวของคีย์ sandbox — นับแยกเพื่อไม่ให้ปนยอดที่เอาไปคิดเงิน</summary>
+    public bool IsSandbox { get; set; }
 }

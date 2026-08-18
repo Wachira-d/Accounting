@@ -354,6 +354,7 @@ public class AccountingDbContext : DbContext
     public DbSet<LocalModelHealth> LocalModelHealths => Set<LocalModelHealth>();
     public DbSet<AiFeatureRoutingConfig> AiFeatureRoutingConfigs => Set<AiFeatureRoutingConfig>();
     public DbSet<AiUsageDaily> AiUsageDailies => Set<AiUsageDaily>();
+    public DbSet<AiUsageDailyTenant> AiUsageDailyTenants => Set<AiUsageDailyTenant>();
     public DbSet<AiSuggestionMemory> AiSuggestionMemories => Set<AiSuggestionMemory>();
 
     // External Integration
@@ -2480,6 +2481,22 @@ public class AccountingDbContext : DbContext
                 .HasDatabaseName("IX_AiUsageDailies_Day_Provider_Feature")
                 .IsUnique();
             e.HasIndex(u => u.UsageDate).HasDatabaseName("IX_AiUsageDailies_UsageDate");
+            e.HasQueryFilter(u => !u.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiUsageDailyTenant>(e =>
+        {
+            // หนึ่งแถวต่อ (วัน, บริษัท, provider, feature, ช่องทาง) — upsert
+            // ต้องพึ่ง unique นี้ ไม่งั้นสองคำขอพร้อมกันสร้างแถวซ้ำแล้วยอดเบิ้ล
+            e.HasIndex(u => new { u.UsageDate, u.CompanyId, u.ProviderType, u.FeatureKey, u.Channel })
+                .HasDatabaseName("IX_AiUsageDailyTenants_Day_Co_Provider_Feature_Channel")
+                .IsUnique();
+            // รายงานหลัก: "ช่วงวันที่ + ไล่ตามบริษัท" และ "ช่วงวันที่ + ไล่ตามกลุ่มบิล"
+            e.HasIndex(u => new { u.CompanyId, u.UsageDate })
+                .HasDatabaseName("IX_AiUsageDailyTenants_Company_Date");
+            e.HasIndex(u => new { u.BillingAccountId, u.UsageDate })
+                .HasDatabaseName("IX_AiUsageDailyTenants_BillingAccount_Date");
+            e.Property(u => u.CostUsdTotal).HasPrecision(18, 6);
             e.HasQueryFilter(u => !u.IsDeleted);
         });
 

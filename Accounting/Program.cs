@@ -398,7 +398,11 @@ builder.Services.AddScoped<Accounting.Services.Ai.IAiProvider, Accounting.Servic
 builder.Services.AddScoped<Accounting.Services.Ai.IAiPromptSanitizer, Accounting.Services.Ai.AiPromptSanitizer>();
 builder.Services.AddScoped<Accounting.Services.Ai.IAiResponseCacheService, Accounting.Services.Ai.AiResponseCacheService>();
 builder.Services.AddScoped<Accounting.Services.Ai.IAiBudgetGuard, Accounting.Services.Ai.AiBudgetGuard>();
+// ป้ายกำกับ "ใครเรียก AI" — scoped เพราะ cache แผนที่ company→กลุ่มบิล
+// ไว้ในตัวเองเท่าอายุ 1 request (งาน bulk ยิง AI หลายสิบครั้งใน request เดียว)
+builder.Services.AddScoped<Accounting.Services.Ai.IAiUsageAttributionResolver, Accounting.Services.Ai.AiUsageAttributionResolver>();
 builder.Services.AddScoped<Accounting.Services.Ai.IAiFeedbackRecorder, Accounting.Services.Ai.AiFeedbackRecorder>();
+builder.Services.AddScoped<Accounting.Services.Ai.AiUsageReportService>();
 // Per-feature routing policy — SINGLETON so the 1-minute cache survives
 // across HTTP requests. The orchestrator consults this on every AI call
 // to decide local vs provider; the admin UI writes through it.

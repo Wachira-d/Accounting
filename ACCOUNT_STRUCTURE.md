@@ -325,12 +325,67 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 3. **Endpoint feedback เสริม** (`POST /api/v1/feedback/{feedbackId}`) — สำหรับ
    เคสที่แก้ทีหลังในระบบเขา (นักบัญชีแก้เลขบัญชีอีก 3 วันถัดมา) — connector
    สำเร็จรูป (Dynamics) ต้อง sync การแก้กลับมาทางนี้อัตโนมัติ
-4. **วัดความพร้อมราย tenant** — `<Feature>UsedAi` rate ต่อบริษัทลดลงเรื่อย ๆ
-   = local โตจริง; โชว์ใน `/admin` (มี accuracy dashboard แล้ว — เพิ่มมิติ
-   ต่อบริษัท) และใช้เป็นตัวพิสูจน์ margin ที่โตขึ้นต่อ investor/ตัวเอง
+4. **วัดความพร้อมราย tenant** ✅ — `<Feature>UsedAi` rate ต่อบริษัทลดลงเรื่อย ๆ
+   = local โตจริง. **ทำแล้ว** — ดู §7.4 (รายงานการใช้งาน AI แยกรายลูกค้า)
+   ใช้เป็นตัวพิสูจน์ margin ที่โตขึ้นต่อ investor/ตัวเอง
 
 **Kill-switch ยังบังคับเต็ม**: provider ดับ → ทุก endpoint API ตอบจาก local
 ครบ 100% เงียบ ๆ — SLA ของลูกค้า Connected ต้องไม่ผูกกับ uptime ของ DeepSeek
+
+### 7.4 รายงานการใช้งาน AI แยกรายลูกค้า ✅
+
+> ตอบคำถามธุรกิจ: **ลูกค้ารายไหนใช้ AI เท่าไร ผ่านหน้าเว็บหรือผ่าน API
+> จ่ายไปเท่าไร และ local โตพอจะลดการเรียกลงหรือยัง**
+
+**ป้ายกำกับ "ใครเรียก" บนทุก call** (`AiSuggestionFeedback`) — นิยาม
+**ชุดเดียวกับ `UsageEvent`** เป๊ะ ๆ เพื่อให้รายงานกับบิลกระทบยอดกันได้:
+
+| ฟิลด์ | ความหมาย |
+| --- | --- |
+| `Channel` | `Web` (หน้า NextAcc) · `ApiKey` (ลูกค้า Connected) · `Background` (งานระบบ) · `Unknown` (แถวก่อนมีฟีเจอร์นี้) |
+| `ApiClientId` | คีย์ที่ยิงเข้ามา — **null = ใช้ผ่านหน้าเว็บ** (นิยามเดียวกับ `UsageEvent.ApiClientId`) |
+| `BillingAccountId` | กลุ่มผู้จ่าย **snapshot ณ ขณะเรียก** — ไม่ join สด เพราะบริษัทถูกขายออกจากเครือแล้วประวัติต้องไม่ย้ายตาม |
+| `BranchId` · `UserId` | สาขา (จากคีย์) · ผู้กด (ช่องทาง Web) — สำหรับ charge-back ภายในและไล่ที่มาเวลาโต้แย้งบิล |
+| `IsSandbox` | คีย์ทดสอบ — นับเพื่อดูพฤติกรรม แต่ **ไม่เข้าบิล** (รายงานตัดออกโดยค่าเริ่มต้น) |
+
+resolve โดย `AiUsageAttributionResolver` (scoped) อ่าน claim จาก
+`ApiKeyMiddleware` (`AuthMethod=ApiKey` + `ApiKeyId`) — ไม่มี HttpContext =
+`Background`. พลาด resolve ต้องไม่ทำให้ AI call ล้ม (เสียแค่มิติในรายงาน)
+
+**สรุปรายวัน** `AiUsageDailyTenant` unique ที่
+(วัน, บริษัท, provider, feature, ช่องทาง):
+- **แยกตารางจาก `AiUsageDaily` โดยตั้งใจ** — ตารางเดิม unique ที่
+  (วัน, provider, feature) และวิดเจ็ตแอดมินอ่านอยู่ ถ้าเอาแถวแยกบริษัทไปปน
+  ผลรวมจะ**นับซ้ำ**ทันที
+- เก็บ `LatencySumMs` + `LatencySamples` **ไม่ใช่ค่าเฉลี่ย** — รายงานรวมข้าม
+  feature/ช่องทาง/วันตลอดเวลา และ "เฉลี่ยของเฉลี่ย" ผิดเมื่อจำนวน call ต่างกัน
+  (เคสจริงในเทสต์: 500 ms vs 108 ms — ผิด 4.6 เท่า)
+- `CallsLocalServed` = ครั้งที่ **ประหยัดไป** (Skipped + มีคำตอบ local จริง);
+  Skipped ที่ไม่มีคำตอบ local ไม่นับ ไม่งั้นตัวเลข sovereignty สวยเกินจริง
+- `UserReviewed`/`UserAcceptedAi` อัปเดตตอน `RecordUserChoiceAsync` โดยลง
+  **วันที่เกิด call** ไม่ใช่วันที่กดยืนยัน (ไม่งั้นอัตรายอมรับของเดือนหนึ่ง
+  ไปโผล่อีกเดือน) และนับ "ตัดสินใจแล้ว" ครั้งแรกครั้งเดียว — เปลี่ยนใจซ้ำ
+  ปรับเฉพาะตัวเศษ ตัวหารต้องไม่โต
+
+**Service/API/หน้าจอ**
+- `AiUsageReportService` — สรุปแพลตฟอร์ม · เจาะรายลูกค้า · รายคีย์ API ·
+  แนวโน้มรายวัน · ตัวอย่าง call ล่าสุด. ยอดรวมอ่านจาก rollup (เบา)
+  ส่วนรายคีย์/ตัวอย่าง อ่านจากแถวระดับ call (มีดัชนี + จำกัดช่วงวันที่ ≤ 400 วัน)
+- `GET /api/admin/ai-usage/summary|customers/{id}|export` — **SystemAdmin**
+- `GET /api/companies/{id}/ai-usage` (+ `/group` รวมทั้งเครือ) — **ฝั่งลูกค้า
+  ดูของตัวเอง**, แยก controller ให้ route ผูก `companyId` เพื่อให้
+  `TenantAccessMiddleware` กันข้ามบริษัทให้เหมือน endpoint อื่น
+- หน้า `/pages/admin-ai-usage.html` (เมนู adminOnly)
+- **PDPA**: คืนเฉพาะ metadata — **ห้ามคืน `PromptJson`/`ResponseJson`**
+  ซึ่งมีเนื้อหาเอกสารของลูกค้า (กติกาเดียวกับ `MeteringController`)
+
+**ป้าย "ประเภทลูกค้า"** คำนวณจากช่องทางที่พบจริงในช่วงที่ดู:
+`API อย่างเดียว` (มี ApiKey ไม่มี Web) · `เว็บอย่างเดียว` · `ผสม` ·
+`งานระบบเท่านั้น` — คอลัมน์เดียวตอบคำถามแรกที่ทีมขาย/ซัพพอร์ตถามเสมอ
+
+**อ่านตัวเลขให้ถูกทาง**: `AiUsageRate` (= ถึง provider จริง ÷ ทั้งหมด)
+**ยิ่งต่ำยิ่งดี** ตามกฎเหล็ก #1 — รายงานที่โชว์แต่ยอดเงินจะทำให้สรุปกลับด้าน
+ว่า "ใช้น้อย = ไม่มีใครใช้ระบบ" ทั้งที่จริงคือ local เก่งจนไม่ต้องถามครูแล้ว
 
 ## 8. Portal `/connect` 📋
 
@@ -427,7 +482,15 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-14 (rev 11 — §6.1 ลงโค้ดจริง:_
+_Last verified against codebase: 2026-08-18 (rev 12 — **§7.4 รายงานการใช้งาน AI_
+_แยกรายลูกค้า ✅ ลงโค้ดจริง**: ป้ายกำกับ Channel/ApiClientId/BillingAccountId/_
+_BranchId/UserId/IsSandbox บนทุกแถว `AiSuggestionFeedback` (นิยามชุดเดียวกับ_
+_`UsageEvent` เพื่อกระทบยอดกับบิลได้) · resolver อ่าน claim จาก ApiKeyMiddleware ·_
+_ตารางสรุป `AiUsageDailyTenant` (เก็บผลรวม latency ไม่ใช่ค่าเฉลี่ย) ·_
+_`AiUsageReportService` + `/api/admin/ai-usage/*` (SystemAdmin) +_
+_`/api/companies/{id}/ai-usage` (ลูกค้าดูของตัวเอง + ทั้งเครือ) +_
+_หน้า `/pages/admin-ai-usage.html` + export Excel · เทสต์ `AiUsageReportTests` ·_
+_ทำให้ §7.3 ข้อ 4 จาก 📋 → ✅; rev 11 — §6.1 ลงโค้ดจริง:_
 _`PlatformBillingDocumentIssuer` ออกใบกำกับ/ใบเสร็จ/ใบแจ้งหนี้ค่าบริการผ่าน tenant_
 _ของผู้ให้บริการ (เลือกบริษัทที่ ตั้งค่าเว็บไซต์ → ข้อมูลผู้ขาย) ⇒ รายได้ค่าบริการ_
 _ลง GL + เข้ารายงานภาษีขาย/ภ.พ.30 + ออก e-Tax ได้ · เพิ่มช่อง "ภาษีถูกหัก ณ ที่จ่าย"_

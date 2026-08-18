@@ -57,18 +57,31 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<AiFeedbackRecorder> _logger;
+    private readonly IAiUsageAttributionResolver? _attribution;
 
-    public AiFeedbackRecorder(AccountingDbContext db, ILogger<AiFeedbackRecorder> logger)
-    { _db = db; _logger = logger; }
+    public AiFeedbackRecorder(AccountingDbContext db, ILogger<AiFeedbackRecorder> logger,
+        IAiUsageAttributionResolver? attribution = null)
+    { _db = db; _logger = logger; _attribution = attribution; }
 
     public async Task<Guid> RecordCallAsync(AiFeedbackRecord record, CancellationToken ct)
     {
         AiSuggestionFeedback? row = null;
+        // ป้ายกำกับ "ใครเรียก" — resolve ก่อนสร้างแถว เพื่อให้ทั้งแถวและ rollup
+        // ใช้ค่าชุดเดียวกัน (ไม่งั้นสองที่จะไม่ตรงกันเวลากระทบยอด)
+        var who = _attribution == null
+            ? AiUsageAttribution.Unknown
+            : await _attribution.ResolveAsync(record.CompanyId, ct);
         try
         {
             row = new AiSuggestionFeedback
             {
                 CompanyId = record.CompanyId,
+                Channel = who.Channel,
+                BillingAccountId = who.BillingAccountId,
+                BranchId = who.BranchId,
+                ApiClientId = who.ApiClientId,
+                UserId = who.UserId,
+                IsSandbox = who.IsSandbox,
                 FeatureKey = record.FeatureKey.ToString(),
                 PromptHash = record.PromptHash,
                 // Both columns are jsonb in Postgres — any non-JSON string here
@@ -103,6 +116,8 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
             // calls race we accept the small over-count rather than
             // serialising every AI call through a row lock.
             await UpsertDailyRollupAsync(record, ct);
+            // สรุปรายวัน "แยกลูกค้า + ช่องทาง" — ตารางที่รายงานแยกรายลูกค้าอ่าน
+            await UpsertTenantRollupAsync(record, who, ct);
 
             // Invalidate budget guard's 30s cache so the next call
             // reflects this call's contribution.
@@ -130,13 +145,30 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
     {
         if (records.Count == 0) return Array.Empty<Guid>();
         var rows = new List<AiSuggestionFeedback>(records.Count);
+        // แถวลูกก็ต้องติดป้ายเหมือนกัน ไม่งั้นการเจาะดูรายคีย์/รายช่องทางจะเห็น
+        // งาน bulk (จับคู่ธนาคารทั้งงวด) เป็น Unknown ทั้งกอง. resolve ครั้งเดียว
+        // ต่อบริษัท — ทั้ง batch มักเป็นบริษัทเดียวกัน
+        var whoByCompany = new Dictionary<Guid, AiUsageAttribution>();
+        foreach (var cid in records.Select(r => r.CompanyId).Distinct())
+        {
+            whoByCompany[cid] = _attribution == null
+                ? AiUsageAttribution.Unknown
+                : await _attribution.ResolveAsync(cid, ct);
+        }
         try
         {
             foreach (var record in records)
             {
+                var childWho = whoByCompany.GetValueOrDefault(record.CompanyId, AiUsageAttribution.Unknown);
                 var row = new AiSuggestionFeedback
                 {
                     CompanyId = record.CompanyId,
+                    Channel = childWho.Channel,
+                    BillingAccountId = childWho.BillingAccountId,
+                    BranchId = childWho.BranchId,
+                    ApiClientId = childWho.ApiClientId,
+                    UserId = childWho.UserId,
+                    IsSandbox = childWho.IsSandbox,
                     FeatureKey = record.FeatureKey.ToString(),
                     PromptHash = record.PromptHash,
                     PromptJson = CoerceJsonNonNull(record.PromptJson),
@@ -205,10 +237,18 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         {
             var row = await _db.AiSuggestionFeedbacks.FirstOrDefaultAsync(f => f.Id == feedbackId, ct);
             if (row == null) return;
+            // นับ "ตัดสินใจแล้ว" เพิ่มเฉพาะครั้งแรก — ผู้ใช้เปลี่ยนใจแก้ซ้ำได้
+            // ถ้านับทุกครั้งอัตรายอมรับจะเพี้ยน (ตัวหารโตกว่าจำนวน call จริง)
+            var firstDecision = row.UserChosenAt == null;
+            var wasAccepted = row.UserAcceptedAi == true;
             row.UserChosenAnswer = chosenAnswer;
             row.UserChosenAt = DateTime.UtcNow;
             row.UserAcceptedAi = acceptedAi;
             await _db.SaveChangesAsync(ct);
+
+            // สะท้อนเข้าสรุปรายวันของลูกค้ารายนั้น — อัตรา "AI แม่นในสายตา
+            // ผู้ใช้จริง" คำนวณจาก UserAcceptedAi / UserReviewed
+            await BumpTenantReviewAsync(row, firstDecision, wasAccepted, acceptedAi, ct);
 
             // ── ONLINE LEARNING (train ไปเลย) ───────────────────────────
             // The moment a user confirms or overrides, fold the ground
@@ -322,6 +362,112 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         => ex.InnerException?.GetType().Name == "PostgresException"
            && (ex.InnerException.Message.Contains("23505")
                || ex.InnerException.Message.Contains("duplicate key value"));
+
+    /// <summary>สรุปรายวัน "แยกลูกค้า + ช่องทาง" — ตารางที่รายงานรายลูกค้าอ่าน
+    /// (แถวระดับ call โตเป็นล้าน สแกนทั้งปีไม่ไหว).
+    /// best-effort เหมือน rollup รวม: พลาดแล้วรายงานขาดไปนิด ดีกว่าทำให้
+    /// AI call ที่สำเร็จแล้วล้ม</summary>
+    private async Task UpsertTenantRollupAsync(
+        AiFeedbackRecord record, AiUsageAttribution who, CancellationToken ct)
+    {
+        if (record.CompanyId == Guid.Empty) return;
+        try
+        {
+            var today = DateTime.UtcNow.Date;
+            var featureKey = record.FeatureKey.ToString();
+            var row = await _db.AiUsageDailyTenants.FirstOrDefaultAsync(
+                u => u.UsageDate == today
+                     && u.CompanyId == record.CompanyId
+                     && u.ProviderType == record.ProviderUsed
+                     && u.FeatureKey == featureKey
+                     && u.Channel == who.Channel, ct);
+            if (row == null)
+            {
+                row = new AiUsageDailyTenant
+                {
+                    UsageDate = today,
+                    CompanyId = record.CompanyId,
+                    BillingAccountId = who.BillingAccountId,
+                    ProviderType = record.ProviderUsed,
+                    FeatureKey = featureKey,
+                    Channel = who.Channel,
+                    IsSandbox = who.IsSandbox,
+                };
+                _db.AiUsageDailyTenants.Add(row);
+            }
+
+            row.CallsTotal++;
+            switch (record.Status)
+            {
+                case AiCallStatus.Success: row.CallsAi++; break;
+                case AiCallStatus.Cached: row.CallsCached++; break;
+                case AiCallStatus.Failed:
+                case AiCallStatus.InvalidResponse: row.CallsFailed++; break;
+                case AiCallStatus.BudgetExceeded: row.CallsBudgetBlocked++; break;
+                case AiCallStatus.NoProvider: row.CallsNoProvider++; break;
+                case AiCallStatus.Skipped:
+                    // "ข้าม" ที่ local ตอบแทนได้จริง = ครั้งที่ประหยัดเงินไป
+                    // (ตัวชี้วัด sovereignty ตามกฎเหล็ก #1). ข้ามที่ไม่มีคำตอบ
+                    // local เลย ไม่ใช่การประหยัด — เป็นฟีเจอร์ที่ยังไม่มีนักเรียน
+                    if (!string.IsNullOrEmpty(record.LocalModelAnswer)) row.CallsLocalServed++;
+                    break;
+            }
+
+            row.InputTokensTotal += record.InputTokens ?? 0;
+            row.OutputTokensTotal += record.OutputTokens ?? 0;
+            row.CostUsdTotal += record.CostUsd ?? 0m;
+            // เก็บผลรวม + ตัวหาร ไม่เก็บค่าเฉลี่ย — รายงานต้องรวมข้าม feature/
+            // ช่องทาง/วัน ตลอดเวลา และ "เฉลี่ยของเฉลี่ย" ผิดเมื่อจำนวน call ต่างกัน
+            if (record.LatencyMs is > 0)
+            {
+                row.LatencySumMs += record.LatencyMs.Value;
+                row.LatencySamples++;
+            }
+            row.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "AiUsageDailyTenant upsert failed (non-fatal)");
+        }
+    }
+
+    /// <summary>อัปเดตสถิติ "ผู้ใช้ตัดสินใจแล้ว" กลับเข้าสรุปรายวันของวันที่
+    /// **เกิด call** (ไม่ใช่วันที่กดยืนยัน) — ไม่งั้นอัตรายอมรับของเดือนหนึ่ง
+    /// จะไปโผล่อีกเดือนเมื่อผู้ใช้มายืนยันช้า</summary>
+    private async Task BumpTenantReviewAsync(
+        AiSuggestionFeedback row, bool firstDecision, bool wasAccepted, bool acceptedAi,
+        CancellationToken ct)
+    {
+        if (!firstDecision && wasAccepted == acceptedAi) return;   // ไม่มีอะไรเปลี่ยน
+        try
+        {
+            var day = row.CreatedAt.Date;
+            var target = await _db.AiUsageDailyTenants.FirstOrDefaultAsync(
+                u => u.UsageDate == day
+                     && u.CompanyId == row.CompanyId
+                     && u.ProviderType == row.ProviderUsed
+                     && u.FeatureKey == row.FeatureKey
+                     && u.Channel == row.Channel, ct);
+            if (target == null) return;   // แถวเก่าก่อนมี rollup — ข้ามเงียบ
+
+            if (firstDecision)
+            {
+                target.UserReviewed++;
+                if (acceptedAi) target.UserAcceptedAi++;
+            }
+            else if (wasAccepted && !acceptedAi) target.UserAcceptedAi--;
+            else if (!wasAccepted && acceptedAi) target.UserAcceptedAi++;
+
+            if (target.UserAcceptedAi < 0) target.UserAcceptedAi = 0;
+            target.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "AiUsageDailyTenant review bump failed (non-fatal)");
+        }
+    }
 
     private async Task UpsertDailyRollupAsync(AiFeedbackRecord record, CancellationToken ct)
     {
