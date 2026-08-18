@@ -1891,19 +1891,31 @@ public class DocumentService : IDocumentService
             && !RevisableTypes.Contains(doc.DocumentType);
         if (isRestoredWithRealNumber)
         {
+            // ⚠️ ต้องเทียบ "ค่าที่เปลี่ยนจริง" ไม่ใช่ "ส่งฟิลด์มาไหม"
+            // ที่มา: ฟอร์มแก้ไขเป็น PUT ก้อนเดียว ส่ง lines/ส่วนลดท้ายบิล/
+            // PricesIncludeVat มาทุกครั้งอยู่แล้ว ⇒ เช็ค `.HasValue`/`!= null`
+            // เท่ากับบล็อกทุกการกดบันทึก **แม้ไม่ได้แก้อะไรเลย** ⇒ ปุ่ม
+            // "บันทึกและอนุมัติ" ล้มที่ขั้น update ก่อนถึง approve ⇒ ใบที่กู้คืน
+            // มาอนุมัติไม่ได้เลยสักใบ (ทางตัน: กู้คืนได้แต่ใช้งานต่อไม่ได้)
+            // §86/4 ห้าม "แก้ย้อนหลัง" — การส่งค่าเดิมกลับมาไม่ใช่การแก้
             var blocked = new List<string>();
             if (request.DocumentDate.HasValue && request.DocumentDate.Value.Date != doc.DocumentDate.Date)
                 blocked.Add("วันที่เอกสาร");
             if (request.ContactId.HasValue && request.ContactId.Value != doc.ContactId) blocked.Add("ผู้ติดต่อ");
-            if (request.Lines != null) blocked.Add("รายการสินค้า/บริการ");
-            if (request.BillDiscountPercent.HasValue) blocked.Add("ส่วนลดท้ายบิล");
-            if (request.BillDiscountAmount.HasValue) blocked.Add("ส่วนลดท้ายบิล");
-            if (request.PricesIncludeVat.HasValue) blocked.Add("รูปแบบราคารวม VAT");
+            if (request.Lines != null && PrintedLinesChanged(request.Lines, doc.Lines))
+                blocked.Add("รายการสินค้า/บริการ");
+            if (request.BillDiscountPercent.HasValue
+                && request.BillDiscountPercent.Value != doc.BillDiscountPercent) blocked.Add("ส่วนลดท้ายบิล");
+            if (request.BillDiscountAmount.HasValue
+                && request.BillDiscountAmount.Value != doc.BillDiscountAmount) blocked.Add("ส่วนลดท้ายบิล");
+            if (request.PricesIncludeVat.HasValue
+                && request.PricesIncludeVat.Value != doc.PricesIncludeVat) blocked.Add("รูปแบบราคารวม VAT");
             if (blocked.Count > 0)
                 throw new InvalidOperationException(
                     $"เอกสาร {doc.DocumentNumber} เคยออกเลขจริงแล้ว (กู้คืนจากการยกเลิก) — "
                     + $"ห้ามแก้ {string.Join(", ", blocked.Distinct())} ย้อนหลังตามมาตรา 86/4. "
-                    + "หากต้องแก้ยอด/วันที่ ให้ยกเลิกใบนี้ถาวรแล้วออกใบใหม่ (หรือออกใบลดหนี้/เพิ่มหนี้)");
+                    + "หากต้องแก้ยอด/วันที่ ให้ยกเลิกใบนี้ถาวรแล้วออกใบใหม่ (หรือออกใบลดหนี้/เพิ่มหนี้). "
+                    + "ถ้าต้องการแค่อนุมัติใบนี้กลับเข้าบัญชี ให้กดอนุมัติโดยไม่แก้ตัวเลขบนใบ");
         }
 
         if (request.DocumentDate.HasValue) doc.DocumentDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DocumentDate.Value);
@@ -11273,6 +11285,41 @@ public class DocumentService : IDocumentService
     /// ถูกตั้งแล้วจึงแก้ซ้ำไม่ได้ (idempotent guard ปิดทางถาวร)
     ///
     /// ใช้สูตรเดียวกับ Conv() ใน AutoPostToJournalAsync — ปัด 2 ตำแหน่ง away-from-zero</summary>
+    /// <summary>บรรทัดที่ส่งมา "ต่างจากที่พิมพ์บนใบเดิม" หรือไม่ — ใช้กับด่าน
+    /// §86/4 ของใบที่กู้คืนจากการยกเลิก (ยังถือเลขจริงเดิม).
+    ///
+    /// <para>เทียบเฉพาะ <b>สิ่งที่ปรากฏบนใบกำกับ</b> ตาม §86/4: รายการ · จำนวน ·
+    /// หน่วย · ราคา/หน่วย · ส่วนลด · อัตรา VAT · อัตราหัก ณ ที่จ่าย
+    /// — <b>ไม่นับผังบัญชี</b> เพราะรหัสผังไม่เคยพิมพ์อยู่บนเอกสาร การจัดประเภท
+    /// ทางบัญชีภายในจึงไม่ใช่การ "แก้ใบกำกับ" (หลักเดียวกับที่เปิดให้
+    /// ReclassifyLineAccountAsync ทำได้บนใบที่อนุมัติแล้ว)</para>
+    ///
+    /// <para>ค่าที่ส่งมาเป็น null = "ไม่ระบุ" → ไม่ถือว่าแก้ (เช่น Unit ที่ฟอร์ม
+    /// บางทางไม่ได้ส่ง). ปัดทศนิยม 4 ตำแหน่งก่อนเทียบ กัน noise จากการ
+    /// round-trip JSON ทำให้ฟ้องว่าแก้ทั้งที่ตัวเลขเท่าเดิม</para></summary>
+    private static bool PrintedLinesChanged(
+        IReadOnlyList<DocumentLineRequest> incoming, ICollection<DocumentLine> stored)
+    {
+        var current = stored.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+        if (incoming.Count != current.Count) return true;
+
+        static decimal R(decimal v) => Math.Round(v, 4, MidpointRounding.AwayFromZero);
+
+        for (var i = 0; i < current.Count; i++)
+        {
+            var a = incoming[i];
+            var b = current[i];
+            if ((a.Description ?? "").Trim() != (b.Description ?? "").Trim()) return true;
+            if (R(a.Quantity) != R(b.Quantity)) return true;
+            if (R(a.UnitPrice) != R(b.UnitPrice)) return true;
+            if (R(a.DiscountPercent) != R(b.DiscountPercent)) return true;
+            if (R(a.VatRate) != R(b.VatRate)) return true;
+            if (R(a.WithholdingTaxRate) != R(b.WithholdingTaxRate)) return true;
+            if (a.Unit != null && a.Unit.Trim() != (b.Unit ?? "").Trim()) return true;
+        }
+        return false;
+    }
+
     private static decimal ToGlAmount(Document doc, decimal docAmount)
     {
         var fx = doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate;
