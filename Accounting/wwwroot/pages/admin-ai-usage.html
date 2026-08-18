@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายงานการใช้งาน AI - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; }
+    .kpi { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; }
+    .kpi .lbl { font-size:12px; color:#64748b; font-weight:600; }
+    .kpi .val { font-size:22px; font-weight:800; color:#0f172a; margin-top:4px; line-height:1.2 }
+    .kpi .sub { font-size:11px; color:#94a3b8; margin-top:2px }
+    .kpi.good { border-color:#5eead4; background:#f0fdfa }
+    .kpi.warn { border-color:#fcd34d; background:#fffbeb }
+    .kpi.bad  { border-color:#fca5a5; background:#fef2f2 }
+    .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700 }
+    .pill-api  { background:#dbeafe; color:#1e40af }
+    .pill-web  { background:#dcfce7; color:#166534 }
+    .pill-mix  { background:#ede9fe; color:#5b21b6 }
+    .pill-sys  { background:#f1f5f9; color:#475569 }
+    .pill-sbx  { background:#fef3c7; color:#92400e }
+    table.rpt { width:100%; border-collapse:collapse; font-size:13px }
+    table.rpt th { background:#f8fafc; text-align:left; padding:8px 10px; font-weight:700; color:#334155;
+                   border-bottom:2px solid #e2e8f0; white-space:nowrap; position:sticky; top:0; z-index:1 }
+    table.rpt td { padding:8px 10px; border-bottom:1px solid #f1f5f9; vertical-align:top }
+    table.rpt tbody tr:hover { background:#f8fafc; cursor:pointer }
+    .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap }
+    .bar { height:6px; border-radius:3px; background:#e2e8f0; overflow:hidden; min-width:60px }
+    .bar > i { display:block; height:100%; background:#0d9488 }
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-bottom:16px }
+    .card h3 { margin:0 0 12px; font-size:15px; font-weight:700; color:#0f172a }
+    .hl { background:#f0fdfa; border-left:3px solid #14b8a6; padding:8px 12px; margin-bottom:6px;
+          font-size:13px; border-radius:0 6px 6px 0 }
+    .hl.warn { background:#fffbeb; border-left-color:#f59e0b }
+    .scroll-x { overflow-x:auto }
+    .spark { display:flex; align-items:flex-end; gap:2px; height:56px }
+    .spark > div { flex:1; background:#99f6e4; border-radius:2px 2px 0 0; min-height:2px }
+    .spark > div.ai { background:#0d9488 }
+    @media (max-width:900px){ .kpi .val{font-size:18px} }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="container" style="max-width:1500px;margin:0 auto;padding:20px">
+
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+        <div>
+          <h1 style="margin:0;font-size:24px;font-weight:700">🤖 รายงานการใช้งาน AI</h1>
+          <p style="margin:4px 0 0;color:#64748b;font-size:14px">
+            แยกรายลูกค้า · แยกช่องทาง (หน้าเว็บ / API) · ต้นทุนจริง · สัดส่วนที่ระบบตอบเองได้
+          </p>
+        </div>
+        <button class="btn btn-secondary" id="btnExport">⬇️ ดาวน์โหลด Excel</button>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div><label style="font-size:12px;color:#64748b;font-weight:600">ตั้งแต่</label>
+            <input type="date" id="fFrom" class="form-control" style="min-width:150px"></div>
+          <div><label style="font-size:12px;color:#64748b;font-weight:600">ถึง</label>
+            <input type="date" id="fTo" class="form-control" style="min-width:150px"></div>
+          <div><label style="font-size:12px;color:#64748b;font-weight:600">ช่องทาง</label>
+            <select id="fChannel" class="form-control" style="min-width:180px">
+              <option value="">ทุกช่องทาง</option>
+              <option value="1">หน้าเว็บ NextAcc</option>
+              <option value="2">API (คีย์ลูกค้า)</option>
+              <option value="3">งานเบื้องหลังของระบบ</option>
+            </select></div>
+          <div><label style="font-size:12px;color:#64748b;font-weight:600">อัตราแลก USD→บาท</label>
+            <input type="number" id="fRate" class="form-control" value="36.5" step="0.1" style="width:110px"></div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px">
+            <input type="checkbox" id="fSandbox"> รวมคีย์ sandbox
+          </label>
+          <button class="btn btn-primary" id="btnLoad" style="margin-bottom:2px">ดูรายงาน</button>
+        </div>
+      </div>
+
+      <div id="highlights"></div>
+
+      <div class="kpi-grid" id="kpis" style="margin-bottom:16px"></div>
+
+      <div class="card">
+        <h3>แนวโน้มรายวัน <span style="font-weight:400;color:#94a3b8;font-size:12px">
+          — เข้ม = เรียก AI จริง · อ่อน = ระบบตอบเอง/แคช</span></h3>
+        <div class="spark" id="spark"></div>
+        <div id="sparkLabels" style="display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;margin-top:4px"></div>
+      </div>
+
+      <div class="card">
+        <h3>ช่องทางการใช้งาน</h3>
+        <div class="scroll-x"><table class="rpt" id="tblChannel"></table></div>
+      </div>
+
+      <div class="card">
+        <h3>ลูกค้า <span style="font-weight:400;color:#94a3b8;font-size:12px">— คลิกแถวเพื่อเจาะลึก</span></h3>
+        <div class="scroll-x" style="max-height:520px;overflow-y:auto">
+          <table class="rpt" id="tblCustomers"></table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>ฟีเจอร์ที่ใช้</h3>
+        <div class="scroll-x"><table class="rpt" id="tblFeatures"></table></div>
+      </div>
+
+      <div id="detailPanel"></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      data: null,
+
+      init() {
+        const to = new Date();
+        const from = new Date(); from.setDate(from.getDate() - 29);
+        document.getElementById('fTo').value = this.iso(to);
+        document.getElementById('fFrom').value = this.iso(from);
+        document.getElementById('btnLoad').addEventListener('click', () => this.load());
+        document.getElementById('btnExport').addEventListener('click', () => this.exportXlsx());
+        this.load();
+      },
+
+      iso(d) { return d.toISOString().slice(0, 10); },
+      n(v) { return (v ?? 0).toLocaleString('th-TH'); },
+      pct(v) { return ((v ?? 0) * 100).toFixed(1) + '%'; },
+      money(v) { return (v ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+
+      qs() {
+        const p = new URLSearchParams();
+        p.set('from', document.getElementById('fFrom').value);
+        p.set('to', document.getElementById('fTo').value);
+        const ch = document.getElementById('fChannel').value;
+        if (ch) p.set('channel', ch);
+        p.set('includeSandbox', document.getElementById('fSandbox').checked);
+        p.set('usdToThb', document.getElementById('fRate').value || '36.5');
+        return p.toString();
+      },
+
+      async load() {
+        try {
+          const res = await API.get('/api/admin/ai-usage/summary?' + this.qs());
+          if (!res?.success) { Layout.toast(res?.message || 'โหลดรายงานไม่สำเร็จ', 'error'); return; }
+          this.data = res.data;
+          this.renderHighlights();
+          this.renderKpis();
+          this.renderSpark();
+          this.renderChannels();
+          this.renderCustomers();
+          this.renderFeatures();
+          document.getElementById('detailPanel').innerHTML = '';
+        } catch (e) {
+          Layout.toast(e.message || 'โหลดรายงานไม่สำเร็จ', 'error');
+        }
+      },
+
+      async exportXlsx() {
+        // ต้องแนบ JWT เอง — endpoint นี้เป็น SystemAdmin. window.open ตรง ๆ
+        // ไม่แนบ header ⇒ ได้ 401 (เดิมทั้งระบบใช้ fetch→blob แบบนี้)
+        try {
+          const res = await fetch('/api/admin/ai-usage/export?' + this.qs(), {
+            headers: { Authorization: 'Bearer ' + localStorage.getItem('token') },
+          });
+          if (!res.ok) throw new Error('ดาวน์โหลดไม่สำเร็จ (' + res.status + ')');
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = Object.assign(document.createElement('a'),
+            { href: url, download: `AiUsage_${document.getElementById('fFrom').value}_${document.getElementById('fTo').value}.xlsx` });
+          a.click();
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error');
+        }
+      },
+
+      renderHighlights() {
+        const box = document.getElementById('highlights');
+        box.innerHTML = (this.data.highlights || [])
+          .map(h => `<div class="hl${h.startsWith('⚠️') ? ' warn' : ''}">${this.esc(h)}</div>`).join('');
+      },
+
+      renderKpis() {
+        const t = this.data.totals;
+        // "อัตราใช้ AI" ยิ่งต่ำยิ่งดี — local โตพอจะตอบเองแล้ว จึงให้สีเขียว
+        // เมื่อต่ำ ไม่ใช่เมื่อสูง (อ่านผิดทางจะสรุปกลับด้านทั้งรายงาน)
+        const aiCls = t.aiUsageRate <= 0.3 ? 'good' : (t.aiUsageRate >= 0.7 ? 'warn' : '');
+        const accCls = t.userReviewed === 0 ? '' : (t.acceptanceRate >= 0.8 ? 'good' : (t.acceptanceRate < 0.5 ? 'bad' : ''));
+        const cards = [
+          ['เรียกทั้งหมด', this.n(t.callsTotal), 'ทุกเส้นทาง รวมที่ไม่ได้ยิงออก', ''],
+          ['ถึง AI จริง', this.n(t.callsAi), 'อัตราใช้ AI ' + this.pct(t.aiUsageRate) + ' (ยิ่งต่ำยิ่งดี)', aiCls],
+          ['ระบบตอบเอง', this.n(t.callsLocalServed + t.callsCached), 'local ' + this.n(t.callsLocalServed) + ' · แคช ' + this.n(t.callsCached), 'good'],
+          ['ต้นทุน', this.money(t.costThb) + ' ฿', t.costUsd.toFixed(4) + ' USD', ''],
+          ['โทเคน', this.n(t.inputTokens + t.outputTokens), 'เข้า ' + this.n(t.inputTokens) + ' · ออก ' + this.n(t.outputTokens), ''],
+          ['หน่วงเฉลี่ย', this.n(t.avgLatencyMs) + ' ms', 'ถ่วงน้ำหนักตามจำนวน call', ''],
+          ['ผู้ใช้ยอมรับ', t.userReviewed ? this.pct(t.acceptanceRate) : '—', 'ตัดสินใจแล้ว ' + this.n(t.userReviewed) + ' ครั้ง', accCls],
+          ['มีปัญหา', this.n(t.callsFailed + t.callsBudgetBlocked + t.callsNoProvider),
+            'ล้ม ' + this.n(t.callsFailed) + ' · งบ ' + this.n(t.callsBudgetBlocked) + ' · ไม่มี provider ' + this.n(t.callsNoProvider),
+            (t.callsFailed + t.callsBudgetBlocked + t.callsNoProvider) > 0 ? 'bad' : ''],
+        ];
+        document.getElementById('kpis').innerHTML = cards.map(([l, v, s, c]) =>
+          `<div class="kpi ${c}"><div class="lbl">${l}</div><div class="val">${v}</div><div class="sub">${this.esc(s)}</div></div>`).join('');
+      },
+
+      renderSpark() {
+        const d = this.data.daily || [];
+        const max = Math.max(1, ...d.map(x => x.callsTotal));
+        document.getElementById('spark').innerHTML = d.map(x => {
+          const h = Math.round(x.callsTotal / max * 100);
+          const aiH = x.callsTotal ? Math.round(x.callsAi / x.callsTotal * h) : 0;
+          return `<div style="height:${h}%" title="${x.date.slice(0, 10)} · ${this.n(x.callsTotal)} ครั้ง (AI ${this.n(x.callsAi)})">
+                    <div class="ai" style="height:${aiH}%"></div></div>`;
+        }).join('');
+        document.getElementById('sparkLabels').innerHTML = d.length
+          ? `<span>${d[0].date.slice(0, 10)}</span><span>${d[d.length - 1].date.slice(0, 10)}</span>` : '';
+      },
+
+      totalsCols(t) {
+        return `<td class="num">${this.n(t.callsTotal)}</td>
+                <td class="num">${this.n(t.callsAi)}</td>
+                <td class="num">${this.n(t.callsLocalServed + t.callsCached)}</td>
+                <td class="num">${this.pct(t.aiUsageRate)}</td>
+                <td class="num">${t.userReviewed ? this.pct(t.acceptanceRate) : '—'}</td>
+                <td class="num">${this.money(t.costThb)}</td>`;
+      },
+      totalsHead() {
+        return `<th class="num">เรียก</th><th class="num">ถึง AI</th><th class="num">ตอบเอง</th>
+                <th class="num">อัตราใช้ AI</th><th class="num">ยอมรับ</th><th class="num">บาท</th>`;
+      },
+
+      renderChannels() {
+        document.getElementById('tblChannel').innerHTML =
+          `<thead><tr><th>ช่องทาง</th>${this.totalsHead()}<th class="num">หน่วง</th></tr></thead><tbody>` +
+          (this.data.channels || []).map(c =>
+            `<tr><td><strong>${this.esc(c.channelLabel)}</strong></td>${this.totalsCols(c.totals)}
+               <td class="num">${this.n(c.totals.avgLatencyMs)} ms</td></tr>`).join('') +
+          '</tbody>';
+      },
+
+      kindPill(kind) {
+        const map = { 'API อย่างเดียว': 'pill-api', 'เว็บอย่างเดียว': 'pill-web', 'ผสม (เว็บ + API)': 'pill-mix' };
+        return `<span class="pill ${map[kind] || 'pill-sys'}">${this.esc(kind)}</span>`;
+      },
+
+      renderCustomers() {
+        const rows = this.data.customers || [];
+        document.getElementById('tblCustomers').innerHTML =
+          `<thead><tr><th>ลูกค้า</th><th>ประเภท</th><th>กลุ่มบิล</th><th class="num">คีย์</th>
+             ${this.totalsHead()}<th>ฟีเจอร์หลัก</th></tr></thead><tbody>` +
+          (rows.length ? rows.map(c => `
+            <tr data-id="${c.companyId}">
+              <td><strong>${this.esc(c.companyName)}</strong>
+                  <div style="font-size:11px;color:#94a3b8">${this.esc(c.taxId || '')}</div></td>
+              <td>${this.kindPill(c.customerKind)}</td>
+              <td>${this.esc(c.billingAccountName || '—')}</td>
+              <td class="num">${c.apiClientCount || '—'}</td>
+              ${this.totalsCols(c.totals)}
+              <td>${this.esc(c.topFeature || '—')}
+                  <div style="font-size:11px;color:#94a3b8">${this.n(c.topFeatureCalls)} ครั้ง</div></td>
+            </tr>`).join('')
+            : '<tr><td colspan="11" style="color:#94a3b8;padding:16px">ไม่มีข้อมูลในช่วงที่เลือก</td></tr>') +
+          '</tbody>';
+        document.querySelectorAll('#tblCustomers tbody tr[data-id]').forEach(tr =>
+          tr.addEventListener('click', () => this.openDetail(tr.dataset.id)));
+      },
+
+      renderFeatures() {
+        document.getElementById('tblFeatures').innerHTML =
+          `<thead><tr><th>ฟีเจอร์</th>${this.totalsHead()}<th style="width:120px">สัดส่วนที่ตอบเอง</th></tr></thead><tbody>` +
+          (this.data.features || []).map(f => {
+            const p = Math.round((f.totals.selfServedRate || 0) * 100);
+            return `<tr><td><strong>${this.esc(f.featureLabel)}</strong>
+                      <div style="font-size:11px;color:#94a3b8">${this.esc(f.featureKey)}</div></td>
+                    ${this.totalsCols(f.totals)}
+                    <td><div class="bar"><i style="width:${p}%"></i></div>
+                        <div style="font-size:11px;color:#94a3b8">${p}%</div></td></tr>`;
+          }).join('') + '</tbody>';
+      },
+
+      async openDetail(companyId) {
+        const panel = document.getElementById('detailPanel');
+        panel.innerHTML = '<div class="card">กำลังโหลด…</div>';
+        try {
+          const res = await API.get(`/api/admin/ai-usage/customers/${companyId}?` + this.qs());
+          if (!res?.success) { panel.innerHTML = ''; Layout.toast(res?.message || 'โหลดไม่สำเร็จ', 'error'); return; }
+          const d = res.data;
+          panel.innerHTML = `
+            <div class="card" style="border-color:#0d9488">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+                <div><h3 style="margin:0">🔎 ${this.esc(d.companyName)} ${this.kindPill(d.customerKind)}</h3>
+                  <div style="font-size:12px;color:#64748b;margin-top:2px">
+                    ${this.esc(d.taxId || '')} ${d.billingAccountName ? '· กลุ่ม ' + this.esc(d.billingAccountName) : ''}</div></div>
+                <button class="btn btn-secondary" onclick="document.getElementById('detailPanel').innerHTML=''">ปิด</button>
+              </div>
+              ${(d.highlights || []).map(h => `<div class="hl" style="margin-top:10px">${this.esc(h)}</div>`).join('')}
+
+              <h3 style="margin-top:16px">คีย์ API ที่ใช้จริงในช่วงนี้</h3>
+              <div class="scroll-x"><table class="rpt">
+                <thead><tr><th>ชื่อคีย์</th><th>prefix</th><th>สิทธิ์</th>${this.totalsHead()}<th>ล่าสุด</th></tr></thead>
+                <tbody>${(d.apiClients || []).length ? d.apiClients.map(k => `
+                  <tr><td><strong>${this.esc(k.name)}</strong>
+                        ${k.isSandbox ? '<span class="pill pill-sbx">sandbox</span>' : ''}</td>
+                      <td style="font-family:monospace;font-size:12px">${this.esc(k.keyPrefix)}</td>
+                      <td style="font-size:11px;color:#64748b">${this.esc(k.scopes || '—')}</td>
+                      ${this.totalsCols(k.totals)}
+                      <td style="font-size:11px">${k.lastAiCallAt ? new Date(k.lastAiCallAt).toLocaleString('th') : '—'}</td>
+                  </tr>`).join('')
+                  : '<tr><td colspan="10" style="color:#94a3b8">ไม่มีการเรียกผ่าน API ในช่วงนี้</td></tr>'}
+                </tbody></table></div>
+
+              <h3 style="margin-top:16px">ฟีเจอร์</h3>
+              <div class="scroll-x"><table class="rpt">
+                <thead><tr><th>ฟีเจอร์</th>${this.totalsHead()}</tr></thead>
+                <tbody>${(d.features || []).map(f =>
+                  `<tr><td>${this.esc(f.featureLabel)}</td>${this.totalsCols(f.totals)}</tr>`).join('')}</tbody>
+              </table></div>
+
+              <h3 style="margin-top:16px">การเรียกล่าสุด</h3>
+              <div class="scroll-x" style="max-height:340px;overflow-y:auto"><table class="rpt">
+                <thead><tr><th>เวลา</th><th>ฟีเจอร์</th><th>ช่องทาง</th><th>ผล</th>
+                  <th>คำตอบ AI</th><th>local</th><th>ผู้ใช้เลือก</th><th class="num">ms</th><th class="num">โทเคน</th></tr></thead>
+                <tbody>${(d.recentCalls || []).map(c => `
+                  <tr><td style="font-size:11px;white-space:nowrap">${new Date(c.occurredAt).toLocaleString('th')}</td>
+                      <td>${this.esc(c.featureKey)}</td>
+                      <td style="font-size:11px">${this.esc(c.channelLabel)}${c.apiClientName ? '<br><span style="color:#94a3b8">' + this.esc(c.apiClientName) + '</span>' : ''}</td>
+                      <td style="font-size:11px">${this.esc(c.statusLabel)}</td>
+                      <td style="font-size:11px">${this.esc(c.aiAnswer || '—')}</td>
+                      <td style="font-size:11px">${this.esc(c.localAnswer || '—')}</td>
+                      <td style="font-size:11px">${this.esc(c.userChoice || '—')}
+                        ${c.userAcceptedAi === true ? ' ✅' : (c.userAcceptedAi === false ? ' ✏️' : '')}</td>
+                      <td class="num">${c.latencyMs ?? '—'}</td>
+                      <td class="num">${this.n((c.inputTokens || 0) + (c.outputTokens || 0))}</td>
+                  </tr>`).join('')}</tbody>
+              </table></div>
+            </div>`;
+          panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (e) {
+          panel.innerHTML = '';
+          Layout.toast(e.message || 'โหลดไม่สำเร็จ', 'error');
+        }
+      },
+
+      // ทุกค่าที่มาจาก DB (ชื่อบริษัท/ชื่อคีย์/คำตอบ AI) ต้อง encode ก่อนต่อเข้า
+      // HTML — ผู้ใช้/OCR/partner คุมค่าเหล่านี้ได้ (กฎเหล็ก #4 ข้อ C)
+      esc(s) {
+        return String(s ?? '').replace(/[&<>"']/g,
+          c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      },
+    };
+
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

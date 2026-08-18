@@ -3901,6 +3901,58 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_PromptHash" ON "AiSuggestionFeedbacks" ("PromptHash") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_Feature_UserChosen" ON "AiSuggestionFeedbacks" ("FeatureKey", "UserChosenAt") WHERE "IsDeleted" = false;""",
 
+            // ── ป้ายกำกับ "ใครเป็นคนเรียก" (รายงานใช้ AI แยกรายลูกค้า/ช่องทาง) ──
+            // นิยามชุดเดียวกับ UsageEvent: ApiClientId เป็น null = ใช้ผ่านหน้าเว็บ
+            """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "Channel" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "BillingAccountId" uuid NULL;""",
+            """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "BranchId" uuid NULL;""",
+            """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "ApiClientId" uuid NULL;""",
+            """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "UserId" uuid NULL;""",
+            """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "IsSandbox" boolean NOT NULL DEFAULT false;""",
+            // เจาะดูรายคีย์ของลูกค้า API — ไล่ตามช่วงวันที่
+            """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_ApiClient_Date" ON "AiSuggestionFeedbacks" ("ApiClientId", "CreatedAt" DESC) WHERE "IsDeleted" = false AND "ApiClientId" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_Company_Channel_Date" ON "AiSuggestionFeedbacks" ("CompanyId", "Channel", "CreatedAt" DESC) WHERE "IsDeleted" = false;""",
+
+            // ── สรุปรายวันแยกลูกค้า + ช่องทาง (ตารางหลักของรายงาน) ──
+            // แยกจาก AiUsageDailies โดยตั้งใจ — ตารางเดิม unique ที่
+            // (วัน, provider, feature) และวิดเจ็ตแอดมินอ่านอยู่ ถ้าเอาแถวแยก
+            // บริษัทไปปนกับแถวรวมในตารางเดียว ผลรวมจะนับซ้ำทันที
+            """
+            CREATE TABLE IF NOT EXISTS "AiUsageDailyTenants" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "UsageDate" timestamp NOT NULL,
+                "CompanyId" uuid NOT NULL,
+                "BillingAccountId" uuid NULL,
+                "ProviderType" integer NOT NULL,
+                "FeatureKey" varchar(100) NOT NULL,
+                "Channel" integer NOT NULL DEFAULT 0,
+                "CallsTotal" integer NOT NULL DEFAULT 0,
+                "CallsAi" integer NOT NULL DEFAULT 0,
+                "CallsCached" integer NOT NULL DEFAULT 0,
+                "CallsLocalServed" integer NOT NULL DEFAULT 0,
+                "CallsFailed" integer NOT NULL DEFAULT 0,
+                "CallsBudgetBlocked" integer NOT NULL DEFAULT 0,
+                "CallsNoProvider" integer NOT NULL DEFAULT 0,
+                "InputTokensTotal" bigint NOT NULL DEFAULT 0,
+                "OutputTokensTotal" bigint NOT NULL DEFAULT 0,
+                "CostUsdTotal" decimal(18,6) NOT NULL DEFAULT 0,
+                "LatencySumMs" bigint NOT NULL DEFAULT 0,
+                "LatencySamples" integer NOT NULL DEFAULT 0,
+                "UserReviewed" integer NOT NULL DEFAULT 0,
+                "UserAcceptedAi" integer NOT NULL DEFAULT 0,
+                "IsSandbox" boolean NOT NULL DEFAULT false,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiUsageDailyTenants" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiUsageDailyTenants_Day_Co_Provider_Feature_Channel" ON "AiUsageDailyTenants" ("UsageDate", "CompanyId", "ProviderType", "FeatureKey", "Channel") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiUsageDailyTenants_Company_Date" ON "AiUsageDailyTenants" ("CompanyId", "UsageDate" DESC) WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiUsageDailyTenants_BillingAccount_Date" ON "AiUsageDailyTenants" ("BillingAccountId", "UsageDate" DESC) WHERE "IsDeleted" = false;""",
+
             // Prompt response cache — tenant-scoped, content-addressed.
             """
             CREATE TABLE IF NOT EXISTS "AiResponseCaches" (

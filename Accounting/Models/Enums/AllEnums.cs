@@ -1661,6 +1661,32 @@ public enum AiCallStatus
     InvalidResponse = 7,
 }
 
+/// <summary>
+/// "การเรียก AI ครั้งนี้เข้ามาทางไหน" — ตอบคำถามธุรกิจว่าลูกค้ารายไหนใช้ผ่าน
+/// หน้าเว็บ NextAcc และรายไหนเป็นลูกค้า **API อย่างเดียว** (ซื้อ Connected
+/// ไปเสียบระบบตัวเอง ไม่เคยเปิดหน้าเว็บเลย)
+///
+/// เก็บเป็น "ช่องทางที่ request เข้ามา" ไม่ใช่ "ฟีเจอร์" — ฟีเจอร์มี
+/// <see cref="AiFeatureKey"/> อยู่แล้ว ถ้าปนกันจะแยกบิลไม่ออก
+/// </summary>
+public enum AiUsageChannel
+{
+    /// <summary>ระบุไม่ได้ (แถวเก่าก่อนมีฟิลด์นี้ / เส้นทางที่ยังไม่ติดป้าย)</summary>
+    Unknown = 0,
+
+    /// <summary>ผู้ใช้กดจากหน้าเว็บ NextAcc (มี HttpContext + ล็อกอินด้วย JWT)</summary>
+    Web = 1,
+
+    /// <summary>ระบบภายนอกยิงเข้ามาด้วย API key (`X-Api-Key`) — ลูกค้ากลุ่ม
+    /// Connected/API-only. `ApiClientId` บอกว่าคีย์ใบไหน</summary>
+    ApiKey = 2,
+
+    /// <summary>งานเบื้องหลังของระบบเอง (cron/distillation/สแกนกลางคืน) —
+    /// ไม่มี HttpContext. แยกออกจาก Web เพราะไม่ใช่การใช้งานของลูกค้าโดยตรง
+    /// และไม่ควรเอาไปคิดเงิน</summary>
+    Background = 3,
+}
+
 public enum LocalModelHealthStatus
 {
     Healthy = 1,
