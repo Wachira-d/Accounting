@@ -5195,7 +5195,14 @@ public class DocumentService : IDocumentService
         var origNet = NetBy(original.Lines, l => l.AccountId, l => l.DebitAmount, l => l.CreditAmount);
         var wantNet = NetBy(wanted, l => l.AccountId, l => l.DebitAmount, l => l.CreditAmount);
 
-        var origCodes = original.Lines.ToDictionary(l => l.AccountId, l => l.Account);
+        // ⚠️ ห้ามใช้ ToDictionary ตรง ๆ — JE ปกติมี "บัญชีเดียวกันหลายบรรทัด"
+        // ได้เสมอ (เช่น ใบเสร็จ 2 รายการห้องพัก → ขา Cr 41110 สองบรรทัด)
+        // ⇒ duplicate key ⇒ ArgumentException ภาษาอังกฤษ ถูก middleware ปิดบัง
+        // เป็น "ข้อมูลที่ส่งมาไม่ถูกต้อง" — ผู้ใช้กดบันทึกแผงปรับปรุงไม่ได้เลย
+        // ทั้งที่ตัวเลขถูกทุกอย่าง (defect class เดียวกับกฎ "อ่านขาที่ลงจริง")
+        var origCodes = original.Lines
+            .GroupBy(l => l.AccountId)
+            .ToDictionary(g => g.Key, g => g.First().Account);
         foreach (var id in origNet.Keys.Union(wantNet.Keys))
         {
             var code = origCodes.TryGetValue(id, out var a) ? a.AccountCode
@@ -13745,6 +13752,20 @@ public class DocumentService : IDocumentService
             var lastPart = lastEntry[pattern.Length..];
             if (int.TryParse(lastPart, out var n)) nextSeq = n + 1;
         }
+        // ⚠️ ต้องนับ JE ที่ "Add ค้างใน change tracker ยังไม่ save" ด้วย —
+        // เส้นอนุมัติใบกำกับที่แปลงจากใบแจ้งหนี้: AutoPost เพิ่ม SV ใบใหม่แบบ
+        // ยังไม่ save แล้ว supersede ขอเลขให้ "ตัวกลับ" ของใบแจ้งหนี้เดิม
+        // (Sales → SV เดือนเดียวกัน) → query DB มองไม่เห็นใบที่ค้าง ⇒ ได้เลข
+        // ซ้ำ ⇒ unique (CompanyId, EntryNumber) ระเบิดตอน SaveChanges =
+        // **อนุมัติใบกำกับแปลงไม่ได้เลยทั้งระบบ** (500 อ้างอิง BE996D32)
+        var localMax = _db.JournalEntries.Local
+            .Where(j => j.CompanyId == companyId
+                && j.EntryNumber != null && j.EntryNumber.StartsWith(pattern)
+                && int.TryParse(j.EntryNumber[pattern.Length..], out _))
+            .Select(j => int.Parse(j.EntryNumber[pattern.Length..]))
+            .DefaultIfEmpty(0)
+            .Max();
+        if (localMax >= nextSeq) nextSeq = localMax + 1;
         return $"{pattern}{nextSeq:D4}";
     }
 
