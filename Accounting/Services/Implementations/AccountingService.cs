@@ -2667,6 +2667,21 @@ public partial class AccountingService : IAccountingService
                 nextSeq = lastNum + 1;
         }
 
+        // ⚠️ นับ JE ที่ Add ค้างใน change tracker ด้วย (คู่กับ generator ฝั่ง
+        // DocumentService) — ReverseJournalEntryAsync ถูกเรียกกลางทรานแซกชัน
+        // อนุมัติที่ AutoPost เพิ่ง Add JE prefix เดียวกันไว้แบบยังไม่ save
+        // (เคสจริง: อนุมัติใบกำกับแปลงจากใบแจ้งหนี้ → supersede reverse ใบเดิม
+        // ทั้งคู่เป็น SV เดือนเดียวกัน) query DB ไม่เห็นใบค้าง ⇒ เลขซ้ำ ⇒
+        // unique (CompanyId, EntryNumber) ล้มตอน SaveChanges = อนุมัติไม่ได้
+        var localMax = _db.JournalEntries.Local
+            .Where(j => j.CompanyId == companyId
+                && j.EntryNumber != null && j.EntryNumber.StartsWith(pattern)
+                && int.TryParse(j.EntryNumber[pattern.Length..], out _))
+            .Select(j => int.Parse(j.EntryNumber[pattern.Length..]))
+            .DefaultIfEmpty(0)
+            .Max();
+        if (localMax >= nextSeq) nextSeq = localMax + 1;
+
         return $"{pattern}{nextSeq:D4}";
     }
 
