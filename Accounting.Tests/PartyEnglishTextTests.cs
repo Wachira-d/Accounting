@@ -146,6 +146,75 @@ public class PartyEnglishTextTests
         Assert.Equal(typed, asContact);
     }
 
+    // ── ตารางสะกดทางการระดับอำเภอ/เขต ชนะตัวถอดอักษร ──────────────────
+
+    [Theory]
+    [InlineData("บางรัก", "Bang Rak")]
+    [InlineData("ปทุมวัน", "Pathum Wan")]
+    [InlineData("ห้วยขวาง", "Huai Khwang")]
+    [InlineData("ป้อมปราบศัตรูพ่าย", "Pom Prap Sattru Phai")]
+    [InlineData("บางกอกน้อย", "Bangkok Noi")]
+    [InlineData("จตุจักร", "Chatuchak")]
+    [InlineData("คลองเตย", "Khlong Toei")]
+    [InlineData("สาทร", "Sathon")]
+    public void Bangkok_districts_use_the_verified_spelling(string thai, string expected)
+        => Assert.Equal(expected, ThaiRomanizer.PlaceNameEn(thai));
+
+    /// <summary>อำเภอเมือง 75 แห่งประกอบจากตารางจังหวัดทางการ — ไม่มีใครพิมพ์
+    /// ชื่อเหล่านี้ด้วยมือ จึงไม่มีทางสะกดผิด</summary>
+    [Theory]
+    [InlineData("เมืองชลบุรี", "Mueang Chon Buri")]
+    [InlineData("เมืองเชียงใหม่", "Mueang Chiang Mai")]
+    [InlineData("เมืองกาญจนบุรี", "Mueang Kanchanaburi")]
+    [InlineData("เมืองนครราชสีมา", "Mueang Nakhon Ratchasima")]
+    public void Provincial_capital_districts_compose_from_the_official_province_table(
+        string thai, string expected)
+        => Assert.Equal(expected, ThaiRomanizer.PlaceNameEn(thai));
+
+    /// <summary>ชื่อที่ขึ้นต้น "เมือง" แต่ส่วนหลัง **ไม่ใช่ชื่อจังหวัด** ต้องตกไป
+    /// ตัวถอด ไม่ใช่ประกอบมั่ว — เคสจริงในทะเบียน: เมืองจันทร์ (ศรีสะเกษ),
+    /// เมืองปาน (ลำปาง), เมืองยาง (นครราชสีมา), เมืองสรวง (ร้อยเอ็ด)</summary>
+    [Theory]
+    [InlineData("เมืองจันทร์")]
+    [InlineData("เมืองปาน")]
+    [InlineData("เมืองยาง")]
+    [InlineData("เมืองสรวง")]
+    public void A_mueang_prefix_that_is_not_a_province_is_not_composed(string thai)
+        => Assert.Null(ThaiRomanizer.PlaceNameEn(thai));
+
+    [Fact]
+    public void An_unknown_place_falls_through_to_the_transliterator()
+    {
+        Assert.Null(ThaiRomanizer.PlaceNameEn("หนองเหียง"));
+        Assert.Null(ThaiRomanizer.PlaceNameEn(null));
+        Assert.Null(ThaiRomanizer.PlaceNameEn("   "));
+    }
+
+    [Fact]
+    public void The_table_beats_the_transliterator_inside_a_full_address()
+    {
+        var addr = ThaiAddressFormatter.ResolvePartyAddress(
+            isEnglish: true, addressEn: null,
+            freeText: null, buildingNumber: "1", buildingName: null, moo: null, street: "สีลม",
+            subDistrict: "สีลม", district: "บางรัก", province: "กรุงเทพมหานคร", postalCode: "10500");
+
+        Assert.Contains("Bang Rak", addr);   // จากตาราง ไม่ใช่ผลถอดอักษร
+        Assert.Contains("Bangkok", addr);    // จังหวัดจากตารางทางการ
+        Assert.Contains("10500", addr);
+    }
+
+    [Fact]
+    public void Prefixes_are_stripped_before_the_table_lookup()
+    {
+        // ผู้ใช้กรอก "เขตบางรัก" / "แขวงบางรัก" / "อ.เมืองชลบุรี" มาก็ต้องเจอ
+        var addr = ThaiAddressFormatter.ResolvePartyAddress(
+            isEnglish: true, addressEn: null,
+            freeText: null, buildingNumber: "1", buildingName: null, moo: null, street: null,
+            subDistrict: "แขวงบางรัก", district: "เขตบางรัก",
+            province: "กรุงเทพมหานคร", postalCode: "10500");
+        Assert.Contains("Bang Rak", addr);
+    }
+
     [Fact]
     public void Fixing_the_address_once_fixes_every_later_document()
     {
