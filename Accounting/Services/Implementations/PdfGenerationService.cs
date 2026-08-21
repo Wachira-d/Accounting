@@ -1404,6 +1404,19 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine($"<div class='watermark'>{wmText}</div>");
         }
 
+        // ===== หัวกระดาษซ้ำทุกหน้า (RepeatHeaderEveryPage) =====
+        // Chromium ไม่ทำ "repeating header" ให้กับ <div> ใด ๆ — ทางเดียวที่ได้ผล
+        // จริงบน print engine คือ <thead> ของตารางที่ครอบทั้งเอกสาร (spec:
+        // display:table-header-group ⇒ พิมพ์ซ้ำหัวทุกหน้าที่ตารางกินพื้นที่).
+        // จึงห่อ [หัวบริษัท + หัวเอกสาร + กล่องคู่ค้า] ไว้ใน thead แล้วเนื้อหาที่
+        // เหลือ (ตารางรายการ/สรุป/ลายเซ็น) อยู่ใน tbody หน้าเดียวกัน
+        //
+        // หมายเหตุ: ลายน้ำ/ป้ายมุม (position:absolute) และแถบเครดิต (position:
+        // fixed) อยู่ "นอก" ตารางโดยตั้งใจ — ถ้าเอาเข้าไป cell จะกลายเป็น
+        // containing block ทำให้ตำแหน่งเพี้ยน
+        var repeatHeader = template.RepeatHeaderEveryPage;
+        if (repeatHeader) sb.AppendLine("<table class='doc-frame'><thead><tr><td>");
+
         // Header
         sb.AppendLine("<div class='header'>");
         if (template.ShowLogo)
@@ -1545,6 +1558,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowContactEmail && doc.Contact.Email != null) sb.AppendLine($"<div>Email: {WebUtility.HtmlEncode(doc.Contact.Email)}</div>");
         sb.AppendLine("</div>");
 
+        // ปิด thead (3 ส่วนหัวครบ) → เปิด tbody สำหรับเนื้อหาที่ไหลข้ามหน้าได้
+        if (repeatHeader) sb.AppendLine("</td></tr></thead><tbody><tr><td>");
+
         // Line Items Table — ถ้าราคารวม VAT (pricesIncludeVat) ทั้งคอลัมน์
         // "ราคา/หน่วย" และ "จำนวนเงิน" แสดงแบบรวม VAT (math ในตารางถูก
         // qty × unit − disc = amount) + label ชัดว่า "(รวม VAT)" — มาตรฐาน
@@ -1592,6 +1608,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine("</div>");
         }
 
+        // ตัวตัดสินคอลัมน์ส่วนลด — ตัวเดียวกับ QuestPDF (หัวตารางกับเซลล์
+        // ต้องนับคอลัมน์เท่ากันเป๊ะ ไม่งั้นทั้งตารางเหลื่อม)
+        var showDiscountCol = ShouldShowDiscountColumn(doc, template);
         sb.AppendLine("<table class='items-table'><thead><tr>");
         if (template.ShowLineNumber) sb.AppendLine("<th class='center'>#</th>");
         // รหัสสินค้า / VAT ต่อรายการ / WHT ต่อรายการ — เดิม 3 ติ๊กนี้ไม่มี
@@ -1602,7 +1621,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         sb.AppendLine($"<th class='right'>{L.ColQty}</th>");
         if (template.ShowUnit) sb.AppendLine($"<th class='center'>{L.ColUnit}</th>");
         sb.AppendLine($"<th class='right'>{priceLbl}</th>");
-        if (template.ShowDiscount) sb.AppendLine($"<th class='right'>{L.ColDiscount}</th>");
+        if (showDiscountCol) sb.AppendLine($"<th class='right'>{L.ColDiscount}</th>");
         if (template.ShowVatPerLine) sb.AppendLine($"<th class='right'>{L.ColVatPerLine}</th>");
         if (template.ShowWithholdingTax) sb.AppendLine($"<th class='right'>{L.ColWhtPerLine}</th>");
         sb.AppendLine($"<th class='right'>{amountLbl}</th>");
@@ -1632,7 +1651,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine($"<td class='right'>{(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"))}</td>");
             if (template.ShowUnit) sb.AppendLine($"<td class='center'>{WebUtility.HtmlEncode(line.Unit)}</td>");
             sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"))}</td>");
-            if (template.ShowDiscount) sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"))}</td>");
+            if (showDiscountCol) sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"))}</td>");
             // VatRate = -1 คือ "ยกเว้น" (sentinel) — ใช้ helper ตัวเดียวกับ QuestPDF
             if (template.ShowVatPerLine) sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : FormatLineVatRate(line.VatRate, L))}</td>");
             if (template.ShowWithholdingTax) sb.AppendLine($"<td class='right'>{(isDescriptiveLine || line.WithholdingTaxRate <= 0 ? "" : line.WithholdingTaxRate.ToString("0.##") + "%")}</td>");
@@ -1797,11 +1816,15 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         if (template.ShowSignature)
         {
-            sb.AppendLine("<div class='signatures'>");
+            // ⚠️ ต้องเป็น <table><tr> ไม่ใช่ flex — Chromium **ไม่เคารพ**
+            // break-inside:avoid บน flex container/flex item (บั๊กที่ผู้ใช้เจอ:
+            // รูปลายเซ็น+เส้นอยู่หน้า 1 ส่วนชื่อ+ตำแหน่งหลุดไปหน้า 2 โดด ๆ
+            // ทั้งที่ CSS สั่ง avoid ไว้แล้ว) ส่วน <tr> เคารพจริงและใช้ได้ทุกเวอร์ชัน
+            sb.AppendLine("<table class='signatures'><tr>");
             DocumentSigner? sigAt(int i) => signers != null && i < signers.Count ? signers[i] : null;
             void Box(string roleLabel, DocumentSigner? s)
             {
-                sb.Append("<div class='sig-box'>");
+                sb.Append("<td class='sig-box'>");
                 // Always emit a fixed-height image area (even when empty) so
                 // the signature line sits at the same height in every column —
                 // otherwise a signed box (image present) pushed its line lower
@@ -1816,7 +1839,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                     sb.Append($"<div class='sig-name'>{WebUtility.HtmlEncode(s.Name!)}</div>");
                 if (s != null && !string.IsNullOrWhiteSpace(s.Title))
                     sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(s.Title!)}</div>");
-                sb.AppendLine("</div>");
+                sb.AppendLine("</td>");
             }
             // ป้ายลายเซ็น (EN) ที่ผู้ใช้ตั้งไว้ — ใช้เมื่อพิมพ์เอกสารภาษาอังกฤษ
             var sigL1 = PickLangText(template.SignatureLabel1, template.SignatureLabel1En, lang);
@@ -1825,7 +1848,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (sigL1 != null) Box(sigL1, sigAt(0));
             if (sigL2 != null) Box(sigL2, sigAt(1));
             if (template.SignatureCount >= 3 && sigL3 != null) Box(sigL3, sigAt(2));
-            sb.AppendLine("</div>");
+            sb.AppendLine("</tr></table>");
         }
 
         // ── การลงบัญชี (Dr./Cr.) — compact internal-audit footnote ─────────
@@ -1856,6 +1879,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             }
             sb.AppendLine("</div>");
         }
+
+        // ปิดกรอบเอกสาร (tbody/table) ก่อนแถบเครดิต position:fixed
+        if (repeatHeader) sb.AppendLine("</td></tr></tbody></table>");
 
         // เครดิต NextAcc มุมขวาล่าง — เฉพาะบัญชีแพ็กเกจฟรี (ดู IsFreeTierAsync)
         // position:fixed → Chromium พิมพ์ซ้ำทุกหน้าตอนแปลงเป็น PDF; @media print
@@ -2384,11 +2410,40 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             .doc-info {{ display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px 24px; margin-bottom: 14px; }}
             .doc-info > div {{ white-space: nowrap; }}
 
+            /* ── กรอบเอกสาร: หัวกระดาษ 3 ส่วนซ้ำทุกหน้า ──
+               ตารางไร้เส้นที่ครอบทั้งเอกสาร; thead = [หัวบริษัท · หัวเอกสาร ·
+               กล่องคู่ค้า] ⇒ print engine พิมพ์ซ้ำเองทุกหน้า. ต้อง reset
+               padding/border ทุกด้าน ไม่งั้นเนื้อหาเลื่อนจากเดิม 1-2px และ
+               border-collapse ทำให้เกิดเส้นบาง ๆ รอบเอกสาร */
+            .doc-frame {{ width: 100%; border-collapse: collapse; border: none; }}
+            .doc-frame > thead {{ display: table-header-group; }}
+            .doc-frame > tbody {{ display: table-row-group; }}
+            .doc-frame > thead > tr > td, .doc-frame > tbody > tr > td {{
+                padding: 0; border: none; vertical-align: top; }}
+            /* หัวกระดาษเป็นหน่วยเดียว — ห้ามผ่ากลางเวลาซ้ำหน้าถัดไป */
+            .doc-frame > thead > tr {{ page-break-inside: avoid; break-inside: avoid; }}
+
             /* Contact box */
             .contact-section {{ border: 1px solid #e2e2e2; padding: 10px 12px; margin-bottom: 16px; border-radius: 6px; }}
             .section-title {{ font-weight: 700; color: {t.AccentColor}; margin-bottom: 4px; font-size: 13px; }}
             .contact-name {{ font-size: 16px; font-weight: 700; margin-bottom: 2px; }}
             .contact-section > div {{ margin: 1px 0; }}
+
+            /* ── กติกาการแบ่งหน้า (ผู้ใช้ขอ: "ให้ย้ายไปทั้งส่วน ไม่ใช่แค่บรรทัด") ──
+               ทุกกล่องข้อมูลเป็นหน่วยเดียว — ถ้าที่เหลือบนหน้าไม่พอ ยกไปหน้าใหม่
+               ทั้งก้อน ไม่ผ่ากลาง. ยกเว้นตารางรายการที่ต้องผ่าได้ (รายการยาว
+               หลายหน้าเป็นเรื่องปกติ) แต่หัวตารางต้องซ้ำทุกหน้า */
+            .contact-section, .bank-details, .footer-notes, .custom-appendix,
+            .terms-conditions, .cert-section, .summary, .amount-words {{
+                page-break-inside: avoid; break-inside: avoid; }}
+            /* หัวตารางซ้ำทุกหน้าเมื่อรายการล้นไปหน้าถัดไป — Chromium ทำให้เอง
+               เมื่อ thead เป็น table-header-group (ประกาศชัดกันเทมเพลตที่ตั้ง
+               display อื่นทับ) */
+            .items-table thead {{ display: table-header-group; }}
+            .items-table tfoot {{ display: table-footer-group; }}
+            /* แถวรายการห้ามผ่ากลาง — คำอธิบายหลายบรรทัดต้องอยู่หน้าเดียวกับ
+               ตัวเลขของมัน ไม่งั้นอ่านแล้วจับคู่ไม่ได้ */
+            .items-table tr {{ page-break-inside: avoid; break-inside: avoid; }}
 
             /* Items table — numeric columns right-aligned, headers match cells */
             .items-table {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; }}
@@ -2420,9 +2475,12 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                (เดิมป้ายตำแหน่งใต้ชื่อหลุดไปโผล่หน้าถัดไปโดด ๆ). margin-top ลดจาก
                48→28px เพิ่มโอกาสอยู่หน้าเดียวจบ; ถ้าไม่พอดีจริง ทั้งบล็อก (เส้น+
                ชื่อ+ตำแหน่งครบชุด) ยกไปหน้าใหม่ด้วยกัน */
-            .signatures {{ display: flex; justify-content: space-around; gap: 24px; margin-top: 28px;
-                           page-break-inside: avoid; break-inside: avoid; }}
-            .sig-box {{ text-align: center; flex: 1 1 0; max-width: 32%; position: relative;
+            .signatures {{ width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 12px 0;
+                           margin-top: 28px; page-break-inside: avoid; break-inside: avoid; }}
+            /* avoid บน <tr> คือตัวที่ Chromium เคารพจริง — ทั้งแถว (รูป+เส้น+
+               ป้าย+ชื่อ+ตำแหน่ง) ยกไปหน้าใหม่พร้อมกัน ไม่ผ่ากลาง */
+            .signatures tr {{ page-break-inside: avoid; break-inside: avoid; }}
+            .sig-box {{ text-align: center; vertical-align: bottom; position: relative;
                         page-break-inside: avoid; break-inside: avoid; }}
             /* Fixed-height area reserved in EVERY box so the signature line
                aligns across columns whether or not the slot is signed. The
@@ -2536,6 +2594,31 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         string? subDistrict, string? district, string? province, string? postalCode)
         => ThaiAddressFormatter.Format(freeText, buildingNumber, buildingName, moo, street,
             subDistrict, district, province, postalCode);
+
+    /// <summary>
+    /// คอลัมน์ "ส่วนลด" ต้องพิมพ์บนใบนี้ไหม — <b>ตัวตัดสินเดียวของทั้งระบบ</b>
+    /// (HTML renderer + QuestPDF ต้องเรียกตัวนี้ ห้ามเช็ค <c>ShowDiscount</c>
+    /// ตรง ๆ อีก ไม่งั้นสอง renderer ได้จำนวนคอลัมน์ไม่เท่ากัน = หัวตารางกับ
+    /// เซลล์เหลื่อมกันทั้งใบ)
+    ///
+    /// <list type="number">
+    /// <item><c>ShowDiscount = false</c> → ไม่แสดงเสมอ (ผู้ใช้ปิดถาวร)</item>
+    /// <item><c>HideEmptyDiscountColumn = false</c> → แสดงเสมอ (อยากให้ทุกใบ
+    ///   หน้าตาเหมือนกัน)</item>
+    /// <item>นอกนั้น → แสดงเฉพาะเมื่อ<b>มีบรรทัดใดบรรทัดหนึ่งมีส่วนลดจริง</b></item>
+    /// </list>
+    ///
+    /// <para>ดูทั้ง <c>DiscountAmount</c> และ <c>DiscountPercent</c> — บางเส้นทาง
+    /// (OCR/integration) กรอกมาแต่ % แล้วยอดบาทคำนวณทีหลัง ถ้าดูแค่ยอดบาทจะ
+    /// ซ่อนคอลัมน์ทั้งที่ใบมีส่วนลดจริง</para>
+    /// </summary>
+    internal static bool ShouldShowDiscountColumn(Document doc, DocumentTemplate t)
+    {
+        if (!t.ShowDiscount) return false;
+        if (!t.HideEmptyDiscountColumn) return true;
+        return doc.Lines != null && doc.Lines.Any(l => !l.IsDeleted
+            && (l.DiscountAmount > 0.005m || l.DiscountPercent > 0m));
+    }
 
     /// <summary>รูปแบบ "สาขา" ตามประกาศอธิบดีกรมสรรพากรฯ (VAT) ฉบับที่ 199
     /// (ลว. 26 ธ.ค. 2556): รหัสสาขา <b>00000 = "สำนักงานใหญ่"</b> (ไม่ใช่ "สาขา

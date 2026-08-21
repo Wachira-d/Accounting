@@ -4574,6 +4574,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "DefaultPaymentAccountId" uuid NULL;""",
             """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "DefaultPaymentTerms" varchar(300) NULL;""",
             """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "DefaultCreditDays" integer NULL;""",
+            // ซ่อนคอลัมน์ส่วนลดเมื่อไม่มีบรรทัดไหนมีส่วนลดเลย (default true) —
+            // ใบส่วนใหญ่ไม่มีส่วนลด คอลัมน์ 0.00 ทั้งแถวกินความกว้างเปล่า ๆ
+            """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "HideEmptyDiscountColumn" boolean NOT NULL DEFAULT true;""",
+            // หัวกระดาษ 3 ส่วน (บริษัท/หัวเอกสาร/ลูกค้า) ซ้ำทุกหน้าของเอกสารหลายหน้า
+            """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "RepeatHeaderEveryPage" boolean NOT NULL DEFAULT true;""",
 
             // ===== Snapshot ยอดจริงจาก statement ล่าสุด (แสดงคู่ยอด GL ให้เห็นผลต่าง) =====
             """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalance" numeric(18,2) NULL;""",

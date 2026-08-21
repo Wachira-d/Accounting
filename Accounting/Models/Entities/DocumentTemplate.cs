@@ -59,6 +59,25 @@ public class DocumentTemplate : TenantEntity
     public bool ShowItemCode { get; set; } = false;
     public bool ShowUnit { get; set; } = true;
     public bool ShowDiscount { get; set; } = true;
+
+    /// <summary>ซ่อนคอลัมน์ส่วนลดอัตโนมัติเมื่อ <b>ไม่มีบรรทัดไหนมีส่วนลดเลย</b>
+    /// (default true) — เอกสารส่วนใหญ่ไม่มีส่วนลด คอลัมน์ที่เป็น 0.00 ทั้งแถว
+    /// กินความกว้างไปเปล่า ๆ ทำให้ช่องรายการแคบจนคำอธิบายตัดบรรทัด
+    ///
+    /// <para>แยกจาก <see cref="ShowDiscount"/> โดยตั้งใจ: ตัวนั้นคือ "ไม่อยากให้มี
+    /// คอลัมน์นี้เลย" (ปิดถาวรแม้มีส่วนลดจริง — ซึ่งจะทำให้ยอดบนใบอธิบายไม่ได้
+    /// จึงไม่ใช่ค่าปกติ) ส่วนตัวนี้คือ "มีเมื่อจำเป็น". ปิดตัวนี้ = คอลัมน์โผล่
+    /// เสมอ (เหมาะกับกิจการที่อยากให้ทุกใบหน้าตาเหมือนกันเป๊ะ)</para></summary>
+    public bool HideEmptyDiscountColumn { get; set; } = true;
+
+    /// <summary>เอกสารหลายหน้า → พิมพ์ <b>หัวกระดาษ 3 ส่วน</b> (ข้อมูลบริษัทเรา ·
+    /// หัวเอกสาร · ข้อมูลลูกค้า) ซ้ำทุกหน้า (default true) — หน้า 2 ที่มีแต่ตาราง
+    /// ลอย ๆ อ่านไม่รู้ว่าเป็นเอกสารอะไรของใคร และถ้าหน้าหลุดจากชุดก็สืบไม่ได้
+    ///
+    /// <para>ปิดได้เผื่อเทมเพลตที่จัดหน้าเองแล้ว/ต้องการประหยัดพื้นที่หน้า 2
+    /// (ปิด = พฤติกรรมเดิมก่อนเวอร์ชันนี้ หัวขึ้นเฉพาะหน้าแรก)</para></summary>
+    public bool RepeatHeaderEveryPage { get; set; } = true;
+
     public bool ShowVatPerLine { get; set; } = false;
     public bool ShowWithholdingTax { get; set; } = true;
     public string? TableHeaderColor { get; set; } = "#4472C4";

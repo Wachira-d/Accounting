@@ -187,6 +187,8 @@ public class DocumentTemplateService : IDocumentTemplateService
             ShowItemCode = source.ShowItemCode,
             ShowUnit = source.ShowUnit,
             ShowDiscount = source.ShowDiscount,
+            HideEmptyDiscountColumn = source.HideEmptyDiscountColumn,
+            RepeatHeaderEveryPage = source.RepeatHeaderEveryPage,
             ShowVatPerLine = source.ShowVatPerLine,
             ShowWithholdingTax = source.ShowWithholdingTax,
             TableHeaderColor = source.TableHeaderColor,
@@ -324,6 +326,8 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.ShowItemCode.HasValue) t.ShowItemCode = r.ShowItemCode.Value;
         if (r.ShowUnit.HasValue) t.ShowUnit = r.ShowUnit.Value;
         if (r.ShowDiscount.HasValue) t.ShowDiscount = r.ShowDiscount.Value;
+        if (r.HideEmptyDiscountColumn.HasValue) t.HideEmptyDiscountColumn = r.HideEmptyDiscountColumn.Value;
+        if (r.RepeatHeaderEveryPage.HasValue) t.RepeatHeaderEveryPage = r.RepeatHeaderEveryPage.Value;
         if (r.ShowVatPerLine.HasValue) t.ShowVatPerLine = r.ShowVatPerLine.Value;
         if (r.ShowWithholdingTax.HasValue) t.ShowWithholdingTax = r.ShowWithholdingTax.Value;
         if (r.TableHeaderColor != null) t.TableHeaderColor = r.TableHeaderColor;
@@ -417,6 +421,8 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.ShowItemCode.HasValue) t.ShowItemCode = r.ShowItemCode.Value;
         if (r.ShowUnit.HasValue) t.ShowUnit = r.ShowUnit.Value;
         if (r.ShowDiscount.HasValue) t.ShowDiscount = r.ShowDiscount.Value;
+        if (r.HideEmptyDiscountColumn.HasValue) t.HideEmptyDiscountColumn = r.HideEmptyDiscountColumn.Value;
+        if (r.RepeatHeaderEveryPage.HasValue) t.RepeatHeaderEveryPage = r.RepeatHeaderEveryPage.Value;
         if (r.ShowVatPerLine.HasValue) t.ShowVatPerLine = r.ShowVatPerLine.Value;
         if (r.ShowWithholdingTax.HasValue) t.ShowWithholdingTax = r.ShowWithholdingTax.Value;
         if (r.TableHeaderColor != null) t.TableHeaderColor = r.TableHeaderColor;
@@ -477,7 +483,7 @@ public class DocumentTemplateService : IDocumentTemplateService
         t.PaperSize, t.Orientation, t.ShowLogo, t.LogoPosition,
         t.ShowCompanyName, t.ShowCompanyAddress, t.ShowCompanyTaxId,
         t.CustomTitle, t.CustomTitleEn,
-        t.ShowLineNumber, t.ShowUnit, t.ShowDiscount, t.ShowVatPerLine, t.ShowWithholdingTax,
+        t.ShowLineNumber, t.ShowUnit, t.ShowDiscount, t.HideEmptyDiscountColumn, t.RepeatHeaderEveryPage, t.ShowVatPerLine, t.ShowWithholdingTax,
         t.TableHeaderColor, t.TableBorderStyle, t.ShowAmountInWords,
         t.FooterNotes, t.ShowPaymentTerms, t.ShowBankDetails,
         t.DefaultPaymentAccountId, t.DefaultPaymentTerms, t.DefaultCreditDays,
