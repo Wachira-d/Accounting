@@ -3040,13 +3040,13 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
 
         var (th1, th2, en1, en2) = docType switch
         {
-            DocumentType.Quotation           => ("ผู้เสนอราคา", "ผู้มีอำนาจลงนาม", "Quoted by", "Authorized"),
-            DocumentType.Invoice             => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
-            DocumentType.TaxInvoice          => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
-            DocumentType.Receipt             => ("ผู้รับเงิน", "ผู้มีอำนาจลงนาม", "Received by", "Authorized"),
+            DocumentType.Quotation           => ("ผู้เสนอราคา", "ผู้มีอำนาจลงนาม", "Quoted by", "Authorized Signature"),
+            DocumentType.Invoice             => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized Signature"),
+            DocumentType.TaxInvoice          => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized Signature"),
+            DocumentType.Receipt             => ("ผู้รับเงิน", "ผู้มีอำนาจลงนาม", "Received by", "Authorized Signature"),
             DocumentType.ReceiptVoucher      => ("ผู้รับเงิน", "ผู้อนุมัติ", "Received by", "Approved by"),
-            DocumentType.DebitNote           => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
-            DocumentType.CreditNote          => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
+            DocumentType.DebitNote           => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized Signature"),
+            DocumentType.CreditNote          => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized Signature"),
             DocumentType.DeliveryNote        => ("ผู้ส่งของ", "ผู้รับของ", "Delivered by", "Received by"),
             DocumentType.BillingNote         => ("ผู้วางบิล", "ผู้รับวางบิล", "Billed by", "Received by"),
             DocumentType.PurchaseRequisition => ("ผู้ขอซื้อ", "ผู้อนุมัติ", "Requested by", "Approved by"),
@@ -3079,7 +3079,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         DocumentType.PurchaseOrder => "Purchase Order",
         DocumentType.GoodsReceiptNote => "Goods Receipt Note",
         DocumentType.PurchaseInvoice => "Purchase Invoice",
-        DocumentType.Expense => "Expense",
+        DocumentType.Expense => "Expense Record",
         DocumentType.PaymentVoucher => "Payment Voucher",
         DocumentType.CertificateInLieu => "Certificate in Lieu of Receipt",
         _ => "Document"

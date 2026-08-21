@@ -176,4 +176,59 @@ public class DocumentLabelsTests
         Assert.Contains("Tax Invoice", t);
     }
 
+    // ───────────────────────────────────────────────────────────────
+    //  คำที่ตรวจแล้วว่า "ผิด/กำกวม" — ห้ามกลับมาอีก
+    // ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// เทสต์ก่อนหน้าตรวจได้แค่ "ครบและไม่ปนภาษาไทย" — ตรวจ **ความถูกต้องของศัพท์**
+    /// ไม่ได้เลย. คำต้องห้ามด้านล่างมาจากการตรวจทั้งพจนานุกรมทีละคำ แต่ละตัวมี
+    /// เหตุผลกำกับว่าทำไมผิด เพื่อกันคนถัดมา (รวม AI) เผลอ "แปลตรงตัว" กลับเข้ามา
+    ///
+    /// <para><b>วิธีเพิ่ม</b>: เจอคำที่คู่ค้าต่างชาติทักว่าอ่านแล้วสะดุด/ตีความผิด
+    /// → แก้พจนานุกรม แล้วเพิ่มคำเดิมลงตารางนี้พร้อมเหตุผล</para>
+    /// </summary>
+    public static IEnumerable<object[]> BannedEnglishTerms => new[]
+    {
+        // "bill discount" ในภาษาการเงิน = การขายลดตั๋วเงิน (discounting a bill
+        // of exchange) — คนละเรื่องกับ "ส่วนลดท้ายบิล" ⇒ ใช้ "invoice discount"
+        new object[] { "bill discount", "ศัพท์การเงินหมายถึงการขายลดตั๋วเงิน ไม่ใช่ส่วนลดท้ายบิล" },
+        // "under-calculated" ไม่ใช่คำอังกฤษจริง ⇒ "undercharged" / "miscalculated"
+        new object[] { "under-calculated", "ไม่ใช่คำอังกฤษจริง เจ้าของภาษาอ่านแล้วสะดุด" },
+        new object[] { "undercalculated", "ไม่ใช่คำอังกฤษจริง" },
+        // แปลตรงตัวจาก "เอกสารในระบบ" — ห้วนผิดธรรมเนียมจดหมายธุรกิจ ⇒ "Our ref."
+        new object[] { "our document", "ห้วนผิดธรรมเนียมจดหมายธุรกิจ ใช้ \"Our ref.\"" },
+    };
+
+    [Theory]
+    [MemberData(nameof(BannedEnglishTerms))]
+    public void English_labels_avoid_terms_proven_wrong(string banned, string why)
+    {
+        var en = DocumentLabels.For("en");
+        foreach (var key in en.Keys)
+        {
+            Assert.False(
+                en[key].Contains(banned, StringComparison.OrdinalIgnoreCase),
+                $"ป้าย \"{key}\" = \"{en[key]}\" มีคำต้องห้าม \"{banned}\" — {why}");
+        }
+    }
+
+    /// <summary>เหตุผลใบลด/เพิ่มหนี้เป็น "รายการบังคับบนกระดาษ" ตาม §86/9-10 —
+    /// ฝั่งอังกฤษต้องสื่อสาระเท่าฝั่งไทย ไม่ใช่ย่อจนเหลือคำกลาง ๆ ที่สรรพากร
+    /// ตรวจย้อนไม่ได้ว่าลดหนี้เพราะอะไร (เดิม "Adjustment" โดด ๆ ทั้งที่ไทยระบุ
+    /// "ค่าสินค้าน้อยกว่าที่ตกลง")</summary>
+    [Theory]
+    [InlineData("cn_reason_adjustment")]
+    [InlineData("cn_reason_writeoff")]
+    [InlineData("dn_reason_adjustment")]
+    public void Credit_debit_note_reasons_are_specific_not_generic(string key)
+    {
+        var v = DocumentLabels.For("en")[key];
+        Assert.False(string.Equals(v, "Adjustment", StringComparison.OrdinalIgnoreCase),
+            $"ป้าย {key} กว้างเกินไป — §86/9-10 ต้องระบุสาเหตุที่ตรวจย้อนได้");
+        Assert.False(string.Equals(v, "Write-off", StringComparison.OrdinalIgnoreCase),
+            $"ป้าย {key} กว้างเกินไป — CN ลดได้ไม่เกินยอดใบเดิม ต้องบอกว่าบางส่วน");
+        // ยาวพอจะมีคำขยาย (คำเดียวโดด ๆ = ตกสาระ)
+        Assert.Contains(" ", v.Trim());
+    }
 }
