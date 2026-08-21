@@ -525,6 +525,7 @@ python3 tools/record_arg_check.py      # CS1739 named arg ที่ record ไ�
 python3 tools/accessibility_check.py   # CS0051/CS0050 ชนิด private ในลายเซ็น public
 python3 tools/arg_type_check.py        # CS1503 ส่ง id เข้าพารามิเตอร์ที่รับ entity
 python3 tools/gl_code_check.py         # เลขผังบัญชี hardcode ชนความหมายผังมาตรฐาน
+python3 tools/verbatim_string_check.py # CS1010/CS1056 `"` เดี่ยวปิด verbatim string
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -548,6 +549,19 @@ awk brace-balance                      # ทุก .cs ที่แก้
   เป็นชนิด entity ใน `Models/Entities`
   _(ที่มา: `SyncWhtCreditReceivedAsync` 2 จุด — ผ่าน checker 6 ตัวเดิมทั้งหมด
   แล้วไปตายตอน build ฝั่งผู้ใช้)_
+- **`"` เดี่ยวในคอมเมนต์ CSS/HTML ที่อยู่ใน `$@"..."` = ระเบิดทั้งไฟล์** เขียน
+  คอมเมนต์ CSS ว่า `/* ผู้ใช้ขอ: "ให้ย้ายไปทั้งส่วน" */` ใน `BuildCss` ซึ่งเป็น
+  verbatim interpolated string ยาวหลายร้อยบรรทัด — `"` ตัวแรก **ปิด string ทันที**
+  ⇒ CSS ที่เหลือถูกอ่านเป็นโค้ด C# ⇒ error 300+ รายการ (CS1010 Newline in
+  constant · CS1056 Unexpected character `—` · CS1040 preprocessor เพราะ `#` ใน
+  โค้ดสี · CS1002/CS1513 อีกเป็นร้อย) โดย error **ตัวแรก** เท่านั้นที่ชี้บรรทัดจริง
+  ที่เหลือชี้มั่วทั้งไฟล์ — อ่านจากท้ายรายการจะหลงทาง. ในสตริงแบบนี้ `"` จริงต้อง
+  เขียน `""` หรือเลี่ยงไปใช้อัญประกาศไทย `“ ”` ในคอมเมนต์
+  _(checker เดิม 7 ตัวมองไม่เห็นเลย: awk นับปีกกา — คอมเมนต์นี้ไม่มีปีกกา; ตัวอื่น
+  อ่านโครงสร้างโค้ด ไม่มีตัวไหน tokenize string literal → เพิ่ม
+  `tools/verbatim_string_check.py` ซึ่งต้อง track interpolation hole `{...}` ด้วย
+  เพราะ `$@"{(x ? $"<b>{y}</b>" : "")}"` ถูกต้องตามภาษา — รุ่นแรกที่ไม่ track
+  ฟ้องผิด 5 จุดในเรพ)_
 - **เปลี่ยนชื่อตัวแปรต้องไล่ให้ครบทั้งเมธอด = CS0103** เปลี่ยน `postedJournalIds`
   (list ของ Guid) เป็น `postedJournals` (anonymous type) เพราะต้องใช้ `EntryDate`
   ด้วย แล้วลืมจุดใช้งานที่อยู่ห่างออกไป ~120 บรรทัดในเมธอดเดียวกัน — เมธอดยาว
