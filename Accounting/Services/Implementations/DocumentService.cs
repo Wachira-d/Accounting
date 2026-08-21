@@ -1494,23 +1494,29 @@ public class DocumentService : IDocumentService
                 "ใบนี้เคยพักภาษีซื้อ (11640) แล้วย้ายเข้า ภ.พ.30 — ล้างงวดกลับเป็น"
                 + "ค่าปกติไม่ได้ (เลือกงวดใหม่ได้ แต่ต้องระบุงวดเสมอ)");
 
-        // กติกา 1 — มีบรรทัดรายงานจริงแล้ว = รายงานชนะ (block พร้อมชี้ทางแก้)
-        var claimedIn = await _db.TaxReportLines.AsNoTracking()
+        // กติกา 1 — ใบอยู่ในรายงานภาษีซื้อแล้ว
+        //
+        // เดิม block ทั้งหมดแล้วบอกให้ไปเปิดรายงานติ๊กใบออกเอง — แต่ "เลิกเคลม"
+        // จากหน้าเอกสาร (UnclaimInputVatAsync) กลับติ๊กบรรทัดงวดร่างออกให้เงียบ ๆ
+        // อยู่แล้ว ⇒ การกระทำแบบเดียวกันบนข้อมูลชุดเดียวกัน ได้คำตอบคนละอย่าง
+        // แล้วแต่ว่าเข้าทางไหน. รวมพฤติกรรมให้ตรงกัน: **งวดร่างย้ายให้อัตโนมัติ**
+        // (ติ๊กบรรทัดออก + recalc ด้วยกลไกเดียวกับหน้ารายงาน) ส่วนงวดที่ยื่นแล้ว
+        // ยัง block เด็ดขาด — ตัวเลขออกไปถึงสรรพากรแล้ว แก้ได้ทางเดียวคือยื่นเพิ่มเติม
+        var claimedLines = await _db.TaxReportLines
+            .Include(l => l.TaxReport)
             .Where(l => l.DocumentId == doc.Id && !l.IsExcluded && !l.IsDeleted
                 && l.TaxReport.CompanyId == companyId
                 && l.TaxReport.TaxType == TaxType.VAT
                 && l.IncomeTypeCode == "INPUT")
-            .Select(l => new { l.TaxReport.Month, l.TaxReport.Year, l.TaxReport.Status })
-            .FirstOrDefaultAsync();
-        if (claimedIn != null)
-        {
-            var filed = claimedIn.Status == TaxReportStatus.Filed;
+            .ToListAsync();
+
+        // ยื่นแล้ว/นำส่งแล้ว = แตะไม่ได้ (ตรงกับที่ UI ล็อกช่องไว้ให้เห็นก่อนกด)
+        var filedLine = claimedLines
+            .FirstOrDefault(l => l.TaxReport.Status != TaxReportStatus.Draft);
+        if (filedLine != null)
             throw new InvalidOperationException(
-                $"ใบนี้ถูกใช้ในรายงานภาษีซื้องวด {claimedIn.Month:D2}/{claimedIn.Year} แล้ว"
-                + (filed
-                    ? " และงวดนั้น **ยื่นแล้ว** — ย้ายงวดไม่ได้ ต้องยื่นแบบเพิ่มเติมกับสรรพากร"
-                    : " — ถ้าต้องการย้ายงวด ให้เปิดรายงานงวดนั้นแล้วติ๊กใบนี้ออก (หรือลบบรรทัด) ก่อน จึงกลับมาตั้งงวดใหม่ที่นี่ได้"));
-        }
+                $"ใบนี้อยู่ในรายงานภาษีซื้องวด {filedLine.TaxReport.Month:D2}/{filedLine.TaxReport.Year} "
+                + "ที่**ยื่นแล้ว** — ย้ายงวดไม่ได้ ต้องยื่นแบบเพิ่มเติมกับสรรพากร");
 
         if (period.HasValue)
         {
@@ -1521,6 +1527,14 @@ public class DocumentService : IDocumentService
                 period.Value.Year, period.Value.Month);
             if (!ok) throw new InvalidOperationException(reason!);
         }
+
+        // ⚠️ ติ๊กออกจากงวดเดิม **หลัง** validate ครบทุกข้อ — ถ้าย้ายก่อนแล้ว
+        // §82/3 ไม่ผ่าน ใบจะหลุดจากงวดเดิมไปโดยไม่ได้งวดใหม่ (แม้ transaction
+        // rollback ให้ แต่ลำดับนี้ทำให้ถูกต้องโดยไม่ต้องพึ่ง rollback)
+        await ExcludeVatReportLinesAsync(claimedLines,
+            period.HasValue
+                ? $"ย้ายงวดเคลม → {period.Value.Month:D2}/{period.Value.Year}"
+                : "ย้ายกลับไปเคลมตามเดือนเอกสาร");
 
         doc.InputVatBecameClaimableAt = period;
     }
@@ -2464,13 +2478,31 @@ public class DocumentService : IDocumentService
                 && l.TaxReport.TaxType == TaxType.VAT
                 && l.TaxReport.Status != TaxReportStatus.Filed)
             .ToListAsync();
-        foreach (var dl in draftLines)
+        await ExcludeVatReportLinesAsync(draftLines, "ผู้ใช้เลิกเคลม");
+    }
+
+    /// <summary>ติ๊กบรรทัดออกจากรายงาน ภ.พ.30 + recalc ยอดหัวรายงาน — กลไก
+    /// เดียวกับที่หน้ารายงานทำเมื่อนักบัญชีติ๊กออกเอง (<c>IsExcluded=true</c>
+    /// เก็บบรรทัดไว้เป็น audit ไม่ลบ) และใช้สูตรรวมยอดตัวเดียวกัน
+    /// (<c>TaxService.RecalcVatTotals</c>) จึงไม่มีวัน drift จากหน้ารายงาน
+    ///
+    /// <para>⚠️ ถ้าติ๊กออกแล้วไม่ recalc หัวรายงานจะค้างยอดเดิม = ยอดบนจอ/ไฟล์
+    /// ยื่นไม่ตรงกับบรรทัดที่เหลือ. รวมมาไว้ที่เดียวเพราะมีผู้เรียก 2 ทางแล้ว
+    /// (เลิกเคลม · ย้ายงวดเคลม) และทั้งคู่ต้องทำครบทั้งสองขั้นเสมอ</para>
+    ///
+    /// <param name="reason">เหตุผลสั้น ๆ ต่อหน้า Description เป็นร่องรอยว่า
+    /// บรรทัดหลุดจากงวดนี้เพราะอะไร (นักบัญชีเปิดรายงานเก่าแล้วเห็นได้ทันที)</param>
+    /// </summary>
+    private async Task ExcludeVatReportLinesAsync(List<TaxReportLine> lines, string reason)
+    {
+        if (lines.Count == 0) return;
+        foreach (var l in lines)
         {
-            dl.IsExcluded = true;
-            dl.Description = "⚠️ [ผู้ใช้เลิกเคลม] " + (dl.Description ?? "");
-            dl.UpdatedAt = DateTime.UtcNow;
+            l.IsExcluded = true;
+            l.Description = $"⚠️ [{reason}] " + (l.Description ?? "");
+            l.UpdatedAt = DateTime.UtcNow;
         }
-        foreach (var rid in draftLines.Select(l => l.TaxReportId).Distinct())
+        foreach (var rid in lines.Select(l => l.TaxReportId).Distinct())
         {
             var rep = await _db.TaxReports.Include(r => r.Lines).FirstOrDefaultAsync(r => r.Id == rid);
             if (rep != null) { TaxService.RecalcVatTotals(rep); rep.UpdatedAt = DateTime.UtcNow; }

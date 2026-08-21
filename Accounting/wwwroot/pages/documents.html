@@ -6632,14 +6632,16 @@
               : (vcpBasis ? Layout.dateInput(vcpBasis).slice(0, 7) : '');
             fVcp.dataset.initial = fVcp.value;
             const claimed = d.inputVatPp30Month && d.inputVatPp30Year;
-            fVcp.disabled = !!claimed;
+            // ล็อกเฉพาะงวดที่ **ยื่นแล้ว** — งวดร่างย้ายได้เลย ระบบติ๊กใบออกจาก
+            // งวดเดิม+recalc ให้เอง (กติกาเดียวกับแผงในหน้าดูเอกสาร)
+            const claimedFiled = claimed
+              && (d.inputVatPp30ReportStatus === 'Filed' || d.inputVatPp30ReportStatus === 'Submitted');
+            fVcp.disabled = !!claimedFiled;
             if (fVcpLock) {
               fVcpLock.style.display = claimed ? '' : 'none';
-              if (claimed) fVcpLock.textContent =
-                `🔒 ใบนี้อยู่ในรายงานภาษีซื้องวด ${String(d.inputVatPp30Month).padStart(2, '0')}/${d.inputVatPp30Year}` +
-                (d.inputVatPp30ReportStatus === 'Filed'
-                  ? ' (ยื่นแล้ว — ย้ายงวดต้องยื่นแบบเพิ่มเติม)'
-                  : ' แล้ว — ย้ายงวดโดยติ๊กใบนี้ออกจากรายงานงวดนั้นก่อน');
+              if (claimed) fVcpLock.textContent = claimedFiled
+                ? `🔒 ยื่นแบบงวด ${String(d.inputVatPp30Month).padStart(2, '0')}/${d.inputVatPp30Year} แล้ว — ย้ายงวดต้องยื่นแบบเพิ่มเติม`
+                : `📄 อยู่ในรายงาน (ร่าง) งวด ${String(d.inputVatPp30Month).padStart(2, '0')}/${d.inputVatPp30Year} — เปลี่ยนเดือนได้เลย ระบบจะติ๊กใบนี้ออกจากงวดเดิมให้`;
             }
           }
           // PV: เติมกล่อง "ใช้งานใบกำกับภาษี" ตอนแก้ไขเอกสารเก่า
@@ -7806,11 +7808,13 @@
                   <div><div class="text-xs text-gray-500">รหัสสาขา</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" maxlength="5">
                     <div style="font-size:10px;color:#9333ea;margin-top:2px">⚙️ ${d.supplierBranchCode ? 'จากใบนี้' : (d.contact?.branchCode ? 'ดึงจากผู้ติดต่อ' : 'สำนักงานใหญ่')} — แก้เฉพาะถ้าใบกำกับระบุสาขาอื่น</div></div>
                   <div><div class="text-xs text-gray-500">งวดที่เคลม ภ.พ.30</div>
-                    <input type="month" class="form-input" id="ctiClaimPeriod" ${pp30Period ? 'disabled' : ''}
+                    <input type="month" class="form-input" id="ctiClaimPeriod" ${pp30Filed ? 'disabled' : ''}
                       data-initial="${claimPeriodValue}"
                       value="${claimPeriodValue}">
-                    <div style="font-size:10px;color:#9333ea;margin-top:2px">${pp30Period
-                      ? `🔒 อยู่ในรายงานงวด ${pp30Period} แล้ว — ติ๊กใบนี้ออกจากรายงานก่อน จึงย้ายงวดที่นี่ได้`
+                    <div style="font-size:10px;color:#9333ea;margin-top:2px">${pp30Filed
+                      ? `🔒 ยื่นแบบงวด ${pp30Period} แล้ว — ย้ายงวดต้องยื่นเพิ่มเติมกับสรรพากร`
+                      : pp30Period
+                      ? `📄 อยู่ในรายงาน (ร่าง) งวด ${pp30Period} — เปลี่ยนเดือนที่นี่ได้เลย ระบบจะติ๊กใบนี้ออกจากงวดเดิมให้`
                       : d.inputVatBecameClaimableAt
                       ? '📌 ตรึงงวดนี้ไว้เอง — ลบให้ว่างเพื่อกลับไปใช้เดือนภาษีของเอกสาร'
                       : '⚙️ เดือนภาษีของเอกสาร (ค่าปกติ) — เลื่อนได้ไม่เกิน 6 เดือน (§82/3)'}</div></div>
