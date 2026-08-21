@@ -86,6 +86,12 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NULL;""",
             // ที่อยู่บริษัทภาษาอังกฤษ (เอกสารโหมด en) — null = ถอดอักษรอัตโนมัติ
             """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "AddressEn" varchar(500) NULL;""",
+            // ชื่อ/ที่อยู่ภาษาอังกฤษของ **คู่ค้า** — คู่ขนานกับฝั่งบริษัท. เดิมมีแต่
+            // ฝั่งเรา ทำให้ที่อยู่ลูกค้า/ผู้ขายบนใบภาษาอังกฤษถูกถอดอักษรอัตโนมัติ
+            // เสมอและแก้ทับไม่ได้เลย (ThaiRomanizer เป็น RTGS แบบประมาณ ชื่อ
+            // ตำบล/อำเภอ/ถนนสะกดเพี้ยนได้เป็นปกติ)
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "NameEn" varchar(300) NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "AddressEn" varchar(500) NULL;""",
             // Integration external id — match ผู้ติดต่อเดิมเวลา sync กัน contact ซ้ำ
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "ExternalId" varchar(200) NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "ExternalSystem" varchar(100) NULL;""",

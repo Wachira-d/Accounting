@@ -212,4 +212,48 @@ public static class ThaiAddressFormatter
         s = Regex.Replace(s, @"กรุงเทพมหานคร(\s+กรุงเทพมหานคร)+", "กรุงเทพมหานคร");
         return Regex.Replace(s, @"\s{2,}", " ").Trim();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  ที่อยู่/ชื่อ "ของคู่สัญญา" บนเอกสาร — ตัวตัดสินภาษาตัวเดียวของทั้งระบบ
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// ที่อยู่ที่จะพิมพ์ลงเอกสาร ตัดสินจากภาษาของใบ — <b>ห้ามคำนวณลำดับนี้เองที่อื่น</b>
+    ///
+    /// <para>ลำดับชั้นโหมดอังกฤษ: <b>ที่ผู้ใช้กรอกเอง (AddressEn) → ถอดอักษร
+    /// อัตโนมัติ (ThaiRomanizer) → ที่อยู่ไทย</b>. โหมดไทยใช้ <see cref="Format"/> ตามปกติ</para>
+    ///
+    /// <para><b>ทำไมต้องรวมเป็นตัวเดียว</b> (กฎเหล็ก #4 ข้อ A "resolver กลาง"):
+    /// เดิมตรรกะนี้ถูกเขียนซ้ำ 4 จุด — บริษัท×HTML, บริษัท×QuestPDF,
+    /// ผู้ติดต่อ×HTML, ผู้ติดต่อ×QuestPDF — และ<b>สองจุดของผู้ติดต่อไม่มีชั้น
+    /// "ที่ผู้ใช้กรอกเอง" เลย</b> (ถอดอักษรอัตโนมัติเสมอ) ⇒ ต่อให้รู้ว่าตัวถอด
+    /// สะกดตำบล/อำเภอเพี้ยน ก็แก้ไม่ได้ตลอดกาล. รวมเป็นตัวเดียวแล้วเติมชั้นที่
+    /// ขาดครั้งเดียว ทุก renderer ได้พร้อมกัน ไม่มีทาง drift</para>
+    ///
+    /// <para>ตัวถอดอักษรเป็น RTGS แบบประมาณ (ไม่มีพจนานุกรมเสียงอ่าน) — ชื่อ
+    /// ตำบล/อำเภอ/ถนนจึงสะกดเพี้ยนได้เป็นปกติ นี่คือเหตุผลที่ชั้น "กรอกเอง"
+    /// ต้องมีทุกฝ่าย ไม่ใช่เฉพาะบริษัทผู้ออกเอกสาร</para>
+    /// </summary>
+    public static string ResolvePartyAddress(
+        bool isEnglish, string? addressEn,
+        string? freeText, string? buildingNumber, string? buildingName, string? moo, string? street,
+        string? subDistrict, string? district, string? province, string? postalCode)
+    {
+        if (!isEnglish)
+            return Format(freeText, buildingNumber, buildingName, moo, street,
+                subDistrict, district, province, postalCode);
+
+        if (!string.IsNullOrWhiteSpace(addressEn)) return addressEn.Trim();
+
+        return ThaiRomanizer.ComposeEnglishAddress(buildingNumber, buildingName, moo, street,
+            subDistrict, district, province, postalCode, freeText);
+    }
+
+    /// <summary>ชื่อคู่สัญญาที่จะพิมพ์ — โหมดอังกฤษใช้ชื่ออังกฤษที่กรอกไว้ ถ้าไม่มี
+    /// ใช้ชื่อไทยตามเดิม.
+    /// <para><b>ห้ามถอดอักษรชื่อเฉพาะอัตโนมัติ</b> — การสะกดชื่อบริษัท/บุคคลเป็น
+    /// สิทธิ์ของเจ้าของชื่อ (จดทะเบียนไว้อย่างไรต้องเป็นอย่างนั้น) เดาแล้วผิด =
+    /// เอกสารระบุคู่สัญญาผิดคน ต่างจากที่อยู่ที่ถอดผิดยังสื่อสารได้</para></summary>
+    public static string ResolvePartyName(bool isEnglish, string? nameEn, string? name)
+        => isEnglish && !string.IsNullOrWhiteSpace(nameEn) ? nameEn.Trim() : (name ?? "").Trim();
 }

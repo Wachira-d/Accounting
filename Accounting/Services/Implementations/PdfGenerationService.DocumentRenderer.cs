@@ -467,13 +467,11 @@ public partial class PdfGenerationService
         if (t.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(co.NameEn) && coPrimaryName != co.NameEn) Line(co.NameEn!, 11);
         if (t.ShowCompanyAddress)
         {
-            var addr = L.IsEnglish
-                ? (!string.IsNullOrWhiteSpace(co.AddressEn)
-                    ? co.AddressEn!
-                    : ThaiRomanizer.ComposeEnglishAddress(co.BuildingNumber, co.BuildingName, co.Moo,
-                        co.StreetName, co.SubDistrict, co.District, co.Province, co.PostalCode, co.Address))
-                : FormatThaiAddress(co.Address, co.BuildingNumber, co.BuildingName, co.Moo, co.StreetName,
-                    co.SubDistrict, co.District, co.Province, co.PostalCode);
+            // resolver กลางตัวเดียวกับ HTML renderer — ห้ามคำนวณลำดับเองที่นี่
+            var addr = ThaiAddressFormatter.ResolvePartyAddress(
+                L.IsEnglish, co.AddressEn,
+                co.Address, co.BuildingNumber, co.BuildingName, co.Moo, co.StreetName,
+                co.SubDistrict, co.District, co.Province, co.PostalCode);
             if (!string.IsNullOrWhiteSpace(addr)) Line(addr);
         }
         if (t.ShowCompanyTaxId && !string.IsNullOrWhiteSpace(co.TaxId))
@@ -554,7 +552,9 @@ public partial class PdfGenerationService
                 ? customContactTitle
                 : DefaultContactLabelFor(doc.DocumentType, L);
             cc.Item().Text(label).FontSize(9.5f).Bold().FontColor(accent);
-            cc.Item().Text(c.Name ?? "").FontSize(11.5f).Bold().FontColor("#111827");
+            // ชื่ออังกฤษที่กรอกไว้ชนะเมื่อออกใบภาษาอังกฤษ — ตรงกับ HTML renderer
+            cc.Item().Text(ThaiAddressFormatter.ResolvePartyName(L.IsEnglish, c.NameEn, c.Name))
+                .FontSize(11.5f).Bold().FontColor("#111827");
             if (t.ShowContactTaxId && !string.IsNullOrWhiteSpace(c.TaxId))
             {
                 // สาขาเป็นเรื่องนิติบุคคล (ประกาศฯ 199) — บุคคลธรรมดาแสดงเฉพาะ
@@ -572,13 +572,11 @@ public partial class PdfGenerationService
             }
             if (t.ShowContactAddress)
             {
-                // en: ถอดอักษรที่อยู่ลูกค้าอัตโนมัติ (ละตินอยู่แล้วผ่านตามเดิม) —
-                // ตรงกับ HTML renderer
-                var addr = L.IsEnglish
-                    ? ThaiRomanizer.ComposeEnglishAddress(c.BuildingNumber, c.BuildingName, c.Moo,
-                        c.StreetName, c.SubDistrict, c.District, c.Province, c.PostalCode, c.Address)
-                    : FormatThaiAddress(c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
-                        c.SubDistrict, c.District, c.Province, c.PostalCode);
+                // resolver ตัวเดียวกับ HTML renderer + ฝั่งบริษัท
+                var addr = ThaiAddressFormatter.ResolvePartyAddress(
+                    L.IsEnglish, c.AddressEn,
+                    c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
+                    c.SubDistrict, c.District, c.Province, c.PostalCode);
                 if (!string.IsNullOrWhiteSpace(addr)) cc.Item().Text(addr).FontSize(9).FontColor("#374151");
             }
             if (t.ShowContactPhone && !string.IsNullOrWhiteSpace(c.Phone))
