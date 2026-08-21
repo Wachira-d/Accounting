@@ -574,7 +574,7 @@
               <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
             </div>
             <div class="form-group">
-              <label class="form-label" data-help="เลือกงวด ภพ.30 ที่จะเคลมภาษีซื้อใบนี้ — ว่าง = เคลมตามเดือนเอกสารปกติ · เลื่อนได้ไม่เกิน 6 เดือนตาม §82/3 · ถ้าใบถูกใช้ในรายงานงวดใดแล้ว รายงานนั้นชนะ (ต้องติ๊กออกจากรายงานก่อนจึงย้ายได้)">งวดที่เคลมภาษีซื้อ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ว่าง = ตามเดือนเอกสาร)</span></label>
+              <label class="form-label" data-help="งวด ภพ.30 ที่จะเคลมภาษีซื้อใบนี้ — ตอนแก้ไขจะเติมเดือนภาษีของเอกสารไว้ให้ (คืองวดที่ระบบจะใช้ถ้าไม่ย้าย) เปลี่ยนเป็นเดือนอื่นได้ไม่เกิน 6 เดือนตาม §82/3 · ลบให้ว่าง = กลับไปตามเดือนเอกสาร · ถ้าใบถูกใช้ในรายงานงวดใดแล้ว รายงานนั้นชนะ (ต้องติ๊กออกจากรายงานก่อนจึงย้ายได้)">งวดที่เคลมภาษีซื้อ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ค่าปกติ = เดือนภาษีของเอกสาร)</span></label>
               <input type="month" class="form-input" id="fVatClaimPeriod">
               <div id="fVatClaimLocked" style="display:none;font-size:11px;color:#b45309;margin-top:3px"></div>
             </div>
@@ -6622,7 +6622,15 @@
           const fVcp = document.getElementById('fVatClaimPeriod');
           const fVcpLock = document.getElementById('fVatClaimLocked');
           if (fVcp) {
-            fVcp.value = d.inputVatBecameClaimableAt ? String(d.inputVatBecameClaimableAt).slice(0, 7) : '';
+            // โชว์ "งวดที่จะเคลมจริง" เสมอ — ไม่ตรึงงวดเอง = เดือนภาษีของเอกสาร
+            // (TaxPointDate ?? DocumentDate ฐานเดียวกับ GenerateVatReport)
+            // ปล่อยว่างไว้ผู้ใช้อ่านว่า "ไม่ได้เคลม". dataset.initial ให้ payload
+            // แยก "ดูเฉย ๆ" ออกจาก "ตั้งใจย้ายงวด" — ห้ามส่งค่าที่แค่โชว์
+            const vcpBasis = d.taxPointDate || d.documentDate;
+            fVcp.value = d.inputVatBecameClaimableAt
+              ? Layout.dateInput(d.inputVatBecameClaimableAt).slice(0, 7)
+              : (vcpBasis ? Layout.dateInput(vcpBasis).slice(0, 7) : '');
+            fVcp.dataset.initial = fVcp.value;
             const claimed = d.inputVatPp30Month && d.inputVatPp30Year;
             fVcp.disabled = !!claimed;
             if (fVcpLock) {
@@ -7173,6 +7181,10 @@
             if (!isPurchase) return null;
             const el = document.getElementById('fVatClaimPeriod');
             if (!el || el.disabled) return null;          // ถูกล็อก (มีบรรทัดรายงานแล้ว) = ไม่ส่ง
+            // ช่องนี้ pre-fill เดือนภาษีของเอกสารไว้ให้อ่านออก (ว่าง = ผู้ใช้
+            // เข้าใจผิดว่าไม่ได้เคลม) แต่ค่าที่ "แค่โชว์" ห้ามส่ง — ส่งไปจะตรึง
+            // งวดถาวรทั้งที่ผู้ใช้ไม่ได้สั่ง แล้วใบไม่ขยับตาม tax point อีกเลย
+            if (this.editingId && el.value === (el.dataset.initial || '')) return null;
             return this.editingId ? (el.value || '') : (el.value || null);
           })(),
           hasTaxInvoiceReference: document.getElementById('fDocType').value === 'PaymentVoucher'
@@ -7753,6 +7765,19 @@
               const pp30Period = d.inputVatPp30Month
                 ? `${String(d.inputVatPp30Month).padStart(2,'0')}/${d.inputVatPp30Year + 543}` : null;
               const pp30Filed = d.inputVatPp30ReportStatus === 'Filed' || d.inputVatPp30ReportStatus === 'Submitted';
+              // งวดที่ระบบจะใช้ "โดยปกติ" ถ้าไม่ตรึงงวดเอง — ต้องเป็นฐานเดียวกับ
+              // ที่ GenerateVatReport ใช้คัดเอกสารเข้างวด คือ TaxPointDate ??
+              // DocumentDate (ไม่ใช่ documentDate เฉย ๆ — ใบที่ tax point ต่างเดือน
+              // เช่นจ่ายเงินคนละเดือนกับวันที่ใบ จะโชว์เดือนผิดทันที)
+              const _basis = d.taxPointDate || d.documentDate;
+              const defaultClaimMonth = _basis ? Layout.dateInput(_basis).slice(0, 7) : '';
+              // ช่องต้องโชว์ "งวดที่จะเคลมจริง" เสมอ — ว่างไว้ผู้ใช้อ่านว่า
+              // "ไม่ได้เคลม" (ผู้ใช้ทักมาเอง). ลำดับ: อยู่ในรายงานแล้ว > ตรึงเอง > ค่าปกติ
+              const claimPeriodValue = pp30Period
+                ? `${d.inputVatPp30Year}-${String(d.inputVatPp30Month).padStart(2, '0')}`
+                : d.inputVatBecameClaimableAt
+                ? Layout.dateInput(d.inputVatBecameClaimableAt).slice(0, 7)
+                : defaultClaimMonth;
               const vatState = pp30Period
                 ? (pp30Filed
                     ? `<span style="background:#dcfce7;color:#166534;padding:2px 10px;border-radius:99px;font-weight:700">✓ เคลมแล้ว · ภ.พ.30 งวด ${pp30Period} (ยื่นแล้ว)</span>`
@@ -7782,10 +7807,13 @@
                     <div style="font-size:10px;color:#9333ea;margin-top:2px">⚙️ ${d.supplierBranchCode ? 'จากใบนี้' : (d.contact?.branchCode ? 'ดึงจากผู้ติดต่อ' : 'สำนักงานใหญ่')} — แก้เฉพาะถ้าใบกำกับระบุสาขาอื่น</div></div>
                   <div><div class="text-xs text-gray-500">งวดที่เคลม ภ.พ.30</div>
                     <input type="month" class="form-input" id="ctiClaimPeriod" ${pp30Period ? 'disabled' : ''}
-                      value="${pp30Period ? `${d.inputVatPp30Year}-${String(d.inputVatPp30Month).padStart(2,'0')}` : (d.inputVatBecameClaimableAt ? new Date(d.inputVatBecameClaimableAt).toISOString().slice(0,7) : '')}">
+                      data-initial="${claimPeriodValue}"
+                      value="${claimPeriodValue}">
                     <div style="font-size:10px;color:#9333ea;margin-top:2px">${pp30Period
                       ? `🔒 อยู่ในรายงานงวด ${pp30Period} แล้ว — ติ๊กใบนี้ออกจากรายงานก่อน จึงย้ายงวดที่นี่ได้`
-                      : 'ว่าง = เคลมตามเดือนเอกสาร · เลื่อนได้ไม่เกิน 6 เดือน (§82/3)'}</div></div>
+                      : d.inputVatBecameClaimableAt
+                      ? '📌 ตรึงงวดนี้ไว้เอง — ลบให้ว่างเพื่อกลับไปใช้เดือนภาษีของเอกสาร'
+                      : '⚙️ เดือนภาษีของเอกสาร (ค่าปกติ) — เลื่อนได้ไม่เกิน 6 เดือน (§82/3)'}</div></div>
                 </div>
                 ${(d.undueInputVatBlockers || []).length ? `
                 <div style="margin-top:8px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#991b1b">
@@ -8627,18 +8655,27 @@
           supplierTaxInvoiceDate: new Date(dateRaw).toISOString(),
           supplierBranchCode: branch || null
         };
-        // งวดที่เคลม ภ.พ.30 — ส่งเมื่อช่องแก้ได้เท่านั้น (disabled = รายงานชนะ
-        // แตะไม่ได้อยู่แล้ว · ช่องไม่ render บนใบพัก 11640 = ไม่ส่ง = ไม่แตะ).
-        // "" = ล้างกลับเคลมตามเดือนเอกสาร — convention เดียวกับฟอร์มแก้ไข
+        // งวดที่เคลม ภ.พ.30 — ส่งเฉพาะเมื่อผู้ใช้ "เปลี่ยนจริง" เท่านั้น
+        // (disabled = รายงานชนะ แตะไม่ได้ · ช่องไม่ render บนใบพัก 11640 = ไม่ส่ง)
+        //
+        // ⚠️ สำคัญ: ช่องนี้ pre-fill เดือนภาษีของเอกสารไว้ให้อ่านออกว่าจะเคลม
+        // งวดไหน แต่ **ห้ามส่งค่าที่แค่โชว์** — ส่งไป = ตรึงงวดถาวรลง
+        // InputVatBecameClaimableAt ทั้งที่ผู้ใช้ไม่ได้สั่ง แล้วใบจะไม่ขยับตาม
+        // tax point อีกเลย (เช่นแก้วันจ่ายทีหลัง งวดควรขยับตาม). เทียบกับค่าที่
+        // เรนเดอร์ไว้ (data-initial) จึงแยก "ดูเฉย ๆ" ออกจาก "ตั้งใจย้ายงวด" ได้
         const claimPeriodEl = document.getElementById('ctiClaimPeriod');
-        if (claimPeriodEl && !claimPeriodEl.disabled)
+        if (claimPeriodEl && !claimPeriodEl.disabled
+            && claimPeriodEl.value !== (claimPeriodEl.dataset.initial || ''))
           body.inputVatClaimPeriod = claimPeriodEl.value;
         try {
           const res = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`, body);
           const d = res?.data || res;
-          // งวดที่จะโชว์ใน toast — BecameClaimableAt คือค่าที่รายงานใช้จริง
-          const periodTxt = d?.inputVatBecameClaimableAt
-            ? (() => { const p = new Date(d.inputVatBecameClaimableAt);
+          // งวดที่จะโชว์ใน toast — ตรึงเอง (BecameClaimableAt) ชนะ ไม่งั้นใช้
+          // ฐานเดียวกับรายงาน (TaxPointDate ?? DocumentDate) เพื่อให้บอกงวดจริง
+          // ได้เสมอ ไม่ใช่ "ตามเดือนเอกสาร" ลอย ๆ ที่ผู้ใช้ต้องไปเปิดดูเอง
+          const periodSrc = d?.inputVatBecameClaimableAt || d?.taxPointDate || d?.documentDate;
+          const periodTxt = periodSrc
+            ? (() => { const p = new Date(periodSrc);
                 return `${String(p.getMonth() + 1).padStart(2, '0')}/${p.getFullYear() + 543}`; })()
             : null;
           // toast ซื่อสัตย์ แยกตามเส้นทางจริง:
@@ -8648,7 +8685,7 @@
           if (d && !d.inputVatPostedAsUndue) {
             Layout.closeModal('detailModal');
             Layout.toast('บันทึกข้อมูลใบกำกับแล้ว'
-              + (periodTxt ? ` — เคลม ภ.พ.30 งวด ${periodTxt}` : ' — เคลมตามเดือนเอกสาร'), 'success');
+              + (periodTxt ? ` — เคลม ภ.พ.30 งวด ${periodTxt}` : ''), 'success');
           } else if (d && d.inputVatBecameClaimableAt) {
             Layout.closeModal('detailModal');
             Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 (11610)'
