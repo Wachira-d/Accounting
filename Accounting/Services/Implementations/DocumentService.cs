@@ -1485,6 +1485,15 @@ public class DocumentService : IDocumentService
                 "ใบนี้พักภาษีซื้อไว้ (ใบกำกับยังไม่ครบ §86/4) — งวดเคลมจะถูกกำหนด"
                 + "อัตโนมัติเมื่อกด \"เติมใบกำกับครบ\" ไม่สามารถเลือกงวดเองที่นี่ได้");
 
+        // กติกา 2.5 — ใบ undue ที่ย้ายเข้า 11610 แล้ว "ล้างงวด" ไม่ได้ (ย้ายงวด
+        // ได้ ล้างไม่ได้): BecameClaimableAt ของใบพวกนี้คือหลักฐานว่า reclassify
+        // เกิดแล้ว ถ้าตั้งกลับเป็น null รายงานจะเห็นเป็น "ยังพัก 11640" ทั้งที่
+        // GL ย้ายออกไปแล้ว → ภ.พ.30 กับ GL แยกทางกันเงียบ ๆ
+        if (period == null && doc.InputVatPostedAsUndue)
+            throw new InvalidOperationException(
+                "ใบนี้เคยพักภาษีซื้อ (11640) แล้วย้ายเข้า ภ.พ.30 — ล้างงวดกลับเป็น"
+                + "ค่าปกติไม่ได้ (เลือกงวดใหม่ได้ แต่ต้องระบุงวดเสมอ)");
+
         // กติกา 1 — มีบรรทัดรายงานจริงแล้ว = รายงานชนะ (block พร้อมชี้ทางแก้)
         var claimedIn = await _db.TaxReportLines.AsNoTracking()
             .Where(l => l.DocumentId == doc.Id && !l.IsExcluded && !l.IsDeleted
@@ -2320,6 +2329,15 @@ public class DocumentService : IDocumentService
             && (string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride)
                 || doc.InputVatAccountCodeOverride.StartsWith("116")))
             doc.HasTaxInvoiceReference = true;
+
+        // งวดที่เคลม ภ.พ.30 — ตั้งจากหน้าดูเอกสารได้เลย ผ่านตัวตรวจกลางตัว
+        // เดียวกับฟอร์ม (รายงานชนะ · งวดยื่นแล้วห้ามย้าย · กรอบ §82/3).
+        // ต้องอยู่ **หลัง** ReclassifyUndueInputVatAsync — ใบที่เพิ่งเติมใบกำกับ
+        // ครบในคลิกเดียวกันจะพ้นสถานะ "พัก 11640" แล้ว จึงเลือกงวดต่อได้ทันที
+        // (ก่อน reclassify ตัวตรวจกลางบล็อกใบพักไว้ตามกติกา undue-ชนะ).
+        // ข้ามเมื่อกำลังเลิกเคลม — งวดของใบที่ไม่เคลมไม่มีความหมาย
+        if (request.ClaimInputVat != false)
+            await ApplyInputVatClaimPeriodAsync(companyId, doc, request.InputVatClaimPeriod);
 
         await _db.SaveChangesAsync();
         var updated = await GetDocumentAsync(companyId, documentId);
