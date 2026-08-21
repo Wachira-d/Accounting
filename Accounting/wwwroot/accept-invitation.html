@@ -144,7 +144,14 @@
         if (j.data && j.data.companyId) {
           localStorage.setItem('currentCompany', JSON.stringify({ id: j.data.companyId }));
         }
-        setTimeout(() => { location.href = '/pages/dashboard.html'; }, 1200);
+        // หน้านี้ไม่ได้โหลด layout.js (เป็นหน้าสาธารณะก่อน login เสร็จ) จึง
+        // คำนวณปลายทางเองแบบเดียวกับ Layout.dashboardUrl() — เดิมพาไป
+        // '/pages/dashboard.html' ที่ไม่มีอยู่จริง ⇒ ผู้ถูกเชิญกดรับแล้วจอตาย
+        // ตั้งแต่ก้าวแรกที่เข้าระบบ
+        setTimeout(() => {
+          location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced'
+            ? '/app.html' : '/simple.html';
+        }, 1200);
       } catch (e) {
         errEl.textContent = e.message;
         errEl.classList.remove('hidden');

@@ -526,6 +526,7 @@ python3 tools/accessibility_check.py   # CS0051/CS0050 ชนิด private ใ�
 python3 tools/arg_type_check.py        # CS1503 ส่ง id เข้าพารามิเตอร์ที่รับ entity
 python3 tools/gl_code_check.py         # เลขผังบัญชี hardcode ชนความหมายผังมาตรฐาน
 python3 tools/verbatim_string_check.py # CS1010/CS1056 `"` เดี่ยวปิด verbatim string
+python3 tools/dead_link_check.py      # ลิงก์ /pages/*.html ที่ไม่มีไฟล์ปลายทาง
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -549,6 +550,19 @@ awk brace-balance                      # ทุก .cs ที่แก้
   เป็นชนิด entity ใน `Models/Entities`
   _(ที่มา: `SyncWhtCreditReceivedAsync` 2 จุด — ผ่าน checker 6 ตัวเดิมทั้งหมด
   แล้วไปตายตอน build ฝั่งผู้ใช้)_
+- **ลิงก์ไปหน้าที่ไม่มีอยู่จริง — ไม่มี compiler ตัวไหนจับให้** ปุ่ม "เปิด →"
+  ในหน้าสำนักงานบัญชีพาไป `/pages/dashboard.html` ซึ่ง **ไม่เคยมีไฟล์นั้นอยู่
+  จริงเลยสักวันเดียว** (แดชบอร์ดจริงคือ `/simple.html` หรือ `/app.html` ตาม
+  `uiMode`) — ผู้ใช้เจอ ERR_INVALID_RESPONSE. พาธเดียวกันมีอีก 3 จุด (ตอบรับ
+  คำเชิญ · ปุ่ม "กลับระบบหลัก" ใน Connect portal · ออกจาก POS) และเจอ
+  `/pages/document-template.html` (เอกพจน์ ไฟล์จริงพหูพจน์) ในเช็กลิสต์เริ่มต้น
+  ใช้งานอีก 1 จุด. เคยแก้ไปแล้ว **1 จุด** (pos.html) แต่ที่เหลือถูกทิ้งไว้ —
+  defect class "แก้ตัวเดียว เหลือที่เหลือ"
+  _(ลิงก์ที่ชี้ผิดเป็น string ที่ถูกต้องทางไวยากรณ์ทุกประการ ⇒ `node --check`
+  และ checker ฝั่ง C# ทั้งหมดมองไม่เห็น ต้องเช็คกับระบบไฟล์เท่านั้น → เพิ่ม
+  `tools/dead_link_check.py`. ปลายทางที่มีหลายหน้าให้ผ่าน resolver กลาง
+  `Layout.dashboardUrl()` และ **ต้องทิ้งหน้า redirect ไว้ที่ URL เดิม** เพราะ
+  ลิงก์ในอีเมลคำเชิญที่ส่งออกไปแล้ว/บุ๊กมาร์กของผู้ใช้ แก้ย้อนหลังไม่ได้)_
 - **`"` เดี่ยวในคอมเมนต์ CSS/HTML ที่อยู่ใน `$@"..."` = ระเบิดทั้งไฟล์** เขียน
   คอมเมนต์ CSS ว่า `/* ผู้ใช้ขอ: "ให้ย้ายไปทั้งส่วน" */` ใน `BuildCss` ซึ่งเป็น
   verbatim interpolated string ยาวหลายร้อยบรรทัด — `"` ตัวแรก **ปิด string ทันที**

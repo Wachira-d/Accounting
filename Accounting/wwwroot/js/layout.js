@@ -35,6 +35,23 @@ const Layout = {
     return d.innerHTML;
   },
 
+  // ── ปลายทาง "แดชบอร์ด" — resolver กลางตัวเดียวของทั้งระบบ ──
+  // **ห้ามฮาร์ดโค้ดพาธแดชบอร์ดที่อื่นอีก** เพราะแดชบอร์ดมี 2 หน้าจริง
+  // (/simple.html สำหรับโหมดใช้ง่าย · /app.html สำหรับโหมดเต็ม) และเลือกตาม
+  // uiMode ของผู้ใช้ — ที่ไหนเดาเองจะพาผู้ใช้ข้ามโหมดหรือไปหน้าที่ไม่มีอยู่จริง
+  //
+  // ที่มา: มี 4 จุดในระบบที่เขียน `/pages/dashboard.html` ไว้ ซึ่ง**ไม่เคยมี
+  // ไฟล์นั้นอยู่จริงเลยสักวันเดียว** (ตรวจย้อน git history แล้ว) — กด "เปิด"
+  // ในหน้าสำนักงานบัญชี / กดรับคำเชิญ / กด "กลับระบบหลัก" จาก Connect portal
+  // = ตายทุกครั้ง. เคยแก้ไปแล้ว 1 จุด (pos.html) แต่อีก 3 จุดถูกทิ้งไว้ —
+  // defect class "แก้ตัวเดียว เหลือที่เหลือ" จึงรวมมาไว้ที่นี่ให้เหลือจุดเดียว
+  dashboardUrl() {
+    return (localStorage.getItem('uiMode') || 'simple') === 'advanced'
+      ? '/app.html' : '/simple.html';
+  },
+
+  goDashboard() { window.location.href = this.dashboardUrl(); },
+
   // Format a Date as YYYY-MM-DD using LOCAL components.
   // Required because `.toISOString()` converts to UTC and shifts the calendar
   // date by the user's timezone offset (UTC+7 → previous-day rollover for any

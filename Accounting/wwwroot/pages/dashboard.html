@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>กำลังพาไปแดชบอร์ด…</title>
+  <meta name="robots" content="noindex">
+  <style>
+    body { font-family: 'Noto Sans Thai', system-ui, sans-serif; color:#475569;
+           display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+  </style>
+</head>
+<body>
+  <p>กำลังพาไปแดชบอร์ด…</p>
+  <script>
+    /* ── หน้าเปลี่ยนทาง (ไม่ใช่แดชบอร์ดจริง) ──────────────────────────────
+       แดชบอร์ดจริงมี 2 หน้า: /simple.html (โหมดใช้ง่าย) และ /app.html
+       (โหมดเต็ม) เลือกตาม uiMode ของผู้ใช้ — ไม่เคยมีหน้า
+       /pages/dashboard.html อยู่จริงเลยสักวันเดียว
+
+       แต่มี 4 จุดในระบบที่เขียนพาธนี้ไว้ (ปุ่ม "เปิด" ในหน้าสำนักงานบัญชี ·
+       ตอบรับคำเชิญ · ปุ่ม "กลับระบบหลัก" ใน Connect portal · ออกจาก POS)
+       ⇒ ผู้ใช้เจอ ERR_INVALID_RESPONSE ทุกครั้ง. แก้ต้นทางครบทั้ง 4 จุดแล้ว
+       แต่ **ลิงก์ที่ส่งออกไปแล้วแก้ไม่ได้** — อีเมลคำเชิญที่ส่งไปก่อนหน้านี้
+       และบุ๊กมาร์กของผู้ใช้ยังชี้มาที่นี่ตลอดไป ไฟล์นี้จึงต้องอยู่ถาวร
+       ห้ามลบ แม้จะดูเหมือนไฟล์ที่ไม่มีใครใช้
+
+       ใช้ replace() ไม่ใช่ href= เพื่อไม่ให้ค้างใน history (กดย้อนกลับแล้ว
+       เด้งวนซ้ำ) และคง query string เดิมไว้เผื่อหน้าปลายทางอ่าน deep-link */
+    (function () {
+      try {
+        var advanced = (localStorage.getItem('uiMode') || 'simple') === 'advanced';
+        location.replace((advanced ? '/app.html' : '/simple.html') + location.search + location.hash);
+      } catch (_) {
+        location.replace('/simple.html');   // localStorage ถูกบล็อก (โหมดส่วนตัว)
+      }
+    })();
+  </script>
+  <noscript><a href="/simple.html">ไปหน้าแดชบอร์ด</a></noscript>
+</body>
+</html>
