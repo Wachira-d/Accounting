@@ -9289,6 +9289,9 @@ public class DocumentService : IDocumentService
             // กรองเหลือ th/en เท่านั้น — ค่าขยะจาก API ภายนอกกลายเป็น null
             DocumentLanguage = request.DocumentLanguage?.Trim().ToLowerInvariant() is "th" or "en"
                 ? request.DocumentLanguage!.Trim().ToLowerInvariant() : null,
+            // ข้อมูลภาษาอังกฤษ — ว่าง = null (ให้ระบบใช้ไทย/ถอดอักษรให้)
+            NameEn = string.IsNullOrWhiteSpace(request.NameEn) ? null : request.NameEn.Trim(),
+            AddressEn = string.IsNullOrWhiteSpace(request.AddressEn) ? null : request.AddressEn.Trim(),
         };
 
         contact.Address = request.Address ?? ComposeAddress(contact);
@@ -9490,6 +9493,13 @@ public class DocumentService : IDocumentService
             var cl = request.DocumentLanguage.Trim().ToLowerInvariant();
             contact.DocumentLanguage = cl is "th" or "en" ? cl : null;
         }
+
+        // ข้อมูลภาษาอังกฤษ — semantics เดียวกับ field อื่นของ update:
+        // null = ไม่แตะ · "" = ล้างค่า (กลับไปใช้ไทย / ถอดอักษรอัตโนมัติ)
+        if (request.NameEn != null)
+            contact.NameEn = string.IsNullOrWhiteSpace(request.NameEn) ? null : request.NameEn.Trim();
+        if (request.AddressEn != null)
+            contact.AddressEn = string.IsNullOrWhiteSpace(request.AddressEn) ? null : request.AddressEn.Trim();
 
         // ร่องรอยการเปลี่ยน "ตัวตน" — append-only ตาม cross-cutting invariant
         // (ดู CLAUDE.md §M) พร้อมจำนวนเอกสารที่ได้รับผลกระทบย้อนหลัง
@@ -14374,7 +14384,9 @@ public class DocumentService : IDocumentService
         DefaultIssueTaxInvoice: c.DefaultIssueTaxInvoice,
         PaymentDueDays: c.PaymentDueDays,
         PaymentTerms: c.PaymentTerms,
-        DocumentLanguage: c.DocumentLanguage);
+        DocumentLanguage: c.DocumentLanguage,
+        NameEn: c.NameEn,
+        AddressEn: c.AddressEn);
 
     // ==================== Smart Defaults ====================
 

@@ -124,6 +124,36 @@
               </div>
             </div>
           </div>
+          <!-- ข้อมูลภาษาอังกฤษ — พับเก็บไว้ ไม่รกจอสำหรับลูกค้าไทยล้วน
+               (ส่วนใหญ่ไม่ต้องกรอก). เปิดใช้เมื่อออกเอกสารภาษาอังกฤษแล้วพบว่า
+               ตัวถอดอักษรอัตโนมัติสะกดตำบล/อำเภอ/ถนนไม่ตรงกับที่คู่ค้าใช้จริง -->
+          <details id="enInfoBox" style="margin:6px 0 12px;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px">
+            <summary style="cursor:pointer;font-size:13px;font-weight:600">
+              🌐 ข้อมูลภาษาอังกฤษ (สำหรับเอกสารภาษาอังกฤษ)
+              <span style="font-size:11px;color:#64748b;font-weight:normal">— ว่างไว้ได้ ระบบถอดอักษรให้อัตโนมัติ</span>
+            </summary>
+            <div style="margin-top:10px">
+              <div class="form-group">
+                <label class="form-label">ชื่อภาษาอังกฤษ</label>
+                <input type="text" class="form-input" id="fNameEn" maxlength="300"
+                       placeholder="เช่น ABC Service Engineering Co., Ltd.">
+                <div style="font-size:11px;color:#64748b;margin-top:4px">
+                  ว่าง = ใช้ชื่อไทยบนเอกสารอังกฤษ · <b>ระบบไม่ถอดอักษรชื่อให้เอง</b>
+                  เพราะการสะกดชื่อเป็นสิทธิ์ของเจ้าของชื่อ (จดทะเบียนไว้อย่างไรต้องตามนั้น)
+                </div>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">ที่อยู่ภาษาอังกฤษ</label>
+                <textarea class="form-input" id="fAddressEn" rows="2" maxlength="500"
+                          placeholder="เช่น 44 Moo 9, Nong Hiang, Phanat Nikhom, Chon Buri 20140"></textarea>
+                <div style="font-size:11px;color:#64748b;margin-top:4px">
+                  ว่าง = ระบบถอดอักษรจากที่อยู่ไทยให้ (แนว RTGS แบบประมาณ — ชื่อตำบล/อำเภอ/ถนน
+                  อาจสะกดไม่ตรงที่คู่ค้าใช้) · กรอกที่นี่แล้ว<b>ใบต่อ ๆ ไปของผู้ติดต่อรายนี้ถูกตลอด</b>
+                </div>
+              </div>
+            </div>
+          </details>
+
           <!-- สลับที่อยู่ไทย ↔ ต่างประเทศ — vendor/ลูกค้าต่างชาติ (เช่น
                Booking.com B.V.) ไม่มีจังหวัด/รหัสไปรษณีย์ไทย → ติ๊กเพื่อกรอก
                ประเทศ + ที่อยู่แบบ free-text. CountryCode != "TH" จะไป WHT ม.70
@@ -758,6 +788,12 @@
         const taxInvChk = document.getElementById('fDefaultIssueTaxInvoice'); if (taxInvChk) taxInvChk.checked = false;
         const dueDaysEl = document.getElementById('fPaymentDueDays'); if (dueDaysEl) dueDaysEl.value = '';
         const docLangEl = document.getElementById('fDocLang'); if (docLangEl) docLangEl.value = '';
+        // ล้างข้อมูลภาษาอังกฤษ + พับกล่องกลับ — ไม่งั้นค่าของผู้ติดต่อรายก่อน
+        // ค้างข้ามมาที่รายใหม่ (ชื่อ/ที่อยู่อังกฤษของคนละบริษัท = อันตรายกว่า
+        // ช่องอื่นมาก เพราะพิมพ์ลงเอกสารจริง)
+        const nameEnNew = document.getElementById('fNameEn'); if (nameEnNew) nameEnNew.value = '';
+        const addrEnNew = document.getElementById('fAddressEn'); if (addrEnNew) addrEnNew.value = '';
+        const enBoxNew = document.getElementById('enInfoBox'); if (enBoxNew) enBoxNew.open = false;
         // reset ที่อยู่ต่างประเทศ → default = ที่อยู่ไทย
         document.getElementById('fIsForeign').checked = false;
         document.getElementById('fCountryCode').value = '';
@@ -865,6 +901,14 @@
         if (dueDaysEl) dueDaysEl.value = (c.paymentDueDays ?? '') === '' ? '' : c.paymentDueDays;
         const docLangEl2 = document.getElementById('fDocLang');
         if (docLangEl2) docLangEl2.value = c.documentLanguage || '';
+        // ข้อมูลภาษาอังกฤษ — ต้อง hydrate ไม่งั้นเปิดแก้แล้วกดบันทึกค่าหายเงียบ
+        // (defect class "เก็บแล้วต้อง echo กลับ"). เปิดกล่องให้เห็นเลยเมื่อมีค่า
+        const nameEnEl = document.getElementById('fNameEn');
+        if (nameEnEl) nameEnEl.value = c.nameEn || '';
+        const addrEnEl = document.getElementById('fAddressEn');
+        if (addrEnEl) addrEnEl.value = c.addressEn || '';
+        const enBox = document.getElementById('enInfoBox');
+        if (enBox) enBox.open = !!(c.nameEn || c.addressEn);
         document.getElementById('fJuristicId').value = '';
         document.getElementById('fJuristicType').value = '';
         document.getElementById('fRegisteredCapital').value = '';
@@ -997,6 +1041,10 @@
           // ส่งค่าตรง ๆ เสมอ: "" = ล้างกลับ "ตามค่าบริษัท" (update จับ != null),
           // th/en = ตั้งค่า — ต่างจาก field อื่นที่ null = ไม่เปลี่ยน
           documentLanguage: document.getElementById('fDocLang')?.value ?? null,
+          // semantics เดียวกับ documentLanguage: "" = ล้างค่า (กลับไปใช้ไทย/
+          // ถอดอักษรอัตโนมัติ) · มีค่า = ตั้งค่า — ส่งตรง ๆ เสมอ
+          nameEn: document.getElementById('fNameEn')?.value?.trim() ?? null,
+          addressEn: document.getElementById('fAddressEn')?.value?.trim() ?? null,
         };
         try {
           let savedId = id;

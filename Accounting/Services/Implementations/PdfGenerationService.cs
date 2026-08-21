@@ -1430,15 +1430,13 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine($"<div class='company-name-en'>{WebUtility.HtmlEncode(company.NameEn)}</div>");
         if (template.ShowCompanyAddress)
         {
-            // en: AddressEn ที่ผู้ใช้กรอก > ถอดอักษรอัตโนมัติ (ThaiRomanizer) > ไทย
-            var fullAddr = isEnDoc
-                ? (!string.IsNullOrWhiteSpace(company.AddressEn)
-                    ? company.AddressEn!
-                    : ThaiRomanizer.ComposeEnglishAddress(company.BuildingNumber, company.BuildingName,
-                        company.Moo, company.StreetName, company.SubDistrict, company.District,
-                        company.Province, company.PostalCode, company.Address))
-                : FormatThaiAddress(company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
-                    company.SubDistrict, company.District, company.Province, company.PostalCode);
+            // resolver กลางตัวเดียว (AddressEn ที่กรอก > ถอดอักษร > ไทย) —
+            // ห้ามคำนวณลำดับนี้เองที่นี่ ไม่งั้น QuestPDF กับ HTML drift กัน
+            var fullAddr = ThaiAddressFormatter.ResolvePartyAddress(
+                isEnDoc, company.AddressEn,
+                company.Address, company.BuildingNumber, company.BuildingName, company.Moo,
+                company.StreetName, company.SubDistrict, company.District,
+                company.Province, company.PostalCode);
             if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{WebUtility.HtmlEncode(fullAddr)}</div>");
         }
         if (template.ShowCompanyTaxId)
@@ -1512,7 +1510,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             ? contactTitleForLang
             : DefaultContactLabelFor(doc.DocumentType, L);
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{contactSectionLabel}</div>");
-        sb.AppendLine($"<div class='contact-name'>{WebUtility.HtmlEncode(doc.Contact.Name)}</div>");
+        // ชื่ออังกฤษที่กรอกไว้ชนะเมื่อออกใบภาษาอังกฤษ (ไม่ถอดอักษรชื่อให้เอง —
+        // การสะกดชื่อเฉพาะเป็นสิทธิ์ของเจ้าของชื่อ เดาผิด = ระบุคู่สัญญาผิดคน)
+        sb.AppendLine($"<div class='contact-name'>{WebUtility.HtmlEncode(ThaiAddressFormatter.ResolvePartyName(lang == "en", doc.Contact.NameEn, doc.Contact.Name))}</div>");
         // "(สำนักงานใหญ่/สาขาที่ x)" เป็นเรื่องของนิติบุคคล (ประกาศฯ 199) —
         // บุคคลธรรมดาแสดงเฉพาะเมื่อตั้งรหัสสาขาไว้จริง (บุคคลจด VAT มีสาขาได้)
         // ไม่งั้นเลขบัตรประชาชนโดนต่อท้าย "(สำนักงานใหญ่)" ผิดความจริง
@@ -1532,14 +1532,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         if (template.ShowContactAddress)
         {
-            // en: ผู้ติดต่อไม่มีช่องที่อยู่อังกฤษ → ถอดอักษรอัตโนมัติ (ที่อยู่ที่เป็น
-            // ละตินอยู่แล้ว เช่นลูกค้าต่างชาติ ผ่านตามเดิมไม่ถูกแตะ)
-            var caddr = lang == "en"
-                ? ThaiRomanizer.ComposeEnglishAddress(doc.Contact.BuildingNumber, doc.Contact.BuildingName,
-                    doc.Contact.Moo, doc.Contact.StreetName, doc.Contact.SubDistrict, doc.Contact.District,
-                    doc.Contact.Province, doc.Contact.PostalCode, doc.Contact.Address)
-                : FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,
-                    doc.Contact.SubDistrict, doc.Contact.District, doc.Contact.Province, doc.Contact.PostalCode);
+            // resolver ตัวเดียวกับฝั่งบริษัท — ผู้ติดต่อมี AddressEn ให้กรอกเองแล้ว
+            // (เดิมถอดอักษรอัตโนมัติเสมอ แก้ทับไม่ได้เลยแม้รู้ว่าสะกดผิด)
+            var caddr = ThaiAddressFormatter.ResolvePartyAddress(
+                lang == "en", doc.Contact.AddressEn,
+                doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName,
+                doc.Contact.Moo, doc.Contact.StreetName, doc.Contact.SubDistrict,
+                doc.Contact.District, doc.Contact.Province, doc.Contact.PostalCode);
             if (!string.IsNullOrWhiteSpace(caddr)) sb.AppendLine($"<div>{WebUtility.HtmlEncode(caddr)}</div>");
         }
         if (template.ShowContactPhone && doc.Contact.Phone != null) sb.AppendLine($"<div>{L.Phone}: {WebUtility.HtmlEncode(doc.Contact.Phone)}</div>");

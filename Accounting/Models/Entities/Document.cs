@@ -693,6 +693,21 @@ public class Contact : TenantEntity
     public string? PostalCode { get; set; }    // 5 digits
     public string CountryCode { get; set; } = "TH";
 
+    // === ข้อมูลภาษาอังกฤษ (ใช้เมื่อออกเอกสารเป็นภาษาอังกฤษ) ===
+    // คู่ขนานกับ Company.NameEn / Company.AddressEn เป๊ะ ๆ — เดิมมีเฉพาะฝั่ง
+    // "บริษัทเรา" ทำให้ที่อยู่ลูกค้า/ผู้ขายบนใบภาษาอังกฤษถูกถอดอักษรอัตโนมัติ
+    // เสมอ และ **ไม่มีทางแก้ทับเลย** ต่อให้รู้ว่าสะกดผิด
+
+    /// <summary>ชื่อภาษาอังกฤษตามที่จดทะเบียน/คู่ค้าใช้จริง — null = ใช้ชื่อไทย
+    /// ตามเดิม. **ระบบไม่ถอดอักษรชื่อให้อัตโนมัติ** เพราะการสะกดชื่อเฉพาะเป็น
+    /// สิทธิ์ของเจ้าของชื่อ เดาผิด = เอกสารระบุคู่สัญญาผิดคน</summary>
+    public string? NameEn { get; set; }
+
+    /// <summary>ที่อยู่ภาษาอังกฤษที่ผู้ใช้กรอกเอง — ชนะการถอดอักษรอัตโนมัติ
+    /// (ThaiRomanizer เป็น RTGS แบบประมาณ ชื่อตำบล/อำเภอ/ถนนสะกดเพี้ยนได้).
+    /// null = ให้ระบบถอดให้จาก structured fields ตามเดิม</summary>
+    public string? AddressEn { get; set; }
+
     public string? Phone { get; set; }
     public string? Email { get; set; }
     public string? ContactPerson { get; set; }

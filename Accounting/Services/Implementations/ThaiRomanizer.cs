@@ -47,6 +47,75 @@ public static class ThaiRomanizer
         ["ปัตตานี"] = "Pattani", ["ยะลา"] = "Yala", ["นราธิวาส"] = "Narathiwat",
     };
 
+    /// <summary>
+    /// สะกดทางการระดับ <b>อำเภอ/เขต</b> — ตัวถอดอักษร rule-based ด้านล่างเป็น
+    /// RTGS แบบประมาณ (ไม่มีพจนานุกรมเสียงอ่าน) จึงสะกดชื่อสถานที่เพี้ยนได้
+    /// ตารางนี้คือ "คำตอบที่ยืนยันแล้ว" ที่ชนะตัวถอดเสมอ
+    ///
+    /// <para><b>ขอบเขต — 50 เขตกรุงเทพฯ</b>: เลือกเฉพาะชุดนี้โดยตั้งใจ เพราะ
+    /// (ก) เป็นที่อยู่ที่พบบ่อยที่สุดในเอกสารธุรกิจไทย (ข) สะกดอังกฤษปรากฏบน
+    /// ป้ายถนน/เอกสารราชการทั่วไป จึงยืนยันได้จริง. อำเภอต่างจังหวัดอีก ~880 ชื่อ
+    /// <b>ไม่ใส่มั่ว</b> — ใส่คำที่เดาเองลงตารางที่ดู "ทางการ" อันตรายกว่าปล่อยให้
+    /// ตัวถอดทำงาน เพราะผู้ใช้จะไม่เอะใจไปตรวจ. ที่เหลือใช้ทางออก 2 ทาง:
+    /// อำเภอเมืองประกอบอัตโนมัติ (ดู <see cref="PlaceNameEn"/>) และผู้ใช้กรอก
+    /// <c>Contact.AddressEn</c>/<c>Company.AddressEn</c> ทับได้เสมอ</para>
+    ///
+    /// <para><b>วิธีเพิ่ม</b>: ยืนยันการสะกดจากเอกสารราชการ/ป้ายจริงก่อน แล้วค่อย
+    /// เติม — ห้ามเติมจากการเดาหรือจากผลของตัวถอดเอง</para>
+    /// </summary>
+    private static readonly Dictionary<string, string> PlaceEnMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // ── 50 เขตกรุงเทพมหานคร ──
+        ["พระนคร"] = "Phra Nakhon", ["ดุสิต"] = "Dusit", ["หนองจอก"] = "Nong Chok",
+        ["บางรัก"] = "Bang Rak", ["บางเขน"] = "Bang Khen", ["บางกะปิ"] = "Bang Kapi",
+        ["ปทุมวัน"] = "Pathum Wan", ["ป้อมปราบศัตรูพ่าย"] = "Pom Prap Sattru Phai",
+        ["พระโขนง"] = "Phra Khanong", ["มีนบุรี"] = "Min Buri", ["ลาดกระบัง"] = "Lat Krabang",
+        ["ยานนาวา"] = "Yan Nawa", ["สัมพันธวงศ์"] = "Samphanthawong", ["พญาไท"] = "Phaya Thai",
+        ["ธนบุรี"] = "Thon Buri", ["บางกอกใหญ่"] = "Bangkok Yai", ["ห้วยขวาง"] = "Huai Khwang",
+        ["คลองสาน"] = "Khlong San", ["ตลิ่งชัน"] = "Taling Chan", ["บางกอกน้อย"] = "Bangkok Noi",
+        ["บางขุนเทียน"] = "Bang Khun Thian", ["ภาษีเจริญ"] = "Phasi Charoen",
+        ["หนองแขม"] = "Nong Khaem", ["ราษฎร์บูรณะ"] = "Rat Burana", ["บางพลัด"] = "Bang Phlat",
+        ["ดินแดง"] = "Din Daeng", ["บึงกุ่ม"] = "Bueng Kum", ["สาทร"] = "Sathon",
+        ["บางซื่อ"] = "Bang Sue", ["จตุจักร"] = "Chatuchak", ["บางคอแหลม"] = "Bang Kho Laem",
+        ["ประเวศ"] = "Prawet", ["คลองเตย"] = "Khlong Toei", ["สวนหลวง"] = "Suan Luang",
+        ["จอมทอง"] = "Chom Thong", ["ดอนเมือง"] = "Don Mueang", ["ราชเทวี"] = "Ratchathewi",
+        ["ลาดพร้าว"] = "Lat Phrao", ["วัฒนา"] = "Watthana", ["บางแค"] = "Bang Khae",
+        ["หลักสี่"] = "Lak Si", ["สายไหม"] = "Sai Mai", ["คันนายาว"] = "Khan Na Yao",
+        ["สะพานสูง"] = "Saphan Sung", ["วังทองหลาง"] = "Wang Thonglang",
+        ["คลองสามวา"] = "Khlong Sam Wa", ["บางนา"] = "Bang Na", ["ทวีวัฒนา"] = "Thawi Watthana",
+        ["ทุ่งครุ"] = "Thung Khru", ["บางบอน"] = "Bang Bon",
+    };
+
+    /// <summary>
+    /// ชื่ออำเภอ/เขต/ตำบล ภาษาอังกฤษที่ <b>ยืนยันได้</b> — null = ไม่รู้จัก
+    /// (ผู้เรียกให้ตกไปใช้ตัวถอดอักษรตามเดิม)
+    ///
+    /// <para>สองทาง: (1) ตารางที่ยืนยันแล้ว <see cref="PlaceEnMap"/>
+    /// (2) <b>"เมือง{จังหวัด}" ประกอบอัตโนมัติ</b> = "Mueang " + ชื่อจังหวัดทางการ
+    /// — ครอบอำเภอเมือง 77 แห่งโดย<b>ไม่ต้องพิมพ์เองสักตัว</b> จึงไม่มีทางสะกดผิด
+    /// (ใช้ตารางจังหวัดทางการซ้ำ). ระวัง: อำเภอที่ขึ้นต้น "เมือง" แต่ส่วนหลัง
+    /// ไม่ใช่ชื่อจังหวัด เช่น <b>เมืองจันทร์</b> (ศรีสะเกษ) ต้องตกไปตัวถอด —
+    /// เงื่อนไข "ส่วนหลังต้องเป็นชื่อจังหวัดที่รู้จัก" กันเคสนี้ให้แล้ว</para>
+    ///
+    /// <para>ใช้กับตำบลด้วยได้ เพราะแขวงในกรุงเทพฯ หลายแห่งชื่อเดียวกับเขต
+    /// (แขวงบางรัก/เขตบางรัก) — ตารางคีย์ด้วยชื่อไทยตรง ๆ จึงปลอดภัย</para>
+    /// </summary>
+    public static string? PlaceNameEn(string? thai)
+    {
+        if (string.IsNullOrWhiteSpace(thai)) return null;
+        var t = thai.Trim();
+        if (PlaceEnMap.TryGetValue(t, out var hit)) return hit;
+
+        // "เมือง" + ชื่อจังหวัด → "Mueang {ProvinceEn}"
+        if (t.StartsWith("เมือง", StringComparison.Ordinal) && t.Length > "เมือง".Length)
+        {
+            var rest = t["เมือง".Length..].Trim();
+            var provEn = ProvinceEn(rest);
+            if (provEn != null) return $"Mueang {provEn}";
+        }
+        return null;
+    }
+
     /// <summary>ชื่อจังหวัดอังกฤษทางการ — null เมื่อไม่ใช่ชื่อจังหวัดที่รู้จัก</summary>
     public static string? ProvinceEn(string? thai)
     {
@@ -322,12 +391,16 @@ public static class ThaiRomanizer
             var en = T(street);
             if (!string.IsNullOrEmpty(en)) bits.Add(soi ? $"Soi {en}" : $"{en} Rd.");
         }
+        // ตำบล/อำเภอ: ตารางที่ยืนยันแล้วชนะตัวถอดเสมอ (ตัวถอดเป็น RTGS แบบ
+        // ประมาณ ชื่อสถานที่จึงเพี้ยนได้ — ดู PlaceNameEn)
+        static string? Place(string? bare) => bare == null ? null : (PlaceNameEn(bare) ?? T(bare));
+
         var sd = Clean(subDistrict);
         if (sd != null)
-            bits.Add(T(sd.Replace("ตำบล", "").Replace("ต.", "").Replace("แขวง", "").Trim())!);
+            bits.Add(Place(sd.Replace("ตำบล", "").Replace("ต.", "").Replace("แขวง", "").Trim())!);
         var d = Clean(district);
         if (d != null)
-            bits.Add(T(d.Replace("อำเภอ", "").Replace("อ.", "").Replace("เขต", "").Trim())!);
+            bits.Add(Place(d.Replace("อำเภอ", "").Replace("อ.", "").Replace("เขต", "").Trim())!);
         var provEn = ProvinceEn(province) ?? T(province);
         var tail = new List<string?> { provEn, Clean(postalCode) }.Where(x => x != null).ToList();
         if (tail.Count > 0) bits.Add(string.Join(" ", tail));
