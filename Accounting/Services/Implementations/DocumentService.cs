@@ -1443,65 +1443,26 @@ public class DocumentService : IDocumentService
     /// generation ถ้าล่าสุดชนะ การแก้เอกสารธรรมดาจะ mutate รายงานงวดอื่น
     /// โดยผู้ใช้ไม่รู้ตัว และทำไม่ได้เลยเมื่องวดนั้น Filed แล้ว
     /// </summary>
+    /// <summary>ตั้ง/ย้ายงวดเคลมภาษีซื้อ — <b>ทางเดียวที่ผู้ใช้เปลี่ยนค่านี้ได้</b>
+    /// (เรียกจากทั้ง 3 ทางเข้า: สร้างเอกสาร · แก้ไขเอกสาร · แผงภาษีซื้อในหน้าดู
+    /// เอกสาร) ตัวตัดสินอยู่ที่ <see cref="InputVatClaimPeriodRules"/> ซึ่งเป็น
+    /// pure function มีเทสต์ครอบ — เมธอดนี้ทำแค่ "หาข้อมูลให้กติกา แล้วลงมือทำ
+    /// ตามที่กติกาบอก" จึงไม่มีทางที่ทางเข้าไหนจะได้ตารางตัดสินใจต่างกัน</summary>
     private async Task ApplyInputVatClaimPeriodAsync(Guid companyId, Document doc, string? raw)
     {
-        if (raw == null) return;                       // null = ไม่แตะ
+        // ── ขั้นที่ 1: ตัดสินจากตัวเอกสาร (ไม่แตะ DB — เคสส่วนใหญ่จบตรงนี้) ──
+        var pre = InputVatClaimPeriodRules.DecideFromDocument(
+            raw, doc.DocumentType, doc.InputVatBecameClaimableAt, doc.InputVatPostedAsUndue);
+        if (pre.Outcome == InputVatClaimPeriodOutcome.NoChange) return;
+        if (pre.Outcome == InputVatClaimPeriodOutcome.Blocked)
+            throw new InvalidOperationException(pre.BlockReason!);
 
-        // ⚠️ ลำดับสำคัญ: แปลงค่า + เทียบของเดิม **ก่อน** guard ทุกตัว
-        //
-        // บั๊กจริงที่เกิด: UI ส่ง "" มาเสมอตอนแก้ไข (เพื่อรองรับการล้างค่า)
-        // แต่เวอร์ชันแรกเช็ค "ต้องเป็นเอกสารฝั่งซื้อ" ก่อนดูว่าค่าเปลี่ยนจริง
-        // ไหม → แก้ใบเสนอราคาที่ไม่เกี่ยวอะไรเลยก็ throw ("Clone ใบเสนอราคา
-        // แล้วบันทึกไม่ได้"). และ throw ใส่ใบ undue ที่ผู้ใช้ไม่ได้แตะช่องนี้
-        // ด้วย. no-op ต้องเป็น no-op เสมอ — guard มีไว้กันการ "เปลี่ยน" เท่านั้น
-
-        // แปลงค่า: "" = ล้างกลับปกติ, "yyyy-MM" = งวดที่เลือก
-        DateTime? period = null;
-        if (!string.IsNullOrWhiteSpace(raw))
-        {
-            var parts = raw.Trim().Split('-');
-            if (parts.Length != 2 || !int.TryParse(parts[0], out var y) || !int.TryParse(parts[1], out var m)
-                || m < 1 || m > 12 || y < 2000 || y > 2200)
-                throw new InvalidOperationException("รูปแบบงวดไม่ถูกต้อง — ต้องเป็น yyyy-MM เช่น 2026-09");
-            // รับ พ.ศ. ด้วย (ผู้ใช้ไทยพิมพ์ 2569-09 ได้) — เกิน 2400 = พ.ศ.
-            if (y > 2400) y -= 543;
-            period = new DateTime(y, m, 1, 0, 0, 0, DateTimeKind.Utc);
-        }
-
-        var current = doc.InputVatBecameClaimableAt.HasValue
-            ? new DateTime(doc.InputVatBecameClaimableAt.Value.Year, doc.InputVatBecameClaimableAt.Value.Month, 1)
-            : (DateTime?)null;
-        if (period == current) return;                 // ไม่เปลี่ยน = จบ ไม่มี guard ไหนยิง
-
-        var isPurchaseDoc = doc.DocumentType is DocumentType.PurchaseInvoice
-            or DocumentType.Expense or DocumentType.PaymentVoucher
-            or DocumentType.CertificateInLieu;
-        if (!isPurchaseDoc)
-            throw new InvalidOperationException("งวดเคลมภาษีซื้อตั้งได้เฉพาะเอกสารฝั่งซื้อ");
-
-        // กติกา 2 — undue flow ชนะเจตนา (บังคับเฉพาะตอน "เปลี่ยน" จริง)
-        if (doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null)
-            throw new InvalidOperationException(
-                "ใบนี้พักภาษีซื้อไว้ (ใบกำกับยังไม่ครบ §86/4) — งวดเคลมจะถูกกำหนด"
-                + "อัตโนมัติเมื่อกด \"เติมใบกำกับครบ\" ไม่สามารถเลือกงวดเองที่นี่ได้");
-
-        // กติกา 2.5 — ใบ undue ที่ย้ายเข้า 11610 แล้ว "ล้างงวด" ไม่ได้ (ย้ายงวด
-        // ได้ ล้างไม่ได้): BecameClaimableAt ของใบพวกนี้คือหลักฐานว่า reclassify
-        // เกิดแล้ว ถ้าตั้งกลับเป็น null รายงานจะเห็นเป็น "ยังพัก 11640" ทั้งที่
-        // GL ย้ายออกไปแล้ว → ภ.พ.30 กับ GL แยกทางกันเงียบ ๆ
-        if (period == null && doc.InputVatPostedAsUndue)
-            throw new InvalidOperationException(
-                "ใบนี้เคยพักภาษีซื้อ (11640) แล้วย้ายเข้า ภ.พ.30 — ล้างงวดกลับเป็น"
-                + "ค่าปกติไม่ได้ (เลือกงวดใหม่ได้ แต่ต้องระบุงวดเสมอ)");
-
-        // กติกา 1 — ใบอยู่ในรายงานภาษีซื้อแล้ว
-        //
-        // เดิม block ทั้งหมดแล้วบอกให้ไปเปิดรายงานติ๊กใบออกเอง — แต่ "เลิกเคลม"
-        // จากหน้าเอกสาร (UnclaimInputVatAsync) กลับติ๊กบรรทัดงวดร่างออกให้เงียบ ๆ
-        // อยู่แล้ว ⇒ การกระทำแบบเดียวกันบนข้อมูลชุดเดียวกัน ได้คำตอบคนละอย่าง
-        // แล้วแต่ว่าเข้าทางไหน. รวมพฤติกรรมให้ตรงกัน: **งวดร่างย้ายให้อัตโนมัติ**
-        // (ติ๊กบรรทัดออก + recalc ด้วยกลไกเดียวกับหน้ารายงาน) ส่วนงวดที่ยื่นแล้ว
-        // ยัง block เด็ดขาด — ตัวเลขออกไปถึงสรรพากรแล้ว แก้ได้ทางเดียวคือยื่นเพิ่มเติม
+        // ── ขั้นที่ 2: ใบอยู่ในรายงาน ภ.พ.30 งวดไหนแล้วบ้าง ──
+        // งวดร่างย้ายให้อัตโนมัติ (ติ๊กบรรทัดออก + recalc ด้วยกลไกเดียวกับหน้า
+        // รายงาน) ส่วนงวดที่ยื่นแล้ว block — ที่มา: เดิม block ทุกกรณีแล้วสั่งให้
+        // ไปติ๊กใบออกเองที่หน้ารายงาน ทั้งที่ปุ่ม "เลิกเคลม" บนหน้าเดียวกัน
+        // (UnclaimInputVatAsync) ติ๊กบรรทัดงวดร่างออกให้เงียบ ๆ อยู่แล้ว ⇒ การ
+        // กระทำแบบเดียวกันบนข้อมูลชุดเดียวกัน ได้คำตอบคนละอย่างแล้วแต่ทางเข้า
         var claimedLines = await _db.TaxReportLines
             .Include(l => l.TaxReport)
             .Where(l => l.DocumentId == doc.Id && !l.IsExcluded && !l.IsDeleted
@@ -1509,34 +1470,23 @@ public class DocumentService : IDocumentService
                 && l.TaxReport.TaxType == TaxType.VAT
                 && l.IncomeTypeCode == "INPUT")
             .ToListAsync();
-
-        // ยื่นแล้ว/นำส่งแล้ว = แตะไม่ได้ (ตรงกับที่ UI ล็อกช่องไว้ให้เห็นก่อนกด)
         var filedLine = claimedLines
             .FirstOrDefault(l => l.TaxReport.Status != TaxReportStatus.Draft);
-        if (filedLine != null)
-            throw new InvalidOperationException(
-                $"ใบนี้อยู่ในรายงานภาษีซื้องวด {filedLine.TaxReport.Month:D2}/{filedLine.TaxReport.Year} "
-                + "ที่**ยื่นแล้ว** — ย้ายงวดไม่ได้ ต้องยื่นแบบเพิ่มเติมกับสรรพากร");
 
-        if (period.HasValue)
-        {
-            // §82/3 — กรอบเดียวกับปุ่ม "ดึงเอกสาร" (ตัวตัดสินกลางเดียวกัน
-            // สิ่งที่ตั้งได้ = สิ่งที่ดึงได้ ไม่มีวันขัดกัน)
-            var basis = doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
-            var (ok, reason) = TaxService.EvaluateClaimPeriod(basis, isInput: true,
-                period.Value.Year, period.Value.Month);
-            if (!ok) throw new InvalidOperationException(reason!);
-        }
+        var post = InputVatClaimPeriodRules.DecideAgainstReports(
+            pre.Period,
+            doc.SupplierTaxInvoiceDate ?? doc.DocumentDate,
+            filedLine == null ? null : (filedLine.TaxReport.Month, filedLine.TaxReport.Year));
+        if (post.Outcome == InputVatClaimPeriodOutcome.Blocked)
+            throw new InvalidOperationException(post.BlockReason!);
 
         // ⚠️ ติ๊กออกจากงวดเดิม **หลัง** validate ครบทุกข้อ — ถ้าย้ายก่อนแล้ว
         // §82/3 ไม่ผ่าน ใบจะหลุดจากงวดเดิมไปโดยไม่ได้งวดใหม่ (แม้ transaction
         // rollback ให้ แต่ลำดับนี้ทำให้ถูกต้องโดยไม่ต้องพึ่ง rollback)
         await ExcludeVatReportLinesAsync(claimedLines,
-            period.HasValue
-                ? $"ย้ายงวดเคลม → {period.Value.Month:D2}/{period.Value.Year}"
-                : "ย้ายกลับไปเคลมตามเดือนเอกสาร");
+            InputVatClaimPeriodRules.MoveAuditReason(post.Period));
 
-        doc.InputVatBecameClaimableAt = period;
+        doc.InputVatBecameClaimableAt = post.Period;
     }
 
     private async Task<(decimal? Pct, string? Status)> ComputeConversionStatusAsync(Guid companyId, Document source)
