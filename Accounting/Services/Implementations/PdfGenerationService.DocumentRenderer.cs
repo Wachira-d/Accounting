@@ -152,6 +152,39 @@ public partial class PdfGenerationService
                         catch { }
                     }
 
+                    // ===== หัวกระดาษ 3 ส่วนซ้ำทุกหน้า (RepeatHeaderEveryPage) =====
+                    // QuestPDF: page.Header() ถูกวาดซ้ำทุกหน้าโดยกำเนิด — ย้าย
+                    // [ป้ายสำเนา · ข้อมูลบริษัทเรา+หัวเอกสาร · กล่องคู่ค้า] เข้ามา
+                    // ที่นี่ แทนที่จะไหลอยู่ใน Content หน้าแรกหน้าเดียว. หน้า 2
+                    // ที่มีแต่ตารางลอย ๆ อ่านไม่ออกว่าเป็นเอกสารอะไรของใคร และ
+                    // ถ้าหน้าหลุดจากชุดก็สืบกลับไม่ได้ (sync กับ .doc-frame
+                    // thead ฝั่ง HTML renderer — สอง renderer ห้าม drift)
+                    var repeatHeader = template.RepeatHeaderEveryPage;
+                    // ป้ายสำเนาวาดครั้งเดียวใน closure ใช้ร่วมทั้งสองเส้นทาง
+                    void ComposeCornerLabel(ColumnDescriptor c)
+                    {
+                        // ป้าย ต้นฉบับ/สำเนา มุมบน — กรอบเล็กสีตาม accent
+                        var badge = c.Item().PaddingBottom(4);
+                        var aligned = labelPos == "TopLeft" ? badge.AlignLeft() : badge.AlignRight();
+                        aligned.Border(1).BorderColor(accent)
+                            .PaddingVertical(1).PaddingHorizontal(12)
+                            .Text(cornerLabel!).FontSize(11).Bold().FontColor(accent);
+                    }
+
+                    if (repeatHeader)
+                    {
+                        page.Header().Column(hc =>
+                        {
+                            void SafeH(Action a) { try { a(); } catch { /* skip failed section */ } }
+                            if (cornerLabel != null) SafeH(() => ComposeCornerLabel(hc));
+                            SafeH(() => ComposeHeaderAndTitle(hc, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L));
+                            SafeH(() => ComposeContact(hc, doc, template, accent, L));
+                            // ระยะห่างหัว↔เนื้อหา — Header ติดกับ Content ทันที
+                            // ถ้าไม่เว้น ตารางจะชนขอบล่างของกล่องคู่ค้า
+                            SafeH(() => hc.Item().Height(6));
+                        });
+                    }
+
                     page.Content().Column(col =>
                     {
                         // Defense-in-depth: ห่อแต่ละ section ด้วย try/catch
@@ -160,18 +193,12 @@ public partial class PdfGenerationService
                         // อื่นจะ render ต่อ ไม่ทำให้ทั้ง PDF ตกไป fallback
                         // ConvertHtmlToPdf (HTML→Blocks ที่หน้าตาเรียบเกินไป).
                         void Safe(Action a) { try { a(); } catch { /* skip failed section */ } }
-                        if (cornerLabel != null)
-                            Safe(() =>
-                            {
-                                // ป้าย ต้นฉบับ/สำเนา มุมบน — กรอบเล็กสีตาม accent
-                                var badge = col.Item().PaddingBottom(4);
-                                var aligned = labelPos == "TopLeft" ? badge.AlignLeft() : badge.AlignRight();
-                                aligned.Border(1).BorderColor(accent)
-                                    .PaddingVertical(1).PaddingHorizontal(12)
-                                    .Text(cornerLabel).FontSize(11).Bold().FontColor(accent);
-                            });
-                        Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L));
-                        Safe(() => ComposeContact(col, doc, template, accent, L));
+                        if (!repeatHeader)
+                        {
+                            if (cornerLabel != null) Safe(() => ComposeCornerLabel(col));
+                            Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L));
+                            Safe(() => ComposeContact(col, doc, template, accent, L));
+                        }
                         Safe(() => ComposeAdjustmentRef(col, doc, accent, L));
                         Safe(() => ComposeSupplierInvoiceNote(col, doc, accent, L));
                         Safe(() => ComposeCurrencyNote(col, doc, accent, L));
@@ -539,7 +566,8 @@ public partial class PdfGenerationService
         // ลูกค้า box) + section title สี accent ตัวหนา → ดูเด่นชัดขึ้น
         // กว่าเดิมที่เป็นเส้นกรอบบางๆ
         // กระชับขึ้น: padding เล็กลง + ชื่อลูกค้าเล็กลง (ผู้ใช้ขอ) ให้ได้พื้นที่คืน
-        col.Item().PaddingTop(8).BorderLeft(3).BorderColor(accent).Background("#F8FAFC")
+        // ShowEntire() — กล่องลูกค้าเป็นหน่วยเดียว ไม่ผ่ากลางข้ามหน้า
+        col.Item().ShowEntire().PaddingTop(8).BorderLeft(3).BorderColor(accent).Background("#F8FAFC")
             .PaddingVertical(6).PaddingHorizontal(9).Column(cc =>
         {
             // Template override > smart per-doc-type fallback > ลูกค้า
@@ -677,6 +705,9 @@ public partial class PdfGenerationService
         // Minimal & Letterhead use a borderless header — no fill, accent-coloured
         // text and a single rule underneath — to match their on-screen look.
         var flatHeader = layout is "Minimal" or "Letterhead";
+        // ตัวตัดสินคอลัมน์ส่วนลด — ตัวเดียวกับ HTML renderer (จำนวนคอลัมน์ของ
+        // ColumnsDefinition / Header / เซลล์ ต้องเท่ากันทั้งสาม ไม่งั้นตารางเหลื่อม)
+        var showDiscountCol = ShouldShowDiscountColumn(doc, t);
 
         col.Item().PaddingTop(8).Table(table =>
         {
@@ -691,7 +722,7 @@ public partial class PdfGenerationService
                 cols.ConstantColumn(50);
                 if (t.ShowUnit) cols.ConstantColumn(45);
                 cols.ConstantColumn(70);
-                if (t.ShowDiscount) cols.ConstantColumn(60);
+                if (showDiscountCol) cols.ConstantColumn(60);
                 if (t.ShowVatPerLine) cols.ConstantColumn(46);
                 if (t.ShowWithholdingTax) cols.ConstantColumn(46);
                 cols.ConstantColumn(80);
@@ -719,7 +750,7 @@ public partial class PdfGenerationService
                 Th(L.ColQty, "right");
                 if (t.ShowUnit) Th(L.ColUnit, "center");
                 Th(inclVat ? L.ColUnitPriceIncl : L.ColUnitPrice, "right");
-                if (t.ShowDiscount) Th(L.ColDiscount, "right");
+                if (showDiscountCol) Th(L.ColDiscount, "right");
                 if (t.ShowVatPerLine) Th(L.ColVatPerLine, "right");
                 if (t.ShowWithholdingTax) Th(L.ColWhtPerLine, "right");
                 Th(inclVat ? L.ColAmountIncl : L.ColAmount, "right");
@@ -778,7 +809,7 @@ public partial class PdfGenerationService
                 Td(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"), "right");
                 if (t.ShowUnit) Td(line.Unit ?? "", "center");
                 Td(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"), "right");
-                if (t.ShowDiscount) Td(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"), "right");
+                if (showDiscountCol) Td(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"), "right");
                 // VatRate = -1 คือ "ยกเว้น" (sentinel เดียวกับฟอร์ม) ไม่ใช่ -1%
                 if (t.ShowVatPerLine) Td(isDescriptiveLine ? "" : FormatLineVatRate(line.VatRate, L), "right");
                 if (t.ShowWithholdingTax) Td(isDescriptiveLine || line.WithholdingTaxRate <= 0
@@ -797,7 +828,9 @@ public partial class PdfGenerationService
         // "หน้าตาไม่เหมือนกับกดดู" → ยอดรวมสุทธิดูไม่เด่น).
         var filledTotal = layout is not ("Minimal" or "Letterhead");
 
-        col.Item().PaddingTop(8).AlignRight().Width(280).Column(sc =>
+        // ShowEntire() — บล็อกสรุปยอดต้องอ่านครบในหน้าเดียว (ยอดก่อน VAT/
+        // VAT/หัก ณ ที่จ่าย/ยอดรวมสุทธิ แยกหน้ากัน = กระทบยอดไม่ได้)
+        col.Item().ShowEntire().PaddingTop(8).AlignRight().Width(280).Column(sc =>
         {
             void Row(string label, string value, bool total = false)
             {
@@ -1043,7 +1076,10 @@ public partial class PdfGenerationService
             }
             catch { /* stamp decorative — ห้าม break PDF */ }
 
-        col.Item().PaddingTop(b.StampBytes != null ? 6 : 40).Row(r =>
+        // ShowEntire() — ทั้งแถวลายเซ็น (รูป + เส้น + ป้าย + ชื่อ + ตำแหน่ง)
+        // ต้องอยู่หน้าเดียวกันเสมอ ถ้าที่ไม่พอให้ยกไปหน้าใหม่ทั้งก้อน
+        // ห้ามผ่ากลาง (คู่กับ break-inside:avoid บน <tr> ฝั่ง HTML)
+        col.Item().ShowEntire().PaddingTop(b.StampBytes != null ? 6 : 40).Row(r =>
         {
             for (int i = 0; i < labels.Count; i++)
             {

@@ -280,6 +280,11 @@
             <label class="check-row"><input type="checkbox" id="showItemCode" onchange="Page.markDirty()"> รหัสสินค้า</label>
             <label class="check-row"><input type="checkbox" id="showUnit" onchange="Page.markDirty()"> หน่วย</label>
             <label class="check-row"><input type="checkbox" id="showDiscount" onchange="Page.markDirty()"> ส่วนลด</label>
+            <label class="check-row" style="padding-left:20px;font-size:12px;color:#475569">
+              <input type="checkbox" id="hideEmptyDiscountColumn" onchange="Page.markDirty()">
+              ซ่อนคอลัมน์ส่วนลดเมื่อทั้งใบไม่มีส่วนลด
+              <span style="color:#94a3b8">— ใบส่วนใหญ่ไม่มีส่วนลด คอลัมน์ 0.00 ทั้งแถวกินความกว้างเปล่า ๆ</span>
+            </label>
             <label class="check-row"><input type="checkbox" id="showVatPerLine" onchange="Page.markDirty()"> VAT ต่อรายการ</label>
             <label class="check-row"><input type="checkbox" id="showWithholdingTax" onchange="Page.markDirty()"> WHT ต่อรายการ</label>
             <div class="editor-row">
@@ -426,6 +431,11 @@
               <div><label>ขอบซ้าย (mm)</label><input id="marginLeft" type="number" onchange="Page.markDirty()"></div>
               <div><label>ขอบขวา (mm)</label><input id="marginRight" type="number" onchange="Page.markDirty()"></div>
             </div>
+            <label class="check-row" style="margin-top:6px">
+              <input type="checkbox" id="repeatHeaderEveryPage" onchange="Page.markDirty()">
+              พิมพ์หัวกระดาษซ้ำทุกหน้า
+              <span style="color:#94a3b8;font-size:12px">— ข้อมูลบริษัท · หัวเอกสาร · ข้อมูลคู่ค้า ขึ้นซ้ำเมื่อรายการล้นไปหน้า 2 (หัวตารางซ้ำให้อยู่แล้ว)</span>
+            </label>
           </div>
         </div>
 
@@ -923,10 +933,10 @@
          'showLogo','showCompanyName','showCompanyNameEn','showCompanyAddress','showCompanyTaxId',
          'showCompanyPhone','showCompanyEmail',
          'showContactTaxId','showContactBranch','showContactAddress','showContactPhone','showContactEmail',
-         'showLineNumber','showItemCode','showUnit','showDiscount','showVatPerLine','showWithholdingTax',
+         'showLineNumber','showItemCode','showUnit','showDiscount','hideEmptyDiscountColumn','showVatPerLine','showWithholdingTax',
          'showSubTotal','showDiscountTotal','showVatSummary','showWithholdingTaxSummary','showAmountInWords',
          'showSignature','showCompanyStamp',
-         'showWatermark','showPaymentTerms','showBankDetails',
+         'showWatermark','showPaymentTerms','showBankDetails','repeatHeaderEveryPage',
         ].forEach(spec => {
           const [id, prop] = spec.includes(':') ? spec.split(':') : [spec, spec];
           set(id, t[prop]);
@@ -1012,6 +1022,7 @@
           showItemCode: getCheck('showItemCode'),
           showUnit: getCheck('showUnit'),
           showDiscount: getCheck('showDiscount'),
+          hideEmptyDiscountColumn: getCheck('hideEmptyDiscountColumn'),
           showVatPerLine: getCheck('showVatPerLine'),
           showWithholdingTax: getCheck('showWithholdingTax'),
           tableBorderStyle: get('tableBorderStyle'),
@@ -1057,6 +1068,7 @@
           marginBottom: getNum('marginBottom'),
           marginLeft: getNum('marginLeft'),
           marginRight: getNum('marginRight'),
+          repeatHeaderEveryPage: getCheck('repeatHeaderEveryPage'),
         };
       },
 
