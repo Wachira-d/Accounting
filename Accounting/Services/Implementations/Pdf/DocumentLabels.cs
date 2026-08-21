@@ -287,8 +287,11 @@ public sealed class DocumentLabels
         ["col_amount"] = "Amount",
         ["col_amount_incl"] = "Amount (incl. VAT)",
 
-        ["total_before_bill_discount"] = "Before bill discount",
-        ["total_bill_discount"] = "Bill discount",
+        // ⚠️ ห้ามใช้ "bill discount" — ในภาษาการเงินอังกฤษหมายถึง "การขายลด
+        // ตั๋วเงิน" (discounting a bill of exchange) คนละเรื่องกับส่วนลดท้ายบิล
+        // ⇒ คู่ค้าต่างชาติสายการเงินตีความผิดทาง. ใช้ "invoice discount"
+        ["total_before_bill_discount"] = "Before invoice discount",
+        ["total_bill_discount"] = "Invoice discount",
         ["total_discount"] = "Total discount",
         ["total_subtotal"] = "Subtotal (excl. VAT)",
         ["total_after_discount_base"] = "Net after discount (taxable)",
@@ -306,15 +309,18 @@ public sealed class DocumentLabels
         ["cn_original_value"] = "Original value",
         ["cn_reason"] = "Reason",
         ["supplier_invoice_no"] = "Supplier tax invoice no.",
-        ["our_doc_ref"] = "Our document",
+        ["our_doc_ref"] = "Our ref.",
+        // เหตุผล CN/DN เป็น "รายการบังคับบนกระดาษ" ตาม §86/9-10 — ต้องสื่อสาระ
+        // เดียวกับฝั่งไทยครบ ไม่ใช่ย่อจนเหลือคำกลาง ๆ ที่ตรวจย้อนไม่ได้
         ["cn_reason_return"] = "Goods return",
         ["cn_reason_discount"] = "Discount / price reduction",
-        ["cn_reason_adjustment"] = "Adjustment",
-        ["cn_reason_writeoff"] = "Write-off",
+        ["cn_reason_adjustment"] = "Adjustment (value less than agreed)",
+        ["cn_reason_writeoff"] = "Partial write-off",
         ["dn_reason_price"] = "Price increase from agreed amount",
         ["dn_reason_extra"] = "Goods / services delivered in excess",
         ["dn_reason_charge"] = "Additional charges billed afterwards",
-        ["dn_reason_adjustment"] = "Adjustment (under-calculated)",
+        // ⚠️ ห้ามใช้ "under-calculated" — ไม่ใช่คำอังกฤษจริง เจ้าของภาษาสะดุด
+        ["dn_reason_adjustment"] = "Correction (amount undercharged)",
         ["currency_label"] = "Currency",
         ["fx_rate_label"] = "Exchange rate",
         ["cn_corrected_value"] = "Corrected value",
