@@ -11,9 +11,13 @@ namespace Accounting.Tests;
 /// วิธีที่เลือก: ผู้ใช้ส่ง "สถานะปลายทาง" ของใบสำคัญมา ระบบคำนวณผลต่างต่อบัญชี
 /// แล้วลง **ใบปรับปรุงใหม่** — ใบเดิมไม่ถูกแก้ (audit trail ครบ) และ GL ถูกต้อง
 ///
-/// สิ่งที่ทำให้เปิดให้แก้อิสระได้อย่างปลอดภัย = 2 ค่าคงที่:
-///   • ยอดรวมห้ามเปลี่ยน (ยอดผิด = แก้ที่เอกสาร ไม่ใช่แอบแก้ผ่าน GL)
-///   • บัญชีคุมห้ามขยับ (ภ.พ.30 / ภ.ง.ด. / อายุหนี้ / มัดจำ อ่านยอดพวกนี้อยู่)
+/// สิ่งที่ทำให้เปิดให้แก้อิสระได้อย่างปลอดภัย:
+///   • **ยอดรวมแต่ละฝั่งต้องตรงกับเอกสาร** (hard rule เดียวเรื่องยอด — ยอดผิด
+///     = แก้ที่เอกสาร ไม่ใช่แอบแก้ผ่าน GL) + Dr = Cr
+///   • บัญชีคุม (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT) **แก้ได้แล้ว** ตามคำขอผู้ใช้
+///     (เดิมบล็อก) — เปลี่ยนจาก reject เป็น "จดร่องรอยเข้ม" ลง audit
+///     (controlAccountsMoved ก่อน→หลัง) เพราะรายงานที่อ่านบัญชีพวกนี้จะเห็น
+///     ยอดต่างจาก GL — เครื่องมือกระทบยอด GL↔ภาษี ใช้ไล่ drift ต่อ
 /// </summary>
 public class AdjustDocumentJournalTests
 {
@@ -45,12 +49,21 @@ public class AdjustDocumentJournalTests
         if (wDr != wCr) return "unbalanced";
         if (wDr != original.Sum(l => l.Debit)) return "totalChanged";
 
+        return null;   // บัญชีคุมไม่ block แล้ว — ดู ControlMoves (ร่องรอย audit)
+    }
+
+    /// <summary>mirror ของ controlAccountsMoved ใน audit — บัญชีคุมที่ยอดสุทธิ
+    /// เปลี่ยน (ก่อน→หลัง) เดิมพวกนี้ถูก reject ตอนนี้ผ่านได้แต่ต้องถูกจดครบ</summary>
+    private static List<(string Code, decimal Before, decimal After)> ControlMoves(
+        IReadOnlyList<Line> original, IReadOnlyList<Line> wanted)
+    {
         var o = Net(original);
         var w = Net(wanted);
-        foreach (var code in o.Keys.Union(w.Keys).Where(Control.Contains))
-            if (o.GetValueOrDefault(code) != w.GetValueOrDefault(code)) return "controlMoved";
-
-        return null;
+        return o.Keys.Union(w.Keys).Where(Control.Contains)
+            .Select(c => (Code: c, Before: o.GetValueOrDefault(c), After: w.GetValueOrDefault(c)))
+            .Where(x => x.Before != x.After)
+            .OrderBy(x => x.Code)
+            .ToList();
     }
 
     /// <summary>ผลต่างที่จะกลายเป็นใบปรับปรุง (บวก = Dr, ลบ = Cr)</summary>
@@ -153,21 +166,25 @@ public class AdjustDocumentJournalTests
     [Theory]
     [InlineData("11610")]   // ภาษีซื้อ → ภ.พ.30
     [InlineData("21210")]   // เจ้าหนี้ → ยอดค้างจ่าย/อายุหนี้
-    public void Moving_a_control_account_is_rejected(string code)
+    public void Moving_a_control_account_is_allowed_and_audited(string code)
     {
-        // ย้ายยอดออกจากบัญชีคุมไปบัญชีอื่น — ยอดรวมเท่าเดิม แต่รายงานพัง
+        // เดิม reject — ผู้ใช้ขอเปิดแก้ทั้งใบรวมลูกหนี้/เจ้าหนี้: ผ่านได้
+        // (ยอดรวมยังเท่าเอกสาร) แต่ต้องโผล่ในร่องรอย audit ครบทุกตัวที่ขยับ
         var wanted = Pv.Select(l => l.Code == code
             ? l with { Code = "53999", Debit = l.Debit, Credit = l.Credit }
             : l).ToArray();
-        Assert.Equal("controlMoved", Validate(Pv, wanted));
+        Assert.Null(Validate(Pv, wanted));
+        var moves = ControlMoves(Pv, wanted);
+        Assert.Single(moves);
+        Assert.Equal(code, moves[0].Code);
+        Assert.Equal(0m, moves[0].After);        // ยอดสุทธิถูกย้ายออกหมด
     }
 
     [Fact]
-    public void Adding_a_control_account_that_was_not_there_is_rejected()
+    public void Adding_a_control_account_is_allowed_but_every_move_is_audited()
     {
-        // แอบเพิ่มภาษีขายเข้ามาเอง = สร้างยอด ภ.พ.30 ที่ไม่มีเอกสารรองรับ
-        // ยอดรวมยังเท่าเดิม (1,070) และสมดุล — จึงผ่านสองด่านแรก แต่ต้องตกที่
-        // ด่านบัญชีคุม ไม่งั้นจะสร้างยอดภาษีขายที่ไม่มีเอกสารรองรับได้
+        // เพิ่มภาษีขาย 21911 เข้ามา + ลดเจ้าหนี้ลง — ตอนนี้ทำได้ (ยอดรวมเท่า
+        // เดิม 1,070 และสมดุล) แต่บัญชีคุมที่ขยับ **ทั้งสองตัว** ต้องถูกจด
         var wanted = new[]
         {
             new Line("53120", 1000m, 0m),
@@ -177,7 +194,11 @@ public class AdjustDocumentJournalTests
         };
         Assert.Equal(1070m, wanted.Sum(l => l.Debit));
         Assert.Equal(1070m, wanted.Sum(l => l.Credit));
-        Assert.Equal("controlMoved", Validate(Pv, wanted));
+        Assert.Null(Validate(Pv, wanted));
+        var moves = ControlMoves(Pv, wanted);
+        Assert.Equal(2, moves.Count);
+        Assert.Equal(("21210", -1070m, -1000m), moves[0]);
+        Assert.Equal(("21911", 0m, -70m), moves[1]);
     }
 
     [Fact]
@@ -208,7 +229,7 @@ public class AdjustDocumentJournalTests
 
         Assert.Equal(0m, after["53120"]);        // ผังเดิมถูกล้างเป็นศูนย์
         Assert.Equal(1000m, after["53310"]);     // ผังใหม่รับยอดมาเต็ม
-        Assert.Equal(70m, after["11610"]);       // บัญชีคุมไม่ขยับ
+        Assert.Equal(70m, after["11610"]);       // เคสนี้ไม่ได้แตะบัญชีคุม — ยอดคงเดิม
         Assert.Equal(-1070m, after["21210"]);
         Assert.Equal(0m, after.Values.Sum());    // งบยังสมดุล
     }

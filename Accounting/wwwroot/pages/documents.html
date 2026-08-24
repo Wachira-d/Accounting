@@ -2101,7 +2101,7 @@
           ? '<span class="badge" style="background:#7c3aed15;color:#7c3aed">กลับรายการแล้ว</span>'
           : Layout.statusBadge(j.status);
         const action = j.canAdjust
-          ? `<button class="btn btn-sm btn-primary" onclick="Page.openJeAdjust('${docId}','${j.id}')" title="แก้ผังบัญชี / เพิ่ม-ลดบรรทัด — ระบบลงใบปรับปรุงใหม่ให้">✏️ แก้ผังบัญชี</button>`
+          ? `<button class="btn btn-sm btn-primary" onclick="Page.openJeAdjust('${docId}','${j.id}')" title="แก้ผังบัญชี/ยอดได้ทุกบรรทัด (รวมลูกหนี้ เจ้าหนี้ ภาษี) — ยอดรวมแต่ละฝั่งต้องเท่าเอกสาร · ระบบลงใบปรับปรุงใหม่ให้">✏️ แก้รายการบัญชี</button>`
           : `<span style="font-size:11px;color:#92400e" title="${this.escapeHtml(j.blockReason || '')}">🔒 ${this.escapeHtml(j.blockReason || 'แก้ไม่ได้')}</span>`;
         return `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:12px;margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
@@ -2116,7 +2116,7 @@
           <table class="table" style="font-size:12px">
             <thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
             <tbody>${(j.lines || []).map(l => `<tr>
-              <td style="font-family:ui-monospace,monospace">${this.escapeHtml(l.accountCode)}${l.isControlAccount ? ' <span title="บัญชีคุม — ยอดต้องตรงกับเอกสารเสมอ">🔒</span>' : ''}</td>
+              <td style="font-family:ui-monospace,monospace">${this.escapeHtml(l.accountCode)}${l.isControlAccount ? ' <span title="บัญชีคุม (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT) — แก้ได้ แต่ระวังรายงานภาษี/อายุหนี้ไม่ตรง GL">⚠️</span>' : ''}</td>
               <td>${this.escapeHtml(l.accountName)}</td>
               <td class="text-right">${l.debitAmount > 0 ? Layout.money(l.debitAmount) : ''}</td>
               <td class="text-right">${l.creditAmount > 0 ? Layout.money(l.creditAmount) : ''}</td>
@@ -2180,11 +2180,13 @@
         if (!je) return;
         await this._ensureAllAccounts();
         this._jeaCtx = { docId, jeId, originalTotal: je.totalDebit };
+        // บัญชีคุมแก้ได้แล้ว (ผู้ใช้ขอเปิดทั้งใบ รวมลูกหนี้/เจ้าหนี้/ยอด) —
+        // control เหลือหน้าที่เดียวคือขึ้นป้ายเตือน ไม่ใช่ล็อกช่อง
         this._jeaRows = (je.lines || []).map(l => ({
           accountId: l.accountId,
           accountCode: l.accountCode, accountName: l.accountName,
           debit: l.debitAmount, credit: l.creditAmount,
-          locked: l.isControlAccount,
+          control: l.isControlAccount,
         }));
         document.getElementById('jeaInfo').innerHTML =
           `<div>ใบสำคัญ <b>${this.escapeHtml(je.entryNumber)}</b> · ${Layout.date(je.entryDate)} · ` +
@@ -2203,26 +2205,22 @@
           <div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px;margin-bottom:8px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
               <span style="font-size:11px;color:#94a3b8;min-width:16px">${i + 1}</span>
-              ${r.locked
-                ? `<input type="text" class="form-input" style="flex:1;font-size:13px" readonly
-                        title="บัญชีคุม — เปลี่ยนไม่ได้"
-                        value="${Layout.esc(r.accountCode + (r.accountName ? ' — ' + r.accountName : ''))}">`
-                : `<select class="form-select" style="flex:1;font-size:13px"
-                        onchange="Page.jeaRowChanged(${i},'account',this.value)">${this._accountOptionsHtml(r.accountId)}</select>
-                   <button class="btn btn-sm btn-ghost" style="color:#ef4444" title="ลบบรรทัดนี้"
-                        onclick="Page.jeaRemoveRow(${i})">✕</button>`}
+              <select class="form-select" style="flex:1;font-size:13px"
+                    onchange="Page.jeaRowChanged(${i},'account',this.value)">${this._accountOptionsHtml(r.accountId)}</select>
+              <button class="btn btn-sm btn-ghost" style="color:#ef4444" title="ลบบรรทัดนี้"
+                    onclick="Page.jeaRemoveRow(${i})">✕</button>
             </div>
-            ${r.locked ? '<div style="font-size:10px;color:#92400e;margin-bottom:6px">🔒 บัญชีคุม — ยอดต้องตรงกับเอกสาร</div>' : ''}
+            ${r.control ? '<div style="font-size:10px;color:#92400e;margin-bottom:6px">⚠️ บัญชีคุม (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT) — แก้ได้ แต่ยอดที่ต่างจากเอกสารจะทำให้รายงานภาษี/อายุหนี้ไม่ตรงกับ GL · ทุกการแก้ถูกบันทึกลง audit</div>' : ''}
             <div style="display:flex;gap:8px">
               <label style="flex:1;font-size:11px;color:var(--gray-500)">เดบิต
                 <input type="number" step="0.01" min="0" inputmode="decimal"
                     class="form-input text-right" style="font-size:13px"
-                    value="${r.debit || 0}" ${r.locked ? 'readonly' : ''}
+                    value="${r.debit || 0}"
                     onchange="Page.jeaRowChanged(${i},'debit',this.value)"></label>
               <label style="flex:1;font-size:11px;color:var(--gray-500)">เครดิต
                 <input type="number" step="0.01" min="0" inputmode="decimal"
                     class="form-input text-right" style="font-size:13px"
-                    value="${r.credit || 0}" ${r.locked ? 'readonly' : ''}
+                    value="${r.credit || 0}"
                     onchange="Page.jeaRowChanged(${i},'credit',this.value)"></label>
             </div>
           </div>`).join('');
@@ -2231,7 +2229,7 @@
 
       jeaRowChanged(i, field, value) {
         const r = (this._jeaRows || [])[i];
-        if (!r || r.locked) return;
+        if (!r) return;
         if (field === 'account') {
           // value = accountId จาก <select> (ไม่ต้อง parse โค้ดจากข้อความอีก)
           const acc = (this._allAccounts || []).find(a => a.id === value);
@@ -2257,7 +2255,11 @@
 
       jeaRemoveRow(i) {
         const rows = this._jeaRows || [];
-        if (rows[i]?.locked) return;
+        if (!rows[i]) return;
+        // บัญชีคุมลบได้แล้ว แต่ต้องรู้ตัวว่ากำลังทำอะไร — ยืนยันก่อน
+        if (rows[i].control && !confirm(
+            `บรรทัดนี้เป็นบัญชีคุม (${rows[i].accountCode}) — ลบแล้วยอดฝั่งรายงาน`
+            + 'ภาษี/อายุหนี้จะไม่ตรงกับ GL\nยืนยันลบ?')) return;
         rows.splice(i, 1);
         this.renderJeaRows();
       },
@@ -2302,6 +2304,28 @@
         }));
         if (lines.some(l => !l.accountId)) {
           Layout.toast('มีบรรทัดที่ยังไม่เลือกผังบัญชี', 'error'); return;
+        }
+        // บัญชีคุมแก้ได้แล้ว แต่ก่อนบันทึกให้ยืนยันครั้งเดียวถ้ายอดสุทธิของ
+        // บัญชีคุมตัวใดเปลี่ยนจากใบเดิม — กันมือลั่น (ป้ายบนแถวเตือนไว้แล้ว
+        // แต่ตอนพิมพ์ยอดหลายบรรทัดอาจไม่ทันสังเกตว่าไปแตะบัญชีคุมเข้า)
+        {
+          const je = (this._docJournals || []).find(x => x.id === ctx.jeId);
+          const net = (list, id) => list.filter(l => (l.accountId ?? l.accountId) === id)
+            .reduce((s, l) => s + (Number(l.debitAmount ?? l.debit) || 0) - (Number(l.creditAmount ?? l.credit) || 0), 0);
+          const controlIds = [...new Set((je?.lines || []).filter(l => l.isControlAccount).map(l => l.accountId))];
+          // บัญชีคุมที่เพิ่มใหม่ในแผง (ไม่อยู่ในใบเดิม) หา id จาก _allAccounts
+          const controlCodes = new Set(['11310','11610','11640','21210','21510','21520','21610',
+            '21711','21712','21713','21911','21912','21913','21916','21917','21918']);
+          (this._jeaRows || []).forEach(r => {
+            if (r.accountCode && controlCodes.has(r.accountCode) && !controlIds.includes(r.accountId))
+              controlIds.push(r.accountId);
+          });
+          const moved = controlIds.filter(id =>
+            Math.round(net(je?.lines || [], id) * 100) !== Math.round(net(lines, id) * 100));
+          if (moved.length && !confirm(
+            `⚠️ ยอดบัญชีคุมถูกแก้ ${moved.length} บัญชี (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT)\n\n`
+            + 'ยอดฝั่งรายงานภาษี/อายุหนี้จะไม่ตรงกับ GL จนกว่าจะกระทบยอด\n'
+            + 'ทุกการแก้ถูกบันทึกลง audit\n\nยืนยันบันทึกใบปรับปรุง?')) return;
         }
         try {
           const res = await api.adjustDocumentJournalEntry(ctx.docId, ctx.jeId, {

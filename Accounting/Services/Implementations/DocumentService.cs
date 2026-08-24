@@ -5080,12 +5080,14 @@ public class DocumentService : IDocumentService
     ///
     /// กติกาที่บังคับ (ทำให้เครื่องมือนี้ปลอดภัยพอจะเปิดให้แก้อิสระ):
     ///   1. Dr = Cr ในสถานะปลายทาง (บัญชีคู่)
-    ///   2. **ยอดรวมห้ามเปลี่ยน** — Σ Dr ปลายทาง = Σ Dr ใบเดิม; ยอดของเอกสาร
-    ///      ต้องแก้ที่เอกสาร ไม่ใช่แอบแก้ผ่าน GL (ไม่งั้นเอกสารกับบัญชีหลุดจากกัน)
-    ///   3. **บัญชีคุมห้ามขยับ** — ภาษีซื้อ/ขาย, ลูกหนี้/เจ้าหนี้, มัดจำ, WHT
-    ///      ยอดเคลื่อนไหวต้องเท่าเดิมทุกบาท (ภ.พ.30 / ภ.ง.ด. / อายุหนี้ อ่านอยู่)
+    ///   2. **ยอดรวมแต่ละฝั่งต้องตรงกับเอกสาร** — Σ Dr ปลายทาง = Σ Dr ใบเดิม
+    ///      (= ยอดเอกสาร); ยอดของเอกสารต้องแก้ที่เอกสาร ไม่ใช่แอบแก้ผ่าน GL
+    ///   3. บัญชีคุม (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT) **แก้ได้** — เปิดตามคำขอ
+    ///      ผู้ใช้ (เดิมบล็อก) แต่ทุกการขยับถูกจดลง audit เป็น
+    ///      controlAccountsMoved (ก่อน→หลัง) เพราะรายงานที่อ่านบัญชีพวกนี้จะ
+    ///      เห็นยอดต่างจาก GL — เครื่องมือกระทบยอด GL↔ภาษี ใช้ไล่ drift ได้
     ///   4. งวดของวันที่ลงใบปรับปรุงต้องเปิด · เอกสารต้องไม่อยู่ในแบบที่ยื่นแล้ว
-    ///      และไม่ได้ส่ง e-Tax
+    ///      และไม่ได้ส่ง e-Tax (gate เดิมยังครบ)
     /// </summary>
     public async Task<List<DocumentJournalEntryDto>> AdjustDocumentJournalEntryAsync(
         Guid companyId, Guid documentId, Guid journalEntryId,
@@ -5203,6 +5205,16 @@ public class DocumentService : IDocumentService
         var origCodes = original.Lines
             .GroupBy(l => l.AccountId)
             .ToDictionary(g => g.Key, g => g.First().Account);
+
+        // บัญชีคุม (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT) — เดิม **บล็อก** การขยับยอด
+        // สุทธิ ผู้ใช้ขอเปิดให้แก้ได้ทั้งหมด (รวมยอด) โดยเหลือ hard rule แค่
+        // "ยอดรวมแต่ละฝั่งต้องตรงกับเอกสาร" (บังคับด้วย wantDr == origDr ข้างบน
+        // + Dr = Cr) จึงเปลี่ยนจากบล็อก → **บันทึกร่องรอยเข้ม**: จดทุกบัญชีคุม
+        // ที่ยอดสุทธิเปลี่ยนลง audit (ก่อน→หลัง) เพราะรายงานที่อ่านบัญชีพวกนี้
+        // (ภ.พ.30 / ภ.ง.ด. / อายุหนี้ / วงจรมัดจำ) จะเห็นยอดต่างจาก GL — เครื่องมือ
+        // กระทบยอด GL↔ภาษี มีไว้จับ drift แบบนี้ และเอกสารที่อยู่ในแบบยื่นแล้ว/
+        // ส่ง e-Tax แล้ว ถูก gate ระดับเอกสารกันไว้ก่อนถึงจุดนี้อยู่แล้ว
+        var controlMoved = new List<object>();
         foreach (var id in origNet.Keys.Union(wantNet.Keys))
         {
             var code = origCodes.TryGetValue(id, out var a) ? a.AccountCode
@@ -5211,10 +5223,7 @@ public class DocumentService : IDocumentService
             var before = Math.Round(origNet.GetValueOrDefault(id), 2, R);
             var after = Math.Round(wantNet.GetValueOrDefault(id), 2, R);
             if (before != after)
-                throw new InvalidOperationException(
-                    $"บัญชีคุม {code} เปลี่ยนยอดไม่ได้ ({before:N2} → {after:N2}) — " +
-                    "ภาษีซื้อ/ขาย ลูกหนี้/เจ้าหนี้ มัดจำ และภาษีหัก ณ ที่จ่าย " +
-                    "ต้องตรงกับเอกสารเสมอ (แก้ที่เอกสารแทน)");
+                controlMoved.Add(new { account = code, before, after });
         }
 
         // ผลต่างที่ต้องลงจริง — บวก = ต้อง Dr เพิ่ม, ลบ = ต้อง Cr
@@ -5271,6 +5280,9 @@ public class DocumentService : IDocumentService
                     originalEntry = original.EntryNumber,
                     entryDate,
                     reason = request.Reason,
+                    // บัญชีคุมที่ยอดสุทธิถูกขยับ (ก่อน→หลัง) — ร่องรอยเข้มแทน
+                    // การบล็อกเดิม ผู้ตรวจ/เครื่องมือกระทบยอดใช้ไล่หา drift ได้
+                    controlAccountsMoved = controlMoved,
                     deltas = deltas.Select(d => new
                     {
                         account = nameById.GetValueOrDefault(d.Id, d.Id.ToString()),
