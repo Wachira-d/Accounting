@@ -73,7 +73,10 @@ public class StatutoryRemittanceController : ControllerBase
         }
     }
 
-    public sealed record RecognizePp36Request(int PeriodYear, int PeriodMonth, DateTime? RecognizeDate);
+    public sealed record RecognizePp36Request(int PeriodYear, int PeriodMonth, DateTime? RecognizeDate,
+        // เลขที่ใบเสร็จกรมสรรพากร (ถ้าไม่ได้กรอกตอนนำส่ง หรือต้องการแก้) —
+        // จะถูก stamp ลงเอกสารเป็นเลขใบกำกับ §86/14 และ backfill ลง remittance
+        string? RdReceiptNumber = null);
 
     /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จกรมสรรพากร (§77/2) —
     /// Dr 11610 / Cr 11640 + stamp เอกสาร → เข้า ภ.พ.30 เดือนที่รับรู้.
@@ -89,7 +92,8 @@ public class StatutoryRemittanceController : ControllerBase
             // (default ที่ผู้ใช้เลือก); มีค่า = override ทั้งชุด
             var res = await _service.RecognizePp36InputVatAsync(companyId,
                 request.PeriodYear, request.PeriodMonth,
-                request.RecognizeDate, User.Identity?.Name ?? "");
+                request.RecognizeDate, User.Identity?.Name ?? "",
+                request.RdReceiptNumber);
             return Ok(new ApiResponse<RemitResult>(true, res, res.Message));
         }
         catch (InvalidOperationException ex)

@@ -199,7 +199,7 @@
                   <td>${Layout.date(r.payDate)}</td>
                   <td>${Layout.esc(r.filingNumber || '-')}</td>
                   <td class="text-center">${r.receiptAttachmentId
-                    ? '📎'
+                    ? `<button class="btn btn-sm btn-ghost" onclick="Page.viewReceipt('${r.receiptAttachmentId}')" title="เปิดดูใบเสร็จ/หลักฐานที่แนบไว้">📎 ดู</button>`
                     : `<button class="btn btn-sm btn-ghost" onclick="Page.attachFromHistory('${r.id}', '${this.period(r.periodYear, r.periodMonth)}')" title="ยังไม่มีไฟล์แนบ — แนบใบเสร็จ/สลิปย้อนหลังได้">＋แนบ</button>`}</td>
                   <td class="text-right">${r.remittanceType === 'VatPp36'
                     ? (r.pp36Recognized
@@ -228,10 +228,21 @@
           if (isNaN(d.getTime())) { Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ใช้ YYYY-MM-DD)', 'error'); return; }
           recognizeDate = dateStr.trim();
         }
+        // §86/14 — เลขใบเสร็จ RD จะกลายเป็น "เลขที่ใบกำกับ" ของภาษีซื้อก้อนนี้ใน
+        // รายงาน ภ.พ.30: ถ้ายังไม่เคยกรอกเลขรับตอนนำส่ง ให้กรอกที่นี่ได้เลย
+        const hist = (this._data?.recentHistory || []).find(r =>
+          r.remittanceType === 'VatPp36' && r.periodYear === year && r.periodMonth === month);
+        let rdReceiptNumber = null;
+        if (!hist || !hist.filingNumber) {
+          const no = prompt('เลขที่ใบเสร็จกรมสรรพากร (เลขรับจากการยื่น) —\n'
+            + 'จะใช้เป็น "เลขที่ใบกำกับ" ของภาษีซื้อก้อนนี้ในรายงาน ภ.พ.30 (§86/14):', '');
+          if (no === null) return;
+          rdReceiptNumber = no.trim() || null;
+        }
         try {
           const cid = Layout.getCompanyId();
           const res = await API.post(`/api/companies/${cid}/remittances/pp36/recognize`,
-            { periodYear: year, periodMonth: month, recognizeDate });
+            { periodYear: year, periodMonth: month, recognizeDate, rdReceiptNumber });
           Layout.toast(res?.message || 'รับรู้ภาษีซื้อ ภ.พ.36 แล้ว', 'success', 9000);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'รับรู้ไม่สำเร็จ', 'error', 8000); }
@@ -348,6 +359,24 @@
           if (msg) msg.textContent = e.message || 'นำส่งไม่สำเร็จ';
           if (btn) { btn.disabled = false; btn.textContent = 'ยืนยันนำส่ง + ลง JE'; }
         }
+      },
+
+      /** เปิดดูไฟล์ใบเสร็จ/หลักฐานที่แนบไว้ — endpoint ต้องมี JWT header
+       *  ใช้ <a href> ตรง ๆ ไม่ได้ จึง fetch เป็น blob แล้วเปิดแท็บใหม่
+       *  (เดิมมีแค่ไอคอน 📎 นิ่ง ๆ กดอะไรไม่ได้เลย — ผู้ใช้ถามหาไฟล์ที่ตัวเองแนบ) */
+      async viewReceipt(attachmentId) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const token = localStorage.getItem('token');
+          const res = await fetch(api.downloadAttachmentUrl(attachmentId),
+            { headers: token ? { 'Authorization': 'Bearer ' + token } : {} });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          window.open(url, '_blank');
+          // คืนหน่วยความจำหลังแท็บใหม่โหลดไฟล์ไปแล้ว
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+        } catch (e) { Layout.toast('เปิดไฟล์ไม่สำเร็จ: ' + (e.message || ''), 'error'); }
       },
 
       /** เปิด modal แนบไฟล์ย้อนหลังจากแถวประวัติ (เดิม _showReceiptStep เขียน

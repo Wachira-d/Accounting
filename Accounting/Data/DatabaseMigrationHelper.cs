@@ -4579,6 +4579,10 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "HideEmptyDiscountColumn" boolean NOT NULL DEFAULT true;""",
             // หัวกระดาษ 3 ส่วน (บริษัท/หัวเอกสาร/ลูกค้า) ซ้ำทุกหน้าของเอกสารหลายหน้า
             """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "RepeatHeaderEveryPage" boolean NOT NULL DEFAULT true;""",
+            // §86/14 — เลขที่/วันที่ใบเสร็จ RD จากการนำส่ง ภ.พ.36 (= ใบกำกับภาษี
+            // ของภาษีซื้อ self-assess) stamp ตอนกด "รับรู้ภาษีซื้อ"
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Pp36RdReceiptNumber" varchar(50) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Pp36RdReceiptDate" timestamptz NULL;""",
 
             // ===== Snapshot ยอดจริงจาก statement ล่าสุด (แสดงคู่ยอด GL ให้เห็นผลต่าง) =====
             """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalance" numeric(18,2) NULL;""",

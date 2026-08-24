@@ -246,9 +246,13 @@ public class TaxFilingExportService : ITaxFilingExportService
                      where d.CompanyId == companyId && docIds.Contains(d.Id)
                      join c in _db.Contacts.AsNoTracking() on d.ContactId equals c.Id into cj
                      from c in cj.DefaultIfEmpty()
-                     select new { d.Id, d.SupplierInvoiceNumber, Snapshot = d.SupplierBranchCode, ContactBranch = c != null ? c.BranchCode : null })
+                     select new { d.Id, d.SupplierInvoiceNumber, Snapshot = d.SupplierBranchCode, ContactBranch = c != null ? c.BranchCode : null,
+                                  d.IsForeignService, d.Pp36RdReceiptNumber })
                 .ToDictionaryAsync(x => x.Id, x => (
-                    SupplierInvoiceNo: (string?)x.SupplierInvoiceNumber,
+                    // §86/14 — ใบ ภ.พ.36: เลขใบกำกับในไฟล์ยื่น = เลขใบเสร็จ RD
+                    // (ไม่ใช่ invoice ผู้ขาย ตปท.) — ชุดเดียวกับจอ (GetTaxReportAsync)
+                    SupplierInvoiceNo: (string?)(x.IsForeignService && !string.IsNullOrWhiteSpace(x.Pp36RdReceiptNumber)
+                        ? x.Pp36RdReceiptNumber : x.SupplierInvoiceNumber),
                     BranchCode: (string?)(x.Snapshot ?? x.ContactBranch)));
 
         // CSV escape: ห่อ "..." ถ้ามี , หรือ " หรือขึ้นบรรทัด — RD parser ปฏิบัติตาม RFC 4180.

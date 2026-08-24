@@ -817,15 +817,33 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     /// เรียกได้หลังนำส่ง (มี remittance VatPp36 งวดนั้น). idempotent ผ่าน JE
     /// Reference ภ.พ.36R-YYYYMM + เอกสารที่ stamp แล้วไม่นับซ้ำ.</summary>
     public async Task<RemitResult> RecognizePp36InputVatAsync(Guid companyId, int periodYear,
-        int periodMonth, DateTime? recognizeDate, string performedBy)
+        int periodMonth, DateTime? recognizeDate, string performedBy,
+        string? rdReceiptNumber = null)
     {
         // ต้องนำส่งงวดนั้นก่อน (Excel flow: 15/6 นำส่ง → 16/6 ได้ใบเสร็จ → รับรู้)
-        var remitted = await _db.Set<StatutoryRemittance>().AnyAsync(r => r.CompanyId == companyId
+        var remittance = await _db.Set<StatutoryRemittance>().FirstOrDefaultAsync(r =>
+            r.CompanyId == companyId
             && !r.IsDeleted && r.RemittanceType == "VatPp36"
             && r.PeriodYear == periodYear && r.PeriodMonth == periodMonth);
-        if (!remitted)
+        if (remittance == null)
             throw new InvalidOperationException(
                 $"ยังไม่ได้นำส่ง ภ.พ.36 งวด {periodMonth:D2}/{periodYear} — นำส่งก่อนแล้วค่อยรับรู้ภาษีซื้อ");
+
+        // §86/14 — ใบเสร็จ RD คือ "ใบกำกับภาษี" ของภาษีซื้อก้อนนี้: เลขที่ใบเสร็จ
+        // (เลขรับจากการยื่น) ต้องมี เพื่อขึ้นเป็นเลขใบกำกับในรายงานภาษีซื้อ ภ.พ.30.
+        // รับจาก request ก่อน (ผู้ใช้เพิ่งได้ใบเสร็จ อาจยังไม่เคยกรอก) → backfill
+        // ลง remittance; ไม่ส่งมาก็ใช้เลขรับที่กรอกตอนนำส่ง
+        if (!string.IsNullOrWhiteSpace(rdReceiptNumber))
+        {
+            rdReceiptNumber = rdReceiptNumber.Trim();
+            if (string.IsNullOrWhiteSpace(remittance.FilingNumber))
+            {
+                remittance.FilingNumber = rdReceiptNumber;
+                remittance.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+        var rdReceiptNo = !string.IsNullOrWhiteSpace(rdReceiptNumber)
+            ? rdReceiptNumber : remittance.FilingNumber;
 
         var refNo = $"ภ.พ.36R-{periodYear}{periodMonth:D2}";
         var dupJe = await _db.JournalEntries.AnyAsync(j => j.CompanyId == companyId
@@ -884,6 +902,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             foreach (var d in docs)
             {
                 d.InputVatBecameClaimableAt = ClaimDateOf(d);
+                // §86/14: เลข/วันที่ใบเสร็จ RD = เลข/วันที่ใบกำกับของภาษีซื้อก้อนนี้
+                // ในรายงาน ภ.พ.30 (ไม่ใช่เลข invoice ผู้ขาย ตปท.) — วันที่ใบเสร็จ
+                // = วันจ่ายจริงของการนำส่ง (recognizeDate override ได้)
+                d.Pp36RdReceiptNumber = rdReceiptNo;
+                d.Pp36RdReceiptDate = recognizeDate ?? remittance.PayDate;
                 d.UpdatedAt = DateTime.UtcNow;
             }
             await _db.SaveChangesAsync();

@@ -106,7 +106,42 @@
           content.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">✓ ไม่มีภาษีซื้อค้างรอใบกำกับ</div>';
           return;
         }
-        content.innerHTML = `
+        // ── แยกสองวงจรที่พัก 11640 เหมือนกันแต่ทางออกคนละทาง ──
+        // • ใบซื้อไทย: ใบกำกับ §86/4 ยังไม่ครบ → "เติมใบกำกับ" ที่หน้านี้
+        // • ใบบริการต่างประเทศ (§83/6): ผู้ขาย ตปท. ไม่มีวันมีใบกำกับไทย —
+        //   ทางออกคือ นำส่ง ภ.พ.36 → รับรู้ (ใบเสร็จ RD) ที่หน้านำส่งภาษี
+        //   (เดิมปนกันในตารางเดียว: ขึ้น "ขาดเลขภาษีผู้ขาย 13 หลัก" ที่ไม่มีวัน
+        //   เติมได้ + ปุ่มเติมใบกำกับที่ backend ปฏิเสธ = ทางตันทั้งแถว)
+        const thaiRows = rows.filter(r => !r.isForeignService);
+        const fsRows = rows.filter(r => r.isForeignService);
+        const fsVat = fsRows.reduce((s, r) => s + (r.vatAmount || 0), 0);
+        const fsSection = fsRows.length ? `
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <div>
+                <div style="font-weight:700;color:#1e40af">🌐 บริการต่างประเทศ ภ.พ.36 (${fsRows.length} ใบ · VAT ${Layout.money(fsVat)})</div>
+                <div style="font-size:12px;color:#1e3a8a;margin-top:2px">ใบพวกนี้<b>ไม่ต้องเติมใบกำกับ</b> (ผู้ขายต่างประเทศไม่มีใบกำกับไทย) — นำส่ง ภ.พ.36 แล้วกด "รับรู้ภาษีซื้อ" เมื่อได้ใบเสร็จกรมสรรพากร (§77/2) ภาษีซื้อจะเข้า ภ.พ.30 เอง</div>
+              </div>
+              <a class="btn btn-sm btn-primary" href="/pages/tax-remittance.html">💸 ไปหน้านำส่งภาษี →</a>
+            </div>
+            <table class="table" style="margin-top:8px;font-size:12px">
+              <thead><tr><th>เลขที่</th><th>วันที่</th><th>ผู้ขาย</th><th class="text-right">VAT</th><th class="text-center">สถานะ</th></tr></thead>
+              <tbody>${fsRows.map(r => `
+                <tr>
+                  <td class="font-medium">${Layout.esc(r.documentNumber)}</td>
+                  <td>${Layout.date(r.documentDate)}</td>
+                  <td>${Layout.esc(r.supplierName || '-')}</td>
+                  <td class="text-right">${Layout.money(r.vatAmount)}</td>
+                  <td class="text-center" style="color:#1e40af">รอนำส่ง/รับรู้ ภ.พ.36</td>
+                </tr>`).join('')}</tbody>
+            </table>
+          </div>` : '';
+        if (!thaiRows.length) {
+          content.innerHTML = fsSection
+            + '<div class="text-center text-gray-400" style="padding:24px">✓ ไม่มีใบกำกับซื้อไทยค้างเติมข้อมูล</div>';
+          return;
+        }
+        content.innerHTML = fsSection + `
           <div class="table-container" style="border:none">
             <table class="table">
               <thead><tr>
@@ -114,7 +149,7 @@
                 <th class="text-right">VAT</th><th class="text-center">อายุ</th>
                 <th class="text-center">สิทธิเคลม</th><th>ขาดข้อมูล</th><th></th>
               </tr></thead>
-              <tbody>${rows.map(r => {
+              <tbody>${thaiRows.map(r => {
                 const claimCell = r.isExpired
                   ? '<span style="color:#dc2626;font-weight:700">หมดสิทธิ</span>'
                   : (r.monthsLeft <= 1

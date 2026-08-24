@@ -4132,13 +4132,18 @@ public class DocumentService : IDocumentService
             if (monthsLeft < 0) monthsLeft = 0;
             var completeness = TaxInvoiceCompletenessChecker.Evaluate(d, d.Contact);
             var vat = d.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+            // ใบ ภ.พ.36: "ขาดข้อมูล" ตาม checklist §86/4 ไม่มีความหมาย (ผู้ขาย
+            // ตปท. ไม่มีเลขภาษีไทย/ใบกำกับไทยให้เติม) — ทางออกจริงคือวงจรนำส่ง
             return new UndueInputVatSummary(
                 d.Id, d.DocumentNumber, d.DocumentDate,
                 d.Contact?.Name ?? "", d.Contact?.TaxId,
                 vat,
                 (int)(today - d.DocumentDate.Date).TotalDays,
                 monthsLeft, isExpired,
-                completeness.MissingFields);
+                d.IsForeignService
+                    ? new[] { "นำส่ง ภ.พ.36 แล้วกด \"รับรู้ภาษีซื้อ\" ที่หน้านำส่งภาษี (§77/2)" }
+                    : completeness.MissingFields,
+                d.IsForeignService);
         }).ToList();
     }
 
