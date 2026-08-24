@@ -290,6 +290,26 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "อัปเดตใบกำกับภาษีซื้อสำเร็จ"));
     }
 
+    public sealed record SetVatClaimPeriodRequest(string? Period);
+
+    /// <summary>ตั้ง/ย้ายงวดเคลมภาษีซื้อของใบเดียว (yyyy-MM · "" = ตามเดือนเอกสาร)
+    /// — ใช้จากหน้านำส่งภาษี (ใบ ภ.พ.36 รับรู้แล้ว) และที่อื่นที่ต้องย้ายงวดโดย
+    /// ไม่เปิดฟอร์มเอกสาร. กติกาอยู่ที่ตัวตรวจกลางฝั่ง service ทั้งหมด</summary>
+    [HttpPost("{documentId:guid}/vat-claim-period")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> SetVatClaimPeriod(
+        Guid companyId, Guid documentId, [FromBody] SetVatClaimPeriodRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์แก้ไขเอกสาร {docType} (ต้องการ Document.Purchase.Create)");
+        var result = await _documentService.SetInputVatClaimPeriodAsync(
+            companyId, documentId, request.Period, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "ตั้งงวดเคลมภาษีซื้อแล้ว"));
+    }
+
     /// <summary>ถาม AI ให้แนะนำผังบัญชี GL ของทุกบรรทัด PV — student-first ผ่าน
     /// distillation model + teacher fallback ตาม Distillation Mandate.</summary>
     [HttpPost("ai-suggest-pv-accounting")]

@@ -203,12 +203,79 @@
                     : `<button class="btn btn-sm btn-ghost" onclick="Page.attachFromHistory('${r.id}', '${this.period(r.periodYear, r.periodMonth)}')" title="ยังไม่มีไฟล์แนบ — แนบใบเสร็จ/สลิปย้อนหลังได้">＋แนบ</button>`}</td>
                   <td class="text-right">${r.remittanceType === 'VatPp36'
                     ? (r.pp36Recognized
-                      ? '<span style="color:#15803d;font-size:12px;font-weight:600" title="รับรู้ภาษีซื้อแล้ว (11640→11610) — เข้า ภ.พ.30 ตามวันที่รับรู้">✓ เข้า ภ.พ.30 แล้ว</span>'
+                      ? `<button class="btn btn-sm btn-outline" style="color:#15803d;border-color:#86efac" onclick="Page.openPp36Detail(${r.periodYear}, ${r.periodMonth})" title="รับรู้ภาษีซื้อแล้ว — กดดูว่าใบไหนเข้า ภ.พ.30 งวดไหน + ย้ายเดือนเคลมได้ที่นี่">✓ เข้า ภ.พ.30 แล้ว · ดู</button>`
                       : `<button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${r.periodYear}, ${r.periodMonth})" title="ได้ใบเสร็จกรมสรรพากรแล้ว → รับรู้ภาษีซื้อ (Dr 11610 / Cr 11640) เข้า ภ.พ.30 (§77/2) — ระบบกันรับรู้ซ้ำให้">🧾 รับรู้ภาษีซื้อ</button>`)
                     : ''}</td>
                 </tr>`).join('')}</tbody>
             </table>
           </div>`;
+      },
+
+      /** รายละเอียดใบ ภ.พ.36 ที่รับรู้แล้วของงวด — ใบไหนเข้า ภ.พ.30 งวดไหน
+       *  สถานะรายงานเป็นยังไง + ย้ายเดือนเคลมต่อใบได้เลย (ที่มา: ป้าย ✓ เดิม
+       *  ไม่บอกงวด ผู้ใช้เปิด ภ.พ.30 ผิดเดือน/รายงานสร้างก่อนรับรู้แล้วหาไม่เจอ) */
+      async openPp36Detail(year, month) {
+        const cid = Layout.getCompanyId();
+        let rows = [];
+        try {
+          const res = await API.get(`/api/companies/${cid}/remittances/pp36/recognized?periodYear=${year}&periodMonth=${month}`);
+          rows = res?.data || [];
+        } catch (e) { Layout.toast(e.message || 'โหลดไม่สำเร็จ', 'error'); return; }
+        const titleEl = this._byId('remitTitle');
+        if (titleEl) titleEl.textContent = `ภ.พ.36 งวด ${this.period(year, month)} — ใบที่รับรู้ภาษีซื้อแล้ว`;
+        const bodyEl = this._byId('remitBody');
+        if (!bodyEl) return;
+        const thMonths = ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+        const statusCell = (r) => {
+          if (r.reportStatus === 'none')
+            return `<span style="color:#b45309">ยังไม่มีรายงาน ภ.พ.30 งวด ${thMonths[r.claimMonth]} ${r.claimYear + 543} — สร้างที่หน้า "รายงานภาษี" แล้วใบนี้จะถูกดึงเข้าเอง</span>`;
+          if (r.reportStatus === 'Filed' || r.reportStatus === 'Submitted')
+            return r.inReport
+              ? '<span style="color:#15803d">✓ อยู่ในรายงาน (ยื่นแล้ว)</span>'
+              : '<span style="color:#991b1b">รายงานงวดนั้นยื่นแล้วแต่ไม่มีใบนี้ — ต้องยื่นเพิ่มเติม</span>';
+          return r.inReport
+            ? '<span style="color:#15803d">✓ อยู่ในรายงาน (ร่าง)</span>'
+            : `<span style="color:#b45309">รายงานงวดนี้<b>สร้างก่อนกดรับรู้</b> — เปิดหน้า "รายงานภาษี" งวด ${thMonths[r.claimMonth]} ${r.claimYear + 543} แล้วกด "สร้างใหม่" เพื่อดึงใบนี้เข้า</span>`;
+        };
+        bodyEl.innerHTML = `
+          <div class="text-xs text-gray-400" style="margin-bottom:8px">
+            เดือนเคลม = งวด ภ.พ.30 ที่ใบจะถูกดึงเข้า (เปลี่ยนได้ — งวดร่างระบบย้ายบรรทัดให้เอง · งวดที่ยื่นแล้วย้ายไม่ได้ต้องยื่นเพิ่มเติม)</div>
+          ${rows.length ? `<table class="table" style="font-size:12px">
+            <thead><tr><th>เลขที่</th><th>ผู้ขาย</th><th class="text-right">VAT</th><th>ใบเสร็จ RD</th><th style="width:130px">เดือนเคลม</th><th>สถานะใน ภ.พ.30</th><th></th></tr></thead>
+            <tbody>${rows.map((r, i) => `
+              <tr>
+                <td class="font-medium">${Layout.esc(r.documentNumber)}</td>
+                <td>${Layout.esc(r.supplierName || '-')}</td>
+                <td class="text-right">${Layout.money(r.vatAmount)}</td>
+                <td class="text-xs">${Layout.esc(r.rdReceiptNumber || '-')}</td>
+                <td><input type="month" id="pp36cm_${i}" class="form-input" style="font-size:12px;padding:4px 6px"
+                      value="${r.claimYear}-${String(r.claimMonth).padStart(2, '0')}"
+                      ${(r.reportStatus === 'Filed' || r.reportStatus === 'Submitted') && r.inReport ? 'disabled title="งวดยื่นแล้ว — ย้ายไม่ได้"' : ''}></td>
+                <td>${statusCell(r)}</td>
+                <td class="text-right"><button class="btn btn-sm btn-secondary"
+                      onclick="Page.savePp36ClaimMonth('${r.documentId}', ${i}, ${year}, ${month})"
+                      ${(r.reportStatus === 'Filed' || r.reportStatus === 'Submitted') && r.inReport ? 'disabled' : ''}>บันทึก</button></td>
+              </tr>`).join('')}</tbody></table>`
+            : '<div class="text-center text-gray-400" style="padding:20px">ไม่พบใบที่รับรู้แล้วในงวดนี้</div>'}
+          <div style="display:flex;justify-content:space-between;margin-top:10px">
+            <a class="btn btn-sm btn-outline" href="/pages/tax.html">📊 เปิดหน้ารายงานภาษี (ภ.พ.30) →</a>
+            <button class="btn btn-secondary" onclick="Layout.closeModal('remitModal')">ปิด</button>
+          </div>`;
+        Layout.openModal('remitModal');
+      },
+
+      /** ย้ายเดือนเคลมของใบเดียว — ผ่านตัวตรวจกลาง (งวดร่างระบบติ๊กบรรทัดออก
+       *  จากงวดเดิม+recalc ให้ · งวดยื่นแล้ว backend block เอง) */
+      async savePp36ClaimMonth(documentId, idx, year, month) {
+        const el = this._byId(`pp36cm_${idx}`);
+        if (!el || !el.value) { Layout.toast('เลือกเดือนเคลมก่อน', 'error'); return; }
+        try {
+          const cid = Layout.getCompanyId();
+          await API.post(`/api/companies/${cid}/document/${documentId}/vat-claim-period`,
+            { period: el.value });
+          Layout.toast('ย้ายเดือนเคลมแล้ว — เปิด ภ.พ.30 งวดใหม่ (หรือกด "สร้างใหม่" ถ้ารายงานมีอยู่แล้ว) เพื่อเห็นใบ', 'success', 9000);
+          this.openPp36Detail(year, month);   // refresh สถานะในตาราง
+        } catch (e) { Layout.toast(e.message || 'ย้ายไม่สำเร็จ', 'error', 9000); }
       },
 
       /** รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD — Dr 11610 / Cr 11640 + เข้า

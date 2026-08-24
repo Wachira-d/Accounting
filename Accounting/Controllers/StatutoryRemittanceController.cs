@@ -81,6 +81,16 @@ public class StatutoryRemittanceController : ControllerBase
     /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จกรมสรรพากร (§77/2) —
     /// Dr 11610 / Cr 11640 + stamp เอกสาร → เข้า ภ.พ.30 เดือนที่รับรู้.
     /// ต้องนำส่ง ภ.พ.36 งวดนั้นก่อน.</summary>
+    /// <summary>รายละเอียดใบที่รับรู้แล้วของงวด ภ.พ.36 — เดือนเคลมต่อใบ +
+    /// สถานะใน ภ.พ.30 (ตอบ "เข้า ภ.พ.30 แล้วแต่เปิดรายงานไม่เจอ")</summary>
+    [HttpGet("pp36/recognized")]
+    public async Task<ActionResult<ApiResponse<List<Pp36RecognizedDocItem>>>> GetPp36Recognized(
+        Guid companyId, [FromQuery] int periodYear, [FromQuery] int periodMonth)
+    {
+        var res = await _service.GetPp36RecognizedDocsAsync(companyId, periodYear, periodMonth);
+        return Ok(new ApiResponse<List<Pp36RecognizedDocItem>>(true, res));
+    }
+
     [HttpPost("pp36/recognize")]
     [RequirePermission(PermissionKeys.TaxFile)]
     public async Task<ActionResult<ApiResponse<RemitResult>>> RecognizePp36(

@@ -1448,6 +1448,37 @@ public class DocumentService : IDocumentService
     /// เอกสาร) ตัวตัดสินอยู่ที่ <see cref="InputVatClaimPeriodRules"/> ซึ่งเป็น
     /// pure function มีเทสต์ครอบ — เมธอดนี้ทำแค่ "หาข้อมูลให้กติกา แล้วลงมือทำ
     /// ตามที่กติกาบอก" จึงไม่มีทางที่ทางเข้าไหนจะได้ตารางตัดสินใจต่างกัน</summary>
+    /// <summary>ตั้ง/ย้ายงวดเคลมภาษีซื้อของใบเดียว — ทางเข้าสาธารณะสำหรับหน้า
+    /// นำส่งภาษี (ใบ ภ.พ.36 ที่รับรู้แล้ว ย้ายเดือนเคลมจากตรงนั้นได้เลย).
+    /// ห่อตัวตรวจกลาง ApplyInputVatClaimPeriodAsync — กติกาครบทุกด่านเหมือน
+    /// เส้นทางฟอร์ม (รายงานร่างย้ายให้+recalc · งวดยื่นแล้ว block · §82/3 ·
+    /// ใบ undue ล้างงวดไม่ได้) ไม่มี logic ใหม่ที่นี่</summary>
+    public async Task<DocumentResponse> SetInputVatClaimPeriodAsync(
+        Guid companyId, Guid documentId, string? period, string actor)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await ApplyInputVatClaimPeriodAsync(companyId, doc, period);
+        _db.AuditLogs.Add(new AuditLog
+        {
+            CompanyId = companyId,
+            Action = AuditAction.Update,
+            EntityType = "Document",
+            EntityId = documentId.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "SetInputVatClaimPeriod",
+                documentNumber = doc.DocumentNumber,
+                period,
+                by = actor,
+            }),
+        });
+        await _db.SaveChangesAsync();
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
     private async Task ApplyInputVatClaimPeriodAsync(Guid companyId, Document doc, string? raw)
     {
         // ── ขั้นที่ 1: ตัดสินจากตัวเอกสาร (ไม่แตะ DB — เคสส่วนใหญ่จบตรงนี้) ──

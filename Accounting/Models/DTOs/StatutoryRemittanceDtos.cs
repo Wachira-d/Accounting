@@ -54,6 +54,24 @@ public record RemittanceHistoryItem(
 /// <summary>ภ.พ.36 ที่นำส่งแล้วแต่ยัง "ไม่ได้กดรับรู้ภาษีซื้อ" — ภาษีซื้อจึงยัง
 /// ไม่ขึ้นใน ภ.พ.30 (ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่
 /// 2 ซ่อนอยู่ในแท็บประวัติ) — dashboard ต้องดันขึ้นมาให้เห็นจนกว่าจะกดรับรู้</summary>
+/// <summary>ใบของงวด ภ.พ.36 ที่ "รับรู้ภาษีซื้อแล้ว" — ตอบคำถาม "เข้า ภ.พ.30
+/// งวดไหน แล้วทำไมเปิดรายงานไม่เจอ": บอกเดือนเคลมต่อใบ + สถานะรายงานงวดนั้น
+/// (ไม่มีรายงาน / มีแต่สร้างก่อนรับรู้จึงยังไม่มีบรรทัดใบนี้ / อยู่ในรายงานแล้ว /
+/// ยื่นแล้ว) — ผู้ใช้แก้เดือนเคลมต่อใบได้จากหน้านำส่งเลย</summary>
+public record Pp36RecognizedDocItem(
+    Guid DocumentId,
+    string DocumentNumber,
+    string SupplierName,
+    decimal VatAmount,
+    int ClaimYear,
+    int ClaimMonth,
+    string? RdReceiptNumber,
+    // "none" = ยังไม่มีรายงาน ภ.พ.30 งวดเคลม · "Draft"/"Filed"/"Submitted" = สถานะรายงาน
+    string ReportStatus,
+    // true = บรรทัดใบนี้อยู่ในรายงานงวดเคลมแล้ว (non-excluded) — false + มีรายงาน
+    // = รายงานสร้างก่อนรับรู้ ต้องกด "สร้างใหม่" เพื่อดึงใบเข้า
+    bool InReport);
+
 public record Pp36AwaitingRecognitionItem(
     int PeriodYear,
     int PeriodMonth,

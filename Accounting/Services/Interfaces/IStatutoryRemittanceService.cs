@@ -36,4 +36,8 @@ public interface IStatutoryRemittanceService
     Task<RemitResult> RecognizePp36InputVatAsync(Guid companyId, int periodYear,
         int periodMonth, DateTime? recognizeDate, string performedBy,
         string? rdReceiptNumber = null);
+
+    /// <summary>รายละเอียดใบที่รับรู้แล้วของงวด ภ.พ.36 + สถานะใน ภ.พ.30 ต่อใบ</summary>
+    Task<List<Pp36RecognizedDocItem>> GetPp36RecognizedDocsAsync(
+        Guid companyId, int periodYear, int periodMonth);
 }

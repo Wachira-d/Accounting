@@ -26,6 +26,11 @@ public interface IDocumentService
     /// ภ.พ.30 จะ include ในเดือนที่ปรับ. ต่างจาก UpdateDocumentAsync ที่แก้ได้
     /// เฉพาะ Draft — method นี้แก้ได้เฉพาะเอกสาร approved ที่ค้าง 11640.</summary>
     Task<DocumentResponse> CompleteSupplierTaxInvoiceAsync(Guid companyId, Guid documentId, CompleteSupplierTaxInvoiceRequest request, string actor);
+
+    /// <summary>ตั้ง/ย้ายงวดเคลมภาษีซื้อของใบเดียว (yyyy-MM · "" = ตามเดือน
+    /// เอกสาร) — ผ่านตัวตรวจกลางชุดเดียวกับฟอร์ม</summary>
+    Task<DocumentResponse> SetInputVatClaimPeriodAsync(
+        Guid companyId, Guid documentId, string? period, string actor);
     /// <summary>รับรู้รายได้จากเงินมัดจำ (ตัด "ขายรอรับรู้" 217xx → รายได้) เมื่อ
     /// ส่งมอบจริง. รองรับรับรู้บางส่วน. สร้าง JE Dr 217xx / Cr รายได้.</summary>
     Task<DocumentResponse> RealizeDepositAsync(Guid companyId, Guid documentId, RealizeDepositRequest request, string actor);
