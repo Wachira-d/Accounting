@@ -34,13 +34,46 @@ public class OcrLineReconcileTests
     }
 
     [Fact]
-    public void Qty_ten_but_amount_hundred_reconciles()
+    public void Price_column_holding_the_line_total_is_divided_not_qty_reset()
     {
-        // qty อ่านผิดเป็น 10, price 100, amount จริง 100 → qty×price=1000≠100 → qty=1
+        // qty=10 (ข้อมูลอิสระ ไม่ใกล้ยอดเงิน), price=100 ≈ amount=100 —
+        // ช่องราคาถืออยู่คือ "ยอดรวมบรรทัด" ไม่ใช่ราคาต่อหน่วย → หารหา
+        // ราคาจริง (100/10=10) และ**เก็บจำนวนไว้** ไม่ทับเป็น 1
+        // (พฤติกรรมเดิมทับ qty=1 — ทิ้งปริมาณที่อ่านได้จากกระดาษ; เปลี่ยน
+        // ตามหลักบัญชี: ราคาทุนต่อหน่วย = ยอดจ่ายจริง ÷ ปริมาณ. ยอดบรรทัด
+        // ที่ลง GL เท่ากันทั้งสองทาง = 100)
         var d = WithLine(Line(qty: 10m, up: 100m, amt: 100m));
         OcrService.SanitizeVatSplitArtifacts(d);
-        Assert.Equal(1m, d.Items[0].Quantity);
+        Assert.Equal(10m, d.Items[0].Quantity);
+        Assert.Equal(10m, d.Items[0].UnitPrice);
         Assert.Equal(100m, (d.Items[0].UnitPrice ?? 0m) * (d.Items[0].Quantity ?? 0m));
+    }
+
+    [Fact]
+    public void Real_pea_bill_keeps_the_meter_quantity_and_derives_the_kwh_price()
+    {
+        // เคสจริง (ผู้ใช้ส่งภาพมา): บิลค่าไฟ กฟภ. 3,611 หน่วย ยอดบรรทัด
+        // 16,351.48 — OCR เอายอดรวมมาใส่ช่องราคา/หน่วย ⇒ ฟอร์มคิด
+        // 3,611 × 16,351.48 = 59,046,338.88 (59 ล้าน). จำนวน 3,611 คือค่า
+        // มิเตอร์จริง ทิ้งไม่ได้ → ราคา/หน่วย = 16,351.48 ÷ 3,611 ≈ 4.5282
+        var d = WithLine(Line(qty: 3611m, up: 16351.48m, amt: 16351.48m, desc: "ค่าไฟฟ้า ประจำเดือน 07/2569"));
+        OcrService.SanitizeVatSplitArtifacts(d);
+        var it = d.Items[0];
+        Assert.Equal(3611m, it.Quantity);
+        Assert.Equal(4.5282m, it.UnitPrice);
+        // ยอดบรรทัดกลับมาตรงยอดจริง (คลาดได้ระดับสตางค์จากการปัด 4 ตำแหน่ง)
+        Assert.True(Math.Abs((it.UnitPrice ?? 0m) * (it.Quantity ?? 0m) - 16351.48m) < 1m);
+    }
+
+    [Fact]
+    public void Missing_unit_price_is_derived_from_amount_and_quantity()
+    {
+        // บิลสาธารณูปโภคพิมพ์แต่ปริมาณ+ยอดรวม ไม่พิมพ์ราคาต่อหน่วย —
+        // เดิม skip เงียบ ๆ (ฟอร์มได้ช่องราคาว่าง) → หารหาให้เลย
+        var d = WithLine(Line(qty: 3611m, up: null, amt: 16351.48m));
+        OcrService.SanitizeVatSplitArtifacts(d);
+        Assert.Equal(4.5282m, d.Items[0].UnitPrice);
+        Assert.Equal(3611m, d.Items[0].Quantity);
     }
 
     [Fact]
@@ -67,7 +100,8 @@ public class OcrLineReconcileTests
     {
         var noPrice = WithLine(Line(qty: 5m, up: null, amt: 500m));
         OcrService.SanitizeVatSplitArtifacts(noPrice);
-        Assert.Equal(5m, noPrice.Items[0].Quantity);   // ไม่มี price → skip (ไม่ crash)
+        Assert.Equal(5m, noPrice.Items[0].Quantity);   // จำนวนไม่ถูกแตะ (ราคาถูกหารหาให้ = 100)
+        Assert.Equal(100m, noPrice.Items[0].UnitPrice);
 
         var noAmt = WithLine(Line(qty: 5m, up: 100m, amt: null));
         OcrService.SanitizeVatSplitArtifacts(noAmt);

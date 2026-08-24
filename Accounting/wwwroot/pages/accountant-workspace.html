@@ -97,9 +97,11 @@
       },
 
       // สลับ currentCompany แล้วพาไป dashboard ของบริษัทนั้น
+      // ปลายทางมาจาก resolver กลาง (Layout.dashboardUrl) — เดิมฮาร์ดโค้ด
+      // '/pages/dashboard.html' ซึ่งไม่มีไฟล์นั้นอยู่จริง ⇒ ปุ่ม "เปิด" ตายทุกครั้ง
       openCompany(id, name) {
         localStorage.setItem('currentCompany', JSON.stringify({ id, name }));
-        location.href = '/pages/dashboard.html';
+        location.href = Layout.dashboardUrl();
       },
     };
     document.addEventListener('DOMContentLoaded', () => Page.init());

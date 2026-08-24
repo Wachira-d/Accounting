@@ -684,16 +684,22 @@ internal static class SmartFieldExtractor
             && data.DocumentNumber.Any(char.IsDigit))
             return;
 
-        // Anchor patterns, ordered by reliability. "Invoice No." sits on
-        // Thai e-Tax invoices nearly always; "(No.)" is the standalone
-        // bracketed form. The grabbed value must contain ≥3 digits — kills
-        // the "T" / "TX" false positives the bare prefix regex produced.
+        // Anchor patterns, ordered by reliability. The grabbed value must
+        // contain ≥3 digits — kills the "T"/"TX" false positives the bare
+        // prefix regex produced.
+        //
+        // ⚠️ ลำดับสำคัญ (บั๊กจริง — บิล กฟภ.): เอกสารราชการ/สาธารณูปโภคพิมพ์
+        // **ทั้งสองเลข** บนใบเดียว — "เลขที่ (No.)" = เลขที่ใบกำกับ/ใบเสร็จ
+        // (ตัวที่ใช้เคลม ภ.พ.30) กับ "เลขที่ใบแจ้งหนี้ (Invoice No.)" = เลขอ้างอิง
+        // รอบบิล. เดิม "Invoice No." อยู่บนสุด ⇒ เลขใบแจ้งหนี้ชนะเลขใบกำกับทุก
+        // ครั้งบนใบพวกนี้. เลขที่หลัก (เลขที่/No. เดี่ยว ๆ) ต้องมาก่อน —
+        // "Invoice No." เหลือเป็น fallback สำหรับใบแจ้งหนี้จริงที่ไม่มีเลขอื่น
         var patterns = new[]
         {
-            @"(?:Invoice\s*No\.?|เลขที่ใบแจ้งหนี้)\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
             @"(?:เลขที่|เลขที|เลข\s?ที่|No\.?)\s*\(\s*No\.?\s*\)\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
-            @"เลขที่\s*\(?\s*(?:No\.?)?\s*\)?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
+            @"เลขที่(?!ใบแจ้งหนี้|สัญญา|บัญชี|ผู้เสียภาษี)\s*\(?\s*(?:No\.?)?\s*\)?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
             @"(?:^|\s)No\.\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
+            @"(?:Invoice\s*No\.?|เลขที่ใบแจ้งหนี้)\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
         };
         foreach (var p in patterns)
         {

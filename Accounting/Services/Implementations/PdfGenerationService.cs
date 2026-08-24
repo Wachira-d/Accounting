@@ -1197,7 +1197,27 @@ public partial class PdfGenerationService : IPdfGenerationService
                      || (doc.DocumentType == DocumentType.TaxInvoice && doc.ServedAsReceipt))
                 title = isEn ? "Tax Invoice / Receipt" : Ov("TaxInvoiceReceipt", "ใบกำกับภาษี/ใบเสร็จรับเงิน");
         }
-        // declined/ไม่ครบ + base = "ใบกำกับภาษี" (TaxInvoice) → downgrade เป็นใบเสร็จ
+        // declined/ข้อมูลผู้ซื้อไม่ครบ + ขายมี VAT → **ใบกำกับภาษีอย่างย่อ** (§86/6)
+        // ไม่ใช่ตัดคำ "ใบกำกับภาษี" ทิ้งเฉย ๆ แบบเดิม — §86 บังคับผู้จด VAT ออก
+        // ใบกำกับ*บางรูปแบบ*ทุกการขาย: ขายปลีก/ผู้ซื้อไม่แจ้งข้อมูล = อย่างย่อ
+        // คือรูปแบบที่กฎหมายมีให้พอดี (ผู้ซื้อเคลมภาษีซื้อไม่ได้ตาม §82/5(2) —
+        // เหมือน "ใบเสร็จเปล่า" เดิมทุกประการ แต่ฝั่งผู้ขายถูกกฎหมายกว่า).
+        // VAT ขายยังลง ภ.พ.30 ครบเหมือนเดิม (ภาระภาษีไม่ขึ้นกับหัวเอกสาร).
+        // ยกเว้นใบเสร็จ settlement ของใบกำกับ (SettlesTaxInvoiceSource) — VAT
+        // รายงานที่ใบกำกับต้นทางแล้ว ห้ามมีคำใบกำกับซ้ำใบที่สอง → ใบเสร็จเปล่า
+        else if (!hasCustomTitle && IsAbbreviatedTaxInvoiceDoc(doc))
+        {
+            // เอกสารที่ทำหน้าที่รับเงินด้วย (ใบเสร็จ / ใบกำกับที่รับเงินแล้ว) →
+            // หัวคู่ "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ"; ใบกำกับขายเชื่อ → อย่างย่อเดี่ยว
+            var actsAsReceipt = doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+                || doc.IssuedAsCashReceipt || doc.ServedAsReceipt;
+            title = actsAsReceipt
+                ? (isEn ? "Receipt / Abbreviated Tax Invoice"
+                        : Ov("ReceiptAbbreviatedTaxInvoice", "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ"))
+                : (isEn ? "Abbreviated Tax Invoice"
+                        : Ov("AbbreviatedTaxInvoice", "ใบกำกับภาษีอย่างย่อ"));
+        }
+        // declined + ไม่มี VAT (TaxInvoice ที่ไม่ควรเกิดแต่กันไว้) → ใบเสร็จเปล่า
         else if (!hasCustomTitle && doc.DocumentType == DocumentType.TaxInvoice)
             title = isEn ? "Receipt" : "ใบเสร็จรับเงิน";
 
@@ -1233,6 +1253,22 @@ public partial class PdfGenerationService : IPdfGenerationService
         // บุคคลธรรมดาต้องการแค่ชื่อ+ที่อยู่ — เลขภาษี/สาขาบังคับเฉพาะนิติบุคคล
         return Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(c).Count > 0;
     }
+
+    /// <summary>ใบนี้เป็น "ใบกำกับภาษีอย่างย่อ" (§86/6) หรือไม่ — ขายมี VAT แต่
+    /// ผู้ซื้อไม่รับใบกำกับ/walk-in/ข้อมูล §86/4 ไม่ครบ (บุคคลธรรมดาที่ระบบ
+    /// downgrade ให้ตอนอนุมัติ). ตัวตัดสินกลางที่ทั้ง ComputeDocumentTitle,
+    /// HTML renderer และ QuestPDF ใช้ร่วม (หัว + ข้อความ §86/6(6) ต้องมาคู่กัน
+    /// เสมอ — คนละ renderer ห้าม drift). ไม่รวมใบเสร็จ settlement ของใบกำกับ
+    /// (VAT รายงานที่ต้นทางแล้ว — ใบนั้นเป็นใบเสร็จเปล่า) และมัดจำ VAT พักรอ.</summary>
+    internal static bool IsAbbreviatedTaxInvoiceDoc(Document doc)
+        => doc.VatAmount > 0
+           && !IsDeferredVatDeposit(doc)
+           && !doc.SettlesTaxInvoiceSource
+           && doc.DocumentType is DocumentType.TaxInvoice
+               or DocumentType.Receipt or DocumentType.ReceiptVoucher
+           && (doc.BuyerDeclinedTaxInvoice
+               || (doc.Contact?.IsWalkInCustomer ?? false)
+               || Buyer864Incomplete(doc));
 
     /// <summary>ตั้ง doc.ServedAsReceipt: ใบกำกับภาษีที่ชำระครบ ณ วันออก (cash
     /// sale) และไม่มีใบเสร็จ/ใบสำคัญรับแยกอ้างถึง → ทำหน้าที่เป็นใบเสร็จในตัว
@@ -1486,6 +1522,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         _ = isRd864Doc;
         sb.AppendLine($"<div class='doc-title'>{title}</div>");
+        // §86/6(6) — ใบกำกับภาษีอย่างย่อต้องมีข้อความระบุชัดว่าราคารวม VAT แล้ว
+        // (ยอดรวมทั้งสิ้นบนใบรวม VAT เสมออยู่แล้ว — บรรทัดนี้คือถ้อยคำที่กฎหมาย
+        // บังคับให้พิมพ์) — sync กับ QuestPDF ComposeHeaderAndTitle
+        if (IsAbbreviatedTaxInvoiceDoc(doc))
+            sb.AppendLine($"<div style='text-align:center;font-size:11px;color:#64748b;margin:-4px 0 8px'>"
+                + (lang == "en" ? "VAT included in the total amount / ยอดรวมทั้งสิ้นได้รวมภาษีมูลค่าเพิ่มแล้ว"
+                                : "ยอดรวมทั้งสิ้นได้รวมภาษีมูลค่าเพิ่มแล้ว") + "</div>");
 
         // Document Info
         sb.AppendLine("<div class='doc-info'>");
@@ -1873,9 +1916,14 @@ public partial class PdfGenerationService : IPdfGenerationService
                 var tag = isDr ? "Dr" : "Cr";
                 var amt = (isDr ? l.Debit : l.Credit).ToString("N2");
                 var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} {l.AccountName}";
+                // แบบบัญชีแยกประเภท: ฝั่งข้อความ Dr ชิดซ้าย/Cr เยื้องขวา 16px —
+                // ฝั่ง "ยอดเงิน" ต้องเยื้องกลับด้าน (ยอด Dr ขยับซ้ายออกจากยอด Cr
+                // เท่ากัน 16px) ให้เห็นสองคอลัมน์ Dr/Cr แบบสมุดบัญชีจริง
+                // (sync กับ ComposeGlPosting ฝั่ง QuestPDF — สอง renderer ห้าม drift)
                 var indent = isDr ? "" : "padding-left:16px;";
+                var amtIndent = isDr ? "padding-right:16px;" : "";
                 sb.AppendLine($"<div style='display:flex;justify-content:space-between;{indent}line-height:1.45'>" +
-                    $"<span><b>{tag}</b> {WebUtility.HtmlEncode(name)}</span><span>{amt}</span></div>");
+                    $"<span><b>{tag}</b> {WebUtility.HtmlEncode(name)}</span><span style='{amtIndent}'>{amt}</span></div>");
             }
             sb.AppendLine("</div>");
         }

@@ -1443,77 +1443,50 @@ public class DocumentService : IDocumentService
     /// generation ถ้าล่าสุดชนะ การแก้เอกสารธรรมดาจะ mutate รายงานงวดอื่น
     /// โดยผู้ใช้ไม่รู้ตัว และทำไม่ได้เลยเมื่องวดนั้น Filed แล้ว
     /// </summary>
+    /// <summary>ตั้ง/ย้ายงวดเคลมภาษีซื้อ — <b>ทางเดียวที่ผู้ใช้เปลี่ยนค่านี้ได้</b>
+    /// (เรียกจากทั้ง 3 ทางเข้า: สร้างเอกสาร · แก้ไขเอกสาร · แผงภาษีซื้อในหน้าดู
+    /// เอกสาร) ตัวตัดสินอยู่ที่ <see cref="InputVatClaimPeriodRules"/> ซึ่งเป็น
+    /// pure function มีเทสต์ครอบ — เมธอดนี้ทำแค่ "หาข้อมูลให้กติกา แล้วลงมือทำ
+    /// ตามที่กติกาบอก" จึงไม่มีทางที่ทางเข้าไหนจะได้ตารางตัดสินใจต่างกัน</summary>
     private async Task ApplyInputVatClaimPeriodAsync(Guid companyId, Document doc, string? raw)
     {
-        if (raw == null) return;                       // null = ไม่แตะ
+        // ── ขั้นที่ 1: ตัดสินจากตัวเอกสาร (ไม่แตะ DB — เคสส่วนใหญ่จบตรงนี้) ──
+        var pre = InputVatClaimPeriodRules.DecideFromDocument(
+            raw, doc.DocumentType, doc.InputVatBecameClaimableAt, doc.InputVatPostedAsUndue);
+        if (pre.Outcome == InputVatClaimPeriodOutcome.NoChange) return;
+        if (pre.Outcome == InputVatClaimPeriodOutcome.Blocked)
+            throw new InvalidOperationException(pre.BlockReason!);
 
-        // ⚠️ ลำดับสำคัญ: แปลงค่า + เทียบของเดิม **ก่อน** guard ทุกตัว
-        //
-        // บั๊กจริงที่เกิด: UI ส่ง "" มาเสมอตอนแก้ไข (เพื่อรองรับการล้างค่า)
-        // แต่เวอร์ชันแรกเช็ค "ต้องเป็นเอกสารฝั่งซื้อ" ก่อนดูว่าค่าเปลี่ยนจริง
-        // ไหม → แก้ใบเสนอราคาที่ไม่เกี่ยวอะไรเลยก็ throw ("Clone ใบเสนอราคา
-        // แล้วบันทึกไม่ได้"). และ throw ใส่ใบ undue ที่ผู้ใช้ไม่ได้แตะช่องนี้
-        // ด้วย. no-op ต้องเป็น no-op เสมอ — guard มีไว้กันการ "เปลี่ยน" เท่านั้น
-
-        // แปลงค่า: "" = ล้างกลับปกติ, "yyyy-MM" = งวดที่เลือก
-        DateTime? period = null;
-        if (!string.IsNullOrWhiteSpace(raw))
-        {
-            var parts = raw.Trim().Split('-');
-            if (parts.Length != 2 || !int.TryParse(parts[0], out var y) || !int.TryParse(parts[1], out var m)
-                || m < 1 || m > 12 || y < 2000 || y > 2200)
-                throw new InvalidOperationException("รูปแบบงวดไม่ถูกต้อง — ต้องเป็น yyyy-MM เช่น 2026-09");
-            // รับ พ.ศ. ด้วย (ผู้ใช้ไทยพิมพ์ 2569-09 ได้) — เกิน 2400 = พ.ศ.
-            if (y > 2400) y -= 543;
-            period = new DateTime(y, m, 1, 0, 0, 0, DateTimeKind.Utc);
-        }
-
-        var current = doc.InputVatBecameClaimableAt.HasValue
-            ? new DateTime(doc.InputVatBecameClaimableAt.Value.Year, doc.InputVatBecameClaimableAt.Value.Month, 1)
-            : (DateTime?)null;
-        if (period == current) return;                 // ไม่เปลี่ยน = จบ ไม่มี guard ไหนยิง
-
-        var isPurchaseDoc = doc.DocumentType is DocumentType.PurchaseInvoice
-            or DocumentType.Expense or DocumentType.PaymentVoucher
-            or DocumentType.CertificateInLieu;
-        if (!isPurchaseDoc)
-            throw new InvalidOperationException("งวดเคลมภาษีซื้อตั้งได้เฉพาะเอกสารฝั่งซื้อ");
-
-        // กติกา 2 — undue flow ชนะเจตนา (บังคับเฉพาะตอน "เปลี่ยน" จริง)
-        if (doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null)
-            throw new InvalidOperationException(
-                "ใบนี้พักภาษีซื้อไว้ (ใบกำกับยังไม่ครบ §86/4) — งวดเคลมจะถูกกำหนด"
-                + "อัตโนมัติเมื่อกด \"เติมใบกำกับครบ\" ไม่สามารถเลือกงวดเองที่นี่ได้");
-
-        // กติกา 1 — มีบรรทัดรายงานจริงแล้ว = รายงานชนะ (block พร้อมชี้ทางแก้)
-        var claimedIn = await _db.TaxReportLines.AsNoTracking()
+        // ── ขั้นที่ 2: ใบอยู่ในรายงาน ภ.พ.30 งวดไหนแล้วบ้าง ──
+        // งวดร่างย้ายให้อัตโนมัติ (ติ๊กบรรทัดออก + recalc ด้วยกลไกเดียวกับหน้า
+        // รายงาน) ส่วนงวดที่ยื่นแล้ว block — ที่มา: เดิม block ทุกกรณีแล้วสั่งให้
+        // ไปติ๊กใบออกเองที่หน้ารายงาน ทั้งที่ปุ่ม "เลิกเคลม" บนหน้าเดียวกัน
+        // (UnclaimInputVatAsync) ติ๊กบรรทัดงวดร่างออกให้เงียบ ๆ อยู่แล้ว ⇒ การ
+        // กระทำแบบเดียวกันบนข้อมูลชุดเดียวกัน ได้คำตอบคนละอย่างแล้วแต่ทางเข้า
+        var claimedLines = await _db.TaxReportLines
+            .Include(l => l.TaxReport)
             .Where(l => l.DocumentId == doc.Id && !l.IsExcluded && !l.IsDeleted
                 && l.TaxReport.CompanyId == companyId
                 && l.TaxReport.TaxType == TaxType.VAT
                 && l.IncomeTypeCode == "INPUT")
-            .Select(l => new { l.TaxReport.Month, l.TaxReport.Year, l.TaxReport.Status })
-            .FirstOrDefaultAsync();
-        if (claimedIn != null)
-        {
-            var filed = claimedIn.Status == TaxReportStatus.Filed;
-            throw new InvalidOperationException(
-                $"ใบนี้ถูกใช้ในรายงานภาษีซื้องวด {claimedIn.Month:D2}/{claimedIn.Year} แล้ว"
-                + (filed
-                    ? " และงวดนั้น **ยื่นแล้ว** — ย้ายงวดไม่ได้ ต้องยื่นแบบเพิ่มเติมกับสรรพากร"
-                    : " — ถ้าต้องการย้ายงวด ให้เปิดรายงานงวดนั้นแล้วติ๊กใบนี้ออก (หรือลบบรรทัด) ก่อน จึงกลับมาตั้งงวดใหม่ที่นี่ได้"));
-        }
+            .ToListAsync();
+        var filedLine = claimedLines
+            .FirstOrDefault(l => l.TaxReport.Status != TaxReportStatus.Draft);
 
-        if (period.HasValue)
-        {
-            // §82/3 — กรอบเดียวกับปุ่ม "ดึงเอกสาร" (ตัวตัดสินกลางเดียวกัน
-            // สิ่งที่ตั้งได้ = สิ่งที่ดึงได้ ไม่มีวันขัดกัน)
-            var basis = doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
-            var (ok, reason) = TaxService.EvaluateClaimPeriod(basis, isInput: true,
-                period.Value.Year, period.Value.Month);
-            if (!ok) throw new InvalidOperationException(reason!);
-        }
+        var post = InputVatClaimPeriodRules.DecideAgainstReports(
+            pre.Period,
+            doc.SupplierTaxInvoiceDate ?? doc.DocumentDate,
+            filedLine == null ? null : (filedLine.TaxReport.Month, filedLine.TaxReport.Year));
+        if (post.Outcome == InputVatClaimPeriodOutcome.Blocked)
+            throw new InvalidOperationException(post.BlockReason!);
 
-        doc.InputVatBecameClaimableAt = period;
+        // ⚠️ ติ๊กออกจากงวดเดิม **หลัง** validate ครบทุกข้อ — ถ้าย้ายก่อนแล้ว
+        // §82/3 ไม่ผ่าน ใบจะหลุดจากงวดเดิมไปโดยไม่ได้งวดใหม่ (แม้ transaction
+        // rollback ให้ แต่ลำดับนี้ทำให้ถูกต้องโดยไม่ต้องพึ่ง rollback)
+        await ExcludeVatReportLinesAsync(claimedLines,
+            InputVatClaimPeriodRules.MoveAuditReason(post.Period));
+
+        doc.InputVatBecameClaimableAt = post.Period;
     }
 
     private async Task<(decimal? Pct, string? Status)> ComputeConversionStatusAsync(Guid companyId, Document source)
@@ -2321,6 +2294,15 @@ public class DocumentService : IDocumentService
                 || doc.InputVatAccountCodeOverride.StartsWith("116")))
             doc.HasTaxInvoiceReference = true;
 
+        // งวดที่เคลม ภ.พ.30 — ตั้งจากหน้าดูเอกสารได้เลย ผ่านตัวตรวจกลางตัว
+        // เดียวกับฟอร์ม (รายงานชนะ · งวดยื่นแล้วห้ามย้าย · กรอบ §82/3).
+        // ต้องอยู่ **หลัง** ReclassifyUndueInputVatAsync — ใบที่เพิ่งเติมใบกำกับ
+        // ครบในคลิกเดียวกันจะพ้นสถานะ "พัก 11640" แล้ว จึงเลือกงวดต่อได้ทันที
+        // (ก่อน reclassify ตัวตรวจกลางบล็อกใบพักไว้ตามกติกา undue-ชนะ).
+        // ข้ามเมื่อกำลังเลิกเคลม — งวดของใบที่ไม่เคลมไม่มีความหมาย
+        if (request.ClaimInputVat != false)
+            await ApplyInputVatClaimPeriodAsync(companyId, doc, request.InputVatClaimPeriod);
+
         await _db.SaveChangesAsync();
         var updated = await GetDocumentAsync(companyId, documentId);
         await FireWebhookAsync(companyId,
@@ -2446,13 +2428,31 @@ public class DocumentService : IDocumentService
                 && l.TaxReport.TaxType == TaxType.VAT
                 && l.TaxReport.Status != TaxReportStatus.Filed)
             .ToListAsync();
-        foreach (var dl in draftLines)
+        await ExcludeVatReportLinesAsync(draftLines, "ผู้ใช้เลิกเคลม");
+    }
+
+    /// <summary>ติ๊กบรรทัดออกจากรายงาน ภ.พ.30 + recalc ยอดหัวรายงาน — กลไก
+    /// เดียวกับที่หน้ารายงานทำเมื่อนักบัญชีติ๊กออกเอง (<c>IsExcluded=true</c>
+    /// เก็บบรรทัดไว้เป็น audit ไม่ลบ) และใช้สูตรรวมยอดตัวเดียวกัน
+    /// (<c>TaxService.RecalcVatTotals</c>) จึงไม่มีวัน drift จากหน้ารายงาน
+    ///
+    /// <para>⚠️ ถ้าติ๊กออกแล้วไม่ recalc หัวรายงานจะค้างยอดเดิม = ยอดบนจอ/ไฟล์
+    /// ยื่นไม่ตรงกับบรรทัดที่เหลือ. รวมมาไว้ที่เดียวเพราะมีผู้เรียก 2 ทางแล้ว
+    /// (เลิกเคลม · ย้ายงวดเคลม) และทั้งคู่ต้องทำครบทั้งสองขั้นเสมอ</para>
+    ///
+    /// <param name="reason">เหตุผลสั้น ๆ ต่อหน้า Description เป็นร่องรอยว่า
+    /// บรรทัดหลุดจากงวดนี้เพราะอะไร (นักบัญชีเปิดรายงานเก่าแล้วเห็นได้ทันที)</param>
+    /// </summary>
+    private async Task ExcludeVatReportLinesAsync(List<TaxReportLine> lines, string reason)
+    {
+        if (lines.Count == 0) return;
+        foreach (var l in lines)
         {
-            dl.IsExcluded = true;
-            dl.Description = "⚠️ [ผู้ใช้เลิกเคลม] " + (dl.Description ?? "");
-            dl.UpdatedAt = DateTime.UtcNow;
+            l.IsExcluded = true;
+            l.Description = $"⚠️ [{reason}] " + (l.Description ?? "");
+            l.UpdatedAt = DateTime.UtcNow;
         }
-        foreach (var rid in draftLines.Select(l => l.TaxReportId).Distinct())
+        foreach (var rid in lines.Select(l => l.TaxReportId).Distinct())
         {
             var rep = await _db.TaxReports.Include(r => r.Lines).FirstOrDefaultAsync(r => r.Id == rid);
             if (rep != null) { TaxService.RecalcVatTotals(rep); rep.UpdatedAt = DateTime.UtcNow; }
@@ -4345,14 +4345,17 @@ public class DocumentService : IDocumentService
                 //    ผู้ใช้ไม่ตัน มีทางไปต่อเสมอ
                 //  • ผู้ซื้อ "บุคคลธรรมดา/ไม่มีเลขภาษี" (ขายปลีก) → ไม่ต้องใช้ใบกำกับ
                 //    เต็มรูปอยู่แล้ว → auto ตั้ง BuyerDeclinedTaxInvoice=true → หัว
-                //    downgrade เป็น "ใบเสร็จรับเงิน" เอง, ไม่ block. VAT ขายยังลง
-                //    ภ.พ.30 ครบ (ภาระภาษีไม่ขึ้นกับหัวเอกสาร) ผู้ซื้อเคลมภาษีซื้อไม่ได้
+                //    เปลี่ยนเป็น "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" (§86/6 — ผู้จด
+                //    VAT ต้องออกใบกำกับบางรูปแบบทุกการขาย อย่างย่อคือรูปแบบสำหรับ
+                //    ขายปลีก/ผู้ซื้อไม่แจ้งข้อมูล), ไม่ block. VAT ขายยังลง ภ.พ.30
+                //    ครบ (ภาระภาษีไม่ขึ้นกับหัวเอกสาร) ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2)
                 if (isJuristicBuyer)
                     throw new InvalidOperationException(
                         $"⛔ §86/4: ใบกำกับภาษีเต็มรูปต้องมี {string.Join(", ", missing)} " +
                         "(ผู้ซื้อนิติบุคคล). เติมข้อมูลผู้ซื้อให้ครบ หรือ ติ๊ก " +
-                        "'☑ ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี' เพื่อออกเป็นใบเสร็จรับเงิน " +
-                        "(VAT ยังนำส่ง ภ.พ.30 ครบ — ผู้ซื้อเคลมภาษีซื้อไม่ได้)");
+                        "'☑ ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี' เพื่อออกเป็น " +
+                        "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ §86/6 " +
+                        "(VAT ยังนำส่ง ภ.พ.30 ครบ — ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2))");
                 doc.BuyerDeclinedTaxInvoice = true;
             }
         }
@@ -5080,12 +5083,14 @@ public class DocumentService : IDocumentService
     ///
     /// กติกาที่บังคับ (ทำให้เครื่องมือนี้ปลอดภัยพอจะเปิดให้แก้อิสระ):
     ///   1. Dr = Cr ในสถานะปลายทาง (บัญชีคู่)
-    ///   2. **ยอดรวมห้ามเปลี่ยน** — Σ Dr ปลายทาง = Σ Dr ใบเดิม; ยอดของเอกสาร
-    ///      ต้องแก้ที่เอกสาร ไม่ใช่แอบแก้ผ่าน GL (ไม่งั้นเอกสารกับบัญชีหลุดจากกัน)
-    ///   3. **บัญชีคุมห้ามขยับ** — ภาษีซื้อ/ขาย, ลูกหนี้/เจ้าหนี้, มัดจำ, WHT
-    ///      ยอดเคลื่อนไหวต้องเท่าเดิมทุกบาท (ภ.พ.30 / ภ.ง.ด. / อายุหนี้ อ่านอยู่)
+    ///   2. **ยอดรวมแต่ละฝั่งต้องตรงกับเอกสาร** — Σ Dr ปลายทาง = Σ Dr ใบเดิม
+    ///      (= ยอดเอกสาร); ยอดของเอกสารต้องแก้ที่เอกสาร ไม่ใช่แอบแก้ผ่าน GL
+    ///   3. บัญชีคุม (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT) **แก้ได้** — เปิดตามคำขอ
+    ///      ผู้ใช้ (เดิมบล็อก) แต่ทุกการขยับถูกจดลง audit เป็น
+    ///      controlAccountsMoved (ก่อน→หลัง) เพราะรายงานที่อ่านบัญชีพวกนี้จะ
+    ///      เห็นยอดต่างจาก GL — เครื่องมือกระทบยอด GL↔ภาษี ใช้ไล่ drift ได้
     ///   4. งวดของวันที่ลงใบปรับปรุงต้องเปิด · เอกสารต้องไม่อยู่ในแบบที่ยื่นแล้ว
-    ///      และไม่ได้ส่ง e-Tax
+    ///      และไม่ได้ส่ง e-Tax (gate เดิมยังครบ)
     /// </summary>
     public async Task<List<DocumentJournalEntryDto>> AdjustDocumentJournalEntryAsync(
         Guid companyId, Guid documentId, Guid journalEntryId,
@@ -5203,6 +5208,16 @@ public class DocumentService : IDocumentService
         var origCodes = original.Lines
             .GroupBy(l => l.AccountId)
             .ToDictionary(g => g.Key, g => g.First().Account);
+
+        // บัญชีคุม (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT) — เดิม **บล็อก** การขยับยอด
+        // สุทธิ ผู้ใช้ขอเปิดให้แก้ได้ทั้งหมด (รวมยอด) โดยเหลือ hard rule แค่
+        // "ยอดรวมแต่ละฝั่งต้องตรงกับเอกสาร" (บังคับด้วย wantDr == origDr ข้างบน
+        // + Dr = Cr) จึงเปลี่ยนจากบล็อก → **บันทึกร่องรอยเข้ม**: จดทุกบัญชีคุม
+        // ที่ยอดสุทธิเปลี่ยนลง audit (ก่อน→หลัง) เพราะรายงานที่อ่านบัญชีพวกนี้
+        // (ภ.พ.30 / ภ.ง.ด. / อายุหนี้ / วงจรมัดจำ) จะเห็นยอดต่างจาก GL — เครื่องมือ
+        // กระทบยอด GL↔ภาษี มีไว้จับ drift แบบนี้ และเอกสารที่อยู่ในแบบยื่นแล้ว/
+        // ส่ง e-Tax แล้ว ถูก gate ระดับเอกสารกันไว้ก่อนถึงจุดนี้อยู่แล้ว
+        var controlMoved = new List<object>();
         foreach (var id in origNet.Keys.Union(wantNet.Keys))
         {
             var code = origCodes.TryGetValue(id, out var a) ? a.AccountCode
@@ -5211,10 +5226,7 @@ public class DocumentService : IDocumentService
             var before = Math.Round(origNet.GetValueOrDefault(id), 2, R);
             var after = Math.Round(wantNet.GetValueOrDefault(id), 2, R);
             if (before != after)
-                throw new InvalidOperationException(
-                    $"บัญชีคุม {code} เปลี่ยนยอดไม่ได้ ({before:N2} → {after:N2}) — " +
-                    "ภาษีซื้อ/ขาย ลูกหนี้/เจ้าหนี้ มัดจำ และภาษีหัก ณ ที่จ่าย " +
-                    "ต้องตรงกับเอกสารเสมอ (แก้ที่เอกสารแทน)");
+                controlMoved.Add(new { account = code, before, after });
         }
 
         // ผลต่างที่ต้องลงจริง — บวก = ต้อง Dr เพิ่ม, ลบ = ต้อง Cr
@@ -5271,6 +5283,9 @@ public class DocumentService : IDocumentService
                     originalEntry = original.EntryNumber,
                     entryDate,
                     reason = request.Reason,
+                    // บัญชีคุมที่ยอดสุทธิถูกขยับ (ก่อน→หลัง) — ร่องรอยเข้มแทน
+                    // การบล็อกเดิม ผู้ตรวจ/เครื่องมือกระทบยอดใช้ไล่หา drift ได้
+                    controlAccountsMoved = controlMoved,
                     deltas = deltas.Select(d => new
                     {
                         account = nameById.GetValueOrDefault(d.Id, d.Id.ToString()),

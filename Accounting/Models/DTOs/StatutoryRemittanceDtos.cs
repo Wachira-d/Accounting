@@ -27,7 +27,9 @@ public record RemittanceDashboardResponse(
     decimal TotalOverdue,         // รวมยอดที่เลยกำหนด
     int OverdueCount,
     List<PendingRemittanceItem> Pending,
-    List<RemittanceHistoryItem> RecentHistory);
+    List<RemittanceHistoryItem> RecentHistory,
+    // ภ.พ.36 นำส่งแล้ว รอรับรู้ภาษีซื้อ (ขั้นที่ 2) — ว่าง = ไม่มีค้าง
+    List<Pp36AwaitingRecognitionItem> Pp36AwaitingRecognition);
 
 /// <summary>รายการที่นำส่งไปแล้ว.</summary>
 public record RemittanceHistoryItem(
@@ -43,7 +45,21 @@ public record RemittanceHistoryItem(
     Guid? JournalEntryId,
     Guid? ReceiptAttachmentId,
     string? CreatedBy,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // ภ.พ.36 เท่านั้น: งวดนี้ "รับรู้ภาษีซื้อ" (11640→11610 เข้า ภ.พ.30) แล้ว
+    // หรือยัง — null = ไม่ใช่ ภ.พ.36. UI ใช้สลับปุ่ม "รับรู้" ↔ ป้าย ✓
+    // (เดิมปุ่มโชว์ตลอดไม่มีสถานะ ผู้ใช้ไม่รู้ว่ากดแล้วหรือยัง)
+    bool? Pp36Recognized = null);
+
+/// <summary>ภ.พ.36 ที่นำส่งแล้วแต่ยัง "ไม่ได้กดรับรู้ภาษีซื้อ" — ภาษีซื้อจึงยัง
+/// ไม่ขึ้นใน ภ.พ.30 (ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่
+/// 2 ซ่อนอยู่ในแท็บประวัติ) — dashboard ต้องดันขึ้นมาให้เห็นจนกว่าจะกดรับรู้</summary>
+public record Pp36AwaitingRecognitionItem(
+    int PeriodYear,
+    int PeriodMonth,
+    decimal VatAmount,        // ภาษีซื้อที่รอรับรู้ (Σ VatAmount ของใบที่ยังพัก 11640)
+    int DocumentCount,
+    DateTime RemittedAt);
 
 /// <summary>คำขอนำส่ง 1 งวด — ระบบ post JE (Dr หนี้ค้างจ่าย / Cr ธนาคาร) +
 /// บันทึก StatutoryRemittance + (option) แนบใบเสร็จ.</summary>

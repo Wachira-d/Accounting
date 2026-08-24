@@ -310,7 +310,7 @@
               <div id="combinedConvertedNote" style="display:none;margin-top:8px;padding:8px 12px;background:#f0f9ff;border-left:3px solid #0ea5e9;border-radius:6px;font-size:12px;color:#075985;line-height:1.5"></div>
               <label id="fDeclineTaxRow" style="display:none;margin-top:8px;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer">
                 <input type="checkbox" id="fBuyerDeclinedTaxInvoice" style="margin-top:3px">
-                <span>ผู้ซื้อ <b>ไม่ประสงค์รับใบกำกับภาษี</b> — ออกเป็น <b>"ใบเสร็จรับเงิน"</b> (ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อครบ)
+                <span>ผู้ซื้อ <b>ไม่ประสงค์รับใบกำกับภาษี</b> — ออกเป็น <b>"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ"</b> (§86/6 — ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อครบ · ผู้ซื้อเคลมภาษีซื้อไม่ได้)
                   <span style="display:block;color:#64748b;font-size:11px">VAT ขายยังลงรายงานภาษีขาย/ภ.พ.30 ครบ — นำส่งภาษีได้ปกติ · ผู้ซื้อเคลมภาษีซื้อไม่ได้</span>
                 </span>
               </label>
@@ -574,7 +574,7 @@
               <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
             </div>
             <div class="form-group">
-              <label class="form-label" data-help="เลือกงวด ภพ.30 ที่จะเคลมภาษีซื้อใบนี้ — ว่าง = เคลมตามเดือนเอกสารปกติ · เลื่อนได้ไม่เกิน 6 เดือนตาม §82/3 · ถ้าใบถูกใช้ในรายงานงวดใดแล้ว รายงานนั้นชนะ (ต้องติ๊กออกจากรายงานก่อนจึงย้ายได้)">งวดที่เคลมภาษีซื้อ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ว่าง = ตามเดือนเอกสาร)</span></label>
+              <label class="form-label" data-help="งวด ภพ.30 ที่จะเคลมภาษีซื้อใบนี้ — ตอนแก้ไขจะเติมเดือนภาษีของเอกสารไว้ให้ (คืองวดที่ระบบจะใช้ถ้าไม่ย้าย) เปลี่ยนเป็นเดือนอื่นได้ไม่เกิน 6 เดือนตาม §82/3 · ลบให้ว่าง = กลับไปตามเดือนเอกสาร · ถ้าใบถูกใช้ในรายงานงวดใดแล้ว รายงานนั้นชนะ (ต้องติ๊กออกจากรายงานก่อนจึงย้ายได้)">งวดที่เคลมภาษีซื้อ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ค่าปกติ = เดือนภาษีของเอกสาร)</span></label>
               <input type="month" class="form-input" id="fVatClaimPeriod">
               <div id="fVatClaimLocked" style="display:none;font-size:11px;color:#b45309;margin-top:3px"></div>
             </div>
@@ -753,9 +753,21 @@
                   <span title="ติ๊กเมื่อราคา/หน่วยที่กรอกรวม VAT 7% แล้ว — ระบบจะถอด VAT ออกให้อัตโนมัติเพื่อแยกฐานภาษีให้ถูกต้อง">ราคารวมภาษี</span>
                 </label>
                 <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsForeignServiceWrap">
-                  <input type="checkbox" id="fIsForeignService" style="margin:0">
+                  <input type="checkbox" id="fIsForeignService" style="margin:0" onchange="Page.onForeignServiceToggle()">
                   <span title="ติ๊กเมื่อซื้อบริการจากต่างประเทศ (Google Ads / AWS / Facebook ฯลฯ) — ระบบจะรวมรายการนี้ในรายงาน ภ.พ.36 (self-assess VAT 7%) และ ภ.ง.ด.54 (WHT)">🌐 บริการต่างประเทศ (§83/6)</span>
+                  <span id="fForeignHint" style="display:none;color:#d97706;font-size:11px;font-weight:600">← คู่ค้าไม่มีเลขภาษีไทย — ผู้ให้บริการต่างประเทศ?</span>
                 </label>
+                <!-- คำอธิบายวงจร ภ.พ.36 — โผล่เมื่อติ๊ก เพื่อให้ผู้ใช้รู้ตั้งแต่สร้างใบ
+                     ว่าต้องทำอะไรต่อบ้าง (ที่มา: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ
+                     เพราะไม่รู้ว่ามีขั้น "รับรู้ภาษีซื้อ") -->
+                <div id="foreignServiceBanner" style="display:none;flex-basis:100%;background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:8px;padding:10px 12px;margin-top:6px;font-size:12px;color:#1e3a8a;line-height:1.7">
+                  <b>🌐 วงจรบริการต่างประเทศ (§83/6):</b>
+                  ① ใบนี้ตั้ง VAT 7% แบบ self-assess (ผู้ขายต่างประเทศไม่คิด VAT มา — เราประเมินเองจากยอดจ่าย ระบบพัก Dr 11640 / Cr 21912)
+                  → ② สิ้นเดือน <b>นำส่ง ภ.พ.36</b> ที่หน้า "นำส่งภาษี" (ภายในวันที่ 7/15 ของเดือนถัดไป)
+                  → ③ ได้ใบเสร็จกรมสรรพากรแล้วกด <b>"รับรู้ภาษีซื้อ"</b> ที่หน้าเดียวกัน
+                  → ④ ภาษีซื้อเข้า <b>ภ.พ.30</b> ให้เคลมอัตโนมัติ (§77/2) · WHT ของใบนี้เข้า <b>ภ.ง.ด.54</b>
+                  · จ่ายเงินตราต่างประเทศ: กรอกสกุลเงิน + อัตราแลกเปลี่ยนในหัวเอกสาร ฐานภาษีคิดจากยอดบาท
+                </div>
                 <label style="display:none;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsDepositWrap">
                   <input type="checkbox" id="fIsDeposit" style="margin:0" onchange="Page.onDepositToggle()">
                   <span title="ติ๊กเมื่อรับเงินมัดจำ/รับล่วงหน้า ก่อนส่งมอบสินค้า/บริการ — ระบบจะลงบัญชี 'ขายรอรับรู้' (217xx) แทนรายได้ ค่อยรับรู้รายได้เมื่อส่งมอบจริงในหน้า 'เงินมัดจำ'">🤝 เงินมัดจำ/รับล่วงหน้า</span>
@@ -1693,12 +1705,24 @@
         if (payload.reference) document.getElementById('fRef').value = payload.reference;
         if (payload.notes) document.getElementById('fNotes').value = payload.notes;
 
-        // §82/5 — banner เตือนเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/ใบเสร็จ)
+        // §82/5 — banner เตือนเคลม VAT ไม่ได้ (รูปแบบใบ (1)(2) + ชนิดรายจ่าย (4)(6))
         if (payload.inputVatClaimWarning) {
           const vb = document.getElementById('vatClaimWarnBanner');
           if (vb) {
             vb.style.display = '';
-            vb.innerHTML = `<div style="font-weight:700;margin-bottom:4px">🚫 ภาษีซื้อเอกสารนี้เคลมไม่ได้</div>${Layout.esc(payload.inputVatClaimWarning)}<div style="margin-top:6px;font-size:12px">💡 ถ้าไม่เคลม: ใช้ "⚙️ ตัวเลือกขั้นสูง — เปลี่ยนผังบัญชี VAT" ด้านล่าง เลือกผัง 5xxxx เพื่อรวม VAT เป็นต้นทุน/ค่าใช้จ่าย</div>`;
+            vb.innerHTML = `<div style="font-weight:700;margin-bottom:4px">🚫 ภาษีซื้อเอกสารนี้เคลมไม่ได้ — ระบบตั้ง "ไม่เคลม" ไว้ให้</div>${Layout.esc(payload.inputVatClaimWarning)}<div style="margin-top:6px;font-size:12px">💡 VAT จะถูกรวมเป็นค่าใช้จ่ายในหมวดที่เลือก · ถ้าเป็นรายจ่ายที่เคลมได้จริง (เช่นรถกระบะ/บรรทุก) ติ๊กเปิดเคลมได้ที่แผงภาษีซื้อหลังอนุมัติ ภายในกรอบ 6 เดือน §82/3</div>`;
+          }
+        }
+        // เตือนแต่ยังเคลมได้ — §82/5(6) ที่ระบุชนิดรถเคลมได้ไว้แล้ว
+        if (payload.inputVatClaimNote && !payload.inputVatClaimWarning) {
+          const vb = document.getElementById('vatClaimWarnBanner');
+          if (vb) {
+            vb.style.display = '';
+            vb.style.background = '#fffbeb';
+            vb.style.borderColor = '#fde68a';
+            vb.style.borderLeftColor = '#d97706';
+            vb.style.color = '#92400e';
+            vb.innerHTML = `<div style="font-weight:700;margin-bottom:4px">⚠️ ตรวจสิทธิ์เคลมภาษีซื้อก่อนบันทึก</div>${Layout.esc(payload.inputVatClaimNote)}`;
           }
         }
 
@@ -1886,6 +1910,15 @@
           if (firstFid) firstFid.dataset.feedbackId = payload.glAccountAiFeedbackId;
         }
         if (!document.querySelector('#linesBody .line-card')) this.addLine();
+        // ส่วนลดท้ายบิลจาก OCR (ใบที่พิมพ์ "ส่วนลด/Discount" ระดับใบ เช่น
+        // Scommerce) — ต้องเติมก่อน calcSum ไม่งั้นยอดสุทธิบนฟอร์มไม่ตรง
+        // ยอดรวมทั้งสิ้นบนกระดาษ
+        if (payload.billDiscountAmount > 0) {
+          const bd = document.getElementById('fBillDiscount');
+          const bm = document.getElementById('fBillDiscountMode');
+          if (bd) bd.value = payload.billDiscountAmount;
+          if (bm) bm.value = 'amt';
+        }
         this.calcSum();
 
         // กฎเหล็ก #3: ฟอร์ม OCR ต้อง pre-fill ครบ + highlight field ที่
@@ -2080,7 +2113,7 @@
           ? '<span class="badge" style="background:#7c3aed15;color:#7c3aed">กลับรายการแล้ว</span>'
           : Layout.statusBadge(j.status);
         const action = j.canAdjust
-          ? `<button class="btn btn-sm btn-primary" onclick="Page.openJeAdjust('${docId}','${j.id}')" title="แก้ผังบัญชี / เพิ่ม-ลดบรรทัด — ระบบลงใบปรับปรุงใหม่ให้">✏️ แก้ผังบัญชี</button>`
+          ? `<button class="btn btn-sm btn-primary" onclick="Page.openJeAdjust('${docId}','${j.id}')" title="แก้ผังบัญชี/ยอดได้ทุกบรรทัด (รวมลูกหนี้ เจ้าหนี้ ภาษี) — ยอดรวมแต่ละฝั่งต้องเท่าเอกสาร · ระบบลงใบปรับปรุงใหม่ให้">✏️ แก้รายการบัญชี</button>`
           : `<span style="font-size:11px;color:#92400e" title="${this.escapeHtml(j.blockReason || '')}">🔒 ${this.escapeHtml(j.blockReason || 'แก้ไม่ได้')}</span>`;
         return `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:12px;margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
@@ -2095,7 +2128,7 @@
           <table class="table" style="font-size:12px">
             <thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th></tr></thead>
             <tbody>${(j.lines || []).map(l => `<tr>
-              <td style="font-family:ui-monospace,monospace">${this.escapeHtml(l.accountCode)}${l.isControlAccount ? ' <span title="บัญชีคุม — ยอดต้องตรงกับเอกสารเสมอ">🔒</span>' : ''}</td>
+              <td style="font-family:ui-monospace,monospace">${this.escapeHtml(l.accountCode)}${l.isControlAccount ? ' <span title="บัญชีคุม (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT) — แก้ได้ แต่ระวังรายงานภาษี/อายุหนี้ไม่ตรง GL">⚠️</span>' : ''}</td>
               <td>${this.escapeHtml(l.accountName)}</td>
               <td class="text-right">${l.debitAmount > 0 ? Layout.money(l.debitAmount) : ''}</td>
               <td class="text-right">${l.creditAmount > 0 ? Layout.money(l.creditAmount) : ''}</td>
@@ -2159,11 +2192,13 @@
         if (!je) return;
         await this._ensureAllAccounts();
         this._jeaCtx = { docId, jeId, originalTotal: je.totalDebit };
+        // บัญชีคุมแก้ได้แล้ว (ผู้ใช้ขอเปิดทั้งใบ รวมลูกหนี้/เจ้าหนี้/ยอด) —
+        // control เหลือหน้าที่เดียวคือขึ้นป้ายเตือน ไม่ใช่ล็อกช่อง
         this._jeaRows = (je.lines || []).map(l => ({
           accountId: l.accountId,
           accountCode: l.accountCode, accountName: l.accountName,
           debit: l.debitAmount, credit: l.creditAmount,
-          locked: l.isControlAccount,
+          control: l.isControlAccount,
         }));
         document.getElementById('jeaInfo').innerHTML =
           `<div>ใบสำคัญ <b>${this.escapeHtml(je.entryNumber)}</b> · ${Layout.date(je.entryDate)} · ` +
@@ -2182,26 +2217,22 @@
           <div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px;margin-bottom:8px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
               <span style="font-size:11px;color:#94a3b8;min-width:16px">${i + 1}</span>
-              ${r.locked
-                ? `<input type="text" class="form-input" style="flex:1;font-size:13px" readonly
-                        title="บัญชีคุม — เปลี่ยนไม่ได้"
-                        value="${Layout.esc(r.accountCode + (r.accountName ? ' — ' + r.accountName : ''))}">`
-                : `<select class="form-select" style="flex:1;font-size:13px"
-                        onchange="Page.jeaRowChanged(${i},'account',this.value)">${this._accountOptionsHtml(r.accountId)}</select>
-                   <button class="btn btn-sm btn-ghost" style="color:#ef4444" title="ลบบรรทัดนี้"
-                        onclick="Page.jeaRemoveRow(${i})">✕</button>`}
+              <select class="form-select" style="flex:1;font-size:13px"
+                    onchange="Page.jeaRowChanged(${i},'account',this.value)">${this._accountOptionsHtml(r.accountId)}</select>
+              <button class="btn btn-sm btn-ghost" style="color:#ef4444" title="ลบบรรทัดนี้"
+                    onclick="Page.jeaRemoveRow(${i})">✕</button>
             </div>
-            ${r.locked ? '<div style="font-size:10px;color:#92400e;margin-bottom:6px">🔒 บัญชีคุม — ยอดต้องตรงกับเอกสาร</div>' : ''}
+            ${r.control ? '<div style="font-size:10px;color:#92400e;margin-bottom:6px">⚠️ บัญชีคุม (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT) — แก้ได้ แต่ยอดที่ต่างจากเอกสารจะทำให้รายงานภาษี/อายุหนี้ไม่ตรงกับ GL · ทุกการแก้ถูกบันทึกลง audit</div>' : ''}
             <div style="display:flex;gap:8px">
               <label style="flex:1;font-size:11px;color:var(--gray-500)">เดบิต
                 <input type="number" step="0.01" min="0" inputmode="decimal"
                     class="form-input text-right" style="font-size:13px"
-                    value="${r.debit || 0}" ${r.locked ? 'readonly' : ''}
+                    value="${r.debit || 0}"
                     onchange="Page.jeaRowChanged(${i},'debit',this.value)"></label>
               <label style="flex:1;font-size:11px;color:var(--gray-500)">เครดิต
                 <input type="number" step="0.01" min="0" inputmode="decimal"
                     class="form-input text-right" style="font-size:13px"
-                    value="${r.credit || 0}" ${r.locked ? 'readonly' : ''}
+                    value="${r.credit || 0}"
                     onchange="Page.jeaRowChanged(${i},'credit',this.value)"></label>
             </div>
           </div>`).join('');
@@ -2210,7 +2241,7 @@
 
       jeaRowChanged(i, field, value) {
         const r = (this._jeaRows || [])[i];
-        if (!r || r.locked) return;
+        if (!r) return;
         if (field === 'account') {
           // value = accountId จาก <select> (ไม่ต้อง parse โค้ดจากข้อความอีก)
           const acc = (this._allAccounts || []).find(a => a.id === value);
@@ -2236,7 +2267,11 @@
 
       jeaRemoveRow(i) {
         const rows = this._jeaRows || [];
-        if (rows[i]?.locked) return;
+        if (!rows[i]) return;
+        // บัญชีคุมลบได้แล้ว แต่ต้องรู้ตัวว่ากำลังทำอะไร — ยืนยันก่อน
+        if (rows[i].control && !confirm(
+            `บรรทัดนี้เป็นบัญชีคุม (${rows[i].accountCode}) — ลบแล้วยอดฝั่งรายงาน`
+            + 'ภาษี/อายุหนี้จะไม่ตรงกับ GL\nยืนยันลบ?')) return;
         rows.splice(i, 1);
         this.renderJeaRows();
       },
@@ -2281,6 +2316,28 @@
         }));
         if (lines.some(l => !l.accountId)) {
           Layout.toast('มีบรรทัดที่ยังไม่เลือกผังบัญชี', 'error'); return;
+        }
+        // บัญชีคุมแก้ได้แล้ว แต่ก่อนบันทึกให้ยืนยันครั้งเดียวถ้ายอดสุทธิของ
+        // บัญชีคุมตัวใดเปลี่ยนจากใบเดิม — กันมือลั่น (ป้ายบนแถวเตือนไว้แล้ว
+        // แต่ตอนพิมพ์ยอดหลายบรรทัดอาจไม่ทันสังเกตว่าไปแตะบัญชีคุมเข้า)
+        {
+          const je = (this._docJournals || []).find(x => x.id === ctx.jeId);
+          const net = (list, id) => list.filter(l => (l.accountId ?? l.accountId) === id)
+            .reduce((s, l) => s + (Number(l.debitAmount ?? l.debit) || 0) - (Number(l.creditAmount ?? l.credit) || 0), 0);
+          const controlIds = [...new Set((je?.lines || []).filter(l => l.isControlAccount).map(l => l.accountId))];
+          // บัญชีคุมที่เพิ่มใหม่ในแผง (ไม่อยู่ในใบเดิม) หา id จาก _allAccounts
+          const controlCodes = new Set(['11310','11610','11640','21210','21510','21520','21610',
+            '21711','21712','21713','21911','21912','21913','21916','21917','21918']);
+          (this._jeaRows || []).forEach(r => {
+            if (r.accountCode && controlCodes.has(r.accountCode) && !controlIds.includes(r.accountId))
+              controlIds.push(r.accountId);
+          });
+          const moved = controlIds.filter(id =>
+            Math.round(net(je?.lines || [], id) * 100) !== Math.round(net(lines, id) * 100));
+          if (moved.length && !confirm(
+            `⚠️ ยอดบัญชีคุมถูกแก้ ${moved.length} บัญชี (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT)\n\n`
+            + 'ยอดฝั่งรายงานภาษี/อายุหนี้จะไม่ตรงกับ GL จนกว่าจะกระทบยอด\n'
+            + 'ทุกการแก้ถูกบันทึกลง audit\n\nยืนยันบันทึกใบปรับปรุง?')) return;
         }
         try {
           const res = await api.adjustDocumentJournalEntry(ctx.docId, ctx.jeId, {
@@ -2594,7 +2651,7 @@
           // ใบเสร็จให้เองตอน approve (ไม่ block) — เตือนเบา ๆ พอ
           if (isJuristic)
             Layout.toast('⚠️ ใบกำกับภาษีเต็มรูป §86/4 (นิติบุคคล) ต้องมี: ' + missing.join(' · ')
-              + ' — เติมให้ครบ หรือ ติ๊ก "ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี" เพื่อออกเป็นใบเสร็จ', 'error', 9000);
+              + ' — เติมให้ครบ หรือ ติ๊ก "ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี" เพื่อออกเป็นใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ', 'error', 9000);
           else
             Layout.toast('ℹ️ ข้อมูล §86/4 ไม่ครบ (' + missing.join(' · ')
               + ') — บุคคลธรรมดา ระบบจะออกเป็น "ใบเสร็จรับเงิน" ให้ (VAT นำส่งครบ)', 'info', 7000);
@@ -2635,6 +2692,25 @@
           '<div id="vatLockHint" style="margin-top:6px;padding:8px 12px;background:#fef2f2;border-left:3px solid #ef4444;border-radius:6px;font-size:12px;color:#991b1b;line-height:1.5">🔒 บริษัทยังไม่ได้ตั้งค่า "จดทะเบียนภาษีมูลค่าเพิ่ม" — ออกใบกำกับภาษี/เก็บ VAT ขายไม่ได้ (§90/2). เปิดได้ที่ ตั้งค่า → ภาษี</div>');
       },
 
+      /** ติ๊ก/ปลด "บริการต่างประเทศ §83/6" — โชว์วงจร ภ.พ.36 + ตั้ง VAT 7%
+       *  self-assess ให้บรรทัดที่ยังเป็น 0 (ภ.พ.36 คิดจาก VatAmount ของใบ —
+       *  ปล่อย 0 ไว้ = ใบไม่เข้า dashboard นำส่ง แล้วผู้ใช้จะงงว่าหายไปไหน) */
+      onForeignServiceToggle() {
+        const on = document.getElementById('fIsForeignService')?.checked;
+        const b = document.getElementById('foreignServiceBanner');
+        if (b) b.style.display = on ? '' : 'none';
+        if (!on) return;
+        let touched = 0;
+        document.querySelectorAll('#linesBody .line-card [data-f="vat"]').forEach(sel => {
+          if ((parseFloat(sel.value) || 0) === 0) { sel.value = '7'; touched++; }
+        });
+        if (touched) {
+          this.calcSum();
+          Layout.toast(`ตั้ง VAT 7% (self-assess §83/6) ให้ ${touched} บรรทัด — `
+            + 'ผู้ขายต่างประเทศไม่คิด VAT มา เราประเมินเองจากยอดจ่ายเพื่อนำส่ง ภ.พ.36', 'info', 9000);
+        }
+      },
+
       onContactChange() {
         const contactId = document.getElementById('fContactId').value;
         const c = this._selectedContact || this.contacts?.find(x => x.id === contactId);
@@ -2662,6 +2738,18 @@
           this.suggestPaymentType(contactId);
           // PV-only — แนะนำ bank account/cash channel จาก payment history
           this.suggestPaymentChannel(contactId);
+        }
+        // คู่ค้าไม่มีเลขภาษีไทย 13 หลัก + ใบฝั่งซื้อ → จุดสังเกตว่าอาจเป็น
+        // ผู้ให้บริการต่างประเทศ (§83/6) — แค่ชี้ ไม่ auto-ติ๊ก (คู่ค้าไทยที่ยัง
+        // ไม่กรอกเลขภาษีก็เข้าเงื่อนไขนี้ได้ ติ๊กแทนผู้ใช้ = สร้างหนี้ ภ.พ.36 ผี)
+        {
+          const hint = document.getElementById('fForeignHint');
+          const purchaseLike = ['Expense', 'PurchaseInvoice', 'PaymentVoucher'];
+          const dt = document.getElementById('fDocType')?.value || '';
+          const noThaiTaxId = c && !/^\d{13}$/.test((c.taxId || '').trim());
+          if (hint) hint.style.display =
+            (purchaseLike.includes(dt) && noThaiTaxId
+             && !document.getElementById('fIsForeignService')?.checked) ? '' : 'none';
         }
         // Auto-suggest payment terms (Net X) จาก history ของผู้ติดต่อรายนี้
         // — ไม่เกี่ยวกับ doc type, ใช้ได้ทั้ง sales (Invoice/Quotation) +
@@ -4441,6 +4529,13 @@
             const cb = document.getElementById('fIsForeignService');
             if (cb) cb.checked = false;
           }
+          // sync banner วงจร ภ.พ.36 + hint ตามสถานะจริง (เปลี่ยนชนิดเอกสาร/
+          // เปิดฟอร์มใหม่ ต้องไม่ค้าง banner ของใบก่อน)
+          const fb = document.getElementById('foreignServiceBanner');
+          if (fb) fb.style.display =
+            (showFs && document.getElementById('fIsForeignService')?.checked) ? '' : 'none';
+          const fh = document.getElementById('fForeignHint');
+          if (fh && !showFs) fh.style.display = 'none';
         }
 
         // AI แนะนำผังบัญชี GL — เฉพาะเอกสารฝั่งซื้อ (Expense / PI / PV) ที่มี
@@ -6622,16 +6717,26 @@
           const fVcp = document.getElementById('fVatClaimPeriod');
           const fVcpLock = document.getElementById('fVatClaimLocked');
           if (fVcp) {
-            fVcp.value = d.inputVatBecameClaimableAt ? String(d.inputVatBecameClaimableAt).slice(0, 7) : '';
+            // โชว์ "งวดที่จะเคลมจริง" เสมอ — ไม่ตรึงงวดเอง = เดือนภาษีของเอกสาร
+            // (TaxPointDate ?? DocumentDate ฐานเดียวกับ GenerateVatReport)
+            // ปล่อยว่างไว้ผู้ใช้อ่านว่า "ไม่ได้เคลม". dataset.initial ให้ payload
+            // แยก "ดูเฉย ๆ" ออกจาก "ตั้งใจย้ายงวด" — ห้ามส่งค่าที่แค่โชว์
+            const vcpBasis = d.taxPointDate || d.documentDate;
+            fVcp.value = d.inputVatBecameClaimableAt
+              ? Layout.dateInput(d.inputVatBecameClaimableAt).slice(0, 7)
+              : (vcpBasis ? Layout.dateInput(vcpBasis).slice(0, 7) : '');
+            fVcp.dataset.initial = fVcp.value;
             const claimed = d.inputVatPp30Month && d.inputVatPp30Year;
-            fVcp.disabled = !!claimed;
+            // ล็อกเฉพาะงวดที่ **ยื่นแล้ว** — งวดร่างย้ายได้เลย ระบบติ๊กใบออกจาก
+            // งวดเดิม+recalc ให้เอง (กติกาเดียวกับแผงในหน้าดูเอกสาร)
+            const claimedFiled = claimed
+              && (d.inputVatPp30ReportStatus === 'Filed' || d.inputVatPp30ReportStatus === 'Submitted');
+            fVcp.disabled = !!claimedFiled;
             if (fVcpLock) {
               fVcpLock.style.display = claimed ? '' : 'none';
-              if (claimed) fVcpLock.textContent =
-                `🔒 ใบนี้อยู่ในรายงานภาษีซื้องวด ${String(d.inputVatPp30Month).padStart(2, '0')}/${d.inputVatPp30Year}` +
-                (d.inputVatPp30ReportStatus === 'Filed'
-                  ? ' (ยื่นแล้ว — ย้ายงวดต้องยื่นแบบเพิ่มเติม)'
-                  : ' แล้ว — ย้ายงวดโดยติ๊กใบนี้ออกจากรายงานงวดนั้นก่อน');
+              if (claimed) fVcpLock.textContent = claimedFiled
+                ? `🔒 ยื่นแบบงวด ${String(d.inputVatPp30Month).padStart(2, '0')}/${d.inputVatPp30Year} แล้ว — ย้ายงวดต้องยื่นแบบเพิ่มเติม`
+                : `📄 อยู่ในรายงาน (ร่าง) งวด ${String(d.inputVatPp30Month).padStart(2, '0')}/${d.inputVatPp30Year} — เปลี่ยนเดือนได้เลย ระบบจะติ๊กใบนี้ออกจากงวดเดิมให้`;
             }
           }
           // PV: เติมกล่อง "ใช้งานใบกำกับภาษี" ตอนแก้ไขเอกสารเก่า
@@ -6810,6 +6915,13 @@
           // ทำหลัง onDocTypeChange เพราะมันคุมการแสดง/reset checkbox มัดจำ.
           const fFs = document.getElementById('fIsForeignService');
           if (fFs) fFs.checked = !!d.isForeignService;
+          // sync banner วงจร ภ.พ.36 อย่างเดียว — ไม่เรียก onForeignServiceToggle
+          // เพราะตัวนั้นตั้ง VAT 7% ให้บรรทัดที่เป็น 0 ด้วย (เหมาะกับตอนผู้ใช้
+          // เพิ่งติ๊กเอง ไม่ใช่ตอน hydrate ใบเดิมที่ค่าถูกบันทึกไว้แล้ว)
+          {
+            const fb = document.getElementById('foreignServiceBanner');
+            if (fb) fb.style.display = d.isForeignService ? '' : 'none';
+          }
           // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — hydrate checkbox จาก doc.
           // (doc.documentType เป็น TaxInvoice อยู่แล้ว → combinedRow แสดงจาก
           // onDocTypeChange; แค่ติ๊กกล่องคืน).
@@ -7173,6 +7285,10 @@
             if (!isPurchase) return null;
             const el = document.getElementById('fVatClaimPeriod');
             if (!el || el.disabled) return null;          // ถูกล็อก (มีบรรทัดรายงานแล้ว) = ไม่ส่ง
+            // ช่องนี้ pre-fill เดือนภาษีของเอกสารไว้ให้อ่านออก (ว่าง = ผู้ใช้
+            // เข้าใจผิดว่าไม่ได้เคลม) แต่ค่าที่ "แค่โชว์" ห้ามส่ง — ส่งไปจะตรึง
+            // งวดถาวรทั้งที่ผู้ใช้ไม่ได้สั่ง แล้วใบไม่ขยับตาม tax point อีกเลย
+            if (this.editingId && el.value === (el.dataset.initial || '')) return null;
             return this.editingId ? (el.value || '') : (el.value || null);
           })(),
           hasTaxInvoiceReference: document.getElementById('fDocType').value === 'PaymentVoucher'
@@ -7753,6 +7869,19 @@
               const pp30Period = d.inputVatPp30Month
                 ? `${String(d.inputVatPp30Month).padStart(2,'0')}/${d.inputVatPp30Year + 543}` : null;
               const pp30Filed = d.inputVatPp30ReportStatus === 'Filed' || d.inputVatPp30ReportStatus === 'Submitted';
+              // งวดที่ระบบจะใช้ "โดยปกติ" ถ้าไม่ตรึงงวดเอง — ต้องเป็นฐานเดียวกับ
+              // ที่ GenerateVatReport ใช้คัดเอกสารเข้างวด คือ TaxPointDate ??
+              // DocumentDate (ไม่ใช่ documentDate เฉย ๆ — ใบที่ tax point ต่างเดือน
+              // เช่นจ่ายเงินคนละเดือนกับวันที่ใบ จะโชว์เดือนผิดทันที)
+              const _basis = d.taxPointDate || d.documentDate;
+              const defaultClaimMonth = _basis ? Layout.dateInput(_basis).slice(0, 7) : '';
+              // ช่องต้องโชว์ "งวดที่จะเคลมจริง" เสมอ — ว่างไว้ผู้ใช้อ่านว่า
+              // "ไม่ได้เคลม" (ผู้ใช้ทักมาเอง). ลำดับ: อยู่ในรายงานแล้ว > ตรึงเอง > ค่าปกติ
+              const claimPeriodValue = pp30Period
+                ? `${d.inputVatPp30Year}-${String(d.inputVatPp30Month).padStart(2, '0')}`
+                : d.inputVatBecameClaimableAt
+                ? Layout.dateInput(d.inputVatBecameClaimableAt).slice(0, 7)
+                : defaultClaimMonth;
               const vatState = pp30Period
                 ? (pp30Filed
                     ? `<span style="background:#dcfce7;color:#166534;padding:2px 10px;border-radius:99px;font-weight:700">✓ เคลมแล้ว · ภ.พ.30 งวด ${pp30Period} (ยื่นแล้ว)</span>`
@@ -7775,11 +7904,22 @@
                   </label>`}
                 </div>
                 ${(!vatPendingUndue && !d.inputVatExpiredAt) ? `
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:8px">
                   <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เลขจากกระดาษ"></div>
                   <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
                   <div><div class="text-xs text-gray-500">รหัสสาขา</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" maxlength="5">
                     <div style="font-size:10px;color:#9333ea;margin-top:2px">⚙️ ${d.supplierBranchCode ? 'จากใบนี้' : (d.contact?.branchCode ? 'ดึงจากผู้ติดต่อ' : 'สำนักงานใหญ่')} — แก้เฉพาะถ้าใบกำกับระบุสาขาอื่น</div></div>
+                  <div><div class="text-xs text-gray-500">งวดที่เคลม ภ.พ.30</div>
+                    <input type="month" class="form-input" id="ctiClaimPeriod" ${pp30Filed ? 'disabled' : ''}
+                      data-initial="${claimPeriodValue}"
+                      value="${claimPeriodValue}">
+                    <div style="font-size:10px;color:#9333ea;margin-top:2px">${pp30Filed
+                      ? `🔒 ยื่นแบบงวด ${pp30Period} แล้ว — ย้ายงวดต้องยื่นเพิ่มเติมกับสรรพากร`
+                      : pp30Period
+                      ? `📄 อยู่ในรายงาน (ร่าง) งวด ${pp30Period} — เปลี่ยนเดือนที่นี่ได้เลย ระบบจะติ๊กใบนี้ออกจากงวดเดิมให้`
+                      : d.inputVatBecameClaimableAt
+                      ? '📌 ตรึงงวดนี้ไว้เอง — ลบให้ว่างเพื่อกลับไปใช้เดือนภาษีของเอกสาร'
+                      : '⚙️ เดือนภาษีของเอกสาร (ค่าปกติ) — เลื่อนได้ไม่เกิน 6 เดือน (§82/3)'}</div></div>
                 </div>
                 ${(d.undueInputVatBlockers || []).length ? `
                 <div style="margin-top:8px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#991b1b">
@@ -7788,7 +7928,7 @@
                   ${d.undueInputVatBlockers.some(b => b.includes('ผู้ขาย')) ? `<div style="margin-top:6px">ชื่อ/เลขภาษี/ที่อยู่/สาขา<b>ของผู้ขาย</b> ดึงจากผู้ติดต่อ ไม่ได้กรอกในหน้านี้ → <a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary);font-weight:700">แก้ข้อมูลผู้ติดต่อ</a> (มักขาด "ที่อยู่") แล้วกลับมากด "บันทึกข้อมูลใบกำกับ" อีกครั้ง</div>` : ''}
                 </div>` : ''}
                 <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="Page.completeTaxInvoice('${d.id}')">💾 บันทึกข้อมูลใบกำกับ</button>` : ''}
-                <div class="text-xs text-gray-400" style="margin-top:6px">ชื่อ/ที่อยู่/เลขภาษี/สาขาผู้ขาย ดึงจาก "ผู้ติดต่อ" อัตโนมัติ (ไม่ต้องกรอกซ้ำ) — หน้านี้กรอกเฉพาะเลขที่/วันที่ใบกำกับของผู้ขาย · การเคลม/ไม่เคลมเป็นดุลพินิจผู้บันทึก ระบบสร้าง JE ปรับให้อัตโนมัติ + กันถอนเคลมจากงวดที่ยื่นแล้ว</div>
+                <div class="text-xs text-gray-400" style="margin-top:6px">ชื่อ/ที่อยู่/เลขภาษี/สาขาผู้ขาย ดึงจาก "ผู้ติดต่อ" อัตโนมัติ (ไม่ต้องกรอกซ้ำ) — หน้านี้กรอกเฉพาะเลขที่/วันที่ใบกำกับของผู้ขาย + เลือกงวด ภ.พ.30 ได้เลยไม่ต้องไปติ๊กในรายงาน · การเคลม/ไม่เคลมเป็นดุลพินิจผู้บันทึก ระบบสร้าง JE ปรับให้อัตโนมัติ + กันถอนเคลมจากงวดที่ยื่นแล้ว</div>
               </div>`;
             })() : ''}
             ${(['PaymentVoucher','Expense','PurchaseInvoice'].includes(d.documentType)
@@ -8621,13 +8761,41 @@
           supplierTaxInvoiceDate: new Date(dateRaw).toISOString(),
           supplierBranchCode: branch || null
         };
+        // งวดที่เคลม ภ.พ.30 — ส่งเฉพาะเมื่อผู้ใช้ "เปลี่ยนจริง" เท่านั้น
+        // (disabled = รายงานชนะ แตะไม่ได้ · ช่องไม่ render บนใบพัก 11640 = ไม่ส่ง)
+        //
+        // ⚠️ สำคัญ: ช่องนี้ pre-fill เดือนภาษีของเอกสารไว้ให้อ่านออกว่าจะเคลม
+        // งวดไหน แต่ **ห้ามส่งค่าที่แค่โชว์** — ส่งไป = ตรึงงวดถาวรลง
+        // InputVatBecameClaimableAt ทั้งที่ผู้ใช้ไม่ได้สั่ง แล้วใบจะไม่ขยับตาม
+        // tax point อีกเลย (เช่นแก้วันจ่ายทีหลัง งวดควรขยับตาม). เทียบกับค่าที่
+        // เรนเดอร์ไว้ (data-initial) จึงแยก "ดูเฉย ๆ" ออกจาก "ตั้งใจย้ายงวด" ได้
+        const claimPeriodEl = document.getElementById('ctiClaimPeriod');
+        if (claimPeriodEl && !claimPeriodEl.disabled
+            && claimPeriodEl.value !== (claimPeriodEl.dataset.initial || ''))
+          body.inputVatClaimPeriod = claimPeriodEl.value;
         try {
           const res = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`, body);
           const d = res?.data || res;
-          // toast ซื่อสัตย์: เช็คจริงว่าย้ายเข้า 11610 แล้วหรือยัง (inputVatBecameClaimableAt)
-          if (d && d.inputVatBecameClaimableAt) {
+          // งวดที่จะโชว์ใน toast — ตรึงเอง (BecameClaimableAt) ชนะ ไม่งั้นใช้
+          // ฐานเดียวกับรายงาน (TaxPointDate ?? DocumentDate) เพื่อให้บอกงวดจริง
+          // ได้เสมอ ไม่ใช่ "ตามเดือนเอกสาร" ลอย ๆ ที่ผู้ใช้ต้องไปเปิดดูเอง
+          const periodSrc = d?.inputVatBecameClaimableAt || d?.taxPointDate || d?.documentDate;
+          const periodTxt = periodSrc
+            ? (() => { const p = new Date(periodSrc);
+                return `${String(p.getMonth() + 1).padStart(2, '0')}/${p.getFullYear() + 543}`; })()
+            : null;
+          // toast ซื่อสัตย์ แยกตามเส้นทางจริง:
+          // ใบพัก 11640 → เช็คว่าย้ายเข้า 11610 สำเร็จไหม · ใบปกติ (ไม่เคยพัก)
+          // → แค่บันทึก metadata + งวด ไม่มี JE ย้าย (เดิมใบปกติโดนข้อความ
+          // "ยังเคลมไม่ได้" ทั้งที่เคลมได้อยู่แล้ว — ข้อความเขียนไว้สำหรับ undue)
+          if (d && !d.inputVatPostedAsUndue) {
             Layout.closeModal('detailModal');
-            Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 (11610) แล้ว', 'success');
+            Layout.toast('บันทึกข้อมูลใบกำกับแล้ว'
+              + (periodTxt ? ` — เคลม ภ.พ.30 งวด ${periodTxt}` : ''), 'success');
+          } else if (d && d.inputVatBecameClaimableAt) {
+            Layout.closeModal('detailModal');
+            Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 (11610)'
+              + (periodTxt ? ` เคลมงวด ${periodTxt}` : '') + ' แล้ว', 'success');
           } else {
             // ยังย้ายไม่ได้ → บอกเหตุผลจริงจาก backend (ไม่เดาว่าเลขภาษีผิดเสมอ)
             const why = (d?.undueInputVatBlockers || []).map(b => '• ' + b).join('\n');

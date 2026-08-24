@@ -63,7 +63,11 @@
   <div style="display:flex;gap:10px;align-items:center">
     <select id="companySel" onchange="App.switchCompany()"></select>
     <a href="/connect/workbench.html" class="btn btn-primary">🧰 โต๊ะทำงาน</a>
-    <a href="/pages/dashboard.html" class="btn btn-ghost">กลับระบบหลัก</a>
+    <!-- ปลายทางแดชบอร์ดเลือกตาม uiMode ตอนคลิก (หน้านี้ไม่ได้โหลด layout.js
+         จึงคำนวณเองแบบเดียวกับ Layout.dashboardUrl) — เดิม href ตรงไป
+         '/pages/dashboard.html' ที่ไม่มีอยู่จริง ⇒ ปุ่มนี้ตายมาตลอด -->
+    <a href="/simple.html" class="btn btn-ghost"
+       onclick="this.href=(localStorage.getItem('uiMode')||'simple')==='advanced'?'/app.html':'/simple.html'">กลับระบบหลัก</a>
   </div>
 </div>
 

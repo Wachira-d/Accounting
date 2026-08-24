@@ -825,7 +825,13 @@ const API = {
       ocrScan: (fileId) => API.post(`${base}/ocr/scan/${fileId}`),
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),
-      ocrCreateDocument: (id, targetType) => API.post(`${base}/ocr/${id}/create-document${targetType ? `?targetType=${encodeURIComponent(targetType)}` : ''}`),
+      ocrCreateDocument: (id, targetType, approve = false) => {
+        const q = new URLSearchParams();
+        if (targetType) q.set('targetType', targetType);
+        if (approve) q.set('approve', 'true');
+        const qs = q.toString();
+        return API.post(`${base}/ocr/${id}/create-document${qs ? '?' + qs : ''}`);
+      },
       // ผูกไฟล์ scan เข้ากับเอกสารที่สร้างผ่าน UI handoff (documents.html save)
       ocrLinkScanToDocument: (scanId, documentId) => API.post(`${base}/ocr/${scanId}/link-document/${documentId}`, {}),
       ocrStockPreview: (id) => API.get(`${base}/ocr/${id}/stock-preview`),

@@ -187,7 +187,9 @@
         { key: 'chartOfAccounts', label: 'นำเข้าผังบัญชี', href: '/pages/accounts.html' },
         { key: 'firstContact', label: 'เพิ่มลูกค้า/vendor คนแรก', href: '/pages/contacts.html' },
         { key: 'bankAccount', label: 'เชื่อมบัญชีธนาคาร', href: '/pages/bank.html' },
-        { key: 'documentTemplate', label: 'ตั้งค่าเทมเพลตเอกสาร (โลโก้ + สี)', href: '/pages/document-template.html' },
+        // ไฟล์จริงเป็นพหูพจน์ document-templateS.html — เดิมสะกดเอกพจน์
+        // ⇒ ข้อนี้ในเช็กลิสต์เริ่มต้นใช้งานคลิกแล้วตาย (จับด้วย tools/dead_link_check.py)
+        { key: 'documentTemplate', label: 'ตั้งค่าเทมเพลตเอกสาร (โลโก้ + สี)', href: '/pages/document-templates.html' },
         { key: 'firstEmployee', label: 'เพิ่มพนักงานคนแรก (ถ้ามี payroll)', href: '/pages/payroll.html' },
         { key: 'firstDocument', label: 'สร้างเอกสารใบแรก', href: '/pages/documents.html' },
       ];

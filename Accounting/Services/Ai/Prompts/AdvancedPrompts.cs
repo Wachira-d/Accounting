@@ -37,6 +37,16 @@ public static class OcrReviewPrompt
    (don't shift +/- 1 day for any timezone reason).
 6. WHT: only flag when explicit on the document, OR when the line type
    reasonably requires it per ประมวลรัษฎากร §50/52.
+7. document_number = the number of THIS document, EXACTLY ONE number, and it
+   must appear VERBATIM on the paper. NEVER concatenate or merge multiple
+   numbers. Utility/government bills print several numbers on one page —
+   ""เลขที่ (No.)"" is the tax-invoice/receipt number (use THIS one);
+   ""เลขที่ใบแจ้งหนี้ (Invoice No.)"", ""เลขที่สัญญา"", ""หมายเลขผู้ใช้"",
+   ""รหัสเครื่องวัด"" are reference numbers, NOT the document number.
+8. line_items[].unit = the unit as printed. If the paper prints no unit,
+   infer from the line type: electricity=""หน่วย"" (kWh), water=""ลบ.ม."",
+   fuel=""ลิตร"", monthly rent/service=""เดือน"", contracted work=""งาน"",
+   goods=""ชิ้น"". NEVER default utilities/services to ""ชิ้น"".
 
 Respond ONLY as JSON:
 {
@@ -59,7 +69,7 @@ Respond ONLY as JSON:
     ""payment_terms_days"": <int or null>
   },
   ""line_items"": [
-    { ""description"": ""..."", ""quantity"": <decimal>, ""unit_price"": <decimal>, ""amount"": <decimal>, ""suggested_account_code"": ""..."", ""is_fixed_asset_candidate"": <bool>, ""is_inventory_candidate"": <bool> }
+    { ""description"": ""..."", ""quantity"": <decimal>, ""unit"": ""..."", ""unit_price"": <decimal>, ""amount"": <decimal>, ""suggested_account_code"": ""..."", ""is_fixed_asset_candidate"": <bool>, ""is_inventory_candidate"": <bool> }
   ],
   ""alternatives"": [""<other_doc_type>""],
   ""risks"": [""<short risk>""],

@@ -458,6 +458,7 @@
           <!-- กลุ่ม "สร้างเอกสาร" — ทางหลัก (primary) — เน้น "เปิดในฟอร์ม" เป็น default
                เพราะกฎเหล็ก #3 OCR ต้องเติมครบ ผู้ใช้แค่ "ยืนยัน" ในฟอร์ม -->
           <button class="btn btn-secondary" id="reviewCreateBtn" onclick="Page.createDocFromReview()" title="สร้างเอกสาร Draft ทันทีโดยไม่เปิดฟอร์ม — ระบบเรียนรู้จากการแก้ไขในฟอร์มได้น้อยกว่า">สร้างทันที</button>
+          <button class="btn btn-secondary" id="reviewCreateApproveBtn" onclick="Page.createDocFromReview(true)" title="สร้างแล้วอนุมัติลงบัญชีทันที (ข้าม Draft) — ใช้เมื่อตรวจข้อมูลใน review ครบแล้ว · ถ้าอนุมัติไม่ผ่าน (ข้อมูลไม่ครบตามกฎหมาย) จะได้ใบ Draft พร้อมเหตุผล">⚡ สร้าง + อนุมัติ</button>
           <button class="btn btn-primary" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก (แนะนำ)">📝 ยืนยันในฟอร์ม</button>
         </div>
       </div>
@@ -1324,7 +1325,10 @@
           actionsHtml += `<button class="btn btn-sm btn-primary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ &amp; สร้างเอกสาร</button>`;
         }
         if (scan.createdDocumentId) {
-          actionsHtml += `<a href="/pages/documents.html?id=${scan.createdDocumentId}" class="btn btn-sm btn-success">สร้างแล้ว &rarr;</a>`;
+          // ?openDoc= เปิด detail ของใบนั้นเลย — เดิมใช้ ?id= ซึ่ง documents.html
+          // ไม่เคยอ่าน param นี้เลย ⇒ ปุ่มพาไปหน้ารวมเอกสารเปล่า ๆ (ผู้ใช้ทัก:
+          // "กดสร้างแล้ว ไม่เด้งแสดงเอกสารที่ถูกสร้าง")
+          actionsHtml += `<a href="/pages/documents.html?openDoc=${scan.createdDocumentId}" class="btn btn-sm btn-success">สร้างแล้ว &rarr;</a>`;
         }
         // 📦 Quick action — promote stock-import directly on the card so
         // users don't have to open the review modal to find it. Only
@@ -1849,12 +1853,27 @@
           // → แสดงเป็น banner แดงเด่น เตือนผู้ใช้ก่อนสร้างเอกสาร
           let vatClaimBanner = '';
           {
-            const m = (scan.processingNotes || '').match(/\[VAT-CLAIM\]\s*([^\n]+)/);
-            if (m) {
+            // ทุกบรรทัด [VAT-CLAIM] (อาจมีทั้งเหตุ "รูปแบบใบ" §82/5(1)(2) และ
+            // เหตุ "ชนิดรายจ่าย" §82/5(4)(6) พร้อมกัน — เดิม match ตัวแรกตัวเดียว
+            // ผู้ใช้เห็นเหตุผลไม่ครบ)
+            const blocks = [...(scan.processingNotes || '').matchAll(/\[VAT-CLAIM\]\s*([^\n]+)/g)]
+              .map(m => m[1]);
+            if (blocks.length) {
               vatClaimBanner = `
                 <div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;padding:12px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;color:#991b1b;line-height:1.7">
-                  <div style="font-weight:700;margin-bottom:4px">🚫 ภาษีซื้อเอกสารนี้เคลมไม่ได้</div>
-                  ${Layout.esc(m[1])}
+                  <div style="font-weight:700;margin-bottom:4px">🚫 ภาษีซื้อเอกสารนี้เคลมไม่ได้ — ระบบตั้ง "ไม่เคลม" ไว้ให้</div>
+                  ${blocks.map(b => `<div style="margin-top:3px">• ${Layout.esc(b)}</div>`).join('')}
+                </div>`;
+            }
+            // [VAT-NOTE] = เตือนแต่ยังเคลมได้ (เช่นค่าน้ำมันที่ระบุชนิดรถที่
+            // เคลมได้ไว้แล้ว) — สีเหลือง ไม่ใช่แดง เพราะไม่ได้ปิดการเคลม
+            const notes = [...(scan.processingNotes || '').matchAll(/\[VAT-NOTE\]\s*([^\n]+)/g)]
+              .map(m => m[1]);
+            if (notes.length) {
+              vatClaimBanner += `
+                <div style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;padding:12px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;color:#92400e;line-height:1.7">
+                  <div style="font-weight:700;margin-bottom:4px">⚠️ ตรวจสิทธิ์เคลมภาษีซื้อก่อนยืนยัน</div>
+                  ${notes.map(b => `<div style="margin-top:3px">• ${Layout.esc(b)}</div>`).join('')}
                 </div>`;
             }
           }
@@ -2730,14 +2749,15 @@
         }
       },
 
-      async createDocFromReview() {
+      async createDocFromReview(approve = false) {
         if (!this._reviewScan) return;
         const api = Layout.api();
         if (!api) return;
 
-        const btn = document.getElementById('reviewCreateBtn');
+        const btn = document.getElementById(approve ? 'reviewCreateApproveBtn' : 'reviewCreateBtn');
+        const originalLabel = btn.textContent;
         btn.disabled = true;
-        btn.textContent = 'กำลังสร้าง...';
+        btn.textContent = approve ? 'กำลังสร้าง + อนุมัติ...' : 'กำลังสร้าง...';
 
         try {
           // ⭐ บันทึกค่าที่ผู้ใช้แก้/เลือกใน review (ผังบัญชี, เลขใบกำกับ, วันที่,
@@ -2747,15 +2767,31 @@
           // Pass the live target-type pick so the chosen เอกสารที่จะสร้าง
           // takes effect without needing a separate "บันทึก" first.
           const target = document.getElementById('revTargetDocType')?.value || null;
-          await api.ocrCreateDocument(this._reviewScan.id, target);
-          Layout.toast('สร้างเอกสารสำเร็จ');
-          btn.textContent = 'สร้างแล้ว';
-          btn.className = 'btn btn-success';
-          this.loadScans();
+          const res = await api.ocrCreateDocument(this._reviewScan.id, target, approve);
+          const r = res?.data || res;
+          // เดิมสร้างเสร็จแล้ว "ค้างที่ modal เฉย ๆ" (ผู้ใช้ทัก) — ปิด modal
+          // กลับหน้ารายการสแกนให้ทำใบถัดไปต่อได้ทันที (bulk workflow) ·
+          // การ์ดใบนี้เปลี่ยนเป็นปุ่ม "สร้างแล้ว →" เปิดใบได้ทุกเมื่อ
+          Layout.closeModal('reviewModal');
+          await this.loadScans();
+          if (approve && r?.createdDocumentId) {
+            // สร้าง+อนุมัติ = ตั้งใจจบใบนี้เลย → พาไปดูใบที่อนุมัติแล้ว
+            // (แนบ warning จาก approve ไว้ใน toast ก่อนออกจากหน้า ถ้ามี)
+            if (r.processingNotes && /\[APPROVE-FAIL\]/.test(r.processingNotes)) {
+              const why = (r.processingNotes.split('[APPROVE-FAIL]')[1] || '').trim();
+              Layout.toast('สร้างเอกสารแล้ว แต่อนุมัติไม่ผ่าน:\n' + why
+                + '\n\nเปิดใบเพื่อแก้แล้วกดอนุมัติเองได้', 'warning', 9000);
+            } else {
+              Layout.toast('สร้าง + อนุมัติเอกสารแล้ว');
+            }
+            setTimeout(() => { location.href = `/pages/documents.html?openDoc=${r.createdDocumentId}`; }, 600);
+          } else {
+            Layout.toast('สร้างเอกสาร (Draft) สำเร็จ — กด "สร้างแล้ว →" บนการ์ดเพื่อเปิดใบ');
+          }
         } catch (err) {
           Layout.toast('สร้างเอกสารไม่สำเร็จ: ' + err.message, 'error');
           btn.disabled = false;
-          btn.textContent = 'สร้างเอกสารทันที';
+          btn.textContent = originalLabel;
         }
       },
 
@@ -3481,14 +3517,49 @@
         // Extract line items the OCR pulled out. ProductCode left blank
         // here — the typeahead on the documents page will let the user
         // attach a product to each line interactively.
-        let lines = (scan.extractedItems || []).map(it => ({
-          description: it.description || '',
-          quantity: it.quantity || 1,
-          unitPrice: it.unitPrice || (it.amount && it.quantity ? it.amount / it.quantity : 0),
-          discountPercent: 0,
-          vatRate: scan.extractedVatAmount && scan.extractedSubTotal ? 7 : 0,
-          withholdingTaxRate: scan.hasWht ? (scan.whtRate || 0) : 0,
-        }));
+        let lines = (scan.extractedItems || []).map(it => {
+          const qty = Number(it.quantity) || 1;
+          const amt = Number(it.amount) || 0;
+          let unitPrice = Number(it.unitPrice) || 0;
+          // ── ด่านคณิตบรรทัด (บั๊กจริง — บิลค่าไฟ 59 ล้าน) ──
+          // OCR อ่าน "ยอดรวมบรรทัด" มาเป็นราคา/หน่วย: qty=3,611 (kWh) ×
+          // unitPrice=16,351.48 (ที่จริงคือยอดทั้งบิล) = 59,046,338.88.
+          // จับได้เพราะ unitPrice ≈ amount ทั้งที่ qty > 1 — ราคาต่อหน่วยจริง
+          // ต้องเป็น amount/qty. **หารหาราคาต่อหน่วย ไม่ใช่ตั้ง qty=1**:
+          // จำนวน 3,611 หน่วยเป็นข้อมูลจริงจากมิเตอร์ (ตรวจย้อน/เทียบเดือน
+          // ได้) ทิ้งไม่ได้ — ตามหลักบัญชี ราคาทุนต่อหน่วยคำนวณจากยอดจ่าย
+          // จริงหารปริมาณ ไม่ใช่บิดปริมาณให้เข้ากับราคา
+          if (qty > 1 && amt > 0 && unitPrice > 0
+              && Math.abs(unitPrice - amt) <= Math.max(1, amt * 0.02)
+              && Math.abs(unitPrice * qty - amt) > Math.max(1, amt * 0.02)) {
+            unitPrice = amt / qty;
+          }
+          if (!unitPrice && amt && qty) unitPrice = amt / qty;
+          // ── ส่วนลดรายบรรทัดจากกระดาษ (บั๊กจริง — ใบ Scommerce ส่วนลดซ้อน) ──
+          // e-invoice หลายเจ้าพิมพ์ [ราคาเต็ม | ส่วนลด | ยอดสุทธิ] ต่อบรรทัด:
+          // qty×unitPrice > amount = บรรทัดนั้นมีส่วนลดจริง. เดิมทิ้งส่วนต่างนี้
+          // เงียบ ๆ (discountPercent:0 เสมอ) ⇒ ยอดบรรทัดในฟอร์มสูงเกินจริง แล้ว
+          // ตัว reconcile ก็เพี้ยนต่อทั้งแถว. เก็บเป็นส่วนลดยอดเงิน (โหมด ฿)
+          // ให้ตรงกับที่กระดาษพิมพ์
+          let lineDiscount = 0;
+          if (amt > 0 && unitPrice > 0) {
+            const grossLine = Math.round(qty * unitPrice * 100) / 100;
+            const diff = Math.round((grossLine - amt) * 100) / 100;
+            if (diff > 0.01 && diff < grossLine) lineDiscount = diff;
+          }
+          return {
+            description: it.description || '',
+            quantity: qty,
+            // หน่วยจากสแกน (เดิม field นี้ถูกทิ้งตรงนี้ → ฟอร์ม default "ชิ้น"
+            // เสมอ ทั้งที่ backend อนุมานให้แล้ว เช่นค่าไฟ = "หน่วย")
+            unit: it.unit || null,
+            unitPrice,
+            discountPercent: 0,
+            discountAmount: lineDiscount,
+            vatRate: scan.extractedVatAmount && scan.extractedSubTotal ? 7 : 0,
+            withholdingTaxRate: scan.hasWht ? (scan.whtRate || 0) : 0,
+          };
+        });
         // ⭐ ยุบ VAT-split phantom lines ที่ external OCR แตกมา ("...(ส่วนมีภาษี)"
         // 4,691.57 + "...(ส่วนไม่มีภาษี)" 0.02). clean ที่นี่ → user เห็น 1 บรรทัด
         // ในฟอร์มทันที (frontend, ไม่ต้อง rebuild backend). backend
@@ -3508,53 +3579,65 @@
         const hdrSub   = Number(scan.extractedSubTotal) || 0;
         const hdrTotal = Number(scan.extractedTotalAmount) || 0;
         const hdrVat   = Number(scan.extractedVatAmount) || 0;
-        const _linesGross = lines.reduce((s, l) =>
-          s + (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1), 0);
+        // ยอดบรรทัดสุทธิ = qty×unitPrice − ส่วนลดรายบรรทัด (ตรงกับที่ฟอร์มจะ
+        // คำนวณ) — เดิมใช้ gross ล้วนไม่หักส่วนลด ทำให้ใบที่มีส่วนลดรายบรรทัด
+        // reconcile เพี้ยนทั้งแถว
+        const _lineNet = (l) => Math.round(((Number(l.unitPrice) || 0) * (Number(l.quantity) || 1)
+          - (Number(l.discountAmount) || 0)) * 100) / 100;
+        const _linesNet = Math.round(lines.reduce((s, l) => s + _lineNet(l), 0) * 100) / 100;
         const TOL = 1;   // บาท
         let pricesIncludeVat = false;
-        if (hdrSub > 0 && hdrTotal > 0 && _linesGross > 0
-            && _linesGross > hdrSub + TOL && _linesGross <= hdrTotal + TOL) {
+        if (hdrSub > 0 && hdrTotal > 0 && _linesNet > 0
+            && _linesNet > hdrSub + TOL && _linesNet <= hdrTotal + TOL) {
           // Case A: ราคารวม VAT — เคส OfficeMate/PEAK ที่ Unit Price = Incl.VAT
           pricesIncludeVat = true;
         }
 
-        // 🔧 Reconcile: เคยใส่ "ส่วนลด" อัตโนมัติเมื่อ linesGross > subtotal
-        // เป็นการเดาที่เสี่ยง (เคสจริงเคยตีค่าขนส่งเป็นส่วนลด ผิดทั้งใบ).
-        // ตอนนี้แบ่ง 4 case ชัด ไม่ใส่ discount มั่วซั่ว:
-        if (lines.length > 0 && hdrSub > 0 && hdrTotal > 0) {
+        // 🔧 Reconcile — **ยอดรวมทั้งสิ้น (hdrTotal) เป็นหลักเสมอ**: เป็นตัวเลข
+        // ที่จ่ายจริง/ตรวจกับกระดาษง่ายสุด ทุกอย่างต้องไล่กลับมาลงตัวที่ยอดนี้.
+        //
+        // บั๊กจริง (ใบ Scommerce ส่วนลดซ้อน): เวอร์ชันเดิมเทียบ "ยอดบรรทัด
+        // ex-VAT" กับ "ยอดรวม incl-VAT" ตรง ๆ แล้วยัดส่วนต่างเป็นส่วนลดรายบรรทัด
+        // ⇒ บรรทัดถูกกดลงจนฐานภาษีเท่ากับยอดรวมทั้งบิล (7,371.01) แล้วฟอร์ม
+        // บวก VAT ซ้ำอีกชั้นเป็น 7,853.22 — เทียบข้ามฐานราคาไม่ได้เด็ดขาด.
+        //
+        // ฐานที่ถูก: ฝั่งบรรทัด (ex-VAT) ต้องเทียบกับ "ฐานภาษี" = hdrTotal −
+        // hdrVat. ส่วนเกิน = ส่วนลดท้ายบิล (ใบอย่าง Scommerce พิมพ์เป็น
+        // "ส่วนลด/Discount" ระดับใบจริง ๆ — ไม่ใช่ของบรรทัดไหน จึงห้ามกระจาย
+        // ใส่บรรทัด: ราคาต่อหน่วยจะเพี้ยนและระบบเรียนรู้ราคาผิด). ส่วนขาด =
+        // มีบรรทัดที่ OCR ไม่อ่าน — เพิ่มบรรทัดให้เห็นชัดว่าต้องตรวจ
+        let billDiscountAmount = 0;
+        if (lines.length > 0 && hdrTotal > 0) {
           if (pricesIncludeVat) {
-            // Case A: ราคารวม VAT. ถ้า linesGross < total → มี line ขาด (เช่น
-            // ค่าขนส่ง 50). เพิ่ม line "OCR ไม่อ่าน — ตรวจสอบ" ยอด = ส่วนต่าง
-            // (รวม VAT แล้ว เพราะ pricesIncludeVat=true) → user เห็นบรรทัดชัด
-            const missing = Math.round((hdrTotal - _linesGross) * 100) / 100;
-            if (missing > TOL) {
-              // อัตรา VAT จาก header (ส่วนใหญ่ 7 แต่เผื่อใบที่ rate ต่าง)
+            // Case A: บรรทัดรวม VAT แล้ว → เทียบกับยอดรวมตรง ๆ ฐานเดียวกัน
+            const diff = Math.round((_linesNet - hdrTotal) * 100) / 100;
+            if (diff < -TOL) {
               const inferredRate = hdrSub > 0 ? Math.round((hdrVat / hdrSub) * 1000) / 10 : 7;
               lines.push({
                 description: 'ค่าขนส่ง/บริการอื่น (ตรวจสอบใบจริง)',
-                quantity: 1,
-                unitPrice: missing,
-                discountPercent: 0,
-                vatRate: inferredRate || 7,
-                withholdingTaxRate: 0,
+                quantity: 1, unitPrice: -diff, discountPercent: 0, discountAmount: 0,
+                vatRate: inferredRate || 7, withholdingTaxRate: 0,
+              });
+            } else if (diff > TOL) {
+              billDiscountAmount = diff;   // ส่วนลดท้ายบิล (ฐานรวม VAT ตามโหมดใบ)
+            }
+          } else {
+            // บรรทัด ex-VAT → ฐานเทียบ = ยอดรวม − VAT (ใบไม่มี VAT: hdrVat=0
+            // ฐานเทียบ = ยอดรวมพอดี). ใช้ hdrSub ยันเมื่อไม่มี VAT header
+            const expectedBase = Math.round((hdrTotal - hdrVat) * 100) / 100;
+            const diff = Math.round((_linesNet - expectedBase) * 100) / 100;
+            if (diff > TOL) {
+              billDiscountAmount = diff;   // เช่น Scommerce: 7,579.44 − 6,888.79 = 690.65
+            } else if (diff < -TOL) {
+              const inferredRate = hdrVat > 0 ? (Math.round((hdrVat / expectedBase) * 1000) / 10 || 7) : 0;
+              lines.push({
+                description: 'ค่าขนส่ง/บริการอื่น (ตรวจสอบใบจริง)',
+                quantity: 1, unitPrice: -diff, discountPercent: 0, discountAmount: 0,
+                vatRate: inferredRate, withholdingTaxRate: 0,
               });
             }
+            // |diff| ≤ TOL = ลงตัวแล้ว ไม่แตะอะไร
           }
-          else if (_linesGross > hdrTotal + TOL) {
-            // Case C: linesGross เกิน total = มีส่วนลดจริง (เช่น line 10,000
-            // แต่ total 9,940 = ส่วนลด 60). ใส่ discountAmount กระจายตามสัดส่วน.
-            const totalDisc = Math.round((_linesGross - hdrTotal) * 100) / 100;
-            let assigned = 0;
-            lines.forEach((l, i) => {
-              const g = (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1);
-              const d = i === lines.length - 1
-                ? Math.round((totalDisc - assigned) * 100) / 100
-                : Math.round((totalDisc * g / _linesGross) * 100) / 100;
-              l.discountAmount = d;
-              assigned += d;
-            });
-          }
-          // Case B/D: ไม่ทำอะไร (B = match แล้ว, D = OCR ขาด ผู้ใช้แก้เอง)
         }
 
         // Derive a due date from the credit terms the OCR read ("Net 30" →
@@ -3637,6 +3720,9 @@
           // ไฟล์ต้นทาง (ตรงกับ path auto-create ฝั่ง backend)
           notes: scan.originalFileName ? `สร้างจากการสแกน OCR: ${scan.originalFileName}` : null,
           lines,
+          // ส่วนลดระดับใบ (จาก reconcile ยึดยอดรวมทั้งสิ้น) → ช่อง "ส่วนลด
+          // ท้ายบิล" ในฟอร์ม — ห้ามกระจายใส่บรรทัด (ดูคอมเมนต์ reconcile)
+          billDiscountAmount,
           currency,
           pricesIncludeVat,
           headerVatRate,
@@ -3666,8 +3752,18 @@
           // §82/5 — คำเตือนเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/ใบเสร็จ) → ฟอร์ม
           // แสดง banner + ไม่เปิดเคลมให้อัตโนมัติ
           inputVatClaimWarning: (() => {
-            const m = (scan.processingNotes || '').match(/\[VAT-CLAIM\]\s*([^\n]+)/);
-            return m ? m[1] : null;
+            // รวมทุกเหตุผล (รูปแบบใบ §82/5(1)(2) + ชนิดรายจ่าย §82/5(4)(6))
+            // เดิมเอาตัวแรกตัวเดียว → ฟอร์มบอกเหตุไม่ครบ
+            const all = [...(scan.processingNotes || '').matchAll(/\[VAT-CLAIM\]\s*([^\n]+)/g)]
+              .map(m => m[1]);
+            return all.length ? all.join(' · ') : null;
+          })(),
+          // เตือนแต่ยังเคลมได้ (ค่าน้ำมันที่ระบุชนิดรถเคลมได้) — ฟอร์มโชว์
+          // แถบเหลือง ไม่ปิดการเคลม
+          inputVatClaimNote: (() => {
+            const all = [...(scan.processingNotes || '').matchAll(/\[VAT-NOTE\]\s*([^\n]+)/g)]
+              .map(m => m[1]);
+            return all.length ? all.join(' · ') : null;
           })(),
           createdAt: Date.now(),
         };

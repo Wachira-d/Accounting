@@ -18,8 +18,12 @@ public class OcrController : ControllerBase
     private readonly IOcrService _service;
     private readonly IOcrQuotaService _quota;
     private readonly AccountingDbContext _db;
-    public OcrController(IOcrService service, IOcrQuotaService quota, AccountingDbContext db)
-    { _service = service; _quota = quota; _db = db; }
+    // สำหรับ "สร้าง + อนุมัติ" — อนุมัติที่ controller ไม่ฉีดเข้า OcrService
+    // (กันวงกลม DI + OcrService ไม่ควรรู้จัก approve pipeline ทั้งชุด)
+    private readonly IDocumentService _documentService;
+    public OcrController(IOcrService service, IOcrQuotaService quota, AccountingDbContext db,
+        IDocumentService documentService)
+    { _service = service; _quota = quota; _db = db; _documentService = documentService; }
 
     /// <summary>Resolve a REAL user id to stamp on uploads. JWT/user-key auth
     /// gives a genuine user. Integration (int_) key auth sets NameIdentifier to
@@ -249,13 +253,38 @@ public class OcrController : ControllerBase
 
     [HttpPost("{scanId:guid}/create-document")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(
-        Guid companyId, Guid scanId, [FromQuery] string? targetType = null)
-        => Ok(new ApiResponse<OcrResultResponse>(true,
-            // Pass the user GUID (not Identity.Name, which is the email) so the
-            // created document's CreatedBy resolves to a real user → its
-            // signature prints. The service still owner-falls-back if empty.
-            await _service.CreateDocumentFromScanAsync(companyId, scanId,
-                JwtHelper.GetUserIdFromClaims(User).ToString(), targetType)));
+        Guid companyId, Guid scanId, [FromQuery] string? targetType = null,
+        [FromQuery] bool approve = false)
+    {
+        // Pass the user GUID (not Identity.Name, which is the email) so the
+        // created document's CreatedBy resolves to a real user → its
+        // signature prints. The service still owner-falls-back if empty.
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _service.CreateDocumentFromScanAsync(companyId, scanId, userId, targetType);
+
+        // "สร้าง + อนุมัติ" — อนุมัติผ่าน pipeline ปกติเต็มขั้น (ด่าน §86/4,
+        // JE, stock, เลขเอกสารจริง). อนุมัติไม่ผ่าน ≠ ล้มเหลวทั้งก้อน:
+        // ใบ Draft ถูกสร้างสำเร็จแล้ว จึงตอบ 200 พร้อมเหตุผลใน ProcessingNotes
+        // ให้ผู้ใช้เปิดใบไปแก้แล้วกดอนุมัติเอง (ห้าม throw ทิ้ง — เดี๋ยวผู้ใช้
+        // เข้าใจว่าไม่มีใบเกิดขึ้นแล้วสแกนซ้ำ = ใบซ้ำ)
+        if (approve && result.CreatedDocumentId.HasValue)
+        {
+            try
+            {
+                await _documentService.ApproveDocumentAsync(
+                    companyId, result.CreatedDocumentId.Value, userId);
+            }
+            catch (Exception ex)
+            {
+                result = result with
+                {
+                    ProcessingNotes = (result.ProcessingNotes ?? "")
+                        + "\n[APPROVE-FAIL] " + ex.Message,
+                };
+            }
+        }
+        return Ok(new ApiResponse<OcrResultResponse>(true, result));
+    }
 
     /// <summary>Rebuild an OCR-created document's lines from the original scan
     /// when it was created empty. Looked up by documentId (the document edit
