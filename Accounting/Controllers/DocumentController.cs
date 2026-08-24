@@ -23,13 +23,15 @@ public class DocumentController : ControllerBase
     private readonly IPermissionService _permissions;
 
     public DocumentController(IDocumentService documentService, IDocumentEmailService docEmailService,
-        AccountingDbContext db, IPermissionService permissions)
+        AccountingDbContext db, IPermissionService permissions, ITaxService taxService)
     {
         _documentService = documentService;
         _docEmailService = docEmailService;
         _db = db;
         _permissions = permissions;
+        _taxService = taxService;
     }
+    private readonly ITaxService _taxService;
 
     private async Task<DocumentType?> GetDocumentTypeAsync(Guid companyId, Guid documentId) =>
         await _db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId)
@@ -307,7 +309,11 @@ public class DocumentController : ControllerBase
                 $"ไม่มีสิทธิ์แก้ไขเอกสาร {docType} (ต้องการ Document.Purchase.Create)");
         var result = await _documentService.SetInputVatClaimPeriodAsync(
             companyId, documentId, request.Period, userIdGuid.ToString());
-        return Ok(new ApiResponse<DocumentResponse>(true, result, "ตั้งงวดเคลมภาษีซื้อแล้ว"));
+        // sync รายงานร่างของงวดใหม่ทันที — ตั้งเดือนเคลมแล้วต้องเห็นในรายงานเลย
+        // โดยไม่ต้อง "สร้างใหม่" (ซึ่งล้างการติ๊กของบรรทัดอื่นทั้งงวด)
+        var pullNote = await _taxService.TryPullIntoDraftReportAsync(companyId, documentId);
+        return Ok(new ApiResponse<DocumentResponse>(true, result,
+            $"ตั้งงวดเคลมภาษีซื้อแล้ว — {pullNote}"));
     }
 
     /// <summary>ถาม AI ให้แนะนำผังบัญชี GL ของทุกบรรทัด PV — student-first ผ่าน

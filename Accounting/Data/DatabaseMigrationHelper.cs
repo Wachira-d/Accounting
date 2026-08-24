@@ -4583,6 +4583,32 @@ public static class DatabaseMigrationHelper
             // ของภาษีซื้อ self-assess) stamp ตอนกด "รับรู้ภาษีซื้อ"
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Pp36RdReceiptNumber" varchar(50) NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Pp36RdReceiptDate" timestamptz NULL;""",
+            // Backfill: ใบสำคัญจ่าย ภ.พ.36 ที่ "รับรู้ภาษีซื้อ" ไปแล้วก่อนมีการแก้
+            // ครั้งนี้ ติดค้างมองไม่เห็นใน ภ.พ.30/รายการดึงเอกสาร เพราะทั้งสองทาง
+            // รับ PV เข้าฝั่งภาษีซื้อเฉพาะที่ HasTaxInvoiceReference=true ซึ่ง
+            // recognition เดิมไม่เคยตั้ง (ใบเสร็จ RD = ใบกำกับ §86/14 → สิทธิ์
+            // สมบูรณ์แล้ว). idempotent — รันซ้ำได้ ไม่แตะใบที่ตั้งไว้แล้ว
+            """UPDATE "Documents" SET "HasTaxInvoiceReference" = true
+               WHERE "IsForeignService" = true
+                 AND "DocumentType" = 13
+                 AND "InputVatBecameClaimableAt" IS NOT NULL
+                 AND "HasTaxInvoiceReference" = false;""",
+            // Backfill เลข/วันที่ใบเสร็จ RD ให้ใบที่รับรู้ก่อนมี field นี้ — ดึงจาก
+            // เลขรับ (FilingNumber) ของการนำส่ง ภ.พ.36 งวดเดียวกัน (เดือนจ่าย)
+            // idempotent: เฉพาะใบที่ยังไม่มีเลข + remittance มีเลขรับจริง
+            """UPDATE "Documents" d
+               SET "Pp36RdReceiptNumber" = r."FilingNumber",
+                   "Pp36RdReceiptDate" = COALESCE(d."Pp36RdReceiptDate", r."PayDate")
+               FROM "StatutoryRemittances" r
+               WHERE d."IsForeignService" = true
+                 AND d."InputVatBecameClaimableAt" IS NOT NULL
+                 AND d."Pp36RdReceiptNumber" IS NULL
+                 AND r."CompanyId" = d."CompanyId"
+                 AND r."RemittanceType" = 'VatPp36'
+                 AND r."IsDeleted" = false
+                 AND r."FilingNumber" IS NOT NULL AND r."FilingNumber" <> ''
+                 AND r."PeriodYear" = EXTRACT(YEAR FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int
+                 AND r."PeriodMonth" = EXTRACT(MONTH FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int;""",
 
             // ===== Snapshot ยอดจริงจาก statement ล่าสุด (แสดงคู่ยอด GL ให้เห็นผลต่าง) =====
             """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalance" numeric(18,2) NULL;""",

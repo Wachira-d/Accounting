@@ -2928,7 +2928,12 @@ public partial class TaxService : ITaxService
     /// ฝั่งซื้อยึดวันที่ใบกำกับของผู้ขายก่อน (อาจต่างจากวันที่เราบันทึก)
     /// แล้วค่อย tax point / วันที่เอกสาร</summary>
     internal static DateTime ClaimBasisDate(Document d)
-        => d.SupplierTaxInvoiceDate ?? d.TaxPointDate ?? d.DocumentDate;
+        // ภ.พ.36 (§83/6): ไม่มีใบกำกับของผู้ขาย ตปท. — "ใบกำกับ" คือใบเสร็จ RD
+        // จากการนำส่ง (§86/14) ⇒ ฐานนับ §82/3 และงวดที่ดึงได้ต้องอิงวันที่ใบเสร็จ
+        // นั้น ไม่ใช่วันจ่าย (เดิมตกไป TaxPointDate/DocumentDate = เดือนจ่าย ซึ่ง
+        // เร็วกว่าใบเสร็จ ~1 เดือน ⇒ หน้าต่างสั้นกว่าจริง + งวดที่ดึงได้เพี้ยน)
+        => (d.IsForeignService ? d.Pp36RdReceiptDate : null)
+           ?? d.SupplierTaxInvoiceDate ?? d.TaxPointDate ?? d.DocumentDate;
 
     /// <summary>ตัดสินว่าเอกสารเดือนภาษี <paramref name="basis"/> ดึงเข้ารายงานงวด
     /// (<paramref name="reportYear"/>/<paramref name="reportMonth"/>) ได้หรือไม่ —
@@ -2961,6 +2966,53 @@ public partial class TaxService : ITaxService
                     + $"{reportMonth:D2}/{reportYear} ไม่ได้ ต้องบันทึก VAT เป็นค่าใช้จ่ายแทน");
         }
         return (true, null);
+    }
+
+    /// <summary>ดึง "ใบเดียว" เข้ารายงาน ภ.พ.30 งวดเคลมของมัน **โดยไม่ regenerate**
+    /// — single source of truth ของคำสัญญา "เดือนเคลม X = อยู่ในรายงานงวด X":
+    /// ทุกจุดที่ตั้ง/ย้ายงวดเคลม (รับรู้ ภ.พ.36 · ย้ายเดือนเคลม) เรียกตัวนี้ต่อท้าย
+    /// เพื่อให้รายงานที่**มีอยู่แล้ว**สะท้อนทันที — ผู้ใช้ไม่ต้องกด "สร้างใหม่"
+    /// ซึ่งล้างการติ๊ก/แก้ยอดที่ทำไว้กับบรรทัดอื่นทั้งงวด (ปมที่ผู้ใช้ไม่ยอมกด).
+    ///
+    /// <para>ใช้ PullDocumentIntoReportAsync เดิมเป็นแกน (กติกาครบ: กันบรรทัดซ้ำ
+    /// · กันเคลมสองงวด · §82/5 ต่อบรรทัด · §82/3) — ตัวนี้แค่หา "รายงานร่างของ
+    /// งวดเคลม" ให้แล้วแปลผลเป็นข้อความ ไม่ throw (best-effort: ผู้เรียกเอา
+    /// ข้อความไปโชว์/log ต่อ งานหลักของผู้เรียกต้องไม่ล้มเพราะการ sync รายงาน)</para></summary>
+    public async Task<string> TryPullIntoDraftReportAsync(Guid companyId, Guid documentId)
+    {
+        try
+        {
+            var doc = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .Select(d => new { d.DocumentNumber, d.InputVatBecameClaimableAt,
+                    d.TaxPointDate, d.DocumentDate })
+                .FirstOrDefaultAsync();
+            if (doc == null) return "ไม่พบเอกสาร";
+            var claim = doc.InputVatBecameClaimableAt ?? doc.TaxPointDate ?? doc.DocumentDate;
+
+            var report = await _db.TaxReports.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT
+                    && r.Year == claim.Year && r.Month == claim.Month)
+                .Select(r => new { r.Id, r.Status })
+                .FirstOrDefaultAsync();
+            if (report == null)
+                return $"ยังไม่มีรายงาน ภ.พ.30 งวด {claim.Month:D2}/{claim.Year} — สร้างรายงานแล้วใบจะถูกดึงเข้าเอง";
+            if (report.Status != TaxReportStatus.Draft)
+                return $"รายงานงวด {claim.Month:D2}/{claim.Year} ยื่นแล้ว — ต้องยื่นเพิ่มเติม";
+
+            var lineExists = await _db.TaxReportLines.AsNoTracking()
+                .AnyAsync(l => l.TaxReportId == report.Id && l.DocumentId == documentId && !l.IsDeleted);
+            if (lineExists)
+                return $"ใบ {doc.DocumentNumber} อยู่ในรายงานงวด {claim.Month:D2}/{claim.Year} แล้ว";
+
+            await PullDocumentIntoReportAsync(companyId, report.Id, documentId);
+            return $"ดึงใบ {doc.DocumentNumber} เข้ารายงาน ภ.พ.30 งวด {claim.Month:D2}/{claim.Year} ให้แล้ว (บรรทัดอื่นที่ติ๊ก/แก้ไว้ไม่ถูกแตะ)";
+        }
+        catch (Exception ex)
+        {
+            // best-effort — เอาเหตุผลจริงไปให้ผู้ใช้เห็น (เช่นถูกใช้ในงวดอื่นอยู่)
+            return $"ดึงเข้ารายงานอัตโนมัติไม่สำเร็จ: {ex.Message}";
+        }
     }
 
     public async Task<TaxReportResponse> PullDocumentIntoReportAsync(Guid companyId, Guid reportId, Guid documentId)
