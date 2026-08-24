@@ -60,7 +60,12 @@ public class RecurringTransactionService : IRecurringTransactionService
             TemplateData = request.TemplateData,
             NotifyBeforeRun = request.NotifyBeforeRun,
             NotifyDaysBefore = request.NotifyDaysBefore,
-            AutoApprove = request.AutoApprove,
+            // ส่งอีเมลอัตโนมัติ = ต้องอนุมัติอัตโนมัติด้วยเสมอ — เอกสาร Draft
+            // ยังเป็นเลข DRAFT-{guid} (§86/4 ออกเลขจริงตอน Approve เท่านั้น)
+            // ส่งออกไปหาลูกค้าไม่ได้. บังคับตรงนี้ + echo กลับใน response
+            // (ไม่ใช่เงียบ ๆ ไม่ส่งอีเมลแล้วผู้ใช้ไม่รู้ว่าทำไม)
+            AutoApprove = request.AutoApprove || request.AutoSendEmail,
+            AutoSendEmail = request.AutoSendEmail,
             CreatedBy = createdBy
         };
 
@@ -124,6 +129,10 @@ public class RecurringTransactionService : IRecurringTransactionService
         if (request.NotifyBeforeRun.HasValue) recurring.NotifyBeforeRun = request.NotifyBeforeRun.Value;
         if (request.NotifyDaysBefore.HasValue) recurring.NotifyDaysBefore = request.NotifyDaysBefore.Value;
         if (request.AutoApprove.HasValue) recurring.AutoApprove = request.AutoApprove.Value;
+        if (request.AutoSendEmail.HasValue) recurring.AutoSendEmail = request.AutoSendEmail.Value;
+        // invariant เดียวกับตอนสร้าง: ส่งอีเมล ⇒ ต้องอนุมัติอัตโนมัติ
+        // (ตั้งหลังทั้งสองฟิลด์ ไม่ว่าผู้ใช้ส่งมาลำดับไหน)
+        if (recurring.AutoSendEmail) recurring.AutoApprove = true;
         if (request.Status.HasValue) recurring.Status = request.Status.Value;
 
         await _db.SaveChangesAsync();
@@ -474,10 +483,11 @@ public class RecurringTransactionService : IRecurringTransactionService
 
             _logger.LogInformation("Created document {DocNumber} from recurring {RecurringId}", result?.DocumentNumber, recurring.Id);
 
-            // Auto-email hook: enqueue ตามกฎ RecurringInvoiceCreated.
-            // ใช้ trigger แยกจาก DocumentApproved เพราะ recurring อาจไม่
-            // approve (AutoApprove=false) แต่ user ยังอยากส่ง draft ออกได้
-            // หรือ approve แล้วก็ส่งได้ — กฎต่างกัน. fail-safe.
+            // Auto-email hook: enqueue ตามกฎ RecurringInvoiceCreated ถ้ามี;
+            // ถ้าไม่มีกฎเลย EmailScheduleService จะดูธง AutoSendEmail บนตัว
+            // recurring แทน (ผู้ใช้ติ๊กในฟอร์มเดียวจบ ไม่ต้องไปสร้างกฎอีกหน้า)
+            // ใช้ trigger แยกจาก DocumentApproved เพราะเงื่อนไข/เวลาส่งต่างกัน.
+            // ส่งเฉพาะใบที่อนุมัติแล้ว — Draft ยังไม่มีเลขจริง §86/4. fail-safe.
             if (result != null && _emailSchedule != null)
             {
                 try { await _emailSchedule.OnRecurringDocumentCreatedAsync(recurring.CompanyId, result.Id, recurring.Id); }
@@ -615,7 +625,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             r.TotalRuns, r.MaxRuns, r.TemplateType, r.DocumentType,
             r.ContactId, r.Contact?.Name,
             r.TemplateData, ExtractAmount(r.TemplateData), r.NotifyBeforeRun,
-            r.NotifyDaysBefore, r.AutoApprove, r.CreatedAt);
+            r.NotifyDaysBefore, r.AutoApprove, r.CreatedAt, r.AutoSendEmail);
 
     /// <summary>ตรวจ template ตอน Create/Update — fail fast ก่อนรอ
     /// midnight cron แล้วเจอ Guid.Empty / GL ผิด tenant. ตรวจ:

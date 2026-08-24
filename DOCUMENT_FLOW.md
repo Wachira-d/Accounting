@@ -563,6 +563,23 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - template เก็บใน `RecurringTransaction.TemplateData` (JSON)
 - `AutoApprove=true` → ใบที่ generate ขึ้นจะถูก approve อัตโนมัติ (ทำตาม flow
   approve ปกติทุกขั้น — tax point, JE, stock, fixed asset)
+- `AutoSendEmail=true` (`RecurringTransaction.AutoSendEmail`) → หลังสร้าง
+  (+approve) ระบบ enqueue อีเมลแนบ PDF ถึง `Contact.Email` **ทันที**
+  (`ScheduledFor = now` ไม่รอ 09:00) ผ่าน
+  `EmailScheduleService.OnRecurringDocumentCreatedAsync:164`
+  - ลำดับความสำคัญ: **มีกฎ `EmailScheduleRule.Trigger="RecurringInvoiceCreated"`
+    อยู่แล้ว → ใช้กฎนั้น** (เวลา/เทมเพลต/BCC ตามกฎ) และ**ไม่**ส่งซ้ำจากธง;
+    ไม่มีกฎเลยจึงใช้ธงบน recurring (rule เสมือน `Id=Guid.Empty` →
+    `EmailQueue.RuleId=null`, idem key `doc:{id}:RecurringInvoiceCreated:autosend-{recurringId}`)
+  - **invariant**: `AutoSendEmail=true ⇒ AutoApprove=true` บังคับทั้งใน
+    `CreateAsync`/`UpdateAsync` และล็อกช่องบนฟอร์ม — ใบ Draft ยังเป็นเลข
+    `DRAFT-{guid}` ตาม §86/4 ส่งออกหาลูกค้าไม่ได้ (guard เดิมใน
+    `OnRecurringDocumentCreatedAsync` ตัด Draft/WaitingApproval/Rejected ทิ้ง)
+  - ผู้ติดต่อไม่มีอีเมล → ข้าม + log warning (ไม่ throw); ผู้ส่งใช้ค่า
+    `CompanySettings.Email*` ของบริษัท ถ้าไม่ได้ตั้ง → fallback อีเมลกลางระบบ
+    (`EmailSenderFactory.GetGlobalFallbackSender`)
+  - ฟอร์ม `pages/recurring.html` แสดงสถานะอีเมลบริษัทจริงจาก
+    `GET /email-config` + ลิงก์ deep link `settings.html?tab=email`
 
 ### 2.8 Quotation online accept (ลูกค้ากดยอมรับใบเสนอราคา)
 - **สร้างลิงก์** (ต้อง login): `POST /document/{id}/quotation-accept-link` —
@@ -2008,6 +2025,19 @@ _LINE bot รับรูปใบเสร็จ → OCR → เอกสาร
 _รวม Flex ปุ่มอนุมัติในแชท + postback guard + แจ้งกลับผู้ส่งเมื่ออนุมัติ)_
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
+
+_รอบ 98 — **รายการประจำ: ออกเอกสารอนุมัติ + ส่งอีเมลได้จบในฟอร์มเดียว**:
+เดิมมี hook `OnRecurringDocumentCreatedAsync` อยู่แล้ว แต่มันส่งเฉพาะเมื่อ
+tenant ไป**สร้างกฎเองที่หน้า "ตารางส่งอีเมล"** (trigger `RecurringInvoiceCreated`)
+⇒ ผู้ใช้ที่ตั้ง SMTP บริษัทไว้แล้วยังไม่มีอะไรถึงลูกค้าเลยและไม่มีที่ไหนบอก
+(silent no-op เต็มรูป). เพิ่มธง `RecurringTransaction.AutoSendEmail` +
+ช่องติ๊กในฟอร์ม: ไม่มีกฎ → ระบบ enqueue เองด้วย **rule เสมือน** (`Id=Guid.Empty`
+→ `EmailQueue.RuleId=null`) ส่ง**ทันที** ไม่รอ 09:00; มีกฎอยู่แล้ว → กฎชนะ
+ไม่ส่งซ้ำ. invariant `AutoSendEmail ⇒ AutoApprove` บังคับทั้ง service
+(`CreateAsync`/`UpdateAsync`) และ UI (ล็อกช่อง + บอกเหตุผล §86/4 ใบร่างเป็น
+`DRAFT-{guid}` ส่งไม่ได้) — ไม่ใช่ปล่อยติ๊กแล้วเงียบ. ฟอร์มดึงสถานะอีเมลจริง
+จาก `GET /email-config` มาแสดง (พร้อม/ยังไม่ทดสอบ/ยังไม่ตั้ง→ใช้อีเมลกลาง) +
+`settings.html` รับ deep link `?tab=email` ได้แล้ว (เดิมลิงก์ไปตกแท็บแรก);_
 
 _รอบ 93 — **single source of truth: เดือนเคลม = อยู่ในรายงานจริง**: ผู้ใช้
 ไม่ยอมกด "สร้างใหม่" (ล้างการติ๊ก/แก้ยอดของบรรทัดอื่นทั้งงวด — ถูกต้อง) →

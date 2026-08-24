@@ -10,8 +10,11 @@ namespace Accounting.Models.Entities;
 ///   DocumentOverdue         = เกินกำหนด N วัน (ยังไม่ชำระ)
 ///   PayrollPaid             = จ่ายเงินเดือนเสร็จ → ส่งสลิป
 ///   WhtCertIssued           = ออกใบ 50 ทวิแล้ว → ส่งให้ผู้รับ
-///   RecurringInvoiceCreated = recurring สร้าง doc ใหม่ (ไม่ว่า auto-approve
-///                             หรือไม่ ก็ส่ง draft/approved ออกได้ทันที)
+///   RecurringInvoiceCreated = recurring สร้าง doc ใหม่ — ส่งเฉพาะใบที่
+///                             อนุมัติแล้วเท่านั้น (Draft ยังเป็นเลข
+///                             DRAFT-{guid} ตาม §86/4 ห้ามส่งออกหาลูกค้า);
+///                             ถ้าไม่มีกฎนี้เลย ระบบจะดูธง AutoSendEmail
+///                             บนตัว RecurringTransaction แทน (ส่งทันที)
 ///   MonthlyStatement        = สรุปรายการลูกค้าเดือนที่แล้ว
 ///                             (DayOfMonth + SendAtHour กำหนดเวลาส่ง)
 /// OffsetDays:

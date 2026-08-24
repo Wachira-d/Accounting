@@ -36,6 +36,16 @@ public class RecurringTransaction : TenantEntity
     public int NotifyDaysBefore { get; set; } = 1;
     public bool AutoApprove { get; set; } = false;
 
+    /// <summary>ส่งอีเมลเอกสาร (PDF แนบ) ให้ผู้ติดต่อทันทีที่รอบสร้างเอกสาร —
+    /// ไม่ต้องไปสร้างกฎในหน้า "ตารางส่งอีเมล" เอง. ใช้อีเมลของบริษัทเอง
+    /// (CompanySettings.Email*) ผ่าน EmailSenderFactory เหมือนช่องทางอื่น.
+    ///
+    /// ⚠️ บังคับคู่กับ AutoApprove — เอกสาร Draft ยังไม่มีเลขที่จริงตาม §86/4
+    /// (ใช้ DRAFT-{guid}) ส่งออกไปหาลูกค้าไม่ได้. service จึงตั้ง
+    /// AutoApprove = true ให้อัตโนมัติเมื่อเปิดตัวนี้ และ echo กลับใน
+    /// response ให้ UI เห็น (ห้าม silent no-op).</summary>
+    public bool AutoSendEmail { get; set; } = false;
+
     /// <summary>Late-fee accrual policy — เปิดเมื่อสร้าง invoice แล้วเกิน due
     /// date จะ accrue ค่าปรับ. Off (default) = recurring เก่าไม่กระทบ.</summary>
     public bool LateFeeEnabled { get; set; } = false;

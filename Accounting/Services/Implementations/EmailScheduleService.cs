@@ -188,10 +188,47 @@ public class EmailScheduleService : IEmailScheduleService
                     && r.Trigger == "RecurringInvoiceCreated"
                     && (r.DocumentType == null || r.DocumentType == doc.DocumentType.ToString()))
                 .ToListAsync(ct);
-            // recurringId เข้า suffix → idempotency: ทุก recurring run ไม่ทับกัน
-            foreach (var rule in rules)
-                await EnqueueDocumentAsync(rule, doc, daysOffset: rule.OffsetDays,
-                    suffix: $"recurring-{recurringId}", ct);
+            if (rules.Count > 0)
+            {
+                // recurringId เข้า suffix → idempotency: ทุก recurring run ไม่ทับกัน
+                foreach (var rule in rules)
+                    await EnqueueDocumentAsync(rule, doc, daysOffset: rule.OffsetDays,
+                        suffix: $"recurring-{recurringId}", ct);
+                await _db.SaveChangesAsync(ct);
+                return;
+            }
+
+            // ── ไม่มีกฎในหน้า "ตารางส่งอีเมล" → ใช้ธง AutoSendEmail บนตัว
+            // recurring แทน. เจตนา: ผู้ใช้ติ๊กในฟอร์ม "สร้างรายการประจำ" ครั้ง
+            // เดียวจบ ไม่ต้องไปประกอบกฎเองอีกหน้า (เดิมติ๊กแล้วไม่มีอะไรเกิดขึ้น
+            // = silent no-op). ถ้ามีกฎอยู่แล้วให้กฎชนะ — กันส่งซ้ำ 2 ฉบับ
+            var autoSend = await _db.RecurringTransactions.AsNoTracking()
+                .Where(r => r.Id == recurringId && r.CompanyId == companyId)
+                .Select(r => (bool?)r.AutoSendEmail).FirstOrDefaultAsync(ct);
+            if (autoSend != true) return;
+
+            if (string.IsNullOrWhiteSpace(doc.Contact?.Email))
+            {
+                _logger.LogWarning(
+                    "Recurring {Rec} เปิดส่งอีเมลอัตโนมัติ แต่ผู้ติดต่อของเอกสาร {Doc} ไม่มีอีเมล — ข้าม",
+                    recurringId, documentId);
+                return;
+            }
+
+            // rule เสมือน (ไม่บันทึกลง DB) — EmailQueue.RuleId เป็น null ได้
+            // Id = Guid.Empty เพื่อให้ EnqueueDocumentAsync ใส่ RuleId = null
+            // (ไม่งั้น FK ชี้ไปกฎที่ไม่มีจริง)
+            var inlineRule = new EmailScheduleRule
+            {
+                Id = Guid.Empty,
+                CompanyId = companyId,
+                Trigger = "RecurringInvoiceCreated",
+                OffsetDays = 0,
+                SendAtHour = 9,
+            };
+            // ส่งทันที ไม่รอ 09:00 ของวัน — เจตนาคือ "ออกเอกสารแล้วส่งเลย"
+            await EnqueueDocumentAsync(inlineRule, doc, daysOffset: 0,
+                suffix: $"autosend-{recurringId}", ct, overrideSendUtc: DateTime.UtcNow);
             await _db.SaveChangesAsync(ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "OnRecurringDocumentCreated enqueue failed Doc={Doc}", documentId); }
@@ -511,7 +548,9 @@ public class EmailScheduleService : IEmailScheduleService
         _db.EmailQueues.Add(new EmailQueue
         {
             CompanyId = doc.CompanyId,
-            RuleId = rule.Id,
+            // rule เสมือน (Id ว่าง = ไม่ได้บันทึกลง DB เช่น AutoSendEmail ของ
+            // recurring) → RuleId ต้องเป็น null ไม่งั้น FK ชี้ไปแถวที่ไม่มีจริง
+            RuleId = rule.Id == Guid.Empty ? null : rule.Id,
             EntityType = "Document",
             EntityId = doc.Id,
             ToEmail = email!,

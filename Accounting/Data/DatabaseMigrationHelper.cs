@@ -288,6 +288,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeGraceDays" int NOT NULL DEFAULT 7;""",
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeMaxPercent" numeric(5,2) NULL DEFAULT 20.0;""",
 
+            // ===== Recurring: ส่งอีเมลเอกสารให้ผู้ติดต่ออัตโนมัติเมื่อสร้าง =====
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "AutoSendEmail" boolean NOT NULL DEFAULT false;""",
+
             // ===== POS deposit support — IsDeposit + DepositRealizedAt =====
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "IsDeposit" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "DepositRealizedAt" timestamp with time zone NULL;""",

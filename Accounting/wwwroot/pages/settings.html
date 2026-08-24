@@ -947,6 +947,15 @@
         if (!Layout.init('settings')) return;
         Layout.setTitle('ตั้งค่า');
         await this.load();
+        // deep link ?tab=email → เปิดแท็บนั้นให้เลย. ลิงก์จากหน้าอื่น (เช่น
+        // "ตั้งค่าอีเมลบริษัท" ในฟอร์มรายการประจำ) เดิมมาถึงแล้วตกที่แท็บ
+        // "ข้อมูลบริษัท" ผู้ใช้ต้องไล่หาเอง = ลิงก์ที่ไม่พาไปถึงปลายทางจริง
+        const wantTab = new URLSearchParams(window.location.search).get('tab');
+        if (wantTab) {
+          const tabEl = Array.from(document.querySelectorAll('.tab'))
+            .find(t => (t.getAttribute('onclick') || '').includes("showTab('" + wantTab + "'"));
+          if (tabEl) this.showTab(wantTab, tabEl);
+        }
         // Toggle e-Tax section visibility
         document.getElementById('sEtaxEnabled').addEventListener('change', function() {
           document.getElementById('etaxConfigSection').style.display = this.checked ? 'block' : 'none';
