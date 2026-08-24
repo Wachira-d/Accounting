@@ -934,6 +934,69 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
     }
 
+    /// <summary>ใบของงวด ภ.พ.36 ที่รับรู้ภาษีซื้อแล้ว + สถานะใน ภ.พ.30 ของงวด
+    /// เคลมแต่ละใบ — ตอบ "เข้า ภ.พ.30 แล้ว...แต่เปิดรายงานไม่เจอ": รายงานเป็น
+    /// snapshot ถ้าสร้างไว้ก่อนกดรับรู้ บรรทัดใบนี้จะยังไม่อยู่จนกด "สร้างใหม่"
+    /// (InReport=false + ReportStatus=Draft คือเคสนั้นพอดี)</summary>
+    public async Task<List<Pp36RecognizedDocItem>> GetPp36RecognizedDocsAsync(
+        Guid companyId, int periodYear, int periodMonth)
+    {
+        // ใบของงวด (ตามเดือนจ่าย — เกณฑ์เดียวกับ recognize) ที่ stamp งวดเคลมแล้ว
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.IsForeignService && d.VatAmount > 0
+                && d.InputVatBecameClaimableAt != null
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+            .Select(d => new { d.Id, d.DocumentNumber, d.ContactId, d.VatAmount,
+                d.PaymentDate, d.DocumentDate, d.InputVatBecameClaimableAt, d.Pp36RdReceiptNumber })
+            .ToListAsync();
+        docs = docs.Where(d =>
+        {
+            var dt = d.PaymentDate ?? d.DocumentDate;
+            return dt.Year == periodYear && dt.Month == periodMonth;
+        }).ToList();
+        if (docs.Count == 0) return new List<Pp36RecognizedDocItem>();
+
+        var contactIds = docs.Select(d => d.ContactId).Distinct().ToList();
+        var contactNames = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+
+        // รายงาน ภ.พ.30 ของทุกงวดเคลมที่เกี่ยว + บรรทัดของใบชุดนี้
+        var claimKeys = docs.Select(d => (d.InputVatBecameClaimableAt!.Value.Year,
+            d.InputVatBecameClaimableAt.Value.Month)).Distinct().ToList();
+        var years = claimKeys.Select(k => k.Item1).Distinct().ToList();
+        var reports = await _db.TaxReports.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT
+                && years.Contains(r.Year))
+            .Select(r => new { r.Id, r.Year, r.Month, r.Status })
+            .ToListAsync();
+        var docIds = docs.Select(d => d.Id).ToList();
+        var reportIds = reports.Select(r => r.Id).ToList();
+        var linesInReports = await _db.TaxReportLines.AsNoTracking()
+            .Where(l => l.DocumentId != null && docIds.Contains(l.DocumentId.Value)
+                && reportIds.Contains(l.TaxReportId)
+                && !l.IsExcluded && !l.IsDeleted && l.IncomeTypeCode == "INPUT")
+            .Select(l => new { l.DocumentId, l.TaxReportId })
+            .ToListAsync();
+
+        return docs.Select(d =>
+        {
+            var cy = d.InputVatBecameClaimableAt!.Value.Year;
+            var cm = d.InputVatBecameClaimableAt.Value.Month;
+            var rep = reports.FirstOrDefault(r => r.Year == cy && r.Month == cm);
+            var inReport = rep != null
+                && linesInReports.Any(l => l.DocumentId == d.Id && l.TaxReportId == rep.Id);
+            return new Pp36RecognizedDocItem(
+                d.Id, d.DocumentNumber,
+                contactNames.GetValueOrDefault(d.ContactId, ""),
+                d.VatAmount, cy, cm, d.Pp36RdReceiptNumber,
+                rep == null ? "none" : rep.Status.ToString(),
+                inReport);
+        }).OrderBy(x => x.DocumentNumber).ToList();
+    }
+
     public async Task AttachReceiptAsync(Guid companyId, Guid remittanceId, Guid attachmentId)
     {
         var rec = await _db.Set<StatutoryRemittance>()
