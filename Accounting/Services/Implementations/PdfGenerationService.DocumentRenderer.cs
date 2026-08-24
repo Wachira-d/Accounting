@@ -475,6 +475,14 @@ public partial class PdfGenerationService
                 });
                 break;
         }
+
+        // §86/6(6) — ใบกำกับภาษีอย่างย่อต้องมีข้อความระบุชัดว่าราคารวม VAT แล้ว
+        // ใส่จุดเดียวท้าย header ครอบทุก layout (ใส่ทีละ layout = drift แน่)
+        // — sync กับ HTML renderer ใต้ .doc-title
+        if (IsAbbreviatedTaxInvoiceDoc(doc))
+            col.Item().PaddingTop(2).AlignCenter()
+                .Text("ยอดรวมทั้งสิ้นได้รวมภาษีมูลค่าเพิ่มแล้ว")
+                .FontSize(8.5f).FontColor("#64748B");
     }
 
     private static void RenderCompanyLines(ColumnDescriptor c, EntCompany co, EntTemplate t, string color, Accounting.Services.Implementations.Pdf.DocumentLabels L, bool center = false)
