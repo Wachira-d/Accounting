@@ -2009,6 +2009,15 @@ _รวม Flex ปุ่มอนุมัติในแชท + postback guar
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
 
+_รอบ 93 — **single source of truth: เดือนเคลม = อยู่ในรายงานจริง**: ผู้ใช้
+ไม่ยอมกด "สร้างใหม่" (ล้างการติ๊ก/แก้ยอดของบรรทัดอื่นทั้งงวด — ถูกต้อง) →
+เพิ่ม `TaxService.TryPullIntoDraftReportAsync(companyId, docId)`: หา**รายงาน
+ร่างของงวดเคลม**แล้วดึงใบเดียวเข้าโดยใช้ `PullDocumentIntoReportAsync` เดิม
+(INSERT บรรทัดเดียว + recalc — บรรทัดอื่นไม่ถูกแตะ) best-effort คืนข้อความ
+ไม่ throw. ผู้เรียก: (1) `RecognizePp36InputVatAsync` หลัง commit — ทุกใบที่
+รับรู้ (2) `POST document/{id}/vat-claim-period` หลังตั้งงวด — toast โชว์ผล
+จริงจาก backend. + backfill เลข/วันที่ใบเสร็จ RD ใบเก่าจาก FilingNumber ของ
+การนำส่งงวดเดียวกัน (idempotent) + ตาราง modal scroll แนวนอน;_
 _รอบ 92 — **ภ.พ.36 ไม่โผล่ใน "ดึงเอกสาร"/ภ.พ.30 — ต้นเหตุจริง**: ทั้ง
 `GenerateVatReport` และ `GetPullableDocumentsAsync` รับ PV เข้าฝั่งภาษีซื้อ
 **เฉพาะที่ `HasTaxInvoiceReference=true`** (นิยามเดิม = อ้างใบกำกับซื้อเพื่อขอ

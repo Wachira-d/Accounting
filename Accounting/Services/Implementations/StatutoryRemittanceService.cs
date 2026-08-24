@@ -23,10 +23,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     private readonly ILogger<StatutoryRemittanceService> _logger;
 
     public StatutoryRemittanceService(AccountingDbContext db, IAccountingService accounting,
-        ILogger<StatutoryRemittanceService> logger)
+        ILogger<StatutoryRemittanceService> logger, ITaxService tax)
     {
-        _db = db; _accounting = accounting; _logger = logger;
+        _db = db; _accounting = accounting; _logger = logger; _tax = tax;
     }
+    private readonly ITaxService _tax;
 
     // ===== ป้ายชื่อ + ผังหนี้ค้างจ่าย ต่อประเภท =====
     private static (string Label, string Form, string PayableCode) Meta(string type) => type switch
@@ -933,9 +934,26 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
             _logger.LogInformation("Recognized PP36 input VAT {Month}/{Year} {Amt} ({Docs} docs) → JE {Je}",
                 periodMonth, periodYear, vatTotal, docs.Count, je.Id);
+
+            // ── sync รายงานที่มีอยู่แล้วทันที (single source of truth) ──
+            // ถ้างวดเคลมมีรายงานร่างอยู่ก่อน (สร้างก่อนกดรับรู้) บรรทัดใบพวกนี้
+            // จะไม่มีทางโผล่จนกว่าจะ regenerate — ซึ่งล้างการติ๊ก/แก้ยอดของ
+            // บรรทัดอื่นทั้งงวด (ผู้ใช้ปฏิเสธจะกดถูกแล้ว). ดึงทีละใบเข้ารายงาน
+            // เดิมแทน (กติกาเต็มของ PullDocumentIntoReport — best-effort:
+            // รับรู้สำเร็จไปแล้ว การ sync รายงานล้มต้องไม่ทำให้ transaction พัง)
+            var pullNotes = new List<string>();
+            foreach (var d in docs)
+            {
+                var note = await _tax.TryPullIntoDraftReportAsync(companyId, d.Id);
+                _logger.LogInformation("PP36 auto-pull {Doc}: {Note}", d.DocumentNumber, note);
+                pullNotes.Add(note);
+            }
+            var pulled = pullNotes.Count(n => n.StartsWith("ดึงใบ"));
+            var pullSummary = pulled > 0 ? $" · ดึงเข้ารายงานร่างที่มีอยู่แล้ว {pulled} ใบ" : "";
+
             var claimMonths = string.Join(", ", docs.Select(ClaimDateOf).Select(dt => dt.ToString("MM/yyyy")).Distinct());
             return new RemitResult(Guid.Empty, je.Id, vatTotal, 0m,
-                $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} จำนวน {vatTotal:N2} บาท ({docs.Count} เอกสาร) — เข้า ภ.พ.30 เดือน {claimMonths} (ตามวันที่ใบกำกับ)");
+                $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} จำนวน {vatTotal:N2} บาท ({docs.Count} เอกสาร) — เข้า ภ.พ.30 เดือน {claimMonths} (ตามวันที่ใบกำกับ){pullSummary}");
         }
         catch
         {

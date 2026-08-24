@@ -240,7 +240,7 @@
         bodyEl.innerHTML = `
           <div class="text-xs text-gray-400" style="margin-bottom:8px">
             เดือนเคลม = งวด ภ.พ.30 ที่ใบจะถูกดึงเข้า (เปลี่ยนได้ — งวดร่างระบบย้ายบรรทัดให้เอง · งวดที่ยื่นแล้วย้ายไม่ได้ต้องยื่นเพิ่มเติม)</div>
-          ${rows.length ? `<table class="table" style="font-size:12px">
+          ${rows.length ? `<div style="overflow-x:auto"><table class="table" style="font-size:12px;min-width:720px">
             <thead><tr><th>เลขที่</th><th>ผู้ขาย</th><th class="text-right">VAT</th><th>ใบเสร็จ RD</th><th style="width:130px">เดือนเคลม</th><th>สถานะใน ภ.พ.30</th><th></th></tr></thead>
             <tbody>${rows.map((r, i) => `
               <tr>
@@ -255,7 +255,7 @@
                 <td class="text-right"><button class="btn btn-sm btn-secondary"
                       onclick="Page.savePp36ClaimMonth('${r.documentId}', ${i}, ${year}, ${month})"
                       ${(r.reportStatus === 'Filed' || r.reportStatus === 'Submitted') && r.inReport ? 'disabled' : ''}>บันทึก</button></td>
-              </tr>`).join('')}</tbody></table>`
+              </tr>`).join('')}</tbody></table></div>`
             : '<div class="text-center text-gray-400" style="padding:20px">ไม่พบใบที่รับรู้แล้วในงวดนี้</div>'}
           <div style="display:flex;justify-content:space-between;margin-top:10px">
             <a class="btn btn-sm btn-outline" href="/pages/tax.html">📊 เปิดหน้ารายงานภาษี (ภ.พ.30) →</a>
@@ -271,9 +271,11 @@
         if (!el || !el.value) { Layout.toast('เลือกเดือนเคลมก่อน', 'error'); return; }
         try {
           const cid = Layout.getCompanyId();
-          await API.post(`/api/companies/${cid}/document/${documentId}/vat-claim-period`,
+          const res = await API.post(`/api/companies/${cid}/document/${documentId}/vat-claim-period`,
             { period: el.value });
-          Layout.toast('ย้ายเดือนเคลมแล้ว — เปิด ภ.พ.30 งวดใหม่ (หรือกด "สร้างใหม่" ถ้ารายงานมีอยู่แล้ว) เพื่อเห็นใบ', 'success', 9000);
+          // ข้อความจาก backend บอกผลจริง: ดึงเข้ารายงานร่างให้แล้ว / ยังไม่มีรายงาน /
+          // งวดยื่นแล้ว — ไม่ต้องเดา และไม่ต้องบอกให้กด "สร้างใหม่" อีก
+          Layout.toast(res?.message || 'ย้ายเดือนเคลมแล้ว', 'success', 10000);
           this.openPp36Detail(year, month);   // refresh สถานะในตาราง
         } catch (e) { Layout.toast(e.message || 'ย้ายไม่สำเร็จ', 'error', 9000); }
       },
