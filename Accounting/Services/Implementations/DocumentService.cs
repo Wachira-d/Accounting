@@ -4319,7 +4319,18 @@ public class DocumentService : IDocumentService
         var mustEnforce864 = doc.DocumentType == DocumentType.TaxInvoice
             || vatBearingReceipt
             || (enforce864 && rd864Types.Contains(doc.DocumentType));
-        // ยกเว้นลูกค้าเงินสด "ไม่ประสงค์รับใบกำกับภาษี" — ประกาศอธิบดีฯ ฉบับ 199
+        // ── §83/6: ติ๊ก "บริการต่างประเทศ ภ.พ.36" แต่ VAT = 0 ──
+        // self-assess VAT คือหัวใจของ ภ.พ.36 — VAT 0 = ใบนี้ไม่เข้า dashboard
+        // นำส่ง ไม่มีอะไรให้รับรู้ ไม่มีภาษีซื้อเข้า ภ.พ.30 = หายทั้งวงจรเงียบ ๆ
+        // (ฟอร์มตั้ง 7% ให้ตอนติ๊กแล้ว แต่ API/integration ยังยิงข้ามฟอร์มได้)
+        // block พร้อมทางแก้สองทาง — ผู้ใช้ไม่ตัน
+        if (doc.IsForeignService && doc.VatAmount <= 0)
+            throw new InvalidOperationException(
+                "ใบนี้ติ๊ก \"บริการต่างประเทศ (§83/6)\" แต่ไม่มี VAT — ภ.พ.36 ต้องประเมิน "
+                + "VAT 7% จากยอดจ่ายเสมอ (ผู้ขายต่างประเทศไม่คิด VAT มา เราประเมินเองเพื่อนำส่ง). "
+                + "ตั้ง VAT 7% ที่บรรทัดรายการ หรือถ้าไม่ใช่บริการต่างประเทศจริง เอาติ๊กออก");
+
+                // ยกเว้นลูกค้าเงินสด "ไม่ประสงค์รับใบกำกับภาษี" — ประกาศอธิบดีฯ ฉบับ 199
         // บังคับเลขผู้เสียภาษี/สาขาผู้ซื้อเฉพาะเมื่อผู้ซื้อเป็นผู้ประกอบการจด VAT;
         // ผู้ซื้อบุคคลธรรมดาที่ไม่แจ้งข้อมูล → ออกใบกำกับได้ (เคลมภาษีซื้อไม่ได้เอง)
         // VAT ขายยังลงรายงาน/นำส่ง ภ.พ.30 ครบตามปกติ
@@ -10500,8 +10511,18 @@ public class DocumentService : IDocumentService
     ///   JuristicPerson (นิติบุคคล)    → 21917 (ภ.ง.ด.53)
     /// Falls back to whichever account exists when the preferred one is
     /// missing (so a half-configured chart still posts).</summary>
-    private async Task<ChartOfAccount?> ResolveWhtPayableAccountAsync(Guid companyId, Contact? contact)
+    private async Task<ChartOfAccount?> ResolveWhtPayableAccountAsync(Guid companyId, Contact? contact,
+        bool isForeignService = false)
     {
+        // จ่ายต่างประเทศ (ม.70) → หนี้ WHT เข้า 21918 (ภ.ง.ด.54) — คนละแบบ/คนละ
+        // กำหนดยื่นกับ ภงด.3/53. เดิมไม่มีทางเลือกนี้เลย: WHT ของ PV ต่างประเทศ
+        // ตกไป 21916/17 → หน้านำส่งนับปนใน ภงด.3/53 (ยื่นผิดแบบ) ขณะที่ 21918
+        // ว่างตลอด. ตัดสินจาก doc.IsForeignService (ผู้ใช้ติ๊กเอง — ชัดกว่าเดา
+        // จาก CountryCode ของ contact ที่มักไม่ได้กรอก)
+        if (isForeignService)
+            return await FindAccountAsync(companyId, "21918")
+                ?? await FindAccountAsync(companyId, "21917")
+                ?? await FindAccountAsync(companyId, "21916");
         var preferJuristic = contact?.ContactType == ContactType.JuristicPerson;
         var primary = preferJuristic ? "21917" : "21916";
         var secondary = preferJuristic ? "21916" : "21917";
@@ -12521,7 +12542,7 @@ public class DocumentService : IDocumentService
                 // Sales: WHT-Asset 11910 (we got withheld); Purchase: WHT-Payable
                 // by counterparty type (Individual→ภ.ง.ด.3 21916, Juristic→ภ.ง.ด.53 21917).
                 var whtAcc = isPurchaseSide
-                    ? await ResolveWhtPayableAccountAsync(companyId, doc.Contact)
+                    ? await ResolveWhtPayableAccountAsync(companyId, doc.Contact, doc.IsForeignService)
                     : await FindAccountAsync(companyId, "11910");
                 if (whtAcc != null)
                 {
@@ -12598,7 +12619,7 @@ public class DocumentService : IDocumentService
                             $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
                     if (thisWht > 0)
                     {
-                        var whtAcc = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
+                        var whtAcc = await ResolveWhtPayableAccountAsync(companyId, doc.Contact, doc.IsForeignService);
                         if (whtAcc != null)
                             AddLine(whtAcc.Id, 0, thisWht, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
                     }
@@ -12647,7 +12668,7 @@ public class DocumentService : IDocumentService
 
             if (doc.WithholdingTaxAmount > 0)
             {
-                var whtAcc = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
+                var whtAcc = await ResolveWhtPayableAccountAsync(companyId, doc.Contact, doc.IsForeignService);
                 if (whtAcc != null)
                     AddLine(whtAcc.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
             }
@@ -12776,7 +12797,7 @@ public class DocumentService : IDocumentService
             // Accrual only — Cash basis defers to the PaymentVoucher path.
             if (whtBasis == Models.Enums.WhtRecognitionBasis.Accrual && doc.WithholdingTaxAmount > 0)
             {
-                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
+                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact, doc.IsForeignService);
                 if (whtAccount != null)
                 {
                     // Group WHT by rate for clear audit trail
@@ -13368,7 +13389,7 @@ public class DocumentService : IDocumentService
                     }
                     if (thisWht > 0)
                     {
-                        var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
+                        var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact, doc.IsForeignService);
                         if (whtAccount != null)
                         {
                             pvWhtThb = PvSrcThb(thisWht);
@@ -13485,7 +13506,7 @@ public class DocumentService : IDocumentService
 
                 if (doc.WithholdingTaxAmount > 0)
                 {
-                    var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
+                    var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact, doc.IsForeignService);
                     if (whtAccount != null)
                         AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
                 }
@@ -13969,7 +13990,7 @@ public class DocumentService : IDocumentService
             // Cash basis: Cr WHT-Payable for this installment's withholding.
             if (postPerPaymentWht)
             {
-                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
+                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact, doc.IsForeignService);
                 if (whtAccount != null)
                     pendingLines.Add((whtAccount.Id, 0, thbWht, $"WHT (ค้างจ่าย) งวด {payment.PaymentNumber}"));
             }
