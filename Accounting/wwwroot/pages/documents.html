@@ -753,9 +753,21 @@
                   <span title="ติ๊กเมื่อราคา/หน่วยที่กรอกรวม VAT 7% แล้ว — ระบบจะถอด VAT ออกให้อัตโนมัติเพื่อแยกฐานภาษีให้ถูกต้อง">ราคารวมภาษี</span>
                 </label>
                 <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsForeignServiceWrap">
-                  <input type="checkbox" id="fIsForeignService" style="margin:0">
+                  <input type="checkbox" id="fIsForeignService" style="margin:0" onchange="Page.onForeignServiceToggle()">
                   <span title="ติ๊กเมื่อซื้อบริการจากต่างประเทศ (Google Ads / AWS / Facebook ฯลฯ) — ระบบจะรวมรายการนี้ในรายงาน ภ.พ.36 (self-assess VAT 7%) และ ภ.ง.ด.54 (WHT)">🌐 บริการต่างประเทศ (§83/6)</span>
+                  <span id="fForeignHint" style="display:none;color:#d97706;font-size:11px;font-weight:600">← คู่ค้าไม่มีเลขภาษีไทย — ผู้ให้บริการต่างประเทศ?</span>
                 </label>
+                <!-- คำอธิบายวงจร ภ.พ.36 — โผล่เมื่อติ๊ก เพื่อให้ผู้ใช้รู้ตั้งแต่สร้างใบ
+                     ว่าต้องทำอะไรต่อบ้าง (ที่มา: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ
+                     เพราะไม่รู้ว่ามีขั้น "รับรู้ภาษีซื้อ") -->
+                <div id="foreignServiceBanner" style="display:none;flex-basis:100%;background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:8px;padding:10px 12px;margin-top:6px;font-size:12px;color:#1e3a8a;line-height:1.7">
+                  <b>🌐 วงจรบริการต่างประเทศ (§83/6):</b>
+                  ① ใบนี้ตั้ง VAT 7% แบบ self-assess (ผู้ขายต่างประเทศไม่คิด VAT มา — เราประเมินเองจากยอดจ่าย ระบบพัก Dr 11640 / Cr 21912)
+                  → ② สิ้นเดือน <b>นำส่ง ภ.พ.36</b> ที่หน้า "นำส่งภาษี" (ภายในวันที่ 7/15 ของเดือนถัดไป)
+                  → ③ ได้ใบเสร็จกรมสรรพากรแล้วกด <b>"รับรู้ภาษีซื้อ"</b> ที่หน้าเดียวกัน
+                  → ④ ภาษีซื้อเข้า <b>ภ.พ.30</b> ให้เคลมอัตโนมัติ (§77/2) · WHT ของใบนี้เข้า <b>ภ.ง.ด.54</b>
+                  · จ่ายเงินตราต่างประเทศ: กรอกสกุลเงิน + อัตราแลกเปลี่ยนในหัวเอกสาร ฐานภาษีคิดจากยอดบาท
+                </div>
                 <label style="display:none;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsDepositWrap">
                   <input type="checkbox" id="fIsDeposit" style="margin:0" onchange="Page.onDepositToggle()">
                   <span title="ติ๊กเมื่อรับเงินมัดจำ/รับล่วงหน้า ก่อนส่งมอบสินค้า/บริการ — ระบบจะลงบัญชี 'ขายรอรับรู้' (217xx) แทนรายได้ ค่อยรับรู้รายได้เมื่อส่งมอบจริงในหน้า 'เงินมัดจำ'">🤝 เงินมัดจำ/รับล่วงหน้า</span>
@@ -2680,6 +2692,25 @@
           '<div id="vatLockHint" style="margin-top:6px;padding:8px 12px;background:#fef2f2;border-left:3px solid #ef4444;border-radius:6px;font-size:12px;color:#991b1b;line-height:1.5">🔒 บริษัทยังไม่ได้ตั้งค่า "จดทะเบียนภาษีมูลค่าเพิ่ม" — ออกใบกำกับภาษี/เก็บ VAT ขายไม่ได้ (§90/2). เปิดได้ที่ ตั้งค่า → ภาษี</div>');
       },
 
+      /** ติ๊ก/ปลด "บริการต่างประเทศ §83/6" — โชว์วงจร ภ.พ.36 + ตั้ง VAT 7%
+       *  self-assess ให้บรรทัดที่ยังเป็น 0 (ภ.พ.36 คิดจาก VatAmount ของใบ —
+       *  ปล่อย 0 ไว้ = ใบไม่เข้า dashboard นำส่ง แล้วผู้ใช้จะงงว่าหายไปไหน) */
+      onForeignServiceToggle() {
+        const on = document.getElementById('fIsForeignService')?.checked;
+        const b = document.getElementById('foreignServiceBanner');
+        if (b) b.style.display = on ? '' : 'none';
+        if (!on) return;
+        let touched = 0;
+        document.querySelectorAll('#linesBody .line-card [data-f="vat"]').forEach(sel => {
+          if ((parseFloat(sel.value) || 0) === 0) { sel.value = '7'; touched++; }
+        });
+        if (touched) {
+          this.calcSum();
+          Layout.toast(`ตั้ง VAT 7% (self-assess §83/6) ให้ ${touched} บรรทัด — `
+            + 'ผู้ขายต่างประเทศไม่คิด VAT มา เราประเมินเองจากยอดจ่ายเพื่อนำส่ง ภ.พ.36', 'info', 9000);
+        }
+      },
+
       onContactChange() {
         const contactId = document.getElementById('fContactId').value;
         const c = this._selectedContact || this.contacts?.find(x => x.id === contactId);
@@ -2707,6 +2738,18 @@
           this.suggestPaymentType(contactId);
           // PV-only — แนะนำ bank account/cash channel จาก payment history
           this.suggestPaymentChannel(contactId);
+        }
+        // คู่ค้าไม่มีเลขภาษีไทย 13 หลัก + ใบฝั่งซื้อ → จุดสังเกตว่าอาจเป็น
+        // ผู้ให้บริการต่างประเทศ (§83/6) — แค่ชี้ ไม่ auto-ติ๊ก (คู่ค้าไทยที่ยัง
+        // ไม่กรอกเลขภาษีก็เข้าเงื่อนไขนี้ได้ ติ๊กแทนผู้ใช้ = สร้างหนี้ ภ.พ.36 ผี)
+        {
+          const hint = document.getElementById('fForeignHint');
+          const purchaseLike = ['Expense', 'PurchaseInvoice', 'PaymentVoucher'];
+          const dt = document.getElementById('fDocType')?.value || '';
+          const noThaiTaxId = c && !/^\d{13}$/.test((c.taxId || '').trim());
+          if (hint) hint.style.display =
+            (purchaseLike.includes(dt) && noThaiTaxId
+             && !document.getElementById('fIsForeignService')?.checked) ? '' : 'none';
         }
         // Auto-suggest payment terms (Net X) จาก history ของผู้ติดต่อรายนี้
         // — ไม่เกี่ยวกับ doc type, ใช้ได้ทั้ง sales (Invoice/Quotation) +
@@ -4486,6 +4529,13 @@
             const cb = document.getElementById('fIsForeignService');
             if (cb) cb.checked = false;
           }
+          // sync banner วงจร ภ.พ.36 + hint ตามสถานะจริง (เปลี่ยนชนิดเอกสาร/
+          // เปิดฟอร์มใหม่ ต้องไม่ค้าง banner ของใบก่อน)
+          const fb = document.getElementById('foreignServiceBanner');
+          if (fb) fb.style.display =
+            (showFs && document.getElementById('fIsForeignService')?.checked) ? '' : 'none';
+          const fh = document.getElementById('fForeignHint');
+          if (fh && !showFs) fh.style.display = 'none';
         }
 
         // AI แนะนำผังบัญชี GL — เฉพาะเอกสารฝั่งซื้อ (Expense / PI / PV) ที่มี
@@ -6865,6 +6915,13 @@
           // ทำหลัง onDocTypeChange เพราะมันคุมการแสดง/reset checkbox มัดจำ.
           const fFs = document.getElementById('fIsForeignService');
           if (fFs) fFs.checked = !!d.isForeignService;
+          // sync banner วงจร ภ.พ.36 อย่างเดียว — ไม่เรียก onForeignServiceToggle
+          // เพราะตัวนั้นตั้ง VAT 7% ให้บรรทัดที่เป็น 0 ด้วย (เหมาะกับตอนผู้ใช้
+          // เพิ่งติ๊กเอง ไม่ใช่ตอน hydrate ใบเดิมที่ค่าถูกบันทึกไว้แล้ว)
+          {
+            const fb = document.getElementById('foreignServiceBanner');
+            if (fb) fb.style.display = d.isForeignService ? '' : 'none';
+          }
           // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — hydrate checkbox จาก doc.
           // (doc.documentType เป็น TaxInvoice อยู่แล้ว → combinedRow แสดงจาก
           // onDocTypeChange; แค่ติ๊กกล่องคืน).

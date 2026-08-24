@@ -131,11 +131,26 @@
       renderPending() {
         const c = document.getElementById('pendingContent');
         const rows = this._data.pending || [];
+        // ── ภ.พ.36 นำส่งแล้วแต่ยังไม่รับรู้ภาษีซื้อ — ต้องเด่นเหนือทุกอย่าง ──
+        // ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่ 2 ("รับรู้
+        // ภาษีซื้อ" เมื่อได้ใบเสร็จ RD) ซ่อนอยู่ในแท็บประวัติ — ดันขึ้นเป็นแถบ
+        // ค้างถาวรจนกว่าจะกด ภาษีซื้อจึงยังไม่ขึ้น ภ.พ.30 อย่างเงียบ ๆ ไม่ได้อีก
+        const awaiting = this._data.pp36AwaitingRecognition || [];
+        const awaitingHtml = awaiting.length ? `
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+            <div style="font-weight:700;color:#1e40af;margin-bottom:6px">🌐 ภ.พ.36 นำส่งแล้ว — รอรับรู้ภาษีซื้อเข้า ภ.พ.30 (${awaiting.length} งวด)</div>
+            <div style="font-size:12px;color:#1e3a8a;margin-bottom:8px">ภาษีซื้อยังพักที่ 11640 และ<b>ยังไม่ขึ้นใน ภ.พ.30</b> จนกว่าจะกด "รับรู้ภาษีซื้อ" (เมื่อได้ใบเสร็จกรมสรรพากร §77/2)</div>
+            ${awaiting.map(a => `
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px dashed #bfdbfe;flex-wrap:wrap">
+                <span style="font-size:13px">งวด <b>${this.period(a.periodYear, a.periodMonth)}</b> · ภาษีซื้อ <b>${Layout.money(a.vatAmount)}</b> · ${a.documentCount} ใบ · นำส่งเมื่อ ${Layout.date(a.remittedAt)}</span>
+                <button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${a.periodYear}, ${a.periodMonth})">🧾 รับรู้ภาษีซื้อ → เข้า ภ.พ.30</button>
+              </div>`).join('')}
+          </div>` : '';
         if (!rows.length) {
-          c.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">✓ ไม่มียอดค้างนำส่ง</div>';
+          c.innerHTML = awaitingHtml + '<div class="text-center text-gray-400" style="padding:40px">✓ ไม่มียอดค้างนำส่ง</div>';
           return;
         }
-        c.innerHTML = `
+        c.innerHTML = awaitingHtml + `
           <div class="table-container" style="border:none">
             <table class="table">
               <thead><tr>
@@ -183,9 +198,13 @@
                   <td class="text-right" style="font-variant-numeric:tabular-nums">${r.lateFee > 0 ? Layout.money(r.lateFee) : '-'}</td>
                   <td>${Layout.date(r.payDate)}</td>
                   <td>${Layout.esc(r.filingNumber || '-')}</td>
-                  <td class="text-center">${r.receiptAttachmentId ? '📎' : '-'}</td>
+                  <td class="text-center">${r.receiptAttachmentId
+                    ? '📎'
+                    : `<button class="btn btn-sm btn-ghost" onclick="Page.attachFromHistory('${r.id}', '${this.period(r.periodYear, r.periodMonth)}')" title="ยังไม่มีไฟล์แนบ — แนบใบเสร็จ/สลิปย้อนหลังได้">＋แนบ</button>`}</td>
                   <td class="text-right">${r.remittanceType === 'VatPp36'
-                    ? `<button class="btn btn-sm btn-outline" onclick="Page.recognizePp36(${r.periodYear}, ${r.periodMonth})" title="ได้ใบเสร็จกรมสรรพากรแล้ว → รับรู้ภาษีซื้อ (Dr 11610 / Cr 11640) เข้า ภ.พ.30 (§77/2) — ระบบกันรับรู้ซ้ำให้">🧾 รับรู้ภาษีซื้อ</button>`
+                    ? (r.pp36Recognized
+                      ? '<span style="color:#15803d;font-size:12px;font-weight:600" title="รับรู้ภาษีซื้อแล้ว (11640→11610) — เข้า ภ.พ.30 ตามวันที่รับรู้">✓ เข้า ภ.พ.30 แล้ว</span>'
+                      : `<button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${r.periodYear}, ${r.periodMonth})" title="ได้ใบเสร็จกรมสรรพากรแล้ว → รับรู้ภาษีซื้อ (Dr 11610 / Cr 11640) เข้า ภ.พ.30 (§77/2) — ระบบกันรับรู้ซ้ำให้">🧾 รับรู้ภาษีซื้อ</button>`)
                     : ''}</td>
                 </tr>`).join('')}</tbody>
             </table>
@@ -311,30 +330,52 @@
               await Layout.api().uploadRemittanceReceipt(rid, fd);
               Layout.closeModal('remitModal');
               Layout.toast((res && res.message) || 'นำส่ง + แนบเอกสารสำเร็จ', 'success');
+              if (r.remittanceType === 'VatPp36')
+                Layout.toast('ขั้นถัดไป: ได้ใบเสร็จกรมสรรพากรเมื่อไร กด "รับรู้ภาษีซื้อ" '
+                  + '(แถบฟ้าด้านบน) เพื่อให้ภาษีซื้อเข้า ภ.พ.30 — ยังไม่กด = ยังไม่ขึ้นใน ภ.พ.30', 'info', 12000);
               this.load();
               return;
             } catch (upErr) {
               // นำส่งสำเร็จแล้วแต่แนบไฟล์ไม่ผ่าน → เปิด step ให้ลองแนบใหม่
-              this._showReceiptStep(rid, 'นำส่งสำเร็จ — แต่แนบเอกสารไม่ผ่าน ลองแนบอีกครั้ง');
+              this._showReceiptStep(rid, 'นำส่งสำเร็จ — แต่แนบเอกสารไม่ผ่าน ลองแนบอีกครั้ง',
+                r.remittanceType === 'VatPp36');
               return;
             }
           }
-          this._showReceiptStep(rid, (res && res.message) || 'นำส่งสำเร็จ');
+          this._showReceiptStep(rid, (res && res.message) || 'นำส่งสำเร็จ',
+            r.remittanceType === 'VatPp36');
         } catch (e) {
           if (msg) msg.textContent = e.message || 'นำส่งไม่สำเร็จ';
           if (btn) { btn.disabled = false; btn.textContent = 'ยืนยันนำส่ง + ลง JE'; }
         }
       },
 
-      _showReceiptStep(rid, message) {
+      /** เปิด modal แนบไฟล์ย้อนหลังจากแถวประวัติ (เดิม _showReceiptStep เขียน
+       *  ลง #remitBody ของ modal ที่ปิดอยู่ = ไม่มีอะไรโผล่) */
+      attachFromHistory(rid, periodLabel) {
+        const titleEl = this._byId('remitTitle');
+        if (titleEl) titleEl.textContent = `แนบใบเสร็จ/หลักฐาน — งวด ${periodLabel}`;
+        Layout.openModal('remitModal');
+        this._showReceiptStep(rid, `แนบใบเสร็จ/หลักฐานของงวด ${periodLabel}`);
+      },
+
+      _showReceiptStep(rid, message, isPp36 = false) {
         const bodyEl = this._byId('remitBody');
         if (!bodyEl) { Layout.closeModal('remitModal'); Layout.toast(message || 'นำส่งสำเร็จ', 'success'); this.load(); return; }
+        // ภ.พ.36 มีขั้นที่ 2 เสมอ — บอกตรงนี้เลย ไม่ปล่อยให้ผู้ใช้ไปหาเองใน
+        // ประวัติ (ที่มา: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ)
+        const pp36Next = isPp36 ? `
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#1e3a8a">
+            <b>🌐 ขั้นถัดไปของ ภ.พ.36:</b> เมื่อได้<b>ใบเสร็จกรมสรรพากร</b> ให้กลับมากด
+            <b>"รับรู้ภาษีซื้อ"</b> (แถบฟ้าในหน้านี้) — ภาษีซื้อจะย้าย 11640→11610
+            และ<b>เข้า ภ.พ.30 ให้เลือกใช้</b> (§77/2) · ยังไม่กด = ยังไม่ขึ้นใน ภ.พ.30
+          </div>` : '';
         bodyEl.innerHTML = `
           <div style="text-align:center;padding:8px 0 16px">
             <div style="font-size:40px">✅</div>
             <div style="font-weight:600;margin-top:6px">${Layout.esc(message)}</div>
             <div class="text-xs text-gray-400" style="margin-top:4px">ลง JE ล้างหนี้ค้างจ่าย / Cr ธนาคาร เรียบร้อย</div>
-          </div>
+          </div>${pp36Next}
           <div class="form-row"><label class="form-label">แนบใบเสร็จ / หลักฐานการนำส่ง (optional)</label>
             <input type="file" id="rmReceipt" class="form-input" accept="image/*,application/pdf"></div>
           <div id="rmUpMsg" style="font-size:12px;min-height:16px"></div>

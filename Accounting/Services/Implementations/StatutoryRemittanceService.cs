@@ -180,11 +180,58 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
         catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ ภพ.36 ไม่สำเร็จ"); }
 
+        // ── ภ.พ.36: นำส่งแล้ว แต่ยังไม่ได้ "รับรู้ภาษีซื้อ" (ขั้นที่ 2) ──
+        // ผู้ใช้เจอจริง: นำส่งเสร็จแล้วไปหาใบใน ภ.พ.30 ไม่เจอ — เพราะภาษีซื้อ
+        // ยังพักที่ 11640 จนกว่าจะกดรับรู้ (ได้ใบเสร็จ RD §77/2) และปุ่มรับรู้
+        // ซ่อนอยู่ในแท็บประวัติโดยไม่มีสถานะบอก. ตรวจจาก JE รับรู้ (Reference
+        // ภ.พ.36R-YYYYMM — กติกา idempotent เดิมของ RecognizePp36InputVatAsync)
+        // + นับใบที่ยังพักจริง ๆ ในงวดนั้น
+        var pp36Awaiting = new List<Pp36AwaitingRecognitionItem>();
+        var pp36Remits = remits.Where(r => r.RemittanceType == "VatPp36").ToList();
+        var pp36RecognizedRefs = pp36Remits.Count == 0
+            ? new HashSet<string>()
+            : (await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.CompanyId == companyId && !j.IsDeleted
+                    && j.Status == JournalEntryStatus.Posted
+                    && j.Reference != null && j.Reference.StartsWith("ภ.พ.36R-"))
+                .Select(j => j.Reference!)
+                .ToListAsync()).ToHashSet();
+        if (pp36Remits.Count > 0)
+        {
+            // ใบที่ยังพัก 11640 (เงื่อนไขชุดเดียวกับ RecognizePp36InputVatAsync)
+            var awaitingDocs = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.IsForeignService && d.VatAmount > 0
+                    && d.InputVatBecameClaimableAt == null
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                .Select(d => new { d.VatAmount, d.PaymentDate, d.DocumentDate })
+                .ToListAsync();
+            foreach (var r in pp36Remits)
+            {
+                if (pp36RecognizedRefs.Contains($"ภ.พ.36R-{r.PeriodYear}{r.PeriodMonth:D2}")) continue;
+                var inPeriod = awaitingDocs.Where(d =>
+                {
+                    var dt = d.PaymentDate ?? d.DocumentDate;
+                    return dt.Year == r.PeriodYear && dt.Month == r.PeriodMonth;
+                }).ToList();
+                if (inPeriod.Count == 0) continue;
+                pp36Awaiting.Add(new Pp36AwaitingRecognitionItem(
+                    r.PeriodYear, r.PeriodMonth,
+                    inPeriod.Sum(d => d.VatAmount), inPeriod.Count, r.PayDate));
+            }
+            pp36Awaiting = pp36Awaiting
+                .OrderBy(a => a.PeriodYear).ThenBy(a => a.PeriodMonth).ToList();
+        }
+
         // ── ประวัติที่นำส่งล่าสุด ──
         var history = remits.OrderByDescending(r => r.PayDate).Take(30)
             .Select(r => new RemittanceHistoryItem(r.Id, r.RemittanceType, Meta(r.RemittanceType).Form,
                 r.PeriodYear, r.PeriodMonth, r.Amount, r.LateFee, r.PayDate, r.FilingNumber,
-                r.JournalEntryId, r.ReceiptAttachmentId, r.CreatedBy, r.CreatedAt))
+                r.JournalEntryId, r.ReceiptAttachmentId, r.CreatedBy, r.CreatedAt,
+                Pp36Recognized: r.RemittanceType == "VatPp36"
+                    ? pp36RecognizedRefs.Contains($"ภ.พ.36R-{r.PeriodYear}{r.PeriodMonth:D2}")
+                    : (bool?)null))
             .ToList();
 
         pending = pending.OrderByDescending(p => p.IsOverdue)
@@ -195,7 +242,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             TotalOverdue: pending.Where(p => p.IsOverdue).Sum(p => p.Amount),
             OverdueCount: pending.Count(p => p.IsOverdue),
             Pending: pending,
-            RecentHistory: history);
+            RecentHistory: history,
+            Pp36AwaitingRecognition: pp36Awaiting);
     }
 
     private PendingRemittanceItem BuildItem(string type, int year, int month, decimal amount,
