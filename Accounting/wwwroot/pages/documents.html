@@ -1693,12 +1693,24 @@
         if (payload.reference) document.getElementById('fRef').value = payload.reference;
         if (payload.notes) document.getElementById('fNotes').value = payload.notes;
 
-        // §82/5 — banner เตือนเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/ใบเสร็จ)
+        // §82/5 — banner เตือนเคลม VAT ไม่ได้ (รูปแบบใบ (1)(2) + ชนิดรายจ่าย (4)(6))
         if (payload.inputVatClaimWarning) {
           const vb = document.getElementById('vatClaimWarnBanner');
           if (vb) {
             vb.style.display = '';
-            vb.innerHTML = `<div style="font-weight:700;margin-bottom:4px">🚫 ภาษีซื้อเอกสารนี้เคลมไม่ได้</div>${Layout.esc(payload.inputVatClaimWarning)}<div style="margin-top:6px;font-size:12px">💡 ถ้าไม่เคลม: ใช้ "⚙️ ตัวเลือกขั้นสูง — เปลี่ยนผังบัญชี VAT" ด้านล่าง เลือกผัง 5xxxx เพื่อรวม VAT เป็นต้นทุน/ค่าใช้จ่าย</div>`;
+            vb.innerHTML = `<div style="font-weight:700;margin-bottom:4px">🚫 ภาษีซื้อเอกสารนี้เคลมไม่ได้ — ระบบตั้ง "ไม่เคลม" ไว้ให้</div>${Layout.esc(payload.inputVatClaimWarning)}<div style="margin-top:6px;font-size:12px">💡 VAT จะถูกรวมเป็นค่าใช้จ่ายในหมวดที่เลือก · ถ้าเป็นรายจ่ายที่เคลมได้จริง (เช่นรถกระบะ/บรรทุก) ติ๊กเปิดเคลมได้ที่แผงภาษีซื้อหลังอนุมัติ ภายในกรอบ 6 เดือน §82/3</div>`;
+          }
+        }
+        // เตือนแต่ยังเคลมได้ — §82/5(6) ที่ระบุชนิดรถเคลมได้ไว้แล้ว
+        if (payload.inputVatClaimNote && !payload.inputVatClaimWarning) {
+          const vb = document.getElementById('vatClaimWarnBanner');
+          if (vb) {
+            vb.style.display = '';
+            vb.style.background = '#fffbeb';
+            vb.style.borderColor = '#fde68a';
+            vb.style.borderLeftColor = '#d97706';
+            vb.style.color = '#92400e';
+            vb.innerHTML = `<div style="font-weight:700;margin-bottom:4px">⚠️ ตรวจสิทธิ์เคลมภาษีซื้อก่อนบันทึก</div>${Layout.esc(payload.inputVatClaimNote)}`;
           }
         }
 

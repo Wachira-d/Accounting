@@ -573,6 +573,22 @@ public class OcrService : IOcrService
             foreach (var w in gatewayResult.Warnings)
                 extractedData.ReasoningTrace.Add("[Gateway] " + w);
 
+            // ── ด่านตรวจเลขที่เอกสาร (anti-hallucination) ──
+            // ที่มา (บั๊กจริง): บิล กฟภ. มี "เลขที่ (No.)" กับ "เลขที่ใบแจ้งหนี้"
+            // ใกล้กัน — LLM เอาสองเลขมาต่อกันเป็นเลขเดียวที่ไม่มีอยู่บนกระดาษ
+            // เลย. เลขที่ผิด = ตามใบไม่เจอ + dedup (เลขที่+ยอด) ไม่มีวันจับใบซ้ำ.
+            // ตรวจกับ token ที่ OCR อ่านได้จริง: ถ้าผ่าออกเป็น 2 เลขที่ต่างก็อยู่
+            // บนเอกสาร = ถูกต่อกัน → เลือกเลขที่หลัก (ป้าย "เลขที่/No." ชนะป้ายรอง
+            // "เลขที่ใบแจ้งหนี้/สัญญา/เครื่องวัด") — ตรรกะอยู่ใน pure class มีเทสต์
+            var (cleanDocNo, docNoNote) = DocumentNumberSanitizer.Sanitize(
+                extractedData.DocumentNumber, extractedText);
+            if (docNoNote != null)
+            {
+                extractedData.DocumentNumber = cleanDocNo;
+                extractedData.FieldConfidence["DocumentNumber"] = 0.85;
+                extractedData.ReasoningTrace.Add("[DocNo] " + docNoNote);
+            }
+
             scanResult.DocumentType = extractedData.DocumentType;
             scanResult.Confidence = extractedData.Confidence;
             scanResult.ExtractedDocumentNumber = extractedData.DocumentNumber;
@@ -638,6 +654,15 @@ public class OcrService : IOcrService
             // ประโยชน์เหมือนกัน (ก่อนหน้านี้ AutoCreate path ไม่มี reconcile →
             // เอกสารที่สร้างจาก OCR API ได้บรรทัดผิดต่างจาก web UI).
             SanitizeVatSplitArtifacts(extractedData);
+
+            // หน่วยนับ: เอกสารไม่พิมพ์/โมเดลไม่ให้มา → อนุมานจากคำอธิบายด้วยกฎ
+            // (ค่าไฟ→"หน่วย" kWh, น้ำ→ลบ.ม., เช่ารายเดือน→เดือน ฯลฯ) ก่อน
+            // serialize — ทั้ง path "สร้างทันที" และ handoff เข้าฟอร์มได้หน่วย
+            // เดียวกัน. เติมเฉพาะที่ว่าง — ไม่ทับของที่เอกสาร/ผู้ใช้ระบุ
+            // _(ที่มา: บิลค่าไฟ 3,611 "ชิ้น" — default ชิ้นเหมาะกับสินค้าเท่านั้น)_
+            foreach (var it in extractedData.Items)
+                if (string.IsNullOrWhiteSpace(it.Unit))
+                    it.Unit = UnitInferrer.Infer(it.Description);
 
             // Store extracted items and account suggestions
             if (extractedData.Items.Count > 0)
@@ -714,6 +739,31 @@ public class OcrService : IOcrService
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
                         + "\n[VAT-CLAIM] " + role.InputVatClaimWarning;
                     extractedData.ReasoningTrace.Add("[VAT-CLAIM] " + role.InputVatClaimWarning);
+                }
+
+                // §82/5(4)/(6) — ต้องห้ามตาม "ชนิดรายจ่าย" ไม่ใช่ตามรูปแบบใบ
+                // (role inferrer ข้างบนตรวจได้แค่รูปแบบ: ใบย่อ/ไม่ใช่ใบกำกับ
+                // เต็มรูป). ใบกำกับเต็มรูปที่ถูกต้อง 100% ของค่าน้ำมันรถเก๋ง/
+                // ค่ารับรอง ก็เคลมไม่ได้ — เดิมระบบเปิดเคลมให้ทุกใบที่รูปแบบถูก
+                // ⇒ ยื่น ภ.พ.30 เกินสิทธิ์เงียบ ๆ (ผู้ใช้รายงาน)
+                if (role.OurRole == "Buyer" && docVat > 0)
+                {
+                    var prohibited = ProhibitedInputVatScreener.Screen(
+                        normalizedText, extractedData.VendorName,
+                        extractedData.Items.Select(i => i.Description));
+                    if (!string.IsNullOrEmpty(prohibited.Warning))
+                    {
+                        // Claimable=false → ใช้ prefix [VAT-CLAIM] ตัวเดียวกับ
+                        // เส้นรูปแบบใบ: ทั้ง frontend และ backend รู้จัก marker นี้
+                        // อยู่แล้ว (default ไม่เคลม + ตั้ง IsVatClaimable=false
+                        // รายบรรทัด) — ไม่ต้องเพิ่ม marker ใหม่ให้ที่อื่นต้องตามแก้
+                        // Claimable=null (รถที่เคลมได้) → เตือนอย่างเดียว
+                        // ใช้ prefix [VAT-NOTE] เพื่อ **ไม่** ปิดการเคลม
+                        var prefix = prohibited.Claimable == false ? "[VAT-CLAIM]" : "[VAT-NOTE]";
+                        var msg = $"{prefix} ({prohibited.RuleCode}) {prohibited.Warning}";
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + msg;
+                        extractedData.ReasoningTrace.Add(msg);
+                    }
                 }
             }
 
@@ -2732,11 +2782,44 @@ public class OcrService : IOcrService
             var amt = item.Amount ?? 0m;
             var up = item.UnitPrice ?? 0m;
             var qty = item.Quantity ?? 0m;
-            if (amt <= 0m || up <= 0m || qty <= 0m) continue;
-            var computed = System.Math.Round(up * qty, 2);
+            if (amt <= 0m) continue;
             var tol = System.Math.Max(1m, System.Math.Abs(amt) * 0.02m);
+
+            // ราคา/หน่วยหาย แต่มียอด+จำนวน → หารหาให้ (บิลสาธารณูปโภคพิมพ์
+            // แต่ปริมาณกับยอดรวม ไม่พิมพ์ราคาต่อหน่วย)
+            if (up <= 0m && qty > 0m)
+            {
+                item.UnitPrice = System.Math.Round(amt / qty, 4, System.MidpointRounding.AwayFromZero);
+                continue;
+            }
+            if (up <= 0m || qty <= 0m) continue;
+
+            var computed = System.Math.Round(up * qty, 2);
             if (System.Math.Abs(computed - amt) <= tol) continue;   // ตรงอยู่แล้ว
-            // เพี้ยน → qty น่าจะอ่านผิด. เชื่อ Amount+UnitPrice → แก้ qty ให้ line = Amount
+
+            // ⚠️ แยกสองเคสให้ถูกตัว (บั๊กจริง — บิลค่าไฟ 59 ล้าน):
+            //
+            // เคส ก: UnitPrice ≈ Amount ทั้งที่ qty > 1 — OCR อ่าน "ยอดรวม
+            //   บรรทัด" มาใส่ช่องราคา/หน่วย (qty=3,611 kWh, up=16,351.48 =
+            //   ยอดทั้งบิล). ตัวผิดคือ **ราคา** ไม่ใช่จำนวน — 3,611 หน่วยคือ
+            //   ค่ามิเตอร์จริง ตรวจย้อน/เทียบเดือนได้ ทิ้งไม่ได้. ตามหลักบัญชี
+            //   ราคาทุนต่อหน่วย = ยอดจ่ายจริง ÷ ปริมาณ → หารหา ไม่ใช่บิด
+            //   ปริมาณให้เข้ากับราคา (เดิมเคสนี้ตกไปแขนงล่าง → qty โดนเขียน
+            //   ทับเป็น 1 เงียบ ๆ ปริมาณหาย)
+            //
+            // เคส ข: qty ≈ Amount — ตัวจำนวนเองคือยอดที่อ่านหลงคอลัมน์มา
+            //   (เช่น qty=1,180 amt=1,180) → จำนวนไม่ใช่ข้อมูลจริง → เชื่อ
+            //   Amount+UnitPrice แก้ qty ให้ line = Amount (พฤติกรรมเดิม)
+            //
+            // ตัวแยกสองเคส: จำนวน "ใกล้ยอดเงิน" = จำนวนคือตัวหลงคอลัมน์ ·
+            // จำนวน "ต่างจากยอดเงิน" = จำนวนเป็นข้อมูลอิสระจากกระดาษ (มิเตอร์/
+            // ปริมาณจริง) ห้ามทิ้ง — ยอดบรรทัด (Amount) คงเดิมทั้งสองทาง
+            var qtyLooksLikeAmount = System.Math.Abs(qty - amt) <= tol;
+            if (qty > 1m && !qtyLooksLikeAmount && System.Math.Abs(up - amt) <= tol)
+            {
+                item.UnitPrice = System.Math.Round(amt / qty, 4, System.MidpointRounding.AwayFromZero);
+                continue;
+            }
             var fixedQty = System.Math.Round(amt / up, 3, System.MidpointRounding.AwayFromZero);
             item.Quantity = fixedQty > 0m ? fixedQty : 1m;
         }
@@ -4465,7 +4548,10 @@ public class OcrService : IOcrService
                     LineOrder = lineOrder++,
                     Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
                     Quantity = item.Quantity ?? 1,
-                    Unit = string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
+                    // Resolve: ว่าง → อนุมานจากคำอธิบาย (ค่าไฟ→"หน่วย") ก่อนตก
+                    // "ชิ้น" · "ชิ้น" บนบรรทัดที่กฎรู้จัก (สแกนเก่าที่ default
+                    // ค้างมา) → แทนด้วยหน่วยจริง · หน่วยอื่น = ตามที่ระบุเสมอ
+                    Unit = UnitInferrer.Resolve(item.Unit, item.Description),
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
                     // ส่วนลด: ราคา/หน่วยคงเป็นราคาเต็ม, ใส่ % ส่วนลด, Amount = ยอดหลังลด
                     DiscountPercent = docDiscountPercent,
@@ -4702,6 +4788,7 @@ public class OcrService : IOcrService
                     LineOrder = lineOrder++,
                     Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
                     Quantity = item.Quantity ?? 1,
+                    Unit = UnitInferrer.Resolve(item.Unit, item.Description),
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
                     Amount = item.Amount ?? 0,
                     VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
