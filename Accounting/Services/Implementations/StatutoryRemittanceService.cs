@@ -916,6 +916,16 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 // = วันจ่ายจริงของการนำส่ง (recognizeDate override ได้)
                 d.Pp36RdReceiptNumber = rdReceiptNo;
                 d.Pp36RdReceiptDate = recognizeDate ?? remittance.PayDate;
+                // ⚠️ ตัวบล็อกที่ทำให้ "รับรู้แล้วแต่ไม่โผล่ใน ภ.พ.30/รายการดึงเอกสาร":
+                // ทั้ง GenerateVatReport และ GetPullableDocuments รับ PV เข้าฝั่ง
+                // ภาษีซื้อ **เฉพาะที่ HasTaxInvoiceReference=true** (นิยามเดิม =
+                // "อ้างใบกำกับซื้อเพื่อขอเครดิต") — ใบ ภ.พ.36 ไม่มีใบกำกับไทยจึง
+                // ไม่เคยติ๊ก ⇒ GL มี Dr 11610 แต่รายงานไม่มีแถว ไม่ reconcile.
+                // หลังนำส่ง+ได้ใบเสร็จ RD ใบเสร็จนั้น**คือใบกำกับภาษี §86/14**
+                // สิทธิ์เครดิตจึงสมบูรณ์ → เปิดธงเหมือนเส้น §86/4
+                // (ReclassifyUndueInputVatAsync ทำแบบเดียวกันอยู่แล้ว)
+                if (d.DocumentType == DocumentType.PaymentVoucher)
+                    d.HasTaxInvoiceReference = true;
                 d.UpdatedAt = DateTime.UtcNow;
             }
             await _db.SaveChangesAsync();

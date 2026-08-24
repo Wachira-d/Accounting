@@ -2928,7 +2928,12 @@ public partial class TaxService : ITaxService
     /// ฝั่งซื้อยึดวันที่ใบกำกับของผู้ขายก่อน (อาจต่างจากวันที่เราบันทึก)
     /// แล้วค่อย tax point / วันที่เอกสาร</summary>
     internal static DateTime ClaimBasisDate(Document d)
-        => d.SupplierTaxInvoiceDate ?? d.TaxPointDate ?? d.DocumentDate;
+        // ภ.พ.36 (§83/6): ไม่มีใบกำกับของผู้ขาย ตปท. — "ใบกำกับ" คือใบเสร็จ RD
+        // จากการนำส่ง (§86/14) ⇒ ฐานนับ §82/3 และงวดที่ดึงได้ต้องอิงวันที่ใบเสร็จ
+        // นั้น ไม่ใช่วันจ่าย (เดิมตกไป TaxPointDate/DocumentDate = เดือนจ่าย ซึ่ง
+        // เร็วกว่าใบเสร็จ ~1 เดือน ⇒ หน้าต่างสั้นกว่าจริง + งวดที่ดึงได้เพี้ยน)
+        => (d.IsForeignService ? d.Pp36RdReceiptDate : null)
+           ?? d.SupplierTaxInvoiceDate ?? d.TaxPointDate ?? d.DocumentDate;
 
     /// <summary>ตัดสินว่าเอกสารเดือนภาษี <paramref name="basis"/> ดึงเข้ารายงานงวด
     /// (<paramref name="reportYear"/>/<paramref name="reportMonth"/>) ได้หรือไม่ —
