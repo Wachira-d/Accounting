@@ -1898,6 +1898,15 @@
           if (firstFid) firstFid.dataset.feedbackId = payload.glAccountAiFeedbackId;
         }
         if (!document.querySelector('#linesBody .line-card')) this.addLine();
+        // ส่วนลดท้ายบิลจาก OCR (ใบที่พิมพ์ "ส่วนลด/Discount" ระดับใบ เช่น
+        // Scommerce) — ต้องเติมก่อน calcSum ไม่งั้นยอดสุทธิบนฟอร์มไม่ตรง
+        // ยอดรวมทั้งสิ้นบนกระดาษ
+        if (payload.billDiscountAmount > 0) {
+          const bd = document.getElementById('fBillDiscount');
+          const bm = document.getElementById('fBillDiscountMode');
+          if (bd) bd.value = payload.billDiscountAmount;
+          if (bm) bm.value = 'amt';
+        }
         this.calcSum();
 
         // กฎเหล็ก #3: ฟอร์ม OCR ต้อง pre-fill ครบ + highlight field ที่

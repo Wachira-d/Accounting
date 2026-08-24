@@ -1149,7 +1149,11 @@ public partial class PdfGenerationService
                         t.Span(isDr ? "Dr " : "Cr ").FontSize(9).Bold().FontColor("#334155");
                         t.Span(name).FontSize(9).FontColor("#334155");
                     });
-                    r.ConstantItem(70).AlignRight().Text(amt).FontSize(9).FontColor("#334155");
+                    // แบบบัญชีแยกประเภท: ยอด Dr เยื้องซ้ายออกจากยอด Cr 16pt
+                    // (กลับด้านกับฝั่งข้อความที่ Cr เยื้องขวา) — ให้เห็นสอง
+                    // คอลัมน์ยอดแบบสมุดบัญชีจริง (sync กับ HTML renderer)
+                    r.ConstantItem(70).AlignRight().PaddingRight(isDr ? 16 : 0)
+                        .Text(amt).FontSize(9).FontColor("#334155");
                 });
             }
         });

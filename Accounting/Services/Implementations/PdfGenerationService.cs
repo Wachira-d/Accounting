@@ -1873,9 +1873,14 @@ public partial class PdfGenerationService : IPdfGenerationService
                 var tag = isDr ? "Dr" : "Cr";
                 var amt = (isDr ? l.Debit : l.Credit).ToString("N2");
                 var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} {l.AccountName}";
+                // แบบบัญชีแยกประเภท: ฝั่งข้อความ Dr ชิดซ้าย/Cr เยื้องขวา 16px —
+                // ฝั่ง "ยอดเงิน" ต้องเยื้องกลับด้าน (ยอด Dr ขยับซ้ายออกจากยอด Cr
+                // เท่ากัน 16px) ให้เห็นสองคอลัมน์ Dr/Cr แบบสมุดบัญชีจริง
+                // (sync กับ ComposeGlPosting ฝั่ง QuestPDF — สอง renderer ห้าม drift)
                 var indent = isDr ? "" : "padding-left:16px;";
+                var amtIndent = isDr ? "padding-right:16px;" : "";
                 sb.AppendLine($"<div style='display:flex;justify-content:space-between;{indent}line-height:1.45'>" +
-                    $"<span><b>{tag}</b> {WebUtility.HtmlEncode(name)}</span><span>{amt}</span></div>");
+                    $"<span><b>{tag}</b> {WebUtility.HtmlEncode(name)}</span><span style='{amtIndent}'>{amt}</span></div>");
             }
             sb.AppendLine("</div>");
         }
