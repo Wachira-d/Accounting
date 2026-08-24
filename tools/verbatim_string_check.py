@@ -21,7 +21,12 @@ checker เดิมทั้ง 7 ตัวมองไม่เห็นเล
 กฎภาษา C# ที่ตรวจ:
   · `@"..."` / `$@"..."` / `@$"..."` — ปิดด้วย `"` ตัวเดียว, ใส่ `"` จริงต้อง
     เขียน `""`
-  · raw string (สาม quote ติดกัน) — `"` เดี่ยวใส่ได้ตามสบาย จึง **ข้าม** ไม่ตรวจ
+  · raw string (สาม quote ติดกัน) — quote เดี่ยวใส่ได้ตามสบาย แต่มีกฎของตัวเอง:
+    ถ้าเนื้อหากินหลายบรรทัด ตัวเปิดต้องตามด้วยขึ้นบรรทัดใหม่ทันที
+    (ห้ามมีเนื้อหาบรรทัดเดียวกับตัวเปิด) และตัวปิดต้องอยู่บรรทัดของตัวเอง
+    ผิดกฎนี้ = CS8997 Unterminated raw string literal + error ลามทั้งไฟล์
+    (บั๊กจริง: เขียน SQL migration หลายบรรทัดต่อท้ายตัวเปิดเลย ⇒ 300+ errors
+     และตัว checker เองก็เพิ่งพลาดกฎเดียวกันในภาษา Python ตอนเขียนหมายเหตุนี้)
   · `"..."` ธรรมดา — `\"` เอาอยู่แล้ว และปิดในบรรทัดเดียว จึงไม่ใช่ปัญหา
 
 ตรรกะ: หา verbatim string ที่เปิดแล้วกินหลายบรรทัด → บรรทัดที่ทำให้มัน "ปิด"
@@ -112,10 +117,20 @@ def _skip_string(text, i):
     interpolated = "$" in prefix
     verbatim = "@" in prefix
 
-    # raw string (สาม quote ขึ้นไป) — `"` เดี่ยวใส่ได้ตามสบาย ไม่ต้องตรวจ
+    # raw string (สาม quote ขึ้นไป) — `"` เดี่ยวใส่ได้ แต่กฎหลายบรรทัดเข้ม:
+    # เปิดแล้วถ้าเนื้อหาข้ามบรรทัด ตัวเปิดต้องตามด้วย newline ทันที
     if len(fence) >= 3:
-        e = text.find(fence, i + len(prefix) + len(fence))
-        return (n if e < 0 else e + len(fence)), None
+        body_start = i + len(prefix) + len(fence)
+        e = text.find(fence, body_start)
+        end = n if e < 0 else e + len(fence)
+        if e >= 0:
+            body = text[body_start:e]
+            if "\n" in body:
+                # หลายบรรทัด → หลังตัวเปิดต้องมีแต่ช่องว่างจนจบบรรทัด
+                first_nl = body.find("\n")
+                if body[:first_nl].strip():
+                    return end, ("raw-multiline", i, body_start)
+        return end, None
 
     j = i + len(prefix) + 1
     while j < n:
@@ -168,7 +183,11 @@ def scan_text(text):
             continue
 
         end, info = _skip_string(text, i)
-        if info and info[0] == "verbatim":
+        if info and info[0] == "raw-multiline":
+            problems.append((line_of(info[1]), 0,
+                'raw string หลายบรรทัด: หลัง \"\"\" ที่เปิด ต้องขึ้นบรรทัดใหม่ทันที '
+                '(ห้ามมีเนื้อหาบรรทัดเดียวกับตัวเปิด) — CS8997'))
+        elif info and info[0] == "verbatim":
             _, start, close = info
             multiline = "\n" in text[start:close]
             nl = text.find("\n", close)
@@ -222,6 +241,21 @@ BAD = '''class A {
     ";
 }'''
 
+# raw string หลายบรรทัดที่เปิดแล้วมีเนื้อหาต่อท้ายทันที = CS8997
+BAD_RAW = '''class A {
+    string Sql() => """UPDATE "T" SET "a" = 1
+       WHERE "b" = 2;""";
+}'''
+
+# raw ถูกกฎ: บรรทัดเดียว (มีเนื้อหาต่อท้ายได้) และหลายบรรทัดที่ขึ้นบรรทัดใหม่
+GOOD_RAW = '''class A {
+    string One() => """UPDATE "T" SET "a" = 1 WHERE "b" = 2;""";
+    string Many() => """
+        UPDATE "T" SET "a" = 1
+        WHERE "b" = 2;
+        """;
+}'''
+
 
 def self_test():
     ok = True
@@ -238,6 +272,19 @@ def self_test():
         ok = False
     else:
         print(f"✅ self-test: จับบั๊กจริงได้ ({bad[0][2]!r})")
+
+    if not scan_text(BAD_RAW):
+        print("❌ self-test: raw string หลายบรรทัดผิดกฎ — จับไม่ได้")
+        ok = False
+    else:
+        print("✅ self-test: จับ raw string หลายบรรทัดที่เปิดผิดกฎได้ (CS8997)")
+    if scan_text(GOOD_RAW):
+        print("❌ self-test: ฟ้องผิดบน raw string ที่ถูกกฎ")
+        for p in scan_text(GOOD_RAW):
+            print("   ", p)
+        ok = False
+    else:
+        print("✅ self-test: raw string ที่ถูกกฎ ไม่ฟ้อง")
     return 0 if ok else 1
 
 
