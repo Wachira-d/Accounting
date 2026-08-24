@@ -762,10 +762,13 @@
                      เพราะไม่รู้ว่ามีขั้น "รับรู้ภาษีซื้อ") -->
                 <div id="foreignServiceBanner" style="display:none;flex-basis:100%;background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:8px;padding:10px 12px;margin-top:6px;font-size:12px;color:#1e3a8a;line-height:1.7">
                   <b>🌐 วงจรบริการต่างประเทศ (§83/6):</b>
+                  <br><b>ฐานภาษี = ยอดที่จ่ายจริงให้ผู้ขายเสมอ</b> — กรอกยอดจ่าย (เช่น 11,009.25) เป็นราคา/หน่วยตรง ๆ ระบบบวก VAT 7% ทับให้ (770.65) · <b>ห้ามใช้โหมด "ราคารวมภาษี"</b> เพราะจะถอด VAT ออกจากยอดจ่าย = ฐานหด นำส่งขาด (ระบบล็อกให้แล้ว) · ยอดสุทธิบนใบ = ฐาน + VAT แต่เงินที่ออกถึงผู้ขายคือฐานอย่างเดียว ส่วน VAT ตั้งหนี้ 21912 รอนำส่งสรรพากร
+                  <br>
                   ① ใบนี้ตั้ง VAT 7% แบบ self-assess (ผู้ขายต่างประเทศไม่คิด VAT มา — เราประเมินเองจากยอดจ่าย ระบบพัก Dr 11640 / Cr 21912)
                   → ② สิ้นเดือน <b>นำส่ง ภ.พ.36</b> ที่หน้า "นำส่งภาษี" (ภายในวันที่ 7/15 ของเดือนถัดไป)
                   → ③ ได้ใบเสร็จกรมสรรพากรแล้วกด <b>"รับรู้ภาษีซื้อ"</b> ที่หน้าเดียวกัน
-                  → ④ ภาษีซื้อเข้า <b>ภ.พ.30</b> ให้เคลมอัตโนมัติ (§77/2) · WHT ของใบนี้เข้า <b>ภ.ง.ด.54</b>
+                  → ④ ภาษีซื้อเข้า <b>ภ.พ.30</b> ให้เคลมอัตโนมัติ (§77/2)
+                  <br><b>หัก ณ ที่จ่าย (ม.70):</b> กรอกในช่อง "หัก ณ ที่จ่าย %" ได้ตามปกติ — นิติบุคคล ตปท. <b>15%</b> ทั่วไป / <b>10%</b> เงินปันผล (มี DTA อาจลด/ยกเว้น — ต้องมีหนังสือรับรองถิ่นที่อยู่) · หนี้ WHT เข้า 21918 และนำส่งแบบ <b>ภ.ง.ด.54</b> แยกจาก ภงด.3/53 · ไม่หักก็ปล่อย 0 ได้ (เช่นค่าโฆษณา 40(8) ที่ไม่เข้า ม.70)
                   · จ่ายเงินตราต่างประเทศ: กรอกสกุลเงิน + อัตราแลกเปลี่ยนในหัวเอกสาร ฐานภาษีคิดจากยอดบาท
                 </div>
                 <label style="display:none;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsDepositWrap">
@@ -2699,6 +2702,22 @@
         const on = document.getElementById('fIsForeignService')?.checked;
         const b = document.getElementById('foreignServiceBanner');
         if (b) b.style.display = on ? '' : 'none';
+        // §83/6: ฐานภาษี ภ.พ.36 = **ยอดที่จ่ายจริงให้ผู้ขาย** เสมอ (ผู้ขาย ตปท.
+        // ไม่เก็บ VAT ไทย — ยอดจ่ายไม่มีวันมี VAT ปนอยู่) → โหมด "ราคารวมภาษี"
+        // ใช้ไม่ได้เด็ดขาด: มันถอด 7/107 ออกจากยอดจ่าย = ฐานหด นำส่งขาด
+        // (11,009.25 → นำส่ง 720.23 แทน 770.65) + เจ้าหนี้ผู้ขายตั้งขาดเท่า VAT
+        const piv = document.getElementById('fPricesIncludeVat');
+        if (piv) {
+          if (on && piv.checked) {
+            piv.checked = false;
+            Layout.toast('ปลด "ราคารวมภาษี" ให้แล้ว — ภ.พ.36 ฐานภาษีคือยอดที่จ่ายจริง '
+              + 'แล้วบวก VAT 7% ทับ (ยอดจ่ายผู้ขาย ตปท. ไม่มี VAT ไทยปนอยู่)', 'info', 9000);
+          }
+          piv.disabled = !!on;
+          piv.title = on
+            ? 'ใช้กับบริการต่างประเทศไม่ได้ — ยอดจ่ายจริงคือฐานภาษี (ไม่มี VAT ไทยปน) VAT 7% บวกเพิ่มจากยอดจ่าย'
+            : '';
+        }
         if (!on) return;
         let touched = 0;
         document.querySelectorAll('#linesBody .line-card [data-f="vat"]').forEach(sel => {
@@ -4536,6 +4555,12 @@
             (showFs && document.getElementById('fIsForeignService')?.checked) ? '' : 'none';
           const fh = document.getElementById('fForeignHint');
           if (fh && !showFs) fh.style.display = 'none';
+          // ปลดล็อกโหมดราคารวมภาษีเมื่อไม่ใช่ใบต่างประเทศแล้ว (กันล็อกค้างข้ามใบ)
+          const piv2 = document.getElementById('fPricesIncludeVat');
+          if (piv2 && (!showFs || !document.getElementById('fIsForeignService')?.checked)) {
+            piv2.disabled = false;
+            piv2.title = '';
+          }
         }
 
         // AI แนะนำผังบัญชี GL — เฉพาะเอกสารฝั่งซื้อ (Expense / PI / PV) ที่มี
@@ -6921,6 +6946,9 @@
           {
             const fb = document.getElementById('foreignServiceBanner');
             if (fb) fb.style.display = d.isForeignService ? '' : 'none';
+            // ล็อกโหมดราคารวมภาษีของใบต่างประเทศ (ฐาน = ยอดจ่ายจริงเสมอ §83/6)
+            const piv = document.getElementById('fPricesIncludeVat');
+            if (piv) piv.disabled = !!d.isForeignService;
           }
           // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — hydrate checkbox จาก doc.
           // (doc.documentType เป็น TaxInvoice อยู่แล้ว → combinedRow แสดงจาก

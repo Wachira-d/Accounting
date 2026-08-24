@@ -431,6 +431,16 @@ public class Document : TenantEntity
     /// จาก US, etc.).</summary>
     public bool IsForeignService { get; set; }
 
+    /// <summary>§86/14 — ใบเสร็จรับเงินของกรมสรรพากรจากการนำส่ง ภ.พ.36 ถือเป็น
+    /// "ใบกำกับภาษี" ของภาษีซื้อก้อนนี้: เลขที่/วันที่ใบเสร็จ RD คือเลขที่/วันที่
+    /// ใบกำกับที่ต้องขึ้นในรายงานภาษีซื้อ ภ.พ.30 (ไม่ใช่เลข invoice ของผู้ขาย
+    /// ต่างประเทศ ซึ่งไม่ใช่ใบกำกับไทย). stamp ตอน "รับรู้ภาษีซื้อ"
+    /// (RecognizePp36InputVatAsync) จากเลขรับ (FilingNumber) ของการนำส่งงวดนั้น.
+    /// field แยกโดยตั้งใจ — ห้าม reuse SupplierInvoiceNumber (เก็บเลข invoice
+    /// การค้าของผู้ขายอยู่ กฎเหล็ก #4E ห้าม field เดียวเก็บสองความหมาย)</summary>
+    public string? Pp36RdReceiptNumber { get; set; }
+    public DateTime? Pp36RdReceiptDate { get; set; }
+
     /// <summary>Link ไปยัง EarlyPaymentDiscountTerm ("2/10 net 30") ที่ผูก
     /// กับเอกสารฝั่งขาย. Receipt ตรวจ window → auto-apply discount. Null =
     /// ไม่มีเงื่อนไขส่วนลดเงินสด.</summary>

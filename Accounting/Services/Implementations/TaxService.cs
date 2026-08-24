@@ -1154,7 +1154,11 @@ public partial class TaxService : ITaxService
                 // ⇒ นำส่งเกินสำหรับรายการที่ยกเลิกไปแล้ว. ใบ reversal เอง
                 // (OriginalEntryId != null) ก็ข้าม — คู่ของมันไม่ถูกนับแล้ว
                 && j.ReversedByEntryId == null
-                && j.OriginalEntryId == null)
+                && j.OriginalEntryId == null
+                // JE "รับรู้ภาษีซื้อ ภ.พ.36" (Dr 11610/Cr 11640) ต้องไม่เข้า scan นี้
+                // — ภาษีซื้อก้อนเดียวกันเข้ารายงานทางเอกสาร (BecameClaimableAt)
+                // อยู่แล้ว ปล่อยไว้ = บรรทัด JV ซ้อนในรายงาน + เสี่ยงนับซ้ำ
+                && (j.Reference == null || !j.Reference.StartsWith("ภ.พ.36R-")))
             .Select(j => j.Id)
             .ToListAsync();
 
@@ -1536,10 +1540,15 @@ public partial class TaxService : ITaxService
         // ภ.ง.ด.53 = นิติบุคคลไทย, ภ.ง.ด.54 = ผู้รับต่างประเทศ (ม.70) —
         // เดิมไม่กรองเลย ทำให้ 3 กับ 53 ของงวดเดียวกันเป็นรายงานฝาแฝด
         // ยอดนำส่งรวมเป็น 2 เท่าของที่หักจริง
-        bool PayeeInScope(Contact? c)
+        bool PayeeInScope(Contact? c, bool docIsForeignService = false)
         {
-            var foreign = c != null && !string.IsNullOrWhiteSpace(c.CountryCode)
-                && !string.Equals(c.CountryCode, "TH", StringComparison.OrdinalIgnoreCase);
+            // สัญญาณ "ต่างประเทศ" มี 2 ทาง: CountryCode ของ contact (มักไม่ได้กรอก)
+            // และธง IsForeignService บนเอกสาร (ผู้ใช้ติ๊กเองตอนสร้าง PV — เชื่อถือได้
+            // กว่า). เดิมดู CountryCode อย่างเดียว: Booking.com ที่ไม่ได้กรอกประเทศ
+            // หลุดจาก ภงด.54 แล้วไปโผล่ ภงด.53 = ยื่นผิดแบบทั้งสองทาง
+            var foreign = docIsForeignService
+                || (c != null && !string.IsNullOrWhiteSpace(c.CountryCode)
+                    && !string.Equals(c.CountryCode, "TH", StringComparison.OrdinalIgnoreCase));
 
             // ม.70: ผู้รับเงินต่างประเทศอยู่ ภ.ง.ด.54 เท่านั้น
             if (report.TaxType == TaxType.WithholdingTax54) return foreign;
@@ -1556,7 +1565,7 @@ public partial class TaxService : ITaxService
             var (form, _, _) = WithholdingTaxCertService.ResolveWhtFormType(c, null);
             return report.TaxType == form;
         }
-        docs = docs.Where(d => PayeeInScope(d.Contact)).ToList();
+        docs = docs.Where(d => PayeeInScope(d.Contact, d.IsForeignService)).ToList();
 
         // ── กันนับซ้ำสาย "ตั้งหนี้ → ใบสำคัญจ่าย" — ทั้ง PI/Expense และ PV ที่
         // แปลง/ผูกกัน ถือ WithholdingTaxAmount บนเอกสารทั้งคู่ ⇒ เดิมเข้ารายงาน
@@ -2466,7 +2475,8 @@ public partial class TaxService : ITaxService
                     {
                         d.Id, d.DocumentNumber, d.SupplierInvoiceNumber,
                         Branch = d.SupplierBranchCode ?? (c != null ? c.BranchCode : null),
-                        d.SupplierTaxInvoiceDate
+                        d.SupplierTaxInvoiceDate,
+                        d.IsForeignService, d.Pp36RdReceiptNumber, d.Pp36RdReceiptDate
                     }).ToDictionaryAsync(x => x.Id);
 
                 var enriched = resp.Lines.Select(ln =>
@@ -2474,11 +2484,19 @@ public partial class TaxService : ITaxService
                     if (ln.DocumentId.HasValue && docInfo.TryGetValue(ln.DocumentId.Value, out var info))
                     {
                         var isInput = ln.IncomeTypeCode is "INPUT" or "JE_INPUT";
+                        // §86/14 — ภาษีซื้อ ภ.พ.36: "ใบกำกับ" คือใบเสร็จรับเงินของ
+                        // กรมสรรพากรจากการนำส่ง ไม่ใช่ invoice ของผู้ขาย ตปท.
+                        // (ผู้ขายต่างประเทศออกใบกำกับไทยไม่ได้) — เลข/วันที่ใน
+                        // รายงานภาษีซื้อจึงต้องเป็นของใบเสร็จ RD ที่ stamp ตอนรับรู้
                         var invNo = isInput
-                            ? (string.IsNullOrWhiteSpace(info.SupplierInvoiceNumber) ? info.DocumentNumber : info.SupplierInvoiceNumber)
+                            ? (info.IsForeignService && !string.IsNullOrWhiteSpace(info.Pp36RdReceiptNumber)
+                                ? $"{info.Pp36RdReceiptNumber} (ใบเสร็จ RD ภ.พ.36)"
+                                : (string.IsNullOrWhiteSpace(info.SupplierInvoiceNumber) ? info.DocumentNumber : info.SupplierInvoiceNumber))
                             : info.DocumentNumber;
-                        var invDate = (isInput && info.SupplierTaxInvoiceDate.HasValue)
-                            ? info.SupplierTaxInvoiceDate.Value : ln.TransactionDate;
+                        var invDate = isInput && info.IsForeignService && info.Pp36RdReceiptDate.HasValue
+                            ? info.Pp36RdReceiptDate.Value
+                            : (isInput && info.SupplierTaxInvoiceDate.HasValue)
+                                ? info.SupplierTaxInvoiceDate.Value : ln.TransactionDate;
                         return ln with { InvoiceNumber = invNo, BranchCode = info.Branch, TransactionDate = invDate };
                     }
                     return ln;

@@ -325,10 +325,37 @@
           const res = await api.getTaxReports(q);
           const data = res.data;
           this.allReports = data?.items || data || [];
+          // แท็บ ภ.พ.36: เดือนที่มีใบบริการต่างประเทศจริงแต่ยังไม่มีใครกดสร้าง
+          // รายงาน — เดิมหายเงียบทั้งเดือน (ผู้ใช้ถาม "ไม่ขึ้นอัตโนมัติหรอ")
+          // ดึงจาก remittance dashboard (แหล่งเดียวกับหน้านำส่งภาษี — ยอดตรงกัน)
+          // แล้วเติมเป็นแถว "ยังไม่สร้าง" พร้อมปุ่มสร้างในคลิกเดียว
+          this._pp36Missing = [];
+          if (this.taxType === 'VatPp36') {
+            try {
+              const dash = await API.get(`/api/companies/${Layout.getCompanyId()}/remittances/dashboard`);
+              const pend = (dash?.data?.pending || []).filter(r => r.remittanceType === 'VatPp36');
+              const have = new Set(this.allReports.map(r => `${r.year}-${r.month}`));
+              const yearF = document.getElementById('yearFilter').value;
+              this._pp36Missing = pend
+                .filter(r => !have.has(`${r.periodYear}-${r.periodMonth}`))
+                .filter(r => !yearF || String(r.periodYear) === String(yearF))
+                .map(r => ({ year: r.periodYear, month: r.periodMonth, amount: r.amount }));
+            } catch (_) { /* dashboard ล้มไม่ต้องพังทั้งแท็บ */ }
+          }
           this.updateStats();
           this.render();
           const totalPages = data?.totalPages || 1;
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /** สร้างรายงาน ภ.พ.36 ของงวดที่ระบบเห็นยอดแล้วในคลิกเดียว (จากแถวเทา) */
+      async generatePp36For(year, month) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.generateTaxReport({ taxType: 'VatPp36', year, month });
+          Layout.toast(`สร้างรายงาน ภ.พ.36 งวด ${String(month).padStart(2, '0')}/${year + 543} แล้ว`);
+          await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       updateStats() {
@@ -344,7 +371,24 @@
         let items = this.allReports;
         if (statusF) items = items.filter(r => r.status === statusF);
         const tbody = document.getElementById('tableBody');
-        if (!items.length) { tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่มีรายงาน</td></tr>'; return; }
+        // แถว "งวดที่มียอด ภ.พ.36 แต่ยังไม่สร้างรายงาน" — โชว์เสมอบนแท็บ ภ.พ.36
+        const missingRows = (this.taxType === 'VatPp36' ? (this._pp36Missing || []) : [])
+          .map(m => `<tr style="background:#f8fafc">
+            <td></td>
+            <td class="font-medium">ภ.พ.36</td><td>${m.year + 543}</td>
+            <td>${['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'][m.month] || m.month}</td>
+            <td class="text-right" style="color:#64748b" title="ฐานคำนวณจากใบบริการต่างประเทศที่อนุมัติแล้ว (แหล่งเดียวกับหน้านำส่งภาษี)">VAT รอนำส่ง ${Layout.money(m.amount)}</td>
+            <td class="text-right">—</td><td class="text-right">—</td>
+            <td><span class="badge" style="background:#f1f5f9;color:#64748b">ยังไม่สร้าง</span></td><td>-</td>
+            <td class="text-right"><button class="btn btn-sm btn-primary"
+              onclick="Page.generatePp36For(${m.year}, ${m.month})">+ สร้างรายงานงวดนี้</button></td>
+          </tr>`).join('');
+        if (!items.length) {
+          tbody.innerHTML = missingRows
+            || '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่มีรายงาน</td></tr>';
+          if (missingRows) return;
+          return;
+        }
         // ภงด.3/53/54 เก็บยอดใน totalIncome/totalTaxWithheld — ไม่ใช่ outputVat/
         // netVat (ของ VAT) ⇒ เดิม list โชว์ 0.00 ทุกแถว ภงด. แม้รายงานมีข้อมูล
         // (ผู้ใช้เข้าใจว่ารายงานว่าง ทั้งที่หนังสือรับรอง 50 ทวิ ออกครบ)
@@ -396,7 +440,7 @@
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.unlockFiling('${r.id}')" title="ปลดล็อกการยื่น — ใช้เมื่อต้องแก้ไขเอกสารที่อยู่ในรายงาน">🔓 Unlock</button>` : ''}
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.rejectAndReverse('${r.id}')" title="RD reject → autonomous reversal JE">⚠️ Reject &amp; Reverse</button>` : ''}
           </td>
-        </tr>`).join('');
+        </tr>`).join('') + missingRows;
         this._updateTaxSelectionBar();
       },
       goPage(p) { Page.page = p; Page.load(); },

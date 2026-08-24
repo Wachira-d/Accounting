@@ -474,7 +474,11 @@ public record UndueInputVatSummary(
     int AgeDays,
     int MonthsLeft,
     bool IsExpired,
-    IReadOnlyList<string> MissingFields);
+    IReadOnlyList<string> MissingFields,
+    // ใบบริการต่างประเทศ (§83/6) — VAT พัก 11640 เหมือนกันแต่**คนละวงจร**:
+    // ทางออกคือ นำส่ง ภ.พ.36 → รับรู้ (ใบเสร็จ RD) ไม่ใช่ "เติมใบกำกับผู้ขาย"
+    // (ผู้ขาย ตปท. ไม่มีวันมีเลขภาษีไทย 13 หลัก) — UI แยก section + CTA ต่างกัน
+    bool IsForeignService = false);
 
 /// <summary>เดือน/ปีที่มีเอกสารจริง (สำหรับ dropdown กรองตามงวด) + จำนวนเอกสาร.
 /// Year เก็บ ค.ศ. (UI แปลงเป็น พ.ศ. เอง).</summary>
