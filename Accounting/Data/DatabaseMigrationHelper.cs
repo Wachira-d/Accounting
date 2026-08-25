@@ -291,6 +291,9 @@ public static class DatabaseMigrationHelper
             // ===== Recurring: ส่งอีเมลเอกสารให้ผู้ติดต่ออัตโนมัติเมื่อสร้าง =====
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "AutoSendEmail" boolean NOT NULL DEFAULT false;""",
 
+            // ===== ใบวางบิลรวมใบแจ้งหนี้: บรรทัด "แทนทั้งใบ" ชี้เอกสารต้นทาง =====
+            """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "SourceDocumentId" uuid NULL;""",
+
             // ===== POS deposit support — IsDeposit + DepositRealizedAt =====
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "IsDeposit" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "DepositRealizedAt" timestamp with time zone NULL;""",

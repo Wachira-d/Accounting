@@ -587,6 +587,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - ฟอร์ม `pages/recurring.html` แสดงสถานะอีเมลบริษัทจริงจาก
     `GET /email-config` + ลิงก์ deep link `settings.html?tab=email`
 
+### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)
+- **ทางเข้า**: ฟอร์มสร้างเอกสาร → ประเภท "ใบวางบิล" + เลือกลูกค้า → กล่อง
+  "รวมใบค้างชำระ" (`documents.html #billingSourceBox`)
+- **API**: `GET /document/billing-note/outstanding?contactId=` ·
+  `POST /document/billing-note/from-invoices` (`DocumentController`)
+- **Service**: `DocumentService.BillingNote.cs` — `CreateBillingNoteFromInvoicesAsync`
+  · แหล่ง: Invoice / TaxInvoice / DebitNote สถานะ Approved/Sent/PartiallyPaid/
+  Overdue + BalanceDue > 0 · ลูกค้าเดียวกันทั้งชุด · ใบละ 1 บรรทัด ยอด =
+  BalanceDue, VatRate 0 (ยอดค้างรวม VAT ต้นทางแล้ว) · **ไม่ลง JE**
+- **กันซ้ำ**: `DocumentLine.SourceDocumentId` → ใบเดียวอยู่ได้ในใบวางบิล
+  active (ไม่ Voided/Rejected/ลบ) ใบเดียวเท่านั้น
+- BN ที่ได้เป็น Draft — อนุมัติออกเลขจริง แล้วเดินสายเดิม (BN → Receipt เมื่อ
+  รับเงิน / ตัวหนี้จริงยังตามที่ใบต้นทาง)
+
 ### 2.8 Quotation online accept (ลูกค้ากดยอมรับใบเสนอราคา)
 - **สร้างลิงก์** (ต้อง login): `POST /document/{id}/quotation-accept-link` —
   เฉพาะ Quotation ที่อนุมัติแล้ว; token 64 hex อายุ 30 วัน เก็บบน
@@ -1041,7 +1055,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | `Quotation` | ❌ | ❌ | – | – | – |
 | `Invoice` | Dr AR / Cr Rev + Cr **[21913 บริการล้วน \| 21911 มีสินค้า TrackStock]** | ❌ (DN จัดการแยก) | output — บริการล้วน: เข้าเมื่อ `OutputVatDueAt` (รับเงิน §78/1); มีสินค้า/legacy (GL ลง 21911 ตรง): เข้าทันทีตาม tax point (§78 ส่งมอบ) | `TaxPointDate` snapshot; บริการ → `OutputVatDueAt` ตอนรับชำระ | รับชำระ (Payment/ใบเสร็จ settlement) → `TryReclassifyUndueOutputVatAsync`: JV Dr 21913 / Cr 21911 เต็มยอดคงเหลือ + stamp `OutputVatDueAt` (full-on-first-settlement, GL-driven, idempotent). แปลงเป็น TIV → supersede reverse JE ทั้งใบ (รวม 21913) ใบกำกับลง 21911 เอง |
 | `TaxInvoice` | Dr AR / Cr Rev + Cr 21911 | ❌ | output | `TaxPointDate` snapshot | – |
-| `BillingNote` | ❌ (รอ Receipt) | ❌ | – | – | – |
+| `BillingNote` | ❌ (รอ Receipt) | ❌ | – | – | **รวมใบค้างหลายใบได้**: `POST document/billing-note/from-invoices` — 1 บรรทัด/ใบ ยอด=BalanceDue, `DocumentLine.SourceDocumentId` ชี้ใบต้นทาง (กันวางบิลซ้ำใน BN active) |
 | `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 | ❌ (Receipt **ไม่อยู่** ใน `ApplyStockMovementsAsync` switch — ถ้าต้อง OUT ต้อง issue Invoice/TaxInvoice ก่อน) | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
 | `ReceiptVoucher` standalone | เหมือน Receipt | ❌ (same as Receipt) | output | DocumentDate | รองรับ `IsDeposit` (2 เคส VAT ดู §3.7) |
 | `DeliveryNote` | ❌ | ❌ (ตั้งใจไม่ trigger — Invoice ที่ตามมาจะ OUT ให้, กัน double-count) | – | – | ใช้คู่กับ Invoice ใน Quotation→DN→Invoice chain |
@@ -2031,6 +2045,28 @@ _LINE bot รับรูปใบเสร็จ → OCR → เอกสาร
 _รวม Flex ปุ่มอนุมัติในแชท + postback guard + แจ้งกลับผู้ส่งเมื่ออนุมัติ)_
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
+
+_รอบ 103 — **ใบวางบิลรวมใบแจ้งหนี้หลายใบ — จาก doc ที่โกหกให้เป็นของจริง**:
+tooltip กับ doc เขียนว่า "ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว" มานานแต่
+โค้ดไม่มีทางทำ (ConvertDocumentAsync รับใบเดียว · ไม่มี Invoice→BillingNote ใน
+convert map) — ผู้ใช้ต้องพิมพ์บรรทัดเอง. เพิ่มเส้นทาง compose จริง:
+`GET document/billing-note/outstanding?contactId=` (ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้
+ที่ Approved/Sent/PartiallyPaid/Overdue + BalanceDue>0 ของลูกค้า พร้อมบอกใบที่
+ถูกวางบิลแล้วอยู่ใบไหน) + `POST document/billing-note/from-invoices` →
+`CreateBillingNoteFromInvoicesAsync` (ไฟล์ใหม่ `DocumentService.BillingNote.cs`,
+class เปลี่ยนเป็น partial): ตรวจ ชนิด/สถานะ/ยอดค้าง/ลูกค้าเดียวกันทั้งชุด/
+ห้ามซ้ำใบวางบิล active → สร้าง BN ร่างผ่าน `CreateDocumentAsync` ปกติ (เลขจริง
+ออกตอนอนุมัติ · **ไม่ลง JE** — ตัวหนี้อยู่ที่ใบต้นทาง) 1 บรรทัด = 1 ใบ ยอด =
+BalanceDue (รวม VAT ของใบต้นทางแล้ว → VatRate 0) เรียงตามวันที่ · ลิงก์ต้นทาง
+ต่อบรรทัดเก็บใน **`DocumentLine.SourceDocumentId` (คอลัมน์ใหม่ + migration)**
+ใช้กันรวมใบเดิมซ้ำ (ทวงลูกค้าซ้ำสองทาง = เสียเครดิต). UI: ฟอร์มใบวางบิล +
+เลือกลูกค้า → กล่องฟ้าแสดงใบค้างให้ติ๊ก (ใบที่วางบิลแล้ว disable + โชว์เลข BN)
++ ยอดรวมสด → ปุ่มสร้าง → ปิดฟอร์ม เปิดใบที่สร้าง. ตรวจด้วย simulation
+validation matrix 116 เคส (ชนิด×สถานะครบ + dedup/คนละลูกค้า/ใบลบ/เรียงลำดับ)
+— ผ่านหมด. **audit ครบทุก DocumentType ในรอบเดียวกัน**: convert map ครบถ้วนดี
+(PR→PO→GRN→PI→PV · Expense→PV/CIL · Receipt/PV→CN/DN · CN terminal) · พบ+แก้
+อีกจุด: ใบมัดจำเป็น pseudo-type (DB = Receipt+IsDeposit) เปิดแก้แล้ว facade
+เดิมชี้ "ใบเสร็จ" — ตอนนี้ชี้ "ใบมัดจำ" ถูกต้อง;_
 
 _รอบ 102 — **ฟอร์มสร้างเอกสาร: "ประเภทเอกสาร" ชั้นเดียว = กระดาษที่จะออก**:
 ผู้ใช้ยังงง "ใบแจ้งหนี้/ใบกำกับภาษี" กับ "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จ" สร้าง

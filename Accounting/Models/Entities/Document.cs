@@ -643,6 +643,13 @@ public class DocumentLine : BaseEntity
     /// </summary>
     public Guid? SourceLineId { get; set; }
 
+    /// <summary>บรรทัดนี้ "แทนทั้งใบ" ของเอกสารอื่น — ใช้กับใบวางบิลที่รวมยอด
+    /// ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้ค้างชำระหลายใบ (1 บรรทัด = 1 ใบ, ยอด =
+    /// BalanceDue ณ วันวางบิล). ต่างจาก <see cref="SourceLineId"/> ที่ชี้ราย
+    /// บรรทัดใน convert chain. ใช้กันรวมใบเดิมซ้ำในใบวางบิล active สองใบ
+    /// (ทวงเงินลูกค้าซ้ำ = เสียเครดิตทันที). Null = บรรทัดปกติ.</summary>
+    public Guid? SourceDocumentId { get; set; }
+
     /// <summary>
     /// Input VAT claimability per ประมวลรัษฎากร §82/5.
     /// <para>true (default) = VAT บนบรรทัดนี้ไปเข้าบัญชี "ภาษีซื้อ 116"

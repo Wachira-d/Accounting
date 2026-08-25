@@ -203,6 +203,11 @@ public interface IDocumentService
         bool forceOverrideRetention, string? overrideReason);
     Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy);
 
+    // ── ใบวางบิลรวมใบค้างชำระหลายใบ (วิธีใช้จริงในไทย: ขายหลายครั้ง → รอบวางบิล
+    //    รวมยอดใบเดียว) — BN ไม่ลง JE, ตัวหนี้ยังอยู่ที่ใบต้นทาง ──
+    Task<List<BillingNoteSourceItem>> GetOutstandingInvoicesForBillingAsync(Guid companyId, Guid contactId);
+    Task<DocumentResponse> CreateBillingNoteFromInvoicesAsync(Guid companyId, CreateBillingNoteFromInvoicesRequest request, string createdBy);
+
     /// <summary>ชนิดปลายทางที่แปลงได้จริงสำหรับบริษัทนี้ — กรองชนิดที่ติดข้อจำกัด
     /// ระดับบริษัทออกแล้ว (ใบกำกับภาษีเมื่อยังไม่จด VAT §90/2)</summary>
     Task<IReadOnlyList<DocumentType>> GetValidConversionTargetsAsync(Guid companyId, DocumentType source);
