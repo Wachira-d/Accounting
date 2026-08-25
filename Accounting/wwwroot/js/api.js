@@ -248,6 +248,9 @@ const API = {
         API.del(`${base}/document/${id}/purge${force ? `?force=true&reason=${encodeURIComponent(reason || '')}` : ''}`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       convertDocument: (id, t) => API.post(`${base}/document/${id}/convert/${t}`),
+      // ใบวางบิลรวมใบค้างชำระหลายใบ (ลูกค้ารายเดียว)
+      getBillingOutstanding: (contactId) => API.get(`${base}/document/billing-note/outstanding?contactId=${contactId}`),
+      createBillingNoteFromInvoices: (d) => API.post(`${base}/document/billing-note/from-invoices`, d),
       convertDocumentPartial: (id, t, body) => API.post(`${base}/document/${id}/convert-partial/${t}`, body),
       getDocumentFulfillment: (id) => API.get(`${base}/document/${id}/fulfillment`),
       getConversionTargets: (id) => API.get(`${base}/document/${id}/conversion-targets`),

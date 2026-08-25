@@ -527,6 +527,7 @@ python3 tools/arg_type_check.py        # CS1503 ส่ง id เข้าพา�
 python3 tools/gl_code_check.py         # เลขผังบัญชี hardcode ชนความหมายผังมาตรฐาน
 python3 tools/verbatim_string_check.py # CS1010/CS1056 `"` เดี่ยวปิด verbatim string
 python3 tools/dead_link_check.py      # ลิงก์ /pages/*.html ที่ไม่มีไฟล์ปลายทาง
+python3 tools/localstorage_key_check.py # คีย์ localStorage ที่อ่านแต่ไม่มีใครเขียน
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -563,6 +564,22 @@ awk brace-balance                      # ทุก .cs ที่แก้
   `tools/dead_link_check.py`. ปลายทางที่มีหลายหน้าให้ผ่าน resolver กลาง
   `Layout.dashboardUrl()` และ **ต้องทิ้งหน้า redirect ไว้ที่ URL เดิม** เพราะ
   ลิงก์ในอีเมลคำเชิญที่ส่งออกไปแล้ว/บุ๊กมาร์กของผู้ใช้ แก้ย้อนหลังไม่ได้)_
+- **หน้าเว็บอ่านคีย์ localStorage ที่ไม่มีใครเขียน = ทั้งหน้าตายเงียบ** เจอ
+  พร้อมกันรอบเดียว 3 จุด: `pages/etax.html` อ่าน `'companyId'` (คีย์ของ portal
+  `/connect` เท่านั้น แอปหลักไม่เคยเขียน) → ได้ null ทุกครั้ง → `window.location
+  .href = '/pages/settings.html'` ⇒ **เมนู e-Tax Invoice กดแล้วเด้งไปหน้าตั้งค่า
+  ตลอด เข้าไม่ได้เลยสักครั้งตั้งแต่เขียนมา**; `mobile-expense.html` คีย์เดียวกัน
+  ⇒ ขึ้น "ต้อง login + เลือกบริษัทก่อน" ตลอด; `pages/signatures-logic.js` อ่าน
+  `'selectedCompanyId'` ซึ่ง**ไม่มีที่ไหนเขียนเลยทั้งเรพ** ⇒ แท็บรออนุมัติว่าง
+  และปุ่มอนุมัติ/ปฏิเสธ `return` เงียบ ๆ กดแล้วไม่มีอะไรเกิดขึ้น. resolver กลาง
+  ตัวเดียวคือ `Layout.getCompanyId()` (อ่าน `currentCompany`) — **ห้ามอ่านคีย์เอง**
+  _(เป็น string ถูกไวยากรณ์ทุกประการ → `node --check` และ checker ฝั่ง C# มองไม่
+  เห็น ต้องเทียบ "ฝั่งอ่าน" กับ "ฝั่งเขียน" ทั้งเรพ → เพิ่ม
+  `tools/localstorage_key_check.py`. บทเรียนซ้อนตอนเขียน checker: (1) ต้องตัด
+  คอมเมนต์ก่อนสแกน ไม่งั้นหมายเหตุที่อธิบายบั๊กเก่าถูกนับเป็นการอ่านจริง —
+  checker ฟ้องตัวเอกสารของตัวเอง (2) ตอนตัดคอมเมนต์ต้องคงจำนวนบรรทัดไว้ ไม่งั้น
+  เลขบรรทัดที่ฟ้องเพี้ยนทั้งไฟล์ (3) กติกาต้องมีทิศทาง — หน้าแอปหลักอ่านคีย์ที่มี
+  แต่ `/connect` เขียน = ผิด แต่ทางกลับกันปกติ ไม่งั้น `token`/`uiMode` ถูกฟ้องผิด)_
 - **raw string หลายบรรทัด: ห้ามเขียนเนื้อหาต่อท้ายตัวเปิด = CS8997 ระเบิดทั้งไฟล์**
   เพิ่ม SQL migration แบบหลายบรรทัดโดยเขียน `UPDATE ...` ต่อท้าย `"""` เลย —
   C# บังคับว่า raw string ที่เนื้อหา**ข้ามบรรทัด** ตัวเปิดต้องตามด้วยขึ้นบรรทัด

@@ -30,7 +30,11 @@ public partial class TaxService
             .FirstOrDefaultAsync(c => c.Id == companyId);
 
         var lines = report.Lines.OrderBy(l => l.LineOrder).ToList();
-        var isVat = report.TaxType is TaxType.VAT or TaxType.VatPp36;
+        // §87 "รายงานภาษีขาย/ภาษีซื้อ" เป็นของ **VAT ปกติ (ภ.พ.30) เท่านั้น** —
+        // ภ.พ.36 (§83/6 นำส่ง VAT แทนผู้ขาย ตปท.) ไม่มีรายงานซื้อ-ขายของตัวเอง
+        // แยกบรรทัดเข้า 2 ชีตนั้นทำให้เข้าใจผิดว่าเป็นภาษีขาย/ซื้อตามมาตรา 87
+        // (ตรงกับฝั่ง UI ที่ตัดปุ่ม ภ.ซื้อ/ภ.ขาย/ภ.พ.30 ออกจากแถว ภ.พ.36 แล้ว)
+        var isVat = report.TaxType is TaxType.VAT;
 
         // Resolve DocumentNumber + Contact.BranchCode + RelatedDocument.DocumentNumber
         // (Remark column ของ template) ในคิวรีเดียว — TaxReportLine มีแต่

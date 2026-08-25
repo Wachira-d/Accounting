@@ -228,18 +228,29 @@ const Layout = {
     await this.loadMyPermissions();
   },
 
+  /** โหลดธงระดับบริษัทที่ใช้ "ซ่อนเมนูที่บริษัทนี้ไม่ได้ใช้" — ดึงจาก
+   *  /settings ครั้งเดียวได้ทั้ง vatRegistered และ etaxEnabled
+   *  (ห้ามเพิ่ม request ใหม่เพื่อธงเดียว) */
   async loadVatRegistration() {
     if (!this.currentCompany?.id) return;
     // ค่า cache กัน flicker + ลด request; refresh เงียบ ๆ ทุกครั้งที่โหลดบริษัท
     try {
       const cached = localStorage.getItem('vatReg:' + this.currentCompany.id);
       if (cached !== null) this._vatRegistered = cached === 'true';
+      const cachedEtax = localStorage.getItem('etaxOn:' + this.currentCompany.id);
+      if (cachedEtax !== null) this._etaxEnabled = cachedEtax === 'true';
     } catch {}
     try {
       const res = await API.get(`/api/companies/${this.currentCompany.id}/settings`);
       if (res?.success && res.data) {
         this._vatRegistered = res.data.vatRegistered !== false;
-        try { localStorage.setItem('vatReg:' + this.currentCompany.id, String(this._vatRegistered)); } catch {}
+        // e-Tax เป็น opt-in (ต้องมีใบรับรองดิจิทัล + ลงทะเบียนกับสรรพากร)
+        // บริษัทที่ยังไม่เปิดใช้ไม่ควรเห็นเมนูนี้รกอยู่ในแถบภาษี
+        this._etaxEnabled = res.data.etaxEnabled === true;
+        try {
+          localStorage.setItem('vatReg:' + this.currentCompany.id, String(this._vatRegistered));
+          localStorage.setItem('etaxOn:' + this.currentCompany.id, String(this._etaxEnabled));
+        } catch {}
         this._refreshNavMenu();
       }
     } catch { /* keep default (show) */ }
@@ -346,6 +357,11 @@ const Layout = {
       // เมนูเฉพาะบริษัทจด VAT (ภ.พ.30 / ภาษีซื้อรอ / ภ.พ.30 ย้อนหลัง) — ซ่อน
       // เมื่อบริษัทไม่จด VAT (ไม่มีภาระยื่น). default true → ไม่กระทบถ้ายังไม่โหลด
       if (item.vatOnly && this._vatRegistered === false) return false;
+      // เมนูเฉพาะบริษัทที่เปิดใช้ e-Tax Invoice (ต้องมีใบรับรองดิจิทัล +
+      // ลงทะเบียนกับสรรพากรก่อน) — ยังไม่เปิดใช้ = ไม่ต้องรกแถบภาษี.
+      // `=== false` เท่านั้น: ตอนยังโหลดค่าไม่เสร็จ (undefined) ให้แสดงไว้ก่อน
+      // กันเมนูกระพริบหาย ๆ โผล่ ๆ (กติกาเดียวกับ vatOnly)
+      if (item.etaxOnly && this._etaxEnabled === false) return false;
       // simple-mode shortlist ใช้เฉพาะผู้ใช้สิทธิ์เต็ม ('*'/owner) — custom role
       // เห็นเมนูตามที่ตั้งสิทธิ์ให้ครบ ไม่โดนตัดซ้ำ
       if (uiMode === 'simple' && !hasCustomGrants && item.id && !SIMPLE_ALLOWED.has(item.id)) return false;
@@ -812,7 +828,8 @@ const Layout = {
     { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html', feature: 'TaxManagement', _i18nKey: 'nav.taxCalendar',
       description: 'กำหนดการยื่นภาษี · alert ก่อนถึงวัน due · ติดตามสถานะการยื่น' },
     { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html', feature: 'EtaxInvoice', _i18nKey: 'nav.etax',
-      description: 'ใบกำกับภาษีอิเล็กทรอนิกส์ — PDF/A-3 + XML ฝัง · ส่งกรมสรรพากร' },
+      etaxOnly: true,
+      description: 'ใบกำกับภาษีอิเล็กทรอนิกส์ (ETDA) — แปลงใบที่อนุมัติแล้วเป็น XML + PDF/A-3 ลงลายเซ็นดิจิทัล ส่งกรมสรรพากร/อีเมลลูกค้า · เปิดใช้ที่ ตั้งค่า > e-Tax' },
     { id: 'tax-export', label: 'Export ยื่นภาษี / SSO', icon: '📤', href: '/pages/tax-export.html', feature: 'TaxManagement', _i18nKey: 'nav.taxExport',
       description: 'ไฟล์ TXT ตามรูปแบบกรมสรรพากร + ประกันสังคม · ภงด.91 รายปี · RD ACK tracking' },
     { id: 'stamp-duty', label: 'อากรแสตมป์', icon: '🏷️', href: '/pages/stamp-duty.html', feature: 'TaxManagement',
@@ -1840,9 +1857,16 @@ const Layout = {
     document.body.appendChild(badge);
   },
 
-  toast(msg, type = 'success') {
+  /** แจ้งเตือนมุมจอ.
+   *  @param durationMs เวลาแสดง (ms) — เดิมพารามิเตอร์นี้ **ไม่มี** แต่มีคน
+   *  เรียกส่งมาแล้ว 40 จุดทั่วระบบ (`Layout.toast(msg,'info',12000)`) ซึ่งถูก
+   *  กลืนทิ้งเงียบ ๆ ⇒ ข้อความสอนขั้นตอนยาว ๆ (เช่น "ขั้นถัดไปของ ภ.พ.36")
+   *  หายไปใน 3.5 วิ ผู้ใช้อ่านไม่ทัน — defect class "ห้าม silent no-op".
+   *  clamp 1.5–20 วิ กันเรียกด้วยค่าเพี้ยนแล้วค้างจอ. */
+  toast(msg, type = 'success', durationMs) {
     const container = document.getElementById('toastContainer');
     if (!container) return;
+    const ms = Math.min(20000, Math.max(1500, Number(durationMs) || 3500));
 
     // Deduplicate: skip if same message is already showing
     const key = `${type}:${msg}`;
@@ -1859,13 +1883,14 @@ const Layout = {
 
     const t = document.createElement('div');
     t.className = `toast toast-${type}`;
-    t.innerHTML = `${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'} ${this.esc(msg)}`;
+    t.innerHTML = `${type === 'success' ? '✅' : type === 'error' ? '❌'
+      : type === 'warning' ? '⚠️' : 'ℹ️'} ${this.esc(msg)}`;
     container.appendChild(t);
     this._activeToasts.set(key, t);
     setTimeout(() => {
       t.style.opacity = '0';
       setTimeout(() => { t.remove(); this._activeToasts.delete(key); }, 300);
-    }, 3500);
+    }, ms);
   },
 
   // Modal helpers

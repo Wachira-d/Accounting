@@ -15,7 +15,9 @@ public record CreateRecurringTransactionRequest(
     string TemplateData,        // JSON
     bool NotifyBeforeRun = true,
     int NotifyDaysBefore = 1,
-    bool AutoApprove = false);
+    bool AutoApprove = false,
+    // ส่งอีเมลให้ผู้ติดต่อทันทีเมื่อสร้างเอกสาร (ใช้ SMTP/อีเมลของบริษัทเอง)
+    bool AutoSendEmail = false);
 
 public record UpdateRecurringTransactionRequest(
     string? Name,
@@ -29,7 +31,8 @@ public record UpdateRecurringTransactionRequest(
     bool? NotifyBeforeRun,
     int? NotifyDaysBefore,
     bool? AutoApprove,
-    RecurringStatus? Status);
+    RecurringStatus? Status,
+    bool? AutoSendEmail = null);
 
 public record RecurringTransactionResponse(
     Guid Id,
@@ -52,4 +55,6 @@ public record RecurringTransactionResponse(
     bool NotifyBeforeRun,
     int NotifyDaysBefore,
     bool AutoApprove,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // echo กลับให้ฟอร์ม hydrate ได้ (defect class "เก็บแล้วต้อง echo กลับ")
+    bool AutoSendEmail = false);

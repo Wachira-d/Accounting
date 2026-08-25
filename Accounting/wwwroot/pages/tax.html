@@ -330,16 +330,34 @@
           // ดึงจาก remittance dashboard (แหล่งเดียวกับหน้านำส่งภาษี — ยอดตรงกัน)
           // แล้วเติมเป็นแถว "ยังไม่สร้าง" พร้อมปุ่มสร้างในคลิกเดียว
           this._pp36Missing = [];
+          this._pp36Remit = {};
           if (this.taxType === 'VatPp36') {
             try {
               const dash = await API.get(`/api/companies/${Layout.getCompanyId()}/remittances/dashboard`);
-              const pend = (dash?.data?.pending || []).filter(r => r.remittanceType === 'VatPp36');
+              const d = dash?.data || {};
+              const pend = (d.pending || []).filter(r => r.remittanceType === 'VatPp36');
+              // ⚠️ งวดที่ "นำส่งแล้ว" จะหลุดออกจาก pending ไปอยู่ใน recentHistory
+              // ⇒ เดิมแถวเทา "ยังไม่สร้าง" หายตามไปด้วย งวดนั้นจึงไม่โผล่ที่ไหน
+              // เลยทั้งที่นำส่งเงินไปจริง — ผู้ใช้เข้าใจว่า "ไม่มียอด"
+              const hist = (d.recentHistory || []).filter(r => r.remittanceType === 'VatPp36');
+              // สถานะการนำส่งต่องวด — ใช้เติมใต้ป้ายสถานะรายงาน (ร่าง/ยื่นแล้ว
+              // ของ "รายงาน" คนละเรื่องกับ "นำส่งเงิน" ที่ทำในหน้านำส่งภาษี)
+              hist.forEach(r => {
+                this._pp36Remit[`${r.periodYear}-${r.periodMonth}`] =
+                  { payDate: r.payDate, filingNumber: r.filingNumber, recognized: r.pp36Recognized === true };
+              });
               const have = new Set(this.allReports.map(r => `${r.year}-${r.month}`));
               const yearF = document.getElementById('yearFilter').value;
-              this._pp36Missing = pend
-                .filter(r => !have.has(`${r.periodYear}-${r.periodMonth}`))
-                .filter(r => !yearF || String(r.periodYear) === String(yearF))
-                .map(r => ({ year: r.periodYear, month: r.periodMonth, amount: r.amount }));
+              const seen = new Set();
+              this._pp36Missing = [
+                ...pend.map(r => ({ year: r.periodYear, month: r.periodMonth, amount: r.amount, remitted: false })),
+                ...hist.map(r => ({ year: r.periodYear, month: r.periodMonth, amount: r.amount, remitted: true,
+                                    payDate: r.payDate })),
+              ]
+                .filter(r => !have.has(`${r.year}-${r.month}`))
+                .filter(r => !yearF || String(r.year) === String(yearF))
+                .filter(r => { const k = `${r.year}-${r.month}`; if (seen.has(k)) return false; seen.add(k); return true; })
+                .sort((a, b) => (b.year - a.year) || (b.month - a.month));
             } catch (_) { /* dashboard ล้มไม่ต้องพังทั้งแท็บ */ }
           }
           this.updateStats();
@@ -347,6 +365,31 @@
           const totalPages = data?.totalPages || 1;
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /** เทียบชนิดภาษีของแถว — API อาจส่งมาเป็นชื่อ enum ("VAT") หรือเลข (1)
+       *  แล้วแต่ serializer (formMap ของ e-Filing รองรับทั้งคู่อยู่แล้ว) จึงต้อง
+       *  เทียบทั้งสองแบบที่เดียว ห้ามเขียน === 'VAT' กระจายตามที่ต่าง ๆ */
+      _isType(r, name, num) {
+        const v = String(r && r.taxType);
+        return v === name || v === String(num);
+      },
+
+      /** ป้ายบอก "สถานะการนำส่งเงิน" ใต้สถานะรายงาน — เฉพาะแถว ภ.พ.36
+       *  (ข้อมูลมาจาก remittance dashboard ที่โหลดคู่กันในแท็บนี้อยู่แล้ว) */
+      _pp36StatusNote(r) {
+        if (!this._isType(r, 'VatPp36', 9)) return '';
+        const info = (this._pp36Remit || {})[`${r.year}-${r.month}`];
+        if (!info) {
+          return '<div style="font-size:10px;color:#b45309;margin-top:2px"'
+            + ' title="รายงานมีแล้ว แต่ยังไม่ได้นำส่งเงินที่หน้านำส่งภาษี">⏳ ยังไม่ได้นำส่ง</div>';
+        }
+        const paid = `<div style="font-size:10px;color:#15803d;margin-top:2px" title="นำส่งเงินแล้ว${
+          info.filingNumber ? ' · เลขรับ ' + Layout.esc(info.filingNumber) : ''}">✓ นำส่งแล้ว ${Layout.date(info.payDate)}</div>`;
+        const recog = info.recognized
+          ? '<div style="font-size:10px;color:#15803d" title="รับรู้ภาษีซื้อ (11640→11610) เข้า ภ.พ.30 แล้ว">✓ เข้า ภ.พ.30 แล้ว</div>'
+          : '<div style="font-size:10px;color:#b45309" title="ยังไม่ได้กด &quot;รับรู้ภาษีซื้อ&quot; ที่หน้านำส่งภาษี — ภาษีซื้อยังพักที่ 11640 ยังไม่ขึ้นใน ภ.พ.30">⏳ ยังไม่รับรู้ภาษีซื้อ</div>';
+        return paid + recog;
       },
 
       /** สร้างรายงาน ภ.พ.36 ของงวดที่ระบบเห็นยอดแล้วในคลิกเดียว (จากแถวเทา) */
@@ -373,13 +416,17 @@
         const tbody = document.getElementById('tableBody');
         // แถว "งวดที่มียอด ภ.พ.36 แต่ยังไม่สร้างรายงาน" — โชว์เสมอบนแท็บ ภ.พ.36
         const missingRows = (this.taxType === 'VatPp36' ? (this._pp36Missing || []) : [])
-          .map(m => `<tr style="background:#f8fafc">
+          .map(m => `<tr style="background:${m.remitted ? '#fffbeb' : '#f8fafc'}">
             <td></td>
             <td class="font-medium">ภ.พ.36</td><td>${m.year + 543}</td>
             <td>${['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'][m.month] || m.month}</td>
-            <td class="text-right" style="color:#64748b" title="ฐานคำนวณจากใบบริการต่างประเทศที่อนุมัติแล้ว (แหล่งเดียวกับหน้านำส่งภาษี)">VAT รอนำส่ง ${Layout.money(m.amount)}</td>
+            <td class="text-right" style="color:#64748b" title="ฐานคำนวณจากใบบริการต่างประเทศที่อนุมัติแล้ว (แหล่งเดียวกับหน้านำส่งภาษี)">${
+              m.remitted ? `VAT ที่นำส่งแล้ว ${Layout.money(m.amount)}` : `VAT รอนำส่ง ${Layout.money(m.amount)}`}</td>
             <td class="text-right">—</td><td class="text-right">—</td>
-            <td><span class="badge" style="background:#f1f5f9;color:#64748b">ยังไม่สร้าง</span></td><td>-</td>
+            <td>${m.remitted
+              ? `<span class="badge badge-warning" title="นำส่งเงินไปแล้วเมื่อ ${Layout.date(m.payDate)} แต่ยังไม่มีรายงานของงวดนี้ — กดสร้างเพื่อเก็บหลักฐาน/ส่งออกไฟล์ยื่น">นำส่งแล้ว · ยังไม่มีรายงาน</span>`
+              : `<span class="badge" style="background:#f1f5f9;color:#64748b">ยังไม่สร้าง</span>`}</td>
+            <td>${m.remitted ? Layout.date(m.payDate) : '-'}</td>
             <td class="text-right"><button class="btn btn-sm btn-primary"
               onclick="Page.generatePp36For(${m.year}, ${m.month})">+ สร้างรายงานงวดนี้</button></td>
           </tr>`).join('');
@@ -424,7 +471,11 @@
               ? `<div style="font-size:10px;color:#b45309;margin-top:2px" title="รายงานเป็น snapshot ไม่อัปเดตเองเมื่อมีเอกสาร/หนังสือรับรองใหม่ — กด 'สร้างใหม่' เพื่อดึงข้อมูลงวดนี้เข้ารายงาน">⚠️ ว่าง — กด "สร้างใหม่"?</div>`
               : ''}</td>
           <td class="text-right font-semibold ${_netOf(r) > 0 ? 'text-danger' : 'text-success'}">${Layout.money(_netOf(r))}</td>
-          <td>${Layout.statusBadge(r.status)}</td>
+          <td>${Layout.statusBadge(r.status)}${
+            // ภ.พ.36 มี 2 สถานะคนละเรื่องที่ผู้ใช้สับสนกันบ่อย: สถานะ "รายงาน"
+            // (ร่าง/ยื่นแล้ว) กับ "นำส่งเงิน" ที่ทำในหน้านำส่งภาษี — แสดงคู่กัน
+            // ไม่งั้นเห็น "ร่าง" แล้วเข้าใจว่ายังไม่ได้นำส่ง ทั้งที่จ่ายไปแล้ว
+            this._pp36StatusNote(r)}</td>
           <td>${r.filedDate ? Layout.date(r.filedDate) : '-'}</td>
           <td class="flex gap-1" style="flex-wrap:wrap">
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${r.id}')" data-i18n="common.view">ดู</button>
@@ -433,10 +484,18 @@
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')" data-i18n="common.delete">ลบ</button>` : ''}
             <button class="btn btn-sm" style="background:#7c3aed;color:#fff" onclick="Page.exportEFiling('${r.id}','${r.taxType}',${r.year},${r.month})" title="ดาวน์โหลดไฟล์ pipe-delimited สำหรับยื่น RD">📥 e-Filing</button>
             <button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="Page.exportXlsx('${r.id}')" title="ส่งออกรายงานเป็น Excel — VAT แยกชีตภาษีขาย/ภาษีซื้อ">📊 Excel</button>
-            ${String(r.taxType).toLowerCase().includes('vat') ? `
-            <button class="btn btn-sm" style="background:#0ea5e9;color:#fff" onclick="Page.exportPdf('${r.id}','purchase')" title="PDF รายงานภาษีซื้อ">📄 ภ.ซื้อ</button>
-            <button class="btn btn-sm" style="background:#0ea5e9;color:#fff" onclick="Page.exportPdf('${r.id}','sales')" title="PDF รายงานภาษีขาย">📄 ภ.ขาย</button>
+            ${/* ⚠️ เดิมใช้ `taxType.toLowerCase().includes('vat')` ซึ่ง 'VatPp36'
+                  ก็เข้าเงื่อนไขด้วย ⇒ แถว ภ.พ.36 มีปุ่ม ภ.ซื้อ/ภ.ขาย/ภ.พ.30
+                  ทั้งที่เป็นคนละแบบคนละมาตรา (§87 รายงานซื้อ-ขาย และแบบ ภ.พ.30
+                  เป็นของ VAT ปกติ · ภ.พ.36 คือ §83/6 นำส่งแทนผู้ขาย ตปท.
+                  ไม่มีรายงานซื้อ-ขายของตัวเอง) — จำกัดให้เฉพาะ VAT จริง */''}
+            ${this._isType(r, 'VAT', 1) ? `
+            <button class="btn btn-sm" style="background:#0ea5e9;color:#fff" onclick="Page.exportPdf('${r.id}','purchase')" title="PDF รายงานภาษีซื้อ (§87)">📄 ภ.ซื้อ</button>
+            <button class="btn btn-sm" style="background:#0ea5e9;color:#fff" onclick="Page.exportPdf('${r.id}','sales')" title="PDF รายงานภาษีขาย (§87)">📄 ภ.ขาย</button>
             <button class="btn btn-sm" style="background:#4f46e5;color:#fff" onclick="Page.exportPdf('${r.id}','pp30')" title="แบบสรุป ภ.พ.30 (PDF)">🧾 ภ.พ.30</button>` : ''}
+            ${this._isType(r, 'VatPp36', 9) ? `
+            <a class="btn btn-sm" style="background:#0ea5e9;color:#fff;text-decoration:none"
+               href="/pages/tax-remittance.html" title="ภ.พ.36 นำส่งเงิน + แนบใบเสร็จกรมสรรพากร + กดรับรู้ภาษีซื้อ ทำที่หน้านำส่งภาษี">💸 หน้านำส่ง/ใบเสร็จ</a>` : ''}
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.unlockFiling('${r.id}')" title="ปลดล็อกการยื่น — ใช้เมื่อต้องแก้ไขเอกสารที่อยู่ในรายงาน">🔓 Unlock</button>` : ''}
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.rejectAndReverse('${r.id}')" title="RD reject → autonomous reversal JE">⚠️ Reject &amp; Reverse</button>` : ''}
           </td>

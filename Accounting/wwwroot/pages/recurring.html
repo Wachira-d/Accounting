@@ -123,10 +123,16 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label"><input type="checkbox" id="fAutoApprove"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
+              <label class="form-label"><input type="checkbox" id="fAutoApprove" onchange="Page.onAutoFlagChange()"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
             </div>
             <div class="form-group">
               <label class="form-label"><input type="checkbox" id="fAutoWht" checked> สร้างหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติ (เมื่อมี WHT)</label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label"><input type="checkbox" id="fAutoSendEmail" onchange="Page.onAutoFlagChange()"> 📧 ส่งอีเมลเอกสาร (แนบ PDF) ให้ผู้ติดต่อทันทีที่ระบบสร้างเอกสาร</label>
+            <div id="autoEmailHint" style="margin-top:6px;padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.6;background:#f8fafc;border:1px solid #e2e8f0;color:#475569">
+              กำลังตรวจการตั้งค่าอีเมลของบริษัท…
             </div>
           </div>
         </div>
@@ -195,6 +201,60 @@ const Page = {
 
   gotoPage(p) { Page.page = p; Page.load(); },
 
+  // ── ส่งอีเมลอัตโนมัติ: สถานะอีเมลบริษัท + กติกาที่บังคับกัน ─────────
+  _emailCfg: undefined,   // undefined = ยังไม่ได้ตรวจ, null = ตรวจแล้วไม่ได้ค่า
+
+  async loadEmailStatus(force) {
+    if (this._emailCfg !== undefined && !force) { this.renderAutoEmailHint(); return; }
+    const api = Layout.api(); if (!api) return;
+    try { const res = await api.getEmailConfig(); this._emailCfg = (res && res.data) || null; }
+    catch (e) { this._emailCfg = null; }
+    this.renderAutoEmailHint();
+  },
+
+  // เปิด "ส่งอีเมล" ⇒ บังคับ "อนุมัติอัตโนมัติ" เสมอ — เอกสารร่างยังเป็นเลข
+  // DRAFT-{guid} (§86/4 ออกเลขจริงตอนอนุมัติ) ส่งออกหาลูกค้าไม่ได้. ล็อกช่อง
+  // ให้เห็นเหตุผลตรงนั้น ดีกว่าปล่อยติ๊กแล้วเงียบไม่ส่ง (ห้าม silent no-op)
+  onAutoFlagChange() {
+    const send = document.getElementById('fAutoSendEmail');
+    const appr = document.getElementById('fAutoApprove');
+    if (!send || !appr) return;
+    if (send.checked) { appr.checked = true; appr.disabled = true; }
+    else appr.disabled = false;
+    this.renderAutoEmailHint();
+  },
+
+  renderAutoEmailHint() {
+    const box = document.getElementById('autoEmailHint');
+    if (!box) return;
+    const on = !!document.getElementById('fAutoSendEmail')?.checked;
+    const cfg = this._emailCfg;
+    const link = '<a href="/pages/settings.html?tab=email" target="_blank" style="color:#2563eb;text-decoration:underline">ตั้งค่า &gt; อีเมล</a>';
+    let status;
+    if (cfg === undefined) status = 'กำลังตรวจการตั้งค่าอีเมลของบริษัท…';
+    else if (cfg && cfg.configured)
+      status = '✅ อีเมลบริษัทพร้อมใช้งาน' + (cfg.fromAddress ? ' (ส่งจาก ' + Layout.esc(cfg.fromAddress) + ')' : '');
+    // "ตั้งไว้แล้วแต่ยังไม่ทดสอบ" ต้องครอบทุก provider ไม่ใช่แค่ SMTP —
+    // tenant ที่ใช้ Microsoft Graph / Gmail API มี smtp.host ว่างเป็นปกติ
+    else if (cfg && ((cfg.smtp && cfg.smtp.host) || cfg.fromAddress
+        || (cfg.microsoft && cfg.microsoft.tenantId) || (cfg.gmail && cfg.gmail.clientId)))
+      status = '⚠️ ตั้งค่าอีเมลไว้แล้วแต่ยัง<strong>ไม่ได้ทดสอบส่ง</strong> — กด "ส่งอีเมลทดสอบ" ที่ ' + link + ' ก่อน จะได้รู้ว่าใช้ได้จริง';
+    else
+      status = '⚠️ ยังไม่ได้ตั้งค่า SMTP/อีเมลของบริษัท — ระบบจะส่งจาก<strong>อีเมลกลางของระบบ</strong>แทน (ลูกค้าจะไม่เห็นชื่อผู้ส่งเป็นบริษัทคุณ) ตั้งค่าเองได้ที่ ' + link;
+    // ฝั่งซื้อ: เอกสารพวกนี้คือ "บันทึกของเราเองต่อบิลของเขา" — ส่งกลับไปหา
+    // ผู้ขายทุกเดือนมักไม่ใช่สิ่งที่ตั้งใจ (ใบสั่งซื้อส่งได้ปกติ จึงไม่เตือน)
+    const inboundTypes = ['Expense', 'PurchaseInvoice', 'PaymentVoucher'];
+    const isInbound = inboundTypes.includes(document.getElementById('fDocType')?.value);
+    box.innerHTML = status + (on
+      ? (isInbound ? '<br>• ⚠️ ชนิดเอกสารนี้เป็น<strong>ฝั่งซื้อ</strong> — ระบบจะส่งเอกสารนี้ไปหา<strong>ผู้ขาย</strong>ทุกงวด ตรวจให้แน่ใจว่าตั้งใจแบบนั้น' : '')
+      + '<br>• เปิดข้อนี้แล้วระบบจะ <strong>อนุมัติเอกสารอัตโนมัติ</strong> ให้ด้วย (ใบร่างยังไม่มีเลขที่จริงตาม §86/4 จึงส่งออกไม่ได้)'
+      + '<br>• ส่งไปที่อีเมลของผู้ติดต่อที่เลือกไว้ พร้อมแนบ PDF — ถ้าผู้ติดต่อไม่มีอีเมล ระบบจะข้ามการส่ง'
+      + '<br>• ติดตามผลส่งได้ที่หน้า <a href="/pages/email-schedule.html" target="_blank" style="color:#2563eb;text-decoration:underline">ตารางส่งอีเมล</a> (ถ้ามีกฎ RecurringInvoiceCreated อยู่แล้ว ระบบจะใช้กฎนั้นแทน ไม่ส่งซ้ำ)'
+      : '');
+    box.style.background = on ? '#f0f9ff' : '#f8fafc';
+    box.style.borderColor = on ? '#bae6fd' : '#e2e8f0';
+  },
+
   async openCreate() {
     document.getElementById('formTitle').textContent = 'สร้างรายการประจำ';
     document.getElementById('fId').value = '';
@@ -207,6 +267,9 @@ const Page = {
     document.getElementById('fExpenseCategory').value = '';
     document.getElementById('fAutoApprove').checked = false;
     document.getElementById('fAutoWht').checked = true;
+    document.getElementById('fAutoSendEmail').checked = false;
+    this.onAutoFlagChange();
+    this.loadEmailStatus();
     await this.loadFormData();
     if (this._contactAC) this._contactAC.clear();
     this.onDocTypeChange();
@@ -337,6 +400,8 @@ const Page = {
     const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder'];
     const ecGroup = document.getElementById('fExpenseCategoryGroup');
     if (ecGroup) ecGroup.style.display = expenseTypes.includes(docType) ? '' : 'none';
+    // ข้อความเตือน "ส่งอีเมลฝั่งซื้อ" ขึ้นกับชนิดเอกสาร → re-render ทุกครั้ง
+    this.renderAutoEmailHint();
   },
 
   async save() {
@@ -391,14 +456,31 @@ const Page = {
       contactId: document.getElementById('fContactId').value || null,
       templateData,
       autoApprove: document.getElementById('fAutoApprove').checked,
+      autoSendEmail: document.getElementById('fAutoSendEmail').checked,
       notifyBeforeRun: true,
       notifyDaysBefore: 1
     };
+
+    // ผู้ติดต่อไม่มีอีเมล = ติ๊ก "ส่งอีเมล" ไว้ก็ไม่มีอะไรออก (backend ข้าม +
+    // log warning) → บอกตั้งแต่ตอนบันทึก ไม่ใช่ปล่อยให้รอถึงงวดหน้าแล้วงง
+    let contactHasEmail = true;
+    if (data.autoSendEmail && data.contactId) {
+      try {
+        const cr = await api.getContact(data.contactId);
+        contactHasEmail = !!(cr && cr.data && cr.data.email);
+      } catch (e) { /* ตรวจไม่ได้ = ไม่ขวางการบันทึก */ }
+    }
 
     try {
       if (id) await api.updateRecurring(id, data);
       else await api.createRecurring(data);
       Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างสำเร็จ');
+      // เตือนตรง ๆ ถ้าเปิดส่งอีเมลแต่บริษัทยังไม่มีอีเมลที่ทดสอบผ่าน — จะได้
+      // ไม่เข้าใจผิดว่าลูกค้าได้รับเมลจากชื่อบริษัทตัวเองทุกงวด
+      if (data.autoSendEmail && !(this._emailCfg && this._emailCfg.configured))
+        Layout.toast('บันทึกแล้ว — แต่ยังไม่ได้ตั้งค่า/ทดสอบอีเมลบริษัท ระบบจะส่งจากอีเมลกลางแทน', 'info');
+      if (data.autoSendEmail && !contactHasEmail)
+        Layout.toast('ผู้ติดต่อนี้ยังไม่มีอีเมล — ระบบจะข้ามการส่งจนกว่าจะเพิ่มอีเมลให้ผู้ติดต่อ', 'info');
       Layout.closeModal('formModal');
       this.load();
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -442,6 +524,7 @@ const Page = {
           <div><span class="text-gray-500 text-sm">ครั้งถัดไป:</span><br><strong>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</strong></div>
           <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.executionCount || r.runCount || 0} ครั้ง</strong></div>
           <div><span class="text-gray-500 text-sm">อนุมัติอัตโนมัติ:</span><br><strong>${r.autoApprove ? 'ใช่' : 'ไม่'}</strong></div>
+          <div><span class="text-gray-500 text-sm">ส่งอีเมลอัตโนมัติ:</span><br><strong>${r.autoSendEmail ? '📧 ส่งให้ผู้ติดต่อทันที (แนบ PDF)' : 'ไม่'}</strong></div>
         </div>
         ${r.description ? `<div style="margin-top:16px"><span class="text-gray-500 text-sm">รายละเอียด:</span><br>${r.description}</div>` : ''}`;
       document.getElementById('detailFooter').innerHTML = `
@@ -468,6 +551,9 @@ const Page = {
       document.getElementById('fAmount').value = r.amount || '';
       document.getElementById('fDescription').value = r.description || '';
       document.getElementById('fAutoApprove').checked = r.autoApprove || false;
+      document.getElementById('fAutoSendEmail').checked = r.autoSendEmail || false;
+      this.onAutoFlagChange();
+      this.loadEmailStatus();
 
       let savedPaymentChannelVal = '';
       let savedExpenseCategoryId = '';

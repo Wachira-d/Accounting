@@ -26,7 +26,7 @@
       <div style="display:flex;align-items:center;gap:12px">
         <span style="font-size:20px">&#9888;</span>
         <div>
-          <strong>ยังไม่ได้ตั้งค่าครบ</strong>
+          <strong id="configTitle">ยังไม่ได้ตั้งค่าครบ</strong>
           <div id="configWarnings" class="text-gray-500 text-sm"></div>
         </div>
         <button class="btn btn-sm btn-outline" onclick="Page.showConfig()" style="margin-left:auto">ตั้งค่า</button>
@@ -211,9 +211,18 @@
     async init() {
       if (!Layout.init('etax')) return;
       Layout.setTitle('e-Tax Invoice');
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
-      this.companyId = localStorage.getItem('companyId');
-      if (!this.companyId) { window.location.href = '/pages/settings.html'; return; }
+      // ⚠️ เดิมอ่าน localStorage.getItem('companyId') ซึ่ง **ไม่มีใครเขียนใน
+      // แอปหลักเลย** (คีย์นั้นเป็นของ portal /connect เท่านั้น) ⇒ ค่าเป็น null
+      // ทุกครั้ง → เด้งไป settings.html ทันที = หน้านี้เข้าไม่ได้เลยสักครั้ง
+      // (อาการที่ผู้ใช้เจอ: "กดเมนู e-Tax แล้วขึ้นหน้าตั้งค่า").
+      // resolver กลางของทั้งระบบคือ Layout.getCompanyId() — ห้ามอ่านคีย์เอง
+      this.companyId = Layout.getCompanyId();
+      if (!this.companyId) {
+        document.getElementById('pageContent').innerHTML =
+          '<div class="empty-state" style="padding:60px 20px"><div class="icon">🏢</div>'
+          + '<h3>ยังไม่ได้เลือกบริษัท</h3><p>เลือกบริษัทที่มุมขวาบนก่อน แล้วเปิดหน้านี้อีกครั้ง</p></div>';
+        return;
+      }
       await this.loadConfigStatus();
       await this.load();
     },
@@ -222,6 +231,25 @@
       try {
         const res = await API.get(`/api/companies/${this.companyId}/etax/config-status`);
         const cfg = res.data;
+        // ยังไม่เปิดใช้ e-Tax = ไม่ต้องรกด้วยคำเตือน cert/API ที่ยังไม่เกี่ยว —
+        // บอกตรง ๆ ว่าเมนูนี้ใช้ทำอะไร ต้องทำอะไรก่อน และซ่อนเมนูได้ถ้าไม่ใช้
+        if (cfg && cfg.companyEtaxEnabled === false) {
+          document.getElementById('configBanner').style.display = 'block';
+          document.getElementById('configBanner').style.borderLeftColor = '#64748b';
+          document.getElementById('configBanner').style.background = '#f8fafc';
+          document.getElementById('configTitle').textContent = 'เมนูนี้คืออะไร — และบริษัทนี้ยังไม่ได้เปิดใช้';
+          document.getElementById('configBanner').querySelector('span').textContent = '🧾';
+          document.getElementById('configWarnings').innerHTML =
+            'e-Tax Invoice = ออกใบกำกับภาษี/ใบเสร็จ<b>อิเล็กทรอนิกส์</b>ตามมาตรฐาน ETDA — '
+            + 'แปลงใบที่อนุมัติแล้วเป็น XML + PDF/A-3 ลงลายเซ็นดิจิทัล แล้วส่งกรมสรรพากร/อีเมลลูกค้า. '
+            + 'บริษัทนี้<b>ยังไม่ได้เปิดใช้</b> — ถ้าไม่ได้ใช้ ซ่อนเมนูนี้ได้เลย';
+          const b = document.getElementById('configBanner').querySelector('button');
+          if (b) b.outerHTML =
+            '<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">'
+            + '<button class="btn btn-sm btn-outline" onclick="Page.hideMenu()">🙈 ซ่อนเมนูนี้</button>'
+            + '<a class="btn btn-sm btn-primary" href="/pages/settings.html?tab=etax">เปิดใช้ที่ตั้งค่า</a></span>';
+          return;
+        }
         const warnings = [];
         if (!cfg.certificateConfigured) warnings.push('ยังไม่ได้ตั้งค่าใบรับรองดิจิทัล (Certificate)');
         if (!cfg.rdApiConfigured) warnings.push('ยังไม่ได้ตั้งค่า RD API Key');
@@ -232,6 +260,14 @@
           document.getElementById('configWarnings').innerHTML = warnings.join(' | ');
         }
       } catch(e) {}
+    },
+
+    /** ซ่อนเมนู e-Tax ให้ตัวเอง — ใช้กลไกซ่อนเมนูกลางของระบบ (ตั้งค่า >
+     *  ทั่วไป เปิดกลับได้) ไม่ใช่ลบทิ้งจากโค้ด เพราะลูกค้ารายอื่นใช้จริง */
+    hideMenu() {
+      Layout.toggleMenuItem('etax', true);
+      Layout.toast('ซ่อนเมนู e-Tax Invoice แล้ว — เปิดกลับได้ที่ ตั้งค่า > ทั่วไป', 'success', 7000);
+      setTimeout(() => { window.location.href = Layout.dashboardUrl(); }, 1200);
     },
 
     async load() {

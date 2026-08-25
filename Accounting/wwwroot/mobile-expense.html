@@ -88,6 +88,19 @@
         document.getElementById('expDate').value = new Date().toISOString().slice(0,10);
       },
 
+      /** บริษัทปัจจุบัน — หน้านี้เป็นหน้าเดี่ยว (ไม่โหลด layout.js) จึงอ่านคีย์เอง
+       *  แต่ต้องอ่าน **คีย์เดียวกับที่แอปหลักเขียนจริง** คือ `currentCompany`
+       *  (JSON) เหมือนที่ Layout.getCompanyId() ทำ — เดิมอ่าน `companyId` ซึ่ง
+       *  มีแต่ portal /connect เท่านั้นที่เขียน (และ portal ก็ไม่ได้ลิงก์มาหน้านี้)
+       *  ⇒ ผู้ใช้แอปหลักเจอ "ต้อง login + เลือกบริษัทก่อน" ตลอด ส่งเบิกไม่ได้เลย */
+      companyId() {
+        try {
+          const c = JSON.parse(localStorage.getItem('currentCompany') || 'null');
+          if (c && c.id) return c.id;
+        } catch (e) { /* ค่าเสีย = ถือว่ายังไม่ได้เลือกบริษัท */ }
+        return '';
+      },
+
       onPhoto(e) {
         const f = e.target.files[0];
         if (!f) return;
@@ -115,7 +128,7 @@
         btn.disabled = true; btn.textContent = 'กำลังส่ง...';
         try {
           const token = localStorage.getItem('token');
-          const companyId = localStorage.getItem('companyId');
+          const companyId = this.companyId();
           if (!token || !companyId) {
             res.innerHTML = '<div class="err">ต้อง login + เลือกบริษัทก่อน</div>';
             btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย'; return;

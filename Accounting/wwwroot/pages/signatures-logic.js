@@ -173,7 +173,11 @@ const Page = {
 
   // ===== Pending Approvals =====
   async loadPending() {
-    const cid = localStorage.getItem('selectedCompanyId');
+    // ⚠️ เดิมอ่าน localStorage 'selectedCompanyId' ซึ่ง **ไม่มีใครเขียนเลย**
+    // ทั้งเรพ ⇒ cid เป็น null เสมอ → แท็บ "รออนุมัติ" ขึ้น "กรุณาเลือกบริษัท"
+    // ตลอด และปุ่มอนุมัติ/ปฏิเสธ `return` เงียบ ๆ (กดแล้วไม่มีอะไรเกิดขึ้น
+    // ไม่มี error) — resolver กลางคือ Layout.getCompanyId() เท่านั้น
+    const cid = Layout.getCompanyId();
     if (!cid) { document.getElementById('pendingBody').innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">กรุณาเลือกบริษัทก่อน</td></tr>'; return; }
     try {
       const res = await API.c(cid).getPendingDocApprovals();
@@ -223,8 +227,9 @@ const Page = {
   },
 
   async submitApprove() {
-    const cid = localStorage.getItem('selectedCompanyId');
-    if (!cid) return;
+    const cid = Layout.getCompanyId();
+    // ห้ามเงียบ: กดปุ่มแล้วไม่มีอะไรเกิดขึ้นเลยคือสิ่งที่ผู้ใช้แก้เองไม่ได้
+    if (!cid) { alert('ยังไม่ได้เลือกบริษัท — เลือกบริษัทที่มุมขวาบนก่อน'); return; }
     const sigId = document.getElementById('approveSignatureId').value || null;
     const comments = document.getElementById('approveComments').value || null;
     try {
@@ -244,8 +249,9 @@ const Page = {
   },
 
   async submitReject() {
-    const cid = localStorage.getItem('selectedCompanyId');
-    if (!cid) return;
+    const cid = Layout.getCompanyId();
+    // ห้ามเงียบ: กดปุ่มแล้วไม่มีอะไรเกิดขึ้นเลยคือสิ่งที่ผู้ใช้แก้เองไม่ได้
+    if (!cid) { alert('ยังไม่ได้เลือกบริษัท — เลือกบริษัทที่มุมขวาบนก่อน'); return; }
     const comments = document.getElementById('rejectComments').value;
     if (!comments) { alert('กรุณาระบุเหตุผล'); return; }
     try {

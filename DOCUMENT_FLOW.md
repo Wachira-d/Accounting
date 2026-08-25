@@ -563,6 +563,43 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - template เก็บใน `RecurringTransaction.TemplateData` (JSON)
 - `AutoApprove=true` → ใบที่ generate ขึ้นจะถูก approve อัตโนมัติ (ทำตาม flow
   approve ปกติทุกขั้น — tax point, JE, stock, fixed asset)
+- `AutoSendEmail=true` (`RecurringTransaction.AutoSendEmail`) → หลังสร้าง
+  (+approve) ระบบ enqueue อีเมลแนบ PDF ถึง `Contact.Email` **ทันที**
+  (`ScheduledFor = now` ไม่รอ 09:00) ผ่าน
+  `EmailScheduleService.OnRecurringDocumentCreatedAsync:164`
+  - ลำดับความสำคัญ: **มีกฎ `EmailScheduleRule.Trigger="RecurringInvoiceCreated"`
+    อยู่แล้ว → ใช้กฎนั้น** (เวลา/เทมเพลต/BCC ตามกฎ) และ**ไม่**ส่งซ้ำจากธง;
+    ไม่มีกฎเลยจึงใช้ธงบน recurring (rule เสมือน `Id=Guid.Empty` →
+    `EmailQueue.RuleId=null`, idem key `doc:{id}:RecurringInvoiceCreated:autosend-{recurringId}`)
+  - **invariant**: `AutoSendEmail=true ⇒ AutoApprove=true` บังคับทั้งใน
+    `CreateAsync`/`UpdateAsync` และล็อกช่องบนฟอร์ม — ใบ Draft ยังเป็นเลข
+    `DRAFT-{guid}` ตาม §86/4 ส่งออกหาลูกค้าไม่ได้ (guard เดิมใน
+    `OnRecurringDocumentCreatedAsync` ตัด Draft/WaitingApproval/Rejected ทิ้ง)
+  - **template สมุดรายวัน (`TemplateType="journal"`) ไม่รับธงนี้** — ปัดเป็น
+    false ทั้งใน `CreateAsync`/`UpdateAsync` (JE ไม่มีคู่ค้า/PDF ให้ส่ง และ
+    `AutoApprove` ฝั่ง journal แปลว่า "post JE อัตโนมัติ" คนละเรื่องกับที่
+    ผู้ใช้ติ๊ก); ตัวตัดสินกลาง `IsJournalTemplate` ใช้ร่วมกับ dispatch ใน
+    `ExecuteRecurringAsync`
+  - ผู้ติดต่อไม่มีอีเมล → ข้าม + log warning (ไม่ throw); ฟอร์มเช็คให้ตั้งแต่
+    ตอนบันทึก (`getContact`) แล้ว toast บอก · ผู้ส่งใช้ค่า
+    `CompanySettings.Email*` ของบริษัท ถ้าไม่ได้ตั้ง → fallback อีเมลกลางระบบ
+    (`EmailSenderFactory.GetGlobalFallbackSender`)
+  - ฟอร์ม `pages/recurring.html` แสดงสถานะอีเมลบริษัทจริงจาก
+    `GET /email-config` + ลิงก์ deep link `settings.html?tab=email`
+
+### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)
+- **ทางเข้า**: ฟอร์มสร้างเอกสาร → ประเภท "ใบวางบิล" + เลือกลูกค้า → กล่อง
+  "รวมใบค้างชำระ" (`documents.html #billingSourceBox`)
+- **API**: `GET /document/billing-note/outstanding?contactId=` ·
+  `POST /document/billing-note/from-invoices` (`DocumentController`)
+- **Service**: `DocumentService.BillingNote.cs` — `CreateBillingNoteFromInvoicesAsync`
+  · แหล่ง: Invoice / TaxInvoice / DebitNote สถานะ Approved/Sent/PartiallyPaid/
+  Overdue + BalanceDue > 0 · ลูกค้าเดียวกันทั้งชุด · ใบละ 1 บรรทัด ยอด =
+  BalanceDue, VatRate 0 (ยอดค้างรวม VAT ต้นทางแล้ว) · **ไม่ลง JE**
+- **กันซ้ำ**: `DocumentLine.SourceDocumentId` → ใบเดียวอยู่ได้ในใบวางบิล
+  active (ไม่ Voided/Rejected/ลบ) ใบเดียวเท่านั้น
+- BN ที่ได้เป็น Draft — อนุมัติออกเลขจริง แล้วเดินสายเดิม (BN → Receipt เมื่อ
+  รับเงิน / ตัวหนี้จริงยังตามที่ใบต้นทาง)
 
 ### 2.8 Quotation online accept (ลูกค้ากดยอมรับใบเสนอราคา)
 - **สร้างลิงก์** (ต้อง login): `POST /document/{id}/quotation-accept-link` —
@@ -1018,7 +1055,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | `Quotation` | ❌ | ❌ | – | – | – |
 | `Invoice` | Dr AR / Cr Rev + Cr **[21913 บริการล้วน \| 21911 มีสินค้า TrackStock]** | ❌ (DN จัดการแยก) | output — บริการล้วน: เข้าเมื่อ `OutputVatDueAt` (รับเงิน §78/1); มีสินค้า/legacy (GL ลง 21911 ตรง): เข้าทันทีตาม tax point (§78 ส่งมอบ) | `TaxPointDate` snapshot; บริการ → `OutputVatDueAt` ตอนรับชำระ | รับชำระ (Payment/ใบเสร็จ settlement) → `TryReclassifyUndueOutputVatAsync`: JV Dr 21913 / Cr 21911 เต็มยอดคงเหลือ + stamp `OutputVatDueAt` (full-on-first-settlement, GL-driven, idempotent). แปลงเป็น TIV → supersede reverse JE ทั้งใบ (รวม 21913) ใบกำกับลง 21911 เอง |
 | `TaxInvoice` | Dr AR / Cr Rev + Cr 21911 | ❌ | output | `TaxPointDate` snapshot | – |
-| `BillingNote` | ❌ (รอ Receipt) | ❌ | – | – | – |
+| `BillingNote` | ❌ (รอ Receipt) | ❌ | – | – | **รวมใบค้างหลายใบได้**: `POST document/billing-note/from-invoices` — 1 บรรทัด/ใบ ยอด=BalanceDue, `DocumentLine.SourceDocumentId` ชี้ใบต้นทาง (กันวางบิลซ้ำใน BN active) |
 | `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 | ❌ (Receipt **ไม่อยู่** ใน `ApplyStockMovementsAsync` switch — ถ้าต้อง OUT ต้อง issue Invoice/TaxInvoice ก่อน) | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
 | `ReceiptVoucher` standalone | เหมือน Receipt | ❌ (same as Receipt) | output | DocumentDate | รองรับ `IsDeposit` (2 เคส VAT ดู §3.7) |
 | `DeliveryNote` | ❌ | ❌ (ตั้งใจไม่ trigger — Invoice ที่ตามมาจะ OUT ให้, กัน double-count) | – | – | ใช้คู่กับ Invoice ใน Quotation→DN→Invoice chain |
@@ -2008,6 +2045,123 @@ _LINE bot รับรูปใบเสร็จ → OCR → เอกสาร
 _รวม Flex ปุ่มอนุมัติในแชท + postback guard + แจ้งกลับผู้ส่งเมื่ออนุมัติ)_
 _+ routing บิลไม่เป็นทางการ → ใบรับรองแทนใบเสร็จ (§2.2c); ก่อนหน้า: ปฏิทินนำส่ง_
 _ภาษี/ประกันสังคมบน dashboard (§5.3b) + แนบสลิปนำส่ง สปส. เข้ารอบเงินเดือน_
+
+_รอบ 103 — **ใบวางบิลรวมใบแจ้งหนี้หลายใบ — จาก doc ที่โกหกให้เป็นของจริง**:
+tooltip กับ doc เขียนว่า "ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว" มานานแต่
+โค้ดไม่มีทางทำ (ConvertDocumentAsync รับใบเดียว · ไม่มี Invoice→BillingNote ใน
+convert map) — ผู้ใช้ต้องพิมพ์บรรทัดเอง. เพิ่มเส้นทาง compose จริง:
+`GET document/billing-note/outstanding?contactId=` (ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้
+ที่ Approved/Sent/PartiallyPaid/Overdue + BalanceDue>0 ของลูกค้า พร้อมบอกใบที่
+ถูกวางบิลแล้วอยู่ใบไหน) + `POST document/billing-note/from-invoices` →
+`CreateBillingNoteFromInvoicesAsync` (ไฟล์ใหม่ `DocumentService.BillingNote.cs`,
+class เปลี่ยนเป็น partial): ตรวจ ชนิด/สถานะ/ยอดค้าง/ลูกค้าเดียวกันทั้งชุด/
+ห้ามซ้ำใบวางบิล active → สร้าง BN ร่างผ่าน `CreateDocumentAsync` ปกติ (เลขจริง
+ออกตอนอนุมัติ · **ไม่ลง JE** — ตัวหนี้อยู่ที่ใบต้นทาง) 1 บรรทัด = 1 ใบ ยอด =
+BalanceDue (รวม VAT ของใบต้นทางแล้ว → VatRate 0) เรียงตามวันที่ · ลิงก์ต้นทาง
+ต่อบรรทัดเก็บใน **`DocumentLine.SourceDocumentId` (คอลัมน์ใหม่ + migration)**
+ใช้กันรวมใบเดิมซ้ำ (ทวงลูกค้าซ้ำสองทาง = เสียเครดิต). UI: ฟอร์มใบวางบิล +
+เลือกลูกค้า → กล่องฟ้าแสดงใบค้างให้ติ๊ก (ใบที่วางบิลแล้ว disable + โชว์เลข BN)
++ ยอดรวมสด → ปุ่มสร้าง → ปิดฟอร์ม เปิดใบที่สร้าง. ตรวจด้วย simulation
+validation matrix 116 เคส (ชนิด×สถานะครบ + dedup/คนละลูกค้า/ใบลบ/เรียงลำดับ)
+— ผ่านหมด. **audit ครบทุก DocumentType ในรอบเดียวกัน**: convert map ครบถ้วนดี
+(PR→PO→GRN→PI→PV · Expense→PV/CIL · Receipt/PV→CN/DN · CN terminal) · พบ+แก้
+อีกจุด: ใบมัดจำเป็น pseudo-type (DB = Receipt+IsDeposit) เปิดแก้แล้ว facade
+เดิมชี้ "ใบเสร็จ" — ตอนนี้ชี้ "ใบมัดจำ" ถูกต้อง;_
+
+_รอบ 102 — **ฟอร์มสร้างเอกสาร: "ประเภทเอกสาร" ชั้นเดียว = กระดาษที่จะออก**:
+ผู้ใช้ยังงง "ใบแจ้งหนี้/ใบกำกับภาษี" กับ "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จ" สร้าง
+ต่างกันยังไง ต้องติ๊กจ่ายไหม — เพราะการเลือกเป็น 2 ชั้น (ชนิดดิบ → dropdown
+"หัวกระดาษ" ที่โผล่ทีหลัง) + ติ๊กจ่าย. รวมเป็น **ตัวเลือกเดียว `fPaper`**:
+รายการคือกระดาษปลายทางตรง ๆ จัดกลุ่มตาม "เงิน" (ก่อนขาย/เรียกเก็บ · ขายเครดิต
+ยังไม่รับเงิน · รับเงินแล้วจบในใบเดียว — ระบบบันทึกรับเงินให้ · รับเงินอื่น ๆ ·
+ปรับปรุงหนี้ · ฝั่งรายจ่าย) เลือกแล้วระบบตั้ง `fDocType` (ยังเป็น source of
+truth เดิม — payload/แปลง/JE ไม่แตะ) + issue mode + flag ทุกตัวให้เอง.
+กลไก: `_PAPERS` map กระดาษ→(type, mode) · `onPaperChange` → ตั้ง type (เรียก
+`onDocTypeChange` เฉพาะตอนชนิดดิบเปลี่ยนจริง) แล้วตั้งโหมดหลังรอบ deferred ของ
+`_syncIssueModeUi` (คิว FIFO — กันโดน resolve จาก flag เก่าทับ) ·
+`_syncPaperFromState` (เรียกท้าย `_syncIssueModeUi` ทั้งสองทางออก) ซิงก์ย้อน
+ตอน hydrate ใบเดิม/ใบแปลง/โค้ดตั้งชนิดเอง + copy `disabled` (แก้ไขใบเดิม
+เปลี่ยนชนิดไม่ได้เหมือนเดิม) · `_syncPaperOptionVisibility` ใช้กติกาชุดเดียว
+กับของเดิม: ฝั่งรายรับ/จ่าย (CN/DN อยู่ทั้งสองฝั่ง) · ไม่จด VAT ซ่อนหัวใบกำกับ
+ทั้งชุด · ใบแปลงจากขายเครดิตซ่อน ขายสด/หัวรวม/3-in-1 และเปิด `tax_paid` แทน ·
+โหมดที่ใบเดิมใช้แต่บริบทซ่อน — เปิด option ให้เลือกเห็น ไม่เด้งไปค่าอื่นเงียบ.
+select เดิม (`fDocType`, `fIssueMode`+label) ซ่อนใน DOM — hint ฟ้า (ชนิด)/เขียว
+(โหมด) ยังแสดง โดยกระดาษที่มีโหมดโชว์เฉพาะ hint เขียวกันข้อความตีกัน ·
+"ตัวเลือกขั้นสูง" (checkbox จริง) ยังอยู่เป็นทางหนีไฟ. ยืนยันด้วย harness รัน
+Page จริงทั้ง object กับ DOM จำลอง (select สร้างจาก markup จริง) 40+ assertion:
+เลือกกระดาษ→flag ครบ 13 แบบ · hydrate ย้อน 8 แบบ · ใบแปลง/ไม่จด VAT/ฝั่งจ่าย/
+ล็อกตอนแก้ไข — ผ่านหมด · negative test (ตัดบรรทัดตั้งโหมด) ฟ้อง 9 เคส;_
+
+_รอบ 101 — **แท็บ ภ.พ.36 ในหน้ารายงานภาษี: งวดที่นำส่งแล้วหายไปทั้งงวด**:
+แถวเทา "ยังไม่สร้าง" (รอบ 36) ดึงจาก `dashboard.pending` อย่างเดียว — พอกด
+นำส่ง งวดนั้น**หลุดจาก pending ไปอยู่ recentHistory** แถวเทาจึงหายตาม และถ้า
+ไม่เคยกดสร้างรายงาน งวดนั้นก็ไม่โผล่ที่ไหนเลยทั้งที่จ่ายเงินไปจริง ⇒ ผู้ใช้
+เข้าใจว่า "ไม่มียอด". แก้ 2 ชั้น: (1) **server** `RemitAsync` ของ VatPp36 เรียก
+`TryEnsurePp36ReportAsync` สร้างรายงานงวดนั้นให้อัตโนมัติ — idempotent, อยู่
+**นอก** transaction ของการนำส่ง และห้าม throw (นำส่ง commit ไปแล้ว ห้ามล้มย้อน
+หลังเพราะสร้างรายงานพลาด) (2) **UI** รวมงวดจาก `recentHistory` เข้าแถวเทาด้วย
+ป้าย "นำส่งแล้ว · ยังไม่มีรายงาน" (พื้นเหลือง) — ครอบข้อมูลเก่าที่นำส่งไปก่อน
+มี auto-generate. **ความสอดคล้องของปุ่ม/สถานะ**: เดิมเช็ค
+`taxType.toLowerCase().includes('vat')` ซึ่ง `'VatPp36'` ก็ผ่าน ⇒ แถว ภ.พ.36 มี
+ปุ่ม **ภ.ซื้อ · ภ.ขาย · ภ.พ.30** ทั้งที่ §87 รายงานซื้อ-ขาย และแบบ ภ.พ.30 เป็น
+ของ VAT ปกติ ภ.พ.36 (§83/6) ไม่มีของตัวเอง — จำกัดเป็น `VAT` จริงเท่านั้น แล้ว
+ใส่ปุ่ม "💸 หน้านำส่ง/ใบเสร็จ" แทน; ฝั่ง Excel export ก็เลิกแตกชีต
+"รายงานภาษีขาย/ซื้อ" ให้ ภ.พ.36 (ใช้ชีต "รายการ" + สรุป) ให้ตรงกัน;
+เพิ่มป้ายใต้สถานะรายงานบอก **สถานะการนำส่งเงิน** (นำส่งแล้ววันไหน / รับรู้ภาษี
+ซื้อเข้า ภ.พ.30 แล้วหรือยัง) เพราะ "ร่าง" ของรายงานคนละเรื่องกับการจ่ายเงิน
+ผู้ใช้เห็นแล้วเข้าใจว่ายังไม่ได้นำส่ง · ตัวเทียบชนิดภาษีรวมเป็น `_isType()`
+ตัวเดียว รองรับทั้งชื่อ enum และตัวเลข (serializer ส่งได้ทั้ง 2 แบบ);_
+
+_รอบ 100 — **"เมนู e-Tax กดแล้วขึ้นหน้าตั้งค่า" — ที่แท้คือหน้าเข้าไม่ได้เลย**:
+ไม่ใช่ดีไซน์ แต่เป็นบั๊ก: `pages/etax.html` อ่าน `localStorage['companyId']`
+ซึ่ง**มีแต่ portal `/connect` เท่านั้นที่เขียน** แอปหลักไม่เคยเขียนคีย์นี้เลย
+⇒ ได้ null ทุกครั้ง → `window.location.href='/pages/settings.html'` ทันที
+= หน้า e-Tax Invoice เข้าไม่ได้สักครั้งตั้งแต่เขียนมา. แก้ให้ใช้ resolver กลาง
+`Layout.getCompanyId()`. **defect class เดียวกันอีก 2 จุด**: `mobile-expense.html`
+(ขึ้น "ต้อง login + เลือกบริษัทก่อน" ตลอด ส่งเบิกไม่ได้) และ
+`pages/signatures-logic.js` อ่าน `'selectedCompanyId'` ที่ไม่มีใครเขียนเลยทั้งเรพ
+⇒ แท็บรออนุมัติว่าง + ปุ่มอนุมัติ/ปฏิเสธ `return` เงียบ ๆ (กดแล้วไม่มีอะไร
+เกิดขึ้น ไม่มี error) — แก้ทั้งหมด + เปลี่ยน guard ให้ดังแทนที่จะเงียบ.
+**คำถาม "เมนูไหนไม่ได้ใช้ก็เอาออก"**: e-Tax เป็นฟีเจอร์จริงตามกฎเหล็ก #2 F
+(ETDA ขมธอ.3-2560) ไม่ควรลบทิ้ง แต่เป็น opt-in ⇒ เพิ่มธง `etaxOnly` บน nav item
+คู่กับ `_etaxEnabled` ที่อ่านจาก `/settings` **ครั้งเดียวกับที่ดึง vatRegistered
+อยู่แล้ว (ไม่มี request เพิ่ม)** → บริษัทที่ยังไม่เปิดใช้ e-Tax ไม่เห็นเมนูนี้
+เลย; ถ้าเปิดหน้ามาแล้วยังไม่ได้เปิดใช้ แบนเนอร์อธิบายว่าเมนูนี้ทำอะไร + ปุ่ม
+"ซ่อนเมนูนี้" (ผ่านกลไกซ่อนเมนูกลาง เปิดกลับได้ที่ ตั้งค่า > ทั่วไป).
+ตรวจ nav ทั้ง 107 รายการ — ปลายทางมีไฟล์จริงครบทุกอัน ไม่มีเมนูตายอื่น;_
+
+_รอบ 99 — **หน้านำส่งภาษี/ประกันสังคม: กรองตามประเภทแบบได้ + ลด noise**:
+หน้าจอจริงมี 13 รายการค้างจาก 5 แบบ × 5 งวด เรียงปนกัน ไม่มีตัวกรองเลยสักตัว
+และทุกแถวขึ้น "เลยกำหนด" แดง + ปุ่ม primary น้ำเงิน ⇒ ทุกอย่างเด่นเท่ากัน =
+ไม่มีอะไรเด่น (alarm fatigue) ผู้ใช้ที่จะยื่น "ภ.พ.30 เม.ย." ต้องไล่สายตาเอง.
+เพิ่ม: **ชิปกรองตามแบบ** (เลือกได้หลายประเภท พร้อมจำนวน+ยอดในชิป) · ตัวกรอง
+สถานะ/งวด/ค้นหา · **3 มุมมอง** (ตามงวด/ตามประเภท/รายการ) พับกลุ่มได้ · KPI
+กดเป็นตัวกรองลัด · ป้ายบอก **"เลยกำหนด N วัน"** แทนคำลอย ๆ + แถบสีความด่วน
+หน้าแถว (ปุ่มลดเป็น outline เท่ากันหมด ให้สีสื่อความด่วนแทน) · ประวัติกรอง
+ประเภท/ค้นหา + สรุปยอด · มือถือแปลงตารางเป็นการ์ด · จำตัวกรองต่อบริษัทใน
+localStorage · แถบ ภ.พ.36 "รอรับรู้ภาษีซื้อ" ย้ายออกนอกการ์ดที่ถูกกรอง (ตัว
+กรองต้องไม่ซ่อนงานที่ค้างอยู่). ตัวตัดสินความด่วน `_urgency` เป็นตัวเดียว ใช้
+ร่วมทั้ง badge/แถบสี/ตัวกรอง. **แถมแก้บั๊กร่วมทั้งระบบ**: `Layout.toast` ไม่เคย
+รับพารามิเตอร์ที่ 3 (ระยะเวลา) แต่มีคนเรียกส่งมาแล้ว **40 จุด** → ข้อความสอน
+ขั้นตอนยาว ๆ หายใน 3.5 วิ; และ `.toast-warning` ไม่มีสีพื้นเลย (`.toast` ตั้ง
+`color:#fff`) = ตัวอักษรขาวบนขาว มองไม่เห็น — แก้ทั้งคู่;_
+
+_รอบ 98 — **รายการประจำ: ออกเอกสารอนุมัติ + ส่งอีเมลได้จบในฟอร์มเดียว**:
+เดิมมี hook `OnRecurringDocumentCreatedAsync` อยู่แล้ว แต่มันส่งเฉพาะเมื่อ
+tenant ไป**สร้างกฎเองที่หน้า "ตารางส่งอีเมล"** (trigger `RecurringInvoiceCreated`)
+⇒ ผู้ใช้ที่ตั้ง SMTP บริษัทไว้แล้วยังไม่มีอะไรถึงลูกค้าเลยและไม่มีที่ไหนบอก
+(silent no-op เต็มรูป). เพิ่มธง `RecurringTransaction.AutoSendEmail` +
+ช่องติ๊กในฟอร์ม: ไม่มีกฎ → ระบบ enqueue เองด้วย **rule เสมือน** (`Id=Guid.Empty`
+→ `EmailQueue.RuleId=null`) ส่ง**ทันที** ไม่รอ 09:00; มีกฎอยู่แล้ว → กฎชนะ
+ไม่ส่งซ้ำ. invariant `AutoSendEmail ⇒ AutoApprove` บังคับทั้ง service
+(`CreateAsync`/`UpdateAsync`) และ UI (ล็อกช่อง + บอกเหตุผล §86/4 ใบร่างเป็น
+`DRAFT-{guid}` ส่งไม่ได้) — ไม่ใช่ปล่อยติ๊กแล้วเงียบ. ฟอร์มดึงสถานะอีเมลจริง
+จาก `GET /email-config` มาแสดง (พร้อม/ยังไม่ทดสอบ—ครอบทั้ง SMTP/MS Graph/Gmail
+ไม่ใช่ดูแค่ `smtp.host`/ยังไม่ตั้ง→ใช้อีเมลกลาง) + เช็คว่าผู้ติดต่อมีอีเมลไหม
+ตั้งแต่ตอนบันทึก + เตือนเมื่อชนิดเอกสารเป็นฝั่งซื้อ (จะส่งไปหาผู้ขาย) +
+`settings.html` รับ deep link `?tab=email` ได้แล้ว (เดิมลิงก์ไปตกแท็บแรก).
+ธงนี้ไม่มีผลกับ template สมุดรายวัน — ปัดทิ้งที่ service (ตรวจด้วย simulation
+102 เคส ผ่าน invariant `AutoSendEmail ⇒ AutoApprove` + `⇒ ไม่ใช่ journal`);_
 
 _รอบ 93 — **single source of truth: เดือนเคลม = อยู่ในรายงานจริง**: ผู้ใช้
 ไม่ยอมกด "สร้างใหม่" (ล้างการติ๊ก/แก้ยอดของบรรทัดอื่นทั้งงวด — ถูกต้อง) →

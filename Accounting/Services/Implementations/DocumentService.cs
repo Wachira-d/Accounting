@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
 
-public class DocumentService : IDocumentService
+public partial class DocumentService : IDocumentService
 {
     private readonly AccountingDbContext _db;
     private readonly IAccountingService _accountingService;

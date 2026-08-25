@@ -820,6 +820,36 @@ public class DocumentController : ControllerBase
                   : "ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ"));
     }
 
+    /// <summary>ใบค้างชำระของลูกค้าที่นำมารวมเป็นใบวางบิลได้ — ใบแจ้งหนี้/
+    /// ใบกำกับ/ใบเพิ่มหนี้ที่อนุมัติแล้วและยังมียอดค้าง + บอกว่าใบไหนถูกวางบิล
+    /// ไปแล้ว (เลขใบวางบิล) เพื่อกันวางบิลซ้ำ.</summary>
+    [HttpGet("billing-note/outstanding")]
+    public async Task<ActionResult<ApiResponse<List<BillingNoteSourceItem>>>> GetBillingOutstanding(
+        Guid companyId, [FromQuery] Guid contactId)
+    {
+        var items = await _documentService.GetOutstandingInvoicesForBillingAsync(companyId, contactId);
+        return Ok(new ApiResponse<List<BillingNoteSourceItem>>(true, items));
+    }
+
+    /// <summary>สร้างใบวางบิล (Draft) จากใบค้างชำระหลายใบของลูกค้ารายเดียว —
+    /// 1 บรรทัด = 1 ใบ ยอด = คงค้าง · ไม่ลง JE (ตัวหนี้อยู่ที่ใบต้นทาง).</summary>
+    [HttpPost("billing-note/from-invoices")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> CreateBillingNoteFromInvoices(
+        Guid companyId, [FromBody] CreateBillingNoteFromInvoicesRequest request)
+    {
+        try
+        {
+            var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+            var result = await _documentService.CreateBillingNoteFromInvoicesAsync(companyId, request, userId);
+            return Ok(new ApiResponse<DocumentResponse>(true, result,
+                $"สร้างใบวางบิลรวม {request.InvoiceIds?.Count ?? 0} ใบแล้ว (ร่าง — ตรวจแล้วกดอนุมัติเพื่อออกเลขจริง)"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<DocumentResponse>(false, null, ex.Message));
+        }
+    }
+
     [HttpPost("{documentId:guid}/convert/{targetType}")]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> ConvertDocument(Guid companyId, Guid documentId, DocumentType targetType)
     {
