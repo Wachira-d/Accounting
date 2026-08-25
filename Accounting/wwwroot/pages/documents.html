@@ -231,7 +231,50 @@
           <div class="doc-section-head"><span class="dsh-icon">🧾</span> ข้อมูลเอกสาร &amp; คู่ค้า</div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
-              <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
+              <!-- ══ ตัวเลือกเดียว = "กระดาษที่จะออก" ══
+                   เดิมผู้ใช้ต้องเลือก 2 ชั้น: ชนิดเอกสารดิบ (Invoice/TaxInvoice)
+                   แล้วค่อยเลือก "หัวกระดาษ" อีก dropdown ที่โผล่ทีหลัง — ผู้ใช้
+                   งงว่า "ใบแจ้งหนี้/ใบกำกับภาษี" กับ "ใบแจ้งหนี้/ใบกำกับภาษี/
+                   ใบเสร็จ" สร้างต่างกันยังไง ต้องติ๊กจ่ายไหม. รวมเป็นชั้นเดียว:
+                   เลือกกระดาษปลายทางตรง ๆ แล้วระบบตั้ง fDocType + issue mode +
+                   flag ทุกตัวให้เอง (จัดกลุ่มตาม "เงิน": ยังไม่รับ / รับแล้ว)
+                   fDocType เดิมยังเป็น source of truth — ซ่อนไว้ ไม่ลบ -->
+              <select class="form-select" id="fPaper" onchange="Page.onPaperChange()">
+                <optgroup label="📋 ก่อนขาย / เรียกเก็บ — ยังไม่ลงบัญชี" data-side="revenue">
+                  <option value="quote">ใบเสนอราคา</option>
+                  <option value="billing">ใบวางบิล — รวมยอดใบแจ้งหนี้หลายใบไปเก็บเงิน</option>
+                  <option value="delivery">ใบส่งของ</option>
+                </optgroup>
+                <optgroup label="💳 ขายเครดิต — ยังไม่รับเงิน (ตั้งลูกหนี้)" data-side="revenue">
+                  <option value="invoice">ใบแจ้งหนี้ — ยังไม่ออกใบกำกับภาษี</option>
+                  <option value="invoice_tax">ใบแจ้งหนี้/ใบกำกับภาษี — ใบเดียว ออกใบกำกับเลย</option>
+                  <option value="tax">ใบกำกับภาษี</option>
+                </optgroup>
+                <optgroup label="💰 รับเงินแล้ว — จบในใบเดียว (ระบบบันทึกรับเงินให้)" data-side="revenue">
+                  <option value="invoice_tax_paid">ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน (3-in-1)</option>
+                  <option value="tax_receipt">ใบกำกับภาษี/ใบเสร็จรับเงิน — ขายสด</option>
+                  <option value="tax_paid" hidden>ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบแล้ว (ใบแปลง)</option>
+                  <option value="receipt_abb">ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ — ลูกค้าไม่ขอใบกำกับ</option>
+                </optgroup>
+                <optgroup label="🧾 รับเงินอื่น ๆ" data-side="revenue">
+                  <option value="receipt">ใบเสร็จรับเงิน — รับชำระใบแจ้งหนี้/ใบกำกับที่ออกไว้แล้ว</option>
+                  <option value="deposit">💰 ใบมัดจำ / รับเงินล่วงหน้า</option>
+                  <option value="receipt_voucher">ใบสำคัญรับ</option>
+                </optgroup>
+                <optgroup label="✏️ ปรับปรุงหนี้ (ออกให้ลูกค้า / ผู้ขายออกให้เรา)" data-side="both">
+                  <option value="debit_note">ใบเพิ่มหนี้</option>
+                  <option value="credit_note">ใบลดหนี้</option>
+                </optgroup>
+                <optgroup label="📤 ฝั่งรายจ่าย" data-side="expense">
+                  <option value="pr">ใบขอซื้อ (PR)</option>
+                  <option value="po">ใบสั่งซื้อ (PO)</option>
+                  <option value="pi">ใบแจ้งหนี้ซื้อ (มีใบแจ้งหนี้ผู้ขาย — เจ้าหนี้การค้า)</option>
+                  <option value="expense">ใบบันทึกค่าใช้จ่าย (ตั้งหนี้ — เจ้าหนี้อื่น)</option>
+                  <option value="pv">ใบสำคัญจ่าย (จ่ายเงินจริง/ตัดหนี้)</option>
+                  <option value="cert">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
+                </optgroup>
+              </select>
+              <select class="form-select" id="fDocType" style="display:none" onchange="Page.onDocTypeChange()">
                 <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
                   <option value="Quotation" title="เสนอราคาให้ลูกค้าก่อนซื้อขายจริง — ยังไม่ลง GL, ไม่มี VAT effect">ใบเสนอราคา</option>
                   <option value="Invoice" title="ขายเครดิต — แจ้งหนี้ลูกค้า (ยังไม่รับเงิน, ยังไม่ใช่ใบกำกับภาษี) — งานบริการ: VAT รอเรียกเก็บ ยังไม่เข้า ภพ.30 จนกว่าจะรับเงิน (§78/1) · มีสินค้า: VAT นำส่งทันที (ส่งมอบ §78 — ควรออกใบกำกับ/ติ๊กใบรวมแทน)">ใบแจ้งหนี้</option>
@@ -267,8 +310,12 @@
                    **ตั้ง flag เบื้องหลังให้เอง** — flag เดิมยังเป็น source of truth
                    (payload/แปลง/JE ไม่เปลี่ยน) จึงไม่กระทบ backend -->
               <div id="issueModeRow" style="display:none;margin-top:10px">
-                <label class="form-label" style="font-size:12.5px;margin-bottom:4px">เอกสารที่จะออกให้ลูกค้า (หัวกระดาษ) *</label>
-                <select class="form-select" id="fIssueMode" onchange="Page.onIssueModeChange()">
+                <!-- label + select ซ่อนถาวร — "ประเภทเอกสาร" (fPaper) ด้านบนเลือก
+                     หัวกระดาษให้แล้วชั้นเดียว. select นี้ยังเป็นตัวกลางตั้ง flag
+                     (fPaper → fIssueMode → checkbox) จึงคงไว้ใน DOM · hint สีเขียว
+                     ข้างล่างยังแสดง เพื่ออธิบายผลของหัวที่เลือก -->
+                <label class="form-label" style="display:none;font-size:12.5px;margin-bottom:4px">เอกสารที่จะออกให้ลูกค้า (หัวกระดาษ) *</label>
+                <select class="form-select" id="fIssueMode" style="display:none" onchange="Page.onIssueModeChange()">
                   <option value="invoice">ใบแจ้งหนี้ — ขายเครดิต ยังไม่ออกใบกำกับภาษี</option>
                   <option value="invoice_tax">ใบแจ้งหนี้/ใบกำกับภาษี — ขายเครดิต ออกใบกำกับเลย</option>
                   <option value="invoice_tax_paid">ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินแล้ว ใบเดียวจบ (3-in-1)</option>
@@ -3597,6 +3644,128 @@
           hint: 'รับเงินแล้ว ณ วันออก (ใบเสร็จ = หลักฐานรับเงิน ม.105) — กด "บันทึกและอนุมัติ" ระบบบันทึกชำระให้อัตโนมัติ · VAT ขายยังลงรายงานภาษีขาย/ภ.พ.30 ครบ (นำส่งภาษีปกติ) · แต่ผู้ซื้อเคลมภาษีซื้อไม่ได้ · ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อครบ' },
       },
 
+      /** ══ "ประเภทเอกสาร" ชั้นเดียว (fPaper) — กระดาษปลายทาง → ชนิด+โหมด ══
+       *  ผู้ใช้เลือกกระดาษที่จะออกตรง ๆ ระบบตั้ง fDocType (source of truth เดิม)
+       *  และ issue mode/flag ให้ครบ — ไม่มีการตัดสินใจชั้นที่สองอีก */
+      _PAPERS: {
+        quote:            { type: 'Quotation' },
+        billing:          { type: 'BillingNote' },
+        delivery:         { type: 'DeliveryNote' },
+        invoice:          { type: 'Invoice',    mode: 'invoice' },
+        invoice_tax:      { type: 'TaxInvoice', mode: 'invoice_tax' },
+        tax:              { type: 'TaxInvoice', mode: 'tax' },
+        invoice_tax_paid: { type: 'TaxInvoice', mode: 'invoice_tax_paid' },
+        tax_receipt:      { type: 'TaxInvoice', mode: 'tax_receipt' },
+        tax_paid:         { type: 'TaxInvoice', mode: 'tax_paid' },      // ใบแปลงจากขายเครดิตเท่านั้น
+        receipt_abb:      { type: 'TaxInvoice', mode: 'receipt_only' },
+        receipt:          { type: 'Receipt' },
+        deposit:          { type: 'Deposit' },
+        receipt_voucher:  { type: 'ReceiptVoucher' },
+        debit_note:       { type: 'DebitNote' },
+        credit_note:      { type: 'CreditNote' },
+        pr:      { type: 'PurchaseRequisition' },
+        po:      { type: 'PurchaseOrder' },
+        pi:      { type: 'PurchaseInvoice' },
+        expense: { type: 'Expense' },
+        pv:      { type: 'PaymentVoucher' },
+        cert:    { type: 'CertificateInLieu' },
+      },
+      _MODE_TO_PAPER: {
+        invoice: 'invoice', invoice_tax: 'invoice_tax', invoice_tax_paid: 'invoice_tax_paid',
+        tax: 'tax', tax_paid: 'tax_paid', tax_receipt: 'tax_receipt', receipt_only: 'receipt_abb',
+      },
+
+      onPaperChange() {
+        const psel = document.getElementById('fPaper');
+        const p = this._PAPERS[psel?.value];
+        if (!p) return;
+        // กันวงจรสะท้อน: onDocTypeChange → (deferred) _syncIssueModeUi →
+        // _syncPaperFromState ห้ามย้อนมาเขียน fPaper ระหว่างที่ผู้ใช้เพิ่งเลือก
+        this._suppressPaperSync = true;
+        const dt = document.getElementById('fDocType');
+        const typeChanged = dt && dt.value !== p.type;
+        if (dt) dt.value = p.type;
+        // เรียกเฉพาะตอนชนิดดิบเปลี่ยนจริง — สลับโหมดในชนิดเดิม (เช่น
+        // ใบกำกับภาษี ↔ ใบกำกับ/ใบเสร็จ ขายสด) ไม่ต้อง reset ค่า default
+        // ของชนิด (พฤติกรรมเดิมของ onIssueModeChange เป๊ะ)
+        if (typeChanged) this.onDocTypeChange();
+        // _syncIssueModeUi ถูกยิงแบบ deferred (setTimeout 0) จาก onDocTypeChange
+        // และจะ resolve โหมดจาก flag เก่า — ตั้งโหมดที่ผู้ใช้เลือก "หลัง" รอบนั้น
+        // (คิว FIFO) แล้วค่อยปลด suppress
+        setTimeout(() => {
+          if (p.mode) {
+            const im = document.getElementById('fIssueMode');
+            if (im) { im.value = p.mode; this.onIssueModeChange(); }
+          }
+          this._suppressPaperSync = false;
+          this._syncPaperFromState();
+        }, 0);
+      },
+
+      /** ซ่อน/แสดงตัวเลือกกระดาษตามบริบทจริง — ฝั่งรายรับ/รายจ่าย · บริษัทจด
+       *  VAT ไหม · ใบแปลงจากขายเครดิตไหม (กติกาชุดเดียวกับ _syncIssueModeUi) */
+      _syncPaperOptionVisibility() {
+        const psel = document.getElementById('fPaper');
+        if (!psel) return;
+        const dt = document.getElementById('fDocType')?.value;
+        const expenseTypes = ['PurchaseRequisition', 'PurchaseOrder', 'GoodsReceiptNote',
+          'PurchaseInvoice', 'Expense', 'PaymentVoucher', 'CertificateInLieu'];
+        const isExpense = expenseTypes.includes(dt);
+        psel.querySelectorAll('optgroup').forEach(g => {
+          const side = g.dataset.side;
+          const show = side === 'both' || (isExpense ? side === 'expense' : side === 'revenue');
+          g.style.display = show ? '' : 'none';
+          g.querySelectorAll('option').forEach(o => { o.hidden = !show; o.disabled = !show; });
+        });
+        if (isExpense) return;
+        const setHidden = (v, hide) => {
+          const o = psel.querySelector(`option[value="${v}"]`);
+          if (o) { o.hidden = hide; o.disabled = hide; }
+        };
+        // บริษัทไม่จด VAT — หัวที่มีคำ "ใบกำกับภาษี" ออกไม่ได้ทั้งชุด
+        if (this._vatRegistered === false)
+          ['invoice_tax', 'tax', 'invoice_tax_paid', 'tax_receipt', 'tax_paid', 'receipt_abb']
+            .forEach(v => setHidden(v, true));
+        // ใบแปลงจากใบแจ้งหนี้/ใบวางบิล (ขายเครดิต): ขายสด/รวมหัวใช้ไม่ได้
+        // (Dr เงินสดโดยไม่ล้างลูกหนี้ใบต้นทาง) · tax_paid โชว์เฉพาะเคสนี้
+        const srcT = this._pinnedSourceDoc?.documentType;
+        const fromCredit = srcT === 'Invoice' || srcT === 'BillingNote';
+        if (fromCredit)
+          ['tax_receipt', 'invoice_tax', 'invoice_tax_paid', 'invoice'].forEach(v => setHidden(v, true));
+        setHidden('tax_paid', !fromCredit);
+      },
+
+      /** ซิงก์ fPaper จากสถานะจริง (fDocType + issue mode ที่ resolve แล้ว) —
+       *  ใช้ตอน hydrate ใบเดิม / แปลงใบ / โค้ดตั้งชนิดเอกสารโปรแกรมmatic */
+      _syncPaperFromState() {
+        if (this._suppressPaperSync) return;
+        const psel = document.getElementById('fPaper');
+        const dt = document.getElementById('fDocType');
+        if (!psel || !dt) return;
+        psel.disabled = dt.disabled;      // แก้ไขใบเดิม = เปลี่ยนชนิดไม่ได้ เหมือนเดิม
+        this._syncPaperOptionVisibility();
+        const type = dt.value;
+        let key = null;
+        const applies = (type === 'Invoice' || type === 'TaxInvoice') && this._vatRegistered !== false;
+        if (applies) key = this._MODE_TO_PAPER[document.getElementById('fIssueMode')?.value];
+        if (!key) {
+          const ks = Object.keys(this._PAPERS);
+          key = ks.find(k => this._PAPERS[k].type === type && !this._PAPERS[k].mode)
+             || ks.find(k => this._PAPERS[k].type === type);
+        }
+        const opt = key && psel.querySelector(`option[value="${key}"]`);
+        if (opt) {
+          // ใบเดิมอาจอยู่ในโหมดที่บริบทปัจจุบันซ่อนไว้ (เช่น tax_paid) — ต้อง
+          // เลือกให้เห็นได้ ไม่ใช่เด้งไปค่าอื่นเงียบ ๆ
+          if (opt.hidden) { opt.hidden = false; opt.disabled = false; }
+          psel.value = key;
+        }
+        // กระดาษที่มีโหมด → hint สีเขียว (issueModeHint) เป็นตัวอธิบายหลัก
+        // ซ่อน hint สีฟ้าของชนิดดิบ กันข้อความสองก้อนตีกัน
+        const blueHint = document.getElementById('docTypeHint');
+        if (blueHint && key && this._PAPERS[key]?.mode && applies) blueHint.style.display = 'none';
+      },
+
       /** ผู้ใช้เลือกหัวเอกสาร → ตั้ง flag เบื้องหลัง (flag ยังเป็น source of truth) */
       onIssueModeChange() {
         const sel = document.getElementById('fIssueMode');
@@ -3658,7 +3827,7 @@
         row.style.display = applies ? '' : 'none';
         const adv = document.getElementById('issueFlagsAdvanced');
         if (adv) adv.style.display = applies ? '' : 'none';
-        if (!applies) return;
+        if (!applies) { this._syncPaperFromState(); return; }
 
         // ตัวเลือก "ขายสด ใบเดียว" ใช้ไม่ได้กับใบที่แปลงมาจากใบแจ้งหนี้เครดิต
         // (จะลง Dr เงินสดทั้งที่ยังไม่รับเงินจริง) — ซ่อนไปเลย ไม่ให้เลือกแล้วพัง
@@ -3702,6 +3871,8 @@
         // baseline สำหรับ logic "ออกจากโหมด paid แล้วปลดติ๊ก" ใน onIssueModeChange
         this._lastIssueMode = sel.value;
         this._refreshIssueModeHint();
+        // ตัวเลือกกระดาษชั้นเดียว (fPaper) ต้องสะท้อนโหมดที่ resolve แล้วเสมอ
+        this._syncPaperFromState();
       },
 
       onCashReceiptToggle() {
