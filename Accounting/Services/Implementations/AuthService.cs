@@ -20,6 +20,9 @@ public class AuthService : IAuthService
     private readonly ICompanyService _companyService;
     private readonly ILogger<AuthService> _logger;
     private readonly ISecretProtector? _secrets;
+    /// <summary>ใช้อ่าน IP + user-agent ตอนบันทึกความยินยอม PDPA เท่านั้น
+    /// (optional — งานเบื้องหลัง/เทสต์ที่เรียก service ตรงไม่มี HttpContext)</summary>
+    private readonly IHttpContextAccessor? _http;
 
     // Account lockout settings (configurable via appsettings Security section)
     private readonly int _maxFailedAttempts;
@@ -33,8 +36,10 @@ public class AuthService : IAuthService
         IAccountingService accountingService,
         ICompanyService companyService,
         ILogger<AuthService> logger,
-        ISecretProtector? secrets = null)
+        ISecretProtector? secrets = null,
+        IHttpContextAccessor? http = null)
     {
+        _http = http;
         _secrets = secrets;
         _db = db;
         _config = config;
@@ -49,8 +54,76 @@ public class AuthService : IAuthService
         _lockoutMinutes = int.Parse(config["Security:LockoutMinutes"] ?? "15");
     }
 
+    // ===== ความยินยอม PDPA ตอนสมัคร (ม.19) — ด่านเดียวของทุกทางสมัคร =====
+    // ทุกทางที่ "สร้างผู้ใช้ใหม่" ต้องผ่าน 2 ฟังก์ชันนี้เท่านั้น: กรอกฟอร์มเอง,
+    // สมัครผ่าน Google/Facebook/LINE, และรับคำเชิญเข้าบริษัท. ห้ามมีทางไหนสร้าง
+    // User โดยไม่เรียก — ไม่งั้นกลับไปเป็นช่องโหว่เดิม (ติ๊กแล้วไม่มีใครเก็บ)
+
+    /// <summary>ไม่ติ๊กยอมรับ = ไม่สมัคร. ปุ่ม SSO บนหน้าสมัครอยู่**นอก** &lt;form&gt;
+    /// ⇒ เบราว์เซอร์ไม่บังคับ required ให้ ด่านจริงจึงต้องอยู่ฝั่ง server</summary>
+    private static void RequireSignupConsent(bool acceptedTerms)
+    {
+        if (!acceptedTerms)
+            throw new InvalidOperationException(
+                "กรุณายอมรับข้อกำหนดการใช้งานและนโยบายความเป็นส่วนตัวก่อนสมัครสมาชิก");
+    }
+
+    /// <summary>บันทึกหลักฐานความยินยอมลง PdpaConsentRecord — เรียกหลัง
+    /// SaveChanges ของ User แล้วเท่านั้น (ต้องมี <c>user.Id</c> จริง).
+    /// ล้มเหลว = ไม่ทำให้การสมัครล้ม แต่ log เป็น Error ให้เห็นชัด: ผู้ใช้ที่
+    /// ติ๊กยอมรับแล้วไม่ควรถูกเด้งกลับเพราะปัญหาฝั่งเรา แต่ก็ห้ามหายเงียบ</summary>
+    private async Task RecordSignupConsentAsync(User user, string? policyVersionShown, string channel)
+    {
+        try
+        {
+            var ctx = _http?.HttpContext;
+            // X-Forwarded-For ตัวแรก = client จริงเมื่ออยู่หลัง reverse proxy
+            var ip = ctx?.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim();
+            if (string.IsNullOrWhiteSpace(ip))
+                ip = ctx?.Connection.RemoteIpAddress?.ToString();
+            if (!string.IsNullOrEmpty(ip) && ip.Length > 45) ip = ip[..45];   // varchar(45)
+            var ua = ctx?.Request.Headers.UserAgent.ToString();
+
+            var grantedAt = DateTime.UtcNow;
+            _db.PdpaConsentRecords.Add(new PdpaConsentRecord
+            {
+                CompanyId = Helpers.PdpaPolicy.PlatformScopeCompanyId,
+                SubjectUserId = user.Id,
+                SubjectContact = user.Email,
+                Purpose = Helpers.PdpaPolicy.SignupPurpose,
+                // เก็บเวอร์ชันที่ **server** ใช้อยู่เป็นเวอร์ชันของแถว ส่วนเวอร์ชันที่
+                // หน้าเว็บแสดงจริงอยู่ใน evidence hash — ต่างกันเมื่อไรแปลว่าเบราว์เซอร์
+                // ค้าง cache ฉบับเก่า (log เตือนด้านล่าง) ไม่ใช่ข้อมูลสูญหาย
+                PolicyVersion = Helpers.PdpaPolicy.CurrentVersion,
+                GrantedAt = grantedAt,
+                Channel = channel,
+                IpAddress = ip,
+                EvidenceHash = Helpers.PdpaConsentEvidence.ComputeHash(
+                    user.Email, Helpers.PdpaPolicy.SignupPurpose, policyVersionShown,
+                    grantedAt, channel, ip, ua),
+            });
+            await _db.SaveChangesAsync();
+
+            if (!string.IsNullOrWhiteSpace(policyVersionShown)
+                && policyVersionShown != Helpers.PdpaPolicy.CurrentVersion)
+            {
+                _logger.LogWarning(
+                    "PDPA consent: หน้าเว็บแสดงนโยบายเวอร์ชัน {Shown} แต่ระบบใช้ {Current} — เบราว์เซอร์อาจค้าง cache (user={UserId})",
+                    policyVersionShown, Helpers.PdpaPolicy.CurrentVersion, user.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            // ห้ามกลืนเงียบ (กฎเหล็ก #4 E) — แต่ก็ห้ามล้มการสมัครของผู้ใช้
+            _logger.LogError(ex, "PDPA consent: บันทึกความยินยอมไม่สำเร็จ (user={UserId}, channel={Channel})",
+                user.Id, channel);
+        }
+    }
+
     public async Task<LoginResponse> RegisterAsync(RegisterRequest request)
     {
+        RequireSignupConsent(request.AcceptedTerms);
+
         // Normalize to lowercase — case-insensitive uniqueness so
         // "Alice@Example.com" and "alice@example.com" can't both register.
         var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
@@ -77,6 +150,9 @@ public class AuthService : IAuthService
 
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
+
+        // หลักฐานความยินยอม — ต้องหลัง SaveChanges เพราะต้องใช้ user.Id จริง
+        await RecordSignupConsentAsync(user, request.PolicyVersion, "web-form");
 
         // Invitation acceptance — when the user registered via an invitation
         // link, consume the matching pending invite for THIS email and skip
@@ -430,6 +506,15 @@ public class AuthService : IAuthService
             }
             else
             {
+                // สมัครใหม่ผ่าน SSO — ต้องยอมรับข้อกำหนด/นโยบายก่อนเสมอ.
+                // หน้า login ไม่ได้ส่งธงนี้มา (และไม่ควรส่ง) ⇒ กดปุ่ม SSO ที่หน้า
+                // เข้าสู่ระบบโดยยังไม่เคยมีบัญชี จะถูกส่งกลับไปหน้าสมัครสมาชิก
+                // ซึ่งเป็นที่เดียวที่แสดงข้อความให้อ่านและมีช่องติ๊กให้ยินยอมจริง
+                if (!request.AcceptedTerms)
+                    throw new InvalidOperationException(
+                        "ยังไม่มีบัญชีสำหรับอีเมลนี้ — กรุณาสมัครสมาชิกที่หน้าสมัคร "
+                        + "เพื่ออ่านและยอมรับข้อกำหนดการใช้งานและนโยบายความเป็นส่วนตัวก่อน");
+
                 // Create new user via SSO (no password needed)
                 user = new User
                 {
@@ -442,6 +527,9 @@ public class AuthService : IAuthService
                 };
                 _db.Users.Add(user);
                 await _db.SaveChangesAsync();
+
+                await RecordSignupConsentAsync(user, request.PolicyVersion,
+                    "sso-" + provider.ToLowerInvariant());
 
                 // Create company if provided
                 if (!string.IsNullOrWhiteSpace(request.CompanyName))

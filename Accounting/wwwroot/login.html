@@ -30,6 +30,12 @@
         <p class="subtitle" data-i18n="login.subtitle">กรอกอีเมลและรหัสผ่านเพื่อเข้าใช้งาน</p>
 
         <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px;white-space:pre-line;line-height:1.5"></div>
+        <!-- โผล่เมื่อกด SSO ด้วยบัญชีที่ยังไม่เคยสมัคร — ยินยอมต้องเกิดที่หน้าสมัคร
+             ซึ่งเป็นที่เดียวที่มีข้อความให้อ่านและช่องติ๊ก (PDPA ม.19) -->
+        <a id="ssoSignupLink" href="/register.html" class="btn btn-primary w-full"
+           style="display:none;margin-bottom:16px;text-align:center;text-decoration:none">
+          ไปหน้าสมัครสมาชิก →
+        </a>
 
         <form onsubmit="handleLogin(event)">
           <div class="form-group">
@@ -177,8 +183,13 @@
       const errEl = document.getElementById('errorMsg');
       errEl.classList.add('hidden');
       try {
+        // signup มีเฉพาะเมื่อผู้ใช้เริ่มจากหน้าสมัครแล้ววนผ่าน LINE กลับมาที่นี่
+        // (ที่นั่นติ๊กยอมรับข้อกำหนดไปแล้ว) — กดปุ่ม SSO ที่หน้านี้ตรง ๆ ไม่ส่ง
+        // การยอมรับใด ๆ ทั้งสิ้น: ผู้ใช้เดิมเข้าระบบได้ ผู้ใช้ใหม่จะถูก server
+        // ส่งกลับไปหน้าสมัคร (ยินยอมต้องเกิดตอนที่มีข้อความให้อ่านจริง)
         const res = await API.ssoLogin(provider, idToken,
-          signup?.companyName || null, signup?.plan || null);
+          signup?.companyName || null, signup?.plan || null,
+          signup?.acceptedTerms === true, signup?.policyVersion || null);
         if (res.success && res.data) {
           const token = res.data.accessToken || res.data.token;
           localStorage.setItem('token', token);
@@ -192,6 +203,11 @@
       } catch (err) {
         errEl.textContent = err.message;
         errEl.classList.remove('hidden');
+        // ยังไม่มีบัญชี → พาไปหน้าสมัคร ไม่ใช่ทิ้งผู้ใช้ไว้กับข้อความยาว ๆ
+        if (/สมัครสมาชิก/.test(err.message || '')) {
+          const go = document.getElementById('ssoSignupLink');
+          if (go) go.style.display = 'block';
+        }
       }
     }
 
