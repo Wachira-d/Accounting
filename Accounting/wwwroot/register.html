@@ -110,7 +110,12 @@
           <div style="margin-bottom:24px">
             <label class="form-checkbox">
               <input type="checkbox" id="agreeTerms" required>
-              <span style="font-size:14px;color:var(--gray-600)">ยอมรับ <a href="#" style="color:var(--primary)">ข้อกำหนดการใช้งาน</a> และ <a href="#" style="color:var(--primary)">นโยบายความเป็นส่วนตัว</a></span>
+              <!-- เปิดแท็บใหม่ — กดอ่านแล้วกลับมาต้องไม่เสียสิ่งที่กรอกไว้ทั้งฟอร์ม -->
+              <span style="font-size:14px;color:var(--gray-600)">ยอมรับ
+                <a href="/terms.html" target="_blank" rel="noopener" style="color:var(--primary)">ข้อกำหนดการใช้งาน</a> และ
+                <a href="/privacy.html" target="_blank" rel="noopener" style="color:var(--primary)">นโยบายความเป็นส่วนตัว</a>
+                <span id="policyVerLabel" style="color:var(--gray-400)"></span>
+              </span>
             </label>
           </div>
           <button type="submit" class="btn btn-primary w-full btn-lg" id="registerBtn" data-i18n="register.registerBtn">
@@ -185,6 +190,18 @@
       }
     })();
 
+    /** เวอร์ชันนโยบายที่หน้านี้ **แสดงจริง** — ส่งไปกับทุกทางสมัคร เพื่อให้
+     *  หลักฐานความยินยอมตอบได้ว่า "ตอนกดยอมรับเขาเห็นฉบับไหน" (ม.19)
+     *  โหลดไม่สำเร็จ = ปล่อย null ให้ server เป็นคนบอกเวอร์ชันของตัวเอง
+     *  — ห้ามเดาเวอร์ชันเองที่ฝั่ง client */
+    let policyVersion = null;
+    fetch('/api/legal/policy').then(r => r.json()).then(d => {
+      const p = d.data || d;
+      policyVersion = p?.version || null;
+      const el = document.getElementById('policyVerLabel');
+      if (el && policyVersion) el.textContent = ' (ฉบับที่ ' + policyVersion + ')';
+    }).catch(() => {});
+
     let ssoConfig = { google: '', facebook: '', line: '' };
     fetch('/api/auth/sso-config').then(r=>r.json()).then(d => {
       ssoConfig = d.data || d;
@@ -224,7 +241,9 @@
       // แพ็กเกจที่เลือกบนการ์ด — ต้องส่งไปด้วย ไม่งั้นสมัครผ่าน SSO ได้ FreeTrial เสมอ
       const ssoPlan = document.querySelector('input[name="plan"]:checked')?.value || null;
       try {
-        const res = await API.ssoLogin(provider, idToken, companyName || null, ssoPlan);
+        // มาถึงตรงนี้ได้ต้องผ่าน _ssoPreflight() มาแล้ว = ติ๊กยอมรับจริง
+        const res = await API.ssoLogin(provider, idToken, companyName || null, ssoPlan,
+          true, policyVersion);
         if (res.success && res.data) {
           const token = res.data.accessToken || res.data.token;
           localStorage.setItem('token', token);
@@ -282,6 +301,10 @@
         sessionStorage.setItem('lineSignup', JSON.stringify({
           companyName: document.getElementById('companyName')?.value || '',
           plan: document.querySelector('input[name="plan"]:checked')?.value || null,
+          // การยอมรับเกิดที่**หน้านี้** (ผ่าน _ssoPreflight) ต้องพกข้ามไปด้วย
+          // ไม่งั้นตอนกลับมาที่ /login.html จะกลายเป็นสมัครโดยไม่มีหลักฐานยินยอม
+          acceptedTerms: true,
+          policyVersion: policyVersion,
         }));
       } catch (e) {}
       const redirect = location.origin + '/login.html';
@@ -378,6 +401,10 @@
           companyName: inviteToken ? null : document.getElementById('companyName').value,
           plan: selectedPlan,
           invitationToken: inviteToken,
+          // PDPA ม.19 — ส่งการยอมรับ + ฉบับนโยบายที่หน้านี้แสดง ไปให้ server
+          // เก็บเป็นหลักฐาน (เดิมช่องติ๊กนี้ไม่เคยถูกส่งออกจากเบราว์เซอร์เลย)
+          acceptedTerms: document.getElementById('agreeTerms').checked,
+          policyVersion: policyVersion,
         });
 
         if (res.success && res.data) {

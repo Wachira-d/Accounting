@@ -529,6 +529,7 @@ python3 tools/verbatim_string_check.py # CS1010/CS1056 `"` เดี่ยวป
 python3 tools/dead_link_check.py      # ลิงก์ /pages/*.html ที่ไม่มีไฟล์ปลายทาง
 python3 tools/localstorage_key_check.py # คีย์ localStorage ที่อ่านแต่ไม่มีใครเขียน
 python3 tools/js_dup_method_check.py   # method ชื่อซ้ำใน object เดียวกัน (ตัวหลังทับเงียบ)
+python3 tools/identifier_space_check.py # CS1001/CS1003 ช่องว่างในชื่อ method/ชนิด
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -632,6 +633,20 @@ awk brace-balance                      # ทุก .cs ที่แก้
   + `UpdateDocumentRequest` + **`DocumentResponse`** (ข้อ B ข้างล่างระบุลำดับไว้แล้ว)
   ลืมตัวใดตัวหนึ่ง: ลืม Response → CS1739 ตอน build; ลืมทั้ง mapper และ Response
   → ไม่มี error แต่ค่าหายเงียบตอน runtime (defect class "เก็บแล้วต้อง echo กลับ")
+- **ช่องว่างในชื่อ method = CS1001/CS1003 ล้มทั้ง solution** โปรเจกต์นี้ตั้งชื่อ
+  เทสต์เป็นภาษาไทย (อ่านง่ายมาก) แต่พลาดง่ายเป็นพิเศษ เพราะภาษาไทยเขียนติดกัน
+  ไม่มีช่องว่าง — ยกเว้นตอนแทรกศัพท์อังกฤษ: `public void แก้ field ใดภายหลัง_...()`
+  ช่องว่างรอบคำว่า `field` **จบ identifier ตรงนั้น** คอมไพเลอร์อ่านเป็น
+  "return type = แก้ · ชื่อ = field" แล้วเจอ token เกิน ⇒ CS1001 ลามทั้งไฟล์ และ
+  ล้ม `Accounting.Tests` ตามด้วย CS0006. checker 11 ตัวเดิมมองไม่เห็นเลย —
+  ทุกตัวอ่านโครงสร้างระดับสูงกว่า (DI graph, ชนิดอาร์กิวเมนต์, string literal)
+  ไม่มีตัวไหนตรวจ "ชื่อ" ระดับ token → เพิ่ม `tools/identifier_space_check.py`
+  _(บทเรียนซ้อนตอนเขียน checker: รุ่นแรกฟ้อง **661 จุด** ทั้งที่เรพไม่มีบั๊กเลย
+  สองสาเหตุ — (1) `private static readonly Guid Acc = Guid.NewGuid();` วงเล็บใน
+  **ค่าเริ่มต้น** ถูกนับเป็นพารามิเตอร์ ต้องตัดที่ `=`/`{` ตัวไหนมาก่อนก่อนเสมอ
+  (2) `record struct Foo(...)` มีคำนำหน้า **สองคำ** ป๊อปคำเดียวไม่พอ. และต้อง
+  ยกเว้น `operator ==` ที่ตัดตรง `=` ไม่ได้ · ยุบช่องว่างใน `<...>` ก่อน ไม่งั้น
+  `Dictionary<string, int>` ถูกนับเป็นสอง token)_
 - checker ใหม่ทุกตัวต้องผ่าน **negative test** ก่อนเชื่อ: ใส่บั๊กที่ตั้งใจจับ
   กลับเข้าไปแล้วยืนยันว่า checker จับได้จริง (เคยมี checker ที่ regex ผิด
   จนไม่จับเคสหลักของตัวเอง)

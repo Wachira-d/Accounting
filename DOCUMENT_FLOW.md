@@ -1390,6 +1390,28 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
 - DSR endpoints `/dsr/access | rectify | erase | portability` SLA 30 วัน
   (cascade-erase ยกเว้น legal_hold ของ พ.ร.บ.บัญชี/สรรพากร — MAX retention)
 
+**ความยินยอมตอนสมัครสมาชิก (ม.19) — ด่านก่อนเข้าระบบทุกทาง**
+- ทุกทางที่ "สร้าง User ใหม่" ต้องผ่าน `AuthService.RequireSignupConsent()` +
+  `RecordSignupConsentAsync()` — ไม่มีทางไหนสร้าง User โดยไม่เรียก 2 ตัวนี้
+  | ทาง | ด่าน | ช่องทางที่บันทึก |
+  | --- | --- | --- |
+  | ฟอร์มสมัคร (`POST /api/auth/register`) | `AcceptedTerms` ต้อง true | `web-form` |
+  | รับคำเชิญเข้าบริษัท (`?invite=` บนฟอร์มเดียวกัน) | เหมือนกัน | `web-form` |
+  | Google / Facebook / LINE (`POST /api/auth/sso`) | บังคับ**เฉพาะตอนสร้าง user ใหม่** — ผู้ใช้เดิมเข้าระบบไม่ถูกขวาง | `sso-google` / `sso-facebook` / `sso-line` |
+- แถวที่เขียน: `PdpaConsentRecord` scope **ระดับแพลตฟอร์ม**
+  (`CompanyId = PdpaPolicy.PlatformScopeCompanyId` = `Guid.Empty` — ตอนสมัคร
+  ผู้ควบคุมข้อมูลคือผู้ให้บริการ ไม่ใช่ tenant ที่ยังไม่เกิด; ทางรับคำเชิญไม่สร้าง
+  บริษัทเลยด้วยซ้ำ) · `Purpose = PdpaPolicy.SignupPurpose`
+- `EvidenceHash` = `PdpaConsentEvidence.ComputeHash(...)` — canonical **ตัวเดียว**
+  ของทั้งฝั่งเขียนและฝั่งตรวจ (`Helpers/PdpaSignupConsent.cs`), ผูก
+  `Email|Purpose|เวอร์ชันที่หน้าเว็บแสดง|GrantedAt|Channel|IP|UserAgent`
+  → round-trip test: `Accounting.Tests/PdpaSignupConsentTests.cs`
+- เวอร์ชันนโยบายอยู่ในโค้ด (`PdpaPolicy.CurrentVersion`) เพราะเนื้อความอยู่ใน
+  `wwwroot/terms.html` + `privacy.html` ซึ่งเปลี่ยนได้ด้วย deploy เท่านั้น —
+  **แก้เนื้อความเมื่อไรต้องขยับเวอร์ชันด้วย**
+- ตัวตนผู้ควบคุมข้อมูลบนหน้าเอกสาร ← `GET /api/legal/policy`
+  ← `SiteSettings.PlatformSeller*` (ชุดเดียวกับที่ใช้ออกใบกำกับค่าบริการ)
+
 ### 6.3 §87/3 retention (5 ปี)
 - ทุกเอกสารตั้ง `RetentionUntil = MAX(filingDate, reportDate, DocumentDate) + 5y`
 - nightly job ห้ามลบจริง (soft-delete + flag `legal_hold`)
@@ -2338,7 +2360,11 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
-_Last verified against codebase: 2026-08-24 (รอบ 84 — **คุณภาพ OCR → สร้างเอกสาร**:_
+_Last verified against codebase: 2026-08-25 (รอบ 85 — **§6.2 ความยินยอมตอนสมัคร_
+_(PDPA ม.19)**: ด่าน `RequireSignupConsent` + `RecordSignupConsentAsync` ทุกทางสมัคร ·_
+_`PdpaConsentRecord` scope แพลตฟอร์ม + evidence hash canonical ตัวเดียว ·_
+_หน้า terms.html/privacy.html จริง + `GET /api/legal/policy`);_
+_รอบ 84 — **คุณภาพ OCR → สร้างเอกสาร**:_
 _(1) `DocumentNumberSanitizer` กันเลข 2 ชุดถูกต่อกัน (บิล กฟภ.) โดยเทียบกับ_
 _token บนกระดาษจริง; (2) reconcile บรรทัดแยกเคส "ราคาถือยอดรวม" (หารหาราคา_
 _เก็บจำนวน) ออกจาก "จำนวนหลงคอลัมน์" (แก้จำนวน) — ค่าไฟ 59 ล้านหาย;_

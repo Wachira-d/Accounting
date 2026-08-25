@@ -20,7 +20,17 @@ public record RegisterRequest(
     // Optional invitation token. When present, RegisterAsync consumes the
     // matching CompanyInvitation in the same transaction so the new user
     // lands on the inviter's company instead of creating a stub one.
-    string? InvitationToken = null);
+    string? InvitationToken = null,
+
+    // ===== ความยินยอมตาม PDPA ม.19 =====
+    // เดิมช่องติ๊ก "ยอมรับข้อกำหนด + นโยบายความเป็นส่วนตัว" บนหน้าสมัคร **ไม่เคย
+    // ถูกส่งมาที่ server เลย** ⇒ ระบบไม่มีหลักฐานสักแถวว่าใครยอมรับอะไรเมื่อไร
+    // (ม.19 วรรคท้าย: ผู้ควบคุมข้อมูลมีภาระพิสูจน์ว่าได้รับความยินยอมแล้ว)
+    bool AcceptedTerms = false,
+    // PolicyVersion = เวอร์ชันนโยบายที่หน้าเว็บ **แสดงจริง** ตอนผู้ใช้กดยอมรับ
+    // เก็บไว้ใน evidence hash เพื่อตอบได้ว่า "ตอนกดยอมรับเขาเห็นฉบับไหน"
+    // (เบราว์เซอร์ที่ค้าง cache อาจแสดงฉบับเก่ากว่าที่ server ใช้อยู่)
+    string? PolicyVersion = null);
 
 public record LoginRequest(
     [Required(ErrorMessage = "กรุณากรอกอีเมล")]
@@ -79,7 +89,15 @@ public record SsoLoginRequest(
     string? CompanyName,   // Optional: create company on first SSO signup
     // แพ็กเกจที่ผู้ใช้เลือกบนหน้า register ก่อนกด SSO — เดิมถูกทิ้ง ทำให้สมัครผ่าน
     // SSO ได้ FreeTrial เสมอไม่ว่าจะเลือกอะไร (null = FreeTrial)
-    Models.Enums.SubscriptionPlan? Plan = null);
+    Models.Enums.SubscriptionPlan? Plan = null,
+
+    // ===== ความยินยอมตาม PDPA ม.19 (ดูคำอธิบายเต็มที่ RegisterRequest) =====
+    // endpoint นี้ทำหน้าที่ทั้ง "เข้าสู่ระบบ" และ "สมัครครั้งแรก" — ด่านยินยอม
+    // บังคับ**เฉพาะตอนที่ต้องสร้างผู้ใช้ใหม่**เท่านั้น ผู้ใช้เดิมกดเข้าระบบต้อง
+    // ไม่ถูกขวาง (หน้า login ไม่มีช่องติ๊กและไม่ควรมี — ยินยอมซ้ำทุกครั้งไม่ใช่
+    // ความยินยอม แต่เป็นพิธีกรรม)
+    bool AcceptedTerms = false,
+    string? PolicyVersion = null);
 
 /// <summary>
 /// Returned by GET /api/auth/profile and used to render the signature settings UI.

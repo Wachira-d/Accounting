@@ -450,8 +450,19 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
   ส่วนตัว" เอง ก่อนพาออกไป IdP; `companyName` + แพ็กเกจที่เลือกถูกส่งเข้า
   `POST /auth/sso` ด้วย (LINE พกข้าม redirect ผ่าน `sessionStorage.lineSignup`)
   — มิฉะนั้นผู้สมัครผ่าน SSO จะได้ `FreeTrial` เสมอและบริษัทไม่มีชื่อ
-  ⚠️ **ค้างอยู่**: ยังไม่เขียน `PdpaConsentRecord` ตอนสมัคร และหน้า
-  ข้อกำหนด/นโยบายยังเป็น `href="#"` (ดูรายละเอียดใน TEST_PLAN §SGN)
+- **ความยินยอม PDPA ม.19 (✅ ลงโค้ดแล้ว)** — ทุกทางที่สร้าง `User` ใหม่ผ่าน
+  `AuthService.RequireSignupConsent()` + `RecordSignupConsentAsync()`:
+  ฟอร์มสมัคร · รับคำเชิญ · Google/Facebook/LINE. `POST /auth/sso` ทำหน้าที่ทั้ง
+  login และ signup จึงบังคับ**เฉพาะตอนสร้าง user ใหม่** — ผู้ใช้เดิมกดเข้าระบบ
+  ต้องไม่ถูกขวาง (ยินยอมซ้ำทุกครั้งไม่ใช่ความยินยอม); ผู้ใช้ใหม่ที่กด SSO ที่หน้า
+  login จะได้ข้อความ + ปุ่มพาไปหน้าสมัคร ซึ่งเป็นที่เดียวที่มีข้อความให้อ่านจริง
+- แถวที่บันทึก: `PdpaConsentRecord` scope ระดับ**แพลตฟอร์ม**
+  (`CompanyId = Guid.Empty` — ตอนสมัคร ผู้ควบคุมข้อมูลคือผู้ให้บริการ ไม่ใช่
+  tenant ที่ยังไม่เกิด) + `EvidenceHash` จาก canonical ตัวเดียวใน
+  `Helpers/PdpaSignupConsent.cs` (round-trip test มีแล้ว)
+- **หน้าเอกสารทางกฎหมายจริง** `/terms.html` + `/privacy.html` (เดิม `href="#"`)
+  — ตัวตนผู้ควบคุมข้อมูล + เวอร์ชันนโยบายมาจาก `GET /api/legal/policy`
+  ← `SiteSettings.PlatformSeller*` ที่แอดมินกรอกไว้แล้ว (ไม่ฝัง literal ซ้ำ)
 - **ตั้งค่าที่ระดับ BillingAccount**: `AllowedAuthMethodsCsv` — องค์กรบังคับได้ว่า
   user ใต้ account ต้อง login วิธีไหน (เช่น enterprise บังคับ O365 เท่านั้น
   ปิด password login) + `EnforceSsoForAccountUsers`
@@ -494,7 +505,10 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-25 (rev 13 — **§8.2 auth: LINE Login ✅_
+_Last verified against codebase: 2026-08-25 (rev 14 — **§8.2 ความยินยอม PDPA ม.19_
+_ตอนสมัคร ✅ ลงโค้ดจริง**: ด่าน + PdpaConsentRecord ทุกทางสมัคร · หน้า_
+_terms.html/privacy.html + GET /api/legal/policy);_
+_rev 13 — **§8.2 auth: LINE Login ✅_
 _(authorization-code) · ตั้งคีย์ SSO จาก /admin/sso-config.html · ทางสมัครผ่าน_
 _Google/Facebook/LINE บังคับติ๊กยอมรับข้อกำหนด + ส่ง companyName/แพ็กเกจไปด้วย)**;_
 _rev 12 — **§7.4 รายงานการใช้งาน AI_

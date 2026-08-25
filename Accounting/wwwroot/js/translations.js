@@ -172,7 +172,7 @@ landing: {
   footerProducts: 'ผลิตภัณฑ์', footerCompany: 'บริษัท', footerSupport: 'สนับสนุน',
   footerAbout: 'เกี่ยวกับเรา', footerBlog: 'บล็อก', footerCareers: 'ร่วมงานกับเรา',
   footerHelp: 'ศูนย์ช่วยเหลือ', footerApiDocs: 'เอกสาร API',
-  footerStatus: 'สถานะระบบ', footerPrivacy: 'นโยบายความเป็นส่วนตัว',
+  footerStatus: 'สถานะระบบ', footerPrivacy: 'นโยบายความเป็นส่วนตัว', footerTerms: 'ข้อกำหนดการใช้งาน',
   footerCopy: '© 2026 Next Acc. สงวนลิขสิทธิ์ทุกประการ',
   compareTitle: 'เปรียบเทียบฟีเจอร์ทุกแพ็กเกจ',
 
@@ -782,7 +782,7 @@ landing: {
   footerProducts: 'Products', footerCompany: 'Company', footerSupport: 'Support',
   footerAbout: 'About Us', footerBlog: 'Blog', footerCareers: 'Careers',
   footerHelp: 'Help Center', footerApiDocs: 'API Docs',
-  footerStatus: 'System Status', footerPrivacy: 'Privacy Policy',
+  footerStatus: 'System Status', footerPrivacy: 'Privacy Policy', footerTerms: 'Terms of Service',
   footerCopy: '© 2026 Next Acc. All rights reserved.',
   compareTitle: 'Compare All Plan Features',
 

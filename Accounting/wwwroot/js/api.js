@@ -146,7 +146,12 @@ const API = {
   // Auth
   login(email, password) { return this.post('/api/auth/login', { email, password }); },
   register(data) { return this.post('/api/auth/register', data); },
-  ssoLogin(provider, idToken, companyName, plan = null) { return this.post('/api/auth/sso', { provider, idToken, companyName, plan }); },
+  // acceptedTerms/policyVersion = หลักฐานยินยอม PDPA ม.19 ส่งเฉพาะจากหน้าสมัคร
+  // (หน้า login ไม่ส่ง → ผู้ใช้ใหม่ที่กด SSO ที่หน้า login จะถูก server ส่งกลับ
+  // ไปหน้าสมัคร ซึ่งเป็นที่เดียวที่มีข้อความให้อ่านและช่องติ๊กให้ยินยอมจริง)
+  ssoLogin(provider, idToken, companyName, plan = null, acceptedTerms = false, policyVersion = null) {
+    return this.post('/api/auth/sso', { provider, idToken, companyName, plan, acceptedTerms, policyVersion });
+  },
   changePassword(data) { return this.post('/api/auth/change-password', data); },
 
   // Company scoped
