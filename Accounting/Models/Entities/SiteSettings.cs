@@ -96,6 +96,28 @@ public class SiteSettings : BaseEntity
     public int AzureDiMaxConcurrentSubmits { get; set; } = 1;
     public int AzureDiPollIntervalMs { get; set; } = 1500;
 
+    // ===== เข้าสู่ระบบด้วยบัญชีภายนอก (SSO / OAuth) =====
+    // เดิมตั้งได้เฉพาะใน appsettings.json → แก้ทีต้อง deploy+restart และแอดมิน
+    // มองไม่เห็นว่าตั้งค่าไว้ไหม. ย้ายมาเก็บใน DB (ตั้งจากหน้าแอดมินได้ทันที)
+    // โดย appsettings ยังเป็น fallback สำหรับ deployment เดิมที่ตั้งไว้แล้ว.
+    // ⚠️ ปุ่มบนหน้า login จะแสดงก็ต่อเมื่อ Enabled=true **และ** มีคีย์ครบ —
+    // ไม่งั้นผู้ใช้กดแล้วเจอ "ยังไม่ได้ตั้งค่า" (ปุ่มที่กดไม่ได้ = ปุ่มหลอก)
+    public bool GoogleLoginEnabled { get; set; }
+    public string? GoogleClientId { get; set; }
+    /// <summary>ไม่จำเป็นสำหรับ One Tap (id_token flow) — เก็บไว้เผื่อใช้
+    /// authorization-code flow ในอนาคต. เข้ารหัสด้วย SecretProtector</summary>
+    public string? GoogleClientSecret { get; set; }
+
+    public bool FacebookLoginEnabled { get; set; }
+    public string? FacebookAppId { get; set; }
+    public string? FacebookAppSecret { get; set; }
+
+    /// <summary>LINE Login (ไทยใช้เยอะที่สุด) — verify id_token ที่
+    /// https://api.line.me/oauth2/v2.1/verify ด้วย Channel ID</summary>
+    public bool LineLoginEnabled { get; set; }
+    public string? LineLoginChannelId { get; set; }
+    public string? LineLoginChannelSecret { get; set; }
+
     // ===== OCR Provider Selection (System-wide, overrides appsettings) =====
     // Provider chain is strictly Azure DI v4 → Local (PaddleOCR + EasyOCR).
     // Legacy provider keys (Google Vision, Tesseract) were removed when those

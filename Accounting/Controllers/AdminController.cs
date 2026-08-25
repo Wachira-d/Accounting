@@ -570,28 +570,67 @@ public class AdminController : ControllerBase
 
     // ===== User Management =====
 
+    /// <summary>รายชื่อผู้ใช้ — ค้นหา + กรอง (สถานะ/แอดมิน/ผู้ถือ License) +
+    /// เรียงลำดับได้. เดิมมีแต่ค้นหา+แบ่งหน้า เรียงตายตัวตามวันสมัคร ⇒ หา
+    /// "ใครไม่ได้เข้าระบบนานแล้ว" หรือ "ใครยังไม่ยืนยันอีเมล" ไม่ได้เลย</summary>
     [HttpGet("users")]
     public async Task<ActionResult<ApiResponse<object>>> GetUsers(
         [FromQuery] string? search,
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20)
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? status = null,        // Active / Inactive / Suspended …
+        [FromQuery] bool? isAdmin = null,
+        [FromQuery] bool? emailVerified = null,
+        [FromQuery] bool? hasLicense = null,
+        [FromQuery] string? sort = null)          // ดู switch ด้านล่าง
     {
+        pageSize = Math.Clamp(pageSize, 10, 200);
+        page = Math.Max(1, page);
         var query = _db.Users.Include(u => u.CompanyUsers).ThenInclude(cu => cu.Company).AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(search))
         {
             query = query.Where(u => u.Email.Contains(search) || u.FullName.Contains(search));
         }
+        if (!string.IsNullOrWhiteSpace(status)
+            && Enum.TryParse<Models.Enums.UserStatus>(status, true, out var st))
+            query = query.Where(u => u.Status == st);
+        if (isAdmin.HasValue) query = query.Where(u => u.IsSystemAdmin == isAdmin.Value);
+        if (emailVerified.HasValue) query = query.Where(u => u.EmailVerified == emailVerified.Value);
+        if (hasLicense.HasValue)
+        {
+            // ผู้ถือ License = มี AccountSubscription ที่ยังไม่หมดอายุ (ตรงกับ
+            // ป้าย 🎫 ที่แสดงในตาราง — เกณฑ์เดียวกันจะได้ไม่ขัดกันเอง)
+            var now = DateTime.UtcNow;
+            var holders = _db.AccountSubscriptions
+                .Where(a => !a.IsDeleted && a.EndDate >= now)
+                .Select(a => a.OwnerUserId);
+            query = hasLicense.Value
+                ? query.Where(u => holders.Contains(u.Id))
+                : query.Where(u => !holders.Contains(u.Id));
+        }
 
         var total = await query.CountAsync();
+        // เรียงลำดับ: ค่าเริ่มต้น = สมัครล่าสุด (พฤติกรรมเดิม)
+        // NULL ของ "เข้าใช้ล่าสุด" ต้องไปท้ายเสมอทั้ง asc/desc — ผู้ใช้ที่ไม่เคย
+        // เข้าเลยไม่ควรลอยขึ้นหัวตารางตอนเรียง "ล่าสุด"
+        query = sort switch
+        {
+            "createdAsc" => query.OrderBy(u => u.CreatedAt),
+            "loginDesc" => query.OrderBy(u => u.LastLoginAt == null).ThenByDescending(u => u.LastLoginAt),
+            "loginAsc" => query.OrderBy(u => u.LastLoginAt == null).ThenBy(u => u.LastLoginAt),
+            "nameAsc" => query.OrderBy(u => u.FullName),
+            "nameDesc" => query.OrderByDescending(u => u.FullName),
+            "emailAsc" => query.OrderBy(u => u.Email),
+            _ => query.OrderByDescending(u => u.CreatedAt),
+        };
         var users = await query
-            .OrderByDescending(u => u.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(u => new
             {
                 u.Id, u.Email, u.FullName, u.Phone, u.Status, u.IsSystemAdmin,
-                u.LastLoginAt, u.CreatedAt,
+                u.EmailVerified, u.LastLoginAt, u.CreatedAt,
                 companies = u.CompanyUsers.Select(cu => new { cu.Company.Id, cu.Company.Name, cu.Role })
             })
             .ToListAsync();
@@ -2068,6 +2107,94 @@ public class AdminController : ControllerBase
         Gmail: new GmailConfigDto(s.SystemGmailClientId,
             !string.IsNullOrEmpty(s.SystemGmailClientSecret),
             !string.IsNullOrEmpty(s.SystemGmailRefreshToken)));
+
+    /// <summary>แถว SiteSettings เดี่ยวของระบบ — สร้างให้ถ้ายังไม่มี
+    /// (deployment ใหม่ที่ยังไม่เคยกดบันทึกตั้งค่าเลย)</summary>
+    private async Task<SiteSettings> GetOrCreateSiteSettingsAsync()
+    {
+        var s = await _db.SiteSettings.FirstOrDefaultAsync();
+        if (s == null)
+        {
+            s = new SiteSettings();
+            _db.SiteSettings.Add(s);
+            await _db.SaveChangesAsync();
+        }
+        return s;
+    }
+
+    // ═══ SSO / OAuth (Google · Facebook · LINE) ══════════════════════
+    // เดิมตั้งได้เฉพาะ appsettings.json → ต้อง deploy ใหม่ทุกครั้งและแอดมิน
+    // มองไม่เห็นว่าตั้งไว้หรือยัง. ย้ายมา DB ตั้งจากหน้าแอดมินได้ทันที
+    // (appsettings ยังเป็น fallback ให้ deployment เดิมไม่พัง)
+
+    public record SsoProviderDto(bool Enabled, string? ClientId, bool HasSecret);
+    public record SsoConfigResponse(
+        SsoProviderDto Google, SsoProviderDto Facebook, SsoProviderDto Line,
+        // ค่าที่ appsettings ตั้งไว้ (read-only) — บอกแอดมินว่ามีของเก่าคาอยู่ไหม
+        bool GoogleFromAppSettings, bool FacebookFromAppSettings, bool LineFromAppSettings,
+        string CallbackHint);
+
+    public record SsoProviderInput(bool? Enabled, string? ClientId, string? Secret);
+    public record UpdateSsoConfigRequest(
+        SsoProviderInput? Google, SsoProviderInput? Facebook, SsoProviderInput? Line);
+
+    [HttpGet("sso-config")]
+    public async Task<ActionResult<ApiResponse<SsoConfigResponse>>> GetSsoConfig(
+        [FromServices] IConfiguration cfg)
+    {
+        var s = await GetOrCreateSiteSettingsAsync();
+        var baseUrl = string.IsNullOrWhiteSpace(s.AppBaseUrl) ? "https://<โดเมนของคุณ>" : s.AppBaseUrl.TrimEnd('/');
+        return Ok(new ApiResponse<SsoConfigResponse>(true, new SsoConfigResponse(
+            new SsoProviderDto(s.GoogleLoginEnabled, s.GoogleClientId, !string.IsNullOrEmpty(s.GoogleClientSecret)),
+            new SsoProviderDto(s.FacebookLoginEnabled, s.FacebookAppId, !string.IsNullOrEmpty(s.FacebookAppSecret)),
+            new SsoProviderDto(s.LineLoginEnabled, s.LineLoginChannelId, !string.IsNullOrEmpty(s.LineLoginChannelSecret)),
+            !string.IsNullOrWhiteSpace(cfg["OAuth:Google:ClientId"]),
+            !string.IsNullOrWhiteSpace(cfg["OAuth:Facebook:AppId"]),
+            !string.IsNullOrWhiteSpace(cfg["OAuth:Line:ChannelId"]),
+            baseUrl + "/login.html")));
+    }
+
+    [HttpPut("sso-config")]
+    public async Task<ActionResult<ApiResponse<SsoConfigResponse>>> UpdateSsoConfig(
+        [FromBody] UpdateSsoConfigRequest req, [FromServices] IConfiguration cfg)
+    {
+        var s = await GetOrCreateSiteSettingsAsync();
+
+        // ค่าว่าง = ไม่แตะของเดิม (แบบเดียวกับช่องรหัสผ่าน SMTP) — ผู้ใช้จะได้
+        // แก้เฉพาะช่องที่ต้องการโดยไม่ต้องพิมพ์ secret ใหม่ทุกครั้ง
+        void Apply(SsoProviderInput? inp, Action<bool> setEnabled,
+            Action<string?> setId, Action<string?> setSecret, Func<string?> getId)
+        {
+            if (inp == null) return;
+            if (inp.ClientId != null) setId(inp.ClientId.Trim().Length == 0 ? null : inp.ClientId.Trim());
+            if (!string.IsNullOrWhiteSpace(inp.Secret)) setSecret(_secrets.Protect(inp.Secret.Trim()));
+            if (inp.Enabled.HasValue)
+            {
+                // เปิดใช้ไม่ได้ถ้ายังไม่มี Client ID — กันปุ่มหลอกบนหน้า login
+                if (inp.Enabled.Value && string.IsNullOrWhiteSpace(getId()))
+                    throw new InvalidOperationException("ต้องกรอก Client ID / App ID / Channel ID ก่อนเปิดใช้งาน");
+                setEnabled(inp.Enabled.Value);
+            }
+        }
+
+        try
+        {
+            Apply(req.Google, v => s.GoogleLoginEnabled = v, v => s.GoogleClientId = v,
+                v => s.GoogleClientSecret = v, () => s.GoogleClientId);
+            Apply(req.Facebook, v => s.FacebookLoginEnabled = v, v => s.FacebookAppId = v,
+                v => s.FacebookAppSecret = v, () => s.FacebookAppId);
+            Apply(req.Line, v => s.LineLoginEnabled = v, v => s.LineLoginChannelId = v,
+                v => s.LineLoginChannelSecret = v, () => s.LineLoginChannelId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<SsoConfigResponse>(false, null, ex.Message));
+        }
+
+        s.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return await GetSsoConfig(cfg);
+    }
 
     // ===== Azure Document Intelligence Config =====
 

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เข้าสู่ระบบด้วยบัญชีภายนอก - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .prov { border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-bottom:16px; background:#fff }
+    .prov h3 { margin:0; font-size:16px; display:flex; align-items:center; gap:8px }
+    .prov .st { margin-left:auto; font-size:12px; font-weight:700; padding:3px 10px; border-radius:999px }
+    .st-on  { background:#dcfce7; color:#166534 }
+    .st-off { background:#f1f5f9; color:#64748b }
+    .steps { background:#f8fafc; border-left:3px solid #64748b; border-radius:0 8px 8px 0;
+             padding:10px 14px; font-size:12.5px; line-height:1.9; color:#475569; margin:10px 0 }
+    .steps code { background:#e2e8f0; padding:1px 6px; border-radius:4px; font-size:11.5px }
+    .cb { display:flex; gap:6px; align-items:center; margin-top:6px }
+    .cb input { flex:1; font-family:ui-monospace,monospace; font-size:12px }
+    .secret-row { position:relative }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="admin-card">
+      <h2 style="margin:0 0 4px">🔐 เข้าสู่ระบบด้วยบัญชีภายนอก (SSO)</h2>
+      <p style="color:#64748b;font-size:13px;margin:0 0 14px">
+        ตั้งค่าที่นี่แล้วมีผลทันที ไม่ต้อง deploy ใหม่ ·
+        <b>ปุ่มบนหน้า login จะแสดงเฉพาะผู้ให้บริการที่ "เปิดใช้ + ใส่ ID ครบ"</b> —
+        ที่ยังไม่พร้อมจะไม่โชว์ให้ผู้ใช้กดแล้วเจอ error
+      </p>
+      <div id="warnAppSettings"></div>
+      <div id="providers">กำลังโหลด…</div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+        <button class="admin-btn admin-btn-outline" onclick="loadCfg()">ยกเลิกการแก้ไข</button>
+        <button class="admin-btn admin-btn-primary" onclick="saveCfg()">บันทึกการตั้งค่า</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('sso-config');
+    let _cfg = null;
+
+    const PROVIDERS = [
+      { key: 'google', icon: '🟦', name: 'Google', idLabel: 'Client ID',
+        secretLabel: 'Client Secret (ไม่บังคับ)', console: 'https://console.cloud.google.com/apis/credentials',
+        steps: cb => `
+          1. เปิด <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console → Credentials</a><br>
+          2. สร้าง <b>OAuth client ID</b> → ประเภท <b>Web application</b><br>
+          3. ใส่ <b>Authorized JavaScript origins</b>: <code>${cb.origin}</code><br>
+          4. ใส่ <b>Authorized redirect URIs</b>: <code>${cb.login}</code><br>
+          5. คัดลอก <b>Client ID</b> มาวางด้านล่าง แล้วติ๊กเปิดใช้งาน` },
+      { key: 'facebook', icon: '🔵', name: 'Facebook', idLabel: 'App ID',
+        secretLabel: 'App Secret (ไม่บังคับ)', console: 'https://developers.facebook.com/apps',
+        steps: cb => `
+          1. เปิด <a href="https://developers.facebook.com/apps" target="_blank">Meta for Developers → My Apps</a><br>
+          2. สร้างแอป → เพิ่มผลิตภัณฑ์ <b>Facebook Login</b> → Web<br>
+          3. Site URL: <code>${cb.origin}</code> · Valid OAuth Redirect URIs: <code>${cb.login}</code><br>
+          4. ต้องผ่าน <b>App Review</b> ขอสิทธิ์ <code>email</code> ก่อนใช้กับผู้ใช้ทั่วไป<br>
+          5. คัดลอก <b>App ID</b> มาวาง แล้วติ๊กเปิดใช้งาน` },
+      { key: 'line', icon: '🟩', name: 'LINE Login', idLabel: 'Channel ID',
+        secretLabel: 'Channel Secret (จำเป็น)', console: 'https://developers.line.biz/console/',
+        steps: cb => `
+          1. เปิด <a href="https://developers.line.biz/console/" target="_blank">LINE Developers Console</a> → สร้าง Provider<br>
+          2. สร้าง Channel ประเภท <b>LINE Login</b> → เลือก App type: <b>Web app</b><br>
+          3. แท็บ LINE Login → <b>Callback URL</b>: <code>${cb.login}</code> (ต้องตรงเป๊ะ)<br>
+          4. เปิด <b>OpenID Connect</b> และขอสิทธิ์ <b>Email address permission</b> (ต้องยื่นเอกสาร)<br>
+          5. คัดลอก <b>Channel ID</b> + <b>Channel Secret</b> มาวาง แล้วติ๊กเปิดใช้งาน<br>
+          <b>หมายเหตุ:</b> ถ้าไม่ได้สิทธิ์อีเมล ผู้ใช้จะเข้าระบบไม่ได้ (ระบบต้องใช้อีเมลผูกบัญชี)` },
+    ];
+
+    async function loadCfg() {
+      try {
+        const r = await AdminAPI.ssoConfig();
+        _cfg = r.data;
+        render();
+      } catch (e) {
+        document.getElementById('providers').innerHTML =
+          `<div style="color:var(--admin-danger);padding:16px">${e.message}</div>`;
+      }
+    }
+
+    function render() {
+      const cb = { origin: location.origin, login: _cfg.callbackHint || (location.origin + '/login.html') };
+      const legacy = [];
+      if (_cfg.googleFromAppSettings) legacy.push('Google');
+      if (_cfg.facebookFromAppSettings) legacy.push('Facebook');
+      if (_cfg.lineFromAppSettings) legacy.push('LINE');
+      document.getElementById('warnAppSettings').innerHTML = legacy.length
+        ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#92400e;margin-bottom:14px">
+             ⚠️ พบคีย์ ${legacy.join(' / ')} ตั้งไว้ใน <code>appsettings.json</code> ด้วย —
+             ค่าที่ตั้งในหน้านี้จะ<b>ชนะ</b> ส่วนของเดิมใช้เป็น fallback เมื่อช่องนี้ว่าง
+           </div>` : '';
+
+      document.getElementById('providers').innerHTML = PROVIDERS.map(p => {
+        const c = _cfg[p.key] || {};
+        return `
+        <div class="prov">
+          <h3>${p.icon} ${p.name}
+            <span class="st ${c.enabled ? 'st-on' : 'st-off'}">${c.enabled ? 'เปิดใช้งาน' : 'ปิดอยู่'}</span>
+          </h3>
+          <div class="steps">${p.steps(cb)}</div>
+          <div class="admin-form-group">
+            <label class="admin-label">${p.idLabel}</label>
+            <div class="cb">
+              <input class="admin-input" id="${p.key}Id" value="${(c.clientId || '').replace(/"/g, '&quot;')}" placeholder="วางค่าจาก console ที่นี่">
+              <button class="admin-btn admin-btn-sm admin-btn-outline" onclick="copyVal('${p.key}Id')">📋 คัดลอก</button>
+            </div>
+          </div>
+          <div class="admin-form-group secret-row">
+            <label class="admin-label">${p.secretLabel} ${c.hasSecret ? '<span style="color:#16a34a">· ตั้งค่าไว้แล้ว</span>' : ''}</label>
+            <div class="cb">
+              <input type="password" class="admin-input" id="${p.key}Secret" placeholder="${c.hasSecret ? 'ปล่อยว่าง = ใช้ค่าเดิม' : 'วาง secret ที่นี่'}">
+              <button class="admin-btn admin-btn-sm admin-btn-outline" onclick="toggleSecret('${p.key}Secret', this)" title="แสดง/ซ่อน">👁</button>
+              <button class="admin-btn admin-btn-sm admin-btn-outline" onclick="copyVal('${p.key}Secret')" title="คัดลอกค่าที่พิมพ์ในช่องนี้">📋</button>
+            </div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px">
+              ค่าที่บันทึกแล้วจะไม่ถูกส่งกลับมาแสดงอีก (เก็บแบบเข้ารหัส) — ปุ่มคัดลอกใช้ได้กับค่าที่พิมพ์ในช่องนี้
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:4px">
+            <input type="checkbox" id="${p.key}On" ${c.enabled ? 'checked' : ''}>
+            <span>เปิดใช้งาน — แสดงปุ่ม "${p.name}" บนหน้าเข้าสู่ระบบ</span>
+          </label>
+        </div>`;
+      }).join('');
+    }
+
+    function toggleSecret(id, btn) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.type = el.type === 'password' ? 'text' : 'password';
+      btn.textContent = el.type === 'password' ? '👁' : '🙈';
+    }
+
+    async function copyVal(id) {
+      const el = document.getElementById(id);
+      if (!el || !el.value) { AdminLayout.toast('ไม่มีค่าให้คัดลอก', 'error'); return; }
+      try {
+        await navigator.clipboard.writeText(el.value);
+        AdminLayout.toast('คัดลอกแล้ว');
+      } catch (e) {
+        // clipboard API ใช้ไม่ได้ (http / เบราว์เซอร์เก่า) → fallback select
+        el.type = 'text'; el.select(); document.execCommand('copy');
+        AdminLayout.toast('คัดลอกแล้ว');
+      }
+    }
+
+    async function saveCfg() {
+      const pick = k => ({
+        enabled: document.getElementById(k + 'On').checked,
+        clientId: document.getElementById(k + 'Id').value.trim(),
+        secret: document.getElementById(k + 'Secret').value,   // ว่าง = ไม่แตะของเดิม
+      });
+      try {
+        const r = await AdminAPI.updateSsoConfig({
+          google: pick('google'), facebook: pick('facebook'), line: pick('line'),
+        });
+        _cfg = r.data;
+        render();
+        AdminLayout.toast('บันทึกแล้ว — หน้า login จะแสดงปุ่มตามที่เปิดใช้ทันที');
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+    }
+
+    loadCfg();
+  </script>
+</body>
+</html>

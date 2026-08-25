@@ -436,10 +436,22 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 | --- | --- | --- |
 | Email + password (ในระบบ) | ✅ | `AuthController` login/refresh/forgot/reset ครบ |
 | Google / Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) |
-| **LINE Login** (OAuth2) | 📋 | คนละอย่างกับ LINE bot binding ที่มีแล้ว (`User.LineUserId` + `LineBindCode`) — แต่ login แล้ว map เข้า `LineUserId` เดิมได้เลย บัญชีเดียวทั้ง login และ bot |
+| **LINE Login** (OAuth2) | ✅ | authorization-code flow → `AuthService.ValidateLineTokenAsync` (channel secret ไม่ออกจาก server); คนละอย่างกับ LINE bot binding ที่มีแล้ว (`User.LineUserId` + `LineBindCode`) — แต่ login แล้ว map เข้า `LineUserId` เดิมได้เลย บัญชีเดียวทั้ง login และ bot |
 | **Microsoft Entra ID (Office 365)** | 📋 | OIDC มาตรฐาน; ตลาดเดียวกับลูกค้า Dynamics พอดี — บริษัทที่ใช้ Dynamics มี M365 อยู่แล้วเกือบ 100% |
 
-- `AuthProvider` เพิ่มค่า `"Line"`, `"Microsoft"` — โครงเดิมรองรับอยู่แล้ว
+- `AuthProvider` เพิ่มค่า `"Line"` (✅ ใช้งานแล้ว), `"Microsoft"` (📋) — โครงเดิมรองรับอยู่แล้ว
+- **ตั้งค่าคีย์จากหน้าเว็บ** `/admin/sso-config.html` → `SiteSettings.{Google,Facebook,Line}*`
+  (DB ชนะ `appsettings.json`); `GET /api/auth/sso-config` คืนเฉพาะ provider ที่
+  **เปิดสวิตช์ + มีคีย์ครบ** → หน้า `login.html`/`register.html` ซ่อนปุ่มที่เหลือ
+  (ปุ่มที่กดแล้วพัง = ปุ่มหลอก ห้ามมี) และแสดงข้อความจริงเมื่อ SDK ของ
+  Google/Facebook โหลดไม่ขึ้น (ตัวบล็อกโฆษณา) แทนที่จะเงียบ
+- **สมัครผ่าน SSO**: ปุ่มอยู่**นอก** `<form>` ⇒ เบราว์เซอร์ไม่ตรวจ `required` ให้
+  → `register.html._ssoPreflight()` บังคับติ๊ก "ยอมรับข้อกำหนด + นโยบายความเป็น
+  ส่วนตัว" เอง ก่อนพาออกไป IdP; `companyName` + แพ็กเกจที่เลือกถูกส่งเข้า
+  `POST /auth/sso` ด้วย (LINE พกข้าม redirect ผ่าน `sessionStorage.lineSignup`)
+  — มิฉะนั้นผู้สมัครผ่าน SSO จะได้ `FreeTrial` เสมอและบริษัทไม่มีชื่อ
+  ⚠️ **ค้างอยู่**: ยังไม่เขียน `PdpaConsentRecord` ตอนสมัคร และหน้า
+  ข้อกำหนด/นโยบายยังเป็น `href="#"` (ดูรายละเอียดใน TEST_PLAN §SGN)
 - **ตั้งค่าที่ระดับ BillingAccount**: `AllowedAuthMethodsCsv` — องค์กรบังคับได้ว่า
   user ใต้ account ต้อง login วิธีไหน (เช่น enterprise บังคับ O365 เท่านั้น
   ปิด password login) + `EnforceSsoForAccountUsers`
@@ -482,7 +494,10 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-18 (rev 12 — **§7.4 รายงานการใช้งาน AI_
+_Last verified against codebase: 2026-08-25 (rev 13 — **§8.2 auth: LINE Login ✅_
+_(authorization-code) · ตั้งคีย์ SSO จาก /admin/sso-config.html · ทางสมัครผ่าน_
+_Google/Facebook/LINE บังคับติ๊กยอมรับข้อกำหนด + ส่ง companyName/แพ็กเกจไปด้วย)**;_
+_rev 12 — **§7.4 รายงานการใช้งาน AI_
 _แยกรายลูกค้า ✅ ลงโค้ดจริง**: ป้ายกำกับ Channel/ApiClientId/BillingAccountId/_
 _BranchId/UserId/IsSandbox บนทุกแถว `AiSuggestionFeedback` (นิยามชุดเดียวกับ_
 _`UsageEvent` เพื่อกระทบยอดกับบิลได้) · resolver อ่าน claim จาก ApiKeyMiddleware ·_

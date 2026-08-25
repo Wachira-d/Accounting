@@ -16,6 +16,47 @@
         <div style="flex:1"></div>
         <button class="admin-btn admin-btn-success" onclick="openCreateUser()">+ สร้างผู้ใช้</button>
       </div>
+      <!-- ตัวกรอง + เรียงลำดับ (เดิมมีแต่ค้นหา เรียงตายตัวตามวันสมัคร) -->
+      <div class="admin-toolbar" style="gap:8px;flex-wrap:wrap;margin-top:-4px">
+        <select id="fStatus" class="admin-input" onchange="loadUsers()" style="max-width:170px">
+          <option value="">สถานะ: ทั้งหมด</option>
+          <option value="Active">ใช้งานอยู่</option>
+          <option value="Inactive">ปิดใช้งาน</option>
+          <option value="Suspended">ถูกระงับ</option>
+          <option value="PendingVerification">รอยืนยัน</option>
+        </select>
+        <select id="fAdmin" class="admin-input" onchange="loadUsers()" style="max-width:150px">
+          <option value="">แอดมิน: ทั้งหมด</option>
+          <option value="true">เฉพาะแอดมิน</option>
+          <option value="false">ไม่ใช่แอดมิน</option>
+        </select>
+        <select id="fVerified" class="admin-input" onchange="loadUsers()" style="max-width:170px">
+          <option value="">อีเมล: ทั้งหมด</option>
+          <option value="true">ยืนยันแล้ว</option>
+          <option value="false">ยังไม่ยืนยัน</option>
+        </select>
+        <select id="fLicense" class="admin-input" onchange="loadUsers()" style="max-width:170px">
+          <option value="">License: ทั้งหมด</option>
+          <option value="true">มี License</option>
+          <option value="false">ไม่มี License</option>
+        </select>
+        <select id="fSort" class="admin-input" onchange="loadUsers()" style="max-width:190px">
+          <option value="">เรียง: สมัครล่าสุด</option>
+          <option value="createdAsc">สมัครเก่าสุด</option>
+          <option value="loginDesc">เข้าใช้ล่าสุด</option>
+          <option value="loginAsc">ไม่ได้เข้านานสุด</option>
+          <option value="nameAsc">ชื่อ ก-ฮ</option>
+          <option value="nameDesc">ชื่อ ฮ-ก</option>
+          <option value="emailAsc">อีเมล A-Z</option>
+        </select>
+        <select id="fPageSize" class="admin-input" onchange="loadUsers()" style="max-width:130px">
+          <option value="20">20 / หน้า</option>
+          <option value="50">50 / หน้า</option>
+          <option value="100">100 / หน้า</option>
+        </select>
+        <button class="admin-btn admin-btn-sm admin-btn-outline" onclick="clearUserFilters()">✕ ล้างตัวกรอง</button>
+        <span id="userTotal" style="margin-left:auto;font-size:12px;color:#94a3b8"></span>
+      </div>
       <div id="userList">กำลังโหลด...</div>
       <div id="pagination" class="admin-pagination"></div>
     </div>
@@ -32,19 +73,40 @@
     // ทำให้ argument กลายเป็น object ไม่ใช่ string → โค้ดที่รอ string พังเงียบ)
     let _userCache = {};
 
+    function clearUserFilters() {
+      ['fStatus','fAdmin','fVerified','fLicense','fSort'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.value = '';
+      });
+      document.getElementById('searchInput').value = '';
+      loadUsers();
+    }
+
     async function loadUsers(page = 1) {
       currentPage = page;
       const search = document.getElementById('searchInput').value;
-      let params = `?page=${page}&pageSize=20`;
+      const v = id => document.getElementById(id)?.value || '';
+      let params = `?page=${page}&pageSize=${v('fPageSize') || 20}`;
       if (search) params += `&search=${encodeURIComponent(search)}`;
+      if (v('fStatus')) params += `&status=${v('fStatus')}`;
+      if (v('fAdmin')) params += `&isAdmin=${v('fAdmin')}`;
+      if (v('fVerified')) params += `&emailVerified=${v('fVerified')}`;
+      if (v('fLicense')) params += `&hasLicense=${v('fLicense')}`;
+      if (v('fSort')) params += `&sort=${v('fSort')}`;
 
       try {
         const res = await AdminAPI.users(params);
         const d = res.data;
         _userCache = Object.fromEntries((d.items || []).map(u => [u.id, u]));
 
+        const totalEl = document.getElementById('userTotal');
+        if (totalEl) totalEl.textContent = `พบ ${(d.totalCount ?? d.total ?? 0).toLocaleString('th-TH')} คน`;
+
         if (d.items.length === 0) {
-          document.getElementById('userList').innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">ไม่พบข้อมูล</div>';
+          const filtered = ['fStatus','fAdmin','fVerified','fLicense'].some(id => document.getElementById(id)?.value)
+            || (document.getElementById('searchInput').value || '').trim();
+          document.getElementById('userList').innerHTML =
+            `<div style="text-align:center;color:#94a3b8;padding:40px">ไม่พบข้อมูล${
+              filtered ? ' — ลอง <a href="#" onclick="clearUserFilters();return false" style="color:#6366f1">ล้างตัวกรอง</a>' : ''}</div>`;
           document.getElementById('pagination').innerHTML = '';
           return;
         }

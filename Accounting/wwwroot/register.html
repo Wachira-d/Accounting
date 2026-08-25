@@ -118,14 +118,20 @@
           </button>
         </form>
 
-        <div class="auth-divider" data-i18n="register.orRegisterWith">หรือสมัครด้วย</div>
+        <!-- ซ่อนไว้ก่อน — โชว์เฉพาะ provider ที่แอดมินเปิดใช้ + ใส่คีย์ครบ
+             (กติกาเดียวกับหน้า login: ปุ่มที่กดแล้วพัง = ปุ่มหลอก ห้ามมี) -->
+        <div class="auth-divider" id="ssoDivider" style="display:none" data-i18n="register.orRegisterWith">หรือสมัครด้วย</div>
 
-        <div style="display:flex;gap:12px;margin-bottom:24px">
-          <button type="button" onclick="handleGoogleRegister()" class="btn btn-secondary w-full" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px">
+        <div id="ssoButtons" style="display:none;gap:12px;margin-bottom:24px;flex-wrap:wrap">
+          <button type="button" id="lineBtn" onclick="handleLineRegister()" class="btn btn-secondary w-full" style="display:none;align-items:center;justify-content:center;gap:8px;padding:12px">
+            <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#06C755" d="M12 2C6.48 2 2 5.72 2 10.3c0 4.1 3.55 7.53 8.35 8.18.33.07.77.22.88.5.1.26.07.66.03.92l-.14.85c-.04.25-.2.98.86.53 1.06-.45 5.7-3.36 7.78-5.75C21.1 13.9 22 12.2 22 10.3 22 5.72 17.52 2 12 2zM8.1 13.2H6.05a.53.53 0 0 1-.53-.53V8.6a.53.53 0 0 1 1.06 0v3.54H8.1a.53.53 0 0 1 0 1.06zm2.07-.53a.53.53 0 0 1-1.06 0V8.6a.53.53 0 0 1 1.06 0v4.07zm4.9 0a.53.53 0 0 1-.95.32l-2.09-2.84v2.52a.53.53 0 0 1-1.06 0V8.6a.53.53 0 0 1 .95-.32l2.09 2.84V8.6a.53.53 0 0 1 1.06 0v4.07zm3.3-2.57a.53.53 0 0 1 0 1.06h-1.52v.98h1.52a.53.53 0 0 1 0 1.06h-2.05a.53.53 0 0 1-.53-.53V8.6a.53.53 0 0 1 .53-.53h2.05a.53.53 0 0 1 0 1.06h-1.52v.97h1.52z"/></svg>
+            LINE
+          </button>
+          <button type="button" id="googleBtn" onclick="handleGoogleRegister()" class="btn btn-secondary w-full" style="display:none;align-items:center;justify-content:center;gap:8px;padding:12px">
             <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
             Google
           </button>
-          <button type="button" onclick="handleFacebookRegister()" class="btn btn-secondary w-full" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px">
+          <button type="button" id="facebookBtn" onclick="handleFacebookRegister()" class="btn btn-secondary w-full" style="display:none;align-items:center;justify-content:center;gap:8px;padding:12px">
             <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#1877F2" d="M18 9a9 9 0 1 0-10.406 8.89v-6.29H5.309V9h2.285V7.017c0-2.255 1.343-3.501 3.4-3.501.984 0 2.014.176 2.014.176v2.215h-1.135c-1.118 0-1.467.694-1.467 1.406V9h2.496l-.399 2.6h-2.097v6.29A9.002 9.002 0 0 0 18 9z"/></svg>
             Facebook
           </button>
@@ -179,13 +185,37 @@
       }
     })();
 
-    let ssoConfig = { google: '', facebook: '' };
+    let ssoConfig = { google: '', facebook: '', line: '' };
     fetch('/api/auth/sso-config').then(r=>r.json()).then(d => {
       ssoConfig = d.data || d;
+      // แสดงเฉพาะ provider ที่เปิดใช้จริง (เหมือนหน้า login — ห้ามมีปุ่มหลอก)
+      const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? 'flex' : 'none'; };
+      show('lineBtn', !!ssoConfig.line);
+      show('googleBtn', !!ssoConfig.google);
+      show('facebookBtn', !!ssoConfig.facebook);
+      const any = !!(ssoConfig.line || ssoConfig.google || ssoConfig.facebook);
+      const box = document.getElementById('ssoButtons'), div = document.getElementById('ssoDivider');
+      if (box) box.style.display = any ? 'flex' : 'none';
+      if (div) div.style.display = any ? '' : 'none';
       if (ssoConfig.facebook && window.FB) {
         FB.init({ appId: ssoConfig.facebook, cookie: true, xfbml: false, version: 'v19.0' });
       }
     }).catch(()=>{});
+
+    /** ⚠️ ปุ่ม SSO อยู่ **นอก** <form> → กดแล้วเบราว์เซอร์ไม่ตรวจ `required`
+     *  ใด ๆ เลย: ติ๊ก "ยอมรับข้อกำหนด/นโยบายความเป็นส่วนตัว" ถูกข้ามทั้งดุ้น
+     *  (สมัครผ่าน Google/Facebook/LINE ได้โดยไม่เคยยอมรับ) — บังคับเองที่นี่ */
+    function _ssoPreflight() {
+      const errEl = document.getElementById('errorMsg');
+      const agree = document.getElementById('agreeTerms');
+      if (agree && !agree.checked) {
+        errEl.textContent = 'กรุณาติ๊กยอมรับข้อกำหนดการใช้งานและนโยบายความเป็นส่วนตัวก่อนสมัคร';
+        errEl.classList.remove('hidden');
+        agree.focus();
+        return false;
+      }
+      return true;
+    }
 
     async function handleSsoResponse(provider, idToken) {
       const errEl = document.getElementById('errorMsg');
@@ -211,8 +241,9 @@
     }
 
     function handleGoogleRegister() {
-      if (!ssoConfig.google) {
-        document.getElementById('errorMsg').textContent = 'ยังไม่ได้ตั้งค่า Google OAuth';
+      if (!ssoConfig.google || !_ssoPreflight()) return;
+      if (!window.google?.accounts?.id) {
+        document.getElementById('errorMsg').textContent = 'โหลดบริการ Google ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
         document.getElementById('errorMsg').classList.remove('hidden');
         return;
       }
@@ -224,19 +255,41 @@
     }
 
     function handleFacebookRegister() {
-      if (!ssoConfig.facebook) {
-        document.getElementById('errorMsg').textContent = 'ยังไม่ได้ตั้งค่า Facebook OAuth';
+      if (!ssoConfig.facebook || !_ssoPreflight()) return;
+      // ⚠️ เดิมเขียน `if (!window.FB) FB.init(...)` — กลับตรรกะ: SDK ไม่โหลด
+      // (ตัวบล็อกโฆษณา/เน็ตล่ม) แล้วเรียก FB.init = ReferenceError กดปุ่มแล้ว
+      // เงียบสนิท ไม่มี error ให้ผู้ใช้เห็น
+      if (!window.FB) {
+        document.getElementById('errorMsg').textContent = 'โหลดบริการ Facebook ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
         document.getElementById('errorMsg').classList.remove('hidden');
         return;
-      }
-      if (!window.FB) {
-        FB.init({ appId: ssoConfig.facebook, cookie: true, xfbml: false, version: 'v19.0' });
       }
       FB.login(function(response) {
         if (response.authResponse) {
           handleSsoResponse('Facebook', response.authResponse.accessToken);
         }
       }, { scope: 'email,public_profile' });
+    }
+
+    /** LINE — ส่งไปหน้า LINE แล้วกลับมาที่ /login.html (callback เดียวกับที่
+     *  ลงทะเบียนไว้ใน LINE Developers) · พก companyName/plan ที่กรอกไว้ไปด้วย
+     *  ผ่าน sessionStorage เพื่อไม่ให้ข้อมูลที่กรอกหายตอนวนกลับ */
+    function handleLineRegister() {
+      if (!ssoConfig.line || !_ssoPreflight()) return;
+      const state = Math.random().toString(36).slice(2);
+      try {
+        sessionStorage.setItem('lineState', state);
+        sessionStorage.setItem('lineSignup', JSON.stringify({
+          companyName: document.getElementById('companyName')?.value || '',
+          plan: document.querySelector('input[name="plan"]:checked')?.value || null,
+        }));
+      } catch (e) {}
+      const redirect = location.origin + '/login.html';
+      window.location.href = 'https://access.line.me/oauth2/v2.1/authorize?response_type=code'
+        + '&client_id=' + encodeURIComponent(ssoConfig.line)
+        + '&redirect_uri=' + encodeURIComponent(redirect)
+        + '&state=' + encodeURIComponent(state)
+        + '&scope=' + encodeURIComponent('profile openid email');
     }
 
     // ===== Live password validation =====

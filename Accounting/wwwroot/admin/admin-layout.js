@@ -22,6 +22,7 @@ const AdminLayout = {
     { section: 'ตั้งค่า' },
     { id: 'site-settings', label: 'ตั้งค่าเว็บไซต์', icon: '⚙️', href: '/admin/site-settings.html' },
     { id: 'system-email', label: 'อีเมลระบบ (SMTP)', icon: '📧', href: '/admin/system-email.html' },
+    { id: 'sso-config', label: 'เข้าสู่ระบบ (Google/Facebook/LINE)', icon: '🔐', href: '/admin/sso-config.html' },
     { id: 'ocr-config', label: 'ตั้งค่า OCR / Azure DI', icon: '🔍', href: '/admin/ocr-config.html' },
     { id: 'ai-config', label: 'AI Augmentation (DeepSeek)', icon: '🤖', href: '/admin/ai-config.html' },
     { id: 'ai-models', label: 'นโยบายโมเดล AI ต่อฟีเจอร์', icon: '🧠', href: '/admin/ai-models.html' },
