@@ -145,7 +145,13 @@
         if (el) { el.textContent = 'สถานะการเข้าสู่ระบบ LINE ไม่ตรงกัน — ลองใหม่อีกครั้ง'; el.classList.remove('hidden'); }
         return;
       }
-      handleSsoResponse('Line', code);
+      // ถ้ามาจากหน้า register จะมี companyName/plan ฝากไว้ — ใช้ครั้งเดียวแล้วลบ
+      let signup = null;
+      try {
+        const raw = sessionStorage.getItem('lineSignup');
+        if (raw) { signup = JSON.parse(raw); sessionStorage.removeItem('lineSignup'); }
+      } catch (e) {}
+      handleSsoResponse('Line', code, signup);
     })();
 
     /** LINE Login — OAuth2 authorization-code + id_token (web flow).
@@ -167,11 +173,12 @@
       window.location.href = url;
     }
 
-    async function handleSsoResponse(provider, idToken) {
+    async function handleSsoResponse(provider, idToken, signup) {
       const errEl = document.getElementById('errorMsg');
       errEl.classList.add('hidden');
       try {
-        const res = await API.ssoLogin(provider, idToken);
+        const res = await API.ssoLogin(provider, idToken,
+          signup?.companyName || null, signup?.plan || null);
         if (res.success && res.data) {
           const token = res.data.accessToken || res.data.token;
           localStorage.setItem('token', token);
@@ -190,8 +197,12 @@
 
     function handleGoogleLogin() {
       if (!ssoConfig.google) return;   // ปุ่มถูกซ่อนอยู่แล้ว — guard กันเรียกตรง
-      const client = google.accounts.oauth2.initCodeClient
-        ? null : null; // Use ID token flow
+      if (!window.google?.accounts?.id) {
+        const el = document.getElementById('errorMsg');
+        el.textContent = 'โหลดบริการ Google ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
+        el.classList.remove('hidden');
+        return;
+      }
       google.accounts.id.initialize({
         client_id: ssoConfig.google,
         callback: (response) => handleSsoResponse('Google', response.credential)
@@ -201,8 +212,13 @@
 
     function handleFacebookLogin() {
       if (!ssoConfig.facebook) return;  // ปุ่มถูกซ่อนอยู่แล้ว — guard กันเรียกตรง
+      // ⚠️ เดิม `if (!window.FB) FB.init(...)` — กลับตรรกะ: SDK ไม่โหลดแล้ว
+      // เรียก FB.init = ReferenceError กดปุ่มแล้วเงียบสนิท ไม่มี error ให้เห็น
       if (!window.FB) {
-        FB.init({ appId: ssoConfig.facebook, cookie: true, xfbml: false, version: 'v19.0' });
+        const el = document.getElementById('errorMsg');
+        el.textContent = 'โหลดบริการ Facebook ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
+        el.classList.remove('hidden');
+        return;
       }
       FB.login(function(response) {
         if (response.authResponse) {
