@@ -528,6 +528,7 @@ python3 tools/gl_code_check.py         # เลขผังบัญชี hardc
 python3 tools/verbatim_string_check.py # CS1010/CS1056 `"` เดี่ยวปิด verbatim string
 python3 tools/dead_link_check.py      # ลิงก์ /pages/*.html ที่ไม่มีไฟล์ปลายทาง
 python3 tools/localstorage_key_check.py # คีย์ localStorage ที่อ่านแต่ไม่มีใครเขียน
+python3 tools/js_dup_method_check.py   # method ชื่อซ้ำใน object เดียวกัน (ตัวหลังทับเงียบ)
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -564,6 +565,23 @@ awk brace-balance                      # ทุก .cs ที่แก้
   `tools/dead_link_check.py`. ปลายทางที่มีหลายหน้าให้ผ่าน resolver กลาง
   `Layout.dashboardUrl()` และ **ต้องทิ้งหน้า redirect ไว้ที่ URL เดิม** เพราะ
   ลิงก์ในอีเมลคำเชิญที่ส่งออกไปแล้ว/บุ๊กมาร์กของผู้ใช้ แก้ย้อนหลังไม่ได้)_
+- **method ชื่อซ้ำใน object literal เดียวกัน = ตัวหลังทับตัวแรกเงียบ ๆ** เจอจริง
+  2 จุดในรอบเดียว: `documents.html` มี `toggleVatClaim(el)` (ไอคอนเคลม VAT บน
+  บรรทัดฟอร์ม) กับ `async toggleVatClaim(id, claim, el)` (หลังอนุมัติ ในหน้า
+  detail) ใน `Page` เดียวกัน — กดไอคอนบนฟอร์มไปเรียกตัวหลังด้วย claim=undefined
+  ⇒ เด้ง confirm "เลิกเคลมภาษีซื้อใบนี้?" กลางฟอร์ม + ยิง API ด้วย DOM element
+  แทน id (ผู้ใช้ที่ตั้งใจ**เปิด**เคลมโดนถามว่าจะ**เลิก**เคลม); `projects.html`
+  มี `openEdit` ซ้ำ — ตัว rename ด้วย `prompt()` ทับฟอร์มแก้ไขเต็ม ⇒ ปุ่มแก้ไข
+  โครงการแก้ได้แค่ชื่อ วันที่/งบ/สัญญาแก้ไม่ได้เลยตั้งแต่เขียนมา. duplicate key
+  ใน object literal **ถูกกติกา JS** — `node --check` ไม่ฟ้อง → เพิ่ม
+  `tools/js_dup_method_check.py` (นับ key ที่ brace depth 1 ต่อ object)
+  _(บทเรียนซ้อนตอนเขียน checker — ผ่าน 3 รุ่นกว่าจะจับของจริงได้ครบ: (1) เทียบ
+  indent เฉย ๆ ฟ้องผิดใน object ซ้อนที่ indent ชั้นในเท่าชั้นนอก (translations)
+  (2) นับ brace ด้วย regex ต่อบรรทัด พังกับ template literal ข้ามบรรทัด —
+  **พลาดของจริง** (3) tokenizer ต้องรู้จัก **regex literal** ด้วย: เจอ
+  `replace(/'/g, ...)` — quote ในตัว regex เปิด string ค้างแล้วกลืนโค้ดที่เหลือ
+  ทั้งไฟล์ ตัดสิน regex-vs-หาร จาก token ก่อนหน้าแบบ minifier. ทุกรุ่นต้องผ่าน
+  negative test กับบั๊กจริงทั้งสองตัวก่อนเชื่อ)_
 - **หน้าเว็บอ่านคีย์ localStorage ที่ไม่มีใครเขียน = ทั้งหน้าตายเงียบ** เจอ
   พร้อมกันรอบเดียว 3 จุด: `pages/etax.html` อ่าน `'companyId'` (คีย์ของ portal
   `/connect` เท่านั้น แอปหลักไม่เคยเขียน) → ได้ null ทุกครั้ง → `window.location
