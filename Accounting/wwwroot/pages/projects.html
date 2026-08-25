@@ -193,6 +193,8 @@
         try {
           const res = await api.getProject(id);
           const p = res.data;
+          // เรียกได้จาก footer ของ detail modal ด้วย — ปิดก่อนเปิดฟอร์มซ้อน
+          Layout.closeModal('detailModal');
           document.getElementById('formTitle').textContent = 'แก้ไขโครงการ';
           document.getElementById('fId').value = p.id;
           document.getElementById('fCode').value = p.code; document.getElementById('fCode').disabled = true;
@@ -548,21 +550,11 @@
           Layout.toast('ลบโครงการสำเร็จ'); Layout.closeModal('detailModal'); this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      async openEdit(id) {
-        const api = Layout.api(); if (!api) return;
-        try {
-          const res = await api.getProject(id);
-          const p = res.data;
-          if (!p) return;
-          // Reuse create modal if same form. Otherwise prompt.
-          const newName = prompt('ชื่อโครงการใหม่', p.name);
-          if (newName == null) return;
-          await api.updateProject(id, { name: newName });
-          Layout.toast('อัปเดตสำเร็จ');
-          Layout.closeModal('detailModal');
-          this.load();
-        } catch(e) { Layout.toast(e.message, 'error'); }
-      }
+      // ⚠️ เคยมี openEdit ตัวที่สองตรงนี้ (rename ด้วย prompt()) ซ้ำชื่อกับ
+      // ฟอร์มแก้ไขเต็มด้านบน — JS เอาตัวหลังทับเงียบ ๆ ทำให้ปุ่ม "แก้ไข"
+      // โครงการได้แค่ prompt เปลี่ยนชื่อ แก้วันที่/งบ/มูลค่าสัญญาไม่ได้เลย
+      // (จับโดย tools/js_dup_method_check.py) — ลบทิ้ง ให้ฟอร์มเต็มกลับมาทำงาน
+      _dupOpenEditRemoved: true
     };
     Page.init();
   </script>

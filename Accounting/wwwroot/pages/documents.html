@@ -5067,6 +5067,34 @@
           this._taxInvWatchBound = true;
         }
         this._validateTaxInvoiceClaim();
+        // ติ๊ก "มีใบกำกับภาษีซื้อ" = เจตนาเคลม — ปลดล็อกบรรทัดที่ถูกตั้ง 🚫
+        // ด้วยเหตุผลที่ "ใบกำกับเต็มรูปรักษาได้" (§82/5(1) ใบไม่สมบูรณ์/
+        // อย่างย่อ/บิลเงินสด — เคสจริง: ผู้ขายยกเลิกใบอย่างย่อแล้วออกใบเต็มรูป
+        // ให้เพื่อเคลมโดยเฉพาะ แต่บรรทัดยังค้าง 🚫 จาก OCR). เหตุต้องห้ามถาวร
+        // (§82/5(3) ค่ารับรอง · §82/5(6) รถยนต์นั่ง) ไม่แตะ — ใบเต็มรูปก็เคลมไม่ได้
+        this._reclaimLinesForFullTaxInvoice();
+      },
+
+      _reclaimLinesForFullTaxInvoice() {
+        let flipped = 0;
+        document.querySelectorAll('#linesBody .line-card').forEach(row => {
+          const c = row.querySelector('[data-f="vatClaim"]');
+          if (!c || c.dataset.claim !== 'false' || c.dataset.noVat === '1') return;
+          if (c.dataset.userOverride === '1') return;             // ผู้ใช้ตั้งเองมาก่อน — เคารพ
+          const reason = c.dataset.reason || '';
+          const permanent = /§82\/5\((3|4|6)\)|ค่ารับรอง|รถยนต์นั่ง|น้ำมัน/.test(reason);
+          if (permanent) return;
+          c.dataset.claim = 'true';
+          c.dataset.reason = '';
+          c.textContent = '✓';
+          c.style.color = '';
+          c.title = 'VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ';
+          flipped++;
+        });
+        if (flipped > 0) {
+          this.refreshVatProhibitedBanner();
+          Layout.toast(`เปิดเคลม VAT ให้ ${flipped} บรรทัด — มีใบกำกับเต็มรูปแล้ว เหตุ "ใบไม่สมบูรณ์" หมดไป`, 'success', 7000);
+        }
       },
 
       /**
@@ -6279,7 +6307,7 @@
             <div class="lc-field"><label>VAT %</label>
               <select class="form-select" data-f="vat" onchange="Page.onVatTypeChange(this)"><option value="7">7%</option><option value="0">0%</option><option value="-1">ยกเว้น</option></select></div>
             <div class="lc-field lc-claim"><label title="VAT เคลม ภพ.30 ได้หรือไม่ (§82/5)">เคลม VAT</label>
-              <span class="vat-claim-toggle" data-f="vatClaim" data-claim="true" data-reason="" onclick="Page.toggleVatClaim(this)" title="VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ" style="cursor:pointer;user-select:none">✓</span></div>
+              <span class="vat-claim-toggle" data-f="vatClaim" data-claim="true" data-reason="" onclick="Page.toggleLineVatClaim(this)" title="VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ" style="cursor:pointer;user-select:none">✓</span></div>
             <div class="lc-field"><label>หัก ณ ที่จ่าย %</label>
               <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="wht" oninput="Page.calcSum()"></div>
           </div>
@@ -6650,7 +6678,14 @@
         }
       },
 
-      toggleVatClaim(el) {
+      /** สลับเคลม/ไม่เคลม VAT ของ "บรรทัดในฟอร์ม" (ก่อนบันทึก)
+       *  ⚠️ ห้ามตั้งชื่อ toggleVatClaim — เคยชนกับเวอร์ชันหน้า detail
+       *  (id, claim, el) ใน object เดียวกัน แล้ว JS เอาตัวหลังทับเงียบ ๆ:
+       *  กดไอคอนบนฟอร์มเลยไปเรียกตัวหลังด้วย claim=undefined → เด้ง confirm
+       *  "เลิกเคลมภาษีซื้อใบนี้?" กลางฟอร์ม + ยิง API ด้วย DOM element แทน id
+       *  (เคสจริงจาก screenshot ผู้ใช้ — duplicate key ใน object literal
+       *  ถูกกติกา JS, node --check มองไม่เห็น) */
+      toggleLineVatClaim(el) {
         // บรรทัดที่ไม่มี VAT กดติ๊กไม่ได้ — ไม่มีอะไรให้เคลม
         if (el.dataset.noVat === '1') return;
         const cur = el.dataset.claim === 'true';
@@ -7385,6 +7420,35 @@
       },
       async save(approveAfter = false) {
         const api = Layout.api(); if (!api) return;
+        // ── ด่านความขัดแย้ง: ติ๊ก "มีใบกำกับภาษีซื้อ (ขอเครดิต ภ.พ.30)" แต่
+        // ทุกบรรทัดเป็น 🚫 ไม่เคลม (เคสจริง: OCR ตั้ง 🚫 จากใบอย่างย่อ แล้ว
+        // ผู้ใช้ได้ใบเต็มรูปมาทีหลัง) — ถามเป็นภาษาคนก่อนบันทึก ไม่ปล่อยให้
+        // กระดาษบอกเคลมแต่บัญชีไม่เคลมโดยไม่รู้ตัว
+        if (document.getElementById('fHasTaxInvoiceRef')?.checked) {
+          const rows = [...document.querySelectorAll('#linesBody .line-card')];
+          const vatRows = rows.filter(r =>
+            (parseFloat(r.querySelector('[data-f="vat"]')?.value) || 0) > 0
+            && (r.querySelector('[data-f="desc"]')?.value || '').trim());
+          const claimable = vatRows.filter(r =>
+            r.querySelector('[data-f="vatClaim"]')?.dataset.claim !== 'false');
+          if (vatRows.length > 0 && claimable.length === 0) {
+            const doClaim = confirm(
+              'คุณติ๊ก "มีใบกำกับภาษีซื้อ — ขอเครดิต ภ.พ.30" ไว้ '
+              + 'แต่ทุกบรรทัดถูกตั้งเป็น "ไม่เคลม VAT" (🚫) — ขัดกันเอง\n\n'
+              + 'กด OK  = เคลมภาษีซื้อใบนี้ (เปิด ✓ ให้ทุกบรรทัด — ใบกำกับเต็มรูปเคลมได้)\n'
+              + 'กด Cancel = คงไม่เคลมตามเดิม (VAT รวมเป็นต้นทุนค่าใช้จ่าย ไม่ขึ้น ภ.พ.30)');
+            if (doClaim) {
+              vatRows.forEach(r => {
+                const c = r.querySelector('[data-f="vatClaim"]');
+                if (!c) return;
+                c.dataset.claim = 'true'; c.dataset.reason = '';
+                c.textContent = '✓'; c.style.color = '';
+                c.title = 'VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ';
+              });
+              this.refreshVatProhibitedBanner();
+            }
+          }
+        }
         // Strict mode: every line must come from the product picker, not a
         // free-text description. The checkbox lives next to "+ เพิ่มรายการ".
         // Persist the preference so it survives navigation; default is ON.
