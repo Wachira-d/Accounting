@@ -294,6 +294,17 @@ public static class DatabaseMigrationHelper
             // ===== ใบวางบิลรวมใบแจ้งหนี้: บรรทัด "แทนทั้งใบ" ชี้เอกสารต้นทาง =====
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "SourceDocumentId" uuid NULL;""",
 
+            // ===== SSO / OAuth ตั้งจากหน้าแอดมินได้ (เดิมมีแต่ appsettings) =====
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "GoogleLoginEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "GoogleClientId" text NULL;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "GoogleClientSecret" text NULL;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "FacebookLoginEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "FacebookAppId" text NULL;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "FacebookAppSecret" text NULL;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "LineLoginEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "LineLoginChannelId" text NULL;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "LineLoginChannelSecret" text NULL;""",
+
             // ===== POS deposit support — IsDeposit + DepositRealizedAt =====
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "IsDeposit" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "DepositRealizedAt" timestamp with time zone NULL;""",

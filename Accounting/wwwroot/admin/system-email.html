@@ -143,6 +143,11 @@
           <div class="password-field">
             <input type="password" id="smtpPassword" placeholder="••••••••">
             <span class="keep-existing" id="smtpPasswordHint" style="display:none">ปล่อยว่าง = ใช้ค่าเดิม</span>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <button type="button" class="admin-btn admin-btn-sm admin-btn-outline" onclick="toggleSecret('smtpPassword',this)" title="แสดง/ซ่อนสิ่งที่พิมพ์">👁 แสดง</button>
+              <button type="button" class="admin-btn admin-btn-sm admin-btn-outline" onclick="copySecret('smtpPassword')" title="คัดลอกค่าที่พิมพ์ในช่องนี้">📋 คัดลอก</button>
+              <span style="font-size:11px;color:#94a3b8;align-self:center">คัดลอกได้เฉพาะค่าที่พิมพ์ตอนนี้ — รหัสที่บันทึกแล้วถูกเก็บแบบเข้ารหัส ระบบไม่ส่งกลับมาแสดง</span>
+            </div>
           </div>
           <div class="hint" style="color:#dc2626">
             <strong>Gmail:</strong> ต้องใช้ <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:#dc2626;text-decoration:underline">App Password</a>
@@ -176,6 +181,10 @@
           <label>Client Secret <span style="color:#dc2626">*</span></label>
           <div class="password-field">
             <input type="password" id="msClientSecret" placeholder="••••••••">
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <button type="button" class="admin-btn admin-btn-sm admin-btn-outline" onclick="toggleSecret('msClientSecret',this)">👁 แสดง</button>
+              <button type="button" class="admin-btn admin-btn-sm admin-btn-outline" onclick="copySecret('msClientSecret')">📋 คัดลอก</button>
+            </div>
             <span class="keep-existing" id="msClientSecretHint" style="display:none">ปล่อยว่าง = ใช้ค่าเดิม</span>
           </div>
         </div>
@@ -403,6 +412,27 @@
     }
 
     loadConfig();
-  </script>
+  
+    // ── แสดง/คัดลอก secret ที่ "พิมพ์อยู่ในช่อง" ────────────────────────
+    // เจตนาชัด: ไม่เปิดเผยค่าที่บันทึกไว้แล้ว (API ส่งมาแค่ hasPassword:true
+    // ตามหลักความปลอดภัย) — ปุ่มนี้ช่วยตอนวาง App Password ยาว ๆ แล้วอยากเช็ค
+    // ว่าวางครบ/เอาไปใส่ที่อื่นต่อ
+    function toggleSecret(id, btn) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.type = el.type === 'password' ? 'text' : 'password';
+      if (btn) btn.textContent = el.type === 'password' ? '👁 แสดง' : '🙈 ซ่อน';
+    }
+    async function copySecret(id) {
+      const el = document.getElementById(id);
+      if (!el || !el.value) { AdminLayout.toast('ยังไม่มีค่าในช่องนี้ให้คัดลอก', 'error'); return; }
+      try { await navigator.clipboard.writeText(el.value); AdminLayout.toast('คัดลอกแล้ว'); }
+      catch (e) {
+        const prev = el.type; el.type = 'text'; el.select();
+        document.execCommand('copy'); el.type = prev;
+        AdminLayout.toast('คัดลอกแล้ว');
+      }
+    }
+</script>
 </body>
 </html>

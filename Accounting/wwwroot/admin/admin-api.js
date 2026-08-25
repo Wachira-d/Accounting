@@ -187,6 +187,9 @@ const AdminAPI = {
 
   // System Email Configuration
   systemEmail() { return this.get('/system-email'); },
+  // SSO / OAuth (Google · Facebook · LINE)
+  ssoConfig() { return this.get('/sso-config'); },
+  updateSsoConfig(d) { return this.put('/sso-config', d); },
   updateSystemEmail(data) { return this.put('/system-email', data); },
   testSystemEmail(toAddress) { return this.post('/system-email/test', { toAddress }); },
 

@@ -19,6 +19,7 @@ public class AuthService : IAuthService
     private readonly IAccountingService _accountingService;
     private readonly ICompanyService _companyService;
     private readonly ILogger<AuthService> _logger;
+    private readonly ISecretProtector? _secrets;
 
     // Account lockout settings (configurable via appsettings Security section)
     private readonly int _maxFailedAttempts;
@@ -31,8 +32,10 @@ public class AuthService : IAuthService
         ISubscriptionService subscriptionService,
         IAccountingService accountingService,
         ICompanyService companyService,
-        ILogger<AuthService> logger)
+        ILogger<AuthService> logger,
+        ISecretProtector? secrets = null)
     {
+        _secrets = secrets;
         _db = db;
         _config = config;
         _emailService = emailService;
@@ -375,13 +378,28 @@ public class AuthService : IAuthService
     public async Task<LoginResponse> SsoLoginAsync(SsoLoginRequest request)
     {
         var provider = request.Provider?.Trim();
-        if (provider != "Google" && provider != "Facebook")
-            throw new InvalidOperationException("รองรับเฉพาะ Google และ Facebook เท่านั้น");
+        if (provider != "Google" && provider != "Facebook" && provider != "Line")
+            throw new InvalidOperationException("รองรับเฉพาะ Google, Facebook และ LINE เท่านั้น");
+
+        // ผู้ให้บริการต้อง "เปิดใช้ + มีคีย์ครบ" ก่อน — ไม่งั้นปฏิเสธตั้งแต่ต้น
+        // (กันเคสปุ่มหลุดมาบนหน้า login แล้วยิงเข้ามาโดยยังไม่ได้ตั้งค่า)
+        var sso = await GetSsoSettingsAsync();
+        var enabled = provider switch
+        {
+            "Google" => sso.GoogleEnabled,
+            "Facebook" => sso.FacebookEnabled,
+            _ => sso.LineEnabled,
+        };
+        if (!enabled)
+            throw new InvalidOperationException($"ยังไม่ได้เปิดใช้การเข้าสู่ระบบด้วย {provider} — ติดต่อผู้ดูแลระบบ");
 
         // Validate token with provider and extract user info
-        var (providerUserId, email, fullName) = provider == "Google"
-            ? await ValidateGoogleTokenAsync(request.IdToken)
-            : await ValidateFacebookTokenAsync(request.IdToken);
+        var (providerUserId, email, fullName) = provider switch
+        {
+            "Google" => await ValidateGoogleTokenAsync(request.IdToken, sso.GoogleClientId),
+            "Facebook" => await ValidateFacebookTokenAsync(request.IdToken),
+            _ => await ValidateLineTokenAsync(request.IdToken, sso.LineChannelId),
+        };
 
         if (string.IsNullOrWhiteSpace(email))
             throw new InvalidOperationException("ไม่สามารถดึงอีเมลจาก " + provider + " ได้ กรุณาอนุญาตการเข้าถึงอีเมล");
@@ -476,7 +494,116 @@ public class AuthService : IAuthService
         return await GenerateLoginResponse(user);
     }
 
-    private async Task<(string Id, string Email, string Name)> ValidateGoogleTokenAsync(string idToken)
+    /// <summary>ค่า SSO ที่ "ใช้จริง" — DB (ตั้งจากหน้าแอดมิน) ชนะ appsettings
+    /// (deployment เดิม). ตัวตัดสินตัวเดียวของทั้งระบบ: endpoint sso-config ที่
+    /// หน้า login เรียก และ SsoLoginAsync ต้องอ่านจากตัวนี้เท่านั้น ไม่งั้นปุ่ม
+    /// โผล่/หายไม่ตรงกับที่ backend ยอมรับจริง.
+    /// เปิดใช้ = ติ๊กเปิด **และ** มีคีย์ครบ — คีย์ว่าง = ปุ่มกดแล้วพัง</summary>
+    public async Task<SsoSettings> GetSsoSettingsAsync()
+    {
+        var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync();
+        var googleId = FirstNonEmpty(s?.GoogleClientId, _config["OAuth:Google:ClientId"]);
+        var fbId = FirstNonEmpty(s?.FacebookAppId, _config["OAuth:Facebook:AppId"]);
+        var lineId = FirstNonEmpty(s?.LineLoginChannelId, _config["OAuth:Line:ChannelId"]);
+        // ไม่มีแถว SiteSettings เลย (deployment เก่า) → ใช้ appsettings เป็นเกณฑ์:
+        // ตั้งคีย์ไว้ = ถือว่าเปิด (พฤติกรรมเดิมก่อนมีสวิตช์ ไม่ให้ของหายไปเฉย ๆ)
+        return new SsoSettings(
+            GoogleEnabled: (s?.GoogleLoginEnabled ?? !string.IsNullOrWhiteSpace(googleId))
+                && !string.IsNullOrWhiteSpace(googleId),
+            GoogleClientId: googleId,
+            FacebookEnabled: (s?.FacebookLoginEnabled ?? !string.IsNullOrWhiteSpace(fbId))
+                && !string.IsNullOrWhiteSpace(fbId),
+            FacebookAppId: fbId,
+            LineEnabled: (s?.LineLoginEnabled ?? !string.IsNullOrWhiteSpace(lineId))
+                && !string.IsNullOrWhiteSpace(lineId),
+            LineChannelId: lineId);
+    }
+
+    private static string FirstNonEmpty(string? a, string? b)
+        => !string.IsNullOrWhiteSpace(a) ? a.Trim() : (b ?? "").Trim();
+
+    /// <summary>Channel Secret ของ LINE — เก็บเข้ารหัสใน DB (SecretProtector)
+    /// fallback appsettings สำหรับ deployment เดิม. **ห้ามส่งออกจาก server**</summary>
+    private async Task<string> GetLineChannelSecretAsync()
+    {
+        var enc = await _db.SiteSettings.AsNoTracking()
+            .Select(s => s.LineLoginChannelSecret).FirstOrDefaultAsync();
+        if (!string.IsNullOrWhiteSpace(enc))
+            return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
+        return _config["OAuth:Line:ChannelSecret"] ?? "";
+    }
+
+    /// <summary>Callback URL ที่ต้องตรงกับที่ลงทะเบียนใน LINE Developers —
+    /// หน้า login ส่งผู้ใช้ไปด้วยค่านี้ ตอนแลก code ก็ต้องส่งค่าเดียวกัน
+    /// (LINE ตรวจตรง ๆ ไม่ตรง = invalid_grant)</summary>
+    private async Task<string> GetLineRedirectUriAsync()
+    {
+        var baseUrl = await _db.SiteSettings.AsNoTracking()
+            .Select(s => s.AppBaseUrl).FirstOrDefaultAsync();
+        if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = _config["App:BaseUrl"] ?? "";
+        return baseUrl.TrimEnd('/') + "/login.html";
+    }
+
+    /// <summary>LINE Login — verify id_token กับ LINE Platform (§ตรวจ audience
+    /// ด้วย Channel ID ของเราเอง กัน token ของแอปอื่นเอามาใช้). อีเมลมาก็ต่อเมื่อ
+    /// channel ขอ scope `email` และผู้ใช้อนุญาต — ถ้าไม่มี ตัวเรียกจะ throw
+    /// พร้อมข้อความบอกให้อนุญาตอีเมล (เหมือน provider อื่น)</summary>
+    private async Task<(string Id, string Email, string Name)> ValidateLineTokenAsync(
+        string idToken, string channelId)
+    {
+        if (string.IsNullOrWhiteSpace(channelId))
+            throw new UnauthorizedAccessException("ยังไม่ได้ตั้งค่า LINE Channel ID");
+        using var http = new HttpClient();
+
+        // หน้า login ส่ง "authorization code" มา (web flow) ไม่ใช่ id_token —
+        // แลกเป็น id_token ที่นี่ (ต้องใช้ channel secret ซึ่งห้ามออกจาก server).
+        // id_token เป็น JWT = มีจุดคั่น 2 ตัวเสมอ ใช้แยกสองกรณีได้
+        if (idToken.Count(ch => ch == '.') != 2)
+        {
+            var secret = await GetLineChannelSecretAsync();
+            if (string.IsNullOrWhiteSpace(secret))
+                throw new UnauthorizedAccessException("ยังไม่ได้ตั้งค่า LINE Channel Secret");
+            var tokenRes = await http.PostAsync("https://api.line.me/oauth2/v2.1/token",
+                new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["grant_type"] = "authorization_code",
+                    ["code"] = idToken,
+                    ["redirect_uri"] = await GetLineRedirectUriAsync(),
+                    ["client_id"] = channelId,
+                    ["client_secret"] = secret,
+                }));
+            if (!tokenRes.IsSuccessStatusCode)
+                throw new UnauthorizedAccessException("แลก LINE authorization code ไม่สำเร็จ (ตรวจ Callback URL ใน LINE Developers ให้ตรงกับระบบ)");
+            using var td = JsonDocument.Parse(await tokenRes.Content.ReadAsStringAsync());
+            idToken = td.RootElement.TryGetProperty("id_token", out var it) ? it.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(idToken))
+                throw new UnauthorizedAccessException("LINE ไม่คืน id_token — ตรวจว่า scope มี openid");
+        }
+
+        var body = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["id_token"] = idToken,
+            ["client_id"] = channelId,
+        });
+        var res = await http.PostAsync("https://api.line.me/oauth2/v2.1/verify", body);
+        if (!res.IsSuccessStatusCode)
+            throw new UnauthorizedAccessException("LINE token ไม่ถูกต้องหรือหมดอายุ");
+
+        var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+        // LINE ตรวจ aud ให้แล้วจาก client_id ที่ส่งไป — เช็คซ้ำกันพลาด
+        var aud = root.TryGetProperty("aud", out var a) ? a.GetString() ?? "" : "";
+        if (!string.IsNullOrEmpty(aud) && aud != channelId)
+            throw new UnauthorizedAccessException("LINE token ไม่ตรงกับ Channel ID ของระบบ");
+
+        var sub = root.TryGetProperty("sub", out var s) ? s.GetString() ?? "" : "";
+        var email = root.TryGetProperty("email", out var e) ? e.GetString() ?? "" : "";
+        var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+        return (sub, email, name);
+    }
+
+    private async Task<(string Id, string Email, string Name)> ValidateGoogleTokenAsync(
+        string idToken, string expectedClientIdOverride)
     {
         using var http = new HttpClient();
         var res = await http.GetAsync($"https://oauth2.googleapis.com/tokeninfo?id_token={Uri.EscapeDataString(idToken)}");
@@ -489,7 +616,9 @@ public class AuthService : IAuthService
 
         // Verify audience matches our client ID
         var aud = root.GetProperty("aud").GetString() ?? "";
-        var expectedClientId = _config["OAuth:Google:ClientId"] ?? "";
+        var expectedClientId = !string.IsNullOrWhiteSpace(expectedClientIdOverride)
+            ? expectedClientIdOverride
+            : (_config["OAuth:Google:ClientId"] ?? "");
         if (!string.IsNullOrEmpty(expectedClientId) && aud != expectedClientId)
             throw new UnauthorizedAccessException("Google token audience ไม่ตรงกับ client ID");
 

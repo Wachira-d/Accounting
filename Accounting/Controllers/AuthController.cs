@@ -34,13 +34,18 @@ public class AuthController : ControllerBase
         return Ok(new ApiResponse<LoginResponse>(true, result, "เข้าสู่ระบบสำเร็จ"));
     }
 
+    /// <summary>คีย์ SSO ที่ "เปิดใช้จริง" — หน้า login ใช้ตัดสินว่าจะโชว์ปุ่มไหน.
+    /// คืนค่าเฉพาะ provider ที่ **เปิดสวิตช์ + มีคีย์ครบ** (ตัวตัดสินเดียวกับ
+    /// SsoLoginAsync) — ปุ่มที่โชว์แล้วกดไม่ได้คือปุ่มหลอก ห้ามมี</summary>
     [HttpGet("sso-config")]
-    public ActionResult<ApiResponse<object>> GetSsoConfig()
+    public async Task<ActionResult<ApiResponse<object>>> GetSsoConfig()
     {
+        var s = await _authService.GetSsoSettingsAsync();
         return Ok(new ApiResponse<object>(true, new
         {
-            google = _config["OAuth:Google:ClientId"] ?? "",
-            facebook = _config["OAuth:Facebook:AppId"] ?? ""
+            google = s.GoogleEnabled ? s.GoogleClientId : "",
+            facebook = s.FacebookEnabled ? s.FacebookAppId : "",
+            line = s.LineEnabled ? s.LineChannelId : "",
         }));
     }
 
