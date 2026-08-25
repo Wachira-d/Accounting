@@ -530,6 +530,7 @@ python3 tools/dead_link_check.py      # ลิงก์ /pages/*.html ที่�
 python3 tools/localstorage_key_check.py # คีย์ localStorage ที่อ่านแต่ไม่มีใครเขียน
 python3 tools/js_dup_method_check.py   # method ชื่อซ้ำใน object เดียวกัน (ตัวหลังทับเงียบ)
 python3 tools/identifier_space_check.py # CS1001/CS1003 ช่องว่างในชื่อ method/ชนิด
+python3 tools/namespace_shadow_check.py # CS0234 `Helpers.X` ผูกไป namespace ผิดชั้น
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -647,6 +648,19 @@ awk brace-balance                      # ทุก .cs ที่แก้
   (2) `record struct Foo(...)` มีคำนำหน้า **สองคำ** ป๊อปคำเดียวไม่พอ. และต้อง
   ยกเว้น `operator ==` ที่ตัดตรง `=` ไม่ได้ · ยุบช่องว่างใน `<...>` ก่อน ไม่งั้น
   `Dictionary<string, int>` ถูกนับเป็นสอง token)_
+- **`Helpers.X` ผูกไป namespace ผิดชั้น = CS0234 ล้มทั้ง solution** `AuthService.cs`
+  อยู่ใน `Accounting.Services.Implementations` เขียน `Helpers.PdpaPolicy` โดยคิดว่า
+  C# จะไล่ขึ้นไปเจอ `Accounting.Helpers` — แต่เรพนี้**มี `Accounting.Services.Helpers`
+  อยู่ด้วย** (BankCsvParser/BankExcelParser) C# ใช้กติกา "ชั้นใกล้ชนะ" จึงหยุดที่นั่น
+  แล้วฟ้องว่าไม่มี `PdpaPolicy` — **ทั้งที่ไฟล์มี `using Accounting.Helpers;` อยู่แล้ว**
+  (using ไม่ช่วยเลยกับการอ้างที่มีจุดนำหน้า) เกิด 7 จุดในเมธอดเดียว. กฎ: ในเรพนี้
+  **อย่าเขียนชื่อแบบมีจุดนำหน้าบางส่วน** — ใช้ชื่อเปล่าผ่าน `using` หรือชื่อเต็ม
+  `Accounting.Helpers.X` เท่านั้น
+  _(`using_check.py` จับไม่ได้เพราะ using ครบอยู่แล้ว — ปัญหาคือชื่อผูกไปผิดที่
+  ไม่ใช่หาไม่เจอ → เพิ่ม `tools/namespace_shadow_check.py`. บทเรียนซ้อน: รุ่นแรก
+  ฟ้อง "กำกวม" ทุกจุดที่มีผู้สมัคร > 1 → ฟ้อง `Helpers.BankCsvParser` ใน
+  `OpenBankingService.cs` ซึ่ง**ถูกต้องอยู่แล้ว** (ชั้นใกล้มีชนิดนั้นจริง) ต้อง
+  ทำแผนที่ namespace → ชื่อชนิด แล้วฟ้องเฉพาะตอน "ชั้นที่ชนะไม่มี แต่ชั้นนอกมี")_
 - checker ใหม่ทุกตัวต้องผ่าน **negative test** ก่อนเชื่อ: ใส่บั๊กที่ตั้งใจจับ
   กลับเข้าไปแล้วยืนยันว่า checker จับได้จริง (เคยมี checker ที่ regex ผิด
   จนไม่จับเคสหลักของตัวเอง)

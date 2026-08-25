@@ -291,7 +291,11 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                                  where d.CompanyId == companyId && !p.IsDeleted && !d.IsDeleted
                                        && types.Contains(d.DocumentType)
                                        && p.PaymentDate >= yearAgo
-                                       && d.ContactId != null
+                                       // Document.ContactId เป็น Guid (ไม่ใช่ Guid?) ⇒ `!= null`
+                                       // เป็นจริงเสมอ (CS8073) ตัวกรองนี้จึงไม่เคยทำงาน:
+                                       // เอกสารที่ไม่มีคู่ค้าหลุดเข้ามาเป็น "(unknown)" แล้วถูกเฉลี่ย
+                                       // รวมเป็นคู่ค้ารายเดียว ⇒ ประวัติการชำระที่ส่งให้ AI เพี้ยน
+                                       && d.ContactId != Guid.Empty
                                  select new
                                  {
                                      ContactName = d.Contact != null ? d.Contact.Name : "(unknown)",

@@ -87,29 +87,29 @@ public class AuthService : IAuthService
             var grantedAt = DateTime.UtcNow;
             _db.PdpaConsentRecords.Add(new PdpaConsentRecord
             {
-                CompanyId = Helpers.PdpaPolicy.PlatformScopeCompanyId,
+                CompanyId = PdpaPolicy.PlatformScopeCompanyId,
                 SubjectUserId = user.Id,
                 SubjectContact = user.Email,
-                Purpose = Helpers.PdpaPolicy.SignupPurpose,
+                Purpose = PdpaPolicy.SignupPurpose,
                 // เก็บเวอร์ชันที่ **server** ใช้อยู่เป็นเวอร์ชันของแถว ส่วนเวอร์ชันที่
                 // หน้าเว็บแสดงจริงอยู่ใน evidence hash — ต่างกันเมื่อไรแปลว่าเบราว์เซอร์
                 // ค้าง cache ฉบับเก่า (log เตือนด้านล่าง) ไม่ใช่ข้อมูลสูญหาย
-                PolicyVersion = Helpers.PdpaPolicy.CurrentVersion,
+                PolicyVersion = PdpaPolicy.CurrentVersion,
                 GrantedAt = grantedAt,
                 Channel = channel,
                 IpAddress = ip,
-                EvidenceHash = Helpers.PdpaConsentEvidence.ComputeHash(
-                    user.Email, Helpers.PdpaPolicy.SignupPurpose, policyVersionShown,
+                EvidenceHash = PdpaConsentEvidence.ComputeHash(
+                    user.Email, PdpaPolicy.SignupPurpose, policyVersionShown,
                     grantedAt, channel, ip, ua),
             });
             await _db.SaveChangesAsync();
 
             if (!string.IsNullOrWhiteSpace(policyVersionShown)
-                && policyVersionShown != Helpers.PdpaPolicy.CurrentVersion)
+                && policyVersionShown != PdpaPolicy.CurrentVersion)
             {
                 _logger.LogWarning(
                     "PDPA consent: หน้าเว็บแสดงนโยบายเวอร์ชัน {Shown} แต่ระบบใช้ {Current} — เบราว์เซอร์อาจค้าง cache (user={UserId})",
-                    policyVersionShown, Helpers.PdpaPolicy.CurrentVersion, user.Id);
+                    policyVersionShown, PdpaPolicy.CurrentVersion, user.Id);
             }
         }
         catch (Exception ex)
