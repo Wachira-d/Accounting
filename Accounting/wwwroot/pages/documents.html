@@ -239,39 +239,42 @@
                    เลือกกระดาษปลายทางตรง ๆ แล้วระบบตั้ง fDocType + issue mode +
                    flag ทุกตัวให้เอง (จัดกลุ่มตาม "เงิน": ยังไม่รับ / รับแล้ว)
                    fDocType เดิมยังเป็น source of truth — ซ่อนไว้ ไม่ลบ -->
+              <!-- ลำดับกลุ่ม+ถ้อยคำ ผ่านการตรวจของทีมนักบัญชี (มาตรา/JE ตรงจริง)
+                   + ทีม UX (persona ไม่ใช่นักบัญชี 4 คนเดินงานจริง): ชื่อกลุ่ม =
+                   คำตอบของคำถาม "รับเงินหรือยัง?" · กลุ่มรับเงินแล้วขึ้นก่อน
+                   (งานที่ SME ทำบ่อยสุด) · เลิกใช้ "ตั้งลูกหนี้/ขายสด/3-in-1"
+                   ที่ผู้ใช้ทั่วไปตีความผิด -->
               <select class="form-select" id="fPaper" onchange="Page.onPaperChange()">
-                <optgroup label="📋 ก่อนขาย / เรียกเก็บ — ยังไม่ลงบัญชี" data-side="revenue">
+                <optgroup label="🟢 รับเงินจากลูกค้าแล้ว — ใบเดียวจบ ระบบบันทึกรับเงินให้" data-side="revenue">
+                  <option value="tax_receipt">ใบกำกับภาษี/ใบเสร็จรับเงิน — ลูกค้าจ่ายแล้ว (เงินสด/โอน)</option>
+                  <option value="invoice_tax_paid">ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน — ใบเดียวครบ 3 อย่าง</option>
+                  <option value="tax_paid" hidden>ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบจากใบแจ้งหนี้เดิม</option>
+                  <option value="receipt_abb">ใบเสร็จ/ใบกำกับภาษีอย่างย่อ — ลูกค้าไม่ขอใบกำกับเต็มรูป</option>
+                  <option value="deposit">💰 ใบมัดจำ — รับเงินล่วงหน้าบางส่วน ก่อนส่งของ/เริ่มงาน</option>
+                  <option value="receipt">ใบเสร็จรับเงิน — รับชำระใบที่เคยออกไว้ / รับเงินขายทั่วไป</option>
+                  <option value="receipt_voucher">ใบสำคัญรับ — หลักฐานรับเงิน (ใช้แทนใบเสร็จ)</option>
+                </optgroup>
+                <optgroup label="🟡 ขายเครดิต — ยังไม่ได้รับเงิน รอเก็บเงินทีหลัง" data-side="revenue">
+                  <option value="invoice">ใบแจ้งหนี้ — เรียกเก็บเงิน (งานบริการ ยังไม่ออกใบกำกับ)</option>
+                  <option value="invoice_tax">ใบแจ้งหนี้/ใบกำกับภาษี — ขายสินค้า/ต้องออกใบกำกับตอนนี้</option>
+                  <option value="tax">ใบกำกับภาษี — เหมือนข้อบน ต่างแค่หัวกระดาษ</option>
+                  <option value="billing">ใบวางบิล — รวมใบแจ้งหนี้หลายใบ ไปเก็บเงินรอบเดียว</option>
+                </optgroup>
+                <optgroup label="⚪ ยังไม่ขาย / เอกสารประกอบ — ไม่มีผลทางบัญชี-ภาษี" data-side="revenue">
                   <option value="quote">ใบเสนอราคา</option>
-                  <option value="billing">ใบวางบิล — รวมยอดใบแจ้งหนี้หลายใบไปเก็บเงิน</option>
-                  <option value="delivery">ใบส่งของ</option>
+                  <option value="delivery">ใบส่งของ — หลักฐานส่งมอบ (ขายสินค้าต้องออกใบกำกับตามทันที)</option>
                 </optgroup>
-                <optgroup label="💳 ขายเครดิต — ยังไม่รับเงิน (ตั้งลูกหนี้)" data-side="revenue">
-                  <option value="invoice">ใบแจ้งหนี้ — ยังไม่ออกใบกำกับภาษี</option>
-                  <option value="invoice_tax">ใบแจ้งหนี้/ใบกำกับภาษี — ใบเดียว ออกใบกำกับเลย</option>
-                  <option value="tax">ใบกำกับภาษี</option>
+                <optgroup label="✏️ แก้ยอดใบที่ออกไปแล้ว (ฝั่งขายและฝั่งซื้อ)" data-side="both">
+                  <option value="credit_note">ใบลดหนี้ — ลดยอด (คืนของ/ลดราคา/ส่วนลด)</option>
+                  <option value="debit_note">ใบเพิ่มหนี้ — เพิ่มยอด (เก็บเพิ่ม/ค่าขนส่งเพิ่ม)</option>
                 </optgroup>
-                <optgroup label="💰 รับเงินแล้ว — จบในใบเดียว (ระบบบันทึกรับเงินให้)" data-side="revenue">
-                  <option value="invoice_tax_paid">ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน (3-in-1)</option>
-                  <option value="tax_receipt">ใบกำกับภาษี/ใบเสร็จรับเงิน — ขายสด</option>
-                  <option value="tax_paid" hidden>ใบกำกับภาษี/ใบเสร็จรับเงิน — รับเงินครบแล้ว (ใบแปลง)</option>
-                  <option value="receipt_abb">ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ — ลูกค้าไม่ขอใบกำกับ</option>
-                </optgroup>
-                <optgroup label="🧾 รับเงินอื่น ๆ" data-side="revenue">
-                  <option value="receipt">ใบเสร็จรับเงิน — รับชำระใบแจ้งหนี้/ใบกำกับที่ออกไว้แล้ว</option>
-                  <option value="deposit">💰 ใบมัดจำ / รับเงินล่วงหน้า</option>
-                  <option value="receipt_voucher">ใบสำคัญรับ</option>
-                </optgroup>
-                <optgroup label="✏️ ปรับปรุงหนี้ (ออกให้ลูกค้า / ผู้ขายออกให้เรา)" data-side="both">
-                  <option value="debit_note">ใบเพิ่มหนี้</option>
-                  <option value="credit_note">ใบลดหนี้</option>
-                </optgroup>
-                <optgroup label="📤 ฝั่งรายจ่าย" data-side="expense">
-                  <option value="pr">ใบขอซื้อ (PR)</option>
-                  <option value="po">ใบสั่งซื้อ (PO)</option>
-                  <option value="pi">ใบแจ้งหนี้ซื้อ (มีใบแจ้งหนี้ผู้ขาย — เจ้าหนี้การค้า)</option>
-                  <option value="expense">ใบบันทึกค่าใช้จ่าย (ตั้งหนี้ — เจ้าหนี้อื่น)</option>
-                  <option value="pv">ใบสำคัญจ่าย (จ่ายเงินจริง/ตัดหนี้)</option>
-                  <option value="cert">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
+                <optgroup label="📤 ฝั่งรายจ่าย (ซื้อของ/ค่าใช้จ่าย)" data-side="expense">
+                  <option value="expense">ใบบันทึกค่าใช้จ่าย — ค่าเช่า ค่าน้ำไฟ เบิกจ่ายทั่วไป</option>
+                  <option value="pi">ใบแจ้งหนี้ซื้อ — ซื้อสินค้า/วัตถุดิบ มีใบแจ้งหนี้จากผู้ขาย</option>
+                  <option value="pv">ใบสำคัญจ่าย — บันทึกว่าจ่ายเงินออกไปแล้ว</option>
+                  <option value="po">ใบสั่งซื้อ (PO) — สั่งของจากผู้ขาย ยังไม่จ่าย</option>
+                  <option value="pr">ใบขอซื้อ (PR) — ขออนุมัติภายในก่อนสั่งซื้อ</option>
+                  <option value="cert">ใบรับรองแทนใบเสร็จ — ผู้ขายไม่มีใบเสร็จให้ (ตลาดสด แท็กซี่)</option>
                 </optgroup>
               </select>
               <select class="form-select" id="fDocType" style="display:none" onchange="Page.onDocTypeChange()">
@@ -279,13 +282,13 @@
                   <option value="Quotation" title="เสนอราคาให้ลูกค้าก่อนซื้อขายจริง — ยังไม่ลง GL, ไม่มี VAT effect">ใบเสนอราคา</option>
                   <option value="Invoice" title="ขายเครดิต — แจ้งหนี้ลูกค้า (ยังไม่รับเงิน, ยังไม่ใช่ใบกำกับภาษี) — งานบริการ: VAT รอเรียกเก็บ ยังไม่เข้า ภพ.30 จนกว่าจะรับเงิน (§78/1) · มีสินค้า: VAT นำส่งทันที (ส่งมอบ §78 — ควรออกใบกำกับ/ติ๊กใบรวมแทน)">ใบแจ้งหนี้</option>
                   <option value="TaxInvoice" title="ใบกำกับภาษีเต็มรูป (§86) — ออกใบกำกับ = tax point เกิดทันที: Cr Output VAT + เข้า ภพ.30 งวดนี้ ไม่ว่ารับเงินหรือยัง (ขายเครดิต = ตั้งลูกหนี้)">ใบกำกับภาษี</option>
-                  <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR (หรือ Cr รายได้+VAT ถ้าจ่ายสด)">ใบเสร็จรับเงิน</option>
-                  <option value="Deposit" title="รับเงินมัดจำ/รับล่วงหน้าก่อนส่งมอบสินค้า-บริการ — Dr เงินสด/ธนาคาร / Cr ขายรอรับรู้ (217xx) แทนรายได้ · รับรู้รายได้/หักเข้าใบกำกับภายหลัง (ออกใบเสร็จ + ตั้ง IsDeposit ให้อัตโนมัติ)">💰 ใบมัดจำ / รับเงินล่วงหน้า</option>
-                  <option value="DeliveryNote" title="ส่งของแล้วแต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL, เป็นเอกสารโลจิสติก">ใบส่งของ</option>
+                  <option value="Receipt" title="ใช้เมื่อได้รับเงินแล้ว — เลือกใบที่จะตัดยอดจากกล่อง 'รับชำระใบค้าง' ด้านล่าง (ตัดยอดค้างรับ ไม่ลงรายได้ซ้ำ) · ไม่เลือกใบ = ใบเสร็จขายทั่วไป ระบบลงรายได้+VAT ให้">ใบเสร็จรับเงิน</option>
+                  <option value="Deposit" title="ใช้เมื่อรับเงินล่วงหน้าบางส่วนก่อนส่งของ/เริ่มงาน — ตอนขายจริงระบบจะหักยอดมัดจำนี้ออกจากใบกำกับให้อัตโนมัติ · ⚠️ มัดจำที่เป็นส่วนหนึ่งของราคา ต้องออกใบกำกับ/นำส่ง VAT ทันทีที่รับเงิน (§78) — ระบบตั้งให้ตามค่าเริ่มต้นอยู่แล้ว อย่าเปลี่ยนเป็น 'เลื่อน VAT' ถ้าไม่ใช่เงินประกันจริง">💰 ใบมัดจำ / รับเงินล่วงหน้า</option>
+                  <option value="DeliveryNote" title="หลักฐานการส่งมอบ — ไม่มีผลทางบัญชี/ภาษี · ⚠️ ขายสินค้า (จด VAT): ส่งมอบของ = ต้องออกใบกำกับภาษีทันที (§78, §86) — ใช้ใบนี้คู่กับ 'ใบแจ้งหนี้/ใบกำกับภาษี' อย่าปล่อยไว้ใบเดียว">ใบส่งของ</option>
                   <option value="BillingNote" title="ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว — ไม่ลง GL, เป็นเอกสารเรียกเก็บ">ใบวางบิล</option>
                   <option value="DebitNote" title="เพิ่มยอดที่ลูกค้าต้องจ่าย (เช่นค่าปรับ, ค่าขนส่งเพิ่ม) — Dr AR / Cr รายได้/VAT">ใบเพิ่มหนี้</option>
                   <option value="CreditNote" title="ลดยอดที่ลูกค้าต้องจ่าย (คืนสินค้า/ส่วนลด/ตัดหนี้สูญ) — §82/10, ต้องระบุเหตุผล">ใบลดหนี้</option>
-                  <option value="ReceiptVoucher" title="ใบสำคัญรับ (รับเงินที่ไม่ออกใบเสร็จเช่นรับเงินมัดจำ) — Dr Cash / Cr รายได้รับล่วงหน้า">ใบสำคัญรับ</option>
+                  <option value="ReceiptVoucher" title="หลักฐานรับเงินภายใน ใช้แทนใบเสร็จ — ลงบัญชีเหมือนใบเสร็จ (รายได้ + VAT ขาย) · ⚠️ เงินรับที่ไม่ใช่รายได้ขาย (เช่น รับคืนเงินประกัน) อย่าใช้ใบนี้ — จะกลายเป็นรายได้+VAT เกินจริง ให้บันทึกผ่านสมุดรายวัน (JV) แทน · รับมัดจำใช้ 'ใบมัดจำ'">ใบสำคัญรับ</option>
                 </optgroup>
                 <optgroup label="📤 ฝั่งรายจ่าย" id="fDocTypeExpense">
                   <option value="PurchaseRequisition" title="ใบขอซื้อภายใน (PR) — แผนกขออนุมัติซื้อ ก่อนสั่งจริง, ไม่ลง GL">ใบขอซื้อ (PR)</option>
@@ -293,7 +296,7 @@
                   <option value="PurchaseInvoice" title="การค้า: มีใบแจ้งหนี้/ใบกำกับจากผู้ขาย — Dr สินค้า/ค่าใช้จ่าย + ภาษีซื้อ / Cr เจ้าหนี้การค้า (21210), กระทบสต๊อก, อยู่ในสาย PO→GRN→PI">ใบแจ้งหนี้ซื้อ (มีใบแจ้งหนี้ผู้ขาย — เจ้าหนี้การค้า)</option>
                   <option value="Expense" title="คำขอ/ตั้งหนี้ค่าใช้จ่าย: ค่าใช้จ่ายภายใน-เบิกจ่าย ไม่มีใบแจ้งหนี้การค้า — Dr ค่าใช้จ่าย / Cr เจ้าหนี้อื่น (21220) — ยังไม่จ่ายเงิน จ่ายผ่านใบสำคัญจ่าย — ไม่กระทบสต๊อก">ใบบันทึกค่าใช้จ่าย (คำขอ/ตั้งหนี้ — เจ้าหนี้อื่น)</option>
                   <option value="PaymentVoucher" title="การจ่ายเงินจริง: เงินออกทันที — Dr เจ้าหนี้ (ถ้าอ้างอิงเอกสารตั้งหนี้) หรือ Dr ค่าใช้จ่าย / Cr เงินสด-ธนาคาร — ตัดยอดเจ้าหนี้">ใบสำคัญจ่าย (จ่ายเงินจริง/ตัดหนี้)</option>
-                  <option value="CertificateInLieu" title="ใบรับรองแทนใบเสร็จ (§65 ทวิ) — ใช้เมื่อ vendor ออกใบเสร็จไม่ได้ (ตลาดสด, taxi, ผู้ขายไม่จด VAT) — บริษัทออกใบรับรองให้ตัวเอง">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
+                  <option value="CertificateInLieu" title="ใช้เมื่อผู้ขายไม่มีใบเสร็จให้ (ตลาดสด แท็กซี่ ผู้ขายรายย่อย) — บริษัทออกใบรับรองรายจ่ายให้ตัวเองเพื่อใช้เป็นหลักฐานทางภาษี (§65 ทวิ)">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
                 </optgroup>
               </select>
               <!-- 💡 Live hint — updates on select-change from the title
@@ -301,6 +304,9 @@
                    tooltips on <option> are unreliable across browsers
                    (Safari doesn't show them); this hint line is guaranteed. -->
               <div id="docTypeHint" class="hint" style="margin-top:6px;padding:8px 12px;background:#eff6ff;border-left:3px solid #3b82f6;border-radius:6px;font-size:12px;color:#1e40af;line-height:1.5"></div>
+              <!-- เตือนเมื่อเลือกกระดาษที่ต้องออกใบกำกับ แต่ตั้งค่าบริษัทว่ายังไม่จด VAT
+                   (ไม่ซ่อนตัวเลือก — ธงตั้งค่าอาจผิด; ด่านจริงคือ approve §90/2) -->
+              <div id="vatPaperWarn" style="display:none;margin-top:6px;padding:8px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:6px;font-size:12px;color:#991b1b;line-height:1.7"></div>
               <!-- ══ ตัวเลือกเดียวแทน 4 ติ๊กที่กระจายอยู่ ══
                    เดิมผู้ใช้ต้องประกอบเอกสารเองจาก 4 checkbox (ใบเดียวรวมหัว /
                    ไม่ประสงค์รับใบกำกับ / จ่ายแล้ว / ขายเงินสด) ที่อยู่คนละที่และ
@@ -3635,31 +3641,33 @@
        *  "เจตนาตอนออก" ส่วนหัวจริงบนกระดาษอาจดีกว่าที่เลือกได้เมื่อรับเงินจริง
        *  — hint ด้านล่างบอกเรื่องนี้ให้ผู้ใช้รู้ล่วงหน้า
        */
+      // hint เขียน 2 ชั้นตามผลตรวจทีม UX: ประโยคแรก = ภาษาคน ("ใช้เมื่อ…
+      // ระบบจะ…ให้") · รายละเอียดบัญชี/มาตรา ตามหลังในบรรทัดเดียวกัน
       _ISSUE_MODES: {
         invoice:      { type: 'Invoice',    combined: false, cash: false, declined: false,
-          hint: 'ตั้งลูกหนี้รอเก็บเงิน · ยังไม่ต้องนำส่ง VAT จนกว่ารับเงิน (§78/1 งานบริการ) · รับเงินเต็มงวดเดียวเมื่อไร ระบบออก "ใบกำกับภาษี/ใบเสร็จรับเงิน" ให้อัตโนมัติ' },
+          hint: 'ใช้เมื่อส่งงาน/ส่งของแล้ว รอเก็บเงินทีหลัง — ระบบบันทึกยอดค้างรับไว้ให้ · งานบริการยังไม่ต้องนำส่ง VAT จนกว่าจะรับเงิน (§78/1) · ⚠️ ขายสินค้าควรใช้ "ใบแจ้งหนี้/ใบกำกับภาษี" แทน — ส่งมอบของแล้วต้องนำส่ง VAT งวดนี้ (§78) · รับเงินครบเมื่อไรระบบออกใบกำกับ/ใบเสร็จให้อัตโนมัติ' },
         invoice_tax:  { type: 'TaxInvoice', combined: true,  cash: false, declined: false,
-          hint: 'ตั้งลูกหนี้รอเก็บเงิน แต่ VAT นำส่ง ภ.พ.30 ทันที (ออกใบกำกับ = tax point เกิดแล้ว) · ลูกค้าเคลมภาษีซื้อได้เลย · จ่ายครบเมื่อไร หัวเปลี่ยนเป็น "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน"' },
+          hint: 'ขายเครดิต + ออกใบกำกับภาษีเลย — ลูกค้ายังไม่จ่าย ระบบบันทึกยอดค้างรับไว้ให้ แต่ VAT ต้องนำส่งงวดนี้ (ออกใบกำกับ = ภาระภาษีเกิดแล้ว) · ลูกค้าใช้เคลมภาษีซื้อได้ทันที · จ่ายครบเมื่อไรหัวใบเปลี่ยนเป็นรวมใบเสร็จให้เอง' },
         // 3-in-1: combined + "ลูกค้าจ่ายเงินแล้ว" → กด "บันทึกและอนุมัติ" ระบบ
         // อนุมัติ + บันทึกชำระ + จบในคลิกเดียว หัวพิมพ์ 3 หน้าที่ (ServedAsReceipt)
         invoice_tax_paid: { type: 'TaxInvoice', combined: true, cash: false, declined: false, paid: true,
-          hint: 'รับเงินครบแล้ว ณ วันออก — ระบบอนุมัติ + บันทึกชำระ + ออกใบเดียวหัว "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน" ในคลิกเดียว (ไม่ออกใบเสร็จแยก) · เงินเข้าตาม "แหล่งเงิน/ช่องทางชำระ" ที่เลือกด้านล่าง' },
+          hint: 'ใช้เมื่อลูกค้าจ่ายครบแล้ว ณ วันออก — กด "บันทึกและอนุมัติ" ระบบอนุมัติ + บันทึกรับเงิน + ออกใบเดียวหัวครบ 3 อย่าง ไม่ต้องออกใบเสร็จแยก · เงินเข้าตาม "แหล่งเงิน/ช่องทางชำระ" ที่เลือกด้านล่าง · 💡 รับเงินแค่บางส่วน → ใช้ "ใบแจ้งหนี้/ใบกำกับภาษี" แล้วบันทึกชำระตามยอดที่รับจริงแทน' },
         tax:          { type: 'TaxInvoice', combined: false, cash: false, declined: false,
-          hint: 'ตั้งลูกหนี้ + VAT เข้า ภ.พ.30 ทันที · รับเงินครบวันเดียวกัน หัวจะเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ให้เอง · รับเงินภายหลัง ระบบออกใบเสร็จแยกให้' },
+          hint: 'เหมือน "ใบแจ้งหนี้/ใบกำกับภาษี" ทุกอย่าง ต่างแค่หัวกระดาษพิมพ์คำว่า "ใบกำกับภาษี" อย่างเดียว — ลูกค้ายังไม่จ่าย ระบบบันทึกยอดค้างรับ + VAT นำส่งงวดนี้ · รับเงินครบวันเดียวกันหัวจะรวมใบเสร็จให้เอง · รับเงินภายหลังระบบออกใบเสร็จแยกให้' },
         // ใบแปลงจากใบแจ้งหนี้/ใบวางบิลที่ "รับเงินครบแล้ว" — เดินสายเครดิตเต็ม:
         // อนุมัติ (กลับ JE ใบต้นทาง + ตั้งลูกหนี้) → บันทึกชำระเต็มยอดในคลิกเดียว
         // (WHT ของเอกสาร backend หักให้อัตโนมัติในงวดปิดยอด) → ไม่ออกใบเสร็จแยก
         // → หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน" (ServedAsReceipt). ห้ามใช้โหมด
         // ขายสด (tax_receipt) กับใบแปลง — Dr เงินสดตรงโดยไม่ล้างลูกหนี้ใบต้นทาง
         tax_paid:     { type: 'TaxInvoice', combined: false, cash: false, declined: false, paid: true,
-          hint: 'รับเงินครบแล้ว — กด "บันทึกและอนุมัติ" ระบบอนุมัติ (กลับรายการใบแจ้งหนี้ต้นทางให้) + บันทึกชำระเต็มยอด (หัก ณ ที่จ่าย ตามเอกสารอัตโนมัติ) + ออกใบเดียวหัว "ใบกำกับภาษี/ใบเสร็จรับเงิน" ไม่ออกใบเสร็จแยก · เงินเข้าตาม "แหล่งเงิน/ช่องทางชำระ" ที่เลือกด้านล่าง' },
+          hint: 'ใช้เมื่อรับเงินครบจากใบแจ้งหนี้เดิมแล้ว — กด "บันทึกและอนุมัติ" ระบบจัดการให้ทั้งสาย: อนุมัติ (กลับรายการใบต้นทาง) + บันทึกรับเงินเต็มยอด (หัก ณ ที่จ่าย ตามเอกสารอัตโนมัติ) + พิมพ์ใบเดียวหัว "ใบกำกับภาษี/ใบเสร็จรับเงิน" · เงินเข้าตามช่องทางชำระด้านล่าง' },
         tax_receipt:  { type: 'TaxInvoice', combined: false, cash: true,  declined: false,
-          hint: 'ลูกค้าจ่ายแล้ว ณ วันออก — ลง Dr เงินสด/ธนาคาร ไม่ตั้งลูกหนี้ · ปิดสถานะ "ชำระครบ" ทันที · ไม่ออกใบเสร็จแยก · e-Tax T03' },
+          hint: 'ใช้เมื่อลูกค้าจ่ายเงินแล้ว (เงินสดหรือโอน) — ใบนี้เป็นทั้งใบกำกับภาษีและใบเสร็จในใบเดียว ระบบบันทึกรับเงินเข้าบัญชีที่เลือก ปิดสถานะ "ชำระครบ" ทันที ไม่ต้องออกใบเสร็จอีก' },
         // ใบเสร็จรับเงิน = หลักฐานรับเงิน (ม.105) — เลือกหัวนี้คือรับเงินแล้ว
         // ในตัว ไม่ต้องติ๊ก "จ่ายแล้ว" ซ้ำอีกช่อง (เดิมเลือกหัวใบเสร็จได้ทั้งที่
         // ไม่บันทึกรับเงิน = กระดาษบอกรับเงินแล้วแต่บัญชีตั้งลูกหนี้ค้าง — ขัดกันเอง)
         receipt_only: { type: 'TaxInvoice', combined: false, cash: false, declined: true, paid: true,
-          hint: 'รับเงินแล้ว ณ วันออก (ใบเสร็จ = หลักฐานรับเงิน ม.105) — กด "บันทึกและอนุมัติ" ระบบบันทึกชำระให้อัตโนมัติ · VAT ขายยังลงรายงานภาษีขาย/ภ.พ.30 ครบ (นำส่งภาษีปกติ) · แต่ผู้ซื้อเคลมภาษีซื้อไม่ได้ · ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อครบ' },
+          hint: 'ใช้เมื่อลูกค้าจ่ายแล้วและไม่ขอใบกำกับเต็มรูป — ออก "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" ระบบบันทึกรับเงินให้อัตโนมัติ · ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อ · VAT ขายยังนำส่งครบตามปกติ แต่ผู้ซื้อนำใบนี้ไปเคลมภาษีซื้อไม่ได้ · เหมาะกับขายปลีก/บริการรายย่อยแก่ผู้บริโภค (§86/6 — ควรได้รับอนุมัติ ภ.พ.06)' },
       },
 
       /** ══ "ประเภทเอกสาร" ชั้นเดียว (fPaper) — กระดาษปลายทาง → ชนิด+โหมด ══
@@ -3735,15 +3743,15 @@
           g.style.display = show ? '' : 'none';
           g.querySelectorAll('option').forEach(o => { o.hidden = !show; o.disabled = !show; });
         });
-        if (isExpense) return;
+        if (isExpense) { this._hideEmptyPaperGroups(); return; }
         const setHidden = (v, hide) => {
           const o = psel.querySelector(`option[value="${v}"]`);
           if (o) { o.hidden = hide; o.disabled = hide; }
         };
-        // บริษัทไม่จด VAT — หัวที่มีคำ "ใบกำกับภาษี" ออกไม่ได้ทั้งชุด
-        if (this._vatRegistered === false)
-          ['invoice_tax', 'tax', 'invoice_tax_paid', 'tax_receipt', 'tax_paid', 'receipt_abb']
-            .forEach(v => setHidden(v, true));
+        // ⚠️ ห้ามซ่อนหัวใบกำกับตามธง vatRegistered — ธงตั้งค่าอาจผิด/ยังไม่ได้
+        // ติ๊กทั้งที่บริษัทจดจริง (เคสจริง: ตัวเลือกหายทั้งกลุ่ม ผู้ใช้ถามหา
+        // "ใบแจ้งหนี้/ใบกำกับภาษี ออกยังไง") — แสดงครบเสมอ แล้วเตือน+ลิงก์ไป
+        // ตั้งค่าเมื่อเลือก (ด่านจริงคือ approve §90/2 ฝั่ง server)
         // ใบแปลงจากใบแจ้งหนี้/ใบวางบิล (ขายเครดิต): ขายสด/รวมหัวใช้ไม่ได้
         // (Dr เงินสดโดยไม่ล้างลูกหนี้ใบต้นทาง) · tax_paid โชว์เฉพาะเคสนี้
         const srcT = this._pinnedSourceDoc?.documentType;
@@ -3751,6 +3759,19 @@
         if (fromCredit)
           ['tax_receipt', 'invoice_tax', 'invoice_tax_paid', 'invoice'].forEach(v => setHidden(v, true));
         setHidden('tax_paid', !fromCredit);
+        this._hideEmptyPaperGroups();
+      },
+
+      /** หัวกลุ่มที่ตัวเลือกถูกซ่อนหมด ต้องหายทั้งกลุ่ม — ไม่ใช่ค้างเป็นหัวข้อ
+       *  ว่างเปล่าให้ผู้ใช้งงว่า "กลุ่มนี้เคยมีอะไร" (เคสจริงจาก screenshot) */
+      _hideEmptyPaperGroups() {
+        const psel = document.getElementById('fPaper');
+        if (!psel) return;
+        psel.querySelectorAll('optgroup').forEach(g => {
+          const opts = [...g.querySelectorAll('option')];
+          if (opts.length && opts.every(o => o.hidden))
+            g.style.display = 'none';
+        });
       },
 
       /** ซิงก์ fPaper จากสถานะจริง (fDocType + issue mode ที่ resolve แล้ว) —
@@ -3764,8 +3785,11 @@
         this._syncPaperOptionVisibility();
         const type = dt.value;
         let key = null;
-        const applies = (type === 'Invoice' || type === 'TaxInvoice') && this._vatRegistered !== false;
-        if (applies) key = this._MODE_TO_PAPER[document.getElementById('fIssueMode')?.value];
+        // resolve จาก "flag จริง" เสมอ (ตัวตัดสินเดียวกับ _syncIssueModeUi) —
+        // ห้ามผูกกับธง vatRegistered: ใบเดิมของบริษัทที่ธงตั้งค่าผิด ต้องยัง
+        // hydrate กลับถูกกระดาษ ไม่ใช่เด้งไป "ใบกำกับภาษี" เฉย ๆ
+        if (type === 'Invoice' || type === 'TaxInvoice')
+          key = this._MODE_TO_PAPER[this._resolveModeFromFlags(type)];
         if (!key) {
           // ใบมัดจำเป็น pseudo-type: ใน DB คือ Receipt + IsDeposit — hydrate
           // กลับต้องชี้ "ใบมัดจำ" ไม่ใช่ "ใบเสร็จ" (audit เอกสารทุกประเภท)
@@ -3786,7 +3810,37 @@
         // กระดาษที่มีโหมด → hint สีเขียว (issueModeHint) เป็นตัวอธิบายหลัก
         // ซ่อน hint สีฟ้าของชนิดดิบ กันข้อความสองก้อนตีกัน
         const blueHint = document.getElementById('docTypeHint');
-        if (blueHint && key && this._PAPERS[key]?.mode && applies) blueHint.style.display = 'none';
+        if (blueHint && key && this._PAPERS[key]?.mode && this._vatRegistered !== false)
+          blueHint.style.display = 'none';
+        this._refreshVatPaperWarning(key);
+      },
+
+      /** ตัวตัดสินกลาง flag → issue mode — ใช้ร่วมทั้ง _syncIssueModeUi และ
+       *  _syncPaperFromState (ห้ามเขียน resolve ซ้ำสองที่แล้ว drift) */
+      _resolveModeFromFlags(dt) {
+        const on = id => !!document.getElementById(id)?.checked;
+        if (on('fBuyerDeclinedTaxInvoice')) return 'receipt_only';
+        if (on('fIssuedAsCashReceipt')) return 'tax_receipt';
+        if (on('fCombinedTaxInvoice')) return on('fPaidOnIssue') ? 'invoice_tax_paid' : 'invoice_tax';
+        if (dt === 'TaxInvoice') return on('fPaidOnIssue') ? 'tax_paid' : 'tax';
+        return 'invoice';
+      },
+
+      /** เลือกกระดาษที่ต้องออกใบกำกับ ทั้งที่ตั้งค่าบริษัทบอก "ยังไม่จด VAT" —
+       *  เตือนทันทีพร้อมลิงก์ไปตั้งค่า (ไม่ซ่อนตัวเลือก — ธงอาจผิด/ยังไม่ได้ติ๊ก
+       *  ทั้งที่จดจริง; ด่านบังคับจริงคือ approve §90/2 ฝั่ง server) */
+      _refreshVatPaperWarning(paperKey) {
+        const warn = document.getElementById('vatPaperWarn');
+        if (!warn) return;
+        const p = this._PAPERS[paperKey];
+        const needsVat = !!(p && p.mode && p.mode !== 'invoice');
+        const show = needsVat && this._vatRegistered === false;
+        warn.style.display = show ? '' : 'none';
+        if (show) warn.innerHTML =
+          '⚠️ ตั้งค่าบริษัทระบุว่า <b>ยังไม่จดทะเบียน VAT</b> — เอกสารแบบนี้ต้องออกใบกำกับภาษี '
+          + 'จะอนุมัติไม่ผ่าน (§90/2)<br>• ถ้าบริษัท<b>จดแล้ว</b>: ไปติ๊ก "จดทะเบียน VAT" ที่ '
+          + '<a href="/pages/settings.html?tab=tax" target="_blank" style="color:#1d4ed8;text-decoration:underline">ตั้งค่า &gt; ภาษี</a> ก่อน'
+          + '<br>• ถ้ายัง<b>ไม่จด</b>: ใช้ "ใบแจ้งหนี้" (เรียกเก็บ) หรือ "ใบเสร็จรับเงิน" แทน — ห้ามเรียกเก็บ VAT';
       },
 
       // ══ ใบวางบิลรวมใบค้างชำระหลายใบ ═══════════════════════════════════
@@ -3943,13 +3997,8 @@
         const optTaxPaid = sel.querySelector('option[value="tax_paid"]');
         if (optTaxPaid) optTaxPaid.hidden = !fromCredit;
 
-        // อ่าน flag ปัจจุบัน → เลือก option ที่ตรง
-        const on = id => !!document.getElementById(id)?.checked;
-        let mode = dt === 'Invoice' ? 'invoice' : 'tax';
-        if (on('fBuyerDeclinedTaxInvoice')) mode = 'receipt_only';
-        else if (on('fIssuedAsCashReceipt')) mode = 'tax_receipt';
-        else if (on('fCombinedTaxInvoice')) mode = on('fPaidOnIssue') ? 'invoice_tax_paid' : 'invoice_tax';
-        else if (dt === 'TaxInvoice' && on('fPaidOnIssue')) mode = 'tax_paid';
+        // อ่าน flag ปัจจุบัน → เลือก option ที่ตรง (ตัวตัดสินกลางตัวเดียว)
+        let mode = this._resolveModeFromFlags(dt);
         // option ที่ถูกซ่อนไว้ เลือกไม่ได้ → ตกกลับ "ใบกำกับภาษี"
         const opt = sel.querySelector(`option[value="${mode}"]`);
         sel.value = (opt && !opt.hidden) ? mode : 'tax';
