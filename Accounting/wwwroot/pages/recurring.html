@@ -234,12 +234,20 @@ const Page = {
     if (cfg === undefined) status = 'กำลังตรวจการตั้งค่าอีเมลของบริษัท…';
     else if (cfg && cfg.configured)
       status = '✅ อีเมลบริษัทพร้อมใช้งาน' + (cfg.fromAddress ? ' (ส่งจาก ' + Layout.esc(cfg.fromAddress) + ')' : '');
-    else if (cfg && ((cfg.smtp && cfg.smtp.host) || cfg.fromAddress))
+    // "ตั้งไว้แล้วแต่ยังไม่ทดสอบ" ต้องครอบทุก provider ไม่ใช่แค่ SMTP —
+    // tenant ที่ใช้ Microsoft Graph / Gmail API มี smtp.host ว่างเป็นปกติ
+    else if (cfg && ((cfg.smtp && cfg.smtp.host) || cfg.fromAddress
+        || (cfg.microsoft && cfg.microsoft.tenantId) || (cfg.gmail && cfg.gmail.clientId)))
       status = '⚠️ ตั้งค่าอีเมลไว้แล้วแต่ยัง<strong>ไม่ได้ทดสอบส่ง</strong> — กด "ส่งอีเมลทดสอบ" ที่ ' + link + ' ก่อน จะได้รู้ว่าใช้ได้จริง';
     else
       status = '⚠️ ยังไม่ได้ตั้งค่า SMTP/อีเมลของบริษัท — ระบบจะส่งจาก<strong>อีเมลกลางของระบบ</strong>แทน (ลูกค้าจะไม่เห็นชื่อผู้ส่งเป็นบริษัทคุณ) ตั้งค่าเองได้ที่ ' + link;
+    // ฝั่งซื้อ: เอกสารพวกนี้คือ "บันทึกของเราเองต่อบิลของเขา" — ส่งกลับไปหา
+    // ผู้ขายทุกเดือนมักไม่ใช่สิ่งที่ตั้งใจ (ใบสั่งซื้อส่งได้ปกติ จึงไม่เตือน)
+    const inboundTypes = ['Expense', 'PurchaseInvoice', 'PaymentVoucher'];
+    const isInbound = inboundTypes.includes(document.getElementById('fDocType')?.value);
     box.innerHTML = status + (on
-      ? '<br>• เปิดข้อนี้แล้วระบบจะ <strong>อนุมัติเอกสารอัตโนมัติ</strong> ให้ด้วย (ใบร่างยังไม่มีเลขที่จริงตาม §86/4 จึงส่งออกไม่ได้)'
+      ? (isInbound ? '<br>• ⚠️ ชนิดเอกสารนี้เป็น<strong>ฝั่งซื้อ</strong> — ระบบจะส่งเอกสารนี้ไปหา<strong>ผู้ขาย</strong>ทุกงวด ตรวจให้แน่ใจว่าตั้งใจแบบนั้น' : '')
+      + '<br>• เปิดข้อนี้แล้วระบบจะ <strong>อนุมัติเอกสารอัตโนมัติ</strong> ให้ด้วย (ใบร่างยังไม่มีเลขที่จริงตาม §86/4 จึงส่งออกไม่ได้)'
       + '<br>• ส่งไปที่อีเมลของผู้ติดต่อที่เลือกไว้ พร้อมแนบ PDF — ถ้าผู้ติดต่อไม่มีอีเมล ระบบจะข้ามการส่ง'
       + '<br>• ติดตามผลส่งได้ที่หน้า <a href="/pages/email-schedule.html" target="_blank" style="color:#2563eb;text-decoration:underline">ตารางส่งอีเมล</a> (ถ้ามีกฎ RecurringInvoiceCreated อยู่แล้ว ระบบจะใช้กฎนั้นแทน ไม่ส่งซ้ำ)'
       : '');
@@ -392,6 +400,8 @@ const Page = {
     const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder'];
     const ecGroup = document.getElementById('fExpenseCategoryGroup');
     if (ecGroup) ecGroup.style.display = expenseTypes.includes(docType) ? '' : 'none';
+    // ข้อความเตือน "ส่งอีเมลฝั่งซื้อ" ขึ้นกับชนิดเอกสาร → re-render ทุกครั้ง
+    this.renderAutoEmailHint();
   },
 
   async save() {
@@ -451,6 +461,16 @@ const Page = {
       notifyDaysBefore: 1
     };
 
+    // ผู้ติดต่อไม่มีอีเมล = ติ๊ก "ส่งอีเมล" ไว้ก็ไม่มีอะไรออก (backend ข้าม +
+    // log warning) → บอกตั้งแต่ตอนบันทึก ไม่ใช่ปล่อยให้รอถึงงวดหน้าแล้วงง
+    let contactHasEmail = true;
+    if (data.autoSendEmail && data.contactId) {
+      try {
+        const cr = await api.getContact(data.contactId);
+        contactHasEmail = !!(cr && cr.data && cr.data.email);
+      } catch (e) { /* ตรวจไม่ได้ = ไม่ขวางการบันทึก */ }
+    }
+
     try {
       if (id) await api.updateRecurring(id, data);
       else await api.createRecurring(data);
@@ -459,6 +479,8 @@ const Page = {
       // ไม่เข้าใจผิดว่าลูกค้าได้รับเมลจากชื่อบริษัทตัวเองทุกงวด
       if (data.autoSendEmail && !(this._emailCfg && this._emailCfg.configured))
         Layout.toast('บันทึกแล้ว — แต่ยังไม่ได้ตั้งค่า/ทดสอบอีเมลบริษัท ระบบจะส่งจากอีเมลกลางแทน', 'info');
+      if (data.autoSendEmail && !contactHasEmail)
+        Layout.toast('ผู้ติดต่อนี้ยังไม่มีอีเมล — ระบบจะข้ามการส่งจนกว่าจะเพิ่มอีเมลให้ผู้ติดต่อ', 'info');
       Layout.closeModal('formModal');
       this.load();
     } catch (err) { Layout.toast(err.message, 'error'); }

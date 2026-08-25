@@ -38,6 +38,13 @@ public class RecurringTransactionService : IRecurringTransactionService
         _emailSchedule = emailSchedule;
     }
 
+    /// <summary>ตัวตัดสินกลางว่า template เป็น "สมุดรายวัน" หรือ "เอกสาร" —
+    /// ห้ามคำนวณเองซ้ำที่อื่น (ExecuteRecurringAsync/ValidateTemplateAsync/
+    /// invariant ส่งอีเมล ใช้ตัวเดียวกันทั้งหมด). "journal" ไม่สนตัวพิมพ์ =
+    /// สมุดรายวัน, ค่าว่าง/อื่น ๆ = เอกสาร (พฤติกรรมเดิมเป๊ะ).</summary>
+    private static bool IsJournalTemplate(string? templateType)
+        => string.Equals(templateType, "journal", StringComparison.OrdinalIgnoreCase);
+
     public async Task<RecurringTransactionResponse> CreateAsync(Guid companyId, CreateRecurringTransactionRequest request, string createdBy)
     {
         await ValidateTemplateAsync(companyId, request.TemplateType, request.TemplateData, request.ContactId);
@@ -64,8 +71,12 @@ public class RecurringTransactionService : IRecurringTransactionService
             // ยังเป็นเลข DRAFT-{guid} (§86/4 ออกเลขจริงตอน Approve เท่านั้น)
             // ส่งออกไปหาลูกค้าไม่ได้. บังคับตรงนี้ + echo กลับใน response
             // (ไม่ใช่เงียบ ๆ ไม่ส่งอีเมลแล้วผู้ใช้ไม่รู้ว่าทำไม)
-            AutoApprove = request.AutoApprove || request.AutoSendEmail,
-            AutoSendEmail = request.AutoSendEmail,
+            // template สมุดรายวันไม่มีคู่ค้า/PDF ให้ส่ง → ปัดธงทิ้ง ไม่งั้นจะไป
+            // บังคับ AutoApprove ซึ่งฝั่ง journal แปลว่า "post JE อัตโนมัติ"
+            // (คนละเรื่องกับที่ผู้ใช้ติ๊ก)
+            AutoApprove = request.AutoApprove
+                || (request.AutoSendEmail && !IsJournalTemplate(request.TemplateType)),
+            AutoSendEmail = request.AutoSendEmail && !IsJournalTemplate(request.TemplateType),
             CreatedBy = createdBy
         };
 
@@ -130,6 +141,10 @@ public class RecurringTransactionService : IRecurringTransactionService
         if (request.NotifyDaysBefore.HasValue) recurring.NotifyDaysBefore = request.NotifyDaysBefore.Value;
         if (request.AutoApprove.HasValue) recurring.AutoApprove = request.AutoApprove.Value;
         if (request.AutoSendEmail.HasValue) recurring.AutoSendEmail = request.AutoSendEmail.Value;
+        // template สมุดรายวันไม่มีคู่ค้า/PDF ให้ส่ง → ปัดธงทิ้ง **เสมอ** ไม่ใช่
+        // เฉพาะตอน request ส่ง field มา — แถวเก่า/ที่แก้ตรง DB ที่ค้างธงไว้ จะได้
+        // ไม่ไปบังคับ AutoApprove (ฝั่ง journal = post JE อัตโนมัติ คนละเรื่อง)
+        if (IsJournalTemplate(recurring.TemplateType)) recurring.AutoSendEmail = false;
         // invariant เดียวกับตอนสร้าง: ส่งอีเมล ⇒ ต้องอนุมัติอัตโนมัติ
         // (ตั้งหลังทั้งสองฟิลด์ ไม่ว่าผู้ใช้ส่งมาลำดับไหน)
         if (recurring.AutoSendEmail) recurring.AutoApprove = true;
@@ -282,9 +297,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         if (!string.IsNullOrEmpty(recurring.TemplateData))
         {
             var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var templateType = recurring.TemplateType?.ToLowerInvariant() ?? "document";
 
-            if (templateType == "journal")
+            if (IsJournalTemplate(recurring.TemplateType))
             {
                 await CreateJournalFromTemplateAsync(recurring, performedBy, jsonOptions);
             }

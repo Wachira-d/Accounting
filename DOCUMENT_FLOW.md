@@ -575,7 +575,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     `CreateAsync`/`UpdateAsync` และล็อกช่องบนฟอร์ม — ใบ Draft ยังเป็นเลข
     `DRAFT-{guid}` ตาม §86/4 ส่งออกหาลูกค้าไม่ได้ (guard เดิมใน
     `OnRecurringDocumentCreatedAsync` ตัด Draft/WaitingApproval/Rejected ทิ้ง)
-  - ผู้ติดต่อไม่มีอีเมล → ข้าม + log warning (ไม่ throw); ผู้ส่งใช้ค่า
+  - **template สมุดรายวัน (`TemplateType="journal"`) ไม่รับธงนี้** — ปัดเป็น
+    false ทั้งใน `CreateAsync`/`UpdateAsync` (JE ไม่มีคู่ค้า/PDF ให้ส่ง และ
+    `AutoApprove` ฝั่ง journal แปลว่า "post JE อัตโนมัติ" คนละเรื่องกับที่
+    ผู้ใช้ติ๊ก); ตัวตัดสินกลาง `IsJournalTemplate` ใช้ร่วมกับ dispatch ใน
+    `ExecuteRecurringAsync`
+  - ผู้ติดต่อไม่มีอีเมล → ข้าม + log warning (ไม่ throw); ฟอร์มเช็คให้ตั้งแต่
+    ตอนบันทึก (`getContact`) แล้ว toast บอก · ผู้ส่งใช้ค่า
     `CompanySettings.Email*` ของบริษัท ถ้าไม่ได้ตั้ง → fallback อีเมลกลางระบบ
     (`EmailSenderFactory.GetGlobalFallbackSender`)
   - ฟอร์ม `pages/recurring.html` แสดงสถานะอีเมลบริษัทจริงจาก
@@ -2036,8 +2042,12 @@ tenant ไป**สร้างกฎเองที่หน้า "ตารา
 ไม่ส่งซ้ำ. invariant `AutoSendEmail ⇒ AutoApprove` บังคับทั้ง service
 (`CreateAsync`/`UpdateAsync`) และ UI (ล็อกช่อง + บอกเหตุผล §86/4 ใบร่างเป็น
 `DRAFT-{guid}` ส่งไม่ได้) — ไม่ใช่ปล่อยติ๊กแล้วเงียบ. ฟอร์มดึงสถานะอีเมลจริง
-จาก `GET /email-config` มาแสดง (พร้อม/ยังไม่ทดสอบ/ยังไม่ตั้ง→ใช้อีเมลกลาง) +
-`settings.html` รับ deep link `?tab=email` ได้แล้ว (เดิมลิงก์ไปตกแท็บแรก);_
+จาก `GET /email-config` มาแสดง (พร้อม/ยังไม่ทดสอบ—ครอบทั้ง SMTP/MS Graph/Gmail
+ไม่ใช่ดูแค่ `smtp.host`/ยังไม่ตั้ง→ใช้อีเมลกลาง) + เช็คว่าผู้ติดต่อมีอีเมลไหม
+ตั้งแต่ตอนบันทึก + เตือนเมื่อชนิดเอกสารเป็นฝั่งซื้อ (จะส่งไปหาผู้ขาย) +
+`settings.html` รับ deep link `?tab=email` ได้แล้ว (เดิมลิงก์ไปตกแท็บแรก).
+ธงนี้ไม่มีผลกับ template สมุดรายวัน — ปัดทิ้งที่ service (ตรวจด้วย simulation
+102 เคส ผ่าน invariant `AutoSendEmail ⇒ AutoApprove` + `⇒ ไม่ใช่ journal`);_
 
 _รอบ 93 — **single source of truth: เดือนเคลม = อยู่ในรายงานจริง**: ผู้ใช้
 ไม่ยอมกด "สร้างใหม่" (ล้างการติ๊ก/แก้ยอดของบรรทัดอื่นทั้งงวด — ถูกต้อง) →
