@@ -811,13 +811,47 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             _logger.LogInformation("Remitted {Type} {Month}/{Year} amount {Amt} (+fee {Fee}) → JE {Je}",
                 type, req.PeriodMonth, req.PeriodYear, amount, lateFee, je.Id);
 
+            // ── ภ.พ.36: สร้าง "รายงานภาษี" ของงวดให้อัตโนมัติ ───────────────
+            // ผู้ใช้เจอจริง: นำส่งไปแล้วหลายเดือน แต่เปิดแท็บ ภ.พ.36 ในหน้ารายงาน
+            // ภาษีเห็นแค่เดือนเดียว → เข้าใจว่าเดือนอื่น "ไม่มียอด" ทั้งที่นำส่ง
+            // ไปแล้ว. งวดที่นำส่งแล้ว = ยืนยันตัวเลขแล้ว จึงต้องมีรายงานคู่เสมอ
+            // ⚠️ อยู่ **นอก** transaction ของการนำส่งโดยตั้งใจ (commit ไปแล้ว) —
+            // สร้างรายงานพลาดต้องไม่ทำให้การนำส่ง (JE เงินจริง) ล้มตาม
+            var reportNote = type == "VatPp36"
+                ? await TryEnsurePp36ReportAsync(companyId, req.PeriodYear, req.PeriodMonth)
+                : "";
+
             return new RemitResult(rec.Id, je.Id, amount, lateFee,
-                $"นำส่ง{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} สำเร็จ ({amount + lateFee:N2} บาท)");
+                $"นำส่ง{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} สำเร็จ ({amount + lateFee:N2} บาท){reportNote}");
         }
         catch
         {
             await tx.RollbackAsync();
             throw;
+        }
+    }
+
+    /// <summary>สร้างรายงานภาษี ภ.พ.36 ของงวดให้ถ้ายังไม่มี — idempotent
+    /// (มีอยู่แล้วก็เงียบ) และ **ห้าม throw**: การนำส่งสำเร็จ+commit ไปแล้ว
+    /// ห้ามล้มย้อนหลังเพราะสร้างรายงานไม่ผ่าน. คืนข้อความต่อท้ายผลนำส่ง
+    /// (ค่าว่าง = ไม่ได้สร้างอะไรใหม่).</summary>
+    private async Task<string> TryEnsurePp36ReportAsync(Guid companyId, int year, int month)
+    {
+        try
+        {
+            var exists = await _db.TaxReports.AnyAsync(t => t.CompanyId == companyId
+                && t.TaxType == TaxType.VatPp36 && t.Year == year && t.Month == month);
+            if (exists) return "";
+            await _tax.GenerateTaxReportAsync(companyId,
+                new Models.DTOs.Tax.CreateTaxReportRequest(TaxType.VatPp36, year, month));
+            _logger.LogInformation("Auto-generated ภ.พ.36 tax report {Month}/{Year} after remit", month, year);
+            return " · สร้างรายงาน ภ.พ.36 งวดนี้ให้อัตโนมัติแล้ว (ดูที่หน้ารายงานภาษี)";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "สร้างรายงาน ภ.พ.36 อัตโนมัติไม่สำเร็จ {Month}/{Year} — นำส่งสำเร็จแล้ว ไม่กระทบ",
+                month, year);
+            return "";
         }
     }
 
