@@ -207,6 +207,9 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .toast-success { background: var(--success); }
 .toast-error { background: var(--danger); }
 .toast-info { background: var(--info); }
+/* toast-warning เดิมไม่มีสี — .toast ตั้ง color:#fff ไว้ แต่ไม่มี background
+   ⇒ ข้อความขาวบนพื้นขาว = มองไม่เห็นเลย (มีคนเรียก type 'warning' อยู่จริง) */
+.toast-warning { background: #D97706; }
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
 /* ===== Pagination ===== */

@@ -6,6 +6,66 @@
   <title>นำส่งภาษี / ประกันสังคม - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* ── แถบตัวกรอง ───────────────────────────────────────────── */
+    /* แถบตัวกรองเป็น "แผง" ที่มีขอบครบ ไม่ใช่แถบเต็มความกว้าง — .card มี
+       padding 24px (16px บนจอเล็ก) การดันขอบด้วย margin ติดลบค่าคงที่จะล้น
+       บนมือถือ */
+    .rm-filters { padding: 12px 14px; border: 1px solid var(--gray-200); border-radius: 10px;
+      background: #fbfcfe; margin-bottom: 6px; }
+    .rm-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .rm-chip {
+      display: inline-flex; align-items: baseline; gap: 7px; cursor: pointer;
+      border: 1.5px solid var(--gray-300); background: #fff; border-radius: 9999px;
+      padding: 6px 13px; font-size: 13px; font-weight: 600; color: var(--gray-700);
+      transition: all .15s; line-height: 1.3; white-space: nowrap;
+    }
+    .rm-chip:hover { border-color: var(--gray-400); background: var(--gray-50); }
+    .rm-chip .rm-chip-n { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 9999px;
+      background: var(--gray-100); color: var(--gray-600); }
+    .rm-chip .rm-chip-amt { font-size: 11px; font-weight: 500; color: var(--gray-400);
+      font-variant-numeric: tabular-nums; }
+    .rm-chip.on { border-color: currentColor; }
+    .rm-chip.on .rm-chip-n { background: currentColor; color: #fff; }
+    .rm-chip.on .rm-chip-amt { color: inherit; opacity: .75; }
+    .rm-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+    .rm-controls .form-select, .rm-controls .form-input { font-size: 13px; padding: 6px 10px; height: auto; }
+
+    /* ── หัวกลุ่ม (งวด / ประเภท) ─────────────────────────────── */
+    .rm-group-head {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer;
+      padding: 9px 13px; margin-top: 14px; background: var(--gray-50);
+      border: 1px solid var(--gray-200); border-radius: 9px; user-select: none;
+    }
+    .rm-group-head:hover { background: var(--gray-100); }
+    .rm-group-title { font-weight: 700; font-size: 14px; color: var(--gray-800); }
+    .rm-group-meta { font-size: 12px; color: var(--gray-500); }
+    .rm-group-total { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    /* ── แถบสีความด่วนหน้าแถว ─────────────────────────────────── */
+    .rm-row td:first-child { border-left: 3px solid transparent; }
+    .rm-row.u-overdue td:first-child { border-left-color: #dc2626; }
+    .rm-row.u-today   td:first-child { border-left-color: #ea580c; }
+    .rm-row.u-soon    td:first-child { border-left-color: #f59e0b; }
+
+    .rm-type-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px;
+      border-radius: 6px; border: 1px solid; margin-right: 6px; vertical-align: 1px; }
+
+    /* ── มือถือ: ตารางกลายเป็นการ์ด (หัวคอลัมน์ไปอยู่หน้าแต่ละค่า) ── */
+    @media (max-width: 820px) {
+      .rm-table thead { display: none; }
+      .rm-table, .rm-table tbody, .rm-table tr, .rm-table td { display: block; width: 100%; }
+      .rm-table tr.rm-row { border: 1px solid var(--gray-200); border-radius: 10px;
+        margin: 10px 12px; padding: 10px 12px 12px; box-shadow: var(--shadow-sm); }
+      .rm-row td { border: none !important; padding: 3px 0 !important; text-align: left !important; }
+      .rm-row td:first-child { border-left: none !important; }
+      .rm-row td[data-label]::before { content: attr(data-label) " · "; font-size: 11px;
+        color: var(--gray-400); font-weight: 600; }
+      .rm-row td:last-child { margin-top: 8px; }
+      .rm-row td:last-child .btn { width: 100%; }
+      .rm-group-total { margin-left: 0; width: 100%; }
+    }
+  </style>
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
@@ -13,24 +73,41 @@
       <div>
         <h2 class="page-title">นำส่งภาษี / ประกันสังคม</h2>
         <p class="page-subtitle">
-          ยอดรอนำส่งทุกประเภทในที่เดียว — ประกันสังคม (สปส.1-10) · ภาษีหัก ณ ที่จ่าย
-          (ภงด.1/3/53) · ภาษีมูลค่าเพิ่ม (ภพ.30) · พร้อมกำหนดชำระ/เลยกำหนด · กดจ่ายแล้ว
-          ระบบลง JE ล้างหนี้ค้างจ่าย/Cr ธนาคาร + แนบใบเสร็จได้
+          ยอดค้างนำส่งทุกแบบในที่เดียว — ประกันสังคม (สปส.1-10) · ภาษีหัก ณ ที่จ่าย
+          (ภ.ง.ด.1/3/53/54) · ภาษีมูลค่าเพิ่ม (ภ.พ.30/36) · กดนำส่งแล้วระบบลง JE
+          ล้างหนี้ค้างจ่าย / Cr ธนาคาร + แนบใบเสร็จได้
         </p>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <a class="btn btn-secondary btn-sm" href="/pages/tax-calendar.html">📅 ปฏิทินนำส่ง</a>
+        <a class="btn btn-secondary btn-sm" href="/pages/tax.html">📊 รายงานภาษี</a>
+        <button class="btn btn-secondary btn-sm" onclick="Page.load()" title="โหลดยอดใหม่จากเซิร์ฟเวอร์">↻ รีเฟรช</button>
       </div>
     </div>
 
-    <div class="grid grid-4 gap-4" id="kpis" style="margin-bottom:24px"></div>
+    <!-- KPI กดได้ = ตัวกรองลัด (เดิมเป็นตัวเลขนิ่ง ๆ กดอะไรไม่ได้) -->
+    <div class="grid grid-4 gap-4" id="kpis" style="margin-bottom:20px"></div>
+
+    <!-- ภ.พ.36 นำส่งแล้วรอรับรู้ภาษีซื้อ — ต้องเด่นเหนือทุกอย่าง ไม่ถูกตัวกรองซ่อน -->
+    <div id="pp36Banner"></div>
 
     <div class="card" style="margin-bottom:24px">
-      <div class="card-header"><h3 class="card-title">รายการรอนำส่ง</h3></div>
+      <div class="card-header" style="display:flex;align-items:center;justify-content:flex-start;gap:12px;flex-wrap:wrap">
+        <h3 class="card-title" style="margin:0">รายการรอนำส่ง</h3>
+        <span id="pendingCount" class="badge badge-gray"></span>
+        <div id="viewSwitch" style="margin-left:auto;display:flex;gap:4px"></div>
+      </div>
+      <div class="rm-filters" id="filterBar"></div>
       <div id="pendingContent">
         <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-header"><h3 class="card-title">ประวัติการนำส่งล่าสุด</h3></div>
+      <div class="card-header" style="display:flex;align-items:center;justify-content:flex-start;gap:12px;flex-wrap:wrap">
+        <h3 class="card-title" style="margin:0">ประวัติการนำส่งล่าสุด</h3>
+        <div id="histControls" style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap"></div>
+      </div>
       <div id="historyContent"></div>
     </div>
 
@@ -57,13 +134,43 @@
       _banks: [],
       _channels: [],
       _sel: null,
+      _collapsed: {},      // กลุ่มที่ผู้ใช้พับไว้ (ต่อ session)
 
       MONTHS: ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
       period(y, m) { return `${this.MONTHS[m]} ${y + 543}`; },
 
+      // ── กลุ่มประเภทแบบ (ใช้สีให้สแกนด้วยตาได้ทันทีว่าเป็นภาษีสายไหน) ──
+      TYPE_GROUP: {
+        SsoSps110: 'sso',
+        WhtPnd1: 'wht', WhtPnd3: 'wht', WhtPnd53: 'wht', WhtPnd54: 'wht',
+        VatPp30: 'vat', VatPp36: 'vat',
+      },
+      GROUP_STYLE: {
+        sso: { fg: '#047857', bg: '#ecfdf5', bd: '#a7f3d0', label: 'ประกันสังคม' },
+        wht: { fg: '#c2410c', bg: '#fff7ed', bd: '#fed7aa', label: 'หัก ณ ที่จ่าย' },
+        vat: { fg: '#4338ca', bg: '#eef2ff', bd: '#c7d2fe', label: 'ภาษีมูลค่าเพิ่ม' },
+        other: { fg: '#475569', bg: '#f1f5f9', bd: '#cbd5e1', label: 'อื่น ๆ' },
+      },
+      gstyle(type) { return this.GROUP_STYLE[this.TYPE_GROUP[type] || 'other']; },
+
+      // ── สถานะตัวกรอง (จำไว้ต่อบริษัท — เปิดหน้าใหม่ได้มุมมองเดิม) ──
+      _f: { types: [], status: 'all', period: 'all', q: '', view: 'period' },
+      _fKey() { return 'remit.filter.' + (Layout.getCompanyId() || 'x'); },
+      _loadFilter() {
+        try {
+          const raw = localStorage.getItem(this._fKey());
+          if (raw) Object.assign(this._f, JSON.parse(raw) || {});
+          if (!Array.isArray(this._f.types)) this._f.types = [];
+        } catch (e) { /* storage ปิด/พัง = ใช้ค่าเริ่มต้น */ }
+      },
+      _saveFilter() {
+        try { localStorage.setItem(this._fKey(), JSON.stringify(this._f)); } catch (e) { /* ไม่สำคัญพอจะขวางการใช้งาน */ }
+      },
+
       async init() {
         if (!Layout.init('tax-remittance')) return;
         Layout.setTitle('นำส่งภาษี / ประกันสังคม');
+        this._loadFilter();
         await this.load();
       },
 
@@ -86,8 +193,15 @@
           // กัน field หาย
           this._data.pending = this._data.pending || [];
           this._data.recentHistory = this._data.recentHistory || [];
+          // ตรึง index เดิมไว้กับแถว — ตัวกรอง/จัดกลุ่มสลับลำดับได้ แต่ openPay
+          // ต้องอ้าง pending[i] ตัวจริงเสมอ (ไม่งั้นกดนำส่งผิดงวด = ลง JE ผิด)
+          this._data.pending.forEach((r, i) => { r._idx = i; });
           this.renderKpis();
+          this.renderPp36Banner();
+          this.renderViewSwitch();
+          this.renderFilters();
           this.renderPending();
+          this.renderHistoryControls();
           this.renderHistory();
           this.applyDeepLink();
         } catch (e) {
@@ -119,25 +233,149 @@
           done ? 'info' : 'warning', 9000);
       },
 
-      renderKpis() {
-        const d = this._data;
-        document.getElementById('kpis').innerHTML = `
-          <div class="kpi-card"><div class="kpi-label">รวมรอนำส่ง</div><div class="kpi-value">${Layout.money(d.totalPending)}</div><div class="text-xs text-gray-400">${d.pending.length} รายการ</div></div>
-          <div class="kpi-card"><div class="kpi-label">เลยกำหนด</div><div class="kpi-value" style="color:#dc2626">${d.overdueCount}</div><div class="text-xs text-gray-400">รายการ</div></div>
-          <div class="kpi-card"><div class="kpi-label">ยอดเลยกำหนด</div><div class="kpi-value" style="color:#dc2626">${Layout.money(d.totalOverdue)}</div></div>
-          <div class="kpi-card"><div class="kpi-label">นำส่งแล้ว (ล่าสุด)</div><div class="kpi-value">${d.recentHistory.length}</div><div class="text-xs text-gray-400">รายการ</div></div>`;
+      // ═══ ความด่วน ══════════════════════════════════════════════
+      /** จำนวนวันจากวันนี้ถึงกำหนด (ลบ = เลยมาแล้วกี่วัน). เทียบแบบ "วันชนวัน"
+       *  ไม่เอาเวลา — ไม่งั้น 23:00 ของวันครบกำหนดจะกลายเป็นเลยกำหนด */
+      _daysTo(d) {
+        const dt = Layout.asUtc(d);
+        if (!dt || isNaN(dt.getTime())) return null;
+        const a = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+        const n = new Date();
+        const b = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+        return Math.round((a - b) / 86400000);
+      },
+      /** สถานะความด่วนของแถว — ใช้ทั้งสี badge, แถบซ้าย และตัวกรอง
+       *  (ตัวตัดสินตัวเดียว ห้ามคำนวณซ้ำที่อื่น) */
+      _urgency(r) {
+        const days = this._daysTo(r.eFilingDueDate);
+        if (r.isOverdue) {
+          const late = days == null ? null : -days;
+          return { key: 'overdue', cls: 'u-overdue', badge: 'badge-danger',
+            label: late ? `เลยกำหนด ${late} วัน` : 'เลยกำหนด' };
+        }
+        if (days != null && days <= 0)
+          return { key: 'today', cls: 'u-today', badge: 'badge-danger', label: 'ครบกำหนดวันนี้' };
+        if (days != null && days <= 3)
+          return { key: 'today', cls: 'u-today', badge: 'badge-warning', label: `อีก ${days} วัน` };
+        if (days != null && days <= 7)
+          return { key: 'soon', cls: 'u-soon', badge: 'badge-warning', label: `อีก ${days} วัน` };
+        return { key: 'later', cls: '', badge: 'badge-gray',
+          label: days == null ? 'รอนำส่ง' : `อีก ${days} วัน` };
       },
 
-      renderPending() {
-        const c = document.getElementById('pendingContent');
-        const rows = this._data.pending || [];
+      // ═══ ตัวกรอง ═══════════════════════════════════════════════
+      /** สรุปจำนวน+ยอดต่อประเภท เรียงจากยอดมากไปน้อย — ใช้สร้างชิป */
+      _typeSummary() {
+        const map = new Map();
+        (this._data.pending || []).forEach(r => {
+          const k = r.remittanceType;
+          const cur = map.get(k) || { type: k, form: r.formCode, label: r.typeLabel, n: 0, amt: 0 };
+          cur.n++; cur.amt += (r.amount || 0);
+          map.set(k, cur);
+        });
+        return [...map.values()].sort((a, b) => b.amt - a.amt);
+      },
+      /** งวดทั้งหมดที่มีรายการค้าง (เก่า → ใหม่) */
+      _periodOptions() {
+        const set = new Map();
+        (this._data.pending || []).forEach(r => {
+          set.set(`${r.periodYear}-${r.periodMonth}`, { y: r.periodYear, m: r.periodMonth });
+        });
+        return [...set.entries()].map(([k, v]) => ({ key: k, y: v.y, m: v.m }))
+          .sort((a, b) => (a.y - b.y) || (a.m - b.m));
+      },
+      /** รายการหลังกรอง — จุดเดียวที่ตัดสินว่าอะไรถูกแสดง */
+      _filtered() {
+        const f = this._f;
+        const q = (f.q || '').trim().toLowerCase();
+        return (this._data.pending || []).filter(r => {
+          if (f.types.length && !f.types.includes(r.remittanceType)) return false;
+          if (f.period !== 'all' && `${r.periodYear}-${r.periodMonth}` !== f.period) return false;
+          if (f.status !== 'all') {
+            const u = this._urgency(r).key;
+            if (f.status === 'overdue' && u !== 'overdue') return false;
+            if (f.status === 'due7' && !(u === 'overdue' || u === 'today' || u === 'soon')) return false;
+            if (f.status === 'later' && u !== 'later') return false;
+          }
+          if (q) {
+            const hay = [r.formCode, r.typeLabel, this.period(r.periodYear, r.periodMonth),
+              r.payableAccountCode, String(r.amount)].join(' ').toLowerCase();
+            if (!hay.includes(q)) return false;
+          }
+          return true;
+        });
+      },
+      _hasActiveFilter() {
+        const f = this._f;
+        return f.types.length > 0 || f.status !== 'all' || f.period !== 'all' || !!(f.q || '').trim();
+      },
+
+      toggleType(type) {
+        const i = this._f.types.indexOf(type);
+        if (i >= 0) this._f.types.splice(i, 1); else this._f.types.push(type);
+        this._afterFilterChange();
+      },
+      clearTypes() { this._f.types = []; this._afterFilterChange(); },
+      clearAllFilters() {
+        this._f.types = []; this._f.status = 'all'; this._f.period = 'all'; this._f.q = '';
+        this._afterFilterChange();
+      },
+      setStatus(v) { this._f.status = v; this._afterFilterChange(); },
+      setPeriod(v) { this._f.period = v; this._afterFilterChange(); },
+      // ช่องค้นหา: **ห้าม** re-render แถบตัวกรองทั้งก้อนทุกตัวอักษร — ช่อง input
+      // จะถูกสร้างใหม่ทำให้ focus หลุด และพิมพ์ภาษาไทยผ่าน IME พังกลางคำ
+      // (อัปเดตเฉพาะตัวเลขนับ + ตารางก็พอ)
+      setQuery(v) { this._f.q = v; this._saveFilter(); this._updateCounts(); this.renderPending(); },
+      setView(v) { this._f.view = v; this._saveFilter(); this.renderViewSwitch(); this.renderPending(); },
+      _afterFilterChange() {
+        this._saveFilter();
+        this.renderFilters();
+        this.renderPending();
+      },
+      _updateCounts() {
+        const shown = this._filtered().length;
+        const allN = (this._data.pending || []).length;
+        const a = document.getElementById('pendingCount');
+        if (a) a.textContent = `${shown} รายการ`;
+        const b = document.getElementById('rmShown');
+        if (b) b.textContent = `แสดง ${shown} จาก ${allN} รายการ`;
+        const c = document.getElementById('rmClear');
+        if (c) c.style.display = this._hasActiveFilter() ? '' : 'none';
+      },
+
+      // ═══ Render ════════════════════════════════════════════════
+      renderKpis() {
+        const d = this._data;
+        const rows = d.pending || [];
+        const due7 = rows.filter(r => { const k = this._urgency(r).key; return k === 'today' || k === 'soon'; });
+        const due7Amt = due7.reduce((s, r) => s + (r.amount || 0), 0);
+        const paidAmt = (d.recentHistory || []).reduce((s, r) => s + (r.amount || 0) + (r.lateFee || 0), 0);
+        const card = (label, value, sub, color, onclick, title) => `
+          <div class="kpi-card" ${onclick ? `onclick="${onclick}" style="cursor:pointer" title="${Layout.esc(title || '')}"` : ''}>
+            <div class="kpi-label">${label}</div>
+            <div class="kpi-value" ${color ? `style="color:${color}"` : ''}>${value}</div>
+            <div class="text-xs text-gray-400">${sub}</div>
+          </div>`;
+        document.getElementById('kpis').innerHTML =
+          card('รวมรอนำส่ง', Layout.money(d.totalPending), `${rows.length} รายการ`, '',
+               'Page.clearAllFilters()', 'ล้างตัวกรองทั้งหมด')
+        + card('เลยกำหนด', String(d.overdueCount || 0), `${Layout.money(d.totalOverdue)} บาท`, '#dc2626',
+               "Page.setStatus('overdue')", 'กรองเฉพาะที่เลยกำหนด')
+        + card('ครบกำหนดใน 7 วัน', String(due7.length), `${Layout.money(due7Amt)} บาท`, '#d97706',
+               "Page.setStatus('due7')", 'กรองเฉพาะที่ใกล้ครบ/เลยกำหนด')
+        + card('นำส่งแล้ว (12 เดือน)', String((d.recentHistory || []).length), `${Layout.money(paidAmt)} บาท`, '#059669');
+      },
+
+      renderPp36Banner() {
         // ── ภ.พ.36 นำส่งแล้วแต่ยังไม่รับรู้ภาษีซื้อ — ต้องเด่นเหนือทุกอย่าง ──
         // ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่ 2 ("รับรู้
-        // ภาษีซื้อ" เมื่อได้ใบเสร็จ RD) ซ่อนอยู่ในแท็บประวัติ — ดันขึ้นเป็นแถบ
-        // ค้างถาวรจนกว่าจะกด ภาษีซื้อจึงยังไม่ขึ้น ภ.พ.30 อย่างเงียบ ๆ ไม่ได้อีก
-        const awaiting = this._data.pp36AwaitingRecognition || [];
-        const awaitingHtml = awaiting.length ? `
-          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+        // ภาษีซื้อ" เมื่อได้ใบเสร็จ RD) ซ่อนอยู่ในแท็บประวัติ. อยู่นอกการ์ด
+        // "รายการรอนำส่ง" เพื่อไม่ให้ตัวกรองประเภทซ่อนมันไปโดยไม่ตั้งใจ
+        const awaiting = (this._data && this._data.pp36AwaitingRecognition) || [];
+        const el = document.getElementById('pp36Banner');
+        if (!awaiting.length) { el.innerHTML = ''; return; }
+        el.innerHTML = `
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;padding:12px 14px;margin-bottom:20px">
             <div style="font-weight:700;color:#1e40af;margin-bottom:6px">🌐 ภ.พ.36 นำส่งแล้ว — รอรับรู้ภาษีซื้อเข้า ภ.พ.30 (${awaiting.length} งวด)</div>
             <div style="font-size:12px;color:#1e3a8a;margin-bottom:8px">ภาษีซื้อยังพักที่ 11640 และ<b>ยังไม่ขึ้นใน ภ.พ.30</b> จนกว่าจะกด "รับรู้ภาษีซื้อ" (เมื่อได้ใบเสร็จกรมสรรพากร §77/2)</div>
             ${awaiting.map(a => `
@@ -145,60 +383,223 @@
                 <span style="font-size:13px">งวด <b>${this.period(a.periodYear, a.periodMonth)}</b> · ภาษีซื้อ <b>${Layout.money(a.vatAmount)}</b> · ${a.documentCount} ใบ · นำส่งเมื่อ ${Layout.date(a.remittedAt)}</span>
                 <button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${a.periodYear}, ${a.periodMonth})">🧾 รับรู้ภาษีซื้อ → เข้า ภ.พ.30</button>
               </div>`).join('')}
-          </div>` : '';
-        if (!rows.length) {
-          c.innerHTML = awaitingHtml + '<div class="text-center text-gray-400" style="padding:40px">✓ ไม่มียอดค้างนำส่ง</div>';
-          return;
-        }
-        c.innerHTML = awaitingHtml + `
+          </div>`;
+      },
+
+      renderViewSwitch() {
+        const opts = [['period', '📅 ตามงวด'], ['type', '🗂 ตามประเภท'], ['list', '☰ รายการ']];
+        document.getElementById('viewSwitch').innerHTML = opts.map(([v, label]) =>
+          `<button class="btn btn-sm ${this._f.view === v ? 'btn-primary' : 'btn-secondary'}"
+             onclick="Page.setView('${v}')">${label}</button>`).join('');
+      },
+
+      renderFilters() {
+        const f = this._f;
+        const sum = this._typeSummary();
+        const allN = (this._data.pending || []).length;
+        const allAmt = (this._data.pending || []).reduce((s, r) => s + (r.amount || 0), 0);
+        const chip = (on, color, label, n, amt, onclick, title) => `
+          <span class="rm-chip ${on ? 'on' : ''}" ${on ? `style="color:${color};background:${color}12"` : ''}
+                onclick="${onclick}" title="${Layout.esc(title || '')}">
+            <span>${label}</span>
+            <span class="rm-chip-n">${n}</span>
+            <span class="rm-chip-amt">${Layout.money(amt)}</span>
+          </span>`;
+        const chips = chip(f.types.length === 0, '#4f46e5', 'ทั้งหมด', allN, allAmt,
+            'Page.clearTypes()', 'แสดงทุกประเภทแบบ')
+          + sum.map(s => {
+              const g = this.gstyle(s.type);
+              return chip(f.types.includes(s.type), g.fg, Layout.esc(s.form), s.n, s.amt,
+                `Page.toggleType('${s.type}')`, `${s.label} — กดเพื่อกรอง (เลือกได้หลายประเภท)`);
+            }).join('');
+
+        const periods = this._periodOptions();
+        const shown = this._filtered().length;
+        document.getElementById('filterBar').innerHTML = `
+          <div class="rm-chips">${chips}</div>
+          <div class="rm-controls">
+            <select class="form-select" onchange="Page.setStatus(this.value)" style="min-width:150px">
+              <option value="all" ${f.status === 'all' ? 'selected' : ''}>สถานะ: ทั้งหมด</option>
+              <option value="overdue" ${f.status === 'overdue' ? 'selected' : ''}>เลยกำหนดแล้ว</option>
+              <option value="due7" ${f.status === 'due7' ? 'selected' : ''}>ครบกำหนดใน 7 วัน</option>
+              <option value="later" ${f.status === 'later' ? 'selected' : ''}>ยังไม่ใกล้กำหนด</option>
+            </select>
+            <select class="form-select" onchange="Page.setPeriod(this.value)" style="min-width:140px">
+              <option value="all" ${f.period === 'all' ? 'selected' : ''}>งวด: ทั้งหมด</option>
+              ${periods.map(p => `<option value="${p.key}" ${f.period === p.key ? 'selected' : ''}>${this.period(p.y, p.m)}</option>`).join('')}
+            </select>
+            <input type="text" id="rmSearch" class="form-input" style="min-width:190px" placeholder="ค้นหา แบบ/งวด/ยอด…"
+                   value="${Layout.esc(f.q)}" oninput="Page.setQuery(this.value)">
+            <button class="btn btn-sm btn-ghost" id="rmClear" onclick="Page.clearAllFilters()"
+                    style="${this._hasActiveFilter() ? '' : 'display:none'}">✕ ล้างตัวกรอง</button>
+            <span class="text-xs text-gray-400" id="rmShown" style="margin-left:auto">แสดง ${shown} จาก ${allN} รายการ</span>
+          </div>`;
+        document.getElementById('pendingCount').textContent = `${shown} รายการ`;
+      },
+
+      toggleGroup(key) {
+        this._collapsed[key] = !this._collapsed[key];
+        this.renderPending();
+      },
+
+      /** แถวเดียวในตาราง — ใช้ร่วมทุกมุมมอง (ห้าม render คนละแบบต่อมุมมอง) */
+      _rowHtml(r, showType) {
+        const u = this._urgency(r);
+        const g = this.gstyle(r.remittanceType);
+        const fee = r.lateFeePreview > 0
+          ? `<div class="text-xs" style="color:#dc2626">+ เงินเพิ่ม ${Layout.money(r.lateFeePreview)}</div>` : '';
+        const sub = r.remittanceType === 'SsoSps110'
+          ? `<div class="text-xs text-gray-400">ลูกจ้าง ${Layout.money(r.employeeAmount)} · นายจ้าง ${Layout.money(r.employerAmount)}</div>`
+          : (r.remittanceType === 'VatPp30' || r.remittanceType === 'VatPp36'
+              ? `<div class="text-xs text-gray-400">ขาย ${Layout.money(r.outputVat)} − ซื้อ ${Layout.money(r.inputVat)}</div>`
+              : (r.payeeCount ? `<div class="text-xs text-gray-400">${r.payeeCount} ราย</div>` : ''));
+        const typeCell = showType
+          ? `<span class="rm-type-badge" style="color:${g.fg};background:${g.bg};border-color:${g.bd}">${Layout.esc(r.formCode)}</span>${Layout.esc(r.typeLabel)}
+             <div class="text-xs text-gray-400">ผังบัญชี ${Layout.esc(r.payableAccountCode)}</div>`
+          : `${Layout.esc(r.typeLabel)}<div class="text-xs text-gray-400">ผังบัญชี ${Layout.esc(r.payableAccountCode)}</div>`;
+        return `
+          <tr class="rm-row ${u.cls}">
+            <td class="font-medium" data-label="แบบ">${typeCell}</td>
+            <td data-label="งวด">${this.period(r.periodYear, r.periodMonth)}</td>
+            <td class="text-right" data-label="ยอดรอนำส่ง" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}${fee}${sub}</td>
+            <td class="text-center" data-label="กำหนดยื่น">${Layout.date(r.eFilingDueDate)}<div class="text-xs text-gray-400">กระดาษ ${Layout.date(r.paperDueDate)}</div></td>
+            <td class="text-center" data-label="สถานะ"><span class="badge ${u.badge}">${u.label}</span></td>
+            <td class="text-right"><button class="btn btn-outline btn-sm" onclick="Page.openPay(${r._idx})">💸 นำส่ง</button></td>
+          </tr>`;
+      },
+
+      _tableHtml(rows, showType) {
+        return `
           <div class="table-container" style="border:none">
-            <table class="table">
+            <table class="table rm-table">
               <thead><tr>
-                <th>ประเภท</th><th>งวด</th><th class="text-right">ยอดรอนำส่ง</th>
-                <th class="text-center">กำหนดยื่น</th><th class="text-center">สถานะ</th><th></th>
+                <th>แบบ / ประเภท</th><th>งวด</th><th class="text-right">ยอดรอนำส่ง</th>
+                <th class="text-center">กำหนดยื่น (e-Filing)</th><th class="text-center">สถานะ</th><th></th>
               </tr></thead>
-              <tbody>${rows.map((r, i) => {
-                const status = r.isOverdue
-                  ? `<span style="color:#dc2626;font-weight:700">เลยกำหนด</span>`
-                  : `<span style="color:#d97706;font-weight:600">รอนำส่ง</span>`;
-                const fee = r.lateFeePreview > 0
-                  ? `<div class="text-xs" style="color:#dc2626">+ เงินเพิ่ม ${Layout.money(r.lateFeePreview)}</div>` : '';
-                const sub = r.remittanceType === 'SsoSps110'
-                  ? `<div class="text-xs text-gray-400">ลูกจ้าง ${Layout.money(r.employeeAmount)} · นายจ้าง ${Layout.money(r.employerAmount)}</div>`
-                  : (r.remittanceType === 'VatPp30'
-                      ? `<div class="text-xs text-gray-400">ขาย ${Layout.money(r.outputVat)} − ซื้อ ${Layout.money(r.inputVat)}</div>`
-                      : (r.payeeCount ? `<div class="text-xs text-gray-400">${r.payeeCount} ราย</div>` : ''));
-                return `
-                <tr>
-                  <td class="font-medium">${Layout.esc(r.typeLabel)}<div class="text-xs text-gray-400">${Layout.esc(r.formCode)} · ${r.payableAccountCode}</div></td>
-                  <td>${this.period(r.periodYear, r.periodMonth)}</td>
-                  <td class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}${fee}${sub}</td>
-                  <td class="text-center">${Layout.date(r.eFilingDueDate)}<div class="text-xs text-gray-400">กระดาษ ${Layout.date(r.paperDueDate)}</div></td>
-                  <td class="text-center">${status}</td>
-                  <td class="text-right"><button class="btn btn-primary btn-sm" onclick="Page.openPay(${i})">💸 นำส่ง</button></td>
-                </tr>`;
-              }).join('')}</tbody>
+              <tbody>${rows.map(r => this._rowHtml(r, showType)).join('')}</tbody>
             </table>
           </div>`;
       },
 
+      renderPending() {
+        const c = document.getElementById('pendingContent');
+        const all = this._data.pending || [];
+        const rows = this._filtered();
+
+        if (!all.length) {
+          c.innerHTML = `<div class="empty-state" style="padding:48px 20px">
+            <div class="icon">✅</div><h3>ไม่มียอดค้างนำส่ง</h3>
+            <p>ทุกแบบของช่วง 12 เดือนที่ผ่านมาถูกนำส่งครบแล้ว</p></div>`;
+          return;
+        }
+        if (!rows.length) {
+          c.innerHTML = `<div class="empty-state" style="padding:48px 20px">
+            <div class="icon">🔍</div><h3>ไม่มีรายการตรงกับตัวกรอง</h3>
+            <p>มี ${all.length} รายการรอนำส่งอยู่ แต่ถูกตัวกรองปัจจุบันซ่อนไว้ทั้งหมด</p>
+            <button class="btn btn-primary" onclick="Page.clearAllFilters()">✕ ล้างตัวกรอง</button></div>`;
+          return;
+        }
+
+        if (this._f.view === 'list') {
+          // เรียงแบบเดิม: เลยกำหนดก่อน แล้วตามกำหนดยื่น
+          const sorted = [...rows].sort((a, b) =>
+            (b.isOverdue - a.isOverdue) || (Layout.asUtc(a.eFilingDueDate) - Layout.asUtc(b.eFilingDueDate)));
+          c.innerHTML = this._tableHtml(sorted, true);
+          return;
+        }
+
+        const byPeriod = this._f.view === 'period';
+        const groups = new Map();
+        rows.forEach(r => {
+          const key = byPeriod ? `${r.periodYear}-${String(r.periodMonth).padStart(2, '0')}` : r.remittanceType;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(r);
+        });
+        // งวด: เก่าสุดขึ้นก่อน (ค้างนานสุด = ด่วนสุด) · ประเภท: ยอดมากขึ้นก่อน
+        const keys = [...groups.keys()].sort((a, b) => byPeriod
+          ? a.localeCompare(b)
+          : groups.get(b).reduce((s, r) => s + r.amount, 0) - groups.get(a).reduce((s, r) => s + r.amount, 0));
+
+        c.innerHTML = keys.map(k => {
+          const list = groups.get(k).sort((a, b) => Layout.asUtc(a.eFilingDueDate) - Layout.asUtc(b.eFilingDueDate));
+          const total = list.reduce((s, r) => s + (r.amount || 0), 0);
+          const overdueN = list.filter(r => r.isOverdue).length;
+          const first = list[0];
+          const title = byPeriod
+            ? `งวด ${this.period(first.periodYear, first.periodMonth)}`
+            : `${Layout.esc(first.formCode)} — ${Layout.esc(first.typeLabel)}`;
+          const g = byPeriod ? null : this.gstyle(first.remittanceType);
+          const collapsed = !!this._collapsed[k];
+          return `
+            <div>
+              <div class="rm-group-head" onclick="Page.toggleGroup('${k}')">
+                <span style="color:var(--gray-400);font-size:12px">${collapsed ? '▸' : '▾'}</span>
+                <span class="rm-group-title" ${g ? `style="color:${g.fg}"` : ''}>${title}</span>
+                <span class="rm-group-meta">${list.length} รายการ${overdueN ? ` · <b style="color:#dc2626">เลยกำหนด ${overdueN}</b>` : ''}</span>
+                <span class="rm-group-total">${Layout.money(total)}</span>
+              </div>
+              ${collapsed ? '' : this._tableHtml(list, byPeriod)}
+            </div>`;
+        }).join('');
+      },
+
+      // ═══ ประวัติ ═══════════════════════════════════════════════
+      _hf: { type: 'all', q: '' },
+      setHistType(v) { this._hf.type = v; this.renderHistory(); },
+      // ช่องค้นหาประวัติอยู่ใน #histControls ซึ่ง renderHistory ไม่แตะ → focus ไม่หลุด
+      setHistQuery(v) { this._hf.q = v; this.renderHistory(); },
+
+      renderHistoryControls() {
+        const types = new Map();
+        (this._data.recentHistory || []).forEach(r => types.set(r.remittanceType, r.formCode));
+        document.getElementById('histControls').innerHTML = `
+          <select class="form-select" style="font-size:13px;padding:6px 10px;height:auto" onchange="Page.setHistType(this.value)">
+            <option value="all">ทุกประเภท</option>
+            ${[...types.entries()].map(([t, form]) =>
+              `<option value="${t}" ${this._hf.type === t ? 'selected' : ''}>${Layout.esc(form)}</option>`).join('')}
+          </select>
+          <input type="text" id="rmHistSearch" class="form-input" style="font-size:13px;padding:6px 10px;height:auto;min-width:170px"
+                 placeholder="ค้นหา งวด/เลขรับ…" value="${Layout.esc(this._hf.q)}" oninput="Page.setHistQuery(this.value)">`;
+      },
+
+      _filteredHistory() {
+        const q = (this._hf.q || '').trim().toLowerCase();
+        return (this._data.recentHistory || []).filter(r => {
+          if (this._hf.type !== 'all' && r.remittanceType !== this._hf.type) return false;
+          if (q) {
+            const hay = [r.formCode, this.period(r.periodYear, r.periodMonth), r.filingNumber || '',
+              String(r.amount)].join(' ').toLowerCase();
+            if (!hay.includes(q)) return false;
+          }
+          return true;
+        });
+      },
+
       renderHistory() {
         const c = document.getElementById('historyContent');
-        const rows = this._data.recentHistory || [];
-        if (!rows.length) { c.innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีประวัติ</div>'; return; }
+        const all = this._data.recentHistory || [];
+        if (!all.length) { c.innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีประวัติ</div>'; return; }
+        const rows = this._filteredHistory();
+        if (!rows.length) {
+          c.innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่มีรายการตรงกับตัวกรอง</div>';
+          return;
+        }
+        const total = rows.reduce((s, r) => s + (r.amount || 0) + (r.lateFee || 0), 0);
         c.innerHTML = `
           <div class="table-container" style="border:none">
-            <table class="table">
-              <thead><tr><th>ประเภท</th><th>งวด</th><th class="text-right">ยอด</th><th class="text-right">เงินเพิ่ม</th><th>วันที่จ่าย</th><th>เลขรับ</th><th class="text-center">ใบเสร็จ</th><th></th></tr></thead>
-              <tbody>${rows.map(r => `
-                <tr>
-                  <td>${Layout.esc(r.formCode)}</td>
-                  <td>${this.period(r.periodYear, r.periodMonth)}</td>
-                  <td class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</td>
-                  <td class="text-right" style="font-variant-numeric:tabular-nums">${r.lateFee > 0 ? Layout.money(r.lateFee) : '-'}</td>
-                  <td>${Layout.date(r.payDate)}</td>
-                  <td>${Layout.esc(r.filingNumber || '-')}</td>
-                  <td class="text-center">${r.receiptAttachmentId
+            <table class="table rm-table">
+              <thead><tr><th>แบบ</th><th>งวด</th><th class="text-right">ยอด</th><th class="text-right">เงินเพิ่ม</th><th>วันที่จ่าย</th><th>เลขรับ</th><th class="text-center">ใบเสร็จ</th><th></th></tr></thead>
+              <tbody>${rows.map(r => {
+                const g = this.gstyle(r.remittanceType);
+                return `
+                <tr class="rm-row">
+                  <td data-label="แบบ"><span class="rm-type-badge" style="color:${g.fg};background:${g.bg};border-color:${g.bd}">${Layout.esc(r.formCode)}</span></td>
+                  <td data-label="งวด">${this.period(r.periodYear, r.periodMonth)}</td>
+                  <td class="text-right" data-label="ยอด" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</td>
+                  <td class="text-right" data-label="เงินเพิ่ม" style="font-variant-numeric:tabular-nums">${r.lateFee > 0 ? Layout.money(r.lateFee) : '-'}</td>
+                  <td data-label="วันที่จ่าย">${Layout.date(r.payDate)}</td>
+                  <td data-label="เลขรับ">${Layout.esc(r.filingNumber || '-')}</td>
+                  <td class="text-center" data-label="ใบเสร็จ">${r.receiptAttachmentId
                     ? `<button class="btn btn-sm btn-ghost" onclick="Page.viewReceipt('${r.receiptAttachmentId}')" title="เปิดดูใบเสร็จ/หลักฐานที่แนบไว้">📎 ดู</button>`
                     : `<button class="btn btn-sm btn-ghost" onclick="Page.attachFromHistory('${r.id}', '${this.period(r.periodYear, r.periodMonth)}')" title="ยังไม่มีไฟล์แนบ — แนบใบเสร็จ/สลิปย้อนหลังได้">＋แนบ</button>`}</td>
                   <td class="text-right">${r.remittanceType === 'VatPp36'
@@ -206,8 +607,12 @@
                       ? `<button class="btn btn-sm btn-outline" style="color:#15803d;border-color:#86efac" onclick="Page.openPp36Detail(${r.periodYear}, ${r.periodMonth})" title="รับรู้ภาษีซื้อแล้ว — กดดูว่าใบไหนเข้า ภ.พ.30 งวดไหน + ย้ายเดือนเคลมได้ที่นี่">✓ เข้า ภ.พ.30 แล้ว · ดู</button>`
                       : `<button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${r.periodYear}, ${r.periodMonth})" title="ได้ใบเสร็จกรมสรรพากรแล้ว → รับรู้ภาษีซื้อ (Dr 11610 / Cr 11640) เข้า ภ.พ.30 (§77/2) — ระบบกันรับรู้ซ้ำให้">🧾 รับรู้ภาษีซื้อ</button>`)
                     : ''}</td>
-                </tr>`).join('')}</tbody>
+                </tr>`; }).join('')}</tbody>
             </table>
+          </div>
+          <div style="padding:10px 16px;border-top:1px solid var(--gray-200);font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <span class="text-gray-500">แสดง ${rows.length} จาก ${all.length} รายการ</span>
+            <span>รวมที่นำส่งแล้ว (รวมเงินเพิ่ม) <b style="font-variant-numeric:tabular-nums">${Layout.money(total)}</b></span>
           </div>`;
       },
 
@@ -225,7 +630,7 @@
         if (titleEl) titleEl.textContent = `ภ.พ.36 งวด ${this.period(year, month)} — ใบที่รับรู้ภาษีซื้อแล้ว`;
         const bodyEl = this._byId('remitBody');
         if (!bodyEl) return;
-        const thMonths = ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+        const thMonths = this.MONTHS;
         const statusCell = (r) => {
           if (r.reportStatus === 'none')
             return `<span style="color:#b45309">ยังไม่มีรายงาน ภ.พ.30 งวด ${thMonths[r.claimMonth]} ${r.claimYear + 543} — สร้างที่หน้า "รายงานภาษี" แล้วใบนี้จะถูกดึงเข้าเอง</span>`;
@@ -340,9 +745,14 @@
             + '</optgroup>';
         }
         const isSso = r.remittanceType === 'SsoSps110';
+        const u = this._urgency(r);
         const bodyEl = this._byId('remitBody');
         if (!bodyEl) { Layout.toast('เปิดหน้าต่างนำส่งไม่ได้ — โหลดหน้าใหม่', 'error'); return; }
         bodyEl.innerHTML = `
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+            <span class="badge ${u.badge}">${u.label}</span>
+            <span class="text-xs text-gray-500">กำหนดยื่น e-Filing ${Layout.date(r.eFilingDueDate)} · กระดาษ ${Layout.date(r.paperDueDate)}</span>
+          </div>
           <div style="background:#f8fafc;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px">
             <div style="display:flex;justify-content:space-between"><span class="text-gray-500">ยอดเงินสมทบ/ภาษี</span><b style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</b></div>
             ${isSso ? `<div style="display:flex;justify-content:space-between;margin-top:4px"><span class="text-gray-500">เงินเพิ่มนำส่งช้า §49</span><b id="feeLbl" style="color:#dc2626;font-variant-numeric:tabular-nums">${Layout.money(r.lateFeePreview)}</b></div>` : ''}

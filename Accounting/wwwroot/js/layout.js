@@ -1840,9 +1840,16 @@ const Layout = {
     document.body.appendChild(badge);
   },
 
-  toast(msg, type = 'success') {
+  /** แจ้งเตือนมุมจอ.
+   *  @param durationMs เวลาแสดง (ms) — เดิมพารามิเตอร์นี้ **ไม่มี** แต่มีคน
+   *  เรียกส่งมาแล้ว 40 จุดทั่วระบบ (`Layout.toast(msg,'info',12000)`) ซึ่งถูก
+   *  กลืนทิ้งเงียบ ๆ ⇒ ข้อความสอนขั้นตอนยาว ๆ (เช่น "ขั้นถัดไปของ ภ.พ.36")
+   *  หายไปใน 3.5 วิ ผู้ใช้อ่านไม่ทัน — defect class "ห้าม silent no-op".
+   *  clamp 1.5–20 วิ กันเรียกด้วยค่าเพี้ยนแล้วค้างจอ. */
+  toast(msg, type = 'success', durationMs) {
     const container = document.getElementById('toastContainer');
     if (!container) return;
+    const ms = Math.min(20000, Math.max(1500, Number(durationMs) || 3500));
 
     // Deduplicate: skip if same message is already showing
     const key = `${type}:${msg}`;
@@ -1859,13 +1866,14 @@ const Layout = {
 
     const t = document.createElement('div');
     t.className = `toast toast-${type}`;
-    t.innerHTML = `${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'} ${this.esc(msg)}`;
+    t.innerHTML = `${type === 'success' ? '✅' : type === 'error' ? '❌'
+      : type === 'warning' ? '⚠️' : 'ℹ️'} ${this.esc(msg)}`;
     container.appendChild(t);
     this._activeToasts.set(key, t);
     setTimeout(() => {
       t.style.opacity = '0';
       setTimeout(() => { t.remove(); this._activeToasts.delete(key); }, 300);
-    }, 3500);
+    }, ms);
   },
 
   // Modal helpers
