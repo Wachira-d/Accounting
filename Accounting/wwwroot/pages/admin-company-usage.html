@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>การใช้งานรายบริษัท - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; }
+    .kpi { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; }
+    .kpi .lbl { font-size:12px; color:#64748b; font-weight:600; }
+    .kpi .val { font-size:22px; font-weight:800; color:#0f172a; margin-top:4px; line-height:1.2 }
+    .kpi .sub { font-size:11px; color:#94a3b8; margin-top:2px }
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-bottom:16px }
+    .card h3 { margin:0 0 12px; font-size:15px; font-weight:700; color:#0f172a }
+    table.rpt { width:100%; border-collapse:collapse; font-size:13px }
+    table.rpt th { background:#f8fafc; text-align:left; padding:8px 10px; font-weight:700; color:#334155;
+                   border-bottom:2px solid #e2e8f0; white-space:nowrap }
+    table.rpt td { padding:8px 10px; border-bottom:1px solid #f1f5f9; vertical-align:top }
+    table.rpt tbody tr.co:hover { background:#f8fafc; cursor:pointer }
+    .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap }
+    .scroll-x { overflow-x:auto }
+    .chip { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px;
+            font-weight:600; background:#eef2ff; color:#3730a3; margin:2px 3px 2px 0; white-space:nowrap }
+    .muted { color:#94a3b8 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="container" style="max-width:1500px;margin:0 auto;padding:20px">
+
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+        <div>
+          <h1 style="margin:0;font-size:24px;font-weight:700">🏢 การใช้งานรายบริษัท</h1>
+          <p style="margin:4px 0 0;color:#64748b;font-size:14px">
+            เดือนละ 1 หน้า — แต่ละบริษัทออกเอกสารอะไรไปกี่ใบ · สแกน OCR เท่าไร · เรียก AI กี่ครั้ง (จ่ายจริงเท่าไร) · ส่งอีเมล/e-Tax เท่าไร
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a class="btn btn-secondary" href="/pages/admin-ai-usage.html">🤖 เจาะลึก AI</a>
+          <button class="btn btn-secondary" id="btnCsv">⬇️ CSV</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div>
+            <label style="font-size:12px;color:#64748b;font-weight:600">งวด (เดือน)</label>
+            <input type="month" id="fMonth" class="form-control">
+          </div>
+          <button class="btn btn-primary" id="btnLoad">แสดงรายงาน</button>
+          <div style="flex:1"></div>
+          <input type="text" id="fSearch" class="form-control" placeholder="ค้นหาบริษัท / เลขผู้เสียภาษี…" style="max-width:280px">
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:8px;line-height:1.6">
+          นับตาม "วันที่บันทึกเข้าระบบ" ของเดือนที่เลือก (มิเตอร์การใช้งาน — คนละมุมกับเดือนภาษีของเอกสาร) ·
+          เอกสารไม่นับใบที่ถูกลบ · ยอดเงินไม่รวมใบร่าง/รอดำเนินการ/ถูกปฏิเสธ/ยกเลิก ·
+          ตัวเลข AI ตัดคีย์ทดสอบ (sandbox) ออกเหมือนหน้ารายงาน AI
+        </div>
+      </div>
+
+      <div class="kpi-grid" id="kpis" style="margin-bottom:16px"></div>
+
+      <div class="card">
+        <h3>รายบริษัท <span class="muted" style="font-weight:400;font-size:12px" id="rowCount"></span></h3>
+        <div class="scroll-x">
+          <table class="rpt">
+            <thead>
+              <tr>
+                <th>บริษัท</th>
+                <th class="num">เอกสาร</th>
+                <th class="num">อนุมัติแล้ว</th>
+                <th class="num">มูลค่ารวม</th>
+                <th class="num">OCR</th>
+                <th class="num">AI (ครั้ง)</th>
+                <th class="num">AI จ่ายจริง</th>
+                <th class="num">ต้นทุน AI (USD)</th>
+                <th class="num">อีเมล</th>
+                <th class="num">e-Tax</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"><tr><td colspan="10" class="muted" style="padding:24px">กำลังโหลด…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      data: null,
+
+      init() {
+        if (!Layout.init('admin-company-usage')) return;
+        Layout.setTitle('การใช้งานรายบริษัท');
+        const d = new Date();
+        document.getElementById('fMonth').value =
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        document.getElementById('btnLoad').addEventListener('click', () => this.load());
+        document.getElementById('btnCsv').addEventListener('click', () => this.csv());
+        document.getElementById('fSearch').addEventListener('input', () => this.render());
+        this.load();
+      },
+
+      n(v) { return (v ?? 0).toLocaleString('th-TH'); },
+      money(v) { return (v ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+
+      async load() {
+        const [y, m] = (document.getElementById('fMonth').value || '').split('-');
+        if (!y || !m) { Layout.toast('เลือกงวดก่อน', 'error'); return; }
+        document.getElementById('tbody').innerHTML =
+          '<tr><td colspan="10" class="muted" style="padding:24px">กำลังโหลด…</td></tr>';
+        try {
+          const res = await API.get(`/api/admin/company-usage?year=${+y}&month=${+m}`);
+          this.data = res?.data || null;
+          this.render();
+        } catch (e) {
+          this.data = null;
+          document.getElementById('kpis').innerHTML = '';
+          document.getElementById('tbody').innerHTML =
+            `<tr><td colspan="10" style="padding:24px;color:#dc2626">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</td></tr>`;
+        }
+      },
+
+      _rows() {
+        const q = (document.getElementById('fSearch').value || '').trim().toLowerCase();
+        const rows = this.data?.companies || [];
+        if (!q) return rows;
+        return rows.filter(r =>
+          (r.companyName || '').toLowerCase().includes(q) || (r.taxId || '').includes(q));
+      },
+
+      render() {
+        const d = this.data;
+        if (!d) return;
+        document.getElementById('kpis').innerHTML = `
+          <div class="kpi"><div class="lbl">บริษัทที่มีการใช้งาน</div><div class="val">${this.n(d.companyCount)}</div>
+            <div class="sub">งวด ${String(d.month).padStart(2, '0')}/${d.year + 543}</div></div>
+          <div class="kpi"><div class="lbl">เอกสารที่สร้าง</div><div class="val">${this.n(d.documentsTotal)}</div>
+            <div class="sub">ทุกชนิดรวมกัน (ไม่นับที่ถูกลบ)</div></div>
+          <div class="kpi"><div class="lbl">สแกน OCR</div><div class="val">${this.n(d.ocrScans)}</div>
+            <div class="sub">ครั้งที่อัปโหลดเข้าระบบ</div></div>
+          <div class="kpi"><div class="lbl">เรียก AI จริง (เสียเงิน)</div><div class="val">${this.n(d.aiCallsPaid)}</div>
+            <div class="sub">ต้นทุน ${this.money(d.aiCostUsd)} USD</div></div>`;
+
+        const rows = this._rows();
+        document.getElementById('rowCount').textContent =
+          rows.length === (d.companies || []).length ? `(${rows.length} ราย)`
+            : `(แสดง ${rows.length} จาก ${(d.companies || []).length} ราย)`;
+
+        if (!rows.length) {
+          document.getElementById('tbody').innerHTML =
+            '<tr><td colspan="10" class="muted" style="padding:24px">ไม่มีบริษัทที่ใช้งานในงวดนี้</td></tr>';
+          return;
+        }
+        document.getElementById('tbody').innerHTML = rows.map((r, i) => {
+          const chips = (r.documentsByType || []).map(t =>
+            `<span class="chip" title="อนุมัติแล้ว ${this.n(t.approved)} ใบ · มูลค่า ${this.money(t.amount)}">${Layout.esc(Layout.docTypeLabel ? Layout.docTypeLabel(t.type) : t.type)} ${this.n(t.count)}</span>`).join('');
+          return `
+          <tr class="co" onclick="Page.toggle(${i})">
+            <td><div style="font-weight:600">${Layout.esc(r.companyName)}</div>
+              <div class="muted" style="font-size:11px">${Layout.esc(r.taxId || '—')}</div></td>
+            <td class="num">${this.n(r.documentsTotal)}</td>
+            <td class="num">${this.n(r.documentsApproved)}</td>
+            <td class="num">${this.money(r.documentsAmount)}</td>
+            <td class="num">${this.n(r.ocrScans)}<div class="muted" style="font-size:11px">สำเร็จ ${this.n(r.ocrCompleted)}</div></td>
+            <td class="num">${this.n(r.aiCallsTotal)}</td>
+            <td class="num">${this.n(r.aiCallsPaid)}</td>
+            <td class="num">${this.money(r.aiCostUsd)}</td>
+            <td class="num">${this.n(r.emailsSent)}</td>
+            <td class="num">${this.n(r.etaxIssued)}</td>
+          </tr>
+          <tr id="dt${i}" style="display:none"><td colspan="10" style="background:#f8fafc">
+            <div style="font-size:12px;color:#475569;margin-bottom:4px">แยกตามชนิดเอกสาร (ชี้ที่ป้ายเพื่อดูยอดอนุมัติ/มูลค่า)</div>
+            ${chips || '<span class="muted">ไม่มีเอกสารในงวดนี้</span>'}</td></tr>`;
+        }).join('');
+      },
+
+      toggle(i) {
+        const el = document.getElementById('dt' + i);
+        if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+      },
+
+      csv() {
+        const d = this.data;
+        if (!d) return;
+        const head = ['บริษัท', 'เลขผู้เสียภาษี', 'เอกสารทั้งหมด', 'อนุมัติแล้ว', 'มูลค่ารวม',
+          'OCR', 'OCR สำเร็จ', 'AI ครั้งทั้งหมด', 'AI จ่ายจริง', 'ต้นทุน AI (USD)',
+          'อีเมลที่ส่ง', 'e-Tax', 'แยกชนิดเอกสาร'];
+        const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        const lines = [head.map(esc).join(',')];
+        this._rows().forEach(r => {
+          const types = (r.documentsByType || []).map(t => `${t.type}=${t.count}`).join(' | ');
+          lines.push([r.companyName, r.taxId || '', r.documentsTotal, r.documentsApproved,
+            r.documentsAmount, r.ocrScans, r.ocrCompleted, r.aiCallsTotal, r.aiCallsPaid,
+            r.aiCostUsd, r.emailsSent, r.etaxIssued, types].map(esc).join(','));
+        });
+        // ﻿ = BOM ให้ Excel ไทยอ่าน UTF-8 ออก (ไม่งั้นภาษาไทยเป็นขยะ)
+        const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `company-usage-${d.year}-${String(d.month).padStart(2, '0')}.csv`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>
