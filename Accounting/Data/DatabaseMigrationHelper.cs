@@ -3401,6 +3401,32 @@ public static class DatabaseMigrationHelper
               AND "InputVatClaimable" = true;
             """,
 
+            // ===== Backfill: DocumentLine.Amount ที่เก็บ "ยอดรวม VAT" (ผิด convention) =====
+            // OCR รุ่นก่อน 2026-08-14 เก็บยอดรวม VAT ลง Line.Amount บนใบที่ราคารวม VAT
+            // ⇒ ตอนอนุมัติ JE ลง Dr ค่าใช้จ่าย(รวม VAT) + Dr ภาษีซื้อ(VAT ซ้ำ) =
+            // เดบิตเกินเครดิตเท่ายอด VAT พอดี → อนุมัติไม่ได้ตลอดกาล (เคสจริง IKEA
+            // 1,396.00 = 1,304.68 + VAT 91.32 → Dr 1,487.32 ≠ Cr 1,396.00)
+            // ต้นทางแก้แล้ว แต่แถวเก่าค้างของเสีย — ซ่อมให้ตรงนี้ครั้งเดียว
+            // เงื่อนไข Σ Amount = SubTotal + VatAmount เป็นจริงได้เฉพาะตอนเก็บ gross
+            // (ถ้าเก็บ net อยู่แล้ว Σ Amount = SubTotal) ⇒ พอซ่อมเสร็จเงื่อนไขเป็นเท็จ
+            // = รันซ้ำทุก startup ได้ไม่พัง (idempotent) และไม่แตะยอดหัวเอกสารเลย
+            """
+            UPDATE "DocumentLines" dl
+               SET "Amount" = ROUND(dl."Amount" - dl."VatAmount", 2)
+              FROM "Documents" d
+             WHERE dl."DocumentId" = d."Id"
+               AND d."PricesIncludeVat" = true
+               AND d."VatAmount" > 0.02
+               AND d."IsDeleted" = false
+               AND dl."IsDeleted" = false
+               AND (SELECT ROUND(SUM(x."Amount"), 2) FROM "DocumentLines" x
+                     WHERE x."DocumentId" = d."Id" AND x."IsDeleted" = false)
+                   = ROUND(d."SubTotal" + d."VatAmount", 2)
+               AND (SELECT ROUND(SUM(x."VatAmount"), 2) FROM "DocumentLines" x
+                     WHERE x."DocumentId" = d."Id" AND x."IsDeleted" = false)
+                   = ROUND(d."VatAmount", 2);
+            """,
+
             // ===== TaxReportLines.IsExcluded: accountant include/exclude toggle =====
             """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "IsExcluded" boolean NOT NULL DEFAULT false;""",
 

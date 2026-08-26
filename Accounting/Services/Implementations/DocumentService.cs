@@ -4192,6 +4192,27 @@ public partial class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
 
+        // ── ซ่อมบรรทัดที่เก็บ "ยอดรวม VAT" ลง Amount (ผิด convention) ─────────
+        // เอกสารที่ OCR สร้างไว้ก่อน 2026-08-14 เก็บ Line.Amount เป็นยอดรวม VAT
+        // ⇒ JE ลง Dr ค่าใช้จ่าย(รวม VAT) + Dr ภาษีซื้อ(VAT ซ้ำ) = เดบิตเกินเครดิต
+        // เท่ายอด VAT พอดี ⇒ อนุมัติไม่ได้ตลอดกาล และผู้ใช้ไม่มีทางรู้ว่าต้องทำอะไร
+        // ต้นทางแก้แล้ว แต่แถวเก่าไม่มีใครซ่อม → ซ่อมตรงนี้ตอนหยิบมาใช้จริง
+        // (เงื่อนไขแคบมาก + idempotent ดู DocumentLineVatConvention; ยอดหัวเอกสาร
+        // SubTotal/VatAmount/TotalAmount ไม่ขยับ — เปลี่ยนแค่ส่วนแบ่งในบรรทัด)
+        if (doc.Lines is { Count: > 0 } && DocumentLineVatConvention.LinesStoredGross(
+                doc.PricesIncludeVat, doc.SubTotal, doc.VatAmount,
+                doc.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount),
+                doc.Lines.Where(l => !l.IsDeleted).Sum(l => l.VatAmount)))
+        {
+            foreach (var l in doc.Lines.Where(l => !l.IsDeleted))
+                l.Amount = DocumentLineVatConvention.RepairedAmount(l.Amount, l.VatAmount);
+            await _db.SaveChangesAsync();
+            _logger.LogWarning(
+                "ซ่อมยอดรายบรรทัดของเอกสาร {DocumentId} ({Number}): Line.Amount เคยเก็บยอดรวม VAT "
+                + "→ หัก VAT ออกให้เป็นยอดก่อน VAT (SubTotal {SubTotal:N2} + VAT {Vat:N2} = {Total:N2} เท่าเดิม)",
+                doc.Id, doc.DocumentNumber, doc.SubTotal, doc.VatAmount, doc.TotalAmount);
+        }
+
         // Soft warnings — legal/correct but unusual patterns the operator
         // should eyeball before approving. Hard errors still throw below.
         // When AcknowledgeWarnings is false and warnings exist, throw a
@@ -13674,8 +13695,11 @@ public partial class DocumentService : IDocumentService
         }
 
         if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
+            // ส่วนต่าง = ยอด VAT พอดี → บอกสาเหตุ + ทางแก้ ไม่ใช่โยนตัวเลขทิ้งไว้
+            // เฉย ๆ (ผู้ใช้เจอข้อความเดิมแล้วทำอะไรต่อไม่ได้เลย — เคส IKEA/OCR)
             throw new InvalidOperationException(
-                $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
+                DocumentLineVatConvention.ExplainImbalance(totalDebit, totalCredit, doc.VatAmount)
+                ?? $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
 
         // ── ด่านตรวจโครงสร้าง JE ก่อนบันทึก (JournalPostingGuard) ──────────
         // สมดุลอย่างเดียวไม่พอ: เคยมี JE ที่ Dr=Cr เป๊ะแต่เครดิตทั้งใบลงบัญชี

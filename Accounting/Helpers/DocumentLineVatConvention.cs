@@ -1,0 +1,84 @@
+namespace Accounting.Helpers;
+
+/// <summary>
+/// ด่านตรวจ/ซ่อม convention ของ <c>DocumentLine.Amount</c> — **ต้องเป็นยอด
+/// "ก่อน VAT" (net) เสมอ** ไม่ว่าราคาที่ผู้ใช้กรอกจะรวม VAT มาแล้วหรือไม่
+/// (<c>DocumentService.ComputeLineAmounts</c> คืน <c>NetAmount</c> ลงช่องนี้)
+///
+/// ที่มา — เคสจริง IKEA ผ่าน OCR: ใบราคารวม VAT ยอดสุทธิ 1,396.00
+/// (ก่อน VAT 1,304.68 + VAT 91.32) แต่ OCR รุ่นก่อน 2026-08-14 เก็บ
+/// <c>Line.Amount</c> เป็นยอด**รวม VAT** ⇒ ตอนอนุมัติ JE ฝั่งซื้อลง
+/// <code>
+///   Dr ค่าใช้จ่าย  Σ Line.Amount = 1,396.00   (รวม VAT อยู่แล้ว)
+///   Dr ภาษีซื้อ                     91.32   (บวก VAT ซ้ำอีกรอบ)
+///   Cr เจ้าหนี้                   1,396.00
+/// </code>
+/// ⇒ เดบิตเกินเครดิต **เท่ายอด VAT พอดี** = "การบันทึกบัญชีอัตโนมัติไม่สมดุล:
+/// เดบิต 1,487.32 ≠ เครดิต 1,396.00" — ผู้ใช้อ่านแล้วทำอะไรต่อไม่ได้เลย
+///
+/// ต้นทาง (<c>OcrService</c>) แก้แล้วใน 9a0a882 แต่**แถวที่สร้างไปก่อนหน้านั้น
+/// ยังค้างของเสียอยู่** และไม่มีใครซ่อมให้ — คลาสนี้คือกลไกที่ทำให้เคสนี้
+/// "ตายที่หน้างาน" ไม่ได้อีก: ตรวจเจอ = ซ่อมเงียบ ๆ ตอนอนุมัติ + backfill
+/// ตอน migrate + ถ้าไม่เข้าเงื่อนไขซ่อมก็ยังแปลข้อความ error ให้ทำต่อได้
+///
+/// ⚠️ ซ่อมเฉพาะ "ส่วนแบ่งภายในบรรทัด" — <c>SubTotal</c> / <c>VatAmount</c> /
+/// <c>TotalAmount</c> ของเอกสาร **ไม่ขยับแม้แต่สตางค์เดียว** (ยอดบนใบเท่าเดิม)
+/// </summary>
+public static class DocumentLineVatConvention
+{
+    /// <summary>ผลต่างที่ยอมรับได้ตอนเทียบยอด (สตางค์จากการปัดเศษรายบรรทัด)</summary>
+    public const decimal Tolerance = 0.02m;
+
+    private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>
+    /// จริง = บรรทัดในเอกสารนี้เก็บยอด **รวม VAT** ลง <c>Amount</c> (ผิด convention)
+    /// จึงซ่อมได้ด้วย <see cref="RepairedAmount"/> รายบรรทัด
+    ///
+    /// เงื่อนไขแคบโดยตั้งใจ — ต้องเข้าครบทุกข้อจึงจะแตะข้อมูลผู้ใช้:
+    /// <list type="number">
+    /// <item>เอกสารตั้งค่า "ราคารวม VAT" ไว้ (เคสเดียวที่ OCR เก็บผิด)</item>
+    /// <item>มี VAT จริงและมากกว่า tolerance (ไม่งั้นแยก net/gross ไม่ออก)</item>
+    /// <item>Σ Line.Amount ≈ SubTotal + VatAmount → นี่คือลายเซ็นของ "เก็บ gross"</item>
+    /// <item>Σ Line.VatAmount ≈ VatAmount ของหัวเอกสาร → หัก VAT รายบรรทัดแล้ว
+    ///       ผลรวมจะลงตัวกับ SubTotal พอดี ไม่ต้องเดาการปัดเศษใหม่</item>
+    /// </list>
+    /// ถ้า Σ Line.Amount ≈ SubTotal อยู่แล้ว (net ถูกต้อง) จะคืน false เสมอ
+    /// ⇒ เรียกซ้ำกี่ครั้งก็ปลอดภัย (idempotent)
+    /// </summary>
+    public static bool LinesStoredGross(
+        bool pricesIncludeVat, decimal subTotal, decimal vatAmount,
+        decimal lineAmountSum, decimal lineVatSum)
+    {
+        if (!pricesIncludeVat) return false;
+        if (vatAmount <= Tolerance) return false;
+
+        var sumAmt = R2(lineAmountSum);
+        // ซ่อมแล้ว/ถูกอยู่แล้ว → ไม่แตะ (ด่านนี้ต้องมาก่อน กัน tolerance ทับกัน
+        // ตอน VAT เล็กมากจน net กับ gross ห่างกันไม่ถึง 0.02)
+        if (Math.Abs(sumAmt - R2(subTotal)) <= Tolerance) return false;
+
+        if (Math.Abs(sumAmt - R2(subTotal + vatAmount)) > Tolerance) return false;
+        return Math.Abs(R2(lineVatSum) - R2(vatAmount)) <= Tolerance;
+    }
+
+    /// <summary>ยอด net ของบรรทัดหลังซ่อม = ยอดรวม VAT − VAT ของบรรทัดนั้น
+    /// (สูตรเดียวกับที่ <c>OcrService</c> ใช้ตอนสร้างเอกสาร — ห้ามคำนวณใหม่
+    /// จากอัตรา ไม่งั้นจะได้เลขที่ต่างจากที่พิมพ์บนใบ 1 สตางค์)</summary>
+    public static decimal RepairedAmount(decimal lineAmount, decimal lineVatAmount)
+        => R2(lineAmount - lineVatAmount);
+
+    /// <summary>ข้อความอธิบายสาเหตุ เมื่อ JE ไม่สมดุลด้วย "ส่วนต่าง = ยอด VAT พอดี"
+    /// — คืน null เมื่อไม่ใช่อาการนี้ (ให้ผู้เรียกใช้ข้อความเดิม)</summary>
+    public static string? ExplainImbalance(decimal totalDebit, decimal totalCredit, decimal docVatAmount)
+    {
+        var diff = R2(totalDebit - totalCredit);
+        if (docVatAmount <= Tolerance || Math.Abs(diff - R2(docVatAmount)) > Tolerance)
+            return null;
+        return $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2} "
+             + $"— ส่วนต่าง {diff:N2} เท่ากับยอด VAT ของใบนี้พอดี แปลว่ายอดรายบรรทัดถูกเก็บเป็น "
+             + "\"ราคารวม VAT\" ทั้งที่ต้องเก็บเป็นยอดก่อน VAT "
+             + "→ เปิด \"แก้ไข\" เอกสารแล้วกดบันทึกหนึ่งครั้ง ระบบจะคำนวณยอดรายบรรทัดใหม่ให้ "
+             + "(ยอดรวมบนใบไม่เปลี่ยน) แล้วจึงกดอนุมัติอีกครั้ง";
+    }
+}

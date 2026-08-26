@@ -1412,6 +1412,28 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
 - ตัวตนผู้ควบคุมข้อมูลบนหน้าเอกสาร ← `GET /api/legal/policy`
   ← `SiteSettings.PlatformSeller*` (ชุดเดียวกับที่ใช้ออกใบกำกับค่าบริการ)
 
+### 6.2b Convention ยอดรายบรรทัด — `DocumentLine.Amount` ต้องเป็น **net (ก่อน VAT)** เสมอ
+
+จริงเสมอไม่ว่าราคาที่กรอกจะรวม VAT หรือไม่ (`ComputeLineAmounts` คืน `NetAmount`
+ลงช่องนี้) เพราะ JE ฝั่งซื้อลง `Dr ค่าใช้จ่าย = Σ Line.Amount` แล้วบวก
+`Dr ภาษีซื้อ` แยกอีกขา — ถ้า `Amount` รวม VAT มาแล้ว **เดบิตจะเกินเครดิตเท่ายอด
+VAT พอดี**
+
+| ชั้น | ที่อยู่ | ทำอะไร |
+| --- | --- | --- |
+| ต้นทาง | `OcrService` (9a0a882) | `Amount = PricesIncludeVat ? amount − lineVat : amount` |
+| ซ่อมตอนใช้ | `ApproveDocumentAsync` (ก่อนเก็บ warning/JE) | เจอลายเซ็น "เก็บ gross" → หัก VAT รายบรรทัด + `SaveChanges` + log |
+| ซ่อมย้อนหลัง | `DatabaseMigrationHelper` backfill | `UPDATE DocumentLines SET Amount = Amount − VatAmount` ตามเงื่อนไขเดียวกัน (idempotent) |
+| ตัวตัดสิน | `Helpers/DocumentLineVatConvention.cs` | `LinesStoredGross` / `RepairedAmount` / `ExplainImbalance` — **ตัวเดียวทั้ง 3 ชั้น** |
+| ข้อความ error | `ApproveDocumentAsync` + `ErrorMessageTranslator` | ส่วนต่าง = ยอด VAT พอดี → บอกสาเหตุ + ทางแก้ (ไทย **และ** อังกฤษ) |
+
+ลายเซ็นที่ถือว่า "เก็บ gross" (ต้องครบทุกข้อ): `PricesIncludeVat` · `VatAmount > 0.02` ·
+`Σ Line.Amount ≈ SubTotal + VatAmount` · `Σ Line.VatAmount ≈ VatAmount` ·
+และ `Σ Line.Amount ≉ SubTotal` — ซ่อมแล้วเงื่อนไขเป็นเท็จเอง ⇒ รันซ้ำได้
+**ยอดหัวเอกสาร (SubTotal/VatAmount/TotalAmount) ไม่ขยับ** เปลี่ยนแค่ส่วนแบ่งในบรรทัด
+เทสต์: `Accounting.Tests/DocumentLineVatConventionTests.cs` (ตัวเลขจากใบจริง
+1,304.68 + 91.32 = 1,396.00 → Dr 1,487.32)
+
 ### 6.3 §87/3 retention (5 ปี)
 - ทุกเอกสารตั้ง `RetentionUntil = MAX(filingDate, reportDate, DocumentDate) + 5y`
 - nightly job ห้ามลบจริง (soft-delete + flag `legal_hold`)
@@ -2360,7 +2382,10 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
-_Last verified against codebase: 2026-08-25 (รอบ 85 — **§6.2 ความยินยอมตอนสมัคร_
+_Last verified against codebase: 2026-08-26 (รอบ 86 — **§6.2b convention ยอด_
+_รายบรรทัดต้องเป็น net**: ซ่อมอัตโนมัติตอนอนุมัติ + backfill + ข้อความ error_
+_ที่บอกทางแก้ (เคสจริง OCR ใบราคารวม VAT → Dr เกิน Cr เท่ายอด VAT));_
+_รอบ 85 — **§6.2 ความยินยอมตอนสมัคร_
 _(PDPA ม.19)**: ด่าน `RequireSignupConsent` + `RecordSignupConsentAsync` ทุกทางสมัคร ·_
 _`PdpaConsentRecord` scope แพลตฟอร์ม + evidence hash canonical ตัวเดียว ·_
 _หน้า terms.html/privacy.html จริง + `GET /api/legal/policy`);_

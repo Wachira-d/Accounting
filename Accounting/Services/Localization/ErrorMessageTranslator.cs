@@ -99,6 +99,13 @@ public static class ErrorMessageTranslator
             "Debit total ({0}) does not equal credit total ({1})"),
         (new Regex(@"^ยอดชำระ \(([^)]+)\) ไม่ครบ ยอดที่ต้องจ่าย \(([^)]+)\)$", RegexOptions.Compiled),
             "Payment received ({0}) is less than amount due ({1})"),
+        // ⚠️ ต้องมาก่อนกฎทั่วไปด้านล่าง — กฎนั้น `(.+)$` กลืนข้อความอธิบายสาเหตุ
+        // ทั้งท่อน ทำให้ผู้ใช้ locale en ได้แค่ตัวเลขเปล่า ๆ เหมือนเดิม (สองภาษา
+        // ห้าม drift: ฝั่งไทยบอกทางแก้ ฝั่งอังกฤษต้องบอกด้วย)
+        (new Regex(@"^การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต ([^≠]+) ≠ เครดิต ([^—]+) — ส่วนต่าง (\S+) เท่ากับยอด VAT", RegexOptions.Compiled),
+            "Auto-posted journal is unbalanced: debit {0} ≠ credit {1} — the {2} gap equals this document's VAT exactly, "
+            + "which means the line amounts were stored VAT-inclusive instead of net of VAT. "
+            + "Open the document in Edit and save it once (the system recalculates the line amounts; document totals do not change), then approve again."),
         (new Regex(@"^การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต ([^≠]+) ≠ เครดิต (.+)$", RegexOptions.Compiled),
             "Auto-posted journal is unbalanced: debit {0} ≠ credit {1}"),
         (new Regex(@"^การบันทึกบัญชีชำระเงินไม่สมดุล: เดบิต ([^≠]+) ≠ เครดิต (.+)$", RegexOptions.Compiled),
