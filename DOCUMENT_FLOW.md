@@ -1434,6 +1434,31 @@ VAT พอดี**
 เทสต์: `Accounting.Tests/DocumentLineVatConventionTests.cs` (ตัวเลขจากใบจริง
 1,304.68 + 91.32 = 1,396.00 → Dr 1,487.32)
 
+### 6.2c ชื่อทางการค้า (แบรนด์) บนหัวเอกสาร
+
+`DocumentBrand` (ต่อบริษัท มีได้หลายแบรนด์) + `Document.BrandId` (null = ใช้ชื่อบริษัท)
+— ผลต่อ **หน้าตา** เท่านั้น ไม่แตะบัญชี/ภาษี/เลขที่เอกสาร
+
+| ชนิดเอกสาร | ชื่อหลักบนหัว | แบรนด์ได้อะไร |
+| --- | --- | --- |
+| ใบเสนอราคา · ใบแจ้งหนี้ · ใบวางบิล · ใบส่งของ · ใบขอซื้อ · ใบสั่งซื้อ | **ชื่อทางการค้า** | ชื่อ + สโลแกน + โลโก้ + สี + ที่อยู่ + เว็บไซต์ |
+| ใบกำกับภาษี (รวมอย่างย่อ/ใบรวม) · ใบเพิ่มหนี้ · ใบลดหนี้ · ใบเสร็จรับเงิน · ใบสำคัญรับ/จ่าย · ฝั่งซื้อทั้งหมด | **ชื่อนิติบุคคล** (§86/4(2)) | โลโก้ + สี + ที่อยู่ + ชื่อแบรนด์เป็นบรรทัดรอง |
+
+- ด่าน + resolver = `Helpers/DocumentIssuerIdentity.cs` **ตัวเดียว**:
+  `CanBrandBePrimary(type, renderedTitle)` + `Resolve(...)` → `IssuerIdentity`
+- ตัดสินจาก **หัวเอกสารที่ render จริง** ด้วย ไม่ใช่ enum อย่างเดียว — ใบชนิด
+  `Invoice` ที่หัวเป็น "ใบแจ้งหนี้/ใบกำกับภาษี" ถูกบังคับกลับไปใช้ชื่อนิติบุคคล
+- **บรรทัดนิติบุคคลตัวเล็กปิดไม่ได้** เมื่อแบรนด์ขึ้นหัว (`LegalNamePlacement`
+  = Header / Footer / Both — ค่านอกลิสต์ตกเป็น Footer) รูปแบบ:
+  `ดำเนินการโดย {ชื่อ} · เลขประจำตัวผู้เสียภาษี {13 หลัก} · {สาขา}`
+- renderer ทั้งสองตัวเรียก `PdfGenerationService.BuildIssuer(...)` จุดเดียว
+  (ลบการคำนวณ `coPrimaryName` ที่เคยซ้ำอยู่คนละไฟล์) · โลโก้/สีแบรนด์เข้า
+  `BuildBranding(..., brand)` ให้ QuestPDF เห็นตรงกับ HTML
+- เอกสารลูก (convert/clone) สืบทอด `BrandId` จากต้นทาง
+- API: `/api/companies/{id}/document-brands` (CRUD + `/policy` + `/{id}/preview`)
+  · หน้าตั้งค่า `/pages/document-brands.html`
+- เทสต์: `Accounting.Tests/DocumentIssuerIdentityTests.cs`
+
 ### 6.3 §87/3 retention (5 ปี)
 - ทุกเอกสารตั้ง `RetentionUntil = MAX(filingDate, reportDate, DocumentDate) + 5y`
 - nightly job ห้ามลบจริง (soft-delete + flag `legal_hold`)
@@ -2382,7 +2407,10 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
-_Last verified against codebase: 2026-08-26 (รอบ 86 — **§6.2b convention ยอด_
+_Last verified against codebase: 2026-08-26 (รอบ 87 — **§6.2c ชื่อทางการค้าบนหัว_
+_เอกสาร**: DocumentBrand + Document.BrandId · ด่าน §86/4 + resolver กลาง_
+_DocumentIssuerIdentity ที่ renderer ทั้งสองตัวใช้ร่วม · หน้าตั้งค่า document-brands);_
+_รอบ 86 — **§6.2b convention ยอด_
 _รายบรรทัดต้องเป็น net**: ซ่อมอัตโนมัติตอนอนุมัติ + backfill + ข้อความ error_
 _ที่บอกทางแก้ (เคสจริง OCR ใบราคารวม VAT → Dr เกิน Cr เท่ายอด VAT));_
 _รอบ 85 — **§6.2 ความยินยอมตอนสมัคร_

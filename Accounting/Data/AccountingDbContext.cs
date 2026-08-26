@@ -170,6 +170,7 @@ public class AccountingDbContext : DbContext
 
     // Document Templates
     public DbSet<DocumentTemplate> DocumentTemplates => Set<DocumentTemplate>();
+    public DbSet<DocumentBrand> DocumentBrands => Set<DocumentBrand>();
 
     // e-Tax Invoices
     public DbSet<EtaxInvoice> EtaxInvoices => Set<EtaxInvoice>();

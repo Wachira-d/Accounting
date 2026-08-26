@@ -303,6 +303,13 @@ public class Document : TenantEntity
     /// ex-VAT (the historical default, VAT added on top).</summary>
     public bool PricesIncludeVat { get; set; }
 
+    /// <summary>ชื่อทางการค้า/แบรนด์ที่ใช้ออกใบนี้ (null = ใช้ชื่อบริษัทตามเดิม).
+    /// ผลต่อ "หน้าตา" เท่านั้น — ไม่กระทบบัญชี/ภาษี/เลขที่เอกสาร.
+    /// เอกสารที่กฎหมายบังคับชื่อผู้ประกอบการจดทะเบียน (ใบกำกับภาษี ฯลฯ) แบรนด์
+    /// จะลงได้แค่โลโก้ + บรรทัดรอง — ตัวตัดสินอยู่ที่ Helpers.DocumentIssuerIdentity</summary>
+    public Guid? BrandId { get; set; }
+    public DocumentBrand? Brand { get; set; }
+
     // Contact (Customer/Supplier)
     public Guid ContactId { get; set; }
     public Contact Contact { get; set; } = null!;

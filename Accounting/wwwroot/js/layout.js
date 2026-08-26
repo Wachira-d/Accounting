@@ -980,6 +980,8 @@ const Layout = {
       description: 'กำหนดใครเห็นเอกสารกลุ่มอ่อนไหว (payroll / ผู้บริหาร) — sensitivity gate' },
     { id: 'document-templates', label: 'เทมเพลตเอกสาร PDF', icon: '🎨', href: '/pages/document-templates.html', feature: 'DocumentEngine',
       description: 'ปรับ logo · สี · font · header · footer · watermark · ลายเซ็น — preview สด · per-document-type' },
+    { id: 'document-brands', label: 'ชื่อทางการค้า & หน้าตาเอกสาร', icon: '🏷️', href: '/pages/document-brands.html', feature: 'DocumentEngine',
+      description: 'ออกใบเสนอราคา/ใบแจ้งหนี้ในนามชื่อร้าน + โลโก้ของแบรนด์ — เลือกได้ตอนออกใบ · ใบกำกับภาษียังขึ้นชื่อนิติบุคคลตามกฎหมาย' },
     { id: 'settings-features', label: 'ฟีเจอร์ & เมนู (Owner)', icon: '🧩', href: '/pages/settings-features.html', adminOnly: true,
       description: 'เจ้าของกิจการเลือกเปิด/ปิดฟีเจอร์ + ซ่อนเมนูที่ไม่ใช้ ใช้ได้ทุกคนในบริษัท' },
     { id: 'pdpa', label: 'PDPA — สิทธิ์เจ้าของข้อมูล', icon: '🛡️', href: '/pages/pdpa.html', adminOnly: true,

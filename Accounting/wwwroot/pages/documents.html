@@ -277,6 +277,18 @@
                   <option value="cert">ใบรับรองแทนใบเสร็จ — ผู้ขายไม่มีใบเสร็จให้ (ตลาดสด แท็กซี่)</option>
                 </optgroup>
               </select>
+              <!-- ชื่อทางการค้า: โผล่เฉพาะบริษัทที่ตั้งแบรนด์ไว้ (ตั้งที่หน้า
+                   "ชื่อทางการค้า & หน้าตาเอกสาร") · ป้ายใต้ช่องบอกตรง ๆ ว่าใบชนิด
+                   นี้แบรนด์จะขึ้นหัวได้หรือจะเป็นแค่โลโก้/สี — กติกามาจาก API
+                   ห้ามตัดสินในหน้าเว็บ (กฎหมายอยู่ที่ DocumentIssuerIdentity) -->
+              <div id="fBrandRow" style="display:none;margin-top:10px">
+                <label class="form-label" style="font-size:12px">🏷️ ออกในนามชื่อทางการค้า</label>
+                <select class="form-select" id="fBrand" onchange="Page.onBrandChange()">
+                  <option value="">— ใช้ชื่อบริษัท —</option>
+                </select>
+                <div id="fBrandHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+              </div>
+
               <select class="form-select" id="fDocType" style="display:none" onchange="Page.onDocTypeChange()">
                 <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
                   <option value="Quotation" title="เสนอราคาให้ลูกค้าก่อนซื้อขายจริง — ยังไม่ลง GL, ไม่มี VAT effect">ใบเสนอราคา</option>
@@ -1478,6 +1490,7 @@
         });
       },
       async init() {
+        this._loadBrands();   // ไม่ await — ล้มก็แค่ไม่โชว์ช่องแบรนด์ ฟอร์มยังใช้ได้
         // Listen for the "+ สร้างใหม่" cross-tab hand-off — contacts.html
         // posts the new contact id back via postMessage; we auto-pick it
         // here so the user doesn't have to retype/search after creating.
@@ -3701,6 +3714,68 @@
         tax: 'tax', tax_paid: 'tax_paid', tax_receipt: 'tax_receipt', receipt_only: 'receipt_abb',
       },
 
+      // ===== ชื่อทางการค้า (แบรนด์) บนหัวเอกสาร =====
+      // กติกาว่าชนิดไหนแบรนด์ขึ้นหัวได้ มาจาก API เท่านั้น (ป.รัษฎากร §86/4
+      // บังคับชื่อผู้ประกอบการจดทะเบียนบนใบกำกับ) — ห้าม hardcode ลิสต์ที่นี่
+      _brands: [],
+      _brandPolicy: {},
+
+      async _loadBrands() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        try {
+          const p = await API.get(`/api/companies/${cid}/document-brands/policy`);
+          (p.data?.types || []).forEach(t => this._brandPolicy[t.type] = t.brandCanBePrimary);
+        } catch (e) {}
+        try {
+          const r = await API.get(`/api/companies/${cid}/document-brands`);
+          this._brands = r.data || [];
+        } catch (e) { this._brands = []; }
+
+        const row = document.getElementById('fBrandRow');
+        const sel = document.getElementById('fBrand');
+        if (!row || !sel) return;
+        // ไม่มีแบรนด์เลย = ไม่ต้องรกฟอร์ม (ผู้ใช้ส่วนใหญ่ใช้ชื่อบริษัทอย่างเดียว)
+        if (!this._brands.length) { row.style.display = 'none'; return; }
+        row.style.display = '';
+        sel.innerHTML = '<option value="">— ใช้ชื่อบริษัท —</option>'
+          + this._brands.map(b =>
+              `<option value="${b.id}">${this.escapeHtml(b.name)}${b.isDefault ? ' (ตั้งต้น)' : ''}</option>`).join('');
+        this._applyBrandHint();
+      },
+
+      /** ป้ายใต้ช่อง — บอกตรง ๆ ว่าใบชนิดที่เลือกอยู่ แบรนด์จะขึ้นหัวหรือไม่
+       *  (ห้ามเงียบ: ผู้ใช้เลือกแบรนด์แล้วใบออกมาเป็นชื่อบริษัท = งงว่าพัง) */
+      _applyBrandHint() {
+        const hint = document.getElementById('fBrandHint');
+        const sel = document.getElementById('fBrand');
+        if (!hint || !sel) return;
+        const type = document.getElementById('fDocType')?.value || '';
+        const canLead = this._brandPolicy[type] !== false;
+        if (!sel.value) { hint.textContent = 'เอกสารจะขึ้นชื่อบริษัทตามปกติ'; hint.style.color = '#64748b'; return; }
+        if (canLead) {
+          hint.textContent = '✅ หัวเอกสารจะขึ้นชื่อทางการค้า + โลโก้ของแบรนด์ '
+            + '(ชื่อนิติบุคคลพิมพ์ตัวเล็กกำกับไว้เสมอ)';
+          hint.style.color = '#166534';
+        } else {
+          hint.textContent = '⚖️ เอกสารชนิดนี้ต้องขึ้นชื่อนิติบุคคลเป็นตัวหลักตาม ป.รัษฎากร §86/4 '
+            + '— แบรนด์จะได้โลโก้ สี และที่อยู่หน้าร้าน ส่วนชื่อลงเป็นบรรทัดรอง';
+          hint.style.color = '#92400e';
+        }
+      },
+
+      onBrandChange() { this._applyBrandHint(); },
+
+      /** เลือกแบรนด์ให้ตอนเปิดฟอร์ม: แก้ไข = ตามที่บันทึกไว้ · สร้างใหม่ = ตัวตั้งต้น
+       *  (ห้ามค้างค่าจากใบก่อนหน้า — defect class "reset ตอนฟอร์มใหม่") */
+      _hydrateBrand(doc) {
+        const sel = document.getElementById('fBrand');
+        if (!sel) return;
+        const def = this._brands.find(b => b.isDefault);
+        sel.value = doc?.brandId || (doc ? '' : (def ? def.id : ''));
+        this._applyBrandHint();
+      },
+
       onPaperChange() {
         const psel = document.getElementById('fPaper');
         const p = this._PAPERS[psel?.value];
@@ -4644,6 +4719,7 @@
       },
 
       onDocTypeChange() {
+        this._applyBrandHint();   // ชนิดเปลี่ยน = ป้ายแบรนด์ต้องเปลี่ยนตาม
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
         this._refreshNoApproveHint();
@@ -6808,6 +6884,7 @@
 
       openCreate(side) {
         this.editingId = null;
+        this._hydrateBrand(null);   // ใบใหม่ = แบรนด์ตั้งต้น ไม่ใช่ค่าค้างจากใบก่อน
         // ล้าง contact ที่จำไว้สำหรับเทอมเครดิต — ไม่งั้นเทอมของลูกค้ารายก่อน
         // ตามมาเติมในเอกสารใบใหม่ที่ยังไม่ได้เลือกคู่ค้า
         this._creditTermsContact = null;
@@ -7048,6 +7125,7 @@
           const res = await api.getDocument(id);
           const d = res.data;
           this.editingId = id;
+          this._hydrateBrand(d);   // echo กลับค่าที่บันทึกไว้ (ไม่งั้นบันทึกแล้วค่าหาย)
           // เก็บสถานะใบที่กำลังแก้ — chain "จ่ายแล้ว" (อนุมัติ+ชำระ) เปิดให้เฉพาะ
           // ร่าง/ถูกปฏิเสธ (ใบที่ยังไม่เคยลงบัญชี) ไม่ใช่ revision ของใบอนุมัติแล้ว
           this._editingStatus = d.status || null;
@@ -7722,6 +7800,10 @@
           paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
             ? (document.getElementById('fPaymentType')?.value || 'Cash') : null,
           pricesIncludeVat: document.getElementById('fPricesIncludeVat')?.checked || false,
+          // ชื่อทางการค้า — ตอนแก้ไขต้องส่ง Guid.Empty เมื่อผู้ใช้เลือก "ใช้ชื่อบริษัท"
+          // ไม่งั้น server มองว่า "ไม่ส่งมา" แล้วคงแบรนด์เดิมไว้ = กดแล้วไม่มีผล
+          brandId: (document.getElementById('fBrand')?.value || null)
+                   || (this.editingId ? '00000000-0000-0000-0000-000000000000' : null),
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
           // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"
           // (217xx) แทนรายได้. depositOutputVatDeferred เลือกจังหวะ tax point.

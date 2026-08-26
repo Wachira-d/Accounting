@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ชื่อทางการค้า & หน้าตาเอกสาร — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .bw-grid { display:grid; grid-template-columns:360px 1fr; gap:18px; align-items:start }
+    @media (max-width:900px) { .bw-grid { grid-template-columns:1fr } }
+    .bw-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px }
+    .bw-card h3 { margin:0; padding:12px 16px; font-size:14px; border-bottom:1px solid #f1f5f9;
+                  display:flex; align-items:center; gap:8px }
+    .bw-body { padding:14px 16px }
+    .bw-row { margin-bottom:10px }
+    .bw-row label { display:block; font-size:11px; color:#64748b; margin-bottom:3px }
+    .bw-row input, .bw-row select, .bw-row textarea {
+      width:100%; padding:7px 10px; border:1px solid #d1d5db; border-radius:6px; font:inherit; font-size:13px }
+    .bw-row input[type=color] { padding:0; height:36px; cursor:pointer }
+    .bw-2 { display:grid; grid-template-columns:1fr 1fr; gap:8px }
+    .bw-list { list-style:none; margin:0; padding:0 }
+    .bw-list li { padding:10px 16px; border-bottom:1px solid #f1f5f9; cursor:pointer;
+                  display:flex; align-items:center; gap:10px; font-size:13px }
+    .bw-list li:hover { background:#f8fafc }
+    .bw-list li.active { background:#eef2ff; border-left:3px solid #4f46e5 }
+    .bw-list .sw { width:22px; height:22px; border-radius:5px; flex:none; border:1px solid #e2e8f0 }
+    .bw-pill { font-size:10px; padding:1px 7px; border-radius:999px; background:#dcfce7; color:#166534 }
+    .bw-pill.off { background:#f1f5f9; color:#64748b }
+    .bw-note { background:#f8fafc; border-left:3px solid #64748b; border-radius:0 8px 8px 0;
+               padding:10px 14px; font-size:12px; line-height:1.8; color:#475569; margin:0 0 14px }
+    .bw-warn { background:#fffbeb; border:1px solid #fcd34d; color:#92400e; border-radius:8px;
+               padding:10px 14px; font-size:12.5px; line-height:1.8; margin:0 0 14px }
+    /* พรีวิวหัวกระดาษ — จำลองสัดส่วนกระดาษ A4 คร่าว ๆ */
+    .pv { border:1px solid #e2e8f0; border-radius:8px; padding:22px; background:#fff }
+    .pv-head { display:flex; gap:16px; align-items:flex-start; border-bottom:2px solid var(--pvc,#1f2937); padding-bottom:12px }
+    .pv-logo { width:74px; height:44px; object-fit:contain; flex:none; background:#f1f5f9; border-radius:4px }
+    .pv-name { font-size:19px; font-weight:700; color:var(--pvc,#1f2937); line-height:1.3 }
+    .pv-sub { font-size:12px; color:#475569 }
+    .pv-tag { font-size:11px; color:#64748b; font-style:italic }
+    .pv-legal { font-size:10px; color:#64748b; margin-top:3px }
+    .pv-title { text-align:center; font-size:17px; font-weight:700; margin:16px 0 8px; color:var(--pvc,#1f2937) }
+    .pv-skel { height:9px; background:#f1f5f9; border-radius:3px; margin:7px 0 }
+    .pv-foot { border-top:1px solid #e2e8f0; margin-top:16px; padding-top:8px; font-size:10px; color:#64748b }
+    .pv-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px }
+    .pv-tab { padding:5px 11px; border:1px solid #e2e8f0; border-radius:999px; background:#fff;
+              font-size:12px; cursor:pointer }
+    .pv-tab.on { background:#4f46e5; color:#fff; border-color:#4f46e5 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ชื่อทางการค้า &amp; หน้าตาเอกสาร</h2>
+        <p class="page-subtitle">ออกเอกสารในนามชื่อร้าน/แบรนด์ พร้อมโลโก้และสีของตัวเอง — เลือกได้ตอนออกใบ</p>
+      </div>
+    </div>
+    <div id="app"></div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    (async function () {
+      if (!Layout.init('document-brands')) return;
+      Layout.setTitle('ชื่อทางการค้า & หน้าตาเอกสาร');
+      const cid = Layout.getCompanyId();
+
+      const Page = {
+        brands: [],
+        current: null,
+        policy: {},           // { DocumentType: brandCanBePrimary }
+        previewType: 'Quotation',
+
+        esc(s) {
+          return String(s ?? '').replace(/[&<>"']/g, c =>
+            ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+        },
+
+        async load() {
+          // กติกาว่าเอกสารชนิดไหนใช้ชื่อทางการค้าเป็นชื่อหลักได้ — **ถามจาก server**
+          // เสมอ ห้ามก๊อปลิสต์มาไว้ในหน้าเว็บ (กฎหมายเปลี่ยนที่เดียวต้องมีผลทุกที่)
+          try {
+            const p = await API.get(`/api/companies/${cid}/document-brands/policy`);
+            (p.data?.types || []).forEach(t => this.policy[t.type] = t.brandCanBePrimary);
+          } catch (e) {}
+          try {
+            const r = await API.get(`/api/companies/${cid}/document-brands?includeInactive=true`);
+            this.brands = r.data || [];
+          } catch (e) { this.brands = []; }
+          this.render();
+        },
+
+        blank() {
+          return { id:null, name:'', nameEn:'', tagLine:'', tagLineEn:'', logoUrl:'',
+                   address:'', addressEn:'', phone:'', email:'', website:'',
+                   primaryColor:'#1f2937', footerNotes:'',
+                   legalNamePlacement:'Footer', isDefault:this.brands.length===0, isActive:true, sortOrder:0 };
+        },
+
+        render() {
+          document.getElementById('app').innerHTML = `
+            <p class="bw-note">
+              ตั้ง <b>ชื่อร้าน/ชื่อทางการค้า</b> พร้อมโลโก้และสีของตัวเอง แล้วเลือกใช้ตอนออกเอกสารได้
+              — กิจการเดียวมีได้หลายแบรนด์<br>
+              <b>ใบเสนอราคา · ใบแจ้งหนี้ · ใบวางบิล · ใบส่งของ · ใบขอซื้อ/สั่งซื้อ</b> ขึ้นหัวเป็นชื่อทางการค้าได้<br>
+              <b>ใบกำกับภาษี · ใบเพิ่ม/ลดหนี้ · ใบเสร็จรับเงิน</b> กฎหมาย (ป.รัษฎากร §86/4) บังคับให้ขึ้น
+              <b>ชื่อนิติบุคคล</b> เป็นตัวหลัก — แบรนด์ยังได้โลโก้ สี และที่อยู่หน้าร้าน
+            </p>
+            <div class="bw-grid">
+              <div class="bw-card">
+                <h3>🏷️ ชื่อทางการค้า
+                  <button class="btn btn-sm btn-primary" style="margin-left:auto"
+                          onclick="Page.select(null)">+ เพิ่ม</button>
+                </h3>
+                <ul class="bw-list" id="brandList"></ul>
+              </div>
+              <div id="editorWrap"></div>
+            </div>`;
+          this.renderList();
+          if (!this.current) this.current = this.brands[0] ? { ...this.brands[0] } : this.blank();
+          this.renderEditor();
+        },
+
+        renderList() {
+          const ul = document.getElementById('brandList');
+          if (!ul) return;
+          if (!this.brands.length) {
+            ul.innerHTML = `<li style="color:#94a3b8;cursor:default">ยังไม่มี — กด "+ เพิ่ม"</li>`;
+            return;
+          }
+          ul.innerHTML = this.brands.map(b => `
+            <li class="${this.current && this.current.id === b.id ? 'active' : ''}" onclick="Page.select('${b.id}')">
+              <span class="sw" style="background:${this.esc(b.primaryColor || '#e2e8f0')}"></span>
+              <span style="flex:1">
+                ${this.esc(b.name)}
+                ${b.isDefault ? '<span class="bw-pill">ตั้งต้น</span>' : ''}
+                ${b.isActive ? '' : '<span class="bw-pill off">ปิดใช้งาน</span>'}
+              </span>
+            </li>`).join('');
+        },
+
+        select(id) {
+          this.current = id ? { ...this.brands.find(b => b.id === id) } : this.blank();
+          this.renderList();
+          this.renderEditor();
+        },
+
+        // อ่านค่าจากฟอร์มกลับเข้า current — เรียกก่อนพรีวิว/บันทึกเสมอ
+        collect() {
+          const v = id => (document.getElementById(id) || {}).value ?? '';
+          const c = this.current;
+          c.name = v('fName'); c.nameEn = v('fNameEn');
+          c.tagLine = v('fTag'); c.tagLineEn = v('fTagEn');
+          c.logoUrl = v('fLogo');
+          c.address = v('fAddr'); c.addressEn = v('fAddrEn');
+          c.phone = v('fPhone'); c.email = v('fEmail'); c.website = v('fWeb');
+          c.primaryColor = v('fColor');
+          c.footerNotes = v('fFooter');
+          c.legalNamePlacement = v('fPlacement');
+          c.isDefault = !!(document.getElementById('fDefault') || {}).checked;
+          c.isActive = !!(document.getElementById('fActive') || {}).checked;
+          return c;
+        },
+
+        renderEditor() {
+          const c = this.current;
+          document.getElementById('editorWrap').innerHTML = `
+            <div class="bw-card">
+              <h3>${c.id ? '✏️ แก้ไข' : '✨ เพิ่มชื่อทางการค้า'}
+                ${c.id ? `<button class="btn btn-sm btn-outline" style="margin-left:auto"
+                            onclick="Page.remove()">ลบ / ปิดใช้งาน</button>` : ''}
+              </h3>
+              <div class="bw-body">
+                <div class="bw-2">
+                  <div class="bw-row"><label>ชื่อทางการค้า (ไทย) *</label>
+                    <input id="fName" value="${this.esc(c.name)}" oninput="Page.refreshPreview()" placeholder="เช่น บ้านสวนคาเฟ่"></div>
+                  <div class="bw-row"><label>ชื่อทางการค้า (อังกฤษ)</label>
+                    <input id="fNameEn" value="${this.esc(c.nameEn)}" oninput="Page.refreshPreview()"></div>
+                </div>
+                <div class="bw-2">
+                  <div class="bw-row"><label>สโลแกน/คำโปรย (ไทย)</label>
+                    <input id="fTag" value="${this.esc(c.tagLine)}" oninput="Page.refreshPreview()"></div>
+                  <div class="bw-row"><label>สโลแกน (อังกฤษ)</label>
+                    <input id="fTagEn" value="${this.esc(c.tagLineEn)}" oninput="Page.refreshPreview()"></div>
+                </div>
+                <div class="bw-row"><label>URL โลโก้ของแบรนด์ (ว่าง = ใช้โลโก้บริษัท)</label>
+                  <input id="fLogo" value="${this.esc(c.logoUrl)}" oninput="Page.refreshPreview()" placeholder="/uploads/brand-logo.png"></div>
+                <div class="bw-2">
+                  <div class="bw-row"><label>สีหลักของเอกสาร</label>
+                    <input type="color" id="fColor" value="${this.esc(c.primaryColor || '#1f2937')}" oninput="Page.refreshPreview()"></div>
+                  <div class="bw-row"><label>ชื่อนิติบุคคลตัวเล็ก พิมพ์ที่</label>
+                    <select id="fPlacement" onchange="Page.refreshPreview()">
+                      <option value="Footer" ${c.legalNamePlacement==='Footer'?'selected':''}>ท้ายกระดาษ</option>
+                      <option value="Header" ${c.legalNamePlacement==='Header'?'selected':''}>ใต้ชื่อร้านตรงหัว</option>
+                      <option value="Both" ${c.legalNamePlacement==='Both'?'selected':''}>ทั้งสองที่</option>
+                    </select></div>
+                </div>
+                <div class="bw-row"><label>ที่อยู่ที่พิมพ์บนเอกสาร (ว่าง = ที่อยู่บริษัท)</label>
+                  <textarea id="fAddr" rows="2" oninput="Page.refreshPreview()">${this.esc(c.address)}</textarea></div>
+                <div class="bw-row"><label>ที่อยู่ (อังกฤษ)</label>
+                  <textarea id="fAddrEn" rows="2" oninput="Page.refreshPreview()">${this.esc(c.addressEn)}</textarea></div>
+                <div class="bw-2">
+                  <div class="bw-row"><label>โทรศัพท์</label>
+                    <input id="fPhone" value="${this.esc(c.phone)}" oninput="Page.refreshPreview()"></div>
+                  <div class="bw-row"><label>อีเมล</label>
+                    <input id="fEmail" value="${this.esc(c.email)}" oninput="Page.refreshPreview()"></div>
+                </div>
+                <div class="bw-row"><label>เว็บไซต์ / โซเชียล</label>
+                  <input id="fWeb" value="${this.esc(c.website)}" oninput="Page.refreshPreview()"></div>
+                <div class="bw-row"><label>ข้อความท้ายเอกสารของแบรนด์นี้</label>
+                  <textarea id="fFooter" rows="2">${this.esc(c.footerNotes)}</textarea></div>
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px">
+                  <input type="checkbox" id="fDefault" ${c.isDefault?'checked':''}> ใช้เป็นแบรนด์ตั้งต้น (เลือกให้อัตโนมัติตอนออกเอกสาร)
+                </label>
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px">
+                  <input type="checkbox" id="fActive" ${c.isActive?'checked':''}> เปิดใช้งาน
+                </label>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+                  <button class="btn btn-outline" onclick="Page.load()">ยกเลิก</button>
+                  <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="bw-card" style="margin-top:16px">
+              <h3>👁 ตัวอย่างหัวเอกสาร</h3>
+              <div class="bw-body">
+                <div class="pv-tabs" id="pvTabs"></div>
+                <div id="pvWarn"></div>
+                <div class="pv" id="pvBox"></div>
+              </div>
+            </div>`;
+          this.renderTabs();
+          this.refreshPreview();
+        },
+
+        renderTabs() {
+          const types = [
+            ['Quotation','ใบเสนอราคา'], ['Invoice','ใบแจ้งหนี้'], ['BillingNote','ใบวางบิล'],
+            ['DeliveryNote','ใบส่งของ'], ['TaxInvoice','ใบกำกับภาษี'], ['Receipt','ใบเสร็จรับเงิน'],
+          ];
+          document.getElementById('pvTabs').innerHTML = types.map(([k, label]) =>
+            `<button class="pv-tab ${this.previewType===k?'on':''}" onclick="Page.setPreviewType('${k}')">${label}</button>`
+          ).join('');
+        },
+
+        setPreviewType(t) { this.previewType = t; this.renderTabs(); this.refreshPreview(); },
+
+        refreshPreview() {
+          const c = this.collect();
+          // ใช้กติกาที่ server ตอบมา — ไม่ตัดสินเองในหน้าเว็บ
+          const brandLeads = this.policy[this.previewType] !== false && !!c.name;
+          const box = document.getElementById('pvBox');
+          const warn = document.getElementById('pvWarn');
+          if (!box) return;
+
+          const co = Layout.currentCompany;   // property ไม่ใช่ฟังก์ชัน
+          const coName = (co && co.name) || 'บริษัทของคุณ จำกัด';
+          const coTax  = (co && co.taxId) || '0000000000000';
+          const legal  = `ดำเนินการโดย ${coName} · เลขประจำตัวผู้เสียภาษี ${coTax} · สำนักงานใหญ่`;
+
+          const primary   = brandLeads ? c.name : coName;
+          const secondary = brandLeads ? (c.nameEn || '') : (c.name || '');
+          const place = c.legalNamePlacement;
+          const inHead = brandLeads && (place === 'Header' || place === 'Both');
+          const inFoot = brandLeads && (place !== 'Header');
+
+          warn.innerHTML = brandLeads ? '' : `<div class="bw-warn">
+            ⚖️ เอกสารชนิดนี้ต้องขึ้น <b>ชื่อนิติบุคคล</b> เป็นตัวหลักตาม ป.รัษฎากร §86/4
+            — ชื่อทางการค้าจะลงเป็นบรรทัดรอง ส่วนโลโก้ สี และที่อยู่ยังเป็นของแบรนด์
+          </div>`;
+
+          box.style.setProperty('--pvc', c.primaryColor || '#1f2937');
+          box.innerHTML = `
+            <div class="pv-head">
+              ${c.logoUrl ? `<img class="pv-logo" src="${this.esc(c.logoUrl)}" alt="">`
+                          : `<div class="pv-logo"></div>`}
+              <div style="flex:1">
+                <div class="pv-name">${this.esc(primary)}</div>
+                ${brandLeads && c.tagLine ? `<div class="pv-tag">${this.esc(c.tagLine)}</div>` : ''}
+                ${secondary ? `<div class="pv-sub">${this.esc(secondary)}</div>` : ''}
+                ${inHead ? `<div class="pv-legal">${this.esc(legal)}</div>` : ''}
+                ${c.address ? `<div class="pv-sub">${this.esc(c.address)}</div>` : ''}
+                <div class="pv-sub">เลขประจำตัวผู้เสียภาษี: ${this.esc(coTax)} (สำนักงานใหญ่)</div>
+                ${c.phone ? `<div class="pv-sub">โทร: ${this.esc(c.phone)}</div>` : ''}
+                ${c.email ? `<div class="pv-sub">Email: ${this.esc(c.email)}</div>` : ''}
+                ${c.website ? `<div class="pv-sub">${this.esc(c.website)}</div>` : ''}
+              </div>
+            </div>
+            <div class="pv-title">${this.esc(this.typeLabel())}</div>
+            <div class="pv-skel" style="width:70%"></div>
+            <div class="pv-skel"></div>
+            <div class="pv-skel" style="width:85%"></div>
+            <div class="pv-skel" style="width:40%;margin-left:auto"></div>
+            ${inFoot ? `<div class="pv-foot">${this.esc(legal)}</div>` : ''}`;
+        },
+
+        typeLabel() {
+          return ({ Quotation:'ใบเสนอราคา', Invoice:'ใบแจ้งหนี้', BillingNote:'ใบวางบิล',
+                    DeliveryNote:'ใบส่งของ', TaxInvoice:'ใบกำกับภาษี', Receipt:'ใบเสร็จรับเงิน'
+                  })[this.previewType] || this.previewType;
+        },
+
+        async save() {
+          const c = this.collect();
+          if (!c.name.trim()) { Layout.toast('กรุณากรอกชื่อทางการค้า', 'error'); return; }
+          try {
+            const body = { ...c };
+            if (c.id) await API.put(`/api/companies/${cid}/document-brands/${c.id}`, body);
+            else await API.post(`/api/companies/${cid}/document-brands`, body);
+            Layout.toast('บันทึกแล้ว — เลือกใช้ได้ตอนออกเอกสาร');
+            this.current = null;
+            await this.load();
+          } catch (e) { Layout.toast(e.message, 'error'); }
+        },
+
+        async remove() {
+          const c = this.current;
+          if (!c.id) return;
+          if (!confirm(`ลบ "${c.name}"?\n\nถ้ามีเอกสารที่ออกในนามนี้แล้ว ระบบจะปิดใช้งานให้แทน — เอกสารเก่ายังพิมพ์ได้เหมือนเดิม`)) return;
+          try {
+            const r = await API.del(`/api/companies/${cid}/document-brands/${c.id}`);
+            Layout.toast(r.message || 'ลบแล้ว');
+            this.current = null;
+            await this.load();
+          } catch (e) { Layout.toast(e.message, 'error'); }
+        },
+      };
+
+      window.Page = Page;
+      await Page.load();
+    })();
+  </script>
+</body>
+</html>

@@ -3401,6 +3401,44 @@ public static class DatabaseMigrationHelper
               AND "InputVatClaimable" = true;
             """,
 
+            // ===== DocumentBrands: ชื่อทางการค้า/แบรนด์ที่ใช้ออกเอกสาร =====
+            // กิจการเดียวขายหลายแบรนด์ — ใบเสนอราคา/ใบแจ้งหนี้/ใบส่งของ ขึ้นหัวเป็น
+            // ชื่อร้าน + โลโก้ร้านได้ ส่วนเอกสารภาษี (ใบกำกับ ฯลฯ) ยังบังคับชื่อ
+            // นิติบุคคลเป็นตัวหลักตาม §86/4 (ด่านอยู่ที่ DocumentIssuerIdentity)
+            """
+            CREATE TABLE IF NOT EXISTS "DocumentBrands" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Name" varchar(200) NOT NULL,
+                "NameEn" varchar(200) NULL,
+                "TagLine" varchar(300) NULL,
+                "TagLineEn" varchar(300) NULL,
+                "LogoPath" varchar(500) NULL,
+                "LogoUrl" varchar(1000) NULL,
+                "Address" varchar(1000) NULL,
+                "AddressEn" varchar(1000) NULL,
+                "Phone" varchar(100) NULL,
+                "Email" varchar(200) NULL,
+                "Website" varchar(300) NULL,
+                "PrimaryColor" varchar(20) NULL,
+                "SecondaryColor" varchar(20) NULL,
+                "DefaultTemplateId" uuid NULL,
+                "FooterNotes" varchar(2000) NULL,
+                "FooterNotesEn" varchar(2000) NULL,
+                "LegalNamePlacement" varchar(20) NOT NULL DEFAULT 'Footer',
+                "IsDefault" boolean NOT NULL DEFAULT false,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_DocumentBrands_Company" ON "DocumentBrands" ("CompanyId", "IsActive");""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BrandId" uuid NULL;""",
+
             // ===== Backfill: DocumentLine.Amount ที่เก็บ "ยอดรวม VAT" (ผิด convention) =====
             // OCR รุ่นก่อน 2026-08-14 เก็บยอดรวม VAT ลง Line.Amount บนใบที่ราคารวม VAT
             // ⇒ ตอนอนุมัติ JE ลง Dr ค่าใช้จ่าย(รวม VAT) + Dr ภาษีซื้อ(VAT ซ้ำ) =

@@ -1,0 +1,67 @@
+namespace Accounting.Models.Entities;
+
+/// <summary>
+/// **ชื่อทางการค้า / แบรนด์** ที่ใช้ออกเอกสารแทนชื่อนิติบุคคล
+///
+/// กิจการเดียวมักขายหลายแบรนด์ (ร้าน/สาขา/ไลน์สินค้า) และลูกค้ารู้จัก
+/// "ชื่อร้าน" ไม่ใช่ "บริษัท ... จำกัด" — ใบเสนอราคา/ใบแจ้งหนี้/ใบส่งของ
+/// จึงควรขึ้นหัวเป็นชื่อร้าน + โลโก้ร้าน
+///
+/// ⚠️ ขอบเขตทางกฎหมาย (ตัวตัดสินอยู่ที่ <c>Helpers.DocumentIssuerIdentity</c>
+/// ที่เดียว — ห้ามตัดสินเองในหน้า/renderer):
+/// <list type="bullet">
+/// <item><b>ใบกำกับภาษี §86/4</b> (รวมอย่างย่อ §86/6, ใบเพิ่ม/ลดหนี้ §86/9-10,
+///   ใบเสร็จ/ใบสำคัญรับ) — กฎหมายบังคับให้แสดง "ชื่อผู้ประกอบการจดทะเบียน"
+///   ⇒ ชื่อนิติบุคคลต้องเป็น**ตัวหลัก** แบรนด์ลงได้แค่โลโก้ + บรรทัดรอง</item>
+/// <item><b>เอกสารที่ไม่ใช่หลักฐานทางภาษี</b> (ใบเสนอราคา ใบแจ้งหนี้ ใบวางบิล
+///   ใบส่งของ ใบขอซื้อ/สั่งซื้อ) — แบรนด์ขึ้นเป็นตัวหลักได้</item>
+/// <item>ถึงแบรนด์เป็นตัวหลัก ก็ยัง**พิมพ์บรรทัดนิติบุคคลตัวเล็ก**เสมอ
+///   (ชื่อ + เลขประจำตัวผู้เสียภาษี 13 หลัก + สาขา) — ผู้รับต้องสืบได้ว่า
+///   ใครคือคู่สัญญาจริง และ พ.ร.บ.การบัญชีต้องการหลักฐานที่ระบุตัวกิจการ</item>
+/// </list>
+/// </summary>
+public class DocumentBrand : TenantEntity
+{
+    /// <summary>ชื่อทางการค้า (ไทย) — ตัวที่ขึ้นหัวเอกสาร</summary>
+    public string Name { get; set; } = "";
+    public string? NameEn { get; set; }
+
+    /// <summary>ข้อความใต้ชื่อ เช่น สโลแกน / ประเภทกิจการ (ไม่บังคับ)</summary>
+    public string? TagLine { get; set; }
+    public string? TagLineEn { get; set; }
+
+    // ===== โลโก้เฉพาะแบรนด์ (ว่าง = ใช้โลโก้บริษัทจาก CompanySettings) =====
+    public string? LogoPath { get; set; }
+    public string? LogoUrl { get; set; }
+
+    // ===== ข้อมูลติดต่อของแบรนด์ (ว่าง = ใช้ของบริษัท) =====
+    // หน้าร้าน/สาขาที่ลูกค้าติดต่อจริง มักไม่ใช่ที่อยู่จดทะเบียน
+    public string? Address { get; set; }
+    public string? AddressEn { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public string? Website { get; set; }
+
+    // ===== หน้าตาเอกสาร =====
+    /// <summary>สีหลักของหัวเอกสาร/หัวตาราง (hex เช่น #0F766E) — ว่าง = ใช้ของบริษัท</summary>
+    public string? PrimaryColor { get; set; }
+    public string? SecondaryColor { get; set; }
+    /// <summary>เทมเพลตที่ใช้เป็นค่าตั้งต้นเมื่อออกเอกสารในนามแบรนด์นี้
+    /// (ว่าง = ใช้เทมเพลต default ของชนิดเอกสารตามเดิม)</summary>
+    public Guid? DefaultTemplateId { get; set; }
+    /// <summary>ข้อความท้ายเอกสารเฉพาะแบรนด์ (เงื่อนไข/ขอบคุณ) — ว่าง = ของบริษัท</summary>
+    public string? FooterNotes { get; set; }
+    public string? FooterNotesEn { get; set; }
+
+    /// <summary>รูปแบบบรรทัดนิติบุคคลตัวเล็กบนเอกสารที่แบรนด์เป็นตัวหลัก:
+    /// "Header" = ใต้ชื่อแบรนด์ตรงหัว · "Footer" (ค่าเริ่มต้น) = ท้ายกระดาษ ·
+    /// "Both" = ทั้งสองที่. **ไม่มีตัวเลือก "ไม่แสดง"** โดยตั้งใจ — เอกสารที่
+    /// ไม่บอกว่านิติบุคคลใดเป็นคู่สัญญา ใช้เป็นหลักฐานทางบัญชีไม่ได้</summary>
+    public string LegalNamePlacement { get; set; } = "Footer";
+
+    /// <summary>แบรนด์ตั้งต้นของบริษัท — ใช้เมื่อผู้ใช้ไม่ได้เลือกเอง.
+    /// มีได้แบรนด์เดียวต่อบริษัท (service บังคับ)</summary>
+    public bool IsDefault { get; set; }
+    public bool IsActive { get; set; } = true;
+    public int SortOrder { get; set; }
+}

@@ -65,7 +65,8 @@ public partial class PdfGenerationService
         var stampAllowed = doc.Status is not (Accounting.Models.Enums.DocumentStatus.Draft
             or Accounting.Models.Enums.DocumentStatus.WaitingApproval
             or Accounting.Models.Enums.DocumentStatus.Rejected);
-        var b = BuildBranding(template, settings, watermarkOverride, stampAllowed);
+        var b = BuildBranding(template, settings, watermarkOverride, stampAllowed,
+            doc.Brand is { IsDeleted: false, IsActive: true } ? doc.Brand : null);
 
         var accent = b.AccentColor ?? "#1F2937";
         var primary = b.PrimaryColor ?? "#1F2937";
@@ -177,7 +178,7 @@ public partial class PdfGenerationService
                         {
                             void SafeH(Action a) { try { a(); } catch { /* skip failed section */ } }
                             if (cornerLabel != null) SafeH(() => ComposeCornerLabel(hc));
-                            SafeH(() => ComposeHeaderAndTitle(hc, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L));
+                            SafeH(() => ComposeHeaderAndTitle(hc, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, settings));
                             SafeH(() => ComposeContact(hc, doc, template, accent, L));
                             // ระยะห่างหัว↔เนื้อหา — Header ติดกับ Content ทันที
                             // ถ้าไม่เว้น ตารางจะชนขอบล่างของกล่องคู่ค้า
@@ -196,7 +197,7 @@ public partial class PdfGenerationService
                         if (!repeatHeader)
                         {
                             if (cornerLabel != null) Safe(() => ComposeCornerLabel(col));
-                            Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L));
+                            Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, settings));
                             Safe(() => ComposeContact(col, doc, template, accent, L));
                         }
                         Safe(() => ComposeAdjustmentRef(col, doc, accent, L));
@@ -303,8 +304,13 @@ public partial class PdfGenerationService
     // ─────────────────────────────────────────────────────────────────
     private static void ComposeHeaderAndTitle(ColumnDescriptor col, string layout,
         EntDoc doc, EntCompany company, EntTemplate template, PdfBranding b,
-        string accent, string headerBg, string headerText, string titleText, Accounting.Services.Implementations.Pdf.DocumentLabels L)
+        string accent, string headerBg, string headerText, string titleText, Accounting.Services.Implementations.Pdf.DocumentLabels L,
+        EntSettings? settings)
     {
+        // ตัวตนผู้ออกเอกสาร — resolver กลางตัวเดียวกับ HTML renderer
+        // (titleText = หัวที่คำนวณแล้ว → ด่านกฎหมายรู้ว่าใบนี้เป็นใบกำกับหรือไม่)
+        var issuer = BuildIssuer(doc, company, settings, L.IsEnglish ? "en" : "th", titleText);
+
         // cap title ที่ 18pt กันชื่อเอกสารใหญ่เกิน (เดิม 22/20 ใหญ่ไป — ผู้ใช้ขอเล็กลง)
         var titleFontSize = float.TryParse(template.TitleFontSize, out var tf) ? Math.Min(tf, 18f) : 17f;
         // โลโก้บนหัวเอกสาร: คุมด้วย "ความสูง" (ให้พอดีบรรทัดข้อความบริษัท ~14mm)
@@ -324,7 +330,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText, L));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText, L, issuer: issuer));
                 });
                 col.Item().PaddingTop(10).AlignCenter()
                     .Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
@@ -342,7 +348,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L, issuer: issuer));
                 });
                 col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Grey.Lighten1);
                 ComposeDocInfo(col, doc, template, accent, false, L);
@@ -354,7 +360,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { c.Item().AlignCenter().Height(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    RenderCompanyLines(c, company, template, "#222", L, center: true);
+                    RenderCompanyLines(c, company, template, "#222", L, center: true, issuer: issuer);
                 });
                 col.Item().PaddingVertical(4).LineHorizontal(2.5f).LineColor(accent);
                 col.Item().PaddingTop(8).Text(titleText)
@@ -367,7 +373,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { c.Item().AlignCenter().Height(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    RenderCompanyLines(c, company, template, "#222", L, center: true);
+                    RenderCompanyLines(c, company, template, "#222", L, center: true, issuer: issuer);
                 });
                 col.Item().PaddingTop(10).AlignCenter().BorderTop(2.5f).BorderBottom(2.5f).BorderColor(accent)
                     .PaddingVertical(6)
@@ -381,7 +387,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L, issuer: issuer));
                 });
                 col.Item().PaddingTop(12).BorderLeft(6).BorderColor(accent).PaddingLeft(10)
                     .Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
@@ -393,7 +399,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText, L));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText, L, issuer: issuer));
                 });
                 col.Item().PaddingTop(10).Background("#F1F5F9").BorderLeft(6).BorderColor(accent)
                     .PaddingVertical(8).PaddingHorizontal(12)
@@ -406,7 +412,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L, issuer: issuer));
                 });
                 col.Item().PaddingTop(10).Row(r =>
                 {
@@ -430,7 +436,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L, issuer: issuer));
                 });
                 col.Item().PaddingTop(layout == "Compact" ? 6 : 14)
                     .Text(titleText).FontSize(titleFontSize)
@@ -450,7 +456,7 @@ public partial class PdfGenerationService
                     {
                         if (b.LogoBytes is { Length: > 0 })
                             try { rr.ConstantItem(26, Unit.Millimetre).AlignMiddle().MaxHeight(logoH, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
-                        rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L));
+                        rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222", L, issuer: issuer));
                     });
                     r.ConstantItem(220).Column(rc =>
                     {
@@ -485,25 +491,37 @@ public partial class PdfGenerationService
                 .FontSize(8.5f).FontColor("#64748B");
     }
 
-    private static void RenderCompanyLines(ColumnDescriptor c, EntCompany co, EntTemplate t, string color, Accounting.Services.Implementations.Pdf.DocumentLabels L, bool center = false)
+    private static void RenderCompanyLines(ColumnDescriptor c, EntCompany co, EntTemplate t, string color, Accounting.Services.Implementations.Pdf.DocumentLabels L, bool center = false,
+        Accounting.Helpers.IssuerIdentity? issuer = null)
     {
-        void Line(string s, int size = 10, bool bold = false)
+        void Line(string s, int size = 10, bool bold = false, string? overrideColor = null)
         {
             var item = c.Item();
             if (center) item = item.AlignCenter();
-            var text = item.Text(s).FontSize(size).FontColor(color);
+            var text = item.Text(s).FontSize(size).FontColor(overrideColor ?? color);
             if (bold) text.Bold();
         }
-        // โหมด en: NameEn เป็นชื่อหลัก (ไม่ถอดอักษรชื่อบริษัทเอง — สิทธิ์ของเจ้าของ
-        // ชื่อ; ไม่มี NameEn → คงชื่อไทย) + ไม่พิมพ์บรรทัด EN ซ้ำ — ต้องตรงกับ
-        // HTML renderer (กฎ "สอง renderer ห้าม drift")
-        var coPrimaryName = L.IsEnglish && !string.IsNullOrWhiteSpace(co.NameEn) ? co.NameEn! : (co.Name ?? "");
+        // ชื่อ/ที่อยู่/ติดต่อ มาจาก resolver กลาง (BuildIssuer) ตัวเดียวกับ HTML
+        // renderer — ครอบทั้งเคสชื่อทางการค้าและ NameEn โหมด en
+        // (กฎ "สอง renderer ห้าม drift"). ไม่มี issuer = เอกสารเก่า/เส้นทางที่ยัง
+        // ไม่ส่งมา → ถอยไปใช้ข้อมูลบริษัทตรง ๆ เหมือนเดิม
+        var coPrimaryName = issuer?.PrimaryName
+            ?? (L.IsEnglish && !string.IsNullOrWhiteSpace(co.NameEn) ? co.NameEn! : (co.Name ?? ""));
+        var secondary = issuer != null
+            ? issuer.SecondaryName
+            : (!string.IsNullOrWhiteSpace(co.NameEn) && coPrimaryName != co.NameEn ? co.NameEn : null);
+
         if (t.ShowCompanyName) Line(coPrimaryName, 14, true);
-        if (t.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(co.NameEn) && coPrimaryName != co.NameEn) Line(co.NameEn!, 11);
+        if (!string.IsNullOrWhiteSpace(issuer?.TagLine)) Line(issuer!.TagLine!, 9, false, "#64748B");
+        if (t.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(secondary) && coPrimaryName != secondary)
+            Line(secondary!, 11);
+        // ชื่อนิติบุคคลตัวเล็กใต้ชื่อแบรนด์ (ตั้งเป็น Header/Both) — ปิดไม่ได้
+        if (issuer is { LegalLineInHeader: true } && !string.IsNullOrWhiteSpace(issuer.LegalLine))
+            Line(issuer.LegalLine!, 8, false, "#64748B");
         if (t.ShowCompanyAddress)
         {
             // resolver กลางตัวเดียวกับ HTML renderer — ห้ามคำนวณลำดับเองที่นี่
-            var addr = ThaiAddressFormatter.ResolvePartyAddress(
+            var addr = issuer?.Address ?? ThaiAddressFormatter.ResolvePartyAddress(
                 L.IsEnglish, co.AddressEn,
                 co.Address, co.BuildingNumber, co.BuildingName, co.Moo, co.StreetName,
                 co.SubDistrict, co.District, co.Province, co.PostalCode);
@@ -514,10 +532,13 @@ public partial class PdfGenerationService
             var coBranch = FormatBranch(co.BranchCode, co.BranchName, "th");
             Line($"{L.TaxId}: {co.TaxId} ({coBranch})");
         }
-        if (t.ShowCompanyPhone && !string.IsNullOrWhiteSpace(co.Phone))
-            Line($"{L.Phone}: {co.Phone}");
-        if (t.ShowCompanyEmail && !string.IsNullOrWhiteSpace(co.Email))
-            Line($"Email: {co.Email}");
+        var phone = issuer?.Phone ?? co.Phone;
+        var email = issuer?.Email ?? co.Email;
+        if (t.ShowCompanyPhone && !string.IsNullOrWhiteSpace(phone))
+            Line($"{L.Phone}: {phone}");
+        if (t.ShowCompanyEmail && !string.IsNullOrWhiteSpace(email))
+            Line($"Email: {email}");
+        if (!string.IsNullOrWhiteSpace(issuer?.Website)) Line(issuer!.Website!, 9);
     }
 
     private static void ComposeDocInfo(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, bool alignRight, Accounting.Services.Implementations.Pdf.DocumentLabels L)
