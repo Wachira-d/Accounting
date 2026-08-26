@@ -32,7 +32,7 @@ public class DocumentBrandController : ControllerBase
         string? Address, string? AddressEn, string? Phone, string? Email, string? Website,
         string? PrimaryColor, string? SecondaryColor, Guid? DefaultTemplateId,
         string? FooterNotes, string? FooterNotesEn,
-        string? LegalNamePlacement, bool IsDefault = false, bool IsActive = true, int SortOrder = 0);
+        string? LegalNamePlacement, bool IsActive = true, int SortOrder = 0);
 
     public sealed record BrandResponse(
         Guid Id, string Name, string? NameEn, string? TagLine, string? TagLineEn,
@@ -40,13 +40,13 @@ public class DocumentBrandController : ControllerBase
         string? Address, string? AddressEn, string? Phone, string? Email, string? Website,
         string? PrimaryColor, string? SecondaryColor, Guid? DefaultTemplateId,
         string? FooterNotes, string? FooterNotesEn,
-        string LegalNamePlacement, bool IsDefault, bool IsActive, int SortOrder);
+        string LegalNamePlacement, bool IsActive, int SortOrder);
 
     private static BrandResponse Map(DocumentBrand b) => new(
         b.Id, b.Name, b.NameEn, b.TagLine, b.TagLineEn, b.LogoPath, b.LogoUrl,
         b.Address, b.AddressEn, b.Phone, b.Email, b.Website,
         b.PrimaryColor, b.SecondaryColor, b.DefaultTemplateId,
-        b.FooterNotes, b.FooterNotesEn, b.LegalNamePlacement, b.IsDefault, b.IsActive, b.SortOrder);
+        b.FooterNotes, b.FooterNotesEn, b.LegalNamePlacement, b.IsActive, b.SortOrder);
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<List<BrandResponse>>>> List(
@@ -54,8 +54,7 @@ public class DocumentBrandController : ControllerBase
     {
         var q = _db.DocumentBrands.AsNoTracking().Where(b => b.CompanyId == companyId && !b.IsDeleted);
         if (!includeInactive) q = q.Where(b => b.IsActive);
-        var rows = await q.OrderByDescending(b => b.IsDefault).ThenBy(b => b.SortOrder)
-            .ThenBy(b => b.Name).ToListAsync(ct);
+        var rows = await q.OrderBy(b => b.SortOrder).ThenBy(b => b.Name).ToListAsync(ct);
         return Ok(new ApiResponse<List<BrandResponse>>(true, rows.Select(Map).ToList()));
     }
 
@@ -92,7 +91,6 @@ public class DocumentBrandController : ControllerBase
         Apply(b, req);
         _db.DocumentBrands.Add(b);
         await _db.SaveChangesAsync(ct);
-        if (b.IsDefault) await ClearOtherDefaultsAsync(companyId, b.Id, ct);
         return Ok(new ApiResponse<BrandResponse>(true, Map(b), "บันทึกชื่อทางการค้าแล้ว"));
     }
 
@@ -109,7 +107,6 @@ public class DocumentBrandController : ControllerBase
         Apply(b, req);
         b.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        if (b.IsDefault) await ClearOtherDefaultsAsync(companyId, b.Id, ct);
         return Ok(new ApiResponse<BrandResponse>(true, Map(b), "บันทึกแล้ว"));
     }
 
@@ -127,7 +124,6 @@ public class DocumentBrandController : ControllerBase
         if (used)
         {
             b.IsActive = false;
-            b.IsDefault = false;
             b.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
             return Ok(new ApiResponse<string>(true, null,
@@ -189,17 +185,6 @@ public class DocumentBrandController : ControllerBase
             ? "สำนักงานใหญ่"
             : (string.IsNullOrWhiteSpace(name) ? $"สาขาที่ {code}" : $"สาขาที่ {code} {name}");
 
-    /// <summary>แบรนด์ตั้งต้นมีได้ตัวเดียว — ตั้งตัวใหม่ = ตัวเก่าถูกปลด</summary>
-    private async Task ClearOtherDefaultsAsync(Guid companyId, Guid keepId, CancellationToken ct)
-    {
-        var others = await _db.DocumentBrands
-            .Where(x => x.CompanyId == companyId && x.Id != keepId && x.IsDefault && !x.IsDeleted)
-            .ToListAsync(ct);
-        if (others.Count == 0) return;
-        foreach (var o in others) { o.IsDefault = false; o.UpdatedAt = DateTime.UtcNow; }
-        await _db.SaveChangesAsync(ct);
-    }
-
     private static void Apply(DocumentBrand b, BrandRequest r)
     {
         b.Name = r.Name.Trim();
@@ -221,7 +206,6 @@ public class DocumentBrandController : ControllerBase
         // ไม่มีตัวเลือก "ไม่แสดงชื่อนิติบุคคล" — ค่านอกลิสต์ตกไป Footer เสมอ
         var lp = (r.LegalNamePlacement ?? "").Trim();
         b.LegalNamePlacement = lp is "Header" or "Both" ? lp : "Footer";
-        b.IsDefault = r.IsDefault;
         b.IsActive = r.IsActive;
         b.SortOrder = r.SortOrder;
     }

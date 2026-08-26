@@ -97,7 +97,7 @@
           return { id:null, name:'', nameEn:'', tagLine:'', tagLineEn:'', logoUrl:'',
                    address:'', addressEn:'', phone:'', email:'', website:'',
                    primaryColor:'#1f2937', footerNotes:'',
-                   legalNamePlacement:'Footer', isDefault:this.brands.length===0, isActive:true, sortOrder:0 };
+                   legalNamePlacement:'Footer', isActive:true, sortOrder:0 };
         },
 
         render() {
@@ -107,7 +107,9 @@
               — กิจการเดียวมีได้หลายแบรนด์<br>
               <b>ใบเสนอราคา · ใบแจ้งหนี้ · ใบวางบิล · ใบส่งของ · ใบขอซื้อ/สั่งซื้อ</b> ขึ้นหัวเป็นชื่อทางการค้าได้<br>
               <b>ใบกำกับภาษี · ใบเพิ่ม/ลดหนี้ · ใบเสร็จรับเงิน</b> กฎหมาย (ป.รัษฎากร §86/4) บังคับให้ขึ้น
-              <b>ชื่อนิติบุคคล</b> เป็นตัวหลัก — แบรนด์ยังได้โลโก้ สี และที่อยู่หน้าร้าน
+              <b>ชื่อนิติบุคคล</b> เป็นตัวหลัก — แบรนด์ยังได้โลโก้ สี และที่อยู่หน้าร้าน<br>
+              <b>ตอนสร้างเอกสาร ระบบเลือก "ใช้ชื่อบริษัท" ให้เป็นค่าเริ่มต้นเสมอ</b>
+              — จะออกในนามแบรนด์ ต้องเลือกเองรายใบ (ตั้งไว้แล้วไม่ได้แปลว่าทุกใบเปลี่ยนตาม)
             </p>
             <div class="bw-grid">
               <div class="bw-card">
@@ -136,7 +138,6 @@
               <span class="sw" style="background:${this.esc(b.primaryColor || '#e2e8f0')}"></span>
               <span style="flex:1">
                 ${this.esc(b.name)}
-                ${b.isDefault ? '<span class="bw-pill">ตั้งต้น</span>' : ''}
                 ${b.isActive ? '' : '<span class="bw-pill off">ปิดใช้งาน</span>'}
               </span>
             </li>`).join('');
@@ -160,7 +161,6 @@
           c.primaryColor = v('fColor');
           c.footerNotes = v('fFooter');
           c.legalNamePlacement = v('fPlacement');
-          c.isDefault = !!(document.getElementById('fDefault') || {}).checked;
           c.isActive = !!(document.getElementById('fActive') || {}).checked;
           return c;
         },
@@ -212,9 +212,6 @@
                   <input id="fWeb" value="${this.esc(c.website)}" oninput="Page.refreshPreview()"></div>
                 <div class="bw-row"><label>ข้อความท้ายเอกสารของแบรนด์นี้</label>
                   <textarea id="fFooter" rows="2">${this.esc(c.footerNotes)}</textarea></div>
-                <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px">
-                  <input type="checkbox" id="fDefault" ${c.isDefault?'checked':''}> ใช้เป็นแบรนด์ตั้งต้น (เลือกให้อัตโนมัติตอนออกเอกสาร)
-                </label>
                 <label style="display:flex;gap:8px;align-items:center;font-size:13px">
                   <input type="checkbox" id="fActive" ${c.isActive?'checked':''}> เปิดใช้งาน
                 </label>

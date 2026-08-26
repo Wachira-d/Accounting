@@ -3426,7 +3426,6 @@ public static class DatabaseMigrationHelper
                 "FooterNotes" varchar(2000) NULL,
                 "FooterNotesEn" varchar(2000) NULL,
                 "LegalNamePlacement" varchar(20) NOT NULL DEFAULT 'Footer',
-                "IsDefault" boolean NOT NULL DEFAULT false,
                 "IsActive" boolean NOT NULL DEFAULT true,
                 "SortOrder" integer NOT NULL DEFAULT 0,
                 "CreatedAt" timestamp NOT NULL DEFAULT now(),

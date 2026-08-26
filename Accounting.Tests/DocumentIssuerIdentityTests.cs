@@ -125,6 +125,36 @@ public class DocumentIssuerIdentityTests
 
     // ── fallback / พฤติกรรมเดิมต้องไม่เปลี่ยน ──────────────────────
 
+    /// <summary>ข้อกำหนดจากผู้ใช้ข้อ 1: "ถ้าบริษัทไม่ได้ตั้งค่าชื่อทางการค้าเพิ่ม
+    /// ทุกอย่างเหมือนเดิม" — ล็อกไว้ทุกชนิดเอกสาร ไม่ใช่เฉพาะใบเสนอราคา</summary>
+    [Theory]
+    [InlineData(DocumentType.Quotation)]
+    [InlineData(DocumentType.Invoice)]
+    [InlineData(DocumentType.TaxInvoice)]
+    [InlineData(DocumentType.Receipt)]
+    [InlineData(DocumentType.CreditNote)]
+    [InlineData(DocumentType.PurchaseOrder)]
+    [InlineData(DocumentType.PurchaseInvoice)]
+    [InlineData(DocumentType.PaymentVoucher)]
+    public void ไม่ได้ตั้งแบรนด์_ทุกชนิดเอกสารต้องเหมือนเดิมเป๊ะ(DocumentType type)
+    {
+        var id = Resolve(type);
+        Assert.Equal(CoName, id.PrimaryName);          // ชื่อบริษัทตามเดิม
+        Assert.Equal(CoNameEn, id.SecondaryName);
+        Assert.Equal("/uploads/company.png", id.LogoPath);   // โลโก้บริษัทตามเดิม
+        Assert.Equal("#1F2937", id.PrimaryColor);           // สีตามเดิม
+        Assert.Equal("1 ถนนพระราม 4 กรุงเทพฯ", id.Address);
+        Assert.Equal("02-999-8888", id.Phone);
+        Assert.Equal("acc@example.co", id.Email);
+        Assert.Null(id.Website);
+        Assert.Null(id.TagLine);
+        // ไม่มีบรรทัด "ดำเนินการโดย ..." โผล่มาเพิ่มบนเอกสารที่ไม่เคยมี
+        Assert.Null(id.LegalLine);
+        Assert.False(id.LegalLineInHeader);
+        Assert.False(id.LegalLineInFooter);
+        Assert.False(id.BrandIsPrimary);
+    }
+
     [Fact]
     public void ไม่มีแบรนด์_ผลลัพธ์เหมือนก่อนมีฟีเจอร์นี้()
     {

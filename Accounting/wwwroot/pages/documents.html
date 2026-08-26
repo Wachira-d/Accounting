@@ -3740,7 +3740,7 @@
         row.style.display = '';
         sel.innerHTML = '<option value="">— ใช้ชื่อบริษัท —</option>'
           + this._brands.map(b =>
-              `<option value="${b.id}">${this.escapeHtml(b.name)}${b.isDefault ? ' (ตั้งต้น)' : ''}</option>`).join('');
+              `<option value="${b.id}">${this.escapeHtml(b.name)}</option>`).join('');
         this._applyBrandHint();
       },
 
@@ -3752,7 +3752,11 @@
         if (!hint || !sel) return;
         const type = document.getElementById('fDocType')?.value || '';
         const canLead = this._brandPolicy[type] !== false;
-        if (!sel.value) { hint.textContent = 'เอกสารจะขึ้นชื่อบริษัทตามปกติ'; hint.style.color = '#64748b'; return; }
+        if (!sel.value) {
+          hint.textContent = 'ค่าเริ่มต้น — เอกสารขึ้นชื่อบริษัทตามปกติ (เลือกด้านบนถ้าจะออกในนามชื่อร้าน)';
+          hint.style.color = '#64748b';
+          return;
+        }
         if (canLead) {
           hint.textContent = '✅ หัวเอกสารจะขึ้นชื่อทางการค้า + โลโก้ของแบรนด์ '
             + '(ชื่อนิติบุคคลพิมพ์ตัวเล็กกำกับไว้เสมอ)';
@@ -3766,13 +3770,18 @@
 
       onBrandChange() { this._applyBrandHint(); },
 
-      /** เลือกแบรนด์ให้ตอนเปิดฟอร์ม: แก้ไข = ตามที่บันทึกไว้ · สร้างใหม่ = ตัวตั้งต้น
-       *  (ห้ามค้างค่าจากใบก่อนหน้า — defect class "reset ตอนฟอร์มใหม่") */
+      /** เลือกแบรนด์ให้ตอนเปิดฟอร์ม
+       *  - แก้ไขใบเดิม → ตามที่บันทึกไว้ (echo กลับ ไม่งั้นบันทึกแล้วค่าหาย)
+       *  - สร้างใบใหม่ → **"ใช้ชื่อบริษัท" เสมอ** ไม่ว่าจะตั้งแบรนด์ไว้กี่ตัว
+       *
+       *  ตั้งใจไม่มี "แบรนด์ตั้งต้น" ที่เลือกให้อัตโนมัติ: ตั้งแบรนด์ไว้ครั้งเดียว
+       *  แล้วทุกใบเปลี่ยนตามเงียบ ๆ = ใบที่ควรออกในนามบริษัทหลุดไปเป็นชื่อร้าน
+       *  โดยไม่มีใครสั่ง และรู้ตัวอีกทีตอนเอกสารถึงมือลูกค้าแล้ว
+       *  (ยังต้อง reset ทุกครั้ง — ห้ามค้างค่าจากใบก่อนหน้า) */
       _hydrateBrand(doc) {
         const sel = document.getElementById('fBrand');
         if (!sel) return;
-        const def = this._brands.find(b => b.isDefault);
-        sel.value = doc?.brandId || (doc ? '' : (def ? def.id : ''));
+        sel.value = doc?.brandId || '';
         this._applyBrandHint();
       },
 
