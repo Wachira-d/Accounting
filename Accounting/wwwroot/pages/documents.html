@@ -67,6 +67,32 @@
     /* ===== Document form — sectioned layout ===== */
     #formModal .modal { max-width: 960px; }
     /* sticky footer so ยกเลิก/บันทึก อยู่ติดมือเสมอ ไม่ต้องเลื่อนหา */
+    /* ===== แถบปุ่มท้ายหน้ารายละเอียด — เมนู "⋯ เพิ่มเติม" ===== */
+    #detailActions .act-more .dropdown-menu {
+      right: 0; bottom: 100%; top: auto; margin: 0 0 6px;   /* เปิดขึ้นบน — อยู่ท้าย modal แล้ว */
+      min-width: 230px; max-height: 62vh; overflow-y: auto; padding: 6px;
+    }
+    /* ปุ่มในเมนูเป็น "รายการ" ไม่ใช่ปุ่มสี — เต็มความกว้าง ชิดซ้าย อ่านเป็นลิสต์ */
+    #detailActions .act-more .dropdown-menu .btn {
+      display: block; width: 100%; text-align: left; background: none; color: var(--gray-700);
+      border: none; box-shadow: none; padding: 9px 12px; font-size: 13.5px; border-radius: 6px;
+      white-space: normal; min-height: 0;
+    }
+    #detailActions .act-more .dropdown-menu .btn:hover { background: var(--gray-100); }
+    #detailActions .act-more .dropdown-menu .btn.act-danger { color: var(--red-600); }
+    #detailActions .act-more .dropdown-menu .btn.act-danger:hover { background: var(--red-50); }
+    #detailActions .act-more .dropdown-menu .btn[disabled] { opacity: .5; }
+    #detailActions .act-sep {
+      border-top: 1px solid var(--gray-200); margin: 6px 4px 2px; padding: 6px 8px 2px;
+      font-size: 11px; color: var(--gray-400);
+    }
+    @media (max-width: 640px) {
+      /* มือถือ: ปุ่มหลักเรียงเต็มแถวอ่านง่ายกว่าบีบให้พอดีบรรทัด */
+      #detailActions > .btn { flex: 1 1 calc(50% - 6px); }
+      #detailActions .act-more { flex: 1 1 100%; }
+      #detailActions .act-more > .btn { width: 100%; }
+    }
+
     #formModal .modal-footer {
       position: sticky; bottom: 0; background: #fff; z-index: 5;
       box-shadow: 0 -4px 12px -8px rgba(0,0,0,.25);
@@ -175,7 +201,7 @@
       </select>
       <input type="date" class="form-input" id="dateFrom" onchange="Page.load()" title="ตั้งแต่วันที่" style="width:140px">
       <input type="date" class="form-input" id="dateTo" onchange="Page.load()" title="ถึงวันที่" style="width:140px">
-      <button class="btn btn-sm btn-ghost" onclick="Page.setDatePreset('clear')" title="ล้างตัวกรองวันที่">ล้าง</button>
+      <button data-g="primary" class="btn btn-sm btn-ghost" onclick="Page.setDatePreset('clear')" title="ล้างตัวกรองวันที่">ล้าง</button>
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
@@ -970,7 +996,7 @@
                ไม่ใช้ flex:1 inline (ปล่อย .form-input width:100% เป็น default) -->
           <div class="form-group">
             <label class="form-label" data-i18n="common.note">หมายเหตุ
-              <button type="button" class="btn-ai" style="margin-left:8px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
+              <button data-g="primary" type="button" class="btn-ai" style="margin-left:8px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
             </label>
             <!-- textarea: Enter = ขึ้นบรรทัดใหม่ (input เดิม Enter จะ submit ฟอร์ม
                  สร้างเอกสารทันที) — PDF แสดงตามบรรทัดที่พิมพ์ (white-space:pre-line) -->
@@ -1362,7 +1388,7 @@
             <button class="btn btn-sm btn-primary" onclick="Page.printPdf()" title="พิมพ์ PDF ตัวเดียวกับปุ่ม 'ดาวน์โหลด PDF' (QuestPDF) — หน้าตาเหมือนกันเป๊ะ">🖨️ พิมพ์</button>
             <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF — เอกสารที่ผ่าน e-Tax flow แล้วจะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติ (ใช้ยื่นภาษีได้ทันที), เอกสารอื่นได้ PDF ปกติ">📥 ดาวน์โหลด PDF</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.downloadHtmlPdf()" title="ดาวน์โหลดเป็น HTML (เปิดแล้วกดพิมพ์เลือก 'Save as PDF')">📄 ดาวน์โหลด HTML</button>
-            <button class="modal-close" onclick="Layout.closeModal('pdfModal')">&times;</button>
+            <button data-g="primary" class="modal-close" onclick="Layout.closeModal('pdfModal')">&times;</button>
           </div>
         </div>
         <div id="pdfEtaxBanner" style="display:none;flex-shrink:0;padding:8px 16px;background:#ecfdf5;border-bottom:1px solid #a7f3d0;font-size:12px;color:#065f46">
@@ -1415,7 +1441,7 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('convertModal')" data-i18n="common.cancel">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.doConvert()">แปลงเอกสาร</button>
+          <button data-g="primary" class="btn btn-primary" onclick="Page.doConvert()">แปลงเอกสาร</button>
         </div>
       </div>
     </div>
@@ -3728,6 +3754,71 @@
       // ===== ชื่อทางการค้า (แบรนด์) บนหัวเอกสาร =====
       // กติกาว่าชนิดไหนแบรนด์ขึ้นหัวได้ มาจาก API เท่านั้น (ป.รัษฎากร §86/4
       // บังคับชื่อผู้ประกอบการจดทะเบียนบนใบกำกับ) — ห้าม hardcode ลิสต์ที่นี่
+      /** จัดแถบปุ่มท้ายหน้ารายละเอียดเอกสาร — **จุดเดียว**ที่ตัดสินว่าปุ่มไหน
+       *  โชว์ตรง ๆ ปุ่มไหนเก็บในเมนู "⋯ เพิ่มเติม"
+       *
+       *  ที่มา: เอกสารที่อนุมัติแล้วมีปุ่มได้ถึง ~10 ปุ่ม (PDF · ประวัติ · แปลง ·
+       *  อีเมล · ชำระเงิน · ตัดหนี้สูญ · ยกเลิก · ลบทั้งหมด · ถามผู้ช่วย ·
+       *  นำเข้าสต๊อก) แถวเดียวรับไม่ไหว — ล้นออกนอกกรอบจนปุ่มแรก ๆ ถูกตัดหาย
+       *  กดไม่ได้ (`.modal-footer` เป็น flex + justify-content:flex-end ส่วนที่ล้น
+       *  จึงหลุดออกทางซ้าย)
+       *
+       *  กติกา: `data-g` บนปุ่ม — primary = งานหลักของสถานะนั้น (โชว์เสมอ) ·
+       *  more = ใช้นาน ๆ ครั้ง · danger = ทำลาย/ย้อนยาก (เข้าเมนู + คั่นเส้น
+       *  ท้ายสุด กันกดพลาด). ปุ่มที่ไม่ติดป้าย = ถือเป็น primary (ปลอดภัยไว้ก่อน
+       *  — ปุ่มใหม่ที่ลืมติดป้ายต้อง "เห็น" ไม่ใช่ "หาย")
+       *
+       *  ปุ่มรวมน้อยกว่าเกณฑ์ = ไม่ต้องมีเมนู โชว์เรียงกันตามเดิมทั้งหมด */
+      _INLINE_MAX: 5,
+
+      _layoutDetailActions() {
+        const host = document.getElementById('detailActions');
+        if (!host) return;
+        const all = Array.from(host.children).filter(el => el.tagName === 'BUTTON');
+        if (!all.length) return;
+
+        const g = el => el.getAttribute('data-g') || 'primary';
+        const primary = all.filter(el => g(el) === 'primary');
+        const more    = all.filter(el => g(el) === 'more');
+        const danger  = all.filter(el => g(el) === 'danger');
+
+        // น้อยพอ → โชว์หมด ไม่ต้องซ่อนอะไรให้ผู้ใช้ต้องไปหา
+        if (all.length <= this._INLINE_MAX) return;
+
+        host.innerHTML = '';
+        primary.forEach(b => host.appendChild(b));
+
+        const rest = [...more, ...danger];
+        if (!rest.length) return;
+
+        const wrap = document.createElement('div');
+        wrap.className = 'dropdown act-more';
+        wrap.innerHTML = `<button class="btn btn-secondary" type="button"
+            onclick="this.parentElement.querySelector('.dropdown-menu').classList.toggle('show')"
+            title="คำสั่งที่ใช้นาน ๆ ครั้ง และคำสั่งที่ต้องระวัง">⋯ เพิ่มเติม (${rest.length})</button>
+          <div class="dropdown-menu"></div>`;
+        const menu = wrap.querySelector('.dropdown-menu');
+        more.forEach(b => menu.appendChild(b));
+        if (danger.length) {
+          const hr = document.createElement('div');
+          hr.className = 'act-sep';
+          hr.textContent = 'ต้องระวัง — ย้อนกลับยาก';
+          menu.appendChild(hr);
+          danger.forEach(b => { b.classList.add('act-danger'); menu.appendChild(b); });
+        }
+        host.appendChild(wrap);
+
+        // คลิกที่อื่น = ปิดเมนู (ครั้งเดียวพอ — modal ถูกสร้างใหม่ทุกครั้งที่เปิด)
+        if (!this._actMenuCloser) {
+          this._actMenuCloser = (ev) => {
+            document.querySelectorAll('#detailActions .dropdown-menu.show').forEach(m => {
+              if (!m.parentElement.contains(ev.target)) m.classList.remove('show');
+            });
+          };
+          document.addEventListener('click', this._actMenuCloser);
+        }
+      },
+
       /** ค่าที่จะส่งไปกับ payload สำหรับช่องที่ "ว่าง = ปลดค่า"
        *  เลือกไว้        → id นั้น
        *  ว่าง + แก้ไข + โหลดรายการสำเร็จ → Guid.Empty (เจตนาปลดจริง)
@@ -6399,7 +6490,7 @@
             <td>${Layout.statusBadge(d.status)}</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')" data-i18n="common.view">ดู</button>
-              <button class="btn btn-sm btn-ghost" onclick="Page.showPdf('${d.id}')">PDF${hasEtaxId(d.etaxInvoiceId) ? ' 📥' : ''}</button>
+              <button data-g="primary" class="btn btn-sm btn-ghost" onclick="Page.showPdf('${d.id}')">PDF${hasEtaxId(d.etaxInvoiceId) ? ' 📥' : ''}</button>
               <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.cloneDoc('${d.id}')" title="คัดลอกเอกสารฉบับนี้ — สร้างใหม่จากข้อมูลเดิม (ลูกค้า + รายการ + บัญชี)">📋</button>
               ${d.status === 'Draft' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.deleteDoc('${d.id}')" title="ลบเอกสารฉบับร่าง">ลบ</button>` : ''}
               ${d.status !== 'Draft' && d.status !== 'Voided' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidDoc('${d.id}')" title="ยกเลิกเอกสาร">ยกเลิก</button>` : ''}
@@ -8730,17 +8821,17 @@
           this.loadApprovalStatus(d.id);
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
-          actions += ` <button class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
-          actions += ` <button class="btn btn-secondary" onclick="Layout.showEntityTimeline('Document','${d.id}','${Layout.esc(d.documentNumber)}')" title="ดูประวัติการสร้าง / แก้ไข / อนุมัติ / ยกเลิก ของเอกสารฉบับนี้">📜 ประวัติ</button>`;
+          actions += ` <button data-g="primary" class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
+          actions += ` <button data-g="more" class="btn btn-secondary" onclick="Layout.showEntityTimeline('Document','${d.id}','${Layout.esc(d.documentNumber)}')" title="ดูประวัติการสร้าง / แก้ไข / อนุมัติ / ยกเลิก ของเอกสารฉบับนี้">📜 ประวัติ</button>`;
           if (d.status === 'Draft') {
-            actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')" data-i18n="common.edit">แก้ไข</button>`;
-            actions += ` <button class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
-            actions += ` <button class="btn btn-danger" onclick="Page.deleteDoc('${d.id}')" title="ลบถาวร — เฉพาะเอกสารฉบับร่างที่ยังไม่กระทบบัญชี">🗑 ลบถาวร</button>`;
+            actions += ` <button data-g="primary" class="btn btn-warning" onclick="Page.openEdit('${d.id}')" data-i18n="common.edit">แก้ไข</button>`;
+            actions += ` <button data-g="primary" class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
+            actions += ` <button data-g="danger" class="btn btn-danger" onclick="Page.deleteDoc('${d.id}')" title="ลบถาวร — เฉพาะเอกสารฉบับร่างที่ยังไม่กระทบบัญชี">🗑 ลบถาวร</button>`;
           }
           // ใบถูกตีกลับ = แก้ได้ (ยังไม่ posted ไม่มี JE) — เดิมเป็นทางตัน:
           // ตีกลับแล้วทำได้แค่ส่งใบเดิมซ้ำโดยแก้เหตุที่โดนตีกลับไม่ได้เลย
           if (d.status === 'Rejected') {
-            actions += ` <button class="btn btn-warning" onclick="Page.openEdit('${d.id}')" title="แก้ตามเหตุผลที่ถูกตีกลับ แล้วส่งขออนุมัติใหม่">แก้ไข</button>`;
+            actions += ` <button data-g="primary" class="btn btn-warning" onclick="Page.openEdit('${d.id}')" title="แก้ตามเหตุผลที่ถูกตีกลับ แล้วส่งขออนุมัติใหม่">แก้ไข</button>`;
           }
           // ส่งขออนุมัติ / ส่งซ้ำ — เดิมส่งได้ทางเดียวคือกด "อนุมัติ" แล้วโดน
           // workflow gate ปฏิเสธ ค่อยมี confirm ให้ส่ง (ผู้ขอที่ไม่มีสิทธิ์อนุมัติ
@@ -8748,7 +8839,7 @@
           // (รออนุมัติ = ส่งซ้ำเพื่อเตือนผู้อนุมัติคนที่ค้างอยู่)
           if (d.status === 'Draft' || d.status === 'WaitingApproval' || d.status === 'Rejected') {
             const again = d.status === 'WaitingApproval';
-            actions += ` <button class="btn btn-primary" onclick="Page.submitApproval('${d.id}')" title="${again ? 'ส่งเตือนผู้อนุมัติที่ค้างอยู่อีกครั้ง' : 'ส่งเข้าคิวขออนุมัติตามกฎวงเงิน/ประเภทเอกสาร — ผู้อนุมัติจะได้รับแจ้งเตือน'}">📤 ${again ? 'ส่งขออนุมัติอีกครั้ง' : 'ส่งขออนุมัติ'}</button>`;
+            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.submitApproval('${d.id}')" title="${again ? 'ส่งเตือนผู้อนุมัติที่ค้างอยู่อีกครั้ง' : 'ส่งเข้าคิวขออนุมัติตามกฎวงเงิน/ประเภทเอกสาร — ผู้อนุมัติจะได้รับแจ้งเตือน'}">📤 ${again ? 'ส่งขออนุมัติอีกครั้ง' : 'ส่งขออนุมัติ'}</button>`;
           }
           // แปลงเอกสาร: (1) เฉพาะชนิดที่มีปลายทางจริง — เดิมโชว์บนใบปลายทาง
           // (Receipt/CN/PV/GRN/CertInLieu) แล้วกดจบที่ toast error
@@ -8760,22 +8851,22 @@
           const convertibleStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'];
           const hasConvertTargets = (this._validConversions?.[d.documentType] || []).length > 0;
           if (convertibleStatuses.includes(d.status) && hasConvertTargets) {
-            actions += ` <button class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
+            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
           }
           if (d.status === 'Approved' || d.status === 'Sent') {
             if (d.documentType === 'Quotation') {
-              actions += ` <button class="btn btn-secondary" onclick="Page.quotationAcceptLink('${d.id}')" title="สร้างลิงก์สาธารณะให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ (อายุ 30 วัน) — คัดลอกลิงก์อัตโนมัติ">🔗 ลิงก์ยอมรับ</button>`;
+              actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.quotationAcceptLink('${d.id}')" title="สร้างลิงก์สาธารณะให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ (อายุ 30 วัน) — คัดลอกลิงก์อัตโนมัติ">🔗 ลิงก์ยอมรับ</button>`;
             }
             // แก้เอกสาร operational ที่อนุมัติ/ส่งแล้ว — เลขที่คงเดิม Rev เพิ่มทีละ 1.
             // เกณฑ์อยู่ที่ server (canRevise) ไม่ hard-code ชนิดที่นี่ เพิ่มชนิดใหม่ใน
             // DocumentService.RevisableTypes แล้วปุ่มขึ้นเองอัตโนมัติ
             if (d.canRevise) {
-              actions += ` <button class="btn btn-warning" onclick="Page.reviseDocument('${d.id}')" title="แก้ไข${Layout.docTypeLabel(d.documentType)}ที่ส่งแล้ว — เลขที่เดิม Rev เพิ่มทีละ 1 สภาพก่อนแก้ถูกเก็บเป็นประวัติเปิดดูย้อนหลังได้">✏️ แก้ไข (Rev ใหม่)</button>`;
+              actions += ` <button data-g="more" class="btn btn-warning" onclick="Page.reviseDocument('${d.id}')" title="แก้ไข${Layout.docTypeLabel(d.documentType)}ที่ส่งแล้ว — เลขที่เดิม Rev เพิ่มทีละ 1 สภาพก่อนแก้ถูกเก็บเป็นประวัติเปิดดูย้อนหลังได้">✏️ แก้ไข (Rev ใหม่)</button>`;
             } else if (d.cannotReviseReason) {
-              actions += ` <button class="btn btn-secondary" disabled title="${Layout.esc(d.cannotReviseReason)}" style="opacity:.55;cursor:not-allowed">✏️ แก้ไข (Rev ใหม่)</button>`;
+              actions += ` <button data-g="more" class="btn btn-secondary" disabled title="${Layout.esc(d.cannotReviseReason)}" style="opacity:.55;cursor:not-allowed">✏️ แก้ไข (Rev ใหม่)</button>`;
             }
             if (d.documentType === 'DeliveryNote') {
-              actions += ` <button class="btn btn-secondary" onclick="Page.deliverySignLink('${d.id}')" title="สร้างลิงก์ให้ลูกค้าเซ็นรับสินค้าออนไลน์ (POD — อายุ 14 วัน) ลายเซ็นประทับลงช่อง ผู้รับของ บน PDF อัตโนมัติ">✍️ ลิงก์เซ็นรับ</button>`;
+              actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.deliverySignLink('${d.id}')" title="สร้างลิงก์ให้ลูกค้าเซ็นรับสินค้าออนไลน์ (POD — อายุ 14 วัน) ลายเซ็นประทับลงช่อง ผู้รับของ บน PDF อัตโนมัติ">✍️ ลิงก์เซ็นรับ</button>`;
             }
           }
           // e-Tax generation: shown for VAT-eligible types (TaxInvoice / Receipt /
@@ -8788,7 +8879,7 @@
           if (etaxEligibleTypes.includes(d.documentType)
               && _postedStates.includes(d.status)
               && !hasEtaxId) {
-            actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
+            actions += ` <button data-g="more" class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
           }
           // ส่งอีเมล — เปิดหน้าต่างกรอก ผู้รับ/CC/หัวข้อ/ข้อความ + ติ๊กส่งแบบ e-Tax ได้.
           // เอกสารฝั่งขายที่อนุมัติแล้วเท่านั้น (กันส่ง Draft). e-Tax option แสดง
@@ -8800,7 +8891,7 @@
           const _approvedForEmail = _postedStates.includes(d.status);
           if (salesEmailTypes.includes(d.documentType) && _approvedForEmail) {
             const _etaxOk = etaxEligibleTypes.includes(d.documentType);
-            actions += ` <button class="btn btn-secondary" onclick="Page.openSendEmailModal('${d.id}', ${_etaxOk}, false)" title="ส่งเอกสารให้ลูกค้าทางอีเมล — กรอกข้อมูล + เลือกส่งแบบ e-Tax ได้">📧 ส่งอีเมล</button>`;
+            actions += ` <button data-g="primary" class="btn btn-secondary" onclick="Page.openSendEmailModal('${d.id}', ${_etaxOk}, false)" title="ส่งเอกสารให้ลูกค้าทางอีเมล — กรอกข้อมูล + เลือกส่งแบบ e-Tax ได้">📧 ส่งอีเมล</button>`;
           }
           // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
           // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
@@ -8821,7 +8912,7 @@
               && Number(d.balanceDue || 0) > 0.01) {
             // Emoji prefix matches the next-step banner above so the user
             // can trace the guidance "→ ปุ่มไหน" without hunting.
-            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)}, '${d.documentType}', ${Number(d.vatAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
+            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)}, '${d.documentType}', ${Number(d.vatAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
           }
           // Bad debt write-off: only for AR docs that are still outstanding
           const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
@@ -8830,29 +8921,30 @@
           if (arTypes.includes(d.documentType)
               && outstandingStatuses.includes(d.status)
               && balanceDue > 0.01) {
-            actions += ` <button class="btn btn-warning" onclick="Page.writeOffBadDebt('${d.id}')" title="ตัดหนี้สูญ — สร้าง JE: Dr หนี้สูญ, Cr ลูกหนี้">💸 ตัดหนี้สูญ</button>`;
+            actions += ` <button data-g="danger" class="btn btn-warning" onclick="Page.writeOffBadDebt('${d.id}')" title="ตัดหนี้สูญ — สร้าง JE: Dr หนี้สูญ, Cr ลูกหนี้">💸 ตัดหนี้สูญ</button>`;
           }
           if (d.status !== 'Voided' && d.status !== 'Draft') {
-            actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" title="ยกเลิกเอกสารฉบับนี้ (Void) — เอกสารที่ลงบัญชีแล้วระบบจะกลับรายการให้">ยกเลิกเอกสาร</button>`;
+            actions += ` <button data-g="danger" class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" title="ยกเลิกเอกสารฉบับนี้ (Void) — เอกสารที่ลงบัญชีแล้วระบบจะกลับรายการให้">ยกเลิกเอกสาร</button>`;
           }
           // เอกสารที่ยกเลิกผิด → กู้คืนเป็นฉบับร่าง (เลขเดิม) แล้วอนุมัติใหม่ได้
           if (d.status === 'Voided') {
-            actions += ` <button class="btn btn-secondary" onclick="Page.restoreDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="กู้คืนเอกสารที่ยกเลิกผิด → คืนเป็นฉบับร่าง คงเลขเดิม แล้วกดอนุมัติใหม่ (บล็อกถ้าเดือนภาษียื่นแล้ว/มี e-Tax รับรอง)">↩️ กู้คืน</button>`;
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.restoreDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="กู้คืนเอกสารที่ยกเลิกผิด → คืนเป็นฉบับร่าง คงเลขเดิม แล้วกดอนุมัติใหม่ (บล็อกถ้าเดือนภาษียื่นแล้ว/มี e-Tax รับรอง)">↩️ กู้คืน</button>`;
             // ใบที่ยกเลิกก่อนระบบใช้ "วันที่เอกสาร" เป็นค่าเริ่มต้น → รายการกลับ
             // บัญชีตกเดือนที่กด (ข้ามงวด) — ปุ่มนี้ย้ายกลับเข้างวดที่ถูกโดยไม่
             // ต้องกู้คืน/ยกเลิกใหม่
-            actions += ` <button class="btn btn-secondary" onclick="Page.redateVoidReversal('${d.id}')" title="ใช้กับใบที่ยกเลิกแล้วรายการกลับบัญชีไปตกเดือนอื่น — จะแสดงตารางให้ดูก่อนว่าใบสำคัญ 'ตัวกลับ' ใบไหนบ้างจะถูกย้ายจากวันไหนไปวันไหน (ใบต้นฉบับไม่ถูกแตะ ยอดรวมเท่าเดิม)">📅 แก้วันที่กลับบัญชี</button>`;
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.redateVoidReversal('${d.id}')" title="ใช้กับใบที่ยกเลิกแล้วรายการกลับบัญชีไปตกเดือนอื่น — จะแสดงตารางให้ดูก่อนว่าใบสำคัญ 'ตัวกลับ' ใบไหนบ้างจะถูกย้ายจากวันไหนไปวันไหน (ใบต้นฉบับไม่ถูกแตะ ยอดรวมเท่าเดิม)">📅 แก้วันที่กลับบัญชี</button>`;
           }
           const myRole = await Layout.ensureMyRole();
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
-            actions += ` <button class="btn btn-danger" onclick="Page.purgeDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
+            actions += ` <button data-g="danger" class="btn btn-danger" onclick="Page.purgeDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้">🗑 ลบทั้งหมด</button>`;
           }
           // ถามผู้ช่วย AI เกี่ยวกับ "ใบนี้" — ส่ง documentId ไปเป็น context
           // ให้คำตอบอ้างคู่ค้า/ยอด/ผังของใบจริง ไม่ใช่คำแนะนำทั่วไป
-          actions += ` <button class="btn btn-secondary"
+          actions += ` <button data-g="more" class="btn btn-secondary"
             onclick="window.location.href='/pages/assistant.html?documentId=${d.id}&docNo=${encodeURIComponent(d.documentNumber || '')}'"
             title="ถามผู้ช่วย AI เรื่องการลงบัญชี/ภาษีของเอกสารใบนี้ — ผู้ช่วยเห็นรายละเอียดใบนี้ประกอบการตอบ">💬 ถามผู้ช่วย</button>`;
           document.getElementById('detailActions').innerHTML = actions;
+          this._layoutDetailActions();
           Layout.openModal('detailModal');
 
           // ── สายเอกสาร (chain stepper) — async ไม่ block การเปิด modal ──
@@ -8900,9 +8992,19 @@
             const linkRes = await api.getDocumentLinkedScan(d.id);
             const scan = linkRes && linkRes.data;
             if (scan && scan.scanId) {
-              const stockBtn = `<button class="btn btn-success" onclick="window.location.href='/pages/document-scan.html?reviewScan=${scan.scanId}&stockImport=1'" title="เปิดสแกน OCR ของเอกสารนี้ → จับคู่รายการกับสินค้าในระบบ → นำเข้าสต๊อก / วัสดุ / สินทรัพย์ ในคลิกเดียว">📦 นำเข้าสต๊อก (จาก OCR)</button> `;
+              const stockBtn = `<button data-g="more" class="btn btn-success" onclick="window.location.href='/pages/document-scan.html?reviewScan=${scan.scanId}&stockImport=1'" title="เปิดสแกน OCR ของเอกสารนี้ → จับคู่รายการกับสินค้าในระบบ → นำเข้าสต๊อก / วัสดุ / สินทรัพย์ ในคลิกเดียว">📦 นำเข้าสต๊อก (จาก OCR)</button> `;
               const actEl = document.getElementById('detailActions');
-              if (actEl) actEl.innerHTML = stockBtn + actEl.innerHTML;
+              if (actEl) {
+                // ปุ่มนี้มาทีหลัง (async) — ดึงปุ่มออกจากเมนูกลับมาก่อนแล้วจัดใหม่
+                // ทั้งแถว ไม่งั้น prepend ตรง ๆ จะได้ปุ่มลอยหน้าเมนูที่จัดไปแล้ว
+                const menu = actEl.querySelector('.act-more .dropdown-menu');
+                if (menu) Array.from(menu.children).forEach(el => {
+                  if (el.tagName === 'BUTTON') { el.classList.remove('act-danger'); actEl.appendChild(el); }
+                });
+                actEl.querySelector('.act-more')?.remove();
+                actEl.innerHTML = stockBtn + actEl.innerHTML;
+                this._layoutDetailActions();
+              }
             }
           } catch (e) { /* probe failure shouldn't block the modal */ }
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -9219,7 +9321,7 @@
               </div>
               <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
                 <button class="btn btn-outline" onclick="document.getElementById('sendEmailModal').classList.remove('active')">ยกเลิก</button>
-                <button class="btn btn-primary" id="seSendBtn">ส่งอีเมล</button>
+                <button data-g="primary" class="btn btn-primary" id="seSendBtn">ส่งอีเมล</button>
               </div>
             </div>`;
           document.body.appendChild(wrap);
