@@ -1179,6 +1179,7 @@ public partial class DocumentService : IDocumentService
 
             doc.PricesIncludeVat = request.PricesIncludeVat;
             doc.BrandId = request.BrandId;   // ชื่อทางการค้าที่เลือกตอนออกใบ
+            doc.DocumentTemplateId = request.DocumentTemplateId;   // รูปแบบเอกสารที่เลือก
             doc.IsForeignService = request.IsForeignService;
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
@@ -2046,6 +2047,9 @@ public partial class DocumentService : IDocumentService
             // ไม่ส่งมา = คงของเดิม · Guid.Empty = ปลดแบรนด์กลับไปใช้ชื่อบริษัท
             if (request.BrandId.HasValue)
                 doc.BrandId = request.BrandId.Value == Guid.Empty ? null : request.BrandId.Value;
+            if (request.DocumentTemplateId.HasValue)
+                doc.DocumentTemplateId = request.DocumentTemplateId.Value == Guid.Empty
+                    ? null : request.DocumentTemplateId.Value;
 
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
@@ -8735,6 +8739,7 @@ public partial class DocumentService : IDocumentService
             // VAT ซ้ำ (+7%) → ยอดสูงกว่าที่ตกลงกับลูกค้า + ภาษีขายเกินจริง
             PricesIncludeVat: source.PricesIncludeVat,
             BrandId: source.BrandId,   // เอกสารลูกใช้แบรนด์เดียวกับต้นทางเสมอ
+            DocumentTemplateId: source.DocumentTemplateId,   // และรูปแบบเดียวกัน
             BillDiscountPercent: source.BillDiscountPercent > 0 ? source.BillDiscountPercent : null,
             // โหมดยอดบาท + partial convert: เฉลี่ยส่วนลดตามสัดส่วน "ฐาน ex-VAT"
             // ที่ยกไป — line.Amount เป็น ex-VAT หลังส่วนลด (สัดส่วนตรงกับฐานก่อน
@@ -14304,6 +14309,7 @@ public partial class DocumentService : IDocumentService
         PricesIncludeVat: d.PricesIncludeVat,
         BrandId: d.BrandId,
         BrandName: d.Brand?.Name,
+        DocumentTemplateId: d.DocumentTemplateId,
         IsForeignService: d.IsForeignService,
         RelatedDocument: upstream,
         CnDnPurchaseSideOverride: d.CnDnPurchaseSideOverride,

@@ -3,6 +3,7 @@ using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -23,8 +24,16 @@ namespace Accounting.Controllers;
 public class DocumentBrandController : ControllerBase
 {
     private readonly AccountingDbContext _db;
+    private readonly IImageProcessingService _images;
+    private readonly IWebHostEnvironment _env;
 
-    public DocumentBrandController(AccountingDbContext db) => _db = db;
+    public DocumentBrandController(
+        AccountingDbContext db, IImageProcessingService images, IWebHostEnvironment env)
+    {
+        _db = db;
+        _images = images;
+        _env = env;
+    }
 
     public sealed record BrandRequest(
         string Name, string? NameEn, string? TagLine, string? TagLineEn,
@@ -134,6 +143,63 @@ public class DocumentBrandController : ControllerBase
         b.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return Ok(new ApiResponse<string>(true, null, "ลบแล้ว"));
+    }
+
+    /// <summary>อัปโหลดโลโก้ของแบรนด์ — ย่อ/บีบอัดด้วย pipeline เดียวกับโลโก้บริษัท
+    /// (<c>ImageProfile.Logo</c> คงความโปร่งใส PNG) เก็บแยกโฟลเดอร์ต่อบริษัท
+    /// <para>เดิมหน้าตั้งค่าให้พิมพ์ URL เอง ซึ่งใช้ได้เฉพาะคนที่มีไฟล์อยู่บน
+    /// เว็บอยู่แล้ว — ผู้ใช้ทั่วไปมีแต่ไฟล์ในเครื่อง</para></summary>
+    [HttpPost("{brandId:guid}/logo")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<BrandResponse>>> UploadLogo(
+        Guid companyId, Guid brandId, IFormFile file, CancellationToken ct)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<BrandResponse>(false, null, "กรุณาเลือกไฟล์โลโก้"));
+
+        var allowed = new[] { "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml" };
+        if (!allowed.Contains((file.ContentType ?? "").ToLowerInvariant()))
+            return BadRequest(new ApiResponse<BrandResponse>(false, null,
+                "รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP, SVG เท่านั้น"));
+
+        var b = await _db.DocumentBrands
+            .FirstOrDefaultAsync(x => x.Id == brandId && x.CompanyId == companyId && !x.IsDeleted, ct);
+        if (b == null) return NotFound(new ApiResponse<BrandResponse>(false, null, "ไม่พบชื่อทางการค้านี้"));
+
+        // WebRootPath เป็น null ได้ใน deployment ที่ไม่มี wwwroot — ถอยไป ContentRoot
+        // (เคสเดียวกับ SettingsService.UploadLogoAsync)
+        var webRoot = _env.WebRootPath
+            ?? Path.Combine(_env.ContentRootPath ?? Directory.GetCurrentDirectory(), "wwwroot");
+        var dir = Path.Combine(webRoot, "uploads", "brand-logos", companyId.ToString());
+        var web = $"/uploads/brand-logos/{companyId}";
+
+        var oldPath = b.LogoPath;
+        try
+        {
+            using var stream = file.OpenReadStream();
+            var processed = await _images.ProcessAndSaveAsync(
+                stream, file.ContentType!, file.FileName, dir, web, ImageProfile.Logo);
+            b.LogoPath = processed.AbsolutePath;
+            b.LogoUrl = processed.RelativeUrl;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return BadRequest(new ApiResponse<BrandResponse>(false, null,
+                $"ระบบไม่มีสิทธิ์เขียนไฟล์ลงโฟลเดอร์ uploads ({dir}) — โปรดติดต่อผู้ดูแลระบบ: {ex.Message}"));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new ApiResponse<BrandResponse>(false, null, $"บันทึกไฟล์ไม่สำเร็จ: {ex.Message}"));
+        }
+
+        b.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        // ลบไฟล์เก่าหลังบันทึกสำเร็จเท่านั้น — ลบก่อนแล้วอัปโหลดพังคือเสียของเดิมฟรี
+        try { if (!string.IsNullOrEmpty(oldPath) && oldPath != b.LogoPath && System.IO.File.Exists(oldPath)) System.IO.File.Delete(oldPath); }
+        catch { /* ไฟล์เก่าหาย/ถูกล็อก — ไม่ใช่เหตุให้การอัปโหลดล้ม */ }
+
+        return Ok(new ApiResponse<BrandResponse>(true, Map(b), "อัปโหลดโลโก้แล้ว"));
     }
 
     /// <summary>พรีวิวหัวเอกสารแบบสด — หน้าตั้งค่าเรียกเพื่อโชว์ว่าใบชนิดนี้

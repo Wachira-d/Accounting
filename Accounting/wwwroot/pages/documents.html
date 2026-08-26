@@ -289,6 +289,16 @@
                 <div id="fBrandHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
               </div>
 
+              <!-- รูปแบบเอกสาร: โผล่เฉพาะบริษัทที่สร้างเทมเพลตไว้เอง (ตั้งที่หน้า
+                   "เทมเพลตเอกสาร PDF") · ว่าง = ใช้ตั้งต้นของชนิดเอกสารตามเดิม
+                   เลือกแบรนด์ที่ผูกรูปแบบไว้ = ระบบเติมให้ แต่ยังเปลี่ยนรายใบได้ -->
+              <div id="fTemplateRow" style="display:none;margin-top:10px">
+                <label class="form-label" style="font-size:12px">🎨 รูปแบบเอกสาร</label>
+                <select class="form-select" id="fTemplate">
+                  <option value="">— รูปแบบตั้งต้นของชนิดเอกสารนี้ —</option>
+                </select>
+              </div>
+
               <select class="form-select" id="fDocType" style="display:none" onchange="Page.onDocTypeChange()">
                 <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
                   <option value="Quotation" title="เสนอราคาให้ลูกค้าก่อนซื้อขายจริง — ยังไม่ลง GL, ไม่มี VAT effect">ใบเสนอราคา</option>
@@ -1491,6 +1501,7 @@
       },
       async init() {
         this._loadBrands();   // ไม่ await — ล้มก็แค่ไม่โชว์ช่องแบรนด์ ฟอร์มยังใช้ได้
+        this._loadTemplates();
         // Listen for the "+ สร้างใหม่" cross-tab hand-off — contacts.html
         // posts the new contact id back via postMessage; we auto-pick it
         // here so the user doesn't have to retype/search after creating.
@@ -3768,7 +3779,39 @@
         }
       },
 
-      onBrandChange() { this._applyBrandHint(); },
+      onBrandChange() {
+        this._applyBrandHint();
+        // เลือกแบรนด์ที่ผูกรูปแบบไว้ → เติมให้ (ผู้ใช้เปลี่ยนต่อได้ = ไม่ใช่บังคับ)
+        const sel = document.getElementById('fTemplate');
+        const b = this._brands.find(x => x.id === document.getElementById('fBrand')?.value);
+        if (sel && b?.defaultTemplateId) sel.value = b.defaultTemplateId;
+      },
+
+      _templates: [],
+
+      async _loadTemplates() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        try {
+          const r = await API.get(`/api/companies/${cid}/document-templates`);
+          this._templates = (r.data || []).filter(t => t.isActive !== false);
+        } catch (e) { this._templates = []; }
+        const row = document.getElementById('fTemplateRow');
+        const sel = document.getElementById('fTemplate');
+        if (!row || !sel) return;
+        // ไม่เคยสร้างเทมเพลตเอง = ไม่ต้องรกฟอร์ม (ใช้ตั้งต้นอยู่แล้ว)
+        if (!this._templates.length) { row.style.display = 'none'; return; }
+        row.style.display = '';
+        sel.innerHTML = '<option value="">— รูปแบบตั้งต้นของชนิดเอกสารนี้ —</option>'
+          + this._templates.map(t =>
+              `<option value="${t.id}">${this.escapeHtml(t.name)}</option>`).join('');
+      },
+
+      /** แก้ไข = ตามที่บันทึกไว้ · ใบใหม่ = ว่าง (ใช้ตั้งต้น) — ห้ามค้างค่าจากใบก่อน */
+      _hydrateTemplate(doc) {
+        const sel = document.getElementById('fTemplate');
+        if (sel) sel.value = doc?.documentTemplateId || '';
+      },
 
       /** เลือกแบรนด์ให้ตอนเปิดฟอร์ม
        *  - แก้ไขใบเดิม → ตามที่บันทึกไว้ (echo กลับ ไม่งั้นบันทึกแล้วค่าหาย)
@@ -6893,7 +6936,8 @@
 
       openCreate(side) {
         this.editingId = null;
-        this._hydrateBrand(null);   // ใบใหม่ = แบรนด์ตั้งต้น ไม่ใช่ค่าค้างจากใบก่อน
+        this._hydrateBrand(null);   // ใบใหม่ = ชื่อบริษัท ไม่ใช่ค่าค้างจากใบก่อน
+        this._hydrateTemplate(null);
         // ล้าง contact ที่จำไว้สำหรับเทอมเครดิต — ไม่งั้นเทอมของลูกค้ารายก่อน
         // ตามมาเติมในเอกสารใบใหม่ที่ยังไม่ได้เลือกคู่ค้า
         this._creditTermsContact = null;
@@ -7135,6 +7179,7 @@
           const d = res.data;
           this.editingId = id;
           this._hydrateBrand(d);   // echo กลับค่าที่บันทึกไว้ (ไม่งั้นบันทึกแล้วค่าหาย)
+          this._hydrateTemplate(d);
           // เก็บสถานะใบที่กำลังแก้ — chain "จ่ายแล้ว" (อนุมัติ+ชำระ) เปิดให้เฉพาะ
           // ร่าง/ถูกปฏิเสธ (ใบที่ยังไม่เคยลงบัญชี) ไม่ใช่ revision ของใบอนุมัติแล้ว
           this._editingStatus = d.status || null;
@@ -7812,6 +7857,10 @@
           // ชื่อทางการค้า — ตอนแก้ไขต้องส่ง Guid.Empty เมื่อผู้ใช้เลือก "ใช้ชื่อบริษัท"
           // ไม่งั้น server มองว่า "ไม่ส่งมา" แล้วคงแบรนด์เดิมไว้ = กดแล้วไม่มีผล
           brandId: (document.getElementById('fBrand')?.value || null)
+                   || (this.editingId ? '00000000-0000-0000-0000-000000000000' : null),
+          // รูปแบบเอกสารที่เลือก — กติกา Guid.Empty เหมือน brandId (ปลดกลับไป
+          // ใช้ตั้งต้นได้จริง ไม่ใช่กดแล้วไม่มีผล)
+          documentTemplateId: (document.getElementById('fTemplate')?.value || null)
                    || (this.editingId ? '00000000-0000-0000-0000-000000000000' : null),
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
           // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"

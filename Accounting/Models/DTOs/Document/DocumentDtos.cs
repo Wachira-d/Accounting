@@ -104,6 +104,9 @@ public record CreateDocumentRequest(
     // เท่านั้น — ไม่กระทบบัญชี/ภาษี/เลขที่. เอกสารที่กฎหมายบังคับชื่อผู้ประกอบการ
     // จดทะเบียน แบรนด์จะลงได้แค่โลโก้+บรรทัดรอง (Helpers.DocumentIssuerIdentity)
     Guid? BrandId = null,
+    // รูปแบบ (เทมเพลต) ที่เลือกตอนออกใบ — null = ใช้ตั้งต้นของชนิดเอกสาร
+    // (ตอนแก้ไข: Guid.Empty = กลับไปใช้ตั้งต้น เหมือนกติกาของ BrandId)
+    Guid? DocumentTemplateId = null,
     // ภ.พ.36 / ภ.ง.ด.54 — flag เมื่อซื้อบริการจากต่างประเทศ (Google Ads /
     // AWS / Facebook ฯลฯ). ผู้รับบริการในไทยต้อง self-assess VAT 7% และ
     // หัก WHT ตาม DTA. Default false. Apply เฉพาะ PI/Expense/PV.
@@ -233,6 +236,9 @@ public record UpdateDocumentRequest(
     // ให้ได้ (Guid? ใช้ null เป็น "ไม่ส่งมา" ไปแล้ว) → ส่ง Guid.Empty = กลับไป
     // ใช้ชื่อบริษัท มิฉะนั้นผู้ใช้ปลดแบรนด์ออกไม่ได้เลย (defect class "silent no-op")
     Guid? BrandId = null,
+    // รูปแบบ (เทมเพลต) ที่เลือกตอนออกใบ — null = ใช้ตั้งต้นของชนิดเอกสาร
+    // (ตอนแก้ไข: Guid.Empty = กลับไปใช้ตั้งต้น เหมือนกติกาของ BrandId)
+    Guid? DocumentTemplateId = null,
     // Tax Point §78 inputs (optional, แก้ได้ตอน Draft)
     DateTime? DeliveryDate = null,
     DateTime? OwnershipTransferDate = null,
@@ -583,6 +589,7 @@ public record DocumentResponse(
     // ตอนเปิดแก้ไข — เก็บแล้วไม่ echo = ค่าหายเงียบ ๆ)
     Guid? BrandId = null,
     string? BrandName = null,
+    Guid? DocumentTemplateId = null,
     // ภ.พ.36 / ภ.ง.ด.54 — ซื้อบริการจากต่างประเทศ. Echo กลับมาเพื่อ form hydration.
     bool IsForeignService = false,
     // ===== Conversion lineage =====

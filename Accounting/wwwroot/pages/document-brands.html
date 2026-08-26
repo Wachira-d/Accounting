@@ -70,6 +70,7 @@
 
       const Page = {
         brands: [],
+        templates: [],
         current: null,
         policy: {},           // { DocumentType: brandCanBePrimary }
         previewType: 'Quotation',
@@ -90,6 +91,10 @@
             const r = await API.get(`/api/companies/${cid}/document-brands?includeInactive=true`);
             this.brands = r.data || [];
           } catch (e) { this.brands = []; }
+          try {
+            const t = await API.get(`/api/companies/${cid}/document-templates`);
+            this.templates = (t.data || []).filter(x => x.isActive !== false);
+          } catch (e) { this.templates = []; }
           this.render();
         },
 
@@ -161,6 +166,7 @@
           c.primaryColor = v('fColor');
           c.footerNotes = v('fFooter');
           c.legalNamePlacement = v('fPlacement');
+          c.defaultTemplateId = v('fTemplate') || null;
           c.isActive = !!(document.getElementById('fActive') || {}).checked;
           return c;
         },
@@ -186,8 +192,18 @@
                   <div class="bw-row"><label>สโลแกน (อังกฤษ)</label>
                     <input id="fTagEn" value="${this.esc(c.tagLineEn)}" oninput="Page.refreshPreview()"></div>
                 </div>
-                <div class="bw-row"><label>URL โลโก้ของแบรนด์ (ว่าง = ใช้โลโก้บริษัท)</label>
-                  <input id="fLogo" value="${this.esc(c.logoUrl)}" oninput="Page.refreshPreview()" placeholder="/uploads/brand-logo.png"></div>
+                <div class="bw-row"><label>โลโก้ของแบรนด์ (ว่าง = ใช้โลโก้บริษัท)</label>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <input type="file" id="fLogoFile" accept="image/*" style="display:none"
+                           onchange="Page.uploadLogo(this)">
+                    <button class="btn btn-sm btn-outline" onclick="document.getElementById('fLogoFile').click()"
+                            ${c.id ? '' : 'disabled title="บันทึกแบรนด์ก่อน แล้วจึงอัปโหลดโลโก้ได้"'}>
+                      📤 อัปโหลดรูป</button>
+                    ${c.logoUrl ? `<button class="btn btn-sm btn-outline" onclick="Page.clearLogo()">ลบรูป</button>` : ''}
+                    <span style="font-size:11px;color:#94a3b8">PNG / JPG / SVG · ไม่เกิน 10MB</span>
+                  </div>
+                  <input id="fLogo" value="${this.esc(c.logoUrl)}" oninput="Page.refreshPreview()"
+                         placeholder="หรือวาง URL รูปเอง" style="margin-top:6px"></div>
                 <div class="bw-2">
                   <div class="bw-row"><label>สีหลักของเอกสาร</label>
                     <input type="color" id="fColor" value="${this.esc(c.primaryColor || '#1f2937')}" oninput="Page.refreshPreview()"></div>
@@ -210,6 +226,14 @@
                 </div>
                 <div class="bw-row"><label>เว็บไซต์ / โซเชียล</label>
                   <input id="fWeb" value="${this.esc(c.website)}" oninput="Page.refreshPreview()"></div>
+                <div class="bw-row"><label>รูปแบบเอกสารตั้งต้นของแบรนด์นี้</label>
+                  <select id="fTemplate">
+                    <option value="">— ใช้รูปแบบตั้งต้นของแต่ละชนิดเอกสาร —</option>
+                    ${this.templates.map(t => `<option value="${t.id}" ${c.defaultTemplateId===t.id?'selected':''}>${this.esc(t.name)}</option>`).join('')}
+                  </select>
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">
+                    เลือกแบรนด์นี้ตอนออกใบ = ระบบเติมรูปแบบนี้ให้ (เปลี่ยนเป็นรายใบได้)
+                  </div></div>
                 <div class="bw-row"><label>ข้อความท้ายเอกสารของแบรนด์นี้</label>
                   <textarea id="fFooter" rows="2">${this.esc(c.footerNotes)}</textarea></div>
                 <label style="display:flex;gap:8px;align-items:center;font-size:13px">
@@ -299,6 +323,30 @@
           return ({ Quotation:'ใบเสนอราคา', Invoice:'ใบแจ้งหนี้', BillingNote:'ใบวางบิล',
                     DeliveryNote:'ใบส่งของ', TaxInvoice:'ใบกำกับภาษี', Receipt:'ใบเสร็จรับเงิน'
                   })[this.previewType] || this.previewType;
+        },
+
+        /** อัปโหลดโลโก้ — ต้องบันทึกแบรนด์ก่อน (ต้องมี id ให้ผูกไฟล์) */
+        async uploadLogo(input) {
+          const f = input.files && input.files[0];
+          if (!f || !this.current?.id) return;
+          const fd = new FormData();
+          fd.append('file', f);
+          try {
+            const r = await API.upload(`/api/companies/${cid}/document-brands/${this.current.id}/logo`, fd);
+            this.current.logoUrl = r.data?.logoUrl || '';
+            const el = document.getElementById('fLogo');
+            if (el) el.value = this.current.logoUrl;
+            Layout.toast('อัปโหลดโลโก้แล้ว');
+            this.refreshPreview();
+          } catch (e) { Layout.toast(e.message, 'error'); }
+          input.value = '';   // เลือกไฟล์เดิมซ้ำได้
+        },
+
+        clearLogo() {
+          this.current.logoUrl = '';
+          const el = document.getElementById('fLogo');
+          if (el) el.value = '';
+          this.refreshPreview();
         },
 
         async save() {

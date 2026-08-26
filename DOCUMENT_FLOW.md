@@ -1462,7 +1462,16 @@ VAT พอดี**
   (ลบการคำนวณ `coPrimaryName` ที่เคยซ้ำอยู่คนละไฟล์) · โลโก้/สีแบรนด์เข้า
   `BuildBranding(..., brand)` ให้ QuestPDF เห็นตรงกับ HTML
 - เอกสารลูก (convert/clone) สืบทอด `BrandId` จากต้นทาง
-- API: `/api/companies/{id}/document-brands` (CRUD + `/policy` + `/{id}/preview`)
+- **รูปแบบเอกสาร (เทมเพลต) เลือกได้รายใบ** — `Document.DocumentTemplateId`
+  ลำดับการเลือกอยู่ที่ `PdfGenerationService.ResolveDocumentTemplateAsync`
+  **ตัวเดียว** (เดิม if/else ชุดนี้ถูกก๊อปไว้ 2 ที่):
+  คำขอ (พรีวิวชั่วคราว) → ที่เลือกไว้ตอนออกใบ → `Brand.DefaultTemplateId` →
+  ตั้งต้นของชนิดเอกสาร → เทมเพลตในหน่วยความจำ
+  · ข้อ 2-3 ที่ชี้ไปเทมเพลตที่ถูกลบ/ข้ามบริษัท **ตกลงข้อถัดไปเงียบ ๆ** (เอกสาร
+  เก่าต้องพิมพ์ได้เสมอ) ต่างจากข้อ 1 ที่ผู้ใช้เพิ่งเลือกเอง → id ผิด = error จริง
+  · เก็บกับใบเพราะพิมพ์ซ้ำปีหน้าต้องได้หน้าตาเดิม แม้ตั้งต้นจะเปลี่ยนไปแล้ว
+- API: `/api/companies/{id}/document-brands` (CRUD + `/policy` + `/{id}/preview`
+  + `POST /{id}/logo` อัปโหลดโลโก้แบรนด์ผ่าน pipeline เดียวกับโลโก้บริษัท)
   · หน้าตั้งค่า `/pages/document-brands.html`
 - เทสต์: `Accounting.Tests/DocumentIssuerIdentityTests.cs`
 
@@ -2414,7 +2423,10 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
-_Last verified against codebase: 2026-08-26 (รอบ 88 — **§6.2c ปรับตามที่ผู้ใช้สั่ง**:_
+_Last verified against codebase: 2026-08-26 (รอบ 89 — **§6.2c ต่อของที่ค้าง**:_
+_อัปโหลดโลโก้แบรนด์ + เลือกรูปแบบเอกสารรายใบ (Document.DocumentTemplateId) +_
+_resolver กลาง ResolveDocumentTemplateAsync แทน if/else ที่ซ้ำ 2 ที่);_
+_รอบ 88 — **§6.2c ปรับตามที่ผู้ใช้สั่ง**:_
 _ไม่ตั้งแบรนด์ = เหมือนเดิมทุกอย่าง · ตั้งแล้วค่าเริ่มต้นยังเป็นชื่อบริษัท_
 _(ตัด IsDefault ที่เลือกให้อัตโนมัติทิ้ง));_
 _รอบ 87 — **§6.2c ชื่อทางการค้าบนหัว_

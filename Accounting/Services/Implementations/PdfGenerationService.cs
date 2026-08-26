@@ -62,19 +62,8 @@ public partial class PdfGenerationService : IPdfGenerationService
             .OrderByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
 
-        // Get template
-        DocumentTemplate template;
-        if (request.TemplateId.HasValue)
-        {
-            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
-                ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
-        }
-        else
-        {
-            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
-                t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
-                ?? CreateInMemoryDefaultTemplate(document.DocumentType);
-        }
+        // Get template — resolver กลาง (ลำดับเดียวกันทุกทางออก PDF)
+        var template = await ResolveDocumentTemplateAsync(companyId, document, request.TemplateId);
         ApplyDefaultSignatureLabels(template, document.DocumentType);
 
         // Render order:
@@ -164,18 +153,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
-        DocumentTemplate template;
-        if (request.TemplateId.HasValue)
-        {
-            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
-                ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
-        }
-        else
-        {
-            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
-                t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
-                ?? CreateInMemoryDefaultTemplate(document.DocumentType);
-        }
+        var template = await ResolveDocumentTemplateAsync(companyId, document, request.TemplateId);
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
         await ResolveServedAsReceiptAsync(companyId, document);
@@ -1149,6 +1127,45 @@ public partial class PdfGenerationService : IPdfGenerationService
             ?? Clean(template?.Language)
             ?? Clean(settings?.DocumentLanguage)
             ?? "th";
+    }
+
+    /// <summary>
+    /// เลือก "รูปแบบเอกสาร" (เทมเพลต) ของใบหนึ่ง — **ตัวตัดสินเดียว** ของทุกทาง
+    /// ที่ออก PDF จากเอกสารจริง (เดิม if/else ชุดนี้ถูกก๊อปไว้สองที่ = รอ drift)
+    ///
+    /// ลำดับ (ตัวแรกที่เจอชนะ):
+    /// <list type="number">
+    /// <item><b>ที่ส่งมากับคำขอ</b> — พรีวิว "ลองดูแบบอื่น" ชั่วคราว ไม่ผูกกับใบ</item>
+    /// <item><b>ที่เลือกไว้ตอนออกใบ</b> (<c>Document.DocumentTemplateId</c>) —
+    ///   พิมพ์ซ้ำปีหน้าต้องได้หน้าตาเดิม แม้ตั้งต้นของบริษัทเปลี่ยนไปแล้ว</item>
+    /// <item><b>ของแบรนด์ที่ใบนี้ออกในนาม</b> (<c>Brand.DefaultTemplateId</c>)</item>
+    /// <item>เทมเพลตตั้งต้นของชนิดเอกสารนั้น</item>
+    /// <item>เทมเพลตในหน่วยความจำ (บริษัทที่ยังไม่เคยตั้งอะไรเลย)</item>
+    /// </list>
+    /// ข้อ 2-3 ที่ชี้ไปเทมเพลตที่ถูกลบ/ปิด/ข้ามบริษัท จะตกลงข้อถัดไปเงียบ ๆ
+    /// (เอกสารเก่าต้องพิมพ์ได้เสมอ — ห้าม throw ใส่ผู้ใช้ที่แค่กดพิมพ์ใบเดิม)
+    /// ต่างจากข้อ 1 ที่ผู้ใช้เพิ่งเลือกเอง → id ผิดคือ error จริง ต้องบอก
+    /// </summary>
+    private async Task<DocumentTemplate> ResolveDocumentTemplateAsync(
+        Guid companyId, Document document, Guid? requestedTemplateId)
+    {
+        if (requestedTemplateId.HasValue)
+            return await _db.DocumentTemplates.AsNoTracking()
+                       .FirstOrDefaultAsync(t => t.Id == requestedTemplateId.Value && t.CompanyId == companyId)
+                   ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
+
+        foreach (var pinned in new[] { document.DocumentTemplateId, document.Brand?.DefaultTemplateId })
+        {
+            if (!pinned.HasValue) continue;
+            var t = await _db.DocumentTemplates.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == pinned.Value && x.CompanyId == companyId && !x.IsDeleted);
+            if (t != null) return t;
+        }
+
+        return await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
+                   t.CompanyId == companyId && t.DocumentType == document.DocumentType
+                   && t.IsDefault && t.IsActive)
+               ?? CreateInMemoryDefaultTemplate(document.DocumentType);
     }
 
     /// <summary>ตัวตนผู้ออกเอกสารบนหัวกระดาษ — **จุดเดียว**ที่ทั้ง HTML renderer

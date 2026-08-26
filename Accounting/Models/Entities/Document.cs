@@ -310,6 +310,12 @@ public class Document : TenantEntity
     public Guid? BrandId { get; set; }
     public DocumentBrand? Brand { get; set; }
 
+    /// <summary>รูปแบบ (เทมเพลต) ที่ผู้ใช้เลือกตอนออกใบนี้ — null = ใช้เทมเพลต
+    /// ตั้งต้นของชนิดเอกสารตามเดิม. เก็บไว้กับใบเพราะพิมพ์ซ้ำปีหน้าต้องได้
+    /// หน้าตาเดิม แม้ตั้งต้นของบริษัทจะเปลี่ยนไปแล้ว
+    /// (ลำดับการเลือกอยู่ที่ <c>PdfGenerationService.ResolveDocumentTemplateAsync</c>)</summary>
+    public Guid? DocumentTemplateId { get; set; }
+
     // Contact (Customer/Supplier)
     public Guid ContactId { get; set; }
     public Contact Contact { get; set; } = null!;
