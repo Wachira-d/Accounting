@@ -157,10 +157,16 @@ public class DocumentBrandController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<BrandResponse>(false, null, "กรุณาเลือกไฟล์โลโก้"));
 
-        var allowed = new[] { "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml" };
-        if (!allowed.Contains((file.ContentType ?? "").ToLowerInvariant()))
+        // ⚠️ **ไม่รับ SVG** — ImageProcessingService ปล่อย SVG ผ่านแบบดิบ แล้วไฟล์
+        // ถูก serve จาก origin เดียวกับแอป (JWT อยู่ localStorage) ⇒ SVG ที่ฝัง
+        // <script> = stored XSS ขโมย token ได้ (กฎเหล็ก #4 C — ผลตรวจข้อ 10)
+        // ContentType มาจาก client ด้วย จึงเช็คนามสกุลไฟล์ควบ
+        var allowed = new[] { "image/png", "image/jpeg", "image/gif", "image/webp" };
+        var ext = Path.GetExtension(file.FileName ?? "").ToLowerInvariant();
+        var allowedExt = new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" };
+        if (!allowed.Contains((file.ContentType ?? "").ToLowerInvariant()) || !allowedExt.Contains(ext))
             return BadRequest(new ApiResponse<BrandResponse>(false, null,
-                "รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP, SVG เท่านั้น"));
+                "รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP เท่านั้น (ไม่รับ SVG ด้วยเหตุผลด้านความปลอดภัย)"));
 
         var b = await _db.DocumentBrands
             .FirstOrDefaultAsync(x => x.Id == brandId && x.CompanyId == companyId && !x.IsDeleted, ct);
@@ -226,7 +232,7 @@ public class DocumentBrandController : ControllerBase
             st?.LogoPath, st?.LogoUrl, st?.PrimaryColor,
             new DocumentBrandView(b.Name, b.NameEn, b.TagLine, b.TagLineEn, b.LogoPath, b.LogoUrl,
                 b.Address, b.AddressEn, b.Phone, b.Email, b.Website, b.PrimaryColor,
-                b.LegalNamePlacement, b.IsActive));
+                b.LegalNamePlacement, b.IsActive, b.FooterNotes, b.FooterNotesEn));
 
         return Ok(new ApiResponse<object>(true, new
         {

@@ -455,6 +455,33 @@ public partial class DocumentService : IDocumentService
     /// รายบรรทัดแล้ว → VAT/WHT คิดใหม่บนฐานที่ลดลง (mixed-rate ถูกต้อง). 0 = ไม่มี.
     /// DiscountAmount ที่คืนยังเป็น "ส่วนลดรายบรรทัด" ล้วน ไม่รวมท้ายบิล (กัน
     /// double-count ตอน edit round-trip; ท้ายบิลเก็บแยกที่ Document.BillDiscountAmount).</param>
+    /// <summary>ตรวจว่า BrandId / DocumentTemplateId ที่ส่งมา **เป็นของบริษัทนี้จริง**
+    /// — ทั้งสอง field มาจาก client ตรง ๆ ถ้าไม่ตรวจ ผู้ใช้บริษัท A ยิง guid ของ
+    /// บริษัท B เข้ามาได้ แล้วเอกสารบริษัท A จะพิมพ์ชื่อ/โลโก้/ที่อยู่ของบริษัท B
+    /// ลงหัวกระดาษ (ผลตรวจทีมเส้นทางข้อมูล ข้อ 2 — ผิด invariant M "ทุก query
+    /// ต้องมี CompanyId")
+    ///
+    /// <para>คืน null เมื่อค่าเป็น null หรือ <c>Guid.Empty</c> (= "ใช้ค่าปกติ")
+    /// และ **throw** เมื่อ id มีค่าแต่ไม่ใช่ของบริษัทนี้ — ต่างจากการ fallback
+    /// เงียบ ๆ เพราะนี่คือค่าที่ผู้ใช้เพิ่งเลือกเอง ผิดแปลว่ามีอะไรผิดจริง</para></summary>
+    private async Task<Guid?> ResolveOwnedBrandIdAsync(Guid companyId, Guid? brandId)
+    {
+        if (!brandId.HasValue || brandId.Value == Guid.Empty) return null;
+        var ok = await _db.DocumentBrands
+            .AnyAsync(b => b.Id == brandId.Value && b.CompanyId == companyId && !b.IsDeleted);
+        if (!ok) throw new InvalidOperationException("ไม่พบชื่อทางการค้าที่เลือก หรือไม่ใช่ของบริษัทนี้");
+        return brandId.Value;
+    }
+
+    private async Task<Guid?> ResolveOwnedTemplateIdAsync(Guid companyId, Guid? templateId)
+    {
+        if (!templateId.HasValue || templateId.Value == Guid.Empty) return null;
+        var ok = await _db.DocumentTemplates
+            .AnyAsync(t => t.Id == templateId.Value && t.CompanyId == companyId);
+        if (!ok) throw new InvalidOperationException("ไม่พบรูปแบบเอกสารที่เลือก หรือไม่ใช่ของบริษัทนี้");
+        return templateId.Value;
+    }
+
     private static LineAmounts ComputeLineAmounts(DocumentLineRequest line, bool pricesIncludeVat, decimal extraDiscount = 0m)
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
@@ -1178,8 +1205,10 @@ public partial class DocumentService : IDocumentService
                 .Select(c => (bool?)c.VatRegistered).FirstOrDefaultAsync() ?? true;
 
             doc.PricesIncludeVat = request.PricesIncludeVat;
-            doc.BrandId = request.BrandId;   // ชื่อทางการค้าที่เลือกตอนออกใบ
-            doc.DocumentTemplateId = request.DocumentTemplateId;   // รูปแบบเอกสารที่เลือก
+            // ต้องเป็นของบริษัทนี้เท่านั้น + Guid.Empty = ไม่เลือก (normalize ที่นี่
+            // ด้วย ไม่ใช่เฉพาะตอน update — caller อื่นส่ง Empty มาตอน create ได้)
+            doc.BrandId = await ResolveOwnedBrandIdAsync(companyId, request.BrandId);
+            doc.DocumentTemplateId = await ResolveOwnedTemplateIdAsync(companyId, request.DocumentTemplateId);
             doc.IsForeignService = request.IsForeignService;
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
@@ -1334,6 +1363,9 @@ public partial class DocumentService : IDocumentService
             .Include(d => d.BankAccount)
             .Include(d => d.PaymentAccount)
             .Include(d => d.ExpenseCategory)
+            // BrandName ใน DocumentResponse อ่านจาก nav ตัวนี้ — ไม่ Include =
+            // null เสมอ ทั้งที่ DTO ประกาศว่า "echo กลับเพื่อ hydrate" (ผลตรวจข้อ 6)
+            .Include(d => d.Brand)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
@@ -2044,12 +2076,12 @@ public partial class DocumentService : IDocumentService
             _db.DocumentLines.RemoveRange(doc.Lines);
 
             if (request.PricesIncludeVat.HasValue) doc.PricesIncludeVat = request.PricesIncludeVat.Value;
-            // ไม่ส่งมา = คงของเดิม · Guid.Empty = ปลดแบรนด์กลับไปใช้ชื่อบริษัท
+            // ไม่ส่งมา = คงของเดิม · Guid.Empty = ปลดกลับไปใช้ค่าปกติ · id ที่ส่งมา
+            // ต้องเป็นของบริษัทนี้ (กันข้าม tenant — ดู ResolveOwnedBrandIdAsync)
             if (request.BrandId.HasValue)
-                doc.BrandId = request.BrandId.Value == Guid.Empty ? null : request.BrandId.Value;
+                doc.BrandId = await ResolveOwnedBrandIdAsync(companyId, request.BrandId);
             if (request.DocumentTemplateId.HasValue)
-                doc.DocumentTemplateId = request.DocumentTemplateId.Value == Guid.Empty
-                    ? null : request.DocumentTemplateId.Value;
+                doc.DocumentTemplateId = await ResolveOwnedTemplateIdAsync(companyId, request.DocumentTemplateId);
 
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
@@ -3499,6 +3531,9 @@ public partial class DocumentService : IDocumentService
                 Reference = doc.DocumentNumber,
                 // CN คืนมัดจำออกให้ลูกค้าคนเดิม — ภาษาตามใบเสร็จมัดจำต้นทาง
                 DocumentLanguage = doc.DocumentLanguage,
+                // หน้าตาเอกสารต้องตามใบต้นทาง (กฎ "เอกสารลูกต้องสืบทอด")
+                BrandId = doc.BrandId,
+                DocumentTemplateId = doc.DocumentTemplateId,
                 SubTotal = refundBase,
                 VatAmount = refundVat,
                 TotalAmount = request.Amount,
@@ -9750,6 +9785,11 @@ public partial class DocumentService : IDocumentService
             // ใบเสร็จอัตโนมัติออกให้ลูกค้าคนเดียวกับใบกำกับต้นทาง — ภาษาต้องตามใบ
             // ต้นทาง (ใบแจ้งหนี้อังกฤษ → ใบเสร็จอังกฤษ โดยผู้ใช้ไม่ต้องทำอะไร)
             DocumentLanguage = invoice.DocumentLanguage,
+            // ใบเสร็จรับชำระต้องหน้าตาเดียวกับใบแจ้งหนี้/ใบกำกับต้นทาง —
+            // เดิมตกทั้งสอง field ⇒ ลูกค้าได้ใบเสร็จหน้าตาบริษัทเปล่าหลังรับใบแบรนด์
+            // (ผลตรวจ P3 / ข้อ 7)
+            BrandId = invoice.BrandId,
+            DocumentTemplateId = invoice.DocumentTemplateId,
             ProjectId = invoice.ProjectId,
             SubTotal = carryVatFromSource ? invoice.SubTotal : payment.Amount,
             DiscountAmount = carryVatFromSource ? invoice.DiscountAmount : 0m,

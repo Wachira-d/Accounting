@@ -194,13 +194,13 @@
                 </div>
                 <div class="bw-row"><label>โลโก้ของแบรนด์ (ว่าง = ใช้โลโก้บริษัท)</label>
                   <div style="display:flex;gap:8px;align-items:center">
-                    <input type="file" id="fLogoFile" accept="image/*" style="display:none"
+                    <input type="file" id="fLogoFile" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none"
                            onchange="Page.uploadLogo(this)">
                     <button class="btn btn-sm btn-outline" onclick="document.getElementById('fLogoFile').click()"
                             ${c.id ? '' : 'disabled title="บันทึกแบรนด์ก่อน แล้วจึงอัปโหลดโลโก้ได้"'}>
                       📤 อัปโหลดรูป</button>
                     ${c.logoUrl ? `<button class="btn btn-sm btn-outline" onclick="Page.clearLogo()">ลบรูป</button>` : ''}
-                    <span style="font-size:11px;color:#94a3b8">PNG / JPG / SVG · ไม่เกิน 10MB</span>
+                    <span style="font-size:11px;color:#94a3b8">PNG / JPG / WebP · ไม่เกิน 10MB</span>
                   </div>
                   <input id="fLogo" value="${this.esc(c.logoUrl)}" oninput="Page.refreshPreview()"
                          placeholder="หรือวาง URL รูปเอง" style="margin-top:6px"></div>
@@ -333,7 +333,12 @@
           fd.append('file', f);
           try {
             const r = await API.upload(`/api/companies/${cid}/document-brands/${this.current.id}/logo`, fd);
+            // ⚠️ ต้องเก็บ **logoPath** ด้วย — renderer ทั้งสองตัวอ่าน LogoPath ก่อน
+            // LogoUrl ถ้าเก็บแค่ url แล้วผู้ใช้กด "บันทึก" ต่อ (flow ธรรมชาติที่สุด)
+            // payload จะส่ง logoPath ค่าเก่า/null ทับของที่เพิ่งอัปโหลด ⇒ พรีวิว
+            // โชว์โลโก้ร้านถูก แต่ PDF จริงพิมพ์โลโก้บริษัท (ผลตรวจ UX P1)
             this.current.logoUrl = r.data?.logoUrl || '';
+            this.current.logoPath = r.data?.logoPath || '';
             const el = document.getElementById('fLogo');
             if (el) el.value = this.current.logoUrl;
             Layout.toast('อัปโหลดโลโก้แล้ว');
@@ -344,6 +349,7 @@
 
         clearLogo() {
           this.current.logoUrl = '';
+          this.current.logoPath = '';
           const el = document.getElementById('fLogo');
           if (el) el.value = '';
           this.refreshPreview();
@@ -354,11 +360,17 @@
           if (!c.name.trim()) { Layout.toast('กรุณากรอกชื่อทางการค้า', 'error'); return; }
           try {
             const body = { ...c };
-            if (c.id) await API.put(`/api/companies/${cid}/document-brands/${c.id}`, body);
-            else await API.post(`/api/companies/${cid}/document-brands`, body);
-            Layout.toast('บันทึกแล้ว — เลือกใช้ได้ตอนออกเอกสาร');
+            // จับ id ที่ server คืนมา แล้วเลือกแบรนด์ตัวนั้นต่อ — เดิมทิ้ง response
+            // แล้ว reset เป็น brands[0] (เรียงตามชื่อ) ⇒ สร้างแบรนด์ที่ 2 ขึ้นไป
+            // editor เด้งไปโชว์คนละตัว เสี่ยงอัปโหลดโลโก้ใส่แบรนด์ผิด (ผลตรวจ S1)
+            const saved = c.id
+              ? await API.put(`/api/companies/${cid}/document-brands/${c.id}`, body)
+              : await API.post(`/api/companies/${cid}/document-brands`, body);
+            const savedId = saved?.data?.id || c.id;
+            Layout.toast(c.id ? 'บันทึกแล้ว' : 'บันทึกแล้ว — อัปโหลดโลโก้ได้เลย');
             this.current = null;
             await this.load();
+            if (savedId) this.select(savedId);
           } catch (e) { Layout.toast(e.message, 'error'); }
         },
 

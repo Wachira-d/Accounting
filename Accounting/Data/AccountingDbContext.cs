@@ -1200,6 +1200,32 @@ public class AccountingDbContext : DbContext
             e.HasQueryFilter(t => !t.IsDeleted);
         });
 
+        // ===== DocumentBrand (ชื่อทางการค้าบนหัวเอกสาร) =====
+        modelBuilder.Entity<DocumentBrand>(e =>
+        {
+            e.HasIndex(b => new { b.CompanyId, b.IsActive });
+            e.Property(b => b.Name).HasMaxLength(200);
+            e.Property(b => b.NameEn).HasMaxLength(200);
+            e.Property(b => b.TagLine).HasMaxLength(300);
+            e.Property(b => b.TagLineEn).HasMaxLength(300);
+            e.Property(b => b.LogoPath).HasMaxLength(500);
+            e.Property(b => b.LogoUrl).HasMaxLength(1000);
+            e.Property(b => b.Address).HasMaxLength(1000);
+            e.Property(b => b.AddressEn).HasMaxLength(1000);
+            e.Property(b => b.Phone).HasMaxLength(100);
+            e.Property(b => b.Email).HasMaxLength(200);
+            e.Property(b => b.Website).HasMaxLength(300);
+            e.Property(b => b.PrimaryColor).HasMaxLength(20);
+            e.Property(b => b.SecondaryColor).HasMaxLength(20);
+            e.Property(b => b.FooterNotes).HasMaxLength(2000);
+            e.Property(b => b.FooterNotesEn).HasMaxLength(2000);
+            e.Property(b => b.LegalNamePlacement).HasMaxLength(20);
+            // ต้องมีเหมือน tenant entity ตัวอื่นทั้งหมด — ไม่มี = query ใหม่ที่ลืม
+            // !IsDeleted จะเห็นแถวที่ลบแล้ว ต่างจากทั้งระบบ + EF เตือนตอน start
+            // ว่า nav Company (required) ชี้ไป entity ที่มี filter (ผลตรวจข้อ 9)
+            e.HasQueryFilter(b => !b.IsDeleted);
+        });
+
         // ===== EtaxInvoice =====
         modelBuilder.Entity<EtaxInvoice>(e =>
         {

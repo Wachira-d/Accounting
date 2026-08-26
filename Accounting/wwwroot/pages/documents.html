@@ -3728,10 +3728,31 @@
       // ===== ชื่อทางการค้า (แบรนด์) บนหัวเอกสาร =====
       // กติกาว่าชนิดไหนแบรนด์ขึ้นหัวได้ มาจาก API เท่านั้น (ป.รัษฎากร §86/4
       // บังคับชื่อผู้ประกอบการจดทะเบียนบนใบกำกับ) — ห้าม hardcode ลิสต์ที่นี่
+      /** ค่าที่จะส่งไปกับ payload สำหรับช่องที่ "ว่าง = ปลดค่า"
+       *  เลือกไว้        → id นั้น
+       *  ว่าง + แก้ไข + โหลดรายการสำเร็จ → Guid.Empty (เจตนาปลดจริง)
+       *  ว่าง + โหลดไม่สำเร็จ/สร้างใหม่   → null (ไม่แตะของเดิม) */
+      _pinnedFieldValue(elId, listLoaded) {
+        const v = document.getElementById(elId)?.value || null;
+        if (v) return v;
+        return (this.editingId && listLoaded) ? '00000000-0000-0000-0000-000000000000' : null;
+      },
+
       _brands: [],
       _brandPolicy: {},
+      /** promise ของการโหลด — hydrate ต้อง await ก่อนเสมอ ไม่งั้น set value
+       *  ตอน <option> ยังไม่มา ค่าจะตกเป็น "" เงียบ แล้วกลายเป็นคำสั่งล้างค่า
+       *  ตอนกดบันทึก (ผลตรวจ ข้อ 5.2 — race) */
+      _brandsReady: null,
+      /** โหลด policy/แบรนด์สำเร็จจริงหรือไม่ — ล้มแล้วห้ามส่งคำสั่งล้างค่า */
+      _brandsLoaded: false,
 
-      async _loadBrands() {
+      _loadBrands() {
+        this._brandsReady = this._doLoadBrands();
+        return this._brandsReady;
+      },
+
+      async _doLoadBrands() {
         const cid = Layout.getCompanyId();
         if (!cid) return;
         try {
@@ -3739,19 +3760,27 @@
           (p.data?.types || []).forEach(t => this._brandPolicy[t.type] = t.brandCanBePrimary);
         } catch (e) {}
         try {
-          const r = await API.get(`/api/companies/${cid}/document-brands`);
+          // includeInactive: ใบเก่าที่ออกในนามแบรนด์ที่ถูกปิดใช้งานภายหลัง ต้องมี
+          // <option> ค้ำไว้ ไม่งั้นเปิดมาแก้ note บรรทัดเดียวแล้วกดบันทึก =
+          // แบรนด์ถูกปลดถาวรเงียบ ๆ ขัดคำสัญญาของปุ่มลบเอง (ผลตรวจ UX P2)
+          const r = await API.get(`/api/companies/${cid}/document-brands?includeInactive=true`);
           this._brands = r.data || [];
-        } catch (e) { this._brands = []; }
+          this._brandsLoaded = true;
+        } catch (e) { this._brands = []; this._brandsLoaded = false; }
 
         const row = document.getElementById('fBrandRow');
         const sel = document.getElementById('fBrand');
         if (!row || !sel) return;
         // ไม่มีแบรนด์เลย = ไม่ต้องรกฟอร์ม (ผู้ใช้ส่วนใหญ่ใช้ชื่อบริษัทอย่างเดียว)
-        if (!this._brands.length) { row.style.display = 'none'; return; }
+        // นับเฉพาะตัวที่ยังเปิดใช้ — บริษัทที่ปิดหมดแล้วไม่ควรเห็นช่อง
+        if (!this._brands.some(b => b.isActive !== false)) { row.style.display = 'none'; return; }
         row.style.display = '';
+        const keep = sel.value;   // กัน rewrite ทับ selection ที่ hydrate ไว้ก่อน
         sel.innerHTML = '<option value="">— ใช้ชื่อบริษัท —</option>'
           + this._brands.map(b =>
-              `<option value="${b.id}">${this.escapeHtml(b.name)}</option>`).join('');
+              `<option value="${b.id}"${b.isActive === false ? ' data-inactive="1"' : ''}>`
+              + `${this.escapeHtml(b.name)}${b.isActive === false ? ' (ปิดใช้งานแล้ว)' : ''}</option>`).join('');
+        if (keep) sel.value = keep;
         this._applyBrandHint();
       },
 
@@ -3762,9 +3791,27 @@
         const sel = document.getElementById('fBrand');
         if (!hint || !sel) return;
         const type = document.getElementById('fDocType')?.value || '';
-        const canLead = this._brandPolicy[type] !== false;
         if (!sel.value) {
           hint.textContent = 'ค่าเริ่มต้น — เอกสารขึ้นชื่อบริษัทตามปกติ (เลือกด้านบนถ้าจะออกในนามชื่อร้าน)';
+          hint.style.color = '#64748b';
+          return;
+        }
+        // policy โหลดไม่สำเร็จ = **ไม่รู้** ห้ามเดาว่า "ขึ้นหัวได้" (เดิม `!== false`
+        // ทำให้ policy ว่างแปลว่าอนุญาตหมด ⇒ ป้ายบอก ✅ บนใบกำกับภาษีทั้งที่ PDF
+        // จริงบังคับชื่อนิติบุคคล = ป้ายโกหก — ผลตรวจ S5 / ข้อ 16)
+        if (!(type in this._brandPolicy)) {
+          hint.textContent = 'ℹ️ ระบบจะเลือกให้ตามชนิดเอกสาร — ใบกำกับภาษี/ใบเสร็จ '
+            + 'จะขึ้นชื่อนิติบุคคลเป็นตัวหลักเสมอตามกฎหมาย ส่วนแบรนด์ได้โลโก้และสี';
+          hint.style.color = '#64748b';
+          return;
+        }
+        // เอกสารรับเข้า (ค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ/ใบสำคัญจ่าย) — กระดาษมาจากผู้ขาย
+        // เราไม่ได้พิมพ์หัวเอง ข้อความ §86/4 จึงชวนงงมากกว่าช่วย (ผลตรวจ S8)
+        const canLead = this._brandPolicy[type];
+        const INBOUND = ['Expense', 'PurchaseInvoice', 'PaymentVoucher',
+                         'CertificateInLieu', 'GoodsReceiptNote'];
+        if (INBOUND.includes(type)) {
+          hint.textContent = 'เอกสารนี้ใช้ภายใน/รับจากผู้ขาย — แบรนด์มีผลแค่โลโก้และสีบนกระดาษที่เราพิมพ์';
           hint.style.color = '#64748b';
           return;
         }
@@ -3788,29 +3835,57 @@
       },
 
       _templates: [],
+      _templatesReady: null,
+      _templatesLoaded: false,
 
-      async _loadTemplates() {
+      _loadTemplates() {
+        this._templatesReady = this._doLoadTemplates();
+        return this._templatesReady;
+      },
+
+      async _doLoadTemplates() {
         const cid = Layout.getCompanyId();
         if (!cid) return;
         try {
           const r = await API.get(`/api/companies/${cid}/document-templates`);
-          this._templates = (r.data || []).filter(t => t.isActive !== false);
-        } catch (e) { this._templates = []; }
+          // เก็บ inactive ไว้ด้วย — ใบเก่าที่ตรึงเทมเพลตที่ถูกปิดไปแล้วต้องมี
+          // option ค้ำ ไม่งั้นบันทึกทีเดียวค่าหาย (เหตุผลเดียวกับแบรนด์)
+          this._templates = r.data || [];
+          this._templatesLoaded = true;
+        } catch (e) { this._templates = []; this._templatesLoaded = false; }
+        this._renderTemplateOptions();
+      },
+
+      /** ตัวเลือกรูปแบบ = เฉพาะเทมเพลตของ "ชนิดเอกสารที่เลือกอยู่" — เทมเพลต
+       *  ใบเสนอราคาไปโผล่ตอนออกใบแจ้งหนี้ = ได้ CustomTitle/flag ผิดชนิดทั้งใบ
+       *  (ผลตรวจ S6 / ข้อ 4); ตัวที่ปิดใช้งานโชว์เฉพาะตอนใบนั้นตรึงไว้อยู่ */
+      _renderTemplateOptions() {
         const row = document.getElementById('fTemplateRow');
         const sel = document.getElementById('fTemplate');
         if (!row || !sel) return;
-        // ไม่เคยสร้างเทมเพลตเอง = ไม่ต้องรกฟอร์ม (ใช้ตั้งต้นอยู่แล้ว)
-        if (!this._templates.length) { row.style.display = 'none'; return; }
+        const type = document.getElementById('fDocType')?.value || '';
+        const pinned = sel.value;
+        const usable = this._templates.filter(t =>
+          (!type || !t.documentType || t.documentType === type)
+          && (t.isActive !== false || t.id === pinned));
+        if (!usable.length) { row.style.display = 'none'; return; }
         row.style.display = '';
         sel.innerHTML = '<option value="">— รูปแบบตั้งต้นของชนิดเอกสารนี้ —</option>'
-          + this._templates.map(t =>
-              `<option value="${t.id}">${this.escapeHtml(t.name)}</option>`).join('');
+          + usable.map(t =>
+              `<option value="${t.id}">${this.escapeHtml(t.name)}`
+              + `${t.isActive === false ? ' (ปิดใช้งานแล้ว)' : ''}</option>`).join('');
+        if (pinned) sel.value = pinned;
       },
 
       /** แก้ไข = ตามที่บันทึกไว้ · ใบใหม่ = ว่าง (ใช้ตั้งต้น) — ห้ามค้างค่าจากใบก่อน */
-      _hydrateTemplate(doc) {
+      async _hydrateTemplate(doc) {
+        try { await this._templatesReady; } catch (e) {}
         const sel = document.getElementById('fTemplate');
-        if (sel) sel.value = doc?.documentTemplateId || '';
+        if (!sel) return;
+        // ตรึงค่าก่อน render เพื่อให้ตัวที่ปิดใช้งานยังมี option ค้ำไว้
+        sel.value = doc?.documentTemplateId || '';
+        this._renderTemplateOptions();
+        sel.value = doc?.documentTemplateId || '';
       },
 
       /** เลือกแบรนด์ให้ตอนเปิดฟอร์ม
@@ -3821,7 +3896,10 @@
        *  แล้วทุกใบเปลี่ยนตามเงียบ ๆ = ใบที่ควรออกในนามบริษัทหลุดไปเป็นชื่อร้าน
        *  โดยไม่มีใครสั่ง และรู้ตัวอีกทีตอนเอกสารถึงมือลูกค้าแล้ว
        *  (ยังต้อง reset ทุกครั้ง — ห้ามค้างค่าจากใบก่อนหน้า) */
-      _hydrateBrand(doc) {
+      async _hydrateBrand(doc) {
+        // รอ options มาก่อนเสมอ — set value ตอนยังไม่มี <option> ค่าจะตกเป็น ""
+        // เงียบ แล้วกลายเป็นคำสั่ง "ล้างแบรนด์" ตอนกดบันทึก (ผลตรวจ ข้อ 5.2)
+        try { await this._brandsReady; } catch (e) {}
         const sel = document.getElementById('fBrand');
         if (!sel) return;
         sel.value = doc?.brandId || '';
@@ -4772,6 +4850,7 @@
 
       onDocTypeChange() {
         this._applyBrandHint();   // ชนิดเปลี่ยน = ป้ายแบรนด์ต้องเปลี่ยนตาม
+        this._renderTemplateOptions();   // และตัวเลือกรูปแบบต้องกรองตามชนิดใหม่
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
         this._refreshNoApproveHint();
@@ -7854,14 +7933,13 @@
           paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
             ? (document.getElementById('fPaymentType')?.value || 'Cash') : null,
           pricesIncludeVat: document.getElementById('fPricesIncludeVat')?.checked || false,
-          // ชื่อทางการค้า — ตอนแก้ไขต้องส่ง Guid.Empty เมื่อผู้ใช้เลือก "ใช้ชื่อบริษัท"
-          // ไม่งั้น server มองว่า "ไม่ส่งมา" แล้วคงแบรนด์เดิมไว้ = กดแล้วไม่มีผล
-          brandId: (document.getElementById('fBrand')?.value || null)
-                   || (this.editingId ? '00000000-0000-0000-0000-000000000000' : null),
-          // รูปแบบเอกสารที่เลือก — กติกา Guid.Empty เหมือน brandId (ปลดกลับไป
-          // ใช้ตั้งต้นได้จริง ไม่ใช่กดแล้วไม่มีผล)
-          documentTemplateId: (document.getElementById('fTemplate')?.value || null)
-                   || (this.editingId ? '00000000-0000-0000-0000-000000000000' : null),
+          // ชื่อทางการค้า / รูปแบบเอกสาร — ตอนแก้ไขต้องส่ง Guid.Empty เมื่อผู้ใช้
+          // เลือก "ใช้ชื่อบริษัท" ไม่งั้น server มองว่า "ไม่ส่งมา" แล้วคงของเดิมไว้
+          // = กดแล้วไม่มีผล. แต่ค่าว่างที่เกิดจาก **โหลดรายการไม่สำเร็จ** ไม่ใช่
+          // เจตนาผู้ใช้ ⇒ ห้ามส่งคำสั่งล้างค่า (ผลตรวจ ข้อ 5.3 — API ล่มแล้วแก้ใบ
+          // ไหนก็ปลดแบรนด์ใบนั้น) — ส่ง null = "ไม่แตะ" แทน
+          brandId: this._pinnedFieldValue('fBrand', this._brandsLoaded),
+          documentTemplateId: this._pinnedFieldValue('fTemplate', this._templatesLoaded),
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
           // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"
           // (217xx) แทนรายได้. depositOutputVatDeferred เลือกจังหวะ tax point.

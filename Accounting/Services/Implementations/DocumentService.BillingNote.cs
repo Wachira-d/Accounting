@@ -148,7 +148,13 @@ public partial class DocumentService
             Reference: null,
             Notes: request.Notes
                 ?? $"รวมยอดค้างชำระ {ordered.Count} ใบ ({string.Join(", ", ordered.Select(d => d.DocumentNumber))})",
-            Lines: lines);
+            Lines: lines,
+            // ใบวางบิลอยู่ในกลุ่มที่แบรนด์ขึ้นหัวได้ — ลูกค้าที่รับใบแจ้งหนี้ชื่อร้าน
+            // ทุกเดือนต้องได้ใบวางบิลชื่อร้านด้วย (ผลตรวจข้อ 7). ใบต้นทางทุกใบมา
+            // จากคู่ค้ารายเดียวกันอยู่แล้ว แต่แบรนด์อาจต่างกัน → ใช้ก็ต่อเมื่อ
+            // "ทุกใบใช้แบรนด์เดียวกัน" ไม่งั้นเลือกแทนผู้ใช้ไม่ได้ ปล่อยเป็นชื่อบริษัท
+            BrandId: ordered.Select(d => d.BrandId).Distinct().Count() == 1
+                ? ordered[0].BrandId : null);
 
         var resp = await CreateDocumentAsync(companyId, createReq, createdBy);
 

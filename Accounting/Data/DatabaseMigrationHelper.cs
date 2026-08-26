@@ -3438,6 +3438,8 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_DocumentBrands_Company" ON "DocumentBrands" ("CompanyId", "IsActive");""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BrandId" uuid NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentTemplateId" uuid NULL;""",
+            // Delete แบรนด์สแกนหาเอกสารที่ใช้อยู่ — ไม่มี index = full scan ต่อบริษัท
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_Brand" ON "Documents" ("CompanyId", "BrandId") WHERE "BrandId" IS NOT NULL;""",
 
             // ===== Backfill: DocumentLine.Amount ที่เก็บ "ยอดรวม VAT" (ผิด convention) =====
             // OCR รุ่นก่อน 2026-08-14 เก็บยอดรวม VAT ลง Line.Amount บนใบที่ราคารวม VAT

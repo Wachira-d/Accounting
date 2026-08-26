@@ -1461,7 +1461,25 @@ VAT พอดี**
 - renderer ทั้งสองตัวเรียก `PdfGenerationService.BuildIssuer(...)` จุดเดียว
   (ลบการคำนวณ `coPrimaryName` ที่เคยซ้ำอยู่คนละไฟล์) · โลโก้/สีแบรนด์เข้า
   `BuildBranding(..., brand)` ให้ QuestPDF เห็นตรงกับ HTML
-- เอกสารลูก (convert/clone) สืบทอด `BrandId` จากต้นทาง
+- **ที่อยู่บนเอกสารภาษี = ที่อยู่จดทะเบียนเสมอ** (§86/4(2) + ป.86/2542) —
+  ที่อยู่หน้าร้านของแบรนด์ทับได้เฉพาะใบที่แบรนด์ขึ้นหัว
+- **ชื่อแบรนด์เป็นบรรทัดรองบนเอกสารภาษี พิมพ์เสมอ** (`SecondaryIsBrand`) ห้าม
+  gate ด้วย `template.ShowCompanyNameEn` (default=false ⇒ สายเอกสารข้ามชื่อกัน)
+- **`IsActive` ไม่ตัดแบรนด์ตอน render** — ใบเก่าที่ตรึง `BrandId` ไว้ต้องพิมพ์
+  หน้าตาเดิมแม้แบรนด์ถูกปิดใช้งาน (สัญญาของปุ่มลบ) · `IsActive` คุมแค่รายการ
+  ให้เลือกตอนออกใบใหม่
+- **normalize หัวเอกสารก่อนเทียบ marker** — `CustomTitle` ที่ผู้ใช้พิมพ์เอง
+  ("ใบกำกับ ภาษี" เว้นวรรค · `TAX-INVOICE` · สระอำแบบแยก) ต้องยังโดนด่านจับ
+- **`BrandId`/`DocumentTemplateId` ต้องเป็นของบริษัทนั้น** —
+  `ResolveOwnedBrandIdAsync` / `ResolveOwnedTemplateIdAsync` throw เมื่อข้าม tenant
+  (invariant M) · `Guid.Empty` = "ไม่เลือก" normalize ทั้ง create และ update
+- **pinned template ต้องตรงชนิดเอกสาร** — เทมเพลตใบเสนอราคาที่สืบทอดมากับใบที่
+  convert เป็นใบแจ้งหนี้จะพา `CustomTitle`/flag ผิดชนิดมาทั้งใบ
+- **เอกสารภาษีบังคับ `ShowCompanyName`/`TaxId`/`Address`** —
+  `EnforceTaxDocTemplateInvariants` (เทมเพลตปิด flag เหล่านี้ไม่ได้ §86/4(2)-(3))
+- เอกสารลูก (convert/clone/settlement receipt/CN มัดจำ/ใบวางบิล) สืบทอด
+  `BrandId` + `DocumentTemplateId` จากต้นทาง (ใบวางบิลสืบทอดเมื่อทุกใบใช้แบรนด์
+  เดียวกันเท่านั้น — ต่างกันเลือกแทนผู้ใช้ไม่ได้)
 - **รูปแบบเอกสาร (เทมเพลต) เลือกได้รายใบ** — `Document.DocumentTemplateId`
   ลำดับการเลือกอยู่ที่ `PdfGenerationService.ResolveDocumentTemplateAsync`
   **ตัวเดียว** (เดิม if/else ชุดนี้ถูกก๊อปไว้ 2 ที่):
@@ -2423,7 +2441,11 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
-_Last verified against codebase: 2026-08-26 (รอบ 89 — **§6.2c ต่อของที่ค้าง**:_
+_Last verified against codebase: 2026-08-26 (รอบ 90 — **§6.2c ผลตรวจ 3 ทีม**:_
+_LegalLine ท้ายกระดาษใน QuestPDF · ที่อยู่จดทะเบียนบนเอกสารภาษี · บรรทัดรอง_
+_แบรนด์ไม่ gate · IsActive ไม่ตัดตอน render · tenant guard · pinned template_
+_ตรงชนิด · สืบทอดครบทุกเอกสารลูก · normalize marker);_
+_รอบ 89 — **§6.2c ต่อของที่ค้าง**:_
 _อัปโหลดโลโก้แบรนด์ + เลือกรูปแบบเอกสารรายใบ (Document.DocumentTemplateId) +_
 _resolver กลาง ResolveDocumentTemplateAsync แทน if/else ที่ซ้ำ 2 ที่);_
 _รอบ 88 — **§6.2c ปรับตามที่ผู้ใช้สั่ง**:_

@@ -65,8 +65,10 @@ public partial class PdfGenerationService
         var stampAllowed = doc.Status is not (Accounting.Models.Enums.DocumentStatus.Draft
             or Accounting.Models.Enums.DocumentStatus.WaitingApproval
             or Accounting.Models.Enums.DocumentStatus.Rejected);
+        // ไม่เช็ค IsActive — ใบเก่าที่ตรึงแบรนด์ไว้ต้องพิมพ์โลโก้/สีเดิมแม้แบรนด์
+        // ถูกปิดใช้งานภายหลัง (สัญญาของปุ่มลบ; ผลตรวจทีมเส้นทางข้อมูล ข้อ 3)
         var b = BuildBranding(template, settings, watermarkOverride, stampAllowed,
-            doc.Brand is { IsDeleted: false, IsActive: true } ? doc.Brand : null);
+            doc.Brand is { IsDeleted: false } ? doc.Brand : null);
 
         var accent = b.AccentColor ?? "#1F2937";
         var primary = b.PrimaryColor ?? "#1F2937";
@@ -205,7 +207,7 @@ public partial class PdfGenerationService
                         Safe(() => ComposeCurrencyNote(col, doc, accent, L));
                         Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, L, layout, accent));
                         Safe(() => ComposeSummary(col, doc, template, accent, layout, L));
-                        Safe(() => ComposeFooter(col, doc, template, accent, L));
+                        Safe(() => ComposeFooter(col, doc, template, accent, L, issuer));
                         Safe(() => ComposeSignatures(col, template, b, signers, lang));
                         Safe(() => ComposeGlPosting(col, gl, lang, L));
                     });
@@ -513,7 +515,12 @@ public partial class PdfGenerationService
 
         if (t.ShowCompanyName) Line(coPrimaryName, 14, true);
         if (!string.IsNullOrWhiteSpace(issuer?.TagLine)) Line(issuer!.TagLine!, 9, false, "#64748B");
-        if (t.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(secondary) && coPrimaryName != secondary)
+        // บรรทัดรองที่เป็น "ชื่อแบรนด์" (เอกสารภาษีที่นิติบุคคลขึ้นหัว) พิมพ์เสมอ —
+        // ห้าม gate ด้วย ShowCompanyNameEn (default=false ⇒ สายเอกสาร "ใบแจ้งหนี้
+        // ชื่อร้าน → ใบกำกับชื่อบริษัท" จะไม่มีอะไรเชื่อมกันเลย ลูกค้าจับคู่ใบไม่ได้
+        // — ผลตรวจทีมนักบัญชี ก-3); ชื่ออังกฤษของบริษัทยัง gate ตามเดิม
+        var showSecondary = issuer is { SecondaryIsBrand: true } || t.ShowCompanyNameEn;
+        if (showSecondary && !string.IsNullOrWhiteSpace(secondary) && coPrimaryName != secondary)
             Line(secondary!, 11);
         // ชื่อนิติบุคคลตัวเล็กใต้ชื่อแบรนด์ (ตั้งเป็น Header/Both) — ปิดไม่ได้
         if (issuer is { LegalLineInHeader: true } && !string.IsNullOrWhiteSpace(issuer.LegalLine))
@@ -947,7 +954,8 @@ public partial class PdfGenerationService
         return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
-    private static void ComposeFooter(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, Accounting.Services.Implementations.Pdf.DocumentLabels L)
+    private static void ComposeFooter(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, Accounting.Services.Implementations.Pdf.DocumentLabels L,
+        Accounting.Helpers.IssuerIdentity? issuer = null)
     {
         // CertificateInLieu — เอกสารใบรับรองการจ่ายเงินแทนใบเสร็จ
         // (กรณีจ่ายให้คนไม่จด VAT / ไม่ออกใบเสร็จ) มี metadata block
@@ -1048,9 +1056,14 @@ public partial class PdfGenerationService
             });
 
         // หมายเหตุท้ายเอกสาร: ของใบนี้ชนะ > ของเทมเพลต (เลือกภาษาตามเอกสาร)
+        // ลำดับ: ข้อความเฉพาะใบ → ของแบรนด์ → ของเทมเพลต (แบรนด์ที่กรอกช่อง
+        // "ข้อความท้ายเอกสาร" ไว้ เดิมไม่มี renderer อ่านเลย = field ตาย —
+        // ผลตรวจทีมเส้นทางข้อมูล ข้อ 8) — sync กับ HTML renderer
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
             ? doc.CustomFooterNotes
-            : PickLangText(t.FooterNotes, t.FooterNotesEn, L.IsEnglish ? "en" : "th");
+            : !string.IsNullOrWhiteSpace(issuer?.FooterNotes)
+                ? issuer!.FooterNotes
+                : PickLangText(t.FooterNotes, t.FooterNotesEn, L.IsEnglish ? "en" : "th");
         if (!string.IsNullOrWhiteSpace(footerNotes))
             col.Item().PaddingTop(8).Text(footerNotes).FontSize(10).FontColor("#555");
 
@@ -1063,6 +1076,14 @@ public partial class PdfGenerationService
                 cc.Item().Text(L.Terms).Bold().FontSize(10).FontColor("#555");
                 cc.Item().Text(doc.CustomTermsAndConditions!).FontSize(10).FontColor("#555");
             });
+
+        // ชื่อนิติบุคคลตัวเล็กท้ายกระดาษ — placement ตั้งต้นของทุกแบรนด์คือ Footer
+        // เดิม renderer นี้พิมพ์เฉพาะเคส Header ⇒ ใบแบรนด์ที่พิมพ์ผ่าน QuestPDF
+        // ไม่มีชื่อนิติบุคคล/เลขผู้เสียภาษีที่ไหนเลยทั้งใบ ขัด invariant "ปิดไม่ได้"
+        // ของ resolver เอง (ผลตรวจทีมนักบัญชี ก-1 — defect class "สอง renderer
+        // ห้าม drift") — sync กับ HTML renderer (.company-legal-footer)
+        if (issuer is { LegalLineInFooter: true } && !string.IsNullOrWhiteSpace(issuer.LegalLine))
+            col.Item().PaddingTop(8).Text(issuer.LegalLine!).FontSize(8).FontColor("#64748B");
     }
 
     private static void ComposeSignatures(ColumnDescriptor col, EntTemplate t, PdfBranding b,

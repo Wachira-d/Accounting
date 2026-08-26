@@ -1142,30 +1142,61 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// <item>เทมเพลตตั้งต้นของชนิดเอกสารนั้น</item>
     /// <item>เทมเพลตในหน่วยความจำ (บริษัทที่ยังไม่เคยตั้งอะไรเลย)</item>
     /// </list>
-    /// ข้อ 2-3 ที่ชี้ไปเทมเพลตที่ถูกลบ/ปิด/ข้ามบริษัท จะตกลงข้อถัดไปเงียบ ๆ
+    /// ข้อ 2-3 ที่ชี้ไปเทมเพลตที่ถูกลบ/ข้ามบริษัท/คนละชนิดเอกสาร จะตกลงข้อถัดไป
+    /// เงียบ ๆ (เทมเพลตที่แค่ "ปิดใช้งาน" ยังใช้ได้ — reprint ใบเก่าต้องหน้าตาเดิม)
     /// (เอกสารเก่าต้องพิมพ์ได้เสมอ — ห้าม throw ใส่ผู้ใช้ที่แค่กดพิมพ์ใบเดิม)
     /// ต่างจากข้อ 1 ที่ผู้ใช้เพิ่งเลือกเอง → id ผิดคือ error จริง ต้องบอก
     /// </summary>
     private async Task<DocumentTemplate> ResolveDocumentTemplateAsync(
         Guid companyId, Document document, Guid? requestedTemplateId)
     {
+        DocumentTemplate? resolved = null;
         if (requestedTemplateId.HasValue)
-            return await _db.DocumentTemplates.AsNoTracking()
-                       .FirstOrDefaultAsync(t => t.Id == requestedTemplateId.Value && t.CompanyId == companyId)
-                   ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
-
-        foreach (var pinned in new[] { document.DocumentTemplateId, document.Brand?.DefaultTemplateId })
         {
-            if (!pinned.HasValue) continue;
-            var t = await _db.DocumentTemplates.AsNoTracking()
-                .FirstOrDefaultAsync(x => x.Id == pinned.Value && x.CompanyId == companyId && !x.IsDeleted);
-            if (t != null) return t;
+            resolved = await _db.DocumentTemplates.AsNoTracking()
+                           .FirstOrDefaultAsync(t => t.Id == requestedTemplateId.Value && t.CompanyId == companyId)
+                       ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
 
-        return await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
-                   t.CompanyId == companyId && t.DocumentType == document.DocumentType
-                   && t.IsDefault && t.IsActive)
-               ?? CreateInMemoryDefaultTemplate(document.DocumentType);
+        if (resolved == null)
+        {
+            foreach (var pinned in new[] { document.DocumentTemplateId, document.Brand?.DefaultTemplateId })
+            {
+                if (!pinned.HasValue) continue;
+                // ต้องเป็นเทมเพลตของ "ชนิดเอกสารนี้" เท่านั้น — เทมเพลตใบเสนอราคาที่
+                // สืบทอดมากับใบที่ convert เป็นใบแจ้งหนี้ (หรือ Brand.DefaultTemplateId
+                // ที่ผูกไว้ชนิดเดียว) จะพา CustomTitle/flag ของคนละชนิดมาทั้งใบ
+                // — ใบแจ้งหนี้พิมพ์หัวใบเสนอราคาได้ (ผลตรวจทีมเส้นทางข้อมูล ข้อ 4)
+                var t = await _db.DocumentTemplates.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == pinned.Value && x.CompanyId == companyId
+                        && !x.IsDeleted && x.DocumentType == document.DocumentType);
+                if (t != null) { resolved = t; break; }
+            }
+        }
+
+        resolved ??= await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
+                         t.CompanyId == companyId && t.DocumentType == document.DocumentType
+                         && t.IsDefault && t.IsActive)
+                     ?? CreateInMemoryDefaultTemplate(document.DocumentType);
+
+        EnforceTaxDocTemplateInvariants(resolved, document);
+        return resolved;
+    }
+
+    /// <summary>เอกสารภาษี (§86/4) — ชื่อ + เลขผู้เสียภาษีผู้ขายเป็นรายการบังคับ
+    /// ตามกฎหมาย ห้ามเทมเพลตปิด (เดิมติ๊กปิด ShowCompanyName/ShowCompanyTaxId ได้
+    /// → ใบกำกับไร้ชื่อ/เลขภาษีผู้ขายทั้งใบ — ผลตรวจทีมนักบัญชี ข-3).
+    /// template มาจาก AsNoTracking/in-memory เสมอ — mutate ได้ไม่ persist</summary>
+    private static void EnforceTaxDocTemplateInvariants(DocumentTemplate template, Document doc)
+    {
+        var isTaxDoc = doc.DocumentType is DocumentType.TaxInvoice
+                or DocumentType.DebitNote or DocumentType.CreditNote
+            || ((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
+                && doc.VatAmount > 0);
+        if (!isTaxDoc) return;
+        template.ShowCompanyName = true;
+        template.ShowCompanyTaxId = true;
+        template.ShowCompanyAddress = true;   // ที่อยู่ก็เป็นรายการบังคับ §86/4(2)
     }
 
     /// <summary>ตัวตนผู้ออกเอกสารบนหัวกระดาษ — **จุดเดียว**ที่ทั้ง HTML renderer
@@ -1180,7 +1211,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var view = b == null || b.IsDeleted ? null : new DocumentBrandView(
             b.Name, b.NameEn, b.TagLine, b.TagLineEn, b.LogoPath, b.LogoUrl,
             b.Address, b.AddressEn, b.Phone, b.Email, b.Website, b.PrimaryColor,
-            b.LegalNamePlacement, b.IsActive);
+            b.LegalNamePlacement, b.IsActive, b.FooterNotes, b.FooterNotesEn);
 
         var addr = ThaiAddressFormatter.ResolvePartyAddress(
             isEn, company.AddressEn,
@@ -1530,7 +1561,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowCompanyName) sb.AppendLine($"<div class='company-name'>{WebUtility.HtmlEncode(coPrimaryName)}</div>");
         if (!string.IsNullOrWhiteSpace(issuer.TagLine))
             sb.AppendLine($"<div class='company-tagline' style='font-size:9pt;color:#64748b'>{WebUtility.HtmlEncode(issuer.TagLine!)}</div>");
-        if (template.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(issuer.SecondaryName) && coPrimaryName != issuer.SecondaryName)
+        // ชื่อแบรนด์เป็นบรรทัดรอง = พิมพ์เสมอ (ก-3) · ชื่ออังกฤษบริษัท gate ตามเดิม
+        if ((issuer.SecondaryIsBrand || template.ShowCompanyNameEn)
+            && !string.IsNullOrWhiteSpace(issuer.SecondaryName) && coPrimaryName != issuer.SecondaryName)
             sb.AppendLine($"<div class='company-name-en'>{WebUtility.HtmlEncode(issuer.SecondaryName!)}</div>");
         // ชื่อนิติบุคคลตัวเล็กใต้ชื่อแบรนด์ (ตั้งเป็น Header/Both) — ปิดไม่ได้
         if (issuer.LegalLineInHeader && !string.IsNullOrWhiteSpace(issuer.LegalLine))
@@ -1874,9 +1907,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (!string.IsNullOrWhiteSpace(cleanNotesHtml))
             sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'><strong>{L.Notes}:</strong> {System.Net.WebUtility.HtmlEncode(cleanNotesHtml)}</div>");
 
+        // ลำดับ: เฉพาะใบ → ของแบรนด์ → ของเทมเพลต (sync กับ QuestPDF — ผลตรวจข้อ 8)
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
             ? doc.CustomFooterNotes
-            : PickLangText(template.FooterNotes, template.FooterNotesEn, lang);
+            : !string.IsNullOrWhiteSpace(issuer.FooterNotes)
+                ? issuer.FooterNotes
+                : PickLangText(template.FooterNotes, template.FooterNotesEn, lang);
         if (!string.IsNullOrWhiteSpace(footerNotes))
             sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'>{System.Net.WebUtility.HtmlEncode(footerNotes)}</div>");
 

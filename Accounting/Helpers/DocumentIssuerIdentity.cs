@@ -36,7 +36,16 @@ public sealed record IssuerIdentity(
     string? LegalLine,
     bool LegalLineInHeader,
     bool LegalLineInFooter,
-    bool BrandIsPrimary);
+    bool BrandIsPrimary,
+    /// <summary>true = SecondaryName คือ "ชื่อแบรนด์" (บนเอกสารภาษีที่นิติบุคคล
+    /// เป็นตัวหลัก) — renderer ต้องพิมพ์**เสมอ** ห้าม gate ด้วย
+    /// template.ShowCompanyNameEn (flag นั้น default=false ⇒ สายเอกสาร
+    /// "ใบแจ้งหนี้ชื่อร้าน → ใบกำกับชื่อบริษัท" จะไม่มีอะไรเชื่อมกันเลย —
+    /// ผลตรวจทีมนักบัญชี ก-3)</summary>
+    bool SecondaryIsBrand = false,
+    /// <summary>ข้อความท้ายเอกสารของแบรนด์ — null = ใช้ของเทมเพลต/บริษัทตามเดิม
+    /// (เดิมช่องนี้ในหน้าตั้งค่ากรอกได้แต่ไม่มี renderer อ่าน = field ตาย)</summary>
+    string? FooterNotes = null);
 
 /// <summary>
 /// **ตัวตัดสินเดียว** ว่าหัวเอกสารจะขึ้นชื่ออะไร โลโก้ไหน และต้องแฝงชื่อ
@@ -85,8 +94,20 @@ public static class DocumentIssuerIdentity
     {
         if (!BrandPrimaryAllowed.Contains(type)) return false;
         if (string.IsNullOrWhiteSpace(renderedTitle)) return true;
-        var t = renderedTitle.ToLowerInvariant();
-        return !TaxInvoiceMarkers.Any(m => t.Contains(m, StringComparison.OrdinalIgnoreCase));
+        var t = NormalizeTitle(renderedTitle);
+        return !TaxInvoiceMarkers.Any(m => t.Contains(NormalizeTitle(m), StringComparison.Ordinal));
+    }
+
+    /// <summary>normalize หัวเอกสารก่อนเทียบ marker — CustomTitle เป็นค่าที่ผู้ใช้
+    /// พิมพ์เอง "ใบกำกับ ภาษี" (เว้นวรรค) / "TAX-INVOICE" / สระอำแบบแยก
+    /// (นิคหิต ํ + สระอา) ตาเห็นเป็นคำเดียวกันแต่ Contains ตรง ๆ มองไม่เห็น
+    /// ⇒ แบรนด์ขึ้นหัวบนกระดาษที่อ่านว่า "ใบกำกับภาษี" ได้ (ผลตรวจ ข-1)</summary>
+    private static string NormalizeTitle(string s)
+    {
+        var t = s.Normalize(System.Text.NormalizationForm.FormC)
+            .Replace("\u0E4D\u0E32", "\u0E33")   // นิคหิต+สระอา → สระอำ (NFC ไม่รวมให้)
+            .ToLowerInvariant();
+        return new string(t.Where(c => !char.IsWhiteSpace(c) && c is not ('-' or '_' or '.' )).ToArray());
     }
 
     private static string? Pick(params string?[] values)
@@ -95,13 +116,19 @@ public static class DocumentIssuerIdentity
     /// <summary>ประกอบบรรทัดนิติบุคคลตัวเล็ก — "ดำเนินการโดย {ชื่อ} เลขประจำตัว
     /// ผู้เสียภาษี {13 หลัก} ({สาขา})" · ภาษาอังกฤษใช้ "Operated by"</summary>
     public static string BuildLegalLine(
-        string companyName, string? companyTaxId, string? branchLabel, bool isEnglish)
+        string companyName, string? companyTaxId, string? branchLabel, bool isEnglish,
+        string? registeredAddress = null)
     {
         var parts = new List<string> { isEnglish ? $"Operated by {companyName}" : $"ดำเนินการโดย {companyName}" };
         if (!string.IsNullOrWhiteSpace(companyTaxId))
             parts.Add(isEnglish ? $"Tax ID {companyTaxId}" : $"เลขประจำตัวผู้เสียภาษี {companyTaxId}");
         if (!string.IsNullOrWhiteSpace(branchLabel))
             parts.Add(branchLabel!);
+        // ที่อยู่จดทะเบียน — บนใบที่แบรนด์ขึ้นหัว ที่อยู่ที่พิมพ์ตรงหัวคือของหน้าร้าน
+        // ถ้าต้องส่งคำบอกกล่าว/ทวงหนี้ ลูกค้าต้องหาภูมิลำเนานิติบุคคล (ป.พ.พ. ม.68-69)
+        // ได้จากใบ (ผลตรวจทีมนักบัญชี ข-4)
+        if (!string.IsNullOrWhiteSpace(registeredAddress))
+            parts.Add(registeredAddress!);
         return string.Join(" · ", parts);
     }
 
@@ -132,7 +159,11 @@ public static class DocumentIssuerIdentity
             ? companyNameEn
             : null;
 
-        var useBrand = brand is { IsActive: true } && !string.IsNullOrWhiteSpace(brand.Name);
+        // ⚠️ ตั้งใจ**ไม่**เช็ค IsActive ที่นี่ — ใบเก่าที่ตรึง BrandId ไว้ต้องพิมพ์
+        // หน้าตาเดิมเสมอแม้แบรนด์ถูกปิดใช้งานภายหลัง (ปุ่มลบสัญญากับผู้ใช้ไว้ว่า
+        // "เอกสารเก่ายังพิมพ์ได้เหมือนเดิม") IsActive คุมแค่รายการให้เลือกตอน
+        // ออกใบใหม่ (ผลตรวจทีมเส้นทางข้อมูล ข้อ 3)
+        var useBrand = brand != null && !string.IsNullOrWhiteSpace(brand.Name);
         if (!useBrand)
         {
             return new IssuerIdentity(
@@ -156,8 +187,8 @@ public static class DocumentIssuerIdentity
         var brandPrimary = isEnglish && !string.IsNullOrWhiteSpace(b.NameEn) ? b.NameEn! : b.Name;
         var brandCanLead = CanBrandBePrimary(type, renderedTitle);
 
-        // โลโก้/ที่อยู่/สีของแบรนด์ใช้ได้ทุกเอกสาร — สิ่งที่กฎหมายคุมคือ "ชื่อ"
-        // ไม่ใช่ภาพ (โลโก้บนใบกำกับภาษีเป็นเรื่องปกติมานาน)
+        // โลโก้/สี/เบอร์ติดต่อของแบรนด์ใช้ได้ทุกเอกสาร — สิ่งที่กฎหมายคุมคือ
+        // "ชื่อ" กับ "ที่อยู่" ไม่ใช่ภาพ (โลโก้บนใบกำกับภาษีเป็นเรื่องปกติมานาน)
         var logoPath = Pick(b.LogoPath, companyLogoPath);
         var logoUrl  = Pick(b.LogoUrl, companyLogoUrl);
         var address  = Pick(isEnglish ? b.AddressEn : b.Address, b.Address, companyAddress);
@@ -167,15 +198,18 @@ public static class DocumentIssuerIdentity
 
         if (!brandCanLead)
         {
-            // เอกสารภาษี — ชื่อนิติบุคคลเป็นตัวหลักตาม §86/4 แบรนด์ลงเป็นบรรทัดรอง
-            // (ยังได้โลโก้ + สี + ที่อยู่หน้าร้าน ⇒ ใบยังดู "เป็นแบรนด์" อยู่)
+            // เอกสารภาษี — ชื่อนิติบุคคลเป็นตัวหลักตาม §86/4(2) และ **ที่อยู่ต้อง
+            // เป็นที่ตั้งสถานประกอบการตามที่จดทะเบียน** (ป.86/2542) — ที่อยู่หน้าร้าน
+            // ของแบรนด์ทับไม่ได้ ไม่งั้นใบกำกับรายการไม่ถูกต้อง ผู้ซื้อเสี่ยงภาษีซื้อ
+            // ต้องห้าม §82/5(1) (ผลตรวจทีมนักบัญชี ก-2). แบรนด์ยังได้โลโก้ + สี +
+            // ชื่อร้านเป็นบรรทัดรอง ⇒ ใบยังดู "เป็นแบรนด์" อยู่
             return new IssuerIdentity(
                 PrimaryName: legalPrimary,
                 SecondaryName: Pick(brandPrimary, legalSecondary),
                 TagLine: null,
                 LogoPath: logoPath,
                 LogoUrl: logoUrl,
-                Address: address,
+                Address: companyAddress,
                 Phone: phone,
                 Email: email,
                 Website: b.Website,
@@ -183,7 +217,9 @@ public static class DocumentIssuerIdentity
                 LegalLine: null,
                 LegalLineInHeader: false,
                 LegalLineInFooter: false,
-                BrandIsPrimary: false);
+                BrandIsPrimary: false,
+                SecondaryIsBrand: true,
+                FooterNotes: Pick(isEnglish ? b.FooterNotesEn : b.FooterNotes, b.FooterNotes));
         }
 
         // แบรนด์เป็นตัวหลัก — บรรทัดนิติบุคคลตัวเล็กต้องมีเสมอ (ปิดไม่ได้)
@@ -204,10 +240,12 @@ public static class DocumentIssuerIdentity
             Email: email,
             Website: b.Website,
             PrimaryColor: color,
-            LegalLine: BuildLegalLine(companyName, companyTaxId, branchLabel, isEnglish),
+            LegalLine: BuildLegalLine(companyName, companyTaxId, branchLabel, isEnglish, companyAddress),
             LegalLineInHeader: inHeader,
             LegalLineInFooter: inFooter,
-            BrandIsPrimary: true);
+            BrandIsPrimary: true,
+            SecondaryIsBrand: !isEnglish && !string.IsNullOrWhiteSpace(b.NameEn) && brandPrimary != b.NameEn,
+            FooterNotes: Pick(isEnglish ? b.FooterNotesEn : b.FooterNotes, b.FooterNotes));
     }
 }
 
@@ -227,4 +265,6 @@ public sealed record DocumentBrandView(
     string? Website = null,
     string? PrimaryColor = null,
     string? LegalNamePlacement = "Footer",
-    bool IsActive = true);
+    bool IsActive = true,
+    string? FooterNotes = null,
+    string? FooterNotesEn = null);

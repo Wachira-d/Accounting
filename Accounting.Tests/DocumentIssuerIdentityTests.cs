@@ -174,11 +174,16 @@ public class DocumentIssuerIdentityTests
     }
 
     [Fact]
-    public void แบรนด์ปิดใช้งาน_ถอยไปใช้ชื่อบริษัท()
+    public void แบรนด์ปิดใช้งาน_ใบเก่าที่ตรึงไว้ยังพิมพ์หน้าตาเดิม()
     {
+        // ปุ่มลบสัญญากับผู้ใช้ว่า "ปิดใช้งานให้แทนการลบ — เอกสารเก่ายังพิมพ์ได้
+        // เหมือนเดิม" ⇒ resolver ห้ามตัดแบรนด์ทิ้งตอน render (ผลตรวจข้อ 3)
+        // IsActive คุมแค่ "รายการให้เลือกตอนออกใบใหม่" ซึ่งเป็นเรื่องของ API/UI
         var id = Resolve(DocumentType.Quotation, brand: Brand(active: false));
-        Assert.Equal(CoName, id.PrimaryName);
-        Assert.False(id.BrandIsPrimary);
+        Assert.Equal("บ้านสวนคาเฟ่", id.PrimaryName);
+        Assert.True(id.BrandIsPrimary);
+        Assert.Equal("/uploads/brand.png", id.LogoPath);
+        Assert.False(string.IsNullOrWhiteSpace(id.LegalLine));
     }
 
     [Fact]
@@ -193,14 +198,59 @@ public class DocumentIssuerIdentityTests
     [Fact]
     public void ใบกำกับภาษียังได้โลโก้_สี_ที่อยู่หน้าร้านของแบรนด์()
     {
-        // สิ่งที่กฎหมายคุมคือ "ชื่อ" ไม่ใช่ภาพ — ใบยังดูเป็นแบรนด์ได้
+        // สิ่งที่กฎหมายคุมคือ "ชื่อ" กับ "ที่อยู่" ไม่ใช่ภาพ — ใบยังดูเป็นแบรนด์ได้
         var id = Resolve(DocumentType.TaxInvoice, brand: Brand());
         Assert.Equal("/uploads/brand.png", id.LogoPath);
         Assert.Equal("#0F766E", id.PrimaryColor);
-        Assert.Equal("99 ถนนสุขุมวิท กรุงเทพฯ", id.Address);
         Assert.Equal("02-111-2222", id.Phone);
-        // ชื่อร้านลงเป็นบรรทัดรอง ไม่หายไปเฉย ๆ
+        // ชื่อร้านลงเป็นบรรทัดรอง ไม่หายไปเฉย ๆ + renderer ต้องพิมพ์เสมอ
         Assert.Equal("บ้านสวนคาเฟ่", id.SecondaryName);
+        Assert.True(id.SecondaryIsBrand);
+    }
+
+    [Fact]
+    public void ใบกำกับภาษี_ที่อยู่ต้องเป็นที่อยู่จดทะเบียน_ห้ามใช้ที่อยู่หน้าร้าน()
+    {
+        // §86/4(2) + ป.86/2542 — ที่อยู่บนใบกำกับต้องเป็นที่ตั้งสถานประกอบการ
+        // ตามที่จดทะเบียน; ที่อยู่หน้าร้านของแบรนด์ทับไม่ได้ ไม่งั้นรายการไม่ถูกต้อง
+        // ผู้ซื้อเสี่ยงภาษีซื้อต้องห้าม §82/5(1) (ผลตรวจทีมนักบัญชี ก-2)
+        foreach (var type in new[] { DocumentType.TaxInvoice, DocumentType.DebitNote,
+                                     DocumentType.CreditNote, DocumentType.Receipt })
+            Assert.Equal("1 ถนนพระราม 4 กรุงเทพฯ", Resolve(type, brand: Brand()).Address);
+
+        // ใบที่แบรนด์ขึ้นหัวได้ — ที่อยู่หน้าร้านถูกต้องแล้ว
+        Assert.Equal("99 ถนนสุขุมวิท กรุงเทพฯ", Resolve(DocumentType.Quotation, brand: Brand()).Address);
+    }
+
+    [Theory]
+    [InlineData("ใบกำกับ ภาษี")]           // เว้นวรรคกลางคำ
+    [InlineData("TAX-INVOICE")]            // ยัติภังค์ + ตัวใหญ่
+    [InlineData("Tax  Invoice")]           // เว้นวรรคซ้อน
+    [InlineData("ใบ_กำกับภาษี")]           // ขีดล่าง
+    public void หัวที่ผู้ใช้ตั้งเองแบบเลี่ยงคำ_ต้องยังโดนด่านจับ(string customTitle)
+    {
+        // CustomTitle เป็นค่าที่ผู้ใช้พิมพ์เอง — ตาเห็นว่าเป็น "ใบกำกับภาษี"
+        // แต่ Contains ตรง ๆ มองไม่เห็น ⇒ แบรนด์ขึ้นหัวบนใบกำกับได้ (ผลตรวจ ข-1)
+        Assert.False(DocumentIssuerIdentity.CanBrandBePrimary(DocumentType.Invoice, customTitle));
+        Assert.Equal(CoName, Resolve(DocumentType.Invoice, customTitle, brand: Brand()).PrimaryName);
+    }
+
+    [Fact]
+    public void บรรทัดนิติบุคคลมีที่อยู่จดทะเบียนด้วย()
+    {
+        // ที่อยู่บนหัวเป็นของหน้าร้าน — ถ้าต้องส่งคำบอกกล่าว/ทวงหนี้ ต้องหา
+        // ภูมิลำเนานิติบุคคลได้จากใบ (ป.พ.พ. ม.68-69 — ผลตรวจ ข-4)
+        var id = Resolve(DocumentType.Quotation, brand: Brand());
+        Assert.Contains("1 ถนนพระราม 4 กรุงเทพฯ", id.LegalLine!);
+    }
+
+    [Fact]
+    public void ข้อความท้ายเอกสารของแบรนด์ถูกส่งต่อให้_renderer()
+    {
+        // เดิมช่องนี้กรอกได้ในหน้าตั้งค่าแต่ไม่มี renderer อ่าน = field ตาย (ข้อ 8)
+        var b = new DocumentBrandView("ร้าน ก", FooterNotes: "ขอบคุณที่อุดหนุน");
+        Assert.Equal("ขอบคุณที่อุดหนุน", Resolve(DocumentType.Quotation, brand: b).FooterNotes);
+        Assert.Equal("ขอบคุณที่อุดหนุน", Resolve(DocumentType.TaxInvoice, brand: b).FooterNotes);
     }
 
     [Fact]
