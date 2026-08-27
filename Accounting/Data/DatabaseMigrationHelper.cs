@@ -3445,6 +3445,10 @@ public static class DatabaseMigrationHelper
             // null ทั้งสองคอลัมน์ = พฤติกรรมเดิมทุกประการ (กิจการสาขาเดียวไม่กระทบ)
             // IssuerBranchCode = snapshot รหัส 5 หลักที่พิมพ์จริงตอนอนุมัติ — แก้ทะเบียน
             // สาขาภายหลังต้องไม่ย้อนไปเปลี่ยนใบกำกับที่ออกไปแล้ว (§86/4)
+            // ที่อยู่ของแบรนด์ผูกกับทะเบียนบริษัท/สาขาได้ — แถวเก่าเป็น 'Custom'
+            // (พิมพ์เอง) เพื่อคงพฤติกรรมเดิมทุกประการ
+            """ALTER TABLE "DocumentBrands" ADD COLUMN IF NOT EXISTS "AddressSource" varchar(20) NOT NULL DEFAULT 'Custom';""",
+            """ALTER TABLE "DocumentBrands" ADD COLUMN IF NOT EXISTS "AddressSourceBranchId" uuid NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BranchId" uuid NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IssuerBranchCode" varchar(5) NULL;""",
             // รายงานภาษีซื้อ/ขายแยกตามสถานประกอบการ (§87) สแกนด้วยคู่นี้
