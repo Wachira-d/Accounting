@@ -170,6 +170,7 @@ public class AccountingDbContext : DbContext
 
     // Document Templates
     public DbSet<DocumentTemplate> DocumentTemplates => Set<DocumentTemplate>();
+    public DbSet<DocumentBrand> DocumentBrands => Set<DocumentBrand>();
 
     // e-Tax Invoices
     public DbSet<EtaxInvoice> EtaxInvoices => Set<EtaxInvoice>();
@@ -793,6 +794,10 @@ public class AccountingDbContext : DbContext
             e.HasOne(d => d.PaymentAccount).WithMany().HasForeignKey(d => d.PaymentAccountId).OnDelete(DeleteBehavior.SetNull);
             // Expense category — header-level chart of account for expense documents
             e.HasOne(d => d.ExpenseCategory).WithMany().HasForeignKey(d => d.ExpenseCategoryId).OnDelete(DeleteBehavior.SetNull);
+            // สาขาผู้ออกเอกสาร — SetNull เพราะเอกสารต้องไม่หายไปกับทะเบียนสาขา
+            // (รหัสที่พิมพ์จริงถูก snapshot ไว้ใน IssuerBranchCode แล้ว ใบเก่ายังพิมพ์ถูก)
+            e.HasOne(d => d.Branch).WithMany().HasForeignKey(d => d.BranchId).OnDelete(DeleteBehavior.SetNull);
+            e.Property(d => d.IssuerBranchCode).HasMaxLength(5);
             e.HasQueryFilter(d => !d.IsDeleted);
         });
 
@@ -1197,6 +1202,32 @@ public class AccountingDbContext : DbContext
             e.Property(t => t.LogoHeight).HasPrecision(5, 2);
             e.Property(t => t.WatermarkOpacity).HasPrecision(3, 2);
             e.HasQueryFilter(t => !t.IsDeleted);
+        });
+
+        // ===== DocumentBrand (ชื่อทางการค้าบนหัวเอกสาร) =====
+        modelBuilder.Entity<DocumentBrand>(e =>
+        {
+            e.HasIndex(b => new { b.CompanyId, b.IsActive });
+            e.Property(b => b.Name).HasMaxLength(200);
+            e.Property(b => b.NameEn).HasMaxLength(200);
+            e.Property(b => b.TagLine).HasMaxLength(300);
+            e.Property(b => b.TagLineEn).HasMaxLength(300);
+            e.Property(b => b.LogoPath).HasMaxLength(500);
+            e.Property(b => b.LogoUrl).HasMaxLength(1000);
+            e.Property(b => b.Address).HasMaxLength(1000);
+            e.Property(b => b.AddressEn).HasMaxLength(1000);
+            e.Property(b => b.Phone).HasMaxLength(100);
+            e.Property(b => b.Email).HasMaxLength(200);
+            e.Property(b => b.Website).HasMaxLength(300);
+            e.Property(b => b.PrimaryColor).HasMaxLength(20);
+            e.Property(b => b.SecondaryColor).HasMaxLength(20);
+            e.Property(b => b.FooterNotes).HasMaxLength(2000);
+            e.Property(b => b.FooterNotesEn).HasMaxLength(2000);
+            e.Property(b => b.LegalNamePlacement).HasMaxLength(20);
+            // ต้องมีเหมือน tenant entity ตัวอื่นทั้งหมด — ไม่มี = query ใหม่ที่ลืม
+            // !IsDeleted จะเห็นแถวที่ลบแล้ว ต่างจากทั้งระบบ + EF เตือนตอน start
+            // ว่า nav Company (required) ชี้ไป entity ที่มี filter (ผลตรวจข้อ 9)
+            e.HasQueryFilter(b => !b.IsDeleted);
         });
 
         // ===== EtaxInvoice =====

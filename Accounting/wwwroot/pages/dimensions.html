@@ -18,13 +18,21 @@
     <!-- Branches Tab -->
     <div id="tab-branches">
       <div class="page-header">
-        <div><h2 class="page-title">จัดการสาขา</h2><p class="page-subtitle">กำหนดสาขาสำหรับแยกรายงานและติดตามผลประกอบการ</p></div>
+        <div><h2 class="page-title">ทะเบียนสาขา / สถานประกอบการ</h2><p class="page-subtitle">ที่อยู่ + รหัสสาขาสรรพากรของแต่ละแห่ง — ใช้พิมพ์บนใบกำกับภาษีและแยกรายงานภาษี</p></div>
         <button class="btn btn-primary" onclick="Page.openCreateBranch()">+ เพิ่มสาขา</button>
+      </div>
+      <!-- กิจการสาขาเดียวไม่ต้องกรอกหน้านี้เลย — ระบบใช้ที่อยู่บริษัทตามเดิม -->
+      <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:13px;line-height:1.9;color:#075985">
+        <b>มีที่เดียวไม่ต้องกรอกหน้านี้</b> — ระบบจะใช้ชื่อ/ที่อยู่และรหัสสาขาในหน้า
+        <a href="/pages/settings.html" style="color:#0369a1">ตั้งค่าบริษัท</a> เหมือนเดิมทุกอย่าง<br>
+        กรอกเมื่อมี <b>ตั้งแต่ 2 แห่งขึ้นไป</b> — ป.รัษฎากร §86/4 บังคับให้ใบกำกับภาษีระบุ
+        <b>รหัสสาขา 5 หลัก</b> ของสถานที่ที่ออกใบ (สำนักงานใหญ่ = 00000, สาขาที่ 1 = 00001)
+        และ §87 บังคับแยกรายงานภาษีซื้อ/ขายตามสถานประกอบการ
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>รหัส</th><th>ชื่อสาขา</th><th>ที่อยู่</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
-          <tbody id="branchBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>รหัส</th><th>ชื่อสาขา</th><th>รหัสสรรพากร</th><th>ที่อยู่</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <tbody id="branchBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -64,20 +72,50 @@
       </div>
     </div>
 
-    <!-- Branch Modal -->
+    <!-- Branch Modal — ครบทุกช่องที่ §86/4 ต้องพิมพ์บนใบกำกับภาษี
+         (ของเดิมมีแค่ รหัส/ชื่อ/ที่อยู่บรรทัดเดียว → ออกใบกำกับให้ถูกกฎหมายไม่ได้) -->
     <div class="modal-overlay" id="branchModal">
-      <div class="modal" style="max-width:500px">
+      <div class="modal" style="max-width:640px">
         <div class="modal-header"><h3 class="modal-title" id="branchModalTitle">เพิ่มสาขา</h3><button class="modal-close" onclick="Layout.closeModal('branchModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="branchId">
           <div class="form-row">
-            <div class="form-group"><label class="form-label">รหัสสาขา *</label><input type="text" class="form-input" id="branchCode" placeholder="BR001"></div>
-            <div class="form-group"><label class="form-label">ชื่อสาขา *</label><input type="text" class="form-input" id="branchName"></div>
+            <div class="form-group"><label class="form-label" data-help="รหัสที่ใช้เรียกภายในระบบ (ไม่ใช่รหัสสรรพากร) เช่น HQ, BR-CM">รหัสสาขา (ภายใน) *</label><input type="text" class="form-input" id="branchCode" placeholder="HQ"></div>
+            <div class="form-group"><label class="form-label">ชื่อสาขา *</label><input type="text" class="form-input" id="branchName" placeholder="สำนักงานใหญ่"></div>
           </div>
-          <div class="form-group"><label class="form-label">ที่อยู่</label><input type="text" class="form-input" id="branchAddr"></div>
+          <div class="form-group"><label class="form-label" data-help="ใช้ตอนออกเอกสารภาษาอังกฤษ — เว้นว่างได้">ชื่อสาขา (อังกฤษ)</label><input type="text" class="form-input" id="branchNameEn" placeholder="Head Office"></div>
+
+          <div style="background:var(--gray-50, #f9fafb);border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0">
+            <div class="form-group" style="margin-bottom:8px">
+              <label class="form-label"><input type="checkbox" id="branchHead" onchange="Page.onHeadOfficeToggle()"> เป็น <b>สำนักงานใหญ่</b> (มีได้แห่งเดียว)</label>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label" data-help="ตัวเลข 5 หลักตามที่จดกับกรมสรรพากร — สำนักงานใหญ่ = 00000, สาขาแรก = 00001 (ประกาศอธิบดีฯ ฉบับที่ 199) พิมพ์สั้นกว่า 5 หลักระบบเติม 0 ข้างหน้าให้">รหัสสาขาสรรพากร (5 หลัก)</label>
+              <input type="text" class="form-input" id="branchTaxCode" placeholder="00001" maxlength="5" inputmode="numeric" style="max-width:160px">
+              <div style="font-size:12px;color:var(--gray-500);margin-top:4px">พิมพ์บนใบกำกับภาษีเป็น “สำนักงานใหญ่” หรือ “สาขาที่ 1”</div>
+            </div>
+          </div>
+
+          <div class="form-group"><label class="form-label">ที่อยู่ (เลขที่ / อาคาร / ถนน)</label><input type="text" class="form-input" id="branchAddr" placeholder="123/45 ถนนสุขุมวิท"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">แขวง/ตำบล</label><input type="text" class="form-input" id="branchSubDistrict"></div>
+            <div class="form-group"><label class="form-label">เขต/อำเภอ</label><input type="text" class="form-input" id="branchDistrict"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จังหวัด</label><input type="text" class="form-input" id="branchProvince"></div>
+            <div class="form-group"><label class="form-label">รหัสไปรษณีย์</label><input type="text" class="form-input" id="branchPostal" maxlength="5" inputmode="numeric"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" class="form-input" id="branchPhone"></div>
+            <div class="form-group"><label class="form-label">อีเมล</label><input type="email" class="form-input" id="branchEmail"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ผู้จัดการสาขา</label><input type="text" class="form-input" id="branchManager"></div>
           <div class="form-group"><label class="form-label"><input type="checkbox" id="branchActive" checked> ใช้งาน</label></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('branchModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveBranch()" data-i18n="common.save">บันทึก</button></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('branchModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveBranch()" data-i18n="common.save">บันทึก</button>
+        </div>
       </div>
     </div>
 
@@ -128,9 +166,12 @@
   <script>
 const Page = {
   init() {
-    if (!Layout.init('dimensions')) return;
-    Layout.setTitle('หลายสาขาและมิติ');
-    this.loadBranches();
+    // เมนู "ทะเบียนสาขา" (หมวดตั้งค่า) ชี้มาที่ ?tab=branches — ใช้ไฟล์เดียวกับ
+    // เมนูเดิม `/pages/dimensions.html` ที่ยังใช้ได้ทุกลิงก์/บุ๊กมาร์ก (ห้ามย้ายไฟล์)
+    const tab = new URLSearchParams(location.search).get('tab');
+    if (!Layout.init(tab === 'branches' ? 'branches' : 'dimensions')) return;
+    Layout.setTitle(tab === 'branches' ? 'ทะเบียนสาขา' : 'หลายสาขาและมิติ');
+    this.switchTab(tab === 'dimensions' ? 'dimensions' : 'branches');
   },
 
   switchTab(tab) {
@@ -144,48 +185,130 @@ const Page = {
     else if (tab === 'analysis') this.initAnalysis();
   },
 
+  /** ช่องในฟอร์มสาขา → key ของ payload (ที่เดียว ใช้ทั้งตอนล้าง/เติม/ส่ง —
+      กันบั๊ก "เพิ่มช่องแล้วลืมต่อสายบางจุด" ที่เคยทำให้ค่าหายเงียบ) */
+  _BRANCH_FIELDS: {
+    branchCode: 'code', branchName: 'name', branchNameEn: 'nameEn',
+    branchTaxCode: 'taxBranchCode', branchAddr: 'address',
+    branchSubDistrict: 'subDistrict', branchDistrict: 'district',
+    branchProvince: 'province', branchPostal: 'postalCode',
+    branchPhone: 'phone', branchEmail: 'email', branchManager: 'managerName',
+  },
+
+  _branches: [],
+
+  _taxCodeLabel(code) {
+    if (!code) return '<span style="color:var(--gray-400)">— ยังไม่ระบุ —</span>';
+    return code === '00000'
+      ? `<span class="font-medium">${code}</span> <span style="font-size:11px;color:var(--gray-500)">สำนักงานใหญ่</span>`
+      : `<span class="font-medium">${Layout.esc(code)}</span> <span style="font-size:11px;color:var(--gray-500)">สาขาที่ ${parseInt(code, 10)}</span>`;
+  },
+
+  _addrLine(b) {
+    return [b.address, b.subDistrict, b.district, b.province, b.postalCode]
+      .filter(Boolean).join(' ') || '-';
+  },
+
   async loadBranches() {
     const api = Layout.api(); if (!api) return;
     try {
-      const res = await api.getBranches();
+      // includeInactive: หน้าตั้งค่าต้องเห็นสาขาที่ปิดไว้ ไม่งั้นเปิดกลับไม่ได้เลย
+      const res = await api.getBranches(true);
       const items = res.data?.items || res.data || [];
+      this._branches = items;
       const tbody = document.getElementById('branchBody');
-      if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสาขา</td></tr>'; return; }
-      tbody.innerHTML = items.map(b => `<tr>
-        <td><span class="font-medium">${Layout.esc(b.code || '-')}</span></td>
-        <td>${Layout.esc(b.name || '-')}</td>
-        <td>${Layout.esc(b.address || '-')}</td>
+      if (!items.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">
+          ยังไม่มีสาขา — กิจการที่มีที่เดียวไม่ต้องเพิ่ม ระบบใช้ที่อยู่บริษัทตามเดิม</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = items.map(b => `<tr${b.isActive === false ? ' style="opacity:.55"' : ''}>
+        <td><span class="font-medium">${Layout.esc(b.code || '-')}</span>${b.isHeadOffice ? ' <span class="badge badge-info" style="font-size:10px">สนญ.</span>' : ''}</td>
+        <td>${Layout.esc(b.name || '-')}${b.nameEn ? `<div style="font-size:11px;color:var(--gray-500)">${Layout.esc(b.nameEn)}</div>` : ''}</td>
+        <td>${this._taxCodeLabel(b.taxBranchCode)}</td>
+        <td style="font-size:12px">${Layout.esc(this._addrLine(b))}</td>
         <td>${Layout.statusBadge(b.isActive !== false ? 'Active' : 'Inactive')}</td>
-        <td><button class="btn btn-sm btn-secondary" onclick="Page.editBranch('${b.id}')" data-i18n="common.edit">แก้ไข</button></td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="Page.editBranch('${b.id}')" data-i18n="common.edit">แก้ไข</button>
+          <button class="btn btn-sm btn-danger" onclick="Page.deleteBranch('${b.id}')" data-i18n="common.delete">ลบ</button>
+        </td>
       </tr>`).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
+  /** ติ๊ก "สำนักงานใหญ่" → รหัสสรรพากรต้องเป็น 00000 เสมอ (ล็อกช่องไม่ให้พิมพ์ผิด) */
+  onHeadOfficeToggle() {
+    const head = document.getElementById('branchHead').checked;
+    const tax = document.getElementById('branchTaxCode');
+    if (head) { tax.value = '00000'; tax.readOnly = true; tax.style.background = 'var(--gray-100, #f3f4f6)'; }
+    else { if (tax.value === '00000') tax.value = ''; tax.readOnly = false; tax.style.background = ''; }
+  },
+
+  _resetBranchForm() {
+    Object.keys(this._BRANCH_FIELDS).forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('branchId').value = '';
+    document.getElementById('branchHead').checked = false;
+    document.getElementById('branchActive').checked = true;
+    this.onHeadOfficeToggle();
+  },
+
   openCreateBranch() {
     document.getElementById('branchModalTitle').textContent = 'เพิ่มสาขา';
-    document.getElementById('branchId').value = '';
-    ['branchCode','branchName','branchAddr'].forEach(id => document.getElementById(id).value = '');
-    document.getElementById('branchActive').checked = true;
+    this._resetBranchForm();
+    // สาขาแรกของกิจการ = สำนักงานใหญ่ (เดาให้ ผู้ใช้แก้ได้)
+    if (!this._branches.length) {
+      document.getElementById('branchHead').checked = true;
+      document.getElementById('branchCode').value = 'HQ';
+      document.getElementById('branchName').value = 'สำนักงานใหญ่';
+      this.onHeadOfficeToggle();
+    }
     Layout.openModal('branchModal');
   },
 
   editBranch(id) {
-    // Simplified - just open modal for edit
+    const b = this._branches.find(x => x.id === id);
+    if (!b) { Layout.toast('ไม่พบสาขา — ลองโหลดหน้าใหม่', 'error'); return; }
     document.getElementById('branchModalTitle').textContent = 'แก้ไขสาขา';
+    this._resetBranchForm();
     document.getElementById('branchId').value = id;
+    // เติมค่าเดิมทุกช่อง — เดิมเปิดฟอร์มเปล่า กดบันทึกแล้วทับข้อมูลเก่าด้วยค่าว่าง
+    Object.entries(this._BRANCH_FIELDS).forEach(([elId, key]) => {
+      document.getElementById(elId).value = b[key] ?? '';
+    });
+    document.getElementById('branchHead').checked = !!b.isHeadOffice;
+    document.getElementById('branchActive').checked = b.isActive !== false;
+    this.onHeadOfficeToggle();
     Layout.openModal('branchModal');
   },
 
   async saveBranch() {
     const api = Layout.api(); if (!api) return;
     const id = document.getElementById('branchId').value;
-    const data = { code: document.getElementById('branchCode').value, name: document.getElementById('branchName').value, address: document.getElementById('branchAddr').value, isActive: document.getElementById('branchActive').checked };
+    const data = {};
+    Object.entries(this._BRANCH_FIELDS).forEach(([elId, key]) => {
+      data[key] = document.getElementById(elId).value.trim();
+    });
+    data.isHeadOffice = document.getElementById('branchHead').checked;
+    data.isActive = document.getElementById('branchActive').checked;
+
+    if (!data.code) { Layout.toast('กรุณากรอกรหัสสาขา', 'error'); return; }
     if (!data.name) { Layout.toast('กรุณากรอกชื่อสาขา', 'error'); return; }
+    if (data.taxBranchCode && !/^[0-9]{1,5}$/.test(data.taxBranchCode)) {
+      Layout.toast('รหัสสาขาสรรพากรต้องเป็นตัวเลขไม่เกิน 5 หลัก', 'error'); return;
+    }
     try {
       if (id) await api.updateBranch(id, data); else await api.createBranch(data);
       Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มสาขาสำเร็จ');
       Layout.closeModal('branchModal'); this.loadBranches();
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async deleteBranch(id) {
+    const b = this._branches.find(x => x.id === id);
+    if (!confirm(`ลบสาขา "${b?.name || ''}"?\n\nลบได้เฉพาะสาขาที่ยังไม่มีรายการบัญชีอ้างถึง — ถ้าเลิกใช้แล้วให้เอาเครื่องหมาย "ใช้งาน" ออกแทน`)) return;
+    const api = Layout.api(); if (!api) return;
+    try { await api.deleteBranch(id); Layout.toast('ลบสำเร็จ'); this.loadBranches(); }
+    catch (err) { Layout.toast(err.message, 'error'); }
   },
 
   _dims: [],

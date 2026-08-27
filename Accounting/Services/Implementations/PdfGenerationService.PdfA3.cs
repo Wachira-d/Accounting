@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Etax;
 using Microsoft.EntityFrameworkCore;
 using QuestPDF.Drawing;
@@ -138,6 +139,11 @@ public partial class PdfGenerationService
             VatRate: l.VatRate,
             VatAmount: l.VatAmount)).ToList();
 
+        // สถานประกอบการที่ออกใบ — resolver กลางตัวเดียวกับ renderer เอกสารปกติ
+        // (กิจการสาขาเดียว: ได้ company.BranchCode/ที่อยู่บริษัทเหมือนเดิมเป๊ะ)
+        var issuerBranch = ResolveIssuerBranch(document, company, isEnglish: false);
+        var companyAddress = $"{company.Address ?? ""} {company.SubDistrict ?? ""} {company.District ?? ""} {company.Province ?? ""} {company.PostalCode ?? ""}".Trim();
+
         return new EtaxPdfMetadata(
             DocumentNumber: document.DocumentNumber,
             DocumentType: docTypeRoot,
@@ -145,13 +151,13 @@ public partial class PdfGenerationService
             XmlVersion: "v2.0",
             SellerName: etax.SellerName,
             SellerTaxId: etax.SellerTaxId,
-            SellerBranch: company.BranchCode ?? "00000",
-            SellerAddress: $"{company.Address ?? ""} {company.SubDistrict ?? ""} {company.District ?? ""} {company.Province ?? ""} {company.PostalCode ?? ""}".Trim(),
-            SellerPhone: company.Phone,
-            SellerEmail: company.Email,
+            SellerBranch: issuerBranch.Code,
+            SellerAddress: issuerBranch.Address ?? companyAddress,
+            SellerPhone: issuerBranch.Phone ?? company.Phone,
+            SellerEmail: issuerBranch.Email ?? company.Email,
             BuyerName: etax.BuyerName,
             BuyerTaxId: etax.BuyerTaxId,
-            BuyerBranch: document.Contact?.BranchCode ?? "00000",
+            BuyerBranch: TaxBranchCode.Normalize(document.Contact?.BranchCode),
             BuyerAddress: document.Contact?.Address,
             EtaxRefNumber: etax.EtaxRefNumber,
             DocumentDate: document.DocumentDate,
@@ -440,8 +446,10 @@ public partial class PdfGenerationService
                     c.Item().Text(m.SellerName).FontSize(14).Bold();
                     if (!string.IsNullOrWhiteSpace(m.SellerAddress))
                         c.Item().Text(m.SellerAddress).FontSize(9);
+                    // เดิมพิมพ์เลขดิบ "00003" ถ้าไม่ใช่สำนักงานใหญ่ — ไม่ตรงถ้อยคำตาม
+                    // ประกาศอธิบดีฯ ฉบับที่ 199 (ต้องเป็น "สาขาที่ 3") → ใช้ resolver กลาง
                     c.Item().Text($"เลขประจำตัวผู้เสียภาษี: {m.SellerTaxId}    " +
-                        $"สาขา: {(m.SellerBranch == "00000" || string.IsNullOrEmpty(m.SellerBranch) ? "สำนักงานใหญ่" : m.SellerBranch)}")
+                        $"สาขา: {TaxBranchCode.Label(m.SellerBranch)}")
                         .FontSize(9);
                     if (!string.IsNullOrEmpty(m.SellerPhone))
                         c.Item().Text($"โทร: {m.SellerPhone}    {m.SellerEmail ?? ""}").FontSize(9);
@@ -473,7 +481,7 @@ public partial class PdfGenerationService
                     b.Item().Text(m.BuyerAddress).FontSize(9);
                 if (!string.IsNullOrEmpty(m.BuyerTaxId))
                     b.Item().Text($"เลขประจำตัวผู้เสียภาษี: {m.BuyerTaxId}    " +
-                        $"สาขา: {(m.BuyerBranch == "00000" || string.IsNullOrEmpty(m.BuyerBranch) ? "สำนักงานใหญ่" : m.BuyerBranch)}")
+                        $"สาขา: {TaxBranchCode.Label(m.BuyerBranch)}")
                         .FontSize(9);
             });
 

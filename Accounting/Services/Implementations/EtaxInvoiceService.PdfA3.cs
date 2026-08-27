@@ -12,6 +12,9 @@ public partial class EtaxInvoiceService
     {
         var etax = await _db.EtaxInvoices
             .Include(e => e.Document).ThenInclude(d => d.Lines)
+            // สาขาผู้ออกใบ — ไม่ include แล้วที่อยู่/รหัสสาขาบน PDF จะตกกลับไปเป็น
+            // ของสำนักงานใหญ่เงียบ ๆ ทั้งที่ใบออกจากสาขา (§86/4)
+            .Include(e => e.Document).ThenInclude(d => d.Branch)
             .FirstOrDefaultAsync(e => e.Id == etaxId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ e-Tax Invoice");
         // ไม่ ThenInclude Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
@@ -82,6 +85,10 @@ public partial class EtaxInvoiceService
                 VatRate: l.VatRate,
                 VatAmount: l.VatAmount)).ToList();
 
+        // สถานประกอบการที่ออกใบ — null = กิจการสาขาเดียว (ใช้ค่าบริษัทเหมือนเดิม)
+        var branch = etax.Document.Branch is { IsDeleted: false } b ? b : null;
+        var useBranchAddress = DocumentIssuerBranch.UseBranchAddress(branch?.Address);
+
         var metadata = new EtaxPdfMetadata(
             DocumentNumber: etax.Document.DocumentNumber,
             DocumentType: docTypeRoot,
@@ -89,18 +96,26 @@ public partial class EtaxInvoiceService
             XmlVersion: "v2.0",
             SellerName: etax.SellerName,
             SellerTaxId: etax.SellerTaxId,
-            SellerBranch: company.BranchCode ?? "00000",
+            // สาขาผู้ออกใบ — snapshot บนแถว EtaxInvoice ชนะ (ต้องตรงกับ XML ที่ยื่นไปแล้ว
+            // เสมอ) แล้วค่อยตกไปที่ทะเบียนสาขา/ค่าบริษัทสำหรับใบเก่าที่ยังไม่มี snapshot
+            SellerBranch: DocumentIssuerBranch.ResolveCode(
+                etax.SellerBranch, etax.Document.Branch?.TaxBranchCode, company.BranchCode),
             // ที่อยู่ผู้ขายบน e-Tax PDF/A-3 — ใช้ตัวประกอบกลาง (เดิม interpolate
             // ต่อกันดื้อ ๆ ได้ "... หนองเหียง พนัสนิคม ชลบุรี 20140" ไม่มีคำนำหน้า
             // และซ้ำกับที่อยู่ที่อยู่ใน Address อยู่แล้ว)
-            SellerAddress: ThaiAddressFormatter.Format(
-                company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
-                company.SubDistrict, company.District, company.Province, company.PostalCode),
-            SellerPhone: company.Phone,
-            SellerEmail: company.Email,
+            // ที่อยู่ของสาขา "ทั้งชุดหรือไม่ใช้เลย" — ผสมข้ามชุดได้ที่อยู่ที่ไม่มีจริง
+            SellerAddress: useBranchAddress
+                ? ThaiAddressFormatter.Format(
+                    branch!.Address, null, null, null, null,
+                    branch.SubDistrict, branch.District, branch.Province, branch.PostalCode)
+                : ThaiAddressFormatter.Format(
+                    company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
+                    company.SubDistrict, company.District, company.Province, company.PostalCode),
+            SellerPhone: (useBranchAddress ? branch!.Phone : null) ?? company.Phone,
+            SellerEmail: (useBranchAddress ? branch!.Email : null) ?? company.Email,
             BuyerName: etax.BuyerName,
             BuyerTaxId: etax.BuyerTaxId,
-            BuyerBranch: etax.Document.Contact?.BranchCode ?? "00000",
+            BuyerBranch: TaxBranchCode.Normalize(etax.Document.Contact?.BranchCode),
             BuyerAddress: etax.Document.Contact?.Address,
             EtaxRefNumber: etax.EtaxRefNumber,
             DocumentDate: etax.Document.DocumentDate,

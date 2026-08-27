@@ -929,7 +929,9 @@ const Layout = {
       description: 'job cost · งบประมาณต่อโครงการ · ติดตามรายได้/ค่าใช้จ่าย' },
     { id: 'time-billing', label: 'บันทึกเวลา', icon: '⏱️', href: '/pages/time-billing.html', feature: 'TimeBilling', _i18nKey: 'nav.timeBilling',
       description: 'timesheet · บิลตามชั่วโมง · ติดตามกำไรต่อโปรเจค' },
-    { id: 'dimensions', label: 'สาขา & มิติ (Cost Center)', icon: '🏬', href: '/pages/dimensions.html', feature: 'CostCenter', _i18nKey: 'nav.dimensions',
+    // ทะเบียน "สาขา" ย้ายไปหมวดตั้งค่าแล้ว (ไม่มี feature flag) — เมนูนี้เหลือ
+    // เฉพาะมิติ/ศูนย์ต้นทุน ซึ่งเป็นฟีเจอร์วิเคราะห์ที่ gate ตามแพ็กเกจได้จริง
+    { id: 'dimensions', label: 'ศูนย์ต้นทุน & มิติ (Cost Center)', icon: '🏢', href: '/pages/dimensions.html?tab=dimensions', feature: 'CostCenter', _i18nKey: 'nav.dimensions',
       description: 'cost center หลายมิติ · กระจาย JE ตามแผนก/สาขา · รายงานต่อมิติ' },
     { id: 'intercompany', label: 'ระหว่างบริษัท', icon: '🔗', href: '/pages/intercompany.html', feature: 'MultiCompany', _i18nKey: 'nav.intercompany',
       description: 'ธุรกรรมข้ามบริษัทในเครือ · auto-mirror · eliminate ตอนรวมงบ' },
@@ -959,6 +961,12 @@ const Layout = {
     { section: 'ตั้งค่า & ผู้ใช้', icon: '⚙️', description: 'บริษัท · ทีม/สิทธิ์ · อนุมัติ · เทมเพลต · แจ้งเตือน · PDPA' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html', _i18nKey: 'nav.settings',
       description: 'ข้อมูลบริษัท · logo · เลขผู้เสียภาษี · default บัญชี · เลขเอกสาร · SMTP' },
+    // ทะเบียนสาขาอยู่ในหมวด "ตั้งค่า" เพราะเป็นข้อมูลนิติบุคคล (§86/4 บังคับรหัสสาขา
+    // บนใบกำกับภาษี) ไม่ใช่ฟีเจอร์วิเคราะห์ — ไม่มี feature flag: กิจการหลายสาขา
+    // ต้องออกเอกสารให้ถูกกฎหมายได้ทุกแพ็กเกจ. ชี้ไฟล์เดิม `dimensions.html`
+    // (แค่เปิดแท็บสาขา) — ห้ามสร้างไฟล์ใหม่/ย้าย เพราะลิงก์เดิมยังต้องใช้ได้
+    { id: 'branches', label: 'ทะเบียนสาขา / สถานประกอบการ', icon: '🏬', href: '/pages/dimensions.html?tab=branches',
+      description: 'ที่อยู่แต่ละสาขา + รหัสสาขาสรรพากร 5 หลัก (00000 = สำนักงานใหญ่) · ใช้พิมพ์บนใบกำกับภาษีและแยกรายงานภาษี' },
     // หมายเหตุ: design-system.html เป็นคู่มือ design token/component สำหรับ
     // นักพัฒนา — ไม่ใช่ฟีเจอร์สำหรับผู้ใช้ระบบบัญชี จึงถอดออกจากเมนู (ยังเปิด
     // ตรงผ่าน URL /pages/design-system.html ได้สำหรับทีมพัฒนา).
@@ -980,6 +988,8 @@ const Layout = {
       description: 'กำหนดใครเห็นเอกสารกลุ่มอ่อนไหว (payroll / ผู้บริหาร) — sensitivity gate' },
     { id: 'document-templates', label: 'เทมเพลตเอกสาร PDF', icon: '🎨', href: '/pages/document-templates.html', feature: 'DocumentEngine',
       description: 'ปรับ logo · สี · font · header · footer · watermark · ลายเซ็น — preview สด · per-document-type' },
+    { id: 'document-brands', label: 'ชื่อทางการค้า & หน้าตาเอกสาร', icon: '🏷️', href: '/pages/document-brands.html', feature: 'DocumentEngine',
+      description: 'ออกใบเสนอราคา/ใบแจ้งหนี้ในนามชื่อร้าน + โลโก้ของแบรนด์ — เลือกได้ตอนออกใบ · ใบกำกับภาษียังขึ้นชื่อนิติบุคคลตามกฎหมาย' },
     { id: 'settings-features', label: 'ฟีเจอร์ & เมนู (Owner)', icon: '🧩', href: '/pages/settings-features.html', adminOnly: true,
       description: 'เจ้าของกิจการเลือกเปิด/ปิดฟีเจอร์ + ซ่อนเมนูที่ไม่ใช้ ใช้ได้ทุกคนในบริษัท' },
     { id: 'pdpa', label: 'PDPA — สิทธิ์เจ้าของข้อมูล', icon: '🛡️', href: '/pages/pdpa.html', adminOnly: true,

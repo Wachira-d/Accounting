@@ -47,6 +47,21 @@ public class SubscriptionCheckMiddleware
     }
 
     /// <summary>
+    /// เส้นทางที่ **ห้าม gate ตามแพ็กเกจ** แม้จะตรงกับ RouteFeatureMap ด้านล่าง —
+    /// เพราะเป็นข้อบังคับตามกฎหมาย ไม่ใช่ฟีเจอร์เสริมที่ขายเพิ่มได้
+    ///
+    /// `/dimensions/branches` — สาขาผูกกับ **รหัสสาขาสรรพากร** ที่ §86/4 บังคับให้
+    /// ปรากฏบนใบกำกับภาษี (ประกาศอธิบดีฯ ฉบับที่ 199) และ §87 บังคับแยกรายงาน
+    /// ภาษีซื้อ/ขายต่อสถานประกอบการ. กิจการที่มี 2 สาขาแล้วอยู่แพ็กเกจเล็ก
+    /// จะออกเอกสารให้ถูกกฎหมายไม่ได้เลยถ้าโดน gate — ของที่ขายเพิ่มได้คือ
+    /// "มิติ/ศูนย์ต้นทุน" (`/dimensions` เส้นทางอื่น) ไม่ใช่ทะเบียนสาขา
+    /// </summary>
+    private static readonly string[] FeatureExemptRoutes =
+    {
+        "/dimensions/branches",
+    };
+
+    /// <summary>
     /// Map URL path segments to required FeatureFlag.
     /// Match is by path containing the key (case-insensitive).
     /// More specific paths (longer keys) are evaluated first.
@@ -262,6 +277,14 @@ public class SubscriptionCheckMiddleware
         // Match is "segment-anchored": path contains "{key}/" or ends with "{key}"
         // to avoid /payroll matching /payroll-history.
         var lowerPath = path.ToLowerInvariant();
+
+        // เส้นทางที่กฎหมายบังคับ — ผ่านก่อน ไม่ต้องดู RouteFeatureMap
+        if (FeatureExemptRoutes.Any(r => lowerPath.Contains(r)))
+        {
+            await _next(context);
+            return;
+        }
+
         var requiredFeature = RouteFeatureMap
             .Where(m =>
             {

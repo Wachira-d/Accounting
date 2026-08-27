@@ -303,6 +303,43 @@ public class Document : TenantEntity
     /// ex-VAT (the historical default, VAT added on top).</summary>
     public bool PricesIncludeVat { get; set; }
 
+    /// <summary>ชื่อทางการค้า/แบรนด์ที่ใช้ออกใบนี้ (null = ใช้ชื่อบริษัทตามเดิม).
+    /// ผลต่อ "หน้าตา" เท่านั้น — ไม่กระทบบัญชี/ภาษี/เลขที่เอกสาร.
+    /// เอกสารที่กฎหมายบังคับชื่อผู้ประกอบการจดทะเบียน (ใบกำกับภาษี ฯลฯ) แบรนด์
+    /// จะลงได้แค่โลโก้ + บรรทัดรอง — ตัวตัดสินอยู่ที่ Helpers.DocumentIssuerIdentity</summary>
+    public Guid? BrandId { get; set; }
+    public DocumentBrand? Brand { get; set; }
+
+    /// <summary>
+    /// สถานประกอบการ (สาขา) ที่ **ออกใบนี้** — null = กิจการสาขาเดียว
+    /// (ใช้ชื่อ/ที่อยู่/`Company.BranchCode` ตามเดิมทุกอย่าง เหมือนก่อนมีฟีเจอร์นี้)
+    ///
+    /// ต่างจาก <see cref="SupplierBranchCode"/> ซึ่งเป็นสาขาของ **คู่ค้า** บนใบ
+    /// ที่เขาออกให้เรา — ตัวนี้คือสาขาของ **เรา** ในฐานะผู้ออกใบ (§86/4(2))
+    /// </summary>
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+
+    /// <summary>
+    /// รหัสสาขาสรรพากร 5 หลักที่ **พิมพ์ลงบนกระดาษจริง** ตอนอนุมัติ (snapshot)
+    ///
+    /// ทำไมต้อง snapshot ทั้งที่มี <see cref="BranchId"/> แล้ว: `Branch.TaxBranchCode`
+    /// แก้ภายหลังได้ (พิมพ์ผิดตอนตั้งค่า/ย้ายสถานะสำนักงานใหญ่) แต่ใบกำกับภาษีที่
+    /// ออกไปแล้วต้องพิมพ์ซ้ำได้เหมือนเดิมเป๊ะ — ถ้าอ่านสดจากทะเบียนทุกครั้ง
+    /// การแก้ทะเบียนวันนี้จะย้อนไปเปลี่ยนใบของปีที่แล้วทั้งหมด (แนวเดียวกับ
+    /// <see cref="SupplierBranchCode"/> ที่ทำไว้ให้ฝั่งคู่ค้าอยู่แล้ว)
+    ///
+    /// null = ยังไม่อนุมัติ (Draft อ่านสดจากทะเบียน) หรือเป็นเอกสารเก่าก่อนมีฟีเจอร์นี้
+    /// → ตกไปใช้ `Company.BranchCode` เหมือนเดิม (back-compat)
+    /// </summary>
+    public string? IssuerBranchCode { get; set; }
+
+    /// <summary>รูปแบบ (เทมเพลต) ที่ผู้ใช้เลือกตอนออกใบนี้ — null = ใช้เทมเพลต
+    /// ตั้งต้นของชนิดเอกสารตามเดิม. เก็บไว้กับใบเพราะพิมพ์ซ้ำปีหน้าต้องได้
+    /// หน้าตาเดิม แม้ตั้งต้นของบริษัทจะเปลี่ยนไปแล้ว
+    /// (ลำดับการเลือกอยู่ที่ <c>PdfGenerationService.ResolveDocumentTemplateAsync</c>)</summary>
+    public Guid? DocumentTemplateId { get; set; }
+
     // Contact (Customer/Supplier)
     public Guid ContactId { get; set; }
     public Contact Contact { get; set; } = null!;

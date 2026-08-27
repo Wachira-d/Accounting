@@ -100,6 +100,17 @@ public record CreateDocumentRequest(
     PaymentType? PaymentType = null,
     // Unit prices entered VAT-inclusive (ราคารวมภาษี). True → back 7% VAT out.
     bool PricesIncludeVat = false,
+    // ชื่อทางการค้า/แบรนด์ที่ใช้ออกใบนี้ (null = ใช้ชื่อบริษัท). ผลต่อ "หน้าตา"
+    // เท่านั้น — ไม่กระทบบัญชี/ภาษี/เลขที่. เอกสารที่กฎหมายบังคับชื่อผู้ประกอบการ
+    // จดทะเบียน แบรนด์จะลงได้แค่โลโก้+บรรทัดรอง (Helpers.DocumentIssuerIdentity)
+    Guid? BrandId = null,
+    // สถานประกอบการ (สาขา) ที่ออกใบนี้ — **null = พฤติกรรมเดิมทุกประการ**
+    // (ใช้ Company.BranchCode/ที่อยู่บริษัท) กิจการสาขาเดียวไม่ต้องส่งมาเลย
+    // กระทบ "รหัสสาขาบนกระดาษ + ที่อยู่ + TXID ของ e-Tax" ตาม §86/4(2) + ป.86/2542
+    Guid? BranchId = null,
+    // รูปแบบ (เทมเพลต) ที่เลือกตอนออกใบ — null = ใช้ตั้งต้นของชนิดเอกสาร
+    // (ตอนแก้ไข: Guid.Empty = กลับไปใช้ตั้งต้น เหมือนกติกาของ BrandId)
+    Guid? DocumentTemplateId = null,
     // ภ.พ.36 / ภ.ง.ด.54 — flag เมื่อซื้อบริการจากต่างประเทศ (Google Ads /
     // AWS / Facebook ฯลฯ). ผู้รับบริการในไทยต้อง self-assess VAT 7% และ
     // หัก WHT ตาม DTA. Default false. Apply เฉพาะ PI/Expense/PV.
@@ -225,6 +236,16 @@ public record UpdateDocumentRequest(
     PaymentType? PaymentType = null,
     // Nullable on update so omitting it preserves the stored value.
     bool? PricesIncludeVat = null,
+    // ชื่อทางการค้าที่ใช้ออกใบนี้ — ตอนแก้ไขต้องแยก "ไม่ส่งมา" ออกจาก "ล้างค่า"
+    // ให้ได้ (Guid? ใช้ null เป็น "ไม่ส่งมา" ไปแล้ว) → ส่ง Guid.Empty = กลับไป
+    // ใช้ชื่อบริษัท มิฉะนั้นผู้ใช้ปลดแบรนด์ออกไม่ได้เลย (defect class "silent no-op")
+    Guid? BrandId = null,
+    // สาขาผู้ออกใบ — กติกาเดียวกับ BrandId: null = ไม่ส่งมา (คงค่าเดิม),
+    // Guid.Empty = ล้างกลับไปใช้ค่าบริษัท (ไม่งั้นผู้ใช้ถอดสาขาออกไม่ได้เลย)
+    Guid? BranchId = null,
+    // รูปแบบ (เทมเพลต) ที่เลือกตอนออกใบ — null = ใช้ตั้งต้นของชนิดเอกสาร
+    // (ตอนแก้ไข: Guid.Empty = กลับไปใช้ตั้งต้น เหมือนกติกาของ BrandId)
+    Guid? DocumentTemplateId = null,
     // Tax Point §78 inputs (optional, แก้ได้ตอน Draft)
     DateTime? DeliveryDate = null,
     DateTime? OwnershipTransferDate = null,
@@ -571,6 +592,16 @@ public record DocumentResponse(
     // the UI shows a due date / outstanding balance for a Payment Voucher.
     PaymentType? PaymentType = null,
     bool PricesIncludeVat = false,
+    // ชื่อทางการค้าที่ใช้ออกใบนี้ + ชื่อที่จะโชว์ (echo กลับเพื่อ hydrate ฟอร์ม
+    // ตอนเปิดแก้ไข — เก็บแล้วไม่ echo = ค่าหายเงียบ ๆ)
+    Guid? BrandId = null,
+    string? BrandName = null,
+    // สาขาผู้ออกใบ + ป้ายที่พิมพ์จริง (echo กลับเพื่อ hydrate ฟอร์มตอนเปิดแก้ไข —
+    // เก็บแล้วไม่ echo = ค่าหายเงียบ ๆ). IssuerBranchCode = รหัสที่ตรึงตอนอนุมัติ
+    Guid? BranchId = null,
+    string? BranchName = null,
+    string? IssuerBranchCode = null,
+    Guid? DocumentTemplateId = null,
     // ภ.พ.36 / ภ.ง.ด.54 — ซื้อบริการจากต่างประเทศ. Echo กลับมาเพื่อ form hydration.
     bool IsForeignService = false,
     // ===== Conversion lineage =====

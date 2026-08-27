@@ -24,6 +24,7 @@ public interface IDimensionalAccountingService
 
     // Branches
     Task<BranchResponse> CreateBranchAsync(Guid companyId, CreateBranchRequest request);
-    Task<List<BranchResponse>> GetBranchesAsync(Guid companyId);
+    Task<List<BranchResponse>> GetBranchesAsync(Guid companyId, bool includeInactive = false);
     Task<BranchResponse> UpdateBranchAsync(Guid companyId, Guid branchId, UpdateBranchRequest request);
+    Task DeleteBranchAsync(Guid companyId, Guid branchId);
 }

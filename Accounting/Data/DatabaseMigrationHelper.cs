@@ -3401,6 +3401,81 @@ public static class DatabaseMigrationHelper
               AND "InputVatClaimable" = true;
             """,
 
+            // ===== DocumentBrands: ชื่อทางการค้า/แบรนด์ที่ใช้ออกเอกสาร =====
+            // กิจการเดียวขายหลายแบรนด์ — ใบเสนอราคา/ใบแจ้งหนี้/ใบส่งของ ขึ้นหัวเป็น
+            // ชื่อร้าน + โลโก้ร้านได้ ส่วนเอกสารภาษี (ใบกำกับ ฯลฯ) ยังบังคับชื่อ
+            // นิติบุคคลเป็นตัวหลักตาม §86/4 (ด่านอยู่ที่ DocumentIssuerIdentity)
+            """
+            CREATE TABLE IF NOT EXISTS "DocumentBrands" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Name" varchar(200) NOT NULL,
+                "NameEn" varchar(200) NULL,
+                "TagLine" varchar(300) NULL,
+                "TagLineEn" varchar(300) NULL,
+                "LogoPath" varchar(500) NULL,
+                "LogoUrl" varchar(1000) NULL,
+                "Address" varchar(1000) NULL,
+                "AddressEn" varchar(1000) NULL,
+                "Phone" varchar(100) NULL,
+                "Email" varchar(200) NULL,
+                "Website" varchar(300) NULL,
+                "PrimaryColor" varchar(20) NULL,
+                "SecondaryColor" varchar(20) NULL,
+                "DefaultTemplateId" uuid NULL,
+                "FooterNotes" varchar(2000) NULL,
+                "FooterNotesEn" varchar(2000) NULL,
+                "LegalNamePlacement" varchar(20) NOT NULL DEFAULT 'Footer',
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_DocumentBrands_Company" ON "DocumentBrands" ("CompanyId", "IsActive");""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BrandId" uuid NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentTemplateId" uuid NULL;""",
+            // Delete แบรนด์สแกนหาเอกสารที่ใช้อยู่ — ไม่มี index = full scan ต่อบริษัท
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_Brand" ON "Documents" ("CompanyId", "BrandId") WHERE "BrandId" IS NOT NULL;""",
+
+            // ===== สาขาผู้ออกเอกสาร (เฟส 1 ระบบหลายสาขา) =====
+            // null ทั้งสองคอลัมน์ = พฤติกรรมเดิมทุกประการ (กิจการสาขาเดียวไม่กระทบ)
+            // IssuerBranchCode = snapshot รหัส 5 หลักที่พิมพ์จริงตอนอนุมัติ — แก้ทะเบียน
+            // สาขาภายหลังต้องไม่ย้อนไปเปลี่ยนใบกำกับที่ออกไปแล้ว (§86/4)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BranchId" uuid NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IssuerBranchCode" varchar(5) NULL;""",
+            // รายงานภาษีซื้อ/ขายแยกตามสถานประกอบการ (§87) สแกนด้วยคู่นี้
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_Branch" ON "Documents" ("CompanyId", "BranchId") WHERE "BranchId" IS NOT NULL;""",
+
+            // ===== Backfill: DocumentLine.Amount ที่เก็บ "ยอดรวม VAT" (ผิด convention) =====
+            // OCR รุ่นก่อน 2026-08-14 เก็บยอดรวม VAT ลง Line.Amount บนใบที่ราคารวม VAT
+            // ⇒ ตอนอนุมัติ JE ลง Dr ค่าใช้จ่าย(รวม VAT) + Dr ภาษีซื้อ(VAT ซ้ำ) =
+            // เดบิตเกินเครดิตเท่ายอด VAT พอดี → อนุมัติไม่ได้ตลอดกาล (เคสจริง IKEA
+            // 1,396.00 = 1,304.68 + VAT 91.32 → Dr 1,487.32 ≠ Cr 1,396.00)
+            // ต้นทางแก้แล้ว แต่แถวเก่าค้างของเสีย — ซ่อมให้ตรงนี้ครั้งเดียว
+            // เงื่อนไข Σ Amount = SubTotal + VatAmount เป็นจริงได้เฉพาะตอนเก็บ gross
+            // (ถ้าเก็บ net อยู่แล้ว Σ Amount = SubTotal) ⇒ พอซ่อมเสร็จเงื่อนไขเป็นเท็จ
+            // = รันซ้ำทุก startup ได้ไม่พัง (idempotent) และไม่แตะยอดหัวเอกสารเลย
+            """
+            UPDATE "DocumentLines" dl
+               SET "Amount" = ROUND(dl."Amount" - dl."VatAmount", 2)
+              FROM "Documents" d
+             WHERE dl."DocumentId" = d."Id"
+               AND d."PricesIncludeVat" = true
+               AND d."VatAmount" > 0.02
+               AND d."IsDeleted" = false
+               AND dl."IsDeleted" = false
+               AND (SELECT ROUND(SUM(x."Amount"), 2) FROM "DocumentLines" x
+                     WHERE x."DocumentId" = d."Id" AND x."IsDeleted" = false)
+                   = ROUND(d."SubTotal" + d."VatAmount", 2)
+               AND (SELECT ROUND(SUM(x."VatAmount"), 2) FROM "DocumentLines" x
+                     WHERE x."DocumentId" = d."Id" AND x."IsDeleted" = false)
+                   = ROUND(d."VatAmount", 2);
+            """,
+
             // ===== TaxReportLines.IsExcluded: accountant include/exclude toggle =====
             """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "IsExcluded" boolean NOT NULL DEFAULT false;""",
 

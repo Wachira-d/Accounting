@@ -41,6 +41,8 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         var document = await _db.Documents
             .Include(d => d.Lines)
+            .Include(d => d.Brand)   // ชื่อทางการค้าบนหัวเอกสาร (null = ใช้ชื่อบริษัท)
+            .Include(d => d.Branch)  // สถานประกอบการที่ออกใบ (null = กิจการสาขาเดียว)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
@@ -61,19 +63,8 @@ public partial class PdfGenerationService : IPdfGenerationService
             .OrderByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
 
-        // Get template
-        DocumentTemplate template;
-        if (request.TemplateId.HasValue)
-        {
-            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
-                ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
-        }
-        else
-        {
-            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
-                t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
-                ?? CreateInMemoryDefaultTemplate(document.DocumentType);
-        }
+        // Get template — resolver กลาง (ลำดับเดียวกันทุกทางออก PDF)
+        var template = await ResolveDocumentTemplateAsync(companyId, document, request.TemplateId);
         ApplyDefaultSignatureLabels(template, document.DocumentType);
 
         // Render order:
@@ -155,6 +146,8 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         var document = await _db.Documents
             .Include(d => d.Lines)
+            .Include(d => d.Brand)   // ชื่อทางการค้าบนหัวเอกสาร (null = ใช้ชื่อบริษัท)
+            .Include(d => d.Branch)  // สถานประกอบการที่ออกใบ (null = กิจการสาขาเดียว)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
@@ -162,18 +155,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
-        DocumentTemplate template;
-        if (request.TemplateId.HasValue)
-        {
-            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
-                ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
-        }
-        else
-        {
-            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
-                t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
-                ?? CreateInMemoryDefaultTemplate(document.DocumentType);
-        }
+        var template = await ResolveDocumentTemplateAsync(companyId, document, request.TemplateId);
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
         await ResolveServedAsReceiptAsync(companyId, document);
@@ -1149,6 +1131,133 @@ public partial class PdfGenerationService : IPdfGenerationService
             ?? "th";
     }
 
+    /// <summary>
+    /// เลือก "รูปแบบเอกสาร" (เทมเพลต) ของใบหนึ่ง — **ตัวตัดสินเดียว** ของทุกทาง
+    /// ที่ออก PDF จากเอกสารจริง (เดิม if/else ชุดนี้ถูกก๊อปไว้สองที่ = รอ drift)
+    ///
+    /// ลำดับ (ตัวแรกที่เจอชนะ):
+    /// <list type="number">
+    /// <item><b>ที่ส่งมากับคำขอ</b> — พรีวิว "ลองดูแบบอื่น" ชั่วคราว ไม่ผูกกับใบ</item>
+    /// <item><b>ที่เลือกไว้ตอนออกใบ</b> (<c>Document.DocumentTemplateId</c>) —
+    ///   พิมพ์ซ้ำปีหน้าต้องได้หน้าตาเดิม แม้ตั้งต้นของบริษัทเปลี่ยนไปแล้ว</item>
+    /// <item><b>ของแบรนด์ที่ใบนี้ออกในนาม</b> (<c>Brand.DefaultTemplateId</c>)</item>
+    /// <item>เทมเพลตตั้งต้นของชนิดเอกสารนั้น</item>
+    /// <item>เทมเพลตในหน่วยความจำ (บริษัทที่ยังไม่เคยตั้งอะไรเลย)</item>
+    /// </list>
+    /// ข้อ 2-3 ที่ชี้ไปเทมเพลตที่ถูกลบ/ข้ามบริษัท/คนละชนิดเอกสาร จะตกลงข้อถัดไป
+    /// เงียบ ๆ (เทมเพลตที่แค่ "ปิดใช้งาน" ยังใช้ได้ — reprint ใบเก่าต้องหน้าตาเดิม)
+    /// (เอกสารเก่าต้องพิมพ์ได้เสมอ — ห้าม throw ใส่ผู้ใช้ที่แค่กดพิมพ์ใบเดิม)
+    /// ต่างจากข้อ 1 ที่ผู้ใช้เพิ่งเลือกเอง → id ผิดคือ error จริง ต้องบอก
+    /// </summary>
+    private async Task<DocumentTemplate> ResolveDocumentTemplateAsync(
+        Guid companyId, Document document, Guid? requestedTemplateId)
+    {
+        DocumentTemplate? resolved = null;
+        if (requestedTemplateId.HasValue)
+        {
+            resolved = await _db.DocumentTemplates.AsNoTracking()
+                           .FirstOrDefaultAsync(t => t.Id == requestedTemplateId.Value && t.CompanyId == companyId)
+                       ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
+        }
+
+        if (resolved == null)
+        {
+            foreach (var pinned in new[] { document.DocumentTemplateId, document.Brand?.DefaultTemplateId })
+            {
+                if (!pinned.HasValue) continue;
+                // ต้องเป็นเทมเพลตของ "ชนิดเอกสารนี้" เท่านั้น — เทมเพลตใบเสนอราคาที่
+                // สืบทอดมากับใบที่ convert เป็นใบแจ้งหนี้ (หรือ Brand.DefaultTemplateId
+                // ที่ผูกไว้ชนิดเดียว) จะพา CustomTitle/flag ของคนละชนิดมาทั้งใบ
+                // — ใบแจ้งหนี้พิมพ์หัวใบเสนอราคาได้ (ผลตรวจทีมเส้นทางข้อมูล ข้อ 4)
+                var t = await _db.DocumentTemplates.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == pinned.Value && x.CompanyId == companyId
+                        && !x.IsDeleted && x.DocumentType == document.DocumentType);
+                if (t != null) { resolved = t; break; }
+            }
+        }
+
+        resolved ??= await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
+                         t.CompanyId == companyId && t.DocumentType == document.DocumentType
+                         && t.IsDefault && t.IsActive)
+                     ?? CreateInMemoryDefaultTemplate(document.DocumentType);
+
+        EnforceTaxDocTemplateInvariants(resolved, document);
+        return resolved;
+    }
+
+    /// <summary>เอกสารภาษี (§86/4) — ชื่อ + เลขผู้เสียภาษีผู้ขายเป็นรายการบังคับ
+    /// ตามกฎหมาย ห้ามเทมเพลตปิด (เดิมติ๊กปิด ShowCompanyName/ShowCompanyTaxId ได้
+    /// → ใบกำกับไร้ชื่อ/เลขภาษีผู้ขายทั้งใบ — ผลตรวจทีมนักบัญชี ข-3).
+    /// template มาจาก AsNoTracking/in-memory เสมอ — mutate ได้ไม่ persist</summary>
+    private static void EnforceTaxDocTemplateInvariants(DocumentTemplate template, Document doc)
+    {
+        var isTaxDoc = doc.DocumentType is DocumentType.TaxInvoice
+                or DocumentType.DebitNote or DocumentType.CreditNote
+            || ((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
+                && doc.VatAmount > 0);
+        if (!isTaxDoc) return;
+        template.ShowCompanyName = true;
+        template.ShowCompanyTaxId = true;
+        template.ShowCompanyAddress = true;   // ที่อยู่ก็เป็นรายการบังคับ §86/4(2)
+    }
+
+    /// <summary>ตัวตนผู้ออกเอกสารบนหัวกระดาษ — **จุดเดียว**ที่ทั้ง HTML renderer
+    /// และ QuestPDF เรียก (กฎเหล็ก #4 A "สอง renderer ห้าม drift"; เดิมสองไฟล์
+    /// คำนวณ <c>coPrimaryName</c> เองคนละบรรทัด). ตรรกะกฎหมาย/ลำดับ fallback
+    /// อยู่ใน <see cref="DocumentIssuerIdentity"/> ห้ามตัดสินเองที่ renderer</summary>
+    internal static IssuerIdentity BuildIssuer(
+        Document doc, Company company, CompanySettings? settings, string lang, string? title)
+    {
+        var isEn = lang == "en";
+        var b = doc.Brand;
+        var view = b == null || b.IsDeleted ? null : new DocumentBrandView(
+            b.Name, b.NameEn, b.TagLine, b.TagLineEn, b.LogoPath, b.LogoUrl,
+            b.Address, b.AddressEn, b.Phone, b.Email, b.Website, b.PrimaryColor,
+            b.LegalNamePlacement, b.IsActive, b.FooterNotes, b.FooterNotesEn);
+
+        var companyAddr = ThaiAddressFormatter.ResolvePartyAddress(
+            isEn, company.AddressEn,
+            company.Address, company.BuildingNumber, company.BuildingName, company.Moo,
+            company.StreetName, company.SubDistrict, company.District,
+            company.Province, company.PostalCode);
+
+        // สถานประกอบการที่ออกใบนี้ — ผ่าน resolver กลางตัวเดียว
+        // (กิจการสาขาเดียว: doc.Branch = null + ไม่มี snapshot ⇒ ได้ค่าเท่าเดิมเป๊ะ)
+        var issuerBranch = ResolveIssuerBranch(doc, company, isEn);
+
+        return DocumentIssuerIdentity.Resolve(
+            doc.DocumentType, title, isEn,
+            company.Name, company.NameEn, company.TaxId,
+            // ไม่มีเลขผู้เสียภาษี = ไม่ใช่ผู้ประกอบการจด VAT → ไม่ต้องติดป้ายสาขา
+            string.IsNullOrWhiteSpace(company.TaxId) ? null : issuerBranch.Label,
+            // ที่อยู่สาขา (ถ้าสาขากรอกไว้) ชนะที่อยู่บริษัท — ป.86/2542 กำหนดให้
+            // ที่อยู่บนใบกำกับเป็นที่ตั้งสถานประกอบการที่ออกใบ ไม่ใช่สำนักงานใหญ่เสมอไป
+            issuerBranch.Address ?? companyAddr,
+            issuerBranch.Phone ?? company.Phone,
+            issuerBranch.Email ?? company.Email,
+            settings?.LogoPath, settings?.LogoUrl, settings?.PrimaryColor, view);
+    }
+
+    /// <summary>สถานประกอบการผู้ออกเอกสารใบนี้ — ทางผ่านเดียวจาก entity ไปยัง
+    /// <see cref="DocumentIssuerBranch"/> (renderer/e-Tax/รายงาน ต้องเรียกตัวนี้
+    /// ห้ามอ่าน <c>company.BranchCode</c> เองอีก)</summary>
+    internal static IssuerBranch ResolveIssuerBranch(Document doc, Company company, bool isEnglish)
+    {
+        var br = doc.Branch;
+        var view = br == null || br.IsDeleted ? null : new DocumentBranchView(
+            br.TaxBranchCode, br.Name, br.NameEn,
+            // ที่อยู่ "ทั้งชุดหรือไม่ใช้เลย" — สาขาที่ยังไม่กรอกที่อยู่ใช้ของบริษัทตามเดิม
+            DocumentIssuerBranch.UseBranchAddress(br.Address)
+                ? ThaiAddressFormatter.Format(
+                    br.Address, null, null, null, null,
+                    br.SubDistrict, br.District, br.Province, br.PostalCode)
+                : null,
+            br.Phone, br.Email);
+
+        return DocumentIssuerBranch.Resolve(
+            doc.IssuerBranchCode, view, company.BranchCode, company.BranchName, isEnglish);
+    }
+
     internal static string ComputeDocumentTitle(Document doc, DocumentTemplate template, CompanySettings? settings, string lang)
     {
         var isEn = lang == "en";
@@ -1453,14 +1562,19 @@ public partial class PdfGenerationService : IPdfGenerationService
         var repeatHeader = template.RepeatHeaderEveryPage;
         if (repeatHeader) sb.AppendLine("<table class='doc-frame'><thead><tr><td>");
 
+        // ตัวตนผู้ออกเอกสาร (ชื่อทางการค้า vs ชื่อนิติบุคคล + โลโก้/ที่อยู่ที่ควรใช้)
+        // — resolver กลางตัวเดียวกับ QuestPDF ห้ามตัดสินเองที่นี่
+        var issuer = BuildIssuer(doc, company, settings, lang,
+            ComputeDocumentTitle(doc, template, settings, lang));
+
         // Header
         sb.AppendLine("<div class='header'>");
         if (template.ShowLogo)
         {
             // Prefer an embedded data URI (works in headless Chromium + the
             // preview iframe srcdoc, neither of which resolves relative URLs);
-            // fall back to the public LogoUrl.
-            var logoSrc = TryLogoDataUri(settings?.LogoPath) ?? settings?.LogoUrl;
+            // fall back to the public LogoUrl. โลโก้แบรนด์ชนะโลโก้บริษัท
+            var logoSrc = TryLogoDataUri(issuer.LogoPath) ?? issuer.LogoUrl;
             if (!string.IsNullOrEmpty(logoSrc))
                 sb.AppendLine($"<img src='{logoSrc}' class='logo' style='max-width:{template.LogoWidth}mm;height:{template.LogoHeight}mm;'/>");
         }
@@ -1473,33 +1587,34 @@ public partial class PdfGenerationService : IPdfGenerationService
         // เข้า HTML (renderer นี้คืน text/html ที่ browser + Chromium รัน). ชื่อ/
         // ที่อยู่บริษัทตั้งโดย tenant, line มาจาก OCR/API ภายนอกได้ → เป็น stored
         // XSS sink (JWT เก็บใน localStorage ⇒ script รัน = ขโมย token/takeover)
-        var coPrimaryName = isEnDoc && !string.IsNullOrWhiteSpace(company.NameEn) ? company.NameEn! : company.Name;
+        var coPrimaryName = issuer.PrimaryName;
         if (template.ShowCompanyName) sb.AppendLine($"<div class='company-name'>{WebUtility.HtmlEncode(coPrimaryName)}</div>");
-        if (template.ShowCompanyNameEn && company.NameEn != null && coPrimaryName != company.NameEn)
-            sb.AppendLine($"<div class='company-name-en'>{WebUtility.HtmlEncode(company.NameEn)}</div>");
-        if (template.ShowCompanyAddress)
-        {
-            // resolver กลางตัวเดียว (AddressEn ที่กรอก > ถอดอักษร > ไทย) —
-            // ห้ามคำนวณลำดับนี้เองที่นี่ ไม่งั้น QuestPDF กับ HTML drift กัน
-            var fullAddr = ThaiAddressFormatter.ResolvePartyAddress(
-                isEnDoc, company.AddressEn,
-                company.Address, company.BuildingNumber, company.BuildingName, company.Moo,
-                company.StreetName, company.SubDistrict, company.District,
-                company.Province, company.PostalCode);
-            if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{WebUtility.HtmlEncode(fullAddr)}</div>");
-        }
+        if (!string.IsNullOrWhiteSpace(issuer.TagLine))
+            sb.AppendLine($"<div class='company-tagline' style='font-size:9pt;color:#64748b'>{WebUtility.HtmlEncode(issuer.TagLine!)}</div>");
+        // ชื่อแบรนด์เป็นบรรทัดรอง = พิมพ์เสมอ (ก-3) · ชื่ออังกฤษบริษัท gate ตามเดิม
+        if ((issuer.SecondaryIsBrand || template.ShowCompanyNameEn)
+            && !string.IsNullOrWhiteSpace(issuer.SecondaryName) && coPrimaryName != issuer.SecondaryName)
+            sb.AppendLine($"<div class='company-name-en'>{WebUtility.HtmlEncode(issuer.SecondaryName!)}</div>");
+        // ชื่อนิติบุคคลตัวเล็กใต้ชื่อแบรนด์ (ตั้งเป็น Header/Both) — ปิดไม่ได้
+        if (issuer.LegalLineInHeader && !string.IsNullOrWhiteSpace(issuer.LegalLine))
+            sb.AppendLine($"<div class='company-legal' style='font-size:8pt;color:#64748b'>{WebUtility.HtmlEncode(issuer.LegalLine!)}</div>");
+        if (template.ShowCompanyAddress && !string.IsNullOrWhiteSpace(issuer.Address))
+            sb.AppendLine($"<div>{WebUtility.HtmlEncode(issuer.Address!)}</div>");
         if (template.ShowCompanyTaxId)
         {
             // §86/4 + ประกาศฯ 199: ต้องระบุสาขา (00000 = สำนักงานใหญ่). เดิมไม่แสดง.
             // แสดงสาขาเฉพาะเมื่อมีเลขภาษี (สาขาเป็นเรื่องผู้จด VAT) — ตรงกับ native
             // renderer ไม่ให้บุคคล/กิจการไม่มีเลขภาษีขึ้น "สำนักงานใหญ่" เกินจำเป็น
-            var brc = string.IsNullOrWhiteSpace(company.TaxId)
+            // ป้ายสาขามาจาก resolver กลาง (issuer.BranchLabel) — เดิมอ่าน
+            // company.BranchCode ตรง ๆ ⇒ ใบที่ออกจากสาขาย่อยพิมพ์รหัสสำนักงานใหญ่ผิด
+            var brc = string.IsNullOrWhiteSpace(issuer.BranchLabel)
                 ? ""
-                : $" ({WebUtility.HtmlEncode(FormatBranch(company.BranchCode, company.BranchName, lang))})";
+                : $" ({WebUtility.HtmlEncode(issuer.BranchLabel!)})";
             sb.AppendLine($"<div>{L.TaxId}: {company.TaxId}{brc}</div>");
         }
-        if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>{L.Phone}: {WebUtility.HtmlEncode(company.Phone)}</div>");
-        if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {WebUtility.HtmlEncode(company.Email)}</div>");
+        if (template.ShowCompanyPhone && !string.IsNullOrWhiteSpace(issuer.Phone)) sb.AppendLine($"<div>{L.Phone}: {WebUtility.HtmlEncode(issuer.Phone!)}</div>");
+        if (template.ShowCompanyEmail && !string.IsNullOrWhiteSpace(issuer.Email)) sb.AppendLine($"<div>Email: {WebUtility.HtmlEncode(issuer.Email!)}</div>");
+        if (!string.IsNullOrWhiteSpace(issuer.Website)) sb.AppendLine($"<div>{WebUtility.HtmlEncode(issuer.Website!)}</div>");
         sb.AppendLine("</div></div>");
 
         // Document Title — หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) คำนวณจาก
@@ -1824,14 +1939,23 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (!string.IsNullOrWhiteSpace(cleanNotesHtml))
             sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'><strong>{L.Notes}:</strong> {System.Net.WebUtility.HtmlEncode(cleanNotesHtml)}</div>");
 
+        // ลำดับ: เฉพาะใบ → ของแบรนด์ → ของเทมเพลต (sync กับ QuestPDF — ผลตรวจข้อ 8)
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
             ? doc.CustomFooterNotes
-            : PickLangText(template.FooterNotes, template.FooterNotesEn, lang);
+            : !string.IsNullOrWhiteSpace(issuer.FooterNotes)
+                ? issuer.FooterNotes
+                : PickLangText(template.FooterNotes, template.FooterNotesEn, lang);
         if (!string.IsNullOrWhiteSpace(footerNotes))
             sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'>{System.Net.WebUtility.HtmlEncode(footerNotes)}</div>");
 
         if (!string.IsNullOrWhiteSpace(doc.CustomTermsAndConditions))
             sb.AppendLine($"<div class='terms-conditions' style='white-space:pre-line'><strong>{L.Terms}:</strong><br/>{System.Net.WebUtility.HtmlEncode(doc.CustomTermsAndConditions)}</div>");
+
+        // ชื่อนิติบุคคลตัวเล็กท้ายกระดาษ — เอกสารที่ขึ้นหัวเป็นชื่อทางการค้า
+        // ต้องบอกเสมอว่านิติบุคคลใดเป็นคู่สัญญาจริง (ปิดไม่ได้ ดู
+        // DocumentIssuerIdentity) — sync กับ QuestPDF renderer
+        if (issuer.LegalLineInFooter && !string.IsNullOrWhiteSpace(issuer.LegalLine))
+            sb.AppendLine($"<div class='company-legal-footer' style='font-size:8pt;color:#64748b;margin-top:8px'>{System.Net.WebUtility.HtmlEncode(issuer.LegalLine!)}</div>");
 
         // Signatures — slot[0] = creator, slot[1] = approver. Each slot
         // overlays the user's saved signature image on the line and prints
@@ -2673,43 +2797,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// 00000"); รหัสอื่น = "สาขาที่ {code}" (+ ชื่อสาขาในวงเล็บถ้ามี). รหัสว่าง/ทุก
     /// ตัวเป็นศูนย์ → ถือเป็นสำนักงานใหญ่ (ค่าปกติของกิจการที่มีที่เดียว). ใช้ทั้ง
     /// ผู้ออกเอกสาร (บริษัท) และคู่ค้า (ผู้ซื้อ/ผู้รับเงิน) บนใบกำกับ/ใบสำคัญ ฯลฯ.</summary>
+    /// ⚠️ ลอจิกจริงย้ายไปอยู่ที่ <see cref="TaxBranchCode.LabelWithName"/> — resolver
+    /// กลางตัวเดียวของระบบ (เดิมเขียนไว้ตรงนี้ที่เดียวแต่มีตัวคำนวณคู่แข่งอีก 3 ที่
+    /// ที่ให้ผลไม่ตรงกัน) เมธอดนี้เหลือไว้เป็นทางผ่านให้ call site เดิมทั้งหมด
     internal static string FormatBranch(string? branchCode, string? branchName, string lang)
-    {
-        var isEn = lang == "en";
-        var code = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
-        var name = branchName?.Trim();
-        var codeIsHeadOffice = code.Length == 0 || code.All(ch => ch == '0');
-
-        if (!codeIsHeadOffice)
-        {
-            var label = isEn ? $"Branch {code}" : $"สาขาที่ {code}";
-            // แนบชื่อสาขาถ้ามี — ยกเว้นเมื่อชื่อสาขาเป็นคำว่า "สำนักงานใหญ่/สนญ"
-            // (ค่า default ที่ฟอร์ม auto-เติม) ซึ่งขัดกับรหัสสาขาจริง → ไม่ต้องต่อท้าย
-            if (!string.IsNullOrWhiteSpace(name) && !IsHeadOfficeName(name))
-                label += $" ({name})";
-            return label;
-        }
-
-        // รหัสสาขา = 00000/ว่าง → ปกติ "สำนักงานใหญ่". แต่ถ้า "ชื่อสาขา" เป็น "เลขล้วน"
-        // ที่ไม่ใช่ศูนย์ทั้งหมด (เช่น "00001") = ผู้ใช้กรอกเลขสาขาผิดช่อง (ใส่ใน "ชื่อ
-        // สาขา" แทน "รหัสสาขา" ซึ่งฟอร์ม default ไว้ 00000) → ถือตามนั้น. เช็คเข้มด้วย
-        // regex เลขล้วนเพื่อกัน false-positive (เช่น "สำนักงานใหญ่ ชั้น 5" ไม่โดนแปลง).
-        if (!string.IsNullOrWhiteSpace(name)
-            && Regex.IsMatch(name, @"^0*\d{1,5}$") && name.Any(ch => ch != '0'))
-        {
-            var nd = new string(name.Where(char.IsDigit).ToArray());
-            return isEn ? $"Branch {nd}" : $"สาขาที่ {nd}";
-        }
-        return isEn ? "Head Office" : "สำนักงานใหญ่";
-    }
-
-    /// <summary>ชื่อสาขาที่แท้จริงหมายถึง "สำนักงานใหญ่" (ทุกสะกดที่พบบ่อย) — ใช้กัน
-    /// การต่อท้าย/แสดงชื่อ default ที่ขัดกับรหัสสาขา.</summary>
-    private static bool IsHeadOfficeName(string? name)
-    {
-        var n = name?.Trim();
-        return n is "สำนักงานใหญ่" or "สนญ" or "สนญ." or "สำนักงานใหญ" or "Head Office" or "HeadOffice" or "HO";
-    }
+        => TaxBranchCode.LabelWithName(branchCode, branchName, lang == "en");
 
     /// <summary>ส่วนต่อท้าย "สาขา" สำหรับหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ต่อ
     /// ท้ายชื่อคู่สัญญาแบบ inline (ไม่เพิ่มบรรทัด/ไม่กระทบ layout ฟอร์มราชการ).
@@ -2732,9 +2824,13 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// PDF generation can never be broken by branding data.
     /// </summary>
     private static PdfBranding BuildBranding(DocumentTemplate template, CompanySettings? settings,
-        string? watermarkOverride, bool stampAllowed = false)
+        string? watermarkOverride, bool stampAllowed = false, DocumentBrand? brand = null)
     {
-        byte[]? logo = template.ShowLogo ? TryReadImage(settings?.LogoPath) : null;
+        // โลโก้แบรนด์ชนะโลโก้บริษัท — ต้องตรงกับฝั่ง HTML ที่ใช้ issuer.LogoPath
+        // (ไม่งั้น PDF สองเครื่องพิมพ์โลโก้คนละอัน = defect class "renderer drift")
+        byte[]? logo = template.ShowLogo
+            ? (TryReadImage(brand?.LogoPath) ?? TryReadImage(settings?.LogoPath))
+            : null;
         // ตราประทับ: ประทับเฉพาะเอกสารที่อนุมัติแล้ว (stampAllowed) — Draft/รออนุมัติ
         // ไม่ประทับ (ผู้มีอำนาจอนุมัติ = ประทับตรา). รูปมาจาก CompanySettings.StampPath
         // (ตราบริษัทกลาง ใช้ทุกเอกสาร) fallback template.StampImagePath (ของเดิม).
@@ -2756,8 +2852,8 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                : template.ShowWatermark ? template.WatermarkText : null;
 
         return new PdfBranding(
-            AccentColor: SanitizeHex(template.AccentColor),
-            PrimaryColor: SanitizeHex(template.PrimaryColor),
+            AccentColor: SanitizeHex(brand?.PrimaryColor) ?? SanitizeHex(template.AccentColor),
+            PrimaryColor: SanitizeHex(brand?.PrimaryColor) ?? SanitizeHex(template.PrimaryColor),
             TableHeaderBg: SanitizeHex(template.TableHeaderColor) ?? "#4472C4",
             TableHeaderText: SanitizeHex(template.TableHeaderTextColor) ?? "#FFFFFF",
             WatermarkText: wm,

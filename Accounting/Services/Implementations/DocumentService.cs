@@ -455,6 +455,50 @@ public partial class DocumentService : IDocumentService
     /// รายบรรทัดแล้ว → VAT/WHT คิดใหม่บนฐานที่ลดลง (mixed-rate ถูกต้อง). 0 = ไม่มี.
     /// DiscountAmount ที่คืนยังเป็น "ส่วนลดรายบรรทัด" ล้วน ไม่รวมท้ายบิล (กัน
     /// double-count ตอน edit round-trip; ท้ายบิลเก็บแยกที่ Document.BillDiscountAmount).</param>
+    /// <summary>ตรวจว่า BrandId / DocumentTemplateId ที่ส่งมา **เป็นของบริษัทนี้จริง**
+    /// — ทั้งสอง field มาจาก client ตรง ๆ ถ้าไม่ตรวจ ผู้ใช้บริษัท A ยิง guid ของ
+    /// บริษัท B เข้ามาได้ แล้วเอกสารบริษัท A จะพิมพ์ชื่อ/โลโก้/ที่อยู่ของบริษัท B
+    /// ลงหัวกระดาษ (ผลตรวจทีมเส้นทางข้อมูล ข้อ 2 — ผิด invariant M "ทุก query
+    /// ต้องมี CompanyId")
+    ///
+    /// <para>คืน null เมื่อค่าเป็น null หรือ <c>Guid.Empty</c> (= "ใช้ค่าปกติ")
+    /// และ **throw** เมื่อ id มีค่าแต่ไม่ใช่ของบริษัทนี้ — ต่างจากการ fallback
+    /// เงียบ ๆ เพราะนี่คือค่าที่ผู้ใช้เพิ่งเลือกเอง ผิดแปลว่ามีอะไรผิดจริง</para></summary>
+    private async Task<Guid?> ResolveOwnedBrandIdAsync(Guid companyId, Guid? brandId)
+    {
+        if (!brandId.HasValue || brandId.Value == Guid.Empty) return null;
+        var ok = await _db.DocumentBrands
+            .AnyAsync(b => b.Id == brandId.Value && b.CompanyId == companyId && !b.IsDeleted);
+        if (!ok) throw new InvalidOperationException("ไม่พบชื่อทางการค้าที่เลือก หรือไม่ใช่ของบริษัทนี้");
+        return brandId.Value;
+    }
+
+    /// <summary>ตรวจว่า BranchId ที่ส่งมาเป็นสาขาของบริษัทนี้จริง (invariant M)
+    /// — สาขาผิดบริษัท = ใบกำกับพิมพ์ที่อยู่/รหัสสาขาของคนอื่น §86/4
+    ///
+    /// <para>คืน null เมื่อ null/<c>Guid.Empty</c> = "ใช้ค่าบริษัทตามเดิม"
+    /// (กิจการสาขาเดียวเดินเส้นนี้เสมอ — พฤติกรรมเดิมทุกประการ)</para>
+    ///
+    /// <para>สาขาที่ **ปิดใช้งาน** ยังผูกได้ตอนแก้ใบเก่า — ปิดสาขาไม่ควรทำให้
+    /// เอกสารที่ออกไปแล้วแก้ไม่ได้ (รายการเลือกตอนออกใบใหม่กรองให้อยู่แล้ว)</para></summary>
+    private async Task<Guid?> ResolveOwnedBranchIdAsync(Guid companyId, Guid? branchId)
+    {
+        if (!branchId.HasValue || branchId.Value == Guid.Empty) return null;
+        var ok = await _db.Set<Branch>()
+            .AnyAsync(b => b.Id == branchId.Value && b.CompanyId == companyId && !b.IsDeleted);
+        if (!ok) throw new InvalidOperationException("ไม่พบสาขาที่เลือก หรือไม่ใช่ของบริษัทนี้");
+        return branchId.Value;
+    }
+
+    private async Task<Guid?> ResolveOwnedTemplateIdAsync(Guid companyId, Guid? templateId)
+    {
+        if (!templateId.HasValue || templateId.Value == Guid.Empty) return null;
+        var ok = await _db.DocumentTemplates
+            .AnyAsync(t => t.Id == templateId.Value && t.CompanyId == companyId);
+        if (!ok) throw new InvalidOperationException("ไม่พบรูปแบบเอกสารที่เลือก หรือไม่ใช่ของบริษัทนี้");
+        return templateId.Value;
+    }
+
     private static LineAmounts ComputeLineAmounts(DocumentLineRequest line, bool pricesIncludeVat, decimal extraDiscount = 0m)
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
@@ -1178,6 +1222,12 @@ public partial class DocumentService : IDocumentService
                 .Select(c => (bool?)c.VatRegistered).FirstOrDefaultAsync() ?? true;
 
             doc.PricesIncludeVat = request.PricesIncludeVat;
+            // ต้องเป็นของบริษัทนี้เท่านั้น + Guid.Empty = ไม่เลือก (normalize ที่นี่
+            // ด้วย ไม่ใช่เฉพาะตอน update — caller อื่นส่ง Empty มาตอน create ได้)
+            doc.BrandId = await ResolveOwnedBrandIdAsync(companyId, request.BrandId);
+            // สาขาผู้ออกใบ — null/Empty = ใช้ค่าบริษัทตามเดิม (กิจการสาขาเดียว)
+            doc.BranchId = await ResolveOwnedBranchIdAsync(companyId, request.BranchId);
+            doc.DocumentTemplateId = await ResolveOwnedTemplateIdAsync(companyId, request.DocumentTemplateId);
             doc.IsForeignService = request.IsForeignService;
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
@@ -1332,6 +1382,11 @@ public partial class DocumentService : IDocumentService
             .Include(d => d.BankAccount)
             .Include(d => d.PaymentAccount)
             .Include(d => d.ExpenseCategory)
+            // BrandName ใน DocumentResponse อ่านจาก nav ตัวนี้ — ไม่ Include =
+            // null เสมอ ทั้งที่ DTO ประกาศว่า "echo กลับเพื่อ hydrate" (ผลตรวจข้อ 6)
+            .Include(d => d.Brand)
+            // BranchId/BranchName ใน DocumentResponse อ่านจาก nav ตัวนี้
+            .Include(d => d.Branch)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
@@ -2042,6 +2097,14 @@ public partial class DocumentService : IDocumentService
             _db.DocumentLines.RemoveRange(doc.Lines);
 
             if (request.PricesIncludeVat.HasValue) doc.PricesIncludeVat = request.PricesIncludeVat.Value;
+            // ไม่ส่งมา = คงของเดิม · Guid.Empty = ปลดกลับไปใช้ค่าปกติ · id ที่ส่งมา
+            // ต้องเป็นของบริษัทนี้ (กันข้าม tenant — ดู ResolveOwnedBrandIdAsync)
+            if (request.BrandId.HasValue)
+                doc.BrandId = await ResolveOwnedBrandIdAsync(companyId, request.BrandId);
+            if (request.BranchId.HasValue)
+                doc.BranchId = await ResolveOwnedBranchIdAsync(companyId, request.BranchId);
+            if (request.DocumentTemplateId.HasValue)
+                doc.DocumentTemplateId = await ResolveOwnedTemplateIdAsync(companyId, request.DocumentTemplateId);
 
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
@@ -3491,6 +3554,10 @@ public partial class DocumentService : IDocumentService
                 Reference = doc.DocumentNumber,
                 // CN คืนมัดจำออกให้ลูกค้าคนเดิม — ภาษาตามใบเสร็จมัดจำต้นทาง
                 DocumentLanguage = doc.DocumentLanguage,
+                // หน้าตาเอกสารต้องตามใบต้นทาง (กฎ "เอกสารลูกต้องสืบทอด")
+                BrandId = doc.BrandId,
+                BranchId = doc.BranchId,   // และสาขาที่ออกใบเดิม (§87)
+                DocumentTemplateId = doc.DocumentTemplateId,
                 SubTotal = refundBase,
                 VatAmount = refundVat,
                 TotalAmount = request.Amount,
@@ -4192,6 +4259,27 @@ public partial class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
 
+        // ── ซ่อมบรรทัดที่เก็บ "ยอดรวม VAT" ลง Amount (ผิด convention) ─────────
+        // เอกสารที่ OCR สร้างไว้ก่อน 2026-08-14 เก็บ Line.Amount เป็นยอดรวม VAT
+        // ⇒ JE ลง Dr ค่าใช้จ่าย(รวม VAT) + Dr ภาษีซื้อ(VAT ซ้ำ) = เดบิตเกินเครดิต
+        // เท่ายอด VAT พอดี ⇒ อนุมัติไม่ได้ตลอดกาล และผู้ใช้ไม่มีทางรู้ว่าต้องทำอะไร
+        // ต้นทางแก้แล้ว แต่แถวเก่าไม่มีใครซ่อม → ซ่อมตรงนี้ตอนหยิบมาใช้จริง
+        // (เงื่อนไขแคบมาก + idempotent ดู DocumentLineVatConvention; ยอดหัวเอกสาร
+        // SubTotal/VatAmount/TotalAmount ไม่ขยับ — เปลี่ยนแค่ส่วนแบ่งในบรรทัด)
+        if (doc.Lines is { Count: > 0 } && DocumentLineVatConvention.LinesStoredGross(
+                doc.PricesIncludeVat, doc.SubTotal, doc.VatAmount,
+                doc.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount),
+                doc.Lines.Where(l => !l.IsDeleted).Sum(l => l.VatAmount)))
+        {
+            foreach (var l in doc.Lines.Where(l => !l.IsDeleted))
+                l.Amount = DocumentLineVatConvention.RepairedAmount(l.Amount, l.VatAmount);
+            await _db.SaveChangesAsync();
+            _logger.LogWarning(
+                "ซ่อมยอดรายบรรทัดของเอกสาร {DocumentId} ({Number}): Line.Amount เคยเก็บยอดรวม VAT "
+                + "→ หัก VAT ออกให้เป็นยอดก่อน VAT (SubTotal {SubTotal:N2} + VAT {Vat:N2} = {Total:N2} เท่าเดิม)",
+                doc.Id, doc.DocumentNumber, doc.SubTotal, doc.VatAmount, doc.TotalAmount);
+        }
+
         // Soft warnings — legal/correct but unusual patterns the operator
         // should eyeball before approving. Hard errors still throw below.
         // When AcknowledgeWarnings is false and warnings exist, throw a
@@ -4623,6 +4711,24 @@ public partial class DocumentService : IDocumentService
                     // "PV-202605-NNNN" ไม่ใช่ "PV-202606-..."
                     doc.DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
                         _db, companyId, doc.DocumentType, doc.DocumentDate);
+                }
+
+                // ===== §86/4 — ตรึงรหัสสาขาที่พิมพ์ลงกระดาษ =====
+                // ตรึงพร้อมเลขที่เอกสาร: หลังจากนี้แก้ทะเบียนสาขา (พิมพ์รหัสผิดตอน
+                // ตั้งค่า / ย้ายสถานะสำนักงานใหญ่) ต้องไม่ย้อนไปเปลี่ยนใบที่ออกไปแล้ว
+                // — ใบกำกับพิมพ์ซ้ำปีหน้าต้องได้เลขสาขาเดิมเป๊ะ
+                // กิจการสาขาเดียว: BranchId = null ⇒ ได้ Company.BranchCode เหมือนเดิม
+                if (string.IsNullOrWhiteSpace(doc.IssuerBranchCode))
+                {
+                    var companyBranchCode = await _db.Companies
+                        .Where(c => c.Id == companyId).Select(c => c.BranchCode).FirstOrDefaultAsync();
+                    var docBranchCode = doc.BranchId.HasValue
+                        ? await _db.Set<Branch>()
+                            .Where(b => b.Id == doc.BranchId.Value && b.CompanyId == companyId)
+                            .Select(b => b.TaxBranchCode).FirstOrDefaultAsync()
+                        : null;
+                    doc.IssuerBranchCode = Accounting.Helpers.DocumentIssuerBranch.ResolveCode(
+                        null, docBranchCode, companyBranchCode);
                 }
 
                 // A cash-settled document (จ่ายทันที) is already fully paid the
@@ -8709,6 +8815,11 @@ public partial class DocumentService : IDocumentService
             // ใบปลายทางคิด VAT บนฐานไม่หักส่วนลดท้ายบิล / ราคารวม VAT ถูกบวก
             // VAT ซ้ำ (+7%) → ยอดสูงกว่าที่ตกลงกับลูกค้า + ภาษีขายเกินจริง
             PricesIncludeVat: source.PricesIncludeVat,
+            BrandId: source.BrandId,   // เอกสารลูกใช้แบรนด์เดียวกับต้นทางเสมอ
+            // และออกจากสถานประกอบการเดียวกัน — ใบแจ้งหนี้ออกจากสาขาเชียงใหม่
+            // แล้วใบกำกับกลับเป็นสำนักงานใหญ่ = รายงานภาษีขายเข้าผิดสาขา §87
+            BranchId: source.BranchId,
+            DocumentTemplateId: source.DocumentTemplateId,   // และรูปแบบเดียวกัน
             BillDiscountPercent: source.BillDiscountPercent > 0 ? source.BillDiscountPercent : null,
             // โหมดยอดบาท + partial convert: เฉลี่ยส่วนลดตามสัดส่วน "ฐาน ex-VAT"
             // ที่ยกไป — line.Amount เป็น ex-VAT หลังส่วนลด (สัดส่วนตรงกับฐานก่อน
@@ -9719,6 +9830,12 @@ public partial class DocumentService : IDocumentService
             // ใบเสร็จอัตโนมัติออกให้ลูกค้าคนเดียวกับใบกำกับต้นทาง — ภาษาต้องตามใบ
             // ต้นทาง (ใบแจ้งหนี้อังกฤษ → ใบเสร็จอังกฤษ โดยผู้ใช้ไม่ต้องทำอะไร)
             DocumentLanguage = invoice.DocumentLanguage,
+            // ใบเสร็จรับชำระต้องหน้าตาเดียวกับใบแจ้งหนี้/ใบกำกับต้นทาง —
+            // เดิมตกทั้งสอง field ⇒ ลูกค้าได้ใบเสร็จหน้าตาบริษัทเปล่าหลังรับใบแบรนด์
+            // (ผลตรวจ P3 / ข้อ 7)
+            BrandId = invoice.BrandId,
+            BranchId = invoice.BranchId,   // และสาขาที่ออกใบกำกับต้นทาง (§87)
+            DocumentTemplateId = invoice.DocumentTemplateId,
             ProjectId = invoice.ProjectId,
             SubTotal = carryVatFromSource ? invoice.SubTotal : payment.Amount,
             DiscountAmount = carryVatFromSource ? invoice.DiscountAmount : 0m,
@@ -13674,8 +13791,11 @@ public partial class DocumentService : IDocumentService
         }
 
         if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
+            // ส่วนต่าง = ยอด VAT พอดี → บอกสาเหตุ + ทางแก้ ไม่ใช่โยนตัวเลขทิ้งไว้
+            // เฉย ๆ (ผู้ใช้เจอข้อความเดิมแล้วทำอะไรต่อไม่ได้เลย — เคส IKEA/OCR)
             throw new InvalidOperationException(
-                $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
+                DocumentLineVatConvention.ExplainImbalance(totalDebit, totalCredit, doc.VatAmount)
+                ?? $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
 
         // ── ด่านตรวจโครงสร้าง JE ก่อนบันทึก (JournalPostingGuard) ──────────
         // สมดุลอย่างเดียวไม่พอ: เคยมี JE ที่ Dr=Cr เป๊ะแต่เครดิตทั้งใบลงบัญชี
@@ -14273,6 +14393,12 @@ public partial class DocumentService : IDocumentService
         PaymentTerms: d.PaymentTerms,
         PaymentType: d.PaymentType,
         PricesIncludeVat: d.PricesIncludeVat,
+        BrandId: d.BrandId,
+        BrandName: d.Brand?.Name,
+        BranchId: d.BranchId,
+        BranchName: d.Branch?.Name,
+        IssuerBranchCode: d.IssuerBranchCode,
+        DocumentTemplateId: d.DocumentTemplateId,
         IsForeignService: d.IsForeignService,
         RelatedDocument: upstream,
         CnDnPurchaseSideOverride: d.CnDnPurchaseSideOverride,

@@ -136,6 +136,14 @@ public class DocumentCloneController : ControllerBase
             ExchangeRate: src.ExchangeRate,
             PaymentType: src.PaymentType,
             PricesIncludeVat: src.PricesIncludeVat,
+            // ชื่อทางการค้า + รูปแบบเอกสารที่ตรึงกับใบต้นแบบ — เดิมตกทั้งคู่ ⇒
+            // โคลนใบแบรนด์รายเดือนแล้วใบใหม่กลับเป็นชื่อบริษัทเงียบ ๆ
+            // (defect class เดียวกับ DocumentLanguage ด้านล่าง — ผลตรวจข้อ 7)
+            BrandId: src.BrandId,
+            // สาขาที่ออกใบต้นแบบ — โคลนใบของสาขาเชียงใหม่แล้วใบใหม่กลับเป็น
+            // สำนักงานใหญ่ = รหัสสาขาบนใบกำกับผิด §86/4 + เข้ารายงานผิดสาขา §87
+            BranchId: src.BranchId,
+            DocumentTemplateId: cloneSameType ? src.DocumentTemplateId : null,
             // ภาษาที่ตรึงกับใบต้นแบบต้องตามมา — เดิมหาย ⇒ clone ใบอังกฤษของ
             // ลูกค้าต่างชาติแล้วใบใหม่กลับเป็นไทยเงียบ ๆ
             DocumentLanguage: src.DocumentLanguage,

@@ -30,6 +30,28 @@
   --radius: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
+
+  /* ===== alias ของชื่อที่หน้าเว็บเรียกใช้จริงแต่ไม่เคยประกาศ =====
+     สแกนทั้ง wwwroot เจอการอ้างตัวแปรที่ไม่เคยประกาศ 85 จุด / 11 ชื่อ
+     CSS ถือว่าการอ้างตัวแปรที่ไม่มี = "invalid at computed-value time"
+     ⇒ property นั้นกลายเป็น **initial value** ไม่ใช่ตกไปใช้ค่าที่ประกาศก่อนหน้า
+     เคสจริงที่เจ็บสุด: ปุ่ม "🗑 ลบทั้งหมด" ใน documents.html ตั้ง
+     `background:var(--red-700)` → background = transparent + .btn-danger
+     ตั้ง color:#fff ไว้ ⇒ **ตัวหนังสือขาวบนพื้นขาว = ปุ่มลบถาวรที่มองไม่เห็น
+     แต่ยังกดโดนได้** (ผู้ใช้เห็นเป็นช่องว่างระหว่างปุ่ม)
+     ประกาศไว้ที่เดียวตรงนี้ = ทุกจุดหายพร้อมกัน ไม่ต้องไล่แก้ 85 ที่
+     (ด่านกัน: tools/css_var_check.py) */
+  --red: #EF4444;
+  --red-50: #FEF2F2;
+  --red-600: #DC2626;
+  --red-700: #B91C1C;
+  --green: #10B981;
+  --green-600: #059669;
+  --blue-50: #EFF6FF;
+  --text: #1F2937;
+  --text-secondary: #6B7280;
+  --border: #E5E7EB;
+  --bg-secondary: #F9FAFB;
 }
 
 /* ===== Reset & Base ===== */
@@ -199,7 +221,13 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .modal-close { width: 36px; height: 36px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; background: none; color: var(--gray-400); font-size: 20px; }
 .modal-close:hover { background: var(--gray-100); color: var(--gray-600); }
 .modal-body { padding: 24px; }
-.modal-footer { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--gray-200); }
+/* flex-wrap: เดิมมีเฉพาะใน @media มือถือ ⇒ บนเดสก์ท็อป modal ที่มีปุ่มเยอะ
+   (หน้ารายละเอียดเอกสารมีได้ถึง 9 ปุ่ม) จะดันกันจนล้นออกนอกกรอบ และเพราะ
+   justify-content:flex-end ส่วนที่ล้นจะหลุดออกทาง**ซ้าย** = ปุ่มแรก ๆ ถูกตัดหาย
+   ไปเลยกดไม่ได้. wrap ที่นี่จุดเดียว = ทุก modal ทั้งระบบปลอดภัยพร้อมกัน */
+.modal-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--gray-200); }
+/* ปุ่มในแถบท้าย modal ห้ามถูกบีบจนข้อความหักบรรทัดกลางคำ — ให้ wrap ทั้งปุ่มแทน */
+.modal-footer .btn { flex: 0 0 auto; white-space: nowrap; }
 
 /* ===== Toast ===== */
 .toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
