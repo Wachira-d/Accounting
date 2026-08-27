@@ -104,13 +104,15 @@
       },
       async loadPlans() {
         try {
-          const r = await fetch('/api/admin/plan-templates', {
+          // endpoint ฝั่งลูกค้า (คืนเฉพาะแพ็กเกจที่เปิดขายอยู่ ผ่าน service ตัวเดียว
+          // กับฝั่งแอดมิน) — เดิมยิงไป /api/admin/plan-templates ซึ่งบังคับ role
+          // SystemAdmin ⇒ ลูกค้าได้ 403 แล้ว catch กลืนเงียบ ⇒ หน้า "License ของฉัน"
+          // โชว์รายการแพ็กเกจ **ว่างเปล่า** โดยไม่มีอะไรบอกว่าทำไม
+          const r = await fetch('/api/subscription/plans', {
             headers: { 'Authorization': 'Bearer ' + API.token }
           });
-          // Public template list is fine; admin endpoint may 403 for non-admins.
-          // We fall back to a hardcoded set if needed.
           const j = await r.json();
-          if (j.success) this.plans = (j.data || []).filter(p => p.isActive);
+          if (j.success) this.plans = (j.data || []).filter(p => p.isActive !== false);
         } catch { this.plans = []; }
       },
       render() {

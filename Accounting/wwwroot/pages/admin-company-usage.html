@@ -94,8 +94,10 @@
     const Page = {
       data: null,
 
-      init() {
+      async init() {
         if (!Layout.init('admin-company-usage')) return;
+        // หน้านี้แสดงข้อมูล **ข้ามบริษัท** — เข้าได้เฉพาะแอดมินแพลตฟอร์ม
+        if (!(await Layout.requirePlatformAdmin())) return;
         Layout.setTitle('การใช้งานรายบริษัท');
         const d = new Date();
         document.getElementById('fMonth').value =

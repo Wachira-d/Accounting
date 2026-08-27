@@ -287,8 +287,31 @@ const Layout = {
     return allowed.includes(menuId);
   },
 
+  /** หน้าที่แสดงข้อมูล **ข้ามบริษัท** — เข้าได้เฉพาะแอดมินของแพลตฟอร์ม
+   *  (ด่านจริงอยู่ที่ API ซึ่งบังคับ role SystemAdmin — ตรงนี้กันไม่ให้หน้าจอโผล่
+   *   ให้ลูกค้าเห็นและกันการเดา URL ตรง ๆ) */
+  PLATFORM_ADMIN_PAGES: ['ai-usage', 'admin-company-usage'],
+
+  /** เรียกจากหน้าแอดมินแพลตฟอร์มโดยตรง — รอสิทธิ์จากเซิร์ฟเวอร์ก่อนตัดสิน
+   *  (ค่าจาก localStorage ผู้ใช้แก้เองได้ จึงไม่ใช้เป็นตัวตัดสิน) */
+  async requirePlatformAdmin() {
+    if (!this.myPermissions) { try { await this.loadMyPermissions(); } catch {} }
+    if (this.myPermissions?.isSystemAdmin === true) return true;
+    this.toast('หน้านี้สำหรับผู้ดูแลระบบเท่านั้น', 'error');
+    setTimeout(() => { window.location.href = this.dashboardUrl ? this.dashboardUrl() : '/app.html'; }, 1200);
+    return false;
+  },
+
   _enforceRoleAccess() {
     if (!this.myPermissions || !this.currentPage) return;
+    // ⚠️ ต้องเช็คก่อน early-return ของ isOwnerOrAdmin — "เจ้าของบริษัท" คือลูกค้า
+    // ทุกราย ไม่ใช่แอดมินแพลตฟอร์ม (ต้นเหตุที่เมนูข้ามบริษัทเคยโผล่ให้ลูกค้าเห็น)
+    if (this.PLATFORM_ADMIN_PAGES.includes(this.currentPage)
+        && this.myPermissions.isSystemAdmin !== true) {
+      this.toast('หน้านี้สำหรับผู้ดูแลระบบเท่านั้น', 'error');
+      setTimeout(() => { window.location.href = '/app.html'; }, 1200);
+      return;
+    }
     if (this.myPermissions.isOwnerOrAdmin) return;
     const allowed = this.myPermissions.allowedMenuIds || [];
     if (allowed.includes('*')) return;
@@ -307,6 +330,10 @@ const Layout = {
     if (!nav) return;
     const hidden = this.getHiddenMenuItems();
     const isAdminUser = this.myPermissions?.isOwnerOrAdmin === true;
+    // แอดมิน "ของแพลตฟอร์ม" — ค่าจากเซิร์ฟเวอร์เท่านั้น (default deny เมื่อยังไม่โหลด)
+    // ห้ามอ่านจาก localStorage.user เพราะผู้ใช้แก้เองได้ (เมนูจะเป็นแค่เครื่องสำอาง
+    // แต่ก็ไม่ควรให้แก้ได้ — ด่านจริงอยู่ที่ API ที่บังคับ role SystemAdmin)
+    const isPlatformAdmin = this.myPermissions?.isSystemAdmin === true;
 
     // Simple mode collapses the 14-section, 64-item sidebar to a hand-picked
     // shortlist so non-technical users aren't drowned in options. The full
@@ -352,7 +379,8 @@ const Layout = {
       const visible =
         (!item.id || !hidden.includes(item.id))
         && (!item.id || this.hasMenuAccess(item.id))
-        && (!item.adminOnly || isAdminUser);
+        && (!item.adminOnly || isAdminUser)
+        && (!item.platformAdmin || isPlatformAdmin);
       if (!visible) return false;
       // เมนูเฉพาะบริษัทจด VAT (ภ.พ.30 / ภาษีซื้อรอ / ภ.พ.30 ย้อนหลัง) — ซ่อน
       // เมื่อบริษัทไม่จด VAT (ไม่มีภาระยื่น). default true → ไม่กระทบถ้ายังไม่โหลด
@@ -945,9 +973,13 @@ const Layout = {
       description: 'auto-categorize · anomaly · cash-flow forecast · vendor canon · GL suggestion' },
     { id: 'assistant', label: 'ผู้ช่วยบัญชี AI', icon: '💬', href: '/pages/assistant.html', feature: 'AI_Features',
       description: 'ถามวิธีลงบันทึก เลือกหมวดบัญชี ภาษี — ผู้ช่วยรู้จักผังบัญชีของกิจการคุณ' },
-    { id: 'ai-usage', label: 'รายงานการใช้งาน AI', icon: '📊', href: '/pages/admin-ai-usage.html', adminOnly: true,
+    // ⚠️ platformAdmin (ไม่ใช่ adminOnly) — สองเมนูนี้แสดงข้อมูล **ข้ามบริษัท**
+    // adminOnly แปลว่า "เจ้าของ/แอดมินของบริษัทนี้" = ลูกค้าทุกรายที่เปิดบริษัทเอง
+    // ⇒ เดิมลูกค้าเห็นเมนูของแพลตฟอร์มโผล่ในแถบซ้ายตัวเอง (กดแล้ว API ตอบ 403
+    // ข้อมูลไม่รั่ว แต่ไม่ควรเห็นตั้งแต่แรก)
+    { id: 'ai-usage', label: 'รายงานการใช้งาน AI', icon: '📊', href: '/pages/admin-ai-usage.html', platformAdmin: true,
       description: 'ใครใช้ AI เท่าไร แยกรายลูกค้า/ช่องทาง (หน้าเว็บ vs API) · ต้นทุนจริง · สัดส่วนที่ระบบตอบเองได้' },
-    { id: 'admin-company-usage', label: 'การใช้งานรายบริษัท', icon: '🏢', href: '/pages/admin-company-usage.html', adminOnly: true,
+    { id: 'admin-company-usage', label: 'การใช้งานรายบริษัท', icon: '🏢', href: '/pages/admin-company-usage.html', platformAdmin: true,
       description: 'รายเดือน: แต่ละบริษัทออกเอกสารอะไรกี่ใบ · สแกน OCR · เรียก AI (จ่ายจริงเท่าไร) · ส่งอีเมล/e-Tax' },
     { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
       description: 'นำเข้า Excel ทีละ batch · ส่งออกข้อมูลเป็น CSV/Excel · backup' },
@@ -1033,7 +1065,9 @@ const Layout = {
         </select>
       </div>
       <nav class="sidebar-nav">
-        ${this.navItems.filter(item => (!item.id || this.hasMenuAccess(item.id)) && (!item.adminOnly || this.myPermissions?.isOwnerOrAdmin === true)).map(item => this._renderNavItem(item)).join('')}
+        ${this.navItems.filter(item => (!item.id || this.hasMenuAccess(item.id))
+            && (!item.adminOnly || this.myPermissions?.isOwnerOrAdmin === true)
+            && (!item.platformAdmin || this.myPermissions?.isSystemAdmin === true)).map(item => this._renderNavItem(item)).join('')}
       </nav>
       <div class="sidebar-footer">
         <a href="#" class="nav-item" onclick="Layout.logout();return false"><span class="icon">🚪</span>${this.esc(tLogout)}</a>

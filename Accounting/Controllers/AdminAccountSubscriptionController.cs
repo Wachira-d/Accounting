@@ -19,7 +19,10 @@ namespace Accounting.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/admin/account-subscriptions")]
-[Authorize]
+// ด่านระดับคลาส — เดิมมีแต่ `[Authorize]` ธรรมดา แล้วพึ่ง `IsSystemAdminAsync()`
+// ที่เขียนซ้ำในทุกเมธอด (ตอนนี้ครบทั้ง 9 ตัว แต่เพิ่ม endpoint ใหม่แล้วลืมบรรทัดเดียว
+// = ข้อมูล License ของลูกค้าทุกรายหลุดทันที) ยังคงการเช็ครายเมธอดไว้เป็นชั้นสอง
+[Authorize(Roles = "SystemAdmin")]
 public class AdminAccountSubscriptionController : ControllerBase
 {
     private readonly AccountingDbContext _db;

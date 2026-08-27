@@ -74,6 +74,10 @@
         current: null,
         policy: {},           // { DocumentType: brandCanBePrimary }
         previewType: 'Quotation',
+        // โลโก้บริษัท — ใช้เป็นค่าสำรองในพรีวิวให้ตรงกับที่ PDF ทำจริง
+        // (DocumentIssuerIdentity.Resolve เลือก brand.LogoPath ก่อน แล้วตกไป
+        //  โลโก้บริษัท) เดิมพรีวิวโชว์กล่องว่างทั้งที่กระดาษจริงมีโลโก้บริษัทอยู่
+        companyLogoUrl: '',
 
         esc(s) {
           return String(s ?? '').replace(/[&<>"']/g, c =>
@@ -91,6 +95,10 @@
             const r = await API.get(`/api/companies/${cid}/document-brands?includeInactive=true`);
             this.brands = r.data || [];
           } catch (e) { this.brands = []; }
+          try {
+            const st = await API.get(`/api/companies/${cid}/settings`);
+            this.companyLogoUrl = st.data?.logoUrl || '';
+          } catch (e) { this.companyLogoUrl = ''; }
           try {
             const t = await API.get(`/api/companies/${cid}/document-templates`);
             this.templates = (t.data || []).filter(x => x.isActive !== false);
@@ -297,8 +305,14 @@
           box.style.setProperty('--pvc', c.primaryColor || '#1f2937');
           box.innerHTML = `
             <div class="pv-head">
-              ${c.logoUrl ? `<img class="pv-logo" src="${this.esc(c.logoUrl)}" alt="">`
-                          : `<div class="pv-logo"></div>`}
+              ${(() => {
+                // ลำดับเดียวกับ resolver กลาง: โลโก้แบรนด์ → โลโก้บริษัท → กล่องว่าง
+                const logo = c.logoUrl || this.companyLogoUrl;
+                return logo
+                  ? `<img class="pv-logo" src="${this.esc(logo)}" alt=""
+                          onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'pv-logo'}))">`
+                  : `<div class="pv-logo"></div>`;
+              })()}
               <div style="flex:1">
                 <div class="pv-name">${this.esc(primary)}</div>
                 ${brandLeads && c.tagLine ? `<div class="pv-tag">${this.esc(c.tagLine)}</div>` : ''}

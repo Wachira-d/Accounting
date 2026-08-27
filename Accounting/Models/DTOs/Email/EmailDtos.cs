@@ -51,7 +51,11 @@ public record EmailConfigResponse(
     string? LastTestStatus,
     SmtpConfigDto? Smtp,
     MicrosoftGraphConfigDto? Microsoft,
-    GmailConfigDto? Gmail);
+    GmailConfigDto? Gmail,
+    /// <summary>ข้อความเตือนเมื่อมี "ความลับที่เก็บไว้แต่ถอดรหัสไม่ออก" (คีย์
+    /// เข้ารหัสถูกเปลี่ยนหลังจากบันทึก) — null = ปกติ. ต้องบอกผู้ใช้ตรง ๆ ไม่งั้น
+    /// หน้าจอจะโชว์ว่า "มีรหัสผ่านเก็บไว้แล้ว" แล้วส่งอีเมลไม่ออกโดยไม่มีใครรู้ว่าทำไม</summary>
+    string? SecretWarning = null);
 
 public record SmtpConfigDto(
     string? Host,
@@ -112,7 +116,8 @@ public record SystemEmailConfigResponse(
     string? LastTestStatus,
     SmtpConfigDto? Smtp,
     MicrosoftGraphConfigDto? Microsoft,
-    GmailConfigDto? Gmail);
+    GmailConfigDto? Gmail,
+    string? SecretWarning = null);
 
 public record UpdateSystemEmailConfigRequest(
     EmailProvider Provider,

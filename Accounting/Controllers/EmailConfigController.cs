@@ -98,7 +98,10 @@ public class EmailConfigController : ControllerBase
         return s;
     }
 
-    private static EmailConfigResponse BuildResponse(CompanySettings s) => new(
+    // "มีค่าเก็บไว้" ไม่พอ — ต้อง **ถอดกลับมาใช้ได้จริง** ด้วย ไม่งั้นหน้าจอบอกว่า
+    // มีรหัสผ่านแล้ว ผู้ใช้เว้นช่องว่าง (= ใช้ค่าเดิม) แล้วระบบส่งด้วยรหัสผ่านว่าง
+    // ⇒ "5.7.0 Authentication Required" วนแบบนี้ตลอดกาล แก้ผ่านหน้าเว็บไม่ได้เลย
+    private EmailConfigResponse BuildResponse(CompanySettings s) => new(
         Provider: s.EmailProvider,
         FromAddress: s.EmailFromAddress,
         FromName: s.EmailFromName,
@@ -107,10 +110,15 @@ public class EmailConfigController : ControllerBase
         LastTestedAt: s.EmailLastTestedAt,
         LastTestStatus: s.EmailLastTestStatus,
         Smtp: new SmtpConfigDto(s.EmailSmtpHost, s.EmailSmtpPort, s.EmailSmtpUsername,
-            !string.IsNullOrEmpty(s.EmailSmtpPassword), s.EmailSmtpUseSsl),
+            _secrets.IsUsable(s.EmailSmtpPassword), s.EmailSmtpUseSsl),
         Microsoft: new MicrosoftGraphConfigDto(s.EmailMsTenantId, s.EmailMsClientId,
-            !string.IsNullOrEmpty(s.EmailMsClientSecret), s.EmailMsSenderUpn),
+            _secrets.IsUsable(s.EmailMsClientSecret), s.EmailMsSenderUpn),
         Gmail: new GmailConfigDto(s.EmailGmailClientId,
-            !string.IsNullOrEmpty(s.EmailGmailClientSecret),
-            !string.IsNullOrEmpty(s.EmailGmailRefreshToken)));
+            _secrets.IsUsable(s.EmailGmailClientSecret),
+            _secrets.IsUsable(s.EmailGmailRefreshToken)),
+        SecretWarning: SecretWarnings.Build(_secrets,
+            ("รหัสผ่าน SMTP", s.EmailSmtpPassword),
+            ("Client Secret (Microsoft)", s.EmailMsClientSecret),
+            ("Client Secret (Gmail)", s.EmailGmailClientSecret),
+            ("Refresh Token (Gmail)", s.EmailGmailRefreshToken)));
 }
