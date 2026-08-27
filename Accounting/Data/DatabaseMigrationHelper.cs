@@ -3441,6 +3441,15 @@ public static class DatabaseMigrationHelper
             // Delete แบรนด์สแกนหาเอกสารที่ใช้อยู่ — ไม่มี index = full scan ต่อบริษัท
             """CREATE INDEX IF NOT EXISTS "IX_Documents_Brand" ON "Documents" ("CompanyId", "BrandId") WHERE "BrandId" IS NOT NULL;""",
 
+            // ===== สาขาผู้ออกเอกสาร (เฟส 1 ระบบหลายสาขา) =====
+            // null ทั้งสองคอลัมน์ = พฤติกรรมเดิมทุกประการ (กิจการสาขาเดียวไม่กระทบ)
+            // IssuerBranchCode = snapshot รหัส 5 หลักที่พิมพ์จริงตอนอนุมัติ — แก้ทะเบียน
+            // สาขาภายหลังต้องไม่ย้อนไปเปลี่ยนใบกำกับที่ออกไปแล้ว (§86/4)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BranchId" uuid NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IssuerBranchCode" varchar(5) NULL;""",
+            // รายงานภาษีซื้อ/ขายแยกตามสถานประกอบการ (§87) สแกนด้วยคู่นี้
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_Branch" ON "Documents" ("CompanyId", "BranchId") WHERE "BranchId" IS NOT NULL;""",
+
             // ===== Backfill: DocumentLine.Amount ที่เก็บ "ยอดรวม VAT" (ผิด convention) =====
             // OCR รุ่นก่อน 2026-08-14 เก็บยอดรวม VAT ลง Line.Amount บนใบที่ราคารวม VAT
             // ⇒ ตอนอนุมัติ JE ลง Dr ค่าใช้จ่าย(รวม VAT) + Dr ภาษีซื้อ(VAT ซ้ำ) =

@@ -794,6 +794,10 @@ public class AccountingDbContext : DbContext
             e.HasOne(d => d.PaymentAccount).WithMany().HasForeignKey(d => d.PaymentAccountId).OnDelete(DeleteBehavior.SetNull);
             // Expense category — header-level chart of account for expense documents
             e.HasOne(d => d.ExpenseCategory).WithMany().HasForeignKey(d => d.ExpenseCategoryId).OnDelete(DeleteBehavior.SetNull);
+            // สาขาผู้ออกเอกสาร — SetNull เพราะเอกสารต้องไม่หายไปกับทะเบียนสาขา
+            // (รหัสที่พิมพ์จริงถูก snapshot ไว้ใน IssuerBranchCode แล้ว ใบเก่ายังพิมพ์ถูก)
+            e.HasOne(d => d.Branch).WithMany().HasForeignKey(d => d.BranchId).OnDelete(DeleteBehavior.SetNull);
+            e.Property(d => d.IssuerBranchCode).HasMaxLength(5);
             e.HasQueryFilter(d => !d.IsDeleted);
         });
 

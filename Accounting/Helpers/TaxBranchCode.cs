@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Accounting.Helpers;
 
 /// <summary>
@@ -8,15 +10,23 @@ namespace Accounting.Helpers;
 /// โดย <c>00000</c> = สำนักงานใหญ่ · <c>00001</c> ขึ้นไป = สาขาที่ 1, 2, …
 /// การพิมพ์บนเอกสารต้องเป็นคำว่า "สำนักงานใหญ่" หรือ "สาขาที่ {n}" ไม่ใช่เลขดิบ
 ///
-/// ⚠️ ห้ามเขียนสูตร <c>code == "00000" ? "สำนักงานใหญ่" : ...</c> เองซ้ำอีก —
-/// เดิมมีอยู่ 3 ที่ (DocumentBrandController, PdfA3 ฝั่งผู้ขาย, PdfA3 ฝั่งผู้ซื้อ)
-/// ซึ่งให้ผลไม่เหมือนกัน (บางที่โชว์เลขดิบ "00003" แทน "สาขาที่ 3") — defect class
-/// "resolver กลาง ห้ามคำนวณเอง" ใน CLAUDE.md ข้อ 4.A
+/// ⚠️ ห้ามเขียนสูตรแปลงรหัส→ถ้อยคำเองซ้ำอีก — เดิมมีอยู่ 4 ที่และให้ผลไม่เหมือนกัน:
+/// `PdfGenerationService.FormatBranch` (ตัวที่สมบูรณ์ที่สุด — ย้ายมาที่นี่แล้ว) ·
+/// `PdfA3` ฝั่งผู้ขาย/ผู้ซื้อ (พิมพ์เลขดิบ "00003") · `DocumentBrandController`
+/// (พิมพ์ "สาขาที่ 00003") — defect class "resolver กลาง ห้ามคำนวณเอง" CLAUDE.md ข้อ 4.A
 /// </summary>
 public static class TaxBranchCode
 {
     /// <summary>รหัสของสำนักงานใหญ่ตามประกาศอธิบดีฯ ฉบับที่ 199</summary>
     public const string HeadOffice = "00000";
+
+    /// <summary>ชื่อสาขาที่แท้จริงหมายถึง "สำนักงานใหญ่" (ทุกสะกดที่พบบ่อย) — กัน
+    /// การต่อท้ายชื่อ default ที่ขัดกับรหัสสาขาจริง เช่น "สาขาที่ 3 (สำนักงานใหญ่)"</summary>
+    private static bool IsHeadOfficeName(string? name)
+    {
+        var n = name?.Trim();
+        return n is "สำนักงานใหญ่" or "สนญ" or "สนญ." or "สำนักงานใหญ" or "Head Office" or "HeadOffice" or "HO";
+    }
 
     /// <summary>
     /// เลขอารบิก 0-9 เท่านั้น — <c>char.IsDigit</c> รับเลขไทย (๑๒๓) ด้วย ซึ่งจะผ่าน
@@ -28,17 +38,30 @@ public static class TaxBranchCode
         return s.Length > 0;
     }
 
-    /// <summary>ว่าง/null ถือเป็นสำนักงานใหญ่ — กิจการสาขาเดียวไม่ต้องกรอกอะไรเลย</summary>
+    /// <summary>ดึงเฉพาะตัวเลขออกจากค่าที่ผู้ใช้/ระบบเก่าเก็บไว้ (อาจมีขีด/ช่องว่างปน)</summary>
+    private static string Digits(string? s)
+        => new((s ?? "").Where(ch => ch >= '0' && ch <= '9').ToArray());
+
+    /// <summary>ว่าง/ศูนย์ล้วน ถือเป็นสำนักงานใหญ่ — กิจการสาขาเดียวไม่ต้องกรอกอะไรเลย</summary>
     public static bool IsHeadOffice(string? code)
     {
-        var c = (code ?? "").Trim();
-        return c.Length == 0 || c.TrimStart('0').Length == 0;
+        var d = Digits(code);
+        return d.Length == 0 || d.TrimStart('0').Length == 0;
+    }
+
+    /// <summary>รหัส 5 หลักที่ใช้เก็บ/ส่งเข้า XML e-Tax — ว่าง/เพี้ยน → "00000"</summary>
+    public static string Normalize(string? code)
+    {
+        var d = Digits(code);
+        if (d.Length == 0) return HeadOffice;
+        return d.Length >= 5 ? d[^5..] : d.PadLeft(5, '0');
     }
 
     /// <summary>
-    /// จัดรูปรหัสให้เป็น 5 หลัก — <c>"1"</c> → <c>"00001"</c>, ว่าง → null
+    /// จัดรูปรหัสให้เป็น 5 หลักแบบ **เข้มงวด** — ใช้เป็นด่านตอนบันทึกทะเบียนสาขา
+    /// (ต่างจาก <see cref="Normalize"/> ที่ยอมรับทุกอย่างเพื่อ "แสดงผล")
+    /// <c>"1"</c> → <c>"00001"</c>, ว่าง → null, รูปแบบผิด → false + ข้อความไทย
     /// </summary>
-    /// <returns>true = ใช้ได้ (<paramref name="code"/> คือค่าที่จัดรูปแล้ว หรือ null ถ้าเว้นว่าง)</returns>
     public static bool TryNormalize(string? raw, out string? code, out string? error)
     {
         code = null;
@@ -63,22 +86,42 @@ public static class TaxBranchCode
 
     /// <summary>คำที่ต้องพิมพ์บนเอกสาร — "สำนักงานใหญ่" / "สาขาที่ 3"</summary>
     public static string Label(string? code, bool isEnglish = false)
-    {
-        if (IsHeadOffice(code))
-            return isEnglish ? "Head Office" : "สำนักงานใหญ่";
+        => LabelWithName(code, null, isEnglish);
 
-        var c = (code ?? "").Trim();
-        // ตัดศูนย์นำหน้าเอง ไม่ผ่าน int.Parse — กัน culture ที่แปลงเลขไทยให้โดยไม่ตั้งใจ
-        // เลขที่จัดรูปไม่ได้ (ข้อมูลเก่าเพี้ยน) → โชว์ตามที่เก็บไว้ ดีกว่าโชว์ผิดเป็นสำนักงานใหญ่
-        var n = IsAsciiDigits(c) ? c.TrimStart('0') : c;
-        return isEnglish ? $"Branch {n}" : $"สาขาที่ {n}";
-    }
-
-    /// <summary>คำบนเอกสาร + ชื่อสาขา (ถ้ามี) — "สาขาที่ 3 เชียงใหม่"</summary>
+    /// <summary>
+    /// คำบนเอกสาร + ชื่อสาขาในวงเล็บถ้ามี — "สาขาที่ 3 (เชียงใหม่)"
+    ///
+    /// ใช้กับทั้ง **ผู้ออกเอกสาร** (บริษัท/สาขาของเรา) และ **คู่ค้า** (ผู้ซื้อ/ผู้รับเงิน)
+    /// บนใบกำกับ/ใบสำคัญ/50 ทวิ — ที่เดียวของทั้งระบบ
+    /// </summary>
     public static string LabelWithName(string? code, string? name, bool isEnglish = false)
     {
-        var label = Label(code, isEnglish);
-        var n = (name ?? "").Trim();
-        return n.Length == 0 || IsHeadOffice(code) ? label : $"{label} {n}";
+        var digits = Digits(code);
+        var n = name?.Trim();
+        var codeIsHeadOffice = digits.Length == 0 || digits.TrimStart('0').Length == 0;
+
+        if (!codeIsHeadOffice)
+        {
+            // ตัดศูนย์นำหน้า: ประกาศฯ ให้เขียน "สาขาที่ 3" ไม่ใช่ "สาขาที่ 00003"
+            var seq = digits.TrimStart('0');
+            var label = isEnglish ? $"Branch {seq}" : $"สาขาที่ {seq}";
+            // แนบชื่อสาขาถ้ามี — ยกเว้นเมื่อชื่อเป็นคำว่า "สำนักงานใหญ่/สนญ"
+            // (ค่า default ที่ฟอร์ม auto-เติม) ซึ่งขัดกับรหัสสาขาจริง
+            if (!string.IsNullOrWhiteSpace(n) && !IsHeadOfficeName(n))
+                label += $" ({n})";
+            return label;
+        }
+
+        // รหัส = 00000/ว่าง → ปกติ "สำนักงานใหญ่". แต่ถ้า "ชื่อสาขา" เป็นเลขล้วนที่
+        // ไม่ใช่ศูนย์ทั้งหมด (เช่น "00001") = ผู้ใช้กรอกเลขสาขาผิดช่อง (ใส่ใน "ชื่อ
+        // สาขา" แทน "รหัสสาขา" ซึ่งฟอร์ม default ไว้ 00000) → ถือตามนั้น. เช็คเข้ม
+        // ด้วย regex เลขล้วนเพื่อกัน false-positive ("สำนักงานใหญ่ ชั้น 5" ไม่โดนแปลง)
+        if (!string.IsNullOrWhiteSpace(n)
+            && Regex.IsMatch(n, @"^0*\d{1,5}$") && n.Any(ch => ch != '0'))
+        {
+            var nd = Digits(n).TrimStart('0');
+            return isEnglish ? $"Branch {nd}" : $"สาขาที่ {nd}";
+        }
+        return isEnglish ? "Head Office" : "สำนักงานใหญ่";
     }
 }

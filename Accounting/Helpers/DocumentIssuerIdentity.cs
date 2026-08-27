@@ -45,7 +45,12 @@ public sealed record IssuerIdentity(
     bool SecondaryIsBrand = false,
     /// <summary>ข้อความท้ายเอกสารของแบรนด์ — null = ใช้ของเทมเพลต/บริษัทตามเดิม
     /// (เดิมช่องนี้ในหน้าตั้งค่ากรอกได้แต่ไม่มี renderer อ่าน = field ตาย)</summary>
-    string? FooterNotes = null);
+    string? FooterNotes = null,
+    /// <summary>ถ้อยคำสาขาที่ต้องพิมพ์ต่อท้ายเลขผู้เสียภาษี — "สำนักงานใหญ่" /
+    /// "สาขาที่ 3 (เชียงใหม่)" · null = ไม่พิมพ์ (กิจการที่ไม่มีเลขผู้เสียภาษี).
+    /// **renderer ต้องอ่านจากตรงนี้ ห้ามคำนวณจาก `company.BranchCode` เอง** —
+    /// ใบที่ออกจากสาขาย่อยจะพิมพ์รหัสของสำนักงานใหญ่ผิดทันที (§86/4)</summary>
+    string? BranchLabel = null);
 
 /// <summary>
 /// **ตัวตัดสินเดียว** ว่าหัวเอกสารจะขึ้นชื่ออะไร โลโก้ไหน และต้องแฝงชื่อ
@@ -180,7 +185,8 @@ public static class DocumentIssuerIdentity
                 LegalLine: null,
                 LegalLineInHeader: false,
                 LegalLineInFooter: false,
-                BrandIsPrimary: false);
+                BrandIsPrimary: false,
+                BranchLabel: branchLabel);
         }
 
         var b = brand!;
@@ -219,7 +225,8 @@ public static class DocumentIssuerIdentity
                 LegalLineInFooter: false,
                 BrandIsPrimary: false,
                 SecondaryIsBrand: true,
-                FooterNotes: Pick(isEnglish ? b.FooterNotesEn : b.FooterNotes, b.FooterNotes));
+                FooterNotes: Pick(isEnglish ? b.FooterNotesEn : b.FooterNotes, b.FooterNotes),
+                BranchLabel: branchLabel);
         }
 
         // แบรนด์เป็นตัวหลัก — บรรทัดนิติบุคคลตัวเล็กต้องมีเสมอ (ปิดไม่ได้)
@@ -245,7 +252,8 @@ public static class DocumentIssuerIdentity
             LegalLineInFooter: inFooter,
             BrandIsPrimary: true,
             SecondaryIsBrand: !isEnglish && !string.IsNullOrWhiteSpace(b.NameEn) && brandPrimary != b.NameEn,
-            FooterNotes: Pick(isEnglish ? b.FooterNotesEn : b.FooterNotes, b.FooterNotes));
+            FooterNotes: Pick(isEnglish ? b.FooterNotesEn : b.FooterNotes, b.FooterNotes),
+            BranchLabel: branchLabel);
     }
 }
 

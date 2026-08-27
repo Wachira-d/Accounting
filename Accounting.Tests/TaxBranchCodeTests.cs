@@ -57,20 +57,50 @@ public class TaxBranchCodeTests
     }
 
     [Fact]
-    public void รหัสเพี้ยนที่แปลงเป็นเลขไม่ได้_โชว์ตามที่เก็บไว้_ไม่กลายเป็นสำนักงานใหญ่()
+    public void รหัสที่มีอักขระปน_ถือเอาเฉพาะตัวเลข()
     {
-        // ข้อมูลเก่าที่ผิดรูป ต้องไม่ถูก "กลบ" เป็นสำนักงานใหญ่ (จะรายงานภาษีผิดสาขา)
-        Assert.Equal("สาขาที่ A1", TaxBranchCode.Label("A1"));
+        // ยกมาจาก FormatBranch เดิม (พฤติกรรมที่พิมพ์บนเอกสารอยู่แล้ว) — อย่าเปลี่ยน
+        Assert.Equal("สาขาที่ 1", TaxBranchCode.Label("A1"));
+        Assert.Equal("สาขาที่ 3", TaxBranchCode.Label("0-0-0-0-3"));
     }
 
     [Fact]
-    public void LabelWithName_ต่อชื่อสาขาเฉพาะสาขาย่อย()
+    public void LabelWithName_ต่อชื่อสาขาในวงเล็บเฉพาะสาขาย่อย()
     {
-        Assert.Equal("สาขาที่ 3 เชียงใหม่", TaxBranchCode.LabelWithName("00003", "เชียงใหม่"));
+        Assert.Equal("สาขาที่ 3 (เชียงใหม่)", TaxBranchCode.LabelWithName("00003", "เชียงใหม่"));
         Assert.Equal("สาขาที่ 3", TaxBranchCode.LabelWithName("00003", "  "));
         // สำนักงานใหญ่ไม่ต่อชื่อ — §86/4 ต้องการคำว่า "สำนักงานใหญ่" ล้วน
         Assert.Equal("สำนักงานใหญ่", TaxBranchCode.LabelWithName("00000", "อาคารสาทร"));
     }
+
+    [Theory]
+    [InlineData("สำนักงานใหญ่")]
+    [InlineData("สนญ")]
+    [InlineData("Head Office")]
+    [InlineData("HO")]
+    public void ชื่อสาขาที่แปลว่าสำนักงานใหญ่_ไม่ต่อท้ายรหัสสาขาย่อย(string name)
+    {
+        // ฟอร์ม auto-เติมชื่อ "สำนักงานใหญ่" ไว้ ⇒ ถ้าต่อท้ายจะได้ "สาขาที่ 3 (สำนักงานใหญ่)"
+        Assert.Equal("สาขาที่ 3", TaxBranchCode.LabelWithName("00003", name));
+    }
+
+    [Fact]
+    public void ผู้ใช้กรอกเลขสาขาผิดช่อง_ถือตามเลขที่กรอกในช่องชื่อ()
+    {
+        // รหัส 00000 (ค่า default ของฟอร์ม) + ชื่อเป็นเลขล้วน = กรอกสลับช่อง
+        Assert.Equal("สาขาที่ 1", TaxBranchCode.LabelWithName("00000", "00001"));
+        // แต่ข้อความที่มีเลขปนต้องไม่โดนแปลง
+        Assert.Equal("สำนักงานใหญ่", TaxBranchCode.LabelWithName("00000", "สำนักงานใหญ่ ชั้น 5"));
+    }
+
+    [Theory]
+    [InlineData(null, "00000")]
+    [InlineData("", "00000")]
+    [InlineData("3", "00003")]
+    [InlineData("00003", "00003")]
+    [InlineData("เพี้ยน", "00000")]
+    public void Normalize_สำหรับส่งเข้าไฟล์อีแท็กซ์_ต้องได้ห้าหลักเสมอ(string? raw, string expected)
+        => Assert.Equal(expected, TaxBranchCode.Normalize(raw));
 
     // ---------- TryNormalize: ด่านตอนบันทึกทะเบียนสาขา ----------
 

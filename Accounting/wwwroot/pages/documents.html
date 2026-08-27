@@ -315,6 +315,17 @@
                 <div id="fBrandHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
               </div>
 
+              <!-- สาขาผู้ออกเอกสาร: โผล่เฉพาะกิจการที่ตั้งทะเบียนสาขาไว้ตั้งแต่ 2 แห่ง
+                   ขึ้นไป (กิจการสาขาเดียวไม่เห็นช่องนี้เลย — ไม่มีอะไรเปลี่ยน)
+                   ว่าง = ใช้รหัสสาขา/ที่อยู่ของบริษัทตามเดิม -->
+              <div id="fBranchRow" style="display:none;margin-top:10px">
+                <label class="form-label" style="font-size:12px">🏬 ออกจากสถานประกอบการ (สาขา)</label>
+                <select class="form-select" id="fBranch" onchange="Page.onBranchChange()">
+                  <option value="">— ตามค่าของบริษัท —</option>
+                </select>
+                <div id="fBranchHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+              </div>
+
               <!-- รูปแบบเอกสาร: โผล่เฉพาะบริษัทที่สร้างเทมเพลตไว้เอง (ตั้งที่หน้า
                    "เทมเพลตเอกสาร PDF") · ว่าง = ใช้ตั้งต้นของชนิดเอกสารตามเดิม
                    เลือกแบรนด์ที่ผูกรูปแบบไว้ = ระบบเติมให้ แต่ยังเปลี่ยนรายใบได้ -->
@@ -1527,6 +1538,7 @@
       },
       async init() {
         this._loadBrands();   // ไม่ await — ล้มก็แค่ไม่โชว์ช่องแบรนด์ ฟอร์มยังใช้ได้
+        this._loadBranches(); // เช่นกัน — ล้มก็แค่ไม่โชว์ช่องสาขา
         this._loadTemplates();
         // Listen for the "+ สร้างใหม่" cross-tab hand-off — contacts.html
         // posts the new contact id back via postMessage; we auto-pick it
@@ -3923,6 +3935,82 @@
         const sel = document.getElementById('fTemplate');
         const b = this._brands.find(x => x.id === document.getElementById('fBrand')?.value);
         if (sel && b?.defaultTemplateId) sel.value = b.defaultTemplateId;
+      },
+
+      // ===== สาขาผู้ออกเอกสาร (§86/4 + ป.86/2542) =====
+      // กติกาเดียวกับแบรนด์: กิจการที่ยังไม่ตั้งทะเบียนสาขา **ไม่เห็นช่องนี้เลย**
+      // และค่าเริ่มต้นของใบใหม่คือ "ตามค่าของบริษัท" เสมอ — ห้ามเดาสาขาให้เอง
+      _branches: [],
+      _branchesReady: null,
+      _branchesLoaded: false,
+
+      _loadBranches() {
+        this._branchesReady = this._doLoadBranches();
+        return this._branchesReady;
+      },
+
+      async _doLoadBranches() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        try {
+          // includeInactive: ใบเก่าที่ออกจากสาขาที่ปิดไปแล้วต้องมี <option> ค้ำ
+          // ไม่งั้นเปิดมาแก้แล้วกดบันทึก = สาขาถูกปลดเงียบ ๆ (เหตุผลเดียวกับแบรนด์)
+          const r = await API.get(`/api/companies/${cid}/dimensions/branches?includeInactive=true`);
+          this._branches = r.data || [];
+          this._branchesLoaded = true;
+        } catch (e) { this._branches = []; this._branchesLoaded = false; }
+
+        const row = document.getElementById('fBranchRow');
+        const sel = document.getElementById('fBranch');
+        if (!row || !sel) return;
+        // ยังไม่มีสาขา / มีแห่งเดียว = ไม่ต้องรกฟอร์ม (ไม่มีอะไรให้เลือก)
+        if (this._branches.filter(b => b.isActive !== false).length < 2) {
+          row.style.display = 'none';
+          return;
+        }
+        row.style.display = '';
+        const keep = sel.value;
+        sel.innerHTML = '<option value="">— ตามค่าของบริษัท —</option>'
+          + this._branches.map(b => {
+              const code = b.taxBranchCode ? ` [${this.escapeHtml(b.taxBranchCode)}]` : '';
+              return `<option value="${b.id}"${b.isActive === false ? ' data-inactive="1"' : ''}>`
+                + `${this.escapeHtml(b.name || b.code || '-')}${code}`
+                + `${b.isActive === false ? ' (ปิดใช้งานแล้ว)' : ''}</option>`;
+            }).join('');
+        if (keep) sel.value = keep;
+        this._applyBranchHint();
+      },
+
+      /** ป้ายใต้ช่อง — บอกตรง ๆ ว่ารหัสสาขาอะไรจะไปอยู่บนกระดาษ (ห้ามเงียบ) */
+      _applyBranchHint() {
+        const hint = document.getElementById('fBranchHint');
+        const sel = document.getElementById('fBranch');
+        if (!hint || !sel) return;
+        if (!sel.value) {
+          hint.textContent = 'ค่าเริ่มต้น — ใช้รหัสสาขาและที่อยู่ที่ตั้งไว้ในหน้าตั้งค่าบริษัท';
+          hint.style.color = '#64748b';
+          return;
+        }
+        const b = this._branches.find(x => x.id === sel.value);
+        const code = b?.taxBranchCode || '';
+        const label = !code || /^0*$/.test(code)
+          ? 'สำนักงานใหญ่'
+          : `สาขาที่ ${String(parseInt(code, 10))}`;
+        hint.textContent = `ใบนี้จะพิมพ์ "${label}" ต่อท้ายเลขผู้เสียภาษี`
+          + (b?.address ? ' และใช้ที่อยู่ของสาขานี้' : ' (สาขานี้ยังไม่ได้กรอกที่อยู่ → ใช้ที่อยู่บริษัท)')
+          + (code ? '' : ' — ยังไม่ได้กรอกรหัสสาขาสรรพากรให้สาขานี้');
+        hint.style.color = code ? '#166534' : '#92400e';
+      },
+
+      onBranchChange() { this._applyBranchHint(); },
+
+      /** แก้ไข = ตามที่บันทึกไว้ · ใบใหม่ = ว่าง (ตามค่าบริษัท) — ห้ามค้างค่าจากใบก่อน */
+      async _hydrateBranch(doc) {
+        try { await this._branchesReady; } catch (e) {}
+        const sel = document.getElementById('fBranch');
+        if (!sel) return;
+        sel.value = doc?.branchId || '';
+        this._applyBranchHint();
       },
 
       _templates: [],
@@ -7107,6 +7195,7 @@
       openCreate(side) {
         this.editingId = null;
         this._hydrateBrand(null);   // ใบใหม่ = ชื่อบริษัท ไม่ใช่ค่าค้างจากใบก่อน
+        this._hydrateBranch(null);  // และสาขา = ตามค่าบริษัท (ห้ามค้างจากใบก่อน)
         this._hydrateTemplate(null);
         // ล้าง contact ที่จำไว้สำหรับเทอมเครดิต — ไม่งั้นเทอมของลูกค้ารายก่อน
         // ตามมาเติมในเอกสารใบใหม่ที่ยังไม่ได้เลือกคู่ค้า
@@ -7349,6 +7438,7 @@
           const d = res.data;
           this.editingId = id;
           this._hydrateBrand(d);   // echo กลับค่าที่บันทึกไว้ (ไม่งั้นบันทึกแล้วค่าหาย)
+          this._hydrateBranch(d);
           this._hydrateTemplate(d);
           // เก็บสถานะใบที่กำลังแก้ — chain "จ่ายแล้ว" (อนุมัติ+ชำระ) เปิดให้เฉพาะ
           // ร่าง/ถูกปฏิเสธ (ใบที่ยังไม่เคยลงบัญชี) ไม่ใช่ revision ของใบอนุมัติแล้ว
@@ -8030,6 +8120,7 @@
           // เจตนาผู้ใช้ ⇒ ห้ามส่งคำสั่งล้างค่า (ผลตรวจ ข้อ 5.3 — API ล่มแล้วแก้ใบ
           // ไหนก็ปลดแบรนด์ใบนั้น) — ส่ง null = "ไม่แตะ" แทน
           brandId: this._pinnedFieldValue('fBrand', this._brandsLoaded),
+          branchId: this._pinnedFieldValue('fBranch', this._branchesLoaded),
           documentTemplateId: this._pinnedFieldValue('fTemplate', this._templatesLoaded),
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
           // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"

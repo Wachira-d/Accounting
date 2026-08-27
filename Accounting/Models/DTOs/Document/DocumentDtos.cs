@@ -104,6 +104,10 @@ public record CreateDocumentRequest(
     // เท่านั้น — ไม่กระทบบัญชี/ภาษี/เลขที่. เอกสารที่กฎหมายบังคับชื่อผู้ประกอบการ
     // จดทะเบียน แบรนด์จะลงได้แค่โลโก้+บรรทัดรอง (Helpers.DocumentIssuerIdentity)
     Guid? BrandId = null,
+    // สถานประกอบการ (สาขา) ที่ออกใบนี้ — **null = พฤติกรรมเดิมทุกประการ**
+    // (ใช้ Company.BranchCode/ที่อยู่บริษัท) กิจการสาขาเดียวไม่ต้องส่งมาเลย
+    // กระทบ "รหัสสาขาบนกระดาษ + ที่อยู่ + TXID ของ e-Tax" ตาม §86/4(2) + ป.86/2542
+    Guid? BranchId = null,
     // รูปแบบ (เทมเพลต) ที่เลือกตอนออกใบ — null = ใช้ตั้งต้นของชนิดเอกสาร
     // (ตอนแก้ไข: Guid.Empty = กลับไปใช้ตั้งต้น เหมือนกติกาของ BrandId)
     Guid? DocumentTemplateId = null,
@@ -236,6 +240,9 @@ public record UpdateDocumentRequest(
     // ให้ได้ (Guid? ใช้ null เป็น "ไม่ส่งมา" ไปแล้ว) → ส่ง Guid.Empty = กลับไป
     // ใช้ชื่อบริษัท มิฉะนั้นผู้ใช้ปลดแบรนด์ออกไม่ได้เลย (defect class "silent no-op")
     Guid? BrandId = null,
+    // สาขาผู้ออกใบ — กติกาเดียวกับ BrandId: null = ไม่ส่งมา (คงค่าเดิม),
+    // Guid.Empty = ล้างกลับไปใช้ค่าบริษัท (ไม่งั้นผู้ใช้ถอดสาขาออกไม่ได้เลย)
+    Guid? BranchId = null,
     // รูปแบบ (เทมเพลต) ที่เลือกตอนออกใบ — null = ใช้ตั้งต้นของชนิดเอกสาร
     // (ตอนแก้ไข: Guid.Empty = กลับไปใช้ตั้งต้น เหมือนกติกาของ BrandId)
     Guid? DocumentTemplateId = null,
@@ -589,6 +596,11 @@ public record DocumentResponse(
     // ตอนเปิดแก้ไข — เก็บแล้วไม่ echo = ค่าหายเงียบ ๆ)
     Guid? BrandId = null,
     string? BrandName = null,
+    // สาขาผู้ออกใบ + ป้ายที่พิมพ์จริง (echo กลับเพื่อ hydrate ฟอร์มตอนเปิดแก้ไข —
+    // เก็บแล้วไม่ echo = ค่าหายเงียบ ๆ). IssuerBranchCode = รหัสที่ตรึงตอนอนุมัติ
+    Guid? BranchId = null,
+    string? BranchName = null,
+    string? IssuerBranchCode = null,
     Guid? DocumentTemplateId = null,
     // ภ.พ.36 / ภ.ง.ด.54 — ซื้อบริการจากต่างประเทศ. Echo กลับมาเพื่อ form hydration.
     bool IsForeignService = false,

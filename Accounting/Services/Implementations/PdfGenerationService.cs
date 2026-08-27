@@ -42,6 +42,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var document = await _db.Documents
             .Include(d => d.Lines)
             .Include(d => d.Brand)   // ชื่อทางการค้าบนหัวเอกสาร (null = ใช้ชื่อบริษัท)
+            .Include(d => d.Branch)  // สถานประกอบการที่ออกใบ (null = กิจการสาขาเดียว)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
@@ -146,6 +147,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var document = await _db.Documents
             .Include(d => d.Lines)
             .Include(d => d.Brand)   // ชื่อทางการค้าบนหัวเอกสาร (null = ใช้ชื่อบริษัท)
+            .Include(d => d.Branch)  // สถานประกอบการที่ออกใบ (null = กิจการสาขาเดียว)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
@@ -1213,19 +1215,47 @@ public partial class PdfGenerationService : IPdfGenerationService
             b.Address, b.AddressEn, b.Phone, b.Email, b.Website, b.PrimaryColor,
             b.LegalNamePlacement, b.IsActive, b.FooterNotes, b.FooterNotesEn);
 
-        var addr = ThaiAddressFormatter.ResolvePartyAddress(
+        var companyAddr = ThaiAddressFormatter.ResolvePartyAddress(
             isEn, company.AddressEn,
             company.Address, company.BuildingNumber, company.BuildingName, company.Moo,
             company.StreetName, company.SubDistrict, company.District,
             company.Province, company.PostalCode);
 
+        // สถานประกอบการที่ออกใบนี้ — ผ่าน resolver กลางตัวเดียว
+        // (กิจการสาขาเดียว: doc.Branch = null + ไม่มี snapshot ⇒ ได้ค่าเท่าเดิมเป๊ะ)
+        var issuerBranch = ResolveIssuerBranch(doc, company, isEn);
+
         return DocumentIssuerIdentity.Resolve(
             doc.DocumentType, title, isEn,
             company.Name, company.NameEn, company.TaxId,
-            string.IsNullOrWhiteSpace(company.TaxId)
-                ? null : FormatBranch(company.BranchCode, company.BranchName, lang),
-            addr, company.Phone, company.Email,
+            // ไม่มีเลขผู้เสียภาษี = ไม่ใช่ผู้ประกอบการจด VAT → ไม่ต้องติดป้ายสาขา
+            string.IsNullOrWhiteSpace(company.TaxId) ? null : issuerBranch.Label,
+            // ที่อยู่สาขา (ถ้าสาขากรอกไว้) ชนะที่อยู่บริษัท — ป.86/2542 กำหนดให้
+            // ที่อยู่บนใบกำกับเป็นที่ตั้งสถานประกอบการที่ออกใบ ไม่ใช่สำนักงานใหญ่เสมอไป
+            issuerBranch.Address ?? companyAddr,
+            issuerBranch.Phone ?? company.Phone,
+            issuerBranch.Email ?? company.Email,
             settings?.LogoPath, settings?.LogoUrl, settings?.PrimaryColor, view);
+    }
+
+    /// <summary>สถานประกอบการผู้ออกเอกสารใบนี้ — ทางผ่านเดียวจาก entity ไปยัง
+    /// <see cref="DocumentIssuerBranch"/> (renderer/e-Tax/รายงาน ต้องเรียกตัวนี้
+    /// ห้ามอ่าน <c>company.BranchCode</c> เองอีก)</summary>
+    internal static IssuerBranch ResolveIssuerBranch(Document doc, Company company, bool isEnglish)
+    {
+        var br = doc.Branch;
+        var view = br == null || br.IsDeleted ? null : new DocumentBranchView(
+            br.TaxBranchCode, br.Name, br.NameEn,
+            // ที่อยู่ "ทั้งชุดหรือไม่ใช้เลย" — สาขาที่ยังไม่กรอกที่อยู่ใช้ของบริษัทตามเดิม
+            DocumentIssuerBranch.UseBranchAddress(br.Address)
+                ? ThaiAddressFormatter.Format(
+                    br.Address, null, null, null, null,
+                    br.SubDistrict, br.District, br.Province, br.PostalCode)
+                : null,
+            br.Phone, br.Email);
+
+        return DocumentIssuerBranch.Resolve(
+            doc.IssuerBranchCode, view, company.BranchCode, company.BranchName, isEnglish);
     }
 
     internal static string ComputeDocumentTitle(Document doc, DocumentTemplate template, CompanySettings? settings, string lang)
@@ -1575,9 +1605,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             // §86/4 + ประกาศฯ 199: ต้องระบุสาขา (00000 = สำนักงานใหญ่). เดิมไม่แสดง.
             // แสดงสาขาเฉพาะเมื่อมีเลขภาษี (สาขาเป็นเรื่องผู้จด VAT) — ตรงกับ native
             // renderer ไม่ให้บุคคล/กิจการไม่มีเลขภาษีขึ้น "สำนักงานใหญ่" เกินจำเป็น
-            var brc = string.IsNullOrWhiteSpace(company.TaxId)
+            // ป้ายสาขามาจาก resolver กลาง (issuer.BranchLabel) — เดิมอ่าน
+            // company.BranchCode ตรง ๆ ⇒ ใบที่ออกจากสาขาย่อยพิมพ์รหัสสำนักงานใหญ่ผิด
+            var brc = string.IsNullOrWhiteSpace(issuer.BranchLabel)
                 ? ""
-                : $" ({WebUtility.HtmlEncode(FormatBranch(company.BranchCode, company.BranchName, lang))})";
+                : $" ({WebUtility.HtmlEncode(issuer.BranchLabel!)})";
             sb.AppendLine($"<div>{L.TaxId}: {company.TaxId}{brc}</div>");
         }
         if (template.ShowCompanyPhone && !string.IsNullOrWhiteSpace(issuer.Phone)) sb.AppendLine($"<div>{L.Phone}: {WebUtility.HtmlEncode(issuer.Phone!)}</div>");
@@ -2765,43 +2797,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// 00000"); รหัสอื่น = "สาขาที่ {code}" (+ ชื่อสาขาในวงเล็บถ้ามี). รหัสว่าง/ทุก
     /// ตัวเป็นศูนย์ → ถือเป็นสำนักงานใหญ่ (ค่าปกติของกิจการที่มีที่เดียว). ใช้ทั้ง
     /// ผู้ออกเอกสาร (บริษัท) และคู่ค้า (ผู้ซื้อ/ผู้รับเงิน) บนใบกำกับ/ใบสำคัญ ฯลฯ.</summary>
+    /// ⚠️ ลอจิกจริงย้ายไปอยู่ที่ <see cref="TaxBranchCode.LabelWithName"/> — resolver
+    /// กลางตัวเดียวของระบบ (เดิมเขียนไว้ตรงนี้ที่เดียวแต่มีตัวคำนวณคู่แข่งอีก 3 ที่
+    /// ที่ให้ผลไม่ตรงกัน) เมธอดนี้เหลือไว้เป็นทางผ่านให้ call site เดิมทั้งหมด
     internal static string FormatBranch(string? branchCode, string? branchName, string lang)
-    {
-        var isEn = lang == "en";
-        var code = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
-        var name = branchName?.Trim();
-        var codeIsHeadOffice = code.Length == 0 || code.All(ch => ch == '0');
-
-        if (!codeIsHeadOffice)
-        {
-            var label = isEn ? $"Branch {code}" : $"สาขาที่ {code}";
-            // แนบชื่อสาขาถ้ามี — ยกเว้นเมื่อชื่อสาขาเป็นคำว่า "สำนักงานใหญ่/สนญ"
-            // (ค่า default ที่ฟอร์ม auto-เติม) ซึ่งขัดกับรหัสสาขาจริง → ไม่ต้องต่อท้าย
-            if (!string.IsNullOrWhiteSpace(name) && !IsHeadOfficeName(name))
-                label += $" ({name})";
-            return label;
-        }
-
-        // รหัสสาขา = 00000/ว่าง → ปกติ "สำนักงานใหญ่". แต่ถ้า "ชื่อสาขา" เป็น "เลขล้วน"
-        // ที่ไม่ใช่ศูนย์ทั้งหมด (เช่น "00001") = ผู้ใช้กรอกเลขสาขาผิดช่อง (ใส่ใน "ชื่อ
-        // สาขา" แทน "รหัสสาขา" ซึ่งฟอร์ม default ไว้ 00000) → ถือตามนั้น. เช็คเข้มด้วย
-        // regex เลขล้วนเพื่อกัน false-positive (เช่น "สำนักงานใหญ่ ชั้น 5" ไม่โดนแปลง).
-        if (!string.IsNullOrWhiteSpace(name)
-            && Regex.IsMatch(name, @"^0*\d{1,5}$") && name.Any(ch => ch != '0'))
-        {
-            var nd = new string(name.Where(char.IsDigit).ToArray());
-            return isEn ? $"Branch {nd}" : $"สาขาที่ {nd}";
-        }
-        return isEn ? "Head Office" : "สำนักงานใหญ่";
-    }
-
-    /// <summary>ชื่อสาขาที่แท้จริงหมายถึง "สำนักงานใหญ่" (ทุกสะกดที่พบบ่อย) — ใช้กัน
-    /// การต่อท้าย/แสดงชื่อ default ที่ขัดกับรหัสสาขา.</summary>
-    private static bool IsHeadOfficeName(string? name)
-    {
-        var n = name?.Trim();
-        return n is "สำนักงานใหญ่" or "สนญ" or "สนญ." or "สำนักงานใหญ" or "Head Office" or "HeadOffice" or "HO";
-    }
+        => TaxBranchCode.LabelWithName(branchCode, branchName, lang == "en");
 
     /// <summary>ส่วนต่อท้าย "สาขา" สำหรับหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ต่อ
     /// ท้ายชื่อคู่สัญญาแบบ inline (ไม่เพิ่มบรรทัด/ไม่กระทบ layout ฟอร์มราชการ).

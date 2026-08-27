@@ -88,6 +88,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     {
         var document = await _db.Documents
             .Include(d => d.Lines)
+            // สาขาผู้ออกใบ — ไม่ include แล้ว TXID/ที่อยู่ผู้ขายใน XML จะตกกลับไป
+            // เป็นของสำนักงานใหญ่เงียบ ๆ ทั้งที่ใบออกจากสาขา (§86/4 + ETDA)
+            .Include(d => d.Branch)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
@@ -261,8 +264,13 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 Status = EtaxStatus.Generated,
                 SellerName = company.Name,
                 SellerTaxId = company.TaxId,
-                SellerBranch = company.BranchCode,
-                SellerAddress = $"{company.Address} {company.SubDistrict} {company.District} {company.Province} {company.PostalCode}",
+                // สาขาผู้ออกใบ (snapshot ลง EtaxInvoice) — ต้องตรงกับที่อยู่ใน XML
+                SellerBranch = DocumentIssuerBranch.ResolveCode(
+                    document.IssuerBranchCode, document.Branch?.TaxBranchCode, company.BranchCode),
+                SellerAddress = document.Branch != null && !document.Branch.IsDeleted
+                    && DocumentIssuerBranch.UseBranchAddress(document.Branch.Address)
+                    ? $"{document.Branch.Address} {document.Branch.SubDistrict} {document.Branch.District} {document.Branch.Province} {document.Branch.PostalCode}"
+                    : $"{company.Address} {company.SubDistrict} {company.District} {company.Province} {company.PostalCode}",
                 BuyerName = document.Contact.Name,
                 BuyerTaxId = document.Contact.TaxId,
                 BuyerBranch = document.Contact.BranchCode,
@@ -762,13 +770,17 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var sellerTaxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId, isSeller: true);
         var buyerTaxIdSchemeId = DetermineTaxIdSchemeId(doc.Contact.TaxId,
             contactType: doc.Contact.ContactType);
-        var sellerTxId = ComposeTxId(company.TaxId, company.BranchCode, sellerTaxIdSchemeId);
+        // สาขาผู้ออกใบ — resolver กลาง (snapshot > ทะเบียนสาขา > Company.BranchCode)
+        // กิจการสาขาเดียว: doc.Branch = null ⇒ ได้ company.BranchCode เหมือนเดิมเป๊ะ
+        var sellerBranchCode = DocumentIssuerBranch.ResolveCode(
+            doc.IssuerBranchCode, doc.Branch?.TaxBranchCode, company.BranchCode);
+        var sellerTxId = ComposeTxId(company.TaxId, sellerBranchCode, sellerTaxIdSchemeId);
         var buyerTxId = ComposeTxId(doc.Contact.TaxId, doc.Contact.BranchCode, buyerTaxIdSchemeId);
 
         // Per Schematron TIV-SellerTradeParty-009..012: when CountryID=TH, seller MUST
         // have BuildingNumber, CityName (อำเภอ), CitySubDivisionName (ตำบล), CountrySubDivisionID
         // (province) and 5-digit PostcodeCode. Provide safe fallbacks if data missing.
-        var sellerParty = BuildSellerParty(ram, company);
+        var sellerParty = BuildSellerParty(ram, company, doc.Branch, sellerBranchCode);
 
         // Buyer rules are looser (TIV-BuyerTradeParty-007): structured OR unstructured
         // address acceptable. PostcodeCode required if CountryID=TH.
@@ -1043,43 +1055,64 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     /// All address fields required for CountryID=TH; provides "00" fallbacks where data
     /// missing so the document still validates structurally (user should fill company info).
     /// </summary>
-    private static XElement BuildSellerParty(XNamespace ram, Company company)
+    /// <param name="branch">สาขาที่ออกใบนี้ — null = กิจการสาขาเดียว (ใช้ค่าบนตัวบริษัท
+    /// เหมือนเดิมทุกช่อง)</param>
+    /// <param name="branchCode">รหัสสาขาที่ resolve แล้ว (snapshot &gt; ทะเบียน &gt; บริษัท)</param>
+    private static XElement BuildSellerParty(XNamespace ram, Company company, Branch? branch, string branchCode)
     {
         var taxIdSchemeId = DetermineTaxIdSchemeId(company.TaxId, isSeller: true);
-        var taxId = ComposeTxId(company.TaxId, company.BranchCode, taxIdSchemeId);
+        var taxId = ComposeTxId(company.TaxId, branchCode, taxIdSchemeId);
 
-        var postCode = NormalizePostcode(company.PostalCode, company.Address);
+        // ที่อยู่สถานประกอบการที่ออกใบ (ป.86/2542) — "ทั้งชุดหรือไม่ใช้เลย"
+        // ห้ามผสมช่องของสาขากับของบริษัท จะได้ที่อยู่ที่ไม่มีอยู่จริง
+        var useBranch = branch != null && !branch.IsDeleted
+            && DocumentIssuerBranch.UseBranchAddress(branch.Address);
+        var address     = useBranch ? branch!.Address     : company.Address;
+        var subDistrict = useBranch ? branch!.SubDistrict : company.SubDistrict;
+        var district    = useBranch ? branch!.District    : company.District;
+        var province    = useBranch ? branch!.Province    : company.Province;
+        var postalCode  = useBranch ? branch!.PostalCode  : company.PostalCode;
+        // Branch ไม่มีช่องแยกเลขที่/อาคาร/หมู่/ถนน → แกะจาก free-text ของสาขา
+        var buildingName = useBranch ? null : company.BuildingName;
+        var moo          = useBranch ? null : company.Moo;
+        var streetName   = useBranch ? null : company.StreetName;
+        var buildingNumberField = useBranch ? null : company.BuildingNumber;
+        var phone = useBranch ? (branch!.Phone ?? company.Phone) : company.Phone;
+        var email = useBranch ? (branch!.Email ?? company.Email) : company.Email;
+
+        var postCode = NormalizePostcode(postalCode, address);
         // Prefer the dedicated structured field; fall back to extracting from address text
-        var buildingNo = !string.IsNullOrEmpty(company.BuildingNumber)
-            ? company.BuildingNumber!
-            : (ExtractBuildingNumber(company.Address) ?? "0");
+        var buildingNo = !string.IsNullOrEmpty(buildingNumberField)
+            ? buildingNumberField!
+            : (ExtractBuildingNumber(address) ?? "0");
         // Compose a line-one address. ETDA has no dedicated Moo element so we
         // prepend "หมู่ X" to the street line — without this, provincial
         // sellers / buyers silently lose Moo from every e-Tax XML.
-        var streetLine = ComposeStreetLine(company.Moo, company.StreetName, company.Address);
+        var streetLine = ComposeStreetLine(moo, streetName, address);
 
         // ETDA XSD constrains CityName/CitySubDivisionName/CountrySubDivisionID to
         // numeric TISI 1099 codes (free-text Thai names FAIL XSD validation).
         // Lookup full TISI entry from embedded ThaiAdmin.csv when name+postcode match,
         // else fall back to province-prefix + "01" placeholders (still valid in enum).
-        var provinceCode = ThaiAdminCodes.ResolveProvinceCode(company.Province, postCode);
+        var provinceCode = ThaiAdminCodes.ResolveProvinceCode(province, postCode);
         var districtCode = ThaiAdminCodes.ResolveDistrictCode(
-            company.District, company.SubDistrict, postCode, provinceCode, company.Province);
+            district, subDistrict, postCode, provinceCode, province);
         var subDistrictCode = ThaiAdminCodes.ResolveSubDistrictCode(
-            company.SubDistrict, company.District, postCode, districtCode, company.Province);
+            subDistrict, district, postCode, districtCode, province);
 
         return new XElement(ram + "SellerTradeParty",
+            // ชื่อยังเป็น "ผู้ประกอบการจดทะเบียน" เสมอ — สาขาไม่ใช่นิติบุคคลแยก §86/4(2)
             new XElement(ram + "Name", company.Name),
             new XElement(ram + "SpecifiedTaxRegistration",
                 new XElement(ram + "ID",
                     new XAttribute("schemeID", taxIdSchemeId),
                     taxId)),
             // email + โทร (หลัง TaxRegistration ก่อน Address — ตาม TakeTime/ETDA)
-            BuildDefinedTradeContact(ram, company.Email, company.Phone),
+            BuildDefinedTradeContact(ram, email, phone),
             new XElement(ram + "PostalTradeAddress",
                 new XElement(ram + "PostcodeCode", postCode),
-                !string.IsNullOrEmpty(company.BuildingName)
-                    ? new XElement(ram + "BuildingName", company.BuildingName) : null,
+                !string.IsNullOrEmpty(buildingName)
+                    ? new XElement(ram + "BuildingName", buildingName) : null,
                 !string.IsNullOrEmpty(streetLine) ? new XElement(ram + "LineOne", streetLine) : null,
                 new XElement(ram + "CityName", districtCode),
                 new XElement(ram + "CitySubDivisionName", subDistrictCode),

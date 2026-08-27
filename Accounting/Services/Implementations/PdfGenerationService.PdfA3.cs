@@ -139,6 +139,11 @@ public partial class PdfGenerationService
             VatRate: l.VatRate,
             VatAmount: l.VatAmount)).ToList();
 
+        // สถานประกอบการที่ออกใบ — resolver กลางตัวเดียวกับ renderer เอกสารปกติ
+        // (กิจการสาขาเดียว: ได้ company.BranchCode/ที่อยู่บริษัทเหมือนเดิมเป๊ะ)
+        var issuerBranch = ResolveIssuerBranch(document, company, isEnglish: false);
+        var companyAddress = $"{company.Address ?? ""} {company.SubDistrict ?? ""} {company.District ?? ""} {company.Province ?? ""} {company.PostalCode ?? ""}".Trim();
+
         return new EtaxPdfMetadata(
             DocumentNumber: document.DocumentNumber,
             DocumentType: docTypeRoot,
@@ -146,13 +151,13 @@ public partial class PdfGenerationService
             XmlVersion: "v2.0",
             SellerName: etax.SellerName,
             SellerTaxId: etax.SellerTaxId,
-            SellerBranch: company.BranchCode ?? "00000",
-            SellerAddress: $"{company.Address ?? ""} {company.SubDistrict ?? ""} {company.District ?? ""} {company.Province ?? ""} {company.PostalCode ?? ""}".Trim(),
-            SellerPhone: company.Phone,
-            SellerEmail: company.Email,
+            SellerBranch: issuerBranch.Code,
+            SellerAddress: issuerBranch.Address ?? companyAddress,
+            SellerPhone: issuerBranch.Phone ?? company.Phone,
+            SellerEmail: issuerBranch.Email ?? company.Email,
             BuyerName: etax.BuyerName,
             BuyerTaxId: etax.BuyerTaxId,
-            BuyerBranch: document.Contact?.BranchCode ?? "00000",
+            BuyerBranch: TaxBranchCode.Normalize(document.Contact?.BranchCode),
             BuyerAddress: document.Contact?.Address,
             EtaxRefNumber: etax.EtaxRefNumber,
             DocumentDate: document.DocumentDate,

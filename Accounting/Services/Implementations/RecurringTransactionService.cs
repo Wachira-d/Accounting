@@ -452,6 +452,11 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // ขยะให้อีกชั้นอยู่แล้ว จึงส่งผ่านตรง ๆ ได้
                 DocumentLanguage: root.TryGetProperty("documentLanguage", out var dl)
                     && dl.ValueKind == JsonValueKind.String ? dl.GetString() : null,
+                // สาขาผู้ออกใบ — template เก่าไม่มี key นี้ → null = ใช้ค่าบริษัท
+                // ตามเดิมเป๊ะ. CreateDocumentAsync ตรวจว่าเป็นสาขาของบริษัทนี้อีกชั้น
+                BranchId: root.TryGetProperty("branchId", out var brEl)
+                    && brEl.ValueKind == JsonValueKind.String
+                    && Guid.TryParse(brEl.GetString(), out var brGuid) ? brGuid : null,
                 // flag หัวเอกสาร (policy "ทำงานตามหัวกระดาษ") — บิลรายเดือนแบบ
                 // "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" คือเคสหลักของ recurring ใน
                 // ไทย. template เก่าไม่มี key = false/null (พฤติกรรมเดิม).

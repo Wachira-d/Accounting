@@ -536,7 +536,10 @@ public partial class PdfGenerationService
         }
         if (t.ShowCompanyTaxId && !string.IsNullOrWhiteSpace(co.TaxId))
         {
-            var coBranch = FormatBranch(co.BranchCode, co.BranchName, "th");
+            // ป้ายสาขามาจาก resolver กลาง (issuer) — เดิมอ่าน co.BranchCode ตรง ๆ
+            // ⇒ ใบที่ออกจากสาขาย่อยพิมพ์รหัสของสำนักงานใหญ่ผิดตาม §86/4
+            // fallback ไว้ให้ call site ที่ยังไม่ส่ง issuer มา (พฤติกรรมเดิมทุกประการ)
+            var coBranch = issuer?.BranchLabel ?? FormatBranch(co.BranchCode, co.BranchName, L.IsEnglish ? "en" : "th");
             Line($"{L.TaxId}: {co.TaxId} ({coBranch})");
         }
         var phone = issuer?.Phone ?? co.Phone;

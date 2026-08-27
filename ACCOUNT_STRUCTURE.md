@@ -133,6 +133,25 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 > ⇒ เลือกสาขาในตัวกรองแล้วได้ผลว่าง = ถูกต้องตามข้อมูลจริง (ดีกว่าคืนทุกแถวแบบเดิม
 > ซึ่งอ่านว่า "สาขานี้มีรายการทุกใบ")
 
+### 3.1b เอกสารออกจากสาขาไหน — เฟส 1 ✅
+
+`Document.BranchId` + `Document.IssuerBranchCode` (snapshot 5 หลักตอนอนุมัติ)
++ resolver กลาง `Helpers/DocumentIssuerBranch.cs`
+→ **รายละเอียดทั้งหมดอยู่ที่ `DOCUMENT_FLOW.md` §6.2d** (flow เอกสารเป็น ground truth)
+
+สรุปที่กระทบชั้นโครงสร้างบัญชี:
+
+| ผลกระทบ | สถานะ |
+| --- | --- |
+| รหัสสาขา + ที่อยู่บนกระดาษ (HTML + QuestPDF) | ✅ ผ่าน `IssuerIdentity.BranchLabel` ตัวเดียว |
+| TXID + `SellerTradeParty` ของ e-Tax XML | ✅ `ComposeTxId(taxId, สาขาที่ resolve, …)` |
+| ตัวเลือกสาขาบนฟอร์มออกเอกสาร | ✅ โผล่เมื่อมีสาขาใช้งาน ≥ 2 · ค่าเริ่มต้น = ตามค่าบริษัท |
+| เอกสารลูกสืบทอดสาขา (convert/clone/settlement/CN/recurring) | ✅ ครบ 5 ทาง |
+| **เลขที่เอกสารแยกชุดต่อสาขา** | 📋 เฟส 2 — ติด unique constraint ระดับฐานบน `NumberSeries` |
+| **JE stamp `BranchId`** → งบ/รายงานต่อสาขา | 📋 เฟส 2 |
+| **รายงานภาษีซื้อ/ขาย §87 + ภ.พ.30 แยกสาขา** | 📋 เฟส 2 (`TaxReport` ก็มี unique constraint ที่ต้องขยาย) |
+| ผู้ใช้ผูกสาขา · POS/API key ต่อสาขา · คลังต่อสาขา | 📋 เฟส 3 |
+
 ### 3.2 ออกแบบใหม่ (ยังไม่ทำ) 📋
 
 ```csharp
@@ -527,7 +546,11 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-27 (rev 15 — **§3.1a ทะเบียนสาขา เฟส 0 ✅_
+_Last verified against codebase: 2026-08-27 (rev 16 — **§3.1b เอกสารออกจากสาขาไหน_
+_เฟส 1 ✅**: Document.BranchId + IssuerBranchCode snapshot + resolver กลาง →_
+_รหัสสาขา/ที่อยู่บน renderer ทั้งสองตัว + TXID e-Tax + สืบทอดเอกสารลูก 5 ทาง_
+_(รายละเอียดที่ DOCUMENT_FLOW.md §6.2d));_
+_rev 15 — **§3.1a ทะเบียนสาขา เฟส 0 ✅_
 _ลงโค้ดจริง**: CRUD ครบ + echo ทุกฟิลด์ + ด่านรหัสสรรพากร/สำนักงานใหญ่ + ปลด gate_
 _แพ็กเกจบน `/dimensions/branches` + เมนูในหมวดตั้งค่า + `Helpers/TaxBranchCode.cs`_
 _resolver กลาง (แทนสูตรที่กระจาย 3 ที่) + แก้ตัวกรองสาขาในสมุดรายวันที่ไม่เคยกรอง);_
