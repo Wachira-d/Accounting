@@ -232,13 +232,18 @@ public class RolePermissionService : IRolePermissionService
             catch { /* malformed — skip */ }
         }
 
+        // ธง "แอดมินแพลตฟอร์ม" แยกจาก "เจ้าของบริษัท" เด็ดขาด — เมนูที่แสดงข้อมูล
+        // ข้ามบริษัทต้องใช้ตัวนี้ (ดูหมายเหตุใน MyPermissionsResponse)
+        var isPlatformAdmin = user?.IsSystemAdmin == true;
+
         if (isOwnerOrAdmin)
         {
             return new MyPermissionsResponse(
                 cu.Role.ToString(),
                 true,
                 new List<string>(),
-                ownerHiddenMenuIds);
+                ownerHiddenMenuIds,
+                isPlatformAdmin);
         }
 
         if (cu.CompanyRoleId == null)
@@ -251,7 +256,8 @@ public class RolePermissionService : IRolePermissionService
                 cu.Role.ToString(),
                 false,
                 new List<string> { "*" },
-                ownerHiddenMenuIds);
+                ownerHiddenMenuIds,
+                isPlatformAdmin);
         }
 
         // CompanyRole assigned → STRICT mode. An empty granted list now
@@ -268,7 +274,7 @@ public class RolePermissionService : IRolePermissionService
             .Select(r => r.Name)
             .FirstOrDefaultAsync() ?? cu.Role.ToString();
 
-        return new MyPermissionsResponse(roleName, false, perms, ownerHiddenMenuIds);
+        return new MyPermissionsResponse(roleName, false, perms, ownerHiddenMenuIds, isPlatformAdmin);
     }
 
     public async Task SeedDefaultRolesAsync(Guid companyId)

@@ -960,10 +960,12 @@
         fd.append('file', file);
         const token = localStorage.getItem('token');
         try {
-          // Reuse the shared image-upload endpoint; type=logo keeps the
-          // transparent PNG intact (no square crop). Returns a relative
-          // /uploads URL the PDF renderer resolves to a physical path.
-          const r = await fetch('/api/admin/upload-image?type=logo', {
+          // endpoint ของ **บริษัท** (ไม่ใช่ของแอดมิน) — เดิมยิงไป
+          // /api/admin/upload-image ซึ่งบังคับ role SystemAdmin ⇒ ลูกค้าอัปโหลด
+          // ตราประทับไม่ได้เลย (403) ทั้งที่เป็นฟีเจอร์ของเขาเอง
+          // เก็บแยกโฟลเดอร์ต่อบริษัท + ไม่ crop สี่เหลี่ยม (ตราประทับโปร่งใส)
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/settings/stamp`, {
             method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
           const j = await r.json();
           if (!j.success) throw new Error(j.message || 'อัพโหลดไม่สำเร็จ');

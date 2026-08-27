@@ -115,7 +115,10 @@
     const Page = {
       data: null,
 
-      init() {
+      async init() {
+        // หน้านี้แสดงข้อมูล **ข้ามบริษัท** — เข้าได้เฉพาะแอดมินแพลตฟอร์ม
+        // (ด่านจริงอยู่ที่ API ที่บังคับ role SystemAdmin; ตรงนี้กันการเดา URL)
+        if (!(await Layout.requirePlatformAdmin())) return;
         const to = new Date();
         const from = new Date(); from.setDate(from.getDate() - 29);
         document.getElementById('fTo').value = this.iso(to);
