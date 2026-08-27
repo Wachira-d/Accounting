@@ -63,7 +63,8 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | Entity | ไฟล์ | หมายเหตุ |
 | --- | --- | --- |
 | `Company` | `Models/Entities/Company.cs` | tenant; มี `BranchCode` (สำนักงานใหญ่ 00000) |
-| `Branch` | `Models/Entities/DimensionalAccounting.cs:37` | `TaxBranchCode`, `IsHeadOffice`, ที่อยู่ครบ; `BranchId` ใช้บน JournalEntry/Payroll แล้ว |
+| `Branch` | `Models/Entities/DimensionalAccounting.cs:37` | `TaxBranchCode`, `IsHeadOffice`, ที่อยู่ครบ; `BranchId` ใช้บน JournalEntry/Payroll แล้ว — ทะเบียน + API + หน้าตั้งค่า ✅ (§3.1a) |
+| `TaxBranchCode` (resolver) | `Helpers/TaxBranchCode.cs` | ✅ ตัวเดียวของระบบ: `TryNormalize` (เติม 0 ให้ครบ 5 หลัก) · `Label`/`LabelWithName` ("สำนักงานใหญ่" / "สาขาที่ 3") ตามประกาศอธิบดีฯ ฉบับที่ 199 |
 | `AccountSubscription` | `Models/Entities/AccountSubscription.cs` | แพลนครอบหลายบริษัท **แต่ผูก `OwnerUserId` (คน)** — จุดอ่อนที่ §8 แก้ |
 | `Subscription` (ต่อบริษัท) | `Models/Entities/Subscription.cs` | ชนะ AccountSubscription เมื่อบริษัทมีของตัวเอง (resolution order §6.3) |
 | `ConsolidationGroup/Member` | `DimensionalAccounting.cs:122` | งบรวม + %ถือหุ้น — **เรื่องการเงิน แยกจาก billing เด็ดขาด** |
@@ -110,6 +111,27 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 > `Subscription.AccountSubscriptionId` เหมือนเดิม 100% และยังไม่มี call site ไหน
 > เรียก `RecordAsync` (จะต่อพร้อม `/api/v1` ในขั้นถัดไป). ฟีเจอร์ทุกตัว default
 > **ปิด** → ต่อให้ต่อ endpoint แล้วก็ยังไม่มีใครถูกคิดเงินจนกว่าจะกดเปิดเอง
+
+### 3.1a ทะเบียนสาขา — เฟส 0 ✅ (ตั้งค่าเท่านั้น ยังไม่แตะเอกสาร)
+
+**หลักการที่ห้ามหลุด: กิจการสาขาเดียวต้องไม่รู้สึกถึงความเปลี่ยนแปลงใด ๆ**
+ไม่มีแถวใน `Branches` = ระบบใช้ชื่อ/ที่อยู่/`Company.BranchCode` เหมือนเดิมทุกจุด
+ไม่มีที่ไหนบังคับให้สร้างสาขาก่อนถึงจะทำงานได้
+
+| ของที่ลง | ที่อยู่ | หมายเหตุ |
+| --- | --- | --- |
+| CRUD ครบ | `Controllers/DimensionController.cs` (`/dimensions/branches`) | เพิ่ม `DELETE` + `?includeInactive=` |
+| `BranchResponse` echo ครบทุกฟิลด์ | `Models/DTOs/Dimension/DimensionDtos.cs` | เดิมคืนแค่ 10 ช่อง ตกตำบล/อำเภอ/ไปรษณีย์/โทร/อีเมล ⇒ ฟอร์มแก้ไข prefill ไม่ได้ |
+| `UpdateBranchRequest` ครอบทุกช่อง | ไฟล์เดียวกัน | เดิมแก้ที่อยู่แยกส่วน/รหัสภายใน/สถานะสำนักงานใหญ่ **ไม่ได้เลย** (กดบันทึกแล้วเงียบ) |
+| ด่านความถูกต้อง | `Services/Implementations/DimensionalAccountingService.cs` | รหัสสรรพากรไม่ซ้ำ · `00000` สงวนให้สำนักงานใหญ่ · สำนักงานใหญ่มีได้แห่งเดียว (ตั้งใหม่ปลดของเดิมอัตโนมัติ) · ปิดสาขาสุดท้าย/สำนักงานใหญ่ไม่ได้ · ลบได้เฉพาะสาขาที่ยังไม่มี JE อ้างถึง (พ.ร.บ.การบัญชี ม.10) |
+| ปลด gate แพ็กเกจ | `Middleware/SubscriptionMiddleware.cs` (`FeatureExemptRoutes`) | `/dimensions/branches` เป็นข้อบังคับ §86/4 ไม่ใช่ของขายเพิ่ม — ส่วน `/dimensions` (มิติ/ศูนย์ต้นทุน) ยัง gate ด้วย `CostCenter` เหมือนเดิม |
+| หน้าตั้งค่า | `wwwroot/pages/dimensions.html` (แท็บสาขา) | ฟอร์มครบตาม §86/4 · ปุ่มแก้ไขดึงค่าเดิมมาเติมทุกช่อง · เห็นสาขาที่ปิดใช้งานเพื่อเปิดกลับได้ |
+| เมนู | `wwwroot/js/layout.js` | เพิ่ม `branches` ในหมวด "ตั้งค่า & ผู้ใช้" → `/pages/dimensions.html?tab=branches` (**ไฟล์เดิม** — ลิงก์/บุ๊กมาร์กเก่าใช้ได้ทั้งหมด); เมนู `dimensions` เดิมเหลือเฉพาะมิติ |
+| ตัวกรองสาขาในสมุดรายวัน | `Services/Implementations/AccountingService.cs` | เดิมกรองผ่าน `Branch.DimensionId` ที่ **ไม่มีโค้ดตรงไหนเซ็ตเลย** ⇒ ข้ามเงื่อนไขทั้งก้อน คืนทุกแถว (silent no-op ตั้งแต่เขียนมา); เปลี่ยนมากรอง `BranchId` บนหัว JE/บรรทัด ให้ตรงกับ GL/งบทดลอง/งบกำไรขาดทุน |
+
+> ผลข้างเคียงที่ตั้งใจ: ตอนนี้ยังไม่มีจุดไหน **stamp** `BranchId` ลง JE (มาในเฟส 2)
+> ⇒ เลือกสาขาในตัวกรองแล้วได้ผลว่าง = ถูกต้องตามข้อมูลจริง (ดีกว่าคืนทุกแถวแบบเดิม
+> ซึ่งอ่านว่า "สาขานี้มีรายการทุกใบ")
 
 ### 3.2 ออกแบบใหม่ (ยังไม่ทำ) 📋
 
@@ -505,7 +527,11 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-25 (rev 14 — **§8.2 ความยินยอม PDPA ม.19_
+_Last verified against codebase: 2026-08-27 (rev 15 — **§3.1a ทะเบียนสาขา เฟส 0 ✅_
+_ลงโค้ดจริง**: CRUD ครบ + echo ทุกฟิลด์ + ด่านรหัสสรรพากร/สำนักงานใหญ่ + ปลด gate_
+_แพ็กเกจบน `/dimensions/branches` + เมนูในหมวดตั้งค่า + `Helpers/TaxBranchCode.cs`_
+_resolver กลาง (แทนสูตรที่กระจาย 3 ที่) + แก้ตัวกรองสาขาในสมุดรายวันที่ไม่เคยกรอง);_
+_rev 14 — **§8.2 ความยินยอม PDPA ม.19_
 _ตอนสมัคร ✅ ลงโค้ดจริง**: ด่าน + PdpaConsentRecord ทุกทางสมัคร · หน้า_
 _terms.html/privacy.html + GET /api/legal/policy);_
 _rev 13 — **§8.2 auth: LINE Login ✅_

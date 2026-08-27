@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Dimension;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -248,19 +249,74 @@ public class DimensionalAccountingService : IDimensionalAccountingService
     }
 
     // ===== Branches =====
+    //
+    // ⚠️ กติกาสำคัญ: กิจการ **สาขาเดียว** ไม่ต้องสร้าง Branch เลยก็ทำงานได้ครบ
+    // (ไม่มีแถวในตารางนี้ = ใช้ที่อยู่/รหัสสาขาของบริษัทตามเดิม) — โค้ดทุกเส้นทาง
+    // ที่แตะสาขาต้องทนกับ "ไม่มีสาขาสักแถว" ห้ามบังคับให้สร้างก่อนถึงจะใช้งานได้
+
+    /// <summary>
+    /// จัดรูป + ตรวจรหัสสาขาสรรพากรให้เข้ากับสถานะ "สำนักงานใหญ่"
+    /// (รูปแบบ 5 หลักอยู่ใน resolver กลาง <see cref="TaxBranchCode"/> — ห้ามเขียนซ้ำ)
+    /// </summary>
+    private static string? NormalizeTaxBranchCode(string? raw, bool isHeadOffice)
+    {
+        if (!TaxBranchCode.TryNormalize(raw, out var code, out var error))
+            throw new InvalidOperationException(error);
+
+        if (code == null)
+            // สำนักงานใหญ่มีค่ามาตรฐานอยู่แล้ว — เติมให้ ผู้ใช้ไม่ต้องรู้ว่าต้องเป็น 00000
+            return isHeadOffice ? TaxBranchCode.HeadOffice : null;
+
+        if (isHeadOffice && code != TaxBranchCode.HeadOffice)
+            throw new InvalidOperationException(
+                "สาขาที่ตั้งเป็น \"สำนักงานใหญ่\" ต้องใช้รหัสสาขาสรรพากร 00000");
+
+        if (!isHeadOffice && code == TaxBranchCode.HeadOffice)
+            throw new InvalidOperationException(
+                "รหัส 00000 สงวนไว้สำหรับสำนักงานใหญ่ — สาขาย่อยต้องใช้ 00001 ขึ้นไป");
+
+        return code;
+    }
+
+    /// <summary>สำนักงานใหญ่มีได้แค่แห่งเดียว — ตั้งใหม่แล้วปลดของเดิมให้อัตโนมัติ</summary>
+    private async Task DemoteOtherHeadOfficesAsync(Guid companyId, Guid keepId)
+    {
+        var others = await _db.Set<Branch>()
+            .Where(b => b.CompanyId == companyId && b.IsHeadOffice && b.Id != keepId)
+            .ToListAsync();
+        foreach (var o in others)
+        {
+            o.IsHeadOffice = false;
+            if (o.TaxBranchCode == "00000") o.TaxBranchCode = null;   // 00000 ต้องว่างไว้ให้สำนักงานใหญ่ตัวจริง
+        }
+    }
 
     public async Task<BranchResponse> CreateBranchAsync(Guid companyId, CreateBranchRequest request)
     {
+        var code = (request.Code ?? "").Trim();
+        if (code.Length == 0) throw new InvalidOperationException("กรุณากรอกรหัสสาขา");
+        if (string.IsNullOrWhiteSpace(request.Name)) throw new InvalidOperationException("กรุณากรอกชื่อสาขา");
+
         var existing = await _db.Set<Branch>()
-            .AnyAsync(b => b.CompanyId == companyId && b.Code == request.Code);
+            .AnyAsync(b => b.CompanyId == companyId && b.Code == code);
         if (existing)
-            throw new InvalidOperationException($"รหัสสาขา {request.Code} ซ้ำ");
+            throw new InvalidOperationException($"รหัสสาขา {code} ซ้ำ");
+
+        var taxCode = NormalizeTaxBranchCode(request.TaxBranchCode, request.IsHeadOffice);
+        if (taxCode != null)
+        {
+            var dupTax = await _db.Set<Branch>()
+                .AnyAsync(b => b.CompanyId == companyId && b.TaxBranchCode == taxCode);
+            if (dupTax)
+                throw new InvalidOperationException(
+                    $"รหัสสาขาสรรพากร {taxCode} ถูกใช้กับสาขาอื่นแล้ว — เลขนี้ต้องไม่ซ้ำ (§86/4)");
+        }
 
         var branch = new Branch
         {
             CompanyId = companyId,
-            Code = request.Code,
-            Name = request.Name,
+            Code = code,
+            Name = request.Name.Trim(),
             NameEn = request.NameEn,
             Address = request.Address,
             SubDistrict = request.SubDistrict,
@@ -269,22 +325,30 @@ public class DimensionalAccountingService : IDimensionalAccountingService
             PostalCode = request.PostalCode,
             Phone = request.Phone,
             Email = request.Email,
-            TaxBranchCode = request.TaxBranchCode,
+            TaxBranchCode = taxCode,
             IsHeadOffice = request.IsHeadOffice,
             ManagerName = request.ManagerName
         };
 
         _db.Set<Branch>().Add(branch);
+        if (request.IsHeadOffice)
+            await DemoteOtherHeadOfficesAsync(companyId, branch.Id);
         await _db.SaveChangesAsync();
 
         return MapToBranchResponse(branch);
     }
 
-    public async Task<List<BranchResponse>> GetBranchesAsync(Guid companyId)
+    /// <param name="includeInactive">
+    /// true = รวมสาขาที่ปิดใช้งาน — จำเป็นสำหรับ **หน้าตั้งค่า** ไม่งั้นสาขาที่เผลอ
+    /// ปิดจะหายจากจอถาวร เปิดกลับไม่ได้เลย (default false เพื่อไม่เปลี่ยนพฤติกรรม
+    /// ของตัวเลือกสาขาในหน้าอื่นที่เรียกอยู่แล้ว)
+    /// </param>
+    public async Task<List<BranchResponse>> GetBranchesAsync(Guid companyId, bool includeInactive = false)
     {
         var branches = await _db.Set<Branch>()
-            .Where(b => b.CompanyId == companyId && b.IsActive)
-            .OrderBy(b => b.Code)
+            .Where(b => b.CompanyId == companyId && (includeInactive || b.IsActive))
+            .OrderByDescending(b => b.IsHeadOffice)
+            .ThenBy(b => b.Code)
             .ToListAsync();
 
         return branches.Select(MapToBranchResponse).ToList();
@@ -296,18 +360,99 @@ public class DimensionalAccountingService : IDimensionalAccountingService
             .FirstOrDefaultAsync(b => b.Id == branchId && b.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบสาขา");
 
-        if (request.Name != null) branch.Name = request.Name;
-        if (request.NameEn != null) branch.NameEn = request.NameEn;
-        if (request.Address != null) branch.Address = request.Address;
-        if (request.Phone != null) branch.Phone = request.Phone;
-        if (request.Email != null) branch.Email = request.Email;
-        if (request.TaxBranchCode != null) branch.TaxBranchCode = request.TaxBranchCode;
-        if (request.ManagerName != null) branch.ManagerName = request.ManagerName;
-        if (request.IsActive.HasValue) branch.IsActive = request.IsActive.Value;
+        if (request.Code != null)
+        {
+            var code = request.Code.Trim();
+            if (code.Length == 0) throw new InvalidOperationException("รหัสสาขาว่างไม่ได้");
+            if (code != branch.Code)
+            {
+                var dup = await _db.Set<Branch>()
+                    .AnyAsync(b => b.CompanyId == companyId && b.Code == code && b.Id != branchId);
+                if (dup) throw new InvalidOperationException($"รหัสสาขา {code} ซ้ำ");
+                branch.Code = code;
+            }
+        }
+
+        if (request.Name != null)
+        {
+            if (request.Name.Trim().Length == 0) throw new InvalidOperationException("ชื่อสาขาว่างไม่ได้");
+            branch.Name = request.Name.Trim();
+        }
+        if (request.NameEn != null) branch.NameEn = Blank(request.NameEn);
+        if (request.Address != null) branch.Address = Blank(request.Address);
+        if (request.SubDistrict != null) branch.SubDistrict = Blank(request.SubDistrict);
+        if (request.District != null) branch.District = Blank(request.District);
+        if (request.Province != null) branch.Province = Blank(request.Province);
+        if (request.PostalCode != null) branch.PostalCode = Blank(request.PostalCode);
+        if (request.Phone != null) branch.Phone = Blank(request.Phone);
+        if (request.Email != null) branch.Email = Blank(request.Email);
+        if (request.ManagerName != null) branch.ManagerName = Blank(request.ManagerName);
+
+        // สำนักงานใหญ่ + รหัสสรรพากร ต้องตรวจคู่กัน (00000 ผูกกับสำนักงานใหญ่เสมอ)
+        var willBeHead = request.IsHeadOffice ?? branch.IsHeadOffice;
+        if (request.TaxBranchCode != null || request.IsHeadOffice.HasValue)
+        {
+            var taxCode = NormalizeTaxBranchCode(request.TaxBranchCode ?? branch.TaxBranchCode, willBeHead);
+            if (taxCode != null && taxCode != branch.TaxBranchCode)
+            {
+                var dupTax = await _db.Set<Branch>()
+                    .AnyAsync(b => b.CompanyId == companyId && b.TaxBranchCode == taxCode && b.Id != branchId);
+                if (dupTax)
+                    throw new InvalidOperationException(
+                        $"รหัสสาขาสรรพากร {taxCode} ถูกใช้กับสาขาอื่นแล้ว — เลขนี้ต้องไม่ซ้ำ (§86/4)");
+            }
+            branch.TaxBranchCode = taxCode;
+            branch.IsHeadOffice = willBeHead;
+            if (willBeHead) await DemoteOtherHeadOfficesAsync(companyId, branchId);
+        }
+
+        if (request.IsActive.HasValue && request.IsActive.Value != branch.IsActive)
+        {
+            if (!request.IsActive.Value)
+            {
+                // ปิดสาขาสุดท้ายที่ยังเปิดอยู่ = เอกสารที่ผูกสาขาหาที่ออกไม่เจอ → กันไว้
+                var otherActive = await _db.Set<Branch>()
+                    .CountAsync(b => b.CompanyId == companyId && b.IsActive && b.Id != branchId);
+                if (otherActive == 0)
+                    throw new InvalidOperationException(
+                        "ปิดสาขาสุดท้ายไม่ได้ — ถ้าไม่ต้องการแยกสาขาแล้ว ให้ลบสาขาทิ้งทั้งหมดแทน");
+                if (branch.IsHeadOffice)
+                    throw new InvalidOperationException(
+                        "ปิดสำนักงานใหญ่ไม่ได้ — ย้ายสถานะสำนักงานใหญ่ไปสาขาอื่นก่อน");
+            }
+            branch.IsActive = request.IsActive.Value;
+        }
 
         await _db.SaveChangesAsync();
         return MapToBranchResponse(branch);
     }
+
+    /// <summary>
+    /// ลบสาขา — ได้เฉพาะสาขาที่ยัง "ไม่เคยถูกใช้" เท่านั้น
+    /// สาขาที่มีรายการบัญชีอ้างถึงแล้วห้ามลบ (รายงานย้อนหลังจะหาต้นทางไม่เจอ +
+    /// พ.ร.บ.การบัญชี ม.10 ต้องเก็บ 5 ปี) → ให้ปิดใช้งานแทน
+    /// </summary>
+    public async Task DeleteBranchAsync(Guid companyId, Guid branchId)
+    {
+        var branch = await _db.Set<Branch>()
+            .FirstOrDefaultAsync(b => b.Id == branchId && b.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบสาขา");
+
+        var usedByEntry = await _db.JournalEntries
+            .AnyAsync(j => j.CompanyId == companyId && j.BranchId == branchId);
+        var usedByLine = await _db.JournalEntryLines
+            .AnyAsync(l => l.BranchId == branchId && l.JournalEntry.CompanyId == companyId);
+        if (usedByEntry || usedByLine)
+            throw new InvalidOperationException(
+                "ลบไม่ได้ — สาขานี้มีรายการบัญชีอ้างถึงแล้ว (ต้องเก็บไว้ตาม พ.ร.บ.การบัญชี ม.10) " +
+                "ถ้าเลิกใช้สาขานี้ ให้เอาเครื่องหมาย \"ใช้งาน\" ออกแทน");
+
+        _db.Set<Branch>().Remove(branch);
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>"" จากฟอร์ม = ผู้ใช้ตั้งใจล้างค่า → เก็บเป็น null ไม่ใช่สตริงว่าง</summary>
+    private static string? Blank(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
     // ===== Mapping Helpers =====
 
@@ -316,7 +461,10 @@ public class DimensionalAccountingService : IDimensionalAccountingService
             d.Description, d.ManagerName, d.AnnualBudget, d.IsActive,
             d.Children?.Select(MapToDimensionResponse).ToList());
 
+    // echo **ทุกฟิลด์ที่รับเข้า** — ไม่งั้นฟอร์มแก้ไข prefill ไม่ได้ แล้วผู้ใช้
+    // กดบันทึกทับด้วยค่าว่างโดยไม่รู้ตัว (defect class "เก็บแล้วต้อง echo กลับ")
     private static BranchResponse MapToBranchResponse(Branch b) =>
-        new(b.Id, b.Code, b.Name, b.NameEn, b.Address, b.Province,
-            b.TaxBranchCode, b.IsHeadOffice, b.IsActive, b.ManagerName);
+        new(b.Id, b.Code, b.Name, b.NameEn, b.Address, b.SubDistrict, b.District,
+            b.Province, b.PostalCode, b.Phone, b.Email, b.TaxBranchCode,
+            b.IsHeadOffice, b.IsActive, b.ManagerName);
 }

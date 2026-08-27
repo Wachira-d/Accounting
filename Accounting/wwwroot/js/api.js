@@ -737,9 +737,12 @@ const API = {
       deleteDimension: (id) => API.del(`${base}/dimensions/${id}`),
       getDimensionSummary: () => API.get(`${base}/dimensions/summary`),
       getDimensionPnl: (id) => API.get(`${base}/dimensions/${id}/pnl`),
-      getBranches: () => API.get(`${base}/dimensions/branches`),
+      // includeInactive = true เฉพาะหน้าตั้งค่า (ต้องเห็นสาขาที่ปิดไว้เพื่อเปิดกลับ);
+      // ตัวเลือกสาขาในหน้าอื่นเรียกแบบไม่ส่ง = ได้เฉพาะสาขาที่ใช้งานอยู่เหมือนเดิม
+      getBranches: (includeInactive = false) => API.get(`${base}/dimensions/branches${includeInactive ? '?includeInactive=true' : ''}`),
       createBranch: (d) => API.post(`${base}/dimensions/branches`, d),
       updateBranch: (id, d) => API.put(`${base}/dimensions/branches/${id}`, d),
+      deleteBranch: (id) => API.del(`${base}/dimensions/branches/${id}`),
       // Intercompany
       getIntercompanyTxns: (q = '') => API.get(`${base}/intercompany${q}`),
       getIntercompanyTxn: (id) => API.get(`${base}/intercompany/${id}`),

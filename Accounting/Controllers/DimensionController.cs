@@ -57,11 +57,16 @@ public class DimensionController : ControllerBase
     public async Task<ActionResult<ApiResponse<BranchResponse>>> CreateBranch(Guid companyId, [FromBody] CreateBranchRequest request)
         => StatusCode(201, new ApiResponse<BranchResponse>(true, await _service.CreateBranchAsync(companyId, request)));
 
+    /// <param name="includeInactive">หน้าตั้งค่าส่งมา true — ไม่งั้นสาขาที่ปิดใช้งานหายจากจอ เปิดกลับไม่ได้</param>
     [HttpGet("branches")]
-    public async Task<ActionResult<ApiResponse<List<BranchResponse>>>> GetBranches(Guid companyId)
-        => Ok(new ApiResponse<List<BranchResponse>>(true, await _service.GetBranchesAsync(companyId)));
+    public async Task<ActionResult<ApiResponse<List<BranchResponse>>>> GetBranches(Guid companyId, [FromQuery] bool includeInactive = false)
+        => Ok(new ApiResponse<List<BranchResponse>>(true, await _service.GetBranchesAsync(companyId, includeInactive)));
 
     [HttpPut("branches/{branchId:guid}")]
     public async Task<ActionResult<ApiResponse<BranchResponse>>> UpdateBranch(Guid companyId, Guid branchId, [FromBody] UpdateBranchRequest request)
         => Ok(new ApiResponse<BranchResponse>(true, await _service.UpdateBranchAsync(companyId, branchId, request)));
+
+    [HttpDelete("branches/{branchId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteBranch(Guid companyId, Guid branchId)
+    { await _service.DeleteBranchAsync(companyId, branchId); return NoContent(); }
 }

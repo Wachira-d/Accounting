@@ -252,10 +252,10 @@ public class DocumentBrandController : ControllerBase
         }));
     }
 
+    // เดิมคำนวณเอง → ได้ "สาขาที่ 00003" (เลขศูนย์นำหน้าติดมาด้วย) ไม่ตรงถ้อยคำ
+    // ตามประกาศอธิบดีฯ ฉบับที่ 199 — ย้ายไปใช้ resolver กลางตัวเดียวทั้งระบบ
     private static string FormatBranchLabel(string? code, string? name)
-        => string.IsNullOrWhiteSpace(code) || code == "00000"
-            ? "สำนักงานใหญ่"
-            : (string.IsNullOrWhiteSpace(name) ? $"สาขาที่ {code}" : $"สาขาที่ {code} {name}");
+        => TaxBranchCode.LabelWithName(code, name);
 
     private static void Apply(DocumentBrand b, BrandRequest r)
     {

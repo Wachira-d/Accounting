@@ -572,12 +572,27 @@ public partial class AccountingService : IAccountingService
             query = query.Where(j => dimEntryIds.Contains(j.Id));
         }
 
+        // ตัวกรองสาขา — กรองจาก BranchId บนหัว JE หรือบนบรรทัด ให้ตรงกับที่
+        // GL / งบทดลอง / งบกำไรขาดทุน ใช้อยู่แล้ว
+        //
+        // ⚠️ ของเดิมกรองผ่าน `Branch.DimensionId` ซึ่ง **ไม่มีโค้ดตรงไหนในเรพเซ็ตเลย**
+        // ⇒ `branchDimId` เป็น null เสมอ ⇒ เงื่อนไขทั้งก้อนถูกข้าม ⇒ คืน "ทุกแถว"
+        // เหมือนไม่ได้กรอง — ตัวกรองสาขาในหน้าสมุดรายวันจึงไม่เคยกรองอะไรเลย
+        // ตั้งแต่เขียนมา (silent no-op: ผู้ใช้เลือกสาขาแล้วเห็นรายการของทุกสาขา
+        // โดยไม่มีอะไรบอก) — คงเส้นทางมิติไว้เป็น fallback ให้ข้อมูลเก่าที่เคย
+        // ผูกสาขาเข้ากับมิติด้วยมือยังกรองเจอ
         if (branchId.HasValue)
         {
+            var bId = branchId.Value;
             var branchDimId = await _db.Set<Branch>()
-                .Where(b => b.Id == branchId.Value && b.CompanyId == companyId)
+                .Where(b => b.Id == bId && b.CompanyId == companyId)
                 .Select(b => b.DimensionId)
                 .FirstOrDefaultAsync();
+
+            var branchLineEntryIds = _db.JournalEntryLines
+                .Where(l => l.BranchId == bId)
+                .Select(l => l.JournalEntryId);
+
             if (branchDimId.HasValue)
             {
                 var bLineIds = _db.Set<JournalLineDimension>()
@@ -586,7 +601,13 @@ public partial class AccountingService : IAccountingService
                 var bEntryIds = _db.JournalEntryLines
                     .Where(l => bLineIds.Contains(l.Id))
                     .Select(l => l.JournalEntryId);
-                query = query.Where(j => bEntryIds.Contains(j.Id));
+                query = query.Where(j => j.BranchId == bId
+                    || branchLineEntryIds.Contains(j.Id)
+                    || bEntryIds.Contains(j.Id));
+            }
+            else
+            {
+                query = query.Where(j => j.BranchId == bId || branchLineEntryIds.Contains(j.Id));
             }
         }
 
