@@ -2091,7 +2091,8 @@ public class AdminController : ControllerBase
         return s;
     }
 
-    private static SystemEmailConfigResponse BuildSystemEmailResponse(SiteSettings s) => new(
+    // "มีค่าเก็บไว้" ไม่พอ — ต้องถอดกลับมาใช้ได้จริงด้วย (ดู Helpers/SecretWarnings)
+    private SystemEmailConfigResponse BuildSystemEmailResponse(SiteSettings s) => new(
         Provider: s.SystemEmailProvider,
         FromAddress: s.SystemEmailFromAddress,
         FromName: s.SystemEmailFromName,
@@ -2101,12 +2102,17 @@ public class AdminController : ControllerBase
         LastTestedAt: s.SystemEmailLastTestedAt,
         LastTestStatus: s.SystemEmailLastTestStatus,
         Smtp: new SmtpConfigDto(s.SystemSmtpHost, s.SystemSmtpPort, s.SystemSmtpUsername,
-            !string.IsNullOrEmpty(s.SystemSmtpPassword), s.SystemSmtpUseSsl),
+            _secrets.IsUsable(s.SystemSmtpPassword), s.SystemSmtpUseSsl),
         Microsoft: new MicrosoftGraphConfigDto(s.SystemMsTenantId, s.SystemMsClientId,
-            !string.IsNullOrEmpty(s.SystemMsClientSecret), s.SystemMsSenderUpn),
+            _secrets.IsUsable(s.SystemMsClientSecret), s.SystemMsSenderUpn),
         Gmail: new GmailConfigDto(s.SystemGmailClientId,
-            !string.IsNullOrEmpty(s.SystemGmailClientSecret),
-            !string.IsNullOrEmpty(s.SystemGmailRefreshToken)));
+            _secrets.IsUsable(s.SystemGmailClientSecret),
+            _secrets.IsUsable(s.SystemGmailRefreshToken)),
+        SecretWarning: SecretWarnings.Build(_secrets,
+            ("รหัสผ่าน SMTP", s.SystemSmtpPassword),
+            ("Client Secret (Microsoft)", s.SystemMsClientSecret),
+            ("Client Secret (Gmail)", s.SystemGmailClientSecret),
+            ("Refresh Token (Gmail)", s.SystemGmailRefreshToken)));
 
     /// <summary>แถว SiteSettings เดี่ยวของระบบ — สร้างให้ถ้ายังไม่มี
     /// (deployment ใหม่ที่ยังไม่เคยกดบันทึกตั้งค่าเลย)</summary>

@@ -81,6 +81,14 @@ public class SmtpEmailSender : IEmailSender
         catch (Exception ex)
         {
             _logger?.LogError(ex, "SMTP send failed to {Host}:{Port}", _host, _port);
+            // มี username แต่ไม่มี password = ตั้งค่าไม่ครบ หรือรหัสที่เก็บไว้ถอดรหัส
+            // ไม่ออก (คีย์เข้ารหัสถูกเปลี่ยน) — ปลายทางจะตอบเป็น "Authentication
+            // Required" ซึ่งไม่ได้ชี้ต้นเหตุเลย ผู้ใช้ไล่เองไม่ถูกว่าพลาดตรงไหน
+            if (!string.IsNullOrEmpty(_username) && string.IsNullOrEmpty(_password))
+                return EmailSendResult.Fail(
+                    "ระบบไม่มีรหัสผ่าน SMTP ที่ใช้งานได้ (ช่องรหัสผ่านว่าง หรือรหัสที่บันทึกไว้ "
+                    + "ถอดรหัสไม่ออกเพราะคีย์เข้ารหัสของระบบถูกเปลี่ยน) — โปรดกรอกรหัสผ่าน/"
+                    + $"App Password ใหม่แล้วบันทึกอีกครั้ง · ข้อความจากเซิร์ฟเวอร์: {ex.Message}");
             return EmailSendResult.Fail(ex.Message);
         }
     }

@@ -1440,7 +1440,12 @@
           this._checkEmailProviderFields(c);
 
           const status = document.getElementById('emailStatus');
-          if (c.configured) {
+          // ความลับที่เก็บไว้แต่ถอดรหัสไม่ออก — ต้องขึ้นก่อนสถานะทดสอบ เพราะเป็น
+          // ต้นเหตุจริงของ "Authentication Required" ที่ผู้ใช้ไล่เองไม่ถูก และเป็น
+          // สถานะที่แก้ไม่ได้จนกว่าจะกรอกค่าใหม่ (ช่องว่าง = ใช้ค่าเดิม = ค่าเสียเดิม)
+          if (c.secretWarning) {
+            status.innerHTML = `<div style="padding:10px;background:#fee2e2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:13px;line-height:1.7">${Layout.esc(c.secretWarning)}</div>`;
+          } else if (c.configured) {
             status.innerHTML = `<div style="padding:10px;background:#dcfce7;border-radius:6px;color:#166534;font-size:13px">✓ ตั้งค่าและทดสอบสำเร็จ • ${c.lastTestedAt ? new Date(c.lastTestedAt).toLocaleString('th-TH') : ''}</div>`;
           } else if (c.lastTestStatus && c.lastTestStatus !== 'OK') {
             status.innerHTML = `<div style="padding:10px;background:#fee2e2;border-radius:6px;color:#991b1b;font-size:13px">⚠ ทดสอบล่าสุดไม่ผ่าน: ${c.lastTestStatus}</div>`;

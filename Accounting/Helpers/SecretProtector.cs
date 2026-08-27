@@ -14,19 +14,39 @@ public interface ISecretProtector
 {
     string? Protect(string? plaintext);
     string? Unprotect(string? value);
+
+    /// <summary>
+    /// true = มีความลับที่ **ถอดกลับมาใช้ได้จริง** อยู่ในค่านี้
+    ///
+    /// ต่างจาก <c>!string.IsNullOrEmpty(value)</c> ตรงที่ค่าซึ่งเป็น ciphertext
+    /// แต่ถอดไม่ออก (คีย์ <c>Security:EncryptionKey</c> เปลี่ยนหลังจากบันทึกไว้)
+    /// จะคืน false — ไม่งั้นหน้าจอจะบอกว่า "มีรหัสผ่านเก็บไว้แล้ว" ผู้ใช้จึงเว้นช่อง
+    /// ว่างไว้ (= ใช้ค่าเดิม) แล้วระบบส่งอีเมลด้วยรหัสผ่านว่าง ⇒ เซิร์ฟเวอร์ตอบ
+    /// "5.7.0 Authentication Required" วนแบบนี้ตลอดกาลโดยแก้ผ่านหน้าเว็บไม่ได้เลย
+    /// </summary>
+    bool IsUsable(string? value);
 }
 
 public class SecretProtector : ISecretProtector
 {
+    private const string DevKey = "default-dev-key-change-in-production";
+
     private readonly string _key;
-    private readonly ILogger<SecretProtector> _logger;
+    private readonly ILogger<SecretProtector>? _logger;
 
     public SecretProtector(IConfiguration config, ILogger<SecretProtector> logger)
+        : this(config["Security:EncryptionKey"] ?? DevKey, logger)
     {
-        _key = config["Security:EncryptionKey"] ?? "default-dev-key-change-in-production";
+    }
+
+    /// <summary>รับคีย์ตรง ๆ — ใช้ในเทสต์ (จำลองการ "เปลี่ยนคีย์" ได้โดยไม่ต้องยก
+    /// IConfiguration/ILogger ทั้งชุดมา) และเผื่อ call site ที่ถือคีย์อยู่แล้ว</summary>
+    public SecretProtector(string key, ILogger<SecretProtector>? logger = null)
+    {
+        _key = string.IsNullOrEmpty(key) ? DevKey : key;
         _logger = logger;
-        if (_key == "default-dev-key-change-in-production")
-            _logger.LogWarning("Security:EncryptionKey not configured — using the development default. Set ENCRYPTION_KEY before going to production.");
+        if (_key == DevKey)
+            _logger?.LogWarning("Security:EncryptionKey not configured — using the development default. Set ENCRYPTION_KEY before going to production.");
     }
 
     public string? Protect(string? plaintext)
@@ -46,8 +66,21 @@ public class SecretProtector : ISecretProtector
         try { return EncryptionHelper.Decrypt(value, _key); }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to decrypt protected secret — returning empty to avoid leaking ciphertext to a downstream client.");
+            // ถอดไม่ออก = ค่านี้ถูกเข้ารหัสด้วยคีย์คนละตัว (Security:EncryptionKey
+            // ถูกเปลี่ยนหลังจากบันทึก). คืนค่าว่างเพื่อไม่ให้ ciphertext หลุดออกไป
+            // แต่ **ผู้เรียกต้องเช็ค IsUsable ก่อน** ไม่งั้นจะเอาค่าว่างไปใช้เป็น
+            // รหัสผ่านจริงแล้วได้ error ปลายทางที่ชี้ต้นเหตุไม่ได้
+            _logger?.LogError(ex, "ถอดรหัสความลับที่เก็บไว้ไม่สำเร็จ — น่าจะเกิดจาก "
+                + "Security:EncryptionKey ถูกเปลี่ยนหลังจากบันทึกค่านี้ ผู้ใช้ต้องกรอกใหม่");
             return string.Empty;
         }
+    }
+
+    public bool IsUsable(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return false;
+        if (!EncryptionHelper.IsEncrypted(value)) return true;   // legacy plaintext
+        try { return !string.IsNullOrEmpty(EncryptionHelper.Decrypt(value, _key)); }
+        catch { return false; }
     }
 }
