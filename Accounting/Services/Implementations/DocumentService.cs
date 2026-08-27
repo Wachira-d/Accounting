@@ -12498,7 +12498,11 @@ public partial class DocumentService : IDocumentService
             // cap §86/10 คุมแค่ยอดเงิน แต่ stock/COGS เดินตาม qty บนบรรทัด CN
             if (doc.DocumentType == DocumentType.CreditNote
                 && doc.CreditNoteReason == Models.Enums.CreditNoteReason.Return
-                && source != null && doc.Lines != null)
+                // `doc.Lines` เป็น ICollection ที่ initialize ไว้แล้ว ไม่มีทางเป็น null
+                // — เช็ค `!= null` ตรงนี้เคยทำให้คอมไพเลอร์ถือว่า "อาจ null" ไปทั้ง
+                // เมธอด แล้วไปฟ้อง CS8602 ที่ `foreach (var docLine in doc.Lines)`
+                // ด้านล่างอีกที (เตือนผิดจุดจนหาต้นตอไม่เจอ)
+                && source != null)
             {
                 var cnStockLines = doc.Lines
                     .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))

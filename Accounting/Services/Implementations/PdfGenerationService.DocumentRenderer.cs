@@ -80,6 +80,12 @@ public partial class PdfGenerationService
         // หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) จาก resolver กลาง —
         // ตั้งเองได้ผ่าน settings; ใช้ร่วมกับ HTML renderer กัน logic drift
         var titleText = ComputeDocumentTitle(doc, template, settings, lang);
+        // ตัวตนผู้ออกเอกสาร (ชื่อ/โลโก้/ที่อยู่/ป้ายสาขา/ข้อความท้ายเอกสาร) —
+        // resolver กลางตัวเดียวกับ HTML renderer. **คำนวณครั้งเดียวตรงนี้** แล้ว
+        // ส่งต่อทั้งหัวและท้ายกระดาษ: ComposeFooter ต้องใช้ FooterNotes ของแบรนด์
+        // ส่วน ComposeHeaderAndTitle ใช้ชื่อ/โลโก้ — ถ้าต่างคนต่างคำนวณจะกลาย
+        // เป็นสองแหล่งความจริงบนกระดาษใบเดียวกัน (กฎ "resolver กลาง ห้ามคำนวณเอง")
+        var issuer = BuildIssuer(doc, company, settings, L.IsEnglish ? "en" : "th", titleText);
         // §86/4 เอกสารออกเป็นชุด — ระบุ ต้นฉบับ บนใบกำกับ/ใบเสร็จภาษี. สำเนา
         // ใช้ WatermarkOverride (สำเนา) ตอนสั่งพิมพ์สำเนา → ไม่ต้องมีป้ายซ้อน.
         var isRd864Doc = doc.DocumentType is Accounting.Models.Enums.DocumentType.TaxInvoice
@@ -180,7 +186,7 @@ public partial class PdfGenerationService
                         {
                             void SafeH(Action a) { try { a(); } catch { /* skip failed section */ } }
                             if (cornerLabel != null) SafeH(() => ComposeCornerLabel(hc));
-                            SafeH(() => ComposeHeaderAndTitle(hc, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, settings));
+                            SafeH(() => ComposeHeaderAndTitle(hc, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer));
                             SafeH(() => ComposeContact(hc, doc, template, accent, L));
                             // ระยะห่างหัว↔เนื้อหา — Header ติดกับ Content ทันที
                             // ถ้าไม่เว้น ตารางจะชนขอบล่างของกล่องคู่ค้า
@@ -199,7 +205,7 @@ public partial class PdfGenerationService
                         if (!repeatHeader)
                         {
                             if (cornerLabel != null) Safe(() => ComposeCornerLabel(col));
-                            Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, settings));
+                            Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer));
                             Safe(() => ComposeContact(col, doc, template, accent, L));
                         }
                         Safe(() => ComposeAdjustmentRef(col, doc, accent, L));
@@ -307,11 +313,8 @@ public partial class PdfGenerationService
     private static void ComposeHeaderAndTitle(ColumnDescriptor col, string layout,
         EntDoc doc, EntCompany company, EntTemplate template, PdfBranding b,
         string accent, string headerBg, string headerText, string titleText, Accounting.Services.Implementations.Pdf.DocumentLabels L,
-        EntSettings? settings)
+        Accounting.Helpers.IssuerIdentity issuer)
     {
-        // ตัวตนผู้ออกเอกสาร — resolver กลางตัวเดียวกับ HTML renderer
-        // (titleText = หัวที่คำนวณแล้ว → ด่านกฎหมายรู้ว่าใบนี้เป็นใบกำกับหรือไม่)
-        var issuer = BuildIssuer(doc, company, settings, L.IsEnglish ? "en" : "th", titleText);
 
         // cap title ที่ 18pt กันชื่อเอกสารใหญ่เกิน (เดิม 22/20 ใหญ่ไป — ผู้ใช้ขอเล็กลง)
         var titleFontSize = float.TryParse(template.TitleFontSize, out var tf) ? Math.Min(tf, 18f) : 17f;
