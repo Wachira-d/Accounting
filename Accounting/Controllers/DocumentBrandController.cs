@@ -183,8 +183,11 @@ public class DocumentBrandController : ControllerBase
         try
         {
             using var stream = file.OpenReadStream();
+            // FileName จาก multipart เป็น null ได้ (client บางตัวไม่ส่ง filename)
+            // — ตัวประมวลผลรูปรับ string ไม่ nullable จึงต้องมีชื่อสำรองเสมอ
+            var fileName = string.IsNullOrWhiteSpace(file.FileName) ? $"logo{ext}" : file.FileName;
             var processed = await _images.ProcessAndSaveAsync(
-                stream, file.ContentType!, file.FileName, dir, web, ImageProfile.Logo);
+                stream, file.ContentType!, fileName, dir, web, ImageProfile.Logo);
             b.LogoPath = processed.AbsolutePath;
             b.LogoUrl = processed.RelativeUrl;
         }
