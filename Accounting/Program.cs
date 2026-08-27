@@ -784,17 +784,28 @@ app.UseCmsSiteRouting();
 // เปิดเฉพาะโฟลเดอร์ที่ "ตั้งใจให้สาธารณะ" (โลโก้/แบนเนอร์/รูปสินค้า/ตราประทับ/
 // สื่อ CMS ที่ต้องแสดงบน storefront + ฝังใน PDF) และสลิปที่ผู้ซื้อ/ผู้ดูแลเปิดดู
 // ผ่านลิงก์ตรงในหน้าเว็บ (ชื่อไฟล์เป็น GUID)
+// ⚠️ เพิ่มโฟลเดอร์อัปโหลดใหม่ = ต้องเพิ่มชื่อในลิสต์นี้ด้วยเสมอ ไม่งั้นไฟล์ถูก
+// เขียนสำเร็จ แต่เบราว์เซอร์โหลดไม่ได้ (404) แล้วอาการที่เห็นคือ "รูปไม่ขึ้น"
+// ซึ่งไล่ย้อนกลับมาถึงตรงนี้ยากมาก — `tools/upload_route_check.py` บังคับให้ตรงกัน
 var publicUploadPrefixes = new[]
 {
     "/uploads/logos", "/uploads/banners", "/uploads/products",
     "/uploads/stamps", "/uploads/cms", "/uploads/signatures",
     "/uploads/order-slips", "/uploads/portal-slips",
+    // โลโก้ของ "ชื่อทางการค้า" — ต้องฝังลงหัวเอกสาร/PDF และแสดงบนหน้าตั้งค่า
+    "/uploads/brand-logos",
+    // สลิปโอนค่าบริการ (แอดมินเปิดดูตอนตรวจสอบการชำระเงิน) ชื่อไฟล์เป็น GUID
+    "/uploads/slips",
 };
 app.Use(async (ctx, next) =>
 {
     var path = ctx.Request.Path;
     if (path.StartsWithSegments("/uploads")
-        && !publicUploadPrefixes.Any(p => path.StartsWithSegments(p)))
+        && !publicUploadPrefixes.Any(p => path.StartsWithSegments(p))
+        // ไฟล์ที่วางไว้ที่ **ราก** /uploads/{file} (ไม่มีโฟลเดอร์ย่อย) = โลโก้/ไอคอน/
+        // แบนเนอร์ของแพลตฟอร์มที่แอดมินอัปโหลด (AdminController เขียนลงรากตรง ๆ)
+        // เปิดเฉพาะระดับรากเท่านั้น ไม่ลามถึงโฟลเดอร์ย่อยที่เป็นข้อมูลลูกค้า
+        && (path.Value ?? "").Trim('/').Split('/').Length != 2)
     {
         ctx.Response.StatusCode = StatusCodes.Status404NotFound;
         return;
