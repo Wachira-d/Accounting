@@ -601,6 +601,101 @@ public static class DocumentZoneAnalyzer
 
     // === Learning ===
 
+    /// <summary>
+    /// เติมช่องที่ยัง**ว่าง**ใน <see cref="OcrExtractedData"/> ด้วยแพตเทิร์นที่
+    /// ระบบเรียนจากการแก้ของผู้ใช้ (และจากผลสแกน Azure) — จุดอ่านของตาราง
+    /// <c>OcrLearnedPatterns</c>
+    ///
+    /// ═══ ที่มา (defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้") ═══
+    /// <c>OcrLearnedPattern</c> ถูก**เขียน**ทุกครั้งที่ผู้ใช้แก้ผลสแกน
+    /// (<c>OcrService.LearnFromCorrection</c>) และทุกครั้งที่สแกนผ่าน Azure DI
+    /// (<c>AzureDiPatternLearner</c> ที่ doc-comment ของตัวเองเขียนว่า
+    /// "DocumentZoneAnalyzer.ApplyLearnedPatterns picks them up") — แต่
+    /// <see cref="Analyze"/> ซึ่งเป็นทางเข้าเดียวที่อ่านตารางนี้
+    /// <b>ไม่มีใครเรียกเลยทั้งเรพ</b> ⇒ เป็น write-only store มาตลอด:
+    /// จ่ายค่าเขียนทุกการแก้ แต่ความแม่นไม่เคยดีขึ้นเลยสักครั้ง
+    ///
+    /// ═══ กติกา ═══
+    /// <list type="bullet">
+    /// <item>เติมเฉพาะช่องที่เป็น null/ว่าง — <b>ห้ามทับค่าที่ engine อ่านได้</b>
+    ///   (แพตเทิร์นเป็นตัวช่วยเติมช่องว่าง ไม่ใช่ตัวตัดสินที่ชนะ OCR)</item>
+    /// <item>ข้าม negative example (<c>IsNegativeExample</c>) — แถวพวกนั้นบอกว่า
+    ///   "ค่านี้เคยผิด" ไม่ใช่ "ค่านี้ถูก"</item>
+    /// <item>ค่าที่เติมมาต้องผ่านด่านความสมเหตุผลของชนิดข้อมูลก่อน
+    ///   (เลขภาษี 13 หลัก + checksum · ยอดเงิน &gt; 0)</item>
+    /// </list>
+    /// คืนชื่อช่องที่เติมได้ ไว้ให้ผู้เรียกเขียนลง ReasoningTrace
+    /// </summary>
+    internal static List<string> ApplyLearnedPatternsTo(
+        OcrExtractedData data, string? rawText, IReadOnlyList<OcrLearnedPattern> patterns)
+    {
+        var filled = new List<string>();
+        if (string.IsNullOrWhiteSpace(rawText) || patterns.Count == 0) return filled;
+
+        foreach (var p in patterns.Where(x => !x.IsNegativeExample)
+                                  .OrderByDescending(x => x.TimesConfirmed))
+        {
+            if (string.IsNullOrEmpty(p.ContextKeyword) || string.IsNullOrEmpty(p.ExtractionRegex))
+                continue;
+
+            // ช่องนี้มีค่าแล้ว = ไม่ต้องทำงาน (ประหยัด regex + กันทับ)
+            var alreadyHas = p.FieldName switch
+            {
+                "SellerName" => !string.IsNullOrWhiteSpace(data.VendorName),
+                "SellerTaxId" => !string.IsNullOrWhiteSpace(data.VendorTaxId),
+                "BuyerName" => !string.IsNullOrWhiteSpace(data.BuyerName),
+                "BuyerTaxId" => !string.IsNullOrWhiteSpace(data.BuyerTaxId),
+                "DocumentNumber" => !string.IsNullOrWhiteSpace(data.DocumentNumber),
+                "TotalAmount" => data.TotalAmount is > 0,
+                _ => true,     // ช่องที่ยังไม่รองรับ — ข้าม
+            };
+            if (alreadyHas) continue;
+
+            int kwPos = rawText.IndexOf(p.ContextKeyword, StringComparison.OrdinalIgnoreCase);
+            if (kwPos < 0) continue;
+
+            string value;
+            try
+            {
+                var searchArea = SafeSubstring(rawText, kwPos - 50,
+                    p.SearchRadius > 0 ? p.SearchRadius : 300);
+                var m = Regex.Match(searchArea, p.ExtractionRegex,
+                    RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(200));
+                if (!m.Success) continue;
+                value = (m.Groups.Count > 1 ? m.Groups[1].Value : m.Value).Trim();
+            }
+            catch (RegexMatchTimeoutException) { continue; }
+            catch (ArgumentException) { continue; }   // regex ที่เก็บไว้เสีย
+            if (string.IsNullOrWhiteSpace(value)) continue;
+
+            switch (p.FieldName)
+            {
+                case "SellerName":
+                    data.VendorName = value; filled.Add("ชื่อผู้ขาย"); break;
+                case "SellerTaxId":
+                    if (!Accounting.Helpers.ThaiTaxId.IsValid(value)) continue;
+                    data.VendorTaxId = Accounting.Helpers.ThaiTaxId.Normalize(value);
+                    filled.Add("เลขผู้เสียภาษีผู้ขาย"); break;
+                case "BuyerName":
+                    data.BuyerName = value; filled.Add("ชื่อผู้ซื้อ"); break;
+                case "BuyerTaxId":
+                    if (!Accounting.Helpers.ThaiTaxId.IsValid(value)) continue;
+                    data.BuyerTaxId = Accounting.Helpers.ThaiTaxId.Normalize(value);
+                    filled.Add("เลขผู้เสียภาษีผู้ซื้อ"); break;
+                case "DocumentNumber":
+                    data.DocumentNumber = value; filled.Add("เลขที่เอกสาร"); break;
+                case "TotalAmount":
+                    if (decimal.TryParse(value.Replace(",", ""),
+                            System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var ta)
+                        && ta > 0)
+                    { data.TotalAmount = ta; filled.Add("ยอดรวม"); }
+                    break;
+            }
+        }
+        return filled;
+    }
+
     static void ApplyLearnedPatterns(string text, ZoneAnalysisResult result, List<OcrLearnedPattern> patterns)
     {
         foreach (var p in patterns.OrderByDescending(p => p.TimesConfirmed))

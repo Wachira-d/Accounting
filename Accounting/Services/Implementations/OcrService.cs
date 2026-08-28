@@ -610,6 +610,15 @@ public class OcrService : IOcrService
             // inferrer (derived credit terms flip the PV/PI decision).
             EnrichFromRawText(extractedData, extractedText);
 
+            // ── เติมช่องที่ยังว่างด้วยแพตเทิร์นที่ระบบเรียนไว้ ──
+            // จุดอ่านของตาราง OcrLearnedPatterns ซึ่งถูก**เขียน**ทุกครั้งที่ผู้ใช้
+            // แก้ผลสแกน + ทุกครั้งที่สแกนผ่าน Azure DI แต่ก่อนหน้านี้
+            // **ไม่มีใครอ่านเลย** (DocumentZoneAnalyzer.Analyze ไม่มี call site
+            // ทั้งเรพ) ⇒ จ่ายค่าเขียนทุกการแก้แต่ความแม่นไม่เคยดีขึ้น
+            // ต้องรันหลัง EnrichFromRawText เพราะเป็นตัวเติม "ช่องที่ยังว่าง"
+            // เท่านั้น ห้ามทับค่าที่ engine อ่านได้
+            await ApplyLearnedPatternsAsync(companyId, extractedData, extractedText);
+
             // ── เชื่อค่าเงินจากระบบภายนอก (override OCR vision) ──
             // พาร์ทเนอร์ที่ยิง OCR ผ่าน API ส่งยอดที่กรอก/คำนวณเองมาใน metadata →
             // เชื่อค่านั้นแทนค่าที่ OCR แกะจากรูป (กันอ่านเลขผิด 530↔630). ทำหลัง
@@ -6517,6 +6526,45 @@ public class OcrService : IOcrService
             $"[Tier 0] ดึงค่าจาก e-Tax XML ที่ฝังใน PDF/A-3 — เอกสาร {etax.DocumentTypeName} " +
             $"({etax.DocumentTypeCode}) เลขที่ {etax.DocumentNumber}, ยอดรวม {etax.GrandTotal:N2} {etax.Currency}");
         return data;
+    }
+
+    /// <summary>
+    /// เติมช่องที่ยังว่างจากแพตเทิร์นที่ระบบเรียนไว้ของผู้ขายรายนี้
+    /// (<c>OcrLearnedPatterns</c>) — <b>จุดอ่าน</b>ของตารางที่ก่อนหน้านี้มีแต่
+    /// ฝั่งเขียน ดู <see cref="DocumentZoneAnalyzer.ApplyLearnedPatternsTo"/>
+    ///
+    /// <para>เลือกแพตเทิร์นของผู้ขายรายนี้ก่อน ถ้ายังไม่รู้ว่าใครเป็นผู้ขาย
+    /// (ซึ่งเป็นเคสที่ต้องการความช่วยเหลือที่สุด) ใช้แพตเทิร์นระดับบริษัทที่
+    /// ไม่ผูกกับผู้ขาย. ทุก query มี CompanyId. ล้มเหลว = ข้ามเงียบ ๆ</para>
+    /// </summary>
+    private async Task ApplyLearnedPatternsAsync(
+        Guid companyId, OcrExtractedData data, string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return;
+        try
+        {
+            var vendorTaxId = data.VendorTaxId;
+            var q = _db.OcrLearnedPatterns.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted && !p.IsNegativeExample);
+            q = !string.IsNullOrWhiteSpace(vendorTaxId)
+                ? q.Where(p => p.VendorTaxId == vendorTaxId || p.VendorTaxId == null)
+                : q.Where(p => p.VendorTaxId == null);
+
+            var patterns = await q
+                .OrderByDescending(p => p.TimesConfirmed)
+                .Take(60)
+                .ToListAsync();
+            if (patterns.Count == 0) return;
+
+            var filled = DocumentZoneAnalyzer.ApplyLearnedPatternsTo(data, rawText, patterns);
+            if (filled.Count > 0)
+                data.ReasoningTrace.Add(
+                    $"[Learned] เติมจากแพตเทิร์นที่เรียนไว้: {string.Join(", ", filled)}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ใช้แพตเทิร์นที่เรียนไว้ไม่สำเร็จ — ข้ามขั้นตอนนี้");
+        }
     }
 
     /// <summary>Engine-agnostic raw-text enrichment — fields no structured
