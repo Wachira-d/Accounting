@@ -2677,6 +2677,14 @@
             } catch (e) { /* tolerate malformed */ }
           }
           if (corrections) this._applyAiCorrections(corrections);
+          // ── เก็บ feedbackId ไว้ปิด loop ตอนผู้ใช้กดบันทึก/สร้างเอกสาร ──
+          // ⚠️ เดิม `feedbackId` ที่ AI คืนมาถูก**ทิ้งทันที** ⇒ AiFeedbackTrainingJob
+          // (ซึ่ง mine เฉพาะแถวที่ UserChosenAt != null) ไม่เคยได้ข้อมูลจาก
+          // OcrFullReview เลยสักแถว = จ่าย token แล้วไม่ได้อะไรกลับมา
+          // (ผิดกฎเหล็ก #1 ขั้น CAPTURE ตรง ๆ)
+          this._aiReviewFeedbackId = review?.feedbackId || null;
+          this._aiConvFeedbackId = conv?.feedbackId || null;
+          this._lastAiConv = conv || null;
           // Show flags + suggested target type as a yellow tip inside
           // the review modal so the operator sees AI's verdict before
           // clicking "สร้างเอกสาร".
@@ -2796,6 +2804,32 @@
         const api = Layout.api(); if (!api) return;
         try { await api.ocrCorrect(this._reviewScan.id, this._buildReviewCorrection()); }
         catch (e) { /* best-effort — create จะใช้ค่าเดิมถ้า save ล้ม */ }
+        await this._closeAiReviewFeedback();
+      },
+
+      /** ปิด loop ของ AI review — ส่ง "คำตอบที่ผู้ใช้ยืนยันจริง" กลับไปให้
+       *  นักเรียนเรียน (กฎเหล็ก #1 ขั้น CAPTURE)
+       *
+       *  เดิม feedbackId ที่ AI คืนมาถูกทิ้งทันทีหลังเอา corrections ไปเติมฟอร์ม
+       *  ⇒ แถว feedback ค้างสถานะ "ยังไม่รู้คำตอบจริง" ตลอดไป และ
+       *  AiFeedbackTrainingJob ไม่เคยได้ข้อมูลจาก OcrFullReview เลยสักแถว */
+      async _closeAiReviewFeedback() {
+        const api = Layout.api(); if (!api) return;
+        const chosen = document.getElementById('revTargetDocType')?.value || null;
+        if (!chosen) return;
+        const jobs = [];
+        if (this._aiReviewFeedbackId) {
+          const aiSaid = this._lastAiReview?.target_document || null;
+          jobs.push(api.aiFeedbackRecord(this._aiReviewFeedbackId, chosen, chosen === aiSaid));
+          this._aiReviewFeedbackId = null;   // ปิดแล้วปิดเลย ไม่ส่งซ้ำ
+        }
+        if (this._aiConvFeedbackId) {
+          const convSaid = this._lastAiConv?.primary || null;
+          jobs.push(api.aiFeedbackRecord(this._aiConvFeedbackId, chosen, chosen === convSaid));
+          this._aiConvFeedbackId = null;
+        }
+        try { await Promise.all(jobs); }
+        catch (e) { /* best-effort — ห้ามขวางการบันทึกของผู้ใช้ */ }
       },
       async saveCorrection() {
         if (!this._reviewScan) return;

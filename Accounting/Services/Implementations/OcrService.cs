@@ -741,6 +741,71 @@ public class OcrService : IOcrService
                 foreach (var r in role.Reasons)
                     extractedData.ReasoningTrace.Add("[Role] " + r);
 
+                // ─── AI ช่วยจำแนกชนิดเอกสาร — เฉพาะตอนกติกาไม่มั่นใจ ───
+                //
+                // กฎเหล็ก #1 (student-first): กติกาให้คำตอบไปแล้วข้างบน AI เป็น
+                // "ครูพิเศษ" ที่เรียกเฉพาะเคสคลุมเครือ ปิด provider ทั้งหมดแล้ว
+                // feature ยังทำงานครบผ่านคำตอบของกติกา
+                //
+                // เกณฑ์เรียก: บทบาทไม่มั่นใจ (< 0.7) **หรือ** กระดาษไม่มี marker
+                // ชนิดเอกสารเลย — สองกรณีนี้คือที่ที่กติกาเดาล้วน ๆ และผิดแล้วแพง
+                // ที่สุด (ชนิดผิด = บัญชีคู่ผิดทั้งใบ + เข้ารายงานภาษีผิดฝั่ง)
+                //
+                // ⚠️ AiFeatureKey.DocumentTypeClassification มี enum + prompt +
+                // student ครบมานานแล้ว แต่**ไม่เคยมีใครเรียก** ⇒ prompt ตายอยู่ใน
+                // ไฟล์ และ student อดอาหารถาวร (ไม่มี feedback row เลยจึงไม่มีวัน
+                // IsReady) — นี่คือการต่อสายเส้นที่ขาด
+                var aiWorthAsking = (role.RoleConfidence < 0.7m || !role.ScannedDocType.HasValue)
+                    && !string.IsNullOrWhiteSpace(normalizedText)
+                    && normalizedText.Trim().Length >= 40;
+                if (_aiAugmenter != null && aiWorthAsking)
+                {
+                    try
+                    {
+                        using var cts = CancellationTokenSource.CreateLinkedTokenSource(default);
+                        cts.CancelAfter(TimeSpan.FromSeconds(15));
+                        var cls = await _aiAugmenter.ClassifyDocumentTypeAsync(
+                            companyId, scanResult.Id,
+                            rawText: normalizedText,
+                            documentNumber: extractedData.DocumentNumber,
+                            vendorName: extractedData.VendorName,
+                            totalAmount: extractedData.TotalAmount,
+                            localGuess: extractedData.TargetDocumentType,
+                            localConfidence: role.RoleConfidence,
+                            ct: cts.Token);
+
+                        scanResult.TargetDocTypeAiFeedbackId = cls.FeedbackId;
+                        scanResult.TargetDocTypeAiSuggested = cls.Answer;
+
+                        // ── ด่านกันมั่ว 3 ชั้น (กฎเหล็ก #1) ──
+                        //  1. ต้องเป็นค่าใน enum จริง (ไม่ใช่คำที่ AI แต่งขึ้น)
+                        //  2. confidence ≥ 0.70
+                        //  3. ต้องอยู่ฝั่งเดียวกับบทบาท — AI มองไม่เห็นว่าเราเป็น
+                        //     ผู้ซื้อหรือผู้ขาย จึงเสนอข้ามฝั่งได้ง่าย
+                        if (cls.UsedAi && (cls.Confidence ?? 0m) >= 0.70m
+                            && Enum.TryParse<DocumentType>(cls.Answer, true, out var aiType)
+                            && Accounting.Helpers.DocumentSide.MatchesRole(aiType, extractedData.OurRole))
+                        {
+                            extractedData.TargetDocumentType = aiType.ToString();
+                            scanResult.TargetDocTypeUsedAi = true;
+                            extractedData.ReasoningTrace.Add(
+                                $"[AI] จำแนกชนิดเอกสาร → {aiType} (มั่นใจ {cls.Confidence:P0}) — "
+                                + "เรียก AI เพราะกติกาไม่มั่นใจ");
+                        }
+                        else if (cls.UsedAi)
+                        {
+                            extractedData.ReasoningTrace.Add(
+                                $"[AI] เสนอ {cls.Answer} (มั่นใจ {cls.Confidence:P0}) แต่ไม่ผ่านด่านตรวจ "
+                                + "(ไม่อยู่ใน enum / มั่นใจต่ำ / คนละฝั่งกับบทบาท) → ใช้คำตอบของกติกาต่อ");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // AI ล่ม/เกินงบ/timeout → ใช้คำตอบของกติกาต่อเงียบ ๆ
+                        _logger.LogWarning(ex, "จำแนกชนิดเอกสารด้วย AI ไม่สำเร็จ (ใช้ผลของกติกาต่อ)");
+                    }
+                }
+
                 // เอกสารที่เราออกเองถูกสแกนกลับเข้ามา — ต้องเตือนถึงหน้าเว็บ
                 // ไม่ใช่ซ่อนอยู่ใน reasoning trace ที่พับไว้ (สร้างต่อ = ออกใบขาย
                 // ใบที่สอง เลข/ยอดซ้ำในรายงานภาษีขายที่ยื่นไปแล้ว)

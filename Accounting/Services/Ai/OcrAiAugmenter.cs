@@ -31,6 +31,16 @@ public interface IOcrAiAugmenter
         CancellationToken ct = default);
 
     /// <summary>
+    /// จำแนกชนิดเอกสารจากกระดาษ — เรียกเฉพาะตอนกติกาไม่มั่นใจ
+    /// (ดูรายละเอียดที่ implementation)
+    /// </summary>
+    Task<OcrAiAugmentationResult> ClassifyDocumentTypeAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,
+        string? localGuess, decimal localConfidence,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Suggest GL account code for a single OCR line item.
     /// </summary>
     Task<OcrAiAugmentationResult> SuggestGlAccountAsync(
@@ -399,6 +409,66 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             _logger.LogError(ex, "OcrAiAugmenter.SuggestGlAccount failed");
             return new OcrAiAugmentationResult(
                 Answer: localBestAccountCode, Confidence: localConfidence,
+                Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
+                ComplianceFlags: Array.Empty<string>(),
+                Reasoning: $"Augmenter exception: {ex.Message}",
+                UsedAi: false, FeedbackId: null);
+        }
+    }
+
+    /// <summary>
+    /// "กระดาษใบนี้คือเอกสารชนิดไหน" — เรียกเฉพาะตอน<b>กติกาไม่มั่นใจ</b>
+    ///
+    /// ═══ ทำไมถึงเพิ่งมาต่อสาย ═══
+    /// <c>AiFeatureKey.DocumentTypeClassification</c> (#3) มีครบทุกอย่างมาแล้ว
+    /// — enum, prompt (<c>DocumentTypeClassifyPrompt</c>), และ student ที่
+    /// register ไว้ใน Program.cs — <b>แต่ไม่เคยมีใครเรียกเลยสักครั้ง</b>
+    /// ⇒ prompt ตายอยู่ในไฟล์ และ student อดอาหารถาวร (ไม่มี feedback row
+    /// เกิดขึ้นเลย จึงไม่มีวัน IsReady)
+    ///
+    /// การจำแนกชนิดเอกสารคือคำถามที่ <b>พลาดแล้วแพงที่สุด</b> ในทั้งไปป์ไลน์ —
+    /// ผิดชนิด = บัญชีคู่ผิดทั้งใบ + เข้ารายงานภาษีผิดฝั่ง จึงคุ้มที่จะจ่าย
+    /// token เฉพาะเคสที่กติกาเดาไม่ลง
+    ///
+    /// ═══ ด่านกันมั่ว (anti-hallucination) ═══
+    /// คำตอบต้องเป็นค่าใน <c>DocumentType</c> จริง และต้อง<b>อยู่ฝั่งเดียวกับ
+    /// บทบาทที่ยืนยันแล้ว</b> — AI มองไม่เห็นว่าเราเป็นผู้ซื้อหรือผู้ขาย
+    /// ผู้เรียกจึงต้องกรองอีกชั้น (ดู DocumentSide.MatchesRole)
+    /// </summary>
+    public async Task<OcrAiAugmentationResult> ClassifyDocumentTypeAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,
+        string? localGuess, decimal localConfidence,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var req = Prompts.DocumentTypeClassifyPrompt.Build(
+                companyId, scanResultId,
+                rawTextSample: rawText ?? "",
+                extractedDocNumber: documentNumber,
+                extractedVendorName: vendorName,
+                extractedTotal: totalAmount,
+                localGuess: localGuess,
+                localConfidence: localConfidence);
+
+            var resp = await _orchestrator.AskAsync(req, ct);
+            return new OcrAiAugmentationResult(
+                Answer: resp.PrimaryAnswer,
+                Confidence: resp.Confidence,
+                Alternatives: resp.Alternatives,
+                Risks: resp.Risks,
+                ComplianceFlags: resp.ComplianceFlags,
+                Reasoning: resp.Reasoning,
+                UsedAi: resp.UsedAi,
+                FeedbackId: resp.FeedbackId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "OcrAiAugmenter.ClassifyDocumentType failed");
+            // AI ล้ม = ใช้คำตอบของกติกาต่อ (kill-switch: feature ยังทำงานครบ)
+            return new OcrAiAugmentationResult(
+                Answer: localGuess, Confidence: localConfidence,
                 Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
                 ComplianceFlags: Array.Empty<string>(),
                 Reasoning: $"Augmenter exception: {ex.Message}",
