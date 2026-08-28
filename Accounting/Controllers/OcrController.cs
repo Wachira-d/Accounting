@@ -254,13 +254,17 @@ public class OcrController : ControllerBase
     [HttpPost("{scanId:guid}/create-document")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(
         Guid companyId, Guid scanId, [FromQuery] string? targetType = null,
-        [FromQuery] bool approve = false)
+        [FromQuery] bool approve = false,
+        // ผู้ใช้กดยืนยันในกล่องเตือน "ใบนี้ซ้ำ" แล้ว — ด่านกันซ้ำอยู่ฝั่งเซิร์ฟเวอร์
+        // ทุกปุ่มจึงถูกกันเหมือนกันหมด ไม่ใช่แค่ปุ่มที่หน้าเว็บนึกจะเช็ค
+        [FromQuery] bool allowDuplicate = false)
     {
         // Pass the user GUID (not Identity.Name, which is the email) so the
         // created document's CreatedBy resolves to a real user → its
         // signature prints. The service still owner-falls-back if empty.
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _service.CreateDocumentFromScanAsync(companyId, scanId, userId, targetType);
+        var result = await _service.CreateDocumentFromScanAsync(
+            companyId, scanId, userId, targetType, allowDuplicate);
 
         // "สร้าง + อนุมัติ" — อนุมัติผ่าน pipeline ปกติเต็มขั้น (ด่าน §86/4,
         // JE, stock, เลขเอกสารจริง). อนุมัติไม่ผ่าน ≠ ล้มเหลวทั้งก้อน:

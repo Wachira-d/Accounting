@@ -32,6 +32,12 @@ public interface IOcrService
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null);
+
+    /// <summary>เหมือนตัวบน แต่ <paramref name="allowDuplicate"/> = ผู้ใช้ยืนยันแล้วว่า
+    /// รู้ว่าเป็นใบซ้ำและยังต้องการสร้าง — ด่านกันซ้ำอยู่ที่เซิร์ฟเวอร์ ไม่ใช่ที่ปุ่ม
+    /// บนหน้าเว็บ (เดิมเตือนเฉพาะปุ่มเดียวจากสามปุ่ม อีกสองปุ่มลัดผ่านไปเลย)</summary>
+    Task<OcrResultResponse> CreateDocumentFromScanAsync(
+        Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride, bool allowDuplicate);
     /// <summary>Rebuild a document's lines from its source OCR scan when it
     /// was created empty (pre line-building fix). Looked up by documentId.</summary>
     Task<OcrResultResponse> RepopulateDocumentLinesFromScanAsync(Guid companyId, Guid documentId, string performedBy);

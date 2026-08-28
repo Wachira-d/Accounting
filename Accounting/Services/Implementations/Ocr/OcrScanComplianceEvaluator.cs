@@ -1,5 +1,6 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs.Ocr;
+using Accounting.Models.Enums;
 
 namespace Accounting.Services.Implementations.Ocr;
 
@@ -33,9 +34,10 @@ public static class OcrScanComplianceEvaluator
         // OurRole มาจาก OcrDocumentRoleInferrer — เชื่อถือได้ที่สุดถ้ามี
         if (string.Equals(ourRole, "Seller", StringComparison.OrdinalIgnoreCase)) return false;
         if (string.Equals(ourRole, "Buyer", StringComparison.OrdinalIgnoreCase)) return true;
-        var t = targetType ?? scannedType ?? "";
-        return t is "PurchaseInvoice" or "Expense" or "PaymentVoucher" or "PurchaseOrder"
-            or "PurchaseRequisition" or "GoodsReceiptNote" or "CertificateInLieu";
+        // ไม่รู้บทบาท → ตัดสินจากชนิดผ่านตัวกลาง (Helpers/DocumentSide.cs)
+        // เดิมมีลิสต์ชนิดเขียนมือที่นี่ ซึ่งไม่ตรงกับอีก 2 ที่ในระบบ
+        return Enum.TryParse<DocumentType>(targetType ?? scannedType, out var dt)
+            && DocumentSide.IsPurchase(dt, ourRole);
     }
 
     public static List<OcrScanIssueDto> Evaluate(OcrResultResponse r, string? ourTaxId)

@@ -697,6 +697,13 @@ public class OcrService : IOcrService
                 .Where(c => c.CompanyId == companyId && !c.IsDeleted)
                 .Select(c => (DocumentType?)c.OcrBuyerInvoiceDefaultTarget)
                 .FirstOrDefaultAsync();
+            // ผลจากตัวอนุมานที่ขั้นตอนถัด ๆ ไปต้องใช้ — ประกาศนอกบล็อกเพื่อให้
+            // VendorIntel/federated learner ด้านล่างอ่านได้ (เดิมค่าติดอยู่ในบล็อก
+            // จนกติกา federated ต้องเขียนเงื่อนไขที่เป็นจริงไม่ได้เลย)
+            decimal ocrRoleConfidence = 0m;
+            var ocrLikelyOurOwnDoc = false;
+            bool? ocrWeAreWithheld = null;
+            var ocrTargetFromPaper = false;   // true = กระดาษมี marker ชัด ไม่ใช่ default
             {
                 DocumentType? prevScanned = null;
                 if (Enum.TryParse<DocumentType>(extractedData.DocumentType, ignoreCase: true, out var prevDt))
@@ -725,8 +732,22 @@ public class OcrService : IOcrService
                     extractedData.DocumentType = role.ScannedDocType.Value.ToString();
                 extractedData.OurRole = role.OurRole;
                 extractedData.TargetDocumentType = role.TargetDocType.ToString();
+                ocrRoleConfidence = role.RoleConfidence;
+                ocrLikelyOurOwnDoc = role.LikelyOurOwnIssuedDocument;
+                ocrWeAreWithheld = role.WeAreWithheld;
+                // "กระดาษบอกเอง" = มี marker ชนิดเอกสารชัด — ต่างจากการตกลง
+                // default (Expense/PaymentVoucher) ซึ่งเป็นการเดา
+                ocrTargetFromPaper = role.ScannedDocType.HasValue;
                 foreach (var r in role.Reasons)
                     extractedData.ReasoningTrace.Add("[Role] " + r);
+
+                // เอกสารที่เราออกเองถูกสแกนกลับเข้ามา — ต้องเตือนถึงหน้าเว็บ
+                // ไม่ใช่ซ่อนอยู่ใน reasoning trace ที่พับไว้ (สร้างต่อ = ออกใบขาย
+                // ใบที่สอง เลข/ยอดซ้ำในรายงานภาษีขายที่ยื่นไปแล้ว)
+                if (role.LikelyOurOwnIssuedDocument)
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + "\n[OWN-DOC] เลขผู้ขายบนกระดาษคือบริษัทเราเอง — น่าจะเป็นสำเนาเอกสารที่เราออกไปแล้ว "
+                        + "ตรวจว่ามีใบนี้ในระบบหรือยังก่อนสร้างใหม่";
 
                 // §82/5 — เตือนผู้ใช้เมื่อเอกสารที่ได้รับ "เคลมภาษีซื้อไม่ได้"
                 // (ใบกำกับภาษีอย่างย่อ / ใบเสร็จ-บิลเงินสด ที่ไม่ใช่ใบกำกับเต็มรูป).
@@ -931,7 +952,14 @@ public class OcrService : IOcrService
                 // prediction is the doc-type to create — not the paper that was
                 // scanned. Override TargetDocumentType (set earlier by the role
                 // inferrer); never touch DocumentType (the scanned paper type).
-                if (vendorPred.DocumentType.HasValue && vendorPred.DocumentTypeConfidence >= VendorIntelligenceService.HighConfidence)
+                if (vendorPred.DocumentType.HasValue
+                    && vendorPred.DocumentTypeConfidence >= VendorIntelligenceService.HighConfidence
+                    // ⚠️ prior ของ vendor บอกได้แค่ "เอกสารของเจ้านี้มักลงเป็นอะไร"
+                    // ไม่ได้รู้ว่าใบนี้เราเป็นผู้ซื้อหรือผู้ขาย. TrainFromAdminAsync
+                    // ไม่กรองฝั่ง ⇒ คำแก้ฝั่งขายเขียนทับ prior ฝั่งซื้อของ vendor
+                    // เดียวกันได้ แล้วมาทับใบซื้อใบถัดไปแบบอัตโนมัติที่ ≥0.85
+                    // → ยอมให้ทับเฉพาะเมื่ออยู่ฝั่งเดียวกับบทบาทที่อนุมานได้
+                    && Accounting.Helpers.DocumentSide.MatchesRole(vendorPred.DocumentType.Value, extractedData.OurRole))
                 {
                     var newTarget = vendorPred.DocumentType.Value.ToString();
                     if (extractedData.TargetDocumentType != newTarget)
@@ -950,16 +978,24 @@ public class OcrService : IOcrService
                 // Federated fallback — when per-tenant VendorIntel has no
                 // confident prediction (new vendor for this tenant, but a
                 // vendor the SaaS as a whole has seen before), consult the
-                // cross-tenant pool. Only fires when:
-                //   1. We have NO TargetDocumentType yet, AND
-                //   2. VendorIntel's confidence stayed below MediumConfidence,
-                //   3. And the scanned-paper type was identifiable.
-                // The federated pattern needs k=3 distinct contributing
-                // tenants to be "active" — under the floor, this is silent.
+                // cross-tenant pool. The federated pattern needs k=3 distinct
+                // contributing tenants to be "active" — under the floor, silent.
+                //
+                // ⚠️ เงื่อนไขเดิมมี `string.IsNullOrEmpty(extractedData.TargetDocumentType)`
+                // ซึ่ง **เป็นจริงไม่ได้เลย** เพราะ OcrDocumentRoleInferrer ด้านบน
+                // เซ็ตค่าให้เสมอทุกเส้นทาง ⇒ ตัวเรียนรู้ federated เขียนข้อมูลสะสม
+                // มาตลอดแต่ไม่เคยถูกอ่านสักครั้ง (write-only ตั้งแต่วันแรก)
+                //
+                // เงื่อนไขที่ถูกต้อง: ใช้เมื่อ "เรายังไม่มั่นใจ" —
+                //   1. VendorIntel ของ tenant นี้ไม่มั่นใจ (< Medium)
+                //   2. รู้ชนิดกระดาษ (ใช้เป็น key ของ pattern)
+                //   3. ตัวอนุมานเองก็ไม่มั่นใจ (บทบาท < 0.9) **หรือ** เป้าหมายมาจาก
+                //      default ไม่ใช่ marker บนกระดาษ — ถ้ากระดาษบอกชัดและเรารู้
+                //      บทบาทแน่นอนแล้ว ความรู้ของคนอื่นไม่ควรมาทับ
                 if (_docWorkflowLearner != null
-                    && string.IsNullOrEmpty(extractedData.TargetDocumentType)
                     && (vendorPred.DocumentTypeConfidence < VendorIntelligenceService.MediumConfidence)
-                    && !string.IsNullOrEmpty(extractedData.DocumentType))
+                    && !string.IsNullOrEmpty(extractedData.DocumentType)
+                    && (ocrRoleConfidence < 0.9m || !ocrTargetFromPaper))
                 {
                     try
                     {
@@ -971,11 +1007,22 @@ public class OcrService : IOcrService
                         if (!string.IsNullOrEmpty(fedVKey))
                         {
                             var (fedTarget, fedTenants) = await _docWorkflowLearner.PredictAsync(fedVKey, extractedData.DocumentType);
-                            if (!string.IsNullOrEmpty(fedTarget))
+                            // ห้ามข้ามฝั่งซื้อ/ขาย — ความรู้จาก tenant อื่นบอกได้แค่
+                            // "vendor รายนี้มักถูกลงเป็นอะไร" ไม่ได้รู้ว่าใบนี้เราเป็น
+                            // ผู้ซื้อหรือผู้ขาย ถ้าเป้าที่แนะนำอยู่คนละฝั่งกับบทบาทที่
+                            // ยืนยันแล้ว = ข้อมูลใช้ไม่ได้ ทิ้งไป
+                            if (!string.IsNullOrEmpty(fedTarget)
+                                && Enum.TryParse<DocumentType>(fedTarget, out var fedDt)
+                                && Accounting.Helpers.DocumentSide.MatchesRole(fedDt, extractedData.OurRole))
                             {
                                 extractedData.TargetDocumentType = fedTarget;
                                 extractedData.ReasoningTrace.Add(
                                     $"[Federated] 🌐 ระบบกลางแนะนำสร้าง {fedTarget} (จาก {fedTenants} ลูกค้าที่ใช้ vendor เดียวกัน)");
+                            }
+                            else if (!string.IsNullOrEmpty(fedTarget))
+                            {
+                                extractedData.ReasoningTrace.Add(
+                                    $"[Federated] ข้ามคำแนะนำ {fedTarget} — คนละฝั่งกับบทบาทเรา ({extractedData.OurRole})");
                             }
                         }
                     }
@@ -1009,6 +1056,32 @@ public class OcrService : IOcrService
                     extractedData.PaymentTermsDays = vendorPred.TypicalPaymentTermsDays;
                     extractedData.ReasoningTrace.Add(
                         $"[VendorIntel] ตั้ง payment terms = {vendorPred.TypicalPaymentTermsDays} วัน จากประวัติผู้ขาย");
+
+                    // ── เครดิตเทอมจากประวัติ = หลักฐานว่า "ยังไม่จ่าย" ──
+                    //
+                    // ตัวอนุมานรันก่อนจุดนี้และเห็นเฉพาะเครดิตเทอมที่ "พิมพ์บน
+                    // กระดาษ" ใบที่ไม่พิมพ์เทอมจึงตกไปเป็นใบสำคัญจ่ายเสมอ =
+                    // **บันทึกการจ่ายเงินที่ไม่เคยเกิดขึ้น** (เงินออกจากบัญชีธนาคาร
+                    // ในสมุด ทั้งที่ยังไม่ได้จ่าย → กระทบยอดธนาคารเพี้ยน + เจ้าหนี้ขาด)
+                    //
+                    // ผิดทางไหนแย่กว่ากัน: ตั้งหนี้ทั้งที่จ่ายแล้ว = เจ้าหนี้เกินชั่วคราว
+                    // แล้วไปตัดตอนบันทึกจ่าย (มี flow รองรับ) · แต่บันทึกจ่ายทั้งที่
+                    // ยังไม่จ่าย = เงินสดหาย ไม่มี flow ย้อนกลับ ⇒ เลือกตั้งหนี้
+                    //
+                    // ใช้เฉพาะฝั่งซื้อ + ใบที่ยังเป็น default PaymentVoucher +
+                    // กระดาษไม่มีตราชำระแล้ว (ถ้ามีตรา ตัวอนุมานจะไม่ได้ให้ PV
+                    // จาก default อยู่แล้ว แต่กันไว้ให้ชัด)
+                    if (extractedData.OurRole == "Buyer"
+                        && extractedData.TargetDocumentType == nameof(DocumentType.PaymentVoucher)
+                        && vendorPred.TypicalPaymentTermsDays > 0
+                        && extractedData.DocumentType is nameof(DocumentType.TaxInvoice) or nameof(DocumentType.Invoice))
+                    {
+                        extractedData.TargetDocumentType = nameof(DocumentType.PurchaseInvoice);
+                        extractedData.ReasoningTrace.Add(
+                            $"[VendorIntel] ผู้ขายรายนี้ให้เครดิต {vendorPred.TypicalPaymentTermsDays} วันเป็นปกติ "
+                            + "และกระดาษไม่มีตรา \"ชำระแล้ว\" → ตั้งหนี้เป็นใบแจ้งหนี้ซื้อ แทนใบสำคัญจ่าย "
+                            + "(กันบันทึกการจ่ายที่ยังไม่เกิด)");
+                    }
                 }
 
                 // ─── Pattern-based confidence boost ───
@@ -3962,6 +4035,12 @@ public class OcrService : IOcrService
     }
 
     public async Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null)
+        => await CreateDocumentFromScanAsync(companyId, scanResultId, createdBy, targetTypeOverride, false);
+
+    /// <param name="allowDuplicate">ผู้ใช้ยืนยันแล้วว่ารู้ตัวว่าเป็นใบซ้ำและยังต้องการสร้าง —
+    /// ส่งมาจากหน้าเว็บหลังกดยืนยันในกล่องเตือนเท่านั้น</param>
+    public async Task<OcrResultResponse> CreateDocumentFromScanAsync(
+        Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride, bool allowDuplicate)
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -3977,7 +4056,25 @@ public class OcrService : IOcrService
             throw new InvalidOperationException("OCR scan is not yet completed.");
 
         if (result.CreatedDocumentId.HasValue)
-            throw new InvalidOperationException("A document has already been created from this scan.");
+            throw new Accounting.Helpers.BusinessRuleException(
+                "สแกนนี้สร้างเอกสารไปแล้ว — เปิดใบเดิมจากปุ่ม \"สร้างแล้ว →\" บนการ์ด "
+                + "(ถ้าต้องการแก้ตัวเลข ให้แก้ที่ตัวเอกสาร ไม่ใช่ที่ผลสแกน)");
+
+        // ── ด่านกันสร้างเอกสารซ้ำ ────────────────────────────────────────────
+        //
+        // เดิมเซิร์ฟเวอร์เช็คแค่ `CreatedDocumentId` ของ "สแกนใบนี้" — สแกนใบใหม่
+        // ที่ระบบเองตรวจว่าเป็นใบซ้ำ (IsDuplicate จาก hash / fingerprint /
+        // เลขที่+ยอด) ยังสร้างเอกสารที่สองได้เงียบ ๆ และหน้าเว็บก็เตือนเฉพาะปุ่ม
+        // เดียวจากสามปุ่ม ⇒ อีกสองปุ่มลัดผ่านด่านไปเลย
+        //
+        // ตรวจสองชั้น: (1) ธงที่ตอนสแกนตั้งไว้ (2) **เทียบกับตารางเอกสารจริง**
+        // ซึ่งเดิมไม่เคยเทียบเลย — สแกนที่ไม่ซ้ำกับสแกนเก่า แต่ซ้ำกับเอกสารที่
+        // คีย์มือไว้ก่อน ก็ยังหลุด
+        if (!allowDuplicate)
+        {
+            var dupMsg = await FindDuplicateDocumentWarningAsync(companyId, result);
+            if (dupMsg != null) throw new Accounting.Helpers.BusinessRuleException(dupMsg);
+        }
 
         // Document type precedence: explicit caller override (the user's live
         // dropdown pick in the review modal) → persisted inferred
@@ -4059,11 +4156,9 @@ public class OcrService : IOcrService
         // Sales-side targets bill OUR customer — the counterparty is the
         // BUYER printed on the paper, not the vendor (on a sales doc the
         // vendor block is us).
-        var isSalesSide = docType is DocumentType.Invoice or DocumentType.TaxInvoice
-            or DocumentType.Receipt or DocumentType.ReceiptVoucher
-            or DocumentType.Quotation or DocumentType.BillingNote
-            || (result.OurRole == "Seller"
-                && docType is DocumentType.CreditNote or DocumentType.DebitNote);
+        // ใช้ตัวตัดสินกลาง (Helpers/DocumentSide.cs) — เดิมสูตรนี้เขียนซ้ำ 3 ที่
+        // และให้คำตอบไม่ตรงกันบนเอกสารใบเดียว
+        var isSalesSide = Accounting.Helpers.DocumentSide.IsSales(docType, result.OurRole);
 
         Guid? contactId;
         if (isSalesSide)
@@ -5805,6 +5900,71 @@ public class OcrService : IOcrService
 
         _db.Set<OcrScanResult>().Remove(result);
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// ใบนี้ซ้ำกับอะไรในระบบหรือไม่ — คืนข้อความเตือน (null = ไม่ซ้ำ)
+    ///
+    /// <para>เทียบสองแหล่ง: ธง <c>IsDuplicate</c> ที่ตั้งตอนสแกน (hash ไฟล์ /
+    /// fingerprint เนื้อหา / เลขที่+ยอด) และ <b>ตารางเอกสารจริง</b> ซึ่งเดิม
+    /// ไม่เคยถูกเทียบเลย — ใบที่คีย์มือไว้ก่อนแล้วมาสแกนทีหลังจึงสร้างซ้ำได้
+    /// (ฝั่งซื้อ = เลขใบกำกับผู้ขายซ้ำ ⇒ เคลมภาษีซื้อซ้ำ · ฝั่งขาย = ออกเลข
+    /// เอกสารใหม่ให้รายการเดิม ⇒ ยอดขายเกินจริงใน ภ.พ.30)</para>
+    /// </summary>
+    private async Task<string?> FindDuplicateDocumentWarningAsync(Guid companyId, OcrScanResult result)
+    {
+        if (result.IsDuplicate && result.DuplicateOfScanId.HasValue)
+        {
+            var prior = await _db.Set<OcrScanResult>().AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.Id == result.DuplicateOfScanId.Value)
+                .Select(r => new { r.CreatedDocumentId, r.OriginalFileName })
+                .FirstOrDefaultAsync();
+            if (prior?.CreatedDocumentId != null)
+            {
+                var priorNo = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == prior.CreatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => d.DocumentNumber).FirstOrDefaultAsync();
+                return $"ใบนี้ซ้ำกับที่สแกนไว้แล้ว ({prior.OriginalFileName}) ซึ่งสร้างเป็นเอกสาร "
+                     + $"{priorNo ?? "(ไม่ทราบเลขที่)"} ไปแล้ว — เปิดใบเดิมแทนการสร้างใหม่ "
+                     + "· ถ้าเป็นคนละใบจริง ให้กดยืนยันสร้างซ้ำในกล่องเตือน";
+            }
+        }
+
+        // เทียบกับเอกสารจริง: เลขเอกสารเดียวกัน + คู่ค้าเดียวกัน + ยอดเท่ากัน
+        var docNo = (result.ExtractedDocumentNumber ?? "").Trim();
+        var total = result.ExtractedTotalAmount;
+        if (docNo.Length < 3 || total is null or 0) return null;
+        var vendorDigits = Accounting.Helpers.ThaiTaxId.Normalize(result.ExtractedVendorTaxId);
+
+        // ฝั่งซื้อเก็บเลขใบของผู้ขายไว้ที่ SupplierInvoiceNumber; ฝั่งขายใช้
+        // DocumentNumber ของเราเอง — เทียบทั้งสองช่องเพื่อครอบทั้งสองทิศ
+        var candidates = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided
+                && (d.SupplierInvoiceNumber == docNo || d.DocumentNumber == docNo))
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.TotalAmount, d.ContactId })
+            .Take(20)
+            .ToListAsync();
+        if (candidates.Count == 0) return null;
+
+        var hit = candidates.FirstOrDefault(c => Math.Abs(c.TotalAmount - total.Value) <= 0.01m);
+        if (hit == null) return null;
+
+        // ยืนยันคู่ค้าให้แน่ใจก่อนบล็อก — เลขเอกสารซ้ำข้าม vendor เกิดได้จริง
+        // (ผู้ขายคนละรายใช้เลขรันเดียวกัน) ถ้าคู่ค้าไม่ตรงถือว่าคนละใบ
+        if (!string.IsNullOrEmpty(vendorDigits) && hit.ContactId.HasValue)
+        {
+            var contactTax = await _db.Contacts.AsNoTracking()
+                .Where(c => c.Id == hit.ContactId.Value && c.CompanyId == companyId)
+                .Select(c => c.TaxId).FirstOrDefaultAsync();
+            if (!string.IsNullOrEmpty(contactTax)
+                && Accounting.Helpers.ThaiTaxId.Normalize(contactTax) != vendorDigits)
+                return null;
+        }
+
+        return $"มีเอกสาร {hit.DocumentNumber} ({hit.DocumentDate:dd/MM/yyyy}) ยอด {hit.TotalAmount:N2} "
+             + $"ที่ใช้เลขที่ \"{docNo}\" และยอดเดียวกันอยู่แล้ว — สร้างซ้ำจะทำให้ยอดในรายงานภาษีเกินจริง "
+             + "· เปิดใบเดิมแทน หรือกดยืนยันสร้างซ้ำถ้าเป็นคนละใบจริง";
     }
 
     /// <summary>เติมคำเตือน "ข้อมูลตามสรรพากรยังไม่ครบ" ให้ผลสแกนที่จะส่งออกไป

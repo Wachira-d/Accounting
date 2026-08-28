@@ -32,7 +32,16 @@ public static class OcrDocumentRoleInferrer
         // (ไม่มี marker ชัด / ฝั่งขาย).
         bool? InputVatClaimable = null,
         // คำแนะนำผู้ใช้เมื่อเคลมไม่ได้ — อธิบายว่าทำไม + ต้องทำอย่างไร
-        string? InputVatClaimWarning = null);
+        string? InputVatClaimWarning = null,
+        // กระดาษเป็นหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) หรือไม่ และทิศทางใด
+        // WeAreWithheld = true  → เราถูกหัก  = เครดิตภาษีใช้ใน ภ.ง.ด.50/51
+        // WeAreWithheld = false → เราหักเขา = หนี้ต้องนำส่ง ภ.ง.ด.3/53
+        // null = ไม่ใช่ 50 ทวิ หรือแยกทิศไม่ได้ (**ไม่เดา**)
+        bool IsWhtCertificate = false,
+        bool? WeAreWithheld = null,
+        // เตือนว่าอาจเป็น "เอกสารที่เราออกเอง" ที่ถูกสแกนกลับเข้ามา —
+        // สร้างต่อ = ออกใบขายซ้ำ ต้องให้คนยืนยันก่อน
+        bool LikelyOurOwnIssuedDocument = false);
 
     /// <summary>อ่านหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) แล้วบอกว่า "ใครหักใคร"
     ///
@@ -69,7 +78,9 @@ public static class OcrDocumentRoleInferrer
         // เลขผู้เสียภาษีของบริษัทเราปรากฏที่ตำแหน่งไหนบ้าง (รองรับรูปแบบมีขีดคั่น)
         var ourPositions = new List<int>();
         foreach (System.Text.RegularExpressions.Match m in
-                 System.Text.RegularExpressions.Regex.Matches(text, @"[\d\s-]{13,}"))
+                 // ตัวคั่นห้ามครอบ \n — ไม่งั้นเลขท้ายบรรทัดต่อกับเลขต้นบรรทัดถัดไป
+                 // จนได้ "ตำแหน่งของเลขเรา" ที่ผิดช่อง แล้วทิศ 50 ทวิ กลับด้าน
+                 System.Text.RegularExpressions.Regex.Matches(text, @"[\d \t-]{13,}"))
         {
             var digits = new string(m.Value.Where(char.IsDigit).ToArray());
             if (digits.Contains(companyTax, StringComparison.Ordinal)) ourPositions.Add(m.Index);
@@ -163,6 +174,34 @@ public static class OcrDocumentRoleInferrer
             }
         }
 
+        // ─── Step 1a′: หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — อ่านทิศจากตำแหน่งช่อง ───
+        //
+        // แบบ 50 ทวิ มีสองช่องคู่กันเสมอ (ผู้มีหน้าที่หัก / ผู้ถูกหัก) — ดูว่าเลข
+        // ของเราอยู่ช่องไหนก็รู้ทิศทันที **ไม่ต้องเดา**
+        //
+        // เดิมมี heuristic ที่บอกว่า "เจอ 50 ทวิ ⇒ เราเป็น Seller" ซึ่งผิดครึ่งหนึ่ง
+        // เสมอ (ใบที่เราหักผู้รับเหมาก็เป็น 50 ทวิ เหมือนกัน แต่เราเป็นผู้จ่าย) และ
+        // ตัวอ่านทิศที่ถูกต้อง InferWhtCertWeAreWithheld ก็มีอยู่แล้วในไฟล์นี้ —
+        // แต่เดิมถูกเรียกหลังสร้างเอกสารเสร็จ ไม่ใช่ตอนตัดสินว่าจะสร้างอะไร
+        var isWhtCert = ContainsAll(text, "ณ ที่จ่าย", "รับรอง")
+                     || text.Contains("50 ทวิ")
+                     || text.Contains("withholding tax certificate");
+        var weAreWithheld = isWhtCert ? InferWhtCertWeAreWithheld(rawText, companyTaxId) : null;
+        if (weAreWithheld.HasValue && roleConf < 0.9m)
+        {
+            // เราถูกหัก = เราเป็นผู้รับเงิน = ผู้ขาย · เราหักเขา = เราเป็นผู้จ่าย = ผู้ซื้อ
+            role = weAreWithheld.Value ? "Seller" : "Buyer";
+            roleConf = Math.Max(roleConf, 0.9m);
+            reasons.Add(weAreWithheld.Value
+                ? "หนังสือรับรองหัก ณ ที่จ่าย: เลขของเราอยู่ช่อง \"ผู้ถูกหัก\" → เราถูกหัก (เครดิตภาษี ภ.ง.ด.50/51) · role = Seller"
+                : "หนังสือรับรองหัก ณ ที่จ่าย: เลขของเราอยู่ช่อง \"ผู้มีหน้าที่หัก\" → เราหักเขา (นำส่ง ภ.ง.ด.3/53) · role = Buyer");
+        }
+        else if (isWhtCert)
+        {
+            reasons.Add("พบหนังสือรับรองหัก ณ ที่จ่าย แต่แยกทิศทางจากกระดาษไม่ได้ — "
+                + "ไม่เดาบทบาทจากเอกสารชนิดนี้ (เดิมเดาเป็น Seller เสมอ ซึ่งผิดครึ่งหนึ่ง)");
+        }
+
         // ─── Step 1b: Phrase + position heuristics (kicks in when no tax/name match) ───
         // When tax IDs & names didn't pin down our role, look at how the
         // document itself describes the parties. Receipts almost always
@@ -173,21 +212,20 @@ public static class OcrDocumentRoleInferrer
         // from there, that's another Buyer signal for us.
         if (roleConf < 0.75m && !string.IsNullOrEmpty(rawText))
         {
-            (int buyerLabelPos, _) = FindRolePhrasePositions(rawText);
+            (int buyerLabelPos, int sellerLabelPos) = FindRolePhrasePositions(rawText);
 
-            // Heuristic 1 — WHT-cert presence biases Seller (we issued the
-            // underlying invoice whose payment got withheld).
-            // marker เดิม "หัก ณ ที่จ่าย" ไม่เคย match เอกสารจริง (กระดาษเขียน
-            // "หนังสือรับรองการหักภาษี ณ ที่จ่าย" — มี "ภาษี" คั่น) heuristic นี้
-            // จึงไม่เคยทำงานเลย → ใช้ marker ที่ปรากฏจริง
-            var whtCertHint = ContainsAll(text, "ณ ที่จ่าย", "รับรอง")
-                          || text.Contains("50 ทวิ")
-                          || text.Contains("withholding tax certificate");
-            if (whtCertHint && role == "Buyer" && roleConf < 0.7m)
+            // Heuristic 1 — ป้าย "ผู้ขาย/ผู้ออกใบ" ใกล้ชื่อบริษัทเรา → เราเป็นผู้ขาย
+            // (ด้านตรงข้ามของ Heuristic 3; เดิมคำนวณ sellerLabelPos แล้วทิ้ง)
+            if (sellerLabelPos >= 0 && !string.IsNullOrEmpty(vendorName) && !string.IsNullOrEmpty(companyNm))
             {
-                role = "Seller";
-                roleConf = 0.65m;
-                reasons.Add("พบ \"หนังสือรับรองการหักภาษี ณ ที่จ่าย\" → ลีน Seller (เราเป็นผู้ออกใบกำกับเดิม)");
+                var vPos = rawText.IndexOf(vendorName!, sellerLabelPos, StringComparison.OrdinalIgnoreCase);
+                if (vPos >= 0 && vPos - sellerLabelPos <= 120
+                    && NameOverlaps(vendorName!.ToLowerInvariant(), companyNm))
+                {
+                    role = "Seller";
+                    roleConf = Math.Max(roleConf, 0.85m);
+                    reasons.Add("ป้าย \"ผู้ขาย/ผู้ออกใบ\" ใกล้ชื่อบริษัทเรา → role = Seller (label + fuzzy)");
+                }
             }
 
             // Heuristic 2 — position bias. Top-third of the document is the
@@ -243,7 +281,12 @@ public static class OcrDocumentRoleInferrer
         var hasDeliveryNote = ContainsAny(text, "ใบส่งของ", "delivery note");
         var hasQuotation = ContainsAny(text, "ใบเสนอราคา", "quotation");
         var hasBillingNote = ContainsAny(text, "ใบวางบิล", "billing note");
-        var hasWhtCert = ContainsAll(text, "หัก ณ ที่จ่าย", "รับรอง") || text.Contains("withholding tax certificate");
+        // สลิปโอนเงิน/หลักฐานการชำระ — เดิม**ไม่มี marker เลย** ⇒ ตกไปเป็น Expense
+        // ทุกใบ ทั้งที่ความหมายชัดว่าเงินเคลื่อนแล้ว (จ่าย = PV / รับ = RV)
+        var hasBankSlip = ContainsAny(text,
+            "สลิปโอนเงิน", "สลิปการโอน", "หลักฐานการโอนเงิน", "โอนเงินสำเร็จ", "โอนเงินเรียบร้อย",
+            "รายการโอนเงิน", "transfer slip", "payment slip", "transfer successful",
+            "พร้อมเพย์", "promptpay");
         // ── Markers that decide PAID-vs-UNPAID and EVIDENCE QUALITY ──
         // บิลเงินสด = informal cash bill. With a valid 13-digit vendor TaxId it
         // is acceptable expense evidence (→ PaymentVoucher); WITHOUT one, RD
@@ -360,6 +403,33 @@ public static class OcrDocumentRoleInferrer
             }
             else if (hasPurchaseOrder)
                 target = DocumentType.PurchaseOrder;
+            else if (hasBillingNote)
+            {
+                // ใบวางบิลที่ได้รับ = ผู้ขายเรียกเก็บของที่ส่งไปแล้ว ⇒ ตั้งหนี้
+                // (เดิมตกไป Expense เพราะไม่มี branch นี้)
+                target = DocumentType.PurchaseInvoice;
+                reasons.Add("ใบวางบิลจากผู้ขาย = เรียกเก็บของที่ส่งแล้ว → ตั้งหนี้เป็นใบแจ้งหนี้ซื้อ");
+            }
+            else if (hasDeliveryNote)
+            {
+                // ใบส่งของ = ของมาถึงแล้วแต่ยังไม่วางบิล ⇒ ใบรับสินค้า (GRN)
+                // ซึ่งเป็นขาที่ถูกต้องของ 3-way match (PO ↔ GRN ↔ Invoice)
+                target = DocumentType.GoodsReceiptNote;
+                reasons.Add("ใบส่งของจากผู้ขาย = รับของแล้วยังไม่วางบิล → ใบรับสินค้า (GRN) สำหรับ 3-way match");
+            }
+            else if (hasQuotation)
+            {
+                // ใบเสนอราคาที่ได้รับ — ยังไม่ใช่รายจ่าย ห้ามลงบัญชี
+                // (เดิมตกไป Expense = สร้างค่าใช้จ่ายจากใบเสนอราคา)
+                target = DocumentType.PurchaseRequisition;
+                reasons.Add("ใบเสนอราคาที่ได้รับ ยังไม่ใช่รายจ่าย → ตั้งเป็นใบขอซื้อไว้เปรียบเทียบราคา (ไม่ลงบัญชี)");
+            }
+            else if (hasBankSlip)
+            {
+                // สลิปโอนเงินฝั่งเรา = จ่ายออกไปแล้ว
+                target = DocumentType.PaymentVoucher;
+                reasons.Add("สลิป/หลักฐานการโอนเงิน = เงินออกแล้ว → ใบสำคัญจ่าย (แนบสลิปเป็นหลักฐาน)");
+            }
             else
             {
                 // No clear marker — fall back to Expense (general journal
@@ -368,6 +438,14 @@ public static class OcrDocumentRoleInferrer
                 target = DocumentType.Expense;
                 if (!vendorTaxValid)
                     reasons.Add("ไม่พบเลขผู้เสียภาษีผู้ขาย — หากต้องการให้รายจ่ายหักภาษีได้ พิจารณาออกใบรับรองแทนใบเสร็จ");
+            }
+
+            // 50 ทวิ ที่ "เราเป็นผู้หัก" — เรากำลังจ่ายเงินและหักภาษีไว้นำส่ง
+            // ภ.ง.ด.3/53 ⇒ คู่กับใบสำคัญจ่ายเสมอ ไม่ใช่ Expense ลอย ๆ
+            if (weAreWithheld == false)
+            {
+                target = DocumentType.PaymentVoucher;
+                reasons.Add("เราเป็นผู้หักภาษี ณ ที่จ่าย → ใบสำคัญจ่าย (ภาษีที่หักไว้เข้าทะเบียนนำส่ง ภ.ง.ด.3/53)");
             }
         }
         else // Seller
@@ -388,9 +466,35 @@ public static class OcrDocumentRoleInferrer
                 target = DocumentType.TaxInvoice;
             else if (hasQuotation)
                 target = DocumentType.Quotation;
+            else if (hasBankSlip)
+            {
+                // สลิปที่ลูกค้าส่งมาให้ = เงินเข้าแล้ว → ใบสำคัญรับ
+                target = DocumentType.ReceiptVoucher;
+                reasons.Add("สลิป/หลักฐานการโอนเงินจากลูกค้า = เงินเข้าแล้ว → ใบสำคัญรับ");
+            }
             else
                 target = DocumentType.Invoice;              // generic outgoing
+
+            // 50 ทวิ ที่ "เราถูกหัก" — ไม่ใช่ใบขายใบใหม่ แต่เป็นหลักฐานเครดิตภาษี
+            // ของใบขายที่ออกไปแล้ว (ระบบลงทะเบียนเครดิตให้ต่างหากผ่าน
+            // EnsureWhtCreditFromCertAsync) ⇒ ห้ามสร้างใบขายซ้ำ
+            if (weAreWithheld == true)
+            {
+                target = DocumentType.ReceiptVoucher;
+                reasons.Add("เราถูกหักภาษี ณ ที่จ่าย → หลักฐานรับเงินสุทธิ (ใบสำคัญรับ) + ลงทะเบียนเครดิตภาษี "
+                    + "ใช้ใน ภ.ง.ด.50/51 — **ไม่ใช่**ใบขายใบใหม่");
+            }
         }
+
+        // ─── เตือน "อาจเป็นเอกสารที่เราออกเอง สแกนกลับเข้ามา" ────────────────
+        // เราเป็นผู้ขายบนกระดาษ + กระดาษเป็นเอกสารขาย = สำเนาใบที่เราออกไปแล้ว
+        // การสร้างต่อ = ออกใบขายใบที่สอง (เลขซ้ำ/ยอดซ้ำในรายงานภาษีขาย)
+        // ยกเว้น 50 ทวิ ซึ่งเป็นกระดาษของคู่ค้า ไม่ใช่ของเรา
+        var likelyOurOwn = role == "Seller" && roleConf >= 0.9m && !isWhtCert
+            && (hasTaxInvoice || hasReceipt || hasInvoice || hasCreditNote || hasDebitNote);
+        if (likelyOurOwn)
+            reasons.Add("⚠️ เลขผู้ขายบนกระดาษคือบริษัทเราเอง — น่าจะเป็นสำเนาเอกสารที่เราออกไปแล้ว "
+                + "ตรวจสอบว่ามีใบนี้ในระบบหรือยังก่อนสร้างใหม่ (กันออกเลขซ้ำ/ยอดซ้ำในรายงานภาษีขาย)");
 
         var reasonRole = role == "Buyer" ? "เราเป็นผู้ซื้อ" : "เราเป็นผู้ขาย";
         reasons.Add($"{reasonRole} + กระดาษคือ {(scanned?.ToString() ?? "ไม่ระบุ")} → ควรสร้าง {target} ในระบบ");
@@ -431,7 +535,9 @@ public static class OcrDocumentRoleInferrer
         }
 
         return new InferenceResult(scanned, role, target, roleConf, reasons,
-            inputVatClaimable, inputVatWarning);
+            inputVatClaimable, inputVatWarning,
+            IsWhtCertificate: isWhtCert, WeAreWithheld: weAreWithheld,
+            LikelyOurOwnIssuedDocument: likelyOurOwn);
     }
 
     private static bool TaxIdMatches(string? a, string? b)
