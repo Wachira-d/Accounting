@@ -1263,7 +1263,98 @@
           return;
         }
 
-        container.innerHTML = '<div class="scan-grid">' + filtered.map(s => this.renderScanCard(s)).join('') + '</div>';
+        // ── แถบทำงานเป็นชุด ──
+        //
+        // ผลตรวจ UX: 20 ใบ = เปิด modal 20 รอบ × อย่างน้อย 3 คลิก ทั้งที่ใบเกรด A
+        // ที่ข้อมูลครบและไม่มีคำเตือน แทบไม่ต้องดูอะไรเลย — งานประจำของสำนักงาน
+        // บัญชีคือ "อัปโหลดทีละสิบใบ" ไม่ใช่ทีละใบ
+        //
+        // เลือกเฉพาะใบที่ยัง**ปลอดภัยพอจะอนุมัติรวด**: สแกนเสร็จ · ยังไม่สร้าง
+        // เอกสาร · ไม่มีคำเตือนระดับ error · ไม่ใช่ใบซ้ำ · ไม่มีลายมือ ·
+        // ไม่มีสินทรัพย์ที่ต้องลงทะเบียน — ที่เหลือบังคับให้เปิดดูทีละใบเหมือนเดิม
+        const batchable = filtered.filter(s => this._isBatchApprovable(s));
+        const bar = batchable.length >= 2 ? `
+          <div id="batchBar" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:12px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:#166534;cursor:pointer">
+              <input type="checkbox" id="batchSelectAll" onchange="Page.toggleSelectAll(this.checked)">
+              เลือกทั้งหมดที่พร้อมอนุมัติ (${batchable.length} ใบ)
+            </label>
+            <span id="batchCount" style="font-size:12px;color:#475569">ยังไม่ได้เลือก</span>
+            <div style="flex:1 1 auto"></div>
+            <button class="btn btn-sm btn-primary" id="batchApproveBtn" onclick="Page.batchApprove()" disabled>⚡ ยืนยัน + ลงบัญชีที่เลือก</button>
+          </div>` : '';
+
+        container.innerHTML = bar + '<div class="scan-grid">'
+          + filtered.map(s => this.renderScanCard(s)).join('') + '</div>';
+        this._syncBatchBar();
+      },
+
+      /** ใบนี้ปลอดภัยพอจะอนุมัติแบบไม่เปิดดูหรือไม่ — เกณฑ์ตั้งใจให้เข้ม
+       *  เพราะการอนุมัติรวดข้ามขั้นตรวจของคน ถ้าปล่อยใบที่มีข้อสงสัยผ่าน
+       *  ผู้ใช้จะเลิกเชื่อทั้งฟีเจอร์ */
+      _isBatchApprovable(s) {
+        if (s.scanStatus !== 'Completed' || s.createdDocumentId) return false;
+        if (s.isDuplicate || s.hasHandwriting || s.hasPotentialFixedAsset) return false;
+        // complianceIssues = undefined แปลว่า "เซิร์ฟเวอร์ยังไม่ได้ประเมิน"
+        // → ไม่ใช่ "ไม่มีปัญหา" จึงไม่ปล่อยผ่าน (สัญญาเดียวกับตอนวาดคำเตือน)
+        if (!Array.isArray(s.complianceIssues)) return false;
+        if (s.complianceIssues.some(i => i.severity === 'error')) return false;
+        // ต้องมีข้อมูลครบพอจะลงบัญชีได้จริง
+        if (!s.extractedVendorName || s.extractedTotalAmount == null || !s.extractedDate) return false;
+        // เกรดคุณภาพ D = ควรถ่ายใหม่ ไม่ควรอนุมัติรวด
+        if (s.quality?.letter === 'D') return false;
+        return true;
+      },
+
+      toggleSelectAll(on) {
+        document.querySelectorAll('input.batch-pick').forEach(cb => { cb.checked = on; });
+        this._syncBatchBar();
+      },
+
+      _syncBatchBar() {
+        const picked = [...document.querySelectorAll('input.batch-pick')].filter(cb => cb.checked);
+        const btn = document.getElementById('batchApproveBtn');
+        const lbl = document.getElementById('batchCount');
+        if (btn) btn.disabled = picked.length === 0;
+        if (lbl) lbl.textContent = picked.length ? `เลือกไว้ ${picked.length} ใบ` : 'ยังไม่ได้เลือก';
+      },
+
+      /** อนุมัติทีละใบแบบเรียงคิว (ไม่ยิงขนาน — กันชนกันที่เลขเอกสาร/สต็อก)
+       *  รายงานผลรายใบ ไม่ใช่ "สำเร็จ/ล้มเหลว" ก้อนเดียว เพราะบางใบอาจติดด่าน
+       *  §86/4 แล้วได้ใบร่างแทน ซึ่งผู้ใช้ต้องรู้ว่าใบไหน */
+      async batchApprove() {
+        const picked = [...document.querySelectorAll('input.batch-pick')]
+          .filter(cb => cb.checked).map(cb => cb.dataset.scanId);
+        if (!picked.length) return;
+        if (!confirm(`ยืนยันสร้างและลงบัญชี ${picked.length} ใบ?\n\n`
+          + 'ระบบจะทำทีละใบ — ใบที่ข้อมูลไม่ครบตามกฎหมายจะได้เป็นใบร่างพร้อมเหตุผลแทน')) return;
+
+        const btn = document.getElementById('batchApproveBtn');
+        const lbl = document.getElementById('batchCount');
+        btn.disabled = true;
+        const cid = Layout.getCompanyId();
+        let ok = 0, draft = 0;
+        const failed = [];
+        for (let i = 0; i < picked.length; i++) {
+          if (lbl) lbl.textContent = `กำลังทำ ${i + 1}/${picked.length}…`;
+          try {
+            const r = await API.post(
+              `/api/companies/${cid}/ocr/${picked[i]}/create-document?approve=true`);
+            const d = r?.data;
+            if (d?.createdDocumentId) {
+              // ProcessingNotes มีเหตุผลตอนอนุมัติไม่ผ่าน (ได้ใบร่างแทน)
+              if ((d.processingNotes || '').includes('อนุมัติไม่สำเร็จ')) draft++; else ok++;
+            } else failed.push(picked[i]);
+          } catch (e) {
+            failed.push(picked[i] + ': ' + (e?.message || ''));
+          }
+        }
+        const parts = [];
+        if (ok) parts.push(`ลงบัญชีแล้ว ${ok} ใบ`);
+        if (draft) parts.push(`เป็นใบร่าง ${draft} ใบ (ข้อมูลไม่ครบตามกฎหมาย)`);
+        if (failed.length) parts.push(`ไม่สำเร็จ ${failed.length} ใบ`);
+        Layout.toast(parts.join(' · '), failed.length ? 'warning' : 'success', 8000);
+        await this.loadScans();
       },
 
       renderScanCard(scan) {
@@ -1395,16 +1486,26 @@
           </div>`;
         }
 
+        // ช่องติ๊กสำหรับอนุมัติเป็นชุด — โผล่เฉพาะใบที่ผ่านเกณฑ์ปลอดภัย
+        // (ดู _isBatchApprovable) ใบที่มีข้อสงสัยไม่มีช่องให้ติ๊กเลย เพื่อไม่ให้
+        // ผู้ใช้เผลออนุมัติรวดใบที่ควรเปิดดู
+        const pickBox = this._isBatchApprovable(scan)
+          ? `<label style="display:flex;align-items:center;padding-right:6px;cursor:pointer" title="เลือกเพื่ออนุมัติพร้อมกันหลายใบ">
+               <input type="checkbox" class="batch-pick" data-scan-id="${scan.id}" onchange="Page._syncBatchBar()">
+             </label>`
+          : '';
+
         return `
           <div class="scan-card">
             <div class="scan-card-header">
+              ${pickBox}
               <div class="scan-card-thumb">${thumbIcon}</div>
               <div class="scan-card-meta">
                 <div class="scan-card-filename" title="${Layout.esc(scan.originalFileName || '')}">${Layout.esc(scan.originalFileName || 'ไม่มีชื่อไฟล์')}</div>
                 <div class="scan-card-badges">
                   <span class="doc-type-badge ${typeInfo.cls}">${typeInfo.label}</span>
                   ${statusBadge}
-                  ${scan.quality ? `<span class="doc-type-badge" style="background:${scan.quality.color}22;color:${scan.quality.color};font-weight:700" title="Quality grade — Score ${scan.quality.score}/100">${scan.quality.letter}</span>` : ''}
+                  ${scan.quality ? `<span class="doc-type-badge" style="background:${scan.quality.color}22;color:${scan.quality.color};font-weight:700" title="${Layout.esc(`คุณภาพการอ่าน ${scan.quality.letter} (${scan.quality.score}/100)\n${scan.quality.advice || ''}\n\n${(scan.quality.reasons || []).join('\n')}`)}">${scan.quality.letter}</span>` : ''}
                   ${scan.hasHandwriting ? `<span class="doc-type-badge" style="background:#fef3c7;color:#92400e;font-weight:700" title="ตรวจพบลายมือ — โปรดตรวจสอบยอดเงิน">✋ ลายมือ</span>` : ''}
                 </div>
               </div>
@@ -2315,6 +2416,24 @@
           }
 
           Layout.openModal('reviewModal');
+
+          // Enter = ยืนยัน + ลงบัญชี (กฎเหล็ก #3 ข้อ 4: default action = approve)
+          // เดิมไม่มี keyboard path เลย — ผู้ใช้ที่ทำ 20 ใบต้องเล็งเมาส์ทุกใบ
+          // ไม่ยิงเมื่อโฟกัสอยู่ในช่องกรอก/textarea (Enter ที่นั่นมีความหมายอื่น)
+          if (!this._reviewKeyHandler) {
+            this._reviewKeyHandler = (ev) => {
+              if (ev.key !== 'Enter' || ev.shiftKey || ev.ctrlKey || ev.metaKey) return;
+              const modal = document.getElementById('reviewModal');
+              // Layout.openModal ใส่คลาส 'active' (ไม่ใช่ 'show') — เช็คผิดคลาส
+              // = handler ไม่มีวันยิง แล้วไม่มีใครรู้ว่าฟีเจอร์ตาย
+              if (!modal || !modal.classList.contains('active')) return;
+              const t = ev.target;
+              if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+              const btn = document.getElementById('reviewCreateApproveBtn');
+              if (btn && !btn.disabled) { ev.preventDefault(); btn.click(); }
+            };
+            document.addEventListener('keydown', this._reviewKeyHandler);
+          }
 
           // {stockImport:true} fast-path — caller (📦 card button)
           // wants to skip the field-review step and jump straight

@@ -6301,7 +6301,17 @@ public class OcrService : IOcrService
     {
         if (r.ScanStatus != "Completed") return null;
         var grade = Ocr.ScanQualityGrader.Compute(r);
-        return new OcrQualityGradeDto(grade.Letter, grade.Score, grade.Color);
+        // เหตุผล + คำแนะนำ — เดิม DTO ทิ้ง Reasons ทั้งก้อน ผู้ใช้เห็นแค่ตัวอักษร
+        // "D" โดยไม่รู้ว่าเพราะอะไรและต้องทำอะไรต่อ
+        var advice = grade.Letter switch
+        {
+            "A" => "ข้อมูลครบและสอดคล้องกัน — ยืนยันได้เลย",
+            "B" => "ข้อมูลใช้ได้ แนะนำกวาดตาดูยอดกับวันที่ก่อนยืนยัน",
+            "C" => "ต้องตรวจก่อนยืนยัน — เปิด 'ไฟล์แนบ' เทียบกับกระดาษจริง",
+            _   => "คุณภาพรูปต่ำ — แนะนำ **ถ่าย/สแกนใหม่ให้คมขึ้น** แล้วกด 'สแกนใหม่' "
+                 + "(ถ่ายตรง ๆ ไม่เอียง แสงสม่ำเสมอ เห็นครบทั้งใบ)",
+        };
+        return new OcrQualityGradeDto(grade.Letter, grade.Score, grade.Color, grade.Reasons, advice);
     }
 
     /// <summary>

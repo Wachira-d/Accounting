@@ -109,7 +109,16 @@ public record LinkPurchaseOrderRequest(
     Guid PurchaseOrderId,
     Dictionary<int, Guid?>? LineMappings);
 
-public record OcrQualityGradeDto(string Letter, int Score, string Color);
+/// <param name="Reasons">เหตุผลว่าทำไมได้เกรดนี้ — <c>ScanQualityGrader</c>
+/// สร้างรายการนี้ให้ครบทุกครั้งอยู่แล้ว แต่ DTO เดิม<b>ทิ้งทั้งก้อน</b> ⇒
+/// ผู้ใช้เห็นตัวอักษร "D" โดยไม่รู้ว่าเพราะอะไรและต้องทำอะไรต่อ (เอกสารของ
+/// grader เขียนว่า D = "probably re-scan" แต่การ์ดไม่เคยบอกว่าให้ถ่ายใหม่)</param>
+/// <param name="Advice">คำแนะนำสั้น ๆ ตามเกรด — ผู้ใช้ต้องรู้ "ต้องทำอะไรต่อ"
+/// ไม่ใช่แค่ "คะแนนเท่าไร" (กติกาเดียวกับ Action ของกฎ RD compliance)</param>
+public record OcrQualityGradeDto(
+    string Letter, int Score, string Color,
+    IReadOnlyList<string>? Reasons = null,
+    string? Advice = null);
 
 public record OcrDbdInfo(
     bool LookupAttempted,
