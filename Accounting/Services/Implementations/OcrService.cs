@@ -4016,8 +4016,23 @@ public class OcrService : IOcrService
         var query = _db.Set<OcrScanResult>()
             .Where(r => r.CompanyId == companyId);
 
+        // ตัวกรองสถานะ — "Created"/"Pending" เป็นสถานะ **เชิงความหมาย** ไม่ใช่ค่า
+        // ใน ScanStatus (ซึ่งมีแค่ Pending/Processing/Completed/Failed)
+        //
+        // ⚠️ เดิมเทียบ `r.ScanStatus == status` ตรง ๆ ⇒ แท็บ "สร้างแล้ว" ส่ง
+        // status=Created ไปแล้วได้ 0 แถวเสมอ = **แท็บว่างถาวร** ทั้งที่ตัวเลข
+        // บนการ์ดสถิตินับได้ และตัวกรองฝั่งหน้าเว็บก็เขียนรอไว้แล้วแต่ไม่มี
+        // ข้อมูลให้กรอง
         if (!string.IsNullOrWhiteSpace(status))
-            query = query.Where(r => r.ScanStatus == status);
+        {
+            query = status switch
+            {
+                "Created" => query.Where(r => r.CreatedDocumentId != null),
+                // "รอตรวจสอบ" = สแกนเสร็จแล้วแต่ยังไม่ได้สร้างเอกสาร
+                "Pending" => query.Where(r => r.ScanStatus == "Completed" && r.CreatedDocumentId == null),
+                _ => query.Where(r => r.ScanStatus == status),
+            };
+        }
 
         if (!string.IsNullOrWhiteSpace(request.Search))
             query = query.Where(r => r.OriginalFileName.Contains(request.Search)

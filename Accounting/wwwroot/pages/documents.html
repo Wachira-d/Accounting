@@ -1807,6 +1807,21 @@
         // Wait a tick for openCreate's DOM mutations to settle.
         await new Promise(r => setTimeout(r, 30));
 
+        // ── ปลดโหมด "เฉพาะสินค้าในระบบ" สำหรับใบที่มาจาก OCR ──
+        //
+        // ⚠️ `fStrictProducts` ติ๊กไว้เป็น default และ openEdit ปลดให้เฉพาะตอน
+        // **เปิดแก้ใบเก่า** — เส้นทาง handoff (สร้างใบใหม่จากสแกน) ไม่เคยปลด
+        // ⇒ บรรทัดจาก OCR ไม่มี productCode ทุกบรรทัด แล้ว save() บล็อกว่า
+        // "มี N แถวที่กรอกอิสระ…" ⇒ **ผู้ใช้ใหม่ที่กดปุ่มที่ระบบแนะนำ บันทึก
+        // เอกสารจาก OCR ไม่ได้เลย** จนกว่าจะหา checkbox ที่ซ่อนอยู่ในหัวตารางเจอ
+        const strictCb = document.getElementById('fStrictProducts');
+        if (strictCb && strictCb.checked) {
+          strictCb.checked = false;
+          const hint = document.getElementById('linesHint');
+          if (hint) hint.innerHTML = '💡 เอกสารนี้มาจาก OCR — ปลดล็อกโหมด "เฉพาะสินค้าในระบบ" ให้แล้ว '
+            + 'แก้ไขรายละเอียดได้อิสระ (ผูกสินค้าภายหลังได้)';
+        }
+
         // Target document type (the inferrer's suggestion). Fire
         // onDocTypeChange so type-specific fields (expense category, cert /
         // payment-voucher blocks, AR-only widgets) render for the chosen type

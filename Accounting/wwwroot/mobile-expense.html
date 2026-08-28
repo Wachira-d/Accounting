@@ -83,6 +83,8 @@
   <script>
     const App = {
       photo: null,
+      photoFile: null,
+      scanId: null,   // ผลสแกน OCR ของรูปที่เพิ่งถ่าย — ใช้เป็นเส้นทางสร้างเอกสาร
 
       init() {
         document.getElementById('expDate').value = new Date().toISOString().slice(0,10);
@@ -104,6 +106,7 @@
       onPhoto(e) {
         const f = e.target.files[0];
         if (!f) return;
+        this.photoFile = f;
         const r = new FileReader();
         r.onload = ev => {
           this.photo = ev.target.result;
@@ -112,6 +115,47 @@
           document.getElementById('photoArea').style.display = 'none';
         };
         r.readAsDataURL(f);
+        // ยิง OCR ทันทีที่ถ่าย — หน้านี้โฆษณาไว้ว่า "จะใช้ OCR ดึงยอดเงิน
+        // อัตโนมัติ" แต่เดิม**ไม่เคยเรียก OCR เลย** รูปถูกแนบเป็น base64
+        // เฉย ๆ แล้วให้ผู้ใช้พิมพ์ร้านค้า+ยอดเงินเอง = ฟอร์มว่างรอกรอก
+        // ซึ่งเป็น anti-pattern ที่กฎเหล็ก #3 ห้ามไว้ตรง ๆ
+        this.scanPhoto(f);
+      },
+
+      /** ส่งรูปเข้า OCR แล้วเติมช่องให้ — ผู้ใช้แค่ยืนยัน (กฎเหล็ก #3) */
+      async scanPhoto(file) {
+        const res = document.getElementById('result');
+        const token = localStorage.getItem('token');
+        const companyId = this.companyId();
+        if (!token || !companyId) return;      // ยังไม่ล็อกอิน — ปล่อยให้กรอกมือ
+        res.innerHTML = '<div class="ok">🔎 กำลังอ่านข้อมูลจากรูป…</div>';
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const r = await fetch(`/api/companies/${companyId}/ocr/upload`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token },
+            body: fd,
+          });
+          const j = await r.json();
+          const d = j?.data;
+          if (!r.ok || !j.success || !d) {
+            res.innerHTML = '<div class="err">อ่านรูปอัตโนมัติไม่สำเร็จ — กรอกเองได้เลย</div>';
+            return;
+          }
+          this.scanId = d.id || null;
+          const set = (id, val) => {
+            const el = document.getElementById(id);
+            if (el && val != null && val !== '' && !el.value) el.value = val;
+          };
+          set('vendor', d.extractedVendorName);
+          if (d.extractedTotalAmount != null) set('amount', d.extractedTotalAmount);
+          if (d.extractedDate) set('expDate', String(d.extractedDate).slice(0, 10));
+          const pct = Math.round((Number(d.confidence) || 0) * 100);
+          res.innerHTML = `<div class="ok">✅ อ่านข้อมูลให้แล้ว (ความมั่นใจ ${pct}%) — ตรวจแล้วกดส่งได้เลย</div>`;
+        } catch (e) {
+          res.innerHTML = '<div class="err">อ่านรูปอัตโนมัติไม่สำเร็จ — กรอกเองได้เลย</div>';
+        }
       },
 
       async submit() {
@@ -133,31 +177,49 @@
             res.innerHTML = '<div class="err">ต้อง login + เลือกบริษัทก่อน</div>';
             btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย'; return;
           }
-          const body = {
-            documentType: 'Expense',
-            documentDate: date,
-            contactName: vendor,
-            totalAmount: amount,
-            notes: `[Mobile ${category}] ${notes}`,
-            attachmentBase64: this.photo,
-          };
-          const r = await fetch(`/api/companies/${companyId}/documents`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-            body: JSON.stringify(body),
-          });
+          // ── ส่งผ่านเส้นทาง OCR ที่มีอยู่แล้ว ──
+          //
+          // ⚠️ เดิม POST ไป `/api/companies/{id}/documents` (พหูพจน์) แต่
+          // DocumentController ใช้ route `[controller]` = **/document (เอกพจน์)**
+          // ⇒ ไม่มี route นี้อยู่จริง กดส่งได้ 404 ทุกครั้งตั้งแต่เขียนมา
+          // และ body ที่ส่ง (contactName/totalAmount/attachmentBase64) ก็ไม่ตรง
+          // กับ CreateDocumentRequest ด้วย
+          //
+          // แทนที่จะซ่อม payload ให้ตรง (แล้วต้องดูแลอีกเส้นทางหนึ่งตลอดไป)
+          // ใช้เส้นทางเดียวกับหน้าสแกนบนเดสก์ท็อป: อัปโหลด → OCR → แก้ค่าที่
+          // ผู้ใช้พิมพ์ → สร้างเอกสาร ทุกด่าน (ภาษี/บัญชีคู่/แนบไฟล์) ทำงานครบ
+          if (!this.scanId) {
+            res.innerHTML = '<div class="err">ต้องถ่ายรูปใบเสร็จก่อน — ระบบใช้รูปเป็นหลักฐานการจ่าย</div>';
+            btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย'; return;
+          }
+          const H = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
+          // ส่งค่าที่ผู้ใช้ยืนยัน/แก้ กลับไปให้ระบบเรียนรู้ด้วย (กฎเหล็ก #1)
+          await fetch(`/api/companies/${companyId}/ocr/${this.scanId}/correct`, {
+            method: 'POST', headers: H,
+            body: JSON.stringify({
+              vendorName: vendor, totalAmount: amount,
+              documentDate: date || null, expenseCategory: category || null,
+            }),
+          }).catch(() => { /* best-effort — ไม่ให้ขวางการส่งเบิก */ });
+
+          const r = await fetch(
+            `/api/companies/${companyId}/ocr/${this.scanId}/create-document?targetType=Expense`,
+            { method: 'POST', headers: H });
           const j = await r.json();
           if (!r.ok || !j.success) {
             res.innerHTML = `<div class="err">${j.message || 'ส่งไม่สำเร็จ'}</div>`;
             btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย'; return;
           }
-          res.innerHTML = `<div class="ok">✅ ส่งเบิกแล้ว — เลขที่ ${j.data?.documentNumber || 'รออนุมัติ'}</div>`;
+          res.innerHTML = '<div class="ok">✅ ส่งเบิกแล้ว — เปิดดูใบได้ในระบบหลัก (เมนู เอกสาร)</div>';
           setTimeout(() => {
             document.getElementById('amount').value = '';
             document.getElementById('vendor').value = '';
             document.getElementById('notes').value = '';
             document.getElementById('photoArea').style.display = 'block';
             document.getElementById('photoPreview').classList.remove('show');
+            // ล้างสถานะสแกน — ไม่งั้นรูปใบถัดไปจะใช้ scanId เดิมแล้วเซิร์ฟเวอร์
+            // ตอบ "สแกนนี้สร้างเอกสารไปแล้ว"
+            this.photo = null; this.photoFile = null; this.scanId = null;
             this.photo = null;
             btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย';
           }, 1500);
