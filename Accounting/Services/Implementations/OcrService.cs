@@ -744,6 +744,13 @@ public class OcrService : IOcrService
                 // เอกสารที่เราออกเองถูกสแกนกลับเข้ามา — ต้องเตือนถึงหน้าเว็บ
                 // ไม่ใช่ซ่อนอยู่ใน reasoning trace ที่พับไว้ (สร้างต่อ = ออกใบขาย
                 // ใบที่สอง เลข/ยอดซ้ำในรายงานภาษีขายที่ยื่นไปแล้ว)
+                // สแกน "สำเนา" มาลงบัญชี — เสี่ยงเคลมภาษีซื้อซ้ำ (§86/4 ให้ผู้ซื้อ
+                // ใช้ต้นฉบับ) เตือนถึงหน้าเว็บ ไม่ใช่ซ่อนใน trace ที่พับไว้
+                if (role.LooksLikeCopy && role.OurRole == "Buyer")
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + "\n[COPY-DOC] กระดาษระบุว่าเป็น \"สำเนา\" — ผู้ซื้อต้องใช้ต้นฉบับในการเคลมภาษีซื้อ "
+                        + "(§86/4) และต้นฉบับใบเดียวกันอาจถูกลงบัญชีไปแล้ว ตรวจสอบก่อนสร้างเอกสาร";
+
                 if (role.LikelyOurOwnIssuedDocument)
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
                         + "\n[OWN-DOC] เลขผู้ขายบนกระดาษคือบริษัทเราเอง — น่าจะเป็นสำเนาเอกสารที่เราออกไปแล้ว "

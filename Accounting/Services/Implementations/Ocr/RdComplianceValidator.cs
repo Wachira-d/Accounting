@@ -312,6 +312,34 @@ public class RdComplianceValidator
                 : "กดปุ่ม 'แก้ไข' ด้านล่าง → ตรวจตารางรายการ (จำนวน/ราคา/VAT ต่อบรรทัด) ให้ตรงกับกระดาษ → บันทึก "
                   + "· ถ้ากระดาษมีทั้งรายการมี VAT และยกเว้น ให้ตั้ง VAT ต่อบรรทัดให้ถูก"));
 
+        // Rule 6b: ยอดตัวเลข vs "จำนวนเงินตัวอักษร" บนกระดาษ
+        //
+        // ใบไทยเกือบทุกใบพิมพ์ยอดไว้สองรูปแบบที่หน้าตาต่างกันสิ้นเชิง ⇒ OCR
+        // แทบไม่มีทางอ่านผิดเหมือนกันทั้งคู่ นี่คือด่านที่จับ "จุดทศนิยม/ลูกน้ำ
+        // หาย" ได้ ซึ่งด่านคณิตอื่นจับไม่ได้เลย (6,420.00 → 642000 ยัง
+        // sub+vat=total ถูกทุกอย่างถ้าอ่านผิดพร้อมกันทั้งชุด)
+        var wordsTotal = ThaiAmountInWords.FindInText(rawText);
+        if (wordsTotal is null or 0)
+        {
+            results.Add(new("AMOUNT_IN_WORDS_MATCH", true, "Info",
+                "ไม่พบจำนวนเงินตัวอักษรบนกระดาษ — ข้ามการตรวจซ้ำ (ไม่ได้แปลว่ายอดผิด)", null));
+        }
+        else if (ThaiAmountInWords.Matches(o.ExtractedTotalAmount, wordsTotal))
+        {
+            results.Add(new("AMOUNT_IN_WORDS_MATCH", true, "Info",
+                $"ยอดรวมตรงกับจำนวนเงินตัวอักษรบนกระดาษ ({wordsTotal:N2}) — ยืนยันสองทาง",
+                wordsTotal.Value.ToString("N2")));
+        }
+        else
+        {
+            results.Add(new("AMOUNT_IN_WORDS_MATCH", false, "Warning",
+                $"ยอดรวมที่อ่านได้ {o.ExtractedTotalAmount:N2} ไม่ตรงกับจำนวนเงินตัวอักษรบนกระดาษ "
+                + $"({wordsTotal:N2}) — มักเกิดจากจุดทศนิยม/ลูกน้ำหายตอนอ่าน",
+                $"ตัวเลข={o.ExtractedTotalAmount:N2} · ตัวอักษร={wordsTotal:N2}",
+                "กดปุ่ม 'แก้ไข' ด้านล่าง → ตรวจยอดรวมกับกระดาษจริง แล้วแก้ให้ตรงกับจำนวนเงินตัวอักษร "
+                + "(ตัวอักษรบนใบไทยเป็นตัวตัดสิน เพราะพิมพ์ยากกว่าจะผิด)"));
+        }
+
         // Rule 7: Tenant cross-check — "ใบนี้เป็นของบริษัทที่เปิดอยู่จริงไหม"
         //
         // ═══ กติกาเหล็ก: กฎนี้ห้ามขัดกับกฎที่ 3 ═══

@@ -103,6 +103,51 @@ internal static class SmartFieldExtractor
 
         // 11. Total cannot be less than VAT — sanity check
         ValidateAmountOrdering(data);
+
+        // 12. เทียบยอดกับ "จำนวนเงินตัวอักษร" บนกระดาษ — ด่านที่แรงที่สุด
+        CrossCheckAmountInWords(data, rawText);
+    }
+
+    /// <summary>
+    /// เทียบยอดรวมกับ "จำนวนเงินรวมทั้งสิ้น (ตัวอักษร)" ที่พิมพ์บนกระดาษ
+    ///
+    /// <para>ใบเสร็จ/ใบกำกับไทยเกือบทุกใบพิมพ์ยอดไว้สองรูปแบบ ซึ่งหน้าตาต่างกัน
+    /// สิ้นเชิง ⇒ OCR แทบไม่มีทางอ่านผิด<b>เหมือนกัน</b>ทั้งคู่ นี่จึงเป็นการ
+    /// ตรวจซ้ำที่แรงที่สุดที่มีอยู่บนกระดาษ และจับความผิดพลาดชนิดที่ด่านคณิต
+    /// อื่นจับไม่ได้เลย — จุดทศนิยม/ลูกน้ำหาย (6,420.00 → 642000), หลักเกิน,
+    /// ตัวเลขสลับ. ระบบมีตัวแปลง "เลข → ตัวอักษร" มานานแล้ว (ขาพิมพ์เอกสาร)
+    /// แต่ไม่เคยมีขากลับ ⇒ ข้อมูลที่พิมพ์อยู่บนกระดาษทุกใบถูกทิ้งเปล่า ๆ</para>
+    ///
+    /// <para>สองหน้าที่: (1) <b>เติม</b>ยอดเมื่ออ่านตัวเลขไม่ได้เลย
+    /// (2) <b>เตือน</b>เมื่อสองค่าขัดกัน — ไม่ทับค่าตัวเลขเงียบ ๆ เพราะยังไม่รู้
+    /// ว่าฝั่งไหนถูก ให้คนตัดสิน</para>
+    /// </summary>
+    private static void CrossCheckAmountInWords(OcrExtractedData data, string rawText)
+    {
+        var words = Accounting.Helpers.ThaiAmountInWords.FindInText(rawText);
+        if (words is null or 0) return;
+
+        if (data.TotalAmount is null or 0)
+        {
+            data.TotalAmount = words;
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.TotalAmount] = 0.9;
+            data.ReasoningTrace.Add(
+                $"[AmountWords] อ่านยอดตัวเลขไม่ได้ — ใช้จำนวนเงินตัวอักษรบนกระดาษแทน: {words:N2}");
+            return;
+        }
+
+        if (Accounting.Helpers.ThaiAmountInWords.Matches(data.TotalAmount, words))
+        {
+            // ตรงกัน = หลักฐานสองทาง → ดันความมั่นใจขึ้น
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.TotalAmount] = 0.99;
+            data.ReasoningTrace.Add($"[AmountWords] ยอดตัวเลขตรงกับตัวอักษรบนกระดาษ ({words:N2}) ✓");
+            return;
+        }
+
+        data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.TotalAmount] = 0.35;
+        data.ReasoningTrace.Add(
+            $"[AmountWords] ⚠️ ยอดตัวเลข {data.TotalAmount:N2} ไม่ตรงกับจำนวนเงินตัวอักษรบนกระดาษ "
+            + $"({words:N2}) — ตรวจจุดทศนิยม/ลูกน้ำก่อนอนุมัติ");
     }
 
     // ─── 1. Tax-ID with checksum filter ──────────────────────────────────
@@ -795,6 +840,29 @@ internal static class SmartFieldExtractor
         // รอบบิล. เดิม "Invoice No." อยู่บนสุด ⇒ เลขใบแจ้งหนี้ชนะเลขใบกำกับทุก
         // ครั้งบนใบพวกนี้. เลขที่หลัก (เลขที่/No. เดี่ยว ๆ) ต้องมาก่อน —
         // "Invoice No." เหลือเป็น fallback สำหรับใบแจ้งหนี้จริงที่ไม่มีเลขอื่น
+        // ── แบบฟอร์มเล่มมีสำเนา: "เล่มที่ 007  เลขที่ 0339" ──
+        //
+        // ⚠️ เดิมไม่มี pattern รองรับรูปแบบนี้เลย ทั้งที่เป็นแบบฟอร์มที่พบบ่อย
+        // ที่สุดของร้านค้า/ผู้รับเหมารายย่อย (และเป็นใบที่เพิ่งเป็นบั๊กเรื่อง
+        // เลขผู้ซื้อ — หจก.สหกลชลบุรี เล่ม 007 เลขที่ 0339) ⇒ เลขที่เอกสารว่าง
+        // หรือหยิบเลขอื่นมาแทน · คอลัมน์ "เล่มที่/เลขที่" ในรายงานภาษีซื้อ
+        // (§87) จึงกรอกได้ครึ่งเดียวตลอด
+        //
+        // เก็บเป็น "เล่ม/เลข" เพื่อให้ระบุใบได้จริง — เลขที่ 4 หลักซ้ำกันข้าม
+        // เล่มเป็นเรื่องปกติของแบบฟอร์มชนิดนี้
+        var bookMatch = Regex.Match(text,
+            @"เล่ม\s*ที่?\s*[:：]?\s*(\d{1,6})[\s\S]{0,40}?เลข\s*ที่?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{1,})",
+            RegexOptions.IgnoreCase);
+        if (bookMatch.Success)
+        {
+            var book = bookMatch.Groups[1].Value.Trim();
+            var no = bookMatch.Groups[2].Value.Trim().TrimEnd('.', ',', ';');
+            data.DocumentNumber = $"{book}/{no}";
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.DocumentNumber] = 0.9;
+            data.ReasoningTrace.Add($"[SmartExtract] แบบฟอร์มเล่มมีสำเนา — เล่มที่ {book} เลขที่ {no}");
+            return;
+        }
+
         var patterns = new[]
         {
             @"(?:เลขที่|เลขที|เลข\s?ที่|No\.?)\s*\(\s*No\.?\s*\)\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",

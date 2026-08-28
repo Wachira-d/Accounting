@@ -39,6 +39,9 @@ public static class OcrDocumentRoleInferrer
         // null = ไม่ใช่ 50 ทวิ หรือแยกทิศไม่ได้ (**ไม่เดา**)
         bool IsWhtCertificate = false,
         bool? WeAreWithheld = null,
+        // กระดาษที่สแกนมาน่าจะเป็น "สำเนา" ไม่ใช่ต้นฉบับ — ผู้ซื้อต้องใช้ต้นฉบับ
+        // ในการเคลมภาษีซื้อ (§86/4) และต้นฉบับอาจถูกลงบัญชีไปแล้ว
+        bool LooksLikeCopy = false,
         // เตือนว่าอาจเป็น "เอกสารที่เราออกเอง" ที่ถูกสแกนกลับเข้ามา —
         // สร้างต่อ = ออกใบขายซ้ำ ต้องให้คนยืนยันก่อน
         bool LikelyOurOwnIssuedDocument = false);
@@ -312,6 +315,29 @@ public static class OcrDocumentRoleInferrer
             reasons.Add("พบคำ \"อย่างย่อ\" บนกระดาษ แต่ใบระบุเลขผู้เสียภาษีผู้ซื้อครบ 13 หลัก (checksum ผ่าน) "
                 + "(ใบอย่างย่อตาม §86/6 ไม่มีข้อมูลผู้ซื้อ) → ตีเป็นใบกำกับภาษีเต็มรูป เคลมภาษีซื้อได้");
         }
+        // ── ตรวจ "อย่างย่อ" จากโครงสร้าง ไม่ใช่แค่ตัวหนังสือ ──
+        //
+        // ⚠️ ช่องโหว่ที่ทีมตรวจพบ: สลิป POS ค้าปลีกจำนวนมาก **ไม่พิมพ์คำว่า
+        // "ใบกำกับภาษีอย่างย่อ"** เลย (พิมพ์แค่ "ใบกำกับภาษี" + "ราคารวม
+        // ภาษีมูลค่าเพิ่มแล้ว" และไม่มีบล็อกผู้ซื้อ) ⇒ ระบบตีเป็นใบเต็มรูป
+        // แล้ว **เคลมภาษีซื้อต้องห้ามตาม §82/5(2)** ยื่น ภ.พ.30 เกินสิทธิ์เงียบ ๆ
+        //
+        // ลายเซ็นเชิงโครงสร้างของ §86/6: มีคำว่าใบกำกับภาษี + ไม่มีข้อมูลผู้ซื้อ
+        // เลย (ไม่มีทั้งเลขภาษีและป้ายผู้ซื้อ) + ราคารวม VAT แล้ว
+        if (!hasAbbrevTaxInvoice && hasTaxInvoice && !buyerTaxIdVerified)
+        {
+            var vatInclusive = ContainsAny(text,
+                "ราคารวมภาษีมูลค่าเพิ่ม", "รวมภาษีมูลค่าเพิ่มแล้ว", "ราคารวมvat",
+                "vat included", "inclusive of vat", "incl. vat");
+            var hasBuyerLabel = FindRolePhrasePositions(rawText).buyerLabelPos >= 0;
+            if (vatInclusive && !hasBuyerLabel && string.IsNullOrWhiteSpace(buyerTaxId))
+            {
+                hasAbbrevTaxInvoice = true;
+                reasons.Add("กระดาษไม่พิมพ์คำว่า \"อย่างย่อ\" แต่มีลายเซ็นของ §86/6 ครบ "
+                    + "(ราคารวม VAT แล้ว + ไม่มีข้อมูลผู้ซื้อเลย) → ตีเป็นใบกำกับภาษีอย่างย่อ "
+                    + "เคลมภาษีซื้อไม่ได้ (§82/5(2)) — สลิป POS ส่วนใหญ่เป็นแบบนี้");
+            }
+        }
         // Explicit paid stamps on the paper.
         var hasPaidMarker = ContainsAny(text,
             "ชำระแล้ว", "ชำระเงินสด", "จ่ายเงินสด", "รับเงินแล้ว", "รับเงินเรียบร้อย",
@@ -505,6 +531,23 @@ public static class OcrDocumentRoleInferrer
         //   • ใบกำกับภาษีอย่างย่อ §86/6 → §82/5(2) ห้ามเคลม (ผู้ซื้อ)
         //   • ใบเสร็จ/บิลเงินสด ที่ไม่ใช่ใบกำกับภาษีเต็มรูป → §82/5(1)
         // หมายเหตุ: "ใบกำกับภาษีอย่างย่อ" มีคำว่า "ใบกำกับภาษี" → ต้องแยกชัด.
+        // ── ต้นฉบับ / สำเนา ──
+        //
+        // ⚠️ เดิมไม่มีการตรวจเลย ⇒ สแกน "สำเนา" มาลงบัญชีได้เหมือนต้นฉบับ
+        // ซึ่งเสี่ยงเคลมภาษีซื้อซ้ำ (ต้นฉบับใบเดียวกันอาจถูกลงไปแล้ว) และ
+        // §86/4 กำหนดให้ผู้ซื้อใช้ **ต้นฉบับ** เท่านั้นในการเคลม
+        //
+        // ระวัง: หัวกระดาษไทยจำนวนมากพิมพ์ทั้งสองคำไว้บนใบเดียว
+        // ("ต้นฉบับใบส่งสินค้า/ต้นฉบับใบกำกับภาษี" หรือ "ต้นฉบับ (สำเนา)")
+        // ⇒ ถือเป็นสำเนาเฉพาะเมื่อ **เจอคำว่าสำเนาแต่ไม่เจอคำว่าต้นฉบับ**
+        var hasOriginalMark = ContainsAny(text, "ต้นฉบับ", "original");
+        var hasCopyMark = ContainsAny(text, "สำเนา", "copy", "duplicate");
+        var looksLikeCopy = hasCopyMark && !hasOriginalMark;
+        if (looksLikeCopy)
+            reasons.Add("กระดาษมีคำว่า \"สำเนา\" และไม่มีคำว่า \"ต้นฉบับ\" — ผู้ซื้อต้องใช้ต้นฉบับ "
+                + "ในการเคลมภาษีซื้อ (§86/4) และต้นฉบับใบเดียวกันอาจถูกลงบัญชีไปแล้ว "
+                + "ตรวจสอบก่อนสร้างเอกสาร");
+
         bool? inputVatClaimable = null;
         string? inputVatWarning = null;
         if (role == "Buyer")
@@ -537,6 +580,7 @@ public static class OcrDocumentRoleInferrer
         return new InferenceResult(scanned, role, target, roleConf, reasons,
             inputVatClaimable, inputVatWarning,
             IsWhtCertificate: isWhtCert, WeAreWithheld: weAreWithheld,
+            LooksLikeCopy: looksLikeCopy,
             LikelyOurOwnIssuedDocument: likelyOurOwn);
     }
 
