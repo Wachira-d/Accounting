@@ -1980,7 +1980,19 @@
                   <option value="BillingNote" ${scan.targetDocumentType === 'BillingNote' ? 'selected' : ''}>ใบวางบิล (ขาย)</option>
                   <option value="Quotation" ${scan.targetDocumentType === 'Quotation' ? 'selected' : ''}>ใบเสนอราคา</option>
                 </select>
-                <span style="font-size:11px;color:#92400e">บทบาทของเรา: <strong>${scan.ourRole === 'Seller' ? 'ผู้ขาย' : 'ผู้ซื้อ'}</strong></span>
+                <!-- บทบาทของเรา — **แก้ได้** (เดิมเป็นข้อความอ่านอย่างเดียว)
+                     ระบบอนุมานผิดได้จริง (50 ทวิ · ใบที่อ่านเลขภาษีไม่ออก ·
+                     ใบขายของเราเองที่สแกนกลับเข้ามา) แต่ผู้ใช้แก้ไม่ได้เลย
+                     และไม่มี learner ตัวไหนเก็บความจริงข้อนี้ ⇒ ผิดแล้วผิดตลอด
+                     เปลี่ยนแล้วเซิร์ฟเวอร์จะอนุมาน "เอกสารที่จะสร้าง" ใหม่ให้ -->
+                <label style="font-size:11px;color:#92400e;display:inline-flex;align-items:center;gap:4px">
+                  บทบาทของเราบนกระดาษ
+                  <select id="revOurRole" class="form-control" style="width:auto;padding:2px 6px;font-size:12px"
+                          onchange="Page.onRoleChanged()" title="ผู้ซื้อ = เราจ่าย (ฝั่งซื้อ) · ผู้ขาย = เรารับเงิน (ฝั่งขาย) — เปลี่ยนแล้วระบบจะเสนอเอกสารที่จะสร้างใหม่ให้">
+                    <option value="Buyer" ${scan.ourRole !== 'Seller' ? 'selected' : ''}>ผู้ซื้อ (เราจ่าย)</option>
+                    <option value="Seller" ${scan.ourRole === 'Seller' ? 'selected' : ''}>ผู้ขาย (เรารับเงิน)</option>
+                  </select>
+                </label>
               </div>
               ${scan.suggestedEntryMode ? `
               <div style="margin:8px 0;padding:8px 12px;border-radius:8px;font-size:13px;${scan.suggestedEntryMode === 'Stock'
@@ -2742,6 +2754,8 @@
         return {
           documentType: v('revDocType'),
           targetDocumentType: v('revTargetDocType'),
+          // บทบาทเรา — เดิมไม่มีช่องนี้ในทั้ง UI และ DTO
+          ourRole: v('revOurRole'),
           vendorName: v('revVendorName'),
           vendorTaxId: v('revVendorTaxId'),
           documentNumber: v('revDocNumber'),
@@ -2756,6 +2770,26 @@
           whtRate: f('revWhtRate'),
         };
       },
+      /** ผู้ใช้เปลี่ยนบทบาท → ให้เซิร์ฟเวอร์อนุมาน "เอกสารที่จะสร้าง" ใหม่
+       *  แล้วอัปเดต dropdown ให้ตรง — ไม่ปล่อยให้บทบาทกับเป้าหมายขัดกันเอง
+       *  (เช่น บทบาท "ผู้ขาย" แต่เป้าหมายยังเป็น "ใบสำคัญจ่าย") */
+      async onRoleChanged() {
+        if (!this._reviewScan) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await this._persistReviewEdits();
+          const fresh = (await api.getOcrResult(this._reviewScan.id))?.data;
+          if (!fresh) return;
+          this._reviewScan = { ...this._reviewScan, ...fresh };
+          const sel = document.getElementById('revTargetDocType');
+          if (sel && fresh.targetDocumentType
+              && [...sel.options].some(o => o.value === fresh.targetDocumentType)) {
+            sel.value = fresh.targetDocumentType;
+            Layout.toast(`ปรับเอกสารที่จะสร้างเป็น "${sel.options[sel.selectedIndex].text}" ตามบทบาทใหม่`);
+          }
+        } catch { /* เงียบ — ผู้ใช้ยังเลือกเป้าหมายเองได้ */ }
+      },
+
       /** persist review edits ลง scan (เงียบ — ไม่มี toast/ปุ่มเปลี่ยน) */
       async _persistReviewEdits() {
         if (!this._reviewScan) return;

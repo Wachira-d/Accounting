@@ -156,7 +156,20 @@ public record OcrCorrectionRequest(
     // "เอกสารที่จะสร้าง" dropdown, this string carries the new value so the
     // backend can both update the scan record AND train VendorIntelligence
     // to suggest the same target for this vendor next time.
-    string? TargetDocumentType = null);
+    string? TargetDocumentType = null,
+    /// <summary>
+    /// บทบาทของเราบนกระดาษ — "Buyer" | "Seller"
+    ///
+    /// <para>⚠️ เดิม<b>ไม่มีช่องนี้เลย</b> และหน้า review ก็แสดงบทบาทเป็นข้อความ
+    /// อ่านอย่างเดียว ⇒ เมื่อระบบอนุมานผิด (ซึ่งเกิดได้จริง — 50 ทวิ, ใบที่ OCR
+    /// อ่านเลขภาษีไม่ออก, ใบขายของเราเองที่สแกนกลับเข้ามา) <b>ผู้ใช้แก้ไม่ได้
+    /// และระบบไม่มีทางเรียนรู้</b> เพราะไม่มีทั้ง field และ learner ใด ๆ ที่เก็บ
+    /// ความจริงข้อนี้</para>
+    /// </summary>
+    string? OurRole = null,
+    string? VendorBranchCode = null,
+    string? BuyerTaxId = null,
+    string? BuyerBranchCode = null);
 
 /// <summary>
 /// Request to record a Journal Entry directly from a scan — the "บันทึก JE

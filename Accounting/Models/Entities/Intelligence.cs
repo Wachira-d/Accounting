@@ -259,6 +259,18 @@ public class OcrScanResult : TenantEntity
     /// </summary>
     public string? FieldConfidenceJson { get; set; }
 
+    /// <summary>feedback row ของการจำแนก "เอกสารที่จะสร้าง" ด้วย AI —
+    /// เก็บไว้เพื่อปิด loop ตอนผู้ใช้ยืนยัน/แก้ (กฎเหล็ก #1 ขั้น CAPTURE)</summary>
+    public Guid? TargetDocTypeAiFeedbackId { get; set; }
+
+    /// <summary>คำตอบที่ AI เสนอ — เก็บไว้เทียบว่าผู้ใช้ "รับ" หรือ "แก้"
+    /// (acceptedAi) และให้ UI ติดป้ายซื่อสัตย์ได้</summary>
+    public string? TargetDocTypeAiSuggested { get; set; }
+
+    /// <summary>true เมื่อ AI ถูกเรียกจริงและคำตอบถูกนำมาใช้ — ขับป้าย
+    /// "🤖 AI แนะนำ" vs "⚙️ ระบบแนะนำ" ตามกฎเหล็ก #1</summary>
+    public bool TargetDocTypeUsedAi { get; set; }
+
     // GL & expense suggestions
     public string? ExpenseCategory { get; set; }
     public string? SuggestedAccountsJson { get; set; }

@@ -3311,6 +3311,47 @@ public class OcrService : IOcrService
         if (correction.ExpenseCategory != null) result.ExpenseCategory = correction.ExpenseCategory;
         if (correction.HasWht.HasValue) result.HasWht = correction.HasWht.Value;
         if (correction.WhtRate.HasValue) result.WhtRate = correction.WhtRate;
+        // ── ช่องที่เพิ่งเปิดให้ผู้ใช้แก้ได้ (เดิมไม่มีทางแก้เลย) ──
+        if (correction.BuyerTaxId != null) result.BuyerTaxId = correction.BuyerTaxId;
+        if (correction.VendorBranchCode != null) result.VendorBranchCode = correction.VendorBranchCode;
+        if (correction.BuyerBranchCode != null) result.BuyerBranchCode = correction.BuyerBranchCode;
+
+        // ── บทบาทเรา: แก้ได้ + อนุมานเป้าหมายใหม่ตามบทบาทที่ถูกต้อง ──
+        //
+        // ⚠️ เดิมไม่มีทั้ง field และ UI ⇒ อนุมานผิดแล้วแก้ไม่ได้ตลอดไป และ
+        // SubmitCorrection ก็**ไม่เคยรันตัวอนุมานซ้ำ**หลังผู้ใช้แก้เลขภาษี/ชื่อ
+        // ⇒ แก้เลขผู้ซื้อให้ถูกแล้ว บทบาท/เป้าหมายยังค้างค่าเดิมที่คำนวณจาก
+        // ข้อมูลผิด (defect class "เก็บแล้วต้อง echo กลับ" กลับด้าน: รับค่าแล้ว
+        // ไม่คำนวณต่อ)
+        var roleChanged = correction.OurRole is "Buyer" or "Seller"
+            && !string.Equals(result.OurRole, correction.OurRole, StringComparison.Ordinal);
+        var identityChanged = correction.VendorTaxId != null || correction.BuyerTaxId != null
+            || correction.VendorName != null || correction.DocumentType != null;
+        if (roleChanged) result.OurRole = correction.OurRole;
+        if ((roleChanged || identityChanged) && correction.TargetDocumentType == null)
+        {
+            // ผู้ใช้ไม่ได้ระบุเป้าหมายมาเอง → อนุมานใหม่จากข้อมูลที่แก้แล้ว
+            var co = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId)
+                .Select(c => new { c.TaxId, c.Name }).FirstOrDefaultAsync();
+            DocumentType? prevScanned = Enum.TryParse<DocumentType>(result.DocumentType, true, out var pd) ? pd : null;
+            var re = Ocr.OcrDocumentRoleInferrer.Infer(
+                rawText: Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent ?? ""),
+                vendorTaxId: result.ExtractedVendorTaxId, buyerTaxId: result.BuyerTaxId,
+                vendorName: result.ExtractedVendorName, buyerName: result.BuyerName,
+                companyTaxId: co?.TaxId, companyName: co?.Name,
+                previousScannedType: prevScanned,
+                paymentTermsDays: result.PaymentTermsDays);
+            // บทบาทที่ผู้ใช้ระบุเองชนะการอนุมานเสมอ — คนเห็นกระดาษจริง
+            var finalRole = roleChanged ? correction.OurRole! : re.OurRole;
+            result.OurRole = finalRole;
+            // เป้าหมายจากตัวอนุมานใช้ได้เฉพาะเมื่ออยู่ฝั่งเดียวกับบทบาทสุดท้าย
+            if (Accounting.Helpers.DocumentSide.MatchesRole(re.TargetDocType, finalRole))
+                result.TargetDocumentType = re.TargetDocType.ToString();
+            result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                + $"\n[Re-infer] ผู้ใช้แก้ข้อมูลระบุตัวตน → อนุมานใหม่: บทบาท {finalRole} "
+                + $"· เอกสารที่จะสร้าง {result.TargetDocumentType}";
+        }
         if (correction.DebitAccountCode != null || correction.CreditAccountCode != null)
         {
             // SuggestedAccountsJson is the canonical store for the
@@ -3425,6 +3466,39 @@ public class OcrService : IOcrService
                     _logger.LogWarning(ex, "Failed to record GL-account feedback choice (non-fatal)");
                 }
             }
+        }
+
+        // ───── ปิด loop AI ให้ช่องที่เหลือ (กฎเหล็ก #1 ข้อ CAPTURE) ─────
+        //
+        // ⚠️ ผลตรวจ AI พบว่า loop ปิดจริงแค่ 3 ช่อง (ผังบัญชี · ผู้ติดต่อ ·
+        // โครงการรายบรรทัด) ส่วนคำแก้ที่เหลือ — ชนิดเอกสาร/เป้าหมาย/บทบาท/
+        // วันที่/ยอด/WHT — ไปถึงแค่ learner ที่ไม่ใช่ LLM หรือไม่ไปไหนเลย
+        // ⇒ feedback row ของ AI ค้างสถานะ "ยังไม่รู้คำตอบจริง" ตลอดไป และ
+        // AiFeedbackTrainingJob (ซึ่ง mine เฉพาะแถวที่ UserChosenAt != null)
+        // จึงไม่เคยได้ข้อมูลจากช่องเหล่านี้เลย
+        //
+        // บันทึกทุกช่องที่มี feedbackId ผูกอยู่ ไม่ว่าผู้ใช้จะแก้ช่องไหน
+        if (_feedbackRecorder != null)
+        {
+            async Task CloseAiFeedbackLoop(Guid? feedbackId, string? chosen, string? aiAnswer)
+            {
+                if (feedbackId is null || string.IsNullOrWhiteSpace(chosen)) return;
+                try
+                {
+                    await _feedbackRecorder.RecordUserChoiceAsync(
+                        feedbackId.Value, chosen,
+                        acceptedAi: string.Equals(chosen, aiAnswer, StringComparison.Ordinal), default);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "บันทึก feedback ของผู้ใช้ไม่สำเร็จ (ไม่กระทบการบันทึกคำแก้)");
+                }
+            }
+            // ชนิดเอกสารที่จะสร้าง — คำตอบจริงของ DocumentTypeClassification /
+            // OcrFullReview / DocumentConversionSuggestion
+            await CloseAiFeedbackLoop(result.TargetDocTypeAiFeedbackId,
+                correction.TargetDocumentType ?? result.TargetDocumentType,
+                result.TargetDocTypeAiSuggested);
         }
 
         // Federated doc-workflow learning — when the user confirms what

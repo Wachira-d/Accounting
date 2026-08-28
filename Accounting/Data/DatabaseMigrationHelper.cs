@@ -4696,6 +4696,13 @@ public static class DatabaseMigrationHelper
             // "ตรวจสอบอีกครั้ง" (กฎเหล็ก #3 ข้อ 3) ใช้งานไม่ได้จริง
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "FieldConfidenceJson" text NULL;""",
 
+            // ===== ปิด loop AI ของการจำแนก "เอกสารที่จะสร้าง" =====
+            // เดิม loop ปิดจริงแค่ 3 ช่อง (ผังบัญชี/ผู้ติดต่อ/โครงการ) — การแก้
+            // ชนิดเอกสารซึ่งเป็นคำถามที่พลาดแล้วแพงที่สุด ไม่เคยไปถึง student
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiFeedbackId" uuid NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiSuggested" varchar(50) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeUsedAi" boolean NOT NULL DEFAULT false;""",
+
             // ===== ล้าง regex ที่กลืนขึ้นบรรทัดใหม่ออกจากรูปแบบที่เรียนรู้ไว้แล้ว =====
             // OcrLearnedPatterns เก็บ "regex ที่ใช้ดึงค่า" ลงฐานข้อมูล ⇒ แถวที่
             // เรียนไว้ก่อนหน้ายังถือ pattern เดิมที่ตัวคั่นเป็น [-\s]? ซึ่ง \s ครอบ
