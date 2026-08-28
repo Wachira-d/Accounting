@@ -373,7 +373,15 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             // Description + ครอบ Expense+Asset ครบ (แก้ bug เดิมที่ตัดบัญชี
             // 5xxxx ค่าใช้จ่ายทิ้งเพราะ OrderBy(code).Take(40)).
             var candRows = await GlCandidateBuilder.LoadAsync(
-                _db, companyId, expenseAssetOnly: true, cap: 150, ct);
+                // ⚠️ เดิม hardcode true = ส่งเฉพาะผังรายจ่าย+สินทรัพย์เสมอ
+                // แต่ IntegrationService เรียกเมธอดนี้จาก ProcessInvoiceAsync
+                // ซึ่งสร้าง **ใบกำกับภาษีขาย** ⇒ ผังรายได้ (4xxxx) ไม่เคยอยู่ใน
+                // candidate_accounts เลย และกฎข้อ 5 ของพรอมป์ต์บังคับว่า
+                // "ต้องเลือกจาก candidate_accounts เท่านั้น" ⇒ บรรทัดฝั่งขาย
+                // **ไม่มีทางถูกลงเป็นรายได้ได้เลยโดยโครงสร้าง**
+                _db, companyId,
+                expenseAssetOnly: !string.Equals(lineContext?.OurRole, "Seller", StringComparison.OrdinalIgnoreCase),
+                cap: 150, ct);
             var candidates = candRows
                 .Select(c => new GlAccountPrompt.AccountCandidate(
                     c.Code, c.Name, c.Type, c.IsActive, c.Description))

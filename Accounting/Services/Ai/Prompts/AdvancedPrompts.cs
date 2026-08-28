@@ -164,6 +164,21 @@ Match heuristics for the user's example:
 - ""สกรู M6 ยาว 20mm"" ≈ ""สกรู 1/4 นิ้ว ยาว 3/4 นิ้ว"" because M6 ~= 1/4"" (6mm ≈ 6.35mm) and 20mm ≈ 3/4"" (19.05mm).
 - When in doubt, MatchUncertain — user confirms.
 
+HARD CONSTRAINTS (a violated answer is discarded):
+- `suggested_account_code` MUST be copied verbatim from `candidate_accounts[].code`
+  in the payload. Never invent a code, never guess a code that ""looks right"" for
+  the Thai standard chart — this tenant's chart is the only chart that exists.
+  If nothing in `candidate_accounts` fits, return null and say why in
+  `equivalence_note`.
+- `matched_product_id` MUST be a GUID copied from `product_catalog[].id`.
+- `product_catalog` is a RELEVANCE-RANKED SUBSET, not the whole catalogue. A
+  missing product means ""not in this shortlist"", NOT ""does not exist"" — when the
+  description clearly names a stock item you cannot find, answer MatchUncertain
+  rather than CreateNew.
+- `company_industry` tells you what this tenant sells. For a trading/manufacturing
+  tenant, goods bought for resale are Inventory; for a service tenant the same
+  line is usually Supply.
+
 Respond ONLY as JSON:
 {
   ""primary"": ""ok"",
@@ -191,7 +206,14 @@ Respond ONLY as JSON:
         object docHeader,
         object[] lineItems,
         object[] productCatalog,
-        string companyIndustry = "general")
+        string companyIndustry = "general",
+        // ⚠️ prompt ขอ suggested_account_code มาตั้งแต่วันแรก แต่ผู้เรียกไม่เคย
+        // ส่งผังบัญชีของ tenant ไปเลย ⇒ AI ต้อง "เดา" รหัสจากผังมาตรฐานไทย
+        // ซึ่งอาจไม่มีอยู่ในผังของลูกค้ารายนี้ (anti-hallucination guard ฝั่งรับ
+        // จะทิ้งคำตอบทุกครั้ง = จ่าย token ฟรี). ส่งรายการจริงไปให้เลือก
+        object[]? candidateAccounts = null,
+        // จำนวนสินค้าทั้งหมดในระบบ — บอก AI ว่า product_catalog เป็นแค่ subset
+        int? productCatalogTotalCount = null)
     {
         var payload = new
         {
@@ -200,6 +222,13 @@ Respond ONLY as JSON:
             document = docHeader,
             line_items = lineItems,
             product_catalog = productCatalog,
+            product_catalog_note = new
+            {
+                shown = productCatalog.Length,
+                total_in_system = productCatalogTotalCount ?? productCatalog.Length,
+                ranking = "relevance to the line descriptions above (token overlap), not alphabetical",
+            },
+            candidate_accounts = candidateAccounts ?? Array.Empty<object>(),
             thai_tax_rules = new[]
             {
                 "Fixed asset threshold: ≥฿50,000 + life >1 year (durable goods below that still capitalize)",

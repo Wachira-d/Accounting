@@ -172,17 +172,22 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
     {
         try
         {
+            // "Acknowledge" = ให้ผู้ใช้รับทราบเอง — เป็น **ค่าปลอดภัย** ไม่ใช่
+            // คำแนะนำที่คิดมาแล้ว จึงต้องติดความมั่นใจต่ำให้ตรงความจริง
+            // (0.50 เดิมคือตัวเลขที่แต่งขึ้นให้ดูเหมือนมีเหตุผล — CLAUDE.md
+            // "ค่า default ที่แต่งขึ้นเพื่อให้โค้ดเดินต่อได้ อันตรายกว่าการไม่ตอบ")
+            const decimal acknowledgeConfidence = 0.20m;
             var req = ApprovalWarningFixPrompt.Build(
                 companyId, documentId, warningText,
                 documentSnapshot, vendorHistory,
-                localFix: "Acknowledge", localConfidence: 0.50m);
+                localFix: "Acknowledge", localConfidence: acknowledgeConfidence);
             var resp = await _orchestrator.AskAsync(req, ct);
             return Convert(resp);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Approval warning fix augmenter failed");
-            return Fallback(localAnswer: "Acknowledge", confidence: 0.50m);
+            return Fallback(localAnswer: "Acknowledge", confidence: 0.20m);
         }
     }
 
@@ -216,9 +221,23 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
     {
         try
         {
+            // ── บริบทจริงจากฐานข้อมูล ──────────────────────────────────
+            // เดิมเรียก Build() ด้วยพารามิเตอร์ 8 ตัวแรกเท่านั้น ⇒ ช่องที่
+            // prompt เตรียมไว้ (ประวัติหักภาษีของผู้ขายรายนี้ · ยอดสะสมปีนี้ ·
+            // ค่าเฉลี่ย 6 เดือน · บัญชีที่ลงบ่อย) **ว่างทุกครั้งตั้งแต่วันแรก**
+            // — defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้"
+            var (history, ytd, avg6, dominantAcct) =
+                await LoadWhtVendorContextAsync(companyId, vendorTaxId, vendorName, ct);
+
             var req = WhtCategoryPrompt.Build(
                 companyId, documentId, vendorName, vendorTaxId, vendorType,
-                lineDescription, amount, localGuess, localConfidence);
+                lineDescription, amount, localGuess, localConfidence,
+                vendorWhtHistory: history,
+                vendorIndustry: null,            // ไม่มีข้อมูลจริง — ห้ามแต่งค่า
+                vendorAvg6Months: avg6,
+                wht3ThresholdReached: ytd,
+                vendorDominantGlAccount: dominantAcct,
+                contractTotalKnown: false);
             var resp = await _orchestrator.AskAsync(req, ct);
             return Convert(resp);
         }
@@ -226,6 +245,103 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
         {
             _logger.LogWarning(ex, "WHT category augmenter failed");
             return Fallback(localGuess, localConfidence);
+        }
+    }
+
+    /// <summary>
+    /// รวบรวมบริบทของผู้ขายสำหรับ WhtCategoryPrompt จากข้อมูลจริงในระบบ:
+    ///   • ประวัติรหัสเงินได้/อัตราที่เคยหักให้ผู้ขายรายนี้ (50 ทวิ ย้อน 24 เดือน)
+    ///   • ยอดจ่ายสะสมปีภาษีนี้ — ใช้ตัดสินด่าน ฿1,000 แบบสะสม (ท.ป.4/2528 ข้อ 12)
+    ///   • ค่าเฉลี่ยยอดต่อครั้งย้อน 6 เดือน — ไว้ดูว่าครั้งนี้ผิดสเกลไหม
+    ///   • บัญชีที่ลงให้ผู้ขายรายนี้บ่อยสุด — บอกลักษณะรายจ่าย
+    /// ทุก query มี CompanyId == companyId. ล้มเหลว = คืนค่าว่าง ไม่ throw
+    /// (AI ยังตอบได้จากคำอธิบายบรรทัดเหมือนเดิม).
+    /// </summary>
+    private async Task<(IReadOnlyList<WhtCategoryPrompt.VendorWhtHistory> History,
+                       decimal? PaidThisYear, decimal? Avg6Months, string? DominantAccount)>
+        LoadWhtVendorContextAsync(Guid companyId, string? vendorTaxId, string? vendorName,
+            CancellationToken ct)
+    {
+        var empty = (IReadOnlyList<WhtCategoryPrompt.VendorWhtHistory>)
+            Array.Empty<WhtCategoryPrompt.VendorWhtHistory>();
+        try
+        {
+            var taxId = Accounting.Helpers.ThaiTaxId.Normalize(vendorTaxId);
+            var nameKey = (vendorName ?? "").Trim();
+            if (string.IsNullOrEmpty(taxId) && string.IsNullOrEmpty(nameKey))
+                return (empty, null, null, null);
+
+            // หา contact ของผู้ขาย — เลขผู้เสียภาษีชนะชื่อเสมอ (ชื่อซ้ำกันได้)
+            var payeeQuery = _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted);
+            // TaxId ในฐานเก็บทั้งแบบมีขีดและไม่มี (แล้วแต่ทางเข้า) — เทียบทั้ง
+            // ค่าที่ normalize แล้วและค่าดิบที่ผู้เรียกส่งมา
+            var rawTaxId = (vendorTaxId ?? "").Trim();
+            payeeQuery = !string.IsNullOrEmpty(taxId)
+                ? payeeQuery.Where(c => c.TaxId == taxId || c.TaxId == rawTaxId)
+                : payeeQuery.Where(c => c.Name == nameKey);
+            var payeeIds = await payeeQuery.Select(c => c.Id).ToListAsync(ct);
+
+            decimal? paidThisYear = null, avg6 = null;
+            var history = empty;
+
+            if (payeeIds.Count > 0)
+            {
+                var since24 = DateTime.UtcNow.AddMonths(-24);
+                var lines = await (from l in _db.WithholdingTaxCertLines.AsNoTracking()
+                                   join c in _db.WithholdingTaxCerts.AsNoTracking()
+                                        on l.WithholdingTaxCertId equals c.Id
+                                   where c.CompanyId == companyId && !c.IsDeleted
+                                         && payeeIds.Contains(c.PayeeContactId)
+                                         && c.Status != Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Voided
+                                         && l.PaymentDate >= since24
+                                   select new { l.IncomeTypeCode, l.TaxRate, l.IncomeAmount, l.PaymentDate })
+                                  .ToListAsync(ct);
+
+                if (lines.Count > 0)
+                {
+                    history = lines
+                        .GroupBy(l => new { l.IncomeTypeCode, l.TaxRate })
+                        .OrderByDescending(g => g.Count())
+                        .Take(5)
+                        .Select(g => new WhtCategoryPrompt.VendorWhtHistory(
+                            g.Key.IncomeTypeCode,
+                            g.Key.TaxRate,
+                            g.Count(),
+                            Math.Round(g.Average(x => x.IncomeAmount), 2, MidpointRounding.AwayFromZero),
+                            g.Max(x => x.PaymentDate)))
+                        .ToList();
+
+                    // ปีภาษีไทย = ปีปฏิทิน (ค.ศ.) ตามวันที่จ่าย — ด่าน ฿1,000 สะสม
+                    var yearStart = new DateTime(DateTime.UtcNow.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                    var thisYear = lines.Where(l => l.PaymentDate >= yearStart).ToList();
+                    if (thisYear.Count > 0)
+                        paidThisYear = Math.Round(thisYear.Sum(l => l.IncomeAmount), 2,
+                            MidpointRounding.AwayFromZero);
+
+                    var since6 = DateTime.UtcNow.AddMonths(-6);
+                    var recent = lines.Where(l => l.PaymentDate >= since6).ToList();
+                    if (recent.Count > 0)
+                        avg6 = Math.Round(recent.Average(l => l.IncomeAmount), 2,
+                            MidpointRounding.AwayFromZero);
+                }
+            }
+
+            // บัญชีที่ลงให้ผู้ขายรายนี้บ่อยสุด — VendorKey ใช้กติกาเดียวกับ
+            // SuggestPaymentVoucherAccountingAsync (เลขภาษี ถ้าไม่มีใช้ชื่อ lower)
+            var vendorKey = !string.IsNullOrEmpty(rawTaxId) ? rawTaxId : nameKey.ToLowerInvariant();
+            var dominant = await _db.OcrCategoryMappings.AsNoTracking()
+                .Where(m => m.CompanyId == companyId && !m.IsDeleted && m.VendorKey == vendorKey)
+                .OrderByDescending(m => m.TimesUsed)
+                .Select(m => m.AccountCode + " " + (m.AccountName ?? ""))
+                .FirstOrDefaultAsync(ct);
+
+            return (history, paidThisYear, avg6, string.IsNullOrWhiteSpace(dominant) ? null : dominant.Trim());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "โหลดบริบท WHT ของผู้ขายไม่สำเร็จ — ส่ง prompt แบบไม่มีประวัติแทน");
+            return (empty, null, null, null);
         }
     }
 

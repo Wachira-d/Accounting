@@ -354,7 +354,19 @@ Common Thai WHT codes (รหัสประเภทเงินได้):
 Rules:
 1. If vendor is บุคคลธรรมดา (Personal) → likely 1% per §50bis.
 2. If pure sale of goods → primary = ""None"" (no WHT).
-3. If amount < ฿1,000 → primary = ""Skip"" (under threshold).
+3. ฿1,000 threshold (ท.ป.4/2528 ข้อ 12) is **cumulative per payer-payee-contract**,
+   NOT per line. Use `line.paid_to_vendor_this_year` + `line.amount`:
+   - if `line.amount` + `line.paid_to_vendor_this_year` >= 1000 → withhold on
+     THIS payment even when `line.amount` alone is below 1,000.
+   - only answer ""Skip"" when the running total is still under 1,000 AND
+     `line.contract_total_known` is false. Never answer ""Skip"" from
+     `line.amount` alone.
+4. `vendor_wht_history` beats inference from the description. When the same
+   vendor was taxed at one income code >= 2 times, prefer that code unless the
+   description clearly describes a different kind of income.
+5. `vendor.dominant_gl_account` is the expense account this vendor's lines are
+   usually booked to (from our own history). Treat it as a hint about the nature
+   of the spend (ค่าเช่า → 40(5), ค่าโฆษณา → 2%, etc.), not as proof.
 
 Respond ONLY as JSON:
 {
@@ -386,7 +398,12 @@ Respond ONLY as JSON:
         IReadOnlyList<VendorWhtHistory>? vendorWhtHistory = null,
         string? vendorIndustry = null,
         decimal? vendorAvg6Months = null,
-        decimal? wht3ThresholdReached = null)
+        decimal? wht3ThresholdReached = null,
+        // บัญชีที่บริษัทเราลงให้ผู้ขายรายนี้บ่อยที่สุด (จาก OcrCategoryMapping)
+        // — ป้ายที่ซื่อสัตย์กว่า "industry" เพราะเป็นข้อมูลของเราเอง ไม่ใช่การ
+        // เดาว่าคู่ค้าทำธุรกิจอะไร
+        string? vendorDominantGlAccount = null,
+        bool contractTotalKnown = false)
     {
         var payload = new
         {
@@ -397,6 +414,7 @@ Respond ONLY as JSON:
                 tax_id = vendorTaxId,
                 type = vendorType,                  // "JuristicPerson" | "Personal" | null
                 industry = vendorIndustry,
+                dominant_gl_account = vendorDominantGlAccount,
                 avg_amount_6mo = vendorAvg6Months,  // baseline for "is this contract scale unusual?"
             },
             // Vendor-specific WHT history is the highest-leverage signal —
@@ -414,11 +432,14 @@ Respond ONLY as JSON:
             {
                 description = lineDescription,
                 amount,
-                // Threshold flags for the §3 / §2 rules. The 1000-baht
-                // cumulative-per-year threshold is the most common
-                // mistake; surface it upfront.
-                under_1000_threshold = amount < 1000m,
-                wht3_year_to_date = wht3ThresholdReached,
+                // ด่าน ฿1,000 เป็นแบบ **สะสมต่อคู่สัญญาต่อปี** ไม่ใช่ต่อบรรทัด
+                // (ท.ป.4/2528 ข้อ 12) — ส่งทั้งยอดบรรทัดนี้ ยอดสะสมปีนี้ และ
+                // ผลรวม เพื่อไม่ให้ AI ตัดสินจากยอดบรรทัดตัวเดียวแล้วตอบ Skip ผิด
+                amount_alone_under_1000 = amount < 1000m,
+                paid_to_vendor_this_year = wht3ThresholdReached,
+                cumulative_with_this_line = amount + (wht3ThresholdReached ?? 0m),
+                cumulative_reaches_1000 = amount + (wht3ThresholdReached ?? 0m) >= 1000m,
+                contract_total_known = contractTotalKnown,
             },
             local_model = new { pick = localGuess, confidence = localConfidence },
         };
