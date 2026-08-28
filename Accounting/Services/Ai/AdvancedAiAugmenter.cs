@@ -119,17 +119,43 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
             var extracted = new
             {
                 document_type = scan.DocumentType,
+                // ชนิดกระดาษ vs เอกสารที่จะสร้าง เป็นคนละคำถาม — prompt ขอทั้งคู่
+                scanned_document_type = scan.ScannedDocumentType,
+                target_document_type = scan.TargetDocumentType,
+                our_role = scan.OurRole,
                 document_number = scan.ExtractedDocumentNumber,
                 document_date = scan.ExtractedDate?.ToString("yyyy-MM-dd"),
                 vendor_name = scan.ExtractedVendorName,
                 vendor_tax_id = scan.ExtractedVendorTaxId,
+                // §86/4 บังคับสาขาทั้งสองฝั่ง และ prompt สั่งให้ตรวจ §86 —
+                // เดิมไม่ส่งเลย โมเดลจึงตรวจข้อนี้ไม่ได้
+                vendor_branch_code = scan.VendorBranchCode,
+                vendor_address = scan.VendorAddress,
                 buyer_name = scan.BuyerName,
                 buyer_tax_id = scan.BuyerTaxId,
+                buyer_branch_code = scan.BuyerBranchCode,
+                buyer_address = scan.BuyerAddress,
                 sub_total = scan.ExtractedSubTotal,
                 vat_amount = scan.ExtractedVatAmount,
+                discount_amount = scan.ExtractedDiscountAmount,
                 total_amount = scan.ExtractedTotalAmount,
+                has_wht = scan.HasWht,
+                wht_rate = scan.WhtRate,
                 confidence = scan.Confidence,
             };
+
+            // รายการที่สกัดได้แล้ว — output schema สั่งให้คืน line_items กลับมา
+            // พร้อม unit/qty/unit_price แต่เดิม**ไม่ส่ง input ให้เทียบเลย**
+            object? lineItems = null;
+            if (!string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
+            {
+                try
+                {
+                    lineItems = System.Text.Json.JsonSerializer
+                        .Deserialize<System.Text.Json.JsonElement>(scan.ExtractedItemsJson);
+                }
+                catch { /* JSON เสีย — ส่ง null ดีกว่าทำทั้ง call ล้ม */ }
+            }
 
             var req = OcrReviewPrompt.Build(
                 companyId, scanResultId,
@@ -138,7 +164,8 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 companyContext: company,
                 vendorHistory: vendorHistory,
                 localGuessTargetType: scan.TargetDocumentType ?? scan.DocumentType,
-                localConfidence: scan.Confidence);
+                localConfidence: scan.Confidence,
+                lineItems: lineItems);
             var resp = await _orchestrator.AskAsync(req, ct);
             // OcrReviewPrompt expects corrections / target_document / vendor_canonical /
             // line_items in the response — flagging any missing key surfaces

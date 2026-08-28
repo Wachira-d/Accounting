@@ -85,7 +85,10 @@ Respond ONLY as JSON:
         object companyContext,            // tax ID, address, accounts of record
         object? vendorHistory,            // last N docs from same vendor (or null)
         string? localGuessTargetType,
-        decimal? localConfidence)
+        decimal? localConfidence,
+        // รายการที่ OCR สกัดได้แล้ว (description/qty/unit/unitPrice/amount/
+        // accountCode) — จำเป็นเพราะ output schema สั่งให้คืน line_items กลับมา
+        object? lineItems = null)
     {
         // Truncate raw text — header + summary lines carry 95% of the
         // signal anyway. 3500 chars covers typical 1-2 page invoices.
@@ -95,6 +98,12 @@ Respond ONLY as JSON:
             task = "ocr_full_review",
             ocr_raw_text = snippet,
             local_extraction = extractedSnapshot,
+            // ── รายการที่สกัดได้แล้ว — เดิม**ไม่ได้ส่งเลย** ──
+            // แต่ schema ที่สั่งให้ตอบกลับมีบล็อก line_items ครบทั้ง quantity/
+            // unit/unit_price/suggested_account_code และกฎข้อ 8 ทั้งข้อพูดเรื่อง
+            // line_items[].unit ⇒ โมเดลต้องสร้างทุกอย่างใหม่จากข้อความ 3,500
+            // ตัวอักษรโดยไม่มีฐานเทียบ (จะแก้ให้ถูกได้อย่างไรถ้าไม่เห็นของเดิม)
+            local_line_items = lineItems,
             our_company = companyContext,
             vendor_history = vendorHistory,
             local_model = new { pick = localGuessTargetType, confidence = localConfidence },
@@ -112,6 +121,11 @@ Respond ONLY as JSON:
             SourceEntityId = scanResultId,
             CacheTtlOverrideDays = 1,
             MaxTokensOverride = 1500,
+            // งานนี้สั่งให้ "เทียบเลขผู้เสียภาษีของเรากับที่อยู่บนกระดาษ แล้วแก้
+            // ให้ถูก" (กฎข้อ 3 + 4 ของ system prompt) — ถ้าปิดบัง โมเดลจะได้
+            // 0xxxxxxxxx5 เทียบกับ 0xxxxxxxxx5 แล้วคืนค่าที่ปิดบังกลับมา
+            // ซึ่งหน้าเว็บเคยเขียนทับลงช่องจริง = ทำข้อมูลเสียหาย
+            AllowTaxIdInPrompt = true,
         };
     }
 }

@@ -78,6 +78,23 @@ public sealed record AiRequest
     /// to get a fresh opinion.</summary>
     public bool BypassCache { get; init; }
 
+    /// <summary>
+    /// ไม่ต้องปิดบังเลขประจำตัวผู้เสียภาษีใน payload ของคำขอนี้
+    ///
+    /// <para>⚠️ ใช้เฉพาะ feature ที่ <b>คำถามคือการเทียบตัวเลขนั้นเอง</b> —
+    /// ตัวกรอง PII แปลง 13 หลักเป็น <c>0xxxxxxxxx5</c> ⇒ ถ้างานคือ "ดูว่าเลข
+    /// ผู้ซื้อตรงกับบริษัทเราไหม" หรือ "แก้เลขผู้เสียภาษีให้ถูก" โมเดลจะได้
+    /// <c>0xxxxxxxxx5</c> เทียบกับ <c>0xxxxxxxxx5</c> — โอกาสตรงกันแบบผิด ๆ
+    /// ตกจาก 1/10¹¹ เหลือราว 1/100 และคำตอบที่ได้กลับมาก็เป็นสตริงที่ถูกปิดบัง
+    /// ซึ่งถ้าเขียนกลับลงเอกสาร = <b>ทำข้อมูลจริงเสียหาย</b></para>
+    ///
+    /// <para>เบอร์โทร/อีเมลยังถูกปิดบังตามเดิมเสมอ — ปลดเฉพาะเลขผู้เสียภาษี
+    /// ซึ่งเป็นข้อมูล<b>นิติบุคคลที่เปิดเผยต่อสาธารณะ</b> (ค้นได้จาก DBD/RD)
+    /// ไม่ใช่ข้อมูลส่วนบุคคลตาม PDPA ม.26 · การปลดนี้จึงเป็นการแลก
+    /// "ความเป็นส่วนตัวของเลขที่เปิดเผยอยู่แล้ว" กับ "ความถูกต้องของบัญชี"</para>
+    /// </summary>
+    public bool AllowTaxIdInPrompt { get; init; }
+
     /// <summary>When true the feature returns a free-form plan / structured
     /// JSON document (e.g. bulk bank reconciliation) rather than the standard
     /// primaryAnswer/alternatives shape. The orchestrator then skips the

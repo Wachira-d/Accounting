@@ -115,7 +115,10 @@ Respond ONLY as JSON:
         string? localModelVersion = null,
         string? sourceEntityType = null, Guid? sourceEntityId = null,
         string? whtRecognitionBasis = null,
-        CompanyBusinessContext? businessContext = null)
+        CompanyBusinessContext? businessContext = null,
+        // ── บริบทของบรรทัดที่กฎในพรอมป์ต์ต้องใช้ แต่เดิมไม่เคยส่ง ──
+        string? lineUnit = null, decimal? lineQuantity = null, decimal? lineUnitPrice = null,
+        DateTime? documentDate = null, string? ourRole = null, bool? inputVatClaimable = null)
     {
         var payload = new
         {
@@ -136,13 +139,29 @@ Respond ONLY as JSON:
                 description = lineDescription,
                 amount,
                 currency,
+                // ── หน่วย/จำนวน/ราคาต่อหน่วย — เดิม**ไม่ได้ส่งเลย** ──
+                // ทั้งที่กฎข้อ 8(b) ของ system prompt ทั้งข้อพูดเรื่องหน่วย
+                // ("L/ลิตร → น้ำมัน · kWh → ค่าไฟ · ลบ.ม. → ค่าน้ำ") ⇒ กฎที่
+                // พรอมป์ต์พึ่งมากที่สุดไม่มีอินพุตให้ใช้เลยสักครั้ง
+                // (ExtractedItemsJson มีค่าเหล่านี้อยู่แล้ว แค่ไม่ถูกส่งต่อ)
+                unit = lineUnit,
+                quantity = lineQuantity,
+                unit_price = lineUnitPrice,
+                // วันที่เอกสาร — ใช้ตัดสินงวดบัญชีและเกณฑ์ตั้งเป็นสินทรัพย์
+                document_date = documentDate?.ToString("yyyy-MM-dd"),
+                // ฝั่งซื้อ/ขาย — กฎข้อ 6 ทั้งข้อสมมติว่า "นี่คือใบสำคัญจ่าย
+                // เงินออกจากบริษัท" ซึ่งไม่จริงเมื่อผู้เรียกเป็นฝั่งขาย
+                our_role = ourRole,
+                input_vat_claimable = inputVatClaimable,
             },
             candidate_accounts = candidateAccounts.Select(a => new
             {
                 code = a.Code,
                 name = a.Name,
                 type = a.Type,
-                is_active = a.IsActive,
+                // is_active ถูกตัดออก — GlCandidateBuilder กรอง IsActive มาแล้ว
+                // แล้ว hardcode true ⇒ ส่งคีย์ที่เป็น true เสมอ 150 ตัวต่อคำขอ
+                // (ราว 1,500 โทเคนเปล่า) และไม่มีคำสั่งไหนในพรอมป์ต์ใช้เลย
                 description = a.Description,   // คำอธิบายผัง — ช่วย AI แยกผังชื่อคล้าย
             }),
             vendor_history = vendorHistory.Select(h => new
@@ -150,7 +169,11 @@ Respond ONLY as JSON:
                 code = h.Code,
                 name = h.Name,
                 times_used = h.TimesUsed,
-                avg_amount = h.AvgAmount,
+                // ส่งเฉพาะตอนมีค่าจริง — ผู้เรียกทุกรายส่ง 0m มาแบบ hardcode
+                // ⇒ โมเดลได้ "ยอดเฉลี่ยของบัญชีนี้ = ฿0" ทุกแถว ทั้งที่ system
+                // prompt สั่งให้ "ทักถ้ายอดผิดปกติเทียบกับบัญชีนั้น" ⇒ ฐานเทียบ
+                // เป็นศูนย์ = ทำให้ตอบแย่ลง ไม่ใช่แค่เปลืองโทเคน
+                avg_amount = h.AvgAmount > 0m ? h.AvgAmount : (decimal?)null,
             }),
             local_model = new
             {

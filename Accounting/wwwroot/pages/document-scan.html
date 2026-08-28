@@ -2856,7 +2856,16 @@
         // renderReviewForm). Buyer-name/tax-id fields aren't in the
         // current review form — when AI returns them we surface as
         // a note in the verdict panel instead of writing them.
+        // ── ด่านกันค่าที่ถูกปิดบังเขียนทับข้อมูลจริง ──
+        //
+        // ตัวกรอง PII ฝั่งเซิร์ฟเวอร์แปลงเลข 13 หลักเป็น "0xxxxxxxxx5" ก่อนส่งให้
+        // โมเดล ⇒ ถ้าโมเดลสะท้อนค่าเดิมกลับมา แล้วเราเขียนลงช่อง "เลขผู้เสียภาษี"
+        // = **ทำข้อมูลจริงเสียหาย** (เลขที่อ่านได้ถูกต้องอยู่แล้วถูกทับด้วยดาว)
+        // เจอเพราะ audit prompt: OcrReviewPrompt สั่งให้โมเดลแก้เลขผู้เสียภาษี
+        // แต่ input ที่ให้ไปถูกปิดบัง — คำตอบจึงเป็นค่าปิดบังโดยธรรมชาติ
+        const looksMasked = (v) => typeof v === 'string' && /x{3,}/i.test(v);
         const set = (id, val) => {
+          if (looksMasked(val)) return;   // ค่าที่ถูกปิดบัง = ไม่ใช่ข้อมูลจริง
           const el = document.getElementById(id);
           if (el && val != null && String(val).trim() !== '') {
             el.value = val;

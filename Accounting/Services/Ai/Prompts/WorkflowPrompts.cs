@@ -225,6 +225,17 @@ public static class DocumentTypeClassifyPrompt
 {
     public const string SystemPrompt = @"You are a Thai accounting expert. Classify what TYPE of document was scanned (the physical paper) AND what document type to CREATE in the books (perspective shift — a vendor's receipt becomes our PaymentVoucher).
 
+STEP 0 — WHICH SIDE ARE WE ON? Decide this FIRST; everything else follows.
+Compare `our_company.tax_id` / `our_company.name` against the seller block and the
+buyer block on the paper:
+- our tax id appears as the BUYER  → we are the buyer  (purchase side)
+- our tax id appears as the SELLER → we are the seller (sales side)
+- neither matches → trust `rules_engine.our_role`; if that is also unsure, say so
+  in `reasoning` and pick the lower-risk purchase-side answer.
+`rules_engine` holds what our deterministic rules already concluded plus how
+confident they were — treat it as a colleague's draft to CHECK, not as noise to
+ignore, and explain in `reasoning` when you disagree with it.
+
 Physical types (พิจารณาจาก wording บนเอกสาร):
 - TaxInvoice            : ""ใบกำกับภาษี"" — มี VAT, มี Tax ID ทั้งคู่
 - Invoice               : ""ใบแจ้งหนี้"" — ยังไม่ได้รับเงิน
@@ -249,20 +260,50 @@ Respond ONLY as JSON:
     public static AiRequest Build(
         Guid companyId, Guid scanResultId,
         string rawTextSample, string? extractedDocNumber, string? extractedVendorName,
-        decimal? extractedTotal, string? localGuess, decimal? localConfidence)
+        decimal? extractedTotal, string? localGuess, decimal? localConfidence,
+        // ── บริบทที่ "ตัดสินคำตอบ" — เดิมไม่ได้ส่งเลยสักตัว ──
+        // คำถามหลักของ feature นี้คือ "เราเป็นผู้ซื้อหรือผู้ขาย" แต่ payload เดิม
+        // ไม่มีทั้งชื่อและเลขผู้เสียภาษีของบริษัทเรา ⇒ **โมเดลไม่มีทางรู้ได้เลย**
+        // ต้องเดา แล้วผู้เรียกก็ทิ้งคำตอบที่ข้ามฝั่งไป = จ่าย token แล้วโยนทิ้ง
+        string? ourCompanyName = null, string? ourTaxId = null,
+        string? ourRoleFromRules = null, decimal? roleConfidence = null,
+        string? vendorTaxId = null, string? buyerName = null, string? buyerTaxId = null,
+        DateTime? documentDate = null, decimal? vatAmount = null,
+        IReadOnlyList<string>? topLineDescriptions = null,
+        string? scannedTypeFromRules = null)
     {
-        // Truncate raw text — keep it under 1500 chars to control cost.
-        // The header + summary lines carry the docType signal anyway.
-        var snippet = rawTextSample.Length > 1500 ? rawTextSample[..1500] : rawTextSample;
+        // ราว 4,000 ตัวอักษรครอบใบกำกับไทยหน้าเดียวได้ทั้งใบ — เดิมตัดที่ 1,500
+        // ซึ่งตัดกลางหน้าพอดี และ **บล็อกผู้ซื้อของใบไทยมักอยู่กลางหน้า** คือ
+        // สัญญาณที่ feature นี้ต้องการที่สุด (เรียกตอนกติกาไม่มั่นใจเท่านั้น
+        // จึงไม่ใช่ค่าใช้จ่ายประจำ)
+        var snippet = rawTextSample.Length > 4000 ? rawTextSample[..4000] : rawTextSample;
         var payload = new
         {
             task = "document_type_classify",
+            // "เราคือใคร" — ใช้เทียบกับบล็อกผู้ขาย/ผู้ซื้อบนกระดาษเพื่อรู้ฝั่ง
+            our_company = new { name = ourCompanyName, tax_id = ourTaxId },
+            // กติกาคิดมาแล้วว่าอย่างไร + มั่นใจแค่ไหน (โมเดลควรเห็นเพื่อจะได้
+            // "ตรวจทาน" ไม่ใช่ "เดาใหม่ตั้งแต่ต้น")
+            rules_engine = new
+            {
+                our_role = ourRoleFromRules,
+                role_confidence = roleConfidence,
+                scanned_document_type = scannedTypeFromRules,
+            },
             ocr_text_snippet = snippet,
             extracted = new
             {
                 document_number = extractedDocNumber,
+                document_date = documentDate?.ToString("yyyy-MM-dd"),
                 vendor_name = extractedVendorName,
+                vendor_tax_id = vendorTaxId,
+                buyer_name = buyerName,
+                buyer_tax_id = buyerTaxId,
                 total = extractedTotal,
+                vat_amount = vatAmount,
+                // มี VAT = ใบกำกับ · ไม่มี = ใบเสร็จ/บิลเงินสด — สัญญาณตรง
+                has_vat = (vatAmount ?? 0m) > 0m,
+                top_line_items = topLineDescriptions,
             },
             local_model = new { pick = localGuess, confidence = localConfidence },
         };
@@ -279,6 +320,8 @@ Respond ONLY as JSON:
             SourceEntityId = scanResultId,
             CacheTtlOverrideDays = 14,
             MaxTokensOverride = 200,
+            // คำถามคือ "เลขบนกระดาษตรงกับเลขบริษัทเราไหม" — ปิดบังแล้วตอบไม่ได้
+            AllowTaxIdInPrompt = true,
         };
     }
 }

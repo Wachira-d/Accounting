@@ -144,6 +144,16 @@ public class AiOrchestrator : IAiOrchestrator
                 LocalPrimaryAnswer = localPred.PrimaryAnswer,
                 LocalConfidence = localPred.Confidence,
                 LocalModelVersion = localPred.ModelVersion,
+                // ── ต้องอัปเดตใน payload ด้วย ไม่ใช่แค่ในเมทาดาทา ──
+                //
+                // ⚠️ UserPromptJson ถูก serialize ไปแล้วตั้งแต่ prompt builder
+                // ⇒ บล็อก `local_model` ข้างในยังเป็นคำตอบของ **heuristic ที่
+                // ผู้เรียกส่งมา** ไม่ใช่ของ student ที่เพิ่งทำนาย แต่แถว feedback
+                // กลับบันทึกคำตอบของ student ⇒ **ครูตรวจคำตอบคนละใบกับที่จดไว้**
+                // และ prompt ที่เขียนว่า "ตรวจทานคำตอบของ local model" (เช่น
+                // VendorCanonPrompt) ก็ตรวจของผิดตัวมาตลอด
+                UserPromptJson = ReplaceLocalModelBlock(
+                    request.UserPromptJson, localPred.PrimaryAnswer, localPred.Confidence),
             };
         }
 
@@ -257,7 +267,14 @@ public class AiOrchestrator : IAiOrchestrator
             request.CompanyId, request.SystemPrompt, ct);
         var effectiveRequest = request with { SystemPrompt = enrichedSystemPrompt };
 
-        var sanitizedUserJson = _sanitizer.Sanitize(request.UserPromptJson, settings.AiStripPiiInPrompts);
+        // ── ปิดบัง PII ก่อนส่งออก ──
+        //
+        // ⚠️ feature ที่ "คำถามคือการเทียบเลขผู้เสียภาษี" ต้องเห็นเลขจริง —
+        // ไม่งั้นโมเดลได้ 0xxxxxxxxx5 เทียบกับ 0xxxxxxxxx5 (โอกาสตรงกันแบบผิด ๆ
+        // ตกจาก 1/10¹¹ เหลือราว 1/100) และคำตอบที่คืนมาก็เป็นสตริงที่ถูกปิดบัง
+        // ซึ่งถ้าเขียนกลับลงเอกสาร = ทำข้อมูลจริงเสียหาย
+        var sanitizedUserJson = _sanitizer.Sanitize(
+            request.UserPromptJson, settings.AiStripPiiInPrompts, request.AllowTaxIdInPrompt);
         var promptHash = _sanitizer.ComputePromptHash(sanitizedUserJson, enrichedSystemPrompt, providerConfig.Model);
 
         // ── Step 5: cache lookup ──────────────────────────────────────
@@ -492,6 +509,38 @@ public class AiOrchestrator : IAiOrchestrator
                 CacheHitOfFeedbackId: null, ErrorMessage: reason), ct);
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// เขียนทับบล็อก <c>local_model</c> ใน payload ด้วยคำทำนายของ student ตัวจริง
+    ///
+    /// <para>prompt builder serialize JSON ไปแล้วก่อนที่ orchestrator จะรู้ว่า
+    /// student ทำนายว่าอะไร ⇒ ถ้าไม่เขียนทับ ครูจะเห็นคำตอบของ heuristic ที่
+    /// ผู้เรียกส่งมา แต่แถว feedback บันทึกคำตอบของ student = ตรวจคนละใบกับที่จด
+    /// (ทำให้สถิติ LocalAccuracy/Agreement ใน AiFeedbackTrainingJob เพี้ยนด้วย)</para>
+    ///
+    /// <para>ทำแบบ best-effort: payload ที่ไม่มีบล็อกนี้ (prompt แบบ bulk) ปล่อย
+    /// ผ่านโดยไม่แตะ — ดีกว่าทำ JSON พังแล้วทั้ง call ล้ม</para>
+    /// </summary>
+    private static string ReplaceLocalModelBlock(string userPromptJson, string? pick, decimal confidence)
+    {
+        if (string.IsNullOrWhiteSpace(userPromptJson)) return userPromptJson;
+        try
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(userPromptJson);
+            if (node is not System.Text.Json.Nodes.JsonObject obj) return userPromptJson;
+            if (obj["local_model"] is not System.Text.Json.Nodes.JsonObject) return userPromptJson;
+            obj["local_model"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["pick"] = pick,
+                ["confidence"] = confidence,
+                // บอกครูตรง ๆ ว่าคำตอบนี้มาจากนักเรียนที่กลั่นจาก feedback
+                // ไม่ใช่ heuristic — ครูจะได้ชั่งน้ำหนักถูก
+                ["source"] = "distilled-student",
+            };
+            return obj.ToJsonString();
+        }
+        catch { return userPromptJson; }
     }
 
     private static AiResponse FallbackToLocal(AiRequest req, AiCallStatus status, string? error, Guid? feedbackId)

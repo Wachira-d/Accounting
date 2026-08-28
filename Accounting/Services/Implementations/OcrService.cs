@@ -704,6 +704,7 @@ public class OcrService : IOcrService
             var ocrLikelyOurOwnDoc = false;
             bool? ocrWeAreWithheld = null;
             var ocrTargetFromPaper = false;   // true = กระดาษมี marker ชัด ไม่ใช่ default
+            bool? ocrInputVatClaimable = null;   // §82/5 — ส่งเป็นบริบทให้ AI ตอนจัดผังบัญชี
             {
                 DocumentType? prevScanned = null;
                 if (Enum.TryParse<DocumentType>(extractedData.DocumentType, ignoreCase: true, out var prevDt))
@@ -738,6 +739,7 @@ public class OcrService : IOcrService
                 // "กระดาษบอกเอง" = มี marker ชนิดเอกสารชัด — ต่างจากการตกลง
                 // default (Expense/PaymentVoucher) ซึ่งเป็นการเดา
                 ocrTargetFromPaper = role.ScannedDocType.HasValue;
+                ocrInputVatClaimable = role.InputVatClaimable;
                 foreach (var r in role.Reasons)
                     extractedData.ReasoningTrace.Add("[Role] " + r);
 
@@ -772,6 +774,21 @@ public class OcrService : IOcrService
                             totalAmount: extractedData.TotalAmount,
                             localGuess: extractedData.TargetDocumentType,
                             localConfidence: role.RoleConfidence,
+                            // บริบทที่ตัดสินคำตอบ — ถ้าไม่ส่ง โมเดลไม่มีทางรู้ว่า
+                            // เราเป็นผู้ซื้อหรือผู้ขาย แล้วต้องเดา ซึ่งคำตอบที่
+                            // ข้ามฝั่งจะถูกด่านทิ้งอยู่ดี = จ่าย token แล้วโยนทิ้ง
+                            context: new Services.Ai.OcrDocTypeContext(
+                                OurRole: role.OurRole,
+                                RoleConfidence: role.RoleConfidence,
+                                ScannedDocumentType: role.ScannedDocType?.ToString(),
+                                VendorTaxId: extractedData.VendorTaxId,
+                                BuyerName: extractedData.BuyerName,
+                                BuyerTaxId: extractedData.BuyerTaxId,
+                                DocumentDate: extractedData.DocumentDate,
+                                VatAmount: extractedData.VatAmount,
+                                TopLineDescriptions: extractedData.Items
+                                    .Select(i => i.Description ?? "")
+                                    .Where(d => d.Length > 0).Take(5).ToList()),
                             ct: cts.Token);
 
                         scanResult.TargetDocTypeAiFeedbackId = cls.FeedbackId;
@@ -1267,12 +1284,27 @@ public class OcrService : IOcrService
                         // industry ส่งแยกผ่าน businessContext ใน augmenter อยู่แล้ว.
                         // DBD ยังไม่มี vendor TSIC ชัด → ส่ง null ให้ AI อนุมานจาก
                         // ชื่อผู้ขาย + รหัสสินค้า/หน่วย ตาม decode rules ใน prompt.
+                        // บรรทัดที่ยอดสูงสุด — ใช้ส่งหน่วย/จำนวน/ราคาต่อหน่วยของ
+                        // บรรทัดนั้นให้ AI ตาม decode rule ข้อ 8(b) ของพรอมป์ต์
+                        // (เดิมส่งแต่คำบรรยาย ⇒ กฎที่พรอมป์ต์พึ่งมากที่สุดไม่มี
+                        //  อินพุตให้ใช้เลย: "L/ลิตร → น้ำมัน · kWh → ค่าไฟ")
+                        var mainLine = extractedData.Items
+                            .Where(i => i.Amount.HasValue)
+                            .OrderByDescending(i => i.Amount!.Value)
+                            .FirstOrDefault();
                         var glResult = await _aiAugmenter.SuggestGlAccountAsync(
                             companyId, scanResult.Id,
                             extractedData.VendorName, extractedData.VendorTaxId,
                             extractedData.DbdJuristicType,   // ประเภทนิติบุคคลผู้ขาย (ถ้า DBD เจอ) มิฉะนั้น null
                             aiLineDesc, aiLineAmount, "THB",
                             extractedData.DebitAccountCode, localConf,
+                            new Services.Ai.GlLineContext(
+                                Unit: mainLine?.Unit,
+                                Quantity: mainLine?.Quantity,
+                                UnitPrice: mainLine?.UnitPrice,
+                                DocumentDate: extractedData.DocumentDate,
+                                OurRole: extractedData.OurRole,
+                                InputVatClaimable: ocrInputVatClaimable),
                             glCts.Token);
 
                         // Record the trail. FeedbackId เก็บเสมอ (training signal).

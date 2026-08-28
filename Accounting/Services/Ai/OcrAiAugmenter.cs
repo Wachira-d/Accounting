@@ -17,6 +17,42 @@ namespace Accounting.Services.Ai;
 /// as null and surface the local pick as-is. The orchestrator already
 /// records every call (including failure) so feedback is never lost.
 /// </summary>
+
+/// <summary>
+/// บริบทที่ตัวจำแนกชนิดเอกสารต้องเห็นเพื่อจะตอบได้จริง
+///
+/// <para>คำถามหลักคือ "เราเป็นผู้ซื้อหรือผู้ขาย" ซึ่งตอบไม่ได้เลยถ้าไม่รู้ว่า
+/// เลข/ชื่อบนกระดาษฝั่งไหนคือเรา — payload เดิมส่งแค่ข้อความ + ชื่อผู้ขาย +
+/// ยอดรวม ⇒ โมเดลต้องเดา แล้วผู้เรียกก็ทิ้งคำตอบที่ข้ามฝั่ง (จ่าย token
+/// แล้วโยนทิ้ง)</para>
+/// </summary>
+public sealed record OcrDocTypeContext(
+    string? OurRole = null,
+    decimal? RoleConfidence = null,
+    string? ScannedDocumentType = null,
+    string? VendorTaxId = null,
+    string? BuyerName = null,
+    string? BuyerTaxId = null,
+    DateTime? DocumentDate = null,
+    decimal? VatAmount = null,
+    IReadOnlyList<string>? TopLineDescriptions = null);
+
+/// <summary>
+/// บริบทของบรรทัดที่กฎในพรอมป์ต์จัดผังบัญชีต้องใช้ แต่เดิมไม่เคยถูกส่ง
+///
+/// <para>กฎข้อ 8(b) ของ <c>GlAccountPrompt</c> ทั้งข้อพูดเรื่อง<b>หน่วยนับ</b>
+/// ("L/ลิตร → น้ำมัน · kWh → ค่าไฟ · ลบ.ม. → ค่าน้ำ") แต่ payload มีแค่
+/// {description, amount, currency} ⇒ กฎที่พรอมป์ต์พึ่งมากที่สุดไม่มีอินพุตให้ใช้
+/// ทั้งที่ <c>ExtractedItemsJson</c> เก็บค่าเหล่านี้ไว้อยู่แล้ว</para>
+/// </summary>
+public sealed record GlLineContext(
+    string? Unit = null,
+    decimal? Quantity = null,
+    decimal? UnitPrice = null,
+    DateTime? DocumentDate = null,
+    string? OurRole = null,
+    bool? InputVatClaimable = null);
+
 public interface IOcrAiAugmenter
 {
     /// <summary>
@@ -38,6 +74,7 @@ public interface IOcrAiAugmenter
         Guid companyId, Guid scanResultId,
         string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,
         string? localGuess, decimal localConfidence,
+        OcrDocTypeContext? context = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -48,6 +85,7 @@ public interface IOcrAiAugmenter
         string? vendorName, string? vendorTaxId, string? vendorIndustry,
         string lineDescription, decimal amount, string currency,
         string? localBestAccountCode, decimal localConfidence,
+        GlLineContext? lineContext = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -326,6 +364,7 @@ public class OcrAiAugmenter : IOcrAiAugmenter
         string? vendorName, string? vendorTaxId, string? vendorIndustry,
         string lineDescription, decimal amount, string currency,
         string? localBestAccountCode, decimal localConfidence,
+        GlLineContext? lineContext = null,
         CancellationToken ct = default)
     {
         try
@@ -391,7 +430,15 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 localModelVersion: "ExpenseCategoryLearner-v1",
                 sourceEntityType: "OcrScanResult", sourceEntityId: scanResultId,
                 whtRecognitionBasis: whtBasis,
-                businessContext: bizCtx);
+                businessContext: bizCtx,
+                // บริบทของบรรทัดที่กฎ decode ในพรอมป์ต์ต้องใช้ (หน่วย/จำนวน/
+                // ราคาต่อหน่วย/วันที่/ฝั่ง/สิทธิเคลม VAT) — เดิมไม่เคยส่งเลย
+                lineUnit: lineContext?.Unit,
+                lineQuantity: lineContext?.Quantity,
+                lineUnitPrice: lineContext?.UnitPrice,
+                documentDate: lineContext?.DocumentDate,
+                ourRole: lineContext?.OurRole,
+                inputVatClaimable: lineContext?.InputVatClaimable);
 
             var resp = await _orchestrator.AskAsync(req, ct);
             return new OcrAiAugmentationResult(
@@ -439,10 +486,18 @@ public class OcrAiAugmenter : IOcrAiAugmenter
         Guid companyId, Guid scanResultId,
         string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,
         string? localGuess, decimal localConfidence,
+        OcrDocTypeContext? context = null,
         CancellationToken ct = default)
     {
         try
         {
+            // "เราคือใคร" ต้องมาจากฐานข้อมูล ไม่ใช่จากกระดาษ — ผู้เรียกอาจไม่มี
+            // ค่านี้ในมือ จึงโหลดเองที่นี่เพื่อให้ทุก call site ได้บริบทครบเท่ากัน
+            var me = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId)
+                .Select(c => new { c.Name, c.TaxId })
+                .FirstOrDefaultAsync(ct);
+
             var req = Prompts.DocumentTypeClassifyPrompt.Build(
                 companyId, scanResultId,
                 rawTextSample: rawText ?? "",
@@ -450,7 +505,18 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 extractedVendorName: vendorName,
                 extractedTotal: totalAmount,
                 localGuess: localGuess,
-                localConfidence: localConfidence);
+                localConfidence: localConfidence,
+                ourCompanyName: me?.Name,
+                ourTaxId: me?.TaxId,
+                ourRoleFromRules: context?.OurRole,
+                roleConfidence: context?.RoleConfidence,
+                vendorTaxId: context?.VendorTaxId,
+                buyerName: context?.BuyerName,
+                buyerTaxId: context?.BuyerTaxId,
+                documentDate: context?.DocumentDate,
+                vatAmount: context?.VatAmount,
+                topLineDescriptions: context?.TopLineDescriptions,
+                scannedTypeFromRules: context?.ScannedDocumentType);
 
             var resp = await _orchestrator.AskAsync(req, ct);
             return new OcrAiAugmentationResult(
