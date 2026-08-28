@@ -4076,8 +4076,10 @@ public class OcrService : IOcrService
             int day = int.Parse(dateMatch.Groups[1].Value);
             string monthStr = dateMatch.Groups[2].Value;
             int year = int.Parse(dateMatch.Groups[3].Value);
-            if (year > 2500) year -= 543;
-            if (year < 100) year += 2000;
+            // ⚠️ เดิม `> 2500` + `< 100 -> +2000` = ปีย่อ "69" (พ.ศ.) กลายเป็น 2069
+            // ขณะที่อีกเส้นทางในไฟล์เดียวกันแปลงเป็น 2026 ⇒ ใบเดียวกันลงคนละปี
+            // ตามเส้นทาง OCR — ใช้ตัวแปลงกลาง Helpers/ThaiDate.NormalizeYear
+            year = Accounting.Helpers.ThaiDate.NormalizeYear(year);
             int month;
             if (int.TryParse(monthStr, out month)) { /* numeric */ }
             else
@@ -6613,15 +6615,8 @@ public class OcrService : IOcrService
                     && int.TryParse(m.Groups[2].Value, out var mm)
                     && int.TryParse(m.Groups[3].Value, out var yy))
                 {
-                    // Year heuristic: 4-digit ≥2400 = Buddhist Era → −543;
-                    // 2-digit ≥60 = short BE (69 → 2569 → 2026); else short CE.
-                    var year = yy switch
-                    {
-                        >= 2400 => yy - 543,
-                        >= 100 => yy,
-                        >= 60 => 2500 + yy - 543,
-                        _ => 2000 + yy,
-                    };
+                    // ตัวแปลงกลาง (เดิมกติกานี้ถูกเขียนซ้ำที่นี่ด้วยเกณฑ์ของตัวเอง)
+                    var year = Accounting.Helpers.ThaiDate.NormalizeYear(yy);
                     var due = new DateTime(year, mm, dd);
                     var days = (due.Date - data.DocumentDate.Value.Date).Days;
                     if (days is > 0 and <= 365)

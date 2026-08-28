@@ -2475,14 +2475,29 @@ const Layout = {
   },
 
   // ===== Form Validation Utilities =====
+  // เลขผู้เสียภาษี 13 หลัก — **ตัวตรวจฝั่ง JS ตัวเดียวของระบบ**
+  // ต้องให้คำตอบเดียวกับ Helpers/ThaiTaxId.IsValid ฝั่งเซิร์ฟเวอร์เป๊ะ:
+  // 13 หลัก + หลักแรก 0-8 + mod-11 checksum
+  // ⚠️ เดิมตัวนี้ **ไม่มีกติกาหลักแรก** ⇒ เลขที่ขึ้นต้นด้วย 9 ผ่านด่านฝั่ง
+  // ผู้ใช้แล้วไปตายที่เซิร์ฟเวอร์ (ผู้ใช้ไม่รู้ว่าผิดตรงไหน) และ
+  // smart-hooks.js มีสำเนาที่ตรวจหลักแรกอยู่ ⇒ ตัวตรวจสองตัวบนหน้าเดียวกัน
+  // ตอบไม่ตรงกันกับ input เดียวกัน
   validateTaxId(taxId) {
     if (!taxId) return true;
-    const digits = taxId.replace(/\D/g, '');
-    if (digits.length !== 13) return false;
+    return Layout.taxIdCheck(taxId).valid;
+  },
+
+  /** ผลตรวจแบบมีเหตุผล — ใช้ร่วมกับ smart-hooks (ไอคอนสถานะข้างช่องกรอก)
+   *  คืน { valid, reason } เพื่อไม่ต้องมีสำเนา checksum ตัวที่สอง */
+  taxIdCheck(taxId) {
+    const d = (taxId || '').replace(/\D/g, '');
+    if (d.length !== 13) return { valid: false, reason: `${d.length}/13 หลัก` };
+    if (d[0] < '0' || d[0] > '8') return { valid: false, reason: 'หลักแรกต้องเป็น 0-8' };
     let sum = 0;
-    for (let i = 0; i < 12; i++) sum += parseInt(digits[i]) * (13 - i);
+    for (let i = 0; i < 12; i++) sum += parseInt(d[i], 10) * (13 - i);
     const check = (11 - (sum % 11)) % 10;
-    return check === parseInt(digits[12]);
+    if (check !== parseInt(d[12], 10)) return { valid: false, reason: 'check digit ผิด' };
+    return { valid: true };
   },
 
   validatePhone(phone) {

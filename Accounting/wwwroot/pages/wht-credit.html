@@ -93,15 +93,13 @@
         </div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">ประเภทเงินได้</label>
-            <select class="form-select" id="mIncomeType">
+            <!-- ตัวเลือกถูกสร้างตอน init จาก /api/reference/income-types
+                 (Helpers/ThaiWhtRateTable) — เดิมเป็นสำเนามือที่บอกว่า
+                 "40(4) ดอกเบี้ย/เงินปันผล (1%)" ทั้งที่ดอกเบี้ยบุคคล = 15%,
+                 ดอกเบี้ยนิติบุคคล = 1%, ปันผล = 10% ⇒ ป้ายผิดบนตัวเลือกเดียว
+                 ที่ผู้ใช้เห็นตอนกรอกอัตรา = ยอดหักผิดตั้งแต่ต้นทาง -->
+            <select class="form-select" id="mIncomeType" onchange="Page.onIncomeTypeChanged()">
               <option value="">— ไม่ระบุ —</option>
-              <option value="40(2)">40(2) ค่าบริการ/รับจ้างทำของ (3%)</option>
-              <option value="40(3)">40(3) ค่าสิทธิ (3%)</option>
-              <option value="40(4)">40(4) ดอกเบี้ย/เงินปันผล (1%)</option>
-              <option value="40(5)">40(5) ค่าเช่า (5%)</option>
-              <option value="40(6)">40(6) วิชาชีพอิสระ (3%)</option>
-              <option value="40(7)">40(7) รับเหมา (3%)</option>
-              <option value="40(8)">40(8) อื่น ๆ (3%)</option>
             </select>
           </div>
           <div class="form-group"><label class="form-label">อัตราที่ถูกหัก (%)</label><input type="number" step="0.01" class="form-input" id="mRate" oninput="Page.calc()"></div>
@@ -137,7 +135,52 @@
         const sel = document.getElementById('fYear');
         for (let i = y + 1; i >= y - 5; i--) sel.innerHTML += `<option value="${i}">ปีภาษี ${i + 543}</option>`;
         sel.value = y;
+        await this._loadIncomeTypes();
         await this.load();
+      },
+
+      /** ตัวเลือก "ประเภทเงินได้" มาจากเซิร์ฟเวอร์ (Helpers/ThaiWhtRateTable)
+       *  — ห้ามพิมพ์อัตราไว้ในหน้าเว็บเอง เพราะสำเนามือจะ drift จากกฎหมาย
+       *  (เดิมหน้านี้เขียน "40(4) ดอกเบี้ย/เงินปันผล (1%)" ซึ่งผิดทั้งสองตัว) */
+      _incomeTypes: [],
+      async _loadIncomeTypes() {
+        const sel = document.getElementById('mIncomeType');
+        if (!sel) return;
+        try {
+          const res = await API.get('/api/reference/income-types');
+          this._incomeTypes = res?.data || [];
+        } catch (e) {
+          // โหลดไม่ได้ = ปล่อยเหลือ "— ไม่ระบุ —" แล้วให้ผู้ใช้กรอกอัตราเอง
+          // ดีกว่าโชว์อัตราที่หน้าเว็บเดาเอง
+          Layout.toast('โหลดตารางประเภทเงินได้ไม่สำเร็จ — กรุณากรอกอัตราเอง', 'error');
+          return;
+        }
+        for (const t of this._incomeTypes) {
+          const o = document.createElement('option');
+          o.value = t.taxSection || t.code;
+          o.dataset.code = t.code || '';
+          const rateLabel = (t.individualRate == null && t.juristicRate == null)
+            ? 'อัตราขั้นบันได'
+            : (t.individualRate === t.juristicRate
+                ? `${t.juristicRate}%`
+                : `บุคคล ${t.individualRate ?? '-'}% / นิติบุคคล ${t.juristicRate ?? '-'}%`);
+          o.textContent = `${t.taxSection} ${t.name} (${rateLabel})`;
+          if (t.note) o.title = t.note;
+          sel.appendChild(o);
+        }
+      },
+
+      /** เลือกประเภทแล้วเติมอัตราให้ — เฉพาะตอนช่องยังว่าง (ค่าที่ผู้ใช้พิมพ์
+       *  เองต้องชนะเสมอ ตามกฎ "ห้ามใครมาก่อนชนะ") */
+      onIncomeTypeChanged() {
+        const sel = document.getElementById('mIncomeType');
+        const rate = document.getElementById('mRate');
+        if (!sel || !rate || rate.value) return;
+        const t = this._incomeTypes.find(x => (x.taxSection || x.code) === sel.value);
+        if (!t) return;
+        // ผู้ถูกหักคือ "เรา" ซึ่งเป็นนิติบุคคลในเคสปกติ — ใช้อัตรานิติบุคคลก่อน
+        const r = t.juristicRate ?? t.individualRate;
+        if (r != null) { rate.value = r; this.calc(); }
       },
 
       _year() { return parseInt(document.getElementById('fYear').value, 10); },
