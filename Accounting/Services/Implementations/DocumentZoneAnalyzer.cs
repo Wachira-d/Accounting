@@ -434,7 +434,7 @@ public static class DocumentZoneAnalyzer
 
     static string? ExtractTaxId(string zoneText)
     {
-        var match = Regex.Match(zoneText, @"(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})");
+        var match = Regex.Match(zoneText, Accounting.Helpers.ThaiTaxId.Pattern);
         if (!match.Success) return null;
         var cleaned = Regex.Replace(match.Groups[1].Value, @"[-\s]", "");
         return cleaned.Length == 13 ? cleaned : null;
@@ -532,7 +532,7 @@ public static class DocumentZoneAnalyzer
             if (name != null) companies.Add((name, cm.Index));
         }
 
-        var taxIdPattern = @"(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})";
+        var taxIdPattern = Accounting.Helpers.ThaiTaxId.Pattern;
         var taxIds = Regex.Matches(text, taxIdPattern)
             .Cast<Match>()
             .Select(m => (Id: Regex.Replace(m.Groups[1].Value, @"[-\s]", ""), Pos: m.Index))
@@ -736,7 +736,7 @@ public static class DocumentZoneAnalyzer
     static string BuildExtractionRegex(string value)
     {
         if (Regex.IsMatch(value, @"^\d{13}$"))
-            return @"(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})";
+            return Accounting.Helpers.ThaiTaxId.Pattern;
         if (Regex.IsMatch(value, @"^[A-Za-z0-9\-/]+$"))
             return @"([A-Za-z0-9\-/]+)";
         if (value.Contains("บริษัท") || value.Contains("ห้างหุ้นส่วน") || value.Contains("ร้าน"))

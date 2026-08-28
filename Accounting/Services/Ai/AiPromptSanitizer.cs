@@ -30,13 +30,13 @@ public class AiPromptSanitizer : IAiPromptSanitizer
     // Thai national ID / tax ID: 13 digits, often dash-separated as
     // 1-2345-67890-12-3. Match both formats.
     private static readonly System.Text.RegularExpressions.Regex ThaiIdRegex =
-        new(@"\b\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1}\b|\b\d{13}\b",
+        new(@"\b\d{1}[- \t]?\d{4}[- \t]?\d{5}[- \t]?\d{2}[- \t]?\d{1}\b|\b\d{13}\b",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
     // Thai phone numbers: 0xx-xxx-xxxx or 0xxxxxxxxx (9-10 digits
     // starting with 0). Mobile and landline both covered.
     private static readonly System.Text.RegularExpressions.Regex PhoneRegex =
-        new(@"\b0\d{1,2}[-\s]?\d{3}[-\s]?\d{4}\b|\b0\d{8,9}\b",
+        new(@"\b0\d{1,2}[- \t]?\d{3}[- \t]?\d{4}\b|\b0\d{8,9}\b",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
     public string Sanitize(string userPromptJson, bool stripPii)

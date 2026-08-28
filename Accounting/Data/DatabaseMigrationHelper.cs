@@ -4690,6 +4690,23 @@ public static class DatabaseMigrationHelper
             // idempotent: เฉพาะใบที่ยังไม่มีเลข + remittance มีเลขรับจริง
             """UPDATE "Documents" d SET "Pp36RdReceiptNumber" = r."FilingNumber", "Pp36RdReceiptDate" = COALESCE(d."Pp36RdReceiptDate", r."PayDate") FROM "StatutoryRemittances" r WHERE d."IsForeignService" = true AND d."InputVatBecameClaimableAt" IS NOT NULL AND d."Pp36RdReceiptNumber" IS NULL AND r."CompanyId" = d."CompanyId" AND r."RemittanceType" = 'VatPp36' AND r."IsDeleted" = false AND r."FilingNumber" IS NOT NULL AND r."FilingNumber" <> '' AND r."PeriodYear" = EXTRACT(YEAR FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int AND r."PeriodMonth" = EXTRACT(MONTH FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int;""",
 
+            // ===== ล้าง regex ที่กลืนขึ้นบรรทัดใหม่ออกจากรูปแบบที่เรียนรู้ไว้แล้ว =====
+            // OcrLearnedPatterns เก็บ "regex ที่ใช้ดึงค่า" ลงฐานข้อมูล ⇒ แถวที่
+            // เรียนไว้ก่อนหน้ายังถือ pattern เดิมที่ตัวคั่นเป็น [-\s]? ซึ่ง \s ครอบ
+            // \n ⇒ ต่อเลขท้ายบรรทัดกับเลขต้นบรรทัดถัดไปเป็นเลข 13 หลักที่ไม่มีบน
+            // กระดาษ (บั๊กจริง PI-20260820-0005) — แก้โค้ดอย่างเดียวไม่พอ ต้องล้าง
+            // ของที่ค้างในฐานด้วย. ตั้งเป็น NULL ให้ zone analyzer กลับไปใช้ทาง
+            // กระดาษ (บั๊กจริง PI-20260820-0005) — แก้โค้ดอย่างเดียวไม่พอ ต้องล้าง
+            // ของที่ค้างในฐานด้วย
+            //
+            // เทียบแบบ **เท่ากันเป๊ะ** ไม่ใช่ LIKE '%\s%' สองเหตุผล: (1) pattern
+            // ของชื่อบริษัทก็มี \s อยู่ในตัว (`\s*\(มหาชน\)`) ซึ่งข้ามบรรทัดได้
+            // ตามตั้งใจ จะไปทับผิดตัว (2) ใน LIKE ของ Postgres `\` เป็น escape
+            // char โดยปริยาย ⇒ '%[-\s]?%' ถูกอ่านเป็น '%[-s]?%' แล้วไม่ match อะไรเลย
+            // ค่านี้เป็นค่าเดียวที่ BuildExtractionRegex เคยออกให้เลข 13 หลัก
+            // → เขียนทับด้วย pattern ที่แก้แล้ว (เก็บสิ่งที่เรียนรู้ไว้ ไม่ทิ้ง)
+            """UPDATE "OcrLearnedPatterns" SET "ExtractionRegex" = '(?<!\d)(\d{1}[- \t]?\d{4}[- \t]?\d{5}[- \t]?\d{2}[- \t]?\d{1})(?!\d)' WHERE "ExtractionRegex" = '(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})';""",   // regex-line-span-ok — pattern เดิมอยู่ที่นี่ในฐานะ "ค่าที่จะถูกแทน" ไม่ใช่ regex ที่ใช้งาน
+
             // ===== Snapshot ยอดจริงจาก statement ล่าสุด (แสดงคู่ยอด GL ให้เห็นผลต่าง) =====
             """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalance" numeric(18,2) NULL;""",
             """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalanceDate" timestamptz NULL;""",

@@ -247,7 +247,7 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
     private static readonly System.Text.RegularExpressions.Regex _taxIdMaskedRe =
         new(@"\b(?:\dx{10}\d|x{13})\b", System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex _phoneRe =
-        new(@"\b0\d{1,2}[-\s]?\d{3}[-\s]?\d{4}\b|\b0\d{8,9}\b",
+        new(@"\b0\d{1,2}[- \t]?\d{3}[- \t]?\d{4}\b|\b0\d{8,9}\b",
             System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex _phoneMaskedRe =
         new(@"\b(?:\d{2}x{4}\d{2}|0x{6})\b", System.Text.RegularExpressions.RegexOptions.Compiled);

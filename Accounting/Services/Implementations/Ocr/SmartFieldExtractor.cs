@@ -150,15 +150,9 @@ internal static class SmartFieldExtractor
     internal static List<TaxIdCandidate> ExtractTaxIdCandidates(string text)
     {
         if (string.IsNullOrEmpty(text)) return new List<TaxIdCandidate>();
-        // ตัวคั่นได้เฉพาะ "-" กับช่องว่าง/แท็บ — **ห้ามรวมขึ้นบรรทัดใหม่**
-        // เดิมใช้ [-\s]? ซึ่ง \s ครอบ \n ด้วย ⇒ ตัวเลขท้ายบรรทัดถูกต่อกับตัวเลข
-        // ต้นบรรทัดถัดไปเป็นเลข 13 หลักที่ไม่มีอยู่จริงบนกระดาษ (เช่น "120.00\n
-        // 8859991966695" → "0885999196669") ซึ่งมีโอกาส ~1/10 ที่จะผ่าน mod-11
-        // แล้วกลายเป็น "เลขผู้เสียภาษี" ที่ไม่เคยมีใครพิมพ์ลงกระดาษเลย
-        // (?<!\d)/(?!\d) กันการตัดเลข 13 ตัวออกมาจากเลขก้อนที่ยาวกว่า เช่น
-        // เลขบัญชีธนาคาร/เลขที่อ้างอิง 16 หลัก
-        var pattern = @"(?<!\d)(\d{1}[- \t]?\d{4}[- \t]?\d{5}[- \t]?\d{2}[- \t]?\d{1})(?!\d)";
-        return Regex.Matches(text, pattern)
+        // pattern มาจากตัวกลางตัวเดียวของระบบ — ห้ามคัดลอกมาวางที่นี่
+        // (เหตุผลเรื่องตัวคั่นห้ามครอบ \n อยู่ใน doc ของ ThaiTaxId.Pattern)
+        return Regex.Matches(text, Accounting.Helpers.ThaiTaxId.Pattern)
             .Cast<Match>()
             .Select(m => new TaxIdCandidate(
                 Regex.Replace(m.Groups[1].Value, @"[-\s]", ""),
@@ -291,7 +285,7 @@ internal static class SmartFieldExtractor
 
     private static List<(string FullName, int Position)> ExtractCompanyNames(string text)
     {
-        var pattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|หจก\.?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[-\s]?\d{4})|$)";
+        var pattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|หจก\.?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[- \t]?\d{4})|$)";
         var matches = Regex.Matches(text, pattern, RegexOptions.Multiline);
         var results = new List<(string, int)>();
         foreach (Match m in matches)
@@ -667,7 +661,7 @@ internal static class SmartFieldExtractor
     public static string? ExtractFirstThaiPhone(string text)
     {
         // 9-10 digits, optionally with dashes/spaces; first digit must be 0
-        var m = Regex.Match(text, @"\b(0\d[\s\-]?\d{3}[\s\-]?\d{4})\b");
+        var m = Regex.Match(text, @"\b(0\d[ \t\-]?\d{3}[ \t\-]?\d{4})\b");
         return m.Success ? Regex.Replace(m.Groups[1].Value, @"[\s\-]", "") : null;
     }
 

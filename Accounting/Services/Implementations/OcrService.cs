@@ -3649,7 +3649,7 @@ public class OcrService : IOcrService
         else { data.DocumentType = "Receipt"; data.Confidence = 0.5m; }
 
         // Extract ALL 13-digit tax IDs
-        var taxIdPattern = @"(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})";
+        var taxIdPattern = Accounting.Helpers.ThaiTaxId.Pattern;
         var allTaxIds = Regex.Matches(text, taxIdPattern)
             .Cast<Match>()
             .Select(m => Regex.Replace(m.Groups[1].Value, @"[-\s]", ""))
@@ -3658,7 +3658,7 @@ public class OcrService : IOcrService
             .ToList();
 
         // Extract ALL company names with position
-        var companyPattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[-\s]?\d{4})|$)";
+        var companyPattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[- \t]?\d{4})|$)";
         var companyMatches = Regex.Matches(text, companyPattern, RegexOptions.Multiline);
         var companyNames = new List<(string FullName, int Position)>();
         foreach (Match cm in companyMatches)
