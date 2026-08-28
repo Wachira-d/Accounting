@@ -4690,6 +4690,12 @@ public static class DatabaseMigrationHelper
             // idempotent: เฉพาะใบที่ยังไม่มีเลข + remittance มีเลขรับจริง
             """UPDATE "Documents" d SET "Pp36RdReceiptNumber" = r."FilingNumber", "Pp36RdReceiptDate" = COALESCE(d."Pp36RdReceiptDate", r."PayDate") FROM "StatutoryRemittances" r WHERE d."IsForeignService" = true AND d."InputVatBecameClaimableAt" IS NOT NULL AND d."Pp36RdReceiptNumber" IS NULL AND r."CompanyId" = d."CompanyId" AND r."RemittanceType" = 'VatPp36' AND r."IsDeleted" = false AND r."FilingNumber" IS NOT NULL AND r."FilingNumber" <> '' AND r."PeriodYear" = EXTRACT(YEAR FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int AND r."PeriodMonth" = EXTRACT(MONTH FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int;""",
 
+            // ===== ความมั่นใจรายช่องของ OCR — เดิมไม่ได้เก็บลงฐานเลย =====
+            // ค่าอยู่ในหน่วยความจำเฉพาะตอนสแกนสด พอ reload หน้าค่าหายหมด แล้ว
+            // ป้าย % ข้างทุกช่องตกไปใช้ confidence ของทั้งใบ ⇒ ไฮไลต์เหลือง
+            // "ตรวจสอบอีกครั้ง" (กฎเหล็ก #3 ข้อ 3) ใช้งานไม่ได้จริง
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "FieldConfidenceJson" text NULL;""",
+
             // ===== ล้าง regex ที่กลืนขึ้นบรรทัดใหม่ออกจากรูปแบบที่เรียนรู้ไว้แล้ว =====
             // OcrLearnedPatterns เก็บ "regex ที่ใช้ดึงค่า" ลงฐานข้อมูล ⇒ แถวที่
             // เรียนไว้ก่อนหน้ายังถือ pattern เดิมที่ตัวคั่นเป็น [-\s]? ซึ่ง \s ครอบ

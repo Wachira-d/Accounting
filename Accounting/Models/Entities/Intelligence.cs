@@ -248,6 +248,17 @@ public class OcrScanResult : TenantEntity
     public string? ProcessingNotes { get; set; }
     public DateTime? ProcessedAt { get; set; }
 
+    /// <summary>
+    /// ความมั่นใจรายช่อง — JSON <c>{"SellerTaxId":0.95,"TotalAmount":0.7,…}</c>
+    /// ใช้ชื่อช่องกลางจาก <c>Helpers/OcrFieldKeys.cs</c> เท่านั้น
+    ///
+    /// <para>เดิม<b>ไม่ได้เก็บลงฐานเลย</b> — ค่าอยู่ในหน่วยความจำเฉพาะตอนสแกน
+    /// สด พอ reload หน้า/เปิดจากรายการ ค่าหายหมด แล้วป้าย % ข้างทุกช่องตกไปใช้
+    /// confidence ของทั้งใบ ดูเหมือนเป็นข้อมูลรายช่องจริงทั้งที่เป็นเลขเดียวกัน
+    /// ⇒ ไฮไลต์ "ตรวจสอบอีกครั้ง" ตามกฎเหล็ก #3 ข้อ 3 ใช้งานไม่ได้จริง</para>
+    /// </summary>
+    public string? FieldConfidenceJson { get; set; }
+
     // GL & expense suggestions
     public string? ExpenseCategory { get; set; }
     public string? SuggestedAccountsJson { get; set; }

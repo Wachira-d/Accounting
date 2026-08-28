@@ -225,13 +225,56 @@ public class RdComplianceValidator
                 + "ถ้าไม่มี ให้ขอใบกำกับใหม่จากผู้ขาย (แจ้งชื่อ/ที่อยู่/เลขผู้เสียภาษีของเราให้ครบ)"));
         }
 
-        // Rule 4: Branch code present
-        // (branch is part of company info or "00000" — at least one side
-        //  should carry it for full RD compliance; warn if absent on both)
-        // OcrExtractedData doesn't currently carry branch — surface as Info.
-        results.Add(new("BRANCH_CODE_PRESENT", true, "Info",
-            "Branch code อยู่ใน metadata บริษัท (ระบบใช้ค่า " + (company.BranchCode ?? "00000") + ")",
-            company.BranchCode));
+        // Rule 4: รหัสสาขาบนใบกำกับ — §86/4 + ประกาศอธิบดีฯ ฉบับที่ 199
+        //
+        // ⚠️ เดิมกฎนี้เป็น stub: hard-code IsValid=true/Info แล้วรายงานสาขาของ
+        // "บริษัทเรา" จาก metadata โดยไม่เคยดูกระดาษเลย — คอมเมนต์เดิมบอกว่า
+        // "OcrExtractedData ยังไม่มีสาขา" ซึ่งไม่จริงแล้ว (มี VendorBranchCode/
+        // BuyerBranchCode) แต่กฎไม่เคยถูกต่อสาย ⇒ ใบของสาขาที่ 3 ผ่านฉลุยเป็น
+        // สำนักงานใหญ่ ทั้งที่ผิดทั้ง §86/4 และรายงานรายสถานประกอบการ (§87)
+        // null = "กระดาษไม่ได้ระบุ" (ต่างจาก Normalize ที่แปลงว่าง → "00000"
+        // ซึ่งจะกลบความจริงว่าไม่มีข้อมูล)
+        var sellerBranch = BranchOrNull(o.VendorBranchCode);
+        var buyerBranch = BranchOrNull(o.BuyerBranchCode);
+        var ourBranch = TaxBranchCode.Normalize(company.BranchCode);
+        if (!needsKeyword)
+        {
+            results.Add(new("BRANCH_CODE_PRESENT", true, "Info",
+                "เอกสารไม่มี VAT — ไม่บังคับระบุสาขาตาม §86/4", null));
+        }
+        else if (sellerBranch == null && !canReadPaper)
+        {
+            results.Add(new("BRANCH_CODE_PRESENT", true, "Info",
+                "เครื่องอ่านไม่ได้คืนข้อความทั้งหน้า — ตรวจรหัสสาขาบนกระดาษอัตโนมัติไม่ได้", null));
+        }
+        else if (sellerBranch == null)
+        {
+            results.Add(new("BRANCH_CODE_PRESENT", false, "Warning",
+                "ไม่พบสาขาของผู้ขายบนเอกสาร — ใบกำกับเต็มรูป §86/4 ต้องระบุ \"สำนักงานใหญ่\" "
+                + "หรือ \"สาขาที่ NNNNN\" ของผู้ขาย (ประกาศอธิบดีฯ ฉบับที่ 199)",
+                null,
+                "เปิด 'ไฟล์แนบ' ดูกระดาษจริง — ถ้ามีระบุอยู่ ให้กด 'แก้ไข' แล้วกรอกสาขาผู้ขาย "
+                + "· ถ้ากระดาษไม่มีจริง ให้ขอใบกำกับที่ถูกต้องจากผู้ขาย"));
+        }
+        else if (buyerBranch != null && buyerBranch != ourBranch)
+        {
+            // สาขาผู้ซื้อบนกระดาษไม่ตรงกับสาขาที่บริษัทนี้ตั้งไว้ — ไม่ใช่เรื่องผิด
+            // เสมอไป (กิจการหลายสาขาอาจสแกนใบของอีกสาขา) แต่ต้องให้คนตัดสิน
+            // เพราะมีผลกับรายงานภาษีซื้อรายสถานประกอบการ (§87)
+            results.Add(new("BRANCH_CODE_PRESENT", false, "Warning",
+                $"สาขาผู้ซื้อบนเอกสารคือ {TaxBranchCode.Label(buyerBranch)} แต่บริษัทที่เปิดอยู่ตั้งไว้เป็น "
+                + $"{TaxBranchCode.Label(ourBranch)} — รายงานภาษีซื้อแยกตามสถานประกอบการ (§87) จะเข้าคนละสาขา",
+                buyerBranch,
+                "ถ้าใบนี้เป็นของอีกสาขา ให้สลับสาขาที่มุมขวาบนก่อนสร้างเอกสาร "
+                + "· ถ้ากระดาษระบุผิด ให้แก้ที่ช่องสาขาผู้ซื้อ"));
+        }
+        else
+        {
+            results.Add(new("BRANCH_CODE_PRESENT", true, "Info",
+                $"สาขาผู้ขาย {TaxBranchCode.Label(sellerBranch)}"
+                + (buyerBranch != null ? $" · สาขาผู้ซื้อ {TaxBranchCode.Label(buyerBranch)}" : ""),
+                sellerBranch));
+        }
 
         // Rule 5: Document date present + not in future
         var hasDate = o.ExtractedDate.HasValue;
@@ -354,6 +397,12 @@ public class RdComplianceValidator
     /// ไว้แค่ "ก้อนเดียวกัน" ที่คั่นด้วย - หรือช่องว่างเท่านั้น (ลูกน้ำ/จุด/ตัวอักษร
     /// ตัดก้อน) แล้วค้นแบบ substring ในก้อนนั้น เพื่อให้เคส "123 456 789 0105535099511"
     /// (มีเลขอื่นนำหน้าในบรรทัดเดียวกัน) ยังหาเจอ — ไม่งั้นจะเตือนผิดทั้งที่กระดาษมีเลข</summary>
+    /// <summary>รหัสสาขา 5 หลัก หรือ null เมื่อกระดาษไม่ได้ระบุ/รูปแบบผิด —
+    /// ห้ามใช้ <c>TaxBranchCode.Normalize</c> ตรงนี้เพราะมันแปลงว่างเป็น "00000"
+    /// ซึ่งจะกลบความจริงว่า "ไม่มีข้อมูล" ให้กลายเป็น "สำนักงานใหญ่"</summary>
+    private static string? BranchOrNull(string? raw)
+        => TaxBranchCode.TryNormalize(raw, out var code, out _) ? code : null;
+
     internal static bool RawTextHasTaxId(string? rawText, string? taxId)
     {
         var want = ThaiTaxId.Normalize(taxId);

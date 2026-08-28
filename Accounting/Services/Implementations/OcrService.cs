@@ -809,8 +809,15 @@ public class OcrService : IOcrService
             scanResult.BuyerBranchCode = extractedData.BuyerBranchCode;
             scanResult.BuyerAddress = extractedData.BuyerAddress;
             if (extractedData.FieldConfidence.Count > 0)
+            {
+                // เก็บลงฐานด้วยชื่อช่องกลาง — เดิมเก็บแค่เป็นข้อความใน
+                // ProcessingNotes ซึ่งอ่านกลับมาใช้ไม่ได้ ⇒ พอ reload หน้า
+                // ความมั่นใจรายช่องหายหมด แล้วป้าย % ตกไปใช้ค่าทั้งใบ
+                var canon = Accounting.Helpers.OcrFieldKeys.Canonicalize(extractedData.FieldConfidence);
+                scanResult.FieldConfidenceJson = System.Text.Json.JsonSerializer.Serialize(canon);
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
-                    string.Join("\n", extractedData.FieldConfidence.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
+                    string.Join("\n", canon.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
+            }
             // [Reasoning] section is built AFTER vendorPred so VendorIntel/Learner traces are included.
 
             // ───── Default category resolution (Thai expense classifier) ─────
@@ -5902,6 +5909,19 @@ public class OcrService : IOcrService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>อ่านความมั่นใจรายช่องที่เก็บไว้ในฐาน — คืน null เมื่อไม่มี/พัง
+    /// (null = "ยังไม่รู้" ให้ UI ตกไปใช้ค่าทั้งใบตามเดิม ไม่ใช่ "มั่นใจ 0%")</summary>
+    private static Dictionary<string, double>? ParseFieldConfidenceJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, double>>(json);
+            return parsed is { Count: > 0 } ? Accounting.Helpers.OcrFieldKeys.Canonicalize(parsed) : null;
+        }
+        catch { return null; }
+    }
+
     /// <summary>
     /// ใบนี้ซ้ำกับอะไรในระบบหรือไม่ — คืนข้อความเตือน (null = ไม่ซ้ำ)
     ///
@@ -6076,7 +6096,12 @@ public class OcrService : IOcrService
             hasWht, whtRate,
             paymentTermsDays, items,
             r.RawTextContent,
-            data?.FieldConfidence,
+            // ความมั่นใจรายช่อง: ใช้ของสด (ตอนสแกน) ถ้ามี ไม่งั้นอ่านจากฐาน —
+            // เดิมมีแค่ของสด พอ reload หน้าค่าหายหมด แล้วป้าย % ข้างทุกช่องตกไป
+            // ใช้ confidence ของทั้งใบ ดูเหมือนข้อมูลรายช่องจริงทั้งที่เป็นเลขเดียวกัน
+            data?.FieldConfidence is { Count: > 0 } fresh
+                ? Accounting.Helpers.OcrFieldKeys.Canonicalize(fresh)
+                : ParseFieldConfidenceJson(r.FieldConfidenceJson),
             // Prefer the in-memory extraction (fresh scan path) but
             // fall back to the persisted entity values when remapping
             // a list row or a page reload where `data` is null.
@@ -6147,8 +6172,16 @@ public class OcrService : IOcrService
             TotalAmount = etax.GrandTotal,
         };
 
-        foreach (var k in new[] { "DocumentNumber", "DocumentDate", "VendorName", "VendorTaxId",
-            "VendorAddress", "BuyerName", "BuyerTaxId", "SubTotal", "VatAmount", "TotalAmount" })
+        // ใช้ชื่อช่องกลาง (Helpers/OcrFieldKeys.cs) — เดิมใช้ชื่อชุดของ Azure
+        // ปนกับชื่อของตัวเอง ทำให้ฝั่งอ่านหาไม่เจอ
+        foreach (var k in new[] {
+            Accounting.Helpers.OcrFieldKeys.DocumentNumber, Accounting.Helpers.OcrFieldKeys.DocumentDate,
+            Accounting.Helpers.OcrFieldKeys.SellerName, Accounting.Helpers.OcrFieldKeys.SellerTaxId,
+            Accounting.Helpers.OcrFieldKeys.SellerAddress, Accounting.Helpers.OcrFieldKeys.SellerBranchCode,
+            Accounting.Helpers.OcrFieldKeys.BuyerName, Accounting.Helpers.OcrFieldKeys.BuyerTaxId,
+            Accounting.Helpers.OcrFieldKeys.BuyerAddress, Accounting.Helpers.OcrFieldKeys.BuyerBranchCode,
+            Accounting.Helpers.OcrFieldKeys.SubTotal, Accounting.Helpers.OcrFieldKeys.VatAmount,
+            Accounting.Helpers.OcrFieldKeys.TotalAmount })
         {
             data.FieldConfidence[k] = 1.0;
         }
@@ -6177,6 +6210,51 @@ public class OcrService : IOcrService
     {
         if (string.IsNullOrEmpty(rawText)) return;
         var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
+
+        // ── รหัสสาขา §86/4 (ประกาศอธิบดีฯ 199) — ทุกเส้นทาง engine ──
+        //
+        // ⚠️ เดิม BranchCodeExtractor ถูกเรียกจาก **ที่เดียว** คือ ParseThaiDocument
+        // ซึ่งรันเฉพาะเส้นทาง Tesseract ⇒ บนเส้นทาง Azure DI (เส้นหลัก) และ python
+        // **ไม่เคยอ่านรหัสสาขาจากกระดาษเลย** แล้ว MapToResponse ก็ ?? "00000"
+        // ให้เงียบ ๆ ⇒ ใบของ "สาขาที่ 3" ขึ้นเป็นสำนักงานใหญ่ทุกใบ ซึ่งผิดทั้ง
+        // §86/4 และรายงานภาษีรายสถานประกอบการ (§87)
+        //
+        // ที่นี่คือจุดที่ทุก engine ผ่าน — เติมเฉพาะช่องที่ยังว่าง ไม่ทับของ e-Tax XML
+        if (string.IsNullOrWhiteSpace(data.VendorBranchCode)
+            || string.IsNullOrWhiteSpace(data.BuyerBranchCode))
+        {
+            var br = BranchCodeExtractor.Extract(text);
+            if (string.IsNullOrWhiteSpace(data.VendorBranchCode) && br.SellerBranchCode != null)
+            {
+                data.VendorBranchCode = br.SellerBranchCode;
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerBranchCode] = 0.85;
+                data.ReasoningTrace.Add($"[Enrich] รหัสสาขาผู้ขายจากกระดาษ {br.SellerBranchCode}");
+            }
+            if (string.IsNullOrWhiteSpace(data.BuyerBranchCode) && br.BuyerBranchCode != null)
+            {
+                data.BuyerBranchCode = br.BuyerBranchCode;
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.BuyerBranchCode] = 0.85;
+                data.ReasoningTrace.Add($"[Enrich] รหัสสาขาผู้ซื้อจากกระดาษ {br.BuyerBranchCode}");
+            }
+        }
+
+        // ── ที่อยู่ผู้ขายจากข้อความ (เดิมเติมแค่ email/phone) ──
+        // Azure ให้ VendorAddress ได้บ้างไม่ได้บ้าง; regex ตัวนี้มีอยู่แล้วและ
+        // ถูกใช้ในเส้นทาง Tesseract — ยกมาให้ทุกเส้นทางใช้ร่วมกัน
+        if (string.IsNullOrWhiteSpace(data.VendorAddress))
+        {
+            var addr = VendorAddressRegex.Match(text);
+            if (addr.Success && addr.Groups.Count > 1)
+            {
+                var candidate = addr.Groups[1].Value.Trim();
+                if (candidate.Length >= 10)
+                {
+                    data.VendorAddress = candidate;
+                    data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerAddress] = 0.7;
+                    data.ReasoningTrace.Add("[Enrich] ที่อยู่ผู้ขายจากข้อความบนกระดาษ");
+                }
+            }
+        }
 
         // 0) Vendor email/phone fallback — ทุก path. Azure DI ไม่มี field email,
         //    + Azure อาจไม่จับ phone เคสที่บนเอกสารระบุไม่ชัด → contact ที่สร้าง

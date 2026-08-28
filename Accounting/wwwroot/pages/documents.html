@@ -2674,15 +2674,23 @@
       },
 
       _applyOcrConfidenceHints(conf) {
+        // ชื่อช่องต้องตรงกับคำศัพท์กลางฝั่งเซิร์ฟเวอร์ (Helpers/OcrFieldKeys.cs)
+        //
+        // เดิม map ไปที่ 'SupplierName' / 'SupplierTaxId' / 'PaymentChannel'
+        // ซึ่ง **ไม่มีฝั่งไหนผลิตเลยสักตัว** ⇒ ไฮไลต์เหลือง "ตรวจสอบอีกครั้ง"
+        // (กฎเหล็ก #3 ข้อ 3) แทบไม่เคยขึ้นเลยตั้งแต่เขียนมา — เหลือทำงานจริง
+        // แค่ ExpenseCategory ช่องเดียว
         const fieldMap = {
-          'SupplierName': 'fContact',
-          'SupplierTaxId': 'fSupplierTaxIdReadonly',
+          'SellerName': 'fContact',
+          'SellerTaxId': 'fSupplierTaxIdReadonly',
           'DocumentNumber': 'fSupplierInvoiceNumberPV',
           'DocumentDate': 'fSupplierTaxInvoiceDatePV',
           'TotalAmount': null,                // computed from lines
           'VatAmount': null,
+          'SubTotal': null,
           'ExpenseCategory': 'fExpenseCategory',
-          'PaymentChannel': 'fPaymentChannel',
+          'PaymentTerms': 'fPaymentTerms',
+          'WhtRate': 'fWhtRate',
         };
         Object.entries(conf || {}).forEach(([key, val]) => {
           const v = Number(val) || 0;
