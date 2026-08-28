@@ -428,7 +428,14 @@ const Layout = {
       // localStorage entry of `false` re-opens a group that's not active.
       const containsActive = groupItems.some(it => it.id === this.currentPage);
       const explicit = collapsedState[currentSection.section];
-      const isCollapsed = containsActive ? false : (explicit === false ? false : true);
+      // สมาชิก role กำหนดเอง: เมนูที่ได้รับคือ shortlist ที่แอดมินคัดให้แล้ว —
+      // เปิดหมวด default ให้เห็นทันที. "default พับทุกหมวด" คือเหตุที่ผู้ใช้ทั่วไป
+      // รายงานว่า "ตั้งสิทธิ์ให้แล้วแต่ยังไม่เห็นเมนู" ทั้งที่สิทธิ์มาครบ
+      // (ผู้ใช้สิทธิ์เต็ม/'*' เมนู 60+ รายการ ยังพับ default เหมือนเดิม)
+      const isCollapsed = containsActive ? false
+        : explicit === false ? false
+        : explicit === true ? true
+        : !hasCustomGrants;
       const sectionKey = this._sectionI18nKey(currentSection.section);
       const label = sectionKey ? this._t(sectionKey, currentSection.section) : currentSection.section;
       const icon = currentSection.icon || '📁';
