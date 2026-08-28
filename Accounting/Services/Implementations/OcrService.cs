@@ -5384,8 +5384,13 @@ public class OcrService : IOcrService
     /// ค่าที่ผู้ใช้ตั้งเอง (qty×price == amount เป๊ะ → อยู่ในระยะ tolerance). persist
     /// ลง ExtractedItemsJson → CreateDocumentFromScan อ่านไปใช้. คืน amount ใหม่ให้ UI
     /// อัปเดตช่องยอดโดยไม่ต้อง refetch. null = ไม่แตะ field นั้น (คงค่าเดิม).</summary>
+    /// <param name="accountCode">ผังบัญชีรายบรรทัด — เดิม<b>แก้ไม่ได้เลย</b>
+    /// (ตาราง review แสดงเป็นข้อความอย่างเดียว) ทั้งที่กฎเหล็ก #3 ข้อ 1 บังคับ
+    /// ให้มี <c>GlAccountCode</c> รายบรรทัด และการแก้ตรงนี้คือสิ่งที่
+    /// GlAccountDistillationModel ใช้เรียน</param>
     public async Task<decimal> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
-        int lineIndex, string? description, decimal? quantity, decimal? unitPrice)
+        int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
+        string? accountCode = null)
     {
         var scan = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -5416,6 +5421,8 @@ public class OcrService : IOcrService
         if (description != null) line.Description = description.Trim();
         if (quantity.HasValue) line.Quantity = quantity.Value;
         if (unitPrice.HasValue) line.UnitPrice = unitPrice.Value;
+        if (accountCode != null)
+            line.SuggestedAccountCode = accountCode.Trim() is { Length: > 0 } c ? c : null;
 
         // recompute amount จาก qty×price ที่ (แก้แล้ว) — ถ้าครบทั้งคู่
         var qty = line.Quantity ?? 0m;
@@ -5427,6 +5434,56 @@ public class OcrService : IOcrService
         scan.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return line.Amount ?? 0m;
+    }
+
+    /// <summary>
+    /// เพิ่ม/ลบบรรทัดรายการของผลสแกน
+    ///
+    /// <para>⚠️ ตาราง review เดิม<b>เพิ่มหรือลบแถวไม่ได้เลย</b> — OCR รวมสองแถว
+    /// เป็นแถวเดียว หรือแตกแถวเกินมา ผู้ใช้มีทางออกแค่ "แกะใหม่" (ซึ่งจำกัด
+    /// จำนวนครั้ง) หรือไปแก้ทีหลังในฟอร์มเอกสาร ⇒ ขัดกฎเหล็ก #3 ข้อ 6 ที่บอกว่า
+    /// ตารางต้องแก้ได้เมื่อ OCR หลุด</para>
+    ///
+    /// <para><paramref name="lineIndex"/> = -1 เมื่อเพิ่มต่อท้าย</para>
+    /// </summary>
+    public async Task<int> ModifyExtractedLineAsync(
+        Guid companyId, Guid scanResultId, string action, int lineIndex)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบผลสแกนนี้");
+        if (scan.CreatedDocumentId.HasValue)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "สแกนนี้สร้างเอกสารไปแล้ว — แก้รายการที่ตัวเอกสาร ไม่ใช่ที่ผลสแกน");
+
+        List<OcrExtractedLineItem> items;
+        try
+        {
+            items = string.IsNullOrEmpty(scan.ExtractedItemsJson)
+                ? new List<OcrExtractedLineItem>()
+                : System.Text.Json.JsonSerializer
+                    .Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new();
+        }
+        catch { throw new Accounting.Helpers.BusinessRuleException("ข้อมูลรายการของผลสแกนเสียหาย — กด 'แกะใหม่'"); }
+
+        switch (action)
+        {
+            case "add":
+                items.Add(new OcrExtractedLineItem { Description = "", Quantity = 1m, UnitPrice = 0m, Amount = 0m });
+                break;
+            case "delete":
+                if (lineIndex < 0 || lineIndex >= items.Count)
+                    throw new Accounting.Helpers.BusinessRuleException("ไม่พบบรรทัดที่จะลบ");
+                items.RemoveAt(lineIndex);
+                break;
+            default:
+                throw new Accounting.Helpers.BusinessRuleException($"คำสั่งไม่ถูกต้อง: {action}");
+        }
+
+        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return items.Count;
     }
 
     public async Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId)

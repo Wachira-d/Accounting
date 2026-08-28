@@ -403,7 +403,12 @@ public class OcrController : ControllerBase
         }, req.ProjectId.HasValue ? "บันทึก project ของบรรทัดแล้ว" : "ยกเลิก project ของบรรทัดแล้ว"));
     }
 
-    public sealed record SetLineFieldsRequest(int LineIndex, string? Description, decimal? Quantity, decimal? UnitPrice);
+    public sealed record SetLineFieldsRequest(
+        int LineIndex, string? Description, decimal? Quantity, decimal? UnitPrice,
+        string? AccountCode = null);
+
+    /// <summary>action = "add" | "delete" · LineIndex ใช้เฉพาะตอน delete</summary>
+    public sealed record ModifyLineRequest(string Action, int LineIndex = -1);
 
     /// <summary>แก้ description/จำนวน/ราคาต่อหน่วยของบรรทัด OCR inline ในหน้า review
     /// (กฎเหล็ก #3). recompute amount = qty×price, persist ลง ExtractedItemsJson แล้ว
@@ -413,12 +418,22 @@ public class OcrController : ControllerBase
         Guid companyId, Guid scanId, [FromBody] SetLineFieldsRequest req)
     {
         var amount = await _service.SetExtractedLineFieldsAsync(companyId, scanId,
-            req.LineIndex, req.Description, req.Quantity, req.UnitPrice);
+            req.LineIndex, req.Description, req.Quantity, req.UnitPrice, req.AccountCode);
         return Ok(new ApiResponse<object>(true, new
         {
             lineIndex = req.LineIndex,
             amount,
         }, "บันทึกบรรทัดแล้ว"));
+    }
+
+    /// <summary>เพิ่ม/ลบบรรทัดรายการของผลสแกน — เดิมตาราง review ทำไม่ได้เลย</summary>
+    [HttpPost("{scanId:guid}/modify-line")]
+    public async Task<ActionResult<ApiResponse<object>>> ModifyLine(
+        Guid companyId, Guid scanId, [FromBody] ModifyLineRequest req)
+    {
+        var count = await _service.ModifyExtractedLineAsync(companyId, scanId, req.Action, req.LineIndex);
+        return Ok(new ApiResponse<object>(true, new { lineCount = count },
+            req.Action == "add" ? "เพิ่มบรรทัดแล้ว" : "ลบบรรทัดแล้ว"));
     }
 
     [HttpPost("{scanId:guid}/match-contact/{contactId:guid}")]

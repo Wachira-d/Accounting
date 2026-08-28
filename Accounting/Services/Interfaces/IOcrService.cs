@@ -79,7 +79,13 @@ public interface IOcrService
     /// recompute Amount = qty×unitPrice, persist ลง ExtractedItemsJson, คืน amount
     /// ใหม่. field ที่ส่ง null = คงค่าเดิม.</summary>
     Task<decimal> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
-        int lineIndex, string? description, decimal? quantity, decimal? unitPrice);
+        int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
+        string? accountCode = null);
+
+    /// <summary>เพิ่ม/ลบบรรทัดรายการของผลสแกน — <c>action</c> = "add" | "delete"
+    /// (เดิมตาราง review เพิ่ม/ลบแถวไม่ได้เลย ⇒ OCR รวมหรือแตกแถวผิดแล้วผู้ใช้
+    /// มีทางออกแค่ "แกะใหม่" ซึ่งจำกัดจำนวนครั้ง) คืนจำนวนบรรทัดหลังแก้</summary>
+    Task<int> ModifyExtractedLineAsync(Guid companyId, Guid scanResultId, string action, int lineIndex);
 
     /// <summary>List the matched vendor's open Purchase Orders together with
     /// their line items so the review UI can render the "เลือก PO" picker.

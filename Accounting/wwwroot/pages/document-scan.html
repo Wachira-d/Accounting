@@ -608,15 +608,34 @@
           const descEl = row.querySelector('[data-line-desc]');
           const qtyEl = row.querySelector('[data-line-qty]');
           const priceEl = row.querySelector('[data-line-price]');
+          const acctEl = row.querySelector('[data-line-acct]');
           const res = await API.post(`/api/companies/${cid}/ocr/${scanId}/line-fields`, {
             lineIndex,
             description: descEl ? descEl.value : null,
             quantity: (qtyEl && qtyEl.value !== '') ? Number(qtyEl.value) : null,
             unitPrice: (priceEl && priceEl.value !== '') ? Number(priceEl.value) : null,
+            // ผังบัญชีรายบรรทัด — เดิมคอลัมน์นี้เป็นข้อความอย่างเดียว แก้ไม่ได้
+            // ทั้งที่กฎเหล็ก #3 ข้อ 1 บังคับให้มี GlAccountCode รายบรรทัด และ
+            // การแก้ตรงนี้คือสิ่งที่ GlAccountDistillationModel ใช้เรียน
+            accountCode: acctEl ? acctEl.value : null,
           });
           const amt = res?.data?.amount;
           const amtCell = row.querySelector('[data-line-amt]');
           if (amtCell && amt != null) amtCell.textContent = Layout.money(amt);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /** เพิ่ม/ลบบรรทัดรายการ — เดิมตาราง review ทำไม่ได้เลย ⇒ OCR รวมสองแถว
+       *  เป็นแถวเดียว หรือแตกแถวเกินมา ผู้ใช้มีทางออกแค่ "แกะใหม่" (จำกัดจำนวน
+       *  ครั้ง) หรือไปแก้ทีหลังในฟอร์ม */
+      async modifyLine(scanId, action, lineIndex) {
+        if (action === 'delete' && !confirm('ลบบรรทัดนี้?')) return;
+        try {
+          const cid = Layout.getCompanyId();
+          await API.post(`/api/companies/${cid}/ocr/${scanId}/modify-line`, { action, lineIndex });
+          // โหลด review ใหม่เพื่อให้เลข index ของทุกแถวตรงกับฝั่งเซิร์ฟเวอร์ —
+          // ถ้าแก้ DOM เองแล้ว index เลื่อน การแก้แถวถัดไปจะไปโดนคนละแถว
+          await this.openReview(scanId);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -2256,9 +2275,14 @@
                   <span style="font-size:11px;color:#4f46e5">เลือกแล้วค่อยแก้เฉพาะบรรทัดที่ไม่ตรง</span>
                 </div>
                 <table style="width:100%;font-size:12px;border-collapse:collapse">
-                  <tr style="background:var(--gray-100)"><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px">บัญชี</th><th style="padding:4px 6px;min-width:180px">โครงการ</th></tr>
-                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:70px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:90px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;color:var(--primary)">${it.suggestedAccountCode || '-'}</td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${scan.id}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
+                  <tr style="background:var(--gray-100)"><th style="padding:4px 2px;width:28px"></th><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px;min-width:150px">บัญชี</th><th style="padding:4px 6px;min-width:180px">โครงการ</th></tr>
+                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 2px;text-align:center"><button class="btn btn-sm btn-danger-outline" style="padding:1px 6px;font-size:11px" onclick="Page.modifyLine('${scan.id}','delete',${idx})" title="ลบบรรทัดนี้ (OCR แตกแถวเกิน)">✕</button></td><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:70px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:90px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px"><select data-line-acct data-init-acct="${Layout.esc(it.suggestedAccountCode || '')}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:100%;min-width:150px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="ผังบัญชีของบรรทัดนี้ — แก้ได้ ระบบจะเรียนรู้เพื่อให้ครั้งหน้าเดาถูกตั้งแต่แรก"><option value="">${Layout.esc(it.suggestedAccountCode || '— เลือกบัญชี —')}</option></select></td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${scan.id}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
                 </table>
+                <!-- เพิ่มแถว — เดิมทำไม่ได้เลย ⇒ OCR รวมสองแถวเป็นแถวเดียว
+                     ผู้ใช้แยกกลับไม่ได้ ต้องไปแก้ทีหลังในฟอร์มเอกสาร -->
+                <button class="btn btn-sm btn-outline" style="margin-top:6px"
+                        onclick="Page.modifyLine('${scan.id}','add',-1)"
+                        title="เพิ่มบรรทัดว่าง — ใช้เมื่อ OCR รวมสองรายการเป็นแถวเดียว">➕ เพิ่มบรรทัด</button>
               </div>` : ''}
             </div>
 
@@ -2507,6 +2531,15 @@
 
           if (debitSel) debitSel.innerHTML = buildOptions(initialDebit);
           if (creditSel) creditSel.innerHTML = buildOptions(initialCredit);
+
+          // ผังบัญชีรายบรรทัด — เติมตัวเลือกหลัง CoA โหลดเสร็จ (ตอน render
+          // ตารางยังไม่มีรายการบัญชี) เดิมคอลัมน์นี้เป็นข้อความอย่างเดียว
+          // แก้ไม่ได้ ทั้งที่กฎเหล็ก #3 ข้อ 1 บังคับให้มี GlAccountCode รายบรรทัด
+          document.querySelectorAll('select[data-line-acct]').forEach(sel => {
+            const want = this._resolveCoaCode(sel.dataset.initAcct || '', null)
+              || sel.dataset.initAcct || '';
+            sel.innerHTML = buildOptions(want);
+          });
 
           // Wire 2-way binding between expense-category and debit-account
           // selects. Either dropdown's change updates the other so they
