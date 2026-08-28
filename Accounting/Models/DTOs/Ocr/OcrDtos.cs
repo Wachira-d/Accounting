@@ -86,7 +86,19 @@ public record OcrResultResponse(
     /// อย่างเดียว ห้ามคำนวณเอง (เดิม document-scan.html คัดลอกกฎไปเขียนใน JS
     /// แล้วไม่เคยแก้ตาม ⇒ เตือนผิดบนใบที่กระดาษมีเลขผู้ซื้อครบ). null =
     /// เส้นทางที่ยังไม่ได้ประเมิน (ไม่ใช่ "ไม่มีปัญหา") — UI อย่าเพิ่งวาดอะไร</summary>
-    List<OcrScanIssueDto>? ComplianceIssues = null);
+    List<OcrScanIssueDto>? ComplianceIssues = null,
+    /// <summary>แผนที่ "ชนิดเอกสาร → ฝั่ง" ที่สร้างจาก <c>Helpers.DocumentSide</c>
+    /// ค่าเป็น <c>"Sales"</c> | <c>"Purchase"</c> | <c>"Both"</c> (Both = ต้องดู
+    /// <c>OurRole</c> ประกอบ เช่น CN/DN/ใบส่งของ)
+    ///
+    /// <para>มีไว้เพื่อให้หน้าเว็บ **เลิกถือลิสต์ของตัวเอง** — เดิม
+    /// <c>document-scan.html</c> มี <c>salesTypes</c> เป็นสำเนามือที่ตัด CN/DN
+    /// ออกจากฝั่งขายเสมอและนับใบส่งของเป็นฝั่งขายเสมอ ⇒ ใบลดหนี้<b>ขาย</b>
+    /// เปิดฟอร์มรายจ่าย และใบส่งของจากผู้ขายเปิดฟอร์มรายได้
+    /// (<c>DocumentSide.cs</c> ระบุชื่อสำเนานี้ไว้ในหมายเหตุตั้งแต่แรก)</para>
+    ///
+    /// <para>null = เซิร์ฟเวอร์รุ่นเก่า — หน้าเว็บใช้ fallback ของตัวเอง</para></summary>
+    Dictionary<string, string>? DocumentSideMap = null);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);

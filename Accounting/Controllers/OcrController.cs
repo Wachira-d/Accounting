@@ -700,6 +700,9 @@ public class OcrController : ControllerBase
 
         var userId = User.Identity?.Name ?? "ocr-stock-import";
         var vendorId = scan.MatchedContactId;
+        // ใบที่สแกนมามี VAT จริงไหม — ใช้ตั้ง VatRate ของสินค้าที่สร้างใหม่
+        // แทนการ hardcode 7% (สินค้ายกเว้น §81 / อัตรา 0 จะได้ไม่ถูกตั้งผิด)
+        var scanHasVat = (scan.ExtractedVatAmount ?? 0m) > 0m;
         var lineResults = new List<OcrStockImportLineResult>();
         var created = 0; var matched = 0; var movements = 0; var aliases = 0; var assetsCreated = 0;
 
@@ -841,10 +844,19 @@ public class OcrController : ControllerBase
                         SKU: null,
                         Barcode: null,
                         Category: item.NewProductCategory,
-                        Unit: string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
+                        // ⚠️ เดิม `?? "ชิ้น"` ตรง ๆ — เส้นทางเอกสารถูกแก้ให้ผ่าน
+                        // UnitInferrer ไปแล้ว แต่เส้นทางนี้ตกค้าง และร้ายกว่าเพราะ
+                        // เขียนลง **ทะเบียนสินค้า** ⇒ ค่าไฟ/ค่าบริการได้หน่วย
+                        // "ชิ้น" ติดตัวไปตลอด (defect class "แก้ตัวเดียว เหลือที่เหลือ")
+                        Unit: !string.IsNullOrWhiteSpace(item.Unit) ? item.Unit
+                            : (Services.Implementations.Ocr.UnitInferrer.Infer(ocrDesc) ?? "ชิ้น"),
                         SellingPrice: 0m,
                         CostPrice: item.UnitCost,
-                        VatRate: item.VatRate ?? 7m,
+                        // ⚠️ เดิม `?? 7m` = สมมติว่าทุกอย่างเสีย VAT 7% ⇒ สินค้าที่
+                        // §81 ยกเว้น/อัตรา 0 ถูกตั้ง 7% ในทะเบียน แล้ว **ใบขาย
+                        // ทุกใบในอนาคต** ของสินค้านั้นคิด VAT ผิดตามไปด้วย
+                        // ใช้หลักฐานบนกระดาษแทนการเดา: ใบที่ไม่มี VAT เลย = 0
+                        VatRate: item.VatRate ?? (scanHasVat ? 7m : 0m),
                         IsVatIncluded: false,
                         TrackStock: true,
                         MinimumStock: 0);

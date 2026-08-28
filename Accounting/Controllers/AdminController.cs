@@ -2548,7 +2548,21 @@ public class AdminController : ControllerBase
             vendorsClustered = result.VendorsClustered,
             iterations = result.Iterations,
             durationSeconds = result.Duration.TotalSeconds,
-        }, $"จัดกลุ่ม vendor ด้วย K-means สำเร็จ ({result.VendorsClustered} vendors → {result.K} กลุ่ม)"));
+            persisted = result.Persisted,
+            clusters = result.Clusters.Select(c => new
+            {
+                clusterIndex = c.ClusterIndex,
+                size = c.Size,
+                topAccountCodes = c.TopAccountCodes,
+            }),
+        },
+        // ⚠️ ข้อความเดิมคือ "จัดกลุ่มสำเร็จ (N vendors → K กลุ่ม)" ทั้งที่ผลลัพธ์
+        // **ไม่ถูกเก็บที่ไหนเลยและไม่ถูกคืนให้ใคร** — แอดมินอ่านว่างานสำเร็จแล้ว
+        // ทั้งที่ไม่มีอะไรเกิดขึ้น. ต้องบอกตามจริงว่ายังเป็นการวิเคราะห์ครั้งเดียว
+        result.VendorsClustered == 0
+            ? "ข้อมูล vendor ยังไม่พอสำหรับจัดกลุ่ม (ต้องมีอย่างน้อย K×2 ราย)"
+            : $"วิเคราะห์การจัดกลุ่ม vendor แล้ว ({result.VendorsClustered} ราย → {result.Clusters.Count} กลุ่ม)"
+              + (result.Persisted ? "" : " — ผลนี้เป็นการวิเคราะห์ครั้งเดียว ยังไม่ได้บันทึกลงฐานข้อมูล")));
     }
 
     /// <summary>

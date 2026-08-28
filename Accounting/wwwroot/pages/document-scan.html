@@ -1426,14 +1426,14 @@
             <div class="contact-match">
               <span class="icon">&#x1F464;</span>
               <span class="contact-match-name">${Layout.esc(scan.extractedVendorName)}</span>
-              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}')">ค้นหาผู้ติดต่อ</button>
+              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.esc(scan.id)}')">ค้นหาผู้ติดต่อ</button>
             </div>`;
         } else if (scan.scanStatus === 'Completed') {
           contactHtml = `
             <div class="contact-match">
               <span class="icon">&#x1F464;</span>
               <span class="contact-match-name" style="color:var(--gray-400)">ไม่พบผู้ติดต่อ</span>
-              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}')">ค้นหา</button>
+              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.esc(scan.id)}')">ค้นหา</button>
             </div>`;
         }
 
@@ -1445,7 +1445,7 @@
           // check every extracted field (vendor, totals, expense account)
           // before the document is actually created. Direct create-on-click
           // was the cause of "พอกดสร้างดันสร้างเอกสารเลย".
-          actionsHtml += `<button class="btn btn-sm btn-primary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ &amp; สร้างเอกสาร</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-primary" onclick="Page.openReview('${Layout.esc(scan.id)}')">ตรวจสอบ &amp; สร้างเอกสาร</button>`;
         }
         if (scan.createdDocumentId) {
           // ?openDoc= เปิด detail ของใบนั้นเลย — เดิมใช้ ?id= ซึ่ง documents.html
@@ -1460,24 +1460,24 @@
         const hasItems = (scan.extractedItems && scan.extractedItems.length > 0)
                        || (scan.scanStatus === 'Completed' && (scan.extractedTotalAmount || 0) > 0);
         if (hasItems && scan.scanStatus === 'Completed') {
-          actionsHtml += `<button class="btn btn-sm btn-success" onclick="Page.openReview('${scan.id}', { stockImport: true })" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก / วัสดุสิ้นเปลือง / สินทรัพย์ ในคลิกเดียว">📦 นำเข้าสต็อก</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-success" onclick="Page.openReview('${Layout.esc(scan.id)}', { stockImport: true })" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก / วัสดุสิ้นเปลือง / สินทรัพย์ ในคลิกเดียว">📦 นำเข้าสต็อก</button>`;
         }
         if (scan.scanStatus === 'Completed' || scan.scanStatus === 'Failed') {
-          actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ &amp; สอนระบบ</button>`;
-          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}', { debug: true })" title="ดูข้อมูลดิบที่ OCR แกะมา + zone analysis">&#x1F50D; ข้อมูลดิบ</button>`;
-          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${scan.id}')" title="แกะข้อมูลใหม่โดยไม่ใช้โควต้า">&#x21BA; แกะใหม่</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${Layout.esc(scan.id)}')">ตรวจสอบ &amp; สอนระบบ</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.esc(scan.id)}', { debug: true })" title="ดูข้อมูลดิบที่ OCR แกะมา + zone analysis">&#x1F50D; ข้อมูลดิบ</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${Layout.esc(scan.id)}')" title="แกะข้อมูลใหม่โดยไม่ใช้โควต้า">&#x21BA; แกะใหม่</button>`;
         }
         if (scan.scanStatus === 'Failed') {
-          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${scan.id}')">สแกนใหม่</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${Layout.esc(scan.id)}')">สแกนใหม่</button>`;
         }
         // Delete button — always available. When the scan auto-created a
         // document, the click handler asks the user to confirm a cascade
         // delete and the backend will refuse if that document has been
         // approved/paid (financial records can't be deleted from here).
         if (scan.createdDocumentId) {
-          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${scan.id}', true)" title="ลบ scan + เอกสารที่สร้างอัตโนมัติ">&#x1F5D1; ลบทั้งคู่</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${Layout.esc(scan.id)}', true)" title="ลบ scan + เอกสารที่สร้างอัตโนมัติ">&#x1F5D1; ลบทั้งคู่</button>`;
         } else {
-          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${scan.id}', false)" title="ลบ">&#x1F5D1;</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${Layout.esc(scan.id)}', false)" title="ลบ">&#x1F5D1;</button>`;
         }
 
         // RD-compliance quick check — surfaces missing required fields and a
@@ -1510,7 +1510,7 @@
         // ผู้ใช้เผลออนุมัติรวดใบที่ควรเปิดดู
         const pickBox = this._isBatchApprovable(scan)
           ? `<label style="display:flex;align-items:center;padding-right:6px;cursor:pointer" title="เลือกเพื่ออนุมัติพร้อมกันหลายใบ">
-               <input type="checkbox" class="batch-pick" data-scan-id="${scan.id}" onchange="Page._syncBatchBar()">
+               <input type="checkbox" class="batch-pick" data-scan-id="${Layout.esc(scan.id)}" onchange="Page._syncBatchBar()">
              </label>`
           : '';
 
@@ -1889,7 +1889,7 @@
           // attach the localStorage JWT to <img>/<iframe>/new-tab requests, so
           // pass it as access_token (the server accepts it for /ocr/.../image).
           const _tok = encodeURIComponent(localStorage.getItem('token') || '');
-          const fileUrl = `/api/companies/${cid}/ocr/${scan.id}/image?access_token=${_tok}`;
+          const fileUrl = `/api/companies/${cid}/ocr/${Layout.esc(scan.id)}/image?access_token=${_tok}`;
           const fname = (scan.originalFileName || '').toLowerCase();
           const isImage = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(fname);
           const isPdf = /\.pdf$/i.test(fname);
@@ -2124,7 +2124,7 @@
               ${scan.linkedPurchaseOrderId ? `
               <div style="margin:8px 0;padding:10px 14px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;color:#065f46;display:flex;justify-content:space-between;align-items:center;gap:10px">
                 <span>✅ <strong>ผูกกับใบสั่งซื้อ ${Layout.esc(scan.linkedPurchaseOrderNumber || '')}</strong> — ระบบจะใช้บัญชี GL จาก PO เมื่อสร้างเอกสาร</span>
-                <button class="btn btn-sm btn-outline" onclick="Page.unlinkPo('${scan.id}')" style="border-color:#059669;color:#065f46">ยกเลิกการผูก</button>
+                <button class="btn btn-sm btn-outline" onclick="Page.unlinkPo('${Layout.esc(scan.id)}')" style="border-color:#059669;color:#065f46">ยกเลิกการผูก</button>
               </div>
               ` : (() => {
                 try {
@@ -2132,7 +2132,7 @@
                   if (!pos || !pos.length) return '';
                   return `<div style="margin:8px 0;padding:8px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;font-size:13px;color:#9a3412;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
                     <span>📦 <strong>ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ ${pos.length} ใบ</strong> (${pos.slice(0, 3).map(p => Layout.esc(p)).join(', ')}) — หากรายการนี้สั่งผ่าน PO กรุณารับตามใบสั่งซื้อ ไม่ควรสร้างเอกสารซ้ำ</span>
-                    <button class="btn btn-sm btn-primary" onclick="Page.openPoPicker('${scan.id}')" style="white-space:nowrap">🔗 ผูกกับ PO</button>
+                    <button class="btn btn-sm btn-primary" onclick="Page.openPoPicker('${Layout.esc(scan.id)}')" style="white-space:nowrap">🔗 ผูกกับ PO</button>
                   </div>`;
                 } catch { return ''; }
               })()}
@@ -2145,6 +2145,12 @@
                 <label>เลขผู้เสียภาษี</label>
                 <input type="text" class="form-input" id="revVendorTaxId" value="${Layout.esc(scan.extractedVendorTaxId || '')}">
                 ${scan.dbdInfo && scan.dbdInfo.matched ? '<span title="ยืนยันโดย DBD" style="background:#ecfdf5;color:#059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">DBD &#10004;</span>' : fc('SellerTaxId')}
+              </div>
+              <div class="review-field">
+                <label>รหัสสาขาผู้ขาย</label>
+                <input type="text" class="form-input" id="revVendorBranch" maxlength="5" placeholder="00000"
+                  value="${Layout.esc(scan.vendorBranchCode || '')}">
+                ${fc('SellerBranchCode')}
               </div>
               <div class="review-field">
                 <label>เลขที่เอกสาร</label>
@@ -2171,11 +2177,22 @@
                 <input type="number" class="form-input" id="revTotalAmount" step="0.01" value="${scan.extractedTotalAmount != null ? scan.extractedTotalAmount : ''}">
                 ${fc('TotalAmount')}
               </div>
-              ${scan.buyerName || scan.buyerTaxId ? `
+              <!-- ผู้ซื้อ — เดิมเป็นข้อความอ่านอย่างเดียว ทั้งที่ฝั่งเซิร์ฟเวอร์
+                   เปิดรับ BuyerTaxId/BuyerBranchCode ให้แก้ได้แล้ว (ครึ่งหลังของ
+                   การแก้ไม่เคยถูกต่อสาย) ⇒ ผู้ใช้ยัง "ไม่มีทางแก้เลย" และ
+                   รหัสสาขาถูกเติม "00000" ให้เงียบ ๆ ตาม §86/4 -->
               <div class="review-field" style="background:#f0f9ff;border:1px solid #bae6fd;padding:8px;border-radius:6px">
-                <label style="color:#0369a1">ผู้ซื้อ (Buyer detected)</label>
-                <span style="font-size:13px;color:#0c4a6e">${Layout.esc(scan.buyerName || '-')} ${scan.buyerTaxId ? `(${Layout.esc(scan.buyerTaxId)})` : ''}</span>
-              </div>` : ''}
+                <label style="color:#0369a1">ผู้ซื้อ${scan.buyerName ? ` — ${Layout.esc(scan.buyerName)}` : ''}</label>
+                <input type="text" class="form-input" id="revBuyerTaxId" placeholder="เลขผู้เสียภาษีผู้ซื้อ 13 หลัก"
+                  value="${Layout.esc(scan.buyerTaxId || '')}">
+                ${fc('BuyerTaxId')}
+              </div>
+              <div class="review-field">
+                <label>รหัสสาขาผู้ซื้อ</label>
+                <input type="text" class="form-input" id="revBuyerBranch" maxlength="5" placeholder="00000"
+                  value="${Layout.esc(scan.buyerBranchCode || '')}">
+                ${fc('BuyerBranchCode')}
+              </div>
             </div>
 
             <div class="review-section">
@@ -2197,7 +2214,7 @@
                   })()}
                   <button type="button" class="btn btn-sm"
                     style="background:#fff;border:1px solid #bae6fd;color:#0369a1;padding:2px 8px;font-size:11px;font-weight:500"
-                    onclick="Page.viewOcrAiRaw('${scan.id}')">🔍 ดู AI response เต็ม</button>
+                    onclick="Page.viewOcrAiRaw('${Layout.esc(scan.id)}')">🔍 ดู AI response เต็ม</button>
                 </span>
               </div>
               <div class="review-field">
@@ -2263,25 +2280,25 @@
                      touches the rows that override. -->
                 <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                   <span style="font-size:12px;font-weight:600;color:#3730a3">📌 โครงการหลัก:</span>
-                  <select id="mainProjectPicker-${scan.id}" style="flex:1;min-width:240px;padding:5px 8px;border:1px solid #a5b4fc;border-radius:6px;font-size:12px;background:#fff">
+                  <select id="mainProjectPicker-${Layout.esc(scan.id)}" style="flex:1;min-width:240px;padding:5px 8px;border:1px solid #a5b4fc;border-radius:6px;font-size:12px;background:#fff">
                     ${this._projectOptionsHtml(this._detectMainProjectId(scan.extractedItems))}
                   </select>
-                  <button class="btn btn-sm" style="background:#4f46e5;color:#fff" onclick="Page.applyMainProject('${scan.id}', false)">
+                  <button class="btn btn-sm" style="background:#4f46e5;color:#fff" onclick="Page.applyMainProject('${Layout.esc(scan.id)}', false)">
                     ✓ apply ทุกบรรทัด
                   </button>
-                  <button class="btn btn-sm" style="background:#fff;border:1px solid #c7d2fe;color:#3730a3" onclick="Page.applyMainProject('${scan.id}', true)" title="ใส่ project นี้เฉพาะบรรทัดที่ยังไม่มี project (preserve overrides)">
+                  <button class="btn btn-sm" style="background:#fff;border:1px solid #c7d2fe;color:#3730a3" onclick="Page.applyMainProject('${Layout.esc(scan.id)}', true)" title="ใส่ project นี้เฉพาะบรรทัดที่ยังไม่มี project (preserve overrides)">
                     🩹 เติมเฉพาะที่ว่าง
                   </button>
                   <span style="font-size:11px;color:#4f46e5">เลือกแล้วค่อยแก้เฉพาะบรรทัดที่ไม่ตรง</span>
                 </div>
                 <table style="width:100%;font-size:12px;border-collapse:collapse">
                   <tr style="background:var(--gray-100)"><th style="padding:4px 2px;width:28px"></th><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px;min-width:150px">บัญชี</th><th style="padding:4px 6px;min-width:180px">โครงการ</th></tr>
-                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 2px;text-align:center"><button class="btn btn-sm btn-danger-outline" style="padding:1px 6px;font-size:11px" onclick="Page.modifyLine('${scan.id}','delete',${idx})" title="ลบบรรทัดนี้ (OCR แตกแถวเกิน)">✕</button></td><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:70px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:90px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px"><select data-line-acct data-init-acct="${Layout.esc(it.suggestedAccountCode || '')}" onchange="Page.saveLineFields('${scan.id}', ${idx})" style="width:100%;min-width:150px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="ผังบัญชีของบรรทัดนี้ — แก้ได้ ระบบจะเรียนรู้เพื่อให้ครั้งหน้าเดาถูกตั้งแต่แรก"><option value="">${Layout.esc(it.suggestedAccountCode || '— เลือกบัญชี —')}</option></select></td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${scan.id}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
+                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 2px;text-align:center"><button class="btn btn-sm btn-danger-outline" style="padding:1px 6px;font-size:11px" onclick="Page.modifyLine('${Layout.esc(scan.id)}','delete',${idx})" title="ลบบรรทัดนี้ (OCR แตกแถวเกิน)">✕</button></td><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:70px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:90px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px"><select data-line-acct data-init-acct="${Layout.esc(it.suggestedAccountCode || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;min-width:150px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="ผังบัญชีของบรรทัดนี้ — แก้ได้ ระบบจะเรียนรู้เพื่อให้ครั้งหน้าเดาถูกตั้งแต่แรก"><option value="">${Layout.esc(it.suggestedAccountCode || '— เลือกบัญชี —')}</option></select></td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${Layout.esc(scan.id)}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
                 </table>
                 <!-- เพิ่มแถว — เดิมทำไม่ได้เลย ⇒ OCR รวมสองแถวเป็นแถวเดียว
                      ผู้ใช้แยกกลับไม่ได้ ต้องไปแก้ทีหลังในฟอร์มเอกสาร -->
                 <button class="btn btn-sm btn-outline" style="margin-top:6px"
-                        onclick="Page.modifyLine('${scan.id}','add',-1)"
+                        onclick="Page.modifyLine('${Layout.esc(scan.id)}','add',-1)"
                         title="เพิ่มบรรทัดว่าง — ใช้เมื่อ OCR รวมสองรายการเป็นแถวเดียว">➕ เพิ่มบรรทัด</button>
               </div>` : ''}
             </div>
@@ -2335,27 +2352,27 @@
                 })()}
                 <div style="margin-bottom:12px">
                   <div style="display:grid;grid-template-columns:140px 1fr;gap:4px 12px;font-size:12px;line-height:1.8">
-                    <span style="color:var(--gray-500);font-weight:600">Scan ID</span><span style="font-family:monospace;word-break:break-all">${scan.id}</span>
-                    <span style="color:var(--gray-500);font-weight:600">OCR Engine</span><span><strong>${scan.ocrEngine || '<em style="color:var(--gray-400)">unknown</em>'}</strong></span>
-                    <span style="color:var(--gray-500);font-weight:600">Status</span><span>${scan.scanStatus}</span>
-                    <span style="color:var(--gray-500);font-weight:600">Document Type</span><span><strong>${scan.documentType || 'null'}</strong></span>
+                    <span style="color:var(--gray-500);font-weight:600">Scan ID</span><span style="font-family:monospace;word-break:break-all">${Layout.esc(scan.id)}</span>
+                    <span style="color:var(--gray-500);font-weight:600">OCR Engine</span><span><strong>${scan.ocrEngine ? Layout.esc(scan.ocrEngine) : '<em style="color:var(--gray-400)">unknown</em>'}</strong></span>
+                    <span style="color:var(--gray-500);font-weight:600">Status</span><span>${Layout.esc(scan.scanStatus)}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Document Type</span><span><strong>${scan.documentType ? Layout.esc(scan.documentType) : 'null'}</strong></span>
                     <span style="color:var(--gray-500);font-weight:600">Confidence</span><span>${scan.confidence != null ? (scan.confidence * 100).toFixed(1) + '%' : 'null'}</span>
-                    <span style="color:var(--gray-500);font-weight:600">Vendor Name</span><span>${scan.extractedVendorName || '<em style="color:var(--danger)">null</em>'}</span>
-                    <span style="color:var(--gray-500);font-weight:600">Vendor TaxId</span><span style="font-family:monospace">${scan.extractedVendorTaxId || '<em style="color:var(--danger)">null</em>'}</span>
-                    <span style="color:var(--gray-500);font-weight:600">Doc Number</span><span>${scan.extractedDocumentNumber || '<em style="color:var(--danger)">null</em>'}</span>
-                    <span style="color:var(--gray-500);font-weight:600">Date</span><span>${scan.extractedDate || '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Vendor Name</span><span>${scan.extractedVendorName ? Layout.esc(scan.extractedVendorName) : '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Vendor TaxId</span><span style="font-family:monospace">${scan.extractedVendorTaxId ? Layout.esc(scan.extractedVendorTaxId) : '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Doc Number</span><span>${scan.extractedDocumentNumber ? Layout.esc(scan.extractedDocumentNumber) : '<em style="color:var(--danger)">null</em>'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Date</span><span>${scan.extractedDate ? Layout.esc(scan.extractedDate) : '<em style="color:var(--danger)">null</em>'}</span>
                     <span style="color:var(--gray-500);font-weight:600">SubTotal</span><span>${scan.extractedSubTotal != null ? scan.extractedSubTotal : '<em style="color:var(--danger)">null</em>'}</span>
                     <span style="color:var(--gray-500);font-weight:600">VAT</span><span>${scan.extractedVatAmount != null ? scan.extractedVatAmount : '<em style="color:var(--danger)">null</em>'}</span>
                     <span style="color:var(--gray-500);font-weight:600">Total</span><span>${scan.extractedTotalAmount != null ? scan.extractedTotalAmount : '<em style="color:var(--danger)">null</em>'}</span>
                     <span style="color:var(--gray-500);font-weight:600">Matched Contact</span><span style="font-family:monospace">${scan.matchedContactId || '<em style="color:var(--danger)">null (ไม่พบ)</em>'}</span>
                     <span style="color:var(--gray-500);font-weight:600">Created Doc</span><span style="font-family:monospace">${scan.createdDocumentId || 'null'}</span>
                     <span style="color:var(--gray-500);font-weight:600">Is Duplicate</span><span>${scan.isDuplicate ? 'YES - of ' + scan.duplicateOfScanId : 'No'}</span>
-                    <span style="color:var(--gray-500);font-weight:600">File Hash</span><span style="font-family:monospace;font-size:10px;word-break:break-all">${scan.fileHash || 'null'}</span>
-                    <span style="color:var(--gray-500);font-weight:600">Expense Category</span><span>${scan.expenseCategory || 'null'}</span>
-                    <span style="color:var(--gray-500);font-weight:600">Suggested Acct</span><span>${scan.suggestedAccounts ? 'Dr:' + (scan.suggestedAccounts.debitAccountCode || '-') + ' / Cr:' + (scan.suggestedAccounts.creditAccountCode || '-') : 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">File Hash</span><span style="font-family:monospace;font-size:10px;word-break:break-all">${scan.fileHash ? Layout.esc(scan.fileHash) : 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Expense Category</span><span>${scan.expenseCategory ? Layout.esc(scan.expenseCategory) : 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Suggested Acct</span><span>${scan.suggestedAccounts ? 'Dr:' + Layout.esc(scan.suggestedAccounts.debitAccountCode || '-') + ' / Cr:' + Layout.esc(scan.suggestedAccounts.creditAccountCode || '-') : 'null'}</span>
                     <span style="color:var(--gray-500);font-weight:600">WHT</span><span>${scan.hasWht ? 'Yes (' + (scan.whtRate || '?') + '%)' : 'No'}</span>
                     <span style="color:var(--gray-500);font-weight:600">Payment Terms</span><span>${scan.paymentTermsDays ? scan.paymentTermsDays + ' วัน' : 'null'}</span>
-                    <span style="color:var(--gray-500);font-weight:600">Processed At</span><span>${scan.processedAt || 'null'}</span>
+                    <span style="color:var(--gray-500);font-weight:600">Processed At</span><span>${scan.processedAt ? Layout.esc(scan.processedAt) : 'null'}</span>
                   </div>
                 </div>
 
@@ -2937,8 +2954,43 @@
           creditAccountCode: v('revCreditAccount'),
           hasWht: document.getElementById('revHasWht')?.checked || false,
           whtRate: f('revWhtRate'),
+          // ⚠️ 3 ช่องนี้ถูกเพิ่มใน OcrCorrectionRequest + persist ฝั่งเซิร์ฟเวอร์
+          // ไปแล้ว แต่ payload builder ตัวเดียวของหน้านี้ไม่เคยส่งมาเลย
+          // ⇒ ครึ่งเซิร์ฟเวอร์ของการแก้ ship ไปเฉย ๆ ผู้ใช้ยังแก้ไม่ได้
+          vendorBranchCode: v('revVendorBranch'),
+          buyerTaxId: v('revBuyerTaxId'),
+          buyerBranchCode: v('revBuyerBranch'),
         };
       },
+      /** ฝั่งของชนิดเอกสาร — "Sales" | "Purchase"
+       *
+       *  ใช้แผนที่ที่เซิร์ฟเวอร์ส่งมา (scan.documentSideMap สร้างจาก
+       *  Helpers/DocumentSide) เป็นหลัก. ชนิดที่แผนที่บอกว่า "Both"
+       *  (ใบลดหนี้/ใบเพิ่มหนี้/ใบส่งของ) ตัดสินด้วย ourRole ตามกติกาเดียวกับ
+       *  ฝั่งเซิร์ฟเวอร์: ไม่รู้บทบาท = ถือเป็นฝั่งซื้อ (ปลอดภัยกว่า — ตีเป็น
+       *  ฝั่งขายผิดจะไปสร้างรายการใน ภ.พ.30 ที่ยื่นออกไปแล้ว)
+       *
+       *  fallback ใช้เฉพาะกับเซิร์ฟเวอร์รุ่นเก่าที่ยังไม่ส่งแผนที่มา และกับ
+       *  'Deposit' ซึ่งเป็น pseudo-target ของหน้านี้เอง (ไม่มีใน enum) */
+      _resolveDocSide(docType, scan) {
+        if (!docType) return 'Purchase';
+        if (docType === 'Deposit') return 'Sales';
+        const isSeller = (scan?.ourRole || '') === 'Seller';
+        const map = scan?.documentSideMap;
+        if (map && map[docType]) {
+          const v = map[docType];
+          if (v === 'Both') return isSeller ? 'Sales' : 'Purchase';
+          return v;
+        }
+        // เซิร์ฟเวอร์รุ่นเก่า — ลิสต์นี้ต้องตรงกับ DocumentSide.AlwaysSales
+        const legacySales = ['Quotation', 'Invoice', 'TaxInvoice', 'Receipt',
+          'BillingNote', 'ReceiptVoucher'];
+        if (legacySales.includes(docType)) return 'Sales';
+        if (['CreditNote', 'DebitNote', 'DeliveryNote'].includes(docType))
+          return isSeller ? 'Sales' : 'Purchase';
+        return 'Purchase';
+      },
+
       /** ผู้ใช้เปลี่ยนบทบาท → ให้เซิร์ฟเวอร์อนุมาน "เอกสารที่จะสร้าง" ใหม่
        *  แล้วอัปเดต dropdown ให้ตรง — ไม่ปล่อยให้บทบาทกับเป้าหมายขัดกันเอง
        *  (เช่น บทบาท "ผู้ขาย" แต่เป้าหมายยังเป็น "ใบสำคัญจ่าย") */
@@ -3296,7 +3348,10 @@
         // "create new" pre-fill — gives the user a cleaner generic
         // product name instead of the raw OCR description.
         const gs = line.globalSuggestion;
-        const newProdName = Layout.esc((willCreate && gs?.canonicalLabel) ? gs.canonicalLabel : (line.description || '')).substring(0, 200);
+        // ตัดความยาว **ก่อน** escape เสมอ — ตัดหลัง escape จะผ่ากลาง entity
+        // (`&quot;` → `&quo`) ได้ข้อความเพี้ยนบนจอ
+        const newProdName = Layout.esc(
+          ((willCreate && gs?.canonicalLabel) ? gs.canonicalLabel : (line.description || '')).substring(0, 200));
 
         // Per-row hint stripe — price anomaly OR conversion explainer OR global pattern
         const hints = [];
@@ -3798,10 +3853,13 @@
         // Land on the correct side of the documents page based on the CHOSEN
         // type, not just OurRole — so picking a sales type opens the revenue
         // form (whose fDocType lists that option).
-        // 'Deposit' = pseudo-target ฝั่งขาย (ฟอร์มแปลงเป็น Receipt + IsDeposit)
-        const salesTypes = new Set(['Quotation', 'Invoice', 'TaxInvoice', 'Receipt', 'Deposit',
-          'BillingNote', 'ReceiptVoucher', 'DeliveryNote']);
-        const side = salesTypes.has(targetType) ? 'revenue' : 'expense';
+        // ฝั่งซื้อ/ขายมาจาก **เซิร์ฟเวอร์** (Helpers/DocumentSide.BuildSideMap)
+        // เดิมหน้านี้ถือ salesTypes เป็นสำเนามือที่ตัด CN/DN ออกจากฝั่งขายเสมอ
+        // และนับใบส่งของเป็นฝั่งขายเสมอ ⇒ ใบลดหนี้**ขาย** (ourRole=Seller) เปิด
+        // ฟอร์มรายจ่าย และใบส่งของจากผู้ขายเปิดฟอร์มรายได้
+        // (DocumentSide.cs ระบุชื่อสำเนานี้ไว้ในหมายเหตุตั้งแต่วันที่สร้าง)
+        // 'Deposit' = pseudo-target ฝั่งขาย ไม่มีใน enum ฝั่งเซิร์ฟเวอร์
+        const side = this._resolveDocSide(targetType, scan) === 'Sales' ? 'revenue' : 'expense';
 
         // Extract line items the OCR pulled out. ProductCode left blank
         // here — the typeahead on the documents page will let the user
@@ -4026,10 +4084,15 @@
           hasTaxInvoiceReference: hasSupplierInvoice,
           supplierInvoiceNumber: hasSupplierRef ? scan.extractedDocumentNumber : null,
           supplierTaxInvoiceDate: hasSupplierRef ? scan.extractedDate : null,
-          // สาขาผู้ขายจากกระดาษ — เดิม hard-code '00000' (สำนักงานใหญ่) เสมอ
-          // ⇒ ใบของ "สาขาที่ 3" ลงบัญชีเป็นสำนักงานใหญ่ ผิดทั้ง §86/4 และ
-          // รายงานภาษีซื้อรายสถานประกอบการ (§87)
-          supplierBranchCode: hasSupplierRef ? (scan.vendorBranchCode || '00000') : null,
+          // สาขาผู้ขาย — ลำดับ: ค่าที่ผู้ใช้แก้ในหน้า review ชนะ → ค่าที่อ่านได้
+          // จากกระดาษ → '00000' (สำนักงานใหญ่) เป็นค่าสุดท้าย
+          // ⚠️ '00000' ที่ท้ายสายยัง**เป็นการเดา** (ประกาศอธิบดีฯ 199 บังคับให้
+          // ระบุสาขาจริง) — จึงต้องมีช่องให้ผู้ใช้แก้บนหน้า review เสมอ
+          // (เพิ่งต่อสายในรอบนี้: revVendorBranch → correction → scan)
+          supplierBranchCode: hasSupplierRef
+            ? ((document.getElementById('revVendorBranch')?.value || '').trim()
+               || scan.vendorBranchCode || '00000')
+            : null,
           supplierAddress: hasSupplierRef ? (scan.vendorAddress || null) : null,
           supplierTaxId: hasSupplierRef ? scan.extractedVendorTaxId : null,
           // AI/review picks — accountCode (string) ฝั่งฟอร์ม resolve → id

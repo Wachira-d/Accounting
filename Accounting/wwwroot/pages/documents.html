@@ -7514,10 +7514,14 @@
             // (TaxPointDate ?? DocumentDate ฐานเดียวกับ GenerateVatReport)
             // ปล่อยว่างไว้ผู้ใช้อ่านว่า "ไม่ได้เคลม". dataset.initial ให้ payload
             // แยก "ดูเฉย ๆ" ออกจาก "ตั้งใจย้ายงวด" — ห้ามส่งค่าที่แค่โชว์
+            // เซิร์ฟเวอร์คำนวณงวดนี้ให้แล้ว (ResolveInputVatClaimPeriod ใช้ลำดับ
+            // เดียวกับ GenerateVatReport) — อ่านค่าที่ส่งมาเป็นหลัก ห้ามประกอบเอง
+            // สูตรข้างล่างเหลือไว้เป็น fallback สำหรับเซิร์ฟเวอร์รุ่นเก่าเท่านั้น
             const vcpBasis = d.taxPointDate || d.documentDate;
-            fVcp.value = d.inputVatBecameClaimableAt
-              ? Layout.dateInput(d.inputVatBecameClaimableAt).slice(0, 7)
-              : (vcpBasis ? Layout.dateInput(vcpBasis).slice(0, 7) : '');
+            fVcp.value = d.inputVatClaimPeriod
+              || (d.inputVatBecameClaimableAt
+                    ? Layout.dateInput(d.inputVatBecameClaimableAt).slice(0, 7)
+                    : (vcpBasis ? Layout.dateInput(vcpBasis).slice(0, 7) : ''));
             fVcp.dataset.initial = fVcp.value;
             const claimed = d.inputVatPp30Month && d.inputVatPp30Year;
             // ล็อกเฉพาะงวดที่ **ยื่นแล้ว** — งวดร่างย้ายได้เลย ระบบติ๊กใบออกจาก

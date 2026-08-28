@@ -2773,15 +2773,26 @@ public class OcrService : IOcrService
     private async Task EnsureWhtCreditFromCertAsync(Guid companyId, OcrScanResult result, Guid? documentId)
     {
         // OcrScanResult ไม่มีช่อง "ยอดภาษีที่ถูกหัก" ตรง ๆ — มีแค่ HasWht/WhtRate
-        // จึงคำนวณจากฐาน × อัตรา ถ้าครบ; ไม่ครบค่อยใช้ยอดรวมที่อ่านได้เป็นตัวตั้ง
-        // แล้วให้ผู้ใช้ยืนยันในหน้าทะเบียน (เขียนกำกับไว้ใน Notes)
-        var baseFromScan = result.ExtractedSubTotal ?? 0m;
-        var rateFromScan = result.WhtRate ?? 0m;
-        var derived = baseFromScan > 0 && rateFromScan > 0
-            ? Math.Round(baseFromScan * rateFromScan / 100m, 2) : 0m;
-        var whtAmount = derived > 0 ? derived : (result.ExtractedTotalAmount ?? 0m);
-        if (whtAmount <= 0) return;
-        var needsReview = derived <= 0;
+        // จึงคำนวณจากฐาน × อัตรา ถ้าครบ
+        //
+        // ⚠️ เดิมบรรทัดสุดท้ายเป็น `derived > 0 ? derived : ExtractedTotalAmount`
+        // = **เอายอดรวมทั้งใบมาเป็นยอดภาษี** เมื่ออ่านฐาน/อัตราไม่ครบ ⇒ ใบ 50 ทวิ
+        // ยอด 1,070 หัก 3% ถูกบันทึกเป็นเครดิต CIT 1,070 บาทแทนที่จะเป็น 30 บาท
+        // และ IncomeAmount ถูกเขียน 0 ⇒ อัตราที่คำนวณกลับได้เป็นอนันต์ ไม่มีด่านไหน
+        // จับได้เลย แถวนั้นเป็น Status=Received ⇒ **หักภาษีจริงใน ภ.ง.ด.50 ทันที**
+        // นี่คือ "ค่า default ที่แต่งขึ้นเพื่อให้โค้ดเดินต่อได้" ในเส้นทางที่เป็นเงิน
+        // ตรรกะทั้งหมดอยู่ใน resolver กลางที่เทสต์ได้ (Helpers/WhtCertAmountResolver)
+        // — ตัวเลขภาษีต้องมีเทสต์ยืนยัน ไม่ใช่คำนวณสด ๆ กลางเมธอด async
+        var whtResolved = Accounting.Helpers.WhtCertAmountResolver.Resolve(
+            result.ExtractedSubTotal, result.WhtRate,
+            result.ExtractedTotalAmount, result.RawTextContent);
+        var whtAmount = whtResolved.Amount;
+        var needsReview = whtResolved.NeedsReview;
+
+        // อ่านไม่ได้ทั้งสองทาง = **ไม่รู้** → ยังบันทึกแถวไว้ให้ผู้ใช้เห็นและกรอกเอง
+        // แต่เป็น Pending (TaxService นับเฉพาะ Received/Claimed เข้าเครดิต CIT)
+        // ห้ามเดายอดแล้วตั้งเป็น Received เด็ดขาด
+        var unknownAmount = whtResolved.IsUnknown;
 
         // กันซ้ำ: สแกนใบเดิมอีกรอบไม่ควรได้เครดิตสองเท่า
         var certNo = result.ExtractedDocumentNumber?.Trim();
@@ -2791,8 +2802,12 @@ public class OcrService : IOcrService
         if (dup) return;
 
         var docDate = result.ExtractedDate ?? DateTime.UtcNow.Date;
-        var startMonth = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == companyId).Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
+        var ourProfile = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.FiscalYearStartMonth, c.BusinessType })
+            .FirstOrDefaultAsync();
+        var startMonth = ourProfile?.FiscalYearStartMonth ?? 1;
+        var ourBusinessType = ourProfile?.BusinessType ?? BusinessType.JuristicPerson;
         if (startMonth is < 1 or > 12) startMonth = 1;
         var taxYear = docDate.Month >= startMonth ? docDate.Year : docDate.Year - 1;
 
@@ -2807,19 +2822,31 @@ public class OcrService : IOcrService
             // ผู้จ่าย = ผู้ที่หักเรา — บนใบคือคู่ค้าที่ OCR อ่านได้
             PayerName = result.ExtractedVendorName ?? "",
             PayerTaxId = result.ExtractedVendorTaxId,
-            PayerFormType = WhtPayerFormType.Pnd53,
+            // แบบที่ผู้จ่ายต้องยื่นตัดสินจาก **ผู้ถูกหัก = ตัวเรา** ไม่ใช่ผู้จ่าย:
+            // หักจากบุคคลธรรมดา → ภ.ง.ด.3 · หักจากนิติบุคคล → ภ.ง.ด.53
+            // เดิม hardcode Pnd53 เสมอ ⇒ ผู้ใช้ที่เป็นบุคคลธรรมดา/คณะบุคคล
+            // (BusinessType.Individual) ได้แบบผิดทุกใบโดยไม่มีอะไรบอกว่าเป็นการเดา
+            PayerFormType = ourBusinessType == BusinessType.Individual
+                ? WhtPayerFormType.Pnd3
+                : WhtPayerFormType.Pnd53,
             // ประเภทเงินได้ — ป้อนให้ CheckRate ตรวจอัตรากับ ท.ป.4/2528 ได้
             IncomeTypeCode = InferIncomeTypeCode(result.RawTextContent),
             IncomeAmount = baseAmount,
-            WhtRate = rateFromScan > 0 ? rateFromScan
-                : (baseAmount > 0 ? Math.Round(whtAmount / baseAmount * 100m, 2) : 0m),
+            WhtRate = whtResolved.Rate,
             WhtAmount = whtAmount,
             // มีใบจริงอยู่ในมือแล้ว (นี่คือตัวใบที่เพิ่งสแกน) → ใช้เครดิตได้เลย
-            Status = WhtCreditStatus.Received,
+            // **ยกเว้น** อ่านยอดภาษีไม่ได้เลย → Pending เพื่อให้ TaxService
+            // (นับเฉพาะ Received/Claimed) ไม่เอาไปหักภาษีจนกว่าคนจะกรอกยอดจริง
+            Status = unknownAmount ? WhtCreditStatus.Pending : WhtCreditStatus.Received,
             DocumentId = documentId,
             AttachmentId = result.FileAttachmentId,
             Notes = $"สร้างจากการสแกนหนังสือรับรอง ({result.OriginalFileName})"
-                + (needsReview ? " — ⚠️ อ่านอัตรา/ฐานภาษีไม่ครบ กรุณาตรวจยอดก่อนใช้เครดิต" : ""),
+                + (unknownAmount
+                    ? " — ⚠️ อ่าน \"ยอดภาษีที่หักและนำส่ง\" จากใบไม่ได้ "
+                      + "กรุณากรอกยอดแล้วกดยืนยันเพื่อใช้เป็นเครดิต (ยังไม่ถูกนับใน ภ.ง.ด.50)"
+                    : needsReview
+                        ? " — ⚠️ อ่านอัตรา/ฐานภาษีไม่ครบ ยอดภาษีมาจากจำนวนเงินตัวอักษรบนใบ กรุณาตรวจก่อนใช้เครดิต"
+                        : ""),
         });
         await _db.SaveChangesAsync();
         _logger.LogInformation("บันทึกเครดิตภาษีถูกหักจากหนังสือรับรองที่สแกน {Amount} (scan {Id})",
@@ -5968,7 +5995,14 @@ public class OcrService : IOcrService
                                     .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            // เส้นทางเงิน (JE ตั้งสินทรัพย์) — ห้ามเงียบ: ถ้าอ่านไม่ได้
+                            // fallback ข้างล่างจะหยิบ "บัญชีเจ้าหนี้ตัวแรกที่ขึ้นต้น 21"
+                            // มาลงแทน ซึ่งเป็นการเดาที่ผู้ใช้ไม่มีทางรู้
+                            _logger.LogWarning(ex,
+                                "อ่านบัญชีเครดิตที่แนะนำของสแกน {ScanId} ไม่ได้ — จะตกไปใช้บัญชีเจ้าหนี้ตัวแรก", scan.Id);
+                        }
                     }
                     if (!creditAccountId.HasValue)
                     {
@@ -6249,8 +6283,16 @@ public class OcrService : IOcrService
         if (items.Count == 0) return items;
         var ourTaxId = await _db.Companies.AsNoTracking()
             .Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
+        // แผนที่ฝั่งซื้อ/ขาย สร้างครั้งเดียวต่อ request แล้วแนบไปกับทุกแถว —
+        // หน้าเว็บจะได้เลิกถือลิสต์ salesTypes ของตัวเอง (ดูหมายเหตุใน DTO)
+        var sideMap = Accounting.Helpers.DocumentSide.BuildSideMap()
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
         return items
-            .Select(x => x with { ComplianceIssues = Ocr.OcrScanComplianceEvaluator.Evaluate(x, ourTaxId) })
+            .Select(x => x with
+            {
+                ComplianceIssues = Ocr.OcrScanComplianceEvaluator.Evaluate(x, ourTaxId),
+                DocumentSideMap = sideMap,
+            })
             .ToList();
     }
 
@@ -6296,7 +6338,12 @@ public class OcrService : IOcrService
                     sa.TryGetProperty("VatAccountCode", out var vac) ? vac.GetString() : null,
                     sa.TryGetProperty("VatAccountName", out var van) ? van.GetString() : null);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // เดิม catch {} เงียบ ⇒ ผังบัญชีที่แนะนำหายไปจากการ์ดโดยไม่มีร่องรอย
+                _logger.LogWarning(ex,
+                    "อ่าน SuggestedAccountsJson ของสแกน {ScanId} ไม่ได้ — การ์ดจะไม่โชว์ผังที่แนะนำ", r.Id);
+            }
         }
 
         if (items == null && !string.IsNullOrEmpty(r.ExtractedItemsJson))
@@ -6316,7 +6363,14 @@ public class OcrService : IOcrService
                     el.TryGetProperty("Unit", out var un) ? un.GetString() : null
                 )).ToList();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // เดิม catch {} ⇒ ExtractedItemsJson ที่เพี้ยนทำให้ items = null
+                // แล้วหน้า review โชว์ตารางรายการ **ว่างเปล่าโดยไม่มี error**
+                // ผู้ใช้กดยืนยันแล้วได้เอกสารที่ไม่มีบรรทัดเลย ทั้งที่กระดาษมี
+                _logger.LogWarning(ex,
+                    "อ่าน ExtractedItemsJson ของสแกน {ScanId} ไม่ได้ — ตารางรายการจะว่าง", r.Id);
+            }
         }
 
         var expenseCategory = data?.ExpenseCategory ?? r.ExpenseCategory;

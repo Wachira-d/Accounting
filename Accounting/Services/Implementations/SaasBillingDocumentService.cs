@@ -442,8 +442,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         decimal subtotal, vat, grand;
         if (isVat)
         {
-            if (s!.PlatformPriceIncludesVat) { vat = Math.Round(amount * 7m / 107m, 2); subtotal = amount - vat; grand = amount; }
-            else { subtotal = amount; vat = Math.Round(amount * 0.07m, 2); grand = amount + vat; }
+            if (s!.PlatformPriceIncludesVat) { vat = Math.Round(amount * 7m / 107m, 2, MidpointRounding.AwayFromZero); subtotal = amount - vat; grand = amount; }
+            else { subtotal = amount; vat = Math.Round(amount * 0.07m, 2, MidpointRounding.AwayFromZero); grand = amount + vat; }
         }
         else { subtotal = amount; vat = 0m; grand = amount; }
 
@@ -512,14 +512,14 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         {
             if (s?.PlatformPriceIncludesVat ?? true)
             {
-                vat = Math.Round(gross * 7m / 107m, 2);
+                vat = Math.Round(gross * 7m / 107m, 2, MidpointRounding.AwayFromZero);
                 subtotal = gross - vat;
                 grandTotal = gross;
             }
             else
             {
                 subtotal = gross;
-                vat = Math.Round(gross * 0.07m, 2);
+                vat = Math.Round(gross * 0.07m, 2, MidpointRounding.AwayFromZero);
                 grandTotal = gross + vat;
             }
         }

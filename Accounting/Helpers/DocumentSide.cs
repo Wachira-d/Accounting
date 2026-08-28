@@ -94,4 +94,22 @@ public static class DocumentSide
         var wantSales = string.Equals(ourRole, "Seller", StringComparison.OrdinalIgnoreCase);
         return IsSales(type) == wantSales;
     }
+
+    /// <summary>แผนที่ "ชื่อชนิดเอกสาร → ฝั่ง" สำหรับส่งให้หน้าเว็บใช้แทนการ
+    /// ถือลิสต์ของตัวเอง. ค่า: <c>"Sales"</c> · <c>"Purchase"</c> · <c>"Both"</c>
+    ///
+    /// <para>สร้างจาก 3 เซ็ตข้างบนโดยตรง ⇒ เพิ่ม/ย้ายชนิดที่นี่ที่เดียว
+    /// หน้าเว็บตามทันทีโดยโครงสร้าง (drift เป็นศูนย์ — กลไกเดียวกับที่ใช้กับ
+    /// <c>MENU_SECTIONS</c> และ <c>complianceIssues</c>)</para>
+    ///
+    /// <para>ชนิดที่ไม่อยู่ในเซ็ตไหนเลย (เช่น JournalVoucher) ไม่ถูกใส่ในแผนที่ —
+    /// ผู้เรียกต้องตีความว่า "ไม่ใช่เอกสารซื้อ/ขาย" ไม่ใช่เดาเป็นฝั่งใดฝั่งหนึ่ง</para></summary>
+    public static IReadOnlyDictionary<string, string> BuildSideMap()
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var t in AlwaysSales) map[t.ToString()] = "Sales";
+        foreach (var t in AlwaysPurchase) map[t.ToString()] = "Purchase";
+        foreach (var t in BothSides) map[t.ToString()] = "Both";
+        return map;
+    }
 }
