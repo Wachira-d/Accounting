@@ -182,7 +182,7 @@ public class OcrService : IOcrService
             scanResult.ProcessingNotes = $"Duplicate of scan {duplicateOf.Id} (engine: {duplicateOf.OcrEngine ?? "unknown"})";
             scanResult.ProcessedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
-            return MapToResponse(scanResult);
+            return await AttachComplianceAsync(companyId, MapToResponse(scanResult));
         }
 
         // Load SiteSettings ONCE per scan — feeds gateway config + provider routing + Azure DI.
@@ -2101,7 +2101,7 @@ public class OcrService : IOcrService
             scanResult.Confidence, scanResult.IsDuplicate,
             scanResult.MatchedContactId.HasValue, scanResult.CreatedDocumentId.HasValue,
             (int)(DateTime.UtcNow - scanStartedAt).TotalMilliseconds);
-        return MapToResponse(scanResult, extractedData);
+        return await AttachComplianceAsync(companyId, MapToResponse(scanResult, extractedData));
     }
 
     private static OcrConfidenceGateway.GatewayConfig BuildGatewayConfig(SiteSettings? settings)
@@ -3928,7 +3928,7 @@ public class OcrService : IOcrService
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
             ?? throw new InvalidOperationException("OCR scan result not found.");
 
-        return MapToResponse(result);
+        return await AttachComplianceAsync(companyId, MapToResponse(result));
     }
 
     public async Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request)
@@ -3952,7 +3952,9 @@ public class OcrService : IOcrService
             .Take(request.PageSize)
             .ToListAsync();
 
-        var items = rows.Select(r => MapToResponse(r)).ToList();
+        // คำเตือนบนการ์ดคำนวณที่นี่ที่เดียว (ดู OcrScanComplianceEvaluator) —
+        // ดึงเลขบริษัท **ครั้งเดียวต่อหน้า** ไม่ใช่ต่อแถว (กัน N+1)
+        var items = (await AttachComplianceAsync(companyId, rows.Select(r => MapToResponse(r)).ToList()));
 
         return new PagedResponse<OcrResultResponse>(
             items, totalCount, request.Page, request.PageSize,
@@ -5804,6 +5806,28 @@ public class OcrService : IOcrService
         _db.Set<OcrScanResult>().Remove(result);
         await _db.SaveChangesAsync();
     }
+
+    /// <summary>เติมคำเตือน "ข้อมูลตามสรรพากรยังไม่ครบ" ให้ผลสแกนที่จะส่งออกไป
+    /// — ดึงเลขผู้เสียภาษีของบริษัทครั้งเดียวแล้วประเมินทุกแถว (กัน N+1)
+    ///
+    /// <para>อยู่ตรงนี้เพราะ <c>MapToResponse</c> เป็น sync ไปแตะฐานไม่ได้ และ
+    /// การประเมินต้องรู้เลขบริษัท — แยกเป็นขั้นตอน async หลัง map จึงเป็นที่
+    /// เดียวที่เรียกได้ทั้งเส้นทางรายการและเส้นทางรายตัว</para></summary>
+    private async Task<List<OcrResultResponse>> AttachComplianceAsync(
+        Guid companyId, List<OcrResultResponse> items)
+    {
+        if (items.Count == 0) return items;
+        var ourTaxId = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
+        return items
+            .Select(x => x with { ComplianceIssues = Ocr.OcrScanComplianceEvaluator.Evaluate(x, ourTaxId) })
+            .ToList();
+    }
+
+    /// <summary>เวอร์ชันรายตัว — ใช้กับ endpoint ที่คืนผลสแกนใบเดียว</summary>
+    private async Task<OcrResultResponse> AttachComplianceAsync(
+        Guid companyId, OcrResultResponse item)
+        => (await AttachComplianceAsync(companyId, new List<OcrResultResponse> { item }))[0];
 
     private OcrResultResponse MapToResponse(OcrScanResult r, OcrExtractedData? data = null)
     {

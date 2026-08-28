@@ -131,6 +131,25 @@ internal static class SmartFieldExtractor
     /// ผู้เสียภาษีอากร : " + ช่องว่างที่ OCR แทรก แต่ไม่ไกลจนคว้าป้ายของบรรทัดอื่น</summary>
     private const int TaxIdLabelLookBehind = 60;
 
+    /// <summary>
+    /// มองไปข้างหน้ากี่ตัวอักษร — **ป้ายไม่ได้อยู่ก่อนเลขเสมอ**
+    ///
+    /// แบบฟอร์มพิมพ์สำเร็จ (ใบเสร็จ/ใบกำกับเล่มมีสำเนา) มักมีเส้นประให้เขียน
+    /// แล้วค่อยมีป้ายอยู่ใต้เส้น ⇒ เลขที่พิมพ์ลงไปอยู่ **บรรทัดก่อน** ป้าย:
+    /// <code>
+    ///                       0 2055 65017 74 1
+    ///   ..........เลขประจำตัวผู้เสียภาษีอากร..........
+    /// </code>
+    /// ถ้ามองย้อนหลังอย่างเดียว เลขผู้ซื้อบนใบพวกนี้จะถูกตัดสินว่า "ไม่มีป้าย"
+    /// แล้วแพ้เลขผู้ขาย (ซึ่งอยู่หลังป้ายตามปกติ) ⇒ ช่องผู้ซื้อว่าง แล้วระบบ
+    /// เตือนว่า "ควรระบุเลขผู้เสียภาษีของผู้ซื้อ" ทั้งที่กระดาษมีเลขอยู่เต็ม ๆ
+    /// (เคสจริง: ใบเสร็จ/ใบกำกับภาษี หจก.สหกลชลบุรี เล่ม 007 เลขที่ 0339)
+    ///
+    /// <para>สั้นกว่าฝั่งย้อนหลังตั้งใจ — ป้ายที่ตามหลังค่าเป็นความสัมพันธ์เชิง
+    /// เลย์เอาต์ที่แน่นกว่า ถ้าเปิดกว้างเท่ากันจะเสี่ยงไปคว้าป้ายของบล็อกถัดไป</para>
+    /// </summary>
+    private const int TaxIdLabelLookAhead = 45;
+
     public static List<(string Id, int Position)> ExtractValidThaiTaxIds(string text)
         => ExtractTaxIdCandidates(text).Select(c => (c.Id, c.Position)).ToList();
 
@@ -157,20 +176,36 @@ internal static class SmartFieldExtractor
             .Select(m => new TaxIdCandidate(
                 Regex.Replace(m.Groups[1].Value, @"[-\s]", ""),
                 m.Index,
-                HasTaxIdLabelBefore(text, m.Index)))
+                HasTaxIdLabelNear(text, m.Index, m.Length)))
             .Where(c => c.Id.Length == 13 && IsValidThaiTaxId(c.Id))
-            .Where(c => c.Labelled || !Accounting.Helpers.ThaiTaxId.LooksLikeProductBarcode(c.Id))
+            // ด่านบาร์โค้ด **ไม่มีข้อยกเว้น** — ป้ายกำกับช่วยไม่ได้ตรงนี้
+            //
+            // เดิมเขียน `c.Labelled || !LooksLikeProductBarcode(...)` คือให้ตัวที่มี
+            // ป้ายผ่านไปได้ แต่ "ป้ายอยู่ใกล้" เป็นสัญญาณอ่อน: บาร์โค้ดบรรทัดแรกของ
+            // ตารางสินค้าอยู่ห่างจากบล็อกเลขผู้ซื้อไม่กี่สิบตัวอักษร ⇒ ติดธงมีป้าย
+            // โดยบังเอิญแล้วรอดด่านไปเป็น "เลขผู้เสียภาษี" (จับได้ตอน simulate
+            // การแก้ป้ายสองทิศ) — เลขที่ผ่าน EAN-13 **และ** มี GS1 prefix ของสินค้า
+            // คือบาร์โค้ด ไม่ว่าข้อความรอบ ๆ จะเขียนว่าอะไร
+            .Where(c => !Accounting.Helpers.ThaiTaxId.LooksLikeProductBarcode(c.Id))
             .GroupBy(c => c.Id)
             // ตัวที่มีป้ายชนะตัวที่ไม่มีป้ายเสมอ (เลขเดียวกันอาจโผล่หลายที่)
             .Select(g => g.OrderByDescending(c => c.Labelled).ThenBy(c => c.Position).First())
             .ToList();
     }
 
-    private static bool HasTaxIdLabelBefore(string text, int index)
+    /// <summary>มีป้าย "เลขประจำตัวผู้เสียภาษี" อยู่ใกล้ ๆ เลขก้อนนี้ไหม —
+    /// ดู<b>ทั้งสองทิศ</b> (ดูเหตุผลที่ <see cref="TaxIdLabelLookAhead"/>)</summary>
+    private static bool HasTaxIdLabelNear(string text, int index, int length)
+        => WindowHasLabel(text, Math.Max(0, index - TaxIdLabelLookBehind), index)
+        || WindowHasLabel(text, index + length,
+               Math.Min(text.Length, index + length + TaxIdLabelLookAhead));
+
+    private static bool WindowHasLabel(string text, int start, int end)
     {
-        var start = Math.Max(0, index - TaxIdLabelLookBehind);
-        var window = text.Substring(start, index - start);
+        if (end <= start) return false;
+        var window = text.Substring(start, end - start);
         // ตัดช่องว่าง/ตัวคั่นออกก่อนเทียบ — OCR ไทยแทรกช่องว่างกลางคำเป็นปกติ
+        // และแบบฟอร์มมีเส้นประ ".........." คั่นระหว่างป้ายกับค่าเสมอ
         var squashed = new string(window
             .Where(c => !char.IsWhiteSpace(c) && c is not ('-' or '_' or '.' or ':' or '·'))
             .ToArray()).ToLowerInvariant();

@@ -1359,30 +1359,27 @@
 
         // RD-compliance quick check — surfaces missing required fields and a
         // wrong-company upload right on the scan card, straight after scanning.
+        // คำเตือนมาจากเซิร์ฟเวอร์ (`OcrScanComplianceEvaluator`) — หน้านี้ "แสดง"
+        // อย่างเดียว **ห้ามคำนวณกฎเอง**
+        //
+        // เดิมบล็อกนี้คัดลอกกฎไปเขียนใน JS แล้วไม่เคยแก้ตามฝั่งเซิร์ฟเวอร์เลย:
+        // ตัดสินจาก scan.buyerTaxId ช่องเดียว ไม่เคยเปิดดูข้อความบนกระดาษ ⇒
+        // ใบเสร็จ/ใบกำกับ หจก.สหกลชลบุรี เลขที่ 0339 ที่พิมพ์เลขผู้ซื้อ
+        // "0 2055 65017 74 1" ไว้เต็ม ๆ ยังโดนเตือนว่า "ควรระบุเลขผู้เสียภาษี
+        // ของผู้ซื้อ" และคำเตือน "อาจเป็นเอกสารของบริษัทอื่น" ก็เป็นสำเนามือของ
+        // TENANT_BUYER_MISMATCH รุ่นก่อนแก้ (กฎเหล็ก #4 A: resolver กลาง)
+        //
+        // undefined = เซิร์ฟเวอร์รุ่นเก่ายังไม่ส่งฟิลด์นี้มา → ไม่วาดอะไร
+        // (ต่างจาก [] ที่แปลว่า "ตรวจแล้วไม่พบปัญหา")
         let complianceHtml = '';
-        if (scan.scanStatus === 'Completed') {
-          const issues = [];
-          let company = {};
-          try { company = JSON.parse(localStorage.getItem('currentCompany') || '{}'); } catch {}
-          const norm = (s) => (s || '').replace(/[\s-]/g, '');
-          if (scan.buyerTaxId && company.taxId && norm(scan.buyerTaxId) !== norm(company.taxId)) {
-            issues.push({ sev: 'error', msg: `ผู้ซื้อในเอกสาร (${Layout.esc(scan.buyerTaxId)}) ไม่ตรงกับบริษัท (${Layout.esc(company.taxId)}) — อาจเป็นเอกสารของบริษัทอื่น` });
-          }
-          const isTaxInvoice = scan.documentType === 'TaxInvoice';
-          if (!scan.extractedVendorTaxId) issues.push({ sev: 'warn', msg: 'ไม่พบเลขประจำตัวผู้เสียภาษีของผู้ขาย' });
-          if (!scan.extractedDocumentNumber) issues.push({ sev: 'warn', msg: 'ไม่พบเลขที่เอกสาร' });
-          if (!scan.extractedDate) issues.push({ sev: 'warn', msg: 'ไม่พบวันที่เอกสาร' });
-          if (scan.extractedTotalAmount == null) issues.push({ sev: 'warn', msg: 'ไม่พบยอดรวม' });
-          if (isTaxInvoice && (scan.extractedTotalAmount || 0) >= 1000 && !scan.buyerTaxId)
-            issues.push({ sev: 'warn', msg: 'ใบกำกับภาษีตั้งแต่ 1,000 บาท ควรระบุเลขผู้เสียภาษีของผู้ซื้อ' });
-          if (issues.length) {
-            const hasErr = issues.some(i => i.sev === 'error');
-            const bg = hasErr ? '#fee2e2' : '#fef3c7', bd = hasErr ? '#dc2626' : '#f59e0b', col = hasErr ? '#991b1b' : '#92400e';
-            complianceHtml = `<div style="background:${bg};border:1px solid ${bd};border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12px;color:${col}">
-              <div style="font-weight:700;margin-bottom:3px">${hasErr ? '⚠️ ตรวจสอบด่วน — ข้อมูลตามสรรพากร' : '🛡️ ข้อมูลตามสรรพากรยังไม่ครบ'}</div>
-              <ul style="margin:0;padding-left:16px">${issues.map(i => `<li>${i.msg}</li>`).join('')}</ul>
-            </div>`;
-          }
+        const _issues = scan.complianceIssues;
+        if (Array.isArray(_issues) && _issues.length) {
+          const hasErr = _issues.some(i => i.severity === 'error');
+          const bg = hasErr ? '#fee2e2' : '#fef3c7', bd = hasErr ? '#dc2626' : '#f59e0b', col = hasErr ? '#991b1b' : '#92400e';
+          complianceHtml = `<div style="background:${bg};border:1px solid ${bd};border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12px;color:${col}">
+            <div style="font-weight:700;margin-bottom:3px">${hasErr ? '⚠️ ตรวจสอบด่วน — ข้อมูลตามสรรพากร' : '🛡️ ข้อมูลตามสรรพากรยังไม่ครบ'}</div>
+            <ul style="margin:0;padding-left:16px">${_issues.map(i => `<li>${Layout.esc(i.message || '')}</li>`).join('')}</ul>
+          </div>`;
         }
 
         return `

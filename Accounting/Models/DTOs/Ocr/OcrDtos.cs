@@ -80,7 +80,16 @@ public record OcrResultResponse(
     string? VendorBranchCode = null,
     string? VendorAddress = null,
     string? BuyerBranchCode = null,
-    string? BuyerAddress = null);
+    string? BuyerAddress = null,
+    /// <summary>คำเตือน "ข้อมูลตามสรรพากรยังไม่ครบ" บนการ์ดผลสแกน — คำนวณที่
+    /// เซิร์ฟเวอร์โดย <c>OcrScanComplianceEvaluator</c> หน้าเว็บมีหน้าที่ "แสดง"
+    /// อย่างเดียว ห้ามคำนวณเอง (เดิม document-scan.html คัดลอกกฎไปเขียนใน JS
+    /// แล้วไม่เคยแก้ตาม ⇒ เตือนผิดบนใบที่กระดาษมีเลขผู้ซื้อครบ). null =
+    /// เส้นทางที่ยังไม่ได้ประเมิน (ไม่ใช่ "ไม่มีปัญหา") — UI อย่าเพิ่งวาดอะไร</summary>
+    List<OcrScanIssueDto>? ComplianceIssues = null);
+
+/// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
+public record OcrScanIssueDto(string Severity, string Message);
 
 /// <summary>One open PO of the matched vendor — what the picker modal
 /// renders. Lines come back inline so the operator can map OCR ↔ PO line
