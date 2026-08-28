@@ -1437,7 +1437,6 @@ public class OcrService : IOcrService
 
             // If the seller is our own company, the real vendor is the buyer.
             // Project just the TaxId column (not full Company entity) for efficiency.
-            if (!string.IsNullOrEmpty(extractedData.VendorTaxId) || !string.IsNullOrEmpty(extractedData.BuyerTaxId))
             {
                 var ourTaxId = await _db.Companies
                     .Where(c => c.Id == companyId)
@@ -1453,6 +1452,34 @@ public class OcrService : IOcrService
                         scanResult.ExtractedVendorName = extractedData.VendorName;
                         scanResult.ExtractedVendorTaxId = extractedData.VendorTaxId;
                         scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Swap] Seller is our company — using Buyer as vendor";
+                    }
+
+                    // ── เติมเลขผู้ซื้อจากกระดาษ (กฎเหล็ก #3: OCR ต้องกรอกให้ครบ) ──
+                    //
+                    // บนใบฝั่งซื้อ "ผู้ซื้อ" คือบริษัทเราเสมอ. ตัวสกัดจะไม่เดาเลข
+                    // ผู้ซื้อถ้าไม่เจอคำว่า "ผู้ซื้อ/ลูกค้า" บนกระดาษ (กันบาร์โค้ด
+                    // สินค้าถูกยัดมาเป็นเลขผู้ซื้อ — บั๊ก PI-20260820-0005) แต่ถ้า
+                    // **เลขของเราปรากฏบนกระดาษจริง** และเราไม่ใช่ผู้ขาย ก็สรุปได้
+                    // แน่นอนว่าเราคือผู้ซื้อ → เติมให้เลย ไม่ปล่อยช่องว่างให้ผู้ใช้
+                    // กรอกเอง และไม่ปล่อยเลขผิดที่ OCR หยิบมาค้างไว้
+                    //
+                    // เงื่อนไข "เราไม่ใช่ผู้ขาย" ต้องพิสูจน์เชิงบวก — ใช้ "อ่านเลข
+                    // ผู้ขายได้ และเป็นคนละเลขกับเรา" ไม่ใช่แค่ "เลขผู้ขายไม่ตรงกับเรา"
+                    // เพราะถ้า OCR อ่านเลขผู้ขายไม่ออกเลย (ว่าง) เงื่อนไขหลังจะเป็นจริง
+                    // บนใบ**ขาย**ของเราเองด้วย ⇒ ไปทับเลขลูกค้าด้วยเลขบริษัทเรา
+                    var vendorIdentified = Accounting.Helpers.ThaiTaxId.IsValid(extractedData.VendorTaxId);
+                    var weAreVendor = Accounting.Helpers.ThaiTaxId.Same(extractedData.VendorTaxId, ourTaxId);
+                    var buyerIsUs = Accounting.Helpers.ThaiTaxId.Same(extractedData.BuyerTaxId, ourTaxId);
+                    if (vendorIdentified && !weAreVendor && !buyerIsUs
+                        && Ocr.RdComplianceValidator.RawTextHasTaxId(scanResult.RawTextContent, ourTaxId))
+                    {
+                        var replaced = extractedData.BuyerTaxId;
+                        extractedData.BuyerTaxId = ourTaxId;
+                        scanResult.BuyerTaxId = ourTaxId;
+                        extractedData.ReasoningTrace.Add(string.IsNullOrEmpty(replaced)
+                            ? $"[Buyer] เติมเลขผู้ซื้อ = บริษัทเรา ({ourTaxId}) — พบเลขนี้บนกระดาษและเราไม่ใช่ผู้ขาย"
+                            : $"[Buyer] แทนเลขผู้ซื้อที่อ่านมาผิด '{replaced}' ด้วยเลขบริษัทเรา ({ourTaxId}) "
+                              + "— พบเลขนี้บนกระดาษจริง");
                     }
                 }
             }
@@ -2444,11 +2471,22 @@ public class OcrService : IOcrService
                 if (string.IsNullOrEmpty(bc.Value)) continue;
                 // Treat any 13-digit run inside the barcode as a tax ID
                 // candidate — common for RD QR which embeds buyer tax ID.
+                //
+                // แต่ **บาร์โค้ดสินค้า EAN-13 ก็เป็นเลข 13 หลัก** และมีโอกาส ~1/10
+                // ที่จะผ่าน mod-11 ไทยโดยบังเอิญ — ใบกำกับร้านวัสดุมีบาร์โค้ด
+                // ทุกบรรทัดสินค้า ⇒ เกือบการันตีว่าจะมีตัวหนึ่งถูกยัดเป็นเลข
+                // ผู้เสียภาษีผู้ขาย ทับของจริง (defect class เดียวกับ
+                // PI-20260820-0005). QR ของสรรพากรไม่ใช่ EAN-13 จึงไม่โดนตัด
                 var digits = new string(bc.Value.Where(char.IsDigit).ToArray());
                 if (digits.Length >= 13)
                 {
                     var taxId = digits.Substring(0, 13);
-                    if (Ocr.SmartFieldExtractor.IsValidThaiTaxId(taxId))
+                    if (Accounting.Helpers.ThaiTaxId.LooksLikeProductBarcode(bc.Value))
+                    {
+                        data.ReasoningTrace.Add(
+                            $"[Azure DI Barcode] ข้าม {bc.Value} — เป็นบาร์โค้ดสินค้า (EAN-13) ไม่ใช่เลขผู้เสียภาษี");
+                    }
+                    else if (Ocr.SmartFieldExtractor.IsValidThaiTaxId(taxId))
                     {
                         if (string.IsNullOrEmpty(data.VendorTaxId)) data.VendorTaxId = taxId;
                         else if (data.VendorTaxId == taxId)
@@ -2495,6 +2533,10 @@ public class OcrService : IOcrService
             if (keyLower.Contains("เลขประจำตัว") || keyLower.Contains("tax id"))
             {
                 var taxId = ExtractDigits(value, 13);
+                // ต้องผ่าน checksum จริง — ช่องนี้เป็น K-V ที่ Azure เดาคู่ key/value
+                // เอง ถ้าค่าที่จับมาไม่ใช่เลขผู้เสียภาษี การเติมลงไปคือสร้างข้อมูลผิด
+                // ที่กฎ TENANT_BUYER_MISMATCH จะเอาไปฟันธงว่า "อัพโหลดผิดบริษัท"
+                if (!Accounting.Helpers.ThaiTaxId.IsPlausibleFromScan(taxId)) taxId = "";
                 if (!string.IsNullOrEmpty(taxId))
                 {
                     var isBuyerSide = keyLower.Contains("ผู้ซื้อ") || keyLower.Contains("ลูกค้า")

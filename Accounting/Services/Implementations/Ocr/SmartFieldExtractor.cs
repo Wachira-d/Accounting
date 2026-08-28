@@ -70,7 +70,8 @@ internal static class SmartFieldExtractor
         }
 
         // 1. Tax IDs — extract all 13-digit candidates with valid checksum
-        var taxIds = ExtractValidThaiTaxIds(rawText);
+        //    (บาร์โค้ดสินค้าในตารางรายการถูกคัดออกแล้วใน ExtractTaxIdCandidates)
+        var taxIds = ExtractTaxIdCandidates(rawText);
 
         // 2. Resolve vendor vs buyer with mutual exclusion
         AssignVendorBuyerRoles(data, rawText, taxIds);
@@ -109,30 +110,85 @@ internal static class SmartFieldExtractor
     //   sum = Σ digit[i] * (13 - i)  for i = 0..11
     //   checksum = (11 - (sum % 11)) % 10
     //   digit[12] must equal checksum
-    public static List<(string Id, int Position)> ExtractValidThaiTaxIds(string text)
+    /// <summary>ผู้สมัครเป็นเลขผู้เสียภาษี 1 ตัวที่เจอในข้อความ —
+    /// <c>Labelled</c> = มีป้าย "เลขประจำตัวผู้เสียภาษี"/"Tax ID"
+    /// นำหน้าในระยะสายตา ซึ่งเป็นหลักฐานที่หนักกว่า checksum มาก</summary>
+    internal readonly record struct TaxIdCandidate(string Id, int Position, bool Labelled);
+
+    /// <summary>ป้ายกำกับที่บอกว่า "เลขก้อนถัดไปคือเลขผู้เสียภาษี" — เทียบแบบตัด
+    /// ช่องว่างออกทั้งสองฝั่ง เพราะ Tesseract ไทยแทรกช่องว่างระหว่างสระ/วรรณยุกต์</summary>
+    private static readonly string[] TaxIdLabels =
     {
-        var pattern = @"(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})";
+        "เลขประจำตัวผู้เสียภาษี", "เลขประจําตัวผู้เสียภาษี", "เลขผู้เสียภาษี",
+        "ผู้เสียภาษีอากร", "เลขประจำตัว", "เลขประจําตัว",
+        // ไม่ใส่ "tin" — สั้นเกินไป พอตัดช่องว่างแล้วไปโผล่กลางคำอื่นได้
+        // ("Printing Co., Ltd." → "printingcoltd" มี "tin") ⇒ ติดธงมีป้ายผิด
+        // ซึ่งจะปล่อยบาร์โค้ดผ่านด่านคัดออก
+        "taxid", "taxidentificationno", "vatreg", "vatregistrationno",
+    };
+
+    /// <summary>มองย้อนหลังกี่ตัวอักษรเพื่อหาป้ายกำกับ — พอสำหรับ "เลขประจำตัว
+    /// ผู้เสียภาษีอากร : " + ช่องว่างที่ OCR แทรก แต่ไม่ไกลจนคว้าป้ายของบรรทัดอื่น</summary>
+    private const int TaxIdLabelLookBehind = 60;
+
+    public static List<(string Id, int Position)> ExtractValidThaiTaxIds(string text)
+        => ExtractTaxIdCandidates(text).Select(c => (c.Id, c.Position)).ToList();
+
+    /// <summary>
+    /// หาเลข 13 หลักที่ "เป็นเลขผู้เสียภาษีได้จริง" ในข้อความทั้งหน้า
+    ///
+    /// ═══ ทำไมต้องคัดบาร์โค้ดออก (บั๊กจริง PI-20260820-0005) ═══
+    /// ใบกำกับของร้านค้าวัสดุมีบาร์โค้ด EAN-13 พิมพ์อยู่ในตารางสินค้าทุกบรรทัด
+    /// ซึ่งเป็นเลข 13 หลักเหมือนเลขผู้เสียภาษี และเลขสุ่มมีโอกาส ~1/10 ที่จะผ่าน
+    /// mod-11 ไทยด้วย ⇒ หน้าเดียวมีบาร์โค้ด 10 ตัว = แทบการันตีว่าจะมีตัวหนึ่ง
+    /// ถูกหยิบไปเป็น "เลขผู้ซื้อ" แล้วระบบเตือนว่า "อาจอัพโหลดผิดบริษัท"
+    /// ทั้งที่กระดาษถูกต้องทุกอย่าง (เกิดจริงกับ 8885009199627)
+    ///
+    /// กติกา: ตัวที่มี<b>ป้ายกำกับ</b>นำหน้าเก็บไว้เสมอ (ป้ายหนักกว่า checksum) ·
+    /// ตัวที่ไม่มีป้ายและ<b>หน้าตาเป็นบาร์โค้ดสินค้า</b> (EAN-13 + GS1 prefix) ทิ้ง
+    /// </summary>
+    internal static List<TaxIdCandidate> ExtractTaxIdCandidates(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return new List<TaxIdCandidate>();
+        // ตัวคั่นได้เฉพาะ "-" กับช่องว่าง/แท็บ — **ห้ามรวมขึ้นบรรทัดใหม่**
+        // เดิมใช้ [-\s]? ซึ่ง \s ครอบ \n ด้วย ⇒ ตัวเลขท้ายบรรทัดถูกต่อกับตัวเลข
+        // ต้นบรรทัดถัดไปเป็นเลข 13 หลักที่ไม่มีอยู่จริงบนกระดาษ (เช่น "120.00\n
+        // 8859991966695" → "0885999196669") ซึ่งมีโอกาส ~1/10 ที่จะผ่าน mod-11
+        // แล้วกลายเป็น "เลขผู้เสียภาษี" ที่ไม่เคยมีใครพิมพ์ลงกระดาษเลย
+        // (?<!\d)/(?!\d) กันการตัดเลข 13 ตัวออกมาจากเลขก้อนที่ยาวกว่า เช่น
+        // เลขบัญชีธนาคาร/เลขที่อ้างอิง 16 หลัก
+        var pattern = @"(?<!\d)(\d{1}[- \t]?\d{4}[- \t]?\d{5}[- \t]?\d{2}[- \t]?\d{1})(?!\d)";
         return Regex.Matches(text, pattern)
             .Cast<Match>()
-            .Select(m => (Id: Regex.Replace(m.Groups[1].Value, @"[-\s]", ""), Pos: m.Index))
-            .Where(x => x.Id.Length == 13 && IsValidThaiTaxId(x.Id))
-            .GroupBy(x => x.Id)
-            .Select(g => g.OrderBy(x => x.Pos).First())   // dedupe, keep first occurrence
+            .Select(m => new TaxIdCandidate(
+                Regex.Replace(m.Groups[1].Value, @"[-\s]", ""),
+                m.Index,
+                HasTaxIdLabelBefore(text, m.Index)))
+            .Where(c => c.Id.Length == 13 && IsValidThaiTaxId(c.Id))
+            .Where(c => c.Labelled || !Accounting.Helpers.ThaiTaxId.LooksLikeProductBarcode(c.Id))
+            .GroupBy(c => c.Id)
+            // ตัวที่มีป้ายชนะตัวที่ไม่มีป้ายเสมอ (เลขเดียวกันอาจโผล่หลายที่)
+            .Select(g => g.OrderByDescending(c => c.Labelled).ThenBy(c => c.Position).First())
             .ToList();
     }
 
-    public static bool IsValidThaiTaxId(string id)
+    private static bool HasTaxIdLabelBefore(string text, int index)
     {
-        if (id == null || id.Length != 13) return false;
-        if (!id.All(char.IsDigit)) return false;
-        int sum = 0;
-        for (int i = 0; i < 12; i++) sum += (id[i] - '0') * (13 - i);
-        int check = (11 - (sum % 11)) % 10;
-        return check == (id[12] - '0');
+        var start = Math.Max(0, index - TaxIdLabelLookBehind);
+        var window = text.Substring(start, index - start);
+        // ตัดช่องว่าง/ตัวคั่นออกก่อนเทียบ — OCR ไทยแทรกช่องว่างกลางคำเป็นปกติ
+        var squashed = new string(window
+            .Where(c => !char.IsWhiteSpace(c) && c is not ('-' or '_' or '.' or ':' or '·'))
+            .ToArray()).ToLowerInvariant();
+        return TaxIdLabels.Any(l => squashed.Contains(
+            new string(l.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant(),
+            StringComparison.Ordinal));
     }
 
+    public static bool IsValidThaiTaxId(string? id) => Accounting.Helpers.ThaiTaxId.IsValid(id);
+
     // ─── 2. Vendor vs buyer role assignment with mutual exclusion ───────
-    private static void AssignVendorBuyerRoles(OcrExtractedData data, string text, List<(string Id, int Pos)> taxIds)
+    private static void AssignVendorBuyerRoles(OcrExtractedData data, string text, List<TaxIdCandidate> taxIds)
     {
         // If both already populated AND distinct, leave them alone.
         var hasVendor = !string.IsNullOrEmpty(data.VendorTaxId) || !string.IsNullOrEmpty(data.VendorName);
@@ -148,36 +204,52 @@ internal static class SmartFieldExtractor
         int sellerPos = FindFirstKeyword(text, sellerKeywords);
         int buyerPos = FindFirstKeyword(text, buyerKeywords);
 
-        // Vendor info typically appears in the header (top of document) and
-        // buyer info below it after "ลูกค้า:" / "Bill To:". When a keyword is
-        // missing, default vendor to position 0 (top) and buyer to text end —
-        // this anchors the nearest-name search to the right region.
+        // ตำแหน่งจริงของคำว่า "ผู้ซื้อ/ลูกค้า" — **ห้ามปลอมเป็นท้ายหน้า**
+        //
+        // เดิมเขียนว่า `if (buyerPos < 0) buyerPos = text.Length;` ซึ่งแปลว่า
+        // "ถ้าไม่เจอคำว่าผู้ซื้อ ให้ถือว่าผู้ซื้ออยู่ท้ายหน้า" ⇒ เลข 13 หลัก
+        // ตัวสุดท้ายของหน้า (= บาร์โค้ดบรรทัดล่างสุดของตารางสินค้า) กลายเป็น
+        // เลขผู้ซื้อทุกครั้ง แล้วกฎที่ 7 ก็ฟันธงว่า "อาจอัพโหลดผิดบริษัท"
+        // ทั้งที่กระดาษถูกต้อง (บั๊กจริง PI-20260820-0005)
+        //
+        // ไม่มีหลักฐานว่าเลขไหนเป็นของผู้ซื้อ = **ไม่เดา** ปล่อยว่างไว้ให้
+        // RdComplianceValidator กฎที่ 3 ไปค้นเลขบริษัทเราในข้อความทั้งหน้าเอง
+        // ซึ่งเป็นวิธีที่ถูกต้องกว่าและไม่สร้างข้อมูลผิดขึ้นมาใหม่
+        var buyerAnchor = buyerPos;      // -1 = ไม่มีคำว่าผู้ซื้อบนกระดาษ
         if (sellerPos < 0) sellerPos = 0;
-        if (buyerPos < 0) buyerPos = text.Length;
+        if (buyerPos < 0) buyerPos = text.Length;   // ใช้กับการเดา "ชื่อ" เท่านั้น
+
+        // ผู้สมัครที่มีป้าย "เลขประจำตัวผู้เสียภาษี" นำหน้า ชนะตัวที่ไม่มีป้ายเสมอ —
+        // ถ้าหน้านี้มีตัวที่มีป้ายอยู่แล้ว ตัวไม่มีป้ายไม่ต้องเอามาพิจารณาเลย
+        var labelled = taxIds.Where(t => t.Labelled).ToList();
+        var pool = labelled.Count > 0 ? labelled : taxIds;
 
         // Assign tax IDs: closest to seller-keyword → vendor; closest to
         // buyer-keyword → buyer. Mutual exclusion enforced — once assigned to
         // one role, the same ID cannot also be assigned to the other.
         string? newVendorTaxId = data.VendorTaxId;
         string? newBuyerTaxId = data.BuyerTaxId;
-        if (taxIds.Count >= 2 && string.IsNullOrEmpty(newVendorTaxId) && string.IsNullOrEmpty(newBuyerTaxId))
+        if (pool.Count >= 2 && string.IsNullOrEmpty(newVendorTaxId) && string.IsNullOrEmpty(newBuyerTaxId))
         {
-            var byDistToSeller = taxIds.OrderBy(t => Math.Abs(t.Pos - sellerPos)).First();
+            var byDistToSeller = pool.OrderBy(t => Math.Abs(t.Position - sellerPos)).First();
             newVendorTaxId = byDistToSeller.Id;
-            var remaining = taxIds.Where(t => t.Id != newVendorTaxId).ToList();
-            if (remaining.Count > 0)
-                newBuyerTaxId = remaining.OrderBy(t => Math.Abs(t.Pos - buyerPos)).First().Id;
+            var remaining = pool.Where(t => t.Id != newVendorTaxId).ToList();
+            if (remaining.Count > 0 && buyerAnchor >= 0)
+                newBuyerTaxId = remaining.OrderBy(t => Math.Abs(t.Position - buyerAnchor)).First().Id;
         }
-        else if (taxIds.Count == 1)
+        else if (pool.Count == 1)
         {
             // Single tax id — bias toward vendor unless an explicit buyer
             // keyword sits closer to the tax id than any seller keyword.
-            var only = taxIds[0];
-            var distSeller = sellerPos >= 0 ? Math.Abs(only.Pos - sellerPos) : int.MaxValue;
-            var distBuyer = buyerPos >= 0 ? Math.Abs(only.Pos - buyerPos) : int.MaxValue;
+            var only = pool[0];
+            var distSeller = Math.Abs(only.Position - sellerPos);
+            var distBuyer = buyerAnchor >= 0 ? Math.Abs(only.Position - buyerAnchor) : int.MaxValue;
             if (string.IsNullOrEmpty(newVendorTaxId) && distSeller <= distBuyer)
                 newVendorTaxId = only.Id;
-            else if (string.IsNullOrEmpty(newBuyerTaxId))
+            // ยอมให้เป็นเลขผู้ซื้อได้เฉพาะเมื่อมี**หลักฐาน**: มีคำว่า "ผู้ซื้อ/ลูกค้า"
+            // บนกระดาษ หรือเลขนั้นมีป้าย "เลขประจำตัวผู้เสียภาษี" นำหน้า —
+            // ไม่มีทั้งสองอย่าง = เลขลอย ๆ กลางหน้า (บาร์โค้ด/เลขอ้างอิง) ห้ามเดา
+            else if (string.IsNullOrEmpty(newBuyerTaxId) && (buyerAnchor >= 0 || only.Labelled))
                 newBuyerTaxId = only.Id;
         }
 

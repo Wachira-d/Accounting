@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Ocr;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -102,14 +103,20 @@ public class RdComplianceValidator
         return status;
     }
 
-    private static List<RuleResult> RunRules(OcrResultResponse o, string? rawText, Company company, Document doc)
+    /// <summary>internal เพื่อให้เทสต์เรียกกฎตรง ๆ ได้โดยไม่ต้องมี DbContext —
+    /// เมธอดนี้เป็น pure function (ไม่แตะฐานข้อมูล) ตามกฎเหล็ก #4 G</summary>
+    internal static List<RuleResult> RunRules(OcrResultResponse o, string? rawText, Company company, Document doc)
     {
         var results = new List<RuleResult>();
-        var raw = (rawText ?? "").ToLowerInvariant();
+        // ย่อข้อความก่อนค้นคำสำคัญ — OCR ไทยแทรกช่องว่างกลางคำ/แยกนิคหิตกับสระอา
+        // เป็นปกติ ถ้าค้นบนข้อความดิบจะ "ไม่พบ" คำที่อยู่บนกระดาษเต็ม ๆ
+        // (บั๊กจริง PI-20260820-0005: หัวกระดาษ "ต้นฉบับใบส่งสินค้า/ต้นฉบับใบกำกับภาษี"
+        //  แต่ระบบเตือนว่าไม่พบคำว่า "ใบกำกับภาษี")
+        var raw = ThaiTextNormalizer.SquashForKeywordMatch(rawText);
         // ข้อความ OCR สั้น/ว่าง = "ตรวจไม่ได้" ไม่ใช่ "กระดาษไม่มี" — เครื่องอ่านบาง
         // ตัว (vision AI) คืนเฉพาะฟิลด์ที่สกัดได้ ไม่ได้คืนข้อความทั้งหน้า ถ้าเอา
         // ความว่างมาสรุปว่าเอกสารไม่ครบ จะเตือนผิดทุกใบที่ใช้เครื่องอ่านแบบนั้น
-        var canReadPaper = raw.Trim().Length >= 40;
+        var canReadPaper = (rawText ?? "").Trim().Length >= 40;
 
         // Rule 1: คำที่กฎหมายบังคับให้มีบนหัวเอกสาร — **ต่างกันตามชนิดเอกสาร**
         //   ใบกำกับภาษี §86/4  → "ใบกำกับภาษี"
@@ -124,7 +131,10 @@ public class RdComplianceValidator
             DocumentType.DebitNote   => (new[] { "ใบเพิ่มหนี้", "debit note", "ใบกำกับภาษี" }, "ใบเพิ่มหนี้ (§86/9)"),
             _                        => (new[] { "ใบกำกับภาษี", "tax invoice" }, "ใบกำกับภาษี (§86/4)"),
         };
-        var hasTaxKw = kwList.Any(k => raw.Contains(k));
+        // ย่อ "คำที่ค้น" ด้วยสูตรเดียวกับข้อความ ไม่งั้น "tax invoice" (มีช่องว่าง)
+        // จะหาไม่เจอในข้อความที่ตัดช่องว่างไปแล้ว
+        var hasTaxKw = kwList.Any(k => raw.Contains(
+            ThaiTextNormalizer.SquashForKeywordMatch(k), StringComparison.Ordinal));
         if (!needsKeyword || !canReadPaper || hasTaxKw)
         {
             results.Add(new("TAX_INVOICE_KEYWORD", true, "Info",
@@ -143,11 +153,21 @@ public class RdComplianceValidator
         }
 
         // Rule 2: Seller Tax ID format
-        var sellerOk = IsThaiTaxId(o.ExtractedVendorTaxId);
+        //
+        // แยกสองกรณีให้ผู้ใช้รู้ว่าต้องไปทำอะไร:
+        //   • ไม่ครบ 13 หลัก → Error (ขาดรายการตาม §86/4(2) เคลมภาษีซื้อไม่ได้)
+        //   • ครบ 13 หลักแต่ check digit ไม่ผ่าน → Warning "OCR น่าจะอ่านเลขเพี้ยน
+        //     1 ตัว" ไม่ใช่ Error เพราะกระดาษมักถูก แต่เครื่องอ่านผิด (0↔O, 1↔I, 8↔B)
+        var sellerDigits = ThaiTaxId.Normalize(o.ExtractedVendorTaxId);
+        var sellerOk = ThaiTaxId.IsValid(o.ExtractedVendorTaxId);
+        var sellerLenOk = sellerDigits.Length == 13;
         results.Add(new("SELLER_TAX_ID_FORMAT", sellerOk,
-            sellerOk ? "Info" : "Error",
+            sellerOk ? "Info" : sellerLenOk ? "Warning" : "Error",
             sellerOk ? "เลขผู้เสียภาษีผู้ขายถูกต้อง"
-                     : $"เลขผู้เสียภาษีผู้ขายไม่ถูกต้อง (ต้องเป็น 13 หลัก) — ที่ได้: '{o.ExtractedVendorTaxId}'",
+                : sellerLenOk
+                    ? $"เลขผู้เสียภาษีผู้ขาย '{o.ExtractedVendorTaxId}' ครบ 13 หลักแต่ไม่ผ่าน check digit "
+                      + "— เครื่องอ่านน่าจะอ่านเพี้ยนไป 1 ตัว"
+                    : $"เลขผู้เสียภาษีผู้ขายไม่ถูกต้อง (ต้องเป็น 13 หลัก) — ที่ได้: '{o.ExtractedVendorTaxId}'",
             o.ExtractedVendorTaxId,
             sellerOk ? null
                 : "แก้ที่ผู้ติดต่อของผู้ขาย: กดชื่อผู้ขายด้านบน → แก้ไข → กรอก 'เลขบัตรประชาชน/เลขผู้เสียภาษี' "
@@ -161,8 +181,11 @@ public class RdComplianceValidator
         // เพราะใบกำกับไทยมักพิมพ์เลขผู้ซื้อตัวเล็ก/อยู่มุมที่ OCR จับไม่ติด
         // → ตรวจซ้ำในข้อความ OCR ทั้งหน้าด้วยเลขของบริษัทเอง ก่อนตัดสิน
         var requiresBuyerTaxId = (o.ExtractedTotalAmount ?? 0) >= 1000m;
-        var companyTaxOk = IsThaiTaxId(company.TaxId);
-        var buyerIdRead = IsThaiTaxId(o.BuyerTaxId);
+        var companyTaxOk = ThaiTaxId.IsValid(company.TaxId);
+        // ⚠️ ต้องเป็นเลขที่ "ผ่าน checksum และไม่ใช่บาร์โค้ดสินค้า" — เดิมรับเลข
+        // 13 หลักอะไรก็ได้ ⇒ บาร์โค้ด EAN-13 ในตารางสินค้าที่ถูกยัดมาในช่องนี้
+        // ทำให้กฎที่ 3 "ผ่าน" ด้วยเหตุผลที่ผิด แล้วกฎที่ 7 ก็ไปฟันธงว่าผิดบริษัท
+        var buyerIdRead = ThaiTaxId.IsPlausibleFromScan(o.BuyerTaxId);
         var companyIdFoundInDoc = companyTaxOk && RawTextHasTaxId(rawText, company.TaxId);
         if (!requiresBuyerTaxId)
         {
@@ -246,38 +269,81 @@ public class RdComplianceValidator
                 : "กดปุ่ม 'แก้ไข' ด้านล่าง → ตรวจตารางรายการ (จำนวน/ราคา/VAT ต่อบรรทัด) ให้ตรงกับกระดาษ → บันทึก "
                   + "· ถ้ากระดาษมีทั้งรายการมี VAT และยกเว้น ให้ตั้ง VAT ต่อบรรทัดให้ถูก"));
 
-        // Rule 7: Tenant cross-check — extracted buyer should match this company.
-        // Only meaningful when there IS a buyer tax id on the document.
-        if (!string.IsNullOrWhiteSpace(o.BuyerTaxId))
+        // Rule 7: Tenant cross-check — "ใบนี้เป็นของบริษัทที่เปิดอยู่จริงไหม"
+        //
+        // ═══ กติกาเหล็ก: กฎนี้ห้ามขัดกับกฎที่ 3 ═══
+        // บั๊กจริง PI-20260820-0005 เตือนสองอย่างที่ขัดกันเองบนใบเดียวกัน:
+        // กฎที่ 3 บอก "พบเลขผู้เสียภาษีผู้ซื้อในเอกสาร" (ผ่าน) แต่กฎที่ 7 บอก
+        // "อาจอัพโหลดผิดบริษัท" (Error) — เพราะกฎที่ 7 ดูแค่ช่อง o.BuyerTaxId
+        // ที่ OCR เดามา ไม่เคยเปิดดูข้อความบนกระดาษเลย ผู้ใช้เลยเห็นระบบเถียงกันเอง
+        //
+        // เงื่อนไขที่จะฟันธงว่า "ผิดบริษัท" ได้ ต้องครบ **ทุกข้อ**:
+        //   1. เป็นเอกสารฝั่งซื้อ (ผู้ซื้อ = เราเอง) — ฝั่งขายผู้ซื้อคือลูกค้า
+        //      ไม่มีทางตรงกับเลขเรา การเทียบจึงไม่มีความหมาย
+        //   2. เลขที่อ่านได้เป็นเลขผู้เสียภาษีจริง (ผ่าน checksum + ไม่ใช่บาร์โค้ด)
+        //   3. เลขนั้นไม่ตรงกับบริษัทเรา
+        //   4. และ **ไม่พบเลขบริษัทเราที่ไหนเลยบนกระดาษ** ← ข้อที่หายไปเดิม
+        var isPurchaseSide = doc.DocumentType
+            is DocumentType.PurchaseInvoice or DocumentType.Expense
+            or DocumentType.PaymentVoucher or DocumentType.PurchaseOrder
+            or DocumentType.PurchaseRequisition or DocumentType.GoodsReceiptNote
+            or DocumentType.CertificateInLieu;
+        var buyerDigits = ThaiTaxId.Normalize(o.BuyerTaxId);
+        var buyerIsRealTaxId = ThaiTaxId.IsPlausibleFromScan(o.BuyerTaxId);
+        var buyerIsUs = ThaiTaxId.Same(o.BuyerTaxId, company.TaxId);
+
+        if (buyerIsUs)
         {
-            var match = NormalizeTaxId(o.BuyerTaxId) == NormalizeTaxId(company.TaxId);
-            results.Add(new("TENANT_BUYER_MISMATCH", match,
-                match ? "Info" : "Error",
-                match ? "ผู้ซื้อในเอกสารตรงกับบริษัทที่ใช้งานอยู่"
-                      : $"⚠️ ผู้ซื้อในเอกสาร ({o.BuyerTaxId}) ไม่ตรงกับบริษัท ({company.TaxId}) — " +
-                        "อาจอัพโหลดผิดบริษัท",
+            results.Add(new("TENANT_BUYER_MISMATCH", true, "Info",
+                "ผู้ซื้อในเอกสารตรงกับบริษัทที่ใช้งานอยู่", o.BuyerTaxId));
+        }
+        else if (buyerDigits.Length == 0)
+        {
+            // ไม่มีเลขให้เทียบ — กฎที่ 3 ดูแลเรื่อง "กระดาษมีเลขผู้ซื้อไหม" อยู่แล้ว
+        }
+        else if (!isPurchaseSide)
+        {
+            results.Add(new("TENANT_BUYER_MISMATCH", true, "Info",
+                "เอกสารฝั่งขาย — ผู้ซื้อบนกระดาษคือลูกค้า ไม่ต้องตรงกับเลขบริษัทเรา",
+                o.BuyerTaxId));
+        }
+        else if (companyIdFoundInDoc)
+        {
+            // เลขบริษัทเราอยู่บนกระดาษจริง (กฎที่ 3 ยืนยันแล้ว) แต่ OCR ไปหยิบ
+            // เลข 13 หลักตัวอื่นมาใส่ช่องผู้ซื้อ — บาร์โค้ดสินค้า / เลขทะเบียน /
+            // เลขที่เอกสาร ⇒ นี่คือ "อ่านผิดช่อง" ไม่ใช่ "อัพโหลดผิดบริษัท"
+            // ใช้ RuleCode คนละตัวเพื่อไม่ให้ไปติดธง OcrTenantMismatchFlag
+            results.Add(new("BUYER_TAX_ID_MISREAD", false, "Warning",
+                $"เครื่องอ่านหยิบเลข '{o.BuyerTaxId}' มาใส่ช่องผู้ซื้อ แต่บนกระดาษมีเลขของบริษัทเรา "
+                + $"({company.TaxId}) อยู่จริง — ใบนี้เป็นของบริษัทนี้ ระบบแค่อ่านผิดช่อง",
                 o.BuyerTaxId,
-                match ? null
-                    : "สลับบริษัทที่มุมขวาบนให้ตรงกับใบนี้ แล้วอัปโหลดใหม่ · ถ้าใบนี้เป็นของบริษัทนี้จริง "
-                      + "ให้แก้เลขผู้เสียภาษีบริษัทที่ ตั้งค่า → ข้อมูลบริษัท"));
+                "กดปุ่ม 'แก้ไข' ด้านล่าง → แก้ช่อง 'เลขผู้เสียภาษีผู้ซื้อ' เป็น " + company.TaxId
+                + " → บันทึก (ระบบจะจำไว้ใช้กับใบถัดไปของผู้ขายรายนี้)"));
+        }
+        else if (!buyerIsRealTaxId)
+        {
+            // เลขที่อ่านมาไม่ผ่าน checksum หรือหน้าตาเป็นบาร์โค้ดสินค้า —
+            // ยังฟันธงเรื่องบริษัทไม่ได้ ต้องให้คนดูกระดาษก่อน
+            results.Add(new("BUYER_TAX_ID_MISREAD", false, "Warning",
+                $"เลขในช่องผู้ซื้อ '{o.BuyerTaxId}' ไม่ใช่เลขผู้เสียภาษีที่ถูกต้อง "
+                + "(ไม่ผ่าน check digit หรือเป็นบาร์โค้ดสินค้า) — ยังสรุปไม่ได้ว่าใบนี้ของบริษัทไหน",
+                o.BuyerTaxId,
+                "เปิด 'ไฟล์แนบ' ด้านล่างดูกระดาษจริง → ถ้าเป็นใบของบริษัทนี้ ให้กด 'แก้ไข' "
+                + "แล้วกรอกเลขผู้ซื้อเป็น " + (company.TaxId ?? "เลขบริษัทเรา")));
+        }
+        else
+        {
+            // ครบทั้ง 4 เงื่อนไข — เป็นการเตือนที่มีน้ำหนักจริง
+            results.Add(new("TENANT_BUYER_MISMATCH", false, "Error",
+                $"⚠️ ผู้ซื้อในเอกสาร ({o.BuyerTaxId}) ไม่ตรงกับบริษัท ({company.TaxId}) "
+                + "และไม่พบเลขของบริษัทนี้ที่ใดบนกระดาษ — อาจอัพโหลดผิดบริษัท",
+                o.BuyerTaxId,
+                "สลับบริษัทที่มุมขวาบนให้ตรงกับใบนี้ แล้วอัปโหลดใหม่ · ถ้าใบนี้เป็นของบริษัทนี้จริง "
+                + "ให้แก้เลขผู้เสียภาษีบริษัทที่ ตั้งค่า → ข้อมูลบริษัท"));
         }
 
         return results;
     }
-
-    /// <summary>Thai Tax ID is 13 digits; the last is a checksum that
-    /// equals (11 - (Σ digit×weight mod 11)) mod 10 where weights = 13..2.
-    /// We accept any 13-digit string here (lenient) — full checksum
-    /// validation can be a future tightening.</summary>
-    private static bool IsThaiTaxId(string? s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return false;
-        var digits = Regex.Replace(s, @"[\s-]", "");
-        return digits.Length == 13 && digits.All(char.IsDigit);
-    }
-
-    private static string NormalizeTaxId(string? s)
-        => string.IsNullOrWhiteSpace(s) ? "" : Regex.Replace(s, @"[\s-]", "");
 
     /// <summary>เลขผู้เสียภาษี 13 หลักปรากฏในข้อความ OCR ทั้งหน้าหรือไม่ —
     /// บนกระดาษมักพิมพ์เป็น "0-1055-35099-51-1" หรือเว้นวรรค จึงจับเป็น "ก้อนตัวเลข
@@ -288,13 +354,16 @@ public class RdComplianceValidator
     /// ไว้แค่ "ก้อนเดียวกัน" ที่คั่นด้วย - หรือช่องว่างเท่านั้น (ลูกน้ำ/จุด/ตัวอักษร
     /// ตัดก้อน) แล้วค้นแบบ substring ในก้อนนั้น เพื่อให้เคส "123 456 789 0105535099511"
     /// (มีเลขอื่นนำหน้าในบรรทัดเดียวกัน) ยังหาเจอ — ไม่งั้นจะเตือนผิดทั้งที่กระดาษมีเลข</summary>
-    private static bool RawTextHasTaxId(string? rawText, string? taxId)
+    internal static bool RawTextHasTaxId(string? rawText, string? taxId)
     {
-        var want = NormalizeTaxId(taxId);
+        var want = ThaiTaxId.Normalize(taxId);
         if (want.Length != 13 || string.IsNullOrWhiteSpace(rawText)) return false;
-        foreach (Match m in Regex.Matches(rawText, @"[\d\s-]{13,}"))
+        // \s เดิมครอบ \n ด้วย ⇒ เลขท้ายบรรทัดถูกต่อกับเลขต้นบรรทัดถัดไปจนเกิด
+        // match ปลอม ซึ่งอันตรายเป็นพิเศษตรงนี้เพราะ "เจอเลขเราบนกระดาษ" คือสิ่งที่
+        // ปิดคำเตือน "อัพโหลดผิดบริษัท" — match ปลอมแปลว่าเตือนของจริงถูกกลบ
+        foreach (Match m in Regex.Matches(rawText, @"[\d \t-]{13,}"))
         {
-            if (NormalizeTaxId(m.Value).Contains(want, StringComparison.Ordinal)) return true;
+            if (ThaiTaxId.Normalize(m.Value).Contains(want, StringComparison.Ordinal)) return true;
         }
         return false;
     }

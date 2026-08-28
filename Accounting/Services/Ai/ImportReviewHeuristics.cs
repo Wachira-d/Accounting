@@ -268,14 +268,8 @@ public static class ImportReviewHeuristics
 
     /// <summary>mod-11 ของเลขประจำตัวผู้เสียภาษี/บัตรประชาชนไทย 13 หลัก</summary>
     internal static bool IsValidThaiTaxIdChecksum(string digits13)
-    {
-        if (digits13.Length != 13 || !digits13.All(char.IsDigit)) return false;
-        var sum = 0;
-        for (var i = 0; i < 12; i++)
-            sum += (digits13[i] - '0') * (13 - i);
-        var check = (11 - (sum % 11)) % 10;
-        return check == digits13[12] - '0';
-    }
+        => digits13.Length == 13 && digits13.All(char.IsDigit)
+           && Accounting.Helpers.ThaiTaxId.HasValidChecksum(digits13);
 
     private static string BuildRowKey(Dictionary<string, string?> row, IReadOnlyList<string> cols)
         => string.Join("|", cols.Select(c => (row.GetValueOrDefault(c) ?? "").Trim().ToLowerInvariant()))

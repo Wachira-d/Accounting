@@ -29,12 +29,8 @@ public static class ThaiTaxIdValidator
         if (first < '0' || first > '8')
             return new ValidationResult(false, "หลักแรกต้องเป็น 0-8");
 
-        // Mod-11 checksum
-        int sum = 0;
-        for (int i = 0; i < 12; i++)
-            sum += (clean[i] - '0') * (13 - i);
-        var check = (11 - (sum % 11)) % 10;
-        if (check != (clean[12] - '0'))
+        // Mod-11 checksum — ใช้ตัวกลางตัวเดียวของระบบ (ThaiTaxId.cs) ห้ามคำนวณซ้ำที่นี่
+        if (!ThaiTaxId.HasValidChecksum(clean))
             return new ValidationResult(false, "เลข check digit ไม่ถูกต้อง (ตรวจสอบเลขที่กรอกใหม่อีกครั้ง)");
 
         return new ValidationResult(true, null);

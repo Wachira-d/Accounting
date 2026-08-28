@@ -8481,8 +8481,12 @@
           // ตลอดไป ทั้งที่กระดาษครบจริง) → ใบ OCR ที่ยังติดเตือน ให้ตรวจซ้ำ
           // เบื้องหลังหนึ่งครั้งก่อนแสดง ถ้าผลเปลี่ยนค่อยโหลดใหม่ (ผู้ใช้เห็น
           // ผลล่าสุดเสมอ ไม่ต้องสแกนใหม่) — best-effort: ตรวจไม่ได้ = แสดงของเดิม
+          // ต้องรวม ocrTenantMismatchFlag ด้วย — แบนเนอร์แดง "เลขผู้ซื้อไม่ตรงกับ
+          // บริษัทนี้" อ่านจากธงตัวนี้โดยตรง ไม่ได้อ่านจาก rdComplianceStatus
+          // ⇒ ใบที่สถานะกลายเป็น Valid ไปแล้วแต่ธงยังค้าง จะโชว์แบนเนอร์แดงตลอดไป
+          // โดยไม่มีทางตรวจซ้ำให้หาย (ธงนี้คือคำเตือนที่ผู้ใช้ร้องเรียนบ่อยที่สุด)
           if (!_skipRdRecheck && d.ocrConfidenceScore != null
-              && ['Warning', 'Failed'].includes(d.rdComplianceStatus)) {
+              && (['Warning', 'Failed'].includes(d.rdComplianceStatus) || d.ocrTenantMismatchFlag)) {
             try {
               const r = await API.post(
                 `/api/companies/${Layout.getCompanyId()}/ocr/documents/${id}/recheck-compliance`);
