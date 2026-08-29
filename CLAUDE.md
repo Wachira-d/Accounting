@@ -390,16 +390,37 @@ OCR ไม่ใช่ "ตัวช่วยพิมพ์" แต่เป็
    `Subtotal`, `VatAmount`, `GrandTotal`, `WhtRate` (ถ้ามี), `GlAccountCode` (รายบรรทัด),
    `PaymentTerms` — **ห้ามมี null/empty** ใน field ที่เอกสารต้องมีตามกฎหมาย
 
-2. **Fallback chain เติมให้เต็ม** — ลำดับการเติมเมื่อ OCR confidence ต่ำ:
-   1. **Vision/OCR primary** (DeepSeek-VL / รุ่นที่กำหนด)
-   2. **Local distillation model** (`OcrFullReviewDistillationModel` +
+2. **Fallback chain เติมให้เต็ม** — ลำดับการเติมเมื่อ OCR confidence ต่ำ
+   (**ตรงกับโค้ดจริงใน `OcrService.ProcessScanAsync`** — ปรับให้ตรงเมื่อ
+   2026-08-28 หลังพบว่าข้อ 1 เดิมเขียนถึงสิ่งที่ยังไม่มีในระบบ):
+   1. **OCR engine ตามลำดับ**: Azure Document Intelligence → local python
+      service → `EmbeddedTesseractOcrService` (ตัวสุดท้ายคืน**ข้อความล้วน**
+      ไม่มีโครงตาราง)
+   2. **สกัดจากข้อความ** — `SmartFieldExtractor.Enrich` + `EnrichFromRawText`
+      (รหัสสาขา §86/4, เครดิตเทอม, ส่วนลด, หน่วยนับ, จำนวนเงินตัวอักษร)
+   3. **แพตเทิร์นที่เรียนไว้** — `DocumentZoneAnalyzer.ApplyLearnedPatternsTo`
+      อ่าน `OcrLearnedPatterns` ของผู้ขายรายนั้น (เติมเฉพาะช่องที่ยังว่าง)
+   4. **วิเคราะห์โซน** — `DocumentZoneAnalyzer.Analyze` ทำงานเมื่อ pipeline
+      หลักไม่ได้ทั้งชื่อผู้ขายและยอดรวม
+   5. **Local distillation model** (`OcrFullReviewDistillationModel` +
       `GlAccountDistillationModel` ฯลฯ — ตามกฎเหล็ก #1)
-   3. **Historical lookup** — ถ้า `SellerTaxId` เคยมีในระบบ → autofill
+   6. **Historical lookup** — ถ้า `SellerTaxId` เคยมีในระบบ → autofill
       `SellerName/Address/BranchCode` จาก `Contact` ล่าสุดของ vendor นั้น
-   4. **Rule-based defaults** — VAT 7%, BranchCode `00000`, GL account จาก
+   7. **Rule-based defaults** — VAT 7%, BranchCode `00000`, GL account จาก
       `VendorDefaultGlAccount`, payment terms = company default
-   5. **เดาแบบมีเหตุผล** ใช้ `IAiOrchestrator.AskAsync` เป็น last resort
-      (per กฎเหล็ก #1: ต้อง CAPTURE + DISTILL)
+   8. **เดาแบบมีเหตุผล** ใช้ `IAiOrchestrator.AskAsync` เป็น last resort
+      (per กฎเหล็ก #1: ต้อง CAPTURE + DISTILL) — รวม
+      `AiFeatureKey.OcrLineItemSplit` ที่แตกบรรทัดจากข้อความเมื่อ engine
+      ไม่คืนตารางมา (ผ่านด่าน `Helpers/OcrLineSplitGuard` เสมอ)
+
+   > ⚠️ **Vision-LLM tier ยังไม่มีในระบบ** — เดิมข้อ 1 เขียนว่า
+   > "Vision/OCR primary (DeepSeek-VL)" แต่ `DeepSeekProvider.CompleteAsync`
+   > รับแต่ข้อความ ไม่มีทางส่งรูปเข้าไป และไม่มี engine ตัวไหนเรียกโมเดล
+   > vision เลย. **โค้ดเป็น ground truth — doc ผิด จึงแก้ doc**
+   > ถ้าจะทำจริงต้องมี: (ก) ให้ provider ส่ง image content ได้
+   > (ข) engine tier ใหม่ที่ส่งไฟล์สแกน (ค) toggle + โควตา + budget guard
+   > (ง) ด่านตรวจผลลัพธ์เทียบยอดบนกระดาษแบบเดียวกับ `OcrLineSplitGuard`
+   > — **ห้าม merge ครึ่ง ๆ กลาง ๆ** เพราะตัวเลขที่ได้กลายเป็นรายการบัญชีจริง
 
 3. **Confidence + ป้ายเตือน** — field ที่ confidence < 0.85 → highlight สีเหลือง
    พร้อม tooltip "ตรวจสอบอีกครั้ง" แต่ **ยังต้องมีค่าเติมไว้แล้ว** ไม่ใช่ blank
@@ -896,9 +917,50 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - **`Math.Round` ที่ลืม `AwayFromZero` มักมาเป็นคู่ — แก้ตัวหนึ่งแล้วเหลืออีกตัว**
   `PlatformBillingDocumentIssuer` คิด 7/107 ถูกต้องพร้อม `AwayFromZero` แต่
   `SaasBillingDocumentService` ที่คิด**สูตรเดียวกัน** ลืมทั้ง 4 จุด และ
-  `SampleDataController` อีก 1 จุด ⇒ ใบเดียวกันคำนวณคนละที่ได้ยอดต่างกัน ฿0.01
+  `SampleDataController` อีก 1 จุด
   _(ก่อน commit ที่แตะเงิน: `grep -n 'Math\.Round' <file>` แล้วดูว่าจุดที่เป็น_
   _จำนวนเงินมี `MidpointRounding` ครบทุกจุดไหม — ไม่ใช่แค่จุดที่กำลังแก้)_
+- **แต่ "ลืม `AwayFromZero`" ≠ "ยอดผิด" เสมอไป — ต้องพิสูจน์ว่าสูตรนั้นตกจุด
+  กึ่งกลางได้จริงก่อนเรียกว่าบั๊ก** ตอนไล่แก้ 5 จุดข้างบน ผมสรุปเหมาเข่งว่า
+  "ใบเดียวกันคำนวณคนละที่ต่างกัน ฿0.01" แล้วเขียนลง DOCUMENT_FLOW/ACCOUNT_STRUCTURE
+  ไปแล้ว — พอเขียน simulation ไล่ทุกยอด ฿0.01–฿20,000 (2 ล้านค่า) กลับพบว่า:
+  `x × 7 / 107` และ `x / 1.07` **ไม่มีค่าใดตกจุดกึ่งกลางเลย** (ต้องมี
+  14·c ≡ 107 mod 214 เมื่อ c = จำนวนสตางค์ ซึ่งเป็นไปไม่ได้ — ซ้ายคู่เสมอ ขวาคี่)
+  ⇒ 3 ใน 5 จุดที่ "แก้" ไม่เคยผิดมาก่อน. ที่ผิดจริงคือ `x × 0.07` (VAT บวกเพิ่ม)
+  ซึ่งตกกึ่งกลาง ~0.5% ของยอด (฿1.50 → 0.105 ⇒ 0.11 เทียบ 0.10)
+  _(บทเรียนซ้อน: **negative test ที่ "ผ่านทั้งก่อนและหลังแก้" = ยังไม่ได้พิสูจน์
+  ว่ามีบั๊ก** ไม่ใช่ "แก้สำเร็จ" — ต้องรัน**สูตรเดิม**กับช่วงค่าจริงแล้วเห็นมันพัง
+  ก่อน ถ้าไม่พังแปลว่าที่รายงานมาผิด ให้แก้บันทึกให้ตรงความจริงทันที ไม่ใช่ปล่อย
+  ให้ doc ถือ "บทเรียน" ที่ไม่เคยเกิด. เก็บการยุบสูตรซ้ำไว้ได้ แต่ต้องเรียกว่า
+  **การป้องกัน** ไม่ใช่การแก้บั๊ก — ล็อกข้อเท็จจริงไว้ที่ `VatRoundingModeTests`)_
+- **ผลตรวจจากทีม/agent ต้อง verify ก่อนเชื่อ — มันผิดได้ทั้งสองทาง** รอบเก็บงาน
+  คงค้างพิสูจน์ทั้งสองแบบในรอบเดียว: รายงานบอกว่า `quick-sale.html` มีสูตร
+  7/107 ซ้ำ — **ไม่มีจริง** (แก้ตามไปก็เสียเวลาเปล่า); รายงานบอกว่า
+  `GetActivePatternsAsync` เป็น N+1 ซึ่งผมประเมินตอนแรกว่า "เกินจริง" —
+  **จริง** (`MatchAsync` ถูกเรียกใน `for` ลูปของ `OcrController` แล้วยิง
+  query ต่อบรรทัด). ทั้งสองครั้งคำตอบมาจาก `grep` จุดเรียกจริง ไม่ใช่การอ่าน
+  รายงานแล้วเชื่อ/ไม่เชื่อตามความรู้สึก
+  _(กติกา: ทุกข้อในผลตรวจต้องเปิดไฟล์ยืนยันเองก่อนลงมือ — และเมื่อพบว่าที่_
+  _รายงานมาผิด ให้บันทึกไว้ด้วยว่าผิด ไม่ใช่แค่ข้ามไปเงียบ ๆ)_
+- **"ลืม `AwayFromZero`" ≠ "ยอดผิด" — พิสูจน์ว่าสูตรตกจุดกึ่งกลางได้จริงก่อน**
+  ดูรายละเอียดในบทเรียนเรื่อง `Math.Round` ข้างล่าง: `x × 7/107` และ `x / 1.07`
+  **ไม่มีค่าใดตกจุดกึ่งกลางเลย** ส่วน `x × 0.07` ตกจริง ~0.5% ของยอด
+- **ของที่ "ไม่มีใครเรียก" มี 2 ทางแก้ และต้องเลือกอย่างตั้งใจ: ต่อสาย หรือ ลบ**
+  รอบนี้เจอ 4 ตัวและ**ต่อสายทั้งหมด** เพราะแต่ละตัวมีที่ทางชัดเจนอยู่แล้ว
+  (`GetActivePatternsAsync` → prewarm ก่อนลูป · `RunMaintenanceForCompanyAsync`
+  → endpoint แอดมิน · `DocumentWorkflowPredictor` → local prior ของ
+  `DocumentConversionSuggestion` ซึ่ง `LocalModelVersion` ชื่อ "WorkflowMap-v1"
+  รออยู่แล้ว · `DocumentZoneAnalyzer.Analyze` → fallback เมื่อ pipeline หลัก
+  ไม่ได้อะไรเลย). **ห้ามปล่อยไว้เฉย ๆ** เพราะโค้ดที่ไม่มีใครเรียกจะถูกอ่านว่า
+  "มี feature นี้แล้ว" ทั้งที่ไม่มี — และ doc-comment ของมันจะโกหกคนอ่านต่อไป
+- **feature ที่ยังไม่มีจริง ห้ามเขียนใน CLAUDE.md ว่ามีแล้ว** กฎเหล็ก #3 ข้อ 2
+  เคยระบุว่า fallback ขั้น 1 คือ "Vision/OCR primary (DeepSeek-VL)" แต่
+  `DeepSeekProvider.CompleteAsync` **รับแต่ข้อความ ส่งรูปไม่ได้** และไม่มี engine
+  ตัวไหนเรียกโมเดล vision เลย ⇒ ทุกคนที่อ่านกฎนี้ (รวม AI agent) เข้าใจผิดว่า
+  ระบบมีชั้นนั้นแล้วและไปออกแบบต่อจากสมมติฐานที่ผิด
+  _(กติกาเดิมของไฟล์นี้ใช้ได้ตรง ๆ: **โค้ดเป็น ground truth — doc ผิด แก้ doc**._
+  _และเมื่อจดว่า "ยังไม่มี" ให้เขียนด้วยว่า**ต้องมีอะไรบ้างถึงจะเรียกว่าเสร็จ**_
+  _ไม่งั้นรอบหน้าจะมีคน merge ครึ่ง ๆ กลาง ๆ เข้าเส้นทางที่ตัวเลขกลายเป็นบัญชีจริง)_
 - checker ใหม่ทุกตัวต้องผ่าน **negative test** ก่อนเชื่อ: ใส่บั๊กที่ตั้งใจจับ
   กลับเข้าไปแล้วยืนยันว่า checker จับได้จริง (เคยมี checker ที่ regex ผิด
   จนไม่จับเคสหลักของตัวเอง)

@@ -619,6 +619,19 @@ public class OcrService : IOcrService
             // เท่านั้น ห้ามทับค่าที่ engine อ่านได้
             await ApplyLearnedPatternsAsync(companyId, extractedData, extractedText);
 
+            // ── ทางสำรองสุดท้าย: วิเคราะห์โซนบนกระดาษ ──
+            // รันเฉพาะตอนที่ pipeline หลัก "ไม่ได้อะไรเลย" (ไม่รู้ทั้งผู้ขายและ
+            // ยอดรวม) ซึ่งเป็นตอนที่ผู้ใช้ต้องมานั่งกรอกเองทั้งใบ
+            // ⚠️ DocumentZoneAnalyzer.Analyze เป็นตัวสกัดอีกชุดที่เขียนไว้ครบ
+            // (โซน + FieldPatternLibrary) แต่ **ไม่มี call site ทั้งเรพ**
+            await ApplyZoneAnalysisFallbackAsync(companyId, extractedData, extractedText);
+
+            // ── engine ไม่คืนตารางรายการเลย → ให้ AI แตกบรรทัดจากข้อความ ──
+            // เส้นทาง Tesseract แบบฝังคืนแต่ข้อความล้วน ⇒ Items ว่างทุกใบ
+            // ผลคือเอกสารได้บรรทัดสรุปใบเดียว แยกหมวดค่าใช้จ่ายไม่ได้
+            // (ยังลงบัญชีได้ = local path ที่มีอยู่แล้ว ⇒ kill-switch ผ่าน)
+            await TrySplitLineItemsWithAiAsync(companyId, scanResult, extractedData, extractedText);
+
             // ── เชื่อค่าเงินจากระบบภายนอก (override OCR vision) ──
             // พาร์ทเนอร์ที่ยิง OCR ผ่าน API ส่งยอดที่กรอก/คำนวณเองมาใน metadata →
             // เชื่อค่านั้นแทนค่าที่ OCR แกะจากรูป (กันอ่านเลขผิด 530↔630). ทำหลัง
@@ -1266,12 +1279,24 @@ public class OcrService : IOcrService
                     // ทั้งใบเป็น amount ทำให้กฎ capitalize (≥฿50,000/ชิ้น) ตัดสินบน
                     // ตัวเลขผิด (บิล Makro รวม 60,000 ที่มีปริ้นเตอร์ 4,500 → AI เห็น
                     // 60,000 เลยสั่ง capitalize ทั้งตะกร้า)
-                    var itemDescs = extractedData.Items
+                    // ⚠️ เดิม `.Take(3)` ตัดที่ 3 บรรทัดแรก — ตะกร้าที่มี 12 รายการ
+                    // ถูกตัดสินบัญชีจากรายการที่บังเอิญอยู่ต้นบิล ซึ่งไม่ได้แปลว่า
+                    // เป็นตัวแทนของยอดเลย (บิลค้าปลีกมักเรียงตามลำดับสแกนสินค้า)
+                    // ตอนนี้เรียงตาม**ยอดต่อบรรทัดจากมากไปน้อย** แล้วส่งได้ถึง 12
+                    // บรรทัด + บอกจำนวนที่เหลือ ⇒ ตัวแทนตะกร้าตรงกับที่เงินอยู่จริง
+                    var rankedItems = extractedData.Items
                         .Where(i => !string.IsNullOrWhiteSpace(i.Description))
+                        .OrderByDescending(i => i.Amount ?? 0m)
+                        .ToList();
+                    const int glMaxLines = 12;
+                    var itemDescs = rankedItems
+                        .Take(glMaxLines)
                         .Select(i => i.Amount.HasValue && i.Amount.Value > 0
                             ? $"{i.Description!.Trim()} (฿{i.Amount.Value:N0})"
                             : i.Description!.Trim())
-                        .Take(3).ToList();
+                        .ToList();
+                    if (rankedItems.Count > glMaxLines)
+                        itemDescs.Add($"…และอีก {rankedItems.Count - glMaxLines} รายการย่อย");
                     var aiLineDesc = itemDescs.Count > 0
                         ? string.Join(" | ", itemDescs)
                         : extractedData.VendorName ?? "";
@@ -5553,7 +5578,36 @@ public class OcrService : IOcrService
         scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
         scan.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        // ปิด loop การเรียนรู้ (กฎเหล็ก #1 ขั้น CAPTURE) — ผู้ใช้เพิ่ม/ลบบรรทัด
+        // บนใบที่ AI เป็นคนแตกรายการให้ = ground truth ว่า AI แตกมาไม่ครบ/เกิน
+        // ไม่บันทึก = AiFeedbackTrainingJob mine ไม่ได้ (mine เฉพาะแถวที่
+        // UserChosenAt != null) ⇒ จ่าย token ทุกใบแต่ไม่เคยฉลาดขึ้น
+        await RecordLineSplitFeedbackAsync(scan, items.Count, acceptedAi: false);
         return items.Count;
+    }
+
+    /// <summary>ส่งคำตอบจริงของผู้ใช้กลับไปสอน (feature OcrLineItemSplit)
+    ///
+    /// <para>ยิงครั้งเดียวต่อสแกน — ล้าง <c>LineSplitAiFeedbackId</c> หลังบันทึก
+    /// เพื่อไม่ให้การแก้บรรทัดครั้งที่ 2, 3 ส่งซ้ำ. ล้มเหลว = เงียบ
+    /// (ห้ามขวางการแก้ไขของผู้ใช้)</para></summary>
+    private async Task RecordLineSplitFeedbackAsync(
+        OcrScanResult scan, int finalLineCount, bool acceptedAi)
+    {
+        if (_feedbackRecorder == null || scan.LineSplitAiFeedbackId is not Guid fbId) return;
+        try
+        {
+            await _feedbackRecorder.RecordUserChoiceAsync(
+                fbId, finalLineCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                acceptedAi, default);
+            scan.LineSplitAiFeedbackId = null;      // ปิดแล้วปิดเลย ไม่ส่งซ้ำ
+            await _db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "บันทึก feedback การแตกบรรทัดไม่สำเร็จ (scan {ScanId})", scan.Id);
+        }
     }
 
     public async Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId)
@@ -6448,7 +6502,9 @@ public class OcrService : IOcrService
             VendorBranchCode: data?.VendorBranchCode ?? r.VendorBranchCode ?? "00000",
             VendorAddress: data?.VendorAddress ?? r.VendorAddress,
             BuyerBranchCode: data?.BuyerBranchCode ?? r.BuyerBranchCode ?? "00000",
-            BuyerAddress: data?.BuyerAddress ?? r.BuyerAddress);
+            BuyerAddress: data?.BuyerAddress ?? r.BuyerAddress,
+            // ป้ายซื่อสัตย์ตามกฎเหล็ก #1 — บอกว่ารายการในใบนี้ AI เป็นคนแตกให้
+            LineSplitUsedAi: r.LineSplitUsedAi);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
@@ -6564,6 +6620,146 @@ public class OcrService : IOcrService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "ใช้แพตเทิร์นที่เรียนไว้ไม่สำเร็จ — ข้ามขั้นตอนนี้");
+        }
+    }
+
+    /// <summary>
+    /// ให้ AI แตกรายการจากข้อความดิบ เมื่อ engine ไม่คืนตารางรายการมาเลย
+    ///
+    /// <para><b>ด่านกันมั่ว (กฎเหล็ก #1)</b>: รับผลก็ต่อเมื่อผลรวมของบรรทัด
+    /// ที่ได้กลับมา<b>ลงตัวกับยอดหัวกระดาษ</b> (ยอดก่อนภาษี หรือยอดรวมเมื่อ
+    /// ราคารวม VAT) ภายใน ±1 บาท — ไม่ลงตัว = ทิ้งทั้งชุด ไม่ใช่รับบางบรรทัด
+    /// เพราะบรรทัดที่แต่งขึ้นจะกลายเป็นรายการทางบัญชีจริง</para>
+    ///
+    /// <para>AI ปิด/ล่ม/ตอบไม่ลงตัว → ไม่ทำอะไร ⇒ คงพฤติกรรมเดิม (บรรทัดสรุป
+    /// ใบเดียวจากยอดหัวกระดาษ) ผู้ใช้ยังสร้างเอกสารได้ครบ</para>
+    /// </summary>
+    private async Task TrySplitLineItemsWithAiAsync(
+        Guid companyId, OcrScanResult scanResult, OcrExtractedData data, string? rawText)
+    {
+        var scanResultId = scanResult.Id;
+        if (_aiAugmenter == null) return;
+        if (data.Items.Count > 0) return;                    // engine ให้รายการมาแล้ว
+        if (string.IsNullOrWhiteSpace(rawText)) return;
+
+        var sub = data.SubTotal ?? 0m;
+        var total = data.TotalAmount ?? 0m;
+        if (sub <= 0m && total <= 0m) return;                // ไม่มียอดให้ตรวจ = ไม่เรียก
+
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var res = await _aiAugmenter.SplitLineItemsAsync(
+                companyId, scanResultId, rawText,
+                data.DocumentType, data.VendorName,
+                data.SubTotal, data.VatAmount, data.TotalAmount, cts.Token);
+
+            if (!res.UsedAi || string.IsNullOrWhiteSpace(res.Answer)) return;
+
+            // ด่านตรวจอยู่ใน Helpers/OcrLineSplitGuard (pure + มีเทสต์) —
+            // ตรรกะที่ตัดสินว่า "ยอมให้บรรทัดที่ AI แต่งกลายเป็นรายการบัญชีไหม"
+            // ต้องทดสอบได้ ไม่ใช่ฝังกลางเมธอด async
+            var guard = Accounting.Helpers.OcrLineSplitGuard.Evaluate(res.Answer, sub, total);
+            if (!guard.Accepted)
+            {
+                data.ReasoningTrace.Add($"[LineSplit] ไม่รับผลจาก AI — {guard.Reason}");
+                _logger.LogInformation(
+                    "AI line-split ถูกปฏิเสธ (scan {ScanId}): {Reason}", scanResultId, guard.Reason);
+                return;
+            }
+
+            foreach (var line in guard.Lines)
+            {
+                data.Items.Add(new OcrExtractedLineItem
+                {
+                    Description = line.Description,
+                    Quantity = line.Quantity,
+                    UnitPrice = line.UnitPrice,
+                    Amount = line.Amount,
+                    Unit = line.Unit,
+                });
+            }
+            // ปิด loop การเรียนรู้ (กฎเหล็ก #1 ขั้น CAPTURE) — เก็บ feedbackId
+            // ไว้กับสแกน เพื่อให้ตอนผู้ใช้แก้/ยืนยันรายการในหน้า review
+            // ระบบส่งคำตอบจริงกลับไปสอนได้ ไม่งั้น = จ่าย token ฟรีทุกใบ
+            scanResult.LineSplitAiFeedbackId = res.FeedbackId;
+            scanResult.LineSplitUsedAi = true;
+            data.ReasoningTrace.Add(
+                $"🤖 [LineSplit] AI แตกรายการจากข้อความได้ {guard.Lines.Count} บรรทัด " +
+                $"(รวม ฿{guard.Sum:N2} ตรงกับยอดบนกระดาษ) — กรุณาตรวจก่อนยืนยัน");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AI line-split ล้มเหลว — ใช้บรรทัดสรุปใบเดียวตามเดิม");
+        }
+    }
+
+    /// <summary>
+    /// ทางสำรองสุดท้ายเมื่อ pipeline หลักอ่านอะไรไม่ได้เลย — ใช้
+    /// <see cref="DocumentZoneAnalyzer.Analyze"/> ซึ่งแบ่งกระดาษเป็นโซน
+    /// (หัวเอกสาร/ผู้ขาย/ผู้ซื้อ/รายการ/สรุปยอด) แล้วสกัดด้วย
+    /// <c>FieldPatternLibrary</c>
+    ///
+    /// <para>⚠️ <c>Analyze</c> เป็นตัวสกัดอีกชุดที่เขียนไว้ครบ ~900 บรรทัด
+    /// แต่ <b>ไม่มี call site ทั้งเรพ</b> — เข้าถึงได้ทางเดียวคือผ่านเมธอดนี้</para>
+    ///
+    /// <para>เงื่อนไขเข้า: ไม่รู้ทั้ง <c>VendorName</c> และ <c>TotalAmount</c>
+    /// (คือสถานะที่ผู้ใช้ต้องกรอกเองทั้งใบอยู่แล้ว) ⇒ ผลลัพธ์แย่ที่สุดคือเท่าเดิม
+    /// และ**เติมเฉพาะช่องที่ยังว่าง** ไม่ทับค่าที่ engine อ่านได้</para>
+    /// </summary>
+    private async Task ApplyZoneAnalysisFallbackAsync(
+        Guid companyId, OcrExtractedData data, string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return;
+        if (!string.IsNullOrWhiteSpace(data.VendorName) || data.TotalAmount is > 0) return;
+
+        try
+        {
+            var ourTaxId = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
+
+            var zoned = DocumentZoneAnalyzer.Analyze(rawText, learnedPatterns: null, ourCompanyTaxId: ourTaxId);
+
+            var filled = new List<string>();
+            if (string.IsNullOrWhiteSpace(data.VendorName) && !string.IsNullOrWhiteSpace(zoned.SellerName))
+            { data.VendorName = zoned.SellerName; filled.Add("ชื่อผู้ขาย"); }
+
+            if (string.IsNullOrWhiteSpace(data.VendorTaxId)
+                && Accounting.Helpers.ThaiTaxId.IsValid(zoned.SellerTaxId))
+            { data.VendorTaxId = Accounting.Helpers.ThaiTaxId.Normalize(zoned.SellerTaxId); filled.Add("เลขผู้เสียภาษีผู้ขาย"); }
+
+            if (string.IsNullOrWhiteSpace(data.BuyerName) && !string.IsNullOrWhiteSpace(zoned.BuyerName))
+            { data.BuyerName = zoned.BuyerName; filled.Add("ชื่อผู้ซื้อ"); }
+
+            if (string.IsNullOrWhiteSpace(data.BuyerTaxId)
+                && Accounting.Helpers.ThaiTaxId.IsValid(zoned.BuyerTaxId))
+            { data.BuyerTaxId = Accounting.Helpers.ThaiTaxId.Normalize(zoned.BuyerTaxId); filled.Add("เลขผู้เสียภาษีผู้ซื้อ"); }
+
+            if (string.IsNullOrWhiteSpace(data.DocumentNumber) && !string.IsNullOrWhiteSpace(zoned.DocumentNumber))
+            { data.DocumentNumber = zoned.DocumentNumber; filled.Add("เลขที่เอกสาร"); }
+
+            if (data.DocumentDate == null && zoned.DocumentDate != null)
+            { data.DocumentDate = zoned.DocumentDate; filled.Add("วันที่"); }
+
+            if (data.TotalAmount is not > 0 && zoned.TotalAmount is > 0)
+            { data.TotalAmount = zoned.TotalAmount; filled.Add("ยอดรวม"); }
+
+            if (data.SubTotal is not > 0 && zoned.SubTotal is > 0)
+            { data.SubTotal = zoned.SubTotal; filled.Add("ยอดก่อนภาษี"); }
+
+            if (data.VatAmount is not > 0 && zoned.VatAmount is > 0)
+            { data.VatAmount = zoned.VatAmount; filled.Add("ภาษีมูลค่าเพิ่ม"); }
+
+            if (data.PaymentTermsDays == null && zoned.PaymentTermsDays is > 0)
+            { data.PaymentTermsDays = zoned.PaymentTermsDays; filled.Add("เครดิตเทอม"); }
+
+            if (filled.Count > 0)
+                data.ReasoningTrace.Add(
+                    $"[ZoneFallback] pipeline หลักอ่านไม่ได้ — วิเคราะห์โซนเติมให้: {string.Join(", ", filled)}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "zone-analysis fallback ล้มเหลว — ข้ามขั้นตอนนี้");
         }
     }
 

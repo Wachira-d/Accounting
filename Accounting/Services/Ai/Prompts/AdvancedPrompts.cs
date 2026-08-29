@@ -416,10 +416,20 @@ Respond ONLY as JSON:
   ""suggested_actions"": []
 }";
 
+    /// <param name="workflowPrior">สิ่งที่ "ประวัติจริงของคู่ค้ารายนี้" บอกว่าเอกสาร
+    /// ถัดไปมักเป็นอะไร — มาจาก <c>DocumentWorkflowPredictor</c> (Markov อันดับ 1)
+    ///
+    /// <para>⚠️ ช่องนี้ว่างมาตลอดทั้งที่ <c>LocalModelVersion</c> ของ prompt นี้
+    /// ชื่อ "WorkflowMap-v1" อยู่แล้ว: <c>DocumentWorkflowPredictor</c> ถูก
+    /// register ใน DI แต่ <b>ไม่มีใครเรียกเลยทั้งเรพ</b> ⇒ โมเดลทั้งตัวตายในไฟล์
+    /// และ feature นี้ก็ไม่มี local prior ให้ short-circuit ตามกฎเหล็ก #1</para></param>
     public static AiRequest Build(
         Guid companyId, Guid scanResultId,
         string scannedDocType, object scannedSnapshot,
-        string ourRole)
+        string ourRole,
+        object? workflowPrior = null,
+        string? localGuess = null,
+        decimal? localConfidence = null)
     {
         var payload = new
         {
@@ -427,6 +437,10 @@ Respond ONLY as JSON:
             scanned_doc_type = scannedDocType,
             our_role = ourRole,
             scanned_snapshot = scannedSnapshot,
+            // ประวัติจริงชนะการเดาจากชนิดเอกสารล้วน ๆ — คู่ค้าบางรายไม่เคยเดินตาม
+            // เส้นทางมาตรฐาน (เช่น ออกใบกำกับแล้วจบ ไม่เคยมีใบเสร็จแยก)
+            workflow_prior = workflowPrior,
+            local_model = new { pick = localGuess, confidence = localConfidence },
         };
         return new AiRequest
         {
@@ -434,13 +448,106 @@ Respond ONLY as JSON:
             CompanyId = companyId,
             SystemPrompt = SystemPrompt,
             UserPromptJson = JsonSerializer.Serialize(payload),
-            LocalPrimaryAnswer = null,
-            LocalConfidence = null,
+            LocalPrimaryAnswer = localGuess,
+            LocalConfidence = localConfidence,
             LocalModelVersion = "WorkflowMap-v1",
             SourceEntityType = "OcrScanResult",
             SourceEntityId = scanResultId,
             CacheTtlOverrideDays = 30,
             MaxTokensOverride = 500,
+        };
+    }
+}
+
+/// <summary>
+/// แตก "รายการสินค้า/บริการ" ออกจากข้อความดิบบนกระดาษ เมื่อ engine ที่ใช้
+/// ไม่คืนตารางรายการมาให้เลย
+///
+/// ═══ ทำไมต้องมี ═══
+/// เส้นทาง Tesseract แบบฝัง (ตัวสำรองเมื่อ Azure DI / python service ใช้ไม่ได้)
+/// คืนแต่ข้อความล้วน ไม่มีโครงตาราง ⇒ <c>Items</c> ว่าง<b>ทุกใบ</b> แล้วเอกสาร
+/// ที่สร้างได้มีบรรทัดสรุปใบเดียวจากยอดหัวกระดาษ — ลงบัญชีได้ แต่แยกหมวด
+/// ค่าใช้จ่ายไม่ได้ และรายงานสินค้า/วัตถุดิบ §87(3) ใช้ไม่ได้
+///
+/// ═══ ด่านกันมั่ว ═══
+/// ผู้เรียก<b>ต้อง</b>ตรวจว่าผลรวมของบรรทัดที่ได้กลับมาลงตัวกับยอดที่อ่านได้
+/// จากหัวกระดาษก่อนรับไปใช้ — ไม่ลงตัว = ทิ้งทั้งชุด ไม่ใช่รับบางบรรทัด
+/// (ดู <c>OcrService.TrySplitLineItemsWithAiAsync</c>)
+/// </summary>
+public static class OcrLineSplitPrompt
+{
+    public const string SystemPrompt = @"You are reading the raw OCR text of a Thai purchase/sales document. The OCR engine returned plain text with NO table structure. Reconstruct the line items.
+
+HARD RULES:
+1. Every line you return MUST appear on the paper. NEVER invent a product, a
+   quantity or a price to make the arithmetic work.
+2. `amount` for each line = what the paper shows for that line. If the paper
+   shows only a total per line, set quantity=1 and unit_price=amount.
+3. The sum of all `amount` values MUST equal `known_totals.sub_total` when that
+   is given (or `known_totals.total_amount` when the prices already include
+   VAT). If you cannot make them reconcile from what is actually printed,
+   return an EMPTY `lines` array and explain in `reasoning` — a wrong split is
+   worse than no split, because it becomes accounting entries.
+4. Do NOT include VAT / discount / grand-total rows as line items. Those are
+   summary rows, not goods or services.
+5. `unit` = the unit as printed. When the paper prints none, infer from the
+   line type: electricity=""หน่วย"", water=""ลบ.ม."", fuel=""ลิตร"",
+   monthly service/rent=""เดือน"", contracted work=""งาน"", goods=""ชิ้น"".
+   NEVER default a utility or a service to ""ชิ้น"".
+
+Respond ONLY as JSON:
+{
+  ""primary"": ""ok"",
+  ""confidence"": <0.0-1.0>,
+  ""lines"": [
+    { ""description"": ""..."", ""quantity"": <decimal>, ""unit"": ""..."",
+      ""unit_price"": <decimal>, ""amount"": <decimal> }
+  ],
+  ""reasoning"": ""<1-2 sentences — say so explicitly when you could not reconcile>"",
+  ""risks"": [],
+  ""compliance_flags"": [],
+  ""suggested_actions"": []
+}";
+
+    public static AiRequest Build(
+        Guid companyId, Guid scanResultId,
+        string rawText,
+        string? documentType,
+        string? vendorName,
+        decimal? subTotal, decimal? vatAmount, decimal? totalAmount)
+    {
+        // ข้อความบนใบซื้อ/ขายทั่วไปยาวไม่เกินนี้ — ตัดกันค่า token บานปลาย
+        var snippet = rawText.Length > 6000 ? rawText[..6000] + "...[truncated]" : rawText;
+        var payload = new
+        {
+            task = "ocr_line_item_split",
+            document_type = documentType,
+            vendor_name = vendorName,
+            ocr_raw_text = snippet,
+            // ยอดที่อ่านได้จากหัวกระดาษ = ด่านตรวจของตัวโมเดลเอง และของผู้เรียก
+            known_totals = new
+            {
+                sub_total = subTotal,
+                vat_amount = vatAmount,
+                total_amount = totalAmount,
+                prices_include_vat = subTotal is null or 0m && totalAmount is > 0m,
+            },
+        };
+        return new AiRequest
+        {
+            FeatureKey = AiFeatureKey.OcrLineItemSplit,
+            CompanyId = companyId,
+            SystemPrompt = SystemPrompt,
+            UserPromptJson = JsonSerializer.Serialize(payload),
+            // local path = บรรทัดสรุปใบเดียวจากยอดหัวกระดาษ ซึ่งเป็นพฤติกรรม
+            // เดิมของระบบอยู่แล้ว (ผู้เรียกไม่ต้องทำอะไรเมื่อ AI ไม่ตอบ)
+            LocalPrimaryAnswer = null,
+            LocalConfidence = null,
+            LocalModelVersion = "HeaderSummaryLine-v1",
+            SourceEntityType = "OcrScanResult",
+            SourceEntityId = scanResultId,
+            CacheTtlOverrideDays = 1,
+            MaxTokensOverride = 1200,
         };
     }
 }

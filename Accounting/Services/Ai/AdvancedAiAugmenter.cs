@@ -73,10 +73,14 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
     private readonly AccountingDbContext _db;
     private readonly IAiOrchestrator _orchestrator;
     private readonly ILogger<AdvancedAiAugmenter> _logger;
+    /// <summary>Markov อันดับ 1 ของลำดับเอกสารต่อคู่ค้า — optional เพื่อไม่ให้
+    /// เทสต์/เส้นทางที่ไม่ได้ register ต้องแก้ตาม</summary>
+    private readonly Implementations.Ocr.DocumentWorkflowPredictor? _workflow;
 
     public AdvancedAiAugmenter(AccountingDbContext db, IAiOrchestrator orchestrator,
-        ILogger<AdvancedAiAugmenter> logger)
-    { _db = db; _orchestrator = orchestrator; _logger = logger; }
+        ILogger<AdvancedAiAugmenter> logger,
+        Implementations.Ocr.DocumentWorkflowPredictor? workflow = null)
+    { _db = db; _orchestrator = orchestrator; _logger = logger; _workflow = workflow; }
 
     public async Task<AdvancedAiResult> ReviewOcrAsync(Guid companyId, Guid scanResultId, CancellationToken ct = default)
     {
@@ -88,7 +92,12 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
 
             var company = await _db.Companies.AsNoTracking()
                 .Where(c => c.Id == companyId)
-                .Select(c => new { c.Id, c.Name, c.TaxId, c.Address, c.Phone, c.Email })
+                // ⚠️ เดิมส่ง Phone/Email ไปด้วยทั้งที่ system prompt ไม่มีข้อไหน
+                // ใช้เลย (งานคือ ยืนยันช่อง · แยกผู้ซื้อ/ผู้ขายจาก **เลขภาษี** ·
+                // ตรวจ VAT) = จ่าย token ฟรี + ส่ง PII ออกไปโดยไม่จำเป็น
+                // ที่อยู่เก็บไว้เพราะช่วยจับบล็อก "บริษัทเรา" บนกระดาษเมื่อ OCR
+                // อ่านเลขภาษีไม่ออก · เพิ่มรหัสสาขาเพราะ §86/4 บังคับ
+                .Select(c => new { c.Id, c.Name, c.TaxId, c.BranchCode, c.Address })
                 .FirstOrDefaultAsync(ct);
             // Company is registered + valid for the request, but stay
             // defensive — a brand-new tenant might race the AI lookup.
@@ -619,11 +628,47 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 total_amount = scan.ExtractedTotalAmount,
                 vat_amount = scan.ExtractedVatAmount,
             };
+            // ── local prior จากประวัติจริงของคู่ค้ารายนี้ ─────────────────
+            // `DocumentWorkflowPredictor` ถูก register ใน DI มาตลอดแต่ไม่มีใคร
+            // เรียก ⇒ โมเดล Markov ทั้งตัวตายในไฟล์ และ prompt นี้ (ที่ตั้งชื่อ
+            // LocalModelVersion ว่า "WorkflowMap-v1" อยู่แล้ว) ไม่เคยมี local
+            // prior ให้ short-circuit ตามกฎเหล็ก #1 เลย
+            object? workflowPrior = null;
+            string? localGuess = null;
+            decimal? localConfidence = null;
+            if (_workflow != null && scan.MatchedContactId is Guid contactId
+                && Enum.TryParse<DocumentType>(scan.DocumentType, out var currentType))
+            {
+                try
+                {
+                    var prior = await _workflow.PredictNextAsync(companyId, contactId, currentType);
+                    if (prior != null)
+                    {
+                        workflowPrior = new
+                        {
+                            next_type = prior.NextType.ToString(),
+                            probability = Math.Round(prior.Probability, 3, MidpointRounding.AwayFromZero),
+                            sample_size = prior.SampleSize,
+                            source = "ประวัติเอกสารจริงของคู่ค้ารายนี้ (Markov อันดับ 1)",
+                        };
+                        localGuess = prior.NextType.ToString();
+                        localConfidence = prior.Probability;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "workflow predictor ล้มเหลว — ส่ง prompt โดยไม่มี prior");
+                }
+            }
+
             var req = DocumentConversionPrompt.Build(
                 companyId, scanResultId,
                 scannedDocType: scan.DocumentType ?? "Unknown",
                 scannedSnapshot: snapshot,
-                ourRole: scan.OurRole ?? "Unknown");
+                ourRole: scan.OurRole ?? "Unknown",
+                workflowPrior: workflowPrior,
+                localGuess: localGuess,
+                localConfidence: localConfidence);
             var resp = await _orchestrator.AskAsync(req, ct);
             // DocumentConversionPrompt expects { targets: [...] } — viable
             // conversion targets with prefill strategies.

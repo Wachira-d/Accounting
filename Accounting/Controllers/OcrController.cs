@@ -535,6 +535,12 @@ public class OcrController : ControllerBase
         var assetDecisions = Services.Implementations.Ocr.FixedAssetDetector.Analyze(
             lines.Select(l => (l.Description, l.Quantity, l.UnitPrice, l.Amount)).ToList());
 
+        // ดึง global pattern ของทุกบรรทัดครั้งเดียวก่อนเข้าลูป — เดิม MatchAsync
+        // ยิง GetActivePatternAsync (ตัวเดี่ยว) ทุกบรรทัด = N+1 query ต่อการสแกน
+        // 1 ใบ ทั้งที่ตัวรวม GetActivePatternsAsync เขียนไว้ให้ใช้เพื่อการนี้
+        // อยู่ติดกันในไฟล์เดียวกันแต่ไม่มีใครเรียก
+        await matcher.PrewarmGlobalPatternsAsync(lines.Select(l => l.Description));
+
         var resultLines = new List<OcrStockPreviewLine>();
         for (var i = 0; i < lines.Count; i++)
         {

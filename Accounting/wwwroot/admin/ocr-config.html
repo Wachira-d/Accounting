@@ -1135,7 +1135,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         const pct = d.daysInMonth > 0 ? Math.round(d.daysElapsed / d.daysInMonth * 100) : 0;
         const top = (d.topCompanies || []).slice(0, 10).map((c, i) =>
           `<tr><td style="padding:4px 8px;color:#64748b">${i + 1}</td>
-               <td style="padding:4px 8px">${(c.companyName || '').replace(/</g, '&lt;')}</td>
+               <td style="padding:4px 8px">${escapeHtml(c.companyName)}</td>
                <td style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600">${fmt(c.azurePages)}</td>
                <td style="padding:4px 8px;text-align:right;color:#475569">${fmt(c.localPages)}</td></tr>`).join('');
         const topTable = top ? `
@@ -1180,7 +1180,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
             </div>
           </details>`;
       } catch (e) {
-        el.innerHTML = `<div style="color:#dc2626">โหลดข้อมูลการใช้งานไม่สำเร็จ: ${(e.message || '').replace(/</g, '&lt;')}</div>`;
+        el.innerHTML = `<div style="color:#dc2626">โหลดข้อมูลการใช้งานไม่สำเร็จ: ${escapeHtml(e.message)}</div>`;
       }
     }
 
@@ -1241,6 +1241,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       }
     }
 
+    // ⚠️ ห้ามเขียน `.replace(/</g, '&lt;')` แทนตัวนี้ — escape แค่ `<` ตัวเดียว
+    // ปลอดภัยเฉพาะใน text node แต่ค่าที่แทรกอยู่ใน **attribute** (value="...")
+    // ยังหลุดผ่าน `"` ได้ ⇒ ปิด attribute แล้วแทรก event handler ต่อได้
+    // (เจอ 2 จุดในไฟล์นี้: ชื่อบริษัทในตารางสรุป + ข้อความ error)
     function escapeHtml(s) {
       return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }

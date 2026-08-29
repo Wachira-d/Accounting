@@ -2172,6 +2172,45 @@ const Layout = {
     });
   },
 
+  // ===== VAT รวมใน (price-inclusive) — ตัวคำนวณกลางตัวเดียวฝั่ง JS =====
+  //
+  // ⚠️ ที่มา: สูตร `Math.round(subtotal * 7 / 107 * 100) / 100` ถูกคัดลอกไป
+  // วางใน pos.html 2 จุด และ documents.html 1 จุด. ปัญหาไม่ใช่ทิศการปัด
+  // (Math.round ของ JS ปัดครึ่งขึ้นเหมือน AwayFromZero สำหรับค่าบวก) แต่เป็น
+  // **binary float**: ค่าที่ควรลงท้าย .xx5 พอดีถูกเก็บเป็น .xx49999… แล้วปัดลง
+  // (คลาสสิก: `Math.round(1.005 * 100) / 100` = 1 ไม่ใช่ 1.01) ⇒ ใบที่พิมพ์
+  // ที่หน้าร้านต่างจากยอดที่เซิร์ฟเวอร์คำนวณด้วย decimal ได้ ฿0.01
+  //
+  // วิธีแก้: คิดด้วย **จำนวนเต็มสตางค์** ทั้งหมด ไม่มี float เข้ามาเกี่ยวเลย
+  //   vatCents = round(totalCents × rate / (100 + rate))  ปัดครึ่งขึ้น
+  // เทียบเท่า `Math.Round(x * 7m / 107m, 2, MidpointRounding.AwayFromZero)`
+  // ฝั่งเซิร์ฟเวอร์ทุกค่า
+
+  /// ยอด VAT ที่แฝงอยู่ในราคารวม VAT — คืนเป็นบาททศนิยม 2 ตำแหน่ง
+  vatFromInclusive(amountBaht, ratePercent = 7) {
+    const rate = Number(ratePercent) || 0;
+    const amt = Number(amountBaht) || 0;
+    if (rate <= 0 || amt === 0) return 0;
+    const sign = amt < 0 ? -1 : 1;
+    const cents = Math.round(Math.abs(amt) * 100);      // ยอดเงินมี 2 ตำแหน่งอยู่แล้ว
+    const denom = 100 + rate;
+    // ทำให้เป็นจำนวนเต็มทั้งเศษและส่วน (รองรับอัตราที่มีทศนิยม เช่น 1.5%)
+    const scale = 1000;
+    const num = cents * Math.round(rate * scale);
+    const den = Math.round(denom * scale);
+    const q = Math.floor(num / den);
+    const r = num - q * den;
+    const vatCents = (r * 2 >= den) ? q + 1 : q;        // ปัดครึ่ง "ขึ้น" เสมอ
+    return sign * vatCents / 100;
+  },
+
+  /// ฐานภาษี (ราคาก่อน VAT) ของราคารวม VAT — ยอดรวมต้องเท่าเดิมเสมอ
+  /// จึงคำนวณจากส่วนต่าง ไม่ปัดสองรอบให้ยอดเพี้ยน
+  baseFromInclusive(amountBaht, ratePercent = 7) {
+    const amt = Number(amountBaht) || 0;
+    return Math.round((amt - Layout.vatFromInclusive(amt, ratePercent)) * 100) / 100;
+  },
+
   // Format helpers
   money(n) {
     if (n == null || n === '') return '0.00';

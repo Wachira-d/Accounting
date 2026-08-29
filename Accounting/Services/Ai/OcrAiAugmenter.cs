@@ -95,6 +95,22 @@ public interface IOcrAiAugmenter
     /// the deterministic pass left the line unresolved AND ≥2 projects are in
     /// play. Answer is a Project id string (one of the candidates) or null.
     /// </summary>
+    /// <summary>
+    /// แตกรายการสินค้า/บริการจากข้อความดิบ เมื่อ engine ไม่คืนตารางมาให้เลย
+    ///
+    /// <para>คืน JSON ดิบของโมเดลผ่าน <c>Answer</c> — ผู้เรียกต้อง parse เอง
+    /// และ<b>ต้องตรวจว่าผลรวมลงตัวกับยอดหัวกระดาษก่อนรับไปใช้</b>
+    /// (ดู <c>OcrService.TrySplitLineItemsWithAiAsync</c>)</para>
+    ///
+    /// <para>AI ปิด/ล่ม → <c>UsedAi=false</c>, <c>Answer=null</c> ⇒ ผู้เรียก
+    /// คงพฤติกรรมเดิม (บรรทัดสรุปใบเดียวจากยอดหัวกระดาษ) — kill-switch ผ่าน</para>
+    /// </summary>
+    Task<OcrAiAugmentationResult> SplitLineItemsAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText, string? documentType, string? vendorName,
+        decimal? subTotal, decimal? vatAmount, decimal? totalAmount,
+        CancellationToken ct = default);
+
     Task<OcrAiAugmentationResult> MatchLineProjectAsync(
         Guid companyId, Guid scanResultId,
         string lineDescription, decimal? amount,
@@ -588,6 +604,48 @@ public class OcrAiAugmenter : IOcrAiAugmenter
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "OcrAiAugmenter.MatchLineProject failed");
+            return Empty($"exception: {ex.Message}");
+        }
+
+        static OcrAiAugmentationResult Empty(string why) => new(
+            Answer: null, Confidence: null,
+            Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
+            ComplianceFlags: Array.Empty<string>(),
+            Reasoning: why, UsedAi: false, FeedbackId: null);
+    }
+
+    public async Task<OcrAiAugmentationResult> SplitLineItemsAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText, string? documentType, string? vendorName,
+        decimal? subTotal, decimal? vatAmount, decimal? totalAmount,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return Empty("no raw text");
+        // ไม่มียอดให้ตรวจสอบผลลัพธ์ = ไม่มีทางรู้ว่าที่ AI แตกมาถูกไหม → ไม่เรียก
+        if (subTotal is not > 0m && totalAmount is not > 0m) return Empty("no totals to reconcile against");
+
+        try
+        {
+            var req = Prompts.OcrLineSplitPrompt.Build(
+                companyId, scanResultId, rawText, documentType, vendorName,
+                subTotal, vatAmount, totalAmount);
+            var resp = await _orchestrator.AskAsync(req, ct);
+            if (!resp.UsedAi || string.IsNullOrWhiteSpace(resp.RawResponseJson))
+                return Empty("ai unavailable");
+
+            return new OcrAiAugmentationResult(
+                Answer: resp.RawResponseJson,
+                Confidence: resp.Confidence,
+                Alternatives: resp.Alternatives,
+                Risks: resp.Risks,
+                ComplianceFlags: resp.ComplianceFlags,
+                Reasoning: resp.Reasoning,
+                UsedAi: true,
+                FeedbackId: resp.FeedbackId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "OcrAiAugmenter.SplitLineItems failed");
             return Empty($"exception: {ex.Message}");
         }
 

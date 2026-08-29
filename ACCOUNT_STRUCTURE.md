@@ -550,10 +550,13 @@ _Last verified against codebase: 2026-08-28 (rev 17 — **VAT ค่าบริ
 _ระหว่างสองตัวออกบิล**: `PlatformBillingDocumentIssuer` คิด 7/107 พร้อม_
 _`MidpointRounding.AwayFromZero` ถูกต้อง แต่ `SaasBillingDocumentService` ที่คิด_
 _**สูตรเดียวกัน** ลืมทั้ง 4 จุด (inclusive/exclusive × 2 เส้นทาง) และ_
-_`SampleDataController` อีก 1 จุด ⇒ ค่าบริการรอบเดียวกันคำนวณคนละที่ได้ยอด_
-_ต่างกัน ฿0.01 (default ของ .NET คือ banker's rounding ซึ่ง CLAUDE.md 4.E ห้าม_
-_ใช้กับจำนวนเงิน) — แก้ให้ทั้ง 5 จุดใช้ `AwayFromZero` เหมือนกัน ไม่มีการเปลี่ยน_
-_โครงสร้าง billing/quota ใด ๆ);_
+_`SampleDataController` อีก 1 จุด — แก้ให้ทั้ง 5 จุดใช้ `AwayFromZero` เหมือนกัน_
+_**ขอบเขตที่แท้จริง (ตรวจย้ำรอบ 100)**: ต่างกันจริงเฉพาะสูตร `x × 0.07`_
+_(VAT บวกเพิ่ม) ซึ่งตกจุดกึ่งกลางราว 0.5% ของยอด เช่น ฿1.50 → 0.105 ⇒_
+_AwayFromZero 0.11 เทียบ banker's 0.10 = **2 ใน 5 จุด**. อีก 3 จุดที่ใช้_
+_`x × 7 / 107` และ `x / 1.07` พิสูจน์ได้ว่า**ไม่มีค่าใดตกจุดกึ่งกลางเลย**_
+_จึงเป็นการทำให้สม่ำเสมอ ไม่ใช่การแก้ยอดที่เคยผิด (ล็อกไว้ด้วย_
+_`VatRoundingModeTests`) · ไม่มีการเปลี่ยนโครงสร้าง billing/quota ใด ๆ);_
 _rev 16 — **§3.1b เอกสารออกจากสาขาไหน_
 _เฟส 1 ✅**: Document.BranchId + IssuerBranchCode snapshot + resolver กลาง →_
 _รหัสสาขา/ที่อยู่บน renderer ทั้งสองตัว + TXID e-Tax + สืบทอดเอกสารลูก 5 ทาง_

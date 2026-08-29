@@ -271,6 +271,16 @@ public class OcrScanResult : TenantEntity
     /// "🤖 AI แนะนำ" vs "⚙️ ระบบแนะนำ" ตามกฎเหล็ก #1</summary>
     public bool TargetDocTypeUsedAi { get; set; }
 
+    /// <summary>feedback row ของการ "แตกบรรทัดจากข้อความด้วย AI"
+    /// (<c>AiFeatureKey.OcrLineItemSplit</c>) — เก็บไว้ปิด loop ตอนผู้ใช้แก้/
+    /// ยืนยันรายการในหน้า review (กฎเหล็ก #1 ขั้น CAPTURE). null = ไม่ได้เรียก
+    /// AI ในรอบนี้ (engine คืนรายการมาแล้ว หรือผลถูกด่านตรวจยอดปฏิเสธ)</summary>
+    public Guid? LineSplitAiFeedbackId { get; set; }
+
+    /// <summary>true เมื่อรายการในใบนี้มาจากการแตกบรรทัดด้วย AI — UI ติดป้าย
+    /// "🤖 AI แตกรายการให้ กรุณาตรวจ" ให้ซื่อสัตย์ตามกฎเหล็ก #1</summary>
+    public bool LineSplitUsedAi { get; set; }
+
     // GL & expense suggestions
     public string? ExpenseCategory { get; set; }
     public string? SuggestedAccountsJson { get; set; }

@@ -98,7 +98,12 @@ public record OcrResultResponse(
     /// (<c>DocumentSide.cs</c> ระบุชื่อสำเนานี้ไว้ในหมายเหตุตั้งแต่แรก)</para>
     ///
     /// <para>null = เซิร์ฟเวอร์รุ่นเก่า — หน้าเว็บใช้ fallback ของตัวเอง</para></summary>
-    Dictionary<string, string>? DocumentSideMap = null);
+    Dictionary<string, string>? DocumentSideMap = null,
+    /// <summary>รายการในใบนี้มาจากการ "แตกบรรทัดด้วย AI" หรือไม่
+    /// (<c>AiFeatureKey.OcrLineItemSplit</c> — ทำงานเมื่อ engine ไม่คืนตาราง
+    /// รายการมาเลย) ⇒ UI ติดป้าย "🤖 AI แตกรายการให้ กรุณาตรวจ" ให้ซื่อสัตย์
+    /// ตามกฎเหล็ก #1 (ป้าย "🤖 AI แนะนำ" เฉพาะตอนเรียก AI จริง)</summary>
+    bool LineSplitUsedAi = false);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);

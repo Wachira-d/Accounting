@@ -4700,6 +4700,8 @@ public static class DatabaseMigrationHelper
             // เดิม loop ปิดจริงแค่ 3 ช่อง (ผังบัญชี/ผู้ติดต่อ/โครงการ) — การแก้
             // ชนิดเอกสารซึ่งเป็นคำถามที่พลาดแล้วแพงที่สุด ไม่เคยไปถึง student
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiFeedbackId" uuid NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LineSplitAiFeedbackId" uuid NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LineSplitUsedAi" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiSuggested" varchar(50) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeUsedAi" boolean NOT NULL DEFAULT false;""",
 
