@@ -546,7 +546,15 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-27 (rev 16 — **§3.1b เอกสารออกจากสาขาไหน_
+_Last verified against codebase: 2026-08-28 (rev 17 — **VAT ค่าบริการปัดเศษไม่ตรงกัน_
+_ระหว่างสองตัวออกบิล**: `PlatformBillingDocumentIssuer` คิด 7/107 พร้อม_
+_`MidpointRounding.AwayFromZero` ถูกต้อง แต่ `SaasBillingDocumentService` ที่คิด_
+_**สูตรเดียวกัน** ลืมทั้ง 4 จุด (inclusive/exclusive × 2 เส้นทาง) และ_
+_`SampleDataController` อีก 1 จุด ⇒ ค่าบริการรอบเดียวกันคำนวณคนละที่ได้ยอด_
+_ต่างกัน ฿0.01 (default ของ .NET คือ banker's rounding ซึ่ง CLAUDE.md 4.E ห้าม_
+_ใช้กับจำนวนเงิน) — แก้ให้ทั้ง 5 จุดใช้ `AwayFromZero` เหมือนกัน ไม่มีการเปลี่ยน_
+_โครงสร้าง billing/quota ใด ๆ);_
+_rev 16 — **§3.1b เอกสารออกจากสาขาไหน_
 _เฟส 1 ✅**: Document.BranchId + IssuerBranchCode snapshot + resolver กลาง →_
 _รหัสสาขา/ที่อยู่บน renderer ทั้งสองตัว + TXID e-Tax + สืบทอดเอกสารลูก 5 ทาง_
 _(รายละเอียดที่ DOCUMENT_FLOW.md §6.2d));_
