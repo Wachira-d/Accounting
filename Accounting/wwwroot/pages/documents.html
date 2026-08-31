@@ -7894,7 +7894,11 @@
           const discMode = row.querySelector('[data-f="discMode"]')?.value || 'pct';
           const line = {
             description: desc,
-            quantity: parseFloat(row.querySelector('[data-f="qty"]').value) || 1,
+            // ⚠️ เดิม `|| 1` — ช่องนี้ตั้ง min="0" (ให้ปิดบรรทัดโดยไม่ลบได้) และ
+            // calcSum ใช้ `|| 0` ⇒ พิมพ์ 0 จอโชว์ ฿0 ไม่เข้ายอดรวม แต่ payload
+            // ส่ง 1 (0 เป็น falsy) = เอกสารออกไปเกินจริงทั้งบรรทัด + JE/VAT ตาม
+            // ต้องใช้กติกาเดียวกับ calcSum
+            quantity: (() => { const q = parseFloat(row.querySelector('[data-f="qty"]').value); return Number.isFinite(q) ? q : 1; })(),
             unit: (row.querySelector('[data-f="unit"]')?.value || '').trim() || 'ชิ้น',
             unitPrice: parseFloat(row.querySelector('[data-f="price"]').value) || 0,
             discountPercent: discMode === 'pct' ? discVal : 0,

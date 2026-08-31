@@ -586,17 +586,9 @@ public class IntegrationService : IIntegrationService
                 // 7%/exempt line). For IncludeVat=true the override is the VAT
                 // baked into lineNet → strip it so subTotal stays ex-VAT.
                 decimal lineVat;
-                if (line.VatAmount.HasValue)
-                {
-                    lineVat = Math.Round(line.VatAmount.Value, 2, MidpointRounding.AwayFromZero);
-                    if (request.IncludeVat) lineNet -= lineVat;
-                }
-                else
-                {
-                    lineVat = request.IncludeVat
-                        ? lineNet - (lineNet / (1 + lineVatRate / 100))
-                        : lineNet * lineVatRate / 100;
-                }
+                // ใช้ตัวคำนวณกลางตัวเดียวกับฝั่งซื้อ — เดิมสองสาขานี้ตีความ
+                // IncludeVat คนละแบบ (สาขาแรกหัก VAT ออกจาก net สาขาที่สองไม่หัก)
+                (lineNet, lineVat) = Accounting.Helpers.DocumentLineVatConvention.SplitLine(lineNet, lineVatRate, line.VatAmount, request.IncludeVat);
 
                 subTotal += lineNet;
                 totalVat += lineVat;
@@ -678,7 +670,8 @@ public class IntegrationService : IIntegrationService
                 });
             }
 
-            var totalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
+            // SubTotal เป็นฐานก่อน VAT เสมอแล้ว (SplitLineVat) ⇒ ยอดรวมต้องบวก VAT
+            var totalAmount = subTotal + totalVat;
 
             // ── กันใบกำกับซ้อนกับ "ใบแจ้งหนี้" เดิมอ้างอิง (WO) เดียวกัน ──
             // เคสจริง: INV 97,500 ค้างอยู่ + integration mint TIV 75,000 แยกใบ
@@ -1634,7 +1627,7 @@ public class IntegrationService : IIntegrationService
 
     private async Task<List<DocumentLine>> BuildDocumentLinesAsync(
         Guid companyId, List<InboundInvoiceLineRequest> lines, decimal defaultVatRate = 7,
-        bool expenseSide = false)
+        bool expenseSide = false, bool includeVat = false)
     {
         // Resolve any line-level AccountCode the partner sent → ChartOfAccount
         // id, so the document line carries its real GL account and the JE
@@ -1681,12 +1674,9 @@ public class IntegrationService : IIntegrationService
             var lineDiscount = line.DiscountAmount ?? 0;
             var lineNet = lineAmount - lineDiscount;
             var lineVatRate = line.VatRate ?? defaultVatRate;
-            // Honor explicit VatAmount when the partner pre-computed it (mixed
-            // 7%/exempt line that a single rate can't express). Otherwise
-            // recompute net × rate as before. Rounded to 2dp to match GL.
-            var lineVat = line.VatAmount.HasValue
-                ? Math.Round(line.VatAmount.Value, 2, MidpointRounding.AwayFromZero)
-                : Math.Round(lineNet * lineVatRate / 100, 2, MidpointRounding.AwayFromZero);
+            // ⚠️ เดิมคิด exclusive เสมอ ไม่รู้จัก IncludeVat ⇒ VAT ไม่เคยถูกบวก
+            // เข้ายอดรวม แล้ว JE ถูกตีตกทั้งใบ (ดูหมายเหตุที่ SplitLineVat)
+            (lineNet, var lineVat) = Accounting.Helpers.DocumentLineVatConvention.SplitLine(lineNet, lineVatRate, line.VatAmount, includeVat);
             var lineWhtRate = line.WithholdingTaxRate ?? 0;
             var lineWht = Math.Round(lineNet * lineWhtRate / 100, 2, MidpointRounding.AwayFromZero);
 
@@ -2389,7 +2379,7 @@ public class IntegrationService : IIntegrationService
         var oldLines = await _db.DocumentLines.Where(l => l.DocumentId == existing.Id).ToListAsync();
         _db.DocumentLines.RemoveRange(oldLines);
         var vatRate = request.VatRate ?? 7m;
-        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
+        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, includeVat: request.IncludeVat);
         foreach (var l in newLines) l.DocumentId = existing.Id;
         existing.Lines = newLines;   // ให้ JE builder เห็นบรรทัดใหม่ทันที (nav ไม่ได้ Include มา)
 
@@ -2399,7 +2389,8 @@ public class IntegrationService : IIntegrationService
         existing.DueDate = NormalizeDate(request.DueDate ?? request.DocumentDate.AddDays(30));
         existing.SubTotal = subTotal;
         existing.VatAmount = totalVat;
-        existing.TotalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
+        // SubTotal เป็นฐานก่อน VAT เสมอแล้ว (SplitLineVat) ⇒ ยอดรวมต้องบวก VAT
+        existing.TotalAmount = subTotal + totalVat;
         existing.BalanceDue = existing.TotalAmount;   // PaidAmount == 0 (guard ผ่านแล้ว)
         // Deposit fields (spec deposit/checkout) — resync = source of truth ทับค่าเดิม.
         // guard ด้านบนยืนยัน PaidAmount==0 (ขายเงินสดที่ปิดยอดถูกบล็อก resync แล้ว)
@@ -2470,7 +2461,7 @@ public class IntegrationService : IIntegrationService
         var oldLines = await _db.DocumentLines.Where(l => l.DocumentId == existing.Id).ToListAsync();
         _db.DocumentLines.RemoveRange(oldLines);
         var vatRate = request.VatRate ?? 7m;
-        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true);
+        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true, includeVat: request.IncludeVat);
         foreach (var l in newLines) l.DocumentId = existing.Id;
         existing.Lines = newLines;
 
@@ -2482,7 +2473,8 @@ public class IntegrationService : IIntegrationService
         existing.SubTotal = subTotal;
         existing.VatAmount = totalVat;
         existing.WithholdingTaxAmount = totalWht;
-        existing.TotalAmount = (request.IncludeVat ? subTotal : subTotal + totalVat) - totalWht;
+        // SubTotal เป็นฐานก่อน VAT เสมอแล้ว (SplitLineVat) ⇒ ยอดรวมต้องบวก VAT
+        existing.TotalAmount = subTotal + totalVat - totalWht;
         existing.BalanceDue = existing.TotalAmount;
         await _db.SaveChangesAsync();
 
@@ -2882,12 +2874,13 @@ public class IntegrationService : IIntegrationService
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.Expense, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true, includeVat: request.IncludeVat);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             var totalWht = lines.Sum(l => l.WithholdingTaxAmount);
             // Net payable = gross − withholding tax (consistent with manual entry).
-            var totalAmount = (request.IncludeVat ? subTotal : subTotal + totalVat) - totalWht;
+            // SubTotal เป็นฐานก่อน VAT เสมอแล้ว (SplitLineVat) ⇒ ยอดรวมต้องบวก VAT
+            var totalAmount = subTotal + totalVat - totalWht;
 
             // AutoApprove=true (default, backward-compat) → Approved + JE + 50 ทวิ
             // ทันทีเหมือนเดิม. false → สร้าง Draft: ยังไม่ลง GL/ยังไม่ออก 50 ทวิ
@@ -3000,12 +2993,13 @@ public class IntegrationService : IIntegrationService
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true, includeVat: request.IncludeVat);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             var totalWht = lines.Sum(l => l.WithholdingTaxAmount);
             // Net cash out = gross − withholding (the supplier receives net).
-            var totalAmount = (request.IncludeVat ? subTotal : subTotal + totalVat) - totalWht;
+            // SubTotal เป็นฐานก่อน VAT เสมอแล้ว (SplitLineVat) ⇒ ยอดรวมต้องบวก VAT
+            var totalAmount = subTotal + totalVat - totalWht;
             var paymentDate = NormalizeDate(request.PaymentDate ?? request.DocumentDate);
 
             // Role separation (หลักบัญชีไทย): a Payment Voucher IS the
@@ -3253,10 +3247,11 @@ public class IntegrationService : IIntegrationService
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true, includeVat: request.IncludeVat);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
-            var totalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
+            // SubTotal เป็นฐานก่อน VAT เสมอแล้ว (SplitLineVat) ⇒ ยอดรวมต้องบวก VAT
+            var totalAmount = subTotal + totalVat;
 
             var document = new Document
             {

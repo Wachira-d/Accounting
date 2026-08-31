@@ -26,6 +26,49 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class DocumentLineVatConvention
 {
+    /// <summary>
+    /// แยก (ฐานก่อน VAT, VAT) ของหนึ่งบรรทัด — <b>ตัวคำนวณกลางของ integration</b>
+    ///
+    /// ═══ ที่มา (ฟีเจอร์ซ้อนที่ทำให้ JE หายทั้งใบ) ═══
+    /// ธง <c>IncludeVat</c> ถูก implement <b>3 แบบ</b> ในไฟล์เดียวกัน:
+    /// <list type="bullet">
+    /// <item>ฝั่งขาย + มี <c>line.VatAmount</c> → หัก VAT ออกจาก net
+    ///   แต่ <c>totalAmount = subTotal</c> ⇒ <b>ยอดรวมขาด VAT</b></item>
+    /// <item>ฝั่งขาย + ไม่มี <c>line.VatAmount</c> → คำนวณ VAT แต่<b>ไม่หัก</b>
+    ///   net ⇒ ยอดรวมถูก แต่ <b>SubTotal เกินจริง</b> (ฐานภาษีขายใน ภ.พ.30
+    ///   และ e-Tax เกินเท่ายอด VAT)</item>
+    /// <item>ฝั่งซื้อ (<c>BuildDocumentLinesAsync</c>) → <b>ไม่รู้จักธงนี้เลย</b>
+    ///   คิด exclusive เสมอ แล้วผู้เรียกใช้ <c>totalAmount = subTotal − wht</c>
+    ///   ⇒ VAT ไม่เคยถูกบวก ⇒ JE ที่ประกอบขึ้นมี Dr เกิน Cr เท่ายอด VAT พอดี
+    ///   ⇒ ด่าน Dr==Cr ตีตกแล้ว <c>return null</c> เงียบ ๆ = <b>เอกสารขึ้นสถานะ
+    ///   "อนุมัติแล้ว" โดยไม่มีรายการบัญชีเลย</b> ทั้งที่ ภ.พ.30 ยังนับใบนี้</item>
+    /// </list>
+    /// (<c>IncludeVat = true</c> เป็น <b>ค่า default</b> ของ request DTO ทั้ง 4 ตัว
+    /// ⇒ นี่คือเส้นทางปกติ ไม่ใช่ edge case)
+    ///
+    /// ═══ กติกาเดียวหลังแก้ ═══
+    /// <c>SubTotal</c> = ฐานก่อน VAT <b>เสมอ</b> · <c>TotalAmount = SubTotal +
+    /// VatAmount − WHT</c> — ตรงกับ <c>DocumentService</c> ที่เป็นเจ้าของกฎตัวจริง
+    /// </summary>
+    /// <param name="amount">ยอดบรรทัดหลังหักส่วนลด — รวม VAT แล้วเมื่อ <paramref name="includeVat"/></param>
+    public static (decimal Net, decimal Vat) SplitLine(
+        decimal amount, decimal vatRate, decimal? explicitVat, bool includeVat)
+    {
+        if (explicitVat.HasValue)
+        {
+            var v = Math.Round(explicitVat.Value, 2, MidpointRounding.AwayFromZero);
+            var n = includeVat ? amount - v : amount;
+            return (Math.Round(n, 2, MidpointRounding.AwayFromZero), v);
+        }
+        if (includeVat && vatRate > 0m)
+        {
+            var net = Math.Round(amount * 100m / (100m + vatRate), 2, MidpointRounding.AwayFromZero);
+            return (net, Math.Round(amount - net, 2, MidpointRounding.AwayFromZero));
+        }
+        var baseNet = Math.Round(amount, 2, MidpointRounding.AwayFromZero);
+        return (baseNet, Math.Round(baseNet * vatRate / 100m, 2, MidpointRounding.AwayFromZero));
+    }
+
     /// <summary>ผลต่างที่ยอมรับได้ตอนเทียบยอด (สตางค์จากการปัดเศษรายบรรทัด)</summary>
     public const decimal Tolerance = 0.02m;
 

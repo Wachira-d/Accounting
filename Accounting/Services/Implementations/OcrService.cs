@@ -626,6 +626,26 @@ public class OcrService : IOcrService
             // (โซน + FieldPatternLibrary) แต่ **ไม่มี call site ทั้งเรพ**
             await ApplyZoneAnalysisFallbackAsync(companyId, extractedData, extractedText);
 
+            // ⚠️ re-sync "ช่องระบุตัวตนเอกสาร" กลับเข้า entity —
+            // การ sync ชุดใหญ่อยู่ **ก่อน** สามขั้นข้างบน (EnrichFromRawText /
+            // ApplyLearnedPatterns / ZoneFallback) และ re-sync ที่มีอยู่เดิม
+            // ครอบแค่ยอดเงิน ⇒ ช่องที่สามขั้นนั้นเติมให้ (ชื่อผู้ขาย/เลขภาษี/
+            // เลขที่เอกสาร/วันที่) อยู่แต่ใน memory ไม่เคยถูกบันทึก
+            // ผลคือ ReasoningTrace เขียนว่า "เติมให้แล้ว" แต่หน้าจอยังว่าง
+            // และ CreateDocumentFromScan อ่านจาก entity → ได้เอกสารลงวันที่
+            // วันนี้แทนวันที่บนกระดาษ (ผิดงวด ภ.พ.30)
+            // เติมเฉพาะช่องที่ entity ยังว่าง — ไม่ทับค่าที่ sync ไปแล้ว
+            if (string.IsNullOrWhiteSpace(scanResult.ExtractedVendorName))
+                scanResult.ExtractedVendorName = extractedData.VendorName;
+            if (string.IsNullOrWhiteSpace(scanResult.ExtractedVendorTaxId))
+                scanResult.ExtractedVendorTaxId = extractedData.VendorTaxId;
+            if (string.IsNullOrWhiteSpace(scanResult.ExtractedDocumentNumber))
+                scanResult.ExtractedDocumentNumber = extractedData.DocumentNumber;
+            scanResult.ExtractedDate ??= extractedData.DocumentDate;
+            scanResult.ExtractedSubTotal ??= extractedData.SubTotal;
+            scanResult.ExtractedVatAmount ??= extractedData.VatAmount;
+            scanResult.ExtractedTotalAmount ??= extractedData.TotalAmount;
+
             // ── engine ไม่คืนตารางรายการเลย → ให้ AI แตกบรรทัดจากข้อความ ──
             // เส้นทาง Tesseract แบบฝังคืนแต่ข้อความล้วน ⇒ Items ว่างทุกใบ
             // ผลคือเอกสารได้บรรทัดสรุปใบเดียว แยกหมวดค่าใช้จ่ายไม่ได้
