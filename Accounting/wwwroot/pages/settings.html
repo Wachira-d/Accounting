@@ -76,7 +76,7 @@
             <span style="color:#94a3b8;font-size:12px" id="logoPlaceholder">ยังไม่มีโลโก้</span>
           </div>
           <div>
-            <input type="file" id="logoFile" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" style="display:none" onchange="Page.uploadLogo()">
+            <input type="file" id="logoFile" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none" onchange="Page.uploadLogo()">
             <button class="btn btn-primary" onclick="document.getElementById('logoFile').click()" style="margin-bottom:8px">เลือกไฟล์โลโก้</button>
             <button class="btn btn-outline" onclick="Page.deleteLogo()" id="btnDeleteLogo" style="margin-bottom:8px;display:none">ลบโลโก้</button>
             <p style="color:#64748b;font-size:12px;margin:0">PNG, JPEG, GIF, WebP, SVG | ขนาดไม่เกิน 10MB</p>
@@ -93,7 +93,7 @@
             <span style="color:#94a3b8;font-size:12px" id="stampPlaceholder">ยังไม่มีตรา</span>
           </div>
           <div>
-            <input type="file" id="stampFile" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" style="display:none" onchange="Page.uploadStamp()">
+            <input type="file" id="stampFile" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none" onchange="Page.uploadStamp()">
             <button class="btn btn-primary" onclick="document.getElementById('stampFile').click()" style="margin-bottom:8px">เลือกไฟล์ตรา</button>
             <button class="btn btn-outline" onclick="Page.deleteStamp()" id="btnDeleteStamp" style="margin-bottom:8px;display:none">ลบตรา</button>
           </div>

@@ -61,62 +61,6 @@ public class SettingsController : ControllerBase
         return Ok(new ApiResponse<CompanySettingsResponse>(true, result, "อัพโหลดโลโก้สำเร็จ"));
     }
 
-    /// <summary>
-    /// อัปโหลด "ตราประทับบริษัท" สำหรับเทมเพลตเอกสาร — คืน URL ให้หน้าเทมเพลตเก็บ
-    ///
-    /// ⚠️ ทำไมต้องมี endpoint นี้: หน้า `/pages/document-templates.html` (หน้าของ
-    /// **ลูกค้า**) เคยยิงไปที่ `/api/admin/upload-image` ซึ่งอยู่ใต้ `AdminController`
-    /// ที่บังคับ `[Authorize(Roles = "SystemAdmin")]` ⇒ ลูกค้าอัปโหลดตราประทับ
-    /// **ไม่ได้เลย (403)** ทั้งที่เป็นฟีเจอร์ของเขาเอง — คนละคลาสกับปัญหาความปลอดภัย
-    /// แต่รากเดียวกัน: หน้าจอฝั่งลูกค้ากับฝั่งแพลตฟอร์มถูกปนกัน
-    ///
-    /// เก็บแยกโฟลเดอร์ต่อบริษัท (tenant isolation) และไม่รับ SVG ด้วยเหตุผลเดียวกับ
-    /// โลโก้แบรนด์ (SVG ฝัง &lt;script&gt; = stored XSS เพราะไฟล์ถูก serve จาก origin
-    /// เดียวกับแอปที่เก็บ JWT ไว้ใน localStorage)
-    /// </summary>
-    [HttpPost("stamp")]
-    [RequestSizeLimit(5 * 1024 * 1024)]
-    public async Task<ActionResult<ApiResponse<object>>> UploadStamp(
-        Guid companyId, IFormFile file,
-        [FromServices] IImageProcessingService images,
-        [FromServices] IWebHostEnvironment env)
-    {
-        if (file == null || file.Length == 0)
-            return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์ตราประทับ"));
-
-        var allowed = new[] { "image/png", "image/jpeg", "image/gif", "image/webp" };
-        var ext = Path.GetExtension(file.FileName ?? "").ToLowerInvariant();
-        var allowedExt = new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" };
-        if (!allowed.Contains((file.ContentType ?? "").ToLowerInvariant()) || !allowedExt.Contains(ext))
-            return BadRequest(new ApiResponse<object>(false, null,
-                "รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP เท่านั้น (ไม่รับ SVG ด้วยเหตุผลด้านความปลอดภัย)"));
-
-        var webRoot = env.WebRootPath
-            ?? Path.Combine(env.ContentRootPath ?? Directory.GetCurrentDirectory(), "wwwroot");
-        var dir = Path.Combine(webRoot, "uploads", "stamps", companyId.ToString());
-        var web = $"/uploads/stamps/{companyId}";
-        var fileName = string.IsNullOrWhiteSpace(file.FileName) ? $"stamp{ext}" : file.FileName;
-
-        try
-        {
-            await using var s = file.OpenReadStream();
-            // profile Logo = ไม่ crop สี่เหลี่ยม (ตราประทับโปร่งใสต้องคงสัดส่วนเดิม)
-            var processed = await images.ProcessAndSaveAsync(
-                s, file.ContentType!, fileName, dir, web, ImageProfile.Logo);
-            return Ok(new ApiResponse<object>(true, new { url = processed.RelativeUrl },
-                "อัพโหลดตราประทับสำเร็จ"));
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return BadRequest(new ApiResponse<object>(false, null,
-                $"ระบบไม่มีสิทธิ์เขียนไฟล์ลงโฟลเดอร์ uploads ({dir}) — โปรดติดต่อผู้ดูแลระบบ: {ex.Message}"));
-        }
-        catch (Exception ex)
-        {
-            return BadRequest(new ApiResponse<object>(false, null, $"บันทึกไฟล์ไม่สำเร็จ: {ex.Message}"));
-        }
-    }
-
     [HttpDelete("logo")]
     public async Task<IActionResult> DeleteLogo(Guid companyId)
     {
@@ -126,16 +70,36 @@ public class SettingsController : ControllerBase
 
     // ===== Company Stamp (ตราประทับบริษัท) Upload =====
 
+    /// <summary>
+    /// อัปโหลดตราประทับบริษัท — **endpoint เดียวของ route นี้**
+    ///
+    /// ⚠️ ที่มา (ฟีเจอร์ซ้อนที่ทำให้ระบบพัง): คอนโทรลเลอร์นี้เคยมี
+    /// `[HttpPost("stamp")]` **สองเมธอด** — ตัวหนึ่งเขียนเพิ่มมาแก้ปัญหา
+    /// "หน้า document-templates ของลูกค้ายิงไป endpoint แอดมินแล้วโดน 403"
+    /// (เข้มความปลอดภัย กัน SVG แต่**ไม่ persist** StampPath ⇒ PDF ไม่เห็นตรา)
+    /// อีกตัวเป็นของเดิมของหน้า settings (persist ครบ แต่**ยังรับ SVG** ซึ่ง
+    /// ฝัง &lt;script&gt; ได้ = stored XSS). route ชนกัน ⇒ ASP.NET Core โยน
+    /// AmbiguousMatchException = **อัปโหลดตราประทับได้ 500 ทุกครั้ง**
+    /// จึงยุบเหลือตัวเดียวที่ได้ทั้งสองคุณสมบัติ: persist ผ่าน SettingsService
+    /// (ตัวถือกฎ validation ที่เดียว — กัน SVG แล้ว) + ตอบครบสัญญาของ**ทั้งสอง
+    /// หน้า**ที่เรียก: settings.html อ่าน `stampUrl` · document-templates.html
+    /// อ่าน `url`/`relativeUrl`
+    /// </summary>
     [HttpPost("stamp")]
     [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
-    public async Task<ActionResult<ApiResponse<CompanySettingsResponse>>> UploadStamp(Guid companyId, IFormFile file)
+    public async Task<ActionResult<ApiResponse<object>>> UploadStamp(Guid companyId, IFormFile file)
     {
         if (file == null || file.Length == 0)
-            return BadRequest(new ApiResponse<string>(false, null, "กรุณาเลือกไฟล์ตราประทับ"));
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์ตราประทับ"));
 
         using var stream = file.OpenReadStream();
         var result = await _settingsService.UploadStampAsync(companyId, stream, file.FileName, file.ContentType);
-        return Ok(new ApiResponse<CompanySettingsResponse>(true, result, "อัพโหลดตราประทับสำเร็จ"));
+        return Ok(new ApiResponse<object>(true, new
+        {
+            url = result.StampUrl,
+            relativeUrl = result.StampUrl,
+            stampUrl = result.StampUrl,
+        }, "อัพโหลดตราประทับสำเร็จ"));
     }
 
     [HttpDelete("stamp")]

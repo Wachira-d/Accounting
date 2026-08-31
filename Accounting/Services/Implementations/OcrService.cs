@@ -626,6 +626,26 @@ public class OcrService : IOcrService
             // (โซน + FieldPatternLibrary) แต่ **ไม่มี call site ทั้งเรพ**
             await ApplyZoneAnalysisFallbackAsync(companyId, extractedData, extractedText);
 
+            // ⚠️ re-sync "ช่องระบุตัวตนเอกสาร" กลับเข้า entity —
+            // การ sync ชุดใหญ่อยู่ **ก่อน** สามขั้นข้างบน (EnrichFromRawText /
+            // ApplyLearnedPatterns / ZoneFallback) และ re-sync ที่มีอยู่เดิม
+            // ครอบแค่ยอดเงิน ⇒ ช่องที่สามขั้นนั้นเติมให้ (ชื่อผู้ขาย/เลขภาษี/
+            // เลขที่เอกสาร/วันที่) อยู่แต่ใน memory ไม่เคยถูกบันทึก
+            // ผลคือ ReasoningTrace เขียนว่า "เติมให้แล้ว" แต่หน้าจอยังว่าง
+            // และ CreateDocumentFromScan อ่านจาก entity → ได้เอกสารลงวันที่
+            // วันนี้แทนวันที่บนกระดาษ (ผิดงวด ภ.พ.30)
+            // เติมเฉพาะช่องที่ entity ยังว่าง — ไม่ทับค่าที่ sync ไปแล้ว
+            if (string.IsNullOrWhiteSpace(scanResult.ExtractedVendorName))
+                scanResult.ExtractedVendorName = extractedData.VendorName;
+            if (string.IsNullOrWhiteSpace(scanResult.ExtractedVendorTaxId))
+                scanResult.ExtractedVendorTaxId = extractedData.VendorTaxId;
+            if (string.IsNullOrWhiteSpace(scanResult.ExtractedDocumentNumber))
+                scanResult.ExtractedDocumentNumber = extractedData.DocumentNumber;
+            scanResult.ExtractedDate ??= extractedData.DocumentDate;
+            scanResult.ExtractedSubTotal ??= extractedData.SubTotal;
+            scanResult.ExtractedVatAmount ??= extractedData.VatAmount;
+            scanResult.ExtractedTotalAmount ??= extractedData.TotalAmount;
+
             // ── engine ไม่คืนตารางรายการเลย → ให้ AI แตกบรรทัดจากข้อความ ──
             // เส้นทาง Tesseract แบบฝังคืนแต่ข้อความล้วน ⇒ Items ว่างทุกใบ
             // ผลคือเอกสารได้บรรทัดสรุปใบเดียว แยกหมวดค่าใช้จ่ายไม่ได้
@@ -786,8 +806,11 @@ public class OcrService : IOcrService
                 {
                     try
                     {
-                        using var cts = CancellationTokenSource.CreateLinkedTokenSource(default);
-                        cts.CancelAfter(TimeSpan.FromSeconds(15));
+                        // ⚠️ เดิมเขียน CreateLinkedTokenSource(default) ซึ่ง `default`
+                        // กำกวมระหว่าง overload (CancellationToken vs params
+                        // CancellationToken[]) = CS0121. ไม่มี token ต้นทางให้ link
+                        // อยู่แล้ว จึงใช้ CTS ธรรมดาที่มี timeout ในตัว
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                         var cls = await _aiAugmenter.ClassifyDocumentTypeAsync(
                             companyId, scanResult.Id,
                             rawText: normalizedText,
@@ -6321,10 +6344,12 @@ public class OcrService : IOcrService
 
         // ยืนยันคู่ค้าให้แน่ใจก่อนบล็อก — เลขเอกสารซ้ำข้าม vendor เกิดได้จริง
         // (ผู้ขายคนละรายใช้เลขรันเดียวกัน) ถ้าคู่ค้าไม่ตรงถือว่าคนละใบ
-        if (!string.IsNullOrEmpty(vendorDigits) && hit.ContactId.HasValue)
+        // ⚠️ Document.ContactId เป็น `Guid` ไม่ใช่ `Guid?` — "ไม่มีคู่ค้า" แทนด้วย
+        // Guid.Empty ไม่ใช่ null (เคยเขียน .HasValue/.Value = CS1061 ล้มทั้ง solution)
+        if (!string.IsNullOrEmpty(vendorDigits) && hit.ContactId != Guid.Empty)
         {
             var contactTax = await _db.Contacts.AsNoTracking()
-                .Where(c => c.Id == hit.ContactId.Value && c.CompanyId == companyId)
+                .Where(c => c.Id == hit.ContactId && c.CompanyId == companyId)
                 .Select(c => c.TaxId).FirstOrDefaultAsync();
             if (!string.IsNullOrEmpty(contactTax)
                 && Accounting.Helpers.ThaiTaxId.Normalize(contactTax) != vendorDigits)
