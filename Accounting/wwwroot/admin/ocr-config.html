@@ -1342,7 +1342,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       const lines = [...document.querySelectorAll('.train-line-row')].map(row => ({
         description: row.querySelector('.train-line-desc').value.trim(),
         accountCode: row.querySelector('.train-line-account').value.trim() || null,
-        amount: parseFloat(row.querySelector('.train-line-amount').value) || null,
+        // 0 มีความหมาย (บรรทัดส่วนลด/ของแถมในใบจริง) — ห้าม || null กลืน
+        amount: (() => { const v=(row.querySelector('.train-line-amount').value ?? '').trim();
+          if (v==='') return null; const n=parseFloat(v); return Number.isFinite(n)?n:null; })(),
       })).filter(l => l.description);
 
       const body = {

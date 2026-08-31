@@ -78,6 +78,12 @@ internal static class ProhibitedInputVatScreener
         "กระบะตอนเดียว", "กระบะแค็บ", "รถกระบะ", "รถบรรทุก", "หกล้อ", "สิบล้อ",
         "รถตู้", "รถโดยสาร", "โฟล์คลิฟ", "forklift", "แบคโฮ", "แบ็คโฮ",
         "แม็คโคร", "แมคโคร", "รถขุด", "รถตัก", "รถไถ", "เครน", "truck",
+        // ใบ fleet ภาษาอังกฤษระบุชนิดรถเป็นอังกฤษ — เดิมไม่แมตช์เลย ⇒ รถกระบะ/
+        // บรรทุกที่เคลมได้ถูกตั้ง "ไม่เคลม" ทุกใบ (ทิศปลอดภัยแต่เสียสิทธิ์ VAT
+        // ต้องไปติ๊กคืนเองใน 6 เดือน §82/3). จงใจไม่ใส่ "van"/"bus"/"tractor"
+        // — ชน advance/business/contractor แบบ substring
+        "pickup", "pick-up", "lorry", "trailer", "excavator", "backhoe",
+        "wheel loader", "6-wheel", "10-wheel",
     };
 
     private const string VehicleGuidance =

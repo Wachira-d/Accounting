@@ -66,8 +66,11 @@ public static class OcrDocumentRoleInferrer
         // ภาษี ณ ที่จ่าย" — คำว่า "หัก ณ ที่จ่าย" (หัก ติดกับ ณ) **ไม่เคยปรากฏ**
         // เพราะมี "ภาษี" คั่นอยู่เสมอ ใช้ "ณ ที่จ่าย" + "รับรอง" แทน
         var isWhtCert = ContainsAll(lower, "ณ ที่จ่าย", "รับรอง")
-                     || lower.Contains("50 ทวิ")
-                     || lower.Contains("withholding tax certificate");
+                     || lower.Contains("50 ทวิ") || lower.Contains("50ทวิ") || lower.Contains("50 bis")
+                     || lower.Contains("withholding tax certificate")
+                     || lower.Contains("certificate of withholding tax")   // ลำดับคำของแบบสองภาษา
+                     || lower.Contains("wht certificate")
+                     || lower.Contains("tax withheld at source");
         if (!isWhtCert) return null;
 
         var companyTax = new string((companyTaxId ?? "").Where(char.IsDigit).ToArray());
@@ -187,8 +190,11 @@ public static class OcrDocumentRoleInferrer
         // ตัวอ่านทิศที่ถูกต้อง InferWhtCertWeAreWithheld ก็มีอยู่แล้วในไฟล์นี้ —
         // แต่เดิมถูกเรียกหลังสร้างเอกสารเสร็จ ไม่ใช่ตอนตัดสินว่าจะสร้างอะไร
         var isWhtCert = ContainsAll(text, "ณ ที่จ่าย", "รับรอง")
-                     || text.Contains("50 ทวิ")
-                     || text.Contains("withholding tax certificate");
+                     || text.Contains("50 ทวิ") || text.Contains("50ทวิ") || text.Contains("50 bis")
+                     || text.Contains("withholding tax certificate")
+                     || text.Contains("certificate of withholding tax")
+                     || text.Contains("wht certificate")
+                     || text.Contains("tax withheld at source");
         var weAreWithheld = isWhtCert ? InferWhtCertWeAreWithheld(rawText, companyTaxId) : null;
         if (weAreWithheld.HasValue && roleConf < 0.9m)
         {
@@ -281,14 +287,25 @@ public static class OcrDocumentRoleInferrer
         var hasCreditNote = ContainsAny(text, "ใบลดหนี้", "credit note");
         var hasDebitNote = ContainsAny(text, "ใบเพิ่มหนี้", "debit note");
         var hasPurchaseOrder = ContainsAny(text, "ใบสั่งซื้อ", "purchase order");
-        var hasDeliveryNote = ContainsAny(text, "ใบส่งของ", "delivery note");
-        var hasQuotation = ContainsAny(text, "ใบเสนอราคา", "quotation");
+        var hasDeliveryNote = ContainsAny(text, "ใบส่งของ", "ใบส่งสินค้า", "ใบส่งมอบงาน",
+            "delivery note", "delivery order", "packing list");
+        // PROFORMA INVOICE มี substring "invoice" ⇒ เดิมถูกตีเป็นใบแจ้งหนี้แล้ว
+        // ตั้งหนี้/ลงค่าใช้จ่ายจากเอกสารที่ยังไม่ใช่เอกสารภาษี (tax point ยังไม่เกิด)
+        var hasProforma = ContainsAny(text, "proforma", "pro-forma", "pro forma", "ใบแจ้งหนี้ชั่วคราว");
+        if (hasProforma) hasInvoice = false;
+        var hasQuotation = hasProforma || ContainsAny(text, "ใบเสนอราคา", "quotation");
         var hasBillingNote = ContainsAny(text, "ใบวางบิล", "billing note");
         // สลิปโอนเงิน/หลักฐานการชำระ — เดิม**ไม่มี marker เลย** ⇒ ตกไปเป็น Expense
         // ทุกใบ ทั้งที่ความหมายชัดว่าเงินเคลื่อนแล้ว (จ่าย = PV / รับ = RV)
         var hasBankSlip = ContainsAny(text,
             "สลิปโอนเงิน", "สลิปการโอน", "หลักฐานการโอนเงิน", "โอนเงินสำเร็จ", "โอนเงินเรียบร้อย",
-            "รายการโอนเงิน", "transfer slip", "payment slip", "transfer successful",
+            "รายการโอนเงิน", "ทำรายการสำเร็จ", "ชำระเงินสำเร็จ", "จ่ายบิลสำเร็จ",
+            // แอปธนาคารไทยรุ่นภาษาอังกฤษพิมพ์คำพวกนี้ ไม่ใช่ "transfer slip"
+            // — เดิมสลิป K PLUS/SCB โหมด EN หลุดไปเป็น Expense (ฝั่งซื้อ) หรือ
+            // แย่กว่า: ใบขายใบใหม่ (ฝั่งขาย = รายได้ซ้ำ)
+            "transfer slip", "payment slip", "transfer successful",
+            "transfer completed", "transaction successful", "transaction completed",
+            "payment successful", "e-slip",
             "พร้อมเพย์", "promptpay");
         // ── Markers that decide PAID-vs-UNPAID and EVIDENCE QUALITY ──
         // บิลเงินสด = informal cash bill. With a valid 13-digit vendor TaxId it
@@ -303,7 +320,10 @@ public static class OcrDocumentRoleInferrer
         //   (2) นิยาม §86/6 — ใบอย่างย่อ "ไม่ระบุชื่อ/เลขภาษีผู้ซื้อ". ถ้า OCR
         //       สกัดเลขภาษีผู้ซื้อ 13 หลักได้ = ใบเต็มรูปแน่นอน ต่อให้เจอคำนี้
         //       ที่อื่นบนกระดาษก็ห้ามตีเป็นอย่างย่อ (เคลมภาษีซื้อได้ ห้ามปัดตก)
-        var hasAbbrevTaxInvoice = ContainsAnyNotNegated(text, "ใบกำกับภาษีอย่างย่อ", "abbreviated tax invoice");
+        var hasAbbrevTaxInvoice = ContainsAnyNotNegated(text, "ใบกำกับภาษีอย่างย่อ",
+            // POS/โรงแรม/ระบบต่างชาติในไทยพิมพ์ "SIMPLIFIED" แทน "ABBREVIATED"
+            // เป็นปกติ — ขาดไปแล้วสลิปอังกฤษหลุดไปเคลม ภ.พ.30 ผิด §82/5(2)
+            "abbreviated tax invoice", "simplified tax invoice", "abb. tax invoice");
         // ปลด marker เฉพาะเมื่อเลขผู้ซื้อ "จริง" — ต้องผ่าน mod-11 checksum ไม่ใช่
         // แค่นับ 13 หลัก (vision model hallucinate เลข 13 หลักได้ง่าย → ใบอย่างย่อ
         // แท้หลุดไปเคลม ภ.พ.30 ผิด §82/5(2))
@@ -328,7 +348,12 @@ public static class OcrDocumentRoleInferrer
         {
             var vatInclusive = ContainsAny(text,
                 "ราคารวมภาษีมูลค่าเพิ่ม", "รวมภาษีมูลค่าเพิ่มแล้ว", "ราคารวมvat",
-                "vat included", "inclusive of vat", "incl. vat");
+                "รวมภาษีแล้ว", "ราคารวมภาษี",
+                // วลีอังกฤษที่พิมพ์จริงบ่อยสุดคือ "VAT inclusive" (สลับลำดับคำ)
+                // ซึ่งของเดิม ("vat included") ไม่แมตช์ ⇒ fallback เชิงโครงสร้าง
+                // ของ §86/6 ไม่เคยยิงบนสลิปอังกฤษเลย
+                "vat included", "vat inclusive", "inclusive of vat",
+                "incl. vat", "incl vat", "including vat", "price includes vat");
             // `rawText` ประกาศเป็น string (ไม่ใช่ string?) แต่ถูก
             // `!string.IsNullOrEmpty(rawText)` เช็คไปก่อนหน้า ⇒ Roslyn เรียนรู้ว่า
             // "อาจ null ได้" แล้วเตือน CS8604 ตรงนี้ — กันด้วย ?? "" ให้ชัด
@@ -344,7 +369,13 @@ public static class OcrDocumentRoleInferrer
         // Explicit paid stamps on the paper.
         var hasPaidMarker = ContainsAny(text,
             "ชำระแล้ว", "ชำระเงินสด", "จ่ายเงินสด", "รับเงินแล้ว", "รับเงินเรียบร้อย",
-            "ได้รับเงิน", "paid in full", "payment received", "cash received");
+            "ได้รับเงิน", "ชำระเงินแล้ว", "รับชำระแล้ว", "ได้รับชำระ",
+            // อังกฤษเดิมมีแต่วลียาวที่แทบไม่มีใครพิมพ์ — ตราจริงคือคำพวกนี้
+            // (จงใจ **ไม่ใส่** "paid"/"approved"/"sale" เดี่ยว ๆ: ชน UNPAID ·
+            // "Amount Paid: 0.00" · ช่องเซ็น "Approved by" · "Sales Tax")
+            "paid in full", "paid in cash", "fully paid", "payment received",
+            "payment completed", "cash received", "received with thanks",
+            "approval code");
         var vendorTaxValid = !string.IsNullOrEmpty(vendorTaxId)
             && vendorTaxId.Count(char.IsDigit) == 13;
 
@@ -544,7 +575,9 @@ public static class OcrDocumentRoleInferrer
         // ("ต้นฉบับใบส่งสินค้า/ต้นฉบับใบกำกับภาษี" หรือ "ต้นฉบับ (สำเนา)")
         // ⇒ ถือเป็นสำเนาเฉพาะเมื่อ **เจอคำว่าสำเนาแต่ไม่เจอคำว่าต้นฉบับ**
         var hasOriginalMark = ContainsAny(text, "ต้นฉบับ", "original");
-        var hasCopyMark = ContainsAny(text, "สำเนา", "copy", "duplicate");
+        // "©/copyright" ใน footer ไม่ใช่เครื่องหมายสำเนา — ตัดก่อนตรวจ
+        var copyCheckText = text.Replace("copyright", " ").Replace("©", " ");
+        var hasCopyMark = ContainsAny(copyCheckText, "สำเนา", "copy", "duplicate");
         var looksLikeCopy = hasCopyMark && !hasOriginalMark;
         if (looksLikeCopy)
             reasons.Add("กระดาษมีคำว่า \"สำเนา\" และไม่มีคำว่า \"ต้นฉบับ\" — ผู้ซื้อต้องใช้ต้นฉบับ "
@@ -664,6 +697,16 @@ public static class OcrDocumentRoleInferrer
     private static (int buyerLabelPos, int sellerLabelPos) FindRolePhrasePositions(string text)
     {
         if (string.IsNullOrEmpty(text)) return (-1, -1);
+        // "CUSTOMER COPY" (สลิปบัตรทุกใบ) / "CUSTOMER SERVICE" / "สำเนาลูกค้า"
+        // ไม่ใช่ป้ายบอกตำแหน่งผู้ซื้อ — ตัดทิ้งก่อนค้น (แทนด้วยช่องว่างความยาว
+        // เท่าเดิม เพื่อไม่ให้ตำแหน่ง index ของป้ายจริงตัวอื่นเลื่อน)
+        foreach (var noise in new[] { "customer copy", "customer service", "merchant copy",
+                                      "สำเนาลูกค้า", "ลูกค้าสัมพันธ์" })
+        {
+            int at;
+            while ((at = text.IndexOf(noise, StringComparison.OrdinalIgnoreCase)) >= 0)
+                text = text.Remove(at, noise.Length).Insert(at, new string(' ', noise.Length));
+        }
         var buyerLabels = new[] { "ผู้ซื้อ", "ลูกค้า", "นามผู้ซื้อ", "Bill To", "BILL TO", "Sold To", "SOLD TO", "ส่งถึง", "Customer", "BUYER" };
         var sellerLabels = new[] { "ผู้ขาย", "ผู้ออกใบ", "ผู้ให้บริการ", "ผู้ออก", "Seller", "SELLER", "From", "FROM" };
         int buyerIdx = -1, sellerIdx = -1;

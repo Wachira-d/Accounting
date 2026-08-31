@@ -53,6 +53,12 @@ public interface IPayrollService
     /// รันใน background scope หลัง pay เพื่อกัน request timeout. best-effort.</summary>
     Task GeneratePostPaymentArtifactsAsync(Guid companyId, Guid runId, string actor);
     Task VoidPayrollAsync(Guid companyId, Guid payrollRunId);
+    /// <summary>กลับรายการจ่ายเงินเดือน (Paid → Approved) เพื่อแก้ยอดย้อนหลังแล้ว
+    /// จ่ายใหม่ — กลับ JE ที่ลงตอนจ่าย (ลงวันเดียวกับ PayDate เพื่อให้โพสต์ใหม่
+    /// เข้างวดเดิมได้), คืนเงินทดรองที่หักในรอบนี้, ตัดสาย JournalEntryId,
+    /// บันทึก AuditLog + ReopenedAt/By/Reason. บล็อกเมื่อนำส่ง สปส. แล้ว หรือ
+    /// งวดบัญชีของ PayDate ปิดแล้ว. เหตุผลบังคับ (≥ 5 ตัวอักษร).</summary>
+    Task<PayrollRunResponse> ReopenPaidRunAsync(Guid companyId, Guid payrollRunId, string reason, string reopenedBy);
     /// <summary>นำส่งประกันสังคมให้ สปส. (สปส.1-10) — post JE คู่ที่สอง
     /// Dr 21815 ประกันสังคมค้างจ่าย / Cr Bank (+ เงินเพิ่ม §49 2%/เดือนถ้านำส่งช้า).
     /// ใช้กับรอบที่ Status=Paid + ยังไม่ได้นำส่ง. คืน PayrollRunResponse ที่

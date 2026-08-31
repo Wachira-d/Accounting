@@ -28,6 +28,31 @@ const Layout = {
   myPermissions: null,   // { roleName, isOwnerOrAdmin, allowedMenuIds }
   _initialized: false,
 
+  /** อ่านค่าตัวเลขจากช่องกรอกโดย **ไม่กลืนเลข 0**
+   *
+   *  ═══ ที่มา (บั๊กจริงซ้ำกันหลายหน้า) ═══
+   *  ทุกหน้าเคยเขียน `parseFloat(el.value) || null` — `parseFloat("0") = 0`
+   *  เป็น falsy ⇒ กลายเป็น null ⇒ ฝั่งเซิร์ฟเวอร์ `if (x.HasValue)` ไม่เข้า ⇒
+   *  **ค่าเดิมค้าง** ผู้ใช้แก้เป็น 0 แล้วบันทึก ระบบเด้งกลับค่าเดิมทุกครั้ง
+   *  (เครดิต 0 วัน · VAT 0 ของใบยกเว้น · ยอดยื่นแบบเปล่า 0 บาท · เพดานยกวันลา
+   *  0 วัน ฯลฯ — เลข 0 คือค่าที่ผู้ใช้ตั้งใจกรอกทั้งนั้น)
+   *
+   *  กติกา: ว่าง = null ("ไม่ระบุ") · "0" = 0 (ค่าจริง) · ขยะ = null
+   *  ห้ามหน้าไหนเขียน `parseFloat(...) || null` เองอีก — ใช้ตัวนี้ */
+  numOrNull(elId) {
+    const v = (document.getElementById(elId)?.value ?? '').trim();
+    if (v === '') return null;
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  },
+  /** เวอร์ชันจำนวนเต็ม — กติกาเดียวกับ numOrNull */
+  intOrNull(elId) {
+    const v = (document.getElementById(elId)?.value ?? '').trim();
+    if (v === '') return null;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : null;
+  },
+
   esc(str) {
     if (str == null) return '';
     const d = document.createElement('div');
@@ -1590,7 +1615,9 @@ const Layout = {
       d.email = document.getElementById('setupEmail')?.value?.trim() || '';
     } else if (this.setupStep === 3) {
       d.isVatRegistered = document.getElementById('setupVatRegistered')?.checked || false;
-      d.vatRate = parseFloat(document.getElementById('setupVatRate')?.value) || 7;
+      // 0% ตั้งใจได้ (ยังไม่จด VAT) — ว่างเท่านั้นที่ตกไป 7
+      { const _v = (document.getElementById('setupVatRate')?.value ?? '').trim();
+        d.vatRate = _v === '' ? 7 : (Number.isFinite(parseFloat(_v)) ? parseFloat(_v) : 7); }
       d.isWhtRegistered = document.getElementById('setupWhtRegistered')?.checked || false;
       d.isSocialSecurityRegistered = document.getElementById('setupSocialSecurity')?.checked || false;
       d.fiscalYearStartMonth = parseInt(document.getElementById('setupFiscalMonth')?.value) || 1;
@@ -1634,7 +1661,7 @@ const Layout = {
         businessType: d.businessType || 'JuristicPerson',
         juristicId: d.juristicId || null,
         isVatRegistered: d.isVatRegistered || false,
-        vatRate: d.vatRate || 7,
+        vatRate: d.vatRate ?? 7,
         isWhtRegistered: d.isWhtRegistered !== false,
         isSocialSecurityRegistered: d.isSocialSecurityRegistered || false,
         address: d.address || null,

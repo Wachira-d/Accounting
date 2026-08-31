@@ -2942,7 +2942,9 @@
        *  saveCorrection + createDocFromReview เพื่อให้ค่าที่เลือกไม่หาย) */
       _buildReviewCorrection() {
         const v = (id) => document.getElementById(id)?.value || null;
-        const f = (id) => parseFloat(document.getElementById(id)?.value) || null;
+        // ⚠️ ห้าม `|| null` — เลข 0 มีความหมาย (ใบยกเว้น VAT ผู้ใช้แก้ VAT
+        // เป็น 0 แล้วต้องติด ไม่ใช่เด้งกลับค่า OCR เดิม) — Layout.numOrNull
+        const f = (id) => Layout.numOrNull(id);
         return {
           documentType: v('revDocType'),
           targetDocumentType: v('revTargetDocType'),

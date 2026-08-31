@@ -298,7 +298,7 @@
           hours: parseFloat(document.getElementById('fHours').value),
           category: document.getElementById('fCategory').value,
           description: document.getElementById('fDesc').value.trim() || null,
-          overtimeHours: parseFloat(document.getElementById('fOt').value) || null,
+          overtimeHours: Layout.numOrNull('fOt'),   // แก้ OT เป็น 0 (ไม่อนุมัติ) ต้องติด
           isHoliday: document.getElementById('fHoliday').checked,
           hasPerDiem: document.getElementById('fPerDiem').checked,
           hasAccommodation: document.getElementById('fAccom').checked,

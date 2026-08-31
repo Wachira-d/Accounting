@@ -591,15 +591,20 @@
           usefulLifeMonths: parseInt(document.getElementById('fLife').value),
           depreciationMethod: document.getElementById('fMethod').value,
           assetAccountId: assetAcct,
-          depreciationExpenseAccountId: document.getElementById('fDepExpAcct').value || null,
-          accumulatedDepreciationAccountId: document.getElementById('fAccumAcct').value || null,
+          // แก้ไข: "" = **ปลดค่า** (Guid.Empty sentinel — server แปลงเป็น null)
+          // เดิมเลือก "— ไม่ระบุ —" แล้วบันทึกไม่มีผล ค่าเดิมผูกอยู่ต่อ
+          depreciationExpenseAccountId: document.getElementById('fDepExpAcct').value
+            || (id ? '00000000-0000-0000-0000-000000000000' : null),
+          accumulatedDepreciationAccountId: document.getElementById('fAccumAcct').value
+            || (id ? '00000000-0000-0000-0000-000000000000' : null),
           assetType: document.getElementById('fAssetType').value,
           leaseTermMonths: parseInt(document.getElementById('fLeaseTerm').value) || null,
           lessorName: document.getElementById('fLessor').value.trim() || null,
           monthlyLeasePayment: parseFloat(document.getElementById('fLeasePmt').value) || null,
           postAcquisitionJournalEntry: postAcq,
           creditAccountId: creditAcct,
-          projectId: document.getElementById('fProject').value || null,
+          projectId: document.getElementById('fProject').value
+            || (id ? '00000000-0000-0000-0000-000000000000' : null),
         };
         try {
           if (id) { await api.updateAsset(id, data); } else { await api.createAsset(data); }

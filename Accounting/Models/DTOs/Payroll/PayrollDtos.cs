@@ -171,7 +171,20 @@ public record PayrollRunResponse(
     string? ExternalRunRef = null,
     // JE ที่ post ตอนจ่าย (Dr เงินเดือน/Cr ปกส.+ภงด.1+ธนาคาร) — ใช้ deep-link
     // ไปหน้าสมุดรายวันดูรายการบัญชีของรอบนี้
-    Guid? JournalEntryId = null);
+    Guid? JournalEntryId = null,
+    // ── สิทธิ์แก้ไข: เซิร์ฟเวอร์ตัดสิน หน้าเว็บ "แสดง" อย่างเดียว ──
+    // เดิม payroll.html คำนวณ payEditable เองจาก status (สำเนามือชุดที่ 3 ของ
+    // กติกาเดียวกัน) และเมื่อแก้ไม่ได้ก็แค่**ซ่อนปุ่มเงียบ ๆ** ผู้ใช้จึงไม่รู้
+    // ว่าทำไมและต้องทำอะไรต่อ. ย้ายมาที่ Helpers/PayrollRunEditPolicy ตัวเดียว
+    // แล้วส่งทั้ง "ได้/ไม่ได้" + "เหตุผลพร้อมทางแก้" มาให้แสดง
+    bool CanEditAmounts = false,
+    string? EditLockReason = null,
+    bool CanReopen = false,
+    string? ReopenBlockReason = null,
+    // ร่องรอยการกลับรายการจ่ายครั้งล่าสุด (Paid → Approved)
+    DateTime? ReopenedAt = null,
+    string? ReopenedBy = null,
+    string? ReopenReason = null);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/
@@ -212,6 +225,11 @@ public record SettleSsoRequest(
 /// <summary>ตั้งแหล่งจ่ายเงินสุทธิรายคน — AccountCode = ผังเงินสด/ธนาคาร/ช่อง
 /// จ่าย (null/ว่าง = ใช้ค่าระดับ run/default).</summary>
 public record SetPaymentAccountRequest(string? AccountCode);
+
+/// <summary>กลับรายการจ่ายเงินเดือน (Paid → Approved) เพื่อแก้ยอดย้อนหลัง.
+/// เหตุผลบังคับ — เป็นรายการที่กลับ JE ที่ลงบัญชีไปแล้ว ต้องตอบผู้ตรวจได้ว่า
+/// ทำไม (พ.ร.บ.การบัญชี ม.10 ร่องรอยการแก้ไข).</summary>
+public record ReopenPayrollRunRequest(string Reason);
 
 /// <summary>แก้ยอดรายคนในรอบ (ก่อนจ่าย). field ที่ส่งมา (HasValue) เท่านั้น
 /// ที่อัปเดต; ระบบรวม Gross/หัก/สุทธิ + run totals ใหม่ให้. ค่าติดลบถูกปัดเป็น 0.</summary>

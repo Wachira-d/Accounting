@@ -126,7 +126,10 @@ public static class OcrScanComplianceEvaluator
     {
         var s = status.Trim();
         if (s.Length == 0) return false;
+        // ตัวกลาง/DBD บางเส้นคืนสถานะเป็นอังกฤษ — ครอบทั้งสองภาษา
         string[] inactive = { "เลิก", "ร้าง", "ชำระบัญชี", "ถอนทะเบียน", "พิทักษ์ทรัพย์", "ล้มละลาย" };
-        return inactive.Any(k => s.Contains(k, StringComparison.Ordinal));
+        string[] inactiveEn = { "dissolved", "liquidat", "struck off", "bankrupt", "defunct" };
+        return inactive.Any(k => s.Contains(k, StringComparison.Ordinal))
+            || inactiveEn.Any(k => s.Contains(k, StringComparison.OrdinalIgnoreCase));
     }
 }

@@ -3329,7 +3329,25 @@
         return `${lbl} ${reason}${conf}`.trim();
       },
 
+      /** แก้ "วันที่เอกสาร" → วันครบกำหนดต้องเลื่อนตาม (ตัวขับคือ วันที่+เครดิต)
+       *  เดิม handler นี้ทำแค่เรื่อง FX ⇒ แก้วันที่ใบจาก 1 ก.ย. เป็น 15 ก.ย.
+       *  โดยเครดิต 30 วัน ครบกำหนดยังค้าง 1 ต.ค. (= +16 วัน) — PDF พิมพ์
+       *  "เครดิต 30 วัน" คู่กับครบกำหนดที่ไม่ใช่ +30 และระบบทวงหนี้เร็วเกินจริง
+       *  กติกาเดียวกับ onCreditDaysInput: ทับได้เมื่อ due ว่าง/มาจาก autoCalc/
+       *  ผู้ใช้ยังไม่เคยพิมพ์วันครบกำหนดเอง */
+      _recalcDueFromDate() {
+        const cd = document.getElementById('fCreditDays');
+        const dateEl = document.getElementById('fDate');
+        const dueEl = document.getElementById('fDueDate');
+        const days = parseInt(cd?.value ?? '', 10);
+        if (!Number.isFinite(days) || days < 0 || !dateEl?.value || !dueEl) return;
+        if (dueEl.value && dueEl.dataset.autoCalc !== '1' && dueEl.dataset.userTouched === '1') return;
+        const d = new Date(dateEl.value);
+        d.setDate(d.getDate() + days);
+        if (!isNaN(d.getTime())) { dueEl.value = Layout.toDateInput(d); dueEl.dataset.autoCalc = '1'; }
+      },
       async onCurrencyOrDateChange() {
+        this._recalcDueFromDate();
         const ccyEl = document.getElementById('fCurrency');
         const grp = document.getElementById('fxRateGroup');
         const rateEl = document.getElementById('fExchangeRate');
@@ -4749,6 +4767,26 @@
           d.setDate(d.getDate() + days);
           if (!isNaN(d.getTime())) { dueEl.value = Layout.toDateInput(d); /* ห้าม toISOString — เลื่อน 1 วันใน ICT */ dueEl.dataset.autoCalc = '1'; }
         }
+        // ข้อความเงื่อนไขการชำระเงิน (ที่พิมพ์ลงกระดาษ) ต้องตามเลขวันใหม่ด้วย
+        // — เดิม _rewriteCreditDaysInTerms ถูกเรียกเฉพาะตอน "เลือกผู้ติดต่อ"
+        // ⇒ แก้เครดิต 30→60 บนฟอร์ม PDF พิมพ์ "ชำระภายใน 30 วัน (เครดิต 60 วัน)"
+        // ในบรรทัดเดียว ลูกค้าถือใบเถียงได้ทั้งสองทาง. เขียนทับเฉพาะเมื่อผู้ใช้
+        // แก้เครดิตเองจริง (isTrusted) และเลขเดิมในข้อความ = เลขเครดิตก่อนหน้า
+        if (ev?.isTrusted && Number.isFinite(days) && days >= 0) {
+          const h = document.getElementById('fPaymentTerms');
+          const prev = parseInt(cd.dataset.prevDays ?? '', 10);
+          if (h?.value && Number.isFinite(prev) && prev > 0 && prev !== days) {
+            const merged = this._rewriteCreditDaysInTerms(h.value, prev, days);
+            // renderPaymentTerms คงธง autoSrc/userTouched เดิมของช่องไว้เอง —
+            // การเขียนเลขวันตามคือการซิงก์ ไม่ใช่การแก้ของผู้ใช้
+            if (merged !== null) {
+              const keepSrc = h.dataset.autoSrc, keepTouched = h.dataset.userTouched;
+              this.renderPaymentTerms(merged, keepSrc || null);
+              if (keepTouched) h.dataset.userTouched = keepTouched;
+            }
+          }
+          cd.dataset.prevDays = String(days);
+        }
       },
       /** ลำดับความสำคัญของ "ที่มา" ค่าเทอมการชำระเงิน — ตัวเลขสูงกว่าทับตัวต่ำกว่าได้
        *
@@ -4781,6 +4819,7 @@
         if (!prof.credit) return;
         const days = contact.paymentDueDays;
         if (typeof days !== 'number' || days < 0) return;
+        // (prevDays ถูกตั้งตอนค่าถูกเติมสำเร็จด้านล่าง ผ่าน onCreditDaysInput/ตรงนี้)
 
         const cdEl = document.getElementById('fCreditDays');
         if (this._canAutoFill(cdEl, 'contact')) {
@@ -7593,6 +7632,10 @@
           const fCd = document.getElementById('fCreditDays');
           if (fCd) {
             fCd.value = d.creditDays ?? '';
+            // จำเลขเดิมไว้ให้ตัวเขียนข้อความเงื่อนไขตาม (onCreditDaysInput)
+            // รู้ว่า "เลขไหนในข้อความคือเลขเครดิตก่อนหน้า"
+            if (Number.isFinite(parseInt(fCd.value, 10))) fCd.dataset.prevDays = String(parseInt(fCd.value, 10));
+            else delete fCd.dataset.prevDays;
             // ค่าที่บันทึกไว้ = การตัดสินใจของผู้ใช้แล้ว — ล็อกไม่ให้ autofill ทับ
             fCd.dataset.userTouched = '1'; delete fCd.dataset.autoSrc;
             this._hideCreditSrcHint();
@@ -8039,13 +8082,32 @@
             Layout.toast('กรุณาระบุชื่อผู้ออกใบรับรอง', 'error'); return;
           }
         }
-        const projectId = document.getElementById('fProject')?.value || null;
-        const dimensionId = document.getElementById('fDimension')?.value || null;
-        const pcVal = document.getElementById('fPaymentChannel')?.value || '';
-        let bankAccountId = null, paymentAccountId = null;
-        if (pcVal.startsWith('bank:')) bankAccountId = pcVal.substring(5);
-        else if (pcVal.startsWith('account:')) paymentAccountId = pcVal.substring(8);
-        const expenseCategoryId = document.getElementById('fExpenseCategory')?.value || null;
+        // dropdown ที่มี option "— ไม่ระบุ —": ตอน **แก้ไข** ค่าว่างต้องแปลว่า
+        // "ปลดออก" ไม่ใช่ "ไม่แตะ" — ส่ง Guid.Empty เป็น sentinel (server รองรับ
+        // แบบเดียวกับ DimensionId/BrandId) เดิมส่ง null ⇒ server ไม่แตะ ⇒
+        // เลือก "ไม่ระบุ" แล้วบันทึก ค่าเดิมยังผูกอยู่ทุกครั้ง (silent no-op)
+        // ตอนสร้างใหม่ ว่าง = null ตามเดิม (ไม่มีของเดิมให้ปลด)
+        const CLEAR_GUID = '00000000-0000-0000-0000-000000000000';
+        // ⚠️ ปลดได้เฉพาะช่องที่ **แสดงอยู่จริง** — ช่องที่ถูกซ่อนตามชนิดเอกสาร
+        // (เช่นโครงการบนใบเสร็จบางโหมด) ค่าว่างของมันไม่ใช่เจตนาผู้ใช้ ห้ามไป
+        // ปลดค่าที่ผูกไว้ (จะกลายเป็น "แก้ field อื่นแล้วโครงการหลุดเงียบ ๆ")
+        const _visible = (el) => !!el && el.offsetParent !== null;
+        const _gsel = (id) => {
+          const el = document.getElementById(id);
+          const v = el?.value || '';
+          return v || (this.editingId && _visible(el) ? CLEAR_GUID : null);
+        };
+        const projectId = _gsel('fProject');
+        const dimensionId = _gsel('fDimension');
+        const _pcEl = document.getElementById('fPaymentChannel');
+        const pcVal = _pcEl?.value || '';
+        // แหล่งเงินเป็นช่องคู่ (bank: / account:) — ว่างตอนแก้ไข (และช่องแสดงอยู่)
+        // = ปลดทั้งคู่
+        const _pcClear = this.editingId && _visible(_pcEl) ? CLEAR_GUID : null;
+        let bankAccountId = _pcClear, paymentAccountId = _pcClear;
+        if (pcVal.startsWith('bank:')) { bankAccountId = pcVal.substring(5); paymentAccountId = _pcClear; }
+        else if (pcVal.startsWith('account:')) { paymentAccountId = pcVal.substring(8); bankAccountId = _pcClear; }
+        const expenseCategoryId = _gsel('fExpenseCategory');
         // "ใบแจ้งหนี้/ใบกำกับภาษี" ใบเดียว — ติ๊ก checkbox บนฟอร์ม (ฝั่งขาย
         // Invoice/TaxInvoice) → บังคับ type=TaxInvoice ให้ทำงานเป็นใบกำกับ
         // เต็มรูป (VAT/ภพ.30/§86/4/e-Tax) แล้วส่ง flag ให้ PDF พิมพ์หัวรวม.
@@ -8089,7 +8151,14 @@
           billDiscountAmount: (document.getElementById('fBillDiscountMode')?.value !== 'pct')
             ? (parseFloat(document.getElementById('fBillDiscount')?.value) || 0) : 0,
           documentDate: document.getElementById('fDate').value,
-          dueDate: document.getElementById('fDueDate').value || null,
+          // แก้ไข (และช่องแสดงอยู่): ว่าง = **ล้างวันครบกำหนดทิ้ง** (sentinel
+          // 0001-01-01 — server แปลงเป็น null) เดิมล้างไม่ได้เลย ใบยังโผล่ใน
+          // รายงานค้างชำระ/อีเมลทวงตามวันเก่า
+          dueDate: (() => {
+            const el = document.getElementById('fDueDate');
+            if (el?.value) return el.value;
+            return this.editingId && el && el.offsetParent !== null ? '0001-01-01' : null;
+          })(),
           deliveryDate: document.getElementById('fDeliveryDate')?.value || null,
           ownershipTransferDate: document.getElementById('fOwnershipTransferDate')?.value || null,
           serviceUsedDate: document.getElementById('fServiceUsedDate')?.value || null,
@@ -8164,9 +8233,14 @@
           // ว่าง = "ไม่ระบุ" (ให้ใช้ค่าตั้งต้นของผู้ขาย) · "0" = เงินสด/จ่ายทันที
           creditDays: (() => {
             const v = (document.getElementById('fCreditDays')?.value ?? '').trim();
-            if (v === '') return null;
+            // แก้ไข (และช่องแสดงอยู่): ว่าง = **ล้างค่า** (ส่ง -1 sentinel —
+            // server แปลงเป็น null แล้วกลับไปใช้ค่าตั้งต้นของผู้ขาย)
+            // สร้างใหม่ / ช่องถูกซ่อนตามชนิดเอกสาร: ว่าง = ไม่แตะ (null)
+            const _cdEl = document.getElementById('fCreditDays');
+            const _canClear = this.editingId && _cdEl && _cdEl.offsetParent !== null;
+            if (v === '') return _canClear ? -1 : null;
             const n = parseInt(v, 10);
-            return Number.isFinite(n) && n >= 0 ? n : null;
+            return Number.isFinite(n) && n >= 0 ? n : (_canClear ? -1 : null);
           })(),
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
           // ภาษาที่ตรึงไว้กับใบนี้ — "" (ตามค่าบริษัท) ต้องส่งเป็น null ไม่ใช่ ""

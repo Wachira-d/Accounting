@@ -268,7 +268,7 @@
         const body = {
           name: document.getElementById('aName').value.trim(),
           documentType: document.getElementById('aDocType').value || null,
-          minAmount: parseFloat(document.getElementById('aMinAmount').value) || null,
+          minAmount: Layout.numOrNull('aMinAmount'),   // 0 = ครอบทุกยอดตั้งแต่บาทแรก
           maxAmount: parseFloat(document.getElementById('aMaxAmount').value) || null,
           isActive: true,
           steps: steps.map((u, i) => ({ stepOrder: i + 1, approverUserId: u, isRequired: true }))

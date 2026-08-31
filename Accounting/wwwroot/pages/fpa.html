@@ -305,8 +305,8 @@
             code: document.getElementById('kCode').value || null,
             category: document.getElementById('kCategory').value || null,
             formula: document.getElementById('kFormula').value || null,
-            targetValue: parseFloat(document.getElementById('kTarget').value) || null,
-            warningThreshold: parseFloat(document.getElementById('kWarn').value) || null
+            targetValue: Layout.numOrNull('kTarget'),   // KPI ของเสีย/อุบัติเหตุ เป้า 0 เป็นค่าปกติ
+            warningThreshold: Layout.numOrNull('kWarn')
           });
           Layout.closeModal('kpiModal'); Layout.toast('สร้าง KPI สำเร็จ'); this.loadKpis();
         } catch (e) { Layout.toast(e.message, 'error'); }

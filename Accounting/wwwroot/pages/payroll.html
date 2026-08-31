@@ -759,9 +759,15 @@ const Page = {
       phone: document.getElementById('empPhone').value || null,
       lineId: document.getElementById('empLineId').value || null,
       // Org structure (preferred — drives cost-centre + approval routing)
-      departmentId: document.getElementById('empDepartmentRef').value || null,
-      positionId: document.getElementById('empPositionRef').value || null,
-      directManagerId: document.getElementById('empDirectManager').value || null,
+      // แก้ไข: "" = **ปลดค่า** (Guid.Empty sentinel) — "— ไม่มี (Top-level) —"
+      // ต้องปลดหัวหน้าได้จริง (เดิมเลือกแล้วบันทึก คนเดิมยังชี้อยู่ สายอนุมัติ
+      // วิ่งไปหาคนที่ลาออก/ไม่ควรอนุมัติแล้ว)
+      departmentId: document.getElementById('empDepartmentRef').value
+        || (id ? '00000000-0000-0000-0000-000000000000' : null),
+      positionId: document.getElementById('empPositionRef').value
+        || (id ? '00000000-0000-0000-0000-000000000000' : null),
+      directManagerId: document.getElementById('empDirectManager').value
+        || (id ? '00000000-0000-0000-0000-000000000000' : null),
     };
     if (id) data.isActive = document.getElementById('empActive').checked;
     if (!data.firstNameTh || !data.lastNameTh) { Layout.toast('กรุณากรอกชื่อ-สกุล', 'error'); return; }
@@ -1171,8 +1177,15 @@ const Page = {
       this._curRun = r;                 // เก็บไว้ให้ตัวแก้ยอดรายคนอ่านค่า
       document.getElementById('runDetailTitle').textContent = r.name || 'รายละเอียดรอบเงินเดือน';
       const details = r.details || r.employees || [];
-      // แก้แหล่งจ่ายได้เฉพาะก่อนจ่าย (Calculated/Approved)
-      const payEditable = r.status === 'Calculated' || r.status === 'Approved';
+      // สิทธิ์แก้ไข = **เซิร์ฟเวอร์ตัดสิน** (Helpers/PayrollRunEditPolicy) หน้านี้
+      // แค่แสดง — เดิมหน้านี้เขียนกติกาเองเป็นสำเนาชุดที่ 3 แล้วเมื่อแก้ไม่ได้ก็
+      // ซ่อนปุ่มเงียบ ๆ ผู้ใช้จึงไม่รู้ว่าทำไมและต้องทำอะไรต่อ
+      // undefined = เซิร์ฟเวอร์รุ่นเก่ายังไม่ส่งฟิลด์นี้มา (ไม่ใช่ "แก้ไม่ได้")
+      // → ตกกลับไปใช้กติกาเดิมชั่วคราว ไม่ใช่ล็อกหน้าจอทิ้ง
+      const payEditable = (r.canEditAmounts === undefined)
+        ? (r.status === 'Calculated' || r.status === 'Approved')
+        : !!r.canEditAmounts;
+      const lockReason = r.editLockReason || '';
       const payOpts = (cur) => {
         let h = '<option value="">— ค่าเริ่มต้น (บัญชีบริษัท) —</option>';
         const banks = (this._bankAccts || []).filter(b => b.linkedAccountCode);
@@ -1194,6 +1207,17 @@ const Page = {
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">พนักงาน</div><div class="font-medium">${r.employeeCount||details.length} คน</div></div>
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ยอดจ่ายสุทธิ</div><div class="font-medium text-primary">${Layout.money(r.totalNetPay||r.totalAmount)}</div></div>
         </div>
+        ${!payEditable && lockReason ? `
+          <div style="margin-bottom:12px;padding:10px 14px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;color:#334155">
+            🔒 <b>รอบนี้แก้ยอดไม่ได้ตอนนี้</b> — ${Layout.esc(lockReason)}
+          </div>` : ''}
+        ${r.reopenedAt ? `
+          <div style="margin-bottom:12px;padding:10px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:13px;color:#92400e">
+            ↩️ <b>รอบนี้ถูกกลับรายการจ่ายเมื่อ ${Layout.esc(Layout.date(r.reopenedAt))}</b>
+            ${r.reopenedBy ? ` โดย ${Layout.esc(r.reopenedBy)}` : ''}${r.reopenReason ? ` · เหตุผล: ${Layout.esc(r.reopenReason)}` : ''}<br>
+            <span style="font-size:12px">ไฟล์ ภ.ง.ด.1 / สปส.1-10 / สลิป ที่แนบไว้ยังเป็น<b>ฉบับก่อนแก้</b> —
+            ระบบจะสร้างทับให้เมื่อกด "จ่าย" ใหม่ อย่าเพิ่งนำไฟล์ชุดเดิมไปยื่น</span>
+          </div>` : ''}
         ${(() => {
           // ตรวจ identity รายคนก่อนจ่าย: รายได้รวม − (ภาษี+ปกส.+PVD+เงินกู้+หักอื่น)
           // ต้อง = สุทธิ — ไม่ลงตัว (เช่นข้อมูล import จากภายนอก) กด "จ่าย" แล้ว
@@ -1245,7 +1269,14 @@ const Page = {
       const lineAllBtn = details.length
         ? `<button class="btn btn-secondary" onclick="Page.sendAllPayslipLine('${id}')" title="ส่งสลิปให้พนักงานทุกคนที่ผูก LINE แล้ว">📤 ส่งสลิปทั้งงวดทาง LINE</button>`
         : '';
-      document.getElementById('runDetailFooter').innerHTML = `${lineAllBtn}${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
+      // "กลับรายการจ่าย" — ทางเดียวที่จะแก้ยอดของรอบที่จ่ายไปแล้ว. ถ้าทำไม่ได้
+      // (นำส่ง สปส. แล้ว ฯลฯ) โชว์ปุ่มที่กดไม่ได้ **พร้อมเหตุผล** ห้ามซ่อนเฉย ๆ
+      const reopenBtn = r.status === 'Paid'
+        ? (r.canReopen
+            ? `<button class="btn btn-secondary" onclick="Page.reopenRun('${id}')" title="กลับรายการ JE ที่ลงตอนจ่าย แล้วปลดล็อกให้แก้ยอด — ต้องกด &quot;จ่าย&quot; ใหม่หลังแก้">↩️ กลับรายการจ่าย (เพื่อแก้ยอด)</button>`
+            : `<button class="btn btn-secondary" disabled title="${Layout.esc(r.reopenBlockReason || 'กลับรายการจ่ายไม่ได้')}">↩️ กลับรายการจ่าย (ไม่ได้)</button>`)
+        : '';
+      document.getElementById('runDetailFooter').innerHTML = `${lineAllBtn}${reopenBtn}${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
       // หลักฐานการจ่าย/นำส่ง (สลิปโอน, ใบเสร็จ สปส., ใบเสร็จสรรพากร) — เก็บ 5 ปี
       // ตาม พ.ร.บ.การบัญชี ม.10 แนบเพิ่ม/ดู/ลบได้ที่นี่
       const filesHost = document.createElement('div');
@@ -1271,6 +1302,31 @@ const Page = {
       }
       Layout.openModal('runDetailModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  /** กลับรายการจ่าย (Paid → Approved) — ถามเหตุผลก่อน เพราะเซิร์ฟเวอร์บังคับ
+   *  และเหตุผลจะถูกเก็บลง AuditLog + แสดงบนแบนเนอร์ของรอบ */
+  async reopenRun(runId) {
+    const api = Layout.api(); if (!api) return;
+    const reason = prompt(
+      'กลับรายการจ่ายเงินเดือนรอบนี้?\n\n'
+      + 'ระบบจะ: กลับรายการบัญชี (JE) ที่ลงตอนจ่าย · คืนยอดเงินทดรองที่หักในรอบนี้ · '
+      + 'เปลี่ยนสถานะกลับเป็น "อนุมัติแล้ว" ให้แก้ยอดได้\n'
+      + 'หลังแก้เสร็จ **ต้องกด "จ่าย" ใหม่** ระบบจึงจะลงบัญชีและสร้างเอกสารชุดใหม่ให้\n\n'
+      + 'ระบุเหตุผล (อย่างน้อย 5 ตัวอักษร):', '');
+    if (reason === null) return;                       // กดยกเลิก
+    if ((reason || '').trim().length < 5) {
+      Layout.toast('ต้องระบุเหตุผลอย่างน้อย 5 ตัวอักษร', 'error');
+      return;
+    }
+    try {
+      await api.reopenPayrollRun(runId, reason.trim());
+      Layout.toast('กลับรายการจ่ายแล้ว — แก้ยอดได้ จากนั้นกด "จ่าย" ใหม่', 'success');
+      await this.viewRun(runId);
+      this.loadRuns();
+    } catch (e) {
+      Layout.toast(e.message || 'กลับรายการจ่ายไม่สำเร็จ', 'error');
+    }
   },
 
   async setPayAccount(runId, empId, sel) {

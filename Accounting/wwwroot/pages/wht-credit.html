@@ -322,7 +322,18 @@
         document.getElementById('mRate').value = r.whtRate || '';
         document.getElementById('mBase').value = r.incomeAmount || '';
         document.getElementById('mAmt').value = r.whtAmount || '';
-        document.getElementById('mAmt').dataset.touched = '1';
+        // ⚠️ เดิมตั้ง touched='1' ตายตัวตอนเปิดแก้ ⇒ ตัวคำนวณ ฐาน×อัตรา ตายถาวร
+        // ในโหมดแก้ไข: แก้ฐาน 10,000→100,000 ช่อง "ภาษีที่ถูกหัก" ค้าง 300
+        // แล้วบันทึกได้ ⇒ ตาราง/เครดิต ภ.ง.ด.50 โชว์ 100,000·3%·300 ในแถวเดียว
+        // → ติด touched เฉพาะเมื่อยอดที่บันทึกไว้ **ต่างจากสูตรจริง** (ใบจริง
+        // ปัดเศษต่าง = ผู้ใช้เคยแก้เอง) ถ้าตรงสูตรอยู่แล้ว ให้ auto-calc ทำงานต่อ
+        {
+          const _b = parseFloat(r.incomeAmount) || 0, _r = parseFloat(r.whtRate) || 0;
+          const _expected = _b > 0 && _r > 0 ? (_b * _r / 100).toFixed(2) : null;
+          const _saved = (parseFloat(r.whtAmount) || 0).toFixed(2);
+          document.getElementById('mAmt').dataset.touched =
+            _expected !== null && _saved === _expected ? '' : '1';
+        }
         document.getElementById('mNotes').value = r.notes || '';
         document.getElementById('mForm').value = r.payerFormType === 'ภ.ง.ด.3' ? '3' : '53';
         document.getElementById('mFile').value = '';

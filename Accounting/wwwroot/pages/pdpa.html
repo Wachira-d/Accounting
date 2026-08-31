@@ -455,7 +455,8 @@
             severity: document.getElementById('breachSev').value,
             description: desc,
             affectedDataCategories: cat,
-            affectedSubjectsCount: parseInt(document.getElementById('breachCount').value) || null,
+            // 0 = ยืนยันแล้วว่าไม่มีผู้ได้รับผลกระทบ ≠ null = ยังไม่ทราบ (สำคัญต่อรายงาน PDPC)
+            affectedSubjectsCount: Layout.intOrNull('breachCount'),
           });
           this.closeModal('breachModal');
           await this.loadBreachAlerts();

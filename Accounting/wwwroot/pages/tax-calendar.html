@@ -186,7 +186,7 @@ const Page = {
     document.getElementById('eventStatus').value = e.status || 'Pending';
     document.getElementById('eventFiledDate').value = Layout.dateInput(e.filedDate);
     document.getElementById('eventRef').value = e.filingReference || '';
-    document.getElementById('eventAmount').value = e.taxAmount || '';
+    document.getElementById('eventAmount').value = e.taxAmount ?? '';   // 0 ต้องโชว์ 0
     document.getElementById('eventNotes').value = e.notes || '';
     Layout.openModal('eventModal');
   },
@@ -198,7 +198,8 @@ const Page = {
       status: document.getElementById('eventStatus').value,
       filedDate: document.getElementById('eventFiledDate').value || null,
       filingReference: document.getElementById('eventRef').value,
-      taxAmount: parseFloat(document.getElementById('eventAmount').value) || null,
+      // ยื่นแบบเปล่า (ยอด 0 บาท) เป็นเรื่องปกติ — 0 ต้องบันทึกติด (ห้าม || null)
+      taxAmount: Layout.numOrNull('eventAmount'),
       notes: document.getElementById('eventNotes').value,
     };
     try {

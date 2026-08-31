@@ -215,7 +215,8 @@
           name: document.getElementById('fName').value,
           description: document.getElementById('fDesc').value || null,
           startDate: document.getElementById('fStart').value,
-          endDate: document.getElementById('fEnd').value || null,
+          // แก้ไข: ว่าง = **ล้างวันสิ้นสุด** ("ไม่กำหนด" — sentinel 0001-01-01)
+          endDate: document.getElementById('fEnd').value || (id ? '0001-01-01' : null),
           budgetAmount: parseFloat(document.getElementById('fBudget').value) || 0,
           contractAmount: parseFloat(document.getElementById('fContract').value) || 0,
         };

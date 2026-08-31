@@ -133,7 +133,7 @@ const Page = {
   async savePlan() {
     const api = Layout.api(); if (!api) return;
     const id = document.getElementById('planId').value;
-    const data = { name: document.getElementById('planName').value, commissionType: document.getElementById('planType').value, rate: parseFloat(document.getElementById('planRate').value) || 0, minimumSales: parseFloat(document.getElementById('planMinSales').value) || null, cap: parseFloat(document.getElementById('planCap').value) || null, description: document.getElementById('planDesc').value };
+    const data = { name: document.getElementById('planName').value, commissionType: document.getElementById('planType').value, rate: parseFloat(document.getElementById('planRate').value) || 0, minimumSales: Layout.numOrNull('planMinSales') /* 0 = ได้คอมตั้งแต่บาทแรก */, cap: parseFloat(document.getElementById('planCap').value) || null, description: document.getElementById('planDesc').value };
     if (!data.name || !data.rate) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
     try {
       if (id) await api.updateCommissionPlan(id, data); else await api.createCommissionPlan(data);

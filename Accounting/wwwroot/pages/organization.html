@@ -384,7 +384,7 @@
           code, title,
           titleEn: document.getElementById('pTitleEn').value || null,
           band: document.getElementById('pBand').value || null,
-          minSalary: parseFloat(document.getElementById('pMin').value) || null,
+          minSalary: Layout.numOrNull('pMin'),
           maxSalary: parseFloat(document.getElementById('pMax').value) || null,
           description: document.getElementById('pDesc').value || null,
         };
