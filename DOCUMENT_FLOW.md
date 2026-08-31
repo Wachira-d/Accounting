@@ -2524,7 +2524,44 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
-_Last verified against codebase: 2026-08-31 (รอบ 109 — **เตือน DSR หลังผิดกฎหมาย_
+_Last verified against codebase: 2026-08-31 (รอบ 110 — **รอบเสถียรภาพ: 4 ทีม_
+_ล่า defect class ที่สรุปจากปัญหาที่ผู้ใช้รายงาน + ผมยืนยันเองทุกข้อก่อนแก้**_
+_(5 commit: c1b104a · 50dd94d · 52098cb · f415340 · f067132):_
+_(1) **สินเชื่อ: จ่ายหนี้แล้วยอดไม่ลดเลยตั้งแต่เขียนมา** — payload หน้า loans_
+_กับ MakeLoanPaymentRequest ชื่อไม่ตรงกันสักตัว ⇒ binder ได้ 0 ทุกช่อง. สัญญา_
+_ใหม่ตรงกับฟอร์มจริง + แตกต้น/ดอกจากตารางผ่อนเมื่อไม่ระบุ + JE ผ่าน_
+_JournalEntryBuilder (ปิดผู้ออกเลขเถื่อน LP-/LD- อีก 2 ตัว) + LateFee มีขา Dr_
+_แล้ว + ผังบัญชีไม่ครบ = throw ไม่ใช่โพสต์ JE ขาเดียวเงียบ ๆ_
+_(2) **เลข 0 ถูก `|| null` กลืน 20 จุด/13 ไฟล์** (ตระกูลเดียวกับเครดิต 0 วัน) —_
+_เพิ่ม `Layout.numOrNull/intOrNull` เป็น resolver กลาง; ตัวแรง: approval_
+_threshold 0 (control bypass เงียบ) · vatRate 0% ถูกทับเป็น 7 ทั้ง save และ_
+_โชว์ · VAT 0 ในหน้า review OCR · เพดานยกวันลา 0 กลายเป็นไม่จำกัด (พร้อมยุบ_
+_ความหมาย 0 ของ PayrollService ให้ตรง LeaveController)_
+_(3) **ล้างค่ากลับเป็นว่างไม่ได้ทั้งระบบ** — วาง sentinel ครบตระกูล: string=""_
+_· Guid=Guid.Empty · int=-1 · DateTime=MinValue; เอกสาร (วันครบกำหนด/เครดิต/_
+_โครงการ/แหล่งเงิน/หมวดค่าใช้จ่าย) · โครงการ (StartDate เดิมไม่อยู่ในสัญญา_
+_เลย = silent no-op ทั้งที่ฟอร์มติด *) · รายการประจำ (StartDate + recompute_
+_นัดรัน + เลิก hardcode dueDays:30) · สินทรัพย์ถาวร · พนักงาน (ปลดหัวหน้า) —_
+_ฝั่งฟอร์มส่ง sentinel เฉพาะโหมดแก้ไข + ช่องแสดงอยู่จริง (กันปลดค่าของช่องที่_
+_ถูกซ่อนตามชนิดเอกสาร)_
+_(4) **field คู่ derive ขัดกันเอง 5 คู่** — WHT cert ฐาน×อัตรา (touched guard_
+_ตายถาวรใน openEdit) · วันที่เอกสาร↔ครบกำหนด · เครดิต↔ข้อความเงื่อนไขบน_
+_กระดาษ · มูลค่าสัญญา TFRS15↔allocation ของ PO (แก้สัญญาแล้วเงินหายจากรายงาน_
+_deferred) · ดอกเบี้ยสินเชื่อ↔ตารางผ่อน_
+_(5) **keyword ไทยล้วน/over-match 12 จุด** (ตระกูล "Diesel") — simplified tax_
+_invoice · vat inclusive · CUSTOMER COPY ไม่ใช่ป้ายผู้ซื้อ · DEPOSIT exclusion_
+_(เงินประกัน≠มัดจำ) + เงินจอง/PREPAYMENT · ตราจ่ายแล้ว EN · สลิปธนาคาร EN ·_
+_ใบส่งสินค้า/delivery order · PROFORMA≠invoice · copyright≠สำเนา · 50 ทวิ EN ·_
+_\bwht\b · สถานะ DBD EN — ทุกลิสต์มี simulation ดึงจากไฟล์จริง 17 เคสรวม_
+_negative (UNPAID/Amount Paid: 0.00/security deposit ต้องไม่โดน)_
+_· control ที่ตรวจแล้ว**ผ่าน**: audit hash chain (มี write→verify) · AiBudgetGuard_
+_(ต่อสาย + fallback local) · ChatRateLimiter (DB-upsert ข้าม instance) — จดไว้:_
+_ForceProviderCall ข้ามด่านงบจาก 3 จุด bulk โดยเจตนา_
+_· backlog ที่จดไว้ไม่แก้ครึ่ง ๆ: normalize ไม่เท่ากันระหว่าง validator/inferrer_
+_(SquashForKeywordMatch ฝั่งเดียว) · marker ชนิดเอกสารกระจาย 3 ที่ ควรรวมเป็น_
+_bilingual table เดียว · ContainsAll("ณ ที่จ่าย","รับรอง") ควรเป็น window ·_
+_SupplierTaxInvoiceDate เปลี่ยนแล้วไม่ revalidate งวดเคลมที่ตรึงไว้ (§82/3));_
+_รอบ 109 — **เตือน DSR หลังผิดกฎหมาย_
 _ไปแล้ว**: `ListOverdueAsync` คืนเฉพาะคำขอที่ `DueBy < now` — กว่าจะขึ้นหน้าจอ_
 _บริษัทก็เลยกรอบ 30 วันตาม ม.32 ไปเรียบร้อยแล้ว ⇒ เตือนไว้เพื่อ "รู้ว่าผิด"_
 _ไม่ใช่ "กันไม่ให้ผิด". เส้นแจ้งเหตุข้อมูลรั่วในไฟล์เดียวกัน_
