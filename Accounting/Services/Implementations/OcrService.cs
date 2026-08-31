@@ -3887,13 +3887,7 @@ public class OcrService : IOcrService
             return;
         }
 
-        // DBD found — adopt as authoritative
         data.DbdLookupAttempted = true;
-        data.DbdMatched = true;
-        data.DbdCanonicalName = dbd.NameTh;
-        data.DbdAddress = dbd.Address;
-        data.DbdJuristicType = dbd.JuristicType;
-        data.DbdStatus = dbd.Status;
 
         // Compare OCR's vendor name with DBD canonical
         var ocrName = data.VendorName?.Trim();
@@ -3909,6 +3903,43 @@ public class OcrService : IOcrService
                        || normalizedDbd.Contains(normalizedOcr, StringComparison.OrdinalIgnoreCase)
                        || normalizedOcr.Contains(normalizedDbd, StringComparison.OrdinalIgnoreCase);
         }
+
+        // ⚠️ **DBD ชนะได้ก็ต่อเมื่อ "กุญแจ" ถูก** — การค้นหาใช้ `VendorTaxId` เป็นคีย์
+        // ซึ่งเป็นช่องที่ OCR อ่านผิดได้บ่อยที่สุดช่องหนึ่ง (บาร์โค้ด EAN-13 ที่ผ่าน
+        // mod-11 · เลขผู้ซื้อถูกหยิบมาเป็นผู้ขาย · หลักเดียวเพี้ยน) ⇒ ถ้าเลขผิด DBD
+        // จะคืน **คนละบริษัท** แล้วโค้ดเดิมจะ (1) ทับชื่อผู้ขายที่อ่านมาถูกแล้วด้วย
+        // ชื่อบริษัทอื่น (2) บันทึกชื่อที่ถูกต้องเป็น **negative example** = สอน
+        // ตัวเรียนรู้ผิดถาวร (3) ตั้ง confidence 0.95 ⇒ ไม่ขึ้นไฮไลต์เตือน และ
+        // (4) สร้าง Contact ผู้ขายรายใหม่ของบริษัทที่ไม่เกี่ยวข้องกับใบนี้เลย
+        //
+        // ตัวแยกคือ **ระดับความต่าง**: OCR ที่อ่าน "ชื่อเดียวกัน" ผิด ได้สตริงที่
+        // *คล้าย* เสมอ (นั่นคือสมมติฐานทั้งหมดของ FuzzyMatcher) — คนละบริษัทได้
+        // คะแนนเกือบศูนย์. วัดกับตัวอย่างจริง: อ่านเพี้ยน 0.772–0.941 ·
+        // คนละบริษัท 0.000–0.087 ⇒ เกณฑ์ 0.45 อยู่กลางช่องว่างกว้าง ๆ
+        const double DbdSameCompanyFloor = 0.45;
+        var nameSim = Ocr.FuzzyMatcher.Similarity(ocrName, dbdName);
+        if (!nameMatches && !string.IsNullOrEmpty(ocrName) && nameSim < DbdSameCompanyFloor)
+        {
+            // คนละบริษัท → ผู้ต้องสงสัยคือ **เลขผู้เสียภาษี** ไม่ใช่ชื่อ
+            // ห้ามทับ ห้ามสอน — ลด confidence ให้ไฮไลต์เหลืองขึ้น (กฎเหล็ก #3 ข้อ 3)
+            // แล้วให้คนตัดสิน (หลัก "ไม่รู้ = ต้องบอกว่าไม่รู้")
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerTaxId] = 0.30;
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.50;
+            data.ReasoningTrace.Add(
+                $"[DBD] ⚠ เลข {data.VendorTaxId} เป็นของ '{dbd.NameTh}' แต่บนกระดาษเขียนว่า '{ocrName}' " +
+                $"(ต่างกันสิ้นเชิง) — น่าจะอ่าน**เลขผู้เสียภาษี**ผิด จึงไม่ทับชื่อและไม่นำไปสอนระบบ");
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") +
+                $"\n[DBD] ⚠ เลขผู้เสียภาษีอาจอ่านผิด — {data.VendorTaxId} ขึ้นทะเบียนเป็น '{dbd.NameTh}' " +
+                $"ไม่ใช่ '{ocrName}' กรุณาตรวจเลขผู้เสียภาษีบนกระดาษอีกครั้ง";
+            return;   // ไม่ตั้ง DbdMatched ⇒ ไม่สร้าง Contact ของบริษัทที่ไม่เกี่ยวข้อง
+        }
+
+        // DBD found + คีย์น่าเชื่อถือ — adopt as authoritative
+        data.DbdMatched = true;
+        data.DbdCanonicalName = dbd.NameTh;
+        data.DbdAddress = dbd.Address;
+        data.DbdJuristicType = dbd.JuristicType;
+        data.DbdStatus = dbd.Status;
 
         if (nameMatches)
         {
@@ -3927,8 +3958,10 @@ public class OcrService : IOcrService
         }
         else
         {
-            // OCR mismatch — DBD wins, but record OCR's wrong reading as negative training
-            data.ReasoningTrace.Add($"[DBD] ⚠ OCR อ่านได้ '{ocrName}' แต่ DBD ระบุ '{dbd.NameTh}' — ใช้จาก DBD และเรียนรู้");
+            // ชื่อ *คล้าย* แต่ไม่เท่า ⇒ บริษัทเดียวกันที่ OCR สะกดเพี้ยน
+            // (ด่าน DbdSameCompanyFloor ข้างบนคัด "คนละบริษัท" ออกไปแล้ว)
+            // → DBD ชนะ + เก็บของเดิมเป็น negative example ได้อย่างปลอดภัย
+            data.ReasoningTrace.Add($"[DBD] ⚠ OCR อ่านได้ '{ocrName}' แต่ DBD ระบุ '{dbd.NameTh}' (ใกล้เคียง {nameSim:P0}) — ใช้จาก DBD และเรียนรู้");
             await RecordOcrMismatchAsync(companyId, data.VendorTaxId, "SellerName",
                 wrongValue: ocrName, correctValue: dbd.NameTh);
             data.VendorName = dbd.NameTh;
