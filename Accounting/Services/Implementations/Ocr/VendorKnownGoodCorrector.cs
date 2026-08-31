@@ -96,6 +96,9 @@ public class VendorKnownGoodCorrector
         string? BestMatch(string field, string? noisyValue)
         {
             if (string.IsNullOrWhiteSpace(noisyValue)) return null;
+            // ด่านกลาง: ช่องที่ไม่คงที่ต่อผู้ขาย หรือเป็นตัวเลขล้วน ห้ามแก้
+            // (ดูเหตุผล + ตัวเลขจาก simulation ใน Helpers/VendorKnownGoodFields)
+            if (!Accounting.Helpers.VendorKnownGoodFields.IsCorrectable(field)) return null;
             var candidates = known.Where(k => k.FieldName == field);
             return candidates
                 .Select(k => new { k.Value, k.Source, k.ConfirmedCount,
@@ -121,43 +124,19 @@ public class VendorKnownGoodCorrector
             swaps++;
         }
 
-        var docMatch = BestMatch("DocumentNumber", data.DocumentNumber);
-        if (docMatch != null)
-        {
-            data.ReasoningTrace.Add(
-                $"[KnownGood] แทน DocumentNumber '{data.DocumentNumber}' → '{docMatch}'");
-            data.DocumentNumber = docMatch;
-            swaps++;
-        }
-
-        // Vendor address / phone / email / branch — only when extractor
-        // produced a noisy value. We don't fill blanks from known-goods
-        // (that would be guessing); the goal here is correction, not
-        // synthesis.
+        // ⛔ **ห้ามแก้เลขที่เอกสาร / รหัสสาขา / เบอร์โทร / อีเมล** — เดิมทำอยู่
+        // แล้วเป็นบั๊กจริง: เลขที่เอกสารเป็นค่า "ต่อใบ" ไม่ใช่ "ต่อผู้ขาย" ⇒
+        // เลขรันติดกันต่างกันหลักเดียว similarity 0.83–0.92 **เกินเกณฑ์เสมอ**
+        // ⇒ ใบใหม่ถือเลขของใบก่อนหน้า (รายงานภาษีซื้อ §87 ยื่นเลขผิด + ด่านกัน
+        // สแกนซ้ำตีว่าเป็นใบเดิม) · รหัสสาขา 5 หลักที่ต่างกัน 1 ตัว = **0.80
+        // พอดี** ⇒ ผ่านทุกคู่ ⇒ ใบของสาขาถูกเขียนเป็นสำนักงานใหญ่ · เบอร์/อีเมล
+        // เป็นตัวเลข/สตริงที่ "ไม่มีการสะกดผิด" — เดาไม่ได้ ต้องถูกหรือไม่ตอบ
+        // (ตัวตัดสิน: Helpers/VendorKnownGoodFields — BestMatch กันไว้อีกชั้น)
         var addrMatch = BestMatch("VendorAddress", data.VendorAddress);
         if (addrMatch != null)
         {
             data.ReasoningTrace.Add($"[KnownGood] แทน VendorAddress → ใช้ที่อยู่จาก Azure");
             data.VendorAddress = addrMatch;
-            swaps++;
-        }
-        var phoneMatch = BestMatch("VendorPhone", data.VendorPhone);
-        if (phoneMatch != null)
-        {
-            data.ReasoningTrace.Add($"[KnownGood] แทน VendorPhone '{data.VendorPhone}' → '{phoneMatch}'");
-            data.VendorPhone = phoneMatch;
-            swaps++;
-        }
-        var emailMatch = BestMatch("VendorEmail", data.VendorEmail);
-        if (emailMatch != null)
-        {
-            data.VendorEmail = emailMatch;
-            swaps++;
-        }
-        var branchMatch = BestMatch("VendorBranchCode", data.VendorBranchCode);
-        if (branchMatch != null)
-        {
-            data.VendorBranchCode = branchMatch;
             swaps++;
         }
 

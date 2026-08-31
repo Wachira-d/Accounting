@@ -4456,6 +4456,13 @@ public static class DatabaseMigrationHelper
                       AND r."Trigger" = 'DocumentDueSoon'
                       AND r."IsDeleted" = false);
             """,
+            // ===== ล้างค่า "เลขที่เอกสาร" ออกจากคลังค่าประจำผู้ขาย =====
+            // VendorKnownGoodCorrector เคยเอาเลขที่เอกสารของใบก่อนหน้ามา
+            // fuzzy-match แล้วทับเลขของใบที่กำลังสแกน (เลขรันติดกันต่างกันหลัก
+            // เดียว = similarity 0.83-0.92 เกินเกณฑ์ 0.80 เสมอ) ⇒ รายงานภาษีซื้อ
+            // §87 ยื่นเลขใบกำกับผิด. แก้โค้ดอย่างเดียวไม่พอ — แถวที่สะสมไว้แล้ว
+            // ยังนอนอยู่ในตาราง (1 แถว/1 ใบ) ต้องลบทิ้งด้วย
+            """DELETE FROM "VendorKnownGoodValues" WHERE "FieldName" = 'DocumentNumber';""",
             // Refresh-token reuse detection (security hardening).
             """ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "PreviousRefreshToken" varchar(500) NULL;""",
             """ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "RefreshTokenRevokedAt" timestamp NULL;""",
@@ -4729,6 +4736,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LineSplitAiFeedbackId" uuid NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LineSplitUsedAi" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "StockImportedAt" timestamp NULL;""",
+            // หมายเหตุที่ผู้ใช้พิมพ์เอง (เหตุผลทางธุรกิจของรายจ่าย) — หน้าเบิก
+            // บนมือถือมีช่องนี้มาตลอดแต่ไม่เคยส่งค่าไปไหน
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "UserNotes" text NULL;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "SourceScanResultId" uuid NULL;""",
 
             // ── กัน JE งานประจำเดือนซ้ำข้าม instance ──

@@ -496,13 +496,14 @@
 
       LAYOUT_LABELS: { Classic:'คลาสสิก', ModernLeft:'โมเดิร์น', BannerHeader:'แบนเนอร์', Compact:'กระชับ', Minimal:'มินิมอล', CenteredFormal:'ทางการ' },
 
-      DOC_TYPES: [
-        ['Quotation','ใบเสนอราคา'], ['Invoice','ใบแจ้งหนี้'], ['TaxInvoice','ใบกำกับภาษี'],
-        ['Receipt','ใบเสร็จรับเงิน'], ['DeliveryNote','ใบส่งของ'], ['BillingNote','ใบวางบิล'],
-        ['DebitNote','ใบเพิ่มหนี้'], ['CreditNote','ใบลดหนี้'], ['PurchaseOrder','ใบสั่งซื้อ'],
-        ['GoodsReceiptNote','ใบรับสินค้า'], ['PurchaseInvoice','ใบแจ้งหนี้ซื้อ'], ['Expense','ใบบันทึกค่าใช้จ่าย'],
-        ['PaymentVoucher','ใบสำคัญจ่าย'], ['ReceiptVoucher','ใบสำคัญรับ'], ['CertificateInLieu','ใบรับรองแทนใบเสร็จ'],
-      ],
+      // ลำดับที่แสดงเป็นเรื่องของหน้านี้ แต่ **ชื่อไทย** มาจาก Layout.docTypeLabel
+      // ตัวเดียว (มิเรอร์ของ PdfGenerationService.GetDocumentTitle) — เดิมพิมพ์ซ้ำ
+      // ไว้ที่นี่แล้วเพี้ยน: CertificateInLieu เขียน "ใบรับรองแทนใบเสร็จ" ขณะที่
+      // กระดาษพิมพ์ "ใบรับรองแทนใบเสร็จรับเงิน" (defect class "คัดลอกมาด้วยมือ")
+      DOC_TYPE_ORDER: ['Quotation', 'Invoice', 'TaxInvoice', 'Receipt', 'DeliveryNote',
+        'BillingNote', 'DebitNote', 'CreditNote', 'PurchaseOrder', 'GoodsReceiptNote',
+        'PurchaseInvoice', 'Expense', 'PaymentVoucher', 'ReceiptVoucher', 'CertificateInLieu'],
+      get DOC_TYPES() { return this.DOC_TYPE_ORDER.map(t => [t, Layout.docTypeLabel(t)]); },
       _typeLabel(t) { const f = this.DOC_TYPES.find(x => x[0] === t); return f ? f[1] : t; },
 
       async init() {

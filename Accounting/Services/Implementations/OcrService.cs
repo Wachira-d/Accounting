@@ -3534,6 +3534,9 @@ public class OcrService : IOcrService
         if (correction.BuyerTaxId != null) result.BuyerTaxId = correction.BuyerTaxId;
         if (correction.VendorBranchCode != null) result.VendorBranchCode = correction.VendorBranchCode;
         if (correction.BuyerBranchCode != null) result.BuyerBranchCode = correction.BuyerBranchCode;
+        // "" = ผู้ใช้ลบหมายเหตุทิ้ง (ล้างค่า) · null = ไม่ได้แตะช่องนี้
+        if (correction.Notes != null)
+            result.UserNotes = string.IsNullOrWhiteSpace(correction.Notes) ? null : correction.Notes.Trim();
 
         // ── บทบาทเรา: แก้ได้ + อนุมานเป้าหมายใหม่ตามบทบาทที่ถูกต้อง ──
         //
@@ -4819,9 +4822,16 @@ public class OcrService : IOcrService
             PaidAmount = isPaidType ? headerTotal : 0,
             BalanceDue = isPaidType ? 0 : headerTotal,
             Reference = result.ExtractedDocumentNumber,
-            Notes = linkedPo != null
-                ? $"Created from OCR scan: {result.OriginalFileName} (รับตาม PO {linkedPo.DocumentNumber})"
-                : $"Created from OCR scan: {result.OriginalFileName}",
+            // หมายเหตุของผู้ใช้ (เหตุผลทางธุรกิจ) มาก่อนเสมอ — เป็นสิ่งที่คนอ่าน
+            // ใบจริง ๆ ต้องเห็น ส่วนที่มาของไฟล์เป็นข้อมูลระบบต่อท้าย
+            // (§65 ตรี(3)/(14): ไม่มีเหตุผลว่าเกี่ยวกับกิจการ = รายจ่ายต้องห้าม)
+            Notes = string.Join(" · ", new[]
+            {
+                result.UserNotes,
+                linkedPo != null
+                    ? $"Created from OCR scan: {result.OriginalFileName} (รับตาม PO {linkedPo.DocumentNumber})"
+                    : $"Created from OCR scan: {result.OriginalFileName}",
+            }.Where(s => !string.IsNullOrWhiteSpace(s))),
             // Linkback so the new PI's "อ้างอิงเอกสาร" surfaces the PO.
             RelatedDocumentId = linkedPo?.Id,
             // ใบรับรองแทนใบเสร็จ — legal fields the printed form requires.

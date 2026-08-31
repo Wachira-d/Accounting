@@ -246,6 +246,12 @@ public class OcrScanResult : TenantEntity
 
     public string? RawTextContent { get; set; }
     public string? ProcessingNotes { get; set; }
+
+    /// <summary>หมายเหตุที่ **ผู้ใช้** พิมพ์เอง (คนละเรื่องกับ ProcessingNotes ซึ่ง
+    /// เป็น log ของไปป์ไลน์) — เหตุผลทางธุรกิจของรายจ่าย เช่น "เดินทางไปพบลูกค้า"
+    /// ไหลต่อเป็น <c>Document.Notes</c> ตอนสร้างเอกสาร (§65 ตรี(3)/(14): รายจ่าย
+    /// ที่พิสูจน์ความเกี่ยวข้องกับกิจการไม่ได้ = รายจ่ายต้องห้าม)</summary>
+    public string? UserNotes { get; set; }
     public DateTime? ProcessedAt { get; set; }
 
     /// <summary>

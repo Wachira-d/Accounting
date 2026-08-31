@@ -404,9 +404,8 @@
         },
 
         typeLabel() {
-          return ({ Quotation:'ใบเสนอราคา', Invoice:'ใบแจ้งหนี้', BillingNote:'ใบวางบิล',
-                    DeliveryNote:'ใบส่งของ', TaxInvoice:'ใบกำกับภาษี', Receipt:'ใบเสร็จรับเงิน'
-                  })[this.previewType] || this.previewType;
+          // ชื่อไทยมาจากตัวเดียวเสมอ (Layout.docTypeLabel) — ห้ามพิมพ์ซ้ำที่นี่
+          return Layout.docTypeLabel(this.previewType);
         },
 
         /** อัปโหลดโลโก้ — ต้องบันทึกแบรนด์ก่อน (ต้องมี id ให้ผูกไฟล์) */

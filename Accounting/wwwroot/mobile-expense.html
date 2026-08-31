@@ -199,6 +199,10 @@
             body: JSON.stringify({
               vendorName: vendor, totalAmount: amount,
               documentDate: date || null, expenseCategory: category || null,
+              // ⚠️ เดิมอ่านค่าช่องนี้ใส่ตัวแปรแล้ว**ไม่ส่งไปไหน** ⇒ เหตุผลที่
+              // ผู้เบิกพิมพ์หายเงียบ. §65 ตรี(3)/(14) รายจ่ายที่พิสูจน์ไม่ได้ว่า
+              // เกี่ยวกับกิจการ = รายจ่ายต้องห้าม — ข้อความนี้คือหลักฐานชิ้นแรก
+              notes: notes || null,
             }),
           }).catch(() => { /* best-effort — ไม่ให้ขวางการส่งเบิก */ });
 
