@@ -112,8 +112,13 @@ public class PdpaController : ControllerBase
     {
         var block = await RequireDpoAsync(companyId); if (block != null) return block;
         var rows = await _svc.ListOverdueAsync(companyId, ct);
+        // แยกให้ชัดว่า "เลยกำหนดแล้ว" กับ "ใกล้ครบกำหนด" — ข้อความเดิมเรียกทุกใบ
+        // ว่า "เกินกำหนด" ทั้งที่ตอนนี้รายการรวมใบที่ยังทันด้วย
+        var now = DateTime.UtcNow;
+        var late = rows.Count(r => r.DueBy < now);
+        var soon = rows.Count - late;
         return Ok(new ApiResponse<IReadOnlyList<PdpaDataSubjectRequest>>(true, rows,
-            $"คำขอ PDPA เกินกำหนด {rows.Count} รายการ"));
+            $"คำขอ PDPA เลยกำหนด {late} รายการ · ใกล้ครบกำหนดใน {PdpaService.DsrWarnDaysAhead} วัน {soon} รายการ"));
     }
 
     [HttpGet("erasure-impact")]

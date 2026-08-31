@@ -214,14 +214,25 @@ public class PdpaService : IPdpaService
         return req;
     }
 
+    /// <summary>จำนวนวันที่เตือนล่วงหน้าก่อนครบกำหนดตอบคำขอ (ม.32 = 30 วัน)
+    ///
+    /// ⚠️ เดิมรายการนี้คืน<b>เฉพาะใบที่เลยกำหนดไปแล้ว</b> (<c>DueBy &lt; now</c>)
+    /// ⇒ กว่าจะขึ้นหน้าจอ บริษัทก็<b>ผิดกฎหมายไปเรียบร้อยแล้ว</b> — เตือนไว้
+    /// เพื่อ "รู้ว่าผิด" ไม่ใช่เพื่อ "กันไม่ให้ผิด". เทียบกับเส้นแจ้งเหตุข้อมูลรั่ว
+    /// (<c>ListBreachAlertsAsync</c>) ที่เตือนล่วงหน้า 24 ชม. ก่อนครบ 72 ชม. อยู่แล้ว
+    /// — ตัวเดียวกันในระบบเดียวกันแต่คนละพฤติกรรม
+    /// (30 วันเป็นกรอบยาว จึงเตือน 7 วันล่วงหน้า = พอให้ DPO ลงมือทัน)</summary>
+    public const int DsrWarnDaysAhead = 7;
+
     public async Task<IReadOnlyList<PdpaDataSubjectRequest>> ListOverdueAsync(Guid companyId,
         CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        var warnUntil = now.AddDays(DsrWarnDaysAhead);
         return await _db.PdpaDataSubjectRequests.AsNoTracking()
             .Where(r => r.CompanyId == companyId && !r.IsDeleted
                         && (r.Status == "Pending" || r.Status == "InProgress")
-                        && r.DueBy < now)
+                        && r.DueBy <= warnUntil)
             .OrderBy(r => r.DueBy)
             .ToListAsync(ct);
     }
