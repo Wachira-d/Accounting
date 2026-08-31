@@ -615,7 +615,7 @@
             <!-- ป้าย + การแสดงของช่องนี้เปลี่ยนตามชนิดเอกสาร (_docFieldProfile):
                  ใบเสนอราคา = "ยืนราคาถึงวันที่" · PO = "กำหนดส่งมอบ" · ใบเสร็จ/
                  ใบลดหนี้ = ซ่อน (เงินรับแล้ว/ไม่มีเครดิตใหม่) -->
-            <div class="form-group" id="fDueDateGroup"><label class="form-label" id="fDueDateLabel" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
+            <div class="form-group" id="fDueDateGroup"><label class="form-label" id="fDueDateLabel" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate" oninput="Page.onDueDateInput(event)"></div>
           </div>
           <!-- เลขจอง (Booking) — ผูกเอกสารหลายใบเข้าด้วยกัน (มัดจำ→ใบสุดท้าย→ใบเสร็จ).
                PMS โรงแรม / POS ร้าน / CRM ส่ง booking key มา; ระบบ index ไว้
@@ -3486,7 +3486,7 @@
             if (dateEl?.value && dueEl && !dueEl.value) {
               const d = new Date(dateEl.value);
               d.setDate(d.getDate() + parseInt(j.data.creditDays, 10));
-              dueEl.value = d.toISOString().slice(0, 10);
+              dueEl.value = Layout.toDateInput(d); /* ห้าม toISOString — เลื่อน 1 วันใน ICT */
             }
           }
           // mark touched bind — ถ้า user เปลี่ยน ส่ง feedback กลับ
@@ -4505,7 +4505,7 @@
           const desc = row.querySelector('[data-f="desc"]')?.value.trim();
           const qty = parseFloat(row.querySelector('[data-f="qty"]')?.value || '0');
           const price = parseFloat(row.querySelector('[data-f="price"]')?.value || '0');
-          const grossLine = qty * price;
+          const grossLine = Math.round(qty * price * 100) / 100;   // ปัดก่อน — mirror ComputeLineAmounts
           const amount = grossLine - this._lineDiscountAmt(row, grossLine);
           if (desc && amount > 0) lines.push({ tempId: 'line-' + idx, description: desc, amount });
         });
@@ -4722,6 +4722,13 @@
       },
       /** วันเครดิต: พิมพ์เอง = ล็อกไม่ให้ autofill ทับ + คำนวณวันครบกำหนดให้
        *  (เดิม dispatch 'input' ไว้แต่ไม่มี listener จริง — วันครบกำหนดไม่ขยับ) */
+      /** ผู้ใช้พิมพ์วันครบกำหนดเอง = ค่าสูงสุด ห้ามให้ช่องเครดิตคำนวณทับทีหลัง */
+      onDueDateInput(ev) {
+        const el = document.getElementById('fDueDate');
+        if (!el || !ev?.isTrusted) return;
+        el.dataset.userTouched = '1';
+        delete el.dataset.autoCalc;
+      },
       onCreditDaysInput(ev) {
         const cd = document.getElementById('fCreditDays');
         if (!cd) return;
@@ -4729,12 +4736,18 @@
         const days = parseInt(cd.value, 10);
         const dateEl = document.getElementById('fDate');
         const dueEl = document.getElementById('fDueDate');
-        // คำนวณทับได้เมื่อ due date ว่าง หรือค่าเดิมมาจากการคำนวณอัตโนมัติ
+        // คำนวณทับได้เมื่อ: ช่องว่าง · ค่าเดิมมาจากการคำนวณอัตโนมัติ · หรือ
+        // **ผู้ใช้เพิ่งแก้ช่องเครดิตเอง** โดยที่ยังไม่เคยพิมพ์วันครบกำหนดเอง
+        //
+        // ⚠️ เดิมไม่มีเงื่อนไขที่สาม ⇒ ตอน "แก้ไขเอกสารเดิม" ช่องวันครบกำหนดถูก
+        // เติมจากค่าที่บันทึกไว้ (ไม่มีธง autoCalc) ⇒ ผู้ใช้แก้เครดิต 3 → 0 แล้ว
+        // วันครบกำหนดยังค้างที่ 16 ก.ย. = สองช่องขัดกันเองบนหน้าจอเดียว
         if (Number.isFinite(days) && days >= 0 && dateEl?.value && dueEl
-            && (!dueEl.value || dueEl.dataset.autoCalc === '1')) {
+            && (!dueEl.value || dueEl.dataset.autoCalc === '1'
+                || (ev?.isTrusted && dueEl.dataset.userTouched !== '1'))) {
           const d = new Date(dateEl.value);
           d.setDate(d.getDate() + days);
-          if (!isNaN(d.getTime())) { dueEl.value = d.toISOString().slice(0, 10); dueEl.dataset.autoCalc = '1'; }
+          if (!isNaN(d.getTime())) { dueEl.value = Layout.toDateInput(d); /* ห้าม toISOString — เลื่อน 1 วันใน ICT */ dueEl.dataset.autoCalc = '1'; }
         }
       },
       /** ลำดับความสำคัญของ "ที่มา" ค่าเทอมการชำระเงิน — ตัวเลขสูงกว่าทับตัวต่ำกว่าได้
@@ -4780,7 +4793,7 @@
         const dateEl = document.getElementById('fDate');
         if (dueEl && !dueEl.value && dateEl?.value) {
           const d = new Date(dateEl.value); d.setDate(d.getDate() + days);
-          if (!isNaN(d.getTime())) { dueEl.value = d.toISOString().slice(0, 10); dueEl.dataset.autoCalc = '1'; }
+          if (!isNaN(d.getTime())) { dueEl.value = Layout.toDateInput(d); /* ห้าม toISOString — เลื่อน 1 วันใน ICT */ dueEl.dataset.autoCalc = '1'; }
         }
         this._applyContactPaymentTermsText(contact, days);
       },
@@ -6785,11 +6798,24 @@
       },
       // คืนยอดส่วนลด (บาท) ของบรรทัด — รองรับทั้งโหมด % และ ฿ (มาตรฐานสากล).
       // gross = qty × price (ก่อนลด). โหมด ฿ ใช้ค่าตรง ๆ (clamp ไม่เกิน gross).
+      /** ยอดส่วนลดของบรรทัด — **ต้องปัดให้ตรงกับ server**
+       *
+       *  ⚠️ `DocumentService.ComputeLineAmounts` ทำตามลำดับ:
+       *     gross = Round(qty × price, 2) → disc = Round(gross × pct/100, 2)
+       *     → afterDiscount = gross − disc
+       *  เดิม JS ไม่ปัดทั้ง gross และส่วนลด แล้วไปปัดหลังหัก ⇒ ผลต่างกัน
+       *  1 สตางค์ (จำลองแล้ว: 1 × 1,499.50 ลด 3% → server 1,454.51 ·
+       *  จอเดิม 1,454.52 · 2 × 49.95 ลด 5% → 94.90 vs 94.91)
+       *  ผู้ใช้กดบันทึกแล้วเปิดใบเดิม ตัวเลขขยับเอง
+       *
+       *  ผู้เรียกต้องส่ง gross ที่ **ปัดแล้ว** เข้ามา (ดู r2 ที่จุดเรียก) */
       _lineDiscountAmt(row, gross) {
         const disc = parseFloat(row.querySelector('[data-f="disc"]')?.value) || 0;
         const mode = row.querySelector('[data-f="discMode"]')?.value || 'pct';
-        if (mode === 'amt') return Math.min(Math.max(disc, 0), gross);
-        return gross * (disc / 100);
+        if (mode === 'amt') {
+          return Math.min(Math.max(Math.round(disc * 100) / 100, 0), gross);
+        }
+        return Math.round(gross * disc / 100 * 100) / 100;
       },
       /** ลายนิ้วมือของ "ฐานที่ใช้คิด VAT" ของบรรทัด — เปลี่ยนเมื่อไรแปลว่า
        *  ยอดที่เก็บไว้ใช้ไม่ได้แล้ว ต้องคิดใหม่ */
@@ -6835,7 +6861,7 @@
           const rawVat = parseFloat(row.querySelector('[data-f="vat"]').value);
           const vatR = rawVat === -1 ? 0 : (rawVat || 0);
           const whtR = parseFloat(row.querySelector('[data-f="wht"]').value) || 0;
-          const grossLine = qty * price;
+          const grossLine = Math.round(qty * price * 100) / 100;   // ปัดก่อน — mirror ComputeLineAmounts
           const entered = grossLine - this._lineDiscountAmt(row, grossLine);
           // VAT ที่บันทึกไว้จริง (ถ้าผู้ใช้ยังไม่แตะฐาน) ชนะการคิดใหม่ — mirror
           // ของ backend ที่ honor VatAmountOverride ตรง ๆ. ไม่งั้นเปิดฟอร์มใบที่
@@ -7152,7 +7178,7 @@
           const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
           const price = parseFloat(row.querySelector('[data-f="price"]').value) || 0;
           const vatR = parseFloat(row.querySelector('[data-f="vat"]').value) || 0;
-          const grossLine = qty * price;
+          const grossLine = Math.round(qty * price * 100) / 100;   // ปัดก่อน — mirror ComputeLineAmounts
           const entered = grossLine - this._lineDiscountAmt(row, grossLine);
           const lineVat = inclVat && vatR > 0 ? r2(entered - entered / (1 + vatR / 100)) : r2(entered * vatR / 100);
           prohibitedTotal += lineVat;
@@ -8131,7 +8157,17 @@
           // ผัง VAT override (ไม่เคลม → ลงเป็นต้นทุน/ค่าใช้จ่าย) — เว้นว่าง = default
           inputVatAccountCodeOverride:
             document.getElementById('fInputVatAccountCodeOverride')?.value.trim() || null,
-          creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
+          // ⚠️ **ห้ามใช้ `|| null`** — `parseInt("0") = 0` ซึ่งเป็น falsy ⇒ กลายเป็น
+          // null ⇒ ฝั่งเซิร์ฟเวอร์ `if (request.CreditDays.HasValue)` ไม่เข้า ⇒
+          // **ค่าเดิมค้างไว้** ผู้ใช้แก้เครดิตเป็น 0 แล้วกดบันทึก ระบบเด้งกลับเป็น
+          // ค่าเดิมทุกครั้ง (defect class เดียวกับ quantity `|| 1` ที่เคยเจอ)
+          // ว่าง = "ไม่ระบุ" (ให้ใช้ค่าตั้งต้นของผู้ขาย) · "0" = เงินสด/จ่ายทันที
+          creditDays: (() => {
+            const v = (document.getElementById('fCreditDays')?.value ?? '').trim();
+            if (v === '') return null;
+            const n = parseInt(v, 10);
+            return Number.isFinite(n) && n >= 0 ? n : null;
+          })(),
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
           // ภาษาที่ตรึงไว้กับใบนี้ — "" (ตามค่าบริษัท) ต้องส่งเป็น null ไม่ใช่ ""
           // ตอนสร้าง; ตอนแก้ไขส่ง "" ได้เพื่อ "ล้างกลับไปใช้ค่าบริษัท"
@@ -8690,7 +8726,7 @@
                 </div>` : ''}
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
                   <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เช่น INV-2026-0042"></div>
-                  <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
+                  <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : ''}"></div>
                   <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" placeholder="00000" maxlength="5">${!d.supplierBranchCode ? `<div style="font-size:10px;color:#9333ea;margin-top:2px">${d.contact?.branchCode ? '⚙️ ดึงจากผู้ติดต่ออัตโนมัติ' : '⚙️ ค่าเริ่มต้น สำนักงานใหญ่'}</div>` : ''}</div>
                 </div>
                 <button class="btn btn-sm btn-primary" onclick="Page.completeTaxInvoice('${d.id}')">บันทึก + ย้ายเข้าภาษีซื้อ ภ.พ.30</button>
@@ -8751,7 +8787,7 @@
                 ${(!vatPendingUndue && !d.inputVatExpiredAt) ? `
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:8px">
                   <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เลขจากกระดาษ"></div>
-                  <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
+                  <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : ''}"></div>
                   <div><div class="text-xs text-gray-500">รหัสสาขา</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || d.contact?.branchCode || '00000')}" maxlength="5">
                     <div style="font-size:10px;color:#9333ea;margin-top:2px">⚙️ ${d.supplierBranchCode ? 'จากใบนี้' : (d.contact?.branchCode ? 'ดึงจากผู้ติดต่อ' : 'สำนักงานใหญ่')} — แก้เฉพาะถ้าใบกำกับระบุสาขาอื่น</div></div>
                   <div><div class="text-xs text-gray-500">งวดที่เคลม ภ.พ.30</div>
@@ -9211,7 +9247,7 @@
           if (d) lineParts.push(d);
           const q = parseFloat(row.querySelector('[data-f="qty"]')?.value) || 0;
           const p = parseFloat(row.querySelector('[data-f="price"]')?.value) || 0;
-          const grossLine = q * p;
+          const grossLine = Math.round(q * p * 100) / 100;   // ปัดก่อน — mirror ComputeLineAmounts
           amountFromLines += Math.round((grossLine - this._lineDiscountAmt(row, grossLine)) * 100) / 100;
         });
         const lineDesc = lineParts.slice(0, 5).join(' · ')
@@ -10129,8 +10165,11 @@
           // ถือใบ combined อ่านแล้วนึกว่าระบบจะสร้างใบกำกับใหม่อีกใบ)
           const tivFull = _rpDt === 'TaxInvoice' && fullFirst;
           rpIssueCb.checked = !tivFull;
+          // ⚠️ นี่คือหัว **สมมติ** ("ถ้าจ่ายครบจะกลายเป็น...") ไม่ใช่หัวปัจจุบัน —
+          // ต้องล้าง documentTitle ที่เซิร์ฟเวอร์คำนวณจากสถานะจริงทิ้ง ไม่งั้น
+          // docHeaderLabel จะคืนค่าเดิมและข้อความจะบอกว่า "จะเปลี่ยนเป็น <หัวเดิม>"
           const _paidHeader = Layout.docHeaderLabel(
-            Object.assign({}, this._currentDoc, { servedAsReceipt: true }));
+            Object.assign({}, this._currentDoc, { servedAsReceipt: true, documentTitle: null }));
           if (rpIssueHint) rpIssueHint.textContent = tivFull
             ? `✔ ไม่สร้างเอกสารใหม่ — ใบนี้ใบเดียวทำหน้าที่ครบ หัวพิมพ์จะเปลี่ยนเป็น "${_paidHeader}" (ติ๊กเฉพาะเมื่อลูกค้าขอใบเสร็จเป็นกระดาษแยก)`
             : '➕ สร้างใบเสร็จรับเงินเพิ่ม 1 ใบ (หลักฐานรับเงิน — อ้างอิงใบเดิม ไม่ลงบัญชี/VAT ซ้ำ) · จ่ายบางส่วน/ผ่อนหลายงวดต้องออกใบเสร็จต่องวด';

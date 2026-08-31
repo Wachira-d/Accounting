@@ -562,11 +562,15 @@
     if (isNaN(dt)) return '-';
     return dt.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
   }
+  // ⚠️ หน้า portal ของลูกค้าไม่โหลด layout.js (หน้าสาธารณะ) จึงมีสำเนาชื่อไทย
+  // ที่นี่ — **ต้องตรงกับ PdfGenerationService.GetDocumentTitle เป๊ะ** เพราะ
+  // ลูกค้าเห็นชื่อนี้คู่กับกระดาษที่ดาวน์โหลดไป (เดิมเขียน 'ใบเสร็จ' และ
+  // 'ใบรับรองแทนใบเสร็จ' ซึ่งไม่ตรงกับที่พิมพ์)
   const DOC_TYPE = {
-    'Quotation':'ใบเสนอราคา','Invoice':'ใบแจ้งหนี้','Receipt':'ใบเสร็จ','TaxInvoice':'ใบกำกับภาษี',
+    'Quotation':'ใบเสนอราคา','Invoice':'ใบแจ้งหนี้','Receipt':'ใบเสร็จรับเงิน','TaxInvoice':'ใบกำกับภาษี',
     'CreditNote':'ใบลดหนี้','DebitNote':'ใบเพิ่มหนี้','DeliveryNote':'ใบส่งของ','BillingNote':'ใบวางบิล',
-    'PurchaseOrder':'ใบสั่งซื้อ','PurchaseInvoice':'ใบแจ้งหนี้ซื้อ','Expense':'ค่าใช้จ่าย','PaymentVoucher':'ใบสำคัญจ่าย',
-    'ReceiptVoucher':'ใบสำคัญรับ','CertificateInLieu':'ใบรับรองแทนใบเสร็จ'
+    'PurchaseOrder':'ใบสั่งซื้อ','PurchaseInvoice':'ใบแจ้งหนี้ซื้อ','Expense':'ใบบันทึกค่าใช้จ่าย','PaymentVoucher':'ใบสำคัญจ่าย',
+    'ReceiptVoucher':'ใบสำคัญรับ','CertificateInLieu':'ใบรับรองแทนใบเสร็จรับเงิน'
   };
   function docTypeLabel(t) { return DOC_TYPE[t] || t; }
   /**

@@ -122,10 +122,23 @@ public class JournalEntryBuilder
     public static async Task<string> NextJournalNumberAsync(AccountingDbContext db,
         Guid companyId, string prefix, DateTime when, CancellationToken ct = default)
     {
-        var lockKey = HashCode.Combine(companyId, prefix, "je-seq");
-        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
         var yearMonth = when.ToString("yyyyMM");
         var jePrefix = $"{prefix}-{yearMonth}-";
+
+        // ⚠️ ล็อกต้องคิดจาก **prefix เต็มรวมเดือน** และต้องเป็นค่าเดียวกันทุกผู้ออกเลข
+        // เดิมมีผู้ออกเลขลง number space เดียวกัน 4 ตัว ด้วยคีย์ล็อก 3 แบบ:
+        //   • ตัวนี้: HashCode.Combine(companyId, prefix, "je-seq")
+        //   • FinancialManagementService: HashCode.Combine(companyId, "JV", ym)
+        //   • AccountingService: Math.Abs($"je_number_{companyId}_{pattern}".GetHashCode())
+        //     ← `string.GetHashCode()` ใน .NET Core **randomize ต่อ process**
+        //       ⇒ สอง instance ได้คีย์คนละค่า = ล็อกนี้กันข้ามเครื่องไม่ได้เลย
+        //   • EclAllowanceJob: **ไม่มีล็อก**
+        // ⇒ approve เอกสาร (คีย์ A) พร้อมกับ post JE ค่าเสื่อม/ปันส่วน (คีย์ B)
+        //   ไม่บล็อกกัน → อ่าน max ได้เลขเดียวกัน → ชน unique (CompanyId,
+        //   EntryNumber) → "อนุมัติไม่สำเร็จ" แบบสุ่มที่กดใหม่แล้วหาย
+        var lockKey = JournalNumberLockKey(companyId, jePrefix);
+        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+
         var suffixes = await db.JournalEntries.IgnoreQueryFilters()
             .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(jePrefix))
             .OrderByDescending(j => j.CreatedAt)
@@ -135,6 +148,33 @@ public class JournalEntryBuilder
         var nextSeq = 1;
         foreach (var s in suffixes)
             if (int.TryParse(s, out var parsed) && parsed >= nextSeq) nextSeq = parsed + 1;
+
+        // นับ JE ที่ Add ค้างใน change tracker ด้วย — ยกมาจาก
+        // AccountingService.GetNextEntryNumberAsync ซึ่งเป็นตัวเดียวที่เคยมี
+        // (เคสจริง: อนุมัติใบกำกับแปลงจากใบแจ้งหนี้ → supersede reverse ใบเดิม
+        // ทั้งคู่ prefix เดียวกันเดือนเดียวกัน · query DB ไม่เห็นใบที่ยังไม่ save
+        // ⇒ เลขซ้ำ ⇒ unique index ล้มตอน SaveChanges = อนุมัติไม่ได้)
+        var localMax = db.JournalEntries.Local
+            .Where(j => j.CompanyId == companyId
+                        && j.EntryNumber != null && j.EntryNumber.StartsWith(jePrefix)
+                        && int.TryParse(j.EntryNumber[jePrefix.Length..], out _))
+            .Select(j => int.Parse(j.EntryNumber[jePrefix.Length..]))
+            .DefaultIfEmpty(0)
+            .Max();
+        if (localMax >= nextSeq) nextSeq = localMax + 1;
+
         return nextSeq <= 9999 ? $"{jePrefix}{nextSeq:D4}" : $"{jePrefix}{nextSeq:D5}";
     }
+
+    /// <summary>
+    /// คีย์ advisory lock ของ number space เลข JE — <b>ผู้ออกเลขทุกตัวต้องใช้ตัวนี้</b>
+    ///
+    /// <para>คิดจาก prefix เต็มที่รวมเดือนแล้ว (เช่น <c>"JV-202608-"</c>) เพื่อให้
+    /// เดือนต่างกันไม่ต้องรอกัน แต่เดือนเดียวกันจาก**คนละ service** ต้องรอกัน.
+    /// ห้ามใช้ <c>string.GetHashCode()</c> — .NET Core randomize ต่อ process
+    /// ⇒ ค่าคีย์ต่างกันทุกครั้งที่รีสตาร์ต ล็อกจึงไม่กันอะไรเลยข้าม instance</para>
+    /// </summary>
+    public static long JournalNumberLockKey(Guid companyId, string fullPrefix)
+        => Accounting.Helpers.AdvisoryLockKey.For(
+            companyId, Accounting.Helpers.AdvisoryLockKey.JournalSequence, fullPrefix);
 }

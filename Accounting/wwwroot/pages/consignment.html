@@ -166,7 +166,7 @@
           list.map(c => `<option value="${c.id}">${this.esc(c.name||'')}${c.taxId ? ' ('+this.esc(c.taxId)+')' : ''}</option>`).join('');
         document.getElementById('fQty').value = '';
         document.getElementById('fPrice').value = '';
-        document.getElementById('fDate').value = new Date().toISOString().slice(0,10);
+        document.getElementById('fDate').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         Layout.openModal("formModal");
       },
       closeForm() { Layout.closeModal("formModal"); },

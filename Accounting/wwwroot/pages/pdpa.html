@@ -264,16 +264,21 @@
           const r = await API.get(`/api/companies/${this._cid()}/pdpa/overdue`);
           const rows = r.data || [];
           if (rows.length === 0) {
-            el.innerHTML = '<div style="color:#15803d;padding:14px">✅ ไม่มีคำขอเลยกำหนด</div>';
+            el.innerHTML = '<div style="color:#15803d;padding:14px">✅ ไม่มีคำขอที่เลยกำหนดหรือใกล้ครบกำหนด</div>';
             return;
           }
+          // เซิร์ฟเวอร์ส่งทั้ง "เลยกำหนด" และ "ใกล้ครบกำหนด" มาในชุดเดียว —
+          // ต้องแยกสีให้เห็น ไม่งั้นใบที่ยังทันจะดูเหมือนผิดกฎหมายไปแล้ว
+          const _now = Date.now();
           el.innerHTML = `<table class="data-table"><thead><tr><th>เลขที่</th><th>ประเภท</th><th>ผู้ขอ</th><th>รับเมื่อ</th><th>ครบกำหนด</th><th>สถานะ</th><th>การจัดการ</th></tr></thead><tbody>${rows.map(r => `
             <tr>
               <td>${r.requestNumber}</td>
               <td>${r.requestType}</td>
               <td>${this._esc(r.requesterName || r.requesterContact)}</td>
               <td>${new Date(r.requestedAt).toLocaleDateString('th-TH')}</td>
-              <td style="color:#dc2626"><b>${new Date(r.dueBy).toLocaleDateString('th-TH')}</b></td>
+              <td style="color:${new Date(r.dueBy).getTime() < _now ? '#dc2626' : '#b45309'}">
+                <b>${new Date(r.dueBy).toLocaleDateString('th-TH')}</b>
+                ${new Date(r.dueBy).getTime() < _now ? ' ⛔ เลยกำหนด' : ' ⏳ ใกล้ครบกำหนด'}</td>
               <td>${r.status}</td>
               <td><button class="btn btn-sm btn-success" onclick="Page.completeDsr('${r.id}')">ปิดงาน</button></td>
             </tr>`).join('')}</tbody></table>`;

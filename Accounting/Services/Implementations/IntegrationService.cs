@@ -780,6 +780,7 @@ public class IntegrationService : IIntegrationService
             //   capability-detection (balanceDue>0) จะ fallback settle เอง ไม่ settle ซ้ำ.
             // • ปกติ (ตั้งหนี้/เครดิต): mapping JE ตามเดิม (Dr ลูกหนี้/Cr รายได้+VAT).
             Guid? journalEntryId;
+            string? jeSkipReason = null;
             string? cashSaleNote = null;
             if (request.IsCashSale && _documentService != null)
             {
@@ -798,16 +799,18 @@ public class IntegrationService : IIntegrationService
                         document.DocumentNumber);
                     document.IssuedAsCashReceipt = false;   // ไม่ใช่ขายเงินสดแล้ว (ลงตั้งหนี้)
                     await _db.SaveChangesAsync();
-                    journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "invoice");
+                    (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, document, "invoice", log);
                     cashSaleNote = " (⚠ ลง JE ขายเงินสดไม่สำเร็จ — ตั้งหนี้แทน, ให้รับชำระในระบบ)";
                 }
             }
             else
             {
-                journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "invoice");
+                (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, document, "invoice", log);
             }
 
-            log.Status = "Success";
+            // ⚠️ ห้ามทับสถานะ PartialSuccess ที่ PostMappingJournalAsync ตั้งไว้ —
+            // "สร้างเอกสารได้แต่ลงบัญชีไม่ได้" ไม่ใช่ Success
+            if (log.Status != "PartialSuccess") log.Status = "Success";
             log.CreatedDocumentId = document.Id;
             log.CreatedContactId = contact.Id;
             log.CreatedJournalEntryId = journalEntryId;
@@ -822,7 +825,9 @@ public class IntegrationService : IIntegrationService
                 });
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Invoice created" + cashSaleNote, document.Id, contact.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true,
+                "Invoice created" + cashSaleNote + JeSkipSuffix(jeSkipReason),
+                document.Id, contact.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {
@@ -1706,9 +1711,14 @@ public class IntegrationService : IIntegrationService
     }
 
     /// <summary>สร้าง "บรรทัด JE" จาก mapping/มาตรฐาน (แยกออกมาให้ reuse ได้
-    /// ทั้ง create ใหม่ และ in-place update). คืน null เมื่อสร้างไม่ได้.</summary>
+    /// ทั้ง create ใหม่ และ in-place update). คืน null เมื่อสร้างไม่ได้.
+    ///
+    /// <para><paramref name="onSkip"/> = เหตุผลที่สร้างไม่ได้ ส่งกลับให้ผู้เรียก
+    /// ไป **แสดงให้ผู้ใช้เห็น** — เดิมเหตุผลอยู่ใน LogWarning อย่างเดียว ซึ่ง
+    /// ผู้ใช้และคู่ค้าไม่มีทางเห็น (ดู PostMappingJournalAsync)</para></summary>
     private async Task<(List<JournalEntryLine> Lines, JournalType Jt, string Prefix)?> BuildIntegrationJournalLinesAsync(
-        Guid companyId, Guid integrationId, Document document, string type)
+        Guid companyId, Guid integrationId, Document document, string type,
+        Action<string>? onSkip = null)
     {
         // Load account mappings for this integration
         var mappings = await _db.Set<IntegrationAccountMapping>()
@@ -1820,7 +1830,7 @@ public class IntegrationService : IIntegrationService
 
                 if (arAccount == null || revenueAccount == null)
                 {
-                    _logger.LogWarning("ไม่พบผังบัญชีลูกหนี้/รายได้ สำหรับ company {CompanyId} — ไม่สร้าง journal", companyId);
+                    Skip(onSkip, "ไม่พบผังบัญชีลูกหนี้การค้า/รายได้ที่ใช้งานอยู่");
                     return null;
                 }
 
@@ -1892,13 +1902,12 @@ public class IntegrationService : IIntegrationService
 
                 if (apAccount == null || expenseAccount == null)
                 {
-                    _logger.LogWarning("ไม่พบผังบัญชีเจ้าหนี้/ค่าใช้จ่าย สำหรับ company {CompanyId} — ไม่สร้าง journal", companyId);
+                    Skip(onSkip, "ไม่พบผังบัญชีเจ้าหนี้การค้า/ค่าใช้จ่ายที่ใช้งานอยู่");
                     return null;
                 }
                 if (document.VatAmount > 0 && vatAccount == null)
                 {
-                    _logger.LogWarning("ไม่พบบัญชีภาษีซื้อที่ถูกต้องสำหรับ company {CompanyId} — ไม่โพสต์ JE (เอกสาร {DocNo})",
-                        companyId, document.DocumentNumber);
+                    Skip(onSkip, "เอกสารมี VAT แต่ไม่พบบัญชีภาษีซื้อในผังบัญชี");
                     return null;
                 }
 
@@ -1980,28 +1989,93 @@ public class IntegrationService : IIntegrationService
             }
             else
             {
-                return null; // Unknown type — cannot auto-generate
+                Skip(onSkip, $"ไม่รู้จักชนิดเอกสาร \"{type}\" จึงสร้างรายการบัญชีอัตโนมัติไม่ได้");
+                return null;
             }
         }
 
-        if (!journalLines.Any()) return null;
+        if (!journalLines.Any())
+        {
+            Skip(onSkip, "สร้างบรรทัดบัญชีจาก mapping ไม่ได้เลยสักบรรทัด");
+            return null;
+        }
 
         // Validate Dr == Cr
         var totalDebit = journalLines.Sum(l => l.DebitAmount);
         var totalCredit = journalLines.Sum(l => l.CreditAmount);
         if (totalDebit != totalCredit)
         {
-            _logger.LogWarning("Journal Dr ({Debit}) != Cr ({Credit}) for {DocNumber} — ไม่สร้าง journal",
-                totalDebit, totalCredit, document.DocumentNumber);
+            Skip(onSkip, $"รายการบัญชีไม่สมดุล Dr {totalDebit:N2} ≠ Cr {totalCredit:N2}");
             return null;
         }
 
         return (journalLines, journalType, prefix);
     }
 
-    private async Task<Guid?> CreateJournalFromMappingsAsync(Guid companyId, Guid integrationId, Document document, string type)
+    /// <summary>ข้อความต่อท้ายคำตอบที่ส่งกลับคู่ค้า เมื่อเอกสารถูกสร้างแต่ยังไม่ได้
+    /// ลงบัญชี — คู่ค้าต้องรู้ว่างานยังไม่จบ ไม่ใช่เห็นแค่คำว่า created</summary>
+    private static string JeSkipSuffix(string? reason) =>
+        string.IsNullOrWhiteSpace(reason) ? "" : $" ⚠ ยังไม่ลงบัญชี: {reason}";
+
+    /// <summary>บันทึกเหตุผลที่ "ไม่สร้างรายการบัญชี" ลง log ของเซิร์ฟเวอร์ **และ**
+    /// ส่งต่อให้ผู้เรียก — จุดเดียวที่ทั้งสองอย่างเกิดพร้อมกัน ห้ามเขียนแยก</summary>
+    private void Skip(Action<string>? onSkip, string reason)
     {
-        var built = await BuildIntegrationJournalLinesAsync(companyId, integrationId, document, type);
+        _logger.LogWarning("ไม่สร้างรายการบัญชีจาก integration — {Reason}", reason);
+        onSkip?.Invoke(reason);
+    }
+
+    /// <summary>
+    /// ลงบัญชีจาก mapping แล้ว **ถ้าลงไม่ได้ ต้องดังพอให้คนเห็น**
+    ///
+    /// ═══ ที่มา (defect class ที่หนักที่สุดในเรพนี้) ═══
+    /// เอกสารจาก integration ถูกสร้างเป็น <c>Status = Approved</c> เสมอ ⇒
+    /// <c>TaxService</c> นับเข้า ภ.พ.30 ทันที. แต่การลงบัญชีมีทางออก null ถึง
+    /// <b>7 ทาง</b> (ไม่พบผังลูกหนี้/รายได้ · ไม่พบผังเจ้าหนี้/ค่าใช้จ่าย · ไม่พบ
+    /// บัญชีภาษีซื้อ · ชนิดเอกสารไม่รู้จัก · สร้างบรรทัดไม่ได้ · Dr≠Cr · ด่าน
+    /// โครงสร้างไม่ผ่าน) และทุกทาง**เขียนแค่ LogWarning** แล้วเดินต่อ ⇒ คู่ค้าได้
+    /// <c>success: true "Invoice created"</c>, log ขึ้น <c>Success</c>, เอกสาร
+    /// อยู่ในระบบ แต่ <b>ไม่มีรายการบัญชีเลย</b> ⇒ **ภ.พ.30 ไม่ตรง GL ถาวร**
+    /// โดยไม่มีใครรู้ (ร่องรอยเดียวคือ log ที่ไม่มีใครเปิดอ่าน)
+    ///
+    /// ที่นี่แปลงความเงียบเป็นเสียง 3 ทาง — ทำที่เดียวเพื่อไม่ให้ 6 จุดเรียกใช้
+    /// drift กัน (กฎเหล็ก #4 E "ห้ามกลืน error ใน payment/stock/JE path"):
+    /// <list type="number">
+    /// <item><b>บนตัวเอกสาร</b> — ต่อเหตุผลเข้า <c>Notes</c> ด้วยหัวข้อ
+    ///   <c>[ยังไม่ลงบัญชี]</c> ให้ผู้ใช้เห็นตอนเปิดใบ (ไม่ใช่แค่ใน log)</item>
+    /// <item><b>บน sync log</b> — สถานะเป็น <c>PartialSuccess</c> ไม่ใช่
+    ///   <c>Success</c> + ใส่เหตุผลใน <c>ErrorMessage</c></item>
+    /// <item><b>ในคำตอบที่ส่งกลับคู่ค้า</b> — ผู้เรียกเอา <c>SkipReason</c>
+    ///   ไปต่อท้ายข้อความ (ดูจุดเรียก)</item>
+    /// </list>
+    /// <para>ทำไมไม่ throw ทิ้งทั้งก้อน: เอกสารของคู่ค้าจะหายไปเลยและคู่ค้าส่วนใหญ่
+    /// ไม่ retry — เก็บเอกสารไว้แล้วบอกให้ชัดว่ายังไม่ลงบัญชี ผู้ใช้แก้ผังบัญชี
+    /// แล้วสั่งลงบัญชีใหม่จากหน้าเอกสารได้ ซึ่งกู้คืนได้จริง</para>
+    /// </summary>
+    private async Task<(Guid? JournalEntryId, string? SkipReason)> PostMappingJournalAsync(
+        Guid companyId, Guid integrationId, Document document, string type, IntegrationSyncLog log)
+    {
+        string? skipReason = null;
+        var jeId = await CreateJournalFromMappingsAsync(
+            companyId, integrationId, document, type, r => skipReason ??= r);
+        if (jeId != null) return (jeId, null);
+
+        skipReason ??= "สร้างรายการบัญชีอัตโนมัติไม่สำเร็จ (ไม่ทราบสาเหตุ)";
+        var note = $"[ยังไม่ลงบัญชี] {skipReason} — เอกสารนี้เข้ารายงานภาษีแล้วแต่ยังไม่มี"
+                 + "รายการบัญชี กรุณาแก้ผังบัญชีแล้วสั่งลงบัญชีใหม่จากหน้าเอกสาร";
+        document.Notes = string.IsNullOrWhiteSpace(document.Notes)
+            ? note : document.Notes + "\n" + note;
+        log.Status = "PartialSuccess";
+        log.ErrorMessage = string.IsNullOrWhiteSpace(log.ErrorMessage)
+            ? note : log.ErrorMessage + "\n" + note;
+        await _db.SaveChangesAsync();
+        return (null, skipReason);
+    }
+
+    private async Task<Guid?> CreateJournalFromMappingsAsync(Guid companyId, Guid integrationId, Document document, string type,
+        Action<string>? onSkip = null)
+    {
+        var built = await BuildIntegrationJournalLinesAsync(companyId, integrationId, document, type, onSkip);
         if (built == null) return null;
         var (journalLines, journalType, prefix) = built.Value;
 
@@ -2009,7 +2083,10 @@ public class IntegrationService : IIntegrationService
         // การตรวจเลย** (ValidateAndAutofix ถูกเรียกเฉพาะ PV path) ⇒ mapping
         // ของ partner ที่ตั้งบัญชีผิดทำให้เครดิตทั้งใบลง 21917 ได้เงียบ ๆ
         if (!await ValidateAndAutofixJournalAsync(companyId, journalLines, document))
+        {
+            Skip(onSkip, "ด่านตรวจโครงสร้างรายการบัญชีไม่ผ่าน (ผังบัญชีที่ mapping ชี้ไปผิดประเภท)");
             return null;
+        }
 
         var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
             f.CompanyId == companyId
@@ -2407,6 +2484,7 @@ public class IntegrationService : IIntegrationService
         //    มิฉะนั้น → reversal + post ใหม่ (งวดปิดห้ามแก้ในงวด)
         var originals = await LoadResyncOriginalsAsync(companyId, existing.Id);
         Guid? journalEntryId = null;
+        string? jeSkipReason = null;
         var inPlace = false;
         if (originals.Count == 1
             && await IsPeriodOpenAsync(companyId, originals[0].EntryDate)
@@ -2419,7 +2497,7 @@ public class IntegrationService : IIntegrationService
         {
             await ResyncReverseOriginalsAsync(companyId, existing, originals);
             await _db.SaveChangesAsync();
-            journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, existing, "invoice");
+            (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, existing, "invoice", log);
         }
         existing.Notes = (existing.Notes ?? "")
             + $"\n[Resync แก้ไขจากระบบภายนอก] {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC — "
@@ -2430,7 +2508,7 @@ public class IntegrationService : IIntegrationService
         // บล็อกตั้งแต่ต้น (แก้ไม่ได้หลังรับชำระ) จึงไม่ต้อง re-settle ที่นี่. เคส
         // degrade (ตั้งหนี้ PaidAmount=0) resync ได้ปกติเป็นใบตั้งหนี้ (mapping JE).
 
-        log.Status = "Updated";
+        if (log.Status != "PartialSuccess") log.Status = "Updated";
         log.CreatedDocumentId = existing.Id;
         log.CreatedJournalEntryId = journalEntryId;
         log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
@@ -2438,8 +2516,9 @@ public class IntegrationService : IIntegrationService
         _logger.LogInformation("Resync-updated invoice {DocNo} (company {Cid}) — {Mode}",
             existing.DocumentNumber, companyId, inPlace ? "in-place" : "reversal");
         return new InboundSyncResponse(true,
-            inPlace ? "Resync updated (in-place) — แก้ JE เดิม เลข JE คงเดิม"
-                    : "Resync updated (reversal) — งวดเดิมปิด/มีหลาย JE จึงกลับรายการ + post ใหม่",
+            (inPlace ? "Resync updated (in-place) — แก้ JE เดิม เลข JE คงเดิม"
+                     : "Resync updated (reversal) — งวดเดิมปิด/มีหลาย JE จึงกลับรายการ + post ใหม่")
+            + JeSkipSuffix(jeSkipReason),
             existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber);
     }
 
@@ -2480,6 +2559,7 @@ public class IntegrationService : IIntegrationService
 
         var originals = await LoadResyncOriginalsAsync(companyId, existing.Id);
         Guid? journalEntryId = null;
+        string? jeSkipReason = null;
         var inPlace = false;
         if (originals.Count == 1
             && await IsPeriodOpenAsync(companyId, originals[0].EntryDate)
@@ -2492,14 +2572,14 @@ public class IntegrationService : IIntegrationService
         {
             await ResyncReverseOriginalsAsync(companyId, existing, originals);
             await _db.SaveChangesAsync();
-            journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, existing, "expense");
+            (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, existing, "expense", log);
         }
         existing.Notes = (existing.Notes ?? "")
             + $"\n[Resync แก้ไขจากระบบภายนอก] {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC — "
             + (inPlace ? "แก้ JE เดิม (in-place, เลขคงเดิม)" : "กลับ JE เดิม + post ใหม่ (reversal)");
         await _db.SaveChangesAsync();
 
-        log.Status = "Updated";
+        if (log.Status != "PartialSuccess") log.Status = "Updated";
         log.CreatedDocumentId = existing.Id;
         log.CreatedJournalEntryId = journalEntryId;
         log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
@@ -2507,8 +2587,9 @@ public class IntegrationService : IIntegrationService
         _logger.LogInformation("Resync-updated expense {DocNo} (company {Cid}) — {Mode}",
             existing.DocumentNumber, companyId, inPlace ? "in-place" : "reversal");
         return new InboundSyncResponse(true,
-            inPlace ? "Resync updated (in-place) — แก้ JE เดิม เลข JE คงเดิม"
-                    : "Resync updated (reversal) — งวดเดิมปิด/มีหลาย JE จึงกลับรายการ + post ใหม่",
+            (inPlace ? "Resync updated (in-place) — แก้ JE เดิม เลข JE คงเดิม"
+                     : "Resync updated (reversal) — งวดเดิมปิด/มีหลาย JE จึงกลับรายการ + post ใหม่")
+            + JeSkipSuffix(jeSkipReason),
             existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber);
     }
 
@@ -2923,17 +3004,18 @@ public class IntegrationService : IIntegrationService
             // Draft (autoApprove=false) → ยังไม่ลง GL และยังไม่ออก 50 ทวิ. ทั้งสองจะ
             // เกิดตอนอนุมัติ (ApproveDocumentAsync post JE + ออก 50 ทวิ ตอนจ่าย/approve).
             Guid? journalEntryId = null;
+            string? jeSkipReason = null;
             string whtNote = "";
             if (autoApprove)
             {
-                journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
+                (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, document, "expense", log);
                 // Auto-issue the withholding-tax certificate so an int_ key sync is
                 // self-sufficient (no separate manual WHT step). Best-effort — a
                 // failure here must not fail the already-committed expense sync.
                 whtNote = await TryAutoGenerateWhtAsync(companyId, document, paid: false);
             }
 
-            log.Status = "Success";
+            if (log.Status != "PartialSuccess") log.Status = "Success";
             log.CreatedDocumentId = document.Id;
             log.CreatedContactId = supplier.Id;
             log.CreatedJournalEntryId = journalEntryId;
@@ -2941,7 +3023,8 @@ public class IntegrationService : IIntegrationService
             await SaveSyncLog(log, integrationId);
 
             return new InboundSyncResponse(true,
-                (autoApprove ? "Expense created" : "Expense created as Draft (pending approval — GL + 50 ทวิ on approve)") + whtNote,
+                (autoApprove ? "Expense created" : "Expense created as Draft (pending approval — GL + 50 ทวิ on approve)")
+                + whtNote + JeSkipSuffix(jeSkipReason),
                 document.Id, supplier.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
@@ -3280,16 +3363,18 @@ public class IntegrationService : IIntegrationService
             await _db.SaveChangesAsync();
             await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
-            var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
+            var (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, document, "expense", log);
 
-            log.Status = "Success";
+            if (log.Status != "PartialSuccess") log.Status = "Success";
             log.CreatedDocumentId = document.Id;
             log.CreatedContactId = supplier.Id;
             log.CreatedJournalEntryId = journalEntryId;
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Certificate in lieu created", document.Id, supplier.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true,
+                "Certificate in lieu created" + JeSkipSuffix(jeSkipReason),
+                document.Id, supplier.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {

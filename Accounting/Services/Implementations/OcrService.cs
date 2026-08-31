@@ -2868,6 +2868,44 @@ public class OcrService : IOcrService
         if (startMonth is < 1 or > 12) startMonth = 1;
         var taxYear = docDate.Month >= startMonth ? docDate.Year : docDate.Year - 1;
 
+        // ── กันเครดิตซ้ำข้ามเส้นทาง (เงินก้อนเดียว 2 แถว) ─────────────────
+        // `DocumentService.SyncWhtCreditReceivedAsync` สร้างแถว **Pending**
+        // ไว้แล้วตอนรับชำระใบขาย (ผูกกับ**ใบขายต้นทาง**, ไม่มีเลขที่ใบรับรอง)
+        // ส่วนเมธอดนี้ผูกกับ **ReceiptVoucher ใบใหม่** ที่สร้างจากการสแกน
+        // ⇒ key ของสองทางไม่มีวันชนกัน ⇒ ภ.ง.ด.50 หักเครดิตเกินเท่าตัว
+        // (แถวหนึ่ง Received นับทันที อีกแถว Pending รอผู้ใช้กด "ได้รับใบแล้ว")
+        //
+        // ทางแก้: ถ้าเจอแถว Pending ของผู้จ่ายรายเดียวกัน ปีภาษีเดียวกัน
+        // ยอดใกล้เคียงกัน → **อัปเกรดแถวเดิม** (เติมเลขที่ใบ/ไฟล์แนบ/สถานะ)
+        // แทนการสร้างแถวใหม่ — ใบจริงคือหลักฐานของเงินก้อนเดิม ไม่ใช่ก้อนใหม่
+        if (!unknownAmount && result.MatchedContactId is Guid payerId)
+        {
+            const decimal matchTolerance = 1m;
+            var candidates = await _db.WhtCreditsReceived
+                .Where(w => w.CompanyId == companyId && !w.IsDeleted
+                            && w.Status == WhtCreditStatus.Pending
+                            && w.PayerContactId == payerId
+                            && w.TaxYear == taxYear
+                            && w.CertificateNumber == null)
+                .ToListAsync();
+            var match = candidates
+                .FirstOrDefault(w => Math.Abs(w.WhtAmount - whtAmount) <= matchTolerance);
+            if (match != null)
+            {
+                match.CertificateNumber = certNo;
+                match.CertificateDate = result.ExtractedDate;
+                match.AttachmentId = result.FileAttachmentId;
+                match.Status = WhtCreditStatus.Received;   // มีใบจริงในมือแล้ว
+                match.Notes = (match.Notes ?? "") +
+                    $" · จับคู่กับหนังสือรับรองที่สแกน ({result.OriginalFileName})";
+                match.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+                _logger.LogInformation(
+                    "จับคู่ใบ 50 ทวิ ที่สแกนกับเครดิตที่รอใบอยู่แล้ว (credit {Id}) — ไม่สร้างแถวใหม่",
+                    match.Id);
+                return;
+            }
+        }
         var baseAmount = result.ExtractedSubTotal ?? 0m;
         _db.WhtCreditsReceived.Add(new WhtCreditReceived
         {
@@ -3496,6 +3534,9 @@ public class OcrService : IOcrService
         if (correction.BuyerTaxId != null) result.BuyerTaxId = correction.BuyerTaxId;
         if (correction.VendorBranchCode != null) result.VendorBranchCode = correction.VendorBranchCode;
         if (correction.BuyerBranchCode != null) result.BuyerBranchCode = correction.BuyerBranchCode;
+        // "" = ผู้ใช้ลบหมายเหตุทิ้ง (ล้างค่า) · null = ไม่ได้แตะช่องนี้
+        if (correction.Notes != null)
+            result.UserNotes = string.IsNullOrWhiteSpace(correction.Notes) ? null : correction.Notes.Trim();
 
         // ── บทบาทเรา: แก้ได้ + อนุมานเป้าหมายใหม่ตามบทบาทที่ถูกต้อง ──
         //
@@ -3846,13 +3887,7 @@ public class OcrService : IOcrService
             return;
         }
 
-        // DBD found — adopt as authoritative
         data.DbdLookupAttempted = true;
-        data.DbdMatched = true;
-        data.DbdCanonicalName = dbd.NameTh;
-        data.DbdAddress = dbd.Address;
-        data.DbdJuristicType = dbd.JuristicType;
-        data.DbdStatus = dbd.Status;
 
         // Compare OCR's vendor name with DBD canonical
         var ocrName = data.VendorName?.Trim();
@@ -3868,6 +3903,43 @@ public class OcrService : IOcrService
                        || normalizedDbd.Contains(normalizedOcr, StringComparison.OrdinalIgnoreCase)
                        || normalizedOcr.Contains(normalizedDbd, StringComparison.OrdinalIgnoreCase);
         }
+
+        // ⚠️ **DBD ชนะได้ก็ต่อเมื่อ "กุญแจ" ถูก** — การค้นหาใช้ `VendorTaxId` เป็นคีย์
+        // ซึ่งเป็นช่องที่ OCR อ่านผิดได้บ่อยที่สุดช่องหนึ่ง (บาร์โค้ด EAN-13 ที่ผ่าน
+        // mod-11 · เลขผู้ซื้อถูกหยิบมาเป็นผู้ขาย · หลักเดียวเพี้ยน) ⇒ ถ้าเลขผิด DBD
+        // จะคืน **คนละบริษัท** แล้วโค้ดเดิมจะ (1) ทับชื่อผู้ขายที่อ่านมาถูกแล้วด้วย
+        // ชื่อบริษัทอื่น (2) บันทึกชื่อที่ถูกต้องเป็น **negative example** = สอน
+        // ตัวเรียนรู้ผิดถาวร (3) ตั้ง confidence 0.95 ⇒ ไม่ขึ้นไฮไลต์เตือน และ
+        // (4) สร้าง Contact ผู้ขายรายใหม่ของบริษัทที่ไม่เกี่ยวข้องกับใบนี้เลย
+        //
+        // ตัวแยกคือ **ระดับความต่าง**: OCR ที่อ่าน "ชื่อเดียวกัน" ผิด ได้สตริงที่
+        // *คล้าย* เสมอ (นั่นคือสมมติฐานทั้งหมดของ FuzzyMatcher) — คนละบริษัทได้
+        // คะแนนเกือบศูนย์. วัดกับตัวอย่างจริง: อ่านเพี้ยน 0.772–0.941 ·
+        // คนละบริษัท 0.000–0.087 ⇒ เกณฑ์ 0.45 อยู่กลางช่องว่างกว้าง ๆ
+        const double DbdSameCompanyFloor = 0.45;
+        var nameSim = Ocr.FuzzyMatcher.Similarity(ocrName, dbdName);
+        if (!nameMatches && !string.IsNullOrEmpty(ocrName) && nameSim < DbdSameCompanyFloor)
+        {
+            // คนละบริษัท → ผู้ต้องสงสัยคือ **เลขผู้เสียภาษี** ไม่ใช่ชื่อ
+            // ห้ามทับ ห้ามสอน — ลด confidence ให้ไฮไลต์เหลืองขึ้น (กฎเหล็ก #3 ข้อ 3)
+            // แล้วให้คนตัดสิน (หลัก "ไม่รู้ = ต้องบอกว่าไม่รู้")
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerTaxId] = 0.30;
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.50;
+            data.ReasoningTrace.Add(
+                $"[DBD] ⚠ เลข {data.VendorTaxId} เป็นของ '{dbd.NameTh}' แต่บนกระดาษเขียนว่า '{ocrName}' " +
+                $"(ต่างกันสิ้นเชิง) — น่าจะอ่าน**เลขผู้เสียภาษี**ผิด จึงไม่ทับชื่อและไม่นำไปสอนระบบ");
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") +
+                $"\n[DBD] ⚠ เลขผู้เสียภาษีอาจอ่านผิด — {data.VendorTaxId} ขึ้นทะเบียนเป็น '{dbd.NameTh}' " +
+                $"ไม่ใช่ '{ocrName}' กรุณาตรวจเลขผู้เสียภาษีบนกระดาษอีกครั้ง";
+            return;   // ไม่ตั้ง DbdMatched ⇒ ไม่สร้าง Contact ของบริษัทที่ไม่เกี่ยวข้อง
+        }
+
+        // DBD found + คีย์น่าเชื่อถือ — adopt as authoritative
+        data.DbdMatched = true;
+        data.DbdCanonicalName = dbd.NameTh;
+        data.DbdAddress = dbd.Address;
+        data.DbdJuristicType = dbd.JuristicType;
+        data.DbdStatus = dbd.Status;
 
         if (nameMatches)
         {
@@ -3886,8 +3958,10 @@ public class OcrService : IOcrService
         }
         else
         {
-            // OCR mismatch — DBD wins, but record OCR's wrong reading as negative training
-            data.ReasoningTrace.Add($"[DBD] ⚠ OCR อ่านได้ '{ocrName}' แต่ DBD ระบุ '{dbd.NameTh}' — ใช้จาก DBD และเรียนรู้");
+            // ชื่อ *คล้าย* แต่ไม่เท่า ⇒ บริษัทเดียวกันที่ OCR สะกดเพี้ยน
+            // (ด่าน DbdSameCompanyFloor ข้างบนคัด "คนละบริษัท" ออกไปแล้ว)
+            // → DBD ชนะ + เก็บของเดิมเป็น negative example ได้อย่างปลอดภัย
+            data.ReasoningTrace.Add($"[DBD] ⚠ OCR อ่านได้ '{ocrName}' แต่ DBD ระบุ '{dbd.NameTh}' (ใกล้เคียง {nameSim:P0}) — ใช้จาก DBD และเรียนรู้");
             await RecordOcrMismatchAsync(companyId, data.VendorTaxId, "SellerName",
                 wrongValue: ocrName, correctValue: dbd.NameTh);
             data.VendorName = dbd.NameTh;
@@ -4781,9 +4855,16 @@ public class OcrService : IOcrService
             PaidAmount = isPaidType ? headerTotal : 0,
             BalanceDue = isPaidType ? 0 : headerTotal,
             Reference = result.ExtractedDocumentNumber,
-            Notes = linkedPo != null
-                ? $"Created from OCR scan: {result.OriginalFileName} (รับตาม PO {linkedPo.DocumentNumber})"
-                : $"Created from OCR scan: {result.OriginalFileName}",
+            // หมายเหตุของผู้ใช้ (เหตุผลทางธุรกิจ) มาก่อนเสมอ — เป็นสิ่งที่คนอ่าน
+            // ใบจริง ๆ ต้องเห็น ส่วนที่มาของไฟล์เป็นข้อมูลระบบต่อท้าย
+            // (§65 ตรี(3)/(14): ไม่มีเหตุผลว่าเกี่ยวกับกิจการ = รายจ่ายต้องห้าม)
+            Notes = string.Join(" · ", new[]
+            {
+                result.UserNotes,
+                linkedPo != null
+                    ? $"Created from OCR scan: {result.OriginalFileName} (รับตาม PO {linkedPo.DocumentNumber})"
+                    : $"Created from OCR scan: {result.OriginalFileName}",
+            }.Where(s => !string.IsNullOrWhiteSpace(s))),
             // Linkback so the new PI's "อ้างอิงเอกสาร" surfaces the PO.
             RelatedDocumentId = linkedPo?.Id,
             // ใบรับรองแทนใบเสร็จ — legal fields the printed form requires.
@@ -6061,6 +6142,17 @@ public class OcrService : IOcrService
                         DepreciationExpenseAccountId: req.DepreciationExpenseAccountId,
                         AccumulatedDepreciationAccountId: req.AccumulatedDepreciationAccountId),
                     createdBy);
+
+                // ผูกสินทรัพย์กลับไปที่สแกน — ให้ AutoRegisterFixedAssetsAsync
+                // รู้ว่าของชิ้นนี้ลงทะเบียนไปแล้ว ตอนเอกสารจากสแกนเดียวกันถูก
+                // approve (เดิม key คนละตัวจึงไม่มีวันชน → สินทรัพย์ซ้ำ)
+                var assetRow = await _db.Set<FixedAsset>()
+                    .FirstOrDefaultAsync(a => a.Id == created.Id && a.CompanyId == companyId);
+                if (assetRow != null)
+                {
+                    assetRow.SourceScanResultId = scan.Id;
+                    await _db.SaveChangesAsync();
+                }
 
                 // Initial capitalization journal entry — Dr: Asset / Cr: AP-or-Cash.
                 // We only post when both account IDs are known (asset

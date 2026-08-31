@@ -122,6 +122,12 @@ DECL_PATTERNS = [
     rf"\bcatch\s*\([^)]*\s+({IDENT})\s*\)",
     rf"\bis\s+[A-Za-z_][\w\.<>,\[\]\?]*\s+({IDENT})\b",          # pattern: is Foo f
     rf"\bis\s*\{{[^{{}}]*\}}\s*({IDENT})\b",                       # property pattern: is { } f
+    # ตัวแปรที่ผูกใน **subpattern ซ้อน** ของ recursive pattern:
+    #   `x is { Matched: true, Status: { } s }`  ·  `x is { Inner: Foo f }`
+    # ต่างจากบรรทัดบนตรงที่ไม่มี `is` นำหน้าติด ๆ (มันอยู่ลึกเข้าไปในวงเล็บปีกกา)
+    # — เคยฟ้องผิดกับโค้ดที่ถูกต้อง (OcrScanComplianceEvaluator)
+    rf"\b{IDENT}\s*:\s*\{{[^{{}}]*\}}\s*({IDENT})\b",              # nested: Status: { } s
+    rf"\b{IDENT}\s*:\s*[A-Za-z_][\w\.<>,\[\]\?]*\s+({IDENT})\s*[,}}]",  # nested: Status: string s
     rf"\bfrom\s+({IDENT})\s+in\b",                                # LINQ range var
     rf"\blet\s+({IDENT})\s*=",
 ]

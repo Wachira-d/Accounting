@@ -291,7 +291,7 @@
           bankBranch: document.getElementById('mBranch').value.trim() || null,
           amount: parseFloat(document.getElementById('mAmount').value),
           checkDate: document.getElementById('mCheckDate').value,
-          issueDate: new Date().toISOString().slice(0,10),
+          issueDate: Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */,
           scheduledDepositDate: document.getElementById('mDepDate').value || document.getElementById('mCheckDate').value,
           contactId: document.getElementById('mContact').value || null,
           notes: document.getElementById('mNotes').value.trim() || null

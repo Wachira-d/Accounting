@@ -195,7 +195,16 @@ public record OcrCorrectionRequest(
     string? OurRole = null,
     string? VendorBranchCode = null,
     string? BuyerTaxId = null,
-    string? BuyerBranchCode = null);
+    string? BuyerBranchCode = null,
+    /// <summary>หมายเหตุ/เหตุผลทางธุรกิจที่ผู้ใช้พิมพ์เอง (เช่น "เดินทางไปพบ
+    /// ลูกค้า") — ไหลต่อไปเป็น <c>Document.Notes</c> ของใบที่สร้างจากสแกนนี้
+    ///
+    /// <para>⚠️ หน้าเบิกค่าใช้จ่ายบนมือถือมีช่องนี้มาตลอด **แต่ไม่เคยส่งค่าไปไหน**
+    /// (อ่านใส่ตัวแปรแล้วทิ้ง) ⇒ ผู้ใช้พิมพ์เหตุผลแล้วหายเงียบ. ไม่ใช่แค่เรื่อง
+    /// ความสะดวก — §65 ตรี(3)/(14) ให้รายจ่ายที่พิสูจน์ไม่ได้ว่าเกี่ยวกับกิจการ
+    /// เป็น**รายจ่ายต้องห้าม** เหตุผลที่ผู้เบิกเขียนคือหลักฐานชิ้นแรกของเรื่องนี้</para>
+    /// </summary>
+    string? Notes = null);
 
 /// <summary>
 /// Request to record a Journal Entry directly from a scan — the "บันทึก JE

@@ -2334,6 +2334,13 @@ const Layout = {
    */
   docHeaderLabel(doc) {
     if (!doc) return '';
+    // เซิร์ฟเวอร์คำนวณหัวที่จะพิมพ์จริงมาให้แล้ว (PdfGenerationService
+    // .ResolveDocumentTitleAsync) → ใช้ค่านั้นตรง ๆ ห้ามคิดเอง. กฎด้านล่างเป็น
+    // fallback สำหรับเส้นทางที่ยังไม่ส่งค่ามา (รายการหลายใบ / API เก่า) เท่านั้น
+    // — มันรู้จักแค่ 3 ธง จึงเพี้ยนจากกระดาษได้ 5 เคส (ชื่อหัวที่ผู้ใช้ตั้งเอง ·
+    // template.CustomTitle · §86/4 ผู้ซื้อไม่ครบ → อย่างย่อ · ใบเสร็จที่มี VAT ·
+    // ใบมัดจำ). undefined = "ยังไม่ได้คำนวณ" ไม่ใช่ "ไม่มีหัว"
+    if (doc.documentTitle) return doc.documentTitle;
     const t = doc.documentType;
     if (t !== 'TaxInvoice') return this.docTypeLabel(t);
     if (doc.buyerDeclinedTaxInvoice) return 'ใบเสร็จรับเงิน';

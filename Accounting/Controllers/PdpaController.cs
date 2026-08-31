@@ -12,8 +12,55 @@ namespace Accounting.Controllers;
 public class PdpaController : ControllerBase
 {
     private readonly IPdpaService _svc;
+    private readonly Services.Interfaces.IPermissionService _permissions;
 
-    public PdpaController(IPdpaService svc) { _svc = svc; }
+    public PdpaController(IPdpaService svc, Services.Interfaces.IPermissionService permissions)
+    {
+        _svc = svc;
+        _permissions = permissions;
+    }
+
+    /// <summary>
+    /// ด่านสิทธิ์ของงาน DSR/DPO — ต้องมี <c>perm:Pii.View</c> (Owner/SystemAdmin ผ่านเอง)
+    ///
+    /// ═══ ทำไมต้องมี ═══
+    /// เดิมคลาสนี้มีแค่ <c>[Authorize]</c> ⇒ <b>สมาชิกคนไหนของบริษัทก็ได้</b>
+    /// เรียก <c>dsr/access</c> เพื่อดัมพ์โปรไฟล์ + เอกสาร + การชำระเงิน +
+    /// <b>ประวัติการเข้าถึง 1 ปี</b> ของใครก็ได้ · <c>dsr/portability</c> โหลดเป็น
+    /// ไฟล์ · <c>dsr/rectify</c> แก้ข้อมูลคนอื่น · <c>dsr/erase</c>
+    /// <b>anonymize ถาวร</b> — ทั้งที่หน้าเงินเดือนในเรพเดียวกันยังต้องมี
+    /// <c>Pii.View</c> ถึงจะเห็นเลขบัตรแบบไม่ mask. ด่านที่อ่อนกว่าแต่คืนข้อมูล
+    /// มากกว่า = ช่องที่ใหญ่ที่สุด (PDPA ม.37(1) บังคับให้มีมาตรการควบคุมการเข้าถึง)
+    /// </summary>
+    private async Task<ActionResult?> RequireDpoAsync(Guid companyId)
+    {
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User);
+        if (await _permissions.HasPermissionAsync(companyId, userId,
+                Models.Constants.PermissionKeys.PiiView))
+            return null;
+        return StatusCode(403, new ApiResponse<object>(false, new
+        {
+            requiredPermission = Models.Constants.PermissionKeys.PiiView,
+        }, "ต้องมีสิทธิ์ดูข้อมูลส่วนบุคคล (Pii.View) จึงจะทำงาน PDPA/DSR ได้"));
+    }
+
+    /// <summary>บันทึกการเข้าถึง/แก้ไข PII ลง <c>PiiAccessLog</c> (ม.37(4))
+    ///
+    /// <para>⚠️ <c>LogPiiAccessAsync</c> ถูกเขียนไว้ตั้งแต่ต้นและ doc-comment ของ
+    /// <c>PermissionKeys.PiiView</c> ก็ระบุว่า "ทุกครั้งที่ field ถูกอ่านแบบ raw
+    /// ต้อง log ลง PiiAccessLog" — แต่ <b>ไม่มี call site เลยทั้งเรพ</b> ⇒ ตาราง
+    /// ว่างเปล่าตลอด = ไม่มี control จริง (doc-comment เป็นเจตนา ไม่ใช่หลักฐาน)</para>
+    /// </summary>
+    private async Task LogPiiAsync(Guid companyId, string subjectType, Guid subjectId,
+        string fieldName, string operation, string purpose, CancellationToken ct)
+    {
+        var actorId = Helpers.JwtHelper.GetUserIdFromClaims(User);
+        var actorEmail = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "";
+        await _svc.LogPiiAccessAsync(companyId, actorId, actorEmail, subjectType, subjectId,
+            fieldName, operation, purpose,
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Request.Headers.UserAgent.ToString(), ct);
+    }
 
     public sealed record SubmitRequest(string RequesterContact, string? RequesterName,
         string RequestType, string? Description,
@@ -35,6 +82,7 @@ public class PdpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<PdpaDataSubjectRequest>>> Assign(
         Guid companyId, Guid requestId, [FromBody] AssignRequest req, CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         try
         {
             var r = await _svc.AssignAsync(companyId, requestId, req.DpoUserId, ct);
@@ -49,6 +97,7 @@ public class PdpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<PdpaDataSubjectRequest>>> Complete(
         Guid companyId, Guid requestId, [FromBody] CompleteRequest req, CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         try
         {
             var r = await _svc.CompleteAsync(companyId, requestId, req.CompletionNote, ct);
@@ -61,9 +110,15 @@ public class PdpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<IReadOnlyList<PdpaDataSubjectRequest>>>> Overdue(
         Guid companyId, CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         var rows = await _svc.ListOverdueAsync(companyId, ct);
+        // แยกให้ชัดว่า "เลยกำหนดแล้ว" กับ "ใกล้ครบกำหนด" — ข้อความเดิมเรียกทุกใบ
+        // ว่า "เกินกำหนด" ทั้งที่ตอนนี้รายการรวมใบที่ยังทันด้วย
+        var now = DateTime.UtcNow;
+        var late = rows.Count(r => r.DueBy < now);
+        var soon = rows.Count - late;
         return Ok(new ApiResponse<IReadOnlyList<PdpaDataSubjectRequest>>(true, rows,
-            $"คำขอ PDPA เกินกำหนด {rows.Count} รายการ"));
+            $"คำขอ PDPA เลยกำหนด {late} รายการ · ใกล้ครบกำหนดใน {PdpaService.DsrWarnDaysAhead} วัน {soon} รายการ"));
     }
 
     [HttpGet("erasure-impact")]
@@ -71,6 +126,7 @@ public class PdpaController : ControllerBase
         Guid companyId, [FromQuery] Guid? userId, [FromQuery] Guid? contactId,
         CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         var r = await _svc.ProposeErasureImpactAsync(companyId, userId, contactId, ct);
         return Ok(new ApiResponse<ErasureImpactReport>(true, r));
     }
@@ -85,7 +141,10 @@ public class PdpaController : ControllerBase
         Guid companyId, [FromQuery] Guid? userId, [FromQuery] Guid? contactId,
         CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         var r = await _svc.GenerateAccessReportAsync(companyId, userId, contactId, ct);
+        await LogPiiAsync(companyId, userId.HasValue ? "User" : "Contact",
+            userId ?? contactId ?? Guid.Empty, "*", "Read", "DSR ม.30 สิทธิเข้าถึง", ct);
         return Ok(new ApiResponse<DataSubjectAccessResult>(true, r,
             $"DSR access report: {r.TotalRecords} records (within 30-day SLA)"));
     }
@@ -97,7 +156,10 @@ public class PdpaController : ControllerBase
         Guid companyId, [FromQuery] Guid? userId, [FromQuery] Guid? contactId,
         CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         var r = await _svc.GenerateAccessReportAsync(companyId, userId, contactId, ct);
+        await LogPiiAsync(companyId, userId.HasValue ? "User" : "Contact",
+            userId ?? contactId ?? Guid.Empty, "*", "Export", "DSR ม.31 portability", ct);
         var json = System.Text.Json.JsonSerializer.Serialize(r, new System.Text.Json.JsonSerializerOptions
         {
             WriteIndented = true,
@@ -117,12 +179,20 @@ public class PdpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<int>>> DsrRectify(
         Guid companyId, [FromBody] DsrRectifyRequest req, CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         if (req.FieldUpdates == null || req.FieldUpdates.Count == 0)
             return BadRequest(new ApiResponse<object>(false, null, "FieldUpdates ว่าง"));
-        var changed = await _svc.ApplyRectificationAsync(companyId, req.UserId,
-            req.ContactId, req.FieldUpdates, ct);
-        return Ok(new ApiResponse<int>(true, changed,
-            $"แก้ไขข้อมูล {changed} แหล่ง (User/Contact)"));
+        try
+        {
+            var changed = await _svc.ApplyRectificationAsync(companyId, req.UserId,
+                req.ContactId, req.FieldUpdates, ct);
+            await LogPiiAsync(companyId, req.UserId.HasValue ? "User" : "Contact",
+                req.UserId ?? req.ContactId ?? Guid.Empty,
+                string.Join(",", req.FieldUpdates.Keys), "Update", "DSR ม.31 สิทธิแก้ไข", ct);
+            return Ok(new ApiResponse<int>(true, changed,
+                $"แก้ไขข้อมูล {changed} แหล่ง (User/Contact)"));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
     public sealed record DsrEraseRequest(Guid? UserId, Guid? ContactId, string? Acknowledgement);
@@ -135,14 +205,21 @@ public class PdpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<int>>> DsrErase(
         Guid companyId, [FromBody] DsrEraseRequest req, CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         if (req.Acknowledgement != "I confirm")
             return BadRequest(new ApiResponse<object>(false, null,
                 "ต้องยืนยัน Acknowledgement='I confirm' ก่อน erasure (irreversible action)"));
         var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
-        var changed = await _svc.ApplyErasureAsync(companyId, req.UserId,
-            req.ContactId, userId, ct);
-        return Ok(new ApiResponse<int>(true, changed,
-            $"Anonymize เสร็จ {changed} แหล่ง (financial records ที่ยัง retain อยู่ภายใน 5 ปียังคงไว้)"));
+        try
+        {
+            var changed = await _svc.ApplyErasureAsync(companyId, req.UserId,
+                req.ContactId, userId, ct);
+            await LogPiiAsync(companyId, req.UserId.HasValue ? "User" : "Contact",
+                req.UserId ?? req.ContactId ?? Guid.Empty, "*", "Erase", "DSR ม.33 สิทธิลบ", ct);
+            return Ok(new ApiResponse<int>(true, changed,
+                $"Anonymize เสร็จ {changed} แหล่ง (financial records ที่ยัง retain อยู่ภายใน 5 ปียังคงไว้)"));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
     // ===== Wave 3 — RoPA =====
@@ -160,6 +237,7 @@ public class PdpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<PdpaProcessingActivity>>> UpsertRopa(
         Guid companyId, [FromBody] UpsertRopaRequest req, CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         var actor = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
         var row = await _svc.UpsertProcessingActivityAsync(companyId, req.Id,
             req.Purpose, req.LegalBasis, req.DataCategories, req.RetentionPeriod,
@@ -190,6 +268,9 @@ public class PdpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<PdpaConsentRecord>>> WithdrawConsent(
         Guid companyId, Guid consentId, [FromBody] WithdrawConsentRequest req, CancellationToken ct)
     {
+        // ถอนความยินยอม "ของคนอื่น" ต้องเป็นงาน DPO — ผู้ใช้ทั่วไปถอนของตัวเอง
+        // ผ่านหน้าตั้งค่าของตัวเอง ไม่ใช่ endpoint ที่รับ consentId ตรง ๆ
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         var row = await _svc.WithdrawConsentAsync(companyId, consentId, req.Reason, ct);
         return Ok(new ApiResponse<PdpaConsentRecord>(true, row, "ถอนความยินยอมแล้ว — หยุดใช้ข้อมูลตาม purpose นี้"));
     }
@@ -216,15 +297,22 @@ public class PdpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<PdpaBreachIncident>>> UpdateBreach(
         Guid companyId, Guid breachId, [FromBody] UpdateBreachRequest req, CancellationToken ct)
     {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         var row = await _svc.UpdateBreachAsync(companyId, breachId, req.Status,
             req.PdpcNotifiedAt, req.PdpcReferenceNumber, req.SubjectsNotifiedAt,
             req.Mitigation, req.RootCause, ct);
         return Ok(new ApiResponse<PdpaBreachIncident>(true, row, "อัปเดต breach แล้ว"));
     }
 
+    /// <summary>รายการเหตุการณ์ข้อมูลรั่ว — เป็นข้อมูลภายในที่อ่อนไหว
+    /// (ระบุว่ารั่วอะไร กระทบกี่คน ยังไม่แจ้ง PDPC หรือยัง) จึงจำกัดสิทธิ์
+    /// ต่างจากการ **แจ้ง** เหตุ (POST /breach) ที่เปิดให้ทุกคนรายงานได้</summary>
     [HttpGet("breach/alerts")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<PdpaBreachIncident>>>> BreachAlerts(
         Guid companyId, CancellationToken ct)
-        => Ok(new ApiResponse<IReadOnlyList<PdpaBreachIncident>>(true,
+    {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<IReadOnlyList<PdpaBreachIncident>>(true,
             await _svc.ListBreachAlertsAsync(companyId, ct)));
+    }
 }

@@ -900,7 +900,7 @@
         // Custom posting-date for the reversal — operator-set instead of
         // hardcoded today, matches Thai RD requirement that the reversal
         // posts on a chosen accounting date inside an open period.
-        const today = new Date().toISOString().slice(0, 10);
+        const today = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         const html = `
           <div style="font-size:13px;line-height:1.7;color:var(--gray-700)">
             ระบบจะสร้าง<b>รายการใหม่</b>ที่สลับยอดเดบิต↔เครดิต เพื่อหักล้างรายการเดิม<br>

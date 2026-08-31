@@ -17,24 +17,46 @@ public class PayrollController : ControllerBase
     private readonly ISensitivityService _sensitivity;
     private readonly IPermissionService _permissions;
     private readonly IPayslipLineDeliveryService _payslipLine;
+    private readonly Services.Implementations.Pdpa.IPdpaService _pdpa;
     public PayrollController(IPayrollService service, ISensitivityService sensitivity,
-        IPermissionService permissions, IPayslipLineDeliveryService payslipLine)
+        IPermissionService permissions, IPayslipLineDeliveryService payslipLine,
+        Services.Implementations.Pdpa.IPdpaService pdpa)
     {
         _service = service;
         _sensitivity = sensitivity;
         _permissions = permissions;
         _payslipLine = payslipLine;
+        _pdpa = pdpa;
     }
 
     private string? ActorEmail() => User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
 
     /// <summary>PDPA ม.26 — เปิดดู PII (CitizenId/Phone/Email) แบบ raw เฉพาะ
     /// user ที่มี permission Pii.View. คนอื่น ๆ ได้ค่า mask ตาม PiiMask helper.</summary>
-    private async Task<bool> CanViewPiiAsync(Guid companyId)
+    private async Task<bool> CanViewPiiAsync(Guid companyId, Guid? subjectEmployeeId = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        return await _permissions.HasPermissionAsync(companyId, userId,
+        var can = await _permissions.HasPermissionAsync(companyId, userId,
             Models.Constants.PermissionKeys.PiiView);
+        // ม.37(4) — เปิดดูแบบ raw ต้องมีร่องรอยว่าใครดูของใครเมื่อไร
+        //
+        // ⚠️ doc-comment ของ PermissionKeys.PiiView ระบุข้อนี้ไว้ตั้งแต่ต้นและ
+        // PdpaService.LogPiiAccessAsync ก็เขียนไว้ครบ — แต่**ไม่มี call site เลย
+        // ทั้งเรพ** ⇒ ตารางว่างเปล่าตลอด = ไม่มี control จริง
+        // (doc-comment ที่บอกว่า "ป้องกันแล้วที่ X" เป็นเจตนา ไม่ใช่หลักฐาน)
+        //
+        // log เฉพาะตอน "ได้ดูจริง" — คนที่ถูก mask ไม่ได้เข้าถึง PII จึงไม่ต้องบันทึก
+        if (can)
+        {
+            await _pdpa.LogPiiAccessAsync(companyId, userId,
+                User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "",
+                subjectType: "Employee", subjectId: subjectEmployeeId ?? Guid.Empty,
+                fieldName: subjectEmployeeId.HasValue ? "*" : "* (รายการพนักงาน)",
+                operation: "Read", purpose: "ดูข้อมูลพนักงานแบบไม่ปกปิด (HR/Payroll)",
+                ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
+                userAgent: Request.Headers.UserAgent.ToString());
+        }
+        return can;
     }
 
     /// <summary>เงินเดือน (BaseSalary) = ข้อมูลอ่อนไหว payroll — คืน true ถ้า user
@@ -73,7 +95,7 @@ public class PayrollController : ControllerBase
     [HttpGet("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> GetEmployee(Guid companyId, Guid employeeId)
         => Ok(new ApiResponse<EmployeeResponse>(true,
-            await _service.GetEmployeeAsync(companyId, employeeId, await CanViewPiiAsync(companyId),
+            await _service.GetEmployeeAsync(companyId, employeeId, await CanViewPiiAsync(companyId, employeeId),
                 await CanViewPayrollAsync(companyId))));
 
     [HttpGet("employees")]

@@ -790,6 +790,18 @@ public partial class PosService
             throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — แยกบิลไม่ได้");
         if (parent.Payments.Any(p => !p.IsDeleted))
             throw new InvalidOperationException("มีการชำระเงินแล้ว — ยกเลิกการชำระก่อนแยกบิล");
+        // ส่วนลด/ค่าบริการที่เป็น **เปอร์เซ็นต์** แยกบิลได้ตรง ๆ (สัดส่วนคงที่
+        // ต่อยอดของแต่ละใบ ⇒ ผลรวมเท่าเดิมเป๊ะ) แต่ค่าที่เป็น **จำนวนเงินก้อน**
+        // (คูปอง/ทิป) แบ่งไม่ได้โดยไม่เดา: จะยกไปใบไหน? เฉลี่ยตามสัดส่วน?
+        // ทั้งสองทางเป็นการตัดสินใจแทนร้าน และคูปองที่ไปโผล่หลายใบยังเสี่ยง
+        // ถูกใช้ซ้ำ → บอกให้ถอดก่อน แล้วค่อยใส่กับใบที่ถูกต้องหลังแยก
+        // (หลัก "ไม่รู้ = ต้องบอกว่าไม่รู้ ห้ามแต่งค่าเอง")
+        if (parent.CouponDiscountAmount > 0)
+            throw new InvalidOperationException(
+                $"บิลนี้ใช้คูปองอยู่ (ส่วนลด {parent.CouponDiscountAmount:N2} บาท) — ถอดคูปองก่อนแยกบิล แล้วค่อยใส่คูปองกับใบที่ต้องการ");
+        if (parent.TipAmount > 0)
+            throw new InvalidOperationException(
+                $"บิลนี้มีทิป {parent.TipAmount:N2} บาท — ล้างทิปก่อนแยกบิล แล้วค่อยใส่ทิปกับใบที่ลูกค้าจ่าย");
 
         // Validate: every requested item id belongs to the parent + no item assigned twice.
         var validIds = parent.Items.Where(i => !i.IsDeleted).Select(i => i.Id).ToHashSet();
@@ -832,6 +844,14 @@ public partial class PosService
                 Notes = $"แยกจาก {parent.OrderNumber} (ส่วนที่ {splitIdx})",
                 Reference = parent.OrderNumber,
                 Status = PosOrderStatus.Open,
+                // ⚠️ ต้องสืบทอด: เดิมใบลูกเกิดมาด้วยค่า 0 ทั้งคู่ แล้ว
+                // RecalculateOrder(child) คิดจาก 0 ⇒ **ส่วนลดท้ายบิลและค่าบริการ
+                // หายทั้งหมดตอนแยกบิล** (ร้านอาหารที่คิด service charge 10%
+                // เสียรายได้ส่วนนั้นทุกครั้งที่แยกบิล ซึ่งเป็นงานประจำวัน;
+                // ฝั่งส่วนลดกลับกัน = เก็บลูกค้าเกินกว่าที่ตกลงไว้)
+                // เป็นเปอร์เซ็นต์จึงยกมาตรง ๆ ได้ — ผลรวมของใบลูกเท่าใบแม่พอดี
+                DiscountPercent = parent.DiscountPercent,
+                ServiceChargePercent = parent.ServiceChargePercent,
                 CreatedBy = userId
             };
             seq++; splitIdx++;
@@ -852,11 +872,24 @@ public partial class PosService
                     DiscountPercent = srcItem.DiscountPercent,
                     SubTotal = srcItem.SubTotal,
                     TotalAmount = srcItem.TotalAmount,
-                    VatAmount = 0,
+                    // ตัวรายการไม่ได้เปลี่ยน VAT ของบรรทัดจึงต้องเท่าเดิม
+                    // (เดิมตั้ง 0 ⇒ ใบที่แยกออกมาโชว์ VAT รายบรรทัดเป็นศูนย์)
+                    VatAmount = srcItem.VatAmount,
                     LineOrder = srcItem.LineOrder,
                     Status = srcItem.Status,
                     Notes = srcItem.Notes,
                 };
+                // ตัวเลือกเพิ่มเติม (เพิ่มชีส/พิเศษ) — ราคาถูกบวกเข้า SubTotal
+                // ตั้งแต่ตอนเพิ่มรายการแล้ว ยอดจึงไม่หาย แต่ถ้าไม่คัดลอกแถวมา
+                // ใบที่พิมพ์จะ**เก็บเงินค่าตัวเลือกโดยไม่มีบรรทัดอธิบาย**
+                foreach (var m in srcItem.Modifiers.Where(m => !m.IsDeleted))
+                    copy.Modifiers.Add(new PosOrderItemModifier
+                    {
+                        ModifierOptionId = m.ModifierOptionId,
+                        ModifierGroupName = m.ModifierGroupName,
+                        ModifierName = m.ModifierName,
+                        PriceAdjustment = m.PriceAdjustment,
+                    });
                 child.Items.Add(copy);
                 // Mark the source item as moved (delete-on-parent).
                 srcItem.IsDeleted = true;
@@ -1417,7 +1450,10 @@ public partial class PosService
         order.Items.Add(item);
     }
 
-    private static void RecalculateOrder(PosOrder order, decimal vatRate)
+    /// <summary>คิดยอดทั้งบิลใหม่จากรายการที่ยังอยู่ + ธงระดับบิล
+    /// (internal เพื่อให้เทสต์ยืนยัน invariant "แยกบิลแล้วยอดรวมต้องเท่าเดิม" ได้
+    /// — เดิมส่วนลด/ค่าบริการหายตอนแยกบิลเพราะใบลูกไม่ได้สืบทอดเปอร์เซ็นต์มา)</summary>
+    internal static void RecalculateOrder(PosOrder order, decimal vatRate)
     {
         var activeItems = order.Items.Where(i => !i.IsDeleted).ToList();
         order.SubTotal = activeItems.Sum(i => i.SubTotal);

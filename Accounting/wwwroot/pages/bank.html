@@ -2894,7 +2894,7 @@
           // ชื่อไฟล์บอกธนาคาร+เลขบัญชี — เปิดทีหลังรู้ทันทีว่าไฟล์ไหนของบัญชีไหน
           const acctTag = `${acct.bankName || ''}-${(acct.accountNumber || '').replace(/\D/g, '').slice(-4)}`
             .replace(/[\\/:*?"<>|\s]+/g, '');
-          a.download = `กระทบยอด-${acctTag}-${new Date().toISOString().slice(0,10)}.xlsx`;
+          a.download = `กระทบยอด-${acctTag}-${Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */}.xlsx`;
           a.click();
           URL.revokeObjectURL(a.href);
           Layout.toast(`ดาวน์โหลดรายงานกระทบยอด — ${acct.accountName} (${acct.bankName})`);
@@ -2920,7 +2920,7 @@
         this.itemFilter = '';
         document.getElementById('grAccount').innerHTML = accounts
           .map(a => `<option value="${a.id}" ${a.id === accountId ? 'selected' : ''}>${a.accountName} — ${a.bankName} ${a.accountNumber}</option>`).join('');
-        document.getElementById('grDate').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('grDate').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         document.getElementById('grNotes').value = '';
         document.getElementById('grBankSearch').value = '';
         document.getElementById('grItemSearch').value = '';

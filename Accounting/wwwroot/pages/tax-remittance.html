@@ -729,7 +729,7 @@
         this._sel = r;
         const titleEl = this._byId('remitTitle');
         if (titleEl) titleEl.textContent = `นำส่ง ${r.formCode} — ${this.period(r.periodYear, r.periodMonth)}`;
-        const today = new Date().toISOString().slice(0, 10);
+        const today = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         // แหล่งเงินครบ: บัญชีธนาคาร (map LinkedAccountId) + GL เงินสด/ช่องจ่ายอื่น
         let bankOpts = '<option value="">— ใช้บัญชีเริ่มต้น —</option>';
         if (this._banks.length) {

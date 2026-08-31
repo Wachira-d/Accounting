@@ -124,6 +124,10 @@ public class AzureDiPatternLearner
         decimal confidence, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(value)) return;
+        // ช่องที่เป็น "ตัวตนของใบนั้นใบเดียว" (เลขที่เอกสาร) เก็บลงคลังค่าประจำ
+        // ผู้ขายไม่ได้ — ได้ 1 แถวต่อ 1 ใบตลอดไป และเคยเป็นเชื้อของบั๊กที่เอา
+        // เลขใบก่อนหน้ามาทับใบใหม่ (ดู Helpers/VendorKnownGoodFields)
+        if (Accounting.Helpers.VendorKnownGoodFields.IsPerDocument(fieldName)) return;
         // Without a TaxId we can't reliably scope the value to a vendor —
         // skip. The local cascade looks up by TaxId; an entry without
         // one would be effectively unreachable anyway.

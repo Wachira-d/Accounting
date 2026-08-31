@@ -246,6 +246,12 @@ public class OcrScanResult : TenantEntity
 
     public string? RawTextContent { get; set; }
     public string? ProcessingNotes { get; set; }
+
+    /// <summary>หมายเหตุที่ **ผู้ใช้** พิมพ์เอง (คนละเรื่องกับ ProcessingNotes ซึ่ง
+    /// เป็น log ของไปป์ไลน์) — เหตุผลทางธุรกิจของรายจ่าย เช่น "เดินทางไปพบลูกค้า"
+    /// ไหลต่อเป็น <c>Document.Notes</c> ตอนสร้างเอกสาร (§65 ตรี(3)/(14): รายจ่าย
+    /// ที่พิสูจน์ความเกี่ยวข้องกับกิจการไม่ได้ = รายจ่ายต้องห้าม)</summary>
+    public string? UserNotes { get; set; }
     public DateTime? ProcessedAt { get; set; }
 
     /// <summary>
@@ -280,6 +286,16 @@ public class OcrScanResult : TenantEntity
     /// <summary>true เมื่อรายการในใบนี้มาจากการแตกบรรทัดด้วย AI — UI ติดป้าย
     /// "🤖 AI แตกรายการให้ กรุณาตรวจ" ให้ซื่อสัตย์ตามกฎเหล็ก #1</summary>
     public bool LineSplitUsedAi { get; set; }
+
+    /// <summary>เวลาที่สแกนนี้ถูก "นำเข้าสต็อก" สำเร็จแล้ว (UTC) — กันกดซ้ำ
+    ///
+    /// <para>⚠️ <c>POST /ocr/{id}/import-stock</c> เดิม<b>ไม่มี guard ใด ๆ เลย</b>
+    /// (ไม่เช็ค <c>CreatedDocumentId</c> ไม่เขียน marker กลับ) ⇒ double-click /
+    /// กด retry / refresh หน้า = <b>สต็อกเข้าซ้ำทุกรอบ</b> · และยังซ้อนกับ
+    /// <c>ApplyStockMovementsAsync(+1)</c> ตอน approve ใบซื้อที่สร้างจากสแกน
+    /// ใบเดียวกัน (เมื่อบรรทัดมี <c>ProductCode</c> จากการผูก PO)
+    /// ⇒ <c>CurrentStock</c> เกินจริงเท่าตัว · WAC เพี้ยน · COGS รอบถัดไปผิด</para></summary>
+    public DateTime? StockImportedAt { get; set; }
 
     // GL & expense suggestions
     public string? ExpenseCategory { get; set; }

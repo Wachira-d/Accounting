@@ -64,7 +64,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             .FirstOrDefaultAsync();
 
         // Get template — resolver กลาง (ลำดับเดียวกันทุกทางออก PDF)
-        var template = await ResolveDocumentTemplateAsync(companyId, document, request.TemplateId);
+        var template = await ResolveDocumentTemplateAsync(_db, companyId, document, request.TemplateId);
         ApplyDefaultSignatureLabels(template, document.DocumentType);
 
         // Render order:
@@ -155,7 +155,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
-        var template = await ResolveDocumentTemplateAsync(companyId, document, request.TemplateId);
+        var template = await ResolveDocumentTemplateAsync(_db, companyId, document, request.TemplateId);
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
         await ResolveServedAsReceiptAsync(companyId, document);
@@ -1149,40 +1149,56 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// (เอกสารเก่าต้องพิมพ์ได้เสมอ — ห้าม throw ใส่ผู้ใช้ที่แค่กดพิมพ์ใบเดิม)
     /// ต่างจากข้อ 1 ที่ผู้ใช้เพิ่งเลือกเอง → id ผิดคือ error จริง ต้องบอก
     /// </summary>
-    private async Task<DocumentTemplate> ResolveDocumentTemplateAsync(
-        Guid companyId, Document document, Guid? requestedTemplateId)
+    internal static async Task<DocumentTemplate> ResolveDocumentTemplateAsync(
+        AccountingDbContext db, Guid companyId, Document document, Guid? requestedTemplateId)
+    {
+        var pool = await LoadTemplatePoolAsync(db, companyId);
+        var resolved = PickTemplate(pool, document, requestedTemplateId,
+            document.Brand?.DefaultTemplateId);
+        EnforceTaxDocTemplateInvariants(resolved, document);
+        return resolved;
+    }
+
+    /// <summary>เทมเพลตทั้งหมดของบริษัท (ครั้งเดียว) — จำนวนถูกจำกัดด้วยชนิดเอกสาร
+    /// (~16 ชนิด × ไม่กี่แบบ) จึงโหลดทั้งชุดถูกกว่ายิงทีละใบ และทำให้เส้นทาง
+    /// "หลายใบ" (รายการเอกสาร) ใช้ <see cref="PickTemplate"/> ตัวเดียวกับตอนพิมพ์ได้
+    /// — ห้ามมีอัลกอริทึมเลือกเทมเพลตชุดที่สอง (defect class "คัดลอกมาด้วยมือ")
+    /// global query filter ตัด IsDeleted ให้แล้ว</summary>
+    private static Task<List<DocumentTemplate>> LoadTemplatePoolAsync(AccountingDbContext db, Guid companyId)
+        => db.DocumentTemplates.AsNoTracking().Where(t => t.CompanyId == companyId).ToListAsync();
+
+    /// <summary>ตรรกะเลือกเทมเพลตล้วน ๆ (ไม่แตะฐานข้อมูล) — ลำดับตาม doc-comment
+    /// ของ <see cref="ResolveDocumentTemplateAsync"/></summary>
+    private static DocumentTemplate PickTemplate(
+        IReadOnlyList<DocumentTemplate> pool, Document document,
+        Guid? requestedTemplateId, Guid? brandDefaultTemplateId)
     {
         DocumentTemplate? resolved = null;
         if (requestedTemplateId.HasValue)
         {
-            resolved = await _db.DocumentTemplates.AsNoTracking()
-                           .FirstOrDefaultAsync(t => t.Id == requestedTemplateId.Value && t.CompanyId == companyId)
+            resolved = pool.FirstOrDefault(t => t.Id == requestedTemplateId.Value)
                        ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
 
         if (resolved == null)
         {
-            foreach (var pinned in new[] { document.DocumentTemplateId, document.Brand?.DefaultTemplateId })
+            foreach (var pinned in new[] { document.DocumentTemplateId, brandDefaultTemplateId })
             {
                 if (!pinned.HasValue) continue;
                 // ต้องเป็นเทมเพลตของ "ชนิดเอกสารนี้" เท่านั้น — เทมเพลตใบเสนอราคาที่
                 // สืบทอดมากับใบที่ convert เป็นใบแจ้งหนี้ (หรือ Brand.DefaultTemplateId
                 // ที่ผูกไว้ชนิดเดียว) จะพา CustomTitle/flag ของคนละชนิดมาทั้งใบ
                 // — ใบแจ้งหนี้พิมพ์หัวใบเสนอราคาได้ (ผลตรวจทีมเส้นทางข้อมูล ข้อ 4)
-                var t = await _db.DocumentTemplates.AsNoTracking()
-                    .FirstOrDefaultAsync(x => x.Id == pinned.Value && x.CompanyId == companyId
-                        && !x.IsDeleted && x.DocumentType == document.DocumentType);
+                var t = pool.FirstOrDefault(x => x.Id == pinned.Value
+                    && x.DocumentType == document.DocumentType);
                 if (t != null) { resolved = t; break; }
             }
         }
 
-        resolved ??= await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
-                         t.CompanyId == companyId && t.DocumentType == document.DocumentType
-                         && t.IsDefault && t.IsActive)
-                     ?? CreateInMemoryDefaultTemplate(document.DocumentType);
-
-        EnforceTaxDocTemplateInvariants(resolved, document);
-        return resolved;
+        return resolved
+               ?? pool.FirstOrDefault(t => t.DocumentType == document.DocumentType
+                                           && t.IsDefault && t.IsActive)
+               ?? CreateInMemoryDefaultTemplate(document.DocumentType);
     }
 
     /// <summary>เอกสารภาษี (§86/4) — ชื่อ + เลขผู้เสียภาษีผู้ขายเป็นรายการบังคับ
@@ -1354,6 +1370,86 @@ public partial class PdfGenerationService : IPdfGenerationService
                 title = $"{title} / {thaiTitle}";
         }
         return title;
+    }
+
+    /// <summary>
+    /// หัวเอกสาร "ที่จะพิมพ์จริง" ของใบหนึ่ง — เดินลำดับเดียวกับตอนออก PDF ทุกขั้น
+    /// (เลือกเทมเพลต → เลือกภาษา → <see cref="ComputeDocumentTitle"/>) แล้วคืน
+    /// ข้อความล้วนให้ฝั่งอื่นเอาไปแสดง
+    ///
+    /// ═══ ทำไมต้องมี ═══
+    /// <c>Layout.docHeaderLabel</c> ใน layout.js เคยเป็น**สำเนามือ**ของกฎนี้ ซึ่ง
+    /// รู้จักแค่ 3 ธง (buyerDeclined / issuedAsCashReceipt / combined) จึงเพี้ยน
+    /// จากกระดาษอย่างน้อย 5 เคส: (1) ชื่อหัวที่ผู้ใช้ตั้งเองใน CompanySettings
+    /// (2) <c>template.CustomTitle</c> (3) ผู้ซื้อ §86/4 ไม่ครบ → กระดาษพิมพ์
+    /// "ใบกำกับภาษีอย่างย่อ" แต่จอบอก "ใบกำกับภาษี" (4) ใบเสร็จ/ใบสำคัญรับที่มี
+    /// VAT → กระดาษพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน" แต่จอบอกแค่ "ใบเสร็จรับเงิน"
+    /// (5) ใบมัดจำ → กระดาษต่อท้าย "(เงินมัดจำ)".
+    /// กลไกที่ตัด drift ทิ้งถาวรคือ **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว**
+    /// (กลไกเดียวกับ <c>MENU_SECTIONS</c> และ <c>complianceIssues</c>)
+    ///
+    /// <para>คืน null เมื่อคำนวณไม่ได้ (เอกสารถูกลบระหว่างทาง ฯลฯ) — ฝั่ง JS
+    /// ตีความ null ว่า "ยังไม่ได้คำนวณ" แล้ว fallback ไปกฎเดิม ไม่ใช่ช่องว่าง</para>
+    /// </summary>
+    internal static async Task<string?> ResolveDocumentTitleAsync(
+        AccountingDbContext db, Guid companyId, Document doc)
+        => (await ResolveDocumentTitlesAsync(db, companyId, new[] { doc }))
+            .GetValueOrDefault(doc.Id);
+
+    /// <summary>หัวเอกสารของทั้งหน้า (รายการเอกสาร) — query คงที่ 3 ครั้งต่อหน้า
+    /// ไม่ว่ากี่แถว (เทมเพลตของบริษัท · ตั้งค่าบริษัท · แบรนด์+ใบต้นทางของหน้านี้)
+    /// ใช้ตัวเลือกเทมเพลตและตัวคำนวณหัวชุดเดียวกับตอนพิมพ์ PDF ทุกประการ
+    ///
+    /// <para>ตั้ง <c>SettlesTaxInvoiceSource</c> (transient) ให้เองจากใบต้นทาง —
+    /// เหมือนที่ <c>ResolveServedAsReceiptAsync</c> ทำตอน render. ส่วน
+    /// <c>ServedAsReceipt</c> ผู้เรียกต้องเซ็ตมาก่อน (ต้องใช้ข้อมูลระดับหน้า
+    /// "มีใบเสร็จแยกอ้างอยู่ไหม" ที่ผู้เรียก batch ไว้แล้ว)</para>
+    /// </summary>
+    internal static async Task<Dictionary<Guid, string>> ResolveDocumentTitlesAsync(
+        AccountingDbContext db, Guid companyId, IReadOnlyList<Document> docs)
+    {
+        var result = new Dictionary<Guid, string>();
+        if (docs.Count == 0) return result;
+
+        var pool = await LoadTemplatePoolAsync(db, companyId);
+        var settings = await db.CompanySettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+
+        // แบรนด์ที่ใบในหน้านี้ออกในนาม (เฉพาะที่ยังไม่ได้ Include มา)
+        var brandIds = docs.Where(d => d.BrandId.HasValue && d.Brand == null)
+            .Select(d => d.BrandId!.Value).Distinct().ToList();
+        var brandDefaults = brandIds.Count == 0
+            ? new Dictionary<Guid, Guid?>()
+            : await db.DocumentBrands.AsNoTracking()
+                .Where(b => b.CompanyId == companyId && brandIds.Contains(b.Id))
+                .ToDictionaryAsync(b => b.Id, b => b.DefaultTemplateId);
+
+        // ใบเสร็จ/ใบสำคัญรับที่อ้าง "ใบกำกับภาษี" → หัวต้องเป็นใบเสร็จเปล่า
+        var settlementSrcIds = docs
+            .Where(d => d.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+                        && d.RelatedDocumentId.HasValue)
+            .Select(d => d.RelatedDocumentId!.Value).Distinct().ToList();
+        var srcIsTaxInvoice = settlementSrcIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await db.Documents.AsNoTracking()
+                .Where(s => s.CompanyId == companyId && settlementSrcIds.Contains(s.Id)
+                            && s.DocumentType == DocumentType.TaxInvoice)
+                .Select(s => s.Id).ToListAsync()).ToHashSet();
+
+        foreach (var doc in docs)
+        {
+            doc.SettlesTaxInvoiceSource = doc.RelatedDocumentId.HasValue
+                && srcIsTaxInvoice.Contains(doc.RelatedDocumentId.Value);
+            var brandDefault = doc.Brand?.DefaultTemplateId
+                ?? (doc.BrandId.HasValue && brandDefaults.TryGetValue(doc.BrandId.Value, out var bd)
+                    ? bd : null);
+            // ห้ามเรียก EnforceTaxDocTemplateInvariants ที่นี่ — มัน mutate ตัว
+            // template ซึ่งเส้นทางนี้ใช้ร่วมกันทั้งหน้า (และไม่มีผลกับหัวเอกสาร)
+            var template = PickTemplate(pool, doc, null, brandDefault);
+            var lang = ResolveDocumentLanguage(null, doc, template, settings);
+            result[doc.Id] = ComputeDocumentTitle(doc, template, settings, lang);
+        }
+        return result;
     }
 
     /// <summary>ข้อมูลผู้ซื้อ §86/4 ไม่ครบพอจะเป็น "ใบกำกับภาษีเต็มรูป" หรือไม่ —
