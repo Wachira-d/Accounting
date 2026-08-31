@@ -786,8 +786,11 @@ public class OcrService : IOcrService
                 {
                     try
                     {
-                        using var cts = CancellationTokenSource.CreateLinkedTokenSource(default);
-                        cts.CancelAfter(TimeSpan.FromSeconds(15));
+                        // ⚠️ เดิมเขียน CreateLinkedTokenSource(default) ซึ่ง `default`
+                        // กำกวมระหว่าง overload (CancellationToken vs params
+                        // CancellationToken[]) = CS0121. ไม่มี token ต้นทางให้ link
+                        // อยู่แล้ว จึงใช้ CTS ธรรมดาที่มี timeout ในตัว
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                         var cls = await _aiAugmenter.ClassifyDocumentTypeAsync(
                             companyId, scanResult.Id,
                             rawText: normalizedText,
@@ -6321,10 +6324,12 @@ public class OcrService : IOcrService
 
         // ยืนยันคู่ค้าให้แน่ใจก่อนบล็อก — เลขเอกสารซ้ำข้าม vendor เกิดได้จริง
         // (ผู้ขายคนละรายใช้เลขรันเดียวกัน) ถ้าคู่ค้าไม่ตรงถือว่าคนละใบ
-        if (!string.IsNullOrEmpty(vendorDigits) && hit.ContactId.HasValue)
+        // ⚠️ Document.ContactId เป็น `Guid` ไม่ใช่ `Guid?` — "ไม่มีคู่ค้า" แทนด้วย
+        // Guid.Empty ไม่ใช่ null (เคยเขียน .HasValue/.Value = CS1061 ล้มทั้ง solution)
+        if (!string.IsNullOrEmpty(vendorDigits) && hit.ContactId != Guid.Empty)
         {
             var contactTax = await _db.Contacts.AsNoTracking()
-                .Where(c => c.Id == hit.ContactId.Value && c.CompanyId == companyId)
+                .Where(c => c.Id == hit.ContactId && c.CompanyId == companyId)
                 .Select(c => c.TaxId).FirstOrDefaultAsync();
             if (!string.IsNullOrEmpty(contactTax)
                 && Accounting.Helpers.ThaiTaxId.Normalize(contactTax) != vendorDigits)

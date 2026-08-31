@@ -329,7 +329,10 @@ public static class OcrDocumentRoleInferrer
             var vatInclusive = ContainsAny(text,
                 "ราคารวมภาษีมูลค่าเพิ่ม", "รวมภาษีมูลค่าเพิ่มแล้ว", "ราคารวมvat",
                 "vat included", "inclusive of vat", "incl. vat");
-            var hasBuyerLabel = FindRolePhrasePositions(rawText).buyerLabelPos >= 0;
+            // `rawText` ประกาศเป็น string (ไม่ใช่ string?) แต่ถูก
+            // `!string.IsNullOrEmpty(rawText)` เช็คไปก่อนหน้า ⇒ Roslyn เรียนรู้ว่า
+            // "อาจ null ได้" แล้วเตือน CS8604 ตรงนี้ — กันด้วย ?? "" ให้ชัด
+            var hasBuyerLabel = FindRolePhrasePositions(rawText ?? "").buyerLabelPos >= 0;
             if (vatInclusive && !hasBuyerLabel && string.IsNullOrWhiteSpace(buyerTaxId))
             {
                 hasAbbrevTaxInvoice = true;
