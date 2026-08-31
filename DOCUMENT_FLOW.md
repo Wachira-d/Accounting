@@ -1156,6 +1156,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     `TaxInvoiceReceipt`/`CombinedInvoice`/`CombinedInvoiceReceipt`/
     `DepositSuffix`) — หน้าตั้งค่า →
     เอกสาร → "หัวเรื่องเอกสาร"; per-template `CustomTitle` ยังชนะ base override
+  - **หน้าเว็บไม่คิดหัวเอง — เซิร์ฟเวอร์ส่ง `DocumentResponse.DocumentTitle`
+    มาให้** (`PdfGenerationService.ResolveDocumentTitleAsync` / `…TitlesAsync`
+    → `DocumentService.GetDocumentAsync` + `GetDocumentsAsync`).
+    `Layout.docHeaderLabel` **แสดงค่านั้นตรง ๆ** กฎเดิมในไฟล์เหลือไว้เป็น
+    fallback ของ endpoint ที่ยังไม่ส่งค่ามาเท่านั้น
+    _(เดิมเป็นสำเนามือที่รู้จักแค่ 3 ธง ⇒ จอกับกระดาษไม่ตรงกัน **6 เคส**:
+    ชื่อหัวที่ผู้ใช้ตั้งเอง · `template.CustomTitle` · §86/4 ผู้ซื้อไม่ครบ →
+    "ใบกำกับภาษีอย่างย่อ" · ใบเสร็จที่มี VAT → "ใบกำกับภาษี/ใบเสร็จรับเงิน" ·
+    `IsDeposit` → "(เงินมัดจำ)" · `IssuedAsCashReceipt` ที่ JS สลับลำดับเป็น
+    "ใบกำกับภาษี/ใบเสร็จรับเงิน" ทั้งที่กระดาษพิมพ์ "ใบเสร็จรับเงิน/ใบกำกับภาษี")_
+    - **ตัวเลือกเทมเพลตมีชุดเดียว** — `PickTemplate` (pure) + `LoadTemplatePool
+      Async`; `ResolveDocumentTemplateAsync` (ตอนพิมพ์) และ `ResolveDocumentTitles
+      Async` (รายการเอกสาร) เรียกตัวเดียวกัน ⇒ หน้ารายการ query คงที่ **3 ครั้ง/หน้า**
+      (เทมเพลตบริษัท · ตั้งค่าบริษัท · แบรนด์+ใบต้นทางของหน้านั้น) ไม่ใช่ N+1
+    - เทสต์: `Accounting.Tests/DocumentTitleServerOwnedTests.cs` (ล็อกทั้ง 6 เคส
+      ฝั่ง C#) + simulation ฝั่ง JS ที่รัน `docHeaderLabel` จริงจาก layout.js
 
 ### 5.2 e-Tax XML (XAdES-BES, RSA-SHA256)
 - **Service**: `EtaxInvoiceService.GenerateAsync` (`:87`)
@@ -2508,7 +2524,29 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
-_Last verified against codebase: 2026-08-28 (รอบ 102 — **ผลตรวจ "ฟีเจอร์ทำงานซ้อนกัน" 4 ด้าน — แก้ชุดแรก**:_
+_Last verified against codebase: 2026-08-31 (รอบ 103 — **หัวเอกสาร: จอกับกระดาษ_
+_ไม่ตรงกัน 6 เคส**: `Layout.docHeaderLabel` เป็น**สำเนามือ**ของ `ComputeDocumentTitle`_
+_ที่รู้จักแค่ 3 ธง จึงมองไม่เห็น (ก) ชื่อหัวที่ผู้ใช้ตั้งเองใน_
+_`CompanySettings.DocumentTitleOverridesJson` (ข) `template.CustomTitle`_
+_(ค) ผู้ซื้อ §86/4 ไม่ครบ/walk-in → กระดาษพิมพ์ **"ใบกำกับภาษีอย่างย่อ"** แต่จอบอก_
+_"ใบกำกับภาษี" (ง) ใบเสร็จ/ใบสำคัญรับที่มี VAT → กระดาษพิมพ์ **"ใบกำกับภาษี/_
+_ใบเสร็จรับเงิน"** (§78/1) แต่จอบอกแค่ "ใบเสร็จรับเงิน" (จ) `IsDeposit` →_
+_กระดาษต่อท้าย "(เงินมัดจำ)" (ฉ) `IssuedAsCashReceipt` — JS สลับลำดับเป็น_
+_"ใบกำกับภาษี/ใบเสร็จรับเงิน" ทั้งที่กระดาษพิมพ์ "ใบเสร็จรับเงิน/ใบกำกับภาษี"_
+_(ตรงกับ e-Tax T03). สองเคสกลางไม่ใช่แค่ป้ายผิด — มันคือ**ชนิดเอกสารทางกฎหมาย_
+_คนละตัว** (§86/6 อย่างย่อ เคลมภาษีซื้อไม่ได้ตาม §82/5(2)) ⇒ ผู้ใช้ตัดสินใจส่ง_
+_ให้ลูกค้าจากข้อมูลที่ผิด_
+_→ แก้ด้วยกลไก ไม่ใช่แก้สำเนา: เซิร์ฟเวอร์คำนวณแล้วส่ง `DocumentResponse._
+_DocumentTitle` มา (`ResolveDocumentTitleAsync` เดี่ยว + `ResolveDocumentTitlesAsync`_
+_แบบ batch สำหรับหน้ารายการ) — JS **แสดงอย่างเดียว** กฎเดิมเหลือเป็น fallback_
+_ของ endpoint ที่ยังไม่ส่งค่ามา (กลไกเดียวกับ `MENU_SECTIONS`/`complianceIssues`)_
+_· ระหว่างทางยุบตัวเลือกเทมเพลตเป็นชุดเดียว (`LoadTemplatePoolAsync` +_
+_`PickTemplate` pure) เพื่อไม่ให้เส้นทาง batch กลายเป็นอัลกอริทึมสำเนาที่สอง —_
+_หน้ารายการจึงเป็น query คงที่ 3 ครั้ง/หน้า ไม่ใช่ N+1_
+_· negative test: simulation รัน `docHeaderLabel` **จริง** จาก layout.js ยืนยัน_
+_กฎเดิมเพี้ยน 5/5 เคสก่อน แล้วหลังแก้ตรง 5/5 + fallback ตรงกฎเดิม 8/8_
+_· `DocumentTitleServerOwnedTests` ล็อกฝั่ง C# ทั้ง 6 เคส);_
+_รอบ 102 — **ผลตรวจ "ฟีเจอร์ทำงานซ้อนกัน" 4 ด้าน — แก้ชุดแรก**:_
 _(1) **`IncludeVat` ถูก implement 3 แบบในไฟล์เดียว → JE หายทั้งใบ**:_
 _`IntegrationService` ฝั่งขาย+มี `line.VatAmount` หัก VAT ออกจาก net แต่_
 _`totalAmount = subTotal` ⇒ ยอดรวมขาด VAT · ฝั่งขาย+ไม่มี `VatAmount` คำนวณ VAT_

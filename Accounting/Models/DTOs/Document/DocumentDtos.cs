@@ -765,7 +765,31 @@ public record DocumentResponse(
     string? PreparerSignatureBase64 = null,
     /// <summary>เลขที่ใบมัดจำที่นำมาหัก + ธง "ให้ JE เดินตามการหักมัดจำ"</summary>
     string? DepositAppliedRef = null,
-    bool DepositAppliedDrivesJournal = false);
+    bool DepositAppliedDrivesJournal = false,
+
+    /// <summary>หัวเรื่องที่จะพิมพ์บนกระดาษจริง — คำนวณโดย
+    /// <c>PdfGenerationService.ComputeDocumentTitle</c> ซึ่งเป็น**เจ้าของกฎตัวจริง**
+    ///
+    /// <para>⚠️ ที่มา: <c>Layout.docHeaderLabel</c> ฝั่ง JS เป็นสำเนามือที่ล้าหลัง
+    /// ⇒ จอกับกระดาษพูดคนละอย่างอย่างน้อย 5 เคส:
+    /// <list type="bullet">
+    /// <item>ติ๊ก "ผู้ซื้อไม่ประสงค์รับใบกำกับ" + มี VAT → จอ "ใบเสร็จรับเงิน" ·
+    ///   กระดาษ "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ"</item>
+    /// <item><c>IssuedAsCashReceipt</c> → จอสลับลำดับกับกระดาษ (กระดาษเรียงตาม
+    ///   e-Tax T03 pairing)</item>
+    /// <item>Receipt/ReceiptVoucher ที่มี VAT → จอไม่เติม "ใบกำกับภาษี/"</item>
+    /// <item>ลูกค้า walk-in หรือข้อมูล §86/4 ไม่ครบ → กระดาษ downgrade เป็น
+    ///   "อย่างย่อ" แต่จอไม่รู้ (<c>IsWalkInCustomer</c> ไม่เคยอยู่ใน DTO ไหนเลย)</item>
+    /// <item>บริษัทตั้ง <c>DocumentTitleOverridesJson</c> / <c>template.CustomTitle</c>
+    ///   → จอไม่รู้จักเลย</item>
+    /// </list>
+    /// เคสที่เจ็บสุด: server ตั้ง <c>BuyerDeclinedTaxInvoice = true</c> ให้เองตอน
+    /// approve เมื่อผู้ซื้อบุคคลธรรมดาข้อมูลไม่ครบ ⇒ ใบที่ผู้ใช้ตั้งใจออกเป็น
+    /// ใบกำกับกลายเป็นใบย่อบนกระดาษ โดยจอไม่เคยบอก</para>
+    ///
+    /// <para>null = เส้นทางที่ยังไม่ได้คำนวณ (เช่นรายการหลายใบ) — หน้าเว็บ
+    /// fallback ไป <c>Layout.docHeaderLabel</c> ตามเดิม</para></summary>
+    string? DocumentTitle = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

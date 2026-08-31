@@ -1490,6 +1490,17 @@ public partial class DocumentService : IDocumentService
                 InputVatPp30Year = pp30.Year,
                 InputVatPp30ReportStatus = pp30.Status.ToString(),
             };
+
+        // หัวเอกสาร "ที่จะพิมพ์จริง" — คำนวณด้วยตัวเดียวกับ renderer แทนที่จะให้
+        // หน้าเว็บเดาเอง (เดิม Layout.docHeaderLabel เป็นสำเนามือที่รู้จักแค่ 3 ธง
+        // ⇒ เพี้ยนจากกระดาษ 5 เคส — ดู ResolveDocumentTitleAsync)
+        // ServedAsReceipt ต้องเซ็ตให้ก่อน (ตัวคำนวณหัวอ่านจาก entity) —
+        // SettlesTaxInvoiceSource ตัว resolver เติมเอง
+        doc.ServedAsReceipt = resp.ServedAsReceipt;
+        resp = resp with
+        {
+            DocumentTitle = await PdfGenerationService.ResolveDocumentTitleAsync(_db, companyId, doc),
+        };
         return resp;
     }
 
@@ -1816,12 +1827,22 @@ public partial class DocumentService : IDocumentService
                 .ToListAsync())
                 .ToHashSet();
 
+        // หัวเอกสารที่จะพิมพ์จริงของทั้งหน้า — resolver ตัวเดียวกับตอนออก PDF
+        // (query คงที่ 3 ครั้ง/หน้า ไม่ใช่ N+1) เพื่อให้ป้ายบนตารางตรงกับกระดาษ
+        // ทุกเคส รวมชื่อหัวที่ผู้ใช้ตั้งเอง/CustomTitle/§86/6 อย่างย่อ
+        foreach (var d in items)
+            d.ServedAsReceipt = ComputeServedAsReceipt(d, tivWithReceipt.Contains(d.Id));
+        var titles = await PdfGenerationService.ResolveDocumentTitlesAsync(_db, companyId, items);
+
         return new PagedResponse<DocumentResponse>(
             items.Select(d => {
                 var (pceCount, pceAmount) = pceSummary.GetValueOrDefault(d.Id);
                 return MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id),
                     hasPce: pceCount > 0, pceCount: pceCount, pceAmount: pceAmount,
-                    servedAsReceipt: ComputeServedAsReceipt(d, tivWithReceipt.Contains(d.Id)));
+                    servedAsReceipt: d.ServedAsReceipt) with
+                {
+                    DocumentTitle = titles.GetValueOrDefault(d.Id),
+                };
             }).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));

@@ -10142,8 +10142,11 @@
           // ถือใบ combined อ่านแล้วนึกว่าระบบจะสร้างใบกำกับใหม่อีกใบ)
           const tivFull = _rpDt === 'TaxInvoice' && fullFirst;
           rpIssueCb.checked = !tivFull;
+          // ⚠️ นี่คือหัว **สมมติ** ("ถ้าจ่ายครบจะกลายเป็น...") ไม่ใช่หัวปัจจุบัน —
+          // ต้องล้าง documentTitle ที่เซิร์ฟเวอร์คำนวณจากสถานะจริงทิ้ง ไม่งั้น
+          // docHeaderLabel จะคืนค่าเดิมและข้อความจะบอกว่า "จะเปลี่ยนเป็น <หัวเดิม>"
           const _paidHeader = Layout.docHeaderLabel(
-            Object.assign({}, this._currentDoc, { servedAsReceipt: true }));
+            Object.assign({}, this._currentDoc, { servedAsReceipt: true, documentTitle: null }));
           if (rpIssueHint) rpIssueHint.textContent = tivFull
             ? `✔ ไม่สร้างเอกสารใหม่ — ใบนี้ใบเดียวทำหน้าที่ครบ หัวพิมพ์จะเปลี่ยนเป็น "${_paidHeader}" (ติ๊กเฉพาะเมื่อลูกค้าขอใบเสร็จเป็นกระดาษแยก)`
             : '➕ สร้างใบเสร็จรับเงินเพิ่ม 1 ใบ (หลักฐานรับเงิน — อ้างอิงใบเดิม ไม่ลงบัญชี/VAT ซ้ำ) · จ่ายบางส่วน/ผ่อนหลายงวดต้องออกใบเสร็จต่องวด';
