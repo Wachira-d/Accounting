@@ -466,9 +466,12 @@ internal static class ExpenseCategoryResolver
             || rawText.Contains("หนังสือรับรองการหักภาษี"))
             return true;
         var lower = rawText.ToLowerInvariant();
+        // `\bwht\b` แทน "wht " (ช่องว่างตามหลัง) — ของเดิมพลาด "WHT" ท้ายบรรทัด
+        // (ตามด้วย \n) และ "WHT3%" ⇒ ไม่อนุมานอัตราหัก ณ ที่จ่าย ⇒ ผู้ใช้ลืมหัก
+        // = บริษัทรับผิดภาษีที่ไม่ได้หัก + เบี้ยปรับ ภ.ง.ด.3/53. boundary กัน
+        // "what"/"weight" ให้แล้ว
         return lower.Contains("withholding tax")
-            || lower.Contains("wht ")
-            || lower.Contains("wht%")
-            || lower.Contains("wht:");
+            || lower.Contains("w/h tax")
+            || System.Text.RegularExpressions.Regex.IsMatch(lower, @"\bwht\b");
     }
 }

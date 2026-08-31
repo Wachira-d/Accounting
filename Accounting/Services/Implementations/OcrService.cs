@@ -37,7 +37,20 @@ public class OcrService : IOcrService
     /// <summary>คำที่บอกว่าเอกสารรับเงินใบนี้เป็น "มัดจำ/รับล่วงหน้า" (ลง 217xx
     /// ไม่ใช่รายได้). "เงินประกัน" ไม่รวม — เป็นหลักประกันสัญญาคนละบัญชี</summary>
     private static readonly Regex DepositKeywordRegex = new(
-        @"เงินมัดจำ|ค่ามัดจำ|มัดจำ|รับล่วงหน้า|เงินล่วงหน้า|DEPOSIT|ADVANCE\s*(?:PAYMENT|RECEIVED)|DOWN\s*PAYMENT",
+        @"เงินมัดจำ|ค่ามัดจำ|มัดจำ|เงินจอง|ค่าจอง|รับล่วงหน้า|เงินล่วงหน้า|ชำระล่วงหน้า"
+        + @"|DEPOSIT|ADVANCE\s*(?:PAYMENT|RECEIVED)|PAYMENT\s*IN\s*ADVANCE|PRE-?PAYMENT"
+        + @"|DOWN\s*PAYMENT|BOOKING\s*FEE|RESERVATION\s*FEE",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>เอกสารที่ **ไม่ใช่** มัดจำแม้มีคำว่า DEPOSIT — คอมเมนต์ของ regex
+    /// ข้างบนระบุเองว่า "เงินประกันไม่รวม (คนละบัญชี)" แต่ alternation `DEPOSIT`
+    /// เดี่ยว ๆ ดูด SECURITY/GUARANTEE/DAMAGE DEPOSIT (= 215xx หนี้สินเงินประกัน
+    /// ไม่ใช่ 217xx ขายรอรับรู้ — ลงผิดแล้วถูกรับรู้เป็นรายได้ตอนเคลียร์มัดจำ)
+    /// และ CASH DEPOSIT / DEPOSIT TO A/C ของสลิปนำฝากธนาคาร. เจอคำพวกนี้ =
+    /// ไม่ auto-flag ปล่อยให้ผู้ใช้ติ๊กเองถ้าใช่มัดจำจริง</summary>
+    private static readonly Regex DepositExclusionRegex = new(
+        @"เงินประกัน|SECURITY\s*DEPOSIT|GUARANTEE\s*DEPOSIT|RENTAL\s*DEPOSIT"
+        + @"|DAMAGE\s*DEPOSIT|CASH\s*DEPOSIT|DEPOSIT\s*TO\s*A/?C|FIXED\s*DEPOSIT",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex VendorAddressRegex = new(
         @"(?:ที่อยู่|ADDRESS)\s*[:：]?\s*((?:[^\n]+\n?){1,4}?)(?=\n\s*(?:โทร|TEL|เลขประจำตัว|TAX\s*ID|อีเมล|EMAIL|FAX|$))",
@@ -1448,6 +1461,7 @@ public class OcrService : IOcrService
             // แปลงเป็น Receipt + IsDeposit ให้เอง
             if (extractedData.OurRole == "Seller"
                 && DepositKeywordRegex.IsMatch(scanResult.RawTextContent ?? "")
+                && !DepositExclusionRegex.IsMatch(scanResult.RawTextContent ?? "")
                 && extractedData.TargetDocumentType
                     is null or nameof(DocumentType.Receipt) or nameof(DocumentType.Invoice))
             {
