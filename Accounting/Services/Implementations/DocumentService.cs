@@ -1164,7 +1164,11 @@ public partial class DocumentService : IDocumentService
             // due date (the money already moved).
             if (isCashSettled)
                 doc.DueDate = null;
-            else if (doc.DueDate == null && doc.CreditDays.HasValue && doc.CreditDays.Value > 0)
+            // เครดิต 0 วัน = "จ่ายทันที" ไม่ใช่ "ไม่ระบุ" ⇒ ครบกำหนด = วันที่เอกสาร
+            // (เดิมเงื่อนไข `> 0` ทำให้ 0 ตกไปเหมือนไม่ได้กรอก แล้ววันครบกำหนดว่าง
+            // ทั้งที่ผู้ใช้ระบุมาชัดเจน — คู่กับบั๊ก `|| null` ฝั่งฟอร์มที่ทำให้ 0
+            // ไม่เคยเดินทางมาถึงที่นี่เลย)
+            else if (doc.DueDate == null && doc.CreditDays.HasValue && doc.CreditDays.Value >= 0)
                 doc.DueDate = doc.DocumentDate.AddDays(doc.CreditDays.Value);
 
             // Auto-link Revenue Contract via Project when not explicitly provided.
@@ -2030,7 +2034,15 @@ public partial class DocumentService : IDocumentService
         await ApplyInputVatClaimPeriodAsync(companyId, doc, request.InputVatClaimPeriod);
         if (request.HasTaxInvoiceReference.HasValue) doc.HasTaxInvoiceReference = request.HasTaxInvoiceReference.Value;
         if (request.SupplierBranchCode != null) doc.SupplierBranchCode = request.SupplierBranchCode;
-        if (request.CreditDays.HasValue) doc.CreditDays = request.CreditDays.Value;
+        if (request.CreditDays.HasValue)
+        {
+            doc.CreditDays = request.CreditDays.Value;
+            // ผู้เรียกที่ไม่ส่ง DueDate มาเอง (เช่น API/integration) ต้องได้วัน
+            // ครบกำหนดที่สอดคล้องกับเครดิตใหม่ — ไม่งั้นสองช่องขัดกันในฐานข้อมูล
+            // (ฟอร์มบนเว็บส่ง DueDate มาด้วยเสมอ จึงไม่ถูกกระทบ)
+            if (!request.DueDate.HasValue && doc.CreditDays.Value >= 0)
+                doc.DueDate = doc.DocumentDate.AddDays(doc.CreditDays.Value);
+        }
         if (request.PaymentTerms != null) doc.PaymentTerms = request.PaymentTerms;
         // ภาษาเอกสาร — รับเฉพาะ th/en; "" = ล้างกลับไปใช้ค่าตั้งต้นของบริษัท
         if (request.DocumentLanguage != null)

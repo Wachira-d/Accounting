@@ -615,7 +615,7 @@
             <!-- ป้าย + การแสดงของช่องนี้เปลี่ยนตามชนิดเอกสาร (_docFieldProfile):
                  ใบเสนอราคา = "ยืนราคาถึงวันที่" · PO = "กำหนดส่งมอบ" · ใบเสร็จ/
                  ใบลดหนี้ = ซ่อน (เงินรับแล้ว/ไม่มีเครดิตใหม่) -->
-            <div class="form-group" id="fDueDateGroup"><label class="form-label" id="fDueDateLabel" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
+            <div class="form-group" id="fDueDateGroup"><label class="form-label" id="fDueDateLabel" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate" oninput="Page.onDueDateInput(event)"></div>
           </div>
           <!-- เลขจอง (Booking) — ผูกเอกสารหลายใบเข้าด้วยกัน (มัดจำ→ใบสุดท้าย→ใบเสร็จ).
                PMS โรงแรม / POS ร้าน / CRM ส่ง booking key มา; ระบบ index ไว้
@@ -4722,6 +4722,13 @@
       },
       /** วันเครดิต: พิมพ์เอง = ล็อกไม่ให้ autofill ทับ + คำนวณวันครบกำหนดให้
        *  (เดิม dispatch 'input' ไว้แต่ไม่มี listener จริง — วันครบกำหนดไม่ขยับ) */
+      /** ผู้ใช้พิมพ์วันครบกำหนดเอง = ค่าสูงสุด ห้ามให้ช่องเครดิตคำนวณทับทีหลัง */
+      onDueDateInput(ev) {
+        const el = document.getElementById('fDueDate');
+        if (!el || !ev?.isTrusted) return;
+        el.dataset.userTouched = '1';
+        delete el.dataset.autoCalc;
+      },
       onCreditDaysInput(ev) {
         const cd = document.getElementById('fCreditDays');
         if (!cd) return;
@@ -4729,9 +4736,15 @@
         const days = parseInt(cd.value, 10);
         const dateEl = document.getElementById('fDate');
         const dueEl = document.getElementById('fDueDate');
-        // คำนวณทับได้เมื่อ due date ว่าง หรือค่าเดิมมาจากการคำนวณอัตโนมัติ
+        // คำนวณทับได้เมื่อ: ช่องว่าง · ค่าเดิมมาจากการคำนวณอัตโนมัติ · หรือ
+        // **ผู้ใช้เพิ่งแก้ช่องเครดิตเอง** โดยที่ยังไม่เคยพิมพ์วันครบกำหนดเอง
+        //
+        // ⚠️ เดิมไม่มีเงื่อนไขที่สาม ⇒ ตอน "แก้ไขเอกสารเดิม" ช่องวันครบกำหนดถูก
+        // เติมจากค่าที่บันทึกไว้ (ไม่มีธง autoCalc) ⇒ ผู้ใช้แก้เครดิต 3 → 0 แล้ว
+        // วันครบกำหนดยังค้างที่ 16 ก.ย. = สองช่องขัดกันเองบนหน้าจอเดียว
         if (Number.isFinite(days) && days >= 0 && dateEl?.value && dueEl
-            && (!dueEl.value || dueEl.dataset.autoCalc === '1')) {
+            && (!dueEl.value || dueEl.dataset.autoCalc === '1'
+                || (ev?.isTrusted && dueEl.dataset.userTouched !== '1'))) {
           const d = new Date(dateEl.value);
           d.setDate(d.getDate() + days);
           if (!isNaN(d.getTime())) { dueEl.value = Layout.toDateInput(d); /* ห้าม toISOString — เลื่อน 1 วันใน ICT */ dueEl.dataset.autoCalc = '1'; }
@@ -8144,7 +8157,17 @@
           // ผัง VAT override (ไม่เคลม → ลงเป็นต้นทุน/ค่าใช้จ่าย) — เว้นว่าง = default
           inputVatAccountCodeOverride:
             document.getElementById('fInputVatAccountCodeOverride')?.value.trim() || null,
-          creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
+          // ⚠️ **ห้ามใช้ `|| null`** — `parseInt("0") = 0` ซึ่งเป็น falsy ⇒ กลายเป็น
+          // null ⇒ ฝั่งเซิร์ฟเวอร์ `if (request.CreditDays.HasValue)` ไม่เข้า ⇒
+          // **ค่าเดิมค้างไว้** ผู้ใช้แก้เครดิตเป็น 0 แล้วกดบันทึก ระบบเด้งกลับเป็น
+          // ค่าเดิมทุกครั้ง (defect class เดียวกับ quantity `|| 1` ที่เคยเจอ)
+          // ว่าง = "ไม่ระบุ" (ให้ใช้ค่าตั้งต้นของผู้ขาย) · "0" = เงินสด/จ่ายทันที
+          creditDays: (() => {
+            const v = (document.getElementById('fCreditDays')?.value ?? '').trim();
+            if (v === '') return null;
+            const n = parseInt(v, 10);
+            return Number.isFinite(n) && n >= 0 ? n : null;
+          })(),
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
           // ภาษาที่ตรึงไว้กับใบนี้ — "" (ตามค่าบริษัท) ต้องส่งเป็น null ไม่ใช่ ""
           // ตอนสร้าง; ตอนแก้ไขส่ง "" ได้เพื่อ "ล้างกลับไปใช้ค่าบริษัท"
