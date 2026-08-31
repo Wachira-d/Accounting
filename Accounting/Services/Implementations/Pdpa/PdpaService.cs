@@ -129,6 +129,27 @@ public class PdpaService : IPdpaService
 
     public PdpaService(AccountingDbContext db) { _db = db; }
 
+    /// <summary>
+    /// ผู้ใช้รายนี้เป็น "เจ้าของข้อมูลที่บริษัทนี้ประมวลผล" จริงไหม
+    ///
+    /// ═══ ทำไมต้องมี ═══
+    /// <c>Users</c> ไม่ใช่ tenant entity (ผูกกับบริษัทผ่าน <c>CompanyUser</c>)
+    /// จึงไม่มี global query filter มาช่วย — เส้นทาง DSR ทั้งสามเส้นเคย query
+    /// <c>_db.Users.FirstOrDefaultAsync(u =&gt; u.Id == userId)</c> <b>เปล่า ๆ</b>
+    /// ⇒ สมาชิกบริษัท A ใส่ GUID ของผู้ใช้บริษัทไหนก็ได้ในระบบ แล้ว
+    /// (ก) <b>อ่าน</b> อีเมล/ชื่อ/เวลาล็อกอินล่าสุด (ข) <b>แก้</b> ข้อมูลนั้น
+    /// (ค) <b>anonymize ถาวร</b> — ข้ามบริษัทได้ทั้งสามอย่าง
+    /// (ผิดทั้งกฎ M "ทุก query ต้องมี CompanyId" และ PDPA ม.37)
+    /// </summary>
+    private Task<bool> IsCompanyMemberAsync(Guid companyId, Guid userId, CancellationToken ct)
+        => _db.Set<CompanyUser>().AsNoTracking()
+            .AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == userId, ct);
+
+    /// <summary>ข้อความเดียวที่ใช้ทุกจุดเมื่อ subject ไม่ได้อยู่ในบริษัทนี้ —
+    /// ไม่บอกว่า "มี user นี้อยู่จริงไหม" (กัน enumeration ข้ามบริษัท)</summary>
+    private const string NotInCompanyMessage =
+        "ไม่พบเจ้าของข้อมูลรายนี้ในบริษัทนี้ — DSR ทำได้เฉพาะข้อมูลที่บริษัทนี้เป็นผู้ควบคุม";
+
     public async Task<PdpaDataSubjectRequest> SubmitAsync(Guid companyId,
         string requesterContact, string? requesterName, string requestType,
         string? description, Guid? linkedUserId, Guid? linkedContactId,
@@ -242,7 +263,8 @@ public class PdpaService : IPdpaService
     public async Task<DataSubjectAccessResult> GenerateAccessReportAsync(Guid companyId,
         Guid? userId, Guid? contactId, CancellationToken ct = default)
     {
-        var user = userId.HasValue
+        // ⛔ ต้องเป็นสมาชิกของบริษัทนี้เท่านั้น (ดู IsCompanyMemberAsync)
+        var user = userId.HasValue && await IsCompanyMemberAsync(companyId, userId.Value, ct)
             ? await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId.Value, ct)
             : null;
         var contacts = contactId.HasValue
@@ -327,6 +349,10 @@ public class PdpaService : IPdpaService
         var changed = 0;
         if (userId.HasValue)
         {
+            // ⛔ แก้ข้อมูลผู้ใช้ของบริษัทอื่นไม่ได้ — throw ไม่ใช่เงียบ ๆ ข้าม
+            // (ห้าม silent no-op: ผู้ใช้ต้องรู้ว่าคำขอไม่ถูกดำเนินการและเพราะอะไร)
+            if (!await IsCompanyMemberAsync(companyId, userId.Value, ct))
+                throw new InvalidOperationException(NotInCompanyMessage);
             var u = await _db.Users.FirstOrDefaultAsync(x => x.Id == userId.Value, ct);
             if (u != null)
             {
@@ -362,6 +388,10 @@ public class PdpaService : IPdpaService
 
         if (userId.HasValue)
         {
+            // ⛔ anonymize เป็นการกระทำที่ย้อนกลับไม่ได้ — ต้องแน่ใจว่าเป็นเจ้าของ
+            // ข้อมูลที่บริษัทนี้ควบคุมจริง ไม่ใช่ GUID ของผู้ใช้บริษัทอื่น
+            if (!await IsCompanyMemberAsync(companyId, userId.Value, ct))
+                throw new InvalidOperationException(NotInCompanyMessage);
             var u = await _db.Users.FirstOrDefaultAsync(x => x.Id == userId.Value, ct);
             if (u != null)
             {

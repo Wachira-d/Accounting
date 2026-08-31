@@ -2524,7 +2524,38 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
-_Last verified against codebase: 2026-08-31 (รอบ 106 — **"สร้างเอกสารได้ แต่ลง_
+_Last verified against codebase: 2026-08-31 (รอบ 107 — **รอบตรวจ PDPA/สิทธิ์:_
+_เส้น DSR เปิดโล่งสามชั้น**:_
+_(1) **ข้ามบริษัทได้** — `PdpaService` query `_db.Users.FirstOrDefaultAsync(u =>_
+_u.Id == userId)` **เปล่า ๆ** ทั้งสามเส้น (`GenerateAccessReportAsync` อ่าน ·_
+_`ApplyRectificationAsync` แก้ · `ApplyErasureAsync` **anonymize ถาวร**)._
+_`Users` ไม่ใช่ tenant entity (ผูกผ่าน `CompanyUser`) จึงไม่มี global query filter_
+_มาช่วย ⇒ สมาชิกบริษัท A ใส่ GUID ของผู้ใช้บริษัทไหนก็ได้ในระบบ แล้วอ่าน/แก้/ลบ_
+_ได้จริง (ผิดทั้งกฎ M "ทุก query ต้องมี CompanyId" และ PDPA ม.37)_
+_→ helper กลาง `IsCompanyMemberAsync` + ข้อความปฏิเสธชุดเดียว `NotInCompanyMessage`_
+_ที่ไม่บอกว่า "มี user นี้อยู่จริงไหม" (กัน enumeration ข้ามบริษัท) · เส้นที่แก้/ลบ_
+_**throw** ไม่ใช่ข้ามเงียบ ๆ (ห้าม silent no-op)_
+_(2) **ไม่มีด่านสิทธิ์เลย** — `PdpaController` มีแค่ `[Authorize]` ระดับคลาส ⇒_
+_สมาชิกคนไหนของบริษัทก็เรียก `dsr/access` ดัมพ์โปรไฟล์ + เอกสาร + การชำระเงิน +_
+_**ประวัติการเข้าถึง 1 ปี** ของใครก็ได้ · `dsr/portability` โหลดเป็นไฟล์ ·_
+_`dsr/erase` **anonymize ถาวร** — ทั้งที่หน้าเงินเดือนในเรพเดียวกันยังต้องมี_
+_`Pii.View` ถึงจะเห็นเลขบัตรแบบไม่ mask. **ด่านที่อ่อนกว่าแต่คืนข้อมูลมากกว่า_
+_คือช่องที่ใหญ่ที่สุด** → `RequireDpoAsync` (perm:Pii.View, Owner/SystemAdmin ผ่าน)_
+_บน 12 endpoint: assign/complete/overdue · erasure-impact · dsr ทั้ง 4 ·_
+_ropa upsert · consent withdraw · breach update/alerts. เปิดไว้ตามเดิมเฉพาะ_
+_"ยื่นคำขอ" · "ให้ความยินยอม" · "แจ้งเหตุข้อมูลรั่ว" · อ่าน RoPA (ไม่มี PII)_
+_(3) **`LogPiiAccessAsync` ไม่มี call site เลยทั้งเรพ** — ทั้งที่ doc-comment ของ_
+_`PermissionKeys.PiiView` เขียนไว้ว่า "ทุกครั้งที่ field ถูกอ่านแบบ raw ต้อง log_
+_ลง PiiAccessLog (ม.37(4))" ⇒ ตารางว่างเปล่าตลอด = **ไม่มี control จริง**_
+_(ซ้ำรอย `CanShareMoneyAggregates`) → ต่อสายที่ DSR ทั้ง 4 เส้น + ที่_
+_`PayrollController.CanViewPiiAsync` (log เฉพาะตอน "ได้ดูจริง" — คนที่ถูก mask_
+_ไม่ได้เข้าถึง PII จึงไม่บันทึก)_
+_**ทำไมรอบนี้ไม่เพิ่ม checker**: ตัวแยกบั๊กนี้คือ "id มาจาก request ของผู้ใช้ หรือ_
+_มาจากแถวที่ scope ด้วย company แล้ว" = taint ไม่ใช่รูปทรงของโค้ด — `_db.Users`_
+_มี 85 จุดในเรพและส่วนใหญ่ถูกต้อง checker แบบ regex จะฟ้องผิดเป็นสิบ ๆ จุด_
+_(กฎของเรพเอง: checker ที่ฟ้องผิด = checker ที่พังแล้ว) กลไกที่ใช้แทนคือ helper_
+_กลางตัวเดียวให้ทั้งสามเส้นเรียก + บันทึกเป็น defect class ใน CLAUDE.md);_
+_รอบ 106 — **"สร้างเอกสารได้ แต่ลง_
 _บัญชีไม่ได้" ถูกรายงานว่า Success**: เอกสารจาก integration ถูกสร้างเป็น_
 _`Status = Approved` เสมอ ⇒ `TaxService` นับเข้า ภ.พ.30 ทันที แต่การลงบัญชีมีทาง_
 _ออก null ถึง **7 ทาง** (ไม่พบผังลูกหนี้/รายได้ · ไม่พบผังเจ้าหนี้/ค่าใช้จ่าย ·_
