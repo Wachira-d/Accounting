@@ -157,10 +157,11 @@ public class SettingsService : ISettingsService
     {
         var settings = await GetOrCreateSettingsAsync(companyId);
 
-        // Validate content type
-        var allowedTypes = new[] { "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml" };
+        // Validate content type — ไม่รับ SVG (stored XSS ผ่าน <script> ในไฟล์
+        // ที่ serve จาก origin เดียวกับแอป — กฎเดียวกับตราประทับ/โลโก้แบรนด์)
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/gif", "image/webp" };
         if (!allowedTypes.Contains(contentType.ToLower()))
-            throw new InvalidOperationException("รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP, SVG เท่านั้น");
+            throw new InvalidOperationException("รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP เท่านั้น — ไม่รับ SVG ด้วยเหตุผลด้านความปลอดภัย");
 
         // WebRootPath is null in environments where wwwroot doesn't exist
         // (slim deployments, certain Docker setups). Fall back to ContentRoot
@@ -224,9 +225,12 @@ public class SettingsService : ISettingsService
     {
         var settings = await GetOrCreateSettingsAsync(companyId);
 
-        var allowedTypes = new[] { "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml" };
+        // ⚠️ ไม่รับ SVG — SVG ฝัง <script> ได้ และไฟล์ถูก serve จาก origin
+        // เดียวกับแอปที่เก็บ JWT ใน localStorage = stored XSS (กฎเดียวกับ
+        // โลโก้แบรนด์/โลโก้บริษัท — CLAUDE.md กฎเหล็ก #4 C)
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/gif", "image/webp" };
         if (!allowedTypes.Contains(contentType.ToLower()))
-            throw new InvalidOperationException("รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP, SVG เท่านั้น (แนะนำ PNG พื้นหลังโปร่งใส)");
+            throw new InvalidOperationException("รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP เท่านั้น — ไม่รับ SVG ด้วยเหตุผลด้านความปลอดภัย (แนะนำ PNG พื้นหลังโปร่งใส)");
 
         var webRoot = _env.WebRootPath
             ?? Path.Combine(_env.ContentRootPath ?? Directory.GetCurrentDirectory(), "wwwroot");
