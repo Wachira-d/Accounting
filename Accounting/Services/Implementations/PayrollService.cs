@@ -778,8 +778,13 @@ public class PayrollService : IPayrollService
                 var adj = srcBal?.AdjustmentDays ?? 0m;
                 var used = leavesByEmpType.FirstOrDefault(x => x.EmployeeId == emp.Id && x.LeaveType == lt.Code)?.Total ?? 0m;
                 var unused = Math.Max(0, lt.AnnualQuota + carriedFrom + adj - used);
-                // Cap by CarryForwardCap (0 = no cap, รักษาความเข้ากันได้)
-                var carried = lt.CarryForwardCap.HasValue && lt.CarryForwardCap.Value > 0
+                // Cap by CarryForwardCap — **0 = เพดาน 0 วันจริง (ยกยอดไม่ได้เลย)**
+                // ไม่ใช่ "no cap": LeaveController.cs (เส้นคำนวณโควตา) ตีความ 0
+                // เป็นเพดานจริงอยู่แล้ว สองเส้นต้องพูดภาษาเดียวกัน. ของเดิมที่
+                // เขียนว่า "0 = no cap เพื่อความเข้ากันได้" ไม่มีแถวจริงให้เข้า
+                // กันได้ด้วยซ้ำ — ฟอร์มเดิมกลืน 0 เป็น null ก่อนถึงฐานข้อมูลเสมอ
+                // (บั๊ก `|| null` ที่เพิ่งแก้) จึงเปลี่ยนได้โดยไม่กระทบข้อมูลเก่า
+                var carried = lt.CarryForwardCap.HasValue
                     ? Math.Min(unused, lt.CarryForwardCap.Value) : unused;
                 if (carried <= 0) continue;
 

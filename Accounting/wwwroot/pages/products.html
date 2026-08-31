@@ -586,7 +586,7 @@
       async saveAdjustStock() {
         const api=Layout.api(); if(!api||!this._current)return;
         try {
-          await api.adjustStock({productId:this._current.id,quantity:parseFloat(document.getElementById('adjQty').value),movementType:document.getElementById('adjType').value,unitCost:parseFloat(document.getElementById('adjCost').value)||null,reference:document.getElementById('adjRef').value||null,notes:document.getElementById('adjNote').value||null});
+          await api.adjustStock({productId:this._current.id,quantity:parseFloat(document.getElementById('adjQty').value),movementType:document.getElementById('adjType').value,unitCost:Layout.numOrNull('adjCost')/* 0 = ของแถม/รับบริจาค — ห้ามให้ระบบแทนด้วยต้นทุนเดิม */,reference:document.getElementById('adjRef').value||null,notes:document.getElementById('adjNote').value||null});
           Layout.closeModal('adjustModal');Layout.toast('ปรับสต็อกสำเร็จ');this.load();
         } catch(e) { Layout.toast(e.message,'error'); }
       },

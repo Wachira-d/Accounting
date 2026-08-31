@@ -286,7 +286,7 @@
         document.getElementById('tPaid').checked = t.isPaid;
         document.getElementById('tHalfDay').checked = t.allowHalfDay;
         document.getElementById('tCarry').checked = t.carryForward;
-        document.getElementById('tCarryCap').value = t.carryForwardCap || '';
+        document.getElementById('tCarryCap').value = t.carryForwardCap ?? '';
         document.getElementById('tAttach').checked = t.requiresAttachment;
         document.getElementById('tActive').checked = t.isActive;
         document.getElementById('tColor').value = t.color || '#6366f1';
@@ -304,7 +304,8 @@
           isPaid: document.getElementById('tPaid').checked,
           allowHalfDay: document.getElementById('tHalfDay').checked,
           carryForward: document.getElementById('tCarry').checked,
-          carryForwardCap: parseFloat(document.getElementById('tCarryCap').value) || null,
+          // 0 = ยกยอดข้ามปีไม่ได้เลย (use-it-or-lose-it) ≠ ว่าง (ไม่จำกัด)
+          carryForwardCap: Layout.numOrNull('tCarryCap'),
           advanceNoticeDays: parseInt(document.getElementById('tNotice').value) || 0,
           requiresAttachment: document.getElementById('tAttach').checked,
           sortOrder: parseInt(document.getElementById('tOrder').value) || 0,

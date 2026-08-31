@@ -1611,7 +1611,7 @@
           this.onBizTypeChange(true);
           document.getElementById('cJuristicId').value = c.juristicId || '';
           document.getElementById('cVatRegistered').checked = c.isVatRegistered || false;
-          document.getElementById('cVatRate').value = c.vatRate || 7;
+          document.getElementById('cVatRate').value = c.vatRate ?? 7;   // 0 ต้องโชว์ 0 ไม่ใช่ 7
           document.getElementById('cWhtRegistered').checked = c.isWhtRegistered !== false;
           document.getElementById('cSocialSecurity').checked = c.isSocialSecurityRegistered || false;
           document.getElementById('cSocialSecurityAccountNo').value = c.socialSecurityAccountNo || '';
@@ -1843,7 +1843,8 @@
             industryType: document.getElementById('cIndustryType').value,
             juristicId: document.getElementById('cJuristicId').value || null,
             isVatRegistered: document.getElementById('cVatRegistered').checked,
-            vatRate: parseFloat(document.getElementById('cVatRate').value) || 7,
+            // 0% เป็นค่าที่ตั้งใจได้ (ยังไม่จด VAT / zero-rated) — ว่างเท่านั้นที่ = 7
+          vatRate: Layout.numOrNull('cVatRate') ?? 7,
             isWhtRegistered: document.getElementById('cWhtRegistered').checked,
             isSocialSecurityRegistered: document.getElementById('cSocialSecurity').checked,
             socialSecurityAccountNo: document.getElementById('cSocialSecurityAccountNo').value || null,
@@ -1945,7 +1946,7 @@
           document.getElementById('sInvoiceEmailSubject').value = s.invoiceEmailSubject || '';
           document.getElementById('sInvoiceEmailBody').value = s.invoiceEmailBody || '';
           // Tax
-          document.getElementById('sVatRate').value = s.defaultVatRate || 7;
+          document.getElementById('sVatRate').value = s.defaultVatRate ?? 7;
           document.getElementById('sVatRegistered').checked = s.vatRegistered !== false;
           const wrb = document.getElementById('sWhtRecognitionBasis');
           if (wrb) wrb.value = s.whtRecognitionBasis || 'Cash';
@@ -2130,7 +2131,8 @@
             etaxServiceProvider: document.getElementById('sEtaxProvider').value,
             // Approval
             requireApprovalForDocuments: document.getElementById('sRequireApproval').checked,
-            approvalThresholdAmount: parseFloat(document.getElementById('sApprovalThreshold').value) || null,
+            // 0 = "ทุกใบต้องผ่านอนุมัติ" (เข้มสุด) — ห้ามกลืนด้วย || null
+          approvalThresholdAmount: Layout.numOrNull('sApprovalThreshold'),
             sodBlockSelfApproval: document.getElementById('sSodBlockSelfApproval').checked,
             budgetCommitmentMode: document.getElementById('sBudgetCommitmentMode').value,
             allowNegativeStock: document.getElementById('sAllowNegativeStock').checked,

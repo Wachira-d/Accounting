@@ -1884,8 +1884,8 @@
           slug: document.getElementById('prdSlug').value,
           shortDescription: document.getElementById('prdShortDesc').value || null,
           fullDescription: this._prdDescQuill ? this._prdDescQuill.root.innerHTML : null,
-          overrideSellingPrice: parseFloat(document.getElementById('prdPrice').value) || null,
-          compareAtPrice: parseFloat(document.getElementById('prdComparePrice').value) || null,
+          overrideSellingPrice: Layout.numOrNull('prdPrice'),   // 0 = สินค้าแจกฟรี
+          compareAtPrice: Layout.numOrNull('prdComparePrice'),
           featuredImageUrl: document.getElementById('prdImageUrl').value || null,
           isVisible: document.getElementById('prdVisible').checked,
           isFeatured: document.getElementById('prdFeatured').checked
@@ -2023,8 +2023,8 @@
         try {
           await api.cmsCreateVariant(this.siteId, productId, {
             sku, name: name || sku, options,
-            price: parseFloat(document.getElementById('varPrice').value) || null,
-            stock: parseInt(document.getElementById('varStock').value) || null
+            price: Layout.numOrNull('varPrice'),
+            stock: Layout.intOrNull('varStock')   // 0 = ของหมด (กันขายเกิน) ≠ ไม่จำกัด
           });
           document.getElementById('prdVariantForm').style.display = 'none';
           Layout.toast('บันทึก Variant สำเร็จ', 'success');
