@@ -98,8 +98,13 @@ public class PayrollService : IPayrollService
     private async Task FireWebhookAsync(Guid companyId, string eventType, object payload)
     {
         if (_webhooks == null) return;
+        // fire-and-forget แต่ **ต้องมีร่องรอย** — webhook ที่ล้มเงียบทุกครั้ง
+        // แปลว่าระบบปลายทางของลูกค้าหยุดรับข้อมูลโดยไม่มีใครรู้
         try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
-        catch { /* fire-and-forget */ }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Payroll webhook {Event} ล้มเหลว (company {Cid})", eventType, companyId);
+        }
     }
 
     /// <summary>Resolve the SSO parameters effective for a year: the
@@ -2613,7 +2618,16 @@ public class PayrollService : IPayrollService
                 var svc = scope.ServiceProvider.GetRequiredService<IPayrollService>();
                 await svc.GeneratePostPaymentArtifactsAsync(companyId, runId, actor);
             }
-            catch { /* swallowed — เอกสาร best-effort */ }
+            catch (Exception ex)
+            {
+                // best-effort จริง (สร้างใหม่ได้ทีหลัง) **แต่ห้ามเงียบสนิท** —
+                // งานก้อนนี้ออก 50 ทวิ/ภ.ง.ด.1/สปส.1-10 ซึ่งมีกำหนดตามกฎหมาย
+                // ถ้าล้มทุกงวดโดยไม่มี log ไม่มีใครรู้จนเลยกำหนดยื่น
+                // ILogger เป็น singleton — ใช้ต่อได้หลัง request scope ถูก dispose
+                _logger?.LogError(ex,
+                    "สร้างเอกสารหลังจ่ายเงินเดือนไม่สำเร็จ (run {Run}, company {Cid}) — "
+                    + "50 ทวิ/ภ.ง.ด.1/สปส.1-10 ยังไม่ถูกสร้าง ต้องสั่งสร้างใหม่", runId, companyId);
+            }
         });
     }
 
