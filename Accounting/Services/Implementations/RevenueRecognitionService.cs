@@ -121,9 +121,28 @@ public class RevenueRecognitionService : IRevenueRecognitionService
 
         if (request.Name != null) contract.Name = request.Name;
         if (request.EndDate.HasValue) contract.EndDate = request.EndDate.Value;
+        var contractValueChanged = request.TotalContractValue.HasValue
+            && contract.TotalContractValue != request.TotalContractValue.Value;
         if (request.TotalContractValue.HasValue) contract.TotalContractValue = request.TotalContractValue.Value;
         if (request.Status != null) contract.Status = request.Status;
         if (request.ProjectId.HasValue) contract.ProjectId = request.ProjectId;
+
+        // แก้มูลค่าสัญญา (amendment ตาม TFRS 15) → ต้อง re-allocate ราคาให้
+        // performance obligations ทุกตัวตามสัดส่วน SSP เดิม — เดิมไม่ทำเลย ⇒
+        // สัญญา 1.2M แต่ PO รวมได้ 1.0M: เงิน 200,000 หายจากรายงานรายได้
+        // รอรับรู้โดยไม่มีใครทัก (สูตรเดียวกับตอน AddObligationAsync — ห้าม
+        // เขียนสูตรที่สอง)
+        if (contractValueChanged && contract.Obligations.Count > 0)
+        {
+            var totalSSP = contract.Obligations.Sum(o => o.StandaloneSellingPrice);
+            foreach (var ob in contract.Obligations)
+            {
+                ob.AllocatedPrice = totalSSP > 0
+                    ? contract.TotalContractValue * (ob.StandaloneSellingPrice / totalSSP)
+                    : 0;
+                ob.DeferredRevenue = ob.AllocatedPrice - ob.RecognizedRevenue;
+            }
+        }
 
         await _db.SaveChangesAsync();
 

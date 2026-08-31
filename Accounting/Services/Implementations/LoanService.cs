@@ -175,6 +175,20 @@ public class LoanService : ILoanService
                 request.InterestRate.Value,
                 remainingMonths,
                 loan.InterestType);
+
+            // ตารางผ่อนต้องตามอัตราใหม่ด้วย — เดิม recompute แค่ MonthlyPayment
+            // ⇒ การ์ดสรุปโชว์ค่างวดใหม่ แต่ตาราง (และดอกเบี้ยค้างจ่ายที่ตั้งจาก
+            // ตาราง) ยังเป็นอัตราเก่า = สองตัวเลขในโมดัลเดียวกันไม่ตรงกัน
+            // GenerateScheduleAsync ลบเฉพาะงวดที่ยังไม่จ่ายแล้วสร้างใหม่ จึง
+            // ปลอดภัยกับงวดที่จ่ายไปแล้ว. เรียกเฉพาะเมื่อมีตารางอยู่ก่อน —
+            // สินเชื่อที่ผู้ใช้ยังไม่กด "สร้างตาราง" ไม่ควรได้ตารางโผล่มาเอง
+            var hasSchedule = await _db.LoanSchedules
+                .AnyAsync(x => x.CompanyId == companyId && x.LoanId == loanId);
+            if (hasSchedule)
+            {
+                await _db.SaveChangesAsync();   // ให้ generator เห็นอัตรา/ค่างวดใหม่
+                await GenerateScheduleAsync(companyId, loanId);
+            }
         }
 
         await _db.SaveChangesAsync();
