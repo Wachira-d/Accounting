@@ -640,6 +640,8 @@ const API = {
       getEmployeeLineStatus: (empId) => API.get(`${base}/payroll/employees/${empId}/line-status`),
       setPayrollPaymentAccount: (runId, empId, accountCode) => API.put(`${base}/payroll/runs/${runId}/employees/${empId}/payment-account`, { accountCode }),
       updatePayrollDetail: (runId, empId, body) => API.put(`${base}/payroll/runs/${runId}/employees/${empId}/detail`, body),
+      // กลับรายการจ่าย (Paid → Approved) เพื่อแก้ยอดย้อนหลังแล้วจ่ายใหม่
+      reopenPayrollRun: (runId, reason) => API.post(`${base}/payroll/runs/${runId}/reopen`, { reason }),
       getPayrollItems: () => API.get(`${base}/payroll/items`),
       createPayrollItem: (d) => API.post(`${base}/payroll/items`, d),
       getLeaves: (q = '') => API.get(`${base}/payroll/leaves${q}`),

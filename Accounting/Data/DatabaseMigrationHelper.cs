@@ -4394,6 +4394,12 @@ public static class DatabaseMigrationHelper
             // this, voiding a payroll silently zeroed each employee's
             // outstanding advance balance.
             """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "AdvanceRecovered" numeric(18,2) NOT NULL DEFAULT 0;""",
+            // PayrollRun กลับรายการจ่าย (Paid → Approved) — ร่องรอยว่าใครกลับ
+            // รายการเมื่อไรเพราะอะไร ใช้ทั้ง audit และแบนเนอร์เตือนบนหน้าจอว่า
+            // เอกสาร ภ.ง.ด.1/สปส.1-10/สลิป ที่แนบไว้ยังเป็นฉบับก่อนแก้
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ReopenedAt" timestamptz NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ReopenedBy" text NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ReopenReason" text NULL;""",
             // Employee tax allowances §47/47ทวิ — ละเอียดขึ้นจากที่เก่า
             // เป็น count × 30K เฉย ๆ (ครอบครัวใหญ่ over-withhold).
             """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "HasSpouseAllowance" boolean NOT NULL DEFAULT false;""",

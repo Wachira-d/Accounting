@@ -431,7 +431,44 @@ public class PayrollController : ControllerBase
 
     [HttpPost("runs/{runId:guid}/void")]
     public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId)
-    { await _service.VoidPayrollAsync(companyId, runId); return Ok(new ApiResponse<bool>(true, true)); }
+    {
+        // ยกเลิกรอบ = กลับ JE + คืนเงินทดรอง — ทำลายข้อมูลมากกว่าการ "อ่าน"
+        // รายละเอียดรอบเสียอีก แต่เดิม**ไม่มีด่านสิทธิ์เลย** ขณะที่ GetRun /
+        // UpdateDetail มี (บทเรียน "ด่านที่อ่อนกว่าแต่ทำได้มากกว่า คือช่องที่
+        // ใหญ่ที่สุด" — เวลาเพิ่ม endpoint ให้ถามว่าหน้าอื่นที่แตะข้อมูลชุด
+        // เดียวกันใช้ด่านอะไร แล้วใช้อย่างน้อยเท่ากัน)
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        try
+        {
+            await _service.VoidPayrollAsync(companyId, runId);
+            return Ok(new ApiResponse<bool>(true, true));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<bool>(false, false, ex.Message));
+        }
+    }
+
+    /// <summary>กลับรายการจ่ายเงินเดือน (Paid → Approved) เพื่อแก้ยอดย้อนหลัง
+    /// แล้วกด "จ่าย" ใหม่ — กลับ JE ลงวันเดียวกับ PayDate + คืนเงินทดรอง +
+    /// บันทึกเหตุผลลง AuditLog. บล็อกเมื่อนำส่ง สปส. แล้ว/งวดบัญชีปิดแล้ว.</summary>
+    [HttpPost("runs/{runId:guid}/reopen")]
+    public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> ReopenRun(
+        Guid companyId, Guid runId, [FromBody] ReopenPayrollRunRequest request)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        try
+        {
+            var res = await _service.ReopenPaidRunAsync(companyId, runId,
+                request.Reason, User.Identity?.Name ?? "");
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res,
+                "กลับรายการจ่ายแล้ว — รอบกลับไปสถานะ \"อนุมัติแล้ว\" แก้ยอดได้ จากนั้นกด \"จ่าย\" ใหม่"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<PayrollRunResponse>(false, null, ex.Message));
+        }
+    }
 
     // Reports — ภงด.1 exposes individual employee salary/WHT and is sensitive
     // payroll data, so it sits behind the same Payroll permission gate. ภงด.3

@@ -1230,10 +1230,11 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
-        // แก้แหล่งจ่ายได้เฉพาะก่อนจ่าย — Paid แล้ว JE ออกไปแล้ว ห้ามแก้ย้อนหลัง
-        if (run.Status != "Calculated" && run.Status != "Approved")
-            throw new InvalidOperationException(
-                "แก้แหล่งจ่ายได้เฉพาะรอบที่ยังไม่จ่าย (Calculated/Approved) เท่านั้น");
+        // แก้แหล่งจ่ายได้เฉพาะก่อนจ่าย — Paid แล้ว JE ออกไปแล้ว ต้องกลับรายการก่อน
+        // (กติกาเดียวกับแก้ยอด — อยู่ที่ Helpers/PayrollRunEditPolicy ตัวเดียว)
+        var (canSetAccount, setAccountReason) = PayrollRunEditPolicy.CanEditAmounts(run.Status);
+        if (!canSetAccount)
+            throw new InvalidOperationException(setAccountReason!);
 
         var detail = run.Details.FirstOrDefault(d => d.EmployeeId == employeeId)
             ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
@@ -1265,10 +1266,11 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
-        // แก้ยอดได้เฉพาะก่อนจ่าย — Paid แล้ว JE ออกไปแล้ว ต้อง void ก่อนถึงแก้
-        if (run.Status != "Calculated" && run.Status != "Approved")
-            throw new InvalidOperationException(
-                "แก้ยอดได้เฉพาะรอบที่ยังไม่จ่าย (Calculated/Approved) — ถ้าจ่ายแล้วต้อง void ก่อน");
+        // แก้ยอดได้เฉพาะรอบที่ยังไม่ลง GL — Paid แล้วต้อง "กลับรายการจ่าย"
+        // (ReopenPaidRunAsync) ให้ JE ถูกกลับก่อน ข้อความชี้ทางแก้อยู่ในนโยบาย
+        var (canEditAmt, editAmtReason) = PayrollRunEditPolicy.CanEditAmounts(run.Status);
+        if (!canEditAmt)
+            throw new InvalidOperationException(editAmtReason!);
 
         var d = run.Details.FirstOrDefault(x => x.EmployeeId == employeeId)
             ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
@@ -2445,35 +2447,7 @@ public class PayrollService : IPayrollService
             // Apply oldest-first (FIFO) so the same advances we paid DOWN
             // become outstanding again in the same order they were cleared.
             if (run.Status == "Paid")
-            {
-                var details = await _db.Set<PayrollDetail>()
-                    .Where(d => d.PayrollRunId == payrollRunId && d.CompanyId == companyId
-                        && d.AdvanceRecovered > 0)
-                    .Select(d => new { d.EmployeeId, d.AdvanceRecovered })
-                    .ToListAsync();
-                foreach (var d in details)
-                {
-                    var remaining = d.AdvanceRecovered;
-                    // Pull advances that this run could have touched — any
-                    // that still has ClearedAmount > 0 (we'll undo from those).
-                    var advances = await _db.Set<SalaryAdvance>()
-                        .Where(a => a.CompanyId == companyId && a.EmployeeId == d.EmployeeId
-                            && a.ClearedAmount > 0 && !a.IsDeleted)
-                        .OrderBy(a => a.RequestDate).ThenBy(a => a.Id)
-                        .ToListAsync();
-                    foreach (var adv in advances)
-                    {
-                        if (remaining <= 0) break;
-                        var refund = Math.Min(remaining, adv.ClearedAmount);
-                        adv.ClearedAmount -= refund;
-                        adv.OutstandingAmount += refund;
-                        // Re-open if it was fully cleared by this run.
-                        if (adv.Status == "Cleared" && adv.OutstandingAmount > 0)
-                            adv.Status = "Disbursed";
-                        remaining -= refund;
-                    }
-                }
-            }
+                await RestoreSalaryAdvancesAsync(companyId, payrollRunId, resetRecovered: false);
 
             run.Status = "Voided";
             run.UpdatedAt = DateTime.UtcNow;
@@ -2490,6 +2464,187 @@ public class PayrollService : IPayrollService
             title: $"ยกเลิกรอบจ่ายเงินเดือน {run.Month:D2}/{run.Year}",
             message: reversedNote,
             entityId: run.Id);
+    }
+
+    /// <summary>คืนยอดเงินทดรองที่รอบนี้หักไป — ใช้ร่วมกันระหว่าง "ยกเลิกรอบ"
+    /// (VoidPayrollAsync) กับ "กลับรายการจ่าย" (ReopenPaidRunAsync).
+    ///
+    /// เดิมตรรกะนี้อยู่ในตัว Void ตัวเดียว. ตอนเพิ่มเส้นทาง reopen การคัดลอกไป
+    /// วางอีกชุดคือ defect class ที่เรพนี้เจอบ่อยที่สุด ("รายการที่คัดลอกมาด้วย
+    /// มือ = drift แน่นอน") — ยอดเงินทดรองพลาด = ลูกหนี้พนักงานเพี้ยนถาวร
+    ///
+    /// FIFO ตามวันขอเบิก เพื่อให้ยอดที่ถูก "ล้าง" ไปกลับมาค้างในลำดับเดิม.
+    /// <paramref name="resetRecovered"/> = true สำหรับ reopen: หลังคืนแล้ว
+    /// AdvanceRecovered ต้องกลับเป็น 0 เพราะรอบนี้ยังไม่ได้หักอะไรอีกต่อไป
+    /// (ถ้าค้างค่าเดิมไว้ แล้วผู้ใช้กด "ยกเลิกรอบ" ทีหลัง จะคืนซ้ำรอบสอง);
+    /// Void ไม่ต้อง reset เพราะรอบเป็นสถานะปลายทางแล้ว ไม่มีใครอ่านต่อ</summary>
+    private async Task RestoreSalaryAdvancesAsync(Guid companyId, Guid payrollRunId, bool resetRecovered)
+    {
+        var details = await _db.Set<PayrollDetail>()
+            .Where(d => d.PayrollRunId == payrollRunId && d.CompanyId == companyId
+                && d.AdvanceRecovered > 0)
+            .ToListAsync();
+        foreach (var d in details)
+        {
+            var remaining = d.AdvanceRecovered;
+            // Pull advances that this run could have touched — any
+            // that still has ClearedAmount > 0 (we'll undo from those).
+            var advances = await _db.Set<SalaryAdvance>()
+                .Where(a => a.CompanyId == companyId && a.EmployeeId == d.EmployeeId
+                    && a.ClearedAmount > 0 && !a.IsDeleted)
+                .OrderBy(a => a.RequestDate).ThenBy(a => a.Id)
+                .ToListAsync();
+            foreach (var adv in advances)
+            {
+                if (remaining <= 0) break;
+                var refund = Math.Min(remaining, adv.ClearedAmount);
+                adv.ClearedAmount -= refund;
+                adv.OutstandingAmount += refund;
+                // Re-open if it was fully cleared by this run.
+                if (adv.Status == "Cleared" && adv.OutstandingAmount > 0)
+                    adv.Status = "Disbursed";
+                remaining -= refund;
+            }
+            if (resetRecovered) d.AdvanceRecovered = 0;
+        }
+    }
+
+    /// <summary>
+    /// กลับรายการจ่ายเงินเดือน (Paid → Approved) เพื่อ **แก้ยอดย้อนหลังแล้วจ่ายใหม่**
+    ///
+    /// ═══ ทำไมต้องมี ═══
+    /// เดิมรอบที่จ่ายแล้วแก้อะไรไม่ได้เลย และหน้าจอก็แค่ซ่อนปุ่มโดยไม่บอกเหตุผล
+    /// ทางเดียวที่เหลือคือ "ยกเลิกรอบ" (Voided = สถานะปลายทาง) แล้วสร้างรอบใหม่
+    /// ทั้งรอบ — ซึ่งทิ้งรอบร้างไว้ในทะเบียนและต้องคำนวณใหม่ทั้งหมด ทั้งที่ความ
+    /// ผิดพลาดจริงมักเป็นตัวเลขของพนักงานคนเดียว
+    ///
+    /// ═══ กลับรายการ "ให้ครบ" หมายถึงอะไร ═══
+    ///   1. กลับ JE ที่ลงตอนจ่าย — ใช้ **วันเดียวกับ PayDate** ไม่ใช่วันนี้:
+    ///      เพราะเราจะโพสต์ใหม่เข้างวดเดิมหลังแก้ ถ้ากลับรายการไปโผล่งวดอื่น
+    ///      งวดเดิมจะเหลือรายการค้างและงวดใหม่มีรายการเกิน (ต่างจาก Void ที่
+    ///      เหตุการณ์ "ถูกยกเลิกวันนี้" จริง ๆ จึงกลับรายการวันนี้ถูกแล้ว)
+    ///   2. คืนยอดเงินทดรองที่หักในรอบนี้ + ล้าง AdvanceRecovered
+    ///   3. ตัดสาย JournalEntryId ออกจาก run (ไม่งั้นปุ่ม "ดูรายการบัญชี" ยัง
+    ///      ชี้ไป JE ที่ถูกกลับรายการแล้ว)
+    ///   4. บันทึกว่าใครกลับรายการ เมื่อไร เพราะอะไร (AuditLog + field บน run)
+    ///
+    /// ═══ สิ่งที่ยัง "ค้าง" อยู่โดยตั้งใจ ═══
+    /// ไฟล์ ภ.ง.ด.1 / สปส.1-10 / สลิป ที่แนบไว้ตอนจ่ายยังเป็นฉบับก่อนแก้ จนกว่า
+    /// จะกด "จ่าย" ใหม่ (ตอนนั้น AutoGenerateFilingsAsync จะสร้างทับให้).
+    /// เราไม่ลบทิ้งตอนนี้เพราะ HR อาจส่งไฟล์ชุดเดิมออกไปแล้วและต้องเทียบได้ว่า
+    /// ฉบับที่ส่งไปต่างจากฉบับใหม่ตรงไหน — แต่ต้อง **ดังพอ**: แบนเนอร์บนหน้าจอ
+    /// อ่านจาก ReopenedAt (กติกา "ทำงานหลักไม่สำเร็จ/ยังไม่จบ ต้องดังบนตัวข้อมูล
+    /// ที่ผู้ใช้เปิดดู" — log ของเซิร์ฟเวอร์ไม่ใช่ช่องทางแจ้งผู้ใช้)
+    /// </summary>
+    public async Task<PayrollRunResponse> ReopenPaidRunAsync(Guid companyId, Guid payrollRunId,
+        string reason, string reopenedBy)
+    {
+        reason = (reason ?? "").Trim();
+        if (reason.Length < 5)
+            throw new InvalidOperationException(
+                "ต้องระบุเหตุผลที่กลับรายการจ่าย (อย่างน้อย 5 ตัวอักษร) — "
+                + "รายการนี้กลับ JE ที่ลงบัญชีไปแล้ว ต้องตอบผู้ตรวจสอบได้ว่าทำไม");
+
+        var run = await _db.Set<PayrollRun>()
+            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+
+        var (canReopen, blockReason) = PayrollRunEditPolicy.CanReopen(run.Status, run.SsoSettledAt);
+        if (!canReopen)
+            throw new InvalidOperationException(blockReason!);
+
+        // งวดบัญชีของ PayDate ต้องเปิดอยู่ — เพราะทั้งรายการกลับและรายการที่จะ
+        // โพสต์ใหม่หลังแก้ ต่างลงวันเดียวกับ PayDate ทั้งคู่ (ดูเหตุผลข้อ 1
+        // ข้างบน). เช็คเองที่นี่เพื่อให้ข้อความบอกทางแก้ แทนที่จะให้
+        // AccountingService โยน error ทั่วไปกลางทาง
+        var fp = await _db.FiscalPeriods.AsNoTracking()
+            .Where(p => p.CompanyId == companyId
+                && p.StartDate <= run.PayDate && p.EndDate >= run.PayDate)
+            .Select(p => new { p.Status, p.Name })
+            .FirstOrDefaultAsync();
+        if (fp != null && fp.Status == FiscalPeriodStatus.Closed)
+            throw new InvalidOperationException(
+                $"งวดบัญชี \"{fp.Name}\" ปิดแล้ว — กลับรายการจ่ายเข้างวดนี้ไม่ได้ "
+                + "กรุณาเปิดงวดก่อน (บัญชี → งวดบัญชี) แล้วลองใหม่");
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // ล็อกแถวแล้วอ่านซ้ำใต้ล็อก — กันสองคนกดพร้อมกันแล้วกลับรายการ JE
+            // ซ้ำสองรอบ / คืนเงินทดรองซ้ำ (รูปแบบเดียวกับ Pay และ Void)
+            var locked = await _db.Set<PayrollRun>()
+                .FromSqlRaw(
+                    """SELECT * FROM "PayrollRuns" WHERE "Id" = {0} AND "CompanyId" = {1} FOR UPDATE""",
+                    payrollRunId, companyId)
+                .FirstOrDefaultAsync();
+            if (locked == null || locked.Status != "Paid")
+                throw new InvalidOperationException(
+                    "รอบนี้ถูกเปลี่ยนสถานะไปแล้วโดยผู้ใช้งานคนอื่น — กรุณารีเฟรชหน้านี้");
+            run = locked;
+
+            var reversedJe = run.JournalEntryId;
+            if (run.JournalEntryId.HasValue && _accountingService != null)
+            {
+                await _accountingService.ReverseJournalEntryAsync(companyId, run.JournalEntryId.Value,
+                    reversalDate: run.PayDate,
+                    description: $"กลับรายการจ่ายเงินเดือน {run.PayrollNumber} ({run.Month:D2}/{run.Year}) — {reason}",
+                    systemTriggered: true);
+            }
+
+            await RestoreSalaryAdvancesAsync(companyId, payrollRunId, resetRecovered: true);
+
+            run.JournalEntryId = null;
+            run.Status = "Approved";
+            run.ReopenedAt = DateTime.UtcNow;
+            run.ReopenedBy = reopenedBy;
+            run.ReopenReason = reason;
+            run.UpdatedBy = reopenedBy;
+            run.UpdatedAt = DateTime.UtcNow;
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(reopenedBy, out var actorId) ? actorId : (Guid?)null,
+                Action = AuditAction.Update,
+                EntityType = "PayrollRun",
+                EntityId = run.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Status = "Paid",
+                    JournalEntryId = reversedJe,
+                    run.TotalNetPay,
+                }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Status = "Approved",
+                    Operation = "ReopenPaidRun",
+                    Reason = reason,
+                    ReversedJournalEntryId = reversedJe,
+                    ReversalDate = run.PayDate,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        _logger?.LogInformation(
+            "กลับรายการจ่ายเงินเดือน run {Run} ({Month}/{Year}) โดย {By} — เหตุผล: {Reason}",
+            payrollRunId, run.Month, run.Year, reopenedBy, reason);
+
+        await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+            title: $"กลับรายการจ่ายเงินเดือน {run.Month:D2}/{run.Year}",
+            message: $"ดำเนินการโดย {reopenedBy} · เหตุผล: {reason} · "
+                   + "รอบกลับไปสถานะ \"อนุมัติแล้ว\" แก้ยอดได้ แล้วต้องกด \"จ่าย\" ใหม่",
+            entityId: run.Id);
+
+        return MapToPayrollRunResponse(run);
     }
 
     /// <summary>
@@ -2685,17 +2840,43 @@ public class PayrollService : IPayrollService
                 .Select(cu => cu.UserId).FirstOrDefaultAsync();
         if (uploaderId == Guid.Empty) return;  // no user → can't attribute
 
-        var existing = await _db.FileAttachments.AsNoTracking()
+        // ไฟล์ชื่อเดียวกันที่แนบอยู่แล้ว = **ฉบับก่อนหน้าของเอกสารเดียวกัน**
+        //
+        // เดิมเป็น "มีชื่อนี้แล้ว → ข้าม" ซึ่งถูกตอนที่รอบหนึ่งจ่ายได้ครั้งเดียว
+        // ตลอดกาล. พอมีเส้นทาง "กลับรายการจ่าย → แก้ยอด → จ่ายใหม่"
+        // (ReopenPaidRunAsync) การข้ามกลายเป็นบั๊กร้าย: ภ.ง.ด.1 / สปส.1-10 /
+        // สลิป ที่แนบอยู่จะเป็น**ตัวเลขก่อนแก้ตลอดไป** แล้ว HR ยื่นผิดฉบับโดย
+        // ไม่มีอะไรบอก (defect class "ค่าที่ค้างอยู่ดูสมเหตุสมผลจนไม่มีใครเทียบ")
+        //
+        // ⚠️ แต่ **ห้ามลบฉบับเก่า** — FileAttachmentService.DeleteAsync ลบไฟล์
+        // จริงบนดิสก์ด้วย และฉบับเก่าอาจถูกยื่น/ส่งให้พนักงานไปแล้ว ต้องเก็บ
+        // 5 ปีตาม พ.ร.บ.การบัญชี ม.10 → **เปลี่ยนชื่อฉบับเก่า** ให้ติดป้าย
+        // "ก่อนแก้ไข-<วันเวลา>" แล้วปล่อยชื่อเดิมให้ฉบับใหม่ ทั้งสองฉบับอยู่
+        // ครบและแยกออกจากกันด้วยตาเปล่า
+        var existing = await _db.FileAttachments
             .Where(f => f.CompanyId == companyId && !f.IsDeleted
                 && f.EntityType == "PayrollRun" && f.EntityId == run.Id)
-            .Select(f => f.OriginalFileName)
             .ToListAsync();
-        var alreadyAttached = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+        var attachedByName = new Dictionary<string, FileAttachment>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in existing) attachedByName[f.OriginalFileName] = f;
 
         async Task AttachAsync(string fileName, string contentType, byte[] bytes)
         {
-            if (alreadyAttached.Contains(fileName) || bytes is null || bytes.Length == 0) return;
-            try { await _attachments.UploadBytesAsync(companyId, "PayrollRun", run.Id, fileName, contentType, bytes, uploaderId); }
+            if (bytes is null || bytes.Length == 0) return;
+            try
+            {
+                if (attachedByName.TryGetValue(fileName, out var old))
+                {
+                    var stamp = DateTime.UtcNow.AddHours(7).ToString("yyyyMMdd-HHmm");
+                    var ext = Path.GetExtension(fileName);
+                    var stem = Path.GetFileNameWithoutExtension(fileName);
+                    old.OriginalFileName = $"{stem} (ฉบับก่อนแก้ไข {stamp}){ext}";
+                    await _db.SaveChangesAsync();
+                    attachedByName.Remove(fileName);
+                }
+                await _attachments.UploadBytesAsync(companyId, "PayrollRun", run.Id,
+                    fileName, contentType, bytes, uploaderId);
+            }
             catch (Exception ex) { _logger?.LogWarning(ex, "Attach filing {File} failed for run {Run}", fileName, run.Id); }
         }
 
@@ -3443,15 +3624,25 @@ public class PayrollService : IPayrollService
         new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,
             i.FixedAmount, i.Percentage, i.IsTaxable, i.IsActive);
 
-    private static PayrollRunResponse MapToPayrollRunResponse(PayrollRun r) =>
-        new(r.Id, r.PayrollNumber, r.Name, r.Year, r.Month, r.PayDate,
+    private static PayrollRunResponse MapToPayrollRunResponse(PayrollRun r)
+    {
+        // ตัดสินสิทธิ์แก้ไขที่เซิร์ฟเวอร์ตัวเดียว (Helpers/PayrollRunEditPolicy)
+        // แล้วส่ง "เหตุผลพร้อมทางแก้" ไปด้วย — หน้าเว็บห้ามคำนวณเองและห้ามซ่อน
+        // ปุ่มเงียบ ๆ (กฎเหล็ก #4 A: resolver กลาง + ห้าม silent no-op)
+        var (canEdit, editReason) = PayrollRunEditPolicy.CanEditAmounts(r.Status);
+        var (canReopen, reopenReason) = PayrollRunEditPolicy.CanReopen(r.Status, r.SsoSettledAt);
+        return new(r.Id, r.PayrollNumber, r.Name, r.Year, r.Month, r.PayDate,
             r.Status, r.TotalGrossSalary, r.TotalDeductions, r.TotalNetPay,
             r.TotalWithholdingTax, r.TotalSocialSecurityEmployee,
             r.TotalSocialSecurityEmployer, r.EmployeeCount, r.CreatedAt,
             r.SsoSettledAt, r.SsoSettlementJournalEntryId, r.SsoFilingNumber,
             r.SsoLateFeeAmount, r.TotalWorkersCompensation,
             Details: null, ExternalSystem: r.ExternalSystem, ExternalRunRef: r.ExternalRunRef,
-            JournalEntryId: r.JournalEntryId);
+            JournalEntryId: r.JournalEntryId,
+            CanEditAmounts: canEdit, EditLockReason: editReason,
+            CanReopen: canReopen, ReopenBlockReason: reopenReason,
+            ReopenedAt: r.ReopenedAt, ReopenedBy: r.ReopenedBy, ReopenReason: r.ReopenReason);
+    }
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
         new(l.Id, l.EmployeeId, $"{e.FirstNameTh} {e.LastNameTh}",

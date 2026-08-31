@@ -197,6 +197,16 @@ public class PayrollRun : TenantEntity
     public string? SalaryExpenseAccountCode { get; set; }
     public string? NetPaymentAccountCode { get; set; }
 
+    // ── กลับรายการจ่าย (Paid → Approved) เพื่อแก้ยอดย้อนหลัง ──
+    // ProcessPaymentAsync ลง JE + สร้าง ภ.ง.ด.1/สปส.1-10/สลิป แนบไว้กับ run
+    // ⇒ การ "แก้ยอดหลังจ่าย" ไม่ใช่การแก้ field เฉย ๆ ต้องกลับรายการ JE +
+    // คืนเงินทดรองที่หักไว้ก่อน (ReopenPaidRunAsync). field ชุดนี้เก็บร่องรอย
+    // ว่าใครกลับรายการเมื่อไรเพราะอะไร — ใช้ทั้ง audit และแบนเนอร์เตือนบนจอ
+    // ว่า "เอกสารที่แนบไว้ยังเป็นฉบับก่อนแก้ จนกว่าจะกดจ่ายใหม่"
+    public DateTime? ReopenedAt { get; set; }
+    public string? ReopenedBy { get; set; }
+    public string? ReopenReason { get; set; }
+
     public ICollection<PayrollDetail> Details { get; set; } = new List<PayrollDetail>();
 }
 
