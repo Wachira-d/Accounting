@@ -202,7 +202,10 @@ public class ProductService : IProductService
         // id so the read-modify-write becomes serial per-product. Auto-
         // releases on transaction end (we wrap in a txn below).
         await using var txn = await _db.Database.BeginTransactionAsync();
-        var prodLockKey = HashCode.Combine(request.ProductId, "stock-adj");
+        // HashCode.Combine สุ่ม seed ต่อ process ⇒ สอง instance ล็อกคนละคีย์
+        // = ปรับสต็อกพร้อมกันแล้วยอดหายจริง (บั๊กที่ล็อกนี้ตั้งใจกันตั้งแต่ต้น)
+        var prodLockKey = Accounting.Helpers.AdvisoryLockKey.For(
+            Accounting.Helpers.AdvisoryLockKey.StockAdjust, request.ProductId.ToString("N"));
         await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", prodLockKey);
 
         var product = await _db.Products

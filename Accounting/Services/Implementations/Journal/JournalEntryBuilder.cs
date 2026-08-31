@@ -175,19 +175,6 @@ public class JournalEntryBuilder
     /// ⇒ ค่าคีย์ต่างกันทุกครั้งที่รีสตาร์ต ล็อกจึงไม่กันอะไรเลยข้าม instance</para>
     /// </summary>
     public static long JournalNumberLockKey(Guid companyId, string fullPrefix)
-    {
-        // FNV-1a 64-bit — deterministic ข้าม process/เครื่อง (ต่างจาก GetHashCode)
-        unchecked
-        {
-            ulong h = 14695981039346656037UL;
-            void Mix(string s)
-            {
-                foreach (var ch in s) { h ^= ch; h *= 1099511628211UL; }
-            }
-            Mix(companyId.ToString("N"));
-            Mix("|je-seq|");
-            Mix(fullPrefix);
-            return (long)h;
-        }
-    }
+        => Accounting.Helpers.AdvisoryLockKey.For(
+            companyId, Accounting.Helpers.AdvisoryLockKey.JournalSequence, fullPrefix);
 }

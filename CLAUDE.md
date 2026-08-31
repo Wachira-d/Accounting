@@ -557,6 +557,7 @@ python3 tools/undeclared_local_check.py # CS0103 ส่งตัวแปรท�
 python3 tools/admin_menu_gate_check.py # เมนู/endpoint ของแพลตฟอร์มที่ลูกค้ามองเห็น
 python3 tools/upload_route_check.py  # โฟลเดอร์อัปโหลดที่เขียนได้แต่ static handler ตอบ 404
 python3 tools/regex_line_span_check.py # \s เป็นตัวคั่นระหว่างตัวเลข → กลืนขึ้นบรรทัดใหม่
+python3 tools/advisory_lock_key_check.py # คีย์ advisory lock ที่สุ่มต่อ process → ล็อกข้ามเครื่องไม่ได้
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -890,6 +891,21 @@ awk brace-balance                      # ทุก .cs ที่แก้
   _(2) **แก้โค้ดอย่างเดียวไม่พอเมื่อของเสียถูก persist ไว้แล้ว** — แถว_
   _`VendorKnownGoodValues` ที่สะสมไว้ (1 แถว/1 ใบ) ยังทับใบใหม่ได้ต่อไป ต้องมี_
   _migration ลบทิ้งด้วย ซ้ำรอยเคส `OcrLearnedPatterns.ExtractionRegex`)_
+- **`HashCode.Combine` / `GetHashCode()` สุ่มต่อ process — ห้ามใช้เป็นคีย์ล็อก**
+  `pg_advisory_xact_lock` กันการแย่งทรัพยากรได้ก็ต่อเมื่อทุก instance คำนวณคีย์ได้
+  **ค่าเดียวกัน** แต่ .NET สุ่ม seed ของ Marvin hash ใหม่ทุก process ⇒ instance A
+  กับ B ได้คีย์คนละค่า ⇒ **ล็อกไม่กันกันเลย** ทั้งที่โค้ดอ่านแล้วเหมือนป้องกันแล้ว
+  — อาการโผล่เฉพาะตอนมีหลาย instance (เลขเอกสาร §86/4 ซ้ำ · เลข JE ซ้ำ · สต็อก
+  หายตอนปรับพร้อมกัน · รายการธนาคารถูกจับคู่สองครั้ง) จึงไม่เจอตอนเทสต์เครื่องเดียว
+  → คีย์ทุกตัวมาจาก `Helpers/AdvisoryLockKey.For(companyId, scope, part)` (FNV-1a)
+  _(บทเรียนซ้อน 3 ข้อ — (1) **รอบก่อนแก้ไปแล้ว 1 จุด แล้วเหลืออีก 7**: การแก้ที่_
+  _จุดที่ผู้ใช้รายงานอย่างเดียวคือ defect class "แก้ตัวเดียว เหลือที่เหลือ" ที่_
+  _เรพนี้เจอซ้ำที่สุด — หลังแก้ต้อง `grep` รูปแบบเดิมทั้งเรพเสมอ_
+  _(2) **เทสต์ "เรียกสองครั้งได้เท่ากัน" จับบั๊กนี้ไม่ได้** เพราะ `HashCode.Combine`_
+  _ก็ผ่านภายใน process เดียวกัน — ต้อง **hard-code ค่าคงที่จริง** ถึงจะพิสูจน์ว่า_
+  _ข้าม process ได้ (ดู `AdvisoryLockKeyTests`)_
+  _(3) นี่เป็นบั๊กที่ checker จับได้จริงเพราะเป็น **รูปทรงของโค้ด** ไม่ใช่ taint —_
+  _ต่างจากเคส `_db.Users` ที่จงใจไม่เขียน checker → `tools/advisory_lock_key_check.py`)_
 - **entity ที่ "ไม่ใช่ tenant entity" คือจุดที่ global query filter ช่วยไม่ได้**
   กฎ M ("ทุก query ต้องมี `CompanyId`") ถูกบังคับด้วย global query filter สำหรับ
   entity ที่มี `CompanyId` — แต่ **`User` ผูกกับบริษัทผ่าน `CompanyUser`** จึงไม่มี

@@ -38,7 +38,8 @@ public partial class FinancialManagementService : IFinancialManagementService
         // Race-safe: advisory lock + numeric MAX. CountAsync was wrong even
         // single-threaded — a voided ref leaves a gap that count+1 reuses
         // (= duplicate). Use the actual max suffix instead.
-        var lockKey = HashCode.Combine(companyId, prefix, ym);
+        var lockKey = Accounting.Helpers.AdvisoryLockKey.For(
+            companyId, Accounting.Helpers.AdvisoryLockKey.FinanceReference, $"{prefix}-{ym}");
         await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
         var suffixes = await _db.JournalEntries
             .Where(j => j.CompanyId == companyId && j.Reference != null && j.Reference.StartsWith(pat))

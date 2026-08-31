@@ -51,7 +51,9 @@ public static class DocumentNumberGenerator
         DateTime? documentDate)
     {
         var prefix = GetPrefix(type);
-        var lockKey = HashCode.Combine(companyId, prefix, "doc-seq");
+        // ⚠️ HashCode.Combine สุ่ม seed ต่อ process ⇒ สอง instance ได้คีย์คนละค่า
+        // = ล็อกกันข้ามเครื่องไม่ได้ ⇒ เลขเอกสารซ้ำ (§86/4 บังคับไม่ซ้ำ ไม่ขาดช่วง)
+        var lockKey = AdvisoryLockKey.For(companyId, AdvisoryLockKey.DocumentSequence, prefix);
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
 
         // เลขใช้ yyyyMMdd ของวันที่ "ตามปฏิทินไทย" (ThaiDate.YyyyMmDd) — แม้

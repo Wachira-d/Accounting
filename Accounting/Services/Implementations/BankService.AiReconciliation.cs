@@ -776,7 +776,9 @@ public partial class BankService
             // when this transaction commits/rolls back.
             foreach (var item in request.Items)
             {
-                var lockKey = HashCode.Combine(companyId, item.BankTransactionId, "bank-rec");
+                var lockKey = Accounting.Helpers.AdvisoryLockKey.For(
+                    companyId, Accounting.Helpers.AdvisoryLockKey.BankReconcile,
+                    item.BankTransactionId.ToString("N"));
                 await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
             }
 

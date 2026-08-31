@@ -2524,7 +2524,31 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
-_Last verified against codebase: 2026-08-31 (รอบ 107 — **รอบตรวจ PDPA/สิทธิ์:_
+_Last verified against codebase: 2026-08-31 (รอบ 108 — **ล็อกที่กันข้ามเครื่อง_
+_ไม่ได้จริง + control เข้ารหัสที่ไม่มีเทสต์**:_
+_(1) `pg_advisory_xact_lock` กันการแย่งทรัพยากรได้ก็ต่อเมื่อทุก instance คำนวณ_
+_คีย์ได้ค่าเดียวกัน — แต่ **7 จุด** ใช้ `HashCode.Combine(...)` ซึ่ง .NET สุ่ม_
+_seed ใหม่ทุก process ⇒ สอง instance ล็อกคนละคีย์ = ไม่กันกันเลย. รอบก่อนแก้ไป_
+_แล้ว 1 จุด (`JournalEntryBuilder`) แต่เหลือ: **เลขเอกสาร** (`DocumentNumber_
+_Generator` — §86/4 บังคับไม่ซ้ำ ไม่ขาดช่วง) · **ตัวออกเลข JE ตัวที่ 5 ใน_
+_`DocumentService`** ที่ยังไม่ถูกยุบทิ้งทั้งที่เขียนลง number space เดียวกัน_
+_(และเรียงด้วย string ⇒ พังที่เลข 5 หลัก) · เลขอ้างอิงการเงิน · จับคู่รายการ_
+_ธนาคาร 2 จุด · ปรับสต็อกรายสินค้า_
+_→ `Helpers/AdvisoryLockKey.For(companyId, scope, part)` (FNV-1a 64-bit) เป็น_
+_เจ้าของสูตรที่เดียว + scope const ประกาศรวมไว้กันพิมพ์ผิดจนกลายเป็นคนละล็อก ·_
+_`GetNextJournalEntryNumberAsync` ยุบเหลือ delegate ไป `JournalEntryBuilder`_
+_· checker ตัวที่ 19 `tools/advisory_lock_key_check.py` (ผ่าน negative test:_
+_ใส่บั๊กกลับ → จับได้ 1 จุด · ถอดออก → 0 จุด)_
+_· `AdvisoryLockKeyTests` **hard-code ค่าคงที่จริง** เพราะเทสต์แบบ "เรียกสองครั้ง_
+_ได้เท่ากัน" จับบั๊กนี้ไม่ได้ (HashCode.Combine ก็ผ่าน)_
+_(2) ชั้น encrypt-at-rest ของ PII (ม.26) ไม่มีเทสต์เลยสักตัว ทั้งที่กฎเหล็ก #4 G_
+_ระบุว่า "control ที่ไม่มีเทสต์ยืนยัน = ไม่มี control" → `PiiEncryptionRoundTrip_
+_Tests` ล็อก: round-trip · **idempotent** (EF save ซ้ำห้ามเข้ารหัสซ้อน) ·_
+_ciphertext ต่างกันทุกครั้ง (nonce สุ่ม) · คีย์ผิด/ข้อมูลถูกแก้ต้องถอดไม่ได้_
+_(GCM tag) · plaintext เก่าต้องไม่ถูกเข้าใจผิดว่าเป็น ciphertext · **ความยาว_
+_ต้องพอดี `HasMaxLength(200)`** — ข้อสุดท้ายมีระยะเผื่อ **ศูนย์** ที่ปลายล่าง:_
+_ค่า 1 ไบต์ให้ ciphertext ยาว 40 ตัวอักษรพอดีเท่าเกณฑ์ `IsEncrypted` (≥40));_
+_รอบ 107 — **รอบตรวจ PDPA/สิทธิ์:_
 _เส้น DSR เปิดโล่งสามชั้น**:_
 _(1) **ข้ามบริษัทได้** — `PdpaService` query `_db.Users.FirstOrDefaultAsync(u =>_
 _u.Id == userId)` **เปล่า ๆ** ทั้งสามเส้น (`GenerateAccessReportAsync` อ่าน ·_

@@ -42,7 +42,8 @@ public partial class BankService
         var bankTxnIds = request.BankTransactions.Select(b => b.ItemId).Distinct().ToList();
         foreach (var bid in bankTxnIds)
         {
-            var lockKey = HashCode.Combine(companyId, bid, "bank-rec");
+            var lockKey = Accounting.Helpers.AdvisoryLockKey.For(
+                companyId, Accounting.Helpers.AdvisoryLockKey.BankReconcile, bid.ToString("N"));
             await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
         }
         var bankTxns = await _db.Set<BankTransaction>()

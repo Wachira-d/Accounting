@@ -14045,43 +14045,18 @@ public partial class DocumentService : IDocumentService
             .Select(j => (Guid?)j.Id).FirstOrDefaultAsync();
     }
 
-    /// <summary>Generate next journal entry number for a given prefix (SV/UV/RV/PV/JV) per month.
-    /// Uses PostgreSQL advisory lock to prevent race conditions on concurrent inserts.</summary>
-    private async Task<string> GetNextJournalEntryNumberAsync(Guid companyId, string prefix)
-    {
-        var lockKey = HashCode.Combine(companyId, prefix, "je-seq");
-        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
-
-        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-        var pattern = $"{prefix}-{yearMonth}-";
-        var lastEntry = await _db.JournalEntries
-            .IgnoreQueryFilters()
-            .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
-            .OrderByDescending(j => j.EntryNumber)
-            .Select(j => j.EntryNumber)
-            .FirstOrDefaultAsync();
-        var nextSeq = 1;
-        if (lastEntry != null)
-        {
-            var lastPart = lastEntry[pattern.Length..];
-            if (int.TryParse(lastPart, out var n)) nextSeq = n + 1;
-        }
-        // ⚠️ ต้องนับ JE ที่ "Add ค้างใน change tracker ยังไม่ save" ด้วย —
-        // เส้นอนุมัติใบกำกับที่แปลงจากใบแจ้งหนี้: AutoPost เพิ่ม SV ใบใหม่แบบ
-        // ยังไม่ save แล้ว supersede ขอเลขให้ "ตัวกลับ" ของใบแจ้งหนี้เดิม
-        // (Sales → SV เดือนเดียวกัน) → query DB มองไม่เห็นใบที่ค้าง ⇒ ได้เลข
-        // ซ้ำ ⇒ unique (CompanyId, EntryNumber) ระเบิดตอน SaveChanges =
-        // **อนุมัติใบกำกับแปลงไม่ได้เลยทั้งระบบ** (500 อ้างอิง BE996D32)
-        var localMax = _db.JournalEntries.Local
-            .Where(j => j.CompanyId == companyId
-                && j.EntryNumber != null && j.EntryNumber.StartsWith(pattern)
-                && int.TryParse(j.EntryNumber[pattern.Length..], out _))
-            .Select(j => int.Parse(j.EntryNumber[pattern.Length..]))
-            .DefaultIfEmpty(0)
-            .Max();
-        if (localMax >= nextSeq) nextSeq = localMax + 1;
-        return $"{pattern}{nextSeq:D4}";
-    }
+    /// <summary>เลขสมุดรายวันถัดไปของ prefix นั้น (SV/UV/RV/PV/JV) ต่อเดือน
+    ///
+    /// ⚠️ เดิมที่นี่มี **ตัวออกเลขของตัวเอง** ซ้ำกับ
+    /// <c>JournalEntryBuilder.NextJournalNumberAsync</c> ทั้งที่เขียนลง number
+    /// space เดียวกัน และล็อกด้วย <c>HashCode.Combine</c> ซึ่ง<b>สุ่ม seed ต่อ
+    /// process</b> ⇒ คนละคีย์กับตัวกลาง ⇒ สองผู้ออกเลขไม่บล็อกกัน (ทั้งข้าม
+    /// instance และข้ามผู้ออก) ⇒ ชน unique (CompanyId, EntryNumber) =
+    /// "อนุมัติไม่สำเร็จ" แบบสุ่ม. อีกทั้งตัวเดิมเรียงด้วย string ⇒ พังที่เลข
+    /// 5 หลัก (JV-202608-10000 เรียงต่ำกว่า …-9999)
+    /// → ยุบทิ้ง ใช้ตัวกลางตัวเดียว (กฎ "resolver กลาง ห้ามคำนวณเอง")</summary>
+    private Task<string> GetNextJournalEntryNumberAsync(Guid companyId, string prefix)
+        => Journal.JournalEntryBuilder.NextJournalNumberAsync(_db, companyId, prefix, DateTime.UtcNow);
 
     /// <summary>Cap payer signature payload size — reject anything bigger
     /// than ~512 KB base64 (~384 KB raw image). Real signatures rendered at
