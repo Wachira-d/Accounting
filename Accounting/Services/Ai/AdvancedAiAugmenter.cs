@@ -73,10 +73,14 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
     private readonly AccountingDbContext _db;
     private readonly IAiOrchestrator _orchestrator;
     private readonly ILogger<AdvancedAiAugmenter> _logger;
+    /// <summary>Markov อันดับ 1 ของลำดับเอกสารต่อคู่ค้า — optional เพื่อไม่ให้
+    /// เทสต์/เส้นทางที่ไม่ได้ register ต้องแก้ตาม</summary>
+    private readonly Implementations.Ocr.DocumentWorkflowPredictor? _workflow;
 
     public AdvancedAiAugmenter(AccountingDbContext db, IAiOrchestrator orchestrator,
-        ILogger<AdvancedAiAugmenter> logger)
-    { _db = db; _orchestrator = orchestrator; _logger = logger; }
+        ILogger<AdvancedAiAugmenter> logger,
+        Implementations.Ocr.DocumentWorkflowPredictor? workflow = null)
+    { _db = db; _orchestrator = orchestrator; _logger = logger; _workflow = workflow; }
 
     public async Task<AdvancedAiResult> ReviewOcrAsync(Guid companyId, Guid scanResultId, CancellationToken ct = default)
     {
@@ -88,7 +92,12 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
 
             var company = await _db.Companies.AsNoTracking()
                 .Where(c => c.Id == companyId)
-                .Select(c => new { c.Id, c.Name, c.TaxId, c.Address, c.Phone, c.Email })
+                // ⚠️ เดิมส่ง Phone/Email ไปด้วยทั้งที่ system prompt ไม่มีข้อไหน
+                // ใช้เลย (งานคือ ยืนยันช่อง · แยกผู้ซื้อ/ผู้ขายจาก **เลขภาษี** ·
+                // ตรวจ VAT) = จ่าย token ฟรี + ส่ง PII ออกไปโดยไม่จำเป็น
+                // ที่อยู่เก็บไว้เพราะช่วยจับบล็อก "บริษัทเรา" บนกระดาษเมื่อ OCR
+                // อ่านเลขภาษีไม่ออก · เพิ่มรหัสสาขาเพราะ §86/4 บังคับ
+                .Select(c => new { c.Id, c.Name, c.TaxId, c.BranchCode, c.Address })
                 .FirstOrDefaultAsync(ct);
             // Company is registered + valid for the request, but stay
             // defensive — a brand-new tenant might race the AI lookup.
@@ -119,17 +128,43 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
             var extracted = new
             {
                 document_type = scan.DocumentType,
+                // ชนิดกระดาษ vs เอกสารที่จะสร้าง เป็นคนละคำถาม — prompt ขอทั้งคู่
+                scanned_document_type = scan.ScannedDocumentType,
+                target_document_type = scan.TargetDocumentType,
+                our_role = scan.OurRole,
                 document_number = scan.ExtractedDocumentNumber,
                 document_date = scan.ExtractedDate?.ToString("yyyy-MM-dd"),
                 vendor_name = scan.ExtractedVendorName,
                 vendor_tax_id = scan.ExtractedVendorTaxId,
+                // §86/4 บังคับสาขาทั้งสองฝั่ง และ prompt สั่งให้ตรวจ §86 —
+                // เดิมไม่ส่งเลย โมเดลจึงตรวจข้อนี้ไม่ได้
+                vendor_branch_code = scan.VendorBranchCode,
+                vendor_address = scan.VendorAddress,
                 buyer_name = scan.BuyerName,
                 buyer_tax_id = scan.BuyerTaxId,
+                buyer_branch_code = scan.BuyerBranchCode,
+                buyer_address = scan.BuyerAddress,
                 sub_total = scan.ExtractedSubTotal,
                 vat_amount = scan.ExtractedVatAmount,
+                discount_amount = scan.ExtractedDiscountAmount,
                 total_amount = scan.ExtractedTotalAmount,
+                has_wht = scan.HasWht,
+                wht_rate = scan.WhtRate,
                 confidence = scan.Confidence,
             };
+
+            // รายการที่สกัดได้แล้ว — output schema สั่งให้คืน line_items กลับมา
+            // พร้อม unit/qty/unit_price แต่เดิม**ไม่ส่ง input ให้เทียบเลย**
+            object? lineItems = null;
+            if (!string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
+            {
+                try
+                {
+                    lineItems = System.Text.Json.JsonSerializer
+                        .Deserialize<System.Text.Json.JsonElement>(scan.ExtractedItemsJson);
+                }
+                catch { /* JSON เสีย — ส่ง null ดีกว่าทำทั้ง call ล้ม */ }
+            }
 
             var req = OcrReviewPrompt.Build(
                 companyId, scanResultId,
@@ -138,7 +173,8 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 companyContext: company,
                 vendorHistory: vendorHistory,
                 localGuessTargetType: scan.TargetDocumentType ?? scan.DocumentType,
-                localConfidence: scan.Confidence);
+                localConfidence: scan.Confidence,
+                lineItems: lineItems);
             var resp = await _orchestrator.AskAsync(req, ct);
             // OcrReviewPrompt expects corrections / target_document / vendor_canonical /
             // line_items in the response — flagging any missing key surfaces
@@ -153,6 +189,138 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
         }
     }
 
+    /// <summary>
+    /// ดึงผังสินค้าที่ "น่าจะตรงกับบรรทัดในเอกสาร" มา cap รายการ พร้อมจำนวน
+    /// ทั้งหมดในระบบ (ไว้บอก AI ว่าลิสต์นี้เป็นแค่ subset — ไม่เจอ ≠ ไม่มี).
+    /// จัดอันดับด้วยการนับ token ที่ซ้ำกับคำอธิบายบรรทัด: ทั้งคำ (แยกด้วย
+    /// ช่องว่าง/เครื่องหมาย) และ substring ยาว ≥ 3 ตัวอักษร เพื่อรองรับภาษาไทย
+    /// ที่เขียนติดกันไม่มีช่องว่าง. เสมอกัน → เรียงตามรหัสเหมือนเดิม
+    /// (deterministic — ผลลัพธ์ต้องไม่ขึ้นกับลำดับที่ฐานคืนมา).
+    /// </summary>
+    private async Task<(object[] Products, int TotalCount, HashSet<string> Ids)> LoadRelevantProductsAsync(
+        Guid companyId, IReadOnlyList<string> lineDescriptions, int cap, CancellationToken ct)
+    {
+        var baseQuery = _db.Products.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.IsActive);
+
+        var total = await baseQuery.CountAsync(ct);
+
+        // โหลดมาจัดอันดับในหน่วยความจำได้ถึง 3,000 แถว (แถวละไม่กี่ฟิลด์) —
+        // เกินกว่านั้นถือว่าต้องใช้ vector search จริง ๆ ยังไม่มี จึงตัดตามรหัส
+        const int rankPoolCap = 3000;
+        var pool = await baseQuery
+            .OrderBy(p => p.Code)
+            .Take(rankPoolCap)
+            .Select(p => new
+            {
+                p.Id,
+                p.Code,
+                p.Name,
+                p.Unit,
+                p.ProductType,
+                p.CurrentStock,
+            })
+            .ToListAsync(ct);
+
+        static IEnumerable<string> Tokens(string s)
+        {
+            var cleaned = new string(s.Select(ch => char.IsLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : ' ').ToArray());
+            return cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                          .Where(t => t.Length >= 2);
+        }
+
+        var needleTokens = lineDescriptions.SelectMany(Tokens).Distinct().ToList();
+        // token ยาว ≥ 3 ใช้เทียบแบบ substring ด้วย (ไทยเขียนติดกัน "สกรูสแตนเลส")
+        var substringNeedles = needleTokens.Where(t => t.Length >= 3).ToList();
+
+        var selected = needleTokens.Count == 0
+            ? pool.Take(cap).ToList()
+            : pool
+                .Select(p =>
+                {
+                    var hay = ((p.Code ?? "") + " " + (p.Name ?? "")).ToLowerInvariant();
+                    var hayTokens = Tokens(hay).ToHashSet();
+                    var score = needleTokens.Count(t => hayTokens.Contains(t)) * 2
+                              + substringNeedles.Count(t => !hayTokens.Contains(t) && hay.Contains(t));
+                    return (Row: p, Score: score);
+                })
+                .OrderByDescending(x => x.Score)
+                .ThenBy(x => x.Row.Code, StringComparer.Ordinal)
+                .Take(cap)
+                .Select(x => x.Row)
+                .ToList();
+
+        var ranked = selected.Select(p => (object)new
+        {
+            id = p.Id.ToString(),
+            code = p.Code,
+            name = p.Name,
+            unit = p.Unit,
+            product_type = p.ProductType.ToString(),
+            current_stock = p.CurrentStock,
+        }).ToArray();
+
+        var ids = selected.Select(p => p.Id.ToString()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return (ranked, total, ids);
+    }
+
+    /// <summary>
+    /// ล้างคำตอบ StockDecision ให้เหลือเฉพาะค่าที่มีอยู่จริงในระบบ:
+    /// `suggested_account_code` ต้องอยู่ในผังบัญชีที่ส่งไปให้เลือก และ
+    /// `matched_product_id` ต้องเป็น GUID ของสินค้าที่อยู่ใน shortlist —
+    /// ไม่ตรง = ล้างค่าทิ้ง + ลด action ลงเป็น MatchUncertain ให้คนตัดสิน
+    /// (ห้ามปล่อยค่าที่ AI แต่งขึ้นไปเป็นปุ่มให้ผู้ใช้กด)
+    /// คืน JSON ที่ล้างแล้ว + ข้อความอธิบายว่าล้างอะไรไป
+    /// </summary>
+    internal static (string? Json, IReadOnlyList<string> Notes) ScrubStockDecisionJson(
+        string? rawJson, HashSet<string> validAccountCodes, HashSet<string> validProductIds)
+    {
+        var notes = new List<string>();
+        if (string.IsNullOrWhiteSpace(rawJson)) return (rawJson, notes);
+        try
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(rawJson);
+            if (node?["lines"] is not System.Text.Json.Nodes.JsonArray lines)
+                return (rawJson, notes);
+
+            var droppedAccounts = 0;
+            var droppedProducts = 0;
+            foreach (var lineNode in lines)
+            {
+                if (lineNode is not System.Text.Json.Nodes.JsonObject line) continue;
+
+                var code = line["suggested_account_code"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(code) && !validAccountCodes.Contains(code))
+                {
+                    line["suggested_account_code"] = null;
+                    line["suggested_account_code_rejected"] = code;
+                    droppedAccounts++;
+                }
+
+                var pid = line["matched_product_id"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(pid) && !validProductIds.Contains(pid))
+                {
+                    line["matched_product_id"] = null;
+                    line["match_confidence"] = null;
+                    line["action"] = "MatchUncertain";
+                    droppedProducts++;
+                }
+            }
+
+            if (droppedAccounts > 0)
+                notes.Add($"AI เสนอรหัสบัญชีที่ไม่มีในผังของบริษัท {droppedAccounts} บรรทัด — ระบบล้างทิ้ง กรุณาเลือกเอง");
+            if (droppedProducts > 0)
+                notes.Add($"AI อ้างรหัสสินค้าที่ไม่มีจริง {droppedProducts} บรรทัด — เปลี่ยนเป็น \"รอยืนยัน\" ให้แล้ว");
+            return (droppedAccounts + droppedProducts > 0 ? node!.ToJsonString() : rawJson, notes);
+        }
+        catch
+        {
+            // JSON เพี้ยน = ปล่อยผ่านให้ ValidateSchema เป็นคนฟ้อง (ไม่กลืน
+            // แบบเงียบ — schema warning จะขึ้นหน้าเว็บอยู่แล้ว)
+            return (rawJson, notes);
+        }
+    }
+
     public async Task<AdvancedAiResult> SuggestStockDecisionsAsync(Guid companyId, Guid scanResultId, CancellationToken ct = default)
     {
         try
@@ -162,43 +330,52 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
             if (scan == null || string.IsNullOrEmpty(scan.ExtractedItemsJson))
                 return Fallback(null);
 
-            // Pull product catalog (cap at 200 to control token count;
-            // larger catalogs would need vector-search pre-filter — not
-            // built yet, future enhancement).
-            var products = await _db.Products.AsNoTracking()
-                .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.IsActive)
-                .OrderBy(p => p.Code)
-                .Take(200)
-                .Select(p => new
-                {
-                    id = p.Id.ToString(),
-                    code = p.Code,
-                    name = p.Name,
-                    unit = p.Unit,
-                    product_type = p.ProductType.ToString(),
-                    current_stock = p.CurrentStock,
-                })
-                .ToListAsync(ct);
-
             // Parse the stored items JSON written by OcrService.
             object[] lineItems;
+            var lineDescriptions = new List<string>();
             try
             {
                 using var doc = JsonDocument.Parse(scan.ExtractedItemsJson);
                 lineItems = doc.RootElement.EnumerateArray()
-                    .Select((el, idx) => (object)new
+                    .Select((el, idx) =>
                     {
-                        line_index = idx,
-                        description = el.TryGetProperty("Description", out var d) ? d.GetString() : "",
-                        quantity = el.TryGetProperty("Quantity", out var q) && q.ValueKind == JsonValueKind.Number ? q.GetDecimal() : 1m,
-                        unit_price = el.TryGetProperty("UnitPrice", out var u) && u.ValueKind == JsonValueKind.Number ? u.GetDecimal() : 0m,
-                        amount = el.TryGetProperty("Amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0m,
+                        var desc = el.TryGetProperty("Description", out var d) ? (d.GetString() ?? "") : "";
+                        if (!string.IsNullOrWhiteSpace(desc)) lineDescriptions.Add(desc);
+                        return (object)new
+                        {
+                            line_index = idx,
+                            description = desc,
+                            quantity = el.TryGetProperty("Quantity", out var q) && q.ValueKind == JsonValueKind.Number ? q.GetDecimal() : 1m,
+                            unit_price = el.TryGetProperty("UnitPrice", out var u) && u.ValueKind == JsonValueKind.Number ? u.GetDecimal() : 0m,
+                            amount = el.TryGetProperty("Amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0m,
+                        };
                     })
                     .ToArray();
             }
             catch { lineItems = Array.Empty<object>(); }
 
             if (lineItems.Length == 0) return Fallback(null);
+
+            // ── ผังสินค้า: จัดอันดับตาม "ความเกี่ยวข้องกับบรรทัดในเอกสาร" ──
+            // เดิม OrderBy(Code).Take(200) = ตัดตามตัวอักษร ⇒ ร้านที่มีสินค้า
+            // เกิน 200 รายการ สินค้าที่ตรงกับใบนี้แทบไม่เคยติดอยู่ในลิสต์เลย
+            // (AI ตอบ CreateNew ทุกบรรทัด → สร้างสินค้าซ้ำในระบบ)
+            var (products, totalProductCount, validProductIds) =
+                await LoadRelevantProductsAsync(companyId, lineDescriptions, 200, ct);
+
+            // ผังบัญชีที่เลือกได้จริงของ tenant นี้ — prompt ขอ suggested_account_code
+            // มาตลอดแต่ไม่เคยมีใครส่งผังไปให้เลย
+            var candRows = await GlCandidateBuilder
+                .LoadAsync(_db, companyId, expenseAssetOnly: true, cap: 120, ct);
+            var candidateAccounts = candRows
+                .Select(c => (object)new { code = c.Code, name = c.Name, type = c.Type })
+                .ToArray();
+            var validCodes = candRows.Select(c => c.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var company = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId)
+                .Select(c => new { c.BusinessType, c.IndustryType })
+                .FirstOrDefaultAsync(ct);
 
             var docHeader = new
             {
@@ -211,12 +388,30 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
 
             var req = StockDecisionPrompt.Build(
                 companyId, scanResultId, docHeader,
-                lineItems, products.Cast<object>().ToArray());
+                lineItems, products,
+                companyIndustry: company == null
+                    ? "general"
+                    : $"{company.BusinessType} / {company.IndustryType}",
+                candidateAccounts: candidateAccounts,
+                productCatalogTotalCount: totalProductCount);
             var resp = await _orchestrator.AskAsync(req, ct);
+            // ── Anti-hallucination guard (กฎเหล็ก #1) ──────────────────
+            // เดิมคำตอบ AI ถูกส่งต่อไปหน้าเว็บดิบ ๆ ⇒ รหัสบัญชีที่ไม่มีใน
+            // ผังของ tenant นี้ และ GUID สินค้าที่ไม่มีจริง กลายเป็นปุ่ม
+            // "ใช้ค่านี้" ให้ผู้ใช้กด → ลงบัญชีผิด/ผูกสินค้าผิดตัว
+            var (scrubbedJson, scrubNotes) =
+                ScrubStockDecisionJson(resp.RawResponseJson, validCodes, validProductIds);
+
             // StockDecisionPrompt expects { lines: [...] } — per-line CreateNew/
             // Update/Match decisions. Without that key the UI's "apply decisions"
             // button has nothing to apply.
-            return ToResult(resp, "lines");
+            var result = ToResult(resp with { RawResponseJson = scrubbedJson }, "lines");
+            if (scrubNotes.Count > 0)
+                result = result with
+                {
+                    ComplianceFlags = result.ComplianceFlags.Concat(scrubNotes).ToList(),
+                };
+            return result;
         }
         catch (Exception ex)
         {
@@ -433,11 +628,47 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 total_amount = scan.ExtractedTotalAmount,
                 vat_amount = scan.ExtractedVatAmount,
             };
+            // ── local prior จากประวัติจริงของคู่ค้ารายนี้ ─────────────────
+            // `DocumentWorkflowPredictor` ถูก register ใน DI มาตลอดแต่ไม่มีใคร
+            // เรียก ⇒ โมเดล Markov ทั้งตัวตายในไฟล์ และ prompt นี้ (ที่ตั้งชื่อ
+            // LocalModelVersion ว่า "WorkflowMap-v1" อยู่แล้ว) ไม่เคยมี local
+            // prior ให้ short-circuit ตามกฎเหล็ก #1 เลย
+            object? workflowPrior = null;
+            string? localGuess = null;
+            decimal? localConfidence = null;
+            if (_workflow != null && scan.MatchedContactId is Guid contactId
+                && Enum.TryParse<DocumentType>(scan.DocumentType, out var currentType))
+            {
+                try
+                {
+                    var prior = await _workflow.PredictNextAsync(companyId, contactId, currentType);
+                    if (prior != null)
+                    {
+                        workflowPrior = new
+                        {
+                            next_type = prior.NextType.ToString(),
+                            probability = Math.Round(prior.Probability, 3, MidpointRounding.AwayFromZero),
+                            sample_size = prior.SampleSize,
+                            source = "ประวัติเอกสารจริงของคู่ค้ารายนี้ (Markov อันดับ 1)",
+                        };
+                        localGuess = prior.NextType.ToString();
+                        localConfidence = prior.Probability;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "workflow predictor ล้มเหลว — ส่ง prompt โดยไม่มี prior");
+                }
+            }
+
             var req = DocumentConversionPrompt.Build(
                 companyId, scanResultId,
                 scannedDocType: scan.DocumentType ?? "Unknown",
                 scannedSnapshot: snapshot,
-                ourRole: scan.OurRole ?? "Unknown");
+                ourRole: scan.OurRole ?? "Unknown",
+                workflowPrior: workflowPrior,
+                localGuess: localGuess,
+                localConfidence: localConfidence);
             var resp = await _orchestrator.AskAsync(req, ct);
             // DocumentConversionPrompt expects { targets: [...] } — viable
             // conversion targets with prefill strategies.

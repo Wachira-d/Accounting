@@ -436,9 +436,17 @@ builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistilla
 // CLAUDE.md "🛡️ Local-First Sovereignty"). One instance per feature, each
 // learns its own (input→answer) map from confirmed feedback + keeps a company
 // majority fallback so the feature still answers when the provider is off.
-// Free-form/bulk features (OcrFullReview, ImportColumnMatch, BulkBankStatementMatch,
+// Free-form/bulk features (ImportColumnMatch, BulkBankStatementMatch,
 // AgingExplanation, …) are intentionally excluded — a single-answer model is the
 // wrong shape for them; they keep their own heuristic fallbacks.
+//
+// ⚠️ OcrFullReview เคยอยู่ในลิสต์ยกเว้นนี้ด้วย ทั้งที่ CLAUDE.md กฎเหล็ก #1 ระบุ
+// ชื่อ OcrFullReviewDistillationModel ไว้ตรง ๆ ว่าต้องมี ⇒ ปิด provider ทุกตัวแล้ว
+// feature ตายเงียบ (หน้าเว็บขึ้น toast "AI ไม่ตอบ") = kill-switch test ไม่ผ่าน
+// และไม่มีใครเรียนจากคำตอบครูเลย จ่าย token ฟรีทุกครั้ง
+// → เขียน student แบบ bespoke ที่เรียน "รายช่อง" แทน single-answer (ดูไฟล์นั้น)
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.OcrFullReviewDistillationModel>();
 foreach (var genericFeatureKey in new[]
 {
     Accounting.Models.Enums.AiFeatureKey.DocumentTypeClassification,

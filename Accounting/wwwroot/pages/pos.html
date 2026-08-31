@@ -1555,7 +1555,7 @@
 
       calcTotals() {
         const subtotal = this.cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
-        const vat = Math.round(subtotal * 7 / 107 * 100) / 100;
+        const vat = Layout.vatFromInclusive(subtotal);   // ตัวคำนวณกลาง (ดู layout.js)
         const net = subtotal;
         document.getElementById('sumSubtotal').textContent = Layout.money(subtotal);
         document.getElementById('sumDiscount').textContent = '0.00';
@@ -2177,7 +2177,7 @@
 
       _buildReceiptSnapshot(orderData) {
         const subtotal = this.cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
-        const vat = Math.round(subtotal * 7 / 107 * 100) / 100;
+        const vat = Layout.vatFromInclusive(subtotal);   // ตัวคำนวณกลาง (ดู layout.js)
         const net = subtotal;
         const paid = this.paidTotal || net;
         return {

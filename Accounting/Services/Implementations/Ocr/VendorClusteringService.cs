@@ -40,7 +40,23 @@ public class VendorClusteringService
         _logger = logger;
     }
 
-    public record ClusterResult(int K, int VendorsClustered, int Iterations, TimeSpan Duration);
+    /// <summary>สรุปกลุ่มหนึ่งกลุ่ม — ขนาดกลุ่ม + ผังบัญชีเด่นของกลุ่ม
+    /// (มิติที่ centroid มีน้ำหนักสูงสุด) ไว้ให้แอดมินอ่านผลได้จริง</summary>
+    public record ClusterSummary(int ClusterIndex, int Size, IReadOnlyList<string> TopAccountCodes);
+
+    /// <param name="Persisted">ผลถูกบันทึกลงฐานหรือไม่ — ปัจจุบัน <b>false</b> เสมอ
+    /// (ยังไม่มีคอลัมน์เก็บ cluster). ต้องส่งออกไปให้ผู้เรียกรู้ เพราะเดิม
+    /// endpoint แอดมินขึ้นข้อความ "จัดกลุ่มสำเร็จ (4,812 vendors)" ทั้งที่
+    /// **ไม่ได้เก็บอะไรไว้เลย** และไม่ได้คืน assignment ให้ใครด้วย
+    /// = silent no-op ที่รายงานว่าสำเร็จ</param>
+    public record ClusterResult(
+        int K, int VendorsClustered, int Iterations, TimeSpan Duration,
+        IReadOnlyList<ClusterSummary> Clusters, bool Persisted = false)
+    {
+        public ClusterResult(int k, int vendorsClustered, int iterations, TimeSpan duration)
+            : this(k, vendorsClustered, iterations, duration,
+                   Array.Empty<ClusterSummary>(), false) { }
+    }
 
     /// <summary>Run a system-wide K-means pass. Reads every
     /// OcrVendorIntelligence row's DebitAccountBreakdownJson and writes
@@ -117,16 +133,32 @@ public class VendorClusteringService
             }
         }
 
-        // Persist cluster ids — we re-use TopLineKeywordsJson? No, we need
-        // a dedicated bag. Stick the cluster as part of UpdatedBy for now
-        // since we want a minimal-schema-impact MVP. (A proper Cluster
-        // column can be added later if we promote this.)
-        // Skipping persist in this MVP; service will return assignments to caller.
+        // ⚠️ ผลการจัดกลุ่ม **ยังไม่ถูกบันทึกลงฐาน** (ไม่มีคอลัมน์เก็บ) —
+        // เดิมโค้ดตรงนี้เขียนหมายเหตุว่า "service will return assignments to
+        // caller" แต่ ClusterResult ก็ไม่มีช่อง assignment ⇒ งาน K-means ทั้งรอบ
+        // ถูกทิ้งทันที ขณะที่ endpoint แอดมินขึ้นข้อความว่า "สำเร็จ N vendors"
+        // ตอนนี้อย่างน้อยต้องคืน **สรุปกลุ่ม** ให้ผู้เรียกเห็นของจริง และติดธง
+        // Persisted=false ไว้ให้ UI พูดความจริง
+        var summaries = new List<ClusterSummary>();
+        for (int c = 0; c < centroids.Length; c++)
+        {
+            var size = assignments.Count(x => x == c);
+            if (size == 0) continue;
+            var topDims = Enumerable.Range(0, dims.Length)
+                .OrderByDescending(d => centroids[c][d])
+                .Take(3)
+                .Where(d => centroids[c][d] > 0.0001)
+                .Select(d => dims[d])
+                .ToList();
+            summaries.Add(new ClusterSummary(c, size, topDims));
+        }
 
         sw.Stop();
-        _logger.LogInformation("Vendor clustering: K={K} vendors={N} iters={I} in {T}",
+        _logger.LogInformation(
+            "Vendor clustering: K={K} vendors={N} iters={I} in {T} — ผลไม่ได้ถูกบันทึกลงฐาน (ยังไม่มีคอลัมน์เก็บ)",
             k, vectors.Count, iter, sw.Elapsed);
-        return new ClusterResult(k, vectors.Count, iter, sw.Elapsed);
+        return new ClusterResult(k, vectors.Count, iter, sw.Elapsed,
+            summaries.OrderByDescending(x => x.Size).ToList(), Persisted: false);
     }
 
     private static Dictionary<string, int> ParseBreakdown(string? json)

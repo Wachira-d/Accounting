@@ -2394,7 +2394,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     private static bool IsAggregatorFlow(BankFlowCategory c) => BankFlowClassifier.IsAggregatorFlow(c);
 
     private static readonly System.Text.RegularExpressions.Regex _refCodeRx =
-        new(@"\b(REC|PAY|INV|BILL|PV|RV|JV|DN|CN|TI|BN)[-\s]?\d{2,}[-\d]*\b",
+        new(@"\b(REC|PAY|INV|BILL|PV|RV|JV|DN|CN|TI|BN)[- \t]?\d{2,}[-\d]*\b",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>Pull document/reference codes (REC260401001, PAY-202604-0001,

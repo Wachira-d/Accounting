@@ -41,7 +41,9 @@ public class DocumentBrandController : ControllerBase
         string? Address, string? AddressEn, string? Phone, string? Email, string? Website,
         string? PrimaryColor, string? SecondaryColor, Guid? DefaultTemplateId,
         string? FooterNotes, string? FooterNotesEn,
-        string? LegalNamePlacement, bool IsActive = true, int SortOrder = 0);
+        string? LegalNamePlacement, bool IsActive = true, int SortOrder = 0,
+        // ที่อยู่ผูกกับทะเบียน: "Company" | "Branch" | "Custom" (default = พฤติกรรมเดิม)
+        string? AddressSource = null, Guid? AddressSourceBranchId = null);
 
     public sealed record BrandResponse(
         Guid Id, string Name, string? NameEn, string? TagLine, string? TagLineEn,
@@ -49,28 +51,58 @@ public class DocumentBrandController : ControllerBase
         string? Address, string? AddressEn, string? Phone, string? Email, string? Website,
         string? PrimaryColor, string? SecondaryColor, Guid? DefaultTemplateId,
         string? FooterNotes, string? FooterNotesEn,
-        string LegalNamePlacement, bool IsActive, int SortOrder);
+        string LegalNamePlacement, bool IsActive, int SortOrder,
+        // echo กลับเพื่อ hydrate ฟอร์ม + ให้พรีวิวเดินลำดับเดียวกับ renderer จริง
+        string AddressSource = "Custom", Guid? AddressSourceBranchId = null,
+        // ที่อยู่ที่ **จะพิมพ์จริง** หลัง resolve แล้ว (Company/Branch/Custom) —
+        // หน้าเว็บใช้แสดงพรีวิวโดยไม่ต้องคำนวณลำดับเอง (กัน preview drift)
+        string? EffectiveAddress = null);
 
-    private static BrandResponse Map(DocumentBrand b) => new(
+    /// <param name="companyAddress">ที่อยู่จดทะเบียนของบริษัท (ประกอบแล้ว) — ใช้เป็น
+    /// ค่าตกกลับของ EffectiveAddress เพื่อให้พรีวิวบนหน้าเว็บตรงกับกระดาษจริง</param>
+    private static BrandResponse Map(DocumentBrand b, string? companyAddress) => new(
         b.Id, b.Name, b.NameEn, b.TagLine, b.TagLineEn, b.LogoPath, b.LogoUrl,
         b.Address, b.AddressEn, b.Phone, b.Email, b.Website,
         b.PrimaryColor, b.SecondaryColor, b.DefaultTemplateId,
-        b.FooterNotes, b.FooterNotesEn, b.LegalNamePlacement, b.IsActive, b.SortOrder);
+        b.FooterNotes, b.FooterNotesEn, b.LegalNamePlacement, b.IsActive, b.SortOrder,
+        BrandAddressSource.Normalize(b.AddressSource), b.AddressSourceBranchId,
+        BrandAddressSource.Resolve(b.AddressSource, b.Address, BranchAddressOf(b.AddressSourceBranch))
+            ?? companyAddress);
+
+    private static string? BranchAddressOf(Branch? br)
+        => br is { IsDeleted: false } && DocumentIssuerBranch.UseBranchAddress(br.Address)
+            ? Accounting.Services.Implementations.ThaiAddressFormatter.Format(br.Address, null, null, null, null,
+                br.SubDistrict, br.District, br.Province, br.PostalCode)
+            : null;
+
+    /// <summary>ที่อยู่จดทะเบียนของบริษัท ประกอบด้วยตัวประกอบกลางตัวเดียวกับ renderer</summary>
+    private async Task<string?> CompanyAddressAsync(Guid companyId, CancellationToken ct)
+    {
+        var c = await _db.Companies.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == companyId, ct);
+        return c == null ? null : Accounting.Services.Implementations.ThaiAddressFormatter.Format(
+            c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
+            c.SubDistrict, c.District, c.Province, c.PostalCode);
+    }
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<List<BrandResponse>>>> List(
         Guid companyId, [FromQuery] bool includeInactive = false, CancellationToken ct = default)
     {
-        var q = _db.DocumentBrands.AsNoTracking().Where(b => b.CompanyId == companyId && !b.IsDeleted);
+        var q = _db.DocumentBrands.AsNoTracking()
+            // สาขาที่ผูกที่อยู่ไว้ — ไม่ include = EffectiveAddress ตกกลับเป็นของบริษัทเงียบ ๆ
+            .Include(b => b.AddressSourceBranch)
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted);
         if (!includeInactive) q = q.Where(b => b.IsActive);
         var rows = await q.OrderBy(b => b.SortOrder).ThenBy(b => b.Name).ToListAsync(ct);
-        return Ok(new ApiResponse<List<BrandResponse>>(true, rows.Select(Map).ToList()));
+        var coAddr = await CompanyAddressAsync(companyId, ct);
+        return Ok(new ApiResponse<List<BrandResponse>>(true, rows.Select(r => Map(r, coAddr)).ToList()));
     }
 
     /// <summary>ชนิดเอกสารที่ยอมให้ชื่อทางการค้าขึ้นเป็นชื่อหลัก — หน้าเว็บใช้
     /// ตัดสินว่าจะโชว์ตัวเลือกแบรนด์แบบ "ขึ้นหัวเลย" หรือแบบ "โลโก้/สีเท่านั้น"</summary>
     [HttpGet("policy")]
-    public ActionResult<ApiResponse<object>> Policy()
+    public async Task<ActionResult<ApiResponse<object>>> Policy(Guid companyId, CancellationToken ct)
     {
         var rows = Enum.GetValues<DocumentType>()
             .Select(t => new
@@ -83,9 +115,14 @@ public class DocumentBrandController : ControllerBase
         return Ok(new ApiResponse<object>(true, new
         {
             types = rows,
+            // ที่อยู่จดทะเบียนที่ **server จะพิมพ์จริง** บนเอกสารภาษี — ส่งให้หน้าเว็บ
+            // ใช้ตรง ๆ (ประกอบด้วยตัวประกอบกลางตัวเดียวกับ renderer) ห้ามให้หน้าเว็บ
+            // ต่อสตริงที่อยู่เอง มิฉะนั้นพรีวิวกับกระดาษจะสะกดไม่เหมือนกัน
+            companyAddress = await CompanyAddressAsync(companyId, ct),
             // ข้อความอธิบายให้หน้าเว็บใช้ตรง ๆ — คำอธิบายกฎหมายอยู่ที่เดียว
             note = "ใบกำกับภาษี/ใบเพิ่มหนี้/ใบลดหนี้/ใบเสร็จรับเงิน ต้องขึ้นชื่อนิติบุคคล"
-                 + "เป็นตัวหลักตาม ป.รัษฎากร §86/4 — แบรนด์ยังใช้โลโก้ สี และที่อยู่หน้าร้านได้",
+                 + "เป็นตัวหลักตาม ป.รัษฎากร §86/4 และ **ที่อยู่ต้องเป็นที่ตั้งสถานประกอบการ"
+                 + "ที่ออกใบ** (ป.86/2542) — แบรนด์ยังใช้โลโก้และสีได้",
         }));
     }
 
@@ -100,7 +137,9 @@ public class DocumentBrandController : ControllerBase
         Apply(b, req);
         _db.DocumentBrands.Add(b);
         await _db.SaveChangesAsync(ct);
-        return Ok(new ApiResponse<BrandResponse>(true, Map(b), "บันทึกชื่อทางการค้าแล้ว"));
+        await _db.Entry(b).Reference(x => x.AddressSourceBranch).LoadAsync(ct);
+        return Ok(new ApiResponse<BrandResponse>(true, Map(b, await CompanyAddressAsync(companyId, ct)),
+            "บันทึกชื่อทางการค้าแล้ว"));
     }
 
     [HttpPut("{brandId:guid}")]
@@ -116,7 +155,9 @@ public class DocumentBrandController : ControllerBase
         Apply(b, req);
         b.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        return Ok(new ApiResponse<BrandResponse>(true, Map(b), "บันทึกแล้ว"));
+        await _db.Entry(b).Reference(x => x.AddressSourceBranch).LoadAsync(ct);
+        return Ok(new ApiResponse<BrandResponse>(true, Map(b, await CompanyAddressAsync(companyId, ct)),
+            "บันทึกแล้ว"));
     }
 
     [HttpDelete("{brandId:guid}")]
@@ -208,7 +249,9 @@ public class DocumentBrandController : ControllerBase
         try { if (!string.IsNullOrEmpty(oldPath) && oldPath != b.LogoPath && System.IO.File.Exists(oldPath)) System.IO.File.Delete(oldPath); }
         catch { /* ไฟล์เก่าหาย/ถูกล็อก — ไม่ใช่เหตุให้การอัปโหลดล้ม */ }
 
-        return Ok(new ApiResponse<BrandResponse>(true, Map(b), "อัปโหลดโลโก้แล้ว"));
+        await _db.Entry(b).Reference(x => x.AddressSourceBranch).LoadAsync(ct);
+        return Ok(new ApiResponse<BrandResponse>(true, Map(b, await CompanyAddressAsync(companyId, ct)),
+            "อัปโหลดโลโก้แล้ว"));
     }
 
     /// <summary>พรีวิวหัวเอกสารแบบสด — หน้าตั้งค่าเรียกเพื่อโชว์ว่าใบชนิดนี้
@@ -270,6 +313,10 @@ public class DocumentBrandController : ControllerBase
         b.LogoUrl = Blank(r.LogoUrl);
         b.Address = Blank(r.Address);
         b.AddressEn = Blank(r.AddressEn);
+        // ค่านอกลิสต์ตกไป "Custom" (พฤติกรรมเดิม) — ผูกสาขาได้เฉพาะโหมด Branch
+        var asrc = (r.AddressSource ?? "").Trim();
+        b.AddressSource = asrc is "Company" or "Branch" ? asrc : "Custom";
+        b.AddressSourceBranchId = b.AddressSource == "Branch" ? r.AddressSourceBranchId : null;
         b.Phone = Blank(r.Phone);
         b.Email = Blank(r.Email);
         b.Website = Blank(r.Website);

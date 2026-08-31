@@ -112,7 +112,7 @@ public static class FieldPatternLibrary
     {
         var results = new List<FieldCandidate>();
         // Match 13 digits with optional separators
-        var pattern = @"\b(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})\b";
+        var pattern = Accounting.Helpers.ThaiTaxId.Pattern;
         foreach (Match m in Regex.Matches(text, pattern))
         {
             var raw = m.Groups[1].Value;
@@ -202,9 +202,9 @@ public static class FieldPatternLibrary
         // Thai phones: 02-XXX-XXXX or 0XX-XXX-XXXX or +66 X XXXX XXXX
         var patterns = new[]
         {
-            @"\b(0\d{1,2}[-\s]?\d{3}[-\s]?\d{4})\b",        // 02-XXX-XXXX or 0XX-XXX-XXXX
+            @"\b(0\d{1,2}[- \t]?\d{3}[- \t]?\d{4})\b",        // 02-XXX-XXXX or 0XX-XXX-XXXX
             @"\b(0\d{8,9})\b",                                // 0XXXXXXXXX (no separators)
-            @"\b(\+66[-\s]?\d{1,2}[-\s]?\d{3}[-\s]?\d{4})\b", // +66 format
+            @"\b(\+66[- \t]?\d{1,2}[- \t]?\d{3}[- \t]?\d{4})\b", // +66 format
         };
         foreach (var p in patterns)
         {
@@ -548,7 +548,7 @@ public static class FieldPatternLibrary
     {
         var results = new List<FieldCandidate>();
         foreach (Match m in Regex.Matches(text,
-            @"(?:เลขบัญชี|เลขที่บัญชี|Account\s*No\.?|A/C\s*No\.?)\s*[:：]?\s*(\d{1,3}[-\s]?\d{1,3}[-\s]?\d{1,4}[-\s]?\d{1,4})",
+            @"(?:เลขบัญชี|เลขที่บัญชี|Account\s*No\.?|A/C\s*No\.?)\s*[:：]?\s*(\d{1,3}[- \t]?\d{1,3}[- \t]?\d{1,4}[- \t]?\d{1,4})",
             RegexOptions.IgnoreCase))
         {
             var raw = m.Groups[1].Value;

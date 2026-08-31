@@ -96,6 +96,38 @@ public static class ThaiTextNormalizer
         return current;
     }
 
+    /// <summary>
+    /// ย่อข้อความให้ "ตาเห็นเป็นคำเดียวกัน = เทียบติด" ก่อนค้นคำสำคัญบนกระดาษ
+    ///
+    /// ทำสี่อย่าง: <see cref="Normalize"/> (ยุบช่องว่างระหว่างอักขระไทย + ซ่อม
+    /// วรรณยุกต์ที่ Tesseract ทำหล่น) → NFC → นิคหิต+สระอา (ํ + า) รวมเป็นสระอำ
+    /// ซึ่ง NFC ไม่รวมให้ → ตัดช่องว่างและตัวคั่นทิ้ง แล้วเป็นตัวพิมพ์เล็ก
+    ///
+    /// <para>ทำไมต้องมี: กฎที่ 1 ของ RdComplianceValidator ค้นคำว่า "ใบกำกับภาษี"
+    /// ด้วย <c>raw.Contains(...)</c> บนข้อความ OCR ดิบ ๆ ⇒ หัวกระดาษที่พิมพ์
+    /// "ต้นฉบับใบส่งสินค้า/ต้นฉบับใบกำกับภาษี" แต่ OCR คืนมาเป็น "ใบกํากับภาษี"
+    /// (นิคหิตแยก) หรือมีช่องว่างแทรก ถูกสรุปว่า "ไม่พบคำว่าใบกำกับภาษี" ทั้งที่
+    /// อยู่บนกระดาษเต็ม ๆ — defect class เดียวกับที่ DocumentIssuerIdentity
+    /// .NormalizeTitle แก้ไปแล้วฝั่งหัวเอกสารที่เราพิมพ์เอง (บั๊กจริง
+    /// PI-20260820-0005)</para>
+    ///
+    /// <para><b>ต้องย่อทั้งสองฝั่ง</b> — ทั้งข้อความและคำที่จะค้น ไม่งั้น
+    /// "tax invoice" (มีช่องว่าง) จะหาไม่เจอในข้อความที่ตัดช่องว่างไปแล้ว</para>
+    /// </summary>
+    public static string SquashForKeywordMatch(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        var t = Normalize(text)
+            .Normalize(System.Text.NormalizationForm.FormC)
+            // นิคหิต + สระอา → สระอำ (NFC ไม่รวมให้) — เขียนเป็น \u หลบปัญหา
+            // encoding ของ editor เหมือน DocumentIssuerIdentity.NormalizeTitle
+            .Replace("\u0E4D\u0E32", "\u0E33")
+            .ToLowerInvariant();
+        return new string(t
+            .Where(c => !char.IsWhiteSpace(c) && c is not ('-' or '_' or '.' or '/' or '\\' or '·' or '|' or ':'))
+            .ToArray());
+    }
+
     /// <summary>Quick test: is most of the text Thai? Caller can use this to
     /// skip normalization for English-only OCR results (very rare in this
     /// system but cheap to check).</summary>

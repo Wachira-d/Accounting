@@ -85,7 +85,10 @@ Respond ONLY as JSON:
         object companyContext,            // tax ID, address, accounts of record
         object? vendorHistory,            // last N docs from same vendor (or null)
         string? localGuessTargetType,
-        decimal? localConfidence)
+        decimal? localConfidence,
+        // รายการที่ OCR สกัดได้แล้ว (description/qty/unit/unitPrice/amount/
+        // accountCode) — จำเป็นเพราะ output schema สั่งให้คืน line_items กลับมา
+        object? lineItems = null)
     {
         // Truncate raw text — header + summary lines carry 95% of the
         // signal anyway. 3500 chars covers typical 1-2 page invoices.
@@ -95,6 +98,12 @@ Respond ONLY as JSON:
             task = "ocr_full_review",
             ocr_raw_text = snippet,
             local_extraction = extractedSnapshot,
+            // ── รายการที่สกัดได้แล้ว — เดิม**ไม่ได้ส่งเลย** ──
+            // แต่ schema ที่สั่งให้ตอบกลับมีบล็อก line_items ครบทั้ง quantity/
+            // unit/unit_price/suggested_account_code และกฎข้อ 8 ทั้งข้อพูดเรื่อง
+            // line_items[].unit ⇒ โมเดลต้องสร้างทุกอย่างใหม่จากข้อความ 3,500
+            // ตัวอักษรโดยไม่มีฐานเทียบ (จะแก้ให้ถูกได้อย่างไรถ้าไม่เห็นของเดิม)
+            local_line_items = lineItems,
             our_company = companyContext,
             vendor_history = vendorHistory,
             local_model = new { pick = localGuessTargetType, confidence = localConfidence },
@@ -112,6 +121,11 @@ Respond ONLY as JSON:
             SourceEntityId = scanResultId,
             CacheTtlOverrideDays = 1,
             MaxTokensOverride = 1500,
+            // งานนี้สั่งให้ "เทียบเลขผู้เสียภาษีของเรากับที่อยู่บนกระดาษ แล้วแก้
+            // ให้ถูก" (กฎข้อ 3 + 4 ของ system prompt) — ถ้าปิดบัง โมเดลจะได้
+            // 0xxxxxxxxx5 เทียบกับ 0xxxxxxxxx5 แล้วคืนค่าที่ปิดบังกลับมา
+            // ซึ่งหน้าเว็บเคยเขียนทับลงช่องจริง = ทำข้อมูลเสียหาย
+            AllowTaxIdInPrompt = true,
         };
     }
 }
@@ -150,6 +164,21 @@ Match heuristics for the user's example:
 - ""สกรู M6 ยาว 20mm"" ≈ ""สกรู 1/4 นิ้ว ยาว 3/4 นิ้ว"" because M6 ~= 1/4"" (6mm ≈ 6.35mm) and 20mm ≈ 3/4"" (19.05mm).
 - When in doubt, MatchUncertain — user confirms.
 
+HARD CONSTRAINTS (a violated answer is discarded):
+- `suggested_account_code` MUST be copied verbatim from `candidate_accounts[].code`
+  in the payload. Never invent a code, never guess a code that ""looks right"" for
+  the Thai standard chart — this tenant's chart is the only chart that exists.
+  If nothing in `candidate_accounts` fits, return null and say why in
+  `equivalence_note`.
+- `matched_product_id` MUST be a GUID copied from `product_catalog[].id`.
+- `product_catalog` is a RELEVANCE-RANKED SUBSET, not the whole catalogue. A
+  missing product means ""not in this shortlist"", NOT ""does not exist"" — when the
+  description clearly names a stock item you cannot find, answer MatchUncertain
+  rather than CreateNew.
+- `company_industry` tells you what this tenant sells. For a trading/manufacturing
+  tenant, goods bought for resale are Inventory; for a service tenant the same
+  line is usually Supply.
+
 Respond ONLY as JSON:
 {
   ""primary"": ""ok"",
@@ -177,7 +206,14 @@ Respond ONLY as JSON:
         object docHeader,
         object[] lineItems,
         object[] productCatalog,
-        string companyIndustry = "general")
+        string companyIndustry = "general",
+        // ⚠️ prompt ขอ suggested_account_code มาตั้งแต่วันแรก แต่ผู้เรียกไม่เคย
+        // ส่งผังบัญชีของ tenant ไปเลย ⇒ AI ต้อง "เดา" รหัสจากผังมาตรฐานไทย
+        // ซึ่งอาจไม่มีอยู่ในผังของลูกค้ารายนี้ (anti-hallucination guard ฝั่งรับ
+        // จะทิ้งคำตอบทุกครั้ง = จ่าย token ฟรี). ส่งรายการจริงไปให้เลือก
+        object[]? candidateAccounts = null,
+        // จำนวนสินค้าทั้งหมดในระบบ — บอก AI ว่า product_catalog เป็นแค่ subset
+        int? productCatalogTotalCount = null)
     {
         var payload = new
         {
@@ -186,6 +222,13 @@ Respond ONLY as JSON:
             document = docHeader,
             line_items = lineItems,
             product_catalog = productCatalog,
+            product_catalog_note = new
+            {
+                shown = productCatalog.Length,
+                total_in_system = productCatalogTotalCount ?? productCatalog.Length,
+                ranking = "relevance to the line descriptions above (token overlap), not alphabetical",
+            },
+            candidate_accounts = candidateAccounts ?? Array.Empty<object>(),
             thai_tax_rules = new[]
             {
                 "Fixed asset threshold: ≥฿50,000 + life >1 year (durable goods below that still capitalize)",
@@ -373,10 +416,20 @@ Respond ONLY as JSON:
   ""suggested_actions"": []
 }";
 
+    /// <param name="workflowPrior">สิ่งที่ "ประวัติจริงของคู่ค้ารายนี้" บอกว่าเอกสาร
+    /// ถัดไปมักเป็นอะไร — มาจาก <c>DocumentWorkflowPredictor</c> (Markov อันดับ 1)
+    ///
+    /// <para>⚠️ ช่องนี้ว่างมาตลอดทั้งที่ <c>LocalModelVersion</c> ของ prompt นี้
+    /// ชื่อ "WorkflowMap-v1" อยู่แล้ว: <c>DocumentWorkflowPredictor</c> ถูก
+    /// register ใน DI แต่ <b>ไม่มีใครเรียกเลยทั้งเรพ</b> ⇒ โมเดลทั้งตัวตายในไฟล์
+    /// และ feature นี้ก็ไม่มี local prior ให้ short-circuit ตามกฎเหล็ก #1</para></param>
     public static AiRequest Build(
         Guid companyId, Guid scanResultId,
         string scannedDocType, object scannedSnapshot,
-        string ourRole)
+        string ourRole,
+        object? workflowPrior = null,
+        string? localGuess = null,
+        decimal? localConfidence = null)
     {
         var payload = new
         {
@@ -384,6 +437,10 @@ Respond ONLY as JSON:
             scanned_doc_type = scannedDocType,
             our_role = ourRole,
             scanned_snapshot = scannedSnapshot,
+            // ประวัติจริงชนะการเดาจากชนิดเอกสารล้วน ๆ — คู่ค้าบางรายไม่เคยเดินตาม
+            // เส้นทางมาตรฐาน (เช่น ออกใบกำกับแล้วจบ ไม่เคยมีใบเสร็จแยก)
+            workflow_prior = workflowPrior,
+            local_model = new { pick = localGuess, confidence = localConfidence },
         };
         return new AiRequest
         {
@@ -391,13 +448,106 @@ Respond ONLY as JSON:
             CompanyId = companyId,
             SystemPrompt = SystemPrompt,
             UserPromptJson = JsonSerializer.Serialize(payload),
-            LocalPrimaryAnswer = null,
-            LocalConfidence = null,
+            LocalPrimaryAnswer = localGuess,
+            LocalConfidence = localConfidence,
             LocalModelVersion = "WorkflowMap-v1",
             SourceEntityType = "OcrScanResult",
             SourceEntityId = scanResultId,
             CacheTtlOverrideDays = 30,
             MaxTokensOverride = 500,
+        };
+    }
+}
+
+/// <summary>
+/// แตก "รายการสินค้า/บริการ" ออกจากข้อความดิบบนกระดาษ เมื่อ engine ที่ใช้
+/// ไม่คืนตารางรายการมาให้เลย
+///
+/// ═══ ทำไมต้องมี ═══
+/// เส้นทาง Tesseract แบบฝัง (ตัวสำรองเมื่อ Azure DI / python service ใช้ไม่ได้)
+/// คืนแต่ข้อความล้วน ไม่มีโครงตาราง ⇒ <c>Items</c> ว่าง<b>ทุกใบ</b> แล้วเอกสาร
+/// ที่สร้างได้มีบรรทัดสรุปใบเดียวจากยอดหัวกระดาษ — ลงบัญชีได้ แต่แยกหมวด
+/// ค่าใช้จ่ายไม่ได้ และรายงานสินค้า/วัตถุดิบ §87(3) ใช้ไม่ได้
+///
+/// ═══ ด่านกันมั่ว ═══
+/// ผู้เรียก<b>ต้อง</b>ตรวจว่าผลรวมของบรรทัดที่ได้กลับมาลงตัวกับยอดที่อ่านได้
+/// จากหัวกระดาษก่อนรับไปใช้ — ไม่ลงตัว = ทิ้งทั้งชุด ไม่ใช่รับบางบรรทัด
+/// (ดู <c>OcrService.TrySplitLineItemsWithAiAsync</c>)
+/// </summary>
+public static class OcrLineSplitPrompt
+{
+    public const string SystemPrompt = @"You are reading the raw OCR text of a Thai purchase/sales document. The OCR engine returned plain text with NO table structure. Reconstruct the line items.
+
+HARD RULES:
+1. Every line you return MUST appear on the paper. NEVER invent a product, a
+   quantity or a price to make the arithmetic work.
+2. `amount` for each line = what the paper shows for that line. If the paper
+   shows only a total per line, set quantity=1 and unit_price=amount.
+3. The sum of all `amount` values MUST equal `known_totals.sub_total` when that
+   is given (or `known_totals.total_amount` when the prices already include
+   VAT). If you cannot make them reconcile from what is actually printed,
+   return an EMPTY `lines` array and explain in `reasoning` — a wrong split is
+   worse than no split, because it becomes accounting entries.
+4. Do NOT include VAT / discount / grand-total rows as line items. Those are
+   summary rows, not goods or services.
+5. `unit` = the unit as printed. When the paper prints none, infer from the
+   line type: electricity=""หน่วย"", water=""ลบ.ม."", fuel=""ลิตร"",
+   monthly service/rent=""เดือน"", contracted work=""งาน"", goods=""ชิ้น"".
+   NEVER default a utility or a service to ""ชิ้น"".
+
+Respond ONLY as JSON:
+{
+  ""primary"": ""ok"",
+  ""confidence"": <0.0-1.0>,
+  ""lines"": [
+    { ""description"": ""..."", ""quantity"": <decimal>, ""unit"": ""..."",
+      ""unit_price"": <decimal>, ""amount"": <decimal> }
+  ],
+  ""reasoning"": ""<1-2 sentences — say so explicitly when you could not reconcile>"",
+  ""risks"": [],
+  ""compliance_flags"": [],
+  ""suggested_actions"": []
+}";
+
+    public static AiRequest Build(
+        Guid companyId, Guid scanResultId,
+        string rawText,
+        string? documentType,
+        string? vendorName,
+        decimal? subTotal, decimal? vatAmount, decimal? totalAmount)
+    {
+        // ข้อความบนใบซื้อ/ขายทั่วไปยาวไม่เกินนี้ — ตัดกันค่า token บานปลาย
+        var snippet = rawText.Length > 6000 ? rawText[..6000] + "...[truncated]" : rawText;
+        var payload = new
+        {
+            task = "ocr_line_item_split",
+            document_type = documentType,
+            vendor_name = vendorName,
+            ocr_raw_text = snippet,
+            // ยอดที่อ่านได้จากหัวกระดาษ = ด่านตรวจของตัวโมเดลเอง และของผู้เรียก
+            known_totals = new
+            {
+                sub_total = subTotal,
+                vat_amount = vatAmount,
+                total_amount = totalAmount,
+                prices_include_vat = subTotal is null or 0m && totalAmount is > 0m,
+            },
+        };
+        return new AiRequest
+        {
+            FeatureKey = AiFeatureKey.OcrLineItemSplit,
+            CompanyId = companyId,
+            SystemPrompt = SystemPrompt,
+            UserPromptJson = JsonSerializer.Serialize(payload),
+            // local path = บรรทัดสรุปใบเดียวจากยอดหัวกระดาษ ซึ่งเป็นพฤติกรรม
+            // เดิมของระบบอยู่แล้ว (ผู้เรียกไม่ต้องทำอะไรเมื่อ AI ไม่ตอบ)
+            LocalPrimaryAnswer = null,
+            LocalConfidence = null,
+            LocalModelVersion = "HeaderSummaryLine-v1",
+            SourceEntityType = "OcrScanResult",
+            SourceEntityId = scanResultId,
+            CacheTtlOverrideDays = 1,
+            MaxTokensOverride = 1200,
         };
     }
 }

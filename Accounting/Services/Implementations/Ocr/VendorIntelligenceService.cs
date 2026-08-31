@@ -87,6 +87,17 @@ public class VendorIntelligenceService
                 .FirstOrDefaultAsync() ?? "";
             industryWeight = ComputeIndustryWeight(sysIntel.IndustryBreakdownJson, ourIndustry);
 
+            // ⚠️ k-anonymity gate — ด่านนี้ถูกเขียนไว้ตั้งแต่แรก
+            // (GlobalVendorIntelLearner.CanShareMoneyAggregates + doc-comment
+            // ที่เขียนว่า "guarded by the k=3 read-time gate inside
+            // VendorIntelligenceService.PredictAsync") แต่ **ไม่เคยมีใครเรียก**
+            // ⇒ ถ้ามีผู้เช่ารายเดียวที่เคยทำธุรกรรมกับผู้ขายรายนี้ ผู้เช่ารายอื่น
+            // จะเห็น ยอดเฉลี่ย/ต่ำสุด/สูงสุด/มัธยฐาน ของรายนั้นตรง ๆ บนแบนเนอร์
+            // เตือน ("ยอด X นอกช่วง min–max") = ข้อมูลการค้าข้ามผู้เช่ารั่ว
+            // ช่องพฤติกรรม (ชนิดเอกสาร/นิสัย WHT/เครดิตเทอม) ไม่ใช่จำนวนเงิน
+            // จึงเปิดได้ตามเดิม
+            var canShareMoney = GlobalVendorIntelLearner.CanShareMoneyAggregates(sysIntel);
+
             intel = new OcrVendorIntelligence
             {
                 VendorKey = sysIntel.VendorKey,
@@ -103,10 +114,10 @@ public class VendorIntelligenceService
                 TypicallyHasWht = sysIntel.TypicallyHasWht,
                 TypicalWhtRate = sysIntel.TypicalWhtRate,
                 WhtUsageCount = sysIntel.WhtUsageCount,
-                AvgTotalAmount = sysIntel.AvgTotalAmount,
-                MinTotalAmount = sysIntel.MinTotalAmount,
-                MaxTotalAmount = sysIntel.MaxTotalAmount,
-                MedianTotalAmount = sysIntel.MedianTotalAmount,
+                AvgTotalAmount = canShareMoney ? sysIntel.AvgTotalAmount : null,
+                MinTotalAmount = canShareMoney ? sysIntel.MinTotalAmount : null,
+                MaxTotalAmount = canShareMoney ? sysIntel.MaxTotalAmount : null,
+                MedianTotalAmount = canShareMoney ? sysIntel.MedianTotalAmount : null,
                 TypicalPaymentTermsDays = sysIntel.TypicalPaymentTermsDays,
             };
             isSystemFallback = true;

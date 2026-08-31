@@ -80,7 +80,33 @@ public record OcrResultResponse(
     string? VendorBranchCode = null,
     string? VendorAddress = null,
     string? BuyerBranchCode = null,
-    string? BuyerAddress = null);
+    string? BuyerAddress = null,
+    /// <summary>คำเตือน "ข้อมูลตามสรรพากรยังไม่ครบ" บนการ์ดผลสแกน — คำนวณที่
+    /// เซิร์ฟเวอร์โดย <c>OcrScanComplianceEvaluator</c> หน้าเว็บมีหน้าที่ "แสดง"
+    /// อย่างเดียว ห้ามคำนวณเอง (เดิม document-scan.html คัดลอกกฎไปเขียนใน JS
+    /// แล้วไม่เคยแก้ตาม ⇒ เตือนผิดบนใบที่กระดาษมีเลขผู้ซื้อครบ). null =
+    /// เส้นทางที่ยังไม่ได้ประเมิน (ไม่ใช่ "ไม่มีปัญหา") — UI อย่าเพิ่งวาดอะไร</summary>
+    List<OcrScanIssueDto>? ComplianceIssues = null,
+    /// <summary>แผนที่ "ชนิดเอกสาร → ฝั่ง" ที่สร้างจาก <c>Helpers.DocumentSide</c>
+    /// ค่าเป็น <c>"Sales"</c> | <c>"Purchase"</c> | <c>"Both"</c> (Both = ต้องดู
+    /// <c>OurRole</c> ประกอบ เช่น CN/DN/ใบส่งของ)
+    ///
+    /// <para>มีไว้เพื่อให้หน้าเว็บ **เลิกถือลิสต์ของตัวเอง** — เดิม
+    /// <c>document-scan.html</c> มี <c>salesTypes</c> เป็นสำเนามือที่ตัด CN/DN
+    /// ออกจากฝั่งขายเสมอและนับใบส่งของเป็นฝั่งขายเสมอ ⇒ ใบลดหนี้<b>ขาย</b>
+    /// เปิดฟอร์มรายจ่าย และใบส่งของจากผู้ขายเปิดฟอร์มรายได้
+    /// (<c>DocumentSide.cs</c> ระบุชื่อสำเนานี้ไว้ในหมายเหตุตั้งแต่แรก)</para>
+    ///
+    /// <para>null = เซิร์ฟเวอร์รุ่นเก่า — หน้าเว็บใช้ fallback ของตัวเอง</para></summary>
+    Dictionary<string, string>? DocumentSideMap = null,
+    /// <summary>รายการในใบนี้มาจากการ "แตกบรรทัดด้วย AI" หรือไม่
+    /// (<c>AiFeatureKey.OcrLineItemSplit</c> — ทำงานเมื่อ engine ไม่คืนตาราง
+    /// รายการมาเลย) ⇒ UI ติดป้าย "🤖 AI แตกรายการให้ กรุณาตรวจ" ให้ซื่อสัตย์
+    /// ตามกฎเหล็ก #1 (ป้าย "🤖 AI แนะนำ" เฉพาะตอนเรียก AI จริง)</summary>
+    bool LineSplitUsedAi = false);
+
+/// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
+public record OcrScanIssueDto(string Severity, string Message);
 
 /// <summary>One open PO of the matched vendor — what the picker modal
 /// renders. Lines come back inline so the operator can map OCR ↔ PO line
@@ -100,7 +126,16 @@ public record LinkPurchaseOrderRequest(
     Guid PurchaseOrderId,
     Dictionary<int, Guid?>? LineMappings);
 
-public record OcrQualityGradeDto(string Letter, int Score, string Color);
+/// <param name="Reasons">เหตุผลว่าทำไมได้เกรดนี้ — <c>ScanQualityGrader</c>
+/// สร้างรายการนี้ให้ครบทุกครั้งอยู่แล้ว แต่ DTO เดิม<b>ทิ้งทั้งก้อน</b> ⇒
+/// ผู้ใช้เห็นตัวอักษร "D" โดยไม่รู้ว่าเพราะอะไรและต้องทำอะไรต่อ (เอกสารของ
+/// grader เขียนว่า D = "probably re-scan" แต่การ์ดไม่เคยบอกว่าให้ถ่ายใหม่)</param>
+/// <param name="Advice">คำแนะนำสั้น ๆ ตามเกรด — ผู้ใช้ต้องรู้ "ต้องทำอะไรต่อ"
+/// ไม่ใช่แค่ "คะแนนเท่าไร" (กติกาเดียวกับ Action ของกฎ RD compliance)</param>
+public record OcrQualityGradeDto(
+    string Letter, int Score, string Color,
+    IReadOnlyList<string>? Reasons = null,
+    string? Advice = null);
 
 public record OcrDbdInfo(
     bool LookupAttempted,
@@ -147,7 +182,20 @@ public record OcrCorrectionRequest(
     // "เอกสารที่จะสร้าง" dropdown, this string carries the new value so the
     // backend can both update the scan record AND train VendorIntelligence
     // to suggest the same target for this vendor next time.
-    string? TargetDocumentType = null);
+    string? TargetDocumentType = null,
+    /// <summary>
+    /// บทบาทของเราบนกระดาษ — "Buyer" | "Seller"
+    ///
+    /// <para>⚠️ เดิม<b>ไม่มีช่องนี้เลย</b> และหน้า review ก็แสดงบทบาทเป็นข้อความ
+    /// อ่านอย่างเดียว ⇒ เมื่อระบบอนุมานผิด (ซึ่งเกิดได้จริง — 50 ทวิ, ใบที่ OCR
+    /// อ่านเลขภาษีไม่ออก, ใบขายของเราเองที่สแกนกลับเข้ามา) <b>ผู้ใช้แก้ไม่ได้
+    /// และระบบไม่มีทางเรียนรู้</b> เพราะไม่มีทั้ง field และ learner ใด ๆ ที่เก็บ
+    /// ความจริงข้อนี้</para>
+    /// </summary>
+    string? OurRole = null,
+    string? VendorBranchCode = null,
+    string? BuyerTaxId = null,
+    string? BuyerBranchCode = null);
 
 /// <summary>
 /// Request to record a Journal Entry directly from a scan — the "บันทึก JE

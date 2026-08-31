@@ -442,7 +442,13 @@ public class AzureDocumentIntelligenceService
                 if (fields.TryGetProperty(fieldName, out var f) &&
                     f.TryGetProperty("confidence", out var c))
                 {
-                    result.FieldConfidence[fieldName] = c.GetDecimal();
+                    // แปลงชื่อของ Azure เป็นชื่อช่องกลางตั้งแต่ต้นทาง
+                    // (Helpers/OcrFieldKeys.cs) — เดิมปล่อยชื่อ Azure ไหลลงไป
+                    // ทั้งระบบ ทำให้ด่านลด confidence และไฮไลต์ฝั่ง UI หาไม่เจอ
+                    var key = Accounting.Helpers.OcrFieldKeys.Canonical(fieldName);
+                    var val = c.GetDecimal();
+                    if (!result.FieldConfidence.TryGetValue(key, out var prev) || val > prev)
+                        result.FieldConfidence[key] = val;
                 }
             }
 

@@ -70,7 +70,8 @@ internal static class SmartFieldExtractor
         }
 
         // 1. Tax IDs — extract all 13-digit candidates with valid checksum
-        var taxIds = ExtractValidThaiTaxIds(rawText);
+        //    (บาร์โค้ดสินค้าในตารางรายการถูกคัดออกแล้วใน ExtractTaxIdCandidates)
+        var taxIds = ExtractTaxIdCandidates(rawText);
 
         // 2. Resolve vendor vs buyer with mutual exclusion
         AssignVendorBuyerRoles(data, rawText, taxIds);
@@ -102,6 +103,51 @@ internal static class SmartFieldExtractor
 
         // 11. Total cannot be less than VAT — sanity check
         ValidateAmountOrdering(data);
+
+        // 12. เทียบยอดกับ "จำนวนเงินตัวอักษร" บนกระดาษ — ด่านที่แรงที่สุด
+        CrossCheckAmountInWords(data, rawText);
+    }
+
+    /// <summary>
+    /// เทียบยอดรวมกับ "จำนวนเงินรวมทั้งสิ้น (ตัวอักษร)" ที่พิมพ์บนกระดาษ
+    ///
+    /// <para>ใบเสร็จ/ใบกำกับไทยเกือบทุกใบพิมพ์ยอดไว้สองรูปแบบ ซึ่งหน้าตาต่างกัน
+    /// สิ้นเชิง ⇒ OCR แทบไม่มีทางอ่านผิด<b>เหมือนกัน</b>ทั้งคู่ นี่จึงเป็นการ
+    /// ตรวจซ้ำที่แรงที่สุดที่มีอยู่บนกระดาษ และจับความผิดพลาดชนิดที่ด่านคณิต
+    /// อื่นจับไม่ได้เลย — จุดทศนิยม/ลูกน้ำหาย (6,420.00 → 642000), หลักเกิน,
+    /// ตัวเลขสลับ. ระบบมีตัวแปลง "เลข → ตัวอักษร" มานานแล้ว (ขาพิมพ์เอกสาร)
+    /// แต่ไม่เคยมีขากลับ ⇒ ข้อมูลที่พิมพ์อยู่บนกระดาษทุกใบถูกทิ้งเปล่า ๆ</para>
+    ///
+    /// <para>สองหน้าที่: (1) <b>เติม</b>ยอดเมื่ออ่านตัวเลขไม่ได้เลย
+    /// (2) <b>เตือน</b>เมื่อสองค่าขัดกัน — ไม่ทับค่าตัวเลขเงียบ ๆ เพราะยังไม่รู้
+    /// ว่าฝั่งไหนถูก ให้คนตัดสิน</para>
+    /// </summary>
+    private static void CrossCheckAmountInWords(OcrExtractedData data, string rawText)
+    {
+        var words = Accounting.Helpers.ThaiAmountInWords.FindInText(rawText);
+        if (words is null or 0) return;
+
+        if (data.TotalAmount is null or 0)
+        {
+            data.TotalAmount = words;
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.TotalAmount] = 0.9;
+            data.ReasoningTrace.Add(
+                $"[AmountWords] อ่านยอดตัวเลขไม่ได้ — ใช้จำนวนเงินตัวอักษรบนกระดาษแทน: {words:N2}");
+            return;
+        }
+
+        if (Accounting.Helpers.ThaiAmountInWords.Matches(data.TotalAmount, words))
+        {
+            // ตรงกัน = หลักฐานสองทาง → ดันความมั่นใจขึ้น
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.TotalAmount] = 0.99;
+            data.ReasoningTrace.Add($"[AmountWords] ยอดตัวเลขตรงกับตัวอักษรบนกระดาษ ({words:N2}) ✓");
+            return;
+        }
+
+        data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.TotalAmount] = 0.35;
+        data.ReasoningTrace.Add(
+            $"[AmountWords] ⚠️ ยอดตัวเลข {data.TotalAmount:N2} ไม่ตรงกับจำนวนเงินตัวอักษรบนกระดาษ "
+            + $"({words:N2}) — ตรวจจุดทศนิยม/ลูกน้ำก่อนอนุมัติ");
     }
 
     // ─── 1. Tax-ID with checksum filter ──────────────────────────────────
@@ -109,30 +155,114 @@ internal static class SmartFieldExtractor
     //   sum = Σ digit[i] * (13 - i)  for i = 0..11
     //   checksum = (11 - (sum % 11)) % 10
     //   digit[12] must equal checksum
-    public static List<(string Id, int Position)> ExtractValidThaiTaxIds(string text)
+    /// <summary>ผู้สมัครเป็นเลขผู้เสียภาษี 1 ตัวที่เจอในข้อความ —
+    /// <c>Labelled</c> = มีป้าย "เลขประจำตัวผู้เสียภาษี"/"Tax ID"
+    /// นำหน้าในระยะสายตา ซึ่งเป็นหลักฐานที่หนักกว่า checksum มาก</summary>
+    internal readonly record struct TaxIdCandidate(string Id, int Position, bool Labelled);
+
+    /// <summary>ป้ายกำกับที่บอกว่า "เลขก้อนถัดไปคือเลขผู้เสียภาษี" — เทียบแบบตัด
+    /// ช่องว่างออกทั้งสองฝั่ง เพราะ Tesseract ไทยแทรกช่องว่างระหว่างสระ/วรรณยุกต์</summary>
+    private static readonly string[] TaxIdLabels =
     {
-        var pattern = @"(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})";
-        return Regex.Matches(text, pattern)
+        "เลขประจำตัวผู้เสียภาษี", "เลขประจําตัวผู้เสียภาษี", "เลขผู้เสียภาษี",
+        "ผู้เสียภาษีอากร", "เลขประจำตัว", "เลขประจําตัว",
+        // ไม่ใส่ "tin" — สั้นเกินไป พอตัดช่องว่างแล้วไปโผล่กลางคำอื่นได้
+        // ("Printing Co., Ltd." → "printingcoltd" มี "tin") ⇒ ติดธงมีป้ายผิด
+        // ซึ่งจะปล่อยบาร์โค้ดผ่านด่านคัดออก
+        "taxid", "taxidentificationno", "vatreg", "vatregistrationno",
+    };
+
+    /// <summary>มองย้อนหลังกี่ตัวอักษรเพื่อหาป้ายกำกับ — พอสำหรับ "เลขประจำตัว
+    /// ผู้เสียภาษีอากร : " + ช่องว่างที่ OCR แทรก แต่ไม่ไกลจนคว้าป้ายของบรรทัดอื่น</summary>
+    private const int TaxIdLabelLookBehind = 60;
+
+    /// <summary>
+    /// มองไปข้างหน้ากี่ตัวอักษร — **ป้ายไม่ได้อยู่ก่อนเลขเสมอ**
+    ///
+    /// แบบฟอร์มพิมพ์สำเร็จ (ใบเสร็จ/ใบกำกับเล่มมีสำเนา) มักมีเส้นประให้เขียน
+    /// แล้วค่อยมีป้ายอยู่ใต้เส้น ⇒ เลขที่พิมพ์ลงไปอยู่ **บรรทัดก่อน** ป้าย:
+    /// <code>
+    ///                       0 2055 65017 74 1
+    ///   ..........เลขประจำตัวผู้เสียภาษีอากร..........
+    /// </code>
+    /// ถ้ามองย้อนหลังอย่างเดียว เลขผู้ซื้อบนใบพวกนี้จะถูกตัดสินว่า "ไม่มีป้าย"
+    /// แล้วแพ้เลขผู้ขาย (ซึ่งอยู่หลังป้ายตามปกติ) ⇒ ช่องผู้ซื้อว่าง แล้วระบบ
+    /// เตือนว่า "ควรระบุเลขผู้เสียภาษีของผู้ซื้อ" ทั้งที่กระดาษมีเลขอยู่เต็ม ๆ
+    /// (เคสจริง: ใบเสร็จ/ใบกำกับภาษี หจก.สหกลชลบุรี เล่ม 007 เลขที่ 0339)
+    ///
+    /// <para>สั้นกว่าฝั่งย้อนหลังตั้งใจ — ป้ายที่ตามหลังค่าเป็นความสัมพันธ์เชิง
+    /// เลย์เอาต์ที่แน่นกว่า ถ้าเปิดกว้างเท่ากันจะเสี่ยงไปคว้าป้ายของบล็อกถัดไป</para>
+    /// </summary>
+    private const int TaxIdLabelLookAhead = 45;
+
+    public static List<(string Id, int Position)> ExtractValidThaiTaxIds(string text)
+        => ExtractTaxIdCandidates(text).Select(c => (c.Id, c.Position)).ToList();
+
+    /// <summary>
+    /// หาเลข 13 หลักที่ "เป็นเลขผู้เสียภาษีได้จริง" ในข้อความทั้งหน้า
+    ///
+    /// ═══ ทำไมต้องคัดบาร์โค้ดออก (บั๊กจริง PI-20260820-0005) ═══
+    /// ใบกำกับของร้านค้าวัสดุมีบาร์โค้ด EAN-13 พิมพ์อยู่ในตารางสินค้าทุกบรรทัด
+    /// ซึ่งเป็นเลข 13 หลักเหมือนเลขผู้เสียภาษี และเลขสุ่มมีโอกาส ~1/10 ที่จะผ่าน
+    /// mod-11 ไทยด้วย ⇒ หน้าเดียวมีบาร์โค้ด 10 ตัว = แทบการันตีว่าจะมีตัวหนึ่ง
+    /// ถูกหยิบไปเป็น "เลขผู้ซื้อ" แล้วระบบเตือนว่า "อาจอัพโหลดผิดบริษัท"
+    /// ทั้งที่กระดาษถูกต้องทุกอย่าง (เกิดจริงกับ 8885009199627)
+    ///
+    /// กติกา: ตัวที่มี<b>ป้ายกำกับ</b>นำหน้าเก็บไว้เสมอ (ป้ายหนักกว่า checksum) ·
+    /// ตัวที่ไม่มีป้ายและ<b>หน้าตาเป็นบาร์โค้ดสินค้า</b> (EAN-13 + GS1 prefix) ทิ้ง
+    /// </summary>
+    internal static List<TaxIdCandidate> ExtractTaxIdCandidates(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return new List<TaxIdCandidate>();
+        // pattern มาจากตัวกลางตัวเดียวของระบบ — ห้ามคัดลอกมาวางที่นี่
+        // (เหตุผลเรื่องตัวคั่นห้ามครอบ \n อยู่ใน doc ของ ThaiTaxId.Pattern)
+        return Regex.Matches(text, Accounting.Helpers.ThaiTaxId.Pattern)
             .Cast<Match>()
-            .Select(m => (Id: Regex.Replace(m.Groups[1].Value, @"[-\s]", ""), Pos: m.Index))
-            .Where(x => x.Id.Length == 13 && IsValidThaiTaxId(x.Id))
-            .GroupBy(x => x.Id)
-            .Select(g => g.OrderBy(x => x.Pos).First())   // dedupe, keep first occurrence
+            .Select(m => new TaxIdCandidate(
+                Regex.Replace(m.Groups[1].Value, @"[-\s]", ""),
+                m.Index,
+                HasTaxIdLabelNear(text, m.Index, m.Length)))
+            .Where(c => c.Id.Length == 13 && IsValidThaiTaxId(c.Id))
+            // ด่านบาร์โค้ด **ไม่มีข้อยกเว้น** — ป้ายกำกับช่วยไม่ได้ตรงนี้
+            //
+            // เดิมเขียน `c.Labelled || !LooksLikeProductBarcode(...)` คือให้ตัวที่มี
+            // ป้ายผ่านไปได้ แต่ "ป้ายอยู่ใกล้" เป็นสัญญาณอ่อน: บาร์โค้ดบรรทัดแรกของ
+            // ตารางสินค้าอยู่ห่างจากบล็อกเลขผู้ซื้อไม่กี่สิบตัวอักษร ⇒ ติดธงมีป้าย
+            // โดยบังเอิญแล้วรอดด่านไปเป็น "เลขผู้เสียภาษี" (จับได้ตอน simulate
+            // การแก้ป้ายสองทิศ) — เลขที่ผ่าน EAN-13 **และ** มี GS1 prefix ของสินค้า
+            // คือบาร์โค้ด ไม่ว่าข้อความรอบ ๆ จะเขียนว่าอะไร
+            .Where(c => !Accounting.Helpers.ThaiTaxId.LooksLikeProductBarcode(c.Id))
+            .GroupBy(c => c.Id)
+            // ตัวที่มีป้ายชนะตัวที่ไม่มีป้ายเสมอ (เลขเดียวกันอาจโผล่หลายที่)
+            .Select(g => g.OrderByDescending(c => c.Labelled).ThenBy(c => c.Position).First())
             .ToList();
     }
 
-    public static bool IsValidThaiTaxId(string id)
+    /// <summary>มีป้าย "เลขประจำตัวผู้เสียภาษี" อยู่ใกล้ ๆ เลขก้อนนี้ไหม —
+    /// ดู<b>ทั้งสองทิศ</b> (ดูเหตุผลที่ <see cref="TaxIdLabelLookAhead"/>)</summary>
+    private static bool HasTaxIdLabelNear(string text, int index, int length)
+        => WindowHasLabel(text, Math.Max(0, index - TaxIdLabelLookBehind), index)
+        || WindowHasLabel(text, index + length,
+               Math.Min(text.Length, index + length + TaxIdLabelLookAhead));
+
+    private static bool WindowHasLabel(string text, int start, int end)
     {
-        if (id == null || id.Length != 13) return false;
-        if (!id.All(char.IsDigit)) return false;
-        int sum = 0;
-        for (int i = 0; i < 12; i++) sum += (id[i] - '0') * (13 - i);
-        int check = (11 - (sum % 11)) % 10;
-        return check == (id[12] - '0');
+        if (end <= start) return false;
+        var window = text.Substring(start, end - start);
+        // ตัดช่องว่าง/ตัวคั่นออกก่อนเทียบ — OCR ไทยแทรกช่องว่างกลางคำเป็นปกติ
+        // และแบบฟอร์มมีเส้นประ ".........." คั่นระหว่างป้ายกับค่าเสมอ
+        var squashed = new string(window
+            .Where(c => !char.IsWhiteSpace(c) && c is not ('-' or '_' or '.' or ':' or '·'))
+            .ToArray()).ToLowerInvariant();
+        return TaxIdLabels.Any(l => squashed.Contains(
+            new string(l.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant(),
+            StringComparison.Ordinal));
     }
 
+    public static bool IsValidThaiTaxId(string? id) => Accounting.Helpers.ThaiTaxId.IsValid(id);
+
     // ─── 2. Vendor vs buyer role assignment with mutual exclusion ───────
-    private static void AssignVendorBuyerRoles(OcrExtractedData data, string text, List<(string Id, int Pos)> taxIds)
+    private static void AssignVendorBuyerRoles(OcrExtractedData data, string text, List<TaxIdCandidate> taxIds)
     {
         // If both already populated AND distinct, leave them alone.
         var hasVendor = !string.IsNullOrEmpty(data.VendorTaxId) || !string.IsNullOrEmpty(data.VendorName);
@@ -148,36 +278,52 @@ internal static class SmartFieldExtractor
         int sellerPos = FindFirstKeyword(text, sellerKeywords);
         int buyerPos = FindFirstKeyword(text, buyerKeywords);
 
-        // Vendor info typically appears in the header (top of document) and
-        // buyer info below it after "ลูกค้า:" / "Bill To:". When a keyword is
-        // missing, default vendor to position 0 (top) and buyer to text end —
-        // this anchors the nearest-name search to the right region.
+        // ตำแหน่งจริงของคำว่า "ผู้ซื้อ/ลูกค้า" — **ห้ามปลอมเป็นท้ายหน้า**
+        //
+        // เดิมเขียนว่า `if (buyerPos < 0) buyerPos = text.Length;` ซึ่งแปลว่า
+        // "ถ้าไม่เจอคำว่าผู้ซื้อ ให้ถือว่าผู้ซื้ออยู่ท้ายหน้า" ⇒ เลข 13 หลัก
+        // ตัวสุดท้ายของหน้า (= บาร์โค้ดบรรทัดล่างสุดของตารางสินค้า) กลายเป็น
+        // เลขผู้ซื้อทุกครั้ง แล้วกฎที่ 7 ก็ฟันธงว่า "อาจอัพโหลดผิดบริษัท"
+        // ทั้งที่กระดาษถูกต้อง (บั๊กจริง PI-20260820-0005)
+        //
+        // ไม่มีหลักฐานว่าเลขไหนเป็นของผู้ซื้อ = **ไม่เดา** ปล่อยว่างไว้ให้
+        // RdComplianceValidator กฎที่ 3 ไปค้นเลขบริษัทเราในข้อความทั้งหน้าเอง
+        // ซึ่งเป็นวิธีที่ถูกต้องกว่าและไม่สร้างข้อมูลผิดขึ้นมาใหม่
+        var buyerAnchor = buyerPos;      // -1 = ไม่มีคำว่าผู้ซื้อบนกระดาษ
         if (sellerPos < 0) sellerPos = 0;
-        if (buyerPos < 0) buyerPos = text.Length;
+        if (buyerPos < 0) buyerPos = text.Length;   // ใช้กับการเดา "ชื่อ" เท่านั้น
+
+        // ผู้สมัครที่มีป้าย "เลขประจำตัวผู้เสียภาษี" นำหน้า ชนะตัวที่ไม่มีป้ายเสมอ —
+        // ถ้าหน้านี้มีตัวที่มีป้ายอยู่แล้ว ตัวไม่มีป้ายไม่ต้องเอามาพิจารณาเลย
+        var labelled = taxIds.Where(t => t.Labelled).ToList();
+        var pool = labelled.Count > 0 ? labelled : taxIds;
 
         // Assign tax IDs: closest to seller-keyword → vendor; closest to
         // buyer-keyword → buyer. Mutual exclusion enforced — once assigned to
         // one role, the same ID cannot also be assigned to the other.
         string? newVendorTaxId = data.VendorTaxId;
         string? newBuyerTaxId = data.BuyerTaxId;
-        if (taxIds.Count >= 2 && string.IsNullOrEmpty(newVendorTaxId) && string.IsNullOrEmpty(newBuyerTaxId))
+        if (pool.Count >= 2 && string.IsNullOrEmpty(newVendorTaxId) && string.IsNullOrEmpty(newBuyerTaxId))
         {
-            var byDistToSeller = taxIds.OrderBy(t => Math.Abs(t.Pos - sellerPos)).First();
+            var byDistToSeller = pool.OrderBy(t => Math.Abs(t.Position - sellerPos)).First();
             newVendorTaxId = byDistToSeller.Id;
-            var remaining = taxIds.Where(t => t.Id != newVendorTaxId).ToList();
-            if (remaining.Count > 0)
-                newBuyerTaxId = remaining.OrderBy(t => Math.Abs(t.Pos - buyerPos)).First().Id;
+            var remaining = pool.Where(t => t.Id != newVendorTaxId).ToList();
+            if (remaining.Count > 0 && buyerAnchor >= 0)
+                newBuyerTaxId = remaining.OrderBy(t => Math.Abs(t.Position - buyerAnchor)).First().Id;
         }
-        else if (taxIds.Count == 1)
+        else if (pool.Count == 1)
         {
             // Single tax id — bias toward vendor unless an explicit buyer
             // keyword sits closer to the tax id than any seller keyword.
-            var only = taxIds[0];
-            var distSeller = sellerPos >= 0 ? Math.Abs(only.Pos - sellerPos) : int.MaxValue;
-            var distBuyer = buyerPos >= 0 ? Math.Abs(only.Pos - buyerPos) : int.MaxValue;
+            var only = pool[0];
+            var distSeller = Math.Abs(only.Position - sellerPos);
+            var distBuyer = buyerAnchor >= 0 ? Math.Abs(only.Position - buyerAnchor) : int.MaxValue;
             if (string.IsNullOrEmpty(newVendorTaxId) && distSeller <= distBuyer)
                 newVendorTaxId = only.Id;
-            else if (string.IsNullOrEmpty(newBuyerTaxId))
+            // ยอมให้เป็นเลขผู้ซื้อได้เฉพาะเมื่อมี**หลักฐาน**: มีคำว่า "ผู้ซื้อ/ลูกค้า"
+            // บนกระดาษ หรือเลขนั้นมีป้าย "เลขประจำตัวผู้เสียภาษี" นำหน้า —
+            // ไม่มีทั้งสองอย่าง = เลขลอย ๆ กลางหน้า (บาร์โค้ด/เลขอ้างอิง) ห้ามเดา
+            else if (string.IsNullOrEmpty(newBuyerTaxId) && (buyerAnchor >= 0 || only.Labelled))
                 newBuyerTaxId = only.Id;
         }
 
@@ -219,7 +365,7 @@ internal static class SmartFieldExtractor
 
     private static List<(string FullName, int Position)> ExtractCompanyNames(string text)
     {
-        var pattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|หจก\.?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[-\s]?\d{4})|$)";
+        var pattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|หจก\.?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[- \t]?\d{4})|$)";
         var matches = Regex.Matches(text, pattern, RegexOptions.Multiline);
         var results = new List<(string, int)>();
         foreach (Match m in matches)
@@ -595,7 +741,7 @@ internal static class SmartFieldExtractor
     public static string? ExtractFirstThaiPhone(string text)
     {
         // 9-10 digits, optionally with dashes/spaces; first digit must be 0
-        var m = Regex.Match(text, @"\b(0\d[\s\-]?\d{3}[\s\-]?\d{4})\b");
+        var m = Regex.Match(text, @"\b(0\d[ \t\-]?\d{3}[ \t\-]?\d{4})\b");
         return m.Success ? Regex.Replace(m.Groups[1].Value, @"[\s\-]", "") : null;
     }
 
@@ -694,6 +840,29 @@ internal static class SmartFieldExtractor
         // รอบบิล. เดิม "Invoice No." อยู่บนสุด ⇒ เลขใบแจ้งหนี้ชนะเลขใบกำกับทุก
         // ครั้งบนใบพวกนี้. เลขที่หลัก (เลขที่/No. เดี่ยว ๆ) ต้องมาก่อน —
         // "Invoice No." เหลือเป็น fallback สำหรับใบแจ้งหนี้จริงที่ไม่มีเลขอื่น
+        // ── แบบฟอร์มเล่มมีสำเนา: "เล่มที่ 007  เลขที่ 0339" ──
+        //
+        // ⚠️ เดิมไม่มี pattern รองรับรูปแบบนี้เลย ทั้งที่เป็นแบบฟอร์มที่พบบ่อย
+        // ที่สุดของร้านค้า/ผู้รับเหมารายย่อย (และเป็นใบที่เพิ่งเป็นบั๊กเรื่อง
+        // เลขผู้ซื้อ — หจก.สหกลชลบุรี เล่ม 007 เลขที่ 0339) ⇒ เลขที่เอกสารว่าง
+        // หรือหยิบเลขอื่นมาแทน · คอลัมน์ "เล่มที่/เลขที่" ในรายงานภาษีซื้อ
+        // (§87) จึงกรอกได้ครึ่งเดียวตลอด
+        //
+        // เก็บเป็น "เล่ม/เลข" เพื่อให้ระบุใบได้จริง — เลขที่ 4 หลักซ้ำกันข้าม
+        // เล่มเป็นเรื่องปกติของแบบฟอร์มชนิดนี้
+        var bookMatch = Regex.Match(text,
+            @"เล่ม\s*ที่?\s*[:：]?\s*(\d{1,6})[\s\S]{0,40}?เลข\s*ที่?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{1,})",
+            RegexOptions.IgnoreCase);
+        if (bookMatch.Success)
+        {
+            var book = bookMatch.Groups[1].Value.Trim();
+            var no = bookMatch.Groups[2].Value.Trim().TrimEnd('.', ',', ';');
+            data.DocumentNumber = $"{book}/{no}";
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.DocumentNumber] = 0.9;
+            data.ReasoningTrace.Add($"[SmartExtract] แบบฟอร์มเล่มมีสำเนา — เล่มที่ {book} เลขที่ {no}");
+            return;
+        }
+
         var patterns = new[]
         {
             @"(?:เลขที่|เลขที|เลข\s?ที่|No\.?)\s*\(\s*No\.?\s*\)\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",

@@ -752,14 +752,28 @@ public class RecurringTransactionService : IRecurringTransactionService
                 decimal total = 0;
                 foreach (var line in lines.EnumerateArray())
                 {
-                    var qty = line.TryGetProperty("quantity", out var q) ? q.GetDecimal() : 1m;
-                    var price = line.TryGetProperty("unitPrice", out var p) ? p.GetDecimal() : 0m;
+                    // ⚠️ เดิมเรียก GetDecimal() ตรง ๆ — ค่าที่เป็นสตริง ("1,200")
+                    // หรือ null โยน InvalidOperationException ⇒ catch {} ข้างล่าง
+                    // กลืนแล้วคืน 0 ⇒ รายการประจำโชว์ยอด ฿0 บนหน้าจอโดยไม่มี
+                    // อะไรบอกว่าอ่านไม่ออก (CLAUDE.md 4.E "ห้าม catch {} กลืน error")
+                    var qty = line.TryGetProperty("quantity", out var q) ? ReadDecimal(q, 1m) : 1m;
+                    var price = line.TryGetProperty("unitPrice", out var p) ? ReadDecimal(p, 0m) : 0m;
                     total += qty * price;
                 }
                 return total;
             }
         }
-        catch { }
+        catch (JsonException) { /* template JSON เสีย — คืน 0 ให้ list ยังโหลดได้ */ }
         return 0;
+
+        static decimal ReadDecimal(JsonElement el, decimal fallback) => el.ValueKind switch
+        {
+            JsonValueKind.Number => el.TryGetDecimal(out var d) ? d : fallback,
+            JsonValueKind.String => decimal.TryParse(
+                (el.GetString() ?? "").Replace(",", ""),
+                System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var s) ? s : fallback,
+            _ => fallback,
+        };
     }
 }

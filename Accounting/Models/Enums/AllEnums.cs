@@ -1640,6 +1640,21 @@ public enum AiFeatureKey
     /// โดยมี RAG ย่อยของบริษัท (ผังบัญชี/ผู้ขาย/การตั้งค่า) ประกอบ.</summary>
     TenantAssistantChat = 55,
 
+    /// <summary>แตกรายการสินค้า/บริการจากข้อความบนกระดาษ เมื่อ engine ที่ใช้
+    /// ไม่คืนตารางรายการมาให้เลย
+    ///
+    /// <para>เส้นทาง Tesseract แบบฝัง (ตัวสำรองเมื่อ Azure/python ใช้ไม่ได้)
+    /// คืนแต่ข้อความล้วน ไม่มีโครงตาราง ⇒ <c>Items</c> ว่างทุกใบ แล้วเอกสาร
+    /// ที่สร้างได้มีบรรทัดสรุปใบเดียวจากยอดหัวกระดาษ ซึ่งลงบัญชีได้แต่
+    /// **แยกหมวดค่าใช้จ่ายไม่ได้** และรายงานสินค้า §87(3) ก็ใช้ไม่ได้</para>
+    ///
+    /// <para>local path ของ feature นี้คือบรรทัดสรุปใบเดียวที่มีอยู่แล้ว —
+    /// ปิด AI ทั้งระบบแล้วผู้ใช้ยังสร้างเอกสารได้ครบ (kill-switch ผ่าน)
+    /// จึงไม่ต้อง register student แบบ single-answer ซึ่งผิดรูปกับ output
+    /// ที่เป็นรายการหลายบรรทัด (แนวเดียวกับ ImportColumnMatch /
+    /// BulkBankStatementMatch)</para></summary>
+    OcrLineItemSplit = 56,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

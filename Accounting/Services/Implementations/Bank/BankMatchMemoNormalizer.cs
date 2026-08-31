@@ -37,17 +37,17 @@ public static class BankMatchMemoNormalizer
 
     // 13-digit Thai TIN, may appear bare or formatted "1-2345-67890-12-3".
     private static readonly Regex _tinRx =
-        new(@"(?<!\d)([0-9](?:[-\s]?[0-9]){12})(?!\d)", RegexOptions.Compiled);
+        new(@"(?<!\d)([0-9](?:[- \t]?[0-9]){12})(?!\d)", RegexOptions.Compiled);
 
     // Thai mobile (08x/09x/06x) or landline (02x/0xx); accept dashes/space.
     private static readonly Regex _phoneRx =
-        new(@"(?<!\d)(0(?:[689])[-\s]?[0-9](?:[-\s]?[0-9]){7,8}|0[2-7][-\s]?[0-9](?:[-\s]?[0-9]){6,7})(?!\d)",
+        new(@"(?<!\d)(0(?:[689])[- \t]?[0-9](?:[- \t]?[0-9]){7,8}|0[2-7][- \t]?[0-9](?:[- \t]?[0-9]){6,7})(?!\d)",
             RegexOptions.Compiled);
 
     // Bank-account tail tokens that mean "last N digits of payer's account",
     // e.g. KBank's "X3349", SCB's "x-1234", KTB's "XXX3349".
     private static readonly Regex _acctTailRx =
-        new(@"\bX{1,4}[-\s]?(\d{3,5})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        new(@"\bX{1,4}[- \t]?(\d{3,5})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Strip Thai/English titles and legal-entity prefixes from a
     /// contact name. "บจก. สมชาย โรเซิร์ฟ" → "สมชาย โรเซิร์ฟ" so the

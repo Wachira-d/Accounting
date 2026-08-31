@@ -14452,7 +14452,31 @@ public partial class DocumentService : IDocumentService
         DeliverySignedAt: d.DeliverySignedAt,
         DeliverySignedBy: d.DeliverySignedBy,
         DocumentLanguage: d.DocumentLanguage,
-        ServedAsReceipt: servedAsReceipt);
+        ServedAsReceipt: servedAsReceipt,
+        // ── ช่องที่รับตอน Create/Update แต่เดิมไม่เคย echo กลับ ──────────
+        // (ดูหมายเหตุใน DocumentResponse — "เก็บแล้วต้อง echo กลับ")
+        BuyerDeclinedTaxInvoice: d.BuyerDeclinedTaxInvoice,
+        // ไม่มีคอลัมน์ของตัวเอง — งวดเคลมถูกเก็บเป็น InputVatBecameClaimableAt
+        // (วันที่ 1 ของเดือน) เจ้าของกฎคือ InputVatClaimPeriodRules ⇒ คำนวณ
+        // ที่เดียวตรงนี้แล้วส่งเป็น "yyyy-MM" ให้ฟอร์ม ห้ามให้หน้าเว็บประกอบเอง
+        // (กฎเหล็ก #4 A "Resolver กลาง ห้ามคำนวณเอง")
+        InputVatClaimPeriod: ResolveInputVatClaimPeriod(d),
+        PreparerName: d.PreparerName,
+        PreparerSignatureBase64: d.PreparerSignatureBase64,
+        DepositAppliedRef: d.DepositAppliedRef,
+        DepositAppliedDrivesJournal: d.DepositAppliedDrivesJournal);
+    }
+
+    /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
+    ///
+    /// <para>ลำดับเดียวกับ GenerateVatReport: งวดที่ตรึงไว้ (InputVatBecameClaimableAt)
+    /// ชนะ · ไม่ได้ตรึง = เดือนภาษีของเอกสาร (TaxPointDate ?? DocumentDate).
+    /// เอกสารฝั่งขายไม่มีภาษีซื้อให้เคลม → null (ฟอร์มจะซ่อนช่อง)</para></summary>
+    private static string? ResolveInputVatClaimPeriod(Document d)
+    {
+        if (!InputVatClaimPeriodRules.IsPurchaseDocType(d.DocumentType)) return null;
+        var basis = d.InputVatBecameClaimableAt ?? d.TaxPointDate ?? d.DocumentDate;
+        return basis == default ? null : $"{basis.Year:D4}-{basis.Month:D2}";
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

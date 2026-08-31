@@ -743,7 +743,29 @@ public record DocumentResponse(
     /// หัวกระดาษจริง (Layout.docHeaderLabel) โดยไม่ต้องเปิดพิมพ์ก่อน.
     /// ⚠️ mirror: PdfGenerationService.ResolveServedAsReceiptAsync คือเจ้าของกฎ
     /// ตัวจริง (ใช้ตอน render) — แก้ที่นั่นต้องแก้ ComputeServedAsReceipt ด้วย</summary>
-    bool ServedAsReceipt = false);
+    bool ServedAsReceipt = false,
+
+    // ═══ ช่องที่รับตอน Create/Update แต่เดิม "ไม่มีใน Response" ═══════════
+    // ทั้ง 6 ช่องนี้ผู้ใช้กรอกได้ · เก็บลงฐานจริง · มีผลกับกระดาษ/ภาษี แต่
+    // ไม่เคยถูก echo กลับ ⇒ เปิดแก้ใบเดิมแล้วฟอร์มอ่านได้ undefined → ส่งค่า
+    // ที่ล้างแล้วกลับไปทับ = **ค่าหายเงียบทุกครั้งที่แก้อะไรก็ตามในใบนั้น**
+    // (CLAUDE.md กฎเหล็ก #4 A "เก็บแล้วต้อง echo กลับ" — บล็อกเดียวกับ
+    // IssuedAsCashReceipt/PaidOnIssue ข้างบนที่แก้ไปแล้ว แต่ตกค้าง 6 ช่อง)
+
+    /// <summary>"ผู้ซื้อไม่ประสงค์ขอใบกำกับภาษี" — ธง §86/4 ที่ควบคุมทั้งหัว
+    /// กระดาษ (PdfGenerationService) และหมายเหตุ e-Tax (EtaxInvoiceService)
+    /// ⇒ ตกค้างมาแล้วทำให้ติ๊กแล้วเปิดแก้ใบ ธงเด้งกลับเป็น false ทุกครั้ง</summary>
+    bool BuyerDeclinedTaxInvoice = false,
+    /// <summary>งวดที่ผู้ใช้เลือกจะเคลมภาษีซื้อ (§82/3) — เดิมหน้าเว็บต้อง
+    /// "เดา" ค่านี้กลับจาก InputVatBecameClaimableAt/TaxPointDate/DocumentDate
+    /// ⇒ โชว์งวดที่ผู้ใช้ไม่เคยเลือกได้</summary>
+    string? InputVatClaimPeriod = null,
+    /// <summary>ชื่อผู้จัดทำเอกสาร + ลายเซ็น (พิมพ์ลงกระดาษ)</summary>
+    string? PreparerName = null,
+    string? PreparerSignatureBase64 = null,
+    /// <summary>เลขที่ใบมัดจำที่นำมาหัก + ธง "ให้ JE เดินตามการหักมัดจำ"</summary>
+    string? DepositAppliedRef = null,
+    bool DepositAppliedDrivesJournal = false);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

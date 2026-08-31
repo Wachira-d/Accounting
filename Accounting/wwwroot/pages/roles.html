@@ -142,96 +142,31 @@
   <script src="/js/layout.js"></script>
   <script>
 
-  const MENU_SECTIONS = [
-    { section: 'หลัก', items: [
-      { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊' },
-    ]},
-    { section: 'รายรับ', items: [
-      { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄' },
-      { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈' },
-    ]},
-    { section: 'รายจ่าย', items: [
-      { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒' },
-      { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾' },
-      { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋' },
-      { id: 'payments', label: 'ชำระเงิน/รวมจ่าย', icon: '💳' },
-    ]},
-    { section: 'รายการอัตโนมัติ', items: [
-      { id: 'recurring', label: 'รายการประจำ', icon: '🔄' },
-    ]},
-    { section: 'ผู้ติดต่อ', items: [
-      { id: 'contacts', label: 'ลูกค้า/ผู้จำหน่าย', icon: '👥' },
-    ]},
-    { section: 'สินค้า/บริการ', items: [
-      { id: 'products', label: 'สินค้าและบริการ', icon: '📦' },
-      { id: 'warehouse', label: 'คลังสินค้า', icon: '🏭' },
-      { id: 'inventory-reports', label: 'รายงานสินค้าคงเหลือ', icon: '📊' },
-      { id: 'supplies', label: 'วัสดุสิ้นเปลือง', icon: '🧹' },
-    ]},
-    { section: 'POS ขายหน้าร้าน', items: [
-      { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️' },
-      { id: 'pos-packages', label: 'แพ็คเกจบริการ', icon: '💆' },
-      { id: 'pos-modifiers', label: 'ตัวเลือกสินค้า', icon: '🔧' },
-      { id: 'pos-reports', label: 'รายงาน POS', icon: '📊' },
-    ]},
-    { section: 'การเงิน', items: [
-      { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦' },
-      { id: 'loans', label: 'สินเชื่อ/เงินกู้', icon: '💰' },
-      { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱' },
-    ]},
-    { section: 'บัญชี', items: [
-      { id: 'accounts', label: 'ผังบัญชี', icon: '📋' },
-      { id: 'journals', label: 'สมุดรายวัน', icon: '📝' },
-      { id: 'general-ledger', label: 'บัญชีแยกประเภท', icon: '📒' },
-      { id: 'fiscal', label: 'งวดบัญชี', icon: '📅' },
-      { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢' },
-      { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰' },
-    ]},
-    { section: 'ภาษี', items: [
-      { id: 'tax', label: 'รายงานภาษี (ภ.พ.30)', icon: '🏛️' },
-      { id: 'wht', label: 'หัก ณ ที่จ่าย (ภ.ง.ด.)', icon: '📜' },
-      { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆' },
-      { id: 'etax', label: 'e-Tax Invoice', icon: '🧾' },
-      { id: 'tax-export', label: 'Export ยื่นภาษี', icon: '📤' },
-    ]},
-    { section: 'เงินเดือน', items: [
-      { id: 'payroll', label: 'ระบบเงินเดือน', icon: '💵' },
-      { id: 'commission', label: 'คอมมิชชัน', icon: '💸' },
-    ]},
-    { section: 'รายงาน', items: [
-      { id: 'executive-reports', label: 'รายงานผู้บริหาร', icon: '👔' },
-      { id: 'reports', label: 'รายงานการเงิน', icon: '📈' },
-      { id: 'budget', label: 'งบประมาณ', icon: '🎯' },
-      { id: 'aging', label: 'อายุลูกหนี้/เจ้าหนี้', icon: '⏳' },
-      { id: 'arap-analysis', label: 'วิเคราะห์ AR/AP', icon: '🔍' },
-      { id: 'fpa', label: 'วิเคราะห์การเงิน', icon: '📉' },
-    ]},
-    { section: 'โครงการ/องค์กร', items: [
-      { id: 'projects', label: 'โครงการ', icon: '📐' },
-      { id: 'time-billing', label: 'บันทึกเวลา', icon: '⏱️' },
-      { id: 'dimensions', label: 'สาขาและมิติ', icon: '🏬' },
-      { id: 'intercompany', label: 'ระหว่างบริษัท', icon: '🔗' },
-      { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑' },
-    ]},
-    { section: 'คลังเอกสาร', items: [
-      { id: 'import-export', label: 'นำเข้า/ส่งออก', icon: '📥' },
-      { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🌐' },
-      { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖' },
-      { id: 'document-scan', label: 'สแกนเอกสาร', icon: '📸' },
-    ]},
-    { section: 'ตั้งค่า', items: [
-      { id: 'team', label: 'จัดการทีม', icon: '👥' },
-      { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️' },
-      { id: 'approval', label: 'การอนุมัติ', icon: '✅' },
-      { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️' },
-      { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗' },
-      { id: 'api-developer', label: 'API Developer', icon: '📘' },
-      { id: 'webhooks', label: 'Webhooks & API', icon: '🔌' },
-      { id: 'subscription', label: 'แพ็กเกจ', icon: '💎' },
-      { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊' },
-      { id: 'audit', label: 'บันทึกกิจกรรม', icon: '🔍' },
-    ]},
-  ];
+  // ═══ รายการช่องติ๊ก = สร้างจากเมนูจริงใน layout.js — ห้ามพิมพ์รายการซ้ำในไฟล์นี้ ═══
+  //
+  // เดิม MENU_SECTIONS เป็น "สำเนาที่คัดลอกมาด้วยมือ" แล้ว drift จากเมนูจริง:
+  // เมนูที่เพิ่มทีหลัง (ภ.พ.30 ย้อนหลัง · ภาษีซื้อยังไม่ถึงกำหนด · ภาษีถูกหัก ·
+  // นำส่งภาษี/ประกันสังคม · อากรแสตมป์ · ทะเบียนสาขา · ชื่อทางการค้า ฯลฯ)
+  // **ไม่มีช่องให้ติ๊กเลย** ⇒ สมาชิกที่ใช้ role กำหนดเอง (strict mode) ไม่มีวันเห็น
+  // เมนูเหล่านั้น และแอดมินเปิดให้ไม่ได้ด้วย — ผู้ใช้รายงานเป็น "ตั้งสิทธิ์แล้วแต่
+  // ยังไม่เห็นเมนู". สร้างจาก Layout.navItems = เพิ่มเมนูใหม่ที่เดียว ช่องติ๊กตามทันที
+  const MENU_SECTIONS = (() => {
+    const out = [];
+    let cur = null;
+    (Layout.navItems || []).forEach(it => {
+      if (it.section) { cur = { section: it.section, items: [] }; out.push(cur); return; }
+      if (!it.id) return;
+      // เมนูของแพลตฟอร์ม/เจ้าของบริษัท — ไม่ใช่สิ่งที่มอบผ่าน role บริษัทได้
+      if (it.adminOnly || it.platformAdmin) return;
+      if (!cur) { cur = { section: 'หลัก', items: [] }; out.push(cur); }
+      cur.items.push({
+        id: it.id, label: it.label, icon: it.icon || '📄',
+        // เงื่อนไขการแสดงผลที่ "ชนะ" สิทธิ์ role — เก็บมาโชว์ให้แอดมินรู้ล่วงหน้า
+        vatOnly: !!it.vatOnly, etaxOnly: !!it.etaxOnly, feature: it.feature || null,
+      });
+    });
+    return out.filter(sec => sec.items.length > 0);
+  })();
 
   // Granular permission keys (perm:* in CompanyRolePermission.MenuItemId).
   // Stored alongside menu IDs but used by services for action-level gating
@@ -346,17 +281,36 @@
     renderPermEditor(selected = []) {
       const editor = document.getElementById('permEditor');
       const set = new Set(selected);
-      let html = '';
+      // ชั้นอื่นที่ "ชนะ" สิทธิ์ role ได้ — ต้องบอกแอดมินตรงนี้ ไม่งั้นติ๊กแล้ว
+      // สมาชิกยังไม่เห็น กลายเป็น "ตั้งค่าแล้วไม่มีผล" ที่ไล่หาสาเหตุไม่ถูก
+      const ownerHidden = new Set(Layout.myPermissions?.ownerHiddenMenuIds || []);
+      const planLoaded = !!Layout.subscription;
+      let html = `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;
+          padding:10px 12px;margin-bottom:12px;font-size:12px;color:#1e40af;line-height:1.8">
+        ℹ️ สิทธิ์เมนูเป็นแค่ชั้นเดียว — เมนูที่ติ๊กแล้วอาจยังไม่แสดงถ้า:
+        ถูก <b>ซ่อนทั้งบริษัท</b> (หน้า "ฟีเจอร์ & เมนู") · <b>ไม่อยู่ในแพ็กเกจ</b> (ขึ้น 🔒) ·
+        เป็นเมนูตามเงื่อนไข (จด VAT / เปิดใช้ e-Tax) — ช่องที่เข้าข่ายมีป้ายกำกับไว้แล้ว
+      </div>`;
       MENU_SECTIONS.forEach(sec => {
         html += `<div class="perm-section">
           <div class="perm-section-title">${sec.section}</div>
           <div class="perm-items">`;
         sec.items.forEach(item => {
           const checked = set.has(item.id) ? 'checked' : '';
-          html += `<label class="perm-item">
+          const notes = [];
+          if (ownerHidden.has(item.id))
+            notes.push('⚠️ ถูกซ่อนทั้งบริษัทอยู่ — ติ๊กแล้วสมาชิกก็ยังไม่เห็น (ปลดที่หน้า "ฟีเจอร์ & เมนู")');
+          if (planLoaded && item.feature && !Layout.hasFeature(item.feature))
+            notes.push('🔒 ไม่อยู่ในแพ็กเกจปัจจุบัน — สมาชิกเห็นแบบล็อก');
+          if (item.vatOnly) notes.push('แสดงเฉพาะบริษัทที่จด VAT');
+          if (item.etaxOnly) notes.push('แสดงเมื่อเปิดใช้ e-Tax แล้ว');
+          const mark = ownerHidden.has(item.id) ? ' <span style="color:#b45309">⚠️</span>'
+            : (planLoaded && item.feature && !Layout.hasFeature(item.feature)) ? ' <span>🔒</span>' : '';
+          const tt = notes.length ? ` title="${notes.join(' · ').replace(/"/g, '&quot;')}"` : '';
+          html += `<label class="perm-item"${tt}>
             <input type="checkbox" value="${item.id}" ${checked} class="perm-cb">
             <span class="perm-icon">${item.icon}</span>
-            ${item.label}
+            ${item.label}${mark}
           </label>`;
         });
         html += '</div></div>';

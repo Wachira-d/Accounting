@@ -248,6 +248,39 @@ public class OcrScanResult : TenantEntity
     public string? ProcessingNotes { get; set; }
     public DateTime? ProcessedAt { get; set; }
 
+    /// <summary>
+    /// ความมั่นใจรายช่อง — JSON <c>{"SellerTaxId":0.95,"TotalAmount":0.7,…}</c>
+    /// ใช้ชื่อช่องกลางจาก <c>Helpers/OcrFieldKeys.cs</c> เท่านั้น
+    ///
+    /// <para>เดิม<b>ไม่ได้เก็บลงฐานเลย</b> — ค่าอยู่ในหน่วยความจำเฉพาะตอนสแกน
+    /// สด พอ reload หน้า/เปิดจากรายการ ค่าหายหมด แล้วป้าย % ข้างทุกช่องตกไปใช้
+    /// confidence ของทั้งใบ ดูเหมือนเป็นข้อมูลรายช่องจริงทั้งที่เป็นเลขเดียวกัน
+    /// ⇒ ไฮไลต์ "ตรวจสอบอีกครั้ง" ตามกฎเหล็ก #3 ข้อ 3 ใช้งานไม่ได้จริง</para>
+    /// </summary>
+    public string? FieldConfidenceJson { get; set; }
+
+    /// <summary>feedback row ของการจำแนก "เอกสารที่จะสร้าง" ด้วย AI —
+    /// เก็บไว้เพื่อปิด loop ตอนผู้ใช้ยืนยัน/แก้ (กฎเหล็ก #1 ขั้น CAPTURE)</summary>
+    public Guid? TargetDocTypeAiFeedbackId { get; set; }
+
+    /// <summary>คำตอบที่ AI เสนอ — เก็บไว้เทียบว่าผู้ใช้ "รับ" หรือ "แก้"
+    /// (acceptedAi) และให้ UI ติดป้ายซื่อสัตย์ได้</summary>
+    public string? TargetDocTypeAiSuggested { get; set; }
+
+    /// <summary>true เมื่อ AI ถูกเรียกจริงและคำตอบถูกนำมาใช้ — ขับป้าย
+    /// "🤖 AI แนะนำ" vs "⚙️ ระบบแนะนำ" ตามกฎเหล็ก #1</summary>
+    public bool TargetDocTypeUsedAi { get; set; }
+
+    /// <summary>feedback row ของการ "แตกบรรทัดจากข้อความด้วย AI"
+    /// (<c>AiFeatureKey.OcrLineItemSplit</c>) — เก็บไว้ปิด loop ตอนผู้ใช้แก้/
+    /// ยืนยันรายการในหน้า review (กฎเหล็ก #1 ขั้น CAPTURE). null = ไม่ได้เรียก
+    /// AI ในรอบนี้ (engine คืนรายการมาแล้ว หรือผลถูกด่านตรวจยอดปฏิเสธ)</summary>
+    public Guid? LineSplitAiFeedbackId { get; set; }
+
+    /// <summary>true เมื่อรายการในใบนี้มาจากการแตกบรรทัดด้วย AI — UI ติดป้าย
+    /// "🤖 AI แตกรายการให้ กรุณาตรวจ" ให้ซื่อสัตย์ตามกฎเหล็ก #1</summary>
+    public bool LineSplitUsedAi { get; set; }
+
     // GL & expense suggestions
     public string? ExpenseCategory { get; set; }
     public string? SuggestedAccountsJson { get; set; }

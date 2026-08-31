@@ -428,7 +428,14 @@ const Layout = {
       // localStorage entry of `false` re-opens a group that's not active.
       const containsActive = groupItems.some(it => it.id === this.currentPage);
       const explicit = collapsedState[currentSection.section];
-      const isCollapsed = containsActive ? false : (explicit === false ? false : true);
+      // สมาชิก role กำหนดเอง: เมนูที่ได้รับคือ shortlist ที่แอดมินคัดให้แล้ว —
+      // เปิดหมวด default ให้เห็นทันที. "default พับทุกหมวด" คือเหตุที่ผู้ใช้ทั่วไป
+      // รายงานว่า "ตั้งสิทธิ์ให้แล้วแต่ยังไม่เห็นเมนู" ทั้งที่สิทธิ์มาครบ
+      // (ผู้ใช้สิทธิ์เต็ม/'*' เมนู 60+ รายการ ยังพับ default เหมือนเดิม)
+      const isCollapsed = containsActive ? false
+        : explicit === false ? false
+        : explicit === true ? true
+        : !hasCustomGrants;
       const sectionKey = this._sectionI18nKey(currentSection.section);
       const label = sectionKey ? this._t(sectionKey, currentSection.section) : currentSection.section;
       const icon = currentSection.icon || '📁';
@@ -2165,6 +2172,45 @@ const Layout = {
     });
   },
 
+  // ===== VAT รวมใน (price-inclusive) — ตัวคำนวณกลางตัวเดียวฝั่ง JS =====
+  //
+  // ⚠️ ที่มา: สูตร `Math.round(subtotal * 7 / 107 * 100) / 100` ถูกคัดลอกไป
+  // วางใน pos.html 2 จุด และ documents.html 1 จุด. ปัญหาไม่ใช่ทิศการปัด
+  // (Math.round ของ JS ปัดครึ่งขึ้นเหมือน AwayFromZero สำหรับค่าบวก) แต่เป็น
+  // **binary float**: ค่าที่ควรลงท้าย .xx5 พอดีถูกเก็บเป็น .xx49999… แล้วปัดลง
+  // (คลาสสิก: `Math.round(1.005 * 100) / 100` = 1 ไม่ใช่ 1.01) ⇒ ใบที่พิมพ์
+  // ที่หน้าร้านต่างจากยอดที่เซิร์ฟเวอร์คำนวณด้วย decimal ได้ ฿0.01
+  //
+  // วิธีแก้: คิดด้วย **จำนวนเต็มสตางค์** ทั้งหมด ไม่มี float เข้ามาเกี่ยวเลย
+  //   vatCents = round(totalCents × rate / (100 + rate))  ปัดครึ่งขึ้น
+  // เทียบเท่า `Math.Round(x * 7m / 107m, 2, MidpointRounding.AwayFromZero)`
+  // ฝั่งเซิร์ฟเวอร์ทุกค่า
+
+  /// ยอด VAT ที่แฝงอยู่ในราคารวม VAT — คืนเป็นบาททศนิยม 2 ตำแหน่ง
+  vatFromInclusive(amountBaht, ratePercent = 7) {
+    const rate = Number(ratePercent) || 0;
+    const amt = Number(amountBaht) || 0;
+    if (rate <= 0 || amt === 0) return 0;
+    const sign = amt < 0 ? -1 : 1;
+    const cents = Math.round(Math.abs(amt) * 100);      // ยอดเงินมี 2 ตำแหน่งอยู่แล้ว
+    const denom = 100 + rate;
+    // ทำให้เป็นจำนวนเต็มทั้งเศษและส่วน (รองรับอัตราที่มีทศนิยม เช่น 1.5%)
+    const scale = 1000;
+    const num = cents * Math.round(rate * scale);
+    const den = Math.round(denom * scale);
+    const q = Math.floor(num / den);
+    const r = num - q * den;
+    const vatCents = (r * 2 >= den) ? q + 1 : q;        // ปัดครึ่ง "ขึ้น" เสมอ
+    return sign * vatCents / 100;
+  },
+
+  /// ฐานภาษี (ราคาก่อน VAT) ของราคารวม VAT — ยอดรวมต้องเท่าเดิมเสมอ
+  /// จึงคำนวณจากส่วนต่าง ไม่ปัดสองรอบให้ยอดเพี้ยน
+  baseFromInclusive(amountBaht, ratePercent = 7) {
+    const amt = Number(amountBaht) || 0;
+    return Math.round((amt - Layout.vatFromInclusive(amt, ratePercent)) * 100) / 100;
+  },
+
   // Format helpers
   money(n) {
     if (n == null || n === '') return '0.00';
@@ -2468,14 +2514,29 @@ const Layout = {
   },
 
   // ===== Form Validation Utilities =====
+  // เลขผู้เสียภาษี 13 หลัก — **ตัวตรวจฝั่ง JS ตัวเดียวของระบบ**
+  // ต้องให้คำตอบเดียวกับ Helpers/ThaiTaxId.IsValid ฝั่งเซิร์ฟเวอร์เป๊ะ:
+  // 13 หลัก + หลักแรก 0-8 + mod-11 checksum
+  // ⚠️ เดิมตัวนี้ **ไม่มีกติกาหลักแรก** ⇒ เลขที่ขึ้นต้นด้วย 9 ผ่านด่านฝั่ง
+  // ผู้ใช้แล้วไปตายที่เซิร์ฟเวอร์ (ผู้ใช้ไม่รู้ว่าผิดตรงไหน) และ
+  // smart-hooks.js มีสำเนาที่ตรวจหลักแรกอยู่ ⇒ ตัวตรวจสองตัวบนหน้าเดียวกัน
+  // ตอบไม่ตรงกันกับ input เดียวกัน
   validateTaxId(taxId) {
     if (!taxId) return true;
-    const digits = taxId.replace(/\D/g, '');
-    if (digits.length !== 13) return false;
+    return Layout.taxIdCheck(taxId).valid;
+  },
+
+  /** ผลตรวจแบบมีเหตุผล — ใช้ร่วมกับ smart-hooks (ไอคอนสถานะข้างช่องกรอก)
+   *  คืน { valid, reason } เพื่อไม่ต้องมีสำเนา checksum ตัวที่สอง */
+  taxIdCheck(taxId) {
+    const d = (taxId || '').replace(/\D/g, '');
+    if (d.length !== 13) return { valid: false, reason: `${d.length}/13 หลัก` };
+    if (d[0] < '0' || d[0] > '8') return { valid: false, reason: 'หลักแรกต้องเป็น 0-8' };
     let sum = 0;
-    for (let i = 0; i < 12; i++) sum += parseInt(digits[i]) * (13 - i);
+    for (let i = 0; i < 12; i++) sum += parseInt(d[i], 10) * (13 - i);
     const check = (11 - (sum % 11)) % 10;
-    return check === parseInt(digits[12]);
+    if (check !== parseInt(d[12], 10)) return { valid: false, reason: 'check digit ผิด' };
+    return { valid: true };
   },
 
   validatePhone(phone) {

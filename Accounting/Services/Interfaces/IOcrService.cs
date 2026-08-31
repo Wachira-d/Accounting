@@ -32,6 +32,12 @@ public interface IOcrService
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null);
+
+    /// <summary>เหมือนตัวบน แต่ <paramref name="allowDuplicate"/> = ผู้ใช้ยืนยันแล้วว่า
+    /// รู้ว่าเป็นใบซ้ำและยังต้องการสร้าง — ด่านกันซ้ำอยู่ที่เซิร์ฟเวอร์ ไม่ใช่ที่ปุ่ม
+    /// บนหน้าเว็บ (เดิมเตือนเฉพาะปุ่มเดียวจากสามปุ่ม อีกสองปุ่มลัดผ่านไปเลย)</summary>
+    Task<OcrResultResponse> CreateDocumentFromScanAsync(
+        Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride, bool allowDuplicate);
     /// <summary>Rebuild a document's lines from its source OCR scan when it
     /// was created empty (pre line-building fix). Looked up by documentId.</summary>
     Task<OcrResultResponse> RepopulateDocumentLinesFromScanAsync(Guid companyId, Guid documentId, string performedBy);
@@ -73,7 +79,13 @@ public interface IOcrService
     /// recompute Amount = qty×unitPrice, persist ลง ExtractedItemsJson, คืน amount
     /// ใหม่. field ที่ส่ง null = คงค่าเดิม.</summary>
     Task<decimal> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
-        int lineIndex, string? description, decimal? quantity, decimal? unitPrice);
+        int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
+        string? accountCode = null);
+
+    /// <summary>เพิ่ม/ลบบรรทัดรายการของผลสแกน — <c>action</c> = "add" | "delete"
+    /// (เดิมตาราง review เพิ่ม/ลบแถวไม่ได้เลย ⇒ OCR รวมหรือแตกแถวผิดแล้วผู้ใช้
+    /// มีทางออกแค่ "แกะใหม่" ซึ่งจำกัดจำนวนครั้ง) คืนจำนวนบรรทัดหลังแก้</summary>
+    Task<int> ModifyExtractedLineAsync(Guid companyId, Guid scanResultId, string action, int lineIndex);
 
     /// <summary>List the matched vendor's open Purchase Orders together with
     /// their line items so the review UI can render the "เลือก PO" picker.

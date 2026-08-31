@@ -49,4 +49,33 @@ public static class ThaiDate
     /// <summary>yyyyMMdd ของวันที่ไทย — ใช้กับเลขเอกสาร.</summary>
     public static string YyyyMmDd(DateTime dt)
         => CalendarDateUtc(dt).ToString("yyyyMMdd");
+
+    /// <summary>
+    /// แปลง "ปีที่อ่านได้จากกระดาษ" เป็นปี ค.ศ. — <b>ตัวแปลงกลางตัวเดียว</b>
+    ///
+    /// <para>รองรับ 4 รูปแบบที่พบบนเอกสารไทยจริง:
+    /// <list type="bullet">
+    /// <item><c>2569</c> → พ.ศ. 4 หลัก → 2026</item>
+    /// <item><c>2026</c> → ค.ศ. 4 หลัก → คงเดิม</item>
+    /// <item><c>69</c> → พ.ศ. ย่อ (2500+69 = 2569) → 2026</item>
+    /// <item><c>26</c> → ค.ศ. ย่อ → 2026</item>
+    /// </list></para>
+    ///
+    /// <para>⚠️ ที่มา: กติกาเดียวกันนี้ถูกเขียนซ้ำในเรพด้วย **เกณฑ์ที่ต่างกัน 4 แบบ**
+    /// (<c>&gt; 2500</c> ใน ParseThaiDocument · <c>&gt;= 2400</c> ใน EnrichFromRawText ·
+    /// <c>&gt; 2400</c> ใน CalendarDateUtc · <c>&gt; currentYear + 10</c> ในหน้าแอดมิน)
+    /// ⇒ เอกสารใบเดียวกันที่เข้าคนละเส้นทาง OCR ลงคนละปีได้</para>
+    ///
+    /// <para>เส้นแบ่ง 2 หลัก: ค่า &gt;= <paramref name="shortBeFloor"/> ถือเป็น พ.ศ. ย่อ
+    /// (ค่าเริ่มต้น 60 = พ.ศ. 2560/ค.ศ. 2017 ขึ้นไป) — เอกสารบัญชีที่สแกนเข้าระบบ
+    /// ไม่ควรเก่ากว่านั้น</para>
+    /// </summary>
+    public static int NormalizeYear(int year, int shortBeFloor = 60) => year switch
+    {
+        >= 2400 => year - 543,        // พ.ศ. 4 หลัก
+        >= 1900 => year,              // ค.ศ. 4 หลัก
+        >= 100 => year,               // 3 หลัก — ผิดปกติ ปล่อยผ่านให้ผู้เรียกตรวจเอง
+        _ when year >= shortBeFloor => 2500 + year - 543,   // พ.ศ. ย่อ (69 → 2026)
+        _ => 2000 + year,             // ค.ศ. ย่อ (26 → 2026)
+    };
 }

@@ -254,13 +254,17 @@ public class OcrController : ControllerBase
     [HttpPost("{scanId:guid}/create-document")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(
         Guid companyId, Guid scanId, [FromQuery] string? targetType = null,
-        [FromQuery] bool approve = false)
+        [FromQuery] bool approve = false,
+        // ผู้ใช้กดยืนยันในกล่องเตือน "ใบนี้ซ้ำ" แล้ว — ด่านกันซ้ำอยู่ฝั่งเซิร์ฟเวอร์
+        // ทุกปุ่มจึงถูกกันเหมือนกันหมด ไม่ใช่แค่ปุ่มที่หน้าเว็บนึกจะเช็ค
+        [FromQuery] bool allowDuplicate = false)
     {
         // Pass the user GUID (not Identity.Name, which is the email) so the
         // created document's CreatedBy resolves to a real user → its
         // signature prints. The service still owner-falls-back if empty.
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _service.CreateDocumentFromScanAsync(companyId, scanId, userId, targetType);
+        var result = await _service.CreateDocumentFromScanAsync(
+            companyId, scanId, userId, targetType, allowDuplicate);
 
         // "สร้าง + อนุมัติ" — อนุมัติผ่าน pipeline ปกติเต็มขั้น (ด่าน §86/4,
         // JE, stock, เลขเอกสารจริง). อนุมัติไม่ผ่าน ≠ ล้มเหลวทั้งก้อน:
@@ -399,7 +403,12 @@ public class OcrController : ControllerBase
         }, req.ProjectId.HasValue ? "บันทึก project ของบรรทัดแล้ว" : "ยกเลิก project ของบรรทัดแล้ว"));
     }
 
-    public sealed record SetLineFieldsRequest(int LineIndex, string? Description, decimal? Quantity, decimal? UnitPrice);
+    public sealed record SetLineFieldsRequest(
+        int LineIndex, string? Description, decimal? Quantity, decimal? UnitPrice,
+        string? AccountCode = null);
+
+    /// <summary>action = "add" | "delete" · LineIndex ใช้เฉพาะตอน delete</summary>
+    public sealed record ModifyLineRequest(string Action, int LineIndex = -1);
 
     /// <summary>แก้ description/จำนวน/ราคาต่อหน่วยของบรรทัด OCR inline ในหน้า review
     /// (กฎเหล็ก #3). recompute amount = qty×price, persist ลง ExtractedItemsJson แล้ว
@@ -409,12 +418,22 @@ public class OcrController : ControllerBase
         Guid companyId, Guid scanId, [FromBody] SetLineFieldsRequest req)
     {
         var amount = await _service.SetExtractedLineFieldsAsync(companyId, scanId,
-            req.LineIndex, req.Description, req.Quantity, req.UnitPrice);
+            req.LineIndex, req.Description, req.Quantity, req.UnitPrice, req.AccountCode);
         return Ok(new ApiResponse<object>(true, new
         {
             lineIndex = req.LineIndex,
             amount,
         }, "บันทึกบรรทัดแล้ว"));
+    }
+
+    /// <summary>เพิ่ม/ลบบรรทัดรายการของผลสแกน — เดิมตาราง review ทำไม่ได้เลย</summary>
+    [HttpPost("{scanId:guid}/modify-line")]
+    public async Task<ActionResult<ApiResponse<object>>> ModifyLine(
+        Guid companyId, Guid scanId, [FromBody] ModifyLineRequest req)
+    {
+        var count = await _service.ModifyExtractedLineAsync(companyId, scanId, req.Action, req.LineIndex);
+        return Ok(new ApiResponse<object>(true, new { lineCount = count },
+            req.Action == "add" ? "เพิ่มบรรทัดแล้ว" : "ลบบรรทัดแล้ว"));
     }
 
     [HttpPost("{scanId:guid}/match-contact/{contactId:guid}")]
@@ -515,6 +534,12 @@ public class OcrController : ControllerBase
         // (pure in-memory).
         var assetDecisions = Services.Implementations.Ocr.FixedAssetDetector.Analyze(
             lines.Select(l => (l.Description, l.Quantity, l.UnitPrice, l.Amount)).ToList());
+
+        // ดึง global pattern ของทุกบรรทัดครั้งเดียวก่อนเข้าลูป — เดิม MatchAsync
+        // ยิง GetActivePatternAsync (ตัวเดี่ยว) ทุกบรรทัด = N+1 query ต่อการสแกน
+        // 1 ใบ ทั้งที่ตัวรวม GetActivePatternsAsync เขียนไว้ให้ใช้เพื่อการนี้
+        // อยู่ติดกันในไฟล์เดียวกันแต่ไม่มีใครเรียก
+        await matcher.PrewarmGlobalPatternsAsync(lines.Select(l => l.Description));
 
         var resultLines = new List<OcrStockPreviewLine>();
         for (var i = 0; i < lines.Count; i++)
@@ -681,6 +706,9 @@ public class OcrController : ControllerBase
 
         var userId = User.Identity?.Name ?? "ocr-stock-import";
         var vendorId = scan.MatchedContactId;
+        // ใบที่สแกนมามี VAT จริงไหม — ใช้ตั้ง VatRate ของสินค้าที่สร้างใหม่
+        // แทนการ hardcode 7% (สินค้ายกเว้น §81 / อัตรา 0 จะได้ไม่ถูกตั้งผิด)
+        var scanHasVat = (scan.ExtractedVatAmount ?? 0m) > 0m;
         var lineResults = new List<OcrStockImportLineResult>();
         var created = 0; var matched = 0; var movements = 0; var aliases = 0; var assetsCreated = 0;
 
@@ -822,10 +850,19 @@ public class OcrController : ControllerBase
                         SKU: null,
                         Barcode: null,
                         Category: item.NewProductCategory,
-                        Unit: string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
+                        // ⚠️ เดิม `?? "ชิ้น"` ตรง ๆ — เส้นทางเอกสารถูกแก้ให้ผ่าน
+                        // UnitInferrer ไปแล้ว แต่เส้นทางนี้ตกค้าง และร้ายกว่าเพราะ
+                        // เขียนลง **ทะเบียนสินค้า** ⇒ ค่าไฟ/ค่าบริการได้หน่วย
+                        // "ชิ้น" ติดตัวไปตลอด (defect class "แก้ตัวเดียว เหลือที่เหลือ")
+                        Unit: !string.IsNullOrWhiteSpace(item.Unit) ? item.Unit
+                            : (Services.Implementations.Ocr.UnitInferrer.Infer(ocrDesc) ?? "ชิ้น"),
                         SellingPrice: 0m,
                         CostPrice: item.UnitCost,
-                        VatRate: item.VatRate ?? 7m,
+                        // ⚠️ เดิม `?? 7m` = สมมติว่าทุกอย่างเสีย VAT 7% ⇒ สินค้าที่
+                        // §81 ยกเว้น/อัตรา 0 ถูกตั้ง 7% ในทะเบียน แล้ว **ใบขาย
+                        // ทุกใบในอนาคต** ของสินค้านั้นคิด VAT ผิดตามไปด้วย
+                        // ใช้หลักฐานบนกระดาษแทนการเดา: ใบที่ไม่มี VAT เลย = 0
+                        VatRate: item.VatRate ?? (scanHasVat ? 7m : 0m),
                         IsVatIncluded: false,
                         TrackStock: true,
                         MinimumStock: 0);

@@ -22,16 +22,14 @@
   // ============================================================
   // Thai Tax ID checksum (client-side — instant, no API call)
   // ============================================================
+  // ⚠️ เดิมไฟล์นี้มีสำเนา checksum ของตัวเอง ⇒ หน้าเดียวกันมีตัวตรวจ 2 ตัวที่
+  // ตอบไม่ตรงกัน (layout.js ไม่ได้ตรวจหลักแรก) — เรียกตัวกลางที่ layout.js
+  // ตัวเดียว (ซึ่งตรงกับ Helpers/ThaiTaxId ฝั่งเซิร์ฟเวอร์)
   function thaiTaxIdValid(taxId) {
-    const clean = (taxId || '').replace(/\D/g, '');
-    if (clean.length !== 13) return { valid: false, reason: `${clean.length}/13 หลัก` };
-    const first = clean[0];
-    if (first < '0' || first > '8') return { valid: false, reason: 'หลักแรกต้องเป็น 0-8' };
-    let sum = 0;
-    for (let i = 0; i < 12; i++) sum += parseInt(clean[i]) * (13 - i);
-    const check = (11 - (sum % 11)) % 10;
-    if (check !== parseInt(clean[12])) return { valid: false, reason: 'check digit ผิด' };
-    return { valid: true };
+    if (typeof Layout !== 'undefined' && Layout.taxIdCheck) return Layout.taxIdCheck(taxId);
+    // layout.js ยังไม่โหลด (ไม่ควรเกิด — ไฟล์นี้ถูกโหลดโดย layout.js เอง)
+    // ตอบว่า "ตรวจไม่ได้" ดีกว่าตรวจด้วยกติกาที่อาจไม่ตรงกับเซิร์ฟเวอร์
+    return { valid: true, reason: '' };
   }
 
   function attachTaxId(el) {

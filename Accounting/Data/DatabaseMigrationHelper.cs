@@ -3445,6 +3445,10 @@ public static class DatabaseMigrationHelper
             // null ทั้งสองคอลัมน์ = พฤติกรรมเดิมทุกประการ (กิจการสาขาเดียวไม่กระทบ)
             // IssuerBranchCode = snapshot รหัส 5 หลักที่พิมพ์จริงตอนอนุมัติ — แก้ทะเบียน
             // สาขาภายหลังต้องไม่ย้อนไปเปลี่ยนใบกำกับที่ออกไปแล้ว (§86/4)
+            // ที่อยู่ของแบรนด์ผูกกับทะเบียนบริษัท/สาขาได้ — แถวเก่าเป็น 'Custom'
+            // (พิมพ์เอง) เพื่อคงพฤติกรรมเดิมทุกประการ
+            """ALTER TABLE "DocumentBrands" ADD COLUMN IF NOT EXISTS "AddressSource" varchar(20) NOT NULL DEFAULT 'Custom';""",
+            """ALTER TABLE "DocumentBrands" ADD COLUMN IF NOT EXISTS "AddressSourceBranchId" uuid NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BranchId" uuid NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IssuerBranchCode" varchar(5) NULL;""",
             // รายงานภาษีซื้อ/ขายแยกตามสถานประกอบการ (§87) สแกนด้วยคู่นี้
@@ -4685,6 +4689,38 @@ public static class DatabaseMigrationHelper
             // เลขรับ (FilingNumber) ของการนำส่ง ภ.พ.36 งวดเดียวกัน (เดือนจ่าย)
             // idempotent: เฉพาะใบที่ยังไม่มีเลข + remittance มีเลขรับจริง
             """UPDATE "Documents" d SET "Pp36RdReceiptNumber" = r."FilingNumber", "Pp36RdReceiptDate" = COALESCE(d."Pp36RdReceiptDate", r."PayDate") FROM "StatutoryRemittances" r WHERE d."IsForeignService" = true AND d."InputVatBecameClaimableAt" IS NOT NULL AND d."Pp36RdReceiptNumber" IS NULL AND r."CompanyId" = d."CompanyId" AND r."RemittanceType" = 'VatPp36' AND r."IsDeleted" = false AND r."FilingNumber" IS NOT NULL AND r."FilingNumber" <> '' AND r."PeriodYear" = EXTRACT(YEAR FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int AND r."PeriodMonth" = EXTRACT(MONTH FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int;""",
+
+            // ===== ความมั่นใจรายช่องของ OCR — เดิมไม่ได้เก็บลงฐานเลย =====
+            // ค่าอยู่ในหน่วยความจำเฉพาะตอนสแกนสด พอ reload หน้าค่าหายหมด แล้ว
+            // ป้าย % ข้างทุกช่องตกไปใช้ confidence ของทั้งใบ ⇒ ไฮไลต์เหลือง
+            // "ตรวจสอบอีกครั้ง" (กฎเหล็ก #3 ข้อ 3) ใช้งานไม่ได้จริง
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "FieldConfidenceJson" text NULL;""",
+
+            // ===== ปิด loop AI ของการจำแนก "เอกสารที่จะสร้าง" =====
+            // เดิม loop ปิดจริงแค่ 3 ช่อง (ผังบัญชี/ผู้ติดต่อ/โครงการ) — การแก้
+            // ชนิดเอกสารซึ่งเป็นคำถามที่พลาดแล้วแพงที่สุด ไม่เคยไปถึง student
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiFeedbackId" uuid NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LineSplitAiFeedbackId" uuid NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LineSplitUsedAi" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiSuggested" varchar(50) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeUsedAi" boolean NOT NULL DEFAULT false;""",
+
+            // ===== ล้าง regex ที่กลืนขึ้นบรรทัดใหม่ออกจากรูปแบบที่เรียนรู้ไว้แล้ว =====
+            // OcrLearnedPatterns เก็บ "regex ที่ใช้ดึงค่า" ลงฐานข้อมูล ⇒ แถวที่
+            // เรียนไว้ก่อนหน้ายังถือ pattern เดิมที่ตัวคั่นเป็น [-\s]? ซึ่ง \s ครอบ
+            // \n ⇒ ต่อเลขท้ายบรรทัดกับเลขต้นบรรทัดถัดไปเป็นเลข 13 หลักที่ไม่มีบน
+            // กระดาษ (บั๊กจริง PI-20260820-0005) — แก้โค้ดอย่างเดียวไม่พอ ต้องล้าง
+            // ของที่ค้างในฐานด้วย. ตั้งเป็น NULL ให้ zone analyzer กลับไปใช้ทาง
+            // กระดาษ (บั๊กจริง PI-20260820-0005) — แก้โค้ดอย่างเดียวไม่พอ ต้องล้าง
+            // ของที่ค้างในฐานด้วย
+            //
+            // เทียบแบบ **เท่ากันเป๊ะ** ไม่ใช่ LIKE '%\s%' สองเหตุผล: (1) pattern
+            // ของชื่อบริษัทก็มี \s อยู่ในตัว (`\s*\(มหาชน\)`) ซึ่งข้ามบรรทัดได้
+            // ตามตั้งใจ จะไปทับผิดตัว (2) ใน LIKE ของ Postgres `\` เป็น escape
+            // char โดยปริยาย ⇒ '%[-\s]?%' ถูกอ่านเป็น '%[-s]?%' แล้วไม่ match อะไรเลย
+            // ค่านี้เป็นค่าเดียวที่ BuildExtractionRegex เคยออกให้เลข 13 หลัก
+            // → เขียนทับด้วย pattern ที่แก้แล้ว (เก็บสิ่งที่เรียนรู้ไว้ ไม่ทิ้ง)
+            """UPDATE "OcrLearnedPatterns" SET "ExtractionRegex" = '(?<!\d)(\d{1}[- \t]?\d{4}[- \t]?\d{5}[- \t]?\d{2}[- \t]?\d{1})(?!\d)' WHERE "ExtractionRegex" = '(\d{1}[-\s]?\d{4}[-\s]?\d{5}[-\s]?\d{2}[-\s]?\d{1})';""",   // regex-line-span-ok — pattern เดิมอยู่ที่นี่ในฐานะ "ค่าที่จะถูกแทน" ไม่ใช่ regex ที่ใช้งาน
 
             // ===== Snapshot ยอดจริงจาก statement ล่าสุด (แสดงคู่ยอด GL ให้เห็นผลต่าง) =====
             """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalance" numeric(18,2) NULL;""",

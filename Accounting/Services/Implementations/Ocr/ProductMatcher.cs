@@ -42,6 +42,39 @@ public class ProductMatcher
     public ProductMatcher(AccountingDbContext db, GlobalProductLearner? global = null)
     { _db = db; _global = global; }
 
+    /// <summary>
+    /// แคชผลค้น global pattern ที่ prefetch ไว้ล่วงหน้าต่อ 1 request
+    /// (`ProductMatcher` เป็น Scoped จึงปลอดภัย). null = ยังไม่ได้ prewarm →
+    /// <see cref="MatchAsync"/> ตกไปค้นทีละคำเหมือนเดิม
+    /// </summary>
+    private Dictionary<string, GlobalProductPattern>? _globalPrefetch;
+
+    /// <summary>
+    /// ดึง global pattern ของทุกบรรทัดใน "ครั้งเดียว" ก่อนเข้าลูป
+    ///
+    /// <para>⚠️ ที่มา: <c>OcrController</c> เรียก <see cref="MatchAsync"/> ใน
+    /// <c>for</c> ลูปทีละบรรทัด และข้างในยิง <c>GetActivePatternAsync</c>
+    /// (ตัวเดี่ยว) ทุกครั้ง ⇒ **N+1 query ต่อการสแกน 1 ใบ** ไปยังตารางระดับ
+    /// ระบบ ขณะที่ <c>GetActivePatternsAsync</c> (ตัวรวม) ถูกเขียนไว้ให้ใช้
+    /// เพื่อการนี้โดยเฉพาะแต่ **ไม่มีใครเรียกเลย** — ของที่สร้างไว้แล้วไม่ได้
+    /// ถูกใช้ อยู่ติดกันในไฟล์เดียวกันด้วยซ้ำ</para>
+    ///
+    /// <para>เรียกก่อนลูปหนึ่งครั้ง แล้ว <see cref="MatchAsync"/> จะอ่านจากแคช
+    /// แทนการยิง DB. ล้มเหลว = ปล่อยแคชเป็น null แล้วกลับไปพฤติกรรมเดิม</para>
+    /// </summary>
+    public async Task PrewarmGlobalPatternsAsync(IEnumerable<string?> descriptions)
+    {
+        if (_global == null) return;
+        var keys = descriptions
+            .Select(d => Normalize(d ?? ""))
+            .Where(k => k.Length > 0)
+            .Distinct()
+            .ToList();
+        if (keys.Count == 0) return;
+        try { _globalPrefetch = await _global.GetActivePatternsAsync(keys); }
+        catch { _globalPrefetch = null; /* ตารางอาจยังไม่มีใน env ทดสอบ */ }
+    }
+
     private const double VendorAliasScore   = 1.00;
     private const double GlobalAliasScore   = 0.95;
     private const double CodeHitScore       = 0.92;
@@ -358,12 +391,20 @@ public class ProductMatcher
         var globalHit = false;
         if (_global != null && byProductId.Count > 0)
         {
-            try
+            if (_globalPrefetch != null)
             {
-                var pattern = await _global.GetActivePatternAsync(norm);
-                if (pattern != null) globalHit = true;
+                // ผู้เรียก prewarm มาแล้ว — ไม่ต้องยิง DB ต่อบรรทัด
+                globalHit = _globalPrefetch.ContainsKey(norm);
             }
-            catch { /* table may not exist yet in test envs */ }
+            else
+            {
+                try
+                {
+                    var pattern = await _global.GetActivePatternAsync(norm);
+                    if (pattern != null) globalHit = true;
+                }
+                catch { /* table may not exist yet in test envs */ }
+            }
         }
 
         // ── Brand-protection + vendor-history rescore ──────────────────

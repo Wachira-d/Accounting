@@ -65,7 +65,7 @@ public class SampleDataController : ControllerBase
         {
             var c = customers[i % customers.Length];
             var amt = 5000m + i * 3000m;
-            var subTotal = Math.Round(amt / 1.07m, 2);
+            var subTotal = Math.Round(amt / 1.07m, 2, MidpointRounding.AwayFromZero);
             var vat = amt - subTotal;
             var invDocDate = now.AddDays(-i * 5);
             var inv = new Document

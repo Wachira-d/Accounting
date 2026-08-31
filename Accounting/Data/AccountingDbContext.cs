@@ -1216,6 +1216,10 @@ public class AccountingDbContext : DbContext
             e.Property(b => b.LogoUrl).HasMaxLength(1000);
             e.Property(b => b.Address).HasMaxLength(1000);
             e.Property(b => b.AddressEn).HasMaxLength(1000);
+            e.Property(b => b.AddressSource).HasMaxLength(20);
+            // SetNull — ลบสาขาแล้วแบรนด์ต้องไม่หาย (ตกไปใช้ที่อยู่บริษัทแทน)
+            e.HasOne(b => b.AddressSourceBranch).WithMany()
+                .HasForeignKey(b => b.AddressSourceBranchId).OnDelete(DeleteBehavior.SetNull);
             e.Property(b => b.Phone).HasMaxLength(100);
             e.Property(b => b.Email).HasMaxLength(200);
             e.Property(b => b.Website).HasMaxLength(300);

@@ -105,11 +105,23 @@ public static class OcrConfidenceGateway
         }
 
         // 5. Per-field confidence penalty
+        //
+        // ⚠️ เดิมมองหาชื่อชุดของ Azure ("InvoiceTotal"/"InvoiceId"/"VendorName"/
+        // "VendorTaxId") ซึ่งมีเฉพาะบนเส้นทาง Azure DI ⇒ ด่านนี้ **ไม่เคยทำงาน
+        // บนเส้นทาง Tesseract/Python เลย** ทั้งที่นั่นคือเส้นทางที่ความมั่นใจ
+        // ต่ำที่สุดและควรถูกด่านนี้จับมากที่สุด — แปลงชื่อผ่านคำศัพท์กลาง
+        // (Helpers/OcrFieldKeys.cs) ก่อนเทียบ ทุกเส้นทางจึงถูกตรวจเท่ากัน
         if (fieldConfidences != null)
         {
-            foreach (var critical in new[] { "InvoiceTotal", "InvoiceId", "VendorName", "VendorTaxId" })
+            var canon = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (k, v) in fieldConfidences)
             {
-                if (fieldConfidences.TryGetValue(critical, out var c) && c < 0.5m)
+                var ck = Accounting.Helpers.OcrFieldKeys.Canonical(k);
+                if (!canon.TryGetValue(ck, out var prev) || v > prev) canon[ck] = v;
+            }
+            foreach (var critical in Accounting.Helpers.OcrFieldKeys.CriticalForTaxInvoice)
+            {
+                if (canon.TryGetValue(critical, out var c) && c < 0.5m)
                 {
                     warnings.Add($"{critical} ความมั่นใจต่ำ ({c:P0})");
                     penalty += config.LowConfidencePenalty;

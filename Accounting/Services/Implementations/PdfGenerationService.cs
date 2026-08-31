@@ -41,7 +41,7 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         var document = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Brand)   // ชื่อทางการค้าบนหัวเอกสาร (null = ใช้ชื่อบริษัท)
+            .Include(d => d.Brand).ThenInclude(b => b!.AddressSourceBranch)   // ชื่อทางการค้า + สาขาที่แบรนด์ผูกที่อยู่ไว้
             .Include(d => d.Branch)  // สถานประกอบการที่ออกใบ (null = กิจการสาขาเดียว)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
@@ -146,7 +146,7 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         var document = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Brand)   // ชื่อทางการค้าบนหัวเอกสาร (null = ใช้ชื่อบริษัท)
+            .Include(d => d.Brand).ThenInclude(b => b!.AddressSourceBranch)   // ชื่อทางการค้า + สาขาที่แบรนด์ผูกที่อยู่ไว้
             .Include(d => d.Branch)  // สถานประกอบการที่ออกใบ (null = กิจการสาขาเดียว)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
@@ -1210,9 +1210,19 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         var isEn = lang == "en";
         var b = doc.Brand;
+        // ที่อยู่ของแบรนด์ผูกกับทะเบียนบริษัท/สาขาได้ — resolve ผ่านตัวกลางตัวเดียว
+        // (null = ใช้ที่อยู่บริษัท ซึ่ง DocumentIssuerIdentity.Resolve จัดการให้อยู่แล้ว)
+        var brandAddr = b == null ? null : BrandAddressSource.Resolve(
+            b.AddressSource,
+            isEn ? (string.IsNullOrWhiteSpace(b.AddressEn) ? b.Address : b.AddressEn) : b.Address,
+            b.AddressSourceBranch is { IsDeleted: false } sb
+                && DocumentIssuerBranch.UseBranchAddress(sb.Address)
+                ? ThaiAddressFormatter.Format(sb.Address, null, null, null, null,
+                    sb.SubDistrict, sb.District, sb.Province, sb.PostalCode)
+                : null);
         var view = b == null || b.IsDeleted ? null : new DocumentBrandView(
             b.Name, b.NameEn, b.TagLine, b.TagLineEn, b.LogoPath, b.LogoUrl,
-            b.Address, b.AddressEn, b.Phone, b.Email, b.Website, b.PrimaryColor,
+            brandAddr, brandAddr, b.Phone, b.Email, b.Website, b.PrimaryColor,
             b.LegalNamePlacement, b.IsActive, b.FooterNotes, b.FooterNotesEn);
 
         var companyAddr = ThaiAddressFormatter.ResolvePartyAddress(

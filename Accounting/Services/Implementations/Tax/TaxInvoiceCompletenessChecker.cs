@@ -122,22 +122,10 @@ public static class TaxInvoiceCompletenessChecker
     public static bool IsValidThaiTaxId(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return false;
-        // strip whitespace + dashes (RD เอกสารเขียน 1-2345-67890-12-3 ได้)
-        Span<char> digits = stackalloc char[13];
-        int n = 0;
-        foreach (var c in raw)
-        {
-            if (c is ' ' or '-' or '\t') continue;
-            if (!char.IsDigit(c)) return false;
-            if (n >= 13) return false;
-            digits[n++] = c;
-        }
-        if (n != 13) return false;
-
-        int sum = 0;
-        for (int i = 0; i < 12; i++)
-            sum += (digits[i] - '0') * (13 - i);
-        int check = (11 - (sum % 11)) % 10;
-        return check == (digits[12] - '0');
+        // เข้มกว่าฝั่งสแกน: ช่องนี้ผู้ใช้พิมพ์เอง ตัวอักษรอื่นปนมา = พิมพ์ผิด ไม่ใช่
+        // "ตัวคั่น" — ยอมเฉพาะ - / ช่องว่าง (RD เอกสารเขียน 1-2345-67890-12-3 ได้)
+        if (raw.Any(c => !char.IsDigit(c) && c is not (' ' or '-' or '\t'))) return false;
+        // checksum ใช้ตัวกลางตัวเดียวของระบบ (Helpers/ThaiTaxId.cs)
+        return Accounting.Helpers.ThaiTaxId.IsValid(raw);
     }
 }

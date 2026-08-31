@@ -38,6 +38,7 @@ public class AdminController : ControllerBase
     private readonly ISaasBillingDocumentService _billing;
     private readonly IEmailService _email;
     private readonly IJobRunRecorder _jobRec;
+    private readonly ILogger<AdminController> _logger;
 
     public AdminController(
         AccountingDbContext db,
@@ -50,7 +51,8 @@ public class AdminController : ControllerBase
         IWebHostEnvironment env,
         ISaasBillingDocumentService billing,
         IEmailService email,
-        IJobRunRecorder jobRec)
+        IJobRunRecorder jobRec,
+        ILogger<AdminController> logger)
     {
         _db = db;
         _subscriptionService = subscriptionService;
@@ -63,6 +65,7 @@ public class AdminController : ControllerBase
         _billing = billing;
         _email = email;
         _jobRec = jobRec;
+        _logger = logger;
     }
 
     // ===== Dashboard Analytics =====
@@ -884,6 +887,10 @@ public class AdminController : ControllerBase
             ?? $"{Request.Scheme}://{Request.Host}";
         var link = $"{baseUrl}/accept-invitation.html?token={Uri.EscapeDataString(inv.Token)}";
         var sent = false;
+        // ⚠️ เดิมเป็น `catch { }` เปล่า ⇒ SMTP ล้มเหลว (auth ผิด/พอร์ตถูกบล็อก/
+        // โดเมนปฏิเสธ) หายไปเงียบสนิท แอดมินเห็นแค่ "ต่ออายุคำเชิญแล้ว" ซึ่ง
+        // อ่านเหมือนสำเร็จ และไม่มีอะไรให้ไล่ต้นเหตุเลยแม้แต่ใน log
+        string? emailError = null;
         try
         {
             if (await _email.IsSystemEmailConfiguredAsync())
@@ -893,10 +900,22 @@ public class AdminController : ControllerBase
                     $"คุณได้รับคำเชิญเข้าร่วม {inv.Company.Name} (บทบาท {inv.Role}). คลิกเพื่อตอบรับ", link);
                 sent = true;
             }
+            else
+            {
+                emailError = "ยังไม่ได้ตั้งค่าอีเมลระบบ (SMTP)";
+            }
         }
-        catch { }
-        return Ok(new ApiResponse<object>(true, new { inviteLink = link, emailSent = sent },
-            sent ? "ส่งคำเชิญซ้ำทางอีเมลแล้ว" : "ต่ออายุคำเชิญแล้ว (คัดลอกลิงก์ส่งให้ผู้ใช้)"));
+        catch (Exception ex)
+        {
+            emailError = ex.Message;
+            _logger.LogWarning(ex,
+                "ส่งอีเมลคำเชิญซ้ำไม่สำเร็จ (invitation {InvitationId} → {Email})", inv.Id, inv.Email);
+        }
+        return Ok(new ApiResponse<object>(true,
+            new { inviteLink = link, emailSent = sent, emailError },
+            sent
+                ? "ส่งคำเชิญซ้ำทางอีเมลแล้ว"
+                : $"ต่ออายุคำเชิญแล้ว (คัดลอกลิงก์ส่งให้ผู้ใช้) — ส่งอีเมลไม่สำเร็จ: {emailError ?? "ไม่ทราบสาเหตุ"}"));
     }
 
     // ===== WP-D1/D2: Admin User Lifecycle =====
@@ -2548,7 +2567,21 @@ public class AdminController : ControllerBase
             vendorsClustered = result.VendorsClustered,
             iterations = result.Iterations,
             durationSeconds = result.Duration.TotalSeconds,
-        }, $"จัดกลุ่ม vendor ด้วย K-means สำเร็จ ({result.VendorsClustered} vendors → {result.K} กลุ่ม)"));
+            persisted = result.Persisted,
+            clusters = result.Clusters.Select(c => new
+            {
+                clusterIndex = c.ClusterIndex,
+                size = c.Size,
+                topAccountCodes = c.TopAccountCodes,
+            }),
+        },
+        // ⚠️ ข้อความเดิมคือ "จัดกลุ่มสำเร็จ (N vendors → K กลุ่ม)" ทั้งที่ผลลัพธ์
+        // **ไม่ถูกเก็บที่ไหนเลยและไม่ถูกคืนให้ใคร** — แอดมินอ่านว่างานสำเร็จแล้ว
+        // ทั้งที่ไม่มีอะไรเกิดขึ้น. ต้องบอกตามจริงว่ายังเป็นการวิเคราะห์ครั้งเดียว
+        result.VendorsClustered == 0
+            ? "ข้อมูล vendor ยังไม่พอสำหรับจัดกลุ่ม (ต้องมีอย่างน้อย K×2 ราย)"
+            : $"วิเคราะห์การจัดกลุ่ม vendor แล้ว ({result.VendorsClustered} ราย → {result.Clusters.Count} กลุ่ม)"
+              + (result.Persisted ? "" : " — ผลนี้เป็นการวิเคราะห์ครั้งเดียว ยังไม่ได้บันทึกลงฐานข้อมูล")));
     }
 
     /// <summary>
@@ -3065,6 +3098,32 @@ public class AdminController : ControllerBase
     {
         await selfCorrection.RunMaintenanceAsync();
         return Ok(new ApiResponse<object>(true, null, "เริ่ม OCR self-correction maintenance สำเร็จ"));
+    }
+
+    /// <summary>
+    /// เวอร์ชันรายบริษัท — ตัดแพตเทิร์นที่ค้าง/ล้าสมัยของ tenant เดียว
+    ///
+    /// <para>⚠️ <c>RunMaintenanceForCompanyAsync</c> ถูกเขียนไว้พร้อมหมายเหตุ
+    /// "(admin debug tool)" แต่ <b>ไม่มี call site เลยทั้งเรพ</b> ⇒ การตัด
+    /// แพตเทิร์นรายบริษัทไม่เคยรัน มีแต่ sweep รวมทั้งระบบ (รายวัน) ⇒ tenant
+    /// ที่แก้ผลสแกนถี่ ๆ จนมีแพตเทิร์นขยะเยอะ ต้องรอ sweep รวมอย่างเดียว
+    /// แก้เฉพาะจุดไม่ได้</para>
+    /// </summary>
+    [HttpPost("ocr-maintenance/run/{companyId:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> RunOcrMaintenanceForCompany(
+        Guid companyId,
+        [FromServices] Services.Implementations.Ocr.OcrSelfCorrectionService selfCorrection,
+        CancellationToken ct)
+    {
+        var exists = await _db.Companies.AsNoTracking()
+            .AnyAsync(c => c.Id == companyId && !c.IsDeleted, ct);
+        if (!exists) return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
+
+        await selfCorrection.RunMaintenanceForCompanyAsync(companyId, ct);
+        await LogAuditAsync(companyId, "OcrMaintenanceForCompany",
+            "รัน OCR self-correction maintenance เฉพาะบริษัทนี้");
+        return Ok(new ApiResponse<object>(true, null,
+            "รัน OCR maintenance ของบริษัทนี้เรียบร้อย"));
     }
 
     // ===================================================================

@@ -225,6 +225,17 @@ public static class DocumentTypeClassifyPrompt
 {
     public const string SystemPrompt = @"You are a Thai accounting expert. Classify what TYPE of document was scanned (the physical paper) AND what document type to CREATE in the books (perspective shift — a vendor's receipt becomes our PaymentVoucher).
 
+STEP 0 — WHICH SIDE ARE WE ON? Decide this FIRST; everything else follows.
+Compare `our_company.tax_id` / `our_company.name` against the seller block and the
+buyer block on the paper:
+- our tax id appears as the BUYER  → we are the buyer  (purchase side)
+- our tax id appears as the SELLER → we are the seller (sales side)
+- neither matches → trust `rules_engine.our_role`; if that is also unsure, say so
+  in `reasoning` and pick the lower-risk purchase-side answer.
+`rules_engine` holds what our deterministic rules already concluded plus how
+confident they were — treat it as a colleague's draft to CHECK, not as noise to
+ignore, and explain in `reasoning` when you disagree with it.
+
 Physical types (พิจารณาจาก wording บนเอกสาร):
 - TaxInvoice            : ""ใบกำกับภาษี"" — มี VAT, มี Tax ID ทั้งคู่
 - Invoice               : ""ใบแจ้งหนี้"" — ยังไม่ได้รับเงิน
@@ -249,20 +260,50 @@ Respond ONLY as JSON:
     public static AiRequest Build(
         Guid companyId, Guid scanResultId,
         string rawTextSample, string? extractedDocNumber, string? extractedVendorName,
-        decimal? extractedTotal, string? localGuess, decimal? localConfidence)
+        decimal? extractedTotal, string? localGuess, decimal? localConfidence,
+        // ── บริบทที่ "ตัดสินคำตอบ" — เดิมไม่ได้ส่งเลยสักตัว ──
+        // คำถามหลักของ feature นี้คือ "เราเป็นผู้ซื้อหรือผู้ขาย" แต่ payload เดิม
+        // ไม่มีทั้งชื่อและเลขผู้เสียภาษีของบริษัทเรา ⇒ **โมเดลไม่มีทางรู้ได้เลย**
+        // ต้องเดา แล้วผู้เรียกก็ทิ้งคำตอบที่ข้ามฝั่งไป = จ่าย token แล้วโยนทิ้ง
+        string? ourCompanyName = null, string? ourTaxId = null,
+        string? ourRoleFromRules = null, decimal? roleConfidence = null,
+        string? vendorTaxId = null, string? buyerName = null, string? buyerTaxId = null,
+        DateTime? documentDate = null, decimal? vatAmount = null,
+        IReadOnlyList<string>? topLineDescriptions = null,
+        string? scannedTypeFromRules = null)
     {
-        // Truncate raw text — keep it under 1500 chars to control cost.
-        // The header + summary lines carry the docType signal anyway.
-        var snippet = rawTextSample.Length > 1500 ? rawTextSample[..1500] : rawTextSample;
+        // ราว 4,000 ตัวอักษรครอบใบกำกับไทยหน้าเดียวได้ทั้งใบ — เดิมตัดที่ 1,500
+        // ซึ่งตัดกลางหน้าพอดี และ **บล็อกผู้ซื้อของใบไทยมักอยู่กลางหน้า** คือ
+        // สัญญาณที่ feature นี้ต้องการที่สุด (เรียกตอนกติกาไม่มั่นใจเท่านั้น
+        // จึงไม่ใช่ค่าใช้จ่ายประจำ)
+        var snippet = rawTextSample.Length > 4000 ? rawTextSample[..4000] : rawTextSample;
         var payload = new
         {
             task = "document_type_classify",
+            // "เราคือใคร" — ใช้เทียบกับบล็อกผู้ขาย/ผู้ซื้อบนกระดาษเพื่อรู้ฝั่ง
+            our_company = new { name = ourCompanyName, tax_id = ourTaxId },
+            // กติกาคิดมาแล้วว่าอย่างไร + มั่นใจแค่ไหน (โมเดลควรเห็นเพื่อจะได้
+            // "ตรวจทาน" ไม่ใช่ "เดาใหม่ตั้งแต่ต้น")
+            rules_engine = new
+            {
+                our_role = ourRoleFromRules,
+                role_confidence = roleConfidence,
+                scanned_document_type = scannedTypeFromRules,
+            },
             ocr_text_snippet = snippet,
             extracted = new
             {
                 document_number = extractedDocNumber,
+                document_date = documentDate?.ToString("yyyy-MM-dd"),
                 vendor_name = extractedVendorName,
+                vendor_tax_id = vendorTaxId,
+                buyer_name = buyerName,
+                buyer_tax_id = buyerTaxId,
                 total = extractedTotal,
+                vat_amount = vatAmount,
+                // มี VAT = ใบกำกับ · ไม่มี = ใบเสร็จ/บิลเงินสด — สัญญาณตรง
+                has_vat = (vatAmount ?? 0m) > 0m,
+                top_line_items = topLineDescriptions,
             },
             local_model = new { pick = localGuess, confidence = localConfidence },
         };
@@ -279,6 +320,8 @@ Respond ONLY as JSON:
             SourceEntityId = scanResultId,
             CacheTtlOverrideDays = 14,
             MaxTokensOverride = 200,
+            // คำถามคือ "เลขบนกระดาษตรงกับเลขบริษัทเราไหม" — ปิดบังแล้วตอบไม่ได้
+            AllowTaxIdInPrompt = true,
         };
     }
 }
@@ -311,7 +354,19 @@ Common Thai WHT codes (รหัสประเภทเงินได้):
 Rules:
 1. If vendor is บุคคลธรรมดา (Personal) → likely 1% per §50bis.
 2. If pure sale of goods → primary = ""None"" (no WHT).
-3. If amount < ฿1,000 → primary = ""Skip"" (under threshold).
+3. ฿1,000 threshold (ท.ป.4/2528 ข้อ 12) is **cumulative per payer-payee-contract**,
+   NOT per line. Use `line.paid_to_vendor_this_year` + `line.amount`:
+   - if `line.amount` + `line.paid_to_vendor_this_year` >= 1000 → withhold on
+     THIS payment even when `line.amount` alone is below 1,000.
+   - only answer ""Skip"" when the running total is still under 1,000 AND
+     `line.contract_total_known` is false. Never answer ""Skip"" from
+     `line.amount` alone.
+4. `vendor_wht_history` beats inference from the description. When the same
+   vendor was taxed at one income code >= 2 times, prefer that code unless the
+   description clearly describes a different kind of income.
+5. `vendor.dominant_gl_account` is the expense account this vendor's lines are
+   usually booked to (from our own history). Treat it as a hint about the nature
+   of the spend (ค่าเช่า → 40(5), ค่าโฆษณา → 2%, etc.), not as proof.
 
 Respond ONLY as JSON:
 {
@@ -343,7 +398,12 @@ Respond ONLY as JSON:
         IReadOnlyList<VendorWhtHistory>? vendorWhtHistory = null,
         string? vendorIndustry = null,
         decimal? vendorAvg6Months = null,
-        decimal? wht3ThresholdReached = null)
+        decimal? wht3ThresholdReached = null,
+        // บัญชีที่บริษัทเราลงให้ผู้ขายรายนี้บ่อยที่สุด (จาก OcrCategoryMapping)
+        // — ป้ายที่ซื่อสัตย์กว่า "industry" เพราะเป็นข้อมูลของเราเอง ไม่ใช่การ
+        // เดาว่าคู่ค้าทำธุรกิจอะไร
+        string? vendorDominantGlAccount = null,
+        bool contractTotalKnown = false)
     {
         var payload = new
         {
@@ -354,6 +414,7 @@ Respond ONLY as JSON:
                 tax_id = vendorTaxId,
                 type = vendorType,                  // "JuristicPerson" | "Personal" | null
                 industry = vendorIndustry,
+                dominant_gl_account = vendorDominantGlAccount,
                 avg_amount_6mo = vendorAvg6Months,  // baseline for "is this contract scale unusual?"
             },
             // Vendor-specific WHT history is the highest-leverage signal —
@@ -371,11 +432,14 @@ Respond ONLY as JSON:
             {
                 description = lineDescription,
                 amount,
-                // Threshold flags for the §3 / §2 rules. The 1000-baht
-                // cumulative-per-year threshold is the most common
-                // mistake; surface it upfront.
-                under_1000_threshold = amount < 1000m,
-                wht3_year_to_date = wht3ThresholdReached,
+                // ด่าน ฿1,000 เป็นแบบ **สะสมต่อคู่สัญญาต่อปี** ไม่ใช่ต่อบรรทัด
+                // (ท.ป.4/2528 ข้อ 12) — ส่งทั้งยอดบรรทัดนี้ ยอดสะสมปีนี้ และ
+                // ผลรวม เพื่อไม่ให้ AI ตัดสินจากยอดบรรทัดตัวเดียวแล้วตอบ Skip ผิด
+                amount_alone_under_1000 = amount < 1000m,
+                paid_to_vendor_this_year = wht3ThresholdReached,
+                cumulative_with_this_line = amount + (wht3ThresholdReached ?? 0m),
+                cumulative_reaches_1000 = amount + (wht3ThresholdReached ?? 0m) >= 1000m,
+                contract_total_known = contractTotalKnown,
             },
             local_model = new { pick = localGuess, confidence = localConfidence },
         };

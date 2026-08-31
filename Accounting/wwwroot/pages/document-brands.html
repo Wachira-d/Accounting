@@ -78,6 +78,10 @@
         // (DocumentIssuerIdentity.Resolve เลือก brand.LogoPath ก่อน แล้วตกไป
         //  โลโก้บริษัท) เดิมพรีวิวโชว์กล่องว่างทั้งที่กระดาษจริงมีโลโก้บริษัทอยู่
         companyLogoUrl: '',
+        // ที่อยู่จดทะเบียนของบริษัท + ทะเบียนสาขา — ใช้ทั้งตัวเลือก "ผูกที่อยู่"
+        // และพรีวิว (เอกสารภาษีต้องโชว์ที่อยู่สถานประกอบการ ไม่ใช่ที่อยู่หน้าร้าน)
+        companyAddress: '',
+        branches: [],
 
         esc(s) {
           return String(s ?? '').replace(/[&<>"']/g, c =>
@@ -90,6 +94,8 @@
           try {
             const p = await API.get(`/api/companies/${cid}/document-brands/policy`);
             (p.data?.types || []).forEach(t => this.policy[t.type] = t.brandCanBePrimary);
+            // ที่อยู่ที่ server จะพิมพ์จริงบนเอกสารภาษี — ไม่ประกอบสตริงเองในหน้าเว็บ
+            this.companyAddress = p.data?.companyAddress || '';
           } catch (e) {}
           try {
             const r = await API.get(`/api/companies/${cid}/document-brands?includeInactive=true`);
@@ -100,6 +106,13 @@
             this.companyLogoUrl = st.data?.logoUrl || '';
           } catch (e) { this.companyLogoUrl = ''; }
           try {
+            // ที่อยู่ที่ resolve แล้วมาจาก server (EffectiveAddress ของแบรนด์ตัวใด
+            // ก็ได้ตกกลับเป็นที่อยู่บริษัท) — แต่เพื่อความชัด ดึงจากทะเบียนสาขา
+            // + ตั้งค่าบริษัทตรง ๆ เพื่อประกอบตัวเลือกและพรีวิว
+            const br = await API.get(`/api/companies/${cid}/dimensions/branches`);
+            this.branches = br.data || [];
+          } catch (e) { this.branches = []; }
+          try {
             const t = await API.get(`/api/companies/${cid}/document-templates`);
             this.templates = (t.data || []).filter(x => x.isActive !== false);
           } catch (e) { this.templates = []; }
@@ -107,7 +120,10 @@
         },
 
         blank() {
-          return { id:null, name:'', nameEn:'', tagLine:'', tagLineEn:'', logoUrl:'',
+          // แบรนด์ใหม่ default = ผูกที่อยู่บริษัท (แหล่งเดียว ไม่ drift ตอนย้ายออฟฟิศ)
+          // — แถวเก่าที่พิมพ์ที่อยู่ไว้เองยังเป็น 'Custom' ตามเดิม (back-compat)
+          return { id:null, addressSource:'Company', addressSourceBranchId:null,
+                   name:'', nameEn:'', tagLine:'', tagLineEn:'', logoUrl:'',
                    address:'', addressEn:'', phone:'', email:'', website:'',
                    primaryColor:'#1f2937', footerNotes:'',
                    legalNamePlacement:'Footer', isActive:true, sortOrder:0 };
@@ -169,6 +185,8 @@
           c.name = v('fName'); c.nameEn = v('fNameEn');
           c.tagLine = v('fTag'); c.tagLineEn = v('fTagEn');
           c.logoUrl = v('fLogo');
+          c.addressSource = v('fAddrSrc') || 'Custom';
+          c.addressSourceBranchId = c.addressSource === 'Branch' ? (v('fAddrBranch') || null) : null;
           c.address = v('fAddr'); c.addressEn = v('fAddrEn');
           c.phone = v('fPhone'); c.email = v('fEmail'); c.website = v('fWeb');
           c.primaryColor = v('fColor');
@@ -222,10 +240,31 @@
                       <option value="Both" ${c.legalNamePlacement==='Both'?'selected':''}>ทั้งสองที่</option>
                     </select></div>
                 </div>
-                <div class="bw-row"><label>ที่อยู่ที่พิมพ์บนเอกสาร (ว่าง = ที่อยู่บริษัท)</label>
-                  <textarea id="fAddr" rows="2" oninput="Page.refreshPreview()">${this.esc(c.address)}</textarea></div>
-                <div class="bw-row"><label>ที่อยู่ (อังกฤษ)</label>
-                  <textarea id="fAddrEn" rows="2" oninput="Page.refreshPreview()">${this.esc(c.addressEn)}</textarea></div>
+                <div class="bw-row"><label>ที่อยู่ที่พิมพ์บนเอกสาร</label>
+                  <select id="fAddrSrc" onchange="Page.onAddrSrcChange()">
+                    <option value="Company"${c.addressSource === 'Company' ? ' selected' : ''}>ใช้ที่อยู่จดทะเบียนของบริษัท (แนะนำ)</option>
+                    <option value="Branch"${c.addressSource === 'Branch' ? ' selected' : ''}>ใช้ที่อยู่ของสาขา…</option>
+                    <option value="Custom"${c.addressSource === 'Custom' ? ' selected' : ''}>พิมพ์เอง (หน้าร้านที่ยังไม่ได้ลงทะเบียนเป็นสาขา)</option>
+                  </select>
+                  <div style="font-size:12px;color:#64748b;margin-top:4px">
+                    ผูกกับทะเบียนไว้ = ย้ายที่อยู่ทีเดียวแล้วทุกแบรนด์ตามทันที ไม่ต้องไล่แก้ทีละอัน
+                  </div>
+                </div>
+                <div class="bw-row" id="fAddrBranchRow" style="${c.addressSource === 'Branch' ? '' : 'display:none'}">
+                  <label>สาขาที่ผูกไว้</label>
+                  <select id="fAddrBranch" onchange="Page.refreshPreview()">
+                    <option value="">— เลือกสาขา —</option>
+                    ${this.branches.map(b => `<option value="${b.id}"${c.addressSourceBranchId === b.id ? ' selected' : ''}>`
+                      + `${this.esc(b.name || b.code || '-')}${b.taxBranchCode ? ` [${this.esc(b.taxBranchCode)}]` : ''}</option>`).join('')}
+                  </select>
+                  ${this.branches.length ? '' : '<div style="font-size:12px;color:#92400e;margin-top:4px">ยังไม่มีสาขาในทะเบียน — เพิ่มได้ที่เมนู "ทะเบียนสาขา / สถานประกอบการ"</div>'}
+                </div>
+                <div class="bw-row" id="fAddrCustomRow" style="${c.addressSource === 'Custom' ? '' : 'display:none'}">
+                  <label>ที่อยู่ที่พิมพ์เอง</label>
+                  <textarea id="fAddr" rows="2" oninput="Page.refreshPreview()">${this.esc(c.address)}</textarea>
+                  <label style="margin-top:6px">ที่อยู่ (อังกฤษ)</label>
+                  <textarea id="fAddrEn" rows="2" oninput="Page.refreshPreview()">${this.esc(c.addressEn)}</textarea>
+                </div>
                 <div class="bw-2">
                   <div class="bw-row"><label>โทรศัพท์</label>
                     <input id="fPhone" value="${this.esc(c.phone)}" oninput="Page.refreshPreview()"></div>
@@ -299,7 +338,8 @@
 
           warn.innerHTML = brandLeads ? '' : `<div class="bw-warn">
             ⚖️ เอกสารชนิดนี้ต้องขึ้น <b>ชื่อนิติบุคคล</b> เป็นตัวหลักตาม ป.รัษฎากร §86/4
-            — ชื่อทางการค้าจะลงเป็นบรรทัดรอง ส่วนโลโก้ สี และที่อยู่ยังเป็นของแบรนด์
+            — ชื่อทางการค้าลงเป็นบรรทัดรอง · <b>ที่อยู่ต้องเป็นที่ตั้งสถานประกอบการที่ออกใบ</b>
+            ตาม ป.86/2542 (ใบที่ออกจากสาขาจะใช้ที่อยู่ของสาขานั้น) — แบรนด์ยังได้โลโก้และสี
           </div>`;
 
           box.style.setProperty('--pvc', c.primaryColor || '#1f2937');
@@ -318,7 +358,13 @@
                 ${brandLeads && c.tagLine ? `<div class="pv-tag">${this.esc(c.tagLine)}</div>` : ''}
                 ${secondary ? `<div class="pv-sub">${this.esc(secondary)}</div>` : ''}
                 ${inHead ? `<div class="pv-legal">${this.esc(legal)}</div>` : ''}
-                ${c.address ? `<div class="pv-sub">${this.esc(c.address)}</div>` : ''}
+                ${(() => {
+                  // ป.86/2542 — เอกสารที่กฎหมายบังคับใช้ที่อยู่ **สถานประกอบการที่ออกใบ**
+                  // เสมอ (ที่อยู่หน้าร้านของแบรนด์ทับไม่ได้) ลำดับเดียวกับ
+                  // DocumentIssuerIdentity.Resolve — พรีวิวห้ามตัดสินเป็นอย่างอื่น
+                  const addr = brandLeads ? this.brandAddress(c) : this.companyAddress;
+                  return addr ? `<div class="pv-sub">${this.esc(addr)}</div>` : '';
+                })()}
                 <div class="pv-sub">เลขประจำตัวผู้เสียภาษี: ${this.esc(coTax)} (สำนักงานใหญ่)</div>
                 ${c.phone ? `<div class="pv-sub">โทร: ${this.esc(c.phone)}</div>` : ''}
                 ${c.email ? `<div class="pv-sub">Email: ${this.esc(c.email)}</div>` : ''}
@@ -331,6 +377,30 @@
             <div class="pv-skel" style="width:85%"></div>
             <div class="pv-skel" style="width:40%;margin-left:auto"></div>
             ${inFoot ? `<div class="pv-foot">${this.esc(legal)}</div>` : ''}`;
+        },
+
+        /** สลับโหมดที่อยู่ — โชว์เฉพาะช่องที่โหมดนั้นใช้จริง (ไม่ให้ผู้ใช้กรอกช่องที่ไม่มีผล) */
+        onAddrSrcChange() {
+          const src = (document.getElementById('fAddrSrc') || {}).value || 'Custom';
+          const br = document.getElementById('fAddrBranchRow');
+          const cu = document.getElementById('fAddrCustomRow');
+          if (br) br.style.display = src === 'Branch' ? '' : 'none';
+          if (cu) cu.style.display = src === 'Custom' ? '' : 'none';
+          this.refreshPreview();
+        },
+
+        /** ที่อยู่ที่แบรนด์นี้จะใช้ — ลำดับเดียวกับ Helpers/BrandAddressSource.Resolve
+         *  (null/ว่าง = ตกไปใช้ที่อยู่บริษัท) */
+        brandAddress(c) {
+          const src = c.addressSource || 'Custom';
+          if (src === 'Company') return this.companyAddress;
+          if (src === 'Branch') {
+            const b = this.branches.find(x => x.id === c.addressSourceBranchId);
+            const parts = b ? [b.address, b.subDistrict, b.district, b.province, b.postalCode] : [];
+            const addr = parts.filter(Boolean).join(' ');
+            return addr || this.companyAddress;   // สาขายังไม่กรอกที่อยู่ → ของบริษัท
+          }
+          return c.address || this.companyAddress;
         },
 
         typeLabel() {

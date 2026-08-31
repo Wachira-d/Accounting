@@ -154,18 +154,25 @@ public class WithholdingTaxCertController : ControllerBase
     [AllowAnonymous]
     public ActionResult<ApiResponse<object>> GetIncomeTypes()
     {
-        var incomeTypes = new[]
+        // ⚠️ เดิมตารางนี้ถูกพิมพ์ไว้ตรงนี้ตัวหนึ่ง และหน้า wht-credit.html พิมพ์ไว้
+        // อีกตัวหนึ่ง — สองตารางไม่ตรงกันเอง และไม่ตรงกับ ท.ป.4/2528 ทั้งคู่
+        // (40(3) ค่าสิทธิ ที่นี่ = 5% ควรเป็น 3% · 40(1) เงินเดือนใส่ 3% คงที่
+        // ทั้งที่กฎหมายเป็นอัตราขั้นบันได · ฝั่งหน้าเว็บยุบดอกเบี้ย+ปันผลเป็น 1%)
+        // ยุบเป็น Helpers/ThaiWhtRateTable ตัวเดียว แล้วให้หน้าเว็บสร้าง dropdown
+        // จาก endpoint นี้ — drift เป็นศูนย์โดยโครงสร้าง
+        var incomeTypes = Accounting.Helpers.ThaiWhtRateTable.All.Select(t => new
         {
-            new { Code = "1", Name = "เงินเดือน ค่าจ้าง บำนาญ", TaxSection = "40(1)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.1" } },
-            new { Code = "2", Name = "ค่านายหน้า", TaxSection = "40(2)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
-            new { Code = "3", Name = "ค่าแห่งลิขสิทธิ์", TaxSection = "40(3)", DefaultRate = 5m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
-            new { Code = "4a", Name = "ดอกเบี้ย", TaxSection = "40(4)(a)", DefaultRate = 15m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
-            new { Code = "4b", Name = "เงินปันผล", TaxSection = "40(4)(b)", DefaultRate = 10m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
-            new { Code = "5", Name = "ค่าเช่าทรัพย์สิน", TaxSection = "40(5)", DefaultRate = 5m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
-            new { Code = "6", Name = "ค่าวิชาชีพอิสระ", TaxSection = "40(6)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3" } },
-            new { Code = "7", Name = "ค่ารับเหมา", TaxSection = "40(7)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3" } },
-            new { Code = "8", Name = "ค่าจ้างทำของ/ค่าบริการ", TaxSection = "40(8)", DefaultRate = 3m, ApplicableForms = new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" } },
-        };
+            t.Code,
+            t.Name,
+            t.TaxSection,
+            IndividualRate = t.IndividualRate,
+            JuristicRate = t.JuristicRate,
+            // ค่าที่ฟอร์มควรเติมให้ก่อน (เคสปกติของบริษัท = ผู้รับเป็นนิติบุคคล)
+            // null = กฎหมายไม่มีอัตราคงที่ ⇒ ห้ามเติมตัวเลขปลอมให้ช่องไม่ว่าง
+            DefaultRate = t.JuristicRate ?? t.IndividualRate,
+            t.ApplicableForms,
+            t.Note,
+        });
 
         return Ok(new ApiResponse<object>(true, incomeTypes));
     }

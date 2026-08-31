@@ -17,6 +17,42 @@ namespace Accounting.Services.Ai;
 /// as null and surface the local pick as-is. The orchestrator already
 /// records every call (including failure) so feedback is never lost.
 /// </summary>
+
+/// <summary>
+/// บริบทที่ตัวจำแนกชนิดเอกสารต้องเห็นเพื่อจะตอบได้จริง
+///
+/// <para>คำถามหลักคือ "เราเป็นผู้ซื้อหรือผู้ขาย" ซึ่งตอบไม่ได้เลยถ้าไม่รู้ว่า
+/// เลข/ชื่อบนกระดาษฝั่งไหนคือเรา — payload เดิมส่งแค่ข้อความ + ชื่อผู้ขาย +
+/// ยอดรวม ⇒ โมเดลต้องเดา แล้วผู้เรียกก็ทิ้งคำตอบที่ข้ามฝั่ง (จ่าย token
+/// แล้วโยนทิ้ง)</para>
+/// </summary>
+public sealed record OcrDocTypeContext(
+    string? OurRole = null,
+    decimal? RoleConfidence = null,
+    string? ScannedDocumentType = null,
+    string? VendorTaxId = null,
+    string? BuyerName = null,
+    string? BuyerTaxId = null,
+    DateTime? DocumentDate = null,
+    decimal? VatAmount = null,
+    IReadOnlyList<string>? TopLineDescriptions = null);
+
+/// <summary>
+/// บริบทของบรรทัดที่กฎในพรอมป์ต์จัดผังบัญชีต้องใช้ แต่เดิมไม่เคยถูกส่ง
+///
+/// <para>กฎข้อ 8(b) ของ <c>GlAccountPrompt</c> ทั้งข้อพูดเรื่อง<b>หน่วยนับ</b>
+/// ("L/ลิตร → น้ำมัน · kWh → ค่าไฟ · ลบ.ม. → ค่าน้ำ") แต่ payload มีแค่
+/// {description, amount, currency} ⇒ กฎที่พรอมป์ต์พึ่งมากที่สุดไม่มีอินพุตให้ใช้
+/// ทั้งที่ <c>ExtractedItemsJson</c> เก็บค่าเหล่านี้ไว้อยู่แล้ว</para>
+/// </summary>
+public sealed record GlLineContext(
+    string? Unit = null,
+    decimal? Quantity = null,
+    decimal? UnitPrice = null,
+    DateTime? DocumentDate = null,
+    string? OurRole = null,
+    bool? InputVatClaimable = null);
+
 public interface IOcrAiAugmenter
 {
     /// <summary>
@@ -31,6 +67,17 @@ public interface IOcrAiAugmenter
         CancellationToken ct = default);
 
     /// <summary>
+    /// จำแนกชนิดเอกสารจากกระดาษ — เรียกเฉพาะตอนกติกาไม่มั่นใจ
+    /// (ดูรายละเอียดที่ implementation)
+    /// </summary>
+    Task<OcrAiAugmentationResult> ClassifyDocumentTypeAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,
+        string? localGuess, decimal localConfidence,
+        OcrDocTypeContext? context = null,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Suggest GL account code for a single OCR line item.
     /// </summary>
     Task<OcrAiAugmentationResult> SuggestGlAccountAsync(
@@ -38,6 +85,7 @@ public interface IOcrAiAugmenter
         string? vendorName, string? vendorTaxId, string? vendorIndustry,
         string lineDescription, decimal amount, string currency,
         string? localBestAccountCode, decimal localConfidence,
+        GlLineContext? lineContext = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -47,6 +95,22 @@ public interface IOcrAiAugmenter
     /// the deterministic pass left the line unresolved AND ≥2 projects are in
     /// play. Answer is a Project id string (one of the candidates) or null.
     /// </summary>
+    /// <summary>
+    /// แตกรายการสินค้า/บริการจากข้อความดิบ เมื่อ engine ไม่คืนตารางมาให้เลย
+    ///
+    /// <para>คืน JSON ดิบของโมเดลผ่าน <c>Answer</c> — ผู้เรียกต้อง parse เอง
+    /// และ<b>ต้องตรวจว่าผลรวมลงตัวกับยอดหัวกระดาษก่อนรับไปใช้</b>
+    /// (ดู <c>OcrService.TrySplitLineItemsWithAiAsync</c>)</para>
+    ///
+    /// <para>AI ปิด/ล่ม → <c>UsedAi=false</c>, <c>Answer=null</c> ⇒ ผู้เรียก
+    /// คงพฤติกรรมเดิม (บรรทัดสรุปใบเดียวจากยอดหัวกระดาษ) — kill-switch ผ่าน</para>
+    /// </summary>
+    Task<OcrAiAugmentationResult> SplitLineItemsAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText, string? documentType, string? vendorName,
+        decimal? subTotal, decimal? vatAmount, decimal? totalAmount,
+        CancellationToken ct = default);
+
     Task<OcrAiAugmentationResult> MatchLineProjectAsync(
         Guid companyId, Guid scanResultId,
         string lineDescription, decimal? amount,
@@ -316,6 +380,7 @@ public class OcrAiAugmenter : IOcrAiAugmenter
         string? vendorName, string? vendorTaxId, string? vendorIndustry,
         string lineDescription, decimal amount, string currency,
         string? localBestAccountCode, decimal localConfidence,
+        GlLineContext? lineContext = null,
         CancellationToken ct = default)
     {
         try
@@ -324,7 +389,15 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             // Description + ครอบ Expense+Asset ครบ (แก้ bug เดิมที่ตัดบัญชี
             // 5xxxx ค่าใช้จ่ายทิ้งเพราะ OrderBy(code).Take(40)).
             var candRows = await GlCandidateBuilder.LoadAsync(
-                _db, companyId, expenseAssetOnly: true, cap: 150, ct);
+                // ⚠️ เดิม hardcode true = ส่งเฉพาะผังรายจ่าย+สินทรัพย์เสมอ
+                // แต่ IntegrationService เรียกเมธอดนี้จาก ProcessInvoiceAsync
+                // ซึ่งสร้าง **ใบกำกับภาษีขาย** ⇒ ผังรายได้ (4xxxx) ไม่เคยอยู่ใน
+                // candidate_accounts เลย และกฎข้อ 5 ของพรอมป์ต์บังคับว่า
+                // "ต้องเลือกจาก candidate_accounts เท่านั้น" ⇒ บรรทัดฝั่งขาย
+                // **ไม่มีทางถูกลงเป็นรายได้ได้เลยโดยโครงสร้าง**
+                _db, companyId,
+                expenseAssetOnly: !string.Equals(lineContext?.OurRole, "Seller", StringComparison.OrdinalIgnoreCase),
+                cap: 150, ct);
             var candidates = candRows
                 .Select(c => new GlAccountPrompt.AccountCandidate(
                     c.Code, c.Name, c.Type, c.IsActive, c.Description))
@@ -381,7 +454,15 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 localModelVersion: "ExpenseCategoryLearner-v1",
                 sourceEntityType: "OcrScanResult", sourceEntityId: scanResultId,
                 whtRecognitionBasis: whtBasis,
-                businessContext: bizCtx);
+                businessContext: bizCtx,
+                // บริบทของบรรทัดที่กฎ decode ในพรอมป์ต์ต้องใช้ (หน่วย/จำนวน/
+                // ราคาต่อหน่วย/วันที่/ฝั่ง/สิทธิเคลม VAT) — เดิมไม่เคยส่งเลย
+                lineUnit: lineContext?.Unit,
+                lineQuantity: lineContext?.Quantity,
+                lineUnitPrice: lineContext?.UnitPrice,
+                documentDate: lineContext?.DocumentDate,
+                ourRole: lineContext?.OurRole,
+                inputVatClaimable: lineContext?.InputVatClaimable);
 
             var resp = await _orchestrator.AskAsync(req, ct);
             return new OcrAiAugmentationResult(
@@ -399,6 +480,85 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             _logger.LogError(ex, "OcrAiAugmenter.SuggestGlAccount failed");
             return new OcrAiAugmentationResult(
                 Answer: localBestAccountCode, Confidence: localConfidence,
+                Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
+                ComplianceFlags: Array.Empty<string>(),
+                Reasoning: $"Augmenter exception: {ex.Message}",
+                UsedAi: false, FeedbackId: null);
+        }
+    }
+
+    /// <summary>
+    /// "กระดาษใบนี้คือเอกสารชนิดไหน" — เรียกเฉพาะตอน<b>กติกาไม่มั่นใจ</b>
+    ///
+    /// ═══ ทำไมถึงเพิ่งมาต่อสาย ═══
+    /// <c>AiFeatureKey.DocumentTypeClassification</c> (#3) มีครบทุกอย่างมาแล้ว
+    /// — enum, prompt (<c>DocumentTypeClassifyPrompt</c>), และ student ที่
+    /// register ไว้ใน Program.cs — <b>แต่ไม่เคยมีใครเรียกเลยสักครั้ง</b>
+    /// ⇒ prompt ตายอยู่ในไฟล์ และ student อดอาหารถาวร (ไม่มี feedback row
+    /// เกิดขึ้นเลย จึงไม่มีวัน IsReady)
+    ///
+    /// การจำแนกชนิดเอกสารคือคำถามที่ <b>พลาดแล้วแพงที่สุด</b> ในทั้งไปป์ไลน์ —
+    /// ผิดชนิด = บัญชีคู่ผิดทั้งใบ + เข้ารายงานภาษีผิดฝั่ง จึงคุ้มที่จะจ่าย
+    /// token เฉพาะเคสที่กติกาเดาไม่ลง
+    ///
+    /// ═══ ด่านกันมั่ว (anti-hallucination) ═══
+    /// คำตอบต้องเป็นค่าใน <c>DocumentType</c> จริง และต้อง<b>อยู่ฝั่งเดียวกับ
+    /// บทบาทที่ยืนยันแล้ว</b> — AI มองไม่เห็นว่าเราเป็นผู้ซื้อหรือผู้ขาย
+    /// ผู้เรียกจึงต้องกรองอีกชั้น (ดู DocumentSide.MatchesRole)
+    /// </summary>
+    public async Task<OcrAiAugmentationResult> ClassifyDocumentTypeAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,
+        string? localGuess, decimal localConfidence,
+        OcrDocTypeContext? context = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // "เราคือใคร" ต้องมาจากฐานข้อมูล ไม่ใช่จากกระดาษ — ผู้เรียกอาจไม่มี
+            // ค่านี้ในมือ จึงโหลดเองที่นี่เพื่อให้ทุก call site ได้บริบทครบเท่ากัน
+            var me = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId)
+                .Select(c => new { c.Name, c.TaxId })
+                .FirstOrDefaultAsync(ct);
+
+            var req = Prompts.DocumentTypeClassifyPrompt.Build(
+                companyId, scanResultId,
+                rawTextSample: rawText ?? "",
+                extractedDocNumber: documentNumber,
+                extractedVendorName: vendorName,
+                extractedTotal: totalAmount,
+                localGuess: localGuess,
+                localConfidence: localConfidence,
+                ourCompanyName: me?.Name,
+                ourTaxId: me?.TaxId,
+                ourRoleFromRules: context?.OurRole,
+                roleConfidence: context?.RoleConfidence,
+                vendorTaxId: context?.VendorTaxId,
+                buyerName: context?.BuyerName,
+                buyerTaxId: context?.BuyerTaxId,
+                documentDate: context?.DocumentDate,
+                vatAmount: context?.VatAmount,
+                topLineDescriptions: context?.TopLineDescriptions,
+                scannedTypeFromRules: context?.ScannedDocumentType);
+
+            var resp = await _orchestrator.AskAsync(req, ct);
+            return new OcrAiAugmentationResult(
+                Answer: resp.PrimaryAnswer,
+                Confidence: resp.Confidence,
+                Alternatives: resp.Alternatives,
+                Risks: resp.Risks,
+                ComplianceFlags: resp.ComplianceFlags,
+                Reasoning: resp.Reasoning,
+                UsedAi: resp.UsedAi,
+                FeedbackId: resp.FeedbackId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "OcrAiAugmenter.ClassifyDocumentType failed");
+            // AI ล้ม = ใช้คำตอบของกติกาต่อ (kill-switch: feature ยังทำงานครบ)
+            return new OcrAiAugmentationResult(
+                Answer: localGuess, Confidence: localConfidence,
                 Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
                 ComplianceFlags: Array.Empty<string>(),
                 Reasoning: $"Augmenter exception: {ex.Message}",
@@ -444,6 +604,48 @@ public class OcrAiAugmenter : IOcrAiAugmenter
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "OcrAiAugmenter.MatchLineProject failed");
+            return Empty($"exception: {ex.Message}");
+        }
+
+        static OcrAiAugmentationResult Empty(string why) => new(
+            Answer: null, Confidence: null,
+            Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
+            ComplianceFlags: Array.Empty<string>(),
+            Reasoning: why, UsedAi: false, FeedbackId: null);
+    }
+
+    public async Task<OcrAiAugmentationResult> SplitLineItemsAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText, string? documentType, string? vendorName,
+        decimal? subTotal, decimal? vatAmount, decimal? totalAmount,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return Empty("no raw text");
+        // ไม่มียอดให้ตรวจสอบผลลัพธ์ = ไม่มีทางรู้ว่าที่ AI แตกมาถูกไหม → ไม่เรียก
+        if (subTotal is not > 0m && totalAmount is not > 0m) return Empty("no totals to reconcile against");
+
+        try
+        {
+            var req = Prompts.OcrLineSplitPrompt.Build(
+                companyId, scanResultId, rawText, documentType, vendorName,
+                subTotal, vatAmount, totalAmount);
+            var resp = await _orchestrator.AskAsync(req, ct);
+            if (!resp.UsedAi || string.IsNullOrWhiteSpace(resp.RawResponseJson))
+                return Empty("ai unavailable");
+
+            return new OcrAiAugmentationResult(
+                Answer: resp.RawResponseJson,
+                Confidence: resp.Confidence,
+                Alternatives: resp.Alternatives,
+                Risks: resp.Risks,
+                ComplianceFlags: resp.ComplianceFlags,
+                Reasoning: resp.Reasoning,
+                UsedAi: true,
+                FeedbackId: resp.FeedbackId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "OcrAiAugmenter.SplitLineItems failed");
             return Empty($"exception: {ex.Message}");
         }
 

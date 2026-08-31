@@ -1807,6 +1807,21 @@
         // Wait a tick for openCreate's DOM mutations to settle.
         await new Promise(r => setTimeout(r, 30));
 
+        // ── ปลดโหมด "เฉพาะสินค้าในระบบ" สำหรับใบที่มาจาก OCR ──
+        //
+        // ⚠️ `fStrictProducts` ติ๊กไว้เป็น default และ openEdit ปลดให้เฉพาะตอน
+        // **เปิดแก้ใบเก่า** — เส้นทาง handoff (สร้างใบใหม่จากสแกน) ไม่เคยปลด
+        // ⇒ บรรทัดจาก OCR ไม่มี productCode ทุกบรรทัด แล้ว save() บล็อกว่า
+        // "มี N แถวที่กรอกอิสระ…" ⇒ **ผู้ใช้ใหม่ที่กดปุ่มที่ระบบแนะนำ บันทึก
+        // เอกสารจาก OCR ไม่ได้เลย** จนกว่าจะหา checkbox ที่ซ่อนอยู่ในหัวตารางเจอ
+        const strictCb = document.getElementById('fStrictProducts');
+        if (strictCb && strictCb.checked) {
+          strictCb.checked = false;
+          const hint = document.getElementById('linesHint');
+          if (hint) hint.innerHTML = '💡 เอกสารนี้มาจาก OCR — ปลดล็อกโหมด "เฉพาะสินค้าในระบบ" ให้แล้ว '
+            + 'แก้ไขรายละเอียดได้อิสระ (ผูกสินค้าภายหลังได้)';
+        }
+
         // Target document type (the inferrer's suggestion). Fire
         // onDocTypeChange so type-specific fields (expense category, cert /
         // payment-voucher blocks, AR-only widgets) render for the chosen type
@@ -2674,15 +2689,23 @@
       },
 
       _applyOcrConfidenceHints(conf) {
+        // ชื่อช่องต้องตรงกับคำศัพท์กลางฝั่งเซิร์ฟเวอร์ (Helpers/OcrFieldKeys.cs)
+        //
+        // เดิม map ไปที่ 'SupplierName' / 'SupplierTaxId' / 'PaymentChannel'
+        // ซึ่ง **ไม่มีฝั่งไหนผลิตเลยสักตัว** ⇒ ไฮไลต์เหลือง "ตรวจสอบอีกครั้ง"
+        // (กฎเหล็ก #3 ข้อ 3) แทบไม่เคยขึ้นเลยตั้งแต่เขียนมา — เหลือทำงานจริง
+        // แค่ ExpenseCategory ช่องเดียว
         const fieldMap = {
-          'SupplierName': 'fContact',
-          'SupplierTaxId': 'fSupplierTaxIdReadonly',
+          'SellerName': 'fContact',
+          'SellerTaxId': 'fSupplierTaxIdReadonly',
           'DocumentNumber': 'fSupplierInvoiceNumberPV',
           'DocumentDate': 'fSupplierTaxInvoiceDatePV',
           'TotalAmount': null,                // computed from lines
           'VatAmount': null,
+          'SubTotal': null,
           'ExpenseCategory': 'fExpenseCategory',
-          'PaymentChannel': 'fPaymentChannel',
+          'PaymentTerms': 'fPaymentTerms',
+          'WhtRate': 'fWhtRate',
         };
         Object.entries(conf || {}).forEach(([key, val]) => {
           const v = Number(val) || 0;
@@ -7491,10 +7514,14 @@
             // (TaxPointDate ?? DocumentDate ฐานเดียวกับ GenerateVatReport)
             // ปล่อยว่างไว้ผู้ใช้อ่านว่า "ไม่ได้เคลม". dataset.initial ให้ payload
             // แยก "ดูเฉย ๆ" ออกจาก "ตั้งใจย้ายงวด" — ห้ามส่งค่าที่แค่โชว์
+            // เซิร์ฟเวอร์คำนวณงวดนี้ให้แล้ว (ResolveInputVatClaimPeriod ใช้ลำดับ
+            // เดียวกับ GenerateVatReport) — อ่านค่าที่ส่งมาเป็นหลัก ห้ามประกอบเอง
+            // สูตรข้างล่างเหลือไว้เป็น fallback สำหรับเซิร์ฟเวอร์รุ่นเก่าเท่านั้น
             const vcpBasis = d.taxPointDate || d.documentDate;
-            fVcp.value = d.inputVatBecameClaimableAt
-              ? Layout.dateInput(d.inputVatBecameClaimableAt).slice(0, 7)
-              : (vcpBasis ? Layout.dateInput(vcpBasis).slice(0, 7) : '');
+            fVcp.value = d.inputVatClaimPeriod
+              || (d.inputVatBecameClaimableAt
+                    ? Layout.dateInput(d.inputVatBecameClaimableAt).slice(0, 7)
+                    : (vcpBasis ? Layout.dateInput(vcpBasis).slice(0, 7) : ''));
             fVcp.dataset.initial = fVcp.value;
             const claimed = d.inputVatPp30Month && d.inputVatPp30Year;
             // ล็อกเฉพาะงวดที่ **ยื่นแล้ว** — งวดร่างย้ายได้เลย ระบบติ๊กใบออกจาก
@@ -8481,8 +8508,12 @@
           // ตลอดไป ทั้งที่กระดาษครบจริง) → ใบ OCR ที่ยังติดเตือน ให้ตรวจซ้ำ
           // เบื้องหลังหนึ่งครั้งก่อนแสดง ถ้าผลเปลี่ยนค่อยโหลดใหม่ (ผู้ใช้เห็น
           // ผลล่าสุดเสมอ ไม่ต้องสแกนใหม่) — best-effort: ตรวจไม่ได้ = แสดงของเดิม
+          // ต้องรวม ocrTenantMismatchFlag ด้วย — แบนเนอร์แดง "เลขผู้ซื้อไม่ตรงกับ
+          // บริษัทนี้" อ่านจากธงตัวนี้โดยตรง ไม่ได้อ่านจาก rdComplianceStatus
+          // ⇒ ใบที่สถานะกลายเป็น Valid ไปแล้วแต่ธงยังค้าง จะโชว์แบนเนอร์แดงตลอดไป
+          // โดยไม่มีทางตรวจซ้ำให้หาย (ธงนี้คือคำเตือนที่ผู้ใช้ร้องเรียนบ่อยที่สุด)
           if (!_skipRdRecheck && d.ocrConfidenceScore != null
-              && ['Warning', 'Failed'].includes(d.rdComplianceStatus)) {
+              && (['Warning', 'Failed'].includes(d.rdComplianceStatus) || d.ocrTenantMismatchFlag)) {
             try {
               const r = await API.post(
                 `/api/companies/${Layout.getCompanyId()}/ocr/documents/${id}/recheck-compliance`);
@@ -8749,8 +8780,10 @@
               // ตรง ๆ + คำนวณ 7/107 ให้เห็นเลยว่าถ้ายอดนี้จริง ๆ รวม VAT ควรแยก
               // เป็นเท่าไร (เช่น 513.60 = 480.00 + VAT 33.60)
               const total = d.totalAmount || 0;
-              const base = Math.round((total / 1.07) * 100) / 100;
-              const vat7 = Math.round((total - base) * 100) / 100;
+              // ผ่านตัวคำนวณกลางเหมือนที่อื่น — เดิมใช้ total/1.07 ซึ่งให้ผลตรงกับ
+              // เซิร์ฟเวอร์ทุกค่าอยู่แล้ว แต่เป็นสำเนาสูตรที่สามในเรพ
+              const vat7 = Layout.vatFromInclusive(total);
+              const base = Layout.baseFromInclusive(total);
               const isDraft = d.status === 'Draft';
               return `
               <div style="margin-bottom:12px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px">

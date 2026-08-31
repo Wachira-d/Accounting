@@ -36,6 +36,30 @@ public class DocumentBrand : TenantEntity
 
     // ===== ข้อมูลติดต่อของแบรนด์ (ว่าง = ใช้ของบริษัท) =====
     // หน้าร้าน/สาขาที่ลูกค้าติดต่อจริง มักไม่ใช่ที่อยู่จดทะเบียน
+
+    /// <summary>
+    /// **ที่อยู่ที่จะพิมพ์บนเอกสารของแบรนด์นี้มาจากไหน** — ผูกกับทะเบียนได้ ไม่ต้องพิมพ์ซ้ำ
+    /// <list type="bullet">
+    /// <item><c>Company</c> — ที่อยู่จดทะเบียนของบริษัท (แก้ที่ตั้งค่าบริษัทที่เดียว
+    ///   แล้วทุกแบรนด์ตามทันที ไม่มีทาง drift)</item>
+    /// <item><c>Branch</c> — ที่อยู่สถานประกอบการที่เลือกไว้ใน
+    ///   <see cref="AddressSourceBranchId"/> (ร้านสาขาที่มีทะเบียนอยู่แล้ว)</item>
+    /// <item><c>Custom</c> — พิมพ์เอง (<see cref="Address"/>) สำหรับหน้าร้านที่ยังไม่ได้
+    ///   ลงทะเบียนเป็นสาขา — **ค่าเริ่มต้นของแถวเก่า** เพื่อคงพฤติกรรมเดิมทุกประการ</item>
+    /// </list>
+    ///
+    /// ⚠️ ไม่ว่าตั้งเป็นอะไร **เอกสารที่กฎหมายบังคับ** (ใบกำกับภาษี §86/4 · อย่างย่อ
+    /// §86/6 · ใบเพิ่ม/ลดหนี้ §86/9-10 · ใบเสร็จ) จะใช้ที่อยู่ของ **สถานประกอบการ
+    /// ที่ออกใบ** เสมอ (สาขาบนเอกสาร ถ้าไม่มีก็ที่อยู่บริษัท) ตาม ป.86/2542 —
+    /// ที่อยู่หน้าร้านแบบ Custom ทับไม่ได้ ตัวตัดสินอยู่ที่ DocumentIssuerIdentity
+    /// </summary>
+    public string AddressSource { get; set; } = "Custom";
+
+    /// <summary>สาขาที่ผูกไว้ เมื่อ <see cref="AddressSource"/> = "Branch"</summary>
+    public Guid? AddressSourceBranchId { get; set; }
+    public Branch? AddressSourceBranch { get; set; }
+
+    /// <summary>ที่อยู่ที่พิมพ์เอง — ใช้เมื่อ <see cref="AddressSource"/> = "Custom"</summary>
     public string? Address { get; set; }
     public string? AddressEn { get; set; }
     public string? Phone { get; set; }
