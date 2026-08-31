@@ -2664,47 +2664,19 @@ public partial class AccountingService : IAccountingService
     private static FiscalPeriodResponse MapPeriodToResponse(FiscalPeriod f) => new(
         f.Id, f.Name, f.Year, f.Month, f.StartDate, f.EndDate, f.Status);
 
-    private async Task<string> GetNextEntryNumberAsync(Guid companyId, string prefix)
-    {
-        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-        var pattern = $"{prefix}-{yearMonth}-";
-
-        // Advisory lock to prevent duplicate entry numbers under concurrency
-        var lockKey = Math.Abs($"je_number_{companyId}_{pattern}".GetHashCode());
-        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
-
-        var lastEntry = await _db.JournalEntries
-            .IgnoreQueryFilters()
-            .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
-            .OrderByDescending(j => j.EntryNumber)
-            .Select(j => j.EntryNumber)
-            .FirstOrDefaultAsync();
-
-        int nextSeq = 1;
-        if (lastEntry != null)
-        {
-            var lastPart = lastEntry[pattern.Length..];
-            if (int.TryParse(lastPart, out var lastNum))
-                nextSeq = lastNum + 1;
-        }
-
-        // ⚠️ นับ JE ที่ Add ค้างใน change tracker ด้วย (คู่กับ generator ฝั่ง
-        // DocumentService) — ReverseJournalEntryAsync ถูกเรียกกลางทรานแซกชัน
-        // อนุมัติที่ AutoPost เพิ่ง Add JE prefix เดียวกันไว้แบบยังไม่ save
-        // (เคสจริง: อนุมัติใบกำกับแปลงจากใบแจ้งหนี้ → supersede reverse ใบเดิม
-        // ทั้งคู่เป็น SV เดือนเดียวกัน) query DB ไม่เห็นใบค้าง ⇒ เลขซ้ำ ⇒
-        // unique (CompanyId, EntryNumber) ล้มตอน SaveChanges = อนุมัติไม่ได้
-        var localMax = _db.JournalEntries.Local
-            .Where(j => j.CompanyId == companyId
-                && j.EntryNumber != null && j.EntryNumber.StartsWith(pattern)
-                && int.TryParse(j.EntryNumber[pattern.Length..], out _))
-            .Select(j => int.Parse(j.EntryNumber[pattern.Length..]))
-            .DefaultIfEmpty(0)
-            .Max();
-        if (localMax >= nextSeq) nextSeq = localMax + 1;
-
-        return $"{pattern}{nextSeq:D4}";
-    }
+    /// <summary>เลขรัน JE — ผ่านตัวออกเลขกลางตัวเดียวของระบบ
+    ///
+    /// <para>⚠️ เดิมเมธอดนี้มี logic ของตัวเองพร้อม advisory lock ที่คิดคีย์จาก
+    /// <c>Math.Abs($"je_number_{companyId}_{pattern}".GetHashCode())</c> —
+    /// <b><c>string.GetHashCode()</c> ใน .NET Core randomize ต่อ process</b>
+    /// ⇒ ค่าคีย์เปลี่ยนทุกครั้งที่รีสตาร์ต และสอง instance ได้คนละค่า
+    /// = ล็อกนี้กันอะไรไม่ได้เลยข้ามเครื่อง (และกันตัวเองข้าม deploy ก็ไม่ได้)</para>
+    ///
+    /// <para>ส่วนที่ดีของตัวนี้ — การนับ JE ที่ Add ค้างใน change tracker —
+    /// ถูกยกเข้าไปอยู่ใน <c>JournalEntryBuilder.NextJournalNumberAsync</c> แล้ว
+    /// จึงไม่หายไปไหน</para></summary>
+    private Task<string> GetNextEntryNumberAsync(Guid companyId, string prefix)
+        => Journal.JournalEntryBuilder.NextJournalNumberAsync(_db, companyId, prefix, DateTime.UtcNow);
 
     private static DateTime NormalizeDate(DateTime date)
     {

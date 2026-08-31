@@ -133,6 +133,23 @@ public partial class DocumentService : IDocumentService
             var existing = await _db.WhtCreditsReceived
                 .FirstOrDefaultAsync(w => w.CompanyId == companyId && w.DocumentId == doc.Id);
 
+            // ⚠️ ห้ามแตะแถวที่มาจาก "หนังสือรับรอง 50 ทวิ ตัวจริง" —
+            // `EnsureWhtCreditFromCertAsync` (สแกนใบ 50 ทวิ) ผูกแถวไว้กับ
+            // ReceiptVoucher ใบใหม่ที่มันสร้าง ⇒ พอ RV ใบนั้นถูก approve
+            // เมธอดนี้จะเจอแถวเดียวกันแล้ว:
+            //   • ถ้า JE ของ RV ไม่มี Dr 11910 → amount ≤ 0.005 →
+            //     **soft-delete เครดิตที่ลงทะเบียนจากใบจริงทิ้งเงียบ ๆ**
+            //   • ถ้ามี → เขียนทับยอด/อัตรา/ปีภาษี ด้วยค่าที่ derive จาก RV
+            //     แทนตัวเลขที่พิมพ์อยู่บนกระดาษ
+            // แถวที่ GL สร้างเองไม่เคยมีเลขที่ใบรับรอง จึงใช้เป็นตัวแยกได้
+            if (existing != null && !string.IsNullOrWhiteSpace(existing.CertificateNumber))
+            {
+                _logger.LogInformation(
+                    "ข้าม SyncWhtCreditReceived ของ {Doc} — แถวนี้มาจากใบ 50 ทวิ {Cert} (ตัวเลขบนกระดาษชนะ GL)",
+                    doc.Id, existing.CertificateNumber);
+                return;
+            }
+
             if (amount <= 0.005m)
             {
                 // WHT ถูกกลับ/แก้เป็นศูนย์ → ลบแถวที่ยังไม่ได้ใช้เครดิตทิ้ง
@@ -10959,7 +10976,44 @@ public partial class DocumentService : IDocumentService
     /// ไม่ได้แล้ว ต้อง reclassify เป็นค่าใช้จ่าย (Dr ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" /
     /// Cr 11640) ล้าง 11640 ที่ค้างเป็น asset ลอย. Idempotent (ตั้ง InputVatExpiredAt).
     /// เรียกจาก endpoint / nightly job. คืนจำนวนเอกสารที่จัดการ.</summary>
+    /// <summary>ค่าล็อกของงาน §82/3 — <b>ต้องตรงกับ</b>
+    /// <c>UndueInputVatExpiryJob.LockKey</c> (ทั้งสองทางต้องกันกันเองได้)</summary>
+    internal const long UndueVatExpiryLockKey = 828_003L;
+
     public async Task<int> ReclassifyExpiredUndueInputVatAsync(Guid companyId, string actor)
+    {
+        // ⚠️ ล็อกอยู่ในเมธอด ไม่ใช่ในตัว job —
+        // เดิม `UndueInputVatExpiryJob` ขอ `pg_advisory_xact_lock(828003)` ไว้
+        // รอบตัวมันเอง แต่ปุ่ม "ล้างภาษีซื้อหมดสิทธิ์" ใน DocumentController
+        // เรียกเมธอดนี้ **ตรง ๆ ไม่มี lock ไม่มี transaction** ⇒ ล็อกที่ job
+        // อุตส่าห์ใส่ไว้ไม่มีผลใด ๆ กับ path ที่สอง
+        // idempotency ของเมธอดคือ `InputVatExpiredAt == null` แบบ read-then-write
+        // ยาว (อ่านที่ต้นเมธอด เซ็ตท้ายสุด) ⇒ กดปุ่มตอน job ตื่นพอดี หรือกด
+        // สองครั้ง = post JE `Dr ค่าใช้จ่ายภาษีซื้อขอคืนไม่ได้ / Cr 11640`
+        // **สองรอบ** ⇒ ค่าใช้จ่ายเกินจริง + บัญชี 11640 ติดลบ
+        // ย้ายล็อกมาไว้ในนี้ = ทุกผู้เรียกได้รับการป้องกันเท่ากันโดยอัตโนมัติ
+        var ownsTransaction = _db.Database.CurrentTransaction == null;
+        var tx = ownsTransaction ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT pg_advisory_xact_lock({0})", new object[] { UndueVatExpiryLockKey });
+            var n = await ReclassifyExpiredUndueInputVatCoreAsync(companyId, actor);
+            if (tx != null) await tx.CommitAsync();
+            return n;
+        }
+        catch
+        {
+            if (tx != null) await tx.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            if (tx != null) await tx.DisposeAsync();
+        }
+    }
+
+    private async Task<int> ReclassifyExpiredUndueInputVatCoreAsync(Guid companyId, string actor)
     {
         var today = DateTime.UtcNow.Date;
         var rows = await _db.Documents.Include(d => d.Lines)
@@ -11242,6 +11296,28 @@ public partial class DocumentService : IDocumentService
         if (doc.DocumentType is not (DocumentType.Expense or DocumentType.PurchaseInvoice
             or DocumentType.PaymentVoucher)) return;
         if (doc.Lines == null || doc.Lines.Count == 0) return;
+
+        // ⚠️ เอกสารที่สร้างจากสแกนที่ "ลงทะเบียนสินทรัพย์ไปแล้ว" ต้องไม่สร้างซ้ำ
+        // เดิม dedup ใช้ `SourceDocumentLineId` ซึ่งสาย scan ไม่เคยเซ็ต (ตอนนั้น
+        // ยังไม่มีเอกสาร) ⇒ key ไม่มีวันชน ⇒ ของชิ้นเดียวได้ 2 แถวในทะเบียน
+        // + PPE เดบิตสองเท่า + ค่าเสื่อมถูกตัดทั้งสองแถวทุกเดือน
+        var scanIds = await _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id && !r.IsDeleted)
+            .Select(r => r.Id)
+            .ToListAsync();
+        if (scanIds.Count > 0)
+        {
+            var alreadyFromScan = await _db.Set<FixedAsset>().AsNoTracking()
+                .AnyAsync(a => a.CompanyId == companyId && !a.IsDeleted
+                               && a.SourceScanResultId != null
+                               && scanIds.Contains(a.SourceScanResultId.Value));
+            if (alreadyFromScan)
+            {
+                _logger.LogInformation(
+                    "ข้าม auto-register สินทรัพย์ของ {Doc} — สแกนต้นทางลงทะเบียนไปแล้ว", doc.Id);
+                return;
+            }
+        }
 
         // ผังที่แต่ละบรรทัดลง → code
         var accIds = doc.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();

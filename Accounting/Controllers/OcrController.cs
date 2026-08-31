@@ -704,6 +704,13 @@ public class OcrController : ControllerBase
             .FirstOrDefaultAsync();
         if (scan == null) return NotFound(new ApiResponse<OcrStockImportResult>(false, null, "ไม่พบผลการสแกน"));
 
+        // ⚠️ กันกดซ้ำ — เดิม endpoint นี้ไม่มี guard ใด ๆ เลย ⇒ double-click /
+        // retry / refresh = สต็อกเข้าซ้ำทุกรอบ (ดู OcrScanResult.StockImportedAt)
+        if (scan.StockImportedAt.HasValue)
+            return BadRequest(new ApiResponse<OcrStockImportResult>(false, null,
+                $"สแกนนี้นำเข้าสต็อกไปแล้วเมื่อ {scan.StockImportedAt:dd/MM/yyyy HH:mm} — " +
+                "นำเข้าซ้ำจะทำให้ยอดคงเหลือเกินจริง หากต้องแก้ให้ปรับสต็อกที่หน้าสินค้าโดยตรง"));
+
         var userId = User.Identity?.Name ?? "ocr-stock-import";
         var vendorId = scan.MatchedContactId;
         // ใบที่สแกนมามี VAT จริงไหม — ใช้ตั้ง VatRate ของสินค้าที่สร้างใหม่
@@ -912,6 +919,10 @@ public class OcrController : ControllerBase
                     FixedAssetId: null));
             }
 
+            // ประทับ marker ใน transaction เดียวกับ movement — commit พร้อมกัน
+            // หรือ rollback พร้อมกัน (ไม่มีสถานะ "ของเข้าแล้วแต่ไม่มี marker")
+            if (movements > 0 || created > 0 || assetsCreated > 0)
+                scan.StockImportedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
         }

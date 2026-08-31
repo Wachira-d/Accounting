@@ -2868,6 +2868,44 @@ public class OcrService : IOcrService
         if (startMonth is < 1 or > 12) startMonth = 1;
         var taxYear = docDate.Month >= startMonth ? docDate.Year : docDate.Year - 1;
 
+        // ── กันเครดิตซ้ำข้ามเส้นทาง (เงินก้อนเดียว 2 แถว) ─────────────────
+        // `DocumentService.SyncWhtCreditReceivedAsync` สร้างแถว **Pending**
+        // ไว้แล้วตอนรับชำระใบขาย (ผูกกับ**ใบขายต้นทาง**, ไม่มีเลขที่ใบรับรอง)
+        // ส่วนเมธอดนี้ผูกกับ **ReceiptVoucher ใบใหม่** ที่สร้างจากการสแกน
+        // ⇒ key ของสองทางไม่มีวันชนกัน ⇒ ภ.ง.ด.50 หักเครดิตเกินเท่าตัว
+        // (แถวหนึ่ง Received นับทันที อีกแถว Pending รอผู้ใช้กด "ได้รับใบแล้ว")
+        //
+        // ทางแก้: ถ้าเจอแถว Pending ของผู้จ่ายรายเดียวกัน ปีภาษีเดียวกัน
+        // ยอดใกล้เคียงกัน → **อัปเกรดแถวเดิม** (เติมเลขที่ใบ/ไฟล์แนบ/สถานะ)
+        // แทนการสร้างแถวใหม่ — ใบจริงคือหลักฐานของเงินก้อนเดิม ไม่ใช่ก้อนใหม่
+        if (!unknownAmount && result.MatchedContactId is Guid payerId)
+        {
+            const decimal matchTolerance = 1m;
+            var candidates = await _db.WhtCreditsReceived
+                .Where(w => w.CompanyId == companyId && !w.IsDeleted
+                            && w.Status == WhtCreditStatus.Pending
+                            && w.PayerContactId == payerId
+                            && w.TaxYear == taxYear
+                            && w.CertificateNumber == null)
+                .ToListAsync();
+            var match = candidates
+                .FirstOrDefault(w => Math.Abs(w.WhtAmount - whtAmount) <= matchTolerance);
+            if (match != null)
+            {
+                match.CertificateNumber = certNo;
+                match.CertificateDate = result.ExtractedDate;
+                match.AttachmentId = result.FileAttachmentId;
+                match.Status = WhtCreditStatus.Received;   // มีใบจริงในมือแล้ว
+                match.Notes = (match.Notes ?? "") +
+                    $" · จับคู่กับหนังสือรับรองที่สแกน ({result.OriginalFileName})";
+                match.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+                _logger.LogInformation(
+                    "จับคู่ใบ 50 ทวิ ที่สแกนกับเครดิตที่รอใบอยู่แล้ว (credit {Id}) — ไม่สร้างแถวใหม่",
+                    match.Id);
+                return;
+            }
+        }
         var baseAmount = result.ExtractedSubTotal ?? 0m;
         _db.WhtCreditsReceived.Add(new WhtCreditReceived
         {
@@ -6061,6 +6099,17 @@ public class OcrService : IOcrService
                         DepreciationExpenseAccountId: req.DepreciationExpenseAccountId,
                         AccumulatedDepreciationAccountId: req.AccumulatedDepreciationAccountId),
                     createdBy);
+
+                // ผูกสินทรัพย์กลับไปที่สแกน — ให้ AutoRegisterFixedAssetsAsync
+                // รู้ว่าของชิ้นนี้ลงทะเบียนไปแล้ว ตอนเอกสารจากสแกนเดียวกันถูก
+                // approve (เดิม key คนละตัวจึงไม่มีวันชน → สินทรัพย์ซ้ำ)
+                var assetRow = await _db.Set<FixedAsset>()
+                    .FirstOrDefaultAsync(a => a.Id == created.Id && a.CompanyId == companyId);
+                if (assetRow != null)
+                {
+                    assetRow.SourceScanResultId = scan.Id;
+                    await _db.SaveChangesAsync();
+                }
 
                 // Initial capitalization journal entry — Dr: Asset / Cr: AP-or-Cash.
                 // We only post when both account IDs are known (asset

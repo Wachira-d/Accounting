@@ -88,7 +88,7 @@
       async init() {
         if (!Layout.init('production')) return;
         Layout.setTitle('งานผลิต');
-        document.getElementById('plannedStart').value = new Date().toISOString().slice(0,10);
+        document.getElementById('plannedStart').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         await this.loadProducts();
         await this.loadBoms();
         await this.load();

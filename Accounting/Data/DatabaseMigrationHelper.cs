@@ -4430,6 +4430,32 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_EmailRules_Company_Trigger" ON "EmailScheduleRules" ("CompanyId", "Trigger") WHERE "IsDeleted" = false;""",
             """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "DayOfMonth" integer NOT NULL DEFAULT 5;""",
             """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "AudienceFilter" varchar(100) NULL;""",
+
+            // ── Seed กฎเตือนใกล้ครบกำหนดให้ tenant เดิม ──
+            // ที่มา: `BackgroundJobService.ProcessPaymentReminders` เคยส่งอีเมล
+            // เตือนให้ **ทุก** บริษัทโดยไม่ต้องตั้งกฎ แต่ส่งตรงทุก 15 นาที
+            // ไม่มี marker ⇒ ~380 ฉบับต่อใบแจ้งหนี้ 1 ใบ. เมื่อลบตัวนั้นทิ้ง
+            // งานย้ายไปอยู่กับ EmailScheduleService ซึ่งทำงาน **เฉพาะ tenant
+            // ที่มีกฎ** ⇒ ถ้าไม่ seed ให้ บริษัทเดิมจะเงียบไปเลยโดยไม่รู้ตัว
+            //
+            // ค่าที่ seed ตรงกับพฤติกรรมเดิมที่สุด: ล่วงหน้า 3 วัน (OffsetDays
+            // = -3 ตามกติกา DueSoon) ส่ง 09:00 น. ครั้งเดียว (RepeatEveryDays=0)
+            // เฉพาะ Invoice. บริษัทที่ตั้งกฎ DocumentDueSoon ไว้เองแล้วจะถูกข้าม
+            // (WHERE NOT EXISTS) — ห้ามทับเจตนาของผู้ใช้
+            """
+            INSERT INTO "EmailScheduleRules"
+                ("Id","CompanyId","Trigger","IsActive","DocumentType","OffsetDays",
+                 "SendAtHour","RepeatEveryDays","CreatedBy")
+            SELECT gen_random_uuid(), c."Id", 'DocumentDueSoon', true, 'Invoice', -3, 9, 0,
+                   'seed:replaces-ProcessPaymentReminders'
+            FROM "Companies" c
+            WHERE c."IsDeleted" = false
+              AND NOT EXISTS (
+                    SELECT 1 FROM "EmailScheduleRules" r
+                    WHERE r."CompanyId" = c."Id"
+                      AND r."Trigger" = 'DocumentDueSoon'
+                      AND r."IsDeleted" = false);
+            """,
             // Refresh-token reuse detection (security hardening).
             """ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "PreviousRefreshToken" varchar(500) NULL;""",
             """ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "RefreshTokenRevokedAt" timestamp NULL;""",
@@ -4702,6 +4728,23 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiFeedbackId" uuid NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LineSplitAiFeedbackId" uuid NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LineSplitUsedAi" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "StockImportedAt" timestamp NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "SourceScanResultId" uuid NULL;""",
+
+            // ── กัน JE งานประจำเดือนซ้ำข้าม instance ──
+            // `EclAllowanceJob` (สำรองหนี้สงสัยจะสูญ) กันซ้ำด้วย
+            // `AnyAsync(Reference == "ECL-yyyyMM" && Posted)` แบบ read-then-write
+            // ธรรมดา ไม่มี advisory lock ⇒ สอง instance ตื่นห่างกันเสี้ยววินาที
+            // ใน 3 วันสุดท้ายของเดือน ทั้งคู่ได้ already=false ⇒ ตั้งสำรอง 2 ชุด
+            // (Dr 57130 / Cr 18100 สองครั้ง) ⇒ กำไรต่ำกว่าจริง แล้วเดือนถัดไป
+            // adjustment = required − currentAllowance กลับรายการก้อนโตผิดปกติ
+            // unique index ทำให้ race เป็นไปไม่ได้เชิงโครงสร้าง (instance ที่สอง
+            // ล้มที่ INSERT แล้ว job จับ exception ไว้อยู่แล้ว = ข้ามรอบไปเงียบ ๆ)
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "UX_JournalEntries_MonthlyJobRef"
+            ON "JournalEntries" ("CompanyId", "Reference")
+            WHERE "Reference" IS NOT NULL AND "Reference" LIKE 'ECL-%' AND "IsDeleted" = false;
+            """,
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiSuggested" varchar(50) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeUsedAi" boolean NOT NULL DEFAULT false;""",
 

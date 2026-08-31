@@ -55,7 +55,6 @@ public class BackgroundJobService : BackgroundService
         await ProcessDunningLetters(scope, ct);
 
         // 3. Send payment reminders
-        await ProcessPaymentReminders(scope, ct);
 
         // 4. Escalate overdue approval requests
         await ProcessApprovalEscalations(scope, ct);
@@ -233,64 +232,21 @@ public class BackgroundJobService : BackgroundService
         }
     }
 
-    private async Task ProcessPaymentReminders(IServiceScope scope, CancellationToken ct)
-    {
-        try
-        {
-            // Send reminders for invoices due within 3 days
-            var emailService = scope.ServiceProvider.GetService<IEmailService>();
-            if (emailService == null) return;
-
-            var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-            var today = DateTime.UtcNow.Date;
-            var reminderCutoff = today.AddDays(3);
-            var companyIds = await db.Documents
-                .Where(d => d.DocumentType == DocumentType.Invoice
-                    && d.Status == DocumentStatus.Approved
-                    && d.DueDate.HasValue
-                    && d.DueDate <= reminderCutoff
-                    && d.DueDate >= today
-                    && d.BalanceDue > 0)
-                .Select(d => d.CompanyId)
-                .Distinct()
-                .ToListAsync();
-
-            foreach (var companyId in companyIds)
-            {
-                var dueSoon = await db.Documents
-                    .Where(d => d.CompanyId == companyId
-                        && d.DocumentType == DocumentType.Invoice
-                        && d.Status == DocumentStatus.Approved
-                        && d.DueDate.HasValue
-                        && d.DueDate <= reminderCutoff
-                        && d.DueDate >= today
-                        && d.BalanceDue > 0)
-                    .Join(db.Contacts, d => d.ContactId, c => c.Id, (d, c) => new { d, c })
-                    .Take(50)
-                    .ToListAsync();
-
-                foreach (var item in dueSoon)
-                {
-                    if (!string.IsNullOrEmpty(item.c.Email))
-                    {
-                        await emailService.SendPaymentReminderAsync(
-                            item.c.Email, item.c.Name, item.d.DocumentNumber,
-                            item.d.BalanceDue, item.d.DueDate!.Value);
-                    }
-                }
-
-                if (dueSoon.Any())
-                    _logger.LogInformation("Company {CompanyId}: payment reminders sent for {Count} invoices", companyId, dueSoon.Count);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send payment reminders");
-            var errorLogService = scope.ServiceProvider.GetService<IErrorLogService>();
-            if (errorLogService != null)
-                await errorLogService.LogErrorAsync(ex, "BackgroundJob.PaymentReminders");
-        }
-    }
+    // ⚠️ ProcessPaymentReminders ถูกลบออก (ฟีเจอร์ซ้อน)
+    //
+    // เดิมเมธอดนี้วนทุก 15 นาที คัดใบแจ้งหนี้ที่ครบกำหนดใน 3 วัน แล้วเรียก
+    // SendPaymentReminderAsync **ตรง ๆ** โดยไม่มี sent-log / marker / cooldown /
+    // idempotency key ใด ๆ ⇒ ลูกค้าได้อีเมลเตือนใบเดิม 96 ฉบับ/วัน
+    // (4 รอบ/ชม. × 24) คูณสูงสุด 4 วัน ≈ **380 ฉบับต่อใบแจ้งหนี้ 1 ใบ**
+    //
+    // งานเดียวกันนี้ EmailScheduleService.ScanDueSoonAndOverdueAsync ทำถูกอยู่
+    // แล้ว: enqueue เข้า EmailQueue พร้อม IdempotencyKey
+    // ($"doc:{id}:{trigger}:{suffix}") และ dispatch ด้วย FOR UPDATE SKIP LOCKED
+    // ⇒ ส่งครั้งเดียวจริง และปลอดภัยข้าม instance
+    //
+    // tenant ที่ยังไม่มีกฎ DocumentDueSoon จะถูก seed ให้อัตโนมัติใน
+    // DatabaseMigrationHelper (ล่วงหน้า 3 วัน 09:00 น. — ตรงกับพฤติกรรมเดิม)
+    // จึงไม่มี tenant ไหนขาดการเตือนไปเพราะการลบครั้งนี้
 
     private async Task ProcessApprovalEscalations(IServiceScope scope, CancellationToken ct)
     {

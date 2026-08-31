@@ -377,7 +377,7 @@
             vatRate: vatable ? 7 : 0
           }));
 
-          const today = new Date().toISOString().slice(0, 10);
+          const today = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
           const doc = await API.c(co.id).createDocument({
             documentType: this.docType,
             documentDate: today,

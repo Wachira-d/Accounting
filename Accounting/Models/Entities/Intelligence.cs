@@ -281,6 +281,16 @@ public class OcrScanResult : TenantEntity
     /// "🤖 AI แตกรายการให้ กรุณาตรวจ" ให้ซื่อสัตย์ตามกฎเหล็ก #1</summary>
     public bool LineSplitUsedAi { get; set; }
 
+    /// <summary>เวลาที่สแกนนี้ถูก "นำเข้าสต็อก" สำเร็จแล้ว (UTC) — กันกดซ้ำ
+    ///
+    /// <para>⚠️ <c>POST /ocr/{id}/import-stock</c> เดิม<b>ไม่มี guard ใด ๆ เลย</b>
+    /// (ไม่เช็ค <c>CreatedDocumentId</c> ไม่เขียน marker กลับ) ⇒ double-click /
+    /// กด retry / refresh หน้า = <b>สต็อกเข้าซ้ำทุกรอบ</b> · และยังซ้อนกับ
+    /// <c>ApplyStockMovementsAsync(+1)</c> ตอน approve ใบซื้อที่สร้างจากสแกน
+    /// ใบเดียวกัน (เมื่อบรรทัดมี <c>ProductCode</c> จากการผูก PO)
+    /// ⇒ <c>CurrentStock</c> เกินจริงเท่าตัว · WAC เพี้ยน · COGS รอบถัดไปผิด</para></summary>
+    public DateTime? StockImportedAt { get; set; }
+
     // GL & expense suggestions
     public string? ExpenseCategory { get; set; }
     public string? SuggestedAccountsJson { get; set; }

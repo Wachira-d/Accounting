@@ -459,7 +459,7 @@
         const bom = '﻿';
         const blob = new Blob([bom + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
-        const today = new Date().toISOString().slice(0,10);
+        const today = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         const a = document.createElement('a');
         a.href = url; a.download = `chart-of-accounts-${today}.csv`; a.click();
         URL.revokeObjectURL(url);

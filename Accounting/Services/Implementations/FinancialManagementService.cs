@@ -12,27 +12,17 @@ public partial class FinancialManagementService : IFinancialManagementService
     private readonly AccountingDbContext _db;
     public FinancialManagementService(AccountingDbContext db) => _db = db;
 
-    private async Task<string> NextJvNumberAsync(Guid companyId)
-    {
-        var ym = DateTime.UtcNow.ToString("yyyyMM");
-        var pat = $"JV-{ym}-";
-        // Race-safe: acquire a per-(company, prefix) advisory lock that auto-
-        // releases at transaction end. Two concurrent NextJvNumberAsync calls
-        // therefore serialise — no duplicate "JV-202605-0001" issues.
-        var lockKey = HashCode.Combine(companyId, "JV", ym);
-        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
-        // Pull suffixes + take integer-max (string MaxAsync breaks past 9999
-        // because "9999" sorts AFTER "10000" lexicographically).
-        var suffixes = await _db.JournalEntries
-            .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pat))
-            .OrderByDescending(j => j.CreatedAt).Take(2000)
-            .Select(j => j.EntryNumber.Substring(pat.Length))
-            .ToListAsync();
-        int seq = 1;
-        foreach (var s in suffixes)
-            if (int.TryParse(s, out var n) && n >= seq) seq = n + 1;
-        return seq <= 9999 ? $"{pat}{seq:D4}" : $"{pat}{seq:D5}";
-    }
+    /// <summary>เลข JV — ผ่านตัวออกเลขกลางตัวเดียวของระบบ
+    ///
+    /// <para>⚠️ เดิมเมธอดนี้มี logic + advisory lock ของตัวเอง โดยใช้คีย์
+    /// <c>HashCode.Combine(companyId, "JV", ym)</c> ซึ่ง<b>คนละค่า</b>กับคีย์ของ
+    /// <c>JournalEntryBuilder</c> ที่ <c>DocumentService</c> ใช้ ⇒ ทั้งสองลงเลข
+    /// ใน number space เดียวกัน (<c>JV-yyyyMM-NNNN</c> + unique index
+    /// <c>(CompanyId, EntryNumber)</c>) แต่<b>ไม่บล็อกกัน</b> ⇒ approve เอกสาร
+    /// พร้อมกับ post JE ปันส่วน/ค่าเสื่อม = อ่าน max ได้เลขเดียวกัน → ชน unique
+    /// → operation หนึ่งล้มด้วย DbUpdateException แบบสุ่ม</para></summary>
+    private Task<string> NextJvNumberAsync(Guid companyId)
+        => Journal.JournalEntryBuilder.NextJournalNumberAsync(_db, companyId, "JV", DateTime.UtcNow);
 
     private async Task<Guid?> GetFiscalPeriodIdAsync(Guid companyId, DateTime date)
     {

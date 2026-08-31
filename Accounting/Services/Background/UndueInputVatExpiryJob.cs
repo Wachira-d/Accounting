@@ -27,7 +27,10 @@ public class UndueInputVatExpiryJob : BackgroundService
     private static readonly TimeSpan Interval = TimeSpan.FromHours(24);
 
     /// <summary>คีย์ advisory lock ของงานนี้ (คงที่ — ทั้งระบบมีผู้รันได้ทีละราย)</summary>
-    private const long LockKey = 828_003L;   // §82/3
+    // ค่าเดียวกับ DocumentService.UndueVatExpiryLockKey — ตอนนี้ตัวเมธอดขอ
+    // ล็อกเองแล้ว (ทุกผู้เรียกได้รับการป้องกันเท่ากัน) job ยังถือล็อกรอบนอก
+    // ไว้เพื่อกันสแกนรายชื่อบริษัทซ้อนกันข้าม instance
+    private const long LockKey = Services.Implementations.DocumentService.UndueVatExpiryLockKey;
 
     public UndueInputVatExpiryJob(IServiceProvider services, ILogger<UndueInputVatExpiryJob> logger)
     {

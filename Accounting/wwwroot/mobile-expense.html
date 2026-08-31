@@ -87,7 +87,7 @@
       scanId: null,   // ผลสแกน OCR ของรูปที่เพิ่งถ่าย — ใช้เป็นเส้นทางสร้างเอกสาร
 
       init() {
-        document.getElementById('expDate').value = new Date().toISOString().slice(0,10);
+        document.getElementById('expDate').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
       },
 
       /** บริษัทปัจจุบัน — หน้านี้เป็นหน้าเดี่ยว (ไม่โหลด layout.js) จึงอ่านคีย์เอง

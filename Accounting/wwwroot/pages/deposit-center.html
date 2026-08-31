@@ -432,7 +432,7 @@
         document.getElementById('realizeInfo').innerHTML =
           `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (ฐาน): <b>${Layout.money(r.outstandingAmount)}</b>`;
         document.getElementById('realizeAmount').value = r.outstandingAmount;
-        document.getElementById('realizeDate').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('realizeDate').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         Layout.openModal('realizeModal');
       },
       async submitRealize() {
@@ -460,7 +460,7 @@
           + `VAT ที่จะนำเข้า ภ.พ.30: <b style="font-size:15px">${Layout.money(r.vatAmount)}</b> บาท `
           + `<span style="color:#64748b">(พักอยู่ที่ผัง 21913 มา ${r.ageDays} วัน)</span>`
           + (stale ? '<br><span style="color:#b91c1c">⚠️ ค้างเกิน 90 วัน — ถ้าจุดรับผิดเกิดไปแล้ว การนำส่งช้ามีเบี้ยปรับ/เงินเพิ่ม</span>' : '');
-        document.getElementById('recVatDate').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('recVatDate').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         Layout.openModal('recVatModal');
       },
 
@@ -489,7 +489,7 @@
         document.getElementById('refundInfo').innerHTML =
           `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (ฐาน): <b>${Layout.money(r.outstandingAmount)}</b> · รวม VAT: <b>${Layout.money(r.totalAmount)}</b>`;
         document.getElementById('refundAmount').value = '';
-        document.getElementById('refundDate').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('refundDate').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         document.getElementById('refundReason').value = '';
         Layout.openModal('refundModal');
       },

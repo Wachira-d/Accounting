@@ -145,16 +145,13 @@ public class EclAllowanceJob : BackgroundService
         var adjustment = Math.Round(required - currentAllowance, 2, MidpointRounding.AwayFromZero);
         if (Math.Abs(adjustment) < 1m) return;   // ต่ำกว่า 1 บาท ไม่คุ้ม JE
 
-        // เลข JV ต่อบริษัท (pattern เดียวกับ snapshot JE)
-        var pattern = $"JV-{today:yyyyMM}-";
-        var lastJe = await db.JournalEntries
-            .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
-            .OrderByDescending(j => j.EntryNumber)
-            .Select(j => j.EntryNumber)
-            .FirstOrDefaultAsync(ct);
-        var nextSeq = 1;
-        if (lastJe != null && int.TryParse(lastJe[pattern.Length..], out var lastNum))
-            nextSeq = lastNum + 1;
+        // ⚠️ เดิม job นี้ออกเลข JV เอง โดย (ก) **ไม่มี advisory lock เลย** และ
+        // (ข) ใช้ `OrderByDescending(EntryNumber)` = เรียงแบบ string ⇒ พังเมื่อ
+        // เลขเกิน 9999 ("9999" มาหลัง "10000") ซึ่งตัวออกเลขกลางออกเป็น D5
+        // ⇒ ตั้งสำรองฯ ชนเลขกับ JE ที่ผู้ใช้กำลัง approve อยู่
+        // ใช้ตัวออกเลขกลางตัวเดียวกับทุกคน (ล็อก + integer max + นับ change tracker)
+        var entryNumber = await Services.Implementations.Journal.JournalEntryBuilder
+            .NextJournalNumberAsync(db, companyId, "JV", today, ct);
 
         var fiscalPeriod = await db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
             f.CompanyId == companyId && f.StartDate <= today && f.EndDate >= today
@@ -164,7 +161,7 @@ public class EclAllowanceJob : BackgroundService
         var je = new JournalEntry
         {
             CompanyId = companyId,
-            EntryNumber = $"{pattern}{nextSeq:D4}",
+            EntryNumber = entryNumber,
             EntryDate = today,
             JournalType = JournalType.General,
             Description = $"ตั้ง/ปรับค่าเผื่อหนี้สงสัยจะสูญ (ECL) ประจำเดือน {today:MM/yyyy} " +

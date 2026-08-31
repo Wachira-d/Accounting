@@ -67,6 +67,18 @@ public class FixedAsset : TenantEntity
     public Guid? SourceDocumentId { get; set; }
     public Guid? SourceDocumentLineId { get; set; }
 
+    /// <summary>ผลสแกน OCR ที่ผู้ใช้กด "ลงทะเบียนสินทรัพย์" จนเกิดแถวนี้
+    ///
+    /// <para>⚠️ ที่มา: <c>OcrService.RegisterAssetFromScanAsync</c> สร้างสินทรัพย์
+    /// โดย<b>ไม่เซ็ต <c>SourceDocumentLineId</c></b> (ตอนนั้นยังไม่มีเอกสาร)
+    /// ส่วน <c>DocumentService.AutoRegisterFixedAssetsAsync</c> กันซ้ำด้วย
+    /// <c>SourceDocumentLineId</c> ⇒ <b>key ไม่มีวันชนกัน</b>: สแกนใบซื้อโน้ตบุ๊ก
+    /// → กด "ลงทะเบียนสินทรัพย์" (asset #1 + JE Dr 18xxx) → กด "สร้างเอกสาร"
+    /// → approve (JE Dr 18xxx อีกรอบ + asset #2) ⇒ PPE เดบิตสองเท่า ·
+    /// ทะเบียนมี 2 แถวของชิ้นเดียว · <c>DepreciationBackgroundService</c>
+    /// ตัดค่าเสื่อมทั้งสองแถวทุกเดือน (dedup ของมันเป็น per-asset จับไม่ได้)</para></summary>
+    public Guid? SourceScanResultId { get; set; }
+
     /// <summary>True = ระบบสร้างให้อัตโนมัติด้วยค่า default (อายุใช้งาน/วิธี
     /// คิดค่าเสื่อมตามประเภท) ผู้ใช้ควรตรวจ/ปรับก่อนใช้จริง. UI ติดป้าย
     /// "⚠️ ตรวจสอบทะเบียนสินทรัพย์".</summary>
