@@ -272,11 +272,22 @@
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('payLoanId').value;
         try {
+          // ⚠️ 0 ในช่องต้น/ดอกมีความหมาย ("จ่ายดอกอย่างเดียว" = เงินต้น 0) —
+          // ห้ามใช้ `|| null` ที่กลืน 0 (defect class เดียวกับ creditDays)
+          // ว่าง = ไม่แตกยอดเอง ให้ระบบแตกจากตารางผ่อนของงวด
+          const _num = (id) => {
+            const v = (document.getElementById(id)?.value ?? '').trim();
+            if (v === '') return null;
+            const n = parseFloat(v);
+            return Number.isFinite(n) ? n : null;
+          };
+          const _amt = _num('payAmount');
+          if (_amt == null || _amt <= 0) { Layout.toast('กรุณากรอกยอดที่จ่าย', 'error'); return; }
           await api.makeLoanPayment(id, {
             paymentDate: document.getElementById('payDate').value,
-            amount: parseFloat(document.getElementById('payAmount').value),
-            principalPortion: parseFloat(document.getElementById('payPrincipal').value) || null,
-            interestPortion: parseFloat(document.getElementById('payInterest').value) || null,
+            amount: _amt,
+            principalPortion: _num('payPrincipal'),
+            interestPortion: _num('payInterest'),
             notes: document.getElementById('payNotes').value || null,
           });
           Layout.closeModal('payModal'); Layout.toast('บันทึกการชำระสำเร็จ');

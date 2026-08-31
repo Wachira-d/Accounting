@@ -72,24 +72,16 @@ public class LoanService : ILoanService
         // Create journal entry for loan disbursement: Dr Cash/Bank, Cr Loan Payable
         if (loan.LoanAccountId.HasValue && loan.BankAccountId.HasValue)
         {
-            var disbYm = DateTime.UtcNow.ToString("yyyyMM");
-            var disbPrefix = $"LD-{disbYm}-";
-            var maxDisbNum = await _db.JournalEntries
-                .IgnoreQueryFilters()
-                .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(disbPrefix))
-                .Select(j => j.EntryNumber)
-                .MaxAsync() as string;
-            var disbSeq = 1;
-            if (maxDisbNum != null)
-            {
-                var lp = maxDisbNum.Substring(disbPrefix.Length);
-                if (int.TryParse(lp, out var parsed)) disbSeq = parsed + 1;
-            }
+            // เลข JE ผ่านตัวกลาง (advisory lock deterministic) — เดิมคำนวณเอง
+            // ด้วย string MAX โดยไม่มีล็อก (ผู้ออกเลข JE เถื่อนอีกตัวในตระกูล
+            // "4 ผู้ออก 3 lock key" ที่เคยไล่แก้)
+            var disbNumber = await Journal.JournalEntryBuilder.NextJournalNumberAsync(
+                _db, companyId, "LD", request.DisbursementDate);
 
             var disbEntry = new JournalEntry
             {
                 CompanyId = companyId,
-                EntryNumber = $"{disbPrefix}{disbSeq:D4}",
+                EntryNumber = disbNumber,
                 EntryDate = request.DisbursementDate,
                 Description = $"รับเงินกู้ {loanNumber} - {request.Name}",
                 TotalDebit = request.PrincipalAmount,
@@ -275,38 +267,77 @@ public class LoanService : ILoanService
         if (loan.Status != "Active")
             throw new InvalidOperationException("สินเชื่อไม่อยู่ในสถานะใช้งาน");
 
-        // Mark schedule as paid
-        var schedule = await _db.LoanSchedules
-            .FirstOrDefaultAsync(s => s.LoanId == loanId && s.InstallmentNumber == request.InstallmentNumber);
+        // ── งวดที่จ่าย: ระบุมา หรือ = งวดค้างจ่ายงวดแรก ──
+        var schedule = request.InstallmentNumber.HasValue
+            ? await _db.LoanSchedules.FirstOrDefaultAsync(x =>
+                x.CompanyId == companyId && x.LoanId == loanId
+                && x.InstallmentNumber == request.InstallmentNumber.Value)
+            : await _db.LoanSchedules
+                .Where(x => x.CompanyId == companyId && x.LoanId == loanId && !x.IsPaid)
+                .OrderBy(x => x.InstallmentNumber)
+                .FirstOrDefaultAsync();
+
+        // ── แตกยอดเป็น ต้น/ดอก ──
+        // ผู้ใช้ระบุเองมา (0 มีความหมาย เช่น "จ่ายดอกอย่างเดียว") → เชื่อค่านั้น
+        // ไม่ระบุ → แตกจากตารางผ่อนของงวด: ดอกตามตาราง (ไม่เกินยอดที่จ่าย)
+        // ที่เหลือเป็นเงินต้น — ตรงกับวิธีตัดชำระเงินกู้มาตรฐาน
+        var lateFee = request.LateFee ?? 0m;
+        decimal principal, interest;
+        if (request.PrincipalPortion.HasValue || request.InterestPortion.HasValue)
+        {
+            principal = request.PrincipalPortion ?? 0m;
+            interest = request.InterestPortion ?? 0m;
+            if (request.Amount.HasValue
+                && Math.Abs(request.Amount.Value - (principal + interest + lateFee)) > 0.01m)
+                throw new InvalidOperationException(
+                    $"ยอดที่จ่าย {request.Amount:N2} ไม่เท่ากับ เงินต้น {principal:N2} + ดอกเบี้ย {interest:N2}"
+                    + (lateFee > 0 ? $" + ค่าปรับ {lateFee:N2}" : "")
+                    + " — กรุณาตรวจการแตกยอดอีกครั้ง");
+        }
+        else
+        {
+            var amount = request.Amount
+                ?? throw new InvalidOperationException("กรุณาระบุยอดที่จ่าย หรือแตกเงินต้น/ดอกเบี้ยมาให้");
+            var baseAmount = amount - lateFee;
+            if (baseAmount < 0)
+                throw new InvalidOperationException("ค่าปรับมากกว่ายอดที่จ่าย — ตรวจตัวเลขอีกครั้ง");
+            interest = Math.Min(schedule?.InterestPortion ?? 0m, baseAmount);
+            principal = baseAmount - interest;
+        }
+
+        var totalPaid = principal + interest + lateFee;
+        if (totalPaid <= 0)
+            throw new InvalidOperationException("ยอดชำระต้องมากกว่า 0");
+
         if (schedule != null)
         {
             schedule.IsPaid = true;
             schedule.PaidDate = request.PaymentDate;
         }
 
-        var totalPaid = request.PrincipalPaid + request.InterestPaid + (request.LateFee ?? 0);
-
+        var installmentNumber = request.InstallmentNumber ?? schedule?.InstallmentNumber ?? 0;
         var payment = new LoanPayment
         {
             CompanyId = companyId,
             LoanId = loanId,
-            InstallmentNumber = request.InstallmentNumber,
+            InstallmentNumber = installmentNumber,
             PaymentDate = request.PaymentDate,
-            PrincipalPaid = request.PrincipalPaid,
-            InterestPaid = request.InterestPaid,
+            PrincipalPaid = principal,
+            InterestPaid = interest,
             TotalPaid = totalPaid,
             LateFee = request.LateFee,
-            PaymentMethod = request.PaymentMethod,
-            Reference = request.Reference,
+            PaymentMethod = string.IsNullOrWhiteSpace(request.PaymentMethod)
+                ? "BankTransfer" : request.PaymentMethod,
+            Reference = request.Reference ?? request.Notes,
             CreatedBy = performedBy
         };
 
         _db.LoanPayments.Add(payment);
 
         // Update loan balances
-        loan.OutstandingPrincipal -= request.PrincipalPaid;
-        loan.TotalPrincipalPaid += request.PrincipalPaid;
-        loan.TotalInterestPaid += request.InterestPaid;
+        loan.OutstandingPrincipal -= principal;
+        loan.TotalPrincipalPaid += principal;
+        loan.TotalInterestPaid += interest;
 
         if (loan.OutstandingPrincipal <= 0)
         {
@@ -314,76 +345,71 @@ public class LoanService : ILoanService
             loan.Status = "PaidOff";
         }
 
-        // Create journal entry for loan payment
-        var lpYm = DateTime.UtcNow.ToString("yyyyMM");
-        var lpPrefix = $"LP-{lpYm}-";
-        var maxLpNum = await _db.JournalEntries
-            .IgnoreQueryFilters()
-            .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(lpPrefix))
-            .Select(j => j.EntryNumber)
-            .MaxAsync() as string;
-        var lpSeq = 1;
-        if (maxLpNum != null)
-        {
-            var lp = maxLpNum.Substring(lpPrefix.Length);
-            if (int.TryParse(lp, out var parsed)) lpSeq = parsed + 1;
-        }
+        // ── JE: Dr เงินกู้ (ตัดหนี้) + Dr ดอกเบี้ยจ่าย / Cr เงินสด-ธนาคาร ──
+        // เส้นเงิน: JE ต้องสมดุลหรือไม่โพสต์เลยพร้อมบอกเหตุ (ห้ามโพสต์ JE
+        // ขาข้างเดียวแบบเดิมที่ข้ามบรรทัดเงียบ ๆ เมื่อผังบัญชีไม่ครบ)
+        if (principal > 0 && !loan.LoanAccountId.HasValue)
+            throw new InvalidOperationException(
+                "สินเชื่อนี้ยังไม่ผูกผังบัญชีเงินกู้ — ตั้งค่าในรายละเอียดสินเชื่อก่อนบันทึกชำระ (ไม่งั้นรายการบัญชีจะไม่สมดุล)");
+        if (interest + lateFee > 0 && !loan.InterestExpenseAccountId.HasValue)
+            throw new InvalidOperationException(
+                "สินเชื่อนี้ยังไม่ผูกผังบัญชีดอกเบี้ยจ่าย — ตั้งค่าในรายละเอียดสินเชื่อก่อนบันทึกชำระ");
+
+        var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.AccountCode == "11122" && a.Level >= 4)
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4)
+            ?? throw new InvalidOperationException("ไม่พบผังบัญชีเงินสด/ธนาคาร (111xx) สำหรับลงรายการจ่าย");
+
+        // เลข JE ผ่านตัวกลาง (advisory lock deterministic) — เดิมที่นี่คำนวณเอง
+        // ด้วย string MAX โดยไม่มีล็อกเลย = ผู้ออกเลข JE เถื่อนอีกตัว
+        var entryNumber = await Journal.JournalEntryBuilder.NextJournalNumberAsync(
+            _db, companyId, "LP", request.PaymentDate);
         var journalEntry = new JournalEntry
         {
             CompanyId = companyId,
-            EntryNumber = $"{lpPrefix}{lpSeq:D4}",
+            EntryNumber = entryNumber,
             EntryDate = request.PaymentDate,
-            Description = $"ชำระสินเชื่อ {loan.LoanNumber} งวดที่ {request.InstallmentNumber}",
+            Description = $"ชำระสินเชื่อ {loan.LoanNumber} งวดที่ {installmentNumber}",
             TotalDebit = totalPaid,
             TotalCredit = totalPaid,
             Status = JournalEntryStatus.Posted,
             IsAutoGenerated = true
         };
 
-        // Debit: Loan Account (reduce liability) + Interest Expense
         var lines = new List<JournalEntryLine>();
-        if (loan.LoanAccountId.HasValue)
-        {
+        var lineOrder = 1;
+        if (principal > 0)
             lines.Add(new JournalEntryLine
             {
                 JournalEntryId = journalEntry.Id,
-                AccountId = loan.LoanAccountId.Value,
-                DebitAmount = request.PrincipalPaid,
+                AccountId = loan.LoanAccountId!.Value,
+                DebitAmount = principal,
                 CreditAmount = 0,
                 Description = "ชำระเงินต้น",
-                LineOrder = 1
+                LineOrder = lineOrder++
             });
-        }
-        if (loan.InterestExpenseAccountId.HasValue && request.InterestPaid > 0)
-        {
+        if (interest + lateFee > 0)
             lines.Add(new JournalEntryLine
             {
                 JournalEntryId = journalEntry.Id,
-                AccountId = loan.InterestExpenseAccountId.Value,
-                DebitAmount = request.InterestPaid,
+                AccountId = loan.InterestExpenseAccountId!.Value,
+                DebitAmount = interest + lateFee,
                 CreditAmount = 0,
-                Description = "ดอกเบี้ยจ่าย",
-                LineOrder = 2
+                // ค่าปรับล่าช้ารวมในขาดอกเบี้ยจ่าย — เดิมไม่มีขา Dr ของค่าปรับ
+                // เลย ⇒ ใส่ LateFee เมื่อไร JE ไม่สมดุลทันที
+                Description = lateFee > 0 ? $"ดอกเบี้ยจ่าย + ค่าปรับล่าช้า {lateFee:N2}" : "ดอกเบี้ยจ่าย",
+                LineOrder = lineOrder++
             });
-        }
-
-        // Credit: Cash/Bank (total payment)
-        var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode == "11122" && a.Level >= 4)
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
-        if (cashAccount != null)
+        lines.Add(new JournalEntryLine
         {
-            lines.Add(new JournalEntryLine
-            {
-                JournalEntryId = journalEntry.Id,
-                AccountId = cashAccount.Id,
-                DebitAmount = 0,
-                CreditAmount = totalPaid,
-                Description = $"จ่ายชำระสินเชื่อ {loan.LoanNumber}",
-                LineOrder = 3
-            });
-        }
+            JournalEntryId = journalEntry.Id,
+            AccountId = cashAccount.Id,
+            DebitAmount = 0,
+            CreditAmount = totalPaid,
+            Description = $"จ่ายชำระสินเชื่อ {loan.LoanNumber}",
+            LineOrder = lineOrder
+        });
 
         journalEntry.Lines = lines;
         _db.JournalEntries.Add(journalEntry);
