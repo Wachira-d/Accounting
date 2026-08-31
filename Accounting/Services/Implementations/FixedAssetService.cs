@@ -297,10 +297,14 @@ public class FixedAssetService : IFixedAssetService
         if (request.Category != null) asset.Category = request.Category;
         if (request.Location != null) asset.Location = request.Location;
         if (request.SerialNumber != null) asset.SerialNumber = request.SerialNumber;
-        if (request.AssetAccountId.HasValue) asset.AssetAccountId = request.AssetAccountId;
-        if (request.DepreciationExpenseAccountId.HasValue) asset.DepreciationExpenseAccountId = request.DepreciationExpenseAccountId;
-        if (request.AccumulatedDepreciationAccountId.HasValue) asset.AccumulatedDepreciationAccountId = request.AccumulatedDepreciationAccountId;
-        if (request.ProjectId.HasValue) asset.ProjectId = request.ProjectId;
+        // Guid.Empty = **ปลดค่า** (dropdown มี "— ไม่ระบุ —" ให้เลือกกลับ แต่เดิม
+        // เลือกแล้วบันทึกไม่มีผล — สินทรัพย์ที่ถอดออกจากโครงการยังคิดค่าเสื่อม
+        // เข้าโครงการที่ปิดไปแล้วต่อ)
+        static Guid? G(Guid? v) => v == Guid.Empty ? null : v;
+        if (request.AssetAccountId.HasValue) asset.AssetAccountId = G(request.AssetAccountId);
+        if (request.DepreciationExpenseAccountId.HasValue) asset.DepreciationExpenseAccountId = G(request.DepreciationExpenseAccountId);
+        if (request.AccumulatedDepreciationAccountId.HasValue) asset.AccumulatedDepreciationAccountId = G(request.AccumulatedDepreciationAccountId);
+        if (request.ProjectId.HasValue) asset.ProjectId = G(request.ProjectId);
 
         // เมื่อผู้ใช้ "ยืนยัน" สินทรัพย์ที่ระบบ auto-register (กดบันทึกในหน้า edit)
         // → ปลดธง NeedsReview เพื่อออกจาก "รอตรวจสอบ" queue. ไม่ใช่ field ใน DTO

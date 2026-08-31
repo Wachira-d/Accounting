@@ -14,11 +14,15 @@ public record CreateProjectRequest(
     string? ExternalSystem = null,
     string? ExternalUrl = null);
 
+/// <summary>StartDate: เดิม**ไม่มีในสัญญาเลย**ทั้งที่ฟอร์มแก้ไขเปิดช่อง "วันเริ่ม *"
+/// ให้แก้และส่งค่ามาด้วย ⇒ แก้แล้วหายเงียบ (silent no-op เต็มรูปแบบ).
+/// EndDate: DateTime.MinValue = ล้างทิ้ง ("ไม่กำหนดวันสิ้นสุด")</summary>
 public record UpdateProjectRequest(
     string? Name, string? Description, DateTime? EndDate,
     decimal? BudgetAmount, decimal? ContractAmount,
     decimal? CompletionPercent, string? Status,
-    string? ExternalUrl = null);
+    string? ExternalUrl = null,
+    DateTime? StartDate = null);
 
 public record ProjectResponse(
     Guid Id, string Code, string Name, string? Description,

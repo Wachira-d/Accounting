@@ -437,7 +437,9 @@ const Page = {
       paymentAccountId: paymentAccountId,
       expenseCategoryId: expenseCategoryId,
       autoGenerateWht: document.getElementById('fAutoWht').checked,
-      dueDays: 30,
+      // ⚠️ เดิม hardcode dueDays: 30 โดยไม่มีช่องให้กรอก ⇒ ใบที่ generate ครบ
+      // กำหนด +30 เสมอ ขัดกับเครดิตจริงของคู่ค้า (เช่น Net 45) ทุกใบทุกเดือน
+      // → ไม่ส่ง = ให้ระบบใช้เครดิตของคู่ค้า/ค่าตั้งต้นเอกสารเป็นตัวตัดสิน
       // หัวรวม "ใบแจ้งหนี้/ใบกำกับภาษี" — backend อ่าน key นี้ตอน generate
       // (RecurringTransactionService) แล้วส่งเข้า CreateDocumentRequest
       combinedInvoiceTaxInvoice: document.getElementById('fDocType').value === 'TaxInvoiceCombined'
@@ -452,7 +454,9 @@ const Page = {
       documentType: _selDocType === 'TaxInvoiceCombined' ? 'TaxInvoice' : _selDocType,
       frequency: document.getElementById('fFrequency').value,
       startDate,
-      endDate: document.getElementById('fEndDate').value || null,
+      // แก้ไข: ว่าง = **ล้างวันสิ้นสุด** (รันไม่มีกำหนด — sentinel 0001-01-01)
+      endDate: document.getElementById('fEndDate').value
+        || (this.editingId ? '0001-01-01' : null),
       contactId: document.getElementById('fContactId').value || null,
       templateData,
       autoApprove: document.getElementById('fAutoApprove').checked,

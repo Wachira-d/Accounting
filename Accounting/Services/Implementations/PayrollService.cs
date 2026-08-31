@@ -359,9 +359,16 @@ public class PayrollService : IPayrollService
         if (request.BranchId.HasValue) employee.BranchId = request.BranchId.Value;
         if (request.DimensionId.HasValue) employee.DimensionId = request.DimensionId.Value;
         // Org structure (preferred over the legacy string Department/Position)
-        if (request.DepartmentId.HasValue) employee.DepartmentId = request.DepartmentId.Value;
-        if (request.PositionId.HasValue) employee.PositionId = request.PositionId.Value;
-        if (request.DirectManagerId.HasValue)
+        // Guid.Empty = ปลดค่า — "— ไม่มี (Top-level) —" ต้องปลดหัวหน้าได้จริง
+        // (เดิมเลือกแล้วบันทึก คนเดิมยังชี้อยู่ ⇒ สายอนุมัติวิ่งไปหาคนที่ลาออก/
+        // ไม่ควรอนุมัติแล้ว และผังองค์กรผิด)
+        if (request.DepartmentId.HasValue)
+            employee.DepartmentId = request.DepartmentId.Value == Guid.Empty ? null : request.DepartmentId.Value;
+        if (request.PositionId.HasValue)
+            employee.PositionId = request.PositionId.Value == Guid.Empty ? null : request.PositionId.Value;
+        if (request.DirectManagerId.HasValue && request.DirectManagerId.Value == Guid.Empty)
+            employee.DirectManagerId = null;
+        else if (request.DirectManagerId.HasValue)
         {
             if (request.DirectManagerId.Value == employeeId)
                 throw new InvalidOperationException("พนักงานไม่สามารถเป็นหัวหน้าของตัวเองได้");

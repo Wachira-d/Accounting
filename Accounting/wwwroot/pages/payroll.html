@@ -759,9 +759,15 @@ const Page = {
       phone: document.getElementById('empPhone').value || null,
       lineId: document.getElementById('empLineId').value || null,
       // Org structure (preferred — drives cost-centre + approval routing)
-      departmentId: document.getElementById('empDepartmentRef').value || null,
-      positionId: document.getElementById('empPositionRef').value || null,
-      directManagerId: document.getElementById('empDirectManager').value || null,
+      // แก้ไข: "" = **ปลดค่า** (Guid.Empty sentinel) — "— ไม่มี (Top-level) —"
+      // ต้องปลดหัวหน้าได้จริง (เดิมเลือกแล้วบันทึก คนเดิมยังชี้อยู่ สายอนุมัติ
+      // วิ่งไปหาคนที่ลาออก/ไม่ควรอนุมัติแล้ว)
+      departmentId: document.getElementById('empDepartmentRef').value
+        || (id ? '00000000-0000-0000-0000-000000000000' : null),
+      positionId: document.getElementById('empPositionRef').value
+        || (id ? '00000000-0000-0000-0000-000000000000' : null),
+      directManagerId: document.getElementById('empDirectManager').value
+        || (id ? '00000000-0000-0000-0000-000000000000' : null),
     };
     if (id) data.isActive = document.getElementById('empActive').checked;
     if (!data.firstNameTh || !data.lastNameTh) { Layout.toast('กรุณากรอกชื่อ-สกุล', 'error'); return; }

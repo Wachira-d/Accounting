@@ -32,7 +32,10 @@ public record UpdateRecurringTransactionRequest(
     int? NotifyDaysBefore,
     bool? AutoApprove,
     RecurringStatus? Status,
-    bool? AutoSendEmail = null);
+    bool? AutoSendEmail = null,
+    /// <summary>เดิมไม่มีในสัญญา ทั้งที่ฟอร์มแก้ไขเปิดช่อง "วันเริ่มต้น *" ให้แก้
+    /// ⇒ แก้แล้วหายเงียบ. การแก้วันเริ่ม/ความถี่ต้อง recompute กำหนดรันถัดไปด้วย</summary>
+    DateTime? StartDate = null);
 
 public record RecurringTransactionResponse(
     Guid Id,

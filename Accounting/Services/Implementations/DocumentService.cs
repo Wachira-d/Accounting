@@ -2020,7 +2020,14 @@ public partial class DocumentService : IDocumentService
         }
 
         if (request.DocumentDate.HasValue) doc.DocumentDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DocumentDate.Value);
-        if (request.DueDate.HasValue) doc.DueDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DueDate.Value);
+        // วันครบกำหนด: DateTime.MinValue = **ล้างทิ้ง** (เดิมล้างไม่ได้เลย —
+        // ลบช่องว่างแล้วบันทึก วันเดิมเด้งกลับ ใบยังโผล่ในรายงานค้างชำระ/อีเมล
+        // ทวงตามวันเก่า) — sentinel ตามตระกูล convention ล้างค่าของเรพ:
+        // string ใช้ "" · Guid ใช้ Guid.Empty · int ใช้ -1 · DateTime ใช้ MinValue
+        if (request.DueDate.HasValue)
+            doc.DueDate = request.DueDate.Value == DateTime.MinValue
+                ? null
+                : Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DueDate.Value);
         if (request.ContactId.HasValue) doc.ContactId = request.ContactId.Value;
         if (request.Reference != null) doc.Reference = request.Reference;
         if (request.Notes != null) doc.Notes = request.Notes;
@@ -2036,11 +2043,14 @@ public partial class DocumentService : IDocumentService
         if (request.SupplierBranchCode != null) doc.SupplierBranchCode = request.SupplierBranchCode;
         if (request.CreditDays.HasValue)
         {
-            doc.CreditDays = request.CreditDays.Value;
+            // -1 = ล้างกลับเป็น "ไม่ระบุ" (ให้ resolver ใช้ค่าตั้งต้นของผู้ขาย
+            // ครั้งถัดไป) — convention เดียวกับ UpdateContactAsync ที่
+            // PaymentDueDays < 0 → null
+            doc.CreditDays = request.CreditDays.Value < 0 ? null : request.CreditDays.Value;
             // ผู้เรียกที่ไม่ส่ง DueDate มาเอง (เช่น API/integration) ต้องได้วัน
             // ครบกำหนดที่สอดคล้องกับเครดิตใหม่ — ไม่งั้นสองช่องขัดกันในฐานข้อมูล
             // (ฟอร์มบนเว็บส่ง DueDate มาด้วยเสมอ จึงไม่ถูกกระทบ)
-            if (!request.DueDate.HasValue && doc.CreditDays.Value >= 0)
+            if (!request.DueDate.HasValue && doc.CreditDays is >= 0)
                 doc.DueDate = doc.DocumentDate.AddDays(doc.CreditDays.Value);
         }
         if (request.PaymentTerms != null) doc.PaymentTerms = request.PaymentTerms;
@@ -2112,23 +2122,32 @@ public partial class DocumentService : IDocumentService
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
         {
-            var projectOk = await _db.Projects.AnyAsync(p =>
-                p.Id == request.ProjectId.Value && p.CompanyId == companyId);
-            if (!projectOk)
-                throw new InvalidOperationException("ไม่พบโครงการในบริษัทนี้");
-            doc.ProjectId = request.ProjectId.Value;
+            // Guid.Empty = **ปลดโครงการออก** — เดิมเลือก "— ไม่ระบุโครงการ —"
+            // แล้วบันทึก โครงการเดิมยังผูกอยู่ (ต้นทุนโครงการนับใบผิดต่อไป)
+            if (request.ProjectId.Value == Guid.Empty)
+                doc.ProjectId = null;
+            else
+            {
+                var projectOk = await _db.Projects.AnyAsync(p =>
+                    p.Id == request.ProjectId.Value && p.CompanyId == companyId);
+                if (!projectOk)
+                    throw new InvalidOperationException("ไม่พบโครงการในบริษัทนี้");
+                doc.ProjectId = request.ProjectId.Value;
+            }
         }
         // DimensionId เป็นเงื่อนไขอิสระ — เดิมซ้อนใน block ProjectId ทำให้แก้
         // dimension โดยไม่ส่ง project = ค่าหายเงียบ
         if (request.DimensionId.HasValue)
             doc.DimensionId = request.DimensionId.Value == Guid.Empty ? null : request.DimensionId.Value;
 
+        // Guid.Empty = ปลดค่า (กติกาเดียวกับ DimensionId/BrandId ข้างบน —
+        // ทุก dropdown ที่มี option "— ไม่ระบุ —" ต้องปลดได้จริง ไม่ใช่ silent no-op)
         if (request.BankAccountId.HasValue)
-            doc.BankAccountId = request.BankAccountId.Value;
+            doc.BankAccountId = request.BankAccountId.Value == Guid.Empty ? null : request.BankAccountId.Value;
         if (request.PaymentAccountId.HasValue)
-            doc.PaymentAccountId = request.PaymentAccountId.Value;
+            doc.PaymentAccountId = request.PaymentAccountId.Value == Guid.Empty ? null : request.PaymentAccountId.Value;
         if (request.ExpenseCategoryId.HasValue)
-            doc.ExpenseCategoryId = request.ExpenseCategoryId.Value;
+            doc.ExpenseCategoryId = request.ExpenseCategoryId.Value == Guid.Empty ? null : request.ExpenseCategoryId.Value;
 
         // CertificateInLieu fields
         if (request.CertificateReason != null) doc.CertificateReason = request.CertificateReason;

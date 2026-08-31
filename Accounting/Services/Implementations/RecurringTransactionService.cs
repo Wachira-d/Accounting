@@ -126,8 +126,40 @@ public class RecurringTransactionService : IRecurringTransactionService
 
         if (request.Name != null) recurring.Name = request.Name;
         if (request.Description != null) recurring.Description = request.Description;
-        if (request.Frequency.HasValue) recurring.Frequency = request.Frequency.Value;
-        if (request.EndDate.HasValue) recurring.EndDate = request.EndDate.Value;
+        // วันเริ่ม/ความถี่ คือตัวขับของ "กำหนดรันถัดไป" — แก้แล้วต้อง recompute
+        // ไม่งั้นเปลี่ยนรายเดือน→รายไตรมาสแล้วระบบยังออกใบเดือนหน้าอีก 1 รอบ
+        // (ลูกค้าถูกเรียกเก็บเกิน) และ "วันเริ่มต้น" เดิมแก้แล้วหายเงียบ
+        var scheduleChanged = false;
+        if (request.StartDate.HasValue && request.StartDate.Value != DateTime.MinValue
+            && recurring.StartDate != request.StartDate.Value)
+        {
+            recurring.StartDate = request.StartDate.Value;
+            recurring.PreferredDay = request.StartDate.Value.Day;
+            scheduleChanged = true;
+        }
+        if (request.Frequency.HasValue && recurring.Frequency != request.Frequency.Value)
+        {
+            recurring.Frequency = request.Frequency.Value;
+            scheduleChanged = true;
+        }
+        if (scheduleChanged)
+        {
+            // ยังไม่เคยรัน → นัดแรก = วันเริ่ม · เคยรันแล้ว → นัดถัดไปคำนวณจาก
+            // รอบล่าสุดด้วยความถี่ใหม่ (ห้ามย้อนไปออกใบซ้ำรอบที่ผ่านมา)
+            // GetNextRunDate เดินหน้าจาก NextRunDate ของ entity — ตั้งฐานก่อนเรียก
+            if (recurring.LastRunDate.HasValue)
+            {
+                recurring.NextRunDate = recurring.LastRunDate.Value;
+                recurring.NextRunDate = GetNextRunDate(recurring);
+            }
+            else
+            {
+                recurring.NextRunDate = recurring.StartDate;
+            }
+        }
+        // MinValue = ล้าง ("รันไม่มีกำหนดสิ้นสุด") — เดิมล้างไม่ได้ รอบบิลหยุดตามวันเก่า
+        if (request.EndDate.HasValue)
+            recurring.EndDate = request.EndDate.Value == DateTime.MinValue ? null : request.EndDate.Value;
         if (request.MaxRuns.HasValue) recurring.MaxRuns = request.MaxRuns.Value;
         if (request.DocumentType.HasValue) recurring.DocumentType = request.DocumentType.Value;
         if (request.ContactId.HasValue) recurring.ContactId = request.ContactId.Value;
@@ -433,7 +465,16 @@ public class RecurringTransactionService : IRecurringTransactionService
             var request = new Models.DTOs.Document.CreateDocumentRequest(
                 DocumentType: docType,
                 DocumentDate: DateTime.UtcNow,
-                DueDate: root.TryGetProperty("dueDays", out var dd) ? DateTime.UtcNow.AddDays(dd.GetInt32()) : DateTime.UtcNow.AddDays(30),
+                // dueDays ระบุใน template = ใช้ตามนั้น (พร้อม CreditDays ให้
+                // สองช่องสอดคล้องกัน) · ไม่ระบุ = ปล่อยให้ DocumentService เติม
+                // จากเครดิตของคู่ค้า — เดิม fallback แข็ง +30 วันเสมอ ขณะที่
+                // CreditDays ถูกเติมจาก contact (เช่น 45) ⇒ ใบที่ generate
+                // ทุกเดือนพิมพ์ "เครดิต 45 วัน" คู่กับครบกำหนด +30 วัน =
+                // เอกสารขัดกันเอง + ระบบทวงหนี้เร็วไป 15 วันทุกรอบ
+                DueDate: root.TryGetProperty("dueDays", out var dd) && dd.ValueKind == JsonValueKind.Number
+                    ? DateTime.UtcNow.AddDays(dd.GetInt32()) : null,
+                CreditDays: root.TryGetProperty("dueDays", out var dd2) && dd2.ValueKind == JsonValueKind.Number
+                    ? dd2.GetInt32() : null,
                 ContactId: contactId,
                 Reference: Sub($"AUTO-{recurring.Name}"),
                 Notes: Sub(root.TryGetProperty("notes", out var notes) ? notes.GetString() : null),

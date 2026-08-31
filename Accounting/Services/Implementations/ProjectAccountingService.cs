@@ -137,7 +137,11 @@ public class ProjectAccountingService : IProjectAccountingService
         var prevStatus = project.Status;
         if (request.Name != null) project.Name = request.Name;
         if (request.Description != null) project.Description = request.Description;
-        if (request.EndDate.HasValue) project.EndDate = request.EndDate.Value;
+        if (request.StartDate.HasValue && request.StartDate.Value != DateTime.MinValue)
+            project.StartDate = request.StartDate.Value;
+        // MinValue = ล้าง ("ไม่กำหนดวันสิ้นสุด") — เดิมล้างไม่ได้เลย
+        if (request.EndDate.HasValue)
+            project.EndDate = request.EndDate.Value == DateTime.MinValue ? null : request.EndDate.Value;
         if (request.BudgetAmount.HasValue) project.BudgetAmount = request.BudgetAmount.Value;
         if (request.ContractAmount.HasValue) project.ContractAmount = request.ContractAmount.Value;
         if (request.CompletionPercent.HasValue) project.CompletionPercent = request.CompletionPercent.Value;
