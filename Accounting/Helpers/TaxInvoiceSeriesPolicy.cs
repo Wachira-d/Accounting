@@ -71,6 +71,32 @@ public static class TaxInvoiceSeriesPolicy
     ///   (ใบสำคัญรับเป็นกระดาษคนละอย่างกับใบเสร็จ ห้ามยุบรวมกัน)</item>
     /// <item>ชนิดอื่น (ใบแจ้งหนี้ / ใบวางบิล / ฝั่งซื้อ) ไม่เกี่ยวกับกติกานี้เลย</item>
     /// </list></summary>
+    /// <summary>ใบที่ "หัวประกาศตัวเป็นใบกำกับภาษี" ทั้งที่ชนิดเอกสารเข้าเล่ม TIV
+    /// ไม่ได้ — ต้อง**บล็อกตอนอนุมัติ** ไม่ใช่ปล่อยผ่าน
+    ///
+    /// <para>ที่มา: <c>ApproveDocumentAsync</c> ตรึง <c>IsTaxInvoiceByLaw</c> จากหัว
+    /// ให้ทุกชนิด แต่ <see cref="SeriesTypeOverride"/> จงใจข้าม <c>Invoice</c> ⇒
+    /// ใบแจ้งหนี้ที่หัวถูกตั้งเอง (CustomTitle / titleOverrides) เป็น
+    /// "ใบแจ้งหนี้/ใบกำกับภาษี" จะถูกประทับว่าเป็นใบกำกับตามกฎหมาย **แต่ถือเลข
+    /// INV- นอกเล่ม** ไม่ผ่านด่าน §86/4 และออก e-Tax ไม่ได้ — กระดาษประกาศตัว
+    /// เป็นใบกำกับ (ลูกค้าเอาไปเคลมภาษีซื้อ) โดยไม่มีคุณสมบัติของใบกำกับสักข้อ</para>
+    ///
+    /// <para>จำกัดเฉพาะ <c>Invoice</c> — <b>ห้าม</b>ขยายไป CreditNote/DebitNote:
+    /// §86/9-10 ให้ถือว่าใบเพิ่มหนี้/ใบลดหนี้เป็นใบกำกับภาษีอยู่แล้ว บางกิจการ
+    /// พิมพ์หัว "ใบลดหนี้ (ใบกำกับภาษี)" ซึ่งถูกกฎหมาย บล็อกไม่ได้</para></summary>
+    public static bool IsTaxTitleOnPlainInvoice(DocumentType type, string? resolvedTitle)
+        => type == DocumentType.Invoice
+           && (resolvedTitle?.Contains(TaxInvoiceKeyword, StringComparison.Ordinal) ?? false);
+
+    /// <summary>ข้อความบล็อก — ต้องบอกทางไปต่อทั้งสองทาง (ห้ามตันเฉย ๆ)</summary>
+    public const string PlainInvoiceTaxTitleBlockedMessage =
+        "อนุมัติไม่ได้ — หัวเอกสารของ \"ใบแจ้งหนี้\" ถูกตั้งให้มีคำว่า \"ใบกำกับภาษี\" "
+        + "แต่ใบแจ้งหนี้ไม่ได้อยู่ในเล่มเลขใบกำกับ (TIV) จึงจะได้กระดาษที่ประกาศตัวเป็น"
+        + "ใบกำกับโดยเลขไม่เรียงในเล่ม ไม่ผ่านด่าน §86/4 และออก e-Tax ไม่ได้. ทางแก้: "
+        + "(1) ถ้าต้องการใบกำกับจริง ให้สร้างเอกสารประเภท \"ใบแจ้งหนี้/ใบกำกับภาษี\" แทน "
+        + "(ได้เลขชุด TIV ถูกต้อง) หรือ (2) แก้หัวเอกสารที่ ตั้งค่า → หัวเรื่องเอกสาร / "
+        + "เทมเพลต ให้ไม่มีคำว่า \"ใบกำกับภาษี\" แล้วอนุมัติใหม่";
+
     public static DocumentType? SeriesTypeOverride(Document doc, bool carriesTaxInvoiceRole)
     {
         if (doc.DocumentType is not (DocumentType.TaxInvoice

@@ -761,6 +761,26 @@ public partial class DocumentService : IDocumentService
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
     {
+        // ── ธง "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" ต้องมาคู่กับชนิด TaxInvoice ──
+        // เดิมชนิดไม่ตรง = **ดรอปธงเงียบ ๆ** ⇒ integration/recurring ที่ส่ง
+        // Invoice + combined:true ได้ใบแจ้งหนี้เปล่ากลับไปโดยไม่มีอะไรบอก
+        // (silent no-op). ตอนนี้:
+        //   • Invoice + combined → ยกชนิดเป็น TaxInvoice ให้ — ตรงกับที่หน้าเว็บ
+        //     ทำอยู่แล้วฝั่ง client (checkbox force type ตอน save) เจตนาผู้เรียก
+        //     ชัดเจนว่าต้องการใบรวม
+        //   • ชนิดอื่น + combined → ปฏิเสธพร้อมบอกทางแก้ (ห้ามเดาเจตนา)
+        if (request.CombinedInvoiceTaxInvoice
+            && request.DocumentType != DocumentType.TaxInvoice)
+        {
+            if (request.DocumentType == DocumentType.Invoice)
+                request = request with { DocumentType = DocumentType.TaxInvoice };
+            else
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "combinedInvoiceTaxInvoice (ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว) ใช้ได้เฉพาะ "
+                    + "documentType = TaxInvoice หรือ Invoice เท่านั้น — "
+                    + $"ส่งมาเป็น {request.DocumentType}");
+        }
+
         // ⭐ ยุบ VAT-split phantom lines ก่อนทุกอย่าง (choke point ครอบคลุมทุก path)
         if (request.Lines is { Count: > 1 })
         {
@@ -2090,14 +2110,26 @@ public partial class DocumentService : IDocumentService
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
-        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — รับเฉพาะเมื่อ doc เป็น TaxInvoice.
         if (request.DepositAppliedAmount.HasValue) doc.DepositAppliedAmount = request.DepositAppliedAmount.Value;
         if (request.DepositAppliedRef != null) doc.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim();
         if (request.DepositAppliedDrivesJournal.HasValue) doc.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal.Value;
         if (request.BuyerDeclinedTaxInvoice.HasValue) doc.BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice.Value;
+        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — ใช้ได้เฉพาะ doc ชนิด TaxInvoice.
+        // เดิมชนิดไม่ตรง = ดรอปธงเงียบ ๆ (silent no-op): ผู้ใช้ติ๊กบนใบแจ้งหนี้
+        // Draft ตอนแก้ไข → บันทึกสำเร็จแต่ไม่มีอะไรเปลี่ยน. update เปลี่ยนชนิด
+        // เอกสารไม่ได้ (เลข/JE ผูกกับชนิด) จึงต้องบอกทางไปต่อแทน
         if (request.CombinedInvoiceTaxInvoice.HasValue)
+        {
+            if (request.CombinedInvoiceTaxInvoice.Value
+                && doc.DocumentType != DocumentType.TaxInvoice)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ติ๊ก \"ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว\" ตอนแก้ไขไม่ได้ — ใบนี้ถูกสร้างเป็น"
+                    + $"ชนิด {doc.DocumentType} แล้ว เปลี่ยนชนิดตอนแก้ไขไม่ได้. ทางแก้: "
+                    + "ใช้ปุ่ม \"แปลงเอกสาร\" เป็นใบกำกับภาษี หรือสร้างใหม่โดยเลือกประเภท "
+                    + "\"ใบแจ้งหนี้/ใบกำกับภาษี\" ตั้งแต่ต้น");
             doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
                 && doc.DocumentType == DocumentType.TaxInvoice;
+        }
         // IssuedAsCashReceipt — เดิม update ไม่รับ ⇒ ติ๊ก "ออกใบกำกับภาษี/ใบเสร็จ
         // รับเงิน ใบเดียว (ขายเงินสด)" ตอนแก้ไขแล้วไม่มีผลเงียบ ๆ (silent no-op)
         // โดยเฉพาะเคสแปลง INV→TaxInvoice แล้วมาติ๊กภายหลัง (convert ไม่ตั้ง flag นี้)
@@ -4829,12 +4861,11 @@ public partial class DocumentService : IDocumentService
                 // ต้องหยุดนิ่งเท่ากัน
                 if (doc.IsTaxInvoiceByLaw == null)
                 {
+                    string? resolvedTitle = null;
                     try
                     {
-                        var resolvedTitle = await PdfGenerationService.ResolveDocumentTitleAsync(
+                        resolvedTitle = await PdfGenerationService.ResolveDocumentTitleAsync(
                             _db, companyId, doc);
-                        doc.IsTaxInvoiceByLaw = Accounting.Helpers.TaxInvoiceSeriesPolicy
-                            .CarriesTaxInvoiceRole(doc, resolvedTitle);
                     }
                     catch (Exception ex)
                     {
@@ -4844,6 +4875,21 @@ public partial class DocumentService : IDocumentService
                             "ตรึงบทบาททางกฎหมายไม่สำเร็จ Doc={Doc} — ใช้ชนิดเอกสารเลือกเลขตามเดิม",
                             documentId);
                     }
+
+                    // ด่าน: "ใบแจ้งหนี้" ที่หัวถูกตั้งให้มีคำว่า "ใบกำกับภาษี" —
+                    // ถ้าปล่อยผ่าน จะได้กระดาษที่ประกาศตัวเป็นใบกำกับ แต่ถือเลข
+                    // INV- นอกเล่ม TIV / ไม่ผ่าน §86/4 / ออก e-Tax ไม่ได้
+                    // (throw **นอก** try ข้างบน — ห้ามให้ catch ที่กันเรื่อง
+                    // resolver ล้ม กลืนด่านนี้ไปด้วย)
+                    if (Accounting.Helpers.TaxInvoiceSeriesPolicy
+                            .IsTaxTitleOnPlainInvoice(doc.DocumentType, resolvedTitle))
+                        throw new Accounting.Helpers.BusinessRuleException(
+                            Accounting.Helpers.TaxInvoiceSeriesPolicy.PlainInvoiceTaxTitleBlockedMessage,
+                            "RD-86/4-INV-TITLE");
+
+                    if (resolvedTitle != null)
+                        doc.IsTaxInvoiceByLaw = Accounting.Helpers.TaxInvoiceSeriesPolicy
+                            .CarriesTaxInvoiceRole(doc, resolvedTitle);
                 }
 
                 if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
@@ -12565,15 +12611,10 @@ public partial class DocumentService : IDocumentService
                 var useUndueOutputVat = false;
                 if (doc.DocumentType == DocumentType.Invoice && !doc.IsDeposit)
                 {
-                    var stockCodes = doc.Lines
-                        .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
-                        .Select(l => l.ProductCode!)
-                        .Distinct()
-                        .ToList();
-                    var hasGoods = stockCodes.Count > 0 && await _db.Products.AsNoTracking()
-                        .AnyAsync(p => p.CompanyId == companyId && stockCodes.Contains(p.Code)
-                            && !p.IsDeleted && p.TrackStock);
-                    useUndueOutputVat = !hasGoods;
+                    // ตัวตัดสิน "มีสินค้าไหม" อยู่ที่ InvoiceHasTrackedGoodsAsync
+                    // ตัวเดียว — warning §86 ตอนอนุมัติใช้เกณฑ์เดียวกันเป๊ะ
+                    // (สองที่ใช้คนละเกณฑ์ = กฎสองข้อที่เถียงกันเองต่อหน้าผู้ใช้)
+                    useUndueOutputVat = !await InvoiceHasTrackedGoodsAsync(companyId, doc);
                 }
 
                 ChartOfAccount? vatAccount = null;
@@ -14963,6 +15004,22 @@ public partial class DocumentService : IDocumentService
     ///   • foreign currency without an explicit FX rate update
     ///   • inventory-tracked product would go negative on this approval
     /// </summary>
+    /// <summary>ใบแจ้งหนี้ใบนี้มีบรรทัด "สินค้า" (Product.TrackStock) ไหม —
+    /// ตัวตัดสินตัวเดียวที่ทั้ง AutoPost (เลือก 21911 vs 21913 พัก) และ warning
+    /// §86 ตอนอนุมัติใช้ร่วมกัน: มีสินค้า = tax point เกิดตอนส่งมอบ (§78)
+    /// ⇒ VAT เข้า ภ.พ.30 ทันทีและผู้ขายมีหน้าที่ออกใบกำกับ ณ ตอนนั้น</summary>
+    private async Task<bool> InvoiceHasTrackedGoodsAsync(Guid companyId, Document doc)
+    {
+        var stockCodes = doc.Lines
+            .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+            .Select(l => l.ProductCode!)
+            .Distinct()
+            .ToList();
+        return stockCodes.Count > 0 && await _db.Products.AsNoTracking()
+            .AnyAsync(p => p.CompanyId == companyId && stockCodes.Contains(p.Code)
+                && !p.IsDeleted && p.TrackStock);
+    }
+
     private async Task<List<string>> CollectApprovalWarningsAsync(Guid companyId, Document doc)
     {
         var warnings = new List<string>();
@@ -15014,6 +15071,28 @@ public partial class DocumentService : IDocumentService
                     + "เติมข้อมูลผู้ซื้อให้ครบ → หัวจะเป็น \"ใบกำกับภาษี/ใบเสร็จรับเงิน\" ใบเดียวจบ "
                     + "(ไม่ต้องออกใบกำกับแยกอีกใบ); หรือถ้าลูกค้าไม่ต้องการใบกำกับจริง ๆ "
                     + "ให้ติ๊ก \"ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี\" เพื่อบันทึกเจตนาไว้เป็นหลักฐาน");
+        }
+
+        // ── §86 (เคส "ใบแจ้งหนี้" ขายสินค้า) — ใบกำกับที่ไม่มีคำว่าใบกำกับ ──
+        // Invoice ที่มีบรรทัดสินค้า (Product.TrackStock): tax point เกิดตอนส่งมอบ
+        // (§78) ⇒ AutoPost ลง Cr 21911 และ VAT **เข้า ภ.พ.30 งวดนี้ทันที** —
+        // แต่กระดาษพิมพ์ "ใบแจ้งหนี้" ไม่ใช่ใบกำกับภาษี, ไม่ผ่านด่าน §86/4,
+        // ออก e-Tax ไม่ได้ ⇒ เรานำส่ง VAT ครบแต่ลูกค้าเคลมภาษีซื้อไม่ได้ และเรามี
+        // หน้าที่ออกใบกำกับ ณ ส่งมอบ (§86 — ไม่ออก = เบี้ยปรับ 2 เท่า §89(5)).
+        // เดิม warning ข้างบนจำกัด Receipt/RV/TaxInvoice ⇒ เคสนี้หลุดทุกชั้น
+        // ทั้งที่เป็นเคสที่ warning ตัวนั้นเขียนไว้เป๊ะ
+        if (doc.DocumentType == DocumentType.Invoice && doc.VatAmount > 0.005m
+            && !doc.BuyerDeclinedTaxInvoice
+            && await InvoiceHasTrackedGoodsAsync(companyId, doc))
+        {
+            warnings.Add(
+                $"⚠️ §86: ใบแจ้งหนี้ใบนี้มี \"สินค้า\" — tax point เกิดตอนส่งมอบ (§78) "
+                + $"VAT {doc.VatAmount:N2} บาท จะเข้ารายงานภาษีขาย/ภ.พ.30 งวดนี้ทันที "
+                + "แต่กระดาษพิมพ์ \"ใบแจ้งหนี้\" ไม่ใช่ใบกำกับภาษี → ลูกค้าเคลมภาษีซื้อไม่ได้ "
+                + "(§82/5(1)) และผู้ขายมีหน้าที่ออกใบกำกับทันทีที่ส่งมอบ (§86). "
+                + "ทางแก้: สร้างใหม่โดยเลือกประเภทเอกสาร \"ใบแจ้งหนี้/ใบกำกับภาษี — "
+                + "ขายสินค้า/ต้องออกใบกำกับตอนนี้\" (ใบเดียวทำหน้าที่ครบ ได้เลขชุดใบกำกับ TIV) "
+                + "— ใบแจ้งหนี้เปล่าเหมาะกับงานบริการที่ใบกำกับจะออกตอนรับเงิน (§78/1) เท่านั้น");
         }
 
         // §86/10 — ใบลดหนี้/ใบเพิ่มหนี้ "ฝั่งซื้อ" ที่มี VAT: รายงานภาษีซื้อต้อง

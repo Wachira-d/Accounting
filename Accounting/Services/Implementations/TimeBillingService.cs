@@ -308,7 +308,10 @@ public class TimeBillingService : ITimeBillingService
         var document = new Document
         {
             CompanyId = companyId,
-            DocumentNumber = $"TINV-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}",
+            // DRAFT- placeholder — เดิม hardcode "TINV-{วันที่}-{GUID}" (prefix ที่
+            // ไม่มีในระบบเลขไหนเลย) และเพราะไม่ใช่ DRAFT- ตอนอนุมัติจึงไม่ได้เลข
+            // จริงจาก DocumentNumberGenerator = เลขสุ่มติดใบถาวร ไม่เรียงลำดับ
+            DocumentNumber = $"DRAFT-{Guid.NewGuid()}",
             DocumentType = DocumentType.Invoice,
             Status = DocumentStatus.Draft,
             DocumentDate = DateTime.UtcNow.Date,

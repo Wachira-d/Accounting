@@ -2670,7 +2670,23 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-01 (รอบ 121 — **ยอดประกันสังคมฝั่ง_
+_Last verified against codebase: 2026-09-01 (รอบ 122 — **"ใบแจ้งหนี้ที่เป็น_
+_ใบกำกับภาษีในตัว ใช้เลข INV หรือ TIV?"**: ยืนยันกติกาเดิมถูกแล้ว — ใบรวมคือ_
+_`TaxInvoice + CombinedInvoiceTaxInvoice` (เลข TIV · หัว "ใบแจ้งหนี้/ใบกำกับ_
+_ภาษี" · e-Tax T02) ส่วน `DocumentType.Invoice` = INV เสมอ (เล่ม TIV มีเฉพาะ_
+_ใบที่เป็นใบกำกับ ณ วินาทีที่ออกเลข — Invoice บริการยังไม่ถึง tax point §78/1_
+_ให้ TIV จะเกิดเล่มขาดช่วงเทียม). ปิดช่อง 4 เรื่อง: (1) warning §86 ครอบ_
+_Invoice ขายสินค้า+VAT ที่เข้า ภ.พ.30 ทันทีแต่กระดาษไม่ใช่ใบกำกับ (ตัวตัดสิน_
+_"มีสินค้าไหม" ยุบเป็น `InvoiceHasTrackedGoodsAsync` ใช้ร่วมกับ AutoPost_
+_21911/21913) (2) บล็อกอนุมัติ Invoice ที่หัวถูก override เป็นใบกำกับ_
+_(`TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice` — จงใจไม่ครอบ CN/DN ซึ่ง_
+_§86/9-10 ถือเป็นใบกำกับอยู่แล้ว) (3) API: Invoice+combined → ยกชนิดเป็น_
+_TaxInvoice ให้ (ตรง semantics ของ UI) ชนิดอื่น → 400 · update → error แทน_
+_ดรอปธงเงียบ (4) เลิก hardcode เลข "INV-{GUID}"/"TINV-{GUID}" ใน_
+_CrossTenantWorkflowService/TimeBillingService → DRAFT- ให้ generator ออกเลข_
+_จริงตอนอนุมัติ + ยุบแผนที่ TypeCode↔ชื่อ e-Tax 4 สำเนาเป็น_
+_`Helpers/EtaxDocumentTypeMap` ตัวเดียว);_
+_ก่อนหน้า 2026-09-01 (รอบ 121 — **ยอดประกันสังคมฝั่ง_
 _นายจ้างจากเส้นนำเข้า (TakeTime) ไม่เคยถูกตรวจ**: import ตรวจแค่ฝั่งลูกจ้าง_
 _(net = gross − หัก) ส่วนนายจ้างคัดมาดิบ ๆ ⇒ 4,403 แทน 4,381 ติดมาตั้งแต่_
 _วินาทีแรก · ยุบตรรกะซ่อมเป็น `SsoWageBase.Normalize` ตัวเดียว เรียกจาก 3 จุด_

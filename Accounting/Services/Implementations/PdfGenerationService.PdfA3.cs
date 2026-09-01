@@ -93,25 +93,10 @@ public partial class PdfGenerationService
         Accounting.Models.Entities.Document document,
         Accounting.Models.Entities.Company company)
     {
-        var docTypeRoot = document.DocumentType switch
-        {
-            Accounting.Models.Enums.DocumentType.TaxInvoice => "TaxInvoice_CrossIndustryInvoice",
-            Accounting.Models.Enums.DocumentType.Receipt => "TaxInvoice_CrossIndustryInvoice",
-            Accounting.Models.Enums.DocumentType.DebitNote => "DebitCreditNote_CrossIndustryInvoice",
-            Accounting.Models.Enums.DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
-            _ => "TaxInvoice_CrossIndustryInvoice"
-        };
-        // ต้อง match TypeCode-name pairing ของ XML (T03/T02/388) — EtaxInvoiceService
-        var docTypeNameTh = document.DocumentType switch
-        {
-            Accounting.Models.Enums.DocumentType.TaxInvoice when document.IssuedAsCashReceipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",
-            Accounting.Models.Enums.DocumentType.TaxInvoice when document.CombinedInvoiceTaxInvoice => "ใบแจ้งหนี้/ใบกำกับภาษี",
-            Accounting.Models.Enums.DocumentType.TaxInvoice => "ใบกำกับภาษี",
-            Accounting.Models.Enums.DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",
-            Accounting.Models.Enums.DocumentType.DebitNote => "ใบเพิ่มหนี้",
-            Accounting.Models.Enums.DocumentType.CreditNote => "ใบลดหนี้",
-            _ => "ใบกำกับภาษี"
-        };
+        // schema root + ชื่อไทยคู่ TypeCode — แผนที่กลางตัวเดียว (ห้ามเอา
+        // หัวกระดาษที่ผู้ใช้ตั้งเองมาใส่: Schematron บังคับคู่ canonical)
+        var docTypeRoot = Accounting.Helpers.EtaxDocumentTypeMap.SchemaRoot(document.DocumentType);
+        var docTypeNameTh = Accounting.Helpers.EtaxDocumentTypeMap.NameTh(document);
 
         string? createdByName = null, createdBySignature = null;
         string? approvedByName = null, approvedBySignature = null;
