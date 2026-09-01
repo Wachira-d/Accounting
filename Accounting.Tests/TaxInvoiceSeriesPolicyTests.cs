@@ -111,6 +111,16 @@ public class TaxInvoiceSeriesPolicyTests
     }
 
     [Fact]
+    public void ยังไม่เคยตั้งค่าต้องแปลว่าเปิด_ไม่ใช่ปิด()
+    {
+        // null = ยังไม่เคยตั้ง → ค่าแนะนำคือเปิด (ผู้ใช้ไม่ต้องไปหาสวิตช์เอง)
+        Assert.True(TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled(null));
+        // ผู้ใช้ปลดติ๊กเอง → เก็บ false และต้องถูกเคารพตลอด ห้ามถูกทับกลับเป็นเปิด
+        Assert.False(TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled(false));
+        Assert.True(TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled(true));
+    }
+
+    [Fact]
     public void หัวที่ยังไม่ได้คำนวณ_ห้ามตีความว่าเป็นใบกำกับ()
     {
         // resolver ล้ม → null: ต้องตกกลับไปใช้ชนิดเอกสารตามเดิม ไม่ใช่เดาว่าใช่

@@ -4858,10 +4858,13 @@ public partial class DocumentService : IDocumentService
                     var seriesType = doc.DocumentType;
                     if (doc.IsTaxInvoiceByLaw.HasValue)
                     {
-                        var unify = await _db.CompanySettings.AsNoTracking()
-                            .Where(s => s.CompanyId == companyId)
-                            .Select(s => (bool?)s.UnifyTaxInvoiceNumberSeries)
-                            .FirstOrDefaultAsync() ?? false;
+                        // null (ยังไม่เคยตั้ง) = เปิด — ดู TaxInvoiceSeriesPolicy
+                        // .IsUnifiedSeriesEnabled ห้ามเขียน `?? false` เองที่นี่
+                        var unify = Accounting.Helpers.TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled(
+                            await _db.CompanySettings.AsNoTracking()
+                                .Where(s => s.CompanyId == companyId)
+                                .Select(s => s.UnifyTaxInvoiceNumberSeries)
+                                .FirstOrDefaultAsync());
                         if (unify)
                             seriesType = Accounting.Helpers.TaxInvoiceSeriesPolicy
                                 .SeriesTypeOverride(doc, doc.IsTaxInvoiceByLaw.Value) ?? doc.DocumentType;
@@ -9969,10 +9972,11 @@ public partial class DocumentService : IDocumentService
         var seriesTypeForReceipt = DocumentType.Receipt;
         if (carriesTaxInvoiceRole)
         {
-            var unifySeries = await _db.CompanySettings.AsNoTracking()
-                .Where(s => s.CompanyId == companyId)
-                .Select(s => (bool?)s.UnifyTaxInvoiceNumberSeries)
-                .FirstOrDefaultAsync() ?? false;
+            var unifySeries = Accounting.Helpers.TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled(
+                await _db.CompanySettings.AsNoTracking()
+                    .Where(s => s.CompanyId == companyId)
+                    .Select(s => s.UnifyTaxInvoiceNumberSeries)
+                    .FirstOrDefaultAsync());
             if (unifySeries) seriesTypeForReceipt = DocumentType.TaxInvoice;
         }
         var number = issueApproved

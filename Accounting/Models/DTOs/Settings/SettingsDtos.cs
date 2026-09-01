@@ -193,7 +193,8 @@ public record CompanySettingsResponse(
     // (เซิร์ฟเวอร์เป็นเจ้าของข้อความ — ห้ามหน้าจอแต่งคำเอง จะกลายเป็นสำเนาที่ drift)
     ReceiptIssueMode ReceiptIssueMode = ReceiptIssueMode.Combined,
     string? ReceiptIssueModeDescription = null,
-    bool UnifyTaxInvoiceNumberSeries = false,
+    // null = ยังไม่เคยตั้ง → หน้าเว็บต้องแสดงว่า "เปิด" (ค่าแนะนำ) ไม่ใช่ปิด
+    bool? UnifyTaxInvoiceNumberSeries = null,
 
     // Per-company annual leave quota override (JSON by LeaveType).
     string? LeaveQuotasJson = null,

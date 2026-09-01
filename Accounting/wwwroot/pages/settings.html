@@ -415,7 +415,8 @@
         <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
           <input type="checkbox" id="sUnifyTaxInvoiceSeries" style="margin-top:3px">
           <span style="font-size:13px;line-height:1.7">
-            <b>ใบที่หัวมีคำว่า "ใบกำกับภาษี" ให้ใช้เลขชุด TIV ทั้งหมด</b><br>
+            <b>ใบที่หัวมีคำว่า "ใบกำกับภาษี" ให้ใช้เลขชุด TIV ทั้งหมด</b>
+            <span style="font-size:11px;color:#16a34a">(แนะนำ — เปิดให้อัตโนมัติ)</span><br>
             <span class="text-xs text-gray-500">
               คนละเรื่องกับตัวเลือกด้านบน (อันนั้นคุม "ออกกี่ใบ" อันนี้คุม "ใบไหนใช้เลขชุดไหน").
               เปิดแล้วเล่มใบกำกับเหลือชุดเดียว — รายงานภาษีขาย §87 เรียงไม่ขาดช่วงในชุดเดียว
@@ -1986,8 +1987,10 @@
             this._renderReceiptModeHint(s.receiptIssueModeDescription);
             _rimSel.onchange = () => this._renderReceiptModeHint(null);
           }
+          // null/undefined = ยังไม่เคยตั้ง → ค่าแนะนำคือ **เปิด** (ไม่ใช่ปิด)
+          // ต้องตรงกับ TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled ฝั่งเซิร์ฟเวอร์
           const _uniCb = document.getElementById('sUnifyTaxInvoiceSeries');
-          if (_uniCb) _uniCb.checked = !!s.unifyTaxInvoiceNumberSeries;
+          if (_uniCb) _uniCb.checked = (s.unifyTaxInvoiceNumberSeries ?? true) !== false;
           document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
           document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
           document.getElementById('sUseCustomSignatory').checked = !!s.useCustomAuthorizedSignatory;

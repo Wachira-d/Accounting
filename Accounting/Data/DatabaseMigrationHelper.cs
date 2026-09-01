@@ -4543,8 +4543,14 @@ public static class DatabaseMigrationHelper
             // tenant เดิมไม่กระทบ
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "ReceiptIssueMode" integer NOT NULL DEFAULT 0;""",
             // "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV เสมอ" (แกนคนละแกนกับ ReceiptIssueMode)
-            // DEFAULT false ⇒ เลขของ tenant เดิมไม่ขยับ
-            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "UnifyTaxInvoiceNumberSeries" boolean NOT NULL DEFAULT false;""",
+            // **nullable โดยตั้งใจ**: NULL = ยังไม่เคยตั้ง → ระบบใช้ค่าแนะนำ = เปิด
+            // (TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled) ⇒ ไม่ต้องให้ผู้ใช้ไปหา
+            // สวิตช์เอง. ผู้ที่ไม่ต้องการเก็บ false ไว้ซึ่งจะไม่ถูกทับอีก —
+            // จงใจ**ไม่มี** UPDATE ไล่ตั้ง true เพราะ migration รันทุกครั้งที่สตาร์ท
+            // ⇒ จะทับเจตนาผู้ใช้ทุกรอบ (defect class "ห้ามทับค่าที่ผู้ใช้ตั้งเอง")
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "UnifyTaxInvoiceNumberSeries" boolean NULL;""",
+            """ALTER TABLE "CompanySettings" ALTER COLUMN "UnifyTaxInvoiceNumberSeries" DROP NOT NULL;""",
+            """ALTER TABLE "CompanySettings" ALTER COLUMN "UnifyTaxInvoiceNumberSeries" DROP DEFAULT;""",
             // บทบาททางกฎหมายของเอกสาร ตรึงตอนอนุมัติพร้อมเลขที่ — nullable เพราะ
             // ใบที่อนุมัติก่อนมีฟีเจอร์นี้ "ยังไม่เคยตรึง" (≠ ไม่ใช่ใบกำกับ)
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsTaxInvoiceByLaw" boolean NULL;""",

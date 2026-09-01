@@ -559,8 +559,11 @@ public class IntegrationService : IIntegrationService
                 ? await GetOrCreateWalkInContactAsync(companyId)
                 : await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, request.CustomerTaxId);
 
-            // Get next document number
-            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.TaxInvoice, request.DocumentDate);
+            // ⚠️ เลขที่เอกสารถูกย้ายไปออก **หลังคำนวณยอด** — กติกา "หัวมีคำว่า
+            // ใบกำกับภาษี → เลขชุด TIV เสมอ" ต้องรู้ VAT ก่อนถึงจะเลือกชุดได้
+            // (ใบที่ VAT=0 หัวพิมพ์ "ใบเสร็จรับเงิน" จึงต้องไปชุด REC)
+            // ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง — เลขที่ขอไว้
+            // แล้วไม่ได้ใช้ (เส้นทาง fail ด้านล่าง) ไม่ทำให้เกิดช่องว่างอยู่แล้ว
 
             // Calculate totals
             var vatRate = request.VatRate ?? 7m;
@@ -730,10 +733,36 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
+            // ── เลขที่เอกสาร: เลือกชุดจากบทบาททางกฎหมาย ──
+            // ใช้ Helpers/TaxInvoiceSeriesPolicy ตัวเดียวกับเส้นในระบบ (พื้นบังคับ
+            // "TaxInvoice ที่มี VAT = ใบกำกับเสมอ" ครอบเคสของ endpoint นี้ครบ:
+            // ขายสด/ผู้ซื้อไม่ครบ §86/4 หัวยังมีคำว่าใบกำกับทั้งคู่) — ห้ามเขียน
+            // เงื่อนไข VAT>0 เองซ้ำที่นี่ จะกลายเป็นสำเนาที่ drift
+            var roleProbe = new Document
+            {
+                DocumentType = DocumentType.TaxInvoice,
+                VatAmount = totalVat,
+            };
+            var integrationCarriesTaxInvoice = Accounting.Helpers.TaxInvoiceSeriesPolicy
+                .CarriesTaxInvoiceRole(roleProbe, resolvedTitle: null);
+            var integrationSeriesType = DocumentType.TaxInvoice;
+            if (Accounting.Helpers.TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled(
+                    await _db.CompanySettings.AsNoTracking()
+                        .Where(s => s.CompanyId == companyId)
+                        .Select(s => s.UnifyTaxInvoiceNumberSeries)
+                        .FirstOrDefaultAsync()))
+            {
+                integrationSeriesType = Accounting.Helpers.TaxInvoiceSeriesPolicy
+                    .SeriesTypeOverride(roleProbe, integrationCarriesTaxInvoice) ?? DocumentType.TaxInvoice;
+            }
+            var docNumber = await _settingsService.GetNextNumberAsync(
+                companyId, integrationSeriesType, request.DocumentDate);
+
             var document = new Document
             {
                 CompanyId = companyId,
                 DocumentNumber = docNumber,
+                IsTaxInvoiceByLaw = integrationCarriesTaxInvoice,
                 DocumentType = DocumentType.TaxInvoice,
                 Status = DocumentStatus.Approved,
                 DocumentDate = NormalizeDate(request.DocumentDate),
