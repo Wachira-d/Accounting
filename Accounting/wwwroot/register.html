@@ -238,13 +238,12 @@
     async function handleSsoResponse(provider, idToken) {
       const errEl = document.getElementById('errorMsg');
       errEl.classList.add('hidden');
-      const companyName = document.getElementById('companyName')?.value || '';
-      // แพ็กเกจที่เลือกบนการ์ด — ต้องส่งไปด้วย ไม่งั้นสมัครผ่าน SSO ได้ FreeTrial เสมอ
-      const ssoPlan = document.querySelector('input[name="plan"]:checked')?.value || null;
+      // ใช้ payload ตัวเดียวกับเส้น redirect — ห้ามประกอบสองที่ (drift แน่นอน)
+      const sp = _ssoSignupPayload();
       try {
         // มาถึงตรงนี้ได้ต้องผ่าน _ssoPreflight() มาแล้ว = ติ๊กยอมรับจริง
-        const res = await API.ssoLogin(provider, idToken, companyName || null, ssoPlan,
-          true, policyVersion);
+        const res = await API.ssoLogin(provider, idToken, sp.companyName || null, sp.plan,
+          true, sp.policyVersion, sp.invitationToken);
         if (res.success && res.data) {
           const token = res.data.accessToken || res.data.token;
           localStorage.setItem('token', token);
@@ -263,13 +262,22 @@
     /** ข้อมูลที่กรอกไว้บนหน้านี้ ต้องพกข้ามไปกับ redirect ทุกครั้ง ไม่งั้นตอน
      *  วนกลับมาที่ /login.html จะกลายเป็นสมัครโดยไม่มีหลักฐานยินยอม (PDPA ม.19)
      *  — ตัวเดียวให้ทั้ง LINE และ Google ใช้ (ห้ามประกอบ payload สองที่) */
+    function _inviteToken() {
+      return new URLSearchParams(location.search).get('invite') || null;
+    }
+
     function _ssoSignupPayload() {
+      const invite = _inviteToken();
       return {
-        companyName: document.getElementById('companyName')?.value || '',
+        // ถูกเชิญเข้าบริษัทอยู่แล้ว = ไม่ต้องสร้างบริษัท stub ให้ (เหมือนเส้นฟอร์ม)
+        companyName: invite ? null : (document.getElementById('companyName')?.value || ''),
         plan: document.querySelector('input[name="plan"]:checked')?.value || null,
         // การยอมรับเกิดที่**หน้านี้** (ผ่าน _ssoPreflight) ต้องพกข้ามไปด้วย
         acceptedTerms: true,
         policyVersion: policyVersion,
+        // คำเชิญต้องเดินทางข้าม redirect ไปด้วย ไม่งั้นผู้ถูกเชิญที่สมัครด้วย SSO
+        // จะไม่ได้เข้าบริษัทที่เชิญเลย
+        invitationToken: invite,
       };
     }
 
@@ -392,7 +400,7 @@
         // account auto-joins the inviting company in the same request.
         // The accept-invitation page hands this off when the invitee
         // clicks "สมัครสมาชิกใหม่และตอบรับ".
-        const inviteToken = new URLSearchParams(location.search).get('invite') || null;
+        const inviteToken = _inviteToken();
         const selectedPlan = document.querySelector('input[name="plan"]:checked')?.value || 'Pro';
         const res = await API.register({
           firstName: document.getElementById('firstName').value,

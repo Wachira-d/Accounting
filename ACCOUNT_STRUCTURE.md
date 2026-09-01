@@ -482,6 +482,33 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 | **Microsoft Entra ID (Office 365)** | 📋 | OIDC มาตรฐาน; ตลาดเดียวกับลูกค้า Dynamics พอดี — บริษัทที่ใช้ Dynamics มี M365 อยู่แล้วเกือบ 100% |
 
 - `AuthProvider` เพิ่มค่า `"Line"` (✅ ใช้งานแล้ว), `"Microsoft"` (📋) — โครงเดิมรองรับอยู่แล้ว
+- 🔐 **การผูกบัญชีภายนอก (✅ รอบ 119)** — ตัวตัดสินคือตาราง
+  **`UserExternalLogins`** (`Provider` + `ProviderUserId` unique) ไม่ใช่คอลัมน์เดี่ยว
+  `Users.AuthProvider/AuthProviderId` ซึ่งเหลือความหมายเป็น "ตัวล่าสุดที่ใช้เข้าระบบ"
+  - **ผูกเข้าบัญชีเดิมได้ก็ต่อเมื่อ provider ยืนยันอีเมลแล้ว** (`Helpers/SsoIdentityPolicy`):
+    Google ต้องมี `email_verified=true` · LINE คืน email = ยืนยันแล้ว ·
+    **Facebook ยืนยันไม่ได้เลย** ⇒ ต้องผ่านลิงก์ยืนยันทางอีเมลเสมอ
+    _(เดิมผูกด้วย "อีเมลตรงกัน" อย่างเดียว = ใครสร้างบัญชี provider ให้อีเมลตรงกับ
+    ผู้ใช้ของเรา ก็เข้าถึงข้อมูลทั้ง tenant ได้ — account pre-hijacking)_
+  - ยืนยันไม่ได้ → ไม่ตัน: แถวสถานะ `ConfirmedAt=null` + ส่งลิงก์อายุ 1 ชม. →
+    `GET /api/auth/sso/confirm-link?token=` → redirect `/login.html?ssoLinked=…`
+  - **ห้ามผูกเงียบ** — ทุกครั้งที่ผูก/ถอด เขียน `AuditLog` (EntityType
+    `UserExternalLogin`) + ส่งอีเมลแจ้งเจ้าของ; ผู้ใช้ดู/ถอดเองได้ที่
+    **ตั้งค่า → 🔐 ความปลอดภัยบัญชี** (`GET/DELETE /api/auth/external-logins`)
+    — ถอดอันสุดท้ายของบัญชีที่ไม่มีรหัสผ่านถูกบล็อกพร้อมบอกทางแก้
+- 🚦 **ด่านสถานะบัญชี (✅ รอบ 119)** `Helpers/UserLoginPolicy.Evaluate` ใช้ร่วม
+  **ทั้งสามทางเข้า** (`LoginAsync` · `SsoLoginAsync` · `RefreshTokenAsync`):
+  Inactive/Suspended = เข้าไม่ได้ + เหตุผลเป็นข้อความ · PendingVerification เข้าได้
+  เฉพาะผ่าน SSO ที่ยืนยันอีเมลแล้ว (แล้วเลื่อนเป็น Active)
+  _(เดิมไม่มีทางเข้าไหนอ่าน `User.Status` เลย ทั้งที่ `PayrollService` ตั้ง
+  Inactive ให้อัตโนมัติเมื่อพนักงานลาออก พร้อมคอมเมนต์ว่า "login is revoked" ⇒
+  พนักงานที่ลาออกแล้วยังล็อกอินได้ — control ที่ไม่มีใครเรียก = ไม่มี control)_
+- บัญชีที่สร้างผ่าน SSO มี `PasswordHash=""` → `LoginAsync` ตรวจก่อนเรียก BCrypt
+  แล้วตอบ 401 พร้อมชื่อ provider ที่ผูกไว้ (เดิม BCrypt โยน `SaltParseException`
+  ⇒ ผู้ใช้เห็น **500** และ ErrorLogs รกด้วยรายการที่ไม่ใช่บั๊ก)
+- คำเชิญเข้าบริษัททำงานบนเส้น SSO ด้วยแล้ว — `ConsumeInvitationAsync` ตัวเดียว
+  ที่ทั้ง `RegisterAsync` และ `SsoLoginAsync` เรียก (เดิมเส้น SSO ไม่มีตรรกะนี้เลย
+  ⇒ ผู้ถูกเชิญที่เลือกสมัครด้วย Google/LINE ไม่ได้เข้าบริษัทที่เชิญ)
 - **ตั้งค่าคีย์จากหน้าเว็บ** `/admin/sso-config.html` → `SiteSettings.{Google,Facebook,Line}*`
   (DB ชนะ `appsettings.json`); `GET /api/auth/sso-config` คืนเฉพาะ provider ที่
   **เปิดสวิตช์ + มีคีย์ครบ** → หน้า `login.html`/`register.html` ซ่อนปุ่มที่เหลือ
@@ -558,7 +585,14 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-01 (rev 18 — **ปุ่ม Google login กดแล้ว_
+_Last verified against codebase: 2026-09-01 (rev 19 — **SSO ผูกบัญชีด้วยอีเมล_
+_อย่างเดียวมาตลอด + ไม่มีทางเข้าไหนอ่าน `User.Status` เลย**: เพิ่ม_
+_`Helpers/SsoIdentityPolicy` (ผูกได้ต่อเมื่อ provider ยืนยันอีเมล — Facebook ต้อง_
+_ผ่านลิงก์ยืนยันเสมอ) · `Helpers/UserLoginPolicy` (ด่านสถานะร่วมสามทางเข้า) ·_
+_ตาราง `UserExternalLogins` (ผูกได้หลาย provider + สถานะรอยืนยัน) · audit +_
+_อีเมลแจ้งทุกครั้งที่ผูก/ถอด · หน้าตั้งค่า → ความปลอดภัยบัญชี · invitation ทำงาน_
+_บนเส้น SSO · บัญชี SSO ล็อกอินด้วยรหัสผ่านได้ 401 แทน 500);_
+_ก่อนหน้า 2026-09-01 (rev 18 — **ปุ่ม Google login กดแล้ว_
 _ไม่ขึ้นอะไร**: CSP ของระบบเอง (`script-src`) ไม่มี `accounts.google.com` ⇒ สคริปต์_
 _One Tap ถูกบล็อกเงียบทุกครั้งตั้งแต่วันแรก แล้วหน้า login ขึ้นข้อความโทษตัวบล็อก_
 _โฆษณา — แก้ CSP + ย้าย Google มาใช้ **authorization-code redirect** เหมือน LINE_

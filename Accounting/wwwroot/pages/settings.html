@@ -45,6 +45,7 @@
       <div class="tab advanced-only" onclick="Page.showTab('approval',this)">อนุมัติ</div>
       <div class="tab advanced-only" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
       <div class="tab" onclick="Page.showTab('signature',this)">ลายเซ็นของฉัน</div>
+      <div class="tab" onclick="Page.showTab('security',this)">🔐 ความปลอดภัยบัญชี</div>
     </div>
 
     <!-- Setup Banner (shown on first setup) -->
@@ -852,6 +853,20 @@
       <div id="numberSeriesContent"><div class="text-gray-400 text-center" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
+    <!-- ===== Security Tab — บัญชีภายนอกที่ผูกไว้ =====
+         ที่มา: ระบบผูก Google/Facebook/LINE เข้ากับบัญชีให้เงียบ ๆ มาตลอด และ
+         ผู้ใช้ไม่มีหน้าไหนเลยที่บอกว่าตัวเองผูกอะไรไว้ หรือถอดได้อย่างไร -->
+    <div id="tabSecurity" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">🔐 บัญชีที่ใช้เข้าสู่ระบบได้</h3>
+      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
+        นอกจากอีเมล + รหัสผ่าน บัญชีของคุณอาจผูกกับ Google / LINE / Facebook ไว้ด้วย
+        ถ้าเห็นรายการที่ไม่ใช่คุณ ให้ถอดออกแล้วเปลี่ยนรหัสผ่านทันที
+      </p>
+      <div id="extLoginList" style="display:flex;flex-direction:column;gap:10px">
+        <div class="text-gray-400" style="font-size:13px">กำลังโหลด…</div>
+      </div>
+    </div>
+
     <!-- ===== Signature Tab ===== -->
     <div id="tabSignature" class="card hidden">
       <h3 class="card-title" style="margin-bottom:4px">ลายเซ็นอิเล็กทรอนิกส์</h3>
@@ -1076,6 +1091,7 @@
         if (tab === 'email') this.loadEmailConfig();
         if (tab === 'etax') this.loadEtaxConfig();
         if (tab === 'signature') this.loadSignature();
+        if (tab === 'security') this.loadExternalLogins();
         if (tab === 'license') this.loadLicenseTab();
         if (tab === 'line') this.loadLineConfig();
         if (tab === 'notify') this.loadNotifyMatrix();
@@ -1188,6 +1204,53 @@
           if (v) ov[el.getAttribute('data-title-key')] = v;   // เก็บเฉพาะที่ตั้งจริง
         });
         return Object.keys(ov).length ? JSON.stringify(ov) : '';   // '' = ล้างกลับ default
+      },
+
+      /** บัญชีภายนอกที่ผูกไว้ — เซิร์ฟเวอร์เป็นคนบอกว่ามีอะไรบ้าง หน้านี้แสดง
+       *  อย่างเดียว (ห้ามเดาจาก localStorage ที่ผู้ใช้แก้เองได้) */
+      async loadExternalLogins() {
+        const box = document.getElementById('extLoginList');
+        if (!box) return;
+        try {
+          const j = await API.getExternalLogins();
+          if (!j || !j.success) throw new Error((j && j.message) || 'โหลดข้อมูลไม่สำเร็จ');
+          const rows = j.data || [];
+          if (!rows.length) {
+            box.innerHTML = `<div style="padding:14px;border:1px dashed #cbd5e1;border-radius:8px;
+              font-size:13px;color:#64748b">ยังไม่ได้ผูกบัญชีภายนอกไว้ —
+              เข้าสู่ระบบด้วยอีเมล + รหัสผ่านเท่านั้น</div>`;
+            return;
+          }
+          const esc = Layout.esc;
+          const fmt = s => s ? new Date(s).toLocaleString('th-TH') : '—';
+          box.innerHTML = rows.map(r => `
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #e2e8f0;border-radius:8px">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:600">${esc(r.providerDisplayName || r.provider)}
+                  ${r.confirmed ? '' : '<span style="font-size:11px;color:#b45309;margin-left:6px">⏳ รอยืนยันทางอีเมล</span>'}
+                </div>
+                <div style="font-size:12px;color:#64748b">${esc(r.providerEmail || '')}</div>
+                <div style="font-size:11px;color:#94a3b8">ผูกเมื่อ ${fmt(r.linkedAt)} · ใช้ล่าสุด ${fmt(r.lastUsedAt)}</div>
+              </div>
+              <button type="button" class="btn btn-sm btn-danger"
+                onclick="Page.removeExternalLogin('${esc(r.id)}','${esc(r.providerDisplayName || r.provider)}')">ถอดการผูก</button>
+            </div>`).join('');
+        } catch (e) {
+          box.innerHTML = `<div style="font-size:13px;color:#b91c1c">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+        }
+      },
+
+      async removeExternalLogin(id, label) {
+        if (!confirm(`ถอดการผูกบัญชี ${label} ออกจากบัญชีนี้?`)) return;
+        try {
+          const j = await API.removeExternalLogin(id);
+          if (!j || !j.success) throw new Error((j && j.message) || 'ถอดไม่สำเร็จ');
+          Layout.toast('ถอดการผูกแล้ว', 'success');
+          await this.loadExternalLogins();
+        } catch (e) {
+          // เซิร์ฟเวอร์บล็อกเมื่อจะทำให้ไม่เหลือทางเข้า — ข้อความบอกทางแก้มาแล้ว
+          Layout.toast(e.message || 'ถอดไม่สำเร็จ', 'error');
+        }
       },
 
       async loadSignature() {

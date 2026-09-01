@@ -140,6 +140,22 @@
     // LINE/Google ส่งกลับมาที่หน้านี้พร้อม ?code=&state= → ส่ง code ให้ backend
     // แลก id_token (ต้องใช้ secret) แล้วเข้าสู่ระบบต่อ · ตรวจ state กัน CSRF
     // ตรรกะทั้งหมดอยู่ใน /js/sso.js ตัวเดียว (ใช้ร่วมกับหน้าสมัคร)
+    // กลับมาจากลิงก์ "ยืนยันการผูกบัญชี" ในอีเมล — เซิร์ฟเวอร์ redirect มาที่นี่
+    // พร้อมผลลัพธ์ (ห้ามเงียบ: ผู้ใช้กดลิงก์แล้วต้องรู้ว่าสำเร็จหรือไม่ เพราะอะไร)
+    (function showSsoLinkResult() {
+      const p = new URLSearchParams(location.search);
+      const ok = p.get('ssoLinked'), err = p.get('ssoLinkError');
+      if (!ok && !err) return;
+      history.replaceState({}, '', location.pathname);
+      const el = document.getElementById('errorMsg');
+      if (!el) return;
+      el.textContent = ok
+        ? `ยืนยันการผูกบัญชี ${ok} เรียบร้อยแล้ว — กดปุ่ม ${ok} ด้านล่างเพื่อเข้าสู่ระบบได้เลย`
+        : err;
+      if (ok) el.style.cssText = 'background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46';
+      el.classList.remove('hidden');
+    })();
+
     (function handleSsoCallback() {
       const cb = Sso.readCallback();
       if (!cb) return;
@@ -178,7 +194,8 @@
         // ส่งกลับไปหน้าสมัคร (ยินยอมต้องเกิดตอนที่มีข้อความให้อ่านจริง)
         const res = await API.ssoLogin(provider, idToken,
           signup?.companyName || null, signup?.plan || null,
-          signup?.acceptedTerms === true, signup?.policyVersion || null);
+          signup?.acceptedTerms === true, signup?.policyVersion || null,
+          signup?.invitationToken || null);
         if (res.success && res.data) {
           const token = res.data.accessToken || res.data.token;
           localStorage.setItem('token', token);
