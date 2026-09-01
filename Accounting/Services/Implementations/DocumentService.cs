@@ -4549,7 +4549,9 @@ public partial class DocumentService : IDocumentService
         // ต้องบอก **เลขใบที่ควรผูก** ไม่ใช่แค่ปฏิเสธ (ห้ามให้ผู้ใช้ตัน)
         if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
             && doc.VatAmount > 0 && !doc.RelatedDocumentId.HasValue
-            && !doc.IsDeposit && doc.ContactId.HasValue)
+            // ⚠️ Document.ContactId เป็น Guid (ไม่ใช่ Guid?) — "ไม่มีคู่ค้า"
+            // แทนด้วย Guid.Empty ไม่ใช่ null
+            && !doc.IsDeposit && doc.ContactId != Guid.Empty)
         {
             var openBills = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted
