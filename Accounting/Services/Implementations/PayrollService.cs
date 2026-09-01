@@ -2691,10 +2691,18 @@ public class PayrollService : IPayrollService
     private int _ssoAdjustedOnReopen;
     public int LastReopenSsoAdjustedCount => _ssoAdjustedOnReopen;
 
+    /// <summary>เลขที่ใบสำคัญที่เพิ่งถูกกลับรายการ — ใช้บอกผู้ใช้ว่า "กลับใบไหน"
+    /// เพราะการกลับรายการ **ไม่แก้ใบเดิม** แต่สร้างใบตรงข้ามขึ้นมาใหม่
+    /// (ใบเดิมยังโชว์ยอดเท่าเดิมตลอดไป เปลี่ยนแค่สถานะเป็น "กลับรายการแล้ว")
+    /// ⇒ ถ้าไม่บอก ผู้ใช้จะเปิดใบเดิมแล้วคิดว่ากดปุ่มไปแล้วไม่มีอะไรเกิดขึ้น</summary>
+    private string? _lastReversedJournalNumber;
+    public string? LastReversedJournalNumber => _lastReversedJournalNumber;
+
     public async Task<PayrollRunResponse> ReopenPaidRunAsync(Guid companyId, Guid payrollRunId,
         string reason, string reopenedBy)
     {
         _ssoAdjustedOnReopen = 0;
+        _lastReversedJournalNumber = null;
         reason = (reason ?? "").Trim();
         if (reason.Length < 5)
             throw new InvalidOperationException(
@@ -2738,13 +2746,31 @@ public class PayrollService : IPayrollService
                     "รอบนี้ถูกเปลี่ยนสถานะไปแล้วโดยผู้ใช้งานคนอื่น — กรุณารีเฟรชหน้านี้");
             run = locked;
 
+            // ── กลับ JE ของการจ่าย ───────────────────────────────────────────
+            // ⚠️ เดิมเป็น `if (มี JE) กลับ;` เฉย ๆ ⇒ รอบที่สถานะ Paid แต่ไม่มี
+            // JournalEntryId ผูกอยู่ จะ **ข้ามไปเงียบ ๆ** แล้วผู้ใช้ได้ข้อความ
+            // "กลับรายการจ่ายแล้ว" ทั้งที่ยอดยังอยู่ในบัญชีครบ (ห้าม silent no-op)
             var reversedJe = run.JournalEntryId;
-            if (run.JournalEntryId.HasValue && _accountingService != null)
+            if (reversedJe.HasValue && _accountingService != null)
             {
-                await _accountingService.ReverseJournalEntryAsync(companyId, run.JournalEntryId.Value,
+                await _accountingService.ReverseJournalEntryAsync(companyId, reversedJe.Value,
                     reversalDate: run.PayDate,
                     description: $"กลับรายการจ่ายเงินเดือน {run.PayrollNumber} ({run.Month:D2}/{run.Year}) — {reason}",
                     systemTriggered: true);
+                _lastReversedJournalNumber = await _db.JournalEntries.AsNoTracking()
+                    .Where(j => j.Id == reversedJe.Value).Select(j => j.EntryNumber)
+                    .FirstOrDefaultAsync();
+            }
+            else if (run.TotalGrossSalary > 0)
+            {
+                // รอบที่มีเงินแต่ไม่มีรายการบัญชีผูกอยู่ = ข้อมูลไม่สอดคล้องกัน
+                // ต้องบอกให้รู้ ไม่ใช่ปล่อยผ่านแล้วบอกว่าสำเร็จ
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"กลับรายการจ่ายไม่ได้ — รอบ {run.PayrollNumber} มีสถานะ \"จ่ายแล้ว\" "
+                    + "แต่ไม่มีรายการบัญชี (JE) ผูกอยู่ ระบบจึงไม่รู้ว่าต้องกลับใบไหน "
+                    + "กรุณาเปิดสมุดรายวัน ค้นด้วยเลขอ้างอิง "
+                    + $"\"HR-PR-{run.Year}-{run.Month:D2}\" แล้วกลับรายการใบนั้นด้วยตนเอง "
+                    + "ก่อนแจ้งผู้ดูแลระบบให้ตรวจการเชื่อมโยงของรอบนี้");
             }
 
             await RestoreSalaryAdvancesAsync(companyId, payrollRunId, resetRecovered: true);
@@ -4016,6 +4042,7 @@ public class PayrollService : IPayrollService
     public async Task<PayrollRunResponse> ReverseSsoSettlementAsync(Guid companyId,
         Guid payrollRunId, string reason, string performedBy)
     {
+        _lastReversedJournalNumber = null;
         reason = (reason ?? "").Trim();
         if (reason.Length < 5)
             throw new InvalidOperationException(
@@ -4056,13 +4083,26 @@ public class PayrollService : IPayrollService
             }
             run = locked;
 
+            // เช่นเดียวกับการกลับรายการจ่าย — ไม่มี JE ให้กลับ ต้องบอก ไม่ใช่เงียบ
             var reversedJe = run.SsoSettlementJournalEntryId;
             if (reversedJe.HasValue && _accountingService != null)
+            {
                 await _accountingService.ReverseJournalEntryAsync(companyId, reversedJe.Value,
                     reversalDate: settledOn,
                     description: $"กลับรายการนำส่งประกันสังคม {run.PayrollNumber} "
                         + $"({run.Month:D2}/{run.Year}) — {reason}",
                     systemTriggered: true);
+                _lastReversedJournalNumber = await _db.JournalEntries.AsNoTracking()
+                    .Where(j => j.Id == reversedJe.Value).Select(j => j.EntryNumber)
+                    .FirstOrDefaultAsync();
+            }
+            else if (run.TotalSocialSecurityEmployee + run.TotalSocialSecurityEmployer > 0)
+            {
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"กลับรายการนำส่งไม่ได้ — รอบ {run.PayrollNumber} บันทึกว่านำส่งแล้ว "
+                    + "แต่ไม่มีรายการบัญชี (JE) ของการนำส่งผูกอยู่ "
+                    + "กรุณาตรวจในสมุดรายวันแล้วกลับรายการใบนั้นด้วยตนเอง");
+            }
 
             _db.AuditLogs.Add(new AuditLog
             {

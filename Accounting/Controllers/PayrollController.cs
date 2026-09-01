@@ -282,8 +282,16 @@ public class PayrollController : ControllerBase
         {
             var res = await _service.ReverseSsoSettlementAsync(companyId, runId,
                 request.Reason, User.Identity?.Name ?? "");
-            return Ok(new ApiResponse<PayrollRunResponse>(true, res,
-                "กลับรายการนำส่งประกันสังคมแล้ว — แก้ยอดในรอบเงินเดือนแล้วนำส่งใหม่ได้"));
+            var revJe = _service.LastReversedJournalNumber;
+            // ⚠️ ขอบเขตของปุ่มนี้คือ **JE ของการนำส่ง** เท่านั้น (Dr 21815 / Cr ธนาคาร)
+            // ไม่ได้แตะ JE ของการจ่ายเงินเดือน (ที่มีบรรทัด 54120 ประกันสังคมนายจ้าง)
+            // — ผู้ใช้เข้าใจสลับกันแล้วรายงานว่า "กดกลับรายการแล้วยอดยังผิด"
+            var msg = "กลับรายการนำส่งประกันสังคมแล้ว"
+                + (string.IsNullOrWhiteSpace(revJe) ? "" : $" (ใบสำคัญ {revJe})")
+                + " — ปุ่มนี้กลับเฉพาะรายการ \"นำส่ง\" เท่านั้น "
+                + "ถ้ายอดประกันสังคมในใบจ่ายเงินเดือนผิด ต้องกด \"กลับรายการจ่าย\" อีกทีหนึ่ง "
+                + "แล้วตรวจยอด → จ่ายใหม่ → นำส่งใหม่";
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, msg));
         }
         catch (InvalidOperationException ex)
         {
@@ -491,6 +499,13 @@ public class PayrollController : ControllerBase
             // แก้อะไรให้ต้องบอก — ห้ามเปลี่ยนตัวเลขเงียบ ๆ
             var ssoFixed = _service.LastReopenSsoAdjustedCount;
             var msg = "กลับรายการจ่ายแล้ว — รอบกลับไปสถานะ \"อนุมัติแล้ว\" แก้ยอดได้ จากนั้นกด \"จ่าย\" ใหม่";
+            // บอกเลขใบที่กลับ — การกลับรายการ **ไม่แก้ใบเดิม** แต่สร้างใบตรงข้าม
+            // ⇒ ใบเดิมยังโชว์ยอดเท่าเดิมตลอดไป (เปลี่ยนแค่สถานะเป็น "กลับรายการแล้ว")
+            // ถ้าไม่บอก ผู้ใช้จะเปิดใบเดิมแล้วคิดว่ากดปุ่มไปแล้วไม่มีอะไรเกิดขึ้น
+            var revJe = _service.LastReversedJournalNumber;
+            if (!string.IsNullOrWhiteSpace(revJe))
+                msg += $" · กลับรายการบัญชี {revJe} แล้ว (ใบเดิมยังแสดงยอดเท่าเดิม "
+                     + "แต่สถานะเปลี่ยนเป็น \"กลับรายการแล้ว\" และมีใบตรงข้ามหักล้างยอดในงบ)";
             if (ssoFixed > 0)
                 msg += $" · ปรับยอดประกันสังคมฝั่งนายจ้างให้ตรงกับฝั่งลูกจ้าง {ssoFixed} คน "
                      + "(ม.33 ใช้ฐานค่าจ้างเดียวกันทั้งสองฝั่ง) — ตรวจยอดก่อนกดจ่าย";
