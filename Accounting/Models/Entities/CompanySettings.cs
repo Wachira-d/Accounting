@@ -289,6 +289,14 @@ public class CompanySettings : TenantEntity
     // Helpers/ReceiptIssuePolicy ตัวเดียว ห้ามเช็ค enum เองในแต่ละไฟล์
     public ReceiptIssueMode ReceiptIssueMode { get; set; } = ReceiptIssueMode.Combined;
 
+    // ── "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV เสมอ" ──
+    // แกนคนละแกนกับ ReceiptIssueMode: อันนั้นคุม "ออกกี่ใบ" อันนี้คุม "ใบไหนใช้
+    // เลขชุดไหน". เปิดแล้วเล่มใบกำกับเหลือชุดเดียว (รายงานภาษีขาย §87 เรียงไม่
+    // ขาดช่วงในชุดเดียว) ส่วนใบเสร็จเปล่า/ใบไม่มี VAT อยู่ชุด REC
+    // default = false ⇒ tenant เดิมเลขไม่ขยับ. กติกาอยู่ที่
+    // Helpers/TaxInvoiceSeriesPolicy ตัวเดียว
+    public bool UnifyTaxInvoiceNumberSeries { get; set; } = false;
+
     // ── กองทุนเงินทดแทน (กท.20ก, พ.ร.บ.เงินทดแทน §44) ──
     // นายจ้างฝ่ายเดียวสมทบ 0.2%–1.0% ของค่าจ้างต่อปี (cap 240,000 บาท/คน/ปี)
     // อัตราตามประเภทกิจการ 10 หมวด: สำนักงาน 0.2%, ค้าปลีก 0.4%, ก่อสร้าง 1.0%

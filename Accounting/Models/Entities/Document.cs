@@ -143,6 +143,19 @@ public class Document : TenantEntity
     /// TaxInvoice ปกติ (deposit+settle ที่ verified) — flag นี้แค่ classification/หัว.</summary>
     public bool IssuedAsCashReceipt { get; set; }
 
+    /// <summary>ใบนี้ทำหน้าที่ "ใบกำกับภาษี" ตามกฎหมายหรือไม่ — **ตรึงตอนอนุมัติ**
+    /// พร้อมเลขที่เอกสาร (แบบเดียวกับ <c>IssuerBranchCode</c>)
+    ///
+    /// ตัดสินจากหัวที่ resolver ตัวเดียวกับกระดาษคำนวณให้ (ดู
+    /// <c>Helpers/TaxInvoiceSeriesPolicy</c>) แล้วใช้เลือกว่าเลขจะอยู่ชุด TIV
+    /// หรือ REC เมื่อบริษัทเปิด <c>CompanySettings.UnifyTaxInvoiceNumberSeries</c>
+    ///
+    /// ตรึงไว้เพราะ (ก) เลขที่ออกไปแล้วห้ามเปลี่ยนย้อนหลัง §86/4 — ค่าที่ใช้
+    /// ตัดสินจึงต้องหยุดนิ่งเท่ากัน (ข) เป็นคำตอบสำเร็จรูปให้รายงาน/ผู้ตรวจว่า
+    /// "ใบไหนเป็นใบกำกับ" โดยไม่ต้องคำนวณหัวใหม่ทุกครั้ง.
+    /// null = ใบที่อนุมัติก่อนมีฟีเจอร์นี้ (ยังไม่เคยตรึง) — ห้ามตีความว่า false</summary>
+    public bool? IsTaxInvoiceByLaw { get; set; }
+
     /// <summary>เจตนา "รับเงินครบแล้ว ณ วันออกใบ" (โหมด tax_paid ของใบแปลงจากขาย
     /// เครดิต) — เดิมอยู่แค่ในฟอร์ม+chain ฝั่ง client ไม่เคยบันทึกลงเอกสาร ⇒
     /// ปิดฟอร์มแล้วตัวเลือกหาย (defect class "เก็บแล้วต้อง echo กลับ") และหัวใบ

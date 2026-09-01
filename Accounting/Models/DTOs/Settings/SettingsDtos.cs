@@ -86,6 +86,8 @@ public record UpdateCompanySettingsRequest(
     // รูปแบบการออกใบกำกับภาษี/ใบเสร็จรับเงิน (0=ใบเดียวจบ 1=แยกเสมอ 2=ค้าปลีก)
     // null = ไม่แก้ · กติกาอยู่ที่ Helpers/ReceiptIssuePolicy
     ReceiptIssueMode? ReceiptIssueMode = null,
+    // "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV เสมอ" (null = ไม่แก้)
+    bool? UnifyTaxInvoiceNumberSeries = null,
     // ภาษาของเอกสารที่ออกทุกใบ: "th" | "en" (null = ไม่แก้). โหมด en พิมพ์หัว
     // สองภาษาบนเอกสารภาษี เพื่อคงคำว่า "ใบกำกับภาษี" ตาม §86/4
     string? DocumentLanguage = null,
@@ -191,6 +193,7 @@ public record CompanySettingsResponse(
     // (เซิร์ฟเวอร์เป็นเจ้าของข้อความ — ห้ามหน้าจอแต่งคำเอง จะกลายเป็นสำเนาที่ drift)
     ReceiptIssueMode ReceiptIssueMode = ReceiptIssueMode.Combined,
     string? ReceiptIssueModeDescription = null,
+    bool UnifyTaxInvoiceNumberSeries = false,
 
     // Per-company annual leave quota override (JSON by LeaveType).
     string? LeaveQuotasJson = null,

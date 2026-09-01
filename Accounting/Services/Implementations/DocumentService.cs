@@ -4817,13 +4817,57 @@ public partial class DocumentService : IDocumentService
                 // duplicates. Documents that already carry a real number (idem-
                 // potent re-approve, or those created by OCR/integration with a
                 // number already stamped) keep the existing number.
+                // ── ตรึง "บทบาททางกฎหมาย" ก่อนออกเลข ──
+                // หัวกระดาษกับเลขที่เอกสารเป็นคนละแกน: ใบที่หัวพิมพ์ "ใบกำกับภาษี/
+                // ใบเสร็จรับเงิน" เหมือนกันเป๊ะ เดิมได้เลขคนละชุด (TIV-/REC-) แล้วแต่
+                // ทางที่กดเข้า ⇒ รายงานภาษีขาย §87 มีเลขปนกันหลายชุดทั้งที่เป็น
+                // รายการใบกำกับล้วน ๆ. ตัดสินจากหัวที่ resolver **ตัวเดียวกับกระดาษ**
+                // คำนวณให้ (ไม่ใช่กติกาสำเนาที่สอง) แล้วตรึงลงเอกสารพร้อมเลขที่
+                // — เลขออกไปแล้วเปลี่ยนย้อนหลังไม่ได้ (§86/4) ค่าที่ใช้ตัดสินจึง
+                // ต้องหยุดนิ่งเท่ากัน
+                if (doc.IsTaxInvoiceByLaw == null)
+                {
+                    try
+                    {
+                        var resolvedTitle = await PdfGenerationService.ResolveDocumentTitleAsync(
+                            _db, companyId, doc);
+                        doc.IsTaxInvoiceByLaw = Accounting.Helpers.TaxInvoiceSeriesPolicy
+                            .CarriesTaxInvoiceRole(doc, resolvedTitle);
+                    }
+                    catch (Exception ex)
+                    {
+                        // resolver ล้ม → ตกกลับไปใช้ชนิดเอกสารตามเดิม (พฤติกรรมก่อน
+                        // มีฟีเจอร์นี้) ห้ามล้มการอนุมัติทั้งใบเพราะ "ป้ายบทบาท"
+                        _logger.LogWarning(ex,
+                            "ตรึงบทบาททางกฎหมายไม่สำเร็จ Doc={Doc} — ใช้ชนิดเอกสารเลือกเลขตามเดิม",
+                            documentId);
+                    }
+                }
+
                 if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
                 {
                     // ใช้เดือนของ DocumentDate (ไม่ใช่ "วันที่ approve") เพื่อให้
                     // เลขกับวันที่สอดคล้องกัน: ใบ 28/05 ที่ approve 01/06 ต้องได้
                     // "PV-202605-NNNN" ไม่ใช่ "PV-202606-..."
+                    //
+                    // ชนิดที่ใช้ "เลือกตัวย่อ" อาจไม่ใช่ชนิดจริงของเอกสาร เมื่อบริษัท
+                    // เปิดกติกา "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV เสมอ" — เปลี่ยน
+                    // แค่ตัวย่อ ไม่แตะ DocumentType (ซึ่งคุม JE / การนับ ภ.พ.30 /
+                    // สายแปลงเอกสาร) และตัวนับเลขนับจาก prefix อยู่แล้วจึงยังเรียง
+                    // ไม่ขาดช่วงต่อ prefix ตาม §86/4
+                    var seriesType = doc.DocumentType;
+                    if (doc.IsTaxInvoiceByLaw.HasValue)
+                    {
+                        var unify = await _db.CompanySettings.AsNoTracking()
+                            .Where(s => s.CompanyId == companyId)
+                            .Select(s => (bool?)s.UnifyTaxInvoiceNumberSeries)
+                            .FirstOrDefaultAsync() ?? false;
+                        if (unify)
+                            seriesType = Accounting.Helpers.TaxInvoiceSeriesPolicy
+                                .SeriesTypeOverride(doc, doc.IsTaxInvoiceByLaw.Value) ?? doc.DocumentType;
+                    }
                     doc.DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
-                        _db, companyId, doc.DocumentType, doc.DocumentDate);
+                        _db, companyId, seriesType, doc.DocumentDate);
                 }
 
                 // ===== §86/4 — ตรึงรหัสสาขาที่พิมพ์ลงกระดาษ =====
@@ -9915,9 +9959,25 @@ public partial class DocumentService : IDocumentService
         // issueApproved: ผู้กดบันทึกมีสิทธิ์อนุมัติ → ใบสมบูรณ์ทันที (เลขจริง)
         // ไม่มีสิทธิ์ → Draft (เลข placeholder — เลขจริงออกตอนผู้มีสิทธิ์อนุมัติ
         // ผ่าน ApproveDocumentAsync ซึ่ง skip การลงบัญชีให้แล้วสำหรับใบ settlement)
+        // ── เลขชุดไหน: ตัดสินจากบทบาททางกฎหมาย ไม่ใช่ชนิดข้อมูล ──
+        // เส้นนี้ออกเลขเองไม่ผ่าน ApproveDocumentAsync ⇒ ต้องใช้กติกาเดียวกัน
+        // (Helpers/TaxInvoiceSeriesPolicy) มิฉะนั้นใบเสร็จที่เป็น "ใบกำกับภาษี ณ
+        // วันรับเงิน §78/1" จะยังตกไปอยู่เล่ม REC เหมือนเดิม ซึ่งเป็นเคสที่ทำให้
+        // ผู้ใช้เห็น "เดี๋ยว TIV เดี๋ยว REC" มากที่สุด
+        // carryVatFromSource = true ⇒ ใบนี้ถือ VAT + หัวพิมพ์คำว่าใบกำกับ
+        var carriesTaxInvoiceRole = carryVatFromSource;
+        var seriesTypeForReceipt = DocumentType.Receipt;
+        if (carriesTaxInvoiceRole)
+        {
+            var unifySeries = await _db.CompanySettings.AsNoTracking()
+                .Where(s => s.CompanyId == companyId)
+                .Select(s => (bool?)s.UnifyTaxInvoiceNumberSeries)
+                .FirstOrDefaultAsync() ?? false;
+            if (unifySeries) seriesTypeForReceipt = DocumentType.TaxInvoice;
+        }
         var number = issueApproved
             ? await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
-                _db, companyId, DocumentType.Receipt, payment.PaymentDate)
+                _db, companyId, seriesTypeForReceipt, payment.PaymentDate)
             : $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
         var srcLabel = invoice.DocumentType == DocumentType.TaxInvoice ? "ใบกำกับภาษี"
             : invoice.DocumentType == DocumentType.DebitNote ? "ใบเพิ่มหนี้" : "ใบแจ้งหนี้";
@@ -9932,6 +9992,9 @@ public partial class DocumentService : IDocumentService
             IsSettlementReceipt = true,
             SettlementPaymentId = payment.Id,
             Reference = invoice.DocumentNumber,
+            // ตรึงบทบาททางกฎหมายพร้อมเลขที่ (เหมือนเส้น approve) — ใบเสร็จที่ถือ
+            // VAT มาจากใบแจ้งหนี้คือใบกำกับ ณ วันรับเงิน §78/1, นอกนั้นเป็นใบเสร็จเปล่า
+            IsTaxInvoiceByLaw = carriesTaxInvoiceRole,
             Status = issueApproved ? DocumentStatus.Paid : DocumentStatus.Draft,
             // ลายเซ็น "ผู้มีอำนาจลงนาม" = ผู้กดบันทึกรับเงิน (ResolveSignersAsync
             // ใช้ UpdatedBy เป็น approver เมื่อไม่มี approval trail — เดิมว่าง →

@@ -4542,6 +4542,12 @@ public static class DatabaseMigrationHelper
             // 1=แยกใบกำกับ–ใบเสร็จเสมอ 2=ค้าปลีกใบเดียวที่จุดขาย. DEFAULT 0 ⇒
             // tenant เดิมไม่กระทบ
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "ReceiptIssueMode" integer NOT NULL DEFAULT 0;""",
+            // "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV เสมอ" (แกนคนละแกนกับ ReceiptIssueMode)
+            // DEFAULT false ⇒ เลขของ tenant เดิมไม่ขยับ
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "UnifyTaxInvoiceNumberSeries" boolean NOT NULL DEFAULT false;""",
+            // บทบาททางกฎหมายของเอกสาร ตรึงตอนอนุมัติพร้อมเลขที่ — nullable เพราะ
+            // ใบที่อนุมัติก่อนมีฟีเจอร์นี้ "ยังไม่เคยตรึง" (≠ ไม่ใช่ใบกำกับ)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsTaxInvoiceByLaw" boolean NULL;""",
 
             // ===== DocumentAdjustingJournalLines (Option 1: เพิ่ม Dr/Cr ลอย) =====
             // ใช้รองรับเคส PV/Doc 1 ใบ มี Dr/Cr เพิ่มเติมที่ไม่ map กับ DocumentLine

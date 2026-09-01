@@ -411,6 +411,20 @@
         </select>
         <div id="sReceiptIssueModeHint" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6"></div>
       </div>
+      <div class="form-group" style="max-width:640px;margin-top:10px">
+        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="sUnifyTaxInvoiceSeries" style="margin-top:3px">
+          <span style="font-size:13px;line-height:1.7">
+            <b>ใบที่หัวมีคำว่า "ใบกำกับภาษี" ให้ใช้เลขชุด TIV ทั้งหมด</b><br>
+            <span class="text-xs text-gray-500">
+              คนละเรื่องกับตัวเลือกด้านบน (อันนั้นคุม "ออกกี่ใบ" อันนี้คุม "ใบไหนใช้เลขชุดไหน").
+              เปิดแล้วเล่มใบกำกับเหลือชุดเดียว — รายงานภาษีขาย §87 เรียงไม่ขาดช่วงในชุดเดียว
+              สรรพากรขอเล่มใบกำกับหยิบเล่มเดียวจบ · ใบเสร็จเปล่า/ใบไม่มี VAT ยังอยู่ชุด REC<br>
+              ⚠️ มีผลกับ<b>ใบใหม่เท่านั้น</b> — ใบที่ออกเลขไปแล้วเปลี่ยนย้อนหลังไม่ได้ (§86/4)
+            </span>
+          </span>
+        </label>
+      </div>
 
       <!-- หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง) -->
       <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">🏷️ หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง)</h3>
@@ -1972,6 +1986,8 @@
             this._renderReceiptModeHint(s.receiptIssueModeDescription);
             _rimSel.onchange = () => this._renderReceiptModeHint(null);
           }
+          const _uniCb = document.getElementById('sUnifyTaxInvoiceSeries');
+          if (_uniCb) _uniCb.checked = !!s.unifyTaxInvoiceNumberSeries;
           document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
           document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
           document.getElementById('sUseCustomSignatory').checked = !!s.useCustomAuthorizedSignatory;
@@ -2194,6 +2210,7 @@
             // enum เป็นตัวเลข — Layout.intOrNull กันค่าว่าง/ขยะไม่ให้กลายเป็น 0
             // โดยบังเอิญ (0 = "ใบเดียวจบ" ซึ่งเป็นค่าจริงที่มีความหมาย)
             receiptIssueMode: Layout.intOrNull('sReceiptIssueMode'),
+            unifyTaxInvoiceNumberSeries: document.getElementById('sUnifyTaxInvoiceSeries')?.checked || false,
             // ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดแยก)
             stampWidthMm: parseFloat(document.getElementById('sStampW')?.value || '32'),
             stampHeightMm: parseFloat(document.getElementById('sStampH')?.value || '32'),

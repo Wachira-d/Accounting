@@ -58,6 +58,8 @@ public class SettingsService : ISettingsService
         if (request.ReceiptIssueMode.HasValue
             && Enum.IsDefined(typeof(ReceiptIssueMode), request.ReceiptIssueMode.Value))
             settings.ReceiptIssueMode = request.ReceiptIssueMode.Value;
+        if (request.UnifyTaxInvoiceNumberSeries.HasValue)
+            settings.UnifyTaxInvoiceNumberSeries = request.UnifyTaxInvoiceNumberSeries.Value;
         // ภาษาเอกสาร — รับเฉพาะ th/en (ค่าอื่น = ไม่แก้ กันค่าขยะจาก client)
         if (request.DocumentLanguage != null)
         {
@@ -537,6 +539,7 @@ public class SettingsService : ISettingsService
         string.IsNullOrWhiteSpace(s.DocumentLanguage) ? "th" : s.DocumentLanguage,
         s.ReceiptIssueMode,
         Accounting.Helpers.ReceiptIssuePolicy.Describe(s.ReceiptIssueMode),
+        s.UnifyTaxInvoiceNumberSeries,
         // HR
         s.LeaveQuotasJson,
         s.EnforceManagerApproval,
