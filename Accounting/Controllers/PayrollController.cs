@@ -264,6 +264,26 @@ public class PayrollController : ControllerBase
     /// <summary>นำส่งประกันสังคมให้ สปส. (สปส.1-10) — post JE คู่ที่สอง
     /// Dr 21815 / Cr Bank. คำนวณเงินเพิ่ม §49 อัตโนมัติ. ใช้กับรอบ Paid +
     /// ยังไม่นำส่ง.</summary>
+    /// <summary>กลับรายการนำส่งประกันสังคม (เช่นนำส่งผิดยอด/ผิดวัน) — กลับ JE
+    /// ก้อนที่สองลงวันเดียวกับที่นำส่งเดิม แล้วปลดล็อกให้นำส่งใหม่</summary>
+    [HttpPost("runs/{runId:guid}/reverse-sso")]
+    public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> ReverseSso(
+        Guid companyId, Guid runId, [FromBody] ReopenPayrollRunRequest request)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        try
+        {
+            var res = await _service.ReverseSsoSettlementAsync(companyId, runId,
+                request.Reason, User.Identity?.Name ?? "");
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res,
+                "กลับรายการนำส่งประกันสังคมแล้ว — แก้ยอดในรอบเงินเดือนแล้วนำส่งใหม่ได้"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<PayrollRunResponse>(false, null, ex.Message));
+        }
+    }
+
     [HttpPost("runs/{runId:guid}/settle-sso")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> SettleSso(
         Guid companyId, Guid runId, [FromBody] SettleSsoRequest request)

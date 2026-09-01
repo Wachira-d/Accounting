@@ -819,6 +819,7 @@ const Page = {
           ${r.status === 'Calculated' ? `<button class="btn btn-sm btn-success" onclick="Page.approveRun('${r.id}')">อนุมัติ</button>` : ''}
           ${r.status === 'Approved' ? `<button class="btn btn-sm btn-primary" onclick="Page.payRun('${r.id}')">จ่าย</button>` : ''}
           ${(r.status === 'Paid' && ssoTotal > 0 && !r.ssoSettledAt) ? `<button class="btn btn-sm btn-warning" onclick="Page.openSettleSso('${r.id}')" title="นำส่งเงินสมทบประกันสังคมให้ สปส. — สร้าง JE Dr 21815 / Cr Bank อัตโนมัติ">💸 นำส่ง สปส.</button>` : ''}
+          ${r.ssoSettledAt ? `<button class="btn btn-sm btn-secondary" onclick="Page.reverseSso('${r.id}')" title="นำส่งผิดยอด/ผิดวัน — กลับรายการ JE นำส่งแล้วนำส่งใหม่ได้">↩️ กลับรายการนำส่ง</button>` : ''}
         </td>
       </tr>`;
       }).join('');
@@ -885,6 +886,29 @@ const Page = {
 
   /** เปิด modal นำส่งประกันสังคม — เติมข้อมูล run + bank dropdown + เตือน
    * เงินเพิ่ม 2%/เดือน ถ้าวันที่นำส่งเกินวันที่ 15 ของเดือนถัดไป */
+  /** กลับรายการนำส่ง สปส. — ใช้เมื่อยอดที่ลงบัญชีไม่ตรงกับที่จ่ายจริง
+   *  (เช่นแก้ยอดรายคนหลังนำส่งไปแล้ว) หรือผิดวัน/ผิดบัญชี */
+  async reverseSso(runId) {
+    const api = Layout.api(); if (!api) return;
+    const reason = prompt(
+      'กลับรายการนำส่งประกันสังคมของรอบนี้?\n\n'
+      + 'ระบบจะกลับรายการบัญชี (JE) ที่ลงตอนนำส่ง **ลงวันเดียวกับที่นำส่งเดิม** '
+      + 'แล้วปลดล็อกให้แก้ยอด/นำส่งใหม่ได้\n'
+      + 'ถ้ายื่น สปส.1-10 ไปแล้วต้องยื่นแก้ไขกับ สปส. ด้วย\n\n'
+      + 'ระบุเหตุผล (อย่างน้อย 5 ตัวอักษร):', '');
+    if (reason === null) return;
+    if ((reason || '').trim().length < 5) {
+      Layout.toast('ต้องระบุเหตุผลอย่างน้อย 5 ตัวอักษร', 'error');
+      return;
+    }
+    try {
+      await api.reverseSso(runId, reason.trim());
+      Layout.toast('กลับรายการนำส่งแล้ว — แก้ยอดในรอบเงินเดือนแล้วนำส่งใหม่ได้', 'success', 7000);
+      this.loadRuns();
+      if (this._curRun?.id === runId) await this.viewRun(runId);
+    } catch (e) { Layout.toast(e.message || 'กลับรายการนำส่งไม่สำเร็จ', 'error', 9000); }
+  },
+
   async openSettleSso(runId) {
     const api = Layout.api(); if (!api) return;
     try {
@@ -909,6 +933,25 @@ const Page = {
         <div>ส่วนนายจ้าง: <b>${Layout.money(r.totalSocialSecurityEmployer)}</b></div>
         <div style="border-top:1px solid #cbd5e1;margin-top:6px;padding-top:6px;font-size:14px">ยอดรวมที่ต้องนำส่ง: <b style="color:#0f766e">${Layout.money(this._ssoCtx.total)}</b></div>
         <div style="margin-top:6px;font-size:11px;color:#64748b">กำหนดส่ง: ${deadline.toLocaleDateString('th-TH')}</div>
+        ${(() => {
+          // ม.33 ใช้ฐานเดียวกันทั้งสองฝั่ง — ไม่เท่ากันแปลว่ามีคนแก้ยอดข้างเดียว
+          // ⇒ ยอดที่จะลงบัญชีจะไม่ตรงกับที่ สปส. เรียกเก็บ (เคสจริงต่างกัน 22 บาท
+          // แล้วเงินฝากในบัญชีแยกประเภทคลาดเคลื่อนไปเรื่อย ๆ). เซิร์ฟเวอร์บล็อก
+          // อยู่แล้ว — ตรงนี้บอกล่วงหน้าก่อนกดจะได้ไม่ต้องเดา
+          const emp = Number(r.totalSocialSecurityEmployee || 0);
+          const er = Number(r.totalSocialSecurityEmployer || 0);
+          const rt = Number(r.ssoRatePercent ?? 5);
+          const ert = Number(r.ssoEmployerRatePercent ?? r.ssoRatePercent ?? 5);
+          if (!(emp > 0) || !(rt > 0)) return '';
+          const expectedEr = Math.round(emp * (ert / rt) * 100) / 100;
+          if (Math.abs(expectedEr - er) <= 1) return '';
+          return `<div style="margin-top:8px;padding:8px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:12px;color:#991b1b;line-height:1.6">
+            ⚠️ <b>ยอดสองฝั่งไม่สอดคล้องกัน</b> — ที่อัตรา ${rt}%/${ert}% ฝั่งนายจ้างควรเป็น
+            ${Layout.money(expectedEr)} (ยอดรวมที่ควรนำส่ง ${Layout.money(emp + expectedEr)})<br>
+            นำส่งตอนนี้ระบบจะบันทึกจ่าย ${Layout.money(emp + er)} ซึ่งไม่ตรงกับที่ สปส. เรียกเก็บ —
+            กด "กลับรายการจ่าย" ที่รอบเงินเดือน แล้วตั้ง "ฐานค่าจ้างประกันสังคม" ของพนักงานที่ยอดเพี้ยนให้ถูกก่อน
+          </div>`;
+        })()}
       `;
       document.getElementById('settleSsoPayDate').value = defaultDate.toLocaleDateString('sv-SE');
       document.getElementById('settleSsoFilingNumber').value = '';

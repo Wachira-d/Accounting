@@ -571,6 +571,8 @@ const API = {
       approvePayroll: (id) => API.post(`${base}/payroll/runs/${id}/approve`),
       payPayroll: (id) => API.post(`${base}/payroll/runs/${id}/pay`),
       settleSso: (id, body) => API.post(`${base}/payroll/runs/${id}/settle-sso`, body),
+      // กลับรายการนำส่ง สปส. (นำส่งผิดยอด/ผิดวัน) — ปลดล็อกให้แก้แล้วนำส่งใหม่
+      reverseSso: (id, reason) => API.post(`${base}/payroll/runs/${id}/reverse-sso`, { reason }),
       // ── นำส่งภาษี/ประกันสังคมรวม (สปส.1-10 + ภงด.1/3/53 + ภพ.30) ──
       getRemittances: (monthsBack = 12) => API.get(`${base}/remittances?monthsBack=${monthsBack}`),
       // ปฏิทินนำส่ง "แบบ × เดือน" — ใช้บน dashboard (รวมงวดยอด 0 ที่ยังต้องยื่นแบบเปล่า)
