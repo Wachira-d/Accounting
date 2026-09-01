@@ -2604,9 +2604,16 @@ public class PayrollService : IPayrollService
     /// อ่านจาก ReopenedAt (กติกา "ทำงานหลักไม่สำเร็จ/ยังไม่จบ ต้องดังบนตัวข้อมูล
     /// ที่ผู้ใช้เปิดดู" — log ของเซิร์ฟเวอร์ไม่ใช่ช่องทางแจ้งผู้ใช้)
     /// </summary>
+    /// <summary>จำนวนพนักงานที่ยอดประกันสังคมถูกซ่อมให้สอดคล้องในการ reopen ครั้ง
+    /// ล่าสุดของ request นี้ — controller อ่านไปบอกผู้ใช้ (ห้ามแก้เงียบ ๆ).
+    /// scoped ต่อ request เหมือน DbContext จึงไม่ปนกันข้าม request</summary>
+    private int _ssoAdjustedOnReopen;
+    public int LastReopenSsoAdjustedCount => _ssoAdjustedOnReopen;
+
     public async Task<PayrollRunResponse> ReopenPaidRunAsync(Guid companyId, Guid payrollRunId,
         string reason, string reopenedBy)
     {
+        _ssoAdjustedOnReopen = 0;
         reason = (reason ?? "").Trim();
         if (reason.Length < 5)
             throw new InvalidOperationException(
@@ -2660,6 +2667,49 @@ public class PayrollService : IPayrollService
             }
 
             await RestoreSalaryAdvancesAsync(companyId, payrollRunId, resetRecovered: true);
+
+            // ── ซ่อมยอดประกันสังคมให้สอดคล้องกันระหว่างที่ยัง "เปิด" อยู่ ──
+            // ม.33 ใช้ฐานค่าจ้างเดียวกันทั้งฝั่งลูกจ้างและนายจ้าง — ข้อมูลที่แก้ไว้
+            // สมัยที่ระบบยังให้แก้ข้างเดียวจึงค้างไม่ตรงกัน (เคสจริง: ลูกจ้างรวม
+            // 4,381 แต่นายจ้างรวม 4,403) และ **การกลับรายการนำส่ง สปส. ไม่ได้แตะ
+            // ยอดตรงนี้เลย** ⇒ ผู้ใช้กลับรายการแล้วนำส่งใหม่ก็ยังได้ยอดเดิม
+            //
+            // reopen คือจังหวะเดียวที่ปลอดภัยจะซ่อม: JE ถูกกลับไปแล้วและกำลังจะ
+            // โพสต์ใหม่ตอนกด "จ่าย" ⇒ แก้ตัวเลขตอนนี้ไม่ทิ้งรายการค้างในบัญชี
+            // (ถ้าไปแก้ตอน Paid ตัวเลขจะไม่ตรงกับ JE ที่ลงไปแล้ว)
+            var ssoFix = await GetSsoParamsAsync(companyId, run.Year);
+            var fixedDetails = await _db.Set<PayrollDetail>()
+                .Where(d => d.PayrollRunId == payrollRunId && d.CompanyId == companyId)
+                .ToListAsync();
+            var ssoAdjusted = 0;
+            foreach (var d in fixedDetails)
+            {
+                if (d.SocialSecurityEmployee <= 0 && d.SocialSecurityEmployer <= 0) continue;
+                // ฐานที่ยอดสมทบคิดมาจริง (แถวเก่ายังไม่เคยตั้ง → อนุมานให้)
+                var resolvedBase = Accounting.Helpers.SsoWageBase.Resolve(
+                    d.SocialSecurityBase, d.SocialSecurityEmployee, d.GrossIncome,
+                    ssoFix.Rate, ssoFix.MaxContribution);
+                var expectedEr = Accounting.Helpers.SsoWageBase.EmployerFrom(
+                    d.SocialSecurityEmployee, ssoFix.Rate,
+                    ssoFix.EmployerRate, ssoFix.EmployerMaxContribution);
+                var changed = false;
+                if (resolvedBase > 0 && d.SocialSecurityBase != resolvedBase)
+                { d.SocialSecurityBase = resolvedBase; changed = true; }
+                if (Math.Abs(expectedEr - d.SocialSecurityEmployer) > 0.005m)
+                { d.SocialSecurityEmployer = expectedEr; changed = true; }
+                if (changed) { d.UpdatedAt = DateTime.UtcNow; ssoAdjusted++; }
+            }
+            if (ssoAdjusted > 0)
+            {
+                run.TotalSocialSecurityEmployer = fixedDetails.Sum(x => x.SocialSecurityEmployer);
+                run.TotalSocialSecurityEmployee = fixedDetails.Sum(x => x.SocialSecurityEmployee);
+                _logger?.LogInformation(
+                    "ซ่อมยอดประกันสังคมให้สอดคล้อง {Count} คน ระหว่างกลับรายการจ่าย run {Run} "
+                    + "→ ลูกจ้าง {Emp} · นายจ้าง {Er}",
+                    ssoAdjusted, payrollRunId, run.TotalSocialSecurityEmployee,
+                    run.TotalSocialSecurityEmployer);
+            }
+            _ssoAdjustedOnReopen = ssoAdjusted;
 
             run.JournalEntryId = null;
             run.Status = "Approved";

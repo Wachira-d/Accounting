@@ -1363,8 +1363,10 @@ const Page = {
       return;
     }
     try {
-      await api.reopenPayrollRun(runId, reason.trim());
-      Layout.toast('กลับรายการจ่ายแล้ว — แก้ยอดได้ จากนั้นกด "จ่าย" ใหม่', 'success');
+      const rr = await api.reopenPayrollRun(runId, reason.trim());
+      // ข้อความจากเซิร์ฟเวอร์ (อาจบอกว่าปรับยอด ปกส. ให้กี่คน) — แสดงตามนั้น
+      Layout.toast(rr?.message || 'กลับรายการจ่ายแล้ว — แก้ยอดได้ จากนั้นกด "จ่าย" ใหม่',
+        'success', 9000);
       await this.viewRun(runId);
       this.loadRuns();
     } catch (e) {
