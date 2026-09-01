@@ -50,6 +50,12 @@ public class AuthController : ControllerBase
             // ค่านี้ตอนพาไป LINE (ห้ามคำนวณจาก location.origin เอง มิฉะนั้น
             // www./non-www หรือโดเมนสำรองจะทำให้สองขั้นตอนอ้างคนละ URL)
             lineCallbackUrl = s.LineEnabled ? s.LoginCallbackUrl : "",
+            // มีค่า = ให้หน้า login ใช้ redirect flow กับ Google (เส้นหลัก)
+            // ว่าง = ยังไม่ได้ตั้ง Client Secret หรือ URL ของระบบ → หน้า login
+            // ตกไปใช้สคริปต์ One Tap พร้อมข้อความบอกว่าต้องไปตั้งอะไร
+            // (ห้ามเงียบ — ดู CLAUDE.md กฎเหล็ก #4 A "ห้าม silent no-op")
+            googleCallbackUrl = s.GoogleEnabled && s.GoogleSecretConfigured
+                ? s.LoginCallbackUrl : "",
         }));
     }
 

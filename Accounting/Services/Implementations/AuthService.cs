@@ -605,10 +605,12 @@ public class AuthService : IAuthService
             LineEnabled: (s?.LineLoginEnabled ?? !string.IsNullOrWhiteSpace(lineId))
                 && !string.IsNullOrWhiteSpace(lineId),
             LineChannelId: lineId,
-            // ค่าเดียวกับที่ GetLineRedirectUriAsync ใช้ตอนแลก code — ส่งให้หน้า
+            // ค่าเดียวกับที่ GetSsoRedirectUriAsync ใช้ตอนแลก code — ส่งให้หน้า
             // login ใช้ต่อ เพื่อให้ทั้งสองขั้นตอนอ้าง URL เดียวกันเป๊ะ
             LoginCallbackUrl: BuildLoginCallbackUrl(
-                FirstNonEmpty(s?.AppBaseUrl, _config["App:BaseUrl"])));
+                FirstNonEmpty(s?.AppBaseUrl, _config["App:BaseUrl"])),
+            GoogleSecretConfigured: !string.IsNullOrWhiteSpace(
+                FirstNonEmpty(s?.GoogleClientSecret, _config["OAuth:Google:ClientSecret"])));
     }
 
     private static string FirstNonEmpty(string? a, string? b)
@@ -631,21 +633,35 @@ public class AuthService : IAuthService
         return _config["OAuth:Line:ChannelSecret"] ?? "";
     }
 
-    /// <summary>Callback URL ที่ต้องตรงกับที่ลงทะเบียนใน LINE Developers —
+    /// <summary>Client Secret ของ Google — เก็บเข้ารหัสใน DB (SecretProtector)
+    /// fallback appsettings สำหรับ deployment เดิม. **ห้ามส่งออกจาก server**
+    /// มีค่า = ใช้ authorization-code redirect flow ได้ (ไม่ต้องพึ่งสคริปต์
+    /// One Tap ที่ถูก CSP/ตัวบล็อก/นโยบายคุกกี้บุคคลที่สามขวางได้)</summary>
+    private async Task<string> GetGoogleClientSecretAsync()
+    {
+        var enc = await _db.SiteSettings.AsNoTracking()
+            .Select(s => s.GoogleClientSecret).FirstOrDefaultAsync();
+        if (!string.IsNullOrWhiteSpace(enc))
+            return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
+        return _config["OAuth:Google:ClientSecret"] ?? "";
+    }
+
+    /// <summary>Callback URL ที่ต้องตรงกับที่ลงทะเบียนไว้ที่ผู้ให้บริการ —
     /// หน้า login ส่งผู้ใช้ไปด้วยค่านี้ ตอนแลก code ก็ต้องส่งค่าเดียวกัน
-    /// (LINE ตรวจตรง ๆ ไม่ตรง = invalid_grant)</summary>
-    private async Task<string> GetLineRedirectUriAsync()
+    /// (ทั้ง LINE และ Google ตรวจตรง ๆ ไม่ตรง = invalid_grant / redirect_uri_mismatch).
+    /// ตัวเดียวของทั้งระบบ — ห้ามคำนวณซ้ำที่อื่น</summary>
+    private async Task<string> GetSsoRedirectUriAsync(string provider)
     {
         var baseUrl = await _db.SiteSettings.AsNoTracking()
             .Select(s => s.AppBaseUrl).FirstOrDefaultAsync();
         if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = _config["App:BaseUrl"] ?? "";
         var url = BuildLoginCallbackUrl(baseUrl);
-        // ยังไม่ได้ตั้ง URL ระบบ → เดิมคืน "/login.html" แบบ relative ซึ่ง LINE
+        // ยังไม่ได้ตั้ง URL ระบบ → เดิมคืน "/login.html" แบบ relative ซึ่ง provider
         // ปฏิเสธ แล้วผู้ใช้เห็นแค่ "แลก code ไม่สำเร็จ" โดยไม่รู้ว่าต้องไปตั้งอะไร
         if (string.IsNullOrWhiteSpace(url))
             throw new InvalidOperationException(
-                "ยังไม่ได้ตั้ง \"URL ของระบบ\" (AppBaseUrl) — LINE Login ต้องใช้ค่านี้สร้าง "
-                + "Callback URL ที่ต้องตรงกับที่ลงทะเบียนไว้ใน LINE Developers. "
+                $"ยังไม่ได้ตั้ง \"URL ของระบบ\" (AppBaseUrl) — {provider} Login ต้องใช้ค่านี้สร้าง "
+                + "Callback URL ที่ต้องตรงกับที่ลงทะเบียนไว้ฝั่งผู้ให้บริการ. "
                 + "ตั้งที่หน้าแอดมิน → ตั้งค่าระบบ → URL ของระบบ แล้วลองใหม่");
         return url;
     }
@@ -674,7 +690,7 @@ public class AuthService : IAuthService
                 {
                     ["grant_type"] = "authorization_code",
                     ["code"] = idToken,
-                    ["redirect_uri"] = await GetLineRedirectUriAsync(),
+                    ["redirect_uri"] = await GetSsoRedirectUriAsync("LINE"),
                     ["client_id"] = channelId,
                     ["client_secret"] = secret,
                 }));
@@ -708,10 +724,49 @@ public class AuthService : IAuthService
         return (sub, email, name);
     }
 
+    /// <summary>Google Login — รับได้ทั้ง <c>id_token</c> (One Tap / GIS) และ
+    /// <c>authorization code</c> จาก redirect flow เหมือนฝั่ง LINE.
+    ///
+    /// ⚠️ redirect flow เป็นเส้นหลักตั้งแต่รอบ 118: สคริปต์ One Tap
+    /// (accounts.google.com/gsi/client) ต้องผ่าน CSP + ตัวบล็อกโฆษณา + คุกกี้
+    /// บุคคลที่สาม/FedCM จึงจะทำงาน — พังได้หลายทางโดยหน้าเว็บไม่รู้สาเหตุ
+    /// ส่วน redirect ใช้แค่การเปลี่ยนหน้า ไม่มีอะไรมาขวางได้</summary>
     private async Task<(string Id, string Email, string Name)> ValidateGoogleTokenAsync(
         string idToken, string expectedClientIdOverride)
     {
         using var http = new HttpClient();
+
+        // id_token เป็น JWT = มีจุดคั่น 2 ตัวเสมอ — ไม่ใช่ = authorization code
+        // ที่ต้องแลกด้วย client secret (ห้ามออกจาก server) เหมือน ValidateLineTokenAsync
+        if (idToken.Count(ch => ch == '.') != 2)
+        {
+            var secret = await GetGoogleClientSecretAsync();
+            if (string.IsNullOrWhiteSpace(secret))
+                throw new UnauthorizedAccessException(
+                    "ยังไม่ได้ตั้ง Google Client Secret — ตั้งที่หน้าแอดมิน → "
+                    + "เข้าสู่ระบบ (Google/Facebook/LINE) แล้วลองใหม่");
+            var clientIdForExchange = !string.IsNullOrWhiteSpace(expectedClientIdOverride)
+                ? expectedClientIdOverride
+                : (_config["OAuth:Google:ClientId"] ?? "");
+            var tokenRes = await http.PostAsync("https://oauth2.googleapis.com/token",
+                new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["grant_type"] = "authorization_code",
+                    ["code"] = idToken,
+                    ["redirect_uri"] = await GetSsoRedirectUriAsync("Google"),
+                    ["client_id"] = clientIdForExchange,
+                    ["client_secret"] = secret,
+                }));
+            if (!tokenRes.IsSuccessStatusCode)
+                throw new UnauthorizedAccessException(
+                    "แลก Google authorization code ไม่สำเร็จ (ตรวจ Authorized redirect URI "
+                    + "ใน Google Cloud Console ให้ตรงกับ Callback URL ของระบบ)");
+            using var td = JsonDocument.Parse(await tokenRes.Content.ReadAsStringAsync());
+            idToken = td.RootElement.TryGetProperty("id_token", out var it) ? it.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(idToken))
+                throw new UnauthorizedAccessException("Google ไม่คืน id_token — ตรวจว่า scope มี openid");
+        }
+
         var res = await http.GetAsync($"https://oauth2.googleapis.com/tokeninfo?id_token={Uri.EscapeDataString(idToken)}");
         if (!res.IsSuccessStatusCode)
             throw new UnauthorizedAccessException("Google token ไม่ถูกต้องหรือหมดอายุ");

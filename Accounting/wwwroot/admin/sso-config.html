@@ -47,13 +47,19 @@
 
     const PROVIDERS = [
       { key: 'google', icon: '🟦', name: 'Google', idLabel: 'Client ID',
-        secretLabel: 'Client Secret (ไม่บังคับ)', console: 'https://console.cloud.google.com/apis/credentials',
+        secretLabel: 'Client Secret (แนะนำให้ใส่)', console: 'https://console.cloud.google.com/apis/credentials',
         steps: cb => `
           1. เปิด <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console → Credentials</a><br>
           2. สร้าง <b>OAuth client ID</b> → ประเภท <b>Web application</b><br>
           3. ใส่ <b>Authorized JavaScript origins</b>: <code>${cb.origin}</code><br>
-          4. ใส่ <b>Authorized redirect URIs</b>: <code>${cb.login}</code><br>
-          5. คัดลอก <b>Client ID</b> มาวางด้านล่าง แล้วติ๊กเปิดใช้งาน` },
+          4. ใส่ <b>Authorized redirect URIs</b>: <code>${cb.login}</code>
+             <button type="button" class="btn btn-sm btn-secondary" style="margin-left:6px"
+               onclick="navigator.clipboard.writeText('${cb.login}').then(()=>Layout.toast('คัดลอก Redirect URI แล้ว','success'))">📋 คัดลอก</button>
+             <span style="color:#b45309">(ต้องตรงเป๊ะทุกตัวอักษร รวม http/https และ www)</span><br>
+          5. คัดลอก <b>Client ID</b> + <b>Client Secret</b> มาวางด้านล่าง แล้วติ๊กเปิดใช้งาน<br>
+          <span style="color:#0f766e">ℹ️ <b>ใส่ Client Secret ด้วย</b> — มีแล้วระบบจะพาผู้ใช้ไปหน้า Google
+          แบบเปลี่ยนหน้า (redirect) ซึ่งทำงานได้ทุกเบราว์เซอร์ ไม่พึ่งสคริปต์ One Tap ที่ถูกตัวบล็อก
+          หรือการปิดคุกกี้ข้ามเว็บขวางจนปุ่มกดแล้วเงียบ</span>` },
       { key: 'facebook', icon: '🔵', name: 'Facebook', idLabel: 'App ID',
         secretLabel: 'App Secret (ไม่บังคับ)', console: 'https://developers.facebook.com/apps',
         steps: cb => `

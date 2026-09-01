@@ -476,7 +476,8 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 | วิธี | สถานะ | หมายเหตุ |
 | --- | --- | --- |
 | Email + password (ในระบบ) | ✅ | `AuthController` login/refresh/forgot/reset ครบ |
-| Google / Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) |
+| **Google OAuth** | ✅ | `POST /auth/sso` — เส้นหลักคือ **authorization-code redirect** เหมือน LINE (`ValidateGoogleTokenAsync` แลก code ที่ `oauth2.googleapis.com/token` ด้วย `SiteSettings.GoogleClientSecret` แล้ว verify id_token ที่ tokeninfo); One Tap (`gsi/client`) เหลือเป็นทางสำรองเมื่อยังไม่ได้ตั้ง secret |
+| Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) — ยังใช้ JS SDK |
 | **LINE Login** (OAuth2) | ✅ | authorization-code flow → `AuthService.ValidateLineTokenAsync` (channel secret ไม่ออกจาก server); คนละอย่างกับ LINE bot binding ที่มีแล้ว (`User.LineUserId` + `LineBindCode`) — แต่ login แล้ว map เข้า `LineUserId` เดิมได้เลย บัญชีเดียวทั้ง login และ bot |
 | **Microsoft Entra ID (Office 365)** | 📋 | OIDC มาตรฐาน; ตลาดเดียวกับลูกค้า Dynamics พอดี — บริษัทที่ใช้ Dynamics มี M365 อยู่แล้วเกือบ 100% |
 
@@ -485,11 +486,22 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
   (DB ชนะ `appsettings.json`); `GET /api/auth/sso-config` คืนเฉพาะ provider ที่
   **เปิดสวิตช์ + มีคีย์ครบ** → หน้า `login.html`/`register.html` ซ่อนปุ่มที่เหลือ
   (ปุ่มที่กดแล้วพัง = ปุ่มหลอก ห้ามมี) และแสดงข้อความจริงเมื่อ SDK ของ
-  Google/Facebook โหลดไม่ขึ้น (ตัวบล็อกโฆษณา) แทนที่จะเงียบ
+  Facebook โหลดไม่ขึ้น แทนที่จะเงียบ
+- ⚠️ **CSP ต้องอนุญาต origin ของ SDK ด้วย** — `script-src` ใน
+  `Middleware/SecurityMiddleware.cs` เดิมไม่มี `https://accounts.google.com`
+  (และ `https://connect.facebook.net`) ⇒ เบราว์เซอร์บล็อกสคริปต์เงียบ ⇒ ปุ่ม Google
+  ขึ้น "โหลดบริการไม่สำเร็จ — ปิดตัวบล็อกโฆษณา" ตลอด ทั้งที่ผู้ใช้ไม่มีตัวบล็อกเลย.
+  บังคับด้วย `tools/csp_external_ref_check.py`
+- **redirect flow ตัวกลางตัวเดียว** `wwwroot/js/sso.js` (`Sso.begin` / `Sso.readCallback`)
+  ใช้ร่วมกันทั้ง `login.html` และ `register.html` สำหรับ **LINE และ Google** —
+  เก็บ `ssoState` (กัน CSRF) + `ssoProvider` (รู้ว่าจะส่ง provider ไหนให้ backend)
+  + `ssoSignup` (พก companyName/แพ็กเกจ/หลักฐานยินยอมข้าม redirect) ใน
+  sessionStorage; callback URL มาจากเซิร์ฟเวอร์ที่เดียว (`SsoSettings.LoginCallbackUrl`)
+  ห้ามคำนวณจาก `location.origin` เอง
 - **สมัครผ่าน SSO**: ปุ่มอยู่**นอก** `<form>` ⇒ เบราว์เซอร์ไม่ตรวจ `required` ให้
   → `register.html._ssoPreflight()` บังคับติ๊ก "ยอมรับข้อกำหนด + นโยบายความเป็น
   ส่วนตัว" เอง ก่อนพาออกไป IdP; `companyName` + แพ็กเกจที่เลือกถูกส่งเข้า
-  `POST /auth/sso` ด้วย (LINE พกข้าม redirect ผ่าน `sessionStorage.lineSignup`)
+  `POST /auth/sso` ด้วย (LINE/Google พกข้าม redirect ผ่าน `sessionStorage.ssoSignup`)
   — มิฉะนั้นผู้สมัครผ่าน SSO จะได้ `FreeTrial` เสมอและบริษัทไม่มีชื่อ
 - **ความยินยอม PDPA ม.19 (✅ ลงโค้ดแล้ว)** — ทุกทางที่สร้าง `User` ใหม่ผ่าน
   `AuthService.RequireSignupConsent()` + `RecordSignupConsentAsync()`:
@@ -546,7 +558,13 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-28 (rev 17 — **VAT ค่าบริการปัดเศษไม่ตรงกัน_
+_Last verified against codebase: 2026-09-01 (rev 18 — **ปุ่ม Google login กดแล้ว_
+_ไม่ขึ้นอะไร**: CSP ของระบบเอง (`script-src`) ไม่มี `accounts.google.com` ⇒ สคริปต์_
+_One Tap ถูกบล็อกเงียบทุกครั้งตั้งแต่วันแรก แล้วหน้า login ขึ้นข้อความโทษตัวบล็อก_
+_โฆษณา — แก้ CSP + ย้าย Google มาใช้ **authorization-code redirect** เหมือน LINE_
+_(ต่อสาย `GoogleClientSecret` ที่มีช่องกรอกในหน้าแอดมินมาตลอดแต่ไม่มีใครเรียกใช้) +_
+_ยุบโค้ด redirect ของสองหน้าเข้า `wwwroot/js/sso.js` ตัวเดียว + `tools/csp_external_ref_check.py`);_
+_ก่อนหน้า 2026-08-28 (rev 17 — **VAT ค่าบริการปัดเศษไม่ตรงกัน_
 _ระหว่างสองตัวออกบิล**: `PlatformBillingDocumentIssuer` คิด 7/107 พร้อม_
 _`MidpointRounding.AwayFromZero` ถูกต้อง แต่ `SaasBillingDocumentService` ที่คิด_
 _**สูตรเดียวกัน** ลืมทั้ง 4 จุด (inclusive/exclusive × 2 เส้นทาง) และ_

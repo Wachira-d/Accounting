@@ -157,6 +157,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/api.js"></script>
+  <script src="/js/sso.js"></script>
   <script>
     I18n.init();
 
@@ -259,11 +260,31 @@
       }
     }
 
+    /** ข้อมูลที่กรอกไว้บนหน้านี้ ต้องพกข้ามไปกับ redirect ทุกครั้ง ไม่งั้นตอน
+     *  วนกลับมาที่ /login.html จะกลายเป็นสมัครโดยไม่มีหลักฐานยินยอม (PDPA ม.19)
+     *  — ตัวเดียวให้ทั้ง LINE และ Google ใช้ (ห้ามประกอบ payload สองที่) */
+    function _ssoSignupPayload() {
+      return {
+        companyName: document.getElementById('companyName')?.value || '',
+        plan: document.querySelector('input[name="plan"]:checked')?.value || null,
+        // การยอมรับเกิดที่**หน้านี้** (ผ่าน _ssoPreflight) ต้องพกข้ามไปด้วย
+        acceptedTerms: true,
+        policyVersion: policyVersion,
+      };
+    }
+
+    function _ssoError(msg) {
+      const el = document.getElementById('errorMsg');
+      if (el) { el.textContent = msg; el.classList.remove('hidden'); }
+    }
+
+    /** Google — เส้นหลักคือ redirect flow (กลับมาที่ /login.html เหมือน LINE)
+     *  One Tap เป็นทางสำรองเมื่อยังไม่ได้ตั้ง Client Secret เท่านั้น */
     function handleGoogleRegister() {
       if (!ssoConfig.google || !_ssoPreflight()) return;
+      if (Sso.begin('Google', ssoConfig, _ssoSignupPayload())) return;
       if (!window.google?.accounts?.id) {
-        document.getElementById('errorMsg').textContent = 'โหลดบริการ Google ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
-        document.getElementById('errorMsg').classList.remove('hidden');
+        _ssoError(Sso.notReadyMessage('Google'));
         return;
       }
       google.accounts.id.initialize({
@@ -295,32 +316,8 @@
      *  ผ่าน sessionStorage เพื่อไม่ให้ข้อมูลที่กรอกหายตอนวนกลับ */
     function handleLineRegister() {
       if (!ssoConfig.line || !_ssoPreflight()) return;
-      const state = Math.random().toString(36).slice(2);
-      try {
-        sessionStorage.setItem('lineState', state);
-        sessionStorage.setItem('lineSignup', JSON.stringify({
-          companyName: document.getElementById('companyName')?.value || '',
-          plan: document.querySelector('input[name="plan"]:checked')?.value || null,
-          // การยอมรับเกิดที่**หน้านี้** (ผ่าน _ssoPreflight) ต้องพกข้ามไปด้วย
-          // ไม่งั้นตอนกลับมาที่ /login.html จะกลายเป็นสมัครโดยไม่มีหลักฐานยินยอม
-          acceptedTerms: true,
-          policyVersion: policyVersion,
-        }));
-      } catch (e) {}
-      // ⚠️ ต้องเป็น **ค่าเดียวกับที่เซิร์ฟเวอร์ใช้ตอนแลก code** (มาจาก AppBaseUrl)
-      // เดิมคำนวณจาก location.origin เอง ⇒ เปิดด้วย www. แต่ AppBaseUrl ไม่มี www
-      // (หรือกลับกัน) = คนละ URL ⇒ LINE ตอบ invalid_grant แล้วผู้ใช้เห็นแค่
-      // "แลก code ไม่สำเร็จ" ทั้งที่ตั้งค่าใน LINE Developers ถูกแล้ว
-      const redirect = ssoConfig.lineCallbackUrl || (location.origin + '/login.html');
-      if (!ssoConfig.lineCallbackUrl) {
-        console.warn('[LINE Login] เซิร์ฟเวอร์ยังไม่ส่ง callback URL — ใช้ origin ปัจจุบันแทน '
-          + 'ถ้าเข้าสู่ระบบไม่ผ่าน ให้ตั้ง "URL ของระบบ" ในหน้าแอดมิน');
-      }
-      window.location.href = 'https://access.line.me/oauth2/v2.1/authorize?response_type=code'
-        + '&client_id=' + encodeURIComponent(ssoConfig.line)
-        + '&redirect_uri=' + encodeURIComponent(redirect)
-        + '&state=' + encodeURIComponent(state)
-        + '&scope=' + encodeURIComponent('profile openid email');
+      if (!Sso.begin('Line', ssoConfig, _ssoSignupPayload()))
+        _ssoError(Sso.notReadyMessage('LINE'));
     }
 
     // ===== Live password validation =====

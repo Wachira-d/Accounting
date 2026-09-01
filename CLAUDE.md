@@ -558,6 +558,7 @@ python3 tools/admin_menu_gate_check.py # เมนู/endpoint ของแพ�
 python3 tools/upload_route_check.py  # โฟลเดอร์อัปโหลดที่เขียนได้แต่ static handler ตอบ 404
 python3 tools/regex_line_span_check.py # \s เป็นตัวคั่นระหว่างตัวเลข → กลืนขึ้นบรรทัดใหม่
 python3 tools/advisory_lock_key_check.py # คีย์ advisory lock ที่สุ่มต่อ process → ล็อกข้ามเครื่องไม่ได้
+python3 tools/csp_external_ref_check.py # สคริปต์/สไตล์ภายนอกที่ CSP ของเราเองไม่อนุญาต → เบราว์เซอร์บล็อกเงียบ
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -1199,6 +1200,26 @@ awk brace-balance                      # ทุก .cs ที่แก้
   _(บทเรียนเดียวกับ "control ที่ไม่มีเทสต์ยืนยัน = ไม่มี control"). ถ้าจะทำจริง_
   _ต้องมี type resolution ระดับ Roslyn ซึ่งเกินขอบเขตของ tools/ ชุดนี้ —_
   _ทางที่คุ้มกว่าคือ `dotnet build` ฝั่งผู้ใช้ ซึ่งจับได้ทันทีอยู่แล้ว)_
+- **CSP เป็น allow-list — สคริปต์ที่ไม่ได้ระบุถูกบล็อกเงียบ และข้อความ error ที่
+  เขียนไว้จะ "โทษผิดตัว" ตลอดไป** หน้า login โหลด
+  `https://accounts.google.com/gsi/client` แต่ `script-src` ใน `SecurityMiddleware`
+  มีแค่ `'self'` + fonts.googleapis.com + cdn.jsdelivr.net ⇒ เบราว์เซอร์บล็อก
+  ทุกครั้ง ⇒ `window.google` ไม่เคยมี ⇒ ปุ่มขึ้น **"โหลดบริการ Google ไม่สำเร็จ —
+  ปิดตัวบล็อกโฆษณาแล้วลองใหม่"** ทั้งที่ผู้ใช้ไม่มีตัวบล็อกโฆษณาเลย (Facebook SDK
+  โดนแบบเดียวกัน · LINE รอดเพราะเป็น redirect ล้วน ไม่โหลดสคริปต์ของใคร)
+  → บทเรียนสองชั้น: (ก) **ข้อความ error ที่เดาสาเหตุแทนผู้ใช้ อันตรายกว่าไม่บอก
+  อะไรเลย** — มันพาไล่ผิดทางเป็นเดือน เขียนให้บอก "ทางแก้ที่อยู่ในมือเรา" แทน
+  (ข) **ของที่ต้องพึ่งสคริปต์ของบุคคลที่สามมีจุดพังมากกว่าที่คิด** (CSP ของเราเอง ·
+  ตัวบล็อก · คุกกี้ข้ามเว็บ/FedCM · in-app browser) — เมื่อมี **redirect flow**
+  ให้เลือก ให้ใช้ redirect เป็นเส้นหลักเสมอ. `GoogleClientSecret` มีช่องให้กรอกใน
+  หน้าแอดมินมาตลอดแต่ **ไม่มีใครเรียกใช้เลย** (defect class "ของที่สร้างไว้แล้ว
+  ไม่ได้ถูกเรียกใช้") — ต่อสายให้เป็นตัวแลก authorization code เหมือน LINE
+  _(→ เพิ่ม `tools/csp_external_ref_check.py` โยง "หน้าเว็บโหลดอะไร" (wwwroot)_
+  _เข้ากับ "เซิร์ฟเวอร์อนุญาตอะไร" (CSP ใน middleware) ซึ่งอยู่คนละไฟล์คนละภาษา —_
+  _รูปแบบเดียวกับ `upload_route_check`. **บทเรียนซ้อน**: รุ่นแรกตัดคอมเมนต์ด้วย_
+  _`//[^\n]*` ก่อนดึง string literal แล้วมันไป**กิน `//` ของ `https://`** ที่อยู่ใน_
+  _สตริงเอง ⇒ ฟ้องผิด 300+ จุด — การตัดคอมเมนต์ต้องแยกสถานะในสตริง/นอกสตริงเสมอ_
+  _(ซ้ำรอยบทเรียน tokenizer ของ `js_dup_method_check`))_
 - checker ใหม่ทุกตัวต้องผ่าน **negative test** ก่อนเชื่อ: ใส่บั๊กที่ตั้งใจจับ
   กลับเข้าไปแล้วยืนยันว่า checker จับได้จริง (เคยมี checker ที่ regex ผิด
   จนไม่จับเคสหลักของตัวเอง)
