@@ -15,6 +15,10 @@ window.Sso = {
   KEY_STATE: 'ssoState',
   KEY_PROVIDER: 'ssoProvider',
   KEY_SIGNUP: 'ssoSignup',
+  /** 'login' (ค่าเริ่มต้น) | 'link' = ผูกบัญชีเพิ่มให้ผู้ใช้ที่ล็อกอินอยู่แล้ว
+   *  ต้องเก็บไว้เพราะ provider อนุญาต callback URL ได้ชุดเดียว (/login.html)
+   *  ⇒ ขากลับต้องรู้เองว่า "กดมาจากหน้าไหน เพื่อทำอะไร" */
+  KEY_MODE: 'ssoMode',
 
   AUTHORIZE: {
     Line: 'https://access.line.me/oauth2/v2.1/authorize',
@@ -47,12 +51,13 @@ window.Sso = {
    *  (ชื่อบริษัท/แพ็กเกจ/หลักฐานการยอมรับข้อกำหนด) ซึ่งต้องพกข้ามไปด้วย ไม่งั้น
    *  ตอนวนกลับมาที่ /login.html จะกลายเป็นสมัครโดยไม่มีหลักฐานยินยอม (PDPA ม.19)
    *  คืน false = ยังไม่พร้อม (ผู้เรียกต้องแสดงเหตุผล ห้ามเงียบ) */
-  begin(provider, cfg, signup) {
+  begin(provider, cfg, signup, mode) {
     if (!this.supportsRedirect(provider, cfg)) return false;
     const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
     try {
       sessionStorage.setItem(this.KEY_STATE, state);
       sessionStorage.setItem(this.KEY_PROVIDER, provider);
+      sessionStorage.setItem(this.KEY_MODE, mode || 'login');
       if (signup) sessionStorage.setItem(this.KEY_SIGNUP, JSON.stringify(signup));
       else sessionStorage.removeItem(this.KEY_SIGNUP);
     } catch (e) {}
@@ -80,15 +85,16 @@ window.Sso = {
     // อ่านแต่ไม่มีใครเขียน ซึ่งเป็น defect class ที่เรพนี้มี checker ดักไว้
     // (tools/localstorage_key_check.py). ผู้ใช้ที่กำลังวนอยู่พอดีตอน deploy จะ
     // เจอ "สถานะไม่ตรงกัน — ลองใหม่อีกครั้ง" ครั้งเดียวแล้วกดใหม่ได้ทันที
-    let saved = null, provider = 'Line', signup = null;
+    let saved = null, provider = 'Line', signup = null, mode = 'login';
     try {
       saved = sessionStorage.getItem(this.KEY_STATE);
       provider = sessionStorage.getItem(this.KEY_PROVIDER) || 'Line';
+      mode = sessionStorage.getItem(this.KEY_MODE) || 'login';
       const raw = sessionStorage.getItem(this.KEY_SIGNUP);
       if (raw) signup = JSON.parse(raw);
     } catch (e) {}
     try {
-      [this.KEY_STATE, this.KEY_PROVIDER, this.KEY_SIGNUP]
+      [this.KEY_STATE, this.KEY_PROVIDER, this.KEY_SIGNUP, this.KEY_MODE]
         .forEach(k => sessionStorage.removeItem(k));
     } catch (e) {}
     // ล้าง query ทิ้งทันที — กันกด refresh แล้วยิง code ซ้ำ (code ใช้ได้ครั้งเดียว)
@@ -96,14 +102,15 @@ window.Sso = {
 
     if (oauthErr) {
       return {
+        mode: mode,
         error: oauthErr === 'access_denied'
           ? ('คุณยกเลิกการเข้าสู่ระบบด้วย ' + provider)
           : ('เข้าสู่ระบบด้วย ' + provider + ' ไม่สำเร็จ (' + oauthErr + ')'),
       };
     }
     if (!saved || saved !== state)
-      return { error: 'สถานะการเข้าสู่ระบบ ' + provider + ' ไม่ตรงกัน — ลองใหม่อีกครั้ง' };
-    return { provider: provider, code: code, signup: signup };
+      return { mode: mode, error: 'สถานะการเข้าสู่ระบบ ' + provider + ' ไม่ตรงกัน — ลองใหม่อีกครั้ง' };
+    return { provider: provider, code: code, signup: signup, mode: mode };
   },
 
   /** ข้อความเดียวกันทุกหน้าเมื่อ redirect flow ยังไม่พร้อม — บอก**ทางแก้** เสมอ

@@ -492,6 +492,20 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
     ผู้ใช้ของเรา ก็เข้าถึงข้อมูลทั้ง tenant ได้ — account pre-hijacking)_
   - ยืนยันไม่ได้ → ไม่ตัน: แถวสถานะ `ConfirmedAt=null` + ส่งลิงก์อายุ 1 ชม. →
     `GET /api/auth/sso/confirm-link?token=` → redirect `/login.html?ssoLinked=…`
+  - 🆕 **ไม่มีอีเมลจาก provider ก็ใช้งานได้ (รอบ 120)** — LINE คืนอีเมลเฉพาะ
+    channel ที่ผ่านอนุมัติสิทธิ์ email ซึ่งส่วนใหญ่ยังไม่ผ่าน. ตัวระบุตัวตนหลัก
+    คือ `ProviderUserId` (LINE userId) ไม่ใช่อีเมล:
+    - **ผูกไว้แล้ว** → ล็อกอินได้เลย ไม่แตะอีเมล
+    - **ยังไม่เคยผูก** → `SsoSignupRequiredException` → API ตอบ 200 พร้อม
+      `needsSignup + ssoTicket + suggestedName + pictureUrl` → หน้า login พาไป
+      `/register.html` เติมชื่อ/รูปให้ ผู้ใช้กรอกแค่อีเมล+รหัสผ่าน →
+      `RegisterRequest.SsoTicket` ผูกบัญชีให้อัตโนมัติ
+    - ตั๋วเซ็นด้วย **กุญแจผูกวัตถุประสงค์** (`JwtHelper.GenerateSsoSignupTicket`,
+      อายุ 20 นาที) ⇒ access token เอามาสวมเป็นตั๋วไม่ได้ (`SsoSignupTicketTests`)
+    - **ผูกตอนล็อกอินอยู่แล้ว**: `POST /api/auth/external-logins/link` —
+      ไม่ต้องใช้อีเมลเลย (JWT + OAuth สด = พิสูจน์ครบทั้งสองฝั่ง);
+      หน้าตั้งค่ามีปุ่ม "ผูกบัญชี LINE/Google" ที่เดินผ่าน `/login.html`
+      ด้วย `ssoMode='link'` เพราะ provider ตั้ง callback URL ได้ชุดเดียว
   - **ห้ามผูกเงียบ** — ทุกครั้งที่ผูก/ถอด เขียน `AuditLog` (EntityType
     `UserExternalLogin`) + ส่งอีเมลแจ้งเจ้าของ; ผู้ใช้ดู/ถอดเองได้ที่
     **ตั้งค่า → 🔐 ความปลอดภัยบัญชี** (`GET/DELETE /api/auth/external-logins`)
@@ -585,7 +599,11 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-01 (rev 19 — **SSO ผูกบัญชีด้วยอีเมล_
+_Last verified against codebase: 2026-09-01 (rev 20 — **LINE ที่ไม่มีสิทธิ์_
+_email ใช้งานไม่ได้เลยแม้แต่คนที่ผูกบัญชีไว้แล้ว**: เลิกบังคับอีเมล ใช้_
+_`ProviderUserId` เป็นตัวระบุตัวตนหลัก · ไม่มีบัญชี → พาไปหน้าสมัครพร้อมตั๋ว_
+_ที่เซ็นแล้ว + เติมชื่อ/รูปให้ · เพิ่มเส้น "ผูกบัญชีตอนล็อกอินอยู่แล้ว");_
+_ก่อนหน้า 2026-09-01 (rev 19 — **SSO ผูกบัญชีด้วยอีเมล_
 _อย่างเดียวมาตลอด + ไม่มีทางเข้าไหนอ่าน `User.Status` เลย**: เพิ่ม_
 _`Helpers/SsoIdentityPolicy` (ผูกได้ต่อเมื่อ provider ยืนยันอีเมล — Facebook ต้อง_
 _ผ่านลิงก์ยืนยันเสมอ) · `Helpers/UserLoginPolicy` (ด่านสถานะร่วมสามทางเข้า) ·_

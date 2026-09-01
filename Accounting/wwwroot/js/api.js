@@ -1113,6 +1113,10 @@ const API = {
   // บัญชี Google/Facebook/LINE ที่ผูกกับผู้ใช้ (หน้าตั้งค่า → ความปลอดภัยบัญชี)
   getExternalLogins: () => API.get('/api/auth/external-logins'),
   removeExternalLogin: (id) => API.del(`/api/auth/external-logins/${id}`),
+  // ผูกเพิ่มขณะล็อกอินอยู่แล้ว — ไม่ต้องมีอีเมลจาก provider (LINE ที่ยังไม่ได้
+  // สิทธิ์ email ก็ผูกได้) · idToken = authorization code ที่เพิ่งได้จาก OAuth
+  linkExternalLogin: (provider, idToken) =>
+    API.post('/api/auth/external-logins/link', { provider, idToken }),
 
   getCompanies: () => API.get('/api/company'),
   createCompany: (d) => API.post('/api/company', d),

@@ -88,6 +88,21 @@ public class AuthController : ControllerBase
         return Ok(new ApiResponse<object>(true, rows));
     }
 
+    /// <summary>ผูกบัญชีภายนอกเพิ่ม ขณะล็อกอินอยู่แล้ว — ไม่ต้องมีอีเมลจาก
+    /// provider (ใช้กับ LINE ที่ channel ยังไม่ได้รับสิทธิ์ email). หน้าเว็บพา
+    /// ผู้ใช้ผ่าน OAuth ตามปกติ แล้วส่ง code ที่ได้กลับมาที่นี่</summary>
+    [Authorize]
+    [HttpPost("external-logins/link")]
+    public async Task<ActionResult<ApiResponse<ExternalLoginResponse>>> LinkExternalLogin(
+        [FromBody] LinkExternalLoginRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var row = await _authService.LinkExternalLoginForUserAsync(
+            userId, request.Provider, request.IdToken);
+        return Ok(new ApiResponse<ExternalLoginResponse>(true, row,
+            $"ผูกบัญชี {row.ProviderDisplayName} แล้ว"));
+    }
+
     [Authorize]
     [HttpDelete("external-logins/{linkId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> RemoveExternalLogin(Guid linkId)
@@ -176,10 +191,29 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("sso")]
-    public async Task<ActionResult<ApiResponse<LoginResponse>>> SsoLogin([FromBody] SsoLoginRequest request)
+    public async Task<ActionResult<ApiResponse<object>>> SsoLogin([FromBody] SsoLoginRequest request)
     {
-        var result = await _authService.SsoLoginAsync(request);
-        return Ok(new ApiResponse<LoginResponse>(true, result, "เข้าสู่ระบบสำเร็จ"));
+        try
+        {
+            var result = await _authService.SsoLoginAsync(request);
+            return Ok(new ApiResponse<object>(true, result, "เข้าสู่ระบบสำเร็จ"));
+        }
+        catch (SsoSignupRequiredException ex)
+        {
+            // provider ไม่ให้อีเมลมา (LINE ที่ยังไม่ได้สิทธิ์ email) และยังไม่เคย
+            // ผูกบัญชี → **ไม่ใช่ error ที่จบตรงนี้** แต่คือ "ไปต่อที่หน้าสมัคร"
+            // ส่งของที่ดึงมาได้ + ตั๋วที่เซ็นแล้วกลับไปให้หน้าเว็บพาไปกรอกอีเมล
+            // (ตอบ 200 เพราะ 4xx จะถูกหน้าเว็บตีความเป็น "พัง" แล้วโชว์ error แดง)
+            return Ok(new ApiResponse<object>(false, new
+            {
+                needsSignup = true,
+                provider = ex.Provider,
+                providerName = SsoIdentityPolicy.DisplayName(ex.Provider),
+                ssoTicket = ex.Ticket,
+                suggestedName = ex.SuggestedName,
+                pictureUrl = ex.PictureUrl,
+            }, ex.Message));
+        }
     }
 
     [HttpPost("refresh")]

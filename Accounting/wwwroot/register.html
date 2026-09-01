@@ -30,6 +30,12 @@
         <p class="subtitle" data-i18n="register.subtitle">กรอกข้อมูลเพื่อเริ่มต้นใช้งาน</p>
 
         <div id="errorMsg" class="hidden" style="padding:12px 16px;background:#FEF2F2;color:#DC2626;border-radius:var(--radius);font-size:14px;margin-bottom:16px;white-space:pre-line;line-height:1.5"></div>
+        <!-- สมัครต่อจากปุ่ม LINE/Google ที่ provider ไม่ได้ให้อีเมลมา —
+             ระบบรู้จักตัวตนแล้ว ขาดแค่อีเมล (ใช้กู้บัญชี/รับเอกสาร) -->
+        <div id="ssoTicketBanner" class="hidden" style="padding:12px 16px;background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;border-radius:var(--radius);font-size:14px;margin-bottom:16px;line-height:1.6;display:flex;gap:12px;align-items:center">
+          <img id="ssoTicketPic" alt="" style="width:40px;height:40px;border-radius:50%;object-fit:cover;display:none">
+          <div id="ssoTicketText" style="flex:1"></div>
+        </div>
 
         <form onsubmit="handleRegister(event)">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -266,6 +272,44 @@
       return new URLSearchParams(location.search).get('invite') || null;
     }
 
+    /** ตั๋วจากหน้า login: ผู้ใช้กด LINE/Google มาแล้วจริง แต่ provider ไม่ให้
+     *  อีเมล ⇒ เรารู้จักตัวตนเขาแล้ว ขาดแค่อีเมล. เติมชื่อที่ดึงมาได้ให้เลย
+     *  ผู้ใช้กรอกเพิ่มแค่อีเมล + รหัสผ่าน แล้วระบบผูกบัญชีให้อัตโนมัติ
+     *  — **ห้ามแต่งอีเมลให้เอง** (ค่าที่แต่งขึ้นอันตรายกว่าการถาม) */
+    let _ssoTicket = null;
+    (function applySsoTicket() {
+      let t = null;
+      try {
+        const raw = sessionStorage.getItem('ssoSignupTicket');
+        if (raw) { t = JSON.parse(raw); sessionStorage.removeItem('ssoSignupTicket'); }
+      } catch (e) {}
+      if (!t || !t.ticket) return;
+      _ssoTicket = t.ticket;
+
+      const name = (t.suggestedName || '').trim();
+      if (name) {
+        const parts = name.split(/\s+/);
+        const fn = document.getElementById('firstName');
+        const ln = document.getElementById('lastName');
+        if (fn && !fn.value) fn.value = parts[0] || name;
+        if (ln && !ln.value && parts.length > 1) ln.value = parts.slice(1).join(' ');
+      }
+      const banner = document.getElementById('ssoTicketBanner');
+      const txt = document.getElementById('ssoTicketText');
+      const pic = document.getElementById('ssoTicketPic');
+      if (pic && t.pictureUrl) { pic.src = t.pictureUrl; pic.style.display = ''; }
+      if (txt) {
+        const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
+          c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+        txt.innerHTML = `✅ ยืนยันตัวตนด้วย <b>${esc(t.providerName || t.provider)}</b> แล้ว`
+          + (name ? ` (${esc(name)})` : '')
+          + `<br><span style="font-size:13px">${esc(t.providerName || t.provider)} ไม่ได้ให้อีเมลมา `
+          + `— กรอกอีเมลและรหัสผ่านเพื่อใช้กู้บัญชี แล้วระบบจะผูก `
+          + `${esc(t.providerName || t.provider)} ให้อัตโนมัติ ครั้งหน้ากดปุ่มเดียวเข้าได้เลย</span>`;
+      }
+      if (banner) banner.classList.remove('hidden');
+    })();
+
     function _ssoSignupPayload() {
       const invite = _inviteToken();
       return {
@@ -414,6 +458,8 @@
           companyName: inviteToken ? null : document.getElementById('companyName').value,
           plan: selectedPlan,
           invitationToken: inviteToken,
+          // ตั๋วจากปุ่ม LINE/Google ที่ไม่ได้อีเมลมา — สมัครเสร็จระบบผูกให้ทันที
+          ssoTicket: _ssoTicket,
           // PDPA ม.19 — ส่งการยอมรับ + ฉบับนโยบายที่หน้านี้แสดง ไปให้ server
           // เก็บเป็นหลักฐาน (เดิมช่องติ๊กนี้ไม่เคยถูกส่งออกจากเบราว์เซอร์เลย)
           acceptedTerms: document.getElementById('agreeTerms').checked,

@@ -152,7 +152,34 @@ public class AuthService : IAuthService
         await _db.SaveChangesAsync();
 
         // หลักฐานความยินยอม — ต้องหลัง SaveChanges เพราะต้องใช้ user.Id จริง
-        await RecordSignupConsentAsync(user, request.PolicyVersion, "web-form");
+        // ตั๋ว SSO (สมัครต่อจากการกดปุ่ม LINE/Google ที่ provider ไม่ให้อีเมลมา)
+        // → ช่องทางสมัครคือ provider นั้น ไม่ใช่ web-form เปล่า ๆ
+        var ssoTicket = JwtHelper.ReadSsoSignupTicket(request.SsoTicket, _config);
+        await RecordSignupConsentAsync(user, request.PolicyVersion,
+            ssoTicket is { } t0 ? "sso-" + t0.Provider.ToLowerInvariant() : "web-form");
+
+        // ผูกบัญชีภายนอกให้ทันทีตามตั๋ว — ผู้ใช้เพิ่งผ่าน OAuth มาสด ๆ และบัญชีนี้
+        // เพิ่งเกิดจากการกรอกอีเมลของเขาเอง ⇒ ไม่มีบัญชีเดิมให้ยึด ผูกได้เลย
+        if (ssoTicket is { } ticket)
+        {
+            var alreadyTaken = await _db.UserExternalLogins.AnyAsync(x =>
+                x.Provider == ticket.Provider && x.ProviderUserId == ticket.ProviderUserId);
+            if (alreadyTaken)
+            {
+                // มีคนผูกตัวตนนี้ไปแล้วระหว่างที่ตั๋วยังไม่หมดอายุ — ไม่ล้มการสมัคร
+                // (บัญชีสร้างไปแล้ว ผู้ใช้กรอกข้อมูลมาแล้ว) แต่ต้องไม่เงียบ
+                _logger.LogWarning(
+                    "SSO signup ticket: identity {Provider}/{Tail} ถูกผูกกับผู้ใช้อื่นแล้ว — ข้ามการผูกให้ user {UserId}",
+                    ticket.Provider,
+                    ticket.ProviderUserId.Length > 6 ? ticket.ProviderUserId[^6..] : ticket.ProviderUserId,
+                    user.Id);
+            }
+            else
+            {
+                await LinkExternalLoginAsync(user, ticket.Provider, ticket.ProviderUserId,
+                    ticket.Email ?? user.Email, confirmed: true, notify: false);
+            }
+        }
 
         // Invitation acceptance — when the user registered via an invitation
         // link, consume the matching pending invite for THIS email and skip
@@ -475,29 +502,19 @@ public class AuthService : IAuthService
                 + SsoIdentityPolicy.DisplayName(provider) + " — ติดต่อผู้ดูแลระบบ");
 
         // Validate token with provider and extract user info
-        var (providerUserId, email, fullName, providerSaysEmailVerified) = provider switch
-        {
-            SsoIdentityPolicy.Google => await ValidateGoogleTokenAsync(request.IdToken, sso.GoogleClientId),
-            SsoIdentityPolicy.Facebook => await ValidateFacebookTokenAsync(request.IdToken),
-            _ => await ValidateLineTokenAsync(request.IdToken, sso.LineChannelId),
-        };
+        var identity = await ValidateProviderTokenAsync(provider, request.IdToken, sso);
+        var providerUserId = identity.Id;
+        var fullName = identity.Name;
 
-        if (string.IsNullOrWhiteSpace(email))
-            throw new InvalidOperationException("ไม่สามารถดึงอีเมลจาก "
-                + SsoIdentityPolicy.DisplayName(provider) + " ได้ กรุณาอนุญาตการเข้าถึงอีเมล");
-
-        // The provider validators return email as string? but the guard
-        // above proves it's non-null here. Flow analysis doesn't propagate
-        // through tuple destructure so the compiler still flags subsequent
-        // dereferences (Email = email, email.Split(...)). Pin it as a
-        // local string to silence CS8601 / CS8602 without an inline `!`.
-        // normalize ตั้งแต่ต้นทาง — เดิมเส้นสมัครใหม่เก็บอีเมลตามที่ provider ส่งมา
-        // (มีตัวพิมพ์ใหญ่ได้) ต่างจาก RegisterAsync ที่ lower เสมอ ⇒ query ที่เทียบ
-        // แบบตรงตัวมองไม่เห็นแถวนั้น
-        string emailNonNull = email!.Trim().ToLowerInvariant();
+        // ⚠️ **อีเมลไม่ใช่สิ่งจำเป็นอีกต่อไป** — ตัวระบุตัวตนหลักคือ `Id` ที่
+        // provider ออกให้ (LINE userId / Google sub) ซึ่งมั่นคงกว่าอีเมลด้วยซ้ำ.
+        // เดิม throw ทิ้งทันทีเมื่อไม่มีอีเมล ⇒ ปุ่ม LINE ใช้ไม่ได้เลยแม้แต่กับคนที่
+        // ผูกบัญชีไว้แล้ว เพราะ channel ส่วนใหญ่ยังไม่ได้รับอนุมัติสิทธิ์ email
+        // (ต้องยื่นเอกสารกับ LINE) — อีเมลใช้เฉพาะตอน "จับคู่บัญชีเดิม/สร้างใหม่"
+        string emailNonNull = (identity.Email ?? "").Trim().ToLowerInvariant();
 
         // ตัวตนนี้ "เชื่อได้" ไหม — ตัวชี้ขาดว่าจะผูกเข้าบัญชีเดิมได้ทันทีหรือไม่
-        var trustedIdentity = SsoIdentityPolicy.CanAutoLink(provider, providerSaysEmailVerified);
+        var trustedIdentity = SsoIdentityPolicy.CanAutoLink(provider, identity.EmailVerified);
 
         // ① ตัวตนที่ผูกไว้แล้ว (ตารางเป็นตัวตัดสิน ไม่ใช่คอลัมน์เดี่ยวบน Users)
         var link = await _db.UserExternalLogins.Include(x => x.User)
@@ -514,7 +531,19 @@ public class AuthService : IAuthService
 
         if (user == null)
         {
-            // ② บัญชีเดิมที่อีเมลตรงกัน (case-insensitive)
+            // ② ยังไม่เคยผูก + provider ไม่ให้อีเมลมา → จับคู่บัญชีเดิมไม่ได้ และ
+            // สร้างบัญชีใหม่ก็ไม่ได้ (Email เป็น unique key ของ Users). **ไม่ตัน**:
+            // ออกตั๋วที่เซ็นแล้วพาไปหน้าสมัคร กรอกแค่อีเมล+รหัสผ่าน แล้วระบบผูก
+            // LINE ให้เอง — ผู้ใช้ไม่ต้องกดปุ่ม SSO ซ้ำ (code ใช้ได้ครั้งเดียว)
+            if (string.IsNullOrWhiteSpace(emailNonNull))
+            {
+                throw new SsoSignupRequiredException(provider,
+                    JwtHelper.GenerateSsoSignupTicket(provider, providerUserId,
+                        identity.Name, identity.Email, identity.PictureUrl, _config),
+                    identity.Name, identity.PictureUrl);
+            }
+
+            // ③ บัญชีเดิมที่อีเมลตรงกัน (case-insensitive)
             var existing = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == emailNonNull);
 
             if (existing != null)
@@ -558,7 +587,7 @@ public class AuthService : IAuthService
                     // ห้ามตั้ง true ให้ฟรี ๆ กับ provider ที่ยืนยันอีเมลไม่ได้ —
                     // ไม่งั้นบัญชีจะกลายเป็น "ยืนยันแล้ว" ทั้งที่ไม่มีใครยืนยัน
                     EmailVerified = SsoIdentityPolicy.MarksEmailVerifiedOnSignup(
-                        provider, providerSaysEmailVerified),
+                        provider, identity.EmailVerified),
                 };
                 _db.Users.Add(user);
                 await _db.SaveChangesAsync();
@@ -646,6 +675,69 @@ public class AuthService : IAuthService
         await _db.SaveChangesAsync();
 
         return await GenerateLoginResponse(user);
+    }
+
+    /// <summary>verify token กับ provider — ตัวกลางเดียวที่ทั้งเส้นล็อกอินและเส้น
+    /// "ผูกบัญชีตอนล็อกอินอยู่แล้ว" เรียก (ห้ามเขียน switch ซ้ำสองที่)</summary>
+    private async Task<SsoIdentity> ValidateProviderTokenAsync(
+        string provider, string idToken, SsoSettings sso)
+    {
+        var identity = provider switch
+        {
+            SsoIdentityPolicy.Google => await ValidateGoogleTokenAsync(idToken, sso.GoogleClientId),
+            SsoIdentityPolicy.Facebook => await ValidateFacebookTokenAsync(idToken),
+            _ => await ValidateLineTokenAsync(idToken, sso.LineChannelId),
+        };
+        if (string.IsNullOrWhiteSpace(identity.Id))
+            throw new UnauthorizedAccessException(
+                SsoIdentityPolicy.DisplayName(provider) + " ไม่คืนรหัสผู้ใช้ — ลองใหม่อีกครั้ง");
+        return identity;
+    }
+
+    /// <summary>ผูกบัญชีภายนอกเข้ากับผู้ใช้ที่ **ล็อกอินอยู่แล้ว**
+    ///
+    /// เส้นนี้ไม่ต้องใช้อีเมลจาก provider เลย — ตัวผู้ใช้ยืนยันตัวเองด้วย JWT
+    /// มาแล้ว และเพิ่งผ่าน OAuth ของ provider มาสด ๆ ⇒ ทั้งสองฝั่งพิสูจน์ครบ
+    /// (ต่างจากเส้นล็อกอินที่ต้องเดาว่า "คนนี้คือใคร" จากอีเมล)</summary>
+    public async Task<ExternalLoginResponse> LinkExternalLoginForUserAsync(
+        Guid userId, string provider, string idToken)
+    {
+        provider = provider?.Trim() ?? "";
+        if (!SsoIdentityPolicy.IsSupported(provider))
+            throw new BusinessRuleException("รองรับเฉพาะ Google, Facebook และ LINE เท่านั้น");
+
+        var sso = await GetSsoSettingsAsync();
+        var enabled = provider switch
+        {
+            SsoIdentityPolicy.Google => sso.GoogleEnabled,
+            SsoIdentityPolicy.Facebook => sso.FacebookEnabled,
+            _ => sso.LineEnabled,
+        };
+        if (!enabled)
+            throw new BusinessRuleException("ยังไม่ได้เปิดใช้การเข้าสู่ระบบด้วย "
+                + SsoIdentityPolicy.DisplayName(provider) + " — ติดต่อผู้ดูแลระบบ");
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId)
+            ?? throw new KeyNotFoundException("ไม่พบบัญชีผู้ใช้");
+        var gate = UserLoginPolicy.Evaluate(user.Status, false);
+        if (!gate.Can) throw new UnauthorizedAccessException(gate.Reason);
+
+        var identity = await ValidateProviderTokenAsync(provider, idToken, sso);
+
+        // ตัวตนนี้ถูกผูกกับ "คนอื่น" อยู่หรือเปล่า — ห้ามแย่งมาเงียบ ๆ
+        var taken = await _db.UserExternalLogins.FirstOrDefaultAsync(x =>
+            x.Provider == provider && x.ProviderUserId == identity.Id);
+        if (taken != null && taken.UserId != userId)
+            throw new BusinessRuleException(
+                $"บัญชี {SsoIdentityPolicy.DisplayName(provider)} นี้ถูกผูกกับผู้ใช้อื่นในระบบแล้ว — "
+                + "ให้เจ้าของบัญชีนั้นถอดการผูกก่อน (ตั้งค่า → ความปลอดภัยบัญชี)");
+
+        var row = await LinkExternalLoginAsync(user, provider, identity.Id,
+            identity.Email ?? user.Email, confirmed: true, notify: true);
+
+        return new ExternalLoginResponse(row.Id, row.Provider,
+            SsoIdentityPolicy.DisplayName(row.Provider), row.ProviderEmail,
+            row.ConfirmedAt, row.LastUsedAt, true);
     }
 
     // ===== การผูกบัญชีภายนอก (Google/Facebook/LINE) =====
@@ -1010,7 +1102,7 @@ public class AuthService : IAuthService
     /// ด้วย Channel ID ของเราเอง กัน token ของแอปอื่นเอามาใช้). อีเมลมาก็ต่อเมื่อ
     /// channel ขอ scope `email` และผู้ใช้อนุญาต — ถ้าไม่มี ตัวเรียกจะ throw
     /// พร้อมข้อความบอกให้อนุญาตอีเมล (เหมือน provider อื่น)</summary>
-    private async Task<(string Id, string Email, string Name, bool EmailVerified)> ValidateLineTokenAsync(
+    private async Task<SsoIdentity> ValidateLineTokenAsync(
         string idToken, string channelId)
     {
         if (string.IsNullOrWhiteSpace(channelId))
@@ -1061,9 +1153,12 @@ public class AuthService : IAuthService
         var sub = root.TryGetProperty("sub", out var s) ? s.GetString() ?? "" : "";
         var email = root.TryGetProperty("email", out var e) ? e.GetString() ?? "" : "";
         var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+        var picture = root.TryGetProperty("picture", out var pic) ? pic.GetString() ?? "" : "";
         // LINE คืนอีเมลเฉพาะเมื่อ channel ได้สิทธิ์ email (ต้องยื่นเอกสารขออนุมัติ)
         // และอีเมลนั้นคืออีเมลที่ผู้ใช้ยืนยันกับ LINE แล้ว ⇒ มีอีเมล = ยืนยันแล้ว
-        return (sub, email, name, !string.IsNullOrWhiteSpace(email));
+        // ไม่มีอีเมลก็ยังใช้ได้ — `sub` (LINE userId) คือตัวระบุตัวตนหลัก
+        return new SsoIdentity(SsoIdentityPolicy.Line, sub, email, name, picture,
+            !string.IsNullOrWhiteSpace(email));
     }
 
     /// <summary>Google Login — รับได้ทั้ง <c>id_token</c> (One Tap / GIS) และ
@@ -1073,7 +1168,7 @@ public class AuthService : IAuthService
     /// (accounts.google.com/gsi/client) ต้องผ่าน CSP + ตัวบล็อกโฆษณา + คุกกี้
     /// บุคคลที่สาม/FedCM จึงจะทำงาน — พังได้หลายทางโดยหน้าเว็บไม่รู้สาเหตุ
     /// ส่วน redirect ใช้แค่การเปลี่ยนหน้า ไม่มีอะไรมาขวางได้</summary>
-    private async Task<(string Id, string Email, string Name, bool EmailVerified)> ValidateGoogleTokenAsync(
+    private async Task<SsoIdentity> ValidateGoogleTokenAsync(
         string idToken, string expectedClientIdOverride)
     {
         using var http = new HttpClient();
@@ -1137,10 +1232,11 @@ public class AuthService : IAuthService
                 || (ev.ValueKind == JsonValueKind.String
                     && string.Equals(ev.GetString(), "true", StringComparison.OrdinalIgnoreCase)));
 
-        return (sub, email, name, verified);
+        var picture = root.TryGetProperty("picture", out var picProp) ? picProp.GetString() ?? "" : "";
+        return new SsoIdentity(SsoIdentityPolicy.Google, sub, email, name, picture, verified);
     }
 
-    private async Task<(string Id, string Email, string Name, bool EmailVerified)> ValidateFacebookTokenAsync(string accessToken)
+    private async Task<SsoIdentity> ValidateFacebookTokenAsync(string accessToken)
     {
         using var http = new HttpClient();
         var res = await http.GetAsync(
@@ -1158,7 +1254,7 @@ public class AuthService : IAuthService
 
         // Graph API **ไม่มีสัญญาณยืนยันอีเมลเลย** — จึงผูกเข้าบัญชีเดิมทันทีไม่ได้
         // (ต้องส่งลิงก์ยืนยันไปที่อีเมลก่อน ดู SsoIdentityPolicy)
-        return (id, email, name, false);
+        return new SsoIdentity(SsoIdentityPolicy.Facebook, id, email, name, null, false);
     }
 
     // Grace period before a user with a weak (legacy) password is forced to change it.

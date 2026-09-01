@@ -27,4 +27,9 @@ public interface IAuthService
 
     /// <summary>ถอดการผูก — บล็อกเมื่อจะทำให้ผู้ใช้ไม่เหลือทางเข้าเลย</summary>
     Task RemoveExternalLoginAsync(Guid userId, Guid linkId);
+
+    /// <summary>ผูกบัญชีภายนอกกับผู้ใช้ที่ล็อกอินอยู่แล้ว — **ไม่ต้องใช้อีเมล
+    /// จาก provider** (ใช้กับ LINE ที่ channel ยังไม่ได้รับสิทธิ์ email)</summary>
+    Task<ExternalLoginResponse> LinkExternalLoginForUserAsync(
+        Guid userId, string provider, string idToken);
 }
