@@ -117,6 +117,13 @@ public class LineBotService : ILineBotService
         if (user == null)
             return "👋 ยังไม่ได้เชื่อมต่อบัญชี — กรุณาขอรหัสจากเว็บไซต์ Next Acc แล้วส่งข้อความ\n" +
                    "ผูก {รหัส 6 หลัก}";
+        // ⚠️ ด่านสถานะบัญชีต้องครอบ **ทุกทางเข้า** ไม่ใช่แค่เว็บ —
+        // PayrollService ตั้ง Status=Inactive ให้อัตโนมัติเมื่อพนักงานลาออก
+        // พร้อมคอมเมนต์ว่า "login + LIFF are revoked" แต่เส้น LINE ไม่เคย
+        // อ่านค่านั้นเลย ⇒ คนที่ลาออกแล้วยังส่งใบเสร็จ/กดอนุมัติผ่าน LINE ได้
+        // (control ที่ไม่มีใครเรียก = ไม่มี control)
+        var gate = Accounting.Helpers.UserLoginPolicy.Evaluate(user.Status, false);
+        if (!gate.Can) return "⛔ " + gate.Reason;
 
         // Resolve the active company for this LINE user.
         // - Single-company users: use that company silently.
@@ -301,6 +308,13 @@ public class LineBotService : ILineBotService
         var user = await _db.Users.FirstOrDefaultAsync(u => u.LineUserId == lineUserId);
         if (user == null)
             return "👋 ได้รับรูปแล้ว แต่ยังไม่ได้เชื่อมต่อบัญชี — กรุณาขอรหัสจากเว็บไซต์ Next Acc แล้วส่งข้อความ\nผูก {รหัส 6 หลัก}\nจากนั้นส่งรูปใบเสร็จมาอีกครั้ง";
+        // ⚠️ ด่านสถานะบัญชีต้องครอบ **ทุกทางเข้า** ไม่ใช่แค่เว็บ —
+        // PayrollService ตั้ง Status=Inactive ให้อัตโนมัติเมื่อพนักงานลาออก
+        // พร้อมคอมเมนต์ว่า "login + LIFF are revoked" แต่เส้น LINE ไม่เคย
+        // อ่านค่านั้นเลย ⇒ คนที่ลาออกแล้วยังส่งใบเสร็จ/กดอนุมัติผ่าน LINE ได้
+        // (control ที่ไม่มีใครเรียก = ไม่มี control)
+        var gate = Accounting.Helpers.UserLoginPolicy.Evaluate(user.Status, false);
+        if (!gate.Can) return "⛔ " + gate.Reason;
 
         var companies = await _db.CompanyUsers
             .Where(cu => cu.UserId == user.Id)
@@ -562,6 +576,13 @@ public class LineBotService : ILineBotService
         var user = await _db.Users.FirstOrDefaultAsync(u => u.LineUserId == lineUserId);
         if (user == null)
             return "👋 ยังไม่ได้เชื่อมต่อบัญชี — ผูกบัญชีก่อนแล้วลองใหม่ (ส่ง: ผูก {รหัส 6 หลัก})";
+        // ⚠️ ด่านสถานะบัญชีต้องครอบ **ทุกทางเข้า** ไม่ใช่แค่เว็บ —
+        // PayrollService ตั้ง Status=Inactive ให้อัตโนมัติเมื่อพนักงานลาออก
+        // พร้อมคอมเมนต์ว่า "login + LIFF are revoked" แต่เส้น LINE ไม่เคย
+        // อ่านค่านั้นเลย ⇒ คนที่ลาออกแล้วยังส่งใบเสร็จ/กดอนุมัติผ่าน LINE ได้
+        // (control ที่ไม่มีใครเรียก = ไม่มี control)
+        var gate = Accounting.Helpers.UserLoginPolicy.Evaluate(user.Status, false);
+        if (!gate.Can) return "⛔ " + gate.Reason;
 
         var doc = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == docId && !d.IsDeleted)

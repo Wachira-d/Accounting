@@ -1239,9 +1239,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 > **คู่ (ลูกจ้าง, นายจ้าง) ต้องสอดคล้องกันเสมอ** (ม.33 ใช้ฐานค่าจ้างเดียวกัน) —
 > ตัวตัดสินตัวเดียวคือ `Helpers/SsoWageBase.Normalize` (ฝั่งลูกจ้างเป็นความจริง
 > ฐาน+ฝั่งนายจ้างเป็นผลลัพธ์ · เกณฑ์ ±1 บาทเท่ากับด่านตอนนำส่ง) เรียกจาก **3 จุด**:
-> 1. `ImportPayrollRunAsync` (`:1120`) — ตอนนำเข้าจากระบบนอก + คืน **warning**
+> 1. `ImportPayrollRunAsync` — ตอนนำเข้าจากระบบนอก + คืน **warning**
 >    ใน `ImportPayrollRunResult.Warnings` ระบุชื่อพนักงาน/ยอดก่อน-หลัง
-> 2. `ProcessPaymentAsync` (`:1958`) — ตาข่ายรับสุดท้ายก่อนสร้าง JE
+> 2. `ProcessPaymentAsync` — ตาข่ายรับสุดท้ายก่อนสร้าง JE
 >    (`LastPaySsoAdjustedCount` → ข้อความตอบกลับของ `/pay`)
 > 3. `ReopenPaidRunAsync` — ตอนกลับรายการจ่าย (`LastReopenSsoAdjustedCount`)
 >

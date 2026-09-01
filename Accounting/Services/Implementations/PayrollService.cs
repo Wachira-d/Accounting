@@ -1128,7 +1128,16 @@ public class PayrollService : IPayrollService
                 line.SocialSecurityBase ?? 0m, line.SocialSecurityEmployee, line.GrossIncome,
                 line.SocialSecurityEmployer, importSso.Rate, importSso.MaxContribution,
                 importSso.EmployerRate, importSso.EmployerMaxContribution);
-            if (norm.Changed && Math.Abs(norm.Employer - line.SocialSecurityEmployer) > 0.005m)
+            if (norm.Conflict != null)
+            {
+                // ระบบตัดสินแทนไม่ได้ → คงค่าที่ส่งมาไว้ทั้งคู่ แล้วบอกให้รู้
+                // (ด่านตอนนำส่ง สปส. จะบล็อกอีกชั้นถ้ายังไม่ถูกแก้ — เงินไม่ออกผิด)
+                warnings.Add($"{emp.FirstNameTh} {emp.LastNameTh}: {norm.Conflict}");
+                _logger?.LogWarning(
+                    "Import payroll: SSO pair conflict for employee {Emp} — {Reason}",
+                    emp.Id, norm.Conflict);
+            }
+            else if (norm.EmployerAdjusted)
             {
                 warnings.Add(
                     $"{emp.FirstNameTh} {emp.LastNameTh}: ปรับเงินสมทบฝั่งนายจ้างจาก "
@@ -1931,6 +1940,11 @@ public class PayrollService : IPayrollService
     private int _lastPaySsoAdjustedCount;
     public int LastPaySsoAdjustedCount => _lastPaySsoAdjustedCount;
 
+    /// <summary>แถวที่ระบบ **ตัดสินแทนไม่ได้** ระหว่างการซ่อมคู่ ปกส. ครั้งล่าสุด
+    /// — ต้องเอาไปบอกผู้ใช้ ไม่ใช่ปล่อยให้ไปตายที่ด่านตอนนำส่งโดยไม่รู้สาเหตุ</summary>
+    private List<string> _lastSsoConflicts = new();
+    public IReadOnlyList<string> LastSsoConflicts => _lastSsoConflicts;
+
     /// <summary>ทำให้ "ฐาน · ลูกจ้าง · นายจ้าง" ของทุกแถวในรอบสอดคล้องกัน —
     /// **ตัวซ่อมตัวเดียว** ที่ทั้งตอนจ่าย ตอนกลับรายการจ่าย (และตอน import ผ่าน
     /// <c>SsoWageBase.Normalize</c> ตรง ๆ) ใช้ร่วมกัน
@@ -1942,7 +1956,8 @@ public class PayrollService : IPayrollService
     /// <para>ปลอดภัยเฉพาะ**ก่อน**สร้าง JE ของรอบนั้น — ห้ามเรียกหลังจ่ายแล้ว
     /// (ตัวเลขจะไม่ตรงกับ JE ที่ลงไปแล้ว)</para></summary>
     /// <returns>จำนวนพนักงานที่ถูกปรับ — ผู้เรียกต้องเอาไปบอกผู้ใช้ ห้ามแก้เงียบ</returns>
-    private async Task<int> NormalizeRunSsoAsync(Guid companyId, PayrollRun run, string reason)
+    private async Task<int> NormalizeRunSsoAsync(
+        Guid companyId, PayrollRun run, string reason, string actor)
     {
         var sso = await GetSsoParamsAsync(companyId, run.Year);
         var details = run.Details is { Count: > 0 }
@@ -1951,36 +1966,85 @@ public class PayrollService : IPayrollService
                 .Where(d => d.PayrollRunId == run.Id && d.CompanyId == companyId)
                 .ToListAsync();
 
-        var adjusted = 0;
+        var moneyAdjusted = 0;      // ยอดเงินฝั่งนายจ้างเปลี่ยนจริง
+        var baseFilled = 0;         // เติมฐานย้อนหลังอย่างเดียว (เงินไม่ขยับ)
+        var conflicts = new List<string>();
+        var before = details.ToDictionary(d => d.EmployeeId,
+            d => (d.SocialSecurityBase, d.SocialSecurityEmployer));
+
         foreach (var d in details)
         {
             var norm = Accounting.Helpers.SsoWageBase.Normalize(
                 d.SocialSecurityBase, d.SocialSecurityEmployee, d.GrossIncome,
                 d.SocialSecurityEmployer, sso.Rate, sso.MaxContribution,
                 sso.EmployerRate, sso.EmployerMaxContribution);
+            if (norm.Conflict != null)
+            {
+                // ห้ามเดาแทนผู้ใช้ — คงค่าเดิมไว้ทั้งคู่ (ด่านตอนนำส่งจะบล็อกเอง)
+                conflicts.Add($"{d.EmployeeId}: {norm.Conflict}");
+                continue;
+            }
             if (!norm.Changed) continue;
             d.SocialSecurityBase = norm.Base;
             d.SocialSecurityEmployer = norm.Employer;
             d.UpdatedAt = DateTime.UtcNow;
-            adjusted++;
+            d.UpdatedBy = actor;
+            if (norm.EmployerAdjusted) moneyAdjusted++; else baseFilled++;
         }
 
-        if (adjusted > 0)
+        if (moneyAdjusted > 0 || baseFilled > 0)
         {
             run.TotalSocialSecurityEmployee = details.Sum(x => x.SocialSecurityEmployee);
             run.TotalSocialSecurityEmployer = details.Sum(x => x.SocialSecurityEmployer);
             _logger?.LogWarning(
-                "ซ่อมยอดประกันสังคมให้สอดคล้อง {Count} คน ระหว่าง{Reason} run {Run} "
-                + "→ ลูกจ้าง {Emp} · นายจ้าง {Er}",
-                adjusted, reason, run.Id, run.TotalSocialSecurityEmployee,
-                run.TotalSocialSecurityEmployer);
+                "ซ่อมยอดประกันสังคม {Money} คน (เติมฐานอย่างเดียว {BaseOnly} คน) ระหว่าง{Reason} "
+                + "run {Run} → ลูกจ้าง {Emp} · นายจ้าง {Er}",
+                moneyAdjusted, baseFilled, reason, run.Id,
+                run.TotalSocialSecurityEmployee, run.TotalSocialSecurityEmployer);
+
+            // ── ร่องรอยที่ตรวจย้อนหลังได้ (พ.ร.บ.การบัญชี ม.10 + กฎ M) ──
+            // การแก้ตัวเลขเงินอัตโนมัติต้องเข้า hash chain ของ AuditLog ไม่ใช่
+            // อยู่แค่ในไฟล์ log ที่ไม่มีใครเปิด — ต้องตอบผู้สอบบัญชีได้ว่า
+            // "ใครเปลี่ยน 4,403 → 4,381 เมื่อไร ด้วยกฎข้อไหน"
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(actor, out var actorId) ? actorId : (Guid?)null,
+                Action = AuditAction.Update,
+                EntityType = "PayrollRun.SocialSecurity",
+                EntityId = run.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(
+                    details.Where(x => before.TryGetValue(x.EmployeeId, out var b)
+                            && (b.SocialSecurityBase != x.SocialSecurityBase
+                                || b.SocialSecurityEmployer != x.SocialSecurityEmployer))
+                        .Select(x => new
+                        {
+                            x.EmployeeId,
+                            Base = before[x.EmployeeId].SocialSecurityBase,
+                            Employer = before[x.EmployeeId].SocialSecurityEmployer,
+                        })),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Reason = reason,
+                    RuleCode = "SSO-M33-PAIR",
+                    LegalReference = "พ.ร.บ.ประกันสังคม ม.33/ม.46",
+                    EmployerAmountAdjusted = moneyAdjusted,
+                    WageBaseBackfilled = baseFilled,
+                    TotalEmployee = run.TotalSocialSecurityEmployee,
+                    TotalEmployer = run.TotalSocialSecurityEmployer,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
         }
-        return adjusted;
+
+        _lastSsoConflicts = conflicts;
+        return moneyAdjusted;
     }
 
     public async Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy)
     {
         _lastPaySsoAdjustedCount = 0;
+        _lastSsoConflicts = new List<string>();
         // Quick existence check before the long-running pay transaction. The
         // FOR UPDATE lock is taken inside payTransaction below so a concurrent
         // Pay click waits and re-reads under the lock.
@@ -2039,7 +2103,7 @@ public class PayrollService : IPayrollService
             // ซ่อมได้โดยไม่ทิ้งรายการค้าง — JE ยังไม่ถูกสร้าง ยอดที่แก้ตรงนี้จะ
             // ไหลเข้า JE ทันที (ถ้าปล่อยไปจะไปตายที่ด่านตอนนำส่ง สปส. แล้วผู้ใช้
             // ต้องกลับรายการทั้งรอบ)
-            _lastPaySsoAdjustedCount = await NormalizeRunSsoAsync(companyId, run, "จ่ายเงินเดือน");
+            _lastPaySsoAdjustedCount = await NormalizeRunSsoAsync(companyId, run, "จ่ายเงินเดือน", processedBy);
 
             run.Status = "Paid";
             run.UpdatedBy = processedBy;
@@ -2753,13 +2817,17 @@ public class PayrollService : IPayrollService
             var reversedJe = run.JournalEntryId;
             if (reversedJe.HasValue && _accountingService != null)
             {
-                await _accountingService.ReverseJournalEntryAsync(companyId, reversedJe.Value,
+                // ⚠️ ต้องบอก **เลขใบตรงข้ามที่เพิ่งสร้าง** ไม่ใช่เลขใบเดิม —
+                // ผู้ใช้เปิดใบเดิมแล้วเห็นยอดเท่าเดิม (ถูกต้อง เพราะห้ามแก้ใบที่
+                // ผ่านรายการแล้ว) สิ่งที่เขาต้องไปดูคือใบหักล้าง. ค่านี้
+                // ReverseJournalEntryAsync คืนมาให้อยู่แล้ว — เดิมทิ้งแล้วไป
+                // query เลขใบเดิมกลับมา = ตอบคำถามผิดข้อที่คอมมิตนั้นตั้งใจแก้
+                var revEntry = await _accountingService.ReverseJournalEntryAsync(
+                    companyId, reversedJe.Value,
                     reversalDate: run.PayDate,
                     description: $"กลับรายการจ่ายเงินเดือน {run.PayrollNumber} ({run.Month:D2}/{run.Year}) — {reason}",
                     systemTriggered: true);
-                _lastReversedJournalNumber = await _db.JournalEntries.AsNoTracking()
-                    .Where(j => j.Id == reversedJe.Value).Select(j => j.EntryNumber)
-                    .FirstOrDefaultAsync();
+                _lastReversedJournalNumber = revEntry?.EntryNumber;
             }
             else if (run.TotalGrossSalary > 0)
             {
@@ -2787,7 +2855,7 @@ public class PayrollService : IPayrollService
             // ตรรกะซ่อมอยู่ที่ NormalizeRunSsoAsync ตัวเดียว — ใช้ร่วมกับตอนจ่าย
             // และตอน import (เดิมเขียนไว้ที่นี่ที่เดียว ⇒ รอบที่ import เข้ามาแล้ว
             // ไม่เคยกด "กลับรายการจ่าย" จึงไม่มีอะไรซ่อมให้เลย)
-            _ssoAdjustedOnReopen = await NormalizeRunSsoAsync(companyId, run, "กลับรายการจ่าย");
+            _ssoAdjustedOnReopen = await NormalizeRunSsoAsync(companyId, run, "กลับรายการจ่าย", reopenedBy);
 
             run.JournalEntryId = null;
             run.Status = "Approved";
@@ -4087,14 +4155,13 @@ public class PayrollService : IPayrollService
             var reversedJe = run.SsoSettlementJournalEntryId;
             if (reversedJe.HasValue && _accountingService != null)
             {
-                await _accountingService.ReverseJournalEntryAsync(companyId, reversedJe.Value,
+                var revEntry = await _accountingService.ReverseJournalEntryAsync(
+                    companyId, reversedJe.Value,
                     reversalDate: settledOn,
                     description: $"กลับรายการนำส่งประกันสังคม {run.PayrollNumber} "
                         + $"({run.Month:D2}/{run.Year}) — {reason}",
                     systemTriggered: true);
-                _lastReversedJournalNumber = await _db.JournalEntries.AsNoTracking()
-                    .Where(j => j.Id == reversedJe.Value).Select(j => j.EntryNumber)
-                    .FirstOrDefaultAsync();
+                _lastReversedJournalNumber = revEntry?.EntryNumber;
             }
             else if (run.TotalSocialSecurityEmployee + run.TotalSocialSecurityEmployer > 0)
             {

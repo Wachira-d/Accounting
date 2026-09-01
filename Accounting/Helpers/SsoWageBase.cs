@@ -115,15 +115,41 @@ public static class SsoWageBase
     ///
     /// <para>ไม่แตะแถวที่ไม่ได้อยู่ในระบบประกันสังคม (สองฝั่งเป็น 0)</para>
     /// </summary>
-    /// <returns>ค่าที่ควรเป็น + ธงว่าต้องแก้ไหม (Changed=false ⇒ อย่าเขียนทับของเดิม
-    /// เพื่อไม่ให้ค่าจ้างที่ประกาศไว้ถูกขยับโดยไม่จำเป็น)</returns>
-    public static (decimal Base, decimal Employer, bool Changed) Normalize(
+    /// <returns>ค่าที่ควรเป็น + ธงแยกว่าอะไรเปลี่ยน + <see cref="SsoPairResult.Conflict"/>
+    /// เมื่อระบบ**ตัดสินแทนไม่ได้** (ผู้เรียกต้องคงค่าเดิมไว้แล้วบอกผู้ใช้)</returns>
+    public static SsoPairResult Normalize(
         decimal storedBase, decimal employeeContribution, decimal grossIncome,
         decimal employerOnFile, decimal rate, decimal maxContribution,
         decimal employerRate, decimal employerMaxContribution)
     {
+        // ไม่อยู่ในระบบประกันสังคม (สองฝั่งเป็น 0) — ไม่แตะ
         if (employeeContribution <= 0 && employerOnFile <= 0)
-            return (storedBase, employerOnFile, false);
+            return new SsoPairResult(storedBase, employerOnFile, false, false, null);
+
+        // ⚠️ ฝั่งลูกจ้าง = 0 แต่ฝั่งนายจ้างมียอด — **ห้ามล้างฝั่งนายจ้างเป็น 0**
+        // (เวอร์ชันแรกทำแบบนั้นเพราะสูตรคิดจากฝั่งลูกจ้างล้วน ⇒ หนี้สินเงินสมทบ
+        // หายไปจาก JE เงียบ ๆ และไฟล์ สปส.1-10 ก็กรองแถวนี้ออก ⇒ นำส่งขาด
+        // + เงินเพิ่ม §49) ระบบไม่มีทางรู้ว่าที่ถูกคือ "เติมฝั่งลูกจ้าง" หรือ
+        // "ลบฝั่งนายจ้าง" ⇒ คงของเดิมไว้แล้วให้คนตัดสิน
+        // (ด่านตอนนำส่งจะบล็อกให้เองอยู่แล้ว — เงินไม่ออกไปผิด)
+        if (employeeContribution <= 0)
+            return new SsoPairResult(storedBase, employerOnFile, false, false,
+                $"ฝั่งลูกจ้างเป็น 0 แต่ฝั่งนายจ้างมี {employerOnFile:N2} บาท — "
+                + "ม.33 ให้สมทบจากฐานค่าจ้างเดียวกันทั้งสองฝั่ง กรุณาตรวจว่าลืมกรอก"
+                + "ยอดฝั่งลูกจ้าง หรือพนักงานคนนี้ไม่ต้องสมทบ (แก้ที่ \"แก้ยอด\" รายคน)");
+
+        // ⚠️ ฝั่งลูกจ้างเองต้องอยู่ในกรอบกฎหมายก่อน จึงจะใช้เป็น "ความจริง" ได้
+        // — ไม่งั้นความผิดพลาดของการหัก (หักขาด/หักเกิน ม.47) จะถูกแปลงเป็น
+        // "ฐานค่าจ้างที่ประกาศต่อ สปส." ที่ไม่ตรงความจริงแทน
+        var minContribution = Contribution(MinBase, rate, maxContribution);
+        if (employeeContribution > maxContribution + 0.005m)
+            return new SsoPairResult(storedBase, employerOnFile, false, false,
+                $"ยอดสมทบฝั่งลูกจ้าง {employeeContribution:N2} เกินเพดาน {maxContribution:N2} "
+                + "บาท/เดือน (ม.46) — หักเกินต้องคืนลูกจ้าง ไม่ใช่ปรับฐานตาม");
+        if (employeeContribution < minContribution - 0.005m)
+            return new SsoPairResult(storedBase, employerOnFile, false, false,
+                $"ยอดสมทบฝั่งลูกจ้าง {employeeContribution:N2} ต่ำกว่าขั้นต่ำ {minContribution:N2} "
+                + $"บาท/เดือน (ฐานขั้นต่ำ {MinBase:N0} ตาม ม.33) — กรุณาตรวจยอดที่หักจริง");
 
         var resolvedBase = Resolve(storedBase, employeeContribution, grossIncome, rate, maxContribution);
         var expectedEmployer = EmployerFrom(employeeContribution, rate, employerRate, employerMaxContribution);
@@ -131,11 +157,29 @@ public static class SsoWageBase
         // แยกสองธง: การเติมฐานย้อนหลังให้แถวเก่า **ต้องไม่ไปขยับยอดนายจ้างที่
         // ลงตัวอยู่แล้ว** (ญาติของบทเรียน "ซ่อมเฉพาะแถวที่พังจริง" — การหารกลับ
         // หาฐานแล้วเขียนทับทุกแถว จะเปลี่ยนค่าจ้างที่ประกาศของแถวที่ถูกอยู่แล้ว)
+        // และผู้เรียกต้องแยกสองเรื่องนี้ตอนบอกผู้ใช้ ไม่งั้นข้อความจะบอกว่า
+        // "ปรับยอดนายจ้าง N คน" ทั้งที่ไม่มีบาทเดียวเปลี่ยน (ป้ายไม่ซื่อสัตย์)
         var baseChanged = resolvedBase > 0 && storedBase != resolvedBase;
         var employerChanged = Math.Abs(expectedEmployer - employerOnFile) > PairTolerance;
 
-        return (resolvedBase > 0 ? resolvedBase : storedBase,
-                employerChanged ? expectedEmployer : employerOnFile,
-                baseChanged || employerChanged);
+        return new SsoPairResult(
+            resolvedBase > 0 ? resolvedBase : storedBase,
+            employerChanged ? expectedEmployer : employerOnFile,
+            baseChanged, employerChanged, null);
     }
+}
+
+/// <summary>ผลการทำให้คู่ (ฐาน · ลูกจ้าง · นายจ้าง) สอดคล้องกัน</summary>
+/// <param name="Base">ฐานค่าจ้างที่ควรบันทึก</param>
+/// <param name="Employer">ยอดฝั่งนายจ้างที่ควรบันทึก</param>
+/// <param name="BaseFilled">เติม/แก้ฐานย้อนหลังให้แถวเก่า (ยอดเงินไม่เปลี่ยน)</param>
+/// <param name="EmployerAdjusted">**ยอดเงิน**ฝั่งนายจ้างถูกปรับจริง</param>
+/// <param name="Conflict">ไม่ null = ระบบตัดสินแทนไม่ได้ ผู้เรียกต้องคงค่าเดิม
+/// ไว้ทั้งหมดแล้วแจ้งข้อความนี้ให้ผู้ใช้ (ห้ามเดาแทน — "ค่าที่แต่งขึ้นอันตราย
+/// กว่าการไม่ตอบ")</param>
+public sealed record SsoPairResult(
+    decimal Base, decimal Employer, bool BaseFilled, bool EmployerAdjusted, string? Conflict)
+{
+    /// <summary>มีอะไรต้องเขียนลงแถวไหม</summary>
+    public bool Changed => BaseFilled || EmployerAdjusted;
 }

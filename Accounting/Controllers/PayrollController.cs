@@ -255,11 +255,18 @@ public class PayrollController : ControllerBase
             var res = await _service.ProcessPaymentAsync(companyId, runId, User.Identity?.Name ?? "");
             // ซ่อมยอดให้ก่อนลง JE = ต้องบอก ห้ามเปลี่ยนตัวเลขเงียบ ๆ
             var ssoFixed = _service.LastPaySsoAdjustedCount;
+            var ssoConflicts = _service.LastSsoConflicts;
             var msg = "จ่ายเงินเดือนสำเร็จ";
             if (ssoFixed > 0)
                 msg += $" · ปรับยอดประกันสังคมฝั่งนายจ้างให้ตรงกับฝั่งลูกจ้าง {ssoFixed} คน "
                      + "ก่อนลงบัญชี (ม.33 ใช้ฐานค่าจ้างเดียวกันทั้งสองฝั่ง — "
                      + "ยอดที่ระบบต้นทางส่งมาไม่สอดคล้องกัน)";
+            // แถวที่ระบบตัดสินแทนไม่ได้ ต้องดังตรงนี้ ไม่ใช่ปล่อยไปตายที่ด่าน
+            // ตอนนำส่ง สปส. โดยผู้ใช้ไม่รู้ว่าต้นเหตุอยู่ที่ใคร
+            if (ssoConflicts.Count > 0)
+                msg += $" · ⚠️ ยอดประกันสังคมของ {ssoConflicts.Count} คนขัดกันจนระบบปรับให้ไม่ได้ "
+                     + "(คงค่าเดิมไว้) — ต้องแก้ก่อนนำส่ง สปส.: "
+                     + string.Join(" · ", ssoConflicts.Take(3));
             return Ok(new ApiResponse<PayrollRunResponse>(true, res, msg));
         }
         catch (InvalidOperationException ex)

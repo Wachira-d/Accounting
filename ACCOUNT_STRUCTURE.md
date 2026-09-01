@@ -526,8 +526,10 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - **ตั้งค่าคีย์จากหน้าเว็บ** `/admin/sso-config.html` → `SiteSettings.{Google,Facebook,Line}*`
   (DB ชนะ `appsettings.json`); `GET /api/auth/sso-config` คืนเฉพาะ provider ที่
   **เปิดสวิตช์ + มีคีย์ครบ** → หน้า `login.html`/`register.html` ซ่อนปุ่มที่เหลือ
-  (ปุ่มที่กดแล้วพัง = ปุ่มหลอก ห้ามมี) และแสดงข้อความจริงเมื่อ SDK ของ
-  Facebook โหลดไม่ขึ้น แทนที่จะเงียบ
+  (ปุ่มที่กดแล้วพัง = ปุ่มหลอก ห้ามมี) และแสดงข้อความเมื่อ SDK ของ Facebook
+  โหลดไม่ขึ้น แทนที่จะเงียบ — ⚠️ ข้อความนั้นยังโทษ "ตัวบล็อกโฆษณา" อยู่ ทั้งที่
+  ต้นเหตุที่พบจริงคือ CSP/การแข่งกันของ `async defer` (หนี้ที่รู้ตัว: Facebook
+  ยังไม่ได้ย้ายไป redirect flow เหมือน Google/LINE)
 - ⚠️ **CSP ต้องอนุญาต origin ของ SDK ด้วย** — `script-src` ใน
   `Middleware/SecurityMiddleware.cs` เดิมไม่มี `https://accounts.google.com`
   (และ `https://connect.facebook.net`) ⇒ เบราว์เซอร์บล็อกสคริปต์เงียบ ⇒ ปุ่ม Google

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- ห้ามให้ตัวสแกนลิงก์/พรีวิวของอีเมลทำอะไรเกินการแสดงผล -->
+  <meta name="robots" content="noindex,nofollow">
+  <title>ยืนยันการผูกบัญชี — NextAcc</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f8fafc;padding:24px">
+  <div class="card" style="max-width:520px;width:100%;padding:32px">
+    <h2 style="margin:0 0 8px;font-size:20px;font-weight:800">ยืนยันการผูกบัญชี</h2>
+    <p class="text-gray-400" style="margin:0 0 20px;font-size:14px;line-height:1.7">
+      มีการขอผูกบัญชีจากผู้ให้บริการภายนอก (Google / LINE / Facebook)
+      เข้ากับบัญชี NextAcc ของคุณ<br>
+      <b>หากไม่ใช่คุณ ให้ปิดหน้านี้ทิ้ง</b> — การผูกจะไม่เกิดขึ้นและบัญชีของคุณยังปลอดภัย
+    </p>
+
+    <div id="msg" class="hidden" style="padding:12px 16px;border-radius:8px;font-size:14px;margin-bottom:16px;line-height:1.6"></div>
+
+    <div id="actions">
+      <button id="btnConfirm" type="button" class="btn btn-primary w-full"
+              style="padding:12px;font-weight:700">ยืนยันการผูกบัญชี</button>
+      <p class="text-gray-400" style="margin:12px 0 0;font-size:12.5px">
+        ลิงก์นี้มีอายุ 1 ชั่วโมงนับจากเวลาที่ขอผูก
+      </p>
+    </div>
+
+    <div style="margin-top:20px;text-align:center">
+      <a href="/login.html" style="font-size:13px">← กลับหน้าเข้าสู่ระบบ</a>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    // ⚠️ การผูกบัญชีเกิดจาก **POST ที่มนุษย์กดปุ่ม** เท่านั้น — หน้านี้มีอยู่
+    // เพราะ GET ที่เปลี่ยนสถานะถูกตัวสแกนลิงก์ในอีเมล (Safe Links / URL Defense /
+    // antivirus / ตัว preview) ยิงแทนผู้ใช้ได้ ⇒ ยืนยันให้เองโดยเจ้าของไม่รู้ตัว
+    const token = new URLSearchParams(location.search).get('token') || '';
+    const msgEl = document.getElementById('msg');
+    const btn = document.getElementById('btnConfirm');
+
+    function show(text, ok) {
+      msgEl.textContent = text;
+      msgEl.style.cssText = ok
+        ? 'padding:12px 16px;border-radius:8px;font-size:14px;margin-bottom:16px;line-height:1.6;background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46'
+        : 'padding:12px 16px;border-radius:8px;font-size:14px;margin-bottom:16px;line-height:1.6;background:#fef2f2;border:1px solid #fca5a5;color:#991b1b';
+      msgEl.classList.remove('hidden');
+    }
+
+    if (!token) {
+      show('ลิงก์ไม่สมบูรณ์ — กรุณาเปิดจากลิงก์ในอีเมลอีกครั้ง หรือกดปุ่มเข้าสู่ระบบ'
+         + 'ด้วยผู้ให้บริการเดิมเพื่อขอลิงก์ใหม่', false);
+      document.getElementById('actions').style.display = 'none';
+    }
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'กำลังยืนยัน…';
+      try {
+        const res = await API.post('/api/auth/sso/confirm-link', { token });
+        if (!res || !res.success) throw new Error((res && res.message) || 'ยืนยันไม่สำเร็จ');
+        show((res.message || 'ยืนยันเรียบร้อยแล้ว')
+           + ' — กดปุ่มผู้ให้บริการที่หน้าเข้าสู่ระบบเพื่อเข้าใช้งานได้เลย', true);
+        document.getElementById('actions').style.display = 'none';
+        setTimeout(() => { location.href = '/login.html'; }, 3000);
+      } catch (e) {
+        show(e.message || 'ยืนยันไม่สำเร็จ', false);
+        btn.disabled = false;
+        btn.textContent = 'ลองยืนยันอีกครั้ง';
+      }
+    });
+  </script>
+</body>
+</html>

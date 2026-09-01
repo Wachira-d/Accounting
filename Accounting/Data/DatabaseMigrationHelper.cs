@@ -5883,16 +5883,25 @@ public static class DatabaseMigrationHelper
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_UserExternalLogins_Provider_ProviderUserId" ON "UserExternalLogins" ("Provider", "ProviderUserId") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_UserExternalLogins_UserId" ON "UserExternalLogins" ("UserId");""",
             // ย้ายของเดิมเข้าตารางใหม่ **ครั้งเดียว** — ถือว่าที่ผูกไว้แล้วยืนยันแล้ว
+            // ⚠️ DISTINCT ON + ON CONFLICT DO NOTHING: ฐานเดิมไม่เคยมี unique
+            // constraint บน (AuthProvider, AuthProviderId) ⇒ อาจมีสองแถวซ้ำกัน
+            // ถ้าปล่อยให้ชน partial unique index ทั้ง statement จะล้ม แล้ว catch
+            // ของ loop จะกลืนทิ้ง ⇒ **ไม่มีใครถูก backfill เลยสักคน** ⇒ ผู้ใช้ SSO
+            // เดิมทุกคนตกไปเส้น "หาด้วยอีเมล" (LINE ที่ไม่มีอีเมลถูกเด้งไปหน้าสมัคร)
+            // และ IsDeleted=false: บัญชีที่ถูกลบ/anonymize ต้องไม่ได้ link row
+            // (global query filter จะตัด User ทิ้ง ⇒ link.User = null ⇒ 500)
             // (ผู้ใช้เหล่านี้เข้าระบบด้วย provider นั้นได้อยู่ก่อนหน้า การบังคับให้
             // ยืนยันย้อนหลังคือการล็อกคนที่ใช้งานอยู่ออกจากระบบ) · idempotent:
             // NOT EXISTS กันแถวซ้ำเมื่อ migration รันทุกครั้งที่เปิดเซิร์ฟเวอร์
             """
             INSERT INTO "UserExternalLogins" ("Id","UserId","Provider","ProviderUserId","ProviderEmail","ConfirmedAt","CreatedAt","IsDeleted")
-            SELECT gen_random_uuid(), u."Id", u."AuthProvider", u."AuthProviderId", u."Email", now(), now(), false
+            SELECT DISTINCT ON (u."AuthProvider", u."AuthProviderId")
+                   gen_random_uuid(), u."Id", u."AuthProvider", u."AuthProviderId", u."Email", now(), now(), false
               FROM "Users" u
              WHERE u."AuthProvider" IS NOT NULL AND u."AuthProviderId" IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM "UserExternalLogins" x
-                                WHERE x."Provider" = u."AuthProvider" AND x."ProviderUserId" = u."AuthProviderId");
+               AND u."IsDeleted" = false
+             ORDER BY u."AuthProvider", u."AuthProviderId", u."CreatedAt"
+            ON CONFLICT DO NOTHING;
             """,
         };
 

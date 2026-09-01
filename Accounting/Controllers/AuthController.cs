@@ -59,21 +59,41 @@ public class AuthController : ControllerBase
         }));
     }
 
-    /// <summary>ลิงก์ยืนยันการผูกบัญชีจากอีเมล — เปิดจากอีเมลโดยตรง จึงตอบเป็น
-    /// **redirect** กลับหน้า login พร้อมผลลัพธ์ ไม่ใช่ JSON (ผู้ใช้ไม่ได้เปิด
-    /// จากในแอป). ไม่ต้องล็อกอินก่อน — token ในลิงก์คือหลักฐานว่าเข้าถึงอีเมลได้</summary>
+    /// <summary>ลิงก์ยืนยันการผูกบัญชีจากอีเมล — **GET ต้องไม่เปลี่ยนสถานะ**
+    ///
+    /// ⚠️ เดิม GET ตัวนี้ผูกบัญชีให้ทันที ⇒ อะไรก็ตามที่ "เปิด URL ในอีเมลแทน
+    /// ผู้ใช้" จะยืนยันให้เอง: Microsoft Defender Safe Links, Proofpoint URL
+    /// Defense, antivirus ที่สแกนอีเมล, ตัว preview ของ Outlook/Slack —
+    /// ทั้งหมดนี้ยิง GET จริง ⇒ ผู้โจมตีที่กดปุ่ม SSO ด้วยอีเมลของเหยื่อ
+    /// **ไม่ต้องรอให้เหยื่อกดอะไรเลย** ก็ได้บัญชีไป (account takeover)
+    ///
+    /// ตอนนี้ GET แค่พาไปหน้ายืนยันที่มีปุ่มให้ "คน" กด แล้วหน้านั้นยิง POST
+    /// — สแกนเนอร์ที่ไล่เปิดลิงก์จะไม่ทำให้เกิดการผูกอีกต่อไป</summary>
     [HttpGet("sso/confirm-link")]
-    public async Task<IActionResult> ConfirmSsoLink([FromQuery] string token)
+    public IActionResult ConfirmSsoLinkPage([FromQuery] string token)
+        => Redirect("/sso-confirm.html?token=" + Uri.EscapeDataString(token ?? ""));
+
+    public sealed record ConfirmSsoLinkRequest(string Token);
+
+    /// <summary>ยืนยันการผูกจริง — เรียกจากปุ่มบนหน้า `/sso-confirm.html`
+    /// (POST + ต้องมีการกดของมนุษย์ · ไม่ใช้คุกกี้จึงไม่เป็นเป้า CSRF)</summary>
+    [HttpPost("sso/confirm-link")]
+    public async Task<ActionResult<ApiResponse<object>>> ConfirmSsoLink(
+        [FromBody] ConfirmSsoLinkRequest request)
     {
         try
         {
-            var provider = await _authService.ConfirmSsoLinkAsync(token);
-            return Redirect("/login.html?ssoLinked=" + Uri.EscapeDataString(provider));
+            var provider = await _authService.ConfirmSsoLinkAsync(request.Token);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                provider,
+                providerName = SsoIdentityPolicy.DisplayName(provider),
+            }, $"ยืนยันการผูกบัญชี {SsoIdentityPolicy.DisplayName(provider)} เรียบร้อยแล้ว"));
         }
         catch (Exception ex)
         {
             // ห้ามเงียบ — ผู้ใช้ต้องรู้ว่าทำไมกดแล้วไม่สำเร็จ และทำอะไรต่อได้
-            return Redirect("/login.html?ssoLinkError=" + Uri.EscapeDataString(ex.Message));
+            return BadRequest(new ApiResponse<object>(false, null, ex.Message));
         }
     }
 

@@ -38,6 +38,9 @@ public static class TaxInvoiceSeriesPolicy
     /// <summary>คำที่กฎหมายบังคับให้ปรากฏบนใบกำกับภาษี (§86/4 (1))</summary>
     public const string TaxInvoiceKeyword = "ใบกำกับภาษี";
 
+    /// <summary>คำเดียวกันบนเอกสารภาษาอังกฤษ (เทียบแบบไม่สนตัวพิมพ์)</summary>
+    public const string TaxInvoiceKeywordEn = "tax invoice";
+
     /// <summary>บริษัทนี้ใช้กติกา "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV" ไหม
     ///
     /// <para><b>null = ยังไม่เคยตั้ง → เปิด</b> เพราะเป็นกติกาที่ถูกต้องสำหรับ
@@ -58,19 +61,6 @@ public static class TaxInvoiceSeriesPolicy
         => (doc.DocumentType == DocumentType.TaxInvoice && doc.VatAmount > 0)
            || (resolvedTitle?.Contains(TaxInvoiceKeyword, StringComparison.Ordinal) ?? false);
 
-    /// <summary>ชนิดที่ใช้ "เลือกตัวย่อของเลข" (ไม่ใช่ชนิดจริงของเอกสาร) —
-    /// <c>null</c> = ใช้ชนิดของตัวเองตามเดิม
-    ///
-    /// <list type="bullet">
-    /// <item>มีบทบาทใบกำกับ → TIV (ครอบทั้ง TaxInvoice / Receipt / ReceiptVoucher
-    ///   ที่เก็บ VAT จริง เช่นใบเสร็จที่เป็นใบกำกับ ณ วันรับเงิน §78/1)</item>
-    /// <item>เป็น <c>TaxInvoice</c> แต่ไม่มีบทบาทใบกำกับ (VAT=0 → หัวพิมพ์
-    ///   "ใบเสร็จรับเงิน") → REC — เคสกลับด้านที่เดิมได้เลข TIV ทั้งที่กระดาษ
-    ///   ไม่ใช่ใบกำกับ</item>
-    /// <item>Receipt / ReceiptVoucher ที่ไม่ใช่ใบกำกับ → <b>คงชุดของตัวเอง</b>
-    ///   (ใบสำคัญรับเป็นกระดาษคนละอย่างกับใบเสร็จ ห้ามยุบรวมกัน)</item>
-    /// <item>ชนิดอื่น (ใบแจ้งหนี้ / ใบวางบิล / ฝั่งซื้อ) ไม่เกี่ยวกับกติกานี้เลย</item>
-    /// </list></summary>
     /// <summary>ใบที่ "หัวประกาศตัวเป็นใบกำกับภาษี" ทั้งที่ชนิดเอกสารเข้าเล่ม TIV
     /// ไม่ได้ — ต้อง**บล็อกตอนอนุมัติ** ไม่ใช่ปล่อยผ่าน
     ///
@@ -85,8 +75,16 @@ public static class TaxInvoiceSeriesPolicy
     /// §86/9-10 ให้ถือว่าใบเพิ่มหนี้/ใบลดหนี้เป็นใบกำกับภาษีอยู่แล้ว บางกิจการ
     /// พิมพ์หัว "ใบลดหนี้ (ใบกำกับภาษี)" ซึ่งถูกกฎหมาย บล็อกไม่ได้</para></summary>
     public static bool IsTaxTitleOnPlainInvoice(DocumentType type, string? resolvedTitle)
-        => type == DocumentType.Invoice
-           && (resolvedTitle?.Contains(TaxInvoiceKeyword, StringComparison.Ordinal) ?? false);
+    {
+        if (type != DocumentType.Invoice || string.IsNullOrWhiteSpace(resolvedTitle))
+            return false;
+        // ⚠️ ต้องจับหัว**ภาษาอังกฤษ**ด้วย — เอกสารที่ตั้ง DocumentLanguage=en
+        // จะได้หัวจาก CustomTitleEn ("Tax Invoice") ซึ่งไม่มีคำไทยเลย ⇒
+        // ลอดด่านได้ทั้งที่กระดาษประกาศตัวเป็นใบกำกับ (เคสขายส่งออก/ลูกค้า
+        // ต่างชาติ ซึ่งพบบ่อยที่สุดของหัวอังกฤษพอดี)
+        return resolvedTitle.Contains(TaxInvoiceKeyword, StringComparison.Ordinal)
+            || resolvedTitle.Contains(TaxInvoiceKeywordEn, StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>ข้อความบล็อก — ต้องบอกทางไปต่อทั้งสองทาง (ห้ามตันเฉย ๆ)</summary>
     public const string PlainInvoiceTaxTitleBlockedMessage =
@@ -97,6 +95,19 @@ public static class TaxInvoiceSeriesPolicy
         + "(ได้เลขชุด TIV ถูกต้อง) หรือ (2) แก้หัวเอกสารที่ ตั้งค่า → หัวเรื่องเอกสาร / "
         + "เทมเพลต ให้ไม่มีคำว่า \"ใบกำกับภาษี\" แล้วอนุมัติใหม่";
 
+    /// <summary>ชนิดที่ใช้ "เลือกตัวย่อของเลข" (ไม่ใช่ชนิดจริงของเอกสาร) —
+    /// <c>null</c> = ใช้ชนิดของตัวเองตามเดิม
+    ///
+    /// <list type="bullet">
+    /// <item>มีบทบาทใบกำกับ → TIV (ครอบทั้ง TaxInvoice / Receipt / ReceiptVoucher
+    ///   ที่เก็บ VAT จริง เช่นใบเสร็จที่เป็นใบกำกับ ณ วันรับเงิน §78/1)</item>
+    /// <item>เป็น <c>TaxInvoice</c> แต่ไม่มีบทบาทใบกำกับ (VAT=0 → หัวพิมพ์
+    ///   "ใบเสร็จรับเงิน") → REC — เคสกลับด้านที่เดิมได้เลข TIV ทั้งที่กระดาษ
+    ///   ไม่ใช่ใบกำกับ</item>
+    /// <item>Receipt / ReceiptVoucher ที่ไม่ใช่ใบกำกับ → <b>คงชุดของตัวเอง</b>
+    ///   (ใบสำคัญรับเป็นกระดาษคนละอย่างกับใบเสร็จ ห้ามยุบรวมกัน)</item>
+    /// <item>ชนิดอื่น (ใบแจ้งหนี้ / ใบวางบิล / ฝั่งซื้อ) ไม่เกี่ยวกับกติกานี้เลย</item>
+    /// </list></summary>
     public static DocumentType? SeriesTypeOverride(Document doc, bool carriesTaxInvoiceRole)
     {
         if (doc.DocumentType is not (DocumentType.TaxInvoice

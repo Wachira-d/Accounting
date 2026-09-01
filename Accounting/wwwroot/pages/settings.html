@@ -1091,7 +1091,7 @@
         }, document.getElementById('cDbdBtn'));
       },
       showTab(tab, el) {
-        ['tabCompany','tabLicense','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabLine','tabNotify','tabApproval','tabNumbering','tabSignature'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        ['tabCompany','tabLicense','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabLine','tabNotify','tabApproval','tabNumbering','tabSignature','tabSecurity'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
         document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1))?.classList.remove('hidden');
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');

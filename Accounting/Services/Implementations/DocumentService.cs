@@ -4881,6 +4881,16 @@ public partial class DocumentService : IDocumentService
                     // INV- นอกเล่ม TIV / ไม่ผ่าน §86/4 / ออก e-Tax ไม่ได้
                     // (throw **นอก** try ข้างบน — ห้ามให้ catch ที่กันเรื่อง
                     // resolver ล้ม กลืนด่านนี้ไปด้วย)
+                    // resolver ล้ม (resolvedTitle == null) บนใบแจ้งหนี้ = **ปฏิเสธ**
+                    // ไม่ใช่ปล่อยผ่าน — ไม่งั้นด่าน compliance หายไปเงียบ ๆ ทุกครั้ง
+                    // ที่ resolver มีปัญหา (fail-closed สำหรับชนิดที่มีความเสี่ยง)
+                    if (resolvedTitle == null && doc.DocumentType == DocumentType.Invoice)
+                        throw new Accounting.Helpers.BusinessRuleException(
+                            "ตรวจหัวเอกสารไม่สำเร็จ จึงยืนยันไม่ได้ว่าใบแจ้งหนี้ใบนี้ไม่ได้"
+                            + "ประกาศตัวเป็นใบกำกับภาษี — ลองอนุมัติอีกครั้ง "
+                            + "หากยังไม่ได้ให้แจ้งผู้ดูแลระบบ (ตรวจการตั้งค่าหัวเอกสาร/เทมเพลต)",
+                            "RD-86/4-INV-TITLE-UNKNOWN");
+
                     if (Accounting.Helpers.TaxInvoiceSeriesPolicy
                             .IsTaxTitleOnPlainInvoice(doc.DocumentType, resolvedTitle))
                         throw new Accounting.Helpers.BusinessRuleException(
@@ -14989,21 +14999,6 @@ public partial class DocumentService : IDocumentService
     // Projection type for the recursive cycle-detection CTE
     private sealed record AncestorRow(Guid Id, string DocumentNumber, int DocumentType);
 
-    /// <summary>Pre-approval soft-warning collector. Returns user-facing
-    /// messages for legal-but-unusual patterns that the operator should
-    /// eyeball before approving. The list is empty when nothing is amiss.
-    /// HARD errors continue to throw inline above — they're never returned
-    /// as warnings because they'd corrupt the books on save. Examples that
-    /// pass the audit but get flagged:
-    ///   • document-date drifted &gt;90d in the past or &gt;30d in the future
-    ///   • VAT rate other than 0 / 7
-    ///   • WHT rate not in the canonical ภ.ง.ด.3 / 53 list
-    ///   • TaxInvoice / Receipt without contact TaxId (e-Tax falls to
-    ///     Non-VAT format silently otherwise)
-    ///   • large amount (&gt;500k THB) — could be a typo
-    ///   • foreign currency without an explicit FX rate update
-    ///   • inventory-tracked product would go negative on this approval
-    /// </summary>
     /// <summary>ใบแจ้งหนี้ใบนี้มีบรรทัด "สินค้า" (Product.TrackStock) ไหม —
     /// ตัวตัดสินตัวเดียวที่ทั้ง AutoPost (เลือก 21911 vs 21913 พัก) และ warning
     /// §86 ตอนอนุมัติใช้ร่วมกัน: มีสินค้า = tax point เกิดตอนส่งมอบ (§78)
@@ -15020,6 +15015,21 @@ public partial class DocumentService : IDocumentService
                 && !p.IsDeleted && p.TrackStock);
     }
 
+    /// <summary>Pre-approval soft-warning collector. Returns user-facing
+    /// messages for legal-but-unusual patterns that the operator should
+    /// eyeball before approving. The list is empty when nothing is amiss.
+    /// HARD errors continue to throw inline above — they're never returned
+    /// as warnings because they'd corrupt the books on save. Examples that
+    /// pass the audit but get flagged:
+    ///   • document-date drifted &gt;90d in the past or &gt;30d in the future
+    ///   • VAT rate other than 0 / 7
+    ///   • WHT rate not in the canonical ภ.ง.ด.3 / 53 list
+    ///   • TaxInvoice / Receipt without contact TaxId (e-Tax falls to
+    ///     Non-VAT format silently otherwise)
+    ///   • large amount (&gt;500k THB) — could be a typo
+    ///   • foreign currency without an explicit FX rate update
+    ///   • inventory-tracked product would go negative on this approval
+    /// </summary>
     private async Task<List<string>> CollectApprovalWarningsAsync(Guid companyId, Document doc)
     {
         var warnings = new List<string>();

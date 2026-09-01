@@ -408,6 +408,58 @@ public class AuthService : IAuthService
         user.FailedLoginAttempts = 0;
         user.LockoutEnd = null;
         user.PasswordWeakDetectedAt = null;
+
+        // ── ยึดบัญชีคืน = ต้องตัดทางเข้าของคนอื่นให้หมด ─────────────────────
+        // เคส pre-hijacking: ผู้โจมตีสมัครบัญชีด้วยอีเมลของเหยื่อไว้ล่วงหน้า
+        // แล้วผูก SSO ของตัวเองไว้ → เหยื่อมาสมัครไม่ได้ จึงกด "ลืมรหัสผ่าน"
+        // ยึดบัญชีคืน — แต่เดิม **link ของผู้โจมตีไม่เคยถูกถอด** เขาจึงยังกดปุ่ม
+        // SSO เข้าบัญชีเดิมได้ตลอดไป (และ refresh token เดิมก็ยังใช้ได้)
+        var links = await _db.UserExternalLogins
+            .Where(x => x.UserId == user.Id && !x.IsDeleted).ToListAsync();
+        foreach (var l in links)
+        {
+            l.IsDeleted = true;
+            l.UpdatedAt = DateTime.UtcNow;
+        }
+        user.AuthProvider = null;
+        user.AuthProviderId = null;
+        // ตัดเซสชันเก่าทั้งหมดด้วย — คนที่ถือ refresh token อยู่ต้องหลุด
+        user.RefreshToken = null;
+        user.PreviousRefreshToken = null;
+        user.RefreshTokenExpiry = null;
+        user.RefreshTokenRevokedAt = DateTime.UtcNow;
+        if (links.Count > 0)
+        {
+            _db.AuditLogs.Add(new AuditLog
+            {
+                UserId = user.Id,
+                UserEmail = user.Email,
+                Action = Models.Enums.AuditAction.Delete,
+                EntityType = "UserExternalLogin",
+                EntityId = user.Id.ToString(),
+                OldValues = JsonSerializer.Serialize(links.Select(l => new { l.Provider, l.ProviderEmail })),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    Reason = "ตั้งรหัสผ่านใหม่ผ่านลิงก์อีเมล — ถอดการผูกภายนอกทั้งหมดเพื่อความปลอดภัย",
+                    RuleCode = "SSO-RESET-UNLINK",
+                }),
+                IpAddress = ClientIp(),
+                Timestamp = DateTime.UtcNow,
+            });
+            try
+            {
+                await _emailService.SendNotificationEmailAsync(user.Email, user.FullName,
+                    "ถอดการผูกบัญชีภายนอกทั้งหมดแล้ว",
+                    "เนื่องจากมีการตั้งรหัสผ่านใหม่ผ่านลิงก์ในอีเมล ระบบได้ถอดการผูก "
+                    + $"{links.Count} บัญชี (Google/LINE/Facebook) และยกเลิกเซสชันทั้งหมด "
+                    + "เพื่อความปลอดภัย — คุณผูกใหม่ได้ที่ ตั้งค่า → ความปลอดภัยบัญชี");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "แจ้งอีเมลการถอดการผูกหลังรีเซ็ตรหัสผ่านไม่สำเร็จ (user={UserId})", user.Id);
+            }
+        }
+
         // ตั้งรหัสผ่านผ่านลิงก์ที่ส่งไปอีเมล = พิสูจน์การเข้าถึงอีเมลแล้ว →
         // activate ผู้ใช้ที่ admin สร้างไว้ (WP-D1) ให้ล็อกอินได้ทันที
         if (user.Status == Models.Enums.UserStatus.PendingVerification)
@@ -564,7 +616,8 @@ public class AuthService : IAuthService
                 }
 
                 await LinkExternalLoginAsync(existing, provider, providerUserId, emailNonNull,
-                    confirmed: true, notify: true);
+                    // มาถึงตรงนี้ได้แปลว่า trustedIdentity = provider ยืนยันอีเมลแล้ว
+                    confirmed: true, notify: true, markEmailVerified: true);
                 user = existing;
             }
             else
@@ -749,11 +802,21 @@ public class AuthService : IAuthService
     /// การแจ้งว่า "บัญชีคุณถูกผูกกับ X" ไม่มีความหมาย)</summary>
     private async Task<UserExternalLogin> LinkExternalLoginAsync(
         User user, string provider, string providerUserId, string providerEmail,
-        bool confirmed, bool notify)
+        bool confirmed, bool notify, bool markEmailVerified = false)
     {
         var row = await _db.UserExternalLogins.FirstOrDefaultAsync(x =>
             x.Provider == provider && x.ProviderUserId == providerUserId);
         var now = DateTime.UtcNow;
+        // ⚠️ แถวเดิมต้องเป็นของผู้ใช้คนเดียวกันเท่านั้น — เดิมโค้ดไม่เคยเช็ค
+        // และไม่เคยเซ็ต row.UserId ⇒ แถว "รอยืนยัน" ของผู้ใช้ A ถูก confirm
+        // ระหว่างที่คนที่เพิ่ง authenticate คือ B ⇒ ครั้งถัดไป link.User = A
+        // เจ้าของตัวตนนั้นเข้าบัญชี A ได้ (เส้นพี่น้อง LinkExternalLoginForUserAsync
+        // มีด่านนี้ครบอยู่แล้ว — เส้นล็อกอินลืม)
+        if (row != null && row.UserId != user.Id)
+            throw new BusinessRuleException(
+                $"บัญชี {SsoIdentityPolicy.DisplayName(provider)} นี้ผูกกับผู้ใช้อื่นในระบบอยู่แล้ว — "
+                + "ให้เจ้าของบัญชีนั้นถอดการผูกก่อน (ตั้งค่า → ความปลอดภัยบัญชี)",
+                "SSO-LINK-OWNED");
         if (row == null)
         {
             row = new UserExternalLogin
@@ -776,7 +839,11 @@ public class AuthService : IAuthService
         }
         user.AuthProvider = provider;
         user.AuthProviderId = providerUserId;
-        if (confirmed) user.EmailVerified = true;
+        // ⚠️ "ผูกสำเร็จ" ≠ "อีเมลของบัญชีนี้ถูกยืนยันแล้ว" — สองเรื่องนี้เคยผูกกัน
+        // อยู่ ⇒ สมัครด้วย Facebook (อีเมลไม่ยืนยัน) หรือสมัครด้วยตั๋ว LINE แล้ว
+        // พิมพ์อีเมลอะไรก็ได้ ก็ได้ธง EmailVerified=true ฟรี ๆ ทับนโยบายที่
+        // SsoIdentityPolicy.MarksEmailVerifiedOnSignup ตั้งใจไว้เอง
+        if (markEmailVerified) user.EmailVerified = true;
 
         _db.AuditLogs.Add(new AuditLog
         {
@@ -892,8 +959,10 @@ public class AuthService : IAuthService
         var gate = UserLoginPolicy.Evaluate(row.User.Status, false);
         if (!gate.Can) throw new UnauthorizedAccessException(gate.Reason);
 
+        // กดลิงก์ในอีเมลของตัวเอง = พิสูจน์การเข้าถึงอีเมลนั้นจริง
         await LinkExternalLoginAsync(row.User, row.Provider, row.ProviderUserId,
-            row.ProviderEmail ?? row.User.Email, confirmed: true, notify: true);
+            row.ProviderEmail ?? row.User.Email,
+            confirmed: true, notify: true, markEmailVerified: true);
         return row.Provider;
     }
 
