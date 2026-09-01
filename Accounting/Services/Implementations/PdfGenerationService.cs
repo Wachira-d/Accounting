@@ -1497,6 +1497,14 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// (ใบกำกับรายงาน VAT ไปแล้ว) → หัวห้ามมีคำ "ใบกำกับภาษี" ซ้ำ (กันเคลมซ้ำ).</summary>
     /// <summary>มีใบเสร็จ/ใบสำคัญรับที่ยัง active อ้างใบนี้อยู่ไหม — เงื่อนไข
     /// เดียวที่ใช้ร่วมทุกจุด (กฎเหล็ก #4 C ห้ามเขียนซ้ำสองที่)</summary>
+    /// <summary>รูปแบบการออกใบกำกับ/ใบเสร็จของบริษัท — คิวรีเดียว ไม่มีแถว
+    /// CompanySettings (tenant ใหม่) = <c>Combined</c> ซึ่งเป็นพฤติกรรมเดิม</summary>
+    private async Task<ReceiptIssueMode> GetReceiptIssueModeAsync(Guid companyId) =>
+        await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (ReceiptIssueMode?)s.ReceiptIssueMode)
+            .FirstOrDefaultAsync() ?? ReceiptIssueMode.Combined;
+
     private Task<bool> HasSeparateReceiptAsync(Guid companyId, Guid documentId) =>
         _db.Documents.AsNoTracking().AnyAsync(r =>
             r.CompanyId == companyId && r.RelatedDocumentId == documentId
@@ -1579,6 +1587,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
 
         if (doc.DocumentType != DocumentType.TaxInvoice) return;
+        // นโยบายบริษัท "แยกใบกำกับ–ใบเสร็จเสมอ" → ใบกำกับห้ามยกหัวเป็นใบเสร็จ
+        // ในตัว เพราะใบเสร็จตัวจริงคือ REC อีกใบ ถ้ายกด้วยจะมีกระดาษสองใบที่ต่าง
+        // พูดว่า "ใบเสร็จรับเงิน" จากการรับเงินก้อนเดียว
+        // (กติกาอยู่ที่ Helpers/ReceiptIssuePolicy — mirror: DocumentService
+        //  .ComputeServedAsReceipt แก้ที่ใดที่หนึ่งต้องแก้อีกที่เสมอ)
+        if (!ReceiptIssuePolicy.AllowsCombinedReceiptHeader(
+                await GetReceiptIssueModeAsync(companyId))) return;
         // ชำระครบวันเดียวกัน (same-day settlement) → ใบกำกับทำหน้าที่ใบเสร็จในตัว.
         // เดิมบังคับ Status == Paid เป๊ะ → พลาดเคสที่ balance = 0 แต่ label ยัง
         // Approved/PartiallyPaid (เช่น หักมัดจำผ่าน flow อื่น / rounding) — คำขอ

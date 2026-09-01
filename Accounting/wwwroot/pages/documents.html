@@ -303,6 +303,10 @@
                   <option value="cert">ใบรับรองแทนใบเสร็จ — ผู้ขายไม่มีใบเสร็จให้ (ตลาดสด แท็กซี่)</option>
                 </optgroup>
               </select>
+              <!-- นโยบายการออกใบของบริษัท (ตั้งค่า → รูปแบบการออกใบกำกับ/ใบเสร็จ)
+                   โผล่เฉพาะโหมด "แยกใบเสมอ" เพื่ออธิบายว่าทำไมตัวเลือกบางตัวหาย —
+                   ห้ามซ่อนตัวเลือกโดยไม่บอกเหตุผล -->
+              <div id="paperModeNote" style="display:none;margin-top:6px;padding:8px 12px;background:#eff6ff;border-left:3px solid #3b82f6;border-radius:6px;font-size:12px;color:#1e40af;line-height:1.6"></div>
               <!-- ชื่อทางการค้า: โผล่เฉพาะบริษัทที่ตั้งแบรนด์ไว้ (ตั้งที่หน้า
                    "ชื่อทางการค้า & หน้าตาเอกสาร") · ป้ายใต้ช่องบอกตรง ๆ ว่าใบชนิด
                    นี้แบรนด์จะขึ้นหัวได้หรือจะเป็นแค่โลโก้/สี — กติกามาจาก API
@@ -1577,8 +1581,14 @@
           // (ฟอร์มเบาลงสำหรับบริษัทที่ไม่ใช้ ข้อมูลเดิมไม่หาย)
           this._showProject = sr?.data?.showProjectOnDocuments !== false;
           this._showCostCenter = sr?.data?.showCostCenterOnDocuments !== false;
+          // รูปแบบการออกใบกำกับ/ใบเสร็จของบริษัท (0=ใบเดียวจบ 1=แยกเสมอ 2=ค้าปลีก)
+          // — เซิร์ฟเวอร์เป็นเจ้าของกติกา (Helpers/ReceiptIssuePolicy) หน้านี้ใช้แค่
+          // "ล็อกช่อง/ซ่อนตัวเลือก + บอกเหตุผล" ให้ตรงกับที่เซิร์ฟเวอร์จะทำจริง
+          this._receiptMode = this._normReceiptMode(sr?.data?.receiptIssueMode);
+          this._receiptModeText = sr?.data?.receiptIssueModeDescription || '';
         }
         catch { this._vatRegistered = true; this._showProject = true; this._showCostCenter = true; }
+        this.applyReceiptIssueMode();
         this.applyVatRegistrationLock();
         this.applyAnalysisAxisVisibility();
         try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
@@ -3771,6 +3781,49 @@
         // ไม่บันทึกรับเงิน = กระดาษบอกรับเงินแล้วแต่บัญชีตั้งลูกหนี้ค้าง — ขัดกันเอง)
         receipt_only: { type: 'TaxInvoice', combined: false, cash: false, declined: true, paid: true,
           hint: 'ใช้เมื่อลูกค้าจ่ายแล้วและไม่ขอใบกำกับเต็มรูป — ออก "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" ระบบบันทึกรับเงินให้อัตโนมัติ · ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อ · VAT ขายยังนำส่งครบตามปกติ แต่ผู้ซื้อนำใบนี้ไปเคลมภาษีซื้อไม่ได้ · เหมาะกับขายปลีก/บริการรายย่อยแก่ผู้บริโภค (§86/6 — ควรได้รับอนุมัติ ภ.พ.06)' },
+      },
+
+      /** enum ReceiptIssueMode ที่เซิร์ฟเวอร์ส่งมา (ชื่อหรือเลขก็ได้ตาม serializer)
+       *  → เลข 0/1/2 เสมอ. undefined = เซิร์ฟเวอร์รุ่นเก่ายังไม่ส่ง = ใบเดียวจบ
+       *  (พฤติกรรมเดิม) ไม่ใช่ "ไม่รู้แล้วล็อกทุกอย่าง" */
+      _normReceiptMode(v) {
+        const map = { Combined: 0, SeparateReceipt: 1, RetailReceipt: 2 };
+        if (typeof v === 'string') return map[v] ?? 0;
+        return Number.isFinite(v) ? Number(v) : 0;
+      },
+      /** โหมด "แยกใบกำกับ–ใบเสร็จเสมอ" — ตัวเดียวที่หน้านี้ถามถึง (mirror ของ
+       *  Helpers/ReceiptIssuePolicy.ForcesSeparateReceipt / AllowsCashReceiptPapers
+       *  ซึ่งบังเอิญเป็นเงื่อนไขเดียวกัน — ถ้าวันหนึ่งกติกาสองตัวนี้แยกจากกัน
+       *  ต้องแยกเมธอดตาม ไม่ใช่ปล่อยให้ที่นี่เดา) */
+      _separateReceiptMode() { return this._receiptMode === 1; },
+
+      /** ซ่อนกระดาษที่ขัดกับนโยบายบริษัท — โหมดแยกใบไม่ควรมีตัวเลือก "ใบกำกับ
+       *  + ใบเสร็จในใบเดียว" ให้กดได้ (เลือกไปก็ถูกเซิร์ฟเวอร์บังคับออกใบเสร็จ
+       *  แยกอยู่ดี = ผู้ใช้เห็นผลไม่ตรงกับที่เลือก). ซ่อนพร้อม**บอกเหตุผล**
+       *  ใต้ dropdown ห้ามหายเฉย ๆ */
+      applyReceiptIssueMode() {
+        const sep = this._separateReceiptMode();
+        const paper = document.getElementById('fPaper');
+        if (paper) {
+          ['tax_receipt', 'invoice_tax_paid'].forEach(v => {
+            const o = paper.querySelector(`option[value="${v}"]`);
+            if (o) o.hidden = sep;
+          });
+          // ถ้าค่าที่เลือกอยู่ถูกซ่อนไป (เปิดฟอร์มค้างไว้แล้วเปลี่ยนนโยบาย) →
+          // ย้ายไปกระดาษที่ใกล้เคียงที่สุดของโหมดนี้ ไม่ปล่อยให้ค้างที่ตัวที่ซ่อน
+          if (sep && ['tax_receipt', 'invoice_tax_paid'].includes(paper.value)) {
+            paper.value = 'tax';
+            if (typeof this.onPaperChange === 'function') this.onPaperChange();
+          }
+        }
+        const host = document.getElementById('paperModeNote');
+        if (host) {
+          host.style.display = sep ? '' : 'none';
+          host.textContent = sep
+            ? (this._receiptModeText || '')
+              + ' — ตัวเลือก "ใบกำกับ+ใบเสร็จในใบเดียว" จึงถูกซ่อนไว้ (เปลี่ยนได้ที่ ตั้งค่า → รูปแบบการออกใบกำกับ/ใบเสร็จ)'
+            : '';
+        }
       },
 
       /** ══ "ประเภทเอกสาร" ชั้นเดียว (fPaper) — กระดาษปลายทาง → ชนิด+โหมด ══
@@ -10220,6 +10273,18 @@
         // ใบเสร็จต่องวด (default เปิด). ผู้ใช้ปรับเองได้เสมอ. อัปเดตตามยอดที่พิมพ์.
         const _refreshIssueDefault = () => {
           if (!_salesSide || !rpIssueCb) return;
+          // นโยบาย "แยกใบกำกับ–ใบเสร็จเสมอ" → ล็อกช่องไว้ติ๊ก **พร้อมบอกเหตุผล**
+          // (เซิร์ฟเวอร์บังคับออกใบเสร็จอยู่แล้วไม่ว่าติ๊กหรือไม่ — ถ้าปล่อยให้
+          // ปลดติ๊กได้ ผู้ใช้จะเห็นผลไม่ตรงกับที่เลือก = silent no-op)
+          if (this._separateReceiptMode()) {
+            rpIssueCb.checked = true;
+            rpIssueCb.disabled = true;
+            if (rpIssueHint) rpIssueHint.textContent =
+              (this._receiptModeText || 'บริษัทตั้งค่าให้แยกใบกำกับ–ใบเสร็จเสมอ')
+              + ' — ระบบจะออกใบเสร็จรับเงิน (REC) ผูกกับใบนี้ให้ทุกครั้งที่รับเงิน';
+            return;
+          }
+          rpIssueCb.disabled = false;
           const amt = parseFloat(amountEl.value || '0') || 0;
           const fullFirst = sourceTotal > 0 && Math.abs(balanceDue - sourceTotal) < 0.01  // งวดแรก
             && amt >= balanceDue - 0.01;                                                   // จ่ายเต็มยอด

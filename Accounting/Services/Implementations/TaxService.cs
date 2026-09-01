@@ -11,6 +11,9 @@ namespace Accounting.Services.Implementations;
 public partial class TaxService : ITaxService
 {
     private readonly AccountingDbContext _db;
+    // optional — ใช้บันทึกกรณีเติม "ป้ายช่วยอ่าน" ในรายงานไม่สำเร็จ (ไม่ใช่ตัวเลข
+    // ที่ยื่น จึงห้ามล้มทั้งรายงาน แต่ก็ห้ามหายเงียบโดยไม่มีร่องรอย)
+    private readonly ILogger<TaxService>? _logger;
 
     // Thai WHT rate table by income type
     private static readonly Dictionary<string, decimal> WhtRateTable = new()
@@ -31,9 +34,10 @@ public partial class TaxService : ITaxService
         { "default", 3m }      // Default rate
     };
 
-    public TaxService(AccountingDbContext db)
+    public TaxService(AccountingDbContext db, ILogger<TaxService>? logger = null)
     {
         _db = db;
+        _logger = logger;
     }
 
     public async Task<TaxReportResponse> GenerateTaxReportAsync(Guid companyId, CreateTaxReportRequest request)
@@ -2479,8 +2483,63 @@ public partial class TaxService : ITaxService
                         d.IsForeignService, d.Pp36RdReceiptNumber, d.Pp36RdReceiptDate
                     }).ToDictionaryAsync(x => x.Id);
 
+                // ── ชนิดเอกสาร "ตามกฎหมาย" ต่อแถว ──
+                // ตัวย่อของเลข (TIV/REC/RV/INV) บอกแค่ชนิดข้อมูล ไม่ได้บอกว่ากระดาษ
+                // ใบนั้นคืออะไร — ใบที่หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน" อยู่ได้
+                // ทั้งบน TIV- (ใบกำกับที่รับเงินครบ/ขายสด) และ REC- (ใบเสร็จ standalone
+                // ที่มี VAT / ใบกำกับ ณ วันรับเงิน §78/1) ⇒ นักบัญชีเปิดรายงานแล้ว
+                // เห็นเลขปนกันจนไล่ไม่ออกว่าใบไหนคือใบกำกับตัวจริง
+                // ใช้ resolver หัวเอกสาร**ตัวเดียวกับที่พิมพ์ลงกระดาษ** (batch,
+                // query คงที่ต่อหน้า) — ห้ามคำนวณป้ายเองที่นี่ ไม่งั้นได้สำเนาที่ drift
+                var kindByDoc = new Dictionary<Guid, string>();
+                try
+                {
+                    var docsForTitle = await _db.Documents.AsNoTracking()
+                        .Include(d => d.Contact)
+                        .Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
+                        .ToListAsync();
+                    if (docsForTitle.Count > 0)
+                    {
+                        // ServedAsReceipt ต้องเซ็ตมาก่อนตามสัญญาของ resolver —
+                        // ใบที่มีใบเสร็จแยกอ้างอยู่ ห้ามนับเป็น "ทำหน้าที่ใบเสร็จเอง"
+                        var tivIds = docsForTitle
+                            .Where(d => d.DocumentType == DocumentType.TaxInvoice)
+                            .Select(d => d.Id).ToList();
+                        var withReceipt = tivIds.Count == 0
+                            ? new HashSet<Guid>()
+                            : (await _db.Documents.AsNoTracking()
+                                .Where(r => r.CompanyId == companyId && r.RelatedDocumentId != null
+                                    && tivIds.Contains(r.RelatedDocumentId!.Value)
+                                    && (r.DocumentType == DocumentType.Receipt
+                                        || r.DocumentType == DocumentType.ReceiptVoucher)
+                                    && r.Status != DocumentStatus.Voided
+                                    && r.Status != DocumentStatus.Draft
+                                    && r.Status != DocumentStatus.Rejected)
+                                .Select(r => r.RelatedDocumentId!.Value)
+                                .Distinct().ToListAsync()).ToHashSet();
+                        var mode = await _db.CompanySettings.AsNoTracking()
+                            .Where(s => s.CompanyId == companyId)
+                            .Select(s => (ReceiptIssueMode?)s.ReceiptIssueMode)
+                            .FirstOrDefaultAsync() ?? ReceiptIssueMode.Combined;
+                        foreach (var d in docsForTitle)
+                            d.ServedAsReceipt = DocumentService.ComputeServedAsReceipt(
+                                d, withReceipt.Contains(d.Id), mode);
+                        kindByDoc = await PdfGenerationService.ResolveDocumentTitlesAsync(
+                            _db, companyId, docsForTitle);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // ป้ายชนิดเอกสารเป็น "ข้อมูลช่วยอ่าน" ไม่ใช่ตัวเลขที่ยื่น —
+                    // ล้มแล้วต้องไม่ทำให้รายงานทั้งฉบับเปิดไม่ได้ (แต่ห้ามเงียบ)
+                    _logger?.LogWarning(ex,
+                        "เติมป้ายชนิดเอกสารในรายงานภาษีไม่สำเร็จ (report {Report})", reportId);
+                }
+
                 var enriched = resp.Lines.Select(ln =>
                 {
+                    if (ln.DocumentId.HasValue && kindByDoc.TryGetValue(ln.DocumentId.Value, out var kind))
+                        ln = ln with { DocumentKindLabel = kind };
                     if (ln.DocumentId.HasValue && docInfo.TryGetValue(ln.DocumentId.Value, out var info))
                     {
                         var isInput = ln.IncomeTypeCode is "INPUT" or "JE_INPUT";

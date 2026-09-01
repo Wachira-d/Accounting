@@ -397,6 +397,36 @@
         </div>
       </div>
 
+      <!-- รูปแบบการออกใบกำกับภาษี / ใบเสร็จรับเงิน -->
+      <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">🧾 รูปแบบการออกใบกำกับภาษี / ใบเสร็จรับเงิน</h3>
+      <p style="color:#64748b;margin:0 0 14px;font-size:13px">
+        ตัดสินว่า<b>การขายหนึ่งครั้งออกกระดาษกี่ใบ</b> และคำว่า "ใบกำกับภาษี" จะอยู่บนเลขชุดไหน
+        (TIV หรือ REC) — ตั้งครั้งเดียวแล้วทุกทางเข้าเดินเส้นเดียวกัน ไม่ต้องจำติ๊กรายใบ
+      </p>
+      <div class="form-group" style="max-width:640px">
+        <select class="form-input" id="sReceiptIssueMode">
+          <option value="0">ใบเดียวจบ (ค่าเริ่มต้น) — ใบกำกับที่รับเงินครบแล้วทำหน้าที่ใบเสร็จในตัว</option>
+          <option value="1">แยกใบกำกับภาษี–ใบเสร็จรับเงิน — ใบกำกับ (TIV) ณ วันส่งมอบ + ใบเสร็จ (REC) ณ วันรับเงิน</option>
+          <option value="2">ค้าปลีก (ใบเดียวที่จุดขาย) — ใบเสร็จรับเงิน/ใบกำกับภาษีใบเดียวจบ</option>
+        </select>
+        <div id="sReceiptIssueModeHint" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6"></div>
+      </div>
+      <div class="form-group" style="max-width:640px;margin-top:10px">
+        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="sUnifyTaxInvoiceSeries" style="margin-top:3px">
+          <span style="font-size:13px;line-height:1.7">
+            <b>ใบที่หัวมีคำว่า "ใบกำกับภาษี" ให้ใช้เลขชุด TIV ทั้งหมด</b>
+            <span style="font-size:11px;color:#16a34a">(แนะนำ — เปิดให้อัตโนมัติ)</span><br>
+            <span class="text-xs text-gray-500">
+              คนละเรื่องกับตัวเลือกด้านบน (อันนั้นคุม "ออกกี่ใบ" อันนี้คุม "ใบไหนใช้เลขชุดไหน").
+              เปิดแล้วเล่มใบกำกับเหลือชุดเดียว — รายงานภาษีขาย §87 เรียงไม่ขาดช่วงในชุดเดียว
+              สรรพากรขอเล่มใบกำกับหยิบเล่มเดียวจบ · ใบเสร็จเปล่า/ใบไม่มี VAT ยังอยู่ชุด REC<br>
+              ⚠️ มีผลกับ<b>ใบใหม่เท่านั้น</b> — ใบที่ออกเลขไปแล้วเปลี่ยนย้อนหลังไม่ได้ (§86/4)
+            </span>
+          </span>
+        </label>
+      </div>
+
       <!-- หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง) -->
       <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">🏷️ หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง)</h3>
       <p style="color:#64748b;margin:0 0 14px;font-size:13px">
@@ -1104,12 +1134,29 @@
         }
       },
 
+      /** คำอธิบายผลของโหมดที่เลือก — ค่าที่เซิร์ฟเวอร์คำนวณมาชนะเสมอ
+       *  (serverText). ตอนผู้ใช้เพิ่งเปลี่ยน dropdown ยังไม่ได้บันทึก จึงไม่มี
+       *  ค่าจากเซิร์ฟเวอร์ → แสดงคำเตือนว่ายังไม่บันทึก แทนที่จะเดาข้อความเอง
+       *  (ห้ามสร้างสำเนามือของ ReceiptIssuePolicy.Describe ฝั่ง JS) */
+      _renderReceiptModeHint(serverText) {
+        const el = document.getElementById('sReceiptIssueModeHint');
+        if (!el) return;
+        el.innerHTML = serverText
+          ? Layout.esc(serverText)
+          : '⚠️ ยังไม่ได้บันทึก — กด "บันทึกการตั้งค่า" แล้วระบบจะยืนยันผลของโหมดนี้';
+      },
+
       // ===== หัวเรื่องเอกสารตั้งเอง =====
       // คีย์ต้องตรงกับ PdfGenerationService.ComputeDocumentTitle (enum name + คีย์เงื่อนไข)
       TITLE_VARIANTS: [
         { k: 'TaxInvoiceReceipt', label: 'ใบกำกับ+รับเงินตอนออก / ใบเสร็จมี VAT', def: 'ใบกำกับภาษี/ใบเสร็จรับเงิน' },
         { k: 'CombinedInvoice', label: 'ใบแจ้งหนี้ + ใบกำกับภาษี รวมใบเดียว', def: 'ใบแจ้งหนี้/ใบกำกับภาษี' },
         { k: 'CombinedInvoiceReceipt', label: 'ใบรวมที่จ่ายครบแล้ว (3-in-1)', def: 'ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน' },
+        // 3 คีย์ล่างนี้เซิร์ฟเวอร์รองรับมาตลอด (ComputeDocumentTitle) แต่หน้านี้
+        // ไม่เคยมีช่องให้กรอก ⇒ ตั้งได้ทางเดียวคือยิง API ตรง
+        { k: 'CashReceiptTaxInvoice', label: 'ขายเงินสด B2B (รับเงินพร้อมออกใบ)', def: 'ใบเสร็จรับเงิน/ใบกำกับภาษี' },
+        { k: 'AbbreviatedTaxInvoice', label: 'ผู้ซื้อไม่ครบ §86/4 — ขายเชื่อ', def: 'ใบกำกับภาษีอย่างย่อ' },
+        { k: 'ReceiptAbbreviatedTaxInvoice', label: 'ผู้ซื้อไม่ครบ §86/4 — รับเงินแล้ว', def: 'ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ' },
         { k: 'DepositSuffix', label: 'ต่อท้ายเอกสารเงินมัดจำ', def: '(เงินมัดจำ)' },
       ],
       // ค่า default ที่โชว์ข้างช่อง "ตั้งหัวเอกสารเอง" ต้องเป็นค่าที่กระดาษพิมพ์
@@ -1929,6 +1976,21 @@
           document.getElementById('sReceiptFooter').value = s.receiptFooter || '';
           document.getElementById('sShowGlEntryOnDocument').checked = !!s.showGlEntryOnDocument;
           document.getElementById('sDocumentLanguage').value = s.documentLanguage || 'th';
+          // รูปแบบการออกใบกำกับ/ใบเสร็จ — enum ส่งมาเป็นชื่อหรือเลขก็ได้ตาม
+          // serializer; map ให้เป็นเลขของ <option> เสมอ. คำอธิบายใต้ช่องมาจาก
+          // **เซิร์ฟเวอร์** (ReceiptIssueModeDescription) ห้ามหน้านี้แต่งเอง
+          const _rimSel = document.getElementById('sReceiptIssueMode');
+          if (_rimSel) {
+            const _rimMap = { Combined: '0', SeparateReceipt: '1', RetailReceipt: '2' };
+            const _rimRaw = s.receiptIssueMode;
+            _rimSel.value = _rimMap[_rimRaw] ?? String(_rimRaw ?? 0);
+            this._renderReceiptModeHint(s.receiptIssueModeDescription);
+            _rimSel.onchange = () => this._renderReceiptModeHint(null);
+          }
+          // null/undefined = ยังไม่เคยตั้ง → ค่าแนะนำคือ **เปิด** (ไม่ใช่ปิด)
+          // ต้องตรงกับ TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled ฝั่งเซิร์ฟเวอร์
+          const _uniCb = document.getElementById('sUnifyTaxInvoiceSeries');
+          if (_uniCb) _uniCb.checked = (s.unifyTaxInvoiceNumberSeries ?? true) !== false;
           document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
           document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
           document.getElementById('sUseCustomSignatory').checked = !!s.useCustomAuthorizedSignatory;
@@ -2049,22 +2111,77 @@
           Layout.toast('ลบตราประทับแล้ว');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      // ตัวย่อมาตรฐาน — ต้องตรงกับ Helpers/DocumentNumberGenerator.GetPrefix
+      // (แสดงเป็น placeholder เท่านั้น: ปล่อยว่าง = ใช้ค่านี้ ไม่ได้เก็บลง DB)
+      NS_DEFAULT_PREFIX: {
+        Quotation: 'QT', Invoice: 'INV', Receipt: 'REC', TaxInvoice: 'TIV',
+        DebitNote: 'DN', CreditNote: 'CN', DeliveryNote: 'DLV', BillingNote: 'BN',
+        ReceiptVoucher: 'RV', PurchaseRequisition: 'PR', PurchaseOrder: 'PO',
+        GoodsReceiptNote: 'GR', PurchaseInvoice: 'PI', Expense: 'EXP',
+        PaymentVoucher: 'PV', CertificateInLieu: 'CIL',
+      },
       async loadNumberSeries() {
         const api = Layout.api(); if (!api) return;
+        const host = document.getElementById('numberSeriesContent');
         try {
           const res = await api.getNumberSeries();
           const items = res.data?.items || res.data || [];
-          document.getElementById('numberSeriesContent').innerHTML = items.length ?
-            `<div class="table-container"><table class="table">
-              <thead><tr><th>ประเภทเอกสาร</th><th>Prefix</th><th>Format</th><th>เลขปัจจุบัน</th><th data-i18n="common.reset">รีเซ็ต</th><th data-i18n="common.status">สถานะ</th></tr></thead>
-              <tbody>${items.map(n => `<tr>
-                <td>${Layout.docTypeLabel(n.documentType)}</td>
-                <td>${n.prefix}</td><td>${n.format}</td>
-                <td>${n.currentNumber}</td><td>${n.resetPeriod}</td>
-                <td>${n.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
-              </tr>`).join('')}</tbody>
-            </table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
-        } catch (e) { document.getElementById('numberSeriesContent').innerHTML = '<p class="text-danger text-center">' + e.message + '</p>'; }
+          // แถวที่ตั้งไว้แล้ว (ถ้ามี) map ตามชนิดเอกสาร — enum ส่งมาเป็นชื่อ
+          const byType = {};
+          items.forEach(n => { byType[String(n.documentType)] = n; });
+          this._nsRows = byType;
+          const rows = Object.keys(this.NS_DEFAULT_PREFIX).map(t => {
+            const cur = byType[t];
+            const def = this.NS_DEFAULT_PREFIX[t];
+            return `<tr>
+              <td>${Layout.esc(Layout.docTypeLabel(t))}</td>
+              <td><input type="text" class="form-input" style="max-width:120px;text-transform:uppercase"
+                    data-ns-type="${t}" data-ns-id="${cur ? Layout.esc(cur.id) : ''}"
+                    maxlength="8" placeholder="${Layout.esc(def)}"
+                    value="${cur && cur.prefix !== def ? Layout.esc(cur.prefix) : ''}"></td>
+              <td class="text-xs text-gray-500">${Layout.esc(def)}-25690901-0001</td>
+            </tr>`;
+          }).join('');
+          host.innerHTML = `
+            <div style="padding:10px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:12.5px;color:#92400e;line-height:1.7;margin-bottom:12px">
+              รูปแบบเลขเป็น <b>ตัวย่อ-วันที่-ลำดับ</b> เหมือนกันทั้งระบบ (เรียงไม่ขาดช่วงตาม §86/4) — ตั้งได้เฉพาะ<b>ตัวย่อ</b><br>
+              ⚠️ เปลี่ยนตัวย่อแล้วเลขจะ<b>เริ่มนับใหม่จาก 0001</b> ในชุดใหม่ (ชุดเดิมยังอยู่ครบ) — ควรเปลี่ยนต้นรอบบัญชีเท่านั้น
+            </div>
+            <div class="table-container"><table class="table">
+              <thead><tr><th>ประเภทเอกสาร</th><th>ตัวย่อ (ว่าง = ค่ามาตรฐาน)</th><th>ตัวอย่างเลขที่</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div>
+            <div style="margin-top:12px"><button class="btn btn-primary" onclick="Page.saveNumberSeries()">บันทึกตัวย่อ</button></div>`;
+        } catch (e) { host.innerHTML = '<p class="text-danger text-center">' + Layout.esc(e.message) + '</p>'; }
+      },
+      /** บันทึกเฉพาะแถวที่ "เปลี่ยนจริง" — ว่าง = กลับไปใช้ค่ามาตรฐาน (ปิดแถวเดิม
+       *  แทนการลบ เพื่อคงร่องรอยว่าเคยตั้งอะไรไว้) */
+      async saveNumberSeries() {
+        const api = Layout.api(); if (!api) return;
+        const inputs = Array.from(document.querySelectorAll('[data-ns-type]'));
+        let changed = 0, failed = 0;
+        for (const el of inputs) {
+          const type = el.getAttribute('data-ns-type');
+          const id = el.getAttribute('data-ns-id') || '';
+          const def = this.NS_DEFAULT_PREFIX[type];
+          const raw = (el.value || '').trim().toUpperCase();
+          const cur = this._nsRows?.[type];
+          const curPrefix = cur ? cur.prefix : def;
+          const want = raw || def;
+          if (want === curPrefix) continue;                    // ไม่เปลี่ยน
+          if (!/^[A-Z0-9]{1,8}$/.test(want)) {
+            Layout.toast(`ตัวย่อของ "${Layout.docTypeLabel(type)}" ต้องเป็น A-Z/0-9 ไม่เกิน 8 ตัว`, 'error');
+            failed++; continue;
+          }
+          try {
+            if (id) await api.updateNumberSeries(id, { prefix: want });
+            else await api.createNumberSeries({ documentType: type, prefix: want, suffix: null, format: '{PREFIX}-{YYYY}{MM}-{SEQ:4}' });
+            changed++;
+          } catch (e) { Layout.toast(e.message, 'error'); failed++; }
+        }
+        if (!changed && !failed) { Layout.toast('ไม่มีอะไรเปลี่ยน', 'info'); return; }
+        if (changed) Layout.toast(`บันทึกตัวย่อแล้ว ${changed} รายการ`, 'success');
+        this.loadNumberSeries();
       },
       async save() {
         const api = Layout.api(); if (!api) return;
@@ -2093,6 +2210,10 @@
             authorizedSignatorySignatureBase64: document.getElementById('sSignatoryImage').value,
             enforceManagerApproval: document.getElementById('sEnforceManagerApproval').checked,
             documentTitleOverridesJson: this.collectTitleOverrides(),
+            // enum เป็นตัวเลข — Layout.intOrNull กันค่าว่าง/ขยะไม่ให้กลายเป็น 0
+            // โดยบังเอิญ (0 = "ใบเดียวจบ" ซึ่งเป็นค่าจริงที่มีความหมาย)
+            receiptIssueMode: Layout.intOrNull('sReceiptIssueMode'),
+            unifyTaxInvoiceNumberSeries: document.getElementById('sUnifyTaxInvoiceSeries')?.checked || false,
             // ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดแยก)
             stampWidthMm: parseFloat(document.getElementById('sStampW')?.value || '32'),
             stampHeightMm: parseFloat(document.getElementById('sStampH')?.value || '32'),

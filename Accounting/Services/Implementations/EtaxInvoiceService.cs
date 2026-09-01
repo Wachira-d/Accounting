@@ -105,7 +105,13 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             throw new InvalidOperationException("ไม่สามารถสร้าง e-Tax จากเอกสารฉบับร่างได้ กรุณาอนุมัติเอกสารก่อน");
         if (document.Status == DocumentStatus.Voided)
             throw new InvalidOperationException("ไม่สามารถสร้าง e-Tax จากเอกสารที่ยกเลิกแล้ว");
-        if (document.Status != DocumentStatus.Approved)
+        // ⚠️ เดิมบังคับ `Status == Approved` **เป๊ะ ๆ** ซึ่งเป็นสถานะชั่วคราวมาก:
+        // พอส่งอีเมล/รับชำระ เอกสารเดินไป Sent → PartiallyPaid → Paid ทันที ⇒
+        // **ใบกำกับที่รับเงินแล้วสร้าง e-Tax ไม่ได้เลย** ทั้งที่มันคือใบที่อนุมัติ
+        // แล้วแท้ ๆ (และใบเสร็จ settlement เกิดมาเป็น Paid ตั้งแต่แรก จึงไม่มีวัน
+        // ผ่านด่านนี้). สิ่งที่ต้องกันจริงคือ "ยังไม่ผ่านการอนุมัติ" กับ "ถูกยกเลิก"
+        // ซึ่งดักไว้หมดแล้วด้านบน + WaitingApproval/Rejected ด้านล่าง
+        if (document.Status is DocumentStatus.WaitingApproval or DocumentStatus.Rejected)
             throw new InvalidOperationException("สามารถสร้าง e-Tax ได้เฉพาะเอกสารที่อนุมัติแล้วเท่านั้น");
 
         if (await _db.EtaxInvoices.AnyAsync(e => e.DocumentId == document.Id && e.CompanyId == companyId && e.Status != EtaxStatus.Error))
@@ -130,6 +136,23 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                     + "จึงยังไม่ใช่ใบกำกับภาษี — ออก e-Tax ไม่ได้. "
                     + "e-Tax จะออกที่ใบกำกับภาษีตอนส่งมอบ/รับรู้รายได้ "
                     + "(หรือเปลี่ยนใบนี้เป็นมัดจำที่เก็บ VAT ทันที ถ้าเป็นการรับชำระราคาจริง)");
+
+            // ใบเสร็จที่ "รับชำระใบกำกับภาษี" — VAT ถูกรายงานที่ใบกำกับต้นทางแล้ว
+            // และกระดาษก็พิมพ์หัว "ใบเสร็จรับเงิน" เปล่า ๆ โดยตั้งใจ (กติกา
+            // SettlesTaxInvoiceSource ใน ComputeDocumentTitle — กันลูกค้าถือกระดาษ
+            // ที่มีคำว่าใบกำกับภาษี 2 ใบจากการขายครั้งเดียว = เคลมภาษีซื้อซ้ำ).
+            // ปล่อยให้ export จะได้ T03 "ใบเสร็จรับเงิน/ใบกำกับภาษี" = ประกาศต่อ RD
+            // ว่าเป็นใบกำกับใบที่สอง ซึ่งขัดกับทั้งกระดาษและ ภ.พ.30 ของตัวเอง
+            var settlesTaxInvoice = document.RelatedDocumentId.HasValue
+                && await _db.Documents.AsNoTracking().AnyAsync(s =>
+                    s.Id == document.RelatedDocumentId.Value && s.CompanyId == companyId
+                    && s.DocumentType == DocumentType.TaxInvoice);
+            if (settlesTaxInvoice)
+                throw new InvalidOperationException(
+                    $"ใบเสร็จ {document.DocumentNumber} เป็นหลักฐานรับชำระของใบกำกับภาษีที่ออกไปแล้ว "
+                    + "— ใบกำกับตัวจริงคือใบต้นทาง (VAT อยู่ใน ภ.พ.30 ที่ใบนั้น). "
+                    + "ให้สร้าง e-Tax ที่ **ใบกำกับภาษีต้นทาง** แทน มิฉะนั้นจะเป็นการแจ้งใบกำกับ "
+                    + "ซ้ำสองใบจากการขายครั้งเดียว");
 
             // ใบที่ข้อมูลผู้ซื้อไม่ครบ §86/4 / ผู้ซื้อไม่ประสงค์รับใบกำกับ →
             // หัวกระดาษไม่มีคำว่าใบกำกับ ส่ง T03 ไม่ได้เช่นกัน

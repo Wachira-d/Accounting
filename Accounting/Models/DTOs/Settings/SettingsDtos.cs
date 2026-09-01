@@ -83,6 +83,11 @@ public record UpdateCompanySettingsRequest(
     bool? ShowGlEntryOnDocument = null,
     // หัวเรื่องเอกสารตั้งเอง (JSON dict — ต่อประเภท + เงื่อนไข). null = ไม่แก้
     string? DocumentTitleOverridesJson = null,
+    // รูปแบบการออกใบกำกับภาษี/ใบเสร็จรับเงิน (0=ใบเดียวจบ 1=แยกเสมอ 2=ค้าปลีก)
+    // null = ไม่แก้ · กติกาอยู่ที่ Helpers/ReceiptIssuePolicy
+    ReceiptIssueMode? ReceiptIssueMode = null,
+    // "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV เสมอ" (null = ไม่แก้)
+    bool? UnifyTaxInvoiceNumberSeries = null,
     // ภาษาของเอกสารที่ออกทุกใบ: "th" | "en" (null = ไม่แก้). โหมด en พิมพ์หัว
     // สองภาษาบนเอกสารภาษี เพื่อคงคำว่า "ใบกำกับภาษี" ตาม §86/4
     string? DocumentLanguage = null,
@@ -184,6 +189,12 @@ public record CompanySettingsResponse(
     bool ShowGlEntryOnDocument = false,
     string? DocumentTitleOverridesJson = null,
     string DocumentLanguage = "th",
+    // รูปแบบการออกใบกำกับภาษี/ใบเสร็จรับเงิน + คำอธิบายที่หน้าเว็บเอาไปแสดงได้เลย
+    // (เซิร์ฟเวอร์เป็นเจ้าของข้อความ — ห้ามหน้าจอแต่งคำเอง จะกลายเป็นสำเนาที่ drift)
+    ReceiptIssueMode ReceiptIssueMode = ReceiptIssueMode.Combined,
+    string? ReceiptIssueModeDescription = null,
+    // null = ยังไม่เคยตั้ง → หน้าเว็บต้องแสดงว่า "เปิด" (ค่าแนะนำ) ไม่ใช่ปิด
+    bool? UnifyTaxInvoiceNumberSeries = null,
 
     // Per-company annual leave quota override (JSON by LeaveType).
     string? LeaveQuotasJson = null,
