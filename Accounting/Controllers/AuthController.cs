@@ -46,6 +46,10 @@ public class AuthController : ControllerBase
             google = s.GoogleEnabled ? s.GoogleClientId : "",
             facebook = s.FacebookEnabled ? s.FacebookAppId : "",
             line = s.LineEnabled ? s.LineChannelId : "",
+            // Callback URL ที่เซิร์ฟเวอร์จะใช้ตอนแลก code — หน้า login ต้องส่ง
+            // ค่านี้ตอนพาไป LINE (ห้ามคำนวณจาก location.origin เอง มิฉะนั้น
+            // www./non-www หรือโดเมนสำรองจะทำให้สองขั้นตอนอ้างคนละ URL)
+            lineCallbackUrl = s.LineEnabled ? s.LoginCallbackUrl : "",
         }));
     }
 

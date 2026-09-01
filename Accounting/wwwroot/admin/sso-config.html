@@ -29,6 +29,7 @@
         <b>ปุ่มบนหน้า login จะแสดงเฉพาะผู้ให้บริการที่ "เปิดใช้ + ใส่ ID ครบ"</b> —
         ที่ยังไม่พร้อมจะไม่โชว์ให้ผู้ใช้กดแล้วเจอ error
       </p>
+      <div id="warnBaseUrl"></div>
       <div id="warnAppSettings"></div>
       <div id="providers">กำลังโหลด…</div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
@@ -66,7 +67,13 @@
         steps: cb => `
           1. เปิด <a href="https://developers.line.biz/console/" target="_blank">LINE Developers Console</a> → สร้าง Provider<br>
           2. สร้าง Channel ประเภท <b>LINE Login</b> → เลือก App type: <b>Web app</b><br>
-          3. แท็บ LINE Login → <b>Callback URL</b>: <code>${cb.login}</code> (ต้องตรงเป๊ะ)<br>
+          3. เปิด channel ที่สร้าง → คลิกแท็บ <b>"LINE Login"</b> (แท็บที่ 2 ถัดจาก
+             "Basic settings" — ช่อง Callback URL <u>ไม่ได้อยู่ในแท็บ Basic settings</u>)
+             → เลื่อนหาหัวข้อ <b>Callback URL</b> → กด Edit แล้ววาง:<br>
+             <code style="display:inline-block;margin:4px 0;padding:4px 8px;background:#0f172a;color:#e2e8f0;border-radius:4px">${cb.login}</code>
+             <button type="button" class="btn btn-sm btn-secondary" style="margin-left:6px"
+               onclick="navigator.clipboard.writeText('${cb.login}').then(()=>Layout.toast('คัดลอก Callback URL แล้ว','success'))">📋 คัดลอก</button>
+             <span style="color:#b45309">(ต้องตรงเป๊ะทุกตัวอักษร รวม http/https และ www)</span><br>
           4. เปิด <b>OpenID Connect</b> และขอสิทธิ์ <b>Email address permission</b> (ต้องยื่นเอกสาร)<br>
           5. คัดลอก <b>Channel ID</b> + <b>Channel Secret</b> มาวาง แล้วติ๊กเปิดใช้งาน<br>
           <b>หมายเหตุ:</b> ถ้าไม่ได้สิทธิ์อีเมล ผู้ใช้จะเข้าระบบไม่ได้ (ระบบต้องใช้อีเมลผูกบัญชี)` },
@@ -89,6 +96,21 @@
       if (_cfg.googleFromAppSettings) legacy.push('Google');
       if (_cfg.facebookFromAppSettings) legacy.push('Facebook');
       if (_cfg.lineFromAppSettings) legacy.push('LINE');
+      // ยังไม่ได้ตั้ง "URL ของระบบ" → callbackHint เป็นข้อความตัวอย่าง ไม่ใช่ URL จริง
+      // LINE/Google/Facebook จะปฏิเสธทั้งหมด และ LINE Login จะ throw ตอนแลก code
+      // ⇒ ต้องบอกตรงนี้ ไม่ใช่ปล่อยให้ไปเจอตอนผู้ใช้กดปุ่มเข้าสู่ระบบแล้วพัง
+      const baseUrlMissing = /โดเมนของคุณ/.test(cb.login);
+      const warnBase = document.getElementById('warnBaseUrl');
+      if (warnBase) {
+        warnBase.innerHTML = baseUrlMissing
+          ? `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#991b1b;margin-bottom:14px">
+               ⛔ <b>ยังไม่ได้ตั้ง "URL ของระบบ" (AppBaseUrl)</b> — Callback URL ด้านล่างจึงเป็นเพียงตัวอย่าง
+               ใช้ตั้งค่ากับผู้ให้บริการไม่ได้ และการเข้าสู่ระบบด้วย LINE จะล้มเหลวตอนแลก token<br>
+               ตั้งที่ <b>ตั้งค่าระบบ → URL ของระบบ</b> ให้ตรงกับโดเมนที่ผู้ใช้เปิดจริง (รวม www หรือไม่มี www) ก่อน
+             </div>`
+          : '';
+      }
+
       document.getElementById('warnAppSettings').innerHTML = legacy.length
         ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#92400e;margin-bottom:14px">
              ⚠️ พบคีย์ ${legacy.join(' / ')} ตั้งไว้ใน <code>appsettings.json</code> ด้วย —

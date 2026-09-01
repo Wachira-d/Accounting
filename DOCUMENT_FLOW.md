@@ -2524,6 +2524,24 @@ map บรรทัดเก็บส่วนลดรายบรรทัด�
 ที่เดียว ห้ามกระจายใส่บรรทัด (เดิมเทียบข้ามฐาน incl/excl VAT แล้วกดบรรทัดลง
 จนฐานภาษี = ยอดรวมทั้งบิล → VAT ถูกบวกซ้ำ) · ยอด Dr ใน "การบันทึกบัญชี"
 ท้ายเอกสารเยื้องซ้ายจากยอด Cr 16px แบบบัญชีแยกประเภท (ทั้ง 2 renderer);_
+_Last verified against codebase: 2026-09-01 (รอบ 117 — **LINE Login: Callback URL_
+_มาจากสองแหล่งที่ไม่ผูกกัน**:_
+_ผู้ใช้หา Callback URL ใน LINE Developers ไม่เจอ — มันอยู่แท็บ **"LINE Login"**_
+_ไม่ใช่ "Basic settings" (คำแนะนำเดิมเขียนว่า "แท็บ LINE Login" แล้วแต่สั้นเกินจน_
+_มองข้าม) → ขยายคำอธิบายให้ระบุว่าเป็นแท็บที่ 2 + ปุ่มคัดลอก URL_
+_· **ของจริงที่เจอระหว่างตรวจ**: `redirect_uri` ถูกคำนวณ **2 ที่ที่ไม่ผูกกัน** —_
+_หน้า `login.html`/`register.html` ใช้ `location.origin + '/login.html'` ส่วน_
+_เซิร์ฟเวอร์ตอนแลก code ใช้ `SiteSettings.AppBaseUrl + '/login.html'`. OAuth บังคับ_
+_ว่าสอง step ต้องส่ง URL **ตรงกันเป๊ะ** ⇒ ผู้ใช้เปิดด้วย `www.` แต่ AppBaseUrl_
+_ไม่มี `www` (หรือกลับกัน / โดเมนสำรอง / http-https) = LINE ตอบ invalid_grant_
+_แล้วผู้ใช้เห็นแค่ "แลก code ไม่สำเร็จ" ทั้งที่ตั้งค่าใน console ถูกแล้ว_
+_→ ยุบเหลือแหล่งเดียว: `SsoSettings.LoginCallbackUrl` (สร้างจาก AppBaseUrl ผ่าน_
+_`BuildLoginCallbackUrl`) ส่งออกทาง `/api/auth/sso-config` แล้วหน้า login ใช้ค่านั้น_
+_(fallback เป็น origin เดิมเฉพาะตอนเซิร์ฟเวอร์รุ่นเก่าไม่ส่งมา + console.warn)_
+_· **AppBaseUrl ว่าง = fail loud**: เดิม `GetLineRedirectUriAsync` คืน `"/login.html"`_
+_แบบ relative ซึ่ง LINE ปฏิเสธและ error ไม่บอกอะไร → throw พร้อมบอกว่าต้องไปตั้ง_
+_"URL ของระบบ" ที่ไหน + หน้า SSO config ขึ้นแบนเนอร์แดงเมื่อยังไม่ได้ตั้ง_
+_(เดิมโชว์ `https://<โดเมนของคุณ>/login.html` เป็นตัวอย่างเฉย ๆ ไม่มีอะไรกัน);_
 _Last verified against codebase: 2026-09-01 (รอบ 116 — **นำส่ง สปส. ยอดไม่ตรงกับ_
 _ที่จ่ายจริง + ไม่มีทางกลับรายการ**:_
 _ผู้ใช้กดนำส่งซ้ำก่อนตรวจ ⇒ สลิป K BIZ จ่ายจริง **8,762** แต่ JE ลง **8,784**_

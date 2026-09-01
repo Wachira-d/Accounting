@@ -604,11 +604,21 @@ public class AuthService : IAuthService
             FacebookAppId: fbId,
             LineEnabled: (s?.LineLoginEnabled ?? !string.IsNullOrWhiteSpace(lineId))
                 && !string.IsNullOrWhiteSpace(lineId),
-            LineChannelId: lineId);
+            LineChannelId: lineId,
+            // ค่าเดียวกับที่ GetLineRedirectUriAsync ใช้ตอนแลก code — ส่งให้หน้า
+            // login ใช้ต่อ เพื่อให้ทั้งสองขั้นตอนอ้าง URL เดียวกันเป๊ะ
+            LoginCallbackUrl: BuildLoginCallbackUrl(
+                FirstNonEmpty(s?.AppBaseUrl, _config["App:BaseUrl"])));
     }
 
     private static string FirstNonEmpty(string? a, string? b)
         => !string.IsNullOrWhiteSpace(a) ? a.Trim() : (b ?? "").Trim();
+
+    /// <summary>Callback URL เดียวของระบบ — ตัวกลางที่ทั้งฝั่งพาไป LINE (หน้า
+    /// login) และฝั่งแลก code (server) ต้องใช้ร่วมกัน. baseUrl ว่าง = คืนค่าว่าง
+    /// (ห้ามคืน "/login.html" แบบ relative ซึ่ง LINE ไม่รับและทำให้ error กำกวม)</summary>
+    private static string BuildLoginCallbackUrl(string? baseUrl)
+        => string.IsNullOrWhiteSpace(baseUrl) ? "" : baseUrl.TrimEnd('/') + "/login.html";
 
     /// <summary>Channel Secret ของ LINE — เก็บเข้ารหัสใน DB (SecretProtector)
     /// fallback appsettings สำหรับ deployment เดิม. **ห้ามส่งออกจาก server**</summary>
@@ -629,7 +639,15 @@ public class AuthService : IAuthService
         var baseUrl = await _db.SiteSettings.AsNoTracking()
             .Select(s => s.AppBaseUrl).FirstOrDefaultAsync();
         if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = _config["App:BaseUrl"] ?? "";
-        return baseUrl.TrimEnd('/') + "/login.html";
+        var url = BuildLoginCallbackUrl(baseUrl);
+        // ยังไม่ได้ตั้ง URL ระบบ → เดิมคืน "/login.html" แบบ relative ซึ่ง LINE
+        // ปฏิเสธ แล้วผู้ใช้เห็นแค่ "แลก code ไม่สำเร็จ" โดยไม่รู้ว่าต้องไปตั้งอะไร
+        if (string.IsNullOrWhiteSpace(url))
+            throw new InvalidOperationException(
+                "ยังไม่ได้ตั้ง \"URL ของระบบ\" (AppBaseUrl) — LINE Login ต้องใช้ค่านี้สร้าง "
+                + "Callback URL ที่ต้องตรงกับที่ลงทะเบียนไว้ใน LINE Developers. "
+                + "ตั้งที่หน้าแอดมิน → ตั้งค่าระบบ → URL ของระบบ แล้วลองใหม่");
+        return url;
     }
 
     /// <summary>LINE Login — verify id_token กับ LINE Platform (§ตรวจ audience

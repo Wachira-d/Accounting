@@ -307,7 +307,15 @@
           policyVersion: policyVersion,
         }));
       } catch (e) {}
-      const redirect = location.origin + '/login.html';
+      // ⚠️ ต้องเป็น **ค่าเดียวกับที่เซิร์ฟเวอร์ใช้ตอนแลก code** (มาจาก AppBaseUrl)
+      // เดิมคำนวณจาก location.origin เอง ⇒ เปิดด้วย www. แต่ AppBaseUrl ไม่มี www
+      // (หรือกลับกัน) = คนละ URL ⇒ LINE ตอบ invalid_grant แล้วผู้ใช้เห็นแค่
+      // "แลก code ไม่สำเร็จ" ทั้งที่ตั้งค่าใน LINE Developers ถูกแล้ว
+      const redirect = ssoConfig.lineCallbackUrl || (location.origin + '/login.html');
+      if (!ssoConfig.lineCallbackUrl) {
+        console.warn('[LINE Login] เซิร์ฟเวอร์ยังไม่ส่ง callback URL — ใช้ origin ปัจจุบันแทน '
+          + 'ถ้าเข้าสู่ระบบไม่ผ่าน ให้ตั้ง "URL ของระบบ" ในหน้าแอดมิน');
+      }
       window.location.href = 'https://access.line.me/oauth2/v2.1/authorize?response_type=code'
         + '&client_id=' + encodeURIComponent(ssoConfig.line)
         + '&redirect_uri=' + encodeURIComponent(redirect)
