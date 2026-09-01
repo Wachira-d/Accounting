@@ -895,6 +895,10 @@ const API = {
       uploadStamp: (formData) => API.upload(`${base}/settings/stamp`, formData),
       deleteStamp: () => API.del(`${base}/settings/stamp`),
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
+      // ตั้งตัวย่อเลขที่เอกสารเอง — controller/service มีมาตลอดแต่ไม่เคยมี
+      // ฝั่ง client ผูกไว้ ⇒ แท็บ "ลำดับเลขที่" เป็นตารางว่างที่แก้อะไรไม่ได้
+      createNumberSeries: (d) => API.post(`${base}/settings/number-series`, d),
+      updateNumberSeries: (id, d) => API.put(`${base}/settings/number-series/${id}`, d),
       // Email config
       getEmailConfig: () => API.get(`${base}/email-config`),
       updateEmailConfig: (d) => API.put(`${base}/email-config`, d),

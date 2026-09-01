@@ -753,15 +753,18 @@ public class ImportExportService : IImportExportService
         }
         else
         {
-            var series = await _db.NumberSeries
-                .FirstOrDefaultAsync(n => n.CompanyId == companyId && n.IsActive && n.Prefix == "JV");
-            var nextNum = (series?.CurrentNumber ?? 0) + 1;
-            if (series != null) series.CurrentNumber = nextNum;
+            // ⚠️ เดิมอ่านเลขรันจากแถว NumberSeries ที่ Prefix == "JV" ซึ่ง
+            // **ไม่มีใครสร้างเลยทั้งระบบ** (ไม่มี seed + ไม่มี UI สร้าง) ⇒
+            // `series` เป็น null ทุกครั้ง ⇒ nextNum = 1 เสมอ ⇒ ทุก JE ที่ import
+            // ได้เลข "JV-000001" ซ้ำกันหมดตั้งแต่วันแรก. ใช้ผู้ออกเลข JE ตัวเดียว
+            // ของระบบแทน (มี advisory lock ข้าม instance + นับต่อเดือนจริง)
+            var entryNumber = await Journal.JournalEntryBuilder.NextJournalNumberAsync(
+                _db, companyId, "JV", date);
 
             var entry = new JournalEntry
             {
                 CompanyId = companyId,
-                EntryNumber = $"JV-{nextNum:D6}",
+                EntryNumber = entryNumber,
                 EntryDate = date,
                 Description = description,
                 Reference = reference,

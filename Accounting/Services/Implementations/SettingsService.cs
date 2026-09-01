@@ -287,6 +287,26 @@ public class SettingsService : ISettingsService
     }
 
     // ===== Number Series =====
+    //
+    // ⚠️ ใช้เฉพาะ **ตัวย่อ** (Prefix) เท่านั้น — ดู doc-comment ของ
+    // DocumentNumberGenerator.ResolvePrefixAsync. field Format/CurrentNumber/
+    // ResetPeriod ยังอยู่ในตารางเพื่อไม่ทำลายแถวเดิม แต่ไม่มีผลกับเลขที่ออกจริง
+    // อีกต่อไป (เดิมมันสร้างเลขคนละทรงที่ไม่มี advisory lock)
+
+    /// <summary>ตัวย่อต้องเป็น A-Z/0-9 ไม่เกิน 8 ตัว — เข้าไปเป็นส่วนหนึ่งของ
+    /// เลขที่เอกสารตามกฎหมายและเป็น key ของ advisory lock: อักขระอย่างช่องว่าง/
+    /// ขีด จะทำให้ตัวตัดเลขลำดับ (<c>Substring</c> หลัง "PREFIX-yyyyMMdd-")
+    /// อ่านผิด และเลขบนกระดาษกลายเป็นอะไรก็ได้. ฝั่งฟอร์มเช็คแล้วแต่ API เปิด
+    /// อยู่ — ด่านจริงต้องอยู่ที่นี่</summary>
+    private static string NormalizePrefix(string? raw)
+    {
+        var p = (raw ?? "").Trim().ToUpperInvariant();
+        if (!System.Text.RegularExpressions.Regex.IsMatch(p, "^[A-Z0-9]{1,8}$"))
+            throw new InvalidOperationException(
+                "ตัวย่อเลขที่เอกสารต้องเป็นตัวอักษร A-Z หรือตัวเลข 0-9 ความยาว 1-8 ตัว "
+                + "(ห้ามเว้นวรรค/ขีด/อักขระพิเศษ เพราะตัวย่อเป็นส่วนหนึ่งของเลขที่เอกสารตามกฎหมาย)");
+        return p;
+    }
 
     public async Task<NumberSeriesResponse> CreateNumberSeriesAsync(Guid companyId, CreateNumberSeriesRequest request)
     {
@@ -294,6 +314,7 @@ public class SettingsService : ISettingsService
             .AnyAsync(n => n.CompanyId == companyId && n.DocumentType == request.DocumentType && n.IsActive);
         if (existing)
             throw new InvalidOperationException("มี number series สำหรับประเภทเอกสารนี้อยู่แล้ว");
+        request = request with { Prefix = NormalizePrefix(request.Prefix) };
 
         var series = new NumberSeries
         {
@@ -328,7 +349,7 @@ public class SettingsService : ISettingsService
             .FirstOrDefaultAsync(n => n.Id == seriesId && n.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ number series");
 
-        if (request.Prefix != null) series.Prefix = request.Prefix;
+        if (request.Prefix != null) series.Prefix = NormalizePrefix(request.Prefix);
         if (request.Suffix != null) series.Suffix = request.Suffix;
         if (request.Format != null) series.Format = request.Format;
         if (request.CurrentNumber.HasValue) series.CurrentNumber = request.CurrentNumber.Value;
@@ -342,89 +363,37 @@ public class SettingsService : ISettingsService
     public Task<string> GetNextNumberAsync(Guid companyId, DocumentType documentType)
         => GetNextNumberAsync(companyId, documentType, documentDate: null);
 
-    public async Task<string> GetNextNumberAsync(Guid companyId, DocumentType documentType, DateTime? documentDate)
-    {
-        var series = await _db.Set<NumberSeries>()
-            .FirstOrDefaultAsync(n => n.CompanyId == companyId && n.DocumentType == documentType && n.IsActive);
-
-        if (series == null)
-        {
-            // Fallback to default pattern
-            var prefix = documentType switch
-            {
-                DocumentType.Quotation => "QT",
-                DocumentType.Invoice => "INV",
-                DocumentType.Receipt => "REC",
-                DocumentType.TaxInvoice => "TIV",
-                DocumentType.DebitNote => "DN",
-                DocumentType.CreditNote => "CN",
-                DocumentType.DeliveryNote => "DLV",
-                DocumentType.BillingNote => "BN",
-                DocumentType.ReceiptVoucher => "RV",
-                DocumentType.PurchaseRequisition => "PR",
-                DocumentType.PurchaseOrder => "PO",
-                DocumentType.PurchaseInvoice => "PI",
-                DocumentType.Expense => "EXP",
-                DocumentType.PaymentVoucher => "PV",
-                DocumentType.CertificateInLieu => "CIL",
-                _ => "DOC"
-            };
-            // Format {PREFIX}-{yyyyMMdd}-{NNNN} — yyyyMMdd ของวันที่ไทย
-            // (ThaiDate.YyyyMmDd) ตรงกับ DocumentNumberGenerator + display
-            var datePart = Accounting.Helpers.ThaiDate.YyyyMmDd(documentDate ?? DateTime.UtcNow);
-            var pattern = $"{prefix}-{datePart}-";
-            var lastDoc = await _db.Documents
-                .Where(d => d.CompanyId == companyId && d.DocumentType == documentType && d.DocumentNumber.StartsWith(pattern))
-                .OrderByDescending(d => d.DocumentNumber)
-                .Select(d => d.DocumentNumber)
-                .FirstOrDefaultAsync();
-            int nextSeq = 1;
-            if (lastDoc != null)
-            {
-                var lastPart = lastDoc[pattern.Length..];
-                if (int.TryParse(lastPart, out var lastNum))
-                    nextSeq = lastNum + 1;
-            }
-            return $"{pattern}{nextSeq:D4}";
-        }
-
-        // Check if reset is needed
-        var now = DateTime.UtcNow;
-        if (series.ResetPeriod > 0 && series.LastResetDate.HasValue)
-        {
-            var monthsSinceReset = (now.Year - series.LastResetDate.Value.Year) * 12 + (now.Month - series.LastResetDate.Value.Month);
-            if (monthsSinceReset >= series.ResetPeriod)
-            {
-                series.CurrentNumber = 0;
-                series.LastResetDate = now;
-            }
-        }
-
-        series.CurrentNumber++;
-
-        var result = series.Format
-            .Replace("{PREFIX}", series.Prefix)
-            .Replace("{SUFFIX}", series.Suffix ?? "")
-            .Replace("{YYYY}", now.ToString("yyyy"))
-            .Replace("{YY}", now.ToString("yy"))
-            .Replace("{MM}", now.ToString("MM"))
-            .Replace("{DD}", now.ToString("dd"));
-
-        // Handle sequence with padding: {SEQ:4} → 0001
-        var seqPattern = System.Text.RegularExpressions.Regex.Match(result, @"\{SEQ:(\d+)\}");
-        if (seqPattern.Success)
-        {
-            var padding = int.Parse(seqPattern.Groups[1].Value);
-            result = result.Replace(seqPattern.Value, series.CurrentNumber.ToString($"D{padding}"));
-        }
-        else
-        {
-            result = result.Replace("{SEQ}", series.CurrentNumber.ToString());
-        }
-
-        await _db.SaveChangesAsync();
-        return result;
-    }
+    /// <summary>
+    /// เลขที่เอกสารถัดไป — <b>ส่งต่อให้ <c>DocumentNumberGenerator</c> ตัวเดียว
+    /// ของระบบ</b>
+    ///
+    /// ═══ ทำไมต้องยุบ ═══
+    /// เดิมเมธอดนี้เป็น "เครื่องออกเลขเครื่องที่สอง" ที่เดินคู่ขนานกับตัวหลัก
+    /// (UI/POS/OCR ใช้ <c>DocumentNumberGenerator</c>, เส้น integration 6 จุดใช้
+    /// ตัวนี้) และตัวนี้พลาด 4 อย่างที่ตัวหลักแก้ไปแล้ว:
+    ///   • <b>ไม่มี advisory lock</b> ⇒ สอง request พร้อมกันได้เลขซ้ำ (§86/4
+    ///     บังคับไม่ซ้ำ ไม่ขาดช่วง)
+    ///   • <b>ไม่ <c>IgnoreQueryFilters()</c></b> ⇒ ใบที่ soft-delete มองไม่เห็น
+    ///     → ออกเลขทับของเดิม
+    ///   • <c>OrderByDescending(DocumentNumber)</c> = lexicographic max (พังวันที่
+    ///     ทะลุ 9999 ใบ ซึ่งตัวหลักแก้ไว้ด้วย integer-max แล้ว)
+    ///   • ตาราง prefix สำรองของตัวเองที่ <b>ขาด GoodsReceiptNote</b> → ตก "DOC-"
+    /// และเมื่อมีแถว <c>NumberSeries</c> มันยังสร้างเลข**คนละทรง** (รายเดือน
+    /// นับเอง) ⇒ บริษัทเดียวมีเลขสองรูปแบบปนกัน
+    ///
+    /// ตัวย่อที่ผู้ใช้ตั้งเองยังใช้ได้ — <c>DocumentNumberGenerator.ResolvePrefixAsync</c>
+    /// อ่าน <c>NumberSeries.Prefix</c> ให้แล้ว (override เฉพาะตัวย่อ ไม่ใช่รูปแบบ)
+    ///
+    /// ⚠️ <b>ยังเหลืออีกครึ่ง</b>: <c>pg_advisory_xact_lock</c> กันได้จริงเฉพาะเมื่อ
+    /// ผู้เรียกอยู่ใน transaction — <c>IntegrationService</c> ทั้ง 6 จุดยัง**ไม่เปิด
+    /// transaction เลย** ล็อกจึงถูกปล่อยทันทีที่ statement จบ. ตอนนี้ตัวกันชั้น
+    /// สุดท้ายคือ unique index <c>(CompanyId, DocumentNumber)</c> ⇒ ชนกันแล้ว
+    /// **error ดัง** ไม่ใช่เลขซ้ำเงียบ ๆ (ดีกว่าเดิมที่ไม่มีทั้งล็อกและ integer-max
+    /// ที่ถูกต้อง). งานที่เหลือคือห่อ create ของ IntegrationService ด้วย transaction
+    /// — จดไว้ใน DOCUMENT_FLOW รอบ 112 ไม่ทำครึ่ง ๆ กลาง ๆ ในคอมมิตนี้
+    /// </summary>
+    public Task<string> GetNextNumberAsync(Guid companyId, DocumentType documentType, DateTime? documentDate)
+        => Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, documentType, documentDate);
 
     // ===== API Key Management =====
 

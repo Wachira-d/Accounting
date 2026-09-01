@@ -2371,7 +2371,10 @@ const Layout = {
     const t = doc.documentType;
     if (t !== 'TaxInvoice') return this.docTypeLabel(t);
     if (doc.buyerDeclinedTaxInvoice) return 'ใบเสร็จรับเงิน';
-    if (doc.issuedAsCashReceipt) return 'ใบกำกับภาษี/ใบเสร็จรับเงิน';
+    // ⚠️ ลำดับคำต้องตรงกับกระดาษ: ขายสด B2B (issuedAsCashReceipt) พิมพ์
+    // "ใบเสร็จรับเงิน/ใบกำกับภาษี" ตาม pairing ของ e-Tax T03 — ไม่ใช่สลับหน้าหลัง
+    // (PdfGenerationService.ComputeDocumentTitle เป็นเจ้าของกฎ)
+    if (doc.issuedAsCashReceipt) return 'ใบเสร็จรับเงิน/ใบกำกับภาษี';
     if (doc.combinedInvoiceTaxInvoice)
       return doc.servedAsReceipt
         ? 'ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน'

@@ -661,7 +661,14 @@
                 <td class="text-center">${chk}</td>
                 <td>${ln.lineOrder}${cf ? ' <span title="ยกมาจากเดือนก่อน (§82/3 ยังไม่เกิน 6 เดือน) — ติ๊กใช้เพื่อเคลมเดือนนี้" style="color:#d97706">↩</span>' : ''}</td>
                 <td class="text-xs">${dstr(ln.transactionDate)}</td>
-                <td class="text-xs">${esc((/^(🚫|⚠️|\[รอใบกำกับ|\[ดึงเข้างวด)/.test(ln.description || '') ? ln.description : (ln.invoiceNumber || ln.description)) || '-')}</td>
+                <td class="text-xs">${esc((/^(🚫|⚠️|\[รอใบกำกับ|\[ดึงเข้างวด)/.test(ln.description || '') ? ln.description : (ln.invoiceNumber || ln.description)) || '-')}${
+                  // ชนิดเอกสารตามกฎหมาย — ตัวย่อของเลข (TIV/REC/RV) บอกแค่ชนิดข้อมูล
+                  // ในระบบ ใบที่หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน" อยู่ได้ทั้งสอง
+                  // ชุด. ค่านี้เซิร์ฟเวอร์คำนวณจาก resolver หัวเอกสารตัวเดียวกับ
+                  // กระดาษ — undefined = เซิร์ฟเวอร์รุ่นเก่ายังไม่ส่ง (ไม่ใช่ "ไม่มีชนิด")
+                  ln.documentKindLabel
+                    ? `<div style="color:#64748b;font-size:10.5px;line-height:1.4">${esc(ln.documentKindLabel)}</div>` : ''
+                }</td>
                 <td class="text-xs">${esc(ln.taxPayerId || '-')}</td>
                 <td class="text-center text-xs">${branchLabel(ln.branchCode)}</td>
                 <td class="text-xs">${esc(ln.taxPayerName || '-')}</td>

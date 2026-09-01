@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -47,10 +48,28 @@ public static class DocumentNumberGenerator
     /// → เอกสารวันที่ 28/05 ที่ approve วันที่ 1/06 จะได้ "PV-202606-0001"
     /// (ผิด — เลขควรเป็น 202605). null = fallback bkkNow (เคสไม่รู้วันที่
     /// ตอน generate เช่น JE manual).</summary>
+    /// <summary>ตัวย่อที่บริษัทนี้ใช้จริงสำหรับชนิดเอกสารนี้ — <c>NumberSeries</c>
+    /// (ถ้าตั้งไว้) ชนะค่ามาตรฐาน
+    ///
+    /// ⚠️ override ได้เฉพาะ **ตัวย่อ** เท่านั้น ไม่ใช่รูปแบบเลข: รูปแบบยังเป็น
+    /// <c>{PREFIX}-{yyyyMMdd}-{NNNN}</c> เสมอทั้งระบบ. เดิม NumberSeries มีช่อง
+    /// <c>Format</c>/<c>CurrentNumber</c> ที่สร้างเลข**คนละทรง**ขึ้นมา (รายเดือน
+    /// นับเอง ไม่มี advisory lock) — ถ้ามีใครสร้างแถวขึ้นมา บริษัทเดียวจะมีเลข
+    /// สองทรงปนกันและเส้นนั้นออกเลขซ้ำได้ (§86/4 บังคับไม่ซ้ำ ไม่ขาดช่วง)
+    /// จึงเก็บไว้แค่ส่วนที่ผู้ใช้ต้องการจริง คือ "ขอเปลี่ยนตัวย่อ"</summary>
+    public static async Task<string> ResolvePrefixAsync(AccountingDbContext db, Guid companyId, DocumentType type)
+    {
+        var custom = await db.Set<NumberSeries>().AsNoTracking()
+            .Where(n => n.CompanyId == companyId && n.DocumentType == type && n.IsActive && !n.IsDeleted)
+            .Select(n => n.Prefix)
+            .FirstOrDefaultAsync();
+        return string.IsNullOrWhiteSpace(custom) ? GetPrefix(type) : custom.Trim();
+    }
+
     public static async Task<string> NextAsync(AccountingDbContext db, Guid companyId, DocumentType type,
         DateTime? documentDate)
     {
-        var prefix = GetPrefix(type);
+        var prefix = await ResolvePrefixAsync(db, companyId, type);
         // ⚠️ HashCode.Combine สุ่ม seed ต่อ process ⇒ สอง instance ได้คีย์คนละค่า
         // = ล็อกกันข้ามเครื่องไม่ได้ ⇒ เลขเอกสารซ้ำ (§86/4 บังคับไม่ซ้ำ ไม่ขาดช่วง)
         var lockKey = AdvisoryLockKey.For(companyId, AdvisoryLockKey.DocumentSequence, prefix);
