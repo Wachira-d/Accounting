@@ -282,6 +282,13 @@ public class CompanySettings : TenantEntity
     // approve ใบไม่ครบ §86/4 ก่อนจะถูกตรวจสรรพากร.
     public bool EnforceFullTaxInvoiceFields { get; set; } = false;
 
+    // ── รูปแบบการออกใบกำกับภาษี / ใบเสร็จรับเงิน ──
+    // ตัดสินว่าการขายหนึ่งครั้งออกกระดาษกี่ใบ และคำว่า "ใบกำกับภาษี" ไปอยู่บน
+    // เลขชุดไหน (TIV หรือ REC). default = Combined = พฤติกรรมเดิมทั้งหมด
+    // ⇒ tenant ที่มีอยู่ไม่กระทบแม้แต่ใบเดียว. กติกาทั้งหมดอยู่ที่
+    // Helpers/ReceiptIssuePolicy ตัวเดียว ห้ามเช็ค enum เองในแต่ละไฟล์
+    public ReceiptIssueMode ReceiptIssueMode { get; set; } = ReceiptIssueMode.Combined;
+
     // ── กองทุนเงินทดแทน (กท.20ก, พ.ร.บ.เงินทดแทน §44) ──
     // นายจ้างฝ่ายเดียวสมทบ 0.2%–1.0% ของค่าจ้างต่อปี (cap 240,000 บาท/คน/ปี)
     // อัตราตามประเภทกิจการ 10 หมวด: สำนักงาน 0.2%, ค้าปลีก 0.4%, ก่อสร้าง 1.0%

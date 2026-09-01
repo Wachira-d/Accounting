@@ -397,6 +397,21 @@
         </div>
       </div>
 
+      <!-- รูปแบบการออกใบกำกับภาษี / ใบเสร็จรับเงิน -->
+      <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">🧾 รูปแบบการออกใบกำกับภาษี / ใบเสร็จรับเงิน</h3>
+      <p style="color:#64748b;margin:0 0 14px;font-size:13px">
+        ตัดสินว่า<b>การขายหนึ่งครั้งออกกระดาษกี่ใบ</b> และคำว่า "ใบกำกับภาษี" จะอยู่บนเลขชุดไหน
+        (TIV หรือ REC) — ตั้งครั้งเดียวแล้วทุกทางเข้าเดินเส้นเดียวกัน ไม่ต้องจำติ๊กรายใบ
+      </p>
+      <div class="form-group" style="max-width:640px">
+        <select class="form-input" id="sReceiptIssueMode">
+          <option value="0">ใบเดียวจบ (ค่าเริ่มต้น) — ใบกำกับที่รับเงินครบแล้วทำหน้าที่ใบเสร็จในตัว</option>
+          <option value="1">แยกใบกำกับภาษี–ใบเสร็จรับเงิน — ใบกำกับ (TIV) ณ วันส่งมอบ + ใบเสร็จ (REC) ณ วันรับเงิน</option>
+          <option value="2">ค้าปลีก (ใบเดียวที่จุดขาย) — ใบเสร็จรับเงิน/ใบกำกับภาษีใบเดียวจบ</option>
+        </select>
+        <div id="sReceiptIssueModeHint" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6"></div>
+      </div>
+
       <!-- หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง) -->
       <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">🏷️ หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง)</h3>
       <p style="color:#64748b;margin:0 0 14px;font-size:13px">
@@ -1104,12 +1119,29 @@
         }
       },
 
+      /** คำอธิบายผลของโหมดที่เลือก — ค่าที่เซิร์ฟเวอร์คำนวณมาชนะเสมอ
+       *  (serverText). ตอนผู้ใช้เพิ่งเปลี่ยน dropdown ยังไม่ได้บันทึก จึงไม่มี
+       *  ค่าจากเซิร์ฟเวอร์ → แสดงคำเตือนว่ายังไม่บันทึก แทนที่จะเดาข้อความเอง
+       *  (ห้ามสร้างสำเนามือของ ReceiptIssuePolicy.Describe ฝั่ง JS) */
+      _renderReceiptModeHint(serverText) {
+        const el = document.getElementById('sReceiptIssueModeHint');
+        if (!el) return;
+        el.innerHTML = serverText
+          ? Layout.esc(serverText)
+          : '⚠️ ยังไม่ได้บันทึก — กด "บันทึกการตั้งค่า" แล้วระบบจะยืนยันผลของโหมดนี้';
+      },
+
       // ===== หัวเรื่องเอกสารตั้งเอง =====
       // คีย์ต้องตรงกับ PdfGenerationService.ComputeDocumentTitle (enum name + คีย์เงื่อนไข)
       TITLE_VARIANTS: [
         { k: 'TaxInvoiceReceipt', label: 'ใบกำกับ+รับเงินตอนออก / ใบเสร็จมี VAT', def: 'ใบกำกับภาษี/ใบเสร็จรับเงิน' },
         { k: 'CombinedInvoice', label: 'ใบแจ้งหนี้ + ใบกำกับภาษี รวมใบเดียว', def: 'ใบแจ้งหนี้/ใบกำกับภาษี' },
         { k: 'CombinedInvoiceReceipt', label: 'ใบรวมที่จ่ายครบแล้ว (3-in-1)', def: 'ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน' },
+        // 3 คีย์ล่างนี้เซิร์ฟเวอร์รองรับมาตลอด (ComputeDocumentTitle) แต่หน้านี้
+        // ไม่เคยมีช่องให้กรอก ⇒ ตั้งได้ทางเดียวคือยิง API ตรง
+        { k: 'CashReceiptTaxInvoice', label: 'ขายเงินสด B2B (รับเงินพร้อมออกใบ)', def: 'ใบเสร็จรับเงิน/ใบกำกับภาษี' },
+        { k: 'AbbreviatedTaxInvoice', label: 'ผู้ซื้อไม่ครบ §86/4 — ขายเชื่อ', def: 'ใบกำกับภาษีอย่างย่อ' },
+        { k: 'ReceiptAbbreviatedTaxInvoice', label: 'ผู้ซื้อไม่ครบ §86/4 — รับเงินแล้ว', def: 'ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ' },
         { k: 'DepositSuffix', label: 'ต่อท้ายเอกสารเงินมัดจำ', def: '(เงินมัดจำ)' },
       ],
       // ค่า default ที่โชว์ข้างช่อง "ตั้งหัวเอกสารเอง" ต้องเป็นค่าที่กระดาษพิมพ์
@@ -1929,6 +1961,17 @@
           document.getElementById('sReceiptFooter').value = s.receiptFooter || '';
           document.getElementById('sShowGlEntryOnDocument').checked = !!s.showGlEntryOnDocument;
           document.getElementById('sDocumentLanguage').value = s.documentLanguage || 'th';
+          // รูปแบบการออกใบกำกับ/ใบเสร็จ — enum ส่งมาเป็นชื่อหรือเลขก็ได้ตาม
+          // serializer; map ให้เป็นเลขของ <option> เสมอ. คำอธิบายใต้ช่องมาจาก
+          // **เซิร์ฟเวอร์** (ReceiptIssueModeDescription) ห้ามหน้านี้แต่งเอง
+          const _rimSel = document.getElementById('sReceiptIssueMode');
+          if (_rimSel) {
+            const _rimMap = { Combined: '0', SeparateReceipt: '1', RetailReceipt: '2' };
+            const _rimRaw = s.receiptIssueMode;
+            _rimSel.value = _rimMap[_rimRaw] ?? String(_rimRaw ?? 0);
+            this._renderReceiptModeHint(s.receiptIssueModeDescription);
+            _rimSel.onchange = () => this._renderReceiptModeHint(null);
+          }
           document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
           document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
           document.getElementById('sUseCustomSignatory').checked = !!s.useCustomAuthorizedSignatory;
@@ -2093,6 +2136,9 @@
             authorizedSignatorySignatureBase64: document.getElementById('sSignatoryImage').value,
             enforceManagerApproval: document.getElementById('sEnforceManagerApproval').checked,
             documentTitleOverridesJson: this.collectTitleOverrides(),
+            // enum เป็นตัวเลข — Layout.intOrNull กันค่าว่าง/ขยะไม่ให้กลายเป็น 0
+            // โดยบังเอิญ (0 = "ใบเดียวจบ" ซึ่งเป็นค่าจริงที่มีความหมาย)
+            receiptIssueMode: Layout.intOrNull('sReceiptIssueMode'),
             // ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดแยก)
             stampWidthMm: parseFloat(document.getElementById('sStampW')?.value || '32'),
             stampHeightMm: parseFloat(document.getElementById('sStampH')?.value || '32'),

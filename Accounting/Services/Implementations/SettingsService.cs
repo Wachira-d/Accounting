@@ -53,6 +53,11 @@ public class SettingsService : ISettingsService
         if (request.AuthorizedSignatorySignatureBase64 != null) settings.AuthorizedSignatorySignatureBase64 = string.IsNullOrWhiteSpace(request.AuthorizedSignatorySignatureBase64) ? null : request.AuthorizedSignatorySignatureBase64.Trim();
         if (request.DocumentTitleOverridesJson != null)
             settings.DocumentTitleOverridesJson = string.IsNullOrWhiteSpace(request.DocumentTitleOverridesJson) ? null : request.DocumentTitleOverridesJson;
+        // รูปแบบการออกใบกำกับ/ใบเสร็จ — รับเฉพาะค่าที่นิยามไว้จริง (กันเลขขยะจาก
+        // client ที่จะทำให้ policy ตกไป default เงียบ ๆ)
+        if (request.ReceiptIssueMode.HasValue
+            && Enum.IsDefined(typeof(ReceiptIssueMode), request.ReceiptIssueMode.Value))
+            settings.ReceiptIssueMode = request.ReceiptIssueMode.Value;
         // ภาษาเอกสาร — รับเฉพาะ th/en (ค่าอื่น = ไม่แก้ กันค่าขยะจาก client)
         if (request.DocumentLanguage != null)
         {
@@ -561,6 +566,8 @@ public class SettingsService : ISettingsService
         s.ShowGlEntryOnDocument,
         s.DocumentTitleOverridesJson,
         string.IsNullOrWhiteSpace(s.DocumentLanguage) ? "th" : s.DocumentLanguage,
+        s.ReceiptIssueMode,
+        Accounting.Helpers.ReceiptIssuePolicy.Describe(s.ReceiptIssueMode),
         // HR
         s.LeaveQuotasJson,
         s.EnforceManagerApproval,

@@ -4538,6 +4538,10 @@ public static class DatabaseMigrationHelper
 
             // ===== CompanySettings: §86/4 hard-block opt-in =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EnforceFullTaxInvoiceFields" boolean NOT NULL DEFAULT false;""",
+            // รูปแบบการออกใบกำกับ/ใบเสร็จ (ReceiptIssueMode): 0=ใบเดียวจบ (เดิม)
+            // 1=แยกใบกำกับ–ใบเสร็จเสมอ 2=ค้าปลีกใบเดียวที่จุดขาย. DEFAULT 0 ⇒
+            // tenant เดิมไม่กระทบ
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "ReceiptIssueMode" integer NOT NULL DEFAULT 0;""",
 
             // ===== DocumentAdjustingJournalLines (Option 1: เพิ่ม Dr/Cr ลอย) =====
             // ใช้รองรับเคส PV/Doc 1 ใบ มี Dr/Cr เพิ่มเติมที่ไม่ map กับ DocumentLine

@@ -1486,7 +1486,8 @@ public partial class DocumentService : IDocumentService
             upstream, downstream, pct, status,
             pceRows.Count > 0, pceRows.Count, pceRows.Sum(r => r.Amount), bookedByProject,
             pceByLine,
-            servedAsReceipt: ComputeServedAsReceipt(doc, hasSeparateReceiptDoc));
+            servedAsReceipt: ComputeServedAsReceipt(doc, hasSeparateReceiptDoc,
+                await GetReceiptIssueModeAsync(companyId)));
         if (pp30 != null)
             resp = resp with
             {
@@ -1834,8 +1835,9 @@ public partial class DocumentService : IDocumentService
         // หัวเอกสารที่จะพิมพ์จริงของทั้งหน้า — resolver ตัวเดียวกับตอนออก PDF
         // (query คงที่ 3 ครั้ง/หน้า ไม่ใช่ N+1) เพื่อให้ป้ายบนตารางตรงกับกระดาษ
         // ทุกเคส รวมชื่อหัวที่ผู้ใช้ตั้งเอง/CustomTitle/§86/6 อย่างย่อ
+        var receiptModeForPage = await GetReceiptIssueModeAsync(companyId);
         foreach (var d in items)
-            d.ServedAsReceipt = ComputeServedAsReceipt(d, tivWithReceipt.Contains(d.Id));
+            d.ServedAsReceipt = ComputeServedAsReceipt(d, tivWithReceipt.Contains(d.Id), receiptModeForPage);
         var titles = await PdfGenerationService.ResolveDocumentTitlesAsync(_db, companyId, items);
 
         return new PagedResponse<DocumentResponse>(
@@ -4528,6 +4530,48 @@ public partial class DocumentService : IDocumentService
                 + "ผู้ขายต่างประเทศไม่มี VAT ไทยปนอยู่ ฐานภาษีคือยอดจ่ายเต็มจำนวน "
                 + "แล้วประเมิน VAT 7% บวกทับ. ปลดติ๊ก \"ราคารวมภาษี\" แล้วกรอกยอดจ่ายจริง"
                 + "เป็นราคาต่อหน่วยตรง ๆ");
+
+        // ── ใบเสร็จ "ลอย" ที่มี VAT ทั้งที่ลูกค้ามีใบกำกับ/ใบแจ้งหนี้ค้างอยู่ ──
+        //
+        // ใบเสร็จ/ใบสำคัญรับที่ **ไม่ผูกใบต้นทาง** (RelatedDocumentId = null) ถูก
+        // ตีความว่าเป็น "ขายสด standalone" ทุกที่ในระบบ ⇒
+        //   • ภ.พ.30 นับ VAT ที่ใบนี้ (TaxService: `!doc.RelatedDocumentId.HasValue`)
+        //     ทั้งที่ใบกำกับต้นทางนับไปแล้ว = **นำส่ง VAT ซ้ำ**
+        //   • JE เดินเส้น standalone (Dr เงินสด / Cr รายได้ + Cr 21911) = รายได้
+        //     เบิ้ล และ AR ของใบกำกับเดิมไม่ถูกล้าง
+        // ทั้งสองอย่างเงียบสนิท — ยอดแต่ละใบ "ดูสมเหตุสมผล" ไม่มีใครเอาไปเทียบกัน
+        //
+        // เกิดง่ายมากในโหมดแยกใบ: ผู้ใช้ที่เคยชินกับโปรแกรมอื่นจะเปิดฟอร์ม "สร้าง
+        // ใบเสร็จ" แล้วพิมพ์เองแทนที่จะกด "บันทึกชำระเงิน" บนใบกำกับ. เส้นทางที่
+        // ถูกคือ payment/convert ซึ่งผูก RelatedDocumentId ให้อัตโนมัติ
+        //
+        // block ที่ approve (ไม่ใช่ตอนสร้าง) — ร่างยังลองผิดลองถูกได้ และข้อความ
+        // ต้องบอก **เลขใบที่ควรผูก** ไม่ใช่แค่ปฏิเสธ (ห้ามให้ผู้ใช้ตัน)
+        if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+            && doc.VatAmount > 0 && !doc.RelatedDocumentId.HasValue
+            && !doc.IsDeposit && doc.ContactId.HasValue)
+        {
+            var openBills = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.ContactId == doc.ContactId
+                    && (d.DocumentType == DocumentType.TaxInvoice
+                        || d.DocumentType == DocumentType.Invoice
+                        || d.DocumentType == DocumentType.DebitNote)
+                    && d.BalanceDue > 0.01m
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                    && d.Status != DocumentStatus.Rejected)
+                .OrderBy(d => d.DocumentDate)
+                .Select(d => d.DocumentNumber)
+                .Take(5)
+                .ToListAsync();
+            if (openBills.Count > 0)
+                throw new InvalidOperationException(
+                    $"ใบนี้เป็นใบเสร็จที่มี VAT แต่ไม่ได้ผูกกับใบต้นทาง ขณะที่ลูกค้ารายนี้ยังมีใบค้างชำระอยู่ "
+                    + $"({string.Join(", ", openBills)}) — อนุมัติแบบนี้ระบบจะนับ VAT ขายซ้ำใน ภ.พ.30 "
+                    + "และบันทึกรายได้เบิ้ล. วิธีที่ถูก: เปิดใบค้างชำระใบนั้นแล้วกด \"💰 บันทึกชำระเงิน\" "
+                    + "(ระบบออกใบเสร็จผูกให้อัตโนมัติ) หรือถ้าตั้งใจออกใบเสร็จใบนี้จริง ให้เลือก "
+                    + "\"ใบต้นทาง\" ในฟอร์มก่อนอนุมัติ");
+        }
 
                 // ยกเว้นลูกค้าเงินสด "ไม่ประสงค์รับใบกำกับภาษี" — ประกาศอธิบดีฯ ฉบับ 199
         // บังคับเลขผู้เสียภาษี/สาขาผู้ซื้อเฉพาะเมื่อผู้ซื้อเป็นผู้ประกอบการจด VAT;
@@ -10184,10 +10228,22 @@ public partial class DocumentService : IDocumentService
             // ใบกำกับภาษี/ใบเสร็จรับเงิน") — ไม่ออกใบเสร็จแยกซ้ำ กระดาษใบเดียวจบ.
             // ผ่อนหลายงวดยังออกใบเสร็จหลักฐานต่องวดตามเดิม (ใบรวมแทนใบเสร็จ
             // ของหลายงวดไม่ได้ → หัวคง 2 หน้าที่)
-            var combinedSelfReceipt = doc.DocumentType == DocumentType.TaxInvoice
+            // นโยบายบริษัท (Helpers/ReceiptIssuePolicy) เป็นตัวตั้ง default และ
+            // เป็นตัว "บังคับ" ในโหมดแยกใบ:
+            //   • ค่าที่ client ส่งมาชนะ default — ยกเว้นโหมดแยกใบที่บังคับออกเสมอ
+            //     (ไม่งั้นพนักงานเผลอปลดติ๊กครั้งเดียว = ใบกำกับใบนั้นยกหัวเป็น
+            //     ใบเสร็จในตัวไม่ได้ด้วย (ถูก suppress) ⇒ ลูกค้าไม่มีใบเสร็จเลย)
+            //   • โหมดแยกใบยังปิด "ใบรวมทำหน้าที่ใบเสร็จเอง" ด้วย — ไม่งั้นใบ
+            //     combined จะเป็นข้อยกเว้นที่หลุดนโยบายเงียบ ๆ
+            var receiptMode = await GetReceiptIssueModeAsync(companyId);
+            var forceSeparate = Accounting.Helpers.ReceiptIssuePolicy.ForcesSeparateReceipt(receiptMode);
+            var combinedSelfReceipt = !forceSeparate
+                && doc.DocumentType == DocumentType.TaxInvoice
                 && doc.CombinedInvoiceTaxInvoice && singleShotFull;
 
-            var wantReceipt = (request.IssueReceiptDocument ?? true)
+            var wantReceipt = (forceSeparate
+                    || (request.IssueReceiptDocument
+                        ?? Accounting.Helpers.ReceiptIssuePolicy.DefaultIssueSeparateReceipt(receiptMode)))
                 && !combinedSelfReceipt
                 && doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.DebitNote;
             if (wantReceipt)
@@ -14338,14 +14394,26 @@ public partial class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>รูปแบบการออกใบกำกับ/ใบเสร็จของบริษัท (คิวรีเดียว) — ไม่มีแถว
+    /// CompanySettings = <c>Combined</c> ซึ่งเป็นพฤติกรรมเดิมทุกประการ</summary>
+    private async Task<ReceiptIssueMode> GetReceiptIssueModeAsync(Guid companyId) =>
+        await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (ReceiptIssueMode?)s.ReceiptIssueMode)
+            .FirstOrDefaultAsync() ?? ReceiptIssueMode.Combined;
+
     /// <summary>ใบกำกับ "ทำหน้าที่ใบเสร็จในตัว" ไหม — mirror ของกติกาใน
     /// <c>PdfGenerationService.ResolveServedAsReceiptAsync</c> (เจ้าของกฎตอน
     /// render): TaxInvoice + ยอดคงเหลือ ≈ 0 + เคยรับเงินจริง + ลงบัญชีแล้ว +
     /// ไม่มีใบเสร็จแยกอ้างถึง. แก้ที่ใดที่หนึ่งต้องแก้อีกที่เสมอ ไม่งั้นป้าย
     /// บนหน้าจอจะไม่ตรงกับหัวที่พิมพ์ออกมา (defect class "สอง renderer ห้าม drift")</summary>
-    internal static bool ComputeServedAsReceipt(Document d, bool hasSeparateReceipt)
+    internal static bool ComputeServedAsReceipt(Document d, bool hasSeparateReceipt,
+        ReceiptIssueMode mode = ReceiptIssueMode.Combined)
     {
         if (d.DocumentType != DocumentType.TaxInvoice) return false;
+        // นโยบายบริษัท "แยกใบกำกับ–ใบเสร็จเสมอ" → ใบกำกับไม่ยกหัวเป็นใบเสร็จ
+        // (กติกาเดียวกับฝั่ง render — Helpers/ReceiptIssuePolicy)
+        if (!Accounting.Helpers.ReceiptIssuePolicy.AllowsCombinedReceiptHeader(mode)) return false;
         // ใบร่างที่เลือกโหมด "รับเงินครบแล้ว" → แสดง/พิมพ์หัวรวมตามเจตนา (เลข
         // DRAFT ไม่ใช่เอกสารตามกฎหมาย — หลัก "Draft PDF = Approved PDF").
         // หลังอนุมัติ ตัดสินจากการชำระจริงเท่านั้น (อนุมัติแล้วแต่ยังไม่บันทึก
