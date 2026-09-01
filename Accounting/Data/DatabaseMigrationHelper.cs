@@ -4394,6 +4394,12 @@ public static class DatabaseMigrationHelper
             // this, voiding a payroll silently zeroed each employee's
             // outstanding advance balance.
             """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "AdvanceRecovered" numeric(18,2) NOT NULL DEFAULT 0;""",
+            // ฐานค่าจ้างประกันสังคม (ม.33) รายคนต่อรอบ — ตัวเลขที่ต้องปรากฏใน
+            // ช่อง "ค่าจ้าง" ของ สปส.1-10 และเป็นฐานของทั้งฝั่งลูกจ้าง/นายจ้าง
+            // เดิม exporter เอา GrossIncome มาใส่ช่องค่าจ้างแต่ใช้ยอดสมทบที่เก็บไว้
+            // ⇒ คู่ตัวเลขขัดกันเองทันทีที่มีการแก้ยอด. 0 = แถวเก่าที่ยังไม่เคย
+            // ตั้งฐาน (Helpers/SsoWageBase.Resolve อนุมานให้จากยอดสมทบจริง)
+            """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "SocialSecurityBase" numeric(18,2) NOT NULL DEFAULT 0;""",
             // PayrollRun กลับรายการจ่าย (Paid → Approved) — ร่องรอยว่าใครกลับ
             // รายการเมื่อไรเพราะอะไร ใช้ทั้ง audit และแบนเนอร์เตือนบนหน้าจอว่า
             // เอกสาร ภ.ง.ด.1/สปส.1-10/สลิป ที่แนบไว้ยังเป็นฉบับก่อนแก้
