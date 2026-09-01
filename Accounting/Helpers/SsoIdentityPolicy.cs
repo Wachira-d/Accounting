@@ -1,5 +1,21 @@
 namespace Accounting.Helpers;
 
+/// <summary>ตัวตนที่ provider คืนมาหลัง verify token
+///
+/// <para><b>Email อาจว่างได้</b> — LINE คืนอีเมลเฉพาะเมื่อ channel ผ่านการอนุมัติ
+/// สิทธิ์ email (ต้องยื่นเอกสาร) ซึ่งส่วนใหญ่ยังไม่ผ่าน. เดิมระบบ throw ทิ้งทันที
+/// เมื่อไม่มีอีเมล ⇒ ปุ่ม LINE ใช้ไม่ได้เลยแม้แต่กับคนที่ผูกบัญชีไว้แล้ว
+/// ทั้งที่ <c>Id</c> (LINE userId) เป็นตัวระบุตัวตนที่มั่นคงกว่าอีเมลด้วยซ้ำ
+/// (ไม่เปลี่ยนแม้ผู้ใช้เปลี่ยนอีเมล)</para>
+/// </summary>
+public sealed record SsoIdentity(
+    string Provider,
+    string Id,
+    string? Email,
+    string? Name,
+    string? PictureUrl,
+    bool EmailVerified);
+
 /// <summary>กติกาเดียวของระบบว่า "ตัวตนจาก SSO เชื่อได้แค่ไหน"
 ///
 /// ⚠️ ที่มา: <c>SsoLoginAsync</c> เดิม **ผูก SSO เข้าบัญชีเดิมด้วยอีเมลอย่างเดียว**
@@ -51,6 +67,14 @@ public static class SsoIdentityPolicy
         => $"อีเมล {email} มีบัญชีอยู่แล้วในระบบ — เราส่งลิงก์ยืนยันการผูกบัญชี "
            + $"{DisplayName(provider)} ไปที่อีเมลนี้แล้ว กรุณาเปิดอีเมลแล้วกดยืนยัน "
            + "(ลิงก์มีอายุ 1 ชั่วโมง) จากนั้นกดเข้าสู่ระบบด้วยปุ่มเดิมอีกครั้ง";
+
+    /// <summary>ไม่มีอีเมลจาก provider (LINE ที่ยังไม่ได้สิทธิ์ email) และยังไม่เคย
+    /// ผูกบัญชี — ไปกรอกอีเมลที่หน้าสมัคร โดยพา**ตัวตนที่ยืนยันแล้ว**ไปด้วย
+    /// (ticket) เพื่อผูกให้อัตโนมัติหลังสมัครเสร็จ ผู้ใช้จะได้ไม่ต้องกด SSO ซ้ำ</summary>
+    public static string SignupNeedsEmailMessage(string provider)
+        => $"{DisplayName(provider)} ไม่ได้ให้อีเมลมา (channel ยังไม่ได้รับสิทธิ์ email) — "
+           + "พาไปหน้าสมัครสมาชิกเพื่อกรอกอีเมล แล้วระบบจะผูกบัญชี "
+           + $"{DisplayName(provider)} ให้อัตโนมัติ";
 
     /// <summary>ผู้ใช้ใหม่ที่กด SSO ที่หน้า login (ไม่มีช่องติ๊กยินยอม) — ส่งกลับไป
     /// หน้าสมัคร ซึ่งเป็นที่เดียวที่มีข้อความให้อ่านจริง (PDPA ม.19)</summary>

@@ -12,6 +12,11 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- SsoSignupTicketTests สร้าง IConfiguration ปลอมเพื่อทดสอบตั๋ว SSO.
+         ปกติ type ชุดนี้ไหลมาจาก FrameworkReference ของโปรเจกต์หลัก (Web SDK)
+         อยู่แล้ว — ระบุตรง ๆ เพื่อไม่ให้การคอมไพล์ขึ้นกับการไหลแบบ transitive
+         (โปรเจกต์เทสต์พัง = ล้มทั้ง solution ด้วย CS0006) -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>

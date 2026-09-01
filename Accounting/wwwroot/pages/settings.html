@@ -865,6 +865,13 @@
       <div id="extLoginList" style="display:flex;flex-direction:column;gap:10px">
         <div class="text-gray-400" style="font-size:13px">กำลังโหลด…</div>
       </div>
+
+      <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">ผูกบัญชีเพิ่ม</h3>
+      <p class="text-gray-400" style="margin:0 0 12px;font-size:13px">
+        ผูกแล้วครั้งหน้ากดปุ่มเดียวเข้าระบบได้เลย ไม่ต้องกรอกรหัสผ่าน —
+        <b>LINE ไม่ต้องใช้อีเมล</b> (ผูกจากตรงนี้ได้เลยแม้ LINE จะไม่ส่งอีเมลมาให้)
+      </p>
+      <div id="extLoginAddBtns" style="display:flex;gap:10px;flex-wrap:wrap"></div>
     </div>
 
     <!-- ===== Signature Tab ===== -->
@@ -926,6 +933,8 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <!-- ตัวกลาง SSO redirect ตัวเดียวกับหน้า login/register (ใช้ผูกบัญชีเพิ่ม) -->
+  <script src="/js/sso.js"></script>
   <script src="/js/dbd-lookup.js"></script>
   <script src="/js/thai-address.js"></script>
   <script src="/js/translations.js"></script>
@@ -1208,13 +1217,51 @@
 
       /** บัญชีภายนอกที่ผูกไว้ — เซิร์ฟเวอร์เป็นคนบอกว่ามีอะไรบ้าง หน้านี้แสดง
        *  อย่างเดียว (ห้ามเดาจาก localStorage ที่ผู้ใช้แก้เองได้) */
+      /** ปุ่มผูกเพิ่ม — สร้างจาก sso-config ของเซิร์ฟเวอร์ (ปุ่มที่กดแล้วพัง =
+       *  ปุ่มหลอก ห้ามมี) · ซ่อน provider ที่ผูกไว้แล้ว */
+      async renderExternalLoginButtons(linked) {
+        const box = document.getElementById('extLoginAddBtns');
+        if (!box) return;
+        try {
+          if (!this._ssoCfg) {
+            const r = await fetch('/api/auth/sso-config');
+            const d = await r.json();
+            this._ssoCfg = d.data || d || {};
+          }
+          const cfg = this._ssoCfg;
+          const have = new Set((linked || []).map(x => x.provider));
+          const avail = [
+            { p: 'Line', label: '💬 ผูกบัญชี LINE' },
+            { p: 'Google', label: '🟦 ผูกบัญชี Google' },
+          ].filter(x => Sso.supportsRedirect(x.p, cfg) && !have.has(x.p));
+          box.innerHTML = avail.length
+            ? avail.map(x => `<button type="button" class="btn btn-secondary"
+                 onclick="Page.startLinkExternal('${x.p}')">${Layout.esc(x.label)}</button>`).join('')
+            : `<span class="text-gray-400" style="font-size:13px">ผูกครบทุกบัญชีที่ระบบเปิดใช้แล้ว</span>`;
+        } catch (e) { box.innerHTML = ''; }
+      },
+
+      /** provider ตั้ง callback URL ได้ชุดเดียว (/login.html) → ส่งผู้ใช้ผ่าน
+       *  ที่นั่นด้วยโหมด 'link' แล้วหน้านั้นจะผูกให้เสร็จและพากลับมา */
+      startLinkExternal(provider) {
+        if (!Sso.begin(provider, this._ssoCfg, null, 'link'))
+          Layout.toast(Sso.notReadyMessage(provider), 'error');
+      },
+
       async loadExternalLogins() {
         const box = document.getElementById('extLoginList');
         if (!box) return;
+        // กลับมาจากหน้า login หลังผูกสำเร็จ — บอกผลให้เห็น ไม่ใช่เงียบ
+        const linkedJust = new URLSearchParams(location.search).get('linked');
+        if (linkedJust) {
+          Layout.toast('ผูกบัญชี ' + linkedJust + ' แล้ว', 'success');
+          history.replaceState({}, '', location.pathname + '?tab=security');
+        }
         try {
           const j = await API.getExternalLogins();
           if (!j || !j.success) throw new Error((j && j.message) || 'โหลดข้อมูลไม่สำเร็จ');
           const rows = j.data || [];
+          await this.renderExternalLoginButtons(rows);
           if (!rows.length) {
             box.innerHTML = `<div style="padding:14px;border:1px dashed #cbd5e1;border-radius:8px;
               font-size:13px;color:#64748b">ยังไม่ได้ผูกบัญชีภายนอกไว้ —

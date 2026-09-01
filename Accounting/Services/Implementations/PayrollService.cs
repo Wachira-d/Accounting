@@ -1118,6 +1118,28 @@ public class PayrollService : IPayrollService
 
         foreach (var (line, emp) in resolved)
         {
+            // ── ด่านคู่ ปกส. ที่ **หายไปทั้งเส้นนี้** ──────────────────────────
+            // เส้น import ตรวจแค่ "net = gross − หักฝั่งลูกจ้าง" ส่วนฝั่งนายจ้าง
+            // คัดมาดิบ ๆ ⇒ TakeTime คิดนายจ้างจากค่าจ้างเต็ม แต่คิดลูกจ้างจากฐาน
+            // ที่หักจริง ⇒ ต่างกัน 22 บาท (4,381 vs 4,403) ติดมากับรอบตั้งแต่
+            // วินาทีแรก และไม่มีทางไหนซ่อมให้เลยนอกจากผู้ใช้กด "กลับรายการจ่าย"
+            // → ทำให้สอดคล้องตั้งแต่ต้นทาง + **บอกให้รู้** (ห้ามแก้เงียบ)
+            var norm = Accounting.Helpers.SsoWageBase.Normalize(
+                line.SocialSecurityBase ?? 0m, line.SocialSecurityEmployee, line.GrossIncome,
+                line.SocialSecurityEmployer, importSso.Rate, importSso.MaxContribution,
+                importSso.EmployerRate, importSso.EmployerMaxContribution);
+            if (norm.Changed && Math.Abs(norm.Employer - line.SocialSecurityEmployer) > 0.005m)
+            {
+                warnings.Add(
+                    $"{emp.FirstNameTh} {emp.LastNameTh}: ปรับเงินสมทบฝั่งนายจ้างจาก "
+                    + $"{line.SocialSecurityEmployer:N2} เป็น {norm.Employer:N2} ให้ตรงกับฝั่งลูกจ้าง "
+                    + $"{line.SocialSecurityEmployee:N2} ตามอัตรา ม.33 ของปี {request.Year} "
+                    + "(ระบบต้นทางส่งมาไม่สอดคล้องกัน — สปส. คิดจากฐานค่าจ้างเดียวกันทั้งสองฝั่ง)");
+                _logger?.LogWarning(
+                    "Import payroll: employer SSO {Sent} → {Fixed} for employee {Emp} (employee side {Employee})",
+                    line.SocialSecurityEmployer, norm.Employer, emp.Id, line.SocialSecurityEmployee);
+            }
+
             run.Details.Add(new PayrollDetail
             {
                 CompanyId = companyId,
@@ -1134,12 +1156,9 @@ public class PayrollService : IPayrollService
                 // ที่ส่งมา** ไม่ใช่จาก GrossIncome — เพราะยอดสมทบคือสิ่งที่นำส่ง
                 // จริงและต้องตรงกับช่องค่าจ้างบนไฟล์ สปส.1-10 (เดิม exporter หยิบ
                 // GrossIncome ไปใส่ ⇒ ได้คู่ที่ 5% ไม่ลงตัว เช่น 14,094 คู่กับ 683)
-                SocialSecurityBase = line.SocialSecurityBase
-                    ?? Accounting.Helpers.SsoWageBase.Resolve(
-                        0m, line.SocialSecurityEmployee, line.GrossIncome,
-                        importSso.Rate, importSso.MaxContribution),
+                SocialSecurityBase = norm.Base,
                 SocialSecurityEmployee = line.SocialSecurityEmployee,
-                SocialSecurityEmployer = line.SocialSecurityEmployer,
+                SocialSecurityEmployer = norm.Employer,
                 WithholdingTax = line.WithholdingTax,
                 ProvidentFundEmployee = line.ProvidentFundEmployee,
                 ProvidentFundEmployer = line.ProvidentFundEmployer,
@@ -1155,8 +1174,11 @@ public class PayrollService : IPayrollService
         // totals = ผลรวมยอดที่ส่งมา (ไม่คำนวณใหม่)
         run.TotalGrossSalary = resolved.Sum(r => r.Line.GrossIncome);
         run.TotalWithholdingTax = resolved.Sum(r => r.Line.WithholdingTax);
-        run.TotalSocialSecurityEmployee = resolved.Sum(r => r.Line.SocialSecurityEmployee);
-        run.TotalSocialSecurityEmployer = resolved.Sum(r => r.Line.SocialSecurityEmployer);
+        run.TotalSocialSecurityEmployee = run.Details.Sum(d => d.SocialSecurityEmployee);
+        // ⚠️ จากแถวที่ผ่าน Normalize แล้ว ไม่ใช่จาก payload ดิบ — ไม่งั้นยอดรวม
+        // กับรายตัวไม่ตรงกันตั้งแต่วินาทีแรก (ญาติของ "ตัวเลขคู่ที่ต้องสอดคล้อง
+        // กัน ห้ามมาจากคนละแหล่ง")
+        run.TotalSocialSecurityEmployer = run.Details.Sum(d => d.SocialSecurityEmployer);
         run.TotalProvidentFundEmployee = resolved.Sum(r => r.Line.ProvidentFundEmployee);
         run.TotalProvidentFundEmployer = resolved.Sum(r => r.Line.ProvidentFundEmployer);
         run.TotalNetPay = resolved.Sum(r => r.Line.NetPay);
@@ -1906,8 +1928,59 @@ public class PayrollService : IPayrollService
         return MapToPayrollRunResponse(run);
     }
 
+    private int _lastPaySsoAdjustedCount;
+    public int LastPaySsoAdjustedCount => _lastPaySsoAdjustedCount;
+
+    /// <summary>ทำให้ "ฐาน · ลูกจ้าง · นายจ้าง" ของทุกแถวในรอบสอดคล้องกัน —
+    /// **ตัวซ่อมตัวเดียว** ที่ทั้งตอนจ่าย ตอนกลับรายการจ่าย (และตอน import ผ่าน
+    /// <c>SsoWageBase.Normalize</c> ตรง ๆ) ใช้ร่วมกัน
+    ///
+    /// <para>เดิมตรรกะนี้เขียนไว้ใน <c>ReopenPaidRunAsync</c> ที่เดียว ⇒ รอบที่
+    /// นำเข้าจากระบบนอกแล้วเดินตรงไป "จ่าย" ไม่เคยผ่านการซ่อมเลย ยอดฝั่งนายจ้าง
+    /// ที่ TakeTime ส่งมาผิดจึงติดไปถึง JE และไปโผล่ตอนนำส่ง สปส.</para>
+    ///
+    /// <para>ปลอดภัยเฉพาะ**ก่อน**สร้าง JE ของรอบนั้น — ห้ามเรียกหลังจ่ายแล้ว
+    /// (ตัวเลขจะไม่ตรงกับ JE ที่ลงไปแล้ว)</para></summary>
+    /// <returns>จำนวนพนักงานที่ถูกปรับ — ผู้เรียกต้องเอาไปบอกผู้ใช้ ห้ามแก้เงียบ</returns>
+    private async Task<int> NormalizeRunSsoAsync(Guid companyId, PayrollRun run, string reason)
+    {
+        var sso = await GetSsoParamsAsync(companyId, run.Year);
+        var details = run.Details is { Count: > 0 }
+            ? run.Details.ToList()
+            : await _db.Set<PayrollDetail>()
+                .Where(d => d.PayrollRunId == run.Id && d.CompanyId == companyId)
+                .ToListAsync();
+
+        var adjusted = 0;
+        foreach (var d in details)
+        {
+            var norm = Accounting.Helpers.SsoWageBase.Normalize(
+                d.SocialSecurityBase, d.SocialSecurityEmployee, d.GrossIncome,
+                d.SocialSecurityEmployer, sso.Rate, sso.MaxContribution,
+                sso.EmployerRate, sso.EmployerMaxContribution);
+            if (!norm.Changed) continue;
+            d.SocialSecurityBase = norm.Base;
+            d.SocialSecurityEmployer = norm.Employer;
+            d.UpdatedAt = DateTime.UtcNow;
+            adjusted++;
+        }
+
+        if (adjusted > 0)
+        {
+            run.TotalSocialSecurityEmployee = details.Sum(x => x.SocialSecurityEmployee);
+            run.TotalSocialSecurityEmployer = details.Sum(x => x.SocialSecurityEmployer);
+            _logger?.LogWarning(
+                "ซ่อมยอดประกันสังคมให้สอดคล้อง {Count} คน ระหว่าง{Reason} run {Run} "
+                + "→ ลูกจ้าง {Emp} · นายจ้าง {Er}",
+                adjusted, reason, run.Id, run.TotalSocialSecurityEmployee,
+                run.TotalSocialSecurityEmployer);
+        }
+        return adjusted;
+    }
+
     public async Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy)
     {
+        _lastPaySsoAdjustedCount = 0;
         // Quick existence check before the long-running pay transaction. The
         // FOR UPDATE lock is taken inside payTransaction below so a concurrent
         // Pay click waits and re-reads under the lock.
@@ -1959,6 +2032,14 @@ public class PayrollService : IPayrollService
             if (lockedStatus != "Approved")
                 throw new InvalidOperationException(
                     "รอบนี้ถูกประมวลผลไปแล้วโดยผู้ใช้งานคนอื่น — กรุณารีเฟรชหน้านี้");
+
+            // ── ตาข่ายรับสุดท้ายก่อนลง JE ──────────────────────────────────────
+            // รอบที่ import เข้ามา **ก่อน** มีด่านที่ต้นทาง (หรือถูกแก้ยอดรายคน
+            // ระหว่างทาง) อาจยังมีคู่ ปกส. ที่ไม่ลงตัวอยู่. นี่คือจังหวะสุดท้ายที่
+            // ซ่อมได้โดยไม่ทิ้งรายการค้าง — JE ยังไม่ถูกสร้าง ยอดที่แก้ตรงนี้จะ
+            // ไหลเข้า JE ทันที (ถ้าปล่อยไปจะไปตายที่ด่านตอนนำส่ง สปส. แล้วผู้ใช้
+            // ต้องกลับรายการทั้งรอบ)
+            _lastPaySsoAdjustedCount = await NormalizeRunSsoAsync(companyId, run, "จ่ายเงินเดือน");
 
             run.Status = "Paid";
             run.UpdatedBy = processedBy;
@@ -2677,39 +2758,10 @@ public class PayrollService : IPayrollService
             // reopen คือจังหวะเดียวที่ปลอดภัยจะซ่อม: JE ถูกกลับไปแล้วและกำลังจะ
             // โพสต์ใหม่ตอนกด "จ่าย" ⇒ แก้ตัวเลขตอนนี้ไม่ทิ้งรายการค้างในบัญชี
             // (ถ้าไปแก้ตอน Paid ตัวเลขจะไม่ตรงกับ JE ที่ลงไปแล้ว)
-            var ssoFix = await GetSsoParamsAsync(companyId, run.Year);
-            var fixedDetails = await _db.Set<PayrollDetail>()
-                .Where(d => d.PayrollRunId == payrollRunId && d.CompanyId == companyId)
-                .ToListAsync();
-            var ssoAdjusted = 0;
-            foreach (var d in fixedDetails)
-            {
-                if (d.SocialSecurityEmployee <= 0 && d.SocialSecurityEmployer <= 0) continue;
-                // ฐานที่ยอดสมทบคิดมาจริง (แถวเก่ายังไม่เคยตั้ง → อนุมานให้)
-                var resolvedBase = Accounting.Helpers.SsoWageBase.Resolve(
-                    d.SocialSecurityBase, d.SocialSecurityEmployee, d.GrossIncome,
-                    ssoFix.Rate, ssoFix.MaxContribution);
-                var expectedEr = Accounting.Helpers.SsoWageBase.EmployerFrom(
-                    d.SocialSecurityEmployee, ssoFix.Rate,
-                    ssoFix.EmployerRate, ssoFix.EmployerMaxContribution);
-                var changed = false;
-                if (resolvedBase > 0 && d.SocialSecurityBase != resolvedBase)
-                { d.SocialSecurityBase = resolvedBase; changed = true; }
-                if (Math.Abs(expectedEr - d.SocialSecurityEmployer) > 0.005m)
-                { d.SocialSecurityEmployer = expectedEr; changed = true; }
-                if (changed) { d.UpdatedAt = DateTime.UtcNow; ssoAdjusted++; }
-            }
-            if (ssoAdjusted > 0)
-            {
-                run.TotalSocialSecurityEmployer = fixedDetails.Sum(x => x.SocialSecurityEmployer);
-                run.TotalSocialSecurityEmployee = fixedDetails.Sum(x => x.SocialSecurityEmployee);
-                _logger?.LogInformation(
-                    "ซ่อมยอดประกันสังคมให้สอดคล้อง {Count} คน ระหว่างกลับรายการจ่าย run {Run} "
-                    + "→ ลูกจ้าง {Emp} · นายจ้าง {Er}",
-                    ssoAdjusted, payrollRunId, run.TotalSocialSecurityEmployee,
-                    run.TotalSocialSecurityEmployer);
-            }
-            _ssoAdjustedOnReopen = ssoAdjusted;
+            // ตรรกะซ่อมอยู่ที่ NormalizeRunSsoAsync ตัวเดียว — ใช้ร่วมกับตอนจ่าย
+            // และตอน import (เดิมเขียนไว้ที่นี่ที่เดียว ⇒ รอบที่ import เข้ามาแล้ว
+            // ไม่เคยกด "กลับรายการจ่าย" จึงไม่มีอะไรซ่อมให้เลย)
+            _ssoAdjustedOnReopen = await NormalizeRunSsoAsync(companyId, run, "กลับรายการจ่าย");
 
             run.JournalEntryId = null;
             run.Status = "Approved";

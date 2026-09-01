@@ -162,11 +162,35 @@
       const el = document.getElementById('errorMsg');
       if (cb.error) {
         if (el) { el.textContent = cb.error; el.classList.remove('hidden'); }
+        // โหมดผูกบัญชี: พากลับไปหน้าที่กดมา ไม่ทิ้งผู้ใช้ไว้ที่หน้า login
+        if (cb.mode === 'link') setTimeout(() => {
+          location.href = '/pages/settings.html?tab=security';
+        }, 2500);
         return;
       }
+      // ผูกบัญชีเพิ่มให้ผู้ใช้ที่ล็อกอินอยู่แล้ว — ไม่ต้องมีอีเมลจาก provider เลย
+      if (cb.mode === 'link') { linkSsoAccount(cb.provider, cb.code); return; }
       // ถ้ามาจากหน้า register จะมี companyName/plan/หลักฐานยินยอมฝากไว้
       handleSsoResponse(cb.provider, cb.code, cb.signup);
     })();
+
+    /** callback URL ของ provider ตั้งได้ชุดเดียว (หน้านี้) → หน้าตั้งค่าจึงส่ง
+     *  ผู้ใช้ผ่านที่นี่ แล้วเราผูกให้เสร็จค่อยพากลับไป */
+    async function linkSsoAccount(provider, code) {
+      const el = document.getElementById('errorMsg');
+      try {
+        const res = await API.linkExternalLogin(provider, code);
+        if (!res || !res.success) throw new Error((res && res.message) || 'ผูกบัญชีไม่สำเร็จ');
+        location.href = '/pages/settings.html?tab=security&linked='
+          + encodeURIComponent(res.data?.providerDisplayName || provider);
+      } catch (err) {
+        if (el) {
+          el.textContent = err.message || 'ผูกบัญชีไม่สำเร็จ';
+          el.classList.remove('hidden');
+        }
+        setTimeout(() => { location.href = '/pages/settings.html?tab=security'; }, 3000);
+      }
+    }
 
     function _ssoError(msg) {
       const el = document.getElementById('errorMsg');
@@ -196,6 +220,22 @@
           signup?.companyName || null, signup?.plan || null,
           signup?.acceptedTerms === true, signup?.policyVersion || null,
           signup?.invitationToken || null);
+        // provider ไม่ได้ให้อีเมลมา (LINE ที่ channel ยังไม่ได้สิทธิ์ email) และ
+        // ยังไม่เคยผูกบัญชี → ไม่ใช่ error: พาไปกรอกอีเมลที่หน้าสมัคร พร้อมพา
+        // "ตั๋ว" ที่เซ็นแล้วไปด้วย เพื่อผูกบัญชีให้อัตโนมัติหลังสมัครเสร็จ
+        if (res && res.data && res.data.needsSignup) {
+          try {
+            sessionStorage.setItem('ssoSignupTicket', JSON.stringify({
+              ticket: res.data.ssoTicket,
+              provider: res.data.provider,
+              providerName: res.data.providerName,
+              suggestedName: res.data.suggestedName || '',
+              pictureUrl: res.data.pictureUrl || '',
+            }));
+          } catch (e) {}
+          location.href = '/register.html?sso=1';
+          return;
+        }
         if (res.success && res.data) {
           const token = res.data.accessToken || res.data.token;
           localStorage.setItem('token', token);

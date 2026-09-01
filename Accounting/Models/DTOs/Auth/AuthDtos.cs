@@ -22,6 +22,11 @@ public record RegisterRequest(
     // lands on the inviter's company instead of creating a stub one.
     string? InvitationToken = null,
 
+    // ตั๋วที่ระบบออกให้หลังผู้ใช้กด LINE/Google แล้ว provider ไม่ได้ให้อีเมลมา
+    // (เซ็นด้วยกุญแจของเรา อายุ 20 นาที) — สมัครเสร็จระบบผูกบัญชีนั้นให้ทันที
+    // ผู้ใช้ไม่ต้องกดปุ่ม SSO ซ้ำ (authorization code ใช้ได้ครั้งเดียว)
+    string? SsoTicket = null,
+
     // ===== ความยินยอมตาม PDPA ม.19 =====
     // เดิมช่องติ๊ก "ยอมรับข้อกำหนด + นโยบายความเป็นส่วนตัว" บนหน้าสมัคร **ไม่เคย
     // ถูกส่งมาที่ server เลย** ⇒ ระบบไม่มีหลักฐานสักแถวว่าใครยอมรับอะไรเมื่อไร
@@ -102,6 +107,12 @@ public record SsoLoginRequest(
     // คำเชิญเข้าบริษัท — เดิมเส้นนี้ไม่รับเลย ⇒ ผู้ถูกเชิญที่เลือกสมัครด้วย
     // Google/LINE ไม่ได้เข้าบริษัทที่เชิญ ต้องให้แอดมินเชิญซ้ำ
     string? InvitationToken = null);
+
+/// <summary>ผูกบัญชีภายนอกขณะล็อกอินอยู่แล้ว — ไม่ต้องมีอีเมลจาก provider เลย
+/// (ตัวผู้ใช้ยืนยันด้วย JWT แล้ว + เพิ่งผ่าน OAuth มาสด ๆ)</summary>
+public record LinkExternalLoginRequest(
+    [Required] string Provider,
+    [Required] string IdToken);
 
 /// <summary>บัญชีภายนอกที่ผูกไว้ — หน้าโปรไฟล์ใช้แสดง/ถอด
 /// (ProviderUserId ไม่เคยส่งออก: เป็นตัวระบุตัวบุคคลฝั่ง provider)</summary>
