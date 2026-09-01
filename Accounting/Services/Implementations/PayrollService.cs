@@ -3753,6 +3753,26 @@ public class PayrollService : IPayrollService
         if (totalSso <= 0)
             throw new InvalidOperationException("รอบนี้ไม่มียอดประกันสังคมต้องนำส่ง");
 
+        // ── ด่านก่อนลง JE: สองฝั่งต้องสอดคล้องกันตามอัตราของปีนั้น ──
+        // เคสจริง: ผู้ใช้แก้ยอดฝั่งลูกจ้างของพนักงานคนหนึ่ง (705→683) ฝั่งนายจ้าง
+        // ค้างค่าเดิม ⇒ ระบบลง JE นำส่ง 8,784 แต่ สปส. เรียกเก็บจริง 8,762
+        // (= 4,381 × 2) ⇒ เงินฝากในบัญชีแยกประเภทหายเกินจริง 22 บาท และกระทบยอด
+        // ธนาคารไปตลอดจนกว่าจะมีคนสังเกต. **ห้ามลงบัญชีก่อนแล้วค่อยหวังว่าจะตรง**
+        var ssoCheck = await GetSsoParamsAsync(companyId, run.Year);
+        var expectedEmployer = Accounting.Helpers.SsoWageBase.EmployerFrom(
+            run.TotalSocialSecurityEmployee, ssoCheck.Rate,
+            ssoCheck.EmployerRate, decimal.MaxValue);
+        if (Math.Abs(expectedEmployer - run.TotalSocialSecurityEmployer) > 1m)
+            throw new InvalidOperationException(
+                $"ยอดประกันสังคมสองฝั่งไม่สอดคล้องกัน — ลูกจ้าง {run.TotalSocialSecurityEmployee:N2} "
+                + $"แต่นายจ้าง {run.TotalSocialSecurityEmployer:N2} (ที่อัตรา "
+                + $"{ssoCheck.Rate * 100m:F2}%/{ssoCheck.EmployerRate * 100m:F2}% ควรเป็น {expectedEmployer:N2}). "
+                + $"ถ้าลงบัญชีตอนนี้ระบบจะบันทึกจ่าย {totalSso:N2} ทั้งที่ สปส. เรียกเก็บ "
+                + $"{run.TotalSocialSecurityEmployee + expectedEmployer:N2} ⇒ ยอดเงินฝากคลาดเคลื่อน. "
+                + "วิธีแก้: กด \"กลับรายการจ่าย\" ที่รอบเงินเดือน → เปิดโมดัล \"แก้ยอด\" ของ"
+                + "พนักงานที่ยอดเพี้ยน → ตั้ง \"ฐานค่าจ้างประกันสังคม\" ให้ถูก (ระบบคิดสองฝั่ง"
+                + "ให้เอง) → กด \"จ่าย\" ใหม่ แล้วค่อยนำส่ง");
+
         // ── หาผังบัญชี ──
         // 21815 ประกันสังคมค้างจ่าย (Cr ตอนจ่ายเงินเดือน) → ตอนนี้ Dr ล้างหนี้
         var ssoPayableAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
@@ -3867,6 +3887,124 @@ public class PayrollService : IPayrollService
             await tx.RollbackAsync();
             throw;
         }
+
+        return await GetPayrollRunAsync(companyId, payrollRunId);
+    }
+
+    /// <summary>
+    /// กลับรายการนำส่งประกันสังคม — ล้าง <c>SsoSettledAt</c> + กลับ JE ก้อนที่สอง
+    ///
+    /// ═══ ทำไมต้องมี ═══
+    /// เดิม <c>SettleSocialSecurityAsync</c> เป็น **ทางเดียว ไปแล้วกลับไม่ได้**:
+    /// นำส่งผิดยอด/ผิดวัน/ผิดบัญชี = ตัน ต้องไปแก้ในฐานข้อมูลเอง. และข้อความใน
+    /// <c>Helpers/PayrollRunEditPolicy.CanReopen</c> ก็บอกให้ผู้ใช้ "กลับรายการ
+    /// นำส่ง สปส. ก่อน" ทั้งที่ระบบไม่เคยมีปุ่มนั้น — ด่านที่ชี้ไปยังทางที่ไม่มีอยู่
+    /// (defect class "สถานะปลายทางที่ผู้ใช้ไปต่อไม่ได้ = ฟีเจอร์ที่ยังไม่จบ")
+    ///
+    /// เคสจริงที่ทำให้ต้องมี: ยอดที่ลงบัญชี 8,784 แต่จ่าย สปส. จริง 8,762
+    /// (ฝั่งนายจ้างค้างค่าเดิม 22 บาท) ⇒ ต้องกลับรายการเพื่อไปแก้รอบเงินเดือน
+    /// แล้วนำส่งใหม่ให้ตรงกับสลิปธนาคาร
+    ///
+    /// ═══ กลับให้ครบ ═══
+    /// กลับ JE **ลงวันเดียวกับวันที่นำส่งเดิม** (ไม่ใช่วันนี้) — งวดที่บันทึกไว้
+    /// ต้องกลับมาเป็นศูนย์สุทธิ ไม่ใช่ทิ้งรายการค้างไว้งวดหนึ่งแล้วไปเกินอีกงวด
+    /// (บทเรียนเดียวกับ <c>ReopenPaidRunAsync</c>) · เคลียร์ทั้ง JE id / เลขรับ /
+    /// เงินเพิ่ม §49 เพราะทั้งชุดจะถูกคำนวณใหม่ตอนนำส่งรอบหน้า
+    /// </summary>
+    public async Task<PayrollRunResponse> ReverseSsoSettlementAsync(Guid companyId,
+        Guid payrollRunId, string reason, string performedBy)
+    {
+        reason = (reason ?? "").Trim();
+        if (reason.Length < 5)
+            throw new InvalidOperationException(
+                "ต้องระบุเหตุผลที่กลับรายการนำส่งประกันสังคม (อย่างน้อย 5 ตัวอักษร) — "
+                + "รายการนี้กลับ JE ที่ลงบัญชีไปแล้ว ต้องตอบผู้ตรวจสอบได้ว่าทำไม");
+
+        var run = await _db.Set<PayrollRun>()
+            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรอบเงินเดือน");
+
+        if (!run.SsoSettledAt.HasValue)
+            throw new InvalidOperationException(
+                "รอบนี้ยังไม่ได้นำส่งประกันสังคม — ไม่มีรายการให้กลับ");
+
+        var settledOn = run.SsoSettledAt.Value;
+        var fp = await _db.FiscalPeriods.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.StartDate <= settledOn && p.EndDate >= settledOn)
+            .Select(p => new { p.Status, p.Name })
+            .FirstOrDefaultAsync();
+        if (fp != null && fp.Status == FiscalPeriodStatus.Closed)
+            throw new InvalidOperationException(
+                $"งวดบัญชี \"{fp.Name}\" ปิดแล้ว — กลับรายการนำส่งเข้างวดนี้ไม่ได้ "
+                + "กรุณาเปิดงวดก่อน (บัญชี → งวดบัญชี) แล้วลองใหม่");
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // ล็อกแถวแล้วอ่านซ้ำใต้ล็อก — กันสองคนกดพร้อมกันแล้วกลับ JE ซ้ำสองรอบ
+            var locked = await _db.Set<PayrollRun>()
+                .FromSqlRaw(
+                    """SELECT * FROM "PayrollRuns" WHERE "Id" = {0} AND "CompanyId" = {1} FOR UPDATE""",
+                    payrollRunId, companyId)
+                .FirstOrDefaultAsync();
+            if (locked == null || !locked.SsoSettledAt.HasValue)
+            {
+                await tx.RollbackAsync();
+                return await GetPayrollRunAsync(companyId, payrollRunId);
+            }
+            run = locked;
+
+            var reversedJe = run.SsoSettlementJournalEntryId;
+            if (reversedJe.HasValue && _accountingService != null)
+                await _accountingService.ReverseJournalEntryAsync(companyId, reversedJe.Value,
+                    reversalDate: settledOn,
+                    description: $"กลับรายการนำส่งประกันสังคม {run.PayrollNumber} "
+                        + $"({run.Month:D2}/{run.Year}) — {reason}",
+                    systemTriggered: true);
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(performedBy, out var actorId) ? actorId : (Guid?)null,
+                Action = AuditAction.Update,
+                EntityType = "PayrollRun",
+                EntityId = run.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    run.SsoSettledAt,
+                    SettlementJournalEntryId = reversedJe,
+                    run.SsoFilingNumber,
+                    run.SsoLateFeeAmount,
+                    Amount = run.TotalSocialSecurityEmployee + run.TotalSocialSecurityEmployer,
+                }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Operation = "ReverseSsoSettlement",
+                    Reason = reason,
+                    ReversalDate = settledOn,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+
+            run.SsoSettledAt = null;
+            run.SsoSettlementJournalEntryId = null;
+            run.SsoSettlementDocumentId = null;
+            run.SsoFilingNumber = null;
+            run.SsoLateFeeAmount = 0m;
+            run.UpdatedBy = performedBy;
+            run.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        _logger?.LogInformation(
+            "กลับรายการนำส่ง สปส. run {Run} ({Month}/{Year}) โดย {By} — เหตุผล: {Reason}",
+            payrollRunId, run.Month, run.Year, performedBy, reason);
 
         return await GetPayrollRunAsync(companyId, payrollRunId);
     }

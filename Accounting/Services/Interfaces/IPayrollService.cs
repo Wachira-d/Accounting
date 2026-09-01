@@ -59,10 +59,17 @@ public interface IPayrollService
     /// บันทึก AuditLog + ReopenedAt/By/Reason. บล็อกเมื่อนำส่ง สปส. แล้ว หรือ
     /// งวดบัญชีของ PayDate ปิดแล้ว. เหตุผลบังคับ (≥ 5 ตัวอักษร).</summary>
     Task<PayrollRunResponse> ReopenPaidRunAsync(Guid companyId, Guid payrollRunId, string reason, string reopenedBy);
+    /// <summary>กลับรายการนำส่งประกันสังคม — กลับ JE ก้อนที่สอง (ลงวันเดียวกับ
+    /// วันที่นำส่งเดิม) + ล้าง SsoSettledAt/JE/เลขรับ/เงินเพิ่ม เพื่อให้แก้รอบ
+    /// เงินเดือนแล้วนำส่งใหม่ได้. เหตุผลบังคับ (≥ 5 ตัวอักษร).</summary>
+    Task<PayrollRunResponse> ReverseSsoSettlementAsync(Guid companyId, Guid payrollRunId,
+        string reason, string performedBy);
     /// <summary>นำส่งประกันสังคมให้ สปส. (สปส.1-10) — post JE คู่ที่สอง
     /// Dr 21815 ประกันสังคมค้างจ่าย / Cr Bank (+ เงินเพิ่ม §49 2%/เดือนถ้านำส่งช้า).
     /// ใช้กับรอบที่ Status=Paid + ยังไม่ได้นำส่ง. คืน PayrollRunResponse ที่
-    /// อัปเดต SsoSettledAt + SsoSettlementJournalEntryId + SsoLateFeeAmount.</summary>
+    /// อัปเดต SsoSettledAt + SsoSettlementJournalEntryId + SsoLateFeeAmount.
+    /// **บล็อกเมื่อยอดสองฝั่งไม่สอดคล้องกันตามอัตราของปีนั้น** — กันลง JE ยอดหนึ่ง
+    /// แล้วจ่ายจริงอีกยอด (เคสจริง: ลง 8,784 แต่ สปส. เก็บ 8,762).</summary>
     Task<PayrollRunResponse> SettleSocialSecurityAsync(Guid companyId, Guid payrollRunId,
         DateTime payDate, Guid? bankAccountId, Guid? bankGlAccountId, string? filingNumber, string performedBy);
     /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1)) — รวบรวม WHT
