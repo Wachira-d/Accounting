@@ -1087,6 +1087,8 @@ public class PayrollService : IPayrollService
         }
 
         // ── สร้าง run + details ──
+        // อัตรา/เพดาน ปกส. ของปีนั้น — ใช้อนุมานฐานค่าจ้างเมื่อระบบนอกไม่ได้ส่งมา
+        var importSso = await GetSsoParamsAsync(companyId, request.Year);
         var count = await _db.Set<PayrollRun>()
             .CountAsync(r => r.CompanyId == companyId && r.Year == request.Year);
         var payrollNumber = $"PR-{request.Year}{request.Month:D2}-{(count + 1):D3}";
@@ -1128,6 +1130,14 @@ public class PayrollService : IPayrollService
                 OtherIncome = line.OtherEarnings,
                 GrossIncome = line.GrossIncome,
                 TaxableGross = line.TaxableGross ?? line.GrossIncome,
+                // ฐานสมทบ: ระบบนอกส่งมาก็ใช้เลย ไม่ส่งมา → **อนุมานจากยอดสมทบ
+                // ที่ส่งมา** ไม่ใช่จาก GrossIncome — เพราะยอดสมทบคือสิ่งที่นำส่ง
+                // จริงและต้องตรงกับช่องค่าจ้างบนไฟล์ สปส.1-10 (เดิม exporter หยิบ
+                // GrossIncome ไปใส่ ⇒ ได้คู่ที่ 5% ไม่ลงตัว เช่น 14,094 คู่กับ 683)
+                SocialSecurityBase = line.SocialSecurityBase
+                    ?? Accounting.Helpers.SsoWageBase.Resolve(
+                        0m, line.SocialSecurityEmployee, line.GrossIncome,
+                        importSso.Rate, importSso.MaxContribution),
                 SocialSecurityEmployee = line.SocialSecurityEmployee,
                 SocialSecurityEmployer = line.SocialSecurityEmployer,
                 WithholdingTax = line.WithholdingTax,
@@ -1212,6 +1222,7 @@ public class PayrollService : IPayrollService
                     e?.EmployeeCode,
                     d.BaseSalary, d.OvertimePay, d.Allowances, d.Commission, d.Bonus, d.OtherIncome,
                     d.GrossIncome,
+                    d.SocialSecurityBase,
                     d.SocialSecurityEmployee, d.SocialSecurityEmployer, d.WithholdingTax,
                     d.ProvidentFundEmployee, d.LoanDeduction, d.OtherDeductions,
                     d.TotalDeductions, d.NetPay,
@@ -1219,7 +1230,16 @@ public class PayrollService : IPayrollService
             }).ToList();
         }
 
-        return MapToPayrollRunResponse(run) with { Details = lines };
+        // อัตรา/เพดาน ปกส. ของปีนั้น — หน้าจอใช้คำนวณตัวอย่างตอนแก้ฐานค่าจ้าง
+        // (ค่ามาจากเซิร์ฟเวอร์ ไม่ใช่ตารางที่หน้าเว็บฝังเอง)
+        var ssoForUi = await GetSsoParamsAsync(companyId, run.Year);
+        return MapToPayrollRunResponse(run) with
+        {
+            Details = lines,
+            SsoRatePercent = ssoForUi.Rate * 100m,
+            SsoEmployerRatePercent = ssoForUi.EmployerRate * 100m,
+            SsoWageCeiling = ssoForUi.MaxBase,
+        };
     }
 
     public async Task<PayrollRunResponse> SetEmployeePaymentAccountAsync(
@@ -1282,7 +1302,49 @@ public class PayrollService : IPayrollService
         if (req.Commission.HasValue) d.Commission = Pos(req.Commission.Value);
         if (req.Bonus.HasValue) d.Bonus = Pos(req.Bonus.Value);
         if (req.OtherIncome.HasValue) d.OtherIncome = Pos(req.OtherIncome.Value);
-        if (req.SocialSecurityEmployee.HasValue) d.SocialSecurityEmployee = Pos(req.SocialSecurityEmployee.Value);
+        // ── ประกันสังคม: **ฐานเป็นตัวตั้ง ทั้งสองฝั่งเป็นผลลัพธ์** ──
+        // เดิมแก้ฝั่งลูกจ้างได้อิสระ ฝั่งนายจ้างค้างค่าเดิม ⇒ ยอดนำส่งสองฝั่ง
+        // ไม่เท่ากัน (เคสจริง: ลูกจ้าง 4,381 vs นายจ้าง 4,403 ต่างกัน 22 = ยอด
+        // ของพนักงานที่ถูกแก้พอดี) ทั้งที่ ม.33 ใช้ฐานเดียวกันทั้งคู่
+        // และไฟล์ สปส.1-10 ก็ประกาศค่าจ้างที่ 5% ไม่ลงตัวกับเงินสมทบ
+        var ssoParams = await GetSsoParamsAsync(companyId, run.Year);
+        if (req.SocialSecurityBase.HasValue)
+        {
+            // ผู้ใช้ระบุ "ค่าจ้างที่ใช้เป็นฐาน" มาเอง (ม.5: เบี้ยเลี้ยง/ค่าน้ำมัน
+            // เหมาจ่ายไม่ใช่ค่าจ้าง) → คิดทั้งสองฝั่งใหม่จากฐานนั้น
+            d.SocialSecurityBase = Pos(req.SocialSecurityBase.Value);
+            if (d.SocialSecurityBase > 0)
+            {
+                var clamped = Accounting.Helpers.SsoWageBase.Clamp(d.SocialSecurityBase, ssoParams.MaxBase);
+                d.SocialSecurityEmployee = Accounting.Helpers.SsoWageBase.Contribution(
+                    clamped, ssoParams.Rate, ssoParams.MaxContribution);
+                // ฝั่งนายจ้างคิดจาก "ยอดลูกจ้าง" ตามสัดส่วนอัตรา ไม่ใช่คำนวณจากฐาน
+                // ใหม่อีกรอบ — อัตราเท่ากันต้องได้ยอดเท่ากันเป๊ะ ไม่ต่างกันด้วยเศษปัด
+                d.SocialSecurityEmployer = Accounting.Helpers.SsoWageBase.EmployerFrom(
+                    d.SocialSecurityEmployee, ssoParams.Rate,
+                    ssoParams.EmployerRate, ssoParams.EmployerMaxContribution);
+            }
+            else
+            {
+                d.SocialSecurityEmployee = 0m;
+                d.SocialSecurityEmployer = 0m;
+            }
+        }
+        else if (req.SocialSecurityEmployee.HasValue)
+        {
+            // แก้ "ยอดสมทบ" ตรง ๆ (ทางเดิมที่ผู้ใช้คุ้น) → ย้อนกลับไปหาฐานที่ทำให้
+            // ยอดนั้นถูกต้อง แล้วให้ฝั่งนายจ้างตามฐานเดียวกัน — เว้นแต่ผู้ใช้ระบุ
+            // ฝั่งนายจ้างมาเองในคำขอเดียวกัน (กรณีอัตราสองฝั่งไม่เท่ากันจริง เช่น
+            // ประกาศลดอัตราชั่วคราวช่วงโควิด ซึ่งกฎหมายเคยกำหนดคนละอัตรา)
+            d.SocialSecurityEmployee = Pos(req.SocialSecurityEmployee.Value);
+            d.SocialSecurityBase = Accounting.Helpers.SsoWageBase.Resolve(
+                0m, d.SocialSecurityEmployee, d.GrossIncome,
+                ssoParams.Rate, ssoParams.MaxContribution);
+            if (!req.SocialSecurityEmployer.HasValue)
+                d.SocialSecurityEmployer = Accounting.Helpers.SsoWageBase.EmployerFrom(
+                    d.SocialSecurityEmployee, ssoParams.Rate,
+                    ssoParams.EmployerRate, ssoParams.EmployerMaxContribution);
+        }
         if (req.SocialSecurityEmployer.HasValue) d.SocialSecurityEmployer = Pos(req.SocialSecurityEmployer.Value);
         if (req.WithholdingTax.HasValue) d.WithholdingTax = Pos(req.WithholdingTax.Value);
         if (req.ProvidentFundEmployee.HasValue) d.ProvidentFundEmployee = Pos(req.ProvidentFundEmployee.Value);
@@ -1636,12 +1698,17 @@ public class PayrollService : IPayrollService
                 //   หายาก ปกติเด็กฝึกงาน — แต่ฐานคงต้องตามกฎ).
                 var ssoEmployee = 0m;
                 var ssoEmployer = 0m;
+                var ssoWageBase = 0m;
                 if (emp.IsSubjectToSocialSecurity)
                 {
-                    const decimal SsoMinBase = 1_650m;
-                    var ssoBase = Math.Max(SsoMinBase, Math.Min(emp.BaseSalary, sso.MaxBase));
-                    ssoEmployee = Math.Min(Math.Round(ssoBase * sso.Rate, 2), sso.MaxContribution);
-                    ssoEmployer = Math.Min(Math.Round(ssoBase * sso.EmployerRate, 2), sso.EmployerMaxContribution);
+                    // ฐาน + การปัดเศษผ่านตัวกลางเดียว (Helpers/SsoWageBase) —
+                    // ทั้งสองฝั่งคิดจากฐานเดียวกันเสมอ และฐานถูกเก็บลงแถวเพื่อให้
+                    // ไฟล์ สปส.1-10 รายงานค่าจ้างที่ตรงกับยอดสมทบ
+                    ssoWageBase = Accounting.Helpers.SsoWageBase.Clamp(emp.BaseSalary, sso.MaxBase);
+                    ssoEmployee = Accounting.Helpers.SsoWageBase.Contribution(
+                        ssoWageBase, sso.Rate, sso.MaxContribution);
+                    ssoEmployer = Accounting.Helpers.SsoWageBase.Contribution(
+                        ssoWageBase, sso.EmployerRate, sso.EmployerMaxContribution);
                 }
 
                 // กองทุนเงินทดแทน (กท.20ก) — นายจ้างฝ่ายเดียว, อัตรา 0.2–1.0%
@@ -1747,6 +1814,7 @@ public class PayrollService : IPayrollService
                     // ภ.ง.ด.1 e-Filing export + 50 ทวิ. ปัจจุบัน engine
                     // เดิมแยก nonTaxableExtra ไว้แล้ว — ใช้ค่านี้.
                     TaxableGross = taxableGross,
+                    SocialSecurityBase = ssoWageBase,
                     SocialSecurityEmployee = ssoEmployee,
                     SocialSecurityEmployer = ssoEmployer,
                     WorkersCompensation = workersComp,

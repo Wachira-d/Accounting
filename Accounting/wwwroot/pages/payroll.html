@@ -1352,6 +1352,7 @@ const Page = {
     { k: 'commission', l: 'คอมมิชชัน', grp: 'in' },
     { k: 'bonus', l: 'โบนัส', grp: 'in' },
     { k: 'otherIncome', l: 'รายได้อื่น', grp: 'in' },
+    { k: 'socialSecurityBase', l: 'ฐานค่าจ้างประกันสังคม (ม.33)', grp: 'sso' },
     { k: 'socialSecurityEmployee', l: 'ประกันสังคม (ลูกจ้าง)', grp: 'de' },
     { k: 'withholdingTax', l: 'ภาษีหัก ณ ที่จ่าย', grp: 'de' },
     { k: 'providentFundEmployee', l: 'กองทุนสำรองเลี้ยงชีพ', grp: 'de' },
@@ -1372,7 +1373,7 @@ const Page = {
     const inputRow = f => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <label style="flex:1;font-size:13px">${f.l}</label>
         <input type="number" step="0.01" min="0" id="ed_${f.k}" value="${num(d[f.k]).toFixed(2)}"
-          oninput="Page._edRecalc()" style="width:140px;text-align:right" class="form-input"></div>`;
+          oninput="Page._edRecalc('${f.k}')" style="width:140px;text-align:right" class="form-input"></div>`;
     const body = document.getElementById('editDetailBody');
     body.innerHTML = `
       <div style="font-size:12px;color:#64748b;margin-bottom:8px">แก้ได้เฉพาะก่อนจ่าย · ระบบจะรวมยอด + ตรวจสุทธิให้</div>
@@ -1382,6 +1383,13 @@ const Page = {
       ${this._edFields.filter(f => f.grp === 'de').map(inputRow).join('')}
       <div style="font-weight:600;color:#475569;margin:10px 0 4px">ส่วนนายจ้าง (ไม่หักจากสุทธิ — กระทบ GL/สปส.)</div>
       ${this._edFields.filter(f => f.grp === 'er').map(inputRow).join('')}
+      <div style="font-weight:600;color:#0f766e;margin:10px 0 4px">ประกันสังคม — ฐานค่าจ้าง (ม.33)</div>
+      ${this._edFields.filter(f => f.grp === 'sso').map(inputRow).join('')}
+      <div style="font-size:11.5px;color:#64748b;line-height:1.65;margin-top:2px">
+        ตัวเลขนี้คือช่อง <b>"ค่าจ้าง"</b> ที่จะไปอยู่ในไฟล์ สปส.1-10 — แก้แล้วระบบคิดเงินสมทบ
+        <b>ทั้งฝั่งลูกจ้างและนายจ้าง</b> ใหม่จากฐานนี้ให้เอง (สองฝั่งต้องมาจากฐานเดียวกันเสมอ)<br>
+        ค่าจ้างตาม ม.5 ไม่รวมเบี้ยเลี้ยง/ค่าน้ำมันเหมาจ่ายที่ไม่ใช่ค่าตอบแทนการทำงาน จึงอาจน้อยกว่ารายได้รวม
+      </div>
       <div style="border-top:1px solid #e2e8f0;margin-top:10px;padding-top:10px;font-size:14px">
         <div style="display:flex;justify-content:space-between"><span>รวมรายได้</span><b id="edGross">-</b></div>
         <div style="display:flex;justify-content:space-between"><span>รวมรายการหัก</span><b id="edDed">-</b></div>
@@ -1390,11 +1398,80 @@ const Page = {
         <div id="edDiffHint" style="font-size:12px;margin-top:6px;line-height:1.5"></div>
       </div>`;
     this._edOldNet = num(d.netPay);
+    this._edSyncSso('init');
+    // เตือนเมื่อคู่ตัวเลขที่รับมา "ไม่ลงตัว" — เคสจริง: แก้ยอดฝั่งลูกจ้างไว้
+    // ฝั่งนายจ้างค้างค่าเดิม ⇒ ยอดนำส่งสองฝั่งไม่เท่ากันและไฟล์ สปส.1-10 เพี้ยน
+    const _erNow = num(d.socialSecurityEmployer);
+    const _empNow = num(d.socialSecurityEmployee);
+    const _erRate = Number(this._curRun?.ssoEmployerRatePercent ?? this._curRun?.ssoRatePercent ?? 5);
+    const _empRate = Number(this._curRun?.ssoRatePercent ?? 5);
+    if (_empNow > 0 && _erNow > 0 && _empRate > 0
+        && Math.abs(_erNow - _empNow * (_erRate / _empRate)) > 1) {
+      const w = document.createElement('div');
+      w.style.cssText = 'margin:8px 0;padding:8px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:12px;color:#991b1b;line-height:1.6';
+      w.innerHTML = `⚠️ ยอดประกันสังคมสองฝั่งไม่สอดคล้องกัน (ลูกจ้าง ${Layout.money(_empNow)} · นายจ้าง ${Layout.money(_erNow)}) `
+        + `— ม.33 ใช้ฐานค่าจ้างเดียวกันทั้งคู่ กด "บันทึก" ระบบจะคิดใหม่จากฐานด้านล่างให้ตรงกัน`;
+      body.prepend(w);
+    }
     this._edRecalc();
     Layout.openModal('editDetailModal');
   },
   _edVal(k) { const el = document.getElementById('ed_' + k); return el ? (Number(el.value) || 0) : 0; },
-  _edRecalc() {
+  _edSet(k, v) { const el = document.getElementById('ed_' + k); if (el) el.value = Number(v).toFixed(2); },
+
+  /** ประกันสังคม: ฐานค่าจ้างกับเงินสมทบสองฝั่งต้องสอดคล้องกันตลอดเวลา
+   *
+   *  โมดัลนี้ส่ง **ทุกช่อง** ไปเสมอ ⇒ ถ้าปล่อยให้ทั้งสามค่าขัดกันบนจอ เซิร์ฟเวอร์
+   *  (ซึ่งถือ "ฐาน" เป็นตัวตั้ง) จะคิดใหม่แล้วทับสิ่งที่ผู้ใช้เพิ่งพิมพ์ = ค่าหาย
+   *  เงียบ ๆ. จึงซิงก์ที่นี่ให้ตรงกับกติกาฝั่งเซิร์ฟเวอร์เป๊ะ ๆ
+   *
+   *  ⚠️ อัตรา/เพดานมาจาก API (ssoRatePercent/ssoWageCeiling) **ห้ามฝังเลขเอง** —
+   *  ตารางกฎหมายที่ถูกคัดลอกไปเขียนใหม่ใน JS = คิดผิดตลอดไป (กฎเหล็ก #4) */
+  _edSyncSso(changed) {
+    const r = this._curRun || {};
+    const rate = Number(r.ssoRatePercent ?? 5) / 100;
+    const erRate = Number(r.ssoEmployerRatePercent ?? r.ssoRatePercent ?? 5) / 100;
+    const ceiling = Number(r.ssoWageCeiling || 0);
+    if (!(rate > 0)) return;
+    const MIN_BASE = 1650;                       // ม.33 ฐานขั้นต่ำ
+    const clamp = b => ceiling > 0 ? Math.min(Math.max(b, MIN_BASE), ceiling) : Math.max(b, MIN_BASE);
+    const maxEmp = ceiling > 0 ? Math.round(ceiling * rate * 100) / 100 : Infinity;
+    const maxEr = ceiling > 0 ? Math.round(ceiling * erRate * 100) / 100 : Infinity;
+    const contrib = (b, rt, cap) => Math.min(Math.round(clamp(b) * rt * 100) / 100, cap);
+    // ฝั่งนายจ้าง = ยอดลูกจ้าง × สัดส่วนอัตรา (mirror ของ SsoWageBase.EmployerFrom)
+    const erFrom = emp => emp <= 0 ? 0
+      : Math.min(erRate === rate ? emp : Math.round(emp * (erRate / rate) * 100) / 100, maxEr);
+
+    if (changed === 'init') {
+      // เปิดโมดัลกับแถวเก่าที่ยังไม่เคยตั้งฐาน (ฐาน = 0) → เติมฐานที่ยอดสมทบ
+      // ปัจจุบันคิดมาจริง เพื่อให้ผู้ใช้เห็นตัวเลขที่มีความหมาย ไม่ใช่ 0.00
+      // **ไม่แตะยอดสมทบทั้งสองฝั่ง** (ยังไม่ได้แก้อะไร ห้ามเปลี่ยนค่าเงียบ ๆ)
+      if (this._edVal('socialSecurityBase') > 0) return;
+      const emp0 = this._edVal('socialSecurityEmployee');
+      if (emp0 <= 0) return;
+      this._edSet('socialSecurityBase',
+        emp0 >= maxEmp - 0.005 ? this._edVal('baseSalary') : Math.round(emp0 / rate * 100) / 100);
+      return;
+    }
+    if (changed === 'socialSecurityBase') {
+      const b = this._edVal('socialSecurityBase');
+      if (b <= 0) { this._edSet('socialSecurityEmployee', 0); this._edSet('socialSecurityEmployer', 0); return; }
+      this._edSet('socialSecurityEmployee', contrib(b, rate, maxEmp));
+      // ฝั่งนายจ้างคิดจากยอดลูกจ้างตามสัดส่วนอัตรา (อัตราเท่ากัน = เท่ากันเป๊ะ)
+      this._edSet('socialSecurityEmployer', erFrom(this._edVal('socialSecurityEmployee')));
+    } else if (changed === 'socialSecurityEmployee') {
+      // พิมพ์ยอดสมทบตรง ๆ → ย้อนหาฐานที่ทำให้ยอดนั้นถูก แล้วให้ฝั่งนายจ้างตามฐานเดิม
+      const emp = this._edVal('socialSecurityEmployee');
+      if (emp <= 0) { this._edSet('socialSecurityBase', 0); this._edSet('socialSecurityEmployer', 0); return; }
+      // ชนเพดาน = ค่าจ้างจริงสูงกว่าเพดาน หารกลับไม่ได้ความจริง → คงฐานเดิมไว้
+      if (!(emp >= maxEmp - 0.005)) this._edSet('socialSecurityBase', Math.round(emp / rate * 100) / 100);
+      this._edSet('socialSecurityEmployer', erFrom(emp));
+    }
+  },
+
+  _edRecalc(changed) {
+    if (changed === 'socialSecurityBase' || changed === 'socialSecurityEmployee')
+      this._edSyncSso(changed);
     const inc = ['baseSalary','overtimePay','allowances','commission','bonus','otherIncome'].reduce((s,k)=>s+this._edVal(k),0);
     const ded = ['socialSecurityEmployee','withholdingTax','providentFundEmployee','loanDeduction','otherDeductions'].reduce((s,k)=>s+this._edVal(k),0);
     const net = Math.round((inc - ded) * 100) / 100;

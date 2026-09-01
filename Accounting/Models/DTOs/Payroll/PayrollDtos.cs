@@ -136,7 +136,12 @@ public record ImportPayrollLine(
     string? PaymentAccountCode = null,
     string? IncomeTypeCode = null,
     // taxableGross (ถ้าต่างจาก gross — สวัสดิการยกเว้นภาษี). null = ใช้ gross
-    decimal? TaxableGross = null);
+    decimal? TaxableGross = null,
+    // ค่าจ้างที่ใช้เป็นฐานสมทบประกันสังคม ม.33 (≠ รายได้รวม: เบี้ยเลี้ยง/ค่าน้ำมัน
+    // เหมาจ่ายที่ไม่ใช่ค่าตอบแทนการทำงานไม่นับเป็นฐาน) — ตัวเลขนี้คือช่อง "ค่าจ้าง"
+    // ที่จะปรากฏใน สปส.1-10. ไม่ส่งมา = ระบบอนุมานจากยอดสมทบที่ส่งมา (÷ อัตรา)
+    // เพื่อให้คู่ (ค่าจ้าง, เงินสมทบ) บนไฟล์ตรงกันเสมอ
+    decimal? SocialSecurityBase = null);
 
 /// <summary>ผลลัพธ์ import — run + เอกสารที่ออกให้.</summary>
 public record ImportPayrollRunResult(
@@ -184,7 +189,13 @@ public record PayrollRunResponse(
     // ร่องรอยการกลับรายการจ่ายครั้งล่าสุด (Paid → Approved)
     DateTime? ReopenedAt = null,
     string? ReopenedBy = null,
-    string? ReopenReason = null);
+    string? ReopenReason = null,
+    // อัตรา/เพดานประกันสังคมของปีนั้น (ม.33) — ส่งมาให้หน้าจอคำนวณตัวอย่างสด ๆ
+    // ตอนผู้ใช้แก้ฐานค่าจ้าง **ห้ามหน้าเว็บฝังอัตราเอง** (ตารางกฎหมายที่ถูกคัดลอก
+    // ไปเขียนใหม่ใน JS = คิดผิดตลอดไป — กฎเหล็ก #4). เติมเฉพาะตอนดึง run เดี่ยว
+    decimal SsoRatePercent = 5m,
+    decimal SsoEmployerRatePercent = 5m,
+    decimal SsoWageCeiling = 0m);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/
@@ -202,6 +213,8 @@ public record PayrollRunLineDto(
     decimal OtherIncome,
     decimal GrossIncome,
     // รายการหัก
+    // ฐานค่าจ้าง ปกส. ที่ยอดสมทบคิดมาจริง (0 = ข้อมูลเก่ายังไม่เคยตั้ง)
+    decimal SocialSecurityBase,
     decimal SocialSecurityEmployee,
     decimal SocialSecurityEmployer,
     decimal WithholdingTax,
@@ -234,6 +247,10 @@ public record ReopenPayrollRunRequest(string Reason);
 /// <summary>แก้ยอดรายคนในรอบ (ก่อนจ่าย). field ที่ส่งมา (HasValue) เท่านั้น
 /// ที่อัปเดต; ระบบรวม Gross/หัก/สุทธิ + run totals ใหม่ให้. ค่าติดลบถูกปัดเป็น 0.</summary>
 public record UpdatePayrollDetailRequest(
+    // ค่าจ้างที่ใช้เป็นฐานสมทบประกันสังคม (ม.33) — ส่งมาแล้วระบบคิด**ทั้งสองฝั่ง**
+    // ใหม่จากฐานนี้ (ไม่ต้องกรอกยอดสมทบเอง). ถ้าไม่ส่งแต่ส่ง SocialSecurityEmployee
+    // มา ระบบจะย้อนหาฐานจากยอดนั้นแล้วให้ฝั่งนายจ้างตามฐานเดียวกัน
+    decimal? SocialSecurityBase = null,
     decimal? BaseSalary = null,
     decimal? OvertimePay = null,
     decimal? Allowances = null,

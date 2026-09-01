@@ -366,8 +366,16 @@ public class TaxFilingExportService : ITaxFilingExportService
         var ratePercent = ssoCfg?.RatePercent
             ?? (Accounting.Helpers.SsoRateSchedule.GetDefault(year).Rate * 100m);
 
+        var rate = ratePercent / 100m;
+        var maxContribution = Math.Round(wageCeiling * rate, 2, MidpointRounding.AwayFromZero);
+        // ค่าจ้างที่รายงาน = **ฐานที่ยอดสมทบถูกคำนวณมาจริง** ไม่ใช่ GrossIncome
+        // (เดิมใช้ GrossIncome ⇒ ไฟล์ประกาศคู่ที่ 5% ไม่ลงตัว เช่น 14,094 คู่กับ 683)
+        decimal WageOf(Models.Entities.PayrollDetail d) =>
+            Accounting.Helpers.SsoWageBase.Resolve(
+                d.SocialSecurityBase, d.SocialSecurityEmployee, d.GrossIncome, rate, maxContribution);
+
         var sb = new StringBuilder();
-        var totalWages = allDetails.Sum(d => Math.Min(d.GrossIncome, wageCeiling));
+        var totalWages = allDetails.Sum(d => Math.Min(WageOf(d), wageCeiling));
         var totalEmpContrib = allDetails.Sum(d => d.SocialSecurityEmployee);
         var totalErContrib = allDetails.Sum(d => d.SocialSecurityEmployer);
         var branchSeq = company.BranchCode ?? "00000";
@@ -379,7 +387,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         foreach (var detail in allDetails)
         {
             var emp = detail.Employee;
-            var wageBase = Math.Min(detail.GrossIncome, wageCeiling);
+            var wageBase = Math.Min(WageOf(detail), wageCeiling);
             sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{emp.SocialSecurityNumber}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{wageBase:F2}|{detail.SocialSecurityEmployee:F2}|{detail.SocialSecurityEmployer:F2}");
         }
 
@@ -431,6 +439,18 @@ public class TaxFilingExportService : ITaxFilingExportService
         //     เดาจากเพศเมื่อจำเป็น; ยังไม่เข้าชุดที่ สปส. รับ → แจ้งเตือน
         //   • เลขบัตร: ตัดขีด/ช่องว่างเหลือแต่ตัวเลข; ไม่ครบ 13 หลัก → แจ้งเตือน
         //   • ชื่อ/นามสกุลว่าง → แจ้งเตือน
+        // อัตรา/เพดานของปีนั้น — ใช้ทั้งหาค่าจ้างที่ตรงกับยอดสมทบ และตรวจคู่ก่อนยื่น
+        var xlCfg = await _db.SsoYearConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted);
+        var xlCeiling = xlCfg?.WageCeiling
+            ?? Accounting.Helpers.SsoRateSchedule.GetDefault(year).WageCeiling;
+        var xlRate = (xlCfg?.RatePercent
+            ?? (Accounting.Helpers.SsoRateSchedule.GetDefault(year).Rate * 100m)) / 100m;
+        var xlMaxContribution = Math.Round(xlCeiling * xlRate, 2, MidpointRounding.AwayFromZero);
+        decimal xlWageOf(Models.Entities.PayrollDetail d) =>
+            Accounting.Helpers.SsoWageBase.Resolve(
+                d.SocialSecurityBase, d.SocialSecurityEmployee, d.GrossIncome, xlRate, xlMaxContribution);
+
         var issues = new List<string>();
         var rows = new List<Dictionary<string, object?>>();
         var rowNo = 1; // แถวข้อมูลใน Excel เริ่มที่ 2 (แถว 1 = หัวตาราง)
@@ -449,6 +469,16 @@ public class TaxFilingExportService : ITaxFilingExportService
                 issues.Add($"แถว {rowNo} ({firstName}): เลขบัตร {citizenId.Length} หลัก (ต้อง 13 หลัก)");
             if (firstName.Length == 0 || lastName.Length == 0)
                 issues.Add($"แถว {rowNo}: ชื่อหรือนามสกุลว่าง");
+            // ด่านก่อนยื่น — สปส. e-Service คิด 5% จากค่าจ้างที่กรอกแล้วเทียบกับ
+            // เงินสมทบ ไม่ตรง = ตีกลับทั้งแถว. เตือนที่ระบบเราก่อนดีกว่าให้ไปเจอ
+            // ตอนอัปโหลด (เผื่อปัดเศษ ±1 บาท)
+            var xlWage = xlWageOf(d);
+            if (!Accounting.Helpers.SsoWageBase.IsConsistent(
+                    xlWage, d.SocialSecurityEmployee, xlRate, xlCeiling, xlMaxContribution))
+                issues.Add($"แถว {rowNo} ({firstName}): ค่าจ้าง {xlWage:N2} กับเงินสมทบ "
+                    + $"{d.SocialSecurityEmployee:N2} ไม่ลงตัวที่อัตรา {xlRate * 100m:F2}% "
+                    + "— แก้ \"ฐานค่าจ้างประกันสังคม\" ของพนักงานคนนี้ในรอบเงินเดือน "
+                    + "(สปส. จะคำนวณใหม่จากค่าจ้างที่กรอกและตีกลับถ้าไม่ตรง)");
 
             rows.Add(new Dictionary<string, object?>
             {
@@ -456,7 +486,7 @@ public class TaxFilingExportService : ITaxFilingExportService
                 ["คำนำหน้าชื่อ"] = title,
                 ["ชื่อผู้ประกันตน"] = firstName,
                 ["นามสกุลผู้ประกันตน"] = lastName,
-                ["ค่าจ้าง"] = Math.Round(d.GrossIncome, 2),
+                ["ค่าจ้าง"] = Math.Round(xlWageOf(d), 2),
                 ["จำนวนเงินสมทบ"] = Math.Round(d.SocialSecurityEmployee, 2),
             });
         }
@@ -464,7 +494,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         using var ms = new MemoryStream();
         MiniExcelLibs.MiniExcel.SaveAs(ms, rows, sheetName: branchSeq);
 
-        var totalWages = allDetails.Sum(d => d.GrossIncome);
+        var totalWages = allDetails.Sum(d => xlWageOf(d));
         var totalEmpContrib = allDetails.Sum(d => d.SocialSecurityEmployee);
         var summary = $"ไฟล์ Excel แนบ e-Service เดือน {month}/{year} ผู้ประกันตน {allDetails.Count} คน " +
             $"เงินสมทบลูกจ้าง {totalEmpContrib:N2} บาท (sheet: {branchSeq})";
