@@ -23,6 +23,13 @@ public static class SsoWageBase
     /// <summary>ฐานขั้นต่ำตาม ม.33 — เงินเดือนต่ำกว่านี้ยังต้องสมทบจากฐาน 1,650</summary>
     public const decimal MinBase = 1_650m;
 
+    /// <summary>ผลต่างที่ยอมรับได้ระหว่างยอดนายจ้างที่ควรเป็น กับที่บันทึกไว้จริง
+    ///
+    /// 1 บาท — กว้างพอสำหรับการปัดเศษของระบบต้นทาง (ยอดที่ import มามักปัดเป็น
+    /// บาทถ้วน เช่น 647.65 → 648) แต่แคบพอที่จะจับเคสจริงที่ต่างกัน 22 บาท
+    /// (4,381 vs 4,403 — นายจ้างคิดจากค่าจ้างเต็ม ลูกจ้างคิดจากฐานที่หักจริง)</summary>
+    public const decimal PairTolerance = 1m;
+
     /// <summary>บีบฐานให้อยู่ในกรอบกฎหมาย [1,650, เพดานของปีนั้น]</summary>
     public static decimal Clamp(decimal wage, decimal ceiling)
         => Math.Max(MinBase, Math.Min(wage, ceiling));
@@ -91,5 +98,44 @@ public static class SsoWageBase
     {
         var expected = Contribution(Clamp(wageOnFile, ceiling), rate, maxContribution);
         return Math.Abs(expected - contribution) <= 1m;
+    }
+
+    /// <summary>ทำให้ "ฐาน · ลูกจ้าง · นายจ้าง" ของแถวหนึ่งสอดคล้องกัน — **ตัวตัดสิน
+    /// ตัวเดียว** ที่ทุกจุดเขียนยอดประกันสังคมต้องเรียก
+    ///
+    /// <para>ที่มา (บั๊กจริง): ยอดนายจ้างถูกเขียนจาก 4 ทางแต่มีแค่ 3 ทางที่ผูกกับ
+    /// ฝั่งลูกจ้าง — ทางที่ 4 คือ <b>การนำเข้ารอบเงินเดือนจากระบบนอก (TakeTime)</b>
+    /// ซึ่งคัดค่ามาดิบ ๆ ไม่เคยตรวจ ⇒ TakeTime คิดฝั่งนายจ้างจากค่าจ้างเต็ม
+    /// ส่วนฝั่งลูกจ้างคิดจากฐานที่หักจริง ⇒ ต่างกัน 22 บาท (4,381 vs 4,403)
+    /// ติดมากับรอบตั้งแต่วินาทีแรกและไม่มีอะไรซ่อมให้เลย</para>
+    ///
+    /// <para><b>ฝั่งลูกจ้างเป็นความจริง</b> (เป็นยอดที่หักจากเงินเดือนพนักงานไป
+    /// จริงและตรงกับสลิปที่จ่ายไปแล้ว) — ฐานและฝั่งนายจ้างเป็นผลลัพธ์ที่คิดตาม
+    /// ห้ามทำกลับทาง</para>
+    ///
+    /// <para>ไม่แตะแถวที่ไม่ได้อยู่ในระบบประกันสังคม (สองฝั่งเป็น 0)</para>
+    /// </summary>
+    /// <returns>ค่าที่ควรเป็น + ธงว่าต้องแก้ไหม (Changed=false ⇒ อย่าเขียนทับของเดิม
+    /// เพื่อไม่ให้ค่าจ้างที่ประกาศไว้ถูกขยับโดยไม่จำเป็น)</returns>
+    public static (decimal Base, decimal Employer, bool Changed) Normalize(
+        decimal storedBase, decimal employeeContribution, decimal grossIncome,
+        decimal employerOnFile, decimal rate, decimal maxContribution,
+        decimal employerRate, decimal employerMaxContribution)
+    {
+        if (employeeContribution <= 0 && employerOnFile <= 0)
+            return (storedBase, employerOnFile, false);
+
+        var resolvedBase = Resolve(storedBase, employeeContribution, grossIncome, rate, maxContribution);
+        var expectedEmployer = EmployerFrom(employeeContribution, rate, employerRate, employerMaxContribution);
+
+        // แยกสองธง: การเติมฐานย้อนหลังให้แถวเก่า **ต้องไม่ไปขยับยอดนายจ้างที่
+        // ลงตัวอยู่แล้ว** (ญาติของบทเรียน "ซ่อมเฉพาะแถวที่พังจริง" — การหารกลับ
+        // หาฐานแล้วเขียนทับทุกแถว จะเปลี่ยนค่าจ้างที่ประกาศของแถวที่ถูกอยู่แล้ว)
+        var baseChanged = resolvedBase > 0 && storedBase != resolvedBase;
+        var employerChanged = Math.Abs(expectedEmployer - employerOnFile) > PairTolerance;
+
+        return (resolvedBase > 0 ? resolvedBase : storedBase,
+                employerChanged ? expectedEmployer : employerOnFile,
+                baseChanged || employerChanged);
     }
 }

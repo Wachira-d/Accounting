@@ -253,7 +253,14 @@ public class PayrollController : ControllerBase
         try
         {
             var res = await _service.ProcessPaymentAsync(companyId, runId, User.Identity?.Name ?? "");
-            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "จ่ายเงินเดือนสำเร็จ"));
+            // ซ่อมยอดให้ก่อนลง JE = ต้องบอก ห้ามเปลี่ยนตัวเลขเงียบ ๆ
+            var ssoFixed = _service.LastPaySsoAdjustedCount;
+            var msg = "จ่ายเงินเดือนสำเร็จ";
+            if (ssoFixed > 0)
+                msg += $" · ปรับยอดประกันสังคมฝั่งนายจ้างให้ตรงกับฝั่งลูกจ้าง {ssoFixed} คน "
+                     + "ก่อนลงบัญชี (ม.33 ใช้ฐานค่าจ้างเดียวกันทั้งสองฝั่ง — "
+                     + "ยอดที่ระบบต้นทางส่งมาไม่สอดคล้องกัน)";
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, msg));
         }
         catch (InvalidOperationException ex)
         {
