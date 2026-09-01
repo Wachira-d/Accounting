@@ -157,6 +157,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/api.js"></script>
+  <script src="/js/sso.js"></script>
   <script>
     I18n.init();
 
@@ -237,13 +238,12 @@
     async function handleSsoResponse(provider, idToken) {
       const errEl = document.getElementById('errorMsg');
       errEl.classList.add('hidden');
-      const companyName = document.getElementById('companyName')?.value || '';
-      // แพ็กเกจที่เลือกบนการ์ด — ต้องส่งไปด้วย ไม่งั้นสมัครผ่าน SSO ได้ FreeTrial เสมอ
-      const ssoPlan = document.querySelector('input[name="plan"]:checked')?.value || null;
+      // ใช้ payload ตัวเดียวกับเส้น redirect — ห้ามประกอบสองที่ (drift แน่นอน)
+      const sp = _ssoSignupPayload();
       try {
         // มาถึงตรงนี้ได้ต้องผ่าน _ssoPreflight() มาแล้ว = ติ๊กยอมรับจริง
-        const res = await API.ssoLogin(provider, idToken, companyName || null, ssoPlan,
-          true, policyVersion);
+        const res = await API.ssoLogin(provider, idToken, sp.companyName || null, sp.plan,
+          true, sp.policyVersion, sp.invitationToken);
         if (res.success && res.data) {
           const token = res.data.accessToken || res.data.token;
           localStorage.setItem('token', token);
@@ -259,11 +259,40 @@
       }
     }
 
+    /** ข้อมูลที่กรอกไว้บนหน้านี้ ต้องพกข้ามไปกับ redirect ทุกครั้ง ไม่งั้นตอน
+     *  วนกลับมาที่ /login.html จะกลายเป็นสมัครโดยไม่มีหลักฐานยินยอม (PDPA ม.19)
+     *  — ตัวเดียวให้ทั้ง LINE และ Google ใช้ (ห้ามประกอบ payload สองที่) */
+    function _inviteToken() {
+      return new URLSearchParams(location.search).get('invite') || null;
+    }
+
+    function _ssoSignupPayload() {
+      const invite = _inviteToken();
+      return {
+        // ถูกเชิญเข้าบริษัทอยู่แล้ว = ไม่ต้องสร้างบริษัท stub ให้ (เหมือนเส้นฟอร์ม)
+        companyName: invite ? null : (document.getElementById('companyName')?.value || ''),
+        plan: document.querySelector('input[name="plan"]:checked')?.value || null,
+        // การยอมรับเกิดที่**หน้านี้** (ผ่าน _ssoPreflight) ต้องพกข้ามไปด้วย
+        acceptedTerms: true,
+        policyVersion: policyVersion,
+        // คำเชิญต้องเดินทางข้าม redirect ไปด้วย ไม่งั้นผู้ถูกเชิญที่สมัครด้วย SSO
+        // จะไม่ได้เข้าบริษัทที่เชิญเลย
+        invitationToken: invite,
+      };
+    }
+
+    function _ssoError(msg) {
+      const el = document.getElementById('errorMsg');
+      if (el) { el.textContent = msg; el.classList.remove('hidden'); }
+    }
+
+    /** Google — เส้นหลักคือ redirect flow (กลับมาที่ /login.html เหมือน LINE)
+     *  One Tap เป็นทางสำรองเมื่อยังไม่ได้ตั้ง Client Secret เท่านั้น */
     function handleGoogleRegister() {
       if (!ssoConfig.google || !_ssoPreflight()) return;
+      if (Sso.begin('Google', ssoConfig, _ssoSignupPayload())) return;
       if (!window.google?.accounts?.id) {
-        document.getElementById('errorMsg').textContent = 'โหลดบริการ Google ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
-        document.getElementById('errorMsg').classList.remove('hidden');
+        _ssoError(Sso.notReadyMessage('Google'));
         return;
       }
       google.accounts.id.initialize({
@@ -295,24 +324,8 @@
      *  ผ่าน sessionStorage เพื่อไม่ให้ข้อมูลที่กรอกหายตอนวนกลับ */
     function handleLineRegister() {
       if (!ssoConfig.line || !_ssoPreflight()) return;
-      const state = Math.random().toString(36).slice(2);
-      try {
-        sessionStorage.setItem('lineState', state);
-        sessionStorage.setItem('lineSignup', JSON.stringify({
-          companyName: document.getElementById('companyName')?.value || '',
-          plan: document.querySelector('input[name="plan"]:checked')?.value || null,
-          // การยอมรับเกิดที่**หน้านี้** (ผ่าน _ssoPreflight) ต้องพกข้ามไปด้วย
-          // ไม่งั้นตอนกลับมาที่ /login.html จะกลายเป็นสมัครโดยไม่มีหลักฐานยินยอม
-          acceptedTerms: true,
-          policyVersion: policyVersion,
-        }));
-      } catch (e) {}
-      const redirect = location.origin + '/login.html';
-      window.location.href = 'https://access.line.me/oauth2/v2.1/authorize?response_type=code'
-        + '&client_id=' + encodeURIComponent(ssoConfig.line)
-        + '&redirect_uri=' + encodeURIComponent(redirect)
-        + '&state=' + encodeURIComponent(state)
-        + '&scope=' + encodeURIComponent('profile openid email');
+      if (!Sso.begin('Line', ssoConfig, _ssoSignupPayload()))
+        _ssoError(Sso.notReadyMessage('LINE'));
     }
 
     // ===== Live password validation =====
@@ -387,7 +400,7 @@
         // account auto-joins the inviting company in the same request.
         // The accept-invitation page hands this off when the invitee
         // clicks "สมัครสมาชิกใหม่และตอบรับ".
-        const inviteToken = new URLSearchParams(location.search).get('invite') || null;
+        const inviteToken = _inviteToken();
         const selectedPlan = document.querySelector('input[name="plan"]:checked')?.value || 'Pro';
         const res = await API.register({
           firstName: document.getElementById('firstName').value,

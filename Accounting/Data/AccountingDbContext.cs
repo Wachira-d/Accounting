@@ -116,6 +116,9 @@ public class AccountingDbContext : DbContext
     public DbSet<PdpaDataSubjectRequest> PdpaDataSubjectRequests => Set<PdpaDataSubjectRequest>();
     public DbSet<PdpaProcessingActivity> PdpaProcessingActivities => Set<PdpaProcessingActivity>();
     public DbSet<PdpaConsentRecord> PdpaConsentRecords => Set<PdpaConsentRecord>();
+    /// <summary>บัญชี Google/Facebook/LINE ที่ผูกกับผู้ใช้ — ตัวตัดสินตอนล็อกอิน
+    /// ด้วย SSO (คอลัมน์ User.AuthProvider/AuthProviderId เหลือเป็น "ตัวล่าสุด")</summary>
+    public DbSet<UserExternalLogin> UserExternalLogins => Set<UserExternalLogin>();
     public DbSet<PdpaPiiAccessLog> PdpaPiiAccessLogs => Set<PdpaPiiAccessLog>();
     public DbSet<PdpaBreachIncident> PdpaBreachIncidents => Set<PdpaBreachIncident>();
     public DbSet<StatutoryRemittance> StatutoryRemittances => Set<StatutoryRemittance>();
@@ -453,6 +456,23 @@ public class AccountingDbContext : DbContext
             e.Property(u => u.Email).HasMaxLength(256);
             e.Property(u => u.FullName).HasMaxLength(256);
             e.HasQueryFilter(u => !u.IsDeleted);
+        });
+
+        // ===== UserExternalLogin (บัญชี Google/Facebook/LINE ที่ผูกไว้) =====
+        modelBuilder.Entity<UserExternalLogin>(e =>
+        {
+            e.Property(x => x.Provider).HasMaxLength(32);
+            e.Property(x => x.ProviderUserId).HasMaxLength(256);
+            e.Property(x => x.ProviderEmail).HasMaxLength(256);
+            e.Property(x => x.LinkedIp).HasMaxLength(45);
+            // ตัวตนหนึ่งของ provider ต้องผูกได้กับผู้ใช้เดียวเท่านั้น — เดิมไม่มี
+            // index นี้ (AuthProvider/AuthProviderId บน Users) ⇒ ถ้ามีสองแถวชนกัน
+            // `FirstOrDefault` จะหยิบมั่วโดยไม่มีอะไรเตือน
+            e.HasIndex(x => new { x.Provider, x.ProviderUserId }).IsUnique();
+            e.HasIndex(x => x.UserId);
+            e.HasOne(x => x.User).WithMany()
+                .HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         // ===== Company =====

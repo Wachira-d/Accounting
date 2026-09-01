@@ -5856,6 +5856,44 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_IdempotencyRecords_Key" ON "IdempotencyRecords" ("CacheKey");""",
             """CREATE INDEX IF NOT EXISTS "IX_IdempotencyRecords_CreatedAt" ON "IdempotencyRecords" ("CreatedAt");""",
+
+            // ===== UserExternalLogins — บัญชี Google/Facebook/LINE ที่ผูกกับผู้ใช้ =====
+            // เดิมเก็บใน Users.AuthProvider/AuthProviderId ซึ่งเป็นช่องเดี่ยว ⇒ ผูก
+            // ได้ทีละราย (Google แล้ว LINE = ทับกันไปมา) และไม่มีที่เก็บสถานะ
+            // "ยังไม่ยืนยัน" สำหรับ provider ที่ยืนยันอีเมลให้ไม่ได้ (Facebook)
+            """
+            CREATE TABLE IF NOT EXISTS "UserExternalLogins" (
+                "Id" uuid PRIMARY KEY,
+                "UserId" uuid NOT NULL REFERENCES "Users"("Id") ON DELETE CASCADE,
+                "Provider" varchar(32) NOT NULL,
+                "ProviderUserId" varchar(256) NOT NULL,
+                "ProviderEmail" varchar(256) NULL,
+                "ConfirmedAt" timestamptz NULL,
+                "ConfirmToken" text NULL,
+                "ConfirmTokenExpiry" timestamptz NULL,
+                "LinkedIp" varchar(45) NULL,
+                "LastUsedAt" timestamptz NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_UserExternalLogins_Provider_ProviderUserId" ON "UserExternalLogins" ("Provider", "ProviderUserId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_UserExternalLogins_UserId" ON "UserExternalLogins" ("UserId");""",
+            // ย้ายของเดิมเข้าตารางใหม่ **ครั้งเดียว** — ถือว่าที่ผูกไว้แล้วยืนยันแล้ว
+            // (ผู้ใช้เหล่านี้เข้าระบบด้วย provider นั้นได้อยู่ก่อนหน้า การบังคับให้
+            // ยืนยันย้อนหลังคือการล็อกคนที่ใช้งานอยู่ออกจากระบบ) · idempotent:
+            // NOT EXISTS กันแถวซ้ำเมื่อ migration รันทุกครั้งที่เปิดเซิร์ฟเวอร์
+            """
+            INSERT INTO "UserExternalLogins" ("Id","UserId","Provider","ProviderUserId","ProviderEmail","ConfirmedAt","CreatedAt","IsDeleted")
+            SELECT gen_random_uuid(), u."Id", u."AuthProvider", u."AuthProviderId", u."Email", now(), now(), false
+              FROM "Users" u
+             WHERE u."AuthProvider" IS NOT NULL AND u."AuthProviderId" IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM "UserExternalLogins" x
+                                WHERE x."Provider" = u."AuthProvider" AND x."ProviderUserId" = u."AuthProviderId");
+            """,
         };
 
         foreach (var sql in statements)

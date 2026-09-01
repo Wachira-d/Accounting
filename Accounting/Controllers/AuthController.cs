@@ -46,7 +46,55 @@ public class AuthController : ControllerBase
             google = s.GoogleEnabled ? s.GoogleClientId : "",
             facebook = s.FacebookEnabled ? s.FacebookAppId : "",
             line = s.LineEnabled ? s.LineChannelId : "",
+            // Callback URL ที่เซิร์ฟเวอร์จะใช้ตอนแลก code — หน้า login ต้องส่ง
+            // ค่านี้ตอนพาไป LINE (ห้ามคำนวณจาก location.origin เอง มิฉะนั้น
+            // www./non-www หรือโดเมนสำรองจะทำให้สองขั้นตอนอ้างคนละ URL)
+            lineCallbackUrl = s.LineEnabled ? s.LoginCallbackUrl : "",
+            // มีค่า = ให้หน้า login ใช้ redirect flow กับ Google (เส้นหลัก)
+            // ว่าง = ยังไม่ได้ตั้ง Client Secret หรือ URL ของระบบ → หน้า login
+            // ตกไปใช้สคริปต์ One Tap พร้อมข้อความบอกว่าต้องไปตั้งอะไร
+            // (ห้ามเงียบ — ดู CLAUDE.md กฎเหล็ก #4 A "ห้าม silent no-op")
+            googleCallbackUrl = s.GoogleEnabled && s.GoogleSecretConfigured
+                ? s.LoginCallbackUrl : "",
         }));
+    }
+
+    /// <summary>ลิงก์ยืนยันการผูกบัญชีจากอีเมล — เปิดจากอีเมลโดยตรง จึงตอบเป็น
+    /// **redirect** กลับหน้า login พร้อมผลลัพธ์ ไม่ใช่ JSON (ผู้ใช้ไม่ได้เปิด
+    /// จากในแอป). ไม่ต้องล็อกอินก่อน — token ในลิงก์คือหลักฐานว่าเข้าถึงอีเมลได้</summary>
+    [HttpGet("sso/confirm-link")]
+    public async Task<IActionResult> ConfirmSsoLink([FromQuery] string token)
+    {
+        try
+        {
+            var provider = await _authService.ConfirmSsoLinkAsync(token);
+            return Redirect("/login.html?ssoLinked=" + Uri.EscapeDataString(provider));
+        }
+        catch (Exception ex)
+        {
+            // ห้ามเงียบ — ผู้ใช้ต้องรู้ว่าทำไมกดแล้วไม่สำเร็จ และทำอะไรต่อได้
+            return Redirect("/login.html?ssoLinkError=" + Uri.EscapeDataString(ex.Message));
+        }
+    }
+
+    /// <summary>บัญชีภายนอกที่ผูกไว้ — หน้าโปรไฟล์ใช้แสดงว่าผูกอะไรไว้บ้าง
+    /// (เดิมผู้ใช้ไม่มีทางรู้เลยว่าบัญชีตัวเองถูกผูกกับ provider ไหนอยู่)</summary>
+    [Authorize]
+    [HttpGet("external-logins")]
+    public async Task<ActionResult<ApiResponse<object>>> GetExternalLogins()
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var rows = await _authService.GetExternalLoginsAsync(userId);
+        return Ok(new ApiResponse<object>(true, rows));
+    }
+
+    [Authorize]
+    [HttpDelete("external-logins/{linkId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> RemoveExternalLogin(Guid linkId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _authService.RemoveExternalLoginAsync(userId, linkId);
+        return Ok(new ApiResponse<string>(true, "ถอดการผูกบัญชีแล้ว"));
     }
 
     // ===== Onboarding tour preferences (ปิดการสอนถาวร ต่อ user) =====

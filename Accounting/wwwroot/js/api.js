@@ -149,8 +149,12 @@ const API = {
   // acceptedTerms/policyVersion = หลักฐานยินยอม PDPA ม.19 ส่งเฉพาะจากหน้าสมัคร
   // (หน้า login ไม่ส่ง → ผู้ใช้ใหม่ที่กด SSO ที่หน้า login จะถูก server ส่งกลับ
   // ไปหน้าสมัคร ซึ่งเป็นที่เดียวที่มีข้อความให้อ่านและช่องติ๊กให้ยินยอมจริง)
-  ssoLogin(provider, idToken, companyName, plan = null, acceptedTerms = false, policyVersion = null) {
-    return this.post('/api/auth/sso', { provider, idToken, companyName, plan, acceptedTerms, policyVersion });
+  // invitationToken = ผู้ถูกเชิญเข้าบริษัทที่เลือกสมัครด้วย SSO — เดิมไม่ส่งเลย
+  // ⇒ คำเชิญไม่ถูกใช้ ผู้ใช้ไม่ได้เข้าบริษัทที่เชิญ ต้องให้แอดมินเชิญซ้ำ
+  ssoLogin(provider, idToken, companyName, plan = null, acceptedTerms = false,
+           policyVersion = null, invitationToken = null) {
+    return this.post('/api/auth/sso', {
+      provider, idToken, companyName, plan, acceptedTerms, policyVersion, invitationToken });
   },
   changePassword(data) { return this.post('/api/auth/change-password', data); },
 
@@ -1106,6 +1110,9 @@ const API = {
   // User profile (incl. signature)
   getProfile: () => API.get('/api/auth/profile'),
   updateProfile: (data) => API.put('/api/auth/profile', data),
+  // บัญชี Google/Facebook/LINE ที่ผูกกับผู้ใช้ (หน้าตั้งค่า → ความปลอดภัยบัญชี)
+  getExternalLogins: () => API.get('/api/auth/external-logins'),
+  removeExternalLogin: (id) => API.del(`/api/auth/external-logins/${id}`),
 
   getCompanies: () => API.get('/api/company'),
   createCompany: (d) => API.post('/api/company', d),

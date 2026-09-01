@@ -476,20 +476,59 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 | วิธี | สถานะ | หมายเหตุ |
 | --- | --- | --- |
 | Email + password (ในระบบ) | ✅ | `AuthController` login/refresh/forgot/reset ครบ |
-| Google / Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) |
+| **Google OAuth** | ✅ | `POST /auth/sso` — เส้นหลักคือ **authorization-code redirect** เหมือน LINE (`ValidateGoogleTokenAsync` แลก code ที่ `oauth2.googleapis.com/token` ด้วย `SiteSettings.GoogleClientSecret` แล้ว verify id_token ที่ tokeninfo); One Tap (`gsi/client`) เหลือเป็นทางสำรองเมื่อยังไม่ได้ตั้ง secret |
+| Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) — ยังใช้ JS SDK |
 | **LINE Login** (OAuth2) | ✅ | authorization-code flow → `AuthService.ValidateLineTokenAsync` (channel secret ไม่ออกจาก server); คนละอย่างกับ LINE bot binding ที่มีแล้ว (`User.LineUserId` + `LineBindCode`) — แต่ login แล้ว map เข้า `LineUserId` เดิมได้เลย บัญชีเดียวทั้ง login และ bot |
 | **Microsoft Entra ID (Office 365)** | 📋 | OIDC มาตรฐาน; ตลาดเดียวกับลูกค้า Dynamics พอดี — บริษัทที่ใช้ Dynamics มี M365 อยู่แล้วเกือบ 100% |
 
 - `AuthProvider` เพิ่มค่า `"Line"` (✅ ใช้งานแล้ว), `"Microsoft"` (📋) — โครงเดิมรองรับอยู่แล้ว
+- 🔐 **การผูกบัญชีภายนอก (✅ รอบ 119)** — ตัวตัดสินคือตาราง
+  **`UserExternalLogins`** (`Provider` + `ProviderUserId` unique) ไม่ใช่คอลัมน์เดี่ยว
+  `Users.AuthProvider/AuthProviderId` ซึ่งเหลือความหมายเป็น "ตัวล่าสุดที่ใช้เข้าระบบ"
+  - **ผูกเข้าบัญชีเดิมได้ก็ต่อเมื่อ provider ยืนยันอีเมลแล้ว** (`Helpers/SsoIdentityPolicy`):
+    Google ต้องมี `email_verified=true` · LINE คืน email = ยืนยันแล้ว ·
+    **Facebook ยืนยันไม่ได้เลย** ⇒ ต้องผ่านลิงก์ยืนยันทางอีเมลเสมอ
+    _(เดิมผูกด้วย "อีเมลตรงกัน" อย่างเดียว = ใครสร้างบัญชี provider ให้อีเมลตรงกับ
+    ผู้ใช้ของเรา ก็เข้าถึงข้อมูลทั้ง tenant ได้ — account pre-hijacking)_
+  - ยืนยันไม่ได้ → ไม่ตัน: แถวสถานะ `ConfirmedAt=null` + ส่งลิงก์อายุ 1 ชม. →
+    `GET /api/auth/sso/confirm-link?token=` → redirect `/login.html?ssoLinked=…`
+  - **ห้ามผูกเงียบ** — ทุกครั้งที่ผูก/ถอด เขียน `AuditLog` (EntityType
+    `UserExternalLogin`) + ส่งอีเมลแจ้งเจ้าของ; ผู้ใช้ดู/ถอดเองได้ที่
+    **ตั้งค่า → 🔐 ความปลอดภัยบัญชี** (`GET/DELETE /api/auth/external-logins`)
+    — ถอดอันสุดท้ายของบัญชีที่ไม่มีรหัสผ่านถูกบล็อกพร้อมบอกทางแก้
+- 🚦 **ด่านสถานะบัญชี (✅ รอบ 119)** `Helpers/UserLoginPolicy.Evaluate` ใช้ร่วม
+  **ทั้งสามทางเข้า** (`LoginAsync` · `SsoLoginAsync` · `RefreshTokenAsync`):
+  Inactive/Suspended = เข้าไม่ได้ + เหตุผลเป็นข้อความ · PendingVerification เข้าได้
+  เฉพาะผ่าน SSO ที่ยืนยันอีเมลแล้ว (แล้วเลื่อนเป็น Active)
+  _(เดิมไม่มีทางเข้าไหนอ่าน `User.Status` เลย ทั้งที่ `PayrollService` ตั้ง
+  Inactive ให้อัตโนมัติเมื่อพนักงานลาออก พร้อมคอมเมนต์ว่า "login is revoked" ⇒
+  พนักงานที่ลาออกแล้วยังล็อกอินได้ — control ที่ไม่มีใครเรียก = ไม่มี control)_
+- บัญชีที่สร้างผ่าน SSO มี `PasswordHash=""` → `LoginAsync` ตรวจก่อนเรียก BCrypt
+  แล้วตอบ 401 พร้อมชื่อ provider ที่ผูกไว้ (เดิม BCrypt โยน `SaltParseException`
+  ⇒ ผู้ใช้เห็น **500** และ ErrorLogs รกด้วยรายการที่ไม่ใช่บั๊ก)
+- คำเชิญเข้าบริษัททำงานบนเส้น SSO ด้วยแล้ว — `ConsumeInvitationAsync` ตัวเดียว
+  ที่ทั้ง `RegisterAsync` และ `SsoLoginAsync` เรียก (เดิมเส้น SSO ไม่มีตรรกะนี้เลย
+  ⇒ ผู้ถูกเชิญที่เลือกสมัครด้วย Google/LINE ไม่ได้เข้าบริษัทที่เชิญ)
 - **ตั้งค่าคีย์จากหน้าเว็บ** `/admin/sso-config.html` → `SiteSettings.{Google,Facebook,Line}*`
   (DB ชนะ `appsettings.json`); `GET /api/auth/sso-config` คืนเฉพาะ provider ที่
   **เปิดสวิตช์ + มีคีย์ครบ** → หน้า `login.html`/`register.html` ซ่อนปุ่มที่เหลือ
   (ปุ่มที่กดแล้วพัง = ปุ่มหลอก ห้ามมี) และแสดงข้อความจริงเมื่อ SDK ของ
-  Google/Facebook โหลดไม่ขึ้น (ตัวบล็อกโฆษณา) แทนที่จะเงียบ
+  Facebook โหลดไม่ขึ้น แทนที่จะเงียบ
+- ⚠️ **CSP ต้องอนุญาต origin ของ SDK ด้วย** — `script-src` ใน
+  `Middleware/SecurityMiddleware.cs` เดิมไม่มี `https://accounts.google.com`
+  (และ `https://connect.facebook.net`) ⇒ เบราว์เซอร์บล็อกสคริปต์เงียบ ⇒ ปุ่ม Google
+  ขึ้น "โหลดบริการไม่สำเร็จ — ปิดตัวบล็อกโฆษณา" ตลอด ทั้งที่ผู้ใช้ไม่มีตัวบล็อกเลย.
+  บังคับด้วย `tools/csp_external_ref_check.py`
+- **redirect flow ตัวกลางตัวเดียว** `wwwroot/js/sso.js` (`Sso.begin` / `Sso.readCallback`)
+  ใช้ร่วมกันทั้ง `login.html` และ `register.html` สำหรับ **LINE และ Google** —
+  เก็บ `ssoState` (กัน CSRF) + `ssoProvider` (รู้ว่าจะส่ง provider ไหนให้ backend)
+  + `ssoSignup` (พก companyName/แพ็กเกจ/หลักฐานยินยอมข้าม redirect) ใน
+  sessionStorage; callback URL มาจากเซิร์ฟเวอร์ที่เดียว (`SsoSettings.LoginCallbackUrl`)
+  ห้ามคำนวณจาก `location.origin` เอง
 - **สมัครผ่าน SSO**: ปุ่มอยู่**นอก** `<form>` ⇒ เบราว์เซอร์ไม่ตรวจ `required` ให้
   → `register.html._ssoPreflight()` บังคับติ๊ก "ยอมรับข้อกำหนด + นโยบายความเป็น
   ส่วนตัว" เอง ก่อนพาออกไป IdP; `companyName` + แพ็กเกจที่เลือกถูกส่งเข้า
-  `POST /auth/sso` ด้วย (LINE พกข้าม redirect ผ่าน `sessionStorage.lineSignup`)
+  `POST /auth/sso` ด้วย (LINE/Google พกข้าม redirect ผ่าน `sessionStorage.ssoSignup`)
   — มิฉะนั้นผู้สมัครผ่าน SSO จะได้ `FreeTrial` เสมอและบริษัทไม่มีชื่อ
 - **ความยินยอม PDPA ม.19 (✅ ลงโค้ดแล้ว)** — ทุกทางที่สร้าง `User` ใหม่ผ่าน
   `AuthService.RequireSignupConsent()` + `RecordSignupConsentAsync()`:
@@ -546,7 +585,20 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-08-28 (rev 17 — **VAT ค่าบริการปัดเศษไม่ตรงกัน_
+_Last verified against codebase: 2026-09-01 (rev 19 — **SSO ผูกบัญชีด้วยอีเมล_
+_อย่างเดียวมาตลอด + ไม่มีทางเข้าไหนอ่าน `User.Status` เลย**: เพิ่ม_
+_`Helpers/SsoIdentityPolicy` (ผูกได้ต่อเมื่อ provider ยืนยันอีเมล — Facebook ต้อง_
+_ผ่านลิงก์ยืนยันเสมอ) · `Helpers/UserLoginPolicy` (ด่านสถานะร่วมสามทางเข้า) ·_
+_ตาราง `UserExternalLogins` (ผูกได้หลาย provider + สถานะรอยืนยัน) · audit +_
+_อีเมลแจ้งทุกครั้งที่ผูก/ถอด · หน้าตั้งค่า → ความปลอดภัยบัญชี · invitation ทำงาน_
+_บนเส้น SSO · บัญชี SSO ล็อกอินด้วยรหัสผ่านได้ 401 แทน 500);_
+_ก่อนหน้า 2026-09-01 (rev 18 — **ปุ่ม Google login กดแล้ว_
+_ไม่ขึ้นอะไร**: CSP ของระบบเอง (`script-src`) ไม่มี `accounts.google.com` ⇒ สคริปต์_
+_One Tap ถูกบล็อกเงียบทุกครั้งตั้งแต่วันแรก แล้วหน้า login ขึ้นข้อความโทษตัวบล็อก_
+_โฆษณา — แก้ CSP + ย้าย Google มาใช้ **authorization-code redirect** เหมือน LINE_
+_(ต่อสาย `GoogleClientSecret` ที่มีช่องกรอกในหน้าแอดมินมาตลอดแต่ไม่มีใครเรียกใช้) +_
+_ยุบโค้ด redirect ของสองหน้าเข้า `wwwroot/js/sso.js` ตัวเดียว + `tools/csp_external_ref_check.py`);_
+_ก่อนหน้า 2026-08-28 (rev 17 — **VAT ค่าบริการปัดเศษไม่ตรงกัน_
 _ระหว่างสองตัวออกบิล**: `PlatformBillingDocumentIssuer` คิด 7/107 พร้อม_
 _`MidpointRounding.AwayFromZero` ถูกต้อง แต่ `SaasBillingDocumentService` ที่คิด_
 _**สูตรเดียวกัน** ลืมทั้ง 4 จุด (inclusive/exclusive × 2 เส้นทาง) และ_

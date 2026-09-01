@@ -113,6 +113,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/api.js"></script>
+  <script src="/js/sso.js"></script>
   <script>
     I18n.init();
     // SSO config (loaded from server)
@@ -136,47 +137,51 @@
       if (ssoConfig.line && window.liff) { /* LIFF ไม่จำเป็นสำหรับ web login */ }
     }).catch(()=>{});
 
-    // LINE ส่งกลับมาที่หน้านี้พร้อม ?code=&state= → ส่ง code ให้ backend แลก
-    // id_token (ต้องใช้ channel secret) แล้วเข้าสู่ระบบต่อ · ตรวจ state กัน CSRF
-    (function handleLineCallback() {
+    // LINE/Google ส่งกลับมาที่หน้านี้พร้อม ?code=&state= → ส่ง code ให้ backend
+    // แลก id_token (ต้องใช้ secret) แล้วเข้าสู่ระบบต่อ · ตรวจ state กัน CSRF
+    // ตรรกะทั้งหมดอยู่ใน /js/sso.js ตัวเดียว (ใช้ร่วมกับหน้าสมัคร)
+    // กลับมาจากลิงก์ "ยืนยันการผูกบัญชี" ในอีเมล — เซิร์ฟเวอร์ redirect มาที่นี่
+    // พร้อมผลลัพธ์ (ห้ามเงียบ: ผู้ใช้กดลิงก์แล้วต้องรู้ว่าสำเร็จหรือไม่ เพราะอะไร)
+    (function showSsoLinkResult() {
       const p = new URLSearchParams(location.search);
-      const code = p.get('code'), state = p.get('state');
-      if (!code) return;
-      let saved = null;
-      try { saved = sessionStorage.getItem('lineState'); sessionStorage.removeItem('lineState'); } catch (e) {}
-      // ล้าง query ทิ้งทันที — กันกด refresh แล้วยิง code ซ้ำ (LINE ใช้ได้ครั้งเดียว)
+      const ok = p.get('ssoLinked'), err = p.get('ssoLinkError');
+      if (!ok && !err) return;
       history.replaceState({}, '', location.pathname);
-      if (!saved || saved !== state) {
-        const el = document.getElementById('errorMsg');
-        if (el) { el.textContent = 'สถานะการเข้าสู่ระบบ LINE ไม่ตรงกัน — ลองใหม่อีกครั้ง'; el.classList.remove('hidden'); }
-        return;
-      }
-      // ถ้ามาจากหน้า register จะมี companyName/plan ฝากไว้ — ใช้ครั้งเดียวแล้วลบ
-      let signup = null;
-      try {
-        const raw = sessionStorage.getItem('lineSignup');
-        if (raw) { signup = JSON.parse(raw); sessionStorage.removeItem('lineSignup'); }
-      } catch (e) {}
-      handleSsoResponse('Line', code, signup);
+      const el = document.getElementById('errorMsg');
+      if (!el) return;
+      el.textContent = ok
+        ? `ยืนยันการผูกบัญชี ${ok} เรียบร้อยแล้ว — กดปุ่ม ${ok} ด้านล่างเพื่อเข้าสู่ระบบได้เลย`
+        : err;
+      if (ok) el.style.cssText = 'background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46';
+      el.classList.remove('hidden');
     })();
 
-    /** LINE Login — OAuth2 authorization-code + id_token (web flow).
-     *  เปิดหน้า LINE ให้ผู้ใช้อนุญาต แล้วกลับมาที่ /login.html พร้อม code →
-     *  แลก id_token ที่ backend ไม่ได้ (ต้องใช้ channel secret) จึงใช้
-     *  implicit-style: ขอ id_token กลับมาตรงผ่าน response_type=code แล้วให้
-     *  หน้า login ส่ง code ให้ backend แลกเอง — ที่นี่ส่ง code ไปเป็น IdToken
-     *  แล้ว AuthService verify กับ LINE (รองรับทั้ง id_token ตรงและ code) */
+    (function handleSsoCallback() {
+      const cb = Sso.readCallback();
+      if (!cb) return;
+      const el = document.getElementById('errorMsg');
+      if (cb.error) {
+        if (el) { el.textContent = cb.error; el.classList.remove('hidden'); }
+        return;
+      }
+      // ถ้ามาจากหน้า register จะมี companyName/plan/หลักฐานยินยอมฝากไว้
+      handleSsoResponse(cb.provider, cb.code, cb.signup);
+    })();
+
+    function _ssoError(msg) {
+      const el = document.getElementById('errorMsg');
+      if (el) { el.textContent = msg; el.classList.remove('hidden'); }
+    }
+
+    /** LINE Login — OAuth2 authorization-code (web flow): เปิดหน้า LINE ให้
+     *  ผู้ใช้อนุญาต แล้วกลับมาที่ /login.html พร้อม code → ส่ง code ให้ backend
+     *  แลก id_token เอง (ต้องใช้ channel secret ซึ่งห้ามออกจาก server) */
     function handleLineLogin() {
       if (!ssoConfig.line) return;
-      const state = Math.random().toString(36).slice(2);
-      try { sessionStorage.setItem('lineState', state); } catch (e) {}
-      const redirect = location.origin + '/login.html';
-      const url = 'https://access.line.me/oauth2/v2.1/authorize?response_type=code'
-        + '&client_id=' + encodeURIComponent(ssoConfig.line)
-        + '&redirect_uri=' + encodeURIComponent(redirect)
-        + '&state=' + encodeURIComponent(state)
-        + '&scope=' + encodeURIComponent('profile openid email');
-      window.location.href = url;
+      // เดิม fallback เป็น location.origin เมื่อเซิร์ฟเวอร์ไม่ส่ง callback URL —
+      // ซึ่ง**ตายปลายทางเสมอ** (เซิร์ฟเวอร์ก็แลก code ไม่ได้เพราะไม่มี AppBaseUrl)
+      // ผู้ใช้เห็นแค่ "แลก code ไม่สำเร็จ" โดยไม่รู้ว่าต้องไปตั้งอะไร → บอกตั้งแต่ต้น
+      if (!Sso.begin('Line', ssoConfig)) _ssoError(Sso.notReadyMessage('LINE'));
     }
 
     async function handleSsoResponse(provider, idToken, signup) {
@@ -189,7 +194,8 @@
         // ส่งกลับไปหน้าสมัคร (ยินยอมต้องเกิดตอนที่มีข้อความให้อ่านจริง)
         const res = await API.ssoLogin(provider, idToken,
           signup?.companyName || null, signup?.plan || null,
-          signup?.acceptedTerms === true, signup?.policyVersion || null);
+          signup?.acceptedTerms === true, signup?.policyVersion || null,
+          signup?.invitationToken || null);
         if (res.success && res.data) {
           const token = res.data.accessToken || res.data.token;
           localStorage.setItem('token', token);
@@ -211,12 +217,18 @@
       }
     }
 
+    /** Google Login — เส้นหลักคือ redirect flow เหมือน LINE (ไม่ต้องโหลดสคริปต์
+     *  ของ Google เลย) · One Tap เป็นทางสำรองสำหรับ deployment ที่ยังไม่ได้ตั้ง
+     *  Client Secret เท่านั้น
+     *  ⚠️ ที่มา: สคริปต์ One Tap ถูก CSP ของระบบเองบล็อก (script-src ไม่มี
+     *  accounts.google.com) ⇒ window.google ไม่เคยมี ⇒ ปุ่มขึ้น "โหลดบริการ
+     *  Google ไม่สำเร็จ — ปิดตัวบล็อกโฆษณา" ทั้งที่ผู้ใช้ไม่มีตัวบล็อกเลย และ
+     *  ต่อให้สคริปต์โหลดได้ prompt() ก็ไม่ขึ้นอะไรเมื่อเบราว์เซอร์ปิดคุกกี้ข้ามเว็บ */
     function handleGoogleLogin() {
       if (!ssoConfig.google) return;   // ปุ่มถูกซ่อนอยู่แล้ว — guard กันเรียกตรง
+      if (Sso.begin('Google', ssoConfig)) return;
       if (!window.google?.accounts?.id) {
-        const el = document.getElementById('errorMsg');
-        el.textContent = 'โหลดบริการ Google ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
-        el.classList.remove('hidden');
+        _ssoError(Sso.notReadyMessage('Google'));
         return;
       }
       google.accounts.id.initialize({

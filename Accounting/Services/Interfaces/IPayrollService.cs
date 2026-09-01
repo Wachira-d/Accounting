@@ -59,6 +59,10 @@ public interface IPayrollService
     /// บันทึก AuditLog + ReopenedAt/By/Reason. บล็อกเมื่อนำส่ง สปส. แล้ว หรือ
     /// งวดบัญชีของ PayDate ปิดแล้ว. เหตุผลบังคับ (≥ 5 ตัวอักษร).</summary>
     Task<PayrollRunResponse> ReopenPaidRunAsync(Guid companyId, Guid payrollRunId, string reason, string reopenedBy);
+    /// <summary>จำนวนพนักงานที่ยอดประกันสังคมถูกซ่อมให้สอดคล้อง (ฝั่งนายจ้างตาม
+    /// ฝั่งลูกจ้างตามอัตรา ม.33) ในการ <c>ReopenPaidRunAsync</c> ครั้งล่าสุดของ
+    /// request นี้ — ใช้บอกผู้ใช้ว่าระบบแก้อะไรให้ ห้ามแก้เงียบ ๆ</summary>
+    int LastReopenSsoAdjustedCount { get; }
     /// <summary>กลับรายการนำส่งประกันสังคม — กลับ JE ก้อนที่สอง (ลงวันเดียวกับ
     /// วันที่นำส่งเดิม) + ล้าง SsoSettledAt/JE/เลขรับ/เงินเพิ่ม เพื่อให้แก้รอบ
     /// เงินเดือนแล้วนำส่งใหม่ได้. เหตุผลบังคับ (≥ 5 ตัวอักษร).</summary>

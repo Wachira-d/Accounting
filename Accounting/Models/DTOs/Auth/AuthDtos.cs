@@ -97,7 +97,17 @@ public record SsoLoginRequest(
     // ไม่ถูกขวาง (หน้า login ไม่มีช่องติ๊กและไม่ควรมี — ยินยอมซ้ำทุกครั้งไม่ใช่
     // ความยินยอม แต่เป็นพิธีกรรม)
     bool AcceptedTerms = false,
-    string? PolicyVersion = null);
+    string? PolicyVersion = null,
+
+    // คำเชิญเข้าบริษัท — เดิมเส้นนี้ไม่รับเลย ⇒ ผู้ถูกเชิญที่เลือกสมัครด้วย
+    // Google/LINE ไม่ได้เข้าบริษัทที่เชิญ ต้องให้แอดมินเชิญซ้ำ
+    string? InvitationToken = null);
+
+/// <summary>บัญชีภายนอกที่ผูกไว้ — หน้าโปรไฟล์ใช้แสดง/ถอด
+/// (ProviderUserId ไม่เคยส่งออก: เป็นตัวระบุตัวบุคคลฝั่ง provider)</summary>
+public record ExternalLoginResponse(
+    Guid Id, string Provider, string ProviderDisplayName,
+    string? ProviderEmail, DateTime? LinkedAt, DateTime? LastUsedAt, bool Confirmed);
 
 /// <summary>
 /// Returned by GET /api/auth/profile and used to render the signature settings UI.

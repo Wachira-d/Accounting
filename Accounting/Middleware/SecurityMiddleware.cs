@@ -88,20 +88,34 @@ public class SecurityMiddleware
         //
         // 'unsafe-eval' ถอดออกแล้ว: grep ทั้ง wwwroot ไม่มี eval()/new Function()
         // ใช้เลย จึงไม่มีอะไรพัง และตัดช่องทาง payload ที่ต้องพึ่ง eval ทิ้งได้ฟรี
+        //
+        // ⚠️ SDK ของ SSO ต้องอยู่ใน allow-list ด้วย — CSP เป็น **allow-list**
+        // อะไรที่ไม่ได้ระบุ เบราว์เซอร์บล็อกเงียบ (เห็นเฉพาะใน console).
+        // เดิมไม่มี https://accounts.google.com ⇒ <script src=".../gsi/client">
+        // ถูกบล็อกทุกครั้ง ⇒ window.google ไม่เคยมี ⇒ หน้า login ขึ้น
+        // "โหลดบริการ Google ไม่สำเร็จ — ปิดตัวบล็อกโฆษณา" ทั้งที่ผู้ใช้ไม่มี
+        // ตัวบล็อกโฆษณาเลย (ข้อความโทษผิดตัว ไล่ต้นเหตุไม่เจอ). Facebook SDK
+        // (connect.facebook.net) ก็โดนแบบเดียวกัน. LINE ไม่โดนเพราะเป็น
+        // redirect ล้วน ไม่โหลดสคริปต์ของบุคคลที่สาม
         headers.Append("Content-Security-Policy",
             "default-src 'self'; " +
-            "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
+            "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net "
+                + "https://accounts.google.com https://connect.facebook.net; " +
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net "
+                + "https://accounts.google.com; " +
             "font-src 'self' https://fonts.gstatic.com; " +
             "img-src 'self' data: blob: https:; " +
-            "connect-src 'self' wss: ws:; " +
+            "connect-src 'self' wss: ws: https://accounts.google.com https://oauth2.googleapis.com "
+                + "https://graph.facebook.com; " +
             // frame-src/object-src: ไฟล์แนบ (PDF) เปิดดูในหน้าโดยดึงผ่าน fetch
             // พร้อม JWT แล้วทำเป็น blob: URL ใส่ <iframe> — ลิงก์ตรงใช้ไม่ได้
             // เพราะ endpoint ต้องมี Authorization header.
             // เดิม **ไม่มี 2 directive นี้เลย** จึงตกไปใช้ default-src 'self'
             // ซึ่งไม่ครอบ blob: → Chrome บล็อกและขึ้น "This content is blocked"
             // (img-src มี blob: อยู่แล้ว รูปภาพแนบจึงเปิดได้ แต่ PDF เปิดไม่ได้)
-            "frame-src 'self' blob: data:; " +
+            // accounts.google.com/www.facebook.com — One Tap และ FB.login วาด
+            // iframe ของตัวเองลงหน้า (ปุ่ม SSO ที่เหลือใช้ redirect ไม่ต้องใช้)
+            "frame-src 'self' blob: data: https://accounts.google.com https://www.facebook.com; " +
             "object-src 'self' blob: data:; " +
             // 'self' (not 'none') — the modern equivalent of X-Frame-Options
             // SAMEORIGIN; lets first-party pages embed the OCR PDF/image

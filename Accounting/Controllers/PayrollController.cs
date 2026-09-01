@@ -481,8 +481,13 @@ public class PayrollController : ControllerBase
         {
             var res = await _service.ReopenPaidRunAsync(companyId, runId,
                 request.Reason, User.Identity?.Name ?? "");
-            return Ok(new ApiResponse<PayrollRunResponse>(true, res,
-                "กลับรายการจ่ายแล้ว — รอบกลับไปสถานะ \"อนุมัติแล้ว\" แก้ยอดได้ จากนั้นกด \"จ่าย\" ใหม่"));
+            // แก้อะไรให้ต้องบอก — ห้ามเปลี่ยนตัวเลขเงียบ ๆ
+            var ssoFixed = _service.LastReopenSsoAdjustedCount;
+            var msg = "กลับรายการจ่ายแล้ว — รอบกลับไปสถานะ \"อนุมัติแล้ว\" แก้ยอดได้ จากนั้นกด \"จ่าย\" ใหม่";
+            if (ssoFixed > 0)
+                msg += $" · ปรับยอดประกันสังคมฝั่งนายจ้างให้ตรงกับฝั่งลูกจ้าง {ssoFixed} คน "
+                     + "(ม.33 ใช้ฐานค่าจ้างเดียวกันทั้งสองฝั่ง) — ตรวจยอดก่อนกดจ่าย";
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, msg));
         }
         catch (InvalidOperationException ex)
         {
