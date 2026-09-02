@@ -27,7 +27,13 @@ public class RateLimitMiddleware
         || path.StartsWith("/api/auth/register", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/api/auth/refresh", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase);
+        || path.StartsWith("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase)
+        // ⚠️ เส้น SSO ต้องอยู่ tier เดียวกับ login — ไม่งั้นตกไป tier anonymous
+        // (600/นาที/IP) ซึ่งเปิดช่อง: ยิงซ้ำ ๆ = **email bombing เหยื่อ**ด้วย
+        // ลิงก์ยืนยันที่ดูเหมือนระบบส่งเอง · เดา token ได้ 600 ครั้ง/นาที ·
+        // เอนูมอีเมลจากข้อความตอบกลับที่ต่างกันระหว่าง "มีบัญชี" กับ "ไม่มี"
+        || path.StartsWith("/api/auth/sso", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/api/auth/external-logins", StringComparison.OrdinalIgnoreCase);
 
     public async Task InvokeAsync(HttpContext context)
     {

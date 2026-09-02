@@ -358,9 +358,18 @@ public class TaxFilingExportService : ITaxFilingExportService
             .OrderBy(d => d.Employee.EmployeeCode)
             .ToList();
 
-        // SSO wage ceiling/rate per year (15,000 → 17,500 ปี 2026 → ...)
-        var ssoCfg = await _db.SsoYearConfigs.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted);
+        // SSO wage ceiling/rate ของ **เดือนนั้น** (15,000 → 17,500 ปี 2026 → ...)
+        // ⚠️ ต้องกรองด้วยเดือนด้วย: ประกาศลดอัตราออกเป็นช่วงเดือน ⇒ ปีเดียวมีได้
+        // หลายอัตรา การหยิบแถวแรกของปีจะได้อัตราของเดือนอื่นมาใช้กับเดือนนี้
+        var ssoCfg = (await _db.SsoYearConfigs.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted)
+                .ToListAsync())
+            .Where(c => Accounting.Helpers.SsoRateSchedule.CoversMonth(
+                c.EffectiveFromMonth, c.EffectiveToMonth, month))
+            .OrderBy(c => Accounting.Helpers.SsoRateSchedule.SpanWidth(
+                c.EffectiveFromMonth, c.EffectiveToMonth))
+            .ThenBy(c => c.EffectiveFromMonth)
+            .FirstOrDefault();
         var wageCeiling = ssoCfg?.WageCeiling
             ?? Accounting.Helpers.SsoRateSchedule.GetDefault(year).WageCeiling;
         var ratePercent = ssoCfg?.RatePercent
@@ -440,8 +449,15 @@ public class TaxFilingExportService : ITaxFilingExportService
         //   • เลขบัตร: ตัดขีด/ช่องว่างเหลือแต่ตัวเลข; ไม่ครบ 13 หลัก → แจ้งเตือน
         //   • ชื่อ/นามสกุลว่าง → แจ้งเตือน
         // อัตรา/เพดานของปีนั้น — ใช้ทั้งหาค่าจ้างที่ตรงกับยอดสมทบ และตรวจคู่ก่อนยื่น
-        var xlCfg = await _db.SsoYearConfigs.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted);
+        var xlCfg = (await _db.SsoYearConfigs.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted)
+                .ToListAsync())
+            .Where(c => Accounting.Helpers.SsoRateSchedule.CoversMonth(
+                c.EffectiveFromMonth, c.EffectiveToMonth, month))
+            .OrderBy(c => Accounting.Helpers.SsoRateSchedule.SpanWidth(
+                c.EffectiveFromMonth, c.EffectiveToMonth))
+            .ThenBy(c => c.EffectiveFromMonth)
+            .FirstOrDefault();
         var xlCeiling = xlCfg?.WageCeiling
             ?? Accounting.Helpers.SsoRateSchedule.GetDefault(year).WageCeiling;
         var xlRate = (xlCfg?.RatePercent

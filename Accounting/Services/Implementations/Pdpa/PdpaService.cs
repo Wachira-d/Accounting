@@ -113,7 +113,11 @@ public sealed record DataSubjectAccessResult(
     List<Dictionary<string, object?>> Documents,
     List<Dictionary<string, object?>> Payments,
     List<Dictionary<string, object?>> AccessLogs,
-    int TotalRecords);
+    int TotalRecords,
+    /// <summary>บัญชีภายนอก (Google/Facebook/LINE) ที่ผูกไว้ — ม.30 ให้เจ้าของข้อมูล
+    /// ขอ "สำเนาข้อมูลทั้งหมดที่เก็บอยู่" ซึ่งรวมความเชื่อมโยงกับผู้ให้บริการภายนอก
+    /// (เป็นข้อมูลที่ทำให้เข้าบัญชีได้ ⇒ ต้องอยู่ในรายงานให้เจ้าของเห็นและถอดได้)</summary>
+    List<Dictionary<string, object?>>? ExternalLogins = null);
 
 public sealed record ErasureImpactReport(
     int UserRowsAffected,
@@ -342,15 +346,38 @@ public class PdpaService : IPdpaService
             ["accessedBy"] = a.UserEmail, ["ipAddress"] = a.IpAddress, ["at"] = a.Timestamp,
         }).ToList() ?? new List<Dictionary<string, object?>>();
 
+        // บัญชีภายนอกที่ผูกไว้ (ม.30) — LinkedIp/LastUsedAt เป็นข้อมูลที่เก็บไว้จริง
+        // จึงต้องแสดงให้เจ้าของข้อมูลเห็น ไม่ใช่เก็บไว้เฉย ๆ โดยไม่มีใครอ่าน
+        var extRows = user != null
+            ? (await _db.UserExternalLogins.AsNoTracking()
+                .Where(x => x.UserId == user.Id && !x.IsDeleted)
+                .OrderBy(x => x.CreatedAt)
+                .Select(x => new {
+                    x.Provider, x.ProviderUserId, x.ProviderEmail,
+                    x.ConfirmedAt, x.LinkedIp, x.LastUsedAt, x.CreatedAt,
+                }).ToListAsync(ct))
+                .Select(x => new Dictionary<string, object?> {
+                    // ชื่อเต็ม — `Helpers.X` เปล่า ๆ จะผูกไป Accounting.Services.Helpers
+                    // (ชั้นใกล้ชนะ) แล้วเป็น CS0234 ล้มทั้ง solution
+                    ["provider"] = Accounting.Helpers.SsoIdentityPolicy.DisplayName(x.Provider),
+                    ["providerUserId"] = x.ProviderUserId,
+                    ["providerEmail"] = x.ProviderEmail,
+                    ["linkedAt"] = x.CreatedAt,
+                    ["confirmedAt"] = x.ConfirmedAt,
+                    ["linkedFromIp"] = x.LinkedIp,
+                    ["lastUsedAt"] = x.LastUsedAt,
+                }).ToList()
+            : new List<Dictionary<string, object?>>();
+
         var total = (userProfile.Count > 0 ? 1 : 0) + contactRows.Count
-            + docRows.Count + payRows.Count + logRows.Count;
+            + docRows.Count + payRows.Count + logRows.Count + extRows.Count;
 
         return new DataSubjectAccessResult(
             GeneratedAt: DateTime.UtcNow,
             SubjectIdentifier: user?.Email ?? contacts.FirstOrDefault()?.Email,
             UserProfile: userProfile, Contacts: contactRows,
             Documents: docRows, Payments: payRows, AccessLogs: logRows,
-            TotalRecords: total);
+            TotalRecords: total, ExternalLogins: extRows);
     }
 
     public async Task<int> ApplyRectificationAsync(Guid companyId,
@@ -411,6 +438,33 @@ public class PdpaService : IPdpaService
                 u.Phone = null;
                 u.LineUserId = null;
                 u.Status = Models.Enums.UserStatus.Inactive;
+
+                // ⛔ ทางเข้าที่ยังเปิดอยู่ = การลบที่ยังไม่จบ
+                // บัญชีที่ anonymise แล้วแต่ยังผูก Google/LINE ไว้ กด SSO ก็เข้าได้
+                // ตามปกติ (เส้น SSO ค้นด้วย ProviderUserId ไม่ได้ดูอีเมล) ⇒ ต้อง
+                // ถอดทุกช่องทางพร้อมกัน: ตารางผูกบัญชี + ช่องเดี่ยวเดิมบน User
+                // + refresh token ที่ยังไม่หมดอายุ (ไม่งั้นเซสชันเดิมยังใช้ต่อได้)
+                var extLogins = await _db.UserExternalLogins
+                    .Where(x => x.UserId == u.Id && !x.IsDeleted).ToListAsync(ct);
+                foreach (var e in extLogins)
+                {
+                    e.IsDeleted = true;
+                    e.ProviderEmail = null;
+                    e.ConfirmToken = null;
+                    e.ConfirmTokenExpiry = null;
+                    e.LinkedIp = null;
+                }
+                u.AuthProvider = null;
+                u.AuthProviderId = null;
+                u.PasswordHash = string.Empty;
+
+                u.RefreshToken = null;
+                u.PreviousRefreshToken = null;
+                u.RefreshTokenExpiry = null;
+                u.RefreshTokenRevokedAt = DateTime.UtcNow;
+                u.PasswordResetToken = null;
+                u.PasswordResetTokenExpiry = null;
+
                 changed++;
             }
         }

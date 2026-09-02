@@ -4437,6 +4437,43 @@ public partial class DocumentService : IDocumentService
             throw new DocumentApprovalWarningsException(warnings, hints);
         }
 
+        // ── ผู้ใช้กด "อนุมัติทั้งที่มีคำเตือน" — ต้องมีร่องรอย ──
+        // เดิมคำเตือนที่ถูก acknowledge หายไปเฉย ๆ: ใบที่อนุมัติแบบ "รู้แล้วว่าผิด
+        // §86 แต่ยืนยัน" หน้าตาเหมือนใบที่ไม่เคยมีคำเตือนเลย ⇒ ผู้สอบบัญชี/
+        // สรรพากรถามว่า "ทำไมออกใบแจ้งหนี้ทั้งที่มีสินค้า" แล้วไม่มีอะไรตอบได้
+        // ต้องดังทั้งบน **ตัวเอกสาร** (ผู้ใช้เปิดดูเห็น) และใน **audit** (hash chain)
+        if (warnings.Count > 0 && acknowledgeWarnings)
+        {
+            // ⚠️ ต้องลง **InternalNotes** ไม่ใช่ Notes — Notes ถูกพิมพ์ลงกระดาษ
+            // (PdfGenerationService.SanitizeNotesForPrint) ⇒ คำเตือนภายในจะไป
+            // โผล่บนใบที่ส่งให้ลูกค้า
+            var ackNote = "— รับทราบคำเตือนตอนอนุมัติ —\n"
+                + string.Join("\n", warnings.Select(w => "• " + w))
+                + $"\n(ยืนยันโดย {approvedBy} เมื่อ "
+                + $"{DateTime.UtcNow.AddHours(7).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} น. เวลาไทย)";
+            doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes)
+                ? ackNote
+                : doc.InternalNotes.TrimEnd() + "\n\n" + ackNote;
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                Action = AuditAction.Update,
+                EntityType = "Document",
+                EntityId = doc.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "ApproveWithAcknowledgedWarnings",
+                    documentNumber = doc.DocumentNumber,
+                    documentType = doc.DocumentType.ToString(),
+                    warnings,
+                    by = approvedBy,
+                    ruleCode = "APPROVE-ACK-WARNINGS",
+                    legalReference = "RD-86 / RD-82/5(1)",
+                }),
+            });
+        }
+
         // CreditNote must declare its reason — per ประมวลรัษฎากร §82/10 the
         // CN reason distinguishes whether goods physically returned (restocks)
         // from a pure financial adjustment (no stock impact). Without it the
@@ -14755,7 +14792,10 @@ public partial class DocumentService : IDocumentService
         PreparerName: d.PreparerName,
         PreparerSignatureBase64: d.PreparerSignatureBase64,
         DepositAppliedRef: d.DepositAppliedRef,
-        DepositAppliedDrivesJournal: d.DepositAppliedDrivesJournal);
+        DepositAppliedDrivesJournal: d.DepositAppliedDrivesJournal,
+        // หมายเหตุภายใน (ไม่พิมพ์ลงกระดาษ) — ที่เก็บ "คำเตือนที่กดรับทราบแล้ว"
+        // ต้อง echo กลับ ไม่งั้นร่องรอยอยู่แต่ในฐานข้อมูลกับ audit ผู้ใช้ไม่เห็น
+        InternalNotes: d.InternalNotes);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

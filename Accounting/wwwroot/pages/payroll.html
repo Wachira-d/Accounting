@@ -424,6 +424,7 @@ const Page = {
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead><tr style="background:#f8fafc;color:#64748b">
             <th style="text-align:left;padding:8px">ปี (ค.ศ. / พ.ศ.)</th>
+            <th style="text-align:center;padding:8px">เดือนที่มีผล</th>
             <th style="text-align:right;padding:8px">เพดานค่าจ้าง/เดือน</th>
             <th style="text-align:right;padding:8px">อัตราลูกจ้าง %</th>
             <th style="text-align:right;padding:8px">อัตรานายจ้าง %</th>
@@ -432,26 +433,37 @@ const Page = {
             <th style="padding:8px"></th>
           </tr></thead>
           <tbody>
-            ${rows.map(r => `<tr style="border-top:1px solid #e5e7eb${r.isOverride ? ';background:#fffbeb' : ''}">
+            ${rows.map(r => {
+              // ⚠️ id ต้องผูกกับ "ปี + ช่วงเดือน" — ปีเดียวมีได้หลายแถว
+              // (ประกาศลดอัตราเป็นช่วงเดือน) ถ้าคีย์ด้วยปีอย่างเดียว id จะซ้ำ
+              // แล้ว getElementById หยิบแถวแรกมาเสมอ = บันทึกทับแถวผิด
+              const f = r.effectiveFromMonth || 1, t = r.effectiveToMonth || 12;
+              const k = `${r.year}_${f}_${t}`;
+              const whole = f === 1 && t === 12;
+              return `<tr style="border-top:1px solid #e5e7eb${r.isOverride ? ';background:#fffbeb' : ''}">
               <td style="padding:6px 8px;font-weight:600">${r.year} / ${r.year + 543}</td>
+              <td style="padding:6px 8px;text-align:center;white-space:nowrap">
+                ${whole ? '<span style="color:#64748b">ทั้งปี</span>' : `<b>${f}–${t}</b>`}</td>
               <td style="padding:6px 8px;text-align:right">
-                <input type="number" id="ssoCeil_${r.year}" value="${r.wageCeiling}" min="1000" step="500"
+                <input type="number" id="ssoCeil_${k}" value="${r.wageCeiling}" min="1000" step="500"
                        style="width:110px;text-align:right" class="form-input form-input-sm"></td>
               <td style="padding:6px 8px;text-align:right">
-                <input type="number" id="ssoRate_${r.year}" value="${r.ratePercent}" min="0.5" max="30" step="0.5"
+                <input type="number" id="ssoRate_${k}" value="${r.ratePercent}" min="0.5" max="30" step="0.5"
                        style="width:70px;text-align:right" class="form-input form-input-sm"></td>
               <td style="padding:6px 8px;text-align:right">
-                <input type="number" id="ssoErRate_${r.year}" value="${r.employerRatePercent}" min="0.5" max="30" step="0.5"
+                <input type="number" id="ssoErRate_${k}" value="${r.employerRatePercent}" min="0.5" max="30" step="0.5"
                        style="width:70px;text-align:right" class="form-input form-input-sm"></td>
               <td style="padding:6px 8px;text-align:right;font-weight:600">${(r.maxMonthlyContribution || 0).toLocaleString('th-TH', {minimumFractionDigits:2})}</td>
               <td style="padding:6px 8px;text-align:center">${r.isOverride
                 ? '<span style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">กำหนดเอง</span>'
                 : '<span style="background:#e2e8f0;color:#475569;padding:2px 8px;border-radius:10px;font-size:11px">ตามกฎหมาย</span>'}</td>
               <td style="padding:6px 8px;white-space:nowrap">
-                <button class="btn btn-sm btn-primary" onclick="Page.saveSsoConfig(${r.year})">บันทึก</button>
-                ${r.isOverride ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.resetSsoConfig(${r.year})" title="ลบค่าที่กำหนดเอง กลับไปใช้ตามกฎหมาย">↺</button>` : ''}
+                <button class="btn btn-sm btn-primary" onclick="Page.saveSsoConfig(${r.year},${f},${t})">บันทึก</button>
+                <button class="btn btn-sm btn-secondary" onclick="Page.addSsoPeriod(${r.year})"
+                        title="ประกาศลดอัตราชั่วคราวมีผลเฉพาะบางเดือน — เพิ่มเป็นช่วงแยก ไม่ต้องแก้อัตราทั้งปี">+ ช่วงเดือน</button>
+                ${r.isOverride ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.resetSsoConfig(${r.year},${f},${t})" title="ลบค่าที่กำหนดเอง กลับไปใช้ตามกฎหมาย">↺</button>` : ''}
               </td>
-            </tr>`).join('')}
+            </tr>`; }).join('')}
           </tbody>
         </table>`;
     } catch (err) {
@@ -459,17 +471,20 @@ const Page = {
     }
   },
 
-  async saveSsoConfig(year) {
+  async saveSsoConfig(year, fromMonth, toMonth) {
     const cid = Layout.getCompanyId(); if (!cid) return;
-    const ceil = parseFloat(document.getElementById(`ssoCeil_${year}`)?.value);
-    const rate = parseFloat(document.getElementById(`ssoRate_${year}`)?.value);
-    const erRate = parseFloat(document.getElementById(`ssoErRate_${year}`)?.value);
+    const f = fromMonth || 1, t = toMonth || 12;
+    const k = `${year}_${f}_${t}`;
+    const ceil = parseFloat(document.getElementById(`ssoCeil_${k}`)?.value);
+    const rate = parseFloat(document.getElementById(`ssoRate_${k}`)?.value);
+    const erRate = parseFloat(document.getElementById(`ssoErRate_${k}`)?.value);
     if (!ceil || !rate) { Layout.toast('กรอกเพดานค่าจ้างและอัตราให้ครบ', 'error'); return; }
     try {
       const res = await fetch(`/api/companies/${cid}/payroll/sso-config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({ year, wageCeiling: ceil, ratePercent: rate, employerRatePercent: erRate || rate })
+        body: JSON.stringify({ year, wageCeiling: ceil, ratePercent: rate, employerRatePercent: erRate || rate,
+          effectiveFromMonth: f, effectiveToMonth: t })
       });
       const j = await res.json();
       if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
@@ -535,11 +550,45 @@ const Page = {
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
 
-  async resetSsoConfig(year) {
-    if (!confirm(`ลบค่าที่กำหนดเองของปี ${year} แล้วกลับไปใช้ค่าตามกฎหมาย?`)) return;
+  /** ประกาศลดอัตราสมทบของไทยมีผลเป็น "ช่วงเดือน" — เพิ่มเป็นแถวแยก ไม่ใช่ไป
+   *  แก้อัตราทั้งปี (แก้ทั้งปี = เปลี่ยนอัตราของเดือนที่ยื่น สปส. ไปแล้วย้อนหลัง
+   *  ⇒ สร้างไฟล์ สปส.1-10 ใหม่แล้วไม่ตรงกับที่ยื่นจริง) */
+  async addSsoPeriod(year) {
+    const raw = prompt(`เพิ่มช่วงเดือนที่ใช้อัตราต่างจากทั้งปี (ปี ${year})\n`
+      + 'ใส่เป็น "เดือนเริ่ม-เดือนสิ้นสุด" เช่น 5-7 (พ.ค.–ก.ค.)', '');
+    if (!raw) return;
+    const m = raw.match(/^\s*(\d{1,2})\s*[-–]\s*(\d{1,2})\s*$/);
+    if (!m) { Layout.toast('รูปแบบไม่ถูกต้อง — ใส่เช่น 5-7', 'error'); return; }
+    const f = parseInt(m[1]), t = parseInt(m[2]);
+    if (!(f >= 1 && f <= 12 && t >= 1 && t <= 12)) { Layout.toast('เดือนต้องอยู่ระหว่าง 1–12', 'error'); return; }
+    // ใช้ค่าที่แสดงอยู่ของแถวทั้งปีเป็นค่าตั้งต้น แล้วให้ผู้ใช้แก้อัตราในตาราง
+    const base = `${year}_1_12`;
+    const ceil = parseFloat(document.getElementById(`ssoCeil_${base}`)?.value) || 0;
+    const rate = parseFloat(document.getElementById(`ssoRate_${base}`)?.value) || 5;
+    const erRate = parseFloat(document.getElementById(`ssoErRate_${base}`)?.value) || rate;
     const cid = Layout.getCompanyId(); if (!cid) return;
     try {
-      const res = await fetch(`/api/companies/${cid}/payroll/sso-config/${year}`, {
+      const res = await fetch(`/api/companies/${cid}/payroll/sso-config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({ year, wageCeiling: ceil, ratePercent: rate, employerRatePercent: erRate,
+          effectiveFromMonth: Math.min(f, t), effectiveToMonth: Math.max(f, t) })
+      });
+      const j = await res.json();
+      if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+      Layout.toast(`${j.message || 'เพิ่มช่วงแล้ว'} — แก้อัตราของช่วงนี้ในตารางแล้วกดบันทึก`);
+      this.loadSsoConfig();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async resetSsoConfig(year, fromMonth, toMonth) {
+    const f = fromMonth || 1, t = toMonth || 12;
+    const scope = (f === 1 && t === 12) ? 'ทั้งปี' : `เดือน ${f}–${t}`;
+    if (!confirm(`ลบค่าที่กำหนดเองของปี ${year} (${scope}) แล้วกลับไปใช้ค่าตามกฎหมาย?`)) return;
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    try {
+      const res = await fetch(
+        `/api/companies/${cid}/payroll/sso-config/${year}?fromMonth=${f}&toMonth=${t}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });

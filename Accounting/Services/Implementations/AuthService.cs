@@ -130,6 +130,17 @@ public class AuthService : IAuthService
         if (await _db.Users.AnyAsync(u => u.Email.ToLower() == email))
             throw new InvalidOperationException("อีเมลนี้ถูกใช้งานแล้ว");
 
+        // ตั๋ว SSO ต้องยังไม่ถูกใช้ผูกกับใคร — ตรวจ**ก่อน**สร้างผู้ใช้ ไม่งั้น
+        // จะได้บัญชีที่สร้างสำเร็จแต่ผูกไม่ได้ (ตั๋วใบเดียวสมัครหลายบัญชีได้ใน
+        // 20 นาที เพราะไม่มีใครเก็บ jti)
+        var ticketPre = JwtHelper.ReadSsoSignupTicket(request.SsoTicket, _config);
+        if (ticketPre is { } tp && await _db.UserExternalLogins.AnyAsync(x =>
+                x.Provider == tp.Provider && x.ProviderUserId == tp.ProviderUserId))
+            throw new BusinessRuleException(
+                $"บัญชี {SsoIdentityPolicy.DisplayName(tp.Provider)} นี้ถูกใช้สมัครไปแล้ว — "
+                + "กรุณาเข้าสู่ระบบด้วยปุ่มเดิม หรือใช้ \"ลืมรหัสผ่าน\" หากจำอีเมลที่สมัครไว้ไม่ได้",
+                "SSO-TICKET-USED");
+
         ValidatePassword(request.Password);
 
         // Support both FullName and FirstName+LastName from frontend
@@ -162,23 +173,13 @@ public class AuthService : IAuthService
         // เพิ่งเกิดจากการกรอกอีเมลของเขาเอง ⇒ ไม่มีบัญชีเดิมให้ยึด ผูกได้เลย
         if (ssoTicket is { } ticket)
         {
-            var alreadyTaken = await _db.UserExternalLogins.AnyAsync(x =>
-                x.Provider == ticket.Provider && x.ProviderUserId == ticket.ProviderUserId);
-            if (alreadyTaken)
-            {
-                // มีคนผูกตัวตนนี้ไปแล้วระหว่างที่ตั๋วยังไม่หมดอายุ — ไม่ล้มการสมัคร
-                // (บัญชีสร้างไปแล้ว ผู้ใช้กรอกข้อมูลมาแล้ว) แต่ต้องไม่เงียบ
-                _logger.LogWarning(
-                    "SSO signup ticket: identity {Provider}/{Tail} ถูกผูกกับผู้ใช้อื่นแล้ว — ข้ามการผูกให้ user {UserId}",
-                    ticket.Provider,
-                    ticket.ProviderUserId.Length > 6 ? ticket.ProviderUserId[^6..] : ticket.ProviderUserId,
-                    user.Id);
-            }
-            else
-            {
-                await LinkExternalLoginAsync(user, ticket.Provider, ticket.ProviderUserId,
-                    ticket.Email ?? user.Email, confirmed: true, notify: false);
-            }
+            // ผูกให้ตามตั๋ว — ถ้าผูกไม่สำเร็จจะ throw ออกไป (ผู้ใช้ต้องรู้)
+            // ⚠️ ตัวตนที่ถูกผูกไปแล้วถูกปฏิเสธตั้งแต่**ก่อนสร้างผู้ใช้** ด้านบน
+            // แล้ว (ดู RequireUnusedSsoTicketAsync) — เดิมเช็คตรงนี้แล้ว log
+            // อย่างเดียวแล้วตอบว่าสมัครสำเร็จ ⇒ ผู้ใช้เชื่อว่าครั้งหน้ากดปุ่ม
+            // provider เข้าได้ แต่ไม่ได้ผูกจริง (silent partial success)
+            await LinkExternalLoginAsync(user, ticket.Provider, ticket.ProviderUserId,
+                ticket.Email ?? user.Email, confirmed: true, notify: false);
         }
 
         // Invitation acceptance — when the user registered via an invitation
@@ -365,6 +366,12 @@ public class AuthService : IAuthService
         var user = await _db.Users.FindAsync(userId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ใช้งาน");
 
+        // บัญชีที่สร้างผ่าน SSO มี PasswordHash = "" → BCrypt โยน SaltParseException
+        // ⇒ 500 (บั๊กเดียวกับที่แก้ใน LoginAsync แต่รอบนั้นแก้จุดเดียว)
+        if (string.IsNullOrEmpty(user.PasswordHash))
+            throw new UnauthorizedAccessException(
+                UserLoginPolicy.PasswordLoginUnavailableMessage(user.AuthProvider));
+
         if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
             throw new UnauthorizedAccessException("รหัสผ่านเดิมไม่ถูกต้อง");
 
@@ -543,15 +550,7 @@ public class AuthService : IAuthService
         // ผู้ให้บริการต้อง "เปิดใช้ + มีคีย์ครบ" ก่อน — ไม่งั้นปฏิเสธตั้งแต่ต้น
         // (กันเคสปุ่มหลุดมาบนหน้า login แล้วยิงเข้ามาโดยยังไม่ได้ตั้งค่า)
         var sso = await GetSsoSettingsAsync();
-        var enabled = provider switch
-        {
-            SsoIdentityPolicy.Google => sso.GoogleEnabled,
-            SsoIdentityPolicy.Facebook => sso.FacebookEnabled,
-            _ => sso.LineEnabled,
-        };
-        if (!enabled)
-            throw new InvalidOperationException("ยังไม่ได้เปิดใช้การเข้าสู่ระบบด้วย "
-                + SsoIdentityPolicy.DisplayName(provider) + " — ติดต่อผู้ดูแลระบบ");
+        EnsureProviderEnabled(provider, sso);
 
         // Validate token with provider and extract user info
         var identity = await ValidateProviderTokenAsync(provider, request.IdToken, sso);
@@ -618,6 +617,12 @@ public class AuthService : IAuthService
                 await LinkExternalLoginAsync(existing, provider, providerUserId, emailNonNull,
                     // มาถึงตรงนี้ได้แปลว่า trustedIdentity = provider ยืนยันอีเมลแล้ว
                     confirmed: true, notify: true, markEmailVerified: true);
+
+                // คำเชิญเข้าบริษัทใช้ได้กับ **บัญชีเดิม** ด้วย — คนที่มีบัญชีอยู่แล้ว
+                // แล้วถูกเชิญเข้าอีกบริษัท กดลิงก์คำเชิญ → เลือกเข้าด้วย Google
+                // เดิมจะเข้าระบบได้แต่คำเชิญค้าง Pending ตลอดไปโดยไม่มีอะไรบอก
+                // (silent no-op) ⇒ แอดมินเห็น "รอตอบรับ" ทั้งที่คนนั้นเข้ามาแล้ว
+                await ConsumeInvitationAsync(existing, request.InvitationToken);
                 user = existing;
             }
             else
@@ -738,7 +743,7 @@ public class AuthService : IAuthService
         var identity = provider switch
         {
             SsoIdentityPolicy.Google => await ValidateGoogleTokenAsync(idToken, sso.GoogleClientId),
-            SsoIdentityPolicy.Facebook => await ValidateFacebookTokenAsync(idToken),
+            SsoIdentityPolicy.Facebook => await ValidateFacebookTokenAsync(idToken, sso.FacebookAppId),
             _ => await ValidateLineTokenAsync(idToken, sso.LineChannelId),
         };
         if (string.IsNullOrWhiteSpace(identity.Id))
@@ -760,15 +765,7 @@ public class AuthService : IAuthService
             throw new BusinessRuleException("รองรับเฉพาะ Google, Facebook และ LINE เท่านั้น");
 
         var sso = await GetSsoSettingsAsync();
-        var enabled = provider switch
-        {
-            SsoIdentityPolicy.Google => sso.GoogleEnabled,
-            SsoIdentityPolicy.Facebook => sso.FacebookEnabled,
-            _ => sso.LineEnabled,
-        };
-        if (!enabled)
-            throw new BusinessRuleException("ยังไม่ได้เปิดใช้การเข้าสู่ระบบด้วย "
-                + SsoIdentityPolicy.DisplayName(provider) + " — ติดต่อผู้ดูแลระบบ");
+        EnsureProviderEnabled(provider, sso);
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId)
             ?? throw new KeyNotFoundException("ไม่พบบัญชีผู้ใช้");
@@ -790,7 +787,7 @@ public class AuthService : IAuthService
 
         return new ExternalLoginResponse(row.Id, row.Provider,
             SsoIdentityPolicy.DisplayName(row.Provider), row.ProviderEmail,
-            row.ConfirmedAt, row.LastUsedAt, true);
+            row.CreatedAt, row.LastUsedAt, true, row.ConfirmedAt, row.LinkedIp);
     }
 
     // ===== การผูกบัญชีภายนอก (Google/Facebook/LINE) =====
@@ -875,7 +872,8 @@ public class AuthService : IAuthService
             {
                 await _emailService.SendNotificationEmailAsync(user.Email, user.FullName,
                     $"บัญชีของคุณถูกผูกกับ {SsoIdentityPolicy.DisplayName(provider)}",
-                    $"ระบบได้ผูกบัญชี {SsoIdentityPolicy.DisplayName(provider)} ({providerEmail}) "
+                    // HtmlEncode — providerEmail มาจากภายนอก และปลายทางคือ HTML
+                    $"ระบบได้ผูกบัญชี {SsoIdentityPolicy.DisplayName(provider)} ({System.Net.WebUtility.HtmlEncode(providerEmail)}) "
                     // ⚠️ ระบุ InvariantCulture — ถ้า process ตั้ง culture th-TH
                     // ปฏิทินเริ่มต้นเป็นพุทธศักราช ปี 2026 จะกลายเป็น 2569 เงียบ ๆ
                     // ในข้อความที่ไม่ใช่แบบยื่นภาษี (ซึ่งต้องเป็น ค.ศ.)
@@ -931,7 +929,7 @@ public class AuthService : IAuthService
         {
             await _emailService.SendNotificationEmailAsync(user.Email, user.FullName,
                 $"ยืนยันการผูกบัญชี {SsoIdentityPolicy.DisplayName(provider)}",
-                $"มีการขอผูกบัญชี {SsoIdentityPolicy.DisplayName(provider)} ({providerEmail}) "
+                $"มีการขอผูกบัญชี {SsoIdentityPolicy.DisplayName(provider)} ({System.Net.WebUtility.HtmlEncode(providerEmail)}) "
                 + "เข้ากับบัญชี NextAcc ของคุณ<br>"
                 + "กดปุ่มด้านล่างเพื่อยืนยัน (ลิงก์มีอายุ 1 ชั่วโมง)<br><br>"
                 + "<b>หากไม่ใช่คุณ ไม่ต้องทำอะไร</b> — การผูกจะไม่เกิดขึ้นและบัญชีของคุณยังปลอดภัย",
@@ -974,7 +972,8 @@ public class AuthService : IAuthService
             .ToListAsync();
         return rows.Select(x => new ExternalLoginResponse(
             x.Id, x.Provider, SsoIdentityPolicy.DisplayName(x.Provider),
-            x.ProviderEmail, x.ConfirmedAt, x.LastUsedAt, x.ConfirmedAt != null)).ToList();
+            x.ProviderEmail, x.CreatedAt, x.LastUsedAt, x.ConfirmedAt != null,
+            x.ConfirmedAt, x.LinkedIp)).ToList();
     }
 
     /// <summary>ถอดการผูก — ต้องเหลือทางเข้าอย่างน้อยหนึ่งทางเสมอ
@@ -1063,12 +1062,20 @@ public class AuthService : IAuthService
             && inv.ExpiresAt > DateTime.UtcNow
             && string.Equals(inv.Email, user.Email, StringComparison.OrdinalIgnoreCase))
         {
-            _db.CompanyUsers.Add(new CompanyUser
+            // เส้น SSO ของ "บัญชีเดิม" เรียกเมธอดนี้ได้ด้วย ⇒ ผู้ใช้อาจเป็นสมาชิก
+            // บริษัทนั้นอยู่แล้ว การ Add ซ้ำจะได้สองสิทธิ์ในบริษัทเดียว (บทบาทไหน
+            // ชนะขึ้นกับลำดับแถว) — ถือว่าคำเชิญถูกใช้แล้ว แต่ไม่เพิ่มแถวใหม่
+            var already = await _db.CompanyUsers.AnyAsync(cu =>
+                cu.CompanyId == inv.CompanyId && cu.UserId == user.Id && !cu.IsDeleted);
+            if (!already)
             {
-                CompanyId = inv.CompanyId,
-                UserId = user.Id,
-                Role = inv.Role,
-            });
+                _db.CompanyUsers.Add(new CompanyUser
+                {
+                    CompanyId = inv.CompanyId,
+                    UserId = user.Id,
+                    Role = inv.Role,
+                });
+            }
             inv.Status = Models.Enums.InvitationStatus.Accepted;
             inv.AcceptedAt = DateTime.UtcNow;
             inv.AcceptedByUserId = user.Id;
@@ -1081,6 +1088,26 @@ public class AuthService : IAuthService
             "Invitation token did not match a valid invite (token={Token}, email={Email}) — proceeding without auto-join",
             invitationToken, user.Email);
         return false;
+    }
+
+    /// <summary>ด่าน "ผู้ให้บริการนี้เปิดใช้แล้วหรือยัง" — **ตัวเดียว**ของทุกเส้น
+    /// ที่แตะ SSO (ล็อกอิน · ผูกบัญชีเพิ่ม · ยืนยันการผูก)
+    ///
+    /// <para>เดิมคัดลอกทั้ง switch และข้อความไว้สองที่ ⇒ เพิ่ม provider ตัวที่สี่
+    /// แล้วแก้ที่เดียว อีกเส้นจะตกไปที่ <c>_ =&gt; sso.LineEnabled</c> เงียบ ๆ
+    /// (ผูก provider ใหม่ได้ทั้งที่แอดมินยังไม่ได้เปิด)</para></summary>
+    private static void EnsureProviderEnabled(string provider, SsoSettings sso)
+    {
+        var enabled = provider switch
+        {
+            SsoIdentityPolicy.Google => sso.GoogleEnabled,
+            SsoIdentityPolicy.Facebook => sso.FacebookEnabled,
+            SsoIdentityPolicy.Line => sso.LineEnabled,
+            _ => false,   // ไม่รู้จัก = ปิดไว้ก่อน ห้ามเดาว่าเป็น LINE
+        };
+        if (!enabled)
+            throw new BusinessRuleException("ยังไม่ได้เปิดใช้การเข้าสู่ระบบด้วย "
+                + SsoIdentityPolicy.DisplayName(provider) + " — ติดต่อผู้ดูแลระบบ");
     }
 
     /// <summary>ค่า SSO ที่ "ใช้จริง" — DB (ตั้งจากหน้าแอดมิน) ชนะ appsettings
@@ -1132,6 +1159,25 @@ public class AuthService : IAuthService
         if (!string.IsNullOrWhiteSpace(enc))
             return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
         return _config["OAuth:Line:ChannelSecret"] ?? "";
+    }
+
+    /// <summary>App Secret ของ Facebook — เก็บเข้ารหัสใน DB (SecretProtector)
+    /// fallback appsettings. **ห้ามส่งออกจาก server**</summary>
+    private async Task<string> GetFacebookAppSecretAsync()
+    {
+        var enc = await _db.SiteSettings.AsNoTracking()
+            .Select(s => s.FacebookAppSecret).FirstOrDefaultAsync();
+        if (!string.IsNullOrWhiteSpace(enc))
+            return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
+        return _config["OAuth:Facebook:AppSecret"] ?? "";
+    }
+
+    private static string HmacSha256Hex(string key, string message)
+    {
+        using var h = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(key));
+        return Convert.ToHexString(h.ComputeHash(System.Text.Encoding.UTF8.GetBytes(message)))
+            .ToLowerInvariant();
     }
 
     /// <summary>Client Secret ของ Google — เก็บเข้ารหัสใน DB (SecretProtector)
@@ -1305,11 +1351,38 @@ public class AuthService : IAuthService
         return new SsoIdentity(SsoIdentityPolicy.Google, sub, email, name, picture, verified);
     }
 
-    private async Task<SsoIdentity> ValidateFacebookTokenAsync(string accessToken)
+    private async Task<SsoIdentity> ValidateFacebookTokenAsync(string accessToken, string expectedAppId)
     {
         using var http = new HttpClient();
+
+        // ⚠️ ต้องพิสูจน์ว่า token ออกให้ **แอปของเรา** ก่อน — graph /me รับ token
+        // ของแอปไหนก็ได้ ⇒ ผู้โจมตีใช้แอป Facebook ของตัวเองปั๊ม identity +
+        // อีเมลของคนอื่นมายิงเส้นสมัคร เพื่อจองอีเมลเหยื่อล่วงหน้าเป็นชุด
+        // (Google/LINE ตรวจ aud อยู่แล้ว — Facebook คือด่านที่อ่อนกว่าโดยไม่มีเหตุผล)
+        var appSecret = await GetFacebookAppSecretAsync();
+        if (!string.IsNullOrWhiteSpace(expectedAppId) && !string.IsNullOrWhiteSpace(appSecret))
+        {
+            var dbg = await http.GetAsync("https://graph.facebook.com/debug_token"
+                + $"?input_token={Uri.EscapeDataString(accessToken)}"
+                + $"&access_token={Uri.EscapeDataString(expectedAppId + "|" + appSecret)}");
+            if (!dbg.IsSuccessStatusCode)
+                throw new UnauthorizedAccessException("ตรวจสอบ Facebook token ไม่สำเร็จ");
+            using var dd = JsonDocument.Parse(await dbg.Content.ReadAsStringAsync());
+            var data = dd.RootElement.TryGetProperty("data", out var dEl) ? dEl : default;
+            var appId = data.ValueKind == JsonValueKind.Object
+                && data.TryGetProperty("app_id", out var aEl) ? aEl.GetString() ?? "" : "";
+            var isValid = data.ValueKind == JsonValueKind.Object
+                && data.TryGetProperty("is_valid", out var vEl) && vEl.ValueKind == JsonValueKind.True;
+            if (!isValid || appId != expectedAppId)
+                throw new UnauthorizedAccessException(
+                    "Facebook token ไม่ได้ออกให้แอปของระบบนี้ — ลองกดปุ่ม Facebook ใหม่อีกครั้ง");
+        }
+
+        // appsecret_proof — กัน token ที่หลุดออกไปถูกใช้จากที่อื่น
+        var proof = string.IsNullOrWhiteSpace(appSecret) ? null : HmacSha256Hex(appSecret, accessToken);
         var res = await http.GetAsync(
-            $"https://graph.facebook.com/me?fields=id,name,email&access_token={Uri.EscapeDataString(accessToken)}");
+            $"https://graph.facebook.com/me?fields=id,name,email&access_token={Uri.EscapeDataString(accessToken)}"
+            + (proof == null ? "" : $"&appsecret_proof={proof}"));
         if (!res.IsSuccessStatusCode)
             throw new UnauthorizedAccessException("Facebook token ไม่ถูกต้องหรือหมดอายุ");
 

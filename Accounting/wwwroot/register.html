@@ -349,11 +349,12 @@
     function handleFacebookRegister() {
       if (!ssoConfig.facebook || !_ssoPreflight()) return;
       // ⚠️ เดิมเขียน `if (!window.FB) FB.init(...)` — กลับตรรกะ: SDK ไม่โหลด
-      // (ตัวบล็อกโฆษณา/เน็ตล่ม) แล้วเรียก FB.init = ReferenceError กดปุ่มแล้ว
-      // เงียบสนิท ไม่มี error ให้ผู้ใช้เห็น
+      // แล้วเรียก FB.init = ReferenceError กดปุ่มแล้วเงียบสนิท ไม่มี error ให้เห็น
+      // และห้ามโทษ "ตัวบล็อกโฆษณา" — สาเหตุที่พบจริงคือ CSP ของระบบเอง ซึ่ง
+      // ผู้ใช้แก้ไม่ได้ (ข้อความที่เดาสาเหตุแทนผู้ใช้พาไล่ผิดทาง)
       if (!window.FB) {
-        document.getElementById('errorMsg').textContent = 'โหลดบริการ Facebook ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
-        document.getElementById('errorMsg').classList.remove('hidden');
+        _ssoError('ยังสมัครด้วย Facebook ไม่ได้ — สคริปต์ของ Facebook โหลดไม่สำเร็จ '
+          + 'ให้ใช้ปุ่ม Google หรือ LINE ไปก่อน แล้วแจ้งผู้ดูแลระบบให้ตรวจการตั้งค่า Facebook Login');
         return;
       }
       FB.login(function(response) {
@@ -369,7 +370,7 @@
     function handleLineRegister() {
       if (!ssoConfig.line || !_ssoPreflight()) return;
       if (!Sso.begin('Line', ssoConfig, _ssoSignupPayload()))
-        _ssoError(Sso.notReadyMessage('LINE'));
+        _ssoError(Sso.notReadyMessage('Line'));
     }
 
     // ===== Live password validation =====

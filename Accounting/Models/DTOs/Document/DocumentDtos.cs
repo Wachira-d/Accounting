@@ -789,7 +789,15 @@ public record DocumentResponse(
     ///
     /// <para>null = เส้นทางที่ยังไม่ได้คำนวณ (เช่นรายการหลายใบ) — หน้าเว็บ
     /// fallback ไป <c>Layout.docHeaderLabel</c> ตามเดิม</para></summary>
-    string? DocumentTitle = null);
+    string? DocumentTitle = null,
+
+    /// <summary>หมายเหตุ**ภายใน** — ไม่พิมพ์ลงกระดาษ (ต่างจาก <c>Notes</c>)
+    ///
+    /// <para>ที่นี่คือที่เก็บ "คำเตือนที่ผู้ใช้กดรับทราบแล้วยืนยันอนุมัติ" —
+    /// เดิมคำเตือนที่ถูก acknowledge หายไปเฉย ๆ ⇒ ใบที่อนุมัติทั้งที่รู้ว่าผิด
+    /// §86 หน้าตาเหมือนใบที่ไม่เคยมีคำเตือน (ไม่มีอะไรตอบผู้สอบบัญชีได้)
+    /// คู่กับ AuditLog <c>APPROVE-ACK-WARNINGS</c> ที่มี hash chain</para></summary>
+    string? InternalNotes = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

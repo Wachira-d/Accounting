@@ -1277,7 +1277,11 @@
                   ${r.confirmed ? '' : '<span style="font-size:11px;color:#b45309;margin-left:6px">⏳ รอยืนยันทางอีเมล</span>'}
                 </div>
                 <div style="font-size:12px;color:#64748b">${esc(r.providerEmail || '')}</div>
-                <div style="font-size:11px;color:#94a3b8">ผูกเมื่อ ${fmt(r.linkedAt)} · ใช้ล่าสุด ${fmt(r.lastUsedAt)}</div>
+                <div style="font-size:11px;color:#94a3b8">ผูกเมื่อ ${fmt(r.linkedAt)} · ใช้ล่าสุด ${fmt(r.lastUsedAt)}${
+                  r.confirmed && r.confirmedAt ? ' · ยืนยันเมื่อ ' + fmt(r.confirmedAt) : ''}</div>
+                <!-- IP ตอนผูก: ตอบคำถาม "ใครผูกบัญชีนี้เข้ามา" ให้เจ้าของเห็นเอง
+                     (เดิมเก็บลงฐานแล้วไม่มีใครอ่าน = ข้อมูลที่เก็บโดยไม่ได้ใช้) -->
+                ${r.linkedFromIp ? `<div style="font-size:11px;color:#94a3b8">ผูกจาก IP ${esc(r.linkedFromIp)}</div>` : ''}
               </div>
               <button type="button" class="btn btn-sm btn-danger"
                 onclick="Page.removeExternalLogin('${esc(r.id)}','${esc(r.providerDisplayName || r.provider)}')">ถอดการผูก</button>

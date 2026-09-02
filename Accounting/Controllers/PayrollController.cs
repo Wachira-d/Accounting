@@ -558,8 +558,12 @@ public class PayrollController : ControllerBase
 
     // ===== SSO year-config (เพดานค่าจ้าง/อัตราสมทบ ปรับได้รายปี) =====
 
+    /// <remarks><c>EffectiveFromMonth</c>/<c>EffectiveToMonth</c> = ช่วงเดือนที่
+    /// อัตรานี้มีผล (ไม่ส่ง = ทั้งปี) — ประกาศลดอัตราสมทบของไทยออกเป็นช่วงเดือน
+    /// ⇒ ปีเดียวมีได้หลายแถว แต่ช่วงต้องไม่ทับกัน</remarks>
     public sealed record SsoYearConfigRequest(int Year, decimal WageCeiling,
-        decimal RatePercent = 5m, decimal EmployerRatePercent = 5m, string? Notes = null);
+        decimal RatePercent = 5m, decimal EmployerRatePercent = 5m, string? Notes = null,
+        int? EffectiveFromMonth = null, int? EffectiveToMonth = null);
 
     /// <summary>Effective SSO parameters per year: company overrides merged
     /// over the statutory default schedule (15,000 → 17,500 ปี 2026 →
@@ -576,22 +580,43 @@ public class PayrollController : ControllerBase
         var overrides = await db.SsoYearConfigs
             .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Year >= start && c.Year <= end)
             .ToListAsync();
-        var rows = Enumerable.Range(start, end - start + 1).Select(y =>
+        // หนึ่งปีมีได้หลายแถว (ประกาศลดอัตราเป็นช่วงเดือน) ⇒ คืนทุกช่วง
+        // ปีที่ไม่มี override เลย คืนแถวเดียว 1–12 = ค่าตามกฎหมาย
+        var rows = Enumerable.Range(start, end - start + 1).SelectMany(y =>
         {
-            var ov = overrides.FirstOrDefault(o => o.Year == y);
             var (defCeiling, defRate) = SsoRateSchedule.GetDefault(y);
-            var ceiling = ov?.WageCeiling ?? defCeiling;
-            var rate = ov != null ? ov.RatePercent / 100m : defRate;
-            return new
+            var ovs = overrides.Where(o => o.Year == y)
+                .OrderBy(o => o.EffectiveFromMonth).ToList();
+            if (ovs.Count == 0)
+                return new[] { new
+                {
+                    Year = y,
+                    WageCeiling = defCeiling,
+                    RatePercent = defRate * 100m,
+                    EmployerRatePercent = defRate * 100m,
+                    MaxMonthlyContribution = Math.Round(defCeiling * defRate, 2),
+                    EffectiveFromMonth = 1,
+                    EffectiveToMonth = 12,
+                    IsOverride = false,
+                    Notes = (string?)null,
+                } };
+            return ovs.Select(ov =>
             {
-                Year = y,
-                WageCeiling = ceiling,
-                RatePercent = rate * 100m,
-                EmployerRatePercent = ov?.EmployerRatePercent ?? defRate * 100m,
-                MaxMonthlyContribution = Math.Round(ceiling * rate, 2),
-                IsOverride = ov != null,
-                ov?.Notes,
-            };
+                var rate = ov.RatePercent / 100m;
+                var (f, t) = SsoRateSchedule.NormalizeRange(ov.EffectiveFromMonth, ov.EffectiveToMonth);
+                return new
+                {
+                    Year = y,
+                    WageCeiling = ov.WageCeiling,
+                    RatePercent = rate * 100m,
+                    EmployerRatePercent = ov.EmployerRatePercent,
+                    MaxMonthlyContribution = Math.Round(ov.WageCeiling * rate, 2),
+                    EffectiveFromMonth = f,
+                    EffectiveToMonth = t,
+                    IsOverride = true,
+                    ov.Notes,
+                };
+            }).ToArray();
         }).ToList();
         return Ok(new ApiResponse<object>(true, rows));
     }
@@ -611,11 +636,33 @@ public class PayrollController : ControllerBase
         if (req.WageCeiling <= 0 || req.RatePercent <= 0 || req.RatePercent > 30)
             return BadRequest(new ApiResponse<object>(false, null, "เพดานค่าจ้าง/อัตราสมทบไม่ถูกต้อง"));
 
-        var existing = await db.SsoYearConfigs
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted);
+        var (fromM, toM) = SsoRateSchedule.NormalizeRange(req.EffectiveFromMonth, req.EffectiveToMonth);
+
+        var yearRows = await db.SsoYearConfigs
+            .Where(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted)
+            .ToListAsync();
+        // แถวเดิมของ "ช่วงเดียวกันเป๊ะ" = แก้ไข · ช่วงใหม่ = เพิ่มแถว
+        var existing = yearRows.FirstOrDefault(c =>
+            c.EffectiveFromMonth == fromM && c.EffectiveToMonth == toM);
         if (existing == null)
         {
-            existing = new Models.Entities.SsoYearConfig { CompanyId = companyId, Year = year };
+            // ช่วงที่ซ้อนอยู่ข้างในช่วงกว้างกว่าเป็นเรื่องปกติ (อัตราทั้งปี +
+            // ประกาศลดชั่วคราวบางเดือน) — ตัวอ่านเลือก "ช่วงที่แคบกว่า" เสมอ
+            // ⛔ ที่รับไม่ได้คือทับกันโดย**กว้างเท่ากัน** (เช่น 1–6 กับ 4–9)
+            // เพราะไม่มีเกณฑ์ตัดสิน ⇒ ผลจะขึ้นกับลำดับแถว
+            var clash = yearRows.FirstOrDefault(c => SsoRateSchedule.RangesAmbiguous(
+                c.EffectiveFromMonth, c.EffectiveToMonth, fromM, toM));
+            if (clash != null)
+                return BadRequest(new ApiResponse<object>(false, null,
+                    $"ช่วงเดือน {fromM}–{toM} ทับกับค่าที่ตั้งไว้แล้วแบบตัดสินไม่ได้ "
+                    + $"(เดือน {clash.EffectiveFromMonth}–{clash.EffectiveToMonth} ปี {year} กว้างเท่ากัน) — "
+                    + "แก้ช่วงเดิมก่อน หรือเลือกช่วงที่ไม่ทับกัน"));
+
+            existing = new Models.Entities.SsoYearConfig
+            {
+                CompanyId = companyId, Year = year,
+                EffectiveFromMonth = fromM, EffectiveToMonth = toM,
+            };
             db.SsoYearConfigs.Add(existing);
         }
         existing.WageCeiling = req.WageCeiling;
@@ -624,30 +671,46 @@ public class PayrollController : ControllerBase
         existing.Notes = req.Notes;
         existing.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
+        var scope = fromM == 1 && toM == 12 ? "ทั้งปี" : $"เดือน {fromM}–{toM}";
         return Ok(new ApiResponse<object>(true, new
         {
             existing.Year,
             existing.WageCeiling,
             existing.RatePercent,
+            existing.EffectiveFromMonth,
+            existing.EffectiveToMonth,
             MaxMonthlyContribution = Math.Round(existing.WageCeiling * existing.RatePercent / 100m, 2),
-        }, $"บันทึกค่าประกันสังคมปี {year} แล้ว — สมทบสูงสุด {existing.WageCeiling * existing.RatePercent / 100m:N2} บาท/เดือน"));
+        }, $"บันทึกค่าประกันสังคมปี {year} ({scope}) แล้ว — สมทบสูงสุด {existing.WageCeiling * existing.RatePercent / 100m:N2} บาท/เดือน"));
     }
 
     /// <summary>Remove a year override — the statutory default takes over.</summary>
     [HttpDelete("sso-config/{year:int}")]
     public async Task<ActionResult<ApiResponse<object>>> DeleteSsoConfig(
-        Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db)
+        Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db,
+        [FromQuery] int? fromMonth = null, [FromQuery] int? toMonth = null)
     {
         var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
         var y = year > 2400 ? year - 543 : year;
-        var existing = await db.SsoYearConfigs
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted);
-        if (existing == null)
+        // ปีเดียวมีได้หลายช่วงเดือน — ระบุช่วงเพื่อลบเฉพาะช่วงนั้น
+        // ไม่ระบุ = ลบทั้งปี (พฤติกรรมเดิมตอนที่หนึ่งปีมีได้แถวเดียว)
+        var rows = await db.SsoYearConfigs
+            .Where(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted)
+            .ToListAsync();
+        if (fromMonth.HasValue || toMonth.HasValue)
+        {
+            var (f, t) = SsoRateSchedule.NormalizeRange(fromMonth, toMonth);
+            rows = rows.Where(c => c.EffectiveFromMonth == f && c.EffectiveToMonth == t).ToList();
+        }
+        if (rows.Count == 0)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบค่าตั้งของปีนี้"));
-        existing.IsDeleted = true;
-        existing.UpdatedAt = DateTime.UtcNow;
+        foreach (var r in rows)
+        {
+            r.IsDeleted = true;
+            r.UpdatedAt = DateTime.UtcNow;
+        }
         await db.SaveChangesAsync();
-        return Ok(new ApiResponse<object>(true, null, $"ลบค่าตั้งปี {y} แล้ว — กลับไปใช้ตารางตามกฎหมาย"));
+        return Ok(new ApiResponse<object>(true, null,
+            $"ลบค่าตั้งปี {y} จำนวน {rows.Count} ช่วง แล้ว — กลับไปใช้ตารางตามกฎหมาย"));
     }
 
     // ===== Tax-rule config (PIT brackets + allowances รายปี) =====

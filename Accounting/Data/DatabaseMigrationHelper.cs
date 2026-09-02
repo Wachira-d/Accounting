@@ -5903,6 +5903,37 @@ public static class DatabaseMigrationHelper
              ORDER BY u."AuthProvider", u."AuthProviderId", u."CreatedAt"
             ON CONFLICT DO NOTHING;
             """,
+
+            // หมายเหตุภายในของเอกสาร (ไม่พิมพ์ลงกระดาษ) — มีบน entity มานานแล้ว
+            // แต่ไม่เคยมีบรรทัด ADD COLUMN ⇒ ฐานที่สร้างก่อนเพิ่มพร็อพเพอร์ตี้จะ
+            // ไม่มีคอลัมน์นี้. ใช้เก็บ "คำเตือนที่ผู้ใช้กดรับทราบตอนอนุมัติ"
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InternalNotes" text NULL;""",
+
+            // อัตรา/เพดานประกันสังคมมีผลเป็น "ช่วงเดือน" ไม่ใช่ทั้งปี — แถวเก่า
+            // default 1–12 = ทั้งปี จึงให้ผลเหมือนเดิมทุกประการ
+            """ALTER TABLE "SsoYearConfigs" ADD COLUMN IF NOT EXISTS "EffectiveFromMonth" integer NOT NULL DEFAULT 1;""",
+            """ALTER TABLE "SsoYearConfigs" ADD COLUMN IF NOT EXISTS "EffectiveToMonth" integer NOT NULL DEFAULT 12;""",
+
+            // ===== เลข placeholder รุ่นเก่าบนเอกสาร **Draft** =====
+            // สองทางเข้าเคยออกเลขเองโดยไม่ผ่าน DocumentNumberGenerator
+            // (CrossTenant "INV-yyyyMMdd-XXXXXX" · TimeBilling "TINV-…") ⇒ ใบพวกนี้
+            // ถือเลขที่ไม่อยู่ในลำดับ gap-free §86/4 อยู่แล้ว. ต้นทางแก้เป็น
+            // DRAFT-{guid} แล้ว แต่แถวเก่ายังค้าง ⇒ พออนุมัติจะได้เลขเดิมติดไป
+            // (เพราะเครื่องออกเลขข้ามใบที่ "มีเลขแล้ว")
+            //
+            // ⚠️ แตะเฉพาะ Status = 0 (Draft) เท่านั้น — ใบที่อนุมัติแล้วห้ามเปลี่ยน
+            // เลขย้อนหลังเด็ดขาด (§86/4 + เลขนั้นเข้ารายงานภาษีขายไปแล้ว)
+            // ⚠️ ต้องมีตัวอักษร A-F อย่างน้อยหนึ่งตัวในหกหลักท้าย: เลขที่ระบบออกจริง
+            // เป็นลำดับเลขศูนย์นำหน้า (ตัวเลขล้วน) ⇒ เงื่อนไขนี้กัน "INV-20260101-000042"
+            // ของบริษัทที่ตั้งรูปแบบเลขคล้ายกันไม่ให้โดนแตะ
+            """
+            UPDATE "Documents"
+               SET "DocumentNumber" = 'DRAFT-' || gen_random_uuid()
+             WHERE "Status" = 0
+               AND "IsDeleted" = false
+               AND "DocumentNumber" ~ '^(INV|TINV)-[0-9]{8}-[0-9A-F]{6}$'
+               AND "DocumentNumber" ~ '[A-F]{1}[0-9A-F]*$';
+            """,
         };
 
         foreach (var sql in statements)

@@ -107,16 +107,30 @@ public class PayrollService : IPayrollService
         }
     }
 
-    /// <summary>Resolve the SSO parameters effective for a year: the
-    /// company's SsoYearConfigs override row wins; otherwise the statutory
-    /// schedule (SsoRateSchedule). Returns employee/employer monthly caps
-    /// pre-computed (= ceiling × rate). Buddhist-era years normalised.</summary>
+    /// <summary>Resolve the SSO parameters effective for a **year + month**:
+    /// the company's SsoYearConfigs override row covering that month wins;
+    /// otherwise the statutory schedule (SsoRateSchedule). Returns
+    /// employee/employer monthly caps pre-computed (= ceiling × rate).
+    /// Buddhist-era years normalised.
+    ///
+    /// <para>⚠️ <paramref name="month"/> ไม่มีค่า default โดยตั้งใจ — ประกาศลด
+    /// อัตราสมทบออกเป็นช่วงเดือน ⇒ เส้นทางที่ "ไม่รู้เดือน" จะคิดอัตราผิดเงียบ ๆ
+    /// ให้ผู้เรียกระบุเสมอ (ทุกจุดที่เรียกมีเดือนอยู่ในมืออยู่แล้ว)</para></summary>
     internal async Task<(decimal MaxBase, decimal Rate, decimal EmployerRate, decimal MaxContribution, decimal EmployerMaxContribution)>
-        GetSsoParamsAsync(Guid companyId, int year)
+        GetSsoParamsAsync(Guid companyId, int year, int month)
     {
         var y = year > 2400 ? year - 543 : year;
-        var cfg = await _db.Set<SsoYearConfig>().AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted);
+        var cfg = (await _db.Set<SsoYearConfig>().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted)
+                .ToListAsync())
+            .Where(c => Accounting.Helpers.SsoRateSchedule.CoversMonth(
+                c.EffectiveFromMonth, c.EffectiveToMonth, month))
+            // ช่วงที่แคบกว่าชนะ (ประกาศลดชั่วคราวชนะอัตราทั้งปี) — ผลลัพธ์ไม่
+            // ขึ้นกับลำดับแถว
+            .OrderBy(c => Accounting.Helpers.SsoRateSchedule.SpanWidth(
+                c.EffectiveFromMonth, c.EffectiveToMonth))
+            .ThenBy(c => c.EffectiveFromMonth)
+            .FirstOrDefault();
         decimal ceiling, rate, erRate;
         if (cfg != null)
         {
@@ -1088,7 +1102,7 @@ public class PayrollService : IPayrollService
 
         // ── สร้าง run + details ──
         // อัตรา/เพดาน ปกส. ของปีนั้น — ใช้อนุมานฐานค่าจ้างเมื่อระบบนอกไม่ได้ส่งมา
-        var importSso = await GetSsoParamsAsync(companyId, request.Year);
+        var importSso = await GetSsoParamsAsync(companyId, request.Year, request.Month);
         var count = await _db.Set<PayrollRun>()
             .CountAsync(r => r.CompanyId == companyId && r.Year == request.Year);
         var payrollNumber = $"PR-{request.Year}{request.Month:D2}-{(count + 1):D3}";
@@ -1263,7 +1277,7 @@ public class PayrollService : IPayrollService
 
         // อัตรา/เพดาน ปกส. ของปีนั้น — หน้าจอใช้คำนวณตัวอย่างตอนแก้ฐานค่าจ้าง
         // (ค่ามาจากเซิร์ฟเวอร์ ไม่ใช่ตารางที่หน้าเว็บฝังเอง)
-        var ssoForUi = await GetSsoParamsAsync(companyId, run.Year);
+        var ssoForUi = await GetSsoParamsAsync(companyId, run.Year, run.Month);
         return MapToPayrollRunResponse(run) with
         {
             Details = lines,
@@ -1338,7 +1352,7 @@ public class PayrollService : IPayrollService
         // ไม่เท่ากัน (เคสจริง: ลูกจ้าง 4,381 vs นายจ้าง 4,403 ต่างกัน 22 = ยอด
         // ของพนักงานที่ถูกแก้พอดี) ทั้งที่ ม.33 ใช้ฐานเดียวกันทั้งคู่
         // และไฟล์ สปส.1-10 ก็ประกาศค่าจ้างที่ 5% ไม่ลงตัวกับเงินสมทบ
-        var ssoParams = await GetSsoParamsAsync(companyId, run.Year);
+        var ssoParams = await GetSsoParamsAsync(companyId, run.Year, run.Month);
         if (req.SocialSecurityBase.HasValue)
         {
             // ผู้ใช้ระบุ "ค่าจ้างที่ใช้เป็นฐาน" มาเอง (ม.5: เบี้ยเลี้ยง/ค่าน้ำมัน
@@ -1547,7 +1561,7 @@ public class PayrollService : IPayrollService
             // SSO parameters effective for THIS run's year — the wage ceiling
             // steps up by royal decree (15,000 → 17,500 in 2026 → 20,000 in
             // 2029 → 23,000 in 2032) and a company can override per year.
-            var sso = await GetSsoParamsAsync(companyId, run.Year);
+            var sso = await GetSsoParamsAsync(companyId, run.Year, run.Month);
 
             foreach (var emp in employees)
             {
@@ -1959,7 +1973,7 @@ public class PayrollService : IPayrollService
     private async Task<int> NormalizeRunSsoAsync(
         Guid companyId, PayrollRun run, string reason, string actor)
     {
-        var sso = await GetSsoParamsAsync(companyId, run.Year);
+        var sso = await GetSsoParamsAsync(companyId, run.Year, run.Month);
         var details = run.Details is { Count: > 0 }
             ? run.Details.ToList()
             : await _db.Set<PayrollDetail>()
@@ -3702,7 +3716,7 @@ public class PayrollService : IPayrollService
             .ToListAsync();
 
         // Wage base cap follows the YEAR being reported, not a fixed 15,000.
-        var ssoParams = await GetSsoParamsAsync(companyId, year);
+        var ssoParams = await GetSsoParamsAsync(companyId, year, month);
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
@@ -3954,7 +3968,7 @@ public class PayrollService : IPayrollService
         // ค้างค่าเดิม ⇒ ระบบลง JE นำส่ง 8,784 แต่ สปส. เรียกเก็บจริง 8,762
         // (= 4,381 × 2) ⇒ เงินฝากในบัญชีแยกประเภทหายเกินจริง 22 บาท และกระทบยอด
         // ธนาคารไปตลอดจนกว่าจะมีคนสังเกต. **ห้ามลงบัญชีก่อนแล้วค่อยหวังว่าจะตรง**
-        var ssoCheck = await GetSsoParamsAsync(companyId, run.Year);
+        var ssoCheck = await GetSsoParamsAsync(companyId, run.Year, run.Month);
         var expectedEmployer = Accounting.Helpers.SsoWageBase.EmployerFrom(
             run.TotalSocialSecurityEmployee, ssoCheck.Rate,
             ssoCheck.EmployerRate, decimal.MaxValue);

@@ -96,8 +96,11 @@ public static class SsoWageBase
     public static bool IsConsistent(decimal wageOnFile, decimal contribution,
         decimal rate, decimal ceiling, decimal maxContribution)
     {
+        // ⚠️ ต้องใช้ค่าคงที่ตัวเดียวกับ Normalize — ตัวเลขคู่เดียวกันถูกตัดสินสอง
+        // จังหวะ (ตอนเขียนยอด กับตอนตรวจก่อนยื่น) ถ้าเกณฑ์ต่างกันแม้นิดเดียว
+        // จะเกิดช่วงที่ "ผ่านตอนเขียน แต่ตกตอนยื่น" โดยไม่มีใครแก้ให้ได้
         var expected = Contribution(Clamp(wageOnFile, ceiling), rate, maxContribution);
-        return Math.Abs(expected - contribution) <= 1m;
+        return Math.Abs(expected - contribution) <= PairTolerance;
     }
 
     /// <summary>ทำให้ "ฐาน · ลูกจ้าง · นายจ้าง" ของแถวหนึ่งสอดคล้องกัน — **ตัวตัดสิน

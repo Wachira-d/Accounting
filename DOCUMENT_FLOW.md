@@ -345,6 +345,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       2 เท่าของภาษีตามใบ (§89(5)) + ปรับอาญา (§90(12))
     - เอกสารที่ VAT เข้ารายงานแต่หัวไม่มีคำว่าใบกำกับ → `CollectApprovalWarningsAsync`
       เตือนตอนอนุมัติ (ไม่ block — ขายปลีกที่ลูกค้าไม่ขอใบกำกับเป็นเคสปกติ) และ
+      **เมื่อผู้ใช้กด "ยืนยันทั้งที่มีคำเตือน" (`acknowledgeWarnings=true`)
+      ระบบบันทึกร่องรอย 2 ที่**: `Document.InternalNotes` (หมายเหตุ**ภายใน** —
+      ไม่พิมพ์ลงกระดาษ ต่างจาก `Notes`) + `AuditLog` `APPROVE-ACK-WARNINGS`
+      (มี hash chain) — เดิมคำเตือนที่ถูก acknowledge หายไปเฉย ๆ ⇒ ใบที่อนุมัติ
+      ทั้งที่รู้ว่าผิด §86 หน้าตาเหมือนใบที่ไม่เคยมีคำเตือน ไม่มีอะไรตอบผู้สอบบัญชี
+      (`DocumentService.ApproveDocumentAsync` · echo กลับผ่าน
+      `DocumentResponse.InternalNotes` และแสดงเป็นการ์ดสีเหลืองในหน้ารายละเอียด)
       `TaxService.NotFullTaxInvoice` ติดธงบรรทัดในรายงานภาษีขายว่า
       "[ไม่ใช่ใบกำกับเต็มรูป — ลูกค้าเคลมภาษีซื้อไม่ได้]" เพื่อให้เห็นทั้งงวดในที่เดียว
     - แก้ย้อนหลังใบที่ออกไปแล้ว: เติมข้อมูลผู้ซื้อ → **พิมพ์ใหม่จากใบเดิม**
@@ -2670,7 +2677,50 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-01 (รอบ 122 — **"ใบแจ้งหนี้ที่เป็น_
+_Last verified against codebase: 2026-09-02 (รอบ 123 — **เก็บงานค้างทั้งชุด**:_
+_(1) **คำเตือนที่กด "รับทราบ" แล้วต้องเหลือร่องรอย** — `acknowledgeWarnings=true`_
+_เขียน `Document.InternalNotes` (ไม่พิมพ์ลงกระดาษ — **ห้ามใช้ `Notes` เพราะ_
+_`SanitizeNotesForPrint` พิมพ์ลงใบที่ส่งลูกค้า**) + `AuditLog`_
+_`APPROVE-ACK-WARNINGS` และ echo กลับผ่าน `DocumentResponse.InternalNotes`_
+_· พบว่า `Documents."InternalNotes"` **มีบน entity แต่ไม่เคยมี ADD COLUMN**_
+_(ฐานที่สร้างก่อนเพิ่มพร็อพเพอร์ตี้จะไม่มีคอลัมน์) → เพิ่มใน migration_
+_(2) **migration เลข placeholder เก่าบนเอกสาร Draft** — `INV-yyyyMMdd-XXXXXX`/_
+_`TINV-…` จากสองทางที่เคย bypass เครื่องออกเลข → `DRAFT-{uuid}` **เฉพาะ_
+_`Status = 0`** (ใบที่อนุมัติแล้วห้ามเปลี่ยนเลขย้อนหลัง §86/4) และต้องมี A-F_
+_ในหกหลักท้าย (เลขที่ generator ออกเป็นตัวเลขล้วน — กันบริษัทที่ตั้งรูปแบบเลข_
+_คล้ายกันไม่ให้โดนแตะ)_
+_(3) **อัตรา/เพดานประกันสังคมเป็น "ช่วงเดือน" ไม่ใช่ทั้งปี** — ประกาศลดอัตราของ_
+_ไทยออกเป็นช่วงเดือนเสมอ (1% พ.ค.–ก.ค. 2563 · 2.5% ม.ค.–ก.พ. 2565) แต่_
+_`SsoYearConfig` เก็บได้ปีละค่าเดียว ⇒ ผู้ใช้ต้องแก้แถวเดิมกลางปี ซึ่ง**เปลี่ยน_
+_อัตราของเดือนที่ยื่น สปส. ไปแล้วย้อนหลังด้วย** → เพิ่ม_
+_`EffectiveFromMonth`/`EffectiveToMonth` + กติกา **"ช่วงแคบกว่าชนะ"**_
+_(`SsoRateSchedule.SpanWidth`) ⇒ ตั้ง "ทั้งปี 5% + ลด 1% เฉพาะ 5–7" ได้โดยไม่ต้อง_
+_ตัดปีเป็นสามท่อน และผลไม่ขึ้นกับลำดับแถว · `GetSsoParamsAsync(companyId, year,_
+_**month**)` ไม่มี default ให้เดือน (เส้นที่ "ไม่รู้เดือน" จะคิดอัตราผิดเงียบ ๆ)_
+_· ปฏิเสธเฉพาะช่วงที่ทับกันแบบ**กว้างเท่ากัน** (`RangesAmbiguous`)_
+_(4) **PDPA**: `ApplyErasureAsync` ถอด `UserExternalLogins` + `AuthProvider`/_
+_`AuthProviderId` + refresh token (บัญชีที่ anonymise แล้วแต่ยังผูก Google/LINE_
+_กด SSO ก็เข้าได้ตามปกติ — เส้น SSO ค้นด้วย `ProviderUserId` ไม่ได้ดูอีเมล =_
+_"ทางเข้าที่ยังเปิดอยู่ = การลบที่ยังไม่จบ") · `GenerateAccessReportAsync`_
+_คืนบัญชีภายนอกที่ผูกไว้ (ม.30)_
+_(5) `ExternalLoginResponse.LinkedAt` เคยแมป `ConfirmedAt` (ยืมช่องผิดความหมาย —_
+_การผูกที่ยังไม่ยืนยัน = "ไม่มีวันที่ผูก") → แยกเป็น `LinkedAt`(CreatedAt) +_
+_`ConfirmedAt` + `LinkedFromIp` (คอลัมน์ที่เก็บมาตลอดแต่ไม่มีใครอ่าน)_
+_(6) `SsoLoginRequest.InvitationToken` ถูกใช้บนเส้น **บัญชีเดิม** ด้วย (เดิม_
+_ใช้เฉพาะตอนสมัครใหม่ ⇒ คนที่มีบัญชีแล้วถูกเชิญ กดลิงก์แล้วเลือก Google =_
+_คำเชิญค้าง Pending ตลอดไปโดยไม่มีอะไรบอก) + กันเพิ่ม `CompanyUser` ซ้ำ_
+_(7) `js/sso.js`: state ใช้ `crypto.getRandomValues` (ไม่ใช่ `Math.random`) ·_
+_เลิกเดา provider เป็น 'Line' เมื่ออ่าน sessionStorage ไม่ได้ (ข้อความจะโทษ_
+_ผู้ให้บริการผิดตัว) · `sessionStorage` เขียนไม่ได้ → **หยุดพร้อมบอกทางแก้**_
+_แทนพาเดินครบรอบไปเจอ "สถานะไม่ตรงกัน" · `Sso.displayName` เป็นตัวตัดสินชื่อ_
+_ที่โชว์ ให้ตรงกับ `SsoIdentityPolicy.DisplayName` ฝั่งเซิร์ฟเวอร์_
+_(8) ข้อความ Facebook ที่โทษ "ตัวบล็อกโฆษณา" อีก 2 จุด (สาเหตุจริงคือ CSP ของ_
+_ระบบเอง ซึ่งผู้ใช้แก้ไม่ได้) · `SsoWageBase.IsConsistent` ใช้ `PairTolerance`_
+_ตัวเดียวกับ `Normalize` (เกณฑ์ต่างกัน = "ผ่านตอนเขียน ตกตอนยื่น") ·_
+_`ReadSsoSignupTicket` ตรึง `ValidAlgorithms` · ด่าน "provider เปิดใช้หรือยัง"_
+_ยุบเป็น `EnsureProviderEnabled` ตัวเดียว (สองสำเนาเดิมมี `_ => LineEnabled`_
+_ที่จะปล่อย provider ตัวที่สี่ผ่านเงียบ ๆ));_
+_ก่อนหน้า 2026-09-01 (รอบ 122 — **"ใบแจ้งหนี้ที่เป็น_
 _ใบกำกับภาษีในตัว ใช้เลข INV หรือ TIV?"**: ยืนยันกติกาเดิมถูกแล้ว — ใบรวมคือ_
 _`TaxInvoice + CombinedInvoiceTaxInvoice` (เลข TIV · หัว "ใบแจ้งหนี้/ใบกำกับ_
 _ภาษี" · e-Tax T02) ส่วน `DocumentType.Invoice` = INV เสมอ (เล่ม TIV มีเฉพาะ_

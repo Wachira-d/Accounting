@@ -33,4 +33,55 @@ public static class SsoRateSchedule
         var (ceiling, rate) = GetDefault(year);
         return Math.Round(ceiling * rate, 2);
     }
+
+    // ===== ช่วงเดือนที่ override มีผล =====
+    // ⚠️ ประกาศลดอัตราสมทบของไทยออกเป็น **ช่วงเดือน** เสมอ (เช่น ลดเหลือ 1%
+    // เดือน พ.ค.–ก.ค. 2563, 2.5% เดือน ม.ค.–ก.พ. 2565) ไม่ใช่ทั้งปี — เดิม
+    // SsoYearConfig เก็บอัตราเดียวต่อปี ⇒ ผู้ใช้ต้องแก้แถวเดิมกลางปี ซึ่ง
+    // **เปลี่ยนอัตราของเดือนที่ยื่นไปแล้วย้อนหลังด้วย** (ไฟล์ สปส.1-10 ที่
+    // สร้างใหม่จะไม่ตรงกับที่ยื่นจริง) จึงต้องเก็บเป็นช่วงเดือนตั้งแต่ต้น
+
+    /// <summary>ทำให้ช่วงเดือนอยู่ในกรอบ 1–12 และเรียงถูกทาง
+    /// (null/0 = ทั้งปี — แถวเก่าก่อนมีคอลัมน์นี้ต้องแปลว่า "ทั้งปี" เหมือนเดิม)</summary>
+    public static (int From, int To) NormalizeRange(int? fromMonth, int? toMonth)
+    {
+        var f = fromMonth is >= 1 and <= 12 ? fromMonth.Value : 1;
+        var t = toMonth is >= 1 and <= 12 ? toMonth.Value : 12;
+        return f <= t ? (f, t) : (t, f);
+    }
+
+    /// <summary>เดือนนี้อยู่ในช่วงที่ override มีผลหรือไม่</summary>
+    public static bool CoversMonth(int? fromMonth, int? toMonth, int month)
+    {
+        var (f, t) = NormalizeRange(fromMonth, toMonth);
+        return month >= f && month <= t;
+    }
+
+    /// <summary>สองช่วงทับกันไหม</summary>
+    public static bool RangesOverlap(int? aFrom, int? aTo, int? bFrom, int? bTo)
+    {
+        var (af, at) = NormalizeRange(aFrom, aTo);
+        var (bf, bt) = NormalizeRange(bFrom, bTo);
+        return af <= bt && bf <= at;
+    }
+
+    /// <summary>ความกว้างของช่วง (จำนวนเดือน) — ใช้เป็นลำดับความ**จำเพาะ**
+    ///
+    /// <para>กติกา: เมื่อหลายแถวครอบเดือนเดียวกัน **ช่วงที่แคบกว่าชนะ** —
+    /// ตรงกับรูปที่กฎหมายออกจริง: อัตราปกติทั้งปี (1–12) + ประกาศลดชั่วคราว
+    /// เฉพาะบางเดือน (เช่น 5–7) ⇒ ผู้ใช้ตั้งสองแถวได้โดยไม่ต้องตัดปีเป็นสามท่อน
+    /// และผลลัพธ์ไม่ขึ้นกับลำดับแถว (ห้าม "ใครมาก่อนชนะ")</para>
+    ///
+    /// <para>ที่ยัง**ห้าม**คือสองช่วง**กว้างเท่ากัน**ที่ทับกัน (เช่น 1–6 กับ 4–9)
+    /// — ตัวนั้นไม่มีเกณฑ์ตัดสิน ต้องให้ผู้ใช้แก้เอง</para></summary>
+    public static int SpanWidth(int? fromMonth, int? toMonth)
+    {
+        var (f, t) = NormalizeRange(fromMonth, toMonth);
+        return t - f + 1;
+    }
+
+    /// <summary>ช่วงสองอันนี้ "กำกวม" ไหม — ทับกันและกว้างเท่ากัน</summary>
+    public static bool RangesAmbiguous(int? aFrom, int? aTo, int? bFrom, int? bTo)
+        => RangesOverlap(aFrom, aTo, bFrom, bTo)
+           && SpanWidth(aFrom, aTo) == SpanWidth(bFrom, bTo);
 }

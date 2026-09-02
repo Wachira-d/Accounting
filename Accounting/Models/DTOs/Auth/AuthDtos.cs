@@ -116,9 +116,14 @@ public record LinkExternalLoginRequest(
 
 /// <summary>บัญชีภายนอกที่ผูกไว้ — หน้าโปรไฟล์ใช้แสดง/ถอด
 /// (ProviderUserId ไม่เคยส่งออก: เป็นตัวระบุตัวบุคคลฝั่ง provider)</summary>
+/// <remarks><c>LinkedAt</c> = วันที่ **ผูก** (<c>CreatedAt</c> ของแถว) ส่วน
+/// <c>ConfirmedAt</c> = วันที่เจ้าของกดยืนยันในอีเมล — คนละความหมาย ห้ามยืมช่อง
+/// เดียวเก็บทั้งสองค่า (การผูกที่ยังไม่ยืนยันจะกลายเป็น "ไม่มีวันที่ผูก" ทันที)
+/// · <c>LinkedFromIp</c> ตอบคำถาม "ใครผูกบัญชีนี้เข้ามา" ให้เจ้าของเห็นเอง</remarks>
 public record ExternalLoginResponse(
     Guid Id, string Provider, string ProviderDisplayName,
-    string? ProviderEmail, DateTime? LinkedAt, DateTime? LastUsedAt, bool Confirmed);
+    string? ProviderEmail, DateTime? LinkedAt, DateTime? LastUsedAt, bool Confirmed,
+    DateTime? ConfirmedAt = null, string? LinkedFromIp = null);
 
 /// <summary>
 /// Returned by GET /api/auth/profile and used to render the signature settings UI.
