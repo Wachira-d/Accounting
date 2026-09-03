@@ -325,6 +325,30 @@ QR/บัตร/redirect → poll → เปลี่ยนหน้าเป็
 | **5** Live + ops | ด่านสลับ live · ป้ายโหมด · หน้ารายการ intent (ค้น/ตรวจสด/บันทึกมือ) · แจ้งเตือนค้าง Pending · refund → ใบลดหนี้ | ผู้ใช้จริงเปิด live ได้เองโดยไม่ต้องให้เราช่วย |
 | **6** provider ที่สอง (พิสูจน์ abstraction) | เขียน adapter ตัวที่สอง (2C2P หรือ KBank QR) โดย**ไม่แตะ**ทางเข้าและ intent service | ถ้าต้องแก้ไฟล์นอกโฟลเดอร์ adapter = abstraction รั่ว ต้องแก้ก่อนปิดเฟส |
 
+### 7.1 บันทึกการสร้างจริง
+
+| เฟส | สถานะ | หมายเหตุ |
+| --- | --- | --- |
+| **1** แกน | ✅ | `PaymentProviderConfig`/`PaymentIntent`/`PaymentIntentEvent` + migration (unique index กันซ้ำ 2 ชั้น: idempotency key ต่อบริษัท + charge id ต่อ provider) · `IPaymentProvider` · `ManualSlipPaymentProvider` · `Helpers/PaymentIntentPolicy` (บริสุทธิ์ + 14 เทสต์) · `PaymentIntentService` (ล็อกต่อ source ตอนสร้าง · ต่อ intent ตอนเปลี่ยนสถานะ) · `Payment`/`PosPayment` มี `PaymentIntentId` · `tools/payment_provider_boundary_check.py` — **ยังไม่เปลี่ยนพฤติกรรมของทางเข้าใดเลย** ตามเกณฑ์ผ่านของเฟสนี้ |
+
+**สิ่งที่พบระหว่างทำเฟส 1:**
+
+1. **"ล้มเหลว/หมดอายุ" ต้องเดินหน้าไป "สำเร็จ" ได้** — provider ตัดสิน timeout ที่ 10 นาที
+   แต่ธนาคารยืนยันการโอนที่นาทีที่ 11 เกิดขึ้นจริง · ถ้าห้ามไว้ = ลูกค้าจ่ายแล้วระบบไม่รับ
+   ซึ่งเป็นเคสร้องเรียนที่แก้ยากที่สุด (ต้องคืนเงินแล้วให้จ่ายใหม่)
+2. **webhook ซ้ำต้องเป็น no-op ไม่ใช่ error** — ตอบ error ให้ provider = มัน retry ไม่รู้จบ
+3. **ล็อกสองระดับคนละคีย์** — ตอนถามว่า "มี intent อยู่แล้วไหม" ต้องล็อกที่ **source**
+   (สองแท็บกดจ่ายพร้อมกันต้องได้ QR ใบเดียว) · ตอนเปลี่ยนสถานะล็อกที่ **intent**
+   (webhook กับ job ต้องไม่เขียนทับกัน) · ใช้คีย์เดียวกันจะล็อกกว้างเกินจนจ่ายพร้อมกัน
+   คนละบิลไม่ได้
+4. **เรียก provider หลังบันทึกแถวแล้วเท่านั้น** — ถ้าสร้าง charge สำเร็จแต่เราล้มก่อนบันทึก
+   จะมี charge ลอยที่ผูกกับอะไรไม่ได้ = เงินลูกค้าหายในระบบเรา
+5. **`checker` รุ่นแรกฟ้องผิด 16 จุด** — จับ "ชื่อเจ้า" เปล่า ๆ แล้วไปโดน `stripe`
+   (สลับสีแถวตาราง) และตารางคำสำคัญ OCR/สเตทเมนต์ธนาคารที่มีชื่อ gateway อย่างถูกต้อง ·
+   ตามกฎ "checker ที่ฟ้องผิด = checker ที่พังแล้ว" เปลี่ยนมาจับเฉพาะ **ร่องรอยการเชื่อมต่อ**
+   (โดเมน API/CDN · prefix ของคีย์) ซึ่งโผล่โดยบังเอิญไม่ได้ + เพิ่ม regression guard
+   ใน negative test
+
 **ต้องสร้าง checker**: `tools/payment_provider_boundary_check.py` — ฟ้องเมื่อไฟล์นอก
 `Services/Payments/Providers/**` อ้างชื่อ provider (`omise`, `api.omise.co`, `pkey_`, `skey_`)
 หรือเมื่อ `ChargeRequest`/DTO ใดมี property ชื่อคล้ายเลขบัตร · negative test ทั้งสองแบบ

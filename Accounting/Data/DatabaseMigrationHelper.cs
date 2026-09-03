@@ -5808,6 +5808,32 @@ public static class DatabaseMigrationHelper
             // ไม่งั้นทุก tenant ที่อัปเกรดมาจะล็อกตัวเองออกจากระบบทันที)
             """ALTER TABLE "CompanyUsers" ADD COLUMN IF NOT EXISTS "AllowedBranchIds" text NULL;""",
 
+            // ═══ Payment gateway เฟส 1: ชั้นกลาง (PAYMENT_GATEWAY_DESIGN.md) ═══
+            // ระบบมี 4 เส้นทางรับเงินแบบสลิปที่ต่างคนต่างเขียน — ถ้าต่อ gateway ทีละทาง
+            // จะได้สำเนา 4 ชุดที่ drift แน่นอน · ทุกทางเข้าจึงเดินผ่าน PaymentIntent
+            // คีย์ทุกช่องผ่าน ISecretProtector เท่านั้น (SitePaymentGateway เดิมใช้
+            // EncryptionHelper คนละทางกับที่ webhook ใช้ถอด = สองทางเข้ารหัสในไฟล์เดียว)
+            """CREATE TABLE IF NOT EXISTS "PaymentProviderConfigs" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "CompanyId" uuid NOT NULL, "ProviderCode" varchar(50) NOT NULL, "DisplayName" varchar(200) NULL, "TestPublicKey" text NULL, "TestSecretKeyProtected" text NULL, "LivePublicKey" text NULL, "LiveSecretKeyProtected" text NULL, "WebhookSecretProtected" text NULL, "Mode" integer NOT NULL DEFAULT 0, "LiveEnabledAt" timestamptz NULL, "LastTestPassedAt" timestamptz NULL, "LastWebhookAt" timestamptz NULL, "EnabledMethodsJson" text NULL, "ClearingAccountId" uuid NULL, "FeeExpenseAccountId" uuid NULL, "ExpectedFeePercentByMethodJson" text NULL, "WhtOnFee" integer NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_PaymentProviderConfigs_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id"));""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PaymentProviderConfigs_Company_Provider" ON "PaymentProviderConfigs" ("CompanyId", "ProviderCode") WHERE "IsDeleted" = false;""",
+
+            """CREATE TABLE IF NOT EXISTS "PaymentIntents" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "CompanyId" uuid NOT NULL, "ProviderConfigId" uuid NULL, "ProviderCode" varchar(50) NOT NULL, "SourceKind" integer NOT NULL, "SourceId" uuid NOT NULL, "SiteId" uuid NULL, "ContactId" uuid NULL, "Amount" numeric(18,2) NOT NULL DEFAULT 0, "Currency" varchar(3) NOT NULL DEFAULT 'THB', "Description" text NULL, "CustomerEmail" text NULL, "CustomerPhone" text NULL, "Status" integer NOT NULL DEFAULT 0, "MethodKind" integer NOT NULL DEFAULT 1, "ProviderRef" varchar(200) NULL, "ProviderStatusRaw" varchar(100) NULL, "QrPayload" text NULL, "QrExpiresAt" timestamptz NULL, "ReturnUrl" text NULL, "AuthorizeUrl" text NULL, "FailureCode" varchar(100) NULL, "FailureMessage" text NULL, "FeeEstimated" numeric(18,2) NOT NULL DEFAULT 0, "FeeActual" numeric(18,2) NULL, "SettledAmount" numeric(18,2) NULL, "SettledAt" timestamptz NULL, "SettlementRef" varchar(200) NULL, "ConfirmedAt" timestamptz NULL, "ConfirmedBy" varchar(200) NULL, "ReceiptDocumentId" uuid NULL, "JournalEntryId" uuid NULL, "SettlementJournalEntryId" uuid NULL, "AttemptCount" integer NOT NULL DEFAULT 0, "LastPolledAt" timestamptz NULL, "IdempotencyKey" varchar(300) NOT NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_PaymentIntents_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id"));""",
+            // กันสร้าง intent ซ้ำสำหรับการจ่ายครั้งเดียวกัน (สองแท็บกดพร้อมกัน)
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PaymentIntents_Idem" ON "PaymentIntents" ("CompanyId", "IdempotencyKey");""",
+            // charge id ของ provider ต้องผูกกับ intent เดียว — webhook + poll เข้ามาพร้อมกันได้
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PaymentIntents_ProviderRef" ON "PaymentIntents" ("ProviderCode", "ProviderRef") WHERE "ProviderRef" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_PaymentIntents_Source" ON "PaymentIntents" ("CompanyId", "SourceKind", "SourceId");""",
+            // job กระทบยอดไล่เฉพาะใบที่ยังเปิดอยู่ (Created=0 · Pending=1)
+            """CREATE INDEX IF NOT EXISTS "IX_PaymentIntents_Open" ON "PaymentIntents" ("Status", "LastPolledAt") WHERE "Status" IN (0, 1);""",
+
+            """CREATE TABLE IF NOT EXISTS "PaymentIntentEvents" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "CompanyId" uuid NOT NULL, "IntentId" uuid NOT NULL, "At" timestamptz NOT NULL DEFAULT now(), "Source" integer NOT NULL, "FromStatus" integer NULL, "ToStatus" integer NOT NULL, "PayloadJson" text NULL, "Note" text NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_PaymentIntentEvents_Intents" FOREIGN KEY ("IntentId") REFERENCES "PaymentIntents"("Id") ON DELETE CASCADE);""",
+            """CREATE INDEX IF NOT EXISTS "IX_PaymentIntentEvents_Intent" ON "PaymentIntentEvents" ("IntentId", "At");""",
+
+            // ผูกการชำระเงินเดิมเข้ากับ intent — ค่า null = รายการก่อนมีระบบนี้ (ปกติ)
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "PaymentIntentId" uuid NULL;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "GatewayFeeAmount" numeric(18,2) NULL;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "GatewayRef" varchar(200) NULL;""",
+            """ALTER TABLE "PosPayments" ADD COLUMN IF NOT EXISTS "PaymentIntentId" uuid NULL;""",
+
             // ศูนย์ช่วยเหลือ (เอกสาร + วิดีโอสอนใช้งาน) — ระดับแพลตฟอร์ม ไม่มี CompanyId
             """CREATE TABLE IF NOT EXISTS "HelpResources" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "Title" varchar(300) NOT NULL DEFAULT '', "Description" text NULL, "Category" integer NOT NULL DEFAULT 1, "ModuleCode" varchar(50) NULL, "Kind" integer NOT NULL DEFAULT 1, "Provider" integer NOT NULL DEFAULT 0, "SourceUrl" text NULL, "StoragePath" text NULL, "FileName" text NULL, "FileSizeBytes" bigint NOT NULL DEFAULT 0, "DurationSeconds" integer NOT NULL DEFAULT 0, "ThumbnailUrl" text NULL, "IsPublished" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "ViewCount" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE INDEX IF NOT EXISTS "IX_HelpResources_Cat" ON "HelpResources" ("Category", "SortOrder") WHERE "IsDeleted" = false;""",

@@ -220,6 +220,10 @@ public class PosPayment : BaseEntity
     public string? ReferenceNo { get; set; }                     // เลขอ้างอิง (card approval, transfer ref)
     public string? CardLastFour { get; set; }                    // บัตร 4 หลักท้าย
     public DateTime PaidAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>รายการชำระเงินผ่าน gateway ที่ทำให้เกิดการรับเงินนี้ (QR บนจอลูกค้า) —
+    /// null = แคชเชียร์กด "รับแล้ว" เอง ซึ่งเป็นพฤติกรรมเดิมและยังใช้ได้ต่อไป</summary>
+    public Guid? PaymentIntentId { get; set; }
 }
 
 // ==================== Service Package (แพ็คเกจบริการ) ====================

@@ -572,6 +572,72 @@ public enum ProductType
     RawMaterial = 5
 }
 
+
+// ==================== Payment gateway (ชั้นกลาง) ====================
+// ออกแบบใน PAYMENT_GATEWAY_DESIGN.md — enum เหล่านี้เป็นภาษาที่ "ทางเข้าทุกทาง"
+// พูดกัน ห้ามมีชื่อ provider โผล่ในนี้
+
+/// <summary>โหมดของคีย์ที่ใช้จริงตอนนี้</summary>
+public enum PaymentProviderMode
+{
+    /// <summary>คีย์ทดสอบ — เงินไม่เข้าจริง · ต้องมีป้ายเตือนทั้งหน้าตั้งค่าและหน้าจ่ายของลูกค้า</summary>
+    Test = 0,
+    Live = 1,
+}
+
+/// <summary>สิ่งที่กำลังจ่าย — ตัวชี้ว่า intent นี้ผูกกับอะไร</summary>
+public enum PaymentSourceKind
+{
+    SiteOrder = 1,             // คำสั่งซื้อหน้าเว็บขายของ
+    Document = 2,              // ใบแจ้งหนี้/ใบวางบิลผ่าน portal ลูกค้า
+    LodgingReservation = 3,    // มัดจำที่พัก
+    SubscriptionPayment = 4,   // ค่าบริการ SaaS ของตัวระบบเอง
+    PosOrder = 5,              // บิล POS (แสดง QR บนจอลูกค้า)
+}
+
+public enum PaymentIntentStatus
+{
+    /// <summary>สร้างแถวแล้ว แต่ยังไม่ได้เรียก provider</summary>
+    Created = 0,
+    /// <summary>มี charge/QR แล้ว กำลังรอลูกค้าจ่าย</summary>
+    Pending = 1,
+    Succeeded = 2,
+    Failed = 3,
+    /// <summary>QR/ลิงก์หมดอายุก่อนลูกค้าจ่าย — ไม่ใช่ความผิดพลาด ต้องเปิดให้สร้างใหม่ได้</summary>
+    Expired = 4,
+    Refunded = 5,
+    PartiallyRefunded = 6,
+}
+
+/// <summary>วิธีจ่ายในภาษาของชั้นกลาง (ไม่ใช่ชื่อ source ของ provider)</summary>
+public enum PaymentMethodKind
+{
+    PromptPay = 1,
+    Card = 2,
+    MobileBanking = 3,
+    InternetBanking = 4,
+    TrueMoney = 5,
+    /// <summary>อัปโหลดสลิปแล้วให้คนตรวจ — เส้นทางเดิมของระบบ ยังต้องมีต่อไปเป็น fallback</summary>
+    ManualSlip = 9,
+}
+
+public enum PaymentEventSource
+{
+    Webhook = 1,
+    Poll = 2,
+    /// <summary>คนกดยืนยันเอง (ตรวจสลิป/แก้เคสค้าง) — ผู้สอบบัญชีถามเสมอว่าใครกด</summary>
+    Manual = 3,
+    System = 4,
+}
+
+/// <summary>หัก ณ ที่จ่ายบนค่าธรรมเนียม gateway — default None จนกว่านักบัญชีของ
+/// ลูกค้าจะยืนยัน (เป็นประเด็นที่ยังตีความต่างกัน ระบบไม่ตัดสินแทน)</summary>
+public enum GatewayFeeWhtMode
+{
+    None = 0,
+    Withhold3Percent = 1,
+}
+
 // ==================== Bank ====================
 public enum BankTransactionType
 {

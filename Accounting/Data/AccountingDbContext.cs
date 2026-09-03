@@ -207,6 +207,11 @@ public class AccountingDbContext : DbContext
 
     // Warehouse Management
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
+
+    // ชั้นกลางของการรับชำระเงินผ่าน gateway (PAYMENT_GATEWAY_DESIGN.md)
+    public DbSet<PaymentProviderConfig> PaymentProviderConfigs => Set<PaymentProviderConfig>();
+    public DbSet<PaymentIntent> PaymentIntents => Set<PaymentIntent>();
+    public DbSet<PaymentIntentEvent> PaymentIntentEvents => Set<PaymentIntentEvent>();
     public DbSet<WarehouseStock> WarehouseStocks => Set<WarehouseStock>();
     public DbSet<StockTransfer> StockTransfers => Set<StockTransfer>();
     public DbSet<StockTransferLine> StockTransferLines => Set<StockTransferLine>();

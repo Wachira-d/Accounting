@@ -261,6 +261,14 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IInvent
 // ผู้เขียนสต็อกตัวเดียวของระบบ — ยุบ Product.CurrentStock กับ WarehouseStock
 // ให้เหลือความจริงเดียว (POS_MULTI_BRANCH_ANALYSIS.md เฟส 0)
 builder.Services.AddScoped<IStockLedger, Accounting.Services.Implementations.Inventory.StockLedger>();
+
+// ── ชั้นกลางของการรับชำระเงินผ่าน gateway (PAYMENT_GATEWAY_DESIGN.md) ──
+// adapter ทุกตัว register เป็น IPaymentProvider ตัวเดียวกัน — PaymentIntentService
+// เลือกจาก ProviderCode ⇒ เพิ่มเจ้าใหม่ = เพิ่มบรรทัดเดียวที่นี่ ไม่แตะทางเข้าเลย
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentProvider,
+    Accounting.Services.Payments.Providers.ManualSlipPaymentProvider>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentIntentService,
+    Accounting.Services.Payments.PaymentIntentService>();
 // 3-way match — PO ↔ GRN ↔ Invoice. Blocks AP overpayment before
 // the cheque goes out.
 builder.Services.AddScoped<Accounting.Services.Implementations.Procurement.IGrnMatchService,

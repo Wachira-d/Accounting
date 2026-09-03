@@ -74,4 +74,9 @@ public static class AdvisoryLockKey
     /// <summary>เพิ่มโควตาเอกสาร (ซื้อ top-up / แลกจากภารกิจ) — part = "reward"/"topup"
     /// เพดานต่อวัน-เดือนจะไร้ผลทันทีถ้าปล่อยให้สองแท็บกดพร้อมกันแล้วผ่านทั้งคู่</summary>
     public const string QuotaGrant = "quota-grant";
+
+    /// <summary>การชำระเงินผ่าน gateway — ล็อกทั้งตอน "มี intent อยู่แล้วไหม" (คีย์ = source)
+    /// และตอนเปลี่ยนสถานะ (คีย์ = intent id) · สองแท็บที่กดจ่ายพร้อมกันต้องได้ QR ใบเดียว
+    /// ไม่ใช่สองใบซ้อน · webhook กับ job กระทบยอดต้องไม่เขียนทับกัน</summary>
+    public const string PaymentIntent = "pay-intent";
 }
