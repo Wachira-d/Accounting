@@ -808,7 +808,27 @@ public record DocumentResponse(
     /// คู่กับ AuditLog <c>APPROVE-ACK-WARNINGS</c> ที่มี hash chain</para></summary>
     string? InternalNotes = null,
     /// <summary>โมดูลที่สร้างเอกสารนี้ (Lodging/Pos/…) — หน้าเว็บใช้ติดป้าย "มาจากระบบจอง"</summary>
-    string? OriginModule = null);
+    string? OriginModule = null,
+
+    // ── ใบกำกับภาษีเต็มรูปที่ออก "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4) ──
+    /// <summary>ใบนี้ถูกแทนที่ด้วยใบกำกับเต็มรูปใบไหน (null = ยังไม่เคยออกใบแทน)
+    /// — ใบที่มีค่านี้จะ<b>ไม่อยู่ในรายงานภาษีขาย</b> (ใบแทนรายงานให้แล้ว)</summary>
+    Guid? ReplacedByDocumentId = null,
+    string? ReplacedByDocumentNumber = null,
+    /// <summary>ใบนี้ออกมาแทนใบไหน (null = ไม่ใช่ใบแทน)</summary>
+    Guid? ReplacesDocumentId = null,
+    string? ReplacesDocumentNumber = null,
+    string? ReplacementReason = null,
+    DateTime? ReplacedAt = null,
+    /// <summary>กดปุ่ม "ออกใบกำกับภาษีเต็มรูป" ได้ไหม — <b>เซิร์ฟเวอร์ตัดสิน</b>
+    /// ด้วย <c>FullTaxInvoiceReplacement.Check</c> ตัวเดียวกับที่ endpoint ใช้
+    ///
+    /// <para>ห้ามให้หน้าเว็บเขียนกติกาเอง (§86/4 ครบไหม · บริษัทจด VAT ไหม ·
+    /// ออกไปแล้วหรือยัง) — defect class "สำเนามือฝั่ง JS ที่ตามหลังอยู่ไม่กี่ธง".
+    /// null = เส้นทางที่ยังไม่ได้คำนวณ (รายการหลายใบ) ≠ "ทำไม่ได้"</para></summary>
+    bool? CanIssueFullTaxInvoice = null,
+    /// <summary>เหตุผลที่กดไม่ได้ (ข้อความไทยพร้อมโชว์) — null เมื่อกดได้</summary>
+    string? FullTaxInvoiceBlockedReason = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

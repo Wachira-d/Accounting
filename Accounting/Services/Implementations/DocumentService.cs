@@ -774,7 +774,7 @@ public partial class DocumentService : IDocumentService
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
-        string? originModule = null)
+        string? originModule = null, bool isFullTaxInvoiceReplacement = false)
     {
         // ── ธง "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" ต้องมาคู่กับชนิด TaxInvoice ──
         // เดิมชนิดไม่ตรง = **ดรอปธงเงียบ ๆ** ⇒ integration/recurring ที่ส่ง
@@ -813,7 +813,10 @@ public partial class DocumentService : IDocumentService
         // และเราเป็นสาเหตุ (LODGING_LICENSING_PLAN §5 · ทีม CPA)
         // ตอนนี้: ใบที่กฎหมายบังคับ → ออกได้เสมอ แล้วคิด overage · ใบที่รอได้ → บล็อกตามเดิม
         var quotaClass = DocumentQuotaPolicy.Classify(
-            request.DocumentType, request.IsDeposit, IsLodgingOrigin(originModule));
+            request.DocumentType, request.IsDeposit, IsLodgingOrigin(originModule),
+            // ใบกำกับที่ออก "แทน" ใบเสร็จ = การขายเดิมที่นับโควตาไปแล้ว —
+            // นับอีกครั้งคือคิดเงินลูกค้าสองเด้งจากงานเดียว
+            isReplacement: isFullTaxInvoiceReplacement);
         var withinQuota = await _subscriptionService.CheckUsageLimitAsync(companyId, "document");
         if (!withinQuota && DocumentQuotaPolicy.CanRefuseWhenOverQuota(quotaClass))
         {
@@ -1562,6 +1565,36 @@ public partial class DocumentService : IDocumentService
         {
             DocumentTitle = await PdfGenerationService.ResolveDocumentTitleAsync(_db, companyId, doc),
         };
+
+        // ── ใบกำกับภาษีเต็มรูปที่ออก "แทน" (§86/6 → §86/4) ──
+        // ปุ่ม/ป้ายบนหน้าเว็บต้องอ่านค่าที่**เซิร์ฟเวอร์คำนวณ**เท่านั้น
+        // (กติกาอยู่ใน FullTaxInvoiceReplacement.Check ตัวเดียวกับ endpoint)
+        if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
+        {
+            var elig = await EvaluateFullTaxInvoiceReplacementAsync(companyId, doc);
+            resp = resp with
+            {
+                CanIssueFullTaxInvoice = elig.Allowed,
+                FullTaxInvoiceBlockedReason = elig.Allowed ? null : elig.Message,
+            };
+        }
+        // เลขที่ของใบที่ผูกกัน — โชว์ให้ผู้ใช้กดไปดูได้ (ห้ามให้เขาไปค้นเองจาก id)
+        var replacementLinkIds = new[] { doc.ReplacedByDocumentId, doc.ReplacesDocumentId }
+            .Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
+        if (replacementLinkIds.Count > 0)
+        {
+            var numbers = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && replacementLinkIds.Contains(d.Id))
+                .Select(d => new { d.Id, d.DocumentNumber })
+                .ToDictionaryAsync(x => x.Id, x => x.DocumentNumber);
+            resp = resp with
+            {
+                ReplacedByDocumentNumber = doc.ReplacedByDocumentId.HasValue
+                    && numbers.TryGetValue(doc.ReplacedByDocumentId.Value, out var byNo) ? byNo : null,
+                ReplacesDocumentNumber = doc.ReplacesDocumentId.HasValue
+                    && numbers.TryGetValue(doc.ReplacesDocumentId.Value, out var ofNo) ? ofNo : null,
+            };
+        }
         return resp;
     }
 
@@ -5116,13 +5149,19 @@ public partial class DocumentService : IDocumentService
                 // บันทึกไม่มีสิทธิ์อนุมัติ): การเงินทั้งหมดอยู่ที่ Payment แล้ว
                 // (JE Dr เงินสด/Cr ลูกหนี้ + PaidAmount) — อนุมัติใบนี้ = ออกเลขจริง
                 // + ประทับผู้อนุมัติ (ลายเซ็น) เท่านั้น ห้าม post JE/บวกยอดซ้ำ
+                // ใบกำกับภาษีเต็มรูปที่ออก "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ: เศรษฐกิจ
+                // ของรายการไม่เปลี่ยนเลย — เงินรับแล้ว รายได้รับรู้แล้ว ภาษีขายลง
+                // 21911 แล้วตั้งแต่ใบเดิม เปลี่ยนแค่ "กระดาษที่ผู้ซื้อถือ" ⇒ post JE
+                // ซ้ำ = รายได้/ภาษีขายเบิ้ล (และ ภ.พ.30 ก็สลับไปนับใบแทนแล้ว)
+                var isFullTaxInvoiceReplacement = doc.ReplacesDocumentId.HasValue;
+
                 if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType)
-                    && !doc.IsSettlementReceipt)
+                    && !doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
                 {
                     await AutoPostToJournalAsync(companyId, doc, approvedBy);
                 }
 
-                if (!doc.IsSettlementReceipt)
+                if (!doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
                     await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
 
                 // เอกสาร settle ที่อ้างเอกสารตั้งหนี้ (PV/Receipt/RV/CIL แปลงมา)
@@ -5184,7 +5223,7 @@ public partial class DocumentService : IDocumentService
                     }
                 }
 
-                if (!doc.IsSettlementReceipt)
+                if (!doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
                 {
                     await ApplyProjectBillingAsync(companyId, doc, +1);
                     await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
@@ -5193,8 +5232,41 @@ public partial class DocumentService : IDocumentService
                 // supersede ใบแจ้งหนี้ต้นทาง: TaxInvoice ที่แปลงจากใบแจ้งหนี้ (approved,
                 // ยังไม่ชำระ) เมื่ออนุมัติ → ล้างใบแจ้งหนี้เดิม (reverse JE + คืน stock +
                 // กลับ project) กัน GL/รายได้/สต๊อกซ้ำ (ภพ.30 นับเฉพาะ TaxInvoice อยู่แล้ว).
-                if (doc.DocumentType == DocumentType.TaxInvoice && doc.RelatedDocumentId.HasValue)
+                if (doc.DocumentType == DocumentType.TaxInvoice && doc.RelatedDocumentId.HasValue
+                    && !isFullTaxInvoiceReplacement)
                     await SupersedeSourceInvoiceAsync(companyId, doc, approvedBy);
+
+                // ── ตราประทับ "ใบเดิมถูกแทนที่แล้ว" (§86/4) ──
+                // ลง ณ **ตอนอนุมัติ** ไม่ใช่ตอนสร้าง: ถ้าประทับตั้งแต่ยังเป็นร่าง
+                // ใบเดิมจะหลุดจากรายงานภาษีขายทันทีทั้งที่ใบแทนยังไม่มีเลข ⇒
+                // ภาษีขายนำส่งขาดทั้งใบโดยไม่มีอะไรเตือน (ช่วงครึ่ง ๆ ที่ห้ามมี)
+                if (isFullTaxInvoiceReplacement)
+                {
+                    var replaced = await _db.Documents.FirstOrDefaultAsync(d =>
+                        d.Id == doc.ReplacesDocumentId!.Value && d.CompanyId == companyId);
+                    if (replaced == null)
+                        throw new Accounting.Helpers.BusinessRuleException(
+                            "ไม่พบใบต้นทางที่ใบนี้ออกมาแทน — ยกเลิกใบนี้แล้วออกใหม่จากใบเสร็จโดยตรง",
+                            "RD-86/4-REPLACE-SOURCE-MISSING");
+
+                    replaced.ReplacedByDocumentId = doc.Id;
+                    replaced.ReplacedAt = DateTime.UtcNow;
+                    // หมายเหตุ**ภายใน** (ไม่พิมพ์ลงกระดาษ) — ผู้สอบบัญชีต้องเห็นว่า
+                    // ทำไมใบนี้หายจากรายงานภาษีขายทั้งที่ยอดยังอยู่ใน GL
+                    replaced.InternalNotes = string.Join(" · ", new[]
+                    {
+                        replaced.InternalNotes?.Trim(),
+                        Accounting.Helpers.FullTaxInvoiceReplacement.OriginalRecalledNote(
+                            doc.DocumentNumber, doc.ReplacementReason),
+                    }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                    replaced.UpdatedAt = DateTime.UtcNow;
+                    replaced.UpdatedBy = approvedBy;
+
+                    // ใบแทนต้องไม่โผล่ในรายการค้างรับ — เงินรับครบตั้งแต่ใบเดิม
+                    doc.PaidAmount = doc.TotalAmount;
+                    doc.BalanceDue = 0m;
+                    doc.Status = DocumentStatus.Paid;
+                }
 
                 // บังคับลงทะเบียนสินทรัพย์ — บรรทัดที่ลงผัง PPE (12xxx) ต้องมี
                 // ทะเบียนสินทรัพย์ + ตารางค่าเสื่อม (TFRS บทที่ 10 + §65 ตรี (5)).
@@ -6962,14 +7034,20 @@ public partial class DocumentService : IDocumentService
                 // 6) Back out this document's contribution to its project's
                 //    BilledAmount — mirror of the +1 applied at approval.
                 //    Skip Draft docs: never approved, so never billed.
-                if (doc.Status != DocumentStatus.Draft)
+                // ใบกำกับที่ออก "แทน" ใบเสร็จ ไม่เคยบวกยอดโครงการ/ไม่เคยขยับสต๊อก
+                // ตอนอนุมัติ (ApproveDocumentAsync ข้ามให้ — ใบเดิมทำไปแล้ว) ⇒
+                // ตอน void ต้องข้ามการ "กลับ" ด้วย มิฉะนั้นจะได้สต๊อกผีคืนเข้าคลัง
+                // และยอดวางบิลโครงการติดลบ ทั้งที่ไม่มีอะไรเคยเกิดขึ้น
+                var isReplacementDoc = doc.ReplacesDocumentId.HasValue;
+
+                if (doc.Status != DocumentStatus.Draft && !isReplacementDoc)
                     await ApplyProjectBillingAsync(companyId, doc, -1);
 
                 // 6b) Reverse any stock movement this document caused at
                 //     approval. Sign=-1 means a sale Invoice's OUT becomes IN
                 //     (stock restored), a purchase Invoice's IN becomes OUT.
                 //     Same Draft skip: drafts never decremented stock.
-                if (doc.Status != DocumentStatus.Draft)
+                if (doc.Status != DocumentStatus.Draft && !isReplacementDoc)
                     await ApplyStockMovementsAsync(companyId, doc, -1, "system-void");
 
                 // 6c) Back out this document's auto-booked project cost entries
@@ -7032,6 +7110,33 @@ public partial class DocumentService : IDocumentService
                         _logger.LogWarning(
                             "Void {Tax}: คืนใบแจ้งหนี้ต้นทาง {Src} เป็นร่าง — ไม่งั้นรายได้หายทั้งก้อน",
                             doc.DocumentNumber, supersededSrc.DocumentNumber);
+                    }
+                }
+
+                // 7-replacement) ใบกำกับเต็มรูปที่ออก "แทน" ใบเสร็จ ถูกยกเลิกเอง →
+                // ปลดตราประทับบนใบเดิม ไม่งั้นใบเดิมจะถูกกันออกจากรายงานภาษีขาย
+                // ตลอดไป ทั้งที่ใบแทนไม่มีอยู่แล้ว ⇒ **ภาษีขายหายทั้งใบ** โดยยอด
+                // ยังอยู่ใน GL (จับได้ตอนกระทบยอด ภ.พ.30 กับ GL เท่านั้น).
+                // ใบเดิมไม่ต้องคืนสถานะ — มันไม่เคยถูก void (ต่างจาก 7-supersede)
+                if (doc.ReplacesDocumentId.HasValue)
+                {
+                    var replacedSrc = await _db.Documents.FirstOrDefaultAsync(d =>
+                        d.Id == doc.ReplacesDocumentId.Value && d.CompanyId == companyId
+                        && d.ReplacedByDocumentId == documentId);
+                    if (replacedSrc != null)
+                    {
+                        replacedSrc.ReplacedByDocumentId = null;
+                        replacedSrc.ReplacedAt = null;
+                        replacedSrc.InternalNotes = string.Join(" · ", new[]
+                        {
+                            replacedSrc.InternalNotes?.Trim(),
+                            $"ใบกำกับภาษีเต็มรูป {doc.DocumentNumber} ถูกยกเลิก — "
+                                + "ใบนี้กลับมาเป็นเจ้าของแถวในรายงานภาษีขายตามเดิม",
+                        }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                        replacedSrc.UpdatedAt = DateTime.UtcNow;
+                        _logger.LogWarning(
+                            "Void {Tax}: ปลดตราประทับใบแทนบน {Src} — คืนใบเดิมเข้ารายงานภาษีขาย",
+                            doc.DocumentNumber, replacedSrc.DocumentNumber);
                     }
                 }
 
@@ -9091,7 +9196,8 @@ public partial class DocumentService : IDocumentService
     private async Task<DocumentResponse> ConvertCoreAsync(
         Document source, DocumentType targetType,
         List<(DocumentLine Line, decimal Qty)> spec, string createdBy,
-        DateTime? documentDate = null, DateTime? dueDate = null)
+        DateTime? documentDate = null, DateTime? dueDate = null,
+        bool isFullTaxInvoiceReplacement = false)
     {
         var companyId = source.CompanyId;
 
@@ -9169,7 +9275,8 @@ public partial class DocumentService : IDocumentService
                 : null,
             // ลิงก์ต้นทางต้องเข้าไปตั้งแต่ create — PV ที่ settle ใบแจ้งหนี้ซื้อ
             // ต้องไม่โดน auto-approve แบบ standalone cash ก่อนมีลิงก์
-            RelatedDocumentId: source.Id), createdBy);
+            RelatedDocumentId: source.Id), createdBy,
+            isFullTaxInvoiceReplacement: isFullTaxInvoiceReplacement);
 
         // Link new document to source + propagate appendix/contract metadata
         var created = await _db.Documents.FindAsync(newDoc.Id);
@@ -9248,6 +9355,119 @@ public partial class DocumentService : IDocumentService
         }
 
         return await ConvertCoreAsync(source, targetType, spec, createdBy);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ออก "ใบกำกับภาษีเต็มรูป" แทนใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4)
+    //
+    //  ที่มา (ผู้ใช้ถาม 2026-09-03): ลูกค้ารับใบเสร็จ/ใบกำกับอย่างย่อไปแล้ว
+    //  ภายหลังขอเต็มรูปเพื่อเคลมภาษีซื้อ (อย่างย่อเคลมไม่ได้ §82/5(2)) —
+    //  เดิม ValidConversions[Receipt] มีแค่ CN/DN จึงทำไม่ได้เลย
+    //
+    //  ⚠️ ทำไมไม่ใส่ TaxInvoice ลง ValidConversions เฉย ๆ: ใบเสร็จที่มี VAT
+    //  **นับเป็นภาษีขายเข้า ภ.พ.30 ไปแล้ว** (tax point = วันรับเงิน §78/1 —
+    //  TaxService branch "Receipt/ReceiptVoucher standalone") ⇒ การแปลงปกติ
+    //  จะได้ใบที่สองที่ AutoPost รายได้/ภาษีขายซ้ำ **และ**ถูกนับใน ภ.พ.30
+    //  อีกรอบ. การขายครั้งเดียวมีใบกำกับได้ใบเดียว → ออกแบบเป็น "ใบแทน":
+    //    • ใบใหม่ใช้ **วันที่ของใบเดิม** (tax point เกิดไปแล้ว ย้ายงวดไม่ได้)
+    //    • ผูกสองทาง ReplacesDocumentId / ReplacedByDocumentId
+    //    • อนุมัติแล้ว **ไม่ post JE / ไม่ขยับสต๊อก / ไม่แตะยอดใบต้นทาง**
+    //      (เงิน+รายได้+ภาษีขายลงไปครบตั้งแต่ใบเดิม — เปลี่ยนแค่ "กระดาษ")
+    //    • รายงานภาษีขายนับใบแทน และข้ามใบที่ถูกแทน ⇒ ยอด VAT รวมไม่ขยับ
+    // ══════════════════════════════════════════════════════════════════
+
+    /// <summary>ตรวจสิทธิ์ออกใบแทน — ใช้ร่วมกันทั้งตอนกดจริงและตอนตอบ
+    /// <c>DocumentResponse</c> ให้ UI ตัดสินว่าจะโชว์ปุ่มไหม (ห้ามให้หน้าเว็บ
+    /// เขียนกติกาสำเนาที่สอง — defect class "สำเนามือฝั่ง JS")</summary>
+    private async Task<Accounting.Helpers.FullTaxInvoiceEligibility> EvaluateFullTaxInvoiceReplacementAsync(
+        Guid companyId, Document src)
+    {
+        await _db.HydrateContactAsync(companyId, src);
+
+        // "เป็นใบกำกับเต็มรูปอยู่แล้วไหม" ตัดสินจาก **หัวที่จะพิมพ์จริง** ผ่าน
+        // resolver ตัวเดียวกับกระดาษ ไม่ใช่ชนิดเอกสาร — ใบเสร็จที่ผู้ซื้อครบ
+        // §86/4 พิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน" อยู่แล้ว ไม่ต้องออกใบแทน
+        var missingBuyer = Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(src.Contact);
+        var isFullAlready = src.DocumentType == DocumentType.TaxInvoice
+            || (missingBuyer.Count == 0 && !src.BuyerDeclinedTaxInvoice
+                && src.Contact is { IsWalkInCustomer: false } && src.VatAmount > 0.005m);
+
+        return Accounting.Helpers.FullTaxInvoiceReplacement.Check(
+            sourceIsIssued: src.Status is not (DocumentStatus.Draft or DocumentStatus.Voided
+                or DocumentStatus.Rejected or DocumentStatus.WaitingApproval),
+            sourceIsFullTaxInvoice: isFullAlready,
+            sourceVatAmount: src.VatAmount,
+            alreadyReplaced: src.ReplacedByDocumentId.HasValue,
+            companyIsVatRegistered: await IsCompanyVatRegisteredAsync(companyId),
+            missingBuyerFields: missingBuyer);
+    }
+
+    public async Task<DocumentResponse> IssueFullTaxInvoiceForReceiptAsync(
+        Guid companyId, Guid receiptId, string? reason, string actor)
+    {
+        var src = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == receiptId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (src.DocumentType is not (DocumentType.Receipt or DocumentType.ReceiptVoucher))
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ออกใบกำกับภาษีเต็มรูปแทนได้เฉพาะใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ",
+                "RD-86/4-REPLACE-SOURCE-TYPE");
+
+        var eligibility = await EvaluateFullTaxInvoiceReplacementAsync(companyId, src);
+        if (!eligibility.Allowed)
+            throw new Accounting.Helpers.BusinessRuleException(
+                eligibility.Message ?? "ออกใบกำกับภาษีเต็มรูปแทนใบนี้ไม่ได้",
+                $"RD-86/4-REPLACE-{eligibility.Reason}");
+
+        // คัดลอกทุกบรรทัดเต็มจำนวน — ใบแทนต้องเป็น "ใบเดียวกัน" ทุกสตางค์
+        // (ConvertCoreAsync ยก VatAmountOverride ให้เมื่อยกทั้งบรรทัด ⇒ VAT
+        // ตรงเป๊ะ ไม่คลาดกัน 0.01 จากการคิดใหม่)
+        var spec = src.Lines.OrderBy(l => l.LineOrder).Select(l => (l, l.Quantity)).ToList();
+        var created = await ConvertCoreAsync(src, DocumentType.TaxInvoice, spec, actor,
+            documentDate: src.DocumentDate, dueDate: src.DocumentDate,
+            isFullTaxInvoiceReplacement: true);
+
+        var replacement = await _db.Documents.FindAsync(created.Id);
+        if (replacement != null)
+        {
+            replacement.ReplacesDocumentId = src.Id;
+            replacement.ReplacementReason = string.IsNullOrWhiteSpace(reason) ? null : reason!.Trim();
+            // หมายเหตุอ้างใบเดิม **ต้องพิมพ์ลงกระดาษ** — ผู้ซื้อและผู้สอบบัญชี
+            // ต้องเห็นว่าใบนี้แทนใบไหน (จึงลง Notes ไม่ใช่ InternalNotes)
+            replacement.Notes = string.Join(" · ", new[]
+            {
+                src.Notes?.Trim(),
+                Accounting.Helpers.FullTaxInvoiceReplacement.ReplacementNote(src.DocumentNumber, src.DocumentDate),
+            }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            // เงินรับครบตั้งแต่ใบเดิม — ใบแทนต้องไม่ไปโผล่ในรายการค้างรับ
+            replacement.PaymentType = src.PaymentType;
+            await _db.SaveChangesAsync();
+        }
+
+        // อนุมัติทันที: ใบแทนไม่มีอะไรให้ตรวจเพิ่ม (ยอด/วันที่/ผู้ซื้อ ยกมาจาก
+        // ใบที่อนุมัติแล้วทั้งหมด) และถ้าค้าง Draft ไว้ ใบเดิมจะยังอยู่ในรายงาน
+        // (ตราประทับ ReplacedByDocumentId ลงตอน approve) = สภาพครึ่ง ๆ ที่ผู้ใช้
+        // ไม่มีทางรู้. ผู้เรียกต้องเช็คสิทธิ์อนุมัติมาก่อน (ดู controller)
+        try
+        {
+            await ApproveDocumentAsync(companyId, created.Id, actor, acknowledgeWarnings: true);
+        }
+        catch (Exception ex) when (ex is not KeyNotFoundException)
+        {
+            // อนุมัติไม่ผ่าน (งวดบัญชีปิด · กฎอนุมัติของบริษัท · ฯลฯ) — ใบแทนยัง
+            // ค้างเป็น **ร่าง** และใบเดิมยัง **ไม่ถูกประทับ** (ตราประทับลงตอน
+            // approve เท่านั้น) ⇒ รายงานภาษีขายยังถูกต้องทุกประการ. บอกผู้ใช้ตรง ๆ
+            // ว่าอยู่ตรงไหนและต้องทำอะไรต่อ — ห้ามปล่อยให้เจอ error ดิบแล้วเดาเอง
+            // ว่าใบที่โผล่มาในรายการร่างคืออะไร
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"สร้างใบกำกับภาษีเต็มรูป (ร่าง) แล้ว แต่อนุมัติอัตโนมัติไม่ผ่าน: {ex.Message} "
+                + "— ใบเดิมยังอยู่ในรายงานภาษีขายตามปกติ · แก้ตามข้อความข้างต้นแล้ว"
+                + "กด \"อนุมัติ\" ที่ใบร่างนั้นเพื่อให้การแทนที่มีผล",
+                "RD-86/4-REPLACE-APPROVE-FAILED");
+        }
+        return await GetDocumentAsync(companyId, created.Id);
     }
 
     public async Task<DocumentResponse> ConvertDocumentPartialAsync(
@@ -14894,7 +15114,11 @@ public partial class DocumentService : IDocumentService
         // หมายเหตุภายใน (ไม่พิมพ์ลงกระดาษ) — ที่เก็บ "คำเตือนที่กดรับทราบแล้ว"
         // ต้อง echo กลับ ไม่งั้นร่องรอยอยู่แต่ในฐานข้อมูลกับ audit ผู้ใช้ไม่เห็น
         InternalNotes: d.InternalNotes,
-        OriginModule: d.OriginModule);
+        OriginModule: d.OriginModule,
+        ReplacedByDocumentId: d.ReplacedByDocumentId,
+        ReplacesDocumentId: d.ReplacesDocumentId,
+        ReplacementReason: d.ReplacementReason,
+        ReplacedAt: d.ReplacedAt);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

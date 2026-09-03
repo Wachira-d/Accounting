@@ -8877,6 +8877,30 @@
               <span style="color:#64748b;font-size:11px">ระบบจะกลับ JE เดิมแล้วลงใหม่ให้ถูกฝั่ง — งบกับ ภ.พ.30 จึงตรงกันเสมอ</span>
             </div>`;
           }
+          // ── ใบแทน/ใบที่ถูกแทน (§86/6 → §86/4) ──
+          // ต้องเห็นทั้งสองทิศ: ใบที่ถูกแทนต้องบอกว่า "ทำไมหายจากรายงานภาษีขาย"
+          // และใบแทนต้องบอกว่า "ทำไมไม่มีรายการบัญชีของตัวเอง" — ไม่งั้นทั้งคู่
+          // ดูเหมือนข้อมูลผิดตอนกระทบยอด
+          if (d.replacedByDocumentId) {
+            banners += `<div style="background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              🔁 <b>ใบนี้ถูกแทนที่แล้ว</b> — ออกใบกำกับภาษีเต็มรูป
+              <b>${Layout.esc(d.replacedByDocumentNumber || '')}</b> แทนไปเมื่อ
+              ${d.replacedAt ? Layout.date(d.replacedAt) : '-'}
+              <div style="margin-top:4px;color:#78350f">รายการบัญชีของใบนี้ยังอยู่ครบ (เงินรับจริง)
+              แต่ <b>ไม่ถูกนับในรายงานภาษีขาย</b> อีกแล้ว — ใบแทนเป็นเจ้าของแถวนั้น
+              จึงไม่นับภาษีขายซ้ำจากการขายครั้งเดียว (§86)</div>
+              ${d.replacementReason ? `<div style="margin-top:4px;color:#78350f">เหตุผล: ${Layout.esc(d.replacementReason)}</div>` : ''}
+            </div>`;
+          }
+          if (d.replacesDocumentId) {
+            banners += `<div style="background:#eff6ff;border:1px solid #93c5fd;color:#1e40af;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              🧾 <b>ใบกำกับภาษีเต็มรูป (ออกแทน)</b> — แทนใบ
+              <b>${Layout.esc(d.replacesDocumentNumber || '')}</b> ที่เรียกคืนแล้ว
+              <div style="margin-top:4px;color:#1e3a8a">ใช้วันที่และยอดของใบเดิม ·
+              <b>ไม่มีรายการบัญชีของตัวเอง</b> (รายได้/ภาษีขายลงไปแล้วตั้งแต่ใบเดิม) ·
+              ใบนี้คือใบที่อยู่ในรายงานภาษีขาย</div>
+            </div>`;
+          }
           banners += this._nextStepBanner(d);
           if (d.ocrConfidenceScore != null) {
             const conf = Math.round(d.ocrConfidenceScore * 100);
@@ -9303,6 +9327,19 @@
             // can trace the guidance "→ ปุ่มไหน" without hunting.
             actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)}, '${d.documentType}', ${Number(d.vatAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
           }
+          // ── ออกใบกำกับภาษีเต็มรูป "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4) ──
+          // ลูกค้ารับใบย่อไปแล้วกลับมาขอเต็มรูปเพื่อเคลมภาษีซื้อ (ใบย่อเคลมไม่ได้
+          // §82/5(2)). **เซิร์ฟเวอร์ตัดสินว่ากดได้ไหม** (canIssueFullTaxInvoice) —
+          // ห้ามเขียนกติกา §86/4 ซ้ำที่นี่ (defect class "สำเนามือฝั่ง JS")
+          // undefined = เซิร์ฟเวอร์รุ่นเก่ายังไม่ส่งค่ามา → ไม่วาดอะไร (≠ "ทำไม่ได้")
+          if (d.canIssueFullTaxInvoice === true) {
+            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.issueFullTaxInvoice('${d.id}','${Layout.jsArg(d.documentNumber)}')" title="ลูกค้าขอใบกำกับภาษีเต็มรูปภายหลัง — ระบบออกใบใหม่ 'แทน' ใบนี้ (วันที่เดิม ยอดเดิม ไม่มีรายการบัญชีใหม่) และใบนี้จะถูกเรียกคืน ไม่นับซ้ำในรายงานภาษีขาย">🧾 ออกใบกำกับภาษีเต็มรูป</button>`;
+          } else if (d.canIssueFullTaxInvoice === false && d.fullTaxInvoiceBlockedReason
+                     && !d.replacedByDocumentId) {
+            // บอกเหตุผลเสมอ — "ปุ่มหายไปเฉย ๆ" คือ silent no-op ที่ผู้ใช้ debug ไม่ได้
+            actions += ` <button data-g="more" class="btn btn-secondary" disabled title="${Layout.esc(d.fullTaxInvoiceBlockedReason)}">🧾 ออกใบกำกับเต็มรูปไม่ได้</button>`;
+          }
+
           // Bad debt write-off: only for AR docs that are still outstanding
           const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
           const outstandingStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
@@ -10586,6 +10623,34 @@
           Layout.toast('ตัดหนี้สูญสำเร็จ — สร้าง JE และเคลียร์เอกสารแล้ว');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ตัดหนี้สูญไม่สำเร็จ', 'error'); }
+      },
+      // ออกใบกำกับภาษีเต็มรูป "แทน" ใบเสร็จ/ใบกำกับภาษีอย่างย่อ (§86/6 → §86/4)
+      //
+      // ⚠️ ต้องอธิบายให้ชัดว่า "ใบเดิมถูกเรียกคืน" ไม่ใช่ "ได้เอกสารเพิ่มอีกใบ" —
+      // การขายครั้งเดียวมีใบกำกับได้ใบเดียว ถ้าผู้ใช้เข้าใจว่ามีสองใบแล้วส่งทั้งคู่
+      // ให้ลูกค้า ลูกค้าจะเคลมภาษีซื้อสองรอบจากการขายครั้งเดียว
+      async issueFullTaxInvoice(id, docNo) {
+        const api = Layout.api(); if (!api) return;
+        const reason = prompt('เหตุผลที่ออกใบกำกับภาษีเต็มรูปแทน (เก็บไว้ให้ผู้สอบบัญชี):',
+          'ลูกค้าขอใบกำกับภาษีเต็มรูปเพื่อใช้เคลมภาษีซื้อ');
+        if (reason === null) return;   // ผู้ใช้กดยกเลิก
+        if (!(await Layout.confirmDanger({
+          title: 'ออกใบกำกับภาษีเต็มรูปแทนใบนี้',
+          message: `ระบบจะออก <strong>ใบกำกับภาษีเต็มรูปใบใหม่</strong> แทน ${Layout.esc(docNo || '')}<br>`
+            + '• ใช้ <strong>วันที่เดิม</strong> และยอดเดิมทุกสตางค์ (จุดความรับผิด VAT เกิดไปแล้ว §78/1)<br>'
+            + '• <strong>ไม่มีรายการบัญชีใหม่</strong> — เงิน/รายได้/ภาษีขายลงไปครบตั้งแต่ใบเดิม<br>'
+            + '• รายงานภาษีขายจะนับ <strong>ใบใหม่แทนใบเดิม</strong> (ยอดรวมไม่เปลี่ยน)<br>'
+            + '<strong style="color:#dc2626">ต้องเรียกคืนใบเดิมจากลูกค้า</strong> — '
+            + 'การขายครั้งเดียวมีใบกำกับภาษีได้ใบเดียว (§86)',
+          mode: 'math'
+        }))) return;
+        try {
+          const res = await api.issueFullTaxInvoice(id, reason);
+          Layout.closeModal('detailModal');
+          Layout.toast(`ออกใบกำกับภาษีเต็มรูป ${res?.data?.documentNumber || ''} แทนใบเดิมแล้ว`);
+          await this.load();
+          if (res?.data?.id) await this.detail(res.data.id);
+        } catch (e) { Layout.toast(e.message || 'ออกใบกำกับภาษีเต็มรูปไม่สำเร็จ', 'error'); }
       },
       async voidPayment(paymentId) {
         const api = Layout.api(); if (!api) return;

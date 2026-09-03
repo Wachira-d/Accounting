@@ -171,6 +171,13 @@ public partial class TaxService : ITaxService
             .Where(d => d.CompanyId == companyId
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && d.VatAmount != 0
+                // ใบเสร็จ/ใบกำกับอย่างย่อ ที่ออก "ใบกำกับภาษีเต็มรูปแทน" ไปแล้ว
+                // (§86/6 → §86/4): ใบแทนถือยอดเดียวกัน วันที่เดียวกัน และเป็น
+                // TaxInvoice ⇒ ถูกนับที่ branch ใบกำกับ. ถ้าไม่กันใบเดิมออก
+                // ภาษีขายจะถูกรายงาน **สองครั้ง** สำหรับการขายครั้งเดียว.
+                // ตราประทับนี้ลงตอนใบแทนถูก "อนุมัติ" และถูกปลดเมื่อใบแทนถูก
+                // ยกเลิก (DocumentService) ⇒ ไม่มีช่วงที่ทั้งคู่หายจากรายงาน
+                && d.ReplacedByDocumentId == null
                 // ปกติ: tax point อยู่ในงวด — OR: ภาษีซื้อที่ "ถึงกำหนดเคลม" เดือนนี้
                 // (BecameClaimableAt) แม้วันที่เอกสารอยู่เดือนก่อน (§83/6 ภ.พ.36 รับรู้
                 // ทีหลัง / §86/4 เติมใบกำกับครบทีหลัง) — เดิม query เอา DocumentDate
@@ -223,6 +230,7 @@ public partial class TaxService : ITaxService
                 // ทั้งก้อนถูกรายงานโดยใบปลายทางแล้ว (Cr 21911 เต็มใบ) → ห้ามดึงมา
                 // เพิ่มแถวซ้ำ (นับซ้ำ = ยอดขาย/ภาษีขายเกินจริง)
                 && d.DepositAppliedToDocumentId == null
+                && d.ReplacedByDocumentId == null   // ออกใบกำกับเต็มรูปแทนแล้ว → ใบแทนรายงาน
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
                 && d.VatAmount != 0)
             .ToListAsync();
@@ -3103,6 +3111,19 @@ public partial class TaxService : ITaxService
             throw new InvalidOperationException($"เอกสารประเภท {doc.DocumentType} ไม่สามารถดึงเข้ารายงาน ภพ.30 ได้");
         if (doc.VatAmount == 0)
             throw new InvalidOperationException("เอกสารนี้ไม่มี VAT");
+        // ใบที่ออก "ใบกำกับภาษีเต็มรูปแทน" ไปแล้ว — ใบแทนถือยอดเดียวกันและอยู่ใน
+        // รายงานแล้ว การดึงใบเดิมเข้ามาด้วยมือ = ภาษีขายซ้ำสำหรับการขายครั้งเดียว
+        // (loop หลักกันไว้แล้ว เส้นทางดึงมือต้องกันด้วย)
+        if (doc.ReplacedByDocumentId.HasValue)
+        {
+            var replacementNo = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.ReplacedByDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => d.DocumentNumber).FirstOrDefaultAsync();
+            throw new InvalidOperationException(
+                $"เอกสาร {doc.DocumentNumber} ออกใบกำกับภาษีเต็มรูปแทนไปแล้ว"
+                + (replacementNo != null ? $" ({replacementNo})" : "")
+                + " — ให้ดึง**ใบแทน**เข้ารายงานแทน มิฉะนั้นภาษีขายจะถูกนับสองครั้ง");
+        }
         // PV ที่ไม่ได้ติ๊ก "ใช้งานใบกำกับภาษี" = จ่ายเงินเฉย ๆ ไม่ขอเครดิตภาษีซื้อ
         // (§82/5(1) ไม่มีใบกำกับเต็มรูป) — loop หลักก็ไม่นับ ห้ามดึงเข้ามาเคลม
         if (doc.DocumentType == DocumentType.PaymentVoucher

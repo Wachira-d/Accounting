@@ -502,6 +502,53 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   + approve warning §86/9-10 เมื่อลงวันที่ย้อนหลังเกิน 1 เดือนภาษีโดยไม่มี LateReason
 - **Lineage**: ลูก carry `RelatedDocumentId = source.Id`, `SourceLineId` ต่อ
   บรรทัด (จำเป็นสำหรับ partial fulfillment + 3-way match)
+
+#### 2.4b ใบกำกับภาษีเต็มรูป "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4) ✅ รอบ 130
+
+**เคสจริง (ผู้ใช้ถาม 2026-09-03)**: ลูกค้ารับ "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ"
+ไปแล้ว ภายหลังกลับมาขอ "เต็มรูป" เพื่อเคลมภาษีซื้อ (อย่างย่อเคลมไม่ได้ §82/5(2))
+
+**ทำไมไม่ใส่ `Receipt → TaxInvoice` ลง `ValidConversions`**: ใบเสร็จที่มี VAT
+**นับเป็นภาษีขายเข้า ภ.พ.30 ไปแล้ว** (tax point = วันรับเงิน §78/1 — ดู
+`TaxService.GenerateVatReport` branch "Receipt/ReceiptVoucher standalone")
+⇒ การแปลงปกติจะได้ใบที่สองที่ AutoPost รายได้/ภาษีขายซ้ำ **และ** ถูกนับใน ภ.พ.30
+อีกแถว. การขายครั้งเดียวมีใบกำกับได้ **ใบเดียว** (§86)
+
+**จึงออกแบบเป็น "ใบแทน" ไม่ใช่ "ใบเพิ่ม"**:
+- **Method**: `DocumentService.IssueFullTaxInvoiceForReceiptAsync`
+  (endpoint `POST /api/{companyId}/document/{id}/issue-full-tax-invoice`
+  — สิทธิ์ระดับเดียวกับ **Approve**)
+- **ตัวตัดสินกลาง (pure)**: `Helpers/FullTaxInvoiceReplacement.Check` —
+  บล็อกเมื่อ บริษัทไม่จด VAT · ใบต้นทางยังไม่อนุมัติ/ถูกยกเลิก · เป็นใบกำกับ
+  เต็มรูปอยู่แล้ว · ไม่มี VAT · ออกใบแทนไปแล้ว · ผู้ซื้อไม่ครบ §86/4
+  (ตัวเดียวกับที่ `DocumentResponse.CanIssueFullTaxInvoice` ใช้ ⇒ หน้าเว็บ
+  **แสดง**อย่างเดียว ไม่มีสำเนากติกาฝั่ง JS)
+- **ใบแทนสร้างผ่าน `ConvertCoreAsync`** (ยก `VatAmountOverride` รายบรรทัด ⇒
+  ยอดตรงเป๊ะทุกสตางค์) แต่ใช้ **วันที่ของใบเดิม** — tax point เกิดไปแล้ว
+  ย้ายงวดไม่ได้ (ย้าย = ภ.พ.30 ผิดสองเดือนพร้อมกัน)
+- **ตอน approve ใบแทน (`ReplacesDocumentId != null`)** ข้ามทั้งหมด:
+  `AutoPostToJournalAsync` · `ApplySourceDocumentAdjustmentsAsync` ·
+  `ApplyProjectBillingAsync` · `ApplyStockMovementsAsync` ·
+  `SupersedeSourceInvoiceAsync` — เศรษฐกิจของรายการไม่เปลี่ยน (เงิน/รายได้/
+  ภาษีขายลงไปครบตั้งแต่ใบเดิม) เปลี่ยนแค่ **กระดาษที่ผู้ซื้อถือ**
+  แล้วประทับ `ReplacedByDocumentId` + `ReplacedAt` + `InternalNotes` บนใบเดิม
+  (ประทับตอน **approve** ไม่ใช่ตอนสร้าง — ไม่งั้นใบเดิมหลุดจากรายงานตั้งแต่
+  ใบแทนยังเป็นร่าง = ภาษีขายนำส่งขาดโดยไม่มีอะไรเตือน)
+- **รายงานภาษีขาย**: `GenerateVatReport` กรอง `d.ReplacedByDocumentId == null`
+  (ทั้ง query หลักและ `deferredRecognized`) ⇒ ใบแทนเป็นเจ้าของแถว ยอด VAT
+  รวมไม่ขยับ · `PullDocumentIntoReportAsync` block ใบที่ถูกแทนพร้อมชี้ให้ดึง
+  ใบแทนแทน (เส้นดึงมือต้องมีด่านเดียวกับ loop หลัก)
+- **โควตา**: `DocumentQuotaPolicy.Classify(..., isReplacement: true)` →
+  `NotCounted` — การขายเดิมที่นับไปแล้ว (พารามิเตอร์ของ **เมธอด**
+  `CreateDocumentAsync` ไม่ใช่ช่องใน DTO ด้วยเหตุผลเดียวกับ `originModule`)
+- **Void ใบแทน** → ปลด `ReplacedByDocumentId` บนใบเดิม (คืนเข้ารายงานภาษีขาย)
+  + ข้าม `ApplyProjectBillingAsync(-1)` / `ApplyStockMovementsAsync(-1)`
+  (ไม่เคย +1 ตอน approve). **Void ใบเดิม**ถูก guard `activeChild` เดิมกันไว้
+  แล้ว — ต้องยกเลิกใบแทนก่อน
+- **หมายเหตุ**: `FullTaxInvoiceReplacement.ReplacementNote` ลง `Notes` ของใบแทน
+  (**พิมพ์ลงกระดาษ** — ผู้ซื้อ/ผู้สอบบัญชีต้องเห็นว่าแทนใบไหน) ·
+  `OriginalRecalledNote` ลง `InternalNotes` ของใบเดิม (ไม่พิมพ์)
+- **เทสต์**: `Accounting.Tests/FullTaxInvoiceReplacementTests.cs`
 - **Cascade**: `CustomAppendix / RevenueContractId / PerformanceObligationId /
   FileAttachment` (`CascadeAttachmentsAsync :3077`)
 - **JE ของใบลูกดูประเภทต้นทาง (กันยอดเบิ้ล/ยอดหาย)**:
@@ -2719,7 +2766,13 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-03 (รอบ 127 — **หนึ่งความจริงของสต็อก**:_
+_Last verified against codebase: 2026-09-03 (รอบ 130 — **ใบกำกับภาษีเต็มรูป
+"แทน" ใบเสร็จ/ใบกำกับอย่างย่อ**: §2.4b ใหม่ — `IssueFullTaxInvoiceForReceiptAsync` +_
+_`Helpers/FullTaxInvoiceReplacement` (pure) · ใบแทนใช้วันที่ใบเดิม ไม่ post JE ใหม่ ·_
+_ประทับ `ReplacedByDocumentId` ตอน approve · `GenerateVatReport` +_
+_`PullDocumentIntoReportAsync` กันใบที่ถูกแทนออก ⇒ ภาษีขายไม่ถูกนับสองครั้ง ·_
+_void ใบแทน → ปลดตราประทับ คืนใบเดิมเข้ารายงาน)_
+_ก่อนหน้า: 2026-09-03 (รอบ 127 — **หนึ่งความจริงของสต็อก**:_
 _ขั้น 8 ของ Approve ไม่เขียนสต็อกเองอีกแล้ว — เดินผ่าน `IStockLedger.MoveAsync`_
 _ซึ่งเขียน `WarehouseStock` (ความจริง) + `StockMovement` ที่มี `WarehouseId` เสมอ +_
 _ปรับ `Product.CurrentStock` ให้เท่าผลรวมทุกคลัง · คลังของเอกสารแปลงจาก `doc.BranchId`_

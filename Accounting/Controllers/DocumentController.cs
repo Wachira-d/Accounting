@@ -858,6 +858,37 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารสำเร็จ"));
     }
 
+    public sealed record IssueFullTaxInvoiceRequest(string? Reason);
+
+    /// <summary>
+    /// ออก <b>ใบกำกับภาษีเต็มรูป "แทน"</b> ใบเสร็จ/ใบกำกับภาษีอย่างย่อ
+    /// (§86/6 → §86/4) — เคสจริง: ลูกค้ารับใบย่อไปแล้ว กลับมาขอเต็มรูปเพื่อ
+    /// เคลมภาษีซื้อ (ใบย่อเคลมไม่ได้ §82/5(2))
+    ///
+    /// <para>ไม่ใช่ endpoint แปลงเอกสาร: ใบเดิมนับภาษีขายเข้า ภ.พ.30 ไปแล้ว
+    /// ⇒ ใบใหม่เป็น "ใบแทน" (วันที่เดิม · ไม่มี JE ใหม่ · รายงานสลับมานับใบแทน)</para>
+    ///
+    /// <para>ใช้สิทธิ์เดียวกับ Approve — มันออกเลขจริงตาม §86/4 และเปลี่ยนว่า
+    /// เอกสารใบไหนเป็นเจ้าของแถวในรายงานภาษีขาย (ผลระดับเดียวกับการอนุมัติ)</para>
+    /// </summary>
+    [HttpPost("{documentId:guid}/issue-full-tax-invoice")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> IssueFullTaxInvoice(
+        Guid companyId, Guid documentId, [FromBody] IssueFullTaxInvoiceRequest? request = null)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                "ไม่มีสิทธิ์ออกใบกำกับภาษีแทน (ต้องการสิทธิ์ระดับเดียวกับการอนุมัติเอกสาร)");
+
+        var result = await _documentService.IssueFullTaxInvoiceForReceiptAsync(
+            companyId, documentId, request?.Reason, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result,
+            $"ออกใบกำกับภาษีเต็มรูป {result.DocumentNumber} แทนใบเดิมแล้ว — "
+            + "ใบเดิมถูกเรียกคืนและไม่นับซ้ำในรายงานภาษีขาย"));
+    }
+
     /// <summary>
     /// Valid conversion targets for a document, per the Thai accounting
     /// workflow rules in DocumentService.ValidConversions. The convert UI

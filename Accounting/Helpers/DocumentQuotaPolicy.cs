@@ -39,8 +39,14 @@ public static class DocumentQuotaPolicy
     /// **ไม่นับเข้าโควตาเอกสาร** เพราะมิเตอร์ของที่พักคือ `lodging.stay`
     /// (นับตอนปิดการเข้าพัก) ถ้านับทั้งสองทางลูกค้าจะโดนคิดสองเด้งจากงานเดียว
     /// แต่ยังคง **ห้ามบล็อก** ตามกฎหมายเหมือนเดิม</summary>
-    public static QuotaEnforcement Classify(DocumentType type, bool isDeposit, bool fromLodging)
+    /// <param name="isReplacement">ใบกำกับภาษีเต็มรูปที่ออก "แทน" ใบเสร็จ/ใบกำกับ
+    /// อย่างย่อ (§86/6 → §86/4) — <b>การขายครั้งเดียวกัน</b>กับใบที่นับไปแล้ว
+    /// จึงไม่นับซ้ำ (หลักการข้อ 1 ของไฟล์นี้: นับ "การขาย 1 ครั้ง" ไม่ใช่นับใบ)
+    /// และห้ามบล็อกเพราะ §86 บังคับให้ออกใบกำกับให้ผู้ซื้อ</param>
+    public static QuotaEnforcement Classify(DocumentType type, bool isDeposit, bool fromLodging,
+        bool isReplacement = false)
     {
+        if (isReplacement) return QuotaEnforcement.NotCounted;
         var mustAllow = MustAlwaysIssue(type);
         if (fromLodging) return mustAllow ? QuotaEnforcement.CountedMustAllow : QuotaEnforcement.NotCounted;
         return type switch

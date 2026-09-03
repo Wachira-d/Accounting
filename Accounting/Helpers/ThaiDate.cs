@@ -50,6 +50,20 @@ public static class ThaiDate
     public static string YyyyMmDd(DateTime dt)
         => CalendarDateUtc(dt).ToString("yyyyMMdd");
 
+    /// <summary>วันที่ไทยแบบอ่านออก <c>dd/MM/พ.ศ.</c> — ใช้ในข้อความที่ผู้ใช้/
+    /// ผู้สอบบัญชีอ่าน (หมายเหตุบนเอกสาร ฯลฯ)
+    ///
+    /// <para>ระบุ <see cref="System.Globalization.CultureInfo.InvariantCulture"/> เสมอ:
+    /// ถ้า process ตั้ง culture th-TH ปฏิทินเริ่มต้นเป็นพุทธศักราชอยู่แล้ว ⇒
+    /// <c>dd/MM/yyyy</c> จะได้ปี พ.ศ. มาเอง แล้วการ +543 ที่นี่จะกลายเป็น
+    /// <b>บวกซ้ำ</b> (2026 → 3112) เงียบ ๆ</para></summary>
+    public static string ToThaiDisplayString(DateTime dt)
+    {
+        var d = CalendarDateUtc(dt);
+        return d.ToString("dd/MM/", System.Globalization.CultureInfo.InvariantCulture)
+             + (d.Year + 543).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     /// <summary>
     /// แปลง "ปีที่อ่านได้จากกระดาษ" เป็นปี ค.ศ. — <b>ตัวแปลงกลางตัวเดียว</b>
     ///

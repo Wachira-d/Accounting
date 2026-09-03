@@ -5808,6 +5808,16 @@ public static class DatabaseMigrationHelper
             // ไม่งั้นทุก tenant ที่อัปเกรดมาจะล็อกตัวเองออกจากระบบทันที)
             """ALTER TABLE "CompanyUsers" ADD COLUMN IF NOT EXISTS "AllowedBranchIds" text NULL;""",
 
+            // ═══ ใบแทน: ใบเสร็จ/ใบกำกับอย่างย่อ → ใบกำกับภาษีเต็มรูป (§86/6 → §86/4) ═══
+            // การขายครั้งเดียวมีใบกำกับได้ใบเดียว — ออกใบเต็มรูปเพิ่มโดยไม่เรียกคืนใบเดิม
+            // = ภาษีขายเข้า ภ.พ.30 สองรอบ ⇒ ต้องผูกกันสองทางแล้วให้รายงานนับใบแทน
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacedByDocumentId" uuid NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacesDocumentId" uuid NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacementReason" text NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacedAt" timestamp with time zone NULL;""",
+            // ใบหนึ่งใบถูกแทนได้ครั้งเดียว และเป็นใบแทนของใบเดียว
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_Documents_ReplacesDoc" ON "Documents" ("ReplacesDocumentId") WHERE "ReplacesDocumentId" IS NOT NULL;""",
+
             // ═══ Payment gateway เฟส 1: ชั้นกลาง (PAYMENT_GATEWAY_DESIGN.md) ═══
             // ระบบมี 4 เส้นทางรับเงินแบบสลิปที่ต่างคนต่างเขียน — ถ้าต่อ gateway ทีละทาง
             // จะได้สำเนา 4 ชุดที่ drift แน่นอน · ทุกทางเข้าจึงเดินผ่าน PaymentIntent
