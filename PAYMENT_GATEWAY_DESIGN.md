@@ -331,7 +331,22 @@ QR/บัตร/redirect → poll → เปลี่ยนหน้าเป็
 | --- | --- | --- |
 | **1** แกน | ✅ | `PaymentProviderConfig`/`PaymentIntent`/`PaymentIntentEvent` + migration (unique index กันซ้ำ 2 ชั้น: idempotency key ต่อบริษัท + charge id ต่อ provider) · `IPaymentProvider` · `ManualSlipPaymentProvider` · `Helpers/PaymentIntentPolicy` (บริสุทธิ์ + 14 เทสต์) · `PaymentIntentService` (ล็อกต่อ source ตอนสร้าง · ต่อ intent ตอนเปลี่ยนสถานะ) · `Payment`/`PosPayment` มี `PaymentIntentId` · `tools/payment_provider_boundary_check.py` — **ยังไม่เปลี่ยนพฤติกรรมของทางเข้าใดเลย** ตามเกณฑ์ผ่านของเฟสนี้ |
 
-| **2** Omise sandbox | 🔨 backend เสร็จ | `OmisePaymentProvider` (PromptPay + บัตร + mobile/internet banking + TrueMoney) · named HttpClient timeout 20 วิ · `POST /api/pay/webhooks/{provider}` ยืนยันด้วยการ **re-fetch event** · หน้าตั้งค่า API (คีย์ · ทดสอบ · สลับโหมด) พร้อม**ด่านเปิด live** · CSP ประกอบจาก `IPaymentProvider.CspNeeds` — เหลือหน้าเว็บ `payment-settings.html` + `pay-widget.js` + job กระทบยอด |
+| **2** Omise sandbox | ✅ | `OmisePaymentProvider` (PromptPay + บัตร + mobile/internet banking + TrueMoney) · named HttpClient timeout 20 วิ · `POST /api/pay/webhooks/{provider}` ยืนยันด้วยการ **re-fetch event** · หน้าตั้งค่า API (คีย์ · ทดสอบ · สลับโหมด) พร้อม**ด่านเปิด live** · CSP ประกอบจาก `IPaymentProvider.CspNeeds` · `pages/payment-settings.html` (ขั้นตอน 4 ข้อพร้อมติ๊กว่าทำถึงไหน · ปุ่มคัดลอก URL แจ้งเตือน · ปุ่มเปิด live ที่ถูกล็อก) · `js/pay-widget.js` (หน้าจ่ายตัวเดียวของทุกทางเข้า) · `PaymentIntentReconcileJob` ทุก 5 นาที |
+
+**สิ่งที่พบระหว่างทำเฟส 2 (ต่อ · ฝั่งหน้าเว็บ + job):**
+
+11. **ป้าย "โหมดทดสอบ" ต้องอยู่บนหน้าจ่ายของ *ลูกค้า*** ไม่ใช่แค่หน้าตั้งค่าของร้าน —
+    ไม่งั้นร้านทดลองเองแล้วเข้าใจว่าเก็บเงินได้จริง
+12. **ปุ่มเปิด live ถูกล็อกโดย `canEnableLive` ที่ *เซิร์ฟเวอร์* คำนวณ** — หน้าเว็บไม่ตัดสินเอง
+    ไม่งั้นกลายเป็นด่านชุดที่สองที่ drift (defect class "สำเนามือฝั่ง JS")
+13. **หน้ากลับจาก 3-D Secure ห้ามเชื่อ query string** — ใครก็เติม `?status=success` เองได้ ·
+    ต้องถามสถานะจากเซิร์ฟเวอร์ (ซึ่งไปถาม provider สดถ้ายังค้าง)
+14. **poll ต้องถอยห่าง** 2s→5s→10s แล้วหยุดเมื่อจบ — ลูกค้าใช้เวลาสแกนจ่ายเป็นนาที
+    การถามทุกวินาทีไม่ช่วยอะไรแต่เปลืองทั้งเซิร์ฟเวอร์เราและโควตา API ของ provider
+15. **job กระทบยอดคือตาข่ายรับ ไม่ใช่ของฟุ่มเฟือย** — webhook หายได้จริงหลายทาง
+    (ส่งพลาด · เซิร์ฟเวอร์รีสตาร์ต · ยังไม่ตั้ง URL · ไฟร์วอลล์) และอาการที่ผู้ใช้เจอคือ
+    "ลูกค้าจ่ายแล้วออเดอร์ยังค้าง" ซึ่งเจ้าของร้านไม่รู้จนลูกค้าโทรมา ·
+    รายการ **โหมดจริง** ที่ค้างเกิน 30 นาทีต้อง log ระดับ warning
 
 **สิ่งที่พบระหว่างทำเฟส 2:**
 

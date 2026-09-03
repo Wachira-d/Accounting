@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รับชำระเงินออนไลน์ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px; margin-bottom:16px }
+    .card h3 { margin:0 0 4px; font-size:15px; font-weight:700; color:#0f172a }
+    .card .sub { margin:0 0 14px; font-size:12px; color:#64748b; line-height:1.6 }
+    .mode-banner { border-radius:10px; padding:12px 14px; font-size:13px; font-weight:600; margin-bottom:14px; line-height:1.6 }
+    .mode-banner.test { background:#fef3c7; color:#92400e; border:1px solid #f59e0b }
+    .mode-banner.live { background:#dcfce7; color:#166534; border:1px solid #22c55e }
+    .kv { display:grid; grid-template-columns:170px 1fr; gap:8px 12px; font-size:13px; align-items:center }
+    .kv b { color:#475569; font-weight:600 }
+    .hint { font-size:11.5px; color:#64748b; line-height:1.6; margin-top:4px }
+    .webhook-box { display:flex; gap:8px; align-items:center; background:#f8fafc; border:1px solid #e2e8f0;
+                   border-radius:8px; padding:8px 10px; font-family:ui-monospace,monospace; font-size:12px;
+                   word-break:break-all }
+    .method-grid { display:flex; flex-wrap:wrap; gap:10px }
+    .method-grid label { display:flex; gap:6px; align-items:center; font-size:13px; background:#f8fafc;
+                         border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; cursor:pointer }
+    .steps { counter-reset:s; padding:0; margin:0 0 14px; list-style:none }
+    .steps li { counter-increment:s; position:relative; padding-left:30px; margin-bottom:8px; font-size:13px;
+                color:#334155; line-height:1.7 }
+    .steps li::before { content:counter(s); position:absolute; left:0; top:1px; width:20px; height:20px;
+                        border-radius:50%; background:#e2e8f0; color:#334155; font-size:11px; font-weight:700;
+                        display:flex; align-items:center; justify-content:center }
+    .steps li.done::before { content:'✓'; background:#dcfce7; color:#166534 }
+    .muted { color:#94a3b8 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="container" style="max-width:900px;margin:0 auto;padding:20px">
+
+      <div style="margin-bottom:16px">
+        <h1 style="margin:0;font-size:24px;font-weight:700">💳 รับชำระเงินออนไลน์</h1>
+        <p style="margin:4px 0 0;color:#64748b;font-size:14px">
+          เปิดให้ลูกค้าจ่ายผ่าน PromptPay / บัตร ได้จากหน้าเว็บขายของ · ใบแจ้งหนี้ · การจองที่พัก
+          — ระบบบันทึกการรับเงินและลงบัญชีให้อัตโนมัติเมื่อจ่ายสำเร็จ
+        </p>
+      </div>
+
+      <div id="modeBanner"></div>
+      <div id="body"><div class="card muted">กำลังโหลด…</div></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // หน้าตั้งค่าการรับชำระเงิน (PAYMENT_GATEWAY_DESIGN.md §4.4)
+    //
+    // กติกาที่หน้านี้ต้องรักษา:
+    //  • **ไม่มีชื่อผู้ให้บริการ hard-code** — รายชื่อ/วิธีจ่ายมาจาก API
+    //    (`payment-settings/providers`) เพื่อไม่ให้เป็นสำเนามือที่ drift
+    //  • **secret key ไม่เคยถูกส่งกลับมา** — ช่องคีย์จึงว่างเสมอ และ "ว่าง = ไม่เปลี่ยน"
+    //  • **ปุ่มเปิดใช้จริงถูกล็อก** จนกว่าเซิร์ฟเวอร์บอกว่า `canEnableLive`
+    //    (หน้าเว็บ **ไม่ตัดสินเอง** — ไม่งั้นกลายเป็นด่านชุดที่สองที่ drift)
+    const Page = {
+      configs: [], providers: [],
+      cid() { return Layout.getCompanyId(); },
+
+      async init() {
+        if (!Layout.init('payment-settings')) return;
+        Layout.setTitle('รับชำระเงินออนไลน์');
+        await this.load();
+      },
+
+      async load() {
+        try {
+          const [p, c] = await Promise.all([
+            Layout.api().getPaymentProviders(),
+            Layout.api().getPaymentConfigs(),
+          ]);
+          this.providers = p.data || [];
+          this.configs = c.data || [];
+          this.render();
+        } catch (e) {
+          document.getElementById('body').innerHTML =
+            `<div class="card" style="color:#b91c1c">โหลดข้อมูลไม่สำเร็จ: ${Layout.esc(e.message)}</div>`;
+        }
+      },
+
+      cfgOf(code) { return this.configs.find(x => x.providerCode === code) || null; },
+
+      render() {
+        // แถบโหมด — ต้องเห็นทุกครั้งที่เข้าหน้านี้ ไม่ใช่ซ่อนอยู่ในรายละเอียด
+        const live = this.configs.filter(c => c.mode === 'Live' && c.isActive);
+        document.getElementById('modeBanner').innerHTML = live.length
+          ? `<div class="mode-banner live">✅ <b>โหมดใช้งานจริง</b> — เงินที่ลูกค้าจ่ายเข้าบัญชีจริง</div>`
+          : `<div class="mode-banner test">⚠️ <b>โหมดทดสอบ</b> — เงินไม่เข้าจริง ใช้สำหรับลองระบบเท่านั้น
+               · ลูกค้าจะเห็นป้ายนี้บนหน้าจ่ายเงินด้วย</div>`;
+
+        document.getElementById('body').innerHTML = this.providers
+          // เส้นสลิปเป็น provider ตัวหนึ่งในระบบ แต่ไม่มีอะไรให้ตั้งค่า จึงไม่แสดงที่นี่
+          .filter(p => p.supportsWebhook)
+          .map(p => this.cardHtml(p)).join('')
+          || '<div class="card muted">ยังไม่มีผู้ให้บริการรับชำระเงินที่รองรับในระบบ</div>';
+      },
+
+      cardHtml(p) {
+        const c = this.cfgOf(p.code);
+        const isLive = c?.mode === 'Live';
+        const methods = p.methods.map(m => {
+          const on = (c?.enabledMethods || []).includes(m);
+          return `<label><input type="checkbox" data-m="${Layout.esc(p.code)}" value="${Layout.esc(m)}"
+                    ${on ? 'checked' : ''}> ${Layout.esc(this.methodLabel(m))}</label>`;
+        }).join('');
+
+        const testedOk = !!c?.lastTestPassedAt;
+        const gotWebhook = !!c?.lastWebhookAt;
+        return `
+        <div class="card">
+          <h3>${Layout.esc(c?.displayName || p.code)}</h3>
+          <p class="sub">รองรับ: ${p.methods.map(m => Layout.esc(this.methodLabel(m))).join(' · ')}
+            ${p.supportsRefund ? ' · คืนเงินผ่านระบบได้' : ''}</p>
+
+          <ol class="steps">
+            <li class="${c ? 'done' : ''}">กรอกคีย์ <b>โหมดทดสอบ</b> จากแดชบอร์ดของผู้ให้บริการ แล้วกดบันทึก</li>
+            <li class="${gotWebhook ? 'done' : ''}">นำ <b>URL แจ้งเตือน</b> ด้านล่างไปตั้งในแดชบอร์ดของผู้ให้บริการ</li>
+            <li class="${testedOk ? 'done' : ''}">กด <b>ทดสอบเชื่อมต่อ</b> — ต้องผ่านทั้งคีย์และการแจ้งเตือน</li>
+            <li class="${isLive ? 'done' : ''}">กรอกคีย์ <b>ใช้งานจริง</b> แล้วกดเปิดใช้จริง</li>
+          </ol>
+
+          <div class="kv">
+            <b>ชื่อที่แสดง</b>
+            <input class="form-input" id="dn_${Layout.esc(p.code)}" value="${Layout.esc(c?.displayName || '')}"
+                   placeholder="เช่น รับชำระออนไลน์">
+
+            <b>คีย์สาธารณะ (ทดสอบ)</b>
+            <input class="form-input" id="tp_${Layout.esc(p.code)}" value="${Layout.esc(c?.testPublicKey || '')}">
+
+            <b>คีย์ลับ (ทดสอบ)</b>
+            <input class="form-input" id="ts_${Layout.esc(p.code)}" type="password"
+                   placeholder="${c?.testSecretHint ? 'บันทึกไว้แล้ว (' + Layout.esc(c.testSecretHint) + ') — เว้นว่าง = ไม่เปลี่ยน' : 'ยังไม่ได้ตั้งค่า'}">
+
+            <b>คีย์สาธารณะ (ใช้จริง)</b>
+            <input class="form-input" id="lp_${Layout.esc(p.code)}" value="${Layout.esc(c?.livePublicKey || '')}">
+
+            <b>คีย์ลับ (ใช้จริง)</b>
+            <input class="form-input" id="ls_${Layout.esc(p.code)}" type="password"
+                   placeholder="${c?.liveSecretHint ? 'บันทึกไว้แล้ว (' + Layout.esc(c.liveSecretHint) + ') — เว้นว่าง = ไม่เปลี่ยน' : 'ยังไม่ได้ตั้งค่า'}">
+
+            <b>วิธีจ่ายที่เปิด</b>
+            <div class="method-grid">${methods}</div>
+
+            <b>URL แจ้งเตือน</b>
+            <div>
+              <div class="webhook-box">
+                <span id="wh_${Layout.esc(p.code)}">${Layout.esc(c?.webhookUrl || '—')}</span>
+                <button class="btn btn-sm btn-ghost" onclick="Page.copyWebhook('${Layout.jsArg(p.code)}')">คัดลอก</button>
+              </div>
+              <div class="hint">
+                ${gotWebhook
+                  ? 'ได้รับการแจ้งเตือนล่าสุดเมื่อ ' + Layout.esc(new Date(c.lastWebhookAt).toLocaleString('th-TH'))
+                  : '<b style="color:#b45309">ยังไม่เคยได้รับการแจ้งเตือน</b> — ถ้าไม่ตั้ง URL นี้ ลูกค้าจ่ายเงินแล้วออเดอร์จะไม่อัปเดต'}
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+            <button class="btn btn-primary" onclick="Page.save('${Layout.jsArg(p.code)}')">บันทึก</button>
+            <button class="btn btn-secondary" onclick="Page.test('${Layout.jsArg(p.code)}')">ทดสอบเชื่อมต่อ</button>
+            ${isLive
+              ? `<button class="btn btn-ghost" onclick="Page.setMode('${Layout.jsArg(p.code)}','Test')">กลับสู่โหมดทดสอบ</button>`
+              : `<button class="btn ${c?.canEnableLive ? 'btn-success' : 'btn-ghost'}"
+                    ${c?.canEnableLive ? '' : 'disabled'}
+                    title="${c?.canEnableLive ? 'เปิดรับเงินจริง' : 'ต้องทดสอบเชื่อมต่อให้ผ่าน และกรอกคีย์ใช้งานจริงให้ครบก่อน'}"
+                    onclick="Page.setMode('${Layout.jsArg(p.code)}','Live')">เปิดใช้จริง</button>`}
+          </div>
+          <div class="hint" id="th_${Layout.esc(p.code)}"></div>
+        </div>`;
+      },
+
+      /// ป้ายวิธีจ่ายเป็นภาษาไทย — คีย์มาจากเซิร์ฟเวอร์ ค่าที่ไม่รู้จักแสดงตามเดิม
+      /// (เพิ่มวิธีจ่ายใหม่ฝั่งเซิร์ฟเวอร์แล้วหน้านี้ยังใช้ได้ ไม่ตกหล่น)
+      methodLabel(m) {
+        return ({
+          PromptPay: 'พร้อมเพย์ (QR)', Card: 'บัตรเครดิต/เดบิต',
+          MobileBanking: 'โมบายแบงก์กิ้ง', InternetBanking: 'อินเทอร์เน็ตแบงก์กิ้ง',
+          TrueMoney: 'ทรูมันนี่วอลเล็ท', ManualSlip: 'โอนแล้วแนบสลิป',
+        })[m] || m;
+      },
+
+      copyWebhook(code) {
+        const el = document.getElementById('wh_' + code);
+        if (!el) return;
+        navigator.clipboard?.writeText(el.textContent.trim())
+          .then(() => Layout.toast('คัดลอก URL แล้ว ✓'))
+          .catch(() => Layout.toast('คัดลอกไม่สำเร็จ — เลือกข้อความแล้วคัดลอกเอง', 'warning'));
+      },
+
+      async save(code) {
+        const val = id => (document.getElementById(id + '_' + code)?.value || '').trim();
+        const methods = Array.from(document.querySelectorAll(`input[data-m="${CSS.escape(code)}"]:checked`))
+          .map(x => x.value);
+        try {
+          await Layout.api().savePaymentConfig({
+            providerCode: code,
+            displayName: val('dn'),
+            testPublicKey: val('tp'), testSecretKey: val('ts'),
+            livePublicKey: val('lp'), liveSecretKey: val('ls'),
+            enabledMethods: methods, isActive: true,
+          });
+          Layout.toast('บันทึกแล้ว ✓');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async test(code) {
+        const box = document.getElementById('th_' + code);
+        if (box) box.textContent = 'กำลังทดสอบ…';
+        try {
+          const res = await Layout.api().testPaymentConfig(code);
+          const h = res.data || {};
+          // ข้อความมาจากเซิร์ฟเวอร์ทั้งหมด — หน้าเว็บไม่แต่งคำอธิบายเอง
+          if (box) box.innerHTML = (h.keysValid && h.webhookReceived ? '✅ ' : '⚠️ ')
+            + Layout.esc(h.message || '');
+          await this.load();
+        } catch (e) {
+          if (box) box.innerHTML = '❌ ' + Layout.esc(e.message);
+        }
+      },
+
+      async setMode(code, mode) {
+        if (mode === 'Live' && !confirm(
+          'เปิดรับชำระเงินจริงใช่ไหม?\n\nหลังจากนี้เงินที่ลูกค้าจ่ายจะเข้าบัญชีจริง '
+          + 'และการเปิดใช้งานนี้จะถูกบันทึกไว้ในประวัติการตรวจสอบ')) return;
+        try {
+          const res = await Layout.api().setPaymentMode(code, mode);
+          Layout.toast(res?.message || 'บันทึกแล้ว', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

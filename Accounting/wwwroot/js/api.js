@@ -676,6 +676,17 @@ const API = {
       makeLoanPayment: (id, d) => API.post(`${base}/loans/${id}/payments`, d),
       getLoanPayments: (id) => API.get(`${base}/loans/${id}/payments`),
       getLoanSummary: () => API.get(`${base}/loans/summary`),
+      // ── รับชำระเงินผ่าน gateway (PAYMENT_GATEWAY_DESIGN.md) ──
+      // ไม่มีชื่อผู้ให้บริการในไฟล์นี้ — ทุกอย่างผ่านชั้นกลาง
+      getPaymentProviders: () => API.get(`${base}/payment-settings/providers`),
+      getPaymentConfigs: () => API.get(`${base}/payment-settings`),
+      savePaymentConfig: (d) => API.put(`${base}/payment-settings`, d),
+      testPaymentConfig: (code) => API.post(`${base}/payment-settings/${code}/test`, {}),
+      setPaymentMode: (code, mode) => API.post(`${base}/payment-settings/${code}/mode`, { mode }),
+      createPaymentIntent: (d) => API.post(`${base}/pay/intents`, d),
+      getPaymentIntentStatus: (id, live = true) => API.get(`${base}/pay/intents/${id}/status?live=${live}`),
+      listPaymentIntents: (q = '') => API.get(`${base}/pay/intents${q}`),
+      getPaymentIntentEvents: (id) => API.get(`${base}/pay/intents/${id}/events`),
       // สูตรวัตถุดิบต่อสินค้า (recipe) — มุมมองบนตาราง BOM เดียวกับใบสั่งผลิต
       getProductRecipe: (productId) => API.get(`${base}/mfg/products/${productId}/recipe`),
       saveProductRecipe: (productId, d) => API.put(`${base}/mfg/products/${productId}/recipe`, d),
