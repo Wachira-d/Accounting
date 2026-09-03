@@ -31,6 +31,8 @@ public class AccountingDbContext : DbContext
     public DbSet<BillingAccount> BillingAccounts => Set<BillingAccount>();
     public DbSet<BillingAccountAdmin> BillingAccountAdmins => Set<BillingAccountAdmin>();
     public DbSet<ApiFeature> ApiFeatures => Set<ApiFeature>();
+    public DbSet<QuotaRewardOption> QuotaRewardOptions => Set<QuotaRewardOption>();
+    public DbSet<QuotaRewardGrant> QuotaRewardGrants => Set<QuotaRewardGrant>();
     public DbSet<CompanyFeature> CompanyFeatures => Set<CompanyFeature>();
     public DbSet<ApiPricingPlan> ApiPricingPlans => Set<ApiPricingPlan>();
     public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
@@ -615,6 +617,19 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.SnapshotUnitPrice).HasPrecision(18, 4);
             e.Property(x => x.LastBilledPeriod).HasMaxLength(7);
             e.HasIndex(x => new { x.CompanyId, x.FeatureCode }).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<QuotaRewardOption>(e =>
+        {
+            e.Property(x => x.Title).HasMaxLength(200);
+            e.Property(x => x.EstimatedRevenuePerView).HasPrecision(18, 2);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<QuotaRewardGrant>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.GrantedAt });
+            e.HasOne(x => x.Option).WithMany().HasForeignKey(x => x.OptionId).OnDelete(DeleteBehavior.Cascade);
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 

@@ -5726,6 +5726,18 @@ public static class DatabaseMigrationHelper
             WHERE NOT EXISTS (SELECT 1 FROM "ApiFeatures" f WHERE f."FeatureCode" = v."FeatureCode");
             """,
 
+            // ═══ โควตาพิเศษ: ซื้อ top-up / ทำภารกิจแลกโควตา (LODGING_LICENSING_PLAN §11-12) ═══
+            """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "DocumentBonusQuota" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "DocumentBonusExpiresAt" timestamptz NULL;""",
+            """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "QuotaRewardBlocked" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "AllowQuotaReward" boolean NOT NULL DEFAULT false;""",
+            """CREATE TABLE IF NOT EXISTS "QuotaRewardOptions" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "Kind" integer NOT NULL DEFAULT 1, "Title" varchar(200) NOT NULL DEFAULT '', "Description" text NULL, "ImageUrl" text NULL, "MediaUrl" text NULL, "PartnerUrl" text NULL, "DurationSeconds" integer NOT NULL DEFAULT 60, "RewardDocuments" integer NOT NULL DEFAULT 5, "RewardValidDays" integer NOT NULL DEFAULT 30, "MaxPerDay" integer NOT NULL DEFAULT 2, "MaxPerMonth" integer NOT NULL DEFAULT 10, "EstimatedRevenuePerView" numeric(18,2) NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
+            """CREATE TABLE IF NOT EXISTS "QuotaRewardGrants" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "CompanyId" uuid NOT NULL, "OptionId" uuid NOT NULL REFERENCES "QuotaRewardOptions"("Id") ON DELETE CASCADE, "UserId" uuid NULL, "Kind" integer NOT NULL DEFAULT 1, "GrantedDocuments" integer NOT NULL DEFAULT 0, "GrantedAt" timestamptz NOT NULL DEFAULT now(), "ExpiresAt" timestamptz NOT NULL DEFAULT now(), "ClickedThrough" boolean NOT NULL DEFAULT false, "WatchedSeconds" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
+            """CREATE INDEX IF NOT EXISTS "IX_QuotaRewardGrants_Company_At" ON "QuotaRewardGrants" ("CompanyId", "GrantedAt");""",
+            // seed ตัวอย่าง "วิดีโอสอนฟีเจอร์ของเราเอง" — ไม่มีโฆษณาเครือข่ายเป็นค่าเริ่มต้น
+            // (ปิดไว้ IsActive=false ⇒ ทั้งฟีเจอร์ปิดจนกว่าแอดมินจะเปิด — ชั้นที่ 1 ของสวิตช์)
+            """INSERT INTO "QuotaRewardOptions" ("Id","Kind","Title","Description","DurationSeconds","RewardDocuments","RewardValidDays","MaxPerDay","MaxPerMonth","IsActive","SortOrder","CreatedBy") SELECT gen_random_uuid(), 2, 'ดูวิธีใช้ฟีเจอร์ที่ยังไม่ได้ใช้ 1 นาที', 'ดูวิดีโอสั้นแล้วรับโควตาเอกสารเพิ่ม 5 ฉบับ (ใช้ได้ 30 วัน)', 60, 5, 30, 2, 10, false, 10, 'seed' WHERE NOT EXISTS (SELECT 1 FROM "QuotaRewardOptions");""",
+
             // ═══ ส่วนขยาย add-on catalog (LODGING_LICENSING_PLAN.md §6) ═══
             // ใช้ ApiFeature/CompanyFeature เดิมเป็น catalog กลางของ "ของที่ขายเพิ่มได้
             // ทุกชนิด" แทนการสร้างระบบ license คู่ขนาน (สองแคตตาล็อก = drift แน่นอน)

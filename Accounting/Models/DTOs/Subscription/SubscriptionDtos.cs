@@ -74,7 +74,12 @@ public record SubscriptionResponse(
     List<string> EnabledFeatureNames,
     UsageLimits Limits,
     UsageCurrent Current,
-    bool IsPermanentFree = false);
+    bool IsPermanentFree = false,
+    /// <summary>รหัส add-on ที่บริษัทนี้เปิดใช้อยู่ (`AddOnCodes.*`) — ส่งมาพร้อม
+    /// แพ็กเกจเพื่อให้ `Layout.hasFeature` ตัวเดียวตอบได้ทั้ง "ความสามารถของ
+    /// แพ็กเกจ" (bitmask) และ "ส่วนเสริมที่ซื้อเพิ่ม" (string) — ห้ามให้หน้าเว็บ
+    /// ไปเรียก endpoint ที่สองแล้วตัดสินเอง (จะกลายเป็น resolver ตัวที่สอง)</summary>
+    List<string>? EnabledAddOnCodes = null);
 
 public record UsageLimits(
     int MaxUsers,

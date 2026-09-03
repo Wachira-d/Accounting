@@ -45,7 +45,13 @@ public class UsageMeteringService : IUsageMeteringService
                 return new UsageRecordResult(false, null, 0, false, false, "ไม่พบบริษัท");
 
             // ── 1. ฟีเจอร์ต้องเปิดอยู่ ──
-            if (!await IsFeatureEnabledAsync(request.CompanyId, request.FeatureCode, ct))
+            // **ยกเว้นมิเตอร์ของระบบ** (เอกสารเกินโควตา · การเข้าพักที่ปิด · top-up):
+            // ไม่ใช่สวิตช์ที่ลูกค้ากดเปิด จึงไม่มีวันมีแถว CompanyFeature ⇒ ถ้าบังคับ
+            // ให้เปิดก่อน การบันทึกทุกครั้งจะถูกปฏิเสธเงียบ ๆ และเก็บเงินส่วนเกิน
+            // ไม่ได้เลยแม้แต่บาทเดียว (ดู AddOnCodes.SystemMeters ที่อธิบายว่าทำไม
+            // ห้ามให้มิเตอร์พวกนี้โผล่เป็นสวิตช์ในหน้าลูกค้า)
+            if (!Models.Constants.AddOnCodes.IsSystemMeter(request.FeatureCode)
+                && !await IsFeatureEnabledAsync(request.CompanyId, request.FeatureCode, ct))
                 return new UsageRecordResult(false, null, 0, false, false,
                     $"ฟีเจอร์ {request.FeatureCode} ยังไม่ได้เปิดใช้งานสำหรับบริษัทนี้");
 
@@ -213,6 +219,16 @@ public class UsageMeteringService : IUsageMeteringService
             .OrderByDescending(p => p.BillingAccountId.HasValue)   // ดีลเฉพาะกลุ่มมาก่อน
             .ThenByDescending(p => p.EffectiveFrom)
             .FirstOrDefault();
+    }
+
+    /// <summary>ราคาที่มีผลกับบริษัทนี้ตอนนี้ — เปิดให้ที่อื่นใช้เพื่อไม่ให้ใครต้อง
+    /// เขียนลำดับ "ดีลเฉพาะกลุ่มชนะราคามาตรฐาน" ซ้ำอีกชุด (drift แน่นอน)</summary>
+    public async Task<ApiPricingPlan?> ResolveEffectivePlanAsync(
+        Guid companyId, string featureCode, CancellationToken ct = default)
+    {
+        var accountId = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.BillingAccountId).FirstOrDefaultAsync(ct);
+        return await ResolvePlanAsync(featureCode, accountId, DateTime.UtcNow, ct);
     }
 
     public async Task<bool> IsFeatureEnabledAsync(Guid companyId, string featureCode, CancellationToken ct = default)

@@ -1563,6 +1563,7 @@
         const sideParam = params.get('side');
         const navId = sideParam === 'expense' ? 'expense-docs' : sideParam === 'revenue' ? 'documents' : 'documents';
         if (!Layout.init(navId)) return;
+        Layout.showQuotaBanner();   // เตือนโควตาก่อนผู้ใช้เริ่มออกใบ ไม่ใช่ตอนกดบันทึกแล้วเด้ง
         Layout.setTitle(sideParam === 'revenue' ? 'เอกสารฝั่งรายรับ' : sideParam === 'expense' ? 'เอกสารฝั่งรายจ่าย' : 'เอกสาร');
         // Inject Export button into header actions
         const pa = document.getElementById('pageActions');

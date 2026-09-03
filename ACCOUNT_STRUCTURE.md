@@ -291,6 +291,54 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
   เดียวกับเอกสารอื่น และสะท้อนการแก้ไขล่าสุด) ไม่ใช่สำเนาที่แนบค้างไว้
 - **ยกเว้นค่าบริการ (0 บาท)** ไม่ออกเอกสาร — ไม่มีรายได้ให้บันทึก
 
+#### 6.1a ปิดรอบบิลค่าใช้งาน — `UsageInvoicingJob` ✅
+
+`UsageEvent` มีช่อง `BilledPeriod` / `BilledDocumentId` มาตั้งแต่ต้น แต่ **ไม่เคยมีใคร
+เขียนสองช่องนั้น** ⇒ ค่าใช้งานที่คิดได้ค้างในตารางตลอดกาล ไม่เคยกลายเป็นใบแจ้งหนี้
+(defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้"). งาน `UsageInvoicingJob`
+(`Services/Background/UsageInvoicingJob.cs`, รอบ 6 ชม.) ปิดช่องนี้:
+
+| ขั้น | พฤติกรรม |
+| --- | --- |
+| ขอบเขต | `BilledPeriod IS NULL` · ไม่ใช่ sandbox · `OccurredAt` อยู่ใน **งวดที่ปิดแล้ว** (ก่อนต้นเดือนนี้ตามปฏิทินไทย) |
+| จัดกลุ่ม | ต่อ (บริษัท, งวด) → 1 ใบแจ้งหนี้ · **แยกบรรทัดต่อ `FeatureCode`** (ชื่อจาก `ApiFeature.Name` ไม่ใช่รหัสดิบ) |
+| ออกเอกสาร | `IPlatformBillingDocumentIssuer.IssueUsageInvoiceAsync` (ใหม่) — ใบแจ้งหนี้หลายบรรทัด ครบกำหนด +7 วัน อ้างอิง `USAGE-{งวด}-{8 ตัวแรกของ CompanyId}` |
+| Prepaid | **ไม่ออกใบ** (เครดิตถูกตัดตอน `RecordAsync` แล้ว — ออกอีกใบ = เก็บสองรอบ) แต่ยัง **ตีตรา `BilledPeriod`** เพื่อไม่ให้วนอ่านแถวเดิมตลอดไป · `BilledDocumentId = null` แปลว่า "ปิดรอบแล้วโดยไม่มีใบ" |
+| ยอดต่ำกว่า ฿50 | **ไม่ตีตรา** — ยกยอดไปรวมงวดถัดไป (ไม่ใช่การยกเลิกหนี้) |
+| ออกใบไม่สำเร็จ | **ไม่ตีตรา** ปล่อยให้รอบหน้าลองใหม่ — ตีตราแล้วรายได้หายถาวรโดยไม่มีใครรู้ |
+| ยังไม่ตั้ง tenant ผู้ให้บริการ | ข้ามทั้งรอบ ไม่แตะข้อมูล (ตั้งค่าเสร็จเมื่อไรก็เก็บย้อนหลังได้) |
+
+ล็อกด้วย `AdvisoryLockKey.UsageInvoicing` ระดับระบบ (ไม่ผูกบริษัท) ใน transaction จริง
+— งานเดินทีเดียวทุก tenant จึงต้องกันหลาย instance ปิดรอบเดียวกันพร้อมกัน
+
+#### 6.1b ส่วนเสริม (add-on) และโควตาเอกสาร ✅
+
+ความสามารถที่ขายแยกจากแพ็กเกจเดินผ่าน `CompanyFeature` (string code ใน
+`Models/Constants/AddOnCodes.cs`) ไม่ใช่ `FeatureFlags` bitmask (ใช้ไปถึงบิต 47/64 แล้ว)
+
+| ชั้น | ที่อยู่ | หน้าที่ |
+| --- | --- | --- |
+| แคตตาล็อก + ราคา | `ApiFeature` / `ApiPricingPlan` · หน้า `/pages/admin-addons.html` (SystemAdmin) | ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย — **ตั้งราคาใหม่ไม่แก้ราคาเดิม** (ปิดแผนเก่า เปิดแผนใหม่) |
+| สวิตช์ของลูกค้า | `CompanyFeature` · หน้า `/pages/addons.html` | เปิด/ปิดเอง · ติ๊กยอมรับค่าใช้จ่ายแยกจากปุ่มเปิด · ปิดแล้วหยุดคิดเงินทันที |
+| ตัวตัดสินสิทธิ์ | `IEntitlementService.CheckAsync` (เซิร์ฟเวอร์) · `Layout.hasFeature` (หน้าเว็บ) | ชื่อที่มีจุด = add-on code · ไม่มีจุด = ความสามารถของแพ็กเกจ — **ตัวเดียวตอบทั้งสองแกน** |
+| ค่าเหมารายเดือน | `AddOnMonthlyBillingJob` + `AddOnBilling.FlatAmount` | ทดลองใช้/ของแถม = ฿0 **แต่ยังบันทึกแถว** ให้เห็นในบิล |
+
+`SubscriptionResponse.EnabledAddOnCodes` เดินทางมากับแพ็กเกจ เพื่อไม่ให้หน้าเว็บต้อง
+ยิง endpoint ที่สองแล้วตัดสินสิทธิ์เอง (= resolver ตัวที่สอง)
+
+**โควตาเอกสาร** (`IQuotaService` + `Helpers/DocumentQuotaPolicy.cs`):
+- `GET /api/companies/{id}/metering/quota` — used / planLimit / bonus / **warnLevel** /
+  วันที่คาดว่าจะเต็ม / ยอดส่วนเกินเดือนนี้ · **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว**
+  (`Layout.showQuotaBanner()` ใช้ในหน้าเอกสาร · ที่พัก · POS)
+- `POST …/quota/topup` — ซื้อโควตาเพิ่ม 100 ฉบับ/แพ็ก (อายุ 60 วัน) ผ่าน `documents.topup`
+- `POST …/quota/rewards/{id}/claim` — ภารกิจแลกโควตา (§12 ของ LODGING_LICENSING_PLAN),
+  สวิตช์ 3 ชั้น: ไม่มี option ที่ `IsActive` · `PlanTemplate.AllowQuotaReward` ·
+  `Subscription.QuotaRewardBlocked`
+- โบนัสถูก **หักทีละใบ** ตอนออกเอกสารที่เกินโควตาแพ็กเกจ (`IncrementUsageAsync`) —
+  ถ้าไม่หัก ผู้ที่ซื้อครั้งเดียวจะได้โควตาเพิ่มทุกเดือนจนหมดอายุ
+- มิเตอร์ของระบบ (`AddOnCodes.SystemMeters`) **ไม่ต้องให้ลูกค้าเปิด** — `RecordAsync`
+  ข้ามด่าน "ฟีเจอร์เปิดอยู่ไหม" ให้รหัสกลุ่มนี้ ไม่งั้นค่าส่วนเกินจะบันทึกไม่ได้เลย
+
 ### 6.2 Prepaid (default) / Postpaid
 
 - **Prepaid**: ซื้อแพ็กเครดิตล่วงหน้า → `CreditBalance` ตัดตาม UsageEvent → เตือน 20%/หมด
@@ -615,7 +663,16 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-03 (rev 22 — **ที่พัก (Lodging)** §3.1b: LodgingProperty ผูก Site/Branch ·_
+_Last verified against codebase: 2026-09-03 (rev 23 — **License ส่วนเสริม + โควตา**:_
+_§6.1a ปิดรอบบิลค่าใช้งาน (`UsageInvoicingJob` เขียน `BilledPeriod`/`BilledDocumentId`_
+_ที่ไม่เคยมีใครเขียน · ใบแจ้งหนี้หลายบรรทัดผ่าน `IssueUsageInvoiceAsync` · Prepaid_
+_ปิดรอบโดยไม่ออกใบ · ต่ำกว่า ฿50 ยกยอด · ออกใบไม่สำเร็จห้ามตีตรา) ·_
+_§6.1b ชั้น add-on (`AddOnCodes`/`CompanyFeature`/`IEntitlementService`) + โควตาเอกสาร_
+_(`IQuotaService`: สถานะ/top-up/ภารกิจแลกโควตา · `DocumentQuotaPolicy` ตัดสิน "นับไหม"_
+_กับ "บล็อกได้ไหม" แยกกัน — เอกสารที่กฎหมายบังคับออกได้เสมอ) · หน้า `/pages/addons.html`_
+_(ลูกค้า) + `/pages/admin-addons.html` (SystemAdmin) · `SubscriptionResponse.EnabledAddOnCodes`_
+_→ `Layout.hasFeature` ตัวเดียวตอบทั้ง bitmask และ add-on code)_
+_ก่อนหน้า: 2026-09-03 (rev 22 — **ที่พัก (Lodging)** §3.1b: LodgingProperty ผูก Site/Branch ·_
 _seed ตอนสร้างเว็บโรงแรม · สิทธิ์ Lodging.Manage/Settings · scope สาธารณะ SiteId+token)_
 _ก่อนหน้า: 2026-09-02 (rev 21 — **เก็บงานค้างของชั้น_
 _ผู้ใช้/บัญชีภายนอก**: (ก) คำเชิญเข้าบริษัท (`CompanyInvitation`) ถูก consume_

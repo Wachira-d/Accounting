@@ -3043,9 +3043,13 @@ public partial class DocumentService : IDocumentService
         var eff = await _subscriptionService.GetEffectivePlanAsync(companyId);
         var sub = await _db.Subscriptions.AsNoTracking()
             .Where(s => s.CompanyId == companyId && !s.IsDeleted)
-            .Select(s => new { s.CurrentMonthDocuments })
+            .Select(s => new { s.CurrentMonthDocuments, s.DocumentBonusQuota, s.DocumentBonusExpiresAt })
             .FirstOrDefaultAsync();
-        return (sub?.CurrentMonthDocuments ?? 0, eff?.MaxDocumentsPerMonth ?? 0);
+        // โบนัส (top-up/แอดมินให้/ภารกิจ) ต้องบวกที่นี่ด้วย ไม่ใช่แค่ใน
+        // CheckUsageLimitAsync — ไม่งั้นข้อความปฏิเสธจะบอกเพดานผิดจากที่ระบบใช้จริง
+        return (sub?.CurrentMonthDocuments ?? 0,
+            DocumentQuotaPolicy.EffectiveLimit(eff?.MaxDocumentsPerMonth ?? 0,
+                sub?.DocumentBonusQuota ?? 0, sub?.DocumentBonusExpiresAt, DateTime.UtcNow));
     }
 
     /// <summary>เอกสารเกินโควตา 1 ฉบับ = 1 UsageEvent (documents.overage)

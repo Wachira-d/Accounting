@@ -21,9 +21,10 @@ public class MeteringController : ControllerBase
 {
     private readonly AccountingDbContext _db;
     private readonly IUsageMeteringService _metering;
+    private readonly IQuotaService _quota;
 
-    public MeteringController(AccountingDbContext db, IUsageMeteringService metering)
-    { _db = db; _metering = metering; }
+    public MeteringController(AccountingDbContext db, IUsageMeteringService metering, IQuotaService quota)
+    { _db = db; _metering = metering; _quota = quota; }
 
     /// <summary>
     /// ฟีเจอร์ที่เปิดขายทั้งหมด + สถานะเปิด/ปิดของบริษัทนี้ + **ราคาที่มีผลตอนนี้**
@@ -70,10 +71,14 @@ public class MeteringController : ControllerBase
             return new
             {
                 f.FeatureCode, f.Name, f.NameEn, f.Description, f.UnitLabel,
+                f.Icon, f.ModuleCode, f.TrialDays,
+                kind = f.Kind.ToString(),
                 isPublished = f.IsPublished,
                 isEnabled = state?.IsEnabled ?? false,
                 enabledAt = state?.EnabledAt,
                 enabledBy = state?.EnabledBy,
+                trialUntil = state?.TrialUntil,
+                grantSource = state?.GrantSource.ToString(),
                 pricing = plan == null ? null : new
                 {
                     method = plan.Method.ToString(),
@@ -110,6 +115,53 @@ public class MeteringController : ControllerBase
 
         return Ok(new ApiResponse<object>(true, new { featureCode, enabled = req.Enabled },
             req.Enabled ? $"เปิดใช้ {feature.Name} แล้ว" : $"ปิด {feature.Name} แล้ว — หยุดคิดค่าใช้จ่ายทันที"));
+    }
+
+    // ═══════════════ โควตาเอกสาร: สถานะ · ซื้อเพิ่ม · แลกจากภารกิจ ═══════════════
+
+    /// <summary>สถานะโควตาเอกสารเดือนนี้ — **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว**
+    ///
+    /// ทุกหน้าที่อยากเตือน "ใกล้เต็ม" ต้องอ่านจากที่นี่ ห้ามเทียบเปอร์เซ็นต์เอง
+    /// (defect class "สำเนามือฝั่ง JS" — เกิดมาแล้วกับ MENU_SECTIONS/docHeaderLabel)</summary>
+    [HttpGet("quota")]
+    public async Task<ActionResult<ApiResponse<DocumentQuotaStatus>>> GetQuota(Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<DocumentQuotaStatus>(true, await _quota.GetDocumentQuotaAsync(companyId, ct)));
+
+    public record TopUpRequest(int Packs = 1);
+
+    /// <summary>ซื้อโควตาเอกสารเพิ่ม — ทางไปต่อทางที่ 1 เมื่อชนเพดาน (§11)</summary>
+    [HttpPost("quota/topup")]
+    public async Task<ActionResult<ApiResponse<DocumentQuotaStatus>>> TopUp(
+        Guid companyId, [FromBody] TopUpRequest req, CancellationToken ct)
+    {
+        var actor = User.Identity?.Name ?? "unknown";
+        var status = await _quota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct);
+        var docs = req.Packs * Models.Constants.AddOnCodes.DocumentsPerTopUpPack;
+        return Ok(new ApiResponse<DocumentQuotaStatus>(true, status,
+            $"เพิ่มโควตา {docs} ฉบับแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"));
+    }
+
+    /// <summary>ภารกิจแลกโควตาที่เปิดอยู่ (§12) — ว่างเปล่า = เจ้าของระบบปิดไว้
+    /// หรือแพ็กเกจนี้ไม่รองรับ ซึ่งเป็นสถานะปกติ ไม่ใช่ error</summary>
+    [HttpGet("quota/rewards")]
+    public async Task<ActionResult<ApiResponse<List<QuotaRewardOptionDto>>>> ListRewards(
+        Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<List<QuotaRewardOptionDto>>(true, await _quota.ListRewardOptionsAsync(companyId, ct)));
+
+    public record ClaimRewardRequest(int WatchedSeconds, bool ClickedThrough = false);
+
+    /// <summary>รับโควตาหลังทำภารกิจจบ — เวลาที่ส่งมาจากเบราว์เซอร์เชื่อไม่ได้ 100%
+    /// จึงมีเพดานต่อวัน/เดือนเป็นด่านจริง (ดู <c>QuotaRewardPolicy</c>)</summary>
+    [HttpPost("quota/rewards/{optionId:guid}/claim")]
+    public async Task<ActionResult<ApiResponse<QuotaRewardClaimResult>>> ClaimReward(
+        Guid companyId, Guid optionId, [FromBody] ClaimRewardRequest req, CancellationToken ct)
+    {
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User);
+        var res = await _quota.ClaimRewardAsync(companyId, optionId, req.WatchedSeconds,
+            req.ClickedThrough, userId, ct);
+        return res.Granted
+            ? Ok(new ApiResponse<QuotaRewardClaimResult>(true, res, res.Message))
+            : BadRequest(new ApiResponse<QuotaRewardClaimResult>(false, res, res.Message));
     }
 
     /// <summary>ยอดใช้งานรายเดือนของบริษัทนี้</summary>

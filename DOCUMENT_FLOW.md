@@ -1684,6 +1684,7 @@ VAT พอดี**
 
 | Gate | Where | กระทำ |
 | --- | --- | --- |
+| **โควตาเอกสารของแพ็กเกจ** | `Helpers/DocumentQuotaPolicy.Classify` เรียกจาก `DocumentService.CreateDocumentAsync` | ตอบ **สองคำถามแยกกัน**: (1) *นับโควตาไหม* — นับเฉพาะใบที่แทน "การขาย 1 ครั้ง" (TaxInvoice/Invoice/Receipt); CN/DN/ใบสำคัญ/เอกสารฝั่งซื้อ/ใบส่งของ **ไม่นับ**; เอกสารที่โมดูลที่พักออกให้ (`OriginModule="Lodging"`) ไม่นับเพราะมีมิเตอร์ `lodging.stay` แล้ว (2) *บล็อกได้ไหม* — **ใบที่กฎหมายบังคับให้ออกห้ามบล็อกเด็ดขาด** (§86/4 tax point เกิดแล้ว · §86/9-10 ถ้าค้างจะทำให้ ภ.พ.30 เกินจริง) → เกินโควตาบันทึกเป็น `documents.overage` แทนการปฏิเสธ; บล็อกได้เฉพาะใบเสนอราคา/ใบสั่งซื้อ/ใบขอซื้อ (`BusinessRuleException` รหัส `QUOTA-DOCUMENTS`). เพดานจริง = โควตาแพ็กเกจ + โบนัสที่ยังไม่หมดอายุ (`EffectiveLimit`) — ดู ACCOUNT_STRUCTURE.md §6.1b |
 | §86/4 completeness (PI/Expense/PV) | `TaxInvoiceCompletenessChecker` | ถ้าไม่ครบ → input VAT ลง 11640 (undue) |
 | §82/5 prohibited input VAT | `ChartOfAccount.InputVatClaimable` + per-line `IsVatClaimable` | flag claim=false, แยกออกจาก ภ.พ.30 + แสดง "🚫 §82/5" line |
 | §82/5(1)(2) non-full-tax-invoice | `OcrDocumentRoleInferrer.Infer` → `InputVatClaimable/InputVatClaimWarning` | OCR ตรวจ "ใบกำกับภาษีอย่างย่อ §86/6" หรือ "ใบเสร็จ/บิลเงินสด ไม่ใช่ §86/4" + มี VAT → เขียน `[VAT-CLAIM]` ลง ProcessingNotes; review UI + form แสดง banner แดง "เคลม VAT ไม่ได้ — ขอใบกำกับเต็มรูป"; ไม่ auto-ติ๊ก "ขอเครดิตภาษีซื้อ". กัน false positive 2 ชั้น: `ContainsAnyNotNegated` (ข้ามข้อความปฏิเสธ "ไม่ใช่...อย่างย่อ" จาก vision model) + เลขภาษีผู้ซื้อ 13 หลักถูกสกัดได้ = ใบเต็มรูปเสมอ (§86/6 ใบอย่างย่อไม่มีข้อมูลผู้ซื้อ) override คำที่เจอบนกระดาษ |
@@ -2707,7 +2708,13 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-03 (รอบ 124 — **โมดูลที่พัก**: §6.5 ใหม่ทั้งหมด —_
+_Last verified against codebase: 2026-09-03 (รอบ 125 — **โควตาเอกสาร + ส่วนเสริม**:_
+_§7 เพิ่ม gate "โควตาเอกสารของแพ็กเกจ" — `DocumentQuotaPolicy` แยก "นับไหม" ออกจาก_
+_"บล็อกได้ไหม" ⇒ ใบกำกับ/ใบเสร็จ/ใบลดหนี้ **ออกได้เสมอแม้โควตาเต็ม** (คิดเป็น_
+_`documents.overage` แทน) ส่วนใบเสนอราคา/ใบสั่งซื้อบล็อกได้ · เอกสารจากโมดูลที่พัก_
+_(`Document.OriginModule="Lodging"`) ไม่นับซ้ำเพราะมีมิเตอร์ `lodging.stay` แล้ว ·_
+_รายละเอียดชั้น license/บิลอยู่ที่ ACCOUNT_STRUCTURE.md §6.1a-§6.1b)_
+_ก่อนหน้า: 2026-09-03 (รอบ 124 — **โมดูลที่พัก**: §6.5 ใหม่ทั้งหมด —_
 _เว็บไซต์ IndustryType.Hotel seed ที่พัก+ห้อง+ราคา+นโยบายให้จองได้ทันที · เงินทุกใบผ่าน_
 _IDocumentService (มัดจำ §78/1 · เช็คเอาต์ DepositApplied* · ยกเลิก Refund/Realize) ·_
 _ดู `LODGING_TAKETIME_ANALYSIS.md` สำหรับสิ่งที่ลอก/ไม่ลอก/ยังไม่ทำ)_

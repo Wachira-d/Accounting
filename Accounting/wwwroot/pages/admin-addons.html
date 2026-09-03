@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ส่วนเสริมและราคา - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-bottom:16px }
+    .card h3 { margin:0 0 12px; font-size:15px; font-weight:700; color:#0f172a }
+    table.rpt { width:100%; border-collapse:collapse; font-size:13px }
+    table.rpt th { background:#f8fafc; text-align:left; padding:8px 10px; font-weight:700; color:#334155;
+                   border-bottom:2px solid #e2e8f0; white-space:nowrap }
+    table.rpt td { padding:8px 10px; border-bottom:1px solid #f1f5f9; vertical-align:top }
+    .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap }
+    .scroll-x { overflow-x:auto }
+    .muted { color:#94a3b8 }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700 }
+    .pill.on { background:#dcfce7; color:#166534 }
+    .pill.off { background:#f1f5f9; color:#64748b }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px }
+    @media (max-width:640px){ .grid2 { grid-template-columns:1fr } }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="container" style="max-width:1400px;margin:0 auto;padding:20px">
+
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+        <div>
+          <h1 style="margin:0;font-size:24px;font-weight:700">💰 ส่วนเสริมและราคา</h1>
+          <p style="margin:4px 0 0;color:#64748b;font-size:14px">
+            ตั้งราคา · เปิด/ปิดการขาย · กำหนดวันทดลองใช้ และแพ็กเกจขั้นต่ำของแต่ละส่วนเสริม
+          </p>
+        </div>
+        <a class="btn btn-secondary" href="/pages/admin-company-usage.html">🏢 การใช้งานรายบริษัท</a>
+      </div>
+
+      <div class="card">
+        <div class="muted" style="font-size:12px;line-height:1.7">
+          <b>การตั้งราคาใหม่ไม่แก้ราคาเดิม</b> — ระบบปิดแผนเดิม ณ เวลาที่ตั้ง แล้วเปิดแผนใหม่ต่อ
+          บิลที่ออกไปแล้วอ้างราคา ณ วันนั้นเสมอ (ประวัติไม่เปลี่ยนย้อนหลัง) ·
+          ส่วนเสริมที่ยังมีบริษัทเปิดใช้อยู่ <b>ปิดการขายได้</b> (ไม่รับผู้ใช้ใหม่) แต่ผู้ใช้เดิมยังใช้ต่อและปิดเองได้
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>รายการทั้งหมด</h3>
+        <div class="scroll-x">
+          <table class="rpt">
+            <thead>
+              <tr>
+                <th>ส่วนเสริม</th>
+                <th>ชนิด</th>
+                <th>วิธีคิดเงิน</th>
+                <th class="num">ราคา</th>
+                <th class="num">โควตาฟรี/เดือน</th>
+                <th class="num">ทดลอง (วัน)</th>
+                <th>แพ็กเกจขั้นต่ำ</th>
+                <th class="num">บริษัทที่เปิดใช้</th>
+                <th>สถานะขาย</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="tbody"><tr><td colspan="10" class="muted" style="padding:24px">กำลังโหลด…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="editModal">
+    <div class="modal-content" style="max-width:680px">
+      <div class="modal-header">
+        <h3 id="editTitle">แก้ไขส่วนเสริม</h3>
+        <button class="modal-close" onclick="Layout.closeModal('editModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="fCode">
+        <div class="grid2">
+          <div>
+            <label>ชื่อที่ลูกค้าเห็น</label>
+            <input class="form-control" id="fName">
+          </div>
+          <div>
+            <label>ไอคอน (อีโมจิ)</label>
+            <input class="form-control" id="fIcon" maxlength="4">
+          </div>
+        </div>
+        <label>คำอธิบาย</label>
+        <textarea class="form-control" id="fDesc" rows="2"></textarea>
+        <div class="grid2">
+          <div>
+            <label>หน่วยนับ</label>
+            <input class="form-control" id="fUnit" placeholder="เดือน / ฉบับ / การเข้าพัก">
+          </div>
+          <div>
+            <label>ลำดับแสดงผล</label>
+            <input class="form-control" id="fSort" type="number">
+          </div>
+          <div>
+            <label>ทดลองใช้ฟรี (วัน)</label>
+            <input class="form-control" id="fTrial" type="number" min="0">
+          </div>
+          <div>
+            <label>แพ็กเกจขั้นต่ำ <span class="muted" style="font-weight:400">(คั่นด้วยจุลภาค เว้นว่าง = ทุกแพ็กเกจ)</span></label>
+            <input class="form-control" id="fMinPlan" placeholder="Standard,Professional,Enterprise">
+          </div>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <input type="checkbox" id="fPublished"> เปิดขาย (รับผู้ใช้ใหม่)
+        </label>
+
+        <hr style="margin:16px 0;border:none;border-top:1px solid #e2e8f0">
+        <h4 style="margin:0 0 8px;font-size:14px">ตั้งราคาใหม่</h4>
+        <div class="muted" style="font-size:12px;margin-bottom:8px">
+          เว้นว่างทั้งบล็อกนี้ = แก้เฉพาะข้อมูลส่วนเสริม ไม่แตะราคา
+        </div>
+        <div class="grid2">
+          <div>
+            <label>วิธีคิดเงิน</label>
+            <select class="form-control" id="pMethod">
+              <option value="">— ไม่เปลี่ยนราคา —</option>
+              <option value="FlatMonthly">เหมารายเดือน (FlatMonthly)</option>
+              <option value="PerUnit">ต่อหน่วย (PerUnit)</option>
+              <option value="PerCall">ต่อการเรียก (PerCall)</option>
+              <option value="Tiered">ขั้นบันได (Tiered)</option>
+            </select>
+          </div>
+          <div>
+            <label>ราคา (บาท)</label>
+            <input class="form-control" id="pPrice" type="number" step="0.01" min="0">
+          </div>
+          <div>
+            <label>โควตาฟรีต่อเดือน</label>
+            <input class="form-control" id="pFree" type="number" min="0" value="0">
+          </div>
+          <div>
+            <label>หมายเหตุ (เห็นเฉพาะแอดมิน)</label>
+            <input class="form-control" id="pNote">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('editModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      rows: [],
+
+      async init() {
+        if (!Layout.init('admin-addons')) return;
+        if (!(await Layout.requirePlatformAdmin())) return;
+        Layout.setTitle('ส่วนเสริมและราคา');
+        await this.load();
+      },
+
+      n(v) { return (v ?? 0).toLocaleString('th-TH'); },
+      money(v) { return (v ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+
+      async load() {
+        try {
+          const res = await API.get('/api/admin/metering/features');
+          this.rows = res?.data || [];
+        } catch (e) {
+          document.getElementById('tbody').innerHTML =
+            `<tr><td colspan="10" style="padding:24px;color:#dc2626">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</td></tr>`;
+          return;
+        }
+        this.render();
+      },
+
+      methodLabel(m) {
+        return ({ FlatMonthly: 'เหมารายเดือน', PerUnit: 'ต่อหน่วย', PerCall: 'ต่อการเรียก', Tiered: 'ขั้นบันได' })[m] || m || '—';
+      },
+
+      render() {
+        const tb = document.getElementById('tbody');
+        if (!this.rows.length) {
+          tb.innerHTML = '<tr><td colspan="10" class="muted" style="padding:24px">ยังไม่มีส่วนเสริมในแคตตาล็อก</td></tr>';
+          return;
+        }
+        tb.innerHTML = this.rows.map((f, i) => {
+          const p = f.standardPlan;
+          return `<tr>
+            <td>
+              <div style="font-weight:600">${Layout.esc(f.icon || '🧩')} ${Layout.esc(f.name)}</div>
+              <div class="muted" style="font-size:11px">${Layout.esc(f.featureCode)}</div>
+            </td>
+            <td>${Layout.esc(f.kind || '')}${f.moduleCode ? `<div class="muted" style="font-size:11px">${Layout.esc(f.moduleCode)}</div>` : ''}</td>
+            <td>${Layout.esc(this.methodLabel(p?.method))}</td>
+            <td class="num">${p ? this.money(p.unitPrice) : '<span class="muted">ยังไม่ตั้ง</span>'}</td>
+            <td class="num">${p ? this.n(p.freeQuotaPerMonth) : '—'}</td>
+            <td class="num">${this.n(f.trialDays)}</td>
+            <td>${f.minPlanCsv ? Layout.esc(f.minPlanCsv) : '<span class="muted">ทุกแพ็กเกจ</span>'}</td>
+            <td class="num">${this.n(f.enabledCompanies)}</td>
+            <td><span class="pill ${f.isPublished ? 'on' : 'off'}">${f.isPublished ? 'เปิดขาย' : 'ปิดขาย'}</span></td>
+            <td><button class="btn btn-secondary" onclick="Page.edit(${i})">แก้ไข</button></td>
+          </tr>`;
+        }).join('');
+      },
+
+      edit(i) {
+        const f = this.rows[i];
+        if (!f) return;
+        document.getElementById('editTitle').textContent = f.name || f.featureCode;
+        document.getElementById('fCode').value = f.featureCode;
+        document.getElementById('fName').value = f.name || '';
+        document.getElementById('fIcon').value = f.icon || '';
+        document.getElementById('fDesc').value = f.description || '';
+        document.getElementById('fUnit').value = f.unitLabel || '';
+        document.getElementById('fSort').value = f.sortOrder ?? 0;
+        document.getElementById('fTrial').value = f.trialDays ?? 0;
+        document.getElementById('fMinPlan').value = f.minPlanCsv || '';
+        document.getElementById('fPublished').checked = !!f.isPublished;
+        // ราคาเริ่มต้นว่างเสมอ — การเปิดฟอร์มต้องไม่กลายเป็นการตั้งราคาใหม่โดยไม่ตั้งใจ
+        document.getElementById('pMethod').value = '';
+        document.getElementById('pPrice').value = '';
+        document.getElementById('pFree').value = f.standardPlan?.freeQuotaPerMonth ?? 0;
+        document.getElementById('pNote').value = '';
+        this._kind = f.kind;
+        this._module = f.moduleCode;
+        this._scopes = f.requiredScopes || '';
+        Layout.openModal('editModal');
+      },
+
+      async save() {
+        const code = document.getElementById('fCode').value;
+        const method = document.getElementById('pMethod').value;
+        const priceRaw = document.getElementById('pPrice').value;
+        if (method && priceRaw === '') { Layout.toast('เลือกวิธีคิดเงินแล้วต้องใส่ราคาด้วย', 'error'); return; }
+
+        try {
+          await API.post('/api/admin/metering/features', {
+            featureCode: code,
+            name: document.getElementById('fName').value.trim(),
+            nameEn: null,
+            description: document.getElementById('fDesc').value.trim(),
+            unitLabel: document.getElementById('fUnit').value.trim(),
+            requiredScopes: this._scopes,
+            sortOrder: +document.getElementById('fSort').value || 0,
+            isPublished: document.getElementById('fPublished').checked,
+            kind: this._kind || null,
+            icon: document.getElementById('fIcon').value.trim(),
+            moduleCode: this._module || null,
+            trialDays: +document.getElementById('fTrial').value || 0,
+            minPlanCsv: document.getElementById('fMinPlan').value.trim(),
+          });
+
+          if (method) {
+            await API.post('/api/admin/metering/plans', {
+              featureCode: code,
+              method,
+              unitPrice: +priceRaw,
+              freeQuotaPerMonth: +document.getElementById('pFree').value || 0,
+              tierJson: null,
+              effectiveFrom: null,
+              billingAccountId: null,
+              adminNote: document.getElementById('pNote').value.trim() || null,
+            });
+          }
+          Layout.closeModal('editModal');
+          Layout.toast('บันทึกแล้ว', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

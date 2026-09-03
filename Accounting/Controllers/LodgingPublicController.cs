@@ -1,3 +1,4 @@
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Lodging;
 using Accounting.Models.Enums;
@@ -16,7 +17,19 @@ namespace Accounting.Controllers;
 public class LodgingPublicController : ControllerBase
 {
     private readonly ILodgingService _svc;
-    public LodgingPublicController(ILodgingService svc) { _svc = svc; }
+    private readonly IEntitlementService _entitlement;
+    public LodgingPublicController(ILodgingService svc, IEntitlementService entitlement)
+    {
+        _svc = svc;
+        _entitlement = entitlement;
+    }
+
+    /// <summary>402 พร้อมทางไปต่อ — ห้ามคืน 403 เปล่า ๆ ให้ผู้ใช้เดาเองว่าต้องทำอะไร
+    /// (ที่พักเป็นคนต้องเปิด add-on ไม่ใช่แขก จึงเขียนข้อความให้แขกเข้าใจว่าไม่ใช่ความผิดเขา)</summary>
+    private ActionResult<ApiResponse<T>> AddOnRequired<T>(EntitlementResult ent)
+        => StatusCode(402, new ApiResponse<T>(false, default,
+            "ที่พักยังไม่ได้เปิดใช้บริการนี้ — กรุณาติดต่อที่พักโดยตรง",
+            new List<string> { ent.Reason ?? "", ent.UpgradeHint ?? "" }));
 
     [HttpGet("info")]
     public async Task<ActionResult<ApiResponse<LodgingPublicInfo>>> Info(Guid companyId, Guid siteId)
@@ -83,9 +96,18 @@ public class LodgingPublicController : ControllerBase
         return Ok(new ApiResponse<LodgingReservationResponse>(true, r, msg));
     }
 
+    /// <summary>แขกส่งคำขอถึงที่พัก (แม่บ้าน/ซ่อม/รูมเซอร์วิส/คอนเซียร์จ) —
+    /// อยู่ใต้ add-on **Guest Portal Pro** (LODGING_LICENSING_PLAN §3.1)
+    ///
+    /// ส่วนที่ยังฟรีเสมอคือหน้าการจองด้วย token: ดูรายละเอียด · อัปโหลดสลิป · ยกเลิก
+    /// (สามอย่างนี้คือ Aha-moment ที่ทำให้ลูกค้าติด และการยกเลิก/คืนเงินเป็นเส้นแดง
+    /// ที่ทีมลูกค้าทั้งสามรายบอกตรงกันว่าห้ามล็อก)</summary>
     [HttpPost("reservations/{token}/requests")]
     public async Task<ActionResult<ApiResponse<LodgingGuestRequestDto>>> GuestRequest(Guid companyId, Guid siteId, string token, [FromBody] LodgingGuestRequestCreate req)
     {
+        var ent = await _entitlement.CheckAsync(companyId, AddOnCodes.LodgingGuestPortal);
+        if (!ent.Allowed) return AddOnRequired<LodgingGuestRequestDto>(ent);
+
         var r = await _svc.CreateGuestRequestByTokenAsync(companyId, siteId, token, req);
         if (r == null) return NotFound(new ApiResponse<LodgingGuestRequestDto>(false, null, "ไม่พบการจอง"));
         return Ok(new ApiResponse<LodgingGuestRequestDto>(true, r, "ส่งคำขอถึงที่พักแล้ว"));

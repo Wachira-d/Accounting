@@ -95,6 +95,19 @@ public static class DocumentQuotaPolicy
         + "เอกสารที่กฎหมายบังคับ (ใบกำกับภาษี · ใบเสร็จ · ใบลดหนี้) ยังออกได้ตามปกติ "
         + "ส่วนใบเสนอราคา/ใบสั่งซื้อ ให้ซื้อโควตาเพิ่มหรืออัปเกรดแพ็กเกจที่หน้า \"ส่วนเสริมของฉัน\"";
 
+    /// <summary>โควตาที่ใช้ได้จริงในเดือนนี้ = โควตาแพ็กเกจ + โบนัสที่ยังไม่หมดอายุ
+    /// (โบนัสมาจาก top-up ที่ซื้อ · แอดมินให้ · ภารกิจแลกโควตา §12)
+    ///
+    /// <paramref name="planLimit"/> ≤ 0 แปลว่า "ยังไม่ได้ตั้งค่า/ไม่จำกัด" ไม่ใช่
+    /// "ศูนย์ใบ" — คืนค่าเดิมไปตรง ๆ ห้ามเอาโบนัสไปกลบ ไม่งั้นแพ็กเกจไม่จำกัด
+    /// จะกลายเป็นจำกัดเท่าโบนัสทันทีที่มีใครได้โบนัส</summary>
+    public static int EffectiveLimit(int planLimit, int bonusQuota, DateTime? bonusExpiresAt, DateTime nowUtc)
+    {
+        if (planLimit <= 0 || bonusQuota <= 0) return planLimit;
+        if (bonusExpiresAt.HasValue && bonusExpiresAt.Value <= nowUtc) return planLimit;
+        return planLimit + bonusQuota;
+    }
+
     /// <summary>ระดับการเตือน — 0 = ปกติ, 1 = ใกล้เต็ม (≥ WarnPercent), 2 = เต็มแล้ว</summary>
     public const int WarnPercent = 80;
 

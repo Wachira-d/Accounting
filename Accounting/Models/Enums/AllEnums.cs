@@ -75,6 +75,25 @@ public enum BillingAccountStatus
 }
 
 /// <summary>วิธีคิดเงินต่อฟีเจอร์ — admin เลือกได้อิสระ ไม่ hard-code ในโค้ด</summary>
+/// <summary>ชนิดของภารกิจที่แลกโควตาเอกสารได้ (LODGING_LICENSING_PLAN §12)
+///
+/// เรียงตามมูลค่าต่อครั้งจากมากไปน้อย — `AdNetwork` อยู่ท้ายสุดโดยตั้งใจ
+/// (฿0.03–0.15/ครั้ง เทียบ lead พาร์ทเนอร์ ฿100–1,000+) และปิดเป็นค่าเริ่มต้น</summary>
+public enum QuotaRewardKind
+{
+    /// <summary>ข้อเสนอจากพาร์ทเนอร์ B2B — กด "สนใจ" = lead</summary>
+    PartnerOffer = 1,
+    /// <summary>วิดีโอสอนฟีเจอร์ของเราเอง — เพิ่ม activation แทนเงินสด</summary>
+    HouseVideo = 2,
+    /// <summary>แนะนำที่พักเพื่อนให้มาสมัคร</summary>
+    Referral = 3,
+    /// <summary>ตอบแบบสอบถาม/ให้ข้อมูลธุรกิจ</summary>
+    Survey = 4,
+    /// <summary>โฆษณาเครือข่าย (Google Ad Manager rewarded ฯลฯ) — ปิดเป็นค่าเริ่มต้น
+    /// เพราะ eCPM ต่ำและคุมเนื้อหาไม่ได้</summary>
+    AdNetwork = 9
+}
+
 /// <summary>ชนิดของแคตตาล็อกฟีเจอร์ — แยก "ผลิตภัณฑ์ Connected API" (ของเดิม)
 /// ออกจาก "ส่วนเสริมของแอป" (Lodging ฯลฯ) เพื่อให้หน้าแอดมิน/portal จัดกลุ่มถูก
 /// โดย resolver ยังอ่าน FeatureCode แบบเดียวกันทั้งหมด</summary>

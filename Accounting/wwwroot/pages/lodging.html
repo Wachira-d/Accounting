@@ -132,6 +132,7 @@
       propertyId: null, props: [], units: [], roomTypes: [], extras: [], current: null, _t: null,
       async init() {
         if (!Layout.init('lodging')) return;
+        Layout.showQuotaBanner();
         const api = Layout.api(); if (!api) return;
         document.getElementById('dashDate').value = todayIso(); document.getElementById('calFrom').value = todayIso();
         try {

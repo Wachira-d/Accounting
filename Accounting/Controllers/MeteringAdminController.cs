@@ -50,6 +50,8 @@ public class MeteringAdminController : ControllerBase
         {
             f.Id, f.FeatureCode, f.Name, f.NameEn, f.Description, f.UnitLabel,
             f.IsPublished, f.RequiredScopes, f.SortOrder,
+            f.Icon, f.ModuleCode, f.TrialDays, f.MinPlanCsv,
+            kind = f.Kind.ToString(),
             enabledCompanies = enabledCounts.GetValueOrDefault(f.FeatureCode, 0),
             // แผนมาตรฐาน (BillingAccountId = null) แสดงเป็นราคาหลัก;
             // ดีลเฉพาะกลุ่มนับแยกให้เห็นว่ามีกี่ดีล
@@ -66,9 +68,13 @@ public class MeteringAdminController : ControllerBase
         })));
     }
 
+    /// <summary>ช่องท้าย 5 ตัวเป็น nullable ทั้งหมด = "ไม่ได้ส่งมา ให้คงค่าเดิม"
+    /// (ฟอร์มเก่าที่ยังไม่รู้จักช่องพวกนี้ต้องไม่ล้างค่าที่ตั้งไว้แล้วโดยไม่ตั้งใจ)</summary>
     public record UpsertFeatureRequest(
         string FeatureCode, string Name, string? NameEn, string? Description,
-        string UnitLabel, string RequiredScopes, int SortOrder, bool IsPublished);
+        string UnitLabel, string RequiredScopes, int SortOrder, bool IsPublished,
+        string? Kind = null, string? Icon = null, string? ModuleCode = null,
+        int? TrialDays = null, string? MinPlanCsv = null);
 
     [HttpPost("features")]
     public async Task<ActionResult<ApiResponse<object>>> UpsertFeature([FromBody] UpsertFeatureRequest req)
@@ -92,6 +98,11 @@ public class MeteringAdminController : ControllerBase
         row.RequiredScopes = req.RequiredScopes?.Trim() ?? "";
         row.SortOrder = req.SortOrder;
         row.IsPublished = req.IsPublished;
+        if (req.Kind != null && Enum.TryParse<ApiFeatureKind>(req.Kind, true, out var kind)) row.Kind = kind;
+        if (req.Icon != null) row.Icon = req.Icon.Trim();
+        if (req.ModuleCode != null) row.ModuleCode = req.ModuleCode.Trim();
+        if (req.TrialDays.HasValue) row.TrialDays = Math.Max(0, req.TrialDays.Value);
+        if (req.MinPlanCsv != null) row.MinPlanCsv = req.MinPlanCsv.Trim();
         row.UpdatedAt = DateTime.UtcNow;
         row.UpdatedBy = User.Identity?.Name;
         await _db.SaveChangesAsync();

@@ -48,6 +48,11 @@ public interface IUsageMeteringService
     /// (ปิดอยู่ = 403 และต้องไม่เกิด UsageEvent)</summary>
     Task<bool> IsFeatureEnabledAsync(Guid companyId, string featureCode, CancellationToken ct = default);
 
+    /// <summary>แผนราคาที่มีผลกับบริษัทนี้ตอนนี้ (ดีลเฉพาะกลุ่มชนะราคามาตรฐาน) —
+    /// null = ยังไม่ได้ตั้งราคา. เปิดเป็น public เพื่อไม่ให้ที่อื่นเขียนลำดับการ
+    /// เลือกซ้ำอีกชุด</summary>
+    Task<ApiPricingPlan?> ResolveEffectivePlanAsync(Guid companyId, string featureCode, CancellationToken ct = default);
+
     /// <summary>เปิด/ปิดฟีเจอร์ (ลูกค้ากดเองใน portal) — บันทึกว่าใครกดตอนไหน
     /// และเห็นราคาเท่าไร</summary>
     Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,

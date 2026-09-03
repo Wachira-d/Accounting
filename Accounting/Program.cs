@@ -558,6 +558,7 @@ builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
 builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.Lodging.LodgingService>();
 // resolver สิทธิ์ตัวเดียว (แพ็กเกจ + add-on) — ห้ามมีตัวที่สอง
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
+builder.Services.AddScoped<IQuotaService, QuotaService>();
 builder.Services.AddScoped<CmsLeadService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();
@@ -602,6 +603,9 @@ builder.Services.AddHostedService<Accounting.Services.Background.AddOnMonthlyBil
 // night audit ของที่พัก — ปิดการจองที่เลยวันเช็คเอาต์แล้วยังค้าง เพื่อให้มิเตอร์
 // lodging.stay เดินตามความจริง (กันเคส "ไม่กดเช็คเอาต์เพื่อไม่ให้เกิดเอกสาร" §13)
 builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAuditJob>();
+// ปิดรอบบิลค่าใช้งาน — รวม UsageEvent ที่ยังไม่ออกบิลเป็นใบแจ้งหนี้หลายบรรทัด
+// (BilledPeriod/BilledDocumentId มีมาตั้งแต่ต้นแต่ไม่เคยมีใครเขียน = เก็บเงินไม่ได้)
+builder.Services.AddHostedService<Accounting.Services.Background.UsageInvoicingJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnifiedPaymentQueryService,
     Accounting.Services.Implementations.Payments.UnifiedPaymentQueryService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayoutService,

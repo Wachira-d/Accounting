@@ -28,11 +28,25 @@ public interface IPlatformBillingDocumentIssuer
     Task<PlatformDocResult?> IssueRenewalInvoiceAsync(Guid buyerCompanyId, string description,
         decimal amountNet, DateTime issueDate, DateTime dueDate, string reference);
 
+    /// <summary>ออก "ใบแจ้งหนี้ค่าใช้งานตามจริง" หลายบรรทัดในใบเดียว
+    /// (ค่าเหมา add-on · เอกสารเกินโควตา · การเข้าพัก · SMS ฯลฯ ของงวดนั้น)
+    ///
+    /// <para>ทำไมต้องหลายบรรทัด: ถ้ายุบเป็นบรรทัดเดียว "ค่าบริการเดือน ก.ย." ลูกค้า
+    /// จะไม่มีทางรู้ว่ายอดมาจากอะไร แล้วทุกครั้งที่ยอดขยับต้องโทรถาม — ใบกำกับคือ
+    /// คำอธิบายค่าใช้จ่าย ไม่ใช่แค่ตัวเลขรวม</para></summary>
+    Task<PlatformDocResult?> IssueUsageInvoiceAsync(Guid buyerCompanyId, IReadOnlyList<PlatformInvoiceLine> lines,
+        DateTime issueDate, DateTime dueDate, string reference, string? notes = null);
+
     /// <summary>tenant ผู้ให้บริการถูกตั้งค่าไว้แล้วหรือยัง (ใช้เลือกเส้นทาง)</summary>
     Task<bool> IsEnabledAsync();
 }
 
 public sealed record PlatformDocResult(Guid DocumentId, string DocumentNumber, bool IsTaxInvoice);
+
+/// <summary>1 บรรทัดบนใบแจ้งหนี้ค่าใช้งาน — <paramref name="AmountNet"/> คือยอดรวม
+/// ของบรรทัดนั้นตามที่เก็บใน <c>UsageEvent.ChargedAmount</c> (คิดมาแล้ว ไม่คิดใหม่:
+/// ราคาถูก snapshot ไว้ตอนเกิดเหตุการณ์ การคำนวณซ้ำจะได้คนละยอดเมื่อราคาเปลี่ยน)</summary>
+public sealed record PlatformInvoiceLine(string Description, decimal AmountNet, string Unit = "รายการ", decimal Quantity = 1m);
 
 public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
 {
@@ -178,6 +192,72 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         catch (Exception ex)
         {
             _logger.LogError(ex, "ออกใบแจ้งหนี้ต่ออายุผ่าน tenant ไม่สำเร็จ (company {CompanyId})", buyerCompanyId);
+            return null;
+        }
+    }
+
+    public async Task<PlatformDocResult?> IssueUsageInvoiceAsync(Guid buyerCompanyId,
+        IReadOnlyList<PlatformInvoiceLine> lines, DateTime issueDate, DateTime dueDate,
+        string reference, string? notes = null)
+    {
+        try
+        {
+            var (settings, tenantId) = await ResolveTenantAsync();
+            if (settings == null || tenantId == null) return null;
+
+            // บรรทัดยอด 0 ถูกตัดทิ้ง (โควตาฟรีกลืนไปแล้ว) — แต่ถ้าตัดจนไม่เหลือ
+            // แปลว่าไม่มีอะไรต้องเก็บเงิน **ไม่ใช่**ออกใบเปล่า (§86/4 ห้ามใบไม่มีบรรทัด)
+            var billable = lines.Where(l => l.AmountNet > 0m).ToList();
+            if (billable.Count == 0) return null;
+
+            var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == buyerCompanyId);
+            if (buyer == null) return null;
+            var contactId = await EnsureContactAsync(tenantId.Value, buyer);
+            if (contactId == null) return null;
+
+            var isVat = settings.PlatformIsVatRegistered && IsValidTaxId(settings.PlatformSellerTaxId);
+            var revenueCode = string.IsNullOrWhiteSpace(settings.PlatformRevenueAccountCode)
+                ? "41000" : settings.PlatformRevenueAccountCode;
+
+            var docLines = billable.Select(l =>
+            {
+                // ถอด VAT ต่อบรรทัด — ปัดที่ระดับบรรทัดเหมือนเส้นทางอื่นของไฟล์นี้
+                // (ถอดจากยอดรวมแล้วเฉลี่ยกลับ จะได้เศษไม่ตรงกับที่แสดงในแต่ละบรรทัด)
+                var baseAmount = isVat && settings.PlatformPriceIncludesVat
+                    ? decimal.Round(l.AmountNet * 100m / 107m, 2, MidpointRounding.AwayFromZero)
+                    : l.AmountNet;
+                var qty = l.Quantity > 0m ? l.Quantity : 1m;
+                return new DocumentLineRequest(
+                    Description: l.Description,
+                    Quantity: qty,
+                    Unit: l.Unit,
+                    UnitPrice: decimal.Round(baseAmount / qty, 4, MidpointRounding.AwayFromZero),
+                    DiscountPercent: 0m,
+                    VatRate: isVat ? 7m : 0m,
+                    WithholdingTaxRate: 0m,
+                    AccountId: null,
+                    AccountCode: revenueCode);
+            }).ToList();
+
+            var req = new CreateDocumentRequest(
+                DocumentType: DocumentType.Invoice,
+                DocumentDate: issueDate,
+                DueDate: dueDate,
+                ContactId: contactId.Value,
+                Reference: reference,
+                Notes: notes ?? "ใบแจ้งหนี้ค่าใช้งานตามจริงของรอบบิล",
+                Lines: docLines);
+
+            var created = await Documents.CreateDocumentAsync(tenantId.Value, req, Actor);
+            var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
+            _logger.LogInformation("ออกใบแจ้งหนี้ค่าใช้งาน {DocNo} ({Lines} บรรทัด · อ้างอิง {Ref})",
+                approved.DocumentNumber, docLines.Count, reference);
+            return new PlatformDocResult(approved.Id, approved.DocumentNumber, isVat);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ออกใบแจ้งหนี้ค่าใช้งานไม่สำเร็จ (company {CompanyId} · อ้างอิง {Ref})",
+                buyerCompanyId, reference);
             return null;
         }
     }

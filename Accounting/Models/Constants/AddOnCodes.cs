@@ -47,6 +47,15 @@ public static class AddOnCodes
     /// <summary>ซื้อโควตาเอกสารเพิ่มเป็นก้อน (top-up) — ราคาต่อแพ็ก 100 ฉบับ</summary>
     public const string DocumentsTopUp = "documents.topup";
 
+    /// <summary>1 แพ็ก top-up = กี่ฉบับ — **ต้องตรงกับ `UnitLabel` ที่ seed ไว้**
+    /// ("แพ็ก 100 ฉบับ") ถ้าจะเปลี่ยนต้องแก้ทั้งสองที่พร้อมกัน มิฉะนั้นลูกค้าจ่าย
+    /// ราคาแพ็กหนึ่งแต่ได้โควตาอีกจำนวนหนึ่ง</summary>
+    public const int DocumentsPerTopUpPack = 100;
+
+    /// <summary>โควตา top-up ที่ซื้อมีอายุกี่วัน — ยาวกว่าโบนัสจากภารกิจ เพราะ
+    /// ลูกค้าจ่ายเงินจริง (ซื้อปลายเดือนแล้วหมดอายุใน 3 วันคือการโกงกลาย ๆ)</summary>
+    public const int TopUpValidDays = 60;
+
     /// <summary>add-on ทั้งหมดที่เป็น "สวิตช์" ให้ลูกค้าเปิด/ปิดเอง (ใช้ในหน้า addons
     /// และตอน seed) — เรียงตามลำดับที่อยากให้เห็นบนหน้าจอ</summary>
     public static readonly IReadOnlyList<string> Switchable = new[]

@@ -64,4 +64,10 @@ public static class AdvisoryLockKey
     public const string AddOnMonthlyBilling = "addon-bill";
     /// <summary>night audit ของที่พัก — part = PropertyId</summary>
     public const string LodgingNightAudit = "lodging-audit";
+    /// <summary>ปิดรอบบิลค่าใช้งาน (รวม UsageEvent เป็นใบแจ้งหนี้) — part = งวดที่รัน
+    /// · คีย์ระดับระบบไม่ผูกบริษัท เพราะงานเดินทีเดียวทุก tenant</summary>
+    public const string UsageInvoicing = "usage-invoice";
+    /// <summary>เพิ่มโควตาเอกสาร (ซื้อ top-up / แลกจากภารกิจ) — part = "reward"/"topup"
+    /// เพดานต่อวัน-เดือนจะไร้ผลทันทีถ้าปล่อยให้สองแท็บกดพร้อมกันแล้วผ่านทั้งคู่</summary>
+    public const string QuotaGrant = "quota-grant";
 }

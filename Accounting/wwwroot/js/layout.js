@@ -207,6 +207,44 @@ const Layout = {
     document.body.insertBefore(banner, document.body.firstChild);
   },
 
+  /** แถบเตือนโควตาเอกสาร — เรียกจากหน้าที่ "สร้างเอกสาร" ได้ (เอกสาร · ที่พัก · POS)
+   *
+   *  ข้อความ ระดับเตือน และวันที่คาดว่าจะเต็ม **คำนวณที่เซิร์ฟเวอร์ทั้งหมด**
+   *  (`GET metering/quota`) หน้านี้แค่วาด — ห้ามหน้าไหนเทียบเปอร์เซ็นต์เอง ไม่งั้น
+   *  จะได้เกณฑ์คนละชุดต่อหน้า (defect class เดียวกับ MENU_SECTIONS/docHeaderLabel)
+   *
+   *  ไม่มีข้อมูล/เรียกไม่สำเร็จ = **ไม่วาดอะไรเลย** (ไม่ใช่ "ปกติดี") — การเงียบ
+   *  ปลอดภัยกว่าการยืนยันสิ่งที่ยังไม่รู้ */
+  async showQuotaBanner() {
+    const cid = this.getCompanyId();
+    if (!cid || document.getElementById('quotaBanner')) return;
+    let q = null;
+    try {
+      const res = await API.get(`/api/companies/${cid}/metering/quota`);
+      q = res?.data || null;
+    } catch { return; }
+    if (!q || !q.warnLevel || !q.message) return;
+    if (sessionStorage.getItem('quotaBannerDismissed') === String(q.warnLevel)) return;
+
+    const full = q.warnLevel === 2;
+    const banner = document.createElement('div');
+    banner.id = 'quotaBanner';
+    banner.style.cssText = `background:${full ? '#fee2e2' : '#fef3c7'};color:${full ? '#991b1b' : '#78350f'};`
+      + 'padding:10px 16px;display:flex;align-items:center;gap:12px;font-size:13px;border-bottom:1px solid rgba(0,0,0,.08)';
+    banner.innerHTML = `
+      <span style="font-size:18px">${full ? '🚫' : '⚠️'}</span>
+      <span style="flex:1">${this.esc(q.message)}</span>
+      <a href="/pages/addons.html" style="background:${full ? '#991b1b' : '#78350f'};color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap">ซื้อโควตาเพิ่ม</a>
+      <button onclick="Layout._dismissQuotaBanner(${q.warnLevel})" style="background:transparent;border:none;color:inherit;font-size:20px;cursor:pointer;padding:0 4px" aria-label="ปิด">×</button>`;
+    document.body.insertBefore(banner, document.body.firstChild);
+  },
+
+  _dismissQuotaBanner(level) {
+    // จำระดับที่ปิดไว้ — พอเลื่อนจาก "ใกล้เต็ม" เป็น "เต็มแล้ว" ต้องเตือนใหม่
+    sessionStorage.setItem('quotaBannerDismissed', String(level));
+    document.getElementById('quotaBanner')?.remove();
+  },
+
   _dismissPasswordWeakBanner() {
     sessionStorage.setItem('passwordWeakNoticeDismissed', '1');
     const el = document.getElementById('passwordWeakBanner');
@@ -214,10 +252,17 @@ const Layout = {
   },
 
   // ===== Feature & Subscription Helpers =====
+  // ตัวตัดสินสิทธิ์ **ตัวเดียว** ของหน้าเว็บ — ตอบได้ทั้งสองแกน:
+  //   • ความสามารถระดับแพ็กเกจ (bitmask → enabledFeatureNames) เช่น "DocumentEngine"
+  //   • ส่วนเสริมที่ซื้อเพิ่ม (AddOnCodes เป็น string) เช่น "lodging.guest-portal"
+  // แยกกันด้วยรูปของชื่อเอง (add-on มีจุดคั่นเสมอ) จึงไม่ต้องให้ผู้เรียกบอกชนิด
+  // — ห้ามเขียนตัวเช็ค add-on แยกในหน้าใดหน้าหนึ่ง (จะกลายเป็น resolver ตัวที่สอง
+  // แล้ว drift แน่นอน เหมือน MENU_SECTIONS/docHeaderLabel ที่เคยเกิดมาแล้ว)
   hasFeature(name) {
     if (!name) return true;
     // Without subscription data, allow access (graceful fallback)
     if (!this.subscription) return true;
+    if (name.includes('.')) return (this.subscription.enabledAddOnCodes || []).includes(name);
     return this.features.includes(name);
   },
 
@@ -226,8 +271,15 @@ const Layout = {
     if (this.hasFeature(name)) return true;
     if (opts.silent) return false;
     const label = opts.label || name;
-    this.toast(this._t('layout.upgradeNeeded', `ฟีเจอร์ "${label}" ไม่อยู่ในแพ็กเกจของคุณ — โปรดอัพเกรด`, { label }), 'error');
-    setTimeout(() => { window.location.href = '/pages/subscription.html'; }, 1200);
+    // ส่วนเสริมเปิดเองได้ทันทีที่หน้าส่วนเสริม ส่วนความสามารถของแพ็กเกจต้องอัปเกรด
+    // — พาไปหน้าที่ "กดแล้วจบ" ไม่ใช่หน้าที่ไม่มีปุ่มให้กด
+    const isAddOn = name.includes('.');
+    this.toast(isAddOn
+      ? `"${label}" เป็นส่วนเสริม — เปิดใช้ได้ที่หน้าส่วนเสริมของฉัน`
+      : this._t('layout.upgradeNeeded', `ฟีเจอร์ "${label}" ไม่อยู่ในแพ็กเกจของคุณ — โปรดอัพเกรด`, { label }), 'error');
+    setTimeout(() => {
+      window.location.href = isAddOn ? '/pages/addons.html' : '/pages/subscription.html';
+    }, 1200);
     return false;
   },
 
@@ -315,7 +367,7 @@ const Layout = {
   /** หน้าที่แสดงข้อมูล **ข้ามบริษัท** — เข้าได้เฉพาะแอดมินของแพลตฟอร์ม
    *  (ด่านจริงอยู่ที่ API ซึ่งบังคับ role SystemAdmin — ตรงนี้กันไม่ให้หน้าจอโผล่
    *   ให้ลูกค้าเห็นและกันการเดา URL ตรง ๆ) */
-  PLATFORM_ADMIN_PAGES: ['ai-usage', 'admin-company-usage'],
+  PLATFORM_ADMIN_PAGES: ['ai-usage', 'admin-company-usage', 'admin-addons'],
 
   /** เรียกจากหน้าแอดมินแพลตฟอร์มโดยตรง — รอสิทธิ์จากเซิร์ฟเวอร์ก่อนตัดสิน
    *  (ค่าจาก localStorage ผู้ใช้แก้เองได้ จึงไม่ใช้เป็นตัวตัดสิน) */
@@ -1017,6 +1069,8 @@ const Layout = {
       description: 'ใครใช้ AI เท่าไร แยกรายลูกค้า/ช่องทาง (หน้าเว็บ vs API) · ต้นทุนจริง · สัดส่วนที่ระบบตอบเองได้' },
     { id: 'admin-company-usage', label: 'การใช้งานรายบริษัท', icon: '🏢', href: '/pages/admin-company-usage.html', platformAdmin: true,
       description: 'รายเดือน: แต่ละบริษัทออกเอกสารอะไรกี่ใบ · สแกน OCR · เรียก AI (จ่ายจริงเท่าไร) · ส่งอีเมล/e-Tax' },
+    { id: 'admin-addons', label: 'ส่วนเสริมและราคา', icon: '💰', href: '/pages/admin-addons.html', platformAdmin: true,
+      description: 'แคตตาล็อกส่วนเสริม: ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย (ราคาเก่าไม่ถูกแก้ย้อนหลัง)' },
     { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
       description: 'นำเข้า Excel ทีละ batch · ส่งออกข้อมูลเป็น CSV/Excel · backup' },
     { id: 'migrate-competitor', label: 'ย้ายจาก Express/PEAK/FlowAccount', icon: '🔁', href: '/pages/migrate-competitor.html', feature: 'BulkImport',
@@ -1078,6 +1132,8 @@ const Layout = {
       description: 'แพ็กเกจหลัก (User-level) ครอบหลายบริษัทใต้ License เดียว — แนะนำสำหรับเจ้าของหลายบริษัท / นักบัญชีดูแลหลายลูกค้า' },
     { id: 'subscription', label: 'แพ็กเกจของบริษัทนี้', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
       description: 'แพ็กเกจระดับบริษัท (Company-level) — ใช้เมื่อต้องการแยกบิลแยกใบกำกับ' },
+    { id: 'addons', label: 'ส่วนเสริมของฉัน', icon: '🧩', href: '/pages/addons.html',
+      description: 'เปิด/ปิดส่วนเสริมที่คิดเงินแยกจากแพ็กเกจ · ดูโควตาเอกสารเดือนนี้ · ซื้อโควตาเพิ่ม' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',
       description: 'การใช้งานเทียบกับ limit · จำนวนเอกสาร · ผู้ใช้ · storage' },
     { id: 'audit', label: 'บันทึกกิจกรรม (Audit)', icon: '🔍', href: '/pages/audit.html', feature: 'AuditLog', _i18nKey: 'nav.audit',

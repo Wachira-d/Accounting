@@ -126,6 +126,27 @@ front desk ทั้งชุด (แดชบอร์ด · tape chart · walk
 3. **เฟส 3 — `IEntitlementService`** + `MinPlanCsv/TrialDays` + AddOnRouteMap ใน middleware ผ่าน `EnforceMode.LogOnly` ก่อน + บิต `LodgingModule`
 4. **เฟส 4 — บิลรวม** overload หลายบรรทัด + bundle + multi-property/room-cap gate + รายงาน metric (§8)
 
+### สถานะการลงโค้ด (อัปเดต 2026-09-03 — โค้ดเป็น ground truth)
+
+| เฟส | สถานะ | ที่อยู่จริงในโค้ด |
+| --- | --- | --- |
+| 1 (ก) job ค่าเหมารายเดือน | ✅ | `Services/Background/AddOnMonthlyBillingJob.cs` + `Helpers/AddOnBilling.cs` + `UsageMeteringService.RecordFlatMonthlyAsync` |
+| 1 (ข) seed แคตตาล็อก + ราคา | ✅ | `DatabaseMigrationHelper` — 14 `ApiFeature` + 14 `ApiPricingPlan` · รหัสอยู่ที่ `Models/Constants/AddOnCodes.cs` |
+| 1 (ค) gate Guest Portal | ✅ | `LodgingPublicController.GuestRequest` → 402 พร้อมทางไปต่อ (ดู/สลิป/ยกเลิก ยังฟรี) · multi-property gate ใน `LodgingService.CreatePropertyAsync` |
+| 1 (ง) หน้าลูกค้า | ✅ | `wwwroot/pages/addons.html` (ติ๊กยอมรับค่าใช้จ่ายแยกจากปุ่มเปิด) |
+| 1 (จ) หน้าแอดมิน | ✅ | `wwwroot/pages/admin-addons.html` → `/api/admin/metering/*` (เดิมมี endpoint แต่ไม่มีหน้าเรียก) |
+| 2 โควตาเอกสาร | ✅ | `Helpers/DocumentQuotaPolicy.cs` + `DocumentService` (overage/ห้ามบล็อกใบที่กฎหมายบังคับ) · แถบเตือน `Layout.showQuotaBanner()` · top-up + ภารกิจแลกโควตาที่ `Services/Implementations/QuotaService.cs` |
+| 2 (§13) มิเตอร์ที่พัก | ✅ | `AddOnCodes.LodgingStay` · `LodgingService.Lifecycle.MeterStayAsync` · `Services/Background/LodgingNightAuditJob.cs` · `LodgingProperty.AccountingMode` |
+| 3 resolver สิทธิ์ | ✅ | `Services/Implementations/EntitlementService.cs` · ฝั่งหน้าเว็บ `Layout.hasFeature` อ่าน `SubscriptionResponse.EnabledAddOnCodes` |
+| 4 บิลรวมหลายบรรทัด | ✅ | `IPlatformBillingDocumentIssuer.IssueUsageInvoiceAsync` + `Services/Background/UsageInvoicingJob.cs` (เขียน `BilledPeriod`/`BilledDocumentId` ที่ไม่เคยมีใครเขียน) |
+| 3 AddOnRouteMap ใน middleware | 📋 ยังไม่ทำ | ตั้งใจ: ด่านระดับ route ของ `/lodging/**` ใน `SubscriptionMiddleware` (โหมด LogOnly ก่อน) — วันนี้ gate อยู่ที่ระดับ endpoint/บริการแทน |
+| 3 บิต `LodgingModule` | 📋 ยังไม่ทำ | bitmask ใช้ถึงบิต 47/64 — ยังไม่จำเป็นเพราะ add-on ทุกตัวเดินผ่าน string code แล้ว |
+| 4 bundle (`IncludedAddOnCodes`) | 📋 ยังไม่ทำ | วันนี้ผูก add-on กับแพ็กเกจได้ผ่าน `GrantSource=BundledInPlan` รายบริษัท ยังไม่มีตัวตั้งระดับ `PlanTemplate` |
+| 4 รายงาน metric §8 | 📋 ยังไม่ทำ | ข้อมูลดิบครบใน `UsageEvent`/`QuotaRewardGrant` แล้ว เหลือหน้าสรุป |
+
+> **ยังไม่ได้คอมไพล์ในสภาพแวดล้อมนี้** (ไม่มี .NET SDK) — ผ่าน checker ทั้ง 21 ตัว +
+> `node --check` + brace balance เท่านั้น
+
 ## 7. Compliance checklist ก่อนขาย Guest Portal Pro (E — ต้องครบก่อน `IsPublished=true`)
 
 - [ ] DPA (PDPA ม.38) มาตรฐานผูกทุก tenant ที่เปิด add-on — วันนี้ยังไม่มีเทมเพลต

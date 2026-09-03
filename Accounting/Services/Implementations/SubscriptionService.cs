@@ -484,6 +484,13 @@ public class SubscriptionService : ISubscriptionService
         if (ownerDisabled != FeatureFlags.None)
             features = features & ~ownerDisabled;
 
+        // add-on ที่ซื้อเพิ่ม (string code) เดินทางมากับแพ็กเกจ เพื่อให้หน้าเว็บมี
+        // ตัวตัดสินสิทธิ์ตัวเดียว (`Layout.hasFeature`) ไม่ต้องยิง endpoint ที่สอง
+        var addOnCodes = await _db.CompanyFeatures.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && f.IsEnabled && !f.IsDeleted)
+            .Select(f => f.FeatureCode)
+            .ToListAsync();
+
         return new SubscriptionResponse(
             sub.Id, sub.CompanyId, plan, status, sub.BillingCycle,
             sub.PricePerCycle, sub.StartDate, endDate, sub.NextBillingDate,
@@ -491,7 +498,8 @@ public class SubscriptionService : ISubscriptionService
             FeatureFlagsHelper.ToNameList(features),
             new UsageLimits(maxUsers, maxCompanies, maxDocs, maxJournals, maxStorage),
             new UsageCurrent(sub.CurrentMonthDocuments, sub.CurrentMonthJournalEntries, sub.CurrentStorageUsed),
-            sub.IsPermanentFree);
+            sub.IsPermanentFree,
+            addOnCodes);
     }
 
     public async Task<SubscriptionResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy)
@@ -737,7 +745,8 @@ public class SubscriptionService : ISubscriptionService
             if (agg == null) return false;
             return limitType switch
             {
-                "document" => agg.Documents < agg.MaxDocuments,
+                "document" => agg.Documents < Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(
+                    agg.MaxDocuments, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow),
                 "journal" => agg.JournalEntries < agg.MaxJournalEntries,
                 "storage" => agg.StorageBytes < agg.MaxStorageBytes,
                 _ => true
@@ -747,7 +756,8 @@ public class SubscriptionService : ISubscriptionService
         // Per-company plan path — original behavior.
         return limitType switch
         {
-            "document" => sub.CurrentMonthDocuments < sub.MaxDocumentsPerMonth,
+            "document" => sub.CurrentMonthDocuments < Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(
+                sub.MaxDocumentsPerMonth, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow),
             "journal" => sub.CurrentMonthJournalEntries < sub.MaxJournalEntriesPerMonth,
             "storage" => sub.CurrentStorageUsed < sub.MaxStorageBytes,
             _ => true
@@ -900,6 +910,19 @@ public class SubscriptionService : ISubscriptionService
         {
             case "document":
                 sub.CurrentMonthDocuments++;
+                // โบนัสเอกสาร (top-up ที่ซื้อ · แอดมินให้ · ภารกิจแลกโควตา §12)
+                // **ต้องถูกใช้ให้หมดไป** ไม่ใช่แค่ยกเพดานค้างไว้ — ถ้าไม่หัก ผู้ที่
+                // ซื้อ +100 ใบครั้งเดียวจะได้ +100 ใบ **ทุกเดือน** จนโบนัสหมดอายุ
+                // (counter รายเดือนถูกรีเซ็ต แต่โบนัสไม่ถูกแตะ) = แจกฟรีโดยไม่ตั้งใจ.
+                // หักเฉพาะใบที่ **เกินโควตาแพ็กเกจล้วน ๆ** แล้ว — ใบที่ยังอยู่ในโควตา
+                // ปกติไม่กินโบนัส (แบบเดียวกับ OcrBonusPages ใน OcrQuotaService)
+                if (sub.MaxDocumentsPerMonth > 0
+                    && sub.CurrentMonthDocuments > sub.MaxDocumentsPerMonth
+                    && sub.DocumentBonusQuota > 0
+                    && (sub.DocumentBonusExpiresAt == null || sub.DocumentBonusExpiresAt > DateTime.UtcNow))
+                {
+                    sub.DocumentBonusQuota--;
+                }
                 break;
             case "journal":
                 sub.CurrentMonthJournalEntries++;

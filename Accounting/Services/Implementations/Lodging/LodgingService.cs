@@ -99,6 +99,21 @@ public partial class LodgingService : ILodgingService
     public async Task<LodgingPropertyDto> CreatePropertyAsync(Guid companyId, LodgingPropertyDto dto, string userId)
     {
         if (string.IsNullOrWhiteSpace(dto.Name)) throw new BusinessRuleException("กรุณาระบุชื่อที่พัก");
+
+        // ที่พักแห่งแรกใช้ฟรี (มากับเว็บ Hotel template) · แห่งที่ 2 ขึ้นไปเป็น add-on
+        // — hard block ตรงนี้ได้เพราะเป็น "ของใหม่ที่ยังไม่เคยเปิด" ไม่กระทบงานที่ทำอยู่
+        // (ต่างจากโควตาเอกสารที่ห้ามบล็อก — LODGING_LICENSING_PLAN §5)
+        var existing = await _db.LodgingProperties.CountAsync(x => x.CompanyId == companyId && !x.IsDeleted);
+        if (existing >= 1 && _entitlement != null)
+        {
+            var ent = await _entitlement.CheckAsync(companyId, Models.Constants.AddOnCodes.LodgingMultiProperty);
+            if (!ent.Allowed)
+                throw new BusinessRuleException(
+                    $"เปิดที่พักได้ 1 แห่งในแพ็กเกจปัจจุบัน — {ent.UpgradeHint ?? "เปิดส่วนเสริม \"ที่พักหลายแห่ง\""}"
+                    + " (ที่หน้า \"ส่วนเสริมของฉัน\")",
+                    "ADDON-REQUIRED:" + Models.Constants.AddOnCodes.LodgingMultiProperty);
+        }
+
         var p = new LodgingProperty { CompanyId = companyId, CreatedBy = userId };
         Apply(p, dto);
         await GuardAccountingModeAsync(companyId, p, LodgingAccountingMode.Full, dto, userId);
