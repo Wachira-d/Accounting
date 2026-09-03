@@ -7,7 +7,12 @@ namespace Accounting.Services.Interfaces;
 public interface IDocumentService
 {
     // Documents
-    Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy);
+    /// <param name="originModule">โมดูลต้นทางที่สั่งสร้าง ("Lodging"/…) — ใช้ตัดสิน
+    /// ว่าเอกสารใบนี้นับเข้าโควตาไหม. **เป็นพารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request
+    /// โดยตั้งใจ** — ถ้าอยู่ใน DTO ผู้เรียก API จะส่งมาเองแล้วเลี่ยงโควตาได้
+    /// (ดูหมายเหตุใน DocumentDtos.cs)</param>
+    Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
+        string? originModule = null);
     Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>Same as GetDocumentAsync but honors per-user sensitivity rules — when the
     /// caller cannot see the doc, returns a redacted stub instead of throwing.</summary>

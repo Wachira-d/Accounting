@@ -44,8 +44,4 @@ public interface IEntitlementService
     /// <summary>ตรวจบิตของแพ็กเกจโดยตรง (ทางลัดสำหรับโค้ดที่ถือ enum อยู่แล้ว)</summary>
     Task<EntitlementResult> CheckAsync(Guid companyId, FeatureFlags flag, CancellationToken ct = default);
 
-    /// <summary>รหัส add-on ทั้งหมดที่บริษัทนี้เปิดใช้อยู่ (รวมที่อยู่ในช่วง trial)
-    /// — ส่งให้ frontend พร้อม subscription เพื่อให้ `Layout.hasFeature` เช็คได้
-    /// โดยไม่ยิง request เพิ่ม</summary>
-    Task<List<string>> GetEnabledAddOnCodesAsync(Guid companyId, CancellationToken ct = default);
 }

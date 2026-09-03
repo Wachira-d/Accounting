@@ -766,7 +766,8 @@ public partial class DocumentService : IDocumentService
         return outList;
     }
 
-    public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
+    public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
+        string? originModule = null)
     {
         // ── ธง "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" ต้องมาคู่กับชนิด TaxInvoice ──
         // เดิมชนิดไม่ตรง = **ดรอปธงเงียบ ๆ** ⇒ integration/recurring ที่ส่ง
@@ -805,7 +806,7 @@ public partial class DocumentService : IDocumentService
         // และเราเป็นสาเหตุ (LODGING_LICENSING_PLAN §5 · ทีม CPA)
         // ตอนนี้: ใบที่กฎหมายบังคับ → ออกได้เสมอ แล้วคิด overage · ใบที่รอได้ → บล็อกตามเดิม
         var quotaClass = DocumentQuotaPolicy.Classify(
-            request.DocumentType, request.IsDeposit, IsLodgingOrigin(request.OriginModule));
+            request.DocumentType, request.IsDeposit, IsLodgingOrigin(originModule));
         var withinQuota = await _subscriptionService.CheckUsageLimitAsync(companyId, "document");
         if (!withinQuota && DocumentQuotaPolicy.CanRefuseWhenOverQuota(quotaClass))
         {
@@ -1027,7 +1028,7 @@ public partial class DocumentService : IDocumentService
                     && request.DocumentType == DocumentType.TaxInvoice,
                 DepositAppliedAmount = request.DepositAppliedAmount ?? 0m,
                 DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
-                OriginModule = string.IsNullOrWhiteSpace(request.OriginModule) ? null : request.OriginModule.Trim(),
+                OriginModule = string.IsNullOrWhiteSpace(originModule) ? null : originModule.Trim(),
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
                 BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice ?? false,
                 // ขายเงินสด ใบเดียว (เฉพาะ TaxInvoice ฝั่งขาย) — AutoPost ลงแบบเงินสด
@@ -11318,9 +11319,18 @@ public partial class DocumentService : IDocumentService
     /// ไม่ได้แล้ว ต้อง reclassify เป็นค่าใช้จ่าย (Dr ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" /
     /// Cr 11640) ล้าง 11640 ที่ค้างเป็น asset ลอย. Idempotent (ตั้ง InputVatExpiredAt).
     /// เรียกจาก endpoint / nightly job. คืนจำนวนเอกสารที่จัดการ.</summary>
-    /// <summary>ค่าล็อกของงาน §82/3 — <b>ต้องตรงกับ</b>
-    /// <c>UndueInputVatExpiryJob.LockKey</c> (ทั้งสองทางต้องกันกันเองได้)</summary>
-    internal const long UndueVatExpiryLockKey = 828_003L;
+    /// <summary>คีย์ล็อกของงาน §82/3 — <b>ผูกกับบริษัท</b>
+    ///
+    /// เดิมเป็นค่าคงที่ <c>828_003L</c> ทั้งระบบ ⇒ ผู้ใช้บริษัท A กดปุ่ม
+    /// "ล้างภาษีซื้อหมดสิทธิ์" แล้วสแกนนานเป็นสิบวินาที ผู้ใช้**บริษัทอื่น**ที่กด
+    /// ปุ่มเดียวกันต้องรอจนเสร็จ ทั้งที่ทำงานคนละชุดข้อมูลโดยสิ้นเชิง
+    /// (head-of-line blocking ข้าม tenant — จุดเดียวในเรพที่เป็นแบบนี้)
+    ///
+    /// การผูก companyId ยัง<b>กันสิ่งที่ต้องกันได้ครบเหมือนเดิม</b>: ปุ่มกับ job
+    /// ของ<i>บริษัทเดียวกัน</i>ยังชนกันไม่ได้ ซึ่งคือเจตนาจริงของล็อกนี้
+    /// (กัน JE ซ้ำจาก read-then-write ยาวของ <c>InputVatExpiredAt</c>)</summary>
+    internal static long UndueVatExpiryLockKeyFor(Guid companyId)
+        => Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.UndueVatExpiry, "reclassify");
 
     public async Task<int> ReclassifyExpiredUndueInputVatAsync(Guid companyId, string actor)
     {
@@ -11339,7 +11349,7 @@ public partial class DocumentService : IDocumentService
         try
         {
             await _db.Database.ExecuteSqlRawAsync(
-                "SELECT pg_advisory_xact_lock({0})", new object[] { UndueVatExpiryLockKey });
+                "SELECT pg_advisory_xact_lock({0})", new object[] { UndueVatExpiryLockKeyFor(companyId) });
             var n = await ReclassifyExpiredUndueInputVatCoreAsync(companyId, actor);
             if (tx != null) await tx.CommitAsync();
             return n;

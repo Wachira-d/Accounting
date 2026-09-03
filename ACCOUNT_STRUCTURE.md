@@ -339,6 +339,20 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 - มิเตอร์ของระบบ (`AddOnCodes.SystemMeters`) **ไม่ต้องให้ลูกค้าเปิด** — `RecordAsync`
   ข้ามด่าน "ฟีเจอร์เปิดอยู่ไหม" ให้รหัสกลุ่มนี้ ไม่งั้นค่าส่วนเกินจะบันทึกไม่ได้เลย
 
+**สิ่งที่ตัดสินโควตา ห้ามให้ client ส่งมาเอง** — `OriginModule` (โมดูลต้นทางของเอกสาร)
+เคยอยู่ใน `CreateDocumentRequest` ⇒ ผู้เรียก REST API ส่ง `"originModule":"Lodging"`
+มาทุกใบก็ไม่กินโควตาเลยตลอดกาล. ตอนนี้เป็น **พารามิเตอร์ของเมธอด**
+`IDocumentService.CreateDocumentAsync(..., originModule)` ซึ่ง model binding เอื้อมไม่ถึง
+โดยโครงสร้าง (ปลอดภัยกว่าให้ controller ล้างเอง ซึ่งวันหนึ่งจะมีตัวใหม่ที่ลืมล้าง)
+
+**สวิตช์ของภารกิจแลกโควตา (§12) ตั้งได้จริงแล้วทั้ง 3 ชั้น** — `/api/admin/metering/quota-rewards`
+(สร้าง/แก้/เปิด-ปิดภารกิจ + ยอด 30 วันล่าสุดไว้เทียบว่าคุ้ม lead ไหม) ·
+`quota-rewards/plan` (ต่อแพ็กเกจ) · `quota-rewards/block-company` (ระงับรายบริษัท + AuditLog)
+ทั้งหมดอยู่ในหน้า `/pages/admin-addons.html` — ก่อนหน้านี้กลไกครบแต่**ไม่มีทางเปิดใช้เลย**
+
+**ขายเฉพาะของที่มีจริง** — `lodging.promo` ถูก unpublish แล้ว: `LodgingReservation.PromoCode`
+เก็บเป็นข้อความเฉย ๆ `LodgingPricingEngine` ไม่เคยอ่านมาคิดส่วนลด ⇒ เปิดขายไปก็ไม่ได้อะไร
+
 ### 6.2 Prepaid (default) / Postpaid
 
 - **Prepaid**: ซื้อแพ็กเครดิตล่วงหน้า → `CreditBalance` ตัดตาม UsageEvent → เตือน 20%/หมด
@@ -663,7 +677,15 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-03 (rev 23 — **License ส่วนเสริม + โควตา**:_
+_Last verified against codebase: 2026-09-03 (rev 24 — **เก็บงานค้างจากการตรวจซ้ำ**:_
+_(1) ปิดช่องเลี่ยงโควตา — `OriginModule` ย้ายจาก request DTO ไปเป็นพารามิเตอร์ของเมธอด_
+_(2) `lodging.promo` unpublish (ขายฟีเจอร์ที่ยังไม่มี) (3) สวิตช์ภารกิจแลกโควตา 3 ชั้น_
+_มี endpoint + หน้าจอแอดมินจริงแล้ว (4) ลบ `GetEnabledAddOnCodesAsync` ที่ไม่มีใครเรียก_
+_(5) ยุบสำเนา resolver ราคาใน `EntitlementService` → เรียก `ResolveEffectivePlanAsync`_
+_ตัวเดียวกับเส้นคิดเงิน (doc-comment เดิมอ้างเทสต์ที่ไม่มีไฟล์อยู่จริง)_
+_(6) ล็อก §82/3 ผูก `companyId` แล้ว — เลิกบล็อกข้ามบริษัท + job เลิกถือล็อกทั้งรอบ_
+_(7) ตั้ง `Db:MaxPoolSize`/`MinThreads` + ให้เส้นที่เปิด connection เองใช้สตริงเดียวกับ EF)_
+_ก่อนหน้า: 2026-09-03 (rev 23 — **License ส่วนเสริม + โควตา**:_
 _§6.1a ปิดรอบบิลค่าใช้งาน (`UsageInvoicingJob` เขียน `BilledPeriod`/`BilledDocumentId`_
 _ที่ไม่เคยมีใครเขียน · ใบแจ้งหนี้หลายบรรทัดผ่าน `IssueUsageInvoiceAsync` · Prepaid_
 _ปิดรอบโดยไม่ออกใบ · ต่ำกว่า ฿50 ยกยอด · ออกใบไม่สำเร็จห้ามตีตรา) ·_

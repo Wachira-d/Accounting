@@ -144,10 +144,16 @@ public record CreateDocumentRequest(
     // ให้ priority เหนือ CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1) คงเป็นกรรมการ.
     // เหมือน integration PV/invoice. null = fallback CreatedBy user เหมือนเดิม.
     string? PreparerName = null,
-    string? PreparerSignatureBase64 = null,
-    /// <summary>โมดูลต้นทางที่สั่งสร้าง ("Lodging"/"Pos"/…) — ใช้ตัดสินโควตาเอกสาร
-    /// (ดู Document.OriginModule) · null = ฟอร์มปกติ/API</summary>
-    string? OriginModule = null);
+    string? PreparerSignatureBase64 = null);
+
+// ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
+// เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
+// (`DocumentQuotaPolicy.Classify(..., fromLodging)`) ⇒ ผู้ใช้ที่เรียก REST API
+// ด้วย token ของตัวเองส่ง `"originModule":"Lodging"` มาทุกใบ ก็ไม่กินโควตาเลย
+// ตลอดกาล และไม่เกิดค่าส่วนเกินด้วย — **ค่าที่ client คุมได้ ห้ามใช้ตัดสินเรื่องเงิน**
+// ตอนนี้เป็น **พารามิเตอร์ของเมธอด** `IDocumentService.CreateDocumentAsync(..., originModule)`
+// ซึ่ง model binding เอื้อมไม่ถึงโดยโครงสร้าง (ปลอดภัยกว่าการให้ controller ล้างเอง
+// ซึ่งวันหนึ่งจะมี controller ตัวใหม่ที่ลืมล้าง — defect class "แก้ตัวเดียว เหลือที่เหลือ")
 
 public record DocumentLineRequest(
     string Description,

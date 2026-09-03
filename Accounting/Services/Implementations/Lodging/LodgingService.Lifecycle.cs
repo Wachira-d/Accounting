@@ -279,9 +279,8 @@ public partial class LodgingService
             DepositDeferredAccountCode: prop.DepositDeferredAccountCode,
             DepositOutputVatDeferred: prop.DepositOutputVatDeferred,
             BookingNumber: r.ReservationNumber,
-            PaymentType: null,
-            OriginModule: LodgingOrigin);
-        var created = await _docService.CreateDocumentAsync(companyId, request, userId);
+            PaymentType: null);
+        var created = await _docService.CreateDocumentAsync(companyId, request, userId, LodgingOrigin);
         await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
         return created;
     }
@@ -494,9 +493,8 @@ public partial class LodgingService
             BankAccountId: request.BankAccountId,
             BranchId: prop.BranchId,
             BookingNumber: r.ReservationNumber,
-            ServiceUsedDate: r.CheckOutDate,
-            OriginModule: LodgingOrigin);
-        var created = await _docService.CreateDocumentAsync(companyId, create, userId);
+            ServiceUsedDate: r.CheckOutDate);
+        var created = await _docService.CreateDocumentAsync(companyId, create, userId, LodgingOrigin);
         var approved = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
 
         decimal collected = 0;

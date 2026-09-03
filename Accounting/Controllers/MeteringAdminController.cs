@@ -254,4 +254,155 @@ public class MeteringAdminController : ControllerBase
             topAccounts = byAccount,
         }));
     }
+
+    // ──────────────────────────────────────────────────────────
+    //  ภารกิจแลกโควตา (LODGING_LICENSING_PLAN §12) — สวิตช์ชั้นที่ 1 และ 2-3
+    // ──────────────────────────────────────────────────────────
+
+    /// <summary>รายการภารกิจทั้งหมด + ยอดที่แจกไปแล้ว
+    ///
+    /// **ทำไมต้องมีหน้านี้**: กลไกทั้งชุด (policy · service · หน้าลูกค้า · เทสต์)
+    /// ลงโค้ดครบแล้วแต่เคย**ไม่มีทางเปิดใช้เลย** — ไม่มี endpoint สร้าง/เปิด option
+    /// ไม่มีที่ตั้ง `AllowQuotaReward`/`QuotaRewardBlocked` ⇒ เป็น dead path
+    /// จนกว่าจะไปแก้ DB ด้วยมือ (defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้")</summary>
+    [HttpGet("quota-rewards")]
+    public async Task<ActionResult<ApiResponse<object>>> GetQuotaRewards()
+    {
+        var options = await _db.QuotaRewardOptions.AsNoTracking()
+            .Where(o => !o.IsDeleted)
+            .OrderBy(o => o.SortOrder).ThenBy(o => o.Title).ToListAsync();
+
+        var since = DateTime.UtcNow.AddDays(-30);
+        var grants = await _db.QuotaRewardGrants.AsNoTracking()
+            .Where(g => !g.IsDeleted && g.GrantedAt >= since)
+            .GroupBy(g => g.OptionId)
+            .Select(g => new
+            {
+                OptionId = g.Key,
+                Count = g.Count(),
+                Docs = g.Sum(x => x.GrantedDocuments),
+                Clicks = g.Count(x => x.ClickedThrough),
+            })
+            .ToDictionaryAsync(x => x.OptionId, x => x);
+
+        return Ok(new ApiResponse<object>(true, options.Select(o =>
+        {
+            grants.TryGetValue(o.Id, out var g);
+            return new
+            {
+                o.Id, kind = o.Kind.ToString(), o.Title, o.Description, o.ImageUrl, o.MediaUrl, o.PartnerUrl,
+                o.DurationSeconds, o.RewardDocuments, o.RewardValidDays, o.MaxPerDay, o.MaxPerMonth,
+                o.EstimatedRevenuePerView, o.IsActive, o.SortOrder,
+                // 30 วันล่าสุด — ให้เทียบได้ว่า "โควตาที่แจกไป" คุ้มกับ lead ที่ได้ไหม
+                last30Claims = g?.Count ?? 0,
+                last30Documents = g?.Docs ?? 0,
+                last30ClickThroughs = g?.Clicks ?? 0,
+            };
+        })));
+    }
+
+    public record UpsertQuotaRewardRequest(
+        Guid? Id, string Kind, string Title, string? Description,
+        string? ImageUrl, string? MediaUrl, string? PartnerUrl,
+        int DurationSeconds, int RewardDocuments, int RewardValidDays,
+        int MaxPerDay, int MaxPerMonth, decimal EstimatedRevenuePerView,
+        bool IsActive, int SortOrder);
+
+    [HttpPost("quota-rewards")]
+    public async Task<ActionResult<ApiResponse<object>>> UpsertQuotaReward([FromBody] UpsertQuotaRewardRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.Title))
+            return BadRequest(new ApiResponse<string>(false, null, "กรุณาระบุชื่อภารกิจ"));
+        if (!Enum.TryParse<QuotaRewardKind>(req.Kind, true, out var kind))
+            return BadRequest(new ApiResponse<string>(false, null,
+                "ชนิดต้องเป็น PartnerOffer / HouseVideo / Referral / Survey / AdNetwork"));
+        if (req.RewardDocuments <= 0)
+            return BadRequest(new ApiResponse<string>(false, null, "โควตาที่ให้ต้องมากกว่า 0"));
+        // เพดานต่อวัน/เดือนเป็น 0 = ไม่จำกัด ซึ่งแปลว่า "แลกได้ไม่อั้น" — ต้องตั้งใจจริง ๆ
+        if (req.IsActive && req.MaxPerDay <= 0 && req.MaxPerMonth <= 0)
+            return BadRequest(new ApiResponse<string>(false, null,
+                "เปิดใช้งานโดยไม่มีเพดานทั้งต่อวันและต่อเดือนไม่ได้ — ผู้ใช้จะแลกโควตาได้ไม่จำกัด"));
+
+        var row = req.Id.HasValue
+            ? await _db.QuotaRewardOptions.FirstOrDefaultAsync(o => o.Id == req.Id.Value && !o.IsDeleted)
+            : null;
+        if (req.Id.HasValue && row == null)
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบภารกิจนี้"));
+        if (row == null)
+        {
+            row = new QuotaRewardOption { CreatedBy = User.Identity?.Name };
+            _db.QuotaRewardOptions.Add(row);
+        }
+
+        row.Kind = kind;
+        row.Title = req.Title.Trim();
+        row.Description = req.Description?.Trim();
+        row.ImageUrl = req.ImageUrl?.Trim();
+        row.MediaUrl = req.MediaUrl?.Trim();
+        row.PartnerUrl = req.PartnerUrl?.Trim();
+        row.DurationSeconds = Math.Clamp(req.DurationSeconds, 5, 600);
+        row.RewardDocuments = Math.Clamp(req.RewardDocuments, 1, 500);
+        row.RewardValidDays = Math.Clamp(req.RewardValidDays, 0, 365);
+        row.MaxPerDay = Math.Max(0, req.MaxPerDay);
+        row.MaxPerMonth = Math.Max(0, req.MaxPerMonth);
+        row.EstimatedRevenuePerView = Math.Max(0m, req.EstimatedRevenuePerView);
+        row.IsActive = req.IsActive;
+        row.SortOrder = req.SortOrder;
+        row.UpdatedAt = DateTime.UtcNow;
+        row.UpdatedBy = User.Identity?.Name;
+        await _db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<object>(true, new { row.Id, row.IsActive },
+            req.IsActive ? $"บันทึกและเปิดใช้ \"{row.Title}\" แล้ว" : $"บันทึก \"{row.Title}\" (ยังไม่เปิดใช้)"));
+    }
+
+    public record PlanQuotaRewardRequest(SubscriptionPlan Plan, bool Allow);
+
+    /// <summary>สวิตช์ชั้นที่ 2 — เปิด/ปิดการแลกโควตาต่อ **แพ็กเกจ**
+    /// (แพ็กเกจสูงไม่ควรต้องดูโฆษณาแลกโควตา — เป็นประสบการณ์ของแพ็กเกจฟรี/เริ่มต้น)</summary>
+    [HttpPost("quota-rewards/plan")]
+    public async Task<ActionResult<ApiResponse<object>>> SetPlanQuotaReward([FromBody] PlanQuotaRewardRequest req)
+    {
+        var templates = await _db.PlanTemplates.Where(p => p.Plan == req.Plan).ToListAsync();
+        if (templates.Count == 0)
+            return NotFound(new ApiResponse<string>(false, null, $"ไม่พบแพ็กเกจ {req.Plan}"));
+        foreach (var t in templates)
+        {
+            t.AllowQuotaReward = req.Allow;
+            t.UpdatedAt = DateTime.UtcNow;
+            t.UpdatedBy = User.Identity?.Name;
+        }
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { plan = req.Plan.ToString(), allow = req.Allow },
+            req.Allow ? $"เปิดให้แพ็กเกจ {req.Plan} แลกโควตาได้" : $"ปิดการแลกโควตาของแพ็กเกจ {req.Plan}"));
+    }
+
+    public record BlockCompanyRewardRequest(Guid CompanyId, bool Blocked, string? Reason);
+
+    /// <summary>สวิตช์ชั้นที่ 3 — ระงับสิทธิ์แลกโควตาเฉพาะบริษัทที่ใช้ในทางที่ผิด
+    /// (เขียน AuditLog ด้วย เพราะเป็นการตัดสิทธิ์ที่ลูกค้าจะโทรมาถาม)</summary>
+    [HttpPost("quota-rewards/block-company")]
+    public async Task<ActionResult<ApiResponse<object>>> BlockCompanyReward([FromBody] BlockCompanyRewardRequest req)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == req.CompanyId && !s.IsDeleted);
+        if (sub == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบแพ็กเกจของบริษัทนี้"));
+        sub.QuotaRewardBlocked = req.Blocked;
+        sub.UpdatedAt = DateTime.UtcNow;
+        sub.UpdatedBy = User.Identity?.Name;
+        _db.AuditLogs.Add(new AuditLog
+        {
+            CompanyId = req.CompanyId,
+            Action = AuditAction.Update,
+            EntityType = "Subscription",
+            EntityId = sub.Id.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "QuotaRewardBlocked", blocked = req.Blocked,
+                reason = req.Reason, by = User.Identity?.Name,
+            }),
+        });
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { req.CompanyId, req.Blocked },
+            req.Blocked ? "ระงับสิทธิ์แลกโควตาของบริษัทนี้แล้ว" : "คืนสิทธิ์แลกโควตาแล้ว"));
+    }
 }

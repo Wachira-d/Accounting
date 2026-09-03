@@ -15,6 +15,18 @@ using QuestPDF.Infrastructure;
 
 QuestPDF.Settings.License = LicenseType.Community;
 
+// ThreadPool: งานที่เป็น CPU-bound แบบ sync ในระบบนี้คือการเรนเดอร์ PDF
+// (`QuestPDF.GeneratePdf()`) ซึ่งยึด thread จริงตลอดการเรนเดอร์ · ค่าเริ่มต้นของ
+// .NET ตั้ง min = จำนวน core แล้วโตช้า (~1-2 thread/วินาที) ⇒ ผู้ใช้หลายสิบคนกด
+// พิมพ์พร้อมกันจะเจอหน่วงเป็นช่วง ๆ ระหว่างที่ pool ค่อย ๆ ขยาย. ยกพื้นขึ้นมาให้
+// รับ burst ได้ทันที (ไม่ใช่การเพิ่มเพดาน — แค่ไม่ต้องรอ pool โต)
+{
+    ThreadPool.GetMinThreads(out var minWorker, out var minIo);
+    var targetWorker = Math.Max(minWorker, Environment.ProcessorCount * 4);
+    var targetIo = Math.Max(minIo, Environment.ProcessorCount * 4);
+    ThreadPool.SetMinThreads(targetWorker, targetIo);
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 // ตรวจ DI graph "ทุก environment" ไม่ใช่เฉพาะ Development
@@ -38,9 +50,36 @@ builder.Host.UseDefaultServiceProvider(o =>
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 // ===== Database (PostgreSQL) =====
+// ── Connection pool ──
+// เพดานจริงของ "กี่คนทำงานพร้อมกันได้" คือจำนวน connection ไม่ใช่จำนวน request:
+// EF เปิด/คืน connection ต่อ query **ยกเว้นใน transaction** ซึ่งถือไว้ทั้งช่วง —
+// และเส้นสำคัญของระบบนี้ (อนุมัติเอกสาร · ลงบัญชี · ปิดรอบบิล) อยู่ใน transaction
+// ทั้งหมด ⇒ งานที่กินเวลา 10 วินาที = กิน connection 10 วินาทีเต็ม
+//
+// Npgsql default = 100 ซึ่งบังเอิญเท่ากับ `max_connections` default ของ PostgreSQL
+// พอดี ⇒ ถ้าไม่ตั้งอะไรเลย แอปจะพยายามใช้จนเต็มโควตาของฐานเอง (ไม่เหลือให้
+// superuser/เครื่องมือ/instance ที่สอง). ตั้งชัดเจนแทนการปล่อยตาม default และ
+// **ตั้งผ่าน env ได้** เพื่อให้ปรับตาม max_connections จริงของแต่ละ deployment:
+//   Db__MaxPoolSize (default 60) · Db__MinPoolSize (default 5)
+//   Db__ConnectionIdleLifetimeSeconds (default 60 — คืน connection ที่ว่างนาน)
+// สูตรคร่าว ๆ: MaxPoolSize × จำนวน instance ≤ max_connections − 10 (สำรองไว้)
+// เส้นที่เปิด connection เองนอก EF (endpoint วินิจฉัย + schema fix ตอนบูต) ต้องใช้
+// connection string **ตัวเดียวกัน** — คนละสตริง = คนละ pool ที่มีเพดานของตัวเอง
+// (default 100) ⇒ รวมกันเกิน max_connections ของฐานโดยไม่มีใครเห็น
+var pgBuilder = new Npgsql.NpgsqlConnectionStringBuilder(
+    builder.Configuration.GetConnectionString("DefaultConnection"))
+{
+    MaxPoolSize = builder.Configuration.GetValue("Db:MaxPoolSize", 60),
+    MinPoolSize = builder.Configuration.GetValue("Db:MinPoolSize", 5),
+    ConnectionIdleLifetime = builder.Configuration.GetValue("Db:ConnectionIdleLifetimeSeconds", 60),
+    // รอคิว connection ได้ไม่เกิน 30 วิ แล้วค่อยล้มพร้อมข้อความชัด ๆ —
+    // ดีกว่าค้างยาวจนผู้ใช้กดซ้ำแล้วยิ่งกินคิว
+    Timeout = builder.Configuration.GetValue("Db:ConnectTimeoutSeconds", 30),
+};
+
 builder.Services.AddDbContext<AccountingDbContext>(options =>
     options.UseNpgsql(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
+        pgBuilder.ConnectionString,
         npgsqlOptions =>
         {
             // Split queries for multi-Include chains (prevents cartesian explosion)
@@ -962,7 +1001,7 @@ app.MapPost("/api/error-log/client", async (HttpContext ctx, IConfiguration conf
         var body = await ctx.Request.ReadFromJsonAsync<Dictionary<string, object>>();
         if (body == null) return Results.BadRequest();
 
-        var connStr = config.GetConnectionString("DefaultConnection");
+        var connStr = pgBuilder.ConnectionString;   // pool เดียวกับ EF (ดูหมายเหตุ Db:MaxPoolSize)
         if (string.IsNullOrEmpty(connStr)) return Results.Ok(new { logged = false });
 
         using var conn = new Npgsql.NpgsqlConnection(connStr);
@@ -989,7 +1028,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = Dat
 // DB diagnostic endpoint — checks if critical columns/tables exist (bypasses EF)
 app.MapGet("/health/db", (IConfiguration config) =>
 {
-    var connStr = config.GetConnectionString("DefaultConnection");
+    var connStr = pgBuilder.ConnectionString;   // pool เดียวกับ EF
     if (string.IsNullOrEmpty(connStr)) return Results.Ok(new { status = "no_connection_string" });
     try
     {
@@ -1073,7 +1112,7 @@ app.MapFallback(context =>
 // If EF model building fails (e.g. new entity configs), ApplyMissingColumns via EF also fails,
 // creating a chicken-and-egg problem where login breaks with no error log.
 {
-    var connStr = app.Configuration.GetConnectionString("DefaultConnection");
+    var connStr = pgBuilder.ConnectionString;
     if (!string.IsNullOrEmpty(connStr))
     {
         try

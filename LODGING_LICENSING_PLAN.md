@@ -142,7 +142,19 @@ front desk ทั้งชุด (แดชบอร์ด · tape chart · walk
 | 3 AddOnRouteMap ใน middleware | 📋 ยังไม่ทำ | ตั้งใจ: ด่านระดับ route ของ `/lodging/**` ใน `SubscriptionMiddleware` (โหมด LogOnly ก่อน) — วันนี้ gate อยู่ที่ระดับ endpoint/บริการแทน |
 | 3 บิต `LodgingModule` | 📋 ยังไม่ทำ | bitmask ใช้ถึงบิต 47/64 — ยังไม่จำเป็นเพราะ add-on ทุกตัวเดินผ่าน string code แล้ว |
 | 4 bundle (`IncludedAddOnCodes`) | 📋 ยังไม่ทำ | วันนี้ผูก add-on กับแพ็กเกจได้ผ่าน `GrantSource=BundledInPlan` รายบริษัท ยังไม่มีตัวตั้งระดับ `PlanTemplate` |
-| 4 รายงาน metric §8 | 📋 ยังไม่ทำ | ข้อมูลดิบครบใน `UsageEvent`/`QuotaRewardGrant` แล้ว เหลือหน้าสรุป |
+| 4 รายงาน metric §8 | 📋 ยังไม่ทำ | ข้อมูลดิบครบใน `UsageEvent`/`QuotaRewardGrant` แล้ว เหลือหน้าสรุป (ตัวเลข 30 วันของภารกิจแลกโควตาโผล่ในหน้าแอดมินแล้ว) |
+| §3.1 `lodging.promo` | ⛔ ถอนออกจากการขาย | `LodgingReservation.PromoCode` เก็บเป็นข้อความเฉย ๆ — `LodgingPricingEngine` ไม่เคยอ่านมาคิดส่วนลด ⇒ ขายไปก็ไม่ได้อะไร. `IsPublished=false` ทั้ง seed และ migration ของฐานเดิม · จะเปิดขายได้ต่อเมื่อมีตารางโค้ดส่วนลด + การตรวจสิทธิ์/วันหมดอายุ + ผลต่อ `Totals` จริง |
+| §3.1 add-on อีก 6 ตัว | 📋 ยังไม่ทำ (ปิดขายอยู่) | channel-manager · pos-folio · analytics · i18n · early-late-fee · loyalty — seed ไว้เป็น `IsPublished=false` ทั้งหมด **ห้ามเปิดขายก่อนมี call site จริง** (ตรวจด้วย `grep AddOnCodes.<ชื่อ>` ต้องเจอนอก catalog) |
+
+**บทเรียนจากรอบตรวจซ้ำ (2026-09-03)** — สิ่งที่ "ลงโค้ดครบ" แล้วยังไม่จบจริง:
+- **ค่าที่ client ส่งได้ ห้ามใช้ตัดสินเรื่องเงิน** — `OriginModule` อยู่ใน request DTO
+  แล้วถูกใช้ตัดสินว่านับโควตาไหม ⇒ ส่ง `"Lodging"` มาเองก็ไม่เสียโควตาตลอดกาล.
+  แก้ด้วยการย้ายเป็น**พารามิเตอร์ของเมธอด** (โครงสร้างกัน ดีกว่าให้ controller ล้างเอง)
+- **สวิตช์ต้องมีที่เปิด** — กลไกภารกิจแลกโควตาครบทั้ง entity/policy/service/UI/เทสต์
+  แต่ไม่มี endpoint สร้าง option และไม่มีที่ตั้ง `AllowQuotaReward`/`QuotaRewardBlocked`
+  ⇒ เป็น dead path จนกว่าจะแก้ DB มือ. "ปิดเป็นค่าเริ่มต้น" ถูก แต่ **ไม่มีสวิตช์เปิด = ยังไม่จบ**
+- **ห้ามเปิดขาย add-on ที่ไม่มี call site** — ตรวจง่าย ๆ ด้วย `grep AddOnCodes.<ชื่อ>`
+  ถ้าเจอแต่ในไฟล์ catalog/migration แปลว่าเปิดใช้แล้วไม่มีอะไรเปลี่ยน
 
 > **ยังไม่ได้คอมไพล์ในสภาพแวดล้อมนี้** (ไม่มี .NET SDK) — ผ่าน checker ทั้ง 21 ตัว +
 > `node --check` + brace balance เท่านั้น

@@ -5727,6 +5727,12 @@ public static class DatabaseMigrationHelper
             """,
 
             // ═══ โควตาพิเศษ: ซื้อ top-up / ทำภารกิจแลกโควตา (LODGING_LICENSING_PLAN §11-12) ═══
+            // `lodging.promo` ถูก seed เป็น IsPublished=true แต่ **ฟีเจอร์ยังไม่มีจริง**:
+            // `LodgingReservation.PromoCode` เก็บเป็นข้อความเฉย ๆ — `LodgingPricingEngine`
+            // ไม่เคยอ่านค่านี้มาคิดส่วนลดเลย ⇒ ลูกค้าจ่ายเดือนละ ฿200 แล้วไม่ได้อะไรเพิ่ม
+            // ปิดการขายไว้ก่อน (ผู้ที่เปิดไปแล้วยังใช้ต่อและปิดเองได้ตามกติกา unpublish)
+            // — CLAUDE.md: "feature ที่ยังไม่มีจริง ห้ามเขียนว่ามีแล้ว"
+            """UPDATE "ApiFeatures" SET "IsPublished" = false, "Description" = "Description" || ' (ยังไม่เปิดขาย — อยู่ระหว่างพัฒนา)' WHERE "FeatureCode" = 'lodging.promo' AND "IsPublished" = true;""",
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "DocumentBonusQuota" integer NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "DocumentBonusExpiresAt" timestamptz NULL;""",
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "QuotaRewardBlocked" boolean NOT NULL DEFAULT false;""",
@@ -5765,7 +5771,7 @@ public static class DatabaseMigrationHelper
             INSERT INTO "ApiFeatures" ("Id","FeatureCode","Name","NameEn","UnitLabel","RequiredScopes","SortOrder","Description","Kind","ModuleCode","Icon","TrialDays","IsPublished","CreatedBy")
             SELECT * FROM (VALUES
                 (gen_random_uuid(),'lodging.guest-portal','Guest Portal Pro','Guest Portal Pro','เดือน','',110,'QR ต่อห้อง · ให้แขกแจ้งขอผ้า/แจ้งซ่อม/รูมเซอร์วิสเอง · แจ้งเตือนก่อนเช็คอินและขอรีวิวอัตโนมัติ (หน้าการจองด้วยลิงก์ให้แขกดู/อัปโหลดสลิป/ยกเลิก = ใช้ฟรีอยู่แล้ว)',2,'Lodging','🛎️',14,true,'seed'),
-                (gen_random_uuid(),'lodging.promo','โค้ดส่วนลด/โปรโมชัน','Promo codes','เดือน','',120,'สร้างโค้ดส่วนลดสำหรับจองตรง — ดึงลูกค้าจาก OTA ที่คิดค่าคอมมิชชัน 15-18%',2,'Lodging','🏷️',14,true,'seed'),
+                (gen_random_uuid(),'lodging.promo','โค้ดส่วนลด/โปรโมชัน','Promo codes','เดือน','',120,'สร้างโค้ดส่วนลดสำหรับจองตรง — ดึงลูกค้าจาก OTA ที่คิดค่าคอมมิชชัน 15-18%',2,'Lodging','🏷️',14,false,'seed'),
                 (gen_random_uuid(),'lodging.channel-manager','เชื่อม OTA (Agoda/Booking)','Channel manager','เดือน','',130,'ซิงก์ห้องว่างและราคาไปยัง OTA อัตโนมัติ — กัน overbooking และเลิกคีย์สองระบบ',2,'Lodging','🔗',14,false,'seed'),
                 (gen_random_uuid(),'lodging.pos-folio','ชาร์จ POS เข้าห้องพัก','POS to folio','เดือน','',140,'สั่งอาหาร/เครื่องดื่มที่ POS แล้วเข้าบิลห้องอัตโนมัติ ปิดยอดตอนเช็คเอาต์',2,'Lodging','🍽️',14,false,'seed'),
                 (gen_random_uuid(),'lodging.analytics','รายงาน Occupancy/ADR/RevPAR','Lodging analytics','เดือน','',150,'อัตราเข้าพัก · ราคาเฉลี่ยต่อห้อง · รายได้ต่อห้องที่มี — ผูกกับตัวเลขบัญชีจริง',2,'Lodging','📊',14,false,'seed'),

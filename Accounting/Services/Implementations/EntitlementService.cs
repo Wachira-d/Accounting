@@ -10,13 +10,15 @@ public class EntitlementService : IEntitlementService
 {
     private readonly AccountingDbContext _db;
     private readonly ISubscriptionService _subscriptions;
+    private readonly IUsageMeteringService _metering;
     private readonly ILogger<EntitlementService> _logger;
 
     public EntitlementService(AccountingDbContext db, ISubscriptionService subscriptions,
-        ILogger<EntitlementService> logger)
+        IUsageMeteringService metering, ILogger<EntitlementService> logger)
     {
         _db = db;
         _subscriptions = subscriptions;
+        _metering = metering;
         _logger = logger;
     }
 
@@ -91,12 +93,6 @@ public class EntitlementService : IEntitlementService
             $"เปิดใช้{priceText}{trialText}", code, price);
     }
 
-    public async Task<List<string>> GetEnabledAddOnCodesAsync(Guid companyId, CancellationToken ct = default)
-        => await _db.CompanyFeatures.AsNoTracking()
-            .Where(f => f.CompanyId == companyId && f.IsEnabled && !f.IsDeleted)
-            .Select(f => f.FeatureCode)
-            .ToListAsync(ct);
-
     /// <summary>แพ็กเกจปัจจุบันต่ำกว่าที่ add-on ต้องการไหม — คืนชื่อแพ็กเกจต่ำสุดที่ผ่าน
     /// (null = ไม่บล็อก). ว่าง/ไม่ระบุ = ขายได้ทุกแพ็กเกจ</summary>
     private static string? MinPlanBlocked(string? minPlanCsv, SubscriptionPlan current)
@@ -111,24 +107,14 @@ public class EntitlementService : IEntitlementService
         return allowed.OrderBy(p => (int)p).First().ToString();
     }
 
-    /// <summary>ราคาปัจจุบันของ add-on (ดีลเฉพาะกลุ่มชนะราคามาตรฐาน) — logic เดียวกับ
-    /// `UsageMeteringService.ResolvePlanAsync` แต่ตัวนั้น private อยู่ในคลาสของมัน
-    /// และเป็นเส้น "คิดเงิน" ส่วนตัวนี้เป็นเส้น "แสดงราคา" ⇒ ถ้าวันหนึ่งเกณฑ์เลือก
-    /// แผนเปลี่ยน ต้องแก้ทั้งสองที่ (มีเทสต์ล็อกไว้ที่ EntitlementPriceTests)</summary>
+    /// <summary>ราคาที่จะโชว์ให้ลูกค้าเห็นก่อนกดเปิด
+    ///
+    /// **เรียกตัวเดียวกับเส้นคิดเงิน** (`IUsageMeteringService.ResolveEffectivePlanAsync`)
+    /// เดิมที่นี่คัดลอกเกณฑ์ "ดีลเฉพาะกลุ่มชนะราคามาตรฐาน" มาเขียนใหม่ พร้อม
+    /// doc-comment ที่อ้างว่ามีเทสต์ล็อกไว้ — **ซึ่งไม่มีไฟล์เทสต์นั้นอยู่จริง**
+    /// (บทเรียน CLAUDE.md: doc-comment ที่บอกว่าป้องกันแล้ว = เจตนา ไม่ใช่หลักฐาน)
+    /// การยุบให้เหลือตัวเดียวปลอดภัยกว่าการเขียนเทสต์ล็อกสำเนาสองชุด เพราะราคา
+    /// ที่โชว์กับราคาที่เก็บจริง**เป็นไปไม่ได้**ที่จะต่างกันโดยโครงสร้าง</summary>
     private async Task<decimal?> ResolvePriceAsync(Guid companyId, string code, CancellationToken ct)
-    {
-        var accountId = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == companyId).Select(c => c.BillingAccountId).FirstOrDefaultAsync(ct);
-        var now = DateTime.UtcNow;
-        var plans = await _db.ApiPricingPlans.AsNoTracking()
-            .Where(p => p.FeatureCode == code && !p.IsDeleted
-                     && p.EffectiveFrom <= now && (p.EffectiveTo == null || p.EffectiveTo > now)
-                     && (p.BillingAccountId == null || p.BillingAccountId == accountId))
-            .ToListAsync(ct);
-        return plans
-            .OrderByDescending(p => p.BillingAccountId.HasValue)
-            .ThenByDescending(p => p.EffectiveFrom)
-            .Select(p => (decimal?)p.UnitPrice)
-            .FirstOrDefault();
-    }
+        => (await _metering.ResolveEffectivePlanAsync(companyId, code, ct))?.UnitPrice;
 }
