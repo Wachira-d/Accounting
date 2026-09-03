@@ -276,6 +276,10 @@ builder.Services.AddHttpClient(
     c => c.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentIntentService,
     Accounting.Services.Payments.PaymentIntentService>();
+// ตัวจัดการ "เงินเข้าแล้วทำอะไรต่อ" ต่อชนิดต้นทาง — เพิ่มทางเข้าใหม่ = เพิ่มไฟล์
+// ไม่ใช่แก้ service กลาง · ต้นทางที่ยังไม่มีตัวจัดการจะ log error ดัง ๆ (ไม่เงียบ)
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.SiteOrderPaymentHandler>();
 // 3-way match — PO ↔ GRN ↔ Invoice. Blocks AP overpayment before
 // the cheque goes out.
 builder.Services.AddScoped<Accounting.Services.Implementations.Procurement.IGrnMatchService,

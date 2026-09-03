@@ -59,11 +59,12 @@ public class PaymentIntentService : IPaymentIntentService
 {
     private readonly AccountingDbContext _db;
     private readonly IEnumerable<IPaymentProvider> _providers;
+    private readonly IEnumerable<IPaymentCompletionHandler> _handlers;
     private readonly ILogger<PaymentIntentService> _logger;
 
     public PaymentIntentService(AccountingDbContext db, IEnumerable<IPaymentProvider> providers,
-        ILogger<PaymentIntentService> logger)
-    { _db = db; _providers = providers; _logger = logger; }
+        IEnumerable<IPaymentCompletionHandler> handlers, ILogger<PaymentIntentService> logger)
+    { _db = db; _providers = providers; _handlers = handlers; _logger = logger; }
 
     private IPaymentProvider Resolve(string code)
         => _providers.FirstOrDefault(p => p.ProviderCode == code)
@@ -229,7 +230,51 @@ public class PaymentIntentService : IPaymentIntentService
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+
+        // ── หลังยืนยันเงินเข้าแล้ว ให้ทางเข้าเดิมทำงานต่อ ──
+        // ทำ **นอกธุรกรรม** โดยตั้งใจ: การยืนยันว่าเงินเข้าแล้วเป็นข้อเท็จจริงที่ต้อง
+        // บันทึกให้ได้เสมอ · ถ้ารวมไว้ในธุรกรรมเดียวกันแล้ว orchestrator ปลายทางล้ม
+        // (สต็อกไม่พอ/e-Tax ล่ม) การบันทึกว่าเงินเข้าจะถูกกลับด้วย ⇒ ลูกค้าจ่ายแล้ว
+        // ระบบลืมสนิท ซึ่งกู้ยากกว่าออเดอร์ที่ค้างอยู่แต่รู้ว่าจ่ายแล้ว
+        if (charge.Status == PaymentIntentStatus.Succeeded)
+            await DispatchSucceededAsync(intent, ct);
+
         return intent;
+    }
+
+    /// <summary>ส่งต่อให้ทางเข้าเดิมทำงาน — ถ้าไม่ทำขั้นนี้ ระบบจะกลายเป็น
+    /// "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้" ทันที (ลูกค้าจ่ายเงินสำเร็จ · แถวถูกต้อง ·
+    /// แต่ออเดอร์ยังค้างชำระตลอดกาล)</summary>
+    private async Task DispatchSucceededAsync(PaymentIntent intent, CancellationToken ct)
+    {
+        var handler = _handlers.FirstOrDefault(h => h.SourceKind == intent.SourceKind);
+        if (handler == null)
+        {
+            // ยังไม่ได้ต่อสายทางเข้านี้ — ต้องดัง ไม่ใช่เงียบ เพราะเงินเข้าแล้วจริง
+            _logger.LogError(
+                "เงินเข้าแล้วแต่ยังไม่มีตัวจัดการของต้นทางชนิด {Kind} — intent {Intent} "
+                + "ยอด {Amount:N2} · ต้องบันทึกการรับเงินด้วยมือ",
+                intent.SourceKind, intent.Id, intent.Amount);
+            AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Succeeded,
+                PaymentIntentStatus.Succeeded,
+                note: "⚠️ เงินเข้าแล้วแต่ระบบยังไม่ได้บันทึกการรับเงินให้ต้นทางนี้อัตโนมัติ");
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
+
+        try { await handler.HandleSucceededAsync(intent, ct); }
+        catch (Exception ex)
+        {
+            // ห้าม throw กลับไปหา webhook — provider จะ retry ไม่รู้จบ และการยืนยันว่า
+            // เงินเข้าถูกบันทึกไปแล้ว · ต้องดังพอให้คนตามเก็บได้: log + ประวัติของ intent
+            _logger.LogError(ex,
+                "เงินเข้าแล้วแต่ดำเนินการต่อของต้นทาง {Kind} ล้มเหลว — intent {Intent} "
+                + "ต้นทาง {Source}", intent.SourceKind, intent.Id, intent.SourceId);
+            AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Succeeded,
+                PaymentIntentStatus.Succeeded,
+                note: "⚠️ เงินเข้าแล้วแต่ดำเนินการต่อไม่สำเร็จ: " + ex.Message);
+            await _db.SaveChangesAsync(ct);
+        }
     }
 
     public async Task<PaymentIntent> RefreshAsync(Guid companyId, Guid intentId,
