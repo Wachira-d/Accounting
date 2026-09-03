@@ -114,6 +114,24 @@ public partial class PosService : IPosService
             ?? throw new KeyNotFoundException("ไม่พบ POS Terminal");
         if (!terminal.IsActive) throw new InvalidOperationException("Terminal นี้ถูกปิดใช้งาน");
 
+        // ด่านสาขา: แคชเชียร์ของสาขา B ต้องเปิดกะบนเครื่องของสาขา A ไม่ได้
+        // (ยอดขายลงผิดสาขา · ตัดสต็อกผิดคลัง · เห็นยอดของสาขาที่ไม่ได้ดูแล)
+        // ผู้ใช้ที่ยังไม่ถูกจำกัดสาขา = ทุกสาขา ⇒ บริษัทสาขาเดียวไม่รู้สึกอะไร
+        var allowedCsv = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+            .Select(cu => cu.AllowedBranchIds)
+            .FirstOrDefaultAsync();
+        if (Accounting.Helpers.BranchScope.IsRestricted(allowedCsv))
+        {
+            var branchName = terminal.BranchId is Guid tb
+                ? await _db.Branches.AsNoTracking()
+                    .Where(b => b.Id == tb && b.CompanyId == companyId)
+                    .Select(b => b.Name).FirstOrDefaultAsync()
+                : null;
+            var deny = Accounting.Helpers.BranchScope.DenyReason(allowedCsv, terminal.BranchId, branchName);
+            if (deny != null) throw new InvalidOperationException(deny);
+        }
+
         var existingOpen = await _db.PosSessions.AnyAsync(s => s.TerminalId == terminalId && s.Status == PosSessionStatus.Open);
         if (existingOpen) throw new InvalidOperationException("มีกะที่เปิดอยู่แล้ว กรุณาปิดกะก่อน");
 

@@ -1091,6 +1091,8 @@ const API = {
       removePosModifierOption: (groupId, optId) => API.del(`${base}/pos/modifier-groups/${groupId}/options/${optId}`),
       // POS - Reports
       getPosDailySummary: (q = '') => API.get(`${base}/pos/daily-summary${q}`),
+      // ยอดขายแยกรายสาขา (POS เฟส 5) — เซิร์ฟเวอร์รวมให้ หน้าเว็บแสดงอย่างเดียว
+      getPosBranchSummary: (q = '') => API.get(`${base}/pos/reports/branches${q}`),
       getPosCommissionSummary: (q) => API.get(`${base}/pos/commission-summary${q}`),
       getPosCommissionDetail: (q) => API.get(`${base}/pos/commission-detail${q}`),
       // Integration

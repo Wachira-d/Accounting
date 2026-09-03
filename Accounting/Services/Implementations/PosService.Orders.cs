@@ -1383,6 +1383,60 @@ public partial class PosService
     /// <summary>Z-Report (สิ้นกะ) — query สรุปยอด session ที่ closed.
     /// Read-only — ไม่ post JE เพิ่ม (JE เกิดต่อออเดอร์ใน CompleteOrderAsync
     /// อยู่แล้ว). ใช้เทียบเงินสดในลิ้นชัก + audit ก่อนปิดงาน.</summary>
+
+    public async Task<PosBranchSummaryResponse> GetBranchSummaryAsync(Guid companyId, DateTime from, DateTime to)
+    {
+        var start = from.Date;
+        var end = to.Date.AddDays(1);
+
+        var orders = await _db.PosOrders.AsNoTracking()
+            .Include(o => o.Payments)
+            .Where(o => o.CompanyId == companyId && o.CreatedAt >= start && o.CreatedAt < end)
+            .ToListAsync();
+
+        var branchIds = orders.Where(o => o.BranchId.HasValue).Select(o => o.BranchId!.Value).Distinct().ToList();
+        var branches = await _db.Branches.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && branchIds.Contains(b.Id))
+            .Select(b => new { b.Id, b.Name, b.TaxBranchCode })
+            .ToListAsync();
+        var byId = branches.ToDictionary(b => b.Id);
+
+        var rows = orders
+            .GroupBy(o => o.BranchId)
+            .Select(g =>
+            {
+                var completed = g.Where(o => o.Status == PosOrderStatus.Completed).ToList();
+                var net = completed.Sum(o => o.NetAmount);
+                var name = g.Key is Guid bid && byId.TryGetValue(bid, out var b)
+                    ? b.Name
+                    // บิลที่ไม่ผูกสาขา ต้องโชว์เป็นแถวของตัวเอง ไม่ใช่ยัดรวมกับสำนักงานใหญ่
+                    // (ไม่งั้นผลรวมรายสาขาจะไม่เท่ายอดบริษัทโดยไม่มีใครรู้ว่าทำไม)
+                    : "(ยังไม่ผูกสาขา)";
+                var code = g.Key is Guid bid2 && byId.TryGetValue(bid2, out var b2) ? b2.TaxBranchCode : null;
+                return new PosBranchSummaryRow(
+                    g.Key, name, code,
+                    completed.Count,
+                    g.Count(o => o.Status == PosOrderStatus.Voided),
+                    net,
+                    completed.Sum(o => o.VatAmount),
+                    completed.Sum(o => o.DiscountAmount),
+                    completed.Count > 0
+                        ? Math.Round(net / completed.Count, 2, MidpointRounding.AwayFromZero) : 0m,
+                    completed.SelectMany(o => o.Payments)
+                        .GroupBy(pmt => pmt.PaymentMethod)
+                        .Select(pg => new PaymentMethodSummary(
+                            pg.Key, PaymentMethodThaiLabel(pg.Key), pg.Count(), pg.Sum(x => x.Amount)))
+                        .ToList());
+            })
+            .OrderByDescending(r => r.NetSales)
+            .ToList();
+
+        return new PosBranchSummaryResponse(
+            start, end.AddDays(-1), rows,
+            rows.Sum(r => r.NetSales),
+            rows.Any(r => r.BranchId == null));
+    }
+
     public async Task<PosZReportResponse> GetZReportAsync(Guid companyId, Guid sessionId)
     {
         var session = await _db.PosSessions.AsNoTracking()

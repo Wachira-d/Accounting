@@ -449,6 +449,32 @@ public record PosDailySummaryResponse(
     decimal NetSales,
     List<PaymentMethodSummary> PaymentBreakdown);
 
+/// <summary>สรุปยอดขาย POS **รายสาขา** ของวันหนึ่ง — คำถามแรกของเจ้าของร้านหลายสาขา
+/// ("สาขาไหนขายดี · สาขาไหนต้นทุน/waste สูงผิดปกติ") ซึ่งเดิมตอบไม่ได้เลยเพราะ
+/// `GetDailySummaryAsync` รวมทั้งบริษัท และ JE ของ POS ไม่มีมิติสาขา</summary>
+public record PosBranchSummaryRow(
+    Guid? BranchId,
+    string BranchName,
+    // null = สาขายังไม่กรอกรหัสสาขาสรรพากร (ห้ามเดาเป็น 00000)
+    string? TaxBranchCode,
+    int CompletedOrders,
+    int VoidedOrders,
+    decimal NetSales,
+    decimal VatAmount,
+    decimal DiscountAmount,
+    // ยอดเฉลี่ยต่อบิล — ตัวเทียบสาขาที่ใช้บ่อยที่สุด
+    decimal AveragePerOrder,
+    List<PaymentMethodSummary> PaymentBreakdown);
+
+public record PosBranchSummaryResponse(
+    DateTime FromDate,
+    DateTime ToDate,
+    List<PosBranchSummaryRow> Branches,
+    decimal GrandTotalNetSales,
+    // true = มีบิลที่ยังไม่ผูกสาขา (เครื่องที่ยังไม่ตั้งค่า) — UI ต้องเตือน ไม่ใช่ซ่อน
+    // มิฉะนั้นผลรวมรายสาขาจะไม่เท่ายอดรวมบริษัทโดยไม่มีใครรู้ว่าทำไม
+    bool HasUnassignedBranch);
+
 public record PaymentMethodSummary(
     PaymentMethod Method,
     string MethodName,

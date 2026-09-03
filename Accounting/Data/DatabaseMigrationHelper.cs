@@ -5801,6 +5801,13 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "ProductModifierOptions" ADD COLUMN IF NOT EXISTS "ComponentProductId" uuid NULL;""",
             """ALTER TABLE "ProductModifierOptions" ADD COLUMN IF NOT EXISTS "ComponentQuantity" numeric(18,4) NOT NULL DEFAULT 0;""",
 
+            // ═══ POS เฟส 6: ขอบเขตสาขาของผู้ใช้ ═══
+            // แคชเชียร์ของสาขา B เปิดกะบนเครื่องของสาขา A ได้ ⇒ ยอดขายลงผิดสาขา ·
+            // ตัดสต็อกผิดคลัง · เห็นยอดของสาขาที่ไม่ได้ดูแล
+            // NULL = ทุกสาขา (พฤติกรรมเดิม — ห้ามให้ "ยังไม่ตั้งค่า" แปลว่า "ห้ามทุกอย่าง"
+            // ไม่งั้นทุก tenant ที่อัปเกรดมาจะล็อกตัวเองออกจากระบบทันที)
+            """ALTER TABLE "CompanyUsers" ADD COLUMN IF NOT EXISTS "AllowedBranchIds" text NULL;""",
+
             // ศูนย์ช่วยเหลือ (เอกสาร + วิดีโอสอนใช้งาน) — ระดับแพลตฟอร์ม ไม่มี CompanyId
             """CREATE TABLE IF NOT EXISTS "HelpResources" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "Title" varchar(300) NOT NULL DEFAULT '', "Description" text NULL, "Category" integer NOT NULL DEFAULT 1, "ModuleCode" varchar(50) NULL, "Kind" integer NOT NULL DEFAULT 1, "Provider" integer NOT NULL DEFAULT 0, "SourceUrl" text NULL, "StoragePath" text NULL, "FileName" text NULL, "FileSizeBytes" bigint NOT NULL DEFAULT 0, "DurationSeconds" integer NOT NULL DEFAULT 0, "ThumbnailUrl" text NULL, "IsPublished" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "ViewCount" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE INDEX IF NOT EXISTS "IX_HelpResources_Cat" ON "HelpResources" ("Category", "SortOrder") WHERE "IsDeleted" = false;""",

@@ -44,6 +44,7 @@
       <div class="tab-bar" style="border:none;margin:0;">
         <div class="tab active" onclick="Page.switchTab('daily')">สรุปยอดขาย</div>
         <div class="tab" onclick="Page.switchTab('orders')">รายการออเดอร์</div>
+        <div class="tab" onclick="Page.switchTab('branches')">รายสาขา</div>
         <div class="tab" onclick="Page.switchTab('commission')">คอมมิชชัน</div>
       </div>
       <div class="date-range">
@@ -93,6 +94,23 @@
       <div id="ordersPagination"></div>
     </div>
 
+    <!-- Branch Tab — "สาขาไหนขายดี" คำถามแรกของเจ้าของร้านหลายสาขา -->
+    <div id="tabBranches" style="display:none;">
+      <div id="branchWarn"></div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr>
+            <th>สาขา</th><th>รหัสสาขา (§86/4)</th>
+            <th class="text-right">บิลที่ปิด</th><th class="text-right">ยกเลิก</th>
+            <th class="text-right">ยอดขายสุทธิ</th><th class="text-right">เฉลี่ย/บิล</th>
+            <th class="text-right">VAT</th><th class="text-right">ส่วนลด</th>
+            <th>ช่องทางชำระ</th>
+          </tr></thead>
+          <tbody id="branchBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Commission Tab -->
     <div id="tabCommission" style="display:none;">
       <div id="commissionContent"><p class="text-center text-gray-400" style="padding:40px;" data-i18n="common.loading">กำลังโหลด...</p></div>
@@ -139,6 +157,7 @@
         event.target.classList.add('active');
         document.getElementById('tabDaily').style.display = tab === 'daily' ? '' : 'none';
         document.getElementById('tabOrders').style.display = tab === 'orders' ? '' : 'none';
+        document.getElementById('tabBranches').style.display = tab === 'branches' ? '' : 'none';
         document.getElementById('tabCommission').style.display = tab === 'commission' ? '' : 'none';
         this.load();
       },
@@ -146,7 +165,52 @@
       async load() {
         if (this.currentTab === 'daily') await this.loadDailySummary();
         else if (this.currentTab === 'orders') await this.loadOrders();
+        else if (this.currentTab === 'branches') await this.loadBranchSummary();
         else if (this.currentTab === 'commission') await this.loadCommission();
+      },
+
+      async loadBranchSummary() {
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('dateFrom').value;
+        const to = document.getElementById('dateTo').value;
+        const body = document.getElementById('branchBody');
+        try {
+          const res = await api.getPosBranchSummary(`?from=${from}&to=${to}`);
+          const d = res.data || {};
+          const rows = d.branches || [];
+          // บิลที่ยังไม่ผูกสาขาต้อง **เตือน** ไม่ใช่ซ่อน — ไม่งั้นผลรวมรายสาขาไม่เท่า
+          // ยอดรวมบริษัทโดยไม่มีใครรู้ว่าทำไม
+          document.getElementById('branchWarn').innerHTML = d.hasUnassignedBranch
+            ? `<div style="background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px">
+                 ⚠️ มีบิลที่ <b>ยังไม่ผูกสาขา</b> — เกิดจากเครื่องขายที่ยังไม่ได้ตั้งสาขา
+                 (ตั้งได้ที่ปุ่ม "⚙️ ตั้งค่าเครื่อง" ในหน้า POS) · บิลเหล่านั้นแสดงเป็นแถวแยกด้านล่าง
+               </div>` : '';
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีข้อมูลในช่วงนี้</td></tr>';
+            return;
+          }
+          body.innerHTML = rows.map(r => `<tr>
+            <td class="font-medium">${Layout.esc(r.branchName)}</td>
+            <td>${r.taxBranchCode
+                  ? Layout.esc(r.taxBranchCode === '00000' ? 'สำนักงานใหญ่ (00000)' : 'สาขาที่ ' + r.taxBranchCode)
+                  : '<span style="color:#b45309">— ยังไม่ได้กรอก —</span>'}</td>
+            <td class="text-right">${r.completedOrders}</td>
+            <td class="text-right">${r.voidedOrders}</td>
+            <td class="text-right font-semibold">${Layout.money(r.netSales)}</td>
+            <td class="text-right">${Layout.money(r.averagePerOrder)}</td>
+            <td class="text-right">${Layout.money(r.vatAmount)}</td>
+            <td class="text-right">${Layout.money(r.discountAmount)}</td>
+            <td style="font-size:12px">${(r.paymentBreakdown || [])
+                  .map(p => `${Layout.esc(p.methodName)} ${Layout.money(p.amount)}`).join(' · ') || '-'}</td>
+          </tr>`).join('')
+            + `<tr style="background:#f8fafc;font-weight:700">
+                 <td colspan="4">รวมทุกสาขา</td>
+                 <td class="text-right">${Layout.money(d.grandTotalNetSales)}</td>
+                 <td colspan="4"></td>
+               </tr>`;
+        } catch (e) {
+          body.innerHTML = `<tr><td colspan="9" class="text-center" style="padding:40px;color:#b91c1c">${Layout.esc(e.message)}</td></tr>`;
+        }
       },
 
       async loadDailySummary() {
