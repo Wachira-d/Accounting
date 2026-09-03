@@ -122,6 +122,9 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 - สิทธิ์ใหม่ใน `PermissionKeys`: `Lodging.Manage` (front desk) · `Lodging.Settings` (ตั้งค่า) — Owner/SystemAdmin ผ่านอัตโนมัติ
 - ฝั่งสาธารณะ scope `CompanyId + SiteId` เสมอ · การจองเข้าถึงด้วย `PublicToken` (ไม่มี id เดาได้) · เมนู `lodging`/`lodging-settings`
   อยู่ใต้ feature `CmsWebsiteBuilder` เหมือน CMS
+- **license/การคิดเงินของส่วนเสริม** 📋 ออกแบบแล้วใน `LODGING_LICENSING_PLAN.md` — ใช้ catalog `ApiFeature`/`ApiPricingPlan`/
+  `CompanyFeature`/`UsageEvent` (§7) เป็น add-on catalog ทั่วไป · มิเตอร์หลัก = โควตาเอกสารของแพ็กเกจบัญชี (§5) ·
+  ข้อเท็จจริงที่ต้องแก้ก่อน: `FlatMonthly` ยังไม่ถูกเก็บเงินจริง · โควตาเอกสาร hard-block เอกสารตามกฎหมาย · `/lodging` ไม่มี gate
 
 ### 3.1a ทะเบียนสาขา — เฟส 0 ✅ (ตั้งค่าเท่านั้น ยังไม่แตะเอกสาร)
 
