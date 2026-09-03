@@ -2893,7 +2893,10 @@
         if (!contact?.taxId) missing.push('เลขผู้เสียภาษี 13 หลัก');
         // รหัสสาขาบังคับเฉพาะนิติบุคคล — บุคคลธรรมดาไม่มีสาขา
         const tid = String(contact?.taxId || '').replace(/\D/g, '');
-        const isJuristic = contact?.contactType === 'JuristicPerson' || contact?.contactType === 2
+        // เดินผ่านตัวแปลงกลาง (Layout.isJuristicContact) — เดิมเขียนเงื่อนไข
+        // "รับทั้ง string และ number" เองที่นี่จุดเดียว ส่วน contacts.html ถูกทิ้งไว้
+        // = สำเนาที่ drift · ตอนนี้กติกาอยู่ที่เดียว
+        const isJuristic = Layout.isJuristicContact(contact?.contactType)
           || (tid.length === 13 && tid.startsWith('0'));
         if (isJuristic && !contact?.branchCode) missing.push('รหัสสาขา (00000=สนญ.)');
         if (!(contact?.address || contact?.subDistrict || contact?.province)) missing.push('ที่อยู่');

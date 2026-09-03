@@ -73,6 +73,28 @@ const Layout = {
    *
    *  ⚠️ ทางที่ดีกว่าเสมอคือ **อย่าส่งข้อความอิสระผ่าน onclick** — ส่ง id/ดัชนี
    *  แล้วไปหยิบค่าจากข้อมูลที่โหลดไว้ (`Page.rows[i]`) ใช้ตัวนี้เฉพาะเมื่อเลี่ยงไม่ได้ */
+  /** ประเภทผู้ติดต่อ → เลข 1|2|3 — **ตัวแปลงตัวเดียวของระบบ**
+   *
+   *  ที่มา (บั๊กจริง): `Program.cs` ตั้ง `JsonStringEnumConverter` ⇒ API ส่ง enum
+   *  เป็น **สตริง** (`"JuristicPerson"`) แต่หน้าเว็บเทียบกับ **ตัวเลข**
+   *  (`c.contactType === 2`, `String(c.contactType || 2)` กับ `<option value="2">`)
+   *  ⇒ ไม่ match เลย: ช่อง "ประเภทผู้ติดต่อ" **ว่างทุกครั้ง** ที่เปิดแก้ไข ·
+   *  รหัสสาขาไม่เคยขึ้นในตาราง · ป้ายสีผิด
+   *
+   *  `documents.html` แก้ไปแล้ว 1 จุด (รับทั้ง string และ number) แต่
+   *  `contacts.html` ถูกทิ้งไว้ = defect class "แก้ตัวเดียว เหลือที่เหลือ"
+   *  → ยุบมาเป็นตัวแปลงกลางตัวเดียว รับได้ทั้งสองรูป */
+  contactTypeCode(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return v;
+    const n = parseInt(v, 10);
+    if (!isNaN(n) && String(n) === String(v).trim()) return n;
+    return ({ Individual: 1, JuristicPerson: 2, GovernmentAgency: 3 })[String(v)] ?? null;
+  },
+
+  /** true = นิติบุคคล (ต้องมีรหัสสาขา §86/4 · หัก ณ ที่จ่ายยื่น ภ.ง.ด.53) */
+  isJuristicContact(v) { return this.contactTypeCode(v) === 2; },
+
   jsArg(v) {
     return String(v == null ? '' : v)
       .replace(/\\/g, '\\\\')

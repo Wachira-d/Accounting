@@ -393,6 +393,112 @@ public class IntegrationService : IIntegrationService
         return null;
     }
 
+
+    // ═══════════════════════════════════════════════════════════════════
+    // คุณภาพข้อมูลผู้ติดต่อที่มาจากระบบภายนอก
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>ผลการเทียบชื่อกับทะเบียนกรมพัฒนาธุรกิจการค้า</summary>
+    private sealed record DbdVerification(
+        bool Matched, string? OfficialName, string? OfficialNameEn, string? OfficialAddress,
+        Accounting.Helpers.DbdTrustVerdict Verdict, string? Warning);
+
+    /// <summary>เทียบเลขผู้เสียภาษีที่ระบบภายนอกส่งมากับทะเบียนราชการ
+    ///
+    /// <para><b>ที่มา (บั๊กจริง)</b>: ระบบภายนอกส่งชื่อ "ทบริษัท คาร์วิน ไทย…" (มีอักษรแปลก
+    /// นำหน้า — ลายเซ็นของฟิลด์เหลื่อม/ตัดคำ) พร้อมเลขผู้เสียภาษีที่ถูกต้อง แต่เราเก็บชื่อ
+    /// ตรง ๆ โดยไม่เคยเอาเลขไปตรวจกับทะเบียนเลย ⇒ ชื่อผิดไหลลงใบกำกับภาษี (§86/4
+    /// บังคับชื่อผู้ซื้อถูกต้อง) · <c>IDbdLookupService</c> มีอยู่และถูก inject ไว้แล้วด้วยซ้ำ
+    /// แต่ถูกเรียกเฉพาะตอน "ไม่มีชื่อมาเลย" — เงื่อนไขที่แคบเกินจนไม่เคยช่วยเคสนี้
+    /// (defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้")</para>
+    ///
+    /// <para><b>ด่านสำคัญ</b>: ทะเบียนชนะได้ก็ต่อเมื่อ <b>กุญแจถูก</b> — เลขผิดหนึ่งหลัก
+    /// จะได้ข้อมูล<b>บริษัทอื่น</b>ที่ถูกต้อง 100% ตามทะเบียน ⇒ ใช้
+    /// <c>DbdIdentityGuard</c> ตัวเดียวกับที่เส้น OCR ใช้ (ห้ามเขียนกติกาซ้ำ)</para></summary>
+    private async Task<DbdVerification> VerifyAgainstDbdAsync(string? taxId, string? incomingName)
+    {
+        var normalized = Accounting.Helpers.ThaiTaxId.Normalize(taxId);
+        // ตรวจเฉพาะ**นิติบุคคล** (ขึ้นต้น 0) ที่ checksum ผ่าน — เลขบัตรประชาชนไม่มีในทะเบียนนี้
+        if (_dbd == null || !Accounting.Helpers.ThaiTaxId.IsJuristic(normalized))
+            return new(false, null, null, null, Accounting.Helpers.DbdTrustVerdict.NoIncomingName, null);
+
+        Accounting.Services.Interfaces.DbdCompanyResult? dbd;
+        try { dbd = await _dbd.GetByJuristicIdAsync(normalized); }
+        catch (Exception ex)
+        {
+            // ทะเบียนล่ม = ใช้ข้อมูลที่ส่งมาตามเดิม (best-effort) ห้ามทำให้ sync ล้มทั้งก้อน
+            _logger.LogWarning(ex, "ตรวจทะเบียน DBD ไม่สำเร็จสำหรับเลข {TaxId} — ใช้ข้อมูลที่ต้นทางส่งมา", normalized);
+            return new(false, null, null, null, Accounting.Helpers.DbdTrustVerdict.NoIncomingName, null);
+        }
+        if (dbd == null || string.IsNullOrWhiteSpace(dbd.NameTh))
+            return new(false, null, null, null, Accounting.Helpers.DbdTrustVerdict.NoIncomingName, null);
+
+        var sim = Ocr.FuzzyMatcher.Similarity(incomingName ?? "", dbd.NameTh);
+        var verdict = Accounting.Helpers.DbdIdentityGuard.Judge(dbd.NameTh, incomingName, sim);
+
+        if (verdict == Accounting.Helpers.DbdTrustVerdict.KeyLooksWrong)
+        {
+            var msg = Accounting.Helpers.DbdIdentityGuard.KeyMismatchMessage(
+                normalized, dbd.NameTh, incomingName ?? "");
+            _logger.LogWarning("ผู้ติดต่อจากระบบภายนอก: {Message}", msg);
+            return new(false, dbd.NameTh, dbd.NameEn, dbd.Address, verdict, msg);
+        }
+
+        return new(true, dbd.NameTh, dbd.NameEn, dbd.Address, verdict, null);
+    }
+
+    /// <summary>คัดค่าที่จะลงช่องที่อยู่แบบมีโครง — ค่าที่ไม่ผ่านจะถูก**ย้ายไปหมายเหตุ**
+    /// ไม่ใช่ทิ้งเงียบ (กฎ "ห้าม silent no-op": ค่าที่ต้นทางส่งผิดช่องอาจมีข้อมูลจริงปนอยู่
+    /// และเป็นหลักฐานว่าต้องไปแก้ที่ต้นทาง)</summary>
+    private string? SanitizeStructuredAddressField(
+        string? value, string fieldLabel, List<string> rejected)
+    {
+        var check = Accounting.Helpers.InboundAddressSanity.CheckStructured(value);
+        if (check.Accepted) return value;
+        rejected.Add($"{fieldLabel}: \"{check.Rejected}\" ({check.Reason})");
+        _logger.LogWarning(
+            "ผู้ติดต่อจากระบบภายนอก: ปฏิเสธค่าในช่อง \"{Field}\" — {Reason}", fieldLabel, check.Reason);
+        return null;
+    }
+
+    /// <summary>สรุป "เกิดอะไรขึ้นตอนรับข้อมูลจากระบบภายนอก" ลงหมายเหตุของผู้ติดต่อ
+    ///
+    /// <para>ผู้ใช้เปิดหน้าผู้ติดต่อแล้วต้องเห็นได้เองว่าทำไมชื่อถูกแก้ / ทำไมช่องที่อยู่ว่าง —
+    /// ถ้าเก็บไว้แต่ใน log ผู้ใช้จะเจอแค่ "ข้อมูลไม่เหมือนที่ส่ง" โดยไม่มีอะไรอธิบาย
+    /// (กฎ "ต้องดังในที่ที่คนดู" — log ของเซิร์ฟเวอร์ไม่ใช่ช่องทางแจ้งผู้ใช้)</para></summary>
+    private static string? BuildInboundDataNote(DbdVerification dbd, List<string> rejectedFields)
+    {
+        var lines = new List<string>();
+        if (dbd.Verdict == Accounting.Helpers.DbdTrustVerdict.SameCompanyMisspelled && dbd.Matched)
+            lines.Add($"ชื่อถูกแก้ตามทะเบียนกรมพัฒนาธุรกิจการค้า: {dbd.OfficialName}");
+        if (dbd.Warning != null)
+            lines.Add("⚠️ " + dbd.Warning);
+        if (rejectedFields.Count > 0)
+        {
+            lines.Add("⚠️ ระบบต้นทางส่งค่าผิดช่อง จึงไม่นำมาใช้ (แก้ที่ต้นทางแล้ว sync ใหม่ได้):");
+            lines.AddRange(rejectedFields.Select(r => "  • " + r));
+        }
+        if (lines.Count == 0) return null;
+        var stamp = DateTime.UtcNow.AddHours(7)
+            .ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        return $"[ตรวจข้อมูลขาเข้า {stamp} น.]\n" + string.Join("\n", lines);
+    }
+
+    /// <summary>ประเภทผู้ติดต่อ — อนุมานจากเลขผู้เสียภาษีเมื่อระบบภายนอกไม่ได้ส่งมา
+    ///
+    /// <para><b>ทำไมสำคัญ</b>: ค่านี้เป็นตัวตัดสิน <b>ภ.ง.ด.3 (บุคคล) vs ภ.ง.ด.53 (นิติบุคคล)</b>
+    /// · ค่าเดิม default เป็น <c>Individual</c> เสมอเมื่อไม่ได้ส่งมา ⇒ นิติบุคคลถูกจัดเป็น
+    /// บุคคลธรรมดาเงียบ ๆ แล้วยื่นผิดแบบ · เลข 13 หลักที่ขึ้นต้น <b>0</b> คือเลขทะเบียน
+    /// นิติบุคคล ตอบได้จากข้อมูลที่มีอยู่แล้ว ไม่ต้องเดา</para></summary>
+    private static ContactType ResolveContactType(string? sent, string? taxId, bool dbdMatched)
+    {
+        if (!string.IsNullOrWhiteSpace(sent)) return ParseContactType(sent);
+        // ทะเบียนนิติบุคคลยืนยันแล้ว = นิติบุคคลแน่นอน
+        if (dbdMatched) return ContactType.JuristicPerson;
+        return Accounting.Helpers.ThaiTaxId.IsJuristic(taxId)
+            ? ContactType.JuristicPerson : ContactType.Individual;
+    }
+
     // ===== Phase 2: Inbound Data Processing =====
 
     public async Task<InboundSyncResponse> ProcessCustomerAsync(Guid companyId, Guid integrationId, InboundCustomerRequest request)
@@ -409,18 +515,41 @@ public class IntegrationService : IIntegrationService
             if (contact == null && !string.IsNullOrEmpty(request.Name))
                 contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.Name.ToLower() && !c.IsDeleted);
 
+            // ── ตรวจกับทะเบียนราชการก่อนเสมอ (ไม่ใช่เฉพาะตอนไม่มีชื่อมา) ──
+            // ระบบภายนอกส่งชื่อผิดมาได้ (ฟิลด์เหลื่อม/ตัดคำ) ทั้งที่เลขผู้เสียภาษีถูก
+            // ⇒ เอาเลขไปตรวจทุกครั้ง แล้วให้ชื่อทางการชนะ **เมื่อกุญแจน่าเชื่อถือ**
+            var dbdCheck = await VerifyAgainstDbdAsync(request.TaxId, request.Name);
+            var officialName = dbdCheck.Matched ? dbdCheck.OfficialName : null;
+
+            // ค่าที่ต้นทางส่งผิดช่อง — เก็บไว้บอกผู้ใช้ ไม่ทิ้งเงียบ
+            var rejectedFields = new List<string>();
+            var moo = SanitizeStructuredAddressField(request.Moo, "หมู่ที่", rejectedFields);
+            var subDistrict = SanitizeStructuredAddressField(request.SubDistrict, "ตำบล/แขวง", rejectedFields);
+            var district = SanitizeStructuredAddressField(request.District, "อำเภอ/เขต", rejectedFields);
+            var province = SanitizeStructuredAddressField(request.Province, "จังหวัด", rejectedFields);
+            var streetName = SanitizeStructuredAddressField(request.StreetName, "ถนน/ซอย", rejectedFields);
+            var buildingName = SanitizeStructuredAddressField(request.BuildingName, "ชื่ออาคาร", rejectedFields);
+            var postalCheck = Accounting.Helpers.InboundAddressSanity.CheckPostalCode(request.PostalCode);
+            var postalCode = postalCheck.Accepted ? request.PostalCode : null;
+            if (!postalCheck.Accepted)
+                rejectedFields.Add($"รหัสไปรษณีย์: \"{postalCheck.Rejected}\" ({postalCheck.Reason})");
+
+            var syncNote = BuildInboundDataNote(dbdCheck, rejectedFields);
+
             if (contact == null)
             {
                 contact = new Contact
                 {
                     CompanyId = companyId,
-                    Name = request.Name,
+                    Name = officialName ?? request.Name,
+                    NameEn = dbdCheck.Matched ? dbdCheck.OfficialNameEn : null,
                     TaxId = request.TaxId,
                     Phone = request.Phone,
                     Email = request.Email,
                     Address = request.Address,
                     BranchCode = request.BranchCode,
-                    ContactType = ParseContactType(request.ContactType),
+                    // ตัวตัดสิน ภ.ง.ด.3 vs 53 — ห้าม default เป็นบุคคลธรรมดาเงียบ ๆ
+                    ContactType = ResolveContactType(request.ContactType, request.TaxId, dbdCheck.Matched),
                     IsCustomer = request.IsCustomer ?? true,
                     IsSupplier = request.IsSupplier ?? false,
                     IsActive = true,
@@ -429,18 +558,32 @@ public class IntegrationService : IIntegrationService
                     // data on the trip in. Map them through, including the
                     // newly-added Moo field.
                     BuildingNumber = request.BuildingNumber,
-                    BuildingName = request.BuildingName,
-                    Moo = request.Moo,
-                    StreetName = request.StreetName,
-                    SubDistrict = request.SubDistrict,
-                    District = request.District,
-                    Province = request.Province,
-                    PostalCode = request.PostalCode,
+                    BuildingName = buildingName,
+                    Moo = moo,
+                    StreetName = streetName,
+                    SubDistrict = subDistrict,
+                    District = district,
+                    Province = province,
+                    PostalCode = postalCode,
+                    Notes = syncNote,
                 };
                 _db.Set<Contact>().Add(contact);
             }
             else
             {
+                // ชื่อทางการชนะเมื่อทะเบียนยืนยัน — นี่คือจุดที่ซ่อมข้อมูลเก่าที่เพี้ยนไปแล้ว
+                // (contact ที่สร้างก่อนมีด่านนี้จะถูกแก้ให้ถูกในการ sync ครั้งถัดไป)
+                if (officialName != null && officialName != contact.Name)
+                {
+                    _logger.LogInformation(
+                        "แก้ชื่อผู้ติดต่อตามทะเบียน: \"{Old}\" → \"{New}\" (เลข {TaxId})",
+                        contact.Name, officialName, request.TaxId);
+                    contact.Name = officialName;
+                }
+                if (dbdCheck.Matched && !string.IsNullOrWhiteSpace(dbdCheck.OfficialNameEn)
+                    && string.IsNullOrWhiteSpace(contact.NameEn))
+                    contact.NameEn = dbdCheck.OfficialNameEn;
+                if (syncNote != null) contact.Notes = syncNote;
                 // Update existing — only overwrite when the request actually
                 // carries a value, so partial syncs don't blank out fields
                 // the receiving tenant has already enriched.
@@ -453,15 +596,20 @@ public class IntegrationService : IIntegrationService
                 // TakeTime ส่ง branchCode) ไม่มีวันได้รหัสสาขา → ใบกำกับเต็มรูป
                 // approve 400 "ต้องมีรหัสสาขาผู้ซื้อ" ตลอดไป แม้ TakeTime ส่งครบ
                 if (request.BranchCode != null) contact.BranchCode = request.BranchCode;
-                if (request.ContactType != null) contact.ContactType = ParseContactType(request.ContactType);
+                // ประเภทผู้ติดต่อ: อนุมานได้เมื่อไม่ได้ส่งมา — แต่ห้ามลดระดับนิติบุคคล
+                // ที่ยืนยันแล้วกลับเป็นบุคคลธรรมดาเพราะ sync ครั้งนี้ไม่ได้ส่งค่ามา
+                var resolvedType = ResolveContactType(request.ContactType, request.TaxId, dbdCheck.Matched);
+                if (request.ContactType != null || contact.ContactType != ContactType.JuristicPerson)
+                    contact.ContactType = resolvedType;
                 if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
-                if (request.BuildingName != null) contact.BuildingName = request.BuildingName;
-                if (request.Moo != null) contact.Moo = request.Moo;
-                if (request.StreetName != null) contact.StreetName = request.StreetName;
-                if (request.SubDistrict != null) contact.SubDistrict = request.SubDistrict;
-                if (request.District != null) contact.District = request.District;
-                if (request.Province != null) contact.Province = request.Province;
-                if (request.PostalCode != null) contact.PostalCode = request.PostalCode;
+                // ใช้ค่าที่ผ่านด่านแล้ว — ค่าที่ถูกปฏิเสธจะไม่ทับของเดิมที่ผู้ใช้แก้ไว้ถูก
+                if (buildingName != null) contact.BuildingName = buildingName;
+                if (moo != null) contact.Moo = moo;
+                if (streetName != null) contact.StreetName = streetName;
+                if (subDistrict != null) contact.SubDistrict = subDistrict;
+                if (district != null) contact.District = district;
+                if (province != null) contact.Province = province;
+                if (postalCode != null) contact.PostalCode = postalCode;
             }
 
             await _db.SaveChangesAsync();
@@ -1365,24 +1513,17 @@ public class IntegrationService : IIntegrationService
             string? resolvedAddress = null, resolvedNameEn = null;
             var looksLikeJuristic = !string.IsNullOrWhiteSpace(taxId)
                 && taxId.Length == 13 && taxId.All(char.IsDigit);
-            var nameMissing = string.IsNullOrWhiteSpace(name) || name.Trim() == taxId;
-            if (_dbd != null && looksLikeJuristic && nameMissing)
+            // ⚠️ เดิมมีเงื่อนไข `nameMissing` คร่อมอยู่ ⇒ ตรวจทะเบียนเฉพาะตอนต้นทาง
+            // **ไม่ส่งชื่อมาเลย** · เคสที่เจอจริงคือต้นทางส่งชื่อ **ผิด** มา (ฟิลด์เหลื่อม/
+            // ตัดคำ) ซึ่งเงื่อนไขนั้นข้ามไปทุกครั้ง — ตอนนี้ตรวจเสมอเมื่อเลขเป็นนิติบุคคล
+            // แล้วให้ `DbdIdentityGuard` เป็นคนตัดสินว่าทะเบียนชนะได้ไหม
+            var dbdDoc = await VerifyAgainstDbdAsync(taxId, name);
+            if (dbdDoc.Matched)
             {
-                try
-                {
-                    var dbd = await _dbd.GetByJuristicIdAsync(taxId!);
-                    if (dbd != null && !string.IsNullOrWhiteSpace(dbd.NameTh))
-                    {
-                        resolvedName = dbd.NameTh;
-                        resolvedNameEn = dbd.NameEn;
-                        resolvedAddress = dbd.Address;
-                        _logger.LogInformation("DBD enrich: taxId {TaxId} → {Name}", taxId, dbd.NameTh);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "DBD enrich failed for taxId {TaxId} — ใช้ข้อมูลที่ API ส่งมา", taxId);
-                }
+                resolvedName = dbdDoc.OfficialName ?? resolvedName;
+                resolvedNameEn = dbdDoc.OfficialNameEn;
+                resolvedAddress = dbdDoc.OfficialAddress;
+                _logger.LogInformation("DBD enrich: taxId {TaxId} → {Name}", taxId, resolvedName);
             }
 
             contact = new Contact
@@ -1394,9 +1535,11 @@ public class IntegrationService : IIntegrationService
                 IsCustomer = true,
                 IsActive = true,
                 Address = resolvedAddress,
-                // นิติบุคคลขึ้นต้น "0" → ContactType.Juristic; ถ้าได้ชื่ออังกฤษมาเก็บด้วย
-                ContactType = looksLikeJuristic && taxId!.StartsWith("0")
-                    ? ContactType.JuristicPerson : ContactType.Individual,
+                // ชื่ออังกฤษจากทะเบียน — เดิมดึงมาแล้วแต่ไม่เคยถูกเก็บ (ตัวแปรลอย)
+                // ⇒ โหมดเอกสารภาษาอังกฤษต้องถอดอักษรเอาเองทั้งที่มีชื่อทางการอยู่
+                NameEn = resolvedNameEn,
+                // ตัวตัดสิน ภ.ง.ด.3 vs 53 — ทะเบียนยืนยันแล้ว หรือเลขขึ้นต้น "0" = นิติบุคคล
+                ContactType = ResolveContactType(null, taxId, dbdDoc.Matched),
             };
             _db.Set<Contact>().Add(contact);
             await _db.SaveChangesAsync();
