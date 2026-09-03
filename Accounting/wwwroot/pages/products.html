@@ -39,6 +39,8 @@
         <option value="">ทุกประเภท</option>
         <option value="Product">สินค้า</option>
         <option value="Service">บริการ</option>
+        <option value="RawMaterial">วัตถุดิบ</option>
+        <option value="Supplies">วัสดุสิ้นเปลือง</option>
         <option value="NonStock">ไม่ติดตามสต็อก</option>
       </select>
     </div>
@@ -59,7 +61,7 @@
           <div class="form-row">
             <div class="form-group"><label class="form-label">รหัสสินค้า *</label><input type="text" class="form-input" id="fCode"></div>
             <div class="form-group"><label class="form-label">ประเภท *</label>
-              <select class="form-select" id="fType"><option value="Product">สินค้า</option><option value="Service">บริการ</option><option value="NonStock">ไม่ติดตามสต็อก</option></select>
+              <select class="form-select" id="fType"><option value="Product">สินค้า</option><option value="Service">บริการ</option><option value="RawMaterial">วัตถุดิบ</option><option value="Supplies">วัสดุสิ้นเปลือง</option><option value="NonStock">ไม่ติดตามสต็อก</option></select>
             </div>
           </div>
           <div class="form-group"><label class="form-label">ชื่อสินค้า (ไทย) *</label><input type="text" class="form-input" id="fName"></div>
@@ -128,6 +130,45 @@
     </div>
 
     <!-- Product Detail Modal -->
+    <!-- ===== สูตรวัตถุดิบ (recipe) =====
+         "ขาย 1 หน่วยแล้วกินอะไรบ้าง" — มุมมองที่ร้านอาหาร/คาเฟ่เข้าใจ บนตาราง BOM
+         เดียวกับใบสั่งผลิต (ห้ามสร้างความจริงชุดที่สอง) -->
+    <div class="modal-overlay" id="recipeModal">
+      <div class="modal" style="max-width:640px;">
+        <div class="modal-header">
+          <h3 class="modal-title">🧪 สูตรวัตถุดิบ — <span id="recipeProductName"></span></h3>
+          <button class="modal-close" onclick="Layout.closeModal('recipeModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:block;margin-bottom:12px">
+            <input type="checkbox" id="fConsumesBom">
+            <span>ขายแล้ว <b>ตัดวัตถุดิบตามสูตร</b> (ไม่ตัดสต็อกตัวสินค้าเอง)</span>
+          </label>
+          <div class="form-hint" style="margin:-6px 0 14px">
+            เปิดสำหรับของที่ <b>ชงสด/ทำสด</b> — ชานมไข่มุก 1 แก้วไม่ได้อยู่ในสต็อกล่วงหน้า
+            มันคือชา + นม + ไข่มุก + แก้ว + หลอด ที่ประกอบ ณ จุดขาย ⇒ ตัดสต็อก "ชานมไข่มุก"
+            ไม่มีความหมาย (ยอดติดลบตลอดกาล) · <b>ปิดไว้</b> สำหรับสินค้าสำเร็จรูปที่ซื้อ/ผลิตมารอขาย
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <b style="font-size:13px">วัตถุดิบต่อ 1 หน่วย</b>
+            <button class="btn btn-sm btn-secondary" onclick="Page.addRecipeLine()">+ เพิ่มวัตถุดิบ</button>
+          </div>
+          <table class="table" style="font-size:13px"><thead><tr>
+            <th style="text-align:left">วัตถุดิบ</th><th style="width:130px">จำนวน/หน่วย</th><th style="width:50px"></th>
+          </tr></thead><tbody id="recipeLines"></tbody></table>
+          <div class="form-hint" style="margin-top:8px">
+            จำนวนคิด <b>ต่อ 1 หน่วยของสินค้าแม่</b> (ขาย 2 แก้ว ระบบคูณให้เอง) ·
+            การบันทึกจะ <b>ปิดสูตรเดิมแล้วออกเวอร์ชันใหม่</b> ไม่ลบทิ้ง — บิลที่ขายไปแล้ว
+            ต้องยังอธิบายได้ว่าตอนนั้นใช้สูตรอะไร
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('recipeModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveRecipe()">บันทึกสูตร</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="detailModal">
       <div class="modal" style="max-width:850px">
         <div class="modal-header"><h3 class="modal-title" id="dtTitle">รายละเอียดสินค้า</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
@@ -260,9 +301,74 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
-    const typeMap = {Product:'สินค้า',Service:'บริการ',NonStock:'อื่นๆ'};
+    // วัตถุดิบ = ของที่ถูก "กิน" ตอนขาย/ผลิตตามสูตร และเป็น **ต้นทุนขาย**
+    // (ต่างจากวัสดุสิ้นเปลืองที่ลงค่าใช้จ่ายทันที)
+    const typeMap = {Product:'สินค้า',Service:'บริการ',RawMaterial:'วัตถุดิบ',Supplies:'วัสดุสิ้นเปลือง',NonStock:'อื่นๆ'};
     const Page = {
       page: 1, _cache: {}, _current: null,
+      // ===== สูตรวัตถุดิบ =====
+      _recipeProductId: null,
+      _recipeCandidates: null,
+
+      /// รายชื่อของที่เอามาเป็นวัตถุดิบได้ — โหลดครั้งเดียวต่อหน้า
+      async _loadRecipeCandidates() {
+        if (this._recipeCandidates) return this._recipeCandidates;
+        const api = Layout.api(); if (!api) return [];
+        // วัตถุดิบ/วัสดุ/สินค้าที่ติดตามสต็อก ใช้เป็น component ได้ทั้งหมด —
+        // ไม่กรองแคบเกินไป เพราะร้านบางแห่งใช้ "สินค้า" ที่ขายเองเป็นส่วนผสมด้วย
+        const res = await api.getProducts('?pageSize=500');
+        this._recipeCandidates = (res.data?.items || res.data || [])
+          .filter(p => p.productType !== 'Service');
+        return this._recipeCandidates;
+      },
+
+      async openRecipe(id) {
+        const api = Layout.api(); if (!api) return;
+        const p = this._cache[id];
+        this._recipeProductId = id;
+        document.getElementById('recipeProductName').textContent = p ? (p.name || '') : '';
+        await this._loadRecipeCandidates();
+        try {
+          const res = await api.getProductRecipe(id);
+          const r = res.data || {};
+          document.getElementById('fConsumesBom').checked = !!r.consumesBomOnSale;
+          document.getElementById('recipeLines').innerHTML = '';
+          (r.lines || []).forEach(l => this.addRecipeLine(l.componentProductId, l.quantityPerParent));
+          if (!(r.lines || []).length) this.addRecipeLine();
+          Layout.openModal('recipeModal');
+        } catch (e) { Layout.toast('โหลดสูตรไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      addRecipeLine(componentId, qty) {
+        const opts = (this._recipeCandidates || [])
+          .filter(c => c.id !== this._recipeProductId)   // วัตถุดิบต้องไม่ใช่ตัวสินค้าเอง
+          .map(c => `<option value="${Layout.esc(c.id)}"${c.id === componentId ? ' selected' : ''}>`
+            + `${Layout.esc(c.code)} — ${Layout.esc(c.name)} (${Layout.esc(c.unit || '')})</option>`).join('');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td><select class="form-select recipe-comp"><option value="">— เลือกวัตถุดิบ —</option>${opts}</select></td>`
+          + `<td><input type="number" class="form-input recipe-qty" step="0.0001" min="0" value="${qty != null ? qty : ''}"></td>`
+          + `<td><button class="btn btn-sm btn-ghost" onclick="this.closest('tr').remove()" title="ลบบรรทัด">✕</button></td>`;
+        document.getElementById('recipeLines').appendChild(tr);
+      },
+
+      async saveRecipe() {
+        const api = Layout.api(); if (!api) return;
+        const rows = Array.from(document.querySelectorAll('#recipeLines tr'));
+        const lines = rows.map(tr => ({
+          componentProductId: tr.querySelector('.recipe-comp').value,
+          quantityPerParent: parseFloat(tr.querySelector('.recipe-qty').value) || 0,
+        })).filter(l => l.componentProductId && l.quantityPerParent > 0);
+        try {
+          await api.saveProductRecipe(this._recipeProductId, {
+            consumesBomOnSale: document.getElementById('fConsumesBom').checked,
+            lines,
+          });
+          Layout.closeModal('recipeModal');
+          Layout.toast('บันทึกสูตรแล้ว ✓');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       async init() {
         if (!Layout.init('products')) return;
         Layout.setTitle('สินค้า/บริการ');
@@ -302,6 +408,7 @@
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')" data-i18n="common.view">ดู</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')" data-i18n="common.edit">แก้ไข</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.openRecipe('${p.id}')" title="สูตรวัตถุดิบ — ขาย 1 หน่วยแล้วตัดอะไรบ้าง">🧪 สูตร</button>
               ${p.trackStock ? `<button class="btn btn-sm btn-primary" onclick="Page.quickAdjustStock('${p.id}','${(p.name||'').replace(/'/g, '&apos;')}','${p.unit||''}',${p.currentStock||0},${p.costPrice||0})" title="เพิ่ม/ลด/ปรับสต็อก">📦 สต็อก</button>` : ''}
             </td>
           </tr>`).join('');

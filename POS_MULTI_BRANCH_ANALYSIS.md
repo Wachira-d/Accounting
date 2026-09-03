@@ -342,6 +342,7 @@ CompleteOrderAsync / SyncOfflineOrderAsync (PosService.Orders.cs:555 และ�
 | **0** ยุบสต็อก | ✅ | `IStockLedger` + `StockLedger` · migration 6 ขั้น (คลังหลัก/ย้ายยอด/backfill `WarehouseId`/unique index) · ย้ายผู้เขียน **ครบทุกไฟล์ในรอบเดียว**: `PosService.Orders` 4 จุด · `DocumentService.ApplyStockMovementsAsync` 2 จุด · `ProductService` 3 จุด · `CmsCommerceService` 3 จุด · `ImportExportService` 2 จุด · `ProductionOrderService` 2 จุด · `StockCountService` · `ConsignmentService` · **`WarehouseService` ใบโอนคลัง 3 จุด** (ฝั่งที่เคยเขียน `WarehouseStock` อย่างเดียว) · `tools/stock_writer_check.py` (negative test ผ่าน) |
 | **1** เครื่องผูกสาขา | ✅ | entity + migration + snapshot `PosOrder.BranchId/WarehouseId` (สืบทอดตอนแยกบิล · ตรึงตอนเปิดบิล ห้าม resolve สด) · DTO ครบ 3 record + ตัวแปลงตัวเดียว (`LoadScopeNamesAsync` แยกโหลดข้อมูลออกจากตรรกะ) · หน้า "⚙️ ตั้งค่าเครื่อง" ใน `pos.html` (สาขา/คลัง/ตัวย่อ) · ป้ายสาขาบนหัวหน้า POS ที่**เตือนเมื่อยังไม่ผูกสาขา** · `ResolvePaymentAccountAsync(.., terminal)` ให้บัญชีบนเครื่องชนะ · JE ของ POS ติดมิติสาขา (`BranchId` บนทั้งขายและคืนเงิน = ฐานของเฟส 5) |
 | **2** ภาษี | 🔨 ส่วนใหญ่เสร็จ | `Company.IsRetailApproved` + `PhoR06ApprovedDate` + หน้าตั้งค่า · `Helpers/PosSlipHeader` ตัดสินหัวสลิปที่เซิร์ฟเวอร์ **หน้าเว็บแสดงอย่างเดียว** (renderer ทั้งสองตัว: print window + ESC/POS) · เลขใบกำกับอย่างย่อ gap-free ต่อ (สาขา, เดือน) พร้อม advisory lock · `IssuerBranchCode` ตรึงลงบิล — เหลือคอลัมน์สาขาในรายงานภาษีขาย + `IssueTaxInvoiceAsync` ตั้ง `BranchId` |
+| **3** สูตร | ✅ | `ProductType.RawMaterial` · `Product.ConsumesBomOnSale` · `Helpers/BomConsumption` (ฟังก์ชันบริสุทธิ์ + 8 เทสต์) · ตัด/คืนวัตถุดิบครบ **4 เส้น** (ขาย · sync ออฟไลน์ · ยกเลิกบิล · คืนเงินบางส่วน) ผ่านตัวเดียว · `ProductModifierOption.ComponentProductId/Quantity` (ท็อปปิ้งกินวัตถุดิบจริง) · COGS จากต้นทุน component · endpoint `mfg/products/{id}/recipe` + modal "🧪 สูตร" ในหน้าสินค้า |
 | **7** ครัวกลาง | 🔨 บางส่วน | `ProductionOrder.WarehouseId` + เบิก/รับที่คลังนั้น + ด่านของขาดดูยอด**ในคลัง** — เหลือการโอนอัตโนมัติหลังผลิต |
 
 **สิ่งที่พบเพิ่มระหว่างทำเฟส 0** (ไม่อยู่ในผลตรวจรอบแรก — เจอเพราะต้องอ่านทุกผู้เขียน):
@@ -379,6 +380,20 @@ CompleteOrderAsync / SyncOfflineOrderAsync (PosService.Orders.cs:555 และ�
 9. **มี renderer ของสลิปสองตัว** (print window HTML + ESC/POS thermal) — กฎ
    "สอง renderer ห้าม drift" ใช้กับ POS ด้วย: ทั้งคู่รับ `slipTitle`/`branchLabel`/
    `abbreviatedNo` จากเซิร์ฟเวอร์ ไม่คำนวณเอง
+**สิ่งที่พบเพิ่มระหว่างทำเฟส 3:**
+
+11. **สูตรที่ผู้ใช้ตั้งไว้ต้องเป็น "เวอร์ชัน" ไม่ใช่การเขียนทับ** — บิลที่ขายไปแล้วต้องยัง
+    อธิบายได้ว่าตอนนั้นใช้สูตรอะไร (พ.ร.บ.การบัญชี ม.10 เก็บ 5 ปี) ⇒ บันทึกสูตรใหม่ =
+    ปิดสูตรเดิม (`IsActive=false` + `EffectiveTo=now`) แล้วออก `v{n+1}` ไม่ลบทิ้ง
+12. **เปิดธง "ขายแล้วกินสูตร" โดยไม่มีสูตร = ตัดอะไรไม่ได้ทั้งสองทาง** (ไม่ตัดวัตถุดิบ
+    เพราะไม่มีสูตร · ไม่ตัดตัวเองเพราะธงบอกว่าไม่ต้อง) ⇒ บล็อกตั้งแต่ตอนบันทึก
+    พร้อมบอกทางแก้ · และถ้าข้อมูลเก่าหลุดมาถึง runtime ให้ **log ดัง** ไม่เงียบ
+13. **ผลลัพธ์ของตัวคิดสูตรต้องเรียงคงที่** — ledger ล็อกต่อ (คลัง, สินค้า) ถ้าสองบิลกิน
+    วัตถุดิบชุดเดียวกันแต่ล็อกคนละลำดับจะ **deadlock** ⇒ `Resolve` เรียงตาม
+    `ComponentProductId` เสมอ (ล็อกไว้ด้วยเทสต์)
+14. **คืนเงินบางส่วนต้องใช้ตัวคิดสูตรตัวเดียวกัน** — เขียนสัดส่วนวัตถุดิบเองที่จุดคืนเงิน
+    = สำเนาที่สอง ⇒ สร้างบรรทัดจำลองที่มีเฉพาะจำนวนที่คืนแล้วส่งเข้าตัวเดิม
+
 10. **`nullable_arg_check` resolve ชื่อเมธอดแบบ global** ⇒ `PosService.Normalize(Guid?)`
     ถูกจับคู่กับ `Normalize(decimal)` ของอีกไฟล์ **ฟ้องผิด 4 จุดบนโค้ดที่ถูกต้อง**.
     ตามกฎ "checker ที่ฟ้องผิด = checker ที่พังแล้ว" แก้ที่ checker (ชั้นใกล้ชนะ:

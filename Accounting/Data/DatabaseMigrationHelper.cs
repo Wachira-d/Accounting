@@ -5790,6 +5790,17 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "IsRetailApproved" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "PhoR06ApprovedDate" timestamp with time zone NULL;""",
 
+            // ═══ POS เฟส 3: ขายแล้วกินวัตถุดิบตามสูตร (sell-consumes-BOM) ═══
+            // เดิม BOM ถูกอ่านจาก ProductionOrderService ที่เดียว (ผลิตล่วงหน้า) ·
+            // การขายไม่เคยอ่านสูตรเลย ⇒ ขายชานม 1 แก้วตัดสต็อก "ชานมไข่มุก" ตัวเดียว
+            // (ซึ่งไม่เคยมีของอยู่จริง = ยอดติดลบตลอดกาล) ส่วนใบชา/นม/ไข่มุก/แก้ว/หลอด
+            // ไม่ถูกตัดเลย ⇒ ต้นทุนขายผิดทุกแก้ว
+            // default false = ร้านเดิมไม่รู้สึกอะไร
+            """ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "ConsumesBomOnSale" boolean NOT NULL DEFAULT false;""",
+            // ท็อปปิ้งกินวัตถุดิบ ("+ไข่มุกเพิ่ม" กินไข่มุกจริงอีก 30 กรัม ไม่ใช่แค่บวกราคา)
+            """ALTER TABLE "ProductModifierOptions" ADD COLUMN IF NOT EXISTS "ComponentProductId" uuid NULL;""",
+            """ALTER TABLE "ProductModifierOptions" ADD COLUMN IF NOT EXISTS "ComponentQuantity" numeric(18,4) NOT NULL DEFAULT 0;""",
+
             // ศูนย์ช่วยเหลือ (เอกสาร + วิดีโอสอนใช้งาน) — ระดับแพลตฟอร์ม ไม่มี CompanyId
             """CREATE TABLE IF NOT EXISTS "HelpResources" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "Title" varchar(300) NOT NULL DEFAULT '', "Description" text NULL, "Category" integer NOT NULL DEFAULT 1, "ModuleCode" varchar(50) NULL, "Kind" integer NOT NULL DEFAULT 1, "Provider" integer NOT NULL DEFAULT 0, "SourceUrl" text NULL, "StoragePath" text NULL, "FileName" text NULL, "FileSizeBytes" bigint NOT NULL DEFAULT 0, "DurationSeconds" integer NOT NULL DEFAULT 0, "ThumbnailUrl" text NULL, "IsPublished" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "ViewCount" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE INDEX IF NOT EXISTS "IX_HelpResources_Cat" ON "HelpResources" ("Category", "SortOrder") WHERE "IsDeleted" = false;""",

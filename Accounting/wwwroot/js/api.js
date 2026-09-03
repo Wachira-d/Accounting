@@ -676,6 +676,9 @@ const API = {
       makeLoanPayment: (id, d) => API.post(`${base}/loans/${id}/payments`, d),
       getLoanPayments: (id) => API.get(`${base}/loans/${id}/payments`),
       getLoanSummary: () => API.get(`${base}/loans/summary`),
+      // สูตรวัตถุดิบต่อสินค้า (recipe) — มุมมองบนตาราง BOM เดียวกับใบสั่งผลิต
+      getProductRecipe: (productId) => API.get(`${base}/mfg/products/${productId}/recipe`),
+      saveProductRecipe: (productId, d) => API.put(`${base}/mfg/products/${productId}/recipe`, d),
       // Warehouse
       getWarehouses: () => API.get(`${base}/warehouses`),
       createWarehouse: (d) => API.post(`${base}/warehouses`, d),

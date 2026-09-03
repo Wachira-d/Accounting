@@ -327,6 +327,15 @@ public class ProductModifierOption : BaseEntity
     public bool IsDefault { get; set; }
     public int SortOrder { get; set; }
     public bool IsActive { get; set; } = true;
+
+    // ── ท็อปปิ้งกินวัตถุดิบ (POS_MULTI_BRANCH_ANALYSIS เฟส 3) ──
+    // "+ไข่มุกเพิ่ม" ไม่ได้แค่บวกราคา แต่กินไข่มุกจริงอีก 30 กรัม — เดิม option มีแค่
+    // `PriceAdjustment` ⇒ ร้านที่ขายท็อปปิ้งเยอะ สต็อกวัตถุดิบเพี้ยนสะสมทุกวัน
+    /// <summary>วัตถุดิบที่ตัวเลือกนี้กินเพิ่ม — null = ไม่กินวัตถุดิบ (แค่ราคา/ฉลาก)</summary>
+    public Guid? ComponentProductId { get; set; }
+    public Product? ComponentProduct { get; set; }
+    /// <summary>ปริมาณต่อ 1 หน่วยของสินค้าแม่ (ไม่ใช่ต่อบิล)</summary>
+    public decimal ComponentQuantity { get; set; }
 }
 
 // ==================== Staff Commission Summary ====================

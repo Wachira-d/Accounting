@@ -13,6 +13,17 @@ public class Product : TenantEntity
     public string? NameEn { get; set; }
     public string? Description { get; set; }
     public ProductType ProductType { get; set; }
+
+    /// <summary>ขาย 1 หน่วยแล้ว **กินวัตถุดิบตามสูตร (BOM)** แทนการตัดสต็อกตัวเอง
+    ///
+    /// <para>ร้านชานมไข่มุกชงสด: ชานมไข่มุก 1 แก้วไม่ได้อยู่ในสต็อกล่วงหน้า มันคือ
+    /// ชา 200ml + นม 50ml + ไข่มุก 50g + แก้ว 1 + หลอด 1 ที่ประกอบ ณ จุดขาย ⇒ ตัดสต็อก
+    /// "ชานมไข่มุก" ไม่มีความหมาย (ยอดติดลบตลอดกาล) ต้องตัดวัตถุดิบแทน</para>
+    ///
+    /// <para>true = ห้ามตัดสต็อกตัวเอง (ตัด component แทน) · false = พฤติกรรมเดิมทุกประการ
+    /// (สินค้าสำเร็จรูปที่ผลิต/ซื้อมาแล้วรอขาย) — <b>default false เพื่อไม่กระทบร้านเดิม</b></para></summary>
+    public bool ConsumesBomOnSale { get; set; }
+
     public string? SKU { get; set; }
     public string? Barcode { get; set; }
     public string? Category { get; set; }

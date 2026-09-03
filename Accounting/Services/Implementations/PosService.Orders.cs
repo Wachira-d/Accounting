@@ -159,7 +159,8 @@ public partial class PosService
     public async Task VoidOrderAsync(Guid companyId, Guid orderId, string userId)
     {
         var order = await _db.PosOrders
-            .Include(o => o.Items)
+            // ต้องมี Modifiers ด้วย — การคืนวัตถุดิบตามสูตรอ่านท็อปปิ้งที่ลูกค้าเลือก
+            .Include(o => o.Items).ThenInclude(i => i.Modifiers)
             .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
         if (order.Status == PosOrderStatus.Voided) throw new InvalidOperationException("ออเดอร์นี้ถูกยกเลิกไปแล้ว");
@@ -174,7 +175,11 @@ public partial class PosService
             foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
             {
                 var product = await _db.Products.FindAsync(item.ProductId);
-                if (product?.TrackStock == true)
+                if (product == null) continue;
+                // บิลที่กินสูตรตอนขาย ต้อง **คืนวัตถุดิบ** ไม่ใช่คืนตัวสินค้าแม่
+                var gaveBack = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
+                    +1, DateTime.UtcNow, $"VOID-{order.OrderNumber}", "คืนวัตถุดิบจากการยกเลิกออเดอร์", userId);
+                if (!gaveBack.Handled && product.TrackStock)
                 {
                     await _stock.MoveAsync(new StockMoveRequest(
                         CompanyId: companyId,
@@ -216,7 +221,7 @@ public partial class PosService
     public async Task<OrderResponse> RefundOrderAsync(Guid companyId, Guid orderId, RefundOrderRequest request, string userId)
     {
         var order = await _db.PosOrders
-            .Include(o => o.Items)
+            .Include(o => o.Items).ThenInclude(i => i.Modifiers)
             .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
         if (order.Status != PosOrderStatus.Completed)
@@ -269,20 +274,35 @@ public partial class PosService
                 if (item.ProductId.HasValue)
                 {
                     var product = await _db.Products.FindAsync(item.ProductId.Value);
-                    if (product?.TrackStock == true)
+                    if (product != null)
                     {
-                        var move = await _stock.MoveAsync(new StockMoveRequest(
-                            CompanyId: companyId,
-                            ProductId: product.Id,
-                            Quantity: qty,                    // + = คืนเข้าคลัง
-                            MovementType: "IN",
-                            Reference: $"REFUND-{order.OrderNumber}",
-                            WarehouseId: order.WarehouseId,
-                            PosOrderId: order.Id,
-                            UnitCostOverride: EffectiveUnitCost(product),
-                            Notes: "คืนสินค้าจากการคืนเงิน POS",
-                            CreatedBy: userId));
-                        refundCogs += move.TotalCost;
+                        // คืนบางส่วน: สร้างบรรทัดจำลองที่มีเฉพาะจำนวนที่คืน เพื่อให้
+                        // ตัวคิดสูตรตัวเดียวกันคำนวณสัดส่วนวัตถุดิบให้ (ห้ามเขียนสูตรซ้ำที่นี่)
+                        var partial = new PosOrderItem { Quantity = qty };
+                        foreach (var mod in item.Modifiers.Where(x => !x.IsDeleted)) partial.Modifiers.Add(mod);
+                        var gaveBack = await ApplyRecipeConsumptionAsync(companyId, order, partial, product,
+                            +1, DateTime.UtcNow, $"REFUND-{order.OrderNumber}",
+                            "คืนวัตถุดิบจากการคืนเงิน POS", userId);
+                        if (gaveBack.Handled)
+                        {
+                            // ต้นทุนที่กลับเข้ามา = ต้นทุนวัตถุดิบรวมของบรรทัดที่คืน
+                            refundCogs += gaveBack.TotalCost;
+                        }
+                        else if (product.TrackStock)
+                        {
+                            var move = await _stock.MoveAsync(new StockMoveRequest(
+                                CompanyId: companyId,
+                                ProductId: product.Id,
+                                Quantity: qty,                    // + = คืนเข้าคลัง
+                                MovementType: "IN",
+                                Reference: $"REFUND-{order.OrderNumber}",
+                                WarehouseId: order.WarehouseId,
+                                PosOrderId: order.Id,
+                                UnitCostOverride: EffectiveUnitCost(product),
+                                Notes: "คืนสินค้าจากการคืนเงิน POS",
+                                CreatedBy: userId));
+                            refundCogs += move.TotalCost;
+                        }
                     }
                 }
             }
@@ -581,7 +601,10 @@ public partial class PosService
             foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
             {
                 var product = await _db.Products.FindAsync(item.ProductId);
-                if (product?.TrackStock == true)
+                if (product == null) continue;
+                var ateOffline = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
+                    -1, request.CompletedAt, order.OrderNumber, "วัตถุดิบตามสูตร POS (offline sync)", createdBy);
+                if (!ateOffline.Handled && product.TrackStock)
                 {
                     await _stock.MoveAsync(new StockMoveRequest(
                         CompanyId: companyId,
@@ -1020,7 +1043,11 @@ public partial class PosService
         foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
         {
             var product = await _db.Products.FindAsync(item.ProductId);
-            if (product?.TrackStock == true)
+            if (product == null) continue;
+            // สินค้าที่ชงสด (`ConsumesBomOnSale`) กินวัตถุดิบตามสูตรแทนการตัดตัวเอง
+            var ate = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
+                -1, DateTime.UtcNow, order.OrderNumber, "วัตถุดิบตามสูตร POS", userId);
+            if (!ate.Handled && product.TrackStock)
             {
                 await _stock.MoveAsync(new StockMoveRequest(
                     CompanyId: companyId,
@@ -1055,6 +1082,79 @@ public partial class PosService
         p.CostingMethod == CostingMethod.WeightedAverage && p.AverageUnitCost > 0
             ? p.AverageUnitCost : p.CostPrice;
 
+
+
+    /// <summary>ตัด/คืน **วัตถุดิบตามสูตร** ของบรรทัดขาย 1 บรรทัด — ตัวเดียวที่ทุกเส้นเรียก
+    /// (ขาย · sync ออฟไลน์ · ยกเลิกบิล · คืนเงิน) เพื่อไม่ให้เกิดสำเนาที่ drift
+    ///
+    /// <para><paramref name="direction"/>: −1 = ขาย (กินวัตถุดิบ) · +1 = คืน/ยกเลิก</para>
+    ///
+    /// <para><c>Handled = true</c> ⇒ ผู้เรียก **ห้ามตัดสต็อกตัวสินค้าแม่ซ้ำ**
+    /// (ชานมไข่มุกไม่ได้อยู่ในสต็อกล่วงหน้า — ตัดตัวมันเองจะทำให้ยอดติดลบตลอดกาล) ·
+    /// <c>TotalCost</c> = ต้นทุนวัตถุดิบรวมของบรรทัดนี้ ใช้ลง COGS</para>
+    ///
+    /// <para><c>Handled = false</c> เมื่อสินค้าไม่ได้ตั้ง <c>ConsumesBomOnSale</c> →
+    /// ผู้เรียกตัดสต็อกตัวเองตามพฤติกรรมเดิมทุกประการ</para></summary>
+    private async Task<(bool Handled, decimal TotalCost)> ApplyRecipeConsumptionAsync(
+        Guid companyId, PosOrder order, PosOrderItem item, Product product,
+        int direction, DateTime movementDate, string reference, string note, string userId)
+    {
+        if (!product.ConsumesBomOnSale) return (false, 0m);
+
+        var now = DateTime.UtcNow;
+        var bomId = await _db.BillsOfMaterials.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.ParentProductId == product.Id
+                     && b.IsActive && !b.IsDeleted
+                     && b.EffectiveFrom <= now && (b.EffectiveTo == null || b.EffectiveTo >= now))
+            .OrderByDescending(b => b.EffectiveFrom)
+            .Select(b => (Guid?)b.Id)
+            .FirstOrDefaultAsync();
+        if (bomId is not Guid activeBomId)
+        {
+            // ตั้งธงว่ากินสูตรแต่ยังไม่มีสูตร = ตั้งค่าไม่ครบ · ห้ามเงียบ และห้ามตัด
+            // สต็อกตัวเองแทน (จะได้ยอดติดลบโดยที่วัตถุดิบไม่ถูกตัด = ผิดสองทาง)
+            _logger.LogWarning(
+                "สินค้า {Code} ตั้งว่าขายแล้วกินสูตร แต่ยังไม่มีสูตรที่ใช้งานอยู่ — ไม่ได้ตัดวัตถุดิบให้บิล {Order}",
+                product.Code, order.OrderNumber);
+            return (true, 0m);
+        }
+
+        var recipe = await _db.BomLines.AsNoTracking()
+            .Where(l => l.BomId == activeBomId && !l.IsDeleted)
+            .Select(l => new Accounting.Helpers.BomRecipeLine(l.ComponentProductId, l.QuantityPerParent))
+            .ToListAsync();
+
+        // ท็อปปิ้งที่ลูกค้าเลือก — option ที่ผูกวัตถุดิบไว้เท่านั้น
+        var optionIds = item.Modifiers.Where(m => !m.IsDeleted && m.ModifierOptionId.HasValue)
+            .Select(m => m.ModifierOptionId!.Value).ToList();
+        var modifiers = optionIds.Count == 0
+            ? new List<Accounting.Helpers.BomModifierDraw>()
+            : await _db.Set<ProductModifierOption>().AsNoTracking()
+                .Where(o => optionIds.Contains(o.Id) && o.ComponentProductId != null && o.ComponentQuantity > 0)
+                .Select(o => new Accounting.Helpers.BomModifierDraw(o.ComponentProductId!.Value, o.ComponentQuantity))
+                .ToListAsync();
+
+        var draws = Accounting.Helpers.BomConsumption.Resolve(recipe, modifiers, item.Quantity);
+        var totalCost = 0m;
+        foreach (var d in draws)
+        {
+            var qty = direction < 0 ? -d.Quantity : d.Quantity;
+            var move = await _stock.MoveAsync(new StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: d.ComponentProductId,
+                Quantity: qty,
+                MovementType: qty < 0 ? "OUT" : "IN",
+                Reference: reference,
+                WarehouseId: order.WarehouseId,   // วัตถุดิบของ **สาขานั้น**
+                PosOrderId: order.Id,
+                MovementDate: movementDate,
+                Notes: $"{note} ({product.Code}"
+                     + (d.Source == Accounting.Helpers.BomDraw.FromModifier ? " · ท็อปปิ้ง" : " · สูตร") + ")",
+                CreatedBy: userId));
+            totalCost += move.TotalCost;
+        }
+        return (true, totalCost);
+    }
 
     /// <summary>ออก **เลขใบกำกับภาษีอย่างย่อ** (§86/6) ให้บิลที่ปิดแล้ว — ตรึงลงบิลพร้อม
     /// รหัสสาขา (§86/4 ห้ามแก้ย้อนหลัง)
