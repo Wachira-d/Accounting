@@ -837,7 +837,7 @@
               </table>
             </div>`;
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
-          actions += ` <button class="btn btn-secondary" onclick="Layout.showEntityTimeline('JournalEntry','${j.id}','${Layout.esc(j.entryNumber)}')" title="ประวัติการสร้าง / ผ่านรายการ / กลับรายการ / แก้ไข ของรายการบัญชี">📜 ประวัติ</button>`;
+          actions += ` <button class="btn btn-secondary" onclick="Layout.showEntityTimeline('JournalEntry','${j.id}','${Layout.jsArg(j.entryNumber)}')" title="ประวัติการสร้าง / ผ่านรายการ / กลับรายการ / แก้ไข ของรายการบัญชี">📜 ประวัติ</button>`;
           // ชุดปุ่มต้องตรงกับสิ่งที่ server ยอมให้ทำจริง (ดูคอมเมนต์ที่แถวลิสต์)
           // ใบที่ผูกเอกสาร: แก้/กลับ/ลบ ถูกบล็อกหมด เหลือทางเดียวคือไปที่เอกสาร
           if (j.sourceDocumentId) {

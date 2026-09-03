@@ -685,7 +685,7 @@
                     <h3 style="margin-bottom:8px">${this.esc(s.name||'')}</h3>
                     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">${this.esc(s.description||'')}</div>
                     <div style="margin-bottom:14px"><strong>฿${Number(s.price||0).toLocaleString('th-TH')}</strong> · ${s.durationMinutes||0} นาที</div>
-                    <button class="btn btn-primary" onclick="Store.openBookingPicker('${this.esc(s.id||'')}', '${this.esc(s.name||'')}')">เลือกเวลา</button>
+                    <button class="btn btn-primary" onclick="Store.openBookingPicker('${this.jsArg(s.id||'')}', '${this.jsArg(s.name||'')}')">เลือกเวลา</button>
                   </div>`).join('')}
               </div>
             </div>`;
@@ -829,6 +829,9 @@
       },
 
       esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
+      // ค่าที่ฝังใน JS string ภายใน onclick="" — `esc` แปลง ' เป็น &#39; ซึ่งเบราว์เซอร์
+      // decode กลับเป็น ' ก่อน JS parse ⇒ ชื่อบริการที่มีอัญประกาศทำให้ปุ่มทั้งหน้าตาย
+      jsArg(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '').replace(/\n/g, '\\n').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); },
 
       // Rewrite an internal slug-style URL (e.g. "/services", "/contact",
       // "products/abc") so it stays inside the current site when we are on
@@ -960,7 +963,7 @@
                   <label style="font-size:14px">จำนวน:</label>
                   <input type="number" id="pdQty" value="1" min="1" style="width:80px;padding:8px 10px;border:1px solid #D1D5DB;border-radius:6px">
                 </div>
-                <button class="btn btn-primary" style="padding:14px 28px;font-size:16px" onclick="Store.addToCart('${this.esc(p.id)}', parseFloat(document.getElementById('pdQty').value)||1)">
+                <button class="btn btn-primary" style="padding:14px 28px;font-size:16px" onclick="Store.addToCart('${this.jsArg(p.id)}', parseFloat(document.getElementById('pdQty').value)||1)">
                   🛒 เพิ่มในตะกร้า
                 </button>
                 ${p.description ? `<div style="margin-top:32px;line-height:1.7">${p.description}</div>` : ''}
@@ -1368,7 +1371,7 @@
           // Server returns StartTime as a string "HH:mm" — render directly.
           box.innerHTML = slots.map(s => {
             const t = String(s.startTime || '').slice(0, 5);
-            return `<button onclick="Store._pickSlot('${this.esc(s.startTime)}', this)" style="padding:10px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:6px;cursor:pointer;font-weight:600">${this.esc(t)}</button>`;
+            return `<button onclick="Store._pickSlot('${this.jsArg(s.startTime)}', this)" style="padding:10px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:6px;cursor:pointer;font-weight:600">${this.esc(t)}</button>`;
           }).join('');
         } catch(_) {
           box.innerHTML = '<div style="color:#DC2626;grid-column:1/-1">โหลดเวลาไม่สำเร็จ</div>';
@@ -1671,7 +1674,7 @@
             ${(r.requests||[]).slice(0,5).map(x => `<div style="font-size:13px;padding:4px 0">• ${this.esc(x.details)} <span class="lg-badge ${x.status === 'Completed' || x.status === 'Verified' ? 'ok' : ''}">${this.esc(x.status)}</span>${x.responseNote ? ' — ' + this.esc(x.responseNote) : ''}</div>`).join('')}</div>` : ''}
           <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap">
             <a href="${this._pageUrl('home')}" class="btn">← กลับหน้าหลัก</a>
-            ${canCancel ? `<button class="btn" style="border:1px solid #DC2626;color:#DC2626" onclick="Store.lodgingCancel('${this.esc(token)}')">ยกเลิกการจอง</button>` : ''}
+            ${canCancel ? `<button class="btn" style="border:1px solid #DC2626;color:#DC2626" onclick="Store.lodgingCancel('${this.jsArg(token)}')">ยกเลิกการจอง</button>` : ''}
           </div>
         </div>`;
       },

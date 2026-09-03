@@ -51,6 +51,11 @@ public class CmsRenderingService : ICmsRenderingService
             ? GenerateThemeCssFromEntity(page.Site.Theme)
             : GenerateDefaultThemeCss();
 
+        // ข้อมูลติดต่อบนเนื้อหาเป็น **โทเคน** แทนค่าตอนเรนเดอร์ — แก้ที่หน้าตั้งค่า
+        // ครั้งเดียวแล้วทุกหน้าตามทันที (เดิม seed เบอร์/อีเมลตัวอย่างฝังเป็นข้อความ
+        // ตายตัว ⇒ ลูกค้ากรอกข้อมูลจริงแล้วหน้าเว็บยังโชว์ 02-XXX-XXXX อยู่เหมือนเดิม)
+        var tokens = await BuildContentTokensAsync(companyId, page.Site);
+
         var renderedBlocks = page.Blocks
             .Where(b => b.IsVisible)
             .OrderBy(b => b.SortOrder)
@@ -60,18 +65,20 @@ public class CmsRenderingService : ICmsRenderingService
                     ? b.Translations.FirstOrDefault(t => t.LanguageCode == languageCode)
                     : null;
 
+                var cfg = Accounting.Helpers.CmsContentTokens.Apply(blockTranslation?.ConfigJson ?? b.ConfigJson, tokens);
+
                 return new RenderedBlockResponse
                 {
                     BlockId = b.Id,
                     BlockType = b.BlockType,
                     SortOrder = b.SortOrder,
-                    ConfigJson = blockTranslation?.ConfigJson ?? b.ConfigJson,
+                    ConfigJson = cfg,
                     IsVisible = b.IsVisible,
                     HideOnMobile = b.HideOnMobile,
                     HideOnDesktop = b.HideOnDesktop,
                     CssClasses = b.CssClasses,
                     InlineStyleJson = b.InlineStyleJson,
-                    RenderedHtml = RenderBlockToHtml(b.BlockType, blockTranslation?.ConfigJson ?? b.ConfigJson, b.CssClasses)
+                    RenderedHtml = RenderBlockToHtml(b.BlockType, cfg, b.CssClasses)
                 };
             })
             .ToList();
@@ -98,6 +105,27 @@ public class CmsRenderingService : ICmsRenderingService
             Blocks = renderedBlocks,
             ThemeCss = themeCss
         };
+    }
+
+
+    /// <summary>ค่าของโทเคนเนื้อหาสำหรับเว็บนี้ — ค่าระดับเว็บชนะค่าระดับบริษัท
+    ///
+    /// **ตัวเดียวของระบบ** (ดู <see cref="Accounting.Helpers.CmsContentTokens"/>) — ห้ามหน้าใด
+    /// หน้าหนึ่งไปประกอบค่าเอง ไม่งั้นหน้า "ติดต่อเรา" กับ footer จะโชว์คนละเบอร์</summary>
+    private async Task<Dictionary<string, string?>> BuildContentTokensAsync(Guid companyId, Models.Entities.Site site)
+    {
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.Name, c.NameEn, c.Phone, c.Email, c.Address, c.TaxId, c.Website })
+            .FirstOrDefaultAsync();
+
+        return Accounting.Helpers.CmsContentTokens.BuildValues(
+            companyName: company?.Name, companyNameEn: company?.NameEn,
+            companyPhone: company?.Phone, companyEmail: company?.Email,
+            companyAddress: company?.Address, companyTaxId: company?.TaxId,
+            companyWebsite: company?.Website,
+            siteName: site.Name, sitePhone: site.ContactPhone, siteEmail: site.ContactEmail,
+            siteLineId: site.LineId, siteFacebook: site.FacebookUrl, siteInstagram: site.InstagramUrl);
     }
 
     public async Task<StorefrontDataResponse> GetStorefrontDataAsync(Guid companyId, Guid siteId, string? languageCode = null)
@@ -131,6 +159,8 @@ public class CmsRenderingService : ICmsRenderingService
         var themeCss = site.Theme != null
             ? GenerateThemeCssFromEntity(site.Theme)
             : GenerateDefaultThemeCss();
+
+        var siteTokens = await BuildContentTokensAsync(companyId, site);
 
         // Published pages — surfaced so the storefront can build a
         // default top-nav when the site has no Navigation entity set.
@@ -166,7 +196,13 @@ public class CmsRenderingService : ICmsRenderingService
                 DefaultLanguage = site.DefaultLanguage,
                 DefaultCurrency = site.DefaultCurrency,
                 CaptchaProvider = site.CaptchaProvider,
-                CaptchaSiteKey = site.CaptchaSiteKey
+                CaptchaSiteKey = site.CaptchaSiteKey,
+                ContactPhone = siteTokens.GetValueOrDefault("company.phone"),
+                ContactEmail = siteTokens.GetValueOrDefault("company.email"),
+                ContactAddress = siteTokens.GetValueOrDefault("company.address"),
+                LineId = siteTokens.GetValueOrDefault("site.lineId"),
+                FacebookUrl = siteTokens.GetValueOrDefault("site.facebook"),
+                InstagramUrl = siteTokens.GetValueOrDefault("site.instagram")
             },
             Theme = new StorefrontThemeInfo
             {

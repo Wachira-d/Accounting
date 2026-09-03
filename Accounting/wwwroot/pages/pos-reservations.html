@@ -500,14 +500,14 @@
           out.push(`<button class="ok" onclick="Page.markDeposit('${r.id}',${r.depositAmount})" title="บันทึกการรับมัดจำ — auto-confirm">💳 รับมัดจำ</button>`);
         if (r.status === 'Pending')   out.push(`<button class="ok" onclick="Page.setStatus('${r.id}','Confirmed')">✓ ยืนยัน</button>`);
         if (r.status === 'Pending' || r.status === 'Confirmed')
-          out.push(`<button class="seat" onclick="Page.seatNow('${r.id}','${Layout.esc(r.tableNumber||'')}')">🪑 นั่งโต๊ะ</button>`);
+          out.push(`<button class="seat" onclick="Page.seatNow('${r.id}','${Layout.jsArg(r.tableNumber||'')}')">🪑 นั่งโต๊ะ</button>`);
         if (r.status === 'Seated')
           out.push(`<button class="ok" onclick="Page.setStatus('${r.id}','Completed')">✓ จบบิล</button>`);
         if (r.status === 'Pending' || r.status === 'Confirmed')
           out.push(`<button onclick="Page.setStatus('${r.id}','NoShow')" title="ลูกค้าไม่มาตามนัด">😞 ไม่มา</button>`);
         out.push(`<button onclick="Page.edit('${r.id}')">✏️</button>`);
         if (r.status !== 'Completed' && r.status !== 'Seated')
-          out.push(`<button class="del" onclick="Page.del('${r.id}','${Layout.esc(r.customerName).replace(/'/g,'&apos;')}')">🗑️</button>`);
+          out.push(`<button class="del" onclick="Page.del('${r.id}','${Layout.jsArg(r.customerName).replace(/'/g,'&apos;')}')">🗑️</button>`);
         return out.join('');
       },
 

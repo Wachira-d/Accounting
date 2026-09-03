@@ -91,7 +91,7 @@
                 : '<span style="color:#cbd5e1">—</span>'}
             </td>
             <td style="text-align:right;padding-right:10px">
-              <button class="btn btn-sm btn-primary" onclick="Page.openCompany('${c.companyId}', '${Layout.esc(c.name)}')">เปิด →</button>
+              <button class="btn btn-sm btn-primary" onclick="Page.openCompany('${c.companyId}', '${Layout.jsArg(c.name)}')">เปิด →</button>
             </td>
           </tr>`).join('');
       },

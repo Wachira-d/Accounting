@@ -217,6 +217,14 @@ public class CmsSiteController : ControllerBase
         return Ok(new ApiResponse<SiteResponse>(true, result));
     }
 
+    /// <summary>รายการโทเคนที่ใช้ได้ในเนื้อหาหน้าเว็บ — **หน้าเว็บสร้าง UI จากที่นี่**
+    /// ห้ามพิมพ์รายชื่อโทเคนซ้ำในหน้าจอ (defect class "สำเนามือฝั่ง JS" ที่เคยเกิดกับ
+    /// MENU_SECTIONS/complianceIssues — เพิ่มโทเคนใหม่แล้วหน้าช่วยเหลือตามทันที)</summary>
+    [HttpGet("~/api/cms/content-tokens")]
+    public ActionResult<ApiResponse<object>> GetContentTokens()
+        => Ok(new ApiResponse<object>(true,
+            Helpers.CmsContentTokens.Supported.Select(t => new { token = t.Token, label = t.Label })));
+
     [HttpGet("~/api/cms/resolve/domain/{domain}")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<SiteResponse>>> ResolveByDomain(string domain)

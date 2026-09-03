@@ -264,7 +264,7 @@
           }
           const myRole = await Layout.ensureMyRole();
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
-            footer += ` <button class="btn btn-danger" onclick="Page.deleteCert('${d.id}','${Layout.esc(d.certificateNumber || '')}')" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
+            footer += ` <button class="btn btn-danger" onclick="Page.deleteCert('${d.id}','${Layout.jsArg(d.certificateNumber || '')}')" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');

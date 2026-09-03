@@ -1426,14 +1426,14 @@
             <div class="contact-match">
               <span class="icon">&#x1F464;</span>
               <span class="contact-match-name">${Layout.esc(scan.extractedVendorName)}</span>
-              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.esc(scan.id)}')">ค้นหาผู้ติดต่อ</button>
+              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.jsArg(scan.id)}')">ค้นหาผู้ติดต่อ</button>
             </div>`;
         } else if (scan.scanStatus === 'Completed') {
           contactHtml = `
             <div class="contact-match">
               <span class="icon">&#x1F464;</span>
               <span class="contact-match-name" style="color:var(--gray-400)">ไม่พบผู้ติดต่อ</span>
-              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.esc(scan.id)}')">ค้นหา</button>
+              <button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.jsArg(scan.id)}')">ค้นหา</button>
             </div>`;
         }
 
@@ -1445,7 +1445,7 @@
           // check every extracted field (vendor, totals, expense account)
           // before the document is actually created. Direct create-on-click
           // was the cause of "พอกดสร้างดันสร้างเอกสารเลย".
-          actionsHtml += `<button class="btn btn-sm btn-primary" onclick="Page.openReview('${Layout.esc(scan.id)}')">ตรวจสอบ &amp; สร้างเอกสาร</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-primary" onclick="Page.openReview('${Layout.jsArg(scan.id)}')">ตรวจสอบ &amp; สร้างเอกสาร</button>`;
         }
         if (scan.createdDocumentId) {
           // ?openDoc= เปิด detail ของใบนั้นเลย — เดิมใช้ ?id= ซึ่ง documents.html
@@ -1460,24 +1460,24 @@
         const hasItems = (scan.extractedItems && scan.extractedItems.length > 0)
                        || (scan.scanStatus === 'Completed' && (scan.extractedTotalAmount || 0) > 0);
         if (hasItems && scan.scanStatus === 'Completed') {
-          actionsHtml += `<button class="btn btn-sm btn-success" onclick="Page.openReview('${Layout.esc(scan.id)}', { stockImport: true })" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก / วัสดุสิ้นเปลือง / สินทรัพย์ ในคลิกเดียว">📦 นำเข้าสต็อก</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-success" onclick="Page.openReview('${Layout.jsArg(scan.id)}', { stockImport: true })" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก / วัสดุสิ้นเปลือง / สินทรัพย์ ในคลิกเดียว">📦 นำเข้าสต็อก</button>`;
         }
         if (scan.scanStatus === 'Completed' || scan.scanStatus === 'Failed') {
-          actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${Layout.esc(scan.id)}')">ตรวจสอบ &amp; สอนระบบ</button>`;
-          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.esc(scan.id)}', { debug: true })" title="ดูข้อมูลดิบที่ OCR แกะมา + zone analysis">&#x1F50D; ข้อมูลดิบ</button>`;
-          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${Layout.esc(scan.id)}')" title="แกะข้อมูลใหม่โดยไม่ใช้โควต้า">&#x21BA; แกะใหม่</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${Layout.jsArg(scan.id)}')">ตรวจสอบ &amp; สอนระบบ</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.jsArg(scan.id)}', { debug: true })" title="ดูข้อมูลดิบที่ OCR แกะมา + zone analysis">&#x1F50D; ข้อมูลดิบ</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${Layout.jsArg(scan.id)}')" title="แกะข้อมูลใหม่โดยไม่ใช้โควต้า">&#x21BA; แกะใหม่</button>`;
         }
         if (scan.scanStatus === 'Failed') {
-          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${Layout.esc(scan.id)}')">สแกนใหม่</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${Layout.jsArg(scan.id)}')">สแกนใหม่</button>`;
         }
         // Delete button — always available. When the scan auto-created a
         // document, the click handler asks the user to confirm a cascade
         // delete and the backend will refuse if that document has been
         // approved/paid (financial records can't be deleted from here).
         if (scan.createdDocumentId) {
-          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${Layout.esc(scan.id)}', true)" title="ลบ scan + เอกสารที่สร้างอัตโนมัติ">&#x1F5D1; ลบทั้งคู่</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${Layout.jsArg(scan.id)}', true)" title="ลบ scan + เอกสารที่สร้างอัตโนมัติ">&#x1F5D1; ลบทั้งคู่</button>`;
         } else {
-          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${Layout.esc(scan.id)}', false)" title="ลบ">&#x1F5D1;</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-danger-outline" onclick="Page.deleteScan('${Layout.jsArg(scan.id)}', false)" title="ลบ">&#x1F5D1;</button>`;
         }
 
         // RD-compliance quick check — surfaces missing required fields and a
@@ -2124,7 +2124,7 @@
               ${scan.linkedPurchaseOrderId ? `
               <div style="margin:8px 0;padding:10px 14px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;color:#065f46;display:flex;justify-content:space-between;align-items:center;gap:10px">
                 <span>✅ <strong>ผูกกับใบสั่งซื้อ ${Layout.esc(scan.linkedPurchaseOrderNumber || '')}</strong> — ระบบจะใช้บัญชี GL จาก PO เมื่อสร้างเอกสาร</span>
-                <button class="btn btn-sm btn-outline" onclick="Page.unlinkPo('${Layout.esc(scan.id)}')" style="border-color:#059669;color:#065f46">ยกเลิกการผูก</button>
+                <button class="btn btn-sm btn-outline" onclick="Page.unlinkPo('${Layout.jsArg(scan.id)}')" style="border-color:#059669;color:#065f46">ยกเลิกการผูก</button>
               </div>
               ` : (() => {
                 try {
@@ -2132,7 +2132,7 @@
                   if (!pos || !pos.length) return '';
                   return `<div style="margin:8px 0;padding:8px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;font-size:13px;color:#9a3412;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
                     <span>📦 <strong>ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ ${pos.length} ใบ</strong> (${pos.slice(0, 3).map(p => Layout.esc(p)).join(', ')}) — หากรายการนี้สั่งผ่าน PO กรุณารับตามใบสั่งซื้อ ไม่ควรสร้างเอกสารซ้ำ</span>
-                    <button class="btn btn-sm btn-primary" onclick="Page.openPoPicker('${Layout.esc(scan.id)}')" style="white-space:nowrap">🔗 ผูกกับ PO</button>
+                    <button class="btn btn-sm btn-primary" onclick="Page.openPoPicker('${Layout.jsArg(scan.id)}')" style="white-space:nowrap">🔗 ผูกกับ PO</button>
                   </div>`;
                 } catch { return ''; }
               })()}
@@ -2214,7 +2214,7 @@
                   })()}
                   <button type="button" class="btn btn-sm"
                     style="background:#fff;border:1px solid #bae6fd;color:#0369a1;padding:2px 8px;font-size:11px;font-weight:500"
-                    onclick="Page.viewOcrAiRaw('${Layout.esc(scan.id)}')">🔍 ดู AI response เต็ม</button>
+                    onclick="Page.viewOcrAiRaw('${Layout.jsArg(scan.id)}')">🔍 ดู AI response เต็ม</button>
                 </span>
               </div>
               <div class="review-field">
@@ -2243,7 +2243,7 @@
                 </select>
                 <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-end">
                   ${scan.suggestedAccounts?.debitAccountCode ? `<span style="font-size:11px;color:var(--primary);white-space:nowrap">แนะนำ: ${Layout.esc(scan.suggestedAccounts.debitAccountCode)} ${Layout.esc(scan.suggestedAccounts.debitAccountName || '')}</span>` : ''}
-                  ${(scan.glAccountAiSuggestedCode && scan.glAccountAiSuggestedCode !== scan.suggestedAccounts?.debitAccountCode) ? `<button type="button" onclick="Page.applyAiDebitAccount('${Layout.esc(scan.glAccountAiSuggestedCode)}')" style="font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:5px;padding:1px 8px;white-space:nowrap;cursor:pointer" title="AI เสนอผังนี้ (confidence ต่ำกว่าเกณฑ์ระบบเลยไม่เลือกให้อัตโนมัติ) — กดเพื่อใช้ของ AI">🤖 ใช้ของ AI: ${Layout.esc(scan.glAccountAiSuggestedCode)}</button>` : ''}
+                  ${(scan.glAccountAiSuggestedCode && scan.glAccountAiSuggestedCode !== scan.suggestedAccounts?.debitAccountCode) ? `<button type="button" onclick="Page.applyAiDebitAccount('${Layout.jsArg(scan.glAccountAiSuggestedCode)}')" style="font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:5px;padding:1px 8px;white-space:nowrap;cursor:pointer" title="AI เสนอผังนี้ (confidence ต่ำกว่าเกณฑ์ระบบเลยไม่เลือกให้อัตโนมัติ) — กดเพื่อใช้ของ AI">🤖 ใช้ของ AI: ${Layout.esc(scan.glAccountAiSuggestedCode)}</button>` : ''}
                 </div>
               </div>
               <div class="review-field">
@@ -2289,22 +2289,22 @@
                   <select id="mainProjectPicker-${Layout.esc(scan.id)}" style="flex:1;min-width:240px;padding:5px 8px;border:1px solid #a5b4fc;border-radius:6px;font-size:12px;background:#fff">
                     ${this._projectOptionsHtml(this._detectMainProjectId(scan.extractedItems))}
                   </select>
-                  <button class="btn btn-sm" style="background:#4f46e5;color:#fff" onclick="Page.applyMainProject('${Layout.esc(scan.id)}', false)">
+                  <button class="btn btn-sm" style="background:#4f46e5;color:#fff" onclick="Page.applyMainProject('${Layout.jsArg(scan.id)}', false)">
                     ✓ apply ทุกบรรทัด
                   </button>
-                  <button class="btn btn-sm" style="background:#fff;border:1px solid #c7d2fe;color:#3730a3" onclick="Page.applyMainProject('${Layout.esc(scan.id)}', true)" title="ใส่ project นี้เฉพาะบรรทัดที่ยังไม่มี project (preserve overrides)">
+                  <button class="btn btn-sm" style="background:#fff;border:1px solid #c7d2fe;color:#3730a3" onclick="Page.applyMainProject('${Layout.jsArg(scan.id)}', true)" title="ใส่ project นี้เฉพาะบรรทัดที่ยังไม่มี project (preserve overrides)">
                     🩹 เติมเฉพาะที่ว่าง
                   </button>
                   <span style="font-size:11px;color:#4f46e5">เลือกแล้วค่อยแก้เฉพาะบรรทัดที่ไม่ตรง</span>
                 </div>
                 <table style="width:100%;font-size:12px;border-collapse:collapse">
                   <tr style="background:var(--gray-100)"><th style="padding:4px 2px;width:28px"></th><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px;min-width:150px">บัญชี</th><th style="padding:4px 6px;min-width:180px">โครงการ</th></tr>
-                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 2px;text-align:center"><button class="btn btn-sm btn-danger-outline" style="padding:1px 6px;font-size:11px" onclick="Page.modifyLine('${Layout.esc(scan.id)}','delete',${idx})" title="ลบบรรทัดนี้ (OCR แตกแถวเกิน)">✕</button></td><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:70px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:90px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px"><select data-line-acct data-init-acct="${Layout.esc(it.suggestedAccountCode || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;min-width:150px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="ผังบัญชีของบรรทัดนี้ — แก้ได้ ระบบจะเรียนรู้เพื่อให้ครั้งหน้าเดาถูกตั้งแต่แรก"><option value="">${Layout.esc(it.suggestedAccountCode || '— เลือกบัญชี —')}</option></select></td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${Layout.esc(scan.id)}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
+                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 2px;text-align:center"><button class="btn btn-sm btn-danger-outline" style="padding:1px 6px;font-size:11px" onclick="Page.modifyLine('${Layout.jsArg(scan.id)}','delete',${idx})" title="ลบบรรทัดนี้ (OCR แตกแถวเกิน)">✕</button></td><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:70px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:90px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px"><select data-line-acct data-init-acct="${Layout.esc(it.suggestedAccountCode || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;min-width:150px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="ผังบัญชีของบรรทัดนี้ — แก้ได้ ระบบจะเรียนรู้เพื่อให้ครั้งหน้าเดาถูกตั้งแต่แรก"><option value="">${Layout.esc(it.suggestedAccountCode || '— เลือกบัญชี —')}</option></select></td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${Layout.esc(scan.id)}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
                 </table>
                 <!-- เพิ่มแถว — เดิมทำไม่ได้เลย ⇒ OCR รวมสองแถวเป็นแถวเดียว
                      ผู้ใช้แยกกลับไม่ได้ ต้องไปแก้ทีหลังในฟอร์มเอกสาร -->
                 <button class="btn btn-sm btn-outline" style="margin-top:6px"
-                        onclick="Page.modifyLine('${Layout.esc(scan.id)}','add',-1)"
+                        onclick="Page.modifyLine('${Layout.jsArg(scan.id)}','add',-1)"
                         title="เพิ่มบรรทัดว่าง — ใช้เมื่อ OCR รวมสองรายการเป็นแถวเดียว">➕ เพิ่มบรรทัด</button>
               </div>` : ''}
             </div>
@@ -2773,7 +2773,7 @@
               resultsEl.innerHTML = '<div class="contact-search-item" style="color:var(--gray-400)">ไม่พบผู้ติดต่อ</div>';
             } else {
               resultsEl.innerHTML = items.slice(0, 10).map(c => `
-                <div class="contact-search-item" onclick="Page.selectContact('${c.id}', '${Layout.esc(c.name || '')}')">
+                <div class="contact-search-item" onclick="Page.selectContact('${c.id}', '${Layout.jsArg(c.name || '')}')">
                   <div class="name">${Layout.esc(c.name || '-')}</div>
                   <div class="tax-id">${c.taxId ? 'เลขภาษี: ' + Layout.esc(c.taxId) : ''}</div>
                 </div>`).join('');
@@ -2931,7 +2931,7 @@
           </div>
           ${review?.reasoning ? `<div style="color:#7c2d12;margin-bottom:6px"><b>สรุป:</b> ${Layout.esc(review.reasoning)}</div>` : ''}
           ${targets.length ? `<div style="margin-bottom:6px"><b>แนะนำให้สร้าง:</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
-            ${targets.map(t => `<button class="btn btn-sm btn-outline" onclick="Page.openInDocumentForm('${Layout.esc(t.target_type)}')" title="${Layout.esc(t.rationale || '')}">${Layout.esc(t.target_type)}</button>`).join('')}
+            ${targets.map(t => `<button class="btn btn-sm btn-outline" onclick="Page.openInDocumentForm('${Layout.jsArg(t.target_type)}')" title="${Layout.esc(t.rationale || '')}">${Layout.esc(t.target_type)}</button>`).join('')}
           </div></div>` : ''}
           ${flags.length ? `<div style="color:#7c3aed;margin-bottom:6px"><b>กฎภาษีไทย:</b> ${flags.map(f => Layout.esc(f)).join(' · ')}</div>` : ''}
           ${actions.length ? `<div style="color:#0f766e;margin-bottom:6px"><b>แนะนำ:</b><ul style="margin:4px 0 0 18px;padding:0">${actions.map(a => `<li>${Layout.esc(a)}</li>`).join('')}</ul></div>` : ''}

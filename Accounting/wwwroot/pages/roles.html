@@ -495,7 +495,7 @@
               </div>
             </div>
             <p style="font-size:12px;color:#475569;line-height:1.5;margin:0 0 10px">${Layout.esc(t.description)}</p>
-            <button class="btn btn-sm btn-primary" style="width:100%" onclick="Page.applyTemplate('${t.key}','${Layout.esc(t.name).replace(/'/g,'&apos;')}')">+ สร้างจาก template นี้</button>
+            <button class="btn btn-sm btn-primary" style="width:100%" onclick="Page.applyTemplate('${t.key}','${Layout.jsArg(t.name).replace(/'/g,'&apos;')}')">+ สร้างจาก template นี้</button>
           </div>
         `).join('');
       } catch (e) { grid.innerHTML = '<span style="color:#dc2626">' + Layout.esc(e.message) + '</span>'; }

@@ -411,7 +411,7 @@
                   <div style="display:flex;align-items:center;gap:12px;">
                     <div class="cc-total">${Layout.money(s.totalCommission)}</div>
                     <button class="btn btn-sm btn-secondary"
-                      onclick="Page.openCommissionDetail('${s.staffId}','${Layout.esc(s.staffName||'')}')">
+                      onclick="Page.openCommissionDetail('${s.staffId}','${Layout.jsArg(s.staffName||'')}')">
                       🔍 ดูรายละเอียด
                     </button>
                   </div>

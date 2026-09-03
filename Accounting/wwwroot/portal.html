@@ -327,8 +327,8 @@
                   <td><span class="pill ${cls}">${lbl}</span></td>
                   <td>
                     <button class="btn btn-ghost btn-sm" onclick="Portal.viewDocument('${d.id}')">ดู</button>
-                    <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${d.id}','${esc(d.documentNumber)}')">PDF</button>
-                    ${d.balanceDue > 0 ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${d.id}', ${d.balanceDue}, '${esc(d.documentNumber)}')">💳 ชำระ</button>` : ''}
+                    <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${d.id}','${jsArg(d.documentNumber)}')">PDF</button>
+                    ${d.balanceDue > 0 ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${d.id}', ${d.balanceDue}, '${jsArg(d.documentNumber)}')">💳 ชำระ</button>` : ''}
                   </td>
                 </tr>`;
               }).join('')}</tbody>
@@ -360,7 +360,7 @@
           </div>`;
         document.getElementById('modalFooter').innerHTML = `
           <button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>
-          <button class="btn btn-primary" onclick="Portal.downloadPdf('${d.id}','${esc(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>
+          <button class="btn btn-primary" onclick="Portal.downloadPdf('${d.id}','${jsArg(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>
         `;
         document.getElementById('modalBg').classList.add('open');
       } catch (e) { toast(e.message, 'err'); }
@@ -555,6 +555,9 @@
   // Helpers
   // ============================================================
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  // ค่าที่ฝังใน JS string ภายใน onclick="" — `esc` ใช้ไม่ได้เพราะมันแปลง ' เป็น &#39;
+  // ซึ่งเบราว์เซอร์ decode กลับเป็น ' **ก่อน** JS parse ⇒ string ปิดกลางคัน หน้าตาย
+  function jsArg(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '').replace(/\n/g, '\\n').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   function money(n) { return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function dateThai(d) {
     if (!d) return '-';

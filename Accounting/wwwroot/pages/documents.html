@@ -3119,7 +3119,7 @@
                 <div style="font-weight:600;color:#1e3a8a">${Layout.esc(j.entryNumber)} · ${Layout.money(j.gross)}</div>
                 <div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${new Date(j.entryDate).toLocaleDateString('th-TH')}${j.reference ? ' · อ้างอิง ' + Layout.esc(j.reference) : ''}${j.description ? ' · ' + Layout.esc(j.description) : ''}</div>
               </div>
-              <button type="button" class="btn btn-sm btn-primary" onclick="Page.pickJvDeposit('${Layout.esc(j.entryNumber)}', ${j.gross})">หัก</button>
+              <button type="button" class="btn btn-sm btn-primary" onclick="Page.pickJvDeposit('${Layout.jsArg(j.entryNumber)}', ${j.gross})">หัก</button>
             </div>`).join('');
         } catch (e) { box.innerHTML = `<span style="color:#dc2626">ค้นไม่สำเร็จ: ${Layout.esc(e.message || '')}</span>`; }
       },
@@ -3148,7 +3148,7 @@
           this.updateDepositSummary(null);   // refresh แถวหักมัดจำใน totals box
           Layout.toast(`เลือก JV ${entryNumber} แล้ว — จะหักตอนกด "บันทึกและอนุมัติ"`, 'info', 7000);
           const box = document.getElementById('jvDepResults');
-          if (box) box.innerHTML = `<span style="color:#065f46">✓ เลือก JV ${Layout.esc(entryNumber)} (${Layout.money(gross)}) — จะหักตอนบันทึกและอนุมัติ · <a href="#" onclick="Page._pendingDepositApplies=(Page._pendingDepositApplies||[]).filter(a=>!(a.kind==='journal'&&a.journalEntryNumber==='${Layout.esc(entryNumber)}'));Page.updateDepositSummary(null);Page.searchJvDeposits();return false" style="color:#dc2626">ยกเลิก</a></span>`;
+          if (box) box.innerHTML = `<span style="color:#065f46">✓ เลือก JV ${Layout.esc(entryNumber)} (${Layout.money(gross)}) — จะหักตอนบันทึกและอนุมัติ · <a href="#" onclick="Page._pendingDepositApplies=(Page._pendingDepositApplies||[]).filter(a=>!(a.kind==='journal'&&a.journalEntryNumber==='${Layout.jsArg(entryNumber)}'));Page.updateDepositSummary(null);Page.searchJvDeposits();return false" style="color:#dc2626">ยกเลิก</a></span>`;
         }
       },
 
@@ -9117,7 +9117,7 @@
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button data-g="primary" class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
-          actions += ` <button data-g="more" class="btn btn-secondary" onclick="Layout.showEntityTimeline('Document','${d.id}','${Layout.esc(d.documentNumber)}')" title="ดูประวัติการสร้าง / แก้ไข / อนุมัติ / ยกเลิก ของเอกสารฉบับนี้">📜 ประวัติ</button>`;
+          actions += ` <button data-g="more" class="btn btn-secondary" onclick="Layout.showEntityTimeline('Document','${d.id}','${Layout.jsArg(d.documentNumber)}')" title="ดูประวัติการสร้าง / แก้ไข / อนุมัติ / ยกเลิก ของเอกสารฉบับนี้">📜 ประวัติ</button>`;
           if (d.status === 'Draft') {
             actions += ` <button data-g="primary" class="btn btn-warning" onclick="Page.openEdit('${d.id}')" data-i18n="common.edit">แก้ไข</button>`;
             actions += ` <button data-g="primary" class="btn btn-success" onclick="Page.approve('${d.id}')">อนุมัติ</button>`;
@@ -9223,7 +9223,7 @@
           }
           // เอกสารที่ยกเลิกผิด → กู้คืนเป็นฉบับร่าง (เลขเดิม) แล้วอนุมัติใหม่ได้
           if (d.status === 'Voided') {
-            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.restoreDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="กู้คืนเอกสารที่ยกเลิกผิด → คืนเป็นฉบับร่าง คงเลขเดิม แล้วกดอนุมัติใหม่ (บล็อกถ้าเดือนภาษียื่นแล้ว/มี e-Tax รับรอง)">↩️ กู้คืน</button>`;
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.restoreDoc('${d.id}','${Layout.jsArg(d.documentNumber)}')" title="กู้คืนเอกสารที่ยกเลิกผิด → คืนเป็นฉบับร่าง คงเลขเดิม แล้วกดอนุมัติใหม่ (บล็อกถ้าเดือนภาษียื่นแล้ว/มี e-Tax รับรอง)">↩️ กู้คืน</button>`;
             // ใบที่ยกเลิกก่อนระบบใช้ "วันที่เอกสาร" เป็นค่าเริ่มต้น → รายการกลับ
             // บัญชีตกเดือนที่กด (ข้ามงวด) — ปุ่มนี้ย้ายกลับเข้างวดที่ถูกโดยไม่
             // ต้องกู้คืน/ยกเลิกใหม่
@@ -9231,7 +9231,7 @@
           }
           const myRole = await Layout.ensureMyRole();
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
-            actions += ` <button data-g="danger" class="btn btn-danger" onclick="Page.purgeDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้">🗑 ลบทั้งหมด</button>`;
+            actions += ` <button data-g="danger" class="btn btn-danger" onclick="Page.purgeDoc('${d.id}','${Layout.jsArg(d.documentNumber)}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้">🗑 ลบทั้งหมด</button>`;
           }
           // ถามผู้ช่วย AI เกี่ยวกับ "ใบนี้" — ส่ง documentId ไปเป็น context
           // ให้คำตอบอ้างคู่ค้า/ยอด/ผังของใบจริง ไม่ใช่คำแนะนำทั่วไป

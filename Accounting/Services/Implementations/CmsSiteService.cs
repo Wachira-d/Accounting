@@ -156,6 +156,16 @@ public class CmsSiteService : ICmsSiteService
         if (request.DefaultCurrency != null) site.DefaultCurrency = request.DefaultCurrency;
         if (request.CaptchaProvider != null) site.CaptchaProvider = request.CaptchaProvider;
         if (request.CaptchaSiteKey != null) site.CaptchaSiteKey = request.CaptchaSiteKey;
+        // "" ที่ผู้ใช้ล้างช่องทิ้ง = กลับไปใช้ค่าของบริษัท (ไม่ใช่เก็บสตริงว่าง
+        // ซึ่งจะทำให้ token กลายเป็นว่างเปล่าแทนที่จะ fallback)
+        static string? Blank(string v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+
+        // ข้อมูลติดต่อระดับเว็บ — "" = ล้างค่ากลับไปใช้ของบริษัท · null = ไม่ได้ส่งมา
+        if (request.ContactPhone != null) site.ContactPhone = Blank(request.ContactPhone);
+        if (request.ContactEmail != null) site.ContactEmail = Blank(request.ContactEmail);
+        if (request.LineId != null) site.LineId = Blank(request.LineId);
+        if (request.FacebookUrl != null) site.FacebookUrl = Blank(request.FacebookUrl);
+        if (request.InstagramUrl != null) site.InstagramUrl = Blank(request.InstagramUrl);
         if (request.CookieConsentEnabled.HasValue) site.CookieConsentEnabled = request.CookieConsentEnabled.Value;
         if (request.PrivacyPolicyUrl != null) site.PrivacyPolicyUrl = request.PrivacyPolicyUrl;
         if (request.TermsOfServiceUrl != null) site.TermsOfServiceUrl = request.TermsOfServiceUrl;
@@ -205,6 +215,11 @@ public class CmsSiteService : ICmsSiteService
                 DefaultCurrency = s.DefaultCurrency,
                 CaptchaProvider = s.CaptchaProvider,
                 CaptchaSiteKey = s.CaptchaSiteKey,
+                ContactPhone = s.ContactPhone,
+                ContactEmail = s.ContactEmail,
+                LineId = s.LineId,
+                FacebookUrl = s.FacebookUrl,
+                InstagramUrl = s.InstagramUrl,
                 CookieConsentEnabled = s.CookieConsentEnabled,
                 PrivacyPolicyUrl = s.PrivacyPolicyUrl,
                 CurrentStorageUsed = s.CurrentStorageUsed,

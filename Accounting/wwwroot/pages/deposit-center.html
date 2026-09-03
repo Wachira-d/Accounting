@@ -378,7 +378,7 @@
           const refBase = r.baseAmount > 0 && r.refundedAmount > 0 ? Math.min(100 - pctReal, (r.refundedAmount / r.totalAmount) * 100) : 0;
           return `<div class="dc-card">
             <div class="top"><div>
-              <div class="no">${Layout.esc(r.documentNumber)} ${r.bookingNumber ? `<span class="dc-badge bk" onclick="Page.showBooking('${Layout.esc(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}</div>
+              <div class="no">${Layout.esc(r.documentNumber)} ${r.bookingNumber ? `<span class="dc-badge bk" onclick="Page.showBooking('${Layout.jsArg(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}</div>
               <div class="who">${Layout.esc(r.contactName || '-')}</div>
               <div class="meta">${new Date(r.documentDate).toLocaleDateString('th-TH')} · ค้างมา ${r.ageDays} วัน ${isDocless ? '· จาก GL' : ''}</div>
             </div><div style="text-align:right">${this.statusChip(r.status)}<div style="margin-top:4px">${this.vatChip(r)}</div></div></div>
@@ -403,7 +403,7 @@
         tbody.innerHTML = rows.map(r => {
           const isDocless = !r.id || r.id === '00000000-0000-0000-0000-000000000000';
           return `<tr>
-            <td><b>${Layout.esc(r.documentNumber)}</b>${r.bookingNumber ? ` <span class="dc-badge bk" onclick="Page.showBooking('${Layout.esc(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}<br>
+            <td><b>${Layout.esc(r.documentNumber)}</b>${r.bookingNumber ? ` <span class="dc-badge bk" onclick="Page.showBooking('${Layout.jsArg(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}<br>
                 <span style="color:var(--gray-500);font-size:12px">${Layout.esc(r.contactName || '-')}</span></td>
             <td>${new Date(r.documentDate).toLocaleDateString('th-TH')}<br><span style="color:var(--gray-400);font-size:11px">${r.ageDays} วัน</span></td>
             <td>${this.vatChip(r)}</td>

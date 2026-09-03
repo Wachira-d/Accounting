@@ -1665,7 +1665,7 @@
             <span style="font-size:13px;color:#16a34a">Match: <b>${(plan.matches||[]).length}</b></span>
             <span style="font-size:13px;color:#d97706">Unmatched: <b>${(plan.unmatched||[]).length}</b></span>
             <span style="font-size:13px;color:#dc2626">Missing data: <b>${(plan.missingData||[]).length}</b></span>
-            <button class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#0f172a" onclick="Page.viewBulkAiRaw('${esc(plan.feedbackId || '')}')">🔍 ดู AI response เต็ม</button>
+            <button class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#0f172a" onclick="Page.viewBulkAiRaw('${Layout.jsArg(plan.feedbackId || '')}')">🔍 ดู AI response เต็ม</button>
           </div>
           ${plan.reasoning ? `<div style="background:#f8fafc;padding:10px 14px;border-radius:6px;font-size:13px;color:#475569;margin-bottom:12px">💭 ${esc(plan.reasoning)}</div>` : ''}
           ${warningsBlock}
@@ -2420,9 +2420,9 @@
           }
 
           return `<div style="border:2px solid ${borderColor};border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer;transition:all 0.15s;background:${bg};${isDimmed ? 'opacity:0.35;pointer-events:none' : ''}"
-            onclick="Page.togglePickerSelect('${c.type}','${c.id}','${this.esc(c.number).replace(/'/g,"\\'")}',${c.amount})">
+            onclick="Page.togglePickerSelect('${c.type}','${c.id}','${Layout.jsArg(c.number)}',${c.amount})">
             <div style="display:flex;align-items:start;gap:12px">
-              <input type="checkbox" ${isSel ? 'checked' : ''} style="margin-top:8px;width:18px;height:18px;cursor:pointer" onclick="event.stopPropagation();Page.togglePickerSelect('${c.type}','${c.id}','${this.esc(c.number).replace(/'/g,"\\'")}',${c.amount})">
+              <input type="checkbox" ${isSel ? 'checked' : ''} style="margin-top:8px;width:18px;height:18px;cursor:pointer" onclick="event.stopPropagation();Page.togglePickerSelect('${c.type}','${c.id}','${Layout.jsArg(c.number)}',${c.amount})">
               <div style="background:${scoreBg};color:${scoreColor};padding:6px 10px;border-radius:8px;font-weight:700;font-size:14px;min-width:54px;text-align:center">
                 ${c.score}%
               </div>

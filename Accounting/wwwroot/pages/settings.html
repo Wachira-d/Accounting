@@ -1284,7 +1284,7 @@
                 ${r.linkedFromIp ? `<div style="font-size:11px;color:#94a3b8">ผูกจาก IP ${esc(r.linkedFromIp)}</div>` : ''}
               </div>
               <button type="button" class="btn btn-sm btn-danger"
-                onclick="Page.removeExternalLogin('${esc(r.id)}','${esc(r.providerDisplayName || r.provider)}')">ถอดการผูก</button>
+                onclick="Page.removeExternalLogin('${Layout.jsArg(r.id)}','${Layout.jsArg(r.providerDisplayName || r.provider)}')">ถอดการผูก</button>
             </div>`).join('');
         } catch (e) {
           box.innerHTML = `<div style="font-size:13px;color:#b91c1c">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;

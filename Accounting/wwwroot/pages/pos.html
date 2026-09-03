@@ -2401,7 +2401,7 @@
             const inLabel = mins <= 0 ? 'ถึงเวลาแล้ว' : (mins < 60 ? `อีก ${mins} น.` : at.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}));
             resvBadge = `<div style="font-size:9px;color:#7c3aed;font-weight:700;margin-top:2px">📅 ${Layout.esc(inLabel)}</div>`;
           }
-          return `<div ${dataAttrs} onclick="Page._tableClick('${Layout.esc(t.tableNumber).replace(/'/g,'&apos;')}','${t.activeOrderId || ''}','${t.status || ''}',${t.isActive?'true':'false'},'${t.upcomingReservationId || ''}')"
+          return `<div ${dataAttrs} onclick="Page._tableClick('${Layout.jsArg(t.tableNumber).replace(/'/g,'&apos;')}','${t.activeOrderId || ''}','${t.status || ''}',${t.isActive?'true':'false'},'${t.upcomingReservationId || ''}')"
                        style="position:absolute;left:${t.x}px;top:${t.y}px;width:${t.width}px;height:${t.height}px;background:${bg};border:2px solid ${border};border-radius:${radius};transform:rotate(${t.rotation}deg);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:${t.isActive?'pointer':'not-allowed'};user-select:none;font-weight:700;color:#0f172a;transition:transform .12s,box-shadow .12s"
                        onmouseover="this.style.transform='rotate(${t.rotation}deg) scale(1.04)';this.style.boxShadow='0 8px 20px rgba(0,0,0,.15)'"
                        onmouseout="this.style.transform='rotate(${t.rotation}deg)';this.style.boxShadow=''"

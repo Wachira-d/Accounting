@@ -5733,6 +5733,20 @@ public static class DatabaseMigrationHelper
             // ปิดการขายไว้ก่อน (ผู้ที่เปิดไปแล้วยังใช้ต่อและปิดเองได้ตามกติกา unpublish)
             // — CLAUDE.md: "feature ที่ยังไม่มีจริง ห้ามเขียนว่ามีแล้ว"
             """UPDATE "ApiFeatures" SET "IsPublished" = false, "Description" = "Description" || ' (ยังไม่เปิดขาย — อยู่ระหว่างพัฒนา)' WHERE "FeatureCode" = 'lodging.promo' AND "IsPublished" = true;""",
+            // ── ข้อมูลติดต่อของเว็บไซต์ + ล้าง placeholder ที่ seed ค้างไว้ ──
+            // เดิมเทมเพลตหน้า "ติดต่อเรา" ฝัง 02-XXX-XXXX / info@example.com เป็นข้อความ
+            // ตายตัว ⇒ ลูกค้ากรอกเบอร์จริงในหน้าตั้งค่าแล้วหน้าเว็บยังโชว์ตัวอย่างอยู่
+            // แก้โค้ด seeder อย่างเดียวไม่พอ — เว็บที่สร้างไปแล้วยังถือข้อความเก่า
+            // (บทเรียนเดียวกับ OcrLearnedPatterns.ExtractionRegex / VendorKnownGoodValues)
+            """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "ContactPhone" varchar(50) NULL;""",
+            """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "ContactEmail" varchar(256) NULL;""",
+            """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "LineId" varchar(100) NULL;""",
+            """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "FacebookUrl" text NULL;""",
+            """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "InstagramUrl" text NULL;""",
+            """UPDATE "PageBlocks" SET "ConfigJson" = replace(replace(replace("ConfigJson", '02-XXX-XXXX', '{{company.phone}}'), '081-XXX-XXXX', '{{company.phone}}'), '086-XXX-XXXX', '{{company.phone}}') WHERE "ConfigJson" LIKE '%XXX-XXXX%';""",
+            """UPDATE "PageBlocks" SET "ConfigJson" = replace(replace(replace("ConfigJson", 'info@example.com', '{{company.email}}'), 'hello@shop.com', '{{company.email}}'), 'reservations@hotel.com', '{{company.email}}') WHERE "ConfigJson" LIKE '%@example.com%' OR "ConfigJson" LIKE '%hello@shop.com%' OR "ConfigJson" LIKE '%reservations@hotel.com%';""",
+            """UPDATE "PageBlockTranslations" SET "ConfigJson" = replace(replace(replace("ConfigJson", '02-XXX-XXXX', '{{company.phone}}'), '081-XXX-XXXX', '{{company.phone}}'), '086-XXX-XXXX', '{{company.phone}}') WHERE "ConfigJson" LIKE '%XXX-XXXX%';""",
+            """UPDATE "PageBlockTranslations" SET "ConfigJson" = replace("ConfigJson", 'info@example.com', '{{company.email}}') WHERE "ConfigJson" LIKE '%@example.com%';""",
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "DocumentBonusQuota" integer NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "DocumentBonusExpiresAt" timestamptz NULL;""",
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "QuotaRewardBlocked" boolean NOT NULL DEFAULT false;""",

@@ -145,7 +145,7 @@
                 ${p.status === 'Open' ? `<button class="btn btn-sm btn-secondary" onclick='Page.openEdit(${JSON.stringify(p)})' title="แก้ไขชื่อ/ปี/เดือน/วันที่ — ใช้ตอนที่กรอกผิดและยังไม่มีรายการในงวดนี้">✏️ แก้ไข</button>` : ''}
                 ${p.status === 'Open' ? `<button class="btn btn-sm btn-warning" onclick="Page.softClose('${p.id}')" title="Soft close — สามารถ reopen ได้">📁 Soft Close</button>` : ''}
                 ${p.status === 'Closed' ? `<button class="btn btn-sm btn-ghost" onclick="Page.reopen('${p.id}')" title="กลับไป Open status">↩️ Reopen</button>` : ''}
-                ${p.status === 'Open' ? `<button class="btn btn-sm btn-danger" onclick="Page.deletePeriod('${p.id}','${Layout.esc(p.name || (p.year + '/' + p.month))}')" title="ลบงวด — ใช้ได้เฉพาะงวดที่ยังไม่มีใบสำคัญ/opening balance">🗑️ ลบ</button>` : ''}
+                ${p.status === 'Open' ? `<button class="btn btn-sm btn-danger" onclick="Page.deletePeriod('${p.id}','${Layout.jsArg(p.name || (p.year + '/' + p.month))}')" title="ลบงวด — ใช้ได้เฉพาะงวดที่ยังไม่มีใบสำคัญ/opening balance">🗑️ ลบ</button>` : ''}
                 ${p.status === 'Locked' ? '<span class="text-xs" style="color:#7c3aed">🔒 Locked (Year-End)</span>' : ''}
               </td>
             </tr>`;
