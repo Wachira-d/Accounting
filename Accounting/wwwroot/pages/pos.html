@@ -135,7 +135,9 @@
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <select id="terminalSelect" class="form-select" style="font-size:13px;padding:6px 10px;" onchange="Page.onTerminalChange()"></select>
+            <span id="termBranchBadge" style="display:none;align-self:center;font-size:12px;font-weight:700;border-radius:6px;padding:3px 8px;"></span>
             <button class="btn btn-sm btn-secondary" onclick="Page.openCreateTerminal()" title="สร้างเครื่องขาย (Terminal) ใหม่">+ เครื่องขาย</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.openEditTerminal()" title="แก้ไขเครื่องขาย — สาขา · คลังที่ตัดสต็อก · ตัวย่อเลขใบกำกับอย่างย่อ">⚙️ ตั้งค่าเครื่อง</button>
             <button class="btn btn-sm btn-primary" id="btnSession" onclick="Page.toggleSession()">เปิดกะ</button>
             <button class="btn btn-sm btn-ghost" onclick="Page.showDailySummary()">📊 สรุปยอด</button>
             <button class="btn btn-sm btn-ghost" onclick="Page.openPrintSettings()" title="ตั้งค่าใบเสร็จ / เครื่องพิมพ์ Thermal">🖨️ ตั้งค่าพิมพ์</button>
@@ -330,7 +332,7 @@
     <!-- Create Terminal Modal -->
     <div class="modal-overlay" id="terminalModal">
       <div class="modal" style="max-width:420px;">
-        <div class="modal-header"><h3 class="modal-title">สร้างเครื่องขาย (Terminal)</h3><button class="modal-close" onclick="Layout.closeModal('terminalModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title" id="termModalTitle">สร้างเครื่องขาย (Terminal)</h3><button class="modal-close" onclick="Layout.closeModal('terminalModal')">&times;</button></div>
         <div class="modal-body">
           <div class="form-group"><label class="form-label">ชื่อเครื่องขาย *</label><input type="text" class="form-input" id="fTermName" placeholder="เช่น เคาน์เตอร์ 1, สาขาสีลม"></div>
           <div class="form-group"><label class="form-label">ประเภทธุรกิจ *</label>
@@ -342,11 +344,29 @@
               <option value="Mixed">ผสม (สินค้า+บริการ)</option>
             </select>
           </div>
-          <div class="form-group"><label class="form-label">ที่ตั้ง/สาขา</label><input type="text" class="form-input" id="fTermLocation" placeholder="ไม่บังคับ"></div>
+          <div class="form-group"><label class="form-label">ที่ตั้ง (ข้อความอิสระ)</label><input type="text" class="form-input" id="fTermLocation" placeholder="ไม่บังคับ — ใช้แสดงเฉยๆ"></div>
+
+          <div class="form-group">
+            <label class="form-label">สาขา</label>
+            <select class="form-select" id="fTermBranch"><option value="">— ยังไม่ระบุ (สำนักงานใหญ่) —</option></select>
+            <div class="form-hint">ใช้กับ <b>รหัสสาขาบนใบกำกับ (§86/4)</b> · มิติบัญชีรายสาขา · รายงานแยกสาขา —
+              ช่อง "ที่ตั้ง" ด้านบนเป็นข้อความอิสระ ระบบไม่ใช้ตัดสินอะไร</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">คลังที่ตัดสต็อก</label>
+            <select class="form-select" id="fTermWarehouse"><option value="">— คลังหลักของบริษัท —</option></select>
+            <div class="form-hint">ขายที่เครื่องนี้จะตัดสต็อกจากคลังนี้ — ร้านหลายสาขาควรตั้งเป็นคลังของสาขานั้น
+              ไม่งั้นขายที่ไหนก็ตัดจากกองเดียวกันหมด</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ตัวย่อเลขใบกำกับภาษีอย่างย่อ</label>
+            <input type="text" class="form-input" id="fTermAbbrevPrefix" maxlength="10" placeholder="เช่น ABB (เว้นว่าง = ABB)">
+            <div class="form-hint">เลขรัน gap-free <b>ต่อสาขาต่อเดือน</b> (§86/6) — ออกให้เฉพาะบริษัทที่ได้รับอนุมัติ ภ.พ.06 แล้ว</div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('terminalModal')" data-i18n="common.cancel">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.createTerminal()">สร้างเครื่องขาย</button>
+          <button class="btn btn-primary" id="termSaveBtn" onclick="Page.saveTerminal()">สร้างเครื่องขาย</button>
         </div>
       </div>
     </div>
@@ -634,7 +654,12 @@
           bold(0), size(0,0),
         ];
         if (s.header) parts.push(text(s.header + '\n'));
+        // หัวสลิป + รหัสสาขา + เลขใบกำกับอย่างย่อ — ค่าจากเซิร์ฟเวอร์ทั้งหมด
+        // (เครื่องพิมพ์ความร้อนเป็น renderer ตัวที่สอง: กฎ "สอง renderer ห้าม drift")
+        parts.push(text((snap.slipTitle || 'ใบเสร็จรับเงิน') + '\n'));
+        if (snap.branchLabel) parts.push(text(snap.branchLabel + '\n'));
         parts.push(text(hr + '\n'), align(0));
+        if (snap.abbreviatedNo) parts.push(text(`เลขที่ใบกำกับอย่างย่อ: ${snap.abbreviatedNo}\n`));
         parts.push(text(`เลขที่: ${snap.orderNumber || ''}\n`));
         parts.push(text(`วันที่: ${snap.dateTime || ''}\n`));
         if (snap.customer) parts.push(text(`ลูกค้า: ${snap.customer}\n`));
@@ -1174,6 +1199,7 @@
             ? this.terminals.map(t => `<option value="${t.id}">${t.name}</option>`).join('')
             : '<option value="">-- ยังไม่มีเครื่องขาย กรุณาสร้างก่อน --</option>';
           if (this.terminals.length) {
+            this._renderBranchBadge();
             await this.checkSession();
           } else if (!this._guideShown) {
             // First-time setup — walk the user through getting started.
@@ -1181,6 +1207,31 @@
             this.showGuide();
           }
         } catch (e) { Layout.toast('โหลด Terminal ล้มเหลว: ' + e.message, 'error'); }
+      },
+
+      /// ป้ายสาขาบนหัวหน้า POS — แคชเชียร์ต้องเห็นว่ากำลังขายในนามสาขาไหน ก่อนกดขาย
+      /// (เครื่องที่ยังไม่ผูกสาขาต้องเห็นคำเตือน ไม่ใช่เงียบแล้วลงเป็นสำนักงานใหญ่)
+      _renderBranchBadge() {
+        const el = document.getElementById('termBranchBadge');
+        if (!el) return;
+        const id = document.getElementById('terminalSelect')?.value;
+        const t = (this.terminals || []).find(x => x.id === id);
+        if (!t) { el.style.display = 'none'; return; }
+        el.style.display = '';
+        if (t.branchId && t.branchTaxCode) {
+          const label = t.branchTaxCode === '00000' ? 'สำนักงานใหญ่' : 'สาขาที่ ' + t.branchTaxCode;
+          el.style.background = '#dcfce7'; el.style.color = '#166534'; el.style.border = '1px solid #22c55e';
+          el.textContent = '🏬 ' + (t.branchName || '') + ' · ' + label;
+          el.title = 'ใบกำกับที่ออกจากเครื่องนี้จะพิมพ์รหัสสาขานี้ (§86/4)';
+        } else if (t.branchId) {
+          el.style.background = '#fef3c7'; el.style.color = '#92400e'; el.style.border = '1px solid #f59e0b';
+          el.textContent = '🏬 ' + (t.branchName || 'สาขา') + ' · ยังไม่ได้กรอกรหัสสาขาสรรพากร';
+          el.title = 'ไปกรอกที่หน้าทะเบียนสาขา — ใบกำกับ §86/4 ต้องมีรหัสสาขา 5 หลัก';
+        } else {
+          el.style.background = '#fee2e2'; el.style.color = '#991b1b'; el.style.border = '1px solid #ef4444';
+          el.textContent = '⚠️ เครื่องนี้ยังไม่ผูกสาขา';
+          el.title = 'ยอดขาย/สต็อกจะลงที่คลังหลักและไม่มีมิติสาขา — กด "⚙️ ตั้งค่าเครื่อง" เพื่อผูก';
+        }
       },
 
       showGuide() {
@@ -1196,26 +1247,94 @@
         Layout.openModal('guideModal');
       },
 
-      openCreateTerminal() {
+      /// สาขา/คลังโหลดครั้งเดียวต่อหน้า — ใช้ทั้งตอนสร้างและตอนแก้ไข
+      async _loadTerminalScopeOptions() {
+        if (this._scopeOptions) return this._scopeOptions;
+        const api = Layout.api(); if (!api) return { branches: [], warehouses: [] };
+        const [b, w] = await Promise.all([
+          api.getBranches().catch(() => ({ data: [] })),
+          api.getWarehouses().catch(() => ({ data: [] })),
+        ]);
+        this._scopeOptions = { branches: b.data || [], warehouses: w.data || [] };
+        return this._scopeOptions;
+      },
+
+      async _fillTerminalScopeSelects(branchId, warehouseId) {
+        const { branches, warehouses } = await this._loadTerminalScopeOptions();
+        const bs = document.getElementById('fTermBranch');
+        const ws = document.getElementById('fTermWarehouse');
+        // รหัสสาขาที่ยังไม่กรอกให้บอกตรง ๆ ว่ายังไม่มี — ห้ามแสดงเป็น "00000"
+        // (ค่า default ที่แต่งขึ้นอันตรายกว่าการไม่ตอบ: ใบของสาขาที่ 3 จะประกาศตัวเป็น สนง.ใหญ่)
+        bs.innerHTML = '<option value="">— ยังไม่ระบุ (สำนักงานใหญ่) —</option>'
+          + branches.map(x => `<option value="${Layout.esc(x.id)}">${Layout.esc(x.name)}`
+            + (x.taxBranchCode ? ` (${Layout.esc(x.taxBranchCode)})` : ' — ยังไม่ได้กรอกรหัสสาขาสรรพากร')
+            + '</option>').join('');
+        ws.innerHTML = '<option value="">— คลังหลักของบริษัท —</option>'
+          + warehouses.map(x => `<option value="${Layout.esc(x.id)}">${Layout.esc(x.name)}</option>`).join('');
+        bs.value = branchId || '';
+        ws.value = warehouseId || '';
+      },
+
+      async openCreateTerminal() {
+        this._editingTerminalId = null;
+        document.getElementById('termModalTitle').textContent = 'สร้างเครื่องขาย (Terminal)';
+        document.getElementById('termSaveBtn').textContent = 'สร้างเครื่องขาย';
         document.getElementById('fTermName').value = '';
         document.getElementById('fTermMode').value = 'Trading';
         document.getElementById('fTermLocation').value = '';
+        document.getElementById('fTermAbbrevPrefix').value = '';
+        await this._fillTerminalScopeSelects('', '');
         Layout.openModal('terminalModal');
       },
 
-      async createTerminal() {
+      async openEditTerminal() {
+        const id = document.getElementById('terminalSelect').value;
+        const t = (this.terminals || []).find(x => x.id === id);
+        if (!t) { Layout.toast('เลือกเครื่องขายก่อน', 'warning'); return; }
+        this._editingTerminalId = id;
+        document.getElementById('termModalTitle').textContent = 'แก้ไขเครื่องขาย';
+        document.getElementById('termSaveBtn').textContent = 'บันทึก';
+        document.getElementById('fTermName').value = t.name || '';
+        document.getElementById('fTermMode').value = t.businessMode || 'Trading';
+        document.getElementById('fTermLocation').value = t.location || '';
+        document.getElementById('fTermAbbrevPrefix').value = t.abbreviatedInvoicePrefix || '';
+        await this._fillTerminalScopeSelects(t.branchId, t.warehouseId);
+        Layout.openModal('terminalModal');
+      },
+
+      async saveTerminal() {
         const api = Layout.api(); if (!api) return;
         const name = document.getElementById('fTermName').value.trim();
         if (!name) { Layout.toast('กรุณาระบุชื่อเครื่องขาย', 'error'); return; }
+        // ฝั่งแก้ไข: '' ต้องส่งเป็น Guid ว่างเพื่อ "ล้างค่า" ไม่ใช่ null ที่แปลว่า "ไม่แตะ"
+        const EMPTY = '00000000-0000-0000-0000-000000000000';
+        const branch = document.getElementById('fTermBranch').value;
+        const warehouse = document.getElementById('fTermWarehouse').value;
+        const prefix = document.getElementById('fTermAbbrevPrefix').value.trim();
         try {
-          await api.createPosTerminal({
-            name,
-            businessMode: document.getElementById('fTermMode').value,
-            location: document.getElementById('fTermLocation').value.trim() || null,
-            settingsJson: null,
-          });
+          if (this._editingTerminalId) {
+            await api.updatePosTerminal(this._editingTerminalId, {
+              name,
+              businessMode: document.getElementById('fTermMode').value,
+              location: document.getElementById('fTermLocation').value.trim(),
+              settingsJson: null,
+              branchId: branch || EMPTY,
+              warehouseId: warehouse || EMPTY,
+              abbreviatedInvoicePrefix: prefix,
+            });
+          } else {
+            await api.createPosTerminal({
+              name,
+              businessMode: document.getElementById('fTermMode').value,
+              location: document.getElementById('fTermLocation').value.trim() || null,
+              settingsJson: null,
+              branchId: branch || null,
+              warehouseId: warehouse || null,
+              abbreviatedInvoicePrefix: prefix || null,
+            });
+          }
           Layout.closeModal('terminalModal');
-          Layout.toast('สร้างเครื่องขายสำเร็จ');
+          Layout.toast(this._editingTerminalId ? 'บันทึกเครื่องขายแล้ว ✓' : 'สร้างเครื่องขายสำเร็จ');
           await this.loadTerminals();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -1262,7 +1381,7 @@
         }
       },
 
-      onTerminalChange() { this.checkSession(); },
+      onTerminalChange() { this._renderBranchBadge(); this.checkSession(); },
 
       toggleSession() {
         if (this.session) {
@@ -2187,6 +2306,14 @@
           customer: document.getElementById('fCustomerName')?.value || '',
           items: this.cart.map(c => ({ name: c.name, qty: c.quantity, price: c.unitPrice, total: c.unitPrice * c.quantity })),
           subtotal, vat, net, paid, change: Math.max(0, paid - net),
+          // ── หัวสลิป/เลขใบกำกับอย่างย่อ/รหัสสาขา: **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว** ──
+          // เดิมหน้านี้พิมพ์ "ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ" เป็น string literal ทุกใบ
+          // โดยไม่ตรวจ ภ.พ.06 เลย = ออกใบกำกับโดยไม่มีสิทธิ์ (§86/6) และผู้ซื้อเคลม
+          // ภาษีซื้อไม่ได้ตาม §82/5(5). ห้ามคำนวณเองซ้ำที่นี่ (defect class "สำเนามือฝั่ง JS")
+          // undefined = เซิร์ฟเวอร์รุ่นเก่ายังไม่ส่งฟิลด์ → ตกไปใช้ค่าปลอดภัย "ใบเสร็จรับเงิน"
+          slipTitle: orderData?.slipTitle || 'ใบเสร็จรับเงิน',
+          abbreviatedNo: orderData?.abbreviatedInvoiceNumber || '',
+          branchLabel: orderData?.issuerBranchLabel || '',
         };
       },
 
@@ -2247,8 +2374,10 @@
           <h2>${esc(company.name || 'ใบเสร็จรับเงิน')}</h2>
           ${company.taxId ? `<div class="c muted">เลขผู้เสียภาษี ${esc(company.taxId)}</div>` : ''}
           ${headerLines}
-          <div class="c muted">ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ</div>
+          <div class="c muted">${esc(snap.slipTitle || 'ใบเสร็จรับเงิน')}</div>
+          ${snap.branchLabel ? `<div class="c muted">${esc(snap.branchLabel)}</div>` : ''}
           <div class="line"></div>
+          ${snap.abbreviatedNo ? `<div class="muted">เลขที่ใบกำกับอย่างย่อ: ${esc(snap.abbreviatedNo)}</div>` : ''}
           <div class="muted">เลขที่: ${esc(snap.orderNumber)}</div>
           <div class="muted">วันที่: ${esc(snap.dateTime)}</div>
           ${snap.customer ? `<div class="muted">ลูกค้า: ${esc(snap.customer)}</div>` : ''}

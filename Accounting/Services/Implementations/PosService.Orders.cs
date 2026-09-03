@@ -356,7 +356,10 @@ public partial class PosService
         try
         {
             var journalRequest = new Models.DTOs.Accounting.CreateJournalEntryRequest(
-                DateTime.UtcNow, $"POS Refund #{order.OrderNumber}", $"REFUND-{order.OrderNumber}", lines);
+                DateTime.UtcNow, $"POS Refund #{order.OrderNumber}", $"REFUND-{order.OrderNumber}", lines,
+                // มิติสาขาจาก snapshot บนบิล — ทำให้ P&L รายสาขาจาก
+                // DimensionalAccountingService ตรงกับยอดขาย POS ของสาขานั้น
+                BranchId: order.BranchId);
             var journal = await _accountingService.CreateJournalEntryAsync(companyId, journalRequest, userId);
             await _accountingService.PostJournalEntryAsync(companyId, journal.Id);
         }
@@ -571,6 +574,7 @@ public partial class PosService
 
             order.Status = PosOrderStatus.Completed;
             order.CompletedAt = request.CompletedAt;
+            await IssueAbbreviatedInvoiceNumberAsync(companyId, order);
 
             // GL + stock — same as the online CompleteOrderAsync.
             await CreateSalesJournalEntryAsync(companyId, order, createdBy);
@@ -991,6 +995,7 @@ public partial class PosService
         {
         order.Status = PosOrderStatus.Completed;
         order.CompletedAt = DateTime.UtcNow;
+        await IssueAbbreviatedInvoiceNumberAsync(companyId, order);
 
         // Loyalty: award 1 point per ฿100 spent (NetAmount excluding tip) and
         // bump visit counter / lastVisit on the linked Contact. Floor — fractions
@@ -1050,8 +1055,75 @@ public partial class PosService
         p.CostingMethod == CostingMethod.WeightedAverage && p.AverageUnitCost > 0
             ? p.AverageUnitCost : p.CostPrice;
 
+
+    /// <summary>ออก **เลขใบกำกับภาษีอย่างย่อ** (§86/6) ให้บิลที่ปิดแล้ว — ตรึงลงบิลพร้อม
+    /// รหัสสาขา (§86/4 ห้ามแก้ย้อนหลัง)
+    ///
+    /// <para>ทำไมไม่ใช้ <c>OrderNumber</c>: เลขนั้นนับต่อ**บริษัท** และนับใบที่ถูกยกเลิกด้วย
+    /// ⇒ เลขใบกำกับจะกระโดดและซ้ำข้ามสาขา · §86/6 ต้อง gap-free **ต่อสาขา**</para>
+    ///
+    /// <para>ทำไมต้องล็อก: สองแคชเชียร์ของสาขาเดียวกันปิดบิลพร้อมกันจะได้เลขซ้ำ ·
+    /// คีย์ต้อง deterministic ข้าม process (`AdvisoryLockKey` ไม่ใช่ `HashCode.Combine`) ·
+    /// ล็อกอยู่ในธุรกรรมของผู้เรียก (ปิดบิลมีธุรกรรมครอบอยู่แล้ว)</para>
+    ///
+    /// <para>ไม่มีสิทธิ์ออก (ยังไม่จด VAT / ไม่มี ภ.พ.06 / บิลไม่มี VAT) → **ไม่ออกเลข**
+    /// และหัวสลิปเป็น "ใบเสร็จรับเงิน" — ห้ามพิมพ์คำว่าใบกำกับโดยไม่มีสิทธิ์</para></summary>
+    private async Task IssueAbbreviatedInvoiceNumberAsync(Guid companyId, PosOrder order)
+    {
+        if (order.AbbreviatedInvoiceNumber != null) return;   // ออกไปแล้ว — idempotent
+
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.IsVatRegistered, c.IsRetailApproved, c.PhoR06ApprovedDate })
+            .FirstOrDefaultAsync();
+        if (company == null) return;
+
+        var issuedAt = order.CompletedAt ?? DateTime.UtcNow;
+        var header = Accounting.Helpers.PosSlipHeader.Resolve(
+            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
+            order.VatAmount, issuedAt);
+
+        // รหัสสาขาตรึงลงบิลเสมอ แม้ออกอย่างย่อไม่ได้ — รายงานภาษีขายต้องรู้ว่าใบนี้
+        // ของสาขาไหน และค่านี้ต้องไม่เปลี่ยนเมื่อเครื่องย้ายสาขาภายหลัง
+        order.IssuerBranchCode ??= order.BranchId is Guid bid
+            ? await _db.Branches.AsNoTracking()
+                .Where(b => b.Id == bid && b.CompanyId == companyId)
+                .Select(b => b.TaxBranchCode)
+                .FirstOrDefaultAsync()
+            : null;
+
+        if (!header.CanIssueAbbreviated) return;
+
+        // เลขรันต่อ (สาขา, เดือนภาษี) — ตัวย่อจากเครื่อง ถ้าไม่ตั้งใช้ "ABB"
+        var prefixRoot = await _db.PosSessions.AsNoTracking()
+            .Where(x => x.Id == order.SessionId && x.CompanyId == companyId)
+            .Select(x => x.Terminal.AbbreviatedInvoicePrefix)
+            .FirstOrDefaultAsync();
+        var branchPart = string.IsNullOrWhiteSpace(order.IssuerBranchCode) ? "00000" : order.IssuerBranchCode;
+        var prefix = $"{(string.IsNullOrWhiteSpace(prefixRoot) ? "ABB" : prefixRoot)}-{branchPart}-{issuedAt:yyyyMM}-";
+
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            Accounting.Helpers.AdvisoryLockKey.For(companyId,
+                Accounting.Helpers.AdvisoryLockKey.DocumentSequence, prefix));
+
+        var last = await _db.PosOrders.IgnoreQueryFilters()
+            .Where(o => o.CompanyId == companyId && o.AbbreviatedInvoiceNumber != null
+                     && o.AbbreviatedInvoiceNumber.StartsWith(prefix))
+            .Select(o => o.AbbreviatedInvoiceNumber)
+            .MaxAsync();
+        var seq = 1;
+        if (last != null && int.TryParse(last.Substring(prefix.Length), out var parsed)) seq = parsed + 1;
+        order.AbbreviatedInvoiceNumber = $"{prefix}{seq:D5}";
+    }
+
     private async Task CreateSalesJournalEntryAsync(Guid companyId, PosOrder order, string userId)
     {
+        // เครื่องที่เปิดกะนี้ — ใช้เลือกบัญชีเงินสด/ธนาคารของสาขา (null ได้ = ใช้ผังมาตรฐาน)
+        var jeTerminal = await _db.PosSessions.AsNoTracking()
+            .Where(s => s.Id == order.SessionId && s.CompanyId == companyId)
+            .Select(s => s.Terminal)
+            .FirstOrDefaultAsync();
+
         // Sales / VAT / COGS / Inventory accounts — single source per company.
         var salesAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41000")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.Level >= 4);
@@ -1072,7 +1144,7 @@ public partial class PosService
             // No payment records — fall back to a single debit using the default cash
             // account so the JE still balances. Older orders without explicit payment
             // method end up here.
-            var cashAccount = await ResolvePaymentAccountAsync(companyId, PaymentMethod.Cash);
+            var cashAccount = await ResolvePaymentAccountAsync(companyId, PaymentMethod.Cash, jeTerminal);
             if (cashAccount == null) return;
             lines.Add(new(cashAccount.Id, order.NetAmount, 0, $"รับเงิน POS #{order.OrderNumber}"));
         }
@@ -1080,7 +1152,7 @@ public partial class PosService
         {
             foreach (var pay in paymentsToBook)
             {
-                var acct = await ResolvePaymentAccountAsync(companyId, pay.PaymentMethod);
+                var acct = await ResolvePaymentAccountAsync(companyId, pay.PaymentMethod, jeTerminal);
                 if (acct == null) continue;
                 // Use Amount (allocated to invoice), not ReceivedAmount, so cash-tendered-with-change
                 // posts the invoice value, not the full bill the customer handed over.
@@ -1157,7 +1229,8 @@ public partial class PosService
         }
 
         var journalRequest = new Models.DTOs.Accounting.CreateJournalEntryRequest(
-            DateTime.UtcNow, $"POS Sale #{order.OrderNumber}", order.OrderNumber, lines);
+            DateTime.UtcNow, $"POS Sale #{order.OrderNumber}", order.OrderNumber, lines,
+            BranchId: order.BranchId);
 
         try
         {
@@ -1507,7 +1580,17 @@ public partial class PosService
         DocumentNumber: null,
         TipAmount: o.TipAmount,
         CouponCode: o.CouponCode,
-        CouponDiscountAmount: o.CouponDiscountAmount);
+        CouponDiscountAmount: o.CouponDiscountAmount,
+        BranchId: o.BranchId,
+        WarehouseId: o.WarehouseId,
+        AbbreviatedInvoiceNumber: o.AbbreviatedInvoiceNumber,
+        IssuerBranchCode: o.IssuerBranchCode,
+        IssuerBranchLabel: Accounting.Helpers.PosSlipHeader.BranchLabel(o.IssuerBranchCode),
+        // บิลที่ออกเลขอย่างย่อไปแล้ว = หัวถูกตรึงตั้งแต่ตอนปิดบิล (§86/4 ห้ามแก้ย้อนหลัง)
+        // บิลที่ยังไม่ปิด ยังไม่รู้ผล — ปล่อย null ให้หน้าเว็บถามตอนจะพิมพ์
+        SlipTitle: o.AbbreviatedInvoiceNumber != null
+            ? Accounting.Helpers.PosSlipHeader.AbbreviatedTaxInvoice
+            : o.Status == PosOrderStatus.Completed ? Accounting.Helpers.PosSlipHeader.Receipt : null);
 
     private static OrderItemResponse MapOrderItem(PosOrderItem i) => new(
         i.Id, i.ProductId, i.ServicePackageId, i.ItemName, i.ItemCode,
@@ -1524,8 +1607,25 @@ public partial class PosService
     // the Thai SME chart-of-accounts seeded by SeedCoaService:
     //   1011 เงินสด / 1012 ธนาคาร / 1131 บัตรเครดิตค้างรับ
     // Fallback by prefix lets companies with a customized COA still resolve.
-    private async Task<Accounting.Models.Entities.ChartOfAccount?> ResolvePaymentAccountAsync(Guid companyId, PaymentMethod method)
+    private async Task<Accounting.Models.Entities.ChartOfAccount?> ResolvePaymentAccountAsync(
+        Guid companyId, PaymentMethod method, PosTerminal? terminal = null)
     {
+        // บัญชีที่ตั้งไว้ **บนเครื่อง** ชนะเสมอ — สาขาที่มีบัญชีธนาคาร/ลิ้นชักเงินสด
+        // ของตัวเองต้องลงคนละบัญชี ไม่งั้นเงินของทุกสาขากองรวมกันแล้วกระทบยอด
+        // ธนาคารรายสาขาไม่ได้เลย (ค่า null = ใช้ผังบัญชีตามวิธีจ่ายเหมือนเดิม)
+        var pinned = method == PaymentMethod.Cash ? terminal?.CashAccountId : terminal?.BankAccountId;
+        if (pinned is Guid acctId)
+        {
+            var pinnedAccount = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.Id == acctId && a.CompanyId == companyId);
+            if (pinnedAccount != null) return pinnedAccount;
+            // ตั้งไว้แต่หาไม่เจอ (ถูกลบ/ย้ายบริษัท) → ตกไปใช้ผังบัญชีมาตรฐาน
+            // แต่ต้องดัง ไม่ใช่เงียบ — เงินจะลงบัญชีที่เจ้าของไม่ได้ตั้งใจ
+            _logger.LogWarning(
+                "เครื่อง POS {Terminal} ตั้งบัญชีรับเงิน {Account} ไว้ แต่ไม่พบในผังบัญชีของบริษัท {Company} — ใช้บัญชีมาตรฐานแทน",
+                terminal?.Name, acctId, companyId);
+        }
+
         string preferred; string prefix;
         switch (method)
         {

@@ -63,7 +63,11 @@ public record UpdateCompanyRequest(
     bool? IsSetupComplete,
     // ที่อยู่ภาษาอังกฤษ (โหมดเอกสาร en) — null = ไม่เปลี่ยน, "" = ล้าง (กลับไป
     // ใช้ตัวถอดอักษรอัตโนมัติ), อื่น ๆ = ตั้งค่า
-    string? AddressEn = null);
+    string? AddressEn = null,
+    // ภ.พ.06 — สิทธิ์ออกใบกำกับภาษีอย่างย่อ (§86/6) · ธง = เจตนา · วันที่ = หลักฐาน
+    // ต้องมีทั้งคู่ถึงจะออกได้ (ดู Helpers/PosSlipHeader) · null = ไม่แตะ
+    bool? IsRetailApproved = null,
+    DateTime? PhoR06ApprovedDate = null);
 
 public record CompanyResponse(
     Guid Id,
@@ -98,7 +102,10 @@ public record CompanyResponse(
     bool IsSetupComplete,
     SubscriptionSummary? Subscription,
     string? MyRole = null,   // current requesting user's role in this company
-    string? AddressEn = null);
+    string? AddressEn = null,
+    // เก็บแล้วต้อง echo กลับ — ไม่งั้นเปิดหน้าตั้งค่าแล้วติ๊กหาย
+    bool IsRetailApproved = false,
+    DateTime? PhoR06ApprovedDate = null);
 
 public record SubscriptionSummary(
     SubscriptionPlan Plan,

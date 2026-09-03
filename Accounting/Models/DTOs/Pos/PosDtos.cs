@@ -3,18 +3,32 @@ using Accounting.Models.Enums;
 namespace Accounting.Models.DTOs.Pos;
 
 // ===== POS Terminal =====
+// สาขา/คลัง/บัญชีรับเงิน — เพิ่มพร้อมกันทั้ง 3 record ตามเช็กลิสต์ "เก็บแล้วต้อง
+// echo กลับ" (ลืม Response = เปิดแก้แล้วบันทึก ค่าหายเงียบ ๆ)
 public record CreateTerminalRequest(
     string Name,
     PosBusinessMode BusinessMode,
     string? Location,
-    string? SettingsJson);
+    string? SettingsJson,
+    Guid? BranchId = null,
+    Guid? WarehouseId = null,
+    Guid? CashAccountId = null,
+    Guid? BankAccountId = null,
+    string? AbbreviatedInvoicePrefix = null);
 
 public record UpdateTerminalRequest(
     string? Name,
     PosBusinessMode? BusinessMode,
     string? Location,
     bool? IsActive,
-    string? SettingsJson);
+    string? SettingsJson,
+    // Guid.Empty = "ล้างค่า" (null = ไม่แตะ) — ต้องแยกสองความหมายนี้ ไม่งั้นถอด
+    // สาขาออกจากเครื่องไม่ได้เลย
+    Guid? BranchId = null,
+    Guid? WarehouseId = null,
+    Guid? CashAccountId = null,
+    Guid? BankAccountId = null,
+    string? AbbreviatedInvoicePrefix = null);
 
 public record TerminalResponse(
     Guid Id,
@@ -23,7 +37,16 @@ public record TerminalResponse(
     bool IsActive,
     string? Location,
     string? SettingsJson,
-    int OpenSessionCount);
+    int OpenSessionCount,
+    Guid? BranchId = null,
+    string? BranchName = null,
+    // รหัสสาขาสรรพากรของสาขานี้ (§86/4) — "00000" = สำนักงานใหญ่
+    string? BranchTaxCode = null,
+    Guid? WarehouseId = null,
+    string? WarehouseName = null,
+    Guid? CashAccountId = null,
+    Guid? BankAccountId = null,
+    string? AbbreviatedInvoicePrefix = null);
 
 // ===== POS Session =====
 public record OpenSessionRequest(
@@ -115,7 +138,21 @@ public record OrderResponse(
     string? DocumentNumber = null,
     decimal TipAmount = 0,
     string? CouponCode = null,
-    decimal CouponDiscountAmount = 0);
+    decimal CouponDiscountAmount = 0,
+    // ── สาขา/คลัง (snapshot ตอนเปิดบิล) + หัวสลิปที่เซิร์ฟเวอร์คำนวณให้ ──
+    // หน้าเว็บ **แสดง** อย่างเดียว ห้ามคำนวณเอง (defect class "สำเนามือฝั่ง JS"
+    // เดียวกับ docHeaderLabel / complianceIssues / MENU_SECTIONS)
+    Guid? BranchId = null,
+    Guid? WarehouseId = null,
+    string? AbbreviatedInvoiceNumber = null,
+    string? IssuerBranchCode = null,
+    // ข้อความรหัสสาขาที่พิมพ์บนกระดาษ ("สำนักงานใหญ่" / "สาขาที่ 00003") —
+    // null = ยังไม่รู้รหัสสาขา (ห้ามเดา)
+    string? IssuerBranchLabel = null,
+    // หัวสลิป: "ใบเสร็จรับเงิน" หรือ "ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ"
+    string? SlipTitle = null,
+    // เหตุผลที่ออกอย่างย่อไม่ได้ — โชว์เป็นคำเตือนพร้อมทางไปต่อ (null = ออกได้ปกติ)
+    string? AbbreviatedBlockedReason = null);
 
 // ===== Offline sale sync — atomic create+pay+complete, idempotent =====
 public record OfflineOrderRequest(

@@ -340,7 +340,8 @@ CompleteOrderAsync / SyncOfflineOrderAsync (PosService.Orders.cs:555 และ�
 | เฟส | สถานะ | หมายเหตุ |
 | --- | --- | --- |
 | **0** ยุบสต็อก | ✅ | `IStockLedger` + `StockLedger` · migration 6 ขั้น (คลังหลัก/ย้ายยอด/backfill `WarehouseId`/unique index) · ย้ายผู้เขียน **ครบทุกไฟล์ในรอบเดียว**: `PosService.Orders` 4 จุด · `DocumentService.ApplyStockMovementsAsync` 2 จุด · `ProductService` 3 จุด · `CmsCommerceService` 3 จุด · `ImportExportService` 2 จุด · `ProductionOrderService` 2 จุด · `StockCountService` · `ConsignmentService` · **`WarehouseService` ใบโอนคลัง 3 จุด** (ฝั่งที่เคยเขียน `WarehouseStock` อย่างเดียว) · `tools/stock_writer_check.py` (negative test ผ่าน) |
-| **1** เครื่องผูกสาขา | 🔨 backend เสร็จ | entity + migration + snapshot `PosOrder.BranchId/WarehouseId` (สืบทอดตอนแยกบิล · ตรึงตอนเปิดบิล ห้าม resolve สด) — เหลือ API/หน้าตั้งค่าเครื่อง + ป้ายสาขาบนหน้า POS + `ResolvePaymentAccount` |
+| **1** เครื่องผูกสาขา | ✅ | entity + migration + snapshot `PosOrder.BranchId/WarehouseId` (สืบทอดตอนแยกบิล · ตรึงตอนเปิดบิล ห้าม resolve สด) · DTO ครบ 3 record + ตัวแปลงตัวเดียว (`LoadScopeNamesAsync` แยกโหลดข้อมูลออกจากตรรกะ) · หน้า "⚙️ ตั้งค่าเครื่อง" ใน `pos.html` (สาขา/คลัง/ตัวย่อ) · ป้ายสาขาบนหัวหน้า POS ที่**เตือนเมื่อยังไม่ผูกสาขา** · `ResolvePaymentAccountAsync(.., terminal)` ให้บัญชีบนเครื่องชนะ · JE ของ POS ติดมิติสาขา (`BranchId` บนทั้งขายและคืนเงิน = ฐานของเฟส 5) |
+| **2** ภาษี | 🔨 ส่วนใหญ่เสร็จ | `Company.IsRetailApproved` + `PhoR06ApprovedDate` + หน้าตั้งค่า · `Helpers/PosSlipHeader` ตัดสินหัวสลิปที่เซิร์ฟเวอร์ **หน้าเว็บแสดงอย่างเดียว** (renderer ทั้งสองตัว: print window + ESC/POS) · เลขใบกำกับอย่างย่อ gap-free ต่อ (สาขา, เดือน) พร้อม advisory lock · `IssuerBranchCode` ตรึงลงบิล — เหลือคอลัมน์สาขาในรายงานภาษีขาย + `IssueTaxInvoiceAsync` ตั้ง `BranchId` |
 | **7** ครัวกลาง | 🔨 บางส่วน | `ProductionOrder.WarehouseId` + เบิก/รับที่คลังนั้น + ด่านของขาดดูยอด**ในคลัง** — เหลือการโอนอัตโนมัติหลังผลิต |
 
 **สิ่งที่พบเพิ่มระหว่างทำเฟส 0** (ไม่อยู่ในผลตรวจรอบแรก — เจอเพราะต้องอ่านทุกผู้เขียน):
@@ -366,6 +367,23 @@ CompleteOrderAsync / SyncOfflineOrderAsync (PosService.Orders.cs:555 และ�
    และตอนนี้มี `TransferPairId` ให้รายงานแยกออกจากการขาย/ซื้อได้
 7. **นำเข้าสต็อกยกมาซ้ำไฟล์เดิม** — เดิมล้างยอดเก่าด้วย `CurrentStock -=` อย่างเดียว
    ⇒ ยอดต่อคลังบวมขึ้นทุกรอบทั้งที่ยอดรวมถูก
+
+**สิ่งที่พบเพิ่มระหว่างทำเฟส 1-2:**
+
+8. **สลิป POS พิมพ์คำว่า "ใบกำกับภาษีอย่างย่อ" ทุกใบโดยไม่ตรวจอะไรเลย** — เป็น string
+   literal ใน `pos.html` ⇒ บริษัทที่ยังไม่ได้รับอนุมัติ **ภ.พ.06** (หรือยังไม่จด VAT ด้วยซ้ำ)
+   ก็ออกใบกำกับโดยไม่มีสิทธิ์ (§86/6) · ผู้ซื้อที่รับใบไปเคลมภาษีซื้อไม่ได้ตาม §82/5(5)
+   ทั้งที่หน้ากระดาษบอกว่าเป็นใบกำกับ. และระบบ**ไม่มีช่อง ภ.พ.06 เลยทั้งเรพ** — เพิ่ม
+   `Company.IsRetailApproved` + `PhoR06ApprovedDate` (ธง = เจตนา · วันที่ = หลักฐาน
+   ต้องมีทั้งคู่) + `Helpers/PosSlipHeader` เป็นตัวตัดสินตัวเดียว
+9. **มี renderer ของสลิปสองตัว** (print window HTML + ESC/POS thermal) — กฎ
+   "สอง renderer ห้าม drift" ใช้กับ POS ด้วย: ทั้งคู่รับ `slipTitle`/`branchLabel`/
+   `abbreviatedNo` จากเซิร์ฟเวอร์ ไม่คำนวณเอง
+10. **`nullable_arg_check` resolve ชื่อเมธอดแบบ global** ⇒ `PosService.Normalize(Guid?)`
+    ถูกจับคู่กับ `Normalize(decimal)` ของอีกไฟล์ **ฟ้องผิด 4 จุดบนโค้ดที่ถูกต้อง**.
+    ตามกฎ "checker ที่ฟ้องผิด = checker ที่พังแล้ว" แก้ที่ checker (ชั้นใกล้ชนะ:
+    ไฟล์ที่เรียกประกาศเองไหม — กติกาเดียวกับ `namespace_shadow_check`) ไม่ใช่เลี่ยงโค้ด ·
+    ผ่าน negative test ซ้ำแล้ว
 
 ---
 

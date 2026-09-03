@@ -5783,6 +5783,13 @@ public static class DatabaseMigrationHelper
             // ครัวกลาง: ใบสั่งผลิตเบิก/รับที่คลังไหน (null = คลังหลัก)
             """ALTER TABLE "ProductionOrders" ADD COLUMN IF NOT EXISTS "WarehouseId" uuid NULL;""",
 
+            // ═══ POS เฟส 2: สิทธิ์ออกใบกำกับภาษีอย่างย่อ (§86/6 · ภ.พ.06) ═══
+            // เดิมสลิป POS พิมพ์คำว่า "ใบกำกับภาษีอย่างย่อ" ทุกใบโดยไม่ตรวจอะไรเลย
+            // = ออกใบกำกับโดยไม่มีสิทธิ์ · ผู้ซื้อเคลมภาษีซื้อไม่ได้ตาม §82/5(5)
+            // default false = ทุกบริษัทเริ่มจาก "ยังไม่ได้รับอนุมัติ" (ปลอดภัยกว่าเดา)
+            """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "IsRetailApproved" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "PhoR06ApprovedDate" timestamp with time zone NULL;""",
+
             // ศูนย์ช่วยเหลือ (เอกสาร + วิดีโอสอนใช้งาน) — ระดับแพลตฟอร์ม ไม่มี CompanyId
             """CREATE TABLE IF NOT EXISTS "HelpResources" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "Title" varchar(300) NOT NULL DEFAULT '', "Description" text NULL, "Category" integer NOT NULL DEFAULT 1, "ModuleCode" varchar(50) NULL, "Kind" integer NOT NULL DEFAULT 1, "Provider" integer NOT NULL DEFAULT 0, "SourceUrl" text NULL, "StoragePath" text NULL, "FileName" text NULL, "FileSizeBytes" bigint NOT NULL DEFAULT 0, "DurationSeconds" integer NOT NULL DEFAULT 0, "ThumbnailUrl" text NULL, "IsPublished" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "ViewCount" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE INDEX IF NOT EXISTS "IX_HelpResources_Cat" ON "HelpResources" ("Category", "SortOrder") WHERE "IsDeleted" = false;""",
