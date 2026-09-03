@@ -110,6 +110,21 @@ public record SsoLoginRequest(
 
 /// <summary>ผูกบัญชีภายนอกขณะล็อกอินอยู่แล้ว — ไม่ต้องมีอีเมลจาก provider เลย
 /// (ตัวผู้ใช้ยืนยันด้วย JWT แล้ว + เพิ่งผ่าน OAuth มาสด ๆ)</summary>
+/// <summary>หน้าสมัคร (มาด้วยตั๋ว SSO) ขอผูกตัวตน provider เข้ากับบัญชีเดิมที่อีเมล X —
+/// Password ว่าง = แค่ "เช็ค" (มีบัญชีไหม + ส่งลิงก์ยืนยัน) · มี = ผูกทันทีถ้ารหัสถูก</summary>
+public record SsoLinkExistingRequest(
+    [Required] string SsoTicket,
+    [Required] string Email,
+    string? Password = null);
+
+public record SsoLinkExistingResponse(
+    bool Exists,
+    bool Linked,
+    bool EmailSent,
+    string? MaskedEmail,
+    string Message,
+    LoginResponse? Login = null);
+
 public record LinkExternalLoginRequest(
     [Required] string Provider,
     [Required] string IdToken);

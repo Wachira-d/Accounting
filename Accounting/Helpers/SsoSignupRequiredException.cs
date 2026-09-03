@@ -17,14 +17,27 @@ public class SsoSignupRequiredException : BusinessRuleException
     public string Ticket { get; }
     public string? SuggestedName { get; }
     public string? PictureUrl { get; }
+    /// <summary>อีเมลที่ provider ให้มา (null = LINE ที่ยังไม่ได้สิทธิ์ email) —
+    /// หน้าสมัครใช้เติมช่องอีเมลให้ และใช้เป็นค่าเริ่มต้นของช่อง "ผูกกับบัญชีเดิม"</summary>
+    public string? Email { get; }
 
     public SsoSignupRequiredException(
         string provider, string ticket, string? suggestedName, string? pictureUrl)
-        : base(SsoIdentityPolicy.SignupNeedsEmailMessage(provider), "SSO-NO-EMAIL")
+        : this(provider, ticket, suggestedName, pictureUrl, null,
+               SsoIdentityPolicy.SignupNeedsEmailMessage(provider), "SSO-NO-EMAIL") { }
+
+    /// <summary>กรณี provider ให้อีเมลมาแล้วแต่ **ยังไม่มีบัญชี** — เดิม throw ข้อความ
+    /// ให้ผู้ใช้ไปกดปุ่ม "ไปหน้าสมัคร" เอง ตอนนี้พาไปเลยพร้อมชื่อ/อีเมล/รูปที่ดึงได้
+    /// (ผู้ใช้กด SSO มาแล้ว ไม่ควรต้องกดซ้ำหรือพิมพ์ซ้ำ)</summary>
+    public SsoSignupRequiredException(
+        string provider, string ticket, string? suggestedName, string? pictureUrl,
+        string? email, string message, string ruleCode)
+        : base(message, ruleCode)
     {
         Provider = provider;
         Ticket = ticket;
         SuggestedName = suggestedName;
         PictureUrl = pictureUrl;
+        Email = email;
     }
 }

@@ -232,8 +232,24 @@ public class AuthController : ControllerBase
                 ssoTicket = ex.Ticket,
                 suggestedName = ex.SuggestedName,
                 pictureUrl = ex.PictureUrl,
+                // มีอีเมล = provider ให้มาแล้วแต่ยังไม่มีบัญชี (Google/Facebook) ·
+                // null = LINE ที่ยังไม่ได้สิทธิ์ email — หน้าสมัครใช้เติมช่อง/ตั้งค่าเริ่มต้นช่องผูกบัญชี
+                email = ex.Email,
+                // แยกสองเหตุให้หน้าเว็บเขียนป้ายถูก: ไม่มีอีเมล vs ไม่มีบัญชี
+                reason = ex.RuleCode,
             }, ex.Message));
         }
+    }
+
+    /// <summary>หน้าสมัครที่มาด้วยตั๋ว SSO: "ฉันมีบัญชีอยู่แล้ว" — เช็คอีเมล/ส่งลิงก์ยืนยัน/
+    /// ผูกด้วยรหัสผ่าน (ดู AuthService.SsoLinkExistingAsync) · ไม่ใช้คุกกี้ → ไม่เป็นเป้า CSRF ·
+    /// ตั๋วอายุ 20 นาทีต่อการกด OAuth 1 ครั้ง + lockout เดียวกับ login = ไม่เป็นช่องเดารหัส</summary>
+    [HttpPost("sso/link-existing")]
+    public async Task<ActionResult<ApiResponse<SsoLinkExistingResponse>>> SsoLinkExisting(
+        [FromBody] SsoLinkExistingRequest request)
+    {
+        var result = await _authService.SsoLinkExistingAsync(request);
+        return Ok(new ApiResponse<SsoLinkExistingResponse>(true, result, result.Message));
     }
 
     [HttpPost("refresh")]

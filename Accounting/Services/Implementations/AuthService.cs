@@ -631,8 +631,15 @@ public class AuthService : IAuthService
                 // หน้า login ไม่ได้ส่งธงนี้มา (และไม่ควรส่ง) ⇒ กดปุ่ม SSO ที่หน้า
                 // เข้าสู่ระบบโดยยังไม่เคยมีบัญชี จะถูกส่งกลับไปหน้าสมัครสมาชิก
                 // ซึ่งเป็นที่เดียวที่แสดงข้อความให้อ่านและมีช่องติ๊กให้ยินยอมจริง
+                // ⇒ **พาไปเลย** พร้อมตั๋วที่มีชื่อ/อีเมล/รูป — หน้าสมัครเติมให้หมด
+                // ผู้ใช้กรอกเพิ่มแค่รหัสผ่าน (หรือผูกกับบัญชีเดิมถ้าเคยสมัครด้วยอีเมลอื่น)
+                // ไม่ต้องกดปุ่ม provider ซ้ำ (code ใช้ได้ครั้งเดียว)
                 if (!request.AcceptedTerms)
-                    throw new InvalidOperationException(SsoIdentityPolicy.NoAccountMessage);
+                    throw new SsoSignupRequiredException(provider,
+                        JwtHelper.GenerateSsoSignupTicket(provider, providerUserId,
+                            identity.Name, emailNonNull, identity.PictureUrl, _config),
+                        identity.Name, identity.PictureUrl, emailNonNull,
+                        SsoIdentityPolicy.NoAccountMessage, "SSO-NO-ACCOUNT");
 
                 // Create new user via SSO (no password needed)
                 user = new User
@@ -733,6 +740,92 @@ public class AuthService : IAuthService
         await _db.SaveChangesAsync();
 
         return await GenerateLoginResponse(user);
+    }
+
+    /// <summary>หน้าสมัคร (มาถึงด้วยตั๋ว SSO): ผู้ใช้บอกว่า "ฉันมีบัญชีอยู่แล้วที่อีเมล X"
+    ///
+    /// สามจังหวะในเมธอดเดียว:
+    ///   1. **เช็ค** (ไม่ส่งรหัสผ่าน) — บอกว่าอีเมลนี้มีบัญชีไหม (หน้าสมัครเปิดเผยอยู่แล้ว
+    ///      ผ่าน "อีเมลนี้ถูกใช้งานแล้ว" จึงไม่ใช่ข้อมูลใหม่) ถ้ามี = ส่งลิงก์ยืนยันไปที่อีเมล
+    ///      นั้นทันที (เจ้าของอีเมลเท่านั้นที่กดได้ — กติกา "ค่าที่ตรงกัน ≠ พิสูจน์ตัวตน")
+    ///   2. **ผูกด้วยรหัสผ่าน** — รหัสผ่านของบัญชีเดิมคือหลักฐานความเป็นเจ้าของที่แข็งกว่า
+    ///      อีเมลตรงกัน ⇒ ผูกได้ทันที + ออก token เข้าระบบเลย (ใช้ lockout เดียวกับ login)
+    ///   3. ไม่มีบัญชี — บอกให้สมัครใหม่ด้วยอีเมลนั้นได้เลย (ไม่ throw: ไม่ใช่ error)
+    /// ตั๋วผูกกับตัวตน provider ที่ผ่าน OAuth มาสด ๆ (อายุ 20 นาที) — ตัวตนที่ถูกผูกไปแล้ว
+    /// ถูกปฏิเสธก่อนทุกอย่าง</summary>
+    public async Task<SsoLinkExistingResponse> SsoLinkExistingAsync(SsoLinkExistingRequest request)
+    {
+        var ticket = JwtHelper.ReadSsoSignupTicket(request.SsoTicket, _config)
+            ?? throw new BusinessRuleException(
+                "ตั๋วยืนยันตัวตนหมดอายุหรือไม่ถูกต้อง — กลับไปกดปุ่ม Google/LINE ที่หน้าเข้าสู่ระบบอีกครั้ง",
+                "SSO-TICKET-INVALID");
+        var providerName = SsoIdentityPolicy.DisplayName(ticket.Provider);
+
+        var used = await _db.UserExternalLogins.AnyAsync(x =>
+            x.Provider == ticket.Provider && x.ProviderUserId == ticket.ProviderUserId && x.ConfirmedAt != null);
+        if (used)
+            throw new BusinessRuleException(
+                $"บัญชี {providerName} นี้ผูกกับผู้ใช้ในระบบอยู่แล้ว — กดเข้าสู่ระบบด้วยปุ่ม {providerName} ได้เลย",
+                "SSO-TICKET-USED");
+
+        var email = (request.Email ?? "").Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+            throw new BusinessRuleException("กรุณากรอกอีเมลให้ครบ", "SSO-LINK-EMAIL");
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
+        if (user == null)
+            return new SsoLinkExistingResponse(false, false, false, null,
+                $"ยังไม่มีบัญชีสำหรับ {email} — สมัครใหม่ด้วยอีเมลนี้ได้เลย ระบบจะผูก {providerName} ให้อัตโนมัติ");
+
+        // ด่านสถานะบัญชี — บัญชีที่ถูกปิดต้องไม่ได้อะไรจากเส้นนี้ แม้แต่อีเมลชวนยืนยัน
+        var gate = UserLoginPolicy.Evaluate(user.Status, viaVerifiedSso: false);
+        if (!gate.Can) throw new UnauthorizedAccessException(gate.Reason);
+
+        var providerEmail = string.IsNullOrWhiteSpace(ticket.Email) ? user.Email : ticket.Email!;
+
+        if (string.IsNullOrEmpty(request.Password))
+        {
+            await SendSsoLinkConfirmationAsync(user, ticket.Provider, ticket.ProviderUserId, providerEmail, null);
+            return new SsoLinkExistingResponse(true, false, true, PiiMask.Email(user.Email),
+                $"มีบัญชีสำหรับอีเมลนี้แล้ว — เราส่งลิงก์ยืนยันการผูก {providerName} ไปที่ {PiiMask.Email(user.Email)} "
+                + "(อายุ 1 ชั่วโมง) หรือกรอกรหัสผ่านของบัญชีนั้นด้านล่างเพื่อผูกและเข้าระบบทันที");
+        }
+
+        // ── ผูกด้วยรหัสผ่าน — กติกา lockout เดียวกับ LoginAsync (ห้ามเป็นช่องเดารหัสผ่านใหม่) ──
+        if (user.LockoutEnd.HasValue && user.LockoutEnd > DateTime.UtcNow)
+        {
+            var remaining = (int)(user.LockoutEnd.Value - DateTime.UtcNow).TotalMinutes + 1;
+            throw new UnauthorizedAccessException($"บัญชีถูกล็อคชั่วคราว กรุณาลองใหม่ในอีก {remaining} นาที");
+        }
+        if (string.IsNullOrEmpty(user.PasswordHash))
+            throw new UnauthorizedAccessException(
+                "บัญชีนี้สมัครผ่าน Google/Facebook/LINE ไม่มีรหัสผ่าน — ใช้ปุ่ม \"ส่งลิงก์ยืนยันทางอีเมล\" แทน");
+        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        {
+            user.FailedLoginAttempts = (user.FailedLoginAttempts ?? 0) + 1;
+            if (user.FailedLoginAttempts >= _maxFailedAttempts)
+            {
+                user.LockoutEnd = DateTime.UtcNow.AddMinutes(_lockoutMinutes);
+                user.FailedLoginAttempts = 0;
+                await _db.SaveChangesAsync();
+                throw new UnauthorizedAccessException($"รหัสผ่านผิดเกินกำหนด บัญชีถูกล็อค {_lockoutMinutes} นาที");
+            }
+            await _db.SaveChangesAsync();
+            throw new UnauthorizedAccessException("รหัสผ่านไม่ถูกต้อง");
+        }
+
+        // รหัสผ่านถูก = เจ้าของบัญชีจริง ⇒ ผูกทันที (แจ้งอีเมลเจ้าของตามกติกา "ห้ามผูกเงียบ")
+        // ไม่ตั้ง EmailVerified ให้ — อีเมลของบัญชีไม่ได้ถูกยืนยันจากเส้นนี้
+        await LinkExternalLoginAsync(user, ticket.Provider, ticket.ProviderUserId, providerEmail,
+            confirmed: true, notify: true, markEmailVerified: false);
+        user.FailedLoginAttempts = 0;
+        user.LockoutEnd = null;
+        user.LastLoginAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        var login = await GenerateLoginResponse(user);
+        return new SsoLinkExistingResponse(true, true, false, PiiMask.Email(user.Email),
+            $"ผูกบัญชี {providerName} กับ {PiiMask.Email(user.Email)} แล้ว — ครั้งหน้ากดปุ่ม {providerName} เข้าได้เลย", login);
     }
 
     /// <summary>verify token กับ provider — ตัวกลางเดียวที่ทั้งเส้นล็อกอินและเส้น

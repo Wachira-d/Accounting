@@ -156,6 +156,11 @@ const API = {
     return this.post('/api/auth/sso', {
       provider, idToken, companyName, plan, acceptedTerms, policyVersion, invitationToken });
   },
+  // หน้าสมัครที่มาด้วยตั๋ว SSO: "มีบัญชีอยู่แล้ว" — password ว่าง = เช็ค+ส่งลิงก์ยืนยัน ·
+  // มี = ผูกทันที (คืน token) — ดู AuthService.SsoLinkExistingAsync
+  ssoLinkExisting(ssoTicket, email, password = null) {
+    return this.post('/api/auth/sso/link-existing', { ssoTicket, email, password });
+  },
   changePassword(data) { return this.post('/api/auth/change-password', data); },
 
   // Company scoped
