@@ -171,8 +171,8 @@
       <div class="tab active" data-type="" onclick="Page.setType(this)" data-i18n="common.all">ทั้งหมด</div>
       <!-- Revenue tabs -->
       <div class="tab tab-revenue" data-type="Invoice" onclick="Page.setType(this)">ใบแจ้งหนี้</div>
-      <div class="tab tab-revenue" data-type="TaxInvoice" onclick="Page.setType(this)">ใบกำกับภาษี</div>
-      <div class="tab tab-revenue" data-type="Receipt" onclick="Page.setType(this)">ใบเสร็จรับเงิน</div>
+      <div class="tab tab-revenue" data-type="TaxInvoice" title="เอกสารที่ชนิดข้อมูลเป็นใบกำกับภาษี (เลขชุด TIV) — หัวกระดาษจริงดูที่คอลัมน์ &quot;หัวกระดาษ&quot; ซึ่งอาจเป็น &quot;ใบกำกับภาษี/ใบเสร็จรับเงิน&quot; หรือ &quot;ใบเสร็จรับเงิน&quot; เมื่อ VAT = 0" onclick="Page.setType(this)">ใบกำกับภาษี</div>
+      <div class="tab tab-revenue" data-type="Receipt" title="เอกสารที่ชนิดข้อมูลเป็นใบเสร็จรับเงิน (เลขชุด REC) — ถ้ามี VAT หัวกระดาษจะพิมพ์ว่า &quot;ใบเสร็จรับเงิน/ใบกำกับภาษี&quot;" onclick="Page.setType(this)">ใบเสร็จรับเงิน</div>
       <div class="tab tab-revenue" data-type="Quotation" onclick="Page.setType(this)">ใบเสนอราคา</div>
       <div class="tab tab-revenue" data-type="DeliveryNote" onclick="Page.setType(this)">ใบส่งของ</div>
       <div class="tab tab-revenue" data-type="BillingNote" onclick="Page.setType(this)">ใบวางบิล</div>
@@ -187,6 +187,14 @@
       <div class="tab tab-expense" data-type="Expense" onclick="Page.setType(this)">ใบบันทึกค่าใช้จ่าย</div>
       <div class="tab tab-expense" data-type="PaymentVoucher" onclick="Page.setType(this)">ใบสำคัญจ่าย</div>
       <div class="tab tab-expense" data-type="CertificateInLieu" onclick="Page.setType(this)">ใบรับรองแทนใบเสร็จ</div>
+    </div>
+    <!-- สองแกนที่ไม่ใช่ฟังก์ชันของกันและกัน — เดิมไม่มีอะไรบนจอบอก ผู้ใช้จึงอ่านว่า
+         "หมวดแสดงเอกสารไม่ตรง" ทั้งที่ทั้งสองค่าถูกต้องคนละแกน (ดู DOCUMENT_FLOW §7) -->
+    <div id="docTabsHint" style="font-size:11.5px;color:var(--gray-500);margin:-6px 0 10px;line-height:1.7">
+      แท็บกรองด้วย <b>ชนิดข้อมูล</b> (ตัวที่กำหนดเลขที่และการลงบัญชี) ส่วนคอลัมน์
+      <b>หัวกระดาษ</b> คือชนิดตามกฎหมายที่พิมพ์จริง — สองอย่างนี้ต่างกันได้โดยถูกต้อง
+      เช่น ใบชนิด <i>ใบกำกับภาษี</i> ที่ VAT = 0 จะพิมพ์หัวว่า <i>ใบเสร็จรับเงิน</i>
+      · ใบเสร็จที่มี VAT พิมพ์หัวว่า <i>ใบเสร็จรับเงิน/ใบกำกับภาษี</i>
     </div>
 
     <div class="toolbar">
@@ -238,7 +246,7 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th style="width:36px"><input type="checkbox" id="docCheckAll" onchange="Page.toggleAllDocs(this.checked)"></th><th onclick="Page.setSort('number')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามเลขที่">เลขที่ <span id="sortInd_number" style="color:var(--primary);font-size:11px"></span></th><th data-i18n="common.type">ประเภท</th><th onclick="Page.setSort('date')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามวันที่"><span data-i18n="common.date">วันที่</span> <span id="sortInd_date" style="color:var(--primary);font-size:11px"></span></th><th>ผู้ติดต่อ</th><th class="text-right" onclick="Page.setSort('amount')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามยอดรวม">ยอดรวม <span id="sortInd_amount" style="color:var(--primary);font-size:11px"></span></th><th class="text-right">ค้างชำระ</th><th onclick="Page.setSort('status')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามสถานะ"><span data-i18n="common.status">สถานะ</span> <span id="sortInd_status" style="color:var(--primary);font-size:11px"></span></th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="docCheckAll" onchange="Page.toggleAllDocs(this.checked)"></th><th onclick="Page.setSort('number')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามเลขที่">เลขที่ <span id="sortInd_number" style="color:var(--primary);font-size:11px"></span></th><th title="ชนิดตามกฎหมายที่พิมพ์บนหัวกระดาษจริง — คำนวณจากสถานะของใบ (VAT · จ่ายครบ · ข้อมูลผู้ซื้อครบ §86/4) จึงอาจต่างจากแท็บด้านบนที่กรองด้วย &quot;ชนิดข้อมูล&quot; เช่น ใบชนิด TaxInvoice ที่ VAT=0 พิมพ์หัวว่า &quot;ใบเสร็จรับเงิน&quot;">หัวกระดาษ (ตามกฎหมาย)</th><th onclick="Page.setSort('date')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามวันที่"><span data-i18n="common.date">วันที่</span> <span id="sortInd_date" style="color:var(--primary);font-size:11px"></span></th><th>ผู้ติดต่อ</th><th class="text-right" onclick="Page.setSort('amount')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามยอดรวม">ยอดรวม <span id="sortInd_amount" style="color:var(--primary);font-size:11px"></span></th><th class="text-right">ค้างชำระ</th><th onclick="Page.setSort('status')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามสถานะ"><span data-i18n="common.status">สถานะ</span> <span id="sortInd_status" style="color:var(--primary);font-size:11px"></span></th><th data-i18n="common.manage">จัดการ</th></tr></thead>
         <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
@@ -2246,6 +2254,82 @@
       // ===== Adjusting JE Lines (Option 1) =====
 
       _adjState: { docId: null, lines: [] },
+
+      /** ใบนี้มีบรรทัดที่ลงผังบัญชี "สินทรัพย์ถาวร" ไหม
+       *
+       *  เกณฑ์ = รหัสผังขึ้นต้น 12 (ที่ดิน อาคาร อุปกรณ์ ยานพาหนะ ฯลฯ ตามผัง
+       *  มาตรฐานของระบบ) และเป็นเอกสาร**ฝั่งซื้อ** — ใบขายที่บังเอิญอ้างผัง 12
+       *  (เช่นขายทรัพย์สินออก) ไม่ใช่การ "ได้มา" จึงไม่ต้องชวนลงทะเบียน */
+      _docHasAssetAccountLine(d) {
+        const buySide = ['PurchaseInvoice', 'Expense', 'PaymentVoucher', 'GoodsReceiptNote'];
+        if (!buySide.includes(d.documentType)) return false;
+        return (d.lines || []).some(l => String(l.accountCode || '').startsWith('12'));
+      },
+
+      /** แผง "สินทรัพย์ถาวร" บนหน้ารายละเอียดเอกสาร
+       *
+       *  ตอบคำถามที่หน้านี้เคยตอบไม่ได้: "ใบนี้ลงเป็นสินทรัพย์แล้วหรือยัง"
+       *  — ถ้าลงแล้วโชว์รายการ + สถานะรอตรวจ · ถ้ายังไม่ลงก็บอกตรง ๆ พร้อมปุ่ม
+       *  ไปสร้าง **ไม่ใช่เงียบ** (ผู้ใช้รายงานว่า "ไม่มีให้กดไปสร้างทรัพย์สิน
+       *  ไม่มีการเช็คว่าลงเป็นทรัพย์สินรึยัง")
+       *
+       *  ⚠️ ใบที่ยังไม่อนุมัติ = ยังไม่ถึงจังหวะลงทะเบียน (ระบบสร้างให้ตอนอนุมัติ)
+       *  จึงบอกว่า "จะสร้างให้เมื่ออนุมัติ" ไม่ใช่ "ยังไม่ได้ลงทะเบียน" ซึ่งชวนให้
+       *  ผู้ใช้ไปสร้างซ้ำด้วยมือแล้วได้สินทรัพย์สองรายการจากใบเดียว */
+      async renderDocAssetSection(docId) {
+        const host = document.getElementById('docAssetPanel_' + docId);
+        if (!host) return;
+        const api = Layout.api(); if (!api) return;
+        let list = [];
+        try {
+          const res = await api.getAssetsByDocument(docId);
+          list = res?.data || [];
+        } catch (e) {
+          host.innerHTML = `<div style="color:#dc2626;font-size:12px">โหลดข้อมูลสินทรัพย์ไม่สำเร็จ: ${this.escapeHtml(e.message)}</div>`;
+          return;
+        }
+        // ใช้ `_currentDoc` ที่เส้น openDetail ตั้งไว้แล้ว — ห้ามสร้างตัวแปรใหม่
+        // ที่ไม่มีใครเซ็ต (จะได้ status undefined แล้วเงื่อนไข approved ผิดเสมอ)
+        const doc = this._currentDoc || {};
+        const approved = !['Draft', 'WaitingApproval', 'Rejected'].includes(doc.status);
+
+        if (!list.length) {
+          host.innerHTML = `
+            <h4 style="font-size:14px;margin-bottom:8px">🏗️ สินทรัพย์ถาวร</h4>
+            <div style="border:1px solid #fcd34d;background:#fffbeb;border-radius:8px;padding:12px;font-size:13px;color:#78350f">
+              <div style="font-weight:600;margin-bottom:4px">
+                ${approved ? 'ใบนี้ยังไม่ได้ลงทะเบียนเป็นสินทรัพย์' : 'ยังไม่ถึงจังหวะลงทะเบียน'}
+              </div>
+              <div style="font-size:12px;line-height:1.7;margin-bottom:${approved ? '10px' : '0'}">
+                ${approved
+                  ? 'ใบนี้มีบรรทัดที่ลงผังบัญชีหมวดสินทรัพย์ (12xxx) แต่ยังไม่มีรายการในทะเบียนสินทรัพย์ — ค่าเสื่อมราคาจะไม่ถูกคำนวณจนกว่าจะลงทะเบียน (TFRS for NPAEs บทที่ 10)'
+                  : 'ระบบจะสร้างรายการสินทรัพย์ให้อัตโนมัติเมื่อ<b>อนุมัติ</b>เอกสารใบนี้ — ไม่ต้องสร้างเองล่วงหน้า มิฉะนั้นจะได้สินทรัพย์ซ้ำสองรายการจากใบเดียว'}
+              </div>
+              ${approved ? '<a href="/pages/fixed-assets.html" class="btn btn-sm btn-warning">➕ ไปทะเบียนสินทรัพย์</a>' : ''}
+            </div>`;
+          return;
+        }
+
+        const pending = list.filter(a => a.needsReview).length;
+        host.innerHTML = `
+          <h4 style="font-size:14px;margin-bottom:8px">🏗️ สินทรัพย์ถาวรจากใบนี้ (${list.length})</h4>
+          ${pending ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;font-size:12px;color:#78350f;margin-bottom:8px">
+            มี ${pending} รายการที่ระบบสร้างให้อัตโนมัติและ<b>ยังไม่ผ่านการยืนยัน</b> —
+            ค่าเสื่อมจะคำนวณถูกต้องก็ต่อเมื่อตรวจอายุการใช้งาน/วิธีคิดค่าเสื่อมแล้ว
+          </div>` : ''}
+          <table class="table" style="font-size:12px">
+            <thead><tr><th>รหัส</th><th>ชื่อ</th><th class="text-right">ราคาทุน</th><th>สถานะ</th><th></th></tr></thead>
+            <tbody>${list.map(a => `<tr>
+              <td style="font-family:ui-monospace,monospace">${this.escapeHtml(a.assetCode || '')}</td>
+              <td>${this.escapeHtml(a.name || '')}</td>
+              <td class="text-right">${Layout.money(a.acquisitionCost)}</td>
+              <td>${a.needsReview
+                ? '<span class="badge" style="background:#fbbf24;color:#78350f">⚠️ รอตรวจ</span>'
+                : Layout.statusBadge(a.status)}</td>
+              <td class="text-right"><a class="btn btn-sm btn-ghost" href="/pages/fixed-assets.html?assetId=${a.id}">เปิด →</a></td>
+            </tr>`).join('')}</tbody>
+          </table>`;
+      },
 
       /** แผง "รายการบัญชี (JE)" บนหน้าเอกสาร — กางบรรทัด Dr/Cr จริงจาก GL
        *  พร้อมปุ่มแก้ผังบัญชีในตัว. เดิมโชว์แค่ยอดรวมต่อใบ ผู้ใช้จึงไม่มีทางเห็น
@@ -9090,10 +9174,17 @@
               // บรรทัด Dr/Cr จาก GL และใส่ปุ่มแก้ผังบัญชีให้ในตัว
               extraSections += `<div id="docJournalPanel_${d.id}" style="margin-top:16px"></div>`;
             }
+            // แผง "สินทรัพย์ถาวร" — โชว์เฉพาะใบฝั่งซื้อที่มีบรรทัดลงผังหมวดสินทรัพย์
+            // (เดิมระบบสร้าง DRAFT ให้อัตโนมัติแล้วแจ้งด้วย toast 12 วินาที ⇒
+            // ผู้ใช้ที่เปิดใบย้อนหลังไม่มีทางรู้เลยว่าลงทะเบียนแล้วหรือยัง)
+            if (this._docHasAssetAccountLine(d)) {
+              extraSections += `<div id="docAssetPanel_${d.id}" style="margin-top:16px"></div>`;
+            }
             if (extraSections) {
               document.getElementById('detailContent').innerHTML += extraSections;
             }
             if (journals.length) this.renderDocJournalSection(d.id);
+            if (this._docHasAssetAccountLine(d)) this.renderDocAssetSection(d.id);
             // #23 Comments widget — mount thread + activity log
             const commentsHost = document.createElement('div');
             commentsHost.id = `commentsMount-${id}`;

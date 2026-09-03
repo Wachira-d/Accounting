@@ -677,7 +677,17 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-03 (rev 24 — **เก็บงานค้างจากการตรวจซ้ำ**:_
+_Last verified against codebase: 2026-09-03 (rev 25 — **รอบผู้ใช้รายงาน 6 ข้อ**:_
+_(1) หน้า "ติดต่อเรา" ของเว็บ CMS โชว์เบอร์/อีเมลตัวอย่าง (`02-XXX-XXXX`) ที่ seed_
+_ฝังเป็นข้อความตายตัว → เปลี่ยนเป็นโทเคน `{{company.phone}}` (`Helpers/CmsContentTokens`)_
+_แทนค่าตอนเรนเดอร์ + `Site.ContactPhone/ContactEmail/LineId/FacebookUrl/InstagramUrl`_
+_ให้ override ระดับเว็บ (ว่าง = ใช้ของบริษัท) + migration ล้าง placeholder ที่ค้างในฐาน_
+_(2) `Layout.jsArg()` — ค่าที่ฝังใน JS string ของ onclick ต้องหนีแบบ JS ไม่ใช่ HTML_
+_(3) ศูนย์ช่วยเหลือ `HelpResource` (ระดับแพลตฟอร์ม ไม่มี CompanyId): วิดีโอ/คู่มือ_
+_อัปโหลดเองหรือฝัง YouTube/Facebook/TikTok · แยกสองแกน หมวด (สอนเรื่องอะไร) กับ_
+_ModuleCode (ของธุรกิจไหน) · `/api/help` + หน้า `help.html`/`admin-help.html` ·_
+_CSP `frame-src` เพิ่มโดเมนวิดีโอ มิฉะนั้นเบราว์เซอร์บล็อกเงียบ)_
+_ก่อนหน้า: 2026-09-03 (rev 24 — **เก็บงานค้างจากการตรวจซ้ำ**:_
 _(1) ปิดช่องเลี่ยงโควตา — `OriginModule` ย้ายจาก request DTO ไปเป็นพารามิเตอร์ของเมธอด_
 _(2) `lodging.promo` unpublish (ขายฟีเจอร์ที่ยังไม่มี) (3) สวิตช์ภารกิจแลกโควตา 3 ชั้น_
 _มี endpoint + หน้าจอแอดมินจริงแล้ว (4) ลบ `GetEnabledAddOnCodesAsync` ที่ไม่มีใครเรียก_

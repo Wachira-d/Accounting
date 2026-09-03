@@ -5738,6 +5738,9 @@ public static class DatabaseMigrationHelper
             // ตายตัว ⇒ ลูกค้ากรอกเบอร์จริงในหน้าตั้งค่าแล้วหน้าเว็บยังโชว์ตัวอย่างอยู่
             // แก้โค้ด seeder อย่างเดียวไม่พอ — เว็บที่สร้างไปแล้วยังถือข้อความเก่า
             // (บทเรียนเดียวกับ OcrLearnedPatterns.ExtractionRegex / VendorKnownGoodValues)
+            // ศูนย์ช่วยเหลือ (เอกสาร + วิดีโอสอนใช้งาน) — ระดับแพลตฟอร์ม ไม่มี CompanyId
+            """CREATE TABLE IF NOT EXISTS "HelpResources" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "Title" varchar(300) NOT NULL DEFAULT '', "Description" text NULL, "Category" integer NOT NULL DEFAULT 1, "ModuleCode" varchar(50) NULL, "Kind" integer NOT NULL DEFAULT 1, "Provider" integer NOT NULL DEFAULT 0, "SourceUrl" text NULL, "StoragePath" text NULL, "FileName" text NULL, "FileSizeBytes" bigint NOT NULL DEFAULT 0, "DurationSeconds" integer NOT NULL DEFAULT 0, "ThumbnailUrl" text NULL, "IsPublished" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "ViewCount" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
+            """CREATE INDEX IF NOT EXISTS "IX_HelpResources_Cat" ON "HelpResources" ("Category", "SortOrder") WHERE "IsDeleted" = false;""",
             """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "ContactPhone" varchar(50) NULL;""",
             """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "ContactEmail" varchar(256) NULL;""",
             """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "LineId" varchar(100) NULL;""",

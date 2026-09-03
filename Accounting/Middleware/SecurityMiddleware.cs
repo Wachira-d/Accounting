@@ -115,7 +115,13 @@ public class SecurityMiddleware
             // (img-src มี blob: อยู่แล้ว รูปภาพแนบจึงเปิดได้ แต่ PDF เปิดไม่ได้)
             // accounts.google.com/www.facebook.com — One Tap และ FB.login วาด
             // iframe ของตัวเองลงหน้า (ปุ่ม SSO ที่เหลือใช้ redirect ไม่ต้องใช้)
-            "frame-src 'self' blob: data: https://accounts.google.com https://www.facebook.com; " +
+            // ศูนย์ช่วยเหลือฝังวิดีโอสอนใช้งานจาก YouTube/Facebook/TikTok —
+            // ⚠️ **CSP เป็น allow-list**: โดเมนที่ไม่ได้ระบุถูกบล็อกเงียบ ผู้ใช้เห็น
+            // แค่กรอบว่างโดยไม่มี error ให้ไล่ (บทเรียนจริง: ปุ่ม Google SSO ที่
+            // ขึ้นข้อความโทษตัวบล็อกโฆษณาทั้งที่ CSP ของเราเองเป็นคนบล็อก)
+            // เพิ่มผู้ให้บริการใหม่ = ต้องเพิ่มที่นี่ **และ** ใน HelpMediaEmbed
+            "frame-src 'self' blob: data: https://accounts.google.com https://www.facebook.com "
+            + "https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com; " +
             "object-src 'self' blob: data:; " +
             // 'self' (not 'none') — the modern equivalent of X-Frame-Options
             // SAMEORIGIN; lets first-party pages embed the OCR PDF/image

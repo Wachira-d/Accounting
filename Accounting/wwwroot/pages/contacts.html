@@ -91,7 +91,7 @@
           </div>
           <div class="form-row">
             <div class="form-group form-checkbox"><input type="checkbox" id="fIsCustomer" checked onchange="Page.onCustomerToggle()"><label for="fIsCustomer">ลูกค้า</label></div>
-            <div class="form-group form-checkbox"><input type="checkbox" id="fIsSupplier"><label for="fIsSupplier">ผู้จำหน่าย</label></div>
+            <div class="form-group form-checkbox"><input type="checkbox" id="fIsSupplier" checked><label for="fIsSupplier">ผู้จำหน่าย</label></div>
           </div>
           <div class="form-row" id="creditLimitRow">
             <div class="form-group" style="flex:1">
@@ -776,8 +776,12 @@
         const cl = document.getElementById('fCreditLimit'); if (cl) cl.value = '';
         const ch = document.getElementById('creditLimitHint'); if (ch) ch.textContent = '';
         document.getElementById('fContactType').value = '2';
+        // ผู้ติดต่อรายใหม่ติ๊กทั้งลูกค้าและผู้จำหน่ายไว้ก่อน — คู่ค้าส่วนใหญ่ของ SME
+        // เป็นได้ทั้งสองฝั่ง (ซื้อของจากร้านเดียวกับที่ขายให้) และการ "ติ๊กเกิน"
+        // ไม่ทำให้เกิดความเสียหาย ต่างจากการ "ติ๊กขาด" ที่ทำให้ผู้ติดต่อไม่โผล่ใน
+        // ตัวเลือกตอนออกเอกสารอีกฝั่ง แล้วผู้ใช้ต้องกลับมาแก้ทีหลังโดยไม่รู้สาเหตุ
         document.getElementById('fIsCustomer').checked = true;
-        document.getElementById('fIsSupplier').checked = false;
+        document.getElementById('fIsSupplier').checked = true;
         this.onCustomerToggle();
         // Reset GL override dropdowns to "ใช้ค่าเริ่มต้นของระบบ" — a
         // stale selection from a previous open would silently pin the

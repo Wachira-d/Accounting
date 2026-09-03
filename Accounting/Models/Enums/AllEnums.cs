@@ -119,6 +119,41 @@ public enum AddOnGrantSource
     BundledInPlan = 3
 }
 
+/// <summary>หมวดของเนื้อหาช่วยเหลือ — "สอนเรื่องอะไร"
+/// (คนละแกนกับ `HelpResource.ModuleCode` ที่บอกว่า "ของธุรกิจไหน")</summary>
+public enum HelpCategory
+{
+    /// <summary>เริ่มต้นใช้งาน · ตั้งค่าบริษัทครั้งแรก</summary>
+    GettingStarted = 1,
+    /// <summary>ระบบบัญชี — ผังบัญชี · สมุดรายวัน · งบการเงิน</summary>
+    Accounting = 2,
+    /// <summary>เอกสาร — ใบเสนอราคา/ใบกำกับ/ใบเสร็จ และการแปลงเอกสาร</summary>
+    Documents = 3,
+    /// <summary>ภาษี — ภ.พ.30 · หัก ณ ที่จ่าย · e-Tax</summary>
+    Tax = 4,
+    /// <summary>เงินเดือน · ประกันสังคม</summary>
+    Payroll = 5,
+    /// <summary>สินค้าคงคลัง · ต้นทุน</summary>
+    Inventory = 6,
+    /// <summary>ฟีเจอร์เฉพาะธุรกิจ (ดูคู่กับ ModuleCode)</summary>
+    BusinessFeature = 7,
+    /// <summary>รายงาน · การวิเคราะห์</summary>
+    Reports = 8,
+    Other = 99,
+}
+
+/// <summary>ชนิดของสื่อในศูนย์ช่วยเหลือ</summary>
+public enum HelpResourceKind
+{
+    Video = 1,
+    /// <summary>เอกสาร PDF/คู่มือที่อัปโหลด</summary>
+    Document = 2,
+    /// <summary>บทความสั้นในระบบ (ใช้ Description เป็นเนื้อหา)</summary>
+    Article = 3,
+    /// <summary>ลิงก์ไปหน้าอื่น (เอกสารภายนอก/บล็อก)</summary>
+    Link = 4,
+}
+
 public enum PricingMethod
 {
     /// <summary>ต่อหน่วยงานที่สำเร็จ (ต่อเอกสาร OCR / ต่อบรรทัด statement)

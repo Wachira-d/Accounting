@@ -391,6 +391,8 @@ public class AccountingDbContext : DbContext
     // Content
     public DbSet<SitePage> SitePages => Set<SitePage>();
     public DbSet<SitePageTranslation> SitePageTranslations => Set<SitePageTranslation>();
+    /// <summary>ศูนย์ช่วยเหลือ — ระดับแพลตฟอร์ม ไม่มี CompanyId จึงไม่มี tenant filter</summary>
+    public DbSet<HelpResource> HelpResources => Set<HelpResource>();
     public DbSet<PageBlock> PageBlocks => Set<PageBlock>();
     public DbSet<PageBlockTranslation> PageBlockTranslations => Set<PageBlockTranslation>();
     public DbSet<BlockTemplate> BlockTemplates => Set<BlockTemplate>();

@@ -223,6 +223,15 @@ public class FixedAssetService : IFixedAssetService
     /// แล้ว NeedsReview=true (ยังไม่ผ่านการยืนยันจากผู้ใช้). UI โชว์ banner
     /// เตือน + บังคับให้กรอก UsefulLifeMonths/DepreciationMethod/Location
     /// ก่อนถึงจะเริ่มคิดค่าเสื่อมจริงได้.</summary>
+    public async Task<List<FixedAssetResponse>> GetByDocumentAsync(Guid companyId, Guid documentId)
+    {
+        var items = await _db.FixedAssets.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.SourceDocumentId == documentId)
+            .OrderBy(a => a.AssetCode)
+            .ToListAsync();
+        return items.Select(MapToResponse).ToList();
+    }
+
     public async Task<List<FixedAssetResponse>> GetNeedsReviewAsync(Guid companyId)
     {
         var items = await _db.FixedAssets.AsNoTracking()

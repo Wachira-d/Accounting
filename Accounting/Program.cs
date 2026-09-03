@@ -859,6 +859,8 @@ var publicUploadPrefixes = new[]
     "/uploads/slips",
     // สลิปมัดจำการจองที่พัก (แขกอัปโหลดผ่าน token · พนักงานเปิดดูตอนยืนยัน) ชื่อไฟล์ GUID
     "/uploads/lodging-slips",
+    // สื่อของศูนย์ช่วยเหลือ (วิดีโอ/คู่มือที่ผู้ให้บริการอัปโหลด) — ลูกค้าทุกรายเปิดดู
+    "/uploads/help-media",
 };
 app.Use(async (ctx, next) =>
 {

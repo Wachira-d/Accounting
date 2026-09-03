@@ -601,6 +601,7 @@ const API = {
       // สินทรัพย์ที่ระบบสร้างอัตโนมัติจาก PV/PI และยังไม่ผ่านการ "ยืนยัน"
       // (NeedsReview=true) — UI ใช้เป็น badge เตือนผู้ใช้
       getAssetsNeedsReview: () => API.get(`${base}/fixedasset/needs-review`),
+      getAssetsByDocument: (docId) => API.get(`${base}/fixedasset/by-document/${docId}`),
       createAsset: (d) => API.post(`${base}/fixedasset`, d),
       updateAsset: (id, d) => API.put(`${base}/fixedasset/${id}`, d),
       deleteAsset: (id) => API.del(`${base}/fixedasset/${id}`),

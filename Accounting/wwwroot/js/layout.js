@@ -392,7 +392,7 @@ const Layout = {
   /** หน้าที่แสดงข้อมูล **ข้ามบริษัท** — เข้าได้เฉพาะแอดมินของแพลตฟอร์ม
    *  (ด่านจริงอยู่ที่ API ซึ่งบังคับ role SystemAdmin — ตรงนี้กันไม่ให้หน้าจอโผล่
    *   ให้ลูกค้าเห็นและกันการเดา URL ตรง ๆ) */
-  PLATFORM_ADMIN_PAGES: ['ai-usage', 'admin-company-usage', 'admin-addons'],
+  PLATFORM_ADMIN_PAGES: ['ai-usage', 'admin-company-usage', 'admin-addons', 'admin-help'],
 
   /** เรียกจากหน้าแอดมินแพลตฟอร์มโดยตรง — รอสิทธิ์จากเซิร์ฟเวอร์ก่อนตัดสิน
    *  (ค่าจาก localStorage ผู้ใช้แก้เองได้ จึงไม่ใช้เป็นตัวตัดสิน) */
@@ -1094,6 +1094,8 @@ const Layout = {
       description: 'ใครใช้ AI เท่าไร แยกรายลูกค้า/ช่องทาง (หน้าเว็บ vs API) · ต้นทุนจริง · สัดส่วนที่ระบบตอบเองได้' },
     { id: 'admin-company-usage', label: 'การใช้งานรายบริษัท', icon: '🏢', href: '/pages/admin-company-usage.html', platformAdmin: true,
       description: 'รายเดือน: แต่ละบริษัทออกเอกสารอะไรกี่ใบ · สแกน OCR · เรียก AI (จ่ายจริงเท่าไร) · ส่งอีเมล/e-Tax' },
+    { id: 'admin-help', label: 'จัดการคู่มือ/วิดีโอสอน', icon: '🎓', href: '/pages/admin-help.html', platformAdmin: true,
+      description: 'อัปโหลดวิดีโอสอนหรือวางลิงก์ YouTube/Facebook/TikTok · แยกหมวดตามเรื่องและตามโมดูลธุรกิจ · เผยแพร่/พักไว้เป็นร่างได้' },
     { id: 'admin-addons', label: 'ส่วนเสริมและราคา', icon: '💰', href: '/pages/admin-addons.html', platformAdmin: true,
       description: 'แคตตาล็อกส่วนเสริม: ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย (ราคาเก่าไม่ถูกแก้ย้อนหลัง)' },
     { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
@@ -1157,6 +1159,8 @@ const Layout = {
       description: 'แพ็กเกจหลัก (User-level) ครอบหลายบริษัทใต้ License เดียว — แนะนำสำหรับเจ้าของหลายบริษัท / นักบัญชีดูแลหลายลูกค้า' },
     { id: 'subscription', label: 'แพ็กเกจของบริษัทนี้', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
       description: 'แพ็กเกจระดับบริษัท (Company-level) — ใช้เมื่อต้องการแยกบิลแยกใบกำกับ' },
+    { id: 'help', label: 'คู่มือ & วิดีโอสอนใช้งาน', icon: '🎓', href: '/pages/help.html',
+      description: 'วิดีโอสอนใช้งานและคู่มือ แยกตามเรื่อง (บัญชี · ภาษี · เงินเดือน) และตามธุรกิจ (ที่พัก · POS · เว็บไซต์)' },
     { id: 'addons', label: 'ส่วนเสริมของฉัน', icon: '🧩', href: '/pages/addons.html',
       description: 'เปิด/ปิดส่วนเสริมที่คิดเงินแยกจากแพ็กเกจ · ดูโควตาเอกสารเดือนนี้ · ซื้อโควตาเพิ่ม' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',
