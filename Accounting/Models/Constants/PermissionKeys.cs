@@ -83,6 +83,11 @@ public static class PermissionKeys
     public const string CmsOrderManage    = P + "CMS.OrderManage";
     public const string CmsSiteSettings   = P + "CMS.SiteSettings";
 
+    // ───── Lodging (ธุรกิจที่พัก) ─────
+    // Manage = front desk: จอง/ยืนยัน/เช็คอิน-เอาต์/folio/แม่บ้าน · Settings = ตั้งค่าที่พัก/ห้อง/ราคา/นโยบาย
+    public const string LodgingManage     = P + "Lodging.Manage";
+    public const string LodgingSettings   = P + "Lodging.Settings";
+
     // ───── Documents ─────
     // Blanket keys — historical, still honoured. A user holding any blanket
     // key bypasses the per-direction split below (so existing role templates
@@ -190,6 +195,10 @@ public static class PermissionKeys
         new(CmsLeadAssign,    "CMS",      "กระจาย Lead",              "assign ให้ทีมขาย"),
         new(CmsOrderManage,   "CMS",      "จัดการ Order ที่ลูกค้าสั่งจากเว็บ", "shopping cart orders"),
         new(CmsSiteSettings,  "CMS",      "ตั้งค่าเว็บไซต์",          "subdomain · theme · SEO"),
+
+        // Lodging / ที่พัก
+        new(LodgingManage,    "ที่พัก",   "จัดการการจองที่พัก (front desk)", "จอง · ยืนยันมัดจำ · เช็คอิน/เอาต์ · folio · แม่บ้าน"),
+        new(LodgingSettings,  "ที่พัก",   "ตั้งค่าที่พัก",             "ห้อง · ราคา/ฤดูกาล · นโยบายยกเลิก · บริการเสริม"),
 
         // Documents — blanket (ทำได้ทุกประเภท)
         new(DocumentCreate,   "เอกสาร",  "สร้างเอกสาร (ทุกประเภท)",   "blanket — invoice + PI + PV + etc."),

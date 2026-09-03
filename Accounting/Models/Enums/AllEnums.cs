@@ -1807,3 +1807,160 @@ public enum WhtPayerFormType
     /// <summary>ภ.ง.ด.53 — ผู้จ่ายหักจากนิติบุคคล (เคสปกติของบริษัท)</summary>
     Pnd53 = 53,
 }
+
+// ==================== Lodging (ธุรกิจที่พัก: โรงแรม · รีสอร์ท · โฮสเทล · บ้านพัก) ====================
+// ที่มา: สกัดโดเมนจาก TakeTime (Ipsos-Dev-TH) + PMS มาตรฐาน แล้วออกแบบใหม่ให้ต่อกับ
+// แกนบัญชี/ภาษีของระบบนี้ (มัดจำ §78/1 · ใบกำกับ §86/4 · เลข gap-free)
+
+/// <summary>ประเภทที่พัก — กำหนด default ของนโยบาย/ช่องตั้งค่าตอน seed</summary>
+public enum LodgingPropertyType
+{
+    Hotel = 1,          // โรงแรม
+    Resort = 2,         // รีสอร์ท
+    Hostel = 3,         // โฮสเทล (ขายเป็นเตียง)
+    Villa = 4,          // บ้านพัก/วิลล่า ทั้งหลัง
+    Apartment = 5,      // อพาร์ตเมนต์/เซอร์วิสอพาร์ตเมนต์
+    Campsite = 6,       // แคมป์/ลานกางเต็นท์
+    Other = 99
+}
+
+/// <summary>วิธีคิดราคาห้องต่อคืน</summary>
+public enum LodgingPricingMode
+{
+    /// <summary>ราคาต่อห้อง/ต่อหลัง ต่อคืน (ไม่ขึ้นกับจำนวนคน) — โรงแรมทั่วไป</summary>
+    PerUnit = 1,
+    /// <summary>ราคาต่อคน ต่อคืน — โฮสเทล/แคมป์ (TakeTime: LimitWithPeople)</summary>
+    PerPerson = 2
+}
+
+/// <summary>วิธีที่แผนราคาปรับจากราคาฐาน</summary>
+public enum LodgingRateAdjustMode
+{
+    /// <summary>ใช้ราคาฐานของประเภทห้องตรง ๆ</summary>
+    Base = 0,
+    /// <summary>กำหนดราคาต่อคืนตายตัวแทนราคาฐาน</summary>
+    Absolute = 1,
+    /// <summary>คูณราคาฐาน (เช่น 0.90 = ลด 10%)</summary>
+    Multiplier = 2,
+    /// <summary>บวก/ลบจากราคาฐาน (บาท)</summary>
+    Delta = 3
+}
+
+/// <summary>ชนิดฤดูกาล (TakeTime PricingSeasons.SeasonType)</summary>
+public enum LodgingSeasonType
+{
+    Low = 1,
+    Regular = 2,
+    High = 3,
+    Peak = 4,
+    Holiday = 5
+}
+
+/// <summary>วิธีคิดราคาบริการเสริม</summary>
+public enum LodgingExtraPriceMode
+{
+    PerStay = 1,            // ต่อการเข้าพัก (เช่น รับส่งสนามบิน)
+    PerNight = 2,           // ต่อคืน (เช่น เตียงเสริม)
+    PerPerson = 3,          // ต่อคน (เช่น ทัวร์)
+    PerPersonPerNight = 4   // ต่อคนต่อคืน (เช่น อาหารเช้า)
+}
+
+public enum LodgingExtraCategory
+{
+    Breakfast = 1,
+    ExtraBed = 2,
+    Transfer = 3,
+    Tour = 4,
+    Spa = 5,
+    Food = 6,
+    Other = 99
+}
+
+/// <summary>สถานะการจองที่พัก (lifecycle เดินหน้าอย่างเดียว ยกเว้น Cancelled/NoShow)</summary>
+public enum LodgingReservationStatus
+{
+    /// <summary>จองแล้ว รอชำระมัดจำ/รอยืนยัน — ยังกันห้องไว้จนกว่า HoldExpiresAt</summary>
+    Pending = 0,
+    Confirmed = 1,
+    CheckedIn = 2,
+    CheckedOut = 3,
+    Cancelled = 4,
+    NoShow = 5
+}
+
+public enum LodgingReservationSource
+{
+    Web = 1,        // จองผ่านเว็บไซต์/portal
+    WalkIn = 2,
+    Phone = 3,
+    Agent = 4,
+    Ota = 5,        // Agoda/Booking.com ฯลฯ (บันทึกมือ)
+    Other = 99
+}
+
+/// <summary>สถานะแม่บ้านของห้อง (TakeTime RoomStatusHistory.Status)</summary>
+public enum LodgingHousekeepingStatus
+{
+    VacantClean = 1,
+    VacantDirty = 2,
+    Occupied = 3,
+    Cleaning = 4,
+    Inspecting = 5,
+    OutOfOrder = 6,
+    Maintenance = 7
+}
+
+public enum LodgingHousekeepingTaskType
+{
+    CheckoutClean = 1,
+    StayOver = 2,
+    DeepClean = 3,
+    Turndown = 4,
+    Inspection = 5,
+    Maintenance = 6
+}
+
+public enum LodgingTaskStatus
+{
+    Pending = 0,
+    Assigned = 1,
+    InProgress = 2,
+    Completed = 3,
+    Verified = 4,
+    Cancelled = 5
+}
+
+public enum LodgingTaskPriority
+{
+    Low = 0,
+    Normal = 1,
+    High = 2,
+    Urgent = 3
+}
+
+/// <summary>ค่าใช้จ่ายระหว่างพัก (folio) — ที่มาของรายการ</summary>
+public enum LodgingChargeSource
+{
+    Manual = 1,     // พนักงานคีย์
+    Pos = 2,        // มาจาก POS (ร้านอาหาร/มินิบาร์)
+    GuestPortal = 3,// แขกสั่งเองผ่านพอร์ทัล
+    System = 4      // ระบบคิดให้ (ค่าปรับ/late checkout)
+}
+
+public enum LodgingChargeStatus
+{
+    Pending = 0,    // ค้างชำระ (จะรวมในใบเช็คเอาต์)
+    Paid = 1,
+    Cancelled = 2
+}
+
+/// <summary>คำขอจากแขก (พอร์ทัลแขก/พนักงานบันทึกแทน)</summary>
+public enum LodgingGuestRequestType
+{
+    Housekeeping = 1,
+    Maintenance = 2,
+    Concierge = 3,
+    RoomService = 4,
+    Complaint = 5,
+    Other = 99
+}

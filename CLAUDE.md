@@ -1363,6 +1363,18 @@ awk brace-balance                      # ทุก .cs ที่แก้
   รหัสผ่าน · บัญชีภายนอกทุก provider · token ที่ออกไปแล้ว · ช่องเดี่ยวเดิม
   (`AuthProvider`/`AuthProviderId`) ที่ยังมีโค้ดเก่าอ่านอยู่. วิธีหา: `grep` ว่า
   **อะไรบ้างที่ resolve ตัวตนผู้ใช้ได้** แล้วถามทีละอย่างว่า "อันนี้ถูกตัดหรือยัง"
+- **slug พิเศษของ storefront ห้ามแย่งหน้า CMS ที่ seed ไว้โดยไม่ probe ก่อน** — `/booking` และ `/rooms`
+  เป็นหน้า `SitePage` ที่ `CmsSiteTemplateSeeder.HotelPlan` สร้างให้ทุกเว็บโรงแรม; โมดูลที่พักอยาก
+  ยึด slug เดียวกัน (ให้ปุ่ม "จองห้องพัก" ที่ seed ไว้พาไประบบจองจริงโดยไม่ต้องแก้เทมเพลต) ⇒
+  `tryRouteSpecialSlug` ต้อง `fetch /lodging/info` **ก่อน** แล้วยึดเฉพาะเมื่อมีที่พักผูกจริง —
+  เว็บสปา/คลินิกที่ใช้บล็อก BookingCalendar แบบ slot ต้องไม่ถูกกระทบ (ทดสอบ LDG-S-02)
+- **โมดูลใหม่ที่มี "เงิน" ห้ามออกเอกสาร/เลขเอง — เดินผ่าน `IDocumentService` เสมอ** (โมดูลที่พัก รอบ 124
+  เป็นตัวอย่าง: มัดจำ = `Receipt IsDeposit` · เช็คเอาต์ = `TaxInvoice` + `DepositApplied*` ·
+  ยกเลิก = `RefundDeposit`/`RealizeDeposit`) — TakeTime ที่นำมาวิเคราะห์ออกเลขด้วย
+  `SELECT TOP 1 … +1` ไม่มี lock และเก็บ `Deposit` เป็น "ยอดจ่ายสะสม" (reuse field ผิดความหมาย)
+  ทั้งสองอย่างเป็น defect class ที่ไฟล์นี้ห้ามอยู่แล้ว · ค่าตั้งค่าที่ยังไม่มีใครอ่าน
+  (`EarlyCheckInFee/LateCheckOutFee`) ต้องถูกจดใน backlog (`LODGING_TAKETIME_ANALYSIS.md` §2)
+  ไม่ปล่อยเงียบ — เป็น "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้" ตั้งแต่วันแรกโดยรู้ตัว
 - checker ใหม่ทุกตัวต้องผ่าน **negative test** ก่อนเชื่อ: ใส่บั๊กที่ตั้งใจจับ
   กลับเข้าไปแล้วยืนยันว่า checker จับได้จริง (เคยมี checker ที่ regex ผิด
   จนไม่จับเคสหลักของตัวเอง)
@@ -1403,6 +1415,8 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - **VAT** = 7% (กฎหมายไทย); per-line `VatRate` รองรับ mixed rate / 0% / exempt
 - **เลขเอกสาร** ออกตอน Approve เท่านั้น (Draft ใช้ `DRAFT-{guid}` placeholder)
   เพื่อกัน gap จากการลบ Draft (compliance §86/4)
+- **โมดูลที่พัก (Lodging)** — flow/เส้นเงินอยู่ใน `DOCUMENT_FLOW.md` §6.5 · โครงสร้างใน
+  `ACCOUNT_STRUCTURE.md` §3.1b · สิ่งที่ลอก/ไม่ลอกจาก TakeTime + backlog ใน `LODGING_TAKETIME_ANALYSIS.md`
 
 ## วิธีทำงาน
 

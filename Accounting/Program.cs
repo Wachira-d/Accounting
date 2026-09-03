@@ -554,6 +554,8 @@ builder.Services.AddScoped<ICmsSiteService, CmsSiteService>();
 builder.Services.AddScoped<ICmsContentService, CmsContentService>();
 builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
+// ธุรกิจที่พัก (โรงแรม/รีสอร์ท/บ้านพัก) — จอง · มัดจำ · เช็คอิน/เอาต์ · folio · แม่บ้าน
+builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.Lodging.LodgingService>();
 builder.Services.AddScoped<CmsLeadService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();
@@ -804,6 +806,8 @@ var publicUploadPrefixes = new[]
     "/uploads/brand-logos",
     // สลิปโอนค่าบริการ (แอดมินเปิดดูตอนตรวจสอบการชำระเงิน) ชื่อไฟล์เป็น GUID
     "/uploads/slips",
+    // สลิปมัดจำการจองที่พัก (แขกอัปโหลดผ่าน token · พนักงานเปิดดูตอนยืนยัน) ชื่อไฟล์ GUID
+    "/uploads/lodging-slips",
 };
 app.Use(async (ctx, next) =>
 {

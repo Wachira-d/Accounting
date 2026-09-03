@@ -428,6 +428,22 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteBooking> SiteBookings => Set<SiteBooking>();
     public DbSet<SiteBookingPayment> SiteBookingPayments => Set<SiteBookingPayment>();
 
+    // Lodging (ธุรกิจที่พัก)
+    public DbSet<LodgingProperty> LodgingProperties => Set<LodgingProperty>();
+    public DbSet<LodgingRoomType> LodgingRoomTypes => Set<LodgingRoomType>();
+    public DbSet<LodgingUnit> LodgingUnits => Set<LodgingUnit>();
+    public DbSet<LodgingRatePlan> LodgingRatePlans => Set<LodgingRatePlan>();
+    public DbSet<LodgingSeason> LodgingSeasons => Set<LodgingSeason>();
+    public DbSet<LodgingRateOverride> LodgingRateOverrides => Set<LodgingRateOverride>();
+    public DbSet<LodgingCancellationPolicy> LodgingCancellationPolicies => Set<LodgingCancellationPolicy>();
+    public DbSet<LodgingExtra> LodgingExtras => Set<LodgingExtra>();
+    public DbSet<LodgingReservation> LodgingReservations => Set<LodgingReservation>();
+    public DbSet<LodgingReservationRoom> LodgingReservationRooms => Set<LodgingReservationRoom>();
+    public DbSet<LodgingReservationExtra> LodgingReservationExtras => Set<LodgingReservationExtra>();
+    public DbSet<LodgingFolioCharge> LodgingFolioCharges => Set<LodgingFolioCharge>();
+    public DbSet<LodgingHousekeepingTask> LodgingHousekeepingTasks => Set<LodgingHousekeepingTask>();
+    public DbSet<LodgingGuestRequest> LodgingGuestRequests => Set<LodgingGuestRequest>();
+
     // Customer & CRM
     public DbSet<SiteCustomer> SiteCustomers => Set<SiteCustomer>();
     public DbSet<SiteCustomerAddress> SiteCustomerAddresses => Set<SiteCustomerAddress>();
@@ -3220,6 +3236,131 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.GatewayTransactionId).HasMaxLength(256);
             e.Property(p => p.Reference).HasMaxLength(256);
             e.HasOne(p => p.Booking).WithMany(b => b.Payments).HasForeignKey(p => p.BookingId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ===== Lodging (ธุรกิจที่พัก) =====
+        modelBuilder.Entity<LodgingProperty>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.SiteId }).HasDatabaseName("IX_LodgingProperties_CompanyId_SiteId");
+            e.Property(p => p.Name).HasMaxLength(256); e.Property(p => p.NameEn).HasMaxLength(256); e.Property(p => p.Code).HasMaxLength(16);
+            e.Property(p => p.EarlyCheckInFee).HasPrecision(18, 2); e.Property(p => p.LateCheckOutFee).HasPrecision(18, 2);
+            e.Property(p => p.DepositPercent).HasPrecision(5, 2); e.Property(p => p.DepositFixedAmount).HasPrecision(18, 2);
+            e.Property(p => p.DepositMinAmount).HasPrecision(18, 2); e.Property(p => p.DepositMaxAmount).HasPrecision(18, 2);
+            e.Property(p => p.ServiceChargePercent).HasPrecision(5, 2); e.Property(p => p.WeekendMultiplier).HasPrecision(6, 3);
+            e.Property(p => p.ExtraGuestPrice).HasPrecision(18, 2); e.Property(p => p.NoShowChargePercent).HasPrecision(5, 2);
+            e.HasOne(p => p.Site).WithMany().HasForeignKey(p => p.SiteId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(p => p.Branch).WithMany().HasForeignKey(p => p.BranchId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(p => p.DefaultCancellationPolicy).WithMany().HasForeignKey(p => p.DefaultCancellationPolicyId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingRoomType>(e =>
+        {
+            e.HasIndex(r => r.PropertyId).HasDatabaseName("IX_LodgingRoomTypes_PropertyId");
+            e.Property(r => r.Name).HasMaxLength(256); e.Property(r => r.Code).HasMaxLength(32); e.Property(r => r.Slug).HasMaxLength(128);
+            e.Property(r => r.SizeSqm).HasPrecision(8, 2); e.Property(r => r.BaseRate).HasPrecision(18, 2);
+            e.Property(r => r.ExtraGuestPrice).HasPrecision(18, 2); e.Property(r => r.ExtraBedPrice).HasPrecision(18, 2);
+            e.HasOne(r => r.Property).WithMany(p => p.RoomTypes).HasForeignKey(r => r.PropertyId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.Product).WithMany().HasForeignKey(r => r.ProductId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(r => !r.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingUnit>(e =>
+        {
+            e.HasIndex(u => u.RoomTypeId).HasDatabaseName("IX_LodgingUnits_RoomTypeId");
+            e.Property(u => u.Number).HasMaxLength(50);
+            e.HasOne(u => u.RoomType).WithMany(r => r.Units).HasForeignKey(u => u.RoomTypeId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(u => !u.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingRatePlan>(e =>
+        {
+            e.Property(r => r.Name).HasMaxLength(256); e.Property(r => r.Code).HasMaxLength(32);
+            e.Property(r => r.AdjustValue).HasPrecision(18, 4); e.Property(r => r.DepositPercent).HasPrecision(5, 2);
+            e.HasOne(r => r.Property).WithMany(p => p.RatePlans).HasForeignKey(r => r.PropertyId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.RoomType).WithMany().HasForeignKey(r => r.RoomTypeId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(r => r.CancellationPolicy).WithMany().HasForeignKey(r => r.CancellationPolicyId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(r => !r.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingSeason>(e =>
+        {
+            e.Property(s => s.Name).HasMaxLength(256); e.Property(s => s.Multiplier).HasPrecision(6, 3);
+            e.HasOne(s => s.Property).WithMany(p => p.Seasons).HasForeignKey(s => s.PropertyId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(s => !s.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingRateOverride>(e =>
+        {
+            e.HasIndex(o => new { o.RoomTypeId, o.Date }).HasDatabaseName("IX_LodgingRateOverrides_RoomType_Date");
+            e.Property(o => o.Rate).HasPrecision(18, 2);
+            e.HasOne(o => o.RoomType).WithMany().HasForeignKey(o => o.RoomTypeId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(o => !o.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingCancellationPolicy>(e =>
+        {
+            e.Property(p => p.Name).HasMaxLength(256);
+            e.HasOne(p => p.Property).WithMany().HasForeignKey(p => p.PropertyId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingExtra>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(256); e.Property(x => x.Price).HasPrecision(18, 2);
+            e.HasOne(x => x.Property).WithMany(p => p.Extras).HasForeignKey(x => x.PropertyId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingReservation>(e =>
+        {
+            e.HasIndex(r => new { r.CompanyId, r.ReservationNumber }).IsUnique().HasDatabaseName("IX_LodgingReservations_Company_Number");
+            e.HasIndex(r => r.PublicToken).IsUnique().HasDatabaseName("IX_LodgingReservations_PublicToken");
+            e.HasIndex(r => new { r.PropertyId, r.CheckInDate, r.CheckOutDate, r.Status }).HasDatabaseName("IX_LodgingReservations_Property_Dates");
+            e.Property(r => r.ReservationNumber).HasMaxLength(50); e.Property(r => r.PublicToken).HasMaxLength(64);
+            e.Property(r => r.GuestName).HasMaxLength(256); e.Property(r => r.GuestEmail).HasMaxLength(256); e.Property(r => r.GuestPhone).HasMaxLength(50);
+            e.Property(r => r.GuestTaxId).HasMaxLength(20); e.Property(r => r.Currency).HasMaxLength(3);
+            foreach (var name in new[] { nameof(LodgingReservation.RoomSubtotal), nameof(LodgingReservation.ExtrasTotal), nameof(LodgingReservation.DiscountAmount),
+                nameof(LodgingReservation.ServiceChargeAmount), nameof(LodgingReservation.VatAmount), nameof(LodgingReservation.TotalAmount), nameof(LodgingReservation.FolioTotal),
+                nameof(LodgingReservation.DepositRequired), nameof(LodgingReservation.DepositPaid), nameof(LodgingReservation.PaidAmount),
+                nameof(LodgingReservation.CancellationFee), nameof(LodgingReservation.RefundAmount) })
+                e.Property(name).HasPrecision(18, 2);
+            e.HasOne(r => r.Property).WithMany().HasForeignKey(r => r.PropertyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(r => r.Contact).WithMany().HasForeignKey(r => r.ContactId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(r => r.RatePlan).WithMany().HasForeignKey(r => r.RatePlanId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(r => r.DepositDocument).WithMany().HasForeignKey(r => r.DepositDocumentId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(r => r.FinalDocument).WithMany().HasForeignKey(r => r.FinalDocumentId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(r => !r.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingReservationRoom>(e =>
+        {
+            e.HasIndex(x => x.ReservationId).HasDatabaseName("IX_LodgingReservationRooms_ReservationId");
+            e.HasIndex(x => x.UnitId).HasDatabaseName("IX_LodgingReservationRooms_UnitId");
+            e.Property(x => x.RoomTypeName).HasMaxLength(256); e.Property(x => x.Subtotal).HasPrecision(18, 2);
+            e.HasOne(x => x.Reservation).WithMany(r => r.Rooms).HasForeignKey(x => x.ReservationId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.RoomType).WithMany().HasForeignKey(x => x.RoomTypeId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Unit).WithMany().HasForeignKey(x => x.UnitId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingReservationExtra>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(256); e.Property(x => x.UnitPrice).HasPrecision(18, 2); e.Property(x => x.Total).HasPrecision(18, 2);
+            e.HasOne(x => x.Reservation).WithMany(r => r.Extras).HasForeignKey(x => x.ReservationId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingFolioCharge>(e =>
+        {
+            e.Property(c => c.Description).HasMaxLength(500); e.Property(c => c.Quantity).HasPrecision(18, 3);
+            e.Property(c => c.UnitPrice).HasPrecision(18, 2); e.Property(c => c.Total).HasPrecision(18, 2); e.Property(c => c.VatRate).HasPrecision(5, 2);
+            e.HasOne(c => c.Reservation).WithMany(r => r.Charges).HasForeignKey(c => c.ReservationId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(c => c.Product).WithMany().HasForeignKey(c => c.ProductId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingHousekeepingTask>(e =>
+        {
+            e.HasIndex(t => new { t.PropertyId, t.Status }).HasDatabaseName("IX_LodgingHousekeepingTasks_Property_Status");
+            e.Property(t => t.AssignedToName).HasMaxLength(256);
+            e.HasOne(t => t.Unit).WithMany().HasForeignKey(t => t.UnitId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(t => !t.IsDeleted);
+        });
+        modelBuilder.Entity<LodgingGuestRequest>(e =>
+        {
+            e.HasIndex(g => new { g.PropertyId, g.Status }).HasDatabaseName("IX_LodgingGuestRequests_Property_Status");
+            e.HasOne(g => g.Reservation).WithMany().HasForeignKey(g => g.ReservationId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(g => !g.IsDeleted);
         });
 
         // ===== SiteCustomer =====

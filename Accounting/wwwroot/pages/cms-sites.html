@@ -590,8 +590,16 @@
           const site = siteRes.data;
           if (!site?.id) throw new Error('ไม่ได้รับข้อมูลเว็บไซต์ที่สร้าง');
 
-          Layout.toast('สร้างเว็บไซต์สำเร็จ — กำลังพาไปหน้าแก้ไข', 'success');
           Layout.closeModal('createModal');
+          const chosenIndustry = !isNaN(industryOverride) ? industryOverride : (tpl.industryType ?? 0);
+          if (chosenIndustry === 15) {
+            // ธุรกิจที่พัก: เซิร์ฟเวอร์ seed ห้อง/ราคา/นโยบายให้แล้ว → พาไปหน้าตั้งค่าที่พัก
+            // (ผูกด้วย siteId — หน้านั้น resolve ที่พักของเว็บนี้เอง) ให้เห็นทันทีว่าจองได้แล้ว
+            Layout.toast('สร้างเว็บไซต์ + ระบบจองที่พักสำเร็จ — กำลังพาไปตั้งค่าที่พัก', 'success');
+            setTimeout(() => { window.location.href = `/pages/lodging-settings.html?siteId=${site.id}&welcome=1`; }, 700);
+            return;
+          }
+          Layout.toast('สร้างเว็บไซต์สำเร็จ — กำลังพาไปหน้าแก้ไข', 'success');
           setTimeout(() => { window.location.href = `/pages/cms-edit.html?siteId=${site.id}`; }, 700);
         } catch (e) {
           Layout.toast(e.message || 'สร้างไม่สำเร็จ', 'error');

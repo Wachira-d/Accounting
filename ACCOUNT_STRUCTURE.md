@@ -112,6 +112,17 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 > เรียก `RecordAsync` (จะต่อพร้อม `/api/v1` ในขั้นถัดไป). ฟีเจอร์ทุกตัว default
 > **ปิด** → ต่อให้ต่อ endpoint แล้วก็ยังไม่มีใครถูกคิดเงินจนกว่าจะกดเปิดเอง
 
+### 3.1b ที่พัก (Lodging) ✅ รอบ 124 — ชั้น Company → Site/Branch → LodgingProperty
+
+- `LodgingProperty` (`Models/Entities/Lodging.cs`) = "ที่พัก 1 แห่ง" ถือการตั้งค่าทั้งหมด (เวลาเข้า-ออก · กติกาจอง ·
+  มัดจำ/VAT/service charge/ผังบัญชี · ฤดูกาล/สุดสัปดาห์ · นโยบายยกเลิก · แจ้งเตือน · แม่บ้าน) — ผูก `SiteId` (1 เว็บ : 1 ที่พัก
+  ที่ active — `ResolvePropertyIdForSiteAsync` เลือกตัวแรกตาม SortOrder) และ `BranchId` (เอกสารทุกใบของที่พักออกจากสาขานั้น)
+- บริษัทเดียวมีหลายที่พักได้ (`Code` ไม่ซ้ำต่อบริษัท — ใช้ในเลขจอง `RES-{Code}-…`); ที่พักไม่ผูกเว็บ = รับจองผ่าน front desk อย่างเดียว
+- สร้างอัตโนมัติเมื่อ `CreateSiteAsync(IndustryType.Hotel)` (`LodgingSeeder`) — ไม่ขึ้นกับ `SeedTemplate`; idempotent ต่อ SiteId
+- สิทธิ์ใหม่ใน `PermissionKeys`: `Lodging.Manage` (front desk) · `Lodging.Settings` (ตั้งค่า) — Owner/SystemAdmin ผ่านอัตโนมัติ
+- ฝั่งสาธารณะ scope `CompanyId + SiteId` เสมอ · การจองเข้าถึงด้วย `PublicToken` (ไม่มี id เดาได้) · เมนู `lodging`/`lodging-settings`
+  อยู่ใต้ feature `CmsWebsiteBuilder` เหมือน CMS
+
 ### 3.1a ทะเบียนสาขา — เฟส 0 ✅ (ตั้งค่าเท่านั้น ยังไม่แตะเอกสาร)
 
 **หลักการที่ห้ามหลุด: กิจการสาขาเดียวต้องไม่รู้สึกถึงความเปลี่ยนแปลงใด ๆ**
@@ -601,7 +612,9 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-02 (rev 21 — **เก็บงานค้างของชั้น_
+_Last verified against codebase: 2026-09-03 (rev 22 — **ที่พัก (Lodging)** §3.1b: LodgingProperty ผูก Site/Branch ·_
+_seed ตอนสร้างเว็บโรงแรม · สิทธิ์ Lodging.Manage/Settings · scope สาธารณะ SiteId+token)_
+_ก่อนหน้า: 2026-09-02 (rev 21 — **เก็บงานค้างของชั้น_
 _ผู้ใช้/บัญชีภายนอก**: (ก) คำเชิญเข้าบริษัท (`CompanyInvitation`) ถูก consume_
 _บนเส้น SSO ของ **บัญชีเดิม** ด้วย — เดิมทำเฉพาะตอนสมัครใหม่ ⇒ ผู้ใช้ที่มีบัญชี_
 _อยู่แล้วแล้วถูกเชิญเข้าอีกบริษัท กดลิงก์คำเชิญ → เลือก "เข้าด้วย Google" จะเข้า_

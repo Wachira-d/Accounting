@@ -1653,6 +1653,33 @@ VAT พอดี**
 
 ---
 
+### 6.5 โมดูลที่พัก (Lodging — โรงแรม/รีสอร์ท/บ้านพัก) ✅ รอบ 124
+
+> ที่มา/การตัดสินใจเทียบ TakeTime: `LODGING_TAKETIME_ANALYSIS.md` · entity: `Models/Entities/Lodging.cs` ·
+> engine (pure): `Helpers/LodgingPricingEngine.cs` (+ `LodgingAvailability`) · service: `Services/Implementations/Lodging/LodgingService*.cs` ·
+> API หลังบ้าน: `Controllers/LodgingController.cs` (`/api/companies/{cid}/lodging/**` · สิทธิ์ `Lodging.Manage` / `Lodging.Settings`) ·
+> API สาธารณะ: `Controllers/LodgingPublicController.cs` (`/cms/sites/{siteId}/lodging/**` AllowAnonymous · scope siteId + token) ·
+> seed: `Services/Implementations/Cms/LodgingSeeder.cs` (เรียกจาก `CmsSiteService.CreateSiteAsync` เมื่อ `IndustryType.Hotel`)
+
+**ทางเข้า** — (1) storefront `/booking` `/book` `/rooms` (เฉพาะเว็บที่มีที่พักผูก — `tryRouteSpecialSlug` probe `/lodging/info` ก่อน ไม่มีก็ปล่อยหน้า CMS ที่ seed ไว้) และบล็อก `BookingCalendar` ที่กลายเป็นช่องค้นหาห้องว่างอัตโนมัติ · (2) front desk `pages/lodging.html` (walk-in/โทร/OTA · `ConfirmImmediately`) · (3) `/reservation/{token}` ให้แขกดู/อัปโหลดสลิป/ยกเลิก/ส่งคำขอ
+
+**Lifecycle**: `Pending` (กันห้องถึง `HoldExpiresAt` = `PaymentHoldMinutes`; หมดเวลา+ไม่มีสลิป → `ExpireHoldsAsync` ตั้ง Cancelled อัตโนมัติ; อัปโหลดสลิปต่อเวลา 24 ชม.) → `Confirmed` (พนักงานกดยืนยัน/รับมัดจำ · หรือทันทีเมื่อ `ConfirmWithoutDeposit`/มัดจำ = 0/staff ConfirmImmediately) → `CheckedIn` (ต้อง assign `LodgingUnit` ครบทุกห้อง · unit → Occupied) → `CheckedOut` · ทางออก `Cancelled`/`NoShow` (เฉพาะก่อนเช็คอิน — เช็คอินแล้วต้องเช็คเอาต์/ออกบิล)
+
+**เส้นเงิน (ทุกใบผ่าน `IDocumentService` — โมดูลไม่ออกเลขเอง)**
+
+| เหตุการณ์ | เอกสาร | หมายเหตุ |
+| --- | --- | --- |
+| ยืนยัน + รับมัดจำ (`ConfirmAsync`) | `Receipt` `IsDeposit=true` `BookingNumber=RES-…` `PricesIncludeVat=true` `DepositDeferredAccountCode`/`DepositOutputVatDeferred` จากที่พัก → Approve(ack) | Cr 217xx (+VAT ทันที §78/1 เว้นแต่ defer) · ตรวจห้องว่างซ้ำก่อนยืนยัน (hold หมดแล้วอาจถูกจองทับ → `LODGING-OVERSOLD`) |
+| เช็คเอาต์ (`CheckOutAsync`) | `TaxInvoice` (บริษัทจด VAT) / `Invoice` ทั้งการเข้าพัก: บรรทัดค่าห้องต่อห้อง (AccountCode = `RoomRevenueAccountCode`, ProductCode ของประเภทห้อง) + บริการเสริม (1 บรรทัด/รายการ ยอดรวม — ห้ามหาร Total/Qty) + folio Pending (VatRate รายบรรทัด) + service charge (`ServiceChargeAccountCode`) · `DepositAppliedAmount=DepositPaid` `DepositAppliedRef=เลขใบมัดจำ` `DepositAppliedDrivesJournal=true` → Approve(ack) → ถ้า `CollectBalanceNow` และ `BalanceDue>0` → `CreatePaymentAsync` | DocumentService ตัด 217xx + guard over-apply ให้ (§ deposit) · ค่าเสียหาย = folio charge Source=System ก่อนออกบิล · เช็คเอาต์เครดิต = DueDate +30 วัน + บันทึกยอดค้างใน InternalNotes · unit → VacantDirty + งานแม่บ้าน CheckoutClean อัตโนมัติ |
+| ยกเลิก / no-show (`CancelCoreAsync`) | ค่าปรับ = `LodgingPricingEngine.CancellationFee` จาก **snapshot** นโยบาย ณ วันจอง (no-show = `NoShowChargePercent`) → ส่วนคืน `RefundDepositAsync` · ส่วนริบ `RealizeDepositAsync(RevenueAccountCode = CancellationFeeAccountCode ?? RoomRevenueAccountCode)` | ค่าปรับเกินมัดจำ = บันทึกส่วนต่างที่ยังไม่เรียกเก็บใน InternalNotes (ไม่แต่งเอกสารเพิ่ม) |
+| เลื่อนวัน (`RescheduleAsync`) | ไม่ออกเอกสาร — คิดราคาใหม่ทั้งใบ (แผนราคาเดิม) · มัดจำที่รับแล้วคงเดิม · ปลด unit ให้จัดใหม่ | เฉพาะ Pending/Confirmed |
+
+**ราคา** (`LodgingPricingEngine.NightlyRate` ต่อคืน): ฐาน → แผนราคา (Absolute/Multiplier/Delta) → ฤดูกาล (ช่วงแคบกว่าชนะ · recurring ข้ามปีได้ · จำกัดประเภทห้องได้) → สุดสัปดาห์ (`WeekendMultiplier`×mask) → override รายวัน **แทนที่ทั้งหมด** · แขกเกิน `StandardOccupancy` × `ExtraGuestPrice` · เตียงเสริม · PerPerson = ราคา×คน · `Totals`: ราคารวม VAT → VAT = total×r/(100+r) (informational — ตัวจริงคำนวณอีกครั้งตอนออกเอกสารด้วยสูตรเดียวกัน) · มัดจำ = %/คงที่ + min/max · ขั้นต่ำคืน = max(ที่พัก, ห้อง, ฤดูกาล, override). ห้องว่าง (`LodgingAvailability.AvailableRooms`): ต่อคืน min(capacity(allotment) + overbooking − ที่กัน) · Pending กันเฉพาะที่ hold ยังไม่หมด · StopSell = 0 · unit ปิดซ่อมไม่นับ
+
+**Invariants**: `Reservation.TotalAmount` = engine ณ วันจอง (snapshot ใน `PriceBreakdownJson`) · `FolioTotal` = Σ charges ที่ไม่ Cancelled · `PaidAmount` = มัดจำ + ยอดเก็บตอนเช็คเอาต์ − คืน · `BalanceDue` = Total+Folio−Paid · เลขจอง `RES-{Code}-{yyMM}-{####}` ต่อที่พัก ภายใต้ `AdvisoryLockKey.For(cid,"lodging-res",propertyId)` · `PublicToken` 32 hex ต่อการจอง (unique index) · `GuestIdNumber` ไม่เคยออกจากเซิร์ฟเวอร์เต็ม (`MaskId`) · ทุก query มี `CompanyId` + ฝั่งสาธารณะเพิ่ม `SiteId`
+
+**ตาราง (CREATE TABLE IF NOT EXISTS ใน `DatabaseMigrationHelper`)**: LodgingProperties · LodgingRoomTypes · LodgingUnits · LodgingRatePlans · LodgingSeasons · LodgingRateOverrides · LodgingCancellationPolicies · LodgingExtras · LodgingReservations · LodgingReservationRooms · LodgingReservationExtras · LodgingFolioCharges · LodgingHousekeepingTasks · LodgingGuestRequests
+
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 
 | Gate | Where | กระทำ |
@@ -1698,6 +1725,9 @@ VAT พอดี**
 | แก้ fixed asset auto-register | `DocumentService.AutoRegisterFixedAssetsAsync :4477` |
 | แก้ผัง 11640 ↔ 11610 reclassify | `DocumentService.ReclassifyUndueInputVatAsync :1137` |
 | แก้ deposit Realize/Refund/Apply | `DocumentService.cs` ค้นหา `RealizeDepositAsync` / `RefundDepositAsync` / `ApplyDepositToInvoiceAsync` |
+| แก้ราคาที่พัก/ห้องว่าง (ฤดูกาล/แผนราคา/override/มัดจำ/ค่าปรับยกเลิก) | `Helpers/LodgingPricingEngine.cs` (pure + `Accounting.Tests/LodgingPricingEngineTests.cs`) — service แค่โหลดข้อมูลส่งเข้า `BuildQuote` (`LodgingService.Reservations.cs`) |
+| แก้เอกสารตอนยืนยันมัดจำ/เช็คเอาต์/ยกเลิกที่พัก | `Services/Implementations/Lodging/LodgingService.Lifecycle.cs` — `CreateDepositReceiptAsync` · `CheckOutAsync` · `CancelCoreAsync` (§6.5) |
+| seed ที่พักตอนสร้างเว็บโรงแรม | `Services/Implementations/Cms/LodgingSeeder.cs` ← `CmsSiteService.CreateSiteAsync` (IndustryType.Hotel) |
 | แก้รายงาน ภ.พ.30 (จอ) | `TaxService.GenerateVatReport :119` |
 | ดูสายการแปลงทั้งเส้นของเอกสาร (chain stepper) | `DocumentService.GetDocumentChainAsync` — ขึ้นตาม RelatedDocumentId (กัน cycle, 15 ชั้น) แล้ว BFS ลง (เพดาน 60 ใบ); ใบ Voided คงอยู่ในสาย (UI ขีดฆ่า) / UI: `documents.html renderChainStepper` บนสุดของ detail modal |
 | ค่าเริ่มต้นฟอร์มต่อชนิดเอกสาร (แหล่งเงิน/เงื่อนไขชำระ/วันเครดิต) | `DocumentTemplate.DefaultPaymentAccountId/DefaultPaymentTerms/DefaultCreditDays` — ตั้งใน template default ของชนิดนั้น (`document-templates.html` กล่อง "⚡ ค่าเริ่มต้น") / ฟอร์มดึงผ่าน `GET document-templates/default/{type}` เติมเฉพาะช่องว่าง+เฉพาะสร้างใหม่ (`applyDocTypeDefaults`) |
@@ -2677,7 +2707,11 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-02 (รอบ 123 — **เก็บงานค้างทั้งชุด**:_
+_Last verified against codebase: 2026-09-03 (รอบ 124 — **โมดูลที่พัก**: §6.5 ใหม่ทั้งหมด —_
+_เว็บไซต์ IndustryType.Hotel seed ที่พัก+ห้อง+ราคา+นโยบายให้จองได้ทันที · เงินทุกใบผ่าน_
+_IDocumentService (มัดจำ §78/1 · เช็คเอาต์ DepositApplied* · ยกเลิก Refund/Realize) ·_
+_ดู `LODGING_TAKETIME_ANALYSIS.md` สำหรับสิ่งที่ลอก/ไม่ลอก/ยังไม่ทำ)_
+_ก่อนหน้า: 2026-09-02 (รอบ 123 — **เก็บงานค้างทั้งชุด**:_
 _(1) **คำเตือนที่กด "รับทราบ" แล้วต้องเหลือร่องรอย** — `acknowledgeWarnings=true`_
 _เขียน `Document.InternalNotes` (ไม่พิมพ์ลงกระดาษ — **ห้ามใช้ `Notes` เพราะ_
 _`SanitizeNotesForPrint` พิมพ์ลงใบที่ส่งลูกค้า**) + `AuditLog`_
@@ -4351,5 +4385,6 @@ _(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Con
 | 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
 | 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
 | 12 | JE migrate + business gaps ปิด | JE Builder phase 2 (ReclassifyLine + FxRevaluation refactor), UnifiedPaymentQueryService cross-domain (AR+AP+POS+CMS), POS deposit IsDeposit+DepositRealizedAt, TipPayoutService §50 ทวิ (3% WHT >1000), RecurringLateFeeAccrualJob (rate/grace/cap config), DocumentLineDeliveryService LINE flex, Budget scenarios best/base/worst |
+| 124 | โมดูลที่พัก (Lodging) | วิเคราะห์ TakeTime → `Lodging*` 14 ตาราง · `LodgingPricingEngine` pure + 19 เทสต์ · storefront `/booking` + `/reservation/{token}` · front desk + ตั้งค่า 2 หน้า · มัดจำ Receipt(IsDeposit) → เช็คเอาต์ TaxInvoice DepositApplied* → ยกเลิก Refund/Realize ตามนโยบาย snapshot · seed เมื่อสร้างเว็บโรงแรม |
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._

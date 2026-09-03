@@ -102,6 +102,26 @@ public class CmsSiteService : ICmsSiteService
             }
         }
 
+        // เว็บไซต์ประเภทโรงแรม/ที่พัก → seed ที่พัก+ห้อง+ราคา+นโยบายให้ "จองได้ทันที"
+        // (ไม่ขึ้นกับ SeedTemplate — หน้าเว็บกับระบบจองเป็นคนละชั้น; ที่พักต้องมีเสมอ
+        // ไม่งั้นปุ่ม "จองห้องพัก" บน storefront ไม่มีอะไรให้จอง) · best-effort เหมือน template
+        if (request.IndustryType == IndustryType.Hotel)
+        {
+            try
+            {
+                var prop = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId);
+                if (prop != null)
+                {
+                    await _db.SaveChangesAsync();
+                    _logger.LogInformation("Seeded lodging property {Code} for site {SiteId}", prop.Code, site.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Lodging seeding failed for site {SiteId}", site.Id);
+            }
+        }
+
         _logger.LogInformation("Site '{Name}' created for company {CompanyId}", site.Name, companyId);
 
         return await GetSiteAsync(companyId, site.Id) ?? throw new InvalidOperationException("Failed to retrieve created site.");

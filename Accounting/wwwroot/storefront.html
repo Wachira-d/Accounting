@@ -103,6 +103,26 @@
     .product-card .compare{color:var(--text-secondary);font-size:13px;text-decoration:line-through;margin-left:6px}
     /* Block: Booking calendar (placeholder) */
     .blk-booking{padding:48px 20px;text-align:center}
+    /* Lodging (ที่พัก) */
+    .lg-search{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;background:#fff;border:1px solid #E5E7EB;border-radius:var(--radius,8px);padding:16px;text-align:left;max-width:1100px;margin:0 auto}
+    .lg-search label{display:block;font-size:12px;color:var(--text-secondary,#6B7280);margin-bottom:4px}
+    .lg-input{width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px;font-family:inherit;font-size:14px;background:#fff}
+    .lg-room{display:grid;grid-template-columns:200px 1fr auto;gap:18px;background:#fff;border:1px solid #E5E7EB;border-radius:var(--radius,8px);padding:16px;margin-bottom:14px;text-align:left}
+    .lg-room img,.lg-room .lg-noimg{width:200px;height:140px;object-fit:cover;border-radius:6px;background:#F3F4F6}
+    .lg-room h3{margin:0 0 6px;font-size:18px}
+    .lg-meta{font-size:13px;color:var(--text-secondary,#6B7280);margin-bottom:6px}
+    .lg-price{text-align:right;min-width:170px}
+    .lg-price .amt{font-size:24px;font-weight:800;color:var(--primary,#4F46E5)}
+    .lg-price small{display:block;color:var(--text-secondary,#6B7280);font-size:12px}
+    .lg-plan{font-size:13px;padding:6px 8px;border:1px solid #E5E7EB;border-radius:6px;margin-top:6px;display:flex;justify-content:space-between;gap:8px;cursor:pointer}
+    .lg-plan.sel{border-color:var(--primary,#4F46E5);background:#EEF2FF}
+    .lg-sum{background:var(--surface,#F9FAFB);border-radius:var(--radius,8px);padding:16px;font-size:14px;text-align:left}
+    .lg-sum .row{display:flex;justify-content:space-between;padding:4px 0}
+    .lg-sum .total{font-weight:800;font-size:18px;border-top:1px solid #E5E7EB;margin-top:6px;padding-top:8px}
+    .lg-badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;background:#FEF3C7;color:#92400E}
+    .lg-badge.ok{background:#D1FAE5;color:#065F46} .lg-badge.bad{background:#FEE2E2;color:#991B1B} .lg-badge.info{background:#DBEAFE;color:#1E40AF}
+    .lg-night{display:inline-block;font-size:11px;background:#F3F4F6;border-radius:4px;padding:2px 6px;margin:2px}
+    @media (max-width:640px){.lg-room{grid-template-columns:1fr}.lg-room img,.lg-room .lg-noimg{width:100%;height:160px}.lg-price{text-align:left}}
     .blk-booking .placeholder{padding:32px;background:var(--surface,#F9FAFB);border:2px dashed #D1D5DB;border-radius:var(--radius,8px);color:var(--text-secondary,#6B7280)}
     /* Block: Cart summary */
     .blk-cart{padding:48px 20px;max-width:880px;margin:0 auto}
@@ -651,6 +671,9 @@
         const bookingEls = document.querySelectorAll('[data-block="booking"]');
         for (const el of bookingEls) {
           try {
+            // เว็บที่พัก: บล็อก "ปฏิทินจอง" = ช่องค้นหาห้องว่าง (ไม่ใช่ slot นัดหมาย)
+            const lodging = await Store.lodgingInfo();
+            if (lodging) { el.innerHTML = Store.lodgingSearchForm(lodging); continue; }
             const r = await fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/booking-services`);
             const j = await r.json();
             const services = j.data || [];
@@ -874,6 +897,15 @@
         }
         if (slug.startsWith('product/')) {
           await this.renderProductDetail(slug.substring('product/'.length)); return true;
+        }
+        // ที่พัก: /booking, /book, /rooms → หน้าค้นหา+จอง (เฉพาะเว็บที่มีที่พักผูกอยู่ —
+        // ไม่มีก็ปล่อยให้หน้า CMS ที่ seed ไว้ทำงานตามเดิม) · /reservation/{token} → หน้าการจองของแขก
+        if (slug === 'booking' || slug === 'book' || slug === 'rooms') {
+          const info = await this.lodgingInfo();
+          if (info) { await this.renderLodgingSearch(); return true; }
+        }
+        if (slug.startsWith('reservation/')) {
+          await this.renderLodgingReservation(slug.substring('reservation/'.length)); return true;
         }
         return false;
       },
@@ -1395,6 +1427,286 @@
         document.body.appendChild(t);
         setTimeout(() => t.remove(), 4000);
       }
+    });
+
+    // ═══════════════ ที่พัก (Lodging) — ค้นหาห้องว่าง → เลือกแผนราคา/บริการเสริม → จอง → ดู/อัปโหลดสลิป/ยกเลิกด้วย token ═══════════════
+    // ราคาทุกตัวเลขมาจากเซิร์ฟเวอร์ (search/quote) — หน้าเว็บแสดงอย่างเดียว ห้ามคำนวณเอง (กติกา "resolver กลาง")
+    Object.assign(Store, {
+      _lodging: undefined,
+      _lgState: { checkIn: '', checkOut: '', adults: 2, children: 0, rooms: 1, sel: {}, extras: {}, ratePlanId: null, results: [], quote: null },
+      _lurl(path) { return this._url('/lodging' + path); },
+      async lodgingInfo() {
+        if (this._lodging !== undefined) return this._lodging;
+        try {
+          const r = await fetch(this._lurl('/info'));
+          this._lodging = r.ok ? ((await r.json()).data || null) : null;
+        } catch (_) { this._lodging = null; }
+        return this._lodging;
+      },
+      _money(n) { return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+      _dateTh(d) { try { return new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); } catch (_) { return d; } },
+      _todayIso(offset = 0) { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10); },
+
+      lodgingSearchForm(info) {
+        const st = this._lgState;
+        const ci = st.checkIn || this._todayIso(1), co = st.checkOut || this._todayIso(2);
+        return `<div class="lg-search">
+          <div><label>เช็คอิน</label><input type="date" class="lg-input" id="lgIn" value="${ci}" min="${this._todayIso(0)}"></div>
+          <div><label>เช็คเอาต์</label><input type="date" class="lg-input" id="lgOut" value="${co}" min="${this._todayIso(1)}"></div>
+          <div><label>ผู้ใหญ่</label><select class="lg-input" id="lgAdults">${[1,2,3,4,5,6].map(n=>`<option ${n===st.adults?'selected':''}>${n}</option>`).join('')}</select></div>
+          <div><label>เด็ก (≤${info.childMaxAge} ปี)</label><select class="lg-input" id="lgChildren">${[0,1,2,3,4].map(n=>`<option ${n===st.children?'selected':''}>${n}</option>`).join('')}</select></div>
+          <div><label>จำนวนห้อง</label><select class="lg-input" id="lgRooms">${[1,2,3,4,5].map(n=>`<option ${n===st.rooms?'selected':''}>${n}</option>`).join('')}</select></div>
+          <div><button class="btn btn-primary" style="width:100%" onclick="Store.lodgingSearch()">🔍 ค้นหาห้องว่าง</button></div>
+          <div style="grid-column:1/-1;font-size:12px;color:var(--text-secondary)">เช็คอิน ${this.esc(info.checkInTime)} · เช็คเอาต์ ${this.esc(info.checkOutTime)} · ${info.pricesIncludeVat ? 'ราคารวมภาษีแล้ว' : 'ราคายังไม่รวม VAT'}${info.serviceChargePercent > 0 ? ` · service charge ${info.serviceChargePercent}%` : ''} · ${info.onlineBookingEnabled ? 'จองออนไลน์ได้ทันที' : 'รับจองผ่านเจ้าหน้าที่'}</div>
+        </div>`;
+      },
+
+      async renderLodgingSearch() {
+        const info = await this.lodgingInfo();
+        const main = document.getElementById('sfMain');
+        document.title = `จองห้องพัก — ${info?.name || ''}`;
+        if (!info) { main.innerHTML = '<div class="sf-loader">เว็บไซต์นี้ยังไม่มีที่พักเปิดให้จอง</div>'; return; }
+        main.innerHTML = `<div class="sf-container" style="padding:32px 20px">
+          <h1 style="margin-bottom:6px">${this.esc(info.name)}</h1>
+          <div style="color:var(--text-secondary);margin-bottom:18px">${'★'.repeat(info.starRating||0)} ${this.esc(info.address||'')}</div>
+          <div id="lgSearchBox">${this.lodgingSearchForm(info)}</div>
+          <div id="lgResults" style="margin-top:24px">${(info.roomTypes||[]).map(rt => this._roomCard(rt, null)).join('')}</div>
+          <div id="lgBookBox"></div>
+        </div>`;
+        if (this._lgState.checkIn) await this.lodgingSearch();
+      },
+
+      _roomCard(rt, res) {
+        const img = (rt.images && rt.images[0]) ? `<img src="${this.esc(rt.images[0])}" alt="${this.esc(rt.name)}">` : '<div class="lg-noimg"></div>';
+        const st = this._lgState;
+        const meta = `${rt.sizeSqm ? rt.sizeSqm + ' ตรม. · ' : ''}${rt.bedType ? this.esc(rt.bedType) + ' · ' : ''}พักได้ ${rt.maxOccupancy} คน${rt.viewType ? ' · ' + this.esc(rt.viewType) : ''}${(res ? res.includesBreakfast : rt.includesBreakfast) ? ' · 🍳 รวมอาหารเช้า' : ''}`;
+        let right;
+        if (!res) right = `<div class="lg-price"><div class="amt">฿${this._money(rt.baseRate)}</div><small>ต่อคืน (ราคาเริ่มต้น)</small></div>`;
+        else {
+          const nights = res.nights?.length || 0;
+          const sel = st.sel[rt.id] || 0;
+          const plans = (res.ratePlans || []).map(p => `<div class="lg-plan ${st.ratePlanId === p.ratePlanId ? 'sel' : ''}" onclick="Store.lodgingPickPlan('${p.ratePlanId}')">
+              <span>${this.esc(p.name)}${p.includesBreakfast ? ' 🍳' : ''}${!p.isRefundable ? ' <span class="lg-badge bad">ไม่คืนเงิน</span>' : ''}</span><b>฿${this._money(p.pricePerRoom)}</b></div>`).join('');
+          right = `<div class="lg-price"><div class="amt">฿${this._money(res.pricePerRoom)}</div><small>ต่อห้อง · ${nights} คืน (เฉลี่ย ฿${this._money(res.averageNightlyRate)}/คืน)</small>
+            <div style="margin:4px 0">${(res.nights||[]).slice(0,7).map(n => `<span class="lg-night" title="${this.esc(n.seasonName||'')}">${new Date(n.date).getDate()}: ${Number(n.rate).toLocaleString('th-TH')}</span>`).join('')}${nights > 7 ? '<span class="lg-night">…</span>' : ''}</div>
+            ${plans}
+            ${res.unavailableReason ? `<div style="margin-top:8px"><span class="lg-badge bad">${this.esc(res.unavailableReason)}</span></div>` :
+              `<div style="margin-top:8px"><span class="lg-badge ok">ว่าง ${res.availableRooms} ห้อง</span>
+               <select class="lg-input" style="width:auto;display:inline-block;margin-left:6px" onchange="Store.lodgingSelectRoom('${rt.id}', this.value)">${Array.from({length: Math.min(res.availableRooms, 5) + 1}, (_, i) => `<option value="${i}" ${i===sel?'selected':''}>${i === 0 ? 'เลือกจำนวนห้อง' : i + ' ห้อง'}</option>`).join('')}</select></div>`}
+          </div>`;
+        }
+        return `<div class="lg-room" id="lgRoom-${rt.id}">${img}<div><h3>${this.esc(rt.name)}</h3><div class="lg-meta">${meta}</div><div style="font-size:14px">${this.esc(rt.description||'')}</div>
+          ${(rt.amenities||[]).length ? `<div class="lg-meta" style="margin-top:6px">${rt.amenities.map(a => '· ' + this.esc(a)).join(' ')}</div>` : ''}</div>${right}</div>`;
+      },
+
+      async lodgingSearch() {
+        const st = this._lgState;
+        st.checkIn = document.getElementById('lgIn')?.value || st.checkIn;
+        st.checkOut = document.getElementById('lgOut')?.value || st.checkOut;
+        st.adults = +(document.getElementById('lgAdults')?.value || st.adults);
+        st.children = +(document.getElementById('lgChildren')?.value || st.children);
+        st.rooms = +(document.getElementById('lgRooms')?.value || st.rooms);
+        if (!st.checkIn || !st.checkOut) { this._toast('กรุณาเลือกวันเข้าพัก'); return; }
+        if (!document.getElementById('lgResults')) { location.href = this._pageUrl('booking'); return; }
+        const box = document.getElementById('lgResults');
+        box.innerHTML = '<div class="sf-loader">กำลังค้นหาห้องว่าง...</div>';
+        try {
+          const r = await fetch(this._lurl('/search'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ checkIn: st.checkIn + 'T00:00:00', checkOut: st.checkOut + 'T00:00:00', adults: st.adults, children: st.children, rooms: st.rooms, ratePlanId: st.ratePlanId }) });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.message || 'ค้นหาไม่สำเร็จ');
+          st.results = j.data || [];
+          st.sel = {}; st.quote = null;
+          const info = await this.lodgingInfo();
+          const byId = Object.fromEntries((info.roomTypes||[]).map(rt => [rt.id, rt]));
+          box.innerHTML = st.results.length ? st.results.map(res => this._roomCard(byId[res.roomTypeId] || res, res)).join('') : '<div class="sf-loader">ไม่มีห้องเปิดขาย</div>';
+          document.getElementById('lgBookBox').innerHTML = '';
+        } catch (e) { box.innerHTML = `<div class="sf-loader" style="color:#DC2626">${this.esc(e.message)}</div>`; }
+      },
+      lodgingPickPlan(id) { this._lgState.ratePlanId = this._lgState.ratePlanId === id ? null : id; this.lodgingSearch(); },
+      async lodgingSelectRoom(roomTypeId, n) {
+        this._lgState.sel[roomTypeId] = +n;
+        await this.lodgingQuote();
+      },
+      _quoteBody() {
+        const st = this._lgState;
+        const rooms = [];
+        for (const [rtId, n] of Object.entries(st.sel)) for (let i = 0; i < n; i++) rooms.push({ roomTypeId: rtId, adults: Math.max(1, Math.ceil(st.adults / Math.max(1, Object.values(st.sel).reduce((a,b)=>a+b,0)))), children: i === 0 ? st.children : 0, extraBeds: 0 });
+        const extras = Object.entries(st.extras).filter(([,q]) => q > 0).map(([extraId, quantity]) => ({ extraId, quantity }));
+        return { checkIn: st.checkIn + 'T00:00:00', checkOut: st.checkOut + 'T00:00:00', rooms, extras, ratePlanId: st.ratePlanId };
+      },
+      async lodgingQuote() {
+        const st = this._lgState; const info = await this.lodgingInfo();
+        const box = document.getElementById('lgBookBox');
+        const body = this._quoteBody();
+        if (!body.rooms.length) { box.innerHTML = ''; return; }
+        try {
+          const r = await fetch(this._lurl('/quote'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.message || 'คำนวณราคาไม่สำเร็จ');
+          st.quote = j.data;
+          box.innerHTML = this._bookForm(info, st.quote);
+          box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (e) { box.innerHTML = `<div class="sf-loader" style="color:#DC2626">${this.esc(e.message)}</div>`; }
+      },
+      _bookForm(info, q) {
+        const st = this._lgState;
+        const extras = (info.extras||[]).map(x => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;font-size:14px">
+            <span>${this.esc(x.name)} <small style="color:var(--text-secondary)">฿${this._money(x.price)} ${({1:'/การเข้าพัก',2:'/คืน',3:'/คน',4:'/คน/คืน'})[x.priceMode]||''}</small></span>
+            <select class="lg-input" style="width:80px" onchange="Store.lodgingSetExtra('${x.id}', this.value)">${Array.from({length: (x.maxQuantity||5)+1}, (_, i) => `<option value="${i}" ${(st.extras[x.id]||0)===i?'selected':''}>${i}</option>`).join('')}</select></label>`).join('');
+        const errs = (q.errors||[]).map(e => `<div class="lg-badge bad" style="margin:2px 0">${this.esc(e)}</div>`).join('');
+        return `<div style="display:grid;grid-template-columns:1fr 340px;gap:20px;margin-top:24px" class="lg-book">
+          <form id="lgBookForm" onsubmit="Store.lodgingSubmit(event)" style="display:grid;gap:10px;background:#fff;border:1px solid #E5E7EB;border-radius:var(--radius,8px);padding:18px">
+            <h3 style="margin:0">ข้อมูลผู้เข้าพัก</h3>
+            <div><label>ชื่อ-นามสกุล *</label><input name="guestName" class="lg-input" required maxlength="200"></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div><label>เบอร์โทร *</label><input name="guestPhone" class="lg-input" required maxlength="30"></div>
+              <div><label>อีเมล</label><input type="email" name="guestEmail" class="lg-input" maxlength="200"></div>
+            </div>
+            ${info.requireGuestIdNumber ? '<div><label>เลขบัตรประชาชน/พาสปอร์ต *</label><input name="guestIdNumber" class="lg-input" required maxlength="30"></div>' : ''}
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div><label>เวลาที่คาดว่าจะถึง</label><input name="arrivalTime" class="lg-input" placeholder="เช่น 18:30" maxlength="20"></div>
+              <div><label>สัญชาติ</label><input name="guestNationality" class="lg-input" maxlength="60"></div>
+            </div>
+            <div><label>คำขอพิเศษ</label><textarea name="specialRequests" class="lg-input" rows="2" maxlength="1000"></textarea></div>
+            <details><summary style="cursor:pointer;font-size:14px">ขอใบกำกับภาษีในนามบริษัท</summary>
+              <div style="display:grid;gap:8px;margin-top:8px"><input name="guestCompanyName" class="lg-input" placeholder="ชื่อบริษัท"><input name="guestTaxId" class="lg-input" placeholder="เลขประจำตัวผู้เสียภาษี 13 หลัก" maxlength="13"><input name="guestAddress" class="lg-input" placeholder="ที่อยู่"></div></details>
+            ${extras ? `<h3 style="margin:8px 0 0">บริการเสริม</h3>${extras}` : ''}
+            ${info.houseRules ? `<label style="font-size:13px;display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="acceptHouseRules" required style="margin-top:3px"><span>ยอมรับกติกาที่พัก:<br><span style="white-space:pre-wrap;color:var(--text-secondary)">${this.esc(info.houseRules)}</span></span></label>` : ''}
+            <button type="submit" class="btn btn-primary" style="padding:14px" ${errs ? 'disabled' : ''}>ยืนยันการจอง${q.depositRequired > 0 ? ` · มัดจำ ฿${this._money(q.depositRequired)}` : ''}</button>
+          </form>
+          <div class="lg-sum">
+            <h3 style="margin:0 0 8px">สรุปการจอง</h3>
+            <div style="font-size:13px;color:var(--text-secondary)">${this._dateTh(q.checkIn)} → ${this._dateTh(q.checkOut)} · ${q.nights} คืน${q.ratePlanName ? ' · ' + this.esc(q.ratePlanName) : ''}</div>
+            ${(q.rooms||[]).map(r => `<div class="row"><span>${this.esc(r.roomTypeName)} (${r.adults} ผู้ใหญ่${r.children ? ' ' + r.children + ' เด็ก' : ''})</span><span>฿${this._money(r.subtotal)}</span></div>`).join('')}
+            ${(q.extras||[]).map(e => `<div class="row"><span>${this.esc(e.name)} ×${e.quantity}</span><span>฿${this._money(e.total)}</span></div>`).join('')}
+            ${q.serviceChargeAmount > 0 ? `<div class="row"><span>Service charge</span><span>฿${this._money(q.serviceChargeAmount)}</span></div>` : ''}
+            ${q.vatAmount > 0 ? `<div class="row" style="color:var(--text-secondary)"><span>${q.pricesIncludeVat ? 'รวม VAT' : 'VAT'} ${q.vatRate}%</span><span>฿${this._money(q.vatAmount)}</span></div>` : ''}
+            <div class="row total"><span>ยอดรวม</span><span>฿${this._money(q.totalAmount)}</span></div>
+            ${q.depositRequired > 0 ? `<div class="row"><span>มัดจำที่ต้องชำระ</span><b>฿${this._money(q.depositRequired)}</b></div>` : '<div class="row"><span>ไม่ต้องชำระมัดจำ</span><span>ยืนยันทันที</span></div>'}
+            ${q.cancellationPolicyName ? `<div style="font-size:12px;margin-top:8px;color:var(--text-secondary)">นโยบายยกเลิก: <b>${this.esc(q.cancellationPolicyName)}</b>${q.nonRefundable ? ' — ไม่คืนเงินทุกกรณี' : ''}<br>${(q.cancellationRules||[]).map(r => `ก่อน ${r.daysBefore} วัน คิด ${r.penaltyPercent}%`).join(' · ')}</div>` : ''}
+            ${errs}
+          </div></div>`;
+      },
+      async lodgingSetExtra(id, q) { this._lgState.extras[id] = +q; await this.lodgingQuote(); },
+      async lodgingSubmit(ev) {
+        ev.preventDefault();
+        const form = ev.target; const btn = form.querySelector('button[type=submit]');
+        const fd = new FormData(form);
+        const body = Object.assign(this._quoteBody(), {
+          guestName: fd.get('guestName'), guestPhone: fd.get('guestPhone'), guestEmail: fd.get('guestEmail') || null,
+          guestIdNumber: fd.get('guestIdNumber') || null, arrivalTime: fd.get('arrivalTime') || null, guestNationality: fd.get('guestNationality') || null,
+          specialRequests: fd.get('specialRequests') || null, guestCompanyName: fd.get('guestCompanyName') || null,
+          guestTaxId: fd.get('guestTaxId') || null, guestAddress: fd.get('guestAddress') || null, acceptHouseRules: fd.get('acceptHouseRules') === 'on',
+        });
+        btn.disabled = true; btn.textContent = 'กำลังจอง...';
+        try {
+          const r = await fetch(this._lurl('/reservations'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.message || 'จองไม่สำเร็จ');
+          const res = j.data;
+          this._lgState.sel = {}; this._lgState.extras = {};
+          const url = this._pageUrl('reservation/' + res.publicToken);
+          history.pushState({}, '', url);
+          await this.renderLodgingReservation(res.publicToken, j.message);
+        } catch (e) { this._toast('❌ ' + e.message); btn.disabled = false; btn.textContent = 'ยืนยันการจอง'; }
+      },
+
+      async renderLodgingReservation(token, banner) {
+        const main = document.getElementById('sfMain');
+        main.innerHTML = '<div class="sf-loader">กำลังโหลดการจอง...</div>';
+        let r;
+        try {
+          const resp = await fetch(this._lurl('/reservations/' + encodeURIComponent(token)));
+          const j = await resp.json().catch(() => null);
+          if (!resp.ok) throw new Error(j?.message || 'ไม่พบการจอง');
+          r = j.data;
+        } catch (e) { main.innerHTML = `<div class="sf-loader" style="color:#DC2626">${this.esc(e.message)}</div>`; return; }
+        document.title = `การจอง ${r.reservationNumber}`;
+        const STATUS = { Pending: ['รอชำระมัดจำ', ''], Confirmed: ['ยืนยันแล้ว', 'ok'], CheckedIn: ['เช็คอินแล้ว', 'info'], CheckedOut: ['เช็คเอาต์แล้ว', 'info'], Cancelled: ['ยกเลิก', 'bad'], NoShow: ['ไม่มาเข้าพัก', 'bad'] };
+        const st = STATUS[r.status] || [r.status, ''];
+        const info = await this.lodgingInfo();
+        const canCancel = r.status === 'Pending' || r.status === 'Confirmed';
+        const canSlip = r.status === 'Pending' || (r.status === 'Confirmed' && r.balanceDue > 0);
+        main.innerHTML = `<div class="sf-container" style="padding:32px 20px;max-width:860px">
+          ${banner ? `<div class="lg-badge ok" style="display:block;padding:12px;margin-bottom:14px;font-size:14px">${this.esc(banner)}</div>` : ''}
+          <h1 style="margin-bottom:4px">การจอง ${this.esc(r.reservationNumber)} <span class="lg-badge ${st[1]}">${st[0]}</span></h1>
+          <div style="color:var(--text-secondary);margin-bottom:18px">${this.esc(r.propertyName)} · เช็คอิน ${this._dateTh(r.checkInDate)} หลัง ${this.esc(r.checkInTime)} · เช็คเอาต์ ${this._dateTh(r.checkOutDate)} ก่อน ${this.esc(r.checkOutTime)} · ${r.nights} คืน</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="lg-book">
+            <div class="lg-sum">
+              <h3 style="margin:0 0 8px">ห้องพัก</h3>
+              ${(r.rooms||[]).map(x => `<div class="row"><span>${this.esc(x.roomTypeName)}${x.unitNumber ? ' ห้อง ' + this.esc(x.unitNumber) : ''} · ${x.adults} ผู้ใหญ่${x.children ? ' ' + x.children + ' เด็ก' : ''}</span><span>฿${this._money(x.subtotal)}</span></div>`).join('')}
+              ${(r.extras||[]).map(e => `<div class="row"><span>${this.esc(e.name)} ×${e.quantity}</span><span>฿${this._money(e.total)}</span></div>`).join('')}
+              ${r.serviceChargeAmount > 0 ? `<div class="row"><span>Service charge</span><span>฿${this._money(r.serviceChargeAmount)}</span></div>` : ''}
+              ${(r.charges||[]).filter(c => c.status !== 'Cancelled').map(c => `<div class="row"><span>${this.esc(c.description)}</span><span>฿${this._money(c.total)}</span></div>`).join('')}
+              <div class="row total"><span>ยอดรวม</span><span>฿${this._money(r.grandTotal)}</span></div>
+              <div class="row"><span>ชำระแล้ว</span><span>฿${this._money(r.paidAmount)}</span></div>
+              <div class="row"><span>คงเหลือ</span><b>฿${this._money(r.balanceDue)}</b></div>
+              ${r.status === 'Pending' && r.depositRequired > 0 ? `<div class="row" style="color:#92400E"><span>มัดจำที่ต้องชำระ</span><b>฿${this._money(r.depositRequired)}</b></div>${r.holdExpiresAt ? `<div style="font-size:12px;color:#92400E">กรุณาชำระและอัปโหลดสลิปภายใน ${new Date(r.holdExpiresAt).toLocaleString('th-TH')} มิฉะนั้นระบบจะปล่อยห้อง</div>` : ''}` : ''}
+              ${r.cancellationFee > 0 ? `<div class="row"><span>ค่าปรับยกเลิก</span><span>฿${this._money(r.cancellationFee)}</span></div>` : ''}
+              ${r.refundAmount > 0 ? `<div class="row"><span>คืนเงิน</span><span>฿${this._money(r.refundAmount)}</span></div>` : ''}
+            </div>
+            <div class="lg-sum">
+              <h3 style="margin:0 0 8px">ผู้เข้าพัก</h3>
+              <div>${this.esc(r.guestName)}</div>
+              <div style="font-size:13px;color:var(--text-secondary)">${this.esc(r.guestPhone||'')} ${this.esc(r.guestEmail||'')}</div>
+              ${r.specialRequests ? `<div style="font-size:13px;margin-top:6px">คำขอพิเศษ: ${this.esc(r.specialRequests)}</div>` : ''}
+              ${r.cancellationPolicyName ? `<div style="font-size:12px;margin-top:10px;color:var(--text-secondary)">นโยบายยกเลิก: <b>${this.esc(r.cancellationPolicyName)}</b>${r.nonRefundable ? ' — ไม่คืนเงิน' : ''}<br>${(r.cancellationRules||[]).map(x => `ก่อน ${x.daysBefore} วัน คิด ${x.penaltyPercent}%`).join(' · ')}</div>` : ''}
+              ${r.confirmationMessage ? `<div style="font-size:13px;margin-top:10px">${this.esc(r.confirmationMessage)}</div>` : ''}
+              <div style="font-size:13px;margin-top:10px">ติดต่อที่พัก: ${this.esc(r.propertyPhone||info?.phone||'')}${r.propertyLineId ? ' · LINE ' + this.esc(r.propertyLineId) : ''}</div>
+            </div>
+          </div>
+          ${canSlip ? `<div class="lg-sum" style="margin-top:16px"><h3 style="margin:0 0 8px">📎 ${r.status === 'Pending' ? 'อัปโหลดสลิปมัดจำ' : 'อัปโหลดสลิปชำระเงิน'}</h3>
+            ${r.paymentSlipUrl ? `<div class="lg-badge info" style="margin-bottom:8px">ส่งสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} — รอที่พักตรวจสอบ</div>` : ''}
+            <form onsubmit="Store.lodgingUploadSlip(event, '${this.esc(token)}')" style="display:grid;gap:8px;grid-template-columns:1fr 1fr auto">
+              <input type="file" name="file" accept="image/*,application/pdf" required class="lg-input">
+              <input name="reference" class="lg-input" placeholder="อ้างอิง/เวลาโอน (ถ้ามี)" maxlength="100">
+              <button class="btn btn-primary" type="submit">ส่งสลิป</button>
+              <div class="sf-slip-status" style="grid-column:1/-1;font-size:13px"></div>
+            </form></div>` : ''}
+          ${r.status === 'CheckedIn' ? `<div class="lg-sum" style="margin-top:16px"><h3 style="margin:0 0 8px">🛎️ แจ้งความต้องการถึงที่พัก</h3>
+            <form onsubmit="Store.lodgingGuestRequest(event, '${this.esc(token)}')" style="display:grid;gap:8px;grid-template-columns:160px 1fr auto">
+              <select name="requestType" class="lg-input"><option value="Housekeeping">ทำความสะอาด/ผ้าเช็ดตัว</option><option value="Maintenance">แจ้งซ่อม</option><option value="RoomService">รูมเซอร์วิส</option><option value="Concierge">คอนเซียร์จ/รถรับส่ง</option><option value="Complaint">ร้องเรียน</option><option value="Other">อื่น ๆ</option></select>
+              <input name="details" class="lg-input" required placeholder="รายละเอียด" maxlength="500"><button class="btn btn-primary" type="submit">ส่ง</button></form>
+            ${(r.requests||[]).slice(0,5).map(x => `<div style="font-size:13px;padding:4px 0">• ${this.esc(x.details)} <span class="lg-badge ${x.status === 'Completed' || x.status === 'Verified' ? 'ok' : ''}">${this.esc(x.status)}</span>${x.responseNote ? ' — ' + this.esc(x.responseNote) : ''}</div>`).join('')}</div>` : ''}
+          <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap">
+            <a href="${this._pageUrl('home')}" class="btn">← กลับหน้าหลัก</a>
+            ${canCancel ? `<button class="btn" style="border:1px solid #DC2626;color:#DC2626" onclick="Store.lodgingCancel('${this.esc(token)}')">ยกเลิกการจอง</button>` : ''}
+          </div>
+        </div>`;
+      },
+      async lodgingUploadSlip(ev, token) {
+        ev.preventDefault();
+        const form = ev.target; const status = form.querySelector('.sf-slip-status');
+        status.textContent = 'กำลังอัปโหลด...';
+        try {
+          const r = await fetch(this._lurl('/reservations/' + encodeURIComponent(token) + '/slip'), { method: 'POST', body: new FormData(form) });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.message || 'อัปโหลดไม่สำเร็จ');
+          await this.renderLodgingReservation(token, j.message);
+        } catch (e) { status.textContent = '✗ ' + e.message; status.style.color = '#DC2626'; }
+      },
+      async lodgingGuestRequest(ev, token) {
+        ev.preventDefault();
+        const fd = new FormData(ev.target);
+        try {
+          const r = await fetch(this._lurl('/reservations/' + encodeURIComponent(token) + '/requests'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requestType: fd.get('requestType'), details: fd.get('details') }) });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.message || 'ส่งไม่สำเร็จ');
+          await this.renderLodgingReservation(token, j.message);
+        } catch (e) { this._toast('❌ ' + e.message); }
+      },
+      async lodgingCancel(token) {
+        if (!confirm('ยืนยันยกเลิกการจอง? ค่าปรับ (ถ้ามี) คิดตามนโยบายยกเลิกที่แสดง')) return;
+        const reason = prompt('เหตุผลในการยกเลิก (ไม่บังคับ)') || null;
+        try {
+          const r = await fetch(this._lurl('/reservations/' + encodeURIComponent(token) + '/cancel'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.message || 'ยกเลิกไม่สำเร็จ');
+          await this.renderLodgingReservation(token, j.message);
+        } catch (e) { this._toast('❌ ' + e.message); }
+      },
     });
 
     Store.init();
