@@ -12,6 +12,7 @@ public class SecurityMiddleware
     private readonly RequestDelegate _next;
     private readonly bool _isDevelopment;
     private readonly long _maxRequestSize;
+    private readonly ILogger<SecurityMiddleware> _logger;
 
     // Paths that should never be exposed
     private static readonly string[] BlockedPaths =
@@ -21,9 +22,11 @@ public class SecurityMiddleware
         "/web.config", "/appsettings", "/connectionstrings"
     ];
 
-    public SecurityMiddleware(RequestDelegate next, IWebHostEnvironment env, IConfiguration config)
+    public SecurityMiddleware(RequestDelegate next, IWebHostEnvironment env, IConfiguration config,
+        ILogger<SecurityMiddleware> logger)
     {
         _next = next;
+        _logger = logger;
         _isDevelopment = env.IsDevelopment();
         _maxRequestSize = long.Parse(config["Security:MaxRequestSizeBytes"] ?? "10485760"); // 10MB default
     }
@@ -76,6 +79,30 @@ public class SecurityMiddleware
         // Prevent information leakage
         headers.Append("X-Permitted-Cross-Domain-Policies", "none");
 
+        // ── โดเมนของผู้ให้บริการรับชำระเงิน ──
+        // adapter แต่ละตัว **ประกาศเอง** ว่าต้องการโดเมนไหน (IPaymentProvider.CspNeeds)
+        // ⇒ เพิ่มเจ้าใหม่ = แก้แต่ไฟล์ใน Services/Payments/Providers/ ตามเกณฑ์ผ่านเฟส 6
+        // ของ PAYMENT_GATEWAY_DESIGN.md · ถ้า hard-code โดเมนที่นี่ = abstraction รั่ว
+        // (บังคับด้วย tools/payment_provider_boundary_check.py)
+        //
+        // ล้มเหลว = ปล่อยว่าง ไม่ใช่ throw — CSP ที่แคบเกินทำให้ปุ่มจ่ายเงินใช้ไม่ได้
+        // แต่หน้าอื่นยังทำงาน ส่วน throw จะทำให้ทั้งเว็บล่ม
+        string payScript = "", payConnect = "", payFrame = "";
+        try
+        {
+            var payProviders = context.RequestServices
+                .GetServices<Accounting.Services.Payments.IPaymentProvider>().ToList();
+            static string Join(IEnumerable<string> parts) =>
+                parts.Distinct().Any() ? " " + string.Join(' ', parts.Distinct()) : "";
+            payScript = Join(payProviders.SelectMany(p => p.CspNeeds.ScriptSrc));
+            payConnect = Join(payProviders.SelectMany(p => p.CspNeeds.ConnectSrc));
+            payFrame = Join(payProviders.SelectMany(p => p.CspNeeds.FrameSrc));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "อ่านโดเมนของผู้ให้บริการรับชำระเงินสำหรับ CSP ไม่สำเร็จ");
+        }
+
         // Content Security Policy
         //
         // ⚠️ หนี้ที่รู้ตัว: script-src ยังมี 'unsafe-inline' — ถอดไม่ได้ตอนนี้เพราะ
@@ -99,14 +126,17 @@ public class SecurityMiddleware
         // redirect ล้วน ไม่โหลดสคริปต์ของบุคคลที่สาม
         headers.Append("Content-Security-Policy",
             "default-src 'self'; " +
+            // ผู้ให้บริการรับชำระเงิน **ประกาศโดเมนที่ต้องใช้เอง** (IPaymentProvider.CspNeeds)
+            // ⇒ เพิ่มเจ้าใหม่ไม่ต้องแตะไฟล์นี้ · ถ้า hard-code ที่นี่ = abstraction รั่ว
+            // ตามเกณฑ์ผ่านเฟส 6 ของ PAYMENT_GATEWAY_DESIGN.md
             "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net "
-                + "https://accounts.google.com https://connect.facebook.net; " +
+                + "https://accounts.google.com https://connect.facebook.net" + payScript + "; " +
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net "
                 + "https://accounts.google.com; " +
             "font-src 'self' https://fonts.gstatic.com; " +
             "img-src 'self' data: blob: https:; " +
             "connect-src 'self' wss: ws: https://accounts.google.com https://oauth2.googleapis.com "
-                + "https://graph.facebook.com; " +
+                + "https://graph.facebook.com" + payConnect + "; " +
             // frame-src/object-src: ไฟล์แนบ (PDF) เปิดดูในหน้าโดยดึงผ่าน fetch
             // พร้อม JWT แล้วทำเป็น blob: URL ใส่ <iframe> — ลิงก์ตรงใช้ไม่ได้
             // เพราะ endpoint ต้องมี Authorization header.
@@ -121,7 +151,8 @@ public class SecurityMiddleware
             // ขึ้นข้อความโทษตัวบล็อกโฆษณาทั้งที่ CSP ของเราเองเป็นคนบล็อก)
             // เพิ่มผู้ให้บริการใหม่ = ต้องเพิ่มที่นี่ **และ** ใน HelpMediaEmbed
             "frame-src 'self' blob: data: https://accounts.google.com https://www.facebook.com "
-            + "https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com; " +
+            + "https://www.youtube.com https://www.youtube-nocookie.com https://www.tiktok.com"
+            + payFrame + "; " +
             "object-src 'self' blob: data:; " +
             // 'self' (not 'none') — the modern equivalent of X-Frame-Options
             // SAMEORIGIN; lets first-party pages embed the OCR PDF/image

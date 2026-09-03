@@ -267,6 +267,13 @@ builder.Services.AddScoped<IStockLedger, Accounting.Services.Implementations.Inv
 // เลือกจาก ProviderCode ⇒ เพิ่มเจ้าใหม่ = เพิ่มบรรทัดเดียวที่นี่ ไม่แตะทางเข้าเลย
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentProvider,
     Accounting.Services.Payments.Providers.ManualSlipPaymentProvider>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentProvider,
+    Accounting.Services.Payments.Providers.OmisePaymentProvider>();
+// named client — timeout สั้นกว่าค่าเริ่มต้นมาก เพราะผู้ใช้กำลังรออยู่หน้าจอจ่ายเงิน
+// (ค้าง 100 วินาทีแล้วค่อยบอกว่าล้มเหลว แย่กว่าบอกเร็วแล้วให้กดใหม่)
+builder.Services.AddHttpClient(
+    Accounting.Services.Payments.Providers.OmisePaymentProvider.HttpClientName,
+    c => c.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentIntentService,
     Accounting.Services.Payments.PaymentIntentService>();
 // 3-way match — PO ↔ GRN ↔ Invoice. Blocks AP overpayment before

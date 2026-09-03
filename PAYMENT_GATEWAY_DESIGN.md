@@ -331,6 +331,25 @@ QR/บัตร/redirect → poll → เปลี่ยนหน้าเป็
 | --- | --- | --- |
 | **1** แกน | ✅ | `PaymentProviderConfig`/`PaymentIntent`/`PaymentIntentEvent` + migration (unique index กันซ้ำ 2 ชั้น: idempotency key ต่อบริษัท + charge id ต่อ provider) · `IPaymentProvider` · `ManualSlipPaymentProvider` · `Helpers/PaymentIntentPolicy` (บริสุทธิ์ + 14 เทสต์) · `PaymentIntentService` (ล็อกต่อ source ตอนสร้าง · ต่อ intent ตอนเปลี่ยนสถานะ) · `Payment`/`PosPayment` มี `PaymentIntentId` · `tools/payment_provider_boundary_check.py` — **ยังไม่เปลี่ยนพฤติกรรมของทางเข้าใดเลย** ตามเกณฑ์ผ่านของเฟสนี้ |
 
+| **2** Omise sandbox | 🔨 backend เสร็จ | `OmisePaymentProvider` (PromptPay + บัตร + mobile/internet banking + TrueMoney) · named HttpClient timeout 20 วิ · `POST /api/pay/webhooks/{provider}` ยืนยันด้วยการ **re-fetch event** · หน้าตั้งค่า API (คีย์ · ทดสอบ · สลับโหมด) พร้อม**ด่านเปิด live** · CSP ประกอบจาก `IPaymentProvider.CspNeeds` — เหลือหน้าเว็บ `payment-settings.html` + `pay-widget.js` + job กระทบยอด |
+
+**สิ่งที่พบระหว่างทำเฟส 2:**
+
+6. **CSP เป็นจุดที่ abstraction รั่วได้ง่ายที่สุด** — เป็น allow-list ที่ต้องระบุโดเมนตรง ๆ
+   ถ้าเขียนใน `SecurityMiddleware` การเพิ่มเจ้าใหม่จะต้องแก้ไฟล์นอกโฟลเดอร์ adapter
+   = ผิดเกณฑ์ผ่านเฟส 6 ของเอกสารนี้เอง · checker จับได้ทันที (3 จุด) →
+   ให้ adapter **ประกาศโดเมนที่ต้องใช้เอง** (`IPaymentProvider.CspNeeds`) แล้ว
+   middleware ประกอบ CSP จากรายการนั้น ⇒ เพิ่มเจ้าใหม่ไม่ต้องแตะ CSP อีกเลย
+7. **สถานะที่ไม่รู้จักต้องเป็น `Pending` ไม่ใช่ `Failed`** — เดาว่าล้มเหลวแล้วปิดใบทิ้งทั้งที่
+   เงินอาจเข้าจริง แพงกว่าการรอต่ออีกนิด
+8. **webhook ต้องตอบ 200 เสมอแม้ปฏิเสธ** — ตอบ error = provider retry ไม่รู้จบ ·
+   สิ่งที่เกิดขึ้นถูกบันทึกฝั่งเราแล้ว
+9. **"ทดสอบผ่าน" ต้องรวม webhook มาถึงจริง** — คีย์ถูกแต่ลืมตั้ง URL ในแดชบอร์ดคือเคสที่
+   พบบ่อยที่สุด และเป็นเคสที่ลูกค้าจ่ายเงินแล้วออเดอร์ไม่อัปเดตโดยเจ้าของร้านไม่รู้ตัว ·
+   **เปลี่ยนคีย์แล้วต้องล้างผลทดสอบเดิม** ไม่งั้นใส่คีย์ผิดแล้วยัง "ผ่าน" อยู่จากผลเก่า
+10. **คีย์ที่เว้นว่างตอนบันทึก = ไม่เปลี่ยน ไม่ใช่ล้างทิ้ง** — หน้าเว็บไม่เคยได้ secret กลับไป
+    จึงส่งกลับมาไม่ได้ · ถ้าตีความว่างเป็น "ล้าง" ผู้ใช้จะลบคีย์ตัวเองทุกครั้งที่แก้ชื่อที่แสดง
+
 **สิ่งที่พบระหว่างทำเฟส 1:**
 
 1. **"ล้มเหลว/หมดอายุ" ต้องเดินหน้าไป "สำเร็จ" ได้** — provider ตัดสิน timeout ที่ 10 นาที

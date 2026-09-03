@@ -3,6 +3,24 @@ using Accounting.Models.Enums;
 
 namespace Accounting.Services.Payments;
 
+/// <summary>โดเมนภายนอกที่ adapter ต้องให้เบราว์เซอร์เข้าถึงได้
+///
+/// <para><b>ทำไมต้องให้ adapter ประกาศเอง</b>: CSP เป็น allow-list ที่บังคับฝั่งเบราว์เซอร์
+/// จึงต้องระบุโดเมนตรง ๆ — ถ้าเขียนไว้ใน <c>SecurityMiddleware</c> การเพิ่มเจ้าใหม่จะต้อง
+/// ไปแก้ไฟล์นอกโฟลเดอร์ adapter ซึ่งเป็นนิยามของ "abstraction รั่ว" ตามเกณฑ์ผ่านเฟส 6 ·
+/// ให้ adapter บอกความต้องการแล้ว middleware ประกอบ CSP จากรายการนี้แทน</para>
+///
+/// <para>⚠️ CSP บล็อกแบบ<b>เงียบ</b> — โดเมนที่ลืมประกาศทำให้ปุ่มจ่ายเงิน "กดแล้วไม่มีอะไร
+/// เกิดขึ้น" โดยไม่มี error ให้ไล่ (บทเรียนจริงจากปุ่ม Google SSO)</para></summary>
+public sealed record ProviderCspNeeds(
+    IReadOnlyList<string> ScriptSrc,
+    IReadOnlyList<string> ConnectSrc,
+    IReadOnlyList<string> FrameSrc)
+{
+    public static readonly ProviderCspNeeds None =
+        new(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>());
+}
+
 /// <summary>ความสามารถของ provider — หน้าตั้งค่าสร้างตัวเลือกจากค่านี้ ห้าม hard-code
 /// รายการวิธีจ่ายในหน้าเว็บ (defect class "สำเนามือฝั่ง JS")</summary>
 public sealed record PaymentCapabilities(
@@ -84,6 +102,14 @@ public interface IPaymentProvider
 {
     string ProviderCode { get; }
     PaymentCapabilities Capabilities { get; }
+
+    /// <summary>โดเมนที่ต้องอนุญาตใน CSP — <c>SecurityMiddleware</c> ประกอบจากค่านี้
+    /// ⇒ เพิ่มเจ้าใหม่ไม่ต้องแตะไฟล์นอกโฟลเดอร์ adapter</summary>
+    ProviderCspNeeds CspNeeds => ProviderCspNeeds.None;
+
+    /// <summary>URL ของสคริปต์ที่หน้าจ่ายเงินต้องโหลด (tokenization ฝั่งเบราว์เซอร์) —
+    /// null = ไม่ต้องโหลดอะไร · หน้าเว็บขอค่านี้จาก API ไม่ hard-code เอง</summary>
+    string? ClientScriptUrl => null;
 
     Task<ProviderCharge> CreateChargeAsync(PaymentIntent intent, ChargeRequest req,
         PaymentProviderConfig config, CancellationToken ct = default);
