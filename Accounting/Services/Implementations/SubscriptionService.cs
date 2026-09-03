@@ -600,7 +600,11 @@ public class SubscriptionService : ISubscriptionService
         int MaxOcrPagesPerMonth,
         int? AzureOcrPagesPerMonth,
         int? LocalOcrPagesPerMonth,
-        FeatureFlags EnabledFeatures);
+        FeatureFlags EnabledFeatures,
+        /// <summary>ระดับแพ็กเกจที่มีผลจริง — ใช้ตัดสิน "add-on นี้ขายเฉพาะ Pro ขึ้นไป"
+        /// (`ApiFeature.MinPlanCsv`). ต้องมาจาก resolver ตัวเดียวกับ limits/features
+        /// ไม่ใช่ query ซ้ำที่อื่น (บทเรียน "สอง resolver จะเถียงกันเองต่อหน้าผู้ใช้")</summary>
+        SubscriptionPlan Plan = SubscriptionPlan.FreeTrial);
 
     public async Task<EffectivePlan?> GetEffectivePlanAsync(Guid companyId)
     {
@@ -619,6 +623,7 @@ public class SubscriptionService : ISubscriptionService
         // Account-plan path. If the account row is missing / deleted, fall back
         // to the per-company row so we never lock the user out by accident.
         var acct = await _db.AccountSubscriptions
+            .Include(a => a.PlanTemplate)   // ต้องมี ไม่งั้น EffectivePlan.Plan ตกเป็น FreeTrial เสมอ
             .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
         if (acct == null)
         {
@@ -649,7 +654,8 @@ public class SubscriptionService : ISubscriptionService
             MaxOcrPagesPerMonth: acct.MaxOcrPagesPerMonth,
             AzureOcrPagesPerMonth: acct.AzureOcrPagesPerMonth,
             LocalOcrPagesPerMonth: acct.LocalOcrPagesPerMonth,
-            EnabledFeatures: acct.EnabledFeatures);
+            EnabledFeatures: acct.EnabledFeatures,
+            Plan: acct.PlanTemplate != null ? acct.PlanTemplate.Plan : SubscriptionPlan.FreeTrial);
     }
 
     private static EffectivePlan BuildFromCompanySub(Subscription sub)
@@ -674,7 +680,8 @@ public class SubscriptionService : ISubscriptionService
             MaxOcrPagesPerMonth: sub.MaxOcrPagesPerMonth,
             AzureOcrPagesPerMonth: sub.AzureOcrPagesPerMonth,
             LocalOcrPagesPerMonth: sub.LocalOcrPagesPerMonth,
-            EnabledFeatures: sub.EnabledFeatures);
+            EnabledFeatures: sub.EnabledFeatures,
+            Plan: sub.Plan);
     }
 
     public async Task<bool> CheckUsageLimitAsync(Guid companyId, string limitType)

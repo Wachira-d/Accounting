@@ -112,6 +112,15 @@ public class LodgingProperty : TenantEntity
     public LodgingCancellationPolicy? DefaultCancellationPolicy { get; set; }
     /// <summary>ค่าปรับ no-show เป็น % ของยอดรวม (ปกติ = 100 = ริบทั้งหมด / หรือ 1 คืน ⇒ ใส่ตามนโยบาย)</summary>
     public decimal NoShowChargePercent { get; set; } = 100;
+    /// <summary>ให้ระบบออกเอกสารบัญชีให้แค่ไหน (Full/ReceiptOnly/Off) — ดู
+    /// <see cref="LodgingAccountingMode"/>. ทุกโหมดนับมิเตอร์การเข้าพักเท่ากัน</summary>
+    public LodgingAccountingMode AccountingMode { get; set; } = LodgingAccountingMode.Full;
+
+    /// <summary>ผู้ใช้ยืนยันว่า "ออกใบกำกับภาษีจากระบบอื่น" ตอนเลือกโหมด Off
+    /// (บริษัทจด VAT เท่านั้นที่ต้องยืนยัน) — เก็บวัน+ผู้ยืนยันเป็นหลักฐาน</summary>
+    public DateTime? AccountingModeAckAt { get; set; }
+    public string? AccountingModeAckBy { get; set; }
+
     /// <summary>ผังบัญชี "รายได้ริบมัดจำ/ค่าปรับยกเลิก" (TakeTime FORFEIT_INCOME 41220) —
     /// null = ลงรายได้ค่าห้อง. ใช้ตอน RealizeDeposit ส่วนที่ริบเมื่อยกเลิก/no-show</summary>
     public string? CancellationFeeAccountCode { get; set; }
@@ -388,6 +397,13 @@ public class LodgingReservation : TenantEntity
     public decimal RefundAmount { get; set; }
     public string? InternalNotes { get; set; }
     public string? ConfirmedBy { get; set; }
+
+    /// <summary>งวดที่การเข้าพักนี้ถูกนับเป็น 1 หน่วยมิเตอร์ (yyyy-MM) — null = ยังไม่นับ
+    ///
+    /// มิเตอร์ของโมดูลที่พักคือ "การเข้าพักที่ปิดสถานะ" ไม่ใช่จำนวนเอกสาร: 1 การเข้าพัก
+    /// = 1 หน่วยเสมอ ไม่ว่าจะออกเอกสารกี่ใบหรือไม่ออกเลย (LODGING_LICENSING_PLAN §13.2)
+    /// กันนับซ้ำเมื่อสถานะถูกแตะหลายรอบ (เช่น night audit ตามมาทีหลัง)</summary>
+    public string? MeteredPeriod { get; set; }
 
     public ICollection<LodgingReservationRoom> Rooms { get; set; } = new List<LodgingReservationRoom>();
     public ICollection<LodgingReservationExtra> Extras { get; set; } = new List<LodgingReservationExtra>();

@@ -75,6 +75,31 @@ public enum BillingAccountStatus
 }
 
 /// <summary>วิธีคิดเงินต่อฟีเจอร์ — admin เลือกได้อิสระ ไม่ hard-code ในโค้ด</summary>
+/// <summary>ชนิดของแคตตาล็อกฟีเจอร์ — แยก "ผลิตภัณฑ์ Connected API" (ของเดิม)
+/// ออกจาก "ส่วนเสริมของแอป" (Lodging ฯลฯ) เพื่อให้หน้าแอดมิน/portal จัดกลุ่มถูก
+/// โดย resolver ยังอ่าน FeatureCode แบบเดียวกันทั้งหมด</summary>
+public enum ApiFeatureKind
+{
+    ConnectedApi = 1,
+    /// <summary>ส่วนเสริมที่ลูกค้าเปิดใช้ในแอป (ไม่ต้องมี API key)</summary>
+    BusinessAddOn = 2,
+    /// <summary>มิเตอร์ที่ระบบเขียนเอง (เอกสารเกินโควตา · การเข้าพัก · อีเมล/SMS)
+    /// — ไม่ใช่สวิตช์ที่ลูกค้ากดเปิด/ปิด และต้องไม่โผล่ในหน้า "ส่วนเสริมของฉัน"</summary>
+    SystemMeter = 3
+}
+
+/// <summary>ใครเป็นคนเปิด add-on ให้บริษัทนี้ — แยก "อำนาจ" ออกจาก EnabledBy (ชื่อ)
+/// เพราะ policy ต่างกัน: ของแถมที่ admin ยัดให้ต้องไม่ถูกคิดเงิน และลูกค้าปิดเองไม่ได้</summary>
+public enum AddOnGrantSource
+{
+    /// <summary>ลูกค้ากดเปิดเองใน portal (จ่ายเงิน)</summary>
+    OwnerSelfServe = 1,
+    /// <summary>admin แพลตฟอร์มยัดให้เป็นดีล/ของแถม (ราคาตาม SnapshotUnitPrice ซึ่งอาจ 0)</summary>
+    AdminGranted = 2,
+    /// <summary>มากับแพ็กเกจ (bundled) — ปิดแพ็กเกจเมื่อไรก็หายไปเอง ไม่คิดเงินแยก</summary>
+    BundledInPlan = 3
+}
+
 public enum PricingMethod
 {
     /// <summary>ต่อหน่วยงานที่สำเร็จ (ต่อเอกสาร OCR / ต่อบรรทัด statement)
@@ -1822,6 +1847,23 @@ public enum LodgingPropertyType
     Apartment = 5,      // อพาร์ตเมนต์/เซอร์วิสอพาร์ตเมนต์
     Campsite = 6,       // แคมป์/ลานกางเต็นท์
     Other = 99
+}
+
+/// <summary>ที่พักนี้ให้ระบบออกเอกสารบัญชีให้แค่ไหน (LODGING_LICENSING_PLAN.md §13.3)
+///
+/// มีไว้สำหรับลูกค้าที่ "ไม่ได้ใช้บัญชีของเรา" จริง ๆ (ใช้โปรแกรมอื่น/สำนักงานบัญชี/
+/// ไม่จด VAT) — **ทุกโหมดนับมิเตอร์ lodging.stay เท่ากัน** เพราะมิเตอร์ผูกกับ
+/// "การเข้าพักที่ปิด" ไม่ใช่จำนวนเอกสาร ⇒ เลือก Off ไม่ได้แปลว่าใช้ฟรี</summary>
+public enum LodgingAccountingMode
+{
+    /// <summary>ค่าเริ่มต้น — ใบเสร็จมัดจำ + ใบกำกับ/ใบแจ้งหนี้ตอนเช็คเอาต์ + ใบลดหนี้</summary>
+    Full = 1,
+    /// <summary>ออกใบเสร็จรับเงินอย่างเดียว — สำหรับกิจการที่ **ไม่ได้จด VAT**</summary>
+    ReceiptOnly = 2,
+    /// <summary>ไม่ออกเอกสารบัญชีเลย (PMS อย่างเดียว) — เก็บบันทึกการเข้าพักไว้ให้
+    /// export ไปลงบัญชีที่อื่น. บริษัทที่จด VAT เลือกได้ต่อเมื่อยืนยันว่าออกใบกำกับ
+    /// จากระบบอื่น (บันทึกความยินยอมไว้) — ไม่งั้นเราเป็นสาเหตุให้ผิด §86/4</summary>
+    Off = 3
 }
 
 /// <summary>วิธีคิดราคาห้องต่อคืน</summary>

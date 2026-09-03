@@ -144,7 +144,10 @@ public record CreateDocumentRequest(
     // ให้ priority เหนือ CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1) คงเป็นกรรมการ.
     // เหมือน integration PV/invoice. null = fallback CreatedBy user เหมือนเดิม.
     string? PreparerName = null,
-    string? PreparerSignatureBase64 = null);
+    string? PreparerSignatureBase64 = null,
+    /// <summary>โมดูลต้นทางที่สั่งสร้าง ("Lodging"/"Pos"/…) — ใช้ตัดสินโควตาเอกสาร
+    /// (ดู Document.OriginModule) · null = ฟอร์มปกติ/API</summary>
+    string? OriginModule = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -797,7 +800,9 @@ public record DocumentResponse(
     /// เดิมคำเตือนที่ถูก acknowledge หายไปเฉย ๆ ⇒ ใบที่อนุมัติทั้งที่รู้ว่าผิด
     /// §86 หน้าตาเหมือนใบที่ไม่เคยมีคำเตือน (ไม่มีอะไรตอบผู้สอบบัญชีได้)
     /// คู่กับ AuditLog <c>APPROVE-ACK-WARNINGS</c> ที่มี hash chain</para></summary>
-    string? InternalNotes = null);
+    string? InternalNotes = null,
+    /// <summary>โมดูลที่สร้างเอกสารนี้ (Lodging/Pos/…) — หน้าเว็บใช้ติดป้าย "มาจากระบบจอง"</summary>
+    string? OriginModule = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

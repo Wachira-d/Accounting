@@ -19,6 +19,41 @@ public partial class LodgingService
 {
     private static readonly LodgingReservationStatus[] Terminal = { LodgingReservationStatus.Cancelled, LodgingReservationStatus.NoShow, LodgingReservationStatus.CheckedOut };
 
+    /// <summary>ป้ายโมดูลบนเอกสารที่โมดูลนี้ออกให้ — ใช้กันนับโควตาเอกสารซ้ำ
+    /// (มิเตอร์ของที่พักคือ lodging.stay ไม่ใช่จำนวนใบ — DocumentQuotaPolicy)</summary>
+    internal const string LodgingOrigin = "Lodging";
+
+    /// <summary>นับการเข้าพักนี้เป็น 1 หน่วยมิเตอร์ (`lodging.stay`)
+    ///
+    /// เรียกตอน **ปิดสถานะ** เท่านั้น: เช็คเอาต์ · no-show · ยกเลิกที่มีเงินมัดจำ —
+    /// ไม่ใช่ตอนจอง (จองแล้วยกเลิกฟรีต้องไม่โดนคิด) และไม่ใช่ตอนออกเอกสาร (ที่พัก
+    /// ที่ตั้ง AccountingMode=Off ไม่มีเอกสารเลยแต่ต้องนับเท่ากัน — §13.2/§13.3)
+    ///
+    /// กันนับซ้ำสองชั้น: `MeteredPeriod` บนการจอง + IdempotencyKey ต่อ ReservationId
+    /// **ห้าม throw** — มิเตอร์พังต้องไม่ทำให้เช็คเอาต์/ยกเลิกทำไม่ได้</summary>
+    private async Task MeterStayAsync(Guid companyId, LodgingReservation r, string reason)
+    {
+        if (r.MeteredPeriod != null) return;
+        var period = AddOnBilling.PeriodOf(DateTime.UtcNow);
+        r.MeteredPeriod = period;
+        if (_metering == null) return;
+        try
+        {
+            await _metering.RecordAsync(new Accounting.Services.Interfaces.UsageRecordRequest(
+                CompanyId: companyId,
+                FeatureCode: Models.Constants.AddOnCodes.LodgingStay,
+                Quantity: 1,
+                IdempotencyKey: $"stay:{r.Id:N}",
+                RefEntityType: "LodgingReservation",
+                RefEntityId: r.Id));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "บันทึกมิเตอร์การเข้าพัก {No} ({Reason}) ไม่สำเร็จ — งานหลักสำเร็จแล้ว",
+                r.ReservationNumber, reason);
+        }
+    }
+
     private IQueryable<LodgingReservation> ResQuery(Guid companyId) => _db.LodgingReservations
         .Include(r => r.Property)
         .Include(r => r.Rooms).ThenInclude(x => x.Unit)
@@ -197,8 +232,13 @@ public partial class LodgingService
         {
             if (r.DepositDocumentId != null && r.DepositPaid == 0)
                 throw new BusinessRuleException("มีใบเสร็จมัดจำอยู่แล้วแต่ยอดยังไม่ถูกบันทึก — ตรวจสอบเอกสารก่อน");
-            var doc = await CreateDepositReceiptAsync(companyId, r, amount, request, userId);
-            r.DepositDocumentId ??= doc.Id;
+            // โหมด Off = ไม่ออกเอกสารบัญชี (ลูกค้าใช้โปรแกรมบัญชีอื่น) — ยังบันทึกยอด
+            // รับเงินไว้บนการจองตามปกติ และ**ยังนับมิเตอร์เท่าเดิม** (§13.3)
+            if (r.Property.AccountingMode != LodgingAccountingMode.Off)
+            {
+                var doc = await CreateDepositReceiptAsync(companyId, r, amount, request, userId);
+                r.DepositDocumentId ??= doc.Id;
+            }
             r.DepositPaid += amount; r.PaidAmount += amount;
             if (!string.IsNullOrWhiteSpace(request.PaymentReference)) r.PaymentReference = request.PaymentReference;
         }
@@ -239,7 +279,8 @@ public partial class LodgingService
             DepositDeferredAccountCode: prop.DepositDeferredAccountCode,
             DepositOutputVatDeferred: prop.DepositOutputVatDeferred,
             BookingNumber: r.ReservationNumber,
-            PaymentType: null);
+            PaymentType: null,
+            OriginModule: LodgingOrigin);
         var created = await _docService.CreateDocumentAsync(companyId, request, userId);
         await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
         return created;
@@ -376,6 +417,10 @@ public partial class LodgingService
         if (r.Status != LodgingReservationStatus.CheckedIn) throw new BusinessRuleException($"ต้องเช็คอินก่อนจึงเช็คเอาต์ได้ (สถานะปัจจุบัน {StatusTh(r.Status)})");
         if (r.FinalDocumentId != null) throw new BusinessRuleException("ออกเอกสารเช็คเอาต์ไปแล้ว");
         var prop = r.Property;
+        // โหมด "ไม่ออกเอกสาร" — ปิดการเข้าพักให้จบงานหน้าเคาน์เตอร์ แล้วนับมิเตอร์
+        // เท่ากับโหมดปกติ (ลูกค้าเลือกทิ้งมูลค่าส่วนเอกสารเอง ไม่ใช่ได้ใช้ฟรี)
+        if (prop.AccountingMode == LodgingAccountingMode.Off)
+            return await CheckOutWithoutDocumentAsync(companyId, r, request, userId);
         var vatRate = await EffectiveVatRateAsync(companyId, prop);
 
         if (request.DamageCharge is decimal dmg && dmg > 0)
@@ -449,7 +494,8 @@ public partial class LodgingService
             BankAccountId: request.BankAccountId,
             BranchId: prop.BranchId,
             BookingNumber: r.ReservationNumber,
-            ServiceUsedDate: r.CheckOutDate);
+            ServiceUsedDate: r.CheckOutDate,
+            OriginModule: LodgingOrigin);
         var created = await _docService.CreateDocumentAsync(companyId, create, userId);
         var approved = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
 
@@ -483,11 +529,57 @@ public partial class LodgingService
                 });
         }
         r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
+        await MeterStayAsync(companyId, r, "checkout");
         _db.AuditLogs.Add(Audit(companyId, AuditAction.Update, r, new
         {
             action = "CheckOut", finalDocument = approved.DocumentNumber, docType = docType.ToString(), depositApplied = applyDeposit ? r.DepositPaid : 0m,
             collected, balanceLeft = approved.BalanceDue - collected, by = userId,
         }));
+        await _db.SaveChangesAsync();
+        return await MapAsync(companyId, r, true, true);
+    }
+
+    /// <summary>เช็คเอาต์ของที่พักที่ตั้ง `AccountingMode = Off` — ปิดการเข้าพัก
+    /// เก็บยอดที่รับจริงไว้บนการจอง แต่ไม่ออกเอกสารบัญชีใด ๆ (ลูกค้าลงบัญชีที่อื่น)
+    /// มิเตอร์ `lodging.stay` ยังนับเท่าเดิม (§13.3)</summary>
+    private async Task<LodgingReservationResponse> CheckOutWithoutDocumentAsync(
+        Guid companyId, LodgingReservation r, LodgingCheckOutRequest request, string userId)
+    {
+        var vatRate = await EffectiveVatRateAsync(companyId, r.Property);
+        if (request.DamageCharge is decimal dmg && dmg > 0)
+        {
+            r.Charges.Add(new LodgingFolioCharge
+            {
+                CompanyId = companyId, ReservationId = r.Id,
+                Description = "ค่าเสียหาย/ของหาย" + (string.IsNullOrWhiteSpace(request.DamageDescription) ? "" : $" — {request.DamageDescription!.Trim()}"),
+                Quantity = 1, UnitPrice = dmg, Total = Math.Round(dmg, 2, MidpointRounding.AwayFromZero), VatRate = vatRate,
+                Source = LodgingChargeSource.System, Status = LodgingChargeStatus.Pending, ChargedAt = DateTime.UtcNow, CreatedBy = userId,
+            });
+            RecalcFolio(r);
+        }
+        var balance = Math.Max(0, r.TotalAmount + r.FolioTotal - r.PaidAmount);
+        if (request.CollectBalanceNow && balance > 0) r.PaidAmount += balance;
+        foreach (var c in r.Charges.Where(c => c.Status == LodgingChargeStatus.Pending)) c.Status = LodgingChargeStatus.Paid;
+        r.Status = LodgingReservationStatus.CheckedOut; r.CheckedOutAt = DateTime.UtcNow;
+        AppendInternal(r, $"เช็คเอาต์แบบไม่ออกเอกสาร (โหมด {r.Property.AccountingMode}) — ยอดรวม {r.TotalAmount + r.FolioTotal:N2}"
+            + (request.CollectBalanceNow ? $" รับเพิ่ม {balance:N2}" : " ยังไม่รับส่วนที่เหลือ"));
+        if (!string.IsNullOrWhiteSpace(request.Note)) AppendInternal(r, request.Note!);
+        foreach (var room in r.Rooms.Where(x => x.Unit != null))
+        {
+            room.Unit!.HousekeepingStatus = LodgingHousekeepingStatus.VacantDirty;
+            if (r.Property.AutoCreateHousekeepingTaskOnCheckout)
+                _db.LodgingHousekeepingTasks.Add(new LodgingHousekeepingTask
+                {
+                    CompanyId = companyId, PropertyId = r.PropertyId, UnitId = room.Unit.Id, ReservationId = r.Id,
+                    TaskType = LodgingHousekeepingTaskType.CheckoutClean, Priority = LodgingTaskPriority.Normal,
+                    Status = LodgingTaskStatus.Pending, DueAt = DateTime.UtcNow.AddHours(2),
+                    EstimatedMinutes = r.Property.HousekeepingMinutesPerRoom, CreatedBy = userId,
+                });
+        }
+        r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
+        await MeterStayAsync(companyId, r, "checkout-nodoc");
+        _db.AuditLogs.Add(Audit(companyId, AuditAction.Update, r, new
+        { action = "CheckOutNoDocument", mode = r.Property.AccountingMode.ToString(), collected = request.CollectBalanceNow ? balance : 0m, by = userId }));
         await _db.SaveChangesAsync();
         return await MapAsync(companyId, r, true, true);
     }
@@ -531,6 +623,10 @@ public partial class LodgingService
         r.PaidAmount = Math.Max(0, r.PaidAmount - refund);
         if (fee > deposit + 0.005m) AppendInternal(r, $"ค่าปรับตามนโยบาย {fee:N2} มากกว่ามัดจำที่รับ {deposit:N2} — ส่วนต่าง {fee - deposit:N2} ยังไม่ได้เรียกเก็บ");
         foreach (var room in r.Rooms) room.UnitId = null;
+        // นับมิเตอร์เฉพาะการจองที่ "มีเงินเกี่ยวข้องจริง" — จองแล้วยกเลิกฟรีก่อนจ่ายมัดจำ
+        // ต้องไม่ถูกคิด (ไม่งั้นการเปิดให้จองฟรีจะกลายเป็นกับดัก) · no-show คิดเสมอ
+        // เพราะห้องถูกกันไว้จริงและมีค่าปรับตามนโยบาย
+        if (noShow || deposit > 0 || fee > 0) await MeterStayAsync(companyId, r, noShow ? "no-show" : "cancel");
         _db.AuditLogs.Add(Audit(companyId, noShow ? AuditAction.Update : AuditAction.Delete, r, new { action = noShow ? "NoShow" : "Cancel", reason, fee, refund, forfeit, by = actor }));
         await _db.SaveChangesAsync();
         _logger.LogInformation("Lodging reservation {No} {Action}: fee {Fee} refund {Refund} forfeit {Forfeit}", r.ReservationNumber, noShow ? "no-show" : "cancelled", fee, refund, forfeit);

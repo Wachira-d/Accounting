@@ -599,6 +599,9 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.NameEn).HasMaxLength(200);
             e.Property(x => x.UnitLabel).HasMaxLength(50);
             e.Property(x => x.RequiredScopes).HasMaxLength(300);
+            e.Property(x => x.MinPlanCsv).HasMaxLength(120);
+            e.Property(x => x.Icon).HasMaxLength(16);
+            e.Property(x => x.ModuleCode).HasMaxLength(40);
             e.HasIndex(x => x.FeatureCode).IsUnique();
             e.HasQueryFilter(x => !x.IsDeleted);
         });
@@ -609,6 +612,8 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.EnabledBy).HasMaxLength(200);
             e.Property(x => x.DisabledBy).HasMaxLength(200);
             e.Property(x => x.AcceptedUnitPrice).HasPrecision(18, 4);
+            e.Property(x => x.SnapshotUnitPrice).HasPrecision(18, 4);
+            e.Property(x => x.LastBilledPeriod).HasMaxLength(7);
             e.HasIndex(x => new { x.CompanyId, x.FeatureCode }).IsUnique();
             e.HasQueryFilter(x => !x.IsDeleted);
         });

@@ -556,6 +556,8 @@ builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
 // ธุรกิจที่พัก (โรงแรม/รีสอร์ท/บ้านพัก) — จอง · มัดจำ · เช็คอิน/เอาต์ · folio · แม่บ้าน
 builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.Lodging.LodgingService>();
+// resolver สิทธิ์ตัวเดียว (แพ็กเกจ + add-on) — ห้ามมีตัวที่สอง
+builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<CmsLeadService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();
@@ -594,6 +596,12 @@ builder.Services.AddHostedService<Accounting.Services.Background.UndueInputVatEx
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();
+// ค่าเหมารายเดือนของ add-on — ตัวที่ทำให้ FlatMonthly เก็บเงินได้จริง
+// (เดิม ComputeCharge คืน 0 โดยอ้าง "รอบบิล" ที่ไม่เคยมี — LODGING_LICENSING_PLAN §6)
+builder.Services.AddHostedService<Accounting.Services.Background.AddOnMonthlyBillingJob>();
+// night audit ของที่พัก — ปิดการจองที่เลยวันเช็คเอาต์แล้วยังค้าง เพื่อให้มิเตอร์
+// lodging.stay เดินตามความจริง (กันเคส "ไม่กดเช็คเอาต์เพื่อไม่ให้เกิดเอกสาร" §13)
+builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAuditJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnifiedPaymentQueryService,
     Accounting.Services.Implementations.Payments.UnifiedPaymentQueryService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayoutService,

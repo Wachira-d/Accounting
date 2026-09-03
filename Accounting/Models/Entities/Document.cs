@@ -443,6 +443,13 @@ public class Document : TenantEntity
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }
 
+    /// <summary>โมดูลที่สร้างเอกสารนี้ ("Lodging", "Pos", "Ocr", null = ฟอร์มปกติ/API)
+    ///
+    /// ใช้ตัดสิน**โควตา**: เอกสารที่โมดูลที่พักออกให้อัตโนมัติไม่นับเข้าโควตาเอกสาร
+    /// เพราะมิเตอร์ของที่พักคือ `lodging.stay` (นับตอนปิดการเข้าพัก) — นับสองทาง
+    /// = ลูกค้าโดนคิดสองเด้งจากงานเดียว (LODGING_LICENSING_PLAN §13.2)</summary>
+    public string? OriginModule { get; set; }
+
     /// <summary>True when the operator has explicitly DISMISSED this document
     /// from the "waiting to issue WHT cert" list. The source doc still
     /// exists and is unchanged; we just don't pester the user about it any

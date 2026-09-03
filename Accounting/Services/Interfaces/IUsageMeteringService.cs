@@ -53,6 +53,26 @@ public interface IUsageMeteringService
     Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
         string actor, CancellationToken ct = default);
 
+    /// <summary>เปิด/ปิดพร้อมระบุ "ใครให้" — admin ยัดของแถม (AdminGranted) หรือ
+    /// มากับแพ็กเกจ (BundledInPlan) ต้องไม่ถูกคิดเงินรายเดือน · snapshotUnitPrice
+    /// = ราคาดีลพิเศษที่ตกลงกันไว้ (null = ใช้ราคามาตรฐาน)</summary>
+    Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
+        string actor, Models.Enums.AddOnGrantSource grantSource, decimal? snapshotUnitPrice,
+        CancellationToken ct = default);
+
+    /// <summary>ออก <see cref="UsageEvent"/> ค่าเหมารายเดือนของ add-on 1 ตัว 1 งวด
+    ///
+    /// แยกจาก <see cref="RecordAsync"/> โดยเจตนา: RecordAsync คือ "มีการใช้งาน 1 ครั้ง"
+    /// ซึ่งสำหรับ FlatMonthly ต้องคิด ฿0 (ไม่งั้นใช้ 10 ครั้งจ่าย 10 เท่า) ส่วนตัวนี้คือ
+    /// "ถึงรอบเก็บค่าเหมา" ที่เกิดเดือนละครั้งจาก background job — เดิมไม่มีเมธอดนี้เลย
+    /// ⇒ ฟีเจอร์เหมารายเดือนเปิดใช้ได้แต่ไม่เคยถูกเรียกเก็บเงินสักบาท
+    /// (defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้")
+    ///
+    /// idempotent ด้วย <c>AddOnBilling.FlatKey</c> + <c>CompanyFeature.LastBilledPeriod</c>
+    /// — เรียกซ้ำงวดเดิมไม่เกิดยอดซ้ำ</summary>
+    Task<UsageRecordResult> RecordFlatMonthlyAsync(Guid companyId, string featureCode,
+        string period, CancellationToken ct = default);
+
     /// <summary>สรุปการใช้งานของบริษัทในเดือนที่ระบุ (สำหรับหน้า usage)</summary>
     Task<List<UsageSummaryRow>> GetMonthlyUsageAsync(Guid companyId, int year, int month,
         CancellationToken ct = default);

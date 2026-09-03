@@ -19,15 +19,22 @@ public partial class LodgingService : ILodgingService
     private readonly IDocumentService _docService;
     private readonly IEmailService? _email;
     private readonly IImageProcessingService? _images;
+    /// <summary>มิเตอร์ — optional: บันทึกไม่ได้ต้องไม่ทำให้เช็คเอาต์พัง (เสียรายได้
+    /// 1 รายการยอมรับได้ · ทำให้แขกออกจากที่พักไม่ได้ยอมรับไม่ได้)</summary>
+    private readonly IUsageMeteringService? _metering;
+    private readonly IEntitlementService? _entitlement;
 
     public LodgingService(AccountingDbContext db, ILogger<LodgingService> logger, IDocumentService docService,
-        IEmailService? email = null, IImageProcessingService? images = null)
+        IEmailService? email = null, IImageProcessingService? images = null,
+        IUsageMeteringService? metering = null, IEntitlementService? entitlement = null)
     {
         _db = db;
         _logger = logger;
         _docService = docService;
         _email = email;
         _images = images;
+        _metering = metering;
+        _entitlement = entitlement;
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
@@ -94,6 +101,7 @@ public partial class LodgingService : ILodgingService
         if (string.IsNullOrWhiteSpace(dto.Name)) throw new BusinessRuleException("กรุณาระบุชื่อที่พัก");
         var p = new LodgingProperty { CompanyId = companyId, CreatedBy = userId };
         Apply(p, dto);
+        await GuardAccountingModeAsync(companyId, p, LodgingAccountingMode.Full, dto, userId);
         if (string.IsNullOrWhiteSpace(p.Code)) p.Code = DeriveCode(p.Name);
         await EnsureUniqueCodeAsync(companyId, p);
         _db.LodgingProperties.Add(p);
@@ -104,13 +112,53 @@ public partial class LodgingService : ILodgingService
     public async Task<LodgingPropertyDto> UpdatePropertyAsync(Guid companyId, Guid propertyId, LodgingPropertyDto dto, string userId)
     {
         var p = await RequirePropertyAsync(companyId, propertyId, tracking: true);
+        var prevMode = p.AccountingMode;
         Apply(p, dto);
+        await GuardAccountingModeAsync(companyId, p, prevMode, dto, userId);
         if (string.IsNullOrWhiteSpace(p.Code)) p.Code = DeriveCode(p.Name);
         await EnsureUniqueCodeAsync(companyId, p);
         p.UpdatedBy = userId;
         p.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return await ToDtoAsync(companyId, p);
+    }
+
+    /// <summary>ด่านของโหมดออกเอกสาร (LODGING_LICENSING_PLAN §13.3 · ทีม CPA)
+    ///
+    /// • `Off` = ไม่ออกเอกสารเลย — บริษัทที่ **จด VAT** เลือกได้ต่อเมื่อติ๊กยืนยันว่า
+    ///   ออกใบกำกับจากระบบอื่น มิฉะนั้นเราคือ "สาเหตุ" ที่ทำให้ลูกค้าผิด §86/4
+    /// • `ReceiptOnly` = สำหรับกิจการที่ไม่จด VAT เท่านั้น (จด VAT แล้วรับเงินค่าห้อง
+    ///   ต้องออกใบกำกับ ไม่ใช่ใบเสร็จเปล่า)
+    /// เก็บวัน/ผู้ยืนยันเป็นหลักฐาน — ไม่ใช่แค่ผ่านด่านแล้วลืม</summary>
+    private async Task GuardAccountingModeAsync(Guid companyId, LodgingProperty p,
+        LodgingAccountingMode previous, LodgingPropertyDto dto, string userId)
+    {
+        if (p.AccountingMode == LodgingAccountingMode.Full) { p.AccountingModeAckAt = null; p.AccountingModeAckBy = null; return; }
+
+        var vatRegistered = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => (bool?)c.IsVatRegistered).FirstOrDefaultAsync() == true;
+
+        if (p.AccountingMode == LodgingAccountingMode.ReceiptOnly && vatRegistered)
+            throw new BusinessRuleException(
+                "บริษัทจดทะเบียน VAT ต้องออกใบกำกับภาษีเมื่อรับเงินค่าห้อง (§86/4) — "
+                + "โหมด \"ใบเสร็จอย่างเดียว\" ใช้ได้เฉพาะกิจการที่ไม่ได้จด VAT",
+                "RD-86/4");
+
+        if (p.AccountingMode == LodgingAccountingMode.Off && vatRegistered && !dto.AccountingModeAcknowledged
+            && p.AccountingModeAckAt == null)
+            throw new BusinessRuleException(
+                "ปิดการออกเอกสารได้ แต่บริษัทจด VAT ต้องยืนยันว่าจะออกใบกำกับภาษีจากระบบอื่น "
+                + "(§86/4 บังคับให้ออกทุกครั้งที่รับเงิน) — ติ๊กยืนยันในหน้าตั้งค่าก่อน",
+                "RD-86/4-ACK");
+
+        if (dto.AccountingModeAcknowledged && p.AccountingModeAckAt == null)
+        {
+            p.AccountingModeAckAt = DateTime.UtcNow;
+            p.AccountingModeAckBy = userId;
+        }
+        if (previous != p.AccountingMode)
+            _logger.LogInformation("ที่พัก {Prop} เปลี่ยนโหมดออกเอกสาร {From} → {To} โดย {User}",
+                p.Id, previous, p.AccountingMode, userId);
     }
 
     private static string DeriveCode(string name)
@@ -149,6 +197,7 @@ public partial class LodgingService : ILodgingService
         p.DepositMinAmount = Math.Max(0, d.DepositMinAmount); p.DepositMaxAmount = d.DepositMaxAmount;
         p.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(d.DepositDeferredAccountCode) ? null : d.DepositDeferredAccountCode.Trim();
         p.DepositOutputVatDeferred = d.DepositOutputVatDeferred;
+        p.AccountingMode = d.AccountingMode;
         p.PricesIncludeVat = d.PricesIncludeVat; p.ChargeVat = d.ChargeVat;
         p.ServiceChargePercent = Math.Clamp(d.ServiceChargePercent, 0, 100);
         p.RoomRevenueAccountCode = string.IsNullOrWhiteSpace(d.RoomRevenueAccountCode) ? null : d.RoomRevenueAccountCode.Trim();
@@ -188,6 +237,8 @@ public partial class LodgingService : ILodgingService
             DepositPercent = p.DepositPercent, DepositFixedAmount = p.DepositFixedAmount, DepositMinAmount = p.DepositMinAmount,
             DepositMaxAmount = p.DepositMaxAmount, DepositDeferredAccountCode = p.DepositDeferredAccountCode,
             DepositOutputVatDeferred = p.DepositOutputVatDeferred,
+            AccountingMode = p.AccountingMode,
+            AccountingModeAcknowledged = p.AccountingModeAckAt != null,
             PricesIncludeVat = p.PricesIncludeVat, ChargeVat = p.ChargeVat, ServiceChargePercent = p.ServiceChargePercent,
             RoomRevenueAccountCode = p.RoomRevenueAccountCode, ServiceChargeAccountCode = p.ServiceChargeAccountCode,
             CancellationFeeAccountCode = p.CancellationFeeAccountCode,

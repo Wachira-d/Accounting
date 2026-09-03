@@ -59,6 +59,9 @@ public class LodgingPropertyDto
     public decimal? DepositMaxAmount { get; set; }
     public string? DepositDeferredAccountCode { get; set; }
     public bool DepositOutputVatDeferred { get; set; }
+    public LodgingAccountingMode AccountingMode { get; set; } = LodgingAccountingMode.Full;
+    /// <summary>ผู้ใช้ติ๊กยืนยันว่าออกใบกำกับจากระบบอื่น (จำเป็นเมื่อเลือก Off + จด VAT)</summary>
+    public bool AccountingModeAcknowledged { get; set; }
 
     public bool PricesIncludeVat { get; set; } = true;
     public bool? ChargeVat { get; set; }

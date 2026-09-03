@@ -39,6 +39,11 @@ public partial class DocumentService : IDocumentService
     private readonly IAdvancedArApService? _advancedArAp;
     private readonly IApprovalService? _approval;
 
+    /// <summary>มิเตอร์คิดเงิน — optional เพราะ DocumentService ถูกสร้างในเทสต์/เส้นทาง
+    /// ที่ไม่มี DI ครบ. null = ไม่บันทึก overage (เสียรายได้ 1 รายการ ยอมรับได้
+    /// ห้ามทำให้สร้างเอกสารไม่ได้)</summary>
+    private readonly IUsageMeteringService? _metering;
+
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
@@ -58,8 +63,10 @@ public partial class DocumentService : IDocumentService
         Accounting.Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
         IFixedAssetService? fixedAssets = null,
         Accounting.Services.Implementations.Inventory.IInventoryCostingService? inventoryCosting = null,
-        IPermissionService? permissionService = null)
+        IPermissionService? permissionService = null,
+        IUsageMeteringService? metering = null)
     {
+        _metering = metering;
         _fixedAssets = fixedAssets;
         _inventoryCosting = inventoryCosting;
         _permissionService = permissionService;
@@ -792,9 +799,20 @@ public partial class DocumentService : IDocumentService
             }
         }
 
-        // Check usage limit
-        if (!await _subscriptionService.CheckUsageLimitAsync(companyId, "document"))
-            throw new InvalidOperationException("เกินจำนวนเอกสารที่อนุญาตต่อเดือน");
+        // ── โควตาเอกสาร: แยก "นับ" ออกจาก "บล็อก" (Helpers/DocumentQuotaPolicy) ──
+        // ⚠️ เดิมบรรทัดนี้ throw ทุกชนิดเอกสารเมื่อเกินโควตา ⇒ ใบกำกับภาษีตอนแขก
+        // เช็คเอาต์/ใบเสร็จของเงินที่รับมาแล้ว ออกไม่ได้กลางคัน = ลูกค้าผิด §86/4
+        // และเราเป็นสาเหตุ (LODGING_LICENSING_PLAN §5 · ทีม CPA)
+        // ตอนนี้: ใบที่กฎหมายบังคับ → ออกได้เสมอ แล้วคิด overage · ใบที่รอได้ → บล็อกตามเดิม
+        var quotaClass = DocumentQuotaPolicy.Classify(
+            request.DocumentType, request.IsDeposit, IsLodgingOrigin(request.OriginModule));
+        var withinQuota = await _subscriptionService.CheckUsageLimitAsync(companyId, "document");
+        if (!withinQuota && DocumentQuotaPolicy.CanRefuseWhenOverQuota(quotaClass))
+        {
+            var (used, limit) = await GetDocumentQuotaAsync(companyId);
+            throw new BusinessRuleException(
+                DocumentQuotaPolicy.BlockedMessage(used, limit), "QUOTA-DOCUMENTS");
+        }
 
         // Check feature access
         if (!await _subscriptionService.CheckFeatureAccessAsync(companyId, FeatureFlags.DocumentEngine))
@@ -1009,6 +1027,7 @@ public partial class DocumentService : IDocumentService
                     && request.DocumentType == DocumentType.TaxInvoice,
                 DepositAppliedAmount = request.DepositAppliedAmount ?? 0m,
                 DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
+                OriginModule = string.IsNullOrWhiteSpace(request.OriginModule) ? null : request.OriginModule.Trim(),
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
                 BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice ?? false,
                 // ขายเงินสด ใบเดียว (เฉพาะ TaxInvoice ฝั่งขาย) — AutoPost ลงแบบเงินสด
@@ -1377,7 +1396,16 @@ public partial class DocumentService : IDocumentService
             }
 
             await _db.SaveChangesAsync();
-            await _subscriptionService.IncrementUsageAsync(companyId, "document");
+
+            // นับเข้าโควตาเฉพาะใบที่ "แทนการขาย 1 ครั้ง" — ใบลดหนี้/ใบเสร็จรับชำระ/
+            // เอกสารฝั่งซื้อ/เอกสารที่โมดูลที่พักออกให้ ไม่นับซ้ำ (มิเตอร์ของที่พัก
+            // คือ lodging.stay ที่นับตอนปิดการเข้าพัก — DocumentQuotaPolicy)
+            if (DocumentQuotaPolicy.Counts(quotaClass))
+            {
+                await _subscriptionService.IncrementUsageAsync(companyId, "document");
+                // เกินโควตาแต่เป็นใบที่ห้ามปฏิเสธ → เกิดหนี้แทนการบล็อก
+                if (!withinQuota) await RecordDocumentOverageAsync(companyId, doc);
+            }
 
             await transaction.CommitAsync();
 
@@ -3007,6 +3035,46 @@ public partial class DocumentService : IDocumentService
             catch { await tx.RollbackAsync(); throw; }
         });
     }
+
+    /// <summary>โควตาเอกสารเดือนนี้ (ใช้แล้ว, เพดาน) — อ่านจาก resolver เดียวกับที่บังคับ
+    /// เพื่อให้ข้อความที่ผู้ใช้เห็นตรงกับตัวเลขที่ระบบใช้ตัดสินจริง</summary>
+    private async Task<(int Used, int Limit)> GetDocumentQuotaAsync(Guid companyId)
+    {
+        var eff = await _subscriptionService.GetEffectivePlanAsync(companyId);
+        var sub = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && !s.IsDeleted)
+            .Select(s => new { s.CurrentMonthDocuments })
+            .FirstOrDefaultAsync();
+        return (sub?.CurrentMonthDocuments ?? 0, eff?.MaxDocumentsPerMonth ?? 0);
+    }
+
+    /// <summary>เอกสารเกินโควตา 1 ฉบับ = 1 UsageEvent (documents.overage)
+    ///
+    /// **ห้าม throw** — งานหลักคือเอกสารที่กฎหมายบังคับให้ออก บันทึกมิเตอร์ไม่ได้
+    /// ก็ต้องออกเอกสารสำเร็จอยู่ดี (หลักเดียวกับที่ UsageMeteringService ประกาศไว้)
+    /// idempotent ด้วย DocumentId — สร้างเอกสารใบเดิมซ้ำไม่ได้อยู่แล้ว แต่กัน retry</summary>
+    private async Task RecordDocumentOverageAsync(Guid companyId, Document doc)
+    {
+        if (_metering == null) return;
+        try
+        {
+            await _metering.RecordAsync(new UsageRecordRequest(
+                CompanyId: companyId,
+                FeatureCode: Models.Constants.AddOnCodes.DocumentsOverage,
+                Quantity: 1,
+                IdempotencyKey: $"doc-overage:{doc.Id:N}",
+                RefEntityType: "Document",
+                RefEntityId: doc.Id));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "บันทึก overage เอกสาร {DocId} ไม่สำเร็จ — เอกสารออกแล้วตามปกติ", doc.Id);
+        }
+    }
+
+    /// <summary>เอกสารนี้มาจากโมดูลที่พักไหม (ไม่นับโควตาซ้ำ — มิเตอร์คือ lodging.stay)</summary>
+    private static bool IsLodgingOrigin(string? originModule)
+        => string.Equals(originModule, "Lodging", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>ผนวกเลขมัดจำเข้า DepositAppliedRef แบบ comma-separated + dedup —
     /// หักหลายใบเข้าใบเดียว → เก็บเลขครบทุกใบ (เดิมเก็บแค่ใบแรก → PDF/รายงานโชว์
@@ -14795,7 +14863,8 @@ public partial class DocumentService : IDocumentService
         DepositAppliedDrivesJournal: d.DepositAppliedDrivesJournal,
         // หมายเหตุภายใน (ไม่พิมพ์ลงกระดาษ) — ที่เก็บ "คำเตือนที่กดรับทราบแล้ว"
         // ต้อง echo กลับ ไม่งั้นร่องรอยอยู่แต่ในฐานข้อมูลกับ audit ผู้ใช้ไม่เห็น
-        InternalNotes: d.InternalNotes);
+        InternalNotes: d.InternalNotes,
+        OriginModule: d.OriginModule);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

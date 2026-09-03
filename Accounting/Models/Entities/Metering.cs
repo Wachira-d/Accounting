@@ -32,6 +32,27 @@ public class ApiFeature : BaseEntity
 
     /// <summary>ลำดับแสดงในหน้าเลือกฟีเจอร์</summary>
     public int SortOrder { get; set; }
+
+    // ═══ ส่วนขยายรอบ add-on (LODGING_LICENSING_PLAN.md §6) ═══
+
+    /// <summary>ConnectedApi (เดิม) · BusinessAddOn (ส่วนเสริมในแอป) · SystemMeter
+    /// (มิเตอร์ที่ระบบเขียนเอง — ห้ามโผล่เป็นสวิตช์ให้ลูกค้ากดปิด)</summary>
+    public ApiFeatureKind Kind { get; set; } = ApiFeatureKind.ConnectedApi;
+
+    /// <summary>ต้องมีแพ็กเกจบัญชีขั้นต่ำอะไรถึงจะเปิด add-on นี้ได้ —
+    /// ว่าง/null = ขายได้ทุกแพ็กเกจ · "Pro,Enterprise" = เฉพาะสองแพ็กนี้
+    /// (ชื่อตรงกับ <see cref="SubscriptionPlan"/>)</summary>
+    public string? MinPlanCsv { get; set; }
+
+    /// <summary>ทดลองใช้ฟรีกี่วันก่อนเริ่มคิดเงิน (0 = ไม่มี trial) — ตั้งต่อ add-on
+    /// เพราะบางตัวเห็นคุณค่าใน 1 สัปดาห์ บางตัวต้องรอรอบการจองจริง</summary>
+    public int TrialDays { get; set; }
+
+    /// <summary>ไอคอน emoji สำหรับหน้าเลือก add-on (ไม่ใช่ไฟล์ — กัน asset หาย)</summary>
+    public string? Icon { get; set; }
+
+    /// <summary>โมดูลที่ add-on นี้สังกัด — ใช้จัดกลุ่มหน้าจอ ("Lodging", "Api")</summary>
+    public string? ModuleCode { get; set; }
 }
 
 /// <summary>
@@ -55,6 +76,29 @@ public class CompanyFeature : TenantEntity
     /// เคยแจ้งราคาแล้ว (ไม่ใช่ราคาที่ใช้คิดเงินจริง ซึ่งอ่านจาก
     /// <see cref="ApiPricingPlan"/> ณ เวลาที่เกิด usage)</summary>
     public decimal? AcceptedUnitPrice { get; set; }
+
+    // ═══ ส่วนขยายรอบ add-on (LODGING_LICENSING_PLAN.md §6) ═══
+
+    /// <summary>อยู่ในช่วงทดลองใช้ฟรีถึงเมื่อไร — ยังไม่ถึง = ใช้ได้แต่ยอดเป็น ฿0
+    /// (job รายเดือนข้ามการคิดเงินให้) · null = ไม่ใช่ trial</summary>
+    public DateTime? TrialUntil { get; set; }
+
+    /// <summary>true = พอหมด trial ให้ปิดเอง (ไม่คิดเงินโดยไม่ถาม) ·
+    /// false = คิดเงินต่อทันทีตามราคาที่ยอมรับไว้ (ต้องบอกให้ชัดตอนกดเปิด)</summary>
+    public bool AutoDisableAfterTrial { get; set; }
+
+    /// <summary>ใครเป็นคนเปิด — ของแถมจาก admin/แพ็กเกจ ไม่คิดเงิน</summary>
+    public AddOnGrantSource GrantSource { get; set; } = AddOnGrantSource.OwnerSelfServe;
+
+    /// <summary>ราคาที่ตกลงใช้จริงตลอดสัญญา (ดีลพิเศษ) — null = ใช้ราคามาตรฐาน
+    /// ของ <see cref="ApiPricingPlan"/> ณ เวลานั้น. ต่างจาก
+    /// <see cref="AcceptedUnitPrice"/> ซึ่งเป็น "ราคาที่ผู้ใช้เห็นตอนกด" (หลักฐาน)</summary>
+    public decimal? SnapshotUnitPrice { get; set; }
+
+    /// <summary>งวดล่าสุดที่ job รายเดือนออก UsageEvent ค่าเหมาให้แล้ว (yyyy-MM) —
+    /// กันคิดเงินซ้ำเมื่อ job รันหลายรอบ/หลาย instance ในเดือนเดียวกัน
+    /// (คู่กับ IdempotencyKey บน UsageEvent — กันสองชั้น)</summary>
+    public string? LastBilledPeriod { get; set; }
 }
 
 /// <summary>

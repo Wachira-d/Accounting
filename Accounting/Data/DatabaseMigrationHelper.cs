@@ -5726,6 +5726,74 @@ public static class DatabaseMigrationHelper
             WHERE NOT EXISTS (SELECT 1 FROM "ApiFeatures" f WHERE f."FeatureCode" = v."FeatureCode");
             """,
 
+            // ═══ ส่วนขยาย add-on catalog (LODGING_LICENSING_PLAN.md §6) ═══
+            // ใช้ ApiFeature/CompanyFeature เดิมเป็น catalog กลางของ "ของที่ขายเพิ่มได้
+            // ทุกชนิด" แทนการสร้างระบบ license คู่ขนาน (สองแคตตาล็อก = drift แน่นอน)
+            """ALTER TABLE "ApiFeatures" ADD COLUMN IF NOT EXISTS "Kind" integer NOT NULL DEFAULT 1;""",
+            """ALTER TABLE "ApiFeatures" ADD COLUMN IF NOT EXISTS "MinPlanCsv" varchar(120) NULL;""",
+            """ALTER TABLE "ApiFeatures" ADD COLUMN IF NOT EXISTS "TrialDays" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "ApiFeatures" ADD COLUMN IF NOT EXISTS "Icon" varchar(16) NULL;""",
+            """ALTER TABLE "ApiFeatures" ADD COLUMN IF NOT EXISTS "ModuleCode" varchar(40) NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "TrialUntil" timestamptz NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "AutoDisableAfterTrial" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "GrantSource" integer NOT NULL DEFAULT 1;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "SnapshotUnitPrice" numeric(18,4) NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "LastBilledPeriod" varchar(7) NULL;""",
+            // แคตตาล็อกเดิมทั้งหมดคือผลิตภัณฑ์ Connected API — ติดป้ายให้ตรงความจริง
+            // (แถวใหม่ที่ seed ด้านล่างเป็น BusinessAddOn/SystemMeter)
+            """UPDATE "ApiFeatures" SET "ModuleCode" = 'Api' WHERE "ModuleCode" IS NULL AND "Kind" = 1;""",
+
+            // ── seed add-on ของโมดูลที่พัก + มิเตอร์ระบบ ──
+            // ต่างจาก seed ของ Connected API ตรงที่ **ตั้งราคาตั้งต้นให้ด้วย** (ด้านล่าง)
+            // เพราะเจ้าของระบบกำหนดตัวเลขมาแล้ว ("guest portal +100/เดือน") และ add-on ที่
+            // ไม่มีราคา = เปิดใช้ได้ฟรีเงียบ ๆ ซึ่งเป็นช่องรั่วรายได้แบบเดียวกับที่
+            // LODGING_LICENSING_PLAN §6 เตือนไว้. admin เปลี่ยนราคาได้ทุกเมื่อผ่านหน้า
+            // /admin/addons.html (สร้าง ApiPricingPlan แถวใหม่ที่มี EffectiveFrom ใหม่)
+            """
+            INSERT INTO "ApiFeatures" ("Id","FeatureCode","Name","NameEn","UnitLabel","RequiredScopes","SortOrder","Description","Kind","ModuleCode","Icon","TrialDays","IsPublished","CreatedBy")
+            SELECT * FROM (VALUES
+                (gen_random_uuid(),'lodging.guest-portal','Guest Portal Pro','Guest Portal Pro','เดือน','',110,'QR ต่อห้อง · ให้แขกแจ้งขอผ้า/แจ้งซ่อม/รูมเซอร์วิสเอง · แจ้งเตือนก่อนเช็คอินและขอรีวิวอัตโนมัติ (หน้าการจองด้วยลิงก์ให้แขกดู/อัปโหลดสลิป/ยกเลิก = ใช้ฟรีอยู่แล้ว)',2,'Lodging','🛎️',14,true,'seed'),
+                (gen_random_uuid(),'lodging.promo','โค้ดส่วนลด/โปรโมชัน','Promo codes','เดือน','',120,'สร้างโค้ดส่วนลดสำหรับจองตรง — ดึงลูกค้าจาก OTA ที่คิดค่าคอมมิชชัน 15-18%',2,'Lodging','🏷️',14,true,'seed'),
+                (gen_random_uuid(),'lodging.channel-manager','เชื่อม OTA (Agoda/Booking)','Channel manager','เดือน','',130,'ซิงก์ห้องว่างและราคาไปยัง OTA อัตโนมัติ — กัน overbooking และเลิกคีย์สองระบบ',2,'Lodging','🔗',14,false,'seed'),
+                (gen_random_uuid(),'lodging.pos-folio','ชาร์จ POS เข้าห้องพัก','POS to folio','เดือน','',140,'สั่งอาหาร/เครื่องดื่มที่ POS แล้วเข้าบิลห้องอัตโนมัติ ปิดยอดตอนเช็คเอาต์',2,'Lodging','🍽️',14,false,'seed'),
+                (gen_random_uuid(),'lodging.analytics','รายงาน Occupancy/ADR/RevPAR','Lodging analytics','เดือน','',150,'อัตราเข้าพัก · ราคาเฉลี่ยต่อห้อง · รายได้ต่อห้องที่มี — ผูกกับตัวเลขบัญชีจริง',2,'Lodging','📊',14,false,'seed'),
+                (gen_random_uuid(),'lodging.multi-property','ที่พักหลายแห่ง','Multi-property','แห่ง/เดือน','',160,'เปิดที่พักแห่งที่ 2 ขึ้นไปในบริษัทเดียวกัน (แห่งแรกใช้ฟรี)',2,'Lodging','🏘️',0,true,'seed'),
+                (gen_random_uuid(),'lodging.i18n','หน้าจองหลายภาษา/สกุลเงิน','Multi-language booking','เดือน','',170,'หน้าจองรองรับหลายภาษาและแสดงราคาหลายสกุลเงินสำหรับแขกต่างชาติ',2,'Lodging','🌏',14,false,'seed'),
+                (gen_random_uuid(),'lodging.early-late-fee','คิดค่า early/late check-out อัตโนมัติ','Early/late fee','เดือน','',180,'คิดค่าธรรมเนียมเข้าก่อน/ออกช้าตามที่ตั้งไว้ให้อัตโนมัติ ไม่ต้องคีย์เอง',2,'Lodging','⏰',14,false,'seed'),
+                (gen_random_uuid(),'lodging.loyalty','สะสมแต้ม/สมาชิก','Loyalty','เดือน','',190,'สะสมแต้มและสิทธิ์สมาชิกสำหรับแขกที่กลับมาพักซ้ำ',2,'Lodging','⭐',14,false,'seed'),
+                (gen_random_uuid(),'documents.overage','เอกสารเกินโควตาแพ็กเกจ','Document overage','ฉบับ','',900,'เอกสารบัญชีที่ออกเกินโควตาของแพ็กเกจในเดือนนั้น — คิดต่อฉบับ ไม่มีการบล็อกการออกเอกสารที่กฎหมายบังคับ',3,'Billing','📄',0,true,'seed'),
+                (gen_random_uuid(),'lodging.stay','การเข้าพักที่ปิดสถานะ','Closed stay','การเข้าพัก','',910,'นับ 1 หน่วยต่อการเข้าพักที่เช็คเอาต์/ไม่มา/ยกเลิกโดยมีมัดจำ — เป็นมิเตอร์ของโมดูลที่พัก',3,'Lodging','🛏️',0,true,'seed'),
+                (gen_random_uuid(),'lodging.email.overage','อีเมลแจ้งเตือนเกินโควตา','Email overage','ฉบับ','',920,'อีเมลยืนยัน/แจ้งเตือนของที่พักที่เกินโควตาฟรีต่อเดือน',3,'Lodging','✉️',0,true,'seed'),
+                (gen_random_uuid(),'lodging.notify.sms','SMS แจ้งเตือน','SMS notification','ข้อความ','',930,'ข้อความ SMS ถึงแขก — ต้นทุนต่อข้อความจริงจากผู้ให้บริการ',3,'Lodging','📱',0,false,'seed'),
+                (gen_random_uuid(),'documents.topup','ซื้อโควตาเอกสารเพิ่ม','Document top-up','แพ็ก 100 ฉบับ','',940,'ซื้อโควตาเอกสารเพิ่มเป็นก้อนสำหรับเดือนที่ยอดจองสูงกว่าปกติ',3,'Billing','➕',0,true,'seed')
+            ) AS v("Id","FeatureCode","Name","NameEn","UnitLabel","RequiredScopes","SortOrder","Description","Kind","ModuleCode","Icon","TrialDays","IsPublished","CreatedBy")
+            WHERE NOT EXISTS (SELECT 1 FROM "ApiFeatures" f WHERE f."FeatureCode" = v."FeatureCode");
+            """,
+
+            // ราคาตั้งต้น (LODGING_LICENSING_PLAN §3.1) — Method: 3=FlatMonthly, 1=PerUnit
+            // FreeQuotaPerMonth ของ lodging.email.overage = 200 (โควตาฟรีของ Standard)
+            """
+            INSERT INTO "ApiPricingPlans" ("Id","FeatureCode","Method","UnitPrice","FreeQuotaPerMonth","EffectiveFrom","AdminNote","CreatedBy")
+            SELECT gen_random_uuid(), v."FeatureCode", v."Method", v."UnitPrice", v."FreeQuota", now(), v."AdminNote", 'seed'
+            FROM (VALUES
+                ('lodging.guest-portal',3,100.0,0,'ราคาตั้งต้นจากแผน — แก้ได้ที่ /admin/addons.html'),
+                ('lodging.promo',3,200.0,0,'ราคาตั้งต้นจากแผน'),
+                ('lodging.channel-manager',3,1200.0,0,'ราคาตั้งต้นจากแผน (ยังไม่เปิดขาย)'),
+                ('lodging.pos-folio',3,400.0,0,'ราคาตั้งต้นจากแผน (ยังไม่เปิดขาย)'),
+                ('lodging.analytics',3,250.0,0,'ราคาตั้งต้นจากแผน (ยังไม่เปิดขาย)'),
+                ('lodging.multi-property',3,300.0,0,'ต่อที่พักที่เพิ่มจากแห่งแรก'),
+                ('lodging.i18n',3,250.0,0,'ราคาตั้งต้นจากแผน (ยังไม่เปิดขาย)'),
+                ('lodging.early-late-fee',3,99.0,0,'ราคาตั้งต้นจากแผน (ยังไม่เปิดขาย)'),
+                ('lodging.loyalty',3,300.0,0,'ราคาตั้งต้นจากแผน (ยังไม่เปิดขาย)'),
+                ('documents.overage',1,5.0,0,'ต่อเอกสารที่เกินโควตาแพ็กเกจ'),
+                ('lodging.stay',1,0.0,0,'มิเตอร์นับอย่างเดียว — โควตาอยู่ที่แพ็กเกจบัญชี'),
+                ('lodging.email.overage',1,0.2,200,'ฟรี 200 ฉบับ/เดือน เกินคิดฉบับละ 0.20'),
+                ('lodging.notify.sms',1,0.8,0,'ต้นทุน SMS ต่อข้อความ'),
+                ('documents.topup',1,300.0,0,'แพ็ก 100 ฉบับ')
+            ) AS v("FeatureCode","Method","UnitPrice","FreeQuota","AdminNote")
+            WHERE NOT EXISTS (SELECT 1 FROM "ApiPricingPlans" p WHERE p."FeatureCode" = v."FeatureCode" AND p."IsDeleted" = false);
+            """,
+
             // ===== ApiKey — ขยายให้รองรับ /api/v1 (ACCOUNT_STRUCTURE.md §7) =====
             // ต่อยอดตารางเดิมแทนการสร้าง ApiClient ใหม่แข่งกัน — key ที่ลูกค้าใช้อยู่
             // ทำงานเหมือนเดิมทุกประการ. Scopes เป็น NULL สำหรับคีย์เก่าทุกใบ
@@ -5909,6 +5977,10 @@ public static class DatabaseMigrationHelper
             // ไม่มีคอลัมน์นี้. ใช้เก็บ "คำเตือนที่ผู้ใช้กดรับทราบตอนอนุมัติ"
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InternalNotes" text NULL;""",
 
+            // โมดูลต้นทางของเอกสาร — ใช้กันนับโควตาซ้ำ (เอกสารจากโมดูลที่พักมีมิเตอร์
+            // ของตัวเองคือ lodging.stay) ดู Helpers/DocumentQuotaPolicy
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OriginModule" varchar(40) NULL;""",
+
             // อัตรา/เพดานประกันสังคมมีผลเป็น "ช่วงเดือน" ไม่ใช่ทั้งปี — แถวเก่า
             // default 1–12 = ทั้งปี จึงให้ผลเหมือนเดิมทุกประการ
             """ALTER TABLE "SsoYearConfigs" ADD COLUMN IF NOT EXISTS "EffectiveFromMonth" integer NOT NULL DEFAULT 1;""",
@@ -5966,6 +6038,13 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_LodgingHousekeepingTasks_Property_Status" ON "LodgingHousekeepingTasks" ("PropertyId", "Status");""",
             """CREATE TABLE IF NOT EXISTS "LodgingGuestRequests" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "PropertyId" uuid NOT NULL, "ReservationId" uuid NOT NULL REFERENCES "LodgingReservations"("Id") ON DELETE CASCADE, "RequestType" integer NOT NULL DEFAULT 99, "Details" text NOT NULL, "Status" integer NOT NULL DEFAULT 0, "ResolvedAt" timestamptz NULL, "ResolvedBy" text NULL, "ResponseNote" text NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE INDEX IF NOT EXISTS "IX_LodgingGuestRequests_Property_Status" ON "LodgingGuestRequests" ("PropertyId", "Status");""",
+
+            // โหมดออกเอกสารของที่พัก + ธงมิเตอร์การเข้าพัก (LODGING_LICENSING_PLAN §13)
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AccountingMode" integer NOT NULL DEFAULT 1;""",
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AccountingModeAckAt" timestamptz NULL;""",
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AccountingModeAckBy" text NULL;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "MeteredPeriod" varchar(7) NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_LodgingReservations_Metered" ON "LodgingReservations" ("CompanyId", "MeteredPeriod");""",
         };
 
         foreach (var sql in statements)

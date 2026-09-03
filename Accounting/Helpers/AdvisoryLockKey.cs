@@ -59,4 +59,9 @@ public static class AdvisoryLockKey
     public const string FinanceReference = "fin-ref";
     /// <summary>ปรับสต็อกรายสินค้า (read-modify-write) — part = ProductId</summary>
     public const string StockAdjust = "stock-adj";
+    /// <summary>ออกค่าเหมา add-on รายเดือน — part = งวด "yyyy-MM" (กันหลาย instance
+    /// ออกบิลงวดเดียวกันพร้อมกัน · คีย์ระดับระบบไม่ผูกบริษัท)</summary>
+    public const string AddOnMonthlyBilling = "addon-bill";
+    /// <summary>night audit ของที่พัก — part = PropertyId</summary>
+    public const string LodgingNightAudit = "lodging-audit";
 }
