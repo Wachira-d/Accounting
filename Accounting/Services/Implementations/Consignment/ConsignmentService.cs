@@ -53,8 +53,12 @@ public class ConsignmentService : IConsignmentService
     private readonly AccountingDbContext _db;
     private readonly ILogger<ConsignmentService> _logger;
 
-    public ConsignmentService(AccountingDbContext db, ILogger<ConsignmentService> logger)
-    { _db = db; _logger = logger; }
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0)</summary>
+    private readonly Accounting.Services.Interfaces.IStockLedger _stock;
+
+    public ConsignmentService(AccountingDbContext db, ILogger<ConsignmentService> logger,
+        Accounting.Services.Interfaces.IStockLedger stock)
+    { _db = db; _logger = logger; _stock = stock; }
 
     public async Task<ConsignmentRecord> ReceiveInboundAsync(Guid companyId, Guid productId,
         Guid vendorContactId, decimal quantity, decimal? agreedUnitPrice,
@@ -88,7 +92,6 @@ public class ConsignmentService : IConsignmentService
         if (product.CurrentStock < quantity)
             throw new InvalidOperationException(
                 $"Insufficient stock to dispatch: have {product.CurrentStock}, need {quantity}");
-        product.CurrentStock -= quantity;
         var record = new ConsignmentRecord
         {
             CompanyId = companyId,
@@ -100,22 +103,19 @@ public class ConsignmentService : IConsignmentService
             ReceivedAt = dispatchedAt,
         };
         _db.ConsignmentRecords.Add(record);
-        // ทุกจุดที่ขยับ CurrentStock ต้องมี StockMovement คู่กัน — ไม่งั้น
-        // stock card (SUM movements) จะ drift จาก CurrentStock ถาวร
-        _db.StockMovements.Add(new StockMovement
-        {
-            CompanyId = companyId,
-            ProductId = productId,
-            MovementDate = dispatchedAt,
-            MovementType = "OUT",
-            Quantity = quantity,
-            UnitCost = product.CostPrice,
-            BalanceAfter = product.CurrentStock,
-            Reference = $"CONSIGN-OUT-{record.Id.ToString()[..8]}",
-            Notes = "ส่งสินค้าฝากขาย (consignment outbound) — ของอยู่ที่ลูกค้า ยังเป็นกรรมสิทธิ์เรา",
-            CreatedBy = "ConsignmentService",
-        });
+        // ยอดคงเหลือ + stock card ต้องขยับพร้อมกันเสมอ ⇒ เดินผ่าน ledger ตัวเดียว
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _stock.MoveAsync(new Accounting.Services.Interfaces.StockMoveRequest(
+            CompanyId: companyId,
+            ProductId: productId,
+            Quantity: -quantity,          // − = ออกจากคลังเรา (ของไปอยู่ที่ลูกค้า)
+            MovementType: "OUT",
+            Reference: $"CONSIGN-OUT-{record.Id.ToString()[..8]}",
+            MovementDate: dispatchedAt,
+            Notes: "ส่งสินค้าฝากขาย (consignment outbound) — ของอยู่ที่ลูกค้า ยังเป็นกรรมสิทธิ์เรา",
+            CreatedBy: "ConsignmentService"), ct);
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return record;
     }
 

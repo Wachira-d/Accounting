@@ -743,8 +743,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    - cash receipt: Dr Cash/Bank / Cr AR (หรือ Cr 217xx ถ้า `IsDeposit`)
    - payment voucher: Dr AP/Expense / Cr Cash/Bank
    - WHT: Cr 21915/21916 ตามประเภทเงินได้
-8. **Stock movements** (`:1794` → `ApplyStockMovementsAsync :4605`) —
-   switch ตัดสินตาม `DocumentType` (`:4612`):
+8. **Stock movements** (`:1794` → `ApplyStockMovementsAsync`) —
+   switch ตัดสินตาม `DocumentType`:
+
+   > ⚠️ **ตั้งแต่ POS เฟส 0**: เมธอดนี้ **ไม่เขียนสต็อกเอง** อีกแล้ว — ทุกการเคลื่อนไหว
+   > เดินผ่าน `IStockLedger.MoveAsync` (`Services/Implementations/Inventory/StockLedger.cs`)
+   > ซึ่งเป็น**ผู้เขียนสต็อกตัวเดียวของระบบ**: เขียน `WarehouseStock` (ความจริง) +
+   > `StockMovement` (มี `WarehouseId` เสมอ) + ปรับ `Product.CurrentStock` ให้เท่าผลรวมทุกคลัง.
+   > คลังของเอกสารมาจาก `ResolveWarehouseIdAsync(companyId, doc.BranchId)` — เอกสารผูก
+   > **สาขา** ไม่ได้ผูกคลัง จึงต้องแปลงผ่านตัวกลางตัวเดียว. ขา void group ต่อ
+   > (สินค้า, คลัง) เพื่อคืนของเข้าคลังที่มันออกไป. บังคับด้วย `tools/stock_writer_check.py`
+   > (`StockMovements.Add` / `CurrentStock ±=` นอก `StockLedger.cs` = ฟ้อง)
    - **OUT (−1)**: `Invoice` / `TaxInvoice` (sale); **CN ฝั่งซื้อแบบ Return**
      (source = PI/Expense/CIL — เราคืนของให้ vendor = ของออกจากสต๊อกเรา)
    - **IN (+1)**: `GoodsReceiptNote` / `PurchaseInvoice` /
@@ -1719,7 +1728,9 @@ VAT พอดี**
 | เพิ่ม `DocumentType` ใหม่ | `Models/Enums/AllEnums.cs:305` + `DocumentService.cs` หลายจุด (search by enum literal) |
 | แก้ flow Approve | `DocumentService.ApproveDocumentAsync :1512` |
 | แก้ flow JE per type | `DocumentService.AutoPostToJournalAsync :4684+` |
-| แก้ stock movement | `DocumentService.ApplyStockMovementsAsync :4605–4682` |
+| แก้ stock movement (ทิศทางต่อชนิดเอกสาร) | `DocumentService.ApplyStockMovementsAsync` |
+| **แก้การเขียนสต็อกเอง (ยอด/คลัง/ต้นทุน)** | `Services/Implementations/Inventory/StockLedger.cs` — **ที่เดียวของระบบ** |
+| แก้สูตรต้นทุนถัวเฉลี่ย | `Helpers/WeightedAverageCost.cs` |
 | แก้ §65 ตรี rule | `Services/Implementations/Tax/Section65TerValidator.cs` |
 | แก้ tax point logic | `Services/Implementations/Tax/TaxPointResolver.cs` |
 | แก้ §86/4 completeness | `Services/Implementations/Tax/TaxInvoiceCompletenessChecker.cs` |
@@ -2708,7 +2719,13 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-03 (รอบ 126 — **ปิดช่องเลี่ยงโควตา**:_
+_Last verified against codebase: 2026-09-03 (รอบ 127 — **หนึ่งความจริงของสต็อก**:_
+_ขั้น 8 ของ Approve ไม่เขียนสต็อกเองอีกแล้ว — เดินผ่าน `IStockLedger.MoveAsync`_
+_ซึ่งเขียน `WarehouseStock` (ความจริง) + `StockMovement` ที่มี `WarehouseId` เสมอ +_
+_ปรับ `Product.CurrentStock` ให้เท่าผลรวมทุกคลัง · คลังของเอกสารแปลงจาก `doc.BranchId`_
+_ผ่าน `ResolveWarehouseIdAsync` · ขา void group ต่อ (สินค้า, คลัง) เพื่อคืนของเข้าคลังเดิม ·_
+_ผู้เขียนสต็อกเดิมทั้ง 9 ไฟล์ถูกย้ายในคอมมิตเดียว บังคับด้วย `tools/stock_writer_check.py`)_
+_ก่อนหน้า: 2026-09-03 (รอบ 126 — **ปิดช่องเลี่ยงโควตา**:_
 _`OriginModule` ย้ายออกจาก `CreateDocumentRequest` ไปเป็นพารามิเตอร์ของ_
 _`IDocumentService.CreateDocumentAsync` ⇒ model binding เอื้อมไม่ถึงโดยโครงสร้าง ·_
 _`LodgingService` ส่งค่าเป็นอาร์กิวเมนต์แทน (พฤติกรรมเดิมทุกประการ) ·_
@@ -4397,6 +4414,7 @@ _(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Con
 | 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
 | 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
 | 12 | JE migrate + business gaps ปิด | JE Builder phase 2 (ReclassifyLine + FxRevaluation refactor), UnifiedPaymentQueryService cross-domain (AR+AP+POS+CMS), POS deposit IsDeposit+DepositRealizedAt, TipPayoutService §50 ทวิ (3% WHT >1000), RecurringLateFeeAccrualJob (rate/grace/cap config), DocumentLineDeliveryService LINE flex, Budget scenarios best/base/worst |
+| 125 | POS เฟส 0-1 — หนึ่งความจริงของสต็อก | `IStockLedger` + `StockLedger` เป็นผู้เขียนสต็อกตัวเดียว · ย้ายผู้เขียนเดิม **ทุกไฟล์ในรอบเดียว** (POS 4 · เอกสาร 2 · สินค้า 3 · CMS 3 · นำเข้า 2 · ผลิต 2 · นับสต็อก · ฝากขาย · **ใบโอนคลัง 3**) · migration สร้างคลังหลัก + ย้ายยอดเดิม + backfill `StockMovements.WarehouseId` · `PosTerminal.BranchId/WarehouseId` + snapshot ลง `PosOrder` · `ProductionOrder.WarehouseId` · `Helpers/WeightedAverageCost` (ยุบสูตร WAC 3 ชุด) · `tools/stock_writer_check.py` |
 | 124 | โมดูลที่พัก (Lodging) | วิเคราะห์ TakeTime → `Lodging*` 14 ตาราง · `LodgingPricingEngine` pure + 19 เทสต์ · storefront `/booking` + `/reservation/{token}` · front desk + ตั้งค่า 2 หน้า · มัดจำ Receipt(IsDeposit) → เช็คเอาต์ TaxInvoice DepositApplied* → ยกเลิก Refund/Realize ตามนโยบาย snapshot · seed เมื่อสร้างเว็บโรงแรม |
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._

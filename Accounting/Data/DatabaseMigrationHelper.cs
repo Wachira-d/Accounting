@@ -5738,6 +5738,51 @@ public static class DatabaseMigrationHelper
             // ตายตัว ⇒ ลูกค้ากรอกเบอร์จริงในหน้าตั้งค่าแล้วหน้าเว็บยังโชว์ตัวอย่างอยู่
             // แก้โค้ด seeder อย่างเดียวไม่พอ — เว็บที่สร้างไปแล้วยังถือข้อความเก่า
             // (บทเรียนเดียวกับ OcrLearnedPatterns.ExtractionRegex / VendorKnownGoodValues)
+            // ═══ POS เฟส 0: ยุบสองความจริงของสต็อกให้เหลือหนึ่ง ═══
+            // เดิม Product.CurrentStock (ตัวเลขเดียวทั้งบริษัท) กับ WarehouseStock (ต่อคลัง)
+            // เป็นระบบคู่ขนานที่ไม่คุยกัน — POS/ใบซื้อ/นับสต็อก/ผลิต เขียนตัวแรก ส่วนใบโอนคลัง
+            // เขียนตัวหลัง ⇒ โอนของไปสาขาแล้วยอดที่ POS ตัดไม่ขยับ (POS_MULTI_BRANCH §2.2)
+            // หลังรอบนี้: WarehouseStock = ความจริง · CurrentStock = ผลรวมที่ derive มา
+            //
+            // 1) ทุกบริษัทที่มีสินค้าต้องมี "คลังหลัก" — บริษัทที่ไม่เคยใช้ระบบคลังต้องทำงาน
+            //    ได้เหมือนเดิมโดยไม่ต้องรู้ว่ามีคำว่าคลัง (ข้อสรุปทีม UX)
+            """INSERT INTO "Warehouses" ("Id","CompanyId","Code","Name","IsDefault","IsActive","CreatedAt","CreatedBy","IsDeleted") SELECT gen_random_uuid(), c."Id", 'MAIN', 'คลังหลัก', true, true, now(), 'system:migration', false FROM "Companies" c WHERE c."IsDeleted" = false AND NOT EXISTS (SELECT 1 FROM "Warehouses" w WHERE w."CompanyId" = c."Id" AND w."IsDeleted" = false);""",
+            // 2) บริษัทที่มีคลังอยู่แล้วแต่ไม่มีตัวไหนเป็น default → ตั้งตัวที่เก่าสุดเป็น default
+            //    (ledger เลือก default ก่อน ถ้าไม่มีจะได้คลังเก่าสุดซึ่งเป็นพฤติกรรมเดียวกัน
+            //    แต่ตั้งให้ชัดเพื่อไม่ให้ผลลัพธ์ขึ้นกับลำดับแถว)
+            """UPDATE "Warehouses" w SET "IsDefault" = true WHERE w."IsDeleted" = false AND NOT EXISTS (SELECT 1 FROM "Warehouses" d WHERE d."CompanyId" = w."CompanyId" AND d."IsDeleted" = false AND d."IsDefault" = true) AND w."Id" = (SELECT w2."Id" FROM "Warehouses" w2 WHERE w2."CompanyId" = w."CompanyId" AND w2."IsDeleted" = false ORDER BY w2."CreatedAt", w2."Id" LIMIT 1);""",
+            // 3) ย้ายยอดคงเหลือเดิมเข้าคลังหลัก **เฉพาะสินค้าที่ยังไม่มีแถวคลังใด ๆ**
+            //    — สินค้าที่เคยผ่านใบโอนคลังมาแล้วมี WarehouseStock อยู่ ห้ามยัดเพิ่มซ้ำ
+            //    (จะกลายเป็นยอดสองเท่า) · ยอดจะถูกซ่อมด้วย ReconcileProductTotalsAsync
+            """INSERT INTO "WarehouseStocks" ("Id","CompanyId","WarehouseId","ProductId","Quantity","ReservedQuantity","AvailableQuantity","CreatedAt","CreatedBy","IsDeleted") SELECT gen_random_uuid(), p."CompanyId", w."Id", p."Id", p."CurrentStock", 0, p."CurrentStock", now(), 'system:migration', false FROM "Products" p JOIN "Warehouses" w ON w."CompanyId" = p."CompanyId" AND w."IsDefault" = true AND w."IsDeleted" = false WHERE p."IsDeleted" = false AND p."TrackStock" = true AND NOT EXISTS (SELECT 1 FROM "WarehouseStocks" s WHERE s."ProductId" = p."Id" AND s."IsDeleted" = false);""",
+            // 4) สินค้าที่มีแถวคลังอยู่แล้ว → ปรับ CurrentStock ให้เท่าผลรวมคลัง
+            //    (ก่อนหน้านี้สองตัวเลขนี้ไม่เคยตรงกัน ต้องเลือกให้คลังเป็นความจริง)
+            """UPDATE "Products" p SET "CurrentStock" = COALESCE((SELECT SUM(s."Quantity") FROM "WarehouseStocks" s WHERE s."ProductId" = p."Id" AND s."IsDeleted" = false), 0) WHERE p."IsDeleted" = false AND p."TrackStock" = true;""",
+            // 5) StockMovement เก่าที่ไม่มี WarehouseId → ยัดคลังหลักย้อนหลัง เพื่อให้รายงาน
+            //    แยกคลังไม่มีรูโหว่ "ก่อนวันที่ระบบรู้จักคลัง"
+            """UPDATE "StockMovements" m SET "WarehouseId" = (SELECT w."Id" FROM "Warehouses" w WHERE w."CompanyId" = m."CompanyId" AND w."IsDefault" = true AND w."IsDeleted" = false LIMIT 1) WHERE m."WarehouseId" IS NULL;""",
+            // 6) index สำหรับการอ่านยอดต่อ (คลัง, สินค้า) ซึ่งเป็น hot path ของ POS
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_WarehouseStocks_Wh_Product" ON "WarehouseStocks" ("WarehouseId", "ProductId") WHERE "IsDeleted" = false;""",
+
+            // ═══ POS เฟส 1: ผูกเครื่อง POS เข้ากับสาขา/คลัง/บัญชีรับเงิน ═══
+            // เดิมมีแค่ `Location` เป็นข้อความอิสระ ⇒ ระบบไม่รู้ว่าเครื่องไหนอยู่สาขาไหน
+            // ทำรายงานรายสาขา / รหัสสาขาบนใบกำกับ (§86/4) / ตัดสต็อกของสาขาไม่ได้เลย
+            """ALTER TABLE "PosTerminals" ADD COLUMN IF NOT EXISTS "BranchId" uuid NULL;""",
+            """ALTER TABLE "PosTerminals" ADD COLUMN IF NOT EXISTS "WarehouseId" uuid NULL;""",
+            """ALTER TABLE "PosTerminals" ADD COLUMN IF NOT EXISTS "CashAccountId" uuid NULL;""",
+            """ALTER TABLE "PosTerminals" ADD COLUMN IF NOT EXISTS "BankAccountId" uuid NULL;""",
+            """ALTER TABLE "PosTerminals" ADD COLUMN IF NOT EXISTS "AbbreviatedInvoicePrefix" varchar(20) NULL;""",
+            // snapshot บนบิล — ห้าม resolve สดจากเครื่องตอนทำรายงาน (เครื่องย้ายสาขาได้
+            // แล้วยอดขายย้อนหลังจะย้ายตามไปทั้งก้อน)
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "BranchId" uuid NULL;""",
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "WarehouseId" uuid NULL;""",
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "AbbreviatedInvoiceNumber" varchar(50) NULL;""",
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "IssuerBranchCode" varchar(5) NULL;""",
+            // เลขใบกำกับภาษีอย่างย่อต้อง gap-free **ต่อสาขา** (§86/6) — unique ต่อบริษัท
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosOrders_AbbrevNo" ON "PosOrders" ("CompanyId", "AbbreviatedInvoiceNumber") WHERE "AbbreviatedInvoiceNumber" IS NOT NULL;""",
+            // ครัวกลาง: ใบสั่งผลิตเบิก/รับที่คลังไหน (null = คลังหลัก)
+            """ALTER TABLE "ProductionOrders" ADD COLUMN IF NOT EXISTS "WarehouseId" uuid NULL;""",
+
             // ศูนย์ช่วยเหลือ (เอกสาร + วิดีโอสอนใช้งาน) — ระดับแพลตฟอร์ม ไม่มี CompanyId
             """CREATE TABLE IF NOT EXISTS "HelpResources" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "Title" varchar(300) NOT NULL DEFAULT '', "Description" text NULL, "Category" integer NOT NULL DEFAULT 1, "ModuleCode" varchar(50) NULL, "Kind" integer NOT NULL DEFAULT 1, "Provider" integer NOT NULL DEFAULT 0, "SourceUrl" text NULL, "StoragePath" text NULL, "FileName" text NULL, "FileSizeBytes" bigint NOT NULL DEFAULT 0, "DurationSeconds" integer NOT NULL DEFAULT 0, "ThumbnailUrl" text NULL, "IsPublished" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "ViewCount" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE INDEX IF NOT EXISTS "IX_HelpResources_Cat" ON "HelpResources" ("Category", "SortOrder") WHERE "IsDeleted" = false;""",

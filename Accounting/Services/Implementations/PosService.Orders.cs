@@ -9,6 +9,21 @@ namespace Accounting.Services.Implementations;
 
 public partial class PosService
 {
+    /// <summary>สาขา/คลังของเครื่องที่เปิดกะนี้ — ตรึงลงบิล **ตอนสร้าง** เท่านั้น
+    ///
+    /// <para>ห้าม resolve สดจาก terminal ตอนทำรายงาน: เครื่องย้ายสาขาได้ (ร้านย้าย
+    /// แคชเชียร์ไปสาขาใหม่) แล้วยอดขายย้อนหลังจะย้ายตามไปทั้งก้อน — defect class
+    /// เดียวกับ `IssuerBranchCode` บนเอกสารที่ §86/4 บังคับให้ตรึง</para></summary>
+    private async Task<(Guid? BranchId, Guid? WarehouseId)> ResolveTerminalScopeAsync(
+        Guid companyId, Guid sessionId)
+    {
+        var scope = await _db.PosSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId && s.CompanyId == companyId)
+            .Select(s => new { s.Terminal.BranchId, s.Terminal.WarehouseId })
+            .FirstOrDefaultAsync();
+        return scope == null ? (null, null) : (scope.BranchId, scope.WarehouseId);
+    }
+
     // ==================== Order CRUD ====================
 
     public async Task<OrderResponse> CreateOrderAsync(Guid companyId, CreateOrderRequest request, string createdBy)
@@ -30,12 +45,15 @@ public partial class PosService
             if (int.TryParse(lastPart, out var parsed)) posSeq = parsed + 1;
         }
         var orderNumber = $"{posPrefix}{posSeq:D4}";
+        var scope = await ResolveTerminalScopeAsync(companyId, request.SessionId);
 
         var order = new PosOrder
         {
             CompanyId = companyId,
             SessionId = request.SessionId,
             OrderNumber = orderNumber,
+            BranchId = scope.BranchId,
+            WarehouseId = scope.WarehouseId,
             OrderType = request.OrderType,
             CustomerId = request.CustomerId,
             CustomerName = request.CustomerName,
@@ -147,6 +165,10 @@ public partial class PosService
         if (order.Status == PosOrderStatus.Voided) throw new InvalidOperationException("ออเดอร์นี้ถูกยกเลิกไปแล้ว");
 
         var wasCompleted = order.Status == PosOrderStatus.Completed;
+
+        // ธุรกรรมชัดเจน — `IStockLedger` ล็อกด้วย `pg_advisory_xact_lock` ซึ่ง**ปล่อยทันที
+        // ถ้าไม่มีธุรกรรมครอบ** (บทเรียน AdvisoryLockKey) ⇒ ไม่มีธุรกรรม = ไม่กันอะไรเลย
+        await using var voidTxn = await _db.Database.BeginTransactionAsync();
         if (wasCompleted)
         {
             foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
@@ -154,26 +176,24 @@ public partial class PosService
                 var product = await _db.Products.FindAsync(item.ProductId);
                 if (product?.TrackStock == true)
                 {
-                    product.CurrentStock += item.Quantity;
-                    _db.StockMovements.Add(new StockMovement
-                    {
-                        CompanyId = companyId,
-                        ProductId = product.Id,
-                        MovementDate = DateTime.UtcNow,
-                        MovementType = "IN",
-                        Quantity = item.Quantity,
-                        UnitCost = EffectiveUnitCost(product),
-                        BalanceAfter = product.CurrentStock,
-                        Reference = $"VOID-{order.OrderNumber}",
-                        Notes = "คืนสต็อกจากการยกเลิกออเดอร์",
-                        CreatedBy = userId
-                    });
+                    await _stock.MoveAsync(new StockMoveRequest(
+                        CompanyId: companyId,
+                        ProductId: product.Id,
+                        Quantity: item.Quantity,          // + = คืนเข้าคลัง
+                        MovementType: "IN",
+                        Reference: $"VOID-{order.OrderNumber}",
+                        WarehouseId: order.WarehouseId,   // null = คลังหลัก (บริษัทที่ไม่ใช้ระบบคลัง)
+                        PosOrderId: order.Id,
+                        UnitCostOverride: EffectiveUnitCost(product),
+                        Notes: "คืนสต็อกจากการยกเลิกออเดอร์",
+                        CreatedBy: userId));
                 }
             }
         }
 
         order.Status = PosOrderStatus.Voided;
         await _db.SaveChangesAsync();
+        await voidTxn.CommitAsync();
 
         // Reverse the sales journal entry — voiding a completed POS sale must
         // back out the GL impact (cash/revenue/VAT/COGS), else revenue and
@@ -251,21 +271,18 @@ public partial class PosService
                     var product = await _db.Products.FindAsync(item.ProductId.Value);
                     if (product?.TrackStock == true)
                     {
-                        product.CurrentStock += qty;
-                        refundCogs += EffectiveUnitCost(product) * qty;
-                        _db.StockMovements.Add(new StockMovement
-                        {
-                            CompanyId = companyId,
-                            ProductId = product.Id,
-                            MovementDate = DateTime.UtcNow,
-                            MovementType = "IN",
-                            Quantity = qty,
-                            UnitCost = EffectiveUnitCost(product),
-                            BalanceAfter = product.CurrentStock,
-                            Reference = $"REFUND-{order.OrderNumber}",
-                            Notes = "คืนสินค้าจากการคืนเงิน POS",
-                            CreatedBy = userId,
-                        });
+                        var move = await _stock.MoveAsync(new StockMoveRequest(
+                            CompanyId: companyId,
+                            ProductId: product.Id,
+                            Quantity: qty,                    // + = คืนเข้าคลัง
+                            MovementType: "IN",
+                            Reference: $"REFUND-{order.OrderNumber}",
+                            WarehouseId: order.WarehouseId,
+                            PosOrderId: order.Id,
+                            UnitCostOverride: EffectiveUnitCost(product),
+                            Notes: "คืนสินค้าจากการคืนเงิน POS",
+                            CreatedBy: userId));
+                        refundCogs += move.TotalCost;
                     }
                 }
             }
@@ -502,11 +519,14 @@ public partial class PosService
                 if (int.TryParse(lastPart, out var parsed)) posSeq = parsed + 1;
             }
 
+            var offlineScope = await ResolveTerminalScopeAsync(companyId, request.SessionId);
             var order = new PosOrder
             {
                 CompanyId = companyId,
                 SessionId = request.SessionId,
                 OrderNumber = $"{posPrefix}{posSeq:D4}",
+                BranchId = offlineScope.BranchId,
+                WarehouseId = offlineScope.WarehouseId,
                 OrderType = request.OrderType,
                 CustomerId = request.CustomerId,
                 CustomerName = request.CustomerName,
@@ -559,19 +579,17 @@ public partial class PosService
                 var product = await _db.Products.FindAsync(item.ProductId);
                 if (product?.TrackStock == true)
                 {
-                    product.CurrentStock -= item.Quantity;
-                    _db.StockMovements.Add(new StockMovement
-                    {
-                        CompanyId = companyId,
-                        ProductId = product.Id,
-                        MovementDate = request.CompletedAt,
-                        MovementType = "OUT",
-                        Quantity = -item.Quantity,
-                        UnitCost = EffectiveUnitCost(product),
-                        BalanceAfter = product.CurrentStock,
-                        Reference = order.OrderNumber,
-                        Notes = "POS Sale (offline sync)",
-                    });
+                    await _stock.MoveAsync(new StockMoveRequest(
+                        CompanyId: companyId,
+                        ProductId: product.Id,
+                        Quantity: -item.Quantity,         // − = ตัดออกจากคลัง
+                        MovementType: "OUT",
+                        Reference: order.OrderNumber,
+                        WarehouseId: order.WarehouseId,
+                        PosOrderId: order.Id,
+                        MovementDate: request.CompletedAt,
+                        Notes: "POS Sale (offline sync)",
+                        CreatedBy: createdBy));
                 }
             }
 
@@ -838,6 +856,10 @@ public partial class PosService
                 CompanyId = companyId,
                 SessionId = parent.SessionId,
                 OrderNumber = $"{posPrefix}{seq:D4}",
+                // สืบทอดจากใบแม่ ไม่ resolve ใหม่จากเครื่อง — ใบลูกต้องอยู่สาขา/คลัง
+                // เดียวกับใบที่มันแยกออกมาเสมอ แม้เครื่องจะย้ายสาขาไปแล้ว
+                BranchId = parent.BranchId,
+                WarehouseId = parent.WarehouseId,
                 OrderType = parent.OrderType,
                 CustomerName = parent.CustomerName,
                 TableNumber = parent.TableNumber == null ? null : $"{parent.TableNumber}/{splitIdx}",
@@ -995,19 +1017,16 @@ public partial class PosService
             var product = await _db.Products.FindAsync(item.ProductId);
             if (product?.TrackStock == true)
             {
-                product.CurrentStock -= item.Quantity;
-                _db.StockMovements.Add(new StockMovement
-                {
-                    CompanyId = companyId,
-                    ProductId = product.Id,
-                    MovementDate = DateTime.UtcNow,
-                    MovementType = "OUT",
-                    Quantity = -item.Quantity,
-                    UnitCost = EffectiveUnitCost(product),
-                    BalanceAfter = product.CurrentStock,
-                    Reference = order.OrderNumber,
-                    Notes = "POS Sale"
-                });
+                await _stock.MoveAsync(new StockMoveRequest(
+                    CompanyId: companyId,
+                    ProductId: product.Id,
+                    Quantity: -item.Quantity,         // − = ตัดออกจากคลัง
+                    MovementType: "OUT",
+                    Reference: order.OrderNumber,
+                    WarehouseId: order.WarehouseId,   // คลังของสาขาที่ขาย (null = คลังหลัก)
+                    PosOrderId: order.Id,
+                    Notes: "POS Sale",
+                    CreatedBy: userId));
             }
         }
 

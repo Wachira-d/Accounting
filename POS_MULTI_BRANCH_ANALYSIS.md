@@ -335,6 +335,38 @@ CompleteOrderAsync / SyncOfflineOrderAsync (PosService.Orders.cs:555 และ�
 **ประมาณขนาด**: เฟส 0 = ใหญ่สุดและเสี่ยงสุด (แตะทุกผู้เขียนสต็อก) แต่ทุกเฟสหลังพึ่งมัน
 ห้ามข้าม · เฟส 1-2 เล็ก ทำได้ทันทีหลัง 0 · เฟส 3 กลาง · 4-7 เล็ก-กลาง
 
+### 6.1 บันทึกการสร้างจริง (อัปเดตทุกคอมมิตที่ปิดเฟส)
+
+| เฟส | สถานะ | หมายเหตุ |
+| --- | --- | --- |
+| **0** ยุบสต็อก | ✅ | `IStockLedger` + `StockLedger` · migration 6 ขั้น (คลังหลัก/ย้ายยอด/backfill `WarehouseId`/unique index) · ย้ายผู้เขียน **ครบทุกไฟล์ในรอบเดียว**: `PosService.Orders` 4 จุด · `DocumentService.ApplyStockMovementsAsync` 2 จุด · `ProductService` 3 จุด · `CmsCommerceService` 3 จุด · `ImportExportService` 2 จุด · `ProductionOrderService` 2 จุด · `StockCountService` · `ConsignmentService` · **`WarehouseService` ใบโอนคลัง 3 จุด** (ฝั่งที่เคยเขียน `WarehouseStock` อย่างเดียว) · `tools/stock_writer_check.py` (negative test ผ่าน) |
+| **1** เครื่องผูกสาขา | 🔨 backend เสร็จ | entity + migration + snapshot `PosOrder.BranchId/WarehouseId` (สืบทอดตอนแยกบิล · ตรึงตอนเปิดบิล ห้าม resolve สด) — เหลือ API/หน้าตั้งค่าเครื่อง + ป้ายสาขาบนหน้า POS + `ResolvePaymentAccount` |
+| **7** ครัวกลาง | 🔨 บางส่วน | `ProductionOrder.WarehouseId` + เบิก/รับที่คลังนั้น + ด่านของขาดดูยอด**ในคลัง** — เหลือการโอนอัตโนมัติหลังผลิต |
+
+**สิ่งที่พบเพิ่มระหว่างทำเฟส 0** (ไม่อยู่ในผลตรวจรอบแรก — เจอเพราะต้องอ่านทุกผู้เขียน):
+
+1. **`ProductService.AdjustStockAsync` ขัดแย้งกับตัวเอง** — เขียน
+   `movement.Quantity = request.Quantity` (ไม่มีเครื่องหมาย ⇒ OUT ก็เป็นบวก) แต่
+   `ws.Quantity += qty` (มีเครื่องหมาย) ⇒ รายงานที่ SUM จาก `StockMovement` อ่านการเบิก
+   เป็น "รับเข้า" ทุกแถว ขณะที่ยอดในคลังถูก · และแตะ `WarehouseStock` **เฉพาะตอนระบุคลังมา**
+   ⇒ การปรับสต็อกแบบไม่ระบุคลังทำให้สองตัวเลขห่างกันขึ้นเรื่อย ๆ
+2. **การนับสต็อกเขียนทับยอดรวมทุกคลัง** — ทั้ง `ProductService.ApplyStockCountAsync` และ
+   `StockCountService.CloseAsync` ตั้ง `product.CurrentStock = line.CountedQty` ตรง ๆ ทั้งที่
+   ใบตรวจนับผูกคลังได้ (`StockCount.WarehouseId`) ⇒ นับสาขา A ได้ 10 ⇒ ระบบเชื่อว่าทั้งบริษัท
+   มี 10 · ของที่สาขา B **หายจากระบบเงียบ ๆ** (แก้ด้วย `SetAbsolute` ที่ตั้งยอดของคลังนั้น
+   แล้วให้ยอดรวมขยับตามผลต่าง — ล็อกไว้ด้วย `StockLedgerDeltaTests`)
+3. **สูตร WAC ถูกเขียนซ้ำ 3 ที่** (`InventoryCostingService` · `DocumentService` inline ·
+   เกือบเป็นที่ 4 ใน ledger) → ยุบเป็น `Helpers/WeightedAverageCost` + `WeightedAverageCostTests`
+4. **`RegisterReceiptAsync` เรียก `SaveChangesAsync` ข้างใน** ⇒ ถ้า ledger เรียกมัน จะ flush
+   entity ที่ผู้เรียกประกอบค้างไว้ (เอกสารที่ยังไม่ครบบรรทัด) กลางทาง → ledger ใช้สูตรกลาง
+   ปรับบน entity ที่ track อยู่แทน
+5. **`CmsCommerceService` มี fallback ที่เขียนสต็อกเอง** เมื่อ DI ไม่ครบ — และ
+   `ReverseStockIfDeductedAsync` ก็เขียนเองอีกจุด (ไม่แตะ `WarehouseStock` เลย)
+6. **ใบโอนคลังทำให้ยอดรวมบริษัทลดลงระหว่างทาง** (goods in transit) — ถูกต้องแล้วในเชิงบัญชี
+   และตอนนี้มี `TransferPairId` ให้รายงานแยกออกจากการขาย/ซื้อได้
+7. **นำเข้าสต็อกยกมาซ้ำไฟล์เดิม** — เดิมล้างยอดเก่าด้วย `CurrentStock -=` อย่างเดียว
+   ⇒ ยอดต่อคลังบวมขึ้นทุกรอบทั้งที่ยอดรวมถูก
+
 ---
 
 ## 7. คำถามที่เจ้าของระบบต้องตัดสิน

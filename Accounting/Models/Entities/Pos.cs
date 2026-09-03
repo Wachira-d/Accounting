@@ -9,8 +9,33 @@ public class PosTerminal : TenantEntity
     public string Name { get; set; } = null!;                    // "POS-1", "แคชเชียร์ 1"
     public PosBusinessMode BusinessMode { get; set; }
     public bool IsActive { get; set; } = true;
-    public string? Location { get; set; }                        // สาขา/ที่ตั้ง
+    /// <summary>⚠️ ข้อความอิสระ (ของเดิม) — **ห้ามใช้ตัดสินอะไร** ใช้ได้แค่แสดง
+    /// ตัวที่บอกสาขาจริงคือ <see cref="BranchId"/></summary>
+    public string? Location { get; set; }
     public string? SettingsJson { get; set; }                    // JSON config (receipt format, tax, etc.)
+
+    // ── สาขา + คลัง (POS_MULTI_BRANCH_ANALYSIS.md เฟส 1) ──
+    // เดิมมีแค่ `Location` เป็นข้อความ ⇒ ระบบไม่รู้ว่าเครื่องไหนอยู่สาขาไหน จึงทำ
+    // รายงานรายสาขา/รหัสสาขาบนใบกำกับ/ตัดสต็อกของสาขาไม่ได้เลย
+    /// <summary>สาขาที่เครื่องนี้ตั้งอยู่ — ใช้กับรหัสสาขาบนใบกำกับ (§86/4) ·
+    /// มิติบัญชีรายสาขา · รายงานแยกสาขา · null = ยังไม่ระบุ (ขึ้นป้ายเตือนในหน้า POS)</summary>
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+
+    /// <summary>คลังที่เครื่องนี้ตัดสต็อก — null = คลังหลักของบริษัท
+    /// (ปกติ = คลังที่ผูกกับสาขาเดียวกัน)</summary>
+    public Guid? WarehouseId { get; set; }
+    public Warehouse? Warehouse { get; set; }
+
+    /// <summary>บัญชีเงินสด/ธนาคารของเครื่องนี้ — null = ใช้ค่าที่ resolve จาก
+    /// ผังบัญชีตามวิธีจ่าย (พฤติกรรมเดิม) · สาขาที่มีบัญชีธนาคารคนละบัญชีตั้งที่นี่
+    /// ไม่งั้นเงินโอนของทุกสาขาลงบัญชีเดียวกันหมดแล้วกระทบยอดธนาคารไม่ได้</summary>
+    public Guid? CashAccountId { get; set; }
+    public Guid? BankAccountId { get; set; }
+
+    /// <summary>เลขรันใบกำกับภาษี**อย่างย่อ** (§86/6) — ต้อง gap-free **ต่อสาขา**
+    /// ห้ามใช้ `OrderNumber` แทน (นับต่อบริษัท และนับใบที่ void ด้วย)</summary>
+    public string? AbbreviatedInvoicePrefix { get; set; }
 
     public ICollection<PosSession> Sessions { get; set; } = new List<PosSession>();
 }
@@ -45,6 +70,18 @@ public class PosOrder : TenantEntity
     public PosSession Session { get; set; } = null!;
 
     public string OrderNumber { get; set; } = null!;             // Running number: POS-202603-0001
+
+    // ── snapshot สาขา/คลัง ณ เวลาเปิดออเดอร์ ──
+    // **ห้าม resolve สดจาก terminal ตอนทำรายงาน** — เครื่องย้ายสาขาได้ แล้วยอดขาย
+    // ย้อนหลังจะย้ายตามไปทั้งก้อน (defect class เดียวกับ IssuerBranchCode บนเอกสาร)
+    public Guid? BranchId { get; set; }
+    public Guid? WarehouseId { get; set; }
+
+    /// <summary>เลขที่ใบกำกับภาษีอย่างย่อที่ออกให้บิลนี้ (§86/6) — null = ยังไม่ออก
+    /// หรือบริษัทไม่ได้รับอนุมัติ ภ.พ.06 (พิมพ์หัวว่า "ใบเสร็จรับเงิน" แทน)</summary>
+    public string? AbbreviatedInvoiceNumber { get; set; }
+    /// <summary>รหัสสาขาสรรพากรที่ตรึงไว้ตอนออกใบ — §86/4 ห้ามเปลี่ยนย้อนหลัง</summary>
+    public string? IssuerBranchCode { get; set; }
     public PosOrderType OrderType { get; set; }
     public PosOrderStatus Status { get; set; } = PosOrderStatus.Open;
 

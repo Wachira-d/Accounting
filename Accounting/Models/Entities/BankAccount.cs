@@ -666,4 +666,11 @@ public class ProductionOrder : TenantEntity
     public decimal CumulativeComponentCost { get; set; }   // total cost backflushed
     public Guid? JournalEntryId { get; set; }              // FG / RM posting
     public string? Notes { get; set; }
+
+    /// <summary>คลังที่เบิกวัตถุดิบและรับสินค้าสำเร็จรูปเข้า — null = คลังหลัก
+    ///
+    /// <para>ครัวกลางของเชนร้าน (POS_MULTI_BRANCH_ANALYSIS เฟส 7): ผลิตน้ำเชื่อม/
+    /// ไข่มุกที่ครัวกลางแล้วโอนไปสาขา ⇒ ต้องเบิก-รับที่**คลังครัวกลาง** ไม่ใช่ยอดรวม
+    /// ของบริษัท มิฉะนั้นสาขาที่ยังไม่ได้ของก็ "มีของ" ในระบบ</para></summary>
+    public Guid? WarehouseId { get; set; }
 }

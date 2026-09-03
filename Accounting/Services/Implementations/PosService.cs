@@ -14,12 +14,17 @@ public partial class PosService : IPosService
     private readonly IAccountingService _accountingService;
     private readonly ILogger<PosService> _logger;
     private readonly IEmailSenderFactory? _emailFactory;
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ — POS ห้าม `CurrentStock ±=` เองอีก
+    /// (เดิมทำ 4 จุดโดยไม่ระบุคลัง ⇒ ขายที่สาขาไหนก็ตัดยอดรวมของบริษัท)</summary>
+    private readonly IStockLedger _stock;
 
-    public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger, IEmailSenderFactory? emailFactory = null)
+    public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger,
+        IStockLedger stock, IEmailSenderFactory? emailFactory = null)
     {
         _db = db;
         _accountingService = accountingService;
         _logger = logger;
+        _stock = stock;
         _emailFactory = emailFactory;
     }
 

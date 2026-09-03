@@ -44,6 +44,11 @@ public partial class DocumentService : IDocumentService
     /// ห้ามทำให้สร้างเอกสารไม่ได้)</summary>
     private readonly IUsageMeteringService? _metering;
 
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0) —
+    /// optional เพราะเทสต์เก่าสร้าง DocumentService ด้วยอาร์กิวเมนต์ไม่ครบ;
+    /// null = ข้ามการขยับสต็อก **พร้อมบันทึกเสียงดังบนตัวเอกสาร** ห้ามเงียบ</summary>
+    private readonly IStockLedger? _stock;
+
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
@@ -64,8 +69,10 @@ public partial class DocumentService : IDocumentService
         IFixedAssetService? fixedAssets = null,
         Accounting.Services.Implementations.Inventory.IInventoryCostingService? inventoryCosting = null,
         IPermissionService? permissionService = null,
-        IUsageMeteringService? metering = null)
+        IUsageMeteringService? metering = null,
+        IStockLedger? stock = null)
     {
+        _stock = stock;
         _metering = metering;
         _fixedAssets = fixedAssets;
         _inventoryCosting = inventoryCosting;
@@ -4524,9 +4531,7 @@ public partial class DocumentService : IDocumentService
                 + string.Join("\n", warnings.Select(w => "• " + w))
                 + $"\n(ยืนยันโดย {approvedBy} เมื่อ "
                 + $"{DateTime.UtcNow.AddHours(7).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} น. เวลาไทย)";
-            doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes)
-                ? ackNote
-                : doc.InternalNotes.TrimEnd() + "\n\n" + ackNote;
+            AppendInternalNote(doc, ackNote);
 
             _db.AuditLogs.Add(new AuditLog
             {
@@ -8116,9 +8121,8 @@ public partial class DocumentService : IDocumentService
                 doc.AgingLastEvaluatedAt = DateTime.UtcNow;
                 doc.UpdatedBy = writtenOffBy;
                 doc.UpdatedAt = DateTime.UtcNow;
-                doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes)
-                    ? $"ตัดหนี้สูญ {DateTime.UtcNow:yyyy-MM-dd}: {reason ?? ""}"
-                    : doc.InternalNotes + $"\nตัดหนี้สูญ {DateTime.UtcNow:yyyy-MM-dd}: {reason ?? ""}";
+                AppendInternalNote(doc,
+                    $"ตัดหนี้สูญ {DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}: {reason ?? ""}");
 
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
@@ -12129,10 +12133,32 @@ public partial class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>ต่อข้อความลง <c>Document.InternalNotes</c> — **ห้ามใช้ `Notes`**
+    /// เพราะ `PdfGenerationService.SanitizeNotesForPrint` พิมพ์ `Notes` ลงกระดาษจริง
+    /// ⇒ หมายเหตุภายในจะไปโผล่บนใบที่ส่งให้ลูกค้า (บทเรียนใน CLAUDE.md)</summary>
+    private static void AppendInternalNote(Document doc, string note)
+    {
+        if (string.IsNullOrWhiteSpace(note)) return;
+        doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes)
+            ? note
+            : doc.InternalNotes.TrimEnd() + "\n\n" + note;
+    }
+
     private async Task ApplyStockMovementsAsync(Guid companyId, Document doc, int sign, string actor)
     {
         if (sign == 0) return;
         var now = DateTime.UtcNow;
+
+        // ห้ามขยับสต็อกเองอีก (กฎ IStockLedger) · null = DI ไม่ครบ (เทสต์เก่า) →
+        // ต้องดังตามกฎ "ห้าม silent no-op": เขียนบนตัวเอกสารที่ผู้ใช้เปิดดู ไม่ใช่ log เฉย ๆ
+        if (_stock == null)
+        {
+            _logger.LogError("ไม่มี IStockLedger — ข้ามการขยับสต็อกของ {Doc}", doc.DocumentNumber);
+            AppendInternalNote(doc, $"⚠️ ไม่ได้ขยับสต็อกให้เอกสารนี้ (ระบบสต็อกไม่พร้อม) — ตรวจสอบและปรับสต็อกเอง");
+            return;
+        }
+        // เอกสารผูก **สาขา** ไม่ได้ผูกคลัง — แปลงผ่านตัวกลางตัวเดียว
+        var docWarehouseId = await _stock.ResolveWarehouseIdAsync(companyId, doc.BranchId);
 
         // ===== ขา void (sign<0): กลับตาม movement ที่ "เกิดจริง" =====
         // ไม่ recompute ทิศทางจากกติกาปัจจุบัน — เอกสารเก่าที่เคยขยับสต๊อกด้วย
@@ -12146,13 +12172,16 @@ public partial class DocumentService : IDocumentService
             // EF Core แปลเป็น SQL ไม่ได้ (movement ต่อเอกสารมีน้อย ไม่หนัก)
             var rows = await _db.StockMovements.AsNoTracking()
                 .Where(m => m.CompanyId == companyId && m.DocumentId == doc.Id)
-                .Select(m => new { m.ProductId, m.Quantity, m.UnitCost, m.MovementDate })
+                .Select(m => new { m.ProductId, m.WarehouseId, m.Quantity, m.UnitCost, m.MovementDate })
                 .ToListAsync();
+            // group ต่อ (สินค้า, คลัง) — ของที่ออกจากคลังไหนต้องคืนเข้าคลังนั้น
+            // (group ต่อสินค้าเฉย ๆ จะคืนของทั้งก้อนเข้าคลังเดียวเมื่อใบเดียวแตะหลายคลัง)
             var nets = rows
-                .GroupBy(r => r.ProductId)
+                .GroupBy(r => new { r.ProductId, r.WarehouseId })
                 .Select(g => new
                 {
-                    ProductId = g.Key,
+                    g.Key.ProductId,
+                    g.Key.WarehouseId,
                     NetQty = g.Sum(x => x.Quantity),
                     OrigCost = g.OrderBy(x => x.MovementDate).First().UnitCost,
                 })
@@ -12165,22 +12194,20 @@ public partial class DocumentService : IDocumentService
                 if (product == null) continue;
 
                 var qtyDelta = -n.NetQty;
-                product.CurrentStock += qtyDelta;
-                _db.StockMovements.Add(new StockMovement
-                {
-                    CompanyId = companyId,
-                    ProductId = product.Id,
-                    DocumentId = doc.Id,
-                    MovementDate = now,
-                    MovementType = qtyDelta > 0 ? "IN" : "OUT",
-                    Quantity = qtyDelta,
+                await _stock.MoveAsync(new StockMoveRequest(
+                    CompanyId: companyId,
+                    ProductId: product.Id,
+                    Quantity: qtyDelta,
+                    MovementType: qtyDelta > 0 ? "IN" : "OUT",
+                    Reference: doc.DocumentNumber,
+                    // คลังเดียวกับที่ movement ต้นทางลง — เอกสารเดิมผูกสาขาไว้แล้ว
+                    WarehouseId: n.WarehouseId ?? docWarehouseId,
+                    DocumentId: doc.Id,
+                    MovementDate: now,
                     // ต้นทุนเดิมของ movement ต้นทาง — กลับรายการมูลค่าเท่ากันพอดี
-                    UnitCost = n.OrigCost,
-                    BalanceAfter = product.CurrentStock,
-                    Reference = doc.DocumentNumber,
-                    Notes = $"กลับรายการจากการยกเลิก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
-                    CreatedBy = actor,
-                });
+                    UnitCostOverride: n.OrigCost,
+                    Notes: $"กลับรายการจากการยกเลิก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
+                    CreatedBy: actor));
 
                 // WAC ต้อง rebuild หลัง void ซื้อ (audit A5): เดิมปรับแค่ CurrentStock
                 // → avg ค้างค่าที่รวมล็อตที่ยกเลิกแล้ว → COGS ขายถัดไปผิด + 11500
@@ -12344,18 +12371,10 @@ public partial class DocumentService : IDocumentService
                     ? landedTotal * (line.Amount / stockLineBase)
                     : 0m;
                 var receiptCost = line.Quantity > 0
-                    ? Math.Round((line.Amount + landedShare) / line.Quantity, 4)
+                    ? Math.Round((line.Amount + landedShare) / line.Quantity, 4, MidpointRounding.AwayFromZero)
                     : line.UnitPrice;
-                if (product.CostingMethod == Models.Enums.CostingMethod.WeightedAverage && receiptCost > 0)
-                {
-                    // newAvg = (oldStock×oldAvg + qty×receiptCost) / (oldStock+qty)
-                    var oldStock = Math.Max(0m, product.CurrentStock);
-                    var oldAvg = product.AverageUnitCost > 0 ? product.AverageUnitCost : product.CostPrice;
-                    var totalQty = oldStock + line.Quantity;
-                    product.AverageUnitCost = totalQty <= 0
-                        ? receiptCost
-                        : Math.Round((oldStock * oldAvg + line.Quantity * receiptCost) / totalQty, 4);
-                }
+                // ค่าเฉลี่ยถัวน้ำหนักปรับที่ ledger (สูตรกลาง `WeightedAverageCost`) —
+                // เดิมคำนวณซ้ำ inline ที่นี่ = สำเนาสูตรชุดที่สาม
                 unitCost = receiptCost > 0 ? receiptCost : product.CostPrice;
             }
             else
@@ -12367,23 +12386,20 @@ public partial class DocumentService : IDocumentService
                     : EffectiveUnitCost(product);
             }
 
-            product.CurrentStock += qtyDelta;
-            _db.StockMovements.Add(new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = product.Id,
-                DocumentId = doc.Id,
-                MovementDate = now,
+            await _stock.MoveAsync(new StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: product.Id,
+                Quantity: qtyDelta,
                 // MovementType is informational for reports — we tag based on
                 // direction so "IN" / "OUT" reads naturally even on a void.
-                MovementType = qtyDelta > 0 ? "IN" : "OUT",
-                Quantity = qtyDelta,
-                UnitCost = unitCost,
-                BalanceAfter = product.CurrentStock,
-                Reference = doc.DocumentNumber,
-                Notes = $"จาก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
-                CreatedBy = actor,
-            });
+                MovementType: qtyDelta > 0 ? "IN" : "OUT",
+                Reference: doc.DocumentNumber,
+                WarehouseId: docWarehouseId,
+                DocumentId: doc.Id,
+                MovementDate: now,
+                UnitCostOverride: unitCost,
+                Notes: $"จาก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
+                CreatedBy: actor));
         }
     }
 

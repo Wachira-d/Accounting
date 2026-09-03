@@ -258,6 +258,9 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Tax.ITaxComplianc
 // every stock-IN / stock-OUT path so COGS posts at the correct value.
 builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IInventoryCostingService,
     Accounting.Services.Implementations.Inventory.InventoryCostingService>();
+// ผู้เขียนสต็อกตัวเดียวของระบบ — ยุบ Product.CurrentStock กับ WarehouseStock
+// ให้เหลือความจริงเดียว (POS_MULTI_BRANCH_ANALYSIS.md เฟส 0)
+builder.Services.AddScoped<IStockLedger, Accounting.Services.Implementations.Inventory.StockLedger>();
 // 3-way match — PO ↔ GRN ↔ Invoice. Blocks AP overpayment before
 // the cheque goes out.
 builder.Services.AddScoped<Accounting.Services.Implementations.Procurement.IGrnMatchService,

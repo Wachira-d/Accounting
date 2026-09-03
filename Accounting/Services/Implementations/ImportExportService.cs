@@ -20,12 +20,16 @@ public class ImportExportService : IImportExportService
 
     // _ai is optional so the service still works in tests / environments
     // where AI isn't registered. Production wires it up in Program.cs.
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0)</summary>
+    private readonly IStockLedger? _stock;
+
     public ImportExportService(AccountingDbContext db, IErrorLogService errorLogService,
-        IImportAiAugmenter? ai = null)
+        IImportAiAugmenter? ai = null, IStockLedger? stock = null)
     {
         _db = db;
         _errorLogService = errorLogService;
         _ai = ai;
+        _stock = stock;
     }
 
     public async Task<ImportResult> ImportAsync(Guid companyId, ImportRequest request, string performedBy)
@@ -892,27 +896,39 @@ public class ImportExportService : IImportExportService
         var existingOpening = await _db.StockMovements
             .Where(m => m.CompanyId == companyId && m.ProductId == product.Id && m.MovementType == "OPENING")
             .ToListAsync();
+        if (_stock == null)
+            throw new InvalidOperationException("ระบบสต็อกไม่พร้อม — ไม่สามารถนำเข้าสต็อกยกมาได้");
+
+        // ล้างยอดยกมาชุดก่อนผ่าน ledger ด้วย (ไม่ใช่ `CurrentStock -=` เอง) เพื่อให้
+        // `WarehouseStock` ถูกล้างตามไปพร้อมกัน — เดิมลบเฉพาะยอดรวม ⇒ นำเข้าไฟล์ซ้ำ
+        // แล้วยอดต่อคลังบวมขึ้นทุกรอบทั้งที่ยอดรวมถูก
         if (existingOpening.Count > 0)
         {
-            foreach (var ex in existingOpening) product.CurrentStock -= ex.Quantity;
+            foreach (var ex in existingOpening.GroupBy(m => m.WarehouseId))
+            {
+                var net = ex.Sum(m => m.Quantity);
+                if (net == 0m) continue;
+                await _stock.MoveAsync(new StockMoveRequest(
+                    CompanyId: companyId, ProductId: product.Id, Quantity: -net,
+                    MovementType: net > 0 ? "OUT" : "IN",
+                    Reference: "OPENING-RESET", WarehouseId: ex.Key,
+                    UnitCostOverride: unitCost,
+                    Notes: "ล้างสต็อกยกมาชุดก่อน (นำเข้าซ้ำ)", CreatedBy: performedBy));
+            }
             _db.StockMovements.RemoveRange(existingOpening);
         }
 
-        product.CurrentStock += qty;
         product.CostPrice = unitCost;
-
-        _db.StockMovements.Add(new StockMovement
-        {
-            CompanyId = companyId,
-            ProductId = product.Id,
-            MovementDate = openingDate,
-            MovementType = "OPENING",
-            Quantity = qty,
-            UnitCost = unitCost,
-            BalanceAfter = product.CurrentStock,
-            Notes = row.GetValueOrDefault("Notes") ?? "สต็อกยกมา (Import)",
-            CreatedBy = performedBy
-        });
+        await _stock.MoveAsync(new StockMoveRequest(
+            CompanyId: companyId,
+            ProductId: product.Id,
+            Quantity: qty,
+            MovementType: "OPENING",
+            WarehouseId: null,                // ยกมาเข้าคลังหลัก
+            MovementDate: openingDate,
+            UnitCostOverride: unitCost,
+            Notes: row.GetValueOrDefault("Notes") ?? "สต็อกยกมา (Import)",
+            CreatedBy: performedBy));
     }
 
     /// <summary>
@@ -1059,21 +1075,19 @@ public class ImportExportService : IImportExportService
         var unitCost = decimal.TryParse(row.GetValueOrDefault("UnitCost"), out var uc) ? uc : product.CostPrice;
         var date = DateTime.TryParse(row.GetValueOrDefault("AdjustmentDate"), out var d) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(d) : DateTime.UtcNow;
 
-        product.CurrentStock += signed;
+        if (_stock == null)
+            throw new InvalidOperationException("ระบบสต็อกไม่พร้อม — ไม่สามารถนำเข้ารายการปรับสต็อกได้");
 
-        _db.StockMovements.Add(new StockMovement
-        {
-            CompanyId = companyId,
-            ProductId = product.Id,
-            MovementDate = date,
-            MovementType = rawType,
-            Quantity = signed,
-            UnitCost = unitCost,
-            BalanceAfter = product.CurrentStock,
-            Reference = row.GetValueOrDefault("Reference"),
-            Notes = row.GetValueOrDefault("Notes"),
-            CreatedBy = performedBy
-        });
+        await _stock.MoveAsync(new StockMoveRequest(
+            CompanyId: companyId,
+            ProductId: product.Id,
+            Quantity: signed,
+            MovementType: rawType,
+            Reference: row.GetValueOrDefault("Reference"),
+            MovementDate: date,
+            UnitCostOverride: unitCost,
+            Notes: row.GetValueOrDefault("Notes"),
+            CreatedBy: performedBy));
     }
 
     // ===== Fixed Asset import =====
