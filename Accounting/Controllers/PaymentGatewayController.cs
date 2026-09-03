@@ -105,6 +105,42 @@ public class PaymentGatewayController : ControllerBase
         return Ok(new ApiResponse<object>(true, rows));
     }
 
+    /// <summary>กระทบยอดเงินที่รับผ่าน gateway ของงวดหนึ่ง
+    ///
+    /// <para>สมการที่ต้องเป็นจริง: <c>Σ charge − Σ คืนเงิน − Σ ค่าธรรมเนียม =
+    /// Σ ที่โอนเข้าจริง + ที่ยังไม่ถึงรอบโอน</c> · <b>ผลต่างที่อธิบายไม่ได้ต้องเป็น 0</b>
+    /// — ไม่เป็นศูนย์แปลว่ามีเงินหายหรือค่าธรรมเนียมไม่ตรงที่คาด ต้องมีคนดู</para></summary>
+    [HttpGet("reconciliation")]
+    public async Task<ActionResult<ApiResponse<object>>> Reconciliation(
+        Guid companyId, [FromQuery] DateTime? from, [FromQuery] DateTime? to,
+        CancellationToken ct = default)
+    {
+        var toDate = (to ?? DateTime.UtcNow).Date.AddDays(1);
+        var fromDate = (from ?? DateTime.UtcNow.AddDays(-30)).Date;
+
+        var rows = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId
+                     && i.ConfirmedAt != null && i.ConfirmedAt >= fromDate && i.ConfirmedAt < toDate
+                     && (i.Status == PaymentIntentStatus.Succeeded
+                         || i.Status == PaymentIntentStatus.Refunded
+                         || i.Status == PaymentIntentStatus.PartiallyRefunded))
+            .Select(i => new GatewayIntentAmounts(
+                i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount,
+                i.Status == PaymentIntentStatus.Refunded,
+                i.SettledAt != null))
+            .ToListAsync(ct);
+
+        var result = GatewayReconciliation.Compute(rows);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            fromDate, toDate = toDate.AddDays(-1),
+            result.SucceededCount, result.GrossCharged, result.RefundedAmount,
+            result.FeeTotal, result.FeeIsEstimated, result.ExpectedNet,
+            result.SettledTotal, result.UnsettledCount, result.UnsettledAmount,
+            result.Difference, result.UnexplainedDifference, result.IsBalanced,
+        }));
+    }
+
     /// <summary>ประวัติของรายการเดียว — "ลูกค้าบอกว่าจ่ายแล้วแต่ระบบไม่รู้" ตอบจากตรงนี้</summary>
     [HttpGet("intents/{intentId:guid}/events")]
     public async Task<ActionResult<ApiResponse<object>>> Events(

@@ -34,6 +34,11 @@ public static class ChartOfAccountTemplates
             new("11310", "ลูกหนี้การค้า", "Trade Receivables", AccountType.Asset, 4),
             new("11320", "ลูกหนี้อื่น", "Other Receivables", AccountType.Asset, 4),
             new("11330", "ลูกหนี้กรรมการ/เงินทดรองกรรมการ", "Director's Advance Receivable", AccountType.Asset, 4),
+            // เงินที่ลูกค้าจ่ายผ่าน payment gateway สำเร็จแล้ว แต่ยัง**ไม่เข้าบัญชีธนาคาร**
+            // (ผู้ให้บริการโอนเข้า T+n หลังหักค่าธรรมเนียม) — ห้าม Dr ธนาคารตั้งแต่ตอน
+            // charge สำเร็จ ไม่งั้นยอดธนาคารในระบบไม่ตรงกับยอดจริงตลอดเวลา
+            // (PAYMENT_GATEWAY_DESIGN.md §5 · ข้อสรุปทีม 2)
+            new("11340", "ลูกหนี้ผู้ให้บริการรับชำระเงิน", "Payment Gateway Receivable", AccountType.Asset, 4),
             new("114", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 3),
             new("11400", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 4),
             new("115", "สินค้าคงเหลือ", "Inventories", AccountType.Asset, 3),
