@@ -1415,6 +1415,14 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - **VAT** = 7% (กฎหมายไทย); per-line `VatRate` รองรับ mixed rate / 0% / exempt
 - **เลขเอกสาร** ออกตอน Approve เท่านั้น (Draft ใช้ `DRAFT-{guid}` placeholder)
   เพื่อกัน gap จากการลบ Draft (compliance §86/4)
+- **POS หลายสาขา + วัตถุดิบ** — ผลวิเคราะห์และแผน 7 เฟสอยู่ใน `POS_MULTI_BRANCH_ANALYSIS.md`
+  (ข้อเท็จจริงสำคัญ: `Product.CurrentStock` กับ `WarehouseStock` เป็น**สองความจริงที่ไม่คุยกัน**
+  — ห้ามเพิ่มฟีเจอร์สาขาก่อนยุบผ่าน `IStockLedger` ตัวเดียว · POS ยังไม่ผูก `Branch`/`Warehouse`
+  · สลิปพิมพ์ "ใบกำกับภาษีอย่างย่อ" โดยไม่ตรวจ ภ.พ.06)
+- **Payment gateway (Omise ก่อน · เปลี่ยนเจ้าได้)** — ออกแบบใน `PAYMENT_GATEWAY_DESIGN.md`
+  (วันนี้**ไม่มี**การเชื่อม gateway ใดเลย มีแค่ enum + คีย์ที่เข้ารหัสไว้แล้วไม่มีใครอ่าน ·
+  ทุกทางเข้าต้องเดินผ่าน `PaymentIntent` + `IPaymentProvider` ตัวเดียว · webhook ยืนยันแบบของ
+  เจ้านั้น (Omise = re-fetch event) ไม่ใช่ HMAC ของเรา · ห้ามสลับ live ก่อนทดสอบผ่าน)
 - **โมดูลที่พัก (Lodging)** — flow/เส้นเงินอยู่ใน `DOCUMENT_FLOW.md` §6.5 · โครงสร้างใน
   `ACCOUNT_STRUCTURE.md` §3.1b · สิ่งที่ลอก/ไม่ลอกจาก TakeTime + backlog ใน `LODGING_TAKETIME_ANALYSIS.md`
 
