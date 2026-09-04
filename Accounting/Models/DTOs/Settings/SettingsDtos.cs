@@ -349,7 +349,19 @@ public record CreateApiKeyRequest(
     int RateLimitPerMinute = 60,
     bool CanRead = true,
     bool CanWrite = false,
-    bool CanDelete = false);
+    bool CanDelete = false,
+    /// <summary>สิทธิ์ระดับ scope ของ <c>/api/v1</c> — เว้นวรรค/คอมมาคั่น
+    /// (เช่น <c>"ocr:read bank:read contacts:*"</c> · <c>"*"</c> = ทุก scope)
+    ///
+    /// <para>⚠️ **จุดสร้าง ApiKey ไม่เคยเซ็ตช่องนี้เลย** (grep `.Scopes = ` = 0)
+    /// ขณะที่ <c>PublicApiControllerBase</c> ปฏิเสธคีย์ที่ scope ว่างทุกใบ
+    /// ⇒ <c>/api/v1</c> ทั้งหมด (ocr · bank · contacts · documents) **เข้าไม่ได้
+    /// เลยสักเส้นเดียวตั้งแต่วันแรก** — ทั้งที่ทั้งสองฝั่งเขียนถูกต้องในตัวมันเอง
+    /// (ผลตรวจ H-A4 · defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้")</para>
+    ///
+    /// <para>ค่าเริ่มต้น <c>null</c> = ไม่ให้ scope ใดเลย — ต้อง**ตั้งใจให้**
+    /// เท่านั้น ไม่ใช่ได้มาโดยบังเอิญ (กติกาเดิมของ base ที่ถูกอยู่แล้ว)</para></summary>
+    string? Scopes = null);
 
 public record ApiKeyResponse(
     Guid Id,
@@ -362,7 +374,10 @@ public record ApiKeyResponse(
     bool CanRead,
     bool CanWrite,
     bool CanDelete,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    /// <summary>สิทธิ์ระดับ scope ของ /api/v1 — ต้อง echo กลับ ไม่งั้นหน้าจัดการ
+    /// API key แสดงไม่ได้ว่าคีย์ใบไหนเข้า endpoint ไหนได้บ้าง</summary>
+    string? Scopes = null);
 
 public record ApiKeyCreatedResponse(
     Guid Id,

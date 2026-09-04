@@ -68,6 +68,21 @@ public class PayrollController : ControllerBase
         return await _sensitivity.CanViewAsync(companyId, userId, Models.Enums.SensitivityKind.Payroll);
     }
 
+    /// <summary>ด่านสำหรับข้อมูล "รายคน": ของตัวเองดูได้เสมอ · ของคนอื่นต้องมีสิทธิ์ HR
+    ///
+    /// <para>ที่มา (ผลตรวจ D-A2): endpoint อ่าน 7 ตัวไม่มีด่านเลย — รวม
+    /// <c>pnd3</c>/<c>sso</c> ที่คืน<b>ชื่อ + ค่าจ้าง + ภาษีของพนักงานทุกคน</b>
+    /// และ <c>leaves</c>/<c>leaves/balance</c> ที่รับ <c>employeeId</c> อะไรก็ได้
+    /// ⇒ สมาชิกคนไหนของบริษัทก็อ่านข้อมูลเงินเดือน/วันลาของเพื่อนร่วมงานได้</para></summary>
+    private async Task<ActionResult?> RequireOwnOrPayrollAsync(Guid companyId, Guid employeeId)
+    {
+        var actorUserId = JwtHelper.GetUserIdFromClaims(User);
+        if (actorUserId != Guid.Empty && employeeId != Guid.Empty
+            && await _service.IsEmployeeOfUserAsync(companyId, employeeId, actorUserId))
+            return null;
+        return await CheckPayrollAccessAsync(companyId);
+    }
+
     /// <summary>Gate every payroll endpoint behind the Payroll sensitivity rule.
     /// Returns 403 with a structured body so integrations distinguish "no access"
     /// from "no such record". Owner / SystemAdmin pass through.</summary>
@@ -151,10 +166,18 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> GetByExternal(
         Guid companyId, string externalSystem, string externalId)
     {
-        var emp = await _service.GetEmployeeByExternalAsync(companyId, externalSystem, externalId);
-        return emp == null
-            ? NotFound(new ApiResponse<object>(false, null, "ไม่พบพนักงาน"))
-            : Ok(new ApiResponse<EmployeeResponse>(true, emp));
+        // ★ เดิมคืนแถวพนักงาน **ดิบ** ไม่ผ่านการปิดบัง PII/เงินเดือน ต่างจาก
+        // `GetEmployee`/`GetEmployees` ที่ส่ง CanViewPii/CanViewPayroll เข้าไป
+        // ⇒ ใครก็ได้ที่รู้ (ExternalSystem, ExternalId) อ่านเลขบัตรประชาชนและ
+        // เงินเดือนได้ครบโดยไม่ต้องมีสิทธิ์อะไรเลย (ผลตรวจ D-A2)
+        // → หา id ก่อน แล้วเดินผ่านเส้นเดียวกับ GetEmployee เพื่อให้กติกาปิดบัง
+        //   เป็นชุดเดียวกัน (ไม่สร้างกติกาสำเนาที่สอง)
+        var lookup = await _service.GetEmployeeByExternalAsync(companyId, externalSystem, externalId);
+        if (lookup == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบพนักงาน"));
+        var emp = await _service.GetEmployeeAsync(companyId, lookup.Id,
+            await CanViewPiiAsync(companyId, lookup.Id), await CanViewPayrollAsync(companyId));
+        return Ok(new ApiResponse<EmployeeResponse>(true, emp));
     }
 
     [HttpDelete("employees/{employeeId:guid}")]
@@ -244,7 +267,10 @@ public class PayrollController : ControllerBase
 
     [HttpGet("items")]
     public async Task<ActionResult<ApiResponse<List<PayrollItemResponse>>>> GetItems(Guid companyId)
-        => Ok(new ApiResponse<List<PayrollItemResponse>>(true, await _service.GetPayrollItemsAsync(companyId)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<List<PayrollItemResponse>>(true, await _service.GetPayrollItemsAsync(companyId)));
+    }
 
     // Payroll Runs
     [HttpPost("runs")]
@@ -515,7 +541,11 @@ public class PayrollController : ControllerBase
 
     [HttpGet("leaves/{leaveId:guid}")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> GetLeave(Guid companyId, Guid leaveId)
-        => Ok(new ApiResponse<LeaveResponse>(true, await _service.GetLeaveAsync(companyId, leaveId)));
+    {
+        // ใบลาเฉพาะใบ — ผู้ใช้ได้ id มาจากลิสต์ที่ผ่านด่านแล้ว จึงใช้ด่าน HR ตรง ๆ
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<LeaveResponse>(true, await _service.GetLeaveAsync(companyId, leaveId)));
+    }
 
     [HttpPost("leaves/{leaveId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> ApproveLeave(Guid companyId, Guid leaveId)
@@ -544,13 +574,24 @@ public class PayrollController : ControllerBase
 
     [HttpGet("leaves")]
     public async Task<ActionResult<ApiResponse<List<LeaveResponse>>>> GetLeaves(Guid companyId, [FromQuery] Guid? employeeId, [FromQuery] int? year)
-        => Ok(new ApiResponse<List<LeaveResponse>>(true, await _service.GetLeavesAsync(companyId, employeeId, year)));
+    {
+        // ระบุพนักงาน → ของตัวเองดูได้ · ไม่ระบุ (ดูของทุกคน) → ต้องมีสิทธิ์ HR
+        // เดิมไม่มีด่านเลย ⇒ สมาชิกคนไหนก็อ่านวันลาของเพื่อนร่วมงานได้ (D-A2)
+        var block = employeeId is { } eid
+            ? await RequireOwnOrPayrollAsync(companyId, eid)
+            : await CheckPayrollAccessAsync(companyId);
+        if (block != null) return block;
+        return Ok(new ApiResponse<List<LeaveResponse>>(true, await _service.GetLeavesAsync(companyId, employeeId, year)));
+    }
 
     [HttpGet("leaves/balance")]
     public async Task<ActionResult<ApiResponse<LeaveBalanceResponse>>> GetLeaveBalance(
         Guid companyId, [FromQuery] Guid employeeId, [FromQuery] int? year)
-        => Ok(new ApiResponse<LeaveBalanceResponse>(true,
+    {
+        var block = await RequireOwnOrPayrollAsync(companyId, employeeId); if (block != null) return block;
+        return Ok(new ApiResponse<LeaveBalanceResponse>(true,
             await _service.GetLeaveBalanceAsync(companyId, employeeId, year ?? DateTime.UtcNow.Year)));
+    }
 
     [HttpPost("runs/{runId:guid}/void")]
     public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId)
@@ -617,11 +658,17 @@ public class PayrollController : ControllerBase
 
     [HttpGet("pnd3/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetPnd3(Guid companyId, int year, int month)
-        => Ok(new ApiResponse<object>(true, await _service.GeneratePnd3Async(companyId, year, month)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<object>(true, await _service.GeneratePnd3Async(companyId, year, month)));
+    }
 
     [HttpGet("sso/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetSso(Guid companyId, int year, int month)
-        => Ok(new ApiResponse<object>(true, await _service.GenerateSsoReportAsync(companyId, year, month)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<object>(true, await _service.GenerateSsoReportAsync(companyId, year, month)));
+    }
 
     /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1) เงินเดือน).
     /// employeeId=null → คืน Zip รวมทุกคน, ระบุ → คืน PDF เดียวคน.

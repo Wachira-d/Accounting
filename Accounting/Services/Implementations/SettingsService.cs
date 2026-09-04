@@ -428,7 +428,10 @@ public class SettingsService : ISettingsService
             RateLimitPerMinute = request.RateLimitPerMinute,
             CanRead = request.CanRead,
             CanWrite = request.CanWrite,
-            CanDelete = request.CanDelete
+            CanDelete = request.CanDelete,
+            // ★ ช่องนี้ไม่เคยถูกเซ็ตมาก่อน ⇒ /api/v1 ปฏิเสธคีย์ทุกใบที่ scope ว่าง
+            // ⇒ Connected API เข้าไม่ได้เลยสักเส้นตั้งแต่วันแรก (ผลตรวจ H-A4)
+            Scopes = string.IsNullOrWhiteSpace(request.Scopes) ? null : request.Scopes!.Trim(),
         };
 
         _db.Set<ApiKey>().Add(apiKey);
@@ -447,7 +450,7 @@ public class SettingsService : ISettingsService
 
         return keys.Select(k => new ApiKeyResponse(
             k.Id, k.Name, k.KeyPrefix, k.Status, k.ExpiresAt, k.LastUsedAt,
-            k.AllowedFeatures, k.CanRead, k.CanWrite, k.CanDelete, k.CreatedAt)).ToList();
+            k.AllowedFeatures, k.CanRead, k.CanWrite, k.CanDelete, k.CreatedAt, k.Scopes)).ToList();
     }
 
     public async Task RevokeApiKeyAsync(Guid companyId, Guid apiKeyId)
