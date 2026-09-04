@@ -35,6 +35,11 @@ public static class SequenceNumber
     /// การสแกนทั้งตารางของ tenant ที่มีข้อมูลหลายปี</summary>
     public const int ScanWindow = 2000;
 
+    /// <summary>logger สำหรับคำเตือน "ออกเลขนอก transaction" — ตั้งครั้งเดียวตอน
+    /// boot ใน <c>Program.cs</c> · เป็น static เพราะตัวออกเลขเป็น helper ที่
+    /// ทุกที่เรียกได้โดยไม่ผ่าน DI (เขียนครั้งเดียวตอนเริ่ม ไม่ใช่ state ต่อ request)</summary>
+    public static ILogger? Log { get; set; }
+
     /// <summary>
     /// **ส่วนที่เป็นคณิตศาสตร์ล้วน** — หาลำดับถัดไปจากรายการ suffix ที่มีอยู่
     ///
@@ -90,9 +95,16 @@ public static class SequenceNumber
         {
             // ไม่ throw — เส้นที่เคยทำงานอยู่ต้องไม่พังเพราะการเพิ่มด่าน แต่ต้อง
             // "ดัง" พอให้เห็นตอนตรวจ log (กติกา "ห้ามเงียบ" ของกฎเหล็ก #4)
-            System.Diagnostics.Debug.WriteLine(
-                $"[SequenceNumber] ออกเลข '{prefix}' นอก transaction — advisory lock " +
-                "จะถูกปล่อยก่อน insert ⇒ กันเลขซ้ำได้แค่ unique index เท่านั้น");
+            //
+            // ⚠️ เดิมบรรทัดนี้เป็น `Debug.WriteLine` ซึ่ง **คอมไพล์หายไปใน Release**
+            // ⇒ คำเตือนที่ตั้งใจให้ดัง กลับเงียบสนิทบนเครื่องจริง — ตรงข้ามกับ
+            // คอมเมนต์ที่เขียนไว้เอง (ญาติของบทเรียน "LogWarning แล้วเดินต่อ":
+            // ดังในที่ที่ไม่มีคนดู = ไม่ดัง) จึงยิงผ่าน logger จริง และถ้ายังไม่มี
+            // ใครตั้ง ก็ออก stderr ไว้ก่อน — ห้ามมีทางที่มันหายไปทั้งหมด
+            var msg = $"[SequenceNumber] ออกเลข '{prefix}' นอก transaction — advisory lock "
+                + "จะถูกปล่อยก่อน insert ⇒ กันเลขซ้ำได้แค่ unique index เท่านั้น";
+            if (Log is { } log) log.LogWarning("{Message}", msg);
+            else Console.Error.WriteLine(msg);
         }
 
         // lockPart แยกจาก prefix เพราะ number space บางชุดถูกแบ่งด้วยคีย์อื่น

@@ -12044,9 +12044,9 @@ public partial class DocumentService : IDocumentService
         var period = await ResolveFiscalPeriodAsync(companyId, date);
         if (period != null && period.Status != FiscalPeriodStatus.Open)
             throw new Accounting.Helpers.BusinessRuleException(
-                $"ลง{what}เข้างวด "{period.Name}" ไม่ได้ — งวดนี้ปิดแล้ว "
+                $"ลง{what}เข้างวด “{period.Name}” ไม่ได้ — งวดนี้ปิดแล้ว "
                 + $"(วันที่รายการ {date:yyyy-MM-dd}). "
-                + "ทางแก้: เปิดงวดที่หน้า "งวดบัญชี" แล้วทำรายการใหม่ "
+                + "ทางแก้: เปิดงวดที่หน้า “งวดบัญชี” แล้วทำรายการใหม่ "
                 + "หรือแก้วันที่รายการให้อยู่ในงวดที่ยังเปิด — "
                 + "การลงย้อนเข้างวดที่ยื่นแบบไปแล้วทำให้งบที่ยื่นกับบัญชีไม่ตรงกัน");
         return period;

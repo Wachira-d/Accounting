@@ -554,3 +554,35 @@ review-queue.html + GET /ocr/review-queue · AiFeatureKey 8 ค่า · POST /a
 
 ---
 _ผลิตโดย 8 subagent (Opus) + main agent (Fable 5.1) verify · 2026-09-02 · ไม่ได้คอมไพล์ — env ไม่มี .NET SDK_
+
+---
+
+## §11 ผลตรวจย้อนงานของตัวเอง — รอบ 126 (2026-09-04)
+
+ตรวจคุณภาพของคอมมิต `49e9014 → 920f377` (Sprint 3/4/5 + ด่านสิทธิ์) กับโค้ดจริง
+
+### แก้แล้วในรอบนี้
+| ID | เรื่อง | ความรุนแรง | สถานะ |
+| --- | --- | --- | --- |
+| REV-01 | `DocumentService.cs:12047,12049` `"` ASCII ปิดสตริงกลางคำ ⇒ **CS1002 ล้มทั้ง solution** (เขียนเองใน `802f149`) | ล้ม build | ✅ แก้เป็นอัญประกาศไทย + `tools/string_quote_close_check.py` (ตัวที่ 29) |
+| REV-02 | `SequenceNumber` เตือน "นอก transaction" ด้วย `Debug.WriteLine` ⇒ หายไปใน Release ทั้งที่คอมเมนต์เขียนว่า "ต้องดัง" | สูง | ✅ `ILogger` + fallback `Console.Error` |
+| REV-03 | `DOCUMENT_FLOW.md` ไม่ถูกอัปเดตใน 4 คอมมิตที่เปลี่ยน flow (C-T04 ด่านงวดปิด · C-T11 retention) | สูง — ผิด hard requirement | ✅ เพิ่มขั้น 0 "ด่านงวดปิด" + แก้ขั้น 5 retention |
+
+### ต้องทำก่อน/ตอน deploy (ยังไม่ได้ทำ)
+| ID | เรื่อง |
+| --- | --- |
+| REV-05 | **ยังไม่เคยคอมไพล์ทั้งชุด** (env ไม่มี .NET SDK) · จุดที่ checker มองไม่เห็น: บล็อก DataProtection ใน `Program.cs` · positional record ที่เพิ่มพารามิเตอร์ → CS1739 ทุกจุดสร้าง |
+| REV-06 | **`throw` ใหม่ 3 ตัวเปลี่ยนพฤติกรรม** — งวดปิด (9 จุด) · แก้เงินได้โดยไม่ส่ง WHT · ที่ดิน+ค่าเสื่อม ⇒ audit ข้อมูลจริงว่ามีกี่บริษัทจะเจอ 400 ทันที + release note |
+| REV-07 | `JobLock` จอง connection จาก pool ตลอดอายุงาน (session-level lock) — วัดจริงก่อนตัดสิน |
+| REV-08 | migration retention `UPDATE "Documents" … GREATEST(…)` รันทุก boot + สแกนทั้งตาราง → จำกัด `WHERE` หรือทำ one-shot |
+| REV-09 | เทสต์ใหม่ 3 ไฟล์ยังไม่เคยรัน (`DisplayTextTests` · `SequenceNumberTests` · `AiPromptSanitizerTests`) |
+
+### ผลตรวจโมดูลที่พัก/CMS → แยกเป็นไฟล์ของตัวเอง
+`LODGING_BOOKING_AUDIT.md` — เช็กลิสต์ 9 ข้อเทียบโค้ดจริง + งาน `LDG-P0-01..LDG-P2-06`
+**หัวข้อที่กระทบทั้งระบบ ไม่ใช่แค่ที่พัก:** `PaymentGatewayController` เป็น
+`[Authorize]` และไม่มีทางเข้า `[AllowAnonymous]` ใด ๆ ที่สร้าง `PaymentIntent` ได้
+⇒ **ลูกค้าปลายทางจ่ายออนไลน์ไม่ได้เลยทั้งร้านค้าและที่พัก** ⇒
+`LodgingReservationPaymentHandler` + `SiteOrderPaymentHandler` เป็นโค้ดที่ไม่มีวัน
+ถูกเรียก (defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้")
+
+_รอบ 126 · main agent · ไม่ได้คอมไพล์ — env ไม่มี .NET SDK_

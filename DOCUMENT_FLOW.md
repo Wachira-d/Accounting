@@ -710,6 +710,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 > (กัน flow ที่ setting บังคับใช้โดน block ตัวเอง)
 **`DocumentService.ApproveDocumentAsync` (`:1512`)** ทำตามลำดับ:
 
+0. **ด่านงวดปิด** (`RequireOpenFiscalPeriodAsync` — `DocumentService.cs:12041`)
+   — ทุกจุดที่ **จะลง JE จริง** ต้องผ่านก่อน: งวดของวันที่รายการต้องเป็น
+   `FiscalPeriodStatus.Open` ไม่งั้น `BusinessRuleException` (HTTP 400 ข้อความไทย
+   ที่บอกทางแก้ 2 ทาง: เปิดงวด หรือแก้วันที่). ครอบ **9 จุด**: ล้าง/คืนภาษีซื้อ ·
+   รับรู้ภาษีขาย · รับรู้/คืน/ตัดชำระมัดจำ · รายการมัดจำ · รับ-จ่ายเงิน ·
+   ตัดหนี้สูญ
+   _(รอบ 125 · C-T04 — เดิมลงย้อนเข้างวดที่ยื่นแบบไปแล้วได้เงียบ ๆ ⇒ งบที่ยื่น_
+   _กับบัญชีไม่ตรงกันโดยไม่มีอะไรเตือน · **เปลี่ยนพฤติกรรม**: เส้นที่เคยผ่านจะ_
+   _เริ่ม 400 ถ้างวดปิดอยู่ — ดู "ผลกระทบก่อน deploy" ใน `SYSTEM_REVIEW_2026-09.md`)_
 1. **Permission + workflow gate** (`:1638`) — ตรวจ ApprovalWorkflow
    (multi-level), credit limit ของลูกค้า (AR/AP advanced)
    - **§90/2 hard-block**: `CompanySettings.VatRegistered=false` → ห้ามอนุมัติ
@@ -736,8 +745,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 4. **Snapshot Tax Point** (`:1760`) — `TaxPointResolver.Resolve(doc)` →
    `doc.TaxPointDate` = MIN(delivery / ownership transfer / payment received /
    invoice issue) ตาม §78 / §78/1 → ตัดสินงวด ภ.พ.30
-5. **Retention** (`:1766`) — `doc.RetentionUntil ??= DocumentDate + 5 years`
-   ตาม พ.ร.บ.บัญชี ม.10 (ห้ามลบจริงก่อนหมดอายุ)
+5. **Retention** (`DocumentService.cs:5126`) — `doc.RetentionUntil ??=`
+   **วันสิ้นรอบบัญชีที่เอกสารอยู่** `+ 5 ปี` (ไม่ใช่ `DocumentDate + 5y`)
+   ตาม พ.ร.บ.บัญชี ม.10 + §87/3 · คำนวณผ่าน
+   `Helpers.FiscalYear.FiscalYearOf(...)` → `RangeFor(...).EndInclusive`
+   แล้วใช้ `MAX(fyEnd, DocumentDate)` เป็นฐาน
+   _(รอบ 125 · C-T11 — สูตรเดิมสั้นไปเกือบ 12 เดือน และสั้นได้ถึง ~14 เดือน_
+   _เมื่อรอบบัญชีไม่ตรงปีปฏิทิน · `DatabaseMigrationHelper` มี backfill_
+   _`UPDATE "Documents" … GREATEST(…)` ให้แถวเก่า)_
 6. **§65 ตรี** (`:1773`) — `ApplySection65TerAsync` → `doc.NonDeductibleAmount`
    + breakdown JSON (`NonDeductibleRuleJson`); ไหลเข้า ภ.ง.ด.50 ผ่าน
    `TaxService.GenerateCitReport` (บวกกลับ).
@@ -2778,7 +2793,14 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-04 (รอบ 131 — **สกุลเงินของเอกสาร (A-D1)**:_
+_Last verified against codebase: 2026-09-04 (รอบ 126 — **เก็บ doc ที่ค้างจาก Sprint 4/5**:_
+_ขั้นอนุมัติเพิ่ม **ขั้น 0 "ด่านงวดปิด"** (`RequireOpenFiscalPeriodAsync` · C-T04 ·_
+_9 จุดที่ลง JE จริง — **เปลี่ยนพฤติกรรม**: ลงย้อนเข้างวดที่ปิดแล้วจะได้ 400 พร้อม_
+_ข้อความบอกทางแก้ 2 ทาง) · **ขั้น 5 retention** เปลี่ยนฐานจาก `DocumentDate + 5y`_
+_เป็น **วันสิ้นรอบบัญชี + 5y** (C-T11 — สูตรเดิมสั้นไปเกือบ 12 เดือน) ·_
+_ทั้งสองข้อถูก ship ใน `802f149` โดย **ไม่ได้อัปเดตไฟล์นี้** ซึ่งผิด hard requirement_
+_ของ CLAUDE.md — บันทึกไว้เป็นบทเรียนใน §F แล้ว)_
+_ก่อนหน้า: 2026-09-04 (รอบ 131 — **สกุลเงินของเอกสาร (A-D1)**:_
 _ฟอร์ม `documents.html` ส่ง `currency`/`exchangeRate` ใน payload แล้ว (เดิมไม่เคยส่ง_
 _⇒ ใบสกุลต่างประเทศจากหน้าจอลงบัญชีเป็นบาท rate 1 ทุกใบ) · ตอนแก้ไขแสดงค่าจริง +_
 _ล็อกพร้อมเหตุผลผ่าน `_hydrateCurrencyReadonly` เพราะ `UpdateDocumentRequest`_

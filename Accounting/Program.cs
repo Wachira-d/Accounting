@@ -838,6 +838,11 @@ builder.Services.AddHsts(options =>
 
 var app = builder.Build();
 
+// ตัวออกเลขรันกลางเป็น static helper (ทุกที่เรียกได้โดยไม่ผ่าน DI) — ให้มัน
+// มี logger จริงไว้เตือนเมื่อถูกเรียกนอก transaction ไม่งั้นคำเตือนหายเงียบ
+Accounting.Helpers.SequenceNumber.Log =
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SequenceNumber");
+
 // Non-null web root for static-file fallbacks below. WebRootPath can be null
 // when wwwroot doesn't exist at startup; coalesce to ContentRoot/wwwroot so the
 // Path.Combine call sites stay non-null (silences CS8604) and still resolve.
