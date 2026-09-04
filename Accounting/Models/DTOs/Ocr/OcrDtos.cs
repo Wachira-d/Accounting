@@ -160,7 +160,16 @@ public record OcrLineItemDto(
     Guid? ProjectId = null,
     string? ProjectName = null,
     /// <summary>Unit detected from the description (ถุง/เส้น/กล่อง…).</summary>
-    string? Unit = null);
+    string? Unit = null,
+    /// <summary>อัตรา VAT ของบรรทัดนี้ — <c>7</c> เสียภาษี · <c>0</c> อัตราศูนย์ ·
+    /// <c>-1</c> ยกเว้น §81 (convention เดียวกับ <c>DocumentLine.VatRate</c>)
+    ///
+    /// <para>E-OCR-01: ต้องส่งถึงหน้า review ให้ผู้ใช้เห็น/แก้ได้ — ไม่งั้นบรรทัด
+    /// ที่ระบบเดาผิดจะไหลเข้าเอกสารโดยไม่มีใครทัดทาน แล้วไปโผล่ผิดคอลัมน์ใน
+    /// รายงานภาษีซื้อ §87</para></summary>
+    decimal? VatRate = null,
+    /// <summary>ภาษีของบรรทัดนี้หลังเฉลี่ยยอดจากหัวใบ (เฉพาะบรรทัดที่อัตรา &gt; 0)</summary>
+    decimal? VatAmount = null);
 
 public record OcrCreditPurchaseRequest(int Pages);
 

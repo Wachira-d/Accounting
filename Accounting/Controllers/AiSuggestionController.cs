@@ -493,52 +493,15 @@ public class AiSuggestionController : ControllerBase
             }));
         }
 
-        // 1) Vendor-side check: ผู้ขายต่างประเทศ → export rule (0% ฝั่งขาย,
-        //    หรือ ภ.พ.36 ฝั่งซื้อ). ใช้ทั้ง explicit country และเทียบ TaxId
-        //    ที่ไม่ใช่รูปแบบไทย (13 หลัก เริ่ม 0–9).
-        var isForeign = !string.IsNullOrWhiteSpace(req.VendorCountryCode)
-            && !string.Equals(req.VendorCountryCode, "TH", StringComparison.OrdinalIgnoreCase);
-        if (!isForeign && !string.IsNullOrWhiteSpace(req.VendorTaxId))
-        {
-            var tid = req.VendorTaxId.Where(char.IsDigit).ToArray();
-            if (tid.Length > 0 && tid.Length != 13) isForeign = true;
-        }
-
-        // 2) Description-side check: keyword สำหรับ Exempt (ตาม §81/1-15)
-        //    ครอบคลุมหมวดที่ SMB ไทยเจอบ่อย — ครู / ผัก / นม / หนังสือ /
-        //    หนังสือพิมพ์ / ยา (เฉพาะตามรายการกระทรวงสาธารณสุข) / ปุ๋ย
-        var desc = req.LineDescription.ToLowerInvariant();
-        var exemptKeywords = new[]
-        {
-            "ค่าเล่าเรียน", "ค่าเรียน", "ค่าสอน", "tuition",
-            "ผัก", "ผลไม้", "ข้าวสาร",
-            "นม", "milk", "fresh milk",
-            "หนังสือ", "นิตยสาร", "หนังสือพิมพ์", "newspaper",
-            "ปุ๋ย", "อาหารสัตว์", "เมล็ดพันธุ์",
-            "ค่าขนส่งสาธารณะ", "รถเมล์", "รถไฟ", "btx", "mrt",
-            "ค่าเช่าอสังหาริมทรัพย์", "rental of immovable property",
-            "ค่ารักษาพยาบาล", "โรงพยาบาล",
-        };
-        var isExempt = exemptKeywords.Any(k => desc.Contains(k));
-
-        // 3) Pick + reasoning
-        string suggestion;
-        string reasoning;
-        if (isExempt)
-        {
-            suggestion = "Exempt";
-            reasoning = "รายละเอียดตรงกับหมวดยกเว้น VAT ตาม §81 (อาหาร / ขนส่ง / การศึกษา / หนังสือ ฯลฯ)";
-        }
-        else if (isForeign)
-        {
-            suggestion = "0";
-            reasoning = "ผู้ขายต่างประเทศ — ฝั่งขายใช้ 0% (export), ฝั่งซื้อให้บันทึก ภ.พ.36 แยก";
-        }
-        else
-        {
-            suggestion = "7";
-            reasoning = "ผู้ขายในประเทศ + รายการทั่วไป → VAT 7% (อัตราปกติ)";
-        }
+        // ═══ กติกาอยู่ที่ Helpers/ThaiVatTypeRule ตัวเดียว (E-OCR-01/OCR-02) ═══
+        // เดิมเขียนไว้ในเมธอดนี้ที่เดียว ⇒ สาย OCR (ซึ่งกฎเหล็ก #3 ตั้งเป้าให้เป็น
+        // 90% ของงาน) เรียกไม่ได้เลย และตั้ง VatRate = 7 ทุกบรรทัดแทน
+        var isForeign = Accounting.Helpers.ThaiVatTypeRule.LooksForeignVendor(
+            req.VendorCountryCode, req.VendorTaxId);
+        var isExempt = Accounting.Helpers.ThaiVatTypeRule.LooksExempt(req.LineDescription);
+        var suggestion = Accounting.Helpers.ThaiVatTypeRule.Suggest(
+            req.LineDescription, req.VendorCountryCode, req.VendorTaxId);
+        var reasoning = Accounting.Helpers.ThaiVatTypeRule.Reasoning(suggestion);
 
         // Log to feedback so user override trains the model
         var inputJson = JsonSerializer.Serialize(new
