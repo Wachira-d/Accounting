@@ -6209,6 +6209,18 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AccountingModeAckBy" text NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "MeteredPeriod" varchar(7) NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_LodgingReservations_Metered" ON "LodgingReservations" ("CompanyId", "MeteredPeriod");""",
+
+            // C-T11 — ขยาย RetentionUntil ของแถวเดิมที่คำนวณจาก "วันที่เอกสาร + 5 ปี"
+            // ให้เป็น "วันสิ้นรอบบัญชี + 5 ปี" (§87/3 นับจากวันยื่นแบบ · ม.10 นับจาก
+            // วันสิ้นรอบ) — แถวเดิมสั้นไปเกือบ 12 เดือน (ถึง ~14 ถ้ารอบไม่ตรงปีปฏิทิน)
+            // ⇒ เสี่ยงลบเอกสารที่สรรพากรยังเรียกดูได้
+            //
+            // ใช้ GREATEST เพื่อ **ไม่ย่นของใคร** — retention เป็น MAX ของทุกกฎที่ครอบ
+            // แถวที่ยาวกว่าอยู่แล้ว (legal hold / กฎอื่น) ต้องคงไว้
+            //
+            // สูตรวันสิ้นรอบ: ถ้าเดือนของเอกสาร >= เดือนเริ่มรอบ → รอบจบปีถัดไป
+            // (เขียนบรรทัดเดียวตามแบบของลิสต์นี้ — ห้าม raw string หลายบรรทัด CS8997)
+            """UPDATE "Documents" d SET "RetentionUntil" = GREATEST(d."RetentionUntil", (make_date(CASE WHEN EXTRACT(MONTH FROM d."DocumentDate") >= c."FiscalYearStartMonth" THEN EXTRACT(YEAR FROM d."DocumentDate")::int + 1 ELSE EXTRACT(YEAR FROM d."DocumentDate")::int END, c."FiscalYearStartMonth", 1) - INTERVAL '1 day' + INTERVAL '5 years')::timestamptz) FROM "Companies" c WHERE c."Id" = d."CompanyId" AND d."RetentionUntil" IS NOT NULL;""",
         };
 
         foreach (var sql in statements)

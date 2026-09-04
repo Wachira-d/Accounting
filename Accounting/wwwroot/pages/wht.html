@@ -155,10 +155,39 @@
       page: 1,
       allCerts: [],
       contacts: [],
+      // ตารางประเภทเงินได้ + อัตราตาม ท.ป.4/2528 — **มาจากเซิร์ฟเวอร์เท่านั้น**
+      // (Helpers/ThaiWhtRateTable ผ่าน /api/reference/income-types)
+      //
+      // ⚠️ เดิมไฟล์นี้พิมพ์ตารางไว้เอง **2 ชุด** (dropdown ตอนเพิ่มบรรทัด +
+      // incMap ตอนแสดงผล) มีแค่ 6 จาก 11 ประเภท ⇒ ขาด 40(4)(ก) ดอกเบี้ย ·
+      // 40(4)(ข) ปันผล · 40(7) รับเหมา · ค่าโฆษณา 2% · ค่าขนส่ง 1% — และ
+      // **อัตราไม่เปลี่ยนตามประเภทที่เลือก** (ค้างที่ 3 เสมอ) ⇒ ยอดหักผิด
+      // ตั้งแต่ต้นทาง แล้วไหลไป ภ.ง.ด.3/53 + เครดิต CIT ทั้งสาย (ผลตรวจ C-T06)
+      _incomeTypes: [],
+
+      async loadIncomeTypes() {
+        try {
+          const res = await API.get('/api/reference/income-types');
+          this._incomeTypes = res?.data || res || [];
+        } catch (e) {
+          // ไม่ throw — หน้ายังใช้งานส่วนอื่นได้ แต่ต้องบอกว่าทำไมช่องประเภทว่าง
+          // (ห้ามตกไปใช้ตารางที่พิมพ์เอง ซึ่งเป็นต้นเหตุของบั๊กนี้)
+          this._incomeTypes = [];
+          Layout.toast('โหลดตารางประเภทเงินได้ไม่สำเร็จ — ลองรีเฟรชหน้า', 'error');
+        }
+      },
+
+      /// ชื่อประเภทสำหรับแสดงผล — ใช้ตารางเดียวกับ dropdown
+      incomeTypeLabel(code) {
+        const t = this._incomeTypes.find(x => String(x.code) === String(code));
+        return t ? `${t.taxSection} ${t.name}` : (code || '-');
+      },
+
       async init() {
         if (!Layout.init('wht')) return;
         Layout.setTitle('หนังสือรับรองหัก ณ ที่จ่าย');
         this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
+        await this.loadIncomeTypes();
         await this.load();
       },
       async load() {
@@ -234,10 +263,10 @@
               <div><span class="text-gray-500 text-xs">วันที่ออก</span><div>${d.issuedDate ? Layout.date(d.issuedDate) : '-'}</div></div>
             </div>`;
           if (d.lines && d.lines.length) {
-            const incMap = {'1':'40(1) เงินเดือน','2':'40(2) รับจ้าง','3':'40(3) ค่าลิขสิทธิ์','5':'40(5) ค่าเช่า','6':'40(6) วิชาชีพ','8':'40(8) อื่นๆ'};
+
             html += '<h4 class="text-sm font-semibold" style="margin:12px 0 8px">รายการเงินได้</h4><div class="table-container"><table class="table"><thead><tr><th data-i18n="common.type">ประเภท</th><th>วันจ่าย</th><th class="text-right">เงินได้</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead><tbody>';
             html += d.lines.map(l => `<tr>
-              <td>${incMap[l.incomeTypeCode] || l.incomeTypeCode}</td>
+              <td>${Layout.esc(Page.incomeTypeLabel(l.incomeTypeCode))}</td>
               <td>${Layout.date(l.paymentDate)}</td>
               <td class="text-right">${Layout.money(l.incomeAmount)}</td>
               <td class="text-right">${l.taxRate}%</td>
@@ -844,10 +873,12 @@
         const today = Layout.toDateInput(new Date());
         const row = document.createElement('tr');
         row.innerHTML = `
-          <td><select class="form-select" data-f="code" style="font-size:12px"><option value="1">40(1) เงินเดือน</option><option value="2">40(2) รับจ้าง</option><option value="3">40(3) ค่าลิขสิทธิ์</option><option value="5">40(5) ค่าเช่า</option><option value="6">40(6) วิชาชีพ</option><option value="8">40(8) อื่นๆ</option></select></td>
+          <td><select class="form-select" data-f="code" style="font-size:12px">${
+            this._incomeTypes.map(x => `<option value="${Layout.esc(x.code)}" data-rate="${x.defaultRate ?? ''}">${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`).join('')
+          }</select></td>
           <td><input type="date" class="form-input" data-f="date" value="${today}" style="font-size:12px"></td>
           <td><input type="number" class="form-input text-right" data-f="income" step="0.01" style="font-size:12px"></td>
-          <td><input type="number" class="form-input text-right" data-f="rate" value="3" step="0.01" style="font-size:12px;width:60px"></td>
+          <td><input type="number" class="form-input text-right" data-f="rate" step="0.01" style="font-size:12px;width:60px"></td>
           <td><input type="number" class="form-input text-right" data-f="tax" step="0.01" style="font-size:12px" readonly></td>
           <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove()">&#10005;</button></td>`;
         const calc = () => {
@@ -855,6 +886,26 @@
           const rate = parseFloat(row.querySelector('[data-f="rate"]').value) || 0;
           row.querySelector('[data-f="tax"]').value = (inc * rate / 100).toFixed(2);
         };
+        // เลือกประเภทเงินได้ → เติมอัตราตามกฎหมายให้ (ท.ป.4/2528)
+        //
+        // ⚠️ เดิมอัตราค้างที่ 3 เสมอไม่ว่าจะเลือกประเภทไหน ⇒ ค่าเช่า (5%) ·
+        // ดอกเบี้ยบุคคล (15%) · ปันผล (10%) · ค่าโฆษณา (2%) · ค่าขนส่ง (1%)
+        // ถูกหักผิดทุกใบ แล้วไหลไป ภ.ง.ด.3/53 + เครดิต CIT ทั้งสาย
+        //
+        // ค่าที่กฎหมาย**ไม่ได้กำหนดคงที่** (เงินเดือน 40(1) = อัตราขั้นบันได)
+        // ส่งมาเป็น null ⇒ ล้างช่องให้ผู้ใช้กรอกเอง **ห้ามใส่ตัวเลขปลอมให้ช่องไม่ว่าง**
+        const codeSel = row.querySelector('[data-f="code"]');
+        const rateInput = row.querySelector('[data-f="rate"]');
+        const applyRate = () => {
+          const opt = codeSel.selectedOptions[0];
+          const r = opt?.dataset.rate;
+          rateInput.value = (r === '' || r == null) ? '' : r;
+          rateInput.placeholder = (r === '' || r == null) ? 'อัตราขั้นบันได — กรอกเอง' : '';
+          calc();
+        };
+        codeSel.addEventListener('change', applyRate);
+        applyRate();
+
         row.querySelector('[data-f="income"]').addEventListener('input', calc);
         row.querySelector('[data-f="rate"]').addEventListener('input', calc);
         document.getElementById('linesBody').appendChild(row);

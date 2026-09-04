@@ -31,6 +31,32 @@ public class FixedAssetService : IFixedAssetService
         if (request.AssetType == AssetType.RightOfUse && effectiveLife <= 0 && request.LeaseTermMonths.HasValue)
             effectiveLife = request.LeaseTermMonths.Value;
 
+        // ── ที่ดิน / งานระหว่างก่อสร้าง คิดค่าเสื่อมไม่ได้ (ผลตรวจ C-T15) ──
+        //
+        // `FixedAssetAccountClassifier` รู้เรื่องนี้อยู่แล้ว (Depreciable=false)
+        // แต่ **เส้นสร้างด้วยมือไม่เคยเรียกมัน** ⇒ ผู้ใช้เลือกผัง 12290 (ที่ดิน)
+        // แล้วตั้งวิธีคิดค่าเสื่อมเป็นเส้นตรงได้ ⇒ ระบบสร้างตารางค่าเสื่อมและลง JE
+        // ทุกเดือน ⇒ **ค่าเสื่อมที่ดินหักภาษีไม่ได้ (พ.ร.ฎ.145)** ต้องบวกกลับใน
+        // ภ.ง.ด.50 ทั้งจำนวน — แต่ไม่มีใครรู้เพราะตัวเลขดูปกติทุกเดือน
+        //
+        // บล็อกดัง ๆ พร้อมบอกทางแก้ ไม่ใช่แก้ค่าให้เงียบ ๆ (ผู้ใช้อาจตั้งใจเลือก
+        // ผังผิด — ถ้าเราแก้ให้เอง เขาจะไม่รู้ว่าผังที่เลือกไว้ไม่ตรงกับของจริง)
+        var assetAccountCode = request.AssetAccountId == null ? null
+            : await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.Id == request.AssetAccountId && a.CompanyId == companyId)
+                .Select(a => a.AccountCode).FirstOrDefaultAsync();
+        var assetClass = Tax.FixedAssetAccountClassifier.Resolve(assetAccountCode);
+        if (assetClass is { Depreciable: false }
+            && request.DepreciationMethod != DepreciationMethod.None)
+        {
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"\"{assetClass.Category}\" (ผัง {assetClass.AssetAccountCode}) คิดค่าเสื่อมราคาไม่ได้ "
+                + "— ค่าเสื่อมของที่ดิน/งานระหว่างก่อสร้างหักเป็นรายจ่ายทางภาษีไม่ได้ "
+                + "(พ.ร.ฎ.145) ต้องบวกกลับทั้งจำนวนใน ภ.ง.ด.50. "
+                + "ทางแก้: เลือกวิธีคิดค่าเสื่อมเป็น \"ไม่คิดค่าเสื่อม\" "
+                + "หรือเปลี่ยนผังบัญชีให้ตรงกับสินทรัพย์จริง");
+        }
+
         var asset = new FixedAsset
         {
             CompanyId = companyId,
