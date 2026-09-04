@@ -31,8 +31,11 @@ public class ProductService : IProductService
     {
         var p = await _db.Products.FirstOrDefaultAsync(x => x.Id == productId && x.CompanyId == companyId && !x.IsDeleted)
             ?? throw new InvalidOperationException("ไม่พบสินค้า");
-        if (!_images.IsProcessableImage(contentType) && contentType?.ToLowerInvariant() != "image/svg+xml")
-            throw new InvalidOperationException("รองรับเฉพาะไฟล์รูปภาพ (JPG/PNG/WebP/GIF/SVG)");
+        // ตัวกรองชั้นแรก — ตัวตัดสินจริงคือ magic bytes ใน ProcessAndSaveAsync (F-03) ·
+        // SVG ถูกถอดออกทั้งชนิด (XML ที่ฝัง <script> ได้ = HTML ปลอมเป็นรูป)
+        if (!_images.IsProcessableImage(contentType))
+            throw new Accounting.Helpers.UnsupportedUploadException(
+                "รองรับเฉพาะไฟล์รูปภาพ (JPG/PNG/WebP/GIF)");
 
         var dir = Path.Combine(_env.WebRootPath, "uploads", "products", companyId.ToString());
         var web = $"/uploads/products/{companyId}";

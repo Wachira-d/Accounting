@@ -464,6 +464,15 @@ builder.Services.AddScoped<IMobileApiService, MobileApiService>();
 builder.Services.AddScoped<IDbdLookupService, DbdLookupService>();
 builder.Services.AddHttpClient();
 
+// Webhook ขาออก — URL มาจากผู้เช่า (F-04)
+// ปิด auto-redirect: ด่านตรวจ IP ทำงานกับ URL ที่ผู้ใช้ตั้งไว้ ถ้าปลายทางตอบ
+// 302 ไป http://169.254.169.254 แล้ว HttpClient ตามไปเอง = ด่านถูกข้ามทั้งดุ้น
+builder.Services.AddHttpClient("WebhookClient")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+    });
+
 // ───── AI integration (DeepSeek + swappable providers + orchestrator) ─────
 // Provider implementations are registered as IAiProvider so the
 // orchestrator can pick the active one by AiProviderType. Adding a new
@@ -940,6 +949,18 @@ app.UseStaticFiles(new StaticFileOptions
         {
             // Cache images/fonts for 7 days
             ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=604800";
+        }
+
+        // ═══ ไฟล์ที่ "ผู้ใช้อัปโหลด" ต้องไม่ถูกเบราว์เซอร์รันเป็นหน้าเว็บ (F-03) ═══
+        // ชั้นที่สองต่อจากตัวตรวจ magic bytes: ต่อให้วันหนึ่งมีไฟล์แปลกหลุดเข้ามาได้
+        // (เส้นอัปโหลดใหม่ที่ลืมตรวจ · ไฟล์เก่าที่ค้างอยู่ก่อนแก้) มันก็ต้อง
+        // **ดาวน์โหลด ไม่ใช่ render** — X-Content-Type-Options กัน MIME sniffing และ
+        // Content-Disposition: attachment กันการ navigate ไปเปิดตรง ๆ
+        // (ไม่กระทบ <img src>/<video> ที่ยังแสดงผลได้ตามปกติ)
+        if (ctx.Context.Request.Path.StartsWithSegments("/uploads"))
+        {
+            ctx.Context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            ctx.Context.Response.Headers["Content-Disposition"] = "attachment";
         }
     }
 });

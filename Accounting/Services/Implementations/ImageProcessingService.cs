@@ -50,25 +50,29 @@ public class ImageProcessingService : IImageProcessingService
     {
         Directory.CreateDirectory(absoluteDirectory);
 
-        // SVG: pass through (vector — resizing is meaningless)
-        if (contentType?.ToLowerInvariant() == "image/svg+xml")
-        {
-            return await SaveRawAsync(input, originalFileName, ".svg", absoluteDirectory, webBaseUrl);
-        }
-
-        if (!IsProcessableImage(contentType ?? ""))
-        {
-            // Unknown content-type: save raw with original extension
-            var rawExt = Path.GetExtension(originalFileName);
-            if (string.IsNullOrEmpty(rawExt)) rawExt = ".bin";
-            return await SaveRawAsync(input, originalFileName, rawExt, absoluteDirectory, webBaseUrl);
-        }
-
-        // Buffer original so we can measure size + retry on decoder failure
+        // ═══ ไบต์จริงเป็นตัวตัดสินชนิดไฟล์ — ไม่ใช่ Content-Type/นามสกุลจาก client (F-03) ═══
+        //
+        // เดิม: ชนิดที่ "ประมวลผลไม่ได้" ถูกเซฟดิบ **ด้วยนามสกุลจากชื่อไฟล์ของ client**
+        // ลงโฟลเดอร์ที่เสิร์ฟสาธารณะ ⇒ อัปโหลด x.html / x.js / x.svg แล้วได้ URL ที่
+        // origin เดียวกับแอป ⇒ stored XSS ที่ผ่าน CSP `script-src 'self'` สมบูรณ์
+        // (JWT อยู่ใน localStorage) · SVG ก็คือ XML ที่ฝัง <script> ได้ = HTML
+        // ที่ปลอมเป็นรูป จึงถูกถอดออกจาก allow-list ทั้งชนิด
+        //
+        // buffer ก่อนเสมอ เพื่อ (ก) อ่านหัวไฟล์ได้ (ข) วัดขนาด (ค) retry ตอน decoder ล้ม
         using var src = new MemoryStream();
         await input.CopyToAsync(src);
         var originalBytes = src.Length;
         src.Position = 0;
+
+        var kind = Accounting.Helpers.UploadFileType.Sniff(
+            src.GetBuffer().AsSpan(0, (int)Math.Min(src.Length, Accounting.Helpers.UploadFileType.HeaderBytes)))
+            ?? throw new Accounting.Helpers.UnsupportedUploadException(
+                Accounting.Helpers.UploadFileType.RejectMessage);
+        src.Position = 0;
+
+        // ไม่ใช่รูป (PDF/ICO) — เซฟดิบด้วยนามสกุล **ที่ระบบสรุปเอง**
+        if (!kind.Value.IsImage)
+            return await SaveRawAsync(src, originalFileName, kind.Value.Extension, absoluteDirectory, webBaseUrl);
 
         Image<Rgba32> image;
         try
@@ -79,9 +83,10 @@ public class ImageProcessingService : IImageProcessingService
         {
             _logger.LogWarning(ex, "ImageSharp failed to decode {File} ({ContentType}); saving raw", originalFileName, contentType);
             src.Position = 0;
-            var fallbackExt = Path.GetExtension(originalFileName);
-            if (string.IsNullOrEmpty(fallbackExt)) fallbackExt = ".jpg";
-            return await SaveRawAsync(src, originalFileName, fallbackExt, absoluteDirectory, webBaseUrl);
+            // ⚠️ นามสกุลมาจาก **ผลตรวจไบต์** ไม่ใช่ชื่อไฟล์ของ client — decoder ล้ม
+            // ไม่ได้แปลว่าไบต์โกหก (ไฟล์รูปเสียบางส่วนก็ decode ไม่ได้) แต่ถ้าปล่อยให้
+            // client เลือกนามสกุลตรงนี้ ก็เท่ากับเปิดช่องเดิมกลับมาทางประตูหลัง
+            return await SaveRawAsync(src, originalFileName, kind.Value.Extension, absoluteDirectory, webBaseUrl);
         }
 
         using (image)
