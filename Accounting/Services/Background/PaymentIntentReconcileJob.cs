@@ -64,6 +64,9 @@ public class PaymentIntentReconcileJob : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
         var intents = scope.ServiceProvider.GetRequiredService<IPaymentIntentService>();
+        // แจ้งเตือนคนจริง — log ของเซิร์ฟเวอร์ไม่ใช่ช่องทางแจ้งผู้ใช้ (กฎเหล็ก #4 E:
+        // "ดังพอ" ต้องดังในที่ที่คนดู) · optional เพราะ engine อาจไม่ได้ register
+        var notify = scope.ServiceProvider.GetService<Accounting.Services.Interfaces.INotificationEngine>();
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         // คีย์ระดับระบบ (ไม่ผูกบริษัท) — งานเดินทีเดียวทุก tenant
@@ -105,6 +108,13 @@ public class PaymentIntentReconcileJob : BackgroundService
                         "รายการชำระเงินค้างเกิน {Minutes} นาที: {Intent} บริษัท {Company} "
                         + "ยอด {Amount:N2} ผ่าน {Provider} — ตรวจว่าตั้ง webhook URL ไว้ถูกหรือยัง",
                         StuckThreshold.TotalMinutes, row.Id, row.CompanyId, row.Amount, row.ProviderCode);
+
+                    // แจ้ง **ครั้งเดียวต่อรายการ** — job เดินทุก 5 นาที ถ้าแจ้งทุกรอบ
+                    // ผู้ใช้จะได้ 12 ข้อความ/ชั่วโมงต่อ 1 รายการ แล้วเลิกอ่านทั้งหมด
+                    // (การแจ้งที่ถี่เกินจนถูกเมินมีค่าเท่ากับไม่แจ้ง) · ใช้ประวัติของ
+                    // intent เป็นตัวจำ ไม่ต้องมีคอลัมน์/แคชใหม่
+                    await NotifyStuckOnceAsync(db, notify, row.CompanyId, row.Id,
+                        row.Amount, row.ProviderCode, ct);
                 }
             }
             catch (Exception ex)
@@ -117,5 +127,52 @@ public class PaymentIntentReconcileJob : BackgroundService
         _logger.LogInformation(
             "ตรวจสถานะรายการชำระเงิน {Count} รายการ · ค้างนานผิดปกติ {Stuck} รายการ",
             due.Count, stuck);
+    }
+
+    /// <summary>หมายเหตุที่ใช้เป็น "เคยแจ้งไปแล้ว" — canonical string เดียว
+    /// ใช้ทั้งตอนเขียนและตอนเช็ค (ห้ามเขียน format สองที่ ไม่งั้นเช็คไม่มีวันเจอ)</summary>
+    private const string StuckNotifiedNote = "แจ้งเตือนรายการค้างแล้ว";
+
+    private async Task NotifyStuckOnceAsync(AccountingDbContext db,
+        Accounting.Services.Interfaces.INotificationEngine? notify,
+        Guid companyId, Guid intentId, decimal amount, string providerCode, CancellationToken ct)
+    {
+        var alreadyNotified = await db.PaymentIntentEvents.AsNoTracking()
+            .AnyAsync(e => e.IntentId == intentId && e.Note != null
+                && e.Note.Contains(StuckNotifiedNote), ct);
+        if (alreadyNotified) return;
+
+        db.PaymentIntentEvents.Add(new Accounting.Models.Entities.PaymentIntentEvent
+        {
+            CompanyId = companyId,
+            IntentId = intentId,
+            At = DateTime.UtcNow,
+            Source = PaymentEventSource.System,
+            ToStatus = PaymentIntentStatus.Pending,
+            Note = $"{StuckNotifiedNote} (ค้างเกิน {StuckThreshold.TotalMinutes:0} นาที)",
+        });
+        await db.SaveChangesAsync(ct);
+
+        if (notify == null) return;
+        try
+        {
+            await notify.DispatchAsync(companyId,
+                Accounting.Models.Constants.NotificationEvents.GatewayPaymentStuck,
+                new Accounting.Services.Interfaces.NotificationContext
+                {
+                    Title = "รับชำระออนไลน์ค้างนานผิดปกติ",
+                    Message = $"มีรายการรับชำระ {amount:N2} บาท ผ่าน {providerCode} "
+                        + $"ค้างเกิน {StuckThreshold.TotalMinutes:0} นาที — "
+                        + "สาเหตุที่พบบ่อยสุดคือยังไม่ได้ตั้ง Webhook URL ในแดชบอร์ดของผู้ให้บริการ "
+                        + "(ถ้าลูกค้าจ่ายแล้วจริง ให้เปิดหน้ารายการรับชำระออนไลน์แล้วกด \"ตรวจสถานะสด\")",
+                    ActionUrl = "/pages/payment-intents.html",
+                    EntityType = "PaymentIntent", EntityId = intentId,
+                });
+        }
+        catch (Exception ex)
+        {
+            // แจ้งเตือนล้มต้องไม่ทำให้ job ตาย — แต่ต้องรู้ว่าล้ม
+            _logger.LogWarning(ex, "ส่งแจ้งเตือนรายการชำระเงินค้าง {Intent} ไม่สำเร็จ", intentId);
+        }
     }
 }

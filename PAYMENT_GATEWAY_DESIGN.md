@@ -333,8 +333,52 @@ QR/บัตร/redirect → poll → เปลี่ยนหน้าเป็
 
 | **2** Omise sandbox | ✅ | `OmisePaymentProvider` (PromptPay + บัตร + mobile/internet banking + TrueMoney) · named HttpClient timeout 20 วิ · `POST /api/pay/webhooks/{provider}` ยืนยันด้วยการ **re-fetch event** · หน้าตั้งค่า API (คีย์ · ทดสอบ · สลับโหมด) พร้อม**ด่านเปิด live** · CSP ประกอบจาก `IPaymentProvider.CspNeeds` · `pages/payment-settings.html` (ขั้นตอน 4 ข้อพร้อมติ๊กว่าทำถึงไหน · ปุ่มคัดลอก URL แจ้งเตือน · ปุ่มเปิด live ที่ถูกล็อก) · `js/pay-widget.js` (หน้าจ่ายตัวเดียวของทุกทางเข้า) · `PaymentIntentReconcileJob` ทุก 5 นาที |
 
-| **4** ทางเข้า | 🔨 เว็บขายของแล้ว | `IPaymentCompletionHandler` ต่อชนิดต้นทาง + `SiteOrderPaymentHandler` (เรียก `ConfirmPaymentAsync` เดิมที่ทำครบอยู่แล้ว) · ต้นทางที่ยังไม่มีตัวจัดการ **log error ดัง ๆ + บันทึกลงประวัติ intent** ไม่เงียบ — เหลือ portal · มัดจำที่พัก · SaaS · POS |
+| **4** ทางเข้า | ✅ | ตัวจัดการครบ 5 ชนิดต้นทาง: `SiteOrderPaymentHandler` · `DocumentPaymentHandler` (portal · idempotent ด้วย `PAY-INTENT-{id}`) · `LodgingReservationPaymentHandler` (→ `ConfirmAsync` เดิม · ปล่อย `LODGING-OVERSOLD` ขึ้นไปบันทึกในประวัติ ห้ามกลืน) · `SubscriptionPaymentHandler` (SaaS — **จงใจไม่เรียก resolver บัญชีพัก** เพราะเป็นรายได้ของแพลตฟอร์มไม่ใช่ของผู้เช่า) · `PosOrderPaymentHandler` (AddPayment → Complete · รองรับจ่ายหลายวิธี) · ทุกตัวห้ามเงียบเมื่อหา source ไม่เจอ/บิลถูก void/ยอดไม่ตรง |
+| **5** Live + ops | ✅ | ด่านสลับ live + ป้ายโหมด (เฟส 2) · `pages/payment-intents.html` — ค้น/กรอง/**ตรวจสถานะสด**/**ยืนยันด้วยมือ** (บังคับเหตุผล · เดินผ่าน `ApplyChargeAsync` เส้นเดียวกับ webhook ⇒ ต้นทางถูกดำเนินการต่อครบ)/**คืนเงิน**/ดูประวัติ · แจ้งเตือนค้าง Pending ผ่าน `INotificationEngine` (`gateway.payment_stuck`) **ครั้งเดียวต่อรายการ** โดยใช้ประวัติ intent เป็นตัวจำ · refund **ไม่ออกใบลดหนี้อัตโนมัติ** — คำตอบชี้ทางต่อแทน (ดูเหตุผลข้อ 28) |
 | **3** บัญชี | ✅ | บัญชี **11340** ในผังมาตรฐาน · `Helpers/GatewayReconciliation` (บริสุทธิ์ + 7 เทสต์) + `GET pay/reconciliation` · **ขา "เงินเข้า" แยกธนาคาร/บัญชีพักด้วย `IGatewayAccountResolver`** — adapter ประกาศ `SettlesDirectlyToBank` เอง (เส้นสลิป = true → Dr ธนาคารตามเดิม · gateway = false → Dr 11340) แล้วส่งผ่าน `ConfirmPaymentAsync(moneyInAccountId:)` → `CreatePaymentRequest.OverridePaymentAccountId` ที่มีอยู่แล้ว · **settlement**: `Helpers/GatewaySettlementMath` (บริสุทธิ์ + 14 เทสต์) + `GatewaySettlementService` (ล็อกต่อ provider · JE Dr ธนาคาร + Dr ค่าธรรมเนียม = Cr 11340 (+ Cr ภ.ง.ด.53 เมื่อเปิดหัก)) + `pages/payment-settlements.html` (ดูตัวอย่างก่อนบันทึกเสมอ) · **WHT บนค่าธรรมเนียม gross-up** ตาม `GatewayFeeWhtMode` |
+
+**สิ่งที่พบระหว่างทำเฟส 5-6:**
+
+27. **เจอทางลัดที่ข้ามชั้นกลางทั้งชั้น** — `POST /api/cms-webhook/{siteId}/payment`
+    (ของเดิมก่อนมีการออกแบบนี้) เรียก `ConfirmPaymentAsync` **ตรง ๆ** ⇒ เงินเข้าสำเร็จ
+    แต่ **ไม่มีแถวใน `PaymentIntent` เลย**: ไม่โผล่ในหน้ารายการรับชำระ · ไม่เข้าบัญชีพัก
+    11340 · ไม่อยู่ในรายงานกระทบยอด — คือ "สองความจริงของ *ลูกค้าจ่ายหรือยัง*" ซึ่งเป็น
+    สิ่งที่ทั้งการออกแบบนี้ตั้งใจกำจัด · และมันยืนยันด้วย **HMAC ของ secret ที่เราตั้งเอง**
+    ซึ่งเป็นรูปแบบที่เอกสารนี้ปฏิเสธไว้ตั้งแต่ต้น (ต้องยืนยันแบบของเจ้านั้น)
+    <br>**ทางแก้ที่เลือก**: ไม่ลบ URL (ส่งออกไปแล้ว แก้ย้อนหลังไม่ได้ — กติกาเดียวกับ
+    `/pages/dashboard.html`) แต่ให้เดินผ่าน `RecordExternalSuccessAsync` ซึ่ง
+    find-or-create intent แล้วส่งต่อให้ตัวจัดการเดิม ⇒ **ความจริงเดียว** โดยผู้เรียก
+    ภายนอกไม่รู้สึกถึงความต่างเลย
+28. **refund ห้ามออกใบลดหนี้ให้อัตโนมัติ** — §86/10 บังคับ "เหตุผล" ตาม closed list ·
+    ต้องอ้างใบกำกับเดิม · และ `SUM(ใบลดหนี้) ≤ ยอดใบเดิม` · สามอย่างนี้ระบบเดาแทนไม่ได้
+    จึงคืนเงินให้จริงแล้ว **บอกขั้นถัดไปให้ชัด** ว่าต้องไปออกใบลดหนี้จากเอกสารต้นทาง
+    (ซึ่งมีด่าน §86/10 ครบอยู่แล้ว) — ดีกว่าออกใบที่เหตุผลผิดแล้วผู้ใช้ไม่รู้ตัว
+29. **แจ้งเตือนที่ถี่เกินจนถูกเมิน = ไม่ได้แจ้ง** — job เดินทุก 5 นาที ถ้าแจ้งรายการค้าง
+    ทุกรอบ ผู้ใช้จะได้ 12 ข้อความ/ชั่วโมงต่อ 1 รายการแล้วเลิกอ่านทั้งหมด · แจ้ง
+    **ครั้งเดียวต่อรายการ** โดยใช้ประวัติของ intent เป็นตัวจำ (ไม่ต้องเพิ่มคอลัมน์/แคช
+    ที่จะกลายเป็น state ข้าม instance)
+30. **ตรวจ "abstraction รั่วไหม" ตามเกณฑ์ผ่านเฟส 6** — `grep` ชื่อเจ้าทั้งเรพ:
+    หลุดนอกโฟลเดอร์ adapter **เฉพาะ `Program.cs`** (บรรทัด DI ซึ่งเป็นตะเข็บที่ตั้งใจ)
+    · CSP มาจาก `CspNeeds` · วิธีจ่ายมาจาก `Capabilities` · ธนาคาร vs บัญชีพักมาจาก
+    `SettlesDirectlyToBank` · หน้าเว็บสร้างตัวเลือกจาก API ทั้งหมด ⇒ **ตะเข็บครบ**
+
+**⚠️ เฟส 6 (adapter ตัวที่สอง) — ยังไม่ทำ และนี่คือเหตุผล:**
+
+การเขียน adapter ของเจ้าที่ **ทดสอบกับ sandbox จริงไม่ได้** = เดา endpoint · เดาโครง
+payload · เดารูปแบบ webhook แล้วเอาตัวเลขที่ได้ไปลงเป็นรายการบัญชีจริง ซึ่งเอกสารนี้
+และ CLAUDE.md ห้ามไว้ตรง ๆ ("ห้าม merge ครึ่ง ๆ กลาง ๆ" · "feature ที่ยังไม่มีจริง
+ห้ามเขียนว่ามีแล้ว") · สิ่งที่ทำแทนคือ**ตรวจว่าตะเข็บพร้อมรับเจ้าที่สอง** (ข้อ 30)
+
+**เช็กลิสต์สำหรับคนที่จะเขียน adapter ตัวที่สอง** — ถ้าต้องแก้ไฟล์นอก
+`Services/Payments/Providers/**` นอกจาก 1 บรรทัดใน `Program.cs` แปลว่า abstraction รั่ว:
+1. `ProviderCode` · `Capabilities` (วิธีจ่าย/refund/webhook)
+2. `CspNeeds` + `ClientScriptUrl` ถ้าต้องโหลดสคริปต์ฝั่งเบราว์เซอร์
+3. `SettlesDirectlyToBank` (เกือบทุกเจ้า = `false` — ค่า default ถูกอยู่แล้ว)
+4. `CreateChargeAsync` / `GetChargeAsync` / `RefundAsync`
+5. `VerifyWebhookAsync` — **ยืนยันแบบของเจ้านั้น** แล้ว resolve intent จาก metadata
+   ของ charge ไม่ใช่จาก URL
+6. `TestConnectionAsync` — ต้องตรวจถึงขั้น **webhook มาถึงจริง**
+7. named `HttpClient` + 1 บรรทัด DI ใน `Program.cs`
 
 **สิ่งที่พบระหว่างทำเฟส 4 (เริ่ม):**
 

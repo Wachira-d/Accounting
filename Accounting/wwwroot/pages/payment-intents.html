@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รายการรับชำระออนไลน์ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px; margin-bottom:16px }
+    .card h3 { margin:0 0 4px; font-size:15px; font-weight:700; color:#0f172a }
+    .card .sub { margin:0 0 14px; font-size:12px; color:#64748b; line-height:1.6 }
+    .hint { font-size:11.5px; color:#64748b; line-height:1.6; margin-top:6px }
+    table.tbl { width:100%; border-collapse:collapse; font-size:12.5px }
+    table.tbl th, table.tbl td { padding:7px 9px; border-bottom:1px solid #eef2f7; text-align:left; vertical-align:top }
+    table.tbl th { background:#f8fafc; font-weight:600; color:#475569; font-size:11.5px }
+    table.tbl td.num, table.tbl th.num { text-align:right; font-variant-numeric:tabular-nums }
+    .scroll-x { overflow-x:auto }
+    .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600; white-space:nowrap }
+    .st-Succeeded { background:#dcfce7; color:#166534 }
+    .st-Pending, .st-Created { background:#fef3c7; color:#92400e }
+    .st-Failed, .st-Expired { background:#fee2e2; color:#991b1b }
+    .st-Refunded, .st-PartiallyRefunded { background:#ede9fe; color:#5b21b6 }
+    .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px }
+    .filters label { font-size:12px; color:#475569; font-weight:600; display:block; margin-bottom:3px }
+    .stuck { background:#fffbeb }
+    .banner { border-radius:10px; padding:11px 14px; font-size:12.5px; line-height:1.7; margin-bottom:12px }
+    .banner.warn { background:#fef3c7; border:1px solid #fcd34d; color:#92400e }
+    .ev { font-size:11.5px; color:#475569; line-height:1.7 }
+    .ev b { color:#0f172a }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="container" style="max-width:1120px;margin:0 auto;padding:20px">
+      <div style="margin-bottom:16px">
+        <h1 style="margin:0;font-size:24px;font-weight:700">💳 รายการรับชำระออนไลน์</h1>
+        <p style="margin:4px 0 0;color:#64748b;font-size:14px">
+          ทุกครั้งที่ลูกค้ากดจ่ายผ่านระบบ — เว็บขายของ · ใบแจ้งหนี้ใน portal · มัดจำที่พัก ·
+          บิล POS · ค่าบริการระบบ · ใช้หน้านี้ตอบคำถาม <b>"ลูกค้าบอกว่าจ่ายแล้วแต่ระบบไม่รู้"</b>
+        </p>
+      </div>
+      <div id="body"><div class="card">กำลังโหลด…</div></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="evModal">
+    <div class="modal" style="max-width:640px">
+      <div class="modal-header">
+        <div class="modal-title">ประวัติรายการชำระเงิน</div>
+        <button class="modal-close" onclick="Layout.closeModal('evModal')">&times;</button>
+      </div>
+      <div class="modal-body" id="evBody" style="padding:18px 24px"></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // หน้ารายการ intent (PAYMENT_GATEWAY_DESIGN.md เฟส 5)
+    //
+    // กติกา:
+    //  • **ไม่มีชื่อผู้ให้บริการ hard-code** — โชว์ค่าที่เซิร์ฟเวอร์ส่งมาตรง ๆ
+    //  • "ตรวจสถานะสด" = ให้เซิร์ฟเวอร์ไปถามผู้ให้บริการจริง ไม่ใช่ refresh หน้าจอ
+    //  • "ยืนยันด้วยมือ" **บังคับกรอกเหตุผล** — เป็นจุดที่ผู้สอบบัญชีถามเสมอ
+    //    และเดินผ่าน endpoint เดียวกับ webhook ⇒ ต้นทางถูกดำเนินการต่อครบเหมือนกัน
+    const Page = {
+      rows: [],
+      filter: { status: '', q: '' },
+
+      async init() {
+        await Layout.init();
+        if (!Layout.getCompanyId()) {
+          document.getElementById('body').innerHTML = '<div class="card">กรุณาเลือกบริษัทก่อน</div>';
+          return;
+        }
+        await this.load();
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const q = this.filter.status ? `?status=${encodeURIComponent(this.filter.status)}&limit=300` : '?limit=300';
+          this.rows = (await api.listPaymentIntents(q))?.data || [];
+          this.render();
+        } catch (e) {
+          document.getElementById('body').innerHTML =
+            `<div class="card banner warn">โหลดไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+        }
+      },
+
+      // ค้างนานผิดปกติ = ยังเปิดอยู่และสร้างมาเกิน 30 นาที (เกณฑ์เดียวกับงานเบื้องหลัง)
+      isStuck(r) {
+        if (!['Created', 'Pending'].includes(r.status)) return false;
+        return (Date.now() - new Date(r.createdAt).getTime()) > 30 * 60 * 1000;
+      },
+
+      visible() {
+        const q = (this.filter.q || '').trim().toLowerCase();
+        if (!q) return this.rows;
+        return this.rows.filter(r =>
+          (r.providerRef || '').toLowerCase().includes(q)
+          || (r.sourceKind || '').toLowerCase().includes(q)
+          || String(r.amount).includes(q));
+      },
+
+      render() {
+        const rows = this.visible();
+        const stuckCount = this.rows.filter(r => this.isStuck(r)).length;
+        document.getElementById('body').innerHTML = `
+          ${stuckCount ? `<div class="banner warn">
+            ⚠️ มี <b>${stuckCount}</b> รายการค้างเกิน 30 นาที — สาเหตุที่พบบ่อยที่สุดคือ
+            <b>ยังไม่ได้ตั้ง Webhook URL</b> ในแดชบอร์ดของผู้ให้บริการ
+            (ดู URL ได้ที่ <a href="/pages/payment-settings.html">หน้าตั้งค่าการรับชำระเงินออนไลน์</a>)
+            · ถ้าลูกค้าจ่ายแล้วจริง กด "ตรวจสถานะสด" ที่แถวนั้น
+          </div>` : ''}
+          <div class="card">
+            <div class="filters">
+              <div><label>สถานะ</label>
+                <select class="form-input" id="fSt" onchange="Page.setStatus(this.value)">
+                  <option value="">ทั้งหมด</option>
+                  <option value="Pending">รอชำระ</option>
+                  <option value="Succeeded">สำเร็จ</option>
+                  <option value="Failed">ล้มเหลว</option>
+                  <option value="Expired">หมดอายุ</option>
+                  <option value="Refunded">คืนเงินแล้ว</option>
+                </select></div>
+              <div style="flex:1;min-width:200px"><label>ค้นหา (เลขอ้างอิง / ที่มา / ยอด)</label>
+                <input class="form-input" id="fQ" value="${Layout.esc(this.filter.q)}"
+                  oninput="Page.setQuery(this.value)"></div>
+              <button class="btn btn-secondary" onclick="Page.load()">🔄 โหลดใหม่</button>
+            </div>
+            <div class="scroll-x"><table class="tbl">
+              <thead><tr>
+                <th>เวลา</th><th>ที่มา</th><th>ช่องทาง</th><th>อ้างอิง</th>
+                <th class="num">ยอด</th><th>สถานะ</th><th>ยืนยันโดย</th><th></th>
+              </tr></thead>
+              <tbody>${rows.map(r => this.row(r)).join('') ||
+                '<tr><td colspan="8" style="color:#94a3b8;padding:16px">ไม่มีรายการ</td></tr>'}</tbody>
+            </table></div>
+            <div class="hint">
+              💡 "ตรวจสถานะสด" = ระบบไปถามผู้ให้บริการจริง ณ ตอนนี้ (ไม่ใช่แค่รีเฟรชหน้าจอ) ·
+              "ยืนยันด้วยมือ" ใช้เมื่อ<b>เห็นเงินเข้าบัญชีจริงแล้ว</b>แต่ระบบยังไม่รู้ —
+              ระบบจะดำเนินการต่อให้ต้นทาง (ออกใบเสร็จ/ตัดหนี้/ยืนยันการจอง) เหมือนที่ควรเกิด
+            </div>
+          </div>`;
+      },
+
+      setStatus(v) { this.filter.status = v; this.load(); },
+      setQuery(v) { this.filter.q = v; this.render();
+        const el = document.getElementById('fQ'); if (el) { el.focus(); el.setSelectionRange(v.length, v.length); } },
+
+      row(r) {
+        const open = ['Created', 'Pending'].includes(r.status);
+        const stuck = this.isStuck(r);
+        return `<tr class="${stuck ? 'stuck' : ''}">
+          <td>${Layout.date(r.createdAt)}<div style="color:#94a3b8;font-size:11px">${new Date(r.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</div></td>
+          <td>${Layout.esc(r.sourceKind || '')}</td>
+          <td>${Layout.esc(r.providerCode || '')}<div style="color:#94a3b8;font-size:11px">${Layout.esc(r.method || '')}</div></td>
+          <td style="font-family:ui-monospace,monospace;font-size:11px;word-break:break-all">${Layout.esc(r.providerRef || '—')}</td>
+          <td class="num">${Layout.money(r.amount)}</td>
+          <td><span class="pill st-${Layout.esc(r.status)}">${Layout.esc(r.status)}</span>
+            ${stuck ? '<div style="color:#b45309;font-size:11px;margin-top:2px">ค้างนาน</div>' : ''}
+            ${r.failureMessage ? `<div style="color:#b91c1c;font-size:11px;margin-top:2px">${Layout.esc(r.failureMessage)}</div>` : ''}</td>
+          <td style="font-size:11.5px">${Layout.esc(r.confirmedBy || '—')}</td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-sm btn-secondary" onclick="Page.events('${r.id}')">ประวัติ</button>
+            ${open ? `<button class="btn btn-sm btn-secondary" onclick="Page.live('${r.id}')">ตรวจสถานะสด</button>
+                      <button class="btn btn-sm btn-primary" onclick="Page.manual('${r.id}')">ยืนยันด้วยมือ</button>` : ''}
+            ${r.status === 'Succeeded' ? `<button class="btn btn-sm btn-warning" onclick="Page.refund('${r.id}', ${Number(r.amount) || 0})">คืนเงิน</button>` : ''}
+          </td>
+        </tr>`;
+      },
+
+      async live(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getPaymentIntentStatus(id, true);
+          Layout.toast(`สถานะล่าสุด: ${res?.data?.status || '-'}`);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ตรวจสถานะไม่สำเร็จ', 'error'); }
+      },
+
+      async manual(id) {
+        const api = Layout.api(); if (!api) return;
+        const reason = prompt('เหตุผลที่ยืนยันด้วยมือ (ผู้สอบบัญชีจะเห็นข้อความนี้):',
+          'ตรวจสอบยอดในบัญชีธนาคารแล้วพบเงินเข้าจริง');
+        if (!reason) return;
+        if (!(await Layout.confirmDanger({
+          title: 'ยืนยันการรับเงินด้วยมือ',
+          message: 'ระบบจะถือว่า<strong>เงินเข้าแล้ว</strong>และดำเนินการต่อให้ต้นทางทันที '
+            + '(ออกใบเสร็จ / ตัดหนี้ / ยืนยันการจอง / ปิดบิล)<br>'
+            + '<strong style="color:#dc2626">ยืนยันทั้งที่เงินยังไม่เข้าจริง = บัญชีคลาดเคลื่อน</strong> '
+            + '— ตรวจยอดในบัญชีธนาคารให้เห็นก่อน',
+          mode: 'math'
+        }))) return;
+        try {
+          const res = await api.confirmPaymentIntentManually(id, reason);
+          Layout.toast(res?.message || 'ยืนยันแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ยืนยันไม่สำเร็จ', 'error'); }
+      },
+
+      async refund(id, max) {
+        const api = Layout.api(); if (!api) return;
+        const raw = prompt(`ยอดที่ต้องการคืน (สูงสุด ${max.toFixed(2)}):`, max.toFixed(2));
+        if (raw === null) return;
+        const amount = Number(raw);
+        if (!(amount > 0) || amount > max + 0.005) { Layout.toast('ยอดคืนไม่ถูกต้อง', 'error'); return; }
+        const reason = prompt('เหตุผลการคืนเงิน:', 'ลูกค้ายกเลิกคำสั่งซื้อ');
+        if (!reason) return;
+        try {
+          const res = await api.refundPaymentIntent(id, amount, reason);
+          // ขั้นถัดไปที่ระบบทำแทนไม่ได้ — ต้องบอกให้ชัด ไม่ใช่ปล่อยให้ผู้ใช้เดา
+          alert(`${res?.message || 'คืนเงินแล้ว'}\n\nขั้นถัดไป: ${res?.data?.nextStep || ''}`);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'คืนเงินไม่สำเร็จ', 'error'); }
+      },
+
+      async events(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const rows = (await api.getPaymentIntentEvents(id))?.data || [];
+          const html = rows.map(e => `<div class="ev">
+            <b>${Layout.date(e.at)} ${new Date(e.at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</b>
+            · ${Layout.esc(e.source || '')} · ${Layout.esc(e.fromStatus || '—')} → ${Layout.esc(e.toStatus || '')}
+            ${e.note ? `<br><span style="color:#64748b">${Layout.esc(e.note)}</span>` : ''}
+          </div>`).join('<hr style="border:0;border-top:1px solid #eef2f7;margin:6px 0">');
+          document.getElementById('evBody').innerHTML =
+            html || '<div class="ev" style="color:#94a3b8">ยังไม่มีประวัติ</div>';
+          Layout.openModal('evModal');
+        } catch (e) { Layout.toast(e.message || 'โหลดประวัติไม่สำเร็จ', 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

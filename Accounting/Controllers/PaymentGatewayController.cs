@@ -141,6 +141,111 @@ public class PaymentGatewayController : ControllerBase
         }));
     }
 
+    public sealed record ManualConfirmRequest(string Reason);
+    public sealed record RefundRequest(decimal? Amount, string Reason);
+
+    /// <summary>**ยืนยันด้วยมือ** — เงินเข้าจริงแล้ว (เห็นในบัญชีธนาคาร/แดชบอร์ดผู้ให้บริการ)
+    /// แต่ระบบยังไม่รู้ เพราะ webhook หายและถามสถานะสดก็ยังไม่ขึ้น
+    ///
+    /// <para>เดินผ่าน <c>ApplyChargeAsync</c> เส้นเดียวกับ webhook/poll ⇒ ได้ทั้ง
+    /// การเปลี่ยนสถานะ · ประวัติ · และ<b>การส่งต่อให้ทางเข้าเดิมทำงาน</b> (ออกใบเสร็จ /
+    /// ตัดหนี้ / ยืนยันการจอง) เหมือนกันทุกประการ — ห้ามเขียนเส้นที่สองที่แค่แก้สถานะ</para>
+    ///
+    /// <para><b>ต้องระบุเหตุผล</b> และถูกบันทึกว่า <c>manual:{user}</c> —
+    /// การยืนยันด้วยมือคือจุดที่ผู้สอบบัญชีถามเสมอว่าใครกดและเพราะอะไร</para></summary>
+    [HttpPost("intents/{intentId:guid}/confirm-manually")]
+    public async Task<ActionResult<ApiResponse<IntentResponse>>> ConfirmManually(
+        Guid companyId, Guid intentId, [FromBody] ManualConfirmRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Reason))
+            return BadRequest(new ApiResponse<IntentResponse>(false, null,
+                "กรุณาระบุเหตุผล — เช่น \"ตรวจสอบยอดในบัญชีธนาคารแล้วพบเงินเข้าจริง\" "
+                + "(ผู้สอบบัญชีต้องเห็นว่าใครยืนยันและเพราะอะไร)"));
+
+        var intent = await _intents.FindAsync(companyId, intentId, ct);
+        if (intent == null)
+            return NotFound(new ApiResponse<IntentResponse>(false, null, "ไม่พบรายการชำระเงิน"));
+
+        var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
+        var updated = await _intents.ApplyChargeAsync(intentId,
+            new ProviderCharge(
+                ProviderRef: intent.ProviderRef ?? $"manual:{intentId:N}",
+                Status: PaymentIntentStatus.Succeeded,
+                RawStatus: "manual_confirm",
+                Amount: intent.Amount),
+            PaymentEventSource.Manual, $"{actor} · {req.Reason.Trim()}", ct);
+
+        return Ok(new ApiResponse<IntentResponse>(true,
+            Map(updated, await IsTestModeAsync(updated, ct)),
+            "ยืนยันการรับเงินแล้ว — ระบบดำเนินการต่อให้ต้นทางเรียบร้อย"));
+    }
+
+    /// <summary>คืนเงินผ่านผู้ให้บริการ
+    ///
+    /// <para><b>ไม่สร้างใบลดหนี้ให้อัตโนมัติ</b>โดยตั้งใจ: §86/10 บังคับให้ใบลดหนี้มี
+    /// "เหตุผล" ตาม closed list · ต้องอ้างใบกำกับเดิม · และยอดสะสมของใบลดหนี้ห้ามเกิน
+    /// ใบเดิม — สิ่งเหล่านี้ต้องให้คนตัดสิน ระบบเดาแทนไม่ได้ · คำตอบจึงชี้ทางต่อว่า
+    /// ให้ไปออกใบลดหนี้จากเอกสารต้นทาง (ซึ่งมีด่าน §86/10 ครบอยู่แล้ว)</para></summary>
+    [HttpPost("intents/{intentId:guid}/refund")]
+    public async Task<ActionResult<ApiResponse<object>>> Refund(
+        Guid companyId, Guid intentId, [FromBody] RefundRequest req,
+        [FromServices] IEnumerable<IPaymentProvider> providers, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Reason))
+            return BadRequest(new ApiResponse<object>(false, null!, "กรุณาระบุเหตุผลการคืนเงิน"));
+
+        var intent = await _db.PaymentIntents
+            .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
+        if (intent == null) return NotFound(new ApiResponse<object>(false, null!, "ไม่พบรายการชำระเงิน"));
+        if (intent.Status is not (PaymentIntentStatus.Succeeded or PaymentIntentStatus.PartiallyRefunded))
+            return BadRequest(new ApiResponse<object>(false, null!,
+                "คืนเงินได้เฉพาะรายการที่รับเงินสำเร็จแล้ว"));
+
+        var amount = req.Amount ?? intent.Amount;
+        if (amount <= 0 || amount > intent.Amount + 0.005m)
+            return BadRequest(new ApiResponse<object>(false, null!,
+                $"ยอดคืนต้องมากกว่า 0 และไม่เกินยอดที่รับไว้ ({intent.Amount:N2})"));
+
+        var provider = providers.FirstOrDefault(p => p.ProviderCode == intent.ProviderCode);
+        if (provider == null)
+            return BadRequest(new ApiResponse<object>(false, null!,
+                $"ไม่รู้จักช่องทางชำระเงิน \"{intent.ProviderCode}\""));
+        if (!provider.Capabilities.SupportsRefund)
+            return BadRequest(new ApiResponse<object>(false, null!,
+                "ช่องทางนี้คืนเงินผ่านระบบไม่ได้ — ต้องคืนที่ธนาคาร/แดชบอร์ดของผู้ให้บริการเอง "
+                + "แล้วออกใบลดหนี้ในระบบ (§86/10)"));
+
+        var config = intent.ProviderConfigId is Guid cid
+            ? await _db.PaymentProviderConfigs.FirstOrDefaultAsync(c => c.Id == cid, ct)
+            : null;
+
+        var result = await provider.RefundAsync(intent, amount, req.Reason.Trim(),
+            config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }, ct);
+
+        if (!result.Succeeded)
+            return BadRequest(new ApiResponse<object>(false, null!,
+                result.FailureMessage ?? "ผู้ให้บริการปฏิเสธการคืนเงิน"));
+
+        var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
+        var full = amount >= intent.Amount - 0.005m;
+        await _intents.ApplyChargeAsync(intentId,
+            new ProviderCharge(intent.ProviderRef ?? string.Empty,
+                full ? PaymentIntentStatus.Refunded : PaymentIntentStatus.PartiallyRefunded,
+                "refunded", intent.Amount),
+            PaymentEventSource.Manual, $"{actor} · คืนเงิน {amount:N2}: {req.Reason.Trim()}", ct);
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            refundRef = result.ProviderRefundRef,
+            amount,
+            isFullRefund = full,
+            // ขั้นถัดไปที่ระบบทำแทนไม่ได้ — ต้องบอกให้ชัด ไม่ใช่ปล่อยให้ผู้ใช้เดา
+            nextStep = "เปิดเอกสารต้นทางแล้วออก \"ใบลดหนี้\" (§86/10) เพื่อลดภาษีขาย — "
+                + "ระบบไม่ออกให้อัตโนมัติเพราะใบลดหนี้ต้องระบุเหตุผลตามที่กฎหมายกำหนด "
+                + "และยอดสะสมห้ามเกินใบเดิม ซึ่งต้องให้คนตัดสิน",
+        }, $"คืนเงิน {amount:N2} บาทเรียบร้อย"));
+    }
+
     // ══════════════════════════════════════════════════════════════════
     //  บันทึก "เงินที่ผู้ให้บริการโอนเข้าธนาคาร" (settlement)
     //

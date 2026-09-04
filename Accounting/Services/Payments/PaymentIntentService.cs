@@ -35,6 +35,21 @@ public interface IPaymentIntentService
     Task<PaymentIntent> RefreshAsync(Guid companyId, Guid intentId, CancellationToken ct = default);
 
     Task<PaymentIntent?> FindAsync(Guid companyId, Guid intentId, CancellationToken ct = default);
+
+    /// <summary>บันทึก "เงินเข้าแล้ว" ที่ระบบ<b>ไม่ได้เป็นคนสร้าง charge เอง</b> —
+    /// ใช้กับทางเข้าที่ผู้ให้บริการ (หรือตัวกลางของลูกค้า) แจ้งเข้ามาโดยที่เรายังไม่มี
+    /// <c>PaymentIntent</c> ของรายการนั้น
+    ///
+    /// <para><b>ทำไมต้องมี</b>: ถ้าปล่อยให้ทางเข้าแบบนั้นเรียก orchestrator ปลายทาง
+    /// ตรง ๆ จะได้ <b>สองความจริงของ "ลูกค้าจ่ายหรือยัง"</b> — เงินเข้าสำเร็จแต่ไม่มีแถว
+    /// ในรายการรับชำระ · ไม่เข้าบัญชีพัก · ไม่โผล่ในรายงานกระทบยอด ซึ่งเป็น defect class
+    /// เดียวกับ "สองความจริงของสต็อก" ที่เคยใช้ทั้งรอบยุบ</para>
+    ///
+    /// <para><b>idempotent</b>: ถ้ามี intent ของ source นี้ที่จบแล้ว คืนตัวเดิมโดยไม่ทำอะไร
+    /// (ผู้ให้บริการส่งซ้ำเป็นเรื่องปกติ — throw จะทำให้ retry ไม่รู้จบ)</para></summary>
+    Task<PaymentIntent> RecordExternalSuccessAsync(Guid companyId, PaymentSourceKind sourceKind,
+        Guid sourceId, decimal amount, string providerRef, string confirmedBy,
+        Guid? siteId = null, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -73,6 +88,70 @@ public class PaymentIntentService : IPaymentIntentService
     public Task<PaymentIntent?> FindAsync(Guid companyId, Guid intentId, CancellationToken ct = default)
         => _db.PaymentIntents.AsNoTracking()
             .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
+
+    public async Task<PaymentIntent> RecordExternalSuccessAsync(Guid companyId,
+        PaymentSourceKind sourceKind, Guid sourceId, decimal amount, string providerRef,
+        string confirmedBy, Guid? siteId = null, CancellationToken ct = default)
+    {
+        Guid intentId;
+        await using (var tx = await _db.Database.BeginTransactionAsync(ct))
+        {
+            // ล็อกที่ **source** เหมือน StartAsync — สองการแจ้งพร้อมกันของบิลเดียวกัน
+            // ต้องได้แถวเดียว ไม่ใช่สองแถวซ้อน
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.PaymentIntent,
+                    $"{sourceKind}:{sourceId:N}") }, ct);
+
+            var existing = await _db.PaymentIntents
+                .Where(i => i.CompanyId == companyId
+                         && i.SourceKind == sourceKind && i.SourceId == sourceId)
+                .OrderByDescending(i => i.CreatedAt)
+                .ToListAsync(ct);
+
+            // จบไปแล้ว = แจ้งซ้ำ → no-op (ห้าม throw · ผู้แจ้งจะ retry ไม่รู้จบ)
+            var settled = existing.FirstOrDefault(i => PaymentIntentPolicy.IsSettledPositive(i.Status));
+            if (settled != null)
+            {
+                await tx.CommitAsync(ct);
+                return settled;
+            }
+
+            var open = existing.FirstOrDefault(i => PaymentIntentPolicy.IsOpen(i.Status));
+            if (open == null)
+            {
+                // ไม่เคยมี intent (เงินเกิดนอกระบบเราทั้งหมด) → สร้างแถวย้อนหลังให้มี
+                // หลักฐานหนึ่งเดียว · ใช้ ProviderCode ของเส้นสลิปเพราะสิ่งที่จริงคือ
+                // "เงินเข้าบัญชีเราแล้ว มีคน/ระบบอื่นเป็นผู้ยืนยัน" ไม่ใช่เราสร้าง charge
+                open = new PaymentIntent
+                {
+                    CompanyId = companyId,
+                    ProviderCode = Providers.ManualSlipPaymentProvider.Code,
+                    SourceKind = sourceKind,
+                    SourceId = sourceId,
+                    SiteId = siteId,
+                    Amount = amount,
+                    MethodKind = PaymentMethodKind.ManualSlip,
+                    Status = PaymentIntentStatus.Created,
+                    AttemptCount = existing.Count + 1,
+                    Description = "บันทึกย้อนหลังจากการแจ้งของระบบภายนอก",
+                    IdempotencyKey = PaymentIntentPolicy.IdempotencyKey(
+                        sourceKind, sourceId, amount, existing.Count + 1),
+                };
+                _db.PaymentIntents.Add(open);
+                AddEvent(open, PaymentEventSource.Webhook, null, PaymentIntentStatus.Created,
+                    note: $"สร้างจากการแจ้งของระบบภายนอก โดย {confirmedBy}");
+                await _db.SaveChangesAsync(ct);
+            }
+            intentId = open.Id;
+            await tx.CommitAsync(ct);
+        }
+
+        // เดินผ่านเส้นเดียวกับ webhook/poll ⇒ ได้ทั้งสถานะ · ประวัติ · และการส่งต่อ
+        // ให้ทางเข้าเดิมทำงาน (ออกใบเสร็จ/ตัดหนี้/ตัดสต๊อก) ครบเหมือนกันทุกประการ
+        return await ApplyChargeAsync(intentId,
+            new ProviderCharge(providerRef, PaymentIntentStatus.Succeeded, "external_confirm", amount),
+            PaymentEventSource.Webhook, confirmedBy, ct);
+    }
 
     public async Task<PaymentIntent> StartAsync(Guid companyId, StartPaymentRequest request,
         string? providerCode = null, CancellationToken ct = default)

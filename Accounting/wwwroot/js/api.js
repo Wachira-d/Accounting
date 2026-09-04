@@ -695,6 +695,12 @@ const API = {
       previewSettlement: (d) => API.post(`${base}/pay/settlements/preview`, d),
       recordSettlement: (d) => API.post(`${base}/pay/settlements`, d),
       getPaymentIntentEvents: (id) => API.get(`${base}/pay/intents/${id}/events`),
+      // ยืนยันด้วยมือ (เห็นเงินเข้าบัญชีจริงแต่ระบบยังไม่รู้) — เดินผ่าน endpoint
+      // เดียวกับ webhook ⇒ ต้นทางถูกดำเนินการต่อครบเหมือนกัน · บังคับเหตุผล
+      confirmPaymentIntentManually: (id, reason) =>
+        API.post(`${base}/pay/intents/${id}/confirm-manually`, { reason }),
+      refundPaymentIntent: (id, amount, reason) =>
+        API.post(`${base}/pay/intents/${id}/refund`, { amount, reason }),
       // สูตรวัตถุดิบต่อสินค้า (recipe) — มุมมองบนตาราง BOM เดียวกับใบสั่งผลิต
       getProductRecipe: (productId) => API.get(`${base}/mfg/products/${productId}/recipe`),
       saveProductRecipe: (productId, d) => API.put(`${base}/mfg/products/${productId}/recipe`, d),
