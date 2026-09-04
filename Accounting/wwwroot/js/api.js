@@ -926,7 +926,11 @@ const API = {
         API.post(`${base}/ai/anomalies/${anomalyId}/explain${force ? '?force=true' : ''}`),
       aiBatchSuggestPvAccounts: (sourceInvoiceId) =>
         API.post(`${base}/ai/payment-voucher/suggest-all-accounts`, { sourceInvoiceId }),
+      // ⚠️ รับ **id ของไฟล์แนบ** ไม่ใช่ id ของสแกน — เคยมีหน้าเว็บส่ง scanId เข้ามา
+      // แล้วได้ "File attachment not found." ทุกครั้ง · ถ้าต้องการ "อ่านไฟล์ใหม่"
+      // จากรายการสแกนที่มีอยู่แล้ว ให้ใช้ ocrRetryScan (รับ scanId + ไม่ใช้โควตา)
       ocrScan: (fileId) => API.post(`${base}/ocr/scan/${fileId}`),
+      ocrRetryScan: (scanId) => API.post(`${base}/ocr/${scanId}/retry`),
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),
       ocrCreateDocument: (id, targetType, approve = false) => {

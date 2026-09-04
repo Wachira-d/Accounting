@@ -232,15 +232,30 @@ public class OcrController : ControllerBase
             return StatusCode(429, new ApiResponse<object>(false, null,
                 $"ใช้ retry ครบ {maxRetries} ครั้งแล้ว — กรุณาอัปโหลดใหม่ (ใช้โควต้า)"));
 
-        scan.RetryCount++;
-        scan.ScanStatus = "Processing";
-        await _db.SaveChangesAsync();
-
+        // ⚠️ ตรวจไฟล์ **ก่อน** เขียนอะไรลงแถว — เดิมเพิ่ม RetryCount แล้วค่อยเจอว่า
+        // ไม่มีไฟล์ ⇒ ผู้ใช้เสียสิทธิ์ retry ไปฟรี ๆ กับคำขอที่ทำไม่ได้ตั้งแต่ต้น
         if (!scan.FileAttachmentId.HasValue)
             return BadRequest(new ApiResponse<object>(false, null, "ไม่พบไฟล์ต้นฉบับ"));
 
-        var result = await _service.ScanAsync(companyId, scan.FileAttachmentId.Value);
-        return Ok(new ApiResponse<OcrResultResponse>(true, result, "Retry สำเร็จ (ไม่ใช้โควต้า)"));
+        // ⚠️ เดิมตั้ง `scan.ScanStatus = "Processing"` ตรงนี้ — แต่ ScanAsync สร้าง
+        // **แถวใหม่** เสมอ ไม่มีใครกลับมาตั้งสถานะแถวนี้คืน ⇒ แถวเดิมค้าง
+        // "Processing" ตลอดกาล · แถวเก่าไม่ได้กำลังถูกประมวลผล จึงไม่ควรแตะสถานะเลย
+        scan.RetryCount++;
+        await _db.SaveChangesAsync();
+
+        // forceRescan: ถ้าไม่ส่ง ด่าน hash จะคืน **สำเนาของผลเดิม** แล้วเราตอบว่า
+        // "Retry สำเร็จ" ทั้งที่ไม่มี engine ตัวไหนทำงานเลย = silent no-op
+        var result = await _service.ScanAsync(companyId, scan.FileAttachmentId.Value, forceRescan: true);
+
+        // ผลไปโผล่ที่ **เอกสารคนละแถว** — ต้องบอกเลขปลายทางเสมอ ไม่งั้นผู้ใช้เปิด
+        // แถวเดิมแล้วเห็นค่าเท่าเดิม จะรายงานว่า "กดปุ่มแล้วไม่มีอะไรเกิดขึ้น"
+        scan.ProcessingNotes = string.IsNullOrWhiteSpace(scan.ProcessingNotes)
+            ? $"สแกนใหม่แล้ว → ผลอยู่ที่สแกน {result.Id}"
+            : $"{scan.ProcessingNotes}\nสแกนใหม่แล้ว → ผลอยู่ที่สแกน {result.Id}";
+        await _db.SaveChangesAsync();
+
+        return Ok(new ApiResponse<OcrResultResponse>(true, result,
+            $"สแกนใหม่แล้ว (ไม่ใช้โควต้า) — ผลอยู่ที่รายการสแกนใหม่ {result.Id} · รายการเดิมยังเก็บผลอ่านครั้งก่อนไว้เพื่อเปรียบเทียบ"));
     }
 
     [HttpGet("{scanId:guid}")]

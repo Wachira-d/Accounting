@@ -183,6 +183,31 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - (C) ส่วนลด — `grossSum > total` → คำนวณ `docDiscountPercent` ลงทุกบรรทัด
   - (D) OCR ขาด — `grossSum < subtotal` → ปล่อยให้ user แก้
 - **Quota refund**: ถ้า re-OCR (retry) ไม่ใช้ quota ใหม่ (`OcrService.cs`)
+- **ไฟล์ซ้ำ (hash ตรง) → เส้น `Cached`** (`OcrService.ScanAsync`):
+  - เกณฑ์เลือกต้นฉบับ: `CompanyId` เดียวกัน · `FileHash` ตรง · `ScanStatus =
+    Completed` · **`!IsDuplicate`** (กันสำเนาของสำเนา) · `OrderByDescending
+    (CreatedAt)` = ผลอ่านล่าสุดที่เป็นของจริง (deterministic)
+  - คัดลอกผ่าน **`Helpers/OcrScanSnapshot.CopyExtractionFrom`** ตัวเดียว —
+    **deny-list**: คัดลอกทุกช่องที่ประกาศบน `OcrScanResult` ยกเว้น 15 ช่องที่เป็น
+    ตัวตนของแถว (ไฟล์แนบ · hash · สถานะ · engine · notes · RetryCount ·
+    `ExternalMetadataJson` · `UserNotes` · `CreatedDocumentId` ·
+    `CreatedJournalEntryId` · `StockImportedAt` · ธง duplicate) ⇒ ช่องใหม่
+    ในอนาคตถูกคัดลอกโดยอัตโนมัติ · ล็อกด้วย `OcrScanSnapshotTests`
+    (เติมค่าทุกช่องแล้วพิสูจน์ว่าไม่มีช่องไหนหลุด)
+  - แถวสำเนาจึงมี `RawTextContent` + `ExtractedItemsJson` + `FieldConfidenceJson`
+    + ช่อง §86/4 + `TargetDocumentType` ครบเท่าต้นฉบับ — สำคัญเพราะขั้นสร้าง
+    เอกสารอ่าน raw text ไปตัดสิน **สกุลเงิน · เหตุผลใบลดหนี้ §86/10 ·
+    ประเภทเงินได้ 50 ทวิ · เงินมัดจำ · คำเตือน RD compliance**
+  - `OcrEngine = "Cached"`, `ProcessingNotes = "Duplicate of scan {id}"`,
+    ไม่มี engine ตัวไหนทำงาน ⇒ `/upload` **คืนโควตา** (`result.IsDuplicate`)
+  - **"สแกนใหม่" = `POST /ocr/{scanId}/retry`** → `ScanAsync(forceRescan: true)`
+    ข้ามด่าน hash แล้วเดิน engine จริง · สร้าง **แถวใหม่** (แถวเดิมเก็บผลอ่านเดิม
+    ไว้เปรียบเทียบ ไม่ถูกตั้งเป็น `Processing` ค้าง) และข้อความตอบกลับบอก
+    **เลขสแกนปลายทาง** เสมอ
+- **ด่านตัวเลขสามช่อง** (`OcrConfidenceGateway` ข้อ 2b): ฟ้องเมื่อ
+  `|SubTotal+VAT−Total| > ฿0.02` **และ** `|VAT − 7%×SubTotal| > max(฿0.02,
+  ฿0.01×จำนวนบรรทัด)` พร้อมกัน ⇒ ใบหลายอัตราภาษี (ผลรวมเป๊ะ) ไม่ถูกฟ้องผิด ·
+  ปิดช่องที่ ฿0.44 เคยรอด `MathTolerance` ฿2.00 และ 7.37% เคยรอดกรอบ 6.5–7.5%
 
 ### 2.2b LINE bot — "โยนบิลเข้าไลน์" (Paypers-style)
 
@@ -2807,7 +2832,11 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-04 (รอบ 126c — **LDG-P2-06 ปิดครบ**: สลิปออกจาก_
+_Last verified against codebase: 2026-09-04 (รอบ 134 — **สแกนซ้ำคัดลอกข้อมูลไม่ครบ**:_
+_§2.2 เพิ่มเส้น `Cached` เต็มรูป (เกณฑ์เลือกต้นฉบับ · deny-list ของ `OcrScanSnapshot` ·_
+_forceRescan) + ด่านตัวเลขสามช่องของ `OcrConfidenceGateway` — **เปลี่ยนพฤติกรรม**:_
+_สแกนสำเนาได้ข้อมูลครบเท่าต้นฉบับ 49 ช่อง (เดิม 10) และ retry อ่านไฟล์ใหม่จริง)_
+_ก่อนหน้า: 2026-09-04 (รอบ 126c — **LDG-P2-06 ปิดครบ**: สลิปออกจาก_
 _static path สาธารณะ (PII) มาอยู่หลังด่าน + LINE แจ้งเจ้าของเมื่อมีจอง/สลิปใหม่ ·_
 _แก้บันทึกที่ผิด: อีเมลแจ้งแขก/เจ้าของ **มีอยู่แล้วตั้งแต่รอบ 124** ที่ขาดคือ LINE เท่านั้น)_
 _ก่อนหน้า: 2026-09-04 (รอบ 126b — **ปลายทางของโมดูลที่พัก**:_
@@ -4528,6 +4557,7 @@ _(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Con
 | 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
 | 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
 | 12 | JE migrate + business gaps ปิด | JE Builder phase 2 (ReclassifyLine + FxRevaluation refactor), UnifiedPaymentQueryService cross-domain (AR+AP+POS+CMS), POS deposit IsDeposit+DepositRealizedAt, TipPayoutService §50 ทวิ (3% WHT >1000), RecurringLateFeeAccrualJob (rate/grace/cap config), DocumentLineDeliveryService LINE flex, Budget scenarios best/base/worst |
+| 134 | สแกนซ้ำคัดลอกข้อมูลไม่ครบ (ผู้ใช้รายงาน) | เส้น `Cached` เคยคัดลอก **10 ช่องจาก 49** ⇒ ข้อความดิบ · รายการสินค้า · ช่อง §86/4 ฝั่งผู้ซื้อ · `TargetDocumentType` · หมวดค่าใช้จ่าย · WHT · ค่าความมั่นใจรายช่อง **หายเงียบ 39 ช่อง** ทุกครั้งที่อัปโหลดไฟล์เดิมซ้ำ → `Helpers/OcrScanSnapshot` เป็น **deny-list** (คัดลอกทุกช่อง ยกเว้น 15 ช่องที่เป็นตัวตนของแถว) + `OcrScanSnapshotTests` เติมค่าทุกช่องพิสูจน์ว่าไม่มีช่องไหนหลุด · ด่านไฟล์ซ้ำกรอง `!IsDuplicate` + `OrderByDescending(CreatedAt)` (เดิมได้สำเนาของสำเนา แบบไม่ deterministic) · `ScanAsync(forceRescan)` + retry เลิกทิ้งแถวค้าง `Processing` และบอกเลขสแกนปลายทาง · ปุ่ม "สแกนใหม่" เลิกส่ง scanId ไป endpoint ที่รับ fileAttachmentId (500 มาตลอด) · กล่อง Raw Text เลิกโทษ Docker เมื่อ engine เป็น `Cached`/`EtaxXml` · `OcrConfidenceGateway` ข้อ 2b จับ "ตัวเลขสามช่องขัดกันเอง" · migration COALESCE ซ่อมแถวสำเนาที่พังไปแล้ว |
 | 133 | สัญญาณความมั่นใจของ OCR + ด่าน PDPA ก่อนส่ง prompt | `fc()` ในหน้า review เลิก fallback ไปคะแนน**ทั้งใบ** (เดิม "00000 · 95%" บนค่าที่ระบบเดาให้) → "—" · stamp `SellerBranchCode/BuyerBranchCode = 0.30` เมื่ออ่านไม่ได้ · `Layout.applyOcrConfidenceHints` ตัวกลางตัวเดียว ใช้ทั้งฟอร์มเอกสารและ**หน้า review ที่ผู้ใช้ตัดสินใจจริง** · เปิดแก้ VendorAddress/BuyerName/BuyerAddress/PaymentTermsDays ครบทั้ง ฟอร์ม→payload→DTO→persist · `AiPromptSanitizer`: regex อีเมล + เลขบัญชีที่มีป้าย + **สตริงใน array ที่ไม่เคยถูกปิดบังเลย** + `AllowTaxIdInPrompt` คงเฉพาะเลขนิติบุคคล (เลขบัตรประชาชนปิดบังเสมอ §26) · `pg_try_advisory_lock` บนงานเทรน · `AiFeatureKey` 4 ค่าที่ตายแล้ว → `[Obsolete(error)]` |
 | 128 | POS เฟส 3 — ขายแล้วกินสูตร | `ProductType.RawMaterial` · `Product.ConsumesBomOnSale` · `Helpers/BomConsumption` (บริสุทธิ์ · เรียงผลลัพธ์คงที่กัน deadlock) · ตัด/คืนวัตถุดิบครบ 4 เส้นผ่านตัวเดียว · ท็อปปิ้งผูกวัตถุดิบ (`ProductModifierOption.ComponentProductId`) · สูตรเป็น **เวอร์ชัน** ไม่เขียนทับ (`mfg/products/{id}/recipe`) |
 | 127 | POS เฟส 1-2 — สาขา + ภ.พ.06 | `PosTerminal.BranchId/WarehouseId/Cash/BankAccountId` · snapshot ลง `PosOrder` · `Company.IsRetailApproved` + `PhoR06ApprovedDate` · `Helpers/PosSlipHeader` ตัดสินหัวสลิปที่เซิร์ฟเวอร์ (renderer 2 ตัวรับค่ามาแสดง) · เลขใบกำกับอย่างย่อ gap-free ต่อ (สาขา, เดือน) · JE ของ POS ติดมิติสาขา |

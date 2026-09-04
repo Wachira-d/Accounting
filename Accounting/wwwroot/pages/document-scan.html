@@ -1468,7 +1468,12 @@
           actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${Layout.jsArg(scan.id)}')" title="แกะข้อมูลใหม่โดยไม่ใช้โควต้า">&#x21BA; แกะใหม่</button>`;
         }
         if (scan.scanStatus === 'Failed') {
-          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${Layout.jsArg(scan.id)}')">สแกนใหม่</button>`;
+          // ⚠️ เดิมเรียก Page.rescan(scan.id) ซึ่งยิงไป /ocr/scan/{fileAttachmentId}
+          // โดยส่ง **id ของสแกน** เข้าไปแทน id ของไฟล์แนบ ⇒ เซิร์ฟเวอร์หาไฟล์ไม่เจอ
+          // และโยน "File attachment not found." ทุกครั้ง — ปุ่มนี้ใช้ไม่ได้มาตลอด
+          // (defect class เดียวกับ tools/arg_type_check.py: ส่ง id ผิดชนิด)
+          // ทางที่ถูกคือเส้นเดียวกับ "แกะใหม่" ซึ่งรับ scanId และหาไฟล์แนบให้เอง
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${Layout.jsArg(scan.id)}')">สแกนใหม่</button>`;
         }
         // Delete button — always available. When the scan auto-created a
         // document, the click handler asks the user to confirm a cascade
@@ -1602,17 +1607,11 @@
         }
       },
 
-      async rescan(scanId) {
-        const api = Layout.api();
-        if (!api) return;
-        try {
-          await api.ocrScan(scanId);
-          Layout.toast('เริ่มสแกนใหม่แล้ว');
-          this.loadScans();
-        } catch (err) {
-          Layout.toast('สแกนใหม่ไม่สำเร็จ: ' + err.message, 'error');
-        }
-      },
+      // ── `rescan(scanId)` ถูกลบแล้ว — อย่าสร้างกลับมา ──
+      // มันส่ง **id ของสแกน** ไปให้ endpoint ที่รับ id ของ **ไฟล์แนบ** ⇒ 500
+      // "File attachment not found." ทุกครั้งที่กด · และการมีสองเมธอดที่แปลว่า
+      // "สแกนใหม่" คือสำเนามือที่รอ drift อยู่แล้ว — เหลือ `retryScan` ตัวเดียว
+      // ซึ่งเดินผ่าน /ocr/{scanId}/retry (ไม่ใช้โควตา + บังคับ forceRescan)
 
       async deleteScan(scanId, cascade = false) {
         // When cascading, the user is also deleting the auto-created draft
@@ -1646,24 +1645,63 @@
       // ==================== Review Modal ====================
       async retryScan(scanId) {
         if (!confirm('แกะข้อมูล OCR ใหม่อีกครั้ง? (ไม่ใช้โควต้า, จำกัดตามค่าที่ Admin ตั้งไว้)')) return;
-        const cid = Layout.getCompanyId();
-        if (!cid) { Layout.toast('ไม่พบ company context', 'error'); return; }
+        const api = Layout.api();
+        if (!api) { Layout.toast('ไม่พบ company context', 'error'); return; }
         try {
-          const res = await fetch(`/api/companies/${cid}/ocr/${scanId}/retry`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-          });
-          const data = await res.json();
-          if (!data.success) {
-            Layout.toast(data.message || 'Retry ล้มเหลว', 'error');
-            return;
-          }
-          Layout.toast(data.message || 'Retry สำเร็จ', 'success');
+          // เซิร์ฟเวอร์เป็นคนเขียนข้อความ (บอกเลขสแกนใหม่ที่ผลไปโผล่) — หน้าเว็บ
+          // แสดงอย่างเดียว ห้ามแต่งข้อความเอง ไม่งั้นเป็นสำเนามือที่รอ drift
+          const data = await api.ocrRetryScan(scanId);
+          Layout.toast(data?.message || 'อ่านไฟล์ใหม่แล้ว', 'success');
           this.loadScans();
           this.loadQuota();
         } catch (err) {
-          Layout.toast('Retry ล้มเหลว: ' + err.message, 'error');
+          Layout.toast('อ่านไฟล์ใหม่ไม่สำเร็จ: ' + err.message, 'error');
         }
+      },
+
+      /**
+       * กล่อง "Raw OCR Text" — ต้องบอก **ความจริงของแถวนี้** ไม่ใช่คำวินิจฉัยสำเร็จรูป
+       *
+       * ⚠️ ที่มา (บั๊กจริง): เดิมพอ rawTextContent ว่าง หน้าจอพิมพ์ตายตัวว่า
+       * "OCR อาจไม่ได้เชื่อมต่อกับ local service — ตรวจสอบ Docker / appsettings"
+       * ทั้งที่ช่อง Engine เขียนว่า `Cached` อยู่ตรงหน้า (ไม่มี engine ตัวไหนทำงานเลย
+       * เพราะเป็นสำเนาของสแกนก่อนหน้า) ⇒ ผู้ใช้ไปไล่แก้ Docker ที่ไม่ได้เสีย แล้ว
+       * กด "สแกนใหม่" ซึ่งตอนนั้นก็คืนสำเนาเดิมอีก = วนไม่จบ
+       *
+       * กติกา: **ข้อความ error ที่เดาสาเหตุแทนผู้ใช้ อันตรายกว่าไม่บอกอะไรเลย**
+       * (บทเรียนเดียวกับปุ่ม Google SSO ที่โทษตัวบล็อกโฆษณาทั้งที่ต้นเหตุคือ CSP
+       * ของเราเอง) — แยกตาม engine แล้วบอก "ทางไปต่อ" ของแต่ละกรณีเสมอ
+       */
+      _rawTextPanel(scan) {
+        if (scan.rawTextContent) {
+          return `<pre style="font-size:11px;background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;line-height:1.6">${Layout.esc(scan.rawTextContent)}</pre>`;
+        }
+        const box = (bg, fg, html) => `<div style="padding:12px;background:${bg};border-radius:6px;color:${fg};font-size:12px;border:1px solid var(--gray-200)">${html}</div>`;
+        const rescanBtn = `<button class="btn btn-sm btn-outline" style="margin-top:8px" onclick="Page.retryScan('${Layout.jsArg(scan.id)}')">&#x21BA; อ่านไฟล์ใหม่ด้วย engine จริง (ไม่ใช้โควตา)</button>`;
+
+        if (scan.ocrEngine === 'Cached') {
+          const src = scan.duplicateOfScanId
+            ? `<button class="btn btn-sm btn-outline" style="margin-top:8px;margin-right:6px" onclick="Page.openReview('${Layout.jsArg(scan.duplicateOfScanId)}', { debug: true })">เปิดสแกนต้นฉบับ</button>`
+            : '';
+          return box('#f3e8ff', '#6b21a8',
+            `<strong>&#x267B; ไม่มีข้อความดิบเพราะสแกนนี้เป็น "สำเนา"</strong> — ไฟล์นี้เคยสแกนไปแล้ว
+             ระบบจึงคัดลอกผลเดิมมาให้โดยไม่เรียก OCR ซ้ำ <b>ไม่ใช่อาการ OCR เสีย</b>
+             <br>สแกนที่ทำมาก่อนหน้ารุ่นแก้ไขนี้จะไม่มีข้อความดิบติดมาด้วย
+             <br>${src}${rescanBtn}`);
+        }
+        if (scan.ocrEngine === 'EtaxXml') {
+          return box('#ecfdf5', '#065f46',
+            `<strong>&#x1F4C4; ไม่มีข้อความดิบเพราะอ่านจากไฟล์ e-Tax XML โดยตรง</strong> —
+             ค่าทุกช่องมาจากโครงสร้าง XML ที่ผู้ขายเซ็นรับรอง ซึ่งแม่นกว่าการอ่านภาพ
+             จึงไม่มีขั้นตอน OCR ให้เก็บข้อความดิบ`);
+        }
+        return box('var(--gray-50)', 'var(--danger)',
+          `<strong>ไม่มีข้อความดิบ</strong> — engine
+           <code>${scan.ocrEngine ? Layout.esc(scan.ocrEngine) : 'ไม่ระบุ'}</code>
+           ทำงานแล้วแต่ไม่ได้ข้อความกลับมา (ไฟล์เป็นภาพเปล่า/สแกนเอียงจนอ่านไม่ออก
+           หรือ engine ขัดข้อง)
+           <br>ลองอ่านใหม่ได้เลย — ถ้ายังไม่ได้ ให้แจ้งผู้ดูแลระบบพร้อม Scan ID ด้านบน
+           <br>${rescanBtn}`);
       },
 
       // ============= PO linkage (รับตาม PO + ฟังก์ชันชื่อแทน) =============
@@ -2444,7 +2482,7 @@
 
                 <div>
                   <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Raw OCR Text</div>
-                  ${scan.rawTextContent ? `<pre style="font-size:11px;background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;line-height:1.6">${Layout.esc(scan.rawTextContent)}</pre>` : '<div style="padding:12px;background:var(--gray-50);border-radius:6px;color:var(--danger);font-size:12px;border:1px solid var(--gray-200)"><strong>ไม่มี Raw Text</strong> — OCR อาจไม่ได้เชื่อมต่อกับ local service หรือ text extraction ล้มเหลว<br>ตรวจสอบ: (1) ocr-service Docker ทำงานอยู่หรือไม่ (2) appsettings.json Ocr:Provider และ Ocr:LocalServiceUrl ถูกต้อง</div>'}
+                  ${this._rawTextPanel(scan)}
                 </div>
 
                 <div style="margin-top:12px">

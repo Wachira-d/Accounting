@@ -27,8 +27,12 @@ public interface IOcrService
     /// suggests the target type and the user explicitly creates via
     /// CreateDocumentFromScanAsync. Integration partner syncs opt in to true
     /// to keep their existing zero-touch behavior.
+    ///
+    /// <paramref name="forceRescan"/>: ข้ามด่าน "ไฟล์นี้เคยสแกนแล้ว (hash ตรง)"
+    /// แล้วเดินเส้น engine จริง — ใช้กับปุ่ม "สแกนใหม่" เท่านั้น · ถ้าไม่มีธงนี้
+    /// การกดสแกนใหม่จะได้สำเนาของผลเดิมกลับมาแล้วตอบว่า "สำเร็จ" (silent no-op)
     /// </summary>
-    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false);
+    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false, bool forceRescan = false);
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null);
