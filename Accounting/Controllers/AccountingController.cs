@@ -314,7 +314,11 @@ public class AccountingController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> CloseFiscalPeriod(Guid companyId, Guid periodId)
     {
         await _accountingService.CloseFiscalPeriodAsync(companyId, periodId);
-        return Ok(new ApiResponse<string>(true, null, "ปิดงวดบัญชีสำเร็จ"));
+        // บอกขอบเขตให้ชัด — "ปิดงวด" ล็อกการโพสต์ ไม่ได้ปิดบัญชี
+        // (เดิมสร้างใบปิดรายเดือนด้วย ⇒ งบกำไรขาดทุนของงวดนั้นกลายเป็น 0 · C-T02)
+        return Ok(new ApiResponse<string>(true, null,
+            "ปิดงวดบัญชีสำเร็จ — งวดนี้ถูกล็อกไม่ให้บันทึกรายการเพิ่ม " +
+            "(การปิดบัญชีรายได้/ค่าใช้จ่ายเข้ากำไรสะสมทำปีละครั้งที่เมนู \"ปิดปี\")"));
     }
 
     /// <summary>Edit a fiscal period's year/month/start/end dates — for

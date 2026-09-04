@@ -1999,9 +1999,9 @@ public partial class TaxService : ITaxService
         // Hard-coding Jan/Dec would make every non-calendar-FY filer report
         // the wrong period to RD (illegal under Thai Revenue Code §65).
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
-        var startMonth = company?.FiscalYearStartMonth is >= 1 and <= 12 ? company.FiscalYearStartMonth : 1;
-        var startDate = new DateTime(year, startMonth, 1);
-        var endDate = startDate.AddYears(1).AddDays(-1);
+        var fy = Accounting.Helpers.FiscalYear.RangeFor(year, company?.FiscalYearStartMonth ?? 1);
+        var startDate = fy.Start;
+        var endDate = fy.EndInclusive;
 
         // Calculate total revenue
         var revenueLines = await _db.JournalEntryLines
@@ -2009,6 +2009,7 @@ public partial class TaxService : ITaxService
             .Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= startDate
                 && l.JournalEntry.EntryDate <= endDate
                 && l.Account!.AccountType == AccountType.Revenue)
@@ -2022,6 +2023,7 @@ public partial class TaxService : ITaxService
             .Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= startDate
                 && l.JournalEntry.EntryDate <= endDate
                 && l.Account!.AccountType == AccountType.Expense)

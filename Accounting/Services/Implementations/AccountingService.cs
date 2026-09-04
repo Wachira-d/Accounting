@@ -1955,6 +1955,7 @@ public partial class AccountingService : IAccountingService
             join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
             where j.CompanyId == companyId
                 && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
+                && !j.IsClosingEntry          // ★ C-T02 — เหตุผลเดียวกับ GetProfitAndLossAsync
                 && j.EntryDate >= fromDate && j.EntryDate < toEnd
                 && (a.AccountType == AccountType.Revenue || a.AccountType == AccountType.Expense)
             group new { l.DebitAmount, l.CreditAmount } by a.AccountType into g
@@ -1975,6 +1976,11 @@ public partial class AccountingService : IAccountingService
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
                 && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
+                // ★ C-T02: ใบปิดบัญชีเป็นรายการ GL ที่ถูกต้อง แต่มันคือรายการ
+                // *ปิด* งบกำไรขาดทุน ไม่ใช่ผลการดำเนินงาน — รวมเข้ามาเมื่อไร
+                // ยอดของงวดที่ปิดแล้วกลายเป็น 0 ทันที
+                // (งบดุล/งบทดลอง/บัญชีแยกประเภทยังเห็นครบ — ห้ามซ่อนรายการจริง)
+                && !j.IsClosingEntry
                 && j.EntryDate >= fromDate.Date
                 && j.EntryDate < toDate.Date.AddDays(1))
             .Select(j => j.Id);
@@ -2022,6 +2028,9 @@ public partial class AccountingService : IAccountingService
         var postedEntryIds = _db.JournalEntries
             .Where(j => j.CompanyId == companyId
                 && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
+                // ★ C-T02: ใบปิดบัญชีย้าย P&L → กำไรสะสม ไม่แตะเงินสดเลย
+                // แต่ถ้านับเข้ามา กำไรสุทธิที่เป็นฐานของงบกระแสเงินสดจะเป็น 0
+                && !j.IsClosingEntry
                 && j.EntryDate >= fromDate.Date
                 && j.EntryDate < toDate.Date.AddDays(1))
             .Select(j => j.Id);
@@ -2474,143 +2483,27 @@ public partial class AccountingService : IAccountingService
             throw new InvalidOperationException(
                 "ไม่สามารถปิดงวดได้ — พบปัญหาที่ต้องแก้ไข:\n• " + string.Join("\n• ", issues));
 
-        // ===== Create closing journal entries (ปิดบัญชีรายได้/ค่าใช้จ่ายเข้ากำไรสะสม) =====
-        await CreateClosingEntriesAsync(companyId, period);
-
+        // ═══ "ปิดงวด" = **ล็อกไม่ให้โพสต์เพิ่ม** เท่านั้น — ไม่ปิดบัญชี (C-T02) ═══
+        //
+        // เดิมที่นี่เรียก CreateClosingEntriesAsync ⇒ ปิดงวด**รายเดือน** สร้างใบ
+        // CL-yyyyMM ล้างรายได้/ค่าใช้จ่ายเข้ากำไรสะสมทันที ⇒ เปิดงบกำไรขาดทุน
+        // ม.ค.–ธ.ค. แล้ว **ยอดของเดือนที่ปิดไปเป็น 0** (ใบปิดกลับด้านทุกบรรทัดพอดี)
+        // แล้วตัวเลขนี้ไหลต่อไปที่ XBRL ที่ยื่น DBD · ฐาน ภ.ง.ด.51 · รายงาน CIT
+        // ⇒ งบการเงินที่ยื่นออกไปผิดโดยไม่มีอะไรเตือน
+        //
+        // ตามหลักบัญชี การปิด P&L เข้ากำไรสะสมทำ **ปีละครั้ง** ตอนสิ้นรอบ —
+        // `YearEndCloseAsync` เป็นที่เดียวที่ทำ (และติดธง `IsClosingEntry` ให้
+        // งบกำไรขาดทุนคัดออกได้) · การปิดงวดรายเดือนมีไว้กันคนโพสต์ย้อนหลัง
+        // ไม่ใช่การปิดบัญชี
         period.Status = FiscalPeriodStatus.Closed;
         await _db.SaveChangesAsync();
     }
 
-    private async Task CreateClosingEntriesAsync(Guid companyId, FiscalPeriod period)
-    {
-        var retainedEarningsAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId
-                && a.AccountCode.StartsWith("32020") && a.IsActive)
-            ?? await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.CompanyId == companyId
-                    && a.AccountCode.StartsWith("3202") && a.IsActive)
-            ?? await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.CompanyId == companyId
-                    && a.AccountType == AccountType.Equity
-                    && a.AccountCode.StartsWith("32") && a.Level >= 4 && a.IsActive);
-
-        if (retainedEarningsAccount == null)
-            throw new InvalidOperationException(
-                "ไม่พบบัญชีกำไรสะสม (32020) ในผังบัญชี — กรุณาเพิ่มก่อนปิดงวด");
-
-        // F9 — รวมเฉพาะ Posted (ที่ยังมีผล). Status==Reversed = entry ต้นที่
-        // ถูก reverse แล้ว — มี reversal entry คู่ขนานที่ post กลับด้านอยู่
-        // แล้ว ถ้านับ Reversed ด้วยจะ double-count: ต้น + reversal = 0 net
-        // แต่ใส่ Reversed อันต้นเข้าไปอีก = +1 ทับ. ตัด Reversed ทิ้ง — เหลือ
-        // เฉพาะ Posted ทั้ง original + reversal (สอง entries post normal +
-        // post กลับ — net = 0 ถ้า cancel กันพอดี).
-        var postedLines = await _db.JournalEntryLines
-            .Include(l => l.Account)
-            .Include(l => l.JournalEntry)
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate >= period.StartDate
-                && l.JournalEntry.EntryDate <= period.EndDate
-                && (l.Account!.AccountType == AccountType.Revenue
-                    || l.Account!.AccountType == AccountType.Expense))
-            .ToListAsync();
-
-        if (postedLines.Count == 0) return;
-
-        var grouped = postedLines
-            .Where(l => l.Account != null)
-            .GroupBy(l => new { l.AccountId, l.Account!.AccountCode, l.Account.AccountName, l.Account.AccountType })
-            .Select(g => new
-            {
-                g.Key.AccountId,
-                g.Key.AccountCode,
-                g.Key.AccountName,
-                g.Key.AccountType,
-                TotalDebit = g.Sum(l => l.DebitAmount),
-                TotalCredit = g.Sum(l => l.CreditAmount)
-            })
-            .Where(g => g.TotalDebit != 0 || g.TotalCredit != 0)
-            .ToList();
-
-        if (grouped.Count == 0) return;
-
-        var closingLines = new List<JournalEntryLine>();
-
-        foreach (var acct in grouped)
-        {
-            if (acct.AccountType == AccountType.Revenue)
-            {
-                var netCredit = acct.TotalCredit - acct.TotalDebit;
-                if (netCredit == 0) continue;
-                closingLines.Add(new JournalEntryLine
-                {
-                    AccountId = acct.AccountId,
-                    DebitAmount = netCredit > 0 ? netCredit : 0,
-                    CreditAmount = netCredit < 0 ? Math.Abs(netCredit) : 0,
-                    Description = $"ปิดบัญชี {acct.AccountCode} {acct.AccountName}"
-                });
-            }
-            else
-            {
-                var netDebit = acct.TotalDebit - acct.TotalCredit;
-                if (netDebit == 0) continue;
-                closingLines.Add(new JournalEntryLine
-                {
-                    AccountId = acct.AccountId,
-                    DebitAmount = netDebit < 0 ? Math.Abs(netDebit) : 0,
-                    CreditAmount = netDebit > 0 ? netDebit : 0,
-                    Description = $"ปิดบัญชี {acct.AccountCode} {acct.AccountName}"
-                });
-            }
-        }
-
-        if (closingLines.Count == 0) return;
-
-        var totalClosingDebit = closingLines.Sum(l => l.DebitAmount);
-        var totalClosingCredit = closingLines.Sum(l => l.CreditAmount);
-        var netToRE = totalClosingCredit - totalClosingDebit;
-
-        closingLines.Add(new JournalEntryLine
-        {
-            AccountId = retainedEarningsAccount.Id,
-            DebitAmount = netToRE > 0 ? netToRE : 0,
-            CreditAmount = netToRE < 0 ? Math.Abs(netToRE) : 0,
-            Description = "ปิดกำไร(ขาดทุน)สุทธิเข้ากำไรสะสม"
-        });
-
-        var finalDebit = closingLines.Sum(l => l.DebitAmount);
-        var finalCredit = closingLines.Sum(l => l.CreditAmount);
-        if (Math.Abs(finalDebit - finalCredit) > 0.01m)
-            throw new InvalidOperationException(
-                $"Closing entries ไม่สมดุล: Dr={finalDebit:N2} Cr={finalCredit:N2}");
-
-        var yearMonth = period.EndDate.ToString("yyyyMM");
-        var entryNumber = $"CL-{yearMonth}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
-
-        var closingEntry = new JournalEntry
-        {
-            CompanyId = companyId,
-            EntryNumber = entryNumber,
-            EntryDate = period.EndDate,
-            JournalType = JournalType.General,
-            Description = $"ปิดบัญชีรายได้/ค่าใช้จ่ายประจำงวด {period.Name}",
-            Status = JournalEntryStatus.Posted,
-            IsAutoGenerated = true,
-            TotalDebit = finalDebit,
-            TotalCredit = finalCredit,
-            CreatedBy = "System",
-            FiscalPeriodId = period.Id
-        };
-
-        for (var i = 0; i < closingLines.Count; i++)
-        {
-            closingLines[i].JournalEntryId = closingEntry.Id;
-            closingLines[i].LineOrder = i + 1;
-            closingEntry.Lines.Add(closingLines[i]);
-        }
-
-        _db.JournalEntries.Add(closingEntry);
-    }
+    // ── ลบ CreateClosingEntriesAsync ทิ้ง (C-T02) ──
+    // เมธอดนี้สร้างใบปิดบัญชีตอนปิดงวด**รายเดือน** ซึ่งเป็นต้นเหตุที่งบกำไรขาดทุน
+    // ของงวดที่ปิดแล้วกลายเป็น 0 · การปิด P&L เข้ากำไรสะสมทำปีละครั้งที่
+    // `YearEndCloseAsync` ซึ่งมีตรรกะของตัวเองครบอยู่แล้ว (และติดธง IsClosingEntry)
+    // — เก็บโค้ดที่ไม่มีใครเรียกไว้เฉย ๆ จะถูกอ่านว่า "ระบบมีฟีเจอร์นี้" ทั้งที่ไม่มี
 
     // ==================== Helpers ====================
 

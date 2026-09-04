@@ -938,10 +938,10 @@ public class TaxFilingExportService : ITaxFilingExportService
     {
         var company = await GetCompanyAsync(companyId);
         var thaiYear = year + 543;
-        var startMonth = company.FiscalYearStartMonth is >= 1 and <= 12 ? company.FiscalYearStartMonth : 1;
-        var fyStart = new DateTime(year, startMonth, 1);
-        var fyEnd = fyStart.AddYears(1).AddDays(-1);
-        var halfEnd = fyStart.AddMonths(6).AddDays(-1);   // 6 เดือนแรก
+        var fy = Accounting.Helpers.FiscalYear.RangeFor(year, company.FiscalYearStartMonth);
+        var fyStart = fy.Start;
+        var fyEnd = fy.EndInclusive;
+        var halfEnd = fy.HalfEndInclusive;   // 6 เดือนแรก
 
         // First-year ยกเว้น ภ.ง.ด.51 — ใช้ Company.CreatedAt เป็น proxy
         // ของวันเริ่มจัดตั้งระบบ (best-effort; user override ผ่าน portal ได้).
@@ -960,6 +960,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var revenueHalf = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= fyStart
                 && l.JournalEntry.EntryDate <= halfEnd
                 && l.Account!.AccountType == AccountType.Revenue)
@@ -967,6 +968,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var expenseHalf = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= fyStart
                 && l.JournalEntry.EntryDate <= halfEnd
                 && l.Account!.AccountType == AccountType.Expense)
