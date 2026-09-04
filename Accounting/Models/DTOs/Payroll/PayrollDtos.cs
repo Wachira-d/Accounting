@@ -26,7 +26,21 @@ public record CreateEmployeeRequest(
     string? ExternalSystem = null,
     /// <summary>LINE User ID ของพนักงาน (รูปแบบ Uxxxxxxxx) — ใช้ส่งแจ้งเตือน
     /// ผลอนุมัติลา/สลิปเงินเดือนตรงถึงพนักงานโดยไม่ต้องเป็น user ในระบบ.</summary>
-    string? LineId = null);
+    string? LineId = null,
+    // ═══ ค่าลดหย่อนภาษี §47 (D-T2) ═══
+    // 8 ช่องนี้มีอยู่บน entity + คอลัมน์ในฐานมาตลอด และเครื่องคิดภาษีก็อ่าน
+    // ครบทุกช่อง — แต่ **ไม่มีจุดเขียนเลยทั้งเรพ** (ไม่มีใน DTO ไม่มีในฟอร์ม)
+    // ⇒ ทุกคนได้ลดหย่อนแค่ 60,000 ⇒ พนักงานที่มีคู่สมรส + บุตร 2 คน เงินเดือน
+    // 50,000 ถูกหักภาษี 31,925 ทั้งที่ควรเป็น 6,475 (4.9 เท่า)
+    // "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้" — ครึ่งเซิร์ฟเวอร์ ship ไปคนเดียว
+    bool HasSpouseAllowance = false,
+    int ChildAllowanceCount = 0,
+    int SecondAndLaterChildren = 0,
+    int ParentAllowanceCount = 0,
+    decimal LifeInsurancePremium = 0m,
+    decimal RmfSsfContribution = 0m,
+    decimal DonationAmount = 0m,
+    int TaxAllowances = 0);
 
 public record UpdateEmployeeRequest(
     string? Position, string? Department, string? Phone,
@@ -45,7 +59,23 @@ public record UpdateEmployeeRequest(
     string? ExternalId = null,
     string? ExternalSystem = null,
     string? SalaryType = null,
-    string? LineId = null);
+    string? LineId = null,
+    // ═══ ค่าลดหย่อนภาษี §47 (D-T2) ═══
+    // 8 ช่องนี้มีอยู่บน entity + คอลัมน์ในฐานมาตลอด และเครื่องคิดภาษีก็อ่าน
+    // ครบทุกช่อง — แต่ **ไม่มีจุดเขียนเลยทั้งเรพ** (ไม่มีใน DTO ไม่มีในฟอร์ม)
+    // ⇒ ทุกคนได้ลดหย่อนแค่ 60,000 ⇒ พนักงานที่มีคู่สมรส + บุตร 2 คน เงินเดือน
+    // 50,000 ถูกหักภาษี 31,925 ทั้งที่ควรเป็น 6,475 (4.9 เท่า)
+    // "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้" — ครึ่งเซิร์ฟเวอร์ ship ไปคนเดียว
+    // nullable ทั้งหมด — ไม่ส่ง = ไม่แตะค่าเดิม (ฟอร์มที่ยังไม่มีแท็บนี้
+    // ต้องไม่ล้างค่าลดหย่อนของพนักงานทิ้งโดยไม่ตั้งใจ)
+    bool? HasSpouseAllowance = null,
+    int? ChildAllowanceCount = null,
+    int? SecondAndLaterChildren = null,
+    int? ParentAllowanceCount = null,
+    decimal? LifeInsurancePremium = null,
+    decimal? RmfSsfContribution = null,
+    decimal? DonationAmount = null,
+    int? TaxAllowances = null);
 
 public record EmployeeResponse(
     Guid Id, string EmployeeCode, string TitleTh,
@@ -65,7 +95,16 @@ public record EmployeeResponse(
     DateTime? LastSyncedAt = null,
     string? Phone = null,
     string? Email = null,
-    string? LineId = null);
+    string? LineId = null,
+    // echo กลับ — เก็บแล้วต้องแสดงได้ ไม่งั้น "เปิดแก้แล้วบันทึก ค่าหายเงียบ ๆ"
+    bool HasSpouseAllowance = false,
+    int ChildAllowanceCount = 0,
+    int SecondAndLaterChildren = 0,
+    int ParentAllowanceCount = 0,
+    decimal LifeInsurancePremium = 0m,
+    decimal RmfSsfContribution = 0m,
+    decimal DonationAmount = 0m,
+    int TaxAllowances = 0);
 
 /// <summary>Bulk-sync envelope for employees from an external HRIS. Each
 /// row is upserted on (CompanyId, ExternalSystem, ExternalId). Rows

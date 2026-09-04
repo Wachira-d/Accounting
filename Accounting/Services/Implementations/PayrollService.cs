@@ -28,17 +28,9 @@ public class PayrollService : IPayrollService
     private readonly INotificationEngine? _notify;
 
     // Thai personal income tax brackets (progressive)
-    private static readonly (decimal UpperBound, decimal Rate)[] ThaiTaxBrackets =
-    {
-        (150_000m, 0.00m),
-        (300_000m, 0.05m),
-        (500_000m, 0.10m),
-        (750_000m, 0.15m),
-        (1_000_000m, 0.20m),
-        (2_000_000m, 0.25m),
-        (5_000_000m, 0.30m),
-        (decimal.MaxValue, 0.35m)
-    };
+    // ตารางขั้นภาษี §48(1) ย้ายไป `Helpers/ThaiPitCalculator.DefaultBrackets`
+    // พร้อมตัวคิดภาษี — เพื่อให้มีเทสต์ล็อกตัวเลขได้ (เดิมสูตรอยู่กลางเมธอด
+    // ~470 บรรทัดโดยไม่มีเทสต์เลยสักตัว · ผลตรวจ D-R2/D-T1..T4)
 
     // Social security parameters are YEAR-DEPENDENT (เพดานปรับขึ้นเป็นขั้น
     // ตามพระราชกฤษฎีกา: 15,000 → 17,500 ปี 2026 → 20,000 ปี 2029 → 23,000
@@ -282,6 +274,15 @@ public class PayrollService : IPayrollService
             ExternalSystem = request.ExternalSystem,
             LastSyncedAt = request.ExternalId != null ? DateTime.UtcNow : null,
             LineId = request.LineId,
+            // ค่าลดหย่อน §47 (D-T2) — เดิมไม่มีจุดเขียนเลยทั้งเรพ
+            HasSpouseAllowance = request.HasSpouseAllowance,
+            ChildAllowanceCount = Math.Max(0, request.ChildAllowanceCount),
+            SecondAndLaterChildren = Math.Max(0, request.SecondAndLaterChildren),
+            ParentAllowanceCount = Math.Clamp(request.ParentAllowanceCount, 0, 4),
+            LifeInsurancePremium = Math.Max(0m, request.LifeInsurancePremium),
+            RmfSsfContribution = Math.Max(0m, request.RmfSsfContribution),
+            DonationAmount = Math.Max(0m, request.DonationAmount),
+            TaxAllowances = Math.Max(0, request.TaxAllowances),
         };
 
         _db.Set<Employee>().Add(employee);
@@ -396,6 +397,17 @@ public class PayrollService : IPayrollService
         // state (Suspended, PendingVerification) which is admin-managed.
         if (request.CostBehavior != null) employee.CostBehavior = request.CostBehavior;
         if (request.SalaryType != null) employee.SalaryType = request.SalaryType;
+        // ค่าลดหย่อนภาษี §47 (D-T2) — ไม่ส่ง = ไม่แตะค่าเดิม (ฟอร์ม/คู่ค้าที่ยัง
+        // ไม่ส่งช่องเหล่านี้ต้องไม่ล้างค่าลดหย่อนของพนักงานทิ้งโดยไม่ตั้งใจ)
+        if (request.HasSpouseAllowance.HasValue) employee.HasSpouseAllowance = request.HasSpouseAllowance.Value;
+        if (request.ChildAllowanceCount.HasValue) employee.ChildAllowanceCount = Math.Max(0, request.ChildAllowanceCount.Value);
+        if (request.SecondAndLaterChildren.HasValue) employee.SecondAndLaterChildren = Math.Max(0, request.SecondAndLaterChildren.Value);
+        // §47(1)(ญ) ลดหย่อนบิดามารดาได้สูงสุด 4 คน (พ่อแม่ตัวเอง + ของคู่สมรส)
+        if (request.ParentAllowanceCount.HasValue) employee.ParentAllowanceCount = Math.Clamp(request.ParentAllowanceCount.Value, 0, 4);
+        if (request.LifeInsurancePremium.HasValue) employee.LifeInsurancePremium = Math.Max(0m, request.LifeInsurancePremium.Value);
+        if (request.RmfSsfContribution.HasValue) employee.RmfSsfContribution = Math.Max(0m, request.RmfSsfContribution.Value);
+        if (request.DonationAmount.HasValue) employee.DonationAmount = Math.Max(0m, request.DonationAmount.Value);
+        if (request.TaxAllowances.HasValue) employee.TaxAllowances = Math.Max(0, request.TaxAllowances.Value);
         // LastSyncedAt only stamps when ExternalId is actually present — a
         // plain UI edit that re-sends an unchanged costBehavior shouldn't
         // look like an HRIS sync.
@@ -1785,7 +1797,27 @@ public class PayrollService : IPayrollService
                 // TAXABLE portion only — สวัสดิการยกเว้นภาษีถูกแยกไว้แล้วใน
                 // nonTaxableExtra → ไม่กระทบฐาน WHT.
                 var ytdIncome = cumulativeIncome + taxableGross;
-                var estimatedAnnualIncome = run.Month > 0 ? ytdIncome * 12 / run.Month : ytdIncome * 12;
+
+                // ═══ ประมาณการเงินได้ทั้งปี — จาก "งวดที่เหลือ" ไม่ใช่ "เดือนที่ผ่านมา" ═══
+                // (D-T3/D-T4) สูตรเดิม `ytd × 12 ÷ เดือน` ทำสองอย่างผิดพร้อมกัน:
+                //  · โบนัสก้อนเดียวถูกอ่านว่า "ได้ทุกเดือน" ⇒ เงินเดือน 50,000 +
+                //    โบนัส 300,000 ในเดือน 6 ถูกหักรวม 82,221 แทน 61,925 (ม.50(1)
+                //    เงินได้ครั้งคราวรวมครั้งเดียว ไม่ประมาณการซ้ำ)
+                //  · คนเข้ากลางปีถูกประมาณการจากเดือนที่ผ่านมา ⇒ เข้า 1 ก.ค.
+                //    เงินเดือน 150,000 หักงวดแรก 305 แล้วพุ่ง 36,759 งวดสุดท้าย
+                // สูตรใหม่ฉายเฉพาะ **ฐานประจำ** ไปข้างหน้า — แก้ทั้งสองด้วยตัวเดียว
+                //
+                // ฐานประจำ = ส่วนที่คาดว่าจะได้ต่อไปทุกงวด (เงินเดือน + เบี้ยเลี้ยง
+                // ประจำ + OT ที่เกิดในงวดนี้ยังถือว่าไม่ประจำ) — ตัดรายการครั้งคราว
+                // (โบนัส/คอมมิชชัน/อื่น ๆ) ออกเพราะมันอยู่ในยอดสะสมแล้ว
+                var recurringMonthly = Math.Max(0m, emp.BaseSalary - leaveDeduction + allowances);
+
+                // งวดที่เหลือหลังงวดนี้ — เคารพวันสิ้นสุดการจ้างถ้ามี (ลาออกกลางปี
+                // ไม่ควรถูกประมาณการว่ายังได้เงินเดือนจนสิ้นปี)
+                var lastPayMonth = emp.EndDate.HasValue && emp.EndDate.Value.Year == run.Year
+                    ? Math.Min(12, Math.Max(run.Month, emp.EndDate.Value.Month))
+                    : 12;
+                var remainingPeriodsAfterThis = Math.Max(0, lastPayMonth - run.Month);
 
                 // Apply Revenue Code §47 allowances before bracket lookup. Skipping
                 // these used to over-withhold by 5–15 % depending on income tier —
@@ -1810,34 +1842,46 @@ public class PayrollService : IPayrollService
                 var donationCapPct = (taxCfg?.DonationCapPercent ?? 10m) / 100m;
                 var perDependantLegacy = PitPerDependantAllowance;
 
-                var detailedAllowance =
-                    (emp.HasSpouseAllowance ? spouseAllow : 0m)
-                    + (emp.ChildAllowanceCount * childAllow)
-                    + (emp.SecondAndLaterChildren * childPost2561Bonus)
-                    + (Math.Min(4, emp.ParentAllowanceCount) * parentAllow)
-                    + Math.Min(lifeInsCap, emp.LifeInsurancePremium)
-                    + Math.Min(pvdCap, emp.RmfSsfContribution);
                 var hasDetailed = emp.HasSpouseAllowance
                     || emp.ChildAllowanceCount > 0 || emp.SecondAndLaterChildren > 0
                     || emp.ParentAllowanceCount > 0 || emp.LifeInsurancePremium > 0
                     || emp.RmfSsfContribution > 0;
-                var dependantsAllowance = hasDetailed
-                    ? detailedAllowance
-                    : perDependantLegacy * Math.Max(0, emp.TaxAllowances);
-                var baseDeductions = personalAllow + dependantsAllowance + annualSso + annualPvd;
-                // บริจาคหักได้ตาม donationCapPct ของเงินได้สุทธิหลังลดหย่อน
-                var afterBase = Math.Max(0, estimatedAnnualIncome - baseDeductions);
-                var donation = Math.Min(emp.DonationAmount, afterBase * donationCapPct);
-                var personalDeductions = baseDeductions + donation;
-                var estimatedTaxableIncome = Math.Max(0m, estimatedAnnualIncome - personalDeductions);
+                // ═══ คำนวณภาษีผ่าน pure class ตัวเดียว (D-T1..T4) ═══
+                // เดิมสูตรอยู่กลางเมธอดนี้ ~470 บรรทัด **ไม่มีเทสต์เลย** และลืมหัก
+                // ค่าใช้จ่าย §42ทวิ (50% ไม่เกิน 100,000) ⇒ เงินเดือน 50,000 ถูกหัก
+                // 31,925/ปี ทั้งที่ควรเป็น 20,450 (เกินเดือนละ 956 บาทต่อคน) ·
+                // `Section42TwiCap` มีในตารางตั้งค่ามาตลอดแต่ไม่มีใครอ่าน
+                var pitAllowances = new Accounting.Helpers.PitAllowances(
+                    Personal: personalAllow,
+                    Spouse: emp.HasSpouseAllowance ? spouseAllow : 0m,
+                    Children: hasDetailed
+                        ? (emp.ChildAllowanceCount * childAllow) + (emp.SecondAndLaterChildren * childPost2561Bonus)
+                        : 0m,
+                    Parents: hasDetailed ? Math.Min(4, emp.ParentAllowanceCount) * parentAllow : 0m,
+                    LifeInsurance: hasDetailed ? Math.Min(lifeInsCap, emp.LifeInsurancePremium) : 0m,
+                    ProvidentFund: (hasDetailed ? Math.Min(pvdCap, emp.RmfSsfContribution) : 0m) + annualPvd,
+                    SocialSecurity: annualSso);
+                // ผู้ที่ยังไม่ได้กรอกลดหย่อนรายช่อง ใช้ตัวเลขรวมแบบเดิม (TaxAllowances)
+                var pitAllowancesEffective = hasDetailed
+                    ? pitAllowances
+                    : pitAllowances with { Children = perDependantLegacy * Math.Max(0, emp.TaxAllowances) };
 
-                var brackets = ParseBrackets(taxCfg);
-                var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedTaxableIncome, brackets);
-                var remainingMonths = 13 - run.Month;
-                var monthlyTax = remainingMonths > 0
-                    ? (estimatedAnnualTax - cumulativeTax) / remainingMonths
-                    : 0m;
-                monthlyTax = Math.Max(0, monthlyTax);
+                var pit = Accounting.Helpers.ThaiPitCalculator.Compute(
+                    taxableIncomeYtd: ytdIncome,
+                    recurringMonthlyIncome: recurringMonthly,
+                    remainingPeriodsAfterThis: remainingPeriodsAfterThis,
+                    allowances: pitAllowancesEffective,
+                    taxWithheldYtdBeforeThisPeriod: cumulativeTax,
+                    donationAmount: emp.DonationAmount,
+                    donationCapPercent: donationCapPct * 100m,
+                    expenseCap: taxCfg?.Section42TwiCap,
+                    brackets: ParseBrackets(taxCfg) is { } bk
+                        ? bk.Select(b => new Accounting.Helpers.PitBracket(b.UpperBound, b.Rate)).ToArray()
+                        : null);
+
+                var estimatedAnnualIncome = pit.EstimatedAnnualIncome;
+                var estimatedAnnualTax = pit.EstimatedAnnualTax;
+                var monthlyTax = pit.WithholdingThisPeriod;
 
                 var totalDeductionsForEmp = ssoEmployee + monthlyTax + pvdEmployee + otherDeductions;
                 var netPay = grossIncome - totalDeductionsForEmp;
@@ -3799,42 +3843,9 @@ public class PayrollService : IPayrollService
 
     // ===== Thai Income Tax Calculation =====
 
-    /// <summary>
-    /// Calculates Thai personal income tax using progressive brackets.
-    /// Brackets: 0-150K=0%, 150K-300K=5%, 300K-500K=10%, 500K-750K=15%,
-    /// 750K-1M=20%, 1M-2M=25%, 2M-5M=30%, 5M+=35%
-    /// </summary>
-    /// <summary>คิดภาษีโดย walk progressive brackets — รับ override
-    /// brackets จาก TaxRuleConfig (ถ้ามี) ไม่งั้น fallback ใช้
-    /// hardcoded ThaiTaxBrackets ปัจจุบัน.</summary>
-    private static decimal CalculateThaiIncomeTax(decimal annualTaxableIncome,
-        (decimal UpperBound, decimal Rate)[]? brackets = null)
-    {
-        if (annualTaxableIncome <= 0) return 0;
-        var b = brackets ?? ThaiTaxBrackets;
-
-        decimal totalTax = 0;
-        decimal previousBound = 0;
-
-        foreach (var (upperBound, rate) in b)
-        {
-            if (annualTaxableIncome <= previousBound)
-                break;
-
-            var taxableInBracket = Math.Min(annualTaxableIncome, upperBound) - previousBound;
-            if (taxableInBracket > 0)
-            {
-                totalTax += taxableInBracket * rate;
-            }
-
-            previousBound = upperBound;
-        }
-
-        return Math.Round(totalTax, 2, MidpointRounding.AwayFromZero);
-    }
 
     /// <summary>โหลด TaxRuleConfig ของ company × fiscal year. คืน null
-    /// ถ้าไม่มี → caller ใช้ค่า default (Pit* constants + ThaiTaxBrackets).
+    /// ถ้าไม่มี → caller ใช้ค่า default (Pit* constants + ThaiPitCalculator.DefaultBrackets).
     /// Cache ใน-memory ของ instance นี้ — Year ของ payroll ไม่เปลี่ยนระหว่าง run.</summary>
     private readonly Dictionary<(Guid CompanyId, int Year), TaxRuleConfig?> _taxRuleCache = new();
     private async Task<TaxRuleConfig?> GetTaxRuleAsync(Guid companyId, int fiscalYear)
@@ -3848,7 +3859,7 @@ public class PayrollService : IPayrollService
         return cfg;
     }
 
-    /// <summary>Parse BracketsJson → array สำหรับ CalculateThaiIncomeTax.
+    /// <summary>Parse BracketsJson → array สำหรับ ThaiPitCalculator.
     /// คืน null ถ้า config ไม่มี / json ว่าง / parse fail → caller fallback.</summary>
     private static (decimal UpperBound, decimal Rate)[]? ParseBrackets(TaxRuleConfig? cfg)
     {
@@ -3895,7 +3906,12 @@ public class PayrollService : IPayrollService
             e.ContactId,
             e.CostBehavior,
             e.ExternalId, e.ExternalSystem, e.LastSyncedAt,
-            phone, email, e.LineId);
+            phone, email, e.LineId,
+            // echo ค่าลดหย่อนกลับ — "เก็บแล้วต้อง echo กลับ" ไม่งั้นเปิดฟอร์มแก้
+            // แล้วบันทึก ค่าที่เคยกรอกหายเงียบ ๆ (กฎเหล็ก #4 A)
+            e.HasSpouseAllowance, e.ChildAllowanceCount, e.SecondAndLaterChildren,
+            e.ParentAllowanceCount, e.LifeInsurancePremium, e.RmfSsfContribution,
+            e.DonationAmount, e.TaxAllowances);
     }
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
