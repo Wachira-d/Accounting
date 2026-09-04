@@ -7,6 +7,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <style>
+    .paybox{margin-top:10px;padding:10px 12px;border-radius:8px;background:#FFFBEB;border:1px solid #FDE68A;font-size:13px}
+    .paybox.ok{background:#ECFDF5;border-color:#A7F3D0;color:#065F46}
+    .paybox.wait{background:#EFF6FF;border-color:#BFDBFE;color:#1E3A8A}
+    .paybox.bad{background:#FEF2F2;border-color:#FECACA;color:#991B1B}
     .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-bottom:16px }
     .card h3 { margin:0 0 12px; font-size:15px; font-weight:700; color:#0f172a }
     .addon-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px }
@@ -71,6 +75,22 @@
     </div>
   </div>
 
+  <div class="modal" id="slipModal">
+    <div class="modal-content" style="max-width:520px">
+      <div class="modal-header">
+        <h3 id="slipModalTitle">แนบสลิป</h3>
+        <button class="modal-close" onclick="Page.closeSlip()">&times;</button>
+      </div>
+      <div class="modal-body" id="slipModalBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Page.closeSlip()">ยกเลิก</button>
+        <button class="btn btn-primary" id="slipSubmit" onclick="Page.submitSlip()">ส่งสลิป</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- หน้าจ่ายเงินกลาง — ห้ามเขียน QR/poll เองซ้ำอีกชุด -->
+  <script src="/js/pay-widget.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
@@ -241,6 +261,11 @@
         try {
           const res = await API.get(`/api/companies/${this.cid()}/metering/features`);
           this.features = res?.data || [];
+          // เปิด gateway ไหม — ถามเซิร์ฟเวอร์ ห้ามเดา (ที่ยังไม่เปิดต้องเห็นเฉพาะเส้นสลิป)
+          try {
+            const m = await fetch(`/api/companies/${this.cid()}/public-pay/methods`);
+            this.gatewayOn = m.ok ? !!((await m.json()).data?.online) : false;
+          } catch { this.gatewayOn = false; }
         } catch { this.features = []; }
         this.renderFeatures();
       },
@@ -274,6 +299,7 @@
               <span class="pill ${f.isEnabled ? 'on' : 'off'}">${f.isEnabled ? 'เปิดอยู่' : 'ปิดอยู่'}</span>
             </div>
             <div class="price">${this.priceText(f)}</div>
+            ${this.payBox(f)}
             ${f.isEnabled
               ? `<button class="btn btn-secondary" onclick="Page.toggle('${Layout.jsArg(f.featureCode)}', false, '${Layout.jsArg(f.name)}')">ปิดใช้งาน</button>`
               : `<div class="consent">
@@ -282,6 +308,88 @@
                  </div>
                  <button class="btn btn-primary" onclick="Page.toggle('${Layout.jsArg(f.featureCode)}', true, '${Layout.jsArg(f.name)}')">เปิดใช้งาน</button>`}
           </div>`).join('');
+      },
+
+      // ── กล่องชำระค่าส่วนเสริม (LDG-P0-03) ──
+      // ทุกข้อความสถานะมาจากเซิร์ฟเวอร์ (paymentStatusLabel) — ห้ามแต่งเองที่นี่
+      // ไม่งั้นได้สำเนามือชุดที่สองที่ drift (เหมือน MENU_SECTIONS/docHeaderLabel)
+      payBox(f) {
+        const st = f.paymentStatus;
+        if (!st || st === 'NotRequired') return '';
+        const due = Number(f.amountDue || 0);
+        const code = Layout.jsArg(f.featureCode);
+        if (st === 'Paid') return `<div class="paybox ok">✓ ${Layout.esc(f.paymentStatusLabel)}</div>`;
+        if (st === 'PendingReview') return `<div class="paybox wait">⏳ ${Layout.esc(f.paymentStatusLabel)}
+            ${f.slipUploadedAt ? `<div class="muted">ส่งเมื่อ ${new Date(f.slipUploadedAt).toLocaleString('th-TH')}</div>` : ''}</div>`;
+        const why = st === 'Rejected' && f.paymentRejectedReason
+          ? `<div class="paybox bad">⚠️ ${Layout.esc(f.paymentStatusLabel)} — ${Layout.esc(f.paymentRejectedReason)}</div>` : '';
+        return `${why}
+          <div class="paybox">
+            <div><b>ยอดที่ต้องชำระ ฿${due.toLocaleString('th-TH', {minimumFractionDigits: 2})}</b></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+              ${this.gatewayOn
+                ? `<button class="btn btn-primary btn-sm" onclick="Page.payOnline('${code}')">💳 ชำระออนไลน์</button>` : ''}
+              <button class="btn btn-secondary btn-sm" onclick="Page.slipForm('${code}')">📎 แนบสลิปโอนเงิน</button>
+            </div>
+            <div class="muted" style="margin-top:6px">${this.gatewayOn
+              ? 'ชำระออนไลน์ = ยืนยันทันที · แนบสลิป = รอผู้ดูแลระบบตรวจสอบ'
+              : 'ยังไม่เปิดรับชำระออนไลน์ — โอนแล้วแนบสลิป ผู้ดูแลระบบจะตรวจสอบให้'}</div>
+          </div>`;
+      },
+      async payOnline(code) {
+        try {
+          const res = await API.post(
+            `/api/companies/${this.cid()}/metering/features/${encodeURIComponent(code)}/payment/intent`,
+            { method: 'PromptPay', returnUrl: location.href });
+          const i = res?.data;
+          if (!i) throw new Error('เริ่มการชำระเงินไม่สำเร็จ');
+          if (i.authorizeUrl) { location.href = i.authorizeUrl; return; }
+          this.showQr(i, code);
+        } catch (e) { Layout.toast(e.message || 'เริ่มการชำระเงินไม่สำเร็จ', 'error'); }
+      },
+      showQr(intent, code) {
+        // ใช้หน้าจ่ายกลางถ้ามี — ไม่เขียน QR/poll เองซ้ำอีกชุด
+        if (window.PayWidget) {
+          PayWidget._opts = { companyId: this.cid() };
+          PayWidget._intentId = intent.id;
+          PayWidget._mount(); PayWidget._stopped = false;
+          PayWidget._renderPending(intent);
+          PayWidget._poll(0, Date.now());
+          return;
+        }
+        Layout.toast('เปิดหน้าชำระเงินไม่สำเร็จ — กรุณาแนบสลิปแทน', 'error');
+      },
+      slipForm(code) {
+        const f = this.features.find(x => x.featureCode === code);
+        this._slipCode = code;
+        document.getElementById('slipModalTitle').textContent = 'แนบสลิปค่าส่วนเสริม — ' + (f?.name || code);
+        document.getElementById('slipModalBody').innerHTML = `
+          <form id="addonSlipForm" style="display:grid;gap:10px">
+            <label>ไฟล์สลิป (รูปหรือ PDF)<input type="file" name="file" accept="image/*,application/pdf" required class="form-input"></label>
+            <label>ยอดที่โอน<input type="number" step="0.01" min="0" name="amount" value="${Number(f?.amountDue || 0)}" class="form-input"></label>
+            <label>อ้างอิง/เวลาโอน (ถ้ามี)<input name="reference" maxlength="120" class="form-input"></label>
+            <div class="muted">ผู้ดูแลระบบจะตรวจสอบ — ถ้าข้อมูลไม่ตรงจะแจ้งเหตุผลและปิดฟีเจอร์</div>
+          </form>`;
+        Layout.openModal('slipModal');
+      },
+      closeSlip() { Layout.closeModal('slipModal'); },
+      async submitSlip() {
+        const code = this._slipCode;
+        const form = document.getElementById('addonSlipForm');
+        if (!form || !form.file.files.length) { Layout.toast('เลือกไฟล์สลิปก่อน', 'error'); return; }
+        const btn = document.getElementById('slipSubmit');
+        btn.disabled = true;
+        try {
+          const r = await fetch(
+            `/api/companies/${this.cid()}/metering/features/${encodeURIComponent(code)}/payment/slip`,
+            { method: 'POST', headers: { Authorization: 'Bearer ' + API.token }, body: new FormData(form) });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.message || 'ส่งสลิปไม่สำเร็จ');
+          Layout.toast(j?.message || 'ส่งสลิปแล้ว', 'success');
+          this.closeSlip();
+          await this.loadFeatures();
+        } catch (e) { Layout.toast(e.message || 'ส่งสลิปไม่สำเร็จ', 'error'); }
+        finally { btn.disabled = false; }
       },
 
       async toggle(code, enable, name) {

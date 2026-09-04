@@ -23,6 +23,70 @@ public class MeteringAdminController : ControllerBase
     public MeteringAdminController(AccountingDbContext db) { _db = db; }
 
     // ──────────────────────────────────────────────────────────
+    //  ตรวจการชำระเงินค่าส่วนเสริม (LDG-P0-03)
+    //  เดิม: การปฏิเสธสลิปไม่เคยไปแตะสิทธิ์อะไรเลย ⇒ สลิปปลอมก็ยังใช้ฟีเจอร์ได้
+    // ──────────────────────────────────────────────────────────
+
+    /// <summary>คิวสลิปค่าส่วนเสริมที่รอตรวจ (ทุกบริษัท)</summary>
+    [HttpGet("addon-payments")]
+    public async Task<ActionResult<ApiResponse<object>>> PendingAddOnPayments(
+        [FromQuery] string? status, CancellationToken ct)
+    {
+        var q = _db.CompanyFeatures.AsNoTracking().Where(f => !f.IsDeleted);
+        q = status switch
+        {
+            "pending" or null or "" => q.Where(f => f.PaymentStatus == AddOnPaymentStatus.PendingReview),
+            "awaiting" => q.Where(f => f.PaymentStatus == AddOnPaymentStatus.AwaitingPayment),
+            "rejected" => q.Where(f => f.PaymentStatus == AddOnPaymentStatus.Rejected),
+            "all" => q.Where(f => f.PaymentStatus != AddOnPaymentStatus.NotRequired),
+            _ => q.Where(f => f.PaymentStatus == AddOnPaymentStatus.PendingReview),
+        };
+
+        var rows = await q
+            .OrderByDescending(f => f.SlipUploadedAt ?? f.UpdatedAt ?? f.CreatedAt)
+            .Take(300)
+            .Join(_db.Companies.AsNoTracking(), f => f.CompanyId, c => c.Id, (f, c) => new
+            {
+                f.CompanyId, companyName = c.Name, f.FeatureCode, f.IsEnabled,
+                paymentStatus = f.PaymentStatus.ToString(), f.PaymentSlipUrl, f.SlipUploadedAt,
+                f.PaymentReference, f.PaidAmount, f.AcceptedUnitPrice,
+                f.PaymentReviewedAt, f.PaymentReviewedBy, f.PaymentRejectedReason,
+            })
+            .ToListAsync(ct);
+
+        var names = await _db.ApiFeatures.AsNoTracking()
+            .ToDictionaryAsync(f => f.FeatureCode, f => f.Name, ct);
+        var data = rows.Select(r => new
+        {
+            r.CompanyId, r.companyName, r.FeatureCode,
+            featureName = names.TryGetValue(r.FeatureCode, out var n) ? n : r.FeatureCode,
+            r.IsEnabled, r.paymentStatus, r.PaymentSlipUrl, r.SlipUploadedAt,
+            r.PaymentReference, r.PaidAmount, r.AcceptedUnitPrice,
+            r.PaymentReviewedAt, r.PaymentReviewedBy, r.PaymentRejectedReason,
+        }).ToList();
+        return Ok(new ApiResponse<object>(true, data));
+    }
+
+    public record ReviewAddOnPaymentRequest(bool Approve, string? Reason);
+
+    /// <summary>อนุมัติ/ปฏิเสธการชำระเงินของส่วนเสริม —
+    /// <b>ปฏิเสธ = ปิดฟีเจอร์จริง</b> พร้อมแจ้งเจ้าของบริษัททางอีเมล</summary>
+    [HttpPost("addon-payments/{companyId:guid}/{featureCode}")]
+    public async Task<ActionResult<ApiResponse<object>>> ReviewAddOnPayment(
+        Guid companyId, string featureCode, [FromBody] ReviewAddOnPaymentRequest req,
+        [FromServices] Accounting.Services.Payments.IAddOnPurchaseService addons,
+        CancellationToken ct)
+    {
+        var actor = User.Identity?.Name ?? "system-admin";
+        var st = req.Approve
+            ? await addons.ApproveAsync(companyId, featureCode, actor, ct)
+            : await addons.RejectAsync(companyId, featureCode, req.Reason ?? "", actor, ct);
+        return Ok(new ApiResponse<object>(true, st, req.Approve
+            ? "ยืนยันการชำระเงินแล้ว"
+            : "ปฏิเสธการชำระเงินและปิดฟีเจอร์แล้ว — แจ้งลูกค้าทางอีเมลแล้ว"));
+    }
+
+    // ──────────────────────────────────────────────────────────
     //  ฟีเจอร์ในแคตตาล็อก
     // ──────────────────────────────────────────────────────────
 

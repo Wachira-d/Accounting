@@ -1736,7 +1736,19 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 
 ---
 
-### 6.5 โมดูลที่พัก (Lodging — โรงแรม/รีสอร์ท/บ้านพัก) ✅ รอบ 124
+### 6.5 โมดูลที่พัก (Lodging — โรงแรม/รีสอร์ท/บ้านพัก) ✅ รอบ 124 · ปลายทาง ✅ รอบ 126
+
+> **รอบ 126 — เส้นที่แขกสัมผัสจริง** (`LODGING_BOOKING_AUDIT.md`):
+> | สิ่งที่เพิ่ม | ไฟล์ | หมายเหตุ |
+> | --- | --- | --- |
+> | **จ่ายออนไลน์ได้จริง** | `PublicPaymentController` (`[AllowAnonymous]`) + `PublicPaymentResolver` | เดิม `PaymentGatewayController` เป็น `[Authorize]` และไม่มีทางเข้าอื่น ⇒ **ลูกค้าปลายทางจ่ายไม่ได้ทั้งระบบ** · ตัวตนพิสูจน์ด้วย `PublicToken`/`orderId` · **ไม่รับ `SourceId` และไม่รับ `Amount`** (ยอดมาจาก `LodgingAmounts.OnlinePayableAmount`) · เพดาน 20 intent/ชม./source |
+> | **ปฏิเสธสลิปได้** | `LodgingService.RejectSlipAsync` · `POST reservations/{id}/reject-slip` | เหตุผล**บังคับ** → ล้างสลิปให้ส่งใหม่ · ต่อ hold 24 ชม. · แจ้งแขกทางอีเมล · `SlipUploadBlocked` ปิดรับสลิปเมื่อพบของปลอม · **ไม่ลบไฟล์เดิม** (หลักฐาน) |
+> | **หลักฐานการจองให้โหลด** | `GET reservations/{token}/voucher.pdf` + `Helpers/LodgingVoucherBuilder` | **ไม่ใช่เอกสารภาษี** — มีเทสต์ล็อกว่าคำว่า "ใบกำกับภาษี"/"ใบเสร็จรับเงิน" ต้องไม่โผล่ · ใบเสร็จมัดจำ/ใบกำกับเช็คเอาต์ยังเป็นคนละใบผ่าน `IDocumentService` ตามเดิม |
+> | **ค่าเช็คอินก่อนเวลา / เช็คเอาต์ช้า** | `CheckInAsync` / `CheckOutAsync` → `AddChargeCoreAsync` | `EarlyCheckInFee`/`LateCheckOutFee` มีคอลัมน์มาตั้งแต่รอบ 124 แต่**ไม่มีใครอ่าน** · **พนักงานติ๊กเอง** ไม่ใช่ระบบเก็บอัตโนมัติ |
+>
+> **สูตรยอดคงเหลือย้ายมาอยู่ที่เดียว** — `Helpers/LodgingAmounts.BalanceDue`
+> (เดิมคัดลอกไว้ 4 จุดใน `LodgingService`) เพราะกำลังจะมีผู้ใช้รายที่ห้าคือเส้นจ่ายเงินของแขก
+
 
 > ที่มา/การตัดสินใจเทียบ TakeTime: `LODGING_TAKETIME_ANALYSIS.md` · entity: `Models/Entities/Lodging.cs` ·
 > engine (pure): `Helpers/LodgingPricingEngine.cs` (+ `LodgingAvailability`) · service: `Services/Implementations/Lodging/LodgingService*.cs` ·
@@ -2793,7 +2805,12 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-04 (รอบ 126 — **เก็บ doc ที่ค้างจาก Sprint 4/5**:_
+_Last verified against codebase: 2026-09-04 (รอบ 126b — **ปลายทางของโมดูลที่พัก**:_
+_§6.5 เพิ่มตารางสิ่งที่ต่อสายรอบนี้ — ทางจ่ายออนไลน์ของลูกค้าปลายทาง (`PublicPaymentController`_
+_ซึ่งเป็นทางเข้าเดียวที่ไม่ต้องล็อกอินและสร้าง `PaymentIntent` ได้) · ปฏิเสธสลิป ·_
+_voucher หลักฐานการจอง (**ไม่ใช่เอกสารภาษี**) · ค่าเช็คอินก่อนเวลา/เช็คเอาต์ช้า ·_
+_สูตร BalanceDue ยุบมาที่ `Helpers/LodgingAmounts`)_
+_ก่อนหน้า: 2026-09-04 (รอบ 126 — **เก็บ doc ที่ค้างจาก Sprint 4/5**:_
 _ขั้นอนุมัติเพิ่ม **ขั้น 0 "ด่านงวดปิด"** (`RequireOpenFiscalPeriodAsync` · C-T04 ·_
 _9 จุดที่ลง JE จริง — **เปลี่ยนพฤติกรรม**: ลงย้อนเข้างวดที่ปิดแล้วจะได้ 400 พร้อม_
 _ข้อความบอกทางแก้ 2 ทาง) · **ขั้น 5 retention** เปลี่ยนฐานจาก `DocumentDate + 5y`_

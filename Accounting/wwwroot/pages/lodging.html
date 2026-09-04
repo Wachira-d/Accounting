@@ -142,10 +142,13 @@
         if (!this.props.length) { sel.innerHTML = '<option value="">ยังไม่มีที่พัก</option>'; document.getElementById('dashStats').innerHTML = '<div class="card">ยังไม่มีที่พัก — <a href="/pages/lodging-settings.html">สร้างที่พักในหน้าตั้งค่า</a> หรือสร้างเว็บไซต์ประเภท "โรงแรม/ที่พัก" ใน CMS</div>'; return; }
         sel.innerHTML = this.props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
         this.propertyId = new URLSearchParams(location.search).get('propertyId') || this.props[0].id; sel.value = this.propertyId;
+        this.property = this.props.find(p => p.id === this.propertyId) || null;
         await this.loadRefs(); await this.loadDash();
         const open = new URLSearchParams(location.search).get('id'); if (open) await this.openReservation(open);
       },
-      async onPropChange() { this.propertyId = document.getElementById('propSelector').value; await this.loadRefs(); await this.loadDash(); await this.loadList(); },
+      async onPropChange() { this.propertyId = document.getElementById('propSelector').value;
+        this.property = this.props.find(p => p.id === this.propertyId) || null;
+        await this.loadRefs(); await this.loadDash(); await this.loadList(); },
       async loadRefs() {
         const api = Layout.api();
         const [u, rt, ex] = await Promise.all([api.lodgingUnits(this.propertyId), api.lodgingRoomTypes(this.propertyId), api.lodgingExtras(this.propertyId)]);
@@ -232,7 +235,8 @@
         if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('ยกเลิก', 'cancel(false)', 'btn-danger') + (d10(r.checkInDate) <= todayIso() ? A('No-show', 'cancel(true)', 'btn-danger') : '');
         actions += A('✏️ แก้ข้อมูลแขก', 'editGuestForm()');
         document.getElementById('resBody').innerHTML = `
-          ${r.status === 'Pending' && r.slipUploadedAt ? `<div class="warn">📎 แขกอัปโหลดสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} ${r.paymentReference ? '(' + esc(r.paymentReference) + ')' : ''} — <a href="${esc(r.paymentSlipUrl)}" target="_blank">เปิดดูสลิป</a> แล้วกด "ยืนยัน + บันทึกรับมัดจำ"</div>` : ''}
+          ${r.slipUploadedAt ? `<div class="warn">📎 แขกอัปโหลดสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} ${r.paymentReference ? '(' + esc(r.paymentReference) + ')' : ''} — <a href="${esc(r.paymentSlipUrl)}" target="_blank">เปิดดูสลิป</a> แล้วกด "ยืนยัน + บันทึกรับมัดจำ" หรือ <a href="#" onclick="Page.rejectSlipForm();return false" style="color:#dc2626">ปฏิเสธสลิป</a> ถ้ายอด/ชื่อไม่ตรง</div>` : ''}
+          ${r.slipRejectedCount > 0 ? `<div class="warn" style="background:#FEE2E2;border-color:#FCA5A5">⚠️ สลิปถูกปฏิเสธมาแล้ว ${r.slipRejectedCount} ครั้ง${r.slipRejectedReason ? ` — ล่าสุด: ${esc(r.slipRejectedReason)}` : ''}${r.slipUploadBlocked ? ' · <b>ปิดรับสลิปของใบนี้แล้ว</b> (แขกยังชำระออนไลน์/ติดต่อที่พักได้)' : ''}</div>` : ''}
           ${r.status === 'Pending' && r.holdExpiresAt ? `<div class="hint" style="margin-bottom:8px">กันห้องถึง ${new Date(r.holdExpiresAt).toLocaleString('th-TH')}</div>` : ''}
           <div class="grid grid-2 gap-4">
             <div class="card"><h4>👤 ผู้เข้าพัก</h4><div><b>${esc(r.guestName)}</b>${r.guestCompanyName ? ` · ${esc(r.guestCompanyName)}` : ''}</div><div class="hint">📱 ${esc(r.guestPhone || '-')} · 📧 ${esc(r.guestEmail || '-')}${r.guestNationality ? ' · ' + esc(r.guestNationality) : ''}</div>
@@ -270,6 +274,33 @@
       },
       pmSelect(name, def) { return `<select class="form-input" name="${name}">${Object.entries(PM).map(([k, v]) => `<option value="${k}" ${+k === def ? 'selected' : ''}>${v}</option>`).join('')}</select>`; },
       async assign(reservationRoomId, unitId) { await this.call(() => Layout.api().lodgingAssign(this.current.id, { reservationRoomId, unitId: unitId || null })); },
+      // ปฏิเสธสลิป — เหตุผล**บังคับ** เพราะข้อความนี้ถูกส่งถึงแขกตรง ๆ
+      // และเป็นสิ่งเดียวที่บอกเขาว่าต้องทำอะไรต่อ
+      rejectSlipForm() {
+        const r = this.current;
+        this.sub('ปฏิเสธสลิปของแขก', `<form id="rjf" class="grid2">
+          <div class="fld" style="grid-column:1/-1"><label>เหตุผล (แขกจะเห็นข้อความนี้)</label>
+            <input class="form-input" name="reason" required maxlength="500" list="rjReasons"
+                   placeholder="เช่น ยอดในสลิปไม่ตรงกับยอดมัดจำ">
+            <datalist id="rjReasons">
+              <option value="ยอดเงินในสลิปไม่ตรงกับยอดมัดจำที่ต้องชำระ">
+              <option value="ไม่พบรายการเงินเข้าในบัญชีของที่พัก">
+              <option value="สลิปอ่านไม่ออก/ไม่ชัด กรุณาถ่ายใหม่">
+              <option value="สลิปเป็นของรายการอื่น ไม่ใช่การจองนี้">
+              <option value="ตรวจพบว่าสลิปถูกแก้ไข">
+            </datalist></div>
+          <div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="block">
+            ปิดรับสลิปของการจองนี้ไปเลย (ใช้เมื่อพบสลิปปลอม — แขกยังชำระออนไลน์/ติดต่อที่พักได้)</label></div>
+          <div class="hint" style="grid-column:1/-1">ระบบจะลบสลิปออกจากหน้าจอให้แขกส่งใหม่ ต่อเวลาถือห้องอีก 24 ชม.
+            และส่งอีเมลแจ้งเหตุผล · <b>ไฟล์สลิปเดิมไม่ถูกลบ</b> ยังใช้เป็นหลักฐานได้</div>
+        </form>`, async () => {
+          const f = document.getElementById('rjf');
+          if (!f.reason.value.trim()) { Layout.toast('กรุณาระบุเหตุผล', 'error'); return false; }
+          await this.call(() => Layout.api().lodgingRejectSlip(r.id,
+            { reason: f.reason.value.trim(), blockFurtherUploads: f.block.checked }));
+        }, 'ปฏิเสธสลิป');
+      },
+
       confirmForm(extra) {
         const r = this.current; const due = Math.max(0, r.depositRequired - r.depositPaid);
         this.sub(extra ? 'รับชำระเพิ่ม' : 'ยืนยันการจอง + บันทึกรับมัดจำ', `<form id="cf" class="grid2">
@@ -290,9 +321,12 @@
           ${missing.length ? `<div class="warn" style="grid-column:1/-1">ยังไม่ได้จัดห้อง ${missing.length} ห้อง — เลือกในหน้ารายละเอียด (dropdown ที่บรรทัดห้อง) ก่อน</div>` : `<div class="hint" style="grid-column:1/-1">ห้อง: ${r.rooms.map(x => esc(x.unitNumber)).join(', ')}</div>`}
           <div class="fld"><label>เลขบัตร/พาสปอร์ต</label><input class="form-input" name="idno" placeholder="${esc(r.guestIdNumberMasked || '')}"></div>
           <div class="fld"><label>สัญชาติ</label><input class="form-input" name="nat" value="${esc(r.guestNationality || '')}"></div>
+          ${(this.property?.earlyCheckInFee > 0) ? `<div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="early">
+            เก็บค่าเช็คอินก่อนเวลา ${money(this.property.earlyCheckInFee)} บาท (ก่อน ${esc(this.property.checkInTime || '')} น.)</label>
+            <div class="hint">ระบบไม่เก็บเองอัตโนมัติ — ห้องอาจว่างอยู่แล้วหรือที่พักยกเว้นให้</div></div>` : ''}
           <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div></form>`, async () => {
           const f = document.getElementById('cif');
-          await this.call(() => Layout.api().lodgingCheckIn(r.id, { guestIdNumber: f.idno.value || null, guestNationality: f.nat.value || null, note: f.note.value || null }));
+          await this.call(() => Layout.api().lodgingCheckIn(r.id, { guestIdNumber: f.idno.value || null, guestNationality: f.nat.value || null, note: f.note.value || null, chargeEarlyCheckIn: !!(f.early && f.early.checked) }));
         }, 'เช็คอิน');
       },
       chargeForm() {
@@ -318,9 +352,11 @@
           <div class="fld"><label>วิธีชำระ</label>${this.pmSelect('pm', 1)}</div>
           <div class="fld"><label>อ้างอิง</label><input class="form-input" name="ref"></div>
           <div class="fld"><label><input type="checkbox" name="company" ${r.guestTaxId ? 'checked' : ''}> ออกใบกำกับในนามบริษัทของแขก (${esc(r.guestCompanyName || 'ยังไม่มีข้อมูล')})</label></div>
+          ${(this.property?.lateCheckOutFee > 0) ? `<div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="late">
+            เก็บค่าเช็คเอาต์ช้า ${money(this.property.lateCheckOutFee)} บาท (หลัง ${esc(this.property.checkOutTime || '')} น.)</label></div>` : ''}
           <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div></form>`, async () => {
           const f = document.getElementById('cof');
-          await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null }));
+          await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', chargeLateCheckOut: !!(f.late && f.late.checked), issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null }));
         }, 'เช็คเอาต์');
       },
       async cancel(noShow) {

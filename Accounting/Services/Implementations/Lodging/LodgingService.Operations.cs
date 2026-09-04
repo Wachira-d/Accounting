@@ -50,15 +50,18 @@ public partial class LodgingService
             PromoCode = r.PromoCode, RoomSubtotal = r.RoomSubtotal, ExtrasTotal = r.ExtrasTotal, DiscountAmount = r.DiscountAmount,
             ServiceChargeAmount = r.ServiceChargeAmount, VatAmount = r.VatAmount, TotalAmount = r.TotalAmount, FolioTotal = r.FolioTotal,
             GrandTotal = r.TotalAmount + r.FolioTotal, DepositRequired = r.DepositRequired, DepositPaid = r.DepositPaid, PaidAmount = r.PaidAmount,
-            BalanceDue = Math.Max(0, r.TotalAmount + r.FolioTotal - r.PaidAmount), Currency = r.Currency, HoldExpiresAt = r.HoldExpiresAt,
+            BalanceDue = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount), Currency = r.Currency, HoldExpiresAt = r.HoldExpiresAt,
             DepositDocumentId = r.DepositDocumentId, DepositDocumentNumber = r.DepositDocumentId is Guid dd ? docNos.GetValueOrDefault(dd) : null,
             FinalDocumentId = r.FinalDocumentId, FinalDocumentNumber = r.FinalDocumentId is Guid fd ? docNos.GetValueOrDefault(fd) : null,
             PaymentSlipUrl = r.PaymentSlipUrl, PaymentReference = r.PaymentReference, SlipUploadedAt = r.SlipUploadedAt,
+            SlipRejectedCount = r.SlipRejectedCount, SlipRejectedReason = r.SlipRejectedReason,
+            SlipRejectedAt = r.SlipRejectedAt, SlipUploadBlocked = r.SlipUploadBlocked,
             ConfirmedAt = r.ConfirmedAt, CheckedInAt = r.CheckedInAt, CheckedOutAt = r.CheckedOutAt, CancelledAt = r.CancelledAt,
             CancellationReason = r.CancellationReason, CancellationFee = r.CancellationFee, RefundAmount = r.RefundAmount,
             InternalNotes = includeInternal ? r.InternalNotes : null, CreatedAt = r.CreatedAt,
             ConfirmationMessage = prop.ConfirmationMessage, HouseRules = prop.HouseRules,
             CheckInTime = Time(prop.CheckInTime), CheckOutTime = Time(prop.CheckOutTime), PropertyPhone = prop.Phone, PropertyLineId = prop.LineId,
+            PropertyAddress = prop.Address, PropertyMapUrl = prop.MapUrl,
             Rooms = r.Rooms.Select(x => new LodgingReservationRoomDto
             {
                 Id = x.Id, RoomTypeId = x.RoomTypeId, RoomTypeName = x.RoomTypeName, UnitId = x.UnitId, UnitNumber = x.Unit?.Number,
@@ -246,7 +249,7 @@ public partial class LodgingService
         Id = r.Id, ReservationNumber = r.ReservationNumber, Status = r.Status, Source = r.Source, GuestName = r.GuestName, GuestPhone = r.GuestPhone,
         CheckInDate = r.CheckInDate, CheckOutDate = r.CheckOutDate, Nights = r.Nights, RoomCount = r.Rooms.Count, RoomSummary = RoomSummary(r),
         UnitNumbers = string.Join(", ", r.Rooms.Where(x => x.Unit != null).Select(x => x.Unit!.Number)),
-        TotalAmount = r.TotalAmount, FolioTotal = r.FolioTotal, PaidAmount = r.PaidAmount, BalanceDue = Math.Max(0, r.TotalAmount + r.FolioTotal - r.PaidAmount),
+        TotalAmount = r.TotalAmount, FolioTotal = r.FolioTotal, PaidAmount = r.PaidAmount, BalanceDue = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount),
         DepositRequired = r.DepositRequired, HoldExpiresAt = r.HoldExpiresAt, HasSlip = r.SlipUploadedAt != null, CreatedAt = r.CreatedAt,
     };
 
@@ -357,6 +360,19 @@ public partial class LodgingService
                     : $"<p>เรียน คุณ{enc(r.GuestName)}<br>เราได้รับคำขอจองของท่านแล้ว{(r.Status == LodgingReservationStatus.Pending && r.HoldExpiresAt != null ? $" กรุณาชำระมัดจำ {r.DepositRequired:N2} บาท และอัปโหลดสลิปภายใน {r.HoldExpiresAt.Value.AddHours(7):dd/MM/yyyy HH:mm} น. เพื่อยืนยันห้อง" : "")}</p>";
                 var rules = string.IsNullOrWhiteSpace(prop.HouseRules) ? "" : $"<p><b>กติกาที่พัก</b><br>{enc(prop.HouseRules).Replace("\n", "<br>")}</p>";
                 await _email.SendAsync(r.GuestEmail, subject, intro + summary + rules);
+            }
+            // สลิปไม่ผ่าน = แขกต้องลงมือทำอะไรต่อ ⇒ ห้ามเงียบ ต้องถึงตัวเขา ไม่ใช่แค่บนหน้าเว็บ
+            // ที่เขาอาจไม่กลับมาเปิดอีกเลย (กติกา "ดัง 3 ที่": ตัวข้อมูล · สถานะ · คำตอบถึงผู้เกี่ยวข้อง)
+            if (!string.IsNullOrWhiteSpace(r.GuestEmail) && evt == "slip-rejected")
+            {
+                var why = enc(r.SlipRejectedReason ?? "ข้อมูลในสลิปไม่ตรงกับยอดที่ต้องชำระ");
+                var next = r.SlipUploadBlocked
+                    ? "<p>ที่พัก<b>ปิดรับสลิปของการจองนี้แล้ว</b> — กรุณาชำระออนไลน์ผ่านลิงก์ด้านล่าง หรือติดต่อที่พักโดยตรง</p>"
+                    : "<p>กรุณาตรวจสอบแล้ว<b>ส่งสลิปใหม่</b>ผ่านลิงก์ด้านล่าง — ที่พักต่อเวลาถือห้องให้แล้ว</p>";
+                await _email.SendAsync(r.GuestEmail,
+                    $"สลิปไม่ผ่านการตรวจสอบ — การจอง {r.ReservationNumber}",
+                    $"<p>เรียน คุณ{enc(r.GuestName)}<br>สลิปที่ท่านส่งมายังไม่ผ่านการตรวจสอบ</p>"
+                    + $"<p><b>เหตุผล:</b> {why}</p>" + next + summary);
             }
             if (prop.NotifyOwnerOnBooking && evt is "created" or "slip")
             {

@@ -387,6 +387,18 @@ public class LodgingReservation : TenantEntity
     public string? PaymentReference { get; set; }
     public DateTime? SlipUploadedAt { get; set; }
 
+    // ── การตรวจสลิป (LDG-P0-02) ──
+    // เดิมมีแต่ "ยืนยัน" กับ "ยกเลิกทั้งใบ" ⇒ สลิปไม่ตรง/ปลอม พนักงานได้แต่เงียบ
+    // แล้วหน้าแขกค้าง "รอที่พักตรวจสอบ" ตลอดไป (silent no-op ในรูปที่แย่ที่สุด)
+    /// <summary>จำนวนครั้งที่สลิปถูกปฏิเสธ — ใช้ตัดสินว่าควรปิดรับสลิปของใบนี้หรือยัง</summary>
+    public int SlipRejectedCount { get; set; }
+    /// <summary>เหตุผลครั้งล่าสุด — แสดงให้แขกเห็นตรง ๆ ห้ามให้เขาเดาว่าทำไมไม่ผ่าน</summary>
+    public string? SlipRejectedReason { get; set; }
+    public DateTime? SlipRejectedAt { get; set; }
+    /// <summary>ปิดรับสลิปของการจองใบนี้ — ใช้เมื่อพบสลิปปลอมซ้ำ ๆ · แขกยังจ่าย
+    /// ออนไลน์หรือติดต่อที่พักได้ (ไม่ใช่การตัดทางไปต่อทั้งหมด)</summary>
+    public bool SlipUploadBlocked { get; set; }
+
     // ── lifecycle ──
     public DateTime? ConfirmedAt { get; set; }
     public DateTime? CheckedInAt { get; set; }

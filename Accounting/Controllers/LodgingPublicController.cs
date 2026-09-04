@@ -77,6 +77,28 @@ public class LodgingPublicController : ControllerBase
         return Ok(new ApiResponse<LodgingReservationResponse>(true, r));
     }
 
+    /// <summary>
+    /// **หลักฐานการจองให้แขกโหลดเก็บ** (LDG-P1-04) — PDF พิมพ์ได้ ใช้แสดงตอนเช็คอิน
+    ///
+    /// <para>เดิมหน้าการจองมีแค่ปุ่ม "กลับหน้าหลัก" กับ "ยกเลิก" — ไม่มีอะไรให้เก็บเลย</para>
+    ///
+    /// <para><b>ไม่ใช่เอกสารภาษี</b> — ใบเสร็จมัดจำ/ใบกำกับตอนเช็คเอาต์เป็นคนละใบ
+    /// และออกผ่าน <c>IDocumentService</c> ตามเลข gap-free §86/4 · ตัวประกอบ HTML
+    /// (<c>LodgingVoucherBuilder</c>) เขียนคำเตือนนี้ไว้ท้ายเอกสารและมีเทสต์ล็อกว่า
+    /// คำว่า "ใบกำกับภาษี"/"ใบเสร็จรับเงิน" ต้องไม่โผล่บนหัว</para>
+    /// </summary>
+    [HttpGet("reservations/{token}/voucher.pdf")]
+    public async Task<IActionResult> Voucher(Guid companyId, Guid siteId, string token,
+        [FromServices] IPdfGenerationService pdf, CancellationToken ct)
+    {
+        var r = await _svc.GetReservationByTokenAsync(companyId, siteId, token);
+        if (r == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบการจอง"));
+
+        var html = Accounting.Helpers.LodgingVoucherBuilder.BuildHtml(r);
+        var bytes = await pdf.RenderHtmlToPdfAsync(html);
+        return File(bytes, "application/pdf", Accounting.Helpers.LodgingVoucherBuilder.FileName(r));
+    }
+
     [HttpPost("reservations/{token}/slip")]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> UploadSlip(Guid companyId, Guid siteId, string token, IFormFile? file, [FromForm] string? reference)

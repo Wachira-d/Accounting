@@ -297,6 +297,10 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPaymentIntentService,
 // แต่ตัวมันรับ IEnumerable<IPaymentCompletionHandler> อยู่แล้ว
 builder.Services.AddScoped<Accounting.Services.Payments.IGatewayAccountResolver,
     Accounting.Services.Payments.GatewayAccountResolver>();
+// ตัวแปล "ของที่ลูกค้าปลายทางถืออยู่" (token การจอง / orderId) → เป้าหมายการจ่ายเงิน
+// — ทางเดียวที่ผู้ไม่ล็อกอินสร้าง PaymentIntent ได้ ผ่าน PublicPaymentController
+builder.Services.AddScoped<Accounting.Services.Payments.IPublicPaymentResolver,
+    Accounting.Services.Payments.PublicPaymentResolver>();
 // ขั้น "เงินเข้าธนาคารจริง" (settlement) — ล้างบัญชีพัก + ลงค่าธรรมเนียม + WHT
 builder.Services.AddScoped<Accounting.Services.Payments.IGatewaySettlementService,
     Accounting.Services.Payments.GatewaySettlementService>();
@@ -304,6 +308,11 @@ builder.Services.AddScoped<Accounting.Services.Payments.IGatewaySettlementServic
 // ไม่ใช่แก้ service กลาง · ต้นทางที่ยังไม่มีตัวจัดการจะ log error ดัง ๆ (ไม่เงียบ)
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.SiteOrderPaymentHandler>();
+// ซื้อส่วนเสริม (add-on) — เงินเข้าแล้วเปิดสิทธิ์ทันที ไม่ต้องรอแอดมินตรวจสลิป
+builder.Services.AddScoped<Accounting.Services.Payments.IAddOnPurchaseService,
+    Accounting.Services.Payments.AddOnPurchaseService>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.AddOnPurchasePaymentHandler>();
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.DocumentPaymentHandler>();
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
@@ -936,6 +945,8 @@ var publicUploadPrefixes = new[]
     "/uploads/lodging-slips",
     // สื่อของศูนย์ช่วยเหลือ (วิดีโอ/คู่มือที่ผู้ให้บริการอัปโหลด) — ลูกค้าทุกรายเปิดดู
     "/uploads/help-media",
+    // รูปที่พัก/ประเภทห้อง — แสดงบนหน้าเว็บสาธารณะของที่พัก (LDG-P1-05)
+    "/uploads/lodging",
 };
 app.Use(async (ctx, next) =>
 {

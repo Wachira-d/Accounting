@@ -5888,6 +5888,16 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "GrantSource" integer NOT NULL DEFAULT 1;""",
             """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "SnapshotUnitPrice" numeric(18,4) NULL;""",
             """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "LastBilledPeriod" varchar(7) NULL;""",
+            // การชำระเงินของ add-on (LDG-P0-03) — เดิมเปิดใช้ได้ฟรีทันที ไม่มีทั้ง gateway และสลิป
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentStatus" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentIntentId" uuid NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentSlipUrl" text NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "SlipUploadedAt" timestamptz NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentReference" varchar(120) NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaidAmount" numeric(18,2) NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentReviewedAt" timestamptz NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentReviewedBy" text NULL;""",
+            """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentRejectedReason" text NULL;""",
             // แคตตาล็อกเดิมทั้งหมดคือผลิตภัณฑ์ Connected API — ติดป้ายให้ตรงความจริง
             // (แถวใหม่ที่ seed ด้านล่างเป็น BusinessAddOn/SystemMeter)
             """UPDATE "ApiFeatures" SET "ModuleCode" = 'Api' WHERE "ModuleCode" IS NULL AND "Kind" = 1;""",
@@ -6208,6 +6218,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AccountingModeAckAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AccountingModeAckBy" text NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "MeteredPeriod" varchar(7) NULL;""",
+            // การตรวจสลิปของแขก (LDG-P0-02) — เดิมปฏิเสธสลิปไม่ได้เลย
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SlipRejectedCount" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SlipRejectedReason" text NULL;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SlipRejectedAt" timestamptz NULL;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SlipUploadBlocked" boolean NOT NULL DEFAULT false;""",
             """CREATE INDEX IF NOT EXISTS "IX_LodgingReservations_Metered" ON "LodgingReservations" ("CompanyId", "MeteredPeriod");""",
 
             // C-T11 — ขยาย RetentionUntil ของแถวเดิมที่คำนวณจาก "วันที่เอกสาร + 5 ปี"
@@ -6220,7 +6235,11 @@ public static class DatabaseMigrationHelper
             //
             // สูตรวันสิ้นรอบ: ถ้าเดือนของเอกสาร >= เดือนเริ่มรอบ → รอบจบปีถัดไป
             // (เขียนบรรทัดเดียวตามแบบของลิสต์นี้ — ห้าม raw string หลายบรรทัด CS8997)
-            """UPDATE "Documents" d SET "RetentionUntil" = GREATEST(d."RetentionUntil", (make_date(CASE WHEN EXTRACT(MONTH FROM d."DocumentDate") >= c."FiscalYearStartMonth" THEN EXTRACT(YEAR FROM d."DocumentDate")::int + 1 ELSE EXTRACT(YEAR FROM d."DocumentDate")::int END, c."FiscalYearStartMonth", 1) - INTERVAL '1 day' + INTERVAL '5 years')::timestamptz) FROM "Companies" c WHERE c."Id" = d."CompanyId" AND d."RetentionUntil" IS NOT NULL;""",
+            // ⚠️ คำสั่งนี้รัน**ทุกครั้งที่ boot** — เงื่อนไขท้าย (`RetentionUntil <` ค่าใหม่)
+            // ทำให้รอบที่สองเป็นต้นไปไม่แตะแถวไหนเลย (0 rows) แทนที่จะเขียนทับทั้งตาราง
+            // ซ้ำ ๆ · ถ้าไม่มีเงื่อนไขนี้ ฐานที่มีเอกสารหลักล้านใบจะเสียเวลา+WAL ทุกครั้ง
+            // ที่ deploy โดยไม่ได้อะไรเพิ่ม (REV-08)
+            """UPDATE "Documents" d SET "RetentionUntil" = GREATEST(d."RetentionUntil", (make_date(CASE WHEN EXTRACT(MONTH FROM d."DocumentDate") >= c."FiscalYearStartMonth" THEN EXTRACT(YEAR FROM d."DocumentDate")::int + 1 ELSE EXTRACT(YEAR FROM d."DocumentDate")::int END, c."FiscalYearStartMonth", 1) - INTERVAL '1 day' + INTERVAL '5 years')::timestamptz) FROM "Companies" c WHERE c."Id" = d."CompanyId" AND d."RetentionUntil" IS NOT NULL AND d."RetentionUntil" < (make_date(CASE WHEN EXTRACT(MONTH FROM d."DocumentDate") >= c."FiscalYearStartMonth" THEN EXTRACT(YEAR FROM d."DocumentDate")::int + 1 ELSE EXTRACT(YEAR FROM d."DocumentDate")::int END, c."FiscalYearStartMonth", 1) - INTERVAL '1 day' + INTERVAL '5 years')::timestamptz;""",
         };
 
         foreach (var sql in statements)

@@ -45,6 +45,27 @@
         </div>
       </div>
 
+      <!-- คิวตรวจการชำระเงินค่าส่วนเสริม (LDG-P0-03) -->
+      <div class="card">
+        <h3>🧾 การชำระเงินค่าส่วนเสริมที่รอตรวจ
+          <span class="muted" style="font-weight:400;font-size:12px">— ปฏิเสธ = <b>ปิดฟีเจอร์ของบริษัทนั้นทันที</b> และแจ้งเจ้าของทางอีเมล</span>
+        </h3>
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          <select id="payFilter" class="form-input" style="max-width:220px" onchange="Page.loadPayments()">
+            <option value="pending">รอตรวจสอบ</option>
+            <option value="awaiting">รอลูกค้าชำระ</option>
+            <option value="rejected">ปฏิเสธแล้ว</option>
+            <option value="all">ทั้งหมดที่มีค่าใช้จ่าย</option>
+          </select>
+        </div>
+        <div class="scroll-x">
+          <table class="table">
+            <thead><tr><th>บริษัท</th><th>ส่วนเสริม</th><th class="num">ยอด</th><th>สลิป</th><th>สถานะ</th><th></th></tr></thead>
+            <tbody id="payRows"><tr><td colspan="6" style="padding:18px" class="muted">กำลังโหลด...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="card">
         <h3>รายการทั้งหมด</h3>
         <div class="scroll-x">
@@ -242,6 +263,59 @@
         if (!(await Layout.requirePlatformAdmin())) return;
         Layout.setTitle('ส่วนเสริมและราคา');
         await this.load();
+        await this.loadPayments();
+      },
+
+      // ── คิวตรวจการชำระเงินค่าส่วนเสริม ──
+      async loadPayments() {
+        const tb = document.getElementById('payRows');
+        const st = document.getElementById('payFilter')?.value || 'pending';
+        try {
+          const res = await API.get(`/api/admin/metering/addon-payments?status=${encodeURIComponent(st)}`);
+          this.payments = res?.data || [];
+        } catch (e) {
+          tb.innerHTML = `<tr><td colspan="6" style="padding:18px;color:#dc2626">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</td></tr>`;
+          return;
+        }
+        if (!this.payments.length) {
+          tb.innerHTML = '<tr><td colspan="6" style="padding:18px" class="muted">ไม่มีรายการในสถานะนี้</td></tr>';
+          return;
+        }
+        const label = { AwaitingPayment: 'รอชำระ', PendingReview: 'รอตรวจ', Paid: 'ชำระแล้ว', Rejected: 'ปฏิเสธ' };
+        tb.innerHTML = this.payments.map(r => `
+          <tr>
+            <td>${Layout.esc(r.companyName || '')}<div class="muted" style="font-size:11px">${Layout.esc(r.companyId)}</div></td>
+            <td>${Layout.esc(r.featureName)}<div class="muted" style="font-size:11px">${Layout.esc(r.featureCode)}</div></td>
+            <td class="num">${this.money(r.paidAmount ?? r.acceptedUnitPrice)}</td>
+            <td>${r.paymentSlipUrl
+                  ? `<a href="${Layout.esc(r.paymentSlipUrl)}" target="_blank" rel="noopener">เปิดดูสลิป</a>
+                     <div class="muted" style="font-size:11px">${r.slipUploadedAt ? new Date(r.slipUploadedAt).toLocaleString('th-TH') : ''}
+                     ${r.paymentReference ? ' · ' + Layout.esc(r.paymentReference) : ''}</div>`
+                  : '<span class="muted">—</span>'}</td>
+            <td><span class="pill ${r.paymentStatus === 'Paid' ? 'on' : 'off'}">${Layout.esc(label[r.paymentStatus] || r.paymentStatus)}</span>
+                ${r.paymentRejectedReason ? `<div class="muted" style="font-size:11px">${Layout.esc(r.paymentRejectedReason)}</div>` : ''}
+                ${!r.isEnabled ? '<div class="muted" style="font-size:11px">ฟีเจอร์ถูกปิดอยู่</div>' : ''}</td>
+            <td style="white-space:nowrap">
+              ${r.paymentStatus !== 'Paid'
+                ? `<button class="btn btn-sm btn-primary" onclick="Page.reviewPayment('${Layout.jsArg(r.companyId)}', '${Layout.jsArg(r.featureCode)}', true)">✓ อนุมัติ</button>
+                   <button class="btn btn-sm btn-secondary" onclick="Page.reviewPayment('${Layout.jsArg(r.companyId)}', '${Layout.jsArg(r.featureCode)}', false)">✕ ปฏิเสธ</button>`
+                : ''}
+            </td>
+          </tr>`).join('');
+      },
+      async reviewPayment(companyId, featureCode, approve) {
+        let reason = null;
+        if (!approve) {
+          reason = prompt('เหตุผลที่ไม่อนุมัติ (ลูกค้าจะเห็นข้อความนี้ และฟีเจอร์จะถูกปิด)');
+          if (!reason || !reason.trim()) return;
+        } else if (!confirm('ยืนยันว่าตรวจสอบการชำระเงินแล้วถูกต้อง?')) return;
+        try {
+          const res = await API.post(
+            `/api/admin/metering/addon-payments/${encodeURIComponent(companyId)}/${encodeURIComponent(featureCode)}`,
+            { approve, reason });
+          Layout.toast(res?.message || 'บันทึกแล้ว', 'success');
+          await this.loadPayments();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },
 
       n(v) { return (v ?? 0).toLocaleString('th-TH'); },

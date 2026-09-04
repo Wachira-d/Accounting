@@ -17,9 +17,18 @@
  *  4. **ป้ายโหมดทดสอบต้องเห็นบนหน้าจ่ายของลูกค้า** ไม่ใช่แค่หน้าตั้งค่าของร้าน —
  *     ไม่งั้นร้านทดลองแล้วเข้าใจว่าเก็บเงินได้จริง
  *
+ * ═══ สองโหมด ═══
+ *  A. **โหมดในระบบ** (ผู้ใช้ล็อกอิน) — ส่ง sourceKind/sourceId/amount เอง ยิงไป
+ *     `/pay/intents` ซึ่งเป็น [Authorize]
+ *  B. **โหมดลูกค้าปลายทาง** (ไม่ล็อกอิน) — ส่ง `publicBase` ที่เป็นเส้นทางซึ่ง
+ *     **มี token/orderId ของผู้เรียกอยู่ในตัว URL แล้ว** ยิงไป `/public-pay/...`
+ *     ⇒ ฝั่งนี้ **ไม่ส่ง sourceId และไม่ส่ง amount** เลย: เซิร์ฟเวอร์ resolve เอง
+ *     จากแถวจริง (ถ้าให้หน้าเว็บกำหนดยอดได้ ใครก็จ่าย 1 บาทแล้วได้ของ)
+ *
  * การใช้:
  *   PayWidget.open({
- *     companyId, sourceKind: 'SiteOrder', sourceId, amount,
+ *     companyId, sourceKind: 'SiteOrder', sourceId, amount,   // โหมด A
+ *     publicBase: `/api/companies/${cid}/public-pay/lodging/${siteId}/${token}`, // โหมด B
  *     method: 'PromptPay', description, customerEmail,
  *     onPaid: (intent) => { ... },     // จ่ายสำเร็จ
  *     onClosed: () => { ... },         // ผู้ใช้ปิดหน้าต่างเอง
@@ -51,19 +60,32 @@
       this._setBody('<div style="padding:28px;text-align:center;color:#64748b">กำลังเตรียมการชำระเงิน…</div>');
 
       try {
-        const res = await fetch(`/api/companies/${opts.companyId}/pay/intents`, {
+        const pub = !!opts.publicBase;
+        const url = pub
+          ? `${opts.publicBase}/intents`
+          : `/api/companies/${opts.companyId}/pay/intents`;
+        // โหมดสาธารณะส่ง **เฉพาะวิธีจ่าย** — ตัวตนอยู่ใน URL แล้ว และยอดมาจาก
+        // เซิร์ฟเวอร์เท่านั้น (ห้ามให้หน้าเว็บกำหนดจำนวนเงินที่ตัวเองจะจ่าย)
+        const body = pub
+          ? {
+              method: opts.method || 'PromptPay',
+              returnUrl: opts.returnUrl || (location.origin + location.pathname),
+              cardToken: opts.cardToken || null,
+            }
+          : {
+              sourceKind: opts.sourceKind, sourceId: opts.sourceId,
+              amount: opts.amount, method: opts.method || 'PromptPay',
+              description: opts.description || null,
+              customerEmail: opts.customerEmail || null,
+              customerPhone: opts.customerPhone || null,
+              returnUrl: opts.returnUrl || (location.origin + location.pathname),
+              cardToken: opts.cardToken || null,
+              siteId: opts.siteId || null, contactId: opts.contactId || null,
+            };
+        const res = await fetch(url, {
           method: 'POST',
           headers: Object.assign({ 'Content-Type': 'application/json' }, this._authHeader()),
-          body: JSON.stringify({
-            sourceKind: opts.sourceKind, sourceId: opts.sourceId,
-            amount: opts.amount, method: opts.method || 'PromptPay',
-            description: opts.description || null,
-            customerEmail: opts.customerEmail || null,
-            customerPhone: opts.customerPhone || null,
-            returnUrl: opts.returnUrl || (location.origin + location.pathname),
-            cardToken: opts.cardToken || null,
-            siteId: opts.siteId || null, contactId: opts.contactId || null,
-          }),
+          body: JSON.stringify(body),
         });
         const json = await res.json();
         if (!res.ok || !json.success) throw new Error(json.message || 'เริ่มการชำระเงินไม่สำเร็จ');
@@ -83,7 +105,10 @@
     },
 
     _authHeader() {
-      // หน้า storefront ของลูกค้าไม่มี token — endpoint ฝั่งนั้นเปิดสาธารณะอยู่แล้ว
+      // หน้า storefront ของลูกค้าไม่มี token — โหมดสาธารณะจึงเดินผ่าน `/public-pay/...`
+      // (คอมเมนต์เดิมตรงนี้เขียนว่า "endpoint ฝั่งนั้นเปิดสาธารณะอยู่แล้ว" ซึ่ง
+      //  **ไม่จริง** — `/pay/*` เป็น [Authorize] ทั้งคลาส ⇒ widget นี้ใช้กับแขก
+      //  ไม่ได้เลยตั้งแต่วันแรก และไม่มีหน้าไหนเรียกมันด้วย · แก้แล้วในรอบ 126)
       const t = (() => { try { return localStorage.getItem('token'); } catch { return null; } })();
       return t ? { Authorization: 'Bearer ' + t } : {};
     },
@@ -192,9 +217,10 @@
       this._timer = setTimeout(async () => {
         if (this._stopped) return;
         try {
-          const res = await fetch(
-            `/api/companies/${this._opts.companyId}/pay/intents/${this._intentId}/status`,
-            { headers: this._authHeader() });
+          const statusUrl = this._opts.publicBase
+            ? `${this._opts.publicBase}/intents/${this._intentId}`
+            : `/api/companies/${this._opts.companyId}/pay/intents/${this._intentId}/status`;
+          const res = await fetch(statusUrl, { headers: this._authHeader() });
           const json = await res.json();
           const intent = json.data;
           if (intent && intent.status === 'Succeeded') {

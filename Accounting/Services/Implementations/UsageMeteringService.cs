@@ -272,6 +272,21 @@ public class UsageMeteringService : IUsageMeteringService
             var plan = await ResolvePlanAsync(featureCode, account, now, ct);
             row.AcceptedUnitPrice = snapshotUnitPrice ?? plan?.UnitPrice;
 
+            // ── ต้องจ่ายก่อนใช้ไหม (LDG-P0-03) ──
+            // ตัวตัดสินอยู่ที่ `AddOnPaymentPolicy` ที่เดียว — ห้ามให้หน้าเว็บหรือ
+            // controller ตัดสินเอง (ไม่งั้นสองฝั่งจะไม่ตรงกันในวันที่กติกาเปลี่ยน)
+            // ⚠️ อ่าน TrialUntil **หลัง** บล็อกตั้ง trial ด้านบน เพราะ trial ที่เพิ่ง
+            // เริ่มต้องทำให้รอบนี้ไม่ต้องจ่าย
+            var needPay = Accounting.Helpers.AddOnPaymentPolicy.RequiresPayment(
+                grantSource, plan?.Method, row.AcceptedUnitPrice, row.TrialUntil, now);
+            // เคยจ่ายผ่านแล้วและเปิดใหม่ในงวดเดิม = ไม่เก็บซ้ำ (Paid ค้างไว้ได้)
+            if (row.PaymentStatus != AddOnPaymentStatus.Paid || !needPay)
+                row.PaymentStatus = Accounting.Helpers.AddOnPaymentPolicy.InitialStatus(needPay);
+            if (!needPay)
+            {
+                row.PaymentRejectedReason = null;
+            }
+
             // ทดลองใช้ฟรีตามที่ตั้งไว้บนฟีเจอร์ — เริ่มนับ**ครั้งแรกที่เปิดเท่านั้น**
             // (ปิดแล้วเปิดใหม่ต้องไม่ได้ trial รอบสอง ไม่งั้นใช้ฟรีตลอดกาลด้วยการ
             // toggle ทุกเดือน) เทียบด้วย TrialUntil ที่เคยตั้งไว้แล้ว

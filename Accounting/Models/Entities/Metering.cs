@@ -99,6 +99,30 @@ public class CompanyFeature : TenantEntity
     /// กันคิดเงินซ้ำเมื่อ job รันหลายรอบ/หลาย instance ในเดือนเดียวกัน
     /// (คู่กับ IdempotencyKey บน UsageEvent — กันสองชั้น)</summary>
     public string? LastBilledPeriod { get; set; }
+
+    // ═══ การชำระเงินของ add-on (LDG-P0-03) ═══
+    // เดิม: กดเปิด = ใช้ได้ทันทีฟรี แล้วค่อยเก็บเงินทีหลังผ่าน AddOnMonthlyBillingJob
+    // ⇒ ไม่มีทั้งช่องจ่ายผ่าน gateway และช่องแนบสลิป · และเมื่อแอดมินปฏิเสธสลิป
+    // ก็ไม่มีอะไรไปปิดสิทธิ์ให้ (defect class "ปฏิเสธแล้วไม่มีผลอะไรเลย")
+
+    /// <summary>สถานะการชำระเงินของการเปิดใช้ครั้งนี้ — <see cref="AddOnPaymentStatus"/></summary>
+    public AddOnPaymentStatus PaymentStatus { get; set; } = AddOnPaymentStatus.NotRequired;
+
+    /// <summary>รายการชำระเงินออนไลน์ (ถ้าจ่ายผ่าน gateway) — ผูกกลับไปที่
+    /// <c>PaymentIntent</c> ตัวเดียวของระบบ ไม่สร้างระบบรับเงินชุดที่สอง</summary>
+    public Guid? PaymentIntentId { get; set; }
+
+    /// <summary>สลิปที่ลูกค้าแนบ (เส้นสำรองเมื่อยังไม่เปิด gateway)</summary>
+    public string? PaymentSlipUrl { get; set; }
+    public DateTime? SlipUploadedAt { get; set; }
+    public string? PaymentReference { get; set; }
+    public decimal? PaidAmount { get; set; }
+
+    /// <summary>ผลการตรวจของแอดมินแพลตฟอร์ม</summary>
+    public DateTime? PaymentReviewedAt { get; set; }
+    public string? PaymentReviewedBy { get; set; }
+    /// <summary>เหตุผลที่ปฏิเสธ — ลูกค้าต้องเห็น ไม่ใช่ถูกปิดเงียบ ๆ</summary>
+    public string? PaymentRejectedReason { get; set; }
 }
 
 /// <summary>

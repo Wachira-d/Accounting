@@ -467,6 +467,11 @@ public class LodgingReservationResponse
     public string? PaymentSlipUrl { get; set; }
     public string? PaymentReference { get; set; }
     public DateTime? SlipUploadedAt { get; set; }
+    // ── ผลการตรวจสลิป — echo กลับให้หน้าแขกเห็นเหตุผล ห้ามให้เขาเดาเอง ──
+    public int SlipRejectedCount { get; set; }
+    public string? SlipRejectedReason { get; set; }
+    public DateTime? SlipRejectedAt { get; set; }
+    public bool SlipUploadBlocked { get; set; }
     public DateTime? ConfirmedAt { get; set; }
     public DateTime? CheckedInAt { get; set; }
     public DateTime? CheckedOutAt { get; set; }
@@ -487,6 +492,9 @@ public class LodgingReservationResponse
     public string CheckOutTime { get; set; } = "12:00";
     public string? PropertyPhone { get; set; }
     public string? PropertyLineId { get; set; }
+    // ที่อยู่/แผนที่ — แขกต้องรู้ว่าไปที่ไหน · จำเป็นบนหลักฐานการจองที่พิมพ์เก็บ
+    public string? PropertyAddress { get; set; }
+    public string? PropertyMapUrl { get; set; }
 }
 
 public class LodgingReservationRoomDto
@@ -576,7 +584,11 @@ public record LodgingCheckInRequest(
     List<LodgingAssignUnitRequest>? Assignments = null,
     string? GuestIdNumber = null,
     string? GuestNationality = null,
-    string? Note = null);
+    string? Note = null,
+    /// <summary>เก็บค่าเช็คอินก่อนเวลาตามที่ตั้งไว้ใน <c>LodgingProperty.EarlyCheckInFee</c>
+    /// — <b>พนักงานเป็นคนตัดสิน</b> ไม่ใช่ระบบเก็บเองอัตโนมัติ เพราะห้องอาจว่างอยู่แล้ว
+    /// และที่พักหลายแห่งยกเว้นให้ (ค่าที่แต่งขึ้นเองอันตรายกว่าการไม่ตอบ)</summary>
+    bool ChargeEarlyCheckIn = false);
 
 public record LodgingAddChargeRequest(
     string Description, decimal Quantity, decimal UnitPrice,
@@ -594,6 +606,9 @@ public record LodgingCheckOutRequest(
     string? DamageDescription = null,
     /// <summary>false = ออกใบแจ้งหนี้แต่ยังไม่รับเงิน (ลูกค้าองค์กร/agent เครดิต)</summary>
     bool CollectBalanceNow = true,
+    /// <summary>เก็บค่าเช็คอินก่อนเวลาตามที่ตั้งไว้ (LodgingProperty.LateCheckOutFee)
+    /// — พนักงานตัดสินเช่นกัน</summary>
+    bool ChargeLateCheckOut = false,
     /// <summary>ออกใบกำกับภาษีในนามบริษัทของแขก (ใช้ GuestTaxId/GuestCompanyName)</summary>
     bool IssueTaxInvoiceToCompany = false,
     string? Note = null);
@@ -737,3 +752,10 @@ public class LodgingCalendarAvailability
 }
 
 public record LodgingCalendarDay(DateTime Date, int Available, decimal Rate, bool StopSell, int? Allotment);
+
+/// <summary>ปฏิเสธสลิปที่แขกส่งมา — <b>เหตุผลบังคับ</b> เพราะข้อความนี้คือสิ่งเดียว
+/// ที่แขกจะได้เห็นว่าทำไมไม่ผ่านและต้องทำอะไรต่อ</summary>
+public sealed record LodgingRejectSlipRequest(
+    string Reason,
+    /// <summary>ปิดรับสลิปของใบนี้ไปเลย (พบสลิปปลอม) — แขกยังจ่ายออนไลน์/ติดต่อที่พักได้</summary>
+    bool BlockFurtherUploads = false);

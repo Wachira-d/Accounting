@@ -48,6 +48,11 @@ public interface ILodgingService
     Task<LodgingReservationResponse> CreateReservationAsync(Guid companyId, Guid propertyId, LodgingCreateReservationRequest request, LodgingReservationSource source, string actor, Guid? siteId = null);
     Task<LodgingReservationResponse?> GetReservationByTokenAsync(Guid companyId, Guid siteId, string token);
     Task<LodgingReservationResponse?> UploadSlipByTokenAsync(Guid companyId, Guid siteId, string token, IFormFile file, string? reference);
+
+    /// <summary>ปฏิเสธสลิปที่แขกส่งมา (เหตุผลบังคับ) — ล้างสลิปออกให้ส่งใหม่ได้ ·
+    /// ต่ออายุ hold · แจ้งแขก · เลือกปิดรับสลิปของใบนี้ได้เมื่อพบสลิปปลอม</summary>
+    Task<LodgingReservationResponse?> RejectSlipAsync(
+        Guid companyId, Guid reservationId, LodgingRejectSlipRequest request, string userId);
     Task<LodgingReservationResponse?> CancelByTokenAsync(Guid companyId, Guid siteId, string token, LodgingCancelRequest request);
     Task<LodgingGuestRequestDto?> CreateGuestRequestByTokenAsync(Guid companyId, Guid siteId, string token, LodgingGuestRequestCreate request);
 

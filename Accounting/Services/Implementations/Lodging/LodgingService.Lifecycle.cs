@@ -86,8 +86,17 @@ public partial class LodgingService
         if (r == null) return null;
         if (r.Status is LodgingReservationStatus.Cancelled or LodgingReservationStatus.NoShow)
             throw new BusinessRuleException("การจองนี้ถูกยกเลิกแล้ว");
+        // ที่พักปิดรับสลิปของใบนี้แล้ว (พบสลิปไม่ตรง/ปลอมซ้ำ) — ต้องบอกทางไปต่อ
+        // ไม่ใช่ปฏิเสธเฉย ๆ (กติกา "ปฏิเสธแล้วต้องมีทางไปต่อ")
+        if (r.SlipUploadBlocked)
+            throw new BusinessRuleException(
+                "ที่พักปิดรับสลิปของการจองนี้แล้ว — กรุณาชำระออนไลน์ผ่านหน้านี้ "
+                + "หรือติดต่อที่พักโดยตรงเพื่อยืนยันการชำระเงิน");
         var url = await SaveSlipFileAsync(companyId, r.Id, file);
         r.PaymentSlipUrl = url; r.PaymentReference = reference; r.SlipUploadedAt = DateTime.UtcNow;
+        // ส่งใหม่แล้ว = ล้างผลปฏิเสธครั้งก่อนออกจากหน้าจอ (แต่ **คงตัวนับไว้** เพราะ
+        // มันคือหลักฐานว่าใบนี้เคยมีปัญหา — ตัวนับที่รีเซ็ตทุกครั้งจะไม่มีวันถึงเกณฑ์)
+        r.SlipRejectedReason = null; r.SlipRejectedAt = null;
         // อัปโหลดสลิปแล้ว = ต่อเวลาถือห้องให้พนักงานตรวจ (ไม่ปล่อยห้องระหว่างรอตรวจ)
         if (r.Status == LodgingReservationStatus.Pending && r.HoldExpiresAt != null && r.HoldExpiresAt < DateTime.UtcNow.AddHours(24))
             r.HoldExpiresAt = DateTime.UtcNow.AddHours(24);
@@ -95,6 +104,60 @@ public partial class LodgingService
         await _db.SaveChangesAsync();
         await TryNotifyAsync(companyId, r.Id, "slip");
         return await MapAsync(companyId, r, includeToken: true, includeInternal: false);
+    }
+
+    /// <summary>
+    /// **ปฏิเสธสลิปที่แขกส่งมา** (LDG-P0-02)
+    ///
+    /// <para>เดิมพนักงานมีแค่ "ยืนยัน + รับมัดจำ" กับ "ยกเลิกทั้งใบ" ⇒ เจอสลิปไม่ตรง
+    /// หรือสลิปปลอมก็ได้แต่<b>เงียบ</b> แล้วหน้าแขกค้างข้อความ "รอที่พักตรวจสอบ"
+    /// ตลอดไป — silent no-op ในรูปที่มองไม่เห็นที่สุด (ไม่มี error ให้ไล่ เพราะ
+    /// ไม่มีอะไรเกิดขึ้นเลย)</para>
+    ///
+    /// <para><b>สามอย่างที่ต้องเกิดพร้อมกัน</b> ตามกติกา "ดัง 3 ที่":
+    /// (ก) ล้างสลิปออกจากแถวเพื่อให้แขกส่งใหม่ได้ (ข) เก็บเหตุผลไว้บนตัวข้อมูล
+    /// ให้ทั้งแขกและ audit เห็น (ค) แจ้งแขกทางอีเมล</para>
+    ///
+    /// <para><b>ต่ออายุ hold ด้วย</b> — ปฏิเสธแล้วปล่อยห้องทันทีเท่ากับลงโทษแขก
+    /// สำหรับความผิดที่ยังไม่พิสูจน์ · ให้เวลาส่งใหม่ 24 ชม.
+    /// ยกเว้นกรณีปิดรับสลิป (ตั้งใจไม่ต่อให้ เพราะไม่รอสลิปแล้ว)</para>
+    ///
+    /// <para>⚠️ <b>ไม่ลบไฟล์จริง</b> — สลิปที่ถูกปฏิเสธคือหลักฐานตั้งต้นถ้ามีข้อพิพาท
+    /// (บทเรียนเดียวกับ "เปลี่ยนชื่อฉบับเก่า ไม่ใช่ลบ" ของไฟล์แนบเงินเดือน)</para>
+    /// </summary>
+    public async Task<LodgingReservationResponse?> RejectSlipAsync(
+        Guid companyId, Guid reservationId, LodgingRejectSlipRequest request, string userId)
+    {
+        var reason = (request.Reason ?? "").Trim();
+        if (reason.Length == 0)
+            throw new BusinessRuleException(
+                "ต้องระบุเหตุผลที่สลิปไม่ผ่าน — ข้อความนี้คือสิ่งเดียวที่แขกจะเห็นว่าต้องทำอะไรต่อ");
+        if (reason.Length > 500) reason = reason[..500];
+
+        var r = await ResQuery(companyId).FirstOrDefaultAsync(x => x.Id == reservationId);
+        if (r == null) return null;
+        if (r.SlipUploadedAt == null)
+            throw new BusinessRuleException("การจองนี้ยังไม่มีสลิปให้ตรวจ");
+
+        var oldUrl = r.PaymentSlipUrl;
+        r.PaymentSlipUrl = null;
+        r.PaymentReference = null;
+        r.SlipUploadedAt = null;
+        r.SlipRejectedCount += 1;
+        r.SlipRejectedReason = reason;
+        r.SlipRejectedAt = DateTime.UtcNow;
+        if (request.BlockFurtherUploads) r.SlipUploadBlocked = true;
+        else if (r.Status == LodgingReservationStatus.Pending)
+            r.HoldExpiresAt = DateTime.UtcNow.AddHours(24);
+
+        _db.AuditLogs.Add(Audit(companyId, AuditAction.Update, r, new
+        {
+            action = "SlipRejected", reason, blocked = r.SlipUploadBlocked,
+            rejectedCount = r.SlipRejectedCount, previousSlip = oldUrl, by = userId,
+        }));
+        await _db.SaveChangesAsync();
+        await TryNotifyAsync(companyId, r.Id, "slip-rejected");
+        return await MapAsync(companyId, r, includeToken: true, includeInternal: true);
     }
 
     public async Task<LodgingReservationResponse?> CancelByTokenAsync(Guid companyId, Guid siteId, string token, LodgingCancelRequest request)
@@ -167,7 +230,7 @@ public partial class LodgingService
             RoomSummary = string.Join(" · ", r.Rooms.GroupBy(x => x.RoomTypeName).Select(g => g.Count() > 1 ? $"{g.Key} ×{g.Count()}" : g.Key)),
             UnitNumbers = string.Join(", ", r.Rooms.Where(x => x.UnitNumber != null).Select(x => x.UnitNumber)),
             TotalAmount = r.TotalAmount, FolioTotal = r.FolioTotal, PaidAmount = r.PaidAmount,
-            BalanceDue = Math.Max(0, r.TotalAmount + r.FolioTotal - r.PaidAmount), DepositRequired = r.DepositRequired,
+            BalanceDue = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount), DepositRequired = r.DepositRequired,
             HoldExpiresAt = r.HoldExpiresAt, HasSlip = r.SlipUploadedAt != null, CreatedAt = r.CreatedAt,
         }).ToList();
         return new PagedResponse<LodgingReservationListItem>(list, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
@@ -365,6 +428,17 @@ public partial class LodgingService
         r.Status = LodgingReservationStatus.CheckedIn; r.CheckedInAt = DateTime.UtcNow; r.HoldExpiresAt = null;
         r.ConfirmedAt ??= DateTime.UtcNow; r.ConfirmedBy ??= userId;
         foreach (var room in r.Rooms.Where(x => x.Unit != null)) room.Unit!.HousekeepingStatus = LodgingHousekeepingStatus.Occupied;
+
+        // ── ค่าเช็คอินก่อนเวลา (LDG-P2-06) ──
+        // `EarlyCheckInFee` มีคอลัมน์ + หน้าตั้งค่ามาตั้งแต่รอบ 124 แต่**ไม่มีใครอ่าน**
+        // (จดไว้ใน LODGING_TAKETIME_ANALYSIS §2) ⇒ ที่พักตั้งค่าไว้แล้วไม่เคยเก็บได้เลย
+        // พนักงานเป็นคนติ๊ก ไม่ใช่ระบบเก็บเอง — ห้องอาจว่างอยู่แล้วและหลายที่ยกเว้นให้
+        if (request.ChargeEarlyCheckIn && r.Property.EarlyCheckInFee > 0)
+            await AddChargeCoreAsync(companyId, r, new LodgingAddChargeRequest(
+                Description: $"ค่าเช็คอินก่อนเวลา (ก่อน {Time(r.Property.CheckInTime)} น.)",
+                Quantity: 1, UnitPrice: r.Property.EarlyCheckInFee,
+                Source: LodgingChargeSource.Manual), userId);
+
         if (!string.IsNullOrWhiteSpace(request.Note)) AppendInternal(r, request.Note);
         r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
         _db.AuditLogs.Add(Audit(companyId, AuditAction.Update, r, new { action = "CheckIn", units = r.Rooms.Select(x => x.Unit?.Number), by = userId }));
@@ -377,6 +451,20 @@ public partial class LodgingService
     public async Task<LodgingReservationResponse> AddChargeAsync(Guid companyId, Guid reservationId, LodgingAddChargeRequest request, string userId)
     {
         var r = await RequireReservationAsync(companyId, reservationId);
+        await AddChargeCoreAsync(companyId, r, request, userId);
+        r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return await MapAsync(companyId, r, true, true);
+    }
+
+    /// <summary>เพิ่มรายการ folio 1 บรรทัด — **ไม่ SaveChanges และไม่ map**
+    ///
+    /// <para>แยกออกมาเพื่อให้เส้นอื่น (ค่าเช็คอินก่อนเวลา/เช็คเอาต์ช้า) ใช้
+    /// <b>ตรรกะเดียวกัน</b> ได้ในธุรกรรมเดียว — ไม่ใช่คัดลอกสูตรคิดยอด/VAT
+    /// ไปไว้ที่สอง (defect class "สำเนามือที่ drift")</para></summary>
+    private async Task AddChargeCoreAsync(Guid companyId, LodgingReservation r,
+        LodgingAddChargeRequest request, string userId)
+    {
         if (r.Status is LodgingReservationStatus.CheckedOut or LodgingReservationStatus.Cancelled or LodgingReservationStatus.NoShow)
             throw new BusinessRuleException("การจองสิ้นสุดแล้ว — เพิ่มรายการไม่ได้ (ออกเอกสารแยกแทน)");
         if (string.IsNullOrWhiteSpace(request.Description)) throw new BusinessRuleException("กรุณาระบุรายการ");
@@ -392,9 +480,6 @@ public partial class LodgingService
         };
         r.Charges.Add(c);
         RecalcFolio(r);
-        r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-        return await MapAsync(companyId, r, true, true);
     }
 
     public async Task<LodgingReservationResponse> CancelChargeAsync(Guid companyId, Guid reservationId, Guid chargeId, string userId)
@@ -435,6 +520,14 @@ public partial class LodgingService
             });
             RecalcFolio(r);
         }
+
+        // ── ค่าเช็คเอาต์ช้า (LDG-P2-06) ──
+        // คู่กับ EarlyCheckInFee ที่ต่อสายตอนเช็คอิน — ทั้งคู่เคยมีคอลัมน์แต่ไม่มีใครอ่าน
+        if (request.ChargeLateCheckOut && prop.LateCheckOutFee > 0)
+            await AddChargeCoreAsync(companyId, r, new LodgingAddChargeRequest(
+                Description: $"ค่าเช็คเอาต์ช้า (หลัง {Time(prop.CheckOutTime)} น.)",
+                Quantity: 1, UnitPrice: prop.LateCheckOutFee,
+                VatRate: vatRate, Source: LodgingChargeSource.System), userId);
 
         // ── ใบกำกับ/ใบแจ้งหนี้สุดท้าย ──
         var contactId = r.ContactId ?? throw new BusinessRuleException("การจองไม่มีผู้ติดต่อ (Contact)");
@@ -558,7 +651,7 @@ public partial class LodgingService
             });
             RecalcFolio(r);
         }
-        var balance = Math.Max(0, r.TotalAmount + r.FolioTotal - r.PaidAmount);
+        var balance = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount);
         if (request.CollectBalanceNow && balance > 0) r.PaidAmount += balance;
         foreach (var c in r.Charges.Where(c => c.Status == LodgingChargeStatus.Pending)) c.Status = LodgingChargeStatus.Paid;
         r.Status = LodgingReservationStatus.CheckedOut; r.CheckedOutAt = DateTime.UtcNow;

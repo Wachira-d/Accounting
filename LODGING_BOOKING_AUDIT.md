@@ -189,3 +189,24 @@ _บทเรียนซ้อนตอนเขียน checker (ผ่าน
 ---
 
 _Last verified against codebase: 2026-09-04_
+
+---
+
+## 6. สถานะหลังรอบ 126b — ทำอะไรไปแล้วบ้าง
+
+| ID | สถานะ | สิ่งที่ทำ |
+| --- | --- | --- |
+| **LDG-P0-01** | ✅ | `PublicPaymentController` (`[AllowAnonymous]`) + `IPublicPaymentResolver` · `PayWidget` เพิ่มโหมด `publicBase` (**ไม่ส่ง sourceId/amount**) · ปุ่มชำระออนไลน์บนหน้า `/reservation/{token}` และหน้า order-success · `GET public-pay/methods` บอกว่าเปิด gateway ไหม (หน้าเว็บห้ามเดา) · เพดาน 20 intent/ชม./source · ตรวจ `SourceKind+SourceId` ซ้ำทุกครั้งที่อ่านสถานะ |
+| **LDG-P0-02** | ✅ | `RejectSlipAsync` + `POST reservations/{id}/reject-slip` · เหตุผลบังคับ · ต่อ hold 24 ชม. · อีเมลถึงแขก · `SlipUploadBlocked` · UI ทั้งฝั่งพนักงาน (ปุ่ม + รายการเหตุผลสำเร็จรูป) และฝั่งแขก (ป้ายเหตุผล + ซ่อนฟอร์มเมื่อถูกปิด) |
+| **LDG-P0-03** | ✅ | `AddOnPaymentStatus` + ฟิลด์บน `CompanyFeature` + migration · `AddOnPaymentPolicy` (pure + 9 เทสต์) · `AddOnPurchaseService` · `AddOnPurchasePaymentHandler` (`PaymentSourceKind.AddOnPurchase`) · endpoint ลูกค้า (intent/slip) + แอดมิน (คิว + อนุมัติ/ปฏิเสธ) · **ปฏิเสธ = ปิดฟีเจอร์จริง** ผ่าน `SetFeatureEnabledAsync` + audit + อีเมล |
+| **LDG-P1-04** | ✅ | `Helpers/LodgingVoucherBuilder` (pure) + `GET reservations/{token}/voucher.pdf` · ปุ่ม "⬇ บันทึกหลักฐานการจอง (PDF)" · 8 เทสต์ รวมด่านคำต้องห้าม + culture th-TH + escape |
+| **LDG-P1-05** | ✅ | storefront วาดแกลเลอรี/สิ่งอำนวยความสะดวก/คำอธิบาย/แผนที่/ติดต่อ/กติกาที่พัก · lightbox · รูปหลายใบต่อประเภทห้อง · ซ่อนฟอร์มเมื่อ `onlineBookingEnabled=false` · **ตัวอัปโหลดรูป** (`POST lodging/images` + prefix `/uploads/lodging`) |
+| **LDG-P2-06** | 🔨 บางส่วน | `EarlyCheckInFee`/`LateCheckOutFee` ต่อสายแล้ว (ติ๊กตอนเช็คอิน/เช็คเอาต์) · **ยังไม่ทำ**: ย้ายที่เก็บสลิปที่พักออกจาก `publicUploadPrefixes` (PII) · อีเมล/LINE ยืนยันการจองอัตโนมัติ (ตรวจ call site ของ `NotifyOwnerOnBooking` ก่อน) |
+| **REV-08** | ✅ | migration retention เพิ่มเงื่อนไข `RetentionUntil <` ค่าใหม่ ⇒ boot รอบสองเป็นต้นไปแตะ 0 แถว |
+
+### ยังเหลือ (ของรอบถัดไป)
+- **REV-05** ยังไม่เคยคอมไพล์ — checker 29 ตัวผ่านหมดแต่ไม่ทดแทน `dotnet build`
+- **REV-06** `throw` ใหม่เปลี่ยนพฤติกรรม (งวดปิด · WHT · ที่ดิน) ต้อง audit ข้อมูลจริง + release note
+- **REV-07** `JobLock` จอง connection ตลอดอายุงาน — วัดจริงก่อนตัดสิน
+- **REV-09** เทสต์ใหม่ 6 ไฟล์ยังไม่เคยรัน
+- **LDG-P2-06** ส่วนที่เหลือข้างบน

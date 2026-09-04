@@ -24,6 +24,39 @@ public class LodgingController : ControllerBase
     private static ActionResult<ApiResponse<T>> Wrap<T>(T data, string? msg = null) => new OkObjectResult(new ApiResponse<T>(true, data, msg));
     private static ActionResult<ApiResponse<T>> Missing<T>(string msg) => new NotFoundObjectResult(new ApiResponse<T>(false, default, msg));
 
+    /// <summary>
+    /// อัปโหลดรูปที่พัก/ประเภทห้อง (LDG-P1-05)
+    ///
+    /// <para>เดิมหน้าตั้งค่าให้ <b>พิมพ์ URL เอง</b> ซึ่งลูกค้า SME ทำไม่ได้จริง
+    /// (ต้องไปหาที่ฝากรูปเองก่อน) ⇒ ช่องรูปว่างเปล่าทุกราย แล้วหน้าเว็บที่พักไม่มีรูป</para>
+    ///
+    /// <para>⚠️ prefix <c>/uploads/lodging</c> ต้องอยู่ใน <c>publicUploadPrefixes</c>
+    /// ของ <c>Program.cs</c> ด้วย ไม่งั้นเขียนไฟล์สำเร็จแต่เบราว์เซอร์ได้ 404 —
+    /// บังคับด้วย <c>tools/upload_route_check.py</c></para>
+    /// </summary>
+    [HttpPost("images")]
+    [RequirePermission(PermissionKeys.LodgingSettings)]
+    [RequestSizeLimit(12 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<string>>> UploadImage(
+        Guid companyId, IFormFile? file,
+        [FromServices] IImageProcessingService images,
+        [FromServices] IWebHostEnvironment env)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<string>(false, null, "กรุณาเลือกไฟล์รูป"));
+        if (!file.ContentType.StartsWith("image/"))
+            return BadRequest(new ApiResponse<string>(false, null, "รองรับเฉพาะไฟล์รูปภาพ"));
+
+        // แยกโฟลเดอร์ต่อบริษัท — รูปของที่พักเป็นของสาธารณะ แต่ไม่ควรปนกันข้ามผู้เช่า
+        var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
+        var dir = Path.Combine(webRoot, "uploads", "lodging", companyId.ToString("N"));
+        await using var s = file.OpenReadStream();
+        var saved = await images.ProcessAndSaveAsync(
+            s, file.ContentType, file.FileName, dir,
+            $"/uploads/lodging/{companyId:N}", ImageProfile.Banner);
+        return Wrap(saved.RelativeUrl, "อัปโหลดรูปแล้ว");
+    }
+
     // ═══════════ ตั้งค่า: ที่พัก ═══════════
 
     [HttpGet("properties")]
@@ -200,6 +233,21 @@ public class LodgingController : ControllerBase
     {
         var r = await _svc.ConfirmAsync(companyId, id, req, Uid);
         var msg = r.DepositDocumentNumber != null ? $"ยืนยันการจองแล้ว · ใบเสร็จมัดจำ {r.DepositDocumentNumber}" : "ยืนยันการจองแล้ว";
+        return Wrap(r, msg);
+    }
+
+    /// <summary>ปฏิเสธสลิปที่แขกส่งมา — ทางออกที่หายไปเมื่อสลิปไม่ตรง/ปลอม
+    /// (เดิมมีแค่ "ยืนยัน" กับ "ยกเลิกทั้งใบ" ⇒ พนักงานได้แต่เงียบ)</summary>
+    [HttpPost("reservations/{id:guid}/reject-slip")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> RejectSlip(
+        Guid companyId, Guid id, [FromBody] LodgingRejectSlipRequest req)
+    {
+        var r = await _svc.RejectSlipAsync(companyId, id, req, Uid);
+        if (r == null) return NotFound(new ApiResponse<LodgingReservationResponse>(false, null, "ไม่พบการจอง"));
+        var msg = r.SlipUploadBlocked
+            ? "ปฏิเสธสลิปและปิดรับสลิปของการจองนี้แล้ว — แจ้งแขกทางอีเมลแล้ว"
+            : "ปฏิเสธสลิปแล้ว — แจ้งแขกพร้อมเหตุผล และต่อเวลาถือห้องให้อีก 24 ชม.";
         return Wrap(r, msg);
     }
 

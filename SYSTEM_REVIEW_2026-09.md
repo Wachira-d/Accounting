@@ -574,7 +574,7 @@ _ผลิตโดย 8 subagent (Opus) + main agent (Fable 5.1) verify · 2026
 | REV-05 | **ยังไม่เคยคอมไพล์ทั้งชุด** (env ไม่มี .NET SDK) · จุดที่ checker มองไม่เห็น: บล็อก DataProtection ใน `Program.cs` · positional record ที่เพิ่มพารามิเตอร์ → CS1739 ทุกจุดสร้าง |
 | REV-06 | **`throw` ใหม่ 3 ตัวเปลี่ยนพฤติกรรม** — งวดปิด (9 จุด) · แก้เงินได้โดยไม่ส่ง WHT · ที่ดิน+ค่าเสื่อม ⇒ audit ข้อมูลจริงว่ามีกี่บริษัทจะเจอ 400 ทันที + release note |
 | REV-07 | `JobLock` จอง connection จาก pool ตลอดอายุงาน (session-level lock) — วัดจริงก่อนตัดสิน |
-| REV-08 | migration retention `UPDATE "Documents" … GREATEST(…)` รันทุก boot + สแกนทั้งตาราง → จำกัด `WHERE` หรือทำ one-shot |
+| ~~REV-08~~ ✅ | migration retention เพิ่มเงื่อนไข `RetentionUntil <` ค่าใหม่ ⇒ boot รอบสองเป็นต้นไปแตะ 0 แถว |
 | REV-09 | เทสต์ใหม่ 3 ไฟล์ยังไม่เคยรัน (`DisplayTextTests` · `SequenceNumberTests` · `AiPromptSanitizerTests`) |
 
 ### ผลตรวจโมดูลที่พัก/CMS → แยกเป็นไฟล์ของตัวเอง
@@ -584,5 +584,16 @@ _ผลิตโดย 8 subagent (Opus) + main agent (Fable 5.1) verify · 2026
 ⇒ **ลูกค้าปลายทางจ่ายออนไลน์ไม่ได้เลยทั้งร้านค้าและที่พัก** ⇒
 `LodgingReservationPaymentHandler` + `SiteOrderPaymentHandler` เป็นโค้ดที่ไม่มีวัน
 ถูกเรียก (defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้")
+
+### รอบ 126b — ต่อสายปลายทางของโมดูลที่พักครบทั้ง 6 ชิ้น
+`LDG-P0-01` ✅ ทางจ่ายออนไลน์ของลูกค้าปลายทาง (`PublicPaymentController` — ทางเข้าเดียว
+ที่ไม่ต้องล็อกอินและสร้าง `PaymentIntent` ได้ · **ไม่รับ SourceId/Amount**) ·
+`LDG-P0-02` ✅ ปฏิเสธสลิป + ปิดรับสลิปเมื่อพบของปลอม ·
+`LDG-P0-03` ✅ ซื้อ add-on สองเส้นทาง (gateway/สลิป) + **ปฏิเสธ = ปิดฟีเจอร์จริง** ·
+`LDG-P1-04` ✅ voucher หลักฐานการจอง (ไม่ใช่เอกสารภาษี · 8 เทสต์) ·
+`LDG-P1-05` ✅ storefront วาดข้อมูล/รูปที่เก็บไว้แล้ว + ตัวอัปโหลดรูป ·
+`LDG-P2-06` 🔨 ค่าเช็คอินก่อนเวลา/เช็คเอาต์ช้าต่อสายแล้ว (เหลือเรื่องที่เก็บสลิปเป็น PII + อีเมลยืนยันการจอง)
+
+รายละเอียดทั้งหมดใน `LODGING_BOOKING_AUDIT.md` §6
 
 _รอบ 126 · main agent · ไม่ได้คอมไพล์ — env ไม่มี .NET SDK_

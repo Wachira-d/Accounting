@@ -79,6 +79,16 @@ public class MeteringController : ControllerBase
                 enabledBy = state?.EnabledBy,
                 trialUntil = state?.TrialUntil,
                 grantSource = state?.GrantSource.ToString(),
+                // ── สถานะการชำระเงิน (LDG-P0-03) — เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว ──
+                paymentStatus = (state?.PaymentStatus ?? Models.Enums.AddOnPaymentStatus.NotRequired).ToString(),
+                paymentStatusLabel = Accounting.Helpers.AddOnPaymentPolicy.StatusLabel(
+                    state?.PaymentStatus ?? Models.Enums.AddOnPaymentStatus.NotRequired),
+                paymentRejectedReason = state?.PaymentRejectedReason,
+                slipUploadedAt = state?.SlipUploadedAt,
+                amountDue = state == null
+                    || state.PaymentStatus is Models.Enums.AddOnPaymentStatus.NotRequired
+                                           or Models.Enums.AddOnPaymentStatus.Paid
+                    ? 0m : Math.Max(0m, state.AcceptedUnitPrice ?? 0m),
                 pricing = plan == null ? null : new
                 {
                     method = plan.Method.ToString(),
@@ -115,6 +125,91 @@ public class MeteringController : ControllerBase
 
         return Ok(new ApiResponse<object>(true, new { featureCode, enabled = req.Enabled },
             req.Enabled ? $"เปิดใช้ {feature.Name} แล้ว" : $"ปิด {feature.Name} แล้ว — หยุดคิดค่าใช้จ่ายทันที"));
+    }
+
+    // ═══════════════ ชำระค่าส่วนเสริม (LDG-P0-03) ═══════════════
+    //  เดิม: กดเปิด = ใช้ได้ฟรีทันที ไม่มีทั้งช่องจ่ายและช่องแนบสลิป
+    //  ตอนนี้: มี gateway → จ่ายแล้วเปิดทันที · ไม่มี → แนบสลิปแล้วรอแอดมินตรวจ
+
+    /// <summary>สถานะการชำระเงินของส่วนเสริมตัวหนึ่ง — หน้าเว็บ**แสดงอย่างเดียว**
+    /// (ข้อความสถานะมาจาก <c>AddOnPaymentPolicy.StatusLabel</c> ห้าม JS แต่งเอง)</summary>
+    [HttpGet("features/{featureCode}/payment")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAddOnPayment(
+        Guid companyId, string featureCode,
+        [FromServices] Accounting.Services.Payments.IAddOnPurchaseService addons,
+        CancellationToken ct)
+    {
+        var st = await addons.GetAsync(companyId, featureCode, ct);
+        if (st == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้เปิดใช้ส่วนเสริมนี้"));
+        return Ok(new ApiResponse<object>(true, st));
+    }
+
+    /// <summary>สร้างรายการชำระเงินออนไลน์ของส่วนเสริม — ยอดมาจากเซิร์ฟเวอร์เท่านั้น</summary>
+    public record StartAddOnPaymentRequest(Models.Enums.PaymentMethodKind Method, string? ReturnUrl = null);
+
+    [HttpPost("features/{featureCode}/payment/intent")]
+    public async Task<ActionResult<ApiResponse<object>>> StartAddOnPayment(
+        Guid companyId, string featureCode, [FromBody] StartAddOnPaymentRequest req,
+        [FromServices] Accounting.Services.Payments.IAddOnPurchaseService addons,
+        [FromServices] Accounting.Services.Payments.IPaymentIntentService intents,
+        CancellationToken ct)
+    {
+        var due = await addons.AmountDueAsync(companyId, featureCode, ct);
+        if (due <= 0m)
+            return BadRequest(new ApiResponse<object>(false, null, "ส่วนเสริมนี้ไม่มียอดค้างชำระ"));
+
+        var row = await _db.CompanyFeatures.AsNoTracking()
+            .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted, ct);
+        if (row == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบส่วนเสริมนี้"));
+        var name = await _db.ApiFeatures.AsNoTracking()
+            .Where(f => f.FeatureCode == featureCode).Select(f => f.Name).FirstOrDefaultAsync(ct) ?? featureCode;
+
+        try
+        {
+            // SourceId = CompanyFeature.Id (PaymentIntent.SourceId เป็น Guid)
+            var intent = await intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
+                Models.Enums.PaymentSourceKind.AddOnPurchase, row.Id, due, req.Method,
+                Description: $"ค่าส่วนเสริม {name}", ReturnUrl: req.ReturnUrl), ct: ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                id = intent.Id, status = intent.Status.ToString(), amount = intent.Amount,
+                currency = intent.Currency, qrPayload = intent.QrPayload,
+                qrExpiresAt = intent.QrExpiresAt, authorizeUrl = intent.AuthorizeUrl,
+                failureMessage = intent.FailureMessage,
+            }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<object>(false, null, ex.Message));
+        }
+    }
+
+    /// <summary>แนบสลิปค่าส่วนเสริม — เส้นสำรองเมื่อยังไม่เปิด gateway</summary>
+    [HttpPost("features/{featureCode}/payment/slip")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<object>>> UploadAddOnSlip(
+        Guid companyId, string featureCode, IFormFile? file,
+        [FromForm] string? reference, [FromForm] decimal? amount,
+        [FromServices] Accounting.Services.Payments.IAddOnPurchaseService addons,
+        [FromServices] IImageProcessingService images,
+        [FromServices] IWebHostEnvironment env,
+        CancellationToken ct)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์สลิป"));
+        if (!file.ContentType.StartsWith("image/") && file.ContentType != "application/pdf")
+            return BadRequest(new ApiResponse<object>(false, null, "รองรับเฉพาะรูปภาพหรือ PDF"));
+
+        var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
+        var dir = Path.Combine(webRoot, "uploads", "slips");
+        await using var s = file.OpenReadStream();
+        var saved = await images.ProcessAndSaveAsync(
+            s, file.ContentType, file.FileName, dir, "/uploads/slips", ImageProfile.Slip);
+
+        var actor = User.Identity?.Name ?? "unknown";
+        var st = await addons.UploadSlipAsync(companyId, featureCode, saved.RelativeUrl, reference, amount, actor, ct);
+        return Ok(new ApiResponse<object>(true, st,
+            "ส่งหลักฐานการชำระเงินแล้ว — ผู้ดูแลระบบจะตรวจสอบและยืนยันให้"));
     }
 
     // ═══════════════ โควตาเอกสาร: สถานะ · ซื้อเพิ่ม · แลกจากภารกิจ ═══════════════

@@ -593,6 +593,26 @@ public enum PaymentSourceKind
     LodgingReservation = 3,    // มัดจำที่พัก
     SubscriptionPayment = 4,   // ค่าบริการ SaaS ของตัวระบบเอง
     PosOrder = 5,              // บิล POS (แสดง QR บนจอลูกค้า)
+    AddOnPurchase = 6,         // ซื้อส่วนเสริม (add-on) รายเดือน — LDG-P0-03
+}
+
+/// <summary>สถานะการชำระเงินของการเปิดใช้ add-on หนึ่งครั้ง (LDG-P0-03)
+///
+/// <para>แยกจาก <c>CompanyFeature.IsEnabled</c> โดยตั้งใจ: "เปิดใช้อยู่ไหม" กับ
+/// "จ่ายเงินแล้วหรือยัง" เป็นคนละคำถาม — ระหว่างรอแอดมินตรวจสลิป ฟีเจอร์เปิดใช้ได้
+/// แต่ต้องติดป้ายว่ายังไม่ยืนยันการชำระเงิน</para></summary>
+public enum AddOnPaymentStatus
+{
+    /// <summary>ไม่ต้องจ่าย — ยังไม่ตั้งราคา · แถมจากแพ็กเกจ · admin ยัดให้ · อยู่ในช่วง trial</summary>
+    NotRequired = 0,
+    /// <summary>รอชำระ — ยังไม่จ่ายและยังไม่แนบสลิป</summary>
+    AwaitingPayment = 1,
+    /// <summary>แนบสลิปแล้ว รอแอดมินตรวจ</summary>
+    PendingReview = 2,
+    /// <summary>ยืนยันแล้ว (gateway สำเร็จ หรือแอดมินอนุมัติสลิป)</summary>
+    Paid = 3,
+    /// <summary>แอดมินปฏิเสธ — สิทธิ์ถูกปิดพร้อมกัน</summary>
+    Rejected = 4,
 }
 
 public enum PaymentIntentStatus
