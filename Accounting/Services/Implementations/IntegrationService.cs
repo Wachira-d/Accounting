@@ -539,7 +539,7 @@ public class IntegrationService : IIntegrationService
                     District = district,
                     Province = province,
                     PostalCode = postalCode,
-                    Notes = syncNote,
+                    InternalNotes = syncNote,
                 };
                 _db.Set<Contact>().Add(contact);
             }
@@ -557,7 +557,7 @@ public class IntegrationService : IIntegrationService
                 if (dbdCheck.Matched && !string.IsNullOrWhiteSpace(dbdCheck.OfficialNameEn)
                     && string.IsNullOrWhiteSpace(contact.NameEn))
                     contact.NameEn = dbdCheck.OfficialNameEn;
-                if (syncNote != null) contact.Notes = syncNote;
+                if (syncNote != null) contact.InternalNotes = syncNote;
                 // Update existing — only overwrite when the request actually
                 // carries a value, so partial syncs don't blank out fields
                 // the receiving tenant has already enriched.

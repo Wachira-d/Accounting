@@ -341,9 +341,12 @@ public class WebhookService : IWebhookService
                 stopwatch.Stop();
                 delivery.IsSuccess = false;
                 delivery.ErrorMessage = urlCheck.Reason;
-                delivery.DurationMs = (int)stopwatch.ElapsedMilliseconds;
+                // DurationMs เป็น decimal เหมือนทุกจุดในเมธอดนี้ — อย่าแปลงเป็น int
+                delivery.DurationMs = (decimal)stopwatch.Elapsed.TotalMilliseconds;
+                // บันทึกแถวเองเพราะ return ตรงนี้ ไม่ได้ไปถึงจุด Add ปลายเมธอด
+                _db.Set<WebhookDelivery>().Add(delivery);
                 await _db.SaveChangesAsync();
-                return;
+                return delivery;
             }
 
             var request = new HttpRequestMessage(HttpMethod.Post, registration.Url)

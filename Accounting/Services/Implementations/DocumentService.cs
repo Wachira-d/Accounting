@@ -15514,7 +15514,7 @@ public partial class DocumentService : IDocumentService
         // ที่นี่ไม่มี raw text ของกระดาษ จึงคัดกรองจาก **ชื่อผู้ขาย + คำอธิบาย
         // รายบรรทัด** ซึ่งเป็นข้อมูลที่ผู้ใช้พิมพ์เองอยู่แล้ว · เตือน ไม่บล็อก
         // เพราะรถบางประเภทเคลมได้ (§82/5(6) ยกเว้นรถบรรทุก/กระบะตอนเดียว)
-        if (Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType, doc.OurRole)
+        if (Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType)
             && doc.VatAmount > 0.005m
             && doc.Lines.Any(l => l.IsVatClaimable))
         {
@@ -15539,7 +15539,7 @@ public partial class DocumentService : IDocumentService
         //
         // เตือน ไม่บล็อก — ผู้ใช้อาจรู้ยอดสัญญาทั้งก้อนที่ระบบไม่เห็น (เช่นสัญญา
         // ปีต่อปีที่ยังไม่ได้บันทึก) การบล็อกจะทำให้เขาทำงานไม่ได้โดยเราไม่ได้ถูกกว่า
-        if (Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType, doc.OurRole)
+        if (Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType)
             && doc.ContactId != Guid.Empty
             && doc.WithholdingTaxAmount <= 0.005m
             && doc.SubTotal > 0m)
