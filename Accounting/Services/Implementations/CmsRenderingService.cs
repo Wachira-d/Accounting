@@ -65,7 +65,11 @@ public class CmsRenderingService : ICmsRenderingService
                     ? b.Translations.FirstOrDefault(t => t.LanguageCode == languageCode)
                     : null;
 
-                var cfg = Accounting.Helpers.CmsContentTokens.Apply(blockTranslation?.ConfigJson ?? b.ConfigJson, tokens);
+                // `Apply` ประกาศคืน string? (คืนค่าเดิมเมื่อ input ว่าง) แต่ input ตรงนี้
+                // ไม่มีทางเป็น null (`b.ConfigJson` มีค่าเริ่มต้น "{}") — ระบุ fallback ให้ชัด
+                // แทนที่จะปล่อยเป็น string? แล้วไปโผล่เป็น CS8601/CS8604 ที่จุดใช้งาน
+                var cfg = Accounting.Helpers.CmsContentTokens.Apply(
+                    blockTranslation?.ConfigJson ?? b.ConfigJson, tokens) ?? b.ConfigJson;
 
                 return new RenderedBlockResponse
                 {

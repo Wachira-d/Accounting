@@ -1158,8 +1158,10 @@ public class AuthService : IAuthService
             // เส้น SSO ของ "บัญชีเดิม" เรียกเมธอดนี้ได้ด้วย ⇒ ผู้ใช้อาจเป็นสมาชิก
             // บริษัทนั้นอยู่แล้ว การ Add ซ้ำจะได้สองสิทธิ์ในบริษัทเดียว (บทบาทไหน
             // ชนะขึ้นกับลำดับแถว) — ถือว่าคำเชิญถูกใช้แล้ว แต่ไม่เพิ่มแถวใหม่
+            // ⚠️ `CompanyUser` เป็น join entity ที่ **ไม่ได้สืบทอด `BaseEntity`**
+            // จึงไม่มี `IsDeleted` — การถอนสมาชิกคือ **ลบแถวจริง** ไม่ใช่ soft delete
             var already = await _db.CompanyUsers.AnyAsync(cu =>
-                cu.CompanyId == inv.CompanyId && cu.UserId == user.Id && !cu.IsDeleted);
+                cu.CompanyId == inv.CompanyId && cu.UserId == user.Id);
             if (!already)
             {
                 _db.CompanyUsers.Add(new CompanyUser

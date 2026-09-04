@@ -92,6 +92,8 @@ public static class DatabaseMigrationHelper
             // ตำบล/อำเภอ/ถนนสะกดเพี้ยนได้เป็นปกติ)
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "NameEn" varchar(300) NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "AddressEn" varchar(500) NULL;""",
+            // ร่องรอยการ sync/ตรวจข้อมูลจากระบบภายนอก — **ภายในเท่านั้น** ห้ามพิมพ์ลงเอกสาร
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "InternalNotes" text NULL;""",
             // Integration external id — match ผู้ติดต่อเดิมเวลา sync กัน contact ซ้ำ
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "ExternalId" varchar(200) NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "ExternalSystem" varchar(100) NULL;""",

@@ -71,8 +71,8 @@ public class ImageProcessingService : IImageProcessingService
         src.Position = 0;
 
         // ไม่ใช่รูป (PDF/ICO) — เซฟดิบด้วยนามสกุล **ที่ระบบสรุปเอง**
-        if (!kind.Value.IsImage)
-            return await SaveRawAsync(src, originalFileName, kind.Value.Extension, absoluteDirectory, webBaseUrl);
+        if (!kind.IsImage)
+            return await SaveRawAsync(src, originalFileName, kind.Extension, absoluteDirectory, webBaseUrl);
 
         Image<Rgba32> image;
         try
@@ -86,7 +86,7 @@ public class ImageProcessingService : IImageProcessingService
             // ⚠️ นามสกุลมาจาก **ผลตรวจไบต์** ไม่ใช่ชื่อไฟล์ของ client — decoder ล้ม
             // ไม่ได้แปลว่าไบต์โกหก (ไฟล์รูปเสียบางส่วนก็ decode ไม่ได้) แต่ถ้าปล่อยให้
             // client เลือกนามสกุลตรงนี้ ก็เท่ากับเปิดช่องเดิมกลับมาทางประตูหลัง
-            return await SaveRawAsync(src, originalFileName, kind.Value.Extension, absoluteDirectory, webBaseUrl);
+            return await SaveRawAsync(src, originalFileName, kind.Extension, absoluteDirectory, webBaseUrl);
         }
 
         using (image)
