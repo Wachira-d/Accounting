@@ -896,6 +896,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   เพื่อให้ void กลับยอดธนาคารด้วย rate เดิม; settlement Receipt/PV ข้ามใบที่
   rate ต่างกัน (ใบเสร็จ rate วันรับ vs invoice rate วันแจ้ง) ก็ post FX diff
   เช่นกัน; สิ้นงวด unrealized ใช้ `FxRevaluationService.PostAsync` (มีอยู่แล้ว)
+- **สกุลเงิน/อัตราของ *ตัวเอกสาร* ตั้งได้ตอนสร้างครั้งเดียว** —
+  `CreateDocumentRequest.Currency/ExchangeRate` → `ResolveExchangeRateAsync`
+  (THB→1 · override ชนะ · ไม่ระบุ = ดึงอัตรากลาง ธ.ปท. ของ `DocumentDate` ·
+  ดึงไม่ได้ = **throw** ห้ามตกไปใช้ 1 เงียบ ๆ) แล้วทุกยอดที่ลง GL คูณผ่าน
+  `ToGlAmount(doc, amount)` (`DocumentService.cs:12192`).
+  `UpdateDocumentRequest` **ไม่มี**สองช่องนี้โดยเจตนา (อัตราถูกตรึงลง JE/AR-AP/
+  ภ.พ.30 ไปแล้ว) ⇒ ฟอร์มตอนแก้ไขต้องแสดงค่าจริงแล้ว **ล็อกพร้อมบอกเหตุผล**
+  (`documents.html` → `_hydrateCurrencyReadonly`) ห้ามโชว์ THB หลอกแล้วให้กด
+  เปลี่ยนได้โดยไม่มีผล. _(A-D1: เดิม payload ของ `save()` ไม่ส่งสองช่องนี้เลย
+  ⇒ ใบสกุลต่างประเทศทุกใบที่สร้างจากหน้าจอลงบัญชีเป็นบาทที่ยอดเดิม)_
 - **ค่าธรรมเนียมหักจากยอดโอน** (marketplace Shopee/Lazada, gateway, ธนาคาร):
   `Payment.FeeAmount(+FeeAccountId)` — Amount คือเงินสุทธิที่เข้า, เอกสาร
   ถูกล้างที่ Amount+Fee: JE Dr เงินสด + Dr ค่าธรรมเนียม (53200/ค้นชื่อ) /
@@ -2766,7 +2776,12 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-03 (รอบ 130 — **ใบกำกับภาษีเต็มรูป
+_Last verified against codebase: 2026-09-04 (รอบ 131 — **สกุลเงินของเอกสาร (A-D1)**:_
+_ฟอร์ม `documents.html` ส่ง `currency`/`exchangeRate` ใน payload แล้ว (เดิมไม่เคยส่ง_
+_⇒ ใบสกุลต่างประเทศจากหน้าจอลงบัญชีเป็นบาท rate 1 ทุกใบ) · ตอนแก้ไขแสดงค่าจริง +_
+_ล็อกพร้อมเหตุผลผ่าน `_hydrateCurrencyReadonly` เพราะ `UpdateDocumentRequest`_
+_ไม่รับสองช่องนี้ · ตรวจแล้ว `ToGlAmount` และ renderer ทั้งสองตัวถูกต้องอยู่ก่อนแล้ว)_
+_ก่อนหน้า: 2026-09-03 (รอบ 130 — **ใบกำกับภาษีเต็มรูป
 "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ**: §2.4b ใหม่ — `IssueFullTaxInvoiceForReceiptAsync` +_
 _`Helpers/FullTaxInvoiceReplacement` (pure) · ใบแทนใช้วันที่ใบเดิม ไม่ post JE ใหม่ ·_
 _ประทับ `ReplacedByDocumentId` ตอน approve · `GenerateVatReport` +_

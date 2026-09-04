@@ -2863,8 +2863,16 @@
           // Show flags + suggested target type as a yellow tip inside
           // the review modal so the operator sees AI's verdict before
           // clicking "สร้างเอกสาร".
-          this._renderAiVerdict(review, conv);
-          Layout.toast('🤖 AI ตรวจสอบเสร็จ — ตรวจรายการก่อนสร้างเอกสาร');
+          // ── ป้ายต้องซื่อสัตย์ (กฎเหล็ก #1) ──
+          // `usedAi` มาจากเซิร์ฟเวอร์อยู่แล้ว (AdvancedAiResult.UsedAi) แต่เดิม
+          // หน้านี้ขึ้น "🤖 AI ตรวจสอบเสร็จ" **ทุกครั้ง** — รวมตอน student ตอบเอง
+          // หรือตอน provider ดับแล้ว fallback มา local ⇒ ผู้ใช้เข้าใจว่าจ่าย token
+          // ไปแล้วทั้งที่ไม่ได้เรียก และเชื่อคำตอบมากกว่าที่ควร
+          const usedAi = !!(review?.usedAi || conv?.usedAi);
+          this._renderAiVerdict(review, conv, usedAi);
+          Layout.toast(usedAi
+            ? '🤖 AI ตรวจสอบเสร็จ — ตรวจรายการก่อนสร้างเอกสาร'
+            : '⚙️ ระบบตรวจสอบเสร็จ (ไม่ได้เรียก AI) — ตรวจรายการก่อนสร้างเอกสาร');
         } catch (err) {
           Layout.toast('AI failed: ' + err.message, 'error');
         } finally {
@@ -2909,7 +2917,7 @@
         }
       },
 
-      _renderAiVerdict(review, conv) {
+      _renderAiVerdict(review, conv, usedAi) {
         let panel = document.getElementById('aiVerdictPanel');
         if (!panel) {
           panel = document.createElement('div');
@@ -2926,7 +2934,7 @@
         }
         panel.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:6px">
-            <strong style="color:#9a3412">🤖 AI ตรวจสอบ</strong>
+            <strong style="color:#9a3412">${usedAi ? '🤖 AI ตรวจสอบ' : '⚙️ ระบบตรวจสอบ (โมเดลในเครื่อง)'}</strong>
             <button onclick="document.getElementById('aiVerdictPanel').remove()" style="background:none;border:none;color:#94a3b8;cursor:pointer">×</button>
           </div>
           ${review?.reasoning ? `<div style="color:#7c2d12;margin-bottom:6px"><b>สรุป:</b> ${Layout.esc(review.reasoning)}</div>` : ''}

@@ -100,6 +100,10 @@ public class AiOrchestrator : IAiOrchestrator
             UsedCache = false,
             FeedbackId = fid,
             ProviderModel = "local:" + localPred.ModelVersion,
+            // ★ E-AI-01: เส้น short-circuit ต้องส่งคำตอบแบบมีโครงของนักเรียนออกไปด้วย
+            // ไม่งั้น feature ที่วาดจาก StructuredJson จะได้แผงว่างทุกครั้งที่นักเรียน
+            // มั่นใจพอจนไม่ต้องเรียก AI — ซึ่งเป็นเป้าหมายของกฎเหล็ก #1 พอดี
+            RawResponseJson = localPred.StructuredJson,
         };
     }
 
@@ -144,6 +148,13 @@ public class AiOrchestrator : IAiOrchestrator
                 LocalPrimaryAnswer = localPred.PrimaryAnswer,
                 LocalConfidence = localPred.Confidence,
                 LocalModelVersion = localPred.ModelVersion,
+                // ★ E-AI-01: คำตอบแบบมีโครงของนักเรียนต้องติดมากับ request ด้วย
+                // เพราะเส้น "เรียก AI แล้วล้ม" ตกไปที่ FallbackToLocal(request, ...)
+                // ซึ่งอ่านจาก request ไม่ใช่จาก localPred ⇒ ถ้าไม่ยกมาตรงนี้
+                // นักเรียนจะถูกทิ้งคำตอบทุกครั้งที่ AI ล่ม (เคสที่ kill-switch
+                // ถูกเขียนขึ้นมาเพื่อรองรับพอดี) · ผู้เรียกที่ตั้ง LocalRawJson
+                // มาเองชนะ (นักเรียนไม่ได้ตอบเป็นโครงสร้าง = null → คงของเดิม)
+                LocalRawJson = localPred.StructuredJson ?? request.LocalRawJson,
                 // ── ต้องอัปเดตใน payload ด้วย ไม่ใช่แค่ในเมทาดาทา ──
                 //
                 // ⚠️ UserPromptJson ถูก serialize ไปแล้วตั้งแต่ prompt builder
@@ -558,7 +569,10 @@ public class AiOrchestrator : IAiOrchestrator
             UsedCache = false,
             FeedbackId = feedbackId,
             ProviderModel = null,
-            RawResponseJson = null,
+            // ★ E-AI-01: AI ล่ม/เกินงบ → ยังต้องส่งคำตอบมีโครงของนักเรียนออกไป
+            // (เดิม hard-code null ⇒ kill-switch ที่เขียนไว้ใช้ไม่ได้จริงกับ
+            // feature ที่ผลลัพธ์เป็นโครงสร้าง)
+            RawResponseJson = req.LocalRawJson,
         };
 
     private static decimal ComputeCost(AiProviderRawResponse raw, AiProviderConfig config)

@@ -4257,6 +4257,39 @@
        *  แล้วทุกใบเปลี่ยนตามเงียบ ๆ = ใบที่ควรออกในนามบริษัทหลุดไปเป็นชื่อร้าน
        *  โดยไม่มีใครสั่ง และรู้ตัวอีกทีตอนเอกสารถึงมือลูกค้าแล้ว
        *  (ยังต้อง reset ทุกครั้ง — ห้ามค้างค่าจากใบก่อนหน้า) */
+      /** สกุลเงิน + อัตราแลกเปลี่ยนของใบที่กำลังเปิด — echo กลับ แล้วล็อกตอนแก้ไข
+       *
+       *  ═══ ที่มา (A-D1) ═══
+       *  ฟอร์มมีช่องสกุลเงินให้เลือกมาตลอด แต่ payload ของ `save()` **ไม่เคยส่ง
+       *  ค่ามาเลย** ⇒ ใบสกุลต่างประเทศที่สร้างจากหน้าจอลงบัญชีเป็นบาทที่ยอดเดิม
+       *  แก้ที่ payload อย่างเดียวไม่จบ เพราะ `UpdateDocumentRequest` ไม่มีสองช่องนี้
+       *  (อัตราถูกตรึงลง JE/ลูกหนี้/ภ.พ.30 ตั้งแต่สร้าง — แก้ย้อนหลังไม่ได้)
+       *  ⇒ ตอนแก้ไขต้อง **แสดงค่าจริง + ล็อก + บอกเหตุผล** ไม่ใช่โชว์ THB หลอก
+       *  แล้วให้กดเปลี่ยนได้โดยไม่มีผล (silent no-op — กฎเหล็ก #4 A)
+       *
+       *  @param doc ใบที่เปิดอยู่ · `null` = ฟอร์มใบใหม่ (ปลดล็อก คืนค่า THB) */
+      _hydrateCurrencyReadonly(doc) {
+        const cur = document.getElementById('fCurrency');
+        const rate = document.getElementById('fExchangeRate');
+        const grp = document.getElementById('fxRateGroup');
+        const hint = document.getElementById('fxRateHint');
+        if (!cur || !rate) return;
+        const ccy = doc?.currency || 'THB';
+        cur.value = ccy;
+        cur.disabled = !!doc;
+        rate.value = doc ? (doc.exchangeRate ?? 1) : 1;
+        rate.readOnly = !!doc;
+        rate.dataset.userTouched = '';
+        if (grp) grp.style.display = ccy === 'THB' ? 'none' : '';
+        if (hint) {
+          hint.textContent = doc
+            ? 'ตรึงไว้ตั้งแต่สร้างเอกสาร — แก้ไม่ได้ (อัตราถูกใช้ลงบัญชี/ภาษีไปแล้ว) ต้องยกเลิกใบแล้วออกใหม่'
+            : '';
+        }
+        // ใบใหม่: ให้ตัวเติมอัตรา BoT ทำงานตามปกติ
+        if (!doc) { try { this.onCurrencyOrDateChange?.(); } catch (e) {} }
+      },
+
       async _hydrateBrand(doc) {
         // รอ options มาก่อนเสมอ — set value ตอนยังไม่มี <option> ค่าจะตกเป็น ""
         // เงียบ แล้วกลายเป็นคำสั่ง "ล้างแบรนด์" ตอนกดบันทึก (ผลตรวจ ข้อ 5.2)
@@ -7426,6 +7459,7 @@
         this._hydrateBrand(null);   // ใบใหม่ = ชื่อบริษัท ไม่ใช่ค่าค้างจากใบก่อน
         this._hydrateBranch(null);  // และสาขา = ตามค่าบริษัท (ห้ามค้างจากใบก่อน)
         this._hydrateTemplate(null);
+        this._hydrateCurrencyReadonly(null);  // ปลดล็อก + คืนค่า THB ให้ใบใหม่
         // ล้าง contact ที่จำไว้สำหรับเทอมเครดิต — ไม่งั้นเทอมของลูกค้ารายก่อน
         // ตามมาเติมในเอกสารใบใหม่ที่ยังไม่ได้เลือกคู่ค้า
         this._creditTermsContact = null;
@@ -7681,6 +7715,12 @@
           document.querySelector('#formModal .modal-title').textContent = 'แก้ไขเอกสาร';
           document.getElementById('fDocType').value = d.documentType;
           document.getElementById('fDocType').disabled = true;
+          // ── สกุลเงิน + อัตราแลกเปลี่ยน: echo กลับ แล้ว "ล็อกพร้อมบอกเหตุผล" ──
+          // `UpdateDocumentRequest` **ไม่มี** สองช่องนี้ (ตั้งตอนสร้างครั้งเดียว
+          // เพราะอัตราถูกตรึงลง JE/ลูกหนี้/ภ.พ.30 ไปแล้ว) ⇒ ถ้าปล่อยช่องว่างไว้
+          // ผู้ใช้จะเห็นใบ USD แสดงเป็น THB (ค่าที่แสดง**โกหก**) และแก้ได้แต่
+          // ไม่มีผลอะไร = silent no-op ที่กฎเหล็ก #4 A ห้ามไว้
+          this._hydrateCurrencyReadonly(d);
           // Re-tag the line table for selling-vs-cost defaults on the typeahead.
           const linesTbl = document.getElementById('linesTable');
           if (linesTbl) {
@@ -8291,6 +8331,21 @@
             ? (parseFloat(document.getElementById('fBillDiscount')?.value) || 0) : 0,
           billDiscountAmount: (document.getElementById('fBillDiscountMode')?.value !== 'pct')
             ? (parseFloat(document.getElementById('fBillDiscount')?.value) || 0) : 0,
+          // ═══ สกุลเงิน + อัตราแลกเปลี่ยน (A-D1) ═══
+          // ⚠️ เดิม payload **ไม่ส่งสองช่องนี้เลย** ทั้งที่ฟอร์มมีให้เลือก
+          // (#fCurrency / #fExchangeRate) ⇒ เซิร์ฟเวอร์ใช้ค่า default THB rate 1
+          // ทุกใบ ⇒ ใบสกุลต่างประเทศที่สร้างจากหน้าจอ **ลงบัญชีเป็นบาทที่ยอดเดิม**
+          // (USD 1,000 กลายเป็น ฿1,000 แทน ฿36,000) — ผิดเป็นเท่าตัวของอัตรา
+          // และผิดทั้ง GL · ลูกหนี้ · ภ.พ.30 · งบการเงิน
+          // ส่ง rate เฉพาะตอนไม่ใช่ THB — ปล่อย null ให้เซิร์ฟเวอร์ดึงอัตรา BoT
+          // ของวันที่เอกสารเองเมื่อผู้ใช้ไม่ได้กรอก (ดู CreateDocumentRequest)
+          currency: document.getElementById('fCurrency')?.value || 'THB',
+          exchangeRate: (() => {
+            const ccy = document.getElementById('fCurrency')?.value || 'THB';
+            if (ccy === 'THB') return 1;
+            const v = parseFloat(document.getElementById('fExchangeRate')?.value);
+            return Number.isFinite(v) && v > 0 ? v : null;
+          })(),
           documentDate: document.getElementById('fDate').value,
           // แก้ไข (และช่องแสดงอยู่): ว่าง = **ล้างวันครบกำหนดทิ้ง** (sentinel
           // 0001-01-01 — server แปลงเป็น null) เดิมล้างไม่ได้เลย ใบยังโผล่ใน

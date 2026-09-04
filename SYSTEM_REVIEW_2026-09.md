@@ -29,7 +29,7 @@
 | 1 | F-02 | `GET/POST /api/Subscription/payments/{paymentId}` ไม่มี companyId ⇒ guard ข้าม ⇒ อ่าน/เขียนทับสลิปชำระเงินของ**บริษัทอื่น**ได้ด้วย GUID เดียว | รั่วข้ามผู้เช่า ยิงได้ทันที | M |
 | 2 | ✅(G-01) F-01 + G-01 + G-04 | XSS เชิงระบบ: `Layout.esc` ไม่หนี `"`/`'` (82 จุดใน attribute) · admin console ต่อชื่อผู้ใช้/ชื่อบริษัท/หมายเหตุสลิปดิบ 114 จุด · สมัครสาธารณะไม่ validate `FullName` · CSP `unsafe-inline` · JWT ใน localStorage ⇒ ผู้เช่า→ยึด SystemAdmin | takeover แพลตฟอร์ม | S (esc) + M (admin) |
 | 3 | A-D2 + D-A1 + D-A2 | endpoint เขียนของ Document (PUT/DELETE/convert/payments/write-off) และ Payroll (create/approve/**pay**/settle-sso/sync) ไม่มี permission gate — สมาชิกคนไหนก็ได้ลง JE/จ่ายเงินเดือน | สิทธิ์ | M+S |
-| 4 | A-D1 | ฟอร์มสร้างเอกสารไม่ส่ง `currency/exchangeRate` เลย ⇒ ใบสกุลต่างประเทศทุกใบจาก UI ลงบัญชีเป็นบาท rate 1 | เงิน/ภาษีผิดเป็นเท่าตัว | S |
+| 4 | ✅ A-D1 | ฟอร์มสร้างเอกสารไม่ส่ง `currency/exchangeRate` เลย ⇒ ใบสกุลต่างประเทศทุกใบจาก UI ลงบัญชีเป็นบาท rate 1 | เงิน/ภาษีผิดเป็นเท่าตัว | S |
 | 5 | C-T02 + C-T03 | ปิดงวด**รายเดือน**สร้าง closing entry ⇒ P&L ของงวดที่ปิดกลายเป็น 0 (ไหลไป XBRL DBD + ภ.ง.ด.51) · YearEndClose ตรึง ม.ค.–ธ.ค. ไม่อ่าน FiscalYearStartMonth | งบการเงินที่ยื่นผิด | M+S |
 | 6 | ✅ d77a56a+ C-T01 | ภ.พ.30 กรอง `VatAmount != 0` ⇒ ยอดขาย 0% (ส่งออก) และยกเว้นไม่เคยเข้ารายงาน · ซื้อยกเว้นปนเป็นยอดขาย | §80/1 §81 §87 | M |
 | 7 | E-OCR-01 | OCR ใส่ VatRate = 7 ทุกบรรทัดถ้าใบมี VAT + เฉลี่ย VAT ตามยอด ⇒ ใบผสม 7%/ยกเว้น (Makro/BigC/บิลอาหาร) รายงานภาษีซื้อผิดทุกใบ ยอดรวมตรงจึงเงียบ | §87 งานประจำวัน | L |
@@ -37,7 +37,7 @@
 | 9 | D-F1 + D-S1 + D-S2 + D-S3 | สร้างรอบเงินเดือนจากหน้าจอ**พังทุกครั้ง** (ส่ง พ.ศ. + ไม่ส่งงวด) · พนักงานที่เพิ่มจาก payroll.html ไม่เข้า ปกส. เงียบ · ลาออกกลางเดือนหายจากรอบ · ไม่ prorate | ม.33 ม.5 | S+S+S+M |
 | 10 | ✅ แก้ไปก่อนหน้าแล้ว H-A1 | `quick-sale.html` เรียก `Layout.toDateInput` แต่ไม่โหลด layout.js ⇒ ขายเร็วขายไม่ได้เลย (มีเมนู + ปุ่มมือถือ) | ผู้ใช้เจอทุกวัน · 1 บรรทัด | S |
 | 11 | H-A2 + H-A3 | ใบแจ้งหนี้ Time Billing VAT=0 ตายตัว · POS ใช้ UtcNow ⇒ ขาย 00:00–07:00 ตกวัน/เดือนก่อน (ภ.พ.30 ผิดงวด) | เงิน/ภาษี | M+S |
-| 12 | E-AI-01 | `ToResult` ส่ง `RawResponseJson` ที่ local path เป็น null เสมอ ⇒ student ที่เขียนเพื่อ kill-switch ถูกทิ้ง ผู้ใช้เห็น "🤖 AI ตรวจสอบเสร็จ" + แผงว่าง (3 feature) | ละเมิดกฎเหล็ก #1 · 1 บรรทัด | S |
+| 12 | ✅ E-AI-01 | `ToResult` ส่ง `RawResponseJson` ที่ local path เป็น null เสมอ ⇒ student ที่เขียนเพื่อ kill-switch ถูกทิ้ง ผู้ใช้เห็น "🤖 AI ตรวจสอบเสร็จ" + แผงว่าง (3 feature) | ละเมิดกฎเหล็ก #1 · 1 บรรทัด | S |
 | 13 | E-AI-02 + E-AI-03 | budget guard นับ heuristic/memory เป็น call จริง ⇒ daily cap เต็มแล้วบล็อก AI จริง · รายงานการใช้ AI นับ call ที่ไม่เคยเกิด · memory hit บันทึก ProviderUsed=DeepSeek | ต้นทุน + ตัวชี้วัดโกหก | S+S |
 | 14 | F-06 | DataProtection key ring บนดิสก์ท้องถิ่น `./.dpkeys` ⇒ replica ที่ 2 ถอด PII ไม่ออก / restart ไม่มี volume = เลขบัตร ปชช. หายถาวร | **ต้องแก้ก่อนขึ้น replica ที่สอง** | M |
 | 15 | F-08 + F-09 | ตัวออกเลข ~25 จุด `Max()+1` ไม่มี advisory lock ไม่มี unique index (JE/Payment/POS/50ทวิ) · background job 11/12 ไม่มีล็อกข้าม instance | เลขซ้ำ/JE ซ้ำ/อีเมลซ้ำเมื่อ scale | L+M |
@@ -71,7 +71,7 @@
 4. F-03 upload allow-list จาก magic bytes + `nosniff` + `Content-Disposition` บน `/uploads/**` · F-04 SSRF validate URL + ปิด redirect · F-16 `/health/db` gate · H-A6 OPENBANKING key fail-fast
 
 **Sprint 1 — เงิน/ภาษีที่ผิดอยู่ตอนนี้ (3–5 วัน)**
-5. A-D1 currency/exchangeRate ใน save()+openEdit + เทสต์ + ตรวจ AutoPost ToGlAmount (:11886) และ PDF พิมพ์สกุล
+5. ✅ A-D1 currency/exchangeRate ใน save() + `_hydrateCurrencyReadonly` ตอน openEdit (ล็อก+บอกเหตุผล เพราะ `UpdateDocumentRequest` ไม่รับสองช่องนี้) · ตรวจแล้ว: `ToGlAmount` (:12192) คูณอัตราถูกต้อง และ renderer ทั้งสองตัวพิมพ์สกุล/อัตราอยู่แล้ว (PdfGenerationService:1786 · DocumentRenderer:683)
 6. C-T02/T03/T04: `IsClosingEntry` + กรองที่ resolver กลาง · CloseFiscalPeriod ทำแค่ล็อก · `Helpers/FiscalYear.RangeFor` · `ResolveOpenFiscalPeriodAsync`
 7. C-T01: predicate + Pp30Box enum (R5 ของทีม C) + แยก exempt sales/purchases
 8. D-R2 `Helpers/ThaiPitCalculator` pure + เทสต์ 4 ระดับ → แล้วแก้ D-T1/T2/T3/T4 บนตัวนั้น · D-T2 เพิ่ม 8 ฟิลด์ใน DTO+ฟอร์ม
@@ -79,7 +79,7 @@
 10. H-A1 (1 บรรทัด) · H-A2 TimeBilling ผ่าน CreateDocumentAsync · H-A3 ThaiDate ใน POS · H-A18 throw · H-A16 dropdown ลูกค้า
 
 **Sprint 2 — AI/OCR ตามกฎเหล็ก #1/#3 (3–4 วัน)**
-11. E-AI-01 (1 บรรทัด + JS toast ซื่อสัตย์) · E-AI-02+03 `AiCallStatus.LocalServed` + แก้ผู้บริโภค 3 จุด · E-AI-07 advisory lock training job
+11. ✅ E-AI-01 (`LocalPrediction.StructuredJson` + `AiRequest.LocalRawJson` + ต่อสาย 3 จุดใน orchestrator + `OcrFullReviewDistillationModel` ส่งโครงออกมา + toast/หัวแผงซื่อสัตย์ตาม `usedAi`) · E-AI-02+03 `AiCallStatus.LocalServed` + แก้ผู้บริโภค 3 จุด · E-AI-07 advisory lock training job
 12. E-OCR-01 + OCR-02: VatRate เป็นพลเมืองชั้นหนึ่งของ pipeline (entity→JSON→DTO→review) + VatTypeInference ต่อบรรทัด + ด่าน Σ
 13. E-AI-06 sanitizer (email/bank regex · `_pii` producer จริง · AllowTaxIdInPrompt แยกนิติบุคคล) · E-OCR-03/04/05 · E-AI-10 enum ตาย 8 ค่า ตัดสินใจ
 
