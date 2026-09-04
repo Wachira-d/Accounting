@@ -174,7 +174,7 @@
         features.forEach(f => {
           const checked = enabledSet.has(f.name) ? 'checked' : '';
           html += `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0">
-            <input type="checkbox" class="${idPrefix}_feat" data-name="${f.name}" ${checked} onchange="featureCount('${idPrefix}')">
+            <input type="checkbox" class="${idPrefix}_feat" data-name="${AdminLayout.esc(f.name)}" ${checked} onchange="featureCount('${idPrefix}')">
             <span>${f.labelTh || f.name}</span>
           </label>`;
         });
@@ -230,7 +230,7 @@
               <div class="admin-grid-2">
                 <div class="admin-form-group">
                   <label class="admin-label">ชื่อแพ็กเกจ</label>
-                  <input class="admin-input" id="ep_name" value="${p.name}" required>
+                  <input class="admin-input" id="ep_name" value="${AdminLayout.esc(p.name)}" required>
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">เปิดใช้งาน</label>

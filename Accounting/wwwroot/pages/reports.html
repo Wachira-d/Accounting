@@ -343,7 +343,7 @@
           const sources = res.data?.items || res.data || [];
           this.dataSources = sources;
           const sel = document.getElementById('rDataSource');
-          sel.innerHTML = '<option value="">-- เลือก Data Source --</option>' + sources.map(s => `<option value="${s.type||s.name}">${s.displayName||s.name}</option>`).join('');
+          sel.innerHTML = '<option value="">-- เลือก Data Source --</option>' + sources.map(s => `<option value="${Layout.esc(s.type||s.name)}">${Layout.esc(s.displayName||s.name)}</option>`).join('');
           document.getElementById('rColumnsSelect').innerHTML = '<span class="text-gray-400 text-sm">เลือก Data Source ก่อน</span>';
           document.getElementById('rGroupBy').innerHTML = '<option value="">ไม่ group</option>';
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -356,9 +356,9 @@
         try {
           const res = await api.getReportColumns(ds);
           this.columns = res.data?.items || res.data || [];
-          document.getElementById('rColumnsSelect').innerHTML = this.columns.map(c => `<label class="text-sm" style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="${c.fieldName||c.name}" onchange="Page.toggleColumn(this)" ${this.selectedColumns.includes(c.fieldName||c.name)?'checked':''}> ${c.displayName||c.name}</label>`).join('');
+          document.getElementById('rColumnsSelect').innerHTML = this.columns.map(c => `<label class="text-sm" style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="${Layout.esc(c.fieldName||c.name)}" onchange="Page.toggleColumn(this)" ${this.selectedColumns.includes(c.fieldName||c.name)?'checked':''}> ${c.displayName||c.name}</label>`).join('');
           const groupSel = document.getElementById('rGroupBy');
-          groupSel.innerHTML = '<option value="">ไม่ group</option>' + this.columns.map(c => `<option value="${c.fieldName||c.name}">${c.displayName||c.name}</option>`).join('');
+          groupSel.innerHTML = '<option value="">ไม่ group</option>' + this.columns.map(c => `<option value="${Layout.esc(c.fieldName||c.name)}">${Layout.esc(c.displayName||c.name)}</option>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       toggleColumn(checkbox) {
@@ -403,7 +403,7 @@
           const sources = dsRes.data?.items || dsRes.data || [];
           this.dataSources = sources;
           const sel = document.getElementById('rDataSource');
-          sel.innerHTML = sources.map(s => `<option value="${s.type||s.name}" ${(s.type||s.name)===r.dataSourceType?'selected':''}>${s.displayName||s.name}</option>`).join('');
+          sel.innerHTML = sources.map(s => `<option value="${Layout.esc(s.type||s.name)}" ${(s.type||s.name)===r.dataSourceType?'selected':''}>${Layout.esc(s.displayName||s.name)}</option>`).join('');
           await this.loadDataSourceColumns();
           if (r.groupingJson) { try { const g = JSON.parse(r.groupingJson); if (g.length) document.getElementById('rGroupBy').value = g[0]; } catch (e) { console.error('parseGrouping:', e); } }
           Layout.openModal('reportModal');

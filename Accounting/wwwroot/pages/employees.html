@@ -506,7 +506,7 @@
         box.innerHTML = this._customAllowances.map((a, i) => `
           <div style="display:flex;gap:6px;align-items:center;background:#f8fafc;padding:6px;border-radius:6px">
             <input type="text" class="form-input" style="flex:1" placeholder="ชื่อ (เช่น ค่าโทรศัพท์)"
-                   value="${(a.name || '').replace(/"/g,'&quot;')}" oninput="Page._customAllowances[${i}].name=this.value">
+                   value="${Layout.esc(a.name || '')}" oninput="Page._customAllowances[${i}].name=this.value">
             <select class="form-select" style="width:100px" onchange="Page._customAllowances[${i}].type=this.value">
               <option value="Monthly" ${a.type==='Monthly'?'selected':''}>Monthly</option>
               <option value="Daily" ${a.type==='Daily'?'selected':''}>Daily</option>

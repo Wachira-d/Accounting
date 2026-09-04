@@ -115,10 +115,10 @@
           let html = `<option value="common" data-name="ส่วนกลาง">📋 ส่วนกลาง — บัญชีพื้นฐาน (${d.common.count})</option>`;
           html += `<optgroup label="ส่วนของเจ้าของ (หมวด 3) ตามประเภทธุรกิจ">`;
           for (const b of d.businessTypes)
-            html += `<option value="b:${b.type}" data-name="${b.name}">🏢 ${b.name} — ${b.equityLabel} (${b.count})</option>`;
+            html += `<option value="b:${b.type}" data-name="${AdminLayout.esc(b.name)}">🏢 ${AdminLayout.esc(b.name)} — ${b.equityLabel} (${b.count})</option>`;
           html += `</optgroup><optgroup label="บัญชีเฉพาะอุตสาหกรรม">`;
           for (const i of d.industryTypes)
-            html += `<option value="i:${i.type}" data-name="${i.name}">${i.icon} ${i.name} (${i.count})</option>`;
+            html += `<option value="i:${i.type}" data-name="${AdminLayout.esc(i.name)}">${i.icon} ${i.name} (${i.count})</option>`;
           html += `</optgroup>`;
           sel.innerHTML = html;
           sel.value = this.scopeKey;

@@ -703,7 +703,7 @@
           sel.innerHTML = data.engines.map(e => {
             const star = e.tierBadge || '';
             const tail = e.available ? '' : ` — ${e.disabledReason || 'ใช้งานไม่ได้'}`;
-            return `<option value="${e.key}" ${e.available ? '' : 'disabled'} data-desc="${(e.description || '').replace(/"/g,'&quot;')}">${star} ${e.label}${tail}</option>`;
+            return `<option value="${e.key}" ${e.available ? '' : 'disabled'} data-desc="${Layout.esc(e.description || '')}">${star} ${e.label}${tail}</option>`;
           }).join('');
           sel.value = initial || 'auto';
           document.getElementById('engineChooser').style.display = '';

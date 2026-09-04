@@ -53,18 +53,42 @@ const Layout = {
     return Number.isFinite(n) ? n : null;
   },
 
+  /** HTML escape — ปลอดภัยทั้งใน **เนื้อความ** และใน **ค่าของ attribute**
+   *
+   *  ⚠️ ที่มา (บั๊กจริง · ผลตรวจ G-01/F-01): เดิมทำผ่าน `textContent → innerHTML`
+   *  ซึ่งตาม HTML serialization spec หนีแค่ `&` `<` `>` — **ไม่หนี `"` และ `'`**
+   *  ⇒ ทุกจุดที่เขียน `title="${Layout.esc(v)}"` (61 จุดในเรพ) ค่าที่มี `"`
+   *  จะ**แตกออกจาก attribute** แล้วเติม `onmouseover=` ต่อได้:
+   *
+   *      v = 'x" onmouseover="alert(1)'
+   *      title="x" onmouseover="alert(1)"     ← handler ที่ผู้โจมตีเขียนเอง
+   *
+   *  ค่าพวกนี้มาจากชื่อผู้ติดต่อ · ชื่อสินค้า · หมายเหตุ · ผล OCR — ทั้งหมด
+   *  เป็นสิ่งที่ผู้ใช้/คู่ค้า/กระดาษคุมได้ · และ JWT อยู่ใน localStorage
+   *  ⇒ XSS = ขโมย token (CLAUDE.md กฎเหล็ก #4 C)
+   *
+   *  หนี 5 ตัวเสมอ ไม่ว่าจะเอาไปวางที่ไหน — ในเนื้อความ `&quot;` แสดงผลเป็น `"`
+   *  ตามปกติอยู่แล้ว จึงไม่มีผลข้างเคียงกับสิ่งที่ผู้ใช้เห็น
+   *
+   *  **ยังไม่ใช่ตัวสำหรับ JS string ใน onclick** — อันนั้นใช้ `jsArg()` (ดูข้างล่าง)
+   */
   esc(str) {
     if (str == null) return '';
-    const d = document.createElement('div');
-    d.textContent = String(str);
-    return d.innerHTML;
+    return String(str)
+      .replace(/&/g, '&amp;')     // ต้องมาก่อนเสมอ ไม่งั้นหนีซ้ำตัวที่หนีไปแล้ว
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   },
 
   /** ค่าที่จะฝังใน **JS string literal ภายใน onclick=""** — ไม่ใช่ `esc()`
    *
-   *  `Layout.esc` เป็น **HTML escape** (ทำผ่าน textContent→innerHTML) จึงหนีแค่
-   *  `& < >` **ไม่หนี `'` และขึ้นบรรทัดใหม่** ⇒ พอเอาไปวางใน `onclick="f('...')"`
-   *  ค่าที่มีอัญประกาศเดี่ยวหรือ \n จะปิด string กลางคัน แล้วทั้งหน้าตายด้วย
+   *  `Layout.esc` เป็น **HTML escape** — หนี `& < > " '` เป็น entity แต่
+   *  **ไม่หนีระดับ JS และไม่หนีขึ้นบรรทัดใหม่** ⇒ พอเอาไปวางใน `onclick="f('...')"`
+   *  ค่าที่มี `\n` จะปิด string กลางคัน (และ `&#39;` ที่ esc คืนมาจะถูกเบราว์เซอร์
+   *  decode กลับเป็น `'` **ก่อน** parser ของ JS อ่าน ⇒ ปิด string ได้อยู่ดี)
+   *  แล้วทั้งหน้าตายด้วย
    *  `Invalid or unexpected token` (เจอจริง: ชื่อสินทรัพย์ที่ OCR อ่านมาจาก
    *  ใบกำกับ ทำให้ปุ่มลบในทะเบียนสินทรัพย์กดไม่ได้ทั้งหน้า)
    *

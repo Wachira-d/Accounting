@@ -334,7 +334,7 @@
           <div class="perm-items" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr))">`;
         sec.items.forEach(item => {
           const checked = set.has(item.id) ? 'checked' : '';
-          const tooltip = item.description ? ` title="${item.description.replace(/"/g,'&quot;')}"` : '';
+          const tooltip = item.description ? ` title="${Layout.esc(item.description)}"` : '';
           html += `<label class="perm-item"${tooltip}>
             <input type="checkbox" value="${item.id}" ${checked} class="perm-cb">
             <span class="perm-icon">${item.icon || '🔐'}</span>
