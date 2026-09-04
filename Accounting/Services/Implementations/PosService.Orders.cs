@@ -31,7 +31,7 @@ public partial class PosService
         var session = await _db.PosSessions.FirstOrDefaultAsync(s => s.Id == request.SessionId && s.CompanyId == companyId && s.Status == PosSessionStatus.Open)
             ?? throw new KeyNotFoundException("ไม่พบกะการขายที่เปิดอยู่");
 
-        var posYm = DateTime.UtcNow.ToString("yyyyMM");
+        var posYm = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow).ToString("yyyyMM");
         var posPrefix = $"POS-{posYm}-";
         var maxPos = await _db.PosOrders
             .IgnoreQueryFilters()
@@ -439,7 +439,12 @@ public partial class PosService
             // the end to suppress the VAT-report JE-fallback (avoids VAT
             // double-count: the Document path counts it, the JE path skips it).
             // เลขเอกสารใช้ yyyyMM ของ DocumentDate ให้สอดคล้องกัน
-            var posDocDate = order.CompletedAt ?? DateTime.UtcNow;
+            // ★ H-A3: ต้องเป็น "วันตามปฏิทินไทย" ไม่ใช่วัน UTC — ร้านอาหาร/บาร์
+            // ปิดบิลช่วง 00:00–07:00 ICT ยังเป็น **วันก่อนหน้า** ในเวลา UTC ⇒
+            // ใบกำกับ + เลขชุด yyyyMM + JE ตกวัน/เดือนก่อน ⇒ ภ.พ.30 ผิดงวด
+            // (DocumentService ใช้ ThaiDate.CalendarDateUtc มาตลอด — POS ตกหล่น)
+            var posDocDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(
+                order.CompletedAt ?? DateTime.UtcNow);
             var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
                 _db, companyId, Models.Enums.DocumentType.TaxInvoice, posDocDate);
 
@@ -448,7 +453,7 @@ public partial class PosService
                 CompanyId = companyId,
                 DocumentNumber = docNumber,
                 DocumentType = Models.Enums.DocumentType.TaxInvoice,
-                DocumentDate = order.CompletedAt ?? DateTime.UtcNow,
+                DocumentDate = posDocDate,
                 ContactId = contact.Id,
                 Contact = contact,
                 Status = Models.Enums.DocumentStatus.Approved,
@@ -530,7 +535,7 @@ public partial class PosService
         try
         {
             // Generate the official order number.
-            var posYm = DateTime.UtcNow.ToString("yyyyMM");
+            var posYm = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow).ToString("yyyyMM");
             var posPrefix = $"POS-{posYm}-";
             var maxPos = await _db.PosOrders.IgnoreQueryFilters()
                 .Where(o => o.CompanyId == companyId && o.OrderNumber.StartsWith(posPrefix))
@@ -861,7 +866,7 @@ public partial class PosService
         }
 
         var vatRate = await GetCompanyVatRateAsync(companyId);
-        var posYm = DateTime.UtcNow.ToString("yyyyMM");
+        var posYm = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow).ToString("yyyyMM");
         var posPrefix = $"POS-{posYm}-";
 
         // Compute next number once, then increment per child to avoid round trips.
@@ -1178,7 +1183,9 @@ public partial class PosService
             .FirstOrDefaultAsync();
         if (company == null) return;
 
-        var issuedAt = order.CompletedAt ?? DateTime.UtcNow;
+        // ★ H-A3 — เลขใบกำกับอย่างย่อ (§86/6) ผูกกับวัน/เดือนตามปฏิทินไทย
+        var issuedAt = Accounting.Helpers.ThaiDate.CalendarDateUtc(
+            order.CompletedAt ?? DateTime.UtcNow);
         var header = Accounting.Helpers.PosSlipHeader.Resolve(
             company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
             order.VatAmount, issuedAt);
@@ -1230,7 +1237,14 @@ public partial class PosService
         var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21911")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219") && a.Level >= 4);
 
-        if (salesAccount == null) return; // Skip if no sales account configured
+        // ★ H-A18: เดิม `return;` เงียบ ๆ ⇒ ออเดอร์ปิดสำเร็จ เงินเข้าลิ้นชัก
+        // แต่ **ไม่มีรายการบัญชีเลย** = GL รั่วโดยไม่มีใครเห็น (ต่างจาก catch
+        // ด้านล่างที่ throw แล้ว — ทางออกสองทางของเมธอดเดียวกันตัดสินคนละแบบ)
+        // กฎเหล็ก #4 E: ห้ามกลืน error ใน payment/stock/JE path — fail loud
+        if (salesAccount == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ไม่พบบัญชีรายได้จากการขาย (41000) ในผังบัญชี — เพิ่มผังบัญชีก่อนปิดบิล " +
+                "มิฉะนั้นยอดขายจะไม่เข้าบัญชีแยกประเภท", "POS-NO-SALES-ACCOUNT");
 
         var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
@@ -1245,7 +1259,11 @@ public partial class PosService
             // account so the JE still balances. Older orders without explicit payment
             // method end up here.
             var cashAccount = await ResolvePaymentAccountAsync(companyId, PaymentMethod.Cash, jeTerminal);
-            if (cashAccount == null) return;
+            // ★ H-A18 (ทางออกที่สอง) — เหตุผลเดียวกับข้างบน
+            if (cashAccount == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ไม่พบบัญชีเงินสด/ธนาคารสำหรับรับเงิน POS — ตั้งค่าผังบัญชีของสาขาก่อนปิดบิล",
+                    "POS-NO-CASH-ACCOUNT");
             lines.Add(new(cashAccount.Id, order.NetAmount, 0, $"รับเงิน POS #{order.OrderNumber}"));
         }
         else
@@ -1333,8 +1351,11 @@ public partial class PosService
             }
         }
 
+        // ★ H-A3: วันที่ลงบัญชี = วันตามปฏิทินไทยของเวลาที่ปิดบิล
+        var jeDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(
+            order.CompletedAt ?? DateTime.UtcNow);
         var journalRequest = new Models.DTOs.Accounting.CreateJournalEntryRequest(
-            DateTime.UtcNow, $"POS Sale #{order.OrderNumber}", order.OrderNumber, lines,
+            jeDate, $"POS Sale #{order.OrderNumber}", order.OrderNumber, lines,
             BranchId: order.BranchId);
 
         try
@@ -1611,8 +1632,10 @@ public partial class PosService
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
         // บริษัทไม่จด VAT → คิด 0% (ห้ามเก็บ/ลง output VAT — §90/2). POS ลง JE
         // เอง (21911) ไม่ผ่าน ApproveDocumentAsync จึงต้องกันที่ต้นทางตรงนี้
-        if (company is not { IsVatRegistered: true }) return 0m;
-        return company.VatRate;
+        // ตัวตัดสินเดียวกับเส้นอื่นที่สร้างเอกสารขายเองโดยไม่ผ่าน Approve
+        // (Time Billing / integration) — Helpers/OutputVatRate
+        return Accounting.Helpers.OutputVatRate.ForCompany(
+            company?.IsVatRegistered ?? false, company?.VatRate ?? 0m);
     }
 
     private async Task AddItemToOrder(PosOrder order, CreateOrderItemRequest req, int lineOrder, decimal vatRate)
