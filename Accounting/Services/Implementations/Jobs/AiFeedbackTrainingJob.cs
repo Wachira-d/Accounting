@@ -53,6 +53,50 @@ public class AiFeedbackTrainingJob : BackgroundService
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
 
+        // ── กันสอง instance เทรนพร้อมกัน (E-AI-07) ──
+        // job อื่นทุกตัวมีล็อกแล้ว ตัวนี้ไม่มี — และหน่วงเริ่ม 7 นาทีเท่ากันทุก
+        // เครื่อง ⇒ ตื่นพร้อมกัน**เกือบเสมอ** แล้ว upsert LocalModelHealth /
+        // AiLearnedMemory ทับกัน ⇒ ตัวเลขความแม่นที่แอดมินใช้ตัดสินว่า
+        // "ปิด AI ได้หรือยัง" กลายเป็นของครึ่ง ๆ ของสองรอบ
+        //
+        // ใช้ **try** ไม่ใช่ wait: งานนี้เดินทุก 6 ชม. ถ้าอีกเครื่องกำลังทำอยู่
+        // การรอคือการทำงานเดิมซ้ำเปล่า ๆ — ข้ามไปรอบหน้าถูกกว่า
+        // session-level lock ⇒ ต้องเปิด connection ค้างไว้เอง (xact lock ใช้ไม่ได้
+        // เพราะเมธอดนี้ SaveChanges หลายครั้ง ไม่ได้อยู่ในธุรกรรมเดียว)
+        var lockKey = Accounting.Helpers.AdvisoryLockKey.For(
+            Accounting.Helpers.AdvisoryLockKey.AiFeedbackTraining, "global");
+        var conn = db.Database.GetDbConnection();
+        var openedHere = conn.State != System.Data.ConnectionState.Open;
+        if (openedHere) await conn.OpenAsync(ct);
+        bool acquired;
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"SELECT pg_try_advisory_lock({lockKey})";
+            acquired = Convert.ToBoolean(await cmd.ExecuteScalarAsync(ct));
+        }
+        if (!acquired)
+        {
+            _logger.LogInformation(
+                "AiFeedbackTrainingJob: instance อื่นกำลังเทรนอยู่ — ข้ามรอบนี้ (lock {Key})", lockKey);
+            if (openedHere) await conn.CloseAsync();
+            return;
+        }
+
+        try
+        {
+            await RunTrainingPassAsync(db, ct);
+        }
+        finally
+        {
+            await using var unlock = conn.CreateCommand();
+            unlock.CommandText = $"SELECT pg_advisory_unlock({lockKey})";
+            await unlock.ExecuteScalarAsync(CancellationToken.None);
+            if (openedHere) await conn.CloseAsync();
+        }
+    }
+
+    private async Task RunTrainingPassAsync(AccountingDbContext db, CancellationToken ct)
+    {
         var cutoff = DateTime.UtcNow.AddDays(-30);
         await RefreshAllLocalModelHealthsAsync(db, cutoff, ct);
         await TrainLocalModelsAsync(db, ct);

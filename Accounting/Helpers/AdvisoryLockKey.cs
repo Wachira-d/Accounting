@@ -84,4 +84,13 @@ public static class AdvisoryLockKey
     /// เพราะการเลือกรายการ "ที่ยังไม่ถูกโอน" แล้วมาร์กทีหลังเป็น read-modify-write:
     /// สองคนกดพร้อมกันจะเลือกชุดเดียวกันแล้วลง JE ซ้ำ ⇒ ธนาคารเกินสองเท่า</summary>
     public const string GatewaySettlement = "pay-settle";
+
+    /// <summary>งานเทรน local model จาก feedback (กฎเหล็ก #1 ขั้น DISTILL) —
+    /// part = "global" · คีย์ระดับระบบไม่ผูกบริษัท เพราะงานเดินทีเดียวทุก tenant
+    ///
+    /// <para>เดิม<b>ไม่มีล็อกเลย</b> ต่างจาก job อื่นทุกตัว ⇒ สอง instance ตื่นพร้อมกัน
+    /// (หน่วงเริ่ม 7 นาทีเท่ากันทุกเครื่อง จึงตื่นพร้อมกัน<b>เกือบเสมอ</b>) แล้ว
+    /// upsert `LocalModelHealth`/`AiLearnedMemory` ทับกัน — ตัวเลขความแม่นที่แอดมิน
+    /// ใช้ตัดสินว่า "ปิด AI ได้หรือยัง" กลายเป็นของครึ่ง ๆ ของสองรอบ</para></summary>
+    public const string AiFeedbackTraining = "ai-train";
 }

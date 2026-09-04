@@ -205,6 +205,17 @@ public record OcrCorrectionRequest(
     string? VendorBranchCode = null,
     string? BuyerTaxId = null,
     string? BuyerBranchCode = null,
+    /// <summary>ที่อยู่ผู้ขาย/ผู้ซื้อ + ชื่อผู้ซื้อ + เครดิตเทอม — รายการบังคับ
+    /// ตาม §86/4 ที่ <b>ไม่เคยมีทางแก้จากหน้า review เลย</b> (ผลตรวจ E-OCR-05)
+    ///
+    /// <para>OCR อ่านที่อยู่เพี้ยนเป็นเรื่องปกติ (ตัวเล็ก หลายบรรทัด มีตราประทับทับ)
+    /// แต่ทางเดียวที่ผู้ใช้แก้ได้คือไปแก้ที่ <c>Contact</c> ซึ่ง<b>เปลี่ยนใบเก่า
+    /// ทุกใบของผู้ขายรายนั้นตามไปด้วย</b> — ที่อยู่บนใบกำกับต้องเป็นที่อยู่
+    /// ณ วันที่ออกใบ ไม่ใช่ที่อยู่ล่าสุด</para></summary>
+    string? VendorAddress = null,
+    string? BuyerName = null,
+    string? BuyerAddress = null,
+    int? PaymentTermsDays = null,
     /// <summary>หมายเหตุ/เหตุผลทางธุรกิจที่ผู้ใช้พิมพ์เอง (เช่น "เดินทางไปพบ
     /// ลูกค้า") — ไหลต่อไปเป็น <c>Document.Notes</c> ของใบที่สร้างจากสแกนนี้
     ///

@@ -1535,16 +1535,37 @@ public enum AiFeatureKey
     /// <summary>Narrate a cashflow forecast + suggest scenarios.</summary>
     ForecastNarrative = 12,
 
-    /// <summary>Match a free-text product name → existing Product.</summary>
+    // ══════════════════════════════════════════════════════════════
+    //  4 ค่าที่ "ตายแล้ว" — ไม่มี call site เลยทั้งเรพ และแต่ละตัวมีคู่แฝด
+    //  ที่ใช้งานจริงอยู่แล้ว (ผลตรวจ E-AI-10)
+    //
+    //  ปล่อยไว้เฉย ๆ ไม่ได้: คนอ่าน enum จะเข้าใจว่า "มี feature นี้แล้ว"
+    //  แล้ววันหนึ่งจะมีคนต่อสายตัวนี้แทนตัวจริง ⇒ ได้ corpus **สองกอง**
+    //  สำหรับคำถามเดียวกัน ซึ่งแปลว่า local model ของทั้งสองกองโตช้าลงครึ่งหนึ่ง
+    //  (ขัดกับกฎเหล็ก #1 ข้อ 6 โดยตรง)
+    //
+    //  ไม่ลบทิ้งเพราะตัวเลข 13-16 ต้องถูก "จอง" ไว้ — ถ้าลบแล้วมีคนเอาเลขเดิม
+    //  ไปใช้กับ feature ใหม่ แถว AiSuggestionFeedback เก่า (ถ้ามี) จะกลาย
+    //  ความหมาย. `error: true` ทำให้การอ้างถึงคอมไพล์ไม่ผ่าน = กันได้จริง
+    //  ไม่ใช่แค่คำเตือนที่คนกดข้าม
+    // ══════════════════════════════════════════════════════════════
+
+    /// <summary>ตายแล้ว — ใช้ <see cref="ContactFuzzyMatch"/> (การจับคู่สินค้า
+    /// วันนี้เดินผ่าน <c>Ocr.ProductMatcher</c> ซึ่งเป็น cascade แบบ heuristic
+    /// ไม่ผ่าน AI)</summary>
+    [Obsolete("ไม่มีใครเรียก — การจับคู่สินค้าใช้ Ocr.ProductMatcher (heuristic) ไม่ผ่าน AI", error: true)]
     ProductMatch = 13,
 
-    /// <summary>Match a free-text contact name → existing Contact.</summary>
+    /// <summary>ตายแล้ว — ใช้ <see cref="ContactFuzzyMatch"/> ที่ต่อสายจริงแล้ว</summary>
+    [Obsolete("ซ้ำกับ ContactFuzzyMatch ที่ใช้งานจริง — ใช้ตัวนั้นแทน", error: true)]
     ContactMatch = 14,
 
-    /// <summary>Suggest payment method given vendor history + amount.</summary>
+    /// <summary>ตายแล้ว — ใช้ <see cref="PaymentChannelSuggestion"/></summary>
+    [Obsolete("ซ้ำกับ PaymentChannelSuggestion ที่ใช้งานจริง — ใช้ตัวนั้นแทน", error: true)]
     PaymentMethodSuggestion = 15,
 
-    /// <summary>Suggest currency + FX rate sanity-check.</summary>
+    /// <summary>ตายแล้ว — ใช้ <see cref="FxRateSuggestion"/></summary>
+    [Obsolete("ซ้ำกับ FxRateSuggestion ที่ใช้งานจริง — ใช้ตัวนั้นแทน", error: true)]
     CurrencyAndFxSuggestion = 16,
 
     /// <summary>Aging-receivable explanation per customer.</summary>

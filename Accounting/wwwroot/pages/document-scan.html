@@ -1947,9 +1947,15 @@
 
           // Per-field confidence: prefer FieldConfidence dict if backend supplied it
           const fieldConf = scan.fieldConfidence || {};
+          // ⚠️ ห้าม fallback ไป confidence ของ **ทั้งใบ** — ช่องที่ไม่มีใครวัด
+          // จะได้ป้าย 95% ติดข้างค่าที่ระบบ "เดา" ให้ (เช่นรหัสสาขา 00000 ที่มา
+          // จากค่า default ไม่ใช่จากกระดาษ) ⇒ ผู้ใช้เห็น "00000 · 95%" แล้วกด
+          // ยืนยัน ⇒ ใบของสาขาที่ 3 ลงเป็นสำนักงานใหญ่ทั้งใบ (§86/4 + §87)
+          // "ไม่รู้ = บอกว่าไม่รู้" — ขีดกลางอ่านออกว่ายังไม่ได้ตรวจ
           const fc = (fieldName) => {
             if (fieldName in fieldConf) return confBadge(fieldConf[fieldName]);
-            return confBadge(scan.confidence);
+            return '<span class="conf-badge" style="background:#f1f5f9;color:#64748b" '
+                 + 'title="ยังไม่มีคะแนนความมั่นใจของช่องนี้ — ตรวจกับกระดาษก่อนยืนยัน">—</span>';
           };
 
           document.getElementById('reviewTitle').textContent = 'ตรวจสอบ: ' + (scan.originalFileName || 'เอกสาร');
@@ -2193,6 +2199,34 @@
                   value="${Layout.esc(scan.buyerBranchCode || '')}">
                 ${fc('BuyerBranchCode')}
               </div>
+              <!-- ที่อยู่ + ชื่อผู้ซื้อ + เครดิตเทอม (E-OCR-05) — §86/4 บังคับทั้งสาม
+                   แต่เดิมแก้ที่นี่ไม่ได้เลย ทางเดียวคือไปแก้ที่ "ผู้ติดต่อ" ซึ่ง
+                   เปลี่ยนใบเก่าทุกใบของผู้ขายรายนั้นตามไปด้วย (ที่อยู่บนใบกำกับ
+                   ต้องเป็นที่อยู่ ณ วันที่ออกใบ ไม่ใช่ที่อยู่ล่าสุด) -->
+              <div class="review-field">
+                <label>ที่อยู่ผู้ขาย</label>
+                <input type="text" class="form-input" id="revVendorAddress"
+                  placeholder="ที่อยู่ตามที่พิมพ์บนใบกำกับ" value="${Layout.esc(scan.vendorAddress || '')}">
+                ${fc('SellerAddress')}
+              </div>
+              <div class="review-field">
+                <label>ชื่อผู้ซื้อ</label>
+                <input type="text" class="form-input" id="revBuyerName"
+                  placeholder="ชื่อผู้ซื้อตามใบกำกับ" value="${Layout.esc(scan.buyerName || '')}">
+                ${fc('BuyerName')}
+              </div>
+              <div class="review-field">
+                <label>ที่อยู่ผู้ซื้อ</label>
+                <input type="text" class="form-input" id="revBuyerAddress"
+                  placeholder="ที่อยู่ผู้ซื้อตามใบกำกับ" value="${Layout.esc(scan.buyerAddress || '')}">
+                ${fc('BuyerAddress')}
+              </div>
+              <div class="review-field">
+                <label>เครดิตเทอม (วัน)</label>
+                <input type="number" class="form-input" id="revPaymentTermsDays" min="0" step="1"
+                  placeholder="เช่น 30" value="${scan.paymentTermsDays != null ? scan.paymentTermsDays : ''}">
+                ${fc('PaymentTerms')}
+              </div>
             </div>
 
             <div class="review-section">
@@ -2422,6 +2456,28 @@
                 </div>
               </div>
             </div>`;
+
+          // ไฮไลต์เหลืองบนช่องที่ OCR ไม่มั่นใจ (กฎเหล็ก #3 ข้อ 3 · E-OCR-04)
+          // — **หน้านี้คือหน้าที่ผู้ใช้ตัดสินใจจริง** แต่เดิมมีแค่ป้าย % เล็ก ๆ
+          // ข้างช่อง ไม่มีสัญญาณให้สะดุดตา ส่วนไฮไลต์จริงไปอยู่ในฟอร์มเอกสาร
+          // (หน้าถัดไป) ซึ่งผู้ใช้ที่กด "ยืนยัน" ตรงนี้ไม่มีวันได้เห็น
+          // ตัวไฮไลต์เป็นของกลางใน layout.js — หน้านี้บอกแค่ id ของตัวเอง
+          Layout.applyOcrConfidenceHints(fieldConf, {
+            'SellerName': 'revVendorName',
+            'SellerTaxId': 'revVendorTaxId',
+            'SellerBranchCode': 'revVendorBranch',
+            'DocumentNumber': 'revDocNumber',
+            'DocumentDate': 'revDate',
+            'SubTotal': 'revSubTotal',
+            'VatAmount': 'revVatAmount',
+            'TotalAmount': 'revTotalAmount',
+            'BuyerTaxId': 'revBuyerTaxId',
+            'BuyerBranchCode': 'revBuyerBranch',
+            'SellerAddress': 'revVendorAddress',
+            'BuyerName': 'revBuyerName',
+            'BuyerAddress': 'revBuyerAddress',
+            'PaymentTerms': 'revPaymentTermsDays',
+          });
 
           // Show/hide create button
           const createBtn = document.getElementById('reviewCreateBtn');
@@ -2976,6 +3032,15 @@
           vendorBranchCode: v('revVendorBranch'),
           buyerTaxId: v('revBuyerTaxId'),
           buyerBranchCode: v('revBuyerBranch'),
+          // §86/4 ที่เพิ่งเปิดให้แก้ (E-OCR-05) — ห้ามลืมจุดนี้ซ้ำรอยเดิม:
+          // มีช่องใน DTO ไม่ได้แปลว่าผู้ใช้กรอกได้ ต้องครบทั้ง
+          // ฟอร์ม → payload builder → DTO → persist
+          vendorAddress: v('revVendorAddress'),
+          buyerName: v('revBuyerName'),
+          buyerAddress: v('revBuyerAddress'),
+          // ปัดเป็นจำนวนเต็ม — ฝั่งเซิร์ฟเวอร์เป็น int? ถ้าส่งทศนิยมไป
+          // ทั้ง request จะถูกปฏิเสธ 400 โดยผู้ใช้ไม่รู้ว่าเพราะช่องไหน
+          paymentTermsDays: (() => { const n = f('revPaymentTermsDays'); return n == null ? null : Math.max(0, Math.round(n)); })(),
         };
       },
       /** ฝั่งของชนิดเอกสาร — "Sales" | "Purchase"

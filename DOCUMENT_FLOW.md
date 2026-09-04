@@ -1671,8 +1671,10 @@ VAT พอดี**
 
 ### 6.4 AI distillation (กฎเหล็ก #1) ที่ฝังใน flow
 
-**Feature enum**: `AiFeatureKey` (`Models/Enums/AllEnums.cs:1188`) —
-**ตารางนี้ verified ตรงกับ enum จริงในโค้ด**
+**Feature enum**: `AiFeatureKey` (`Models/Enums/AllEnums.cs:1497`) —
+**ตารางนี้ verified ตรงกับ enum จริงในโค้ด** — แถวที่ขีดฆ่าคือค่าที่ enum ยังมี
+แต่**ไม่มีใครเรียกเลย** (E-AI-10) เดิมตารางนี้เขียนว่ามี student + round-trip
+feedback ครบ ซึ่งไม่จริงเลยสักตัว — โค้ดเป็น ground truth จึงแก้ doc
 
 | จุดเรียก AI | Feature key (enum) | Local model class | Round-trip feedback |
 | --- | --- | --- | --- |
@@ -1690,10 +1692,10 @@ VAT พอดี**
 | Fuzzy duplicate doc | `FuzzyDuplicateDetection = 10` | `DuplicateDocumentDistillationModel.cs` | – |
 | Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | – |
 | Forecast narrative | `ForecastNarrative = 12` | – (essay) | – |
-| Product match | `ProductMatch = 13` | generic | ตอน user เลือก product |
-| Contact match | `ContactMatch = 14` | generic | ตอน user เลือก |
-| Payment method suggest | `PaymentMethodSuggestion = 15` | generic | ตอน user แก้ |
-| Currency + FX suggest | `CurrencyAndFxSuggestion = 16` | generic | ตอน user แก้ rate |
+| ~~Product match~~ | ~~`ProductMatch = 13`~~ | **ตายแล้ว `[Obsolete(error)]`** | **ไม่มี call site เลยทั้งเรพ** — การจับคู่สินค้าเดินผ่าน `Ocr.ProductMatcher` (heuristic cascade ไม่ผ่าน AI) |
+| ~~Contact match~~ | ~~`ContactMatch = 14`~~ | **ตายแล้ว `[Obsolete(error)]`** | ซ้ำกับ `ContactFuzzyMatch` ที่ใช้งานจริง |
+| ~~Payment method suggest~~ | ~~`PaymentMethodSuggestion = 15`~~ | **ตายแล้ว `[Obsolete(error)]`** | ซ้ำกับ `PaymentChannelSuggestion` ที่ใช้งานจริง |
+| ~~Currency + FX suggest~~ | ~~`CurrencyAndFxSuggestion = 16`~~ | **ตายแล้ว `[Obsolete(error)]`** | ซ้ำกับ `FxRateSuggestion` ที่ใช้งานจริง |
 | Aging explanation | `AgingExplanation = 17` | – (essay) | – |
 | Tax filing pre-check | `TaxFilingPreCheck = 18` | – (essay) | – |
 | Stock movement validation | `StockMovementValidation = 19` | generic | – |
@@ -4482,6 +4484,7 @@ _(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Con
 | 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
 | 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
 | 12 | JE migrate + business gaps ปิด | JE Builder phase 2 (ReclassifyLine + FxRevaluation refactor), UnifiedPaymentQueryService cross-domain (AR+AP+POS+CMS), POS deposit IsDeposit+DepositRealizedAt, TipPayoutService §50 ทวิ (3% WHT >1000), RecurringLateFeeAccrualJob (rate/grace/cap config), DocumentLineDeliveryService LINE flex, Budget scenarios best/base/worst |
+| 133 | สัญญาณความมั่นใจของ OCR + ด่าน PDPA ก่อนส่ง prompt | `fc()` ในหน้า review เลิก fallback ไปคะแนน**ทั้งใบ** (เดิม "00000 · 95%" บนค่าที่ระบบเดาให้) → "—" · stamp `SellerBranchCode/BuyerBranchCode = 0.30` เมื่ออ่านไม่ได้ · `Layout.applyOcrConfidenceHints` ตัวกลางตัวเดียว ใช้ทั้งฟอร์มเอกสารและ**หน้า review ที่ผู้ใช้ตัดสินใจจริง** · เปิดแก้ VendorAddress/BuyerName/BuyerAddress/PaymentTermsDays ครบทั้ง ฟอร์ม→payload→DTO→persist · `AiPromptSanitizer`: regex อีเมล + เลขบัญชีที่มีป้าย + **สตริงใน array ที่ไม่เคยถูกปิดบังเลย** + `AllowTaxIdInPrompt` คงเฉพาะเลขนิติบุคคล (เลขบัตรประชาชนปิดบังเสมอ §26) · `pg_try_advisory_lock` บนงานเทรน · `AiFeatureKey` 4 ค่าที่ตายแล้ว → `[Obsolete(error)]` |
 | 128 | POS เฟส 3 — ขายแล้วกินสูตร | `ProductType.RawMaterial` · `Product.ConsumesBomOnSale` · `Helpers/BomConsumption` (บริสุทธิ์ · เรียงผลลัพธ์คงที่กัน deadlock) · ตัด/คืนวัตถุดิบครบ 4 เส้นผ่านตัวเดียว · ท็อปปิ้งผูกวัตถุดิบ (`ProductModifierOption.ComponentProductId`) · สูตรเป็น **เวอร์ชัน** ไม่เขียนทับ (`mfg/products/{id}/recipe`) |
 | 127 | POS เฟส 1-2 — สาขา + ภ.พ.06 | `PosTerminal.BranchId/WarehouseId/Cash/BankAccountId` · snapshot ลง `PosOrder` · `Company.IsRetailApproved` + `PhoR06ApprovedDate` · `Helpers/PosSlipHeader` ตัดสินหัวสลิปที่เซิร์ฟเวอร์ (renderer 2 ตัวรับค่ามาแสดง) · เลขใบกำกับอย่างย่อ gap-free ต่อ (สาขา, เดือน) · JE ของ POS ติดมิติสาขา |
 | 125 | POS เฟส 0-1 — หนึ่งความจริงของสต็อก | `IStockLedger` + `StockLedger` เป็นผู้เขียนสต็อกตัวเดียว · ย้ายผู้เขียนเดิม **ทุกไฟล์ในรอบเดียว** (POS 4 · เอกสาร 2 · สินค้า 3 · CMS 3 · นำเข้า 2 · ผลิต 2 · นับสต็อก · ฝากขาย · **ใบโอนคลัง 3**) · migration สร้างคลังหลัก + ย้ายยอดเดิม + backfill `StockMovements.WarehouseId` · `PosTerminal.BranchId/WarehouseId` + snapshot ลง `PosOrder` · `ProductionOrder.WarehouseId` · `Helpers/WeightedAverageCost` (ยุบสูตร WAC 3 ชุด) · `tools/stock_writer_check.py` |

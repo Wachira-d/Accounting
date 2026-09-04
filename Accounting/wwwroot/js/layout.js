@@ -131,6 +131,38 @@ const Layout = {
       .replace(/>/g, '&gt;');
   },
 
+  /** ไฮไลต์ช่องที่ OCR ไม่มั่นใจ (กฎเหล็ก #3 ข้อ 3) — **ตัวเดียวของทั้งระบบ**
+   *
+   *  @param conf     dict `{ ชื่อช่องกลาง: 0..1 }` จาก `Helpers/OcrFieldKeys.cs`
+   *  @param fieldMap `{ ชื่อช่องกลาง: id ของ input }` (ค่า null = หน้านี้ไม่มีช่องนั้น)
+   *
+   *  ที่มา: ตรรกะนี้เคยอยู่ในฟอร์มเอกสารที่เดียว (`documents.html`) — หน้า
+   *  **review ของ OCR ซึ่งเป็นหน้าที่ผู้ใช้ตัดสินใจจริง** มีแค่ป้าย % ไม่มี
+   *  ไฮไลต์เลย (ผลตรวจ E-OCR-04) พอจะเติมให้ก็จะกลายเป็นสำเนามือชุดที่สอง
+   *  ⇒ ยกมาไว้ที่ตัวกลาง แต่ละหน้าส่งแค่ "ช่องกลาง → id ของตัวเอง"
+   *
+   *  ค่า < 0.85 = เหลือง ("ตรวจอีกครั้ง") · ผู้ใช้แตะช่องเมื่อไร ไฮไลต์หายทันที
+   *  (แตะ = ตรวจแล้ว) — ห้ามค้างไว้จนน่ารำคาญแล้วผู้ใช้เลิกมอง */
+  applyOcrConfidenceHints(conf, fieldMap) {
+    Object.entries(conf || {}).forEach(([key, val]) => {
+      const v = Number(val) || 0;
+      const elId = (fieldMap || {})[key];
+      if (!elId || v >= 0.85) return;
+      const el = document.getElementById(elId);
+      if (!el) return;
+      el.style.borderColor = '#facc15';
+      el.style.background = '#fefce8';
+      el.title = `🤖 OCR มั่นใจ ${Math.round(v * 100)}% — ตรวจให้ตรงกับเอกสารจริงก่อนบันทึก`;
+      const clear = () => {
+        el.style.borderColor = '';
+        el.style.background = '';
+        el.title = '';
+      };
+      el.addEventListener('input', clear, { once: true });
+      el.addEventListener('change', clear, { once: true });
+    });
+  },
+
   // ── ปลายทาง "แดชบอร์ด" — resolver กลางตัวเดียวของทั้งระบบ ──
   // **ห้ามฮาร์ดโค้ดพาธแดชบอร์ดที่อื่นอีก** เพราะแดชบอร์ดมี 2 หน้าจริง
   // (/simple.html สำหรับโหมดใช้ง่าย · /app.html สำหรับโหมดเต็ม) และเลือกตาม

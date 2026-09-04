@@ -2790,7 +2790,10 @@
         // ซึ่ง **ไม่มีฝั่งไหนผลิตเลยสักตัว** ⇒ ไฮไลต์เหลือง "ตรวจสอบอีกครั้ง"
         // (กฎเหล็ก #3 ข้อ 3) แทบไม่เคยขึ้นเลยตั้งแต่เขียนมา — เหลือทำงานจริง
         // แค่ ExpenseCategory ช่องเดียว
-        const fieldMap = {
+        //
+        // ตัวไฮไลต์ย้ายไปอยู่ที่ Layout.applyOcrConfidenceHints แล้ว (E-OCR-04)
+        // — หน้านี้เหลือหน้าที่เดียวคือบอกว่า "ช่องกลางไหน = id ไหนของฉัน"
+        Layout.applyOcrConfidenceHints(conf, {
           'SellerName': 'fContact',
           'SellerTaxId': 'fSupplierTaxIdReadonly',
           'DocumentNumber': 'fSupplierInvoiceNumberPV',
@@ -2801,25 +2804,15 @@
           'ExpenseCategory': 'fExpenseCategory',
           'PaymentTerms': 'fPaymentTerms',
           'WhtRate': 'fWhtRate',
-        };
-        Object.entries(conf || {}).forEach(([key, val]) => {
-          const v = Number(val) || 0;
-          const elId = fieldMap[key];
-          if (!elId || v >= 0.85) return;
-          const el = document.getElementById(elId);
-          if (!el) return;
-          el.style.borderColor = '#facc15';
-          el.style.background = '#fefce8';
-          el.title = `🤖 OCR confidence ${Math.round(v * 100)}% — กรุณาตรวจสอบค่าให้ตรงกับเอกสารจริงก่อนบันทึก`;
-          const clear = () => {
-            el.style.borderColor = '';
-            el.style.background = '';
-            el.title = '';
-            el.removeEventListener('input', clear);
-            el.removeEventListener('change', clear);
-          };
-          el.addEventListener('input', clear, { once: true });
-          el.addEventListener('change', clear, { once: true });
+          // ── ช่อง §86/4 ที่ map ไม่ครบมาตลอด (E-OCR-04) ──
+          // รหัสสาขาเป็นช่องที่ "เดา 00000" ได้บ่อยที่สุด และผิดแล้วกระทบ
+          // รายงานภาษีซื้อ §87 ทั้งใบ — ไม่มีไฮไลต์ = ไม่มีสัญญาณเลย
+          'SellerBranchCode': 'fSupplierBranchCode',
+          'SellerAddress': null,              // ยังไม่มีช่องในฟอร์มนี้ (แก้ที่ผู้ติดต่อ)
+          'BuyerName': null,
+          'BuyerTaxId': null,
+          'BuyerBranchCode': 'fBranch',       // สาขาของ**เรา** ที่ออก/รับเอกสาร
+          'BuyerAddress': null,
         });
       },
       toggleSendEmail() {

@@ -955,6 +955,16 @@ public class OcrService : IOcrService
             scanResult.VendorAddress = extractedData.VendorAddress;
             scanResult.BuyerBranchCode = extractedData.BuyerBranchCode;
             scanResult.BuyerAddress = extractedData.BuyerAddress;
+            // รหัสสาขาที่ "อ่านไม่ได้" ต้องมีคะแนนต่ำติดไว้ (E-OCR-03) —
+            // MapToResponse เติม "00000" ให้เสมอตามกฎเหล็ก #3 (ห้ามส่ง null ให้ UI)
+            // แต่ถ้าไม่มี key ใน FieldConfidence ป้ายจะไปหยิบคะแนนของ**ทั้งใบ**
+            // ⇒ ผู้ใช้เห็น "00000 · 95%" ทั้งที่ไม่มีใครอ่านค่านี้จากกระดาษเลย
+            // ⇒ กดยืนยัน ⇒ ใบของสาขาที่ 3 ลงเป็นสำนักงานใหญ่ (§86/4 + §87)
+            if (string.IsNullOrWhiteSpace(extractedData.VendorBranchCode))
+                extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerBranchCode] = 0.30;
+            if (string.IsNullOrWhiteSpace(extractedData.BuyerBranchCode))
+                extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.BuyerBranchCode] = 0.30;
+
             if (extractedData.FieldConfidence.Count > 0)
             {
                 // เก็บลงฐานด้วยชื่อช่องกลาง — เดิมเก็บแค่เป็นข้อความใน
@@ -3548,6 +3558,15 @@ public class OcrService : IOcrService
         if (correction.BuyerTaxId != null) result.BuyerTaxId = correction.BuyerTaxId;
         if (correction.VendorBranchCode != null) result.VendorBranchCode = correction.VendorBranchCode;
         if (correction.BuyerBranchCode != null) result.BuyerBranchCode = correction.BuyerBranchCode;
+        // ที่อยู่ + ชื่อผู้ซื้อ + เครดิตเทอม (E-OCR-05) — "" = ล้างค่า · null = ไม่ได้แตะ
+        if (correction.VendorAddress != null)
+            result.VendorAddress = string.IsNullOrWhiteSpace(correction.VendorAddress) ? null : correction.VendorAddress.Trim();
+        if (correction.BuyerName != null)
+            result.BuyerName = string.IsNullOrWhiteSpace(correction.BuyerName) ? null : correction.BuyerName.Trim();
+        if (correction.BuyerAddress != null)
+            result.BuyerAddress = string.IsNullOrWhiteSpace(correction.BuyerAddress) ? null : correction.BuyerAddress.Trim();
+        if (correction.PaymentTermsDays.HasValue)
+            result.PaymentTermsDays = correction.PaymentTermsDays.Value >= 0 ? correction.PaymentTermsDays.Value : null;
         // "" = ผู้ใช้ลบหมายเหตุทิ้ง (ล้างค่า) · null = ไม่ได้แตะช่องนี้
         if (correction.Notes != null)
             result.UserNotes = string.IsNullOrWhiteSpace(correction.Notes) ? null : correction.Notes.Trim();
