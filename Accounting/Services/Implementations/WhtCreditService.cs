@@ -433,16 +433,13 @@ public class WhtCreditService
         => await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
             a.CompanyId == companyId && a.AccountCode == code && a.IsActive);
 
-    private async Task<string> NextJeNumberAsync(Guid companyId)
-    {
-        var pattern = $"JV-{DateTime.UtcNow:yyyyMM}-";
-        var last = await _db.JournalEntries.IgnoreQueryFilters()
-            .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
-            .OrderByDescending(j => j.EntryNumber).Select(j => j.EntryNumber).FirstOrDefaultAsync();
-        var next = 1;
-        if (last != null && int.TryParse(last[pattern.Length..], out var n)) next = n + 1;
-        return $"{pattern}{next:D4}";
-    }
+    /// <summary>เลข JE — เดินผ่านเครื่องออกเลขตัวเดียวของระบบ (ผลตรวจ F-08)
+    ///
+    /// <para>เดิมออกเลขเองโดยไม่มี advisory lock และเรียงแบบ<b>ข้อความ</b>
+    /// (<c>"...9999" &gt; "...10000"</c>) ⇒ พอเลขทะลุหลักพัน จะวนกลับไปทับของเดิม
+    /// และเมื่อ post พร้อมกับเส้นอื่นก็ชน unique index แบบสุ่ม</para></summary>
+    private Task<string> NextJeNumberAsync(Guid companyId)
+        => Journal.JournalEntryBuilder.NextJournalNumberAsync(_db, companyId, "JV", DateTime.UtcNow);
 
     // ═══════════ helpers ═══════════
 

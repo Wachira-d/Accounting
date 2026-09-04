@@ -34,10 +34,23 @@ public class BankUnmatchedDigestJob : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try { await RunAsync(stoppingToken); }
+            try { await RunGuardedAsync(stoppingToken); }
             catch (Exception ex) { _logger.LogError(ex, "BankUnmatchedDigestJob failed"); }
             try { await Task.Delay(Interval, stoppingToken); } catch { return; }
         }
+    }
+
+    /// <summary>กันสอง instance ทำงานรอบเดียวกันพร้อมกัน (ผลตรวจ F-09)
+    ///
+    /// <para>ใช้ <b>try</b> ไม่ใช่ wait — งานตามตารางที่อีกเครื่องกำลังทำอยู่
+    /// การรอคือทำงานเดิมซ้ำเปล่า ๆ ข้ามไปรอบหน้าถูกกว่า</para></summary>
+    private async Task RunGuardedAsync(CancellationToken ct)
+    {
+        using var lockScope = _services.CreateScope();
+        var lockDb = lockScope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+        await Accounting.Helpers.JobLock.RunExclusiveAsync(
+            lockDb, Accounting.Helpers.AdvisoryLockKey.BackgroundJob, nameof(BankUnmatchedDigestJob),
+            () => RunAsync(ct), _logger, ct: ct);
     }
 
     private async Task RunAsync(CancellationToken ct)

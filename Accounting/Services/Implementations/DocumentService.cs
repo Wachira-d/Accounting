@@ -11998,19 +11998,12 @@ public partial class DocumentService : IDocumentService
         }
     }
 
-    /// <summary>สร้างรหัสสินทรัพย์ FA-yyyyMM-#### (gap-tolerant — MAX+1).</summary>
-    private async Task<string> GenerateAssetCodeAsync(Guid companyId)
-    {
-        var prefix = $"FA-{DateTime.UtcNow:yyyyMM}-";
-        var last = await _db.FixedAssets.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.AssetCode.StartsWith(prefix))
-            .OrderByDescending(a => a.AssetCode)
-            .Select(a => a.AssetCode)
-            .FirstOrDefaultAsync();
-        int seq = 1;
-        if (last != null && int.TryParse(last[prefix.Length..], out var n)) seq = n + 1;
-        return $"{prefix}{seq:D4}";
-    }
+    /// <summary>รหัสสินทรัพย์ <c>FA-yyyyMM-####</c> — เดินผ่านตัวออกรหัสตัวเดียว
+    /// ของระบบ (เดิมไฟล์นี้กับ <c>FixedAssetService</c> มีสำเนาเหมือนกันคำต่อคำ
+    /// ที่ไม่มีล็อกทั้งคู่ ⇒ ขึ้นทะเบียนจากใบซื้อชนกับที่ผู้ใช้กดสร้างเอง —
+    /// ผลตรวจ F-08)</summary>
+    private Task<string> GenerateAssetCodeAsync(Guid companyId)
+        => Accounting.Helpers.AssetCodeGenerator.NextAsync(_db, companyId);
 
     private async Task<FiscalPeriod?> ResolveFiscalPeriodAsync(Guid companyId, DateTime date)
         => await _db.FiscalPeriods.FirstOrDefaultAsync(p =>

@@ -336,18 +336,8 @@ public class FixedAssetService : IFixedAssetService
     /// <summary>สร้างรหัสสินทรัพย์ FA-yyyyMM-#### (gap-tolerant — MAX+1, ยกเว้น
     /// DRAFT-* placeholder). ใช้ตอนผู้ใช้ยืนยัน asset ที่ auto-register —
     /// ทำให้เลขจริงออกตามลำดับการยืนยัน ไม่ใช่ลำดับ scan/approve.</summary>
-    private async Task<string> GenerateAssetCodeAsync(Guid companyId)
-    {
-        var prefix = $"FA-{DateTime.UtcNow:yyyyMM}-";
-        var last = await _db.FixedAssets.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.AssetCode.StartsWith(prefix))
-            .OrderByDescending(a => a.AssetCode)
-            .Select(a => a.AssetCode)
-            .FirstOrDefaultAsync();
-        var next = 1;
-        if (last != null && int.TryParse(last.Substring(prefix.Length), out var n)) next = n + 1;
-        return $"{prefix}{next:D4}";
-    }
+    private Task<string> GenerateAssetCodeAsync(Guid companyId)
+        => Accounting.Helpers.AssetCodeGenerator.NextAsync(_db, companyId);
 
     public async Task<FixedAssetResponse> DisposeAsync(Guid companyId, Guid assetId, DisposeAssetRequest request, string performedBy)
     {

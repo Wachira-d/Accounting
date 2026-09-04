@@ -207,14 +207,30 @@ builder.Services.AddScoped<PreCloseChecklistService>();
 builder.Services.AddScoped<DocumentCompletenessService>();
 builder.Services.AddScoped<GlobalSearchService>();
 builder.Services.AddSingleton<Accounting.Helpers.ISecretProtector, Accounting.Helpers.SecretProtector>();
-// F15 — Column-level PII encryption via ASP.NET DataProtection. Keys
-// persist to ./.dpkeys (override ผ่าน config "DataProtection:KeyPath").
-// ใน production ให้ mount persistent volume → keys อยู่รอด pod restart.
-var dpKeyPath = builder.Configuration["DataProtection:KeyPath"] ?? "./.dpkeys";
-try { System.IO.Directory.CreateDirectory(dpKeyPath); } catch { }
-builder.Services.AddDataProtection()
-    .SetApplicationName("Accounting")
-    .PersistKeysToFileSystem(new System.IO.DirectoryInfo(dpKeyPath));
+// F15 — เข้ารหัส PII ระดับคอลัมน์ด้วย ASP.NET DataProtection
+//
+// ⚠️ key ring เก็บใน **ฐานข้อมูล** ไม่ใช่ดิสก์ของแต่ละเครื่อง (ผลตรวจ F-06):
+// เดิม PersistKeysToFileSystem("./.dpkeys") ⇒ แต่ละ instance มีคีย์ของตัวเอง
+// ⇒ PII ที่เครื่อง A เข้ารหัส เครื่อง B ถอดไม่ออก และ PiiProtector.TryDecrypt
+// คืน null **เงียบ ๆ** ⇒ ผู้ใช้เห็นเลขบัตร/เลขบัญชี/ลายเซ็นเป็นช่องว่าง สลับ
+// ไปมาตามเครื่องที่ load balancer ส่งไป · pod restart ที่ไม่ได้ mount volume
+// = คีย์หายถาวร ข้อมูลที่เข้ารหัสไว้กู้ไม่ได้เลย
+//
+// ยังรองรับ "DataProtection:KeyPath" ไว้สำหรับ dev/ทดสอบที่ยังไม่มี DB —
+// แต่ production เดินเส้น DB เสมอ
+var dpConn = builder.Configuration.GetConnectionString("DefaultConnection");
+var dpBuilder = builder.Services.AddDataProtection().SetApplicationName("Accounting");
+if (!string.IsNullOrWhiteSpace(dpConn))
+{
+    dpBuilder.AddKeyManagementOptions(o =>
+        o.XmlRepository = new Accounting.Services.Implementations.Security.DbXmlRepository(dpConn!));
+}
+else
+{
+    var dpKeyPath = builder.Configuration["DataProtection:KeyPath"] ?? "./.dpkeys";
+    try { System.IO.Directory.CreateDirectory(dpKeyPath); } catch { }
+    dpBuilder.PersistKeysToFileSystem(new System.IO.DirectoryInfo(dpKeyPath));
+}
 builder.Services.AddSingleton<Accounting.Services.Implementations.Security.IPiiProtector,
                               Accounting.Services.Implementations.Security.PiiProtector>();
 // NOTE: FX gain/loss — ใช้ของเดิม Accounting.Services.Implementations.Forex
@@ -855,8 +871,8 @@ if (builder.Configuration.GetValue("Security:TrustProxyHeaders", true))
 // 1. Exception handling (outermost)
 app.UseMiddleware<ExceptionMiddleware>();
 
-// 2. Rate limiting (protect from abuse early)
-app.UseMiddleware<RateLimitMiddleware>();
+// 2. Rate limiting — **ต้องอยู่หลัง UseAuthentication()** ดูหมายเหตุตรงนั้น
+//    (เดิมอยู่ตรงนี้ ซึ่งเร็วเกินกว่าจะรู้ว่าใครล็อกอินจริง)
 // F24 — Structured request logging (status/duration/user/company/trace).
 // ก่อน controller → ครอบ exception ของ controller ด้วย try/finally.
 app.UseMiddleware<Accounting.Middleware.RequestLoggingMiddleware>();
@@ -999,6 +1015,22 @@ app.UseMiddleware<IdempotencyMiddleware>();
 
 // 6. Authentication & Authorization
 app.UseAuthentication();
+
+// 6.1 Rate limiting — ย้ายมาไว้ **หลัง** UseAuthentication() (ผลตรวจ F-10)
+//
+// เดิมอยู่ก่อนหน้า ⇒ ยังไม่มีใครตรวจลายเซ็น JWT ตอนนั้น แต่โค้ดตัดสิน tier จาก
+// "มี header Authorization ไหม" ⇒ **ใครก็ส่ง `Authorization: x` มาเพื่อเลื่อน
+// ชั้นตัวเองจาก 600 เป็น 3000 ครั้ง/นาทีได้ฟรี** โดยไม่ต้องมีบัญชีด้วยซ้ำ —
+// เพดานที่ตั้งไว้กันการยิงถล่มจึงกลายเป็น 5 เท่าของที่ตั้งใจสำหรับผู้ไม่ล็อกอิน
+//
+// ย้ายมาที่นี่แล้ว `context.User.Identity.IsAuthenticated` เป็นค่าจริง ⇒ tier
+// ตัดสินจากตัวตนที่ตรวจแล้ว · เส้นล็อกอิน/สมัคร/รีเซ็ตรหัสยังเป็น anonymous
+// จึงยังโดน tier เข้ม 10 ครั้ง/นาที/IP เหมือนเดิม
+//
+// แลกมาด้วยการที่ JWT ถูก parse ก่อนนับโควตา — เป็นงานในหน่วยความจำล้วน
+// ไม่มี query ฐานข้อมูล จึงถูกกว่าการเปิดช่องให้เลื่อนชั้นตัวเองมาก
+app.UseMiddleware<RateLimitMiddleware>();
+
 app.UseAuthorization();
 
 // 6.5 กัน browser/proxy/CDN cache API JSON — response ต้องสดเสมอ ไม่งั้น

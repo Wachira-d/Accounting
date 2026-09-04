@@ -19,6 +19,45 @@ public class ApiKeyMiddleware
         _next = next;
     }
 
+    // ── แคชผลตรวจ BCrypt (ผลตรวจ F-11) ──
+    // BCrypt ช้าโดยตั้งใจ (~100ms) เพราะออกแบบมาสำหรับรหัสผ่านที่คนพิมพ์
+    // ไม่ใช่ header ที่คู่ค้ายิงมาทุก request — 100 req/s = 10 วินาที CPU/วินาที
+    // ⇒ thread pool ตัน ทั้งเซิร์ฟเวอร์ช้า ไม่ใช่แค่เส้น API key
+    //
+    // คีย์แคชเป็น SHA-256 ของ (rawKey + hash) — ไม่เก็บ rawKey ไว้ในหน่วยความจำ
+    // และค่าที่เก็บเป็นแค่ true/false ⇒ อ่านแคชได้ก็ยังเดา rawKey ไม่ได้
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime>
+        _verifiedKeys = new();
+    private static readonly TimeSpan VerifyCacheTtl = TimeSpan.FromMinutes(5);
+    private const int VerifyCacheMax = 2_000;
+
+    /// <summary>ตรวจคีย์โดยใช้ผลที่แคชไว้ถ้ายังไม่หมดอายุ
+    ///
+    /// <para>⚠️ แคชเฉพาะ "ลายเซ็นถูกไหม" เท่านั้น — <b>สถานะคีย์ (Revoked /
+    /// Expired) · IP allow-list · โควตา ยังตรวจจากฐานข้อมูลทุก request</b>
+    /// การเพิกถอนคีย์จึงมีผลทันที ไม่ต้องรอแคชหมดอายุ</para></summary>
+    private static bool VerifyKeyCached(string rawKey, string storedHash)
+    {
+        var cacheKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(rawKey + "|" + storedHash)));
+
+        if (_verifiedKeys.TryGetValue(cacheKey, out var at) && DateTime.UtcNow - at < VerifyCacheTtl)
+            return true;
+
+        if (!BCrypt.Net.BCrypt.Verify(rawKey, storedHash)) return false;
+
+        // ไม่แคชผลที่ "ไม่ผ่าน" — ไม่งั้นผู้โจมตีเดาคีย์ผิดไปเรื่อย ๆ ก็ทำให้
+        // dict โตได้ฟรี (defect class เดียวกับ F-14)
+        _verifiedKeys[cacheKey] = DateTime.UtcNow;
+        if (_verifiedKeys.Count > VerifyCacheMax)
+        {
+            var cutoff = DateTime.UtcNow - VerifyCacheTtl;
+            foreach (var kv in _verifiedKeys)
+                if (kv.Value < cutoff) _verifiedKeys.TryRemove(kv.Key, out _);
+        }
+        return true;
+    }
+
     public async Task InvokeAsync(HttpContext context, AccountingDbContext db)
     {
         if (!context.Request.Headers.TryGetValue("X-Api-Key", out var apiKeyHeader))
@@ -55,8 +94,18 @@ public class ApiKeyMiddleware
             return;
         }
 
-        // Verify the full key hash
-        if (!BCrypt.Net.BCrypt.Verify(rawKey, apiKey.KeyHash))
+        // Verify the full key hash — แคชผลไว้ 5 นาที (ผลตรวจ F-11)
+        //
+        // BCrypt ถูกออกแบบให้ **ช้าโดยตั้งใจ** (~100ms/ครั้ง) เพราะใช้กับรหัสผ่าน
+        // ที่คนพิมพ์ ไม่ใช่กับ header ที่คู่ค้ายิงมาทุก request ⇒ partner ที่ยิงถี่
+        // ทำให้ CPU เต็มและ thread pool ตัน = ทั้งเซิร์ฟเวอร์ช้าไปด้วย ไม่ใช่แค่
+        // เส้น API key
+        //
+        // ปลอดภัย: แคชคีย์ด้วย SHA-256 ของ (rawKey + KeyHash) — ทั้งสองส่วนเป็น
+        // ความลับอยู่แล้ว และการรู้ค่า hash ในแคชไม่ช่วยให้เดา rawKey ได้ ·
+        // อายุสั้น 5 นาที ⇒ คีย์ที่ถูกเพิกถอนหยุดใช้งานได้ภายในเวลานั้น (สถานะ
+        // Revoked/Expired ยังถูกตรวจจาก DB **ทุก request** ไม่ได้อยู่ในแคช)
+        if (!VerifyKeyCached(rawKey, apiKey.KeyHash))
         {
             context.Response.StatusCode = 401;
             await context.Response.WriteAsJsonAsync(new { success = false, message = "Invalid API key" });
@@ -93,9 +142,15 @@ public class ApiKeyMiddleware
         if (!EnforceRateLimit(context, apiKey.Id, apiKey.RateLimitPerMinute))
             return;  // 429 already written
 
-        // Update last used
-        apiKey.LastUsedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
+        // Update last used — เขียนอย่างมาก 1 ครั้ง/นาที/คีย์ (ผลตรวจ F-11)
+        // เดิม SaveChangesAsync ทุก request ⇒ partner ที่ยิง 100 req/s สร้าง
+        // write load 100/s บนตารางเดียวโดยไม่มีใครต้องการความละเอียดระดับนั้น
+        // (หน้าจอแสดงแค่ "ใช้ล่าสุดเมื่อไร")
+        if (apiKey.LastUsedAt == null || DateTime.UtcNow - apiKey.LastUsedAt.Value > TimeSpan.FromMinutes(1))
+        {
+            apiKey.LastUsedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
 
         // Create ClaimsPrincipal so [Authorize] attribute passes
         var claims = new List<Claim>

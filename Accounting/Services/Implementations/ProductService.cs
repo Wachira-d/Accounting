@@ -714,17 +714,11 @@ public class ProductService : IProductService
                         f.CompanyId == companyId && f.StartDate <= request.SnapshotDate
                         && f.EndDate >= request.SnapshotDate && f.Status == FiscalPeriodStatus.Open);
 
-                    // Find next JV number
-                    var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-                    var pattern = $"JV-{yearMonth}-";
-                    var lastJe = await _db.JournalEntries
-                        .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
-                        .OrderByDescending(j => j.EntryNumber)
-                        .Select(j => j.EntryNumber)
-                        .FirstOrDefaultAsync();
-                    int nextSeq = 1;
-                    if (lastJe != null && int.TryParse(lastJe[pattern.Length..], out var lastNum))
-                        nextSeq = lastNum + 1;
+                    // เลข JE — ตัวออกเลขตัวเดียวของระบบ (ล็อก + integer-max +
+                    // นับแถวที่ค้างใน change tracker) · เดิมออกเองแล้วเรียงแบบ
+                    // ข้อความ ⇒ วนกลับทับของเดิมเมื่อทะลุ 9999 (ผลตรวจ F-08)
+                    var entryNumber = await Journal.JournalEntryBuilder
+                        .NextJournalNumberAsync(_db, companyId, "JV", DateTime.UtcNow);
 
                     var journalLines = new List<JournalEntryLine>();
                     if (adjustmentAmount > 0)
@@ -744,7 +738,7 @@ public class ProductService : IProductService
                     var je = new JournalEntry
                     {
                         CompanyId = companyId,
-                        EntryNumber = $"{pattern}{nextSeq:D4}",
+                        EntryNumber = entryNumber,
                         EntryDate = request.SnapshotDate,
                         JournalType = JournalType.General,
                         Description = $"ปรับปรุงสินค้าคงเหลือ ณ {request.SnapshotDate:dd/MM/yyyy}",
@@ -1019,16 +1013,9 @@ public class ProductService : IProductService
 
             if (suppliesAccount != null && expenseAccount != null)
             {
-                var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-                var pattern = $"JV-{yearMonth}-";
-                var lastJe = await _db.JournalEntries
-                    .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
-                    .OrderByDescending(j => j.EntryNumber)
-                    .Select(j => j.EntryNumber)
-                    .FirstOrDefaultAsync();
-                int nextSeq = 1;
-                if (lastJe != null && int.TryParse(lastJe[pattern.Length..], out var lastNum))
-                    nextSeq = lastNum + 1;
+                // เลข JE — ตัวออกเลขตัวเดียวของระบบ (เหตุผลเดียวกับอีกจุดในไฟล์นี้)
+                var entryNumber = await Journal.JournalEntryBuilder
+                    .NextJournalNumberAsync(_db, companyId, "JV", DateTime.UtcNow);
 
                 var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
                     f.CompanyId == companyId && f.StartDate <= DateTime.UtcNow
@@ -1037,7 +1024,7 @@ public class ProductService : IProductService
                 var je = new JournalEntry
                 {
                     CompanyId = companyId,
-                    EntryNumber = $"{pattern}{nextSeq:D4}",
+                    EntryNumber = entryNumber,
                     EntryDate = DateTime.UtcNow,
                     JournalType = JournalType.General,
                     Description = $"เบิกใช้วัสดุ: {product.Name} จำนวน {request.Quantity} {product.Unit} ({request.Department ?? "ทั่วไป"})",

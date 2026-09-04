@@ -383,12 +383,18 @@ public partial class LodgingService
             var lockKey = AdvisoryLockKey.For(companyId, ResLockScope, propertyId.ToString("N"));
             await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
             var prefix = $"RES-{prop.Code}-{DateTime.UtcNow.AddHours(7):yyMM}-";
-            var last = await _db.LodgingReservations.IgnoreQueryFilters()
-                .Where(x => x.CompanyId == companyId && x.PropertyId == propertyId && x.ReservationNumber.StartsWith(prefix))
-                .OrderByDescending(x => x.ReservationNumber).Select(x => x.ReservationNumber).FirstOrDefaultAsync();
-            var seq = 1;
-            if (last != null && int.TryParse(last[prefix.Length..], out var n)) seq = n + 1;
-            res.ReservationNumber = $"{prefix}{seq:D4}";
+            // integer-max ผ่านตัวกลาง — เดิมเรียงแบบ**ข้อความ** ⇒ โรงแรมที่มี
+            // การจองเกิน 9,999 ครั้งในเดือนเดียว "RES-…-9999" ยังชนะ "…-10000"
+            // ⇒ เลขวนกลับไปทับใบเดิม (ล็อกมีอยู่แล้วจึงคงไว้ ไม่ล็อกซ้อน)
+            var seqSuffixes = await _db.LodgingReservations.IgnoreQueryFilters()
+                .Where(x => x.CompanyId == companyId && x.PropertyId == propertyId
+                            && x.ReservationNumber.StartsWith(prefix))
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(Accounting.Helpers.SequenceNumber.ScanWindow)
+                .Select(x => x.ReservationNumber.Substring(prefix.Length))
+                .ToListAsync();
+            res.ReservationNumber = Accounting.Helpers.SequenceNumber.Format(
+                prefix, Accounting.Helpers.SequenceNumber.NextSequence(seqSuffixes));
             _db.LodgingReservations.Add(res);
             await _db.SaveChangesAsync();
             await tx.CommitAsync();

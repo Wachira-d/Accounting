@@ -550,20 +550,18 @@ public class CmsBookingService : ICmsBookingService
 
     private async Task<string> GenerateBookingNumber(Guid companyId, Guid siteId)
     {
-        var prefix = $"BK-{DateTime.UtcNow:yyMM}";
-        var last = await _db.SiteBookings
-            .Where(b => b.SiteId == siteId && b.BookingNumber.StartsWith(prefix))
-            .OrderByDescending(b => b.BookingNumber)
-            .Select(b => b.BookingNumber)
-            .FirstOrDefaultAsync();
-
-        var seq = 1;
-        if (last != null && last.Length > prefix.Length + 1)
-        {
-            if (int.TryParse(last[(prefix.Length + 1)..], out var lastSeq))
-                seq = lastSeq + 1;
-        }
-        return $"{prefix}-{seq:D4}";
+        // ล็อก + integer-max ผ่านตัวกลาง (ผลตรวจ F-08) — เดิมไม่มีล็อกเลย
+        // ⇒ ลูกค้าสองคนกดจองพร้อมกันบนเว็บได้เลขเดียวกัน (เว็บสาธารณะ =
+        // จังหวะชนกันเป็นเรื่องปกติ ไม่ใช่ edge case)
+        var prefix = $"BK-{DateTime.UtcNow:yyMM}-";
+        return await Accounting.Helpers.SequenceNumber.NextAsync(
+            _db, companyId, Accounting.Helpers.AdvisoryLockKey.StorefrontSequence, prefix,
+            _db.SiteBookings.IgnoreQueryFilters()
+                .Where(b => b.SiteId == siteId && b.BookingNumber.StartsWith(prefix))
+                .OrderByDescending(b => b.CreatedAt)
+                .Select(b => b.BookingNumber),
+            _db.SiteBookings.Local.Select(b => b.BookingNumber),
+            lockPart: $"{siteId:N}|{prefix}");
     }
 
     private static string GenerateSlug(string name)

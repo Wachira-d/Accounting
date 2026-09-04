@@ -1123,20 +1123,17 @@ public class CmsCommerceService : ICmsCommerceService
 
     private async Task<string> GenerateOrderNumber(Guid companyId, Guid siteId)
     {
-        var prefix = $"WEB-{DateTime.UtcNow:yyMM}";
-        var lastOrder = await _db.SiteOrders
-            .Where(o => o.SiteId == siteId && o.OrderNumber.StartsWith(prefix))
-            .OrderByDescending(o => o.OrderNumber)
-            .Select(o => o.OrderNumber)
-            .FirstOrDefaultAsync();
-
-        var seq = 1;
-        if (lastOrder != null && lastOrder.Length > prefix.Length + 1)
-        {
-            if (int.TryParse(lastOrder[(prefix.Length + 1)..], out var lastSeq))
-                seq = lastSeq + 1;
-        }
-        return $"{prefix}-{seq:D4}";
+        // ล็อก + integer-max ผ่านตัวกลาง (ผลตรวจ F-08) — เลขคำสั่งซื้อซ้ำบนเว็บ
+        // = ลูกค้าสองรายเห็นเลขเดียวกันในอีเมลยืนยัน แล้วตามของกันไม่ถูก
+        var prefix = $"WEB-{DateTime.UtcNow:yyMM}-";
+        return await Accounting.Helpers.SequenceNumber.NextAsync(
+            _db, companyId, Accounting.Helpers.AdvisoryLockKey.StorefrontSequence, prefix,
+            _db.SiteOrders.IgnoreQueryFilters()
+                .Where(o => o.SiteId == siteId && o.OrderNumber.StartsWith(prefix))
+                .OrderByDescending(o => o.CreatedAt)
+                .Select(o => o.OrderNumber),
+            _db.SiteOrders.Local.Select(o => o.OrderNumber),
+            lockPart: $"{siteId:N}|{prefix}");
     }
 
     private static string GenerateSlug(string name)

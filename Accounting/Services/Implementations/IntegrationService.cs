@@ -66,53 +66,27 @@ public class IntegrationService : IIntegrationService
     // ===== Helper: Atomic Journal Entry Number =====
 
     /// <summary>
-    /// Generate unique journal entry number using MAX instead of COUNT to avoid race conditions.
-    /// Uses database MAX(EntryNumber) + parse to get true next number.
+    /// เลข JE ของเส้น integration — **เดินผ่านเครื่องออกเลขตัวเดียวของระบบ**
+    ///
+    /// <para>เดิมเมธอดนี้ออกเลขเอง (<c>OrderByDescending(EntryNumber).First()+1</c>)
+    /// ⇒ ไม่มีล็อก · เรียงแบบข้อความ (เลขทะลุ 9999 แล้ววนกลับไปทับ) · ไม่นับ JE
+    /// ที่ยังค้างใน change tracker ⇒ ชน unique index แบบสุ่ม (ผลตรวจ F-08)</para>
     /// </summary>
-    private async Task<string> GetNextJournalNumberAsync(Guid companyId, string prefix = "JV-INT")
-    {
-        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-        var pattern = $"{prefix}-{yearMonth}-";
+    private Task<string> GetNextJournalNumberAsync(Guid companyId, string prefix = "JV-INT")
+        => Journal.JournalEntryBuilder.NextJournalNumberAsync(_db, companyId, prefix, DateTime.UtcNow);
 
-        // Find the highest existing number with this prefix for this month
-        var lastEntry = await _db.JournalEntries
-            .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
-            .OrderByDescending(j => j.EntryNumber)
-            .Select(j => j.EntryNumber)
-            .FirstOrDefaultAsync();
-
-        int nextSeq = 1;
-        if (lastEntry != null)
-        {
-            var lastPart = lastEntry[pattern.Length..];
-            if (int.TryParse(lastPart, out var lastNum))
-                nextSeq = lastNum + 1;
-        }
-
-        return $"{pattern}{nextSeq:D4}";
-    }
-
-    /// <summary>Generate unique payment number using MAX to avoid race conditions.</summary>
+    /// <summary>เลขใบรับ-จ่ายเงินของเส้น integration — ล็อก + integer-max ผ่าน
+    /// <c>Helpers.SequenceNumber</c> (เหตุผลเดียวกับเมธอดข้างบน)</summary>
     private async Task<string> GetNextPaymentNumberAsync(Guid companyId)
     {
-        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-        var pattern = $"PAY-{yearMonth}-";
-
-        var lastEntry = await _db.Set<Payment>()
-            .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(pattern))
-            .OrderByDescending(p => p.PaymentNumber)
-            .Select(p => p.PaymentNumber)
-            .FirstOrDefaultAsync();
-
-        int nextSeq = 1;
-        if (lastEntry != null)
-        {
-            var lastPart = lastEntry[pattern.Length..];
-            if (int.TryParse(lastPart, out var lastNum))
-                nextSeq = lastNum + 1;
-        }
-
-        return $"{pattern}{nextSeq:D4}";
+        var pattern = $"PAY-{DateTime.UtcNow:yyyyMM}-";
+        return await Accounting.Helpers.SequenceNumber.NextAsync(
+            _db, companyId, Accounting.Helpers.AdvisoryLockKey.PaymentSequence, pattern,
+            _db.Set<Payment>().IgnoreQueryFilters()
+                .Where(x => x.CompanyId == companyId && x.PaymentNumber.StartsWith(pattern))
+                .OrderByDescending(x => x.CreatedAt)
+                .Select(x => x.PaymentNumber),
+            _db.Set<Payment>().Local.Select(x => x.PaymentNumber));
     }
 
     private static DateTime NormalizeDate(DateTime date)

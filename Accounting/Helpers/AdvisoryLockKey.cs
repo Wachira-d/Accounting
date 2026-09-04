@@ -93,4 +93,30 @@ public static class AdvisoryLockKey
     /// upsert `LocalModelHealth`/`AiLearnedMemory` ทับกัน — ตัวเลขความแม่นที่แอดมิน
     /// ใช้ตัดสินว่า "ปิด AI ได้หรือยัง" กลายเป็นของครึ่ง ๆ ของสองรอบ</para></summary>
     public const string AiFeedbackTraining = "ai-train";
+
+    // ── number space อื่น ๆ ที่ไม่ใช่เลขเอกสาร/เลข JE (ผลตรวจ F-08) ──
+    // ทุกตัวเคยออกเลขเองด้วย OrderByDescending().First()+1 โดยไม่มีล็อก
+    // และเรียงแบบ **ข้อความ** (⇒ "9999" > "10000" ⇒ เลขวนกลับไปทับของเดิม)
+
+    /// <summary>เลขใบรับ-จ่ายเงิน (Payment) — part = prefix รวมงวด "PAY-yyyyMM-"</summary>
+    public const string PaymentSequence = "pay-seq";
+    /// <summary>รหัสสินทรัพย์ถาวร — part = prefix ของบริษัท</summary>
+    public const string AssetSequence = "asset-seq";
+    /// <summary>เลขการจองที่พัก — part = prefix รวมงวด</summary>
+    public const string ReservationSequence = "resv-seq";
+    /// <summary>เลขคำสั่งซื้อ/การจองจากหน้าเว็บ (CMS) — part = prefix รวมงวด</summary>
+    public const string StorefrontSequence = "store-seq";
+    /// <summary>รหัสผังบัญชีที่ระบบสร้างให้อัตโนมัติ — part = ช่วงเลขที่ใช้</summary>
+    public const string AccountCodeSequence = "coa-seq";
+    /// <summary>เลขเอกสารของโมดูลย่อย (เบิกค่าใช้จ่าย · เงินกู้ · โอนคลัง ฯลฯ)
+    /// — part = prefix รวมงวด</summary>
+    public const string ModuleSequence = "mod-seq";
+
+    /// <summary>งานเบื้องหลังตามตาราง — part = ชื่องาน (ผลตรวจ F-09)
+    ///
+    /// <para>จาก 16 job มีแค่ 5 ตัวที่ล็อก · ที่เหลือรันพร้อมกันได้ทุกเครื่อง
+    /// และหลายตัว<b>เขียนข้อมูลจริง</b> ไม่ใช่แค่ทำงานซ้ำ: ค่าเสื่อมลง JE
+    /// สองเท่า · ค่าปรับล่าช้าคิดซ้ำ · อีเมลทวงหนี้ส่งถึงลูกค้า N ครั้ง
+    /// ตามจำนวนเครื่อง</para></summary>
+    public const string BackgroundJob = "job";
 }

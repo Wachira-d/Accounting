@@ -1237,14 +1237,16 @@ public class ImportExportService : IImportExportService
         // (PaymentService uses "PAY" prefix per month). We replicate it here
         // rather than reach into PaymentService — single tx, avoids a circular
         // dependency.
-        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-        var paymentPrefix = $"PAY-{yearMonth}-";
-        var lastNum = await _db.Payments
-            .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(paymentPrefix))
-            .OrderByDescending(p => p.PaymentNumber)
-            .Select(p => p.PaymentNumber).FirstOrDefaultAsync();
-        var nextSeq = 1;
-        if (lastNum != null && int.TryParse(lastNum.Substring(paymentPrefix.Length), out var n)) nextSeq = n + 1;
+        // เลขใบรับเงิน — ล็อก + integer-max ผ่านตัวกลาง (ผลตรวจ F-08)
+        // เดิมเรียงแบบข้อความและไม่มีล็อก ⇒ นำเข้าไฟล์สองไฟล์พร้อมกันได้เลขซ้ำ
+        var paymentPrefix = $"PAY-{DateTime.UtcNow:yyyyMM}-";
+        var paymentNumber = await Accounting.Helpers.SequenceNumber.NextAsync(
+            _db, companyId, Accounting.Helpers.AdvisoryLockKey.PaymentSequence, paymentPrefix,
+            _db.Payments.IgnoreQueryFilters()
+                .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(paymentPrefix))
+                .OrderByDescending(p => p.CreatedAt)
+                .Select(p => p.PaymentNumber),
+            _db.Payments.Local.Select(p => p.PaymentNumber));
 
         doc.PaidAmount += amount;
         doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
@@ -1258,7 +1260,7 @@ public class ImportExportService : IImportExportService
         _db.Payments.Add(new Payment
         {
             CompanyId = companyId,
-            PaymentNumber = $"{paymentPrefix}{nextSeq:D4}",
+            PaymentNumber = paymentNumber,
             DocumentId = doc.Id,
             PaymentDate = date,
             Amount = amount,

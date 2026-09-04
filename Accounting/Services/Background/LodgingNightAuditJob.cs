@@ -45,10 +45,23 @@ public class LodgingNightAuditJob : BackgroundService
         try { await Task.Delay(TimeSpan.FromMinutes(3), stoppingToken); } catch { return; }
         while (!stoppingToken.IsCancellationRequested)
         {
-            try { await RunOnce(stoppingToken); }
+            try { await RunGuardedAsync(stoppingToken); }
             catch (Exception ex) { _logger.LogError(ex, "LodgingNightAuditJob cycle failed"); }
             try { await Task.Delay(Cycle, stoppingToken); } catch { return; }
         }
+    }
+
+    /// <summary>กันสอง instance ทำงานรอบเดียวกันพร้อมกัน (ผลตรวจ F-09)
+    ///
+    /// <para>ใช้ <b>try</b> ไม่ใช่ wait — งานตามตารางที่อีกเครื่องกำลังทำอยู่
+    /// การรอคือทำงานเดิมซ้ำเปล่า ๆ ข้ามไปรอบหน้าถูกกว่า</para></summary>
+    private async Task RunGuardedAsync(CancellationToken ct)
+    {
+        using var lockScope = _scopeFactory.CreateScope();
+        var lockDb = lockScope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+        await Accounting.Helpers.JobLock.RunExclusiveAsync(
+            lockDb, Accounting.Helpers.AdvisoryLockKey.BackgroundJob, nameof(LodgingNightAuditJob),
+            () => RunOnce(ct), _logger, ct: ct);
     }
 
     private async Task RunOnce(CancellationToken ct)
