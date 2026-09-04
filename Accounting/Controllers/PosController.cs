@@ -284,6 +284,19 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<PosDailySummaryResponse>>> GetDailySummary(Guid companyId, [FromQuery] DateTime? date = null)
         => Ok(new ApiResponse<PosDailySummaryResponse>(true, await _pos.GetDailySummaryAsync(companyId, date ?? DateTime.UtcNow)));
 
+    /// <summary>ยอดขายแยกรายสาขา — คำถามแรกของเจ้าของร้านหลายสาขา
+    /// (POS_MULTI_BRANCH_ANALYSIS เฟส 5)</summary>
+    [HttpGet("reports/branches")]
+    public async Task<ActionResult<ApiResponse<PosBranchSummaryResponse>>> BranchSummary(
+        Guid companyId, [FromQuery] DateTime? from, [FromQuery] DateTime? to)
+    {
+        var toDate = to ?? DateTime.UtcNow;
+        var fromDate = from ?? toDate;
+        if (fromDate > toDate) (fromDate, toDate) = (toDate, fromDate);
+        return Ok(new ApiResponse<PosBranchSummaryResponse>(
+            true, await _pos.GetBranchSummaryAsync(companyId, fromDate, toDate)));
+    }
+
     /// <summary>Z-Report สิ้นกะ — สรุปยอดทั้ง session (cash variance,
     /// payment breakdown, top products). เทียบเงินในลิ้นชักก่อนปิดงาน.</summary>
     [HttpGet("sessions/{sessionId:guid}/z-report")]

@@ -67,6 +67,17 @@ public interface IPayrollService
     /// (ตาข่ายรับสุดท้ายก่อนลง JE — ใช้กับรอบที่ import เข้ามาก่อนมีด่านที่ต้นทาง)
     /// ผู้เรียกต้องเอาไปบอกผู้ใช้ ห้ามแก้ตัวเลขเงียบ ๆ</summary>
     int LastPaySsoAdjustedCount { get; }
+
+    /// <summary>แถวที่คู่ยอด ปกส. ขัดกันจนระบบตัดสินแทนไม่ได้ (เช่นฝั่งลูกจ้าง
+    /// เป็น 0 แต่ฝั่งนายจ้างมียอด หรือหักเกินเพดาน ม.46) — ระบบคงค่าเดิมไว้
+    /// ผู้เรียกต้องแจ้งผู้ใช้ให้ไปแก้ ไม่ใช่ปล่อยไปตายที่ด่านตอนนำส่ง</summary>
+    IReadOnlyList<string> LastSsoConflicts { get; }
+
+    /// <summary>เลขที่ใบสำคัญที่เพิ่งถูกกลับรายการ (จาก <c>ReopenPaidRunAsync</c>
+    /// หรือ <c>ReverseSsoSettlementAsync</c>) — การกลับรายการ **ไม่แก้ใบเดิม**
+    /// แต่สร้างใบตรงข้ามขึ้นมา ใบเดิมจึงยังโชว์ยอดเท่าเดิมตลอดไป ⇒ ต้องบอกผู้ใช้
+    /// ว่ากลับใบไหน ไม่งั้นเขาจะเปิดใบเดิมแล้วคิดว่ากดปุ่มแล้วไม่มีอะไรเกิดขึ้น</summary>
+    string? LastReversedJournalNumber { get; }
     /// <summary>กลับรายการนำส่งประกันสังคม — กลับ JE ก้อนที่สอง (ลงวันเดียวกับ
     /// วันที่นำส่งเดิม) + ล้าง SsoSettledAt/JE/เลขรับ/เงินเพิ่ม เพื่อให้แก้รอบ
     /// เงินเดือนแล้วนำส่งใหม่ได้. เหตุผลบังคับ (≥ 5 ตัวอักษร).</summary>
@@ -95,6 +106,10 @@ public interface IPayrollService
     Task<int> RunYearEndLeaveCarryForwardAsync(Guid companyId, int year, string performedBy);
     Task<PayrollDetailResponse> GetPayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId);
     Task<PayslipResponse> GeneratePayslipAsync(Guid companyId, Guid payrollRunId, Guid employeeId);
+
+    /// <summary>พนักงานคนนี้คือผู้ใช้คนนี้หรือไม่ — ใช้เปิดสิทธิ์ "ดูของตัวเอง"
+    /// โดยไม่ต้องมีสิทธิ์ HR (สลิปเงินเดือนเป็นเอกสารที่ลูกจ้างมีสิทธิ์ได้รับ)</summary>
+    Task<bool> IsEmployeeOfUserAsync(Guid companyId, Guid employeeId, Guid userId);
 
     // Leave
     Task<LeaveResponse> CreateLeaveAsync(Guid companyId, CreateLeaveRequest request);

@@ -38,6 +38,9 @@ public static class TaxInvoiceSeriesPolicy
     /// <summary>คำที่กฎหมายบังคับให้ปรากฏบนใบกำกับภาษี (§86/4 (1))</summary>
     public const string TaxInvoiceKeyword = "ใบกำกับภาษี";
 
+    /// <summary>คำเดียวกันบนเอกสารภาษาอังกฤษ (เทียบแบบไม่สนตัวพิมพ์)</summary>
+    public const string TaxInvoiceKeywordEn = "tax invoice";
+
     /// <summary>บริษัทนี้ใช้กติกา "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV" ไหม
     ///
     /// <para><b>null = ยังไม่เคยตั้ง → เปิด</b> เพราะเป็นกติกาที่ถูกต้องสำหรับ
@@ -57,6 +60,40 @@ public static class TaxInvoiceSeriesPolicy
     public static bool CarriesTaxInvoiceRole(Document doc, string? resolvedTitle)
         => (doc.DocumentType == DocumentType.TaxInvoice && doc.VatAmount > 0)
            || (resolvedTitle?.Contains(TaxInvoiceKeyword, StringComparison.Ordinal) ?? false);
+
+    /// <summary>ใบที่ "หัวประกาศตัวเป็นใบกำกับภาษี" ทั้งที่ชนิดเอกสารเข้าเล่ม TIV
+    /// ไม่ได้ — ต้อง**บล็อกตอนอนุมัติ** ไม่ใช่ปล่อยผ่าน
+    ///
+    /// <para>ที่มา: <c>ApproveDocumentAsync</c> ตรึง <c>IsTaxInvoiceByLaw</c> จากหัว
+    /// ให้ทุกชนิด แต่ <see cref="SeriesTypeOverride"/> จงใจข้าม <c>Invoice</c> ⇒
+    /// ใบแจ้งหนี้ที่หัวถูกตั้งเอง (CustomTitle / titleOverrides) เป็น
+    /// "ใบแจ้งหนี้/ใบกำกับภาษี" จะถูกประทับว่าเป็นใบกำกับตามกฎหมาย **แต่ถือเลข
+    /// INV- นอกเล่ม** ไม่ผ่านด่าน §86/4 และออก e-Tax ไม่ได้ — กระดาษประกาศตัว
+    /// เป็นใบกำกับ (ลูกค้าเอาไปเคลมภาษีซื้อ) โดยไม่มีคุณสมบัติของใบกำกับสักข้อ</para>
+    ///
+    /// <para>จำกัดเฉพาะ <c>Invoice</c> — <b>ห้าม</b>ขยายไป CreditNote/DebitNote:
+    /// §86/9-10 ให้ถือว่าใบเพิ่มหนี้/ใบลดหนี้เป็นใบกำกับภาษีอยู่แล้ว บางกิจการ
+    /// พิมพ์หัว "ใบลดหนี้ (ใบกำกับภาษี)" ซึ่งถูกกฎหมาย บล็อกไม่ได้</para></summary>
+    public static bool IsTaxTitleOnPlainInvoice(DocumentType type, string? resolvedTitle)
+    {
+        if (type != DocumentType.Invoice || string.IsNullOrWhiteSpace(resolvedTitle))
+            return false;
+        // ⚠️ ต้องจับหัว**ภาษาอังกฤษ**ด้วย — เอกสารที่ตั้ง DocumentLanguage=en
+        // จะได้หัวจาก CustomTitleEn ("Tax Invoice") ซึ่งไม่มีคำไทยเลย ⇒
+        // ลอดด่านได้ทั้งที่กระดาษประกาศตัวเป็นใบกำกับ (เคสขายส่งออก/ลูกค้า
+        // ต่างชาติ ซึ่งพบบ่อยที่สุดของหัวอังกฤษพอดี)
+        return resolvedTitle.Contains(TaxInvoiceKeyword, StringComparison.Ordinal)
+            || resolvedTitle.Contains(TaxInvoiceKeywordEn, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>ข้อความบล็อก — ต้องบอกทางไปต่อทั้งสองทาง (ห้ามตันเฉย ๆ)</summary>
+    public const string PlainInvoiceTaxTitleBlockedMessage =
+        "อนุมัติไม่ได้ — หัวเอกสารของ \"ใบแจ้งหนี้\" ถูกตั้งให้มีคำว่า \"ใบกำกับภาษี\" "
+        + "แต่ใบแจ้งหนี้ไม่ได้อยู่ในเล่มเลขใบกำกับ (TIV) จึงจะได้กระดาษที่ประกาศตัวเป็น"
+        + "ใบกำกับโดยเลขไม่เรียงในเล่ม ไม่ผ่านด่าน §86/4 และออก e-Tax ไม่ได้. ทางแก้: "
+        + "(1) ถ้าต้องการใบกำกับจริง ให้สร้างเอกสารประเภท \"ใบแจ้งหนี้/ใบกำกับภาษี\" แทน "
+        + "(ได้เลขชุด TIV ถูกต้อง) หรือ (2) แก้หัวเอกสารที่ ตั้งค่า → หัวเรื่องเอกสาร / "
+        + "เทมเพลต ให้ไม่มีคำว่า \"ใบกำกับภาษี\" แล้วอนุมัติใหม่";
 
     /// <summary>ชนิดที่ใช้ "เลือกตัวย่อของเลข" (ไม่ใช่ชนิดจริงของเอกสาร) —
     /// <c>null</c> = ใช้ชนิดของตัวเองตามเดิม

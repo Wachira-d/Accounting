@@ -88,8 +88,7 @@
     function renderMarkdown(md) {
       const lines = md.split(/\r?\n/);
       let html = '', i = 0;
-      const inline = (s) => s
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      const inline = (s) => Layout.esc(s)
         .replace(/`([^`]+)`/g, '<code>$1</code>')
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
         .replace(/\*([^*]+)\*/g, '<em>$1</em>')
@@ -113,7 +112,7 @@
             code += lines[i] + '\n'; i++;
           }
           i++; // closing fence
-          html += `<pre><code>${code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>`;
+          html += `<pre><code>${Layout.esc(code)}</code></pre>`;
           continue;
         }
         // blockquote

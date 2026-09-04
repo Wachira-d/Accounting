@@ -53,11 +53,114 @@ const Layout = {
     return Number.isFinite(n) ? n : null;
   },
 
+  /** HTML escape — ปลอดภัยทั้งใน **เนื้อความ** และใน **ค่าของ attribute**
+   *
+   *  ⚠️ ที่มา (บั๊กจริง · ผลตรวจ G-01/F-01): เดิมทำผ่าน `textContent → innerHTML`
+   *  ซึ่งตาม HTML serialization spec หนีแค่ `&` `<` `>` — **ไม่หนี `"` และ `'`**
+   *  ⇒ ทุกจุดที่เขียน `title="${Layout.esc(v)}"` (61 จุดในเรพ) ค่าที่มี `"`
+   *  จะ**แตกออกจาก attribute** แล้วเติม `onmouseover=` ต่อได้:
+   *
+   *      v = 'x" onmouseover="alert(1)'
+   *      title="x" onmouseover="alert(1)"     ← handler ที่ผู้โจมตีเขียนเอง
+   *
+   *  ค่าพวกนี้มาจากชื่อผู้ติดต่อ · ชื่อสินค้า · หมายเหตุ · ผล OCR — ทั้งหมด
+   *  เป็นสิ่งที่ผู้ใช้/คู่ค้า/กระดาษคุมได้ · และ JWT อยู่ใน localStorage
+   *  ⇒ XSS = ขโมย token (CLAUDE.md กฎเหล็ก #4 C)
+   *
+   *  หนี 5 ตัวเสมอ ไม่ว่าจะเอาไปวางที่ไหน — ในเนื้อความ `&quot;` แสดงผลเป็น `"`
+   *  ตามปกติอยู่แล้ว จึงไม่มีผลข้างเคียงกับสิ่งที่ผู้ใช้เห็น
+   *
+   *  **ยังไม่ใช่ตัวสำหรับ JS string ใน onclick** — อันนั้นใช้ `jsArg()` (ดูข้างล่าง)
+   */
   esc(str) {
     if (str == null) return '';
-    const d = document.createElement('div');
-    d.textContent = String(str);
-    return d.innerHTML;
+    return String(str)
+      .replace(/&/g, '&amp;')     // ต้องมาก่อนเสมอ ไม่งั้นหนีซ้ำตัวที่หนีไปแล้ว
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  },
+
+  /** ค่าที่จะฝังใน **JS string literal ภายใน onclick=""** — ไม่ใช่ `esc()`
+   *
+   *  `Layout.esc` เป็น **HTML escape** — หนี `& < > " '` เป็น entity แต่
+   *  **ไม่หนีระดับ JS และไม่หนีขึ้นบรรทัดใหม่** ⇒ พอเอาไปวางใน `onclick="f('...')"`
+   *  ค่าที่มี `\n` จะปิด string กลางคัน (และ `&#39;` ที่ esc คืนมาจะถูกเบราว์เซอร์
+   *  decode กลับเป็น `'` **ก่อน** parser ของ JS อ่าน ⇒ ปิด string ได้อยู่ดี)
+   *  แล้วทั้งหน้าตายด้วย
+   *  `Invalid or unexpected token` (เจอจริง: ชื่อสินทรัพย์ที่ OCR อ่านมาจาก
+   *  ใบกำกับ ทำให้ปุ่มลบในทะเบียนสินทรัพย์กดไม่ได้ทั้งหน้า)
+   *
+   *  ลำดับสำคัญ: หนีระดับ **JS** ก่อน (เบราว์เซอร์ decode HTML ก่อนแล้วค่อย parse JS)
+   *  แล้วค่อยหนีระดับ **HTML attribute**
+   *
+   *  ⚠️ ทางที่ดีกว่าเสมอคือ **อย่าส่งข้อความอิสระผ่าน onclick** — ส่ง id/ดัชนี
+   *  แล้วไปหยิบค่าจากข้อมูลที่โหลดไว้ (`Page.rows[i]`) ใช้ตัวนี้เฉพาะเมื่อเลี่ยงไม่ได้ */
+  /** ประเภทผู้ติดต่อ → เลข 1|2|3 — **ตัวแปลงตัวเดียวของระบบ**
+   *
+   *  ที่มา (บั๊กจริง): `Program.cs` ตั้ง `JsonStringEnumConverter` ⇒ API ส่ง enum
+   *  เป็น **สตริง** (`"JuristicPerson"`) แต่หน้าเว็บเทียบกับ **ตัวเลข**
+   *  (`c.contactType === 2`, `String(c.contactType || 2)` กับ `<option value="2">`)
+   *  ⇒ ไม่ match เลย: ช่อง "ประเภทผู้ติดต่อ" **ว่างทุกครั้ง** ที่เปิดแก้ไข ·
+   *  รหัสสาขาไม่เคยขึ้นในตาราง · ป้ายสีผิด
+   *
+   *  `documents.html` แก้ไปแล้ว 1 จุด (รับทั้ง string และ number) แต่
+   *  `contacts.html` ถูกทิ้งไว้ = defect class "แก้ตัวเดียว เหลือที่เหลือ"
+   *  → ยุบมาเป็นตัวแปลงกลางตัวเดียว รับได้ทั้งสองรูป */
+  contactTypeCode(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return v;
+    const n = parseInt(v, 10);
+    if (!isNaN(n) && String(n) === String(v).trim()) return n;
+    return ({ Individual: 1, JuristicPerson: 2, GovernmentAgency: 3 })[String(v)] ?? null;
+  },
+
+  /** true = นิติบุคคล (ต้องมีรหัสสาขา §86/4 · หัก ณ ที่จ่ายยื่น ภ.ง.ด.53) */
+  isJuristicContact(v) { return this.contactTypeCode(v) === 2; },
+
+  jsArg(v) {
+    return String(v == null ? '' : v)
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/\r/g, '')
+      .replace(/\n/g, '\\n')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  },
+
+  /** ไฮไลต์ช่องที่ OCR ไม่มั่นใจ (กฎเหล็ก #3 ข้อ 3) — **ตัวเดียวของทั้งระบบ**
+   *
+   *  @param conf     dict `{ ชื่อช่องกลาง: 0..1 }` จาก `Helpers/OcrFieldKeys.cs`
+   *  @param fieldMap `{ ชื่อช่องกลาง: id ของ input }` (ค่า null = หน้านี้ไม่มีช่องนั้น)
+   *
+   *  ที่มา: ตรรกะนี้เคยอยู่ในฟอร์มเอกสารที่เดียว (`documents.html`) — หน้า
+   *  **review ของ OCR ซึ่งเป็นหน้าที่ผู้ใช้ตัดสินใจจริง** มีแค่ป้าย % ไม่มี
+   *  ไฮไลต์เลย (ผลตรวจ E-OCR-04) พอจะเติมให้ก็จะกลายเป็นสำเนามือชุดที่สอง
+   *  ⇒ ยกมาไว้ที่ตัวกลาง แต่ละหน้าส่งแค่ "ช่องกลาง → id ของตัวเอง"
+   *
+   *  ค่า < 0.85 = เหลือง ("ตรวจอีกครั้ง") · ผู้ใช้แตะช่องเมื่อไร ไฮไลต์หายทันที
+   *  (แตะ = ตรวจแล้ว) — ห้ามค้างไว้จนน่ารำคาญแล้วผู้ใช้เลิกมอง */
+  applyOcrConfidenceHints(conf, fieldMap) {
+    Object.entries(conf || {}).forEach(([key, val]) => {
+      const v = Number(val) || 0;
+      const elId = (fieldMap || {})[key];
+      if (!elId || v >= 0.85) return;
+      const el = document.getElementById(elId);
+      if (!el) return;
+      el.style.borderColor = '#facc15';
+      el.style.background = '#fefce8';
+      el.title = `🤖 OCR มั่นใจ ${Math.round(v * 100)}% — ตรวจให้ตรงกับเอกสารจริงก่อนบันทึก`;
+      const clear = () => {
+        el.style.borderColor = '';
+        el.style.background = '';
+        el.title = '';
+      };
+      el.addEventListener('input', clear, { once: true });
+      el.addEventListener('change', clear, { once: true });
+    });
   },
 
   // ── ปลายทาง "แดชบอร์ด" — resolver กลางตัวเดียวของทั้งระบบ ──
@@ -207,6 +310,44 @@ const Layout = {
     document.body.insertBefore(banner, document.body.firstChild);
   },
 
+  /** แถบเตือนโควตาเอกสาร — เรียกจากหน้าที่ "สร้างเอกสาร" ได้ (เอกสาร · ที่พัก · POS)
+   *
+   *  ข้อความ ระดับเตือน และวันที่คาดว่าจะเต็ม **คำนวณที่เซิร์ฟเวอร์ทั้งหมด**
+   *  (`GET metering/quota`) หน้านี้แค่วาด — ห้ามหน้าไหนเทียบเปอร์เซ็นต์เอง ไม่งั้น
+   *  จะได้เกณฑ์คนละชุดต่อหน้า (defect class เดียวกับ MENU_SECTIONS/docHeaderLabel)
+   *
+   *  ไม่มีข้อมูล/เรียกไม่สำเร็จ = **ไม่วาดอะไรเลย** (ไม่ใช่ "ปกติดี") — การเงียบ
+   *  ปลอดภัยกว่าการยืนยันสิ่งที่ยังไม่รู้ */
+  async showQuotaBanner() {
+    const cid = this.getCompanyId();
+    if (!cid || document.getElementById('quotaBanner')) return;
+    let q = null;
+    try {
+      const res = await API.get(`/api/companies/${cid}/metering/quota`);
+      q = res?.data || null;
+    } catch { return; }
+    if (!q || !q.warnLevel || !q.message) return;
+    if (sessionStorage.getItem('quotaBannerDismissed') === String(q.warnLevel)) return;
+
+    const full = q.warnLevel === 2;
+    const banner = document.createElement('div');
+    banner.id = 'quotaBanner';
+    banner.style.cssText = `background:${full ? '#fee2e2' : '#fef3c7'};color:${full ? '#991b1b' : '#78350f'};`
+      + 'padding:10px 16px;display:flex;align-items:center;gap:12px;font-size:13px;border-bottom:1px solid rgba(0,0,0,.08)';
+    banner.innerHTML = `
+      <span style="font-size:18px">${full ? '🚫' : '⚠️'}</span>
+      <span style="flex:1">${this.esc(q.message)}</span>
+      <a href="/pages/addons.html" style="background:${full ? '#991b1b' : '#78350f'};color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap">ซื้อโควตาเพิ่ม</a>
+      <button onclick="Layout._dismissQuotaBanner(${q.warnLevel})" style="background:transparent;border:none;color:inherit;font-size:20px;cursor:pointer;padding:0 4px" aria-label="ปิด">×</button>`;
+    document.body.insertBefore(banner, document.body.firstChild);
+  },
+
+  _dismissQuotaBanner(level) {
+    // จำระดับที่ปิดไว้ — พอเลื่อนจาก "ใกล้เต็ม" เป็น "เต็มแล้ว" ต้องเตือนใหม่
+    sessionStorage.setItem('quotaBannerDismissed', String(level));
+    document.getElementById('quotaBanner')?.remove();
+  },
+
   _dismissPasswordWeakBanner() {
     sessionStorage.setItem('passwordWeakNoticeDismissed', '1');
     const el = document.getElementById('passwordWeakBanner');
@@ -214,10 +355,17 @@ const Layout = {
   },
 
   // ===== Feature & Subscription Helpers =====
+  // ตัวตัดสินสิทธิ์ **ตัวเดียว** ของหน้าเว็บ — ตอบได้ทั้งสองแกน:
+  //   • ความสามารถระดับแพ็กเกจ (bitmask → enabledFeatureNames) เช่น "DocumentEngine"
+  //   • ส่วนเสริมที่ซื้อเพิ่ม (AddOnCodes เป็น string) เช่น "lodging.guest-portal"
+  // แยกกันด้วยรูปของชื่อเอง (add-on มีจุดคั่นเสมอ) จึงไม่ต้องให้ผู้เรียกบอกชนิด
+  // — ห้ามเขียนตัวเช็ค add-on แยกในหน้าใดหน้าหนึ่ง (จะกลายเป็น resolver ตัวที่สอง
+  // แล้ว drift แน่นอน เหมือน MENU_SECTIONS/docHeaderLabel ที่เคยเกิดมาแล้ว)
   hasFeature(name) {
     if (!name) return true;
     // Without subscription data, allow access (graceful fallback)
     if (!this.subscription) return true;
+    if (name.includes('.')) return (this.subscription.enabledAddOnCodes || []).includes(name);
     return this.features.includes(name);
   },
 
@@ -226,8 +374,15 @@ const Layout = {
     if (this.hasFeature(name)) return true;
     if (opts.silent) return false;
     const label = opts.label || name;
-    this.toast(this._t('layout.upgradeNeeded', `ฟีเจอร์ "${label}" ไม่อยู่ในแพ็กเกจของคุณ — โปรดอัพเกรด`, { label }), 'error');
-    setTimeout(() => { window.location.href = '/pages/subscription.html'; }, 1200);
+    // ส่วนเสริมเปิดเองได้ทันทีที่หน้าส่วนเสริม ส่วนความสามารถของแพ็กเกจต้องอัปเกรด
+    // — พาไปหน้าที่ "กดแล้วจบ" ไม่ใช่หน้าที่ไม่มีปุ่มให้กด
+    const isAddOn = name.includes('.');
+    this.toast(isAddOn
+      ? `"${label}" เป็นส่วนเสริม — เปิดใช้ได้ที่หน้าส่วนเสริมของฉัน`
+      : this._t('layout.upgradeNeeded', `ฟีเจอร์ "${label}" ไม่อยู่ในแพ็กเกจของคุณ — โปรดอัพเกรด`, { label }), 'error');
+    setTimeout(() => {
+      window.location.href = isAddOn ? '/pages/addons.html' : '/pages/subscription.html';
+    }, 1200);
     return false;
   },
 
@@ -315,7 +470,7 @@ const Layout = {
   /** หน้าที่แสดงข้อมูล **ข้ามบริษัท** — เข้าได้เฉพาะแอดมินของแพลตฟอร์ม
    *  (ด่านจริงอยู่ที่ API ซึ่งบังคับ role SystemAdmin — ตรงนี้กันไม่ให้หน้าจอโผล่
    *   ให้ลูกค้าเห็นและกันการเดา URL ตรง ๆ) */
-  PLATFORM_ADMIN_PAGES: ['ai-usage', 'admin-company-usage'],
+  PLATFORM_ADMIN_PAGES: ['ai-usage', 'admin-company-usage', 'admin-addons', 'admin-help'],
 
   /** เรียกจากหน้าแอดมินแพลตฟอร์มโดยตรง — รอสิทธิ์จากเซิร์ฟเวอร์ก่อนตัดสิน
    *  (ค่าจาก localStorage ผู้ใช้แก้เองได้ จึงไม่ใช้เป็นตัวตัดสิน) */
@@ -334,7 +489,7 @@ const Layout = {
     if (this.PLATFORM_ADMIN_PAGES.includes(this.currentPage)
         && this.myPermissions.isSystemAdmin !== true) {
       this.toast('หน้านี้สำหรับผู้ดูแลระบบเท่านั้น', 'error');
-      setTimeout(() => { window.location.href = '/app.html'; }, 1200);
+      setTimeout(() => { window.location.href = this.dashboardUrl(); }, 1200);
       return;
     }
     if (this.myPermissions.isOwnerOrAdmin) return;
@@ -344,7 +499,7 @@ const Layout = {
       // ปลายทาง fallback: ถ้าไม่มีสิทธิ์แดชบอร์ดด้วย → เด้งไปแดชบอร์ดที่โหลด
       // ไม่ได้ = ค้าง (bounce loop). พาไปหน้าที่ "เข้าได้แน่นอน" แทน — ลายเซ็น
       // ของฉัน (ทุกคนเข้าได้) เพื่อให้ผู้ใช้ที่ถูกจำกัดสิทธิ์ยังอัพลายเซ็นตัวเองได้
-      const target = this.hasMenuAccess('dashboard') ? '/app.html' : '/pages/my-signature.html';
+      const target = this.hasMenuAccess('dashboard') ? this.dashboardUrl() : '/pages/my-signature.html';
       this.toast('คุณไม่มีสิทธิ์เข้าถึงหน้านี้ — กำลังพาไปหน้าที่คุณเข้าได้', 'error');
       setTimeout(() => { window.location.href = target; }, 1500);
     }
@@ -366,7 +521,10 @@ const Layout = {
     // the bottom (which flips uiMode → advanced and reloads).
     const uiMode = localStorage.getItem('uiMode') || 'simple';
     const SIMPLE_ALLOWED = new Set([
-      'dashboard',          // หน้าหลัก (Simple Mode home overrides via custom link)
+      // ⚠️ 'dashboard' **ไม่อยู่ในลิสต์** — โหมดง่ายมีลิงก์ "หน้าหลัก (โหมดง่าย)"
+      // ที่ inject ไว้บนสุดอยู่แล้ว ถ้าใส่ dashboard ด้วยจะได้ "หน้าหลัก" สองอัน
+      // ชี้คนละหน้า (/simple.html กับ /app.html) — อันหลังพาข้ามโหมดไปหน้าที่มี
+      // เมนู 110 รายการซึ่งเป็นสิ่งที่โหมดง่ายตั้งใจซ่อน (ผลตรวจ B-A22)
       'getting-started',    // คู่มือเริ่มต้น — สำคัญที่สุดสำหรับผู้ใช้ใหม่
       'documents',          // ขาย
       'recurring',          // invoice รายเดือนอัตโนมัติ — use case หลักของ SME
@@ -382,13 +540,17 @@ const Layout = {
       'document-scan',      // OCR ถ่ายรูปบิล
       'settings',           // ตั้งค่าบริษัท
     ]);
-    // ⚠️ จับคู่ด้วย "ชื่อหมวด" — เปลี่ยนชื่อหมวดใน navItems ต้องอัปเดตชุดนี้ด้วย
-    const SIMPLE_SECTIONS = new Set([
-      'ขาย / รายรับ', 'ซื้อ / รายจ่าย', 'POS หน้าร้าน',
-      'เงิน & ธนาคาร', 'ลูกค้า & สินค้า',
-      'ภาษี & e-Filing', 'รายงาน & วิเคราะห์', 'ตั้งค่า & ผู้ใช้',
-      'เครื่องมือ: AI · OCR · นำเข้าข้อมูล',  // hosts document-scan (OCR) จาก home strip
-    ]);
+    // ── เดิมมี SIMPLE_SECTIONS: ลิสต์ "ชื่อหมวด" ที่โหมดง่ายยอมให้แสดง — ถอดออกแล้ว ──
+    //
+    // มันเป็น **สำเนามือชุดที่สอง** ที่ต้องคอยให้ตรงกับ SIMPLE_ALLOWED และเมื่อ
+    // สองชุดไม่ตรงกันผลไม่ใช่แค่ "หมวดหาย" แต่คือ **รายการไปโผล่ใต้หมวดผิด**:
+    // ตัวกรองตัดหัวหมวดทิ้งแต่รายการของหมวดนั้นรอด ⇒ `inGroup` ยังค้างอยู่กับ
+    // หมวดก่อนหน้า ⇒ "เบิกค่าใช้จ่าย" ไปอยู่ใต้ "POS หน้าร้าน" และหมวด
+    // "ซื้อ / รายจ่าย" ว่างเปล่า (ผลตรวจ B-A4)
+    //
+    // กติกาที่ถูกคือ **หมวดเป็นภาชนะ ไม่ใช่รายการอิสระ** — ปล่อยหัวหมวดผ่าน
+    // ทุกตัว แล้วให้ flush() ทิ้งหมวดที่ไม่มีสมาชิกเหลือ (มันทำอยู่แล้ว)
+    // ⇒ หมวดที่แสดงคือหมวดที่มีรายการใน SIMPLE_ALLOWED จริง ๆ เสมอ โดยโครงสร้าง
     // ผู้ใช้ที่มี "custom role" (allowedMenuIds เจาะจง ไม่ใช่ '*'/owner) → เมนูที่
     // admin ติ๊กให้ = shortlist ที่ตั้งใจไว้แล้ว ต้องแสดงครบ. ไม่งั้น simple-mode
     // (SIMPLE_ALLOWED) จะไปซ่อนเมนูที่ตั้งสิทธิ์ให้ทับอีกชั้น เช่น ซื้อสินค้า/
@@ -400,7 +562,7 @@ const Layout = {
     const items = this.navItems.filter(item => {
       // section headers + non-item entries pass through; the render loop's
       // flush() then drops sections that end up empty after item filtering.
-      if (item.section) return uiMode !== 'simple' || hasCustomGrants || SIMPLE_SECTIONS.has(item.section);
+      if (item.section) return true;   // flush() ทิ้งหมวดที่ว่างให้เอง
       const visible =
         (!item.id || !hidden.includes(item.id))
         && (!item.id || this.hasMenuAccess(item.id))
@@ -496,7 +658,7 @@ const Layout = {
       html.push(`
         <div style="margin:18px 12px 8px;padding-top:14px;border-top:1px solid #e2e8f0;">
           <a class="nav-item" href="#" onclick="localStorage.setItem('uiMode','advanced'); window.location.reload(); return false;"
-             title="แสดงเมนูครบ 64 รายการของระบบบัญชี">
+             title="${'แสดงเมนูครบ ' + this.navItems.filter(i => i.id).length + ' รายการของระบบบัญชี'}">
             <span class="icon">⚙️</span><span class="label">ดูเมนูทั้งหมด (มืออาชีพ)</span>
           </a>
         </div>`);
@@ -802,7 +964,7 @@ const Layout = {
     { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html', feature: 'Dashboard', _i18nKey: 'nav.dashboard',
       description: 'ภาพรวมธุรกิจ — ยอดขาย รายจ่าย ลูกหนี้ เจ้าหนี้ กำไร เปรียบเทียบรายเดือน' },
     { id: 'getting-started', label: 'เริ่มต้นใช้งาน', icon: '🚀', href: '/pages/getting-started.html',
-      description: 'คู่มือตั้งค่า 5 ขั้นแรก — ข้อมูลบริษัท → ผังบัญชี → ลูกค้า/สินค้า → เอกสารแรก → ภาษี' },
+      description: 'คู่มือตั้งค่าทีละขั้น — ข้อมูลบริษัท → ผังบัญชี → ลูกค้า/สินค้า → เอกสารแรก → ภาษี' },
     { id: 'accountant-workspace', label: 'สำนักงานบัญชี (ทุก client)', icon: '🗂️', href: '/pages/accountant-workspace.html',
       description: 'งานคงค้างรวมทุกบริษัทที่ดูแล · ร่างค้างอนุมัติ · ธนาคารรอ match · สถานะ ภ.พ.30 · ลูกหนี้เกินกำหนด' },
     { id: 'accountant', label: 'เครื่องมือนักบัญชี', icon: '🧮', href: '/pages/accountant.html', feature: 'BasicAccounting', _i18nKey: 'nav.accountant',
@@ -944,6 +1106,10 @@ const Layout = {
       description: 'จัดการ order ที่ลูกค้าสั่งผ่านร้านค้าออนไลน์ — ยืนยัน · จัดส่ง · ติดตาม' },
     { id: 'cms-bookings', label: 'การจองจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings',
       description: 'จัดการการจอง — ร้านอาหาร · สปา · คลินิก · โรงแรม · ยืนยัน-ยกเลิก-No show' },
+    { id: 'lodging', label: 'ที่พัก · Front desk', icon: '🏨', href: '/pages/lodging.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodging',
+      description: 'จองห้องพัก · ยืนยันมัดจำ · เช็คอิน/เอาต์ · ปฏิทินห้อง · แม่บ้าน · โรงแรม/รีสอร์ท/บ้านพัก' },
+    { id: 'lodging-settings', label: 'ตั้งค่าที่พัก', icon: '🛏️', href: '/pages/lodging-settings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodgingSettings',
+      description: 'ประเภทห้อง · หมายเลขห้อง · แผนราคา · ฤดูกาล · ราคารายวัน · นโยบายยกเลิก · บริการเสริม · มัดจำ/VAT' },
     { id: 'cms-leads', label: 'คำขอ / Lead', icon: '📨', href: '/pages/cms-leads.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsLeads',
       description: 'RFQ · นัดดูทรัพย์ · นัด demo · สมัครเรียน · ขอใบเสนอราคา — sales funnel ครบ' },
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
@@ -1013,6 +1179,10 @@ const Layout = {
       description: 'ใครใช้ AI เท่าไร แยกรายลูกค้า/ช่องทาง (หน้าเว็บ vs API) · ต้นทุนจริง · สัดส่วนที่ระบบตอบเองได้' },
     { id: 'admin-company-usage', label: 'การใช้งานรายบริษัท', icon: '🏢', href: '/pages/admin-company-usage.html', platformAdmin: true,
       description: 'รายเดือน: แต่ละบริษัทออกเอกสารอะไรกี่ใบ · สแกน OCR · เรียก AI (จ่ายจริงเท่าไร) · ส่งอีเมล/e-Tax' },
+    { id: 'admin-help', label: 'จัดการคู่มือ/วิดีโอสอน', icon: '🎓', href: '/pages/admin-help.html', platformAdmin: true,
+      description: 'อัปโหลดวิดีโอสอนหรือวางลิงก์ YouTube/Facebook/TikTok · แยกหมวดตามเรื่องและตามโมดูลธุรกิจ · เผยแพร่/พักไว้เป็นร่างได้' },
+    { id: 'admin-addons', label: 'ส่วนเสริมและราคา', icon: '💰', href: '/pages/admin-addons.html', platformAdmin: true,
+      description: 'แคตตาล็อกส่วนเสริม: ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย (ราคาเก่าไม่ถูกแก้ย้อนหลัง)' },
     { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
       description: 'นำเข้า Excel ทีละ batch · ส่งออกข้อมูลเป็น CSV/Excel · backup' },
     { id: 'migrate-competitor', label: 'ย้ายจาก Express/PEAK/FlowAccount', icon: '🔁', href: '/pages/migrate-competitor.html', feature: 'BulkImport',
@@ -1074,6 +1244,16 @@ const Layout = {
       description: 'แพ็กเกจหลัก (User-level) ครอบหลายบริษัทใต้ License เดียว — แนะนำสำหรับเจ้าของหลายบริษัท / นักบัญชีดูแลหลายลูกค้า' },
     { id: 'subscription', label: 'แพ็กเกจของบริษัทนี้', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
       description: 'แพ็กเกจระดับบริษัท (Company-level) — ใช้เมื่อต้องการแยกบิลแยกใบกำกับ' },
+    { id: 'help', label: 'คู่มือ & วิดีโอสอนใช้งาน', icon: '🎓', href: '/pages/help.html',
+      description: 'วิดีโอสอนใช้งานและคู่มือ แยกตามเรื่อง (บัญชี · ภาษี · เงินเดือน) และตามธุรกิจ (ที่พัก · POS · เว็บไซต์)' },
+    { id: 'payment-settings', label: 'รับชำระเงินออนไลน์', icon: '💳', href: '/pages/payment-settings.html',
+      description: 'เปิดให้ลูกค้าจ่ายผ่าน PromptPay/บัตร จากหน้าเว็บขายของ · ใบแจ้งหนี้ · การจองที่พัก — ระบบบันทึกรับเงินและลงบัญชีให้อัตโนมัติ' },
+    { id: 'payment-intents', label: 'รายการรับชำระออนไลน์', icon: '💳', href: '/pages/payment-intents.html',
+      description: 'ทุกครั้งที่ลูกค้ากดจ่ายผ่านระบบ — ตรวจสถานะสด · ยืนยันด้วยมือเมื่อ webhook หาย · คืนเงิน · ดูประวัติทีละรายการ' },
+    { id: 'payment-settlements', label: 'กระทบยอดเงินรับออนไลน์', icon: '🏦', href: '/pages/payment-settlements.html',
+      description: 'เงินที่รับผ่านระบบชำระออนไลน์เข้าธนาคาร T+n หลังหักค่าธรรมเนียม — บันทึกรอบโอนเข้าเพื่อล้างบัญชีพัก 11340 และรับรู้ค่าธรรมเนียม' },
+    { id: 'addons', label: 'ส่วนเสริมของฉัน', icon: '🧩', href: '/pages/addons.html',
+      description: 'เปิด/ปิดส่วนเสริมที่คิดเงินแยกจากแพ็กเกจ · ดูโควตาเอกสารเดือนนี้ · ซื้อโควตาเพิ่ม' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',
       description: 'การใช้งานเทียบกับ limit · จำนวนเอกสาร · ผู้ใช้ · storage' },
     { id: 'audit', label: 'บันทึกกิจกรรม (Audit)', icon: '🔍', href: '/pages/audit.html', feature: 'AuditLog', _i18nKey: 'nav.audit',
@@ -2342,7 +2522,11 @@ const Layout = {
 
   // Document type labels & categorization
   _revenueDocTypes: ['Quotation','Invoice','TaxInvoice','Receipt','DeliveryNote','BillingNote','DebitNote','CreditNote','ReceiptVoucher'],
-  _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','Expense','PaymentVoucher','CertificateInLieu'],
+  // ★ ขาด 'GoodsReceiptNote' มาตลอด (ผลตรวจ A-D5) — ทั้งที่หน้าเอกสารมีแท็บ
+  // "ใบรับสินค้า" อยู่ ⇒ กด "ฝั่งรายจ่าย" หรือเข้าเมนูด้วย ?side=expense
+  // แล้ว **ใบรับสินค้าหายทั้งหมด** (ตัวกรองสองชั้นใน load() ตัดออก) ·
+  // งวดบัญชีและไฟล์ export ก็ขาดตามไปด้วย ⇒ สาย PO→GRN→PI ใช้จากฝั่งจ่ายไม่ได้เลย
+  _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','Expense','PaymentVoucher','CertificateInLieu'],
 
   /**
    * ป้ายเอกสารตาม "หัวกระดาษจริง" — ไม่ใช่แค่ชนิด enum (TODO A4)
@@ -2427,6 +2611,43 @@ const Layout = {
     link.click();
     URL.revokeObjectURL(link.href);
     this.toast(this._t('common.csvSuccess', 'ส่งออก CSV สำเร็จ'), 'success');
+  },
+
+  /**
+   * เปิดไฟล์จาก endpoint ที่ **ต้องมี token** ในแท็บใหม่
+   *
+   * ═══ ทำไมต้องมี ═══
+   * `<a href="/api/...">` ธรรมดา **ไม่ส่ง Authorization header** ⇒ ได้ 401 เงียบ ๆ
+   * (ผู้ใช้เห็นเป็นแท็บว่างหรือ JSON error) · ไฟล์ที่เคยวางไว้ใต้ static path
+   * สาธารณะแล้วย้ายมาอยู่หลังด่าน (เช่นสลิปโอนเงินของแขก — PII) ทุกจุดต้องเดิน
+   * ผ่านตัวนี้ ไม่งั้นลิงก์เดิมจะพังเงียบ
+   *
+   * คืนค่า blob URL ที่เปิดแล้ว — ผู้เรียกไม่ต้องจัดการเอง (revoke ให้อัตโนมัติ
+   * หลังแท็บโหลดเสร็จ; เร็วเกินไปจะทำให้แท็บว่าง)
+   */
+  async openAuthed(url, fallbackName = 'file') {
+    try {
+      const res = await fetch(url, { headers: { Authorization: 'Bearer ' + (API?.token || '') } });
+      if (!res.ok) {
+        let msg = 'เปิดไฟล์ไม่สำเร็จ';
+        try { msg = (await res.json())?.message || msg; } catch (_) { /* ไม่ใช่ JSON */ }
+        this.toast(msg, 'error');
+        return null;
+      }
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const win = window.open(href, '_blank');
+      if (!win) {
+        // ป๊อปอัปถูกบล็อก — ตกไปเป็นดาวน์โหลดแทน ห้ามเงียบ
+        const a = document.createElement('a');
+        a.href = href; a.download = fallbackName; a.click();
+      }
+      setTimeout(() => URL.revokeObjectURL(href), 60000);
+      return href;
+    } catch (e) {
+      this.toast(e.message || 'เปิดไฟล์ไม่สำเร็จ', 'error');
+      return null;
+    }
   },
 
   // Export table to Excel (simple HTML table format)

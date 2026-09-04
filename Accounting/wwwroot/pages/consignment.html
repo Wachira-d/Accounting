@@ -98,7 +98,7 @@
         await this.load();
       },
       _fmt(n) { return (n||0).toLocaleString('th-TH', { maximumFractionDigits: 4 }); },
-      esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
+      esc(s){ return Layout.esc(s); },
 
       async loadProducts() {
         try { const cid = Layout.getCompanyId();

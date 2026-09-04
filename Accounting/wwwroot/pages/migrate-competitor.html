@@ -59,7 +59,7 @@
         if (!Layout.init('migrate-competitor')) return;
         Layout.setTitle('ย้ายจาก Express/PEAK/FlowAccount');
       },
-      _esc(s) { return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      _esc(s) { return Layout.esc(s); },
       _keyLabel(kind) {
         return ({
           Contacts: 'TaxId',

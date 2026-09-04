@@ -245,6 +245,15 @@ public class CompanyService : ICompanyService
         if (request.IndustryType.HasValue) company.IndustryType = request.IndustryType.Value;
         if (request.JuristicId != null) company.JuristicId = request.JuristicId;
         if (request.IsVatRegistered.HasValue) company.IsVatRegistered = request.IsVatRegistered.Value;
+        // ภ.พ.06 (§86/6): ธง+วันที่ต้องสอดคล้องกัน — ติ๊กว่าอนุมัติแล้วแต่ไม่กรอกวันที่
+        // = ไม่มีหลักฐาน ⇒ ปฏิเสธ ดีกว่าปล่อยให้ออกใบกำกับอย่างย่อโดยไม่มีสิทธิ์
+        if (request.IsRetailApproved == true
+            && request.PhoR06ApprovedDate == null && company.PhoR06ApprovedDate == null)
+            throw new InvalidOperationException(
+                "กรุณาระบุวันที่กรมสรรพากรอนุมัติ ภ.พ.06 ก่อนเปิดสิทธิ์ออกใบกำกับภาษีอย่างย่อ");
+        if (request.IsRetailApproved.HasValue) company.IsRetailApproved = request.IsRetailApproved.Value;
+        if (request.PhoR06ApprovedDate.HasValue)
+            company.PhoR06ApprovedDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.PhoR06ApprovedDate.Value);
         if (request.VatRate.HasValue) company.VatRate = request.VatRate.Value;
         if (request.IsWhtRegistered.HasValue) company.IsWhtRegistered = request.IsWhtRegistered.Value;
         if (request.IsSocialSecurityRegistered.HasValue) company.IsSocialSecurityRegistered = request.IsSocialSecurityRegistered.Value;
@@ -593,7 +602,9 @@ public class CompanyService : ICompanyService
             c.SubDistrict, c.District, c.Province,
             c.PostalCode, c.Phone, c.Fax, c.Email, c.Website,
             c.FiscalYearStartMonth, c.IsSetupComplete, sub,
-            AddressEn: c.AddressEn);
+            AddressEn: c.AddressEn,
+            IsRetailApproved: c.IsRetailApproved,
+            PhoR06ApprovedDate: c.PhoR06ApprovedDate);
     }
 
     /// <summary>ประกอบ Company.Address (free-text) จาก structured fields — ที่อยู่

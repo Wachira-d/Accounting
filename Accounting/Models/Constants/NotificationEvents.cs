@@ -44,6 +44,10 @@ public static class NotificationEvents
     public const string PaymentVoucherGenerated = "document.pv_generated";
     public const string DocumentApproved        = "document.approved";
     public const string DocumentVoided          = "document.voided";
+    /// <summary>รับชำระออนไลน์ค้างนานผิดปกติในโหมดใช้งานจริง — อาการที่ผู้ใช้เจอคือ
+    /// "ลูกค้าจ่ายแล้วแต่ออเดอร์ยังค้าง" ซึ่งเจ้าของร้านไม่รู้จนลูกค้าโทรมา ·
+    /// สาเหตุที่พบบ่อยสุดคือยังไม่ได้ตั้ง webhook URL ในแดชบอร์ดผู้ให้บริการ</summary>
+    public const string GatewayPaymentStuck     = "gateway.payment_stuck";
     public const string DepreciationPosted      = "depreciation.posted";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
@@ -100,6 +104,7 @@ public static class NotificationEvents
         ("Accounting", PaymentVoucherGenerated, "สร้างใบสำคัญจ่ายอัตโนมัติ"),
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
+        ("Accounting", GatewayPaymentStuck, "รับชำระออนไลน์ค้างนานผิดปกติ (ตรวจ webhook)"),
         ("Accounting", DepreciationPosted, "ลงค่าเสื่อมราคาประจำเดือนอัตโนมัติ"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),

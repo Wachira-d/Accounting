@@ -396,7 +396,8 @@
         });
       },
 
-      _esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); },
+      // หนีข้อความ = ตัวกลางตัวเดียวของระบบ (สำเนามือเดิมหนีแค่ & < ' ⇒ ค่าที่มี " แตกออกจาก attribute ได้)
+      _esc(s) { return Layout.esc(s); },
 
       createAt(iso) {
         // Click empty cell → open create modal pre-filled with that slot.
@@ -500,14 +501,14 @@
           out.push(`<button class="ok" onclick="Page.markDeposit('${r.id}',${r.depositAmount})" title="บันทึกการรับมัดจำ — auto-confirm">💳 รับมัดจำ</button>`);
         if (r.status === 'Pending')   out.push(`<button class="ok" onclick="Page.setStatus('${r.id}','Confirmed')">✓ ยืนยัน</button>`);
         if (r.status === 'Pending' || r.status === 'Confirmed')
-          out.push(`<button class="seat" onclick="Page.seatNow('${r.id}','${Layout.esc(r.tableNumber||'')}')">🪑 นั่งโต๊ะ</button>`);
+          out.push(`<button class="seat" onclick="Page.seatNow('${r.id}','${Layout.jsArg(r.tableNumber||'')}')">🪑 นั่งโต๊ะ</button>`);
         if (r.status === 'Seated')
           out.push(`<button class="ok" onclick="Page.setStatus('${r.id}','Completed')">✓ จบบิล</button>`);
         if (r.status === 'Pending' || r.status === 'Confirmed')
           out.push(`<button onclick="Page.setStatus('${r.id}','NoShow')" title="ลูกค้าไม่มาตามนัด">😞 ไม่มา</button>`);
         out.push(`<button onclick="Page.edit('${r.id}')">✏️</button>`);
         if (r.status !== 'Completed' && r.status !== 'Seated')
-          out.push(`<button class="del" onclick="Page.del('${r.id}','${Layout.esc(r.customerName).replace(/'/g,'&apos;')}')">🗑️</button>`);
+          out.push(`<button class="del" onclick="Page.del('${r.id}','${Layout.jsArg(r.customerName)}')">🗑️</button>`);
         return out.join('');
       },
 
@@ -661,7 +662,7 @@
           if (!items.length) { results.style.display='none'; return; }
           results.style.display = '';
           results.innerHTML = items.map(c => `
-            <div onclick="Page.attachCust('${c.id}','${(c.name||'').replace(/'/g,'\\\'')}','${(c.phone||'').replace(/'/g,'\\\'')}')" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+            <div onclick="Page.attachCust('${c.id}','${Layout.jsArg(c.name||'')}','${Layout.jsArg(c.phone||'')}')" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
               <div style="font-weight:600">${Layout.esc(c.name)}</div>
               <div style="font-size:11px;color:#64748b">${c.phone?'📞 '+Layout.esc(c.phone)+' · ':''}🎁 ${c.loyaltyPoints||0} แต้ม · มาแล้ว ${c.totalVisitCount||0} ครั้ง</div>
             </div>`).join('');

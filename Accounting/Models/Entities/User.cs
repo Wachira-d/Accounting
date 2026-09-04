@@ -83,4 +83,16 @@ public class CompanyUser
     public CompanyRole? CompanyRole { get; set; }
     public bool IsDefault { get; set; } = false;
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>สาขาที่ผู้ใช้คนนี้ทำงานได้ — CSV ของ Guid · **null/ว่าง = ทุกสาขา**
+    /// (พฤติกรรมเดิมทุกประการ สำหรับบริษัทสาขาเดียวและเจ้าของ)
+    ///
+    /// <para>ที่มา (POS_MULTI_BRANCH_ANALYSIS เฟส 6): แคชเชียร์สาขา B เปิดกะบนเครื่อง
+    /// ของสาขา A ได้ ⇒ ยอดขายลงผิดสาขา · ตัดสต็อกผิดคลัง · และเป็นช่องให้ดูยอดขาย
+    /// ของสาขาที่ตัวเองไม่ได้ดูแล · `Employee.BranchId` มีอยู่แล้วแต่ `CompanyUser`
+    /// (ตัวที่ตัดสินสิทธิ์จริง) ไม่มี</para>
+    ///
+    /// <para>เก็บเป็น CSV ไม่ใช่ตารางแยก เพราะเป็นรายการสั้น (สาขาไม่กี่แห่ง) อ่านทุกครั้ง
+    /// ที่เปิดกะ และไม่ต้อง query ข้าม — ถ้าวันหนึ่งต้องมี metadata ต่อสาขา ค่อยแยกตาราง</para></summary>
+    public string? AllowedBranchIds { get; set; }
 }

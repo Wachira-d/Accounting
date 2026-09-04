@@ -89,6 +89,16 @@ public class StorefrontSiteInfo
     public string DefaultCurrency { get; set; } = "THB";
     public string? CaptchaProvider { get; set; }
     public string? CaptchaSiteKey { get; set; }
+
+    // ── ข้อมูลติดต่อที่ resolve แล้ว (เว็บชนะบริษัท) ──
+    // ส่งค่าที่ **แทนโทเคนเรียบร้อยแล้ว** ให้ storefront วาด footer/หน้าติดต่อ
+    // ห้ามให้หน้าเว็บไปประกอบเอง ไม่งั้นหน้า contact กับ footer โชว์คนละเบอร์
+    public string? ContactPhone { get; set; }
+    public string? ContactEmail { get; set; }
+    public string? ContactAddress { get; set; }
+    public string? LineId { get; set; }
+    public string? FacebookUrl { get; set; }
+    public string? InstagramUrl { get; set; }
 }
 
 public class StorefrontThemeInfo

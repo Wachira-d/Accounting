@@ -84,10 +84,9 @@ public class DbdXbrlExportService : IDbdXbrlExportService
                 "⛔ ต้องระบุเลขทะเบียนนิติบุคคล (Company.JuristicId 13 หลัก) ก่อนนำส่งงบ DBD");
 
         // ── หา fiscal period ──
-        var startMonth = company.FiscalYearStartMonth is >= 1 and <= 12
-            ? company.FiscalYearStartMonth : 1;
-        var fyStart = new DateTime(year, startMonth, 1);
-        var fyEnd = fyStart.AddYears(1).AddDays(-1);
+        var fy = Accounting.Helpers.FiscalYear.RangeFor(year, company.FiscalYearStartMonth);
+        var fyStart = fy.Start;
+        var fyEnd = fy.EndInclusive;
 
         // ── โหลด BS + P&L จาก service เดิม ──
         var bs = await _accounting.GetBalanceSheetAsync(companyId, fyEnd);

@@ -91,7 +91,7 @@
           </div>
           <div class="form-row">
             <div class="form-group form-checkbox"><input type="checkbox" id="fIsCustomer" checked onchange="Page.onCustomerToggle()"><label for="fIsCustomer">ลูกค้า</label></div>
-            <div class="form-group form-checkbox"><input type="checkbox" id="fIsSupplier"><label for="fIsSupplier">ผู้จำหน่าย</label></div>
+            <div class="form-group form-checkbox"><input type="checkbox" id="fIsSupplier" checked><label for="fIsSupplier">ผู้จำหน่าย</label></div>
           </div>
           <div class="form-row" id="creditLimitRow">
             <div class="form-group" style="flex:1">
@@ -524,10 +524,13 @@
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีผู้ติดต่อ</td></tr>'; return; }
           items.forEach(c => Page._cache[c.id] = c);
           const ctLabel = (ct) => ({1:'บุคคลธรรมดา',2:'นิติบุคคล',3:'หน่วยงานราชการ'}[ct] || '-');
+          // API ส่ง enum เป็น **สตริง** (JsonStringEnumConverter) — ต้องแปลงผ่านตัวกลาง
+          // ก่อนเทียบกับตัวเลขเสมอ ไม่งั้นเงื่อนไขเป็นเท็จทุกครั้งแบบเงียบ ๆ
+          const ctCode = (c) => Layout.contactTypeCode(c.contactType);
           tbody.innerHTML = items.map(c => `<tr>
             <td class="font-medium">${Layout.esc(c.name)}</td>
-            <td>${Layout.esc(c.taxId || '-')}${c.branchCode && c.contactType === 2 ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchCode)})</span>` : ''}</td>
-            <td><span class="badge ${c.contactType===2?'badge-info':c.contactType===3?'badge-warning':'badge-gray'}">${ctLabel(c.contactType)}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
+            <td>${Layout.esc(c.taxId || '-')}${c.branchCode && Layout.isJuristicContact(c.contactType) ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchCode)})</span>` : ''}</td>
+            <td><span class="badge ${ctCode(c)===2?'badge-info':ctCode(c)===3?'badge-warning':'badge-gray'}">${ctLabel(ctCode(c))}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
             <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
@@ -776,8 +779,12 @@
         const cl = document.getElementById('fCreditLimit'); if (cl) cl.value = '';
         const ch = document.getElementById('creditLimitHint'); if (ch) ch.textContent = '';
         document.getElementById('fContactType').value = '2';
+        // ผู้ติดต่อรายใหม่ติ๊กทั้งลูกค้าและผู้จำหน่ายไว้ก่อน — คู่ค้าส่วนใหญ่ของ SME
+        // เป็นได้ทั้งสองฝั่ง (ซื้อของจากร้านเดียวกับที่ขายให้) และการ "ติ๊กเกิน"
+        // ไม่ทำให้เกิดความเสียหาย ต่างจากการ "ติ๊กขาด" ที่ทำให้ผู้ติดต่อไม่โผล่ใน
+        // ตัวเลือกตอนออกเอกสารอีกฝั่ง แล้วผู้ใช้ต้องกลับมาแก้ทีหลังโดยไม่รู้สาเหตุ
         document.getElementById('fIsCustomer').checked = true;
-        document.getElementById('fIsSupplier').checked = false;
+        document.getElementById('fIsSupplier').checked = true;
         this.onCustomerToggle();
         // Reset GL override dropdowns to "ใช้ค่าเริ่มต้นของระบบ" — a
         // stale selection from a previous open would silently pin the
@@ -849,7 +856,10 @@
         document.getElementById('formTitle').textContent = 'แก้ไขผู้ติดต่อ';
         document.getElementById('editId').value = c.id;
         const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = '';
-        document.getElementById('fContactType').value = String(c.contactType || 2);
+        // ห้ามเทียบตรง ๆ: API ส่ง "JuristicPerson" แต่ <option value="2">
+        // ⇒ เดิม select ว่างทุกครั้งที่เปิดแก้ไข (ผู้ใช้เห็นเป็นช่องเปล่า)
+        document.getElementById('fContactType').value =
+          String(Layout.contactTypeCode(c.contactType) || 2);
         document.getElementById('fName').value = c.name;
         document.getElementById('fTaxId').value = c.taxId || '';
         document.getElementById('fBranch').value = c.branchCode || '';

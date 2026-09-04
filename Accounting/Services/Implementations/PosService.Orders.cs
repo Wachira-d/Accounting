@@ -9,6 +9,21 @@ namespace Accounting.Services.Implementations;
 
 public partial class PosService
 {
+    /// <summary>สาขา/คลังของเครื่องที่เปิดกะนี้ — ตรึงลงบิล **ตอนสร้าง** เท่านั้น
+    ///
+    /// <para>ห้าม resolve สดจาก terminal ตอนทำรายงาน: เครื่องย้ายสาขาได้ (ร้านย้าย
+    /// แคชเชียร์ไปสาขาใหม่) แล้วยอดขายย้อนหลังจะย้ายตามไปทั้งก้อน — defect class
+    /// เดียวกับ `IssuerBranchCode` บนเอกสารที่ §86/4 บังคับให้ตรึง</para></summary>
+    private async Task<(Guid? BranchId, Guid? WarehouseId)> ResolveTerminalScopeAsync(
+        Guid companyId, Guid sessionId)
+    {
+        var scope = await _db.PosSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId && s.CompanyId == companyId)
+            .Select(s => new { s.Terminal.BranchId, s.Terminal.WarehouseId })
+            .FirstOrDefaultAsync();
+        return scope == null ? (null, null) : (scope.BranchId, scope.WarehouseId);
+    }
+
     // ==================== Order CRUD ====================
 
     public async Task<OrderResponse> CreateOrderAsync(Guid companyId, CreateOrderRequest request, string createdBy)
@@ -16,7 +31,7 @@ public partial class PosService
         var session = await _db.PosSessions.FirstOrDefaultAsync(s => s.Id == request.SessionId && s.CompanyId == companyId && s.Status == PosSessionStatus.Open)
             ?? throw new KeyNotFoundException("ไม่พบกะการขายที่เปิดอยู่");
 
-        var posYm = DateTime.UtcNow.ToString("yyyyMM");
+        var posYm = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow).ToString("yyyyMM");
         var posPrefix = $"POS-{posYm}-";
         var maxPos = await _db.PosOrders
             .IgnoreQueryFilters()
@@ -30,12 +45,15 @@ public partial class PosService
             if (int.TryParse(lastPart, out var parsed)) posSeq = parsed + 1;
         }
         var orderNumber = $"{posPrefix}{posSeq:D4}";
+        var scope = await ResolveTerminalScopeAsync(companyId, request.SessionId);
 
         var order = new PosOrder
         {
             CompanyId = companyId,
             SessionId = request.SessionId,
             OrderNumber = orderNumber,
+            BranchId = scope.BranchId,
+            WarehouseId = scope.WarehouseId,
             OrderType = request.OrderType,
             CustomerId = request.CustomerId,
             CustomerName = request.CustomerName,
@@ -141,39 +159,46 @@ public partial class PosService
     public async Task VoidOrderAsync(Guid companyId, Guid orderId, string userId)
     {
         var order = await _db.PosOrders
-            .Include(o => o.Items)
+            // ต้องมี Modifiers ด้วย — การคืนวัตถุดิบตามสูตรอ่านท็อปปิ้งที่ลูกค้าเลือก
+            .Include(o => o.Items).ThenInclude(i => i.Modifiers)
             .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
         if (order.Status == PosOrderStatus.Voided) throw new InvalidOperationException("ออเดอร์นี้ถูกยกเลิกไปแล้ว");
 
         var wasCompleted = order.Status == PosOrderStatus.Completed;
+
+        // ธุรกรรมชัดเจน — `IStockLedger` ล็อกด้วย `pg_advisory_xact_lock` ซึ่ง**ปล่อยทันที
+        // ถ้าไม่มีธุรกรรมครอบ** (บทเรียน AdvisoryLockKey) ⇒ ไม่มีธุรกรรม = ไม่กันอะไรเลย
+        await using var voidTxn = await _db.Database.BeginTransactionAsync();
         if (wasCompleted)
         {
             foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
             {
                 var product = await _db.Products.FindAsync(item.ProductId);
-                if (product?.TrackStock == true)
+                if (product == null) continue;
+                // บิลที่กินสูตรตอนขาย ต้อง **คืนวัตถุดิบ** ไม่ใช่คืนตัวสินค้าแม่
+                var gaveBack = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
+                    +1, DateTime.UtcNow, $"VOID-{order.OrderNumber}", "คืนวัตถุดิบจากการยกเลิกออเดอร์", userId);
+                if (!gaveBack.Handled && product.TrackStock)
                 {
-                    product.CurrentStock += item.Quantity;
-                    _db.StockMovements.Add(new StockMovement
-                    {
-                        CompanyId = companyId,
-                        ProductId = product.Id,
-                        MovementDate = DateTime.UtcNow,
-                        MovementType = "IN",
-                        Quantity = item.Quantity,
-                        UnitCost = EffectiveUnitCost(product),
-                        BalanceAfter = product.CurrentStock,
-                        Reference = $"VOID-{order.OrderNumber}",
-                        Notes = "คืนสต็อกจากการยกเลิกออเดอร์",
-                        CreatedBy = userId
-                    });
+                    await _stock.MoveAsync(new StockMoveRequest(
+                        CompanyId: companyId,
+                        ProductId: product.Id,
+                        Quantity: item.Quantity,          // + = คืนเข้าคลัง
+                        MovementType: "IN",
+                        Reference: $"VOID-{order.OrderNumber}",
+                        WarehouseId: order.WarehouseId,   // null = คลังหลัก (บริษัทที่ไม่ใช้ระบบคลัง)
+                        PosOrderId: order.Id,
+                        UnitCostOverride: EffectiveUnitCost(product),
+                        Notes: "คืนสต็อกจากการยกเลิกออเดอร์",
+                        CreatedBy: userId));
                 }
             }
         }
 
         order.Status = PosOrderStatus.Voided;
         await _db.SaveChangesAsync();
+        await voidTxn.CommitAsync();
 
         // Reverse the sales journal entry — voiding a completed POS sale must
         // back out the GL impact (cash/revenue/VAT/COGS), else revenue and
@@ -196,7 +221,7 @@ public partial class PosService
     public async Task<OrderResponse> RefundOrderAsync(Guid companyId, Guid orderId, RefundOrderRequest request, string userId)
     {
         var order = await _db.PosOrders
-            .Include(o => o.Items)
+            .Include(o => o.Items).ThenInclude(i => i.Modifiers)
             .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
         if (order.Status != PosOrderStatus.Completed)
@@ -249,23 +274,35 @@ public partial class PosService
                 if (item.ProductId.HasValue)
                 {
                     var product = await _db.Products.FindAsync(item.ProductId.Value);
-                    if (product?.TrackStock == true)
+                    if (product != null)
                     {
-                        product.CurrentStock += qty;
-                        refundCogs += EffectiveUnitCost(product) * qty;
-                        _db.StockMovements.Add(new StockMovement
+                        // คืนบางส่วน: สร้างบรรทัดจำลองที่มีเฉพาะจำนวนที่คืน เพื่อให้
+                        // ตัวคิดสูตรตัวเดียวกันคำนวณสัดส่วนวัตถุดิบให้ (ห้ามเขียนสูตรซ้ำที่นี่)
+                        var partial = new PosOrderItem { Quantity = qty };
+                        foreach (var mod in item.Modifiers.Where(x => !x.IsDeleted)) partial.Modifiers.Add(mod);
+                        var gaveBack = await ApplyRecipeConsumptionAsync(companyId, order, partial, product,
+                            +1, DateTime.UtcNow, $"REFUND-{order.OrderNumber}",
+                            "คืนวัตถุดิบจากการคืนเงิน POS", userId);
+                        if (gaveBack.Handled)
                         {
-                            CompanyId = companyId,
-                            ProductId = product.Id,
-                            MovementDate = DateTime.UtcNow,
-                            MovementType = "IN",
-                            Quantity = qty,
-                            UnitCost = EffectiveUnitCost(product),
-                            BalanceAfter = product.CurrentStock,
-                            Reference = $"REFUND-{order.OrderNumber}",
-                            Notes = "คืนสินค้าจากการคืนเงิน POS",
-                            CreatedBy = userId,
-                        });
+                            // ต้นทุนที่กลับเข้ามา = ต้นทุนวัตถุดิบรวมของบรรทัดที่คืน
+                            refundCogs += gaveBack.TotalCost;
+                        }
+                        else if (product.TrackStock)
+                        {
+                            var move = await _stock.MoveAsync(new StockMoveRequest(
+                                CompanyId: companyId,
+                                ProductId: product.Id,
+                                Quantity: qty,                    // + = คืนเข้าคลัง
+                                MovementType: "IN",
+                                Reference: $"REFUND-{order.OrderNumber}",
+                                WarehouseId: order.WarehouseId,
+                                PosOrderId: order.Id,
+                                UnitCostOverride: EffectiveUnitCost(product),
+                                Notes: "คืนสินค้าจากการคืนเงิน POS",
+                                CreatedBy: userId));
+                            refundCogs += move.TotalCost;
+                        }
                     }
                 }
             }
@@ -339,7 +376,10 @@ public partial class PosService
         try
         {
             var journalRequest = new Models.DTOs.Accounting.CreateJournalEntryRequest(
-                DateTime.UtcNow, $"POS Refund #{order.OrderNumber}", $"REFUND-{order.OrderNumber}", lines);
+                DateTime.UtcNow, $"POS Refund #{order.OrderNumber}", $"REFUND-{order.OrderNumber}", lines,
+                // มิติสาขาจาก snapshot บนบิล — ทำให้ P&L รายสาขาจาก
+                // DimensionalAccountingService ตรงกับยอดขาย POS ของสาขานั้น
+                BranchId: order.BranchId);
             var journal = await _accountingService.CreateJournalEntryAsync(companyId, journalRequest, userId);
             await _accountingService.PostJournalEntryAsync(companyId, journal.Id);
         }
@@ -399,7 +439,12 @@ public partial class PosService
             // the end to suppress the VAT-report JE-fallback (avoids VAT
             // double-count: the Document path counts it, the JE path skips it).
             // เลขเอกสารใช้ yyyyMM ของ DocumentDate ให้สอดคล้องกัน
-            var posDocDate = order.CompletedAt ?? DateTime.UtcNow;
+            // ★ H-A3: ต้องเป็น "วันตามปฏิทินไทย" ไม่ใช่วัน UTC — ร้านอาหาร/บาร์
+            // ปิดบิลช่วง 00:00–07:00 ICT ยังเป็น **วันก่อนหน้า** ในเวลา UTC ⇒
+            // ใบกำกับ + เลขชุด yyyyMM + JE ตกวัน/เดือนก่อน ⇒ ภ.พ.30 ผิดงวด
+            // (DocumentService ใช้ ThaiDate.CalendarDateUtc มาตลอด — POS ตกหล่น)
+            var posDocDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(
+                order.CompletedAt ?? DateTime.UtcNow);
             var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
                 _db, companyId, Models.Enums.DocumentType.TaxInvoice, posDocDate);
 
@@ -408,7 +453,7 @@ public partial class PosService
                 CompanyId = companyId,
                 DocumentNumber = docNumber,
                 DocumentType = Models.Enums.DocumentType.TaxInvoice,
-                DocumentDate = order.CompletedAt ?? DateTime.UtcNow,
+                DocumentDate = posDocDate,
                 ContactId = contact.Id,
                 Contact = contact,
                 Status = Models.Enums.DocumentStatus.Approved,
@@ -490,7 +535,7 @@ public partial class PosService
         try
         {
             // Generate the official order number.
-            var posYm = DateTime.UtcNow.ToString("yyyyMM");
+            var posYm = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow).ToString("yyyyMM");
             var posPrefix = $"POS-{posYm}-";
             var maxPos = await _db.PosOrders.IgnoreQueryFilters()
                 .Where(o => o.CompanyId == companyId && o.OrderNumber.StartsWith(posPrefix))
@@ -502,11 +547,14 @@ public partial class PosService
                 if (int.TryParse(lastPart, out var parsed)) posSeq = parsed + 1;
             }
 
+            var offlineScope = await ResolveTerminalScopeAsync(companyId, request.SessionId);
             var order = new PosOrder
             {
                 CompanyId = companyId,
                 SessionId = request.SessionId,
                 OrderNumber = $"{posPrefix}{posSeq:D4}",
+                BranchId = offlineScope.BranchId,
+                WarehouseId = offlineScope.WarehouseId,
                 OrderType = request.OrderType,
                 CustomerId = request.CustomerId,
                 CustomerName = request.CustomerName,
@@ -551,27 +599,29 @@ public partial class PosService
 
             order.Status = PosOrderStatus.Completed;
             order.CompletedAt = request.CompletedAt;
+            await IssueAbbreviatedInvoiceNumberAsync(companyId, order);
 
             // GL + stock — same as the online CompleteOrderAsync.
             await CreateSalesJournalEntryAsync(companyId, order, createdBy);
             foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
             {
                 var product = await _db.Products.FindAsync(item.ProductId);
-                if (product?.TrackStock == true)
+                if (product == null) continue;
+                var ateOffline = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
+                    -1, request.CompletedAt, order.OrderNumber, "วัตถุดิบตามสูตร POS (offline sync)", createdBy);
+                if (!ateOffline.Handled && product.TrackStock)
                 {
-                    product.CurrentStock -= item.Quantity;
-                    _db.StockMovements.Add(new StockMovement
-                    {
-                        CompanyId = companyId,
-                        ProductId = product.Id,
-                        MovementDate = request.CompletedAt,
-                        MovementType = "OUT",
-                        Quantity = -item.Quantity,
-                        UnitCost = EffectiveUnitCost(product),
-                        BalanceAfter = product.CurrentStock,
-                        Reference = order.OrderNumber,
-                        Notes = "POS Sale (offline sync)",
-                    });
+                    await _stock.MoveAsync(new StockMoveRequest(
+                        CompanyId: companyId,
+                        ProductId: product.Id,
+                        Quantity: -item.Quantity,         // − = ตัดออกจากคลัง
+                        MovementType: "OUT",
+                        Reference: order.OrderNumber,
+                        WarehouseId: order.WarehouseId,
+                        PosOrderId: order.Id,
+                        MovementDate: request.CompletedAt,
+                        Notes: "POS Sale (offline sync)",
+                        CreatedBy: createdBy));
                 }
             }
 
@@ -816,7 +866,7 @@ public partial class PosService
         }
 
         var vatRate = await GetCompanyVatRateAsync(companyId);
-        var posYm = DateTime.UtcNow.ToString("yyyyMM");
+        var posYm = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow).ToString("yyyyMM");
         var posPrefix = $"POS-{posYm}-";
 
         // Compute next number once, then increment per child to avoid round trips.
@@ -838,6 +888,10 @@ public partial class PosService
                 CompanyId = companyId,
                 SessionId = parent.SessionId,
                 OrderNumber = $"{posPrefix}{seq:D4}",
+                // สืบทอดจากใบแม่ ไม่ resolve ใหม่จากเครื่อง — ใบลูกต้องอยู่สาขา/คลัง
+                // เดียวกับใบที่มันแยกออกมาเสมอ แม้เครื่องจะย้ายสาขาไปแล้ว
+                BranchId = parent.BranchId,
+                WarehouseId = parent.WarehouseId,
                 OrderType = parent.OrderType,
                 CustomerName = parent.CustomerName,
                 TableNumber = parent.TableNumber == null ? null : $"{parent.TableNumber}/{splitIdx}",
@@ -969,6 +1023,7 @@ public partial class PosService
         {
         order.Status = PosOrderStatus.Completed;
         order.CompletedAt = DateTime.UtcNow;
+        await IssueAbbreviatedInvoiceNumberAsync(companyId, order);
 
         // Loyalty: award 1 point per ฿100 spent (NetAmount excluding tip) and
         // bump visit counter / lastVisit on the linked Contact. Floor — fractions
@@ -993,21 +1048,22 @@ public partial class PosService
         foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
         {
             var product = await _db.Products.FindAsync(item.ProductId);
-            if (product?.TrackStock == true)
+            if (product == null) continue;
+            // สินค้าที่ชงสด (`ConsumesBomOnSale`) กินวัตถุดิบตามสูตรแทนการตัดตัวเอง
+            var ate = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
+                -1, DateTime.UtcNow, order.OrderNumber, "วัตถุดิบตามสูตร POS", userId);
+            if (!ate.Handled && product.TrackStock)
             {
-                product.CurrentStock -= item.Quantity;
-                _db.StockMovements.Add(new StockMovement
-                {
-                    CompanyId = companyId,
-                    ProductId = product.Id,
-                    MovementDate = DateTime.UtcNow,
-                    MovementType = "OUT",
-                    Quantity = -item.Quantity,
-                    UnitCost = EffectiveUnitCost(product),
-                    BalanceAfter = product.CurrentStock,
-                    Reference = order.OrderNumber,
-                    Notes = "POS Sale"
-                });
+                await _stock.MoveAsync(new StockMoveRequest(
+                    CompanyId: companyId,
+                    ProductId: product.Id,
+                    Quantity: -item.Quantity,         // − = ตัดออกจากคลัง
+                    MovementType: "OUT",
+                    Reference: order.OrderNumber,
+                    WarehouseId: order.WarehouseId,   // คลังของสาขาที่ขาย (null = คลังหลัก)
+                    PosOrderId: order.Id,
+                    Notes: "POS Sale",
+                    CreatedBy: userId));
             }
         }
 
@@ -1031,15 +1087,164 @@ public partial class PosService
         p.CostingMethod == CostingMethod.WeightedAverage && p.AverageUnitCost > 0
             ? p.AverageUnitCost : p.CostPrice;
 
+
+
+    /// <summary>ตัด/คืน **วัตถุดิบตามสูตร** ของบรรทัดขาย 1 บรรทัด — ตัวเดียวที่ทุกเส้นเรียก
+    /// (ขาย · sync ออฟไลน์ · ยกเลิกบิล · คืนเงิน) เพื่อไม่ให้เกิดสำเนาที่ drift
+    ///
+    /// <para><paramref name="direction"/>: −1 = ขาย (กินวัตถุดิบ) · +1 = คืน/ยกเลิก</para>
+    ///
+    /// <para><c>Handled = true</c> ⇒ ผู้เรียก **ห้ามตัดสต็อกตัวสินค้าแม่ซ้ำ**
+    /// (ชานมไข่มุกไม่ได้อยู่ในสต็อกล่วงหน้า — ตัดตัวมันเองจะทำให้ยอดติดลบตลอดกาล) ·
+    /// <c>TotalCost</c> = ต้นทุนวัตถุดิบรวมของบรรทัดนี้ ใช้ลง COGS</para>
+    ///
+    /// <para><c>Handled = false</c> เมื่อสินค้าไม่ได้ตั้ง <c>ConsumesBomOnSale</c> →
+    /// ผู้เรียกตัดสต็อกตัวเองตามพฤติกรรมเดิมทุกประการ</para></summary>
+    private async Task<(bool Handled, decimal TotalCost)> ApplyRecipeConsumptionAsync(
+        Guid companyId, PosOrder order, PosOrderItem item, Product product,
+        int direction, DateTime movementDate, string reference, string note, string userId)
+    {
+        if (!product.ConsumesBomOnSale) return (false, 0m);
+
+        var now = DateTime.UtcNow;
+        var bomId = await _db.BillsOfMaterials.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.ParentProductId == product.Id
+                     && b.IsActive && !b.IsDeleted
+                     && b.EffectiveFrom <= now && (b.EffectiveTo == null || b.EffectiveTo >= now))
+            .OrderByDescending(b => b.EffectiveFrom)
+            .Select(b => (Guid?)b.Id)
+            .FirstOrDefaultAsync();
+        if (bomId is not Guid activeBomId)
+        {
+            // ตั้งธงว่ากินสูตรแต่ยังไม่มีสูตร = ตั้งค่าไม่ครบ · ห้ามเงียบ และห้ามตัด
+            // สต็อกตัวเองแทน (จะได้ยอดติดลบโดยที่วัตถุดิบไม่ถูกตัด = ผิดสองทาง)
+            _logger.LogWarning(
+                "สินค้า {Code} ตั้งว่าขายแล้วกินสูตร แต่ยังไม่มีสูตรที่ใช้งานอยู่ — ไม่ได้ตัดวัตถุดิบให้บิล {Order}",
+                product.Code, order.OrderNumber);
+            return (true, 0m);
+        }
+
+        var recipe = await _db.BomLines.AsNoTracking()
+            .Where(l => l.BomId == activeBomId && !l.IsDeleted)
+            .Select(l => new Accounting.Helpers.BomRecipeLine(l.ComponentProductId, l.QuantityPerParent))
+            .ToListAsync();
+
+        // ท็อปปิ้งที่ลูกค้าเลือก — option ที่ผูกวัตถุดิบไว้เท่านั้น
+        var optionIds = item.Modifiers.Where(m => !m.IsDeleted && m.ModifierOptionId.HasValue)
+            .Select(m => m.ModifierOptionId!.Value).ToList();
+        var modifiers = optionIds.Count == 0
+            ? new List<Accounting.Helpers.BomModifierDraw>()
+            : await _db.Set<ProductModifierOption>().AsNoTracking()
+                .Where(o => optionIds.Contains(o.Id) && o.ComponentProductId != null && o.ComponentQuantity > 0)
+                .Select(o => new Accounting.Helpers.BomModifierDraw(o.ComponentProductId!.Value, o.ComponentQuantity))
+                .ToListAsync();
+
+        var draws = Accounting.Helpers.BomConsumption.Resolve(recipe, modifiers, item.Quantity);
+        var totalCost = 0m;
+        foreach (var d in draws)
+        {
+            var qty = direction < 0 ? -d.Quantity : d.Quantity;
+            var move = await _stock.MoveAsync(new StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: d.ComponentProductId,
+                Quantity: qty,
+                MovementType: qty < 0 ? "OUT" : "IN",
+                Reference: reference,
+                WarehouseId: order.WarehouseId,   // วัตถุดิบของ **สาขานั้น**
+                PosOrderId: order.Id,
+                MovementDate: movementDate,
+                Notes: $"{note} ({product.Code}"
+                     + (d.Source == Accounting.Helpers.BomDraw.FromModifier ? " · ท็อปปิ้ง" : " · สูตร") + ")",
+                CreatedBy: userId));
+            totalCost += move.TotalCost;
+        }
+        return (true, totalCost);
+    }
+
+    /// <summary>ออก **เลขใบกำกับภาษีอย่างย่อ** (§86/6) ให้บิลที่ปิดแล้ว — ตรึงลงบิลพร้อม
+    /// รหัสสาขา (§86/4 ห้ามแก้ย้อนหลัง)
+    ///
+    /// <para>ทำไมไม่ใช้ <c>OrderNumber</c>: เลขนั้นนับต่อ**บริษัท** และนับใบที่ถูกยกเลิกด้วย
+    /// ⇒ เลขใบกำกับจะกระโดดและซ้ำข้ามสาขา · §86/6 ต้อง gap-free **ต่อสาขา**</para>
+    ///
+    /// <para>ทำไมต้องล็อก: สองแคชเชียร์ของสาขาเดียวกันปิดบิลพร้อมกันจะได้เลขซ้ำ ·
+    /// คีย์ต้อง deterministic ข้าม process (`AdvisoryLockKey` ไม่ใช่ `HashCode.Combine`) ·
+    /// ล็อกอยู่ในธุรกรรมของผู้เรียก (ปิดบิลมีธุรกรรมครอบอยู่แล้ว)</para>
+    ///
+    /// <para>ไม่มีสิทธิ์ออก (ยังไม่จด VAT / ไม่มี ภ.พ.06 / บิลไม่มี VAT) → **ไม่ออกเลข**
+    /// และหัวสลิปเป็น "ใบเสร็จรับเงิน" — ห้ามพิมพ์คำว่าใบกำกับโดยไม่มีสิทธิ์</para></summary>
+    private async Task IssueAbbreviatedInvoiceNumberAsync(Guid companyId, PosOrder order)
+    {
+        if (order.AbbreviatedInvoiceNumber != null) return;   // ออกไปแล้ว — idempotent
+
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.IsVatRegistered, c.IsRetailApproved, c.PhoR06ApprovedDate })
+            .FirstOrDefaultAsync();
+        if (company == null) return;
+
+        // ★ H-A3 — เลขใบกำกับอย่างย่อ (§86/6) ผูกกับวัน/เดือนตามปฏิทินไทย
+        var issuedAt = Accounting.Helpers.ThaiDate.CalendarDateUtc(
+            order.CompletedAt ?? DateTime.UtcNow);
+        var header = Accounting.Helpers.PosSlipHeader.Resolve(
+            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
+            order.VatAmount, issuedAt);
+
+        // รหัสสาขาตรึงลงบิลเสมอ แม้ออกอย่างย่อไม่ได้ — รายงานภาษีขายต้องรู้ว่าใบนี้
+        // ของสาขาไหน และค่านี้ต้องไม่เปลี่ยนเมื่อเครื่องย้ายสาขาภายหลัง
+        order.IssuerBranchCode ??= order.BranchId is Guid bid
+            ? await _db.Branches.AsNoTracking()
+                .Where(b => b.Id == bid && b.CompanyId == companyId)
+                .Select(b => b.TaxBranchCode)
+                .FirstOrDefaultAsync()
+            : null;
+
+        if (!header.CanIssueAbbreviated) return;
+
+        // เลขรันต่อ (สาขา, เดือนภาษี) — ตัวย่อจากเครื่อง ถ้าไม่ตั้งใช้ "ABB"
+        var prefixRoot = await _db.PosSessions.AsNoTracking()
+            .Where(x => x.Id == order.SessionId && x.CompanyId == companyId)
+            .Select(x => x.Terminal.AbbreviatedInvoicePrefix)
+            .FirstOrDefaultAsync();
+        var branchPart = string.IsNullOrWhiteSpace(order.IssuerBranchCode) ? "00000" : order.IssuerBranchCode;
+        var prefix = $"{(string.IsNullOrWhiteSpace(prefixRoot) ? "ABB" : prefixRoot)}-{branchPart}-{issuedAt:yyyyMM}-";
+
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            Accounting.Helpers.AdvisoryLockKey.For(companyId,
+                Accounting.Helpers.AdvisoryLockKey.DocumentSequence, prefix));
+
+        var last = await _db.PosOrders.IgnoreQueryFilters()
+            .Where(o => o.CompanyId == companyId && o.AbbreviatedInvoiceNumber != null
+                     && o.AbbreviatedInvoiceNumber.StartsWith(prefix))
+            .Select(o => o.AbbreviatedInvoiceNumber)
+            .MaxAsync();
+        var seq = 1;
+        if (last != null && int.TryParse(last.Substring(prefix.Length), out var parsed)) seq = parsed + 1;
+        order.AbbreviatedInvoiceNumber = $"{prefix}{seq:D5}";
+    }
+
     private async Task CreateSalesJournalEntryAsync(Guid companyId, PosOrder order, string userId)
     {
+        // เครื่องที่เปิดกะนี้ — ใช้เลือกบัญชีเงินสด/ธนาคารของสาขา (null ได้ = ใช้ผังมาตรฐาน)
+        var jeTerminal = await _db.PosSessions.AsNoTracking()
+            .Where(s => s.Id == order.SessionId && s.CompanyId == companyId)
+            .Select(s => s.Terminal)
+            .FirstOrDefaultAsync();
+
         // Sales / VAT / COGS / Inventory accounts — single source per company.
         var salesAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41000")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.Level >= 4);
         var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21911")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219") && a.Level >= 4);
 
-        if (salesAccount == null) return; // Skip if no sales account configured
+        // ★ H-A18: เดิม `return;` เงียบ ๆ ⇒ ออเดอร์ปิดสำเร็จ เงินเข้าลิ้นชัก
+        // แต่ **ไม่มีรายการบัญชีเลย** = GL รั่วโดยไม่มีใครเห็น (ต่างจาก catch
+        // ด้านล่างที่ throw แล้ว — ทางออกสองทางของเมธอดเดียวกันตัดสินคนละแบบ)
+        // กฎเหล็ก #4 E: ห้ามกลืน error ใน payment/stock/JE path — fail loud
+        if (salesAccount == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ไม่พบบัญชีรายได้จากการขาย (41000) ในผังบัญชี — เพิ่มผังบัญชีก่อนปิดบิล " +
+                "มิฉะนั้นยอดขายจะไม่เข้าบัญชีแยกประเภท", "POS-NO-SALES-ACCOUNT");
 
         var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
@@ -1053,15 +1258,24 @@ public partial class PosService
             // No payment records — fall back to a single debit using the default cash
             // account so the JE still balances. Older orders without explicit payment
             // method end up here.
-            var cashAccount = await ResolvePaymentAccountAsync(companyId, PaymentMethod.Cash);
-            if (cashAccount == null) return;
+            var cashAccount = await ResolvePaymentAccountAsync(companyId, PaymentMethod.Cash, jeTerminal);
+            // ★ H-A18 (ทางออกที่สอง) — เหตุผลเดียวกับข้างบน
+            if (cashAccount == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ไม่พบบัญชีเงินสด/ธนาคารสำหรับรับเงิน POS — ตั้งค่าผังบัญชีของสาขาก่อนปิดบิล",
+                    "POS-NO-CASH-ACCOUNT");
             lines.Add(new(cashAccount.Id, order.NetAmount, 0, $"รับเงิน POS #{order.OrderNumber}"));
         }
         else
         {
             foreach (var pay in paymentsToBook)
             {
-                var acct = await ResolvePaymentAccountAsync(companyId, pay.PaymentMethod);
+                // บิลที่ลูกค้าสแกนจ่ายผ่านระบบรับชำระออนไลน์: เงิน**ยังไม่เข้าบัญชีร้าน**
+                // ผู้ให้บริการโอนเข้า T+n หลังหักค่าธรรมเนียม ⇒ ต้องลงบัญชีพัก 11340
+                // ไม่ใช่บัญชีธนาคาร/ลิ้นชักของสาขา (ลงธนาคารเลย = ยอดธนาคารสูงเกินจริง
+                // และกระทบยอดรายสาขาไม่ได้) · ตัวตัดสินคือ resolver ตัวเดียวของระบบ
+                var acct = await ResolveGatewayClearingAsync(companyId, pay)
+                    ?? await ResolvePaymentAccountAsync(companyId, pay.PaymentMethod, jeTerminal);
                 if (acct == null) continue;
                 // Use Amount (allocated to invoice), not ReceivedAmount, so cash-tendered-with-change
                 // posts the invoice value, not the full bill the customer handed over.
@@ -1137,8 +1351,12 @@ public partial class PosService
             }
         }
 
+        // ★ H-A3: วันที่ลงบัญชี = วันตามปฏิทินไทยของเวลาที่ปิดบิล
+        var jeDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(
+            order.CompletedAt ?? DateTime.UtcNow);
         var journalRequest = new Models.DTOs.Accounting.CreateJournalEntryRequest(
-            DateTime.UtcNow, $"POS Sale #{order.OrderNumber}", order.OrderNumber, lines);
+            jeDate, $"POS Sale #{order.OrderNumber}", order.OrderNumber, lines,
+            BranchId: order.BranchId);
 
         try
         {
@@ -1191,6 +1409,60 @@ public partial class PosService
     /// <summary>Z-Report (สิ้นกะ) — query สรุปยอด session ที่ closed.
     /// Read-only — ไม่ post JE เพิ่ม (JE เกิดต่อออเดอร์ใน CompleteOrderAsync
     /// อยู่แล้ว). ใช้เทียบเงินสดในลิ้นชัก + audit ก่อนปิดงาน.</summary>
+
+    public async Task<PosBranchSummaryResponse> GetBranchSummaryAsync(Guid companyId, DateTime from, DateTime to)
+    {
+        var start = from.Date;
+        var end = to.Date.AddDays(1);
+
+        var orders = await _db.PosOrders.AsNoTracking()
+            .Include(o => o.Payments)
+            .Where(o => o.CompanyId == companyId && o.CreatedAt >= start && o.CreatedAt < end)
+            .ToListAsync();
+
+        var branchIds = orders.Where(o => o.BranchId.HasValue).Select(o => o.BranchId!.Value).Distinct().ToList();
+        var branches = await _db.Branches.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && branchIds.Contains(b.Id))
+            .Select(b => new { b.Id, b.Name, b.TaxBranchCode })
+            .ToListAsync();
+        var byId = branches.ToDictionary(b => b.Id);
+
+        var rows = orders
+            .GroupBy(o => o.BranchId)
+            .Select(g =>
+            {
+                var completed = g.Where(o => o.Status == PosOrderStatus.Completed).ToList();
+                var net = completed.Sum(o => o.NetAmount);
+                var name = g.Key is Guid bid && byId.TryGetValue(bid, out var b)
+                    ? b.Name
+                    // บิลที่ไม่ผูกสาขา ต้องโชว์เป็นแถวของตัวเอง ไม่ใช่ยัดรวมกับสำนักงานใหญ่
+                    // (ไม่งั้นผลรวมรายสาขาจะไม่เท่ายอดบริษัทโดยไม่มีใครรู้ว่าทำไม)
+                    : "(ยังไม่ผูกสาขา)";
+                var code = g.Key is Guid bid2 && byId.TryGetValue(bid2, out var b2) ? b2.TaxBranchCode : null;
+                return new PosBranchSummaryRow(
+                    g.Key, name, code,
+                    completed.Count,
+                    g.Count(o => o.Status == PosOrderStatus.Voided),
+                    net,
+                    completed.Sum(o => o.VatAmount),
+                    completed.Sum(o => o.DiscountAmount),
+                    completed.Count > 0
+                        ? Math.Round(net / completed.Count, 2, MidpointRounding.AwayFromZero) : 0m,
+                    completed.SelectMany(o => o.Payments)
+                        .GroupBy(pmt => pmt.PaymentMethod)
+                        .Select(pg => new PaymentMethodSummary(
+                            pg.Key, PaymentMethodThaiLabel(pg.Key), pg.Count(), pg.Sum(x => x.Amount)))
+                        .ToList());
+            })
+            .OrderByDescending(r => r.NetSales)
+            .ToList();
+
+        return new PosBranchSummaryResponse(
+            start, end.AddDays(-1), rows,
+            rows.Sum(r => r.NetSales),
+            rows.Any(r => r.BranchId == null));
+    }
+
     public async Task<PosZReportResponse> GetZReportAsync(Guid companyId, Guid sessionId)
     {
         var session = await _db.PosSessions.AsNoTracking()
@@ -1360,8 +1632,10 @@ public partial class PosService
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
         // บริษัทไม่จด VAT → คิด 0% (ห้ามเก็บ/ลง output VAT — §90/2). POS ลง JE
         // เอง (21911) ไม่ผ่าน ApproveDocumentAsync จึงต้องกันที่ต้นทางตรงนี้
-        if (company is not { IsVatRegistered: true }) return 0m;
-        return company.VatRate;
+        // ตัวตัดสินเดียวกับเส้นอื่นที่สร้างเอกสารขายเองโดยไม่ผ่าน Approve
+        // (Time Billing / integration) — Helpers/OutputVatRate
+        return Accounting.Helpers.OutputVatRate.ForCompany(
+            company?.IsVatRegistered ?? false, company?.VatRate ?? 0m);
     }
 
     private async Task AddItemToOrder(PosOrder order, CreateOrderItemRequest req, int lineOrder, decimal vatRate)
@@ -1488,7 +1762,17 @@ public partial class PosService
         DocumentNumber: null,
         TipAmount: o.TipAmount,
         CouponCode: o.CouponCode,
-        CouponDiscountAmount: o.CouponDiscountAmount);
+        CouponDiscountAmount: o.CouponDiscountAmount,
+        BranchId: o.BranchId,
+        WarehouseId: o.WarehouseId,
+        AbbreviatedInvoiceNumber: o.AbbreviatedInvoiceNumber,
+        IssuerBranchCode: o.IssuerBranchCode,
+        IssuerBranchLabel: Accounting.Helpers.PosSlipHeader.BranchLabel(o.IssuerBranchCode),
+        // บิลที่ออกเลขอย่างย่อไปแล้ว = หัวถูกตรึงตั้งแต่ตอนปิดบิล (§86/4 ห้ามแก้ย้อนหลัง)
+        // บิลที่ยังไม่ปิด ยังไม่รู้ผล — ปล่อย null ให้หน้าเว็บถามตอนจะพิมพ์
+        SlipTitle: o.AbbreviatedInvoiceNumber != null
+            ? Accounting.Helpers.PosSlipHeader.AbbreviatedTaxInvoice
+            : o.Status == PosOrderStatus.Completed ? Accounting.Helpers.PosSlipHeader.Receipt : null);
 
     private static OrderItemResponse MapOrderItem(PosOrderItem i) => new(
         i.Id, i.ProductId, i.ServicePackageId, i.ItemName, i.ItemCode,
@@ -1505,8 +1789,44 @@ public partial class PosService
     // the Thai SME chart-of-accounts seeded by SeedCoaService:
     //   1011 เงินสด / 1012 ธนาคาร / 1131 บัตรเครดิตค้างรับ
     // Fallback by prefix lets companies with a customized COA still resolve.
-    private async Task<Accounting.Models.Entities.ChartOfAccount?> ResolvePaymentAccountAsync(Guid companyId, PaymentMethod method)
+    /// <summary>บัญชีพักของ gateway สำหรับรายการที่จ่ายผ่านระบบรับชำระออนไลน์ —
+    /// <c>null</c> = ไม่ได้จ่ายผ่าน gateway (หรือ gateway นั้นเงินเข้าธนาคารทันที)
+    /// ⇒ ผู้เรียกตกไปใช้ผังตามวิธีจ่ายเหมือนเดิม
+    ///
+    /// <para>กติกาอยู่ที่ <see cref="IGatewayAccountResolver"/> ที่เดียวของระบบ —
+    /// ห้าม POS ตัดสินเองว่าเจ้าไหนเข้าธนาคารทันที (จะกลายเป็นกติกาชุดที่สอง)</para></summary>
+    private async Task<Accounting.Models.Entities.ChartOfAccount?> ResolveGatewayClearingAsync(
+        Guid companyId, PosPayment pay)
     {
+        if (_gatewayAccounts == null || pay.PaymentIntentId is not Guid intentId) return null;
+        var intent = await _db.PaymentIntents.AsNoTracking()
+            .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId);
+        if (intent == null) return null;
+        var accId = await _gatewayAccounts.ResolveMoneyInAccountAsync(intent);
+        if (accId is not Guid id) return null;
+        return await _db.ChartOfAccounts.FirstOrDefaultAsync(
+            a => a.Id == id && a.CompanyId == companyId && !a.IsDeleted);
+    }
+
+    private async Task<Accounting.Models.Entities.ChartOfAccount?> ResolvePaymentAccountAsync(
+        Guid companyId, PaymentMethod method, PosTerminal? terminal = null)
+    {
+        // บัญชีที่ตั้งไว้ **บนเครื่อง** ชนะเสมอ — สาขาที่มีบัญชีธนาคาร/ลิ้นชักเงินสด
+        // ของตัวเองต้องลงคนละบัญชี ไม่งั้นเงินของทุกสาขากองรวมกันแล้วกระทบยอด
+        // ธนาคารรายสาขาไม่ได้เลย (ค่า null = ใช้ผังบัญชีตามวิธีจ่ายเหมือนเดิม)
+        var pinned = method == PaymentMethod.Cash ? terminal?.CashAccountId : terminal?.BankAccountId;
+        if (pinned is Guid acctId)
+        {
+            var pinnedAccount = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.Id == acctId && a.CompanyId == companyId);
+            if (pinnedAccount != null) return pinnedAccount;
+            // ตั้งไว้แต่หาไม่เจอ (ถูกลบ/ย้ายบริษัท) → ตกไปใช้ผังบัญชีมาตรฐาน
+            // แต่ต้องดัง ไม่ใช่เงียบ — เงินจะลงบัญชีที่เจ้าของไม่ได้ตั้งใจ
+            _logger.LogWarning(
+                "เครื่อง POS {Terminal} ตั้งบัญชีรับเงิน {Account} ไว้ แต่ไม่พบในผังบัญชีของบริษัท {Company} — ใช้บัญชีมาตรฐานแทน",
+                terminal?.Name, acctId, companyId);
+        }
+
         string preferred; string prefix;
         switch (method)
         {

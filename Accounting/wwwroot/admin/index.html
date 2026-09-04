@@ -158,8 +158,8 @@
               <tbody>
                 ${d.recentUsers.map(u => `
                   <tr>
-                    <td><strong>${u.fullName}</strong>${u.isSystemAdmin ? ' <span class="admin-badge-sm bg-purple">Admin</span>' : ''}</td>
-                    <td>${u.email}</td>
+                    <td><strong>${AdminLayout.esc(u.fullName)}</strong>${u.isSystemAdmin ? ' <span class="admin-badge-sm bg-purple">Admin</span>' : ''}</td>
+                    <td>${AdminLayout.esc(u.email)}</td>
                     <td>${AdminLayout.statusBadge(u.status)}</td>
                     <td>${AdminLayout.date(u.createdAt)}</td>
                     <td>${AdminLayout.datetime(u.lastLoginAt)}</td>
@@ -179,7 +179,7 @@
           : '<div style="text-align:center;color:#94a3b8;padding:20px">ไม่มีรายการรอตรวจสอบ</div>';
 
       } catch (err) {
-        document.getElementById('kpiGrid').innerHTML = `<div class="admin-kpi"><div style="color:var(--admin-danger)">${err.message}</div></div>`;
+        document.getElementById('kpiGrid').innerHTML = `<div class="admin-kpi"><div style="color:var(--admin-danger)">${AdminLayout.esc(err.message)}</div></div>`;
       }
     }
 
@@ -188,19 +188,19 @@
       return `<div style="display:flex;align-items:flex-end;gap:16px;height:180px;padding:10px 0">
         ${items.map(i => `
           <div style="flex:1;text-align:center;display:flex;flex-direction:column;justify-content:flex-end;height:100%">
-            <div style="font-weight:700;font-size:18px;margin-bottom:4px">${i.value}</div>
-            <div style="background:${i.color};border-radius:6px 6px 0 0;height:${Math.max(i.value / max * 120, 4)}px;transition:height .5s"></div>
-            <div style="font-size:12px;color:#64748b;margin-top:6px">${i.label}</div>
+            <div style="font-weight:700;font-size:18px;margin-bottom:4px">${AdminLayout.esc(i.value)}</div>
+            <div style="background:${i.color};border-radius:6px 6px 0 0;height:${AdminLayout.esc(Math.max(i.value / max * 120, 4))}px;transition:height .5s"></div>
+            <div style="font-size:12px;color:#64748b;margin-top:6px">${AdminLayout.esc(i.label)}</div>
           </div>
         `).join('')}
       </div>`;
     }
 
     async function runAction(method, label) {
-      if (!confirm(`ต้องการ ${label}?`)) return;
+      if (!confirm(`ต้องการ ${AdminLayout.esc(label)}?`)) return;
       try {
         await AdminAPI[method]();
-        AdminLayout.toast(`${label} สำเร็จ`);
+        AdminLayout.toast(`${AdminLayout.esc(label)} สำเร็จ`);
         loadDashboard();
       } catch (err) {
         AdminLayout.toast(err.message, 'error');

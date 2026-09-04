@@ -519,21 +519,21 @@ public class CmsContentService : ICmsContentService
         var basePath = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "cms", companyId.ToString(), siteId.ToString());
         Directory.CreateDirectory(basePath);
 
-        string uniqueName; string filePath;
-        if (_images != null && _images.IsProcessableImage(contentType))
-        {
-            var webBase = $"/uploads/cms/{companyId}/{siteId}";
-            var processed = await _images.ProcessAndSaveAsync(fileStream, contentType, fileName, basePath, webBase, ImageProfile.Banner);
-            filePath = processed.AbsolutePath;
-            uniqueName = Path.GetFileName(filePath);
-        }
-        else
-        {
-            uniqueName = $"{Guid.NewGuid():N}{Path.GetExtension(fileName)}";
-            filePath = Path.Combine(basePath, uniqueName);
-            using (var fs = new FileStream(filePath, FileMode.Create))
-                await fileStream.CopyToAsync(fs);
-        }
+        // ═══ ทุกไฟล์ต้องผ่านตัวตรวจชนิดจากไบต์จริง (F-03) ═══
+        // เดิม: ชนิดที่ IsProcessableImage ไม่รู้จัก ถูกเซฟดิบ **ด้วยนามสกุลจากชื่อ
+        // ไฟล์ของ client** ลงโฟลเดอร์นี้ ซึ่งอยู่ใน publicUploadPrefixes ⇒ อัปโหลด
+        // x.html / x.js / x.svg แล้วได้ URL origin เดียวกับแอป = stored XSS
+        // ตอนนี้ทุกเส้นเดินผ่าน ProcessAndSaveAsync ซึ่ง sniff ไบต์ + ตั้งนามสกุลเอง
+        // และ throw UnsupportedUploadException (→ HTTP 400) เมื่อไม่อยู่ใน allow-list
+        if (_images == null)
+            throw new Accounting.Helpers.UnsupportedUploadException(
+                "ระบบประมวลผลไฟล์ยังไม่พร้อม — ลองใหม่อีกครั้ง");
+
+        var webBase = $"/uploads/cms/{companyId}/{siteId}";
+        var processed = await _images.ProcessAndSaveAsync(
+            fileStream, contentType, fileName, basePath, webBase, ImageProfile.Banner);
+        var filePath = processed.AbsolutePath;
+        var uniqueName = Path.GetFileName(filePath);
 
         var media = new SiteMedia
         {
@@ -541,7 +541,10 @@ public class CmsContentService : ICmsContentService
             SiteId = siteId,
             FileName = uniqueName,
             OriginalFileName = fileName,
-            ContentType = contentType,
+            // MIME ที่บันทึกต้องมาจาก **ไฟล์ที่เซฟจริง** ไม่ใช่ที่ client บอก —
+            // ไม่งั้นระบบยังถือค่าที่โกหกไว้ใช้ต่อ (เช่นตอนตอบ header)
+            ContentType = Accounting.Helpers.UploadFileType.ContentTypeForExtension(
+                Path.GetExtension(uniqueName)),
             FileSize = new FileInfo(filePath).Length,
             StoragePath = filePath,
             MediaType = GetMediaType(contentType),

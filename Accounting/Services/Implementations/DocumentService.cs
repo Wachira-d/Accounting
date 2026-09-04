@@ -39,6 +39,16 @@ public partial class DocumentService : IDocumentService
     private readonly IAdvancedArApService? _advancedArAp;
     private readonly IApprovalService? _approval;
 
+    /// <summary>มิเตอร์คิดเงิน — optional เพราะ DocumentService ถูกสร้างในเทสต์/เส้นทาง
+    /// ที่ไม่มี DI ครบ. null = ไม่บันทึก overage (เสียรายได้ 1 รายการ ยอมรับได้
+    /// ห้ามทำให้สร้างเอกสารไม่ได้)</summary>
+    private readonly IUsageMeteringService? _metering;
+
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0) —
+    /// optional เพราะเทสต์เก่าสร้าง DocumentService ด้วยอาร์กิวเมนต์ไม่ครบ;
+    /// null = ข้ามการขยับสต็อก **พร้อมบันทึกเสียงดังบนตัวเอกสาร** ห้ามเงียบ</summary>
+    private readonly IStockLedger? _stock;
+
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
@@ -58,8 +68,12 @@ public partial class DocumentService : IDocumentService
         Accounting.Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
         IFixedAssetService? fixedAssets = null,
         Accounting.Services.Implementations.Inventory.IInventoryCostingService? inventoryCosting = null,
-        IPermissionService? permissionService = null)
+        IPermissionService? permissionService = null,
+        IUsageMeteringService? metering = null,
+        IStockLedger? stock = null)
     {
+        _stock = stock;
+        _metering = metering;
         _fixedAssets = fixedAssets;
         _inventoryCosting = inventoryCosting;
         _permissionService = permissionService;
@@ -759,8 +773,29 @@ public partial class DocumentService : IDocumentService
         return outList;
     }
 
-    public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
+    public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
+        string? originModule = null, bool isFullTaxInvoiceReplacement = false)
     {
+        // ── ธง "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" ต้องมาคู่กับชนิด TaxInvoice ──
+        // เดิมชนิดไม่ตรง = **ดรอปธงเงียบ ๆ** ⇒ integration/recurring ที่ส่ง
+        // Invoice + combined:true ได้ใบแจ้งหนี้เปล่ากลับไปโดยไม่มีอะไรบอก
+        // (silent no-op). ตอนนี้:
+        //   • Invoice + combined → ยกชนิดเป็น TaxInvoice ให้ — ตรงกับที่หน้าเว็บ
+        //     ทำอยู่แล้วฝั่ง client (checkbox force type ตอน save) เจตนาผู้เรียก
+        //     ชัดเจนว่าต้องการใบรวม
+        //   • ชนิดอื่น + combined → ปฏิเสธพร้อมบอกทางแก้ (ห้ามเดาเจตนา)
+        if (request.CombinedInvoiceTaxInvoice
+            && request.DocumentType != DocumentType.TaxInvoice)
+        {
+            if (request.DocumentType == DocumentType.Invoice)
+                request = request with { DocumentType = DocumentType.TaxInvoice };
+            else
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "combinedInvoiceTaxInvoice (ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว) ใช้ได้เฉพาะ "
+                    + "documentType = TaxInvoice หรือ Invoice เท่านั้น — "
+                    + $"ส่งมาเป็น {request.DocumentType}");
+        }
+
         // ⭐ ยุบ VAT-split phantom lines ก่อนทุกอย่าง (choke point ครอบคลุมทุก path)
         if (request.Lines is { Count: > 1 })
         {
@@ -772,9 +807,23 @@ public partial class DocumentService : IDocumentService
             }
         }
 
-        // Check usage limit
-        if (!await _subscriptionService.CheckUsageLimitAsync(companyId, "document"))
-            throw new InvalidOperationException("เกินจำนวนเอกสารที่อนุญาตต่อเดือน");
+        // ── โควตาเอกสาร: แยก "นับ" ออกจาก "บล็อก" (Helpers/DocumentQuotaPolicy) ──
+        // ⚠️ เดิมบรรทัดนี้ throw ทุกชนิดเอกสารเมื่อเกินโควตา ⇒ ใบกำกับภาษีตอนแขก
+        // เช็คเอาต์/ใบเสร็จของเงินที่รับมาแล้ว ออกไม่ได้กลางคัน = ลูกค้าผิด §86/4
+        // และเราเป็นสาเหตุ (LODGING_LICENSING_PLAN §5 · ทีม CPA)
+        // ตอนนี้: ใบที่กฎหมายบังคับ → ออกได้เสมอ แล้วคิด overage · ใบที่รอได้ → บล็อกตามเดิม
+        var quotaClass = DocumentQuotaPolicy.Classify(
+            request.DocumentType, request.IsDeposit, IsLodgingOrigin(originModule),
+            // ใบกำกับที่ออก "แทน" ใบเสร็จ = การขายเดิมที่นับโควตาไปแล้ว —
+            // นับอีกครั้งคือคิดเงินลูกค้าสองเด้งจากงานเดียว
+            isReplacement: isFullTaxInvoiceReplacement);
+        var withinQuota = await _subscriptionService.CheckUsageLimitAsync(companyId, "document");
+        if (!withinQuota && DocumentQuotaPolicy.CanRefuseWhenOverQuota(quotaClass))
+        {
+            var (used, limit) = await GetDocumentQuotaAsync(companyId);
+            throw new BusinessRuleException(
+                DocumentQuotaPolicy.BlockedMessage(used, limit), "QUOTA-DOCUMENTS");
+        }
 
         // Check feature access
         if (!await _subscriptionService.CheckFeatureAccessAsync(companyId, FeatureFlags.DocumentEngine))
@@ -989,6 +1038,7 @@ public partial class DocumentService : IDocumentService
                     && request.DocumentType == DocumentType.TaxInvoice,
                 DepositAppliedAmount = request.DepositAppliedAmount ?? 0m,
                 DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
+                OriginModule = string.IsNullOrWhiteSpace(originModule) ? null : originModule.Trim(),
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
                 BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice ?? false,
                 // ขายเงินสด ใบเดียว (เฉพาะ TaxInvoice ฝั่งขาย) — AutoPost ลงแบบเงินสด
@@ -1357,7 +1407,16 @@ public partial class DocumentService : IDocumentService
             }
 
             await _db.SaveChangesAsync();
-            await _subscriptionService.IncrementUsageAsync(companyId, "document");
+
+            // นับเข้าโควตาเฉพาะใบที่ "แทนการขาย 1 ครั้ง" — ใบลดหนี้/ใบเสร็จรับชำระ/
+            // เอกสารฝั่งซื้อ/เอกสารที่โมดูลที่พักออกให้ ไม่นับซ้ำ (มิเตอร์ของที่พัก
+            // คือ lodging.stay ที่นับตอนปิดการเข้าพัก — DocumentQuotaPolicy)
+            if (DocumentQuotaPolicy.Counts(quotaClass))
+            {
+                await _subscriptionService.IncrementUsageAsync(companyId, "document");
+                // เกินโควตาแต่เป็นใบที่ห้ามปฏิเสธ → เกิดหนี้แทนการบล็อก
+                if (!withinQuota) await RecordDocumentOverageAsync(companyId, doc);
+            }
 
             await transaction.CommitAsync();
 
@@ -1506,6 +1565,36 @@ public partial class DocumentService : IDocumentService
         {
             DocumentTitle = await PdfGenerationService.ResolveDocumentTitleAsync(_db, companyId, doc),
         };
+
+        // ── ใบกำกับภาษีเต็มรูปที่ออก "แทน" (§86/6 → §86/4) ──
+        // ปุ่ม/ป้ายบนหน้าเว็บต้องอ่านค่าที่**เซิร์ฟเวอร์คำนวณ**เท่านั้น
+        // (กติกาอยู่ใน FullTaxInvoiceReplacement.Check ตัวเดียวกับ endpoint)
+        if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
+        {
+            var elig = await EvaluateFullTaxInvoiceReplacementAsync(companyId, doc);
+            resp = resp with
+            {
+                CanIssueFullTaxInvoice = elig.Allowed,
+                FullTaxInvoiceBlockedReason = elig.Allowed ? null : elig.Message,
+            };
+        }
+        // เลขที่ของใบที่ผูกกัน — โชว์ให้ผู้ใช้กดไปดูได้ (ห้ามให้เขาไปค้นเองจาก id)
+        var replacementLinkIds = new[] { doc.ReplacedByDocumentId, doc.ReplacesDocumentId }
+            .Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
+        if (replacementLinkIds.Count > 0)
+        {
+            var numbers = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && replacementLinkIds.Contains(d.Id))
+                .Select(d => new { d.Id, d.DocumentNumber })
+                .ToDictionaryAsync(x => x.Id, x => x.DocumentNumber);
+            resp = resp with
+            {
+                ReplacedByDocumentNumber = doc.ReplacedByDocumentId.HasValue
+                    && numbers.TryGetValue(doc.ReplacedByDocumentId.Value, out var byNo) ? byNo : null,
+                ReplacesDocumentNumber = doc.ReplacesDocumentId.HasValue
+                    && numbers.TryGetValue(doc.ReplacesDocumentId.Value, out var ofNo) ? ofNo : null,
+            };
+        }
         return resp;
     }
 
@@ -2090,14 +2179,26 @@ public partial class DocumentService : IDocumentService
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
-        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — รับเฉพาะเมื่อ doc เป็น TaxInvoice.
         if (request.DepositAppliedAmount.HasValue) doc.DepositAppliedAmount = request.DepositAppliedAmount.Value;
         if (request.DepositAppliedRef != null) doc.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim();
         if (request.DepositAppliedDrivesJournal.HasValue) doc.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal.Value;
         if (request.BuyerDeclinedTaxInvoice.HasValue) doc.BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice.Value;
+        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — ใช้ได้เฉพาะ doc ชนิด TaxInvoice.
+        // เดิมชนิดไม่ตรง = ดรอปธงเงียบ ๆ (silent no-op): ผู้ใช้ติ๊กบนใบแจ้งหนี้
+        // Draft ตอนแก้ไข → บันทึกสำเร็จแต่ไม่มีอะไรเปลี่ยน. update เปลี่ยนชนิด
+        // เอกสารไม่ได้ (เลข/JE ผูกกับชนิด) จึงต้องบอกทางไปต่อแทน
         if (request.CombinedInvoiceTaxInvoice.HasValue)
+        {
+            if (request.CombinedInvoiceTaxInvoice.Value
+                && doc.DocumentType != DocumentType.TaxInvoice)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ติ๊ก \"ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว\" ตอนแก้ไขไม่ได้ — ใบนี้ถูกสร้างเป็น"
+                    + $"ชนิด {doc.DocumentType} แล้ว เปลี่ยนชนิดตอนแก้ไขไม่ได้. ทางแก้: "
+                    + "ใช้ปุ่ม \"แปลงเอกสาร\" เป็นใบกำกับภาษี หรือสร้างใหม่โดยเลือกประเภท "
+                    + "\"ใบแจ้งหนี้/ใบกำกับภาษี\" ตั้งแต่ต้น");
             doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
                 && doc.DocumentType == DocumentType.TaxInvoice;
+        }
         // IssuedAsCashReceipt — เดิม update ไม่รับ ⇒ ติ๊ก "ออกใบกำกับภาษี/ใบเสร็จ
         // รับเงิน ใบเดียว (ขายเงินสด)" ตอนแก้ไขแล้วไม่มีผลเงียบ ๆ (silent no-op)
         // โดยเฉพาะเคสแปลง INV→TaxInvoice แล้วมาติ๊กภายหลัง (convert ไม่ตั้ง flag นี้)
@@ -2556,7 +2657,7 @@ public partial class DocumentService : IDocumentService
 
         var now = DateTime.UtcNow;
         var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
-        var period = await ResolveFiscalPeriodAsync(companyId, now);
+        var period = await RequireOpenFiscalPeriodAsync(companyId, now, "รายการล้างภาษีซื้อ");
         var je = new JournalEntry
         {
             CompanyId = companyId, EntryNumber = entryNumber, EntryDate = now,
@@ -2661,7 +2762,7 @@ public partial class DocumentService : IDocumentService
 
         var now = DateTime.UtcNow;
         var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
-        var period = await ResolveFiscalPeriodAsync(companyId, now);
+        var period = await RequireOpenFiscalPeriodAsync(companyId, now, "รายการคืนภาษีซื้อ");
         var je = new JournalEntry
         {
             CompanyId = companyId, EntryNumber = entryNumber, EntryDate = now,
@@ -2929,7 +3030,7 @@ public partial class DocumentService : IDocumentService
                 var outputVatAcc = await FindAccountAsync(companyId, "21911")
                     ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21911 (ภาษีขาย)");
 
-                var period = await ResolveFiscalPeriodAsync(companyId, when);
+                var period = await RequireOpenFiscalPeriodAsync(companyId, when, "รายการรับรู้ภาษีขาย");
                 var je = new JournalEntry
                 {
                     CompanyId = companyId,
@@ -2975,6 +3076,50 @@ public partial class DocumentService : IDocumentService
             catch { await tx.RollbackAsync(); throw; }
         });
     }
+
+    /// <summary>โควตาเอกสารเดือนนี้ (ใช้แล้ว, เพดาน) — อ่านจาก resolver เดียวกับที่บังคับ
+    /// เพื่อให้ข้อความที่ผู้ใช้เห็นตรงกับตัวเลขที่ระบบใช้ตัดสินจริง</summary>
+    private async Task<(int Used, int Limit)> GetDocumentQuotaAsync(Guid companyId)
+    {
+        var eff = await _subscriptionService.GetEffectivePlanAsync(companyId);
+        var sub = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && !s.IsDeleted)
+            .Select(s => new { s.CurrentMonthDocuments, s.DocumentBonusQuota, s.DocumentBonusExpiresAt })
+            .FirstOrDefaultAsync();
+        // โบนัส (top-up/แอดมินให้/ภารกิจ) ต้องบวกที่นี่ด้วย ไม่ใช่แค่ใน
+        // CheckUsageLimitAsync — ไม่งั้นข้อความปฏิเสธจะบอกเพดานผิดจากที่ระบบใช้จริง
+        return (sub?.CurrentMonthDocuments ?? 0,
+            DocumentQuotaPolicy.EffectiveLimit(eff?.MaxDocumentsPerMonth ?? 0,
+                sub?.DocumentBonusQuota ?? 0, sub?.DocumentBonusExpiresAt, DateTime.UtcNow));
+    }
+
+    /// <summary>เอกสารเกินโควตา 1 ฉบับ = 1 UsageEvent (documents.overage)
+    ///
+    /// **ห้าม throw** — งานหลักคือเอกสารที่กฎหมายบังคับให้ออก บันทึกมิเตอร์ไม่ได้
+    /// ก็ต้องออกเอกสารสำเร็จอยู่ดี (หลักเดียวกับที่ UsageMeteringService ประกาศไว้)
+    /// idempotent ด้วย DocumentId — สร้างเอกสารใบเดิมซ้ำไม่ได้อยู่แล้ว แต่กัน retry</summary>
+    private async Task RecordDocumentOverageAsync(Guid companyId, Document doc)
+    {
+        if (_metering == null) return;
+        try
+        {
+            await _metering.RecordAsync(new UsageRecordRequest(
+                CompanyId: companyId,
+                FeatureCode: Models.Constants.AddOnCodes.DocumentsOverage,
+                Quantity: 1,
+                IdempotencyKey: $"doc-overage:{doc.Id:N}",
+                RefEntityType: "Document",
+                RefEntityId: doc.Id));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "บันทึก overage เอกสาร {DocId} ไม่สำเร็จ — เอกสารออกแล้วตามปกติ", doc.Id);
+        }
+    }
+
+    /// <summary>เอกสารนี้มาจากโมดูลที่พักไหม (ไม่นับโควตาซ้ำ — มิเตอร์คือ lodging.stay)</summary>
+    private static bool IsLodgingOrigin(string? originModule)
+        => string.Equals(originModule, "Lodging", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>ผนวกเลขมัดจำเข้า DepositAppliedRef แบบ comma-separated + dedup —
     /// หักหลายใบเข้าใบเดียว → เก็บเลขครบทุกใบ (เดิมเก็บแค่ใบแรก → PDF/รายงานโชว์
@@ -3076,7 +3221,7 @@ public partial class DocumentService : IDocumentService
         var vatMove = recognizeDeferredVat ? doc.VatAmount : 0m;
 
         var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
-        var period = await ResolveFiscalPeriodAsync(companyId, when);
+        var period = await RequireOpenFiscalPeriodAsync(companyId, when, "รายการรับรู้มัดจำ");
         var je = new JournalEntry
         {
             CompanyId = companyId,
@@ -3565,7 +3710,7 @@ public partial class DocumentService : IDocumentService
 
         var when = request.RefundDate ?? DateTime.UtcNow;
         var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
-        var period = await ResolveFiscalPeriodAsync(companyId, when);
+        var period = await RequireOpenFiscalPeriodAsync(companyId, when, "รายการคืนมัดจำ");
         var je = new JournalEntry
         {
             CompanyId = companyId, EntryNumber = entryNumber, EntryDate = when,
@@ -3864,7 +4009,7 @@ public partial class DocumentService : IDocumentService
             Status = JournalEntryStatus.Posted,
             TotalDebit = request.Amount, TotalCredit = request.Amount,
             CreatedBy = actor, IsAutoGenerated = true, SourceDocumentId = deposit.Id,
-            FiscalPeriodId = (await ResolveFiscalPeriodAsync(companyId, when))?.Id,
+            FiscalPeriodId = (await RequireOpenFiscalPeriodAsync(companyId, when, "รายการมัดจำ"))?.Id,
             ProjectId = deposit.ProjectId,
         };
         _db.JournalEntries.Add(je);
@@ -4181,7 +4326,7 @@ public partial class DocumentService : IDocumentService
             Description = $"นำมัดจำ (JV {jv.EntryNumber}) ตัดชำระ {invoice.DocumentNumber}",
             Reference = invoice.DocumentNumber, Status = JournalEntryStatus.Posted,
             TotalDebit = gross, TotalCredit = gross, CreatedBy = actor, IsAutoGenerated = true,
-            FiscalPeriodId = (await ResolveFiscalPeriodAsync(companyId, when))?.Id, ProjectId = invoice.ProjectId,
+            FiscalPeriodId = (await RequireOpenFiscalPeriodAsync(companyId, when, "รายการนำมัดจำตัดชำระ"))?.Id, ProjectId = invoice.ProjectId,
         };
         _db.JournalEntries.Add(apply);
         var ln = 1;
@@ -4403,6 +4548,41 @@ public partial class DocumentService : IDocumentService
                 }
             }
             throw new DocumentApprovalWarningsException(warnings, hints);
+        }
+
+        // ── ผู้ใช้กด "อนุมัติทั้งที่มีคำเตือน" — ต้องมีร่องรอย ──
+        // เดิมคำเตือนที่ถูก acknowledge หายไปเฉย ๆ: ใบที่อนุมัติแบบ "รู้แล้วว่าผิด
+        // §86 แต่ยืนยัน" หน้าตาเหมือนใบที่ไม่เคยมีคำเตือนเลย ⇒ ผู้สอบบัญชี/
+        // สรรพากรถามว่า "ทำไมออกใบแจ้งหนี้ทั้งที่มีสินค้า" แล้วไม่มีอะไรตอบได้
+        // ต้องดังทั้งบน **ตัวเอกสาร** (ผู้ใช้เปิดดูเห็น) และใน **audit** (hash chain)
+        if (warnings.Count > 0 && acknowledgeWarnings)
+        {
+            // ⚠️ ต้องลง **InternalNotes** ไม่ใช่ Notes — Notes ถูกพิมพ์ลงกระดาษ
+            // (PdfGenerationService.SanitizeNotesForPrint) ⇒ คำเตือนภายในจะไป
+            // โผล่บนใบที่ส่งให้ลูกค้า
+            var ackNote = "— รับทราบคำเตือนตอนอนุมัติ —\n"
+                + string.Join("\n", warnings.Select(w => "• " + w))
+                + $"\n(ยืนยันโดย {approvedBy} เมื่อ "
+                + $"{DateTime.UtcNow.AddHours(7).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} น. เวลาไทย)";
+            AppendInternalNote(doc, ackNote);
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                Action = AuditAction.Update,
+                EntityType = "Document",
+                EntityId = doc.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "ApproveWithAcknowledgedWarnings",
+                    documentNumber = doc.DocumentNumber,
+                    documentType = doc.DocumentType.ToString(),
+                    warnings,
+                    by = approvedBy,
+                    ruleCode = "APPROVE-ACK-WARNINGS",
+                    legalReference = "RD-86 / RD-82/5(1)",
+                }),
+            });
         }
 
         // CreditNote must declare its reason — per ประมวลรัษฎากร §82/10 the
@@ -4829,12 +5009,11 @@ public partial class DocumentService : IDocumentService
                 // ต้องหยุดนิ่งเท่ากัน
                 if (doc.IsTaxInvoiceByLaw == null)
                 {
+                    string? resolvedTitle = null;
                     try
                     {
-                        var resolvedTitle = await PdfGenerationService.ResolveDocumentTitleAsync(
+                        resolvedTitle = await PdfGenerationService.ResolveDocumentTitleAsync(
                             _db, companyId, doc);
-                        doc.IsTaxInvoiceByLaw = Accounting.Helpers.TaxInvoiceSeriesPolicy
-                            .CarriesTaxInvoiceRole(doc, resolvedTitle);
                     }
                     catch (Exception ex)
                     {
@@ -4844,6 +5023,31 @@ public partial class DocumentService : IDocumentService
                             "ตรึงบทบาททางกฎหมายไม่สำเร็จ Doc={Doc} — ใช้ชนิดเอกสารเลือกเลขตามเดิม",
                             documentId);
                     }
+
+                    // ด่าน: "ใบแจ้งหนี้" ที่หัวถูกตั้งให้มีคำว่า "ใบกำกับภาษี" —
+                    // ถ้าปล่อยผ่าน จะได้กระดาษที่ประกาศตัวเป็นใบกำกับ แต่ถือเลข
+                    // INV- นอกเล่ม TIV / ไม่ผ่าน §86/4 / ออก e-Tax ไม่ได้
+                    // (throw **นอก** try ข้างบน — ห้ามให้ catch ที่กันเรื่อง
+                    // resolver ล้ม กลืนด่านนี้ไปด้วย)
+                    // resolver ล้ม (resolvedTitle == null) บนใบแจ้งหนี้ = **ปฏิเสธ**
+                    // ไม่ใช่ปล่อยผ่าน — ไม่งั้นด่าน compliance หายไปเงียบ ๆ ทุกครั้ง
+                    // ที่ resolver มีปัญหา (fail-closed สำหรับชนิดที่มีความเสี่ยง)
+                    if (resolvedTitle == null && doc.DocumentType == DocumentType.Invoice)
+                        throw new Accounting.Helpers.BusinessRuleException(
+                            "ตรวจหัวเอกสารไม่สำเร็จ จึงยืนยันไม่ได้ว่าใบแจ้งหนี้ใบนี้ไม่ได้"
+                            + "ประกาศตัวเป็นใบกำกับภาษี — ลองอนุมัติอีกครั้ง "
+                            + "หากยังไม่ได้ให้แจ้งผู้ดูแลระบบ (ตรวจการตั้งค่าหัวเอกสาร/เทมเพลต)",
+                            "RD-86/4-INV-TITLE-UNKNOWN");
+
+                    if (Accounting.Helpers.TaxInvoiceSeriesPolicy
+                            .IsTaxTitleOnPlainInvoice(doc.DocumentType, resolvedTitle))
+                        throw new Accounting.Helpers.BusinessRuleException(
+                            Accounting.Helpers.TaxInvoiceSeriesPolicy.PlainInvoiceTaxTitleBlockedMessage,
+                            "RD-86/4-INV-TITLE");
+
+                    if (resolvedTitle != null)
+                        doc.IsTaxInvoiceByLaw = Accounting.Helpers.TaxInvoiceSeriesPolicy
+                            .CarriesTaxInvoiceRole(doc, resolvedTitle);
                 }
 
                 if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
@@ -4910,10 +5114,25 @@ public partial class DocumentService : IDocumentService
                     doc.TaxPointDate = TaxPointResolver.Resolve(doc);
 
                 // ===== Retention §87/3 + พ.ร.บ.บัญชี ม.10 — เก็บ 5 ปี =====
-                // นับจาก MAX(วันสิ้นรอบบัญชีของเอกสาร, วันที่เอกสาร) + 5 ปี.
-                // ใช้ simple rule: DocumentDate + 5 ปี (เพียงพอกับ floor 5 ปี;
-                // job ปิดรอบจะขยายได้ถ้าต้องการ superset).
-                doc.RetentionUntil ??= doc.DocumentDate.Date.AddYears(5);
+                //
+                // นับจาก **วันสิ้นรอบบัญชี**ที่เอกสารอยู่ ไม่ใช่วันที่เอกสาร
+                // (ผลตรวจ C-T11): §87/3 นับจากวันยื่นแบบ · ม.10 นับจากวันสิ้นรอบ
+                // ⇒ ใบลงวันที่ 5 ม.ค. ของรอบ ม.ค.–ธ.ค. ต้องเก็บถึงสิ้นปีที่ 5
+                // **นับจาก 31 ธ.ค.** ไม่ใช่จาก 5 ม.ค. — สูตรเดิมสั้นไปเกือบ 12 เดือน
+                // และถ้ารอบบัญชีไม่ตรงปีปฏิทินจะสั้นได้ถึง ~14 เดือน
+                //
+                // ⚠️ กติกา retention ของเรพนี้คือ **MAX ของทุกกฎที่ครอบ** — สั้นไป
+                // แปลว่าอาจลบเอกสารที่สรรพากรยังเรียกดูได้ (เรื่องกฎหมาย ไม่ใช่พื้นที่)
+                if (doc.RetentionUntil == null)
+                {
+                    var startMonth = await _db.Companies.AsNoTracking()
+                        .Where(c => c.Id == companyId)
+                        .Select(c => (int?)c.FiscalYearStartMonth).FirstOrDefaultAsync() ?? 1;
+                    var fy = Accounting.Helpers.FiscalYear.FiscalYearOf(doc.DocumentDate.Date, startMonth);
+                    var fyEnd = Accounting.Helpers.FiscalYear.RangeFor(fy, startMonth).EndInclusive;
+                    var basis = fyEnd > doc.DocumentDate.Date ? fyEnd : doc.DocumentDate.Date;
+                    doc.RetentionUntil = basis.AddYears(5);
+                }
 
                 // ===== §65 ตรี — รายจ่ายต้องห้าม (บวกกลับ ภ.ง.ด.50) =====
                 // เฉพาะเอกสารฝั่งซื้อ/ค่าใช้จ่ายที่กระทบกำไรสุทธิ.
@@ -4945,13 +5164,19 @@ public partial class DocumentService : IDocumentService
                 // บันทึกไม่มีสิทธิ์อนุมัติ): การเงินทั้งหมดอยู่ที่ Payment แล้ว
                 // (JE Dr เงินสด/Cr ลูกหนี้ + PaidAmount) — อนุมัติใบนี้ = ออกเลขจริง
                 // + ประทับผู้อนุมัติ (ลายเซ็น) เท่านั้น ห้าม post JE/บวกยอดซ้ำ
+                // ใบกำกับภาษีเต็มรูปที่ออก "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ: เศรษฐกิจ
+                // ของรายการไม่เปลี่ยนเลย — เงินรับแล้ว รายได้รับรู้แล้ว ภาษีขายลง
+                // 21911 แล้วตั้งแต่ใบเดิม เปลี่ยนแค่ "กระดาษที่ผู้ซื้อถือ" ⇒ post JE
+                // ซ้ำ = รายได้/ภาษีขายเบิ้ล (และ ภ.พ.30 ก็สลับไปนับใบแทนแล้ว)
+                var isFullTaxInvoiceReplacement = doc.ReplacesDocumentId.HasValue;
+
                 if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType)
-                    && !doc.IsSettlementReceipt)
+                    && !doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
                 {
                     await AutoPostToJournalAsync(companyId, doc, approvedBy);
                 }
 
-                if (!doc.IsSettlementReceipt)
+                if (!doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
                     await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
 
                 // เอกสาร settle ที่อ้างเอกสารตั้งหนี้ (PV/Receipt/RV/CIL แปลงมา)
@@ -5013,7 +5238,7 @@ public partial class DocumentService : IDocumentService
                     }
                 }
 
-                if (!doc.IsSettlementReceipt)
+                if (!doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
                 {
                     await ApplyProjectBillingAsync(companyId, doc, +1);
                     await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
@@ -5022,8 +5247,41 @@ public partial class DocumentService : IDocumentService
                 // supersede ใบแจ้งหนี้ต้นทาง: TaxInvoice ที่แปลงจากใบแจ้งหนี้ (approved,
                 // ยังไม่ชำระ) เมื่ออนุมัติ → ล้างใบแจ้งหนี้เดิม (reverse JE + คืน stock +
                 // กลับ project) กัน GL/รายได้/สต๊อกซ้ำ (ภพ.30 นับเฉพาะ TaxInvoice อยู่แล้ว).
-                if (doc.DocumentType == DocumentType.TaxInvoice && doc.RelatedDocumentId.HasValue)
+                if (doc.DocumentType == DocumentType.TaxInvoice && doc.RelatedDocumentId.HasValue
+                    && !isFullTaxInvoiceReplacement)
                     await SupersedeSourceInvoiceAsync(companyId, doc, approvedBy);
+
+                // ── ตราประทับ "ใบเดิมถูกแทนที่แล้ว" (§86/4) ──
+                // ลง ณ **ตอนอนุมัติ** ไม่ใช่ตอนสร้าง: ถ้าประทับตั้งแต่ยังเป็นร่าง
+                // ใบเดิมจะหลุดจากรายงานภาษีขายทันทีทั้งที่ใบแทนยังไม่มีเลข ⇒
+                // ภาษีขายนำส่งขาดทั้งใบโดยไม่มีอะไรเตือน (ช่วงครึ่ง ๆ ที่ห้ามมี)
+                if (isFullTaxInvoiceReplacement)
+                {
+                    var replaced = await _db.Documents.FirstOrDefaultAsync(d =>
+                        d.Id == doc.ReplacesDocumentId!.Value && d.CompanyId == companyId);
+                    if (replaced == null)
+                        throw new Accounting.Helpers.BusinessRuleException(
+                            "ไม่พบใบต้นทางที่ใบนี้ออกมาแทน — ยกเลิกใบนี้แล้วออกใหม่จากใบเสร็จโดยตรง",
+                            "RD-86/4-REPLACE-SOURCE-MISSING");
+
+                    replaced.ReplacedByDocumentId = doc.Id;
+                    replaced.ReplacedAt = DateTime.UtcNow;
+                    // หมายเหตุ**ภายใน** (ไม่พิมพ์ลงกระดาษ) — ผู้สอบบัญชีต้องเห็นว่า
+                    // ทำไมใบนี้หายจากรายงานภาษีขายทั้งที่ยอดยังอยู่ใน GL
+                    replaced.InternalNotes = string.Join(" · ", new[]
+                    {
+                        replaced.InternalNotes?.Trim(),
+                        Accounting.Helpers.FullTaxInvoiceReplacement.OriginalRecalledNote(
+                            doc.DocumentNumber, doc.ReplacementReason),
+                    }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                    replaced.UpdatedAt = DateTime.UtcNow;
+                    replaced.UpdatedBy = approvedBy;
+
+                    // ใบแทนต้องไม่โผล่ในรายการค้างรับ — เงินรับครบตั้งแต่ใบเดิม
+                    doc.PaidAmount = doc.TotalAmount;
+                    doc.BalanceDue = 0m;
+                    doc.Status = DocumentStatus.Paid;
+                }
 
                 // บังคับลงทะเบียนสินทรัพย์ — บรรทัดที่ลงผัง PPE (12xxx) ต้องมี
                 // ทะเบียนสินทรัพย์ + ตารางค่าเสื่อม (TFRS บทที่ 10 + §65 ตรี (5)).
@@ -6791,14 +7049,20 @@ public partial class DocumentService : IDocumentService
                 // 6) Back out this document's contribution to its project's
                 //    BilledAmount — mirror of the +1 applied at approval.
                 //    Skip Draft docs: never approved, so never billed.
-                if (doc.Status != DocumentStatus.Draft)
+                // ใบกำกับที่ออก "แทน" ใบเสร็จ ไม่เคยบวกยอดโครงการ/ไม่เคยขยับสต๊อก
+                // ตอนอนุมัติ (ApproveDocumentAsync ข้ามให้ — ใบเดิมทำไปแล้ว) ⇒
+                // ตอน void ต้องข้ามการ "กลับ" ด้วย มิฉะนั้นจะได้สต๊อกผีคืนเข้าคลัง
+                // และยอดวางบิลโครงการติดลบ ทั้งที่ไม่มีอะไรเคยเกิดขึ้น
+                var isReplacementDoc = doc.ReplacesDocumentId.HasValue;
+
+                if (doc.Status != DocumentStatus.Draft && !isReplacementDoc)
                     await ApplyProjectBillingAsync(companyId, doc, -1);
 
                 // 6b) Reverse any stock movement this document caused at
                 //     approval. Sign=-1 means a sale Invoice's OUT becomes IN
                 //     (stock restored), a purchase Invoice's IN becomes OUT.
                 //     Same Draft skip: drafts never decremented stock.
-                if (doc.Status != DocumentStatus.Draft)
+                if (doc.Status != DocumentStatus.Draft && !isReplacementDoc)
                     await ApplyStockMovementsAsync(companyId, doc, -1, "system-void");
 
                 // 6c) Back out this document's auto-booked project cost entries
@@ -6861,6 +7125,33 @@ public partial class DocumentService : IDocumentService
                         _logger.LogWarning(
                             "Void {Tax}: คืนใบแจ้งหนี้ต้นทาง {Src} เป็นร่าง — ไม่งั้นรายได้หายทั้งก้อน",
                             doc.DocumentNumber, supersededSrc.DocumentNumber);
+                    }
+                }
+
+                // 7-replacement) ใบกำกับเต็มรูปที่ออก "แทน" ใบเสร็จ ถูกยกเลิกเอง →
+                // ปลดตราประทับบนใบเดิม ไม่งั้นใบเดิมจะถูกกันออกจากรายงานภาษีขาย
+                // ตลอดไป ทั้งที่ใบแทนไม่มีอยู่แล้ว ⇒ **ภาษีขายหายทั้งใบ** โดยยอด
+                // ยังอยู่ใน GL (จับได้ตอนกระทบยอด ภ.พ.30 กับ GL เท่านั้น).
+                // ใบเดิมไม่ต้องคืนสถานะ — มันไม่เคยถูก void (ต่างจาก 7-supersede)
+                if (doc.ReplacesDocumentId.HasValue)
+                {
+                    var replacedSrc = await _db.Documents.FirstOrDefaultAsync(d =>
+                        d.Id == doc.ReplacesDocumentId.Value && d.CompanyId == companyId
+                        && d.ReplacedByDocumentId == documentId);
+                    if (replacedSrc != null)
+                    {
+                        replacedSrc.ReplacedByDocumentId = null;
+                        replacedSrc.ReplacedAt = null;
+                        replacedSrc.InternalNotes = string.Join(" · ", new[]
+                        {
+                            replacedSrc.InternalNotes?.Trim(),
+                            $"ใบกำกับภาษีเต็มรูป {doc.DocumentNumber} ถูกยกเลิก — "
+                                + "ใบนี้กลับมาเป็นเจ้าของแถวในรายงานภาษีขายตามเดิม",
+                        }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                        replacedSrc.UpdatedAt = DateTime.UtcNow;
+                        _logger.LogWarning(
+                            "Void {Tax}: ปลดตราประทับใบแทนบน {Src} — คืนใบเดิมเข้ารายงานภาษีขาย",
+                            doc.DocumentNumber, replacedSrc.DocumentNumber);
                     }
                 }
 
@@ -7950,9 +8241,8 @@ public partial class DocumentService : IDocumentService
                 doc.AgingLastEvaluatedAt = DateTime.UtcNow;
                 doc.UpdatedBy = writtenOffBy;
                 doc.UpdatedAt = DateTime.UtcNow;
-                doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes)
-                    ? $"ตัดหนี้สูญ {DateTime.UtcNow:yyyy-MM-dd}: {reason ?? ""}"
-                    : doc.InternalNotes + $"\nตัดหนี้สูญ {DateTime.UtcNow:yyyy-MM-dd}: {reason ?? ""}";
+                AppendInternalNote(doc,
+                    $"ตัดหนี้สูญ {DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}: {reason ?? ""}");
 
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
@@ -8921,7 +9211,8 @@ public partial class DocumentService : IDocumentService
     private async Task<DocumentResponse> ConvertCoreAsync(
         Document source, DocumentType targetType,
         List<(DocumentLine Line, decimal Qty)> spec, string createdBy,
-        DateTime? documentDate = null, DateTime? dueDate = null)
+        DateTime? documentDate = null, DateTime? dueDate = null,
+        bool isFullTaxInvoiceReplacement = false)
     {
         var companyId = source.CompanyId;
 
@@ -8999,7 +9290,8 @@ public partial class DocumentService : IDocumentService
                 : null,
             // ลิงก์ต้นทางต้องเข้าไปตั้งแต่ create — PV ที่ settle ใบแจ้งหนี้ซื้อ
             // ต้องไม่โดน auto-approve แบบ standalone cash ก่อนมีลิงก์
-            RelatedDocumentId: source.Id), createdBy);
+            RelatedDocumentId: source.Id), createdBy,
+            isFullTaxInvoiceReplacement: isFullTaxInvoiceReplacement);
 
         // Link new document to source + propagate appendix/contract metadata
         var created = await _db.Documents.FindAsync(newDoc.Id);
@@ -9078,6 +9370,119 @@ public partial class DocumentService : IDocumentService
         }
 
         return await ConvertCoreAsync(source, targetType, spec, createdBy);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ออก "ใบกำกับภาษีเต็มรูป" แทนใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4)
+    //
+    //  ที่มา (ผู้ใช้ถาม 2026-09-03): ลูกค้ารับใบเสร็จ/ใบกำกับอย่างย่อไปแล้ว
+    //  ภายหลังขอเต็มรูปเพื่อเคลมภาษีซื้อ (อย่างย่อเคลมไม่ได้ §82/5(2)) —
+    //  เดิม ValidConversions[Receipt] มีแค่ CN/DN จึงทำไม่ได้เลย
+    //
+    //  ⚠️ ทำไมไม่ใส่ TaxInvoice ลง ValidConversions เฉย ๆ: ใบเสร็จที่มี VAT
+    //  **นับเป็นภาษีขายเข้า ภ.พ.30 ไปแล้ว** (tax point = วันรับเงิน §78/1 —
+    //  TaxService branch "Receipt/ReceiptVoucher standalone") ⇒ การแปลงปกติ
+    //  จะได้ใบที่สองที่ AutoPost รายได้/ภาษีขายซ้ำ **และ**ถูกนับใน ภ.พ.30
+    //  อีกรอบ. การขายครั้งเดียวมีใบกำกับได้ใบเดียว → ออกแบบเป็น "ใบแทน":
+    //    • ใบใหม่ใช้ **วันที่ของใบเดิม** (tax point เกิดไปแล้ว ย้ายงวดไม่ได้)
+    //    • ผูกสองทาง ReplacesDocumentId / ReplacedByDocumentId
+    //    • อนุมัติแล้ว **ไม่ post JE / ไม่ขยับสต๊อก / ไม่แตะยอดใบต้นทาง**
+    //      (เงิน+รายได้+ภาษีขายลงไปครบตั้งแต่ใบเดิม — เปลี่ยนแค่ "กระดาษ")
+    //    • รายงานภาษีขายนับใบแทน และข้ามใบที่ถูกแทน ⇒ ยอด VAT รวมไม่ขยับ
+    // ══════════════════════════════════════════════════════════════════
+
+    /// <summary>ตรวจสิทธิ์ออกใบแทน — ใช้ร่วมกันทั้งตอนกดจริงและตอนตอบ
+    /// <c>DocumentResponse</c> ให้ UI ตัดสินว่าจะโชว์ปุ่มไหม (ห้ามให้หน้าเว็บ
+    /// เขียนกติกาสำเนาที่สอง — defect class "สำเนามือฝั่ง JS")</summary>
+    private async Task<Accounting.Helpers.FullTaxInvoiceEligibility> EvaluateFullTaxInvoiceReplacementAsync(
+        Guid companyId, Document src)
+    {
+        await _db.HydrateContactAsync(companyId, src);
+
+        // "เป็นใบกำกับเต็มรูปอยู่แล้วไหม" ตัดสินจาก **หัวที่จะพิมพ์จริง** ผ่าน
+        // resolver ตัวเดียวกับกระดาษ ไม่ใช่ชนิดเอกสาร — ใบเสร็จที่ผู้ซื้อครบ
+        // §86/4 พิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน" อยู่แล้ว ไม่ต้องออกใบแทน
+        var missingBuyer = Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(src.Contact);
+        var isFullAlready = src.DocumentType == DocumentType.TaxInvoice
+            || (missingBuyer.Count == 0 && !src.BuyerDeclinedTaxInvoice
+                && src.Contact is { IsWalkInCustomer: false } && src.VatAmount > 0.005m);
+
+        return Accounting.Helpers.FullTaxInvoiceReplacement.Check(
+            sourceIsIssued: src.Status is not (DocumentStatus.Draft or DocumentStatus.Voided
+                or DocumentStatus.Rejected or DocumentStatus.WaitingApproval),
+            sourceIsFullTaxInvoice: isFullAlready,
+            sourceVatAmount: src.VatAmount,
+            alreadyReplaced: src.ReplacedByDocumentId.HasValue,
+            companyIsVatRegistered: await IsCompanyVatRegisteredAsync(companyId),
+            missingBuyerFields: missingBuyer);
+    }
+
+    public async Task<DocumentResponse> IssueFullTaxInvoiceForReceiptAsync(
+        Guid companyId, Guid receiptId, string? reason, string actor)
+    {
+        var src = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == receiptId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (src.DocumentType is not (DocumentType.Receipt or DocumentType.ReceiptVoucher))
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ออกใบกำกับภาษีเต็มรูปแทนได้เฉพาะใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ",
+                "RD-86/4-REPLACE-SOURCE-TYPE");
+
+        var eligibility = await EvaluateFullTaxInvoiceReplacementAsync(companyId, src);
+        if (!eligibility.Allowed)
+            throw new Accounting.Helpers.BusinessRuleException(
+                eligibility.Message ?? "ออกใบกำกับภาษีเต็มรูปแทนใบนี้ไม่ได้",
+                $"RD-86/4-REPLACE-{eligibility.Reason}");
+
+        // คัดลอกทุกบรรทัดเต็มจำนวน — ใบแทนต้องเป็น "ใบเดียวกัน" ทุกสตางค์
+        // (ConvertCoreAsync ยก VatAmountOverride ให้เมื่อยกทั้งบรรทัด ⇒ VAT
+        // ตรงเป๊ะ ไม่คลาดกัน 0.01 จากการคิดใหม่)
+        var spec = src.Lines.OrderBy(l => l.LineOrder).Select(l => (l, l.Quantity)).ToList();
+        var created = await ConvertCoreAsync(src, DocumentType.TaxInvoice, spec, actor,
+            documentDate: src.DocumentDate, dueDate: src.DocumentDate,
+            isFullTaxInvoiceReplacement: true);
+
+        var replacement = await _db.Documents.FindAsync(created.Id);
+        if (replacement != null)
+        {
+            replacement.ReplacesDocumentId = src.Id;
+            replacement.ReplacementReason = string.IsNullOrWhiteSpace(reason) ? null : reason!.Trim();
+            // หมายเหตุอ้างใบเดิม **ต้องพิมพ์ลงกระดาษ** — ผู้ซื้อและผู้สอบบัญชี
+            // ต้องเห็นว่าใบนี้แทนใบไหน (จึงลง Notes ไม่ใช่ InternalNotes)
+            replacement.Notes = string.Join(" · ", new[]
+            {
+                src.Notes?.Trim(),
+                Accounting.Helpers.FullTaxInvoiceReplacement.ReplacementNote(src.DocumentNumber, src.DocumentDate),
+            }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            // เงินรับครบตั้งแต่ใบเดิม — ใบแทนต้องไม่ไปโผล่ในรายการค้างรับ
+            replacement.PaymentType = src.PaymentType;
+            await _db.SaveChangesAsync();
+        }
+
+        // อนุมัติทันที: ใบแทนไม่มีอะไรให้ตรวจเพิ่ม (ยอด/วันที่/ผู้ซื้อ ยกมาจาก
+        // ใบที่อนุมัติแล้วทั้งหมด) และถ้าค้าง Draft ไว้ ใบเดิมจะยังอยู่ในรายงาน
+        // (ตราประทับ ReplacedByDocumentId ลงตอน approve) = สภาพครึ่ง ๆ ที่ผู้ใช้
+        // ไม่มีทางรู้. ผู้เรียกต้องเช็คสิทธิ์อนุมัติมาก่อน (ดู controller)
+        try
+        {
+            await ApproveDocumentAsync(companyId, created.Id, actor, acknowledgeWarnings: true);
+        }
+        catch (Exception ex) when (ex is not KeyNotFoundException)
+        {
+            // อนุมัติไม่ผ่าน (งวดบัญชีปิด · กฎอนุมัติของบริษัท · ฯลฯ) — ใบแทนยัง
+            // ค้างเป็น **ร่าง** และใบเดิมยัง **ไม่ถูกประทับ** (ตราประทับลงตอน
+            // approve เท่านั้น) ⇒ รายงานภาษีขายยังถูกต้องทุกประการ. บอกผู้ใช้ตรง ๆ
+            // ว่าอยู่ตรงไหนและต้องทำอะไรต่อ — ห้ามปล่อยให้เจอ error ดิบแล้วเดาเอง
+            // ว่าใบที่โผล่มาในรายการร่างคืออะไร
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"สร้างใบกำกับภาษีเต็มรูป (ร่าง) แล้ว แต่อนุมัติอัตโนมัติไม่ผ่าน: {ex.Message} "
+                + "— ใบเดิมยังอยู่ในรายงานภาษีขายตามปกติ · แก้ตามข้อความข้างต้นแล้ว"
+                + "กด \"อนุมัติ\" ที่ใบร่างนั้นเพื่อให้การแทนที่มีผล",
+                "RD-86/4-REPLACE-APPROVE-FAILED");
+        }
+        return await GetDocumentAsync(companyId, created.Id);
     }
 
     public async Task<DocumentResponse> ConvertDocumentPartialAsync(
@@ -10682,7 +11087,7 @@ public partial class DocumentService : IDocumentService
                         : (await FindAccountAsync(companyId, "11470") ?? await FindAccountAsync(companyId, "114"));
                     if (cashAcc != null && suspenseAcc != null)
                     {
-                        var upPeriod = await ResolveFiscalPeriodAsync(companyId, payment.PaymentDate);
+                        var upPeriod = await RequireOpenFiscalPeriodAsync(companyId, payment.PaymentDate, "รายการรับ-จ่ายเงิน");
                         var upNumber = await GetNextJournalEntryNumberAsync(companyId, isInflowDoc ? "RV" : "PV");
                         var upJe = new JournalEntry
                         {
@@ -11105,7 +11510,7 @@ public partial class DocumentService : IDocumentService
 
         var now = DateTime.UtcNow;
         var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
-        var period = await ResolveFiscalPeriodAsync(companyId, now);
+        var period = await RequireOpenFiscalPeriodAsync(companyId, now, "รายการตัดหนี้สูญ");
         var je = new JournalEntry
         {
             CompanyId = companyId,
@@ -11153,9 +11558,18 @@ public partial class DocumentService : IDocumentService
     /// ไม่ได้แล้ว ต้อง reclassify เป็นค่าใช้จ่าย (Dr ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" /
     /// Cr 11640) ล้าง 11640 ที่ค้างเป็น asset ลอย. Idempotent (ตั้ง InputVatExpiredAt).
     /// เรียกจาก endpoint / nightly job. คืนจำนวนเอกสารที่จัดการ.</summary>
-    /// <summary>ค่าล็อกของงาน §82/3 — <b>ต้องตรงกับ</b>
-    /// <c>UndueInputVatExpiryJob.LockKey</c> (ทั้งสองทางต้องกันกันเองได้)</summary>
-    internal const long UndueVatExpiryLockKey = 828_003L;
+    /// <summary>คีย์ล็อกของงาน §82/3 — <b>ผูกกับบริษัท</b>
+    ///
+    /// เดิมเป็นค่าคงที่ <c>828_003L</c> ทั้งระบบ ⇒ ผู้ใช้บริษัท A กดปุ่ม
+    /// "ล้างภาษีซื้อหมดสิทธิ์" แล้วสแกนนานเป็นสิบวินาที ผู้ใช้**บริษัทอื่น**ที่กด
+    /// ปุ่มเดียวกันต้องรอจนเสร็จ ทั้งที่ทำงานคนละชุดข้อมูลโดยสิ้นเชิง
+    /// (head-of-line blocking ข้าม tenant — จุดเดียวในเรพที่เป็นแบบนี้)
+    ///
+    /// การผูก companyId ยัง<b>กันสิ่งที่ต้องกันได้ครบเหมือนเดิม</b>: ปุ่มกับ job
+    /// ของ<i>บริษัทเดียวกัน</i>ยังชนกันไม่ได้ ซึ่งคือเจตนาจริงของล็อกนี้
+    /// (กัน JE ซ้ำจาก read-then-write ยาวของ <c>InputVatExpiredAt</c>)</summary>
+    internal static long UndueVatExpiryLockKeyFor(Guid companyId)
+        => Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.UndueVatExpiry, "reclassify");
 
     public async Task<int> ReclassifyExpiredUndueInputVatAsync(Guid companyId, string actor)
     {
@@ -11174,7 +11588,7 @@ public partial class DocumentService : IDocumentService
         try
         {
             await _db.Database.ExecuteSqlRawAsync(
-                "SELECT pg_advisory_xact_lock({0})", new object[] { UndueVatExpiryLockKey });
+                "SELECT pg_advisory_xact_lock({0})", new object[] { UndueVatExpiryLockKeyFor(companyId) });
             var n = await ReclassifyExpiredUndueInputVatCoreAsync(companyId, actor);
             if (tx != null) await tx.CommitAsync();
             return n;
@@ -11599,23 +12013,44 @@ public partial class DocumentService : IDocumentService
         }
     }
 
-    /// <summary>สร้างรหัสสินทรัพย์ FA-yyyyMM-#### (gap-tolerant — MAX+1).</summary>
-    private async Task<string> GenerateAssetCodeAsync(Guid companyId)
-    {
-        var prefix = $"FA-{DateTime.UtcNow:yyyyMM}-";
-        var last = await _db.FixedAssets.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.AssetCode.StartsWith(prefix))
-            .OrderByDescending(a => a.AssetCode)
-            .Select(a => a.AssetCode)
-            .FirstOrDefaultAsync();
-        int seq = 1;
-        if (last != null && int.TryParse(last[prefix.Length..], out var n)) seq = n + 1;
-        return $"{prefix}{seq:D4}";
-    }
+    /// <summary>รหัสสินทรัพย์ <c>FA-yyyyMM-####</c> — เดินผ่านตัวออกรหัสตัวเดียว
+    /// ของระบบ (เดิมไฟล์นี้กับ <c>FixedAssetService</c> มีสำเนาเหมือนกันคำต่อคำ
+    /// ที่ไม่มีล็อกทั้งคู่ ⇒ ขึ้นทะเบียนจากใบซื้อชนกับที่ผู้ใช้กดสร้างเอง —
+    /// ผลตรวจ F-08)</summary>
+    private Task<string> GenerateAssetCodeAsync(Guid companyId)
+        => Accounting.Helpers.AssetCodeGenerator.NextAsync(_db, companyId);
 
+    /// <summary>หา FiscalPeriod ของวันที่นี้ — <b>ไม่ดูสถานะ</b> (ใช้กับงานอ่านอย่างเดียว)</summary>
     private async Task<FiscalPeriod?> ResolveFiscalPeriodAsync(Guid companyId, DateTime date)
         => await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
             p.CompanyId == companyId && p.StartDate <= date && p.EndDate >= date);
+
+    /// <summary>
+    /// หา FiscalPeriod สำหรับ **การลงบัญชี** — งวดที่ปิดแล้วต้องล้มดัง
+    ///
+    /// ═══ ที่มา (ผลตรวจ C-T04) ═══
+    /// <c>ResolveFiscalPeriodAsync</c> ไม่เคยดู <c>Status</c> เลย ⇒ 7 เส้นที่โพสต์
+    /// JE (ล้าง/คืนภาษีซื้อ · รับรู้-คืนมัดจำ · ใช้มัดจำ · ตัดชำระ) ยัด JE เข้า
+    /// **งวดที่ปิดและยื่นแบบไปแล้ว**ได้เงียบ ๆ ⇒ งบที่ยื่นกับ GL ไม่ตรงกันถาวร
+    /// และไม่มีใครรู้จนกว่าจะพิมพ์งบเทียบ — ขณะที่ <c>AccountingService</c>
+    /// (เส้นลง JE ด้วยมือ) ตรวจอยู่แล้วมาตั้งแต่ต้น = กติกาเดียวกันสองมาตรฐาน
+    ///
+    /// <para>ไม่มีงวดครอบวันนี้เลย → คืน <c>null</c> ตามเดิม (บริษัทที่ยังไม่ได้
+    /// ตั้งงวดบัญชียังทำงานได้ — JE ไม่ผูกงวด ซึ่งเป็นพฤติกรรมเดิม)</para>
+    /// </summary>
+    private async Task<FiscalPeriod?> RequireOpenFiscalPeriodAsync(
+        Guid companyId, DateTime date, string what)
+    {
+        var period = await ResolveFiscalPeriodAsync(companyId, date);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ลง{what}เข้างวด “{period.Name}” ไม่ได้ — งวดนี้ปิดแล้ว "
+                + $"(วันที่รายการ {date:yyyy-MM-dd}). "
+                + "ทางแก้: เปิดงวดที่หน้า “งวดบัญชี” แล้วทำรายการใหม่ "
+                + "หรือแก้วันที่รายการให้อยู่ในงวดที่ยังเปิด — "
+                + "การลงย้อนเข้างวดที่ยื่นแบบไปแล้วทำให้งบที่ยื่นกับบัญชีไม่ตรงกัน");
+        return period;
+    }
 
     /// <summary>
     /// บันทึกบัญชีอัตโนมัติเมื่ออนุมัติเอกสาร — สร้าง JournalEntry + Lines โดยตรงผ่าน DbContext
@@ -11954,10 +12389,32 @@ public partial class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>ต่อข้อความลง <c>Document.InternalNotes</c> — **ห้ามใช้ `Notes`**
+    /// เพราะ `PdfGenerationService.SanitizeNotesForPrint` พิมพ์ `Notes` ลงกระดาษจริง
+    /// ⇒ หมายเหตุภายในจะไปโผล่บนใบที่ส่งให้ลูกค้า (บทเรียนใน CLAUDE.md)</summary>
+    private static void AppendInternalNote(Document doc, string note)
+    {
+        if (string.IsNullOrWhiteSpace(note)) return;
+        doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes)
+            ? note
+            : doc.InternalNotes.TrimEnd() + "\n\n" + note;
+    }
+
     private async Task ApplyStockMovementsAsync(Guid companyId, Document doc, int sign, string actor)
     {
         if (sign == 0) return;
         var now = DateTime.UtcNow;
+
+        // ห้ามขยับสต็อกเองอีก (กฎ IStockLedger) · null = DI ไม่ครบ (เทสต์เก่า) →
+        // ต้องดังตามกฎ "ห้าม silent no-op": เขียนบนตัวเอกสารที่ผู้ใช้เปิดดู ไม่ใช่ log เฉย ๆ
+        if (_stock == null)
+        {
+            _logger.LogError("ไม่มี IStockLedger — ข้ามการขยับสต็อกของ {Doc}", doc.DocumentNumber);
+            AppendInternalNote(doc, $"⚠️ ไม่ได้ขยับสต็อกให้เอกสารนี้ (ระบบสต็อกไม่พร้อม) — ตรวจสอบและปรับสต็อกเอง");
+            return;
+        }
+        // เอกสารผูก **สาขา** ไม่ได้ผูกคลัง — แปลงผ่านตัวกลางตัวเดียว
+        var docWarehouseId = await _stock.ResolveWarehouseIdAsync(companyId, doc.BranchId);
 
         // ===== ขา void (sign<0): กลับตาม movement ที่ "เกิดจริง" =====
         // ไม่ recompute ทิศทางจากกติกาปัจจุบัน — เอกสารเก่าที่เคยขยับสต๊อกด้วย
@@ -11971,13 +12428,16 @@ public partial class DocumentService : IDocumentService
             // EF Core แปลเป็น SQL ไม่ได้ (movement ต่อเอกสารมีน้อย ไม่หนัก)
             var rows = await _db.StockMovements.AsNoTracking()
                 .Where(m => m.CompanyId == companyId && m.DocumentId == doc.Id)
-                .Select(m => new { m.ProductId, m.Quantity, m.UnitCost, m.MovementDate })
+                .Select(m => new { m.ProductId, m.WarehouseId, m.Quantity, m.UnitCost, m.MovementDate })
                 .ToListAsync();
+            // group ต่อ (สินค้า, คลัง) — ของที่ออกจากคลังไหนต้องคืนเข้าคลังนั้น
+            // (group ต่อสินค้าเฉย ๆ จะคืนของทั้งก้อนเข้าคลังเดียวเมื่อใบเดียวแตะหลายคลัง)
             var nets = rows
-                .GroupBy(r => r.ProductId)
+                .GroupBy(r => new { r.ProductId, r.WarehouseId })
                 .Select(g => new
                 {
-                    ProductId = g.Key,
+                    g.Key.ProductId,
+                    g.Key.WarehouseId,
                     NetQty = g.Sum(x => x.Quantity),
                     OrigCost = g.OrderBy(x => x.MovementDate).First().UnitCost,
                 })
@@ -11990,22 +12450,20 @@ public partial class DocumentService : IDocumentService
                 if (product == null) continue;
 
                 var qtyDelta = -n.NetQty;
-                product.CurrentStock += qtyDelta;
-                _db.StockMovements.Add(new StockMovement
-                {
-                    CompanyId = companyId,
-                    ProductId = product.Id,
-                    DocumentId = doc.Id,
-                    MovementDate = now,
-                    MovementType = qtyDelta > 0 ? "IN" : "OUT",
-                    Quantity = qtyDelta,
+                await _stock.MoveAsync(new StockMoveRequest(
+                    CompanyId: companyId,
+                    ProductId: product.Id,
+                    Quantity: qtyDelta,
+                    MovementType: qtyDelta > 0 ? "IN" : "OUT",
+                    Reference: doc.DocumentNumber,
+                    // คลังเดียวกับที่ movement ต้นทางลง — เอกสารเดิมผูกสาขาไว้แล้ว
+                    WarehouseId: n.WarehouseId ?? docWarehouseId,
+                    DocumentId: doc.Id,
+                    MovementDate: now,
                     // ต้นทุนเดิมของ movement ต้นทาง — กลับรายการมูลค่าเท่ากันพอดี
-                    UnitCost = n.OrigCost,
-                    BalanceAfter = product.CurrentStock,
-                    Reference = doc.DocumentNumber,
-                    Notes = $"กลับรายการจากการยกเลิก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
-                    CreatedBy = actor,
-                });
+                    UnitCostOverride: n.OrigCost,
+                    Notes: $"กลับรายการจากการยกเลิก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
+                    CreatedBy: actor));
 
                 // WAC ต้อง rebuild หลัง void ซื้อ (audit A5): เดิมปรับแค่ CurrentStock
                 // → avg ค้างค่าที่รวมล็อตที่ยกเลิกแล้ว → COGS ขายถัดไปผิด + 11500
@@ -12169,18 +12627,10 @@ public partial class DocumentService : IDocumentService
                     ? landedTotal * (line.Amount / stockLineBase)
                     : 0m;
                 var receiptCost = line.Quantity > 0
-                    ? Math.Round((line.Amount + landedShare) / line.Quantity, 4)
+                    ? Math.Round((line.Amount + landedShare) / line.Quantity, 4, MidpointRounding.AwayFromZero)
                     : line.UnitPrice;
-                if (product.CostingMethod == Models.Enums.CostingMethod.WeightedAverage && receiptCost > 0)
-                {
-                    // newAvg = (oldStock×oldAvg + qty×receiptCost) / (oldStock+qty)
-                    var oldStock = Math.Max(0m, product.CurrentStock);
-                    var oldAvg = product.AverageUnitCost > 0 ? product.AverageUnitCost : product.CostPrice;
-                    var totalQty = oldStock + line.Quantity;
-                    product.AverageUnitCost = totalQty <= 0
-                        ? receiptCost
-                        : Math.Round((oldStock * oldAvg + line.Quantity * receiptCost) / totalQty, 4);
-                }
+                // ค่าเฉลี่ยถัวน้ำหนักปรับที่ ledger (สูตรกลาง `WeightedAverageCost`) —
+                // เดิมคำนวณซ้ำ inline ที่นี่ = สำเนาสูตรชุดที่สาม
                 unitCost = receiptCost > 0 ? receiptCost : product.CostPrice;
             }
             else
@@ -12192,23 +12642,20 @@ public partial class DocumentService : IDocumentService
                     : EffectiveUnitCost(product);
             }
 
-            product.CurrentStock += qtyDelta;
-            _db.StockMovements.Add(new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = product.Id,
-                DocumentId = doc.Id,
-                MovementDate = now,
+            await _stock.MoveAsync(new StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: product.Id,
+                Quantity: qtyDelta,
                 // MovementType is informational for reports — we tag based on
                 // direction so "IN" / "OUT" reads naturally even on a void.
-                MovementType = qtyDelta > 0 ? "IN" : "OUT",
-                Quantity = qtyDelta,
-                UnitCost = unitCost,
-                BalanceAfter = product.CurrentStock,
-                Reference = doc.DocumentNumber,
-                Notes = $"จาก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
-                CreatedBy = actor,
-            });
+                MovementType: qtyDelta > 0 ? "IN" : "OUT",
+                Reference: doc.DocumentNumber,
+                WarehouseId: docWarehouseId,
+                DocumentId: doc.Id,
+                MovementDate: now,
+                UnitCostOverride: unitCost,
+                Notes: $"จาก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
+                CreatedBy: actor));
         }
     }
 
@@ -12565,15 +13012,10 @@ public partial class DocumentService : IDocumentService
                 var useUndueOutputVat = false;
                 if (doc.DocumentType == DocumentType.Invoice && !doc.IsDeposit)
                 {
-                    var stockCodes = doc.Lines
-                        .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
-                        .Select(l => l.ProductCode!)
-                        .Distinct()
-                        .ToList();
-                    var hasGoods = stockCodes.Count > 0 && await _db.Products.AsNoTracking()
-                        .AnyAsync(p => p.CompanyId == companyId && stockCodes.Contains(p.Code)
-                            && !p.IsDeleted && p.TrackStock);
-                    useUndueOutputVat = !hasGoods;
+                    // ตัวตัดสิน "มีสินค้าไหม" อยู่ที่ InvoiceHasTrackedGoodsAsync
+                    // ตัวเดียว — warning §86 ตอนอนุมัติใช้เกณฑ์เดียวกันเป๊ะ
+                    // (สองที่ใช้คนละเกณฑ์ = กฎสองข้อที่เถียงกันเองต่อหน้าผู้ใช้)
+                    useUndueOutputVat = !await InvoiceHasTrackedGoodsAsync(companyId, doc);
                 }
 
                 ChartOfAccount? vatAccount = null;
@@ -14704,7 +15146,15 @@ public partial class DocumentService : IDocumentService
         PreparerName: d.PreparerName,
         PreparerSignatureBase64: d.PreparerSignatureBase64,
         DepositAppliedRef: d.DepositAppliedRef,
-        DepositAppliedDrivesJournal: d.DepositAppliedDrivesJournal);
+        DepositAppliedDrivesJournal: d.DepositAppliedDrivesJournal,
+        // หมายเหตุภายใน (ไม่พิมพ์ลงกระดาษ) — ที่เก็บ "คำเตือนที่กดรับทราบแล้ว"
+        // ต้อง echo กลับ ไม่งั้นร่องรอยอยู่แต่ในฐานข้อมูลกับ audit ผู้ใช้ไม่เห็น
+        InternalNotes: d.InternalNotes,
+        OriginModule: d.OriginModule,
+        ReplacedByDocumentId: d.ReplacedByDocumentId,
+        ReplacesDocumentId: d.ReplacesDocumentId,
+        ReplacementReason: d.ReplacementReason,
+        ReplacedAt: d.ReplacedAt);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
@@ -14948,6 +15398,22 @@ public partial class DocumentService : IDocumentService
     // Projection type for the recursive cycle-detection CTE
     private sealed record AncestorRow(Guid Id, string DocumentNumber, int DocumentType);
 
+    /// <summary>ใบแจ้งหนี้ใบนี้มีบรรทัด "สินค้า" (Product.TrackStock) ไหม —
+    /// ตัวตัดสินตัวเดียวที่ทั้ง AutoPost (เลือก 21911 vs 21913 พัก) และ warning
+    /// §86 ตอนอนุมัติใช้ร่วมกัน: มีสินค้า = tax point เกิดตอนส่งมอบ (§78)
+    /// ⇒ VAT เข้า ภ.พ.30 ทันทีและผู้ขายมีหน้าที่ออกใบกำกับ ณ ตอนนั้น</summary>
+    private async Task<bool> InvoiceHasTrackedGoodsAsync(Guid companyId, Document doc)
+    {
+        var stockCodes = doc.Lines
+            .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+            .Select(l => l.ProductCode!)
+            .Distinct()
+            .ToList();
+        return stockCodes.Count > 0 && await _db.Products.AsNoTracking()
+            .AnyAsync(p => p.CompanyId == companyId && stockCodes.Contains(p.Code)
+                && !p.IsDeleted && p.TrackStock);
+    }
+
     /// <summary>Pre-approval soft-warning collector. Returns user-facing
     /// messages for legal-but-unusual patterns that the operator should
     /// eyeball before approving. The list is empty when nothing is amiss.
@@ -15014,6 +15480,90 @@ public partial class DocumentService : IDocumentService
                     + "เติมข้อมูลผู้ซื้อให้ครบ → หัวจะเป็น \"ใบกำกับภาษี/ใบเสร็จรับเงิน\" ใบเดียวจบ "
                     + "(ไม่ต้องออกใบกำกับแยกอีกใบ); หรือถ้าลูกค้าไม่ต้องการใบกำกับจริง ๆ "
                     + "ให้ติ๊ก \"ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี\" เพื่อบันทึกเจตนาไว้เป็นหลักฐาน");
+        }
+
+        // ── §86 (เคส "ใบแจ้งหนี้" ขายสินค้า) — ใบกำกับที่ไม่มีคำว่าใบกำกับ ──
+        // Invoice ที่มีบรรทัดสินค้า (Product.TrackStock): tax point เกิดตอนส่งมอบ
+        // (§78) ⇒ AutoPost ลง Cr 21911 และ VAT **เข้า ภ.พ.30 งวดนี้ทันที** —
+        // แต่กระดาษพิมพ์ "ใบแจ้งหนี้" ไม่ใช่ใบกำกับภาษี, ไม่ผ่านด่าน §86/4,
+        // ออก e-Tax ไม่ได้ ⇒ เรานำส่ง VAT ครบแต่ลูกค้าเคลมภาษีซื้อไม่ได้ และเรามี
+        // หน้าที่ออกใบกำกับ ณ ส่งมอบ (§86 — ไม่ออก = เบี้ยปรับ 2 เท่า §89(5)).
+        // เดิม warning ข้างบนจำกัด Receipt/RV/TaxInvoice ⇒ เคสนี้หลุดทุกชั้น
+        // ทั้งที่เป็นเคสที่ warning ตัวนั้นเขียนไว้เป๊ะ
+        if (doc.DocumentType == DocumentType.Invoice && doc.VatAmount > 0.005m
+            && !doc.BuyerDeclinedTaxInvoice
+            && await InvoiceHasTrackedGoodsAsync(companyId, doc))
+        {
+            warnings.Add(
+                $"⚠️ §86: ใบแจ้งหนี้ใบนี้มี \"สินค้า\" — tax point เกิดตอนส่งมอบ (§78) "
+                + $"VAT {doc.VatAmount:N2} บาท จะเข้ารายงานภาษีขาย/ภ.พ.30 งวดนี้ทันที "
+                + "แต่กระดาษพิมพ์ \"ใบแจ้งหนี้\" ไม่ใช่ใบกำกับภาษี → ลูกค้าเคลมภาษีซื้อไม่ได้ "
+                + "(§82/5(1)) และผู้ขายมีหน้าที่ออกใบกำกับทันทีที่ส่งมอบ (§86). "
+                + "ทางแก้: สร้างใหม่โดยเลือกประเภทเอกสาร \"ใบแจ้งหนี้/ใบกำกับภาษี — "
+                + "ขายสินค้า/ต้องออกใบกำกับตอนนี้\" (ใบเดียวทำหน้าที่ครบ ได้เลขชุดใบกำกับ TIV) "
+                + "— ใบแจ้งหนี้เปล่าเหมาะกับงานบริการที่ใบกำกับจะออกตอนรับเงิน (§78/1) เท่านั้น");
+        }
+
+        // ── §82/5(4)(6) ภาษีซื้อต้องห้าม — ครอบ **ทุกทางเข้า** ไม่ใช่แค่ OCR ──
+        //
+        // `ProhibitedInputVatScreener` ถูกเรียกจากที่เดียวคือสาย OCR (ผลตรวจ C-T12)
+        // ⇒ ใบที่คีย์มือ / นำเข้า CSV / ยิงผ่าน API เลือกผัง "ค่ารับรอง" หรือ
+        // "ค่าน้ำมัน" แล้ว**เคลมภาษีซื้อผ่านฉลุย** ⇒ ยื่น ภ.พ.30 เกินสิทธิ์
+        // (โดนประเมิน + เบี้ยปรับ) — ด่านที่ครอบแค่ทางเดียวคือด่านที่ไม่มี
+        //
+        // ที่นี่ไม่มี raw text ของกระดาษ จึงคัดกรองจาก **ชื่อผู้ขาย + คำอธิบาย
+        // รายบรรทัด** ซึ่งเป็นข้อมูลที่ผู้ใช้พิมพ์เองอยู่แล้ว · เตือน ไม่บล็อก
+        // เพราะรถบางประเภทเคลมได้ (§82/5(6) ยกเว้นรถบรรทุก/กระบะตอนเดียว)
+        if (Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType, doc.OurRole)
+            && doc.VatAmount > 0.005m
+            && doc.Lines.Any(l => l.IsVatClaimable))
+        {
+            var verdict = Ocr.ProhibitedInputVatScreener.Screen(
+                null, doc.Contact?.Name, doc.Lines.Select(l => l.Description));
+            if (!string.IsNullOrEmpty(verdict.Warning))
+            {
+                var head = verdict.Claimable == false
+                    ? "⚠️ ภาษีซื้อต้องห้าม — ใบนี้ยังตั้งเป็น \"เคลมได้\""
+                    : "ℹ️ ตรวจสิทธิ์เคลมภาษีซื้อ";
+                warnings.Add($"{head} ({verdict.RuleCode}) {verdict.Warning}");
+            }
+        }
+
+        // ── ท.ป.4/2528 ข้อ 12: ด่าน ฿1,000 **สะสมต่อคู่สัญญา** (ผลตรวจ C-T05) ──
+        //
+        // `ThaiWhtRateTable.ShouldWithhold` มีอยู่ในเรพพร้อมคอมเมนต์อธิบายกติกา
+        // ครบถ้วน แต่ **ไม่มี call site เลย** ⇒ ระบบหักตามที่ผู้ใช้พิมพ์ล้วน ๆ
+        // เคสที่หลุด: จ่ายงวดละ 800 สามงวดในสัญญาเดียวกัน — ดูทีละใบไม่ถึง 1,000
+        // เลยสักใบ ⇒ ไม่หักทั้งสามงวด ทั้งที่กฎหมายให้หักตั้งแต่งวดที่ยอดสะสมถึง
+        // ⇒ **ผู้จ่ายรับผิดในภาษีที่ไม่ได้หัก (§54)** ไม่ใช่ผู้รับ
+        //
+        // เตือน ไม่บล็อก — ผู้ใช้อาจรู้ยอดสัญญาทั้งก้อนที่ระบบไม่เห็น (เช่นสัญญา
+        // ปีต่อปีที่ยังไม่ได้บันทึก) การบล็อกจะทำให้เขาทำงานไม่ได้โดยเราไม่ได้ถูกกว่า
+        if (Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType, doc.OurRole)
+            && doc.ContactId != Guid.Empty
+            && doc.WithholdingTaxAmount <= 0.005m
+            && doc.SubTotal > 0m)
+        {
+            var yearStart = new DateTime(doc.DocumentDate.Year, 1, 1);
+            var paidToContactThisYear = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.ContactId == doc.ContactId
+                            && d.Id != doc.Id
+                            && d.DocumentDate >= yearStart && d.DocumentDate <= doc.DocumentDate
+                            && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
+                .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
+
+            if (Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(doc.SubTotal, paidToContactThisYear))
+            {
+                var cumulative = doc.SubTotal + paidToContactThisYear;
+                warnings.Add(
+                    $"⚠️ ท.ป.4/2528 ข้อ 12: ใบนี้ยังไม่ได้หัก ณ ที่จ่าย แต่ยอดจ่ายสะสมให้ "
+                    + $"'{doc.Contact?.Name ?? "คู่ค้ารายนี้"}' ปีนี้เป็น {cumulative:N2} บาท "
+                    + $"(ใบนี้ {doc.SubTotal:N2} + ก่อนหน้า {paidToContactThisYear:N2}) — "
+                    + $"เกินเกณฑ์ {Accounting.Helpers.ThaiWhtRateTable.MinimumThresholdBaht:N0} บาท "
+                    + "ซึ่งนับ**สะสมต่อคู่สัญญา ไม่ใช่ต่อใบ** ⇒ ต้องหักตั้งแต่งวดที่ยอดสะสมถึงเกณฑ์. "
+                    + "ถ้าเป็นค่าซื้อสินค้า (ไม่ใช่ค่าบริการ/รับจ้าง) ไม่ต้องหัก — ยืนยันเพื่ออนุมัติต่อ. "
+                    + "**ภาษีที่ไม่ได้หัก ผู้จ่ายเป็นผู้รับผิด (§54)**");
+            }
         }
 
         // §86/10 — ใบลดหนี้/ใบเพิ่มหนี้ "ฝั่งซื้อ" ที่มี VAT: รายงานภาษีซื้อต้อง

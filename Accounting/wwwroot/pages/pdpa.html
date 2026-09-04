@@ -238,7 +238,7 @@
         await this.loadOverdue();
         await this.loadBreachAlerts();
       },
-      _esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      _esc(s) { return Layout.esc(s); },
       _cid() { return Layout.getCompanyId(); },
 
       tab(name, el) {

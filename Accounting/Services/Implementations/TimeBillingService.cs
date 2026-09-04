@@ -304,20 +304,34 @@ public class TimeBillingService : ITimeBillingService
 
         var totalAmount = entries.Sum(e => e.BillableAmount ?? 0);
 
+        // ═══ H-A2: ใบแจ้งหนี้ค่าบริการต้องคิด VAT ตามสถานะของบริษัท ═══
+        // เดิม `VatAmount = 0, VatRate = 0` **ตายตัว** ไม่เคยอ่าน IsVatRegistered
+        // ⇒ บริษัทที่จด VAT ออกใบแจ้งหนี้ค่าบริการโดยไม่คิด 7% ทุกใบ ⇒ ภ.พ.30
+        // ขาด แล้วต้องไล่ออกใบเพิ่มหนี้ตามทีหลัง (§86/9) ซึ่งลูกค้าอาจไม่ยอมจ่าย
+        // ส่วนต่าง · ตัวตัดสินอัตราอยู่ที่ Helpers/OutputVatRate ที่เดียวทั้งระบบ
+        var billingCompany = await _db.Companies.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == companyId);
+        var vatRate = Accounting.Helpers.OutputVatRate.ForCompany(
+            billingCompany?.IsVatRegistered ?? false, billingCompany?.VatRate ?? 0m);
+        var vatAmount = Accounting.Helpers.OutputVatRate.VatOn(totalAmount, vatRate);
+
         // Create the invoice document
         var document = new Document
         {
             CompanyId = companyId,
-            DocumentNumber = $"TINV-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}",
+            // DRAFT- placeholder — เดิม hardcode "TINV-{วันที่}-{GUID}" (prefix ที่
+            // ไม่มีในระบบเลขไหนเลย) และเพราะไม่ใช่ DRAFT- ตอนอนุมัติจึงไม่ได้เลข
+            // จริงจาก DocumentNumberGenerator = เลขสุ่มติดใบถาวร ไม่เรียงลำดับ
+            DocumentNumber = $"DRAFT-{Guid.NewGuid()}",
             DocumentType = DocumentType.Invoice,
             Status = DocumentStatus.Draft,
             DocumentDate = DateTime.UtcNow.Date,
             DueDate = DateTime.UtcNow.Date.AddDays(30),
             ContactId = request.ContactId,
             SubTotal = totalAmount,
-            VatAmount = 0,
-            TotalAmount = totalAmount,
-            BalanceDue = totalAmount,
+            VatAmount = vatAmount,
+            TotalAmount = totalAmount + vatAmount,
+            BalanceDue = totalAmount + vatAmount,
             Notes = $"Time billing invoice for {entries.Count} time entries",
             CreatedBy = createdBy
         };
@@ -337,8 +351,8 @@ public class TimeBillingService : ITimeBillingService
                 Unit = "Hours",
                 UnitPrice = entry.BillingRate ?? 0,
                 Amount = entry.BillableAmount ?? 0,
-                VatRate = 0,
-                VatAmount = 0
+                VatRate = vatRate,
+                VatAmount = Accounting.Helpers.OutputVatRate.VatOn(entry.BillableAmount ?? 0, vatRate)
             });
 
             // Mark time entries as billed

@@ -218,7 +218,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.Faq, J(new {
                 headline = "คำถามที่พบบ่อย",
                 items = new[] {
-                    new { q = "รับงานเร่งด่วนได้ไหม?", a = "รับ มีค่าธรรมเนียมเร่งด่วน 20% — โทรเข้าสายตรง 086-XXX-XXXX" },
+                    new { q = "รับงานเร่งด่วนได้ไหม?", a = "รับ มีค่าธรรมเนียมเร่งด่วน 20% — โทรเข้าสายตรง {{company.phone}}" },
                     new { q = "ทำงานนอกพื้นที่ได้ไหม?", a = "ได้ มีค่าเดินทางตามจริง + ค่าที่พัก (สำหรับงานต่างจังหวัด)" },
                     new { q = "เซ็น NDA ได้ไหม?", a = "ได้ เราเซ็น NDA ทุกโครงการที่ต้องการความลับ" },
                     new { q = "มีตัวอย่างผลงานไหม?", a = "มี ดูได้ในหน้าผลงาน หรือขอเฉพาะทางอีเมล" }
@@ -249,9 +249,9 @@ public static class CmsSiteTemplateSeeder
             })),
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>ช่องทางการติดต่อ</h2>
-<p>📞 โทร: 02-XXX-XXXX<br>
+<p>📞 โทร: {{company.phone}}<br>
 📱 LINE: @yourshop<br>
-📧 อีเมล: info@example.com<br>
+📧 อีเมล: {{company.email}}<br>
 📍 ที่อยู่: กรุณาแก้ไขที่อยู่ของคุณตรงนี้</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "ส่งข้อความถึงเรา", submitText = "ส่งข้อความ", emailTo = "" })),
@@ -381,7 +381,7 @@ public static class CmsSiteTemplateSeeder
 <ul>
   <li>จองล่วงหน้าได้สูงสุด 30 วัน</li>
   <li>โต๊ะส่วนตัว (4-12 ที่นั่ง) ต้องจองล่วงหน้า 1 วัน</li>
-  <li>งานเลี้ยง 20+ คน โทรประสานงานก่อน 02-XXX-XXXX</li>
+  <li>งานเลี้ยง 20+ คน โทรประสานงานก่อน {{company.phone}}</li>
   <li>โต๊ะจะถูกรักษาไว้ 15 นาทีหลังเวลาจอง</li>
 </ul>"
             })),
@@ -425,7 +425,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📍 ที่ตั้ง</h2>
 <p>กรุณาแก้ไขที่อยู่ร้านของคุณ<br>
-📞 โทร: 02-XXX-XXXX<br>
+📞 โทร: {{company.phone}}<br>
 📱 LINE: @yourshop<br>
 📧 อีเมล: hello@restaurant.com</p>
 <h2>🕐 เวลาเปิด-ปิด</h2>
@@ -589,7 +589,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📍 ที่ตั้ง</h2>
 <p>กรุณาแก้ไขที่อยู่ของคุณ<br>
-📞 02-XXX-XXXX · LINE: @yourcafe · IG: @yourcafe</p>
+📞 {{company.phone}} · LINE: @yourcafe · IG: @yourcafe</p>
 <h2>📶 WiFi</h2>
 <p>SSID: <strong>cafe_guest</strong> · password ติดที่เคาน์เตอร์</p>
 <h2>🚗 ที่จอดรถ</h2>
@@ -704,7 +704,7 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อเรา", subheadline = "ทีมแอดมินพร้อมตอบทุกคำถาม จ-ส 9:00-20:00" })),
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📞 ติดต่อสอบถาม</h2>
-<p>LINE: @yourshop · โทร: 02-XXX-XXXX · อีเมล: hello@shop.com</p>"
+<p>LINE: @yourshop · โทร: {{company.phone}} · อีเมล: {{company.email}}</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "สอบถามสินค้า", submitText = "ส่ง", emailTo = "" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
@@ -813,8 +813,8 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📞 ช่องทางติดต่อ</h2>
 <p>LINE OA: @yourshop (เร็วที่สุด)<br>
-อีเมล: hello@shop.com<br>
-โทร: 02-XXX-XXXX (จ-ศ 9-18)<br>
+อีเมล: {{company.email}}<br>
+โทร: {{company.phone}} (จ-ศ 9-18)<br>
 Facebook: facebook.com/yourshop<br>
 Instagram: @yourshop</p>"
             })),
@@ -988,7 +988,7 @@ Instagram: @yourshop</p>"
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อทีมขาย B2B", subheadline = "ทีมขายไทย · จีน · อังกฤษ พร้อมให้บริการ" })),
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📞 ติดต่อ</h2>
-<p>โทร: 02-XXX-XXXX (จ-ส 8:30-17:30)<br>
+<p>โทร: {{company.phone}} (จ-ส 8:30-17:30)<br>
 อีเมล: sales@trading.com<br>
 LINE OA: @trading · WeChat: tradingco<br>
 WhatsApp: +66 XX XXX XXXX</p>"
@@ -1121,7 +1121,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
         (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อฟาร์ม"), new() {
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อฟาร์ม", subheadline = "ฟาร์มเปิด จ-ส 8:00-17:00" })),
             new(CmsBlockType.RichText, J(new {
-                content = @"<p>📞 โทร: 081-XXX-XXXX · LINE: @yourfarm<br>
+                content = @"<p>📞 โทร: {{company.phone}} · LINE: @yourfarm<br>
 📧 hello@farm.com<br>
 📍 ฟาร์ม 30 ไร่ · นครปฐม / ราชบุรี (กรุณาแก้ไขที่อยู่)</p>"
             })),
@@ -1274,7 +1274,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📍 ที่ตั้ง</h2>
 <p>กรุณาแก้ไขที่อยู่ของคุณ<br>
-📞 02-XXX-XXXX · LINE: @yourspa<br>
+📞 {{company.phone}} · LINE: @yourspa<br>
 📧 hello@spa.com</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "ส่งข้อความ", submitText = "ส่ง", emailTo = "" })),
@@ -1416,9 +1416,9 @@ WhatsApp: +66 XX XXX XXXX</p>"
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อเรา", subheadline = "เปิด 24 ชม. · ห้องฉุกเฉินตลอดเวลา" })),
             new(CmsBlockType.RichText, J(new {
                 content = @"<h2>📍 ที่ตั้ง · 🕐 เปิด 24 ชั่วโมง</h2>
-<p>📞 OPD: 02-XXX-XXXX (จ-ส 7:00-20:00)<br>
-🚨 ฉุกเฉิน 24 ชม.: 086-XXX-XXXX<br>
-📧 contact@hospital.com<br>
+<p>📞 OPD: {{company.phone}} (จ-ส 7:00-20:00)<br>
+🚨 ฉุกเฉิน 24 ชม.: {{company.phone}}<br>
+📧 {{company.email}}<br>
 📱 LINE: @hospital</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "ส่งข้อความ", submitText = "ส่ง", emailTo = "" })),
@@ -1572,7 +1572,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
                     new { name = "preferred_time", label = "ช่วงเวลาที่สะดวก", type = "text" }
                 }
             })),
-            new(CmsBlockType.RichText, J(new { content = "<p>📞 02-XXX-XXXX · LINE: @consulting · 📧 hello@consulting.com</p>" })),
+            new(CmsBlockType.RichText, J(new { content = "<p>📞 {{company.phone}} · LINE: @consulting · 📧 {{company.email}}</p>" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
         })
     };
@@ -1892,7 +1892,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
         (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อรับเหมา"), new() {
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อทีมงาน", subheadline = "เปิด จ-ส 8:00-17:30" })),
             new(CmsBlockType.RichText, J(new {
-                content = "<p>📞 02-XXX-XXXX · 📱 081-XXX-XXXX · LINE: @construct · 📧 contact@construct.com</p>"
+                content = "<p>📞 {{company.phone}} · 📱 {{company.phone}} · LINE: @construct · 📧 {{company.email}}</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "ส่งข้อความ", submitText = "ส่ง", emailTo = "" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
@@ -2030,7 +2030,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
 
         (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อนายหน้า"), new() {
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อนายหน้า", subheadline = "เปิดทุกวัน 9:00-20:00" })),
-            new(CmsBlockType.RichText, J(new { content = "<p>📞 02-XXX-XXXX · 081-XXX-XXXX · LINE: @realestate · 📧 hello@realestate.com</p>" })),
+            new(CmsBlockType.RichText, J(new { content = "<p>📞 {{company.phone}} · {{company.phone}} · LINE: @realestate · 📧 {{company.email}}</p>" })),
             new(CmsBlockType.ContactForm, J(new { headline = "ส่งข้อความ", submitText = "ส่ง", emailTo = "" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
         })
@@ -2350,7 +2350,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
         (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อสถาบัน"), new() {
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อสถาบัน", subheadline = "จ-ส 9:00-18:00" })),
             new(CmsBlockType.RichText, J(new {
-                content = "<p>📞 02-XXX-XXXX · 📱 LINE: @school · 📧 hello@school.com</p>"
+                content = "<p>📞 {{company.phone}} · 📱 LINE: @school · 📧 {{company.email}}</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "ส่งข้อความ", submitText = "ส่ง", emailTo = "" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
@@ -2504,7 +2504,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
         (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อขนส่ง"), new() {
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อทีมงาน", subheadline = "Call center 24 ชม." })),
             new(CmsBlockType.RichText, J(new {
-                content = "<p>📞 02-XXX-XXXX · 📱 081-XXX-XXXX (24 ชม.) · LINE: @logistics · 📧 ops@logistics.com</p>"
+                content = "<p>📞 {{company.phone}} · 📱 {{company.phone}} (24 ชม.) · LINE: @logistics · 📧 {{company.email}}</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "ส่งข้อความ", submitText = "ส่ง", emailTo = "" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
@@ -2638,7 +2638,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
         (new("ติดต่อ / ที่ตั้ง", "contact", PageType.Standard, "ที่ตั้งโรงแรม"), new() {
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อโรงแรม", subheadline = "Front desk เปิด 24 ชม." })),
             new(CmsBlockType.RichText, J(new {
-                content = "<p>📞 02-XXX-XXXX (24 ชม.) · LINE: @hotel · 📧 reservations@hotel.com</p>"
+                content = "<p>📞 {{company.phone}} (24 ชม.) · LINE: @hotel · 📧 {{company.email}}</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "สอบถามการจอง", submitText = "ส่ง", emailTo = "" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))
@@ -2810,7 +2810,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
         (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อโรงงาน"), new() {
             new(CmsBlockType.Hero, J(new { headline = "ติดต่อทีมขาย OEM", subheadline = "ทีมขาย ไทย · จีน · อังกฤษ" })),
             new(CmsBlockType.RichText, J(new {
-                content = "<p>📞 02-XXX-XXXX · 📧 sales@factory.com · LINE: @factory · WeChat: factoryco</p>"
+                content = "<p>📞 {{company.phone}} · 📧 sales@factory.com · LINE: @factory · WeChat: factoryco</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "ส่งข้อความ", submitText = "ส่ง", emailTo = "" })),
             new(CmsBlockType.Map, J(new { address = "นิคมอุตสาหกรรม ประเทศไทย" }))

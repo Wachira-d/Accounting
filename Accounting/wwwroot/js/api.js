@@ -156,6 +156,11 @@ const API = {
     return this.post('/api/auth/sso', {
       provider, idToken, companyName, plan, acceptedTerms, policyVersion, invitationToken });
   },
+  // หน้าสมัครที่มาด้วยตั๋ว SSO: "มีบัญชีอยู่แล้ว" — password ว่าง = เช็ค+ส่งลิงก์ยืนยัน ·
+  // มี = ผูกทันที (คืน token) — ดู AuthService.SsoLinkExistingAsync
+  ssoLinkExisting(ssoTicket, email, password = null) {
+    return this.post('/api/auth/sso/link-existing', { ssoTicket, email, password });
+  },
   changePassword(data) { return this.post('/api/auth/change-password', data); },
 
   // Company scoped
@@ -266,6 +271,8 @@ const API = {
       batchConvertDocuments: (ids, t) => API.post(`${base}/document/batch-convert/${t}`, { documentIds: ids }),
       createInvoiceFromObligation: (obligationId) => API.post(`${base}/document/from-obligation/${obligationId}`),
       writeOffBadDebt: (id, reason) => API.post(`${base}/document/${id}/write-off-bad-debt`, { reason }),
+      // ออกใบกำกับภาษีเต็มรูป "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4)
+      issueFullTaxInvoice: (id, reason) => API.post(`${base}/document/${id}/issue-full-tax-invoice`, { reason }),
       // Contacts
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),
       createContact: (d) => API.post(`${base}/document/contacts`, d),
@@ -433,6 +440,57 @@ const API = {
       cmsListBookings: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/booking/bookings${q}`),
       cmsGetBooking: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/booking/bookings/${id}`),
       cmsUpdateBookingStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/status`, d),
+
+      // Lodging — ธุรกิจที่พัก (ตั้งค่า + front desk) — ทุก endpoint ใต้ /lodging
+      lodgingProperties: () => API.get(`${base}/lodging/properties`),
+      lodgingGetProperty: (pid) => API.get(`${base}/lodging/properties/${pid}`),
+      lodgingCreateProperty: (d) => API.post(`${base}/lodging/properties`, d),
+      lodgingUpdateProperty: (pid, d) => API.put(`${base}/lodging/properties/${pid}`, d),
+      lodgingRoomTypes: (pid) => API.get(`${base}/lodging/properties/${pid}/room-types`),
+      lodgingSaveRoomType: (d) => API.post(`${base}/lodging/room-types`, d),
+      lodgingDeleteRoomType: (id) => API.del(`${base}/lodging/room-types/${id}`),
+      lodgingUnits: (pid) => API.get(`${base}/lodging/properties/${pid}/units`),
+      lodgingSaveUnit: (d) => API.post(`${base}/lodging/units`, d),
+      lodgingDeleteUnit: (id) => API.del(`${base}/lodging/units/${id}`),
+      lodgingSetUnitStatus: (id, d) => API.put(`${base}/lodging/units/${id}/status`, d),
+      lodgingRatePlans: (pid) => API.get(`${base}/lodging/properties/${pid}/rate-plans`),
+      lodgingSaveRatePlan: (d) => API.post(`${base}/lodging/rate-plans`, d),
+      lodgingDeleteRatePlan: (id) => API.del(`${base}/lodging/rate-plans/${id}`),
+      lodgingSeasons: (pid) => API.get(`${base}/lodging/properties/${pid}/seasons`),
+      lodgingSaveSeason: (d) => API.post(`${base}/lodging/seasons`, d),
+      lodgingDeleteSeason: (id) => API.del(`${base}/lodging/seasons/${id}`),
+      lodgingRateOverrides: (pid, q) => API.get(`${base}/lodging/properties/${pid}/rate-overrides${q}`),
+      lodgingSaveRateOverrides: (d) => API.post(`${base}/lodging/rate-overrides`, d),
+      lodgingPolicies: (pid) => API.get(`${base}/lodging/properties/${pid}/policies`),
+      lodgingSavePolicy: (d) => API.post(`${base}/lodging/policies`, d),
+      lodgingDeletePolicy: (id) => API.del(`${base}/lodging/policies/${id}`),
+      lodgingExtras: (pid) => API.get(`${base}/lodging/properties/${pid}/extras`),
+      lodgingSaveExtra: (d) => API.post(`${base}/lodging/extras`, d),
+      lodgingDeleteExtra: (id) => API.del(`${base}/lodging/extras/${id}`),
+      lodgingSearch: (pid, d) => API.post(`${base}/lodging/properties/${pid}/search`, d),
+      lodgingQuote: (pid, d) => API.post(`${base}/lodging/properties/${pid}/quote`, d),
+      lodgingCreateReservation: (pid, d) => API.post(`${base}/lodging/properties/${pid}/reservations`, d),
+      lodgingReservations: (q = '') => API.get(`${base}/lodging/reservations${q}`),
+      lodgingGetReservation: (id) => API.get(`${base}/lodging/reservations/${id}`),
+      lodgingUpdateReservation: (id, d) => API.put(`${base}/lodging/reservations/${id}`, d),
+      lodgingConfirm: (id, d) => API.post(`${base}/lodging/reservations/${id}/confirm`, d),
+      lodgingRejectSlip: (id, d) => API.post(`${base}/lodging/reservations/${id}/reject-slip`, d),
+      lodgingUploadImage: (formData) => API.upload(`${base}/lodging/images`, formData),
+      lodgingAssign: (id, d) => API.post(`${base}/lodging/reservations/${id}/assign`, d),
+      lodgingCheckIn: (id, d) => API.post(`${base}/lodging/reservations/${id}/check-in`, d),
+      lodgingAddCharge: (id, d) => API.post(`${base}/lodging/reservations/${id}/charges`, d),
+      lodgingCancelCharge: (id, chargeId) => API.del(`${base}/lodging/reservations/${id}/charges/${chargeId}`),
+      lodgingCheckOut: (id, d) => API.post(`${base}/lodging/reservations/${id}/check-out`, d),
+      lodgingCancel: (id, d) => API.post(`${base}/lodging/reservations/${id}/cancel`, d),
+      lodgingNoShow: (id, d) => API.post(`${base}/lodging/reservations/${id}/no-show`, d),
+      lodgingReschedule: (id, d) => API.post(`${base}/lodging/reservations/${id}/reschedule`, d),
+      lodgingTasks: (pid, q = '') => API.get(`${base}/lodging/properties/${pid}/housekeeping${q}`),
+      lodgingCreateTask: (d) => API.post(`${base}/lodging/housekeeping`, d),
+      lodgingUpdateTask: (id, d) => API.put(`${base}/lodging/housekeeping/${id}/status`, d),
+      lodgingGuestRequests: (pid, q = '') => API.get(`${base}/lodging/properties/${pid}/guest-requests${q}`),
+      lodgingResolveRequest: (id, d) => API.put(`${base}/lodging/guest-requests/${id}`, d),
+      lodgingDashboard: (pid, q = '') => API.get(`${base}/lodging/properties/${pid}/dashboard${q}`),
+      lodgingCalendar: (pid, q) => API.get(`${base}/lodging/properties/${pid}/calendar${q}`),
       cmsListGateways: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/payment-gateways`),
       cmsCreateGateway: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/payment-gateways`, d),
       cmsUpdateGateway: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/payment-gateways/${id}`, d),
@@ -547,6 +605,7 @@ const API = {
       // สินทรัพย์ที่ระบบสร้างอัตโนมัติจาก PV/PI และยังไม่ผ่านการ "ยืนยัน"
       // (NeedsReview=true) — UI ใช้เป็น badge เตือนผู้ใช้
       getAssetsNeedsReview: () => API.get(`${base}/fixedasset/needs-review`),
+      getAssetsByDocument: (docId) => API.get(`${base}/fixedasset/by-document/${docId}`),
       createAsset: (d) => API.post(`${base}/fixedasset`, d),
       updateAsset: (id, d) => API.put(`${base}/fixedasset/${id}`, d),
       deleteAsset: (id) => API.del(`${base}/fixedasset/${id}`),
@@ -621,6 +680,32 @@ const API = {
       makeLoanPayment: (id, d) => API.post(`${base}/loans/${id}/payments`, d),
       getLoanPayments: (id) => API.get(`${base}/loans/${id}/payments`),
       getLoanSummary: () => API.get(`${base}/loans/summary`),
+      // ── รับชำระเงินผ่าน gateway (PAYMENT_GATEWAY_DESIGN.md) ──
+      // ไม่มีชื่อผู้ให้บริการในไฟล์นี้ — ทุกอย่างผ่านชั้นกลาง
+      getPaymentProviders: () => API.get(`${base}/payment-settings/providers`),
+      getPaymentConfigs: () => API.get(`${base}/payment-settings`),
+      savePaymentConfig: (d) => API.put(`${base}/payment-settings`, d),
+      testPaymentConfig: (code) => API.post(`${base}/payment-settings/${code}/test`, {}),
+      setPaymentMode: (code, mode) => API.post(`${base}/payment-settings/${code}/mode`, { mode }),
+      createPaymentIntent: (d) => API.post(`${base}/pay/intents`, d),
+      getPaymentIntentStatus: (id, live = true) => API.get(`${base}/pay/intents/${id}/status?live=${live}`),
+      listPaymentIntents: (q = '') => API.get(`${base}/pay/intents${q}`),
+      // ── กระทบยอด/บันทึกเงินโอนเข้า (settlement) ──
+      // ยอดที่โอนเข้าจริงเป็น "ตัวตั้ง" — เซิร์ฟเวอร์เป็นคนตรวจและบล็อกเมื่อไม่ตรง
+      getPendingSettlements: (code) =>
+        API.get(`${base}/pay/settlements/pending?providerCode=${encodeURIComponent(code)}`),
+      previewSettlement: (d) => API.post(`${base}/pay/settlements/preview`, d),
+      recordSettlement: (d) => API.post(`${base}/pay/settlements`, d),
+      getPaymentIntentEvents: (id) => API.get(`${base}/pay/intents/${id}/events`),
+      // ยืนยันด้วยมือ (เห็นเงินเข้าบัญชีจริงแต่ระบบยังไม่รู้) — เดินผ่าน endpoint
+      // เดียวกับ webhook ⇒ ต้นทางถูกดำเนินการต่อครบเหมือนกัน · บังคับเหตุผล
+      confirmPaymentIntentManually: (id, reason) =>
+        API.post(`${base}/pay/intents/${id}/confirm-manually`, { reason }),
+      refundPaymentIntent: (id, amount, reason) =>
+        API.post(`${base}/pay/intents/${id}/refund`, { amount, reason }),
+      // สูตรวัตถุดิบต่อสินค้า (recipe) — มุมมองบนตาราง BOM เดียวกับใบสั่งผลิต
+      getProductRecipe: (productId) => API.get(`${base}/mfg/products/${productId}/recipe`),
+      saveProductRecipe: (productId, d) => API.put(`${base}/mfg/products/${productId}/recipe`, d),
       // Warehouse
       getWarehouses: () => API.get(`${base}/warehouses`),
       createWarehouse: (d) => API.post(`${base}/warehouses`, d),
@@ -1033,6 +1118,8 @@ const API = {
       removePosModifierOption: (groupId, optId) => API.del(`${base}/pos/modifier-groups/${groupId}/options/${optId}`),
       // POS - Reports
       getPosDailySummary: (q = '') => API.get(`${base}/pos/daily-summary${q}`),
+      // ยอดขายแยกรายสาขา (POS เฟส 5) — เซิร์ฟเวอร์รวมให้ หน้าเว็บแสดงอย่างเดียว
+      getPosBranchSummary: (q = '') => API.get(`${base}/pos/reports/branches${q}`),
       getPosCommissionSummary: (q) => API.get(`${base}/pos/commission-summary${q}`),
       getPosCommissionDetail: (q) => API.get(`${base}/pos/commission-detail${q}`),
       // Integration

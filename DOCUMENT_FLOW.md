@@ -345,6 +345,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       2 เท่าของภาษีตามใบ (§89(5)) + ปรับอาญา (§90(12))
     - เอกสารที่ VAT เข้ารายงานแต่หัวไม่มีคำว่าใบกำกับ → `CollectApprovalWarningsAsync`
       เตือนตอนอนุมัติ (ไม่ block — ขายปลีกที่ลูกค้าไม่ขอใบกำกับเป็นเคสปกติ) และ
+      **เมื่อผู้ใช้กด "ยืนยันทั้งที่มีคำเตือน" (`acknowledgeWarnings=true`)
+      ระบบบันทึกร่องรอย 2 ที่**: `Document.InternalNotes` (หมายเหตุ**ภายใน** —
+      ไม่พิมพ์ลงกระดาษ ต่างจาก `Notes`) + `AuditLog` `APPROVE-ACK-WARNINGS`
+      (มี hash chain) — เดิมคำเตือนที่ถูก acknowledge หายไปเฉย ๆ ⇒ ใบที่อนุมัติ
+      ทั้งที่รู้ว่าผิด §86 หน้าตาเหมือนใบที่ไม่เคยมีคำเตือน ไม่มีอะไรตอบผู้สอบบัญชี
+      (`DocumentService.ApproveDocumentAsync` · echo กลับผ่าน
+      `DocumentResponse.InternalNotes` และแสดงเป็นการ์ดสีเหลืองในหน้ารายละเอียด)
       `TaxService.NotFullTaxInvoice` ติดธงบรรทัดในรายงานภาษีขายว่า
       "[ไม่ใช่ใบกำกับเต็มรูป — ลูกค้าเคลมภาษีซื้อไม่ได้]" เพื่อให้เห็นทั้งงวดในที่เดียว
     - แก้ย้อนหลังใบที่ออกไปแล้ว: เติมข้อมูลผู้ซื้อ → **พิมพ์ใหม่จากใบเดิม**
@@ -495,6 +502,53 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   + approve warning §86/9-10 เมื่อลงวันที่ย้อนหลังเกิน 1 เดือนภาษีโดยไม่มี LateReason
 - **Lineage**: ลูก carry `RelatedDocumentId = source.Id`, `SourceLineId` ต่อ
   บรรทัด (จำเป็นสำหรับ partial fulfillment + 3-way match)
+
+#### 2.4b ใบกำกับภาษีเต็มรูป "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4) ✅ รอบ 130
+
+**เคสจริง (ผู้ใช้ถาม 2026-09-03)**: ลูกค้ารับ "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ"
+ไปแล้ว ภายหลังกลับมาขอ "เต็มรูป" เพื่อเคลมภาษีซื้อ (อย่างย่อเคลมไม่ได้ §82/5(2))
+
+**ทำไมไม่ใส่ `Receipt → TaxInvoice` ลง `ValidConversions`**: ใบเสร็จที่มี VAT
+**นับเป็นภาษีขายเข้า ภ.พ.30 ไปแล้ว** (tax point = วันรับเงิน §78/1 — ดู
+`TaxService.GenerateVatReport` branch "Receipt/ReceiptVoucher standalone")
+⇒ การแปลงปกติจะได้ใบที่สองที่ AutoPost รายได้/ภาษีขายซ้ำ **และ** ถูกนับใน ภ.พ.30
+อีกแถว. การขายครั้งเดียวมีใบกำกับได้ **ใบเดียว** (§86)
+
+**จึงออกแบบเป็น "ใบแทน" ไม่ใช่ "ใบเพิ่ม"**:
+- **Method**: `DocumentService.IssueFullTaxInvoiceForReceiptAsync`
+  (endpoint `POST /api/{companyId}/document/{id}/issue-full-tax-invoice`
+  — สิทธิ์ระดับเดียวกับ **Approve**)
+- **ตัวตัดสินกลาง (pure)**: `Helpers/FullTaxInvoiceReplacement.Check` —
+  บล็อกเมื่อ บริษัทไม่จด VAT · ใบต้นทางยังไม่อนุมัติ/ถูกยกเลิก · เป็นใบกำกับ
+  เต็มรูปอยู่แล้ว · ไม่มี VAT · ออกใบแทนไปแล้ว · ผู้ซื้อไม่ครบ §86/4
+  (ตัวเดียวกับที่ `DocumentResponse.CanIssueFullTaxInvoice` ใช้ ⇒ หน้าเว็บ
+  **แสดง**อย่างเดียว ไม่มีสำเนากติกาฝั่ง JS)
+- **ใบแทนสร้างผ่าน `ConvertCoreAsync`** (ยก `VatAmountOverride` รายบรรทัด ⇒
+  ยอดตรงเป๊ะทุกสตางค์) แต่ใช้ **วันที่ของใบเดิม** — tax point เกิดไปแล้ว
+  ย้ายงวดไม่ได้ (ย้าย = ภ.พ.30 ผิดสองเดือนพร้อมกัน)
+- **ตอน approve ใบแทน (`ReplacesDocumentId != null`)** ข้ามทั้งหมด:
+  `AutoPostToJournalAsync` · `ApplySourceDocumentAdjustmentsAsync` ·
+  `ApplyProjectBillingAsync` · `ApplyStockMovementsAsync` ·
+  `SupersedeSourceInvoiceAsync` — เศรษฐกิจของรายการไม่เปลี่ยน (เงิน/รายได้/
+  ภาษีขายลงไปครบตั้งแต่ใบเดิม) เปลี่ยนแค่ **กระดาษที่ผู้ซื้อถือ**
+  แล้วประทับ `ReplacedByDocumentId` + `ReplacedAt` + `InternalNotes` บนใบเดิม
+  (ประทับตอน **approve** ไม่ใช่ตอนสร้าง — ไม่งั้นใบเดิมหลุดจากรายงานตั้งแต่
+  ใบแทนยังเป็นร่าง = ภาษีขายนำส่งขาดโดยไม่มีอะไรเตือน)
+- **รายงานภาษีขาย**: `GenerateVatReport` กรอง `d.ReplacedByDocumentId == null`
+  (ทั้ง query หลักและ `deferredRecognized`) ⇒ ใบแทนเป็นเจ้าของแถว ยอด VAT
+  รวมไม่ขยับ · `PullDocumentIntoReportAsync` block ใบที่ถูกแทนพร้อมชี้ให้ดึง
+  ใบแทนแทน (เส้นดึงมือต้องมีด่านเดียวกับ loop หลัก)
+- **โควตา**: `DocumentQuotaPolicy.Classify(..., isReplacement: true)` →
+  `NotCounted` — การขายเดิมที่นับไปแล้ว (พารามิเตอร์ของ **เมธอด**
+  `CreateDocumentAsync` ไม่ใช่ช่องใน DTO ด้วยเหตุผลเดียวกับ `originModule`)
+- **Void ใบแทน** → ปลด `ReplacedByDocumentId` บนใบเดิม (คืนเข้ารายงานภาษีขาย)
+  + ข้าม `ApplyProjectBillingAsync(-1)` / `ApplyStockMovementsAsync(-1)`
+  (ไม่เคย +1 ตอน approve). **Void ใบเดิม**ถูก guard `activeChild` เดิมกันไว้
+  แล้ว — ต้องยกเลิกใบแทนก่อน
+- **หมายเหตุ**: `FullTaxInvoiceReplacement.ReplacementNote` ลง `Notes` ของใบแทน
+  (**พิมพ์ลงกระดาษ** — ผู้ซื้อ/ผู้สอบบัญชีต้องเห็นว่าแทนใบไหน) ·
+  `OriginalRecalledNote` ลง `InternalNotes` ของใบเดิม (ไม่พิมพ์)
+- **เทสต์**: `Accounting.Tests/FullTaxInvoiceReplacementTests.cs`
 - **Cascade**: `CustomAppendix / RevenueContractId / PerformanceObligationId /
   FileAttachment` (`CascadeAttachmentsAsync :3077`)
 - **JE ของใบลูกดูประเภทต้นทาง (กันยอดเบิ้ล/ยอดหาย)**:
@@ -656,6 +710,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 > (กัน flow ที่ setting บังคับใช้โดน block ตัวเอง)
 **`DocumentService.ApproveDocumentAsync` (`:1512`)** ทำตามลำดับ:
 
+0. **ด่านงวดปิด** (`RequireOpenFiscalPeriodAsync` — `DocumentService.cs:12041`)
+   — ทุกจุดที่ **จะลง JE จริง** ต้องผ่านก่อน: งวดของวันที่รายการต้องเป็น
+   `FiscalPeriodStatus.Open` ไม่งั้น `BusinessRuleException` (HTTP 400 ข้อความไทย
+   ที่บอกทางแก้ 2 ทาง: เปิดงวด หรือแก้วันที่). ครอบ **9 จุด**: ล้าง/คืนภาษีซื้อ ·
+   รับรู้ภาษีขาย · รับรู้/คืน/ตัดชำระมัดจำ · รายการมัดจำ · รับ-จ่ายเงิน ·
+   ตัดหนี้สูญ
+   _(รอบ 125 · C-T04 — เดิมลงย้อนเข้างวดที่ยื่นแบบไปแล้วได้เงียบ ๆ ⇒ งบที่ยื่น_
+   _กับบัญชีไม่ตรงกันโดยไม่มีอะไรเตือน · **เปลี่ยนพฤติกรรม**: เส้นที่เคยผ่านจะ_
+   _เริ่ม 400 ถ้างวดปิดอยู่ — ดู "ผลกระทบก่อน deploy" ใน `SYSTEM_REVIEW_2026-09.md`)_
 1. **Permission + workflow gate** (`:1638`) — ตรวจ ApprovalWorkflow
    (multi-level), credit limit ของลูกค้า (AR/AP advanced)
    - **§90/2 hard-block**: `CompanySettings.VatRegistered=false` → ห้ามอนุมัติ
@@ -682,8 +745,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 4. **Snapshot Tax Point** (`:1760`) — `TaxPointResolver.Resolve(doc)` →
    `doc.TaxPointDate` = MIN(delivery / ownership transfer / payment received /
    invoice issue) ตาม §78 / §78/1 → ตัดสินงวด ภ.พ.30
-5. **Retention** (`:1766`) — `doc.RetentionUntil ??= DocumentDate + 5 years`
-   ตาม พ.ร.บ.บัญชี ม.10 (ห้ามลบจริงก่อนหมดอายุ)
+5. **Retention** (`DocumentService.cs:5126`) — `doc.RetentionUntil ??=`
+   **วันสิ้นรอบบัญชีที่เอกสารอยู่** `+ 5 ปี` (ไม่ใช่ `DocumentDate + 5y`)
+   ตาม พ.ร.บ.บัญชี ม.10 + §87/3 · คำนวณผ่าน
+   `Helpers.FiscalYear.FiscalYearOf(...)` → `RangeFor(...).EndInclusive`
+   แล้วใช้ `MAX(fyEnd, DocumentDate)` เป็นฐาน
+   _(รอบ 125 · C-T11 — สูตรเดิมสั้นไปเกือบ 12 เดือน และสั้นได้ถึง ~14 เดือน_
+   _เมื่อรอบบัญชีไม่ตรงปีปฏิทิน · `DatabaseMigrationHelper` มี backfill_
+   _`UPDATE "Documents" … GREATEST(…)` ให้แถวเก่า)_
 6. **§65 ตรี** (`:1773`) — `ApplySection65TerAsync` → `doc.NonDeductibleAmount`
    + breakdown JSON (`NonDeductibleRuleJson`); ไหลเข้า ภ.ง.ด.50 ผ่าน
    `TaxService.GenerateCitReport` (บวกกลับ).
@@ -736,8 +805,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    - cash receipt: Dr Cash/Bank / Cr AR (หรือ Cr 217xx ถ้า `IsDeposit`)
    - payment voucher: Dr AP/Expense / Cr Cash/Bank
    - WHT: Cr 21915/21916 ตามประเภทเงินได้
-8. **Stock movements** (`:1794` → `ApplyStockMovementsAsync :4605`) —
-   switch ตัดสินตาม `DocumentType` (`:4612`):
+8. **Stock movements** (`:1794` → `ApplyStockMovementsAsync`) —
+   switch ตัดสินตาม `DocumentType`:
+
+   > ⚠️ **ตั้งแต่ POS เฟส 0**: เมธอดนี้ **ไม่เขียนสต็อกเอง** อีกแล้ว — ทุกการเคลื่อนไหว
+   > เดินผ่าน `IStockLedger.MoveAsync` (`Services/Implementations/Inventory/StockLedger.cs`)
+   > ซึ่งเป็น**ผู้เขียนสต็อกตัวเดียวของระบบ**: เขียน `WarehouseStock` (ความจริง) +
+   > `StockMovement` (มี `WarehouseId` เสมอ) + ปรับ `Product.CurrentStock` ให้เท่าผลรวมทุกคลัง.
+   > คลังของเอกสารมาจาก `ResolveWarehouseIdAsync(companyId, doc.BranchId)` — เอกสารผูก
+   > **สาขา** ไม่ได้ผูกคลัง จึงต้องแปลงผ่านตัวกลางตัวเดียว. ขา void group ต่อ
+   > (สินค้า, คลัง) เพื่อคืนของเข้าคลังที่มันออกไป. บังคับด้วย `tools/stock_writer_check.py`
+   > (`StockMovements.Add` / `CurrentStock ±=` นอก `StockLedger.cs` = ฟ้อง)
    - **OUT (−1)**: `Invoice` / `TaxInvoice` (sale); **CN ฝั่งซื้อแบบ Return**
      (source = PI/Expense/CIL — เราคืนของให้ vendor = ของออกจากสต๊อกเรา)
    - **IN (+1)**: `GoodsReceiptNote` / `PurchaseInvoice` /
@@ -833,6 +911,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   เพื่อให้ void กลับยอดธนาคารด้วย rate เดิม; settlement Receipt/PV ข้ามใบที่
   rate ต่างกัน (ใบเสร็จ rate วันรับ vs invoice rate วันแจ้ง) ก็ post FX diff
   เช่นกัน; สิ้นงวด unrealized ใช้ `FxRevaluationService.PostAsync` (มีอยู่แล้ว)
+- **สกุลเงิน/อัตราของ *ตัวเอกสาร* ตั้งได้ตอนสร้างครั้งเดียว** —
+  `CreateDocumentRequest.Currency/ExchangeRate` → `ResolveExchangeRateAsync`
+  (THB→1 · override ชนะ · ไม่ระบุ = ดึงอัตรากลาง ธ.ปท. ของ `DocumentDate` ·
+  ดึงไม่ได้ = **throw** ห้ามตกไปใช้ 1 เงียบ ๆ) แล้วทุกยอดที่ลง GL คูณผ่าน
+  `ToGlAmount(doc, amount)` (`DocumentService.cs:12192`).
+  `UpdateDocumentRequest` **ไม่มี**สองช่องนี้โดยเจตนา (อัตราถูกตรึงลง JE/AR-AP/
+  ภ.พ.30 ไปแล้ว) ⇒ ฟอร์มตอนแก้ไขต้องแสดงค่าจริงแล้ว **ล็อกพร้อมบอกเหตุผล**
+  (`documents.html` → `_hydrateCurrencyReadonly`) ห้ามโชว์ THB หลอกแล้วให้กด
+  เปลี่ยนได้โดยไม่มีผล. _(A-D1: เดิม payload ของ `save()` ไม่ส่งสองช่องนี้เลย
+  ⇒ ใบสกุลต่างประเทศทุกใบที่สร้างจากหน้าจอลงบัญชีเป็นบาทที่ยอดเดิม)_
 - **ค่าธรรมเนียมหักจากยอดโอน** (marketplace Shopee/Lazada, gateway, ธนาคาร):
   `Payment.FeeAmount(+FeeAccountId)` — Amount คือเงินสุทธิที่เข้า, เอกสาร
   ถูกล้างที่ Amount+Fee: JE Dr เงินสด + Dr ค่าธรรมเนียม (53200/ค้นชื่อ) /
@@ -1239,9 +1327,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 > **คู่ (ลูกจ้าง, นายจ้าง) ต้องสอดคล้องกันเสมอ** (ม.33 ใช้ฐานค่าจ้างเดียวกัน) —
 > ตัวตัดสินตัวเดียวคือ `Helpers/SsoWageBase.Normalize` (ฝั่งลูกจ้างเป็นความจริง
 > ฐาน+ฝั่งนายจ้างเป็นผลลัพธ์ · เกณฑ์ ±1 บาทเท่ากับด่านตอนนำส่ง) เรียกจาก **3 จุด**:
-> 1. `ImportPayrollRunAsync` (`:1120`) — ตอนนำเข้าจากระบบนอก + คืน **warning**
+> 1. `ImportPayrollRunAsync` — ตอนนำเข้าจากระบบนอก + คืน **warning**
 >    ใน `ImportPayrollRunResult.Warnings` ระบุชื่อพนักงาน/ยอดก่อน-หลัง
-> 2. `ProcessPaymentAsync` (`:1958`) — ตาข่ายรับสุดท้ายก่อนสร้าง JE
+> 2. `ProcessPaymentAsync` — ตาข่ายรับสุดท้ายก่อนสร้าง JE
 >    (`LastPaySsoAdjustedCount` → ข้อความตอบกลับของ `/pay`)
 > 3. `ReopenPaidRunAsync` — ตอนกลับรายการจ่าย (`LastReopenSsoAdjustedCount`)
 >
@@ -1598,8 +1686,10 @@ VAT พอดี**
 
 ### 6.4 AI distillation (กฎเหล็ก #1) ที่ฝังใน flow
 
-**Feature enum**: `AiFeatureKey` (`Models/Enums/AllEnums.cs:1188`) —
-**ตารางนี้ verified ตรงกับ enum จริงในโค้ด**
+**Feature enum**: `AiFeatureKey` (`Models/Enums/AllEnums.cs:1497`) —
+**ตารางนี้ verified ตรงกับ enum จริงในโค้ด** — แถวที่ขีดฆ่าคือค่าที่ enum ยังมี
+แต่**ไม่มีใครเรียกเลย** (E-AI-10) เดิมตารางนี้เขียนว่ามี student + round-trip
+feedback ครบ ซึ่งไม่จริงเลยสักตัว — โค้ดเป็น ground truth จึงแก้ doc
 
 | จุดเรียก AI | Feature key (enum) | Local model class | Round-trip feedback |
 | --- | --- | --- | --- |
@@ -1617,10 +1707,10 @@ VAT พอดี**
 | Fuzzy duplicate doc | `FuzzyDuplicateDetection = 10` | `DuplicateDocumentDistillationModel.cs` | – |
 | Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | – |
 | Forecast narrative | `ForecastNarrative = 12` | – (essay) | – |
-| Product match | `ProductMatch = 13` | generic | ตอน user เลือก product |
-| Contact match | `ContactMatch = 14` | generic | ตอน user เลือก |
-| Payment method suggest | `PaymentMethodSuggestion = 15` | generic | ตอน user แก้ |
-| Currency + FX suggest | `CurrencyAndFxSuggestion = 16` | generic | ตอน user แก้ rate |
+| ~~Product match~~ | ~~`ProductMatch = 13`~~ | **ตายแล้ว `[Obsolete(error)]`** | **ไม่มี call site เลยทั้งเรพ** — การจับคู่สินค้าเดินผ่าน `Ocr.ProductMatcher` (heuristic cascade ไม่ผ่าน AI) |
+| ~~Contact match~~ | ~~`ContactMatch = 14`~~ | **ตายแล้ว `[Obsolete(error)]`** | ซ้ำกับ `ContactFuzzyMatch` ที่ใช้งานจริง |
+| ~~Payment method suggest~~ | ~~`PaymentMethodSuggestion = 15`~~ | **ตายแล้ว `[Obsolete(error)]`** | ซ้ำกับ `PaymentChannelSuggestion` ที่ใช้งานจริง |
+| ~~Currency + FX suggest~~ | ~~`CurrencyAndFxSuggestion = 16`~~ | **ตายแล้ว `[Obsolete(error)]`** | ซ้ำกับ `FxRateSuggestion` ที่ใช้งานจริง |
 | Aging explanation | `AgingExplanation = 17` | – (essay) | – |
 | Tax filing pre-check | `TaxFilingPreCheck = 18` | – (essay) | – |
 | Stock movement validation | `StockMovementValidation = 19` | generic | – |
@@ -1646,10 +1736,52 @@ VAT พอดี**
 
 ---
 
+### 6.5 โมดูลที่พัก (Lodging — โรงแรม/รีสอร์ท/บ้านพัก) ✅ รอบ 124 · ปลายทาง ✅ รอบ 126
+
+> **รอบ 126 — เส้นที่แขกสัมผัสจริง** (`LODGING_BOOKING_AUDIT.md`):
+> | สิ่งที่เพิ่ม | ไฟล์ | หมายเหตุ |
+> | --- | --- | --- |
+> | **จ่ายออนไลน์ได้จริง** | `PublicPaymentController` (`[AllowAnonymous]`) + `PublicPaymentResolver` | เดิม `PaymentGatewayController` เป็น `[Authorize]` และไม่มีทางเข้าอื่น ⇒ **ลูกค้าปลายทางจ่ายไม่ได้ทั้งระบบ** · ตัวตนพิสูจน์ด้วย `PublicToken`/`orderId` · **ไม่รับ `SourceId` และไม่รับ `Amount`** (ยอดมาจาก `LodgingAmounts.OnlinePayableAmount`) · เพดาน 20 intent/ชม./source |
+> | **ปฏิเสธสลิปได้** | `LodgingService.RejectSlipAsync` · `POST reservations/{id}/reject-slip` | เหตุผล**บังคับ** → ล้างสลิปให้ส่งใหม่ · ต่อ hold 24 ชม. · แจ้งแขกทางอีเมล · `SlipUploadBlocked` ปิดรับสลิปเมื่อพบของปลอม · **ไม่ลบไฟล์เดิม** (หลักฐาน) |
+> | **หลักฐานการจองให้โหลด** | `GET reservations/{token}/voucher.pdf` + `Helpers/LodgingVoucherBuilder` | **ไม่ใช่เอกสารภาษี** — มีเทสต์ล็อกว่าคำว่า "ใบกำกับภาษี"/"ใบเสร็จรับเงิน" ต้องไม่โผล่ · ใบเสร็จมัดจำ/ใบกำกับเช็คเอาต์ยังเป็นคนละใบผ่าน `IDocumentService` ตามเดิม |
+> | **ค่าเช็คอินก่อนเวลา / เช็คเอาต์ช้า** | `CheckInAsync` / `CheckOutAsync` → `AddChargeCoreAsync` | `EarlyCheckInFee`/`LateCheckOutFee` มีคอลัมน์มาตั้งแต่รอบ 124 แต่**ไม่มีใครอ่าน** · **พนักงานติ๊กเอง** ไม่ใช่ระบบเก็บอัตโนมัติ |
+> | **สลิปเป็น PII** | `Helpers/LodgingSlipPath` + `reservations/{id\|token}/slip` | ถอด `/uploads/lodging-slips` ออกจาก `publicUploadPrefixes` (เดิมใครได้ URL ก็เปิดได้ตลอดกาล) · ด่านสองชั้น: สิทธิ์ + พาธ (กัน traversal จากค่าที่ค้างใน DB) · `PaymentSlipUrl` ใน API คืน **endpoint ที่มีด่าน** ไม่ใช่ storage path · หน้าเว็บเปิดผ่าน `Layout.openAuthed` (`<a href>` เปล่าไม่ส่ง Bearer ⇒ 401) |
+> | **LINE แจ้งเจ้าของ** | `ILineNotifyService.NotifyLodgingBookingAsync` ← `TryNotifyLineAsync` | จองใหม่ · แขกส่งสลิป → เข้ากลุ่ม LINE เดิมของบริษัท (ไม่ต้องตั้งค่าเพิ่ม) · ใช้ธง `NotifyOwnerOnBooking` ร่วมกับอีเมล · **ฝั่งแขกส่ง LINE ไม่ได้** (จองแบบไม่ล็อกอิน ไม่มี LINE user id) |
+>
+> **สูตรยอดคงเหลือย้ายมาอยู่ที่เดียว** — `Helpers/LodgingAmounts.BalanceDue`
+> (เดิมคัดลอกไว้ 4 จุดใน `LodgingService`) เพราะกำลังจะมีผู้ใช้รายที่ห้าคือเส้นจ่ายเงินของแขก
+
+
+> ที่มา/การตัดสินใจเทียบ TakeTime: `LODGING_TAKETIME_ANALYSIS.md` · entity: `Models/Entities/Lodging.cs` ·
+> engine (pure): `Helpers/LodgingPricingEngine.cs` (+ `LodgingAvailability`) · service: `Services/Implementations/Lodging/LodgingService*.cs` ·
+> API หลังบ้าน: `Controllers/LodgingController.cs` (`/api/companies/{cid}/lodging/**` · สิทธิ์ `Lodging.Manage` / `Lodging.Settings`) ·
+> API สาธารณะ: `Controllers/LodgingPublicController.cs` (`/cms/sites/{siteId}/lodging/**` AllowAnonymous · scope siteId + token) ·
+> seed: `Services/Implementations/Cms/LodgingSeeder.cs` (เรียกจาก `CmsSiteService.CreateSiteAsync` เมื่อ `IndustryType.Hotel`)
+
+**ทางเข้า** — (1) storefront `/booking` `/book` `/rooms` (เฉพาะเว็บที่มีที่พักผูก — `tryRouteSpecialSlug` probe `/lodging/info` ก่อน ไม่มีก็ปล่อยหน้า CMS ที่ seed ไว้) และบล็อก `BookingCalendar` ที่กลายเป็นช่องค้นหาห้องว่างอัตโนมัติ · (2) front desk `pages/lodging.html` (walk-in/โทร/OTA · `ConfirmImmediately`) · (3) `/reservation/{token}` ให้แขกดู/อัปโหลดสลิป/ยกเลิก/ส่งคำขอ
+
+**Lifecycle**: `Pending` (กันห้องถึง `HoldExpiresAt` = `PaymentHoldMinutes`; หมดเวลา+ไม่มีสลิป → `ExpireHoldsAsync` ตั้ง Cancelled อัตโนมัติ; อัปโหลดสลิปต่อเวลา 24 ชม.) → `Confirmed` (พนักงานกดยืนยัน/รับมัดจำ · หรือทันทีเมื่อ `ConfirmWithoutDeposit`/มัดจำ = 0/staff ConfirmImmediately) → `CheckedIn` (ต้อง assign `LodgingUnit` ครบทุกห้อง · unit → Occupied) → `CheckedOut` · ทางออก `Cancelled`/`NoShow` (เฉพาะก่อนเช็คอิน — เช็คอินแล้วต้องเช็คเอาต์/ออกบิล)
+
+**เส้นเงิน (ทุกใบผ่าน `IDocumentService` — โมดูลไม่ออกเลขเอง)**
+
+| เหตุการณ์ | เอกสาร | หมายเหตุ |
+| --- | --- | --- |
+| ยืนยัน + รับมัดจำ (`ConfirmAsync`) | `Receipt` `IsDeposit=true` `BookingNumber=RES-…` `PricesIncludeVat=true` `DepositDeferredAccountCode`/`DepositOutputVatDeferred` จากที่พัก → Approve(ack) | Cr 217xx (+VAT ทันที §78/1 เว้นแต่ defer) · ตรวจห้องว่างซ้ำก่อนยืนยัน (hold หมดแล้วอาจถูกจองทับ → `LODGING-OVERSOLD`) |
+| เช็คเอาต์ (`CheckOutAsync`) | `TaxInvoice` (บริษัทจด VAT) / `Invoice` ทั้งการเข้าพัก: บรรทัดค่าห้องต่อห้อง (AccountCode = `RoomRevenueAccountCode`, ProductCode ของประเภทห้อง) + บริการเสริม (1 บรรทัด/รายการ ยอดรวม — ห้ามหาร Total/Qty) + folio Pending (VatRate รายบรรทัด) + service charge (`ServiceChargeAccountCode`) · `DepositAppliedAmount=DepositPaid` `DepositAppliedRef=เลขใบมัดจำ` `DepositAppliedDrivesJournal=true` → Approve(ack) → ถ้า `CollectBalanceNow` และ `BalanceDue>0` → `CreatePaymentAsync` | DocumentService ตัด 217xx + guard over-apply ให้ (§ deposit) · ค่าเสียหาย = folio charge Source=System ก่อนออกบิล · เช็คเอาต์เครดิต = DueDate +30 วัน + บันทึกยอดค้างใน InternalNotes · unit → VacantDirty + งานแม่บ้าน CheckoutClean อัตโนมัติ |
+| ยกเลิก / no-show (`CancelCoreAsync`) | ค่าปรับ = `LodgingPricingEngine.CancellationFee` จาก **snapshot** นโยบาย ณ วันจอง (no-show = `NoShowChargePercent`) → ส่วนคืน `RefundDepositAsync` · ส่วนริบ `RealizeDepositAsync(RevenueAccountCode = CancellationFeeAccountCode ?? RoomRevenueAccountCode)` | ค่าปรับเกินมัดจำ = บันทึกส่วนต่างที่ยังไม่เรียกเก็บใน InternalNotes (ไม่แต่งเอกสารเพิ่ม) |
+| เลื่อนวัน (`RescheduleAsync`) | ไม่ออกเอกสาร — คิดราคาใหม่ทั้งใบ (แผนราคาเดิม) · มัดจำที่รับแล้วคงเดิม · ปลด unit ให้จัดใหม่ | เฉพาะ Pending/Confirmed |
+
+**ราคา** (`LodgingPricingEngine.NightlyRate` ต่อคืน): ฐาน → แผนราคา (Absolute/Multiplier/Delta) → ฤดูกาล (ช่วงแคบกว่าชนะ · recurring ข้ามปีได้ · จำกัดประเภทห้องได้) → สุดสัปดาห์ (`WeekendMultiplier`×mask) → override รายวัน **แทนที่ทั้งหมด** · แขกเกิน `StandardOccupancy` × `ExtraGuestPrice` · เตียงเสริม · PerPerson = ราคา×คน · `Totals`: ราคารวม VAT → VAT = total×r/(100+r) (informational — ตัวจริงคำนวณอีกครั้งตอนออกเอกสารด้วยสูตรเดียวกัน) · มัดจำ = %/คงที่ + min/max · ขั้นต่ำคืน = max(ที่พัก, ห้อง, ฤดูกาล, override). ห้องว่าง (`LodgingAvailability.AvailableRooms`): ต่อคืน min(capacity(allotment) + overbooking − ที่กัน) · Pending กันเฉพาะที่ hold ยังไม่หมด · StopSell = 0 · unit ปิดซ่อมไม่นับ
+
+**Invariants**: `Reservation.TotalAmount` = engine ณ วันจอง (snapshot ใน `PriceBreakdownJson`) · `FolioTotal` = Σ charges ที่ไม่ Cancelled · `PaidAmount` = มัดจำ + ยอดเก็บตอนเช็คเอาต์ − คืน · `BalanceDue` = Total+Folio−Paid · เลขจอง `RES-{Code}-{yyMM}-{####}` ต่อที่พัก ภายใต้ `AdvisoryLockKey.For(cid,"lodging-res",propertyId)` · `PublicToken` 32 hex ต่อการจอง (unique index) · `GuestIdNumber` ไม่เคยออกจากเซิร์ฟเวอร์เต็ม (`MaskId`) · ทุก query มี `CompanyId` + ฝั่งสาธารณะเพิ่ม `SiteId`
+
+**ตาราง (CREATE TABLE IF NOT EXISTS ใน `DatabaseMigrationHelper`)**: LodgingProperties · LodgingRoomTypes · LodgingUnits · LodgingRatePlans · LodgingSeasons · LodgingRateOverrides · LodgingCancellationPolicies · LodgingExtras · LodgingReservations · LodgingReservationRooms · LodgingReservationExtras · LodgingFolioCharges · LodgingHousekeepingTasks · LodgingGuestRequests
+
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 
 | Gate | Where | กระทำ |
 | --- | --- | --- |
+| **โควตาเอกสารของแพ็กเกจ** | `Helpers/DocumentQuotaPolicy.Classify` เรียกจาก `DocumentService.CreateDocumentAsync` | ตอบ **สองคำถามแยกกัน**: (1) *นับโควตาไหม* — นับเฉพาะใบที่แทน "การขาย 1 ครั้ง" (TaxInvoice/Invoice/Receipt); CN/DN/ใบสำคัญ/เอกสารฝั่งซื้อ/ใบส่งของ **ไม่นับ**; เอกสารที่โมดูลที่พักออกให้ (`OriginModule="Lodging"`) ไม่นับเพราะมีมิเตอร์ `lodging.stay` แล้ว (2) *บล็อกได้ไหม* — **ใบที่กฎหมายบังคับให้ออกห้ามบล็อกเด็ดขาด** (§86/4 tax point เกิดแล้ว · §86/9-10 ถ้าค้างจะทำให้ ภ.พ.30 เกินจริง) → เกินโควตาบันทึกเป็น `documents.overage` แทนการปฏิเสธ; บล็อกได้เฉพาะใบเสนอราคา/ใบสั่งซื้อ/ใบขอซื้อ (`BusinessRuleException` รหัส `QUOTA-DOCUMENTS`). เพดานจริง = โควตาแพ็กเกจ + โบนัสที่ยังไม่หมดอายุ (`EffectiveLimit`). **`originModule` เป็นพารามิเตอร์ของ `CreateDocumentAsync` ไม่ใช่ช่องใน `CreateDocumentRequest`** — เดิมอยู่ใน DTO ⇒ ผู้เรียก API ส่ง `"originModule":"Lodging"` เองแล้วเลี่ยงโควตาได้ทุกใบ (ค่าที่ client คุมได้ ห้ามใช้ตัดสินเรื่องเงิน) — ดู ACCOUNT_STRUCTURE.md §6.1b |
 | §86/4 completeness (PI/Expense/PV) | `TaxInvoiceCompletenessChecker` | ถ้าไม่ครบ → input VAT ลง 11640 (undue) |
 | §82/5 prohibited input VAT | `ChartOfAccount.InputVatClaimable` + per-line `IsVatClaimable` | flag claim=false, แยกออกจาก ภ.พ.30 + แสดง "🚫 §82/5" line |
 | §82/5(1)(2) non-full-tax-invoice | `OcrDocumentRoleInferrer.Infer` → `InputVatClaimable/InputVatClaimWarning` | OCR ตรวจ "ใบกำกับภาษีอย่างย่อ §86/6" หรือ "ใบเสร็จ/บิลเงินสด ไม่ใช่ §86/4" + มี VAT → เขียน `[VAT-CLAIM]` ลง ProcessingNotes; review UI + form แสดง banner แดง "เคลม VAT ไม่ได้ — ขอใบกำกับเต็มรูป"; ไม่ auto-ติ๊ก "ขอเครดิตภาษีซื้อ". กัน false positive 2 ชั้น: `ContainsAnyNotNegated` (ข้ามข้อความปฏิเสธ "ไม่ใช่...อย่างย่อ" จาก vision model) + เลขภาษีผู้ซื้อ 13 หลักถูกสกัดได้ = ใบเต็มรูปเสมอ (§86/6 ใบอย่างย่อไม่มีข้อมูลผู้ซื้อ) override คำที่เจอบนกระดาษ |
@@ -1684,13 +1816,18 @@ VAT พอดี**
 | เพิ่ม `DocumentType` ใหม่ | `Models/Enums/AllEnums.cs:305` + `DocumentService.cs` หลายจุด (search by enum literal) |
 | แก้ flow Approve | `DocumentService.ApproveDocumentAsync :1512` |
 | แก้ flow JE per type | `DocumentService.AutoPostToJournalAsync :4684+` |
-| แก้ stock movement | `DocumentService.ApplyStockMovementsAsync :4605–4682` |
+| แก้ stock movement (ทิศทางต่อชนิดเอกสาร) | `DocumentService.ApplyStockMovementsAsync` |
+| **แก้การเขียนสต็อกเอง (ยอด/คลัง/ต้นทุน)** | `Services/Implementations/Inventory/StockLedger.cs` — **ที่เดียวของระบบ** |
+| แก้สูตรต้นทุนถัวเฉลี่ย | `Helpers/WeightedAverageCost.cs` |
 | แก้ §65 ตรี rule | `Services/Implementations/Tax/Section65TerValidator.cs` |
 | แก้ tax point logic | `Services/Implementations/Tax/TaxPointResolver.cs` |
 | แก้ §86/4 completeness | `Services/Implementations/Tax/TaxInvoiceCompletenessChecker.cs` |
 | แก้ fixed asset auto-register | `DocumentService.AutoRegisterFixedAssetsAsync :4477` |
 | แก้ผัง 11640 ↔ 11610 reclassify | `DocumentService.ReclassifyUndueInputVatAsync :1137` |
 | แก้ deposit Realize/Refund/Apply | `DocumentService.cs` ค้นหา `RealizeDepositAsync` / `RefundDepositAsync` / `ApplyDepositToInvoiceAsync` |
+| แก้ราคาที่พัก/ห้องว่าง (ฤดูกาล/แผนราคา/override/มัดจำ/ค่าปรับยกเลิก) | `Helpers/LodgingPricingEngine.cs` (pure + `Accounting.Tests/LodgingPricingEngineTests.cs`) — service แค่โหลดข้อมูลส่งเข้า `BuildQuote` (`LodgingService.Reservations.cs`) |
+| แก้เอกสารตอนยืนยันมัดจำ/เช็คเอาต์/ยกเลิกที่พัก | `Services/Implementations/Lodging/LodgingService.Lifecycle.cs` — `CreateDepositReceiptAsync` · `CheckOutAsync` · `CancelCoreAsync` (§6.5) |
+| seed ที่พักตอนสร้างเว็บโรงแรม | `Services/Implementations/Cms/LodgingSeeder.cs` ← `CmsSiteService.CreateSiteAsync` (IndustryType.Hotel) |
 | แก้รายงาน ภ.พ.30 (จอ) | `TaxService.GenerateVatReport :119` |
 | ดูสายการแปลงทั้งเส้นของเอกสาร (chain stepper) | `DocumentService.GetDocumentChainAsync` — ขึ้นตาม RelatedDocumentId (กัน cycle, 15 ชั้น) แล้ว BFS ลง (เพดาน 60 ใบ); ใบ Voided คงอยู่ในสาย (UI ขีดฆ่า) / UI: `documents.html renderChainStepper` บนสุดของ detail modal |
 | ค่าเริ่มต้นฟอร์มต่อชนิดเอกสาร (แหล่งเงิน/เงื่อนไขชำระ/วันเครดิต) | `DocumentTemplate.DefaultPaymentAccountId/DefaultPaymentTerms/DefaultCreditDays` — ตั้งใน template default ของชนิดนั้น (`document-templates.html` กล่อง "⚡ ค่าเริ่มต้น") / ฟอร์มดึงผ่าน `GET document-templates/default/{type}` เติมเฉพาะช่องว่าง+เฉพาะสร้างใหม่ (`applyDocTypeDefaults`) |
@@ -2670,7 +2807,113 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-01 (รอบ 121 — **ยอดประกันสังคมฝั่ง_
+_Last verified against codebase: 2026-09-04 (รอบ 126c — **LDG-P2-06 ปิดครบ**: สลิปออกจาก_
+_static path สาธารณะ (PII) มาอยู่หลังด่าน + LINE แจ้งเจ้าของเมื่อมีจอง/สลิปใหม่ ·_
+_แก้บันทึกที่ผิด: อีเมลแจ้งแขก/เจ้าของ **มีอยู่แล้วตั้งแต่รอบ 124** ที่ขาดคือ LINE เท่านั้น)_
+_ก่อนหน้า: 2026-09-04 (รอบ 126b — **ปลายทางของโมดูลที่พัก**:_
+_§6.5 เพิ่มตารางสิ่งที่ต่อสายรอบนี้ — ทางจ่ายออนไลน์ของลูกค้าปลายทาง (`PublicPaymentController`_
+_ซึ่งเป็นทางเข้าเดียวที่ไม่ต้องล็อกอินและสร้าง `PaymentIntent` ได้) · ปฏิเสธสลิป ·_
+_voucher หลักฐานการจอง (**ไม่ใช่เอกสารภาษี**) · ค่าเช็คอินก่อนเวลา/เช็คเอาต์ช้า ·_
+_สูตร BalanceDue ยุบมาที่ `Helpers/LodgingAmounts`)_
+_ก่อนหน้า: 2026-09-04 (รอบ 126 — **เก็บ doc ที่ค้างจาก Sprint 4/5**:_
+_ขั้นอนุมัติเพิ่ม **ขั้น 0 "ด่านงวดปิด"** (`RequireOpenFiscalPeriodAsync` · C-T04 ·_
+_9 จุดที่ลง JE จริง — **เปลี่ยนพฤติกรรม**: ลงย้อนเข้างวดที่ปิดแล้วจะได้ 400 พร้อม_
+_ข้อความบอกทางแก้ 2 ทาง) · **ขั้น 5 retention** เปลี่ยนฐานจาก `DocumentDate + 5y`_
+_เป็น **วันสิ้นรอบบัญชี + 5y** (C-T11 — สูตรเดิมสั้นไปเกือบ 12 เดือน) ·_
+_ทั้งสองข้อถูก ship ใน `802f149` โดย **ไม่ได้อัปเดตไฟล์นี้** ซึ่งผิด hard requirement_
+_ของ CLAUDE.md — บันทึกไว้เป็นบทเรียนใน §F แล้ว)_
+_ก่อนหน้า: 2026-09-04 (รอบ 131 — **สกุลเงินของเอกสาร (A-D1)**:_
+_ฟอร์ม `documents.html` ส่ง `currency`/`exchangeRate` ใน payload แล้ว (เดิมไม่เคยส่ง_
+_⇒ ใบสกุลต่างประเทศจากหน้าจอลงบัญชีเป็นบาท rate 1 ทุกใบ) · ตอนแก้ไขแสดงค่าจริง +_
+_ล็อกพร้อมเหตุผลผ่าน `_hydrateCurrencyReadonly` เพราะ `UpdateDocumentRequest`_
+_ไม่รับสองช่องนี้ · ตรวจแล้ว `ToGlAmount` และ renderer ทั้งสองตัวถูกต้องอยู่ก่อนแล้ว)_
+_ก่อนหน้า: 2026-09-03 (รอบ 130 — **ใบกำกับภาษีเต็มรูป
+"แทน" ใบเสร็จ/ใบกำกับอย่างย่อ**: §2.4b ใหม่ — `IssueFullTaxInvoiceForReceiptAsync` +_
+_`Helpers/FullTaxInvoiceReplacement` (pure) · ใบแทนใช้วันที่ใบเดิม ไม่ post JE ใหม่ ·_
+_ประทับ `ReplacedByDocumentId` ตอน approve · `GenerateVatReport` +_
+_`PullDocumentIntoReportAsync` กันใบที่ถูกแทนออก ⇒ ภาษีขายไม่ถูกนับสองครั้ง ·_
+_void ใบแทน → ปลดตราประทับ คืนใบเดิมเข้ารายงาน)_
+_ก่อนหน้า: 2026-09-03 (รอบ 127 — **หนึ่งความจริงของสต็อก**:_
+_ขั้น 8 ของ Approve ไม่เขียนสต็อกเองอีกแล้ว — เดินผ่าน `IStockLedger.MoveAsync`_
+_ซึ่งเขียน `WarehouseStock` (ความจริง) + `StockMovement` ที่มี `WarehouseId` เสมอ +_
+_ปรับ `Product.CurrentStock` ให้เท่าผลรวมทุกคลัง · คลังของเอกสารแปลงจาก `doc.BranchId`_
+_ผ่าน `ResolveWarehouseIdAsync` · ขา void group ต่อ (สินค้า, คลัง) เพื่อคืนของเข้าคลังเดิม ·_
+_ผู้เขียนสต็อกเดิมทั้ง 9 ไฟล์ถูกย้ายในคอมมิตเดียว บังคับด้วย `tools/stock_writer_check.py`)_
+_ก่อนหน้า: 2026-09-03 (รอบ 126 — **ปิดช่องเลี่ยงโควตา**:_
+_`OriginModule` ย้ายออกจาก `CreateDocumentRequest` ไปเป็นพารามิเตอร์ของ_
+_`IDocumentService.CreateDocumentAsync` ⇒ model binding เอื้อมไม่ถึงโดยโครงสร้าง ·_
+_`LodgingService` ส่งค่าเป็นอาร์กิวเมนต์แทน (พฤติกรรมเดิมทุกประการ) ·_
+_ล็อก §82/3 ผูก companyId แล้ว เลิกบล็อกข้ามบริษัทตอนกดปุ่มล้างภาษีซื้อหมดสิทธิ์)_
+_ก่อนหน้า: 2026-09-03 (รอบ 125 — **โควตาเอกสาร + ส่วนเสริม**:_
+_§7 เพิ่ม gate "โควตาเอกสารของแพ็กเกจ" — `DocumentQuotaPolicy` แยก "นับไหม" ออกจาก_
+_"บล็อกได้ไหม" ⇒ ใบกำกับ/ใบเสร็จ/ใบลดหนี้ **ออกได้เสมอแม้โควตาเต็ม** (คิดเป็น_
+_`documents.overage` แทน) ส่วนใบเสนอราคา/ใบสั่งซื้อบล็อกได้ · เอกสารจากโมดูลที่พัก_
+_(`Document.OriginModule="Lodging"`) ไม่นับซ้ำเพราะมีมิเตอร์ `lodging.stay` แล้ว ·_
+_รายละเอียดชั้น license/บิลอยู่ที่ ACCOUNT_STRUCTURE.md §6.1a-§6.1b)_
+_ก่อนหน้า: 2026-09-03 (รอบ 124 — **โมดูลที่พัก**: §6.5 ใหม่ทั้งหมด —_
+_เว็บไซต์ IndustryType.Hotel seed ที่พัก+ห้อง+ราคา+นโยบายให้จองได้ทันที · เงินทุกใบผ่าน_
+_IDocumentService (มัดจำ §78/1 · เช็คเอาต์ DepositApplied* · ยกเลิก Refund/Realize) ·_
+_ดู `LODGING_TAKETIME_ANALYSIS.md` สำหรับสิ่งที่ลอก/ไม่ลอก/ยังไม่ทำ)_
+_ก่อนหน้า: 2026-09-02 (รอบ 123 — **เก็บงานค้างทั้งชุด**:_
+_(1) **คำเตือนที่กด "รับทราบ" แล้วต้องเหลือร่องรอย** — `acknowledgeWarnings=true`_
+_เขียน `Document.InternalNotes` (ไม่พิมพ์ลงกระดาษ — **ห้ามใช้ `Notes` เพราะ_
+_`SanitizeNotesForPrint` พิมพ์ลงใบที่ส่งลูกค้า**) + `AuditLog`_
+_`APPROVE-ACK-WARNINGS` และ echo กลับผ่าน `DocumentResponse.InternalNotes`_
+_· พบว่า `Documents."InternalNotes"` **มีบน entity แต่ไม่เคยมี ADD COLUMN**_
+_(ฐานที่สร้างก่อนเพิ่มพร็อพเพอร์ตี้จะไม่มีคอลัมน์) → เพิ่มใน migration_
+_(2) **migration เลข placeholder เก่าบนเอกสาร Draft** — `INV-yyyyMMdd-XXXXXX`/_
+_`TINV-…` จากสองทางที่เคย bypass เครื่องออกเลข → `DRAFT-{uuid}` **เฉพาะ_
+_`Status = 0`** (ใบที่อนุมัติแล้วห้ามเปลี่ยนเลขย้อนหลัง §86/4) และต้องมี A-F_
+_ในหกหลักท้าย (เลขที่ generator ออกเป็นตัวเลขล้วน — กันบริษัทที่ตั้งรูปแบบเลข_
+_คล้ายกันไม่ให้โดนแตะ)_
+_(3) **อัตรา/เพดานประกันสังคมเป็น "ช่วงเดือน" ไม่ใช่ทั้งปี** — ประกาศลดอัตราของ_
+_ไทยออกเป็นช่วงเดือนเสมอ (1% พ.ค.–ก.ค. 2563 · 2.5% ม.ค.–ก.พ. 2565) แต่_
+_`SsoYearConfig` เก็บได้ปีละค่าเดียว ⇒ ผู้ใช้ต้องแก้แถวเดิมกลางปี ซึ่ง**เปลี่ยน_
+_อัตราของเดือนที่ยื่น สปส. ไปแล้วย้อนหลังด้วย** → เพิ่ม_
+_`EffectiveFromMonth`/`EffectiveToMonth` + กติกา **"ช่วงแคบกว่าชนะ"**_
+_(`SsoRateSchedule.SpanWidth`) ⇒ ตั้ง "ทั้งปี 5% + ลด 1% เฉพาะ 5–7" ได้โดยไม่ต้อง_
+_ตัดปีเป็นสามท่อน และผลไม่ขึ้นกับลำดับแถว · `GetSsoParamsAsync(companyId, year,_
+_**month**)` ไม่มี default ให้เดือน (เส้นที่ "ไม่รู้เดือน" จะคิดอัตราผิดเงียบ ๆ)_
+_· ปฏิเสธเฉพาะช่วงที่ทับกันแบบ**กว้างเท่ากัน** (`RangesAmbiguous`)_
+_(4) **PDPA**: `ApplyErasureAsync` ถอด `UserExternalLogins` + `AuthProvider`/_
+_`AuthProviderId` + refresh token (บัญชีที่ anonymise แล้วแต่ยังผูก Google/LINE_
+_กด SSO ก็เข้าได้ตามปกติ — เส้น SSO ค้นด้วย `ProviderUserId` ไม่ได้ดูอีเมล =_
+_"ทางเข้าที่ยังเปิดอยู่ = การลบที่ยังไม่จบ") · `GenerateAccessReportAsync`_
+_คืนบัญชีภายนอกที่ผูกไว้ (ม.30)_
+_(5) `ExternalLoginResponse.LinkedAt` เคยแมป `ConfirmedAt` (ยืมช่องผิดความหมาย —_
+_การผูกที่ยังไม่ยืนยัน = "ไม่มีวันที่ผูก") → แยกเป็น `LinkedAt`(CreatedAt) +_
+_`ConfirmedAt` + `LinkedFromIp` (คอลัมน์ที่เก็บมาตลอดแต่ไม่มีใครอ่าน)_
+_(6) `SsoLoginRequest.InvitationToken` ถูกใช้บนเส้น **บัญชีเดิม** ด้วย (เดิม_
+_ใช้เฉพาะตอนสมัครใหม่ ⇒ คนที่มีบัญชีแล้วถูกเชิญ กดลิงก์แล้วเลือก Google =_
+_คำเชิญค้าง Pending ตลอดไปโดยไม่มีอะไรบอก) + กันเพิ่ม `CompanyUser` ซ้ำ_
+_(7) `js/sso.js`: state ใช้ `crypto.getRandomValues` (ไม่ใช่ `Math.random`) ·_
+_เลิกเดา provider เป็น 'Line' เมื่ออ่าน sessionStorage ไม่ได้ (ข้อความจะโทษ_
+_ผู้ให้บริการผิดตัว) · `sessionStorage` เขียนไม่ได้ → **หยุดพร้อมบอกทางแก้**_
+_แทนพาเดินครบรอบไปเจอ "สถานะไม่ตรงกัน" · `Sso.displayName` เป็นตัวตัดสินชื่อ_
+_ที่โชว์ ให้ตรงกับ `SsoIdentityPolicy.DisplayName` ฝั่งเซิร์ฟเวอร์_
+_(8) ข้อความ Facebook ที่โทษ "ตัวบล็อกโฆษณา" อีก 2 จุด (สาเหตุจริงคือ CSP ของ_
+_ระบบเอง ซึ่งผู้ใช้แก้ไม่ได้) · `SsoWageBase.IsConsistent` ใช้ `PairTolerance`_
+_ตัวเดียวกับ `Normalize` (เกณฑ์ต่างกัน = "ผ่านตอนเขียน ตกตอนยื่น") ·_
+_`ReadSsoSignupTicket` ตรึง `ValidAlgorithms` · ด่าน "provider เปิดใช้หรือยัง"_
+_ยุบเป็น `EnsureProviderEnabled` ตัวเดียว (สองสำเนาเดิมมี `_ => LineEnabled`_
+_ที่จะปล่อย provider ตัวที่สี่ผ่านเงียบ ๆ));_
+_ก่อนหน้า 2026-09-01 (รอบ 122 — **"ใบแจ้งหนี้ที่เป็น_
+_ใบกำกับภาษีในตัว ใช้เลข INV หรือ TIV?"**: ยืนยันกติกาเดิมถูกแล้ว — ใบรวมคือ_
+_`TaxInvoice + CombinedInvoiceTaxInvoice` (เลข TIV · หัว "ใบแจ้งหนี้/ใบกำกับ_
+_ภาษี" · e-Tax T02) ส่วน `DocumentType.Invoice` = INV เสมอ (เล่ม TIV มีเฉพาะ_
+_ใบที่เป็นใบกำกับ ณ วินาทีที่ออกเลข — Invoice บริการยังไม่ถึง tax point §78/1_
+_ให้ TIV จะเกิดเล่มขาดช่วงเทียม). ปิดช่อง 4 เรื่อง: (1) warning §86 ครอบ_
+_Invoice ขายสินค้า+VAT ที่เข้า ภ.พ.30 ทันทีแต่กระดาษไม่ใช่ใบกำกับ (ตัวตัดสิน_
+_"มีสินค้าไหม" ยุบเป็น `InvoiceHasTrackedGoodsAsync` ใช้ร่วมกับ AutoPost_
+_21911/21913) (2) บล็อกอนุมัติ Invoice ที่หัวถูก override เป็นใบกำกับ_
+_(`TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice` — จงใจไม่ครอบ CN/DN ซึ่ง_
+_§86/9-10 ถือเป็นใบกำกับอยู่แล้ว) (3) API: Invoice+combined → ยกชนิดเป็น_
+_TaxInvoice ให้ (ตรง semantics ของ UI) ชนิดอื่น → 400 · update → error แทน_
+_ดรอปธงเงียบ (4) เลิก hardcode เลข "INV-{GUID}"/"TINV-{GUID}" ใน_
+_CrossTenantWorkflowService/TimeBillingService → DRAFT- ให้ generator ออกเลข_
+_จริงตอนอนุมัติ + ยุบแผนที่ TypeCode↔ชื่อ e-Tax 4 สำเนาเป็น_
+_`Helpers/EtaxDocumentTypeMap` ตัวเดียว);_
+_ก่อนหน้า 2026-09-01 (รอบ 121 — **ยอดประกันสังคมฝั่ง_
 _นายจ้างจากเส้นนำเข้า (TakeTime) ไม่เคยถูกตรวจ**: import ตรวจแค่ฝั่งลูกจ้าง_
 _(net = gross − หัก) ส่วนนายจ้างคัดมาดิบ ๆ ⇒ 4,403 แทน 4,381 ติดมาตั้งแต่_
 _วินาทีแรก · ยุบตรรกะซ่อมเป็น `SsoWageBase.Normalize` ตัวเดียว เรียกจาก 3 จุด_
@@ -4285,5 +4528,10 @@ _(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Con
 | 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
 | 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
 | 12 | JE migrate + business gaps ปิด | JE Builder phase 2 (ReclassifyLine + FxRevaluation refactor), UnifiedPaymentQueryService cross-domain (AR+AP+POS+CMS), POS deposit IsDeposit+DepositRealizedAt, TipPayoutService §50 ทวิ (3% WHT >1000), RecurringLateFeeAccrualJob (rate/grace/cap config), DocumentLineDeliveryService LINE flex, Budget scenarios best/base/worst |
+| 133 | สัญญาณความมั่นใจของ OCR + ด่าน PDPA ก่อนส่ง prompt | `fc()` ในหน้า review เลิก fallback ไปคะแนน**ทั้งใบ** (เดิม "00000 · 95%" บนค่าที่ระบบเดาให้) → "—" · stamp `SellerBranchCode/BuyerBranchCode = 0.30` เมื่ออ่านไม่ได้ · `Layout.applyOcrConfidenceHints` ตัวกลางตัวเดียว ใช้ทั้งฟอร์มเอกสารและ**หน้า review ที่ผู้ใช้ตัดสินใจจริง** · เปิดแก้ VendorAddress/BuyerName/BuyerAddress/PaymentTermsDays ครบทั้ง ฟอร์ม→payload→DTO→persist · `AiPromptSanitizer`: regex อีเมล + เลขบัญชีที่มีป้าย + **สตริงใน array ที่ไม่เคยถูกปิดบังเลย** + `AllowTaxIdInPrompt` คงเฉพาะเลขนิติบุคคล (เลขบัตรประชาชนปิดบังเสมอ §26) · `pg_try_advisory_lock` บนงานเทรน · `AiFeatureKey` 4 ค่าที่ตายแล้ว → `[Obsolete(error)]` |
+| 128 | POS เฟส 3 — ขายแล้วกินสูตร | `ProductType.RawMaterial` · `Product.ConsumesBomOnSale` · `Helpers/BomConsumption` (บริสุทธิ์ · เรียงผลลัพธ์คงที่กัน deadlock) · ตัด/คืนวัตถุดิบครบ 4 เส้นผ่านตัวเดียว · ท็อปปิ้งผูกวัตถุดิบ (`ProductModifierOption.ComponentProductId`) · สูตรเป็น **เวอร์ชัน** ไม่เขียนทับ (`mfg/products/{id}/recipe`) |
+| 127 | POS เฟส 1-2 — สาขา + ภ.พ.06 | `PosTerminal.BranchId/WarehouseId/Cash/BankAccountId` · snapshot ลง `PosOrder` · `Company.IsRetailApproved` + `PhoR06ApprovedDate` · `Helpers/PosSlipHeader` ตัดสินหัวสลิปที่เซิร์ฟเวอร์ (renderer 2 ตัวรับค่ามาแสดง) · เลขใบกำกับอย่างย่อ gap-free ต่อ (สาขา, เดือน) · JE ของ POS ติดมิติสาขา |
+| 125 | POS เฟส 0-1 — หนึ่งความจริงของสต็อก | `IStockLedger` + `StockLedger` เป็นผู้เขียนสต็อกตัวเดียว · ย้ายผู้เขียนเดิม **ทุกไฟล์ในรอบเดียว** (POS 4 · เอกสาร 2 · สินค้า 3 · CMS 3 · นำเข้า 2 · ผลิต 2 · นับสต็อก · ฝากขาย · **ใบโอนคลัง 3**) · migration สร้างคลังหลัก + ย้ายยอดเดิม + backfill `StockMovements.WarehouseId` · `PosTerminal.BranchId/WarehouseId` + snapshot ลง `PosOrder` · `ProductionOrder.WarehouseId` · `Helpers/WeightedAverageCost` (ยุบสูตร WAC 3 ชุด) · `tools/stock_writer_check.py` |
+| 124 | โมดูลที่พัก (Lodging) | วิเคราะห์ TakeTime → `Lodging*` 14 ตาราง · `LodgingPricingEngine` pure + 19 เทสต์ · storefront `/booking` + `/reservation/{token}` · front desk + ตั้งค่า 2 หน้า · มัดจำ Receipt(IsDeposit) → เช็คเอาต์ TaxInvoice DepositApplied* → ยกเลิก Refund/Realize ตามนโยบาย snapshot · seed เมื่อสร้างเว็บโรงแรม |
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._

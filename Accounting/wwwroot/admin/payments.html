@@ -137,7 +137,7 @@
                 <tr>
                   <td><input type="checkbox" class="bulkChk" value="${p.id}" onchange="updateBulkCount()"></td>
                   <td><strong>${p.paymentNumber || '-'}</strong></td>
-                  <td>${p.companyName || '-'}</td>
+                  <td>${AdminLayout.esc(p.companyName || '-')}</td>
                   <td>${AdminLayout.planBadge(p.requestedPlan)}</td>
                   <td class="admin-text-right"><strong>${AdminLayout.money(p.amount)}</strong></td>
                   <td>${p.paymentMethod || '-'}</td>
@@ -154,7 +154,7 @@
         `;
         updateBulkCount();
       } catch (err) {
-        document.getElementById('pendingList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${err.message}</div>`;
+        document.getElementById('pendingList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${AdminLayout.esc(err.message)}</div>`;
       }
     }
 
@@ -186,7 +186,7 @@
               ${d.items.map(p => `
                 <tr>
                   <td>${p.paymentNumber || '-'}</td>
-                  <td>${p.company ? p.company.name : '-'}</td>
+                  <td>${AdminLayout.esc(p.company ? p.company.name : '-')}</td>
                   <td>${AdminLayout.planBadge(p.requestedPlan)}</td>
                   <td class="admin-text-right"><strong>${AdminLayout.money(p.amount)}</strong></td>
                   <td>${AdminLayout.statusBadge(p.status)}</td>
@@ -217,7 +217,7 @@
         }
         document.getElementById('pagination').innerHTML = pagHtml;
       } catch (err) {
-        document.getElementById('allList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${err.message}</div>`;
+        document.getElementById('allList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${AdminLayout.esc(err.message)}</div>`;
       }
     }
 
@@ -240,7 +240,7 @@
                 <div><div class="admin-label">วันที่ส่ง</div>${AdminLayout.datetime(p.createdAt)}</div>
               </div>
 
-              ${p.slipFileName ? `<div class="admin-mb"><div class="admin-label">สลิปการโอน</div><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;text-align:center">${p.slipFileName}</div></div>` : ''}
+              ${p.slipFileName ? `<div class="admin-mb"><div class="admin-label">สลิปการโอน</div><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;text-align:center">${AdminLayout.esc(p.slipFileName)}</div></div>` : ''}
 
               ${p.slipOcrAmount != null || p.slipOcrAmountMatches != null ? `
                 <div style="border:1px solid ${p.slipOcrAmountMatches ? '#86efac' : '#fde68a'};background:${p.slipOcrAmountMatches ? '#f0fdf4' : '#fffbeb'};border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
@@ -248,15 +248,15 @@
                   ยอด <strong>${p.slipOcrAmount != null ? AdminLayout.money(p.slipOcrAmount) : '—'}</strong>
                   ${p.slipOcrAmountMatches === true ? '<span style="color:#16a34a">✓ ตรงกับที่แจ้ง</span>' : (p.slipOcrAmountMatches === false ? '<span style="color:#b45309">⚠ ไม่ตรงกับที่แจ้ง</span>' : '')}
                   ${p.slipOcrDate ? ` · วันที่ ${AdminLayout.date(p.slipOcrDate)}` : ''}
-                  ${p.slipOcrReference ? ` · อ้างอิง ${p.slipOcrReference}` : ''}
+                  ${p.slipOcrReference ? ` · อ้างอิง ${AdminLayout.esc(p.slipOcrReference)}` : ''}
                 </div>` : ''}
 
-              ${p.referenceNumber ? `<div class="admin-mb"><div class="admin-label">เลขอ้างอิง</div>${p.referenceNumber}</div>` : ''}
-              ${p.notes ? `<div class="admin-mb"><div class="admin-label">หมายเหตุลูกค้า</div>${p.notes}</div>` : ''}
+              ${p.referenceNumber ? `<div class="admin-mb"><div class="admin-label">เลขอ้างอิง</div>${AdminLayout.esc(p.referenceNumber)}</div>` : ''}
+              ${p.notes ? `<div class="admin-mb"><div class="admin-label">หมายเหตุลูกค้า</div>${AdminLayout.esc(p.notes)}</div>` : ''}
 
               <div style="background:#ecfeff;border:1px solid #67e8f9;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#0c4a6e;line-height:1.6">
                 💡 <strong>การอนุมัติจะ sync 2 ชั้นอัตโนมัติ:</strong><br>
-                1. ยืด <code>Subscription.EndDate</code> ของบริษัท ${p.companyName ? '<strong>' + p.companyName + '</strong>' : ''} ตามรอบที่ลูกค้าสมัคร<br>
+                1. ยืด <code>Subscription.EndDate</code> ของบริษัท ${p.companyName ? '<strong>' + AdminLayout.esc(p.companyName) + '</strong>' : ''} ตามรอบที่ลูกค้าสมัคร<br>
                 2. ถ้าบริษัทนี้อยู่ใต้ <strong>Account Plan</strong> ของ User → ยืด <code>AccountSubscription.EndDate</code> + flip status เป็น Active ให้ด้วย (กัน License แม่หมดอายุก่อนลูก) — quota บน Account Plan ไม่ถูก overwrite
               </div>
 
@@ -406,7 +406,7 @@
         recPlans = res.data || [];
         const sel = document.getElementById('recPlan');
         if (!sel) return;
-        sel.innerHTML = recPlans.map(p => `<option value="${p.plan}">${p.name}</option>`).join('')
+        sel.innerHTML = recPlans.map(p => `<option value="${p.plan}">${AdminLayout.esc(p.name)}</option>`).join('')
           || '<option value="">— ไม่มีแพ็กเกจ —</option>';
         recAutoAmount();
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
@@ -423,7 +423,7 @@
             const items = res.data?.items || res.data?.companies || [];
             const sel = document.getElementById('recCompany');
             if (sel) sel.innerHTML = '<option value="">— เลือกบริษัท —</option>'
-              + items.map(c => `<option value="${c.id}">${c.name}${c.taxId ? ' (' + c.taxId + ')' : ''}</option>`).join('');
+              + items.map(c => `<option value="${c.id}">${AdminLayout.esc(c.name)}${c.taxId ? ' (' + c.taxId + ')' : ''}</option>`).join('');
           } catch (err) { AdminLayout.toast(err.message, 'error'); }
           resolve();
         }, 250);

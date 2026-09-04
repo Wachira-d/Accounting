@@ -1,4 +1,6 @@
 using Accounting.Data;
+using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -21,9 +23,35 @@ public class MeteringController : ControllerBase
 {
     private readonly AccountingDbContext _db;
     private readonly IUsageMeteringService _metering;
+    private readonly IQuotaService _quota;
+    private readonly IPermissionService _permissions;
 
-    public MeteringController(AccountingDbContext db, IUsageMeteringService metering)
-    { _db = db; _metering = metering; }
+    public MeteringController(AccountingDbContext db, IUsageMeteringService metering,
+        IQuotaService quota, IPermissionService permissions)
+    { _db = db; _metering = metering; _quota = quota; _permissions = permissions; }
+
+    /// <summary>
+    /// **ด่านของทุก endpoint ที่ก่อค่าใช้จ่ายให้บริษัท**
+    ///
+    /// <para>เดิมคอนโทรลเลอร์นี้มีแค่ <c>[Authorize]</c> ระดับคลาส ⇒ สมาชิกคนไหน
+    /// ก็เปิด add-on รายเดือน/ซื้อโควตา/ส่งหลักฐานชำระเงินแทนบริษัทได้ —
+    /// <b>defect class เดียวกับที่เคยแก้ไปแล้ว</b>ใน <c>DocumentController</c>
+    /// และ <c>PayrollController</c> ("[Authorize] ระดับคลาส = ล็อกอินอยู่ไหม
+    /// ไม่ใช่ มีสิทธิ์ทำสิ่งนี้ไหม") · คอนโทรลเลอร์นี้ไม่ได้อยู่ใน
+    /// <c>tools/write_permission_gate_check.py</c> จึงไม่มีใครจับได้ — เพิ่มเข้าไปแล้ว</para>
+    ///
+    /// <para>Owner/SystemAdmin ผ่านอัตโนมัติ ⇒ ผู้ที่เปิดบริษัทเองไม่กระทบ</para>
+    /// </summary>
+    private async Task<ActionResult?> RequireBillingAsync(Guid companyId, string verb)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.BillingManage))
+            return null;
+        return StatusCode(403, new ApiResponse<object>(false, new
+        {
+            requiredPermission = PermissionKeys.BillingManage.Replace("perm:", ""),
+        }, $"ไม่มีสิทธิ์{verb} — ต้องได้รับสิทธิ์ \"จัดการค่าใช้จ่าย/ส่วนเสริม\" จากเจ้าของบริษัทก่อน"));
+    }
 
     /// <summary>
     /// ฟีเจอร์ที่เปิดขายทั้งหมด + สถานะเปิด/ปิดของบริษัทนี้ + **ราคาที่มีผลตอนนี้**
@@ -70,10 +98,23 @@ public class MeteringController : ControllerBase
             return new
             {
                 f.FeatureCode, f.Name, f.NameEn, f.Description, f.UnitLabel,
+                f.Icon, f.ModuleCode, f.TrialDays,
+                kind = f.Kind.ToString(),
                 isPublished = f.IsPublished,
                 isEnabled = state?.IsEnabled ?? false,
                 enabledAt = state?.EnabledAt,
                 enabledBy = state?.EnabledBy,
+                trialUntil = state?.TrialUntil,
+                grantSource = state?.GrantSource.ToString(),
+                // ── สถานะการชำระเงิน (LDG-P0-03) — เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว ──
+                paymentStatus = (state?.PaymentStatus ?? Models.Enums.AddOnPaymentStatus.NotRequired).ToString(),
+                paymentStatusLabel = Accounting.Helpers.AddOnPaymentPolicy.StatusLabel(
+                    state?.PaymentStatus ?? Models.Enums.AddOnPaymentStatus.NotRequired),
+                paymentRejectedReason = state?.PaymentRejectedReason,
+                slipUploadedAt = state?.SlipUploadedAt,
+                // สูตรเดียวกับ AddOnPurchaseService — เรียก policy ตัวเดียว ห้ามคัดลอกมา
+                amountDue = state == null ? 0m
+                    : Accounting.Helpers.AddOnPaymentPolicy.AmountDue(state.PaymentStatus, state.AcceptedUnitPrice),
                 pricing = plan == null ? null : new
                 {
                     method = plan.Method.ToString(),
@@ -94,6 +135,10 @@ public class MeteringController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> ToggleFeature(
         Guid companyId, string featureCode, [FromBody] ToggleFeatureRequest req)
     {
+        var block = await RequireBillingAsync(companyId,
+            req.Enabled ? "เปิดใช้ส่วนเสริม" : "ปิดส่วนเสริม");
+        if (block != null) return block;
+
         var feature = await _db.ApiFeatures.AsNoTracking()
             .FirstOrDefaultAsync(f => f.FeatureCode == featureCode);
         if (feature == null)
@@ -110,6 +155,170 @@ public class MeteringController : ControllerBase
 
         return Ok(new ApiResponse<object>(true, new { featureCode, enabled = req.Enabled },
             req.Enabled ? $"เปิดใช้ {feature.Name} แล้ว" : $"ปิด {feature.Name} แล้ว — หยุดคิดค่าใช้จ่ายทันที"));
+    }
+
+    /// <summary>
+    /// สิทธิ์ของผู้ใช้คนนี้บนหน้า "ส่วนเสริมของฉัน" — **เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดงอย่างเดียว**
+    ///
+    /// <para>หน้าเว็บต้องรู้ล่วงหน้าว่าจะกดได้ไหม เพื่อ<b>ไม่โชว์ปุ่มที่กดแล้ว 403</b>
+    /// (กติกา "ปฏิเสธแล้วต้องมีทางไปต่อ" — บอกให้ชัดว่าต้องขอสิทธิ์อะไรจากใคร)
+    /// · ห้ามให้ JS เดาจาก role เอง ไม่งั้นได้กติกาสิทธิ์สำเนาที่สองที่ drift</para>
+    /// </summary>
+    [HttpGet("my-access")]
+    public async Task<ActionResult<ApiResponse<object>>> MyAccess(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var canBilling = await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.BillingManage);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            canManageBilling = canBilling,
+            requiredPermission = PermissionKeys.BillingManage.Replace("perm:", ""),
+            note = canBilling ? null
+                : "การเปิดส่วนเสริมและซื้อโควตาเป็นการก่อค่าใช้จ่ายให้บริษัท "
+                  + "— ขอสิทธิ์ “จัดการค่าใช้จ่าย/ส่วนเสริม” จากเจ้าของบริษัทก่อน",
+        }));
+    }
+
+    // ═══════════════ ชำระค่าส่วนเสริม (LDG-P0-03) ═══════════════
+    //  เดิม: กดเปิด = ใช้ได้ฟรีทันที ไม่มีทั้งช่องจ่ายและช่องแนบสลิป
+    //  ตอนนี้: มี gateway → จ่ายแล้วเปิดทันที · ไม่มี → แนบสลิปแล้วรอแอดมินตรวจ
+
+    /// <summary>สถานะการชำระเงินของส่วนเสริมตัวหนึ่ง — หน้าเว็บ**แสดงอย่างเดียว**
+    /// (ข้อความสถานะมาจาก <c>AddOnPaymentPolicy.StatusLabel</c> ห้าม JS แต่งเอง)</summary>
+    [HttpGet("features/{featureCode}/payment")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAddOnPayment(
+        Guid companyId, string featureCode,
+        [FromServices] Accounting.Services.Payments.IAddOnPurchaseService addons,
+        CancellationToken ct)
+    {
+        var st = await addons.GetAsync(companyId, featureCode, ct);
+        if (st == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้เปิดใช้ส่วนเสริมนี้"));
+        return Ok(new ApiResponse<object>(true, st));
+    }
+
+    /// <summary>สร้างรายการชำระเงินออนไลน์ของส่วนเสริม — ยอดมาจากเซิร์ฟเวอร์เท่านั้น</summary>
+    public record StartAddOnPaymentRequest(Models.Enums.PaymentMethodKind Method, string? ReturnUrl = null);
+
+    [HttpPost("features/{featureCode}/payment/intent")]
+    public async Task<ActionResult<ApiResponse<object>>> StartAddOnPayment(
+        Guid companyId, string featureCode, [FromBody] StartAddOnPaymentRequest req,
+        [FromServices] Accounting.Services.Payments.IAddOnPurchaseService addons,
+        [FromServices] Accounting.Services.Payments.IPaymentIntentService intents,
+        CancellationToken ct)
+    {
+        var block = await RequireBillingAsync(companyId, "ชำระค่าส่วนเสริม");
+        if (block != null) return block;
+
+        var due = await addons.AmountDueAsync(companyId, featureCode, ct);
+        if (due <= 0m)
+            return BadRequest(new ApiResponse<object>(false, null, "ส่วนเสริมนี้ไม่มียอดค้างชำระ"));
+
+        var row = await _db.CompanyFeatures.AsNoTracking()
+            .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted, ct);
+        if (row == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบส่วนเสริมนี้"));
+        var name = await _db.ApiFeatures.AsNoTracking()
+            .Where(f => f.FeatureCode == featureCode).Select(f => f.Name).FirstOrDefaultAsync(ct) ?? featureCode;
+
+        try
+        {
+            // SourceId = CompanyFeature.Id (PaymentIntent.SourceId เป็น Guid)
+            var intent = await intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
+                Models.Enums.PaymentSourceKind.AddOnPurchase, row.Id, due, req.Method,
+                Description: $"ค่าส่วนเสริม {name}", ReturnUrl: req.ReturnUrl), ct: ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                id = intent.Id, status = intent.Status.ToString(), amount = intent.Amount,
+                currency = intent.Currency, qrPayload = intent.QrPayload,
+                qrExpiresAt = intent.QrExpiresAt, authorizeUrl = intent.AuthorizeUrl,
+                failureMessage = intent.FailureMessage,
+            }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<object>(false, null, ex.Message));
+        }
+    }
+
+    /// <summary>แนบสลิปค่าส่วนเสริม — เส้นสำรองเมื่อยังไม่เปิด gateway</summary>
+    [HttpPost("features/{featureCode}/payment/slip")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<object>>> UploadAddOnSlip(
+        Guid companyId, string featureCode, IFormFile? file,
+        [FromForm] string? reference, [FromForm] decimal? amount,
+        [FromServices] Accounting.Services.Payments.IAddOnPurchaseService addons,
+        [FromServices] IImageProcessingService images,
+        [FromServices] IWebHostEnvironment env,
+        CancellationToken ct)
+    {
+        var block = await RequireBillingAsync(companyId, "ส่งหลักฐานการชำระเงิน");
+        if (block != null) return block;
+
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์สลิป"));
+        if (!file.ContentType.StartsWith("image/") && file.ContentType != "application/pdf")
+            return BadRequest(new ApiResponse<object>(false, null, "รองรับเฉพาะรูปภาพหรือ PDF"));
+
+        var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
+        var dir = Path.Combine(webRoot, "uploads", "slips");
+        await using var s = file.OpenReadStream();
+        var saved = await images.ProcessAndSaveAsync(
+            s, file.ContentType, file.FileName, dir, "/uploads/slips", ImageProfile.Slip);
+
+        var actor = User.Identity?.Name ?? "unknown";
+        var st = await addons.UploadSlipAsync(companyId, featureCode, saved.RelativeUrl, reference, amount, actor, ct);
+        return Ok(new ApiResponse<object>(true, st,
+            "ส่งหลักฐานการชำระเงินแล้ว — ผู้ดูแลระบบจะตรวจสอบและยืนยันให้"));
+    }
+
+    // ═══════════════ โควตาเอกสาร: สถานะ · ซื้อเพิ่ม · แลกจากภารกิจ ═══════════════
+
+    /// <summary>สถานะโควตาเอกสารเดือนนี้ — **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว**
+    ///
+    /// ทุกหน้าที่อยากเตือน "ใกล้เต็ม" ต้องอ่านจากที่นี่ ห้ามเทียบเปอร์เซ็นต์เอง
+    /// (defect class "สำเนามือฝั่ง JS" — เกิดมาแล้วกับ MENU_SECTIONS/docHeaderLabel)</summary>
+    [HttpGet("quota")]
+    public async Task<ActionResult<ApiResponse<DocumentQuotaStatus>>> GetQuota(Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<DocumentQuotaStatus>(true, await _quota.GetDocumentQuotaAsync(companyId, ct)));
+
+    public record TopUpRequest(int Packs = 1);
+
+    /// <summary>ซื้อโควตาเอกสารเพิ่ม — ทางไปต่อทางที่ 1 เมื่อชนเพดาน (§11)</summary>
+    [HttpPost("quota/topup")]
+    public async Task<ActionResult<ApiResponse<DocumentQuotaStatus>>> TopUp(
+        Guid companyId, [FromBody] TopUpRequest req, CancellationToken ct)
+    {
+        // ซื้อโควตา = จ่ายเงินจริง ⇒ ด่านเดียวกับการเปิด add-on
+        var block = await RequireBillingAsync(companyId, "ซื้อโควตาเพิ่ม");
+        if (block != null) return block;
+
+        var actor = User.Identity?.Name ?? "unknown";
+        var status = await _quota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct);
+        var docs = req.Packs * Models.Constants.AddOnCodes.DocumentsPerTopUpPack;
+        return Ok(new ApiResponse<DocumentQuotaStatus>(true, status,
+            $"เพิ่มโควตา {docs} ฉบับแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"));
+    }
+
+    /// <summary>ภารกิจแลกโควตาที่เปิดอยู่ (§12) — ว่างเปล่า = เจ้าของระบบปิดไว้
+    /// หรือแพ็กเกจนี้ไม่รองรับ ซึ่งเป็นสถานะปกติ ไม่ใช่ error</summary>
+    [HttpGet("quota/rewards")]
+    public async Task<ActionResult<ApiResponse<List<QuotaRewardOptionDto>>>> ListRewards(
+        Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<List<QuotaRewardOptionDto>>(true, await _quota.ListRewardOptionsAsync(companyId, ct)));
+
+    public record ClaimRewardRequest(int WatchedSeconds, bool ClickedThrough = false);
+
+    /// <summary>รับโควตาหลังทำภารกิจจบ — เวลาที่ส่งมาจากเบราว์เซอร์เชื่อไม่ได้ 100%
+    /// จึงมีเพดานต่อวัน/เดือนเป็นด่านจริง (ดู <c>QuotaRewardPolicy</c>)</summary>
+    [HttpPost("quota/rewards/{optionId:guid}/claim")]
+    public async Task<ActionResult<ApiResponse<QuotaRewardClaimResult>>> ClaimReward(
+        Guid companyId, Guid optionId, [FromBody] ClaimRewardRequest req, CancellationToken ct)
+    {
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User);
+        var res = await _quota.ClaimRewardAsync(companyId, optionId, req.WatchedSeconds,
+            req.ClickedThrough, userId, ct);
+        return res.Granted
+            ? Ok(new ApiResponse<QuotaRewardClaimResult>(true, res, res.Message))
+            : BadRequest(new ApiResponse<QuotaRewardClaimResult>(false, res, res.Message));
     }
 
     /// <summary>ยอดใช้งานรายเดือนของบริษัทนี้</summary>

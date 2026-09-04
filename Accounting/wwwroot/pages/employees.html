@@ -120,6 +120,53 @@
               </label>
             </div>
           </div>
+          <!-- ค่าลดหย่อนภาษี §47 — 8 ช่องนี้มีในฐานข้อมูลและเครื่องคิดภาษีอ่านครบ
+               มาตลอด แต่ไม่เคยมีที่ให้กรอก ⇒ ทุกคนได้ลดหย่อนแค่ 60,000 (D-T2) -->
+          <div style="border-top:1px solid var(--gray-200);margin:8px 0;padding-top:8px">
+            <div class="text-xs text-gray-500" style="margin-bottom:6px;font-weight:600">
+              ค่าลดหย่อนภาษี (§47) — ใช้คำนวณภาษีหัก ณ ที่จ่ายรายเดือน
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label style="display:flex;align-items:center;gap:6px;padding-top:24px;font-size:13px">
+                  <input type="checkbox" id="fAllowSpouse"> คู่สมรสไม่มีเงินได้ (60,000)
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="form-label">บุตร (คน × 30,000)</label>
+                <input type="number" min="0" step="1" class="form-input" id="fAllowChildren" value="0">
+              </div>
+              <div class="form-group">
+                <label class="form-label">บุตรคนที่ 2+ เกิด ≥ 2561 (+30,000/คน)</label>
+                <input type="number" min="0" step="1" class="form-input" id="fAllowChildren2561" value="0">
+              </div>
+              <div class="form-group">
+                <label class="form-label">บิดามารดาอายุ ≥ 60 (สูงสุด 4 คน × 30,000)</label>
+                <input type="number" min="0" max="4" step="1" class="form-input" id="fAllowParents" value="0">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">เบี้ยประกันชีวิต/ปี (ไม่เกิน 100,000)</label>
+                <input type="number" min="0" step="0.01" class="form-input" id="fAllowLifeIns" value="0">
+              </div>
+              <div class="form-group">
+                <label class="form-label">RMF/SSF/Thai ESG ต่อปี</label>
+                <input type="number" min="0" step="0.01" class="form-input" id="fAllowRmf" value="0">
+              </div>
+              <div class="form-group">
+                <label class="form-label">เงินบริจาค/ปี (ไม่เกิน 10% ของเงินได้สุทธิ)</label>
+                <input type="number" min="0" step="0.01" class="form-input" id="fAllowDonation" value="0">
+              </div>
+              <div class="form-group">
+                <label class="form-label">ผู้อยู่ในอุปการะ (แบบรวม — ใช้เมื่อไม่กรอกรายช่อง)</label>
+                <input type="number" min="0" step="1" class="form-input" id="fAllowLegacy" value="0">
+              </div>
+            </div>
+            <div style="font-size:11px;color:#64748b">
+              💡 ไม่กรอก = ได้ลดหย่อนส่วนตัว 60,000 + ประกันสังคม + ค่าใช้จ่าย 50% (ไม่เกิน 100,000) ตามกฎหมาย
+            </div>
+          </div>
           <div style="border-top:1px solid var(--gray-200);margin:8px 0;padding-top:8px">
             <div class="text-xs text-gray-500" style="margin-bottom:6px;font-weight:600">บัญชีธนาคาร (รับเงินเดือน)</div>
             <div class="form-row">
@@ -352,6 +399,8 @@
         document.getElementById('fSalary').value = '';
         document.getElementById('fSalaryType').value = 'Monthly';
         document.getElementById('fCostBehavior').value = 'Fixed';
+        // ห้ามค้างค่าลดหย่อนของคนก่อนหน้าติดมาที่ฟอร์มพนักงานใหม่
+        Page._setAllowances({});
         document.getElementById('fSso').checked = true;
         Layout.openModal('formModal');
       },
@@ -379,6 +428,7 @@
           document.getElementById('fSalary').value = e.baseSalary;
           document.getElementById('fSalaryType').value = e.salaryType || 'Monthly';
           document.getElementById('fCostBehavior').value = e.costBehavior || 'Fixed';
+          Page._setAllowances(e);
           document.getElementById('fExtSys').value = e.externalSystem || '';
           document.getElementById('fExtId').value = e.externalId || '';
           Layout.openModal('formModal');
@@ -419,6 +469,7 @@
             costBehavior: document.getElementById('fCostBehavior').value,
             externalId: document.getElementById('fExtId').value.trim() || null,
             externalSystem: document.getElementById('fExtSys').value.trim() || null,
+            ...Page._readAllowances(),
           };
           if (!body.employeeCode || !body.firstNameTh || !body.lastNameTh || !body.startDate || !sal) {
             Layout.toast('กรอกข้อมูลที่จำเป็นให้ครบ', 'error'); return;
@@ -448,6 +499,7 @@
             externalId: document.getElementById('fExtId').value.trim() || null,
             externalSystem: document.getElementById('fExtSys').value.trim() || null,
             salaryType: document.getElementById('fSalaryType').value,
+            ...Page._readAllowances(),
           };
           try {
             await API.put(`/api/companies/${cid}/payroll/employees/${id}`, body);
@@ -456,6 +508,34 @@
             await this.load();
           } catch (err) { Layout.toast(err.message, 'error'); }
         }
+      },
+      /** ค่าลดหย่อนภาษี §47 — helper คู่เดียวใช้ทั้งสร้าง/แก้ไข/รีเซ็ต/hydrate
+       *  เพื่อไม่ให้ 4 จุดเขียนรายการช่องแยกกันแล้ว drift (D-T2) */
+      _readAllowances() {
+        const n = (id) => { const v = parseFloat(document.getElementById(id)?.value); return Number.isFinite(v) && v > 0 ? v : 0; };
+        const i = (id) => { const v = parseInt(document.getElementById(id)?.value, 10); return Number.isFinite(v) && v > 0 ? v : 0; };
+        return {
+          hasSpouseAllowance: document.getElementById('fAllowSpouse')?.checked || false,
+          childAllowanceCount: i('fAllowChildren'),
+          secondAndLaterChildren: i('fAllowChildren2561'),
+          parentAllowanceCount: Math.min(4, i('fAllowParents')),
+          lifeInsurancePremium: n('fAllowLifeIns'),
+          rmfSsfContribution: n('fAllowRmf'),
+          donationAmount: n('fAllowDonation'),
+          taxAllowances: i('fAllowLegacy'),
+        };
+      },
+      _setAllowances(e) {
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? 0; };
+        const cb = document.getElementById('fAllowSpouse');
+        if (cb) cb.checked = !!e.hasSpouseAllowance;
+        set('fAllowChildren', e.childAllowanceCount);
+        set('fAllowChildren2561', e.secondAndLaterChildren);
+        set('fAllowParents', e.parentAllowanceCount);
+        set('fAllowLifeIns', e.lifeInsurancePremium);
+        set('fAllowRmf', e.rmfSsfContribution);
+        set('fAllowDonation', e.donationAmount);
+        set('fAllowLegacy', e.taxAllowances);
       },
       async toggleActive(id, on) {
         try {
@@ -506,7 +586,7 @@
         box.innerHTML = this._customAllowances.map((a, i) => `
           <div style="display:flex;gap:6px;align-items:center;background:#f8fafc;padding:6px;border-radius:6px">
             <input type="text" class="form-input" style="flex:1" placeholder="ชื่อ (เช่น ค่าโทรศัพท์)"
-                   value="${(a.name || '').replace(/"/g,'&quot;')}" oninput="Page._customAllowances[${i}].name=this.value">
+                   value="${Layout.esc(a.name || '')}" oninput="Page._customAllowances[${i}].name=this.value">
             <select class="form-select" style="width:100px" onchange="Page._customAllowances[${i}].type=this.value">
               <option value="Monthly" ${a.type==='Monthly'?'selected':''}>Monthly</option>
               <option value="Daily" ${a.type==='Daily'?'selected':''}>Daily</option>

@@ -37,12 +37,17 @@ _STRIP = re.compile(
     r'|/\*(?:.|\n)*?\*/',        # block comment
     re.M)
 
+# ⚠️ `record struct X` / `record class X` มีคำนำหน้า **สองคำ** ก่อนชื่อจริง —
+# ถ้าไม่ยอมให้ข้าม จะจับได้แค่ "struct" แล้วชื่อจริงหลุด ⇒ ชนิดที่ประกาศในไฟล์
+# เองถูกฟ้องว่า "ไม่ได้ using" (เจอกับ `OutboundUrlGuard.Result` ซึ่งชื่อชนกับ
+# `Result` ในอีก 4 namespace — ชนิดที่ชื่อไม่ชนใครไม่เคยเปิดเผยบั๊กนี้)
 TYPE_DECL = re.compile(
     r'\b(?:public|internal|private|protected|static|sealed|abstract|partial|readonly|ref|file)\s+'
-    r'(?:[\w\s]*?)\b(class|struct|interface|enum|record)\s+([A-Za-z_]\w*)')
+    r'(?:[\w\s]*?)\b(class|struct|interface|enum|record)\s+(?:(?:struct|class)\s+)?([A-Za-z_]\w*)')
 NAMESPACE_DECL = re.compile(r'^\s*namespace\s+([\w.]+)\s*[;{]', re.M)
 USING_DECL = re.compile(r'^\s*(?:global\s+)?using\s+(?:static\s+)?(?:[\w]+\s*=\s*)?([\w.]+)\s*;', re.M)
-DECL_AFTER = re.compile(r'\b(?:namespace|class|struct|interface|enum|record)\s+([A-Za-z_]\w*)')
+DECL_AFTER = re.compile(
+    r'\b(?:namespace|class|struct|interface|enum|record)\s+(?:(?:struct|class)\s+)?([A-Za-z_]\w*)')
 
 # ── จับเฉพาะ "ตำแหน่งไวยากรณ์ที่ต้องเป็น type เท่านั้น" ────────────────────
 # รอบแรกจับ PascalCase ทุกตัวที่ไม่มี '.' นำหน้า → false positive 210 จุด

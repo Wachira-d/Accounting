@@ -71,29 +71,29 @@
               <thead><tr><th>Job</th><th>เริ่ม</th><th>ผล</th><th>รายการ</th><th>ใช้เวลา</th><th>หมายเหตุ</th></tr></thead>
               <tbody>${recent.map(r => `
                 <tr>
-                  <td><strong>${r.jobName}</strong></td>
+                  <td><strong>${AdminLayout.esc(r.jobName)}</strong></td>
                   <td>${fmt(r.startedAt)}</td>
                   <td>${r.success ? '<span style="color:#16a34a">✓ สำเร็จ</span>' : '<span style="color:#dc2626">✗ ล้มเหลว</span>'}</td>
                   <td class="admin-text-right">${r.itemsProcessed}</td>
                   <td>${r.durationMs != null ? (r.durationMs/1000).toFixed(1) + ' วิ' : '-'}</td>
-                  <td style="font-size:12px;color:#64748b">${(r.message||'').replace(/</g,'&lt;')}</td>
+                  <td style="font-size:12px;color:#64748b">${AdminLayout.esc((r.message||'').replace(/</g,'&lt;'))}</td>
                 </tr>`).join('')}</tbody>
             </table></div>`;
         } catch (e) {
-          document.getElementById('runLog').innerHTML = `<div style="color:var(--admin-danger);padding:16px">${e.message}</div>`;
+          document.getElementById('runLog').innerHTML = `<div style="color:var(--admin-danger);padding:16px">${AdminLayout.esc(e.message)}</div>`;
         }
       },
       render() {
         const grid = document.getElementById('grid');
         let html = this.jobs.map(j => `
           <div class="job">
-            <h3>${j.title}</h3>
-            <span class="interval">⏱ ${j.interval}</span>
-            <p>${j.desc}</p>
+            <h3>${AdminLayout.esc(j.title)}</h3>
+            <span class="interval">⏱ ${AdminLayout.esc(j.interval)}</span>
+            <p>${AdminLayout.esc(j.desc)}</p>
             <div class="auto">✓ รันอัตโนมัติ</div>
-            <div style="font-size:11px;color:#94a3b8;margin-top:2px">${j.name}</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px">${AdminLayout.esc(j.name)}</div>
             ${j.triggers.length ? `<div class="trigger-box">${j.triggers.map(t =>
-              `<button class="btn-secondary" style="font-size:12px" onclick="Page.run('${t.fn}',this)">▶ ${t.label}</button>`).join(' ')}</div>` : ''}
+              `<button class="btn-secondary" style="font-size:12px" onclick="Page.run('${t.fn}',this)">▶ ${AdminLayout.esc(t.label)}</button>`).join(' ')}</div>` : ''}
           </div>`).join('');
         // System maintenance card
         html += `
@@ -101,7 +101,7 @@
             <h3>🔧 งานบำรุงรักษาระบบ (สั่งเอง)</h3>
             <p>งานด้าน subscription / trial ที่ปกติ BackgroundJobService จัดการให้ — สั่งรันทันทีได้ที่นี่</p>
             <div class="trigger-box">
-              ${this.extra.map(t => `<button class="btn-secondary" style="font-size:12px;margin:2px" onclick="Page.run('${t.fn}',this)">▶ ${t.label}</button>`).join('')}
+              ${this.extra.map(t => `<button class="btn-secondary" style="font-size:12px;margin:2px" onclick="Page.run('${t.fn}',this)">▶ ${AdminLayout.esc(t.label)}</button>`).join('')}
             </div>
           </div>`;
         grid.innerHTML = html;

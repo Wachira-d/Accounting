@@ -102,6 +102,26 @@ public class CmsSiteService : ICmsSiteService
             }
         }
 
+        // เว็บไซต์ประเภทโรงแรม/ที่พัก → seed ที่พัก+ห้อง+ราคา+นโยบายให้ "จองได้ทันที"
+        // (ไม่ขึ้นกับ SeedTemplate — หน้าเว็บกับระบบจองเป็นคนละชั้น; ที่พักต้องมีเสมอ
+        // ไม่งั้นปุ่ม "จองห้องพัก" บน storefront ไม่มีอะไรให้จอง) · best-effort เหมือน template
+        if (request.IndustryType == IndustryType.Hotel)
+        {
+            try
+            {
+                var prop = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId);
+                if (prop != null)
+                {
+                    await _db.SaveChangesAsync();
+                    _logger.LogInformation("Seeded lodging property {Code} for site {SiteId}", prop.Code, site.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Lodging seeding failed for site {SiteId}", site.Id);
+            }
+        }
+
         _logger.LogInformation("Site '{Name}' created for company {CompanyId}", site.Name, companyId);
 
         return await GetSiteAsync(companyId, site.Id) ?? throw new InvalidOperationException("Failed to retrieve created site.");
@@ -136,6 +156,16 @@ public class CmsSiteService : ICmsSiteService
         if (request.DefaultCurrency != null) site.DefaultCurrency = request.DefaultCurrency;
         if (request.CaptchaProvider != null) site.CaptchaProvider = request.CaptchaProvider;
         if (request.CaptchaSiteKey != null) site.CaptchaSiteKey = request.CaptchaSiteKey;
+        // "" ที่ผู้ใช้ล้างช่องทิ้ง = กลับไปใช้ค่าของบริษัท (ไม่ใช่เก็บสตริงว่าง
+        // ซึ่งจะทำให้ token กลายเป็นว่างเปล่าแทนที่จะ fallback)
+        static string? Blank(string v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+
+        // ข้อมูลติดต่อระดับเว็บ — "" = ล้างค่ากลับไปใช้ของบริษัท · null = ไม่ได้ส่งมา
+        if (request.ContactPhone != null) site.ContactPhone = Blank(request.ContactPhone);
+        if (request.ContactEmail != null) site.ContactEmail = Blank(request.ContactEmail);
+        if (request.LineId != null) site.LineId = Blank(request.LineId);
+        if (request.FacebookUrl != null) site.FacebookUrl = Blank(request.FacebookUrl);
+        if (request.InstagramUrl != null) site.InstagramUrl = Blank(request.InstagramUrl);
         if (request.CookieConsentEnabled.HasValue) site.CookieConsentEnabled = request.CookieConsentEnabled.Value;
         if (request.PrivacyPolicyUrl != null) site.PrivacyPolicyUrl = request.PrivacyPolicyUrl;
         if (request.TermsOfServiceUrl != null) site.TermsOfServiceUrl = request.TermsOfServiceUrl;
@@ -185,6 +215,11 @@ public class CmsSiteService : ICmsSiteService
                 DefaultCurrency = s.DefaultCurrency,
                 CaptchaProvider = s.CaptchaProvider,
                 CaptchaSiteKey = s.CaptchaSiteKey,
+                ContactPhone = s.ContactPhone,
+                ContactEmail = s.ContactEmail,
+                LineId = s.LineId,
+                FacebookUrl = s.FacebookUrl,
+                InstagramUrl = s.InstagramUrl,
                 CookieConsentEnabled = s.CookieConsentEnabled,
                 PrivacyPolicyUrl = s.PrivacyPolicyUrl,
                 CurrentStorageUsed = s.CurrentStorageUsed,

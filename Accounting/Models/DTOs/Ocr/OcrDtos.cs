@@ -160,7 +160,16 @@ public record OcrLineItemDto(
     Guid? ProjectId = null,
     string? ProjectName = null,
     /// <summary>Unit detected from the description (ถุง/เส้น/กล่อง…).</summary>
-    string? Unit = null);
+    string? Unit = null,
+    /// <summary>อัตรา VAT ของบรรทัดนี้ — <c>7</c> เสียภาษี · <c>0</c> อัตราศูนย์ ·
+    /// <c>-1</c> ยกเว้น §81 (convention เดียวกับ <c>DocumentLine.VatRate</c>)
+    ///
+    /// <para>E-OCR-01: ต้องส่งถึงหน้า review ให้ผู้ใช้เห็น/แก้ได้ — ไม่งั้นบรรทัด
+    /// ที่ระบบเดาผิดจะไหลเข้าเอกสารโดยไม่มีใครทัดทาน แล้วไปโผล่ผิดคอลัมน์ใน
+    /// รายงานภาษีซื้อ §87</para></summary>
+    decimal? VatRate = null,
+    /// <summary>ภาษีของบรรทัดนี้หลังเฉลี่ยยอดจากหัวใบ (เฉพาะบรรทัดที่อัตรา &gt; 0)</summary>
+    decimal? VatAmount = null);
 
 public record OcrCreditPurchaseRequest(int Pages);
 
@@ -196,6 +205,17 @@ public record OcrCorrectionRequest(
     string? VendorBranchCode = null,
     string? BuyerTaxId = null,
     string? BuyerBranchCode = null,
+    /// <summary>ที่อยู่ผู้ขาย/ผู้ซื้อ + ชื่อผู้ซื้อ + เครดิตเทอม — รายการบังคับ
+    /// ตาม §86/4 ที่ <b>ไม่เคยมีทางแก้จากหน้า review เลย</b> (ผลตรวจ E-OCR-05)
+    ///
+    /// <para>OCR อ่านที่อยู่เพี้ยนเป็นเรื่องปกติ (ตัวเล็ก หลายบรรทัด มีตราประทับทับ)
+    /// แต่ทางเดียวที่ผู้ใช้แก้ได้คือไปแก้ที่ <c>Contact</c> ซึ่ง<b>เปลี่ยนใบเก่า
+    /// ทุกใบของผู้ขายรายนั้นตามไปด้วย</b> — ที่อยู่บนใบกำกับต้องเป็นที่อยู่
+    /// ณ วันที่ออกใบ ไม่ใช่ที่อยู่ล่าสุด</para></summary>
+    string? VendorAddress = null,
+    string? BuyerName = null,
+    string? BuyerAddress = null,
+    int? PaymentTermsDays = null,
     /// <summary>หมายเหตุ/เหตุผลทางธุรกิจที่ผู้ใช้พิมพ์เอง (เช่น "เดินทางไปพบ
     /// ลูกค้า") — ไหลต่อไปเป็น <c>Document.Notes</c> ของใบที่สร้างจากสแกนนี้
     ///

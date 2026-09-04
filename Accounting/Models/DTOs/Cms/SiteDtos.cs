@@ -57,6 +57,17 @@ public class UpdateSiteRequest
     public string? DefaultCurrency { get; set; }
     public string? CaptchaProvider { get; set; }
     public string? CaptchaSiteKey { get; set; }
+    // ── ข้อมูลติดต่อที่แสดงบนเว็บ (ว่าง = ใช้ของบริษัท) ──
+    // เนื้อหาหน้าเว็บอ้างค่าพวกนี้ผ่านโทเคน {{company.phone}} / {{site.lineId}} ฯลฯ
+    [MaxLength(50)]
+    public string? ContactPhone { get; set; }
+    [MaxLength(256)]
+    public string? ContactEmail { get; set; }
+    [MaxLength(100)]
+    public string? LineId { get; set; }
+    public string? FacebookUrl { get; set; }
+    public string? InstagramUrl { get; set; }
+
     public bool? CookieConsentEnabled { get; set; }
     public string? PrivacyPolicyUrl { get; set; }
     public string? TermsOfServiceUrl { get; set; }
@@ -93,6 +104,11 @@ public class SiteResponse
     public string DefaultCurrency { get; set; } = "THB";
     public string? CaptchaProvider { get; set; }
     public string? CaptchaSiteKey { get; set; }
+    public string? ContactPhone { get; set; }
+    public string? ContactEmail { get; set; }
+    public string? LineId { get; set; }
+    public string? FacebookUrl { get; set; }
+    public string? InstagramUrl { get; set; }
     public bool CookieConsentEnabled { get; set; }
     public string? PrivacyPolicyUrl { get; set; }
     public long CurrentStorageUsed { get; set; }

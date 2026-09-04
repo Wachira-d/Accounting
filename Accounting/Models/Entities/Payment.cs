@@ -14,6 +14,15 @@ public class Payment : TenantEntity
     public string? BankAccount { get; set; }
     public string? Notes { get; set; }
 
+    // ── ผูกกับชั้นกลาง payment gateway (PAYMENT_GATEWAY_DESIGN.md) ──
+    /// <summary>รายการชำระเงินที่ทำให้เกิดการรับเงินนี้ — null = บันทึกด้วยมือ/สลิป
+    /// ก่อนมีระบบ intent (ปกติ ไม่ใช่ข้อผิดพลาด)</summary>
+    public Guid? PaymentIntentId { get; set; }
+    /// <summary>ค่าธรรมเนียม gateway ที่หักจากยอดนี้ — ใช้ตอนกระทบยอด settlement</summary>
+    public decimal? GatewayFeeAmount { get; set; }
+    /// <summary>charge id ฝั่ง provider — ผู้ใช้เอาไปเทียบกับแดชบอร์ดของ gateway ได้</summary>
+    public string? GatewayRef { get; set; }
+
     // Proper FK to bank account (replaces text BankAccount field).
     // When OverrideBankAccountId is set, the GL hit + bank-balance update
     // follow this value; BankAccountId mirrors it for convenience. When

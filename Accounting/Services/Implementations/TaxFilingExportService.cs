@@ -358,9 +358,18 @@ public class TaxFilingExportService : ITaxFilingExportService
             .OrderBy(d => d.Employee.EmployeeCode)
             .ToList();
 
-        // SSO wage ceiling/rate per year (15,000 → 17,500 ปี 2026 → ...)
-        var ssoCfg = await _db.SsoYearConfigs.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted);
+        // SSO wage ceiling/rate ของ **เดือนนั้น** (15,000 → 17,500 ปี 2026 → ...)
+        // ⚠️ ต้องกรองด้วยเดือนด้วย: ประกาศลดอัตราออกเป็นช่วงเดือน ⇒ ปีเดียวมีได้
+        // หลายอัตรา การหยิบแถวแรกของปีจะได้อัตราของเดือนอื่นมาใช้กับเดือนนี้
+        var ssoCfg = (await _db.SsoYearConfigs.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted)
+                .ToListAsync())
+            .Where(c => Accounting.Helpers.SsoRateSchedule.CoversMonth(
+                c.EffectiveFromMonth, c.EffectiveToMonth, month))
+            .OrderBy(c => Accounting.Helpers.SsoRateSchedule.SpanWidth(
+                c.EffectiveFromMonth, c.EffectiveToMonth))
+            .ThenBy(c => c.EffectiveFromMonth)
+            .FirstOrDefault();
         var wageCeiling = ssoCfg?.WageCeiling
             ?? Accounting.Helpers.SsoRateSchedule.GetDefault(year).WageCeiling;
         var ratePercent = ssoCfg?.RatePercent
@@ -440,8 +449,15 @@ public class TaxFilingExportService : ITaxFilingExportService
         //   • เลขบัตร: ตัดขีด/ช่องว่างเหลือแต่ตัวเลข; ไม่ครบ 13 หลัก → แจ้งเตือน
         //   • ชื่อ/นามสกุลว่าง → แจ้งเตือน
         // อัตรา/เพดานของปีนั้น — ใช้ทั้งหาค่าจ้างที่ตรงกับยอดสมทบ และตรวจคู่ก่อนยื่น
-        var xlCfg = await _db.SsoYearConfigs.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted);
+        var xlCfg = (await _db.SsoYearConfigs.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted)
+                .ToListAsync())
+            .Where(c => Accounting.Helpers.SsoRateSchedule.CoversMonth(
+                c.EffectiveFromMonth, c.EffectiveToMonth, month))
+            .OrderBy(c => Accounting.Helpers.SsoRateSchedule.SpanWidth(
+                c.EffectiveFromMonth, c.EffectiveToMonth))
+            .ThenBy(c => c.EffectiveFromMonth)
+            .FirstOrDefault();
         var xlCeiling = xlCfg?.WageCeiling
             ?? Accounting.Helpers.SsoRateSchedule.GetDefault(year).WageCeiling;
         var xlRate = (xlCfg?.RatePercent
@@ -922,10 +938,10 @@ public class TaxFilingExportService : ITaxFilingExportService
     {
         var company = await GetCompanyAsync(companyId);
         var thaiYear = year + 543;
-        var startMonth = company.FiscalYearStartMonth is >= 1 and <= 12 ? company.FiscalYearStartMonth : 1;
-        var fyStart = new DateTime(year, startMonth, 1);
-        var fyEnd = fyStart.AddYears(1).AddDays(-1);
-        var halfEnd = fyStart.AddMonths(6).AddDays(-1);   // 6 เดือนแรก
+        var fy = Accounting.Helpers.FiscalYear.RangeFor(year, company.FiscalYearStartMonth);
+        var fyStart = fy.Start;
+        var fyEnd = fy.EndInclusive;
+        var halfEnd = fy.HalfEndInclusive;   // 6 เดือนแรก
 
         // First-year ยกเว้น ภ.ง.ด.51 — ใช้ Company.CreatedAt เป็น proxy
         // ของวันเริ่มจัดตั้งระบบ (best-effort; user override ผ่าน portal ได้).
@@ -944,6 +960,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var revenueHalf = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= fyStart
                 && l.JournalEntry.EntryDate <= halfEnd
                 && l.Account!.AccountType == AccountType.Revenue)
@@ -951,6 +968,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var expenseHalf = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= fyStart
                 && l.JournalEntry.EntryDate <= halfEnd
                 && l.Account!.AccountType == AccountType.Expense)
@@ -971,7 +989,10 @@ public class TaxFilingExportService : ITaxFilingExportService
         var paidUpCapital = company.PaidUpCapital;
         var isSme = paidUpCapital <= 5_000_000m && revenueAnnualEst <= 30_000_000m;
         var estimatedAnnualCit = ComputeCit(estimatedAnnualProfit, isSme);
-        var halfYearCit = Math.Round(estimatedAnnualCit / 2m, 2);   // §67 ทวิ
+        // §67 ทวิ — **ตกจุดกึ่งกลางจริง**: `x/2` ให้ .005 ทุกครั้งที่สตางค์เป็นเลขคี่
+        // (พิสูจน์แล้วด้วยการไล่ค่า) ⇒ ไม่มี AwayFromZero = banker's rounding
+        // ปัดลงครึ่งหนึ่งของเคส ⇒ ยอดในไฟล์ที่ยื่นต่างจากที่คำนวณเอง (ผลตรวจ C-T16)
+        var halfYearCit = Math.Round(estimatedAnnualCit / 2m, 2, MidpointRounding.AwayFromZero);   // §67 ทวิ
 
         var sb = new System.Text.StringBuilder();
         var branchSeq = company.BranchCode ?? "00000";
@@ -992,16 +1013,22 @@ public class TaxFilingExportService : ITaxFilingExportService
     private static decimal ComputeCit(decimal netProfit, bool isSme)
     {
         if (netProfit <= 0) return 0;
-        if (!isSme) return Math.Round(netProfit * 0.20m, 2);
+        // ⚠️ `×0.20` **ไม่เคยตกจุดกึ่งกลางเลย** (ไล่ค่า 2 ล้านค่าแล้วไม่พบสักตัว —
+        // 20·c ลงท้าย 0 เสมอ) ⇒ บรรทัดนี้ไม่ใช่บั๊ก แต่ใส่ไว้ให้เหมือนกันทั้งเมธอด
+        // **เป็นการป้องกัน** ไม่ให้คนถัดไปคัดลอกรูปที่ไม่มี MidpointRounding ไปใช้
+        // กับสูตรที่ตกจริง (บทเรียน VatRoundingMode: ลืม AwayFromZero ≠ ยอดผิดเสมอ)
+        if (!isSme) return Math.Round(netProfit * 0.20m, 2, MidpointRounding.AwayFromZero);
         // SME ขั้นบันได
         decimal tax = 0;
         var remain = netProfit;
         var b1 = Math.Min(remain, 300_000m); tax += b1 * 0m; remain -= b1;
-        if (remain <= 0) return Math.Round(tax, 2);
+        if (remain <= 0) return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
+        // ★ `×0.15` **ตกจุดกึ่งกลางจริง** — ทุกยอดที่สตางค์ ≡ 10 (mod 20)
+        // (0.30 → 0.045 · 0.70 → 0.105 · 1.10 → 0.165) ⇒ ราว 5% ของยอด
         var b2 = Math.Min(remain, 2_700_000m); tax += b2 * 0.15m; remain -= b2;
-        if (remain <= 0) return Math.Round(tax, 2);
+        if (remain <= 0) return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
         tax += remain * 0.20m;
-        return Math.Round(tax, 2);
+        return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
     }
 
     private static string Esc(string? s) => s == null ? "" : s.Replace("|", "/").Replace("\n", " ").Trim();

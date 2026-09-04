@@ -44,6 +44,12 @@ public sealed record AiRequest
     /// primary so the UI can still show "or one of these" options.</summary>
     public IReadOnlyList<string> LocalAlternatives { get; init; } = Array.Empty<string>();
 
+    /// <summary>คำตอบแบบมีโครงของ local model (รูปเดียวกับ JSON ที่ AI จะคืน) —
+    /// orchestrator ส่งค่านี้ออกทาง <c>AiResponse.RawResponseJson</c> เมื่อ AI ไม่ถูกเรียก
+    /// <para>ไม่มีค่า = นักเรียนตอบได้แค่คำตอบเดี่ยว (พฤติกรรมเดิม) · ดูเหตุผลเต็ม
+    /// ที่ <c>LocalPrediction.StructuredJson</c></para></summary>
+    public string? LocalRawJson { get; init; }
+
     /// <summary>Which entity triggered this — recorded on the feedback row
     /// for audit and for downstream "what document caused this AI call"
     /// drilldown on the admin page.</summary>

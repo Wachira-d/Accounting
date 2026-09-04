@@ -26,11 +26,13 @@ public class UndueInputVatExpiryJob : BackgroundService
     private readonly ILogger<UndueInputVatExpiryJob> _logger;
     private static readonly TimeSpan Interval = TimeSpan.FromHours(24);
 
-    /// <summary>คีย์ advisory lock ของงานนี้ (คงที่ — ทั้งระบบมีผู้รันได้ทีละราย)</summary>
-    // ค่าเดียวกับ DocumentService.UndueVatExpiryLockKey — ตอนนี้ตัวเมธอดขอ
-    // ล็อกเองแล้ว (ทุกผู้เรียกได้รับการป้องกันเท่ากัน) job ยังถือล็อกรอบนอก
-    // ไว้เพื่อกันสแกนรายชื่อบริษัทซ้อนกันข้าม instance
-    private const long LockKey = Services.Implementations.DocumentService.UndueVatExpiryLockKey;
+    // ⚠️ **ไม่มีล็อกรอบนอกแล้ว** — เดิม job ถือ `pg_advisory_xact_lock(828003)`
+    // ค่าคงที่ทั้งระบบไว้ตลอดทั้งรอบ ซึ่งเป็นคีย์เดียวกับที่ปุ่มของผู้ใช้ขอ ⇒
+    // job ที่กำลังไล่บริษัทอยู่ **บล็อกผู้ใช้ทุกบริษัท**ที่กดปุ่มในช่วงนั้น
+    // ตอนนี้ล็อกอยู่ที่ `DocumentService.UndueVatExpiryLockKeyFor(companyId)`
+    // ในตัวเมธอด ⇒ กันซ้อนได้ครบเหมือนเดิม (ปุ่ม vs job ของบริษัทเดียวกัน)
+    // โดยบริษัทอื่นไม่ต้องรอ · การสแกนรายชื่อบริษัทซ้อนกันข้าม instance ไม่เสียหาย
+    // เพราะตัวเมธอดเป็น idempotent (`InputVatExpiredAt`) และล็อกรายบริษัทกันอยู่แล้ว
 
     public UndueInputVatExpiryJob(IServiceProvider services, ILogger<UndueInputVatExpiryJob> logger)
     {
@@ -56,12 +58,6 @@ public class UndueInputVatExpiryJob : BackgroundService
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
         var docs = scope.ServiceProvider.GetRequiredService<IDocumentService>();
-
-        // ล็อกทั้งรอบงานไว้ใน transaction เดียว — instance อื่นที่ตื่นพร้อมกัน
-        // จะรอ (ไม่ใช่รันซ้อน) แล้วเจอว่าไม่มีอะไรเหลือให้ทำเพราะ
-        // InputVatExpiredAt ถูกตั้งไปแล้ว (idempotent อีกชั้น)
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", new object[] { LockKey }, ct);
 
         // เฉพาะบริษัทที่ยังมีเอกสารค้าง 11640 จริง — ไม่สแกนทั้งฐานทุกคืน
         var companyIds = await db.Documents.AsNoTracking()
@@ -91,7 +87,6 @@ public class UndueInputVatExpiryJob : BackgroundService
             }
         }
 
-        await tx.CommitAsync(ct);
         if (total > 0)
             _logger.LogInformation("UndueInputVatExpiryJob: จัดการทั้งหมด {Total} ใบ", total);
     }

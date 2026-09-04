@@ -50,7 +50,31 @@ public class ChatbotService : IChatbotService
     // คำตอบล่าสุดต่อ (session, normalized question) — L3 กันถามซ้ำถี่.
     // in-memory พอ: พลาดข้าม instance แค่ทำให้เสีย AI call เพิ่ม 1 ครั้ง
     // (ไม่ใช่ช่องโหว่ความปลอดภัย) ต่างจากตัวนับ rate ที่ต้องแม่นจริง
+    //
+    // ⚠️ **ต้องมีเพดานและวันหมดอายุ** (ผลตรวจ F-14): ป้อนจาก `AskPublicAsync`
+    // ซึ่งเป็นเส้น **ไม่ต้องล็อกอิน** ⇒ ยิงคำถามที่ไม่ซ้ำกันไปเรื่อย ๆ ก็โต
+    // ไม่มีขอบเขต จนหน่วยความจำหมดแล้ว process ตาย — ทั้งที่ประโยชน์ของแคช
+    // อยู่แค่ 10 นาทีแรกเท่านั้น
     private static readonly ConcurrentDictionary<string, (string Answer, DateTime At)> _recentAnswers = new();
+    private const int RecentAnswersMax = 5_000;
+    private static readonly TimeSpan RecentAnswersTtl = TimeSpan.FromMinutes(10);
+
+    /// <summary>เก็บคำตอบพร้อมล้างของที่หมดอายุ — และถ้ายังเกินเพดานให้ทิ้ง
+    /// ตัวเก่าสุดจนพอดี (แคชที่โตเกินเพดานคือ memory leak ไม่ใช่แคช)</summary>
+    private static void RememberAnswer(string key, string answer)
+    {
+        var now = DateTime.UtcNow;
+        _recentAnswers[key] = (answer, now);
+        if (_recentAnswers.Count <= RecentAnswersMax) return;
+
+        foreach (var kv in _recentAnswers)
+            if (now - kv.Value.At > RecentAnswersTtl) _recentAnswers.TryRemove(kv.Key, out _);
+
+        if (_recentAnswers.Count <= RecentAnswersMax) return;
+        foreach (var kv in _recentAnswers.OrderBy(k => k.Value.At)
+                                         .Take(_recentAnswers.Count - RecentAnswersMax).ToList())
+            _recentAnswers.TryRemove(kv.Key, out _);
+    }
 
     // ═══════════ public chat ═══════════
 
@@ -191,7 +215,7 @@ public class ChatbotService : IChatbotService
         _db.ChatMessages.Add(botMsg);
         conv.MessageCount++; conv.LastMessageAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        _recentAnswers[dupKey] = (answer, DateTime.UtcNow);
+        RememberAnswer(dupKey, answer);
         return new ChatAskResult(conv.Id, token, botMsg.Id, answer, usedAi, conv.Status);
     }
 

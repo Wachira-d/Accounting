@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ที่พัก · Front desk - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .tabs { display:flex; gap:4px; border-bottom:1px solid var(--gray-200); margin-bottom:16px; flex-wrap:wrap }
+    .tab { padding:10px 14px; cursor:pointer; border-bottom:2px solid transparent; font-weight:500; font-size:14px; color:var(--gray-600) }
+    .tab.active { border-bottom-color:var(--primary-600,#4F46E5); color:var(--primary-600,#4F46E5) }
+    .stat-card { background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:12px 16px }
+    .stat-label { font-size:12px;color:var(--gray-500) } .stat-value { font-size:22px;font-weight:700;margin-top:2px }
+    .card { background:#fff; border:1px solid var(--gray-200); border-radius:10px; padding:14px 16px; margin-bottom:14px }
+    .card h4 { margin:0 0 8px; font-size:14px }
+    .pill { display:inline-block; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; background:var(--gray-100) }
+    .st-Pending { background:#fef3c7;color:#92400e } .st-Confirmed { background:#dbeafe;color:#1e40af } .st-CheckedIn { background:#d1fae5;color:#065f46 }
+    .st-CheckedOut { background:#e5e7eb;color:#374151 } .st-Cancelled { background:#fee2e2;color:#991b1b } .st-NoShow { background:#fde68a;color:#78350f }
+    .hk-1 { background:#d1fae5;color:#065f46 } .hk-2 { background:#fee2e2;color:#991b1b } .hk-3 { background:#dbeafe;color:#1e40af } .hk-4 { background:#fef3c7;color:#92400e } .hk-5 { background:#ede9fe;color:#5b21b6 } .hk-6,.hk-7 { background:#e5e7eb;color:#374151 }
+    .board { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px }
+    .room { border:1px solid var(--gray-200); border-radius:8px; padding:8px 10px; font-size:12px; cursor:pointer; background:#fff }
+    .room b { font-size:15px } .room.occ { border-color:#93c5fd; background:#eff6ff } .room.dirty { border-color:#fca5a5; background:#fef2f2 } .room.oos { opacity:.6; background:#f3f4f6 } .room.arr { border-color:#fcd34d }
+    .booking-row { cursor:pointer } .booking-row:hover { background:var(--gray-50) }
+    .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px 14px }
+    .fld label { display:block; font-size:12px; color:var(--gray-600); margin-bottom:3px }
+    .kv { display:flex; justify-content:space-between; padding:3px 0; font-size:13px } .kv.total { font-weight:700; border-top:1px solid var(--gray-200); margin-top:4px; padding-top:6px }
+    .tape { overflow-x:auto } .tape table { border-collapse:collapse; font-size:11px } .tape th,.tape td { border:1px solid var(--gray-200); padding:2px 4px; min-width:34px; text-align:center; white-space:nowrap }
+    .tape td.bar { color:#fff; cursor:pointer } .tape .s-Confirmed { background:#3b82f6 } .tape .s-CheckedIn { background:#10b981 } .tape .s-Pending { background:#f59e0b } .tape td.we { background:#fafafa }
+    .tape th.unit { text-align:left; position:sticky; left:0; background:#fff; min-width:120px }
+    .hint { font-size:11px; color:var(--gray-500) }
+    .actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px }
+    .warn { background:#fef3c7; border:1px solid #fcd34d; border-radius:8px; padding:8px 12px; font-size:13px; margin-bottom:10px }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">🏨 ที่พัก · Front desk</h2>
+        <p class="page-subtitle">จอง · ยืนยันมัดจำ · จัดห้อง · เช็คอิน/เอาต์ · folio · ปฏิทินห้อง · แม่บ้าน · คำขอแขก</p>
+      </div>
+      <div class="flex gap-2">
+        <select class="form-input" id="propSelector" onchange="Page.onPropChange()" style="min-width:220px"><option value="">กำลังโหลด...</option></select>
+        <button class="btn btn-primary" onclick="Page.openNewReservation()">+ จองใหม่ (walk-in/โทร)</button>
+        <a class="btn btn-secondary" href="/pages/lodging-settings.html">⚙️ ตั้งค่า</a>
+      </div>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-tab="dash" onclick="Page.showTab('dash')">แดชบอร์ดวันนี้</div>
+      <div class="tab" data-tab="list" onclick="Page.showTab('list')">รายการจอง</div>
+      <div class="tab" data-tab="cal" onclick="Page.showTab('cal')">ปฏิทินห้อง</div>
+      <div class="tab" data-tab="hk" onclick="Page.showTab('hk')">แม่บ้าน</div>
+      <div class="tab" data-tab="req" onclick="Page.showTab('req')">คำขอแขก</div>
+    </div>
+
+    <div id="tabDash">
+      <div class="flex gap-2" style="margin-bottom:10px;align-items:center"><input type="date" class="form-input" id="dashDate" onchange="Page.loadDash()"><span class="hint">อัตราเข้าพัก · เข้า/ออกวันนี้ · สถานะห้อง</span></div>
+      <div class="grid grid-4 gap-4" style="margin-bottom:14px" id="dashStats"></div>
+      <div class="grid grid-2 gap-4">
+        <div class="card"><h4>🛬 เข้าพักวันนี้</h4><div id="dashArrivals"></div></div>
+        <div class="card"><h4>🛫 ออกวันนี้</h4><div id="dashDepartures"></div></div>
+      </div>
+      <div class="card"><h4>🚪 สถานะห้อง</h4><div class="board" id="dashBoard"></div></div>
+    </div>
+
+    <div id="tabList" class="hidden">
+      <div class="toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <select class="filter-select" id="viewFilter" onchange="Page.loadList()"><option value="">ทั้งหมด (ช่วงวันที่)</option><option value="pending">รอชำระมัดจำ</option><option value="slips">มีสลิปรอตรวจ</option><option value="arrivals">เข้าพักวันนี้</option><option value="inhouse">กำลังพัก</option><option value="departures">ออกวันนี้</option></select>
+        <select class="filter-select" id="statusFilter" onchange="Page.loadList()"><option value="">ทุกสถานะ</option><option value="Pending">รอมัดจำ</option><option value="Confirmed">ยืนยันแล้ว</option><option value="CheckedIn">เช็คอินแล้ว</option><option value="CheckedOut">เช็คเอาต์แล้ว</option><option value="Cancelled">ยกเลิก</option><option value="NoShow">No-show</option></select>
+        <input type="date" class="form-input" id="fromFilter" onchange="Page.loadList()"><input type="date" class="form-input" id="toFilter" onchange="Page.loadList()">
+        <input type="text" class="search-input" id="searchInput" placeholder="เลขจอง / ชื่อ / โทร" oninput="Page.debounce()">
+      </div>
+      <div class="table-container"><table class="table"><thead><tr><th>เลขจอง</th><th>แขก</th><th>เข้า → ออก</th><th>ห้อง</th><th class="text-right">ยอด</th><th class="text-right">คงเหลือ</th><th>สถานะ</th><th>ที่มา</th></tr></thead><tbody id="listBody"></tbody></table></div>
+    </div>
+
+    <div id="tabCal" class="hidden">
+      <div class="flex gap-2" style="margin-bottom:10px;align-items:center"><input type="date" class="form-input" id="calFrom" onchange="Page.loadCal()"><select class="form-input" id="calDays" onchange="Page.loadCal()"><option value="14">14 วัน</option><option value="30">30 วัน</option><option value="60">60 วัน</option></select><span class="hint">คลิกแท่งเพื่อเปิดการจอง · แถว "รอจัดห้อง" = ยังไม่ assign หมายเลขห้อง</span></div>
+      <div class="tape card" id="calBox"></div>
+      <div class="card"><h4>ห้องว่าง/ราคาต่อวัน (ต่อประเภทห้อง)</h4><div class="tape" id="availBox"></div></div>
+    </div>
+
+    <div id="tabHk" class="hidden">
+      <div class="flex gap-2" style="margin-bottom:10px"><select class="filter-select" id="hkStatus" onchange="Page.loadHk()"><option value="">ค้างอยู่</option><option value="Pending">รอ</option><option value="Assigned">มอบหมายแล้ว</option><option value="InProgress">กำลังทำ</option><option value="Completed">เสร็จ</option><option value="Verified">ตรวจแล้ว</option></select><button class="btn btn-secondary" onclick="Page.newTask()">+ งานแม่บ้าน/ซ่อม</button></div>
+      <div class="table-container"><table class="table"><thead><tr><th>ห้อง</th><th>งาน</th><th>ความสำคัญ</th><th>ผู้รับผิดชอบ</th><th>กำหนด</th><th>สถานะ</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="hkBody"></tbody></table></div>
+    </div>
+
+    <div id="tabReq" class="hidden">
+      <div class="flex gap-2" style="margin-bottom:10px"><label class="hint"><input type="checkbox" id="reqOpenOnly" checked onchange="Page.loadReq()"> เฉพาะที่ยังไม่ปิด</label></div>
+      <div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>ห้อง/แขก</th><th>ประเภท</th><th>รายละเอียด</th><th>สถานะ</th><th>ตอบกลับ</th><th></th></tr></thead><tbody id="reqBody"></tbody></table></div>
+    </div>
+
+    <!-- รายละเอียดการจอง -->
+    <div class="modal-overlay" id="resModal">
+      <div class="modal" style="max-width:900px">
+        <div class="modal-header"><h3 class="modal-title" id="resTitle">การจอง</h3><button class="modal-close" onclick="Layout.closeModal('resModal')">&times;</button></div>
+        <div class="modal-body" id="resBody"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('resModal')">ปิด</button></div>
+      </div>
+    </div>
+    <!-- ฟอร์มย่อย (ยืนยัน/เช็คเอาต์/เพิ่มรายการ/จองใหม่/งาน) -->
+    <div class="modal-overlay" id="subModal">
+      <div class="modal" style="max-width:720px">
+        <div class="modal-header"><h3 class="modal-title" id="subTitle"></h3><button class="modal-close" onclick="Layout.closeModal('subModal')">&times;</button></div>
+        <div class="modal-body" id="subBody"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('subModal')">ยกเลิก</button><button class="btn btn-primary" id="subSave">ตกลง</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const ST = { Pending: 'รอมัดจำ', Confirmed: 'ยืนยันแล้ว', CheckedIn: 'เช็คอินแล้ว', CheckedOut: 'เช็คเอาต์แล้ว', Cancelled: 'ยกเลิก', NoShow: 'No-show' };
+    const SRC = { Web: 'เว็บ', WalkIn: 'Walk-in', Phone: 'โทร', Agent: 'Agent', Ota: 'OTA', Other: 'อื่น' };
+    const HK = { 1: 'ว่าง-สะอาด', 2: 'รอทำความสะอาด', 3: 'มีแขก', 4: 'กำลังทำความสะอาด', 5: 'รอตรวจ', 6: 'ห้องเสีย', 7: 'ซ่อมบำรุง', VacantClean: 'ว่าง-สะอาด', VacantDirty: 'รอทำความสะอาด', Occupied: 'มีแขก', Cleaning: 'กำลังทำความสะอาด', Inspecting: 'รอตรวจ', OutOfOrder: 'ห้องเสีย', Maintenance: 'ซ่อมบำรุง' };
+    const HKN = { VacantClean: 1, VacantDirty: 2, Occupied: 3, Cleaning: 4, Inspecting: 5, OutOfOrder: 6, Maintenance: 7 };
+    const TASK = { CheckoutClean: 'ทำความสะอาดหลังเช็คเอาต์', StayOver: 'ทำความสะอาดระหว่างพัก', DeepClean: 'ทำความสะอาดใหญ่', Turndown: 'Turndown', Inspection: 'ตรวจห้อง', Maintenance: 'ซ่อมบำรุง' };
+    const TSTAT = { Pending: 'รอ', Assigned: 'มอบหมายแล้ว', InProgress: 'กำลังทำ', Completed: 'เสร็จ', Verified: 'ตรวจแล้ว', Cancelled: 'ยกเลิก' };
+    const PRI = { Low: 'ต่ำ', Normal: 'ปกติ', High: 'สูง', Urgent: 'ด่วน' };
+    const REQT = { Housekeeping: 'แม่บ้าน', Maintenance: 'แจ้งซ่อม', Concierge: 'คอนเซียร์จ', RoomService: 'รูมเซอร์วิส', Complaint: 'ร้องเรียน', Other: 'อื่น' };
+    const PM = { 1: 'เงินสด', 2: 'โอน', 3: 'บัตรเครดิต', 5: 'PromptPay', 7: 'e-Wallet', 99: 'อื่น' };
+    const esc = (s) => Layout.esc(s);
+    const money = (n) => '฿' + Layout.money(n);
+    const d10 = (d) => (d || '').slice(0, 10);
+    const todayIso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+
+    const Page = {
+      propertyId: null, props: [], units: [], roomTypes: [], extras: [], current: null, _t: null,
+      async init() {
+        if (!Layout.init('lodging')) return;
+        Layout.showQuotaBanner();
+        const api = Layout.api(); if (!api) return;
+        document.getElementById('dashDate').value = todayIso(); document.getElementById('calFrom').value = todayIso();
+        try {
+          const res = await api.lodgingProperties(); this.props = res.data || [];
+        } catch (e) { Layout.toast('โหลดที่พักไม่สำเร็จ: ' + e.message, 'error'); return; }
+        const sel = document.getElementById('propSelector');
+        if (!this.props.length) { sel.innerHTML = '<option value="">ยังไม่มีที่พัก</option>'; document.getElementById('dashStats').innerHTML = '<div class="card">ยังไม่มีที่พัก — <a href="/pages/lodging-settings.html">สร้างที่พักในหน้าตั้งค่า</a> หรือสร้างเว็บไซต์ประเภท "โรงแรม/ที่พัก" ใน CMS</div>'; return; }
+        sel.innerHTML = this.props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+        this.propertyId = new URLSearchParams(location.search).get('propertyId') || this.props[0].id; sel.value = this.propertyId;
+        this.property = this.props.find(p => p.id === this.propertyId) || null;
+        await this.loadRefs(); await this.loadDash();
+        const open = new URLSearchParams(location.search).get('id'); if (open) await this.openReservation(open);
+      },
+      async onPropChange() { this.propertyId = document.getElementById('propSelector').value;
+        this.property = this.props.find(p => p.id === this.propertyId) || null;
+        await this.loadRefs(); await this.loadDash(); await this.loadList(); },
+      async loadRefs() {
+        const api = Layout.api();
+        const [u, rt, ex] = await Promise.all([api.lodgingUnits(this.propertyId), api.lodgingRoomTypes(this.propertyId), api.lodgingExtras(this.propertyId)]);
+        this.units = u.data || []; this.roomTypes = (rt.data || []).filter(r => r.isActive); this.extras = (ex.data || []).filter(e => e.isActive);
+      },
+      showTab(name) {
+        ['tabDash','tabList','tabCal','tabHk','tabReq'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        document.getElementById('tab' + name.charAt(0).toUpperCase() + name.slice(1)).classList.remove('hidden');
+        document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+        if (name === 'list') this.loadList(); if (name === 'cal') this.loadCal(); if (name === 'hk') this.loadHk(); if (name === 'req') this.loadReq();
+      },
+      debounce() { clearTimeout(this._t); this._t = setTimeout(() => this.loadList(), 300); },
+      pill(s) { return `<span class="pill st-${s}">${ST[s] || s}</span>`; },
+      resRow(r) {
+        return `<tr class="booking-row" onclick="Page.openReservation('${r.id}')"><td><b>${esc(r.reservationNumber)}</b>${r.hasSlip && r.status === 'Pending' ? ' 📎' : ''}</td><td>${esc(r.guestName)}<div class="hint">${esc(r.guestPhone || '')}</div></td>
+          <td>${Layout.date(r.checkInDate)} → ${Layout.date(r.checkOutDate)} <span class="hint">${r.nights} คืน</span></td><td>${esc(r.roomSummary)}${r.unitNumbers ? `<div class="hint">ห้อง ${esc(r.unitNumbers)}</div>` : ''}</td>
+          <td class="text-right">${money(r.totalAmount + r.folioTotal)}</td><td class="text-right ${r.balanceDue > 0 ? 'text-warning' : 'text-success'}">${money(r.balanceDue)}</td><td>${this.pill(r.status)}</td><td>${SRC[r.source] || r.source}</td></tr>`;
+      },
+
+      // ─── แดชบอร์ด ───
+      async loadDash() {
+        if (!this.propertyId) return;
+        const api = Layout.api(); const date = document.getElementById('dashDate').value;
+        try {
+          const res = await api.lodgingDashboard(this.propertyId, `?date=${date}`); const d = res.data;
+          document.getElementById('dashStats').innerHTML = [
+            ['อัตราเข้าพัก', `${d.occupancyPercent}%`, `${d.occupiedUnits}/${d.totalUnits} ห้อง`], ['เข้าพักวันนี้', d.arrivalsToday, 'รอเช็คอิน'], ['ออกวันนี้', d.departuresToday, 'รอเช็คเอาต์'],
+            ['กำลังพัก', d.inHouse, 'การจอง'], ['รอมัดจำ', d.pendingReservations, `สลิปรอตรวจ ${d.pendingSlips}`], ['ห้องรอทำความสะอาด', d.dirtyUnits, `ปิดซ่อม ${d.outOfServiceUnits}`],
+            ['งานแม่บ้านค้าง', d.openHousekeepingTasks, `คำขอแขก ${d.openGuestRequests}`], ['รายได้เดือนนี้ (เช็คเอาต์แล้ว)', money(d.revenueMonthToDate), '']
+          ].map(([l, v, s]) => `<div class="stat-card"><div class="stat-label">${l}</div><div class="stat-value">${v}</div><div class="hint">${s}</div></div>`).join('');
+          const mk = (list, empty) => list.length ? `<table class="table"><tbody>${list.map(r => this.resRow(r)).join('')}</tbody></table>` : `<div class="hint">${empty}</div>`;
+          document.getElementById('dashArrivals').innerHTML = mk(d.arrivals, 'ไม่มีแขกเข้าพักวันนี้');
+          document.getElementById('dashDepartures').innerHTML = mk(d.departures, 'ไม่มีแขกออกวันนี้');
+          document.getElementById('dashBoard').innerHTML = d.roomBoard.map(u => `<div class="room ${u.isOutOfService ? 'oos' : u.currentReservationId ? 'occ' : u.housekeepingStatus === 'VacantDirty' || u.housekeepingStatus === 2 ? 'dirty' : u.arrivingReservationId ? 'arr' : ''}" onclick="${u.currentReservationId ? `Page.openReservation('${u.currentReservationId}')` : u.arrivingReservationId ? `Page.openReservation('${u.arrivingReservationId}')` : `Page.unitStatus('${u.unitId}')`}">
+              <b>${esc(u.number)}</b> <span class="hint">${esc(u.roomTypeName)}</span><div><span class="pill hk-${HKN[u.housekeepingStatus] || u.housekeepingStatus}">${HK[u.housekeepingStatus] || u.housekeepingStatus}</span>${u.isOutOfService ? ' 🔧' : ''}</div>
+              ${u.currentGuestName ? `<div>👤 ${esc(u.currentGuestName)}<div class="hint">ออก ${Layout.date(u.currentCheckOut)}</div></div>` : u.arrivingGuestName ? `<div class="hint">🛬 ${esc(u.arrivingGuestName)}</div>` : ''}</div>`).join('');
+        } catch (e) { Layout.toast('โหลดแดชบอร์ดไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      unitStatus(unitId) {
+        const u = this.units.find(x => x.id === unitId); if (!u) return;
+        this.sub(`ห้อง ${esc(u.number)} — สถานะแม่บ้าน`, `<form id="unitForm" class="grid2">
+          <div class="fld"><label>สถานะ</label><select class="form-input" name="status">${Object.entries(HKN).map(([k, v]) => `<option value="${v}" ${u.housekeepingStatus === k || u.housekeepingStatus === v ? 'selected' : ''}>${HK[v]}</option>`).join('')}</select></div>
+          <div class="fld"><label>ปิดซ่อม</label><select class="form-input" name="isOutOfService"><option value="">ไม่เปลี่ยน</option><option value="true">ปิดซ่อม</option><option value="false">เปิดขาย</option></select></div>
+          <div class="fld"><label>ปิดถึง</label><input class="form-input" type="date" name="outOfServiceUntil"></div>
+          <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div></form>`, async () => {
+          const f = document.getElementById('unitForm');
+          const body = { status: +f.status.value, isOutOfService: f.isOutOfService.value === '' ? null : f.isOutOfService.value === 'true', outOfServiceUntil: f.outOfServiceUntil.value ? f.outOfServiceUntil.value + 'T00:00:00' : null, note: f.note.value || null };
+          await this.call(() => Layout.api().lodgingSetUnitStatus(unitId, body)); await this.loadRefs(); await this.loadDash();
+        });
+      },
+
+      // ─── รายการ ───
+      async loadList() {
+        if (!this.propertyId) return;
+        const api = Layout.api();
+        const view = document.getElementById('viewFilter').value, status = document.getElementById('statusFilter').value;
+        const from = document.getElementById('fromFilter').value, to = document.getElementById('toFilter').value, search = document.getElementById('searchInput').value;
+        let q = `?propertyId=${this.propertyId}&pageSize=100`;
+        if (view) q += `&view=${view}`; if (status) q += `&status=${status}`; if (from) q += `&from=${from}`; if (to) q += `&to=${to}`; if (search) q += `&search=${encodeURIComponent(search)}`;
+        try {
+          const res = await api.lodgingReservations(q); const items = res.data?.items || [];
+          document.getElementById('listBody').innerHTML = items.length ? items.map(r => this.resRow(r)).join('') : '<tr><td colspan="8" class="text-center text-gray-400" style="padding:30px">ไม่มีการจองตามเงื่อนไข</td></tr>';
+        } catch (e) { Layout.toast('โหลดรายการไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      // ─── รายละเอียด ───
+      async openReservation(id) {
+        try {
+          const res = await Layout.api().lodgingGetReservation(id); this.renderReservation(res.data); Layout.openModal('resModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      renderReservation(r) {
+        this.current = r;
+        document.getElementById('resTitle').innerHTML = `${esc(r.reservationNumber)} ${this.pill(r.status)} <span class="hint">${SRC[r.source] || r.source}${r.sourceReference ? ' · ' + esc(r.sourceReference) : ''}</span>`;
+        const unitOpts = (roomTypeId, cur) => `<option value="">— ยังไม่จัด —</option>` + this.units.filter(u => u.isActive && !u.isOutOfService).map(u => `<option value="${u.id}" ${u.id === cur ? 'selected' : ''}>${esc(u.number)} (${esc(u.roomTypeName)})${u.roomTypeId !== roomTypeId ? ' ⚠' : ''}</option>`).join('');
+        const rooms = r.rooms.map(x => `<div class="kv"><span>${esc(x.roomTypeName)} · ${x.adults} ผู้ใหญ่${x.children ? ' ' + x.children + ' เด็ก' : ''}${x.extraBeds ? ' · เตียงเสริม ' + x.extraBeds : ''}</span>
+          <span>${r.status === 'Pending' || r.status === 'Confirmed' || r.status === 'CheckedIn' ? `<select class="form-input" style="width:180px;padding:4px" onchange="Page.assign('${x.id}', this.value)">${unitOpts(x.roomTypeId, x.unitId)}</select>` : esc(x.unitNumber || '-')} ${money(x.subtotal)}</span></div>`).join('');
+        const charges = r.charges.filter(c => c.status !== 'Cancelled').map(c => `<div class="kv"><span>${esc(c.description)} ×${c.quantity}${c.status === 'Paid' ? ' ✓' : ''}</span><span>${money(c.total)} ${c.status === 'Pending' ? `<a href="#" onclick="Page.cancelCharge('${c.id}');return false" style="color:#dc2626">✕</a>` : ''}</span></div>`).join('');
+        const A = (label, fn, cls = 'btn-secondary') => `<button class="btn btn-sm ${cls}" onclick="Page.${fn}">${label}</button>`;
+        let actions = '';
+        if (r.status === 'Pending') actions += A(r.depositRequired > 0 ? '✓ ยืนยัน + บันทึกรับมัดจำ' : '✓ ยืนยัน', 'confirmForm()', 'btn-primary');
+        if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('🛬 เช็คอิน', 'checkInForm()', r.status === 'Confirmed' ? 'btn-primary' : 'btn-secondary') + A('📅 เลื่อนวัน', 'rescheduleForm()') + A('รับชำระเพิ่ม', 'confirmForm(true)');
+        if (r.status === 'CheckedIn') actions += A('🛫 เช็คเอาต์ + ออกบิล', 'checkOutForm()', 'btn-primary') + A('+ รายการ folio', 'chargeForm()');
+        if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('ยกเลิก', 'cancel(false)', 'btn-danger') + (d10(r.checkInDate) <= todayIso() ? A('No-show', 'cancel(true)', 'btn-danger') : '');
+        actions += A('✏️ แก้ข้อมูลแขก', 'editGuestForm()');
+        document.getElementById('resBody').innerHTML = `
+          ${r.slipUploadedAt ? `<div class="warn">📎 แขกอัปโหลดสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} ${r.paymentReference ? '(' + esc(r.paymentReference) + ')' : ''} — <a href="#" onclick="Layout.openAuthed('${Layout.jsArg(r.paymentSlipUrl)}', 'slip');return false">เปิดดูสลิป</a> แล้วกด "ยืนยัน + บันทึกรับมัดจำ" หรือ <a href="#" onclick="Page.rejectSlipForm();return false" style="color:#dc2626">ปฏิเสธสลิป</a> ถ้ายอด/ชื่อไม่ตรง</div>` : ''}
+          ${r.slipRejectedCount > 0 ? `<div class="warn" style="background:#FEE2E2;border-color:#FCA5A5">⚠️ สลิปถูกปฏิเสธมาแล้ว ${r.slipRejectedCount} ครั้ง${r.slipRejectedReason ? ` — ล่าสุด: ${esc(r.slipRejectedReason)}` : ''}${r.slipUploadBlocked ? ' · <b>ปิดรับสลิปของใบนี้แล้ว</b> (แขกยังชำระออนไลน์/ติดต่อที่พักได้)' : ''}</div>` : ''}
+          ${r.status === 'Pending' && r.holdExpiresAt ? `<div class="hint" style="margin-bottom:8px">กันห้องถึง ${new Date(r.holdExpiresAt).toLocaleString('th-TH')}</div>` : ''}
+          <div class="grid grid-2 gap-4">
+            <div class="card"><h4>👤 ผู้เข้าพัก</h4><div><b>${esc(r.guestName)}</b>${r.guestCompanyName ? ` · ${esc(r.guestCompanyName)}` : ''}</div><div class="hint">📱 ${esc(r.guestPhone || '-')} · 📧 ${esc(r.guestEmail || '-')}${r.guestNationality ? ' · ' + esc(r.guestNationality) : ''}</div>
+              ${r.guestIdNumberMasked ? `<div class="hint">บัตร/พาสปอร์ต ${esc(r.guestIdNumberMasked)}</div>` : ''}${r.guestTaxId ? `<div class="hint">เลขผู้เสียภาษี ${esc(r.guestTaxId)}</div>` : ''}
+              <div style="margin-top:6px">📅 <b>${Layout.date(r.checkInDate)} → ${Layout.date(r.checkOutDate)}</b> · ${r.nights} คืน · ${r.adults} ผู้ใหญ่ ${r.children} เด็ก ${r.infants} ทารก${r.arrivalTime ? ' · ถึง ' + esc(r.arrivalTime) : ''}</div>
+              ${r.specialRequests ? `<div class="hint" style="margin-top:4px">คำขอ: ${esc(r.specialRequests)}</div>` : ''}
+              ${r.ratePlanName ? `<div class="hint">แผนราคา: ${esc(r.ratePlanName)}</div>` : ''}${r.cancellationPolicyName ? `<div class="hint">นโยบายยกเลิก: ${esc(r.cancellationPolicyName)}${r.nonRefundable ? ' (ไม่คืนเงิน)' : ''} — ${(r.cancellationRules || []).map(x => `≥${x.daysBefore}วัน ${x.penaltyPercent}%`).join(' · ')}</div>` : ''}
+              ${r.publicToken ? `<div class="hint" style="margin-top:6px">ลิงก์ให้แขก: <code>/reservation/${esc(r.publicToken)}</code></div>` : ''}
+            </div>
+            <div class="card"><h4>💰 การเงิน</h4>
+              <div class="kv"><span>ค่าห้อง</span><span>${money(r.roomSubtotal)}</span></div>${r.extrasTotal ? `<div class="kv"><span>บริการเสริม</span><span>${money(r.extrasTotal)}</span></div>` : ''}${r.serviceChargeAmount ? `<div class="kv"><span>Service charge</span><span>${money(r.serviceChargeAmount)}</span></div>` : ''}
+              <div class="kv"><span>รวม (VAT ${money(r.vatAmount)})</span><span>${money(r.totalAmount)}</span></div>${r.folioTotal ? `<div class="kv"><span>Folio ระหว่างพัก</span><span>${money(r.folioTotal)}</span></div>` : ''}
+              <div class="kv total"><span>ยอดรวมทั้งสิ้น</span><span>${money(r.grandTotal)}</span></div>
+              <div class="kv"><span>มัดจำที่ต้องเก็บ / รับแล้ว</span><span>${money(r.depositRequired)} / <b>${money(r.depositPaid)}</b></span></div>
+              <div class="kv"><span>ชำระแล้วทั้งหมด</span><span>${money(r.paidAmount)}</span></div><div class="kv"><span>คงเหลือ</span><b class="${r.balanceDue > 0 ? 'text-warning' : 'text-success'}">${money(r.balanceDue)}</b></div>
+              ${r.depositDocumentId ? `<div class="hint">ใบเสร็จมัดจำ <a href="/pages/documents.html?id=${r.depositDocumentId}">${esc(r.depositDocumentNumber || '')}</a></div>` : ''}${r.finalDocumentId ? `<div class="hint">เอกสารเช็คเอาต์ <a href="/pages/documents.html?id=${r.finalDocumentId}">${esc(r.finalDocumentNumber || '')}</a></div>` : ''}
+              ${r.cancellationFee || r.refundAmount ? `<div class="hint">ค่าปรับ ${money(r.cancellationFee)} · คืนเงิน ${money(r.refundAmount)} — ${esc(r.cancellationReason || '')}</div>` : ''}
+            </div>
+          </div>
+          <div class="card"><h4>🛏️ ห้อง</h4>${rooms}${r.extras.map(e => `<div class="kv"><span>➕ ${esc(e.name)} ×${e.quantity}</span><span>${money(e.total)}</span></div>`).join('')}</div>
+          ${charges || r.status === 'CheckedIn' ? `<div class="card"><h4>🧾 Folio</h4>${charges || '<div class="hint">ยังไม่มีรายการ</div>'}</div>` : ''}
+          ${r.requests?.length ? `<div class="card"><h4>🛎️ คำขอแขก</h4>${r.requests.map(q => `<div class="kv"><span>${REQT[q.requestType] || q.requestType}: ${esc(q.details)}</span><span class="pill">${TSTAT[q.status] || q.status}</span></div>`).join('')}</div>` : ''}
+          ${r.internalNotes ? `<div class="card" style="background:#fffbeb"><h4>หมายเหตุภายใน</h4><div style="white-space:pre-wrap;font-size:12px">${esc(r.internalNotes)}</div></div>` : ''}
+          <div class="actions">${actions}</div>`;
+      },
+      sub(title, html, onSave, saveLabel = 'ตกลง') {
+        document.getElementById('subTitle').textContent = title; document.getElementById('subBody').innerHTML = html;
+        const b = document.getElementById('subSave'); b.textContent = saveLabel; b.disabled = false;
+        b.onclick = async () => { b.disabled = true; try { await onSave(); } finally { b.disabled = false; } };
+        Layout.openModal('subModal');
+      },
+      async call(fn) {
+        try { const res = await fn(); Layout.toast(res.message || 'สำเร็จ'); Layout.closeModal('subModal'); if (res.data?.reservationNumber) this.renderReservation(res.data); await this.loadDash(); if (!document.getElementById('tabList').classList.contains('hidden')) await this.loadList(); return res; }
+        catch (e) { Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); throw e; }
+      },
+      pmSelect(name, def) { return `<select class="form-input" name="${name}">${Object.entries(PM).map(([k, v]) => `<option value="${k}" ${+k === def ? 'selected' : ''}>${v}</option>`).join('')}</select>`; },
+      async assign(reservationRoomId, unitId) { await this.call(() => Layout.api().lodgingAssign(this.current.id, { reservationRoomId, unitId: unitId || null })); },
+      // ปฏิเสธสลิป — เหตุผล**บังคับ** เพราะข้อความนี้ถูกส่งถึงแขกตรง ๆ
+      // และเป็นสิ่งเดียวที่บอกเขาว่าต้องทำอะไรต่อ
+      rejectSlipForm() {
+        const r = this.current;
+        this.sub('ปฏิเสธสลิปของแขก', `<form id="rjf" class="grid2">
+          <div class="fld" style="grid-column:1/-1"><label>เหตุผล (แขกจะเห็นข้อความนี้)</label>
+            <input class="form-input" name="reason" required maxlength="500" list="rjReasons"
+                   placeholder="เช่น ยอดในสลิปไม่ตรงกับยอดมัดจำ">
+            <datalist id="rjReasons">
+              <option value="ยอดเงินในสลิปไม่ตรงกับยอดมัดจำที่ต้องชำระ">
+              <option value="ไม่พบรายการเงินเข้าในบัญชีของที่พัก">
+              <option value="สลิปอ่านไม่ออก/ไม่ชัด กรุณาถ่ายใหม่">
+              <option value="สลิปเป็นของรายการอื่น ไม่ใช่การจองนี้">
+              <option value="ตรวจพบว่าสลิปถูกแก้ไข">
+            </datalist></div>
+          <div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="block">
+            ปิดรับสลิปของการจองนี้ไปเลย (ใช้เมื่อพบสลิปปลอม — แขกยังชำระออนไลน์/ติดต่อที่พักได้)</label></div>
+          <div class="hint" style="grid-column:1/-1">ระบบจะลบสลิปออกจากหน้าจอให้แขกส่งใหม่ ต่อเวลาถือห้องอีก 24 ชม.
+            และส่งอีเมลแจ้งเหตุผล · <b>ไฟล์สลิปเดิมไม่ถูกลบ</b> ยังใช้เป็นหลักฐานได้</div>
+        </form>`, async () => {
+          const f = document.getElementById('rjf');
+          if (!f.reason.value.trim()) { Layout.toast('กรุณาระบุเหตุผล', 'error'); return false; }
+          await this.call(() => Layout.api().lodgingRejectSlip(r.id,
+            { reason: f.reason.value.trim(), blockFurtherUploads: f.block.checked }));
+        }, 'ปฏิเสธสลิป');
+      },
+
+      confirmForm(extra) {
+        const r = this.current; const due = Math.max(0, r.depositRequired - r.depositPaid);
+        this.sub(extra ? 'รับชำระเพิ่ม' : 'ยืนยันการจอง + บันทึกรับมัดจำ', `<form id="cf" class="grid2">
+          <div class="fld"><label>ยอดที่รับ (0 = ยืนยันโดยไม่รับเงิน)</label><input class="form-input" type="number" step="0.01" min="0" name="amount" value="${extra ? r.balanceDue : due}"></div>
+          <div class="fld"><label>วิธีชำระ</label>${this.pmSelect('pm', 2)}</div>
+          <div class="fld"><label>อ้างอิง (เลขที่โอน)</label><input class="form-input" name="ref" value="${esc(r.paymentReference || '')}"></div>
+          <div class="fld"><label>วันที่รับเงิน</label><input class="form-input" type="date" name="date" value="${todayIso()}"></div>
+          <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div>
+          <div class="hint" style="grid-column:1/-1">ยอด > 0 จะออก <b>ใบเสร็จมัดจำ</b> (Cr ขายรอรับรู้) ผ่านเลขเอกสาร gap-free และยืนยันห้องให้ทันที</div></form>`, async () => {
+          const f = document.getElementById('cf');
+          await this.call(() => Layout.api().lodgingConfirm(r.id, { depositAmount: +f.amount.value, paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, paymentDate: f.date.value ? f.date.value + 'T00:00:00' : null, note: f.note.value || null }));
+        }, 'ยืนยัน');
+      },
+      checkInForm() {
+        const r = this.current;
+        const missing = r.rooms.filter(x => !x.unitId);
+        this.sub('เช็คอิน', `<form id="cif" class="grid2">
+          ${missing.length ? `<div class="warn" style="grid-column:1/-1">ยังไม่ได้จัดห้อง ${missing.length} ห้อง — เลือกในหน้ารายละเอียด (dropdown ที่บรรทัดห้อง) ก่อน</div>` : `<div class="hint" style="grid-column:1/-1">ห้อง: ${r.rooms.map(x => esc(x.unitNumber)).join(', ')}</div>`}
+          <div class="fld"><label>เลขบัตร/พาสปอร์ต</label><input class="form-input" name="idno" placeholder="${esc(r.guestIdNumberMasked || '')}"></div>
+          <div class="fld"><label>สัญชาติ</label><input class="form-input" name="nat" value="${esc(r.guestNationality || '')}"></div>
+          ${(this.property?.earlyCheckInFee > 0) ? `<div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="early">
+            เก็บค่าเช็คอินก่อนเวลา ${money(this.property.earlyCheckInFee)} บาท (ก่อน ${esc(this.property.checkInTime || '')} น.)</label>
+            <div class="hint">ระบบไม่เก็บเองอัตโนมัติ — ห้องอาจว่างอยู่แล้วหรือที่พักยกเว้นให้</div></div>` : ''}
+          <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div></form>`, async () => {
+          const f = document.getElementById('cif');
+          await this.call(() => Layout.api().lodgingCheckIn(r.id, { guestIdNumber: f.idno.value || null, guestNationality: f.nat.value || null, note: f.note.value || null, chargeEarlyCheckIn: !!(f.early && f.early.checked) }));
+        }, 'เช็คอิน');
+      },
+      chargeForm() {
+        const r = this.current;
+        this.sub('เพิ่มรายการ folio', `<form id="chf" class="grid2">
+          <div class="fld" style="grid-column:1/-1"><label>รายการ *</label><input class="form-input" name="desc" required placeholder="มินิบาร์ · รูมเซอร์วิส · ซักรีด · late check-out"></div>
+          <div class="fld"><label>จำนวน</label><input class="form-input" type="number" step="0.001" min="0.001" name="qty" value="1"></div>
+          <div class="fld"><label>ราคา/หน่วย</label><input class="form-input" type="number" step="0.01" min="0" name="price" value="0"></div>
+          <div class="fld"><label>VAT % (ว่าง = ตามที่พัก)</label><input class="form-input" type="number" step="0.01" name="vat"></div>
+          <div class="fld"><label>หมายเหตุ</label><input class="form-input" name="notes"></div></form>`, async () => {
+          const f = document.getElementById('chf');
+          await this.call(() => Layout.api().lodgingAddCharge(r.id, { description: f.desc.value, quantity: +f.qty.value, unitPrice: +f.price.value, vatRate: f.vat.value === '' ? null : +f.vat.value, notes: f.notes.value || null }));
+        }, 'เพิ่ม');
+      },
+      async cancelCharge(chargeId) { if (!confirm('ยกเลิกรายการนี้?')) return; await this.call(() => Layout.api().lodgingCancelCharge(this.current.id, chargeId)); },
+      checkOutForm() {
+        const r = this.current;
+        this.sub('เช็คเอาต์ + ออกเอกสาร', `<form id="cof" class="grid2">
+          <div class="hint" style="grid-column:1/-1">ระบบจะออก <b>ใบกำกับภาษี/ใบแจ้งหนี้</b> ทั้งการเข้าพัก (ค่าห้อง + บริการเสริม + folio + service charge) หักมัดจำ ${money(r.depositPaid)} แล้วรับชำระส่วนที่เหลือ ${money(r.balanceDue)}</div>
+          <div class="fld"><label>ค่าเสียหาย/ของหาย (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="dmg" value="0"></div>
+          <div class="fld"><label>รายละเอียดค่าเสียหาย</label><input class="form-input" name="dmgd"></div>
+          <div class="fld"><label>รับชำระส่วนที่เหลือตอนนี้</label><select class="form-input" name="collect"><option value="true">รับเงินเลย</option><option value="false">ออกใบแจ้งหนี้ (เครดิต/agent)</option></select></div>
+          <div class="fld"><label>วิธีชำระ</label>${this.pmSelect('pm', 1)}</div>
+          <div class="fld"><label>อ้างอิง</label><input class="form-input" name="ref"></div>
+          <div class="fld"><label><input type="checkbox" name="company" ${r.guestTaxId ? 'checked' : ''}> ออกใบกำกับในนามบริษัทของแขก (${esc(r.guestCompanyName || 'ยังไม่มีข้อมูล')})</label></div>
+          ${(this.property?.lateCheckOutFee > 0) ? `<div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="late">
+            เก็บค่าเช็คเอาต์ช้า ${money(this.property.lateCheckOutFee)} บาท (หลัง ${esc(this.property.checkOutTime || '')} น.)</label></div>` : ''}
+          <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div></form>`, async () => {
+          const f = document.getElementById('cof');
+          await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', chargeLateCheckOut: !!(f.late && f.late.checked), issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null }));
+        }, 'เช็คเอาต์');
+      },
+      async cancel(noShow) {
+        const r = this.current;
+        const reason = prompt(noShow ? 'บันทึก no-show — เหตุผล/หมายเหตุ' : `ยกเลิกการจอง ${r.reservationNumber} — เหตุผล (ค่าปรับคิดตามนโยบาย ส่วนที่เหลือคืนเงินอัตโนมัติ)`);
+        if (reason === null) return;
+        await this.call(() => noShow ? Layout.api().lodgingNoShow(r.id, { reason }) : Layout.api().lodgingCancel(r.id, { reason }));
+      },
+      rescheduleForm() {
+        const r = this.current;
+        this.sub('เลื่อนวันเข้าพัก', `<form id="rsf" class="grid2"><div class="fld"><label>เช็คอินใหม่</label><input class="form-input" type="date" name="ci" value="${d10(r.checkInDate)}"></div><div class="fld"><label>เช็คเอาต์ใหม่</label><input class="form-input" type="date" name="co" value="${d10(r.checkOutDate)}"></div>
+          <div class="fld" style="grid-column:1/-1"><label>เหตุผล</label><input class="form-input" name="reason"></div><div class="hint" style="grid-column:1/-1">ระบบคิดราคาใหม่ตามฤดูกาล/แผนราคาเดิม · มัดจำที่รับแล้วคงเดิม · ต้องจัดหมายเลขห้องใหม่</div></form>`, async () => {
+          const f = document.getElementById('rsf');
+          await this.call(() => Layout.api().lodgingReschedule(r.id, { checkIn: f.ci.value + 'T00:00:00', checkOut: f.co.value + 'T00:00:00', reason: f.reason.value || null }));
+        }, 'เลื่อนวัน');
+      },
+      editGuestForm() {
+        const r = this.current;
+        const I = (n, v, l, t = 'text') => `<div class="fld"><label>${l}</label><input class="form-input" name="${n}" type="${t}" value="${esc(v || '')}"></div>`;
+        this.sub('แก้ไขข้อมูลแขก', `<form id="egf" class="grid2">${I('guestName', r.guestName, 'ชื่อ')}${I('guestPhone', r.guestPhone, 'โทร')}${I('guestEmail', r.guestEmail, 'อีเมล', 'email')}${I('guestNationality', r.guestNationality, 'สัญชาติ')}${I('guestIdNumber', '', 'เลขบัตร/พาสปอร์ต (ว่าง = ไม่เปลี่ยน)')}${I('arrivalTime', r.arrivalTime, 'เวลาถึง')}${I('guestCompanyName', r.guestCompanyName, 'บริษัท (ใบกำกับ)')}${I('guestTaxId', r.guestTaxId, 'เลขผู้เสียภาษี')}${I('sourceReference', r.sourceReference, 'เลขอ้างอิง OTA/agent')}
+          <div class="fld" style="grid-column:1/-1"><label>ที่อยู่</label><input class="form-input" name="guestAddress" value="${esc(r.guestAddress || '')}"></div>
+          <div class="fld" style="grid-column:1/-1"><label>คำขอพิเศษ</label><input class="form-input" name="specialRequests" value="${esc(r.specialRequests || '')}"></div>
+          <div class="fld" style="grid-column:1/-1"><label>หมายเหตุภายใน (แทนที่ทั้งหมด)</label><textarea class="form-input" name="internalNotes" rows="3">${esc(r.internalNotes || '')}</textarea></div></form>`, async () => {
+          const f = document.getElementById('egf'); const d = {};
+          for (const el of f.elements) if (el.name) d[el.name] = el.value === '' ? (el.name === 'guestIdNumber' ? null : (['guestName'].includes(el.name) ? null : '')) : el.value;
+          if (d.guestName === null) delete d.guestName;
+          await this.call(() => Layout.api().lodgingUpdateReservation(r.id, d));
+        }, 'บันทึก');
+      },
+
+      // ─── จองใหม่ (พนักงาน) ───
+      openNewReservation() {
+        if (!this.propertyId) return;
+        const t = todayIso(); const tm = new Date(); tm.setDate(tm.getDate() + 1); tm.setMinutes(tm.getMinutes() - tm.getTimezoneOffset());
+        this.sub('จองใหม่ (walk-in / โทร / OTA)', `<form id="nrf" class="grid2">
+          <div class="fld"><label>เช็คอิน</label><input class="form-input" type="date" name="ci" value="${t}" onchange="Page.nrSearch()"></div><div class="fld"><label>เช็คเอาต์</label><input class="form-input" type="date" name="co" value="${tm.toISOString().slice(0, 10)}" onchange="Page.nrSearch()"></div>
+          <div class="fld"><label>ผู้ใหญ่</label><input class="form-input" type="number" name="adults" value="2" min="1" onchange="Page.nrSearch()"></div><div class="fld"><label>เด็ก</label><input class="form-input" type="number" name="children" value="0" min="0" onchange="Page.nrSearch()"></div>
+          <div id="nrRooms" style="grid-column:1/-1"><div class="hint">กำลังค้นหาห้องว่าง...</div></div>
+          <div id="nrExtras" style="grid-column:1/-1">${this.extras.length ? `<label class="hint">บริการเสริม</label><div class="grid2">${this.extras.map(x => `<div class="fld"><label>${esc(x.name)} (${money(x.price)})</label><input class="form-input" type="number" min="0" value="0" data-extra="${x.id}" onchange="Page.nrQuote()"></div>`).join('')}</div>` : ''}</div>
+          <div class="fld"><label>ชื่อแขก *</label><input class="form-input" name="guestName" required></div><div class="fld"><label>โทร</label><input class="form-input" name="guestPhone"></div><div class="fld"><label>อีเมล</label><input class="form-input" name="guestEmail" type="email"></div>
+          <div class="fld"><label>ที่มา</label><select class="form-input" name="source"><option value="2">Walk-in</option><option value="3">โทรศัพท์</option><option value="4">Agent</option><option value="5">OTA</option><option value="99">อื่น</option></select></div>
+          <div class="fld"><label>เลขอ้างอิง OTA/agent</label><input class="form-input" name="sourceReference"></div>
+          <div class="fld"><label><input type="checkbox" name="confirmNow"> ยืนยันทันที (จ่ายผ่านช่องทางอื่นแล้ว/ไม่เก็บมัดจำ)</label></div>
+          <div class="fld" style="grid-column:1/-1"><label>คำขอพิเศษ / หมายเหตุภายใน</label><input class="form-input" name="notes"></div>
+          <div id="nrQuote" style="grid-column:1/-1" class="hint"></div></form>`, async () => {
+          const f = document.getElementById('nrf');
+          const rooms = this.nrRoomsBody(f); if (!rooms.length) { Layout.toast('เลือกห้องอย่างน้อย 1 ห้อง', 'error'); return; }
+          const body = { checkIn: f.ci.value + 'T00:00:00', checkOut: f.co.value + 'T00:00:00', rooms, extras: this.nrExtrasBody(), guestName: f.guestName.value, guestPhone: f.guestPhone.value || null, guestEmail: f.guestEmail.value || null,
+            source: +f.source.value, sourceReference: f.sourceReference.value || null, confirmImmediately: f.confirmNow.checked, internalNotes: f.notes.value || null, specialRequests: f.notes.value || null, acceptHouseRules: true };
+          const res = await this.call(() => Layout.api().lodgingCreateReservation(this.propertyId, body));
+          if (res?.data?.id) await this.openReservation(res.data.id);
+        }, 'สร้างการจอง');
+        this.nrSearch();
+      },
+      nrRoomsBody(f) {
+        const rooms = []; const adults = +f.adults.value, children = +f.children.value;
+        document.querySelectorAll('#nrRooms select[data-rt]').forEach(s => { for (let i = 0; i < +s.value; i++) rooms.push({ roomTypeId: s.dataset.rt, adults: Math.max(1, Math.ceil(adults / Math.max(1, rooms.length + 1))), children: rooms.length === 0 ? children : 0, extraBeds: 0 }); });
+        // แบ่งแขกเท่า ๆ กันต่อห้อง (พนักงานแก้ทีหลังได้)
+        if (rooms.length) { const per = Math.max(1, Math.floor(adults / rooms.length)); let rem = adults - per * rooms.length; rooms.forEach(r => { r.adults = per + (rem-- > 0 ? 1 : 0); }); }
+        return rooms;
+      },
+      nrExtrasBody() { return [...document.querySelectorAll('#nrExtras input[data-extra]')].filter(i => +i.value > 0).map(i => ({ extraId: i.dataset.extra, quantity: +i.value })); },
+      async nrSearch() {
+        const f = document.getElementById('nrf'); if (!f) return;
+        const box = document.getElementById('nrRooms');
+        try {
+          const res = await Layout.api().lodgingSearch(this.propertyId, { checkIn: f.ci.value + 'T00:00:00', checkOut: f.co.value + 'T00:00:00', adults: +f.adults.value, children: +f.children.value, rooms: 1 });
+          box.innerHTML = `<table class="table"><thead><tr><th>ประเภทห้อง</th><th>ว่าง</th><th class="text-right">ราคา/ห้อง</th><th>จอง</th></tr></thead><tbody>${(res.data || []).map(x => `<tr><td>${esc(x.name)}${x.unavailableReason ? `<div class="hint" style="color:#dc2626">${esc(x.unavailableReason)}</div>` : ''}</td><td>${x.availableRooms}</td><td class="text-right">${money(x.pricePerRoom)} <span class="hint">(${money(x.averageNightlyRate)}/คืน)</span></td>
+            <td><select class="form-input" style="width:90px;padding:4px" data-rt="${x.roomTypeId}" onchange="Page.nrQuote()">${Array.from({ length: Math.min(x.availableRooms, 9) + 1 }, (_, i) => `<option value="${i}">${i}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table>`;
+        } catch (e) { box.innerHTML = `<div class="hint" style="color:#dc2626">${esc(e.message)}</div>`; }
+      },
+      async nrQuote() {
+        const f = document.getElementById('nrf'); const rooms = this.nrRoomsBody(f); const q = document.getElementById('nrQuote');
+        if (!rooms.length) { q.innerHTML = ''; return; }
+        try {
+          const res = await Layout.api().lodgingQuote(this.propertyId, { checkIn: f.ci.value + 'T00:00:00', checkOut: f.co.value + 'T00:00:00', rooms, extras: this.nrExtrasBody() }); const d = res.data;
+          q.innerHTML = d.errors?.length ? `<span style="color:#dc2626">${d.errors.map(esc).join(' · ')}</span>` : `<b>รวม ${money(d.totalAmount)}</b> (ค่าห้อง ${money(d.roomSubtotal)} · เสริม ${money(d.extrasTotal)} · SC ${money(d.serviceChargeAmount)} · VAT ${money(d.vatAmount)}) · มัดจำ ${money(d.depositRequired)}${d.ratePlanName ? ' · ' + esc(d.ratePlanName) : ''}`;
+        } catch (e) { q.innerHTML = `<span style="color:#dc2626">${esc(e.message)}</span>`; }
+      },
+
+      // ─── ปฏิทิน ───
+      async loadCal() {
+        if (!this.propertyId) return;
+        const from = document.getElementById('calFrom').value; const days = +document.getElementById('calDays').value;
+        const toD = new Date(from); toD.setDate(toD.getDate() + days); toD.setMinutes(toD.getMinutes() - toD.getTimezoneOffset());
+        try {
+          const res = await Layout.api().lodgingCalendar(this.propertyId, `?from=${from}&to=${toD.toISOString().slice(0, 10)}`); const c = res.data;
+          const dates = []; for (let d = new Date(c.from); d < new Date(c.to); d.setDate(d.getDate() + 1)) dates.push(new Date(d));
+          const head = `<tr><th class="unit">ห้อง</th>${dates.map(d => `<th class="${d.getDay() === 0 || d.getDay() === 6 ? 'we' : ''}">${d.getDate()}/${d.getMonth() + 1}</th>`).join('')}</tr>`;
+          const rowOf = (label, bars, cls) => {
+            let cells = ''; let i = 0;
+            while (i < dates.length) {
+              const d = dates[i]; const iso = d.toISOString().slice(0, 10);
+              const bar = bars.find(b => d10(b.checkIn) <= iso && d10(b.checkOut) > iso && d10(b.checkIn) === iso || (i === 0 && d10(b.checkIn) < iso && d10(b.checkOut) > iso));
+              if (bar) {
+                const end = Math.min(dates.length, dates.findIndex(x => x.toISOString().slice(0, 10) >= d10(bar.checkOut)) < 0 ? dates.length : dates.findIndex(x => x.toISOString().slice(0, 10) >= d10(bar.checkOut)));
+                const span = Math.max(1, end - i);
+                cells += `<td class="bar s-${bar.status}" colspan="${span}" onclick="Page.openReservation('${bar.reservationId}')" title="${esc(bar.reservationNumber)}">${esc(bar.guestName)}</td>`; i += span;
+              } else { cells += `<td class="${d.getDay() === 0 || d.getDay() === 6 ? 'we' : ''}"></td>`; i++; }
+            }
+            return `<tr><th class="unit ${cls || ''}">${label}</th>${cells}</tr>`;
+          };
+          const rows = c.rows.map(r => rowOf(`<b>${esc(r.number)}</b> <span class="hint">${esc(r.roomTypeName)}</span>${r.isOutOfService ? ' 🔧' : ''}`, r.bars)).join('');
+          const un = c.unassigned.length ? c.unassigned.map(b => rowOf(`<span class="hint">รอจัดห้อง · ${esc(b.roomTypeName)}</span>`, [b])).join('') : '';
+          document.getElementById('calBox').innerHTML = `<table>${head}${rows}${un}</table>`;
+          document.getElementById('availBox').innerHTML = `<table><tr><th class="unit">ประเภทห้อง</th>${dates.map(d => `<th>${d.getDate()}/${d.getMonth() + 1}</th>`).join('')}</tr>${c.availability.map(a => `<tr><th class="unit">${esc(a.roomTypeName)} <span class="hint">(${a.totalUnits})</span></th>${a.days.map(x => `<td style="${x.stopSell ? 'background:#fee2e2' : x.available === 0 ? 'background:#fef3c7' : ''}"><b>${x.stopSell ? '✕' : x.available}</b><div class="hint">${Number(x.rate).toLocaleString('th-TH')}</div></td>`).join('')}</tr>`).join('')}</table>`;
+        } catch (e) { Layout.toast('โหลดปฏิทินไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      // ─── แม่บ้าน ───
+      async loadHk() {
+        if (!this.propertyId) return;
+        const status = document.getElementById('hkStatus').value;
+        try {
+          const res = await Layout.api().lodgingTasks(this.propertyId, status ? `?status=${status}` : ''); const items = res.data || [];
+          const next = { Pending: ['InProgress', 'เริ่มทำ'], Assigned: ['InProgress', 'เริ่มทำ'], InProgress: ['Completed', '✓ เสร็จ'], Completed: ['Verified', 'ตรวจแล้ว'] };
+          document.getElementById('hkBody').innerHTML = items.length ? items.map(t => `<tr><td><b>${esc(t.unitNumber)}</b> <span class="hint">${esc(t.roomTypeName || '')}</span></td><td>${TASK[t.taskType] || t.taskType}</td><td>${PRI[t.priority] || t.priority}</td><td>${esc(t.assignedToName || '-')}</td><td>${t.dueAt ? new Date(t.dueAt).toLocaleString('th-TH') : '-'}</td><td><span class="pill">${TSTAT[t.status] || t.status}</span></td><td class="hint">${esc(t.notes || '')}</td>
+            <td>${next[t.status] ? `<button class="btn btn-sm btn-primary" onclick="Page.taskStatus('${t.id}','${next[t.status][0]}')">${next[t.status][1]}</button>` : ''} ${t.status !== 'Verified' && t.status !== 'Cancelled' ? `<button class="btn btn-sm btn-secondary" onclick="Page.taskAssign('${t.id}')">มอบหมาย</button> <button class="btn btn-sm btn-secondary" onclick="Page.taskStatus('${t.id}','Cancelled')">ยกเลิก</button>` : ''}</td></tr>`).join('')
+            : '<tr><td colspan="8" class="text-center text-gray-400" style="padding:30px">ไม่มีงาน</td></tr>';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async taskStatus(id, status) { try { await Layout.api().lodgingUpdateTask(id, { status }); await this.loadHk(); await this.loadDash(); } catch (e) { Layout.toast(e.message, 'error'); } },
+      taskAssign(id) {
+        const name = prompt('ชื่อผู้รับผิดชอบ'); if (!name) return;
+        Layout.api().lodgingUpdateTask(id, { status: 'Assigned', assignedToName: name }).then(() => this.loadHk()).catch(e => Layout.toast(e.message, 'error'));
+      },
+      newTask() {
+        this.sub('งานแม่บ้าน/ซ่อมบำรุงใหม่', `<form id="tf" class="grid2">
+          <div class="fld"><label>ห้อง</label><select class="form-input" name="unitId">${this.units.map(u => `<option value="${u.id}">${esc(u.number)} (${esc(u.roomTypeName)})</option>`).join('')}</select></div>
+          <div class="fld"><label>งาน</label><select class="form-input" name="taskType">${Object.entries(TASK).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
+          <div class="fld"><label>ความสำคัญ</label><select class="form-input" name="priority">${Object.entries(PRI).map(([k, v]) => `<option value="${k}" ${k === 'Normal' ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+          <div class="fld"><label>ผู้รับผิดชอบ</label><input class="form-input" name="assignedToName"></div>
+          <div class="fld"><label>กำหนดเสร็จ</label><input class="form-input" type="datetime-local" name="dueAt"></div>
+          <div class="fld"><label>เวลาโดยประมาณ (นาที)</label><input class="form-input" type="number" name="estimatedMinutes" value="30"></div>
+          <div class="fld" style="grid-column:1/-1"><label>รายละเอียด</label><input class="form-input" name="notes"></div></form>`, async () => {
+          const f = document.getElementById('tf');
+          await this.call(() => Layout.api().lodgingCreateTask({ propertyId: this.propertyId, unitId: f.unitId.value, taskType: f.taskType.value, priority: f.priority.value, assignedToName: f.assignedToName.value || null, dueAt: f.dueAt.value || null, estimatedMinutes: +f.estimatedMinutes.value, notes: f.notes.value || null }));
+          await this.loadHk();
+        }, 'สร้างงาน');
+      },
+
+      // ─── คำขอแขก ───
+      async loadReq() {
+        if (!this.propertyId) return;
+        const openOnly = document.getElementById('reqOpenOnly').checked;
+        try {
+          const res = await Layout.api().lodgingGuestRequests(this.propertyId, `?openOnly=${openOnly}`); const items = res.data || [];
+          document.getElementById('reqBody').innerHTML = items.length ? items.map(g => `<tr><td class="hint">${new Date(g.createdAt).toLocaleString('th-TH')}</td><td><b>${esc(g.unitNumbers || '-')}</b><div class="hint">${esc(g.guestName || '')} · ${esc(g.reservationNumber || '')}</div></td><td>${REQT[g.requestType] || g.requestType}</td><td>${esc(g.details)}</td><td><span class="pill">${TSTAT[g.status] || g.status}</span></td><td class="hint">${esc(g.responseNote || '')}</td>
+            <td>${g.status !== 'Completed' && g.status !== 'Cancelled' ? `<button class="btn btn-sm btn-primary" onclick="Page.resolveReq('${g.id}','Completed')">✓ เสร็จ</button> <button class="btn btn-sm btn-secondary" onclick="Page.resolveReq('${g.id}','InProgress')">รับเรื่อง</button>` : ''}</td></tr>`).join('')
+            : '<tr><td colspan="7" class="text-center text-gray-400" style="padding:30px">ไม่มีคำขอ</td></tr>';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async resolveReq(id, status) {
+        const note = status === 'Completed' ? prompt('ข้อความตอบกลับแขก (ไม่บังคับ)') : null;
+        try { await Layout.api().lodgingResolveRequest(id, { status, responseNote: note || null }); await this.loadReq(); await this.loadDash(); } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    window.Page = Page;
+    Page.init();
+  </script>
+</body>
+</html>

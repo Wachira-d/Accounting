@@ -36,6 +36,24 @@
           <img id="ssoTicketPic" alt="" style="width:40px;height:40px;border-radius:50%;object-fit:cover;display:none">
           <div id="ssoTicketText" style="flex:1"></div>
         </div>
+        <!-- มาด้วยตั๋ว SSO แต่เคยสมัครไว้แล้วด้วยอีเมลอื่น → ผูก provider เข้ากับบัญชีเดิม
+             จากหน้านี้เลย (ไม่ต้องไปล็อกอินด้วยรหัสผ่านก่อนแล้วค่อยผูกที่โปรไฟล์) -->
+        <div id="ssoLinkBox" class="hidden" style="padding:14px 16px;background:#F5F3FF;border:1px solid #C4B5FD;border-radius:var(--radius);font-size:14px;margin-bottom:16px;line-height:1.6">
+          <div style="font-weight:600;margin-bottom:6px">มีบัญชี NextAcc อยู่แล้ว? ผูก <span id="ssoLinkProvider"></span> เข้ากับบัญชีเดิม</div>
+          <div style="font-size:13px;color:#4C1D95;margin-bottom:8px">ใส่อีเมลของบัญชีที่เคยสมัครไว้แล้วกด "เช็ค" — ถ้ามีบัญชี ระบบจะให้ยืนยันความเป็นเจ้าของด้วยรหัสผ่านหรือลิงก์ทางอีเมล แล้วผูกให้ทันที (จะได้ไม่มีสองบัญชี)</div>
+          <div style="display:flex;gap:8px">
+            <input type="email" id="ssoLinkEmail" class="form-input" placeholder="อีเมลของบัญชีเดิม" autocomplete="username" style="flex:1">
+            <button type="button" class="btn btn-secondary" id="ssoLinkCheckBtn" onclick="ssoLinkCheck()">เช็ค</button>
+          </div>
+          <div id="ssoLinkResult" style="margin-top:8px;font-size:13px;white-space:pre-line"></div>
+          <div id="ssoLinkPwRow" class="hidden" style="margin-top:8px">
+            <input type="password" id="ssoLinkPassword" class="form-input" placeholder="รหัสผ่านของบัญชีเดิม" autocomplete="current-password" onkeydown="if(event.key==='Enter'){event.preventDefault();ssoLinkWithPassword();}">
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+              <button type="button" class="btn btn-primary" id="ssoLinkBtn" onclick="ssoLinkWithPassword()">ผูกและเข้าสู่ระบบ</button>
+              <button type="button" class="btn btn-secondary" onclick="ssoLinkSendEmail()">ไม่รู้รหัสผ่าน — ส่งลิงก์ยืนยันทางอีเมล</button>
+            </div>
+          </div>
+        </div>
 
         <form onsubmit="handleRegister(event)">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -255,7 +273,7 @@
           localStorage.setItem('token', token);
           localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
           API.token = token;
-          window.location.href = '/app.html';
+          window.location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html';
         } else {
           throw new Error(res.message || 'สมัครสมาชิกไม่สำเร็จ');
         }
@@ -285,6 +303,18 @@
       } catch (e) {}
       if (!t || !t.ticket) return;
       _ssoTicket = t.ticket;
+      _ssoTicketInfo = t;
+
+      // อีเมลจาก provider (Google/Facebook) — เติมให้ทั้งช่องสมัครและช่องผูกบัญชีเดิม
+      // (LINE ที่ไม่มีอีเมล = ปล่อยว่างให้กรอก ห้ามแต่งเอง)
+      const ticketEmail = (t.email || '').trim();
+      const emailEl = document.getElementById('email');
+      if (emailEl && !emailEl.value && ticketEmail) emailEl.value = ticketEmail;
+      const linkEmail = document.getElementById('ssoLinkEmail');
+      if (linkEmail && ticketEmail) linkEmail.value = ticketEmail;
+      const linkProv = document.getElementById('ssoLinkProvider');
+      if (linkProv) linkProv.textContent = t.providerName || t.provider || '';
+      document.getElementById('ssoLinkBox')?.classList.remove('hidden');
 
       const name = (t.suggestedName || '').trim();
       if (name) {
@@ -301,14 +331,75 @@
       if (txt) {
         const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
           c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-        txt.innerHTML = `✅ ยืนยันตัวตนด้วย <b>${esc(t.providerName || t.provider)}</b> แล้ว`
-          + (name ? ` (${esc(name)})` : '')
-          + `<br><span style="font-size:13px">${esc(t.providerName || t.provider)} ไม่ได้ให้อีเมลมา `
-          + `— กรอกอีเมลและรหัสผ่านเพื่อใช้กู้บัญชี แล้วระบบจะผูก `
-          + `${esc(t.providerName || t.provider)} ให้อัตโนมัติ ครั้งหน้ากดปุ่มเดียวเข้าได้เลย</span>`;
+        const prov = esc(t.providerName || t.provider);
+        const who = [name, ticketEmail].filter(Boolean).map(esc).join(' · ');
+        txt.innerHTML = `✅ ยืนยันตัวตนด้วย <b>${prov}</b> แล้ว` + (who ? ` (${who})` : '')
+          + (ticketEmail
+            // Google/Facebook ให้อีเมลมาแล้ว แต่ยังไม่มีบัญชี
+            ? `<br><span style="font-size:13px">ยังไม่มีบัญชีสำหรับอีเมลนี้ — เติมข้อมูลด้านล่างแล้วตั้งรหัสผ่าน `
+              + `ระบบจะผูก ${prov} ให้อัตโนมัติ (ถ้าเคยสมัครด้วยอีเมลอื่น ใช้กล่อง "มีบัญชีอยู่แล้ว" ด้านล่าง)</span>`
+            // LINE ที่ยังไม่ได้สิทธิ์ email
+            : `<br><span style="font-size:13px">${prov} ไม่ได้ให้อีเมลมา `
+              + `— กรอกอีเมลและรหัสผ่านเพื่อใช้กู้บัญชี แล้วระบบจะผูก `
+              + `${prov} ให้อัตโนมัติ ครั้งหน้ากดปุ่มเดียวเข้าได้เลย</span>`);
       }
       if (banner) banner.classList.remove('hidden');
     })();
+
+    let _ssoTicketInfo = null;
+    function _ssoLinkSay(msg, ok) {
+      const el = document.getElementById('ssoLinkResult');
+      el.textContent = msg; el.style.color = ok ? '#065F46' : '#DC2626';
+    }
+    /** "เช็ค": มีบัญชีไหม — มี = เปิดช่องรหัสผ่าน + เซิร์ฟเวอร์ส่งลิงก์ยืนยันไปแล้ว ·
+     *  ไม่มี = เติมอีเมลลงฟอร์มสมัครให้เลย */
+    async function ssoLinkCheck() {
+      const email = (document.getElementById('ssoLinkEmail').value || '').trim();
+      if (!email) { _ssoLinkSay('กรุณากรอกอีเมลให้ครบ', false); return; }
+      const btn = document.getElementById('ssoLinkCheckBtn'); btn.disabled = true;
+      try {
+        const res = await API.ssoLinkExisting(_ssoTicket, email, null);
+        const d = res.data || {};
+        _ssoLinkSay(res.message || '', true);
+        if (d.exists) {
+          document.getElementById('ssoLinkPwRow').classList.remove('hidden');
+          document.getElementById('ssoLinkPassword').focus();
+        } else {
+          document.getElementById('ssoLinkPwRow').classList.add('hidden');
+          const emailEl = document.getElementById('email'); if (emailEl) emailEl.value = email;
+        }
+      } catch (e) { _ssoLinkSay(e.message || 'ตรวจสอบไม่สำเร็จ', false); }
+      finally { btn.disabled = false; }
+    }
+    async function ssoLinkWithPassword() {
+      const email = (document.getElementById('ssoLinkEmail').value || '').trim();
+      const pw = document.getElementById('ssoLinkPassword').value;
+      if (!pw) { _ssoLinkSay('กรุณากรอกรหัสผ่านของบัญชีเดิม', false); return; }
+      const btn = document.getElementById('ssoLinkBtn'); btn.disabled = true; btn.textContent = 'กำลังผูก...';
+      try {
+        const res = await API.ssoLinkExisting(_ssoTicket, email, pw);
+        const d = res.data || {};
+        if (d.linked && d.login) {
+          const token = d.login.accessToken || d.login.token;
+          localStorage.setItem('token', token);
+          localStorage.setItem('user', JSON.stringify(d.login.user || d.login));
+          localStorage.removeItem('currentCompany');
+          API.token = token;
+          _ssoLinkSay(res.message || 'ผูกบัญชีแล้ว', true);
+          setTimeout(() => { window.location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html'; }, 400);
+          return;
+        }
+        _ssoLinkSay(res.message || 'ไม่สำเร็จ', false);
+      } catch (e) { _ssoLinkSay(e.message || 'ผูกไม่สำเร็จ', false); }
+      finally { btn.disabled = false; btn.textContent = 'ผูกและเข้าสู่ระบบ'; }
+    }
+    async function ssoLinkSendEmail() {
+      const email = (document.getElementById('ssoLinkEmail').value || '').trim();
+      try {
+        const res = await API.ssoLinkExisting(_ssoTicket, email, null);
+        _ssoLinkSay(res.message || 'ส่งลิงก์แล้ว', !!(res.data && res.data.exists));
+      } catch (e) { _ssoLinkSay(e.message || 'ส่งไม่สำเร็จ', false); }
+    }
 
     function _ssoSignupPayload() {
       const invite = _inviteToken();
@@ -349,11 +440,12 @@
     function handleFacebookRegister() {
       if (!ssoConfig.facebook || !_ssoPreflight()) return;
       // ⚠️ เดิมเขียน `if (!window.FB) FB.init(...)` — กลับตรรกะ: SDK ไม่โหลด
-      // (ตัวบล็อกโฆษณา/เน็ตล่ม) แล้วเรียก FB.init = ReferenceError กดปุ่มแล้ว
-      // เงียบสนิท ไม่มี error ให้ผู้ใช้เห็น
+      // แล้วเรียก FB.init = ReferenceError กดปุ่มแล้วเงียบสนิท ไม่มี error ให้เห็น
+      // และห้ามโทษ "ตัวบล็อกโฆษณา" — สาเหตุที่พบจริงคือ CSP ของระบบเอง ซึ่ง
+      // ผู้ใช้แก้ไม่ได้ (ข้อความที่เดาสาเหตุแทนผู้ใช้พาไล่ผิดทาง)
       if (!window.FB) {
-        document.getElementById('errorMsg').textContent = 'โหลดบริการ Facebook ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
-        document.getElementById('errorMsg').classList.remove('hidden');
+        _ssoError('ยังสมัครด้วย Facebook ไม่ได้ — สคริปต์ของ Facebook โหลดไม่สำเร็จ '
+          + 'ให้ใช้ปุ่ม Google หรือ LINE ไปก่อน แล้วแจ้งผู้ดูแลระบบให้ตรวจการตั้งค่า Facebook Login');
         return;
       }
       FB.login(function(response) {
@@ -369,7 +461,7 @@
     function handleLineRegister() {
       if (!ssoConfig.line || !_ssoPreflight()) return;
       if (!Sso.begin('Line', ssoConfig, _ssoSignupPayload()))
-        _ssoError(Sso.notReadyMessage('LINE'));
+        _ssoError(Sso.notReadyMessage('Line'));
     }
 
     // ===== Live password validation =====
@@ -471,7 +563,7 @@
           localStorage.setItem('token', token);
           localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
           API.token = token;
-          window.location.href = '/app.html';
+          window.location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html';
         } else {
           throw new Error(res.message || 'สมัครสมาชิกไม่สำเร็จ');
         }
@@ -485,7 +577,7 @@
     }
 
     if (localStorage.getItem('token')) {
-      window.location.href = '/app.html';
+      window.location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html';
     }
 
     // Plan card visual selection
@@ -507,6 +599,19 @@
         this.querySelector('input[type="radio"]').checked = true;
       });
     });
+
+    // ?plan= จากตารางราคาในหน้าแรก (index.html ส่ง lower-case มา) — เดิม
+    // **ไม่มีใครอ่านเลย** ⇒ กด "เลือก Pro" แล้วได้ FreeTrial เงียบ ๆ ทุกครั้ง
+    // (ผลตรวจ B-A3) · ต้องอยู่ **หลัง** listener ของการ์ดถูกผูกแล้ว เพราะเรา
+    // อาศัย handler เดียวกันทำไฮไลต์ให้ — ไม่งั้นจะต้องคัดลอกโค้ดสไตล์มาเขียน
+    // ซ้ำแล้ว drift รอบหน้า (ติ๊กถูกแต่หน้าจอไฮไลต์ผิด = ผู้ใช้เชื่อสิ่งที่เห็น)
+    (function _applyPlanFromQuery() {
+      const wantPlan = (new URLSearchParams(location.search).get('plan') || '').trim().toLowerCase();
+      if (!wantPlan) return;
+      const hit = [...document.querySelectorAll('input[name="plan"]')]
+        .find(r => (r.value || '').toLowerCase() === wantPlan);
+      hit?.closest('.plan-card')?.click();
+    })();
 
     // Apply site settings (logo, background, colors)
     (async function() {

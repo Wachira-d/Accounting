@@ -88,6 +88,17 @@ public class Subscription : BaseEntity
     public int CurrentMonthOcrPages { get; set; }
     public int OcrBonusPages { get; set; }
     public DateTime? OcrBonusExpiresAt { get; set; }
+
+    /// <summary>โควตาเอกสารพิเศษ (ซื้อ top-up / ทำภารกิจแลกโควตา) — บวกเพิ่มจาก
+    /// <see cref="MaxDocumentsPerMonth"/> จนถึง <see cref="DocumentBonusExpiresAt"/>
+    /// (แบบเดียวกับ OcrBonusPages ที่มีอยู่แล้ว — ใช้ pattern เดิม ไม่สร้างกลไกใหม่)</summary>
+    public int DocumentBonusQuota { get; set; }
+    public DateTime? DocumentBonusExpiresAt { get; set; }
+
+    /// <summary>ปิด "ทำภารกิจแลกโควตา" เฉพาะบริษัทนี้ (ชั้นที่ 3 ของสวิตช์ —
+    /// ใช้กับบริษัทที่ใช้ในทางที่ผิด). ชั้น 1 = ปิดทุก QuotaRewardOption ·
+    /// ชั้น 2 = PlanTemplate.AllowQuotaReward</summary>
+    public bool QuotaRewardBlocked { get; set; }
     public DateTime UsageResetDate { get; set; }
 
     // Payment
@@ -244,6 +255,10 @@ public class PlanTemplate : BaseEntity
     public int TrialMaxOcrPagesPerMonth { get; set; } = 10;
     public bool TrialBlockOnExpiry { get; set; } = false;
     public int TrialGracePeriodDays { get; set; } = 7;
+    /// <summary>แพ็กเกจนี้ให้ "ทำภารกิจแลกโควตาเอกสาร" ได้ไหม (LODGING_LICENSING_PLAN §12)
+    /// — ปกติเปิดเฉพาะแพ็กเกจเล็ก/ทดลอง เพราะลูกค้าใหญ่ควรอัปเกรดแทนการดูโฆษณา</summary>
+    public bool AllowQuotaReward { get; set; } = false;
+
 }
 
 /// <summary>

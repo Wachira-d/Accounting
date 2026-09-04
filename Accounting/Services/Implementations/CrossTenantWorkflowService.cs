@@ -488,7 +488,13 @@ public class CrossTenantWorkflowService
         var inv = new Document
         {
             CompanyId = poLink.TargetCompanyId,
-            DocumentNumber = $"INV-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}",
+            // ⚠️ ต้องเป็น DRAFT- placeholder — เดิม hardcode "INV-{วันที่}-{GUID}"
+            // ให้เอกสารชนิด **TaxInvoice** ⇒ ใบกำกับถือเลขสุ่มที่ไม่เรียงลำดับ
+            // ไม่อยู่เล่ม TIV และเพราะเลขไม่ใช่ DRAFT- ตอนอนุมัติก็ไม่ออกเลขใหม่
+            // ให้ (ApproveDocumentAsync ออกเลขเฉพาะใบที่ยังเป็น DRAFT-) = ติดถาวร
+            // ผิด §86/4 (เลขใบกำกับต้องเรียงต่อเนื่องไม่ขาดช่วง). ใช้ DRAFT- แล้ว
+            // เลขจริงจะออกจาก DocumentNumberGenerator ตอน AR อนุมัติ เหมือนใบอื่น
+            DocumentNumber = $"DRAFT-{Guid.NewGuid()}",
             DocumentType = DocumentType.TaxInvoice,
             Status = DocumentStatus.Draft,   // Invoice is Draft so AR team reviews before sending
             DocumentDate = DateTime.UtcNow.Date,

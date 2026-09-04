@@ -101,6 +101,36 @@
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('rateModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRate()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
+
+    <!-- สร้างใบแจ้งหนี้จากเวลาที่บันทึกไว้ (H-A16)
+         เดิมปุ่มยิง generateTimeInvoice({}) ⇒ ContactId = Guid.Empty ⇒
+         "No billable time entries found" ทุกครั้ง = ปุ่มใช้ไม่ได้ตั้งแต่เขียน -->
+    <div class="modal-overlay" id="invModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+          <h3 class="modal-title">สร้างใบแจ้งหนี้จากเวลาทำงาน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('invModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">ลูกค้า <span style="color:var(--red-600)">*</span></label>
+            <input type="hidden" id="invContactId">
+            <input type="text" class="form-input" id="invContact" placeholder="พิมพ์ชื่อลูกค้า…">
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ตั้งแต่วันที่</label><input type="date" class="form-input" id="invFrom"></div>
+            <div class="form-group"><label class="form-label">ถึงวันที่</label><input type="date" class="form-input" id="invTo"></div>
+          </div>
+          <div style="font-size:11px;color:#64748b">
+            💡 รวมเฉพาะรายการที่ตั้งเป็น Billable และอนุมัติแล้ว · เว้นช่วงวันว่าง = ทุกรายการที่ยังไม่ออกบิล
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('invModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitInvoice()">สร้างใบแจ้งหนี้</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -218,10 +248,36 @@ const Page = {
     } catch (err) { /* ignore */ }
   },
 
-  async generateInvoice() {
+  generateInvoice() {
+    document.getElementById('invContactId').value = '';
+    document.getElementById('invContact').value = '';
+    document.getElementById('invFrom').value = '';
+    document.getElementById('invTo').value = '';
+    if (!this._invAC) this._invAC = Layout.contactAutocomplete('invContact', 'invContactId');
+    Layout.openModal('invModal');
+  },
+
+  async submitInvoice() {
     const api = Layout.api(); if (!api) return;
-    if (!confirm('สร้างใบแจ้งหนี้จากรายการ Billable ที่อนุมัติแล้ว?')) return;
-    try { const res = await api.generateTimeInvoice({}); Layout.toast('สร้างใบแจ้งหนี้สำเร็จ'); } catch (err) { Layout.toast(err.message, 'error'); }
+    const contactId = document.getElementById('invContactId').value;
+    // ★ H-A16: ต้องมีลูกค้าเสมอ — เดิมส่ง {} ⇒ ContactId = Guid.Empty ⇒
+    // เซิร์ฟเวอร์หา entry ไม่เจอแล้วตอบ "No billable time entries found"
+    // ทุกครั้ง ผู้ใช้ตีความว่า "ไม่มีข้อมูล" ทั้งที่จริงคือ "ไม่ได้เลือกลูกค้า"
+    if (!contactId) { Layout.toast('กรุณาเลือกลูกค้าก่อนสร้างใบแจ้งหนี้', 'error'); return; }
+    const body = {
+      contactId,
+      fromDate: document.getElementById('invFrom').value || null,
+      toDate: document.getElementById('invTo').value || null,
+    };
+    try {
+      const res = await api.generateTimeInvoice(body);
+      Layout.closeModal('invModal');
+      // การกระทำที่ผลลัพธ์ไปโผล่ที่ "เอกสารคนละใบ" ต้องบอกว่าไปดูที่ไหน
+      const docId = res?.data?.documentId || res?.data?.id || res?.data;
+      Layout.toast('สร้างใบแจ้งหนี้ (ร่าง) สำเร็จ — ตรวจแล้วกดอนุมัติเพื่อออกเลขจริง');
+      if (docId) window.location.href = `/pages/documents.html?openDoc=${encodeURIComponent(docId)}`;
+      else this.loadSummary();
+    } catch (err) { Layout.toast(err.message, 'error'); }
   },
 };
 Page.init();

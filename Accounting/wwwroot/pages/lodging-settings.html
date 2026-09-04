@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่าที่พัก - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .img-strip{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    .img-strip img{width:84px;height:60px;object-fit:cover;border-radius:6px;border:1px solid #E5E7EB;background:#F3F4F6}
+    .tabs { display:flex; gap:4px; border-bottom:1px solid var(--gray-200); margin-bottom:16px; flex-wrap:wrap }
+    .tab { padding:10px 14px; cursor:pointer; border-bottom:2px solid transparent; font-weight:500; font-size:14px; color:var(--gray-600) }
+    .tab.active { border-bottom-color:var(--primary-600,#4F46E5); color:var(--primary-600,#4F46E5) }
+    .card { background:#fff; border:1px solid var(--gray-200); border-radius:10px; padding:16px 18px; margin-bottom:14px }
+    .card h4 { margin:0 0 10px; font-size:14px }
+    .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px 14px }
+    .fld label { display:block; font-size:12px; color:var(--gray-600); margin-bottom:3px }
+    .hint { font-size:11px; color:var(--gray-500); margin-top:2px }
+    .row-actions { white-space:nowrap }
+    .pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; background:var(--gray-100) }
+    .pill.on { background:#D1FAE5; color:#065F46 } .pill.off { background:#FEE2E2; color:#991B1B }
+    .welcome { background:#EEF2FF; border:1px solid #C7D2FE; border-radius:10px; padding:14px 18px; margin-bottom:14px; font-size:14px }
+    .cal { display:grid; grid-template-columns:repeat(7,1fr); gap:4px }
+    .cal .d { border:1px solid var(--gray-200); border-radius:6px; padding:6px; font-size:11px; min-height:58px; cursor:pointer }
+    .cal .d.ov { background:#FEF3C7 } .cal .d.stop { background:#FEE2E2 } .cal .d.sel { outline:2px solid var(--primary-600,#4F46E5) }
+    .cal .d b { display:block; font-size:12px }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">🛏️ ตั้งค่าที่พัก</h2>
+        <p class="page-subtitle">ห้องพัก · หมายเลขห้อง · แผนราคา · ฤดูกาล · ราคารายวัน · นโยบายยกเลิก · บริการเสริม · มัดจำ/VAT</p>
+      </div>
+      <div class="flex gap-2">
+        <select class="form-input" id="propSelector" onchange="Page.onPropChange()" style="min-width:240px"><option value="">กำลังโหลด...</option></select>
+        <button class="btn btn-secondary" onclick="Page.newProperty()">+ ที่พักใหม่</button>
+        <a class="btn btn-secondary" href="/pages/lodging.html">🏨 Front desk →</a>
+      </div>
+    </div>
+
+    <div id="welcomeBox" class="welcome" style="display:none">
+      🎉 ระบบจองที่พักพร้อมใช้งานแล้ว — สร้างประเภทห้อง 3 แบบ (11 ห้อง) · แผนราคา 4 แบบ · ฤดูกาล 4 ช่วง · นโยบายยกเลิก 2 แบบ · บริการเสริม 4 รายการ ให้แล้ว
+      ปรับตัวเลขให้ตรงกับที่พักจริงได้ทุกแท็บด้านล่าง · ลูกค้าจองได้ที่ <b id="welcomeUrl"></b>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-tab="general" onclick="Page.showTab('general')">ที่พัก & กติกา</div>
+      <div class="tab" data-tab="rooms" onclick="Page.showTab('rooms')">ประเภทห้อง & ห้อง</div>
+      <div class="tab" data-tab="plans" onclick="Page.showTab('plans')">แผนราคา</div>
+      <div class="tab" data-tab="seasons" onclick="Page.showTab('seasons')">ฤดูกาล</div>
+      <div class="tab" data-tab="daily" onclick="Page.showTab('daily')">ราคารายวัน / ปิดขาย</div>
+      <div class="tab" data-tab="policies" onclick="Page.showTab('policies')">นโยบายยกเลิก</div>
+      <div class="tab" data-tab="extras" onclick="Page.showTab('extras')">บริการเสริม</div>
+    </div>
+
+    <!-- ═══ ที่พัก ═══ -->
+    <div id="tabGeneral">
+      <form id="propForm" onsubmit="Page.saveProperty(event)">
+        <div class="card"><h4>ข้อมูลที่พัก</h4>
+          <div class="grid2">
+            <div class="fld"><label>ชื่อที่พัก *</label><input class="form-input" name="name" required></div>
+            <div class="fld"><label>ชื่ออังกฤษ</label><input class="form-input" name="nameEn"></div>
+            <div class="fld"><label>รหัส (ใช้ในเลขจอง RES-XXXX-…)</label><input class="form-input" name="code" maxlength="8" style="text-transform:uppercase"></div>
+            <div class="fld"><label>ประเภท</label><select class="form-input" name="propertyType"><option value="1">โรงแรม</option><option value="2">รีสอร์ท</option><option value="3">โฮสเทล</option><option value="4">บ้านพัก/วิลล่า</option><option value="5">อพาร์ตเมนต์</option><option value="6">แคมป์</option><option value="99">อื่น ๆ</option></select></div>
+            <div class="fld"><label>ดาว (0 = ไม่ระบุ)</label><input class="form-input" type="number" name="starRating" min="0" max="5"></div>
+            <div class="fld"><label>เว็บไซต์ที่ผูก</label><select class="form-input" name="siteId" id="siteSelect"><option value="">— ไม่ผูก —</option></select><div class="hint">ที่พักที่ผูกกับเว็บจะเปิดจองบน /booking ของเว็บนั้น</div></div>
+            <div class="fld"><label>โทร</label><input class="form-input" name="phone"></div>
+            <div class="fld"><label>อีเมล</label><input class="form-input" name="email" type="email"></div>
+            <div class="fld"><label>LINE ID</label><input class="form-input" name="lineId"></div>
+            <div class="fld" style="grid-column:1/-1"><label>ที่อยู่</label><input class="form-input" name="address"></div>
+            <div class="fld" style="grid-column:1/-1"><label>คำอธิบาย (แสดงบนเว็บ)</label><textarea class="form-input" name="description" rows="2"></textarea></div>
+            <div class="fld"><label>ลิงก์แผนที่</label><input class="form-input" name="mapUrl"></div>
+            <div class="fld"><label>สิ่งอำนวยความสะดวก (คั่นด้วย ,)</label><input class="form-input" name="amenities" placeholder="wifi, pool, parking"></div>
+            <div class="fld" style="grid-column:1/-1"><label>รูปภาพที่พัก</label>
+              <textarea class="form-input" name="images" rows="2" placeholder="URL รูป — บรรทัดละ 1 รูป (หรือกดอัปโหลดด้านล่าง)"></textarea>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+                <input type="file" id="propImgFile" accept="image/*" multiple style="font-size:13px">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="Page.uploadImages('propImgFile', 'propImages')">⬆ อัปโหลดรูป</button>
+                <span class="hint" id="propImgStatus"></span>
+              </div>
+              <div id="propImages" class="img-strip"></div></div>
+          </div>
+        </div>
+        <div class="card"><h4>เวลาเข้า-ออก & กติกาการจอง</h4>
+          <div class="grid2">
+            <div class="fld"><label>เวลาเช็คอิน</label><input class="form-input" name="checkInTime" placeholder="14:00"></div>
+            <div class="fld"><label>เวลาเช็คเอาต์</label><input class="form-input" name="checkOutTime" placeholder="12:00"></div>
+            <div class="fld"><label>Early check-in ได้กี่ชม. / ค่าธรรมเนียม</label><div class="flex gap-2"><input class="form-input" type="number" name="earlyCheckInHours" min="0"><input class="form-input" type="number" step="0.01" name="earlyCheckInFee" min="0"></div></div>
+            <div class="fld"><label>Late check-out ได้กี่ชม. / ค่าธรรมเนียม</label><div class="flex gap-2"><input class="form-input" type="number" name="lateCheckOutHours" min="0"><input class="form-input" type="number" step="0.01" name="lateCheckOutFee" min="0"></div></div>
+            <div class="fld"><label>พักขั้นต่ำ (คืน)</label><input class="form-input" type="number" name="minNights" min="1"></div>
+            <div class="fld"><label>พักสูงสุด (คืน)</label><input class="form-input" type="number" name="maxNights" min="1"></div>
+            <div class="fld"><label>จองล่วงหน้าได้สูงสุด (วัน)</label><input class="form-input" type="number" name="maxAdvanceDays" min="1"></div>
+            <div class="fld"><label>ต้องจองก่อนเช็คอินอย่างน้อย (ชม.)</label><input class="form-input" type="number" name="minAdvanceHours" min="0"></div>
+            <div class="fld"><label>เด็ก = อายุไม่เกิน</label><input class="form-input" type="number" name="childMaxAge" min="0"></div>
+            <div class="fld"><label>ทารก (ไม่คิดเงิน) = อายุไม่เกิน</label><input class="form-input" type="number" name="infantMaxAge" min="0"></div>
+            <div class="fld"><label>Overbooking ได้กี่ห้อง</label><input class="form-input" type="number" name="overbookingAllowance" min="0"></div>
+            <div class="fld"><label>ราคาแขกเกินมาตรฐาน /คน/คืน (default)</label><input class="form-input" type="number" step="0.01" name="extraGuestPrice" min="0"></div>
+            <div class="fld"><label>ตัวคูณสุดสัปดาห์ (1.00 = ไม่ปรับ)</label><input class="form-input" type="number" step="0.01" name="weekendMultiplier" min="0.01"></div>
+            <div class="fld"><label>วันที่ถือเป็นสุดสัปดาห์</label><div id="weekendDays" class="flex gap-2" style="flex-wrap:wrap;font-size:13px"></div></div>
+            <div class="fld"><label><input type="checkbox" name="onlineBookingEnabled"> เปิดให้จองผ่านเว็บ</label></div>
+            <div class="fld"><label><input type="checkbox" name="requireGuestIdNumber"> ต้องกรอกเลขบัตร/พาสปอร์ตตอนจอง</label></div>
+          </div>
+        </div>
+        <div class="card"><h4>มัดจำ & การยืนยัน</h4>
+          <div class="grid2">
+            <div class="fld"><label>มัดจำ % ของยอดรวม</label><input class="form-input" type="number" step="0.01" name="depositPercent" min="0" max="100"></div>
+            <div class="fld"><label>หรือมัดจำคงที่ต่อการจอง (บาท)</label><input class="form-input" type="number" step="0.01" name="depositFixedAmount" min="0"><div class="hint">มีค่า = ใช้แทน %</div></div>
+            <div class="fld"><label>มัดจำขั้นต่ำ</label><input class="form-input" type="number" step="0.01" name="depositMinAmount" min="0"></div>
+            <div class="fld"><label>มัดจำสูงสุด</label><input class="form-input" type="number" step="0.01" name="depositMaxAmount" min="0"></div>
+            <div class="fld"><label>กันห้องรอชำระมัดจำ (นาที)</label><input class="form-input" type="number" name="paymentHoldMinutes" min="15"><div class="hint">หมดเวลา = ปล่อยห้องอัตโนมัติ</div></div>
+            <div class="fld"><label>ค่าปรับ no-show (% ของยอดรวม)</label><input class="form-input" type="number" step="0.01" name="noShowChargePercent" min="0" max="100"></div>
+            <div class="fld"><label><input type="checkbox" name="autoConfirmOnDeposit"> ยืนยันอัตโนมัติเมื่อบันทึกรับมัดจำ</label></div>
+            <div class="fld"><label><input type="checkbox" name="confirmWithoutDeposit"> ยืนยันทันทีโดยไม่เก็บมัดจำ</label></div>
+            <div class="fld"><label>นโยบายยกเลิก default</label><select class="form-input" name="defaultCancellationPolicyId" id="policySelect"><option value="">— ไม่มี —</option></select></div>
+          </div>
+        </div>
+        <div class="card"><h4>ภาษี & บัญชี</h4>
+          <div class="grid2">
+            <div class="fld"><label>ราคาที่ตั้ง</label><select class="form-input" name="pricesIncludeVat"><option value="true">รวม VAT แล้ว (แสดงลูกค้าแบบรวมภาษี)</option><option value="false">ยังไม่รวม VAT</option></select></div>
+            <div class="fld"><label>คิด VAT ห้องพัก</label><select class="form-input" name="chargeVat"><option value="">ตามสถานะจด VAT ของบริษัท</option><option value="true">คิด 7% เสมอ</option><option value="false">ไม่คิด</option></select><div class="hint">อัตราที่ใช้จริงตอนนี้: <b id="effVat">-</b>%</div></div>
+            <div class="fld"><label>Service charge %</label><input class="form-input" type="number" step="0.01" name="serviceChargePercent" min="0" max="100"></div>
+            <div class="fld"><label>ผังบัญชีรายได้ค่าห้อง</label><input class="form-input" name="roomRevenueAccountCode" placeholder="ว่าง = ตามสินค้า/บริษัท"></div>
+            <div class="fld"><label>ผังบัญชี service charge</label><input class="form-input" name="serviceChargeAccountCode"></div>
+            <div class="fld"><label>ผังบัญชีรายได้ริบมัดจำ/ค่าปรับยกเลิก</label><input class="form-input" name="cancellationFeeAccountCode" placeholder="ว่าง = รายได้ค่าห้อง"></div>
+            <div class="fld"><label>ผังบัญชีพักมัดจำ</label><input class="form-input" name="depositDeferredAccountCode" placeholder="ว่าง = 21712"></div>
+            <div class="fld"><label><input type="checkbox" name="depositOutputVatDeferred"> VAT มัดจำรอเกิดตอนเช็คอิน (ปกติไม่ติ๊ก — §78/1 เกิดตอนรับเงิน)</label></div>
+          </div>
+        </div>
+        <div class="card"><h4>ข้อความ & การแจ้งเตือน & แม่บ้าน</h4>
+          <div class="grid2">
+            <div class="fld" style="grid-column:1/-1"><label>ข้อความยืนยันการจอง (ส่งให้แขก)</label><textarea class="form-input" name="confirmationMessage" rows="2"></textarea></div>
+            <div class="fld" style="grid-column:1/-1"><label>กติกาที่พัก (แขกต้องยอมรับก่อนจอง)</label><textarea class="form-input" name="houseRules" rows="3"></textarea></div>
+            <div class="fld"><label><input type="checkbox" name="notifyOwnerOnBooking"> แจ้งอีเมลเมื่อมีจอง/สลิปใหม่</label></div>
+            <div class="fld"><label>อีเมลผู้รับแจ้งเตือน (คั่นด้วย ,)</label><input class="form-input" name="notifyEmails"></div>
+            <div class="fld"><label>เวลาทำความสะอาด/ห้อง (นาที)</label><input class="form-input" type="number" name="housekeepingMinutesPerRoom" min="5"></div>
+            <div class="fld"><label><input type="checkbox" name="autoCreateHousekeepingTaskOnCheckout"> สร้างงานแม่บ้านอัตโนมัติเมื่อเช็คเอาต์</label></div>
+            <div class="fld"><label><input type="checkbox" name="isActive"> เปิดใช้งานที่พัก</label></div>
+          </div>
+        </div>
+        <div class="flex gap-2"><button class="btn btn-primary" type="submit">💾 บันทึกการตั้งค่า</button></div>
+      </form>
+    </div>
+
+    <!-- ═══ ห้อง ═══ -->
+    <div id="tabRooms" class="hidden">
+      <div class="flex gap-2" style="margin-bottom:10px"><button class="btn btn-primary" onclick="Page.editRoomType()">+ ประเภทห้อง</button></div>
+      <div id="roomTypesBox"></div>
+    </div>
+
+    <!-- ═══ แผนราคา ═══ -->
+    <div id="tabPlans" class="hidden">
+      <div class="flex gap-2" style="margin-bottom:10px"><button class="btn btn-primary" onclick="Page.editPlan()">+ แผนราคา</button></div>
+      <div class="table-container"><table class="table"><thead><tr><th>ชื่อ</th><th>รหัส</th><th>ห้อง</th><th>วิธีปรับราคา</th><th>อาหารเช้า</th><th>คืนเงิน</th><th>นโยบาย</th><th>เงื่อนไข</th><th>มัดจำ</th><th>สถานะ</th><th></th></tr></thead><tbody id="plansBody"></tbody></table></div>
+    </div>
+
+    <!-- ═══ ฤดูกาล ═══ -->
+    <div id="tabSeasons" class="hidden">
+      <div class="flex gap-2" style="margin-bottom:10px"><button class="btn btn-primary" onclick="Page.editSeason()">+ ฤดูกาล</button><span class="hint" style="align-self:center">ช่วงที่แคบกว่าชนะ (สงกรานต์ 5 วัน ชนะ High season 4 เดือน)</span></div>
+      <div class="table-container"><table class="table"><thead><tr><th>ชื่อ</th><th>ชนิด</th><th>ช่วง</th><th>ตัวคูณ</th><th>ทุกปี</th><th>ขั้นต่ำ (คืน)</th><th>เฉพาะห้อง</th><th>สถานะ</th><th></th></tr></thead><tbody id="seasonsBody"></tbody></table></div>
+    </div>
+
+    <!-- ═══ ราคารายวัน ═══ -->
+    <div id="tabDaily" class="hidden">
+      <div class="card">
+        <div class="grid2">
+          <div class="fld"><label>ประเภทห้อง</label><select class="form-input" id="dailyRoomType" onchange="Page.loadDaily()"></select></div>
+          <div class="fld"><label>เดือน</label><input class="form-input" type="month" id="dailyMonth" onchange="Page.loadDaily()"></div>
+          <div class="fld" style="grid-column:1/-1"><div class="hint">คลิกวันเพื่อเลือกช่วง (คลิกวันแรก แล้ววันสุดท้าย) → ตั้งราคา/ปิดขาย/จำกัดจำนวน · เหลือง = มี override · แดง = ปิดขาย</div></div>
+        </div>
+        <div class="cal" id="dailyCal" style="margin:10px 0"></div>
+        <div class="grid2" style="align-items:end">
+          <div class="fld"><label>ช่วงที่เลือก</label><div id="dailyRange" style="font-size:13px;padding:8px 0">-</div></div>
+          <div class="fld"><label>ราคาต่อคืน (ว่าง = ไม่แตะ)</label><input class="form-input" type="number" step="0.01" id="dailyRate" min="0"></div>
+          <div class="fld"><label>ปิดขาย</label><select class="form-input" id="dailyStop"><option value="">ไม่แตะ</option><option value="true">ปิดขาย</option><option value="false">เปิดขาย</option></select></div>
+          <div class="fld"><label>จำนวนห้องที่ปล่อยขาย (0 = ทั้งหมด)</label><input class="form-input" type="number" id="dailyAllot" min="0"></div>
+          <div class="fld"><label>ขั้นต่ำ (คืน)</label><input class="form-input" type="number" id="dailyMin" min="0"></div>
+          <div class="fld"><label>หมายเหตุ</label><input class="form-input" id="dailyNote"></div>
+          <div class="flex gap-2"><button class="btn btn-primary" onclick="Page.saveDaily(false)">บันทึกช่วงที่เลือก</button><button class="btn btn-secondary" onclick="Page.saveDaily(true)">ล้าง override ในช่วง</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ นโยบาย ═══ -->
+    <div id="tabPolicies" class="hidden">
+      <div class="flex gap-2" style="margin-bottom:10px"><button class="btn btn-primary" onclick="Page.editPolicy()">+ นโยบายยกเลิก</button></div>
+      <div class="table-container"><table class="table"><thead><tr><th>ชื่อ</th><th>กฎ</th><th>ไม่คืนเงิน</th><th>default</th><th>สถานะ</th><th></th></tr></thead><tbody id="policiesBody"></tbody></table></div>
+    </div>
+
+    <!-- ═══ บริการเสริม ═══ -->
+    <div id="tabExtras" class="hidden">
+      <div class="flex gap-2" style="margin-bottom:10px"><button class="btn btn-primary" onclick="Page.editExtra()">+ บริการเสริม</button></div>
+      <div class="table-container"><table class="table"><thead><tr><th>ชื่อ</th><th>หมวด</th><th>วิธีคิด</th><th class="text-right">ราคา</th><th>สูงสุด</th><th>บนเว็บ</th><th>สถานะ</th><th></th></tr></thead><tbody id="extrasBody"></tbody></table></div>
+    </div>
+
+    <!-- ═══ modal ทั่วไป ═══ -->
+    <div class="modal-overlay" id="editModal">
+      <div class="modal" style="max-width:760px">
+        <div class="modal-header"><h3 class="modal-title" id="editTitle">แก้ไข</h3><button class="modal-close" onclick="Layout.closeModal('editModal')">&times;</button></div>
+        <div class="modal-body" id="editBody"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('editModal')">ปิด</button><button class="btn btn-primary" id="editSave">บันทึก</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const DAYS = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+    const PRICE_MODE = {1:'ต่อการเข้าพัก',2:'ต่อคืน',3:'ต่อคน',4:'ต่อคน/คืน'};
+    const EXTRA_CAT = {1:'อาหารเช้า',2:'เตียงเสริม',3:'รถรับส่ง',4:'ทัวร์',5:'สปา',6:'อาหาร',99:'อื่น ๆ'};
+    const SEASON_TYPE = {1:'Low',2:'Regular',3:'High',4:'Peak',5:'วันหยุด'};
+    const ADJUST = {0:'ราคาฐาน',1:'ราคาตายตัว',2:'คูณ',3:'บวก/ลบ'};
+    const esc = (s) => Layout.esc(s);
+    const num = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+
+    const Page = {
+      propertyId: null, prop: null, props: [], roomTypes: [], plans: [], seasons: [], policies: [], extras: [], sites: [],
+      daily: { overrides: [], selStart: null, selEnd: null },
+
+      async init() {
+        if (!Layout.init('lodging-settings')) return;
+        const api = Layout.api(); if (!api) return;
+        const qs = new URLSearchParams(location.search);
+        try { const sr = await api.cmsListSites(); this.sites = sr?.data?.items || sr?.data || []; } catch (_) { this.sites = []; }
+        document.getElementById('siteSelect').innerHTML = '<option value="">— ไม่ผูก —</option>' + this.sites.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+        document.getElementById('weekendDays').innerHTML = DAYS.map((d, i) => `<label><input type="checkbox" data-mask="${1 << i}"> ${d}</label>`).join('');
+        await this.loadProps(qs.get('propertyId'), qs.get('siteId'));
+        if (qs.get('welcome') === '1' && this.prop) {
+          document.getElementById('welcomeBox').style.display = '';
+          const site = this.sites.find(s => s.id === this.prop.siteId);
+          document.getElementById('welcomeUrl').textContent = site ? `${site.subdomain}.nextacc.net/booking` : '/booking';
+        }
+      },
+      async loadProps(preferId, preferSite) {
+        const api = Layout.api();
+        const res = await api.lodgingProperties();
+        this.props = res?.data || [];
+        const sel = document.getElementById('propSelector');
+        if (!this.props.length) {
+          sel.innerHTML = '<option value="">ยังไม่มีที่พัก — กด "+ ที่พักใหม่"</option>';
+          this.propertyId = null; this.prop = null; this.fillProp({});
+          return;
+        }
+        sel.innerHTML = this.props.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.code)})</option>`).join('');
+        const bySite = preferSite ? this.props.find(p => p.siteId === preferSite) : null;
+        this.propertyId = preferId || bySite?.id || this.props[0].id;
+        sel.value = this.propertyId;
+        await this.loadAll();
+      },
+      async onPropChange() { this.propertyId = document.getElementById('propSelector').value; await this.loadAll(); },
+      async loadAll() {
+        const api = Layout.api();
+        const [p, rt, pl, se, po, ex] = await Promise.all([
+          api.lodgingGetProperty(this.propertyId), api.lodgingRoomTypes(this.propertyId), api.lodgingRatePlans(this.propertyId),
+          api.lodgingSeasons(this.propertyId), api.lodgingPolicies(this.propertyId), api.lodgingExtras(this.propertyId)]);
+        this.prop = p.data; this.roomTypes = rt.data || []; this.plans = pl.data || []; this.seasons = se.data || []; this.policies = po.data || []; this.extras = ex.data || [];
+        this.fillProp(this.prop); this.renderRooms(); this.renderPlans(); this.renderSeasons(); this.renderPolicies(); this.renderExtras();
+        document.getElementById('dailyRoomType').innerHTML = this.roomTypes.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+        if (!document.getElementById('dailyMonth').value) document.getElementById('dailyMonth').value = new Date().toISOString().slice(0, 7);
+        await this.loadDaily();
+      },
+      showTab(name) {
+        ['tabGeneral','tabRooms','tabPlans','tabSeasons','tabDaily','tabPolicies','tabExtras'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        document.getElementById('tab' + name.charAt(0).toUpperCase() + name.slice(1)).classList.remove('hidden');
+        document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+      },
+
+      // ─── ที่พัก ───
+      // ตัวอัปโหลดรูปตัวเดียวของหน้านี้ — ทั้งฟอร์มที่พักและฟอร์มประเภทห้องใช้ร่วมกัน
+      // (สองสำเนาที่ต่างคนต่างเขียน = drift แน่นอน)
+      async uploadImages(inputId, stripId, fieldName = 'images') {
+        const input = document.getElementById(inputId);
+        const status = document.getElementById(inputId.replace('File', 'Status'));
+        const files = Array.from(input?.files || []);
+        if (!files.length) { Layout.toast('เลือกไฟล์รูปก่อน', 'error'); return; }
+        const ta = document.querySelector(`[name="${fieldName}"]`);
+        if (!ta) return;
+        status.textContent = `กำลังอัปโหลด 0/${files.length}...`;
+        const urls = [];
+        for (let i = 0; i < files.length; i++) {
+          const fd = new FormData(); fd.append('file', files[i]);
+          try {
+            const res = await Layout.api().lodgingUploadImage(fd);
+            if (res?.data) urls.push(res.data);
+          } catch (e) { status.textContent = '✗ ' + (e.message || 'อัปโหลดไม่สำเร็จ'); return; }
+          status.textContent = `กำลังอัปโหลด ${i + 1}/${files.length}...`;
+        }
+        const existing = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+        ta.value = existing.concat(urls).join('\n');
+        input.value = '';
+        status.textContent = `✓ เพิ่มแล้ว ${urls.length} รูป — อย่าลืมกดบันทึก`;
+        this.renderStrip(stripId, ta.value);
+      },
+      renderStrip(stripId, text) {
+        const el = document.getElementById(stripId);
+        if (!el) return;
+        const urls = String(text || '').split('\n').map(s => s.trim()).filter(Boolean);
+        el.innerHTML = urls.map(u => `<img src="${esc(u)}" alt="" loading="lazy">`).join('');
+      },
+
+      fillProp(p) {
+        const f = document.getElementById('propForm');
+        for (const el of f.elements) {
+          if (!el.name) continue;
+          const v = p[el.name];
+          if (el.type === 'checkbox') el.checked = !!v;
+          else if (el.name === 'amenities') el.value = (p.amenities || []).join(', ');
+          else if (el.name === 'images') { el.value = (p.images || []).join('\n'); this.renderStrip('propImages', el.value); }
+          else if (el.name === 'chargeVat') el.value = v == null ? '' : String(v);
+          else if (el.name === 'pricesIncludeVat') el.value = String(v ?? true);
+          else el.value = v ?? '';
+        }
+        document.querySelectorAll('#weekendDays input').forEach(cb => cb.checked = ((p.weekendDaysMask ?? 96) & +cb.dataset.mask) !== 0);
+        document.getElementById('policySelect').innerHTML = '<option value="">— ไม่มี —</option>' + (this.policies || []).map(x => `<option value="${x.id}" ${x.id === p.defaultCancellationPolicyId ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+        document.getElementById('effVat').textContent = p.effectiveVatRate ?? '-';
+      },
+      readProp() {
+        const f = document.getElementById('propForm'); const d = Object.assign({}, this.prop || {});
+        for (const el of f.elements) {
+          if (!el.name) continue;
+          if (el.type === 'checkbox') d[el.name] = el.checked;
+          else if (el.name === 'amenities') d.amenities = el.value.split(',').map(s => s.trim()).filter(Boolean);
+          else if (el.name === 'images') d.images = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+          else if (el.name === 'chargeVat') d.chargeVat = el.value === '' ? null : el.value === 'true';
+          else if (el.name === 'pricesIncludeVat') d.pricesIncludeVat = el.value === 'true';
+          else if (el.type === 'number') d[el.name] = el.value === '' ? null : +el.value;
+          else d[el.name] = el.value === '' ? null : el.value;
+        }
+        let mask = 0; document.querySelectorAll('#weekendDays input:checked').forEach(cb => mask |= +cb.dataset.mask); d.weekendDaysMask = mask;
+        ['minNights','maxNights','maxAdvanceDays','minAdvanceHours','childMaxAge','infantMaxAge','overbookingAllowance','paymentHoldMinutes','housekeepingMinutesPerRoom','starRating','earlyCheckInHours','lateCheckOutHours']
+          .forEach(k => { if (d[k] == null) delete d[k]; });
+        ['depositPercent','depositMinAmount','serviceChargePercent','weekendMultiplier','extraGuestPrice','noShowChargePercent','earlyCheckInFee','lateCheckOutFee'].forEach(k => { if (d[k] == null) d[k] = 0; });
+        return d;
+      },
+      async saveProperty(ev) {
+        ev.preventDefault(); const api = Layout.api();
+        try {
+          const d = this.readProp();
+          const res = this.propertyId ? await api.lodgingUpdateProperty(this.propertyId, d) : await api.lodgingCreateProperty(d);
+          Layout.toast(res.message || 'บันทึกแล้ว');
+          if (!this.propertyId) await this.loadProps(res.data.id); else { this.prop = res.data; this.fillProp(this.prop); }
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+      newProperty() {
+        this.propertyId = null; this.prop = null;
+        this.fillProp({ name: '', propertyType: 1, checkInTime: '14:00', checkOutTime: '12:00', minNights: 1, maxNights: 30, maxAdvanceDays: 365, depositPercent: 50, paymentHoldMinutes: 1440, childMaxAge: 11, infantMaxAge: 2, weekendMultiplier: 1, weekendDaysMask: 96, noShowChargePercent: 100, onlineBookingEnabled: true, autoConfirmOnDeposit: true, notifyOwnerOnBooking: true, autoCreateHousekeepingTaskOnCheckout: true, housekeepingMinutesPerRoom: 30, isActive: true, pricesIncludeVat: true });
+        this.showTab('general'); Layout.toast('กรอกข้อมูลที่พักใหม่แล้วกดบันทึก');
+      },
+
+      // ─── modal helper ───
+      openEditor(title, bodyHtml, onSave) {
+        document.getElementById('editTitle').textContent = title;
+        document.getElementById('editBody').innerHTML = bodyHtml;
+        document.getElementById('editSave').onclick = onSave;
+        Layout.openModal('editModal');
+      },
+      readForm(id) {
+        const f = document.getElementById(id); const d = {};
+        for (const el of f.elements) {
+          if (!el.name) continue;
+          if (el.type === 'checkbox') d[el.name] = el.checked;
+          else if (el.type === 'number') d[el.name] = el.value === '' ? null : +el.value;
+          else d[el.name] = el.value === '' ? null : el.value;
+        }
+        return d;
+      },
+      fld(label, inner, span) { return `<div class="fld" ${span ? 'style="grid-column:1/-1"' : ''}><label>${label}</label>${inner}</div>`; },
+      inp(name, v, type = 'text', extra = '') { return `<input class="form-input" name="${name}" type="${type}" value="${esc(v ?? '')}" ${extra}>`; },
+      chk(name, v, label) { return `<label><input type="checkbox" name="${name}" ${v ? 'checked' : ''}> ${label}</label>`; },
+      sel(name, v, opts) { return `<select class="form-input" name="${name}">${Object.entries(opts).map(([k, l]) => `<option value="${k}" ${String(v) === String(k) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`; },
+
+      // ─── ประเภทห้อง ───
+      renderRooms() {
+        const box = document.getElementById('roomTypesBox');
+        if (!this.roomTypes.length) { box.innerHTML = '<div class="card text-gray-400">ยังไม่มีประเภทห้อง</div>'; return; }
+        box.innerHTML = this.roomTypes.map(r => `<div class="card">
+          <div class="flex" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+            <div><h4 style="margin:0">${esc(r.name)} <span class="pill">${esc(r.code)}</span> <span class="pill ${r.isActive ? 'on' : 'off'}">${r.isActive ? 'เปิดขาย' : 'ปิด'}</span></h4>
+              <div class="hint">฿${num(r.baseRate)}/${r.pricingMode === 2 ? 'คน' : 'ห้อง'}/คืน · มาตรฐาน ${r.standardOccupancy} คน · สูงสุด ${r.maxAdults} ผู้ใหญ่ ${r.maxChildren} เด็ก (รวม ${r.maxOccupancy}) ${r.allowExtraBed ? '· เตียงเสริม ฿' + num(r.extraBedPrice) : ''} ${r.includesBreakfast ? '· 🍳' : ''} ${r.minNights ? '· ขั้นต่ำ ' + r.minNights + ' คืน' : ''}</div></div>
+            <div class="row-actions"><button class="btn btn-sm btn-secondary" onclick="Page.editRoomType('${r.id}')">แก้ไข</button> <button class="btn btn-sm btn-secondary" onclick="Page.editUnit('${r.id}')">+ ห้อง</button> <button class="btn btn-sm btn-danger" onclick="Page.deleteRoomType('${r.id}')">ลบ</button></div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${(r.units || []).map(u => `<span class="pill ${u.isOutOfService ? 'off' : (u.isActive ? '' : 'off')}" style="cursor:pointer" title="${esc(u.floor ? 'ชั้น ' + u.floor : '')}" onclick="Page.editUnit('${r.id}','${u.id}')">${esc(u.number)}${u.isOutOfService ? ' 🔧' : ''}</span>`).join('') || '<span class="hint">ยังไม่มีหมายเลขห้อง — กด "+ ห้อง"</span>'}</div>
+        </div>`).join('');
+      },
+      editRoomType(id) {
+        const r = this.roomTypes.find(x => x.id === id) || { propertyId: this.propertyId, standardOccupancy: 2, maxAdults: 2, maxChildren: 1, maxOccupancy: 3, pricingMode: 1, isActive: true, sortOrder: this.roomTypes.length + 1 };
+        const html = `<form id="rtForm" class="grid2">
+          ${this.fld('ชื่อ *', this.inp('name', r.name, 'text', 'required'))}${this.fld('ชื่ออังกฤษ', this.inp('nameEn', r.nameEn))}
+          ${this.fld('รหัส', this.inp('code', r.code))}${this.fld('slug (URL)', this.inp('slug', r.slug))}
+          ${this.fld('ราคาฐานต่อคืน *', this.inp('baseRate', r.baseRate, 'number', 'step="0.01" min="0" required'))}${this.fld('วิธีคิดราคา', this.sel('pricingMode', r.pricingMode, {1:'ต่อห้องต่อคืน',2:'ต่อคนต่อคืน (โฮสเทล/แคมป์)'}))}
+          ${this.fld('คนที่รวมในราคา', this.inp('standardOccupancy', r.standardOccupancy, 'number', 'min="1"'))}${this.fld('ผู้ใหญ่สูงสุด', this.inp('maxAdults', r.maxAdults, 'number', 'min="1"'))}
+          ${this.fld('เด็กสูงสุด', this.inp('maxChildren', r.maxChildren, 'number', 'min="0"'))}${this.fld('รวมสูงสุด', this.inp('maxOccupancy', r.maxOccupancy, 'number', 'min="1"'))}
+          ${this.fld('ราคาแขกเกิน /คน/คืน (ว่าง = ตามที่พัก)', this.inp('extraGuestPrice', r.extraGuestPrice, 'number', 'step="0.01" min="0"'))}${this.fld('ราคาเตียงเสริม /คืน', this.inp('extraBedPrice', r.extraBedPrice, 'number', 'step="0.01" min="0"'))}
+          ${this.fld('', this.chk('allowExtraBed', r.allowExtraBed, 'มีเตียงเสริม'))}${this.fld('เตียงเสริมสูงสุด', this.inp('maxExtraBeds', r.maxExtraBeds, 'number', 'min="0"'))}
+          ${this.fld('ขั้นต่ำ (คืน) — ว่าง = ตามที่พัก', this.inp('minNights', r.minNights, 'number', 'min="1"'))}${this.fld('', this.chk('includesBreakfast', r.includesBreakfast, 'ราคารวมอาหารเช้า'))}
+          ${this.fld('เตียง', this.inp('bedType', r.bedType))}${this.fld('ขนาด (ตรม.)', this.inp('sizeSqm', r.sizeSqm, 'number', 'step="0.1"'))}${this.fld('วิว', this.inp('viewType', r.viewType))}
+          ${this.fld('ลำดับ', this.inp('sortOrder', r.sortOrder, 'number'))}${this.fld('', this.chk('isActive', r.isActive, 'เปิดขาย'))}
+          ${this.fld('คำอธิบาย', `<textarea class="form-input" name="description" rows="2">${esc(r.description || '')}</textarea>`, true)}
+          ${this.fld('สิ่งอำนวยความสะดวก (คั่น ,)', this.inp('amenitiesCsv', (r.amenities || []).join(', ')), true)}
+          ${this.fld('รูปห้อง', `<textarea class="form-input" name="imagesTxt" rows="2" placeholder="URL รูป — บรรทัดละ 1 รูป (หรือกดอัปโหลด)">${esc((r.images || []).join('\n'))}</textarea>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+              <input type="file" id="rtImgFile" accept="image/*" multiple style="font-size:13px">
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.uploadImages('rtImgFile', 'rtImages', 'imagesTxt')">⬆ อัปโหลดรูป</button>
+              <span class="hint" id="rtImgStatus"></span>
+            </div><div id="rtImages" class="img-strip"></div>`, true)}
+        </form>`;
+        this.openEditor(id ? 'แก้ไขประเภทห้อง' : 'ประเภทห้องใหม่', html, async () => {
+          const d = this.readForm('rtForm'); d.id = r.id || null; d.propertyId = this.propertyId; d.productId = r.productId || null;
+          d.amenities = (d.amenitiesCsv || '').split(',').map(s => s.trim()).filter(Boolean); d.images = (d.imagesTxt || '').split('\n').map(s => s.trim()).filter(Boolean);
+          delete d.amenitiesCsv; delete d.imagesTxt;
+          try { const res = await Layout.api().lodgingSaveRoomType(d); Layout.toast(res.message); Layout.closeModal('editModal'); await this.loadAll(); }
+          catch (e) { Layout.toast(e.message, 'error'); }
+        });
+      },
+      async deleteRoomType(id) {
+        if (!confirm('ลบประเภทห้องนี้? (มีการจองค้างอยู่จะลบไม่ได้ — ปิดใช้งานแทน)')) return;
+        try { await Layout.api().lodgingDeleteRoomType(id); Layout.toast('ลบแล้ว'); await this.loadAll(); } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      editUnit(roomTypeId, unitId) {
+        const rt = this.roomTypes.find(x => x.id === roomTypeId);
+        const u = (rt?.units || []).find(x => x.id === unitId) || { roomTypeId, housekeepingStatus: 1, isActive: true, sortOrder: (rt?.units || []).length + 1 };
+        const html = `<form id="unitForm" class="grid2">
+          ${this.fld('ประเภทห้อง', this.sel('roomTypeId', u.roomTypeId, Object.fromEntries(this.roomTypes.map(x => [x.id, x.name]))))}
+          ${this.fld('หมายเลขห้อง *', this.inp('number', u.number, 'text', 'required'))}${this.fld('ชั้น', this.inp('floor', u.floor))}${this.fld('อาคาร', this.inp('building', u.building))}
+          ${this.fld('สถานะแม่บ้าน', this.sel('housekeepingStatus', u.housekeepingStatus, {1:'ว่าง-สะอาด',2:'ว่าง-รอทำความสะอาด',3:'มีแขก',4:'กำลังทำความสะอาด',5:'รอตรวจ',6:'ห้องเสีย',7:'ซ่อมบำรุง'}))}
+          ${this.fld('', this.chk('isOutOfService', u.isOutOfService, 'ปิดขายชั่วคราว (ซ่อม)'))}${this.fld('ปิดถึงวันที่', this.inp('outOfServiceUntil', u.outOfServiceUntil ? u.outOfServiceUntil.slice(0, 10) : '', 'date'))}
+          ${this.fld('ลำดับ', this.inp('sortOrder', u.sortOrder, 'number'))}${this.fld('', this.chk('isActive', u.isActive, 'ใช้งาน'))}
+          ${this.fld('หมายเหตุ', this.inp('notes', u.notes), true)}
+        </form>${unitId ? `<div style="margin-top:8px"><button class="btn btn-sm btn-danger" onclick="Page.deleteUnit('${unitId}')">ลบห้องนี้</button></div>` : ''}`;
+        this.openEditor(unitId ? 'แก้ไขห้อง' : 'ห้องใหม่', html, async () => {
+          const d = this.readForm('unitForm'); d.id = u.id || null; d.housekeepingStatus = +d.housekeepingStatus;
+          if (d.outOfServiceUntil) d.outOfServiceUntil += 'T00:00:00';
+          try { const res = await Layout.api().lodgingSaveUnit(d); Layout.toast(res.message); Layout.closeModal('editModal'); await this.loadAll(); }
+          catch (e) { Layout.toast(e.message, 'error'); }
+        });
+      },
+      async deleteUnit(id) {
+        if (!confirm('ลบห้องนี้?')) return;
+        try { await Layout.api().lodgingDeleteUnit(id); Layout.toast('ลบแล้ว'); Layout.closeModal('editModal'); await this.loadAll(); } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ─── แผนราคา ───
+      renderPlans() {
+        const tb = document.getElementById('plansBody');
+        tb.innerHTML = this.plans.length ? this.plans.map(p => `<tr>
+          <td><b>${esc(p.name)}</b>${p.isDefault ? ' <span class="pill on">default</span>' : ''}</td><td>${esc(p.code)}</td>
+          <td>${p.roomTypeId ? esc(this.roomTypes.find(r => r.id === p.roomTypeId)?.name || '?') : 'ทุกห้อง'}</td>
+          <td>${ADJUST[p.adjustMode]}${p.adjustMode ? ' ' + p.adjustValue : ''}</td><td>${p.includesBreakfast ? '🍳' : '-'}</td><td>${p.isRefundable ? 'ได้' : '<span class="pill off">ไม่คืน</span>'}</td>
+          <td>${esc(this.policies.find(x => x.id === p.cancellationPolicyId)?.name || '-')}</td>
+          <td class="hint">${[p.minNights ? `≥${p.minNights} คืน` : '', p.maxNights ? `≤${p.maxNights} คืน` : '', p.minAdvanceDays ? `จองก่อน ≥${p.minAdvanceDays} วัน` : '', p.maxAdvanceDays != null ? `จองก่อน ≤${p.maxAdvanceDays} วัน` : '', p.validFrom ? Layout.date(p.validFrom) + '–' + (p.validTo ? Layout.date(p.validTo) : '') : ''].filter(Boolean).join(' · ') || '-'}</td>
+          <td>${p.depositPercent != null ? p.depositPercent + '%' : 'ตามที่พัก'}</td><td><span class="pill ${p.isActive ? 'on' : 'off'}">${p.isActive ? 'ใช้' : 'ปิด'}</span></td>
+          <td class="row-actions"><button class="btn btn-sm btn-secondary" onclick="Page.editPlan('${p.id}')">แก้ไข</button> <button class="btn btn-sm btn-danger" onclick="Page.del('lodgingDeleteRatePlan','${p.id}')">ลบ</button></td></tr>`).join('')
+          : '<tr><td colspan="11" class="text-center text-gray-400">ยังไม่มีแผนราคา — ระบบใช้ราคาฐานของห้อง</td></tr>';
+      },
+      editPlan(id) {
+        const p = this.plans.find(x => x.id === id) || { propertyId: this.propertyId, adjustMode: 0, adjustValue: 0, isRefundable: true, isActive: true, applicableDaysMask: 0, sortOrder: this.plans.length + 1 };
+        const html = `<form id="planForm" class="grid2">
+          ${this.fld('ชื่อ *', this.inp('name', p.name, 'text', 'required'))}${this.fld('รหัส', this.inp('code', p.code))}
+          ${this.fld('ใช้กับห้อง', this.sel('roomTypeId', p.roomTypeId || '', Object.assign({'': 'ทุกประเภทห้อง'}, Object.fromEntries(this.roomTypes.map(x => [x.id, x.name])))))}
+          ${this.fld('วิธีปรับราคา', this.sel('adjustMode', p.adjustMode, {0:'ใช้ราคาฐาน',1:'ราคาตายตัว (บาท/คืน)',2:'คูณราคาฐาน (0.90 = ลด 10%)',3:'บวก/ลบ (บาท/คืน)'}))}
+          ${this.fld('ค่า', this.inp('adjustValue', p.adjustValue, 'number', 'step="0.0001"'))}
+          ${this.fld('นโยบายยกเลิก', this.sel('cancellationPolicyId', p.cancellationPolicyId || '', Object.assign({'': 'ตามที่พัก'}, Object.fromEntries(this.policies.map(x => [x.id, x.name])))))}
+          ${this.fld('มัดจำ % (ว่าง = ตามที่พัก)', this.inp('depositPercent', p.depositPercent, 'number', 'step="0.01" min="0" max="100"'))}
+          ${this.fld('พักขั้นต่ำ (คืน)', this.inp('minNights', p.minNights, 'number', 'min="1"'))}${this.fld('พักสูงสุด (คืน)', this.inp('maxNights', p.maxNights, 'number', 'min="1"'))}
+          ${this.fld('จองล่วงหน้าอย่างน้อย (วัน) — Early bird', this.inp('minAdvanceDays', p.minAdvanceDays, 'number', 'min="0"'))}${this.fld('จองล่วงหน้าไม่เกิน (วัน) — Last minute', this.inp('maxAdvanceDays', p.maxAdvanceDays, 'number', 'min="0"'))}
+          ${this.fld('ใช้ได้ตั้งแต่', this.inp('validFrom', p.validFrom ? p.validFrom.slice(0, 10) : '', 'date'))}${this.fld('ถึง', this.inp('validTo', p.validTo ? p.validTo.slice(0, 10) : '', 'date'))}
+          ${this.fld('วันเช็คอินที่ใช้ได้ (ไม่ติ๊ก = ทุกวัน)', `<div class="flex gap-2" style="flex-wrap:wrap;font-size:13px">${DAYS.map((d, i) => `<label><input type="checkbox" data-pmask="${1 << i}" ${(p.applicableDaysMask & (1 << i)) ? 'checked' : ''}> ${d}</label>`).join('')}</div>`, true)}
+          ${this.fld('', this.chk('includesBreakfast', p.includesBreakfast, 'รวมอาหารเช้า'))}${this.fld('', this.chk('isRefundable', p.isRefundable, 'คืนเงินได้'))}
+          ${this.fld('', this.chk('isDefault', p.isDefault, 'แผน default (ใช้เมื่อลูกค้าไม่เลือก)'))}${this.fld('', this.chk('isActive', p.isActive, 'เปิดใช้'))}
+          ${this.fld('ลำดับ', this.inp('sortOrder', p.sortOrder, 'number'))}
+          ${this.fld('คำอธิบาย', this.inp('description', p.description), true)}
+        </form>`;
+        this.openEditor(id ? 'แก้ไขแผนราคา' : 'แผนราคาใหม่', html, async () => {
+          const d = this.readForm('planForm'); d.id = p.id || null; d.propertyId = this.propertyId; d.adjustMode = +d.adjustMode; d.adjustValue = d.adjustValue ?? 0;
+          let mask = 0; document.querySelectorAll('#planForm input[data-pmask]:checked').forEach(cb => mask |= +cb.dataset.pmask); d.applicableDaysMask = mask;
+          if (d.validFrom) d.validFrom += 'T00:00:00'; if (d.validTo) d.validTo += 'T00:00:00';
+          try { const res = await Layout.api().lodgingSaveRatePlan(d); Layout.toast(res.message); Layout.closeModal('editModal'); await this.loadAll(); }
+          catch (e) { Layout.toast(e.message, 'error'); }
+        });
+      },
+      async del(fn, id) {
+        if (!confirm('ยืนยันลบ?')) return;
+        try { await Layout.api()[fn](id); Layout.toast('ลบแล้ว'); await this.loadAll(); } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ─── ฤดูกาล ───
+      renderSeasons() {
+        const tb = document.getElementById('seasonsBody');
+        const fmt = (s) => s.isRecurringYearly ? `${new Date(s.startDate).getDate()}/${new Date(s.startDate).getMonth() + 1} – ${new Date(s.endDate).getDate()}/${new Date(s.endDate).getMonth() + 1}` : `${Layout.date(s.startDate)} – ${Layout.date(s.endDate)}`;
+        tb.innerHTML = this.seasons.length ? this.seasons.map(s => `<tr><td><b>${esc(s.name)}</b></td><td>${SEASON_TYPE[s.seasonType] || s.seasonType}</td><td>${fmt(s)}</td><td>×${s.multiplier}</td><td>${s.isRecurringYearly ? '✓' : '-'}</td><td>${s.minNights || '-'}</td>
+          <td class="hint">${(s.roomTypeIds || []).length ? s.roomTypeIds.map(id => esc(this.roomTypes.find(r => r.id === id)?.name || '?')).join(', ') : 'ทุกห้อง'}</td><td><span class="pill ${s.isActive ? 'on' : 'off'}">${s.isActive ? 'ใช้' : 'ปิด'}</span></td>
+          <td class="row-actions"><button class="btn btn-sm btn-secondary" onclick="Page.editSeason('${s.id}')">แก้ไข</button> <button class="btn btn-sm btn-danger" onclick="Page.del('lodgingDeleteSeason','${s.id}')">ลบ</button></td></tr>`).join('')
+          : '<tr><td colspan="9" class="text-center text-gray-400">ยังไม่มีฤดูกาล</td></tr>';
+      },
+      editSeason(id) {
+        const s = this.seasons.find(x => x.id === id) || { propertyId: this.propertyId, seasonType: 3, multiplier: 1.25, isRecurringYearly: true, isActive: true, roomTypeIds: [] };
+        const html = `<form id="seasonForm" class="grid2">
+          ${this.fld('ชื่อ *', this.inp('name', s.name, 'text', 'required'))}${this.fld('ชนิด', this.sel('seasonType', s.seasonType, SEASON_TYPE))}
+          ${this.fld('เริ่ม *', this.inp('startDate', s.startDate ? s.startDate.slice(0, 10) : '', 'date', 'required'))}${this.fld('สิ้นสุด *', this.inp('endDate', s.endDate ? s.endDate.slice(0, 10) : '', 'date', 'required'))}
+          ${this.fld('ตัวคูณราคา (1.50 = +50%)', this.inp('multiplier', s.multiplier, 'number', 'step="0.001" min="0.01"'))}${this.fld('ขั้นต่ำ (คืน)', this.inp('minNights', s.minNights, 'number', 'min="1"'))}
+          ${this.fld('', this.chk('isRecurringYearly', s.isRecurringYearly, 'ใช้ซ้ำทุกปี (เทียบเดือน-วัน · รองรับข้ามปี 28 ธ.ค.–2 ม.ค.)'))}${this.fld('', this.chk('isActive', s.isActive, 'เปิดใช้'))}
+          ${this.fld('เฉพาะประเภทห้อง (ไม่ติ๊ก = ทุกห้อง)', `<div class="flex gap-2" style="flex-wrap:wrap;font-size:13px">${this.roomTypes.map(r => `<label><input type="checkbox" data-rt="${r.id}" ${(s.roomTypeIds || []).includes(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join('')}</div>`, true)}
+        </form>`;
+        this.openEditor(id ? 'แก้ไขฤดูกาล' : 'ฤดูกาลใหม่', html, async () => {
+          const d = this.readForm('seasonForm'); d.id = s.id || null; d.propertyId = this.propertyId; d.seasonType = +d.seasonType;
+          d.startDate += 'T00:00:00'; d.endDate += 'T00:00:00';
+          d.roomTypeIds = [...document.querySelectorAll('#seasonForm input[data-rt]:checked')].map(cb => cb.dataset.rt);
+          try { const res = await Layout.api().lodgingSaveSeason(d); Layout.toast(res.message); Layout.closeModal('editModal'); await this.loadAll(); }
+          catch (e) { Layout.toast(e.message, 'error'); }
+        });
+      },
+
+      // ─── ราคารายวัน ───
+      async loadDaily() {
+        const rt = document.getElementById('dailyRoomType').value; const m = document.getElementById('dailyMonth').value;
+        if (!rt || !m) { document.getElementById('dailyCal').innerHTML = ''; return; }
+        const [y, mo] = m.split('-').map(Number);
+        const from = `${m}-01`; const last = new Date(y, mo, 0).getDate(); const to = `${m}-${String(last).padStart(2, '0')}`;
+        try {
+          const res = await Layout.api().lodgingRateOverrides(this.propertyId, `?from=${from}&to=${to}&roomTypeId=${rt}`);
+          this.daily.overrides = res.data || [];
+        } catch (e) { this.daily.overrides = []; }
+        this.daily.selStart = null; this.daily.selEnd = null;
+        this.renderDaily(y, mo, last);
+      },
+      renderDaily(y, mo, last) {
+        const cal = document.getElementById('dailyCal');
+        const first = new Date(y, mo - 1, 1).getDay();
+        const byDate = Object.fromEntries(this.daily.overrides.map(o => [o.date.slice(0, 10), o]));
+        let html = DAYS.map(d => `<div style="font-size:11px;text-align:center;color:var(--gray-500)">${d}</div>`).join('');
+        for (let i = 0; i < first; i++) html += '<div></div>';
+        for (let d = 1; d <= last; d++) {
+          const iso = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; const o = byDate[iso];
+          const sel = this.daily.selStart && iso >= this.daily.selStart && iso <= (this.daily.selEnd || this.daily.selStart);
+          html += `<div class="d ${o ? 'ov' : ''} ${o?.stopSell ? 'stop' : ''} ${sel ? 'sel' : ''}" onclick="Page.pickDay('${iso}')"><b>${d}</b>${o ? `${o.rate != null ? '฿' + Number(o.rate).toLocaleString('th-TH') : ''}${o.stopSell ? ' ปิด' : ''}${o.allotment ? ' /' + o.allotment : ''}${o.minNights ? ' ≥' + o.minNights : ''}` : ''}</div>`;
+        }
+        cal.innerHTML = html;
+        document.getElementById('dailyRange').textContent = this.daily.selStart ? `${this.daily.selStart} → ${this.daily.selEnd || this.daily.selStart}` : '-';
+      },
+      pickDay(iso) {
+        const dd = this.daily;
+        if (!dd.selStart || dd.selEnd) { dd.selStart = iso; dd.selEnd = null; }
+        else if (iso < dd.selStart) { dd.selEnd = dd.selStart; dd.selStart = iso; }
+        else dd.selEnd = iso;
+        const m = document.getElementById('dailyMonth').value; const [y, mo] = m.split('-').map(Number);
+        this.renderDaily(y, mo, new Date(y, mo, 0).getDate());
+      },
+      async saveDaily(clear) {
+        const dd = this.daily; if (!dd.selStart) { Layout.toast('เลือกวันก่อน', 'error'); return; }
+        const rate = document.getElementById('dailyRate').value; const stop = document.getElementById('dailyStop').value;
+        const allot = document.getElementById('dailyAllot').value; const min = document.getElementById('dailyMin').value; const note = document.getElementById('dailyNote').value;
+        const body = { roomTypeId: document.getElementById('dailyRoomType').value, fromDate: dd.selStart + 'T00:00:00', toDate: (dd.selEnd || dd.selStart) + 'T00:00:00',
+          rate: rate === '' ? null : +rate, stopSell: stop === '' ? null : stop === 'true', allotment: allot === '' ? null : +allot, minNights: min === '' ? null : +min, note: note || null, clear };
+        try { const res = await Layout.api().lodgingSaveRateOverrides(body); Layout.toast(res.message); await this.loadDaily(); } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ─── นโยบาย ───
+      renderPolicies() {
+        const tb = document.getElementById('policiesBody');
+        tb.innerHTML = this.policies.length ? this.policies.map(p => `<tr><td><b>${esc(p.name)}</b><div class="hint">${esc(p.description || '')}</div></td>
+          <td class="hint">${p.nonRefundable ? 'ริบ 100% ทุกกรณี' : (p.rules || []).map(r => `ก่อน ${r.daysBefore} วัน คิด ${r.penaltyPercent}%`).join(' · ') || 'ยกเลิกฟรี'}</td>
+          <td>${p.nonRefundable ? '✓' : '-'}</td><td>${p.isDefault ? '<span class="pill on">default</span>' : '-'}</td><td><span class="pill ${p.isActive ? 'on' : 'off'}">${p.isActive ? 'ใช้' : 'ปิด'}</span></td>
+          <td class="row-actions"><button class="btn btn-sm btn-secondary" onclick="Page.editPolicy('${p.id}')">แก้ไข</button> <button class="btn btn-sm btn-danger" onclick="Page.del('lodgingDeletePolicy','${p.id}')">ลบ</button></td></tr>`).join('')
+          : '<tr><td colspan="6" class="text-center text-gray-400">ยังไม่มีนโยบาย — ยกเลิกได้ฟรีทุกกรณี</td></tr>';
+      },
+      editPolicy(id) {
+        const p = this.policies.find(x => x.id === id) || { propertyId: this.propertyId, rules: [{ daysBefore: 7, penaltyPercent: 0 }, { daysBefore: 3, penaltyPercent: 50 }, { daysBefore: 0, penaltyPercent: 100 }], isActive: true };
+        const html = `<form id="policyForm" class="grid2">
+          ${this.fld('ชื่อ *', this.inp('name', p.name, 'text', 'required'))}${this.fld('คำอธิบาย (แสดงลูกค้า)', this.inp('description', p.description))}
+          ${this.fld('', this.chk('nonRefundable', p.nonRefundable, 'ไม่คืนเงินทุกกรณี (ไม่ใช้กฎขั้นบันได)'))}${this.fld('', this.chk('isDefault', p.isDefault, 'ใช้เป็น default ของที่พัก'))}${this.fld('', this.chk('isActive', p.isActive, 'เปิดใช้'))}
+          ${this.fld('กฎขั้นบันได — "ยกเลิกก่อนเข้าพักอย่างน้อย N วัน คิดค่าปรับ X%" (เรียงจากมากไปน้อย ใช้ข้อแรกที่ตรง)', `<div id="ruleRows">${(p.rules || []).map(r => this.ruleRow(r)).join('')}</div><button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('ruleRows').insertAdjacentHTML('beforeend', Page.ruleRow({daysBefore:0,penaltyPercent:100}))">+ ขั้น</button>`, true)}
+        </form>`;
+        this.openEditor(id ? 'แก้ไขนโยบายยกเลิก' : 'นโยบายยกเลิกใหม่', html, async () => {
+          const d = this.readForm('policyForm'); d.id = p.id || null; d.propertyId = this.propertyId;
+          d.rules = [...document.querySelectorAll('#ruleRows .rule')].map(row => ({ daysBefore: +row.querySelector('[name=days]').value, penaltyPercent: +row.querySelector('[name=pct]').value }));
+          try { const res = await Layout.api().lodgingSavePolicy(d); Layout.toast(res.message); Layout.closeModal('editModal'); await this.loadAll(); }
+          catch (e) { Layout.toast(e.message, 'error'); }
+        });
+      },
+      ruleRow(r) { return `<div class="rule flex gap-2" style="align-items:center;margin-bottom:6px;font-size:13px">ก่อนเข้าพัก ≥ <input class="form-input" name="days" type="number" min="0" value="${r.daysBefore}" style="width:80px"> วัน คิด <input class="form-input" name="pct" type="number" min="0" max="100" step="0.01" value="${r.penaltyPercent}" style="width:90px"> % <button type="button" class="btn btn-sm btn-secondary" onclick="this.parentElement.remove()">✕</button></div>`; },
+
+      // ─── บริการเสริม ───
+      renderExtras() {
+        const tb = document.getElementById('extrasBody');
+        tb.innerHTML = this.extras.length ? this.extras.map(x => `<tr><td><b>${esc(x.name)}</b><div class="hint">${esc(x.description || '')}</div></td><td>${EXTRA_CAT[x.category] || '-'}</td><td>${PRICE_MODE[x.priceMode]}</td><td class="text-right">฿${num(x.price)}</td><td>${x.maxQuantity || '-'}</td><td>${x.showOnWebsite ? '✓' : '-'}</td><td><span class="pill ${x.isActive ? 'on' : 'off'}">${x.isActive ? 'ใช้' : 'ปิด'}</span></td>
+          <td class="row-actions"><button class="btn btn-sm btn-secondary" onclick="Page.editExtra('${x.id}')">แก้ไข</button> <button class="btn btn-sm btn-danger" onclick="Page.del('lodgingDeleteExtra','${x.id}')">ลบ</button></td></tr>`).join('')
+          : '<tr><td colspan="8" class="text-center text-gray-400">ยังไม่มีบริการเสริม</td></tr>';
+      },
+      editExtra(id) {
+        const x = this.extras.find(e => e.id === id) || { propertyId: this.propertyId, category: 99, priceMode: 1, showOnWebsite: true, isActive: true, sortOrder: this.extras.length + 1 };
+        const html = `<form id="extraForm" class="grid2">
+          ${this.fld('ชื่อ *', this.inp('name', x.name, 'text', 'required'))}${this.fld('ชื่ออังกฤษ', this.inp('nameEn', x.nameEn))}
+          ${this.fld('หมวด', this.sel('category', x.category, EXTRA_CAT))}${this.fld('วิธีคิดราคา', this.sel('priceMode', x.priceMode, PRICE_MODE))}
+          ${this.fld('ราคา *', this.inp('price', x.price, 'number', 'step="0.01" min="0" required'))}${this.fld('จำนวนสูงสุดต่อการจอง', this.inp('maxQuantity', x.maxQuantity, 'number', 'min="1"'))}
+          ${this.fld('', this.chk('showOnWebsite', x.showOnWebsite, 'แสดงบนเว็บให้ลูกค้าเลือก'))}${this.fld('', this.chk('isActive', x.isActive, 'เปิดใช้'))}
+          ${this.fld('ลำดับ', this.inp('sortOrder', x.sortOrder, 'number'))}
+          ${this.fld('คำอธิบาย', this.inp('description', x.description), true)}
+        </form>`;
+        this.openEditor(id ? 'แก้ไขบริการเสริม' : 'บริการเสริมใหม่', html, async () => {
+          const d = this.readForm('extraForm'); d.id = x.id || null; d.propertyId = this.propertyId; d.category = +d.category; d.priceMode = +d.priceMode; d.productId = x.productId || null;
+          try { const res = await Layout.api().lodgingSaveExtra(d); Layout.toast(res.message); Layout.closeModal('editModal'); await this.loadAll(); }
+          catch (e) { Layout.toast(e.message, 'error'); }
+        });
+      },
+    };
+    window.Page = Page;
+    Page.init();
+  </script>
+</body>
+</html>

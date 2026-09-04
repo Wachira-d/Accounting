@@ -14,30 +14,63 @@ public partial class PosService : IPosService
     private readonly IAccountingService _accountingService;
     private readonly ILogger<PosService> _logger;
     private readonly IEmailSenderFactory? _emailFactory;
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ — POS ห้าม `CurrentStock ±=` เองอีก
+    /// (เดิมทำ 4 จุดโดยไม่ระบุคลัง ⇒ ขายที่สาขาไหนก็ตัดยอดรวมของบริษัท)</summary>
+    private readonly IStockLedger _stock;
+    /// <summary>ผังบัญชีขา "เงินเข้า" ของบิลที่จ่ายผ่านระบบรับชำระออนไลน์ —
+    /// optional เพื่อให้เทสต์/เส้นทางเดิมที่ไม่ผูก gateway สร้าง PosService ได้ตามเดิม
+    /// (null = ใช้ผังตามวิธีจ่ายเหมือนก่อนมีฟีเจอร์นี้ทุกประการ)</summary>
+    private readonly Accounting.Services.Payments.IGatewayAccountResolver? _gatewayAccounts;
 
-    public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger, IEmailSenderFactory? emailFactory = null)
+    public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger,
+        IStockLedger stock, IEmailSenderFactory? emailFactory = null,
+        Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null)
     {
         _db = db;
         _accountingService = accountingService;
         _logger = logger;
+        _stock = stock;
         _emailFactory = emailFactory;
+        _gatewayAccounts = gatewayAccounts;
     }
 
     // ==================== Terminal ====================
 
     public async Task<TerminalResponse> CreateTerminalAsync(Guid companyId, CreateTerminalRequest request)
     {
+        await ValidateTerminalScopeAsync(companyId, request.BranchId, request.WarehouseId);
         var terminal = new PosTerminal
         {
             CompanyId = companyId,
             Name = request.Name,
             BusinessMode = request.BusinessMode,
             Location = request.Location,
-            SettingsJson = request.SettingsJson
+            SettingsJson = request.SettingsJson,
+            BranchId = Normalize(request.BranchId),
+            WarehouseId = Normalize(request.WarehouseId),
+            CashAccountId = Normalize(request.CashAccountId),
+            BankAccountId = Normalize(request.BankAccountId),
+            AbbreviatedInvoicePrefix = string.IsNullOrWhiteSpace(request.AbbreviatedInvoicePrefix)
+                ? null : request.AbbreviatedInvoicePrefix.Trim().ToUpperInvariant(),
         };
         _db.PosTerminals.Add(terminal);
         await _db.SaveChangesAsync();
-        return MapTerminal(terminal, 0);
+        return await MapTerminalAsync(terminal, 0);
+    }
+
+    /// <summary>Guid.Empty จากฟอร์ม = "ไม่เลือก" → เก็บเป็น null</summary>
+    private static Guid? Normalize(Guid? id) => id == Guid.Empty ? null : id;
+
+    /// <summary>สาขา/คลังต้องเป็นของบริษัทนี้จริง — ห้ามผูกเครื่องข้ามผู้เช่า
+    /// (กฎ M: ทุก query ต้องมี CompanyId)</summary>
+    private async Task ValidateTerminalScopeAsync(Guid companyId, Guid? branchId, Guid? warehouseId)
+    {
+        if (Normalize(branchId) is Guid b
+            && !await _db.Branches.AnyAsync(x => x.Id == b && x.CompanyId == companyId && !x.IsDeleted))
+            throw new KeyNotFoundException("ไม่พบสาขาที่เลือกในบริษัทนี้");
+        if (Normalize(warehouseId) is Guid w
+            && !await _db.Warehouses.AnyAsync(x => x.Id == w && x.CompanyId == companyId && !x.IsDeleted))
+            throw new KeyNotFoundException("ไม่พบคลังที่เลือกในบริษัทนี้");
     }
 
     public async Task<List<TerminalResponse>> GetTerminalsAsync(Guid companyId)
@@ -46,7 +79,9 @@ public partial class PosService : IPosService
             .Where(t => t.CompanyId == companyId)
             .Select(t => new { Terminal = t, OpenSessions = t.Sessions.Count(s => s.Status == PosSessionStatus.Open) })
             .ToListAsync();
-        return terminals.Select(x => MapTerminal(x.Terminal, x.OpenSessions)).ToList();
+        // ชื่อสาขา/คลังดึงทีเดียวทั้งบริษัท — เครื่องมีไม่กี่ตัว แต่ N+1 ก็ไม่ควรมี
+        var names = await LoadScopeNamesAsync(companyId);
+        return terminals.Select(x => MapTerminal(x.Terminal, x.OpenSessions, names)).ToList();
     }
 
     public async Task<TerminalResponse> UpdateTerminalAsync(Guid companyId, Guid terminalId, UpdateTerminalRequest request)
@@ -58,9 +93,19 @@ public partial class PosService : IPosService
         if (request.Location != null) terminal.Location = request.Location;
         if (request.IsActive.HasValue) terminal.IsActive = request.IsActive.Value;
         if (request.SettingsJson != null) terminal.SettingsJson = request.SettingsJson;
+        // Guid.Empty = ล้างค่า · null = ไม่แตะ — ต้องแยกสองความหมายนี้ ไม่งั้นถอด
+        // สาขาออกจากเครื่องไม่ได้เลย (defect class "ห้าม silent no-op")
+        await ValidateTerminalScopeAsync(companyId, request.BranchId, request.WarehouseId);
+        if (request.BranchId.HasValue) terminal.BranchId = Normalize(request.BranchId);
+        if (request.WarehouseId.HasValue) terminal.WarehouseId = Normalize(request.WarehouseId);
+        if (request.CashAccountId.HasValue) terminal.CashAccountId = Normalize(request.CashAccountId);
+        if (request.BankAccountId.HasValue) terminal.BankAccountId = Normalize(request.BankAccountId);
+        if (request.AbbreviatedInvoicePrefix != null)
+            terminal.AbbreviatedInvoicePrefix = string.IsNullOrWhiteSpace(request.AbbreviatedInvoicePrefix)
+                ? null : request.AbbreviatedInvoicePrefix.Trim().ToUpperInvariant();
         await _db.SaveChangesAsync();
         var openCount = await _db.PosSessions.CountAsync(s => s.TerminalId == terminalId && s.Status == PosSessionStatus.Open);
-        return MapTerminal(terminal, openCount);
+        return await MapTerminalAsync(terminal, openCount);
     }
 
     // ==================== Session ====================
@@ -74,6 +119,24 @@ public partial class PosService : IPosService
         var terminal = await _db.PosTerminals.FirstOrDefaultAsync(t => t.Id == terminalId && t.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ POS Terminal");
         if (!terminal.IsActive) throw new InvalidOperationException("Terminal นี้ถูกปิดใช้งาน");
+
+        // ด่านสาขา: แคชเชียร์ของสาขา B ต้องเปิดกะบนเครื่องของสาขา A ไม่ได้
+        // (ยอดขายลงผิดสาขา · ตัดสต็อกผิดคลัง · เห็นยอดของสาขาที่ไม่ได้ดูแล)
+        // ผู้ใช้ที่ยังไม่ถูกจำกัดสาขา = ทุกสาขา ⇒ บริษัทสาขาเดียวไม่รู้สึกอะไร
+        var allowedCsv = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+            .Select(cu => cu.AllowedBranchIds)
+            .FirstOrDefaultAsync();
+        if (Accounting.Helpers.BranchScope.IsRestricted(allowedCsv))
+        {
+            var branchName = terminal.BranchId is Guid tb
+                ? await _db.Branches.AsNoTracking()
+                    .Where(b => b.Id == tb && b.CompanyId == companyId)
+                    .Select(b => b.Name).FirstOrDefaultAsync()
+                : null;
+            var deny = Accounting.Helpers.BranchScope.DenyReason(allowedCsv, terminal.BranchId, branchName);
+            if (deny != null) throw new InvalidOperationException(deny);
+        }
 
         var existingOpen = await _db.PosSessions.AnyAsync(s => s.TerminalId == terminalId && s.Status == PosSessionStatus.Open);
         if (existingOpen) throw new InvalidOperationException("มีกะที่เปิดอยู่แล้ว กรุณาปิดกะก่อน");
@@ -142,8 +205,47 @@ public partial class PosService : IPosService
 
     // ==================== Mappers ====================
 
-    private static TerminalResponse MapTerminal(PosTerminal t, int openSessions) => new(
-        t.Id, t.Name, t.BusinessMode, t.IsActive, t.Location, t.SettingsJson, openSessions);
+    /// <summary>ชื่อ+รหัสสาขาสรรพากร และชื่อคลัง ของทั้งบริษัท — โหลดทีเดียวแล้วส่งเข้า
+    /// mapper (แยก "โหลดข้อมูล" ออกจาก "ตรรกะแปลง" เพื่อให้เส้นรายการเดียวกับเส้น
+    /// หลายรายการใช้ตัวแปลงตัวเดียวกัน ไม่เกิดสำเนาที่สอง)</summary>
+    private async Task<(Dictionary<Guid, (string Name, string? TaxCode)> Branches,
+                        Dictionary<Guid, string> Warehouses)> LoadScopeNamesAsync(Guid companyId)
+    {
+        var branches = await _db.Branches.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted)
+            .Select(b => new { b.Id, b.Name, b.TaxBranchCode })
+            .ToListAsync();
+        var warehouses = await _db.Warehouses.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && !w.IsDeleted)
+            .Select(w => new { w.Id, w.Name })
+            .ToListAsync();
+        return (branches.ToDictionary(b => b.Id, b => (b.Name, b.TaxBranchCode)),
+                warehouses.ToDictionary(w => w.Id, w => w.Name));
+    }
+
+    private async Task<TerminalResponse> MapTerminalAsync(PosTerminal t, int openSessions)
+        => MapTerminal(t, openSessions, await LoadScopeNamesAsync(t.CompanyId));
+
+    private static TerminalResponse MapTerminal(PosTerminal t, int openSessions,
+        (Dictionary<Guid, (string Name, string? TaxCode)> Branches, Dictionary<Guid, string> Warehouses) names)
+    {
+        string? branchName = null, branchTaxCode = null;
+        if (t.BranchId is Guid bid && names.Branches.TryGetValue(bid, out var b))
+        {
+            branchName = b.Name;
+            // "00000" = สำนักงานใหญ่ · null = สาขายังไม่กรอกรหัสสรรพากร (ห้ามเดาเป็น
+            // สำนักงานใหญ่ — ค่า default ที่แต่งขึ้นอันตรายกว่าการไม่ตอบ)
+            branchTaxCode = b.TaxCode;
+        }
+        string? warehouseName = null;
+        if (t.WarehouseId is Guid wid && names.Warehouses.TryGetValue(wid, out var wn)) warehouseName = wn;
+
+        return new TerminalResponse(
+            t.Id, t.Name, t.BusinessMode, t.IsActive, t.Location, t.SettingsJson, openSessions,
+            t.BranchId, branchName, branchTaxCode,
+            t.WarehouseId, warehouseName,
+            t.CashAccountId, t.BankAccountId, t.AbbreviatedInvoicePrefix);
+    }
 
     private async Task<SessionResponse> MapSessionAsync(PosSession s)
     {

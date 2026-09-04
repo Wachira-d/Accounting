@@ -47,6 +47,13 @@ public class FixedAssetController : ControllerBase
         return Ok(new ApiResponse<List<FixedAssetResponse>>(true, result));
     }
 
+    /// <summary>สินทรัพย์ที่ลงทะเบียนจากเอกสารใบนี้ — หน้ารายละเอียดเอกสารเรียก
+    /// เพื่อตอบว่า "ใบนี้ลงเป็นสินทรัพย์แล้วหรือยัง" แบบถาวร (ไม่ใช่ toast ที่หายไป)</summary>
+    [HttpGet("by-document/{documentId:guid}")]
+    public async Task<ActionResult<ApiResponse<List<FixedAssetResponse>>>> GetByDocument(Guid companyId, Guid documentId)
+        => Ok(new ApiResponse<List<FixedAssetResponse>>(true,
+            await _assetService.GetByDocumentAsync(companyId, documentId)));
+
     [HttpPost]
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> Create(
         Guid companyId, [FromBody] CreateFixedAssetRequest request)

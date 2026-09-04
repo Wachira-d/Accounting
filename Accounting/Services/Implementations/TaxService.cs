@@ -170,7 +170,23 @@ public partial class TaxService : ITaxService
             // ตัดใบที่ contact ถูกลบ = under-report ภ.พ.30). hydrate แยกด้านล่าง
             .Where(d => d.CompanyId == companyId
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
-                && d.VatAmount != 0
+                // ⚠️ เดิมเงื่อนไขคือ `VatAmount != 0` เท่านั้น ⇒ ใบที่**ทั้งใบเป็น 0%
+                // หรือยกเว้น** มี VatAmount = 0 จึงไม่เคยเข้ารายงานเลย:
+                //   • ช่อง 7 ยอดขายอัตราร้อยละ 0 (ส่งออก §80/1) — หายทั้งช่อง
+                //   • ช่อง 8 ยอดขายยกเว้น (§81) — นับได้เฉพาะใบที่บังเอิญมีบรรทัด 7%
+                //     ปนอยู่ (บิล Makro/BigC) ส่วนใบยกเว้นล้วนหายหมด
+                // ที่ถูกคือ "มีอะไรให้รายงานไหม" ไม่ใช่ "มีภาษีไหม" — ดู
+                // Helpers/Pp30SalesClassifier ซึ่งเป็นตัวตัดสินเดียวกันฝั่งคำนวณ
+                && (d.VatAmount != 0
+                    || d.Lines.Any(l => !l.IsDeleted
+                        && (l.VatRate == 0m || l.VatRate == -1m) && l.Amount != 0m))
+                // ใบเสร็จ/ใบกำกับอย่างย่อ ที่ออก "ใบกำกับภาษีเต็มรูปแทน" ไปแล้ว
+                // (§86/6 → §86/4): ใบแทนถือยอดเดียวกัน วันที่เดียวกัน และเป็น
+                // TaxInvoice ⇒ ถูกนับที่ branch ใบกำกับ. ถ้าไม่กันใบเดิมออก
+                // ภาษีขายจะถูกรายงาน **สองครั้ง** สำหรับการขายครั้งเดียว.
+                // ตราประทับนี้ลงตอนใบแทนถูก "อนุมัติ" และถูกปลดเมื่อใบแทนถูก
+                // ยกเลิก (DocumentService) ⇒ ไม่มีช่วงที่ทั้งคู่หายจากรายงาน
+                && d.ReplacedByDocumentId == null
                 // ปกติ: tax point อยู่ในงวด — OR: ภาษีซื้อที่ "ถึงกำหนดเคลม" เดือนนี้
                 // (BecameClaimableAt) แม้วันที่เอกสารอยู่เดือนก่อน (§83/6 ภ.พ.36 รับรู้
                 // ทีหลัง / §86/4 เติมใบกำกับครบทีหลัง) — เดิม query เอา DocumentDate
@@ -223,6 +239,7 @@ public partial class TaxService : ITaxService
                 // ทั้งก้อนถูกรายงานโดยใบปลายทางแล้ว (Cr 21911 เต็มใบ) → ห้ามดึงมา
                 // เพิ่มแถวซ้ำ (นับซ้ำ = ยอดขาย/ภาษีขายเกินจริง)
                 && d.DepositAppliedToDocumentId == null
+                && d.ReplacedByDocumentId == null   // ออกใบกำกับเต็มรูปแทนแล้ว → ใบแทนรายงาน
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
                 && d.VatAmount != 0)
             .ToListAsync();
@@ -437,22 +454,36 @@ public partial class TaxService : ITaxService
                 .ToDictionary(x => x.DocId, x => x.Net);
 
         decimal outputVat = 0, inputVat = 0;
-        decimal vatExemptAmount = 0;
+        // ═══ ช่อง 7/8 ของ ภ.พ.30 — แยกฝั่งขาย/ฝั่งซื้อ และแยก 0% ออกจากยกเว้น ═══
+        // เดิมมีตัวแปรเดียว (`vatExemptAmount`) ที่รวมยอดยกเว้นของ**ทั้งสองฝั่ง**
+        // เข้าด้วยกันแล้วออกเป็นบรรทัดชื่อ "ยอดขาย/ซื้อยกเว้นภาษี" ⇒ ยอดฝั่งซื้อ
+        // ปนเข้าช่องฝั่งขาย ซึ่ง ภ.พ.30 แยกกันคนละช่อง · และ 0% (§80/1) ไม่เคยมี
+        // ที่เก็บเลยทั้งที่เป็นคนละช่องกับยกเว้น (§81)
+        decimal zeroRatedSales = 0, exemptSales = 0, exemptPurchases = 0;
         var lineOrder = 1;
 
         foreach (var doc in docs)
         {
-            // Check for VAT exempt lines (VatRate == -1)
-            var exemptLines = doc.Lines.Where(l => l.VatRate == -1).ToList();
-            if (exemptLines.Any())
+            // ─ ช่อง 7/8: ยอดขาย 0% และยอดยกเว้น ─
+            // นับครั้งเดียวใน "เดือนที่ขาย" เท่านั้น — เอกสารที่ถูกดึงเข้ามาด้วย
+            // OR-เงื่อนไข (InputVatBecameClaimableAt/OutputVatDueAt = เดือนรับรู้/
+            // รับเงิน ซึ่งต่างจากเดือนขาย) จะโผล่ในรายงาน 2 งวด → ถ้าไม่ guard
+            // ยอดจะถูกบวกซ้ำทั้งสองเดือน
+            var saleDate = doc.TaxPointDate ?? doc.DocumentDate;
+            if (saleDate >= startDate && saleDate <= endDate)
             {
-                // นับยอดยกเว้นครั้งเดียวใน "เดือนที่ขาย" เท่านั้น — เอกสารที่ถูกดึง
-                // เข้ามาด้วย OR-เงื่อนไข (InputVatBecameClaimableAt/OutputVatDueAt =
-                // เดือนรับรู้/รับเงิน ซึ่งต่างจากเดือนขาย) จะโผล่ในรายงาน 2 งวด →
-                // ถ้าไม่ guard ยอดยกเว้นถูกบวกซ้ำทั้งสองเดือน
-                var exemptSaleDate = doc.TaxPointDate ?? doc.DocumentDate;
-                if (exemptSaleDate >= startDate && exemptSaleDate <= endDate)
-                    vatExemptAmount += exemptLines.Sum(l => l.Amount);
+                var split = Pp30SalesClassifier.Split(doc.Lines
+                    .Where(l => !l.IsDeleted)
+                    .Select(l => new Pp30Line(l.VatRate, l.Amount, l.VatAmount)));
+
+                // ใบลดหนี้/เพิ่มหนี้อยู่ได้สองฝั่ง — ตัวชนิดอย่างเดียวตัดสินไม่ได้
+                // (ดู Helpers/DocumentSide) · ที่นี่ใช้ฝั่งที่ระบบตัดสินให้แล้ว
+                // ผ่าน CnDnPurchaseSideOverride ถ้ามี ไม่งั้นถือตามชนิด
+                var isPurchase = doc.CnDnPurchaseSideOverride
+                    ?? DocumentSide.IsPurchase(doc.DocumentType);
+
+                if (isPurchase) exemptPurchases += split.ExemptBase;
+                else { zeroRatedSales += split.ZeroRatedBase; exemptSales += split.ExemptBase; }
             }
 
             // Output VAT - from tax invoices (ใบกำกับภาษี) per Thai law ภ.พ.30.
@@ -1280,15 +1311,49 @@ public partial class TaxService : ITaxService
             }
         }
 
-        // Add summary line for VAT exempt sales/purchases
-        if (vatExemptAmount != 0)
+        // ═══ ช่อง 7/8 ของ ภ.พ.30 — แยกบรรทัดตามช่องจริง ═══
+        // เดิมเป็นบรรทัดเดียวชื่อ "ยอดขาย/ซื้อยกเว้นภาษี" (IncomeTypeCode=EXEMPT)
+        // ที่รวมทั้งสองฝั่งเข้าด้วยกัน ⇒ ผู้กรอกแบบเอาไปใส่ช่อง 8 ทั้งก้อนแล้ว
+        // ยอดฝั่งซื้อปนเข้าไป · และ 0% (§80/1) ไม่เคยมีบรรทัดของตัวเองเลย
+        //
+        // ⚠️ รหัสเดิม "EXEMPT" ยังใช้กับ**ฝั่งซื้อ**ต่อไป เพื่อไม่ให้รายงานเก่าที่
+        // persist ไว้แล้วอ่านไม่ออก — ของใหม่ใช้รหัสที่บอกช่องตรง ๆ
+        if (zeroRatedSales != 0)
         {
             report.Lines.Add(new TaxReportLine
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
-                Description = "ยอดขาย/ซื้อยกเว้นภาษี",
-                IncomeAmount = vatExemptAmount,
+                Description = "ยอดขายที่เสียภาษีอัตราร้อยละ 0 (ส่งออก §80/1) — ช่อง 7",
+                IncomeAmount = zeroRatedSales,
+                TaxRate = 0,
+                TaxAmount = 0,
+                IncomeTypeCode = "ZERO_RATED_SALES"
+            });
+        }
+        if (exemptSales != 0)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = "ยอดขายที่ได้รับยกเว้นภาษี (§81) — ช่อง 8",
+                IncomeAmount = exemptSales,
+                TaxRate = 0,
+                TaxAmount = 0,
+                IncomeTypeCode = "EXEMPT_SALES"
+            });
+        }
+        if (exemptPurchases != 0)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                // ฝั่งซื้อไม่มีช่องของตัวเองใน ภ.พ.30 — แสดงไว้ให้ผู้ทำบัญชีกระทบยอด
+                // ได้ว่าซื้อยกเว้นไปเท่าไร (ภาษีซื้อของยอดนี้ลงเป็นต้นทุน ไม่ใช่เครดิต)
+                Description = "ยอดซื้อที่ได้รับยกเว้นภาษี (§81) — ไม่เข้าช่องใดของ ภ.พ.30",
+                IncomeAmount = exemptPurchases,
                 TaxRate = 0,
                 TaxAmount = 0,
                 IncomeTypeCode = "EXEMPT"
@@ -1934,9 +1999,9 @@ public partial class TaxService : ITaxService
         // Hard-coding Jan/Dec would make every non-calendar-FY filer report
         // the wrong period to RD (illegal under Thai Revenue Code §65).
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
-        var startMonth = company?.FiscalYearStartMonth is >= 1 and <= 12 ? company.FiscalYearStartMonth : 1;
-        var startDate = new DateTime(year, startMonth, 1);
-        var endDate = startDate.AddYears(1).AddDays(-1);
+        var fy = Accounting.Helpers.FiscalYear.RangeFor(year, company?.FiscalYearStartMonth ?? 1);
+        var startDate = fy.Start;
+        var endDate = fy.EndInclusive;
 
         // Calculate total revenue
         var revenueLines = await _db.JournalEntryLines
@@ -1944,6 +2009,7 @@ public partial class TaxService : ITaxService
             .Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= startDate
                 && l.JournalEntry.EntryDate <= endDate
                 && l.Account!.AccountType == AccountType.Revenue)
@@ -1957,6 +2023,7 @@ public partial class TaxService : ITaxService
             .Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= startDate
                 && l.JournalEntry.EntryDate <= endDate
                 && l.Account!.AccountType == AccountType.Expense)
@@ -2804,7 +2871,10 @@ public partial class TaxService : ITaxService
     {
         if (report.TaxType != TaxType.VAT) return;
         var active = report.Lines.Where(l => !l.IsExcluded).ToList();
-        var nonSummary = active.Where(l => l.IncomeTypeCode != "VAT_CREDIT_CF" && l.IncomeTypeCode != "EXEMPT");
+        // บรรทัด "สรุป" ที่ไม่ใช่ภาษีขาย/ซื้อ — ต้องไม่เข้าสูตร OutputVat/InputVat
+        // (ZERO_RATED_SALES / EXEMPT_SALES เป็นช่อง 7/8 ของแบบ ไม่ใช่ตัวภาษี)
+        var summaryCodes = new[] { "VAT_CREDIT_CF", "EXEMPT", "EXEMPT_SALES", "ZERO_RATED_SALES" };
+        var nonSummary = active.Where(l => !summaryCodes.Contains(l.IncomeTypeCode));
         // F11 — ภาษีซื้อจาก JE ล้วน (ไม่มี source doc) tag "JE_INPUT" ต้องนับเป็น
         // ภาษีซื้อ เหมือน "INPUT" — เดิม RecalcVatTotals เช็ค == "INPUT" อย่างเดียว
         // → JE_INPUT หลุดไปรวมใน OutputVat (!= "INPUT") + หายจาก InputVat = ภาษีขาย
@@ -2826,8 +2896,8 @@ public partial class TaxService : ITaxService
     /// internal: DocumentService เรียกตอน void เอกสารที่มีภาษีหัก ณ ที่จ่าย —
     /// ต้องใช้สูตรเดียวกันเพื่อไม่ให้ยอดหัวรายงาน drift จากบรรทัดจริง.</summary>
     /// <summary>ฐาน "มูลค่าสินค้า/บริการที่คิดภาษี" ของเอกสาร = SubTotal หักบรรทัด
-    /// ยกเว้น (VatRate == -1) ออก — ยอดยกเว้นถูกนับแยกไว้ที่บรรทัด EXEMPT อยู่แล้ว
-    /// (vatExemptAmount) การใช้ doc.SubTotal ทั้งใบจึงนับยอดยกเว้นซ้ำสองที่ และทำ
+    /// ยกเว้น (VatRate == -1) ออก — ยอดยกเว้นถูกนับแยกไว้ที่บรรทัดช่อง 8
+    /// (EXEMPT_SALES/EXEMPT) อยู่แล้ว การใช้ doc.SubTotal ทั้งใบจึงนับยอดยกเว้นซ้ำสองที่ และทำ
     /// ให้ "ฐาน × 7% ≠ ภาษีขาย" ในรายงาน/ไฟล์ยื่น (RD cross-check ไม่ผ่าน).
     /// ใบที่ไม่มีบรรทัดยกเว้นจะได้ค่าเท่า SubTotal เหมือนเดิม.
     /// หมายเหตุ: ใบที่ผสม 7% กับ 0% (§80/1) ยังรวมเป็นบรรทัดเดียวที่อัตราสูงสุด —
@@ -3103,6 +3173,19 @@ public partial class TaxService : ITaxService
             throw new InvalidOperationException($"เอกสารประเภท {doc.DocumentType} ไม่สามารถดึงเข้ารายงาน ภพ.30 ได้");
         if (doc.VatAmount == 0)
             throw new InvalidOperationException("เอกสารนี้ไม่มี VAT");
+        // ใบที่ออก "ใบกำกับภาษีเต็มรูปแทน" ไปแล้ว — ใบแทนถือยอดเดียวกันและอยู่ใน
+        // รายงานแล้ว การดึงใบเดิมเข้ามาด้วยมือ = ภาษีขายซ้ำสำหรับการขายครั้งเดียว
+        // (loop หลักกันไว้แล้ว เส้นทางดึงมือต้องกันด้วย)
+        if (doc.ReplacedByDocumentId.HasValue)
+        {
+            var replacementNo = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.ReplacedByDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => d.DocumentNumber).FirstOrDefaultAsync();
+            throw new InvalidOperationException(
+                $"เอกสาร {doc.DocumentNumber} ออกใบกำกับภาษีเต็มรูปแทนไปแล้ว"
+                + (replacementNo != null ? $" ({replacementNo})" : "")
+                + " — ให้ดึง**ใบแทน**เข้ารายงานแทน มิฉะนั้นภาษีขายจะถูกนับสองครั้ง");
+        }
         // PV ที่ไม่ได้ติ๊ก "ใช้งานใบกำกับภาษี" = จ่ายเงินเฉย ๆ ไม่ขอเครดิตภาษีซื้อ
         // (§82/5(1) ไม่มีใบกำกับเต็มรูป) — loop หลักก็ไม่นับ ห้ามดึงเข้ามาเคลม
         if (doc.DocumentType == DocumentType.PaymentVoucher

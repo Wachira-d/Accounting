@@ -81,7 +81,10 @@ public static class JwtHelper
     // ⚠️ เซ็นด้วยกุญแจ **คนละตัว** กับ access token (ผูก purpose เข้าไปในกุญแจ)
     // ⇒ ตั๋วนี้เอาไปใช้เป็น Bearer token ไม่ได้เด็ดขาด แม้ signature จะมาจาก
     // secret เดียวกัน — กันเคส "token ที่ตั้งใจให้ทำอย่างหนึ่ง ผ่านด่านของอีกอย่าง"
-    private const string SsoTicketPurpose = "sso-signup-ticket";
+    // public เพราะเทสต์ต้องสร้าง "ตั๋วที่หมดอายุแล้ว" ด้วยกุญแจเดียวกันเพื่อพิสูจน์
+    // ว่าด่านอายุทำงานจริง — ค่านี้ไม่ใช่ความลับ (ความลับคือ Jwt:Secret) และการ
+    // ให้เทสต์พิมพ์สตริงเดียวกันซ้ำเองคือสำเนามือที่รอ drift
+    public const string SsoTicketPurpose = "sso-signup-ticket";
 
     private static SymmetricSecurityKey PurposeKey(IConfiguration config, string purpose)
     {
@@ -129,6 +132,9 @@ public static class JwtHelper
                     ValidateAudience = false,
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.FromSeconds(30),
+                    // ตรึงอัลกอริทึม — ไม่งั้น handler ยอมรับอะไรก็ได้ที่ตรวจผ่าน
+                    // ด้วยกุญแจนี้ (เช่นตั๋วที่ผู้โจมตีสร้างด้วย alg อื่นที่อ่อนกว่า)
+                    ValidAlgorithms = new[] { SecurityAlgorithms.HmacSha256 },
                 }, out _);
             var p = principal.FindFirst("sso_p")?.Value;
             var uid = principal.FindFirst("sso_uid")?.Value;

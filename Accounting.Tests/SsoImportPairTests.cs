@@ -19,7 +19,7 @@ public class SsoImportPairTests
     private const decimal Rate = 0.05m;
     private const decimal Max = 875m;
 
-    private static (decimal Base, decimal Employer, bool Changed) Norm(
+    private static SsoPairResult Norm(
         decimal storedBase, decimal employee, decimal gross, decimal employerOnFile)
         => SsoWageBase.Normalize(storedBase, employee, gross, employerOnFile,
             Rate, Max, Rate, Max);
@@ -103,6 +103,60 @@ public class SsoImportPairTests
         Assert.False(r.Changed);
         Assert.Equal(0m, r.Employer);
         Assert.Equal(0m, r.Base);
+    }
+
+    // ═══ เคสที่ระบบ "ตัดสินแทนไม่ได้" — ห้ามเดา ห้ามล้างยอดทิ้ง ═══
+    // ที่มา: รุ่นแรกของ Normalize คิดฝั่งนายจ้างจากฝั่งลูกจ้างล้วน ⇒ ลูกจ้าง = 0
+    // ทำให้ฝั่งนายจ้างถูกเขียนเป็น 0 ⇒ JE ไม่มีบรรทัด Dr 54120 และ Cr 21815
+    // ขาด ⇒ หนี้สินเงินสมทบต่ำกว่าจริง + นำส่ง สปส. ขาด (เงินเพิ่ม §49)
+    // และแถวนั้นถูกกรองออกจากไฟล์ สปส.1-10 ด้วย ⇒ ไม่มีใครเห็นจนกระทบยอด GL
+
+    [Fact]
+    public void ฝั่งลูกจ้างเป็นศูนย์แต่นายจ้างมียอด_ห้ามล้างเป็นศูนย์()
+    {
+        var r = Norm(storedBase: 0m, employee: 0m, gross: 14_094m, employerOnFile: 705m);
+
+        Assert.NotNull(r.Conflict);              // ต้องบอกให้คนตัดสิน
+        Assert.False(r.Changed);                 // ห้ามแตะอะไรเลย
+        Assert.Equal(705m, r.Employer);          // ← ยอดเดิมต้องอยู่ครบ
+    }
+
+    [Fact]
+    public void ลูกจ้างถูกหักเกินเพดาน_ห้ามปรับฐานตาม_ต้องรายงาน()
+    {
+        // 5% ของ 30,000 = 1,500 (ต้นทางไม่ cap) — เกินเพดาน 875 ตาม ม.46
+        // การ "ทำให้เท่ากัน" จะกลายเป็นการรับรองการหักเกิน ซึ่งต้องคืนลูกจ้าง
+        var r = Norm(0m, 1_500m, 30_000m, 875m);
+
+        Assert.NotNull(r.Conflict);
+        Assert.False(r.Changed);
+        Assert.Equal(875m, r.Employer);
+    }
+
+    [Fact]
+    public void ลูกจ้างถูกหักต่ำกว่าฐานขั้นต่ำ_ต้องรายงานไม่ใช่ประกาศค่าจ้างต่ำ()
+    {
+        // หัก 50 บาท ⇒ ฐานที่หารกลับได้ = 1,000 ซึ่งต่ำกว่าฐานขั้นต่ำ 1,650 (ม.33)
+        // ถ้าปล่อยผ่านจะกลายเป็นการ "แจ้งค่าจ้างต่ำกว่าความจริง" ต่อ สปส.
+        var r = Norm(0m, 50m, 1_000m, 50m);
+
+        Assert.NotNull(r.Conflict);
+        Assert.False(r.Changed);
+    }
+
+    [Fact]
+    public void แยกธง_เติมฐาน_ออกจาก_ปรับยอดเงิน()
+    {
+        // เติมฐานอย่างเดียว (เงินไม่ขยับ) — ข้อความที่บอกผู้ใช้ต้องไม่พูดว่า
+        // "ปรับยอดนายจ้าง" ทั้งที่ไม่มีบาทเดียวเปลี่ยน (ป้ายไม่ซื่อสัตย์)
+        var onlyBase = Norm(0m, 648m, 12_953m, 648m);
+        Assert.True(onlyBase.BaseFilled);
+        Assert.False(onlyBase.EmployerAdjusted);
+
+        // ปรับยอดเงินจริง
+        var money = Norm(0m, 683m, 14_094m, 705m);
+        Assert.True(money.EmployerAdjusted);
+        Assert.Equal(683m, money.Employer);
     }
 
     [Fact]

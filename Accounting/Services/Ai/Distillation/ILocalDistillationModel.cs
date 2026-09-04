@@ -60,4 +60,20 @@ public sealed record LocalPrediction(
     decimal Confidence,                          // 0.0–1.0
     IReadOnlyList<string> Alternatives,
     int SupportingSamples,                       // how many training rows backed this
-    string ModelVersion);
+    string ModelVersion)
+{
+    /// <summary>คำตอบแบบ **มีโครง** ของนักเรียน — รูปเดียวกับ JSON ที่ AI จะคืน
+    /// สำหรับ feature นั้น · <c>null</c> = นักเรียนตอบได้แค่คำตอบเดี่ยว
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจ E-AI-01): feature ที่ผลลัพธ์เป็น **โครงสร้าง**
+    /// (ตรวจใบทั้งใบ · แตกบรรทัด · จับคู่คอลัมน์นำเข้า) หน้าเว็บวาดจาก
+    /// <c>StructuredJson</c> ซึ่งมาจาก <c>AiResponse.RawResponseJson</c> —
+    /// แต่ทั้งเส้น local (<c>ReturnLocalAsync</c> ตอน short-circuit และ
+    /// <c>FallbackToLocal</c> ตอน AI ล่ม) **ไม่มีช่องให้ส่งค่านี้เลย** ⇒ ค่าเป็น
+    /// null เสมอ ⇒ ผู้ใช้เห็น "ตรวจสอบเสร็จ" คู่กับแผงว่าง</para>
+    ///
+    /// <para>นี่คือการละเมิดกฎเหล็ก #1 ข้อ "local ต้องทดแทน AI ได้ 100%" โดยตรง:
+    /// นักเรียนที่เขียนไว้เพื่อ kill-switch ถูกทิ้งคำตอบทุกครั้งที่ตอบเป็นโครงสร้าง ·
+    /// นักเรียนเดิมที่คืนคำตอบเดี่ยวไม่กระทบ (ค่า default = null = พฤติกรรมเดิม)</para></summary>
+    public string? StructuredJson { get; init; }
+}

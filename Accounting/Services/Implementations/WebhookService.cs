@@ -29,10 +29,23 @@ public class WebhookService : IWebhookService
         _secrets = secrets;
     }
 
+    /// <summary>header ที่ผู้เช่าตั้งเองไม่ได้ — ระบบใช้ยืนยันตัวตน/ระบุ event
+    /// (ปล่อยให้ตั้งทับ = ปลอมลายเซ็นของเราส่งไปหาปลายทางได้)</summary>
+    private static readonly HashSet<string> ReservedWebhookHeaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "X-Webhook-Signature", "X-Webhook-Event", "X-Webhook-Delivery-Id",
+        "Host", "Content-Length", "Transfer-Encoding", "Connection", "Upgrade",
+    };
+
     // ==================== Registration ====================
 
     public async Task<WebhookRegistrationResponse> RegisterAsync(Guid companyId, CreateWebhookRequest request)
     {
+        // ★ F-04: URL มาจากผู้เช่า — ถ้าไม่ตรวจ เซิร์ฟเวอร์กลายเป็นตัวยิงคำขอ
+        // เข้าเครือข่ายภายในให้ผู้โจมตี (SSRF) และคืน status+เวลาเป็น oracle
+        var fmt = Accounting.Helpers.OutboundUrlGuard.CheckFormat(request.Url);
+        if (!fmt.Ok) throw new Accounting.Helpers.BusinessRuleException(fmt.Reason!, "WEBHOOK-URL");
+
         var registration = new WebhookRegistration
         {
             CompanyId = companyId,
@@ -70,7 +83,13 @@ public class WebhookService : IWebhookService
             ?? throw new InvalidOperationException($"Webhook registration {webhookId} not found.");
 
         if (request.Name is not null) registration.Name = request.Name;
-        if (request.Url is not null) registration.Url = request.Url;
+        if (request.Url is not null)
+        {
+            // ตรวจตอนแก้ไขด้วย — ไม่งั้นสมัครด้วย URL ที่ผ่านแล้วค่อยแก้เป็นของภายใน
+            var fmt = Accounting.Helpers.OutboundUrlGuard.CheckFormat(request.Url);
+            if (!fmt.Ok) throw new Accounting.Helpers.BusinessRuleException(fmt.Reason!, "WEBHOOK-URL");
+            registration.Url = request.Url;
+        }
         if (request.Secret is not null) registration.Secret = _secrets.Protect(request.Secret);
         if (request.EventTypes is not null) registration.EventTypes = request.EventTypes;
         if (request.IsActive.HasValue) registration.IsActive = request.IsActive.Value;
@@ -313,6 +332,20 @@ public class WebhookService : IWebhookService
             var jsonPayload = delivery.PayloadJson;
             var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
+            // ★ F-04: ตรวจ **ซ้ำตอนจะส่งจริง** — โดเมนที่ตอนสมัครชี้ IP สาธารณะ
+            // ตอนนี้อาจชี้ 127.0.0.1 แล้ว (DNS rebinding) ⇒ ด่านตอนสมัครอย่างเดียว
+            // คือด่านที่หลอกได้
+            var urlCheck = await Accounting.Helpers.OutboundUrlGuard.CheckResolvedAsync(registration.Url);
+            if (!urlCheck.Ok)
+            {
+                stopwatch.Stop();
+                delivery.IsSuccess = false;
+                delivery.ErrorMessage = urlCheck.Reason;
+                delivery.DurationMs = (int)stopwatch.ElapsedMilliseconds;
+                await _db.SaveChangesAsync();
+                return;
+            }
+
             var request = new HttpRequestMessage(HttpMethod.Post, registration.Url)
             {
                 Content = content
@@ -326,6 +359,9 @@ public class WebhookService : IWebhookService
                 {
                     foreach (var header in customHeaders)
                     {
+                        // ห้ามให้ผู้เช่าตั้ง header ที่ระบบใช้เอง (ลายเซ็น/ชนิด event)
+                        // หรือ header ที่ hop-by-hop — ไม่งั้นปลอมลายเซ็นของเราได้
+                        if (ReservedWebhookHeaders.Contains(header.Key)) continue;
                         request.Headers.TryAddWithoutValidation(header.Key, header.Value);
                     }
                 }

@@ -38,12 +38,17 @@
       <div class="tab" onclick="Page.showTab('general',this)">ทั่วไป</div>
       <div class="tab" onclick="Page.showTab('document',this)">เอกสาร</div>
       <div class="tab" onclick="Page.showTab('tax',this)">ภาษี</div>
-      <div class="tab advanced-only" onclick="Page.showTab('etax',this)">e-Tax</div>
+      <!-- 3 แท็บนี้เคยติด class="advanced-only" ⇒ ซ่อนในโหมดง่าย — แต่มันเป็น
+     **ขั้นตอนตั้งค่า** ไม่ใช่ของสำหรับผู้ใช้ขั้นสูง และการซ่อนสร้างวงจรปิด:
+     เมนู e-Tax ซ่อนจนกว่าจะเปิดใช้ · ที่เปิดใช้อยู่ในแท็บที่ถูกซ่อน ⇒
+     ผู้ใช้โหมดง่ายเปิด e-Tax ไม่ได้เลย และตั้งตัวย่อเลขที่เอกสาร (§86/4)
+     ไม่ได้เช่นกัน (ผลตรวจ B-A11) -->
+      <div class="tab" onclick="Page.showTab('etax',this)">e-Tax</div>
       <div class="tab" onclick="Page.showTab('email',this)" data-i18n="common.email">อีเมล</div>
       <div class="tab" onclick="Page.showTab('line',this)">💬 LINE</div>
       <div class="tab" onclick="Page.showTab('notify',this)">🔔 การแจ้งเตือน</div>
-      <div class="tab advanced-only" onclick="Page.showTab('approval',this)">อนุมัติ</div>
-      <div class="tab advanced-only" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
+      <div class="tab" onclick="Page.showTab('approval',this)">อนุมัติ</div>
+      <div class="tab" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
       <div class="tab" onclick="Page.showTab('signature',this)">ลายเซ็นของฉัน</div>
       <div class="tab" onclick="Page.showTab('security',this)">🔐 ความปลอดภัยบัญชี</div>
     </div>
@@ -169,6 +174,24 @@
           </label>
         </div>
         <div class="form-group"><label class="form-label">อัตรา VAT (%)</label><input type="number" id="cVatRate" class="form-input" value="7" step="0.01"></div>
+      </div>
+      <!-- ภ.พ.06 — สิทธิ์ออกใบกำกับภาษีอย่างย่อ (§86/6)
+           ที่มา: สลิป POS เคยพิมพ์คำว่า "ใบกำกับภาษีอย่างย่อ" ทุกใบโดยไม่ตรวจอะไรเลย
+           = ออกใบกำกับโดยไม่มีสิทธิ์ · ผู้ซื้อเคลมภาษีซื้อไม่ได้ตาม §82/5(5) -->
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+            <input type="checkbox" id="cRetailApproved">
+            <span>ได้รับอนุมัติ <b>ภ.พ.06</b> — ออกใบกำกับภาษีอย่างย่อได้ (§86/6)</span>
+          </label>
+          <div class="form-hint">เฉพาะผู้ประกอบการค้าปลีกที่ยื่น ภ.พ.06 และได้รับอนุมัติแล้ว ·
+            ยังไม่อนุมัติ = สลิป POS พิมพ์เป็น "ใบเสร็จรับเงิน" (ยังนำส่ง VAT ขายครบตามปกติ)</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">วันที่อนุมัติ ภ.พ.06</label>
+          <input type="date" class="form-input" id="cPhoR06Date">
+          <div class="form-hint">บิลที่ลงวันที่ก่อนวันนี้ยังออกอย่างย่อไม่ได้</div>
+        </div>
       </div>
       <div class="form-row">
         <div class="form-group" style="flex:1">
@@ -953,7 +976,7 @@
           await api.deleteCompany(typed);
           localStorage.removeItem('currentCompany');
           alert('ลบบริษัทเรียบร้อย — กลับสู่หน้าเลือกบริษัท');
-          location.href = '/app.html';
+          location.href = Layout.dashboardUrl();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
       // อ่านรูปลายเซ็นผู้มีอำนาจลงนาม → base64 (จำกัด ~300KB กัน payload บวม)
@@ -1091,7 +1114,7 @@
         }, document.getElementById('cDbdBtn'));
       },
       showTab(tab, el) {
-        ['tabCompany','tabLicense','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabLine','tabNotify','tabApproval','tabNumbering','tabSignature'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        ['tabCompany','tabLicense','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabLine','tabNotify','tabApproval','tabNumbering','tabSignature','tabSecurity'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
         document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1))?.classList.remove('hidden');
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
@@ -1277,10 +1300,14 @@
                   ${r.confirmed ? '' : '<span style="font-size:11px;color:#b45309;margin-left:6px">⏳ รอยืนยันทางอีเมล</span>'}
                 </div>
                 <div style="font-size:12px;color:#64748b">${esc(r.providerEmail || '')}</div>
-                <div style="font-size:11px;color:#94a3b8">ผูกเมื่อ ${fmt(r.linkedAt)} · ใช้ล่าสุด ${fmt(r.lastUsedAt)}</div>
+                <div style="font-size:11px;color:#94a3b8">ผูกเมื่อ ${fmt(r.linkedAt)} · ใช้ล่าสุด ${fmt(r.lastUsedAt)}${
+                  r.confirmed && r.confirmedAt ? ' · ยืนยันเมื่อ ' + fmt(r.confirmedAt) : ''}</div>
+                <!-- IP ตอนผูก: ตอบคำถาม "ใครผูกบัญชีนี้เข้ามา" ให้เจ้าของเห็นเอง
+                     (เดิมเก็บลงฐานแล้วไม่มีใครอ่าน = ข้อมูลที่เก็บโดยไม่ได้ใช้) -->
+                ${r.linkedFromIp ? `<div style="font-size:11px;color:#94a3b8">ผูกจาก IP ${esc(r.linkedFromIp)}</div>` : ''}
               </div>
               <button type="button" class="btn btn-sm btn-danger"
-                onclick="Page.removeExternalLogin('${esc(r.id)}','${esc(r.providerDisplayName || r.provider)}')">ถอดการผูก</button>
+                onclick="Page.removeExternalLogin('${Layout.jsArg(r.id)}','${Layout.jsArg(r.providerDisplayName || r.provider)}')">ถอดการผูก</button>
             </div>`).join('');
         } catch (e) {
           box.innerHTML = `<div style="font-size:13px;color:#b91c1c">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
@@ -1768,6 +1795,9 @@
           this.onBizTypeChange(true);
           document.getElementById('cJuristicId').value = c.juristicId || '';
           document.getElementById('cVatRegistered').checked = c.isVatRegistered || false;
+          document.getElementById('cRetailApproved').checked = c.isRetailApproved || false;
+          document.getElementById('cPhoR06Date').value = c.phoR06ApprovedDate
+            ? String(c.phoR06ApprovedDate).slice(0, 10) : '';
           document.getElementById('cVatRate').value = c.vatRate ?? 7;   // 0 ต้องโชว์ 0 ไม่ใช่ 7
           document.getElementById('cWhtRegistered').checked = c.isWhtRegistered !== false;
           document.getElementById('cSocialSecurity').checked = c.isSocialSecurityRegistered || false;
@@ -1820,7 +1850,7 @@
           }
           document.getElementById('setupBanner').classList.add('hidden');
           Layout.toast('ตั้งค่าเสร็จสิ้น! ระบบได้สร้างผังบัญชีเริ่มต้นให้แล้ว');
-          setTimeout(() => window.location.href = '/app.html', 800);
+          setTimeout(() => window.location.href = Layout.dashboardUrl(), 800);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // ===== Business Type & Industry Type UI =====
@@ -2000,6 +2030,8 @@
             industryType: document.getElementById('cIndustryType').value,
             juristicId: document.getElementById('cJuristicId').value || null,
             isVatRegistered: document.getElementById('cVatRegistered').checked,
+            isRetailApproved: document.getElementById('cRetailApproved').checked,
+            phoR06ApprovedDate: document.getElementById('cPhoR06Date').value || null,
             // 0% เป็นค่าที่ตั้งใจได้ (ยังไม่จด VAT / zero-rated) — ว่างเท่านั้นที่ = 7
           vatRate: Layout.numOrNull('cVatRate') ?? 7,
             isWhtRegistered: document.getElementById('cWhtRegistered').checked,

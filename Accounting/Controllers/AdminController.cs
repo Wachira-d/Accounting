@@ -1879,9 +1879,12 @@ public class AdminController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
 
-        var allowedTypes = new[] { "image/png", "image/jpeg", "image/svg+xml", "image/webp", "image/gif" };
+        // ตัวกรองชั้นแรก (ประหยัดการอ่านไฟล์) — **ตัวตัดสินจริงคือ magic bytes**
+        // ใน ProcessAndSaveAsync ซึ่ง throw 400 เมื่อไบต์ไม่ตรง allow-list · SVG
+        // ถูกถอดออกทั้งชนิด: มันคือ XML ที่ฝัง <script> ได้ = HTML ปลอมเป็นรูป (F-03)
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/webp", "image/gif" };
         if (!allowedTypes.Contains(file.ContentType))
-            return BadRequest(new ApiResponse<object>(false, null, "รองรับเฉพาะไฟล์ PNG, JPG, SVG, WebP, GIF"));
+            return BadRequest(new ApiResponse<object>(false, null, "รองรับเฉพาะไฟล์ PNG, JPG, WebP, GIF"));
 
         var dir = Path.Combine(_env.WebRootPath, "uploads");
         await using var s = file.OpenReadStream();
@@ -1896,7 +1899,8 @@ public class AdminController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
 
-        var allowedTypes = new[] { "image/png", "image/jpeg", "image/svg+xml", "image/webp", "image/gif", "image/x-icon" };
+        // ตัวกรองชั้นแรก — ตัวตัดสินจริงคือ magic bytes ใน ProcessAndSaveAsync (F-03)
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/webp", "image/gif", "image/x-icon" };
         if (!allowedTypes.Contains(file.ContentType))
             return BadRequest(new ApiResponse<object>(false, null, "รองรับเฉพาะไฟล์รูปภาพ"));
 

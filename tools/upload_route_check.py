@@ -26,6 +26,9 @@ PROGRAM = SRC / "Program.cs"
 # โฟลเดอร์ที่ **ตั้งใจ** ไม่เสิร์ฟตรง — มี endpoint ตรวจ JWT + CompanyId ของตัวเอง
 PRIVATE_BY_DESIGN = {
     "/uploads/attachments",   # ดาวน์โหลดผ่าน /attachments/{id}/download
+    # สลิปโอนเงินของแขกที่พัก — มีชื่อผู้โอน/เลขบัญชี/ยอด = PII
+    # เสิร์ฟผ่าน `reservations/{id|token}/slip` ที่ตรวจสิทธิ์ (LDG-P2-06)
+    "/uploads/lodging-slips",
 }
 
 

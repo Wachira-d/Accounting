@@ -92,7 +92,7 @@
         render();
       } catch (e) {
         document.getElementById('providers').innerHTML =
-          `<div style="color:var(--admin-danger);padding:16px">${e.message}</div>`;
+          `<div style="color:var(--admin-danger);padding:16px">${AdminLayout.esc(e.message)}</div>`;
       }
     }
 
@@ -127,7 +127,7 @@
         const c = _cfg[p.key] || {};
         return `
         <div class="prov">
-          <h3>${p.icon} ${p.name}
+          <h3>${p.icon} ${AdminLayout.esc(p.name)}
             <span class="st ${c.enabled ? 'st-on' : 'st-off'}">${c.enabled ? 'เปิดใช้งาน' : 'ปิดอยู่'}</span>
           </h3>
           <div class="steps">${p.steps(cb)}</div>
@@ -151,7 +151,7 @@
           </div>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:4px">
             <input type="checkbox" id="${p.key}On" ${c.enabled ? 'checked' : ''}>
-            <span>เปิดใช้งาน — แสดงปุ่ม "${p.name}" บนหน้าเข้าสู่ระบบ</span>
+            <span>เปิดใช้งาน — แสดงปุ่ม "${AdminLayout.esc(p.name)}" บนหน้าเข้าสู่ระบบ</span>
           </label>
         </div>`;
       }).join('');

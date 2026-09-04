@@ -183,7 +183,7 @@
         return r + `<div class="suggestion">💡 ${this._esc(suggestion)}</div>`;
       },
 
-      _esc(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); },
+      _esc(s) { return Layout.esc(s); },
 
       async loadCustomer() {
         const api = Layout.api(); if (!api) return;

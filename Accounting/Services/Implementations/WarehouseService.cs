@@ -11,10 +11,16 @@ namespace Accounting.Services.Implementations;
 public class WarehouseService : IWarehouseService
 {
     private readonly AccountingDbContext _db;
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ — เดิมไฟล์นี้เขียน `WarehouseStock`
+    /// **ตรง ๆ** โดยไม่แตะ `Product.CurrentStock` และไม่ลง `StockMovement` เลย
+    /// ⇒ โอนของจากครัวกลางไปสาขา แล้วยอดที่ POS ตัดตอนขาย (CurrentStock) ไม่ขยับ
+    /// = สองความจริงที่ไม่มีวันตรงกัน (POS_MULTI_BRANCH_ANALYSIS §2.2)</summary>
+    private readonly IStockLedger _stock;
 
-    public WarehouseService(AccountingDbContext db)
+    public WarehouseService(AccountingDbContext db, IStockLedger stock)
     {
         _db = db;
+        _stock = stock;
     }
 
     // ===== Warehouses =====
@@ -280,20 +286,34 @@ public class WarehouseService : IWarehouseService
             .Where(l => l.StockTransferId == transferId)
             .ToListAsync();
 
+        await using var shipTx = await _db.Database.BeginTransactionAsync();
         foreach (var line in lines)
         {
-            var stock = await _db.WarehouseStocks
-                .FirstOrDefaultAsync(s => s.WarehouseId == transfer.FromWarehouseId && s.ProductId == line.ProductId);
+            var stock = await _db.WarehouseStocks.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.CompanyId == companyId
+                    && s.WarehouseId == transfer.FromWarehouseId && s.ProductId == line.ProductId);
 
             if (stock == null || stock.AvailableQuantity < line.Quantity)
                 throw new InvalidOperationException($"สินค้า {line.ProductId} มีจำนวนไม่เพียงพอในคลังต้นทาง");
 
-            stock.Quantity -= line.Quantity;
-            stock.AvailableQuantity -= line.Quantity;
+            await _stock.MoveAsync(new StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: line.ProductId,
+                Quantity: -line.Quantity,     // − = ออกจากคลังต้นทาง
+                MovementType: "TRANSFER_OUT",
+                Reference: transfer.TransferNumber,
+                WarehouseId: transfer.FromWarehouseId,
+                MovementDate: transfer.TransferDate,
+                // จับคู่ขาออก-ขาเข้าของใบเดียวกัน เพื่อให้รายงานรู้ว่านี่คือการย้ายที่
+                // ไม่ใช่การขาย/ซื้อ (ระหว่างทางยอดรวมบริษัทลดลงจริง = goods in transit)
+                TransferPairId: transfer.Id,
+                Notes: $"โอนออกไป {transfer.ToWarehouse.Name}",
+                CreatedBy: "WarehouseService"));
         }
 
         transfer.Status = "InTransit";
         await _db.SaveChangesAsync();
+        await shipTx.CommitAsync();
 
         return MapTransferToResponse(transfer, transfer.FromWarehouse.Name, transfer.ToWarehouse.Name, lines.Count);
     }
@@ -313,39 +333,32 @@ public class WarehouseService : IWarehouseService
             .Where(l => l.StockTransferId == transferId)
             .ToListAsync();
 
+        await using var recvTx = await _db.Database.BeginTransactionAsync();
         foreach (var receivedLine in receivedLines)
         {
             var transferLine = lines.FirstOrDefault(l => l.ProductId == receivedLine.ProductId);
             if (transferLine != null)
             {
                 transferLine.ReceivedQuantity = receivedLine.ReceivedQuantity;
+                if (receivedLine.ReceivedQuantity == 0m) continue;
 
-                // Add stock to destination warehouse
-                var destStock = await _db.WarehouseStocks
-                    .FirstOrDefaultAsync(s => s.WarehouseId == transfer.ToWarehouseId && s.ProductId == receivedLine.ProductId);
-
-                if (destStock == null)
-                {
-                    destStock = new WarehouseStock
-                    {
-                        CompanyId = companyId,
-                        WarehouseId = transfer.ToWarehouseId,
-                        ProductId = receivedLine.ProductId,
-                        Quantity = receivedLine.ReceivedQuantity,
-                        AvailableQuantity = receivedLine.ReceivedQuantity
-                    };
-                    _db.WarehouseStocks.Add(destStock);
-                }
-                else
-                {
-                    destStock.Quantity += receivedLine.ReceivedQuantity;
-                    destStock.AvailableQuantity += receivedLine.ReceivedQuantity;
-                }
+                await _stock.MoveAsync(new StockMoveRequest(
+                    CompanyId: companyId,
+                    ProductId: receivedLine.ProductId,
+                    Quantity: receivedLine.ReceivedQuantity,   // + = เข้าคลังปลายทาง
+                    MovementType: "TRANSFER_IN",
+                    Reference: transfer.TransferNumber,
+                    WarehouseId: transfer.ToWarehouseId,
+                    MovementDate: DateTime.UtcNow,
+                    TransferPairId: transfer.Id,
+                    Notes: $"รับโอนจาก {transfer.FromWarehouse.Name}",
+                    CreatedBy: "WarehouseService"));
             }
         }
 
         transfer.Status = "Received";
         await _db.SaveChangesAsync();
+        await recvTx.CommitAsync();
 
         return MapTransferToResponse(transfer, transfer.FromWarehouse.Name, transfer.ToWarehouse.Name, lines.Count);
     }
@@ -366,16 +379,25 @@ public class WarehouseService : IWarehouseService
                 .Where(l => l.StockTransferId == transferId)
                 .ToListAsync();
 
+            await using var voidTx = await _db.Database.BeginTransactionAsync();
             foreach (var line in lines)
             {
-                var stock = await _db.WarehouseStocks
-                    .FirstOrDefaultAsync(s => s.WarehouseId == transfer.FromWarehouseId && s.ProductId == line.ProductId);
-                if (stock != null)
-                {
-                    stock.Quantity += line.Quantity;
-                    stock.AvailableQuantity += line.Quantity;
-                }
+                await _stock.MoveAsync(new StockMoveRequest(
+                    CompanyId: companyId,
+                    ProductId: line.ProductId,
+                    Quantity: line.Quantity,      // + = คืนกลับคลังต้นทาง
+                    MovementType: "TRANSFER_IN",
+                    Reference: transfer.TransferNumber,
+                    WarehouseId: transfer.FromWarehouseId,
+                    MovementDate: DateTime.UtcNow,
+                    TransferPairId: transfer.Id,
+                    Notes: "ยกเลิกใบโอน — คืนของกลับคลังต้นทาง",
+                    CreatedBy: "WarehouseService"));
             }
+            transfer.Status = "Cancelled";
+            await _db.SaveChangesAsync();
+            await voidTx.CommitAsync();
+            return;
         }
 
         transfer.Status = "Cancelled";

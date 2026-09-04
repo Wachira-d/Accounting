@@ -110,15 +110,35 @@ public record SsoLoginRequest(
 
 /// <summary>ผูกบัญชีภายนอกขณะล็อกอินอยู่แล้ว — ไม่ต้องมีอีเมลจาก provider เลย
 /// (ตัวผู้ใช้ยืนยันด้วย JWT แล้ว + เพิ่งผ่าน OAuth มาสด ๆ)</summary>
+/// <summary>หน้าสมัคร (มาด้วยตั๋ว SSO) ขอผูกตัวตน provider เข้ากับบัญชีเดิมที่อีเมล X —
+/// Password ว่าง = แค่ "เช็ค" (มีบัญชีไหม + ส่งลิงก์ยืนยัน) · มี = ผูกทันทีถ้ารหัสถูก</summary>
+public record SsoLinkExistingRequest(
+    [Required] string SsoTicket,
+    [Required] string Email,
+    string? Password = null);
+
+public record SsoLinkExistingResponse(
+    bool Exists,
+    bool Linked,
+    bool EmailSent,
+    string? MaskedEmail,
+    string Message,
+    LoginResponse? Login = null);
+
 public record LinkExternalLoginRequest(
     [Required] string Provider,
     [Required] string IdToken);
 
 /// <summary>บัญชีภายนอกที่ผูกไว้ — หน้าโปรไฟล์ใช้แสดง/ถอด
 /// (ProviderUserId ไม่เคยส่งออก: เป็นตัวระบุตัวบุคคลฝั่ง provider)</summary>
+/// <remarks><c>LinkedAt</c> = วันที่ **ผูก** (<c>CreatedAt</c> ของแถว) ส่วน
+/// <c>ConfirmedAt</c> = วันที่เจ้าของกดยืนยันในอีเมล — คนละความหมาย ห้ามยืมช่อง
+/// เดียวเก็บทั้งสองค่า (การผูกที่ยังไม่ยืนยันจะกลายเป็น "ไม่มีวันที่ผูก" ทันที)
+/// · <c>LinkedFromIp</c> ตอบคำถาม "ใครผูกบัญชีนี้เข้ามา" ให้เจ้าของเห็นเอง</remarks>
 public record ExternalLoginResponse(
     Guid Id, string Provider, string ProviderDisplayName,
-    string? ProviderEmail, DateTime? LinkedAt, DateTime? LastUsedAt, bool Confirmed);
+    string? ProviderEmail, DateTime? LinkedAt, DateTime? LastUsedAt, bool Confirmed,
+    DateTime? ConfirmedAt = null, string? LinkedFromIp = null);
 
 /// <summary>
 /// Returned by GET /api/auth/profile and used to render the signature settings UI.

@@ -508,7 +508,7 @@
         const d = this._currentReport;
         if (!d) return;
         const periodTH = `${this.monthNames[d.month]} ${d.year + 543}`;
-        const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const esc = s => Layout.esc(s);
         const branch = b => { const x = String(b || '').replace(/\D/g, ''); return (!x || x === '00000' || x === '0') ? 'สำนักงานใหญ่' : 'สาขาที่ ' + x; };
         const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const dstr = s => { try { return s ? new Date(s).toLocaleDateString('th-TH') : ''; } catch { return ''; } };
@@ -613,7 +613,7 @@
               return 'output';
             };
             // escape ครบทุกอักขระ ไม่ใช่แค่ quote — ใช้ทั้งใน attribute และ text node
-            const esc = (s) => (s || '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            const esc = (s) => Layout.esc(s);
             const renderRow = (ln) => {
               const ex = !!ln.isExcluded;
               const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';

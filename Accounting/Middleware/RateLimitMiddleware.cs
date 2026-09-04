@@ -27,7 +27,13 @@ public class RateLimitMiddleware
         || path.StartsWith("/api/auth/register", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/api/auth/refresh", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase);
+        || path.StartsWith("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase)
+        // ⚠️ เส้น SSO ต้องอยู่ tier เดียวกับ login — ไม่งั้นตกไป tier anonymous
+        // (600/นาที/IP) ซึ่งเปิดช่อง: ยิงซ้ำ ๆ = **email bombing เหยื่อ**ด้วย
+        // ลิงก์ยืนยันที่ดูเหมือนระบบส่งเอง · เดา token ได้ 600 ครั้ง/นาที ·
+        // เอนูมอีเมลจากข้อความตอบกลับที่ต่างกันระหว่าง "มีบัญชี" กับ "ไม่มี"
+        || path.StartsWith("/api/auth/sso", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/api/auth/external-logins", StringComparison.OrdinalIgnoreCase);
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -39,9 +45,15 @@ public class RateLimitMiddleware
             return;
         }
 
-        var isAuthenticated = context.Request.Headers.ContainsKey("Authorization") ||
-                              context.Request.Headers.ContainsKey("X-Api-Key") ||
-                              context.Request.Headers.ContainsKey("X-Integration-Key");
+        // ⚠️ "มี header Authorization" ≠ "ล็อกอินแล้ว" (ผลตรวจ F-10)
+        // middleware นี้ย้ายมาอยู่หลัง UseAuthentication() แล้ว จึงถาม
+        // `context.User` ที่ผ่านการตรวจลายเซ็นจริง — เดิมตัดสินจากการมี header
+        // เฉย ๆ ⇒ ส่ง `Authorization: x` มาก็ได้ tier 3000/นาที ทั้งที่ไม่มีบัญชี
+        // (เพดานกันยิงถล่มกลายเป็น 5 เท่าของที่ตั้งใจสำหรับผู้ไม่ล็อกอิน)
+        //
+        // ฝั่ง API key ยังเชื่อ header ไม่ได้เหมือนกัน — ApiKeyMiddleware ตรวจ
+        // ทีหลัง — จึงถือเป็น "ยังไม่พิสูจน์" และไปอยู่ tier ตาม IP
+        var isAuthenticated = context.User?.Identity?.IsAuthenticated == true;
 
         string clientKey;
         int limit;
@@ -70,6 +82,11 @@ public class RateLimitMiddleware
             limit = _anonymousMaxPerMinute;
         }
 
+        // เก็บกวาดหน้าต่างที่เงียบไปแล้ว — dict นี้ถูกป้อนด้วย **IP จากอินเทอร์เน็ต**
+        // ซึ่งไม่มีขอบเขต ⇒ เดิมไม่เคยลบ key เลย = memory โตไปเรื่อย ๆ จนกว่าจะ
+        // รีสตาร์ต (ผลตรวจ F-10) · ทำแบบ amortize ไม่ต้องมี timer แยก
+        MaybeEvictIdle();
+
         var window = Windows.GetOrAdd(clientKey, _ => new SlidingWindow());
 
         if (!window.TryAdd(limit))
@@ -87,15 +104,32 @@ public class RateLimitMiddleware
         await _next(context);
     }
 
+    /// <summary>ลบหน้าต่างที่ไม่มี request มาเกิน 5 นาที — เรียกแบบ amortize
+    /// (ทุก ๆ N request) เพื่อไม่ให้ต้นทุนไปตกกับ request ใดเป็นพิเศษ</summary>
+    private static void MaybeEvictIdle()
+    {
+        if (System.Threading.Interlocked.Increment(ref _requestCounter) % EvictEvery != 0) return;
+        var cutoff = DateTime.UtcNow.AddMinutes(-5);
+        foreach (var kv in Windows)
+            if (kv.Value.LastSeenUtc < cutoff) Windows.TryRemove(kv.Key, out _);
+    }
+
+    private static int _requestCounter;
+    private const int EvictEvery = 5000;
+
     private class SlidingWindow
     {
         private readonly Queue<DateTime> _timestamps = new();
         private readonly object _lock = new();
 
+        /// <summary>เวลาที่เห็น request ล่าสุด — ใช้ตัดสินว่าหน้าต่างนี้ลบได้แล้ว</summary>
+        public DateTime LastSeenUtc { get; private set; } = DateTime.UtcNow;
+
         public bool TryAdd(int maxPerMinute)
         {
             lock (_lock)
             {
+                LastSeenUtc = DateTime.UtcNow;
                 var cutoff = DateTime.UtcNow.AddMinutes(-1);
                 while (_timestamps.Count > 0 && _timestamps.Peek() < cutoff)
                     _timestamps.Dequeue();

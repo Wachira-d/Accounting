@@ -351,8 +351,14 @@ public class ECommerceService : IECommerceService
         {
             CompanyId = companyId,
             DocumentType = DocumentType.TaxInvoice,
-            DocumentNumber = $"EC-{order.OrderNumber}",
-            Status = DocumentStatus.Approved,
+            // ⚠️ ใบกำกับภาษีห้ามถือเลขของระบบอื่น — เดิมใช้เลขคำสั่งซื้อของ
+            // marketplace เป็นเลขที่เอกสาร แล้วตั้ง Approved ตรง ๆ โดยไม่ผ่าน
+            // ApproveDocumentAsync ⇒ ไม่มีเลขเรียง §86/4 · ไม่มี TaxPointDate ·
+            // ไม่มีรหัสสาขา · ออก e-Tax ไม่ได้ ทั้งที่ VAT เข้า ภ.พ.30 เต็มจำนวน
+            // → ใช้ DRAFT- แล้วให้ทีมบัญชีอนุมัติ (เลขจริงออกตอนนั้นเหมือนทางอื่น)
+            // เลขคำสั่งซื้อเดิมเก็บไว้ที่ Reference ด้านล่างอยู่แล้ว (ตามรอยได้)
+            DocumentNumber = $"DRAFT-{Guid.NewGuid()}",
+            Status = DocumentStatus.Draft,
             DocumentDate = order.OrderDate,
             DueDate = order.OrderDate,
             ContactId = contact.Id,

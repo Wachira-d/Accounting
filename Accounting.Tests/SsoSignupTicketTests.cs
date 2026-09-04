@@ -1,5 +1,9 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using Accounting.Helpers;
 using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
 namespace Accounting.Tests;
@@ -66,11 +70,9 @@ public class SsoSignupTicketTests
     }
 
     [Fact]
-    public void ตั๋วหมดอายุ_อ่านไม่ผ่าน()
+    public void กุญแจถูกหมุนแล้ว_ตั๋วเก่าอ่านไม่ผ่าน()
     {
         var cfg = Config();
-        // minutes ถูก clamp ที่ 1 นาที — เลียนแบบ "หมดอายุ" ด้วยกุญแจคนละ secret
-        // (เทียบเท่า deployment ที่หมุน JWT_SECRET แล้ว ตั๋วเก่าต้องใช้ไม่ได้)
         var ticket = JwtHelper.GenerateSsoSignupTicket(
             SsoIdentityPolicy.Line, "Ubbb", "ข", null, null, cfg);
         var otherCfg = new ConfigurationBuilder()
@@ -80,6 +82,48 @@ public class SsoSignupTicketTests
             }).Build();
 
         Assert.Null(JwtHelper.ReadSsoSignupTicket(ticket, otherCfg));
+    }
+
+    /// <summary>ตั๋ว**หมดอายุจริง** — เดิมเทสต์ชื่อนี้ไปเปลี่ยน secret แทน ซึ่ง
+    /// พิสูจน์ "signature ไม่ตรง" ไม่ใช่ "อายุหมด" ⇒ ถ้าใครเผลอตั้ง
+    /// <c>ValidateLifetime = false</c> จะไม่มีเทสต์ตัวไหนจับได้เลย
+    /// (CLAUDE.md — "control ที่ไม่มีเทสต์ยืนยัน = ไม่มี control")
+    ///
+    /// <para>สร้างตั๋วเองด้วยกุญแจ+วัตถุประสงค์เดียวกับของจริง แล้วตั้ง exp ไว้
+    /// ในอดีตให้พ้น ClockSkew 30 วินาที (ผ่าน API ปกติทำไม่ได้เพราะ minutes ถูก
+    /// clamp ขั้นต่ำ 1 นาที — และ**ไม่ควร**เปิดช่องให้ออกตั๋วย้อนหลังในโค้ดจริง)</para>
+    /// </summary>
+    [Fact]
+    public void ตั๋วหมดอายุ_อ่านไม่ผ่าน()
+    {
+        var cfg = Config();
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
+            cfg["Jwt:Secret"] + "|" + JwtHelper.SsoTicketPurpose));
+        var expired = new JwtSecurityToken(
+            claims: new[]
+            {
+                new Claim("sso_p", SsoIdentityPolicy.Line),
+                new Claim("sso_uid", "Uexpired"),
+            },
+            notBefore: DateTime.UtcNow.AddMinutes(-10),
+            expires: DateTime.UtcNow.AddMinutes(-5),
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
+        var token = new JwtSecurityTokenHandler().WriteToken(expired);
+
+        // negative test: ตั๋วชุดเดียวกันแต่ยังไม่หมดอายุ ต้องอ่าน**ผ่าน** —
+        // ไม่งั้นเทสต์ข้างบนอาจผ่านเพราะสร้างตั๋วผิดรูป ไม่ใช่เพราะด่านอายุ
+        var alive = new JwtSecurityToken(
+            claims: new[]
+            {
+                new Claim("sso_p", SsoIdentityPolicy.Line),
+                new Claim("sso_uid", "Ualive"),
+            },
+            expires: DateTime.UtcNow.AddMinutes(5),
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
+        var aliveToken = new JwtSecurityTokenHandler().WriteToken(alive);
+
+        Assert.Null(JwtHelper.ReadSsoSignupTicket(token, cfg));
+        Assert.NotNull(JwtHelper.ReadSsoSignupTicket(aliveToken, cfg));
     }
 
     [Theory]

@@ -15,6 +15,18 @@ using QuestPDF.Infrastructure;
 
 QuestPDF.Settings.License = LicenseType.Community;
 
+// ThreadPool: งานที่เป็น CPU-bound แบบ sync ในระบบนี้คือการเรนเดอร์ PDF
+// (`QuestPDF.GeneratePdf()`) ซึ่งยึด thread จริงตลอดการเรนเดอร์ · ค่าเริ่มต้นของ
+// .NET ตั้ง min = จำนวน core แล้วโตช้า (~1-2 thread/วินาที) ⇒ ผู้ใช้หลายสิบคนกด
+// พิมพ์พร้อมกันจะเจอหน่วงเป็นช่วง ๆ ระหว่างที่ pool ค่อย ๆ ขยาย. ยกพื้นขึ้นมาให้
+// รับ burst ได้ทันที (ไม่ใช่การเพิ่มเพดาน — แค่ไม่ต้องรอ pool โต)
+{
+    ThreadPool.GetMinThreads(out var minWorker, out var minIo);
+    var targetWorker = Math.Max(minWorker, Environment.ProcessorCount * 4);
+    var targetIo = Math.Max(minIo, Environment.ProcessorCount * 4);
+    ThreadPool.SetMinThreads(targetWorker, targetIo);
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 // ตรวจ DI graph "ทุก environment" ไม่ใช่เฉพาะ Development
@@ -38,9 +50,36 @@ builder.Host.UseDefaultServiceProvider(o =>
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 // ===== Database (PostgreSQL) =====
+// ── Connection pool ──
+// เพดานจริงของ "กี่คนทำงานพร้อมกันได้" คือจำนวน connection ไม่ใช่จำนวน request:
+// EF เปิด/คืน connection ต่อ query **ยกเว้นใน transaction** ซึ่งถือไว้ทั้งช่วง —
+// และเส้นสำคัญของระบบนี้ (อนุมัติเอกสาร · ลงบัญชี · ปิดรอบบิล) อยู่ใน transaction
+// ทั้งหมด ⇒ งานที่กินเวลา 10 วินาที = กิน connection 10 วินาทีเต็ม
+//
+// Npgsql default = 100 ซึ่งบังเอิญเท่ากับ `max_connections` default ของ PostgreSQL
+// พอดี ⇒ ถ้าไม่ตั้งอะไรเลย แอปจะพยายามใช้จนเต็มโควตาของฐานเอง (ไม่เหลือให้
+// superuser/เครื่องมือ/instance ที่สอง). ตั้งชัดเจนแทนการปล่อยตาม default และ
+// **ตั้งผ่าน env ได้** เพื่อให้ปรับตาม max_connections จริงของแต่ละ deployment:
+//   Db__MaxPoolSize (default 60) · Db__MinPoolSize (default 5)
+//   Db__ConnectionIdleLifetimeSeconds (default 60 — คืน connection ที่ว่างนาน)
+// สูตรคร่าว ๆ: MaxPoolSize × จำนวน instance ≤ max_connections − 10 (สำรองไว้)
+// เส้นที่เปิด connection เองนอก EF (endpoint วินิจฉัย + schema fix ตอนบูต) ต้องใช้
+// connection string **ตัวเดียวกัน** — คนละสตริง = คนละ pool ที่มีเพดานของตัวเอง
+// (default 100) ⇒ รวมกันเกิน max_connections ของฐานโดยไม่มีใครเห็น
+var pgBuilder = new Npgsql.NpgsqlConnectionStringBuilder(
+    builder.Configuration.GetConnectionString("DefaultConnection"))
+{
+    MaxPoolSize = builder.Configuration.GetValue("Db:MaxPoolSize", 60),
+    MinPoolSize = builder.Configuration.GetValue("Db:MinPoolSize", 5),
+    ConnectionIdleLifetime = builder.Configuration.GetValue("Db:ConnectionIdleLifetimeSeconds", 60),
+    // รอคิว connection ได้ไม่เกิน 30 วิ แล้วค่อยล้มพร้อมข้อความชัด ๆ —
+    // ดีกว่าค้างยาวจนผู้ใช้กดซ้ำแล้วยิ่งกินคิว
+    Timeout = builder.Configuration.GetValue("Db:ConnectTimeoutSeconds", 30),
+};
+
 builder.Services.AddDbContext<AccountingDbContext>(options =>
     options.UseNpgsql(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
+        pgBuilder.ConnectionString,
         npgsqlOptions =>
         {
             // Split queries for multi-Include chains (prevents cartesian explosion)
@@ -168,14 +207,30 @@ builder.Services.AddScoped<PreCloseChecklistService>();
 builder.Services.AddScoped<DocumentCompletenessService>();
 builder.Services.AddScoped<GlobalSearchService>();
 builder.Services.AddSingleton<Accounting.Helpers.ISecretProtector, Accounting.Helpers.SecretProtector>();
-// F15 — Column-level PII encryption via ASP.NET DataProtection. Keys
-// persist to ./.dpkeys (override ผ่าน config "DataProtection:KeyPath").
-// ใน production ให้ mount persistent volume → keys อยู่รอด pod restart.
-var dpKeyPath = builder.Configuration["DataProtection:KeyPath"] ?? "./.dpkeys";
-try { System.IO.Directory.CreateDirectory(dpKeyPath); } catch { }
-builder.Services.AddDataProtection()
-    .SetApplicationName("Accounting")
-    .PersistKeysToFileSystem(new System.IO.DirectoryInfo(dpKeyPath));
+// F15 — เข้ารหัส PII ระดับคอลัมน์ด้วย ASP.NET DataProtection
+//
+// ⚠️ key ring เก็บใน **ฐานข้อมูล** ไม่ใช่ดิสก์ของแต่ละเครื่อง (ผลตรวจ F-06):
+// เดิม PersistKeysToFileSystem("./.dpkeys") ⇒ แต่ละ instance มีคีย์ของตัวเอง
+// ⇒ PII ที่เครื่อง A เข้ารหัส เครื่อง B ถอดไม่ออก และ PiiProtector.TryDecrypt
+// คืน null **เงียบ ๆ** ⇒ ผู้ใช้เห็นเลขบัตร/เลขบัญชี/ลายเซ็นเป็นช่องว่าง สลับ
+// ไปมาตามเครื่องที่ load balancer ส่งไป · pod restart ที่ไม่ได้ mount volume
+// = คีย์หายถาวร ข้อมูลที่เข้ารหัสไว้กู้ไม่ได้เลย
+//
+// ยังรองรับ "DataProtection:KeyPath" ไว้สำหรับ dev/ทดสอบที่ยังไม่มี DB —
+// แต่ production เดินเส้น DB เสมอ
+var dpConn = builder.Configuration.GetConnectionString("DefaultConnection");
+var dpBuilder = builder.Services.AddDataProtection().SetApplicationName("Accounting");
+if (!string.IsNullOrWhiteSpace(dpConn))
+{
+    dpBuilder.AddKeyManagementOptions(o =>
+        o.XmlRepository = new Accounting.Services.Implementations.Security.DbXmlRepository(dpConn!));
+}
+else
+{
+    var dpKeyPath = builder.Configuration["DataProtection:KeyPath"] ?? "./.dpkeys";
+    try { System.IO.Directory.CreateDirectory(dpKeyPath); } catch { }
+    dpBuilder.PersistKeysToFileSystem(new System.IO.DirectoryInfo(dpKeyPath));
+}
 builder.Services.AddSingleton<Accounting.Services.Implementations.Security.IPiiProtector,
                               Accounting.Services.Implementations.Security.PiiProtector>();
 // NOTE: FX gain/loss — ใช้ของเดิม Accounting.Services.Implementations.Forex
@@ -219,6 +274,53 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Tax.ITaxComplianc
 // every stock-IN / stock-OUT path so COGS posts at the correct value.
 builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IInventoryCostingService,
     Accounting.Services.Implementations.Inventory.InventoryCostingService>();
+// ผู้เขียนสต็อกตัวเดียวของระบบ — ยุบ Product.CurrentStock กับ WarehouseStock
+// ให้เหลือความจริงเดียว (POS_MULTI_BRANCH_ANALYSIS.md เฟส 0)
+builder.Services.AddScoped<IStockLedger, Accounting.Services.Implementations.Inventory.StockLedger>();
+
+// ── ชั้นกลางของการรับชำระเงินผ่าน gateway (PAYMENT_GATEWAY_DESIGN.md) ──
+// adapter ทุกตัว register เป็น IPaymentProvider ตัวเดียวกัน — PaymentIntentService
+// เลือกจาก ProviderCode ⇒ เพิ่มเจ้าใหม่ = เพิ่มบรรทัดเดียวที่นี่ ไม่แตะทางเข้าเลย
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentProvider,
+    Accounting.Services.Payments.Providers.ManualSlipPaymentProvider>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentProvider,
+    Accounting.Services.Payments.Providers.OmisePaymentProvider>();
+// named client — timeout สั้นกว่าค่าเริ่มต้นมาก เพราะผู้ใช้กำลังรออยู่หน้าจอจ่ายเงิน
+// (ค้าง 100 วินาทีแล้วค่อยบอกว่าล้มเหลว แย่กว่าบอกเร็วแล้วให้กดใหม่)
+builder.Services.AddHttpClient(
+    Accounting.Services.Payments.Providers.OmisePaymentProvider.HttpClientName,
+    c => c.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentIntentService,
+    Accounting.Services.Payments.PaymentIntentService>();
+// ผังบัญชีขา "เงินเข้า" (ธนาคาร vs บัญชีพัก 11340) — แยกเป็นบริการของตัวเองโดยตั้งใจ:
+// ถ้าอยู่ใน PaymentIntentService จะเกิด **วงกลม DI** เพราะ handler ต้องเรียกมัน
+// แต่ตัวมันรับ IEnumerable<IPaymentCompletionHandler> อยู่แล้ว
+builder.Services.AddScoped<Accounting.Services.Payments.IGatewayAccountResolver,
+    Accounting.Services.Payments.GatewayAccountResolver>();
+// ตัวแปล "ของที่ลูกค้าปลายทางถืออยู่" (token การจอง / orderId) → เป้าหมายการจ่ายเงิน
+// — ทางเดียวที่ผู้ไม่ล็อกอินสร้าง PaymentIntent ได้ ผ่าน PublicPaymentController
+builder.Services.AddScoped<Accounting.Services.Payments.IPublicPaymentResolver,
+    Accounting.Services.Payments.PublicPaymentResolver>();
+// ขั้น "เงินเข้าธนาคารจริง" (settlement) — ล้างบัญชีพัก + ลงค่าธรรมเนียม + WHT
+builder.Services.AddScoped<Accounting.Services.Payments.IGatewaySettlementService,
+    Accounting.Services.Payments.GatewaySettlementService>();
+// ตัวจัดการ "เงินเข้าแล้วทำอะไรต่อ" ต่อชนิดต้นทาง — เพิ่มทางเข้าใหม่ = เพิ่มไฟล์
+// ไม่ใช่แก้ service กลาง · ต้นทางที่ยังไม่มีตัวจัดการจะ log error ดัง ๆ (ไม่เงียบ)
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.SiteOrderPaymentHandler>();
+// ซื้อส่วนเสริม (add-on) — เงินเข้าแล้วเปิดสิทธิ์ทันที ไม่ต้องรอแอดมินตรวจสลิป
+builder.Services.AddScoped<Accounting.Services.Payments.IAddOnPurchaseService,
+    Accounting.Services.Payments.AddOnPurchaseService>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.AddOnPurchasePaymentHandler>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.DocumentPaymentHandler>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.LodgingReservationPaymentHandler>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.SubscriptionPaymentHandler>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.PosOrderPaymentHandler>();
 // 3-way match — PO ↔ GRN ↔ Invoice. Blocks AP overpayment before
 // the cheque goes out.
 builder.Services.AddScoped<Accounting.Services.Implementations.Procurement.IGrnMatchService,
@@ -387,6 +489,15 @@ builder.Services.AddScoped<IMobileApiService, MobileApiService>();
 builder.Services.AddScoped<IDbdLookupService, DbdLookupService>();
 builder.Services.AddHttpClient();
 
+// Webhook ขาออก — URL มาจากผู้เช่า (F-04)
+// ปิด auto-redirect: ด่านตรวจ IP ทำงานกับ URL ที่ผู้ใช้ตั้งไว้ ถ้าปลายทางตอบ
+// 302 ไป http://169.254.169.254 แล้ว HttpClient ตามไปเอง = ด่านถูกข้ามทั้งดุ้น
+builder.Services.AddHttpClient("WebhookClient")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+    });
+
 // ───── AI integration (DeepSeek + swappable providers + orchestrator) ─────
 // Provider implementations are registered as IAiProvider so the
 // orchestrator can pick the active one by AiProviderType. Adding a new
@@ -554,6 +665,11 @@ builder.Services.AddScoped<ICmsSiteService, CmsSiteService>();
 builder.Services.AddScoped<ICmsContentService, CmsContentService>();
 builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
+// ธุรกิจที่พัก (โรงแรม/รีสอร์ท/บ้านพัก) — จอง · มัดจำ · เช็คอิน/เอาต์ · folio · แม่บ้าน
+builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.Lodging.LodgingService>();
+// resolver สิทธิ์ตัวเดียว (แพ็กเกจ + add-on) — ห้ามมีตัวที่สอง
+builder.Services.AddScoped<IEntitlementService, EntitlementService>();
+builder.Services.AddScoped<IQuotaService, QuotaService>();
 builder.Services.AddScoped<CmsLeadService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();
@@ -592,6 +708,17 @@ builder.Services.AddHostedService<Accounting.Services.Background.UndueInputVatEx
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();
+// ค่าเหมารายเดือนของ add-on — ตัวที่ทำให้ FlatMonthly เก็บเงินได้จริง
+// (เดิม ComputeCharge คืน 0 โดยอ้าง "รอบบิล" ที่ไม่เคยมี — LODGING_LICENSING_PLAN §6)
+builder.Services.AddHostedService<Accounting.Services.Background.AddOnMonthlyBillingJob>();
+// night audit ของที่พัก — ปิดการจองที่เลยวันเช็คเอาต์แล้วยังค้าง เพื่อให้มิเตอร์
+// lodging.stay เดินตามความจริง (กันเคส "ไม่กดเช็คเอาต์เพื่อไม่ให้เกิดเอกสาร" §13)
+builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAuditJob>();
+// ปิดรอบบิลค่าใช้งาน — รวม UsageEvent ที่ยังไม่ออกบิลเป็นใบแจ้งหนี้หลายบรรทัด
+// (BilledPeriod/BilledDocumentId มีมาตั้งแต่ต้นแต่ไม่เคยมีใครเขียน = เก็บเงินไม่ได้)
+builder.Services.AddHostedService<Accounting.Services.Background.UsageInvoicingJob>();
+// ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)
+builder.Services.AddHostedService<Accounting.Services.Background.PaymentIntentReconcileJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnifiedPaymentQueryService,
     Accounting.Services.Implementations.Payments.UnifiedPaymentQueryService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayoutService,
@@ -614,6 +741,11 @@ builder.Services.AddControllers(options =>
         // F1 — Cross-cutting tenant guard: ทุก route ที่มี {companyId}
         // ต้องผ่าน membership check ก่อนเข้า action.
         options.Filters.Add<Accounting.Middleware.TenantGuardFilter>();
+        // F-05 — บังคับ CanRead/CanWrite/CanDelete ของ API key. ค่าเหล่านี้ถูก
+        // เขียนลง HttpContext.Items โดย ApiKeyMiddleware มาตลอดแต่ไม่มีใครอ่าน
+        // ⇒ คีย์ "อ่านอย่างเดียว" เขียน/ลบได้เต็ม. ต้องเป็น global filter เพราะ
+        // คีย์ยิงเข้าได้ทุก endpoint — ใส่ทีละคอนโทรลเลอร์ = ตัวถัดไปไม่มีด่าน
+        options.Filters.Add<Accounting.Filters.ApiKeyScopeFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -715,6 +847,11 @@ builder.Services.AddHsts(options =>
 
 var app = builder.Build();
 
+// ตัวออกเลขรันกลางเป็น static helper (ทุกที่เรียกได้โดยไม่ผ่าน DI) — ให้มัน
+// มี logger จริงไว้เตือนเมื่อถูกเรียกนอก transaction ไม่งั้นคำเตือนหายเงียบ
+Accounting.Helpers.SequenceNumber.Log =
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SequenceNumber");
+
 // Non-null web root for static-file fallbacks below. WebRootPath can be null
 // when wwwroot doesn't exist at startup; coalesce to ContentRoot/wwwroot so the
 // Path.Combine call sites stay non-null (silences CS8604) and still resolve.
@@ -748,8 +885,8 @@ if (builder.Configuration.GetValue("Security:TrustProxyHeaders", true))
 // 1. Exception handling (outermost)
 app.UseMiddleware<ExceptionMiddleware>();
 
-// 2. Rate limiting (protect from abuse early)
-app.UseMiddleware<RateLimitMiddleware>();
+// 2. Rate limiting — **ต้องอยู่หลัง UseAuthentication()** ดูหมายเหตุตรงนั้น
+//    (เดิมอยู่ตรงนี้ ซึ่งเร็วเกินกว่าจะรู้ว่าใครล็อกอินจริง)
 // F24 — Structured request logging (status/duration/user/company/trace).
 // ก่อน controller → ครอบ exception ของ controller ด้วย try/finally.
 app.UseMiddleware<Accounting.Middleware.RequestLoggingMiddleware>();
@@ -804,6 +941,16 @@ var publicUploadPrefixes = new[]
     "/uploads/brand-logos",
     // สลิปโอนค่าบริการ (แอดมินเปิดดูตอนตรวจสอบการชำระเงิน) ชื่อไฟล์เป็น GUID
     "/uploads/slips",
+    // ⚠️ "/uploads/lodging-slips" **ถูกถอดออกจากลิสต์นี้แล้ว** (LDG-P2-06) —
+    // สลิปโอนเงินมีชื่อผู้โอน + เลขบัญชี + ยอด = ข้อมูลส่วนบุคคลของแขก ไม่ใช่ของ
+    // สาธารณะ · ชื่อไฟล์เป็น GUID ก็จริง แต่ URL ถูกส่งกลับใน API response ของหน้า
+    // การจอง ⇒ ใครได้ URL ไปก็เปิดดูได้ตลอดกาลโดยไม่มีด่านอะไรเลย
+    // เสิร์ฟผ่าน endpoint ที่มีด่านแทน (LodgingController/LodgingPublicController
+    // `reservations/{...}/slip`) — เส้นเดียวกับ /uploads/attachments
+    // สื่อของศูนย์ช่วยเหลือ (วิดีโอ/คู่มือที่ผู้ให้บริการอัปโหลด) — ลูกค้าทุกรายเปิดดู
+    "/uploads/help-media",
+    // รูปที่พัก/ประเภทห้อง — แสดงบนหน้าเว็บสาธารณะของที่พัก (LDG-P1-05)
+    "/uploads/lodging",
 };
 app.Use(async (ctx, next) =>
 {
@@ -838,6 +985,18 @@ app.UseStaticFiles(new StaticFileOptions
         {
             // Cache images/fonts for 7 days
             ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=604800";
+        }
+
+        // ═══ ไฟล์ที่ "ผู้ใช้อัปโหลด" ต้องไม่ถูกเบราว์เซอร์รันเป็นหน้าเว็บ (F-03) ═══
+        // ชั้นที่สองต่อจากตัวตรวจ magic bytes: ต่อให้วันหนึ่งมีไฟล์แปลกหลุดเข้ามาได้
+        // (เส้นอัปโหลดใหม่ที่ลืมตรวจ · ไฟล์เก่าที่ค้างอยู่ก่อนแก้) มันก็ต้อง
+        // **ดาวน์โหลด ไม่ใช่ render** — X-Content-Type-Options กัน MIME sniffing และ
+        // Content-Disposition: attachment กันการ navigate ไปเปิดตรง ๆ
+        // (ไม่กระทบ <img src>/<video> ที่ยังแสดงผลได้ตามปกติ)
+        if (ctx.Context.Request.Path.StartsWithSegments("/uploads"))
+        {
+            ctx.Context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            ctx.Context.Response.Headers["Content-Disposition"] = "attachment";
         }
     }
 });
@@ -876,6 +1035,22 @@ app.UseMiddleware<IdempotencyMiddleware>();
 
 // 6. Authentication & Authorization
 app.UseAuthentication();
+
+// 6.1 Rate limiting — ย้ายมาไว้ **หลัง** UseAuthentication() (ผลตรวจ F-10)
+//
+// เดิมอยู่ก่อนหน้า ⇒ ยังไม่มีใครตรวจลายเซ็น JWT ตอนนั้น แต่โค้ดตัดสิน tier จาก
+// "มี header Authorization ไหม" ⇒ **ใครก็ส่ง `Authorization: x` มาเพื่อเลื่อน
+// ชั้นตัวเองจาก 600 เป็น 3000 ครั้ง/นาทีได้ฟรี** โดยไม่ต้องมีบัญชีด้วยซ้ำ —
+// เพดานที่ตั้งไว้กันการยิงถล่มจึงกลายเป็น 5 เท่าของที่ตั้งใจสำหรับผู้ไม่ล็อกอิน
+//
+// ย้ายมาที่นี่แล้ว `context.User.Identity.IsAuthenticated` เป็นค่าจริง ⇒ tier
+// ตัดสินจากตัวตนที่ตรวจแล้ว · เส้นล็อกอิน/สมัคร/รีเซ็ตรหัสยังเป็น anonymous
+// จึงยังโดน tier เข้ม 10 ครั้ง/นาที/IP เหมือนเดิม
+//
+// แลกมาด้วยการที่ JWT ถูก parse ก่อนนับโควตา — เป็นงานในหน่วยความจำล้วน
+// ไม่มี query ฐานข้อมูล จึงถูกกว่าการเปิดช่องให้เลื่อนชั้นตัวเองมาก
+app.UseMiddleware<RateLimitMiddleware>();
+
 app.UseAuthorization();
 
 // 6.5 กัน browser/proxy/CDN cache API JSON — response ต้องสดเสมอ ไม่งั้น
@@ -946,7 +1121,7 @@ app.MapPost("/api/error-log/client", async (HttpContext ctx, IConfiguration conf
         var body = await ctx.Request.ReadFromJsonAsync<Dictionary<string, object>>();
         if (body == null) return Results.BadRequest();
 
-        var connStr = config.GetConnectionString("DefaultConnection");
+        var connStr = pgBuilder.ConnectionString;   // pool เดียวกับ EF (ดูหมายเหตุ Db:MaxPoolSize)
         if (string.IsNullOrEmpty(connStr)) return Results.Ok(new { logged = false });
 
         using var conn = new Npgsql.NpgsqlConnection(connStr);
@@ -971,9 +1146,12 @@ app.MapPost("/api/error-log/client", async (HttpContext ctx, IConfiguration conf
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
 // DB diagnostic endpoint — checks if critical columns/tables exist (bypasses EF)
+// ⚠️ F-16: endpoint นี้คืนรายชื่อตาราง/คอลัมน์ + ข้อความ exception (ซึ่งมัก
+// มี host/user ของ connection string) — anonymous มาตลอด ⇒ เปิดเผยโครงสร้าง DB
+// และยิงถี่ ๆ ทำ connection pool เต็มได้ · ต้องเป็นของแอดมินแพลตฟอร์มเท่านั้น
 app.MapGet("/health/db", (IConfiguration config) =>
 {
-    var connStr = config.GetConnectionString("DefaultConnection");
+    var connStr = pgBuilder.ConnectionString;   // pool เดียวกับ EF
     if (string.IsNullOrEmpty(connStr)) return Results.Ok(new { status = "no_connection_string" });
     try
     {
@@ -1000,12 +1178,19 @@ app.MapGet("/health/db", (IConfiguration config) =>
         }
         catch (Exception efEx)
         {
-            checks["EF_ModelBuilding"] = $"FAILED: {efEx.Message}";
+            // เหมือนกัน — บอกว่าพัง ไม่บอกว่าพังตรงไหน (ดูรายละเอียดใน log ของเซิร์ฟเวอร์)
+            app.Logger.LogError(efEx, "/health/db: EF model building failed");
+            checks["EF_ModelBuilding"] = "FAILED";
         }
         return Results.Ok(new { status = "connected", checks });
     }
-    catch (Exception ex) { return Results.Ok(new { status = "error", message = ex.Message }); }
-});
+    // ห้ามส่งข้อความ exception กลับ — มัก含 host/user/รหัสผ่านของ connection string
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "/health/db failed");
+        return Results.Ok(new { status = "error" });
+    }
+}).RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute { Roles = "SystemAdmin" });
 
 // SPA fallback - serve index.html for non-API, non-file routes
 // For /api/ paths: return JSON 404 so frontend gets proper error instead of HTML
@@ -1057,7 +1242,7 @@ app.MapFallback(context =>
 // If EF model building fails (e.g. new entity configs), ApplyMissingColumns via EF also fails,
 // creating a chicken-and-egg problem where login breaks with no error log.
 {
-    var connStr = app.Configuration.GetConnectionString("DefaultConnection");
+    var connStr = pgBuilder.ConnectionString;
     if (!string.IsNullOrEmpty(connStr))
     {
         try

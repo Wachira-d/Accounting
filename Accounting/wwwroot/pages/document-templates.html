@@ -681,7 +681,7 @@
         const cg = document.getElementById('globalColorGrid');
         if (cg) {
           cg.innerHTML = this.COLORS.map(c => `
-            <button type="button" class="color-card" onclick="Page.applyGlobalColor('${c.key}')" title="${c.name}">
+            <button type="button" class="color-card" onclick="Page.applyGlobalColor('${c.key}')" title="${Layout.esc(c.name)}">
               <span class="color-swatch" style="background:${c.accent}"></span>
               <span class="color-swatch" style="background:${c.headBg}"></span>
               <span class="color-swatch" style="background:${c.stripe};border:1px solid #cbd5e1"></span>

@@ -112,6 +112,20 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 > เรียก `RecordAsync` (จะต่อพร้อม `/api/v1` ในขั้นถัดไป). ฟีเจอร์ทุกตัว default
 > **ปิด** → ต่อให้ต่อ endpoint แล้วก็ยังไม่มีใครถูกคิดเงินจนกว่าจะกดเปิดเอง
 
+### 3.1b ที่พัก (Lodging) ✅ รอบ 124 — ชั้น Company → Site/Branch → LodgingProperty
+
+- `LodgingProperty` (`Models/Entities/Lodging.cs`) = "ที่พัก 1 แห่ง" ถือการตั้งค่าทั้งหมด (เวลาเข้า-ออก · กติกาจอง ·
+  มัดจำ/VAT/service charge/ผังบัญชี · ฤดูกาล/สุดสัปดาห์ · นโยบายยกเลิก · แจ้งเตือน · แม่บ้าน) — ผูก `SiteId` (1 เว็บ : 1 ที่พัก
+  ที่ active — `ResolvePropertyIdForSiteAsync` เลือกตัวแรกตาม SortOrder) และ `BranchId` (เอกสารทุกใบของที่พักออกจากสาขานั้น)
+- บริษัทเดียวมีหลายที่พักได้ (`Code` ไม่ซ้ำต่อบริษัท — ใช้ในเลขจอง `RES-{Code}-…`); ที่พักไม่ผูกเว็บ = รับจองผ่าน front desk อย่างเดียว
+- สร้างอัตโนมัติเมื่อ `CreateSiteAsync(IndustryType.Hotel)` (`LodgingSeeder`) — ไม่ขึ้นกับ `SeedTemplate`; idempotent ต่อ SiteId
+- สิทธิ์ใหม่ใน `PermissionKeys`: `Lodging.Manage` (front desk) · `Lodging.Settings` (ตั้งค่า) — Owner/SystemAdmin ผ่านอัตโนมัติ
+- ฝั่งสาธารณะ scope `CompanyId + SiteId` เสมอ · การจองเข้าถึงด้วย `PublicToken` (ไม่มี id เดาได้) · เมนู `lodging`/`lodging-settings`
+  อยู่ใต้ feature `CmsWebsiteBuilder` เหมือน CMS
+- **license/การคิดเงินของส่วนเสริม** 📋 ออกแบบแล้วใน `LODGING_LICENSING_PLAN.md` — ใช้ catalog `ApiFeature`/`ApiPricingPlan`/
+  `CompanyFeature`/`UsageEvent` (§7) เป็น add-on catalog ทั่วไป · มิเตอร์หลัก = โควตาเอกสารของแพ็กเกจบัญชี (§5) ·
+  ข้อเท็จจริงที่ต้องแก้ก่อน: `FlatMonthly` ยังไม่ถูกเก็บเงินจริง · โควตาเอกสาร hard-block เอกสารตามกฎหมาย · `/lodging` ไม่มี gate
+
 ### 3.1a ทะเบียนสาขา — เฟส 0 ✅ (ตั้งค่าเท่านั้น ยังไม่แตะเอกสาร)
 
 **หลักการที่ห้ามหลุด: กิจการสาขาเดียวต้องไม่รู้สึกถึงความเปลี่ยนแปลงใด ๆ**
@@ -276,6 +290,68 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 - **ดาวน์โหลดใบเสร็จ** เรนเดอร์จากเอกสารจริงสด ๆ (ได้เทมเพลต/ลายเซ็น/ตราประทับชุด
   เดียวกับเอกสารอื่น และสะท้อนการแก้ไขล่าสุด) ไม่ใช่สำเนาที่แนบค้างไว้
 - **ยกเว้นค่าบริการ (0 บาท)** ไม่ออกเอกสาร — ไม่มีรายได้ให้บันทึก
+
+#### 6.1a ปิดรอบบิลค่าใช้งาน — `UsageInvoicingJob` ✅
+
+`UsageEvent` มีช่อง `BilledPeriod` / `BilledDocumentId` มาตั้งแต่ต้น แต่ **ไม่เคยมีใคร
+เขียนสองช่องนั้น** ⇒ ค่าใช้งานที่คิดได้ค้างในตารางตลอดกาล ไม่เคยกลายเป็นใบแจ้งหนี้
+(defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้"). งาน `UsageInvoicingJob`
+(`Services/Background/UsageInvoicingJob.cs`, รอบ 6 ชม.) ปิดช่องนี้:
+
+| ขั้น | พฤติกรรม |
+| --- | --- |
+| ขอบเขต | `BilledPeriod IS NULL` · ไม่ใช่ sandbox · `OccurredAt` อยู่ใน **งวดที่ปิดแล้ว** (ก่อนต้นเดือนนี้ตามปฏิทินไทย) |
+| จัดกลุ่ม | ต่อ (บริษัท, งวด) → 1 ใบแจ้งหนี้ · **แยกบรรทัดต่อ `FeatureCode`** (ชื่อจาก `ApiFeature.Name` ไม่ใช่รหัสดิบ) |
+| ออกเอกสาร | `IPlatformBillingDocumentIssuer.IssueUsageInvoiceAsync` (ใหม่) — ใบแจ้งหนี้หลายบรรทัด ครบกำหนด +7 วัน อ้างอิง `USAGE-{งวด}-{8 ตัวแรกของ CompanyId}` |
+| Prepaid | **ไม่ออกใบ** (เครดิตถูกตัดตอน `RecordAsync` แล้ว — ออกอีกใบ = เก็บสองรอบ) แต่ยัง **ตีตรา `BilledPeriod`** เพื่อไม่ให้วนอ่านแถวเดิมตลอดไป · `BilledDocumentId = null` แปลว่า "ปิดรอบแล้วโดยไม่มีใบ" |
+| ยอดต่ำกว่า ฿50 | **ไม่ตีตรา** — ยกยอดไปรวมงวดถัดไป (ไม่ใช่การยกเลิกหนี้) |
+| ออกใบไม่สำเร็จ | **ไม่ตีตรา** ปล่อยให้รอบหน้าลองใหม่ — ตีตราแล้วรายได้หายถาวรโดยไม่มีใครรู้ |
+| ยังไม่ตั้ง tenant ผู้ให้บริการ | ข้ามทั้งรอบ ไม่แตะข้อมูล (ตั้งค่าเสร็จเมื่อไรก็เก็บย้อนหลังได้) |
+
+ล็อกด้วย `AdvisoryLockKey.UsageInvoicing` ระดับระบบ (ไม่ผูกบริษัท) ใน transaction จริง
+— งานเดินทีเดียวทุก tenant จึงต้องกันหลาย instance ปิดรอบเดียวกันพร้อมกัน
+
+#### 6.1b ส่วนเสริม (add-on) และโควตาเอกสาร ✅
+
+ความสามารถที่ขายแยกจากแพ็กเกจเดินผ่าน `CompanyFeature` (string code ใน
+`Models/Constants/AddOnCodes.cs`) ไม่ใช่ `FeatureFlags` bitmask (ใช้ไปถึงบิต 47/64 แล้ว)
+
+| ชั้น | ที่อยู่ | หน้าที่ |
+| --- | --- | --- |
+| แคตตาล็อก + ราคา | `ApiFeature` / `ApiPricingPlan` · หน้า `/pages/admin-addons.html` (SystemAdmin) | ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย — **ตั้งราคาใหม่ไม่แก้ราคาเดิม** (ปิดแผนเก่า เปิดแผนใหม่) |
+| สวิตช์ของลูกค้า | `CompanyFeature` · หน้า `/pages/addons.html` | เปิด/ปิดเอง · ติ๊กยอมรับค่าใช้จ่ายแยกจากปุ่มเปิด · ปิดแล้วหยุดคิดเงินทันที |
+| ตัวตัดสินสิทธิ์ | `IEntitlementService.CheckAsync` (เซิร์ฟเวอร์) · `Layout.hasFeature` (หน้าเว็บ) | ชื่อที่มีจุด = add-on code · ไม่มีจุด = ความสามารถของแพ็กเกจ — **ตัวเดียวตอบทั้งสองแกน** |
+| ค่าเหมารายเดือน | `AddOnMonthlyBillingJob` + `AddOnBilling.FlatAmount` | ทดลองใช้/ของแถม = ฿0 **แต่ยังบันทึกแถว** ให้เห็นในบิล |
+
+`SubscriptionResponse.EnabledAddOnCodes` เดินทางมากับแพ็กเกจ เพื่อไม่ให้หน้าเว็บต้อง
+ยิง endpoint ที่สองแล้วตัดสินสิทธิ์เอง (= resolver ตัวที่สอง)
+
+**โควตาเอกสาร** (`IQuotaService` + `Helpers/DocumentQuotaPolicy.cs`):
+- `GET /api/companies/{id}/metering/quota` — used / planLimit / bonus / **warnLevel** /
+  วันที่คาดว่าจะเต็ม / ยอดส่วนเกินเดือนนี้ · **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว**
+  (`Layout.showQuotaBanner()` ใช้ในหน้าเอกสาร · ที่พัก · POS)
+- `POST …/quota/topup` — ซื้อโควตาเพิ่ม 100 ฉบับ/แพ็ก (อายุ 60 วัน) ผ่าน `documents.topup`
+- `POST …/quota/rewards/{id}/claim` — ภารกิจแลกโควตา (§12 ของ LODGING_LICENSING_PLAN),
+  สวิตช์ 3 ชั้น: ไม่มี option ที่ `IsActive` · `PlanTemplate.AllowQuotaReward` ·
+  `Subscription.QuotaRewardBlocked`
+- โบนัสถูก **หักทีละใบ** ตอนออกเอกสารที่เกินโควตาแพ็กเกจ (`IncrementUsageAsync`) —
+  ถ้าไม่หัก ผู้ที่ซื้อครั้งเดียวจะได้โควตาเพิ่มทุกเดือนจนหมดอายุ
+- มิเตอร์ของระบบ (`AddOnCodes.SystemMeters`) **ไม่ต้องให้ลูกค้าเปิด** — `RecordAsync`
+  ข้ามด่าน "ฟีเจอร์เปิดอยู่ไหม" ให้รหัสกลุ่มนี้ ไม่งั้นค่าส่วนเกินจะบันทึกไม่ได้เลย
+
+**สิ่งที่ตัดสินโควตา ห้ามให้ client ส่งมาเอง** — `OriginModule` (โมดูลต้นทางของเอกสาร)
+เคยอยู่ใน `CreateDocumentRequest` ⇒ ผู้เรียก REST API ส่ง `"originModule":"Lodging"`
+มาทุกใบก็ไม่กินโควตาเลยตลอดกาล. ตอนนี้เป็น **พารามิเตอร์ของเมธอด**
+`IDocumentService.CreateDocumentAsync(..., originModule)` ซึ่ง model binding เอื้อมไม่ถึง
+โดยโครงสร้าง (ปลอดภัยกว่าให้ controller ล้างเอง ซึ่งวันหนึ่งจะมีตัวใหม่ที่ลืมล้าง)
+
+**สวิตช์ของภารกิจแลกโควตา (§12) ตั้งได้จริงแล้วทั้ง 3 ชั้น** — `/api/admin/metering/quota-rewards`
+(สร้าง/แก้/เปิด-ปิดภารกิจ + ยอด 30 วันล่าสุดไว้เทียบว่าคุ้ม lead ไหม) ·
+`quota-rewards/plan` (ต่อแพ็กเกจ) · `quota-rewards/block-company` (ระงับรายบริษัท + AuditLog)
+ทั้งหมดอยู่ในหน้า `/pages/admin-addons.html` — ก่อนหน้านี้กลไกครบแต่**ไม่มีทางเปิดใช้เลย**
+
+**ขายเฉพาะของที่มีจริง** — `lodging.promo` ถูก unpublish แล้ว: `LodgingReservation.PromoCode`
+เก็บเป็นข้อความเฉย ๆ `LodgingPricingEngine` ไม่เคยอ่านมาคิดส่วนลด ⇒ เปิดขายไปก็ไม่ได้อะไร
 
 ### 6.2 Prepaid (default) / Postpaid
 
@@ -526,8 +602,10 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - **ตั้งค่าคีย์จากหน้าเว็บ** `/admin/sso-config.html` → `SiteSettings.{Google,Facebook,Line}*`
   (DB ชนะ `appsettings.json`); `GET /api/auth/sso-config` คืนเฉพาะ provider ที่
   **เปิดสวิตช์ + มีคีย์ครบ** → หน้า `login.html`/`register.html` ซ่อนปุ่มที่เหลือ
-  (ปุ่มที่กดแล้วพัง = ปุ่มหลอก ห้ามมี) และแสดงข้อความจริงเมื่อ SDK ของ
-  Facebook โหลดไม่ขึ้น แทนที่จะเงียบ
+  (ปุ่มที่กดแล้วพัง = ปุ่มหลอก ห้ามมี) และแสดงข้อความเมื่อ SDK ของ Facebook
+  โหลดไม่ขึ้น แทนที่จะเงียบ — ⚠️ ข้อความนั้นยังโทษ "ตัวบล็อกโฆษณา" อยู่ ทั้งที่
+  ต้นเหตุที่พบจริงคือ CSP/การแข่งกันของ `async defer` (หนี้ที่รู้ตัว: Facebook
+  ยังไม่ได้ย้ายไป redirect flow เหมือน Google/LINE)
 - ⚠️ **CSP ต้องอนุญาต origin ของ SDK ด้วย** — `script-src` ใน
   `Middleware/SecurityMiddleware.cs` เดิมไม่มี `https://accounts.google.com`
   (และ `https://connect.facebook.net`) ⇒ เบราว์เซอร์บล็อกสคริปต์เงียบ ⇒ ปุ่ม Google
@@ -599,7 +677,49 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-01 (rev 20 — **LINE ที่ไม่มีสิทธิ์_
+_Last verified against codebase: 2026-09-03 (rev 25 — **รอบผู้ใช้รายงาน 6 ข้อ**:_
+_(1) หน้า "ติดต่อเรา" ของเว็บ CMS โชว์เบอร์/อีเมลตัวอย่าง (`02-XXX-XXXX`) ที่ seed_
+_ฝังเป็นข้อความตายตัว → เปลี่ยนเป็นโทเคน `{{company.phone}}` (`Helpers/CmsContentTokens`)_
+_แทนค่าตอนเรนเดอร์ + `Site.ContactPhone/ContactEmail/LineId/FacebookUrl/InstagramUrl`_
+_ให้ override ระดับเว็บ (ว่าง = ใช้ของบริษัท) + migration ล้าง placeholder ที่ค้างในฐาน_
+_(2) `Layout.jsArg()` — ค่าที่ฝังใน JS string ของ onclick ต้องหนีแบบ JS ไม่ใช่ HTML_
+_(3) ศูนย์ช่วยเหลือ `HelpResource` (ระดับแพลตฟอร์ม ไม่มี CompanyId): วิดีโอ/คู่มือ_
+_อัปโหลดเองหรือฝัง YouTube/Facebook/TikTok · แยกสองแกน หมวด (สอนเรื่องอะไร) กับ_
+_ModuleCode (ของธุรกิจไหน) · `/api/help` + หน้า `help.html`/`admin-help.html` ·_
+_CSP `frame-src` เพิ่มโดเมนวิดีโอ มิฉะนั้นเบราว์เซอร์บล็อกเงียบ)_
+_ก่อนหน้า: 2026-09-03 (rev 24 — **เก็บงานค้างจากการตรวจซ้ำ**:_
+_(1) ปิดช่องเลี่ยงโควตา — `OriginModule` ย้ายจาก request DTO ไปเป็นพารามิเตอร์ของเมธอด_
+_(2) `lodging.promo` unpublish (ขายฟีเจอร์ที่ยังไม่มี) (3) สวิตช์ภารกิจแลกโควตา 3 ชั้น_
+_มี endpoint + หน้าจอแอดมินจริงแล้ว (4) ลบ `GetEnabledAddOnCodesAsync` ที่ไม่มีใครเรียก_
+_(5) ยุบสำเนา resolver ราคาใน `EntitlementService` → เรียก `ResolveEffectivePlanAsync`_
+_ตัวเดียวกับเส้นคิดเงิน (doc-comment เดิมอ้างเทสต์ที่ไม่มีไฟล์อยู่จริง)_
+_(6) ล็อก §82/3 ผูก `companyId` แล้ว — เลิกบล็อกข้ามบริษัท + job เลิกถือล็อกทั้งรอบ_
+_(7) ตั้ง `Db:MaxPoolSize`/`MinThreads` + ให้เส้นที่เปิด connection เองใช้สตริงเดียวกับ EF)_
+_ก่อนหน้า: 2026-09-03 (rev 23 — **License ส่วนเสริม + โควตา**:_
+_§6.1a ปิดรอบบิลค่าใช้งาน (`UsageInvoicingJob` เขียน `BilledPeriod`/`BilledDocumentId`_
+_ที่ไม่เคยมีใครเขียน · ใบแจ้งหนี้หลายบรรทัดผ่าน `IssueUsageInvoiceAsync` · Prepaid_
+_ปิดรอบโดยไม่ออกใบ · ต่ำกว่า ฿50 ยกยอด · ออกใบไม่สำเร็จห้ามตีตรา) ·_
+_§6.1b ชั้น add-on (`AddOnCodes`/`CompanyFeature`/`IEntitlementService`) + โควตาเอกสาร_
+_(`IQuotaService`: สถานะ/top-up/ภารกิจแลกโควตา · `DocumentQuotaPolicy` ตัดสิน "นับไหม"_
+_กับ "บล็อกได้ไหม" แยกกัน — เอกสารที่กฎหมายบังคับออกได้เสมอ) · หน้า `/pages/addons.html`_
+_(ลูกค้า) + `/pages/admin-addons.html` (SystemAdmin) · `SubscriptionResponse.EnabledAddOnCodes`_
+_→ `Layout.hasFeature` ตัวเดียวตอบทั้ง bitmask และ add-on code)_
+_ก่อนหน้า: 2026-09-03 (rev 22 — **ที่พัก (Lodging)** §3.1b: LodgingProperty ผูก Site/Branch ·_
+_seed ตอนสร้างเว็บโรงแรม · สิทธิ์ Lodging.Manage/Settings · scope สาธารณะ SiteId+token)_
+_ก่อนหน้า: 2026-09-02 (rev 21 — **เก็บงานค้างของชั้น_
+_ผู้ใช้/บัญชีภายนอก**: (ก) คำเชิญเข้าบริษัท (`CompanyInvitation`) ถูก consume_
+_บนเส้น SSO ของ **บัญชีเดิม** ด้วย — เดิมทำเฉพาะตอนสมัครใหม่ ⇒ ผู้ใช้ที่มีบัญชี_
+_อยู่แล้วแล้วถูกเชิญเข้าอีกบริษัท กดลิงก์คำเชิญ → เลือก "เข้าด้วย Google" จะเข้า_
+_ระบบได้แต่คำเชิญค้าง `Pending` ตลอดไป (แอดมินเห็น "รอตอบรับ" ทั้งที่คนนั้นเข้า_
+_มาแล้ว = silent no-op) · เพิ่มด่านกัน `CompanyUser` ซ้ำ (สองสิทธิ์ในบริษัท_
+_เดียว = บทบาทไหนชนะขึ้นกับลำดับแถว) (ข) PDPA erasure ถอด `UserExternalLogins`_
+_+ `AuthProvider`/`AuthProviderId` + refresh token ด้วย — บัญชีที่ anonymise_
+_แล้วแต่ยังผูก Google/LINE ไว้ กดปุ่ม SSO ก็เข้าได้ตามปกติ (เส้น SSO ค้นด้วย_
+_`ProviderUserId` ไม่เคยดูอีเมล) และรายงาน DSR access คืนรายการบัญชีภายนอก_
+_ที่ผูกไว้ตาม ม.30 (ค) `ExternalLoginResponse` แยก `LinkedAt` (วันที่ผูก) ออกจาก_
+_`ConfirmedAt` (วันที่ยืนยัน) + เปิด `LinkedFromIp` ให้เจ้าของบัญชีเห็นเอง —_
+_เดิมยืมช่องเดียวเก็บสองความหมาย ⇒ การผูกที่ยังไม่ยืนยันกลายเป็น "ไม่มีวันที่ผูก");_
+_ก่อนหน้า 2026-09-01 (rev 20 — **LINE ที่ไม่มีสิทธิ์_
 _email ใช้งานไม่ได้เลยแม้แต่คนที่ผูกบัญชีไว้แล้ว**: เลิกบังคับอีเมล ใช้_
 _`ProviderUserId` เป็นตัวระบุตัวตนหลัก · ไม่มีบัญชี → พาไปหน้าสมัครพร้อมตั๋ว_
 _ที่เซ็นแล้ว + เติมชื่อ/รูปให้ · เพิ่มเส้น "ผูกบัญชีตอนล็อกอินอยู่แล้ว");_

@@ -7,7 +7,15 @@ namespace Accounting.Services.Interfaces;
 public interface IDocumentService
 {
     // Documents
-    Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy);
+    /// <param name="originModule">โมดูลต้นทางที่สั่งสร้าง ("Lodging"/…) — ใช้ตัดสิน
+    /// ว่าเอกสารใบนี้นับเข้าโควตาไหม. **เป็นพารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request
+    /// โดยตั้งใจ** — ถ้าอยู่ใน DTO ผู้เรียก API จะส่งมาเองแล้วเลี่ยงโควตาได้
+    /// (ดูหมายเหตุใน DocumentDtos.cs)</param>
+    /// <param name="isFullTaxInvoiceReplacement">ใบกำกับเต็มรูปที่ออก "แทน" ใบเสร็จ
+    /// (§86/6 → §86/4) — ไม่นับโควตาซ้ำ (การขายเดิม). <b>พารามิเตอร์ของเมธอด
+    /// ไม่ใช่ช่องใน request</b> ด้วยเหตุผลเดียวกับ originModule</param>
+    Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
+        string? originModule = null, bool isFullTaxInvoiceReplacement = false);
     Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>Same as GetDocumentAsync but honors per-user sensitivity rules — when the
     /// caller cannot see the doc, returns a redacted stub instead of throwing.</summary>
@@ -202,6 +210,17 @@ public interface IDocumentService
     Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId,
         bool forceOverrideRetention, string? overrideReason);
     Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy);
+
+    /// <summary>ออก <b>ใบกำกับภาษีเต็มรูป "แทน"</b> ใบเสร็จ/ใบกำกับภาษีอย่างย่อ
+    /// (§86/6 → §86/4) — ลูกค้ามาขอใบเต็มรูปทีหลังเพื่อเคลมภาษีซื้อ
+    ///
+    /// <para>ไม่ใช่การ "แปลงเอกสาร": ใบเดิมนับภาษีขายเข้า ภ.พ.30 ไปแล้ว
+    /// (§78/1) ⇒ ใบใหม่จึงเป็น<b>ใบแทน</b> — ใช้วันที่ใบเดิม, ไม่ post JE ใหม่,
+    /// ผูกสองทาง แล้วรายงานภาษีขายนับใบแทนและข้ามใบที่ถูกแทน (ยอดรวมไม่ขยับ)</para>
+    ///
+    /// <para>อนุมัติให้ทันที ⇒ <b>ผู้เรียกต้องตรวจสิทธิ์อนุมัติเอกสารมาก่อน</b></para></summary>
+    Task<DocumentResponse> IssueFullTaxInvoiceForReceiptAsync(
+        Guid companyId, Guid receiptId, string? reason, string actor);
 
     // ── ใบวางบิลรวมใบค้างชำระหลายใบ (วิธีใช้จริงในไทย: ขายหลายครั้ง → รอบวางบิล
     //    รวมยอดใบเดียว) — BN ไม่ลง JE, ตัวหนี้ยังอยู่ที่ใบต้นทาง ──

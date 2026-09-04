@@ -25,26 +25,10 @@ public partial class EtaxInvoiceService
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
-        var docTypeRoot = etax.Document.DocumentType switch
-        {
-            DocumentType.TaxInvoice => "TaxInvoice_CrossIndustryInvoice",
-            DocumentType.Receipt => "TaxInvoice_CrossIndustryInvoice",      // T03 uses TaxInvoice schema
-            DocumentType.DebitNote => "DebitCreditNote_CrossIndustryInvoice",
-            DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
-            _ => "TaxInvoice_CrossIndustryInvoice"
-        };
-
-        // ต้อง match TypeCode-name pairing ของ XML (T03/T02/388)
-        var docTypeNameTh = etax.Document.DocumentType switch
-        {
-            DocumentType.TaxInvoice when etax.Document.IssuedAsCashReceipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",
-            DocumentType.TaxInvoice when etax.Document.CombinedInvoiceTaxInvoice => "ใบแจ้งหนี้/ใบกำกับภาษี",
-            DocumentType.TaxInvoice => "ใบกำกับภาษี",
-            DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",
-            DocumentType.DebitNote => "ใบเพิ่มหนี้",
-            DocumentType.CreditNote => "ใบลดหนี้",
-            _ => "ใบกำกับภาษี"
-        };
+        // schema root + ชื่อไทยคู่ TypeCode — แผนที่กลางตัวเดียว (ห้ามเอา
+        // หัวกระดาษที่ผู้ใช้ตั้งเองมาใส่: Schematron บังคับคู่ canonical)
+        var docTypeRoot = Accounting.Helpers.EtaxDocumentTypeMap.SchemaRoot(etax.Document.DocumentType);
+        var docTypeNameTh = Accounting.Helpers.EtaxDocumentTypeMap.NameTh(etax.Document);
 
         // Load signature data from creator/approver
         string? createdByName = null, createdBySignature = null;

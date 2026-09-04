@@ -59,4 +59,64 @@ public static class AdvisoryLockKey
     public const string FinanceReference = "fin-ref";
     /// <summary>ปรับสต็อกรายสินค้า (read-modify-write) — part = ProductId</summary>
     public const string StockAdjust = "stock-adj";
+    /// <summary>ออกค่าเหมา add-on รายเดือน — part = งวด "yyyy-MM" (กันหลาย instance
+    /// ออกบิลงวดเดียวกันพร้อมกัน · คีย์ระดับระบบไม่ผูกบริษัท)</summary>
+    public const string AddOnMonthlyBilling = "addon-bill";
+    /// <summary>night audit ของที่พัก — part = PropertyId</summary>
+    public const string LodgingNightAudit = "lodging-audit";
+    /// <summary>ล้างภาษีซื้อ undue ที่พ้น 6 เดือน (§82/3) — part = "undue-vat"
+    /// **ต้องผูก companyId**: งานทำรายบริษัท เดิมใช้ค่าคงที่ 828003 ทั้งระบบ ⇒
+    /// ผู้ใช้บริษัท A กดปุ่มแล้วผู้ใช้บริษัท B ต้องรอจนเสร็จ ทั้งที่คนละชุดข้อมูล</summary>
+    public const string UndueVatExpiry = "undue-vat";
+    /// <summary>ปิดรอบบิลค่าใช้งาน (รวม UsageEvent เป็นใบแจ้งหนี้) — part = งวดที่รัน
+    /// · คีย์ระดับระบบไม่ผูกบริษัท เพราะงานเดินทีเดียวทุก tenant</summary>
+    public const string UsageInvoicing = "usage-invoice";
+    /// <summary>เพิ่มโควตาเอกสาร (ซื้อ top-up / แลกจากภารกิจ) — part = "reward"/"topup"
+    /// เพดานต่อวัน-เดือนจะไร้ผลทันทีถ้าปล่อยให้สองแท็บกดพร้อมกันแล้วผ่านทั้งคู่</summary>
+    public const string QuotaGrant = "quota-grant";
+
+    /// <summary>การชำระเงินผ่าน gateway — ล็อกทั้งตอน "มี intent อยู่แล้วไหม" (คีย์ = source)
+    /// และตอนเปลี่ยนสถานะ (คีย์ = intent id) · สองแท็บที่กดจ่ายพร้อมกันต้องได้ QR ใบเดียว
+    /// ไม่ใช่สองใบซ้อน · webhook กับ job กระทบยอดต้องไม่เขียนทับกัน</summary>
+    public const string PaymentIntent = "pay-intent";
+
+    /// <summary>บันทึกเงินที่ผู้ให้บริการโอนเข้า (settlement) — ล็อก**ต่อ provider ต่อบริษัท**
+    /// เพราะการเลือกรายการ "ที่ยังไม่ถูกโอน" แล้วมาร์กทีหลังเป็น read-modify-write:
+    /// สองคนกดพร้อมกันจะเลือกชุดเดียวกันแล้วลง JE ซ้ำ ⇒ ธนาคารเกินสองเท่า</summary>
+    public const string GatewaySettlement = "pay-settle";
+
+    /// <summary>งานเทรน local model จาก feedback (กฎเหล็ก #1 ขั้น DISTILL) —
+    /// part = "global" · คีย์ระดับระบบไม่ผูกบริษัท เพราะงานเดินทีเดียวทุก tenant
+    ///
+    /// <para>เดิม<b>ไม่มีล็อกเลย</b> ต่างจาก job อื่นทุกตัว ⇒ สอง instance ตื่นพร้อมกัน
+    /// (หน่วงเริ่ม 7 นาทีเท่ากันทุกเครื่อง จึงตื่นพร้อมกัน<b>เกือบเสมอ</b>) แล้ว
+    /// upsert `LocalModelHealth`/`AiLearnedMemory` ทับกัน — ตัวเลขความแม่นที่แอดมิน
+    /// ใช้ตัดสินว่า "ปิด AI ได้หรือยัง" กลายเป็นของครึ่ง ๆ ของสองรอบ</para></summary>
+    public const string AiFeedbackTraining = "ai-train";
+
+    // ── number space อื่น ๆ ที่ไม่ใช่เลขเอกสาร/เลข JE (ผลตรวจ F-08) ──
+    // ทุกตัวเคยออกเลขเองด้วย OrderByDescending().First()+1 โดยไม่มีล็อก
+    // และเรียงแบบ **ข้อความ** (⇒ "9999" > "10000" ⇒ เลขวนกลับไปทับของเดิม)
+
+    /// <summary>เลขใบรับ-จ่ายเงิน (Payment) — part = prefix รวมงวด "PAY-yyyyMM-"</summary>
+    public const string PaymentSequence = "pay-seq";
+    /// <summary>รหัสสินทรัพย์ถาวร — part = prefix ของบริษัท</summary>
+    public const string AssetSequence = "asset-seq";
+    /// <summary>เลขการจองที่พัก — part = prefix รวมงวด</summary>
+    public const string ReservationSequence = "resv-seq";
+    /// <summary>เลขคำสั่งซื้อ/การจองจากหน้าเว็บ (CMS) — part = prefix รวมงวด</summary>
+    public const string StorefrontSequence = "store-seq";
+    /// <summary>รหัสผังบัญชีที่ระบบสร้างให้อัตโนมัติ — part = ช่วงเลขที่ใช้</summary>
+    public const string AccountCodeSequence = "coa-seq";
+    /// <summary>เลขเอกสารของโมดูลย่อย (เบิกค่าใช้จ่าย · เงินกู้ · โอนคลัง ฯลฯ)
+    /// — part = prefix รวมงวด</summary>
+    public const string ModuleSequence = "mod-seq";
+
+    /// <summary>งานเบื้องหลังตามตาราง — part = ชื่องาน (ผลตรวจ F-09)
+    ///
+    /// <para>จาก 16 job มีแค่ 5 ตัวที่ล็อก · ที่เหลือรันพร้อมกันได้ทุกเครื่อง
+    /// และหลายตัว<b>เขียนข้อมูลจริง</b> ไม่ใช่แค่ทำงานซ้ำ: ค่าเสื่อมลง JE
+    /// สองเท่า · ค่าปรับล่าช้าคิดซ้ำ · อีเมลทวงหนี้ส่งถึงลูกค้า N ครั้ง
+    /// ตามจำนวนเครื่อง</para></summary>
+    public const string BackgroundJob = "job";
 }

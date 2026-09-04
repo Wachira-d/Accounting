@@ -316,7 +316,7 @@
           const c = d.cost;
           const featureRows = (d.byFeature || []).map(f => `
             <tr>
-              <td>${f.feature}</td>
+              <td>${AdminLayout.esc(f.feature)}</td>
               <td style="text-align:right">${f.calls}</td>
               <td style="text-align:right">${f.successful}</td>
               <td style="text-align:right">${f.cached}</td>
@@ -326,7 +326,7 @@
             </tr>`).join('');
           el.innerHTML = `
             ${ap ? `<div style="margin-bottom:14px;padding:10px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:13px">
-                Active: <b>${ap.displayName}</b> · ${ap.providerType} · model <code>${ap.model}</code>
+                Active: <b>${AdminLayout.esc(ap.displayName)}</b> · ${AdminLayout.esc(ap.providerType)} · model <code>${AdminLayout.esc(ap.model)}</code>
                 ${ap.monthlyBudgetUsd ? `· budget $${ap.monthlyBudgetUsd}/mo` : ''}
                 ${ap.dailyCallCap ? `· daily cap ${ap.dailyCallCap}` : ''}
               </div>` : '<div style="margin-bottom:14px;padding:10px;background:#fef3c7;border-radius:8px">ยังไม่มี active provider</div>'}
@@ -354,7 +354,7 @@
               <tbody>${featureRows || '<tr><td colspan="7" style="color:#94a3b8;text-align:center">ยังไม่มี call</td></tr>'}</tbody>
             </table>`;
         } catch (e) {
-          el.innerHTML = `<span style="color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</span>`;
+          el.innerHTML = `<span style="color:#dc2626">โหลดไม่สำเร็จ: ${AdminLayout.esc(e.message)}</span>`;
         }
       },
 
@@ -370,14 +370,14 @@
               <div style="display:flex;justify-content:space-between;align-items:start;gap:12px">
                 <div style="flex:1">
                   <div style="display:flex;align-items:center;gap:8px">
-                    <strong style="font-size:15px">${p.displayName}</strong>
+                    <strong style="font-size:15px">${AdminLayout.esc(p.displayName)}</strong>
                     <span class="badge ${p.isActive ? 'badge-active' : 'badge-inactive'}">${p.isActive ? 'ACTIVE' : 'standby'}</span>
                     ${p.isEnabled ? '' : '<span class="badge badge-warning">disabled</span>'}
                     ${p.lastTestStatus === 'OK' ? '<span class="badge badge-active">✓ tested</span>' : (p.lastTestStatus ? `<span class="badge badge-error">✗ ${p.lastTestStatus.substring(0, 30)}</span>` : '')}
                   </div>
                   <div class="provider-meta">
-                    <span>${p.providerTypeName} · <code>${p.model}</code></span>
-                    ${p.endpoint ? `<span><b>endpoint:</b> ${p.endpoint}</span>` : ''}
+                    <span>${p.providerTypeName} · <code>${AdminLayout.esc(p.model)}</code></span>
+                    ${p.endpoint ? `<span><b>endpoint:</b> ${AdminLayout.esc(p.endpoint)}</span>` : ''}
                     <span><b>key:</b> ${p.hasApiKey ? p.apiKeyMasked : 'ยังไม่ตั้ง'}</span>
                     <span><b>temp:</b> ${p.temperature}</span>
                     <span><b>max:</b> ${p.maxOutputTokens}</span>
@@ -390,12 +390,12 @@
                   ${p.isActive ? '' : `<button class="btn-secondary" onclick="Page.activateProvider('${p.id}')">Activate</button>`}
                   <button class="btn-ghost" onclick="Page.testProvider('${p.id}')">Test</button>
                   <button class="btn-ghost" onclick="Page.openProviderModal('${p.id}')">Edit</button>
-                  ${p.isActive ? '' : `<button class="btn-danger" onclick="Page.deleteProvider('${p.id}','${p.displayName}')">Delete</button>`}
+                  ${p.isActive ? '' : `<button class="btn-danger" onclick="Page.deleteProvider('${p.id}','${AdminLayout.jsArg(p.displayName)}')">Delete</button>`}
                 </div>
               </div>
             </div>`).join('');
         } catch (e) {
-          el.innerHTML = `<span style="color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</span>`;
+          el.innerHTML = `<span style="color:#dc2626">โหลดไม่สำเร็จ: ${AdminLayout.esc(e.message)}</span>`;
         }
       },
 
@@ -486,7 +486,7 @@
       },
 
       async deleteProvider(id, name) {
-        if (!confirm(`ลบ provider "${name}"? (rows ไม่ได้ถูกลบจริง — soft-delete)`)) return;
+        if (!confirm(`ลบ provider "${AdminLayout.esc(name)}"? (rows ไม่ได้ถูกลบจริง — soft-delete)`)) return;
         try { await AdminAPI.delete(`/ai/providers/${id}`); await this.loadProviders(); }
         catch (e) { alert(e.message); }
       },
@@ -513,7 +513,7 @@
                 const ahead = f.aiAccuracy - f.localAccuracy;
                 const color = ahead > 10 ? '#16a34a' : (ahead < -5 ? '#dc2626' : '#64748b');
                 return `<tr>
-                  <td>${f.feature}</td>
+                  <td>${AdminLayout.esc(f.feature)}</td>
                   <td style="text-align:right">${f.samples}</td>
                   <td style="text-align:right;font-weight:600;color:${color}">${f.aiAccuracy}%</td>
                   <td style="text-align:right">${f.localAccuracy}%</td>
@@ -525,9 +525,9 @@
             </table>
             ${d.health.length ? `<div style="margin-top:14px;font-size:13px;color:#475569">
               <b>Local Model Health</b>:
-              ${d.health.map(h => `<div style="margin-top:6px"><b>${h.featureKey}</b> [${h.localModelVersion}] — ${h.status}${h.recommendation ? ' · ' + h.recommendation : ''}</div>`).join('')}
+              ${d.health.map(h => `<div style="margin-top:6px"><b>${AdminLayout.esc(h.featureKey)}</b> [${h.localModelVersion}] — ${h.status}${h.recommendation ? ' · ' + h.recommendation : ''}</div>`).join('')}
             </div>` : ''}`;
-        } catch (e) { el.innerHTML = `<span style="color:#dc2626">${e.message}</span>`; }
+        } catch (e) { el.innerHTML = `<span style="color:#dc2626">${AdminLayout.esc(e.message)}</span>`; }
       },
 
       // ─── Feedback debug ───────────────────────────────────────
@@ -551,7 +551,7 @@
               </tr></thead>
               <tbody>${rows.map(f => `<tr>
                 <td style="color:#64748b;font-size:11px">${new Date(f.createdAt).toLocaleString('th-TH')}</td>
-                <td>${f.featureKey}</td>
+                <td>${AdminLayout.esc(f.featureKey)}</td>
                 <td>${f.status}${f.errorMessage ? ` <span style="color:#dc2626;font-size:11px">(${f.errorMessage.substring(0,50)})</span>` : ''}</td>
                 <td style="font-size:12px">${(f.aiPrimaryAnswer||'').substring(0,40)}${f.aiConfidence ? ` <span style="color:#94a3b8">${Math.round(f.aiConfidence*100)}%</span>` : ''}</td>
                 <td style="font-size:12px">${(f.localModelAnswer||'').substring(0,40)}${f.localModelConfidence ? ` <span style="color:#94a3b8">${Math.round(f.localModelConfidence*100)}%</span>` : ''}</td>
@@ -560,7 +560,7 @@
                 <td style="text-align:right">${(f.costUsd || 0).toFixed(6)}</td>
               </tr>`).join('')}</tbody>
             </table>`;
-        } catch (e) { el.innerHTML = `<span style="color:#dc2626">${e.message}</span>`; }
+        } catch (e) { el.innerHTML = `<span style="color:#dc2626">${AdminLayout.esc(e.message)}</span>`; }
       },
     };
 

@@ -73,6 +73,10 @@ public interface IPosService
 
     // Reports
     Task<PosDailySummaryResponse> GetDailySummaryAsync(Guid companyId, DateTime date);
+
+    /// <summary>สรุปยอดขาย POS แยกรายสาขาในช่วงวันที่ — คำถามแรกของเจ้าของร้านหลายสาขา
+    /// ที่เดิมตอบไม่ได้เลย (POS_MULTI_BRANCH_ANALYSIS เฟส 5)</summary>
+    Task<PosBranchSummaryResponse> GetBranchSummaryAsync(Guid companyId, DateTime from, DateTime to);
     Task<List<CommissionSummaryResponse>> GetCommissionSummariesAsync(Guid companyId, DateTime periodStart, DateTime periodEnd);
 
     /// <summary>Z-Report (รายงานปิดยอดสิ้นกะ/วัน) — aggregate ทุกออเดอร์ Completed

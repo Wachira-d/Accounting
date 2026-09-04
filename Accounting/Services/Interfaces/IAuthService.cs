@@ -32,4 +32,8 @@ public interface IAuthService
     /// จาก provider** (ใช้กับ LINE ที่ channel ยังไม่ได้รับสิทธิ์ email)</summary>
     Task<ExternalLoginResponse> LinkExternalLoginForUserAsync(
         Guid userId, string provider, string idToken);
+
+    /// <summary>หน้าสมัครที่มาถึงด้วยตั๋ว SSO: เช็คว่าอีเมลนี้มีบัญชีไหม → ส่งลิงก์ยืนยัน
+    /// หรือผูกทันทีด้วยรหัสผ่านของบัญชีเดิม (คืน token เข้าระบบเมื่อผูกสำเร็จ)</summary>
+    Task<SsoLinkExistingResponse> SsoLinkExistingAsync(SsoLinkExistingRequest request);
 }

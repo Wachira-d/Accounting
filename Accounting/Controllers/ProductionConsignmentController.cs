@@ -113,6 +113,113 @@ public class ProductionConsignmentController : ControllerBase
         return Ok(new ApiResponse<object>(true, new { bom.Id, bom.Version }, "สร้าง BOM สำเร็จ"));
     }
 
+    // ── สูตรต่อสินค้า (recipe) — มุมมองที่ร้านอาหาร/คาเฟ่เข้าใจ ─────────
+    // BOM ข้างบนเป็นมุมมองของ "ใบสั่งผลิต" (เลือก BOM แล้วผลิตกี่หน่วย) ซึ่งร้านชานม
+    // ไม่ได้คิดแบบนั้น — เขาคิดว่า "ชานมไข่มุก 1 แก้ว ใช้อะไรบ้าง" · endpoint คู่นี้จึงเป็น
+    // **มุมมอง** บนตารางเดียวกัน ไม่ใช่ตารางใหม่ (ห้ามสร้างความจริงชุดที่สอง)
+
+    public sealed record RecipeLineDto(Guid ComponentProductId, string ComponentCode,
+        string ComponentName, string Unit, decimal QuantityPerParent);
+    public sealed record RecipeDto(Guid ProductId, bool ConsumesBomOnSale, Guid? BomId,
+        List<RecipeLineDto> Lines);
+
+    [HttpGet("products/{productId:guid}/recipe")]
+    public async Task<ActionResult<ApiResponse<RecipeDto>>> GetRecipe(
+        Guid companyId, Guid productId, [FromServices] AccountingDbContext db, CancellationToken ct)
+    {
+        var product = await db.Products.AsNoTracking()
+            .Where(p => p.Id == productId && p.CompanyId == companyId && !p.IsDeleted)
+            .Select(p => new { p.Id, p.ConsumesBomOnSale })
+            .FirstOrDefaultAsync(ct);
+        if (product == null) return NotFound(new ApiResponse<RecipeDto>(false, null, "ไม่พบสินค้า"));
+
+        var now = DateTime.UtcNow;
+        var bom = await db.BillsOfMaterials.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.ParentProductId == productId
+                     && b.IsActive && !b.IsDeleted
+                     && b.EffectiveFrom <= now && (b.EffectiveTo == null || b.EffectiveTo >= now))
+            .OrderByDescending(b => b.EffectiveFrom)
+            .Select(b => new
+            {
+                b.Id,
+                lines = b.Lines.Where(l => !l.IsDeleted).Select(l => new RecipeLineDto(
+                    l.ComponentProductId, l.ComponentProduct.Code, l.ComponentProduct.Name,
+                    l.ComponentProduct.Unit, l.QuantityPerParent)).ToList(),
+            })
+            .FirstOrDefaultAsync(ct);
+
+        return Ok(new ApiResponse<RecipeDto>(true, new RecipeDto(
+            productId, product.ConsumesBomOnSale, bom?.Id, bom?.lines ?? new List<RecipeLineDto>())));
+    }
+
+    public sealed record SaveRecipeLine(Guid ComponentProductId, decimal QuantityPerParent);
+    public sealed record SaveRecipeRequest(bool ConsumesBomOnSale, List<SaveRecipeLine> Lines);
+
+    [HttpPut("products/{productId:guid}/recipe")]
+    public async Task<ActionResult<ApiResponse<object>>> SaveRecipe(
+        Guid companyId, Guid productId, [FromBody] SaveRecipeRequest req,
+        [FromServices] AccountingDbContext db, CancellationToken ct)
+    {
+        var product = await db.Products
+            .FirstOrDefaultAsync(p => p.Id == productId && p.CompanyId == companyId && !p.IsDeleted, ct);
+        if (product == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบสินค้า"));
+
+        var lines = (req.Lines ?? new List<SaveRecipeLine>())
+            .Where(l => l.ComponentProductId != Guid.Empty && l.QuantityPerParent > 0).ToList();
+
+        // เปิดธง "ขายแล้วกินสูตร" โดยไม่มีสูตร = ตั้งค่าไม่ครบ ⇒ ขายแล้วไม่ตัดอะไรเลย
+        // และตัดสต็อกตัวเองก็ไม่ได้ ⇒ บล็อกพร้อมบอกทางแก้ (ห้าม silent no-op)
+        if (req.ConsumesBomOnSale && lines.Count == 0)
+            return BadRequest(new ApiResponse<object>(false, null,
+                "เปิด \"ขายแล้วตัดวัตถุดิบตามสูตร\" ต้องมีวัตถุดิบอย่างน้อย 1 รายการ"));
+        if (lines.Any(l => l.ComponentProductId == productId))
+            return BadRequest(new ApiResponse<object>(false, null, "วัตถุดิบต้องไม่ใช่ตัวสินค้าเอง"));
+
+        var ids = lines.Select(l => l.ComponentProductId).Distinct().ToList();
+        if (ids.Count > 0)
+        {
+            var ok = await db.Products.CountAsync(
+                p => p.CompanyId == companyId && ids.Contains(p.Id) && !p.IsDeleted, ct);
+            if (ok != ids.Count)
+                return BadRequest(new ApiResponse<object>(false, null, "มีวัตถุดิบบางรายการไม่อยู่ในบริษัทนี้"));
+        }
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        // สูตรเดิม: ปิด (EffectiveTo = now) แทนการลบ — ใบที่ขายไปแล้วต้องยังอธิบายได้ว่า
+        // ตอนนั้นใช้สูตรอะไร (เอกสารบัญชีต้องตรวจสอบย้อนหลังได้ พ.ร.บ.การบัญชี ม.10)
+        var now = DateTime.UtcNow;
+        var current = await db.BillsOfMaterials
+            .Where(b => b.CompanyId == companyId && b.ParentProductId == productId
+                     && b.IsActive && !b.IsDeleted)
+            .ToListAsync(ct);
+        var nextVersion = current.Count + 1;
+        foreach (var old in current) { old.IsActive = false; old.EffectiveTo = now; }
+
+        if (lines.Count > 0)
+        {
+            db.BillsOfMaterials.Add(new BillOfMaterials
+            {
+                CompanyId = companyId,
+                ParentProductId = productId,
+                Version = $"v{nextVersion}",
+                IsActive = true,
+                EffectiveFrom = now,
+                Notes = "สูตรจากหน้าสินค้า",
+                Lines = lines.Select(l => new BomLine
+                {
+                    ComponentProductId = l.ComponentProductId,
+                    QuantityPerParent = l.QuantityPerParent,
+                }).ToList(),
+            });
+        }
+
+        product.ConsumesBomOnSale = req.ConsumesBomOnSale && lines.Count > 0;
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return Ok(new ApiResponse<object>(true, new { lineCount = lines.Count }, "บันทึกสูตรแล้ว"));
+    }
+
     public sealed record CreateOrderRequest(string OrderNumber, Guid BomId,
         decimal PlannedQty, DateTime PlannedStartAt, string? Notes);
 

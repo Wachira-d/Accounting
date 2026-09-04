@@ -146,6 +146,15 @@ public record CreateDocumentRequest(
     string? PreparerName = null,
     string? PreparerSignatureBase64 = null);
 
+// ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
+// เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
+// (`DocumentQuotaPolicy.Classify(..., fromLodging)`) ⇒ ผู้ใช้ที่เรียก REST API
+// ด้วย token ของตัวเองส่ง `"originModule":"Lodging"` มาทุกใบ ก็ไม่กินโควตาเลย
+// ตลอดกาล และไม่เกิดค่าส่วนเกินด้วย — **ค่าที่ client คุมได้ ห้ามใช้ตัดสินเรื่องเงิน**
+// ตอนนี้เป็น **พารามิเตอร์ของเมธอด** `IDocumentService.CreateDocumentAsync(..., originModule)`
+// ซึ่ง model binding เอื้อมไม่ถึงโดยโครงสร้าง (ปลอดภัยกว่าการให้ controller ล้างเอง
+// ซึ่งวันหนึ่งจะมี controller ตัวใหม่ที่ลืมล้าง — defect class "แก้ตัวเดียว เหลือที่เหลือ")
+
 public record DocumentLineRequest(
     string Description,
     decimal Quantity,
@@ -789,7 +798,37 @@ public record DocumentResponse(
     ///
     /// <para>null = เส้นทางที่ยังไม่ได้คำนวณ (เช่นรายการหลายใบ) — หน้าเว็บ
     /// fallback ไป <c>Layout.docHeaderLabel</c> ตามเดิม</para></summary>
-    string? DocumentTitle = null);
+    string? DocumentTitle = null,
+
+    /// <summary>หมายเหตุ**ภายใน** — ไม่พิมพ์ลงกระดาษ (ต่างจาก <c>Notes</c>)
+    ///
+    /// <para>ที่นี่คือที่เก็บ "คำเตือนที่ผู้ใช้กดรับทราบแล้วยืนยันอนุมัติ" —
+    /// เดิมคำเตือนที่ถูก acknowledge หายไปเฉย ๆ ⇒ ใบที่อนุมัติทั้งที่รู้ว่าผิด
+    /// §86 หน้าตาเหมือนใบที่ไม่เคยมีคำเตือน (ไม่มีอะไรตอบผู้สอบบัญชีได้)
+    /// คู่กับ AuditLog <c>APPROVE-ACK-WARNINGS</c> ที่มี hash chain</para></summary>
+    string? InternalNotes = null,
+    /// <summary>โมดูลที่สร้างเอกสารนี้ (Lodging/Pos/…) — หน้าเว็บใช้ติดป้าย "มาจากระบบจอง"</summary>
+    string? OriginModule = null,
+
+    // ── ใบกำกับภาษีเต็มรูปที่ออก "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4) ──
+    /// <summary>ใบนี้ถูกแทนที่ด้วยใบกำกับเต็มรูปใบไหน (null = ยังไม่เคยออกใบแทน)
+    /// — ใบที่มีค่านี้จะ<b>ไม่อยู่ในรายงานภาษีขาย</b> (ใบแทนรายงานให้แล้ว)</summary>
+    Guid? ReplacedByDocumentId = null,
+    string? ReplacedByDocumentNumber = null,
+    /// <summary>ใบนี้ออกมาแทนใบไหน (null = ไม่ใช่ใบแทน)</summary>
+    Guid? ReplacesDocumentId = null,
+    string? ReplacesDocumentNumber = null,
+    string? ReplacementReason = null,
+    DateTime? ReplacedAt = null,
+    /// <summary>กดปุ่ม "ออกใบกำกับภาษีเต็มรูป" ได้ไหม — <b>เซิร์ฟเวอร์ตัดสิน</b>
+    /// ด้วย <c>FullTaxInvoiceReplacement.Check</c> ตัวเดียวกับที่ endpoint ใช้
+    ///
+    /// <para>ห้ามให้หน้าเว็บเขียนกติกาเอง (§86/4 ครบไหม · บริษัทจด VAT ไหม ·
+    /// ออกไปแล้วหรือยัง) — defect class "สำเนามือฝั่ง JS ที่ตามหลังอยู่ไม่กี่ธง".
+    /// null = เส้นทางที่ยังไม่ได้คำนวณ (รายการหลายใบ) ≠ "ทำไม่ได้"</para></summary>
+    bool? CanIssueFullTaxInvoice = null,
+    /// <summary>เหตุผลที่กดไม่ได้ (ข้อความไทยพร้อมโชว์) — null เมื่อกดได้</summary>
+    string? FullTaxInvoiceBlockedReason = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

@@ -69,14 +69,11 @@ public class InventoryCostingService : IInventoryCostingService
         {
             case CostingMethod.WeightedAverage:
             {
-                // newAvg = (oldStock × oldAvg + receivedQty × receivedCost) / (oldStock + receivedQty)
-                // When oldStock ≤ 0, treat receipt as the seed average.
-                var oldStock = Math.Max(0m, product.CurrentStock);
-                var oldAvg = product.AverageUnitCost > 0 ? product.AverageUnitCost : product.CostPrice;
-                var totalQty = oldStock + quantity;
-                var newAvg = totalQty <= 0 ? receiptUnitCost
-                    : (oldStock * oldAvg + quantity * receiptUnitCost) / totalQty;
-                product.AverageUnitCost = Math.Round(newAvg, 4);
+                // สูตรอยู่ที่ Accounting.Helpers.WeightedAverageCost ที่เดียว —
+                // เดิมเขียนซ้ำที่นี่ + DocumentService inline + (จะเป็น) StockLedger
+                product.AverageUnitCost = Accounting.Helpers.WeightedAverageCost.Next(
+                    product.CurrentStock, product.AverageUnitCost, product.CostPrice,
+                    quantity, receiptUnitCost);
                 await _db.SaveChangesAsync(ct);
                 return receiptUnitCost;
             }

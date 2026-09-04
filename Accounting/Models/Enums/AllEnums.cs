@@ -75,6 +75,85 @@ public enum BillingAccountStatus
 }
 
 /// <summary>วิธีคิดเงินต่อฟีเจอร์ — admin เลือกได้อิสระ ไม่ hard-code ในโค้ด</summary>
+/// <summary>ชนิดของภารกิจที่แลกโควตาเอกสารได้ (LODGING_LICENSING_PLAN §12)
+///
+/// เรียงตามมูลค่าต่อครั้งจากมากไปน้อย — `AdNetwork` อยู่ท้ายสุดโดยตั้งใจ
+/// (฿0.03–0.15/ครั้ง เทียบ lead พาร์ทเนอร์ ฿100–1,000+) และปิดเป็นค่าเริ่มต้น</summary>
+public enum QuotaRewardKind
+{
+    /// <summary>ข้อเสนอจากพาร์ทเนอร์ B2B — กด "สนใจ" = lead</summary>
+    PartnerOffer = 1,
+    /// <summary>วิดีโอสอนฟีเจอร์ของเราเอง — เพิ่ม activation แทนเงินสด</summary>
+    HouseVideo = 2,
+    /// <summary>แนะนำที่พักเพื่อนให้มาสมัคร</summary>
+    Referral = 3,
+    /// <summary>ตอบแบบสอบถาม/ให้ข้อมูลธุรกิจ</summary>
+    Survey = 4,
+    /// <summary>โฆษณาเครือข่าย (Google Ad Manager rewarded ฯลฯ) — ปิดเป็นค่าเริ่มต้น
+    /// เพราะ eCPM ต่ำและคุมเนื้อหาไม่ได้</summary>
+    AdNetwork = 9
+}
+
+/// <summary>ชนิดของแคตตาล็อกฟีเจอร์ — แยก "ผลิตภัณฑ์ Connected API" (ของเดิม)
+/// ออกจาก "ส่วนเสริมของแอป" (Lodging ฯลฯ) เพื่อให้หน้าแอดมิน/portal จัดกลุ่มถูก
+/// โดย resolver ยังอ่าน FeatureCode แบบเดียวกันทั้งหมด</summary>
+public enum ApiFeatureKind
+{
+    ConnectedApi = 1,
+    /// <summary>ส่วนเสริมที่ลูกค้าเปิดใช้ในแอป (ไม่ต้องมี API key)</summary>
+    BusinessAddOn = 2,
+    /// <summary>มิเตอร์ที่ระบบเขียนเอง (เอกสารเกินโควตา · การเข้าพัก · อีเมล/SMS)
+    /// — ไม่ใช่สวิตช์ที่ลูกค้ากดเปิด/ปิด และต้องไม่โผล่ในหน้า "ส่วนเสริมของฉัน"</summary>
+    SystemMeter = 3
+}
+
+/// <summary>ใครเป็นคนเปิด add-on ให้บริษัทนี้ — แยก "อำนาจ" ออกจาก EnabledBy (ชื่อ)
+/// เพราะ policy ต่างกัน: ของแถมที่ admin ยัดให้ต้องไม่ถูกคิดเงิน และลูกค้าปิดเองไม่ได้</summary>
+public enum AddOnGrantSource
+{
+    /// <summary>ลูกค้ากดเปิดเองใน portal (จ่ายเงิน)</summary>
+    OwnerSelfServe = 1,
+    /// <summary>admin แพลตฟอร์มยัดให้เป็นดีล/ของแถม (ราคาตาม SnapshotUnitPrice ซึ่งอาจ 0)</summary>
+    AdminGranted = 2,
+    /// <summary>มากับแพ็กเกจ (bundled) — ปิดแพ็กเกจเมื่อไรก็หายไปเอง ไม่คิดเงินแยก</summary>
+    BundledInPlan = 3
+}
+
+/// <summary>หมวดของเนื้อหาช่วยเหลือ — "สอนเรื่องอะไร"
+/// (คนละแกนกับ `HelpResource.ModuleCode` ที่บอกว่า "ของธุรกิจไหน")</summary>
+public enum HelpCategory
+{
+    /// <summary>เริ่มต้นใช้งาน · ตั้งค่าบริษัทครั้งแรก</summary>
+    GettingStarted = 1,
+    /// <summary>ระบบบัญชี — ผังบัญชี · สมุดรายวัน · งบการเงิน</summary>
+    Accounting = 2,
+    /// <summary>เอกสาร — ใบเสนอราคา/ใบกำกับ/ใบเสร็จ และการแปลงเอกสาร</summary>
+    Documents = 3,
+    /// <summary>ภาษี — ภ.พ.30 · หัก ณ ที่จ่าย · e-Tax</summary>
+    Tax = 4,
+    /// <summary>เงินเดือน · ประกันสังคม</summary>
+    Payroll = 5,
+    /// <summary>สินค้าคงคลัง · ต้นทุน</summary>
+    Inventory = 6,
+    /// <summary>ฟีเจอร์เฉพาะธุรกิจ (ดูคู่กับ ModuleCode)</summary>
+    BusinessFeature = 7,
+    /// <summary>รายงาน · การวิเคราะห์</summary>
+    Reports = 8,
+    Other = 99,
+}
+
+/// <summary>ชนิดของสื่อในศูนย์ช่วยเหลือ</summary>
+public enum HelpResourceKind
+{
+    Video = 1,
+    /// <summary>เอกสาร PDF/คู่มือที่อัปโหลด</summary>
+    Document = 2,
+    /// <summary>บทความสั้นในระบบ (ใช้ Description เป็นเนื้อหา)</summary>
+    Article = 3,
+    /// <summary>ลิงก์ไปหน้าอื่น (เอกสารภายนอก/บล็อก)</summary>
+    Link = 4,
+}
+
 public enum PricingMethod
 {
     /// <summary>ต่อหน่วยงานที่สำเร็จ (ต่อเอกสาร OCR / ต่อบรรทัด statement)
@@ -481,7 +560,102 @@ public enum ProductType
     Product = 1,      // สินค้า
     Service = 2,      // บริการ
     NonStock = 3,     // ไม่ติดตามสต็อก
-    Supplies = 4      // วัสดุสิ้นเปลือง (ผ้าปู, ปลอกหมอน, สบู่, กระดาษ ฯลฯ)
+    Supplies = 4,     // วัสดุสิ้นเปลือง (ผ้าปู, ปลอกหมอน, สบู่, กระดาษ ฯลฯ)
+
+    /// <summary>วัตถุดิบ — ของที่ถูก "กิน" ตอนขาย/ผลิตตามสูตร (ใบชา · นม · ไข่มุก ·
+    /// แก้ว · หลอด) และเป็น **ต้นทุนขาย** ไม่ใช่ค่าใช้จ่ายทันทีแบบ
+    /// <see cref="Supplies"/>
+    ///
+    /// <para>ที่มา (POS_MULTI_BRANCH_ANALYSIS §2.2): ร้านชานมไข่มุกไม่มีชนิดสินค้าที่ตรง
+    /// กับ "วัตถุดิบ" เลย ⇒ ผู้ใช้ต้องเลือกระหว่าง `Product` (โผล่ในหน้าขาย POS ทั้งที่
+    /// ไม่ได้ขายเป็นแก้ว) กับ `Supplies` (ลงค่าใช้จ่ายทันที ⇒ กำไรขั้นต้นเพี้ยน)</para></summary>
+    RawMaterial = 5
+}
+
+
+// ==================== Payment gateway (ชั้นกลาง) ====================
+// ออกแบบใน PAYMENT_GATEWAY_DESIGN.md — enum เหล่านี้เป็นภาษาที่ "ทางเข้าทุกทาง"
+// พูดกัน ห้ามมีชื่อ provider โผล่ในนี้
+
+/// <summary>โหมดของคีย์ที่ใช้จริงตอนนี้</summary>
+public enum PaymentProviderMode
+{
+    /// <summary>คีย์ทดสอบ — เงินไม่เข้าจริง · ต้องมีป้ายเตือนทั้งหน้าตั้งค่าและหน้าจ่ายของลูกค้า</summary>
+    Test = 0,
+    Live = 1,
+}
+
+/// <summary>สิ่งที่กำลังจ่าย — ตัวชี้ว่า intent นี้ผูกกับอะไร</summary>
+public enum PaymentSourceKind
+{
+    SiteOrder = 1,             // คำสั่งซื้อหน้าเว็บขายของ
+    Document = 2,              // ใบแจ้งหนี้/ใบวางบิลผ่าน portal ลูกค้า
+    LodgingReservation = 3,    // มัดจำที่พัก
+    SubscriptionPayment = 4,   // ค่าบริการ SaaS ของตัวระบบเอง
+    PosOrder = 5,              // บิล POS (แสดง QR บนจอลูกค้า)
+    AddOnPurchase = 6,         // ซื้อส่วนเสริม (add-on) รายเดือน — LDG-P0-03
+}
+
+/// <summary>สถานะการชำระเงินของการเปิดใช้ add-on หนึ่งครั้ง (LDG-P0-03)
+///
+/// <para>แยกจาก <c>CompanyFeature.IsEnabled</c> โดยตั้งใจ: "เปิดใช้อยู่ไหม" กับ
+/// "จ่ายเงินแล้วหรือยัง" เป็นคนละคำถาม — ระหว่างรอแอดมินตรวจสลิป ฟีเจอร์เปิดใช้ได้
+/// แต่ต้องติดป้ายว่ายังไม่ยืนยันการชำระเงิน</para></summary>
+public enum AddOnPaymentStatus
+{
+    /// <summary>ไม่ต้องจ่าย — ยังไม่ตั้งราคา · แถมจากแพ็กเกจ · admin ยัดให้ · อยู่ในช่วง trial</summary>
+    NotRequired = 0,
+    /// <summary>รอชำระ — ยังไม่จ่ายและยังไม่แนบสลิป</summary>
+    AwaitingPayment = 1,
+    /// <summary>แนบสลิปแล้ว รอแอดมินตรวจ</summary>
+    PendingReview = 2,
+    /// <summary>ยืนยันแล้ว (gateway สำเร็จ หรือแอดมินอนุมัติสลิป)</summary>
+    Paid = 3,
+    /// <summary>แอดมินปฏิเสธ — สิทธิ์ถูกปิดพร้อมกัน</summary>
+    Rejected = 4,
+}
+
+public enum PaymentIntentStatus
+{
+    /// <summary>สร้างแถวแล้ว แต่ยังไม่ได้เรียก provider</summary>
+    Created = 0,
+    /// <summary>มี charge/QR แล้ว กำลังรอลูกค้าจ่าย</summary>
+    Pending = 1,
+    Succeeded = 2,
+    Failed = 3,
+    /// <summary>QR/ลิงก์หมดอายุก่อนลูกค้าจ่าย — ไม่ใช่ความผิดพลาด ต้องเปิดให้สร้างใหม่ได้</summary>
+    Expired = 4,
+    Refunded = 5,
+    PartiallyRefunded = 6,
+}
+
+/// <summary>วิธีจ่ายในภาษาของชั้นกลาง (ไม่ใช่ชื่อ source ของ provider)</summary>
+public enum PaymentMethodKind
+{
+    PromptPay = 1,
+    Card = 2,
+    MobileBanking = 3,
+    InternetBanking = 4,
+    TrueMoney = 5,
+    /// <summary>อัปโหลดสลิปแล้วให้คนตรวจ — เส้นทางเดิมของระบบ ยังต้องมีต่อไปเป็น fallback</summary>
+    ManualSlip = 9,
+}
+
+public enum PaymentEventSource
+{
+    Webhook = 1,
+    Poll = 2,
+    /// <summary>คนกดยืนยันเอง (ตรวจสลิป/แก้เคสค้าง) — ผู้สอบบัญชีถามเสมอว่าใครกด</summary>
+    Manual = 3,
+    System = 4,
+}
+
+/// <summary>หัก ณ ที่จ่ายบนค่าธรรมเนียม gateway — default None จนกว่านักบัญชีของ
+/// ลูกค้าจะยืนยัน (เป็นประเด็นที่ยังตีความต่างกัน ระบบไม่ตัดสินแทน)</summary>
+public enum GatewayFeeWhtMode
+{
+    None = 0,
+    Withhold3Percent = 1,
 }
 
 // ==================== Bank ====================
@@ -1381,16 +1555,37 @@ public enum AiFeatureKey
     /// <summary>Narrate a cashflow forecast + suggest scenarios.</summary>
     ForecastNarrative = 12,
 
-    /// <summary>Match a free-text product name → existing Product.</summary>
+    // ══════════════════════════════════════════════════════════════
+    //  4 ค่าที่ "ตายแล้ว" — ไม่มี call site เลยทั้งเรพ และแต่ละตัวมีคู่แฝด
+    //  ที่ใช้งานจริงอยู่แล้ว (ผลตรวจ E-AI-10)
+    //
+    //  ปล่อยไว้เฉย ๆ ไม่ได้: คนอ่าน enum จะเข้าใจว่า "มี feature นี้แล้ว"
+    //  แล้ววันหนึ่งจะมีคนต่อสายตัวนี้แทนตัวจริง ⇒ ได้ corpus **สองกอง**
+    //  สำหรับคำถามเดียวกัน ซึ่งแปลว่า local model ของทั้งสองกองโตช้าลงครึ่งหนึ่ง
+    //  (ขัดกับกฎเหล็ก #1 ข้อ 6 โดยตรง)
+    //
+    //  ไม่ลบทิ้งเพราะตัวเลข 13-16 ต้องถูก "จอง" ไว้ — ถ้าลบแล้วมีคนเอาเลขเดิม
+    //  ไปใช้กับ feature ใหม่ แถว AiSuggestionFeedback เก่า (ถ้ามี) จะกลาย
+    //  ความหมาย. `error: true` ทำให้การอ้างถึงคอมไพล์ไม่ผ่าน = กันได้จริง
+    //  ไม่ใช่แค่คำเตือนที่คนกดข้าม
+    // ══════════════════════════════════════════════════════════════
+
+    /// <summary>ตายแล้ว — ใช้ <see cref="ContactFuzzyMatch"/> (การจับคู่สินค้า
+    /// วันนี้เดินผ่าน <c>Ocr.ProductMatcher</c> ซึ่งเป็น cascade แบบ heuristic
+    /// ไม่ผ่าน AI)</summary>
+    [Obsolete("ไม่มีใครเรียก — การจับคู่สินค้าใช้ Ocr.ProductMatcher (heuristic) ไม่ผ่าน AI", error: true)]
     ProductMatch = 13,
 
-    /// <summary>Match a free-text contact name → existing Contact.</summary>
+    /// <summary>ตายแล้ว — ใช้ <see cref="ContactFuzzyMatch"/> ที่ต่อสายจริงแล้ว</summary>
+    [Obsolete("ซ้ำกับ ContactFuzzyMatch ที่ใช้งานจริง — ใช้ตัวนั้นแทน", error: true)]
     ContactMatch = 14,
 
-    /// <summary>Suggest payment method given vendor history + amount.</summary>
+    /// <summary>ตายแล้ว — ใช้ <see cref="PaymentChannelSuggestion"/></summary>
+    [Obsolete("ซ้ำกับ PaymentChannelSuggestion ที่ใช้งานจริง — ใช้ตัวนั้นแทน", error: true)]
     PaymentMethodSuggestion = 15,
 
-    /// <summary>Suggest currency + FX rate sanity-check.</summary>
+    /// <summary>ตายแล้ว — ใช้ <see cref="FxRateSuggestion"/></summary>
+    [Obsolete("ซ้ำกับ FxRateSuggestion ที่ใช้งานจริง — ใช้ตัวนั้นแทน", error: true)]
     CurrencyAndFxSuggestion = 16,
 
     /// <summary>Aging-receivable explanation per customer.</summary>
@@ -1710,6 +1905,27 @@ public enum AiCallStatus
     /// <summary>Provider returned a response that failed schema validation
     /// or Thai-compliance double-check.</summary>
     InvalidResponse = 7,
+
+    /// <summary>
+    /// **ตอบด้วยของในบ้านล้วน — ไม่เคยยิง provider เลย** (heuristic / กติกา /
+    /// memory ที่เรียนไว้ / distillation model). บันทึกแถวไว้เพื่อ **training**
+    /// อย่างเดียว ไม่ใช่เพื่อคิดเงินหรือคิดโควตา
+    ///
+    /// <para>═══ ที่มา (ผลตรวจ AI-02 / AI-03) ═══ 27 endpoint ใน
+    /// <c>AiSuggestionController</c> เป็น heuristic ล้วน (history-mode · stats ·
+    /// bigram · keyword · rfm · pareto · lookup · rules · memory) แต่บันทึกแถวเป็น
+    /// <c>Success</c> + <c>ProviderUsed = DeepSeek</c> ⇒ (ก) <c>AiBudgetGuard</c>
+    /// นับเป็น call ที่เสียเงิน ⇒ **วันที่ผู้ใช้กดปุ่มแนะนำ (ฟรี) เยอะ daily cap
+    /// เต็ม แล้วบล็อก AI ของจริงทั้ง tenant** และยิ่ง local แม่นขึ้น cap ยิ่งเต็ม
+    /// เร็วขึ้น — ตรงข้ามกับเจตนาของกฎเหล็ก #1 (ข) รายงานการใช้ AI ขึ้น
+    /// "สำเร็จ (เรียก AI)" ให้ call ที่ไม่เคยเกิด ⇒ ตัวชี้วัด
+    /// "<c>UsedAi</c> ลดลงเรื่อย ๆ" (กฎเหล็ก #1 ข้อ 6) อ่านไม่ได้เลย</para>
+    ///
+    /// <para>ต่างจาก <see cref="Skipped"/> ตรงเจตนา: Skipped = "ตั้งใจจะเรียก AI
+    /// แต่ถูกปิด/ตัดสินใจไม่เรียก" · LocalServed = "ฟีเจอร์นี้ไม่เคยต้องใช้ AI
+    /// อยู่แล้ว" — ทั้งคู่ไม่เสียเงิน แต่แยกกันเพื่อให้อัตราส่วนที่รายงานมีความหมาย</para>
+    /// </summary>
+    LocalServed = 8,
 }
 
 /// <summary>
@@ -1806,4 +2022,178 @@ public enum WhtPayerFormType
     Pnd3 = 3,
     /// <summary>ภ.ง.ด.53 — ผู้จ่ายหักจากนิติบุคคล (เคสปกติของบริษัท)</summary>
     Pnd53 = 53,
+}
+
+// ==================== Lodging (ธุรกิจที่พัก: โรงแรม · รีสอร์ท · โฮสเทล · บ้านพัก) ====================
+// ที่มา: สกัดโดเมนจาก TakeTime (Ipsos-Dev-TH) + PMS มาตรฐาน แล้วออกแบบใหม่ให้ต่อกับ
+// แกนบัญชี/ภาษีของระบบนี้ (มัดจำ §78/1 · ใบกำกับ §86/4 · เลข gap-free)
+
+/// <summary>ประเภทที่พัก — กำหนด default ของนโยบาย/ช่องตั้งค่าตอน seed</summary>
+public enum LodgingPropertyType
+{
+    Hotel = 1,          // โรงแรม
+    Resort = 2,         // รีสอร์ท
+    Hostel = 3,         // โฮสเทล (ขายเป็นเตียง)
+    Villa = 4,          // บ้านพัก/วิลล่า ทั้งหลัง
+    Apartment = 5,      // อพาร์ตเมนต์/เซอร์วิสอพาร์ตเมนต์
+    Campsite = 6,       // แคมป์/ลานกางเต็นท์
+    Other = 99
+}
+
+/// <summary>ที่พักนี้ให้ระบบออกเอกสารบัญชีให้แค่ไหน (LODGING_LICENSING_PLAN.md §13.3)
+///
+/// มีไว้สำหรับลูกค้าที่ "ไม่ได้ใช้บัญชีของเรา" จริง ๆ (ใช้โปรแกรมอื่น/สำนักงานบัญชี/
+/// ไม่จด VAT) — **ทุกโหมดนับมิเตอร์ lodging.stay เท่ากัน** เพราะมิเตอร์ผูกกับ
+/// "การเข้าพักที่ปิด" ไม่ใช่จำนวนเอกสาร ⇒ เลือก Off ไม่ได้แปลว่าใช้ฟรี</summary>
+public enum LodgingAccountingMode
+{
+    /// <summary>ค่าเริ่มต้น — ใบเสร็จมัดจำ + ใบกำกับ/ใบแจ้งหนี้ตอนเช็คเอาต์ + ใบลดหนี้</summary>
+    Full = 1,
+    /// <summary>ออกใบเสร็จรับเงินอย่างเดียว — สำหรับกิจการที่ **ไม่ได้จด VAT**</summary>
+    ReceiptOnly = 2,
+    /// <summary>ไม่ออกเอกสารบัญชีเลย (PMS อย่างเดียว) — เก็บบันทึกการเข้าพักไว้ให้
+    /// export ไปลงบัญชีที่อื่น. บริษัทที่จด VAT เลือกได้ต่อเมื่อยืนยันว่าออกใบกำกับ
+    /// จากระบบอื่น (บันทึกความยินยอมไว้) — ไม่งั้นเราเป็นสาเหตุให้ผิด §86/4</summary>
+    Off = 3
+}
+
+/// <summary>วิธีคิดราคาห้องต่อคืน</summary>
+public enum LodgingPricingMode
+{
+    /// <summary>ราคาต่อห้อง/ต่อหลัง ต่อคืน (ไม่ขึ้นกับจำนวนคน) — โรงแรมทั่วไป</summary>
+    PerUnit = 1,
+    /// <summary>ราคาต่อคน ต่อคืน — โฮสเทล/แคมป์ (TakeTime: LimitWithPeople)</summary>
+    PerPerson = 2
+}
+
+/// <summary>วิธีที่แผนราคาปรับจากราคาฐาน</summary>
+public enum LodgingRateAdjustMode
+{
+    /// <summary>ใช้ราคาฐานของประเภทห้องตรง ๆ</summary>
+    Base = 0,
+    /// <summary>กำหนดราคาต่อคืนตายตัวแทนราคาฐาน</summary>
+    Absolute = 1,
+    /// <summary>คูณราคาฐาน (เช่น 0.90 = ลด 10%)</summary>
+    Multiplier = 2,
+    /// <summary>บวก/ลบจากราคาฐาน (บาท)</summary>
+    Delta = 3
+}
+
+/// <summary>ชนิดฤดูกาล (TakeTime PricingSeasons.SeasonType)</summary>
+public enum LodgingSeasonType
+{
+    Low = 1,
+    Regular = 2,
+    High = 3,
+    Peak = 4,
+    Holiday = 5
+}
+
+/// <summary>วิธีคิดราคาบริการเสริม</summary>
+public enum LodgingExtraPriceMode
+{
+    PerStay = 1,            // ต่อการเข้าพัก (เช่น รับส่งสนามบิน)
+    PerNight = 2,           // ต่อคืน (เช่น เตียงเสริม)
+    PerPerson = 3,          // ต่อคน (เช่น ทัวร์)
+    PerPersonPerNight = 4   // ต่อคนต่อคืน (เช่น อาหารเช้า)
+}
+
+public enum LodgingExtraCategory
+{
+    Breakfast = 1,
+    ExtraBed = 2,
+    Transfer = 3,
+    Tour = 4,
+    Spa = 5,
+    Food = 6,
+    Other = 99
+}
+
+/// <summary>สถานะการจองที่พัก (lifecycle เดินหน้าอย่างเดียว ยกเว้น Cancelled/NoShow)</summary>
+public enum LodgingReservationStatus
+{
+    /// <summary>จองแล้ว รอชำระมัดจำ/รอยืนยัน — ยังกันห้องไว้จนกว่า HoldExpiresAt</summary>
+    Pending = 0,
+    Confirmed = 1,
+    CheckedIn = 2,
+    CheckedOut = 3,
+    Cancelled = 4,
+    NoShow = 5
+}
+
+public enum LodgingReservationSource
+{
+    Web = 1,        // จองผ่านเว็บไซต์/portal
+    WalkIn = 2,
+    Phone = 3,
+    Agent = 4,
+    Ota = 5,        // Agoda/Booking.com ฯลฯ (บันทึกมือ)
+    Other = 99
+}
+
+/// <summary>สถานะแม่บ้านของห้อง (TakeTime RoomStatusHistory.Status)</summary>
+public enum LodgingHousekeepingStatus
+{
+    VacantClean = 1,
+    VacantDirty = 2,
+    Occupied = 3,
+    Cleaning = 4,
+    Inspecting = 5,
+    OutOfOrder = 6,
+    Maintenance = 7
+}
+
+public enum LodgingHousekeepingTaskType
+{
+    CheckoutClean = 1,
+    StayOver = 2,
+    DeepClean = 3,
+    Turndown = 4,
+    Inspection = 5,
+    Maintenance = 6
+}
+
+public enum LodgingTaskStatus
+{
+    Pending = 0,
+    Assigned = 1,
+    InProgress = 2,
+    Completed = 3,
+    Verified = 4,
+    Cancelled = 5
+}
+
+public enum LodgingTaskPriority
+{
+    Low = 0,
+    Normal = 1,
+    High = 2,
+    Urgent = 3
+}
+
+/// <summary>ค่าใช้จ่ายระหว่างพัก (folio) — ที่มาของรายการ</summary>
+public enum LodgingChargeSource
+{
+    Manual = 1,     // พนักงานคีย์
+    Pos = 2,        // มาจาก POS (ร้านอาหาร/มินิบาร์)
+    GuestPortal = 3,// แขกสั่งเองผ่านพอร์ทัล
+    System = 4      // ระบบคิดให้ (ค่าปรับ/late checkout)
+}
+
+public enum LodgingChargeStatus
+{
+    Pending = 0,    // ค้างชำระ (จะรวมในใบเช็คเอาต์)
+    Paid = 1,
+    Cancelled = 2
+}
+
+/// <summary>คำขอจากแขก (พอร์ทัลแขก/พนักงานบันทึกแทน)</summary>
+public enum LodgingGuestRequestType
+{
+    Housekeeping = 1,
+    Maintenance = 2,
+    Concierge = 3,
+    RoomService = 4,
+    Complaint = 5,
+    Other = 99
 }

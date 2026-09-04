@@ -255,7 +255,7 @@
             <td>${t.isActive ? '<span style="color:#16a34a">active</span>' : '<span style="color:#94a3b8">ปิด</span>'}</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick='Page.editType(${JSON.stringify(t)})'>แก้</button>
-              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteType('${t.id}','${Layout.esc(t.nameTh)}')">ลบ</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteType('${t.id}','${Layout.jsArg(t.nameTh)}')">ลบ</button>
             </td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -346,7 +346,7 @@
             <td>${h.isSubstitute ? '✅' : '—'}</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick='Page.editHoliday(${JSON.stringify(h)})'>แก้</button>
-              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteHoliday('${h.id}','${Layout.esc(h.nameTh)}')">ลบ</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteHoliday('${h.id}','${Layout.jsArg(h.nameTh)}')">ลบ</button>
             </td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }

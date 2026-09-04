@@ -31,6 +31,32 @@ public class FixedAssetService : IFixedAssetService
         if (request.AssetType == AssetType.RightOfUse && effectiveLife <= 0 && request.LeaseTermMonths.HasValue)
             effectiveLife = request.LeaseTermMonths.Value;
 
+        // ── ที่ดิน / งานระหว่างก่อสร้าง คิดค่าเสื่อมไม่ได้ (ผลตรวจ C-T15) ──
+        //
+        // `FixedAssetAccountClassifier` รู้เรื่องนี้อยู่แล้ว (Depreciable=false)
+        // แต่ **เส้นสร้างด้วยมือไม่เคยเรียกมัน** ⇒ ผู้ใช้เลือกผัง 12290 (ที่ดิน)
+        // แล้วตั้งวิธีคิดค่าเสื่อมเป็นเส้นตรงได้ ⇒ ระบบสร้างตารางค่าเสื่อมและลง JE
+        // ทุกเดือน ⇒ **ค่าเสื่อมที่ดินหักภาษีไม่ได้ (พ.ร.ฎ.145)** ต้องบวกกลับใน
+        // ภ.ง.ด.50 ทั้งจำนวน — แต่ไม่มีใครรู้เพราะตัวเลขดูปกติทุกเดือน
+        //
+        // บล็อกดัง ๆ พร้อมบอกทางแก้ ไม่ใช่แก้ค่าให้เงียบ ๆ (ผู้ใช้อาจตั้งใจเลือก
+        // ผังผิด — ถ้าเราแก้ให้เอง เขาจะไม่รู้ว่าผังที่เลือกไว้ไม่ตรงกับของจริง)
+        var assetAccountCode = request.AssetAccountId == null ? null
+            : await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.Id == request.AssetAccountId && a.CompanyId == companyId)
+                .Select(a => a.AccountCode).FirstOrDefaultAsync();
+        var assetClass = Tax.FixedAssetAccountClassifier.Resolve(assetAccountCode);
+        if (assetClass is { Depreciable: false }
+            && request.DepreciationMethod != DepreciationMethod.None)
+        {
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"\"{assetClass.Category}\" (ผัง {assetClass.AssetAccountCode}) คิดค่าเสื่อมราคาไม่ได้ "
+                + "— ค่าเสื่อมของที่ดิน/งานระหว่างก่อสร้างหักเป็นรายจ่ายทางภาษีไม่ได้ "
+                + "(พ.ร.ฎ.145) ต้องบวกกลับทั้งจำนวนใน ภ.ง.ด.50. "
+                + "ทางแก้: เลือกวิธีคิดค่าเสื่อมเป็น \"ไม่คิดค่าเสื่อม\" "
+                + "หรือเปลี่ยนผังบัญชีให้ตรงกับสินทรัพย์จริง");
+        }
+
         var asset = new FixedAsset
         {
             CompanyId = companyId,
@@ -223,6 +249,15 @@ public class FixedAssetService : IFixedAssetService
     /// แล้ว NeedsReview=true (ยังไม่ผ่านการยืนยันจากผู้ใช้). UI โชว์ banner
     /// เตือน + บังคับให้กรอก UsefulLifeMonths/DepreciationMethod/Location
     /// ก่อนถึงจะเริ่มคิดค่าเสื่อมจริงได้.</summary>
+    public async Task<List<FixedAssetResponse>> GetByDocumentAsync(Guid companyId, Guid documentId)
+    {
+        var items = await _db.FixedAssets.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.SourceDocumentId == documentId)
+            .OrderBy(a => a.AssetCode)
+            .ToListAsync();
+        return items.Select(MapToResponse).ToList();
+    }
+
     public async Task<List<FixedAssetResponse>> GetNeedsReviewAsync(Guid companyId)
     {
         var items = await _db.FixedAssets.AsNoTracking()
@@ -327,18 +362,8 @@ public class FixedAssetService : IFixedAssetService
     /// <summary>สร้างรหัสสินทรัพย์ FA-yyyyMM-#### (gap-tolerant — MAX+1, ยกเว้น
     /// DRAFT-* placeholder). ใช้ตอนผู้ใช้ยืนยัน asset ที่ auto-register —
     /// ทำให้เลขจริงออกตามลำดับการยืนยัน ไม่ใช่ลำดับ scan/approve.</summary>
-    private async Task<string> GenerateAssetCodeAsync(Guid companyId)
-    {
-        var prefix = $"FA-{DateTime.UtcNow:yyyyMM}-";
-        var last = await _db.FixedAssets.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.AssetCode.StartsWith(prefix))
-            .OrderByDescending(a => a.AssetCode)
-            .Select(a => a.AssetCode)
-            .FirstOrDefaultAsync();
-        var next = 1;
-        if (last != null && int.TryParse(last.Substring(prefix.Length), out var n)) next = n + 1;
-        return $"{prefix}{next:D4}";
-    }
+    private Task<string> GenerateAssetCodeAsync(Guid companyId)
+        => Accounting.Helpers.AssetCodeGenerator.NextAsync(_db, companyId);
 
     public async Task<FixedAssetResponse> DisposeAsync(Guid companyId, Guid assetId, DisposeAssetRequest request, string performedBy)
     {

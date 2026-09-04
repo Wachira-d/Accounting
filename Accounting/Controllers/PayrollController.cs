@@ -68,6 +68,21 @@ public class PayrollController : ControllerBase
         return await _sensitivity.CanViewAsync(companyId, userId, Models.Enums.SensitivityKind.Payroll);
     }
 
+    /// <summary>ด่านสำหรับข้อมูล "รายคน": ของตัวเองดูได้เสมอ · ของคนอื่นต้องมีสิทธิ์ HR
+    ///
+    /// <para>ที่มา (ผลตรวจ D-A2): endpoint อ่าน 7 ตัวไม่มีด่านเลย — รวม
+    /// <c>pnd3</c>/<c>sso</c> ที่คืน<b>ชื่อ + ค่าจ้าง + ภาษีของพนักงานทุกคน</b>
+    /// และ <c>leaves</c>/<c>leaves/balance</c> ที่รับ <c>employeeId</c> อะไรก็ได้
+    /// ⇒ สมาชิกคนไหนของบริษัทก็อ่านข้อมูลเงินเดือน/วันลาของเพื่อนร่วมงานได้</para></summary>
+    private async Task<ActionResult?> RequireOwnOrPayrollAsync(Guid companyId, Guid employeeId)
+    {
+        var actorUserId = JwtHelper.GetUserIdFromClaims(User);
+        if (actorUserId != Guid.Empty && employeeId != Guid.Empty
+            && await _service.IsEmployeeOfUserAsync(companyId, employeeId, actorUserId))
+            return null;
+        return await CheckPayrollAccessAsync(companyId);
+    }
+
     /// <summary>Gate every payroll endpoint behind the Payroll sensitivity rule.
     /// Returns 403 with a structured body so integrations distinguish "no access"
     /// from "no such record". Owner / SystemAdmin pass through.</summary>
@@ -84,11 +99,49 @@ public class PayrollController : ControllerBase
         return null;
     }
 
+    /// <summary>
+    /// **ด่านของสิทธิ์ระดับ "การกระทำ" — คืน `null` = ผ่าน**
+    ///
+    /// <para>═══ ที่มา (ผลตรวจ D-A1 / D-A2) ═══ endpoint ที่เขียนข้อมูลเงินเดือน
+    /// ทั้งหมดเคยมีด่านแค่ <see cref="CheckPayrollAccessAsync"/> ซึ่งถาม
+    /// **"ดูข้อมูลเงินเดือนได้ไหม" (PayrollView)** เท่านั้น — และอีก 20 กว่า
+    /// endpoint (สร้างรอบ · import · คำนวณ · **อนุมัติ** · **จ่าย** · นำส่ง ปกส. ·
+    /// แก้ยอดรายคน · ตั้งค่าอัตรา ปกส./ภาษี) ไม่มีด่านอะไรเลย ⇒ สมาชิกที่ได้สิทธิ์
+    /// "ดูเงินเดือน" (หรือแม้แต่ไม่ได้อะไรเลยในกลุ่มหลัง) **กดจ่ายเงินเดือนจริง
+    /// ลง JE + ออก ภ.ง.ด.1 + สปส.1-10 ได้**</para>
+    ///
+    /// <para>คีย์ `PayrollRun` / `PayrollApprove` / `PayrollPay` มีอยู่ใน
+    /// <c>PermissionKeys</c> มาตลอดแต่ไม่เคยมีใครเรียก — "ของที่สร้างไว้แล้ว
+    /// ไม่ได้ถูกเรียกใช้" (CLAUDE.md กฎเหล็ก #4)</para>
+    ///
+    /// <para>Owner/SystemAdmin/Accountant ผ่านอัตโนมัติที่ <c>PermissionService</c>
+    /// (คีย์ทั้งสามอยู่ใน <c>AccountantDefaultKeys</c>) ⇒ ผู้ที่ทำเงินเดือนอยู่แล้ว
+    /// ไม่กระทบ · กระทบเฉพาะ role ที่ต้อง grant อยู่แล้วตามการออกแบบ</para>
+    /// </summary>
+    private async Task<ActionResult?> RequireAnyAsync(Guid companyId, string verb, params string[] anyOfKeys)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        foreach (var k in anyOfKeys)
+            if (await _permissions.HasPermissionAsync(companyId, userId, k)) return null;
+        var need = string.Join(" หรือ ", anyOfKeys.Select(k => k.Replace("perm:", "")));
+        return StatusCode(403, new ApiResponse<object>(false, new
+        {
+            redacted = false,
+            kind = "Payroll",
+            requiredPermission = need,
+        }, $"ไม่มีสิทธิ์{verb} (ต้องการ {need})"));
+    }
+
+    /// <summary>ด่านของ endpoint ที่ **เขียน** ข้อมูลเงินเดือน — ต้องผ่านทั้ง
+    /// (ก) ด่านความอ่อนไหว Payroll และ (ข) สิทธิ์ระดับการกระทำ</summary>
+    private async Task<ActionResult?> RequirePayrollWriteAsync(Guid companyId, string verb, params string[] anyOfKeys)
+        => await CheckPayrollAccessAsync(companyId) ?? await RequireAnyAsync(companyId, verb, anyOfKeys);
+
     // Employees
     [HttpPost("employees")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> CreateEmployee(Guid companyId, [FromBody] CreateEmployeeRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "เพิ่มพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         return StatusCode(201, new ApiResponse<EmployeeResponse>(true, await _service.CreateEmployeeAsync(companyId, request)));
     }
 
@@ -113,16 +166,24 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> GetByExternal(
         Guid companyId, string externalSystem, string externalId)
     {
-        var emp = await _service.GetEmployeeByExternalAsync(companyId, externalSystem, externalId);
-        return emp == null
-            ? NotFound(new ApiResponse<object>(false, null, "ไม่พบพนักงาน"))
-            : Ok(new ApiResponse<EmployeeResponse>(true, emp));
+        // ★ เดิมคืนแถวพนักงาน **ดิบ** ไม่ผ่านการปิดบัง PII/เงินเดือน ต่างจาก
+        // `GetEmployee`/`GetEmployees` ที่ส่ง CanViewPii/CanViewPayroll เข้าไป
+        // ⇒ ใครก็ได้ที่รู้ (ExternalSystem, ExternalId) อ่านเลขบัตรประชาชนและ
+        // เงินเดือนได้ครบโดยไม่ต้องมีสิทธิ์อะไรเลย (ผลตรวจ D-A2)
+        // → หา id ก่อน แล้วเดินผ่านเส้นเดียวกับ GetEmployee เพื่อให้กติกาปิดบัง
+        //   เป็นชุดเดียวกัน (ไม่สร้างกติกาสำเนาที่สอง)
+        var lookup = await _service.GetEmployeeByExternalAsync(companyId, externalSystem, externalId);
+        if (lookup == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบพนักงาน"));
+        var emp = await _service.GetEmployeeAsync(companyId, lookup.Id,
+            await CanViewPiiAsync(companyId, lookup.Id), await CanViewPayrollAsync(companyId));
+        return Ok(new ApiResponse<EmployeeResponse>(true, emp));
     }
 
     [HttpDelete("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteEmployee(Guid companyId, Guid employeeId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ลบพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         try { await _service.DeleteEmployeeAsync(companyId, employeeId); return Ok(new ApiResponse<bool>(true, true, "ลบพนักงานแล้ว")); }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
     }
@@ -130,7 +191,7 @@ public class PayrollController : ControllerBase
     [HttpPost("employees/{employeeId:guid}/restore")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> RestoreEmployee(Guid companyId, Guid employeeId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "กู้คืนพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         try { return Ok(new ApiResponse<EmployeeResponse>(true, await _service.RestoreEmployeeAsync(companyId, employeeId), "กู้คืนพนักงานแล้ว")); }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
     }
@@ -138,7 +199,7 @@ public class PayrollController : ControllerBase
     [HttpPut("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> UpdateEmployee(Guid companyId, Guid employeeId, [FromBody] UpdateEmployeeRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "แก้ไขข้อมูลพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         return Ok(new ApiResponse<EmployeeResponse>(true, await _service.UpdateEmployeeAsync(companyId, employeeId, request)));
     }
 
@@ -146,6 +207,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<SyncEmployeesResponse>>> SyncEmployees(
         Guid companyId, [FromBody] SyncEmployeesRequest request)
     {
+        var block = await RequirePayrollWriteAsync(companyId, "sync ข้อมูลพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var r = await _service.SyncEmployeesAsync(companyId, request);
         return Ok(new ApiResponse<SyncEmployeesResponse>(true, r,
             $"sync เสร็จ — เพิ่ม {r.Inserted} · อัปเดต {r.Updated} · ข้าม {r.Skipped}"));
@@ -154,7 +216,7 @@ public class PayrollController : ControllerBase
     [HttpPost("employees/{employeeId:guid}/terminate")]
     public async Task<ActionResult<ApiResponse<bool>>> Terminate(Guid companyId, Guid employeeId, [FromQuery] DateTime endDate)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "แจ้งพนักงานลาออก", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         await _service.TerminateEmployeeAsync(companyId, employeeId, endDate); return Ok(new ApiResponse<bool>(true, true));
     }
 
@@ -163,15 +225,18 @@ public class PayrollController : ControllerBase
     [HttpPost("employees/{employeeId:guid}/severance-preview")]
     public async Task<ActionResult<ApiResponse<SeverancePreviewResponse>>> PreviewSeverance(
         Guid companyId, Guid employeeId, [FromBody] SeverancePreviewRequest request)
-        => Ok(new ApiResponse<SeverancePreviewResponse>(true,
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "ดูตัวอย่างค่าชดเชย", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return Ok(new ApiResponse<SeverancePreviewResponse>(true,
             await _service.PreviewSeverancePayAsync(companyId, employeeId, request)));
+    }
 
     /// <summary>ปิดปี: คำนวณวันลาคงเหลือทุกพนักงานของปี ที่ระบุ →
     /// upsert EmployeeLeaveBalance ของปีถัดไป (carry-forward).</summary>
     [HttpPost("leaves/carry-forward/{year:int}")]
     public async Task<ActionResult<ApiResponse<object>>> RunLeaveCarryForward(Guid companyId, int year)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ทำ carry-forward วันลา", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         var count = await _service.RunYearEndLeaveCarryForwardAsync(companyId, year, actor);
         return Ok(new ApiResponse<object>(true, new { upserts = count, targetYear = year + 1 },
@@ -186,7 +251,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> PostSeverance(
         Guid companyId, Guid employeeId, [FromBody] PostSeveranceRequest req)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "โพสต์เงินชดเชยเข้า GL", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         var jeId = await _service.PostSeveranceAsync(companyId, employeeId,
             req.Amount, req.PayDate, JwtHelper.GetUserIdFromClaims(User).ToString());
         return Ok(new ApiResponse<object>(true, new { journalEntryId = jeId }, "โพสต์เงินชดเชยเข้า GL เรียบร้อย"));
@@ -195,16 +260,25 @@ public class PayrollController : ControllerBase
     // Payroll Items
     [HttpPost("items")]
     public async Task<ActionResult<ApiResponse<PayrollItemResponse>>> CreateItem(Guid companyId, [FromBody] CreatePayrollItemRequest request)
-        => StatusCode(201, new ApiResponse<PayrollItemResponse>(true, await _service.CreatePayrollItemAsync(companyId, request)));
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "สร้างรายการเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return StatusCode(201, new ApiResponse<PayrollItemResponse>(true, await _service.CreatePayrollItemAsync(companyId, request)));
+    }
 
     [HttpGet("items")]
     public async Task<ActionResult<ApiResponse<List<PayrollItemResponse>>>> GetItems(Guid companyId)
-        => Ok(new ApiResponse<List<PayrollItemResponse>>(true, await _service.GetPayrollItemsAsync(companyId)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<List<PayrollItemResponse>>(true, await _service.GetPayrollItemsAsync(companyId)));
+    }
 
     // Payroll Runs
     [HttpPost("runs")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> CreateRun(Guid companyId, [FromBody] CreatePayrollRunRequest request)
-        => StatusCode(201, new ApiResponse<PayrollRunResponse>(true, await _service.CreatePayrollRunAsync(companyId, request, User.Identity?.Name ?? "")));
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "สร้างรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return StatusCode(201, new ApiResponse<PayrollRunResponse>(true, await _service.CreatePayrollRunAsync(companyId, request, User.Identity?.Name ?? "")));
+    }
 
     /// <summary>Import payroll run จากระบบนอก (TakeTime) — รับยอดสำเร็จรูป
     /// ต่อพนักงาน สร้าง run สถานะ Calculated ทันที (ไม่คำนวณใหม่). จากนั้น
@@ -215,6 +289,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<ImportPayrollRunResult>>> ImportRun(
         Guid companyId, [FromBody] ImportPayrollRunRequest request)
     {
+        var block = await RequirePayrollWriteAsync(companyId, "นำเข้ารอบเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var createdBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _service.ImportPayrollRunAsync(companyId, request, createdBy);
         return StatusCode(result.WasExisting ? 200 : 201,
@@ -241,25 +316,39 @@ public class PayrollController : ControllerBase
 
     [HttpPost("runs/{runId:guid}/calculate")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> Calculate(Guid companyId, Guid runId)
-        => Ok(new ApiResponse<PayrollRunResponse>(true, await _service.CalculatePayrollAsync(companyId, runId)));
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "คำนวณรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollRunResponse>(true, await _service.CalculatePayrollAsync(companyId, runId)));
+    }
 
     [HttpPost("runs/{runId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> Approve(Guid companyId, Guid runId)
-        => Ok(new ApiResponse<PayrollRunResponse>(true, await _service.ApprovePayrollAsync(companyId, runId, User.Identity?.Name ?? "")));
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "อนุมัติรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollRunResponse>(true, await _service.ApprovePayrollAsync(companyId, runId, User.Identity?.Name ?? "")));
+    }
 
     [HttpPost("runs/{runId:guid}/pay")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> Pay(Guid companyId, Guid runId)
     {
+        var block = await RequirePayrollWriteAsync(companyId, "จ่ายเงินเดือน", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         try
         {
             var res = await _service.ProcessPaymentAsync(companyId, runId, User.Identity?.Name ?? "");
             // ซ่อมยอดให้ก่อนลง JE = ต้องบอก ห้ามเปลี่ยนตัวเลขเงียบ ๆ
             var ssoFixed = _service.LastPaySsoAdjustedCount;
+            var ssoConflicts = _service.LastSsoConflicts;
             var msg = "จ่ายเงินเดือนสำเร็จ";
             if (ssoFixed > 0)
                 msg += $" · ปรับยอดประกันสังคมฝั่งนายจ้างให้ตรงกับฝั่งลูกจ้าง {ssoFixed} คน "
                      + "ก่อนลงบัญชี (ม.33 ใช้ฐานค่าจ้างเดียวกันทั้งสองฝั่ง — "
                      + "ยอดที่ระบบต้นทางส่งมาไม่สอดคล้องกัน)";
+            // แถวที่ระบบตัดสินแทนไม่ได้ ต้องดังตรงนี้ ไม่ใช่ปล่อยไปตายที่ด่าน
+            // ตอนนำส่ง สปส. โดยผู้ใช้ไม่รู้ว่าต้นเหตุอยู่ที่ใคร
+            if (ssoConflicts.Count > 0)
+                msg += $" · ⚠️ ยอดประกันสังคมของ {ssoConflicts.Count} คนขัดกันจนระบบปรับให้ไม่ได้ "
+                     + "(คงค่าเดิมไว้) — ต้องแก้ก่อนนำส่ง สปส.: "
+                     + string.Join(" · ", ssoConflicts.Take(3));
             return Ok(new ApiResponse<PayrollRunResponse>(true, res, msg));
         }
         catch (InvalidOperationException ex)
@@ -277,13 +366,21 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> ReverseSso(
         Guid companyId, Guid runId, [FromBody] ReopenPayrollRunRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "กลับรายการนำส่งประกันสังคม", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         try
         {
             var res = await _service.ReverseSsoSettlementAsync(companyId, runId,
                 request.Reason, User.Identity?.Name ?? "");
-            return Ok(new ApiResponse<PayrollRunResponse>(true, res,
-                "กลับรายการนำส่งประกันสังคมแล้ว — แก้ยอดในรอบเงินเดือนแล้วนำส่งใหม่ได้"));
+            var revJe = _service.LastReversedJournalNumber;
+            // ⚠️ ขอบเขตของปุ่มนี้คือ **JE ของการนำส่ง** เท่านั้น (Dr 21815 / Cr ธนาคาร)
+            // ไม่ได้แตะ JE ของการจ่ายเงินเดือน (ที่มีบรรทัด 54120 ประกันสังคมนายจ้าง)
+            // — ผู้ใช้เข้าใจสลับกันแล้วรายงานว่า "กดกลับรายการแล้วยอดยังผิด"
+            var msg = "กลับรายการนำส่งประกันสังคมแล้ว"
+                + (string.IsNullOrWhiteSpace(revJe) ? "" : $" (ใบสำคัญ {revJe})")
+                + " — ปุ่มนี้กลับเฉพาะรายการ \"นำส่ง\" เท่านั้น "
+                + "ถ้ายอดประกันสังคมในใบจ่ายเงินเดือนผิด ต้องกด \"กลับรายการจ่าย\" อีกทีหนึ่ง "
+                + "แล้วตรวจยอด → จ่ายใหม่ → นำส่งใหม่";
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, msg));
         }
         catch (InvalidOperationException ex)
         {
@@ -294,10 +391,13 @@ public class PayrollController : ControllerBase
     [HttpPost("runs/{runId:guid}/settle-sso")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> SettleSso(
         Guid companyId, Guid runId, [FromBody] SettleSsoRequest request)
-        => Ok(new ApiResponse<PayrollRunResponse>(true,
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "นำส่งประกันสังคม", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollRunResponse>(true,
             await _service.SettleSocialSecurityAsync(companyId, runId,
                 request.PayDate, request.BankAccountId, request.BankGlAccountId, request.FilingNumber,
                 User.Identity?.Name ?? "")));
+    }
 
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<PayrollDetailResponse>>> GetDetail(Guid companyId, Guid runId, Guid employeeId)
@@ -312,7 +412,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> SetEmployeePaymentAccount(
         Guid companyId, Guid runId, Guid employeeId, [FromBody] SetPaymentAccountRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "แก้แหล่งจ่ายรายคน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         try
         {
             var res = await _service.SetEmployeePaymentAccountAsync(companyId, runId, employeeId, request.AccountCode);
@@ -330,7 +430,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> UpdateDetail(
         Guid companyId, Guid runId, Guid employeeId, [FromBody] UpdatePayrollDetailRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "แก้ยอดรายคนในรอบ", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         try
         {
             var res = await _service.UpdatePayrollDetailAsync(companyId, runId, employeeId, request, User.Identity?.Name ?? "");
@@ -348,7 +448,19 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult> GetPayslip(Guid companyId, Guid runId, Guid employeeId,
         [FromQuery] bool download = false)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        // ── พนักงานเปิดสลิป**ของตัวเอง**ได้เสมอ (ผลตรวจ D-U3) ──
+        //
+        // เดิมต้องมีสิทธิ์ "ดูข้อมูลเงินเดือน" ซึ่งเป็นสิทธิ์ระดับ HR ⇒ พนักงาน
+        // ทั่วไปเปิดสลิปตัวเองไม่ได้เลย ทางเดียวคือรอ HR กดส่งทาง LINE —
+        // สลิปเป็นเอกสารที่ลูกจ้างมีสิทธิ์ได้รับตามกฎหมายแรงงาน ไม่ใช่ข้อมูลลับ
+        // จากเขา · ส่วนสลิป**ของคนอื่น** ยังต้องมีสิทธิ์ HR เหมือนเดิม
+        var actorUserId = JwtHelper.GetUserIdFromClaims(User);
+        var isOwnPayslip = actorUserId != Guid.Empty
+            && await _service.IsEmployeeOfUserAsync(companyId, employeeId, actorUserId);
+        if (!isOwnPayslip)
+        {
+            var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        }
         var slip = await _service.GeneratePayslipAsync(companyId, runId, employeeId);
         if (download)
             // attachment + ชื่อไฟล์ไทย (File() เข้ารหัส filename* UTF-8 ให้เอง)
@@ -365,7 +477,7 @@ public class PayrollController : ControllerBase
     [HttpPost("employees/{employeeId:guid}/line-bind-code")]
     public async Task<ActionResult> IssueLineBindCode(Guid companyId, Guid employeeId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ออกรหัสผูก LINE ให้พนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var (code, addFriendUrl) = await _payslipLine.IssueBindCodeAsync(companyId, employeeId, ActorEmail());
         return Ok(new ApiResponse<object>(true, new
         {
@@ -389,7 +501,7 @@ public class PayrollController : ControllerBase
     [HttpPost("runs/{runId:guid}/employees/{employeeId:guid}/payslip/send-line")]
     public async Task<ActionResult> SendPayslipLine(Guid companyId, Guid runId, Guid employeeId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ส่งสลิปทาง LINE", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var result = await _payslipLine.SendPayslipAsync(companyId, runId, employeeId, ActorEmail());
         var (ok, msg) = result switch
         {
@@ -406,7 +518,7 @@ public class PayrollController : ControllerBase
     [HttpPost("runs/{runId:guid}/payslip/send-line-all")]
     public async Task<ActionResult> SendPayslipLineAll(Guid companyId, Guid runId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ส่งสลิปทาง LINE ทั้งงวด", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var r = await _payslipLine.SendPayslipForRunAsync(companyId, runId, ActorEmail());
         return Ok(new ApiResponse<object>(true, new
         {
@@ -420,15 +532,25 @@ public class PayrollController : ControllerBase
     // Leave
     [HttpPost("leaves")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> CreateLeave(Guid companyId, [FromBody] CreateLeaveRequest request)
-        => StatusCode(201, new ApiResponse<LeaveResponse>(true, await _service.CreateLeaveAsync(companyId, request)));
+    {
+        // ฟอร์มนี้ยื่นใบลา **แทนพนักงานคนใดก็ได้** (request มี EmployeeId) จึงเป็น
+        // งานของ HR ไม่ใช่ self-service — เดิมไม่มีด่านเลย
+        var block = await RequireAnyAsync(companyId, "ยื่นใบลาแทนพนักงาน", Models.Constants.PermissionKeys.HrAdmin, Models.Constants.PermissionKeys.LeaveApprove, Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return StatusCode(201, new ApiResponse<LeaveResponse>(true, await _service.CreateLeaveAsync(companyId, request)));
+    }
 
     [HttpGet("leaves/{leaveId:guid}")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> GetLeave(Guid companyId, Guid leaveId)
-        => Ok(new ApiResponse<LeaveResponse>(true, await _service.GetLeaveAsync(companyId, leaveId)));
+    {
+        // ใบลาเฉพาะใบ — ผู้ใช้ได้ id มาจากลิสต์ที่ผ่านด่านแล้ว จึงใช้ด่าน HR ตรง ๆ
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<LeaveResponse>(true, await _service.GetLeaveAsync(companyId, leaveId)));
+    }
 
     [HttpPost("leaves/{leaveId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> ApproveLeave(Guid companyId, Guid leaveId)
     {
+        var block = await RequireAnyAsync(companyId, "อนุมัติใบลา", Models.Constants.PermissionKeys.LeaveApprove, Models.Constants.PermissionKeys.HrAdmin); if (block != null) return block;
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var name = User.Identity?.Name ?? "";
         return Ok(new ApiResponse<LeaveResponse>(true, await _service.ApproveLeaveAsync(companyId, leaveId, userId, name)));
@@ -437,6 +559,7 @@ public class PayrollController : ControllerBase
     [HttpPost("leaves/{leaveId:guid}/reject")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> RejectLeave(Guid companyId, Guid leaveId, [FromBody] RejectLeaveRequest request)
     {
+        var block = await RequireAnyAsync(companyId, "ปฏิเสธใบลา", Models.Constants.PermissionKeys.LeaveReject, Models.Constants.PermissionKeys.LeaveApprove, Models.Constants.PermissionKeys.HrAdmin); if (block != null) return block;
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var name = User.Identity?.Name ?? "";
         return Ok(new ApiResponse<LeaveResponse>(true, await _service.RejectLeaveAsync(companyId, leaveId, userId, name, request)));
@@ -444,17 +567,31 @@ public class PayrollController : ControllerBase
 
     [HttpPost("leaves/{leaveId:guid}/cancel")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> CancelLeave(Guid companyId, Guid leaveId)
-        => Ok(new ApiResponse<LeaveResponse>(true, await _service.CancelLeaveAsync(companyId, leaveId)));
+    {
+        var block = await RequireAnyAsync(companyId, "ยกเลิกใบลา", Models.Constants.PermissionKeys.LeaveApprove, Models.Constants.PermissionKeys.HrAdmin, Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return Ok(new ApiResponse<LeaveResponse>(true, await _service.CancelLeaveAsync(companyId, leaveId)));
+    }
 
     [HttpGet("leaves")]
     public async Task<ActionResult<ApiResponse<List<LeaveResponse>>>> GetLeaves(Guid companyId, [FromQuery] Guid? employeeId, [FromQuery] int? year)
-        => Ok(new ApiResponse<List<LeaveResponse>>(true, await _service.GetLeavesAsync(companyId, employeeId, year)));
+    {
+        // ระบุพนักงาน → ของตัวเองดูได้ · ไม่ระบุ (ดูของทุกคน) → ต้องมีสิทธิ์ HR
+        // เดิมไม่มีด่านเลย ⇒ สมาชิกคนไหนก็อ่านวันลาของเพื่อนร่วมงานได้ (D-A2)
+        var block = employeeId is { } eid
+            ? await RequireOwnOrPayrollAsync(companyId, eid)
+            : await CheckPayrollAccessAsync(companyId);
+        if (block != null) return block;
+        return Ok(new ApiResponse<List<LeaveResponse>>(true, await _service.GetLeavesAsync(companyId, employeeId, year)));
+    }
 
     [HttpGet("leaves/balance")]
     public async Task<ActionResult<ApiResponse<LeaveBalanceResponse>>> GetLeaveBalance(
         Guid companyId, [FromQuery] Guid employeeId, [FromQuery] int? year)
-        => Ok(new ApiResponse<LeaveBalanceResponse>(true,
+    {
+        var block = await RequireOwnOrPayrollAsync(companyId, employeeId); if (block != null) return block;
+        return Ok(new ApiResponse<LeaveBalanceResponse>(true,
             await _service.GetLeaveBalanceAsync(companyId, employeeId, year ?? DateTime.UtcNow.Year)));
+    }
 
     [HttpPost("runs/{runId:guid}/void")]
     public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId)
@@ -464,7 +601,7 @@ public class PayrollController : ControllerBase
         // UpdateDetail มี (บทเรียน "ด่านที่อ่อนกว่าแต่ทำได้มากกว่า คือช่องที่
         // ใหญ่ที่สุด" — เวลาเพิ่ม endpoint ให้ถามว่าหน้าอื่นที่แตะข้อมูลชุด
         // เดียวกันใช้ด่านอะไร แล้วใช้อย่างน้อยเท่ากัน)
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ยกเลิกรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         try
         {
             await _service.VoidPayrollAsync(companyId, runId);
@@ -483,7 +620,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> ReopenRun(
         Guid companyId, Guid runId, [FromBody] ReopenPayrollRunRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "กลับรายการจ่ายเงินเดือน", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         try
         {
             var res = await _service.ReopenPaidRunAsync(companyId, runId,
@@ -491,6 +628,13 @@ public class PayrollController : ControllerBase
             // แก้อะไรให้ต้องบอก — ห้ามเปลี่ยนตัวเลขเงียบ ๆ
             var ssoFixed = _service.LastReopenSsoAdjustedCount;
             var msg = "กลับรายการจ่ายแล้ว — รอบกลับไปสถานะ \"อนุมัติแล้ว\" แก้ยอดได้ จากนั้นกด \"จ่าย\" ใหม่";
+            // บอกเลขใบที่กลับ — การกลับรายการ **ไม่แก้ใบเดิม** แต่สร้างใบตรงข้าม
+            // ⇒ ใบเดิมยังโชว์ยอดเท่าเดิมตลอดไป (เปลี่ยนแค่สถานะเป็น "กลับรายการแล้ว")
+            // ถ้าไม่บอก ผู้ใช้จะเปิดใบเดิมแล้วคิดว่ากดปุ่มไปแล้วไม่มีอะไรเกิดขึ้น
+            var revJe = _service.LastReversedJournalNumber;
+            if (!string.IsNullOrWhiteSpace(revJe))
+                msg += $" · กลับรายการบัญชี {revJe} แล้ว (ใบเดิมยังแสดงยอดเท่าเดิม "
+                     + "แต่สถานะเปลี่ยนเป็น \"กลับรายการแล้ว\" และมีใบตรงข้ามหักล้างยอดในงบ)";
             if (ssoFixed > 0)
                 msg += $" · ปรับยอดประกันสังคมฝั่งนายจ้างให้ตรงกับฝั่งลูกจ้าง {ssoFixed} คน "
                      + "(ม.33 ใช้ฐานค่าจ้างเดียวกันทั้งสองฝั่ง) — ตรวจยอดก่อนกดจ่าย";
@@ -514,11 +658,17 @@ public class PayrollController : ControllerBase
 
     [HttpGet("pnd3/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetPnd3(Guid companyId, int year, int month)
-        => Ok(new ApiResponse<object>(true, await _service.GeneratePnd3Async(companyId, year, month)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<object>(true, await _service.GeneratePnd3Async(companyId, year, month)));
+    }
 
     [HttpGet("sso/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetSso(Guid companyId, int year, int month)
-        => Ok(new ApiResponse<object>(true, await _service.GenerateSsoReportAsync(companyId, year, month)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<object>(true, await _service.GenerateSsoReportAsync(companyId, year, month)));
+    }
 
     /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1) เงินเดือน).
     /// employeeId=null → คืน Zip รวมทุกคน, ระบุ → คืน PDF เดียวคน.
@@ -536,8 +686,12 @@ public class PayrollController : ControllerBase
 
     // ===== SSO year-config (เพดานค่าจ้าง/อัตราสมทบ ปรับได้รายปี) =====
 
+    /// <remarks><c>EffectiveFromMonth</c>/<c>EffectiveToMonth</c> = ช่วงเดือนที่
+    /// อัตรานี้มีผล (ไม่ส่ง = ทั้งปี) — ประกาศลดอัตราสมทบของไทยออกเป็นช่วงเดือน
+    /// ⇒ ปีเดียวมีได้หลายแถว แต่ช่วงต้องไม่ทับกัน</remarks>
     public sealed record SsoYearConfigRequest(int Year, decimal WageCeiling,
-        decimal RatePercent = 5m, decimal EmployerRatePercent = 5m, string? Notes = null);
+        decimal RatePercent = 5m, decimal EmployerRatePercent = 5m, string? Notes = null,
+        int? EffectiveFromMonth = null, int? EffectiveToMonth = null);
 
     /// <summary>Effective SSO parameters per year: company overrides merged
     /// over the statutory default schedule (15,000 → 17,500 ปี 2026 →
@@ -554,22 +708,43 @@ public class PayrollController : ControllerBase
         var overrides = await db.SsoYearConfigs
             .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Year >= start && c.Year <= end)
             .ToListAsync();
-        var rows = Enumerable.Range(start, end - start + 1).Select(y =>
+        // หนึ่งปีมีได้หลายแถว (ประกาศลดอัตราเป็นช่วงเดือน) ⇒ คืนทุกช่วง
+        // ปีที่ไม่มี override เลย คืนแถวเดียว 1–12 = ค่าตามกฎหมาย
+        var rows = Enumerable.Range(start, end - start + 1).SelectMany(y =>
         {
-            var ov = overrides.FirstOrDefault(o => o.Year == y);
             var (defCeiling, defRate) = SsoRateSchedule.GetDefault(y);
-            var ceiling = ov?.WageCeiling ?? defCeiling;
-            var rate = ov != null ? ov.RatePercent / 100m : defRate;
-            return new
+            var ovs = overrides.Where(o => o.Year == y)
+                .OrderBy(o => o.EffectiveFromMonth).ToList();
+            if (ovs.Count == 0)
+                return new[] { new
+                {
+                    Year = y,
+                    WageCeiling = defCeiling,
+                    RatePercent = defRate * 100m,
+                    EmployerRatePercent = defRate * 100m,
+                    MaxMonthlyContribution = Math.Round(defCeiling * defRate, 2),
+                    EffectiveFromMonth = 1,
+                    EffectiveToMonth = 12,
+                    IsOverride = false,
+                    Notes = (string?)null,
+                } };
+            return ovs.Select(ov =>
             {
-                Year = y,
-                WageCeiling = ceiling,
-                RatePercent = rate * 100m,
-                EmployerRatePercent = ov?.EmployerRatePercent ?? defRate * 100m,
-                MaxMonthlyContribution = Math.Round(ceiling * rate, 2),
-                IsOverride = ov != null,
-                ov?.Notes,
-            };
+                var rate = ov.RatePercent / 100m;
+                var (f, t) = SsoRateSchedule.NormalizeRange(ov.EffectiveFromMonth, ov.EffectiveToMonth);
+                return new
+                {
+                    Year = y,
+                    WageCeiling = ov.WageCeiling,
+                    RatePercent = rate * 100m,
+                    EmployerRatePercent = ov.EmployerRatePercent,
+                    MaxMonthlyContribution = Math.Round(ov.WageCeiling * rate, 2),
+                    EffectiveFromMonth = f,
+                    EffectiveToMonth = t,
+                    IsOverride = true,
+                    ov.Notes,
+                };
+            }).ToArray();
         }).ToList();
         return Ok(new ApiResponse<object>(true, rows));
     }
@@ -582,18 +757,40 @@ public class PayrollController : ControllerBase
         Guid companyId, [FromBody] SsoYearConfigRequest req,
         [FromServices] Accounting.Data.AccountingDbContext db)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ตั้งค่าอัตราประกันสังคม", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         var year = req.Year > 2400 ? req.Year - 543 : req.Year;
         if (year < 2000 || year > 2100)
             return BadRequest(new ApiResponse<object>(false, null, "ปีไม่ถูกต้อง"));
         if (req.WageCeiling <= 0 || req.RatePercent <= 0 || req.RatePercent > 30)
             return BadRequest(new ApiResponse<object>(false, null, "เพดานค่าจ้าง/อัตราสมทบไม่ถูกต้อง"));
 
-        var existing = await db.SsoYearConfigs
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted);
+        var (fromM, toM) = SsoRateSchedule.NormalizeRange(req.EffectiveFromMonth, req.EffectiveToMonth);
+
+        var yearRows = await db.SsoYearConfigs
+            .Where(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted)
+            .ToListAsync();
+        // แถวเดิมของ "ช่วงเดียวกันเป๊ะ" = แก้ไข · ช่วงใหม่ = เพิ่มแถว
+        var existing = yearRows.FirstOrDefault(c =>
+            c.EffectiveFromMonth == fromM && c.EffectiveToMonth == toM);
         if (existing == null)
         {
-            existing = new Models.Entities.SsoYearConfig { CompanyId = companyId, Year = year };
+            // ช่วงที่ซ้อนอยู่ข้างในช่วงกว้างกว่าเป็นเรื่องปกติ (อัตราทั้งปี +
+            // ประกาศลดชั่วคราวบางเดือน) — ตัวอ่านเลือก "ช่วงที่แคบกว่า" เสมอ
+            // ⛔ ที่รับไม่ได้คือทับกันโดย**กว้างเท่ากัน** (เช่น 1–6 กับ 4–9)
+            // เพราะไม่มีเกณฑ์ตัดสิน ⇒ ผลจะขึ้นกับลำดับแถว
+            var clash = yearRows.FirstOrDefault(c => SsoRateSchedule.RangesAmbiguous(
+                c.EffectiveFromMonth, c.EffectiveToMonth, fromM, toM));
+            if (clash != null)
+                return BadRequest(new ApiResponse<object>(false, null,
+                    $"ช่วงเดือน {fromM}–{toM} ทับกับค่าที่ตั้งไว้แล้วแบบตัดสินไม่ได้ "
+                    + $"(เดือน {clash.EffectiveFromMonth}–{clash.EffectiveToMonth} ปี {year} กว้างเท่ากัน) — "
+                    + "แก้ช่วงเดิมก่อน หรือเลือกช่วงที่ไม่ทับกัน"));
+
+            existing = new Models.Entities.SsoYearConfig
+            {
+                CompanyId = companyId, Year = year,
+                EffectiveFromMonth = fromM, EffectiveToMonth = toM,
+            };
             db.SsoYearConfigs.Add(existing);
         }
         existing.WageCeiling = req.WageCeiling;
@@ -602,30 +799,46 @@ public class PayrollController : ControllerBase
         existing.Notes = req.Notes;
         existing.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
+        var scope = fromM == 1 && toM == 12 ? "ทั้งปี" : $"เดือน {fromM}–{toM}";
         return Ok(new ApiResponse<object>(true, new
         {
             existing.Year,
             existing.WageCeiling,
             existing.RatePercent,
+            existing.EffectiveFromMonth,
+            existing.EffectiveToMonth,
             MaxMonthlyContribution = Math.Round(existing.WageCeiling * existing.RatePercent / 100m, 2),
-        }, $"บันทึกค่าประกันสังคมปี {year} แล้ว — สมทบสูงสุด {existing.WageCeiling * existing.RatePercent / 100m:N2} บาท/เดือน"));
+        }, $"บันทึกค่าประกันสังคมปี {year} ({scope}) แล้ว — สมทบสูงสุด {existing.WageCeiling * existing.RatePercent / 100m:N2} บาท/เดือน"));
     }
 
     /// <summary>Remove a year override — the statutory default takes over.</summary>
     [HttpDelete("sso-config/{year:int}")]
     public async Task<ActionResult<ApiResponse<object>>> DeleteSsoConfig(
-        Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db)
+        Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db,
+        [FromQuery] int? fromMonth = null, [FromQuery] int? toMonth = null)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ลบค่าอัตราประกันสังคม", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         var y = year > 2400 ? year - 543 : year;
-        var existing = await db.SsoYearConfigs
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted);
-        if (existing == null)
+        // ปีเดียวมีได้หลายช่วงเดือน — ระบุช่วงเพื่อลบเฉพาะช่วงนั้น
+        // ไม่ระบุ = ลบทั้งปี (พฤติกรรมเดิมตอนที่หนึ่งปีมีได้แถวเดียว)
+        var rows = await db.SsoYearConfigs
+            .Where(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted)
+            .ToListAsync();
+        if (fromMonth.HasValue || toMonth.HasValue)
+        {
+            var (f, t) = SsoRateSchedule.NormalizeRange(fromMonth, toMonth);
+            rows = rows.Where(c => c.EffectiveFromMonth == f && c.EffectiveToMonth == t).ToList();
+        }
+        if (rows.Count == 0)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบค่าตั้งของปีนี้"));
-        existing.IsDeleted = true;
-        existing.UpdatedAt = DateTime.UtcNow;
+        foreach (var r in rows)
+        {
+            r.IsDeleted = true;
+            r.UpdatedAt = DateTime.UtcNow;
+        }
         await db.SaveChangesAsync();
-        return Ok(new ApiResponse<object>(true, null, $"ลบค่าตั้งปี {y} แล้ว — กลับไปใช้ตารางตามกฎหมาย"));
+        return Ok(new ApiResponse<object>(true, null,
+            $"ลบค่าตั้งปี {y} จำนวน {rows.Count} ช่วง แล้ว — กลับไปใช้ตารางตามกฎหมาย"));
     }
 
     // ===== Tax-rule config (PIT brackets + allowances รายปี) =====
@@ -691,7 +904,7 @@ public class PayrollController : ControllerBase
         Guid companyId, [FromBody] TaxRuleConfigRequest req,
         [FromServices] Accounting.Data.AccountingDbContext db)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ตั้งค่ากฎภาษีเงินได้", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         var year = req.FiscalYear > 2400 ? req.FiscalYear - 543 : req.FiscalYear;
         if (year < 2000 || year > 2100)
             return BadRequest(new ApiResponse<object>(false, null, "ปีไม่ถูกต้อง"));
@@ -729,7 +942,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> DeleteTaxRuleConfig(
         Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ลบกฎภาษีเงินได้", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         var y = year > 2400 ? year - 543 : year;
         var existing = await db.TaxRuleConfigs
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.FiscalYear == y && !c.IsDeleted);

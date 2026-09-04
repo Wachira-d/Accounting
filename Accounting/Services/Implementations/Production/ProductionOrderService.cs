@@ -51,11 +51,14 @@ public class ProductionOrderService : IProductionOrderService
     private readonly AccountingDbContext _db;
     private readonly IInventoryCostingService _costing;
     private readonly ILogger<ProductionOrderService> _logger;
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0)</summary>
+    private readonly Accounting.Services.Interfaces.IStockLedger _stock;
 
     public ProductionOrderService(AccountingDbContext db,
         IInventoryCostingService costing,
-        ILogger<ProductionOrderService> logger)
-    { _db = db; _costing = costing; _logger = logger; }
+        ILogger<ProductionOrderService> logger,
+        Accounting.Services.Interfaces.IStockLedger stock)
+    { _db = db; _costing = costing; _logger = logger; _stock = stock; }
 
     public async Task<ProductionOrder> CreateAsync(Guid companyId, string orderNumber,
         Guid bomId, decimal plannedQty, DateTime plannedStartAt,
@@ -91,11 +94,16 @@ public class ProductionOrderService : IProductionOrderService
             .Where(l => l.BomId == order.BomId && !l.IsDeleted)
             .Include(l => l.ComponentProduct)
             .ToListAsync(ct);
+        var shortageWarehouseId = order.WarehouseId
+            ?? await _stock.GetOrCreateDefaultWarehouseIdAsync(companyId, ct);
         var shortages = new List<ComponentShortage>();
         foreach (var line in bomLines)
         {
             var required = line.QuantityPerParent * order.PlannedQty;
-            var available = line.ComponentProduct?.CurrentStock ?? 0m;
+            // ของที่ "มี" คือของใน **คลังที่จะผลิต** ไม่ใช่ยอดรวมทั้งบริษัท —
+            // ครัวกลางเบิกของที่กองอยู่สาขาอื่นไม่ได้
+            var available = await _stock.GetQuantityAsync(
+                companyId, line.ComponentProductId, shortageWarehouseId, ct);
             if (available < required)
                 shortages.Add(new ComponentShortage(
                     line.ComponentProductId,
@@ -132,55 +140,55 @@ public class ProductionOrderService : IProductionOrderService
             .Where(l => l.BomId == order.BomId && !l.IsDeleted)
             .ToListAsync(ct);
 
+        // ธุรกรรมชัดเจน — ledger ล็อกด้วย pg_advisory_xact_lock ซึ่งไม่มีผลถ้าไม่มีธุรกรรม
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var warehouseId = order.WarehouseId
+            ?? await _stock.GetOrCreateDefaultWarehouseIdAsync(companyId, ct);
+
         decimal totalCost = 0m;
         // 1. Consume components (outbound)
         foreach (var line in bomLines)
         {
             var needed = line.QuantityPerParent * completedQty;
             if (needed <= 0) continue;
-            var unitCost = await _costing.ResolveOutboundCostAsync(line.ComponentProductId, needed, ct);
-            totalCost += unitCost * needed;
-            var component = await _db.Products.FirstOrDefaultAsync(p => p.Id == line.ComponentProductId, ct);
+            var component = await _db.Products.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == line.ComponentProductId, ct);
             if (component == null) continue;
-            component.CurrentStock -= needed;
-            _db.StockMovements.Add(new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = line.ComponentProductId,
-                MovementDate = completedAt,
-                MovementType = "OUT",
-                Quantity = needed,
-                UnitCost = unitCost,
-                Reference = $"ProdOrder-{order.OrderNumber}",
-                BalanceAfter = component.CurrentStock,
-            });
+            var move = await _stock.MoveAsync(new Accounting.Services.Interfaces.StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: line.ComponentProductId,
+                Quantity: -needed,            // − = เบิกออก (เดิมเขียนเป็นบวก)
+                MovementType: "OUT",
+                Reference: $"ProdOrder-{order.OrderNumber}",
+                WarehouseId: warehouseId,
+                MovementDate: completedAt,
+                Notes: "เบิกวัตถุดิบเข้าการผลิต",
+                CreatedBy: "system:production"), ct);
+            totalCost += move.TotalCost;
         }
 
         // 2. Produce parent (inbound at cumulative cost per unit)
         var parentUnitCost = completedQty > 0 ? totalCost / completedQty : 0m;
-        await _costing.RegisterReceiptAsync(order.ParentProductId, completedQty, parentUnitCost, ct);
-        var parent = await _db.Products.FirstOrDefaultAsync(p => p.Id == order.ParentProductId, ct);
-        if (parent != null)
-        {
-            parent.CurrentStock += completedQty;
-            _db.StockMovements.Add(new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = order.ParentProductId,
-                MovementDate = completedAt,
-                MovementType = "IN",
-                Quantity = completedQty,
-                UnitCost = parentUnitCost,
-                Reference = $"ProdOrder-{order.OrderNumber}",
-                BalanceAfter = parent.CurrentStock,
-            });
-        }
+        // ledger ปรับต้นทุนถัวเฉลี่ยให้เองเมื่อส่ง UnitCostOverride — ห้ามเรียก
+        // RegisterReceiptAsync ที่นี่ซ้ำ (มันจะคิดค่าเฉลี่ยสองรอบและ SaveChanges กลางทาง)
+        await _stock.MoveAsync(new Accounting.Services.Interfaces.StockMoveRequest(
+            CompanyId: companyId,
+            ProductId: order.ParentProductId,
+            Quantity: completedQty,           // + = รับสินค้าสำเร็จรูปเข้า
+            MovementType: "IN",
+            Reference: $"ProdOrder-{order.OrderNumber}",
+            WarehouseId: warehouseId,
+            MovementDate: completedAt,
+            UnitCostOverride: parentUnitCost,
+            Notes: "รับสินค้าสำเร็จรูปจากการผลิต",
+            CreatedBy: "system:production"), ct);
 
         order.Status = "Completed";
         order.CompletedQty = completedQty;
         order.CompletedAt = completedAt;
         order.CumulativeComponentCost = totalCost;
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         _logger.LogInformation(
             "Production order {Order} completed: {Qty} parent at cost {Cost:N2}/unit (total RM {Total:N2})",
             order.OrderNumber, completedQty, parentUnitCost, totalCost);

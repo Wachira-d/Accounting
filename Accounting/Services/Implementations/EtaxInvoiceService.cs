@@ -716,52 +716,20 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // "ใบเสร็จรับเงิน/ใบกำกับภาษี" combo → use TaxInvoice schema with T03.
         // (Pure standalone Receipt T01 isn't currently exposed; companies that
         // aren't VAT-registered shouldn't be issuing e-Tax anyway.)
-        var rootElementName = doc.DocumentType switch
-        {
-            DocumentType.TaxInvoice => "TaxInvoice_CrossIndustryInvoice",
-            DocumentType.Receipt => "TaxInvoice_CrossIndustryInvoice",   // T03 → TaxInvoice schema
-            DocumentType.DebitNote => "DebitCreditNote_CrossIndustryInvoice",
-            DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
-            _ => "TaxInvoice_CrossIndustryInvoice"
-        };
-        var ramSuffix = doc.DocumentType switch
-        {
-            DocumentType.TaxInvoice => "TaxInvoice_ReusableAggregateBusinessInformationEntity",
-            DocumentType.Receipt => "TaxInvoice_ReusableAggregateBusinessInformationEntity",
-            DocumentType.DebitNote => "DebitCreditNote_ReusableAggregateBusinessInformationEntity",
-            DocumentType.CreditNote => "DebitCreditNote_ReusableAggregateBusinessInformationEntity",
-            _ => "TaxInvoice_ReusableAggregateBusinessInformationEntity"
-        };
+        // schema root / ram namespace / TypeCode / ชื่อไทย — มาจากแผนที่กลาง
+        // ตัวเดียว (Helpers/EtaxDocumentTypeMap) เดิมคัดลอกด้วยมือไว้ 4 ที่
+        var rootElementName = Accounting.Helpers.EtaxDocumentTypeMap.SchemaRoot(doc.DocumentType);
+        var ramSuffix = Accounting.Helpers.EtaxDocumentTypeMap.RamSuffix(doc.DocumentType);
         var rsm = XNamespace.Get($"urn:etda:uncefact:data:standard:{rootElementName}:2");
         var ram = XNamespace.Get($"urn:etda:uncefact:data:standard:{ramSuffix}:2");
 
         // TypeCode per UN/EDIFACT 1001 + ETDA Schematron-validated codelist
         // ใบแจ้งหนี้/ใบกำกับภาษี (combined header) ต้องใช้ T02 ให้ชื่อใน XML
         // ตรงกับหัวกระดาษ PDF (TypeCode-name pairing บังคับ exact ตาม Schematron)
-        var docTypeCode = doc.DocumentType switch
-        {
-            // ขายเงินสด B2B (IssuedAsCashReceipt) → T03 ใบเสร็จรับเงิน/ใบกำกับภาษี
-            // (เช็คก่อน Combined/388 เพราะ cash sale = receipt+tax invoice ในใบเดียว)
-            DocumentType.TaxInvoice when doc.IssuedAsCashReceipt => "T03",
-            DocumentType.TaxInvoice when doc.CombinedInvoiceTaxInvoice => "T02",  // ใบแจ้งหนี้/ใบกำกับภาษี
-            DocumentType.TaxInvoice => "388",
-            DocumentType.Receipt => "T03",       // ใบเสร็จรับเงิน/ใบกำกับภาษี
-            DocumentType.DebitNote => "80",
-            DocumentType.CreditNote => "81",
-            _ => "388"
-        };
+        var docTypeCode = Accounting.Helpers.EtaxDocumentTypeMap.TypeCode(doc);
         // Name MUST match the TypeCode-name pairing per Schematron TIV-Document-003 /
-        // DCN equivalents — exact strings, no extra qualifiers
-        var docTypeName = doc.DocumentType switch
-        {
-            DocumentType.TaxInvoice when doc.IssuedAsCashReceipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",  // T03 pairing
-            DocumentType.TaxInvoice when doc.CombinedInvoiceTaxInvoice => "ใบแจ้งหนี้/ใบกำกับภาษี",
-            DocumentType.TaxInvoice => "ใบกำกับภาษี",
-            DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",   // exact match required
-            DocumentType.DebitNote => "ใบเพิ่มหนี้",
-            DocumentType.CreditNote => "ใบลดหนี้",
-            _ => "ใบกำกับภาษี"
-        };
+        // DCN equivalents — exact strings, no extra qualifiers (แผนที่กลางตัวเดียว)
+        var docTypeName = Accounting.Helpers.EtaxDocumentTypeMap.NameTh(doc);
         // PurposeCode per ETDA ThaiMessageFunctionCode (rd1225) — required for CN/DN.
         // ต้อง map ตามเหตุผลจริงของใบ (สินค้า CDNG* / บริการ CDNS*) — เดิม hardcode
         // CDNG01 ทุกใบ ทำให้ CN คืนสินค้าแจ้ง RD เป็น "ลดราคา" ผิดประเภท

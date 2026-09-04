@@ -9,10 +9,19 @@ public record CreateEmployeeRequest(
     DateTime StartDate, decimal BaseSalary, string? SalaryType,
     string? BankName, string? BankAccountNumber,
     string? BankAccountName, string? SocialSecurityNumber,
-    string? SocialSecurityHospital, bool IsSubjectToSocialSecurity,
-    bool HasProvidentFund, decimal ProvidentFundEmployeePercent,
-    decimal ProvidentFundEmployerPercent,
-    Guid? BranchId, Guid? DimensionId,
+    string? SocialSecurityHospital,
+    // ═══ D-S1: ไม่ส่ง = **ไม่หัก ปกส.** เงียบ ๆ ═══
+    // เดิมเป็นพารามิเตอร์บังคับไม่มี default ⇒ ฟอร์มที่ไม่ส่งช่องนี้ (payroll.html)
+    // ได้ `false` โดยไม่มีอะไรเตือน ขณะที่อีกฟอร์ม (employees.html) ส่ง = drift ·
+    // ผลตาม ม.33: ไม่หัก ไม่นำส่ง ไม่ขึ้น สปส.1-10/1-03 ⇒ เงินเพิ่ม §49 และ
+    // ลูกจ้างเสียสิทธิ์ · แก้ย้อนหลังผ่าน UI ก็ไม่ได้เพราะ Update DTO ไม่มีช่องนี้
+    // ⇒ default = true (ลูกจ้างส่วนใหญ่อยู่ในระบบ ปกส.) — "ไม่รู้" ต้องเข้าทาง
+    //   ที่ถูกกฎหมาย ไม่ใช่ทางที่เงียบที่สุด
+    bool IsSubjectToSocialSecurity = true,
+    bool HasProvidentFund = false,
+    decimal ProvidentFundEmployeePercent = 0m,
+    decimal ProvidentFundEmployerPercent = 0m,
+    Guid? BranchId = null, Guid? DimensionId = null,
     // Org structure (preferred over the legacy string Department/Position)
     Guid? DepartmentId = null, Guid? PositionId = null,
     Guid? DirectManagerId = null,
@@ -26,7 +35,21 @@ public record CreateEmployeeRequest(
     string? ExternalSystem = null,
     /// <summary>LINE User ID ของพนักงาน (รูปแบบ Uxxxxxxxx) — ใช้ส่งแจ้งเตือน
     /// ผลอนุมัติลา/สลิปเงินเดือนตรงถึงพนักงานโดยไม่ต้องเป็น user ในระบบ.</summary>
-    string? LineId = null);
+    string? LineId = null,
+    // ═══ ค่าลดหย่อนภาษี §47 (D-T2) ═══
+    // 8 ช่องนี้มีอยู่บน entity + คอลัมน์ในฐานมาตลอด และเครื่องคิดภาษีก็อ่าน
+    // ครบทุกช่อง — แต่ **ไม่มีจุดเขียนเลยทั้งเรพ** (ไม่มีใน DTO ไม่มีในฟอร์ม)
+    // ⇒ ทุกคนได้ลดหย่อนแค่ 60,000 ⇒ พนักงานที่มีคู่สมรส + บุตร 2 คน เงินเดือน
+    // 50,000 ถูกหักภาษี 31,925 ทั้งที่ควรเป็น 6,475 (4.9 เท่า)
+    // "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้" — ครึ่งเซิร์ฟเวอร์ ship ไปคนเดียว
+    bool HasSpouseAllowance = false,
+    int ChildAllowanceCount = 0,
+    int SecondAndLaterChildren = 0,
+    int ParentAllowanceCount = 0,
+    decimal LifeInsurancePremium = 0m,
+    decimal RmfSsfContribution = 0m,
+    decimal DonationAmount = 0m,
+    int TaxAllowances = 0);
 
 public record UpdateEmployeeRequest(
     string? Position, string? Department, string? Phone,
@@ -45,7 +68,26 @@ public record UpdateEmployeeRequest(
     string? ExternalId = null,
     string? ExternalSystem = null,
     string? SalaryType = null,
-    string? LineId = null);
+    string? LineId = null,
+    /// <summary>D-S1 — เดิมไม่มีช่องนี้ใน Update เลย ⇒ พนักงานที่ถูกตั้งเป็น
+    /// false ตอนสร้าง แก้กลับผ่าน UI ไม่ได้ตลอดกาล</summary>
+    bool? IsSubjectToSocialSecurity = null,
+    // ═══ ค่าลดหย่อนภาษี §47 (D-T2) ═══
+    // 8 ช่องนี้มีอยู่บน entity + คอลัมน์ในฐานมาตลอด และเครื่องคิดภาษีก็อ่าน
+    // ครบทุกช่อง — แต่ **ไม่มีจุดเขียนเลยทั้งเรพ** (ไม่มีใน DTO ไม่มีในฟอร์ม)
+    // ⇒ ทุกคนได้ลดหย่อนแค่ 60,000 ⇒ พนักงานที่มีคู่สมรส + บุตร 2 คน เงินเดือน
+    // 50,000 ถูกหักภาษี 31,925 ทั้งที่ควรเป็น 6,475 (4.9 เท่า)
+    // "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้" — ครึ่งเซิร์ฟเวอร์ ship ไปคนเดียว
+    // nullable ทั้งหมด — ไม่ส่ง = ไม่แตะค่าเดิม (ฟอร์มที่ยังไม่มีแท็บนี้
+    // ต้องไม่ล้างค่าลดหย่อนของพนักงานทิ้งโดยไม่ตั้งใจ)
+    bool? HasSpouseAllowance = null,
+    int? ChildAllowanceCount = null,
+    int? SecondAndLaterChildren = null,
+    int? ParentAllowanceCount = null,
+    decimal? LifeInsurancePremium = null,
+    decimal? RmfSsfContribution = null,
+    decimal? DonationAmount = null,
+    int? TaxAllowances = null);
 
 public record EmployeeResponse(
     Guid Id, string EmployeeCode, string TitleTh,
@@ -65,7 +107,17 @@ public record EmployeeResponse(
     DateTime? LastSyncedAt = null,
     string? Phone = null,
     string? Email = null,
-    string? LineId = null);
+    string? LineId = null,
+    bool IsSubjectToSocialSecurity = true,
+    // echo กลับ — เก็บแล้วต้องแสดงได้ ไม่งั้น "เปิดแก้แล้วบันทึก ค่าหายเงียบ ๆ"
+    bool HasSpouseAllowance = false,
+    int ChildAllowanceCount = 0,
+    int SecondAndLaterChildren = 0,
+    int ParentAllowanceCount = 0,
+    decimal LifeInsurancePremium = 0m,
+    decimal RmfSsfContribution = 0m,
+    decimal DonationAmount = 0m,
+    int TaxAllowances = 0);
 
 /// <summary>Bulk-sync envelope for employees from an external HRIS. Each
 /// row is upserted on (CompanyId, ExternalSystem, ExternalId). Rows
@@ -92,9 +144,20 @@ public record PayrollItemResponse(
     string CalculationType, decimal? FixedAmount,
     decimal? Percentage, bool IsTaxable, bool IsActive);
 
+/// <summary>สร้างรอบเงินเดือน
+///
+/// <para>⚠️ <c>PeriodStart</c>/<c>PeriodEnd</c> เป็น <b>nullable</b> (D-F1) —
+/// เดิมเป็น <c>DateTime</c> ธรรมดา ผู้เรียกที่ไม่ส่งมาจะได้ <c>default</c>
+/// ทั้งคู่ ⇒ ด่าน <c>PeriodStart &gt;= PeriodEnd</c> เป็นจริงเสมอ ⇒
+/// <b>สร้างรอบจากหน้าจอถูกปฏิเสธทุกครั้ง</b> ไม่มีใครสร้างรอบสำเร็จเลย
+/// (ทางเดียวที่ใช้ได้คือ <c>POST /runs/import</c> ของคู่ค้า) ·
+/// ไม่ส่ง = ใช้ต้นเดือน–สิ้นเดือนของงวดนั้น</para>
+///
+/// <para><c>Year</c> รับได้ทั้ง ค.ศ. และ พ.ศ. — เซิร์ฟเวอร์ normalize เอง
+/// เพราะหน้าจอไทยแสดง พ.ศ. เป็นปกติ</para></summary>
 public record CreatePayrollRunRequest(
     string Name, int Year, int Month,
-    DateTime PayDate, DateTime PeriodStart, DateTime PeriodEnd);
+    DateTime PayDate, DateTime? PeriodStart = null, DateTime? PeriodEnd = null);
 
 /// <summary>Import payroll run จากระบบนอกที่คำนวณยอดเองแล้ว (เช่น TakeTime).
 /// recalculate=false → NextAcc ใช้ยอดที่ส่งมาตรง ๆ ไม่คำนวณใหม่ → run ออกมา

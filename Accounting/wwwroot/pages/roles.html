@@ -213,7 +213,7 @@
       const role = await Layout.ensureMyRole();
       if (role !== 'Owner' && role !== 'SystemAdmin' && !Layout.user?.isSystemAdmin) {
         Layout.toast('ต้องเป็นเจ้าของบริษัทเท่านั้นจึงจะจัดการ Role ได้', 'error');
-        setTimeout(() => { window.location.href = '/app.html'; }, 1200);
+        setTimeout(() => { window.location.href = Layout.dashboardUrl(); }, 1200);
         return;
       }
 
@@ -334,7 +334,7 @@
           <div class="perm-items" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr))">`;
         sec.items.forEach(item => {
           const checked = set.has(item.id) ? 'checked' : '';
-          const tooltip = item.description ? ` title="${item.description.replace(/"/g,'&quot;')}"` : '';
+          const tooltip = item.description ? ` title="${Layout.esc(item.description)}"` : '';
           html += `<label class="perm-item"${tooltip}>
             <input type="checkbox" value="${item.id}" ${checked} class="perm-cb">
             <span class="perm-icon">${item.icon || '🔐'}</span>
@@ -495,7 +495,7 @@
               </div>
             </div>
             <p style="font-size:12px;color:#475569;line-height:1.5;margin:0 0 10px">${Layout.esc(t.description)}</p>
-            <button class="btn btn-sm btn-primary" style="width:100%" onclick="Page.applyTemplate('${t.key}','${Layout.esc(t.name).replace(/'/g,'&apos;')}')">+ สร้างจาก template นี้</button>
+            <button class="btn btn-sm btn-primary" style="width:100%" onclick="Page.applyTemplate('${t.key}','${Layout.jsArg(t.name)}')">+ สร้างจาก template นี้</button>
           </div>
         `).join('');
       } catch (e) { grid.innerHTML = '<span style="color:#dc2626">' + Layout.esc(e.message) + '</span>'; }

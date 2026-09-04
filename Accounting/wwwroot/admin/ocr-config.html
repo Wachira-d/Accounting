@@ -1223,13 +1223,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         if (d.modelId) lines.push(`Model:    ${d.modelId}`);
         if (d.locale) lines.push(`Locale:   ${d.locale}`);
         if (d.features?.length) lines.push(`Features: ${d.features.join(', ')}`);
-        if (d.queryString) lines.push(`Query:    ${d.queryString}`);
+        if (d.queryString) lines.push(`Query:    ${AdminLayout.esc(d.queryString)}`);
         if (d.elapsedMs != null) lines.push(`Elapsed:  ${d.elapsedMs}ms`);
         if (d.overallConfidence != null) lines.push(`Conf:     ${Math.round(d.overallConfidence * 100)}%`);
         if (d.foundDocument != null) lines.push(`Found:    ${d.foundDocument ? 'yes' : 'no'}`);
         if (d.textLength != null) lines.push(`TextLen:  ${d.textLength} chars`);
-        if (d.error) lines.push(`\nError:    ${d.error}`);
-        if (d.exceptionType) lines.push(`ExType:   ${d.exceptionType}`);
+        if (d.error) lines.push(`\nError:    ${AdminLayout.esc(d.error)}`);
+        if (d.exceptionType) lines.push(`ExType:   ${AdminLayout.esc(d.exceptionType)}`);
         if (d.warnings?.length) lines.push(`\nWarnings:\n  • ${d.warnings.join('\n  • ')}`);
         if (d.reasons?.length) lines.push(`\nPlan reasons:\n  • ${d.reasons.join('\n  • ')}`);
         det.textContent = lines.join('\n');
@@ -1423,12 +1423,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         console.log('[ocr-config.html] response body:', res);
         if (!r.ok) {
           document.getElementById('systemParsedFields').innerHTML =
-            `<span style="color:#dc2626">❌ HTTP ${r.status}: ${res?.message || res?.title || 'Server error'} — endpoint อาจยังไม่ deploy</span>`;
+            `<span style="color:#dc2626">❌ HTTP ${r.status}: ${AdminLayout.esc(res?.message || res?.title || 'Server error')} — endpoint อาจยังไม่ deploy</span>`;
           return;
         }
         if (!r.ok || !res?.success) {
           document.getElementById('systemParsedFields').innerHTML =
-            `<span style="color:#dc2626">❌ ${res?.message || res?.data?.error || 'ผิดพลาด'}</span>`;
+            `<span style="color:#dc2626">❌ ${AdminLayout.esc(res?.message || res?.data?.error || 'ผิดพลาด')}</span>`;
           return;
         }
         const d = res.data || {};
@@ -1518,7 +1518,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         }
       } catch (e) {
         document.getElementById('systemParsedFields').innerHTML =
-          `<span style="color:#dc2626">❌ ${e.message}</span>`;
+          `<span style="color:#dc2626">❌ ${AdminLayout.esc(e.message)}</span>`;
       }
     }
 

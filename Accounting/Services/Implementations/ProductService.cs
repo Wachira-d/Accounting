@@ -13,12 +13,16 @@ public class ProductService : IProductService
     private readonly AccountingDbContext _db;
     private readonly IImageProcessingService _images;
     private readonly IWebHostEnvironment _env;
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0)</summary>
+    private readonly IStockLedger _stock;
 
-    public ProductService(AccountingDbContext db, IImageProcessingService images, IWebHostEnvironment env)
+    public ProductService(AccountingDbContext db, IImageProcessingService images, IWebHostEnvironment env,
+        IStockLedger stock)
     {
         _db = db;
         _images = images;
         _env = env;
+        _stock = stock;
     }
 
     // ===== Product images (gallery) =====
@@ -27,8 +31,11 @@ public class ProductService : IProductService
     {
         var p = await _db.Products.FirstOrDefaultAsync(x => x.Id == productId && x.CompanyId == companyId && !x.IsDeleted)
             ?? throw new InvalidOperationException("ไม่พบสินค้า");
-        if (!_images.IsProcessableImage(contentType) && contentType?.ToLowerInvariant() != "image/svg+xml")
-            throw new InvalidOperationException("รองรับเฉพาะไฟล์รูปภาพ (JPG/PNG/WebP/GIF/SVG)");
+        // ตัวกรองชั้นแรก — ตัวตัดสินจริงคือ magic bytes ใน ProcessAndSaveAsync (F-03) ·
+        // SVG ถูกถอดออกทั้งชนิด (XML ที่ฝัง <script> ได้ = HTML ปลอมเป็นรูป)
+        if (!_images.IsProcessableImage(contentType))
+            throw new Accounting.Helpers.UnsupportedUploadException(
+                "รองรับเฉพาะไฟล์รูปภาพ (JPG/PNG/WebP/GIF)");
 
         var dir = Path.Combine(_env.WebRootPath, "uploads", "products", companyId.ToString());
         var web = $"/uploads/products/{companyId}";
@@ -195,75 +202,48 @@ public class ProductService : IProductService
 
     public async Task<StockMovementResponse> AdjustStockAsync(Guid companyId, StockAdjustmentRequest request, string userId)
     {
-        // CONCURRENCY FIX: previously two parallel AdjustStockAsync calls for
-        // the same product would each read CurrentStock = X, add their qty,
-        // and save — last write wins and the other movement's quantity is
-        // silently lost. Take a Postgres advisory lock keyed by the product
-        // id so the read-modify-write becomes serial per-product. Auto-
-        // releases on transaction end (we wrap in a txn below).
+        // เดิมเมธอดนี้เขียนสต็อก **เอง** และเขียนไม่สอดคล้องกันในตัวเอง:
+        //   `movement.Quantity = request.Quantity`  (ไม่มีเครื่องหมาย — OUT ก็เป็นบวก)
+        //   `ws.Quantity += qty`                    (มีเครื่องหมาย)
+        // ⇒ รายงานที่ SUM จาก StockMovement ได้ยอดเบิกเป็น "รับเข้า" ทุกแถว ขณะที่ยอด
+        // ในคลังถูก · และ `WarehouseStock` ถูกแตะเฉพาะตอน **ระบุคลังมา** ⇒ การปรับสต็อก
+        // แบบไม่ระบุคลังทำให้สองตัวเลขห่างกันขึ้นเรื่อย ๆ. ตอนนี้เดินผ่าน ledger ตัวเดียว
         await using var txn = await _db.Database.BeginTransactionAsync();
-        // HashCode.Combine สุ่ม seed ต่อ process ⇒ สอง instance ล็อกคนละคีย์
-        // = ปรับสต็อกพร้อมกันแล้วยอดหายจริง (บั๊กที่ล็อกนี้ตั้งใจกันตั้งแต่ต้น)
-        var prodLockKey = Accounting.Helpers.AdvisoryLockKey.For(
-            Accounting.Helpers.AdvisoryLockKey.StockAdjust, request.ProductId.ToString("N"));
-        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", prodLockKey);
 
-        var product = await _db.Products
+        var product = await _db.Products.AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == request.ProductId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบสินค้า");
 
+        var warehouseId = request.WarehouseId
+            ?? await _stock.GetOrCreateDefaultWarehouseIdAsync(companyId);
         var qty = request.MovementType == "OUT" ? -Math.Abs(request.Quantity) : Math.Abs(request.Quantity);
-        if (request.MovementType == "OUT" && product.CurrentStock + qty < 0)
-            throw new InvalidOperationException(
-                $"สต็อกไม่เพียงพอ: คงเหลือ {product.CurrentStock} ต้องการเบิก {Math.Abs(qty)}");
-        product.CurrentStock += qty;
 
-        // Multi-warehouse: ถ้าไม่ระบุ → resolve default warehouse ของบริษัท
-        var warehouseId = request.WarehouseId;
-        if (warehouseId == null)
+        // ด่านสต็อกไม่พอ ต้องดูยอด **ในคลังนั้น** ไม่ใช่ยอดรวมทั้งบริษัท — ไม่งั้นสาขา A
+        // เบิกของที่กองอยู่สาขา B ได้ (ยอดรวมพอ แต่ของไม่ได้อยู่ที่นี่)
+        if (qty < 0)
         {
-            warehouseId = await _db.Set<Warehouse>().AsNoTracking()
-                .Where(w => w.CompanyId == companyId && w.IsDefault && w.IsActive && !w.IsDeleted)
-                .Select(w => (Guid?)w.Id).FirstOrDefaultAsync();
+            var onHand = await _stock.GetQuantityAsync(companyId, request.ProductId, warehouseId);
+            if (onHand + qty < 0)
+                throw new InvalidOperationException(
+                    $"สต็อกไม่เพียงพอในคลังนี้: คงเหลือ {onHand:0.##} ต้องการเบิก {Math.Abs(qty):0.##}");
         }
 
-        var movement = new StockMovement
-        {
-            CompanyId = companyId,
-            ProductId = request.ProductId,
-            MovementDate = DateTime.UtcNow,
-            MovementType = request.MovementType,
-            Quantity = request.Quantity,
-            UnitCost = request.UnitCost ?? product.CostPrice,
-            BalanceAfter = product.CurrentStock,
-            Reference = request.Reference,
-            Notes = request.Notes,
-            WarehouseId = warehouseId,
-            LotNumber = request.LotNumber,
-            CreatedBy = userId
-        };
+        var move = await _stock.MoveAsync(new StockMoveRequest(
+            CompanyId: companyId,
+            ProductId: request.ProductId,
+            Quantity: qty,
+            MovementType: request.MovementType,
+            Reference: request.Reference,
+            WarehouseId: warehouseId,
+            UnitCostOverride: request.UnitCost,
+            LotNumber: request.LotNumber,
+            Notes: request.Notes,
+            CreatedBy: userId));
 
-        _db.StockMovements.Add(movement);
-
-        // ปรับ WarehouseStock per location เมื่อระบุ warehouse
-        if (warehouseId.HasValue)
-        {
-            var ws = await _db.Set<WarehouseStock>().FirstOrDefaultAsync(x =>
-                x.WarehouseId == warehouseId.Value && x.ProductId == request.ProductId);
-            if (ws == null)
-            {
-                ws = new WarehouseStock
-                {
-                    CompanyId = companyId, WarehouseId = warehouseId.Value,
-                    ProductId = request.ProductId, Quantity = 0m,
-                };
-                _db.Add(ws);
-            }
-            ws.Quantity += qty;       // qty เป็น signed อยู่แล้ว (OUT = ลบ)
-        }
         await _db.SaveChangesAsync();
         await txn.CommitAsync();
 
+        var movement = move.Movement;
         return new StockMovementResponse(movement.Id, movement.ProductId, product.Name,
             movement.MovementDate, movement.MovementType, movement.Quantity,
             movement.UnitCost, movement.BalanceAfter, movement.Reference, movement.Notes);
@@ -525,32 +505,32 @@ public class ProductService : IProductService
         if (count.Status == "Completed")
             throw new InvalidOperationException("ใบตรวจนับนี้ปิดแล้ว");
 
+        await using var txn = await _db.Database.BeginTransactionAsync();
+        // ใบตรวจนับผูกคลังได้ (`count.WarehouseId`) — เดิมโค้ดตั้ง
+        // `product.CurrentStock = line.CountedQty` ตรง ๆ ⇒ **นับคลังเดียวแล้วเขียนทับ
+        // ยอดรวมทุกคลังของบริษัท** (นับสาขา A ได้ 10 ⇒ ระบบเชื่อว่าทั้งบริษัทมี 10
+        // ทั้งที่สาขา B ยังมีของอยู่). `SetAbsolute` ตั้งยอดของ **คลังนั้น** แล้วให้
+        // ledger ปรับยอดรวมด้วยผลต่าง
         foreach (var line in count.Lines)
         {
             if (line.Variance == 0) continue;
 
-            var product = await _db.Products.FindAsync(line.ProductId);
-            if (product == null) continue;
-
-            product.CurrentStock = line.CountedQty;
-
-            _db.StockMovements.Add(new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = line.ProductId,
-                MovementDate = DateTime.UtcNow,
-                MovementType = "ADJUST",
-                Quantity = line.Variance,
-                UnitCost = product.CostPrice,
-                BalanceAfter = line.CountedQty,
-                Reference = count.CountNumber,
-                Notes = $"ปรับจากตรวจนับ {count.CountNumber} (ระบบ:{line.SystemQty} นับได้:{line.CountedQty})",
-                CreatedBy = userId
-            });
+            await _stock.MoveAsync(new StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: line.ProductId,
+                Quantity: line.CountedQty,        // SetAbsolute ⇒ นี่คือ "ยอดที่นับได้"
+                MovementType: "ADJUST",
+                Reference: count.CountNumber,
+                WarehouseId: count.WarehouseId,
+                UnitCostOverride: line.UnitCost > 0 ? line.UnitCost : null,
+                Notes: $"ปรับจากตรวจนับ {count.CountNumber} (ระบบ:{line.SystemQty} นับได้:{line.CountedQty})",
+                CreatedBy: userId,
+                SetAbsolute: true));
         }
 
         count.Status = "Completed";
         await _db.SaveChangesAsync();
+        await txn.CommitAsync();
         return await MapStockCountAsync(count);
     }
 
@@ -734,17 +714,11 @@ public class ProductService : IProductService
                         f.CompanyId == companyId && f.StartDate <= request.SnapshotDate
                         && f.EndDate >= request.SnapshotDate && f.Status == FiscalPeriodStatus.Open);
 
-                    // Find next JV number
-                    var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-                    var pattern = $"JV-{yearMonth}-";
-                    var lastJe = await _db.JournalEntries
-                        .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
-                        .OrderByDescending(j => j.EntryNumber)
-                        .Select(j => j.EntryNumber)
-                        .FirstOrDefaultAsync();
-                    int nextSeq = 1;
-                    if (lastJe != null && int.TryParse(lastJe[pattern.Length..], out var lastNum))
-                        nextSeq = lastNum + 1;
+                    // เลข JE — ตัวออกเลขตัวเดียวของระบบ (ล็อก + integer-max +
+                    // นับแถวที่ค้างใน change tracker) · เดิมออกเองแล้วเรียงแบบ
+                    // ข้อความ ⇒ วนกลับทับของเดิมเมื่อทะลุ 9999 (ผลตรวจ F-08)
+                    var entryNumber = await Journal.JournalEntryBuilder
+                        .NextJournalNumberAsync(_db, companyId, "JV", DateTime.UtcNow);
 
                     var journalLines = new List<JournalEntryLine>();
                     if (adjustmentAmount > 0)
@@ -764,7 +738,7 @@ public class ProductService : IProductService
                     var je = new JournalEntry
                     {
                         CompanyId = companyId,
-                        EntryNumber = $"{pattern}{nextSeq:D4}",
+                        EntryNumber = entryNumber,
                         EntryDate = request.SnapshotDate,
                         JournalType = JournalType.General,
                         Description = $"ปรับปรุงสินค้าคงเหลือ ณ {request.SnapshotDate:dd/MM/yyyy}",
@@ -995,23 +969,15 @@ public class ProductService : IProductService
 
         var usageCost = request.Quantity * avgCost;
 
-        // Deduct stock
-        product.CurrentStock -= request.Quantity;
-
-        // Create stock movement
-        _db.StockMovements.Add(new StockMovement
-        {
-            CompanyId = companyId,
-            ProductId = product.Id,
-            MovementDate = DateTime.UtcNow,
-            MovementType = "OUT",
-            Quantity = request.Quantity,
-            UnitCost = avgCost,
-            BalanceAfter = product.CurrentStock,
-            Reference = request.Reference,
-            Notes = $"เบิกใช้วัสดุ: {request.Purpose ?? "-"} แผนก: {request.Department ?? "-"}",
-            CreatedBy = userId
-        });
+        await _stock.MoveAsync(new StockMoveRequest(
+            CompanyId: companyId,
+            ProductId: product.Id,
+            Quantity: -request.Quantity,      // − = เบิกออก (เดิมเขียนเป็นบวก ⇒ รายงานอ่านว่ารับเข้า)
+            MovementType: "OUT",
+            Reference: request.Reference,
+            UnitCostOverride: avgCost,
+            Notes: $"เบิกใช้วัสดุ: {request.Purpose ?? "-"} แผนก: {request.Department ?? "-"}",
+            CreatedBy: userId));
 
         // Create usage log
         var usage = new SuppliesUsageLog
@@ -1047,16 +1013,9 @@ public class ProductService : IProductService
 
             if (suppliesAccount != null && expenseAccount != null)
             {
-                var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-                var pattern = $"JV-{yearMonth}-";
-                var lastJe = await _db.JournalEntries
-                    .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pattern))
-                    .OrderByDescending(j => j.EntryNumber)
-                    .Select(j => j.EntryNumber)
-                    .FirstOrDefaultAsync();
-                int nextSeq = 1;
-                if (lastJe != null && int.TryParse(lastJe[pattern.Length..], out var lastNum))
-                    nextSeq = lastNum + 1;
+                // เลข JE — ตัวออกเลขตัวเดียวของระบบ (เหตุผลเดียวกับอีกจุดในไฟล์นี้)
+                var entryNumber = await Journal.JournalEntryBuilder
+                    .NextJournalNumberAsync(_db, companyId, "JV", DateTime.UtcNow);
 
                 var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
                     f.CompanyId == companyId && f.StartDate <= DateTime.UtcNow
@@ -1065,7 +1024,7 @@ public class ProductService : IProductService
                 var je = new JournalEntry
                 {
                     CompanyId = companyId,
-                    EntryNumber = $"{pattern}{nextSeq:D4}",
+                    EntryNumber = entryNumber,
                     EntryDate = DateTime.UtcNow,
                     JournalType = JournalType.General,
                     Description = $"เบิกใช้วัสดุ: {product.Name} จำนวน {request.Quantity} {product.Unit} ({request.Department ?? "ทั่วไป"})",

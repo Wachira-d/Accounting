@@ -51,7 +51,14 @@ public interface ICmsCommerceService
     /// confirm payment + sync ERP + approve doc (auto-post JE) + record
     /// cash receipt + deduct stock + generate e-Tax (ถ้าเปิด).
     /// Idempotent: เรียกซ้ำได้ไม่กระทบ.</summary>
-    Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId, Guid? paymentId, string actor);
+    /// <param name="moneyInAccountId">ผังบัญชีที่ขา "เงินเข้า" ต้องลง — <c>null</c> =
+    /// ธนาคาร/เงินสดตามปกติ · มีค่า = บัญชีพัก <b>11340 ลูกหนี้ผู้ให้บริการรับชำระเงิน</b>
+    /// (เงินยังอยู่กับ gateway จะเข้าธนาคาร T+n หลังหักค่าธรรมเนียม) ·
+    /// ค่านี้มาจาก <c>IPaymentIntentService.ResolveMoneyInAccountAsync</c> ตัวเดียว
+    /// <para><b>เป็นพารามิเตอร์ของเมธอด ไม่ใช่ช่องใน DTO โดยตั้งใจ</b> — เหตุผลเดียวกับ
+    /// <c>originModule</c>: ถ้าอยู่ใน DTO ผู้เรียก API จะเลือกผังบัญชีเองได้</para></param>
+    Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId, Guid? paymentId,
+        string actor, Guid? moneyInAccountId = null);
 
     // Public payment flow
     Task<UploadSlipResponse?> RecordPaymentSlipAsync(Guid companyId, Guid siteId, Guid orderId, IFormFile file);

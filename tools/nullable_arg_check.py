@@ -56,7 +56,16 @@ for f in cs_files:
         _index_param_list(m.group(1), prop_types)
 
 # 2) เมธอดที่นิยามในโปรเจกต์ + ชนิดพารามิเตอร์
+#
+# เก็บ **สองชั้น**: ทั้งเรพ (methods) และต่อไฟล์ (methods_in_file) — เวลาไล่จุดเรียก
+# ให้ **ชั้นใกล้ชนะ**: ถ้าไฟล์ที่เรียกประกาศเมธอดชื่อนั้นเอง ต้องใช้ตัวนั้นเท่านั้น
+# ห้ามไปหยิบเมธอดชื่อซ้ำจากไฟล์อื่น (กติกาเดียวกับ namespace_shadow_check)
+#
+# ที่มาของกฎนี้: `PosService.Normalize(Guid?)` (private static ในไฟล์นั้นเอง) ถูก
+# จับคู่กับ `Normalize(decimal)` ของอีกไฟล์ ⇒ ฟ้องผิด 4 จุดบนโค้ดที่ถูกต้อง
+# — "checker ที่ฟ้องผิด = checker ที่พังแล้ว" ต้องแก้ checker ไม่ใช่เลี่ยงโค้ด
 methods = defaultdict(list)   # name -> [ [(type, pname), ...], ... ]
+methods_in_file = defaultdict(lambda: defaultdict(list))   # file -> name -> [plist, ...]
 for f in cs_files:
     src = open(f, encoding='utf-8').read()
     for m in re.finditer(
@@ -72,6 +81,7 @@ for f in cs_files:
             if len(toks) >= 2:
                 plist.append((toks[-2], toks[-1]))
         methods[name].append(plist)
+        methods_in_file[f][name].append(plist)
 
 bad = []
 # จับทั้ง `Method(arg)` และ `receiver.Method(arg)` — เวอร์ชันแรกใช้ negative
@@ -86,6 +96,8 @@ for f in cs_files:
         for m in call_re.finditer(code):
             mname, arg = m.group(1), m.group(2)
             if mname not in methods: continue
+            # ชั้นใกล้ชนะ: ไฟล์นี้ประกาศเองไหม
+            overloads = methods_in_file[f].get(mname) or methods[mname]
             # argument ที่ป้องกันไว้แล้ว
             if any(t in code[m.start():m.end()] for t in ('.Value', '??', 'GetValueOrDefault')): continue
             prop = arg.split('.')[-1]
@@ -96,7 +108,7 @@ for f in cs_files:
             base = next(iter(decls)).rstrip('?')
             if base not in VALUE_TYPES: continue
             # พารามิเตอร์ตัวแรกของ overload ใด ๆ รับ non-nullable value type ไหม
-            for plist in methods[mname]:
+            for plist in overloads:
                 if not plist: continue
                 ptype = plist[0][0]
                 if ptype in VALUE_TYPES:      # ไม่มี ? ต่อท้าย = ไม่รับ null
@@ -110,4 +122,5 @@ if bad:
         print(f'    {mn}({arg})  —  {arg} เป็น {at}?  แต่พารามิเตอร์รับ {pt}')
         print(f'    แก้: ใส่ .Value (ถ้ามี guard แล้ว) หรือ ?? ค่าเริ่มต้น\n')
     sys.exit(1)
-print('✅ ไม่พบการส่ง nullable เข้าพารามิเตอร์ที่ไม่รับ null')
+print(f'✅ ไม่พบการส่ง nullable เข้าพารามิเตอร์ที่ไม่รับ null '
+      f'(ตรวจ {len(cs_files)} ไฟล์ · เมธอด {len(methods)} ชื่อ)')

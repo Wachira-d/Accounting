@@ -168,12 +168,19 @@ public class FxRevaluationService : IFxRevaluationService
             // still the original-booked for traceability; the Variance
             // is the incremental amount being posted.
             var carryAdj = priorVariance.GetValueOrDefault((cur, g.Key.Direction));
-            var carrying = booked + carryAdj;
-            var variance = Math.Round(current - carrying, 2);
+            var carrying = Math.Round(booked + carryAdj, 2, MidpointRounding.AwayFromZero);
+            // ★ ต้องคิดจาก **ค่าที่ปัดแล้ว** ทั้งคู่ (ผลตรวจ C-T14)
+            // เดิม variance = Round(current − carrying) โดย current ยัง**ไม่ปัด**
+            // แต่จอ/JE แสดง Round(current) ⇒ คอลัมน์บนหน้าจอบวกกันไม่ได้ยอดรวม
+            // ("ไม่ foot") ต่างกันได้ถึง 0.01 ต่อสกุล — ผู้สอบบัญชีเจอทันที
+            // และ AwayFromZero: `x − y` ที่ 2dp ตกจุดกึ่งกลางได้เมื่อค่าใดค่าหนึ่ง
+            // มีทศนิยม > 2 ตำแหน่ง (อัตราแลกเปลี่ยนมี 4-6 ตำแหน่งเป็นปกติ)
+            var currentRounded = Math.Round(current, 2, MidpointRounding.AwayFromZero);
+            var variance = Math.Round(currentRounded - carrying, 2, MidpointRounding.AwayFromZero);
             if (variance == 0m) continue;
             lines.Add(new FxRevaluationLine(cur, g.Key.Direction,
-                Math.Round(fcy, 2), Math.Round(carrying, 2),
-                Math.Round(current, 2), variance));
+                Math.Round(fcy, 2, MidpointRounding.AwayFromZero), carrying,
+                currentRounded, variance));
         }
 
         // Sign convention: variance > 0 on AR = gain (we owe MORE THB

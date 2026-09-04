@@ -108,10 +108,10 @@
               ${d.items.map(c => `
                 <tr>
                   <td>
-                    <strong>${c.name}</strong>
+                    <strong>${AdminLayout.esc(c.name)}</strong>
                     <div style="font-size:12px;color:#94a3b8">${c.taxId || '-'}</div>
                   </td>
-                  <td>${c.owner ? `<div>${c.owner.fullName}</div><div style="font-size:12px;color:#94a3b8">${c.owner.email}</div>` : '-'}</td>
+                  <td>${c.owner ? `<div>${AdminLayout.esc(c.owner.fullName)}</div><div style="font-size:12px;color:#94a3b8">${AdminLayout.esc(c.owner.email)}</div>` : '-'}</td>
                   <td>${c.subscription ? AdminLayout.planBadge(c.subscription.plan) + (c.subscription.viaLicense ? ` <span title="ผ่าน License ของ ${c.subscription.licenseOwnerEmail || '-'}" style="background:#ecfeff;color:#0c4a6e;border:1px solid #67e8f9;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:4px">🎫</span>` : '') : '<span style="color:#94a3b8">-</span>'}</td>
                   <td>${c.subscription ? AdminLayout.statusBadge(c.subscription.status) : '<span style="color:#94a3b8">ไม่มี</span>'}</td>
                   <td>${c.userCount}</td>
@@ -137,7 +137,7 @@
         }
         document.getElementById('pagination').innerHTML = pagHtml;
       } catch (err) {
-        document.getElementById('customerList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${err.message}</div>`;
+        document.getElementById('customerList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${AdminLayout.esc(err.message)}</div>`;
       }
     }
 
@@ -165,8 +165,8 @@
         <div style="background:linear-gradient(135deg,#ecfeff,#fef9c3);border:1px solid #67e8f9;border-radius:10px;padding:12px 16px;margin-bottom:14px">
           <div style="font-weight:700;color:#0c4a6e;font-size:14px">🎫 บริษัทนี้อยู่ใต้ Account Plan</div>
           <div style="font-size:12px;color:#475569;margin-top:4px">
-            License: <strong>${ap.planName}</strong> (${ap.status}) ·
-            เจ้าของ License: <strong>${ap.ownerName}</strong> &lt;${ap.ownerEmail}&gt; ·
+            License: <strong>${AdminLayout.esc(ap.planName)}</strong> (${ap.status}) ·
+            เจ้าของ License: <strong>${AdminLayout.esc(ap.ownerName)}</strong> &lt;${AdminLayout.esc(ap.ownerEmail)}&gt; ·
             หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}
           </div>
           <a href="/admin/account-subscriptions.html" style="font-size:12px;color:#0ea5e9;text-decoration:none;font-weight:600;display:inline-block;margin-top:6px">→ จัดการ Account Plan</a>
@@ -186,7 +186,7 @@
         <div class="admin-modal-overlay" onclick="if(event.target===this)closeModal()">
           <div class="admin-modal" style="max-width:900px;max-height:90vh;overflow-y:auto">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
-              <h3 style="margin:0">${c.name} ${s ? AdminLayout.planBadge(s.plan) + ' ' + AdminLayout.statusBadge(s.status) : ''}</h3>
+              <h3 style="margin:0">${AdminLayout.esc(c.name)} ${s ? AdminLayout.planBadge(s.plan) + ' ' + AdminLayout.statusBadge(s.status) : ''}</h3>
               <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="closeModal()" style="font-size:18px;padding:2px 10px">&times;</button>
             </div>
 
@@ -205,18 +205,18 @@
             <!-- Overview -->
             <div class="detail-panel active" id="panel-overview">
               <div class="info-grid">
-                <div class="info-item"><div class="label">ชื่อบริษัท</div><div class="value">${c.name}</div></div>
+                <div class="info-item"><div class="label">ชื่อบริษัท</div><div class="value">${AdminLayout.esc(c.name)}</div></div>
                 <div class="info-item"><div class="label">เลขผู้เสียภาษี</div><div class="value">${c.taxId || '-'}</div></div>
                 <div class="info-item"><div class="label">สถานะบริษัท</div><div class="value">${AdminLayout.statusBadge(c.status)}</div></div>
                 <div class="info-item"><div class="label">สมัครเมื่อ</div><div class="value">${AdminLayout.datetime(c.createdAt)}</div></div>
-                <div class="info-item"><div class="label">ที่อยู่</div><div class="value">${[c.address, c.province].filter(Boolean).join(', ') || '-'}</div></div>
+                <div class="info-item"><div class="label">ที่อยู่</div><div class="value">${AdminLayout.esc([c.address, c.province].filter(Boolean).join(', ') || '-')}</div></div>
                 <div class="info-item"><div class="label">จำนวนเอกสาร</div><div class="value">${d.usage.documents}</div></div>
                 <div class="info-item"><div class="label">สมุดรายวัน</div><div class="value">${d.usage.journalEntries}</div></div>
               </div>
 
               ${c.status === 'Suspended' && c.suspendReason ? `
                 <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-top:12px;color:#b91c1c;font-size:13px">
-                  ⛔ <strong>ถูกระงับ:</strong> ${c.suspendReason}
+                  ⛔ <strong>ถูกระงับ:</strong> ${AdminLayout.esc(c.suspendReason)}
                   ${c.suspendedAt ? `<span style="color:#94a3b8"> (${AdminLayout.datetime(c.suspendedAt)})</span>` : ''}
                 </div>` : ''}
 
@@ -225,7 +225,7 @@
                 ${(d.integrations||[]).length === 0
                   ? '<div style="color:#94a3b8;font-size:13px">ยังไม่มีการเชื่อมต่อ</div>'
                   : (d.integrations.map(i => `<div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid #f1f5f9">
-                       <span>${i.systemName} <span style="color:#94a3b8">(${i.systemType})</span></span>
+                       <span>${AdminLayout.esc(i.systemName)} <span style="color:#94a3b8">(${i.systemType})</span></span>
                        <span>${i.isActive ? '🟢' : '⚪'} ${i.lastSyncAt ? 'sync ' + AdminLayout.date(i.lastSyncAt) : 'ยังไม่ sync'}${i.consecutiveErrors > 0 ? ` · ⚠️${i.consecutiveErrors}` : ''}</span>
                      </div>`).join(''))}
               </div>
@@ -269,7 +269,7 @@
                 </div>
                 <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #fecaca">
                   <div style="font-size:12px;color:#b91c1c;margin-bottom:6px">⛔ ลบบริษัทถาวรจากรายการ (soft-delete — ข้อมูลบัญชีเก็บตามกฎหมาย 5 ปี) ทุก user สลับเข้าไม่ได้อีก</div>
-                  <button class="admin-btn admin-btn-sm" style="background:#dc2626;color:#fff" onclick="adminDeleteCompany('${c.id}', '${(c.name||'').replace(/'/g,'&apos;')}')">ลบบริษัทนี้…</button>
+                  <button class="admin-btn admin-btn-sm" style="background:#dc2626;color:#fff" onclick="adminDeleteCompany('${c.id}', '${AdminLayout.jsArg(c.name||'')}')">ลบบริษัทนี้…</button>
                 </div>
               </div>
             </div>
@@ -279,7 +279,7 @@
               ${ap ? `
                 <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#9a3412;line-height:1.6">
                   ⚠️ <strong>อ่านลำดับการ resolver:</strong> บริษัทนี้อยู่ใต้ Account Plan
-                  <strong>${ap.planName}</strong> ของ <strong>${ap.ownerName}</strong>
+                  <strong>${AdminLayout.esc(ap.planName)}</strong> ของ <strong>${AdminLayout.esc(ap.ownerName)}</strong>
                   → quota / features ที่ใช้จริง <strong>ดูจาก Account Plan</strong>
                   (หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}) ·
                   ค่าด้านล่างนี้เป็น Subscription ระดับบริษัทเฉพาะตอน "ถอดออกจาก Account Plan" หรือใช้แยกบิลเท่านั้น
@@ -339,16 +339,16 @@
             <div class="detail-panel" id="panel-actions">
               ${ap ? `
               <div class="action-card" style="border:2px solid #0ea5e9;background:#ecfeff">
-                <h4 style="color:#0c4a6e;margin-top:0">🎫 บริษัทนี้อยู่ใต้ License <span style="background:#0ea5e9;color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px">${ap.planName}</span></h4>
+                <h4 style="color:#0c4a6e;margin-top:0">🎫 บริษัทนี้อยู่ใต้ License <span style="background:#0ea5e9;color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px">${AdminLayout.esc(ap.planName)}</span></h4>
                 <div style="font-size:13px;color:#475569;line-height:1.7;margin-bottom:12px">
-                  เจ้าของ License: <strong>${ap.ownerName}</strong> &lt;${ap.ownerEmail}&gt;<br>
+                  เจ้าของ License: <strong>${AdminLayout.esc(ap.ownerName)}</strong> &lt;${AdminLayout.esc(ap.ownerEmail)}&gt;<br>
                   สถานะ: <strong>${ap.status}</strong> · หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}<br>
                   <span style="color:#0c4a6e">ℹ️ การจัดการแพ็กเกจ / ราคา / quota / วันต่ออายุ ทำได้ที่หน้า License เท่านั้น
                   เพื่อไม่ให้ค่ารายบริษัทขัดแย้งกับ License แม่</span>
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:8px">
                   <a href="/admin/account-subscriptions.html?id=${ap.id}" class="admin-btn admin-btn-primary admin-btn-sm" style="text-decoration:none">→ ไปจัดการ License</a>
-                  <button class="admin-btn admin-btn-danger admin-btn-sm" onclick="apDetach('${c.id}','${c.name.replace(/'/g,'&apos;')}')">🔓 ถอดบริษัทออกจาก License</button>
+                  <button class="admin-btn admin-btn-danger admin-btn-sm" onclick="apDetach('${c.id}','${AdminLayout.jsArg(c.name)}')">🔓 ถอดบริษัทออกจาก License</button>
                 </div>
               </div>
               ` : `
@@ -379,8 +379,8 @@
                 <thead><tr><th>ชื่อ</th><th>อีเมล</th><th>Role</th><th>สถานะ</th><th>เข้าล่าสุด</th><th>จัดการ</th></tr></thead>
                 <tbody>
                   ${d.users.length ? d.users.map(u => `<tr>
-                    <td><strong>${u.fullName}</strong></td>
-                    <td>${u.email}</td>
+                    <td><strong>${AdminLayout.esc(u.fullName)}</strong></td>
+                    <td>${AdminLayout.esc(u.email)}</td>
                     <td>
                       <select style="font-size:12px;padding:3px 6px;border-radius:4px;border:1px solid #d1d5db"
                         onchange="changeUserRole('${c.id}','${u.userId}',this.value)">
@@ -443,7 +443,7 @@
         ? `${(used/1048576).toFixed(1)}/${(max/1048576).toFixed(0)} MB`
         : `${used}/${max >= 99999 ? '∞' : max}`;
       return `<div class="limit-bar">
-        <span class="limit-label">${label}</span>
+        <span class="limit-label">${AdminLayout.esc(label)}</span>
         <div class="bar"><div class="fill ${cls}" style="width:${pct}%"></div></div>
         <span class="limit-value">${fmtVal}</span>
       </div>`;
@@ -460,7 +460,7 @@
 
     // ลบบริษัท (SystemAdmin) — type-to-confirm ชื่อบริษัท กันลบผิด
     async function adminDeleteCompany(id, name) {
-      const typed = prompt(`⛔ ลบบริษัท "${name}"\n\nบริษัทจะหายจากรายการของทุก user ทันที (ข้อมูลบัญชีเก็บตามกฎหมาย 5 ปี)\n\nพิมพ์ชื่อบริษัทให้ตรงทุกตัวอักษรเพื่อยืนยัน:`);
+      const typed = prompt(`⛔ ลบบริษัท "${AdminLayout.esc(name)}"\n\nบริษัทจะหายจากรายการของทุก user ทันที (ข้อมูลบัญชีเก็บตามกฎหมาย 5 ปี)\n\nพิมพ์ชื่อบริษัทให้ตรงทุกตัวอักษรเพื่อยืนยัน:`);
       if (typed === null) return;
       try {
         await AdminApi.deleteCompany(id, typed);
@@ -491,7 +491,7 @@
         const d = res.data;
         // same-origin → tenant app อ่าน localStorage 'token' ตัวเดียวกัน
         localStorage.setItem('token', d.token);
-        AdminLayout.toast(`เข้าดูในนาม ${d.targetUser.email} (read-only ${new Date(d.expiresAt).toLocaleTimeString('th-TH')})`);
+        AdminLayout.toast(`เข้าดูในนาม ${AdminLayout.esc(d.targetUser.email)} (read-only ${new Date(d.expiresAt).toLocaleTimeString('th-TH')})`);
         window.open('/index.html', '_blank');
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
@@ -528,10 +528,10 @@
         }
         sel.disabled = false;
         sel.innerHTML = '<option value="">— เลือก License —</option>' + items.map(a =>
-          `<option value="${a.id}">${a.ownerName} &lt;${a.ownerEmail}&gt; · ${a.planName} (${a.companiesUsed}/${a.maxCompanies} ใช้แล้ว)</option>`
+          `<option value="${a.id}">${AdminLayout.esc(a.ownerName)} &lt;${AdminLayout.esc(a.ownerEmail)}&gt; · ${AdminLayout.esc(a.planName)} (${a.companiesUsed}/${a.maxCompanies} ใช้แล้ว)</option>`
         ).join('');
       } catch (e) {
-        sel.innerHTML = `<option value="">— โหลดล้มเหลว: ${e.message} —</option>`;
+        sel.innerHTML = `<option value="">— โหลดล้มเหลว: ${AdminLayout.esc(e.message)} —</option>`;
       }
     }
 
@@ -540,7 +540,7 @@
       const apId = sel?.value;
       if (!apId) { AdminLayout.toast('กรุณาเลือก License', 'error'); return; }
       const label = sel.options[sel.selectedIndex].text;
-      if (!confirm(`🔗 ผูกบริษัทนี้เข้ากับ License:\n${label}\n\nบริษัทจะใช้ quota / สิทธิ์ / วันหมดอายุของ License นี้`)) return;
+      if (!confirm(`🔗 ผูกบริษัทนี้เข้ากับ License:\n${AdminLayout.esc(label)}\n\nบริษัทจะใช้ quota / สิทธิ์ / วันหมดอายุของ License นี้`)) return;
       try {
         await AdminAPI.post('/companies/' + companyId + '/attach-to-account-plan', { accountSubscriptionId: apId });
         AdminLayout.toast('ผูกเข้า License สำเร็จ');
@@ -600,7 +600,7 @@
       } catch(e) { alert(e.message); }
     }
     async function apDetach(companyId, name) {
-      if (!confirm(`🔓 ถอด "${name}" ออกจาก License ของผู้ใช้?\n\nบริษัทจะกลับไปใช้ Subscription แยกของตัวเอง (FreeTrial ถ้าไม่มี)\nเหมาะกับเคสขายบริษัท / แยกบิล holding`)) return;
+      if (!confirm(`🔓 ถอด "${AdminLayout.esc(name)}" ออกจาก License ของผู้ใช้?\n\nบริษัทจะกลับไปใช้ Subscription แยกของตัวเอง (FreeTrial ถ้าไม่มี)\nเหมาะกับเคสขายบริษัท / แยกบิล holding`)) return;
       try {
         // Detach lives on the user-side API; admin can call it on behalf via
         // the same path — server checks ownership at the user layer. For
@@ -639,7 +639,7 @@
               <div><strong>${h.action}</strong></div>
               ${h.fromPlan && h.toPlan ? `<div style="font-size:12px;color:#64748b">แพ็กเกจ: ${h.fromPlan} → ${h.toPlan}</div>` : ''}
               ${h.fromStatus && h.toStatus ? `<div style="font-size:12px;color:#64748b">สถานะ: ${h.fromStatus} → ${h.toStatus}</div>` : ''}
-              ${h.notes ? `<div style="font-size:12px;color:#94a3b8">${h.notes}</div>` : ''}
+              ${h.notes ? `<div style="font-size:12px;color:#94a3b8">${AdminLayout.esc(h.notes)}</div>` : ''}
               <div class="history-time">${AdminLayout.datetime(h.createdAt)}</div>
             </div>
           </div>

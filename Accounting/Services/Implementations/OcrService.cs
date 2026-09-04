@@ -955,6 +955,16 @@ public class OcrService : IOcrService
             scanResult.VendorAddress = extractedData.VendorAddress;
             scanResult.BuyerBranchCode = extractedData.BuyerBranchCode;
             scanResult.BuyerAddress = extractedData.BuyerAddress;
+            // รหัสสาขาที่ "อ่านไม่ได้" ต้องมีคะแนนต่ำติดไว้ (E-OCR-03) —
+            // MapToResponse เติม "00000" ให้เสมอตามกฎเหล็ก #3 (ห้ามส่ง null ให้ UI)
+            // แต่ถ้าไม่มี key ใน FieldConfidence ป้ายจะไปหยิบคะแนนของ**ทั้งใบ**
+            // ⇒ ผู้ใช้เห็น "00000 · 95%" ทั้งที่ไม่มีใครอ่านค่านี้จากกระดาษเลย
+            // ⇒ กดยืนยัน ⇒ ใบของสาขาที่ 3 ลงเป็นสำนักงานใหญ่ (§86/4 + §87)
+            if (string.IsNullOrWhiteSpace(extractedData.VendorBranchCode))
+                extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerBranchCode] = 0.30;
+            if (string.IsNullOrWhiteSpace(extractedData.BuyerBranchCode))
+                extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.BuyerBranchCode] = 0.30;
+
             if (extractedData.FieldConfidence.Count > 0)
             {
                 // เก็บลงฐานด้วยชื่อช่องกลาง — เดิมเก็บแค่เป็นข้อความใน
@@ -3548,6 +3558,15 @@ public class OcrService : IOcrService
         if (correction.BuyerTaxId != null) result.BuyerTaxId = correction.BuyerTaxId;
         if (correction.VendorBranchCode != null) result.VendorBranchCode = correction.VendorBranchCode;
         if (correction.BuyerBranchCode != null) result.BuyerBranchCode = correction.BuyerBranchCode;
+        // ที่อยู่ + ชื่อผู้ซื้อ + เครดิตเทอม (E-OCR-05) — "" = ล้างค่า · null = ไม่ได้แตะ
+        if (correction.VendorAddress != null)
+            result.VendorAddress = string.IsNullOrWhiteSpace(correction.VendorAddress) ? null : correction.VendorAddress.Trim();
+        if (correction.BuyerName != null)
+            result.BuyerName = string.IsNullOrWhiteSpace(correction.BuyerName) ? null : correction.BuyerName.Trim();
+        if (correction.BuyerAddress != null)
+            result.BuyerAddress = string.IsNullOrWhiteSpace(correction.BuyerAddress) ? null : correction.BuyerAddress.Trim();
+        if (correction.PaymentTermsDays.HasValue)
+            result.PaymentTermsDays = correction.PaymentTermsDays.Value >= 0 ? correction.PaymentTermsDays.Value : null;
         // "" = ผู้ใช้ลบหมายเหตุทิ้ง (ล้างค่า) · null = ไม่ได้แตะช่องนี้
         if (correction.Notes != null)
             result.UserNotes = string.IsNullOrWhiteSpace(correction.Notes) ? null : correction.Notes.Trim();
@@ -4992,8 +5011,44 @@ public class OcrService : IOcrService
             // last line so the lines sum exactly to the header VAT.
             var lineAmountSum = items.Sum(x => x.Amount ?? 0);
             var headerVat = result.ExtractedVatAmount ?? 0;
-            decimal vatAssigned = 0;
             decimal whtAssigned = 0;
+
+            // ═══ E-OCR-01/OCR-02: อัตรา VAT ตัดสิน **รายบรรทัด** ═══
+            // เดิมทุกบรรทัดได้ `headerVat > 0 ? 7 : 0` เหมือนกันหมด แล้วเฉลี่ย VAT
+            // ของหัวใบตามสัดส่วนยอดลงทุกบรรทัด ⇒ บิลผสม 7%/ยกเว้น (Makro/BigC/
+            // บิลอาหาร — งานประจำวัน) บรรทัดยกเว้นติดป้าย 7% และได้ VAT ที่ไม่ควรมี
+            // ⇒ รายงานภาษีซื้อ §87 ที่แยกคอลัมน์ผิดทุกใบ **โดยยอดรวมยังตรง**
+            // จึงเงียบสนิท · กติกาเดียวกับ endpoint /ai/vat/infer-type ที่หน้า
+            // กรอกมือเรียกอยู่แล้ว — ย้ายมาไว้ที่ Helpers/ThaiVatTypeRule ตัวเดียว
+            var standardVatRate = headerVat > 0m ? 7m : 0m;
+            foreach (var it in items)
+            {
+                if (it.VatRate.HasValue) continue;   // ผู้ใช้/AI ตัดสินมาแล้ว — ห้ามทับ
+                it.VatRate = headerVat > 0m
+                    ? Accounting.Helpers.ThaiVatTypeRule.ToVatRate(
+                        Accounting.Helpers.ThaiVatTypeRule.Suggest(
+                            // สแกนไม่มีช่อง "ประเทศผู้ขาย" — ใช้รูปแบบเลขผู้เสียภาษี
+                        // เป็นตัวบอก (ไทย = 13 หลักเสมอ) เหมือนที่ endpoint ทำ
+                        it.Description, null, result.ExtractedVendorTaxId),
+                        standardVatRate)
+                    : 0m;
+            }
+            // เฉลี่ยเฉพาะบรรทัดที่อัตรา > 0 (เศษลงบรรทัดที่เสียภาษีบรรทัดสุดท้าย)
+            var spreadVat = Accounting.Helpers.ThaiVatTypeRule.SpreadHeaderVat(
+                items.Select(x => (x.Amount ?? 0m, x.VatRate ?? 0m)).ToList(), headerVat);
+            for (var vi = 0; vi < items.Count; vi++) items[vi].VatAmount = spreadVat[vi];
+
+            // ── ด่านตรวจ Σ (E-OCR-01) ──
+            // ถ้าเฉลี่ยแล้วไม่ตรงกับ VAT บนกระดาษ แปลว่าอัตราที่เดารายบรรทัดขัดกับ
+            // หัวใบ (เช่นทั้งใบถูกเดาว่ายกเว้นแต่กระดาษมี VAT) — ไม่แต่งตัวเลขให้
+            // ตรง แต่บันทึกไว้ให้หน้า review เตือน แล้วให้คนตัดสิน
+            var vatSum = spreadVat.Sum();
+            if (headerVat > 0m && Math.Abs(vatSum - headerVat) > 0.01m)
+            {
+                _logger.LogWarning(
+                    "OCR scan {ScanId}: Σ VAT รายบรรทัด {Sum} ≠ VAT บนหัวใบ {Header} — " +
+                    "อัตรารายบรรทัดที่เดาไว้อาจขัดกับกระดาษ", result.Id, vatSum, headerVat);
+            }
 
             int lineOrder = 1;
             // ปิดลูปการสอน local model (กฎเหล็ก #1): แนบ feedbackId ระดับ scan ไว้
@@ -5037,14 +5092,7 @@ public class OcrService : IOcrService
                 var amount = item.Amount ?? 0;
                 // Last line absorbs the rounding remainder (both VAT and WHT)
                 // so the line sums tie out exactly to the header figures.
-                decimal lineVat = 0;
-                if (headerVat > 0 && lineAmountSum > 0)
-                {
-                    lineVat = i == items.Count - 1
-                        ? Math.Round(headerVat - vatAssigned, 2)
-                        : Math.Round(headerVat * amount / lineAmountSum, 2);
-                    vatAssigned += lineVat;
-                }
+                var lineVat = spreadVat[i];
                 decimal lineWht = 0;
                 if (headerWht > 0 && lineAmountSum > 0)
                 {
@@ -5092,7 +5140,7 @@ public class OcrService : IOcrService
                     // หักออกแล้วยอดตรงกับที่ ComputeLineAmounts คำนวณเป๊ะ ⇒ เปิดแก้ไข
                     // เอกสารแล้วบันทึกใหม่ ตัวเลขไม่ขยับ
                     Amount = document.PricesIncludeVat ? Math.Round(amount - lineVat, 2) : amount,
-                    VatRate = headerVat > 0 ? 7 : 0,
+                    VatRate = item.VatRate ?? standardVatRate,
                     VatAmount = lineVat,
                     // WHT read off the paper → pre-fill rate + baht per line so
                     // the WHT cert auto-generation has line data ready.
@@ -6515,7 +6563,7 @@ public class OcrService : IOcrService
             {
                 items = data.Items.Select(i => new OcrLineItemDto(
                     i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode,
-                    i.ProjectId, i.ProjectName, i.Unit)).ToList();
+                    i.ProjectId, i.ProjectName, i.Unit, i.VatRate, i.VatAmount)).ToList();
             }
         }
 
@@ -6556,7 +6604,10 @@ public class OcrService : IOcrService
                     el.TryGetProperty("ProjectId", out var pid) && pid.ValueKind == System.Text.Json.JsonValueKind.String
                         && Guid.TryParse(pid.GetString(), out var pg) ? pg : (Guid?)null,
                     el.TryGetProperty("ProjectName", out var pn) ? pn.GetString() : null,
-                    el.TryGetProperty("Unit", out var un) ? un.GetString() : null
+                    el.TryGetProperty("Unit", out var un) ? un.GetString() : null,
+                    // E-OCR-01 — อัตรา/ยอดภาษีรายบรรทัดต้องกลับถึงหน้า review
+                    el.TryGetProperty("VatRate", out var vr) && vr.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)vr.GetDouble() : null,
+                    el.TryGetProperty("VatAmount", out var va) && va.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)va.GetDouble() : null
                 )).ToList();
             }
             catch (Exception ex)
@@ -7279,4 +7330,16 @@ internal class OcrExtractedLineItem
     /// ลูปไหน + AiSuggestedProjectId ใช้เทียบว่าผู้ใช้รับคำตอบ AI หรือแก้.</summary>
     public Guid? ProjectAiFeedbackId { get; set; }
     public Guid? AiSuggestedProjectId { get; set; }
+    /// <summary>อัตรา VAT ของบรรทัดนี้ (<c>7</c> เสียภาษี · <c>0</c> อัตราศูนย์ ·
+    /// <c>-1</c> ยกเว้น §81) — <c>null</c> = ยังไม่ได้ตัดสิน
+    ///
+    /// <para>⚠️ ที่มา (E-OCR-01): เดิมทุกบรรทัดถูกตั้งเป็น
+    /// <c>headerVat &gt; 0 ? 7 : 0</c> เหมือนกันหมด ⇒ ใบผสม 7%/ยกเว้น
+    /// (Makro/BigC/บิลอาหาร = งานประจำวัน) รายงานภาษีซื้อ §87 ที่แยกคอลัมน์
+    /// ผิดทุกใบ โดยยอดรวมยังตรงจึงไม่มีใครเห็น · เก็บลง
+    /// <c>ExtractedItemsJson</c> เพื่อให้หน้า review แก้ได้และค่าไม่หายตอนเปิดใหม่</para></summary>
+    public decimal? VatRate { get; set; }
+    /// <summary>ภาษีของบรรทัดนี้หลังเฉลี่ยจากหัวใบ (เฉพาะบรรทัดที่ <c>VatRate &gt; 0</c>)
+    /// — เก็บไว้ให้หน้า review แสดงและตรวจ Σ ได้โดยไม่ต้องคำนวณซ้ำคนละที่</summary>
+    public decimal? VatAmount { get; set; }
 }

@@ -36,8 +36,12 @@ public interface IStockCountService
 public class StockCountService : IStockCountService
 {
     private readonly AccountingDbContext _db;
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0)</summary>
+    private readonly Accounting.Services.Interfaces.IStockLedger _stock;
 
-    public StockCountService(AccountingDbContext db) { _db = db; }
+    public StockCountService(AccountingDbContext db,
+        Accounting.Services.Interfaces.IStockLedger stock)
+    { _db = db; _stock = stock; }
 
     public async Task<StockCount> StartAsync(Guid companyId, string countNumber,
         Guid? warehouseId, string countType, IReadOnlyList<Guid> productIds,
@@ -99,31 +103,30 @@ public class StockCountService : IStockCountService
         if (sc.Status == "Completed" || sc.Status == "Cancelled")
             throw new InvalidOperationException("Already closed.");
 
-        // Adjust Product.CurrentStock for every variance. The adjustment
-        // JE itself is posted by the caller via JournalEntryService —
-        // we only mark state + return the variance summary so caller
-        // can build the JE lines.
+        // ปรับยอดของ **คลังที่นับ** (`sc.WarehouseId`) — เดิมเขียน
+        // `product.CurrentStock = line.CountedQty` ตรง ๆ ⇒ นับคลังเดียวแล้วเขียนทับยอด
+        // รวมทุกคลัง (ของที่กองอยู่คลังอื่นหายไปจากระบบทันที). การลง JE ปรับปรุงยัง
+        // เป็นหน้าที่ผู้เรียกเหมือนเดิม
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         foreach (var line in sc.Lines)
         {
             if (line.CountedQty == line.SystemQty) continue;
-            var product = await _db.Products.FirstOrDefaultAsync(p => p.Id == line.ProductId, ct);
-            if (product == null) continue;
-            product.CurrentStock = line.CountedQty;
-            // Record a stock movement for audit (Type="ADJUST").
-            _db.StockMovements.Add(new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = product.Id,
-                MovementDate = sc.CountDate,
-                MovementType = "ADJUST",
-                Quantity = line.CountedQty - line.SystemQty,
-                UnitCost = line.UnitCost,
-                Reference = $"StockCount-{sc.CountNumber}",
-                BalanceAfter = line.CountedQty,
-            });
+            await _stock.MoveAsync(new Accounting.Services.Interfaces.StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: line.ProductId,
+                Quantity: line.CountedQty,     // SetAbsolute ⇒ "ยอดที่นับได้"
+                MovementType: "ADJUST",
+                Reference: $"StockCount-{sc.CountNumber}",
+                WarehouseId: sc.WarehouseId,
+                MovementDate: sc.CountDate,
+                UnitCostOverride: line.UnitCost > 0 ? line.UnitCost : null,
+                Notes: $"ตรวจนับ {sc.CountNumber} (ระบบ:{line.SystemQty} นับได้:{line.CountedQty})",
+                CreatedBy: "system:stock-count",
+                SetAbsolute: true), ct);
         }
         sc.Status = "Completed";
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return sc;
     }
 

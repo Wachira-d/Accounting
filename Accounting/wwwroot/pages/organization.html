@@ -219,7 +219,7 @@
               <td>${d.isActive ? '<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">ใช้งาน</span>' : '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">ปิด</span>'}</td>
               <td>
                 <button class="btn btn-sm btn-ghost" onclick="Page.editDept('${d.id}')" data-i18n="common.edit">แก้ไข</button>
-                <button class="btn btn-sm btn-danger" onclick="Page.deleteDept('${d.id}','${Layout.esc(d.name)}')" data-i18n="common.delete">ลบ</button>
+                <button class="btn btn-sm btn-danger" onclick="Page.deleteDept('${d.id}','${Layout.jsArg(d.name)}')" data-i18n="common.delete">ลบ</button>
               </td>
             </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -347,7 +347,7 @@
               <td>${p.isActive ? '<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">ใช้งาน</span>' : '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">ปิด</span>'}</td>
               <td>
                 <button class="btn btn-sm btn-ghost" onclick="Page.editPos('${p.id}')" data-i18n="common.edit">แก้ไข</button>
-                <button class="btn btn-sm btn-danger" onclick="Page.deletePos('${p.id}','${Layout.esc(p.title)}')" data-i18n="common.delete">ลบ</button>
+                <button class="btn btn-sm btn-danger" onclick="Page.deletePos('${p.id}','${Layout.jsArg(p.title)}')" data-i18n="common.delete">ลบ</button>
               </td>
             </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }

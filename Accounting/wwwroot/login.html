@@ -205,7 +205,7 @@
       // เดิม fallback เป็น location.origin เมื่อเซิร์ฟเวอร์ไม่ส่ง callback URL —
       // ซึ่ง**ตายปลายทางเสมอ** (เซิร์ฟเวอร์ก็แลก code ไม่ได้เพราะไม่มี AppBaseUrl)
       // ผู้ใช้เห็นแค่ "แลก code ไม่สำเร็จ" โดยไม่รู้ว่าต้องไปตั้งอะไร → บอกตั้งแต่ต้น
-      if (!Sso.begin('Line', ssoConfig)) _ssoError(Sso.notReadyMessage('LINE'));
+      if (!Sso.begin('Line', ssoConfig)) _ssoError(Sso.notReadyMessage('Line'));
     }
 
     async function handleSsoResponse(provider, idToken, signup) {
@@ -231,6 +231,10 @@
               providerName: res.data.providerName,
               suggestedName: res.data.suggestedName || '',
               pictureUrl: res.data.pictureUrl || '',
+              // provider ให้อีเมลมาแล้วแต่ยังไม่มีบัญชี (Google/Facebook) — หน้าสมัคร
+              // เติมช่องอีเมลให้ และใช้เป็นค่าเริ่มต้นของช่อง "ผูกกับบัญชีเดิม"
+              email: res.data.email || '',
+              reason: res.data.reason || '',
             }));
           } catch (e) {}
           location.href = '/register.html?sso=1';
@@ -283,9 +287,11 @@
       // ⚠️ เดิม `if (!window.FB) FB.init(...)` — กลับตรรกะ: SDK ไม่โหลดแล้ว
       // เรียก FB.init = ReferenceError กดปุ่มแล้วเงียบสนิท ไม่มี error ให้เห็น
       if (!window.FB) {
-        const el = document.getElementById('errorMsg');
-        el.textContent = 'โหลดบริการ Facebook ไม่สำเร็จ — ปิดตัวบล็อกโฆษณาแล้วลองใหม่';
-        el.classList.remove('hidden');
+        // ⚠️ ห้ามโทษ "ตัวบล็อกโฆษณา" — สาเหตุที่พบจริงคือ CSP ของระบบเอง
+        // (script-src ไม่มี connect.facebook.net) ซึ่งผู้ใช้แก้ไม่ได้เลย
+        // ข้อความที่เดาสาเหตุแทนผู้ใช้พาไล่ผิดทางเป็นเดือน
+        _ssoError('ยังเข้าสู่ระบบด้วย Facebook ไม่ได้ — สคริปต์ของ Facebook โหลดไม่สำเร็จ '
+          + 'ให้ใช้ปุ่ม Google หรือ LINE ไปก่อน แล้วแจ้งผู้ดูแลระบบให้ตรวจการตั้งค่า Facebook Login');
         return;
       }
       FB.login(function(response) {

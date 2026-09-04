@@ -19,12 +19,16 @@ public class CmsCommerceService : ICmsCommerceService
     private readonly IDocumentService? _docService;
     private readonly IEtaxInvoiceService? _etaxService;
     private readonly IProductService? _productService;
+    /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0) —
+    /// แทน fallback ที่เคยเขียน `CurrentStock -=` เองเมื่อ DI ไม่ครบ</summary>
+    private readonly IStockLedger? _stock;
 
     public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger,
         IConfiguration config, IImageProcessingService? images = null,
         IDocumentService? docService = null, IEtaxInvoiceService? etaxService = null,
-        IProductService? productService = null)
+        IProductService? productService = null, IStockLedger? stock = null)
     {
+        _stock = stock;
         _db = db;
         _logger = logger;
         _encryptionKey = config["Security:EncryptionKey"] ?? "default-dev-key-change-in-production";
@@ -946,7 +950,7 @@ public class CmsCommerceService : ICmsCommerceService
     /// ทุก step ที่ล้มเหลวจะ log แต่ไม่ rollback step ก่อนหน้า — operator
     /// แก้ใน UI ต่อได้.</summary>
     public async Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId,
-        Guid? paymentId, string actor)
+        Guid? paymentId, string actor, Guid? moneyInAccountId = null)
     {
         var order = await _db.SiteOrders
             .Include(o => o.Payments)
@@ -1018,7 +1022,11 @@ public class CmsCommerceService : ICmsCommerceService
                     PaymentMethod: pay.PaymentMethod,
                     Reference: pay.Reference,
                     BankAccount: null,
-                    Notes: $"Online order #{order.OrderNumber} — {pay.PaymentMethod}"
+                    Notes: $"Online order #{order.OrderNumber} — {pay.PaymentMethod}",
+                    // เงินที่รับผ่าน gateway ยังไม่เข้าธนาคาร → ลงบัญชีพัก 11340 แทน
+                    // (ตัวตัดสินอยู่ที่ IPaymentIntentService.ResolveMoneyInAccountAsync
+                    // ที่เดียว — ที่นี่แค่ส่งต่อ). null = เส้นสลิป เงินอยู่ในธนาคารแล้ว
+                    OverridePaymentAccountId: moneyInAccountId
                 ), actor);
             }
             catch (Exception ex)
@@ -1115,20 +1123,17 @@ public class CmsCommerceService : ICmsCommerceService
 
     private async Task<string> GenerateOrderNumber(Guid companyId, Guid siteId)
     {
-        var prefix = $"WEB-{DateTime.UtcNow:yyMM}";
-        var lastOrder = await _db.SiteOrders
-            .Where(o => o.SiteId == siteId && o.OrderNumber.StartsWith(prefix))
-            .OrderByDescending(o => o.OrderNumber)
-            .Select(o => o.OrderNumber)
-            .FirstOrDefaultAsync();
-
-        var seq = 1;
-        if (lastOrder != null && lastOrder.Length > prefix.Length + 1)
-        {
-            if (int.TryParse(lastOrder[(prefix.Length + 1)..], out var lastSeq))
-                seq = lastSeq + 1;
-        }
-        return $"{prefix}-{seq:D4}";
+        // ล็อก + integer-max ผ่านตัวกลาง (ผลตรวจ F-08) — เลขคำสั่งซื้อซ้ำบนเว็บ
+        // = ลูกค้าสองรายเห็นเลขเดียวกันในอีเมลยืนยัน แล้วตามของกันไม่ถูก
+        var prefix = $"WEB-{DateTime.UtcNow:yyMM}-";
+        return await Accounting.Helpers.SequenceNumber.NextAsync(
+            _db, companyId, Accounting.Helpers.AdvisoryLockKey.StorefrontSequence, prefix,
+            _db.SiteOrders.IgnoreQueryFilters()
+                .Where(o => o.SiteId == siteId && o.OrderNumber.StartsWith(prefix))
+                .OrderByDescending(o => o.CreatedAt)
+                .Select(o => o.OrderNumber),
+            _db.SiteOrders.Local.Select(o => o.OrderNumber),
+            lockPart: $"{siteId:N}|{prefix}");
     }
 
     private static string GenerateSlug(string name)
@@ -1239,18 +1244,24 @@ public class CmsCommerceService : ICmsCommerceService
                         Notes: "Online order line"
                     ), "storefront-customer");
                 }
+                else if (_stock != null)
+                {
+                    // Fallback (DI ไม่ inject IProductService — เช่น test fixture):
+                    // เดินผ่าน ledger เหมือนกัน **ห้ามเขียนสต็อกเอง**
+                    await _stock.MoveAsync(new StockMoveRequest(
+                        CompanyId: companyId,
+                        ProductId: product.Id,
+                        Quantity: -line.Quantity,
+                        MovementType: "OUT",
+                        Reference: $"WEB-Order-{order.OrderNumber}",
+                        Notes: "Online order line",
+                        CreatedBy: "storefront-customer"));
+                }
                 else
                 {
-                    // Fallback (DI ไม่ inject — เช่น test fixture): ทำเอง
-                    product.CurrentStock -= line.Quantity;
-                    _db.StockMovements.Add(new StockMovement
-                    {
-                        CompanyId = companyId, ProductId = product.Id,
-                        MovementType = "OUT", Quantity = line.Quantity,
-                        BalanceAfter = product.CurrentStock,
-                        Reference = $"WEB-Order-{order.OrderNumber}",
-                        Notes = "Online order line", MovementDate = DateTime.UtcNow
-                    });
+                    // ไม่มีทั้งสองตัว = ตัดสต็อกไม่ได้ ห้ามบอกว่าตัดแล้ว (silent no-op)
+                    throw new InvalidOperationException(
+                        "ระบบสต็อกไม่พร้อม — ไม่สามารถตัดสต็อกของคำสั่งซื้อนี้ได้");
                 }
                 line.StockDeducted = true;
             }
@@ -1276,25 +1287,25 @@ public class CmsCommerceService : ICmsCommerceService
 
         if (order == null) return false;
 
+        if (_stock == null)
+            throw new InvalidOperationException("ระบบสต็อกไม่พร้อม — ไม่สามารถคืนสต็อกได้");
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
         foreach (var line in order.Lines.Where(l => l.StockDeducted))
         {
-            line.SiteProduct.Product.CurrentStock += line.Quantity;
+            await _stock.MoveAsync(new StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: line.SiteProduct.Product.Id,
+                Quantity: line.Quantity,          // + = คืนเข้าคลัง
+                MovementType: "IN",
+                Reference: $"WEB-Cancel-{order.OrderNumber}",
+                Notes: "Online order cancelled",
+                CreatedBy: "storefront"));
             line.StockDeducted = false;
-
-            _db.StockMovements.Add(new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = line.SiteProduct.Product.Id,
-                MovementType = "IN",
-                Quantity = line.Quantity,
-                BalanceAfter = line.SiteProduct.Product.CurrentStock,
-                Reference = $"WEB-Cancel-{order.OrderNumber}",
-                Notes = "Online order cancelled",
-                MovementDate = DateTime.UtcNow
-            });
         }
 
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
         return true;
     }
 
@@ -1577,30 +1588,30 @@ public class CmsCommerceService : ICmsCommerceService
         return newContact.Id;
     }
 
-    // Synchronous body — only stages entity changes on the change
-    // tracker, no DB roundtrip. Returns Task so the call sites can
-    // `await` it uniformly without us actually awaiting anything in
-    // here. Caller's SaveChanges flushes the staged changes.
-    private Task ReverseStockIfDeductedAsync(Guid companyId, SiteOrder order)
+    // stage เท่านั้น ไม่ SaveChanges — ผู้เรียกเป็นคน flush (ledger ก็ไม่ save เอง
+    // ตามสัญญาของมัน) · เดิมเมธอดนี้เขียนสต็อกเองซึ่งไม่แตะ WarehouseStock เลย
+    private async Task ReverseStockIfDeductedAsync(Guid companyId, SiteOrder order)
     {
+        if (_stock == null)
+        {
+            // ห้ามข้ามเงียบ: ถ้าคืนสต็อกไม่ได้ การแปลงใบต้องไม่สำเร็จแบบครึ่ง ๆ
+            if (order.Lines.Any(l => l.StockDeducted))
+                throw new InvalidOperationException("ระบบสต็อกไม่พร้อม — ไม่สามารถคืนสต็อกก่อนแปลงเอกสารได้");
+            return;
+        }
         foreach (var line in order.Lines.Where(l => l.StockDeducted))
         {
             if (line.SiteProduct?.Product == null) continue;
-            line.SiteProduct.Product.CurrentStock += line.Quantity;
+            await _stock.MoveAsync(new StockMoveRequest(
+                CompanyId: companyId,
+                ProductId: line.SiteProduct.Product.Id,
+                Quantity: line.Quantity,          // + = คืนเข้าคลัง
+                MovementType: "IN",
+                Reference: $"WEB-Convert-{order.OrderNumber}",
+                Notes: "เปลี่ยนเป็นใบเสนอราคา",
+                CreatedBy: "storefront"));
             line.StockDeducted = false;
-            _db.StockMovements.Add(new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = line.SiteProduct.Product.Id,
-                MovementType = "IN",
-                Quantity = line.Quantity,
-                BalanceAfter = line.SiteProduct.Product.CurrentStock,
-                Reference = $"WEB-Convert-{order.OrderNumber}",
-                Notes = "เปลี่ยนเป็นใบเสนอราคา",
-                MovementDate = DateTime.UtcNow
-            });
         }
-        return Task.CompletedTask;
     }
 
     private async Task<string> NextLeadNumberAsync(Guid companyId)

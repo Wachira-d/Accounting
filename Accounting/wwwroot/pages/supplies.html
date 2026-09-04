@@ -229,7 +229,7 @@
             <td class="text-right">${this.fmt(i.totalValue)}</td>
             <td class="text-right">${this.fmtQty(i.minimumStock)}</td>
             <td>${i.isLow ? '<span class="badge badge-danger">ต่ำ</span>' : '<span class="badge badge-success">ปกติ</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.showHistory('${i.productId}','${Layout.esc(i.productName)}')">ประวัติ</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.showHistory('${i.productId}','${Layout.jsArg(i.productName)}')">ประวัติ</button></td>
           </tr>`).join('');
       } catch (e) { console.error(e); }
     },

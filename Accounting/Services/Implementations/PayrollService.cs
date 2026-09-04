@@ -28,17 +28,9 @@ public class PayrollService : IPayrollService
     private readonly INotificationEngine? _notify;
 
     // Thai personal income tax brackets (progressive)
-    private static readonly (decimal UpperBound, decimal Rate)[] ThaiTaxBrackets =
-    {
-        (150_000m, 0.00m),
-        (300_000m, 0.05m),
-        (500_000m, 0.10m),
-        (750_000m, 0.15m),
-        (1_000_000m, 0.20m),
-        (2_000_000m, 0.25m),
-        (5_000_000m, 0.30m),
-        (decimal.MaxValue, 0.35m)
-    };
+    // ตารางขั้นภาษี §48(1) ย้ายไป `Helpers/ThaiPitCalculator.DefaultBrackets`
+    // พร้อมตัวคิดภาษี — เพื่อให้มีเทสต์ล็อกตัวเลขได้ (เดิมสูตรอยู่กลางเมธอด
+    // ~470 บรรทัดโดยไม่มีเทสต์เลยสักตัว · ผลตรวจ D-R2/D-T1..T4)
 
     // Social security parameters are YEAR-DEPENDENT (เพดานปรับขึ้นเป็นขั้น
     // ตามพระราชกฤษฎีกา: 15,000 → 17,500 ปี 2026 → 20,000 ปี 2029 → 23,000
@@ -107,16 +99,30 @@ public class PayrollService : IPayrollService
         }
     }
 
-    /// <summary>Resolve the SSO parameters effective for a year: the
-    /// company's SsoYearConfigs override row wins; otherwise the statutory
-    /// schedule (SsoRateSchedule). Returns employee/employer monthly caps
-    /// pre-computed (= ceiling × rate). Buddhist-era years normalised.</summary>
+    /// <summary>Resolve the SSO parameters effective for a **year + month**:
+    /// the company's SsoYearConfigs override row covering that month wins;
+    /// otherwise the statutory schedule (SsoRateSchedule). Returns
+    /// employee/employer monthly caps pre-computed (= ceiling × rate).
+    /// Buddhist-era years normalised.
+    ///
+    /// <para>⚠️ <paramref name="month"/> ไม่มีค่า default โดยตั้งใจ — ประกาศลด
+    /// อัตราสมทบออกเป็นช่วงเดือน ⇒ เส้นทางที่ "ไม่รู้เดือน" จะคิดอัตราผิดเงียบ ๆ
+    /// ให้ผู้เรียกระบุเสมอ (ทุกจุดที่เรียกมีเดือนอยู่ในมืออยู่แล้ว)</para></summary>
     internal async Task<(decimal MaxBase, decimal Rate, decimal EmployerRate, decimal MaxContribution, decimal EmployerMaxContribution)>
-        GetSsoParamsAsync(Guid companyId, int year)
+        GetSsoParamsAsync(Guid companyId, int year, int month)
     {
         var y = year > 2400 ? year - 543 : year;
-        var cfg = await _db.Set<SsoYearConfig>().AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted);
+        var cfg = (await _db.Set<SsoYearConfig>().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted)
+                .ToListAsync())
+            .Where(c => Accounting.Helpers.SsoRateSchedule.CoversMonth(
+                c.EffectiveFromMonth, c.EffectiveToMonth, month))
+            // ช่วงที่แคบกว่าชนะ (ประกาศลดชั่วคราวชนะอัตราทั้งปี) — ผลลัพธ์ไม่
+            // ขึ้นกับลำดับแถว
+            .OrderBy(c => Accounting.Helpers.SsoRateSchedule.SpanWidth(
+                c.EffectiveFromMonth, c.EffectiveToMonth))
+            .ThenBy(c => c.EffectiveFromMonth)
+            .FirstOrDefault();
         decimal ceiling, rate, erRate;
         if (cfg != null)
         {
@@ -268,6 +274,15 @@ public class PayrollService : IPayrollService
             ExternalSystem = request.ExternalSystem,
             LastSyncedAt = request.ExternalId != null ? DateTime.UtcNow : null,
             LineId = request.LineId,
+            // ค่าลดหย่อน §47 (D-T2) — เดิมไม่มีจุดเขียนเลยทั้งเรพ
+            HasSpouseAllowance = request.HasSpouseAllowance,
+            ChildAllowanceCount = Math.Max(0, request.ChildAllowanceCount),
+            SecondAndLaterChildren = Math.Max(0, request.SecondAndLaterChildren),
+            ParentAllowanceCount = Math.Clamp(request.ParentAllowanceCount, 0, 4),
+            LifeInsurancePremium = Math.Max(0m, request.LifeInsurancePremium),
+            RmfSsfContribution = Math.Max(0m, request.RmfSsfContribution),
+            DonationAmount = Math.Max(0m, request.DonationAmount),
+            TaxAllowances = Math.Max(0, request.TaxAllowances),
         };
 
         _db.Set<Employee>().Add(employee);
@@ -382,6 +397,20 @@ public class PayrollService : IPayrollService
         // state (Suspended, PendingVerification) which is admin-managed.
         if (request.CostBehavior != null) employee.CostBehavior = request.CostBehavior;
         if (request.SalaryType != null) employee.SalaryType = request.SalaryType;
+        // ค่าลดหย่อนภาษี §47 (D-T2) — ไม่ส่ง = ไม่แตะค่าเดิม (ฟอร์ม/คู่ค้าที่ยัง
+        // ไม่ส่งช่องเหล่านี้ต้องไม่ล้างค่าลดหย่อนของพนักงานทิ้งโดยไม่ตั้งใจ)
+        if (request.HasSpouseAllowance.HasValue) employee.HasSpouseAllowance = request.HasSpouseAllowance.Value;
+        if (request.ChildAllowanceCount.HasValue) employee.ChildAllowanceCount = Math.Max(0, request.ChildAllowanceCount.Value);
+        if (request.SecondAndLaterChildren.HasValue) employee.SecondAndLaterChildren = Math.Max(0, request.SecondAndLaterChildren.Value);
+        // §47(1)(ญ) ลดหย่อนบิดามารดาได้สูงสุด 4 คน (พ่อแม่ตัวเอง + ของคู่สมรส)
+        if (request.ParentAllowanceCount.HasValue) employee.ParentAllowanceCount = Math.Clamp(request.ParentAllowanceCount.Value, 0, 4);
+        if (request.LifeInsurancePremium.HasValue) employee.LifeInsurancePremium = Math.Max(0m, request.LifeInsurancePremium.Value);
+        if (request.RmfSsfContribution.HasValue) employee.RmfSsfContribution = Math.Max(0m, request.RmfSsfContribution.Value);
+        if (request.DonationAmount.HasValue) employee.DonationAmount = Math.Max(0m, request.DonationAmount.Value);
+        if (request.TaxAllowances.HasValue) employee.TaxAllowances = Math.Max(0, request.TaxAllowances.Value);
+        // D-S1 — เปิด/ปิดสถานะผู้ประกันตนย้อนหลังได้ (เดิมไม่มีช่องนี้ใน Update)
+        if (request.IsSubjectToSocialSecurity.HasValue)
+            employee.IsSubjectToSocialSecurity = request.IsSubjectToSocialSecurity.Value;
         // LastSyncedAt only stamps when ExternalId is actually present — a
         // plain UI edit that re-sends an unchanged costBehavior shouldn't
         // look like an HRIS sync.
@@ -949,32 +978,48 @@ public class PayrollService : IPayrollService
         if (request.Month < 1 || request.Month > 12)
             throw new InvalidOperationException("เดือนต้องอยู่ระหว่าง 1 ถึง 12");
 
-        if (request.Year < 2020 || request.Year > DateTime.UtcNow.Year + 1)
-            throw new InvalidOperationException("ปีต้องอยู่ระหว่าง 2020 ถึงปีปัจจุบัน+1");
+        // ═══ D-F1: "+ สร้างรอบเงินเดือน" ถูกปฏิเสธ 2 ชั้นทุกครั้ง ═══
+        //  · หน้าจอไทยแสดง **พ.ศ.** (2569) แล้วส่งค่านั้นมาตรง ๆ ⇒ ตกด่าน
+        //    "ปีต้องอยู่ระหว่าง 2020 ถึงปีปัจจุบัน+1" ทั้งที่ผู้ใช้เห็นปีถูกบนจอ
+        //  · ไม่ส่ง PeriodStart/PeriodEnd ⇒ ได้ default(DateTime) ทั้งคู่ ⇒
+        //    ด่าน `>=` เป็นจริงเสมอ
+        // ⇒ สร้างรอบจากหน้าจอ **ไม่เคยสำเร็จเลย** ทางเดียวที่ใช้ได้คือ
+        //   POST /runs/import ของคู่ค้า. รับ พ.ศ. แล้วแปลงเองแทนการโยนกลับ —
+        //   ผู้ใช้กรอกถูกตามที่จอบอก ระบบต้องเข้าใจเอง
+        var year = request.Year > 2400 ? request.Year - 543 : request.Year;
+        if (year < 2020 || year > DateTime.UtcNow.Year + 1)
+            throw new InvalidOperationException(
+                $"ปีต้องอยู่ระหว่าง {2020 + 543} ถึง {DateTime.UtcNow.Year + 1 + 543} (พ.ศ.)");
 
-        if (request.PeriodStart >= request.PeriodEnd)
+        // ไม่ส่งงวดมา = ทั้งเดือนตามปกติ (เป็นค่าที่ถูกต้องสำหรับ 99% ของรอบ)
+        var periodStart = request.PeriodStart ?? new DateTime(year, request.Month, 1);
+        var periodEnd = request.PeriodEnd
+            ?? new DateTime(year, request.Month, DateTime.DaysInMonth(year, request.Month));
+        if (periodStart >= periodEnd)
             throw new InvalidOperationException("วันเริ่มต้นงวดต้องน้อยกว่าวันสิ้นสุดงวด");
 
+        // ⚠️ ทุกจุดต่อจากนี้ใช้ `year` ที่ normalize แล้ว — ใช้ request.Year ต่อ
+        // จะทำให้ตรวจซ้ำผิดปี เลขรอบเป็น PR-2569xx และรอบไปอยู่คนละปีกับข้อมูลจริง
         var duplicateRun = await _db.Set<PayrollRun>()
-            .AnyAsync(r => r.CompanyId == companyId && r.Year == request.Year
+            .AnyAsync(r => r.CompanyId == companyId && r.Year == year
                 && r.Month == request.Month && r.Status != "Voided" && !r.IsDeleted);
         if (duplicateRun)
-            throw new InvalidOperationException($"รอบจ่ายเงินเดือน {request.Year}/{request.Month:D2} มีอยู่แล้ว");
+            throw new InvalidOperationException($"รอบจ่ายเงินเดือน {year}/{request.Month:D2} มีอยู่แล้ว");
 
         var count = await _db.Set<PayrollRun>()
-            .CountAsync(r => r.CompanyId == companyId && r.Year == request.Year);
-        var payrollNumber = $"PR-{request.Year}{request.Month:D2}-{(count + 1):D3}";
+            .CountAsync(r => r.CompanyId == companyId && r.Year == year);
+        var payrollNumber = $"PR-{year}{request.Month:D2}-{(count + 1):D3}";
 
         var run = new PayrollRun
         {
             CompanyId = companyId,
             PayrollNumber = payrollNumber,
             Name = request.Name,
-            Year = request.Year,
+            Year = year,
             Month = request.Month,
             PayDate = request.PayDate,
-            PeriodStart = request.PeriodStart,
-            PeriodEnd = request.PeriodEnd,
+            PeriodStart = periodStart,
+            PeriodEnd = periodEnd,
             Status = "Draft",
             CreatedBy = createdBy
         };
@@ -1088,7 +1133,7 @@ public class PayrollService : IPayrollService
 
         // ── สร้าง run + details ──
         // อัตรา/เพดาน ปกส. ของปีนั้น — ใช้อนุมานฐานค่าจ้างเมื่อระบบนอกไม่ได้ส่งมา
-        var importSso = await GetSsoParamsAsync(companyId, request.Year);
+        var importSso = await GetSsoParamsAsync(companyId, request.Year, request.Month);
         var count = await _db.Set<PayrollRun>()
             .CountAsync(r => r.CompanyId == companyId && r.Year == request.Year);
         var payrollNumber = $"PR-{request.Year}{request.Month:D2}-{(count + 1):D3}";
@@ -1128,7 +1173,16 @@ public class PayrollService : IPayrollService
                 line.SocialSecurityBase ?? 0m, line.SocialSecurityEmployee, line.GrossIncome,
                 line.SocialSecurityEmployer, importSso.Rate, importSso.MaxContribution,
                 importSso.EmployerRate, importSso.EmployerMaxContribution);
-            if (norm.Changed && Math.Abs(norm.Employer - line.SocialSecurityEmployer) > 0.005m)
+            if (norm.Conflict != null)
+            {
+                // ระบบตัดสินแทนไม่ได้ → คงค่าที่ส่งมาไว้ทั้งคู่ แล้วบอกให้รู้
+                // (ด่านตอนนำส่ง สปส. จะบล็อกอีกชั้นถ้ายังไม่ถูกแก้ — เงินไม่ออกผิด)
+                warnings.Add($"{emp.FirstNameTh} {emp.LastNameTh}: {norm.Conflict}");
+                _logger?.LogWarning(
+                    "Import payroll: SSO pair conflict for employee {Emp} — {Reason}",
+                    emp.Id, norm.Conflict);
+            }
+            else if (norm.EmployerAdjusted)
             {
                 warnings.Add(
                     $"{emp.FirstNameTh} {emp.LastNameTh}: ปรับเงินสมทบฝั่งนายจ้างจาก "
@@ -1254,7 +1308,7 @@ public class PayrollService : IPayrollService
 
         // อัตรา/เพดาน ปกส. ของปีนั้น — หน้าจอใช้คำนวณตัวอย่างตอนแก้ฐานค่าจ้าง
         // (ค่ามาจากเซิร์ฟเวอร์ ไม่ใช่ตารางที่หน้าเว็บฝังเอง)
-        var ssoForUi = await GetSsoParamsAsync(companyId, run.Year);
+        var ssoForUi = await GetSsoParamsAsync(companyId, run.Year, run.Month);
         return MapToPayrollRunResponse(run) with
         {
             Details = lines,
@@ -1318,6 +1372,16 @@ public class PayrollService : IPayrollService
             ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
 
         static decimal Pos(decimal v) => v < 0 ? 0 : v;
+
+        // ส่วนของรายได้ที่ **ไม่ต้องเสียภาษี** (สวัสดิการยกเว้น เช่นค่ารักษาพยาบาล)
+        // — เก็บไว้ก่อนแก้ยอด เพื่อคงไว้หลังรวมรายได้ใหม่ (ผลตรวจ D-D1)
+        var nonTaxablePortion = Math.Max(0m, d.GrossIncome - d.TaxableGross);
+
+        // รายได้เปลี่ยนไหม — ใช้ตัดสินว่าต้องคิดภาษีใหม่หรือเปล่า (ผลตรวจ D-D2)
+        var incomeChanged = req.BaseSalary.HasValue || req.OvertimePay.HasValue
+            || req.Allowances.HasValue || req.Commission.HasValue
+            || req.Bonus.HasValue || req.OtherIncome.HasValue;
+
         if (req.BaseSalary.HasValue) d.BaseSalary = Pos(req.BaseSalary.Value);
         if (req.OvertimePay.HasValue) d.OvertimePay = Pos(req.OvertimePay.Value);
         if (req.Allowances.HasValue) d.Allowances = Pos(req.Allowances.Value);
@@ -1329,7 +1393,7 @@ public class PayrollService : IPayrollService
         // ไม่เท่ากัน (เคสจริง: ลูกจ้าง 4,381 vs นายจ้าง 4,403 ต่างกัน 22 = ยอด
         // ของพนักงานที่ถูกแก้พอดี) ทั้งที่ ม.33 ใช้ฐานเดียวกันทั้งคู่
         // และไฟล์ สปส.1-10 ก็ประกาศค่าจ้างที่ 5% ไม่ลงตัวกับเงินสมทบ
-        var ssoParams = await GetSsoParamsAsync(companyId, run.Year);
+        var ssoParams = await GetSsoParamsAsync(companyId, run.Year, run.Month);
         if (req.SocialSecurityBase.HasValue)
         {
             // ผู้ใช้ระบุ "ค่าจ้างที่ใช้เป็นฐาน" มาเอง (ม.5: เบี้ยเลี้ยง/ค่าน้ำมัน
@@ -1375,7 +1439,34 @@ public class PayrollService : IPayrollService
 
         // รวมยอดใหม่ — หักฝั่งลูกจ้างเท่านั้นที่กระทบ net (ปกส./PVD นายจ้าง = cost บริษัท)
         d.GrossIncome = d.BaseSalary + d.OvertimePay + d.Allowances + d.Commission + d.Bonus + d.OtherIncome;
-        d.TaxableGross = d.GrossIncome;
+
+        // ★ เดิมเขียน `d.TaxableGross = d.GrossIncome` ทับทุกครั้ง (ผลตรวจ D-D1)
+        // ⇒ ส่วนที่ยกเว้นภาษี (ค่ารักษาพยาบาล ฯลฯ ที่ engine แยกไว้ตอนคำนวณ)
+        // **หายทุกครั้งที่ HR แก้ยอดช่องใด ๆ** แม้แก้ช่องที่ไม่เกี่ยวกันเลย
+        // ⇒ ฐานภาษีใน ภ.ง.ด.1 และ 50 ทวิ สูงกว่าจริง = พนักงานถูกหักเกิน
+        // คงสัดส่วนที่ยกเว้นไว้ (clamp ไม่ให้ติดลบเมื่อรายได้ใหม่น้อยกว่าส่วนยกเว้น)
+        d.TaxableGross = Math.Max(0m, d.GrossIncome - Math.Min(nonTaxablePortion, d.GrossIncome));
+
+        // ★ แก้รายได้แล้วภาษีต้องเปลี่ยนตาม (ผลตรวจ D-D2)
+        //
+        // เดิมแก้โบนัส/OT ได้แต่ `WithholdingTax` ค้างค่าเดิม ⇒ หักน้อยกว่าที่ควร
+        // แล้วผู้จ่ายรับผิดตาม §54 — และเงียบสนิทเพราะยอดสุทธิ "ดูสมเหตุสมผล"
+        //
+        // **ไม่คำนวณใหม่ที่นี่** เพราะสูตรภาษีต้องใช้บริบทของทั้งปี (รายได้สะสม ·
+        // ลดหย่อนรายช่อง · ตารางขั้นภาษีของบริษัท · งวดที่เหลือ) ที่เมธอดนี้ไม่มี
+        // — คัดลอกสูตรมาที่นี่ = อัลกอริทึมภาษีชุดที่สองที่จะ drift แน่นอน
+        // (defect class ที่ทั้งไฟล์นี้เพิ่งยุบทิ้งไปในรอบ D-T1..T4)
+        // จึง **ล้มดังพร้อมบอกทางไปต่อ** แทนการปล่อยตัวเลขผิดผ่านไปเงียบ ๆ
+        if (incomeChanged && !req.WithholdingTax.HasValue)
+        {
+            throw new Accounting.Helpers.BusinessRuleException(
+                "แก้ยอดรายได้แล้วต้องระบุภาษีหัก ณ ที่จ่ายใหม่ด้วย — "
+                + $"ยอดเดิม {d.WithholdingTax:N2} บาท คิดจากรายได้ก่อนแก้ "
+                + "ถ้าปล่อยไว้จะหักน้อย/มากกว่าที่ควร (ภาษีที่หักขาด ผู้จ่ายรับผิดตาม §54). "
+                + "ทางแก้: กรอกช่อง \"ภาษีหัก ณ ที่จ่าย\" ในโมดัลเดียวกัน "
+                + "หรือกด \"คำนวณเงินเดือน\" ใหม่ทั้งรอบเพื่อให้ระบบคิดภาษีให้ทุกคน");
+        }
+
         d.TotalDeductions = d.SocialSecurityEmployee + d.WithholdingTax + d.ProvidentFundEmployee
             + d.LoanDeduction + d.OtherDeductions;
         d.NetPay = d.GrossIncome - d.TotalDeductions;
@@ -1459,7 +1550,16 @@ public class PayrollService : IPayrollService
 
             // Get active employees
             var employees = await _db.Set<Employee>()
-                .Where(e => e.CompanyId == companyId && e.IsActive && !e.IsDeleted
+                // ═══ D-S2: ลาออกกลางเดือนหายจากรอบทั้งคน ═══
+                // `Terminate` ตั้ง IsActive = false ⇒ เงื่อนไข `e.IsActive` ตัด
+                // คนที่เพิ่งลาออกออกไปก่อน แล้วเงื่อนไข `EndDate >= PeriodStart`
+                // ที่เขียนไว้เพื่อรองรับเคสนี้โดยเฉพาะ **เป็นจริงไม่ได้เลย**
+                // ⇒ ลาออกกลางเดือน = ไม่ได้เงินเดือนงวดสุดท้าย · ไม่อยู่ใน
+                //   ภ.ง.ด.1 · ไม่อยู่ใน สปส.1-10 — เงียบสนิท ไม่มี error ให้เห็น
+                // (เงื่อนไขที่ "ปกติเป็นจริงเสมอ" ซ่อนเงื่อนไขที่ตามมาไว้ทั้งข้อ)
+                .Where(e => e.CompanyId == companyId && !e.IsDeleted
+                    && (e.IsActive
+                        || (e.EndDate != null && e.EndDate >= run.PeriodStart))
                     && e.StartDate <= run.PeriodEnd
                     && (e.EndDate == null || e.EndDate >= run.PeriodStart))
                 .ToListAsync();
@@ -1538,7 +1638,7 @@ public class PayrollService : IPayrollService
             // SSO parameters effective for THIS run's year — the wage ceiling
             // steps up by royal decree (15,000 → 17,500 in 2026 → 20,000 in
             // 2029 → 23,000 in 2032) and a company can override per year.
-            var sso = await GetSsoParamsAsync(companyId, run.Year);
+            var sso = await GetSsoParamsAsync(companyId, run.Year, run.Month);
 
             foreach (var emp in employees)
             {
@@ -1706,9 +1806,21 @@ public class PayrollService : IPayrollService
                     ? Math.Round(emp.BaseSalary * unpaidLeaveDays / workDaysInMonth, 2, MidpointRounding.AwayFromZero)
                     : 0m;
 
+                // ═══ D-S3: เฉลี่ยตามวันที่เป็นลูกจ้างจริงในงวดนี้ ═══
+                // เดิมเฉลี่ยเฉพาะ "ลาไม่รับค่าจ้าง" ⇒ เข้างาน 25 ก.ย. ได้เงินเดือน
+                // **เต็มเดือน** · ลาออกวันที่ 3 ก็ได้เต็มเดือน ⇒ จ่ายเกิน + ฐาน
+                // ประกันสังคมเกินจริง (ม.5 "ค่าจ้าง" = ที่จ่ายจริง) ⇒ นำส่งเกินและ
+                // ไฟล์ สปส.1-10 ประกาศค่าจ้างที่ไม่ตรงความจริง + ฐานภาษีเกินตาม
+                var payableDays = Accounting.Helpers.PayrollProration.PayableDays(
+                    run.PeriodStart, run.PeriodEnd, emp.StartDate, emp.EndDate);
+                var periodDays = Accounting.Helpers.PayrollProration.DaysInPeriod(
+                    run.PeriodStart, run.PeriodEnd);
+                var proratedBaseSalary = Accounting.Helpers.PayrollProration.Prorate(
+                    emp.BaseSalary, payableDays, periodDays);
+
                 // taxableGross = ส่วนที่นำไปคำนวณ WHT (ตามประมวลรัษฎากร §40(1)).
                 // grossIncome (จ่ายให้พนักงาน) = taxableGross + สวัสดิการยกเว้นภาษี.
-                var taxableGross = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
+                var taxableGross = proratedBaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
                 var grossIncome = taxableGross + nonTaxableExtra;
 
                 // Social security: base on BaseSalary (not gross), capped at the
@@ -1726,7 +1838,9 @@ public class PayrollService : IPayrollService
                     // ฐาน + การปัดเศษผ่านตัวกลางเดียว (Helpers/SsoWageBase) —
                     // ทั้งสองฝั่งคิดจากฐานเดียวกันเสมอ และฐานถูกเก็บลงแถวเพื่อให้
                     // ไฟล์ สปส.1-10 รายงานค่าจ้างที่ตรงกับยอดสมทบ
-                    ssoWageBase = Accounting.Helpers.SsoWageBase.Clamp(emp.BaseSalary, sso.MaxBase);
+                    // ★ D-S3: ฐานค่าจ้างต้องเป็น "ที่จ่ายจริงในงวดนี้" (ม.5) —
+                    // เข้า/ออกกลางเดือนต้องใช้ยอดที่เฉลี่ยแล้ว ไม่ใช่เงินเดือนเต็ม
+                    ssoWageBase = Accounting.Helpers.SsoWageBase.Clamp(proratedBaseSalary, sso.MaxBase);
                     ssoEmployee = Accounting.Helpers.SsoWageBase.Contribution(
                         ssoWageBase, sso.Rate, sso.MaxContribution);
                     ssoEmployer = Accounting.Helpers.SsoWageBase.Contribution(
@@ -1762,7 +1876,30 @@ public class PayrollService : IPayrollService
                 // TAXABLE portion only — สวัสดิการยกเว้นภาษีถูกแยกไว้แล้วใน
                 // nonTaxableExtra → ไม่กระทบฐาน WHT.
                 var ytdIncome = cumulativeIncome + taxableGross;
-                var estimatedAnnualIncome = run.Month > 0 ? ytdIncome * 12 / run.Month : ytdIncome * 12;
+
+                // ═══ ประมาณการเงินได้ทั้งปี — จาก "งวดที่เหลือ" ไม่ใช่ "เดือนที่ผ่านมา" ═══
+                // (D-T3/D-T4) สูตรเดิม `ytd × 12 ÷ เดือน` ทำสองอย่างผิดพร้อมกัน:
+                //  · โบนัสก้อนเดียวถูกอ่านว่า "ได้ทุกเดือน" ⇒ เงินเดือน 50,000 +
+                //    โบนัส 300,000 ในเดือน 6 ถูกหักรวม 82,221 แทน 61,925 (ม.50(1)
+                //    เงินได้ครั้งคราวรวมครั้งเดียว ไม่ประมาณการซ้ำ)
+                //  · คนเข้ากลางปีถูกประมาณการจากเดือนที่ผ่านมา ⇒ เข้า 1 ก.ค.
+                //    เงินเดือน 150,000 หักงวดแรก 305 แล้วพุ่ง 36,759 งวดสุดท้าย
+                // สูตรใหม่ฉายเฉพาะ **ฐานประจำ** ไปข้างหน้า — แก้ทั้งสองด้วยตัวเดียว
+                //
+                // ฐานประจำ = ส่วนที่คาดว่าจะได้ต่อไปทุกงวด (เงินเดือน + เบี้ยเลี้ยง
+                // ประจำ + OT ที่เกิดในงวดนี้ยังถือว่าไม่ประจำ) — ตัดรายการครั้งคราว
+                // (โบนัส/คอมมิชชัน/อื่น ๆ) ออกเพราะมันอยู่ในยอดสะสมแล้ว
+                // ฐานประจำใช้ **เงินเดือนเต็ม** เพราะงวดที่เหลือเป็นเดือนเต็ม —
+                // การเฉลี่ยของงวดนี้ (เข้ากลางเดือน) และการลาไม่รับค่าจ้างเป็น
+                // เหตุการณ์ครั้งคราว ไม่ใช่ฐานที่จะเกิดซ้ำทุกงวด
+                var recurringMonthly = Math.Max(0m, emp.BaseSalary + allowances);
+
+                // งวดที่เหลือหลังงวดนี้ — เคารพวันสิ้นสุดการจ้างถ้ามี (ลาออกกลางปี
+                // ไม่ควรถูกประมาณการว่ายังได้เงินเดือนจนสิ้นปี)
+                var lastPayMonth = emp.EndDate.HasValue && emp.EndDate.Value.Year == run.Year
+                    ? Math.Min(12, Math.Max(run.Month, emp.EndDate.Value.Month))
+                    : 12;
+                var remainingPeriodsAfterThis = Math.Max(0, lastPayMonth - run.Month);
 
                 // Apply Revenue Code §47 allowances before bracket lookup. Skipping
                 // these used to over-withhold by 5–15 % depending on income tier —
@@ -1787,34 +1924,46 @@ public class PayrollService : IPayrollService
                 var donationCapPct = (taxCfg?.DonationCapPercent ?? 10m) / 100m;
                 var perDependantLegacy = PitPerDependantAllowance;
 
-                var detailedAllowance =
-                    (emp.HasSpouseAllowance ? spouseAllow : 0m)
-                    + (emp.ChildAllowanceCount * childAllow)
-                    + (emp.SecondAndLaterChildren * childPost2561Bonus)
-                    + (Math.Min(4, emp.ParentAllowanceCount) * parentAllow)
-                    + Math.Min(lifeInsCap, emp.LifeInsurancePremium)
-                    + Math.Min(pvdCap, emp.RmfSsfContribution);
                 var hasDetailed = emp.HasSpouseAllowance
                     || emp.ChildAllowanceCount > 0 || emp.SecondAndLaterChildren > 0
                     || emp.ParentAllowanceCount > 0 || emp.LifeInsurancePremium > 0
                     || emp.RmfSsfContribution > 0;
-                var dependantsAllowance = hasDetailed
-                    ? detailedAllowance
-                    : perDependantLegacy * Math.Max(0, emp.TaxAllowances);
-                var baseDeductions = personalAllow + dependantsAllowance + annualSso + annualPvd;
-                // บริจาคหักได้ตาม donationCapPct ของเงินได้สุทธิหลังลดหย่อน
-                var afterBase = Math.Max(0, estimatedAnnualIncome - baseDeductions);
-                var donation = Math.Min(emp.DonationAmount, afterBase * donationCapPct);
-                var personalDeductions = baseDeductions + donation;
-                var estimatedTaxableIncome = Math.Max(0m, estimatedAnnualIncome - personalDeductions);
+                // ═══ คำนวณภาษีผ่าน pure class ตัวเดียว (D-T1..T4) ═══
+                // เดิมสูตรอยู่กลางเมธอดนี้ ~470 บรรทัด **ไม่มีเทสต์เลย** และลืมหัก
+                // ค่าใช้จ่าย §42ทวิ (50% ไม่เกิน 100,000) ⇒ เงินเดือน 50,000 ถูกหัก
+                // 31,925/ปี ทั้งที่ควรเป็น 20,450 (เกินเดือนละ 956 บาทต่อคน) ·
+                // `Section42TwiCap` มีในตารางตั้งค่ามาตลอดแต่ไม่มีใครอ่าน
+                var pitAllowances = new Accounting.Helpers.PitAllowances(
+                    Personal: personalAllow,
+                    Spouse: emp.HasSpouseAllowance ? spouseAllow : 0m,
+                    Children: hasDetailed
+                        ? (emp.ChildAllowanceCount * childAllow) + (emp.SecondAndLaterChildren * childPost2561Bonus)
+                        : 0m,
+                    Parents: hasDetailed ? Math.Min(4, emp.ParentAllowanceCount) * parentAllow : 0m,
+                    LifeInsurance: hasDetailed ? Math.Min(lifeInsCap, emp.LifeInsurancePremium) : 0m,
+                    ProvidentFund: (hasDetailed ? Math.Min(pvdCap, emp.RmfSsfContribution) : 0m) + annualPvd,
+                    SocialSecurity: annualSso);
+                // ผู้ที่ยังไม่ได้กรอกลดหย่อนรายช่อง ใช้ตัวเลขรวมแบบเดิม (TaxAllowances)
+                var pitAllowancesEffective = hasDetailed
+                    ? pitAllowances
+                    : pitAllowances with { Children = perDependantLegacy * Math.Max(0, emp.TaxAllowances) };
 
-                var brackets = ParseBrackets(taxCfg);
-                var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedTaxableIncome, brackets);
-                var remainingMonths = 13 - run.Month;
-                var monthlyTax = remainingMonths > 0
-                    ? (estimatedAnnualTax - cumulativeTax) / remainingMonths
-                    : 0m;
-                monthlyTax = Math.Max(0, monthlyTax);
+                var pit = Accounting.Helpers.ThaiPitCalculator.Compute(
+                    taxableIncomeYtd: ytdIncome,
+                    recurringMonthlyIncome: recurringMonthly,
+                    remainingPeriodsAfterThis: remainingPeriodsAfterThis,
+                    allowances: pitAllowancesEffective,
+                    taxWithheldYtdBeforeThisPeriod: cumulativeTax,
+                    donationAmount: emp.DonationAmount,
+                    donationCapPercent: donationCapPct * 100m,
+                    expenseCap: taxCfg?.Section42TwiCap,
+                    brackets: ParseBrackets(taxCfg) is { } bk
+                        ? bk.Select(b => new Accounting.Helpers.PitBracket(b.UpperBound, b.Rate)).ToArray()
+                        : null);
+
+                var estimatedAnnualIncome = pit.EstimatedAnnualIncome;
+                var estimatedAnnualTax = pit.EstimatedAnnualTax;
+                var monthlyTax = pit.WithholdingThisPeriod;
 
                 var totalDeductionsForEmp = ssoEmployee + monthlyTax + pvdEmployee + otherDeductions;
                 var netPay = grossIncome - totalDeductionsForEmp;
@@ -1931,6 +2080,11 @@ public class PayrollService : IPayrollService
     private int _lastPaySsoAdjustedCount;
     public int LastPaySsoAdjustedCount => _lastPaySsoAdjustedCount;
 
+    /// <summary>แถวที่ระบบ **ตัดสินแทนไม่ได้** ระหว่างการซ่อมคู่ ปกส. ครั้งล่าสุด
+    /// — ต้องเอาไปบอกผู้ใช้ ไม่ใช่ปล่อยให้ไปตายที่ด่านตอนนำส่งโดยไม่รู้สาเหตุ</summary>
+    private List<string> _lastSsoConflicts = new();
+    public IReadOnlyList<string> LastSsoConflicts => _lastSsoConflicts;
+
     /// <summary>ทำให้ "ฐาน · ลูกจ้าง · นายจ้าง" ของทุกแถวในรอบสอดคล้องกัน —
     /// **ตัวซ่อมตัวเดียว** ที่ทั้งตอนจ่าย ตอนกลับรายการจ่าย (และตอน import ผ่าน
     /// <c>SsoWageBase.Normalize</c> ตรง ๆ) ใช้ร่วมกัน
@@ -1942,45 +2096,95 @@ public class PayrollService : IPayrollService
     /// <para>ปลอดภัยเฉพาะ**ก่อน**สร้าง JE ของรอบนั้น — ห้ามเรียกหลังจ่ายแล้ว
     /// (ตัวเลขจะไม่ตรงกับ JE ที่ลงไปแล้ว)</para></summary>
     /// <returns>จำนวนพนักงานที่ถูกปรับ — ผู้เรียกต้องเอาไปบอกผู้ใช้ ห้ามแก้เงียบ</returns>
-    private async Task<int> NormalizeRunSsoAsync(Guid companyId, PayrollRun run, string reason)
+    private async Task<int> NormalizeRunSsoAsync(
+        Guid companyId, PayrollRun run, string reason, string actor)
     {
-        var sso = await GetSsoParamsAsync(companyId, run.Year);
+        var sso = await GetSsoParamsAsync(companyId, run.Year, run.Month);
         var details = run.Details is { Count: > 0 }
             ? run.Details.ToList()
             : await _db.Set<PayrollDetail>()
                 .Where(d => d.PayrollRunId == run.Id && d.CompanyId == companyId)
                 .ToListAsync();
 
-        var adjusted = 0;
+        var moneyAdjusted = 0;      // ยอดเงินฝั่งนายจ้างเปลี่ยนจริง
+        var baseFilled = 0;         // เติมฐานย้อนหลังอย่างเดียว (เงินไม่ขยับ)
+        var conflicts = new List<string>();
+        var before = details.ToDictionary(d => d.EmployeeId,
+            d => (d.SocialSecurityBase, d.SocialSecurityEmployer));
+
         foreach (var d in details)
         {
             var norm = Accounting.Helpers.SsoWageBase.Normalize(
                 d.SocialSecurityBase, d.SocialSecurityEmployee, d.GrossIncome,
                 d.SocialSecurityEmployer, sso.Rate, sso.MaxContribution,
                 sso.EmployerRate, sso.EmployerMaxContribution);
+            if (norm.Conflict != null)
+            {
+                // ห้ามเดาแทนผู้ใช้ — คงค่าเดิมไว้ทั้งคู่ (ด่านตอนนำส่งจะบล็อกเอง)
+                conflicts.Add($"{d.EmployeeId}: {norm.Conflict}");
+                continue;
+            }
             if (!norm.Changed) continue;
             d.SocialSecurityBase = norm.Base;
             d.SocialSecurityEmployer = norm.Employer;
             d.UpdatedAt = DateTime.UtcNow;
-            adjusted++;
+            d.UpdatedBy = actor;
+            if (norm.EmployerAdjusted) moneyAdjusted++; else baseFilled++;
         }
 
-        if (adjusted > 0)
+        if (moneyAdjusted > 0 || baseFilled > 0)
         {
             run.TotalSocialSecurityEmployee = details.Sum(x => x.SocialSecurityEmployee);
             run.TotalSocialSecurityEmployer = details.Sum(x => x.SocialSecurityEmployer);
             _logger?.LogWarning(
-                "ซ่อมยอดประกันสังคมให้สอดคล้อง {Count} คน ระหว่าง{Reason} run {Run} "
-                + "→ ลูกจ้าง {Emp} · นายจ้าง {Er}",
-                adjusted, reason, run.Id, run.TotalSocialSecurityEmployee,
-                run.TotalSocialSecurityEmployer);
+                "ซ่อมยอดประกันสังคม {Money} คน (เติมฐานอย่างเดียว {BaseOnly} คน) ระหว่าง{Reason} "
+                + "run {Run} → ลูกจ้าง {Emp} · นายจ้าง {Er}",
+                moneyAdjusted, baseFilled, reason, run.Id,
+                run.TotalSocialSecurityEmployee, run.TotalSocialSecurityEmployer);
+
+            // ── ร่องรอยที่ตรวจย้อนหลังได้ (พ.ร.บ.การบัญชี ม.10 + กฎ M) ──
+            // การแก้ตัวเลขเงินอัตโนมัติต้องเข้า hash chain ของ AuditLog ไม่ใช่
+            // อยู่แค่ในไฟล์ log ที่ไม่มีใครเปิด — ต้องตอบผู้สอบบัญชีได้ว่า
+            // "ใครเปลี่ยน 4,403 → 4,381 เมื่อไร ด้วยกฎข้อไหน"
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(actor, out var actorId) ? actorId : (Guid?)null,
+                Action = AuditAction.Update,
+                EntityType = "PayrollRun.SocialSecurity",
+                EntityId = run.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(
+                    details.Where(x => before.TryGetValue(x.EmployeeId, out var b)
+                            && (b.SocialSecurityBase != x.SocialSecurityBase
+                                || b.SocialSecurityEmployer != x.SocialSecurityEmployer))
+                        .Select(x => new
+                        {
+                            x.EmployeeId,
+                            Base = before[x.EmployeeId].SocialSecurityBase,
+                            Employer = before[x.EmployeeId].SocialSecurityEmployer,
+                        })),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Reason = reason,
+                    RuleCode = "SSO-M33-PAIR",
+                    LegalReference = "พ.ร.บ.ประกันสังคม ม.33/ม.46",
+                    EmployerAmountAdjusted = moneyAdjusted,
+                    WageBaseBackfilled = baseFilled,
+                    TotalEmployee = run.TotalSocialSecurityEmployee,
+                    TotalEmployer = run.TotalSocialSecurityEmployer,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
         }
-        return adjusted;
+
+        _lastSsoConflicts = conflicts;
+        return moneyAdjusted;
     }
 
     public async Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy)
     {
         _lastPaySsoAdjustedCount = 0;
+        _lastSsoConflicts = new List<string>();
         // Quick existence check before the long-running pay transaction. The
         // FOR UPDATE lock is taken inside payTransaction below so a concurrent
         // Pay click waits and re-reads under the lock.
@@ -2039,7 +2243,7 @@ public class PayrollService : IPayrollService
             // ซ่อมได้โดยไม่ทิ้งรายการค้าง — JE ยังไม่ถูกสร้าง ยอดที่แก้ตรงนี้จะ
             // ไหลเข้า JE ทันที (ถ้าปล่อยไปจะไปตายที่ด่านตอนนำส่ง สปส. แล้วผู้ใช้
             // ต้องกลับรายการทั้งรอบ)
-            _lastPaySsoAdjustedCount = await NormalizeRunSsoAsync(companyId, run, "จ่ายเงินเดือน");
+            _lastPaySsoAdjustedCount = await NormalizeRunSsoAsync(companyId, run, "จ่ายเงินเดือน", processedBy);
 
             run.Status = "Paid";
             run.UpdatedBy = processedBy;
@@ -2691,10 +2895,18 @@ public class PayrollService : IPayrollService
     private int _ssoAdjustedOnReopen;
     public int LastReopenSsoAdjustedCount => _ssoAdjustedOnReopen;
 
+    /// <summary>เลขที่ใบสำคัญที่เพิ่งถูกกลับรายการ — ใช้บอกผู้ใช้ว่า "กลับใบไหน"
+    /// เพราะการกลับรายการ **ไม่แก้ใบเดิม** แต่สร้างใบตรงข้ามขึ้นมาใหม่
+    /// (ใบเดิมยังโชว์ยอดเท่าเดิมตลอดไป เปลี่ยนแค่สถานะเป็น "กลับรายการแล้ว")
+    /// ⇒ ถ้าไม่บอก ผู้ใช้จะเปิดใบเดิมแล้วคิดว่ากดปุ่มไปแล้วไม่มีอะไรเกิดขึ้น</summary>
+    private string? _lastReversedJournalNumber;
+    public string? LastReversedJournalNumber => _lastReversedJournalNumber;
+
     public async Task<PayrollRunResponse> ReopenPaidRunAsync(Guid companyId, Guid payrollRunId,
         string reason, string reopenedBy)
     {
         _ssoAdjustedOnReopen = 0;
+        _lastReversedJournalNumber = null;
         reason = (reason ?? "").Trim();
         if (reason.Length < 5)
             throw new InvalidOperationException(
@@ -2738,13 +2950,35 @@ public class PayrollService : IPayrollService
                     "รอบนี้ถูกเปลี่ยนสถานะไปแล้วโดยผู้ใช้งานคนอื่น — กรุณารีเฟรชหน้านี้");
             run = locked;
 
+            // ── กลับ JE ของการจ่าย ───────────────────────────────────────────
+            // ⚠️ เดิมเป็น `if (มี JE) กลับ;` เฉย ๆ ⇒ รอบที่สถานะ Paid แต่ไม่มี
+            // JournalEntryId ผูกอยู่ จะ **ข้ามไปเงียบ ๆ** แล้วผู้ใช้ได้ข้อความ
+            // "กลับรายการจ่ายแล้ว" ทั้งที่ยอดยังอยู่ในบัญชีครบ (ห้าม silent no-op)
             var reversedJe = run.JournalEntryId;
-            if (run.JournalEntryId.HasValue && _accountingService != null)
+            if (reversedJe.HasValue && _accountingService != null)
             {
-                await _accountingService.ReverseJournalEntryAsync(companyId, run.JournalEntryId.Value,
+                // ⚠️ ต้องบอก **เลขใบตรงข้ามที่เพิ่งสร้าง** ไม่ใช่เลขใบเดิม —
+                // ผู้ใช้เปิดใบเดิมแล้วเห็นยอดเท่าเดิม (ถูกต้อง เพราะห้ามแก้ใบที่
+                // ผ่านรายการแล้ว) สิ่งที่เขาต้องไปดูคือใบหักล้าง. ค่านี้
+                // ReverseJournalEntryAsync คืนมาให้อยู่แล้ว — เดิมทิ้งแล้วไป
+                // query เลขใบเดิมกลับมา = ตอบคำถามผิดข้อที่คอมมิตนั้นตั้งใจแก้
+                var revEntry = await _accountingService.ReverseJournalEntryAsync(
+                    companyId, reversedJe.Value,
                     reversalDate: run.PayDate,
                     description: $"กลับรายการจ่ายเงินเดือน {run.PayrollNumber} ({run.Month:D2}/{run.Year}) — {reason}",
                     systemTriggered: true);
+                _lastReversedJournalNumber = revEntry?.EntryNumber;
+            }
+            else if (run.TotalGrossSalary > 0)
+            {
+                // รอบที่มีเงินแต่ไม่มีรายการบัญชีผูกอยู่ = ข้อมูลไม่สอดคล้องกัน
+                // ต้องบอกให้รู้ ไม่ใช่ปล่อยผ่านแล้วบอกว่าสำเร็จ
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"กลับรายการจ่ายไม่ได้ — รอบ {run.PayrollNumber} มีสถานะ \"จ่ายแล้ว\" "
+                    + "แต่ไม่มีรายการบัญชี (JE) ผูกอยู่ ระบบจึงไม่รู้ว่าต้องกลับใบไหน "
+                    + "กรุณาเปิดสมุดรายวัน ค้นด้วยเลขอ้างอิง "
+                    + $"\"HR-PR-{run.Year}-{run.Month:D2}\" แล้วกลับรายการใบนั้นด้วยตนเอง "
+                    + "ก่อนแจ้งผู้ดูแลระบบให้ตรวจการเชื่อมโยงของรอบนี้");
             }
 
             await RestoreSalaryAdvancesAsync(companyId, payrollRunId, resetRecovered: true);
@@ -2761,7 +2995,7 @@ public class PayrollService : IPayrollService
             // ตรรกะซ่อมอยู่ที่ NormalizeRunSsoAsync ตัวเดียว — ใช้ร่วมกับตอนจ่าย
             // และตอน import (เดิมเขียนไว้ที่นี่ที่เดียว ⇒ รอบที่ import เข้ามาแล้ว
             // ไม่เคยกด "กลับรายการจ่าย" จึงไม่มีอะไรซ่อมให้เลย)
-            _ssoAdjustedOnReopen = await NormalizeRunSsoAsync(companyId, run, "กลับรายการจ่าย");
+            _ssoAdjustedOnReopen = await NormalizeRunSsoAsync(companyId, run, "กลับรายการจ่าย", reopenedBy);
 
             run.JournalEntryId = null;
             run.Status = "Approved";
@@ -3115,6 +3349,17 @@ public class PayrollService : IPayrollService
             detail.SocialSecurityEmployee, detail.WithholdingTax,
             detail.ProvidentFundEmployee, detail.OtherDeductions,
             detail.TotalDeductions, detail.NetPay);
+    }
+
+    /// <summary>พนักงานคนนี้ผูกกับผู้ใช้คนนี้ไหม (ผลตรวจ D-U3)
+    ///
+    /// <para>ต้องกรอง <c>CompanyId</c> ด้วยเสมอ — <c>Employee</c> เป็น tenant entity
+    /// แต่ id ที่ส่งมาจาก request ผู้ใช้แก้เองได้ (กติกา M ของ CLAUDE.md)</para></summary>
+    public async Task<bool> IsEmployeeOfUserAsync(Guid companyId, Guid employeeId, Guid userId)
+    {
+        if (userId == Guid.Empty) return false;
+        return await _db.Employees.AsNoTracking()
+            .AnyAsync(e => e.Id == employeeId && e.CompanyId == companyId && e.UserId == userId);
     }
 
     public async Task<PayslipResponse> GeneratePayslipAsync(Guid companyId, Guid payrollRunId, Guid employeeId)
@@ -3608,7 +3853,7 @@ public class PayrollService : IPayrollService
             .ToListAsync();
 
         // Wage base cap follows the YEAR being reported, not a fixed 15,000.
-        var ssoParams = await GetSsoParamsAsync(companyId, year);
+        var ssoParams = await GetSsoParamsAsync(companyId, year, month);
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
@@ -3691,42 +3936,9 @@ public class PayrollService : IPayrollService
 
     // ===== Thai Income Tax Calculation =====
 
-    /// <summary>
-    /// Calculates Thai personal income tax using progressive brackets.
-    /// Brackets: 0-150K=0%, 150K-300K=5%, 300K-500K=10%, 500K-750K=15%,
-    /// 750K-1M=20%, 1M-2M=25%, 2M-5M=30%, 5M+=35%
-    /// </summary>
-    /// <summary>คิดภาษีโดย walk progressive brackets — รับ override
-    /// brackets จาก TaxRuleConfig (ถ้ามี) ไม่งั้น fallback ใช้
-    /// hardcoded ThaiTaxBrackets ปัจจุบัน.</summary>
-    private static decimal CalculateThaiIncomeTax(decimal annualTaxableIncome,
-        (decimal UpperBound, decimal Rate)[]? brackets = null)
-    {
-        if (annualTaxableIncome <= 0) return 0;
-        var b = brackets ?? ThaiTaxBrackets;
-
-        decimal totalTax = 0;
-        decimal previousBound = 0;
-
-        foreach (var (upperBound, rate) in b)
-        {
-            if (annualTaxableIncome <= previousBound)
-                break;
-
-            var taxableInBracket = Math.Min(annualTaxableIncome, upperBound) - previousBound;
-            if (taxableInBracket > 0)
-            {
-                totalTax += taxableInBracket * rate;
-            }
-
-            previousBound = upperBound;
-        }
-
-        return Math.Round(totalTax, 2, MidpointRounding.AwayFromZero);
-    }
 
     /// <summary>โหลด TaxRuleConfig ของ company × fiscal year. คืน null
-    /// ถ้าไม่มี → caller ใช้ค่า default (Pit* constants + ThaiTaxBrackets).
+    /// ถ้าไม่มี → caller ใช้ค่า default (Pit* constants + ThaiPitCalculator.DefaultBrackets).
     /// Cache ใน-memory ของ instance นี้ — Year ของ payroll ไม่เปลี่ยนระหว่าง run.</summary>
     private readonly Dictionary<(Guid CompanyId, int Year), TaxRuleConfig?> _taxRuleCache = new();
     private async Task<TaxRuleConfig?> GetTaxRuleAsync(Guid companyId, int fiscalYear)
@@ -3740,7 +3952,7 @@ public class PayrollService : IPayrollService
         return cfg;
     }
 
-    /// <summary>Parse BracketsJson → array สำหรับ CalculateThaiIncomeTax.
+    /// <summary>Parse BracketsJson → array สำหรับ ThaiPitCalculator.
     /// คืน null ถ้า config ไม่มี / json ว่าง / parse fail → caller fallback.</summary>
     private static (decimal UpperBound, decimal Rate)[]? ParseBrackets(TaxRuleConfig? cfg)
     {
@@ -3787,7 +3999,12 @@ public class PayrollService : IPayrollService
             e.ContactId,
             e.CostBehavior,
             e.ExternalId, e.ExternalSystem, e.LastSyncedAt,
-            phone, email, e.LineId);
+            phone, email, e.LineId, e.IsSubjectToSocialSecurity,
+            // echo ค่าลดหย่อนกลับ — "เก็บแล้วต้อง echo กลับ" ไม่งั้นเปิดฟอร์มแก้
+            // แล้วบันทึก ค่าที่เคยกรอกหายเงียบ ๆ (กฎเหล็ก #4 A)
+            e.HasSpouseAllowance, e.ChildAllowanceCount, e.SecondAndLaterChildren,
+            e.ParentAllowanceCount, e.LifeInsurancePremium, e.RmfSsfContribution,
+            e.DonationAmount, e.TaxAllowances);
     }
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
@@ -3860,7 +4077,7 @@ public class PayrollService : IPayrollService
         // ค้างค่าเดิม ⇒ ระบบลง JE นำส่ง 8,784 แต่ สปส. เรียกเก็บจริง 8,762
         // (= 4,381 × 2) ⇒ เงินฝากในบัญชีแยกประเภทหายเกินจริง 22 บาท และกระทบยอด
         // ธนาคารไปตลอดจนกว่าจะมีคนสังเกต. **ห้ามลงบัญชีก่อนแล้วค่อยหวังว่าจะตรง**
-        var ssoCheck = await GetSsoParamsAsync(companyId, run.Year);
+        var ssoCheck = await GetSsoParamsAsync(companyId, run.Year, run.Month);
         var expectedEmployer = Accounting.Helpers.SsoWageBase.EmployerFrom(
             run.TotalSocialSecurityEmployee, ssoCheck.Rate,
             ssoCheck.EmployerRate, decimal.MaxValue);
@@ -4016,6 +4233,7 @@ public class PayrollService : IPayrollService
     public async Task<PayrollRunResponse> ReverseSsoSettlementAsync(Guid companyId,
         Guid payrollRunId, string reason, string performedBy)
     {
+        _lastReversedJournalNumber = null;
         reason = (reason ?? "").Trim();
         if (reason.Length < 5)
             throw new InvalidOperationException(
@@ -4056,13 +4274,25 @@ public class PayrollService : IPayrollService
             }
             run = locked;
 
+            // เช่นเดียวกับการกลับรายการจ่าย — ไม่มี JE ให้กลับ ต้องบอก ไม่ใช่เงียบ
             var reversedJe = run.SsoSettlementJournalEntryId;
             if (reversedJe.HasValue && _accountingService != null)
-                await _accountingService.ReverseJournalEntryAsync(companyId, reversedJe.Value,
+            {
+                var revEntry = await _accountingService.ReverseJournalEntryAsync(
+                    companyId, reversedJe.Value,
                     reversalDate: settledOn,
                     description: $"กลับรายการนำส่งประกันสังคม {run.PayrollNumber} "
                         + $"({run.Month:D2}/{run.Year}) — {reason}",
                     systemTriggered: true);
+                _lastReversedJournalNumber = revEntry?.EntryNumber;
+            }
+            else if (run.TotalSocialSecurityEmployee + run.TotalSocialSecurityEmployer > 0)
+            {
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"กลับรายการนำส่งไม่ได้ — รอบ {run.PayrollNumber} บันทึกว่านำส่งแล้ว "
+                    + "แต่ไม่มีรายการบัญชี (JE) ของการนำส่งผูกอยู่ "
+                    + "กรุณาตรวจในสมุดรายวันแล้วกลับรายการใบนั้นด้วยตนเอง");
+            }
 
             _db.AuditLogs.Add(new AuditLog
             {

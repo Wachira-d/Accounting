@@ -123,7 +123,7 @@
           this.data = j.data;
           this.render();
         } catch (e) {
-          el.innerHTML = `<div style="padding:40px;text-align:center;color:#dc2626">${e.message}</div>`;
+          el.innerHTML = `<div style="padding:40px;text-align:center;color:#dc2626">${AdminLayout.esc(e.message)}</div>`;
         }
       },
 
@@ -159,11 +159,11 @@
         const updatedBy = f.config?.lastModifiedBy || '—';
         const updatedAt = f.config?.updatedAt ? new Date(f.config.updatedAt).toLocaleString('th-TH') : '—';
         return `
-        <div class="feature-card" data-feature="${f.feature}">
+        <div class="feature-card" data-feature="${AdminLayout.esc(f.feature)}">
           <div class="feature-card-head">
             <div>
               <div class="feature-card-title">
-                ${f.feature}
+                ${AdminLayout.esc(f.feature)}
                 <span class="mode-badge mode-${mode}">${mode}</span>
                 <span class="health-badge health-${health}" title="${f.health?.recommendation || ''}">${health}</span>
               </div>
@@ -180,30 +180,31 @@
           <div class="controls-row">
             <div>
               <label>Routing mode</label>
-              <select id="mode-${f.feature}">
+              <select id="mode-${AdminLayout.esc(f.feature)}">
                 ${(this.data.modes || []).map(m => `<option value="${m}" ${m === mode ? 'selected' : ''}>${m}</option>`).join('')}
               </select>
             </div>
             <div>
               <label>Local threshold (0–1)</label>
-              <input type="number" step="0.05" min="0" max="1" value="${threshold}" id="threshold-${f.feature}">
+              <input type="number" step="0.05" min="0" max="1" value="${threshold}" id="threshold-${AdminLayout.esc(f.feature)}">
             </div>
             <div>
               <label>Provider sampling (0–1)</label>
-              <input type="number" step="0.05" min="0" max="1" value="${sampling}" id="sampling-${f.feature}">
+              <input type="number" step="0.05" min="0" max="1" value="${sampling}" id="sampling-${AdminLayout.esc(f.feature)}">
             </div>
             <div style="display:flex;align-items:end">
-              <button class="btn-save" onclick="Page.save('${f.feature}')">บันทึก</button>
+              <button class="btn-save" onclick="Page.save('${AdminLayout.jsArg(f.feature)}')">บันทึก</button>
             </div>
           </div>
           <div class="save-row">
-            <textarea placeholder="หมายเหตุ admin (ทำไมตั้งโหมดนี้, เป้าหมาย accuracy...)" id="note-${f.feature}">${this.escape(note)}</textarea>
+            <textarea placeholder="หมายเหตุ admin (ทำไมตั้งโหมดนี้, เป้าหมาย accuracy...)" id="note-${AdminLayout.esc(f.feature)}">${AdminLayout.esc(this.escape(note))}</textarea>
           </div>
           ${f.health?.recommendation ? `<div class="recommendation">💡 ${this.escape(f.health.recommendation)}</div>` : ''}
         </div>`;
       },
 
-      escape(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
+      // หนีข้อความ = ตัวกลางตัวเดียวของระบบ (สำเนามือหนีไม่ครบ ⇒ ค่าที่มี " แตกออกจาก attribute)
+      escape(s) { return AdminLayout.esc(s); },
 
       async save(feature) {
         const btn = document.querySelector(`[data-feature="${feature}"] .btn-save`);

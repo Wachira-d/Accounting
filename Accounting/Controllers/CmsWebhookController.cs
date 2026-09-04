@@ -31,23 +31,37 @@ namespace Accounting.Controllers;
 /// ```
 /// gateway-specific webhook (Stripe `payment_intent.succeeded`) ต้องมี adapter
 /// แยก (Edge Function / Cloudflare Worker) แปลงเป็น payload นี้ก่อน POST เข้ามา.
-/// ทำให้ระบบไม่ผูกกับ schema ของ vendor ตัวใดตัวหนึ่ง.</summary>
+/// ทำให้ระบบไม่ผูกกับ schema ของ vendor ตัวใดตัวหนึ่ง.
+///
+/// <para>⚠️ <b>ทางเข้านี้เป็นของเดิม (legacy)</b> — ทางหลักคือ
+/// <c>POST /api/pay/webhooks/{provider}</c> ซึ่งยืนยัน<b>แบบของเจ้านั้น</b>
+/// (re-fetch event ด้วยคีย์ของเรา) แทนการเชื่อ HMAC ที่เราตั้งเอง · ทางนี้ยังเปิดไว้
+/// เพราะ URL ถูกส่งออกไปแล้วและแก้ย้อนหลังไม่ได้ แต่ <b>เดินผ่านชั้นกลางเดียวกัน</b>
+/// (<c>IPaymentIntentService.RecordExternalSuccessAsync</c>) เพื่อไม่ให้เกิดสองความจริง
+/// ของ "ลูกค้าจ่ายหรือยัง" · <b>ห้ามเรียก orchestrator ปลายทางตรง ๆ จากที่นี่อีก</b></para></summary>
 [ApiController]
 [Route("api/cms-webhook")]
 [AllowAnonymous]
 public class CmsWebhookController : ControllerBase
 {
     private readonly AccountingDbContext _db;
-    private readonly ICmsCommerceService _commerceService;
     private readonly ILogger<CmsWebhookController> _logger;
     private readonly ISecretProtector? _secretProtector;
+    /// <summary>ชั้นกลางของการรับชำระเงิน — ทางเข้านี้ **ต้อง** เดินผ่านมัน
+    /// ไม่ใช่เรียก orchestrator ปลายทางตรง ๆ (ดูหมายเหตุที่หัวคลาส)</summary>
+    private readonly Accounting.Services.Payments.IPaymentIntentService _intents;
 
-    public CmsWebhookController(AccountingDbContext db, ICmsCommerceService commerceService,
-        ILogger<CmsWebhookController> logger, ISecretProtector? secretProtector = null)
+    // ⚠️ เดิมรับ ICmsCommerceService ไว้เรียก ConfirmPaymentAsync ตรง ๆ — ถอดออกแล้ว
+    // เพราะทางเข้านี้ต้องเดินผ่านชั้นกลางเท่านั้น · เก็บ field ที่ไม่มีใครใช้ไว้จะกลายเป็น
+    // ทางลัดที่คนถัดไปหยิบไปใช้อีกโดยไม่รู้ว่าทำไมถึงห้าม
+    public CmsWebhookController(AccountingDbContext db,
+        ILogger<CmsWebhookController> logger,
+        Accounting.Services.Payments.IPaymentIntentService intents,
+        ISecretProtector? secretProtector = null)
     {
         _db = db;
-        _commerceService = commerceService;
         _logger = logger;
+        _intents = intents;
         _secretProtector = secretProtector;
     }
 
@@ -129,8 +143,24 @@ public class CmsWebhookController : ControllerBase
             case "completed":
                 try
                 {
-                    await _commerceService.ConfirmPaymentAsync(site.CompanyId, siteId,
-                        payload.OrderId, payload.PaymentId, "webhook:gateway");
+                    // ⚠️ เดิมเรียก ConfirmPaymentAsync **ตรง ๆ** ⇒ เงินเข้าสำเร็จแต่ไม่มีแถว
+                    // ใน PaymentIntent เลย = "สองความจริงของ ลูกค้าจ่ายหรือยัง":
+                    // ไม่โผล่ในหน้ารายการรับชำระ · ไม่เข้าบัญชีพัก 11340 · ไม่อยู่ใน
+                    // รายงานกระทบยอด — ตรงข้ามกับเหตุผลทั้งหมดที่สร้างชั้นกลางขึ้นมา
+                    // ตอนนี้เดินผ่าน RecordExternalSuccessAsync ซึ่ง find-or-create intent
+                    // แล้วส่งต่อให้ ConfirmPaymentAsync เหมือนเดิมทุกประการ (idempotent)
+                    // payload.Amount เป็น nullable — ต้องแกะก่อนใช้ (CS0266 ถ้าปล่อยผ่าน)
+                    // ไม่มีมา/เป็น 0 → ใช้ยอดของออเดอร์เอง (ห้ามลง 0 แล้วเดินต่อเงียบ ๆ)
+                    var amount = payload.Amount is decimal a && a > 0 ? a
+                        : await _db.Set<SiteOrder>().AsNoTracking()
+                            .Where(o => o.Id == payload.OrderId && o.CompanyId == site.CompanyId)
+                            .Select(o => o.TotalAmount).FirstOrDefaultAsync();
+
+                    await _intents.RecordExternalSuccessAsync(site.CompanyId,
+                        PaymentSourceKind.SiteOrder, payload.OrderId, amount,
+                        providerRef: payload.GatewayRef ?? $"cms-webhook:{payload.OrderId:N}",
+                        confirmedBy: "webhook:cms-gateway", siteId: siteId);
+
                     _logger.LogInformation("Webhook auto-confirmed order {OrderId} for site {SiteId}",
                         payload.OrderId, siteId);
                     return Ok(new ApiResponse<object>(true, null, "Payment confirmed + ERP synced"));

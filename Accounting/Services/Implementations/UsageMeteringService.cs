@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -44,7 +45,13 @@ public class UsageMeteringService : IUsageMeteringService
                 return new UsageRecordResult(false, null, 0, false, false, "ไม่พบบริษัท");
 
             // ── 1. ฟีเจอร์ต้องเปิดอยู่ ──
-            if (!await IsFeatureEnabledAsync(request.CompanyId, request.FeatureCode, ct))
+            // **ยกเว้นมิเตอร์ของระบบ** (เอกสารเกินโควตา · การเข้าพักที่ปิด · top-up):
+            // ไม่ใช่สวิตช์ที่ลูกค้ากดเปิด จึงไม่มีวันมีแถว CompanyFeature ⇒ ถ้าบังคับ
+            // ให้เปิดก่อน การบันทึกทุกครั้งจะถูกปฏิเสธเงียบ ๆ และเก็บเงินส่วนเกิน
+            // ไม่ได้เลยแม้แต่บาทเดียว (ดู AddOnCodes.SystemMeters ที่อธิบายว่าทำไม
+            // ห้ามให้มิเตอร์พวกนี้โผล่เป็นสวิตช์ในหน้าลูกค้า)
+            if (!Models.Constants.AddOnCodes.IsSystemMeter(request.FeatureCode)
+                && !await IsFeatureEnabledAsync(request.CompanyId, request.FeatureCode, ct))
                 return new UsageRecordResult(false, null, 0, false, false,
                     $"ฟีเจอร์ {request.FeatureCode} ยังไม่ได้เปิดใช้งานสำหรับบริษัทนี้");
 
@@ -164,7 +171,9 @@ public class UsageMeteringService : IUsageMeteringService
         if (plan == null || billableQty <= 0) return 0m;
         return plan.Method switch
         {
-            // เหมารายเดือน — ค่าบริการมาจากรอบบิล ไม่ผูกกับจำนวนครั้ง
+            // เหมารายเดือน — การ "ใช้งาน" แต่ละครั้งต้องไม่คิดเงิน (ไม่งั้นใช้ 10 ครั้ง
+            // จ่าย 10 เท่า) ค่าเหมาถูกออกเดือนละครั้งโดย AddOnMonthlyBillingJob ผ่าน
+            // RecordFlatMonthlyAsync — **ห้ามลบ 0m นี้โดยไม่แก้ job** ไม่งั้นคิดซ้อน
             PricingMethod.FlatMonthly => 0m,
             PricingMethod.Tiered => ComputeTiered(plan, unitPrice, billableQty),
             _ => unitPrice * billableQty,   // PerUnit / PerCall
@@ -212,13 +221,31 @@ public class UsageMeteringService : IUsageMeteringService
             .FirstOrDefault();
     }
 
+    /// <summary>ราคาที่มีผลกับบริษัทนี้ตอนนี้ — เปิดให้ที่อื่นใช้เพื่อไม่ให้ใครต้อง
+    /// เขียนลำดับ "ดีลเฉพาะกลุ่มชนะราคามาตรฐาน" ซ้ำอีกชุด (drift แน่นอน)</summary>
+    public async Task<ApiPricingPlan?> ResolveEffectivePlanAsync(
+        Guid companyId, string featureCode, CancellationToken ct = default)
+    {
+        var accountId = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.BillingAccountId).FirstOrDefaultAsync(ct);
+        return await ResolvePlanAsync(featureCode, accountId, DateTime.UtcNow, ct);
+    }
+
     public async Task<bool> IsFeatureEnabledAsync(Guid companyId, string featureCode, CancellationToken ct = default)
         => await _db.CompanyFeatures.AsNoTracking()
             .AnyAsync(f => f.CompanyId == companyId && f.FeatureCode == featureCode
                         && f.IsEnabled && !f.IsDeleted, ct);
 
-    public async Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
+    public Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
         string actor, CancellationToken ct = default)
+        => SetFeatureEnabledAsync(companyId, featureCode, enabled, actor,
+            AddOnGrantSource.OwnerSelfServe, null, ct);
+
+    /// <summary>เปิด/ปิด add-on — เส้นทางเดียวของทั้งลูกค้ากดเอง (OwnerSelfServe)
+    /// และ admin ยัดให้ (AdminGranted/BundledInPlan) ห้ามมีตัวที่สอง</summary>
+    public async Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
+        string actor, AddOnGrantSource grantSource, decimal? snapshotUnitPrice,
+        CancellationToken ct = default)
     {
         var row = await _db.CompanyFeatures
             .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted, ct);
@@ -234,13 +261,42 @@ public class UsageMeteringService : IUsageMeteringService
         row.IsEnabled = enabled;
         if (enabled)
         {
-            row.EnabledAt = DateTime.UtcNow;
+            var now = DateTime.UtcNow;
+            row.EnabledAt = now;
             row.EnabledBy = actor;
+            row.GrantSource = grantSource;
+            row.SnapshotUnitPrice = snapshotUnitPrice;
             // เก็บราคาที่ลูกค้าเห็นตอนกดเปิดไว้เป็นหลักฐานว่าแจ้งราคาแล้ว
             var account = await _db.Companies.AsNoTracking()
                 .Where(c => c.Id == companyId).Select(c => c.BillingAccountId).FirstOrDefaultAsync(ct);
-            var plan = await ResolvePlanAsync(featureCode, account, DateTime.UtcNow, ct);
-            row.AcceptedUnitPrice = plan?.UnitPrice;
+            var plan = await ResolvePlanAsync(featureCode, account, now, ct);
+            row.AcceptedUnitPrice = snapshotUnitPrice ?? plan?.UnitPrice;
+
+            // ── ต้องจ่ายก่อนใช้ไหม (LDG-P0-03) ──
+            // ตัวตัดสินอยู่ที่ `AddOnPaymentPolicy` ที่เดียว — ห้ามให้หน้าเว็บหรือ
+            // controller ตัดสินเอง (ไม่งั้นสองฝั่งจะไม่ตรงกันในวันที่กติกาเปลี่ยน)
+            // ⚠️ อ่าน TrialUntil **หลัง** บล็อกตั้ง trial ด้านบน เพราะ trial ที่เพิ่ง
+            // เริ่มต้องทำให้รอบนี้ไม่ต้องจ่าย
+            var needPay = Accounting.Helpers.AddOnPaymentPolicy.RequiresPayment(
+                grantSource, plan?.Method, row.AcceptedUnitPrice, row.TrialUntil, now);
+            // เคยจ่ายผ่านแล้วและเปิดใหม่ในงวดเดิม = ไม่เก็บซ้ำ (Paid ค้างไว้ได้)
+            if (row.PaymentStatus != AddOnPaymentStatus.Paid || !needPay)
+                row.PaymentStatus = Accounting.Helpers.AddOnPaymentPolicy.InitialStatus(needPay);
+            if (!needPay)
+            {
+                row.PaymentRejectedReason = null;
+            }
+
+            // ทดลองใช้ฟรีตามที่ตั้งไว้บนฟีเจอร์ — เริ่มนับ**ครั้งแรกที่เปิดเท่านั้น**
+            // (ปิดแล้วเปิดใหม่ต้องไม่ได้ trial รอบสอง ไม่งั้นใช้ฟรีตลอดกาลด้วยการ
+            // toggle ทุกเดือน) เทียบด้วย TrialUntil ที่เคยตั้งไว้แล้ว
+            if (row.TrialUntil == null && grantSource == AddOnGrantSource.OwnerSelfServe)
+            {
+                var trialDays = await _db.ApiFeatures.AsNoTracking()
+                    .Where(f => f.FeatureCode == featureCode).Select(f => (int?)f.TrialDays).FirstOrDefaultAsync(ct) ?? 0;
+                if (trialDays > 0 && row.EnabledAt == now && row.DisabledAt == null)
+                    row.TrialUntil = now.AddDays(trialDays);
+            }
         }
         else
         {
@@ -250,6 +306,80 @@ public class UsageMeteringService : IUsageMeteringService
         row.UpdatedAt = DateTime.UtcNow;
         row.UpdatedBy = actor;
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>ค่าเหมารายเดือน 1 ฟีเจอร์ 1 งวด — เรียกจาก AddOnMonthlyBillingJob เท่านั้น
+    /// (ดู doc ที่ interface ว่าทำไมแยกจาก RecordAsync)</summary>
+    public async Task<UsageRecordResult> RecordFlatMonthlyAsync(Guid companyId, string featureCode,
+        string period, CancellationToken ct = default)
+    {
+        try
+        {
+            var row = await _db.CompanyFeatures.FirstOrDefaultAsync(
+                f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted, ct);
+            if (row is not { IsEnabled: true })
+                return new UsageRecordResult(false, null, 0, false, false, "ฟีเจอร์ไม่ได้เปิดใช้");
+            if (AddOnBilling.AlreadyBilled(row.LastBilledPeriod, period))
+                return new UsageRecordResult(false, null, 0, false, true, $"งวด {period} ออกบิลแล้ว");
+
+            var company = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+                .Select(c => new { c.Id, c.BillingAccountId }).FirstOrDefaultAsync(ct);
+            if (company == null) return new UsageRecordResult(false, null, 0, false, false, "ไม่พบบริษัท");
+
+            var nowUtc = DateTime.UtcNow;
+            var plan = await ResolvePlanAsync(featureCode, company.BillingAccountId, nowUtc, ct);
+            if (plan is not { Method: PricingMethod.FlatMonthly })
+                return new UsageRecordResult(false, null, 0, false, false, "ไม่ใช่ฟีเจอร์แบบเหมารายเดือน");
+
+            var (amount, reason) = AddOnBilling.FlatAmount(
+                plan.UnitPrice, row.SnapshotUnitPrice, row.TrialUntil,
+                row.GrantSource != AddOnGrantSource.OwnerSelfServe, nowUtc);
+
+            var account = company.BillingAccountId.HasValue
+                ? await _db.BillingAccounts.FirstOrDefaultAsync(a => a.Id == company.BillingAccountId.Value, ct)
+                : null;
+            var isSandbox = account?.IsSandbox == true;
+            if (isSandbox) amount = 0m;
+
+            var ev = new UsageEvent
+            {
+                CompanyId = companyId,
+                BillingAccountId = company.BillingAccountId,
+                FeatureCode = featureCode,
+                Quantity = 1,
+                UnitPriceSnapshot = plan.UnitPrice,
+                ChargedAmount = amount,
+                // ฟรีเพราะ trial/ของแถม ≠ ฟรีเพราะโควตา — ธงนี้แปลว่า "โควตาฟรี"
+                CoveredByFreeQuota = false,
+                IsSandbox = isSandbox,
+                IdempotencyKey = AddOnBilling.FlatKey(featureCode, period),
+                RefEntityType = "CompanyFeature",
+                RefEntityId = row.Id,
+                OccurredAt = nowUtc,
+            };
+            _db.UsageEvents.Add(ev);
+            row.LastBilledPeriod = period;
+
+            if (amount > 0 && account is { PaymentModel: PaymentModel.Prepaid })
+                account.CreditBalance -= amount;
+
+            try { await _db.SaveChangesAsync(ct); }
+            catch (DbUpdateException)
+            {
+                // แข่งกับ instance อื่นที่ออกบิลงวดเดียวกันสำเร็จก่อน — unique index
+                // (CompanyId, IdempotencyKey) ปฏิเสธ ⇒ ถือว่าซ้ำ ไม่ใช่ error
+                _db.Entry(ev).State = EntityState.Detached;
+                return new UsageRecordResult(false, null, 0, false, true, "งวดนี้ถูกออกบิลโดย instance อื่นแล้ว");
+            }
+
+            return new UsageRecordResult(true, ev.Id, amount, false, false, reason);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ออกค่าเหมารายเดือนไม่สำเร็จ company={Company} feature={Feature} period={Period}",
+                companyId, featureCode, period);
+            return new UsageRecordResult(false, null, 0, false, false, "ออกค่าเหมาไม่สำเร็จ");
+        }
     }
 
     public Task<List<UsageSummaryRow>> GetMonthlyUsageAsync(Guid companyId, int year, int month,

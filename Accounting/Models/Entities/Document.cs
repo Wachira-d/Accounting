@@ -372,6 +372,21 @@ public class Document : TenantEntity
 
     public Guid? RelatedDocumentId { get; set; }  // e.g. Quotation → Invoice
 
+    // ── ใบแทน (§86/4: เลขที่ออกแล้วห้ามแก้ย้อนหลัง — ต้องออกใบใหม่แทน) ──
+    //
+    // ที่มา: ลูกค้าที่รับ "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" (§86/6) ไปแล้ว
+    // ภายหลังขอ **ใบกำกับภาษีเต็มรูป** เพื่อเคลมภาษีซื้อ (อย่างย่อเคลมไม่ได้ §82/5(2))
+    // ⇒ ต้องออกใบเต็มรูป **แทน** ใบเดิม ไม่ใช่ออกเพิ่มอีกใบ เพราะการขายครั้งเดียว
+    // มีใบกำกับได้ใบเดียว — ออกสองใบ = ภาษีขายเข้า ภ.พ.30 สองรอบ
+    /// <summary>ใบนี้ถูกแทนที่ด้วยใบไหน — มีค่า = **ถูกเรียกคืนแล้ว** ห้ามนับใน
+    /// รายงานภาษีขาย และห้ามออกใบแทนซ้ำ</summary>
+    public Guid? ReplacedByDocumentId { get; set; }
+    /// <summary>ใบนี้ออกมาแทนใบไหน — ใช้อ้างอิงบนกระดาษและตอนตรวจสอบย้อนหลัง</summary>
+    public Guid? ReplacesDocumentId { get; set; }
+    /// <summary>เหตุผลที่ต้องออกใบแทน (เก็บไว้ให้ผู้สอบบัญชี)</summary>
+    public string? ReplacementReason { get; set; }
+    public DateTime? ReplacedAt { get; set; }
+
     /// <summary>ใบลดหนี้/ใบเพิ่มหนี้: บังคับฝั่งด้วยมือ — <c>true</c> = ฝั่งซื้อ
     /// (ลดภาษีซื้อ 116x), <c>false</c> = ฝั่งขาย (ลดภาษีขาย 2191x),
     /// <c>null</c> = ให้ระบบตัดสินเอง (ใบต้นทาง → GL → บทบาทคู่ค้า)
@@ -442,6 +457,13 @@ public class Document : TenantEntity
     // Notes
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }
+
+    /// <summary>โมดูลที่สร้างเอกสารนี้ ("Lodging", "Pos", "Ocr", null = ฟอร์มปกติ/API)
+    ///
+    /// ใช้ตัดสิน**โควตา**: เอกสารที่โมดูลที่พักออกให้อัตโนมัติไม่นับเข้าโควตาเอกสาร
+    /// เพราะมิเตอร์ของที่พักคือ `lodging.stay` (นับตอนปิดการเข้าพัก) — นับสองทาง
+    /// = ลูกค้าโดนคิดสองเด้งจากงานเดียว (LODGING_LICENSING_PLAN §13.2)</summary>
+    public string? OriginModule { get; set; }
 
     /// <summary>True when the operator has explicitly DISMISSED this document
     /// from the "waiting to issue WHT cert" list. The source doc still

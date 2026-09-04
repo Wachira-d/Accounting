@@ -57,6 +57,16 @@ public class Site : TenantEntity
     public string? CaptchaSiteKey { get; set; }
 
     // PDPA / GDPR
+    // ── ข้อมูลติดต่อที่แสดงบนเว็บ (หน้า "ติดต่อเรา" · footer · โครงสร้างข้อมูล SEO) ──
+    // ว่าง = ใช้ค่าของบริษัท (Company.Phone/Email) — บริษัทเดียวอาจมีหลายเว็บคนละแบรนด์
+    // ที่ใช้เบอร์ติดต่อคนละเบอร์ จึง override ระดับเว็บได้ แต่ไม่บังคับให้กรอกซ้ำ
+    // เนื้อหาหน้าเว็บอ้างค่าพวกนี้ผ่านโทเคน `{{company.phone}}` ฯลฯ (CmsContentTokens)
+    public string? ContactPhone { get; set; }
+    public string? ContactEmail { get; set; }
+    public string? LineId { get; set; }
+    public string? FacebookUrl { get; set; }
+    public string? InstagramUrl { get; set; }
+
     public bool CookieConsentEnabled { get; set; } = true;
     public string? PrivacyPolicyUrl { get; set; }
     public string? TermsOfServiceUrl { get; set; }

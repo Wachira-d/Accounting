@@ -73,6 +73,12 @@
   </style>
 </head>
 <body>
+  <!-- Layout.render() ย้าย #pageContent เข้าไปใน .main-content ที่มี sidebar+topbar
+       ครอบให้ — หน้านี้เดิม**ไม่โหลด layout.js เลย** ทั้งที่เป็นหน้าแรกหลังล็อกอิน
+       ของ uiMode default ⇒ ผู้ใช้ใหม่เจอหน้าที่ไม่มีเมนู ไม่มีตัวเลือกบริษัท
+       และไม่มีปุ่มออกจากระบบ · แถมถ้ายังไม่ได้เลือกบริษัทก็ขึ้น "กรุณาเลือก
+       บริษัท" โดยไม่มีที่ให้เลือก = ทางตัน (ผลตรวจ B-A1/A24/A25) -->
+  <div id="pageContent" class="page-content fade-in">
   <div class="sm-shell">
 
     <div class="sm-topbar">
@@ -138,7 +144,7 @@
             <a href="/pages/expense.html" onclick="event.stopPropagation()">🧾 เบิก (มีบิล)</a>
             <a href="/pages/expense.html?noReceipt=1" onclick="event.stopPropagation()">📝 เบิก (ไม่มีบิล §65 ทวิ)</a>
             <a href="/pages/document-scan.html" onclick="event.stopPropagation()">📸 ถ่ายรูปบิล (AI)</a>
-            <a href="/pages/purchases.html?create=PurchaseInvoice" onclick="event.stopPropagation()">🛒 ซื้อสินค้า</a>
+            <a href="/pages/documents.html?openCreate=expense&type=PurchaseInvoice" onclick="event.stopPropagation()">🛒 ซื้อสินค้า</a>
           </div>
         </div>
       </div>
@@ -193,13 +199,23 @@
     </div>
 
   </div>
+  </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/layout.js"></script>
   <script>
     const SimpleHome = {
       async init() {
+        // เดิมหน้านี้ไม่ผ่าน Layout เลย ⇒ ไม่มีด่านตรวจ token, ไม่มี sidebar,
+        // ไม่มีตัวเลือกบริษัท. Layout.init คืน false เมื่อยังไม่ล็อกอิน
+        // (มันพาไปหน้า login ให้เอง) และเมื่อยังไม่เลือกบริษัท loadCompanies()
+        // จะเรียก load() ซ้ำให้อีกครั้ง — จึงเรียกซ้ำได้ไม่มีผลข้างเคียง
+        if (!Layout.init('dashboard')) return;
+        Layout.setTitle('หน้าหลัก');
+
         // Greet + load company name
-        const co = JSON.parse(localStorage.getItem('currentCompany') || '{}');
+        const co = Layout.currentCompany || JSON.parse(localStorage.getItem('currentCompany') || '{}');
         const user = JSON.parse(localStorage.getItem('user') || '{}');
         const hr = new Date().getHours();
         const greet = hr < 12 ? 'สวัสดีตอนเช้า' : hr < 17 ? 'สวัสดีตอนบ่าย' : 'สวัสดีตอนเย็น';
@@ -222,7 +238,9 @@
         if (!companyId) return;
         const now = new Date();
         const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-        const to = now.toISOString().slice(0, 10);
+        // ★ เดิม toISOString() = UTC ⇒ ก่อน 07:00 ตามเวลาไทยจะได้ "เมื่อวาน"
+        // ⇒ วันที่ 1 ของเดือน ช่วงเช้ามืด ได้ช่วง from > to แล้ว KPI กลับด้าน
+        const to = Layout.toDateInput(now);
         try {
           // P&L = revenue (เงินเข้า) − expense (เงินออก). Easiest server-side source.
           const res = await API.get(`/api/companies/${companyId}/accounting/reports/month-snapshot?fromDate=${from}&toDate=${to}`);
@@ -255,6 +273,10 @@
         }
       },
 
+      // Layout.loadCompanies() เรียก `Page.load()` ซ้ำหลังผู้ใช้เลือกบริษัท —
+      // ต้องมีชื่อนี้ ไม่งั้นหน้าค้างที่ "กรุณาเลือกบริษัท" ตลอดไป
+      load() { return this.init(); },
+
       openScan() {
         window.location.href = '/pages/document-scan.html';
       },
@@ -272,7 +294,7 @@
             <div style="font-weight:700;font-size:16px;margin-bottom:6px;">ยินดีต้อนรับสู่ Next Acc</div>
             <div style="font-size:13px;line-height:1.5;color:#cbd5e1;margin-bottom:10px;">
               4 การ์ดด้านบนครอบคลุมงานประจำวันทั้งหมด · กดเข้าได้เลย<br>
-              ปุ่ม <strong>＋</strong> เขียวที่มุมขวาล่าง — ขาย/เบิกจากหน้าไหนก็ได้
+              เมนูทั้งหมดอยู่ในแถบด้านซ้าย · กด <strong>Ctrl</strong>+<strong>K</strong> เพื่อค้นหาเมนูเร็ว ๆ
             </div>
             <div style="display:flex;gap:8px;">
               <a href="/pages/getting-started.html" style="background:#16a34a;color:#fff;padding:6px 12px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:600;">🚀 ตั้งค่าระบบก่อน</a>
@@ -283,6 +305,10 @@
         document.body.appendChild(div);
       }
     };
+
+    // Layout.loadCompanies() มองหา `Dashboard.load` หรือ `Page.load` เพื่อเรียก
+    // ซ้ำหลังผู้ใช้เลือกบริษัท — ชื่อ SimpleHome ไม่เข้าเงื่อนไขทั้งสอง
+    window.Page = SimpleHome;
 
     document.addEventListener('DOMContentLoaded', () => {
       SimpleHome.init();

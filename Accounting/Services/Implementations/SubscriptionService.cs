@@ -484,6 +484,13 @@ public class SubscriptionService : ISubscriptionService
         if (ownerDisabled != FeatureFlags.None)
             features = features & ~ownerDisabled;
 
+        // add-on ที่ซื้อเพิ่ม (string code) เดินทางมากับแพ็กเกจ เพื่อให้หน้าเว็บมี
+        // ตัวตัดสินสิทธิ์ตัวเดียว (`Layout.hasFeature`) ไม่ต้องยิง endpoint ที่สอง
+        var addOnCodes = await _db.CompanyFeatures.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && f.IsEnabled && !f.IsDeleted)
+            .Select(f => f.FeatureCode)
+            .ToListAsync();
+
         return new SubscriptionResponse(
             sub.Id, sub.CompanyId, plan, status, sub.BillingCycle,
             sub.PricePerCycle, sub.StartDate, endDate, sub.NextBillingDate,
@@ -491,7 +498,8 @@ public class SubscriptionService : ISubscriptionService
             FeatureFlagsHelper.ToNameList(features),
             new UsageLimits(maxUsers, maxCompanies, maxDocs, maxJournals, maxStorage),
             new UsageCurrent(sub.CurrentMonthDocuments, sub.CurrentMonthJournalEntries, sub.CurrentStorageUsed),
-            sub.IsPermanentFree);
+            sub.IsPermanentFree,
+            addOnCodes);
     }
 
     public async Task<SubscriptionResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy)
@@ -600,7 +608,11 @@ public class SubscriptionService : ISubscriptionService
         int MaxOcrPagesPerMonth,
         int? AzureOcrPagesPerMonth,
         int? LocalOcrPagesPerMonth,
-        FeatureFlags EnabledFeatures);
+        FeatureFlags EnabledFeatures,
+        /// <summary>ระดับแพ็กเกจที่มีผลจริง — ใช้ตัดสิน "add-on นี้ขายเฉพาะ Pro ขึ้นไป"
+        /// (`ApiFeature.MinPlanCsv`). ต้องมาจาก resolver ตัวเดียวกับ limits/features
+        /// ไม่ใช่ query ซ้ำที่อื่น (บทเรียน "สอง resolver จะเถียงกันเองต่อหน้าผู้ใช้")</summary>
+        SubscriptionPlan Plan = SubscriptionPlan.FreeTrial);
 
     public async Task<EffectivePlan?> GetEffectivePlanAsync(Guid companyId)
     {
@@ -619,6 +631,7 @@ public class SubscriptionService : ISubscriptionService
         // Account-plan path. If the account row is missing / deleted, fall back
         // to the per-company row so we never lock the user out by accident.
         var acct = await _db.AccountSubscriptions
+            .Include(a => a.PlanTemplate)   // ต้องมี ไม่งั้น EffectivePlan.Plan ตกเป็น FreeTrial เสมอ
             .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
         if (acct == null)
         {
@@ -649,7 +662,8 @@ public class SubscriptionService : ISubscriptionService
             MaxOcrPagesPerMonth: acct.MaxOcrPagesPerMonth,
             AzureOcrPagesPerMonth: acct.AzureOcrPagesPerMonth,
             LocalOcrPagesPerMonth: acct.LocalOcrPagesPerMonth,
-            EnabledFeatures: acct.EnabledFeatures);
+            EnabledFeatures: acct.EnabledFeatures,
+            Plan: acct.PlanTemplate != null ? acct.PlanTemplate.Plan : SubscriptionPlan.FreeTrial);
     }
 
     private static EffectivePlan BuildFromCompanySub(Subscription sub)
@@ -674,7 +688,8 @@ public class SubscriptionService : ISubscriptionService
             MaxOcrPagesPerMonth: sub.MaxOcrPagesPerMonth,
             AzureOcrPagesPerMonth: sub.AzureOcrPagesPerMonth,
             LocalOcrPagesPerMonth: sub.LocalOcrPagesPerMonth,
-            EnabledFeatures: sub.EnabledFeatures);
+            EnabledFeatures: sub.EnabledFeatures,
+            Plan: sub.Plan);
     }
 
     public async Task<bool> CheckUsageLimitAsync(Guid companyId, string limitType)
@@ -730,7 +745,8 @@ public class SubscriptionService : ISubscriptionService
             if (agg == null) return false;
             return limitType switch
             {
-                "document" => agg.Documents < agg.MaxDocuments,
+                "document" => agg.Documents < Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(
+                    agg.MaxDocuments, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow),
                 "journal" => agg.JournalEntries < agg.MaxJournalEntries,
                 "storage" => agg.StorageBytes < agg.MaxStorageBytes,
                 _ => true
@@ -740,7 +756,8 @@ public class SubscriptionService : ISubscriptionService
         // Per-company plan path — original behavior.
         return limitType switch
         {
-            "document" => sub.CurrentMonthDocuments < sub.MaxDocumentsPerMonth,
+            "document" => sub.CurrentMonthDocuments < Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(
+                sub.MaxDocumentsPerMonth, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow),
             "journal" => sub.CurrentMonthJournalEntries < sub.MaxJournalEntriesPerMonth,
             "storage" => sub.CurrentStorageUsed < sub.MaxStorageBytes,
             _ => true
@@ -893,6 +910,19 @@ public class SubscriptionService : ISubscriptionService
         {
             case "document":
                 sub.CurrentMonthDocuments++;
+                // โบนัสเอกสาร (top-up ที่ซื้อ · แอดมินให้ · ภารกิจแลกโควตา §12)
+                // **ต้องถูกใช้ให้หมดไป** ไม่ใช่แค่ยกเพดานค้างไว้ — ถ้าไม่หัก ผู้ที่
+                // ซื้อ +100 ใบครั้งเดียวจะได้ +100 ใบ **ทุกเดือน** จนโบนัสหมดอายุ
+                // (counter รายเดือนถูกรีเซ็ต แต่โบนัสไม่ถูกแตะ) = แจกฟรีโดยไม่ตั้งใจ.
+                // หักเฉพาะใบที่ **เกินโควตาแพ็กเกจล้วน ๆ** แล้ว — ใบที่ยังอยู่ในโควตา
+                // ปกติไม่กินโบนัส (แบบเดียวกับ OcrBonusPages ใน OcrQuotaService)
+                if (sub.MaxDocumentsPerMonth > 0
+                    && sub.CurrentMonthDocuments > sub.MaxDocumentsPerMonth
+                    && sub.DocumentBonusQuota > 0
+                    && (sub.DocumentBonusExpiresAt == null || sub.DocumentBonusExpiresAt > DateTime.UtcNow))
+                {
+                    sub.DocumentBonusQuota--;
+                }
                 break;
             case "journal":
                 sub.CurrentMonthJournalEntries++;
@@ -1590,7 +1620,8 @@ public class SubscriptionService : ISubscriptionService
     }
 
     public async Task<SubscriptionPaymentResponse> ReviewPaymentAsync(
-        Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy)
+        Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy,
+        bool systemConfirmed = false)
     {
         var payment = await _db.SubscriptionPayments
             .Include(p => p.Subscription)
@@ -1600,8 +1631,16 @@ public class SubscriptionService : ISubscriptionService
         if (payment.Status != SubscriptionPaymentStatus.Pending && payment.Status != SubscriptionPaymentStatus.UnderReview)
             throw new InvalidOperationException("ไม่สามารถตรวจสอบรายการนี้ได้ เนื่องจากสถานะไม่ใช่รอตรวจสอบ");
 
-        if (!Guid.TryParse(performedBy, out var reviewerUserId))
-            throw new InvalidOperationException("ไม่สามารถระบุผู้ตรวจสอบได้");
+        // เส้น "ระบบยืนยันเอง" (เงินเข้าจริงผ่านช่องทางชำระออนไลน์) ไม่มีผู้ตรวจสอบ
+        // ที่เป็นคน ⇒ เก็บ null แล้วบอกเหตุผลใน ReviewNotes · ห้ามแต่ง user id ปลอม
+        // ให้ช่องไม่ว่าง (ผู้สอบบัญชีต้องแยกออกว่า "ใครอนุมัติ" กับ "ระบบอนุมัติ")
+        Guid? reviewerUserId = null;
+        if (!systemConfirmed)
+        {
+            if (!Guid.TryParse(performedBy, out var parsed))
+                throw new InvalidOperationException("ไม่สามารถระบุผู้ตรวจสอบได้");
+            reviewerUserId = parsed;
+        }
 
         payment.ReviewedByUserId = reviewerUserId;
         payment.ReviewedAt = DateTime.UtcNow;

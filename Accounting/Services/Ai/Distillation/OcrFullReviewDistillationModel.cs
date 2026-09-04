@@ -180,7 +180,14 @@ public sealed class OcrFullReviewDistillationModel : ILocalDistillationModel
             // ยิ่งเคยเห็นบ่อยยิ่งมั่นใจ แต่ไม่เกินเพดาน
             var conf = Math.Min(MaxConfidence, 0.5m + 0.05m * hit.Samples);
             return Task.FromResult<LocalPrediction?>(new LocalPrediction(
-                answer, conf, Array.Empty<string>(), hit.Samples, Version));
+                answer, conf, Array.Empty<string>(), hit.Samples, Version)
+            {
+                // ★ E-AI-01: คำตอบของนักเรียนตัวนี้ **เป็น JSON ทั้งก้อนอยู่แล้ว**
+                // แต่ orchestrator ส่งออกทาง PrimaryAnswer เท่านั้น ส่วนหน้าเว็บ
+                // (document-scan.html) วาดจาก RawResponseJson ⇒ เดิมได้ null เสมอ
+                // เมื่อไม่ได้เรียก AI = แผงว่างทั้งที่นักเรียนตอบครบ
+                StructuredJson = answer,
+            });
         }
         catch (Exception ex)
         {

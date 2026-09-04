@@ -140,6 +140,31 @@
           </div>
         </div>
         <p style="font-size:12px;color:var(--gray-500);margin-top:-8px;margin-bottom:12px">ลงทะเบียนที่ <a href="https://www.hcaptcha.com" target="_blank">hcaptcha.com</a> หรือ <a href="https://www.google.com/recaptcha/admin" target="_blank">reCAPTCHA admin</a> แล้วนำ Site Key มาใส่ · Secret Key ตั้งค่าที่ฝั่ง Server (appsettings.json)</p>
+
+        <h4 style="margin:20px 0 6px;font-size:15px">📞 ข้อมูลติดต่อที่แสดงบนเว็บ</h4>
+        <p style="font-size:12px;color:var(--gray-500);margin:0 0 10px;line-height:1.7">
+          เว้นว่าง = ใช้ข้อมูลของบริษัทจาก <a href="/pages/settings.html">ตั้งค่าบริษัท</a> ·
+          กรอกที่นี่เฉพาะเมื่อเว็บนี้ใช้เบอร์/อีเมลคนละชุดกับบริษัท<br>
+          เนื้อหาหน้า "ติดต่อเรา" อ้างค่าพวกนี้ผ่าน<b>โทเคน</b> เช่น
+          <code>{{company.phone}}</code> — แก้ที่นี่ที่เดียว ทุกหน้าเปลี่ยนตามทันที
+          (ไม่ต้องไล่แก้เนื้อหาทีละหน้า)
+        </p>
+        <div class="grid-2">
+          <div class="form-group"><label class="form-label">เบอร์โทรติดต่อ</label>
+            <input type="text" class="form-input" id="sContactPhone" placeholder="ใช้ของบริษัท"></div>
+          <div class="form-group"><label class="form-label">อีเมลติดต่อ</label>
+            <input type="email" class="form-input" id="sContactEmail" placeholder="ใช้ของบริษัท"></div>
+          <div class="form-group"><label class="form-label">LINE ID</label>
+            <input type="text" class="form-input" id="sLineId" placeholder="@yourshop"></div>
+          <div class="form-group"><label class="form-label">เพจ Facebook</label>
+            <input type="text" class="form-input" id="sFacebookUrl" placeholder="https://facebook.com/..."></div>
+          <div class="form-group"><label class="form-label">Instagram</label>
+            <input type="text" class="form-input" id="sInstagramUrl" placeholder="https://instagram.com/..."></div>
+        </div>
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-size:12px;color:var(--gray-600)">โทเคนที่ใช้ได้ในเนื้อหาหน้าเว็บ</summary>
+          <div id="tokenHelp" style="font-size:12px;color:var(--gray-600);line-height:1.9;margin-top:6px"></div>
+        </details>
         <div style="margin-top:16px">
           <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO, Analytics &amp; CAPTCHA</button>
         </div>
@@ -870,6 +895,12 @@
           document.getElementById('sMetaPixel').value = this.site.metaPixelId || '';
           document.getElementById('sCaptchaProvider').value = this.site.captchaProvider || '';
           document.getElementById('sCaptchaSiteKey').value = this.site.captchaSiteKey || '';
+          document.getElementById('sContactPhone').value = this.site.contactPhone || '';
+          document.getElementById('sContactEmail').value = this.site.contactEmail || '';
+          document.getElementById('sLineId').value = this.site.lineId || '';
+          document.getElementById('sFacebookUrl').value = this.site.facebookUrl || '';
+          document.getElementById('sInstagramUrl').value = this.site.instagramUrl || '';
+          this.renderTokenHelp();
           this.applyTabsBySiteType();
           this.loadQuotas();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -955,9 +986,9 @@
               </div>
               <button class="btn btn-sm btn-primary" onclick="Page.openBlocks('${p.id}')">✏️ แก้ไขเนื้อหา</button>
               <button class="btn btn-sm btn-secondary" onclick="Page.openEditPage('${p.id}')">⚙️ ตั้งค่า</button>
-              <button class="btn btn-sm btn-ghost" onclick="Page.previewPage('${Layout.esc(p.slug)}')" title="ดูตัวอย่างในแท็บใหม่">👁 ดูตัวอย่าง</button>
+              <button class="btn btn-sm btn-ghost" onclick="Page.previewPage('${Layout.jsArg(p.slug)}')" title="ดูตัวอย่างในแท็บใหม่">👁 ดูตัวอย่าง</button>
               ${!pagePublished ? `<button class="btn btn-sm btn-success" onclick="Page.publishPage('${p.id}')" title="เผยแพร่หน้านี้">🚀</button>` : ''}
-              <button class="btn btn-sm btn-danger" onclick="Page.deletePage('${p.id}','${Layout.esc(p.title)}')">🗑</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deletePage('${p.id}','${Layout.jsArg(p.title)}')">🗑</button>
             </div>`;
         }).join('');
       },
@@ -1506,6 +1537,19 @@
       },
 
       // ============ SEO ============
+      async renderTokenHelp() {
+        const el = document.getElementById('tokenHelp');
+        if (!el || el.dataset.loaded) return;
+        try {
+          const res = await API.get('/api/cms/content-tokens');
+          const rows = res?.data || [];
+          el.innerHTML = rows.map(t =>
+            `<div><code>{{${Layout.esc(t.token)}}}</code> — ${Layout.esc(t.label)}</div>`).join('')
+            || '<span style="color:var(--gray-400)">ไม่มีข้อมูล</span>';
+          el.dataset.loaded = '1';
+        } catch { el.textContent = 'โหลดรายการโทเคนไม่สำเร็จ'; }
+      },
+
       async saveSeo() {
         const api = Layout.api(); if (!api) return;
         try {
@@ -1518,7 +1562,14 @@
             googleTagManagerId: document.getElementById('sGtmId').value || null,
             metaPixelId: document.getElementById('sMetaPixel').value || null,
             captchaProvider: document.getElementById('sCaptchaProvider').value || null,
-            captchaSiteKey: document.getElementById('sCaptchaSiteKey').value || null
+            captchaSiteKey: document.getElementById('sCaptchaSiteKey').value || null,
+            // ส่งสตริงเสมอ (ไม่ใช่ null) — ผู้ใช้ล้างช่องทิ้ง = ตั้งใจกลับไปใช้ของบริษัท
+            // ถ้าส่ง null เซิร์ฟเวอร์จะอ่านว่า "ไม่ได้ส่งมา" แล้วค่าเดิมค้างอยู่เงียบ ๆ
+            contactPhone: document.getElementById('sContactPhone').value,
+            contactEmail: document.getElementById('sContactEmail').value,
+            lineId: document.getElementById('sLineId').value,
+            facebookUrl: document.getElementById('sFacebookUrl').value,
+            instagramUrl: document.getElementById('sInstagramUrl').value
           });
           Layout.toast('บันทึกสำเร็จ', 'success');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -1561,7 +1612,7 @@
               </div>
               <div class="flex gap-2" style="flex-shrink:0">
                 ${d.verificationStatus !== 2 ? `<button class="btn btn-sm btn-primary" onclick="Page.verifyDomain('${d.id}')">ตรวจสอบ</button>` : ''}
-                <button class="btn btn-sm btn-danger" onclick="Page.deleteDomain('${d.id}','${Layout.esc(d.domain)}')">🗑</button>
+                <button class="btn btn-sm btn-danger" onclick="Page.deleteDomain('${d.id}','${Layout.jsArg(d.domain)}')">🗑</button>
               </div>
             </div>`;
         }).join('');
@@ -1635,7 +1686,7 @@
               </div>
             </div>
             <button class="btn btn-sm btn-primary" onclick="Page.openEditNav('${n.id}')">แก้ไข</button>
-            <button class="btn btn-sm btn-danger" onclick="Page.deleteNav('${n.id}','${Layout.esc(n.name)}')">🗑</button>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteNav('${n.id}','${Layout.jsArg(n.name)}')">🗑</button>
           </div>`).join('');
       },
 
@@ -1758,7 +1809,7 @@
               <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Layout.esc(m.fileName||'')}</div>
               <div style="font-size:11px;color:var(--gray-500);margin-top:2px">${(m.fileSize/1024).toFixed(0)} KB</div>
               <div style="display:flex;gap:4px;margin-top:6px">
-                <button class="btn btn-sm btn-ghost" onclick="navigator.clipboard.writeText('${Layout.esc(m.publicUrl||m.storagePath||'')}');Layout.toast('คัดลอก URL แล้ว','success')" style="font-size:11px;flex:1">📋 คัดลอก URL</button>
+                <button class="btn btn-sm btn-ghost" onclick="navigator.clipboard.writeText('${Layout.jsArg(m.publicUrl||m.storagePath||'')}');Layout.toast('คัดลอก URL แล้ว','success')" style="font-size:11px;flex:1">📋 คัดลอก URL</button>
                 <button class="btn btn-sm btn-danger" onclick="Page.deleteMedia('${m.id}')" style="font-size:11px">🗑</button>
               </div>
             </div>
@@ -1816,7 +1867,7 @@
               </div>
             </div>
             <button class="btn btn-sm btn-primary" onclick="Page.openEditProduct('${p.id}')">แก้ไข</button>
-            <button class="btn btn-sm btn-danger" onclick="Page.deleteProduct('${p.id}','${Layout.esc(p.displayName||'')}')">🗑</button>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteProduct('${p.id}','${Layout.jsArg(p.displayName||'')}')">🗑</button>
           </div>`).join('');
       },
 
@@ -2149,7 +2200,7 @@
                 <div style="font-size:12px;color:var(--gray-500)">${s.durationMinutes||0} นาที · ฿${Number(s.price||0).toLocaleString('th-TH')} · รับ ${s.maxCapacity||1} คน/รอบ</div>
               </div>
               <button class="btn btn-sm btn-primary" onclick="Page.openEditBookingService('${s.id}')">แก้ไข</button>
-              <button class="btn btn-sm btn-danger" onclick="Page.deleteBookingService('${s.id}','${Layout.esc(s.name||'')}')">🗑</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteBookingService('${s.id}','${Layout.jsArg(s.name||'')}')">🗑</button>
             </div>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -2271,7 +2322,7 @@
             <td>
               <button class="btn btn-sm btn-secondary" onclick="Page.openEditCustomer('${c.id}')">แก้ไข</button>
               <button class="btn btn-sm btn-success" onclick="Page.linkCustomerToErp('${c.id}')" title="เชื่อมกับ Contact ใน ERP โดยอัตโนมัติ (จับคู่จากอีเมล/เบอร์)">🔗 ERP</button>
-              <button class="btn btn-sm btn-danger" onclick="Page.deleteCustomer('${c.id}','${Layout.esc(c.email||'')}')">🗑</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteCustomer('${c.id}','${Layout.jsArg(c.email||'')}')">🗑</button>
             </td>
           </tr>`).join('')}</tbody></table></div>`;
       },
@@ -2366,8 +2417,8 @@
               <div style="font-weight:600">${Layout.esc(f.name||'')} ${f.createErpDocument?'<span class="block-type-badge" style="background:#D1FAE5;color:#065F46">→ ERP</span>':''}</div>
               <div style="font-size:12px;color:var(--gray-500)">${(f.fields||[]).length} ฟิลด์ · ${f.submissionCount||0} ครั้งที่รับ</div>
             </div>
-            <button class="btn btn-sm btn-secondary" onclick="Page.viewSubmissions('${f.id}','${Layout.esc(f.name||'')}')">ดูคำขอ (${f.submissionCount||0})</button>
-            <button class="btn btn-sm btn-danger" onclick="Page.deleteForm('${f.id}','${Layout.esc(f.name||'')}')">🗑</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.viewSubmissions('${f.id}','${Layout.jsArg(f.name||'')}')">ดูคำขอ (${f.submissionCount||0})</button>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteForm('${f.id}','${Layout.jsArg(f.name||'')}')">🗑</button>
           </div>`).join('');
       },
 
@@ -2500,7 +2551,7 @@
               <div style="font-weight:600">${Layout.esc(l.languageName)} <span class="block-type-badge">${Layout.esc(l.languageCode)}</span> ${l.isDefault ? '<span class="block-type-badge" style="background:#FEF3C7;color:#92400E">⭐ หลัก</span>' : ''}</div>
               <div style="font-size:12px;color:var(--gray-500)">สกุลเงิน: ${Layout.esc(l.currencySymbol)}${Layout.esc(l.currencyCode)}</div>
             </div>
-            ${!l.isDefault ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteLocale('${l.id}','${Layout.esc(l.languageName)}')">🗑</button>` : ''}
+            ${!l.isDefault ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteLocale('${l.id}','${Layout.jsArg(l.languageName)}')">🗑</button>` : ''}
           </div>`).join('');
       },
 
@@ -2554,7 +2605,7 @@
               <div style="font-size:12px;color:var(--gray-500)">${Layout.esc(s.userEmail||'')}</div>
             </div>
             <span class="block-type-badge">${ROLES[s.role]||s.role}</span>
-            <button class="btn btn-sm btn-danger" onclick="Page.deleteStaff('${s.id}','${Layout.esc(s.userFullName||s.userEmail||'')}')">🗑</button>
+            <button class="btn btn-sm btn-danger" onclick="Page.deleteStaff('${s.id}','${Layout.jsArg(s.userFullName||s.userEmail||'')}')">🗑</button>
           </div>`).join('');
       },
 
@@ -2669,7 +2720,7 @@
             grid.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;grid-column:1/-1">ยังไม่มีภาพ — กดปุ่ม "อัพโหลดใหม่" ด้านบน</div>';
           } else {
             grid.innerHTML = media.filter(m => m.contentType?.startsWith('image/')).map(m => `
-              <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;cursor:pointer" onclick="Page.selectMedia('${Layout.esc(m.publicUrl||m.storagePath||'')}')">
+              <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;cursor:pointer" onclick="Page.selectMedia('${Layout.jsArg(m.publicUrl||m.storagePath||'')}')">
                 <img src="${Layout.esc(m.publicUrl||m.storagePath||'')}" style="width:100%;aspect-ratio:1/1;object-fit:cover;background:#F3F4F6" loading="lazy">
                 <div style="padding:6px;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Layout.esc(m.fileName||'')}</div>
               </div>`).join('');

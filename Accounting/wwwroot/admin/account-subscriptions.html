@@ -109,7 +109,8 @@
         while(v>=1024&&i<3){v/=1024;i++;}
         return v.toFixed(v<10?1:0)+' '+u[i];
       },
-      _esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); },
+      // หนีข้อความ = ตัวกลางตัวเดียวของระบบ (สำเนามือหนีไม่ครบ ⇒ ค่าที่มี " แตกออกจาก attribute)
+      _esc(s) { return AdminLayout.esc(s); },
       render() {
         const tbody = document.getElementById('tbody');
         if (!this.all.length) {
@@ -127,7 +128,7 @@
               ? `<span style="color:#f59e0b;font-weight:700">เหลือ ${daysLeft} วัน</span>`
               : `${exp.toLocaleDateString('th-TH')} (${daysLeft}ว.)`;
           return `<tr>
-            <td><strong>${this._esc(a.ownerName)}</strong><div style="font-size:11px;color:#64748b">${this._esc(a.ownerEmail)}</div></td>
+            <td><strong>${AdminLayout.esc(this._esc(a.ownerName))}</strong><div style="font-size:11px;color:#64748b">${this._esc(a.ownerEmail)}</div></td>
             <td>${this._esc(a.planName)}</td>
             <td><span class="as-pill as-status-${a.status}">${a.status}</span></td>
             <td><span class="as-pct"><span>${a.companiesUsed}/${a.maxCompanies}</span><span class="bar"><div class="${klass}" style="width:${pct}%"></div></span></span></td>
@@ -160,7 +161,7 @@
           };
           const attached = (d.attachedCompanies || []).map(c => `
             <tr>
-              <td>${this._esc(c.companyName)}<div style="font-size:11px;color:#64748b">${this._esc(c.taxId||'')}</div></td>
+              <td>${AdminLayout.esc(this._esc(c.companyName))}<div style="font-size:11px;color:#64748b">${this._esc(c.taxId||'')}</div></td>
               <td><span class="as-pill as-status-${c.status}">${c.status}</span></td>
               <td>${(c.currentMonthDocuments||0).toLocaleString()}</td>
               <td>${(c.currentMonthJournalEntries||0).toLocaleString()}</td>
@@ -171,7 +172,7 @@
           const body = `
             <div class="as-section-title">ผู้ใช้ (License Holder)</div>
             <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:8px">
-              <div><strong>${this._esc(d.ownerName)}</strong> · ${this._esc(d.ownerEmail)}${d.ownerPhone?' · '+this._esc(d.ownerPhone):''}</div>
+              <div><strong>${AdminLayout.esc(this._esc(d.ownerName))}</strong> · ${this._esc(d.ownerEmail)}${d.ownerPhone?' · '+this._esc(d.ownerPhone):''}</div>
             </div>
 
             <div class="as-section-title">แพ็กเกจ</div>
@@ -217,7 +218,7 @@
                     <td style="white-space:nowrap">${new Date(r.createdAt).toLocaleString('th-TH')}</td>
                     <td><span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${this._esc(r.action)}</span></td>
                     <td>${r.fromStatus ? r.fromStatus + ' → ' : ''}${r.toStatus || '-'}</td>
-                    <td style="font-size:11px;color:#475569">${this._esc(r.notes || '')}</td>
+                    <td style="font-size:11px;color:#475569">${AdminLayout.esc(this._esc(r.notes || ''))}</td>
                     <td style="font-size:11px;color:#64748b">${this._esc(r.performedBy || '')}</td>
                   </tr>`).join('')
                 + '</tbody></table>'

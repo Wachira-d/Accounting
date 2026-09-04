@@ -127,4 +127,55 @@ public class TaxInvoiceSeriesPolicyTests
         var d = Doc(DocumentType.Receipt);
         Assert.False(TaxInvoiceSeriesPolicy.CarriesTaxInvoiceRole(d, null));
     }
+
+    // ═══ ด่าน "ใบแจ้งหนี้ที่หัวประกาศเป็นใบกำกับ" (รอบ 122) ═══
+    // ที่มา: ApproveDocumentAsync ตรึง IsTaxInvoiceByLaw จากหัวให้ทุกชนิด แต่
+    // SeriesTypeOverride จงใจข้าม Invoice ⇒ ใบแจ้งหนี้ที่หัวถูก override เป็น
+    // "ใบแจ้งหนี้/ใบกำกับภาษี" จะประกาศตัวเป็นใบกำกับโดยถือเลข INV- นอกเล่ม
+
+    [Fact]
+    public void ใบแจ้งหนี้ที่หัวมีคำว่าใบกำกับ_ต้องถูกบล็อก()
+    {
+        Assert.True(TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice(
+            DocumentType.Invoice, "ใบแจ้งหนี้/ใบกำกับภาษี"));
+        Assert.True(TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice(
+            DocumentType.Invoice, "ใบกำกับภาษี"));
+    }
+
+    [Fact]
+    public void ใบแจ้งหนี้หัวปกติ_ไม่ถูกบล็อก()
+    {
+        Assert.False(TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice(
+            DocumentType.Invoice, "ใบแจ้งหนี้"));
+        // resolver ล้ม (null) → ห้ามบล็อกจากการเดา
+        Assert.False(TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice(
+            DocumentType.Invoice, null));
+    }
+
+    [Theory]
+    [InlineData(DocumentType.TaxInvoice)]
+    [InlineData(DocumentType.Receipt)]
+    [InlineData(DocumentType.ReceiptVoucher)]
+    public void ชนิดที่เข้าเล่ม_TIV_ได้_ไม่เข้าด่านนี้(DocumentType type)
+        => Assert.False(TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice(
+            type, "ใบกำกับภาษี/ใบเสร็จรับเงิน"));
+
+    [Fact]
+    public void ใบลดหนี้ที่พิมพ์คำว่าใบกำกับ_ห้ามถูกบล็อก()
+    {
+        // §86/9-10 ให้ถือว่า CN/DN เป็นใบกำกับภาษีอยู่แล้ว — บางกิจการพิมพ์หัว
+        // "ใบลดหนี้ (ใบกำกับภาษี)" ซึ่งถูกกฎหมาย ด่านนี้ต้องไม่ไปยุ่ง
+        Assert.False(TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice(
+            DocumentType.CreditNote, "ใบลดหนี้ (ใบกำกับภาษี)"));
+        Assert.False(TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice(
+            DocumentType.DebitNote, "ใบเพิ่มหนี้/ใบกำกับภาษี"));
+    }
+
+    [Fact]
+    public void ข้อความบล็อก_ต้องบอกทางไปต่อทั้งสองทาง()
+    {
+        // "สถานะปลายทางที่ผู้ใช้ไปต่อไม่ได้ = ฟีเจอร์ที่ยังไม่จบ"
+        Assert.Contains("ใบแจ้งหนี้/ใบกำกับภาษี", TaxInvoiceSeriesPolicy.PlainInvoiceTaxTitleBlockedMessage);
+        Assert.Contains("ตั้งค่า", TaxInvoiceSeriesPolicy.PlainInvoiceTaxTitleBlockedMessage);
+    }
 }
