@@ -16,7 +16,7 @@
 
   // Static commands — สามารถ extend ได้จากภายนอกผ่าน window.CmdPalette.register()
   const staticCommands = [
-    { id: 'nav-dashboard', label: 'ไปหน้าหลัก (Dashboard)', icon: '🏠', keys: 'dashboard หน้าหลัก home', action: () => location.href = '/index.html' },
+    { id: 'nav-dashboard', label: 'ไปหน้าหลัก (Dashboard)', icon: '🏠', keys: 'dashboard หน้าหลัก home', action: () => location.href = ((localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html') },
     { id: 'nav-aging', label: 'รายงานอายุลูกหนี้/เจ้าหนี้', icon: '⏳', keys: 'aging ลูกหนี้ เจ้าหนี้', action: () => location.href = '/pages/aging.html' },
     { id: 'nav-cash', label: 'จัดการเงินสด (PDC + Forecast + Bulk Pay)', icon: '🏦', keys: 'cash pdc forecast เช็ค เงินสด', action: () => location.href = '/pages/cash-management.html' },
     { id: 'nav-mobile', label: 'รับเงินสดด่วน (Mobile)', icon: '📱', keys: 'mobile receipt รับเงิน', action: () => location.href = '/pages/mobile-receipt.html' },
@@ -25,9 +25,9 @@
     { id: 'nav-bank', label: 'กระทบยอดธนาคาร', icon: '🏛️', keys: 'bank reconcile กระทบยอด', action: () => location.href = '/pages/bank.html' },
     { id: 'nav-tax', label: 'ภาษี & รายงานสรรพากร', icon: '🧾', keys: 'tax ภาษี ภพ.30 ภงด', action: () => location.href = '/pages/tax.html' },
     { id: 'nav-reports', label: 'รายงานการเงิน', icon: '📊', keys: 'reports งบ balance sheet pnl กำไร', action: () => location.href = '/pages/reports.html' },
-    { id: 'act-new-invoice', label: '+ สร้างใบแจ้งหนี้ใหม่', icon: '📝', keys: 'new invoice ใหม่ ใบแจ้งหนี้', action: () => location.href = '/pages/documents.html?action=new&type=Invoice' },
-    { id: 'act-new-expense', label: '+ บันทึกค่าใช้จ่าย', icon: '💸', keys: 'new expense ค่าใช้จ่าย', action: () => location.href = '/pages/documents.html?action=new&type=Expense' },
-    { id: 'act-new-pv', label: '+ สร้างใบสำคัญจ่าย', icon: '💵', keys: 'new pv payment voucher จ่าย', action: () => location.href = '/pages/documents.html?action=new&type=PaymentVoucher' },
+    { id: 'act-new-invoice', label: '+ สร้างใบแจ้งหนี้ใหม่', icon: '📝', keys: 'new invoice ใหม่ ใบแจ้งหนี้', action: () => location.href = '/pages/documents.html?openCreate=revenue&type=Invoice' },
+    { id: 'act-new-expense', label: '+ บันทึกค่าใช้จ่าย', icon: '💸', keys: 'new expense ค่าใช้จ่าย', action: () => location.href = '/pages/documents.html?openCreate=expense&type=Expense' },
+    { id: 'act-new-pv', label: '+ สร้างใบสำคัญจ่าย', icon: '💵', keys: 'new pv payment voucher จ่าย', action: () => location.href = '/pages/documents.html?openCreate=expense&type=PaymentVoucher' },
   ];
 
   function getRecents() {

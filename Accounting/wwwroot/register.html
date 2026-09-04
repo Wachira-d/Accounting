@@ -273,7 +273,7 @@
           localStorage.setItem('token', token);
           localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
           API.token = token;
-          window.location.href = '/app.html';
+          window.location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html';
         } else {
           throw new Error(res.message || 'สมัครสมาชิกไม่สำเร็จ');
         }
@@ -386,7 +386,7 @@
           localStorage.removeItem('currentCompany');
           API.token = token;
           _ssoLinkSay(res.message || 'ผูกบัญชีแล้ว', true);
-          setTimeout(() => { window.location.href = '/app.html'; }, 400);
+          setTimeout(() => { window.location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html'; }, 400);
           return;
         }
         _ssoLinkSay(res.message || 'ไม่สำเร็จ', false);
@@ -563,7 +563,7 @@
           localStorage.setItem('token', token);
           localStorage.setItem('user', JSON.stringify(res.data.user || res.data));
           API.token = token;
-          window.location.href = '/app.html';
+          window.location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html';
         } else {
           throw new Error(res.message || 'สมัครสมาชิกไม่สำเร็จ');
         }
@@ -577,7 +577,7 @@
     }
 
     if (localStorage.getItem('token')) {
-      window.location.href = '/app.html';
+      window.location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html';
     }
 
     // Plan card visual selection
@@ -599,6 +599,19 @@
         this.querySelector('input[type="radio"]').checked = true;
       });
     });
+
+    // ?plan= จากตารางราคาในหน้าแรก (index.html ส่ง lower-case มา) — เดิม
+    // **ไม่มีใครอ่านเลย** ⇒ กด "เลือก Pro" แล้วได้ FreeTrial เงียบ ๆ ทุกครั้ง
+    // (ผลตรวจ B-A3) · ต้องอยู่ **หลัง** listener ของการ์ดถูกผูกแล้ว เพราะเรา
+    // อาศัย handler เดียวกันทำไฮไลต์ให้ — ไม่งั้นจะต้องคัดลอกโค้ดสไตล์มาเขียน
+    // ซ้ำแล้ว drift รอบหน้า (ติ๊กถูกแต่หน้าจอไฮไลต์ผิด = ผู้ใช้เชื่อสิ่งที่เห็น)
+    (function _applyPlanFromQuery() {
+      const wantPlan = (new URLSearchParams(location.search).get('plan') || '').trim().toLowerCase();
+      if (!wantPlan) return;
+      const hit = [...document.querySelectorAll('input[name="plan"]')]
+        .find(r => (r.value || '').toLowerCase() === wantPlan);
+      hit?.closest('.plan-card')?.click();
+    })();
 
     // Apply site settings (logo, background, colors)
     (async function() {

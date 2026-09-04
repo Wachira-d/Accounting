@@ -668,8 +668,11 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 #mobileBottomNav a > span:first-child { font-size: 22px; line-height: 1; }
 @media (max-width: 720px) {
   #mobileBottomNav { display: flex; }
-  /* keep page content above the bar */
-  body { padding-bottom: 68px; }
+  /* keep page content above the bar — เฉพาะหน้าที่ "มีแถบล่างจริง"
+     แถบนี้ถูกสร้างโดย layout.js ⇒ หน้าที่ไม่โหลด layout.js จะได้ช่องว่าง
+     68px ท้ายจอโดยไม่มีอะไรอยู่ตรงนั้น (ผลตรวจ B-A24) — :has() ผูกช่องว่าง
+     เข้ากับการมีอยู่ของแถบ จึงถูกเสมอไม่ว่าหน้าไหนจะโหลด layout.js หรือไม่ */
+  body:has(#mobileBottomNav) { padding-bottom: 68px; }
 }
 
 /* ===== Help icon + tooltip bubble ===== */

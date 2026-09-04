@@ -38,12 +38,17 @@
       <div class="tab" onclick="Page.showTab('general',this)">ทั่วไป</div>
       <div class="tab" onclick="Page.showTab('document',this)">เอกสาร</div>
       <div class="tab" onclick="Page.showTab('tax',this)">ภาษี</div>
-      <div class="tab advanced-only" onclick="Page.showTab('etax',this)">e-Tax</div>
+      <!-- 3 แท็บนี้เคยติด class="advanced-only" ⇒ ซ่อนในโหมดง่าย — แต่มันเป็น
+     **ขั้นตอนตั้งค่า** ไม่ใช่ของสำหรับผู้ใช้ขั้นสูง และการซ่อนสร้างวงจรปิด:
+     เมนู e-Tax ซ่อนจนกว่าจะเปิดใช้ · ที่เปิดใช้อยู่ในแท็บที่ถูกซ่อน ⇒
+     ผู้ใช้โหมดง่ายเปิด e-Tax ไม่ได้เลย และตั้งตัวย่อเลขที่เอกสาร (§86/4)
+     ไม่ได้เช่นกัน (ผลตรวจ B-A11) -->
+      <div class="tab" onclick="Page.showTab('etax',this)">e-Tax</div>
       <div class="tab" onclick="Page.showTab('email',this)" data-i18n="common.email">อีเมล</div>
       <div class="tab" onclick="Page.showTab('line',this)">💬 LINE</div>
       <div class="tab" onclick="Page.showTab('notify',this)">🔔 การแจ้งเตือน</div>
-      <div class="tab advanced-only" onclick="Page.showTab('approval',this)">อนุมัติ</div>
-      <div class="tab advanced-only" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
+      <div class="tab" onclick="Page.showTab('approval',this)">อนุมัติ</div>
+      <div class="tab" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
       <div class="tab" onclick="Page.showTab('signature',this)">ลายเซ็นของฉัน</div>
       <div class="tab" onclick="Page.showTab('security',this)">🔐 ความปลอดภัยบัญชี</div>
     </div>
@@ -971,7 +976,7 @@
           await api.deleteCompany(typed);
           localStorage.removeItem('currentCompany');
           alert('ลบบริษัทเรียบร้อย — กลับสู่หน้าเลือกบริษัท');
-          location.href = '/app.html';
+          location.href = Layout.dashboardUrl();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
       // อ่านรูปลายเซ็นผู้มีอำนาจลงนาม → base64 (จำกัด ~300KB กัน payload บวม)
@@ -1845,7 +1850,7 @@
           }
           document.getElementById('setupBanner').classList.add('hidden');
           Layout.toast('ตั้งค่าเสร็จสิ้น! ระบบได้สร้างผังบัญชีเริ่มต้นให้แล้ว');
-          setTimeout(() => window.location.href = '/app.html', 800);
+          setTimeout(() => window.location.href = Layout.dashboardUrl(), 800);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // ===== Business Type & Industry Type UI =====

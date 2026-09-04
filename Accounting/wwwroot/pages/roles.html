@@ -213,7 +213,7 @@
       const role = await Layout.ensureMyRole();
       if (role !== 'Owner' && role !== 'SystemAdmin' && !Layout.user?.isSystemAdmin) {
         Layout.toast('ต้องเป็นเจ้าของบริษัทเท่านั้นจึงจะจัดการ Role ได้', 'error');
-        setTimeout(() => { window.location.href = '/app.html'; }, 1200);
+        setTimeout(() => { window.location.href = Layout.dashboardUrl(); }, 1200);
         return;
       }
 

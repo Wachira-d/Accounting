@@ -489,7 +489,7 @@ const Layout = {
     if (this.PLATFORM_ADMIN_PAGES.includes(this.currentPage)
         && this.myPermissions.isSystemAdmin !== true) {
       this.toast('หน้านี้สำหรับผู้ดูแลระบบเท่านั้น', 'error');
-      setTimeout(() => { window.location.href = '/app.html'; }, 1200);
+      setTimeout(() => { window.location.href = this.dashboardUrl(); }, 1200);
       return;
     }
     if (this.myPermissions.isOwnerOrAdmin) return;
@@ -499,7 +499,7 @@ const Layout = {
       // ปลายทาง fallback: ถ้าไม่มีสิทธิ์แดชบอร์ดด้วย → เด้งไปแดชบอร์ดที่โหลด
       // ไม่ได้ = ค้าง (bounce loop). พาไปหน้าที่ "เข้าได้แน่นอน" แทน — ลายเซ็น
       // ของฉัน (ทุกคนเข้าได้) เพื่อให้ผู้ใช้ที่ถูกจำกัดสิทธิ์ยังอัพลายเซ็นตัวเองได้
-      const target = this.hasMenuAccess('dashboard') ? '/app.html' : '/pages/my-signature.html';
+      const target = this.hasMenuAccess('dashboard') ? this.dashboardUrl() : '/pages/my-signature.html';
       this.toast('คุณไม่มีสิทธิ์เข้าถึงหน้านี้ — กำลังพาไปหน้าที่คุณเข้าได้', 'error');
       setTimeout(() => { window.location.href = target; }, 1500);
     }
@@ -521,7 +521,10 @@ const Layout = {
     // the bottom (which flips uiMode → advanced and reloads).
     const uiMode = localStorage.getItem('uiMode') || 'simple';
     const SIMPLE_ALLOWED = new Set([
-      'dashboard',          // หน้าหลัก (Simple Mode home overrides via custom link)
+      // ⚠️ 'dashboard' **ไม่อยู่ในลิสต์** — โหมดง่ายมีลิงก์ "หน้าหลัก (โหมดง่าย)"
+      // ที่ inject ไว้บนสุดอยู่แล้ว ถ้าใส่ dashboard ด้วยจะได้ "หน้าหลัก" สองอัน
+      // ชี้คนละหน้า (/simple.html กับ /app.html) — อันหลังพาข้ามโหมดไปหน้าที่มี
+      // เมนู 110 รายการซึ่งเป็นสิ่งที่โหมดง่ายตั้งใจซ่อน (ผลตรวจ B-A22)
       'getting-started',    // คู่มือเริ่มต้น — สำคัญที่สุดสำหรับผู้ใช้ใหม่
       'documents',          // ขาย
       'recurring',          // invoice รายเดือนอัตโนมัติ — use case หลักของ SME
@@ -537,13 +540,17 @@ const Layout = {
       'document-scan',      // OCR ถ่ายรูปบิล
       'settings',           // ตั้งค่าบริษัท
     ]);
-    // ⚠️ จับคู่ด้วย "ชื่อหมวด" — เปลี่ยนชื่อหมวดใน navItems ต้องอัปเดตชุดนี้ด้วย
-    const SIMPLE_SECTIONS = new Set([
-      'ขาย / รายรับ', 'ซื้อ / รายจ่าย', 'POS หน้าร้าน',
-      'เงิน & ธนาคาร', 'ลูกค้า & สินค้า',
-      'ภาษี & e-Filing', 'รายงาน & วิเคราะห์', 'ตั้งค่า & ผู้ใช้',
-      'เครื่องมือ: AI · OCR · นำเข้าข้อมูล',  // hosts document-scan (OCR) จาก home strip
-    ]);
+    // ── เดิมมี SIMPLE_SECTIONS: ลิสต์ "ชื่อหมวด" ที่โหมดง่ายยอมให้แสดง — ถอดออกแล้ว ──
+    //
+    // มันเป็น **สำเนามือชุดที่สอง** ที่ต้องคอยให้ตรงกับ SIMPLE_ALLOWED และเมื่อ
+    // สองชุดไม่ตรงกันผลไม่ใช่แค่ "หมวดหาย" แต่คือ **รายการไปโผล่ใต้หมวดผิด**:
+    // ตัวกรองตัดหัวหมวดทิ้งแต่รายการของหมวดนั้นรอด ⇒ `inGroup` ยังค้างอยู่กับ
+    // หมวดก่อนหน้า ⇒ "เบิกค่าใช้จ่าย" ไปอยู่ใต้ "POS หน้าร้าน" และหมวด
+    // "ซื้อ / รายจ่าย" ว่างเปล่า (ผลตรวจ B-A4)
+    //
+    // กติกาที่ถูกคือ **หมวดเป็นภาชนะ ไม่ใช่รายการอิสระ** — ปล่อยหัวหมวดผ่าน
+    // ทุกตัว แล้วให้ flush() ทิ้งหมวดที่ไม่มีสมาชิกเหลือ (มันทำอยู่แล้ว)
+    // ⇒ หมวดที่แสดงคือหมวดที่มีรายการใน SIMPLE_ALLOWED จริง ๆ เสมอ โดยโครงสร้าง
     // ผู้ใช้ที่มี "custom role" (allowedMenuIds เจาะจง ไม่ใช่ '*'/owner) → เมนูที่
     // admin ติ๊กให้ = shortlist ที่ตั้งใจไว้แล้ว ต้องแสดงครบ. ไม่งั้น simple-mode
     // (SIMPLE_ALLOWED) จะไปซ่อนเมนูที่ตั้งสิทธิ์ให้ทับอีกชั้น เช่น ซื้อสินค้า/
@@ -555,7 +562,7 @@ const Layout = {
     const items = this.navItems.filter(item => {
       // section headers + non-item entries pass through; the render loop's
       // flush() then drops sections that end up empty after item filtering.
-      if (item.section) return uiMode !== 'simple' || hasCustomGrants || SIMPLE_SECTIONS.has(item.section);
+      if (item.section) return true;   // flush() ทิ้งหมวดที่ว่างให้เอง
       const visible =
         (!item.id || !hidden.includes(item.id))
         && (!item.id || this.hasMenuAccess(item.id))
@@ -651,7 +658,7 @@ const Layout = {
       html.push(`
         <div style="margin:18px 12px 8px;padding-top:14px;border-top:1px solid #e2e8f0;">
           <a class="nav-item" href="#" onclick="localStorage.setItem('uiMode','advanced'); window.location.reload(); return false;"
-             title="แสดงเมนูครบ 64 รายการของระบบบัญชี">
+             title="${'แสดงเมนูครบ ' + this.navItems.filter(i => i.id).length + ' รายการของระบบบัญชี'}">
             <span class="icon">⚙️</span><span class="label">ดูเมนูทั้งหมด (มืออาชีพ)</span>
           </a>
         </div>`);
@@ -957,7 +964,7 @@ const Layout = {
     { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html', feature: 'Dashboard', _i18nKey: 'nav.dashboard',
       description: 'ภาพรวมธุรกิจ — ยอดขาย รายจ่าย ลูกหนี้ เจ้าหนี้ กำไร เปรียบเทียบรายเดือน' },
     { id: 'getting-started', label: 'เริ่มต้นใช้งาน', icon: '🚀', href: '/pages/getting-started.html',
-      description: 'คู่มือตั้งค่า 5 ขั้นแรก — ข้อมูลบริษัท → ผังบัญชี → ลูกค้า/สินค้า → เอกสารแรก → ภาษี' },
+      description: 'คู่มือตั้งค่าทีละขั้น — ข้อมูลบริษัท → ผังบัญชี → ลูกค้า/สินค้า → เอกสารแรก → ภาษี' },
     { id: 'accountant-workspace', label: 'สำนักงานบัญชี (ทุก client)', icon: '🗂️', href: '/pages/accountant-workspace.html',
       description: 'งานคงค้างรวมทุกบริษัทที่ดูแล · ร่างค้างอนุมัติ · ธนาคารรอ match · สถานะ ภ.พ.30 · ลูกหนี้เกินกำหนด' },
     { id: 'accountant', label: 'เครื่องมือนักบัญชี', icon: '🧮', href: '/pages/accountant.html', feature: 'BasicAccounting', _i18nKey: 'nav.accountant',

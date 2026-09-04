@@ -118,11 +118,22 @@
         title: 'การจดทะเบียน VAT',
         desc: 'ระบุว่าบริษัทจด VAT แล้วหรือยัง + อัตรา VAT มาตรฐาน (default 7%)',
         page: '/pages/settings.html',
+        // ★ เดิมเช็ค `vatRegistered !== undefined` ซึ่ง **เป็นจริงเสมอ** —
+        // `SettingsDtos.VatRegistered` เป็น bool ไม่ nullable ⇒ API ส่ง
+        // true/false มาทุกครั้ง ไม่มีทางเป็น undefined ⇒ ขั้นนี้ติ๊กเขียว
+        // ตั้งแต่วินาทีแรกที่เปิดระบบ (ผลตรวจ B-A12) ⇒ บริษัทที่ต้องจด VAT
+        // ไม่เคยถูกเตือน แล้วออกเอกสารโดยไม่มี VAT ทั้งปี
+        //
+        // เกณฑ์ใหม่ = "จด VAT แล้วและตั้งอัตราไว้" ซึ่งเป็นสิ่งที่ผู้ใช้ทำจริง
+        // ⚠️ บริษัทที่ **ไม่ได้จด** VAT จะเห็นขั้นนี้ค้างเป็นสีเทา — ยอมรับได้
+        // เพราะเช็กลิสต์เป็นคำแนะนำ ไม่ใช่ตัวบล็อก และ "ค้างไว้" ปลอดภัยกว่า
+        // "เขียวทั้งที่ยังไม่ได้ตัดสินใจ" (ระบบยังไม่มีช่องเก็บว่าผู้ใช้ยืนยัน
+        // แล้วว่าไม่จด — ถ้าจะให้ครบต้องเพิ่มฟิลด์ฝั่งเซิร์ฟเวอร์)
         check: async (api, companyId) => {
           try {
             const s = await api.getSettings();
             const d = s.data || s;
-            return d?.vatRegistered !== undefined;
+            return d?.vatRegistered === true && Number(d?.vatRate || 0) > 0;
           } catch { return false; }
         }
       },
@@ -171,7 +182,7 @@
         icon: '🧾',
         title: 'สร้างเอกสารใบแรก',
         desc: 'ลองสร้างใบเสนอราคาหรือใบกำกับภาษีใบแรกเพื่อทดสอบ flow ทั้งหมด',
-        page: '/pages/documents.html?side=revenue&create=Quotation',
+        page: '/pages/documents.html?openCreate=revenue&type=Quotation',
         check: async (api, companyId) => {
           try {
             const r = await api.getDocuments?.('?page=1&pageSize=1') ?? { data: { items: [] } };
