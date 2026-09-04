@@ -1780,7 +1780,8 @@
               ? 'ที่พักปิดรับสลิปของการจองนี้แล้ว กรุณาชำระออนไลน์ด้านล่าง หรือติดต่อที่พักโดยตรง'
               : 'กรุณาตรวจสอบแล้วส่งสลิปใหม่อีกครั้ง'}</span></div>` : ''}
           ${canSlip ? `<div class="lg-sum" style="margin-top:16px"><h3 style="margin:0 0 8px">📎 ${r.status === 'Pending' ? 'อัปโหลดสลิปมัดจำ' : 'อัปโหลดสลิปชำระเงิน'}</h3>
-            ${r.paymentSlipUrl ? `<div class="lg-badge info" style="margin-bottom:8px">ส่งสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} — รอที่พักตรวจสอบ</div>` : ''}
+            ${r.paymentSlipUrl ? `<div class="lg-badge info" style="margin-bottom:8px">ส่งสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} — รอที่พักตรวจสอบ ·
+              <a href="${this.esc(r.paymentSlipUrl)}" target="_blank" rel="noopener">ดูสลิปที่ส่งไป</a></div>` : ''}
             <form onsubmit="Store.lodgingUploadSlip(event, '${this.esc(token)}')" style="display:grid;gap:8px;grid-template-columns:1fr 1fr auto">
               <input type="file" name="file" accept="image/*,application/pdf" required class="lg-input">
               <input name="reference" class="lg-input" placeholder="อ้างอิง/เวลาโอน (ถ้ามี)" maxlength="100">

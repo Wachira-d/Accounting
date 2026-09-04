@@ -3526,3 +3526,29 @@ Last updated: 2026-09-04 — เพิ่ม VATL-01..11 (OCR ตั้ง VatRa
 | FEE-01 | ที่พักตั้ง `EarlyCheckInFee=500` แล้วเช็คอิน **ไม่ติ๊ก** | ไม่มี folio charge (ระบบไม่เก็บเอง) |
 | FEE-02 | ติ๊ก "เก็บค่าเช็คอินก่อนเวลา" | ได้ folio charge 500 · VAT ตามที่พัก · เข้าบิลตอนเช็คเอาต์ |
 | FEE-03 | `LateCheckOutFee=0` | ไม่มี checkbox โผล่ในฟอร์มเช็คเอาต์ |
+
+### LDG-SLIPSEC — สลิปเป็น PII (`LodgingSlipPathTests` · LDG-P2-06)
+| # | เคส | คาดหวัง |
+| --- | --- | --- |
+| SEC-01 | เปิด `https://…/uploads/lodging-slips/2026-09/x.jpg` ตรง ๆ | **404** — โฟลเดอร์ไม่อยู่ใน `publicUploadPrefixes` แล้ว |
+| SEC-02 | พนักงานกด "เปิดดูสลิป" | ผ่าน `Layout.openAuthed` (แนบ Bearer) → ได้ไฟล์ · `<a href>` เปล่า ๆ จะได้ 401 จึงห้ามใช้ |
+| SEC-03 | พนักงานบริษัทอื่นเรียก `reservations/{id}/slip` | 404 (query scope ด้วย `CompanyId`) |
+| SEC-04 | ผู้ใช้ที่ไม่มีสิทธิ์ `LodgingManage` | 403 จาก `RequirePermission` |
+| SEC-05 | แขกเรียกด้วย token ของตัวเอง | ได้ไฟล์ |
+| SEC-06 | แขกเรียกด้วย token ของคนอื่น / token มั่ว | 404 |
+| SEC-07 | `PaymentSlipUrl` ในแถวถูกแก้เป็น `/uploads/lodging-slips/../../appsettings.json` | `null` → 404 (ด่านชั้น 2 หลัง resolve) |
+| SEC-08 | ค่าเป็น `/uploads/attachments/x.pdf` หรือ `/uploads/slips/x.jpg` | `null` — คนละโฟลเดอร์ ไม่ให้ยืมด่านนี้ไปเปิด |
+| SEC-09 | ค่ามี `\` หรือ NUL/อักขระควบคุม | `null` (เลี่ยงด่าน `..` บน Windows / ตัดสตริงที่ NUL) |
+| SEC-10 | ไฟล์นามสกุล `.html` / `.svg` / ไม่มีนามสกุล | content type เป็น `image/*` เสมอ — ห้ามคืน `text/html` (stored XSS บนโดเมนเรา) |
+| SEC-11 | API response ของหน้าการจอง | `paymentSlipUrl` เป็น **endpoint ที่มีด่าน** ไม่ใช่ storage path ดิบ |
+
+### LDG-LINE — แจ้งเตือนเข้ากลุ่ม LINE ของที่พัก
+| # | เคส | คาดหวัง |
+| --- | --- | --- |
+| LINE-01 | บริษัทยังไม่ตั้ง LINE (`LineEnabled=false` หรือไม่มี group) | เงียบ ไม่ error · การจองยังสำเร็จปกติ |
+| LINE-02 | ตั้ง LINE แล้ว + มีจองใหม่ | ข้อความเข้ากลุ่ม: ชื่อที่พัก · เลขที่จอง · ชื่อแขก · ห้อง · ช่วงวัน · ยอด/มัดจำ |
+| LINE-03 | แขกส่งสลิป | ข้อความขึ้นหัว "📎 แขกส่งสลิปแล้ว รอตรวจสอบ" |
+| LINE-04 | `NotifyOwnerOnBooking = false` | ไม่ส่ง LINE (ใช้ธงเดียวกับอีเมล ไม่มีสวิตช์ซ้อน) |
+| LINE-05 | ยืนยัน/ยกเลิกการจอง | **ไม่ส่ง** — เป็นผลจากการกดของเจ้าหน้าที่เอง ไม่ต้องเตือนซ้ำ |
+| LINE-06 | LINE API ล่ม | log warning · การจอง/สลิปยังบันทึกสำเร็จ |
+| LINE-07 | บริษัทไม่ได้ตั้งอีเมลแต่ตั้ง LINE | **LINE ยังส่ง** (เดิม `if (_email == null) return;` อยู่บนสุดจะกลืนไปด้วย) |

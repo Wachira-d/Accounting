@@ -80,6 +80,30 @@ public partial class LodgingService
         return r == null ? null : await MapAsync(companyId, r, includeToken: true, includeInternal: false);
     }
 
+    public async Task<(string Path, string ContentType)?> GetSlipFileAsync(Guid companyId, Guid reservationId)
+    {
+        var url = await _db.LodgingReservations.AsNoTracking()
+            .Where(x => x.Id == reservationId && x.CompanyId == companyId && !x.IsDeleted)
+            .Select(x => x.PaymentSlipUrl).FirstOrDefaultAsync();
+        return SlipFile(url);
+    }
+
+    public async Task<(string Path, string ContentType)?> GetSlipFileByTokenAsync(Guid companyId, Guid siteId, string token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        var url = await _db.LodgingReservations.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId
+                     && x.PublicToken == token && !x.IsDeleted)
+            .Select(x => x.PaymentSlipUrl).FirstOrDefaultAsync();
+        return SlipFile(url);
+    }
+
+    private static (string Path, string ContentType)? SlipFile(string? storedUrl)
+    {
+        var path = ResolveSlipPath(storedUrl);
+        return path == null ? null : (path, SlipContentType(path));
+    }
+
     public async Task<LodgingReservationResponse?> UploadSlipByTokenAsync(Guid companyId, Guid siteId, string token, IFormFile file, string? reference)
     {
         var r = await ByTokenAsync(companyId, siteId, token);

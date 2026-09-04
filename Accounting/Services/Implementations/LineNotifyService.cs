@@ -165,6 +165,24 @@ public class LineNotifyService : ILineNotifyService
         await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "bank-sync");
     }
 
+    public async Task NotifyLodgingBookingAsync(Guid companyId, string propertyName, string reservationNumber,
+        string guestName, string roomSummary, DateTime checkIn, DateTime checkOut, int nights,
+        decimal totalAmount, decimal depositRequired, bool isSlipUploaded)
+    {
+        var (token, groupId) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(groupId)) return;
+        var head = isSlipUploaded ? "📎 แขกส่งสลิปแล้ว รอตรวจสอบ" : "🏨 มีการจองใหม่";
+        // วันที่เข้าพักเป็น "วันตามปฏิทิน" อยู่แล้ว (00:00 UTC) — ไม่ต้อง +7 ซ้ำ
+        // ต่างจาก NowIct() ที่แปลงเวลา ณ ขณะนั้น
+        var msg = $"{head}\n🏠 {propertyName}\n🧾 {reservationNumber}\n👤 {guestName}"
+                + $"\n🛏 {roomSummary}"
+                + $"\n📅 {checkIn:dd/MM/yyyy} → {checkOut:dd/MM/yyyy} ({nights} คืน)"
+                + $"\n💰 ยอดรวม {totalAmount:N2} บาท"
+                + (depositRequired > 0 ? $" · มัดจำ {depositRequired:N2} บาท" : "")
+                + $"\n🕐 {NowIct()}";
+        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "lodging-booking");
+    }
+
     public async Task NotifyECommerceSyncAsync(Guid companyId, string platform, int newOrders, decimal totalAmount)
     {
         var (token, groupId) = await ResolveConfigAsync(companyId);

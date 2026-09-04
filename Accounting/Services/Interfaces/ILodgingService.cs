@@ -59,6 +59,14 @@ public interface ILodgingService
     // ── หลังบ้าน: การจอง ──
     Task<PagedResponse<LodgingReservationListItem>> ListReservationsAsync(Guid companyId, Guid? propertyId, string? status, DateTime? from, DateTime? to, string? search, string? view, int page, int pageSize);
     Task<LodgingReservationResponse?> GetReservationAsync(Guid companyId, Guid reservationId);
+
+    /// <summary>พาธไฟล์สลิปบนดิสก์ + content type — <c>null</c> เมื่อไม่มีสลิปหรือหาไฟล์ไม่เจอ
+    ///
+    /// <para>คืน**พาธ** ไม่ใช่ URL เพราะโฟลเดอร์สลิปไม่ได้เสิร์ฟเป็น static แล้ว
+    /// (PII) · ด่านสิทธิ์อยู่ที่ controller: ฝั่งพนักงานใช้ <c>LodgingManage</c>
+    /// ฝั่งแขกพิสูจน์ด้วย <c>PublicToken</c> ของตัวเอง</para></summary>
+    Task<(string Path, string ContentType)?> GetSlipFileAsync(Guid companyId, Guid reservationId);
+    Task<(string Path, string ContentType)?> GetSlipFileByTokenAsync(Guid companyId, Guid siteId, string token);
     Task<LodgingReservationResponse> UpdateReservationAsync(Guid companyId, Guid reservationId, LodgingUpdateReservationRequest request, string userId);
     /// <param name="moneyInAccountId">ผังบัญชีขา "เงินเข้า" ของใบเสร็จมัดจำ — <c>null</c> =
     /// ธนาคาร/เงินสดตามปกติ · มีค่า = บัญชีพัก 11340 (รับผ่าน gateway เงินยังไม่เข้าธนาคาร) ·

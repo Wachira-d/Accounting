@@ -18,6 +18,9 @@ public partial class LodgingService : ILodgingService
     private readonly ILogger<LodgingService> _logger;
     private readonly IDocumentService _docService;
     private readonly IEmailService? _email;
+    /// <summary>แจ้งกลุ่ม LINE ของที่พักเมื่อมีจอง/สลิปใหม่ — ที่พักไทยเช็ค LINE
+    /// จริงกว่าอีเมล · ไม่ได้ตั้งค่า = เงียบ ไม่ error (LDG-P2-06)</summary>
+    private readonly ILineNotifyService? _line;
     private readonly IImageProcessingService? _images;
     /// <summary>มิเตอร์ — optional: บันทึกไม่ได้ต้องไม่ทำให้เช็คเอาต์พัง (เสียรายได้
     /// 1 รายการยอมรับได้ · ทำให้แขกออกจากที่พักไม่ได้ยอมรับไม่ได้)</summary>
@@ -26,7 +29,8 @@ public partial class LodgingService : ILodgingService
 
     public LodgingService(AccountingDbContext db, ILogger<LodgingService> logger, IDocumentService docService,
         IEmailService? email = null, IImageProcessingService? images = null,
-        IUsageMeteringService? metering = null, IEntitlementService? entitlement = null)
+        IUsageMeteringService? metering = null, IEntitlementService? entitlement = null,
+        ILineNotifyService? line = null)
     {
         _db = db;
         _logger = logger;
@@ -35,6 +39,7 @@ public partial class LodgingService : ILodgingService
         _images = images;
         _metering = metering;
         _entitlement = entitlement;
+        _line = line;
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);

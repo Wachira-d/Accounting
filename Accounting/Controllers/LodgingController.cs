@@ -236,6 +236,21 @@ public class LodgingController : ControllerBase
         return Wrap(r, msg);
     }
 
+    /// <summary>เปิดดูสลิปของการจอง (ฝั่งพนักงาน)
+    ///
+    /// <para>โฟลเดอร์สลิป**ไม่ได้เสิร์ฟเป็น static แล้ว** (LDG-P2-06) — สลิปมีชื่อ
+    /// ผู้โอน/เลขบัญชี/ยอด = PII ของแขก · เดิม URL ตรงเปิดได้โดยไม่มีด่านอะไรเลย
+    /// และ URL นั้นถูกส่งกลับใน API response ของหน้าการจองด้วย</para></summary>
+    [HttpGet("reservations/{id:guid}/slip")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<IActionResult> Slip(Guid companyId, Guid id)
+    {
+        var f = await _svc.GetSlipFileAsync(companyId, id);
+        if (f == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
+        // inline เพื่อให้เปิดดูในแท็บใหม่ได้เลย (พนักงานต้องเทียบยอดกับหน้าจอ)
+        return PhysicalFile(f.Value.Path, f.Value.ContentType);
+    }
+
     /// <summary>ปฏิเสธสลิปที่แขกส่งมา — ทางออกที่หายไปเมื่อสลิปไม่ตรง/ปลอม
     /// (เดิมมีแค่ "ยืนยัน" กับ "ยกเลิกทั้งใบ" ⇒ พนักงานได้แต่เงียบ)</summary>
     [HttpPost("reservations/{id:guid}/reject-slip")]

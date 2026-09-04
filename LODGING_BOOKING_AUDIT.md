@@ -201,12 +201,41 @@ _Last verified against codebase: 2026-09-04_
 | **LDG-P0-03** | ✅ | `AddOnPaymentStatus` + ฟิลด์บน `CompanyFeature` + migration · `AddOnPaymentPolicy` (pure + 9 เทสต์) · `AddOnPurchaseService` · `AddOnPurchasePaymentHandler` (`PaymentSourceKind.AddOnPurchase`) · endpoint ลูกค้า (intent/slip) + แอดมิน (คิว + อนุมัติ/ปฏิเสธ) · **ปฏิเสธ = ปิดฟีเจอร์จริง** ผ่าน `SetFeatureEnabledAsync` + audit + อีเมล |
 | **LDG-P1-04** | ✅ | `Helpers/LodgingVoucherBuilder` (pure) + `GET reservations/{token}/voucher.pdf` · ปุ่ม "⬇ บันทึกหลักฐานการจอง (PDF)" · 8 เทสต์ รวมด่านคำต้องห้าม + culture th-TH + escape |
 | **LDG-P1-05** | ✅ | storefront วาดแกลเลอรี/สิ่งอำนวยความสะดวก/คำอธิบาย/แผนที่/ติดต่อ/กติกาที่พัก · lightbox · รูปหลายใบต่อประเภทห้อง · ซ่อนฟอร์มเมื่อ `onlineBookingEnabled=false` · **ตัวอัปโหลดรูป** (`POST lodging/images` + prefix `/uploads/lodging`) |
-| **LDG-P2-06** | 🔨 บางส่วน | `EarlyCheckInFee`/`LateCheckOutFee` ต่อสายแล้ว (ติ๊กตอนเช็คอิน/เช็คเอาต์) · **ยังไม่ทำ**: ย้ายที่เก็บสลิปที่พักออกจาก `publicUploadPrefixes` (PII) · อีเมล/LINE ยืนยันการจองอัตโนมัติ (ตรวจ call site ของ `NotifyOwnerOnBooking` ก่อน) |
+| **LDG-P2-06** | ✅ | `EarlyCheckInFee`/`LateCheckOutFee` ต่อสายแล้ว · **สลิปออกจาก `publicUploadPrefixes`** → เสิร์ฟผ่าน endpoint ที่มีด่าน (`Helpers/LodgingSlipPath` + 20 เทสต์) · **LINE แจ้งเจ้าของ**เมื่อมีจอง/สลิปใหม่ |
 | **REV-08** | ✅ | migration retention เพิ่มเงื่อนไข `RetentionUntil <` ค่าใหม่ ⇒ boot รอบสองเป็นต้นไปแตะ 0 แถว |
+
+### ⚠️ แก้บันทึกของตัวเอง — ที่เขียนไว้รอบ 126 ผิด 1 ข้อ
+
+ในตาราง §3 (LDG-P2-06) ผมเขียนว่า *"ไม่มีอีเมล/LINE ยืนยันการจองอัตโนมัติ"* —
+**ครึ่งแรกผิด**. `LodgingService.TryNotifyAsync` มีอยู่แล้วและถูกเรียกจริงทุกจุด:
+
+| เหตุการณ์ | ถึงใคร | มีมาตั้งแต่ |
+| --- | --- | --- |
+| `created` — รับคำขอจอง (พร้อมลิงก์ token + กำหนดชำระมัดจำ) | แขก | รอบ 124 |
+| `confirmed` — ยืนยันการจอง (พร้อม `ConfirmationMessage` + กติกาที่พัก) | แขก | รอบ 124 |
+| `created` / `slip` — จองใหม่ · แขกส่งสลิป | เจ้าของ (`NotifyEmails`) | รอบ 124 |
+| `slip-rejected` — สลิปไม่ผ่าน + เหตุผล | แขก | รอบ 126 |
+| `created` / `slip` — เข้ากลุ่ม LINE ของบริษัท | เจ้าของ | **รอบ 126b** |
+
+ที่ขาดจริงคือ **LINE เท่านั้น** — และเฉพาะฝั่งเจ้าของ. ฝั่งแขกส่ง LINE **ไม่ได้**
+เพราะแขกจองแบบไม่ล็อกอิน เราไม่มี LINE user id ของเขา (`Property.LineId` เป็น id
+ไว้ให้แขกติดต่อที่พัก ไม่ใช่ปลายทาง push) — ไม่แต่งให้ดูเหมือนมี
+
+_(กติกา CLAUDE.md: "ผลตรวจจากทีม/agent ต้อง verify ก่อนเชื่อ — มันผิดได้ทั้งสองทาง"
+และ "เมื่อพบว่าที่รายงานมาผิด ให้บันทึกไว้ด้วยว่าผิด ไม่ใช่แค่ข้ามไปเงียบ ๆ")_
+
+### 🔎 พบเพิ่มระหว่างแก้ — นอกขอบเขต LDG แต่คลาสเดียวกัน
+
+`/uploads/slips` (สลิปค่าบริการที่ผู้เช่าโอนให้แพลตฟอร์ม) **ยังอยู่ใน
+`publicUploadPrefixes`** — ความเสี่ยงเดียวกับสลิปที่พักทุกประการ (ชื่อผู้โอน +
+เลขบัญชี + ยอด · ชื่อไฟล์ GUID · URL ถูกส่งกลับใน API ของหน้าแอดมิน) ·
+ไม่แก้ในรอบนี้เพราะกระทบ `SubscriptionController` + หน้าแอดมิน + เส้นซื้อ add-on
+ที่เพิ่งต่อ ⇒ ต้องทำเป็นงานของตัวเองพร้อมเทสต์ · **ตัวด่านพร้อมใช้แล้ว**
+(`LodgingSlipPath` รับ root/prefix เป็นพารามิเตอร์ ⇒ ทำตัวคู่ขนานได้ทันที)
 
 ### ยังเหลือ (ของรอบถัดไป)
 - **REV-05** ยังไม่เคยคอมไพล์ — checker 29 ตัวผ่านหมดแต่ไม่ทดแทน `dotnet build`
 - **REV-06** `throw` ใหม่เปลี่ยนพฤติกรรม (งวดปิด · WHT · ที่ดิน) ต้อง audit ข้อมูลจริง + release note
 - **REV-07** `JobLock` จอง connection ตลอดอายุงาน — วัดจริงก่อนตัดสิน
 - **REV-09** เทสต์ใหม่ 6 ไฟล์ยังไม่เคยรัน
-- **LDG-P2-06** ส่วนที่เหลือข้างบน
+- **PII-SLIP-02** ย้าย `/uploads/slips` (สลิปค่าบริการของแพลตฟอร์ม) ออกจาก public prefix ด้วยวิธีเดียวกัน

@@ -2613,6 +2613,43 @@ const Layout = {
     this.toast(this._t('common.csvSuccess', 'ส่งออก CSV สำเร็จ'), 'success');
   },
 
+  /**
+   * เปิดไฟล์จาก endpoint ที่ **ต้องมี token** ในแท็บใหม่
+   *
+   * ═══ ทำไมต้องมี ═══
+   * `<a href="/api/...">` ธรรมดา **ไม่ส่ง Authorization header** ⇒ ได้ 401 เงียบ ๆ
+   * (ผู้ใช้เห็นเป็นแท็บว่างหรือ JSON error) · ไฟล์ที่เคยวางไว้ใต้ static path
+   * สาธารณะแล้วย้ายมาอยู่หลังด่าน (เช่นสลิปโอนเงินของแขก — PII) ทุกจุดต้องเดิน
+   * ผ่านตัวนี้ ไม่งั้นลิงก์เดิมจะพังเงียบ
+   *
+   * คืนค่า blob URL ที่เปิดแล้ว — ผู้เรียกไม่ต้องจัดการเอง (revoke ให้อัตโนมัติ
+   * หลังแท็บโหลดเสร็จ; เร็วเกินไปจะทำให้แท็บว่าง)
+   */
+  async openAuthed(url, fallbackName = 'file') {
+    try {
+      const res = await fetch(url, { headers: { Authorization: 'Bearer ' + (API?.token || '') } });
+      if (!res.ok) {
+        let msg = 'เปิดไฟล์ไม่สำเร็จ';
+        try { msg = (await res.json())?.message || msg; } catch (_) { /* ไม่ใช่ JSON */ }
+        this.toast(msg, 'error');
+        return null;
+      }
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const win = window.open(href, '_blank');
+      if (!win) {
+        // ป๊อปอัปถูกบล็อก — ตกไปเป็นดาวน์โหลดแทน ห้ามเงียบ
+        const a = document.createElement('a');
+        a.href = href; a.download = fallbackName; a.click();
+      }
+      setTimeout(() => URL.revokeObjectURL(href), 60000);
+      return href;
+    } catch (e) {
+      this.toast(e.message || 'เปิดไฟล์ไม่สำเร็จ', 'error');
+      return null;
+    }
+  },
+
   // Export table to Excel (simple HTML table format)
   exportTableExcel(tableEl, filename = 'export.xlsx') {
     if (typeof tableEl === 'string') tableEl = document.querySelector(tableEl);

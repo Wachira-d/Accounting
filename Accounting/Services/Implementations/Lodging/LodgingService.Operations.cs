@@ -53,7 +53,10 @@ public partial class LodgingService
             BalanceDue = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount), Currency = r.Currency, HoldExpiresAt = r.HoldExpiresAt,
             DepositDocumentId = r.DepositDocumentId, DepositDocumentNumber = r.DepositDocumentId is Guid dd ? docNos.GetValueOrDefault(dd) : null,
             FinalDocumentId = r.FinalDocumentId, FinalDocumentNumber = r.FinalDocumentId is Guid fd ? docNos.GetValueOrDefault(fd) : null,
-            PaymentSlipUrl = r.PaymentSlipUrl, PaymentReference = r.PaymentReference, SlipUploadedAt = r.SlipUploadedAt,
+            // ⚠️ ไม่คืน **storage key** ดิบ ๆ — คืน endpoint ที่มีด่านแทน (LDG-P2-06)
+            // ฝั่งพนักงานใช้เส้นที่ต้องมีสิทธิ์ LodgingManage · ฝั่งแขกใช้เส้นที่ต้องมี token ของตัวเอง
+            PaymentSlipUrl = SlipViewUrl(companyId, r, includeInternal),
+            PaymentReference = r.PaymentReference, SlipUploadedAt = r.SlipUploadedAt,
             SlipRejectedCount = r.SlipRejectedCount, SlipRejectedReason = r.SlipRejectedReason,
             SlipRejectedAt = r.SlipRejectedAt, SlipUploadBlocked = r.SlipUploadBlocked,
             ConfirmedAt = r.ConfirmedAt, CheckedInAt = r.CheckedInAt, CheckedOutAt = r.CheckedOutAt, CancelledAt = r.CancelledAt,
@@ -299,6 +302,29 @@ public partial class LodgingService
 
     // ═══════════════════════════ Slip file ═══════════════════════════
 
+    /// <summary>พาธไฟล์สลิปที่ปลอดภัย — ตรรกะด่านอยู่ที่ <see cref="LodgingSlipPath"/>
+    /// (pure + มีเทสต์) · ที่นี่แค่บอกว่า wwwroot อยู่ไหน</summary>
+    private static string? ResolveSlipPath(string? storedUrl)
+        => LodgingSlipPath.Resolve(storedUrl,
+            Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"));
+
+    private static string SlipContentType(string path) => LodgingSlipPath.ContentType(path);
+
+    /// <summary>URL ที่ให้หน้าเว็บเปิดดูสลิป — <c>null</c> เมื่อยังไม่มีสลิป
+    ///
+    /// <para>เลือกเส้นตาม**ผู้ดู**: พนักงาน (<paramref name="forStaff"/>) เดินเส้นที่
+    /// ตรวจสิทธิ์ <c>LodgingManage</c> · แขกเดินเส้นที่พิสูจน์ด้วย <c>PublicToken</c>
+    /// ของตัวเอง — การจองที่ไม่ผูกเว็บไซต์ (พนักงานสร้างเอง) ไม่มีเส้นฝั่งแขก</para></summary>
+    private static string? SlipViewUrl(Guid companyId, LodgingReservation r, bool forStaff)
+    {
+        if (string.IsNullOrWhiteSpace(r.PaymentSlipUrl)) return null;
+        if (forStaff) return $"/api/companies/{companyId}/lodging/reservations/{r.Id}/slip";
+        if (r.SiteId is not Guid sid || string.IsNullOrWhiteSpace(r.PublicToken)) return null;
+        return $"/api/companies/{companyId}/cms/sites/{sid}/lodging/reservations/"
+             + $"{Uri.EscapeDataString(r.PublicToken)}/slip";
+    }
+
+
     private async Task<string> SaveSlipFileAsync(Guid companyId, Guid reservationId, IFormFile file)
     {
         if (file == null || file.Length == 0) throw new BusinessRuleException("กรุณาเลือกไฟล์สลิป");
@@ -338,6 +364,9 @@ public partial class LodgingService
     /// <summary>อีเมลแจ้งแขก + เจ้าของ — best-effort: ล้มเหลวแค่ log ไม่กระทบการจอง (graceful degradation)</summary>
     private async Task TryNotifyAsync(Guid companyId, Guid reservationId, string evt)
     {
+        // ⚠️ เดิม `if (_email == null) return;` อยู่บนสุด ⇒ ถ้าวันหนึ่งบริษัทไม่ตั้งอีเมล
+        // ช่องทาง LINE จะเงียบตามไปด้วยทั้งที่ตั้งค่าไว้แล้ว — สองช่องทางต้องแยกกัน
+        await TryNotifyLineAsync(companyId, reservationId, evt);
         if (_email == null) return;
         try
         {
@@ -383,6 +412,27 @@ public partial class LodgingService
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "ส่งอีเมลแจ้งการจองที่พัก {Id} ({Evt}) ไม่สำเร็จ", reservationId, evt); }
+    }
+
+    /// <summary>แจ้งกลุ่ม LINE ของที่พัก — เฉพาะเหตุการณ์ที่**เจ้าของต้องลงมือทำต่อ**
+    /// (จองใหม่ · แขกส่งสลิปรอตรวจ) · ยืนยัน/ยกเลิกไม่ต้องเตือนซ้ำเพราะเป็นผลจาก
+    /// การกดของเจ้าหน้าที่เอง</summary>
+    private async Task TryNotifyLineAsync(Guid companyId, Guid reservationId, string evt)
+    {
+        if (_line == null || evt is not ("created" or "slip")) return;
+        try
+        {
+            var r = await ResQuery(companyId).AsNoTracking().FirstOrDefaultAsync(x => x.Id == reservationId);
+            if (r == null || !r.Property.NotifyOwnerOnBooking) return;
+            await _line.NotifyLodgingBookingAsync(companyId, r.Property.Name, r.ReservationNumber,
+                r.GuestName, RoomSummary(r), r.CheckInDate, r.CheckOutDate, r.Nights,
+                r.TotalAmount, r.DepositRequired, isSlipUploaded: evt == "slip");
+        }
+        catch (Exception ex)
+        {
+            // ช่องทางแจ้งเตือนล้มต้องไม่ทำให้การจองล้ม — แต่ต้องดังใน log
+            _logger.LogWarning(ex, "ส่ง LINE แจ้งการจองที่พัก {Id} ({Evt}) ไม่สำเร็จ", reservationId, evt);
+        }
     }
 
     private async Task<string?> GuestLinkAsync(Guid companyId, LodgingReservation r)

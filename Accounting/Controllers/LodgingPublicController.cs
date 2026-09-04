@@ -99,6 +99,18 @@ public class LodgingPublicController : ControllerBase
         return File(bytes, "application/pdf", Accounting.Helpers.LodgingVoucherBuilder.FileName(r));
     }
 
+    /// <summary>แขกเปิดดูสลิปของ**ตัวเอง** — พิสูจน์สิทธิ์ด้วย token ที่เขาถืออยู่
+    ///
+    /// <para>ก่อนหน้านี้ไฟล์อยู่ใต้ static path สาธารณะ ⇒ ใครได้ URL ไปก็เปิดได้
+    /// ตลอดกาล · ตอนนี้ต้องมี token ของการจองใบนั้นเท่านั้น</para></summary>
+    [HttpGet("reservations/{token}/slip")]
+    public async Task<IActionResult> Slip(Guid companyId, Guid siteId, string token)
+    {
+        var f = await _svc.GetSlipFileByTokenAsync(companyId, siteId, token);
+        if (f == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
+        return PhysicalFile(f.Value.Path, f.Value.ContentType);
+    }
+
     [HttpPost("reservations/{token}/slip")]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> UploadSlip(Guid companyId, Guid siteId, string token, IFormFile? file, [FromForm] string? reference)
