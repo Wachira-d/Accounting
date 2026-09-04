@@ -408,6 +408,9 @@ public class PayrollService : IPayrollService
         if (request.RmfSsfContribution.HasValue) employee.RmfSsfContribution = Math.Max(0m, request.RmfSsfContribution.Value);
         if (request.DonationAmount.HasValue) employee.DonationAmount = Math.Max(0m, request.DonationAmount.Value);
         if (request.TaxAllowances.HasValue) employee.TaxAllowances = Math.Max(0, request.TaxAllowances.Value);
+        // D-S1 — เปิด/ปิดสถานะผู้ประกันตนย้อนหลังได้ (เดิมไม่มีช่องนี้ใน Update)
+        if (request.IsSubjectToSocialSecurity.HasValue)
+            employee.IsSubjectToSocialSecurity = request.IsSubjectToSocialSecurity.Value;
         // LastSyncedAt only stamps when ExternalId is actually present — a
         // plain UI edit that re-sends an unchanged costBehavior shouldn't
         // look like an HRIS sync.
@@ -975,32 +978,48 @@ public class PayrollService : IPayrollService
         if (request.Month < 1 || request.Month > 12)
             throw new InvalidOperationException("เดือนต้องอยู่ระหว่าง 1 ถึง 12");
 
-        if (request.Year < 2020 || request.Year > DateTime.UtcNow.Year + 1)
-            throw new InvalidOperationException("ปีต้องอยู่ระหว่าง 2020 ถึงปีปัจจุบัน+1");
+        // ═══ D-F1: "+ สร้างรอบเงินเดือน" ถูกปฏิเสธ 2 ชั้นทุกครั้ง ═══
+        //  · หน้าจอไทยแสดง **พ.ศ.** (2569) แล้วส่งค่านั้นมาตรง ๆ ⇒ ตกด่าน
+        //    "ปีต้องอยู่ระหว่าง 2020 ถึงปีปัจจุบัน+1" ทั้งที่ผู้ใช้เห็นปีถูกบนจอ
+        //  · ไม่ส่ง PeriodStart/PeriodEnd ⇒ ได้ default(DateTime) ทั้งคู่ ⇒
+        //    ด่าน `>=` เป็นจริงเสมอ
+        // ⇒ สร้างรอบจากหน้าจอ **ไม่เคยสำเร็จเลย** ทางเดียวที่ใช้ได้คือ
+        //   POST /runs/import ของคู่ค้า. รับ พ.ศ. แล้วแปลงเองแทนการโยนกลับ —
+        //   ผู้ใช้กรอกถูกตามที่จอบอก ระบบต้องเข้าใจเอง
+        var year = request.Year > 2400 ? request.Year - 543 : request.Year;
+        if (year < 2020 || year > DateTime.UtcNow.Year + 1)
+            throw new InvalidOperationException(
+                $"ปีต้องอยู่ระหว่าง {2020 + 543} ถึง {DateTime.UtcNow.Year + 1 + 543} (พ.ศ.)");
 
-        if (request.PeriodStart >= request.PeriodEnd)
+        // ไม่ส่งงวดมา = ทั้งเดือนตามปกติ (เป็นค่าที่ถูกต้องสำหรับ 99% ของรอบ)
+        var periodStart = request.PeriodStart ?? new DateTime(year, request.Month, 1);
+        var periodEnd = request.PeriodEnd
+            ?? new DateTime(year, request.Month, DateTime.DaysInMonth(year, request.Month));
+        if (periodStart >= periodEnd)
             throw new InvalidOperationException("วันเริ่มต้นงวดต้องน้อยกว่าวันสิ้นสุดงวด");
 
+        // ⚠️ ทุกจุดต่อจากนี้ใช้ `year` ที่ normalize แล้ว — ใช้ request.Year ต่อ
+        // จะทำให้ตรวจซ้ำผิดปี เลขรอบเป็น PR-2569xx และรอบไปอยู่คนละปีกับข้อมูลจริง
         var duplicateRun = await _db.Set<PayrollRun>()
-            .AnyAsync(r => r.CompanyId == companyId && r.Year == request.Year
+            .AnyAsync(r => r.CompanyId == companyId && r.Year == year
                 && r.Month == request.Month && r.Status != "Voided" && !r.IsDeleted);
         if (duplicateRun)
-            throw new InvalidOperationException($"รอบจ่ายเงินเดือน {request.Year}/{request.Month:D2} มีอยู่แล้ว");
+            throw new InvalidOperationException($"รอบจ่ายเงินเดือน {year}/{request.Month:D2} มีอยู่แล้ว");
 
         var count = await _db.Set<PayrollRun>()
-            .CountAsync(r => r.CompanyId == companyId && r.Year == request.Year);
-        var payrollNumber = $"PR-{request.Year}{request.Month:D2}-{(count + 1):D3}";
+            .CountAsync(r => r.CompanyId == companyId && r.Year == year);
+        var payrollNumber = $"PR-{year}{request.Month:D2}-{(count + 1):D3}";
 
         var run = new PayrollRun
         {
             CompanyId = companyId,
             PayrollNumber = payrollNumber,
             Name = request.Name,
-            Year = request.Year,
+            Year = year,
             Month = request.Month,
             PayDate = request.PayDate,
-            PeriodStart = request.PeriodStart,
-            PeriodEnd = request.PeriodEnd,
+            PeriodStart = periodStart,
+            PeriodEnd = periodEnd,
             Status = "Draft",
             CreatedBy = createdBy
         };
@@ -1494,7 +1513,16 @@ public class PayrollService : IPayrollService
 
             // Get active employees
             var employees = await _db.Set<Employee>()
-                .Where(e => e.CompanyId == companyId && e.IsActive && !e.IsDeleted
+                // ═══ D-S2: ลาออกกลางเดือนหายจากรอบทั้งคน ═══
+                // `Terminate` ตั้ง IsActive = false ⇒ เงื่อนไข `e.IsActive` ตัด
+                // คนที่เพิ่งลาออกออกไปก่อน แล้วเงื่อนไข `EndDate >= PeriodStart`
+                // ที่เขียนไว้เพื่อรองรับเคสนี้โดยเฉพาะ **เป็นจริงไม่ได้เลย**
+                // ⇒ ลาออกกลางเดือน = ไม่ได้เงินเดือนงวดสุดท้าย · ไม่อยู่ใน
+                //   ภ.ง.ด.1 · ไม่อยู่ใน สปส.1-10 — เงียบสนิท ไม่มี error ให้เห็น
+                // (เงื่อนไขที่ "ปกติเป็นจริงเสมอ" ซ่อนเงื่อนไขที่ตามมาไว้ทั้งข้อ)
+                .Where(e => e.CompanyId == companyId && !e.IsDeleted
+                    && (e.IsActive
+                        || (e.EndDate != null && e.EndDate >= run.PeriodStart))
                     && e.StartDate <= run.PeriodEnd
                     && (e.EndDate == null || e.EndDate >= run.PeriodStart))
                 .ToListAsync();
@@ -1741,9 +1769,21 @@ public class PayrollService : IPayrollService
                     ? Math.Round(emp.BaseSalary * unpaidLeaveDays / workDaysInMonth, 2, MidpointRounding.AwayFromZero)
                     : 0m;
 
+                // ═══ D-S3: เฉลี่ยตามวันที่เป็นลูกจ้างจริงในงวดนี้ ═══
+                // เดิมเฉลี่ยเฉพาะ "ลาไม่รับค่าจ้าง" ⇒ เข้างาน 25 ก.ย. ได้เงินเดือน
+                // **เต็มเดือน** · ลาออกวันที่ 3 ก็ได้เต็มเดือน ⇒ จ่ายเกิน + ฐาน
+                // ประกันสังคมเกินจริง (ม.5 "ค่าจ้าง" = ที่จ่ายจริง) ⇒ นำส่งเกินและ
+                // ไฟล์ สปส.1-10 ประกาศค่าจ้างที่ไม่ตรงความจริง + ฐานภาษีเกินตาม
+                var payableDays = Accounting.Helpers.PayrollProration.PayableDays(
+                    run.PeriodStart, run.PeriodEnd, emp.StartDate, emp.EndDate);
+                var periodDays = Accounting.Helpers.PayrollProration.DaysInPeriod(
+                    run.PeriodStart, run.PeriodEnd);
+                var proratedBaseSalary = Accounting.Helpers.PayrollProration.Prorate(
+                    emp.BaseSalary, payableDays, periodDays);
+
                 // taxableGross = ส่วนที่นำไปคำนวณ WHT (ตามประมวลรัษฎากร §40(1)).
                 // grossIncome (จ่ายให้พนักงาน) = taxableGross + สวัสดิการยกเว้นภาษี.
-                var taxableGross = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
+                var taxableGross = proratedBaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
                 var grossIncome = taxableGross + nonTaxableExtra;
 
                 // Social security: base on BaseSalary (not gross), capped at the
@@ -1761,7 +1801,9 @@ public class PayrollService : IPayrollService
                     // ฐาน + การปัดเศษผ่านตัวกลางเดียว (Helpers/SsoWageBase) —
                     // ทั้งสองฝั่งคิดจากฐานเดียวกันเสมอ และฐานถูกเก็บลงแถวเพื่อให้
                     // ไฟล์ สปส.1-10 รายงานค่าจ้างที่ตรงกับยอดสมทบ
-                    ssoWageBase = Accounting.Helpers.SsoWageBase.Clamp(emp.BaseSalary, sso.MaxBase);
+                    // ★ D-S3: ฐานค่าจ้างต้องเป็น "ที่จ่ายจริงในงวดนี้" (ม.5) —
+                    // เข้า/ออกกลางเดือนต้องใช้ยอดที่เฉลี่ยแล้ว ไม่ใช่เงินเดือนเต็ม
+                    ssoWageBase = Accounting.Helpers.SsoWageBase.Clamp(proratedBaseSalary, sso.MaxBase);
                     ssoEmployee = Accounting.Helpers.SsoWageBase.Contribution(
                         ssoWageBase, sso.Rate, sso.MaxContribution);
                     ssoEmployer = Accounting.Helpers.SsoWageBase.Contribution(
@@ -1810,7 +1852,10 @@ public class PayrollService : IPayrollService
                 // ฐานประจำ = ส่วนที่คาดว่าจะได้ต่อไปทุกงวด (เงินเดือน + เบี้ยเลี้ยง
                 // ประจำ + OT ที่เกิดในงวดนี้ยังถือว่าไม่ประจำ) — ตัดรายการครั้งคราว
                 // (โบนัส/คอมมิชชัน/อื่น ๆ) ออกเพราะมันอยู่ในยอดสะสมแล้ว
-                var recurringMonthly = Math.Max(0m, emp.BaseSalary - leaveDeduction + allowances);
+                // ฐานประจำใช้ **เงินเดือนเต็ม** เพราะงวดที่เหลือเป็นเดือนเต็ม —
+                // การเฉลี่ยของงวดนี้ (เข้ากลางเดือน) และการลาไม่รับค่าจ้างเป็น
+                // เหตุการณ์ครั้งคราว ไม่ใช่ฐานที่จะเกิดซ้ำทุกงวด
+                var recurringMonthly = Math.Max(0m, emp.BaseSalary + allowances);
 
                 // งวดที่เหลือหลังงวดนี้ — เคารพวันสิ้นสุดการจ้างถ้ามี (ลาออกกลางปี
                 // ไม่ควรถูกประมาณการว่ายังได้เงินเดือนจนสิ้นปี)
@@ -3906,7 +3951,7 @@ public class PayrollService : IPayrollService
             e.ContactId,
             e.CostBehavior,
             e.ExternalId, e.ExternalSystem, e.LastSyncedAt,
-            phone, email, e.LineId,
+            phone, email, e.LineId, e.IsSubjectToSocialSecurity,
             // echo ค่าลดหย่อนกลับ — "เก็บแล้วต้อง echo กลับ" ไม่งั้นเปิดฟอร์มแก้
             // แล้วบันทึก ค่าที่เคยกรอกหายเงียบ ๆ (กฎเหล็ก #4 A)
             e.HasSpouseAllowance, e.ChildAllowanceCount, e.SecondAndLaterChildren,

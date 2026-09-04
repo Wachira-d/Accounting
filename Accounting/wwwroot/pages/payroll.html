@@ -226,6 +226,16 @@
                 หาได้จาก LIFF binding หรือให้พนักงานสแกน QR ผูกบัญชีในแอป NextAcc → ค่าจะเติมอัตโนมัติ
               </div>
             </div>
+            <!-- D-S1: ฟอร์มนี้ไม่เคยส่งค่านี้ ⇒ พนักงานที่เพิ่มจากหน้านี้ได้
+                 false เงียบ ๆ ไม่หัก/ไม่นำส่ง ปกส. และไม่ขึ้น สปส.1-10/1-03 -->
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:6px;padding-top:24px;font-size:13px">
+                <input type="checkbox" id="empSso" checked> ผู้ประกันตน (หัก/นำส่งประกันสังคม ม.33)
+              </label>
+              <div class="text-gray-400" style="font-size:11px;margin-top:4px">
+                ปิดเฉพาะกรณีที่กฎหมายยกเว้นจริง — ไม่หักทั้งที่ต้องหัก = เงินเพิ่ม §49 และลูกจ้างเสียสิทธิ์
+              </div>
+            </div>
           </div>
         </div>
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('empModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveEmployee()" data-i18n="common.save">บันทึก</button></div>
@@ -747,6 +757,7 @@ const Page = {
     document.getElementById('empModalTitle').textContent = 'เพิ่มพนักงาน';
     document.getElementById('empId').value = '';
     document.getElementById('empActiveRow').style.display = 'none';
+    document.getElementById('empSso').checked = true;   // default ตามกฎหมาย (D-S1)
     ['empCode','empFirstName','empLastName','empIdCard','empStartDate','empPosition','empDepartment','empSalary','empBankAccount','empEmail','empPhone','empLineId'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('empStartDate').value = Layout.dateInput(new Date());
     await this._loadOrgDropdowns(null);
@@ -779,6 +790,7 @@ const Page = {
       document.getElementById('empEmail').value = e.email || '';
       document.getElementById('empPhone').value = e.phone || '';
       document.getElementById('empLineId').value = e.lineId || '';
+      document.getElementById('empSso').checked = e.isSubjectToSocialSecurity !== false;
       // Onboarding/offboarding visible only on edit.
       document.getElementById('empActiveRow').style.display = 'block';
       document.getElementById('empActive').checked = e.isActive !== false;
@@ -807,6 +819,7 @@ const Page = {
       email: document.getElementById('empEmail').value || null,
       phone: document.getElementById('empPhone').value || null,
       lineId: document.getElementById('empLineId').value || null,
+      isSubjectToSocialSecurity: document.getElementById('empSso').checked,
       // Org structure (preferred — drives cost-centre + approval routing)
       // แก้ไข: "" = **ปลดค่า** (Guid.Empty sentinel) — "— ไม่มี (Top-level) —"
       // ต้องปลดหัวหน้าได้จริง (เดิมเลือกแล้วบันทึก คนเดิมยังชี้อยู่ สายอนุมัติ
@@ -890,12 +903,28 @@ const Page = {
 
   async saveRun() {
     const api = Layout.api(); if (!api) return;
+    // ═══ D-F1: จอแสดง พ.ศ. แต่ระบบเก็บ ค.ศ. ═══
+    // เดิมส่ง 2569 ไปตรง ๆ แล้วโดนปฏิเสธ "ปีต้องอยู่ระหว่าง 2020…" ทั้งที่จอ
+    // โชว์ปีถูก · และไม่ส่งช่วงงวดเลย ⇒ เซิร์ฟเวอร์ได้ค่าว่างทั้งคู่แล้วตกด่าน
+    // `เริ่ม >= สิ้นสุด` ⇒ **สร้างรอบจากหน้าจอไม่เคยสำเร็จ**
+    // (เซิร์ฟเวอร์ normalize ให้อีกชั้นแล้ว — ฝั่งนี้ส่งค่าที่ถูกตั้งแต่ต้น
+    //  เพื่อไม่ให้พึ่ง "ตัวช่วยเดา" ของอีกฝั่งเป็นเส้นทางปกติ)
+    const yearInput = parseInt(document.getElementById('runYear').value);
+    const month = parseInt(document.getElementById('runMonth').value);
+    const yearCe = yearInput > 2400 ? yearInput - 543 : yearInput;
+    const pad = (n) => String(n).padStart(2, '0');
+    const lastDay = new Date(yearCe, month, 0).getDate();   // เดือน 0-based → วันสุดท้ายของ month
     const data = {
       name: document.getElementById('runName').value,
-      month: parseInt(document.getElementById('runMonth').value),
-      year: parseInt(document.getElementById('runYear').value),
+      month,
+      year: yearCe,
       payDate: document.getElementById('runPayDate').value,
+      periodStart: `${yearCe}-${pad(month)}-01`,
+      periodEnd: `${yearCe}-${pad(month)}-${pad(lastDay)}`,
     };
+    if (!Number.isFinite(yearCe) || !Number.isFinite(month)) {
+      Layout.toast('กรุณาเลือกเดือนและปีให้ถูกต้อง', 'error'); return;
+    }
     if (!data.name || !data.payDate) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
     try {
       await api.createPayrollRun(data);
