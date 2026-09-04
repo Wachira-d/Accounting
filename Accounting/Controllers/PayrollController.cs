@@ -422,7 +422,19 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult> GetPayslip(Guid companyId, Guid runId, Guid employeeId,
         [FromQuery] bool download = false)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        // ── พนักงานเปิดสลิป**ของตัวเอง**ได้เสมอ (ผลตรวจ D-U3) ──
+        //
+        // เดิมต้องมีสิทธิ์ "ดูข้อมูลเงินเดือน" ซึ่งเป็นสิทธิ์ระดับ HR ⇒ พนักงาน
+        // ทั่วไปเปิดสลิปตัวเองไม่ได้เลย ทางเดียวคือรอ HR กดส่งทาง LINE —
+        // สลิปเป็นเอกสารที่ลูกจ้างมีสิทธิ์ได้รับตามกฎหมายแรงงาน ไม่ใช่ข้อมูลลับ
+        // จากเขา · ส่วนสลิป**ของคนอื่น** ยังต้องมีสิทธิ์ HR เหมือนเดิม
+        var actorUserId = JwtHelper.GetUserIdFromClaims(User);
+        var isOwnPayslip = actorUserId != Guid.Empty
+            && await _service.IsEmployeeOfUserAsync(companyId, employeeId, actorUserId);
+        if (!isOwnPayslip)
+        {
+            var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        }
         var slip = await _service.GeneratePayslipAsync(companyId, runId, employeeId);
         if (download)
             // attachment + ชื่อไฟล์ไทย (File() เข้ารหัส filename* UTF-8 ให้เอง)

@@ -107,6 +107,10 @@ public interface IPayrollService
     Task<PayrollDetailResponse> GetPayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId);
     Task<PayslipResponse> GeneratePayslipAsync(Guid companyId, Guid payrollRunId, Guid employeeId);
 
+    /// <summary>พนักงานคนนี้คือผู้ใช้คนนี้หรือไม่ — ใช้เปิดสิทธิ์ "ดูของตัวเอง"
+    /// โดยไม่ต้องมีสิทธิ์ HR (สลิปเงินเดือนเป็นเอกสารที่ลูกจ้างมีสิทธิ์ได้รับ)</summary>
+    Task<bool> IsEmployeeOfUserAsync(Guid companyId, Guid employeeId, Guid userId);
+
     // Leave
     Task<LeaveResponse> CreateLeaveAsync(Guid companyId, CreateLeaveRequest request);
     Task<LeaveResponse> GetLeaveAsync(Guid companyId, Guid leaveId);

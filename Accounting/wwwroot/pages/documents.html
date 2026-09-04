@@ -3216,7 +3216,10 @@
             await api.applyJournalDeposit(this.editingId, entryNumber,
               dRaw ? new Date(dRaw).toISOString() : null);
             Layout.toast('หัก JV มัดจำเข้าใบนี้แล้ว', 'success');
-            if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
+            // ★ `viewDetail` ไม่เคยถูกนิยามในไฟล์นี้ ⇒ เงื่อนไขเป็นเท็จเสมอ
+            // ⇒ หลังหักมัดจำ หน้ารายละเอียดไม่รีเฟรช ยอดค้างชำระค้างค่าเดิม
+            // ผู้ใช้เห็นว่า "ไม่มีอะไรเกิดขึ้น" แล้วกดซ้ำ (ผลตรวจ A-D4)
+            if (this.editingId) await this.detail(this.editingId);
             await this.searchJvDeposits();
           } catch (e) { Layout.toast(e.message || 'หัก JV ไม่สำเร็จ', 'error'); }
         } else {
@@ -3254,7 +3257,7 @@
           });
           Layout.toast('หักมัดจำสำเร็จ — รับรู้รายได้ + ลดยอดคงค้างแล้ว');
           await this.checkContactDeposits(document.getElementById('fContactId').value);
-          if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
+          if (this.editingId) await this.detail(this.editingId);   // ดูหมายเหตุ A-D4 ข้างบน
         } catch (e) { Layout.toast(e.message || 'หักมัดจำไม่สำเร็จ', 'error'); }
       },
 
@@ -3365,7 +3368,7 @@
           Layout.toast('หักมัดจำสำเร็จ — ระบบรับรู้รายได้ + ลดยอดคงค้างแล้ว');
           // refresh deposit summary + reload doc detail
           await this.checkContactDeposits(document.getElementById('fContactId').value);
-          if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
+          if (this.editingId) await this.detail(this.editingId);   // ดูหมายเหตุ A-D4 ข้างบน
         } catch (e) { Layout.toast(e.message || 'หักมัดจำไม่สำเร็จ', 'error'); }
       },
 
@@ -6356,10 +6359,16 @@
         const el = document.getElementById('taxInvVatPreview');
         if (!el) return;
         // คำนวณจาก line items ปัจจุบัน (subtotal + vat) ที่ฟอร์มคำนวณไว้
-        const sub = parseFloat(document.getElementById('fSubTotalDisplay')?.dataset?.value
-                  || document.getElementById('fSubTotal')?.value || '0') || 0;
-        const vat = parseFloat(document.getElementById('fVatAmountDisplay')?.dataset?.value
-                  || document.getElementById('fVatAmount')?.value || '0') || 0;
+        //
+        // ★ เดิมอ่าน 4 id ที่ **ไม่มีอยู่ในหน้านี้เลยสักตัว** (fSubTotalDisplay ·
+        // fSubTotal · fVatAmountDisplay · fVatAmount) ⇒ ได้ 0 ทั้งคู่เสมอ ⇒ กล่อง
+        // "ข้อมูลใบกำกับภาษีของผู้ขาย" ในโหมดกรอกเองขึ้น "— เพิ่มรายการในใบเพื่อ
+        // คำนวณ —" ตลอดไป แม้กรอกรายการครบแล้ว (ผลตรวจ A-D6)
+        // id จริงที่ฟอร์มเขียนยอดลงไปคือ #sumSubTotal / #sumVat (ดู :7168, :7180)
+        const money = id => parseFloat(
+          (document.getElementById(id)?.textContent || '0').replace(/[^0-9.-]/g, '')) || 0;
+        const sub = money('sumSubTotal');
+        const vat = money('sumVat');
         if (srcDoc) {
           el.textContent = `ฐานภาษี ฿${(srcDoc.subTotal || 0).toLocaleString(undefined, {minimumFractionDigits: 2})} • VAT ฿${(srcDoc.vatAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}`;
         } else if (sub || vat) {
@@ -9122,7 +9131,7 @@
                   แต่ถ้า<b>ใบกำกับภาษีตัวจริงมี VAT</b> (ยอด ${Layout.money(total)} มักเป็นยอดรวม VAT
                   = ฐาน <b>${Layout.money(base)}</b> + VAT 7% <b>${Layout.money(vat7)}</b>) —
                   ${isDraft
-                    ? `<a href="#" onclick="Layout.closeModal('detailModal');Page.edit('${d.id}');return false" style="color:#b45309;font-weight:700;text-decoration:underline">แก้ไขใบนี้</a> แล้วติ๊ก "ราคารวม VAT" หรือใส่อัตรา VAT 7% รายบรรทัด แล้วติ๊ก "มีใบกำกับภาษีซื้อ"`
+                    ? `<a href="#" onclick="Layout.closeModal('detailModal');Page.openEdit('${d.id}');return false" style="color:#b45309;font-weight:700;text-decoration:underline">แก้ไขใบนี้</a> แล้วติ๊ก "ราคารวม VAT" หรือใส่อัตรา VAT 7% รายบรรทัด แล้วติ๊ก "มีใบกำกับภาษีซื้อ"`
                     : `ใบนี้อนุมัติ/ลงบัญชีแล้ว แก้ยอดไม่ได้ — ให้<b>ยกเลิกใบนี้</b>แล้วบันทึกใหม่แบบแยกฐาน/VAT พร้อมติ๊ก "มีใบกำกับภาษีซื้อ" จึงจะเคลม ภ.พ.30 ได้`}
                 </div>
               </div>`;
@@ -9919,7 +9928,10 @@
           Layout.toast(j.message);
           // Refresh list + open new doc for edit
           this.load();
-          setTimeout(() => this.edit(j.data.newDocumentId), 300);
+          // ★ เมธอดชื่อ openEdit — `this.edit` ไม่เคยมีนิยามในไฟล์นี้เลย
+          // ⇒ TypeError ถูกกลืนใน setTimeout (ไม่มี catch) ⇒ คัดลอกใบสำเร็จ
+          // แต่ใบใหม่ไม่เปิดขึ้นมา ผู้ใช้เห็นแค่หน้าเดิม (ผลตรวจ A-D3)
+          setTimeout(() => this.openEdit(j.data.newDocumentId), 300);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       /** ติ๊กเคลม/เลิกเคลมภาษีซื้อหลังอนุมัติ — ดุลพินิจผู้บันทึก + คำเตือนกฎ

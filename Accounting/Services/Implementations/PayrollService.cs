@@ -1372,6 +1372,16 @@ public class PayrollService : IPayrollService
             ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
 
         static decimal Pos(decimal v) => v < 0 ? 0 : v;
+
+        // ส่วนของรายได้ที่ **ไม่ต้องเสียภาษี** (สวัสดิการยกเว้น เช่นค่ารักษาพยาบาล)
+        // — เก็บไว้ก่อนแก้ยอด เพื่อคงไว้หลังรวมรายได้ใหม่ (ผลตรวจ D-D1)
+        var nonTaxablePortion = Math.Max(0m, d.GrossIncome - d.TaxableGross);
+
+        // รายได้เปลี่ยนไหม — ใช้ตัดสินว่าต้องคิดภาษีใหม่หรือเปล่า (ผลตรวจ D-D2)
+        var incomeChanged = req.BaseSalary.HasValue || req.OvertimePay.HasValue
+            || req.Allowances.HasValue || req.Commission.HasValue
+            || req.Bonus.HasValue || req.OtherIncome.HasValue;
+
         if (req.BaseSalary.HasValue) d.BaseSalary = Pos(req.BaseSalary.Value);
         if (req.OvertimePay.HasValue) d.OvertimePay = Pos(req.OvertimePay.Value);
         if (req.Allowances.HasValue) d.Allowances = Pos(req.Allowances.Value);
@@ -1429,7 +1439,34 @@ public class PayrollService : IPayrollService
 
         // รวมยอดใหม่ — หักฝั่งลูกจ้างเท่านั้นที่กระทบ net (ปกส./PVD นายจ้าง = cost บริษัท)
         d.GrossIncome = d.BaseSalary + d.OvertimePay + d.Allowances + d.Commission + d.Bonus + d.OtherIncome;
-        d.TaxableGross = d.GrossIncome;
+
+        // ★ เดิมเขียน `d.TaxableGross = d.GrossIncome` ทับทุกครั้ง (ผลตรวจ D-D1)
+        // ⇒ ส่วนที่ยกเว้นภาษี (ค่ารักษาพยาบาล ฯลฯ ที่ engine แยกไว้ตอนคำนวณ)
+        // **หายทุกครั้งที่ HR แก้ยอดช่องใด ๆ** แม้แก้ช่องที่ไม่เกี่ยวกันเลย
+        // ⇒ ฐานภาษีใน ภ.ง.ด.1 และ 50 ทวิ สูงกว่าจริง = พนักงานถูกหักเกิน
+        // คงสัดส่วนที่ยกเว้นไว้ (clamp ไม่ให้ติดลบเมื่อรายได้ใหม่น้อยกว่าส่วนยกเว้น)
+        d.TaxableGross = Math.Max(0m, d.GrossIncome - Math.Min(nonTaxablePortion, d.GrossIncome));
+
+        // ★ แก้รายได้แล้วภาษีต้องเปลี่ยนตาม (ผลตรวจ D-D2)
+        //
+        // เดิมแก้โบนัส/OT ได้แต่ `WithholdingTax` ค้างค่าเดิม ⇒ หักน้อยกว่าที่ควร
+        // แล้วผู้จ่ายรับผิดตาม §54 — และเงียบสนิทเพราะยอดสุทธิ "ดูสมเหตุสมผล"
+        //
+        // **ไม่คำนวณใหม่ที่นี่** เพราะสูตรภาษีต้องใช้บริบทของทั้งปี (รายได้สะสม ·
+        // ลดหย่อนรายช่อง · ตารางขั้นภาษีของบริษัท · งวดที่เหลือ) ที่เมธอดนี้ไม่มี
+        // — คัดลอกสูตรมาที่นี่ = อัลกอริทึมภาษีชุดที่สองที่จะ drift แน่นอน
+        // (defect class ที่ทั้งไฟล์นี้เพิ่งยุบทิ้งไปในรอบ D-T1..T4)
+        // จึง **ล้มดังพร้อมบอกทางไปต่อ** แทนการปล่อยตัวเลขผิดผ่านไปเงียบ ๆ
+        if (incomeChanged && !req.WithholdingTax.HasValue)
+        {
+            throw new Accounting.Helpers.BusinessRuleException(
+                "แก้ยอดรายได้แล้วต้องระบุภาษีหัก ณ ที่จ่ายใหม่ด้วย — "
+                + $"ยอดเดิม {d.WithholdingTax:N2} บาท คิดจากรายได้ก่อนแก้ "
+                + "ถ้าปล่อยไว้จะหักน้อย/มากกว่าที่ควร (ภาษีที่หักขาด ผู้จ่ายรับผิดตาม §54). "
+                + "ทางแก้: กรอกช่อง \"ภาษีหัก ณ ที่จ่าย\" ในโมดัลเดียวกัน "
+                + "หรือกด \"คำนวณเงินเดือน\" ใหม่ทั้งรอบเพื่อให้ระบบคิดภาษีให้ทุกคน");
+        }
+
         d.TotalDeductions = d.SocialSecurityEmployee + d.WithholdingTax + d.ProvidentFundEmployee
             + d.LoanDeduction + d.OtherDeductions;
         d.NetPay = d.GrossIncome - d.TotalDeductions;
@@ -3312,6 +3349,17 @@ public class PayrollService : IPayrollService
             detail.SocialSecurityEmployee, detail.WithholdingTax,
             detail.ProvidentFundEmployee, detail.OtherDeductions,
             detail.TotalDeductions, detail.NetPay);
+    }
+
+    /// <summary>พนักงานคนนี้ผูกกับผู้ใช้คนนี้ไหม (ผลตรวจ D-U3)
+    ///
+    /// <para>ต้องกรอง <c>CompanyId</c> ด้วยเสมอ — <c>Employee</c> เป็น tenant entity
+    /// แต่ id ที่ส่งมาจาก request ผู้ใช้แก้เองได้ (กติกา M ของ CLAUDE.md)</para></summary>
+    public async Task<bool> IsEmployeeOfUserAsync(Guid companyId, Guid employeeId, Guid userId)
+    {
+        if (userId == Guid.Empty) return false;
+        return await _db.Employees.AsNoTracking()
+            .AnyAsync(e => e.Id == employeeId && e.CompanyId == companyId && e.UserId == userId);
     }
 
     public async Task<PayslipResponse> GeneratePayslipAsync(Guid companyId, Guid payrollRunId, Guid employeeId)

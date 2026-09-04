@@ -2522,7 +2522,11 @@ const Layout = {
 
   // Document type labels & categorization
   _revenueDocTypes: ['Quotation','Invoice','TaxInvoice','Receipt','DeliveryNote','BillingNote','DebitNote','CreditNote','ReceiptVoucher'],
-  _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','Expense','PaymentVoucher','CertificateInLieu'],
+  // ★ ขาด 'GoodsReceiptNote' มาตลอด (ผลตรวจ A-D5) — ทั้งที่หน้าเอกสารมีแท็บ
+  // "ใบรับสินค้า" อยู่ ⇒ กด "ฝั่งรายจ่าย" หรือเข้าเมนูด้วย ?side=expense
+  // แล้ว **ใบรับสินค้าหายทั้งหมด** (ตัวกรองสองชั้นใน load() ตัดออก) ·
+  // งวดบัญชีและไฟล์ export ก็ขาดตามไปด้วย ⇒ สาย PO→GRN→PI ใช้จากฝั่งจ่ายไม่ได้เลย
+  _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','Expense','PaymentVoucher','CertificateInLieu'],
 
   /**
    * ป้ายเอกสารตาม "หัวกระดาษจริง" — ไม่ใช่แค่ชนิด enum (TODO A4)
