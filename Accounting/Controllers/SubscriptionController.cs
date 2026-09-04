@@ -4,6 +4,7 @@ using Accounting.Models.DTOs.Subscription;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -17,15 +18,67 @@ public class SubscriptionController : ControllerBase
     private readonly IWebHostEnvironment _env;
     private readonly ISaasBillingDocumentService _billing;
     private readonly ISlipOcrAssistService _slipOcr;
+    private readonly Accounting.Data.AccountingDbContext _db;
 
     public SubscriptionController(ISubscriptionService subscriptionService, IImageProcessingService images,
-        IWebHostEnvironment env, ISaasBillingDocumentService billing, ISlipOcrAssistService slipOcr)
+        IWebHostEnvironment env, ISaasBillingDocumentService billing, ISlipOcrAssistService slipOcr,
+        Accounting.Data.AccountingDbContext db)
     {
         _subscriptionService = subscriptionService;
         _images = images;
         _env = env;
         _billing = billing;
         _slipOcr = slipOcr;
+        _db = db;
+    }
+
+    /// <summary>
+    /// **ด่าน tenant ของรายการชำระค่าบริการ — คืน `null` = ผ่าน**
+    ///
+    /// <para>═══ ที่มา (บั๊กจริง · ผลตรวจ F-02) ═══ route ของคอนโทรลเลอร์นี้เป็น
+    /// <c>api/[controller]</c> ซึ่ง<b>ไม่มี <c>{companyId}</c></b> ⇒
+    /// <c>TenantAccessMiddleware</c> ที่คุมทั้งระบบ **ข้ามไปเลย** (มันหา companyId
+    /// จาก route) และ service ก็ค้นด้วย <c>FindAsync(paymentId)</c> เปล่า ๆ ⇒
+    /// สมาชิกบริษัทใดก็ได้ที่ถือ GUID ของ payment **อ่านรายการชำระค่าบริการของ
+    /// บริษัทอื่น** (ยอด · เลขอ้างอิงการโอน · ชื่อผู้ชำระ · ไฟล์สลิป) และ
+    /// **เขียนทับสลิป** ของรายการที่ยังเป็น Pending ได้</para>
+    ///
+    /// <para>นี่คือ defect class เดียวกับ PDPA DSR: entity ที่<b>ไม่มี
+    /// <c>CompanyId</c> ของตัวเอง</b> (payment ผูกบริษัทผ่าน Subscription)
+    /// คือจุดที่ global query filter ช่วยไม่ได้เลย — ต้องมีด่านสมาชิกคั่นเอง</para>
+    ///
+    /// <para>ข้อความปฏิเสธเป็น <b>404 เหมือนกันหมด</b> ทั้งกรณี "ไม่มี id นี้" และ
+    /// "มีแต่ไม่ใช่ของคุณ" — กัน enumeration ข้ามบริษัท</para>
+    /// </summary>
+    /// <summary>ด่านสมาชิกของบริษัทที่ **ส่งมาใน body** (route ไม่มี companyId
+    /// ⇒ TenantAccessMiddleware ไม่ได้ตรวจให้)</summary>
+    private async Task<ActionResult?> DenyForeignCompanyAsync(Guid companyId)
+    {
+        if (User.IsInRole("SystemAdmin")) return null;
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var isMember = await _db.CompanyUsers.AsNoTracking()
+            .AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
+        return isMember ? null : NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
+    }
+
+    private async Task<ActionResult?> DenyForeignPaymentAsync(Guid paymentId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var ownerCompanyId = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.Id == paymentId)
+            .Select(p => (Guid?)p.Subscription.CompanyId)
+            .FirstOrDefaultAsync();
+        if (ownerCompanyId == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระเงิน"));
+
+        // SystemAdmin ดูได้ทุกบริษัท (หน้าตรวจสลิปฝั่งแพลตฟอร์ม)
+        if (User.IsInRole("SystemAdmin")) return null;
+
+        var isMember = await _db.CompanyUsers.AsNoTracking()
+            .AnyAsync(cu => cu.CompanyId == ownerCompanyId.Value && cu.UserId == userId);
+        return isMember
+            ? null
+            : NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระเงิน"));
     }
 
     // ===== Trial =====
@@ -36,6 +89,9 @@ public class SubscriptionController : ControllerBase
     [HttpPost("trial/start")]
     public async Task<ActionResult<ApiResponse<TrialStatusResponse>>> StartTrial([FromBody] StartTrialRequest request)
     {
+        // request.CompanyId มาจาก body — ไม่มีอะไรตรวจให้ (F-02 คลาสเดียวกัน)
+        var denyTrial = await DenyForeignCompanyAsync(request.CompanyId);
+        if (denyTrial != null) return denyTrial;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.StartTrialAsync(request, userId);
         return Ok(new ApiResponse<TrialStatusResponse>(true, result, "เริ่มทดลองใช้งานสำเร็จ"));
@@ -165,6 +221,7 @@ public class SubscriptionController : ControllerBase
     [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
     public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> UploadSlip(Guid paymentId, IFormFile file)
     {
+        var deny = await DenyForeignPaymentAsync(paymentId); if (deny != null) return deny;
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, "กรุณาอัพโหลดไฟล์สลิป"));
 
@@ -216,6 +273,7 @@ public class SubscriptionController : ControllerBase
     [HttpGet("payments/{paymentId:guid}")]
     public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> GetPayment(Guid paymentId)
     {
+        var deny = await DenyForeignPaymentAsync(paymentId); if (deny != null) return deny;
         var result = await _subscriptionService.GetPaymentAsync(paymentId);
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result));
     }

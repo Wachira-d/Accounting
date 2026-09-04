@@ -210,8 +210,13 @@ public class SignatureApprovalService : ISignatureApprovalService
 
         if (sigData == null && sigId.HasValue)
         {
+            // ★ F-13: เดิมค้นด้วย SignatureId อย่างเดียว ⇒ ส่ง GUID ของลายเซ็นคนอื่น
+            // มาก็แนบภาพลายเซ็นเขาลงเอกสารที่ส่งให้ลูกค้าได้ = ปลอมลายเซ็น
+            // (และเป็นข้อมูลชีวมาตรตาม PDPA ม.26) — ต้องเป็นลายเซ็น "ของผู้อนุมัติเอง"
+            var actorId = Guid.Parse(userId);
             var userSig = await _db.Set<UserSignature>()
-                .FirstOrDefaultAsync(s => s.Id == sigId.Value && s.IsActive && !s.IsDeleted);
+                .FirstOrDefaultAsync(s => s.Id == sigId.Value && s.UserId == actorId
+                    && s.IsActive && !s.IsDeleted);
             if (userSig != null)
             {
                 sigData = userSig.SignatureData;

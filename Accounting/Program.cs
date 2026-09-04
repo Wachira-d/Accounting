@@ -707,6 +707,11 @@ builder.Services.AddControllers(options =>
         // F1 — Cross-cutting tenant guard: ทุก route ที่มี {companyId}
         // ต้องผ่าน membership check ก่อนเข้า action.
         options.Filters.Add<Accounting.Middleware.TenantGuardFilter>();
+        // F-05 — บังคับ CanRead/CanWrite/CanDelete ของ API key. ค่าเหล่านี้ถูก
+        // เขียนลง HttpContext.Items โดย ApiKeyMiddleware มาตลอดแต่ไม่มีใครอ่าน
+        // ⇒ คีย์ "อ่านอย่างเดียว" เขียน/ลบได้เต็ม. ต้องเป็น global filter เพราะ
+        // คีย์ยิงเข้าได้ทุก endpoint — ใส่ทีละคอนโทรลเลอร์ = ตัวถัดไปไม่มีด่าน
+        options.Filters.Add<Accounting.Filters.ApiKeyScopeFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -1068,6 +1073,9 @@ app.MapPost("/api/error-log/client", async (HttpContext ctx, IConfiguration conf
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
 // DB diagnostic endpoint — checks if critical columns/tables exist (bypasses EF)
+// ⚠️ F-16: endpoint นี้คืนรายชื่อตาราง/คอลัมน์ + ข้อความ exception (ซึ่งมัก
+// มี host/user ของ connection string) — anonymous มาตลอด ⇒ เปิดเผยโครงสร้าง DB
+// และยิงถี่ ๆ ทำ connection pool เต็มได้ · ต้องเป็นของแอดมินแพลตฟอร์มเท่านั้น
 app.MapGet("/health/db", (IConfiguration config) =>
 {
     var connStr = pgBuilder.ConnectionString;   // pool เดียวกับ EF
@@ -1097,12 +1105,19 @@ app.MapGet("/health/db", (IConfiguration config) =>
         }
         catch (Exception efEx)
         {
-            checks["EF_ModelBuilding"] = $"FAILED: {efEx.Message}";
+            // เหมือนกัน — บอกว่าพัง ไม่บอกว่าพังตรงไหน (ดูรายละเอียดใน log ของเซิร์ฟเวอร์)
+            app.Logger.LogError(efEx, "/health/db: EF model building failed");
+            checks["EF_ModelBuilding"] = "FAILED";
         }
         return Results.Ok(new { status = "connected", checks });
     }
-    catch (Exception ex) { return Results.Ok(new { status = "error", message = ex.Message }); }
-});
+    // ห้ามส่งข้อความ exception กลับ — มัก含 host/user/รหัสผ่านของ connection string
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "/health/db failed");
+        return Results.Ok(new { status = "error" });
+    }
+}).RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute { Roles = "SystemAdmin" });
 
 // SPA fallback - serve index.html for non-API, non-file routes
 // For /api/ paths: return JSON 404 so frontend gets proper error instead of HTML

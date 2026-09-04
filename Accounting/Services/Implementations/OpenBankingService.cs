@@ -19,11 +19,26 @@ public class OpenBankingService : IOpenBankingService
     public OpenBankingService(AccountingDbContext db, IConfiguration configuration, IErrorLogService errorLogService)
     {
         _db = db;
+        // ★ H-A6: เดิมตกไปใช้คีย์ที่เขียนไว้ใน source **เงียบ ๆ** ⇒ credential
+        // ของธนาคาร (ClientId/ClientSecret/token) ถูกเข้ารหัสด้วยกุญแจสาธารณะ
+        // = เท่ากับ plaintext ถ้าฐานข้อมูลรั่ว · JWT_SECRET / ENCRYPTION_KEY
+        // fail-fast ใน production มาตั้งแต่ต้น (Program.cs) — ตัวนี้ตกหล่นตัวเดียว
         _encryptionKey = Environment.GetEnvironmentVariable("OPENBANKING_ENCRYPTION_KEY")
             ?? configuration["OpenBanking:EncryptionKey"]
-            ?? "DefaultKeyForDev-Change-In-Production!";
+            ?? (IsProductionEnvironment()
+                ? throw new InvalidOperationException(
+                    "OPENBANKING_ENCRYPTION_KEY environment variable is required in production — " +
+                    "ห้ามเข้ารหัส credential ของธนาคารด้วยคีย์ที่อยู่ใน source")
+                : "DefaultKeyForDev-Change-In-Production!");
         _errorLogService = errorLogService;
     }
+
+    /// <summary>อ่านจาก ASPNETCORE_ENVIRONMENT ตรง ๆ — service นี้ไม่ได้รับ
+    /// <c>IWebHostEnvironment</c> และการเพิ่ม dependency เพื่อเช็คค่าเดียวไม่คุ้ม</summary>
+    private static bool IsProductionEnvironment()
+        => string.Equals(
+            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+            "Production", StringComparison.OrdinalIgnoreCase);
 
     // ===== Connections =====
 
