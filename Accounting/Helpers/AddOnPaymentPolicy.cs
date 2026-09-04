@@ -57,6 +57,22 @@ public static class AddOnPaymentPolicy
     public static bool UsableWhilePending(AddOnPaymentStatus status)
         => status != AddOnPaymentStatus.Rejected;
 
+    /// <summary>
+    /// ยอดที่ยังต้องชำระของ add-on ตัวหนึ่ง — <b>สูตรอยู่ที่นี่ที่เดียว</b>
+    ///
+    /// <para>ใช้ <c>AcceptedUnitPrice</c> (ราคาที่ลูกค้า "เห็นและยอมรับ" ตอนกดเปิด)
+    /// ไม่ใช่ราคาปัจจุบัน — ราคาอาจถูกปรับหลังจากนั้น และเราเรียกเก็บได้เฉพาะยอด
+    /// ที่มีหลักฐานว่าแจ้งไปแล้ว</para>
+    ///
+    /// <para>⚠️ เคยเขียนซ้ำสองที่ (<c>AddOnPurchaseService.AmountDueAsync</c> กับ
+    /// projection ของ <c>MeteringController.GetFeatures</c>) — ยุบมาที่นี่ก่อนจะ
+    /// drift เพราะตัวเลขนี้คือยอดที่ขึ้นบนปุ่ม "ชำระออนไลน์" ของลูกค้า</para>
+    /// </summary>
+    public static decimal AmountDue(AddOnPaymentStatus status, decimal? acceptedUnitPrice)
+        => status is AddOnPaymentStatus.NotRequired or AddOnPaymentStatus.Paid
+            ? 0m
+            : Math.Max(0m, acceptedUnitPrice ?? 0m);
+
     /// <summary>ข้อความสถานะที่หน้าเว็บ<b>แสดงอย่างเดียว</b> — ห้ามให้ JS แต่งเอง</summary>
     public static string StatusLabel(AddOnPaymentStatus status) => status switch
     {

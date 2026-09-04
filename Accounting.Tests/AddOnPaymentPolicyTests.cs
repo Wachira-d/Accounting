@@ -84,6 +84,24 @@ public class AddOnPaymentPolicyTests
         Assert.False(AddOnPaymentPolicy.UsableWhilePending(AddOnPaymentStatus.Rejected));
     }
 
+    [Theory]
+    // ยอดที่ขึ้นบนปุ่ม "ชำระออนไลน์" ของลูกค้า — เคยเขียนซ้ำสองที่ ยุบมาที่เดียวแล้ว
+    [InlineData(AddOnPaymentStatus.NotRequired, 499, 0)]
+    [InlineData(AddOnPaymentStatus.Paid, 499, 0)]
+    [InlineData(AddOnPaymentStatus.AwaitingPayment, 499, 499)]
+    [InlineData(AddOnPaymentStatus.PendingReview, 499, 499)]
+    [InlineData(AddOnPaymentStatus.Rejected, 499, 499)]
+    public void ยอดค้างชำระตรงตามสถานะ(AddOnPaymentStatus status, decimal price, decimal expected)
+        => Assert.Equal(expected, AddOnPaymentPolicy.AmountDue(status, price));
+
+    [Fact]
+    public void ราคายังไม่ตั้งหรือติดลบ_ยอดค้างต้องเป็นศูนย์_ไม่ใช่ติดลบ()
+    {
+        // ราคาติดลบไม่ควรเกิด แต่ถ้าหลุดมาจาก DB ต้องไม่กลายเป็น "คืนเงิน" ให้ลูกค้า
+        Assert.Equal(0m, AddOnPaymentPolicy.AmountDue(AddOnPaymentStatus.AwaitingPayment, null));
+        Assert.Equal(0m, AddOnPaymentPolicy.AmountDue(AddOnPaymentStatus.AwaitingPayment, -50m));
+    }
+
     [Fact]
     public void ข้อความสถานะมาจากที่เดียว_และไม่ว่างในสถานะที่ผู้ใช้ต้องเห็น()
     {

@@ -87,10 +87,7 @@ public class AddOnPurchaseService : IAddOnPurchaseService
     {
         var loaded = await LoadAsync(companyId, featureCode, tracked: false, ct);
         if (loaded is not { } x) return 0m;
-        if (x.Row.PaymentStatus is AddOnPaymentStatus.NotRequired or AddOnPaymentStatus.Paid) return 0m;
-        // ราคาที่ลูกค้า "เห็นและยอมรับ" ตอนกดเปิด คือยอดที่เรียกเก็บได้ตามหลักฐาน
-        // — ห้ามใช้ราคาปัจจุบันที่อาจถูกปรับหลังจากนั้น
-        return Math.Max(0m, x.Row.AcceptedUnitPrice ?? 0m);
+        return AddOnPaymentPolicy.AmountDue(x.Row.PaymentStatus, x.Row.AcceptedUnitPrice);
     }
 
     public async Task<AddOnPaymentState?> GetAsync(Guid companyId, string featureCode, CancellationToken ct = default)

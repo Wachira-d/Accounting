@@ -30,6 +30,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WATCHED = [
     "Accounting/Controllers/DocumentController.cs",
     "Accounting/Controllers/PayrollController.cs",
+    # เพิ่มรอบ 126d — ทุก write ที่นี่ "ก่อค่าใช้จ่ายให้บริษัท" (เปิด add-on รายเดือน ·
+    # ซื้อโควตา · ส่งหลักฐานชำระเงิน) แต่มีแค่ [Authorize] ระดับคลาสมาตลอด
+    # ⇒ สมาชิกคนไหนก็กดแทนบริษัทได้ · checker ไม่เคยมองเพราะไม่อยู่ในลิสต์นี้
+    "Accounting/Controllers/MeteringController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -38,6 +42,7 @@ GATE_MARKERS = (
     "DenyKeyAsync",
     "DocumentPermissionHelper",
     "RequirePayrollWriteAsync",
+    "RequireBillingAsync",
     "RequireAnyAsync",
     "HasPermissionAsync",
     "UserRole.Owner",          # ด่าน Owner-only (purge)
@@ -47,6 +52,10 @@ GATE_MARKERS = (
 # POST ที่ "อ่านอย่างเดียว" — รับ body มาคำนวณแล้วคืนค่า ไม่แตะฐานข้อมูล
 # (ต้องระบุชื่อเมธอดตรง ๆ เพื่อให้การเพิ่มรายการเป็นการตัดสินใจที่ตั้งใจ)
 READ_ONLY_POSTS = {
+    # ภารกิจแลกโควตา — ผู้ใช้ทำงานสั้น ๆ แลกโควตา**ฟรี** ไม่ก่อหนี้ให้บริษัท
+    # จึงตั้งใจไม่ผูกกับ BillingManage (ไม่งั้นฟีเจอร์นี้ตายสำหรับสมาชิกทั่วไป
+    # ซึ่งเป็นกลุ่มเป้าหมายของมันพอดี) — เป็นการตัดสินใจ ไม่ใช่การลืม
+    "ClaimReward",
     "SuggestPvAccounting",   # ถาม AI แนะนำผังบัญชี — ไม่เขียนเอกสาร
     "ParseAddress",          # แปลงที่อยู่ free-text → structured
 }

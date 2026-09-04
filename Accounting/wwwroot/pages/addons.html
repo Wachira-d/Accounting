@@ -107,7 +107,20 @@
       cid() { return Layout.getCompanyId(); },
 
       async loadAll() {
+        // โหลดสิทธิ์ **ก่อน** ทุกอย่าง — ถ้าโหลดขนานกัน renderQuota อาจวาดปุ่ม
+        // "ซื้อโควตาเพิ่ม" ไปแล้วก่อน access มาถึง ⇒ ผู้ใช้กดแล้วเจอ 403
+        // (ผลลัพธ์ขึ้นกับลำดับ response = defect class "ใครมาก่อนชนะ")
+        await this.loadAccess();
         await Promise.all([this.loadFeatures(), this.loadQuota(), this.loadMissions()]);
+      },
+
+      async loadAccess() {
+        // สิทธิ์มาจากเซิร์ฟเวอร์ — ห้าม JS เดาจาก role เอง (สำเนากติกาสิทธิ์ชุดที่สอง)
+        // โหลดไม่สำเร็จ = ไม่ซ่อนอะไร (ปุ่มยังอยู่ แล้วเซิร์ฟเวอร์ปฏิเสธเองถ้าไม่มีสิทธิ์)
+        try {
+          const a = await API.get(`/api/companies/${this.cid()}/metering/my-access`);
+          this.access = a?.data || { canManageBilling: true };
+        } catch { this.access = { canManageBilling: true }; }
       },
 
       // ───────── โควตาเอกสาร ─────────
@@ -142,7 +155,8 @@
               </div>
             </div>
             <div style="text-align:right">
-              <button class="btn btn-secondary" onclick="Page.topUp()">➕ ซื้อโควตาเพิ่ม 100 ฉบับ</button>
+              ${this.access && this.access.canManageBilling === false ? ''
+                : `<button class="btn btn-secondary" onclick="Page.topUp()">➕ ซื้อโควตาเพิ่ม 100 ฉบับ</button>`}
               <div class="muted" style="font-size:11px;margin-top:2px">ใช้ได้ 60 วัน</div>
             </div>
           </div>
@@ -288,7 +302,13 @@
           && !['documents.overage', 'documents.topup', 'lodging.stay',
                'lodging.email.overage', 'lodging.notify.sms'].includes(f.featureCode));
         if (!items.length) { grid.innerHTML = '<div class="muted">ยังไม่มีส่วนเสริมที่เปิดขาย</div>'; return; }
-        grid.innerHTML = items.map(f => `
+        // ไม่มีสิทธิ์ = บอกให้ชัดว่าต้องขออะไรจากใคร ไม่ใช่ปล่อยให้กดแล้วเจอ 403
+        const locked = this.access && this.access.canManageBilling === false;
+        const lockNote = locked
+          ? `<div class="paybox bad" style="grid-column:1/-1;margin-bottom:12px">
+               🔒 ${Layout.esc(this.access.note || 'ไม่มีสิทธิ์จัดการค่าใช้จ่าย')}</div>`
+          : '';
+        grid.innerHTML = lockNote + items.map(f => `
           <div class="addon ${f.isEnabled ? 'on' : ''}">
             <div class="top">
               <div class="ico">${Layout.esc(f.icon || '🧩')}</div>
@@ -300,13 +320,13 @@
             </div>
             <div class="price">${this.priceText(f)}</div>
             ${this.payBox(f)}
-            ${f.isEnabled
+            ${locked ? '' : (f.isEnabled
               ? `<button class="btn btn-secondary" onclick="Page.toggle('${Layout.jsArg(f.featureCode)}', false, '${Layout.jsArg(f.name)}')">ปิดใช้งาน</button>`
               : `<div class="consent">
                    <input type="checkbox" id="ck_${Layout.esc(f.featureCode)}">
                    <label for="ck_${Layout.esc(f.featureCode)}">ยอมรับค่าใช้จ่ายตามราคาข้างบน</label>
                  </div>
-                 <button class="btn btn-primary" onclick="Page.toggle('${Layout.jsArg(f.featureCode)}', true, '${Layout.jsArg(f.name)}')">เปิดใช้งาน</button>`}
+                 <button class="btn btn-primary" onclick="Page.toggle('${Layout.jsArg(f.featureCode)}', true, '${Layout.jsArg(f.name)}')">เปิดใช้งาน</button>`)}
           </div>`).join('');
       },
 
@@ -323,15 +343,17 @@
             ${f.slipUploadedAt ? `<div class="muted">ส่งเมื่อ ${new Date(f.slipUploadedAt).toLocaleString('th-TH')}</div>` : ''}</div>`;
         const why = st === 'Rejected' && f.paymentRejectedReason
           ? `<div class="paybox bad">⚠️ ${Layout.esc(f.paymentStatusLabel)} — ${Layout.esc(f.paymentRejectedReason)}</div>` : '';
+        // ไม่มีสิทธิ์ = ยังเห็นยอดค้าง (จะได้ไปบอกเจ้าของ) แต่กดจ่ายเองไม่ได้
+        const canPay = !(this.access && this.access.canManageBilling === false);
         return `${why}
           <div class="paybox">
             <div><b>ยอดที่ต้องชำระ ฿${due.toLocaleString('th-TH', {minimumFractionDigits: 2})}</b></div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            ${canPay ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
               ${this.gatewayOn
                 ? `<button class="btn btn-primary btn-sm" onclick="Page.payOnline('${code}')">💳 ชำระออนไลน์</button>` : ''}
               <button class="btn btn-secondary btn-sm" onclick="Page.slipForm('${code}')">📎 แนบสลิปโอนเงิน</button>
-            </div>
-            <div class="muted" style="margin-top:6px">${this.gatewayOn
+            </div>` : '<div class="muted" style="margin-top:6px">แจ้งเจ้าของบริษัทให้ดำเนินการชำระเงิน</div>'}
+            <div class="muted" style="margin-top:6px">${!canPay ? '' : this.gatewayOn
               ? 'ชำระออนไลน์ = ยืนยันทันที · แนบสลิป = รอผู้ดูแลระบบตรวจสอบ'
               : 'ยังไม่เปิดรับชำระออนไลน์ — โอนแล้วแนบสลิป ผู้ดูแลระบบจะตรวจสอบให้'}</div>
           </div>`;

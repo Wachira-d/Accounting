@@ -1,4 +1,6 @@
 using Accounting.Data;
+using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -22,9 +24,34 @@ public class MeteringController : ControllerBase
     private readonly AccountingDbContext _db;
     private readonly IUsageMeteringService _metering;
     private readonly IQuotaService _quota;
+    private readonly IPermissionService _permissions;
 
-    public MeteringController(AccountingDbContext db, IUsageMeteringService metering, IQuotaService quota)
-    { _db = db; _metering = metering; _quota = quota; }
+    public MeteringController(AccountingDbContext db, IUsageMeteringService metering,
+        IQuotaService quota, IPermissionService permissions)
+    { _db = db; _metering = metering; _quota = quota; _permissions = permissions; }
+
+    /// <summary>
+    /// **ด่านของทุก endpoint ที่ก่อค่าใช้จ่ายให้บริษัท**
+    ///
+    /// <para>เดิมคอนโทรลเลอร์นี้มีแค่ <c>[Authorize]</c> ระดับคลาส ⇒ สมาชิกคนไหน
+    /// ก็เปิด add-on รายเดือน/ซื้อโควตา/ส่งหลักฐานชำระเงินแทนบริษัทได้ —
+    /// <b>defect class เดียวกับที่เคยแก้ไปแล้ว</b>ใน <c>DocumentController</c>
+    /// และ <c>PayrollController</c> ("[Authorize] ระดับคลาส = ล็อกอินอยู่ไหม
+    /// ไม่ใช่ มีสิทธิ์ทำสิ่งนี้ไหม") · คอนโทรลเลอร์นี้ไม่ได้อยู่ใน
+    /// <c>tools/write_permission_gate_check.py</c> จึงไม่มีใครจับได้ — เพิ่มเข้าไปแล้ว</para>
+    ///
+    /// <para>Owner/SystemAdmin ผ่านอัตโนมัติ ⇒ ผู้ที่เปิดบริษัทเองไม่กระทบ</para>
+    /// </summary>
+    private async Task<ActionResult?> RequireBillingAsync(Guid companyId, string verb)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.BillingManage))
+            return null;
+        return StatusCode(403, new ApiResponse<object>(false, new
+        {
+            requiredPermission = PermissionKeys.BillingManage.Replace("perm:", ""),
+        }, $"ไม่มีสิทธิ์{verb} — ต้องได้รับสิทธิ์ \"จัดการค่าใช้จ่าย/ส่วนเสริม\" จากเจ้าของบริษัทก่อน"));
+    }
 
     /// <summary>
     /// ฟีเจอร์ที่เปิดขายทั้งหมด + สถานะเปิด/ปิดของบริษัทนี้ + **ราคาที่มีผลตอนนี้**
@@ -85,10 +112,9 @@ public class MeteringController : ControllerBase
                     state?.PaymentStatus ?? Models.Enums.AddOnPaymentStatus.NotRequired),
                 paymentRejectedReason = state?.PaymentRejectedReason,
                 slipUploadedAt = state?.SlipUploadedAt,
-                amountDue = state == null
-                    || state.PaymentStatus is Models.Enums.AddOnPaymentStatus.NotRequired
-                                           or Models.Enums.AddOnPaymentStatus.Paid
-                    ? 0m : Math.Max(0m, state.AcceptedUnitPrice ?? 0m),
+                // สูตรเดียวกับ AddOnPurchaseService — เรียก policy ตัวเดียว ห้ามคัดลอกมา
+                amountDue = state == null ? 0m
+                    : Accounting.Helpers.AddOnPaymentPolicy.AmountDue(state.PaymentStatus, state.AcceptedUnitPrice),
                 pricing = plan == null ? null : new
                 {
                     method = plan.Method.ToString(),
@@ -109,6 +135,10 @@ public class MeteringController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> ToggleFeature(
         Guid companyId, string featureCode, [FromBody] ToggleFeatureRequest req)
     {
+        var block = await RequireBillingAsync(companyId,
+            req.Enabled ? "เปิดใช้ส่วนเสริม" : "ปิดส่วนเสริม");
+        if (block != null) return block;
+
         var feature = await _db.ApiFeatures.AsNoTracking()
             .FirstOrDefaultAsync(f => f.FeatureCode == featureCode);
         if (feature == null)
@@ -125,6 +155,28 @@ public class MeteringController : ControllerBase
 
         return Ok(new ApiResponse<object>(true, new { featureCode, enabled = req.Enabled },
             req.Enabled ? $"เปิดใช้ {feature.Name} แล้ว" : $"ปิด {feature.Name} แล้ว — หยุดคิดค่าใช้จ่ายทันที"));
+    }
+
+    /// <summary>
+    /// สิทธิ์ของผู้ใช้คนนี้บนหน้า "ส่วนเสริมของฉัน" — **เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดงอย่างเดียว**
+    ///
+    /// <para>หน้าเว็บต้องรู้ล่วงหน้าว่าจะกดได้ไหม เพื่อ<b>ไม่โชว์ปุ่มที่กดแล้ว 403</b>
+    /// (กติกา "ปฏิเสธแล้วต้องมีทางไปต่อ" — บอกให้ชัดว่าต้องขอสิทธิ์อะไรจากใคร)
+    /// · ห้ามให้ JS เดาจาก role เอง ไม่งั้นได้กติกาสิทธิ์สำเนาที่สองที่ drift</para>
+    /// </summary>
+    [HttpGet("my-access")]
+    public async Task<ActionResult<ApiResponse<object>>> MyAccess(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var canBilling = await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.BillingManage);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            canManageBilling = canBilling,
+            requiredPermission = PermissionKeys.BillingManage.Replace("perm:", ""),
+            note = canBilling ? null
+                : "การเปิดส่วนเสริมและซื้อโควตาเป็นการก่อค่าใช้จ่ายให้บริษัท "
+                  + "— ขอสิทธิ์ “จัดการค่าใช้จ่าย/ส่วนเสริม” จากเจ้าของบริษัทก่อน",
+        }));
     }
 
     // ═══════════════ ชำระค่าส่วนเสริม (LDG-P0-03) ═══════════════
@@ -154,6 +206,9 @@ public class MeteringController : ControllerBase
         [FromServices] Accounting.Services.Payments.IPaymentIntentService intents,
         CancellationToken ct)
     {
+        var block = await RequireBillingAsync(companyId, "ชำระค่าส่วนเสริม");
+        if (block != null) return block;
+
         var due = await addons.AmountDueAsync(companyId, featureCode, ct);
         if (due <= 0m)
             return BadRequest(new ApiResponse<object>(false, null, "ส่วนเสริมนี้ไม่มียอดค้างชำระ"));
@@ -195,6 +250,9 @@ public class MeteringController : ControllerBase
         [FromServices] IWebHostEnvironment env,
         CancellationToken ct)
     {
+        var block = await RequireBillingAsync(companyId, "ส่งหลักฐานการชำระเงิน");
+        if (block != null) return block;
+
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์สลิป"));
         if (!file.ContentType.StartsWith("image/") && file.ContentType != "application/pdf")
@@ -229,6 +287,10 @@ public class MeteringController : ControllerBase
     public async Task<ActionResult<ApiResponse<DocumentQuotaStatus>>> TopUp(
         Guid companyId, [FromBody] TopUpRequest req, CancellationToken ct)
     {
+        // ซื้อโควตา = จ่ายเงินจริง ⇒ ด่านเดียวกับการเปิด add-on
+        var block = await RequireBillingAsync(companyId, "ซื้อโควตาเพิ่ม");
+        if (block != null) return block;
+
         var actor = User.Identity?.Name ?? "unknown";
         var status = await _quota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct);
         var docs = req.Packs * Models.Constants.AddOnCodes.DocumentsPerTopUpPack;

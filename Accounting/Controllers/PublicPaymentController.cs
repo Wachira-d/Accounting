@@ -56,6 +56,13 @@ public class PublicPaymentController : ControllerBase
     /// เมื่อยอด+วิธีเท่าเดิม ⇒ การนับนี้จะชนเฉพาะกรณีที่ตั้งใจสร้างใบใหม่จริง ๆ)</summary>
     private const int MaxAttemptsPerHour = 20;
 
+    /// <summary>เว้นระยะขั้นต่ำก่อนถามสถานะสดจาก provider อีกครั้ง
+    ///
+    /// <para>สั้นพอที่ผู้ใช้ไม่รู้สึกช้า (หน้าจ่ายเงิน poll ถี่สุด 2 วิ) แต่ยาวพอ
+    /// ที่การเปิดหลายแท็บ/หลายเครื่องพร้อมกันจะไม่กลายเป็นการยิง provider ทวีคูณ ·
+    /// webhook ยังเป็นเส้นหลักอยู่แล้ว — การ poll เป็นตาข่ายรับเมื่อ webhook หาย</para></summary>
+    private static readonly TimeSpan MinLiveRefreshInterval = TimeSpan.FromSeconds(5);
+
     public sealed record StartRequest(PaymentMethodKind Method, string? ReturnUrl = null, string? CardToken = null);
 
     /// <summary>ข้อมูลที่หน้าจ่ายเงินต้องใช้ — ไม่มี secret · ไม่มีชื่อเจ้า</summary>
@@ -196,7 +203,20 @@ public class PublicPaymentController : ControllerBase
             return NotFound(new ApiResponse<PublicIntentResponse>(false, null, "ไม่พบรายการชำระเงิน"));
 
         // ถามสถานะสดจาก provider ด้วย — webhook หายเป็นเรื่องที่เกิดจริง
-        if (PaymentIntentPolicy.IsOpen(intent.Status))
+        //
+        // ⚠️ **แต่ต้องหน่วง**: หน้าจ่ายเงิน poll ทุก 2-10 วิ นานได้ถึง 15 นาที ⇒
+        // ถ้า refresh ทุกครั้งจะกลายเป็น "1 request ที่ไม่ต้องล็อกอิน = 1 outbound
+        // call ไปหา provider" ⇒ ใครถือ token ที่ถูกต้องใบเดียวก็เปิดแท็บทิ้งไว้
+        // หลายสิบแท็บแล้วยิง provider แทนเราได้ฟรี (ทั้งโควตาและค่าบริการเป็นของเรา)
+        // หน่วงด้วย `LastPolledAt` ซึ่ง `RefreshAsync` เขียนทุกครั้งที่ถาม provider
+        // **แม้สถานะไม่เปลี่ยน** — และเป็นฟิลด์เดียวกับที่ settlement job ใช้เว้นจังหวะ
+        // อยู่แล้ว ⇒ มีความจริงชุดเดียว · ไม่ต้องเพิ่ม state ข้าม request
+        // (กติกา multi-instance: ห้าม static dict/IMemoryCache โดยไม่มีแผน)
+        // ⚠️ ห้ามใช้ UpdatedAt — มันขยับเฉพาะตอนข้อมูล charge เปลี่ยน ⇒ intent ที่
+        // ลูกค้ายังไม่จ่าย (สถานะคงเดิม) จะ "เก่าตลอด" แล้วยิง provider ทุกครั้งเหมือนเดิม
+        var lastTouched = intent.LastPolledAt ?? intent.CreatedAt;
+        var staleEnough = DateTime.UtcNow - lastTouched >= MinLiveRefreshInterval;
+        if (PaymentIntentPolicy.IsOpen(intent.Status) && staleEnough)
         {
             try { intent = await _intents.RefreshAsync(companyId, intentId, ct); }
             catch (Exception ex)

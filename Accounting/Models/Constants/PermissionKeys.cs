@@ -144,6 +144,18 @@ public static class PermissionKeys
 
     // ───── System / Settings ─────
     public const string CompanySettingsEdit = P + "CompanySettings.Edit";
+
+    /// <summary>เปิด/ปิดส่วนเสริมที่มีค่าใช้จ่าย · ซื้อโควตาเพิ่ม · ส่งหลักฐานชำระเงิน
+    ///
+    /// <para><b>การกดเปิด add-on คือการก่อหนี้ให้บริษัท</b> — เดิม
+    /// <c>MeteringController</c> มีแค่ <c>[Authorize]</c> ระดับคลาส ⇒ สมาชิกคนไหน
+    /// ก็เปิดฟีเจอร์รายเดือน/ซื้อโควตาแทนบริษัทได้ (defect class เดียวกับที่เคย
+    /// แก้ไปแล้วใน <c>DocumentController</c>/<c>PayrollController</c>:
+    /// "[Authorize] ระดับคลาส = ล็อกอินอยู่ไหม ไม่ใช่ มีสิทธิ์ทำสิ่งนี้ไหม")</para>
+    ///
+    /// <para>Owner/SystemAdmin ผ่านอัตโนมัติที่ <c>PermissionService</c> ⇒ คนที่
+    /// เปิดบริษัทเองไม่กระทบ · กระทบเฉพาะสมาชิกที่ควรต้องได้รับสิทธิ์ก่อน</para></summary>
+    public const string BillingManage     = P + "Billing.Manage";
     public const string UsersManage         = P + "Users.Manage";       // invite, deactivate
     public const string RolesManage         = P + "Roles.Manage";       // define CompanyRole + grants
 
@@ -243,6 +255,7 @@ public static class PermissionKeys
         new(SensitiveDocsView, "ระบบ",   "ดูเอกสารลับ",              "manager bonus · exec expense"),
         new(AccountingView,   "ระบบ",    "ดูข้อมูลบัญชี",            "GL · journal browser"),
         new(CompanySettingsEdit, "ระบบ", "ตั้งค่าบริษัท",            "logo · template · default GL"),
+        new(BillingManage,    "ระบบ",    "จัดการค่าใช้จ่าย/ส่วนเสริม", "เปิด-ปิด add-on · ซื้อโควตา · ส่งหลักฐานชำระเงิน"),
         new(UsersManage,      "ระบบ",    "จัดการผู้ใช้",             "invite · deactivate"),
         new(RolesManage,      "ระบบ",    "จัดการ Role + สิทธิ์",     "กำหนด company role + ติ๊กสิทธิ์"),
     };
