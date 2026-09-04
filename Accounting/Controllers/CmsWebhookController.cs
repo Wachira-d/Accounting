@@ -45,20 +45,21 @@ namespace Accounting.Controllers;
 public class CmsWebhookController : ControllerBase
 {
     private readonly AccountingDbContext _db;
-    private readonly ICmsCommerceService _commerceService;
     private readonly ILogger<CmsWebhookController> _logger;
     private readonly ISecretProtector? _secretProtector;
     /// <summary>ชั้นกลางของการรับชำระเงิน — ทางเข้านี้ **ต้อง** เดินผ่านมัน
     /// ไม่ใช่เรียก orchestrator ปลายทางตรง ๆ (ดูหมายเหตุที่หัวคลาส)</summary>
     private readonly Accounting.Services.Payments.IPaymentIntentService _intents;
 
-    public CmsWebhookController(AccountingDbContext db, ICmsCommerceService commerceService,
+    // ⚠️ เดิมรับ ICmsCommerceService ไว้เรียก ConfirmPaymentAsync ตรง ๆ — ถอดออกแล้ว
+    // เพราะทางเข้านี้ต้องเดินผ่านชั้นกลางเท่านั้น · เก็บ field ที่ไม่มีใครใช้ไว้จะกลายเป็น
+    // ทางลัดที่คนถัดไปหยิบไปใช้อีกโดยไม่รู้ว่าทำไมถึงห้าม
+    public CmsWebhookController(AccountingDbContext db,
         ILogger<CmsWebhookController> logger,
         Accounting.Services.Payments.IPaymentIntentService intents,
         ISecretProtector? secretProtector = null)
     {
         _db = db;
-        _commerceService = commerceService;
         _logger = logger;
         _intents = intents;
         _secretProtector = secretProtector;
