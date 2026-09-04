@@ -28,7 +28,7 @@
 |---|---|---|---|---|
 | 1 | F-02 | `GET/POST /api/Subscription/payments/{paymentId}` ไม่มี companyId ⇒ guard ข้าม ⇒ อ่าน/เขียนทับสลิปชำระเงินของ**บริษัทอื่น**ได้ด้วย GUID เดียว | รั่วข้ามผู้เช่า ยิงได้ทันที | M |
 | 2 | ✅(G-01) F-01 + G-01 + G-04 | XSS เชิงระบบ: `Layout.esc` ไม่หนี `"`/`'` (82 จุดใน attribute) · admin console ต่อชื่อผู้ใช้/ชื่อบริษัท/หมายเหตุสลิปดิบ 114 จุด · สมัครสาธารณะไม่ validate `FullName` · CSP `unsafe-inline` · JWT ใน localStorage ⇒ ผู้เช่า→ยึด SystemAdmin | takeover แพลตฟอร์ม | S (esc) + M (admin) |
-| 3 | A-D2 + D-A1 + D-A2 | endpoint เขียนของ Document (PUT/DELETE/convert/payments/write-off) และ Payroll (create/approve/**pay**/settle-sso/sync) ไม่มี permission gate — สมาชิกคนไหนก็ได้ลง JE/จ่ายเงินเดือน | สิทธิ์ | M+S |
+| 3 | ✅ A-D2 + D-A1 + D-A2 | endpoint เขียนของ Document (PUT/DELETE/convert/payments/write-off) และ Payroll (create/approve/**pay**/settle-sso/sync) ไม่มี permission gate — สมาชิกคนไหนก็ได้ลง JE/จ่ายเงินเดือน | สิทธิ์ | M+S |
 | 4 | ✅ A-D1 | ฟอร์มสร้างเอกสารไม่ส่ง `currency/exchangeRate` เลย ⇒ ใบสกุลต่างประเทศทุกใบจาก UI ลงบัญชีเป็นบาท rate 1 | เงิน/ภาษีผิดเป็นเท่าตัว | S |
 | 5 | C-T02 + C-T03 | ปิดงวด**รายเดือน**สร้าง closing entry ⇒ P&L ของงวดที่ปิดกลายเป็น 0 (ไหลไป XBRL DBD + ภ.ง.ด.51) · YearEndClose ตรึง ม.ค.–ธ.ค. ไม่อ่าน FiscalYearStartMonth | งบการเงินที่ยื่นผิด | M+S |
 | 6 | ✅ d77a56a+ C-T01 | ภ.พ.30 กรอง `VatAmount != 0` ⇒ ยอดขาย 0% (ส่งออก) และยกเว้นไม่เคยเข้ารายงาน · ซื้อยกเว้นปนเป็นยอดขาย | §80/1 §81 §87 | M |
@@ -67,7 +67,7 @@
 **Sprint 0 — ปิดช่องรั่ว/ยึดระบบ (1–2 วัน)**
 1. F-02 IDOR Subscription payments → ย้ายใต้ `{companyId}` + ITenantGuard ในบริการ · แล้วทำ **R3 กลับด้าน guard** (`[NonTenantScoped]` explicit) + grep รายการ
 2. G-01 แก้ `Layout.esc` ให้หนี 5 อักขระ (ลบ `_esc`) — 1 จุดปิด 82 · เพิ่ม `esc` ใน `admin-layout.js` + ไล่ admin/payments, customers, users (68/114 จุด) · validate `FullName`/`Company.Name` (max-length + strip tag) · G-05 app.html 5 จุด
-3. A-D2 + D-A1 + D-A2 ใส่ permission gate ให้ครบ (Document 12 · Payroll 9) + F-13 ลายเซ็น `UserId ==` + F-05 ApiKey Can* filter global
+3. ✅ A-D2 + D-A1 + D-A2 ใส่ permission gate ครบแล้ว (**Document 20 · Payroll 30** — มากกว่าที่รายงานไว้ เพราะไล่ทุก [HttpPost/Put/Delete] ไม่ใช่เฉพาะที่ระบุ) ผ่าน `DenyDocAsync`/`DenyKeyAsync` + `RequirePayrollWriteAsync`/`RequireAnyAsync` + `tools/write_permission_gate_check.py` (checker ตัวที่ 26) · ยังค้าง: F-13 ลายเซ็น `UserId ==` + F-05 ApiKey Can* filter global
 4. F-03 upload allow-list จาก magic bytes + `nosniff` + `Content-Disposition` บน `/uploads/**` · F-04 SSRF validate URL + ปิด redirect · F-16 `/health/db` gate · H-A6 OPENBANKING key fail-fast
 
 **Sprint 1 — เงิน/ภาษีที่ผิดอยู่ตอนนี้ (3–5 วัน)**

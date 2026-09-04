@@ -40,12 +40,58 @@ public class DocumentController : ControllerBase
     private ActionResult<ApiResponse<T>> Forbid403<T>(string th)
         => StatusCode(403, new ApiResponse<T>(false, default, th));
 
+    /// <summary>ระดับสิทธิ์ที่ action ต้องการ — ใช้กับ <see cref="DenyDocAsync"/></summary>
+    private enum DocPerm { Create, Approve, Void }
+
+    /// <summary>
+    /// **ด่านสิทธิ์ของเอกสาร — ที่เดียว** คืน `null` = ผ่าน · คืนข้อความไทย = ปฏิเสธ
+    ///
+    /// <para>═══ ที่มา (ผลตรวจ A-D2) ═══ `[Authorize]` ระดับคลาสตอบแค่ "ล็อกอินอยู่ไหม"
+    /// ⇒ ตอนแรกมีแต่ create/approve/void ที่เช็คสิทธิ์ ส่วน **PUT · DELETE · convert ·
+    /// payments · write-off** ไม่เช็คเลย ⇒ สมาชิกที่ระบบตั้งใจไม่ให้สร้างเอกสาร
+    /// (Staff/Viewer ที่ไม่ได้ grant) กลับ **แก้ · ลบ · แปลง · บันทึกรับ-จ่ายเงิน ·
+    /// ตัดหนี้สูญ** ได้ทั้งหมด — ลง JE จริงโดยไม่ต้องมีสิทธิ์อะไรเลย</para>
+    ///
+    /// <para>รวมเป็นเมธอดเดียวเพราะข้อความปฏิเสธต้องบอก **ชื่อคีย์สิทธิ์ที่ต้องขอ**
+    /// ให้ตรงกันทุกจุด — 20 จุดที่ต่างคนต่างแต่งข้อความจะ drift แน่นอน</para>
+    ///
+    /// <para>Owner/SystemAdmin/Accountant ผ่านอัตโนมัติที่ `PermissionService`
+    /// (built-in role) ⇒ ด่านนี้กระทบเฉพาะ role ที่ต้อง grant อยู่แล้ว</para>
+    /// </summary>
+    private async Task<string?> DenyDocAsync(
+        Guid companyId, Guid userId, DocumentType type, DocPerm perm, string verb)
+    {
+        var ok = perm switch
+        {
+            DocPerm.Create => await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, type),
+            DocPerm.Approve => await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, type),
+            _ => await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userId, type),
+        };
+        if (ok) return null;
+        var dir = DocumentPermissionHelper.IsRevenue(type) ? "Revenue"
+            : DocumentPermissionHelper.IsPurchase(type) ? "Purchase" : null;
+        return $"ไม่มีสิทธิ์{verb}เอกสาร {type} (ต้องการ Document.{perm}"
+            + (dir == null ? ")" : $" หรือ Document.{dir}.{perm})");
+    }
+
+    /// <summary>ด่านสิทธิ์ที่ไม่ผูกกับเอกสารใบใดใบหนึ่ง (เช่นผู้ติดต่อ, งานล้างข้อมูล
+    /// ทั้งบริษัท) — คืน `null` = ผ่าน</summary>
+    private async Task<string?> DenyKeyAsync(Guid companyId, Guid userId, string key, string verb)
+        => await _permissions.HasPermissionAsync(companyId, userId, key)
+            ? null
+            : $"ไม่มีสิทธิ์{verb} (ต้องการ {key.Replace("perm:", "")})";
+
     // ===== Send document via email =====
 
     [HttpPost("{documentId:guid}/send-email")]
     public async Task<ActionResult<ApiResponse<DocumentEmailLogResponse>>> SendEmail(
         Guid companyId, Guid documentId, [FromBody] SendDocumentEmailRequest request)
     {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentEmailLogResponse>(false, null, "ไม่พบเอกสาร"));
+        var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            docType.Value, DocPerm.Create, "ส่งอีเมล");
+        if (deny != null) return Forbid403<DocumentEmailLogResponse>(deny);
         var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
         var log = await _docEmailService.SendDocumentEmailAsync(companyId, documentId, request, actor);
         var dto = MapEmailLog(log);
@@ -77,6 +123,9 @@ public class DocumentController : ControllerBase
         if (doc.DocumentType != Models.Enums.DocumentType.Quotation)
             return BadRequest(new ApiResponse<object>(false, null,
                 "ลิงก์ยอมรับออนไลน์ใช้ได้เฉพาะใบเสนอราคา"));
+        var denyLink = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            doc.DocumentType, DocPerm.Create, "สร้างลิงก์ยอมรับของ");
+        if (denyLink != null) return Forbid403<object>(denyLink);
         if (doc.Status is Models.Enums.DocumentStatus.Draft or Models.Enums.DocumentStatus.Voided
             or Models.Enums.DocumentStatus.Rejected)
             return BadRequest(new ApiResponse<object>(false, null,
@@ -113,6 +162,9 @@ public class DocumentController : ControllerBase
             or Models.Enums.DocumentStatus.Rejected)
             return BadRequest(new ApiResponse<object>(false, null,
                 "ต้องอนุมัติใบส่งของก่อนจึงส่งลิงก์ให้ลูกค้าเซ็นรับได้"));
+        var denySign = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            doc.DocumentType, DocPerm.Create, "สร้างลิงก์เซ็นรับของ");
+        if (denySign != null) return Forbid403<object>(denySign);
 
         doc.DeliverySignToken = PublicQuotationController.NewToken();
         doc.DeliverySignTokenExpiresAt = DateTime.UtcNow.AddDays(14);
@@ -269,6 +321,11 @@ public class DocumentController : ControllerBase
     [HttpPut("{documentId:guid}")]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> UpdateDocument(Guid companyId, Guid documentId, [FromBody] UpdateDocumentRequest request)
     {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            docType.Value, DocPerm.Create, "แก้ไข");
+        if (deny != null) return Forbid403<DocumentResponse>(deny);
         var result = await _documentService.UpdateDocumentAsync(companyId, documentId, request);
         return Ok(new ApiResponse<DocumentResponse>(true, result));
     }
@@ -340,6 +397,10 @@ public class DocumentController : ControllerBase
     [HttpPost("undue-input-vat/reclassify-expired")]
     public async Task<ActionResult<ApiResponse<object>>> ReclassifyExpiredUndueInputVat(Guid companyId)
     {
+        // งานนี้โพสต์ JE ให้ทุกใบที่พ้น 6 เดือนทั้งบริษัท — ระดับเดียวกับการอนุมัติ
+        var deny = await DenyKeyAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            Models.Constants.PermissionKeys.DocumentApprove, "ล้างภาษีซื้อที่พ้น 6 เดือน");
+        if (deny != null) return Forbid403<object>(deny);
         var n = await _documentService.ReclassifyExpiredUndueInputVatAsync(companyId, User.Identity?.Name ?? "");
         return Ok(new ApiResponse<object>(true, new { reclassified = n },
             n > 0 ? $"reclassify ภาษีซื้อพ้น 6 เดือน {n} รายการ → ค่าใช้จ่าย" : "ไม่มีภาษีซื้อที่พ้น 6 เดือน"));
@@ -786,6 +847,13 @@ public class DocumentController : ControllerBase
     [HttpDelete("{documentId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> DeleteDocument(Guid companyId, Guid documentId)
     {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบเอกสาร"));
+        // ลบได้เฉพาะ Draft ที่ยังไม่มี JE/การชำระ (บังคับใน service) ⇒ ใช้สิทธิ์
+        // ระดับ Create — ผู้ที่สร้างร่างได้ ต้องลบร่างของตัวเองได้
+        var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            docType.Value, DocPerm.Create, "ลบ");
+        if (deny != null) return Forbid403<string>(deny);
         await _documentService.DeleteDocumentAsync(companyId, documentId);
         return Ok(new ApiResponse<string>(true, null, "ลบเอกสารสำเร็จ"));
     }
@@ -839,7 +907,11 @@ public class DocumentController : ControllerBase
     {
         try
         {
-            var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+            var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+            var deny = await DenyDocAsync(companyId, userIdGuid,
+                DocumentType.BillingNote, DocPerm.Create, "สร้าง");
+            if (deny != null) return Forbid403<DocumentResponse>(deny);
+            var userId = userIdGuid.ToString();
             var result = await _documentService.CreateBillingNoteFromInvoicesAsync(companyId, request, userId);
             return Ok(new ApiResponse<DocumentResponse>(true, result,
                 $"สร้างใบวางบิลรวม {request.InvoiceIds?.Count ?? 0} ใบแล้ว (ร่าง — ตรวจแล้วกดอนุมัติเพื่อออกเลขจริง)"));
@@ -853,7 +925,12 @@ public class DocumentController : ControllerBase
     [HttpPost("{documentId:guid}/convert/{targetType}")]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> ConvertDocument(Guid companyId, Guid documentId, DocumentType targetType)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        // สิทธิ์ของ **ปลายทาง** — การแปลงคือการสร้างเอกสารชนิดนั้นขึ้นมาใหม่
+        // (ใบเสนอราคา → ใบกำกับภาษี = สร้างใบกำกับ ไม่ใช่แค่แก้ใบเสนอราคา)
+        var deny = await DenyDocAsync(companyId, userIdGuid, targetType, DocPerm.Create, "แปลงเป็น");
+        if (deny != null) return Forbid403<DocumentResponse>(deny);
+        var userId = userIdGuid.ToString();
         var result = await _documentService.ConvertDocumentAsync(companyId, documentId, targetType, userId);
         return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารสำเร็จ"));
     }
@@ -922,7 +999,10 @@ public class DocumentController : ControllerBase
         Guid companyId, Guid documentId, DocumentType targetType,
         [FromBody] PartialConvertRequest request)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var deny = await DenyDocAsync(companyId, userIdGuid, targetType, DocPerm.Create, "แปลงบางส่วนเป็น");
+        if (deny != null) return Forbid403<DocumentResponse>(deny);
+        var userId = userIdGuid.ToString();
         var result = await _documentService.ConvertDocumentPartialAsync(
             companyId, documentId, targetType, request, userId);
         return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารบางส่วนสำเร็จ"));
@@ -944,7 +1024,10 @@ public class DocumentController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<DocumentResponse>>>> BatchConvert(
         Guid companyId, DocumentType targetType, [FromBody] BatchConvertRequest request)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var deny = await DenyDocAsync(companyId, userIdGuid, targetType, DocPerm.Create, "แปลงเป็น");
+        if (deny != null) return Forbid403<List<DocumentResponse>>(deny);
+        var userId = userIdGuid.ToString();
         var result = await _documentService.BatchConvertDocumentsAsync(companyId, request.DocumentIds, targetType, userId);
         return Ok(new ApiResponse<List<DocumentResponse>>(true, result,
             $"แปลงสำเร็จ {result.Count}/{request.DocumentIds.Count} ฉบับ"));
@@ -954,7 +1037,10 @@ public class DocumentController : ControllerBase
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> CreateInvoiceFromObligation(
         Guid companyId, Guid performanceObligationId)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var deny = await DenyDocAsync(companyId, userIdGuid, DocumentType.Invoice, DocPerm.Create, "สร้าง");
+        if (deny != null) return Forbid403<DocumentResponse>(deny);
+        var userId = userIdGuid.ToString();
         var result = await _documentService.CreateInvoiceFromObligationAsync(companyId, performanceObligationId, userId);
         return Ok(new ApiResponse<DocumentResponse>(true, result, "สร้างใบแจ้งหนี้จากภาระงานสำเร็จ"));
     }
@@ -967,7 +1053,13 @@ public class DocumentController : ControllerBase
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> WriteOffBadDebt(
         Guid companyId, Guid documentId, [FromBody] WriteOffBadDebtRequest? request)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        // ตัดหนี้สูญ = โพสต์ JE (Dr หนี้สูญ / Cr ลูกหนี้) ⇒ ระดับ Approve
+        var deny = await DenyDocAsync(companyId, userIdGuid, docType.Value, DocPerm.Approve, "ตัดหนี้สูญของ");
+        if (deny != null) return Forbid403<DocumentResponse>(deny);
+        var userId = userIdGuid.ToString();
         var result = await _documentService.WriteOffBadDebtAsync(companyId, documentId, userId, request?.Reason);
         return Ok(new ApiResponse<DocumentResponse>(true, result, "ตัดหนี้สูญสำเร็จ"));
     }
@@ -994,6 +1086,9 @@ public class DocumentController : ControllerBase
     [HttpPost("contacts")]
     public async Task<ActionResult<ApiResponse<ContactResponse>>> CreateContact(Guid companyId, [FromBody] CreateContactRequest request)
     {
+        var denyC = await DenyKeyAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            Models.Constants.PermissionKeys.ContactEdit, "สร้างผู้ติดต่อ");
+        if (denyC != null) return Forbid403<ContactResponse>(denyC);
         var result = await _documentService.CreateContactAsync(companyId, request);
         return StatusCode(201, new ApiResponse<ContactResponse>(true, result, "สร้างผู้ติดต่อสำเร็จ"));
     }
@@ -1015,7 +1110,11 @@ public class DocumentController : ControllerBase
     {
         try
         {
-            var performedBy = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+            var mergeUserId = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User);
+            var denyM = await DenyKeyAsync(companyId, mergeUserId,
+                Models.Constants.PermissionKeys.ContactEdit, "รวมผู้ติดต่อ");
+            if (denyM != null) return Forbid403<object>(denyM);
+            var performedBy = mergeUserId.ToString();
             var rows = await _documentService.MergeContactsAsync(companyId, request.KeepId, request.MergeIds ?? new List<Guid>(), performedBy);
             return Ok(new ApiResponse<object>(true, new { rowsRepointed = rows },
                 $"รวมผู้ติดต่อสำเร็จ — ย้ายการอ้างอิง {rows} รายการ"));
@@ -1027,6 +1126,9 @@ public class DocumentController : ControllerBase
     [HttpPut("contacts/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<ContactResponse>>> UpdateContact(Guid companyId, Guid contactId, [FromBody] UpdateContactRequest request)
     {
+        var denyU = await DenyKeyAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            Models.Constants.PermissionKeys.ContactEdit, "แก้ไขผู้ติดต่อ");
+        if (denyU != null) return Forbid403<ContactResponse>(denyU);
         var result = await _documentService.UpdateContactAsync(companyId, contactId, request);
         return Ok(new ApiResponse<ContactResponse>(true, result));
     }
@@ -1034,6 +1136,9 @@ public class DocumentController : ControllerBase
     [HttpDelete("contacts/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<ContactDeleteResult>>> DeleteContact(Guid companyId, Guid contactId)
     {
+        var denyD = await DenyKeyAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            Models.Constants.PermissionKeys.ContactEdit, "ลบผู้ติดต่อ");
+        if (denyD != null) return Forbid403<ContactDeleteResult>(denyD);
         var result = await _documentService.DeleteContactAsync(companyId, contactId);
         return Ok(new ApiResponse<ContactDeleteResult>(true, result, result.Message));
     }
@@ -1073,7 +1178,22 @@ public class DocumentController : ControllerBase
     [HttpPost("payments")]
     public async Task<ActionResult<ApiResponse<PaymentResponse>>> CreatePayment(Guid companyId, [FromBody] CreatePaymentRequest request)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        // ── ด่านสิทธิ์ (A-D2) ── บันทึกการชำระ = โพสต์ JE + ขยับยอดธนาคาร
+        // ⇒ ระดับเดียวกับการอนุมัติ. เส้น allocation แตะได้หลายใบ จึงต้องผ่าน
+        // **ทุกใบ** ไม่ใช่ใบแรก (ไม่งั้นแนบใบฝั่งที่ตัวเองมีสิทธิ์ 1 ใบ แล้ว
+        // พ่วงใบฝั่งที่ไม่มีสิทธิ์เข้าไปด้วยได้)
+        var payTargets = (request.Allocations != null && request.Allocations.Count > 0)
+            ? request.Allocations.Select(a => a.DocumentId).Distinct().ToList()
+            : new List<Guid> { request.DocumentId };
+        foreach (var targetId in payTargets)
+        {
+            var t = await GetDocumentTypeAsync(companyId, targetId);
+            if (t == null) return NotFound(new ApiResponse<PaymentResponse>(false, null, "ไม่พบเอกสารที่จะชำระ"));
+            var denyPay = await DenyDocAsync(companyId, userIdGuid, t.Value, DocPerm.Approve, "บันทึกการชำระของ");
+            if (denyPay != null) return Forbid403<PaymentResponse>(denyPay);
+        }
+        var userId = userIdGuid.ToString();
         // Single endpoint, two paths: when Allocations is non-empty the
         // multi-doc settler runs; otherwise legacy 1:1 settler.
         var result = (request.Allocations != null && request.Allocations.Count > 0)
@@ -1091,6 +1211,15 @@ public class DocumentController : ControllerBase
     [HttpPost("payments/{paymentId:guid}/void")]
     public async Task<ActionResult<ApiResponse<string>>> VoidPayment(Guid companyId, Guid paymentId)
     {
+        // ยกเลิกการชำระ = กลับ JE + คืนยอดธนาคาร ⇒ ระดับ Void ของเอกสารต้นทาง
+        var payDocType = await _db.Payments
+            .Where(pmt => pmt.Id == paymentId && pmt.CompanyId == companyId && !pmt.IsDeleted)
+            .Select(pmt => (DocumentType?)pmt.Document.DocumentType)
+            .FirstOrDefaultAsync();
+        if (payDocType == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบการชำระเงิน"));
+        var denyVoidPay = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            payDocType.Value, DocPerm.Void, "ยกเลิกการชำระของ");
+        if (denyVoidPay != null) return Forbid403<string>(denyVoidPay);
         await _documentService.VoidPaymentAsync(companyId, paymentId);
         return Ok(new ApiResponse<string>(true, null, "ยกเลิกการชำระเงินสำเร็จ"));
     }

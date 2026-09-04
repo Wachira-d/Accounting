@@ -562,6 +562,7 @@ python3 tools/csp_external_ref_check.py # สคริปต์/สไตล์�
 python3 tools/tab_hidelist_check.py  # panel ของแท็บที่ไม่อยู่ในลิสต์ซ่อน → เปิดแล้วค้างทับแท็บอื่น
 python3 tools/stock_writer_check.py  # เขียนสต็อกนอก IStockLedger → สองความจริงที่ไม่มีวันตรงกัน
 python3 tools/payment_provider_boundary_check.py # โดเมน/คีย์ของ gateway หลุดนอก adapter · ข้อมูลบัตรบนเซิร์ฟเวอร์
+python3 tools/write_permission_gate_check.py # endpoint ที่เขียนข้อมูลแต่ไม่มีด่านสิทธิ์ ([Authorize] ตอบแค่ "ล็อกอินไหม")
 python3 tools/html_attr_escape_check.py # ข้อความอิสระเข้า attribute ไม่ผ่านตัวหนี → แตก attribute ยิงสคริปต์ได้
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
@@ -1395,6 +1396,29 @@ awk brace-balance                      # ทุก .cs ที่แก้
   _checker มีไว้จับพอดี · พอผูก `\s*$` แล้วเจอของจริงเพิ่มอีก 1 จุด (`i.name`) ที่_
   _กติกาหลวมเคยกลบไว้ (3) 3 จุดหนี `"` เองด้วย `.replace(/"/g,'&quot;')` = สำเนามือ_
   _ที่หนีไม่ครบ (ไม่หนี `&` `<` `'`) — ยุบมาใช้ตัวกลางแทน)_
+- **`[Authorize]` ระดับคลาส = "ล็อกอินอยู่ไหม" ไม่ใช่ "มีสิทธิ์ทำสิ่งนี้ไหม"**
+  `DocumentController` เช็คสิทธิ์ครบใน create/approve/void จนดูเหมือนคุมแล้ว —
+  แต่ **PUT · DELETE · convert · batch-convert · payments · void-payment ·
+  write-off · contacts (สร้าง/แก้/ลบ/รวม) รวม 20 endpoint ไม่เช็คอะไรเลย** ⇒
+  สมาชิกที่ระบบตั้งใจไม่ให้ *สร้าง* เอกสาร กลับ **แก้ · ลบ · แปลง · บันทึกรับ-จ่าย
+  เงิน · ตัดหนี้สูญ** ได้ทั้งหมด (ลง JE จริง) · `PayrollController` หนักกว่า:
+  ด่านที่มีคือ `CheckPayrollAccessAsync` ซึ่งถามแค่ **"ดูข้อมูลเงินเดือนได้ไหม"**
+  แล้วอีก 20 endpoint (สร้างรอบ · import · คำนวณ · **อนุมัติ** · **จ่าย** ·
+  นำส่ง ปกส. · ตั้งค่าอัตราภาษี) ไม่มีด่านเลย ⇒ **สมาชิกคนไหนก็กดจ่ายเงินเดือน
+  จริงได้** — และคีย์ `PayrollRun`/`PayrollApprove`/`PayrollPay` มีอยู่ใน
+  `PermissionKeys` มาตลอดแต่**ไม่เคยมีใครเรียก** (defect class "ของที่สร้างไว้แล้ว
+  ไม่ได้ถูกเรียกใช้")
+  → กติกา: ด่านต้องรวมเป็น **เมธอดเดียวต่อคอนโทรลเลอร์** (`DenyDocAsync` /
+  `RequirePayrollWriteAsync`) เพราะข้อความปฏิเสธต้องบอก **ชื่อคีย์ที่ต้องขอ**
+  ให้ตรงกันทุกจุด — 40 จุดที่ต่างคนต่างแต่งข้อความจะ drift แน่นอน · และเลือก
+  ระดับสิทธิ์จาก **ผลกระทบ** ไม่ใช่จาก HTTP verb: แตะแต่ร่าง = Create ·
+  โพสต์ JE/ขยับเงิน = Approve/Pay · กลับรายการ = Void
+  _(→ เพิ่ม `tools/write_permission_gate_check.py` — โยง "verb ของ route" เข้ากับ_
+  _"ด่านที่เมธอดเรียก" ซึ่งคอมไพเลอร์ไม่มีทางเห็น. **เป็น allow-list ต่อคอนโทรลเลอร์_
+  _ไม่ใช่กวาดทั้งเรพ** เพราะคอนโทรลเลอร์สาธารณะ (portal แขก · webhook) ตั้งใจไม่มี_
+  _ด่านผู้ใช้ — กวาดหมดจะฟ้องผิดเป็นสิบจุด และ "checker ที่ฟ้องผิด = checker ที่พัง_
+  _แล้ว" · POST ที่อ่านอย่างเดียวต้องใส่ชื่อใน `READ_ONLY_POSTS` ให้เป็นการตัดสินใจ_
+  _ที่ตั้งใจ ไม่ใช่ยกเว้นอัตโนมัติ)_
 - checker ใหม่ทุกตัวต้องผ่าน **negative test** ก่อนเชื่อ: ใส่บั๊กที่ตั้งใจจับ
   กลับเข้าไปแล้วยืนยันว่า checker จับได้จริง (เคยมี checker ที่ regex ผิด
   จนไม่จับเคสหลักของตัวเอง)

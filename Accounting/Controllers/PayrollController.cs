@@ -84,11 +84,49 @@ public class PayrollController : ControllerBase
         return null;
     }
 
+    /// <summary>
+    /// **ด่านของสิทธิ์ระดับ "การกระทำ" — คืน `null` = ผ่าน**
+    ///
+    /// <para>═══ ที่มา (ผลตรวจ D-A1 / D-A2) ═══ endpoint ที่เขียนข้อมูลเงินเดือน
+    /// ทั้งหมดเคยมีด่านแค่ <see cref="CheckPayrollAccessAsync"/> ซึ่งถาม
+    /// **"ดูข้อมูลเงินเดือนได้ไหม" (PayrollView)** เท่านั้น — และอีก 20 กว่า
+    /// endpoint (สร้างรอบ · import · คำนวณ · **อนุมัติ** · **จ่าย** · นำส่ง ปกส. ·
+    /// แก้ยอดรายคน · ตั้งค่าอัตรา ปกส./ภาษี) ไม่มีด่านอะไรเลย ⇒ สมาชิกที่ได้สิทธิ์
+    /// "ดูเงินเดือน" (หรือแม้แต่ไม่ได้อะไรเลยในกลุ่มหลัง) **กดจ่ายเงินเดือนจริง
+    /// ลง JE + ออก ภ.ง.ด.1 + สปส.1-10 ได้**</para>
+    ///
+    /// <para>คีย์ `PayrollRun` / `PayrollApprove` / `PayrollPay` มีอยู่ใน
+    /// <c>PermissionKeys</c> มาตลอดแต่ไม่เคยมีใครเรียก — "ของที่สร้างไว้แล้ว
+    /// ไม่ได้ถูกเรียกใช้" (CLAUDE.md กฎเหล็ก #4)</para>
+    ///
+    /// <para>Owner/SystemAdmin/Accountant ผ่านอัตโนมัติที่ <c>PermissionService</c>
+    /// (คีย์ทั้งสามอยู่ใน <c>AccountantDefaultKeys</c>) ⇒ ผู้ที่ทำเงินเดือนอยู่แล้ว
+    /// ไม่กระทบ · กระทบเฉพาะ role ที่ต้อง grant อยู่แล้วตามการออกแบบ</para>
+    /// </summary>
+    private async Task<ActionResult?> RequireAnyAsync(Guid companyId, string verb, params string[] anyOfKeys)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        foreach (var k in anyOfKeys)
+            if (await _permissions.HasPermissionAsync(companyId, userId, k)) return null;
+        var need = string.Join(" หรือ ", anyOfKeys.Select(k => k.Replace("perm:", "")));
+        return StatusCode(403, new ApiResponse<object>(false, new
+        {
+            redacted = false,
+            kind = "Payroll",
+            requiredPermission = need,
+        }, $"ไม่มีสิทธิ์{verb} (ต้องการ {need})"));
+    }
+
+    /// <summary>ด่านของ endpoint ที่ **เขียน** ข้อมูลเงินเดือน — ต้องผ่านทั้ง
+    /// (ก) ด่านความอ่อนไหว Payroll และ (ข) สิทธิ์ระดับการกระทำ</summary>
+    private async Task<ActionResult?> RequirePayrollWriteAsync(Guid companyId, string verb, params string[] anyOfKeys)
+        => await CheckPayrollAccessAsync(companyId) ?? await RequireAnyAsync(companyId, verb, anyOfKeys);
+
     // Employees
     [HttpPost("employees")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> CreateEmployee(Guid companyId, [FromBody] CreateEmployeeRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "เพิ่มพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         return StatusCode(201, new ApiResponse<EmployeeResponse>(true, await _service.CreateEmployeeAsync(companyId, request)));
     }
 
@@ -122,7 +160,7 @@ public class PayrollController : ControllerBase
     [HttpDelete("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteEmployee(Guid companyId, Guid employeeId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ลบพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         try { await _service.DeleteEmployeeAsync(companyId, employeeId); return Ok(new ApiResponse<bool>(true, true, "ลบพนักงานแล้ว")); }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
     }
@@ -130,7 +168,7 @@ public class PayrollController : ControllerBase
     [HttpPost("employees/{employeeId:guid}/restore")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> RestoreEmployee(Guid companyId, Guid employeeId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "กู้คืนพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         try { return Ok(new ApiResponse<EmployeeResponse>(true, await _service.RestoreEmployeeAsync(companyId, employeeId), "กู้คืนพนักงานแล้ว")); }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
     }
@@ -138,7 +176,7 @@ public class PayrollController : ControllerBase
     [HttpPut("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> UpdateEmployee(Guid companyId, Guid employeeId, [FromBody] UpdateEmployeeRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "แก้ไขข้อมูลพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         return Ok(new ApiResponse<EmployeeResponse>(true, await _service.UpdateEmployeeAsync(companyId, employeeId, request)));
     }
 
@@ -146,6 +184,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<SyncEmployeesResponse>>> SyncEmployees(
         Guid companyId, [FromBody] SyncEmployeesRequest request)
     {
+        var block = await RequirePayrollWriteAsync(companyId, "sync ข้อมูลพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var r = await _service.SyncEmployeesAsync(companyId, request);
         return Ok(new ApiResponse<SyncEmployeesResponse>(true, r,
             $"sync เสร็จ — เพิ่ม {r.Inserted} · อัปเดต {r.Updated} · ข้าม {r.Skipped}"));
@@ -154,7 +193,7 @@ public class PayrollController : ControllerBase
     [HttpPost("employees/{employeeId:guid}/terminate")]
     public async Task<ActionResult<ApiResponse<bool>>> Terminate(Guid companyId, Guid employeeId, [FromQuery] DateTime endDate)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "แจ้งพนักงานลาออก", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         await _service.TerminateEmployeeAsync(companyId, employeeId, endDate); return Ok(new ApiResponse<bool>(true, true));
     }
 
@@ -163,15 +202,18 @@ public class PayrollController : ControllerBase
     [HttpPost("employees/{employeeId:guid}/severance-preview")]
     public async Task<ActionResult<ApiResponse<SeverancePreviewResponse>>> PreviewSeverance(
         Guid companyId, Guid employeeId, [FromBody] SeverancePreviewRequest request)
-        => Ok(new ApiResponse<SeverancePreviewResponse>(true,
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "ดูตัวอย่างค่าชดเชย", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return Ok(new ApiResponse<SeverancePreviewResponse>(true,
             await _service.PreviewSeverancePayAsync(companyId, employeeId, request)));
+    }
 
     /// <summary>ปิดปี: คำนวณวันลาคงเหลือทุกพนักงานของปี ที่ระบุ →
     /// upsert EmployeeLeaveBalance ของปีถัดไป (carry-forward).</summary>
     [HttpPost("leaves/carry-forward/{year:int}")]
     public async Task<ActionResult<ApiResponse<object>>> RunLeaveCarryForward(Guid companyId, int year)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ทำ carry-forward วันลา", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         var count = await _service.RunYearEndLeaveCarryForwardAsync(companyId, year, actor);
         return Ok(new ApiResponse<object>(true, new { upserts = count, targetYear = year + 1 },
@@ -186,7 +228,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> PostSeverance(
         Guid companyId, Guid employeeId, [FromBody] PostSeveranceRequest req)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "โพสต์เงินชดเชยเข้า GL", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         var jeId = await _service.PostSeveranceAsync(companyId, employeeId,
             req.Amount, req.PayDate, JwtHelper.GetUserIdFromClaims(User).ToString());
         return Ok(new ApiResponse<object>(true, new { journalEntryId = jeId }, "โพสต์เงินชดเชยเข้า GL เรียบร้อย"));
@@ -195,7 +237,10 @@ public class PayrollController : ControllerBase
     // Payroll Items
     [HttpPost("items")]
     public async Task<ActionResult<ApiResponse<PayrollItemResponse>>> CreateItem(Guid companyId, [FromBody] CreatePayrollItemRequest request)
-        => StatusCode(201, new ApiResponse<PayrollItemResponse>(true, await _service.CreatePayrollItemAsync(companyId, request)));
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "สร้างรายการเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return StatusCode(201, new ApiResponse<PayrollItemResponse>(true, await _service.CreatePayrollItemAsync(companyId, request)));
+    }
 
     [HttpGet("items")]
     public async Task<ActionResult<ApiResponse<List<PayrollItemResponse>>>> GetItems(Guid companyId)
@@ -204,7 +249,10 @@ public class PayrollController : ControllerBase
     // Payroll Runs
     [HttpPost("runs")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> CreateRun(Guid companyId, [FromBody] CreatePayrollRunRequest request)
-        => StatusCode(201, new ApiResponse<PayrollRunResponse>(true, await _service.CreatePayrollRunAsync(companyId, request, User.Identity?.Name ?? "")));
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "สร้างรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return StatusCode(201, new ApiResponse<PayrollRunResponse>(true, await _service.CreatePayrollRunAsync(companyId, request, User.Identity?.Name ?? "")));
+    }
 
     /// <summary>Import payroll run จากระบบนอก (TakeTime) — รับยอดสำเร็จรูป
     /// ต่อพนักงาน สร้าง run สถานะ Calculated ทันที (ไม่คำนวณใหม่). จากนั้น
@@ -215,6 +263,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<ImportPayrollRunResult>>> ImportRun(
         Guid companyId, [FromBody] ImportPayrollRunRequest request)
     {
+        var block = await RequirePayrollWriteAsync(companyId, "นำเข้ารอบเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var createdBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _service.ImportPayrollRunAsync(companyId, request, createdBy);
         return StatusCode(result.WasExisting ? 200 : 201,
@@ -241,15 +290,22 @@ public class PayrollController : ControllerBase
 
     [HttpPost("runs/{runId:guid}/calculate")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> Calculate(Guid companyId, Guid runId)
-        => Ok(new ApiResponse<PayrollRunResponse>(true, await _service.CalculatePayrollAsync(companyId, runId)));
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "คำนวณรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollRunResponse>(true, await _service.CalculatePayrollAsync(companyId, runId)));
+    }
 
     [HttpPost("runs/{runId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> Approve(Guid companyId, Guid runId)
-        => Ok(new ApiResponse<PayrollRunResponse>(true, await _service.ApprovePayrollAsync(companyId, runId, User.Identity?.Name ?? "")));
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "อนุมัติรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollRunResponse>(true, await _service.ApprovePayrollAsync(companyId, runId, User.Identity?.Name ?? "")));
+    }
 
     [HttpPost("runs/{runId:guid}/pay")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> Pay(Guid companyId, Guid runId)
     {
+        var block = await RequirePayrollWriteAsync(companyId, "จ่ายเงินเดือน", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         try
         {
             var res = await _service.ProcessPaymentAsync(companyId, runId, User.Identity?.Name ?? "");
@@ -284,7 +340,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> ReverseSso(
         Guid companyId, Guid runId, [FromBody] ReopenPayrollRunRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "กลับรายการนำส่งประกันสังคม", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         try
         {
             var res = await _service.ReverseSsoSettlementAsync(companyId, runId,
@@ -309,10 +365,13 @@ public class PayrollController : ControllerBase
     [HttpPost("runs/{runId:guid}/settle-sso")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> SettleSso(
         Guid companyId, Guid runId, [FromBody] SettleSsoRequest request)
-        => Ok(new ApiResponse<PayrollRunResponse>(true,
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "นำส่งประกันสังคม", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollRunResponse>(true,
             await _service.SettleSocialSecurityAsync(companyId, runId,
                 request.PayDate, request.BankAccountId, request.BankGlAccountId, request.FilingNumber,
                 User.Identity?.Name ?? "")));
+    }
 
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<PayrollDetailResponse>>> GetDetail(Guid companyId, Guid runId, Guid employeeId)
@@ -327,7 +386,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> SetEmployeePaymentAccount(
         Guid companyId, Guid runId, Guid employeeId, [FromBody] SetPaymentAccountRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "แก้แหล่งจ่ายรายคน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         try
         {
             var res = await _service.SetEmployeePaymentAccountAsync(companyId, runId, employeeId, request.AccountCode);
@@ -345,7 +404,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> UpdateDetail(
         Guid companyId, Guid runId, Guid employeeId, [FromBody] UpdatePayrollDetailRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "แก้ยอดรายคนในรอบ", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         try
         {
             var res = await _service.UpdatePayrollDetailAsync(companyId, runId, employeeId, request, User.Identity?.Name ?? "");
@@ -380,7 +439,7 @@ public class PayrollController : ControllerBase
     [HttpPost("employees/{employeeId:guid}/line-bind-code")]
     public async Task<ActionResult> IssueLineBindCode(Guid companyId, Guid employeeId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ออกรหัสผูก LINE ให้พนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var (code, addFriendUrl) = await _payslipLine.IssueBindCodeAsync(companyId, employeeId, ActorEmail());
         return Ok(new ApiResponse<object>(true, new
         {
@@ -404,7 +463,7 @@ public class PayrollController : ControllerBase
     [HttpPost("runs/{runId:guid}/employees/{employeeId:guid}/payslip/send-line")]
     public async Task<ActionResult> SendPayslipLine(Guid companyId, Guid runId, Guid employeeId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ส่งสลิปทาง LINE", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var result = await _payslipLine.SendPayslipAsync(companyId, runId, employeeId, ActorEmail());
         var (ok, msg) = result switch
         {
@@ -421,7 +480,7 @@ public class PayrollController : ControllerBase
     [HttpPost("runs/{runId:guid}/payslip/send-line-all")]
     public async Task<ActionResult> SendPayslipLineAll(Guid companyId, Guid runId)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ส่งสลิปทาง LINE ทั้งงวด", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var r = await _payslipLine.SendPayslipForRunAsync(companyId, runId, ActorEmail());
         return Ok(new ApiResponse<object>(true, new
         {
@@ -435,7 +494,12 @@ public class PayrollController : ControllerBase
     // Leave
     [HttpPost("leaves")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> CreateLeave(Guid companyId, [FromBody] CreateLeaveRequest request)
-        => StatusCode(201, new ApiResponse<LeaveResponse>(true, await _service.CreateLeaveAsync(companyId, request)));
+    {
+        // ฟอร์มนี้ยื่นใบลา **แทนพนักงานคนใดก็ได้** (request มี EmployeeId) จึงเป็น
+        // งานของ HR ไม่ใช่ self-service — เดิมไม่มีด่านเลย
+        var block = await RequireAnyAsync(companyId, "ยื่นใบลาแทนพนักงาน", Models.Constants.PermissionKeys.HrAdmin, Models.Constants.PermissionKeys.LeaveApprove, Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return StatusCode(201, new ApiResponse<LeaveResponse>(true, await _service.CreateLeaveAsync(companyId, request)));
+    }
 
     [HttpGet("leaves/{leaveId:guid}")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> GetLeave(Guid companyId, Guid leaveId)
@@ -444,6 +508,7 @@ public class PayrollController : ControllerBase
     [HttpPost("leaves/{leaveId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> ApproveLeave(Guid companyId, Guid leaveId)
     {
+        var block = await RequireAnyAsync(companyId, "อนุมัติใบลา", Models.Constants.PermissionKeys.LeaveApprove, Models.Constants.PermissionKeys.HrAdmin); if (block != null) return block;
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var name = User.Identity?.Name ?? "";
         return Ok(new ApiResponse<LeaveResponse>(true, await _service.ApproveLeaveAsync(companyId, leaveId, userId, name)));
@@ -452,6 +517,7 @@ public class PayrollController : ControllerBase
     [HttpPost("leaves/{leaveId:guid}/reject")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> RejectLeave(Guid companyId, Guid leaveId, [FromBody] RejectLeaveRequest request)
     {
+        var block = await RequireAnyAsync(companyId, "ปฏิเสธใบลา", Models.Constants.PermissionKeys.LeaveReject, Models.Constants.PermissionKeys.LeaveApprove, Models.Constants.PermissionKeys.HrAdmin); if (block != null) return block;
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var name = User.Identity?.Name ?? "";
         return Ok(new ApiResponse<LeaveResponse>(true, await _service.RejectLeaveAsync(companyId, leaveId, userId, name, request)));
@@ -459,7 +525,10 @@ public class PayrollController : ControllerBase
 
     [HttpPost("leaves/{leaveId:guid}/cancel")]
     public async Task<ActionResult<ApiResponse<LeaveResponse>>> CancelLeave(Guid companyId, Guid leaveId)
-        => Ok(new ApiResponse<LeaveResponse>(true, await _service.CancelLeaveAsync(companyId, leaveId)));
+    {
+        var block = await RequireAnyAsync(companyId, "ยกเลิกใบลา", Models.Constants.PermissionKeys.LeaveApprove, Models.Constants.PermissionKeys.HrAdmin, Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return Ok(new ApiResponse<LeaveResponse>(true, await _service.CancelLeaveAsync(companyId, leaveId)));
+    }
 
     [HttpGet("leaves")]
     public async Task<ActionResult<ApiResponse<List<LeaveResponse>>>> GetLeaves(Guid companyId, [FromQuery] Guid? employeeId, [FromQuery] int? year)
@@ -479,7 +548,7 @@ public class PayrollController : ControllerBase
         // UpdateDetail มี (บทเรียน "ด่านที่อ่อนกว่าแต่ทำได้มากกว่า คือช่องที่
         // ใหญ่ที่สุด" — เวลาเพิ่ม endpoint ให้ถามว่าหน้าอื่นที่แตะข้อมูลชุด
         // เดียวกันใช้ด่านอะไร แล้วใช้อย่างน้อยเท่ากัน)
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ยกเลิกรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         try
         {
             await _service.VoidPayrollAsync(companyId, runId);
@@ -498,7 +567,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> ReopenRun(
         Guid companyId, Guid runId, [FromBody] ReopenPayrollRunRequest request)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "กลับรายการจ่ายเงินเดือน", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         try
         {
             var res = await _service.ReopenPaidRunAsync(companyId, runId,
@@ -629,7 +698,7 @@ public class PayrollController : ControllerBase
         Guid companyId, [FromBody] SsoYearConfigRequest req,
         [FromServices] Accounting.Data.AccountingDbContext db)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ตั้งค่าอัตราประกันสังคม", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         var year = req.Year > 2400 ? req.Year - 543 : req.Year;
         if (year < 2000 || year > 2100)
             return BadRequest(new ApiResponse<object>(false, null, "ปีไม่ถูกต้อง"));
@@ -689,7 +758,7 @@ public class PayrollController : ControllerBase
         Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db,
         [FromQuery] int? fromMonth = null, [FromQuery] int? toMonth = null)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ลบค่าอัตราประกันสังคม", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         var y = year > 2400 ? year - 543 : year;
         // ปีเดียวมีได้หลายช่วงเดือน — ระบุช่วงเพื่อลบเฉพาะช่วงนั้น
         // ไม่ระบุ = ลบทั้งปี (พฤติกรรมเดิมตอนที่หนึ่งปีมีได้แถวเดียว)
@@ -776,7 +845,7 @@ public class PayrollController : ControllerBase
         Guid companyId, [FromBody] TaxRuleConfigRequest req,
         [FromServices] Accounting.Data.AccountingDbContext db)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ตั้งค่ากฎภาษีเงินได้", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         var year = req.FiscalYear > 2400 ? req.FiscalYear - 543 : req.FiscalYear;
         if (year < 2000 || year > 2100)
             return BadRequest(new ApiResponse<object>(false, null, "ปีไม่ถูกต้อง"));
@@ -814,7 +883,7 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> DeleteTaxRuleConfig(
         Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db)
     {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ลบกฎภาษีเงินได้", Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         var y = year > 2400 ? year - 543 : year;
         var existing = await db.TaxRuleConfigs
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.FiscalYear == y && !c.IsDeleted);
