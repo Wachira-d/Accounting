@@ -1185,6 +1185,8 @@ const Layout = {
       description: 'วิดีโอสอนใช้งานและคู่มือ แยกตามเรื่อง (บัญชี · ภาษี · เงินเดือน) และตามธุรกิจ (ที่พัก · POS · เว็บไซต์)' },
     { id: 'payment-settings', label: 'รับชำระเงินออนไลน์', icon: '💳', href: '/pages/payment-settings.html',
       description: 'เปิดให้ลูกค้าจ่ายผ่าน PromptPay/บัตร จากหน้าเว็บขายของ · ใบแจ้งหนี้ · การจองที่พัก — ระบบบันทึกรับเงินและลงบัญชีให้อัตโนมัติ' },
+    { id: 'payment-settlements', label: 'กระทบยอดเงินรับออนไลน์', icon: '🏦', href: '/pages/payment-settlements.html',
+      description: 'เงินที่รับผ่านระบบชำระออนไลน์เข้าธนาคาร T+n หลังหักค่าธรรมเนียม — บันทึกรอบโอนเข้าเพื่อล้างบัญชีพัก 11340 และรับรู้ค่าธรรมเนียม' },
     { id: 'addons', label: 'ส่วนเสริมของฉัน', icon: '🧩', href: '/pages/addons.html',
       description: 'เปิด/ปิดส่วนเสริมที่คิดเงินแยกจากแพ็กเกจ · ดูโควตาเอกสารเดือนนี้ · ซื้อโควตาเพิ่ม' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',

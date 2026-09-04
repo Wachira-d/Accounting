@@ -111,6 +111,22 @@ public interface IPaymentProvider
     /// null = ไม่ต้องโหลดอะไร · หน้าเว็บขอค่านี้จาก API ไม่ hard-code เอง</summary>
     string? ClientScriptUrl => null;
 
+    /// <summary>เงินเข้าบัญชีธนาคารของบริษัท<b>ทันที</b>ที่ยืนยันหรือไม่
+    ///
+    /// <para><c>true</c> = เข้าธนาคารแล้วจริง (เช่นเส้นสลิป: ลูกค้าโอนเข้าบัญชีเราตรง ๆ)
+    /// ⇒ JE ลง <b>Dr ธนาคาร</b> ตามเดิม<br/>
+    /// <c>false</c> = ผู้ให้บริการถือเงินไว้ก่อนแล้วโอนเข้า T+n หลังหักค่าธรรมเนียม
+    /// ⇒ JE ต้องลง <b>Dr 11340 ลูกหนี้ผู้ให้บริการรับชำระเงิน</b> แล้วล้างตอน settlement
+    /// (ถ้าลง Dr ธนาคารตั้งแต่ตอน charge <b>ยอดธนาคารในระบบจะไม่ตรงสเตทเมนต์ตลอดเวลา</b>
+    /// และผู้ทำบัญชีกระทบยอดไม่ได้เลย)</para>
+    ///
+    /// <para><b>ทำไมให้ adapter ประกาศเอง</b>: ถ้าเก็บเป็นลิสต์ "ชื่อเจ้าที่เข้าธนาคารทันที"
+    /// ไว้ตรงกลาง การเพิ่มเจ้าใหม่จะต้องแก้ไฟล์นอกโฟลเดอร์ adapter = abstraction รั่ว
+    /// (เกณฑ์ผ่านเฟส 6) · default เป็น <c>false</c> เพราะเป็นพฤติกรรมของ gateway จริง
+    /// ทุกเจ้า — เจ้าที่แหวกต้องประกาศเอง (fail-safe ทางบัญชี: ลง clearing เกินไว้
+    /// แก้ได้ตอน settlement · ลงธนาคารเกินไว้ = กระทบยอดพังเงียบ)</para></summary>
+    bool SettlesDirectlyToBank => false;
+
     Task<ProviderCharge> CreateChargeAsync(PaymentIntent intent, ChargeRequest req,
         PaymentProviderConfig config, CancellationToken ct = default);
 

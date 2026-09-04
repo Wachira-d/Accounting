@@ -950,7 +950,7 @@ public class CmsCommerceService : ICmsCommerceService
     /// ทุก step ที่ล้มเหลวจะ log แต่ไม่ rollback step ก่อนหน้า — operator
     /// แก้ใน UI ต่อได้.</summary>
     public async Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId,
-        Guid? paymentId, string actor)
+        Guid? paymentId, string actor, Guid? moneyInAccountId = null)
     {
         var order = await _db.SiteOrders
             .Include(o => o.Payments)
@@ -1022,7 +1022,11 @@ public class CmsCommerceService : ICmsCommerceService
                     PaymentMethod: pay.PaymentMethod,
                     Reference: pay.Reference,
                     BankAccount: null,
-                    Notes: $"Online order #{order.OrderNumber} — {pay.PaymentMethod}"
+                    Notes: $"Online order #{order.OrderNumber} — {pay.PaymentMethod}",
+                    // เงินที่รับผ่าน gateway ยังไม่เข้าธนาคาร → ลงบัญชีพัก 11340 แทน
+                    // (ตัวตัดสินอยู่ที่ IPaymentIntentService.ResolveMoneyInAccountAsync
+                    // ที่เดียว — ที่นี่แค่ส่งต่อ). null = เส้นสลิป เงินอยู่ในธนาคารแล้ว
+                    OverridePaymentAccountId: moneyInAccountId
                 ), actor);
             }
             catch (Exception ex)

@@ -688,6 +688,12 @@ const API = {
       createPaymentIntent: (d) => API.post(`${base}/pay/intents`, d),
       getPaymentIntentStatus: (id, live = true) => API.get(`${base}/pay/intents/${id}/status?live=${live}`),
       listPaymentIntents: (q = '') => API.get(`${base}/pay/intents${q}`),
+      // ── กระทบยอด/บันทึกเงินโอนเข้า (settlement) ──
+      // ยอดที่โอนเข้าจริงเป็น "ตัวตั้ง" — เซิร์ฟเวอร์เป็นคนตรวจและบล็อกเมื่อไม่ตรง
+      getPendingSettlements: (code) =>
+        API.get(`${base}/pay/settlements/pending?providerCode=${encodeURIComponent(code)}`),
+      previewSettlement: (d) => API.post(`${base}/pay/settlements/preview`, d),
+      recordSettlement: (d) => API.post(`${base}/pay/settlements`, d),
       getPaymentIntentEvents: (id) => API.get(`${base}/pay/intents/${id}/events`),
       // สูตรวัตถุดิบต่อสินค้า (recipe) — มุมมองบนตาราง BOM เดียวกับใบสั่งผลิต
       getProductRecipe: (productId) => API.get(`${base}/mfg/products/${productId}/recipe`),

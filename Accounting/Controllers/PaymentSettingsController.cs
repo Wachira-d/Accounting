@@ -35,7 +35,10 @@ public class PaymentSettingsController : ControllerBase
     { _db = db; _secrets = secrets; _providers = providers; _logger = logger; }
 
     public sealed record ProviderOption(string Code, string DisplayName,
-        List<string> Methods, bool SupportsRefund, bool SupportsWebhook);
+        List<string> Methods, bool SupportsRefund, bool SupportsWebhook,
+        // เงินเข้าธนาคารทันทีไหม — หน้ากระทบยอดใช้ค่านี้กรองว่า "เจ้าไหนมีรอบโอน
+        // ให้บันทึก" · ห้ามให้หน้าเว็บเดาจากชื่อเจ้า (จะกลายเป็นสำเนากติกาชุดที่สอง)
+        bool SettlesDirectlyToBank);
 
     public sealed record ConfigResponse(
         Guid Id, string ProviderCode, string? DisplayName, string Mode,
@@ -87,7 +90,8 @@ public class PaymentSettingsController : ControllerBase
                 p.ProviderCode,   // ชื่อที่แสดงมาจากค่าที่ผู้ใช้ตั้งเอง ไม่ hard-code ที่นี่
                 p.Capabilities.Methods.Select(m => m.ToString()).OrderBy(x => x).ToList(),
                 p.Capabilities.SupportsRefund,
-                p.Capabilities.SupportsWebhook))
+                p.Capabilities.SupportsWebhook,
+                p.SettlesDirectlyToBank))
             .OrderBy(p => p.Code).ToList()));
 
     [HttpGet]

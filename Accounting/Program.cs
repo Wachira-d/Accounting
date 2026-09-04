@@ -276,6 +276,14 @@ builder.Services.AddHttpClient(
     c => c.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentIntentService,
     Accounting.Services.Payments.PaymentIntentService>();
+// ผังบัญชีขา "เงินเข้า" (ธนาคาร vs บัญชีพัก 11340) — แยกเป็นบริการของตัวเองโดยตั้งใจ:
+// ถ้าอยู่ใน PaymentIntentService จะเกิด **วงกลม DI** เพราะ handler ต้องเรียกมัน
+// แต่ตัวมันรับ IEnumerable<IPaymentCompletionHandler> อยู่แล้ว
+builder.Services.AddScoped<Accounting.Services.Payments.IGatewayAccountResolver,
+    Accounting.Services.Payments.GatewayAccountResolver>();
+// ขั้น "เงินเข้าธนาคารจริง" (settlement) — ล้างบัญชีพัก + ลงค่าธรรมเนียม + WHT
+builder.Services.AddScoped<Accounting.Services.Payments.IGatewaySettlementService,
+    Accounting.Services.Payments.GatewaySettlementService>();
 // ตัวจัดการ "เงินเข้าแล้วทำอะไรต่อ" ต่อชนิดต้นทาง — เพิ่มทางเข้าใหม่ = เพิ่มไฟล์
 // ไม่ใช่แก้ service กลาง · ต้นทางที่ยังไม่มีตัวจัดการจะ log error ดัง ๆ (ไม่เงียบ)
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,

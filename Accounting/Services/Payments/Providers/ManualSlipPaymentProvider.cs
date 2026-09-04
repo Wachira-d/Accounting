@@ -30,6 +30,12 @@ public class ManualSlipPaymentProvider : IPaymentProvider
         SupportsPartialRefund: false,
         SupportsWebhook: false);
 
+    /// <summary>ลูกค้าโอนเข้าบัญชีธนาคารของบริษัทตรง ๆ — เงินอยู่ในธนาคารแล้วตั้งแต่
+    /// วินาทีที่คนตรวจสลิปกดยืนยัน · ไม่มีผู้ให้บริการถือเงินไว้ ไม่มีค่าธรรมเนียมหัก
+    /// ⇒ ต้องลง <b>Dr ธนาคาร</b> ตามเดิม ห้ามลงบัญชีพัก 11340 (จะค้างตลอดไปเพราะ
+    /// ไม่มี settlement ให้มาล้าง)</summary>
+    public bool SettlesDirectlyToBank => true;
+
     /// <summary>ไม่ได้ไปคุยกับใคร — แค่ประกาศว่า intent นี้ "รอสลิป"
     ///
     /// <para><c>ProviderRef</c> ใช้ id ของ intent เองเพื่อให้ทุกที่ที่แสดง "เลขอ้างอิงการชำระ"

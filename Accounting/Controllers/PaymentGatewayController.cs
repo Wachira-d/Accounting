@@ -141,6 +141,108 @@ public class PaymentGatewayController : ControllerBase
         }));
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    //  บันทึก "เงินที่ผู้ให้บริการโอนเข้าธนาคาร" (settlement)
+    //
+    //  ตอนลูกค้าจ่ายสำเร็จ เงินยังไม่เข้าบัญชีเรา — ลง Dr 11340 ไว้ก่อน ·
+    //  ผู้ให้บริการรวบยอดแล้วโอนเข้า T+n หลังหักค่าธรรมเนียม ⇒ ขั้นนี้คือขั้นที่
+    //  ล้าง 11340 ออกด้วยเงินจริง + รับรู้ค่าธรรมเนียมเป็นค่าใช้จ่าย
+    //
+    //  ⚠️ **ยอดที่โอนเข้าจริงเป็นตัวตั้ง** — ไม่ตรงกับที่คำนวณได้ = บล็อก
+    //  ห้ามให้ระบบเดาส่วนต่าง (JE ที่ยอดธนาคารไม่ตรงสเตทเมนต์ = กระทบยอด
+    //  ไม่ได้ตลอดไป) · สิทธิ์ระดับเดียวกับการลง JE
+    // ══════════════════════════════════════════════════════════════════
+
+    public sealed record SettlementRequestDto(
+        string ProviderCode, DateTime FromDate, DateTime ToDate,
+        decimal ActualNetReceived, DateTime SettledAt, string SettlementRef, Guid BankAccountId);
+
+    private static object MapPlan(SettlementOutcome outcome) => new
+    {
+        outcome.Ok,
+        outcome.Message,
+        blockReason = outcome.Plan.Reason.ToString(),
+        count = outcome.Plan.IntentIds.Count,
+        outcome.Plan.Gross,
+        feeNetPaid = outcome.Plan.FeeNetPaid,
+        feeGrossedUp = outcome.Plan.FeeGrossedUp,
+        whtOnFee = outcome.Plan.WhtOnFee,
+        outcome.Plan.ExpectedNet,
+        outcome.Plan.ActualNet,
+        outcome.Plan.Difference,
+        lines = outcome.Plan.Lines.Select(l => new
+        { role = l.Role.ToString(), l.Debit, l.Credit, l.Description }),
+        outcome.JournalEntryId,
+        outcome.JournalEntryNumber,
+    };
+
+    /// <summary>รายการที่ "รับเงินแล้วแต่ยังไม่โอนเข้าธนาคาร" — ตั้งต้นของหน้าบันทึกการโอน</summary>
+    [HttpGet("settlements/pending")]
+    public async Task<ActionResult<ApiResponse<object>>> PendingSettlement(
+        Guid companyId, [FromQuery] string? providerCode, CancellationToken ct)
+    {
+        var rows = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId
+                && i.Status == PaymentIntentStatus.Succeeded
+                && i.SettlementJournalEntryId == null
+                && i.ConfirmedAt != null
+                && (providerCode == null || i.ProviderCode == providerCode))
+            .OrderBy(i => i.ConfirmedAt)
+            .Select(i => new
+            {
+                i.Id, i.ProviderCode, i.ConfirmedAt, i.Amount,
+                fee = i.FeeActual ?? i.FeeEstimated,
+                feeIsEstimated = i.FeeActual == null,
+                i.ProviderRef, sourceKind = i.SourceKind.ToString(),
+            })
+            .ToListAsync(ct);
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            count = rows.Count,
+            gross = rows.Sum(r => r.Amount),
+            fee = rows.Sum(r => r.fee),
+            expectedNet = rows.Sum(r => r.Amount - r.fee),
+            // ค่าธรรมเนียมที่ยังเป็นตัวประมาณต้องติดป้าย — ตัวเลขประมาณที่ไม่ติดป้าย
+            // จะถูกอ่านเป็นตัวจริงแล้วนำไปตัดสินใจผิด
+            anyFeeEstimated = rows.Any(r => r.feeIsEstimated),
+            items = rows,
+        }));
+    }
+
+    /// <summary>ดูตัวอย่างก่อนบันทึก — ไม่เขียนอะไรเลย (ให้ผู้ใช้เห็น JE ก่อนกดจริง)</summary>
+    [HttpPost("settlements/preview")]
+    public async Task<ActionResult<ApiResponse<object>>> PreviewSettlement(
+        Guid companyId, [FromBody] SettlementRequestDto req,
+        [FromServices] IGatewaySettlementService settlements, CancellationToken ct)
+    {
+        var outcome = await settlements.PreviewAsync(companyId, ToServiceRequest(req), ct);
+        return Ok(new ApiResponse<object>(true, MapPlan(outcome), outcome.Message));
+    }
+
+    [HttpPost("settlements")]
+    public async Task<ActionResult<ApiResponse<object>>> RecordSettlement(
+        Guid companyId, [FromBody] SettlementRequestDto req,
+        [FromServices] IGatewaySettlementService settlements, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.SettlementRef))
+            return BadRequest(new ApiResponse<object>(false, null!,
+                "กรุณากรอกเลขอ้างอิงรอบโอน (ดูจากสเตทเมนต์/แดชบอร์ดผู้ให้บริการ) — "
+                + "ใช้ตามรอยตอนกระทบยอดย้อนหลัง"));
+
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var outcome = await settlements.RecordAsync(companyId, ToServiceRequest(req), actor, ct);
+        return outcome.Ok
+            ? Ok(new ApiResponse<object>(true, MapPlan(outcome), outcome.Message))
+            // ไม่ตรง = ข้อมูลที่ผู้ใช้ต้องไปแก้ ไม่ใช่ error ของระบบ → คืนแผนไปด้วย
+            // ให้หน้าจอโชว์ว่าต่างเท่าไรและต่างตรงไหน
+            : BadRequest(new ApiResponse<object>(false, MapPlan(outcome), outcome.Message));
+    }
+
+    private static RecordSettlementRequest ToServiceRequest(SettlementRequestDto d)
+        => new(d.ProviderCode, d.FromDate, d.ToDate, d.ActualNetReceived,
+            d.SettledAt, d.SettlementRef.Trim(), d.BankAccountId);
+
     /// <summary>ประวัติของรายการเดียว — "ลูกค้าบอกว่าจ่ายแล้วแต่ระบบไม่รู้" ตอบจากตรงนี้</summary>
     [HttpGet("intents/{intentId:guid}/events")]
     public async Task<ActionResult<ApiResponse<object>>> Events(

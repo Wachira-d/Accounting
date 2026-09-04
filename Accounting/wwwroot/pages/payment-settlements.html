@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>กระทบยอดเงินรับออนไลน์ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px; margin-bottom:16px }
+    .card h3 { margin:0 0 4px; font-size:15px; font-weight:700; color:#0f172a }
+    .card .sub { margin:0 0 14px; font-size:12px; color:#64748b; line-height:1.6 }
+    .hint { font-size:11.5px; color:#64748b; line-height:1.6; margin-top:4px }
+    .muted { color:#94a3b8 }
+    .stat-row { display:flex; flex-wrap:wrap; gap:10px }
+    .stat { flex:1 1 150px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px }
+    .stat .k { font-size:11.5px; color:#64748b }
+    .stat .v { font-size:17px; font-weight:700; color:#0f172a; margin-top:2px }
+    .stat.ok .v { color:#166534 }
+    .stat.warn .v { color:#b45309 }
+    .stat.bad .v { color:#b91c1c }
+    .fgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px 14px }
+    .fgrid label { font-size:12px; color:#475569; font-weight:600; display:block; margin-bottom:3px }
+    table.tbl { width:100%; border-collapse:collapse; font-size:12.5px }
+    table.tbl th, table.tbl td { padding:7px 9px; border-bottom:1px solid #eef2f7; text-align:left }
+    table.tbl th { background:#f8fafc; font-weight:600; color:#475569; font-size:11.5px }
+    table.tbl td.num, table.tbl th.num { text-align:right; font-variant-numeric:tabular-nums }
+    .scroll-x { overflow-x:auto }
+    .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600 }
+    .pill.est { background:#fef3c7; color:#92400e }
+    .banner { border-radius:10px; padding:11px 14px; font-size:12.5px; line-height:1.7; margin-bottom:12px }
+    .banner.bad { background:#fee2e2; border:1px solid #fca5a5; color:#991b1b }
+    .banner.ok { background:#dcfce7; border:1px solid #86efac; color:#166534 }
+    .banner.info { background:#eff6ff; border:1px solid #93c5fd; color:#1e40af }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="container" style="max-width:1040px;margin:0 auto;padding:20px">
+
+      <div style="margin-bottom:16px">
+        <h1 style="margin:0;font-size:24px;font-weight:700">🏦 กระทบยอดเงินรับออนไลน์</h1>
+        <p style="margin:4px 0 0;color:#64748b;font-size:14px">
+          เงินที่ลูกค้าจ่ายผ่านระบบรับชำระออนไลน์ <b>ยังไม่เข้าบัญชีธนาคารทันที</b> —
+          ผู้ให้บริการรวบยอดแล้วโอนเข้าภายหลัง (T+n) หลังหักค่าธรรมเนียม
+          หน้านี้คือที่ที่บันทึก "เงินเข้าธนาคารจริง" แล้วล้างบัญชีพักออก
+        </p>
+      </div>
+
+      <div id="body"><div class="card muted">กำลังโหลด…</div></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // หน้ากระทบยอด + บันทึกเงินโอนเข้าของ payment gateway
+    // (PAYMENT_GATEWAY_DESIGN.md §4.5 · เฟส 3)
+    //
+    // กติกาที่หน้านี้ต้องรักษา:
+    //  • **ไม่มีชื่อผู้ให้บริการ hard-code** — รายชื่อมาจาก API
+    //  • **ไม่คำนวณยอดเอง** — ทุกตัวเลขที่ตัดสินใจได้มาจากเซิร์ฟเวอร์
+    //    (ผลรวม/ค่าธรรมเนียม/ภาษี/ผลต่าง) หน้าเว็บ **แสดง**อย่างเดียว
+    //    ไม่งั้นจะกลายเป็นกติกาชุดที่สองที่ drift — defect class ประจำของเรพนี้
+    //  • ปุ่ม "บันทึก" ต้องผ่าน "ดูตัวอย่าง" ก่อนเสมอ: ผู้ใช้ต้องเห็น JE
+    //    ที่จะลงจริงก่อนกด (เงินเข้าบัญชี = แก้ย้อนหลังยาก)
+    const Page = {
+      companyId: null,
+      providers: [],
+      pending: null,
+      preview: null,
+      banks: [],
+
+      async init() {
+        await Layout.init();
+        this.companyId = Layout.getCompanyId();
+        if (!this.companyId) { document.getElementById('body').innerHTML =
+          '<div class="card">กรุณาเลือกบริษัทก่อน</div>'; return; }
+        await this.load();
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [provRes, bankRes] = await Promise.all([
+            api.getPaymentProviders(),
+            api.getBankAccounts(),
+          ]);
+          // ผู้ให้บริการที่ "ถือเงินไว้ก่อน" เท่านั้นที่มีรอบโอนให้บันทึก —
+          // เส้นสลิปเงินเข้าธนาคารตั้งแต่ตอนยืนยันแล้ว ไม่มีอะไรให้ล้าง
+          this.providers = (provRes?.data || []).filter(p => p.settlesDirectlyToBank === false);
+          this.banks = bankRes?.data?.items || bankRes?.data || [];
+          await this.loadPending();
+        } catch (e) {
+          document.getElementById('body').innerHTML =
+            `<div class="card banner bad">โหลดข้อมูลไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+        }
+      },
+
+      currentProvider() {
+        const sel = document.getElementById('provSel');
+        return sel ? sel.value : (this.providers[0]?.code || '');
+      },
+
+      async loadPending() {
+        const api = Layout.api(); if (!api) return;
+        const code = this.currentProvider();
+        this.pending = code ? (await api.getPendingSettlements(code))?.data : null;
+        this.preview = null;
+        this.render();
+      },
+
+      render() {
+        if (this.providers.length === 0) {
+          document.getElementById('body').innerHTML = `
+            <div class="card">
+              <div class="banner info">
+                ยังไม่ได้เปิดใช้ผู้ให้บริการรับชำระเงินออนไลน์ที่มีรอบโอน —
+                ไปที่ <a href="/pages/payment-settings.html">ตั้งค่าการรับชำระเงินออนไลน์</a> ก่อน
+              </div>
+              <div class="hint">
+                หมายเหตุ: การรับเงินด้วย "สลิปโอน" ไม่ต้องกระทบยอดที่นี่ —
+                ลูกค้าโอนเข้าบัญชีธนาคารของบริษัทโดยตรง เงินอยู่ในธนาคารตั้งแต่วันที่ยืนยันสลิปแล้ว
+              </div>
+            </div>`;
+          return;
+        }
+
+        const p = this.pending;
+        const anyEst = p?.anyFeeEstimated;
+        document.getElementById('body').innerHTML = `
+          <div class="card">
+            <h3>รายการที่รับเงินแล้ว แต่ยังไม่เข้าบัญชีธนาคาร</h3>
+            <p class="sub">
+              ยอดเหล่านี้อยู่ในบัญชีพัก <b>11340 ลูกหนี้ผู้ให้บริการรับชำระเงิน</b>
+              จนกว่าจะบันทึกการโอนเข้า
+            </p>
+            <div class="fgrid" style="margin-bottom:12px">
+              <div>
+                <label>ผู้ให้บริการ</label>
+                <select class="form-input" id="provSel" onchange="Page.loadPending()">
+                  ${this.providers.map(x => `<option value="${Layout.esc(x.code)}">${Layout.esc(x.displayName || x.code)}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <div class="stat-row">
+              <div class="stat"><div class="k">จำนวนรายการ</div><div class="v">${p?.count ?? 0}</div></div>
+              <div class="stat"><div class="k">ยอดรับชำระรวม</div><div class="v">${Layout.money(p?.gross || 0)}</div></div>
+              <div class="stat ${anyEst ? 'warn' : ''}">
+                <div class="k">ค่าธรรมเนียม ${anyEst ? '<span class="pill est">มีตัวประมาณ</span>' : ''}</div>
+                <div class="v">${Layout.money(p?.fee || 0)}</div>
+              </div>
+              <div class="stat ok"><div class="k">ควรได้รับสุทธิ</div><div class="v">${Layout.money(p?.expectedNet || 0)}</div></div>
+            </div>
+            ${anyEst ? `<div class="hint">⚠️ ค่าธรรมเนียมบางรายการยัง<b>เป็นตัวประมาณ</b> (ผู้ให้บริการยังไม่ส่งตัวจริงมา)
+              — ถ้ายอดโอนจริงไม่ตรง ให้ตรวจตัวเลขนี้ก่อน</div>` : ''}
+            ${this.renderItems(p?.items || [])}
+          </div>
+
+          <div class="card">
+            <h3>บันทึกเงินที่โอนเข้าธนาคาร</h3>
+            <p class="sub">
+              กรอกยอดสุทธิที่<b>เข้าบัญชีธนาคารจริง</b>ตามสเตทเมนต์ — ระบบจะตรวจกับผลรวมข้างบน
+              แล้วลงบัญชีให้: <b>Dr ธนาคาร + Dr ค่าธรรมเนียม = Cr บัญชีพัก 11340</b>
+              (ถ้าเปิดหัก ณ ที่จ่ายค่าธรรมเนียม จะมีบรรทัด ภ.ง.ด.53 เพิ่ม)
+            </p>
+            <div class="fgrid">
+              <div><label>ตั้งแต่วันที่ (วันที่รับเงิน)</label>
+                <input type="date" class="form-input" id="fFrom" value="${Layout.toDateInput(this.defaultFrom())}"></div>
+              <div><label>ถึงวันที่</label>
+                <input type="date" class="form-input" id="fTo" value="${Layout.toDateInput(new Date())}"></div>
+              <div><label>ยอดสุทธิที่เข้าบัญชีจริง</label>
+                <input type="number" step="0.01" class="form-input" id="fNet" placeholder="0.00"></div>
+              <div><label>วันที่เงินเข้าบัญชี</label>
+                <input type="date" class="form-input" id="fDate" value="${Layout.toDateInput(new Date())}"></div>
+              <div><label>บัญชีธนาคารที่รับเงิน</label>
+                <select class="form-input" id="fBank">
+                  ${this.banks.map(b => `<option value="${Layout.esc(b.id)}">${Layout.esc(b.bankName || '')} ${Layout.esc(b.accountNumber || '')}</option>`).join('')}
+                </select></div>
+              <div><label>เลขอ้างอิงรอบโอน</label>
+                <input class="form-input" id="fRef" placeholder="เช่น TRF-2026-09-01"></div>
+            </div>
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-secondary" onclick="Page.doPreview()">🔍 ดูตัวอย่างก่อนบันทึก</button>
+              <button class="btn btn-primary" id="btnSave" onclick="Page.doSave()" disabled
+                title="กด 'ดูตัวอย่าง' ก่อน — ต้องเห็นรายการบัญชีที่จะลงจริง">💾 บันทึกและลงบัญชี</button>
+            </div>
+            <div id="previewBox" style="margin-top:14px"></div>
+          </div>`;
+      },
+
+      renderItems(items) {
+        if (!items.length) return '<div class="hint">ไม่มีรายการค้างโอน</div>';
+        return `<div class="scroll-x" style="margin-top:12px"><table class="tbl">
+          <thead><tr>
+            <th>วันที่รับเงิน</th><th>ที่มา</th><th>อ้างอิง</th>
+            <th class="num">ยอด</th><th class="num">ค่าธรรมเนียม</th><th class="num">สุทธิ</th>
+          </tr></thead><tbody>
+          ${items.map(i => `<tr>
+            <td>${Layout.date(i.confirmedAt)}</td>
+            <td>${Layout.esc(i.sourceKind || '')}</td>
+            <td style="font-family:ui-monospace,monospace;font-size:11.5px">${Layout.esc(i.providerRef || '—')}</td>
+            <td class="num">${Layout.money(i.amount)}</td>
+            <td class="num">${Layout.money(i.fee)}${i.feeIsEstimated ? ' <span class="pill est">ประมาณ</span>' : ''}</td>
+            <td class="num">${Layout.money((i.amount || 0) - (i.fee || 0))}</td>
+          </tr>`).join('')}
+          </tbody></table></div>`;
+      },
+
+      defaultFrom() { const d = new Date(); d.setDate(d.getDate() - 14); return d; },
+
+      body() {
+        return {
+          providerCode: this.currentProvider(),
+          fromDate: document.getElementById('fFrom').value,
+          toDate: document.getElementById('fTo').value,
+          actualNetReceived: Number(document.getElementById('fNet').value || 0),
+          settledAt: document.getElementById('fDate').value,
+          settlementRef: document.getElementById('fRef').value,
+          bankAccountId: document.getElementById('fBank').value,
+        };
+      },
+
+      async doPreview() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.previewSettlement(this.body());
+          this.preview = res?.data;
+          this.showPlan(this.preview);
+        } catch (e) {
+          // ฝั่งเซิร์ฟเวอร์คืนแผนมาด้วยแม้ตอนไม่ผ่าน — ถ้าไม่มีค่อยโชว์ข้อความดิบ
+          this.showPlan(e.body?.data || null, e.message);
+        }
+      },
+
+      async doSave() {
+        const api = Layout.api(); if (!api) return;
+        if (!(await Layout.confirmDanger({
+          title: 'บันทึกเงินโอนเข้าและลงบัญชี',
+          message: 'ระบบจะสร้างใบสำคัญรับ (JE) ตามรายการที่แสดง และมาร์กรายการทั้งหมด'
+            + 'ว่า "โอนเข้าแล้ว"<br><strong style="color:#dc2626">'
+            + 'การแก้ย้อนหลังต้องกลับรายการใบสำคัญ</strong> — ตรวจยอดกับสเตทเมนต์ให้ตรงก่อน',
+          mode: 'math'
+        }))) return;
+        try {
+          const res = await api.recordSettlement(this.body());
+          Layout.toast(res?.message || 'บันทึกแล้ว');
+          await this.loadPending();
+        } catch (e) {
+          this.showPlan(e.body?.data || null, e.message);
+          Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
+        }
+      },
+
+      // แสดงแผนที่ **เซิร์ฟเวอร์คำนวณ** — หน้าเว็บไม่คิดตัวเลขเองแม้แต่ช่องเดียว
+      showPlan(plan, fallbackMsg) {
+        const box = document.getElementById('previewBox');
+        const btn = document.getElementById('btnSave');
+        if (!plan) {
+          box.innerHTML = `<div class="banner bad">${Layout.esc(fallbackMsg || 'ตรวจสอบไม่สำเร็จ')}</div>`;
+          btn.disabled = true; return;
+        }
+        const ok = plan.ok;
+        btn.disabled = !ok;
+        const lines = (plan.lines || []).map(l => `<tr>
+            <td>${Layout.esc(l.description || '')}</td>
+            <td class="num">${l.debit ? Layout.money(l.debit) : ''}</td>
+            <td class="num">${l.credit ? Layout.money(l.credit) : ''}</td>
+          </tr>`).join('');
+        box.innerHTML = `
+          <div class="banner ${ok ? 'ok' : 'bad'}">
+            ${ok ? '✅ ' : '⛔ '}${Layout.esc(plan.message || (ok ? 'ยอดตรง — กดบันทึกได้' : 'ยังบันทึกไม่ได้'))}
+          </div>
+          <div class="stat-row" style="margin-bottom:10px">
+            <div class="stat"><div class="k">รายการ</div><div class="v">${plan.count || 0}</div></div>
+            <div class="stat"><div class="k">ยอดรับชำระ</div><div class="v">${Layout.money(plan.gross || 0)}</div></div>
+            <div class="stat"><div class="k">ค่าธรรมเนียม (จ่ายจริง)</div><div class="v">${Layout.money(plan.feeNetPaid || 0)}</div></div>
+            ${plan.whtOnFee ? `<div class="stat"><div class="k">หัก ณ ที่จ่าย 3%</div><div class="v">${Layout.money(plan.whtOnFee)}</div></div>` : ''}
+            <div class="stat ${ok ? 'ok' : 'bad'}"><div class="k">ผลต่าง</div><div class="v">${Layout.money(plan.difference || 0)}</div></div>
+          </div>
+          ${lines ? `<div class="scroll-x"><table class="tbl">
+            <thead><tr><th>รายการบัญชีที่จะลง</th><th class="num">เดบิต</th><th class="num">เครดิต</th></tr></thead>
+            <tbody>${lines}</tbody></table></div>` : ''}
+          ${plan.journalEntryNumber ? `<div class="hint">ใบสำคัญที่สร้าง:
+            <b>${Layout.esc(plan.journalEntryNumber)}</b></div>` : ''}`;
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

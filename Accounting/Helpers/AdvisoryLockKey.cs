@@ -79,4 +79,9 @@ public static class AdvisoryLockKey
     /// และตอนเปลี่ยนสถานะ (คีย์ = intent id) · สองแท็บที่กดจ่ายพร้อมกันต้องได้ QR ใบเดียว
     /// ไม่ใช่สองใบซ้อน · webhook กับ job กระทบยอดต้องไม่เขียนทับกัน</summary>
     public const string PaymentIntent = "pay-intent";
+
+    /// <summary>บันทึกเงินที่ผู้ให้บริการโอนเข้า (settlement) — ล็อก**ต่อ provider ต่อบริษัท**
+    /// เพราะการเลือกรายการ "ที่ยังไม่ถูกโอน" แล้วมาร์กทีหลังเป็น read-modify-write:
+    /// สองคนกดพร้อมกันจะเลือกชุดเดียวกันแล้วลง JE ซ้ำ ⇒ ธนาคารเกินสองเท่า</summary>
+    public const string GatewaySettlement = "pay-settle";
 }
