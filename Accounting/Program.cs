@@ -288,6 +288,14 @@ builder.Services.AddScoped<Accounting.Services.Payments.IGatewaySettlementServic
 // ไม่ใช่แก้ service กลาง · ต้นทางที่ยังไม่มีตัวจัดการจะ log error ดัง ๆ (ไม่เงียบ)
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.SiteOrderPaymentHandler>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.DocumentPaymentHandler>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.LodgingReservationPaymentHandler>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.SubscriptionPaymentHandler>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.PosOrderPaymentHandler>();
 // 3-way match — PO ↔ GRN ↔ Invoice. Blocks AP overpayment before
 // the cheque goes out.
 builder.Services.AddScoped<Accounting.Services.Implementations.Procurement.IGrnMatchService,

@@ -206,7 +206,7 @@ public partial class LodgingService
 
     // ═══════════════════════════ Confirm + deposit ═══════════════════════════
 
-    public async Task<LodgingReservationResponse> ConfirmAsync(Guid companyId, Guid reservationId, LodgingConfirmRequest request, string userId)
+    public async Task<LodgingReservationResponse> ConfirmAsync(Guid companyId, Guid reservationId, LodgingConfirmRequest request, string userId, Guid? moneyInAccountId = null)
     {
         var r = await RequireReservationAsync(companyId, reservationId);
         if (Terminal.Contains(r.Status)) throw new BusinessRuleException($"การจองอยู่ในสถานะ {StatusTh(r.Status)} — ยืนยันไม่ได้");
@@ -236,7 +236,7 @@ public partial class LodgingService
             // รับเงินไว้บนการจองตามปกติ และ**ยังนับมิเตอร์เท่าเดิม** (§13.3)
             if (r.Property.AccountingMode != LodgingAccountingMode.Off)
             {
-                var doc = await CreateDepositReceiptAsync(companyId, r, amount, request, userId);
+                var doc = await CreateDepositReceiptAsync(companyId, r, amount, request, userId, moneyInAccountId);
                 r.DepositDocumentId ??= doc.Id;
             }
             r.DepositPaid += amount; r.PaidAmount += amount;
@@ -254,7 +254,7 @@ public partial class LodgingService
     }
 
     /// <summary>ใบเสร็จมัดจำ — Receipt IsDeposit=true (Cr ขายรอรับรู้ 217xx) ยอด = gross ที่รับจริง</summary>
-    private async Task<DocumentResponse> CreateDepositReceiptAsync(Guid companyId, LodgingReservation r, decimal amount, LodgingConfirmRequest req, string userId)
+    private async Task<DocumentResponse> CreateDepositReceiptAsync(Guid companyId, LodgingReservation r, decimal amount, LodgingConfirmRequest req, string userId, Guid? moneyInAccountId = null)
     {
         var prop = r.Property;
         var vatRate = await EffectiveVatRateAsync(companyId, prop);
@@ -274,6 +274,9 @@ public partial class LodgingService
             },
             PricesIncludeVat: true,
             BankAccountId: req.BankAccountId,
+            // ขา "เงินเข้า" ของใบเสร็จมัดจำ: รับผ่าน gateway → บัญชีพัก 11340
+            // (เงินยังไม่เข้าธนาคาร จะเข้า T+n หลังหักค่าธรรมเนียม) · null = ตามเดิม
+            PaymentAccountId: moneyInAccountId,
             BranchId: prop.BranchId,
             IsDeposit: true,
             DepositDeferredAccountCode: prop.DepositDeferredAccountCode,

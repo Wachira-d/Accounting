@@ -55,7 +55,12 @@ public interface ILodgingService
     Task<PagedResponse<LodgingReservationListItem>> ListReservationsAsync(Guid companyId, Guid? propertyId, string? status, DateTime? from, DateTime? to, string? search, string? view, int page, int pageSize);
     Task<LodgingReservationResponse?> GetReservationAsync(Guid companyId, Guid reservationId);
     Task<LodgingReservationResponse> UpdateReservationAsync(Guid companyId, Guid reservationId, LodgingUpdateReservationRequest request, string userId);
-    Task<LodgingReservationResponse> ConfirmAsync(Guid companyId, Guid reservationId, LodgingConfirmRequest request, string userId);
+    /// <param name="moneyInAccountId">ผังบัญชีขา "เงินเข้า" ของใบเสร็จมัดจำ — <c>null</c> =
+    /// ธนาคาร/เงินสดตามปกติ · มีค่า = บัญชีพัก 11340 (รับผ่าน gateway เงินยังไม่เข้าธนาคาร) ·
+    /// ค่านี้มาจาก <c>IGatewayAccountResolver</c> ตัวเดียว — <b>พารามิเตอร์ของเมธอด
+    /// ไม่ใช่ช่องใน DTO</b> เหตุผลเดียวกับ originModule</param>
+    Task<LodgingReservationResponse> ConfirmAsync(Guid companyId, Guid reservationId,
+        LodgingConfirmRequest request, string userId, Guid? moneyInAccountId = null);
     Task<LodgingReservationResponse> AssignUnitAsync(Guid companyId, Guid reservationId, LodgingAssignUnitRequest request, string userId);
     Task<LodgingReservationResponse> CheckInAsync(Guid companyId, Guid reservationId, LodgingCheckInRequest request, string userId);
     Task<LodgingReservationResponse> AddChargeAsync(Guid companyId, Guid reservationId, LodgingAddChargeRequest request, string userId);

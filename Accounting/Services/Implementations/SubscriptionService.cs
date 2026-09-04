@@ -1620,7 +1620,8 @@ public class SubscriptionService : ISubscriptionService
     }
 
     public async Task<SubscriptionPaymentResponse> ReviewPaymentAsync(
-        Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy)
+        Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy,
+        bool systemConfirmed = false)
     {
         var payment = await _db.SubscriptionPayments
             .Include(p => p.Subscription)
@@ -1630,8 +1631,16 @@ public class SubscriptionService : ISubscriptionService
         if (payment.Status != SubscriptionPaymentStatus.Pending && payment.Status != SubscriptionPaymentStatus.UnderReview)
             throw new InvalidOperationException("ไม่สามารถตรวจสอบรายการนี้ได้ เนื่องจากสถานะไม่ใช่รอตรวจสอบ");
 
-        if (!Guid.TryParse(performedBy, out var reviewerUserId))
-            throw new InvalidOperationException("ไม่สามารถระบุผู้ตรวจสอบได้");
+        // เส้น "ระบบยืนยันเอง" (เงินเข้าจริงผ่านช่องทางชำระออนไลน์) ไม่มีผู้ตรวจสอบ
+        // ที่เป็นคน ⇒ เก็บ null แล้วบอกเหตุผลใน ReviewNotes · ห้ามแต่ง user id ปลอม
+        // ให้ช่องไม่ว่าง (ผู้สอบบัญชีต้องแยกออกว่า "ใครอนุมัติ" กับ "ระบบอนุมัติ")
+        Guid? reviewerUserId = null;
+        if (!systemConfirmed)
+        {
+            if (!Guid.TryParse(performedBy, out var parsed))
+                throw new InvalidOperationException("ไม่สามารถระบุผู้ตรวจสอบได้");
+            reviewerUserId = parsed;
+        }
 
         payment.ReviewedByUserId = reviewerUserId;
         payment.ReviewedAt = DateTime.UtcNow;

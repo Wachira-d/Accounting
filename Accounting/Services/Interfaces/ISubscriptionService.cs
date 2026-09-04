@@ -49,7 +49,13 @@ public interface ISubscriptionService
     Task<SubscriptionPaymentResponse> UploadPaymentSlipAsync(Guid paymentId, string fileName, string originalFileName, string contentType, long fileSize, string storagePath, string performedBy);
     Task<SubscriptionPaymentListResponse> GetPaymentsAsync(Guid companyId);
     Task<SubscriptionPaymentResponse> GetPaymentAsync(Guid paymentId);
-    Task<SubscriptionPaymentResponse> ReviewPaymentAsync(Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy);
+    /// <param name="systemConfirmed">ยืนยันโดย<b>ระบบ</b> (เงินเข้าจริงผ่านช่องทางชำระออนไลน์)
+    /// ไม่ใช่คนกดตรวจสลิป ⇒ ไม่มี "ผู้ตรวจสอบ" ให้บันทึก · <c>ReviewedByUserId</c> เป็น null
+    /// และเหตุผลถูกเขียนลง <c>ReviewNotes</c> แทน
+    /// <para>เส้นที่คนกดยังต้องส่ง <paramref name="performedBy"/> เป็น Guid เหมือนเดิม —
+    /// พารามิเตอร์นี้<b>ไม่ผ่อนด่านของเส้นนั้น</b> (ผู้สอบบัญชีต้องแยกออกว่าใครอนุมัติ)</para></param>
+    Task<SubscriptionPaymentResponse> ReviewPaymentAsync(Guid paymentId,
+        ReviewSubscriptionPaymentRequest request, string performedBy, bool systemConfirmed = false);
     /// <summary>WP-C1: admin บันทึกรับเงินเอง/ยกเว้น — สร้าง payment แล้วอนุมัติ
     /// ทันทีผ่านเส้น renewal เดิม (ต่ออายุ+ประวัติ+ใบเสร็จ). ทุกบาทมี record.</summary>
     Task<SubscriptionPaymentResponse> RecordManualPaymentAsync(Guid companyId, RecordManualPaymentRequest request, string performedBy);

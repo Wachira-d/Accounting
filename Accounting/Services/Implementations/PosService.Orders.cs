@@ -1252,7 +1252,12 @@ public partial class PosService
         {
             foreach (var pay in paymentsToBook)
             {
-                var acct = await ResolvePaymentAccountAsync(companyId, pay.PaymentMethod, jeTerminal);
+                // บิลที่ลูกค้าสแกนจ่ายผ่านระบบรับชำระออนไลน์: เงิน**ยังไม่เข้าบัญชีร้าน**
+                // ผู้ให้บริการโอนเข้า T+n หลังหักค่าธรรมเนียม ⇒ ต้องลงบัญชีพัก 11340
+                // ไม่ใช่บัญชีธนาคาร/ลิ้นชักของสาขา (ลงธนาคารเลย = ยอดธนาคารสูงเกินจริง
+                // และกระทบยอดรายสาขาไม่ได้) · ตัวตัดสินคือ resolver ตัวเดียวของระบบ
+                var acct = await ResolveGatewayClearingAsync(companyId, pay)
+                    ?? await ResolvePaymentAccountAsync(companyId, pay.PaymentMethod, jeTerminal);
                 if (acct == null) continue;
                 // Use Amount (allocated to invoice), not ReceivedAmount, so cash-tendered-with-change
                 // posts the invoice value, not the full bill the customer handed over.
@@ -1761,6 +1766,25 @@ public partial class PosService
     // the Thai SME chart-of-accounts seeded by SeedCoaService:
     //   1011 เงินสด / 1012 ธนาคาร / 1131 บัตรเครดิตค้างรับ
     // Fallback by prefix lets companies with a customized COA still resolve.
+    /// <summary>บัญชีพักของ gateway สำหรับรายการที่จ่ายผ่านระบบรับชำระออนไลน์ —
+    /// <c>null</c> = ไม่ได้จ่ายผ่าน gateway (หรือ gateway นั้นเงินเข้าธนาคารทันที)
+    /// ⇒ ผู้เรียกตกไปใช้ผังตามวิธีจ่ายเหมือนเดิม
+    ///
+    /// <para>กติกาอยู่ที่ <see cref="IGatewayAccountResolver"/> ที่เดียวของระบบ —
+    /// ห้าม POS ตัดสินเองว่าเจ้าไหนเข้าธนาคารทันที (จะกลายเป็นกติกาชุดที่สอง)</para></summary>
+    private async Task<Accounting.Models.Entities.ChartOfAccount?> ResolveGatewayClearingAsync(
+        Guid companyId, PosPayment pay)
+    {
+        if (_gatewayAccounts == null || pay.PaymentIntentId is not Guid intentId) return null;
+        var intent = await _db.PaymentIntents.AsNoTracking()
+            .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId);
+        if (intent == null) return null;
+        var accId = await _gatewayAccounts.ResolveMoneyInAccountAsync(intent);
+        if (accId is not Guid id) return null;
+        return await _db.ChartOfAccounts.FirstOrDefaultAsync(
+            a => a.Id == id && a.CompanyId == companyId && !a.IsDeleted);
+    }
+
     private async Task<Accounting.Models.Entities.ChartOfAccount?> ResolvePaymentAccountAsync(
         Guid companyId, PaymentMethod method, PosTerminal? terminal = null)
     {

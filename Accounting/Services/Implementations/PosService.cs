@@ -17,15 +17,21 @@ public partial class PosService : IPosService
     /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ — POS ห้าม `CurrentStock ±=` เองอีก
     /// (เดิมทำ 4 จุดโดยไม่ระบุคลัง ⇒ ขายที่สาขาไหนก็ตัดยอดรวมของบริษัท)</summary>
     private readonly IStockLedger _stock;
+    /// <summary>ผังบัญชีขา "เงินเข้า" ของบิลที่จ่ายผ่านระบบรับชำระออนไลน์ —
+    /// optional เพื่อให้เทสต์/เส้นทางเดิมที่ไม่ผูก gateway สร้าง PosService ได้ตามเดิม
+    /// (null = ใช้ผังตามวิธีจ่ายเหมือนก่อนมีฟีเจอร์นี้ทุกประการ)</summary>
+    private readonly Accounting.Services.Payments.IGatewayAccountResolver? _gatewayAccounts;
 
     public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger,
-        IStockLedger stock, IEmailSenderFactory? emailFactory = null)
+        IStockLedger stock, IEmailSenderFactory? emailFactory = null,
+        Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null)
     {
         _db = db;
         _accountingService = accountingService;
         _logger = logger;
         _stock = stock;
         _emailFactory = emailFactory;
+        _gatewayAccounts = gatewayAccounts;
     }
 
     // ==================== Terminal ====================
