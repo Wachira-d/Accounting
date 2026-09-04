@@ -405,6 +405,9 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
                 case AiCallStatus.InvalidResponse: row.CallsFailed++; break;
                 case AiCallStatus.BudgetExceeded: row.CallsBudgetBlocked++; break;
                 case AiCallStatus.NoProvider: row.CallsNoProvider++; break;
+                // ไม่เคยยิง provider เลย = ประหยัดเต็ม ๆ (ไม่ต้องมีเงื่อนไข
+                // LocalModelAnswer เพราะสถานะนี้แปลว่ามีคำตอบจากในบ้านแน่นอน)
+                case AiCallStatus.LocalServed: row.CallsLocalServed++; break;
                 case AiCallStatus.Skipped:
                     // "ข้าม" ที่ local ตอบแทนได้จริง = ครั้งที่ประหยัดเงินไป
                     // (ตัวชี้วัด sovereignty ตามกฎเหล็ก #1). ข้ามที่ไม่มีคำตอบ

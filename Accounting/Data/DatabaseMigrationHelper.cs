@@ -5884,6 +5884,21 @@ public static class DatabaseMigrationHelper
             // (แถวใหม่ที่ seed ด้านล่างเป็น BusinessAddOn/SystemMeter)
             """UPDATE "ApiFeatures" SET "ModuleCode" = 'Api' WHERE "ModuleCode" IS NULL AND "Kind" = 1;""",
 
+            // ── แถวเก่าที่ติดป้าย "เรียก AI แล้ว" ทั้งที่ไม่เคยเรียก (ผลตรวจ AI-02/AI-03) ──
+            // 27 endpoint heuristic ใน AiSuggestionController เขียน Status=Success +
+            // ProviderUsed=DeepSeek มาตลอด ⇒ AiBudgetGuard นับเป็น call ที่เสียเงิน
+            // (daily cap เต็มเพราะปุ่มที่ไม่เสียตังค์) และรายงานขึ้น "สำเร็จ (เรียก AI)"
+            // ให้ call ที่ไม่เคยเกิด. แก้โค้ดอย่างเดียวไม่พอ — แถวที่สะสมไว้ยังโกหกต่อไป
+            // (บทเรียนเดียวกับ OcrLearnedPatterns.ExtractionRegex / VendorKnownGoodValues)
+            //
+            // เกณฑ์คัดต้องแม่น เพราะเดาผิดฝั่งไหนก็เสียหาย: ปล่อยแถวจริงหลุด = cap ไม่กัน
+            // ของจริง · ตีแถวจริงเป็น local = นับต้นทุนขาด. ใช้ลายเซ็นของ "การเรียก HTTP
+            // ที่เกิดขึ้นจริง" 3 อย่างพร้อมกัน — มี latency · มี token · มีต้นทุน
+            // ซึ่ง call จริงมีครบเสมอ ส่วน heuristic เขียน 0 ไว้ตายตัวทั้งสามช่อง ·
+            // และเว้นแถวลูกสังเคราะห์ของ bulk call (CacheHitOfFeedbackId ไม่ null)
+            // ที่ latency/token เป็น 0 โดยชอบธรรมเพราะแม่ของมันเป็น call จริง
+            """UPDATE "AiSuggestionFeedbacks" SET "Status" = 8, "ProviderUsed" = 0 WHERE "Status" = 1 AND "ProviderUsed" <> 0 AND COALESCE("LatencyMs", 0) = 0 AND COALESCE("InputTokens", 0) = 0 AND COALESCE("OutputTokens", 0) = 0 AND COALESCE("CostUsd", 0) = 0 AND "CacheHitOfFeedbackId" IS NULL;""",
+
             // ── seed add-on ของโมดูลที่พัก + มิเตอร์ระบบ ──
             // ต่างจาก seed ของ Connected API ตรงที่ **ตั้งราคาตั้งต้นให้ด้วย** (ด้านล่าง)
             // เพราะเจ้าของระบบกำหนดตัวเลขมาแล้ว ("guest portal +100/เดือน") และ add-on ที่

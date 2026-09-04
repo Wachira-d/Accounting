@@ -100,7 +100,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: answer, LocalModelConfidence: confidence,
                 LocalModelVersion: "memory-v1",
                 SourceEntityType: entityType, SourceEntityId: entityId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "memory", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -158,7 +158,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: answer, LocalModelConfidence: confidence,
                 LocalModelVersion: pred?.ModelVersion ?? model.Version,
                 SourceEntityType: "Contact", SourceEntityId: contactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: pred?.ModelVersion, LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -403,7 +403,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: acct.Id.ToString(), LocalModelConfidence: confidence,
                 LocalModelVersion: "slot-heuristic-v1",
                 SourceEntityType: "ChartOfAccount", SourceEntityId: acct.Id,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.None,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "slot-heuristic", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -557,7 +557,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelVersion: "heuristic-v1",
                 SourceEntityType: "DocumentLine",
                 SourceEntityId: req.ContactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.None,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "heuristic", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -666,7 +666,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: days.ToString(), LocalModelConfidence: confidence,
                 LocalModelVersion: "lookup-v1",
                 SourceEntityType: "Contact", SourceEntityId: contactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "lookup", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -806,7 +806,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: channelValue, LocalModelConfidence: confidence,
                 LocalModelVersion: "history-mode-v1",
                 SourceEntityType: "Contact", SourceEntityId: contactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -909,7 +909,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: pickedId?.ToString() ?? "", LocalModelConfidence: confidence,
                 LocalModelVersion: "history-mode-v1",
                 SourceEntityType: "Contact", SourceEntityId: contactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1028,7 +1028,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelConfidence: ranked.FirstOrDefault()?.Score ?? 0m,
                 LocalModelVersion: "bigram-v1",
                 SourceEntityType: "Contact", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "bigram", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1153,7 +1153,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelConfidence: suggestions.FirstOrDefault()?.confidence ?? 0m,
                 LocalModelVersion: "history-mode-v1",
                 SourceEntityType: "JournalEntryLine", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1243,7 +1243,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: pickedId?.ToString() ?? "", LocalModelConfidence: confidence,
                 LocalModelVersion: "history-mode-v1",
                 SourceEntityType: "Contact", SourceEntityId: contactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1313,7 +1313,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: category, LocalModelConfidence: 0.80m,
                 LocalModelVersion: "keyword-v1",
                 SourceEntityType: "FixedAsset", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "keyword", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1417,7 +1417,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: rate.ToString("0.######"), LocalModelConfidence: confidence,
                 LocalModelVersion: "lookup-v1",
                 SourceEntityType: "CurrencyRate", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "lookup", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1505,7 +1505,7 @@ public class AiSuggestionController : ControllerBase
                 AiConfidence: 0.80m, LocalModelAnswer: net.ToString("0"),
                 LocalModelConfidence: 0.80m, LocalModelVersion: "template-v1",
                 SourceEntityType: "CashFlowForecast", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.None,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "template", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1639,7 +1639,7 @@ public class AiSuggestionController : ControllerBase
                 AiConfidence: 0.90m, LocalModelAnswer: perCustomer.Count.ToString(),
                 LocalModelConfidence: 0.90m, LocalModelVersion: "rfm-v1",
                 SourceEntityType: "Contact", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "rfm", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1732,7 +1732,7 @@ public class AiSuggestionController : ControllerBase
                 AiConfidence: 0.90m, LocalModelAnswer: aCount.ToString(),
                 LocalModelConfidence: 0.90m, LocalModelVersion: "pareto-v1",
                 SourceEntityType: "Product", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "pareto", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1861,7 +1861,7 @@ public class AiSuggestionController : ControllerBase
                 AiConfidence: 0.80m, LocalModelAnswer: mappedCount.ToString(),
                 LocalModelConfidence: 0.80m, LocalModelVersion: "bigram-keyword-v1",
                 SourceEntityType: req.EntityType, SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "bigram-keyword", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -1921,7 +1921,7 @@ public class AiSuggestionController : ControllerBase
                 AiConfidence: 0.95m, LocalModelAnswer: dead.Count.ToString(),
                 LocalModelConfidence: 0.95m, LocalModelVersion: "stats-v1",
                 SourceEntityType: "Product", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2012,7 +2012,7 @@ public class AiSuggestionController : ControllerBase
                 AiConfidence: 0.80m, LocalModelAnswer: totalAddback.ToString("0.##"),
                 LocalModelConfidence: 0.80m, LocalModelVersion: "rules-v1",
                 SourceEntityType: "FiscalYear", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "rules", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2084,7 +2084,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelConfidence: confidence,
                 LocalModelVersion: "stats-v1",
                 SourceEntityType: "Product", SourceEntityId: productId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2188,7 +2188,7 @@ public class AiSuggestionController : ControllerBase
                 AiConfidence: 0.95m, LocalModelAnswer: issues.Count.ToString(),
                 LocalModelConfidence: 0.95m, LocalModelVersion: "rules-v1",
                 SourceEntityType: "FiscalPeriod", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "rules", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2286,7 +2286,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: band, LocalModelConfidence: 0.85m,
                 LocalModelVersion: "stats-v1",
                 SourceEntityType: "Contact", SourceEntityId: contactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2366,7 +2366,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: suggested.ToString("0.##"), LocalModelConfidence: 0.75m,
                 LocalModelVersion: "tier-v1",
                 SourceEntityType: "Contact", SourceEntityId: contactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "tier", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2445,7 +2445,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelConfidence: confidence,
                 LocalModelVersion: "history-mode-v1",
                 SourceEntityType: "Document", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2523,7 +2523,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: suggested.ToString("0"), LocalModelConfidence: confidence,
                 LocalModelVersion: "stats-v1",
                 SourceEntityType: "Contact", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2619,7 +2619,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: matched?.Id.ToString() ?? category, LocalModelConfidence: 0.75m,
                 LocalModelVersion: "keyword-v1",
                 SourceEntityType: "Product", SourceEntityId: null,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "keyword", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }
@@ -2699,7 +2699,7 @@ public class AiSuggestionController : ControllerBase
                     LocalModelAnswer: severity, LocalModelConfidence: 0.85m,
                     LocalModelVersion: "stats-v1",
                     SourceEntityType: "DocumentLine", SourceEntityId: req.ContactId,
-                    Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                    Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                     ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                     CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
             }
@@ -2789,7 +2789,7 @@ public class AiSuggestionController : ControllerBase
                 LocalModelAnswer: memo, LocalModelConfidence: 0.75m,
                 LocalModelVersion: "template-v1",
                 SourceEntityType: "Document", SourceEntityId: req.ContactId,
-                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.None,
+                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
                 ModelVersion: "template", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
                 CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
         }

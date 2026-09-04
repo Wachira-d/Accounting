@@ -76,12 +76,14 @@ public class AiBudgetGuard : IAiBudgetGuard
                 // budget-exceeded, synthetic child rows ของ bulk match) ถ้านับทั้งหมด
                 // cap จะถูกกินโดยงานที่ไม่ได้เสียเงิน และยิ่ง local model แม่นขึ้น
                 // (ยิง provider น้อยลง) cap ยิ่งเต็มเร็วขึ้น — ตรงข้ามกับเจตนา
-                var billableStatuses = new[]
-                {
-                    AiCallStatus.Success, AiCallStatus.Failed, AiCallStatus.InvalidResponse,
-                };
+                // ⚠️ คอมเมนต์ข้างบนเขียนเจตนาไว้ถูกตั้งแต่ต้น แต่ตัวกรองเดิมดูแค่
+                // สถานะ จึงยังรั่ว 2 ทาง (ผลตรวจ AI-02) — heuristic ที่ติดป้าย
+                // Success+DeepSeek และแถวลูกสังเคราะห์ของ bulk call
+                // ตัวตัดสินย้ายไป `Helpers/AiCallBilling.BillableRow` ที่เดียว
+                // เพื่อให้เทสต์ล็อกกติกาเดียวกับที่ SQL ใช้จริงได้
                 callsToday = await _db.AiSuggestionFeedbacks
-                    .Where(f => f.CreatedAt >= todayUtc && billableStatuses.Contains(f.Status))
+                    .Where(f => f.CreatedAt >= todayUtc)
+                    .Where(Accounting.Helpers.AiCallBilling.BillableRow)
                     .CountAsync(ct);
                 costMonth = await _db.AiSuggestionFeedbacks
                     .Where(f => f.CreatedAt >= monthStart && f.CostUsd != null)

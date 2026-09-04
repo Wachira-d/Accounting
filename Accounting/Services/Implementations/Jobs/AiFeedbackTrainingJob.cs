@@ -88,7 +88,14 @@ public class AiFeedbackTrainingJob : BackgroundService
                 Samples = g.Count(),
                 LocalCorrect = g.Count(f => f.LocalModelAnswer != null
                                             && f.LocalModelAnswer == f.UserChosenAnswer),
-                AiCorrect = g.Count(f => f.UserAcceptedAi == true),
+                // ⚠️ "ความแม่นของ AI" ต้องหารด้วยจำนวนครั้งที่ **AI ตอบจริง**
+                // ไม่ใช่จำนวนแถวทั้งหมด — 27 endpoint heuristic เขียนแถวโดยไม่เคย
+                // ยิง provider (ผลตรวจ AI-03) ⇒ ถ้าหารด้วย Samples ทั้งก้อน
+                // AiAccuracy30d จะถูกเจือจางลงตามจำนวนครั้งที่ local ทำงานได้ดี
+                // = ยิ่ง local เก่ง ตัวเลข "AI แม่นแค่ไหน" ยิ่งดูแย่ ซึ่งไม่มีความหมาย
+                AiSamples = g.Count(f => f.ProviderUsed != AiProviderType.None),
+                AiCorrect = g.Count(f => f.UserAcceptedAi == true
+                                          && f.ProviderUsed != AiProviderType.None),
                 Agreement = g.Count(f => f.AiPrimaryAnswer != null && f.LocalModelAnswer != null
                                           && f.AiPrimaryAnswer == f.LocalModelAnswer),
             })
@@ -104,7 +111,7 @@ public class AiFeedbackTrainingJob : BackgroundService
             }
             health.SamplesLast30d = r.Samples;
             health.LocalAccuracy30d = r.Samples > 0 ? (decimal)r.LocalCorrect / r.Samples : 0m;
-            health.AiAccuracy30d = r.Samples > 0 ? (decimal)r.AiCorrect / r.Samples : 0m;
+            health.AiAccuracy30d = r.AiSamples > 0 ? (decimal)r.AiCorrect / r.AiSamples : 0m;
             health.AgreementRate30d = r.Samples > 0 ? (decimal)r.Agreement / r.Samples : 0m;
             health.LastEvaluatedAt = DateTime.UtcNow;
 

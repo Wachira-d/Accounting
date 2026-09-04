@@ -1864,6 +1864,27 @@ public enum AiCallStatus
     /// <summary>Provider returned a response that failed schema validation
     /// or Thai-compliance double-check.</summary>
     InvalidResponse = 7,
+
+    /// <summary>
+    /// **ตอบด้วยของในบ้านล้วน — ไม่เคยยิง provider เลย** (heuristic / กติกา /
+    /// memory ที่เรียนไว้ / distillation model). บันทึกแถวไว้เพื่อ **training**
+    /// อย่างเดียว ไม่ใช่เพื่อคิดเงินหรือคิดโควตา
+    ///
+    /// <para>═══ ที่มา (ผลตรวจ AI-02 / AI-03) ═══ 27 endpoint ใน
+    /// <c>AiSuggestionController</c> เป็น heuristic ล้วน (history-mode · stats ·
+    /// bigram · keyword · rfm · pareto · lookup · rules · memory) แต่บันทึกแถวเป็น
+    /// <c>Success</c> + <c>ProviderUsed = DeepSeek</c> ⇒ (ก) <c>AiBudgetGuard</c>
+    /// นับเป็น call ที่เสียเงิน ⇒ **วันที่ผู้ใช้กดปุ่มแนะนำ (ฟรี) เยอะ daily cap
+    /// เต็ม แล้วบล็อก AI ของจริงทั้ง tenant** และยิ่ง local แม่นขึ้น cap ยิ่งเต็ม
+    /// เร็วขึ้น — ตรงข้ามกับเจตนาของกฎเหล็ก #1 (ข) รายงานการใช้ AI ขึ้น
+    /// "สำเร็จ (เรียก AI)" ให้ call ที่ไม่เคยเกิด ⇒ ตัวชี้วัด
+    /// "<c>UsedAi</c> ลดลงเรื่อย ๆ" (กฎเหล็ก #1 ข้อ 6) อ่านไม่ได้เลย</para>
+    ///
+    /// <para>ต่างจาก <see cref="Skipped"/> ตรงเจตนา: Skipped = "ตั้งใจจะเรียก AI
+    /// แต่ถูกปิด/ตัดสินใจไม่เรียก" · LocalServed = "ฟีเจอร์นี้ไม่เคยต้องใช้ AI
+    /// อยู่แล้ว" — ทั้งคู่ไม่เสียเงิน แต่แยกกันเพื่อให้อัตราส่วนที่รายงานมีความหมาย</para>
+    /// </summary>
+    LocalServed = 8,
 }
 
 /// <summary>

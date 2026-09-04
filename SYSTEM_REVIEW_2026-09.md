@@ -38,7 +38,7 @@
 | 10 | ✅ แก้ไปก่อนหน้าแล้ว H-A1 | `quick-sale.html` เรียก `Layout.toDateInput` แต่ไม่โหลด layout.js ⇒ ขายเร็วขายไม่ได้เลย (มีเมนู + ปุ่มมือถือ) | ผู้ใช้เจอทุกวัน · 1 บรรทัด | S |
 | 11 | H-A2 + H-A3 | ใบแจ้งหนี้ Time Billing VAT=0 ตายตัว · POS ใช้ UtcNow ⇒ ขาย 00:00–07:00 ตกวัน/เดือนก่อน (ภ.พ.30 ผิดงวด) | เงิน/ภาษี | M+S |
 | 12 | ✅ E-AI-01 | `ToResult` ส่ง `RawResponseJson` ที่ local path เป็น null เสมอ ⇒ student ที่เขียนเพื่อ kill-switch ถูกทิ้ง ผู้ใช้เห็น "🤖 AI ตรวจสอบเสร็จ" + แผงว่าง (3 feature) | ละเมิดกฎเหล็ก #1 · 1 บรรทัด | S |
-| 13 | E-AI-02 + E-AI-03 | budget guard นับ heuristic/memory เป็น call จริง ⇒ daily cap เต็มแล้วบล็อก AI จริง · รายงานการใช้ AI นับ call ที่ไม่เคยเกิด · memory hit บันทึก ProviderUsed=DeepSeek | ต้นทุน + ตัวชี้วัดโกหก | S+S |
+| 13 | ✅ E-AI-02 + E-AI-03 | budget guard นับ heuristic/memory เป็น call จริง ⇒ daily cap เต็มแล้วบล็อก AI จริง · รายงานการใช้ AI นับ call ที่ไม่เคยเกิด · memory hit บันทึก ProviderUsed=DeepSeek | ต้นทุน + ตัวชี้วัดโกหก | S+S |
 | 14 | F-06 | DataProtection key ring บนดิสก์ท้องถิ่น `./.dpkeys` ⇒ replica ที่ 2 ถอด PII ไม่ออก / restart ไม่มี volume = เลขบัตร ปชช. หายถาวร | **ต้องแก้ก่อนขึ้น replica ที่สอง** | M |
 | 15 | F-08 + F-09 | ตัวออกเลข ~25 จุด `Max()+1` ไม่มี advisory lock ไม่มี unique index (JE/Payment/POS/50ทวิ) · background job 11/12 ไม่มีล็อกข้าม instance | เลขซ้ำ/JE ซ้ำ/อีเมลซ้ำเมื่อ scale | L+M |
 | 16 | H-A4 | จุดสร้าง ApiKey ไม่เคยเซ็ต `Scopes` แต่ `/api/v1` ปฏิเสธคีย์ที่ไม่มี scope ⇒ ผลิตภัณฑ์ Connected ทั้งก้อนใช้ไม่ได้ + UsageEvent 0 แถวตลอดกาล (ไม่มีวัน metering) | รายได้ | M |
@@ -79,7 +79,7 @@
 10. H-A1 (1 บรรทัด) · H-A2 TimeBilling ผ่าน CreateDocumentAsync · H-A3 ThaiDate ใน POS · H-A18 throw · H-A16 dropdown ลูกค้า
 
 **Sprint 2 — AI/OCR ตามกฎเหล็ก #1/#3 (3–4 วัน)**
-11. ✅ E-AI-01 (`LocalPrediction.StructuredJson` + `AiRequest.LocalRawJson` + ต่อสาย 3 จุดใน orchestrator + `OcrFullReviewDistillationModel` ส่งโครงออกมา + toast/หัวแผงซื่อสัตย์ตาม `usedAi`) · E-AI-02+03 `AiCallStatus.LocalServed` + แก้ผู้บริโภค 3 จุด · E-AI-07 advisory lock training job
+11. ✅ E-AI-01 (`LocalPrediction.StructuredJson` + `AiRequest.LocalRawJson` + ต่อสาย 3 จุดใน orchestrator + `OcrFullReviewDistillationModel` ส่งโครงออกมา + toast/หัวแผงซื่อสัตย์ตาม `usedAi`) · ✅ E-AI-02+03 (`AiCallStatus.LocalServed` + 27 จุดที่ต้นทาง + `Helpers/AiCallBilling` ตัวตัดสินตัวเดียว + migration ล้างแถวเก่า + `AiAccuracy30d` หารด้วยจำนวนครั้งที่ AI ตอบจริง) · ยังค้าง: E-AI-07 advisory lock training job
 12. E-OCR-01 + OCR-02: VatRate เป็นพลเมืองชั้นหนึ่งของ pipeline (entity→JSON→DTO→review) + VatTypeInference ต่อบรรทัด + ด่าน Σ
 13. E-AI-06 sanitizer (email/bank regex · `_pii` producer จริง · AllowTaxIdInPrompt แยกนิติบุคคล) · E-OCR-03/04/05 · E-AI-10 enum ตาย 8 ค่า ตัดสินใจ
 

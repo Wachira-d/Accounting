@@ -203,7 +203,11 @@ public class AiUsageReportService
                 CallsTotal = g.Count(),
                 CallsAi = g.Count(x => x.Status == AiCallStatus.Success),
                 CallsCached = g.Count(x => x.Status == AiCallStatus.Cached),
-                CallsLocalServed = g.Count(x => x.Status == AiCallStatus.Skipped && x.LocalModelAnswer != null),
+                // LocalServed = ฟีเจอร์ที่ไม่เคยต้องใช้ AI · Skipped ที่มีคำตอบ local
+                // = ตั้งใจจะเรียกแต่ local ตอบแทนได้ — ทั้งคู่คือ "ครั้งที่ประหยัดเงินไป"
+                // (เดิมนับเฉพาะ Skipped ⇒ 27 endpoint heuristic ไปโผล่ที่ CallsAi แทน)
+                CallsLocalServed = g.Count(x => x.Status == AiCallStatus.LocalServed
+                    || (x.Status == AiCallStatus.Skipped && x.LocalModelAnswer != null)),
                 CallsFailed = g.Count(x => x.Status == AiCallStatus.Failed || x.Status == AiCallStatus.InvalidResponse),
                 CallsBudgetBlocked = g.Count(x => x.Status == AiCallStatus.BudgetExceeded),
                 CallsNoProvider = g.Count(x => x.Status == AiCallStatus.NoProvider),
@@ -445,6 +449,7 @@ public class AiUsageReportService
         AiCallStatus.Cached => "ใช้คำตอบจากแคช",
         AiCallStatus.Failed => "ล้มเหลว",
         AiCallStatus.Skipped => "ข้าม (local ตอบเอง)",
+        AiCallStatus.LocalServed => "ตอบด้วยระบบในบ้าน (ไม่เรียก AI)",
         AiCallStatus.BudgetExceeded => "ถูกงบสกัด",
         AiCallStatus.NoProvider => "ไม่มี provider",
         AiCallStatus.InvalidResponse => "คำตอบไม่ผ่านการตรวจ",
