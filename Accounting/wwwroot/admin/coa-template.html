@@ -118,7 +118,7 @@
             html += `<option value="b:${b.type}" data-name="${AdminLayout.esc(b.name)}">🏢 ${AdminLayout.esc(b.name)} — ${b.equityLabel} (${b.count})</option>`;
           html += `</optgroup><optgroup label="บัญชีเฉพาะอุตสาหกรรม">`;
           for (const i of d.industryTypes)
-            html += `<option value="i:${i.type}" data-name="${AdminLayout.esc(i.name)}">${i.icon} ${i.name} (${i.count})</option>`;
+            html += `<option value="i:${i.type}" data-name="${AdminLayout.esc(i.name)}">${i.icon} ${AdminLayout.esc(i.name)} (${i.count})</option>`;
           html += `</optgroup>`;
           sel.innerHTML = html;
           sel.value = this.scopeKey;
@@ -187,7 +187,8 @@
         document.getElementById('rowCount').textContent =
           this.rows.length ? `(${view.length}/${this.rows.length} รายการ)` : '';
       },
-      esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); },
+      // หนีข้อความ = ตัวกลางตัวเดียวของระบบ (สำเนามือหนีไม่ครบ ⇒ ค่าที่มี " แตกออกจาก attribute)
+      esc(s) { return AdminLayout.esc(s); },
       upd(i, field, val) { if (this.rows[i]) this.rows[i][field] = val; },
       addRow() {
         this.rows.unshift({ accountCode:'', accountNameTh:'', accountNameEn:'',

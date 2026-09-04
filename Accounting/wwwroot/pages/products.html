@@ -409,7 +409,7 @@
               <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${p.id}')" data-i18n="common.view">ดู</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${p.id}')" data-i18n="common.edit">แก้ไข</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.openRecipe('${p.id}')" title="สูตรวัตถุดิบ — ขาย 1 หน่วยแล้วตัดอะไรบ้าง">🧪 สูตร</button>
-              ${p.trackStock ? `<button class="btn btn-sm btn-primary" onclick="Page.quickAdjustStock('${p.id}','${(p.name||'').replace(/'/g, '&apos;')}','${p.unit||''}',${p.currentStock||0},${p.costPrice||0})" title="เพิ่ม/ลด/ปรับสต็อก">📦 สต็อก</button>` : ''}
+              ${p.trackStock ? `<button class="btn btn-sm btn-primary" onclick="Page.quickAdjustStock('${p.id}','${Layout.jsArg(p.name||'')}','${p.unit||''}',${p.currentStock||0},${p.costPrice||0})" title="เพิ่ม/ลด/ปรับสต็อก">📦 สต็อก</button>` : ''}
             </td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages||1, 'Page.goPage');

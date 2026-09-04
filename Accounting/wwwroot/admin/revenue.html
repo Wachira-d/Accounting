@@ -67,7 +67,7 @@
         <thead><tr><th>บริษัท</th><th>แพ็กเกจ</th><th>หมดอายุ</th><th class="admin-text-right">ยอด</th><th></th></tr></thead>
         <tbody>${rows.map(r => `
           <tr>
-            <td>${r.companyName || '-'}</td>
+            <td>${AdminLayout.esc(r.companyName || '-')}</td>
             <td>${AdminLayout.planBadge(r.plan)}</td>
             <td>${AdminLayout.date(r.endDate)}</td>
             <td class="admin-text-right"><strong>${AdminLayout.money(r.amount)}</strong></td>
@@ -117,7 +117,7 @@
               <thead><tr><th>บริษัท</th><th>แพ็กเกจ</th><th>สถานะ</th><th>หมดอายุ</th><th class="admin-text-right">ยอด</th><th></th></tr></thead>
               <tbody>${pd.map(r => `
                 <tr>
-                  <td>${r.companyName || '-'}</td>
+                  <td>${AdminLayout.esc(r.companyName || '-')}</td>
                   <td>${AdminLayout.planBadge(r.plan)}</td>
                   <td>${AdminLayout.statusBadge(r.status)}</td>
                   <td>${AdminLayout.date(r.endDate)}</td>
@@ -128,7 +128,7 @@
                   </td>
                 </tr>`).join('')}</tbody></table></div>`;
       } catch (err) {
-        document.getElementById('kpi').innerHTML = `<div class="admin-kpi"><div class="admin-kpi-label" style="color:var(--admin-danger)">${err.message}</div></div>`;
+        document.getElementById('kpi').innerHTML = `<div class="admin-kpi"><div class="admin-kpi-label" style="color:var(--admin-danger)">${AdminLayout.esc(err.message)}</div></div>`;
       }
       loadUsageAlerts();
     }
@@ -143,7 +143,7 @@
               <thead><tr><th>บริษัท</th><th>แพ็กเกจ</th><th>รายการ</th><th>ใช้/จำกัด</th><th>%</th><th></th></tr></thead>
               <tbody>${rows.map(r => `
                 <tr>
-                  <td>${r.companyName}</td>
+                  <td>${AdminLayout.esc(r.companyName)}</td>
                   <td>${AdminLayout.planBadge(r.plan)}</td>
                   <td>${r.metric}</td>
                   <td class="admin-text-right">${r.used} / ${r.max}</td>
@@ -151,7 +151,7 @@
                   <td><a class="admin-btn admin-btn-outline admin-btn-sm" href="/admin/customers.html">ดูบริษัท</a></td>
                 </tr>`).join('')}</tbody></table></div>`;
       } catch (err) {
-        document.getElementById('usageAlerts').innerHTML = `<div style="color:var(--admin-danger);padding:16px">${err.message}</div>`;
+        document.getElementById('usageAlerts').innerHTML = `<div style="color:var(--admin-danger);padding:16px">${AdminLayout.esc(err.message)}</div>`;
       }
     }
 

@@ -323,7 +323,7 @@
         lines.push(`<span style="color:#991b1b">${esc(d.secretWarning)}</span>`);
       }
       lines.push(`Provider: <strong>${['SMTP', 'Microsoft Graph', 'Gmail API'][d.provider] || 'SMTP'}</strong>`);
-      if (d.fromAddress) lines.push(`ผู้ส่ง: <strong>${d.fromName || ''} &lt;${d.fromAddress}&gt;</strong>`);
+      if (d.fromAddress) lines.push(`ผู้ส่ง: <strong>${d.fromName || ''} &lt;${AdminLayout.esc(d.fromAddress)}&gt;</strong>`);
       if (d.lastTestedAt) {
         const date = new Date(d.lastTestedAt).toLocaleString('th-TH');
         lines.push(`ทดสอบล่าสุด: <strong>${date}</strong> (${d.lastTestStatus || 'unknown'})`);

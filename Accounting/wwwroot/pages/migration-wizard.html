@@ -158,7 +158,7 @@
               <td>${s.completedAt ? Layout.date(s.completedAt) : '-'}</td>
               <td>
                 <button class="btn btn-sm btn-ghost" onclick="Page.openSession('${s.id}')">${s.status === 'Committed' ? 'ดู' : 'แก้ไข →'}</button>
-                ${s.status === 'Committed' ? `<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.rollback('${s.id}','${(s.sessionName||'').replace(/'/g,'&apos;')}')" title="ย้อนการ commit — ลบ Opening Balance ที่ session นี้สร้าง">↶ Rollback</button>` : ''}
+                ${s.status === 'Committed' ? `<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.rollback('${s.id}','${Layout.jsArg(s.sessionName||'')}')" title="ย้อนการ commit — ลบ Opening Balance ที่ session นี้สร้าง">↶ Rollback</button>` : ''}
               </td>
             </tr>`).join('')}</tbody></table></div>`;
         } catch (e) { Layout.toast(e.message, 'error'); }

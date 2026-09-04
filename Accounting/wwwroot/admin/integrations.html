@@ -184,16 +184,16 @@ Content-Type: application/json
       } else {
         tbody.innerHTML = d.integrations.map(i => `
           <tr>
-            <td><strong>${i.systemName}</strong>${i.systemVersion ? ` <small style="color:#94a3b8">v${i.systemVersion}</small>` : ''}</td>
+            <td><strong>${AdminLayout.esc(i.systemName)}</strong>${i.systemVersion ? ` <small style="color:#94a3b8">v${i.systemVersion}</small>` : ''}</td>
             <td><span class="admin-badge-sm bg-blue">${i.systemType}</span></td>
-            <td>${i.companyName || '-'}</td>
+            <td>${AdminLayout.esc(i.companyName || '-')}</td>
             <td>${i.isActive
               ? '<span class="admin-badge-sm bg-green">Active</span>'
               : '<span class="admin-badge-sm bg-gray">Inactive</span>'}</td>
-            <td><code style="font-size:11px;background:#f1f5f9;padding:2px 6px;border-radius:4px">${i.apiKeyPrefix}...</code></td>
+            <td><code style="font-size:11px;background:#f1f5f9;padding:2px 6px;border-radius:4px">${AdminLayout.esc(i.apiKeyPrefix)}...</code></td>
             <td>${AdminLayout.datetime(i.lastSyncAt)}</td>
             <td style="text-align:right">${(i.totalSyncCount || 0).toLocaleString()}</td>
-            <td style="text-align:right;${i.errorCount > 0 ? 'color:#ef4444;font-weight:600' : ''}">${i.errorCount || 0}${i.consecutiveErrors > 5 ? ' <span title="Consecutive errors" style="color:#ef4444">!!!</span>' : ''}</td>
+            <td style="text-align:right;${i.errorCount > 0 ? 'color:#ef4444;font-weight:600' : ''}">${i.errorCount || 0}${AdminLayout.esc(i.consecutiveErrors > 5 ? ' <span title="Consecutive errors" style="color:#ef4444">!!!</span>' : '')}</td>
             <td>${AdminLayout.date(i.createdAt)}</td>
           </tr>
         `).join('');
@@ -209,7 +209,7 @@ Content-Type: application/json
           return `
             <tr>
               <td>${AdminLayout.datetime(l.createdAt)}</td>
-              <td>${l.systemName}</td>
+              <td>${AdminLayout.esc(l.systemName)}</td>
               <td><code style="font-size:12px">${l.eventType}</code></td>
               <td>${l.externalRef || '-'}</td>
               <td><span class="admin-badge-sm ${statusColor}">${l.status}</span></td>

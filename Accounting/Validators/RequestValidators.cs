@@ -16,6 +16,47 @@ public class RegisterRequestValidator : AbstractValidator<RegisterRequest>
     {
         RuleFor(x => x.Email).NotEmpty().EmailAddress().WithMessage("รูปแบบอีเมลไม่ถูกต้อง");
         RuleFor(x => x.Password).NotEmpty().MinimumLength(8).WithMessage("รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร");
+
+        // ชื่อจากหน้าสมัคร (ทางเข้าที่ **ไม่ต้องล็อกอิน**) ไหลไปโผล่ในหน้าจอของ
+        // SystemAdmin · PDF · อีเมล · XML e-Tax — ที่ที่ตัวหนีของหน้าเว็บไปไม่ถึง
+        // (ผลตรวจ F-01) ดูเหตุผลเต็มใน Helpers/DisplayText
+        RuleFor(x => x.FullName).SafeDisplayName("ชื่อ-นามสกุล");
+        RuleFor(x => x.FirstName).SafeDisplayName("ชื่อ");
+        RuleFor(x => x.LastName).SafeDisplayName("นามสกุล");
+        RuleFor(x => x.CompanyName).SafeDisplayName("ชื่อบริษัท");
+    }
+}
+
+/// <summary>ชื่อที่คนอื่น (รวม SystemAdmin) ต้องมองเห็น — กติกาเดียวทั้งระบบ
+/// เพื่อไม่ให้แต่ละฟอร์มไปเขียนเงื่อนไขเอง (สำเนามือ = drift รอบหน้า)</summary>
+public static class DisplayNameRules
+{
+    public static IRuleBuilderOptions<T, string?> SafeDisplayName<T>(
+        this IRuleBuilder<T, string?> rule, string fieldLabel,
+        int maxLength = Helpers.DisplayText.MaxNameLength)
+        => rule.Must(v => Helpers.DisplayText.IsSafeName(v, maxLength))
+               // ข้อความต้องบอกว่าติดตรงไหน (ยาวเกิน vs อักขระต้องห้าม) จึงต้องเห็นค่าจริง
+               .WithMessage((_, v) => Helpers.DisplayText.RejectReason(fieldLabel, v, maxLength));
+}
+
+public class CreateCompanyRequestValidator : AbstractValidator<Models.DTOs.Company.CreateCompanyRequest>
+{
+    public CreateCompanyRequestValidator()
+    {
+        RuleFor(x => x.Name).NotEmpty().WithMessage("กรุณากรอกชื่อบริษัท")
+                            .SafeDisplayName("ชื่อบริษัท");
+        RuleFor(x => x.NameEn).SafeDisplayName("ชื่อบริษัท (อังกฤษ)");
+        RuleFor(x => x.BranchName).SafeDisplayName("ชื่อสาขา");
+    }
+}
+
+public class UpdateCompanyRequestValidator : AbstractValidator<Models.DTOs.Company.UpdateCompanyRequest>
+{
+    public UpdateCompanyRequestValidator()
+    {
+        RuleFor(x => x.Name).SafeDisplayName("ชื่อบริษัท");
+        RuleFor(x => x.NameEn).SafeDisplayName("ชื่อบริษัท (อังกฤษ)");
+        RuleFor(x => x.BranchName).SafeDisplayName("ชื่อสาขา");
     }
 }
 

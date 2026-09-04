@@ -692,34 +692,37 @@
             </div>`;
           }).join('') || '<div class="text-center text-gray-400 w-full" style="align-self:center">ไม่มีข้อมูล</div>';
 
+          // ★ G-05: ชื่อลูกค้า/ผังบัญชี/เลขเอกสาร เป็นค่าที่ผู้ใช้และ OCR
+          // คุมได้ — หน้านี้คือแดชบอร์ดหลักที่ทุกคนเห็นทุกวัน และหน้านี้โหลด
+          // layout.js อยู่แล้ว (มี Layout.esc ให้ใช้) แต่กลับต่อเข้า innerHTML ดิบ
           // Top customers
           const tc = d.topCustomers || [];
           document.getElementById('topCustomers').innerHTML = tc.length ? tc.map(c =>
-            `<tr><td>${c.contactName}</td><td class="text-right">${Layout.money(c.totalAmount)}</td><td class="text-right">${c.invoiceCount}</td></tr>`
+            `<tr><td>${Layout.esc(c.contactName)}</td><td class="text-right">${Layout.money(c.totalAmount)}</td><td class="text-right">${c.invoiceCount}</td></tr>`
           ).join('') : '<tr><td colspan="3" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
 
           // Top expenses
           const te = d.topExpenseCategories || [];
           document.getElementById('topExpenses').innerHTML = te.length ? te.map(e =>
-            `<tr><td>${e.accountName}</td><td class="text-right">${Layout.money(e.amount)}</td><td class="text-right">${(e.percentage || 0).toFixed(1)}%</td></tr>`
+            `<tr><td>${Layout.esc(e.accountName)}</td><td class="text-right">${Layout.money(e.amount)}</td><td class="text-right">${(e.percentage || 0).toFixed(1)}%</td></tr>`
           ).join('') : '<tr><td colspan="3" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
 
           // Overdue invoices
           const oi = d.overdueInvoices || [];
           document.getElementById('overdueInvoices').innerHTML = oi.length ? oi.map(o =>
-            `<tr><td>${o.documentNumber}</td><td>${o.contactName}</td><td class="text-right text-danger">${Layout.money(o.balanceDue)}</td><td><span class="badge badge-danger">${o.daysOverdue} วัน</span></td></tr>`
+            `<tr><td>${Layout.esc(o.documentNumber)}</td><td>${Layout.esc(o.contactName)}</td><td class="text-right text-danger">${Layout.money(o.balanceDue)}</td><td><span class="badge badge-danger">${o.daysOverdue} วัน</span></td></tr>`
           ).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีรายการ</td></tr>';
 
           // Upcoming payables
           const up = d.upcomingPayables || [];
           document.getElementById('upcomingPayables').innerHTML = up.length ? up.map(p =>
-            `<tr><td>${p.documentNumber}</td><td>${p.contactName}</td><td class="text-right">${Layout.money(p.balanceDue)}</td><td><span class="badge badge-warning">${p.daysUntilDue} วัน</span></td></tr>`
+            `<tr><td>${Layout.esc(p.documentNumber)}</td><td>${Layout.esc(p.contactName)}</td><td class="text-right">${Layout.money(p.balanceDue)}</td><td><span class="badge badge-warning">${p.daysUntilDue} วัน</span></td></tr>`
           ).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีรายการ</td></tr>';
 
           // Bank balances
           const bb = d.bankBalances?.accounts || [];
           document.getElementById('bankBalances').innerHTML = bb.length ? bb.map(b =>
-            `<tr><td>${b.accountName}</td><td>${b.bankName}</td><td>${b.currency}</td><td class="text-right font-semibold">${Layout.money(b.balance)}</td></tr>`
+            `<tr><td>${Layout.esc(b.accountName)}</td><td>${Layout.esc(b.bankName)}</td><td>${Layout.esc(b.currency)}</td><td class="text-right font-semibold">${Layout.money(b.balance)}</td></tr>`
           ).join('') : '<tr><td colspan="4" class="text-center text-gray-400">ไม่มีข้อมูล</td></tr>';
 
           // VAT/WHT summary

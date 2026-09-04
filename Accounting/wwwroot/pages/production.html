@@ -104,7 +104,7 @@
         return '<option value="">— เลือกสินค้า —</option>' + this._products.map(p =>
           `<option value="${p.id}" ${p.id===selectedId?'selected':''}>${this.esc(p.code||'')} ${this.esc(p.name||'')}</option>`).join('');
       },
-      esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
+      esc(s){ return Layout.esc(s); },
       async loadBoms() {
         const tbody = document.getElementById('bomsBody');
         try {

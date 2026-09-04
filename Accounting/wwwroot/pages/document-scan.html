@@ -1141,7 +1141,7 @@
               '<div style="padding:12px;color:#64748b">ยังไม่มี AI response สำหรับ scan นี้ (อาจยังไม่ได้กด "🤖 AI ตรวจสอบ & แก้ไข" หรือ AI ไม่ทำงาน)</div>';
             return;
           }
-          const esc = s => (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          const esc = s => Layout.esc(s);
           const pretty = v => {
             if (v == null) return '(null)';
             try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); }

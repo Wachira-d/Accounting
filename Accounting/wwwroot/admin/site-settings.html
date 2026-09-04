@@ -545,17 +545,17 @@
         // Logo preview
         if (d.siteLogoUrl) {
           const preview = document.getElementById('logoPreview');
-          preview.innerHTML = `<img src="${d.siteLogoUrl}" style="width:100%;height:100%;object-fit:contain;border-radius:8px">`;
+          preview.innerHTML = `<img src="${AdminLayout.esc(d.siteLogoUrl)}" style="width:100%;height:100%;object-fit:contain;border-radius:8px">`;
           preview.className = '';
         }
         if (d.faviconUrl) {
           const preview = document.getElementById('faviconPreview');
-          preview.innerHTML = `<img src="${d.faviconUrl}" style="width:100%;height:100%;object-fit:contain;border-radius:8px">`;
+          preview.innerHTML = `<img src="${AdminLayout.esc(d.faviconUrl)}" style="width:100%;height:100%;object-fit:contain;border-radius:8px">`;
           preview.className = '';
         }
         if (d.loginBackgroundUrl) {
           const preview = document.getElementById('loginBgPreview');
-          preview.innerHTML = `<img src="${d.loginBackgroundUrl}" style="width:100%;height:100%;object-fit:contain;border-radius:8px">`;
+          preview.innerHTML = `<img src="${AdminLayout.esc(d.loginBackgroundUrl)}" style="width:100%;height:100%;object-fit:contain;border-radius:8px">`;
           preview.className = '';
         }
 
@@ -746,7 +746,7 @@
           <div style="display:inline-flex;flex-wrap:wrap;gap:24px;align-items:center;background:#f8fafc;padding:16px 32px;border-radius:12px">
             ${phone ? `<span>📞 <strong>${phone}</strong></span>` : ''}
             ${line ? `<span>💬 LINE: <strong>${line}</strong></span>` : ''}
-            ${email ? `<span>📧 <strong>${email}</strong></span>` : ''}
+            ${email ? `<span>📧 <strong>${AdminLayout.esc(email)}</strong></span>` : ''}
           </div>
         </div>`;
       }
@@ -756,8 +756,8 @@
         const isFeatured = validServices.length === 3 ? i === 1 : i === 0;
         return `<div style="background:#fff;border:2px solid ${isFeatured ? '#6366f1' : '#e2e8f0'};border-radius:16px;padding:32px;text-align:center;${isFeatured ? 'box-shadow:0 8px 24px rgba(99,102,241,.15)' : ''}">
           <div style="font-size:36px;margin-bottom:12px">${s.icon || '📋'}</div>
-          <h3 style="margin:0 0 8px;font-size:18px">${s.name}</h3>
-          ${s.description ? `<p style="font-size:14px;color:#6b7280;margin:0 0 16px">${s.description}</p>` : ''}
+          <h3 style="margin:0 0 8px;font-size:18px">${AdminLayout.esc(s.name)}</h3>
+          ${s.description ? `<p style="font-size:14px;color:#6b7280;margin:0 0 16px">${AdminLayout.esc(s.description)}</p>` : ''}
           ${s.price != null ? `<div style="font-size:28px;font-weight:800;color:#6366f1;margin-bottom:8px">฿${Number(s.price).toLocaleString()}<span style="font-size:14px;font-weight:400;color:#9ca3af">${s.priceLabel ? '/' + s.priceLabel : ''}</span></div>` : ''}
           ${s.features && s.features.length ? `<ul style="text-align:left;font-size:13px;color:#4b5563;list-style:none;padding:0;margin:0">${s.features.filter(f=>f).map(f => `<li style="padding:4px 0">✓ ${f}</li>`).join('')}</ul>` : ''}
         </div>`;
@@ -812,7 +812,7 @@
         const r = await AdminAPI.customers('?pageSize=200');
         const items = r.data?.items || [];
         sel.innerHTML = '<option value="">— ไม่ใช้ (โหมด PDF เดิม) —</option>'
-          + items.map(c => `<option value="${c.id}">${c.name}${c.taxId ? ' (' + c.taxId + ')' : ''}</option>`).join('');
+          + items.map(c => `<option value="${c.id}">${AdminLayout.esc(c.name)}${c.taxId ? ' (' + c.taxId + ')' : ''}</option>`).join('');
       } catch { /* โหลดไม่ได้ — เหลือตัวเลือกว่าง */ }
       if (selectedId) {
         if (![...sel.options].some(o => o.value === selectedId)) {

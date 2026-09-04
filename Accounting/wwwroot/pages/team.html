@@ -221,11 +221,11 @@
           // โผล่บนลายเซ็น/เอกสาร. ปุ่มนี้แสดงแยกจากบล็อกจัดการ role ด้านล่าง
           // (ซึ่งยังห้ามแก้ role/ลบตัวเอง)
           const nameEditBtn = isOwner
-            ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="แก้ชื่อ-นามสกุล (ที่แสดงบนลายเซ็น/เอกสาร)" onclick="Page.editMemberName('${m.userId}','${(m.fullName||'').replace(/'/g,'&apos;')}')">&#9998; ชื่อ</button>`
+            ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="แก้ชื่อ-นามสกุล (ที่แสดงบนลายเซ็น/เอกสาร)" onclick="Page.editMemberName('${m.userId}','${Layout.jsArg(m.fullName||'')}')">&#9998; ชื่อ</button>`
             : '';
           // ดูสิทธิ์ effective รายคน (Owner ดูได้ทุกคน / สมาชิกดูของตัวเอง)
           const permBtn = (isOwner || isMe)
-            ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="ดูสิทธิ์การใช้งานทั้งหมดของสมาชิกคนนี้ในบริษัทนี้" onclick="Page.viewPermissions('${m.userId}','${(m.fullName||'').replace(/'/g,'&apos;')}')">🔐 สิทธิ์</button>`
+            ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="ดูสิทธิ์การใช้งานทั้งหมดของสมาชิกคนนี้ในบริษัทนี้" onclick="Page.viewPermissions('${m.userId}','${Layout.jsArg(m.fullName||'')}')">🔐 สิทธิ์</button>`
             : '';
           // Owners can manage any other member, including demoting another Owner.
           // Self-edit / self-remove is always blocked — UI never offers it.
@@ -241,7 +241,7 @@
                 <option value="">-- สิทธิ์เมนู --</option>
                 ${customRoleOpts}
               </select>` : ''}
-              <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${m.fullName.replace(/'/g,'&apos;')}',${m.role==='Owner'?'true':'false'})" data-i18n="common.delete">ลบ</button>
+              <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${Layout.jsArg(m.fullName)}',${m.role==='Owner'?'true':'false'})" data-i18n="common.delete">ลบ</button>
             `;
           }
 

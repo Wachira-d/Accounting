@@ -55,7 +55,7 @@
           document.getElementById('mnContent').innerHTML = '<div class="mn-loading">⚠️ ' + e.message + '</div>';
         }
       },
-      _esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      _esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); },
       _fmt(d) { return new Date(d).toLocaleString('th-TH', {dateStyle:'full', timeStyle:'short'}); },
       _fmtTime(d) { return new Date(d).toLocaleString('th-TH', {dateStyle:'short', timeStyle:'short'}); },
       render() {

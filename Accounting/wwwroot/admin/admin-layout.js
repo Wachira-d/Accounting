@@ -21,6 +21,31 @@ const AdminLayout = {
       .replace(/'/g, '&#39;');
   },
 
+  /** ค่าที่จะฝังใน **JS string literal ภายใน onclick=""** — ไม่ใช่ `esc()`
+   *
+   *  กติกาเดียวกับ `Layout.jsArg` เป๊ะ (หน้าแอดมินไม่ได้โหลด `js/layout.js`)
+   *
+   *  `esc()` เป็น HTML escape — เบราว์เซอร์ **decode entity ก่อน** แล้วค่อยส่งให้
+   *  parser ของ JS อ่าน ⇒ `&#39;` กลับเป็น `'` แล้วปิด string กลางคันได้อยู่ดี
+   *  และ `\n` ไม่ถูกหนีเลย ⇒ ชื่อบริษัท/ชื่อแพ็กเกจที่ผู้เช่าพิมพ์เองทำให้
+   *  **ทั้งหน้าแอดมินตาย** (`Invalid or unexpected token`)
+   *
+   *  ลำดับสำคัญ: หนีระดับ **JS** ก่อน แล้วค่อยหนีระดับ **HTML attribute**
+   *
+   *  ⚠️ ทางที่ดีกว่าเสมอคือ **อย่าส่งข้อความอิสระผ่าน onclick** — ส่ง id แล้วไป
+   *  หยิบค่าจากข้อมูลที่โหลดไว้ ใช้ตัวนี้เฉพาะเมื่อเลี่ยงไม่ได้ */
+  jsArg(v) {
+    return String(v == null ? '' : v)
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/\r/g, '')
+      .replace(/\n/g, '\\n')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  },
+
   navItems: [
     { section: 'ภาพรวม' },
     { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/admin/index.html' },

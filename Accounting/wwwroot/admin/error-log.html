@@ -68,10 +68,11 @@
           const res = await AdminAPI.errorLogs('?' + p.toString());
           this.render(res.data);
         } catch (e) {
-          document.getElementById('content').innerHTML = `<div class="empty-state" style="color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</div>`;
+          document.getElementById('content').innerHTML = `<div class="empty-state" style="color:#dc2626">โหลดไม่สำเร็จ: ${AdminLayout.esc(e.message)}</div>`;
         }
       },
-      esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      // หนีข้อความ = ตัวกลางตัวเดียวของระบบ (สำเนามือหนีไม่ครบ ⇒ ค่าที่มี " แตกออกจาก attribute)
+      esc(s) { return AdminLayout.esc(s); },
       fmt(ts) { const d = new Date(ts); return isNaN(d) ? '-' : d.toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'medium' }); },
       scClass(c) { return c >= 500 ? 'sc-5' : c >= 400 ? 'sc-4' : 'sc-0'; },
       render(d) {

@@ -139,7 +139,7 @@
           <td>${r.isFiled ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ ยื่นแล้ว</span>' : '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">ยังไม่ยื่น</span>'}</td>
           <td style="font-size:12px;color:#64748b">${Layout.esc(r.filingReference || '-')}</td>
           <td>
-            <button class="btn btn-sm btn-ghost" onclick="Page.edit('${r.id}',${r.year},${r.month},${r.salesTotal},${r.outputVat},${r.purchaseTotal},${r.inputVat},'${(r.filingReference||'').replace(/'/g,'&apos;')}','${(r.notes||'').replace(/'/g,'&apos;').replace(/\n/g,' ')}')">แก้</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.edit('${r.id}',${r.year},${r.month},${r.salesTotal},${r.outputVat},${r.purchaseTotal},${r.inputVat},'${Layout.jsArg(r.filingReference||'')}','${Layout.jsArg((r.notes||'').replace(/\n/g,' '))}')">แก้</button>
             <button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.del('${r.id}',${r.year},${r.month})">ลบ</button>
           </td>
         </tr>`).join('');

@@ -1550,7 +1550,7 @@
           modal.innerHTML = `<div class="modal" style="max-width:960px;width:95%;max-height:88vh;overflow:auto"><div id="bulkPlanBody"></div></div>`;
           document.body.appendChild(modal);
         }
-        const esc = s => (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const esc = s => Layout.esc(s);
         const fmtAmt = n => (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const statusColor = plan.status === 'Success' ? '#16a34a'
           : plan.status === 'Truncated' ? '#d97706'
@@ -1944,7 +1944,7 @@
           const j = await r.json();
           if (!j.success || !j.data) throw new Error(j.message || 'ไม่พบข้อมูล');
           const d = j.data;
-          const esc = s => (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          const esc = s => Layout.esc(s);
           const pretty = v => {
             if (v == null) return '(null)';
             try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); }

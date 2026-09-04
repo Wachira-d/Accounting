@@ -9185,7 +9185,7 @@
                   // ปุ่มเดิมเป็น "✏️" เปล่า ๆ ขนาด 10px — ไม่มีใครรู้ว่ากดได้ ทั้งที่นี่
                   // คือทางเดียวที่แก้ผังบัญชีของใบที่อนุมัติแล้วได้ (คำถามจริงจาก
                   // ผู้ใช้: "จะแก้ผังบัญชีที่ลง JE ไปแล้ว แก้ตรงไหน") → ใส่ข้อความกำกับ
-                  ? `<span style="font-family:ui-monospace,monospace;font-size:11px"><b>${this.escapeHtml(l.accountCode)}</b>${l.accountName ? ' ' + this.escapeHtml(l.accountName.substring(0,20)) : ''}</span>${canReclassify ? ` <button class="btn btn-sm" style="padding:1px 7px;font-size:10px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe" onclick="Page.openReclassifyLine('${d.id}', '${l.id}', '${this.escapeHtml(l.accountCode)}', '${this.escapeHtml((l.description||'').replace(/'/g, '&#39;'))}', ${l.amount})" title="ลงผังบัญชีผิด? กดที่นี่เพื่อย้ายไปผังที่ถูก — ระบบลงรายการย้ายบัญชีให้ในงวดเดิม (Dr ผังใหม่ / Cr ผังเก่า) เอกสารต้นฉบับไม่ถูกแก้">✏️ เปลี่ยนผัง</button>` : ''}`
+                  ? `<span style="font-family:ui-monospace,monospace;font-size:11px"><b>${this.escapeHtml(l.accountCode)}</b>${l.accountName ? ' ' + this.escapeHtml(l.accountName.substring(0,20)) : ''}</span>${canReclassify ? ` <button class="btn btn-sm" style="padding:1px 7px;font-size:10px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe" onclick="Page.openReclassifyLine('${d.id}', '${l.id}', '${this.escapeHtml(l.accountCode)}', '${Layout.jsArg(l.description||'')}', ${l.amount})" title="ลงผังบัญชีผิด? กดที่นี่เพื่อย้ายไปผังที่ถูก — ระบบลงรายการย้ายบัญชีให้ในงวดเดิม (Dr ผังใหม่ / Cr ผังเก่า) เอกสารต้นฉบับไม่ถูกแก้">✏️ เปลี่ยนผัง</button>` : ''}`
                   : '<span style="color:#cbd5e1">—</span>';
                 // escape description (มาจากผู้ใช้/OCR — ช่องอื่นในแถว escape หมดแล้ว เว้นช่องนี้
                 // = XSS + layout พัง, กฎเหล็ก #4 C) · ส่วนลดโหมดบาท (percent=null,
@@ -10804,7 +10804,7 @@
               const canPreview = (a.contentType || '').startsWith('image/')
                               || a.contentType === 'application/pdf';
               const safeName = this.escapeHtml(a.originalFileName || '');
-              const jsName = (a.originalFileName || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+              const jsName = Layout.jsArg(a.originalFileName || '');
               return `
               <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:#fff;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:6px">
                 <div data-att-thumb="${a.id}"
@@ -10997,7 +10997,7 @@
           <div style="display:flex;align-items:center;gap:12px;color:#fff;flex:none">
             <div style="flex:1;min-width:0;font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(fileName || 'ไฟล์แนบ')}</div>
             <button class="btn btn-sm" style="background:#fff;color:#111"
-              onclick="Page.downloadAttachment('${attachmentId}','${(fileName || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')">⬇ ดาวน์โหลด</button>
+              onclick="Page.downloadAttachment('${attachmentId}','${Layout.jsArg(fileName || '')}')">⬇ ดาวน์โหลด</button>
             <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff" onclick="Page.closeAttachmentPreview()">✕ ปิด</button>
           </div>
           <div id="attPreviewBody" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px">กำลังเปิดไฟล์…</div>`;

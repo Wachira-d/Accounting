@@ -119,7 +119,8 @@
         const fmt = n => (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const date = d => new Date(d).toLocaleDateString('th-TH');
         const badge = s => `<span class="badge badge-${s}">${s}</span>`;
-        const esc = x => (x||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const esc = x => (x||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
         const pos = s.openPos || [];
         document.getElementById('poBody').innerHTML = pos.length === 0

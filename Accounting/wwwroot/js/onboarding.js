@@ -235,7 +235,7 @@ const Onboarding = {
 
     let i = -1; // -1 = การ์ดแนะนำภาพรวม (intro)
 
-    const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const esc = (s) => Layout.esc(s);
     const nl2br = (s) => esc(s).replace(/\n/g, '<br>');
 
     const footerHtml = `
