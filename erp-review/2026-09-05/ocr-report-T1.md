@@ -170,3 +170,39 @@ branch: (ดู git log) · วันที่ตรวจ 2026-09-05 · วิ�
 - ทางแก้: `Stock` เมื่อ (BusinessType ∈ Trading/Manufacturing **และ** ≥50% บรรทัดจับคู่ Product ได้) หรือมีประวัติ; แสดงเหตุผล
 - ฝ่ายค้าน: "นำเข้าสต๊อกผิด แก้ยากกว่าลงค่าใช้จ่ายผิด" → คำตอบ: จึงเสนอเป็น *suggestion* (ช่องนี้เป็น suggestion อยู่แล้ว) ไม่ใช่ auto-import
 - ความมั่นใจ: สูง
+
+### T1-20 🔴 [P1][S] เลขที่ของ **ใบแจ้งหนี้/ใบวางบิล** (ไม่ใช่ใบกำกับภาษี) ถูกเขียนลง `SupplierInvoiceNumber` = "เลขใบกำกับภาษีของผู้ขาย" ⇒ ตัวตรวจความครบ §86/4 เห็นว่า "มีใบกำกับแล้ว" ⇒ Dr 11610 เคลม ภ.พ.30 ก่อน tax point
+- ไฟล์: `OcrService.cs:4812-4817` `bookSupplierInvoice = !isSalesSide && !vatNotClaimable && (docType is PaymentVoucher or PurchaseInvoice or Expense) && !IsNullOrWhiteSpace(ExtractedDocumentNumber) && ((ExtractedVatAmount ?? 0) > 0 || !IsNullOrWhiteSpace(ExtractedVendorTaxId))` — **ไม่มีเงื่อนไข `ScannedDocumentType == TaxInvoice`** · `:4929-4931 SupplierInvoiceNumber = bookSupplierRef ? ExtractedDocumentNumber : null; SupplierTaxInvoiceDate = … ExtractedDate` · ฝั่งอนุมัติ `Tax/TaxInvoiceCompletenessChecker.cs:43-50` (ครบเมื่อมี SupplierInvoiceNumber + SupplierTaxInvoiceDate + สาขา + เลขภาษีผู้ขาย) → `DocumentService.cs:11459/11515` ใช้ตัดสิน 11610 vs 11640
+- ทำไมพัง: ผู้ให้บริการไทยส่วนใหญ่ออก **ใบแจ้งหนี้** (Invoice) ก่อน แล้วออก **ใบกำกับภาษี** เมื่อรับเงิน (§78/1 tax point บริการ = วันรับชำระ) → role inferrer อ่านได้ถูกว่าเป็น "Invoice" (:391) และ `inputVatClaimable = null` (inferrer :587-614 ไม่มี branch ของ hasInvoice → "ไม่ทราบ") → **ไม่มี [VAT-CLAIM]** → `bookSupplierInvoice=true` เพราะมี VAT + เลขที่ → PI มี `SupplierInvoiceNumber="INV-xxxx"` + วันที่ → อนุมัติ → checker ครบ → **11610** → ภ.พ.30 เดือนที่ได้รับใบแจ้งหนี้ ทั้งที่ใบกำกับภาษียังไม่เกิด (ผู้ขายยังไม่มี tax point ⇒ ยังไม่ได้ยื่นภาษีขาย ⇒ RD cross-check ภาษีซื้อไม่มีคู่)
+- นักบัญชีทำต่าง: ใบแจ้งหนี้ → ตั้งหนี้ + **VAT พัก 11640** เสมอ; ใบกำกับมาถึง (มักคู่กับใบเสร็จ) → ย้าย 11640→11610 ในเดือนนั้น — ระบบมี flow นี้ครบ (`DocumentService.cs:2496-2570`) แต่ OCR ปิดทางเข้าเพราะบอกว่า "มีใบกำกับแล้ว"
+- ผลกระทบ: เคลมภาษีซื้อผิดงวด (RD ประเมิน + เบี้ยปรับ 1 เท่า §89(4)) กับ**ทุกใบแจ้งหนี้ค่าบริการที่มี VAT** — เคสประจำเดือน
+- defect class: "ห้าม reuse field ผิดความหมาย" (เลขใบแจ้งหนี้ ≠ เลขใบกำกับภาษี) + "ค่า default ที่แต่งขึ้น"
+- ทางแก้: `bookSupplierInvoice` ต้องมี `&& result.ScannedDocumentType is "TaxInvoice"` (ใบกำกับ/ใบกำกับ+ใบเสร็จ) · ถ้าเป็น Invoice/BillingNote → เก็บเลขไว้ที่ `Reference` (ทำอยู่แล้ว :4898) และเซ็ต `InputVatPostedAsUndue` path (ปล่อยให้ AutoPost ลง 11640) พร้อม note "รอใบกำกับภาษี §82/3"
+- ฝ่ายค้าน: "ใบแจ้งหนี้จำนวนมากเป็น 'ใบแจ้งหนี้/ใบกำกับภาษี' ในใบเดียว" → คำตอบ: กรณีนั้น `hasTaxInvoice=true` (:388) เงื่อนไขที่เสนอผ่านอยู่แล้ว — เสนอให้แยกเฉพาะใบที่**ไม่มีคำว่าใบกำกับภาษี**เลย
+- ความมั่นใจ: สูง (โค้ด 3 จุดต่อกันชัด) — ต้องเช็คต่อ: `DocumentService.cs:11459-11530` ว่า PI ที่ `SupplierInvoiceNumber` ครบแต่ scanned type = Invoice มีด่านอื่นกันไหม (อ่าน checker แล้วไม่ดู scanned type)
+
+### T1-21 🟠 [P1][S] ใบที่พิมพ์ "ใบกำกับภาษีอย่างย่อ" แต่มีเลขผู้เสียภาษีผู้ซื้อ (checksum ผ่าน) ถูก**ปลด**สถานะอย่างย่อ → เคลมภาษีซื้อ — ข้อสรุปทางกฎหมายกว้างเกินไป
+- ไฟล์: `Ocr/OcrDocumentRoleInferrer.cs:329-337` `if (hasAbbrevTaxInvoice && buyerTaxIdVerified) { hasAbbrevTaxInvoice = false; reasons.Add("… (ใบอย่างย่อตาม §86/6 ไม่มีข้อมูลผู้ซื้อ) → ตีเป็นใบกำกับภาษีเต็มรูป เคลมภาษีซื้อได้"); }` → `:591-612 hasFullTaxInvoice → inputVatClaimable = true`
+- ทำไมสงสัย: §82/5(2) ห้ามใช้ใบอย่างย่อเป็นภาษีซื้อ; การจะเป็น "เต็มรูป" ต้องครบ §86/4 **ทั้ง 8 รายการ** — ชื่อ+**ที่อยู่**ผู้ซื้อ, จำนวนภาษี**แยกแสดง**จากราคา, เลขที่, วันที่ ฯลฯ. สลิป POS/ปั๊มน้ำมันจำนวนมาก (PTT Blue card, Makro member) พิมพ์เลขภาษีลูกค้าไว้บนใบอย่างย่อที่ **ราคารวม VAT / ไม่แยกยอด VAT / ไม่มีที่อยู่ผู้ซื้อ** — ใบพวกนั้นยังเป็นอย่างย่อ และผู้ซื้อต้องไปขอใบเต็มรูปที่เคาน์เตอร์ (แนวปฏิบัติ RD) — ระบบตีเป็นเต็มรูปแล้วเปิดเคลม
+- ทางแก้: ปลด marker เฉพาะเมื่อผ่าน `TaxInvoiceCompletenessChecker`-style ครบชุด (ชื่อผู้ซื้อ + ที่อยู่ผู้ซื้อ + VAT แยกบรรทัด) ไม่ใช่เลขภาษีอย่างเดียว; ถ้าไม่ครบ → คง `Claimable=false` พร้อมเหตุผล "มีเลขผู้ซื้อแต่ขาด X" (S)
+- ฝ่ายค้าน: "vision/Azure hallucinate เลข 13 หลักได้ จึงใช้ checksum เป็นด่านแล้ว" → คำตอบ: checksum กัน hallucination ได้ แต่ไม่ได้ตอบคำถามทางกฎหมายว่าใบครบ §86/4 หรือไม่ — เป็นคนละคำถาม
+- ความมั่นใจ: **กลาง** (ตีความกฎหมาย — ควรถามผู้สอบบัญชี) · โค้ดยืนยันแล้วว่าใช้เลขภาษีอย่างเดียว
+
+### T1-22 🟠 [P2][S] เส้น Tesseract **แต่งยอด VAT ขึ้นเอง** (7/107 ของยอดรวม) เมื่อกระดาษมีคำว่า "ใบกำกับภาษี" + ผู้ขายมีเลข 13 หลัก โดยไม่มีตัวเลข VAT บนกระดาษ
+- ไฟล์: `OcrService.cs:4305-4318` `else if (TotalAmount > 0 && SubTotal == null && VatAmount == null && hasTaxInvoice) { if (vendorTaxIdValid) { SubTotal = Total/1.07; VatAmount = Total − SubTotal; trace "[VAT back-calc] …" } }` (ใน `ParseThaiDocument` :4078)
+- ทำไมเป็นปัญหา: (1) `hasTaxInvoice` มาจากข้อความทั้งหน้า — ใบเสร็จร้านที่พิมพ์ท้ายบิลว่า "ขอใบกำกับภาษีได้ที่เคาน์เตอร์" / "ใบกำกับภาษีจะจัดส่งทางไปรษณีย์" ก็เข้าเงื่อนไข (2) ผู้ขายจด VAT แต่ขายสินค้ายกเว้น §81 (ผัก/หนังสือ/ค่าเช่าอสังหา) — ยอดรวมไม่มี VAT อยู่ข้างใน แต่ระบบแยก 7/107 ออกมาเป็น "ภาษีซื้อ" (3) ถ้า role inferrer ตีเป็น Receipt → `[VAT-CLAIM]` ปิดเคลมได้ แต่ถ้าตีเป็น TaxInvoice (มีคำนั้นบนหน้า) → `inputVatClaimable=true` → **เคลม VAT ที่ไม่มีอยู่จริง** · ไม่มี key ใน `FieldConfidence` ให้ VatAmount ที่คำนวณ (ป้ายเหลืองไม่ขึ้น)
+- defect class: "ค่า default ที่แต่งขึ้น" · ญาติของ `?? 7`
+- ทางแก้: back-calc ได้เฉพาะเมื่อกระดาษมีคำว่า "ราคารวมภาษีมูลค่าเพิ่ม/VAT included" **และ** ไม่มีบรรทัดที่ `ThaiVatTypeRule.LooksExempt` · stamp `FieldConfidence[VatAmount]=0.5` เสมอเมื่อคำนวณ · เส้น Azure ไม่ทำแบบนี้ (ตรวจแล้ว) — เป็นสองมาตรฐานระหว่าง tier
+- ฝ่ายค้าน: "ใบกำกับส่วนใหญ่มี VAT อยู่ในราคา" → คำตอบ: ใช่ แต่ "ส่วนใหญ่" ไม่ใช่เหตุผลให้ตั้งค่าโดยไม่ติดป้าย (กฎเหล็ก #3 ข้อ 3) และตัวเลขนี้ไหลไป ภ.พ.30
+- ความมั่นใจ: สูง (โค้ด) · กลาง (ความถี่ในของจริง เพราะเส้น Tesseract เป็น tier 3)
+
+### T1-23 🟠 [P3][S] regex ตรวจ WHT บนเส้น Tesseract `หัก\s*ณ\s*ที่จ่าย|ภาษี\s*หัก|WHT|W/?T` — `W/?T` ไม่มี word-boundary จับ "growth", "Newton", "software"(ไม่) ฯลฯ ⇒ `HasWht=true` บนใบภาษาอังกฤษที่ไม่เกี่ยว
+- ไฟล์: `OcrService.cs:4359-4360` (`RegexOptions.IgnoreCase`, ไม่มี `\b`)
+- ผล: `HasWht=true, WhtRate=null` → หน้า review ติ๊ก "มี WHT" ให้เอง ผู้ใช้ต้องปลด; ถ้าบังเอิญมี "3%" ภายใน 50 ตัวอักษร (ส่วนลด 3%) → WhtRate=3 → หักจริง
+- ทางแก้: `\bWHT\b|\bW/T\b|\bW\.T\.` และให้ rate มาจาก "หัก ณ ที่จ่าย X%" เท่านั้น
+- ความมั่นใจ: สูง (regex) · ผลกระทบต่ำเพราะ tier 3
+
+### T1-24 🟠 [P3][S] เกณฑ์ 1,000 บาท (ท.ป.4/2528 ข้อ 12) ไม่ถูกใช้ตอน OCR ตั้ง WHT — ประวัติผู้ขายบอกว่า "มัก WHT 3%" ⇒ ใบ 500 บาทก็หัก 15 บาท
+- ไฟล์: `OcrService.cs:1219-1226` (VendorIntel ตั้ง HasWht/WhtRate ไม่ดูยอด) · `:4736-4738` (`headerWht = whtBase × rate` ไม่มี threshold) · grep `MinimumThreshold|1000` ใน OcrService = 0 ขณะที่ `Helpers/ThaiWhtRateTable.ShouldWithhold` มีอยู่และถูกใช้เฉพาะตอนอนุมัติทิศ "ยังไม่หัก" (`DocumentService.cs:15668`)
+- ทางแก้: เรียก `ShouldWithhold(subtotal, paidToContactThisYear)` ทิศกลับด้วย — ถ้าไม่ถึงเกณฑ์และไม่มียอดสะสม → ไม่ตั้ง WHT + trace
+- ความมั่นใจ: สูง · P3 เพราะยอดเล็ก และกฎสะสมทำให้ "หักไว้ก่อน" ไม่ผิดกฎหมาย (แค่ผู้รับเงินโดนหักเกินความจำเป็น)
