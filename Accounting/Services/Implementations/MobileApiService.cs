@@ -14,10 +14,15 @@ public class MobileApiService : IMobileApiService
     private readonly AccountingDbContext _db;
 
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
-    public MobileApiService(AccountingDbContext db, Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
+    // IDocumentService resolve ตอนใช้ (ไม่ inject ตรง) — กัน DI cycle แบบเดียวกับ
+    // ApprovalService: DocumentService ↔ approval workflow อ้างถึงกันได้
+    private readonly IServiceProvider _services;
+    public MobileApiService(AccountingDbContext db, Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
+        IServiceProvider services)
     {
         _db = db;
         _vendorIntel = vendorIntel;
+        _services = services;
     }
 
     // ==================== Device Management ====================
@@ -383,17 +388,21 @@ public class MobileApiService : IMobileApiService
                 // Final step: mark as fully approved
                 approvalRequest.OverallStatus = ApprovalStatus.Approved;
 
-                // Update the underlying entity status if it is a Document
+                // เอกสารต้องอนุมัติผ่าน ApproveDocumentAsync **เท่านั้น** — เดิมเส้นนี้ตั้ง
+                // `document.Status = Approved` ตรง ๆ ⇒ เอกสาร "อนุมัติแล้ว" แต่เลขยัง
+                // DRAFT-{guid} · ไม่มี JE · ไม่ตัดสต๊อก · ไม่ผ่านด่าน §86/4/§82/5/งวดปิด
+                // แล้วรับชำระต่อได้ ⇒ GL กับสถานะเอกสารเล่าคนละเรื่องถาวร
+                // (ทางเข้าที่ 4 ที่ DOCUMENT_FLOW §3.2 ไม่รู้จัก — ผลตรวจ ERP_REVIEW B-02).
+                // ถ้า approve ล้ม (ด่านทางบัญชี/ภาษี) ให้โยนออกไปตรง ๆ — ApprovalRequest
+                // ยังไม่ถูก save จึงยังเป็น Pending ให้กดใหม่หลังแก้เอกสาร (fail loud)
                 if (entityType.Equals("Document", StringComparison.OrdinalIgnoreCase))
                 {
-                    var document = await _db.Documents.FirstOrDefaultAsync(d => d.Id == entityId && !d.IsDeleted);
-                    if (document is not null)
-                    {
-                        document.Status = DocumentStatus.Approved;
-                        document.UpdatedAt = DateTime.UtcNow;
-                        approvedDocumentCompanyId = document.CompanyId;
-                        approvedDocumentId = document.Id;
-                    }
+                    var docSvc = _services.GetService(typeof(IDocumentService)) as IDocumentService
+                        ?? throw new InvalidOperationException("ไม่พบบริการเอกสาร (IDocumentService) — อนุมัติผ่านมือถือไม่ได้");
+                    var approved = await docSvc.ApproveDocumentAsync(companyId, entityId,
+                        $"mobile:{userId}", acknowledgeWarnings: true);
+                    approvedDocumentCompanyId = companyId;
+                    approvedDocumentId = approved.Id;
                 }
             }
             else
@@ -406,13 +415,16 @@ public class MobileApiService : IMobileApiService
         {
             approvalRequest.OverallStatus = ApprovalStatus.Rejected;
 
-            // Update the underlying entity status if it is a Document
+            // ตีกลับ = เด้งเอกสารกลับ Draft ให้ผู้ขอแก้แล้วส่งใหม่ — กติกาเดียวกับ
+            // ApprovalService.RejectAsync (เดิมตั้ง Rejected ซึ่งเป็นสถานะปลายทาง:
+            // แก้ได้แต่อนุมัติ/ส่งใหม่ไม่ได้ — ผลตรวจ ERP_REVIEW B-03) · scope CompanyId
             if (entityType.Equals("Document", StringComparison.OrdinalIgnoreCase))
             {
-                var document = await _db.Documents.FirstOrDefaultAsync(d => d.Id == entityId && !d.IsDeleted);
-                if (document is not null)
+                var document = await _db.Documents.FirstOrDefaultAsync(d =>
+                    d.Id == entityId && d.CompanyId == companyId && !d.IsDeleted);
+                if (document is not null && document.Status == DocumentStatus.WaitingApproval)
                 {
-                    document.Status = DocumentStatus.Rejected;
+                    document.Status = DocumentStatus.Draft;
                     document.UpdatedAt = DateTime.UtcNow;
                 }
             }

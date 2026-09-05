@@ -1,6 +1,8 @@
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Warehouse;
 using Accounting.Models.Entities;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -25,7 +27,12 @@ namespace Accounting.Controllers;
 public class StockTransferController : ControllerBase
 {
     private readonly AccountingDbContext _db;
-    public StockTransferController(AccountingDbContext db) { _db = db; }
+    private readonly IWarehouseService _warehouse;
+    public StockTransferController(AccountingDbContext db, IWarehouseService warehouse)
+    {
+        _db = db;
+        _warehouse = warehouse;
+    }
 
     public sealed record TransferLineRequest(Guid ProductId, decimal Quantity, string? LotNumber, string? SerialNumber, string? Notes);
     public sealed record CreateTransferRequest(
@@ -55,6 +62,14 @@ public class StockTransferController : ControllerBase
         return Ok(new ApiResponse<object>(true, rows));
     }
 
+    /// <summary>
+    /// สร้าง/ส่ง/รับ/ยกเลิก ใบโอน **มอบต่อ IWarehouseService ทั้งหมด** — เดิมคอนโทรลเลอร์นี้
+    /// เขียน <c>StockMovement</c> ตรง (TRANSFER_OUT/IN ต้นทุน 0, BalanceAfter 0 "recompute
+    /// later") โดยไม่แตะ <c>WarehouseStock</c>/<c>CurrentStock</c> ⇒ กด Ship/รับ ได้แถว
+    /// movement แต่ยอดคลังไม่ขยับ = "สองความจริงของสต๊อก" กลับมาทางประตูหลัง ทั้งที่
+    /// เฟส 0 ยุบทุกเส้นเข้า <c>IStockLedger</c> แล้ว (ERP_REVIEW E-04). ตัวเลข TRF- ของ
+    /// WarehouseService เป็น series เดียวกับหน้า warehouses.html จึงไม่มีสองชุดอีก
+    /// </summary>
     [HttpPost]
     public async Task<ActionResult<ApiResponse<object>>> Create(
         Guid companyId, [FromBody] CreateTransferRequest req)
@@ -64,149 +79,42 @@ public class StockTransferController : ControllerBase
         if (req.Lines == null || req.Lines.Count == 0)
             return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุสินค้าที่จะโอนอย่างน้อย 1 รายการ"));
 
-        var prefix = $"ST-{DateTime.UtcNow:yyyyMM}-";
-        var seq = await _db.StockTransfers
-            .Where(t => t.CompanyId == companyId && t.TransferNumber.StartsWith(prefix))
-            .CountAsync() + 1;
-
-        var t = new StockTransfer
-        {
-            CompanyId = companyId,
-            TransferNumber = $"{prefix}{seq:D4}",
-            FromWarehouseId = req.FromWarehouseId,
-            ToWarehouseId = req.ToWarehouseId,
-            TransferDate = req.TransferDate,
-            Reference = req.Reference,
-            Notes = req.Notes,
-            Status = "Draft"
-        };
-        foreach (var l in req.Lines)
-            t.Lines.Add(new StockTransferLine
-            {
-                CompanyId = companyId,   // StockTransferLine = TenantEntity → ต้องมี CompanyId
-                ProductId = l.ProductId,
-                Quantity = l.Quantity,
-                LotNumber = l.LotNumber,
-                SerialNumber = l.SerialNumber,
-                Notes = l.Notes
-            });
-        _db.StockTransfers.Add(t);
-        await _db.SaveChangesAsync();
-        return Ok(new ApiResponse<object>(true, new { t.Id, t.TransferNumber }, "สร้าง transfer แล้ว"));
+        var created = await _warehouse.CreateTransferAsync(companyId,
+            new CreateStockTransferRequest(
+                req.FromWarehouseId, req.ToWarehouseId, req.TransferDate, req.Reference, req.Notes,
+                req.Lines.Select(l => new StockTransferLineRequest(
+                    l.ProductId, l.Quantity, l.LotNumber, l.SerialNumber, l.Notes)).ToList()),
+            User.Identity?.Name ?? "stock-transfers");
+        return Ok(new ApiResponse<object>(true, new { created.Id, created.TransferNumber }, "สร้าง transfer แล้ว"));
     }
 
-    /// <summary>Ship — Draft → InTransit. สร้าง TRANSFER_OUT movement
-    /// ต่อ line + ลด stock ของ source warehouse.</summary>
+    /// <summary>Ship — Draft → InTransit ผ่าน ledger (ตัดคลังต้นทาง + TRANSFER_OUT ต้นทุนจริง)</summary>
     [HttpPost("{transferId:guid}/ship")]
     public async Task<ActionResult<ApiResponse<object>>> Ship(Guid companyId, Guid transferId)
     {
-        var t = await _db.StockTransfers
-            .Include(x => x.Lines)
-            .FirstOrDefaultAsync(x => x.Id == transferId && x.CompanyId == companyId);
-        if (t == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ transfer"));
-        if (t.Status != "Draft") return BadRequest(new ApiResponse<object>(false, null, $"สถานะ {t.Status} ส่งไม่ได้"));
-
-        foreach (var l in t.Lines)
-        {
-            _db.Set<StockMovement>().Add(new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = l.ProductId,
-                MovementDate = t.TransferDate,
-                MovementType = "TRANSFER_OUT",
-                Quantity = -l.Quantity,       // ออกจาก source = ลด
-                UnitCost = 0,
-                BalanceAfter = 0,             // recompute later by stock-balance service
-                Reference = t.TransferNumber,
-                WarehouseId = t.FromWarehouseId,
-                LotNumber = l.LotNumber,
-                SerialNumber = l.SerialNumber,
-                Notes = $"ส่งไปคลัง {t.ToWarehouseId}"
-            });
-        }
-        t.Status = "InTransit";
-        t.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        var t = await _warehouse.ShipTransferAsync(companyId, transferId);
         return Ok(new ApiResponse<object>(true, new { t.Id, t.Status }, "ส่งของออกจากคลังต้นทางแล้ว"));
     }
 
-    /// <summary>Receive — InTransit → Received. สร้าง TRANSFER_IN movement
-    /// + link TransferPairId. คลังปลายทางได้ stock เพิ่ม.</summary>
+    /// <summary>Receive — InTransit → Received ผ่าน ledger. หน้า sme-config รับ "ครบตามใบ"
+    /// (ไม่มีช่องกรอกจำนวนรับ) จึงส่งทุกบรรทัดเท่าจำนวนที่โอน — รับขาด/เกินใช้หน้า warehouses.html</summary>
     [HttpPost("{transferId:guid}/receive")]
     public async Task<ActionResult<ApiResponse<object>>> Receive(Guid companyId, Guid transferId)
     {
-        var t = await _db.StockTransfers
-            .Include(x => x.Lines)
-            .FirstOrDefaultAsync(x => x.Id == transferId && x.CompanyId == companyId);
-        if (t == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ transfer"));
-        if (t.Status != "InTransit") return BadRequest(new ApiResponse<object>(false, null, $"สถานะ {t.Status} รับไม่ได้"));
-
-        // Link pair: หา TRANSFER_OUT ที่ Reference = transferNumber → set TransferPairId
-        var outMovements = await _db.Set<StockMovement>()
-            .Where(m => m.CompanyId == companyId && m.Reference == t.TransferNumber && m.MovementType == "TRANSFER_OUT")
+        var lines = await _db.StockTransferLines.AsNoTracking()
+            .Where(l => l.StockTransferId == transferId && l.CompanyId == companyId)
+            .Select(l => new TransferReceiveLine(l.ProductId, l.Quantity))
             .ToListAsync();
-        foreach (var l in t.Lines)
-        {
-            var pair = outMovements.FirstOrDefault(o => o.ProductId == l.ProductId);
-            var inMov = new StockMovement
-            {
-                CompanyId = companyId,
-                ProductId = l.ProductId,
-                MovementDate = DateTime.UtcNow.Date,
-                MovementType = "TRANSFER_IN",
-                Quantity = l.Quantity,
-                UnitCost = pair?.UnitCost ?? 0,
-                BalanceAfter = 0,
-                Reference = t.TransferNumber,
-                WarehouseId = t.ToWarehouseId,
-                LotNumber = l.LotNumber,
-                SerialNumber = l.SerialNumber,
-                TransferPairId = pair?.Id,
-                Notes = $"รับจากคลัง {t.FromWarehouseId}"
-            };
-            _db.Set<StockMovement>().Add(inMov);
-            if (pair != null) pair.TransferPairId = inMov.Id;
-        }
-        t.Status = "Received";
-        t.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        if (lines.Count == 0) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ transfer"));
+
+        var t = await _warehouse.ReceiveTransferAsync(companyId, transferId, lines);
         return Ok(new ApiResponse<object>(true, new { t.Id, t.Status }, "รับของเข้าคลังปลายทางเรียบร้อย"));
     }
 
     [HttpPost("{transferId:guid}/cancel")]
     public async Task<ActionResult<ApiResponse<object>>> Cancel(Guid companyId, Guid transferId)
     {
-        var t = await _db.StockTransfers
-            .FirstOrDefaultAsync(x => x.Id == transferId && x.CompanyId == companyId);
-        if (t == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ"));
-        if (t.Status == "Received")
-            return BadRequest(new ApiResponse<object>(false, null, "รับเข้าแล้ว ยกเลิกไม่ได้ — สร้าง transfer คืนแทน"));
-        // ถ้า InTransit → reverse TRANSFER_OUT (สร้าง movement ตรงข้าม)
-        if (t.Status == "InTransit")
-        {
-            var outs = await _db.Set<StockMovement>()
-                .Where(m => m.CompanyId == companyId && m.Reference == t.TransferNumber && m.MovementType == "TRANSFER_OUT")
-                .ToListAsync();
-            foreach (var o in outs)
-            {
-                _db.Set<StockMovement>().Add(new StockMovement
-                {
-                    CompanyId = companyId,
-                    ProductId = o.ProductId,
-                    MovementDate = DateTime.UtcNow.Date,
-                    MovementType = "ADJUST",
-                    Quantity = -o.Quantity,    // reverse
-                    UnitCost = o.UnitCost,
-                    BalanceAfter = 0,
-                    Reference = $"CANCEL {t.TransferNumber}",
-                    WarehouseId = t.FromWarehouseId,
-                    LotNumber = o.LotNumber
-                });
-            }
-        }
-        t.Status = "Cancelled";
-        t.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        await _warehouse.VoidTransferAsync(companyId, transferId);
         return Ok(new ApiResponse<object>(true, null, "ยกเลิก transfer แล้ว"));
     }
 

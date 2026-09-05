@@ -197,10 +197,16 @@ public class PortalService : IPortalService
 
     // ===== Portal Data =====
 
+    /// <summary>เอกสารที่ลูกค้าเห็นได้ใน portal = เฉพาะที่ "ออกแล้ว" — ใบร่าง/รออนุมัติ/
+    /// ตีกลับ มีเลข <c>DRAFT-{guid}</c> และยอดเต็ม ⇒ เดิมโผล่เป็น "รอชำระ" พร้อมปุ่มจ่าย
+    /// + ดาวน์โหลด PDF ได้ (ERP_REVIEW A-02). ด่านเดียวใช้ทั้ง 3 เมธอด — ห้ามคัดลอก</summary>
+    private IQueryable<Document> PortalDocuments(Guid companyId, Guid contactId)
+        => _db.Documents.Where(d => d.CompanyId == companyId && d.ContactId == contactId
+            && !DocumentStatusRules.NotIssued.Contains(d.Status));
+
     public async Task<List<PortalDocumentResponse>> GetMyDocumentsAsync(Guid companyId, Guid contactId, string? documentType = null)
     {
-        var query = _db.Documents
-            .Where(d => d.CompanyId == companyId && d.ContactId == contactId);
+        var query = PortalDocuments(companyId, contactId);
 
         if (!string.IsNullOrWhiteSpace(documentType) && Enum.TryParse<DocumentType>(documentType, out var docType))
             query = query.Where(d => d.DocumentType == docType);
@@ -216,8 +222,8 @@ public class PortalService : IPortalService
 
     public async Task<PortalDocumentResponse> GetDocumentAsync(Guid companyId, Guid contactId, Guid documentId)
     {
-        var doc = await _db.Documents
-            .FirstOrDefaultAsync(d => d.CompanyId == companyId && d.ContactId == contactId && d.Id == documentId)
+        var doc = await PortalDocuments(companyId, contactId)
+            .FirstOrDefaultAsync(d => d.Id == documentId)
             ?? throw new InvalidOperationException("Document not found.");
 
         return new PortalDocumentResponse(
@@ -228,9 +234,9 @@ public class PortalService : IPortalService
 
     public async Task<byte[]> DownloadDocumentPdfAsync(Guid companyId, Guid contactId, Guid documentId)
     {
-        var doc = await _db.Documents
+        var doc = await PortalDocuments(companyId, contactId)
             .Include(d => d.Lines)
-            .FirstOrDefaultAsync(d => d.CompanyId == companyId && d.ContactId == contactId && d.Id == documentId)
+            .FirstOrDefaultAsync(d => d.Id == documentId)
             ?? throw new InvalidOperationException("Document not found.");
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
         await _db.HydrateContactAsync(companyId, doc);

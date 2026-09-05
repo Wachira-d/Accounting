@@ -482,6 +482,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   อยู่ Billing axis เดียวกัน gate ตัดบรรทัดที่มี child เก่าอ้าง → ใบกำกับ/ใบเสร็จ
   ยอดขาดไม่ตรงใบแจ้งหนี้. การแปลงซ้ำยังถูกกันด้วย ValidateConversionAsync
   (double revenue guard). partial ตั้งใจ → ConvertDocumentPartialAsync ตามเดิม
+- **ด่านก่อนแปลง PO → PurchaseInvoice** (`ConvertCoreAsync` ต้นเมธอด · รอบ 135 · ERP_REVIEW E-05):
+  ถ้า PO มีใบรับสินค้า (GRN) ที่ไม่ใช่ Voided/Rejected อ้างอยู่ → **บล็อก** พร้อมบอกให้แปลง
+  จาก GRN แทน — เพราะ PI ที่ `RelatedDocumentId` เป็น PO จะไม่รู้จัก 21240 (GR-NI) ⇒ สต๊อกเข้า
+  รอบที่สอง + Dr 11500 ซ้ำ + GR-NI ค้างตลอดกาล (แกน Delivery/Billing แยกกันจึงไม่มีด่านอื่นจับ)
 - **คู่ที่แปลงได้** (`DocumentService.ValidConversions :2808`) — exact:
   ```
   Quotation        → Invoice / TaxInvoice / BillingNote / DeliveryNote / Receipt
@@ -726,11 +730,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ### 3.2 Approve (Draft/WaitingApproval → Approved) — **ขั้นสำคัญที่สุด**
 
-> **ทางเข้า approve มี 3 ทาง — ทุกทางวิ่งเข้า `ApproveDocumentAsync` เดียวกัน:**
+> **ทางเข้า approve มี 4 ทาง — ทุกทางวิ่งเข้า `ApproveDocumentAsync` เดียวกัน:**
 > ① ปุ่มอนุมัติ/บันทึกและอนุมัติ (ตรง) ② กฎอนุมัติตามวงเงิน (ApprovalService
 > gate — กฎ match แล้วปุ่มตรงถูกล็อคจน workflow ผ่าน) ③ ส่งเซ็นอนุมัติ
 > (SignatureApprovalService — เซ็นครบทุกคน → เรียก ApproveDocumentAsync
 > ให้อัตโนมัติ; **เดิมตั้ง Status ตรง ๆ ข้าม JE/สต๊อกทั้งหมด — แก้แล้ว**)
+> ④ อนุมัติผ่านมือถือ (`MobileApiService.QuickApproveAsync` ขั้นสุดท้ายของ
+> ApprovalRequest — **เดิมตั้ง `Status = Approved` ตรง ๆ เหมือน ③ ก่อนแก้ ⇒ เอกสาร
+> "อนุมัติแล้ว" เลขยัง DRAFT-{guid} ไม่มี JE/สต๊อก แล้วรับชำระต่อได้ — แก้แล้ว รอบ 135
+> (ERP_REVIEW B-02); ตีกลับผ่านมือถือเด้งกลับ Draft เหมือน ApprovalService ไม่ใช่ Rejected**)
+> กติกา: ห้ามเขียน `Document.Status` นอก `IDocumentService` — ทางเข้าใหม่ทุกทางต้องเรียก
+> `ApproveDocumentAsync` (checker `document_status_writer_check` อยู่ในลิสต์ที่ควรมี §8 ของ ERP_REVIEW)
 > RequireApprovalForDocuments (เกินวงเงิน) ยกเว้นให้เอกสารที่เซ็นครบแล้ว
 > (กัน flow ที่ setting บังคับใช้โดน block ตัวเอง)
 **`DocumentService.ApproveDocumentAsync` (`:1512`)** ทำตามลำดับ:
@@ -1166,7 +1176,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | Type | JE on Approve | Stock | VAT report side | Tax point | Special |
 | --- | --- | --- | --- | --- | --- |
 | `Quotation` | ❌ | ❌ | – | – | – |
-| `Invoice` | Dr AR / Cr Rev + Cr **[21913 บริการล้วน \| 21911 มีสินค้า TrackStock]** | ❌ (DN จัดการแยก) | output — บริการล้วน: เข้าเมื่อ `OutputVatDueAt` (รับเงิน §78/1); มีสินค้า/legacy (GL ลง 21911 ตรง): เข้าทันทีตาม tax point (§78 ส่งมอบ) | `TaxPointDate` snapshot; บริการ → `OutputVatDueAt` ตอนรับชำระ | รับชำระ (Payment/ใบเสร็จ settlement) → `TryReclassifyUndueOutputVatAsync`: JV Dr 21913 / Cr 21911 เต็มยอดคงเหลือ + stamp `OutputVatDueAt` (full-on-first-settlement, GL-driven, idempotent). แปลงเป็น TIV → supersede reverse JE ทั้งใบ (รวม 21913) ใบกำกับลง 21911 เอง |
+| `Invoice` | Dr AR / Cr Rev + Cr **[21913 บริการล้วน \| 21911 มีสินค้า TrackStock]** | ❌ (DN จัดการแยก) | output — บริการล้วน: เข้าเมื่อ `OutputVatDueAt` (รับเงิน §78/1); มีสินค้า/legacy (GL ลง 21911 ตรง): เข้าทันทีตาม tax point (§78 ส่งมอบ) | `TaxPointDate` snapshot; บริการ → `OutputVatDueAt` ตอนรับชำระ | รับชำระ (Payment/ใบเสร็จ settlement) → `TryReclassifyUndueOutputVatAsync`: JV Dr 21913 / Cr 21911 เต็มยอดคงเหลือ **รวม JE ของ CN/DN ที่อ้างใบนี้ (RelatedDocumentId) และ stamp `OutputVatDueAt` ให้ทั้งใบเดิมและ CN/DN ลูก** (รอบ 135 · ERP_REVIEW C-01 — เดิมรวมแค่ JE ของใบเดิม ⇒ VAT ของ DN ค้าง 21913 ถาวรและไม่เข้า ภ.พ.30; ยกเลิกการรับชำระ (`TryUndoUndueOutputVatReclassAsync`) ล้าง stamp ของลูกด้วย) (full-on-first-settlement, GL-driven, idempotent). แปลงเป็น TIV → supersede reverse JE ทั้งใบ (รวม 21913) ใบกำกับลง 21911 เอง |
 | `TaxInvoice` | Dr AR / Cr Rev + Cr 21911 | ❌ | output | `TaxPointDate` snapshot | – |
 | `BillingNote` | ❌ (รอ Receipt) | ❌ | – | – | **รวมใบค้างหลายใบได้**: `POST document/billing-note/from-invoices` — 1 บรรทัด/ใบ ยอด=BalanceDue, `DocumentLine.SourceDocumentId` ชี้ใบต้นทาง (กันวางบิลซ้ำใน BN active) |
 | `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 | ❌ (Receipt **ไม่อยู่** ใน `ApplyStockMovementsAsync` switch — ถ้าต้อง OUT ต้อง issue Invoice/TaxInvoice ก่อน) | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
@@ -1815,7 +1825,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | §78 / §78/1 / **§78/2** tax point | `TaxPointResolver` | snapshot ตอน approve · นำเข้าใช้ `Document.CustomsDutyPaidDate` **ตรง ๆ ไม่ใช่ MIN** · `SupplyKind` ให้ caller ระบุชนิดแทนการเดา (Auto = พฤติกรรมเดิม) |
 | §65 ตรี รายจ่ายต้องห้าม | `Section65TerValidator` | `NonDeductibleAmount + RuleJson` → ภ.ง.ด.50 · ครอบ **16 กลุ่มอนุมาตรา** (เดิม 8): เพิ่ม (8)(9)(10)(12)(13)(14)(15)(19) — context ใหม่ทุกตัว optional default = "ไม่ตรวจ" จึงไม่เดาแทนผู้ใช้ |
 | ภ.ง.ด.50/51 ยอด CIT | `TaxReport.CitAmount` | **แยกจาก `TotalTaxWithheld`** (เดิม reuse field ผิดความหมาย ทำให้ยอด CIT ปนกับ WHT เวลารวมข้ามรายงาน) · ผู้อ่านใช้ `CitAmount ?? TotalTaxWithheld` รองรับรายงานเก่า |
-| §65 ตรี(4) cap per fiscal year | `Section65TerValidator.Context.PriorYtdEntertainmentExpense` | sum YTD entertainment of Approved docs → excess บวกกลับใบปัจจุบัน |
+| §65 ตรี(4) cap per fiscal year | `Section65TerValidator.Context.PriorYtdEntertainmentExpense` | sum YTD entertainment ของเอกสารที่ **ออกแล้วและยังมีผล** (`DocumentStatusRules.NotIssued` + ไม่ Voided — เดิม `== Approved` ทำให้ PV/PI ที่จ่ายแล้ว (Paid) หลุดทั้งปี · ERP_REVIEW A-01) → excess บวกกลับใบปัจจุบัน |
 | §82/5(6) vehicle dealer override | `CompanySettings.IsVehicleDealer` | bypass warning เมื่อรถเป็น inventory (ประกาศอธิบดี 42) |
 | §87 ลำดับเวลาในรายงาน | `TaxService.NormalizeReportLineOrder` | เรียง + renumber `LineOrder` ท้ายการ generate ทุกครั้ง (ขาย → ซื้อ → บรรทัดสรุป; แต่ละกลุ่มตาม `TransactionDate`, ties = ลำดับเดิมเพื่อ deterministic). เรียกจาก GenerateVatReport / หลัง ApplyVatDeferrals / ComputeVatReport (ไฟล์ยื่น) / GenerateWhtReport / PullDocumentIntoReport / regenerate re-apply. `tax.html` sort ซ้ำฝั่ง client (จอ + แบบพิมพ์ §87) ให้รายงานเก่าถูกลำดับโดยไม่ต้อง regenerate — เดิม LineOrder ไล่ตามลำดับที่ query คืนเอกสาร = วันที่สลับไปมา |
 | §82/5(6) นโยบาย "ดุลพินิจผู้กรอก" | keyword auto-cut ถูกถอดออกทั้งหมด | ระบบ**ไม่เดา**จากข้อความไปตัดสิทธิ (เดิม "ค่าน้ำมัน" คำเดียวโดนตัด = น้ำมันรถกระบะผู้รับเหมาหายจาก ภ.พ.30). การตัดใช้เฉพาะ (a) flag รายบรรทัด IsVatClaimable (b) ผังบัญชีต้องห้ามที่บริษัทตั้งเอง; คำเตือนกฎรถยนต์นั่ง (ประกาศ 42: กระบะตอนเดียว/แค็บ/บรรทุก/ตู้>10 เคลมได้; เก๋ง/กระบะ 4 ประตูไม่ได้) มี 2 จุด — approve warning + confirm ตอนติ๊กเคลมในหน้าเอกสาร |
@@ -2832,7 +2842,13 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-04 (รอบ 134 — **สแกนซ้ำคัดลอกข้อมูลไม่ครบ**:_
+_Last verified against codebase: 2026-09-05 (รอบ 135 — **ผลตรวจทีม ERP review A–F** (`ERP_REVIEW_2026-09-05.md`):_
+_§3.2 ทางเข้า approve ที่ 4 (มือถือ) เข้า `ApproveDocumentAsync` · §2.4 ด่าน PO→PI เมื่อมี GRN ·_
+_undue VAT reclass รวม CN/DN ลูก + stamp/unstamp `OutputVatDueAt` · §65ตรี(4) YTD ใช้_
+_`DocumentStatusRules` · portal ลูกค้าเห็นเฉพาะเอกสารที่ออกแล้ว (`PortalService.PortalDocuments`) ·_
+_รายงานสต๊อก Σ|OUT| + `StockMovementSign` (ADJUST คงเครื่องหมาย) · `StockTransferController`_
+_มอบต่อ `IWarehouseService` · แดชบอร์ดตัด `IsClosingEntry` · aging กรอง CN/DN ตามฝั่ง)_
+_ก่อนหน้า: 2026-09-04 (รอบ 134 — **สแกนซ้ำคัดลอกข้อมูลไม่ครบ**:_
 _§2.2 เพิ่มเส้น `Cached` เต็มรูป (เกณฑ์เลือกต้นฉบับ · deny-list ของ `OcrScanSnapshot` ·_
 _forceRescan) + ด่านตัวเลขสามช่องของ `OcrConfidenceGateway` — **เปลี่ยนพฤติกรรม**:_
 _สแกนสำเนาได้ข้อมูลครบเท่าต้นฉบับ 49 ช่อง (เดิม 10) และ retry อ่านไฟล์ใหม่จริง)_

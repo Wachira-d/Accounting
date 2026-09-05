@@ -9216,6 +9216,25 @@ public partial class DocumentService : IDocumentService
     {
         var companyId = source.CompanyId;
 
+        // PO ที่รับของผ่านใบรับสินค้า (GRN) แล้ว ต้องออกใบแจ้งหนี้ซื้อ **จาก GRN** — แปลง
+        // PO→PI ตรงจะได้ PI ที่ RelatedDocumentId เป็น PO ⇒ GetReceivedViaGrnAccrualAccountAsync
+        // คืน null ⇒ สต๊อกเข้า **รอบที่สอง** + Dr 11500 ซ้ำ + 21240 (GR-NI) ไม่มีใครล้าง
+        // ตลอดกาล ทั้งที่แกน Delivery/Billing แยกกันจึงไม่มีด่านไหนจับ (ERP_REVIEW E-05)
+        if (source.DocumentType == DocumentType.PurchaseOrder && targetType == DocumentType.PurchaseInvoice)
+        {
+            var grnNumber = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == source.Id && !d.IsDeleted
+                    && d.DocumentType == DocumentType.GoodsReceiptNote
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                .OrderBy(d => d.CreatedAt)
+                .Select(d => d.DocumentNumber)
+                .FirstOrDefaultAsync();
+            if (grnNumber != null)
+                throw new InvalidOperationException(
+                    $"ใบสั่งซื้อนี้รับของผ่านใบรับสินค้า {grnNumber} แล้ว — ให้เปิดใบรับสินค้านั้นแล้วแปลงเป็นใบแจ้งหนี้ซื้อ " +
+                    "(3-way match) แทนการแปลงจากใบสั่งซื้อตรง ไม่งั้นสต๊อกและบัญชีสินค้าคงเหลือจะลงซ้ำสองรอบ");
+        }
+
         // ยอดภาษีของใบปลายทางต้อง **ตรงกับใบต้นทางเป๊ะทุกสตางค์** — ลูกค้าถือ
         // ใบแจ้งหนี้อยู่แล้ว ใบกำกับที่แปลงมาแล้วยอดขยับ 0.01 = เอกสารสองใบของ
         // รายการเดียวกันไม่ตรงกัน (ตรวจสอบภาษี/กระทบยอดกับลูกค้าพัง)
@@ -11828,10 +11847,14 @@ public partial class DocumentService : IDocumentService
         // เอกสารซื้อ/ค่าใช้จ่ายที่อนุมัติแล้วในรอบเดียวกัน (description มี
         // "รับรอง"/"entertain") เพื่อให้ excess คำนวณตาม YTD จริง ไม่ใช่
         // เฉพาะใบนี้. exclude doc ปัจจุบัน (re-approve / ก่อน approve)
+        // "ออกแล้ว" = ทุกสถานะที่ไม่ใช่ร่าง/รออนุมัติ/ตีกลับ/ยกเลิก — PV/PI ที่จ่ายแล้ว
+        // เป็น Paid ตั้งแต่ approve ⇒ `== Approved` เป๊ะ ๆ ทำให้ค่ารับรองที่จ่ายไปแล้ว
+        // ทั้งปีหลุดจาก YTD → cap 0.3% ถูกใช้ซ้ำ (ERP_REVIEW A-01 · CLAUDE.md "== Approved มักผิด")
         var priorEntertainment = await _db.DocumentLines.AsNoTracking()
             .Where(l => l.Document.CompanyId == companyId
                 && l.Document.Id != doc.Id
-                && l.Document.Status == DocumentStatus.Approved
+                && !DocumentStatusRules.NotIssued.Contains(l.Document.Status)
+                && l.Document.Status != DocumentStatus.Voided
                 && l.Document.DocumentDate >= yearStart && l.Document.DocumentDate < yearEnd
                 && (l.Document.DocumentType == DocumentType.PurchaseInvoice
                     || l.Document.DocumentType == DocumentType.Expense
@@ -12295,6 +12318,13 @@ public partial class DocumentService : IDocumentService
             if (reclassJeIds.Count > 0)
             {
                 inv.OutputVatDueAt = null;   // เปิดทางให้ tax point เกิดใหม่ตอนรับเงินครั้งหน้า
+                // CN/DN ลูกที่ถูกประทับพร้อมใบเดิม (C-01) ต้องกลับเป็น "ยังพัก" ด้วยกัน
+                var stampedChildren = await _db.Documents
+                    .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == inv.Id && !d.IsDeleted
+                        && (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote)
+                        && d.OutputVatDueAt != null)
+                    .ToListAsync();
+                foreach (var child in stampedChildren) child.OutputVatDueAt = null;
                 _logger.LogInformation(
                     "กลับภาษีขายถึงกำหนดของ {Doc} ({Count} ใบสำคัญ) เพราะ {Reason}",
                     inv.DocumentNumber, reclassJeIds.Count, reason);
@@ -12320,10 +12350,26 @@ public partial class DocumentService : IDocumentService
             if (inv.OutputVatDueAt != null) return;   // reclass ไปแล้ว
             if (inv.Status is DocumentStatus.Voided or DocumentStatus.Rejected) return;
 
+            // CN/DN ที่อ้างใบแจ้งหนี้บริการใบนี้ ลง VAT ไว้ที่ 21913 ด้วย (AutoPost เลือก
+            // vatCode 21913 เมื่อใบเดิมยังพัก) ภายใต้ SourceDocumentId **ของตัวเอง** ⇒ เดิม
+            // reclass รวมแค่ JE ของใบแจ้งหนี้ ⇒ VAT ของ DN ค้าง 21913 ถาวร และ ภ.พ.30
+            // ไม่เห็น DN เลย (ถูก IsExcluded ตอนใบเดิมยังพัก · เดือนถัดไปหลุด query เพราะ
+            // OutputVatDueAt ของ DN เป็น null) · CN ทำให้ยอดที่ย้ายเกินจริง (ERP_REVIEW C-01)
+            var childAdjustments = await _db.Documents
+                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == invoiceId && !d.IsDeleted
+                    && (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote)
+                    && d.OutputVatDueAt == null
+                    && !DocumentStatusRules.NotIssued.Contains(d.Status)
+                    && d.Status != DocumentStatus.Voided)
+                .ToListAsync();
+            var undueSourceIds = new List<Guid> { invoiceId };
+            undueSourceIds.AddRange(childAdjustments.Select(c => c.Id));
+
             var net21913 = await _db.JournalEntryLines
                 .Where(l => !l.IsDeleted
                     && l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.SourceDocumentId == invoiceId
+                    && l.JournalEntry.SourceDocumentId != null
+                    && undueSourceIds.Contains(l.JournalEntry.SourceDocumentId.Value)
                     && !l.JournalEntry.IsDeleted
                     && (l.JournalEntry.Status == JournalEntryStatus.Posted
                         || l.JournalEntry.Status == JournalEntryStatus.Reversed)
@@ -12376,10 +12422,15 @@ public partial class DocumentService : IDocumentService
 
             inv.OutputVatDueAt = when;   // ภ.พ.30 include งวดนี้
             inv.UpdatedAt = DateTime.UtcNow;
+            foreach (var child in childAdjustments)
+            {
+                child.OutputVatDueAt = when;   // CN/DN เข้า ภ.พ.30 งวดเดียวกับใบเดิม
+                child.UpdatedAt = DateTime.UtcNow;
+            }
             await _db.SaveChangesAsync();
             _logger.LogInformation(
-                "Reclassified undue output VAT {Vat:N2} → 21911 for Invoice {Doc} (tax point {When:yyyy-MM-dd})",
-                net21913, inv.DocumentNumber, when);
+                "Reclassified undue output VAT {Vat:N2} → 21911 for Invoice {Doc} (+{Children} CN/DN, tax point {When:yyyy-MM-dd})",
+                net21913, inv.DocumentNumber, childAdjustments.Count, when);
         }
         catch (Exception ex)
         {

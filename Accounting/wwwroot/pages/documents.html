@@ -8280,6 +8280,15 @@
           const v = el?.value || '';
           return v || (this.editingId && _visible(el) ? CLEAR_GUID : null);
         };
+        // ช่องข้อความอิสระ: สร้าง = ว่างส่ง null · แก้ไข = ว่างส่ง "" (ล้างค่า) — เดิมส่ง null
+        // เสมอ ⇒ server ตีว่า "ไม่แตะ" ⇒ ลบหมายเหตุ/เงื่อนไข/เทอมทิ้งแล้วบันทึก ค่าเดิม
+        // กลับมาและ **พิมพ์ลงกระดาษ** เหมือนเดิม (ERP_REVIEW B-01 · กฎ "ห้าม silent no-op")
+        // ใช้กติกา _visible เดียวกับ _gsel: ช่องที่ซ่อนตามชนิดเอกสาร ค่าว่างไม่ใช่เจตนา
+        const _txt = (id) => {
+          const el = document.getElementById(id);
+          const v = (el?.value ?? '').trim();
+          return v || (this.editingId && _visible(el) ? '' : null);
+        };
         const projectId = _gsel('fProject');
         const dimensionId = _gsel('fDimension');
         const _pcEl = document.getElementById('fPaymentChannel');
@@ -8360,16 +8369,16 @@
           deliveryDate: document.getElementById('fDeliveryDate')?.value || null,
           ownershipTransferDate: document.getElementById('fOwnershipTransferDate')?.value || null,
           serviceUsedDate: document.getElementById('fServiceUsedDate')?.value || null,
-          bookingNumber: document.getElementById('fBookingNumber')?.value.trim() || null,
+          bookingNumber: _txt('fBookingNumber'),
           contactId,
           // เลขใบกำกับเดิมนอกระบบ (CN/DN) ชนะช่องอ้างอิงทั่วไป — ใช้ผ่าน hard gate
           // §86/9-10 และพิมพ์บนกระดาษ
           reference: (document.getElementById('fCnExternalRef')?.value || '').trim()
-            || document.getElementById('fRef').value || null,
-          notes: document.getElementById('fNotes').value || null,
-          customAppendix: document.getElementById('fCustomAppendix').value || null,
-          customFooterNotes: document.getElementById('fCustomFooterNotes').value || null,
-          customTermsAndConditions: document.getElementById('fCustomTerms').value || null,
+            || _txt('fRef'),
+          notes: _txt('fNotes'),
+          customAppendix: _txt('fCustomAppendix'),
+          customFooterNotes: _txt('fCustomFooterNotes'),
+          customTermsAndConditions: _txt('fCustomTerms'),
           projectId,
           dimensionId,
           bankAccountId,
@@ -8377,11 +8386,11 @@
           expenseCategoryId,
           lines,
           // CertificateInLieu fields
-          certificateReason: document.getElementById('fCertReason')?.value || null,
-          certifierName: document.getElementById('fCertifierName')?.value || null,
-          certifierPosition: document.getElementById('fCertifierPosition')?.value || null,
-          witnessName: document.getElementById('fWitnessName')?.value || null,
-          witnessPosition: document.getElementById('fWitnessPosition')?.value || null,
+          certificateReason: _txt('fCertReason'),
+          certifierName: _txt('fCertifierName'),
+          certifierPosition: _txt('fCertifierPosition'),
+          witnessName: _txt('fWitnessName'),
+          witnessPosition: _txt('fWitnessPosition'),
           paymentDate: document.getElementById('fPaymentDate')?.value || null,
           creditNoteReason: (document.querySelector('input[name="fCreditNoteReason"]:checked')?.value) || null,
           debitNoteReason: (document.querySelector('input[name="fDebitNoteReason"]:checked')?.value) || null,
@@ -8440,7 +8449,7 @@
             const n = parseInt(v, 10);
             return Number.isFinite(n) && n >= 0 ? n : (_canClear ? -1 : null);
           })(),
-          paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
+          paymentTerms: _txt('fPaymentTerms'),
           // ภาษาที่ตรึงไว้กับใบนี้ — "" (ตามค่าบริษัท) ต้องส่งเป็น null ไม่ใช่ ""
           // ตอนสร้าง; ตอนแก้ไขส่ง "" ได้เพื่อ "ล้างกลับไปใช้ค่าบริษัท"
           // (server กรองเหลือ th/en เท่านั้น ค่าอื่นกลายเป็น null)

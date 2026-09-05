@@ -39,7 +39,9 @@ ALLOWED = {
     "Data/DatabaseMigrationHelper.cs",
 }
 
-RE_MOVEMENT_ADD = re.compile(r"\bStockMovements\s*\.\s*Add\b")
+# ทั้ง `_db.StockMovements.Add(...)` และ `_db.Set<StockMovement>().Add(...)` — ทรงหลัง
+# หลุดรุ่นแรกจริง (StockTransferController เขียน movement ตรงมาตลอด · ERP_REVIEW E-04)
+RE_MOVEMENT_ADD = re.compile(r"\b(?:StockMovements|Set\s*<\s*StockMovement\s*>\s*\(\s*\))\s*\.\s*(?:Add|AddRange)\b")
 RE_CURRENT_STOCK_WRITE = re.compile(r"\.CurrentStock\s*(\+=|-=|=(?!=))")
 # `WarehouseStock` row mutation — จับจากชื่อฟิลด์ที่มีเฉพาะบนแถวนั้น
 RE_WS_QTY_WRITE = re.compile(r"\.(AvailableQuantity|ReservedQuantity)\s*(\+=|-=|=(?!=))")
@@ -119,7 +121,7 @@ def scan_text(rel: str, text: str):
     code = strip_comments_and_strings(text)
     for lineno, line in enumerate(code.splitlines(), start=1):
         if RE_MOVEMENT_ADD.search(line):
-            findings.append((rel, lineno, "StockMovements.Add — ต้องเรียก IStockLedger.MoveAsync แทน"))
+            findings.append((rel, lineno, "StockMovements.Add / Set<StockMovement>().Add — ต้องเรียก IStockLedger.MoveAsync แทน"))
         if RE_CURRENT_STOCK_WRITE.search(line):
             findings.append((rel, lineno, "เขียน Product.CurrentStock เอง — ต้องให้ ledger เป็นคนปรับ"))
         if RE_WS_QTY_WRITE.search(line):
@@ -159,6 +161,7 @@ public class Bad
     {
         product.CurrentStock -= qty;
         _db.StockMovements.Add(new StockMovement { Quantity = qty });
+        _db.Set<StockMovement>().Add(new StockMovement { Quantity = qty });
         ws.AvailableQuantity += qty;
     }
 }
@@ -174,9 +177,9 @@ def self_test() -> int:
         print("❌ negative test ล้ม: ฟ้องโค้ดที่ถูกต้อง")
         for f in good:
             print("   ", f)
-    if len(bad) != 3:
+    if len(bad) != 4:
         ok = False
-        print(f"❌ negative test ล้ม: ควรจับบั๊กได้ 3 จุด แต่จับได้ {len(bad)}")
+        print(f"❌ negative test ล้ม: ควรจับบั๊กได้ 4 จุด แต่จับได้ {len(bad)}")
         for f in bad:
             print("   ", f)
     print("✅ negative test ผ่าน" if ok else "")

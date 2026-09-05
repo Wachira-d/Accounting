@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Product;
 using Accounting.Models.Entities;
@@ -216,7 +217,9 @@ public class ProductService : IProductService
 
         var warehouseId = request.WarehouseId
             ?? await _stock.GetOrCreateDefaultWarehouseIdAsync(companyId);
-        var qty = request.MovementType == "OUT" ? -Math.Abs(request.Quantity) : Math.Abs(request.Quantity);
+        // OUT = ติดลบเสมอ · IN = บวกเสมอ · ADJUST = **คงเครื่องหมายที่ผู้ใช้กรอก** (−5 = ของหาย)
+        // เดิม ADJUST ถูก Math.Abs ⇒ กรอกของหาย 5 กลายเป็นของเพิ่ม 5 เงียบ ๆ (ERP_REVIEW E-08)
+        var qty = StockMovementSign.Normalize(request.MovementType, request.Quantity);
 
         // ด่านสต็อกไม่พอ ต้องดูยอด **ในคลังนั้น** ไม่ใช่ยอดรวมทั้งบริษัท — ไม่งั้นสาขา A
         // เบิกของที่กองอยู่สาขา B ได้ (ยอดรวมพอ แต่ของไม่ได้อยู่ที่นี่)
@@ -615,7 +618,10 @@ public class ProductService : IProductService
             {
                 ProductId = g.Key,
                 TotalIn = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity),
-                TotalOut = g.Where(m => m.MovementType == "OUT").Sum(m => m.Quantity),
+                // OUT ถูกเก็บ "ติดลบ" โดย IStockLedger (Quantity = delta) แต่แถวเก่าก่อนเฟส 0
+                // เก็บบวก ⇒ ต้อง Σ|Quantity| แบบเดียวกับ InventoryCostingService ไม่งั้น
+                // `In − Out` กลายเป็น `In − (−Out)` = ขายแล้วสต๊อก **เพิ่ม** (ERP_REVIEW E-01)
+                TotalOut = g.Where(m => m.MovementType == "OUT").Sum(m => Math.Abs(m.Quantity)),
                 TotalAdjust = g.Where(m => m.MovementType == "ADJUST").Sum(m => m.Quantity),
                 TotalCostIn = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity * m.UnitCost),
                 TotalQtyIn = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity)
@@ -881,7 +887,7 @@ public class ProductService : IProductService
             {
                 ProductId = g.Key,
                 Opening = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity)
-                         - g.Where(m => m.MovementType == "OUT").Sum(m => m.Quantity)
+                         - g.Where(m => m.MovementType == "OUT").Sum(m => Math.Abs(m.Quantity))   // OUT เก็บติดลบ (E-01)
                          + g.Where(m => m.MovementType == "ADJUST").Sum(m => m.Quantity)
             })
             .ToListAsync();
@@ -895,9 +901,9 @@ public class ProductService : IProductService
             {
                 ProductId = g.Key,
                 TotalIn = g.Where(m => m.MovementType == "IN").Sum(m => m.Quantity),
-                TotalOut = g.Where(m => m.MovementType == "OUT").Sum(m => m.Quantity),
+                TotalOut = g.Where(m => m.MovementType == "OUT").Sum(m => Math.Abs(m.Quantity)),   // OUT เก็บติดลบ (E-01)
                 TotalAdjust = g.Where(m => m.MovementType == "ADJUST").Sum(m => m.Quantity),
-                CostOut = g.Where(m => m.MovementType == "OUT").Sum(m => m.Quantity * m.UnitCost)
+                CostOut = g.Where(m => m.MovementType == "OUT").Sum(m => Math.Abs(m.Quantity) * m.UnitCost)
             })
             .ToListAsync();
         var periodLookup = periodData.ToDictionary(p => p.ProductId);

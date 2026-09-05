@@ -2098,10 +2098,21 @@ public class AiSuggestionController : ControllerBase
                 fix = "อนุมัติหรือลบก่อนปิดงวด" });
 
         // 2) Approved Documents without posted JE (auto-post should have created one)
+        // เฉพาะชนิดที่ AutoPost ลง JE จริง — ใบเสนอราคา/PR/PO/ใบส่งของ/ใบวางบิล ไม่มี JE
+        // โดยธรรมชาติ เดิมถูกนับเป็น "ยังไม่ลงบัญชี" ทุกใบ (false positive กลบของจริง) และ
+        // `== Approved` ทำให้ใบ Sent/Paid ที่ AutoPost ล้มเงียบหลุดจากการตรวจ (ERP_REVIEW A-04)
+        var jeBearingTypes = new[]
+        {
+            DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.ReceiptVoucher,
+            DocumentType.DebitNote, DocumentType.CreditNote, DocumentType.PurchaseInvoice, DocumentType.Expense,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu, DocumentType.GoodsReceiptNote,
+        };
         var docsNoJe = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && d.DocumentDate >= start && d.DocumentDate <= end
-                && d.Status == DocumentStatus.Approved
+                && jeBearingTypes.Contains(d.DocumentType)
+                && !DocumentStatusRules.NotIssued.Contains(d.Status)
+                && d.Status != DocumentStatus.Voided
                 && !_db.JournalEntries.Any(j => j.SourceDocumentId == d.Id && !j.IsDeleted))
             .CountAsync(ct);
         if (docsNoJe > 0)

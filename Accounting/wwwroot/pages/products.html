@@ -511,7 +511,7 @@
         document.getElementById('fPrintStation').value='';
         document.getElementById('fUnit').value='ชิ้น';document.getElementById('fSellPrice').value='';document.getElementById('fCostPrice').value='0';
         document.getElementById('fType').value='Product';document.getElementById('fVat').value='7';document.getElementById('fVatIncl').checked=false;
-        document.getElementById('fTrackStock').checked=true;document.getElementById('fMinStock').value='0';document.getElementById('fCode').disabled=false;
+        document.getElementById('fTrackStock').checked=true;document.getElementById('fMinStock').value='0';document.getElementById('fCode').disabled=false;document.getElementById('fType').disabled=false;document.getElementById('fType').title='';
         this._toggleImageSection(null);
         Layout.openModal('formModal');
       },
@@ -523,7 +523,7 @@
         document.getElementById('fName').value=p.name;document.getElementById('fNameEn').value=p.nameEn||'';
         document.getElementById('fCategory').value=p.category||'';document.getElementById('fSku').value=p.sku||'';
         document.getElementById('fUnit').value=p.unit||'ชิ้น';document.getElementById('fSellPrice').value=p.sellingPrice;
-        document.getElementById('fCostPrice').value=p.costPrice;document.getElementById('fType').value=p.productType;
+        document.getElementById('fCostPrice').value=p.costPrice;document.getElementById('fType').value=p.productType;document.getElementById('fType').disabled=true;document.getElementById('fType').title='ชนิดสินค้าเปลี่ยนหลังสร้างไม่ได้ (กระทบสต๊อก/บัญชีย้อนหลัง) — สร้างสินค้าใหม่แทน';
         document.getElementById('fVat').value=p.vatRate==0?'0':'7';document.getElementById('fVatIncl').checked=p.isVatIncluded;
         document.getElementById('fTrackStock').checked=p.trackStock;document.getElementById('fMinStock').value=p.minimumStock;
         document.getElementById('fDesc').value=p.description||'';
@@ -592,7 +592,7 @@
         const id=document.getElementById('editId').value;
         try {
           let saved;
-          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value),vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:parseInt(document.getElementById('fMinStock').value),description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
+          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sku:document.getElementById('fSku').value||'',unit:document.getElementById('fUnit').value,trackStock:document.getElementById('fTrackStock').checked,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value),vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:parseInt(document.getElementById('fMinStock').value),description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
           else { saved = await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value)||0,vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:parseInt(document.getElementById('fMinStock').value)||0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
           Layout.toast(id?'แก้ไขสำเร็จ':'เพิ่มสินค้าสำเร็จ — ตอนนี้อัพโหลดรูปได้แล้ว');
           await this.load();

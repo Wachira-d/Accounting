@@ -77,6 +77,20 @@ public class AgingReportService : IAgingReportService
             query = query.Where(d => d.ProjectId == request.ProjectId.Value);
 
         var documents = await query.ToListAsync();
+
+        // ใบลดหนี้/เพิ่มหนี้อยู่ได้สองฝั่ง — ชนิดอย่างเดียวตัดสินไม่ได้ (Helpers/DocumentSide
+        // ระบุเป็น BothSides) เดิม aging รับ CN/DN ทุกใบทั้ง AR และ AP ⇒ CN ที่เราออกให้ลูกค้า
+        // ไปลดยอด "เจ้าหนี้" · DN ที่ผู้ขายออกไปเพิ่มยอด "ลูกหนี้" (ERP_REVIEW F-03).
+        // ใช้ฝั่งที่ระบบตัดสินไว้ตอนสร้าง (CnDnPurchaseSideOverride — DocumentService ตั้งจาก
+        // ใบต้นทาง) · แถวเก่าที่ยังเป็น null คงพฤติกรรมเดิม (โผล่ทั้งสองฝั่ง) จนกว่าจะ backfill —
+        // ห้ามเดาฝั่งจากชนิด เพราะ DocumentSide.IsPurchase(CN) ไม่มี ourRole = "ซื้อ" เสมอ
+        // ⇒ CN ฝั่งขายเก่าทั้งหมดจะหายจาก AR aging เงียบ ๆ (ค่า default ที่แต่งขึ้น)
+        var wantPurchase = reportType != AgingReportType.AccountsReceivable;
+        documents = documents.Where(d =>
+                !DocumentSide.IsAmbiguous(d.DocumentType)
+                || d.CnDnPurchaseSideOverride == null
+                || d.CnDnPurchaseSideOverride == wantPurchase)
+            .ToList();
         await _db.HydrateContactsAsync(companyId, documents);
 
         // Build contact details with aging (d.Contact ผูกกลับแล้วจาก hydrate — ปลอดภัย)

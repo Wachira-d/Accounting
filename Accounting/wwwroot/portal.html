@@ -58,6 +58,7 @@
     .pill-paid { background: #D1FAE5; color: var(--success); }
     .pill-due { background: #FEF3C7; color: var(--warning); }
     .pill-overdue { background: #FEE2E2; color: var(--danger); }
+    .pill-void { background: #E5E7EB; color: #6B7280; text-decoration: line-through; }
     .empty { text-align: center; padding: 60px 20px; color: var(--gray-500); }
     .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
     select, input.search { padding: 8px 12px; border: 1px solid var(--gray-300); border-radius: 6px; font-size: 13px; font-family: inherit; }
@@ -314,9 +315,12 @@
                 <th class="right">ยอดรวม</th><th class="right">ค้างชำระ</th><th>สถานะ</th><th></th>
               </tr></thead>
               <tbody>${docs.map(d => {
-                const overdue = d.balanceDue > 0 && d.dueDate && new Date(d.dueDate) < new Date();
-                const cls = d.balanceDue <= 0 ? 'pill-paid' : (overdue ? 'pill-overdue' : 'pill-due');
-                const lbl = d.balanceDue <= 0 ? 'ชำระแล้ว' : (overdue ? 'เกินกำหนด' : 'รอชำระ');
+                // สถานะจากเซิร์ฟเวอร์เป็นตัวตั้ง — ใบยกเลิกห้ามขึ้น "ชำระแล้ว"/ปุ่มจ่าย (A-02)
+                const voided = d.status === 'Voided';
+                const payable = !voided && d.balanceDue > 0;
+                const overdue = payable && d.dueDate && new Date(d.dueDate) < new Date();
+                const cls = voided ? 'pill-void' : (d.balanceDue <= 0 ? 'pill-paid' : (overdue ? 'pill-overdue' : 'pill-due'));
+                const lbl = voided ? 'ยกเลิก' : (d.balanceDue <= 0 ? 'ชำระแล้ว' : (overdue ? 'เกินกำหนด' : 'รอชำระ'));
                 return `<tr>
                   <td><strong>${esc(d.documentNumber)}</strong></td>
                   <td>${docTypeLabel(d.documentType)}</td>
@@ -328,7 +332,7 @@
                   <td>
                     <button class="btn btn-ghost btn-sm" onclick="Portal.viewDocument('${d.id}')">ดู</button>
                     <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${d.id}','${jsArg(d.documentNumber)}')">PDF</button>
-                    ${d.balanceDue > 0 ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${d.id}', ${d.balanceDue}, '${jsArg(d.documentNumber)}')">💳 ชำระ</button>` : ''}
+                    ${payable ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${d.id}', ${d.balanceDue}, '${jsArg(d.documentNumber)}')">💳 ชำระ</button>` : ''}
                   </td>
                 </tr>`;
               }).join('')}</tbody>
