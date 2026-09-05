@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Document;
 using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
@@ -31,12 +32,14 @@ public class LineBotService : ILineBotService
     public LineBotService(AccountingDbContext db, IConfiguration config,
         IHttpClientFactory httpFactory, ILogger<LineBotService> logger,
         IDocumentService docService, IPayslipLineDeliveryService payslipLine,
-        IOcrService ocr, IOcrQuotaService ocrQuota, IChatbotService chat)
+        IOcrService ocr, IOcrQuotaService ocrQuota, IChatbotService chat,
+        IPermissionService perms)
     {
         _db = db; _config = config; _httpFactory = httpFactory;
         _logger = logger; _docService = docService; _payslipLine = payslipLine;
-        _ocr = ocr; _ocrQuota = ocrQuota; _chat = chat;
+        _ocr = ocr; _ocrQuota = ocrQuota; _chat = chat; _perms = perms;
     }
+    private readonly IPermissionService _perms;
 
     public async Task<string> IssueBindCodeAsync(Guid userId)
     {
@@ -259,8 +262,21 @@ public class LineBotService : ILineBotService
                         new("ค่าใช้จ่ายจาก " + vendor, 1, "รายการ", amount.Value, 0, 0, 0, null)
                     }
                 ), createdBy: user.Email);
-                try { await _docService.ApproveDocumentAsync(companyId, doc.Id, user.Email); } catch { /* show success even if approve hiccups */ }
-                return $"✅ บันทึกแล้ว {vendor} {amount.Value:N2} ฿\nเลขที่เอกสาร: {doc.DocumentNumber}";
+                // ด่านสิทธิ์เดียวกับเว็บ/postback — เดิมเส้นข้อความนี้อนุมัติอัตโนมัติให้ทุกสมาชิก
+                // (Viewer พิมพ์ "จ่าย xxx 99999" ⇒ Expense Approved + JE) และ `catch {}` กลืน error
+                // แล้วตอบ ✅ พร้อมเลข DRAFT- (ERP_REVIEW G-03)
+                if (!await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, user.Id, Models.Enums.DocumentType.Expense))
+                    return $"📝 บันทึกเป็นฉบับร่างแล้ว {vendor} {amount.Value:N2} ฿ — สิทธิ์ของคุณอนุมัติไม่ได้ แจ้งเจ้าของกิจการ/นักบัญชีอนุมัติในระบบ";
+                try
+                {
+                    var approved = await _docService.ApproveDocumentAsync(companyId, doc.Id, user.Email);
+                    return $"✅ บันทึกและอนุมัติแล้ว {vendor} {amount.Value:N2} ฿\nเลขที่เอกสาร: {approved.DocumentNumber}";
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "LINE บันทึกค่าใช้จ่าย: สร้างร่างแล้วแต่อนุมัติไม่ผ่าน doc {DocId}", doc.Id);
+                    return $"📝 บันทึกเป็นฉบับร่างแล้ว {vendor} {amount.Value:N2} ฿ แต่อนุมัติไม่ผ่าน: {ex.Message}\nเปิดในระบบเพื่อแก้แล้วอนุมัติ";
+                }
             }
             catch (Exception ex)
             {
@@ -595,10 +611,10 @@ public class LineBotService : ILineBotService
             .FirstOrDefaultAsync(cu => cu.CompanyId == doc.CompanyId && cu.UserId == user.Id);
         if (membership == null) return "❌ คุณไม่มีสิทธิ์ในบริษัทของเอกสารนี้";
 
-        // role guard: การอนุมัติ = ออกเลขจริง + ลง JE/ภาษี — ให้เฉพาะ role
-        // ที่อนุมัติในระบบได้ (Staff/Viewer/Auditor สร้างหรือดูได้ แต่อนุมัติไม่ได้)
-        if (membership.Role is not (Models.Enums.UserRole.Owner or Models.Enums.UserRole.Accountant
-            or Models.Enums.UserRole.ExternalAccountant or Models.Enums.UserRole.SystemAdmin))
+        // ด่านสิทธิ์ตัวเดียวกับเว็บ (DocumentPermissionHelper) — เดิมเป็นสำเนามือของ role list
+        // ⇒ custom role ที่ได้ Document.Approve อนุมัติในเว็บได้แต่ LINE ปฏิเสธ · Accountant ที่ถูก
+        // ถอดสิทธิ์ยังอนุมัติผ่าน LINE ได้ · ไม่แยกทิศซื้อ/ขาย (ERP_REVIEW G-04)
+        if (!await DocumentPermissionHelper.CanApproveAsync(_perms, doc.CompanyId, user.Id, doc.DocumentType))
             return "❌ สิทธิ์ของคุณอนุมัติเอกสารไม่ได้ — เอกสารบันทึกเป็นฉบับร่างไว้แล้ว แจ้งเจ้าของกิจการ/นักบัญชีให้อนุมัติในระบบ";
 
         if (doc.Status is not (Models.Enums.DocumentStatus.Draft or Models.Enums.DocumentStatus.WaitingApproval))

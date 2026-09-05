@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Mobile;
 using Accounting.Models.Entities;
@@ -399,6 +400,18 @@ public class MobileApiService : IMobileApiService
                 {
                     var docSvc = _services.GetService(typeof(IDocumentService)) as IDocumentService
                         ?? throw new InvalidOperationException("ไม่พบบริการเอกสาร (IDocumentService) — อนุมัติผ่านมือถือไม่ได้");
+                    // ด่านสิทธิ์เดียวกับเว็บ — เดิมช่องมือถือไม่ตรวจเลยว่าผู้กดอนุมัติได้ไหม (ERP_REVIEW G-05)
+                    var perms = _services.GetService(typeof(IPermissionService)) as IPermissionService
+                        ?? throw new InvalidOperationException("ไม่พบบริการสิทธิ์ (IPermissionService)");
+                    var docType = await _db.Documents.AsNoTracking()
+                        .Where(d => d.Id == entityId && d.CompanyId == companyId && !d.IsDeleted)
+                        .Select(d => (DocumentType?)d.DocumentType)
+                        .FirstOrDefaultAsync()
+                        ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+                    if (!await DocumentPermissionHelper.CanApproveAsync(perms, companyId, userId, docType.Value))
+                        throw new BusinessRuleException(
+                            $"ไม่มีสิทธิ์อนุมัติเอกสาร {docType.Value} (ต้องการ Document.Approve หรือสิทธิ์อนุมัติฝั่งซื้อ/ขาย)",
+                            "PERM-DOC-APPROVE", 403);
                     var approved = await docSvc.ApproveDocumentAsync(companyId, entityId,
                         $"mobile:{userId}", acknowledgeWarnings: true);
                     approvedDocumentCompanyId = companyId;

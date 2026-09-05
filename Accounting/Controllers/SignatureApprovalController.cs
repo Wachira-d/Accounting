@@ -126,7 +126,8 @@ public class ExternalApprovalController : ControllerBase
         Guid companyId, Guid documentId, [FromBody] ExternalApproveRequest req)
     {
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-        var result = await _svc.ExternalApproveQuotationAsync(companyId, documentId, req, ip);
+        var result = await _svc.ExternalApproveQuotationAsync(companyId, documentId, req, ip,
+            JwtHelper.GetUserIdFromClaims(User).ToString());
         return Ok(new ApiResponse<QuotationApprovalResult>(true, result, result.Message));
     }
 }

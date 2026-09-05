@@ -22,7 +22,7 @@ public interface ISignatureApprovalService
     Task<DocumentApprovalResponse> RejectAsync(Guid companyId, Guid approvalId, RejectDocumentRequest request, string userId);
 
     // ===== External API: Approve via Token/API Key =====
-    Task<QuotationApprovalResult> ExternalApproveQuotationAsync(Guid companyId, Guid documentId, ExternalApproveRequest request, string? ipAddress);
+    Task<QuotationApprovalResult> ExternalApproveQuotationAsync(Guid companyId, Guid documentId, ExternalApproveRequest request, string? ipAddress, string actingUserId);
 
     // ===== Signatures on Document =====
     Task<List<DocumentSignatureResponse>> GetDocumentSignaturesAsync(Guid companyId, Guid documentId);

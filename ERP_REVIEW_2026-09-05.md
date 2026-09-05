@@ -21,11 +21,11 @@
 | D | master data · settings · onboarding · import/export | ✅ ครบ 17 ข้อ | `report-D.md` |
 | E | สต๊อก · costing · 3-way match · POS · โอนคลัง | ✅ ครบ 15 ข้อ | `report-E.md` |
 | F | รายงาน/แดชบอร์ด ↔ สมุดบัญชี ("สองความจริง") | ⚠️ **บางส่วน** 10 ข้อ (agent ถูกตัดด้วย rate limit) | `report-F.md` |
-| G | security/tenant ในส่วน §10 (SignatureApproval ภายนอก · PayslipPublic · Impersonation · CMS anonymous · LINE · /api/v1 · allow-list ของ write_permission_gate_check) | ❌ **ยังไม่ได้รัน** (rate limit 2 รอบ) | — |
+| G | security/tenant ในส่วน §10 (SignatureApproval ภายนอก · PayslipPublic · Impersonation · CMS anonymous · LINE · /api/v1 · allow-list ของ write_permission_gate_check) | ✅ ครบ 9 ข้อ (รอบ 3) — **ไม่พบ IDOR/รั่วข้ามบริษัทตรง ๆ** ปัญหาหลักคือ "สิทธิ์" ไม่ใช่ "ตัวตน" | `report-G.md` |
 | H | payroll/HR ↔ GL · โมดูลรอง (ExpenseClaim/PettyCash/Cheque/Advance) · recurring · bank recon · lodging/CMS ↔ เอกสาร | ❌ ยังไม่ได้รัน | — |
 | I | label map/ฟอร์ม↔payload/dead reference ทุกหน้า · เมนู↔สิทธิ์ · **แผนที่ช่องว่างสู่ ERP** | ❌ ยังไม่ได้รัน (ทิ้งผลสแกน enum×หน้า ไว้: ใช้แล้วโดยทีม A) | — |
 
-**รอบถัดไปต้องรัน G · H · I ก่อนอย่างอื่น** — โดยเฉพาะ G เพราะ §10 ของ SYSTEM_REVIEW ระบุเป็นความเสี่ยงอันดับ 1-4 มาตั้งแต่รอบก่อนและยังไม่มีใครอ่าน
+**H · I รันอยู่ (รอบ 3 เริ่ม 06:32 UTC)** — ผลจะถูกเติมในไฟล์นี้เมื่อเสร็จ · G เสร็จแล้ว (ปิดความเสี่ยงอันดับ 1-4 ของ §10 SYSTEM_REVIEW: ตรวจแล้ว **ไม่ใช่บั๊ก** 5 พื้นที่ · ที่พบคือช่องอนุมัติทางอ้อมไม่มีด่านสิทธิ์ — แก้แล้ว)
 
 ## §1 สรุปผู้บริหาร
 
@@ -51,6 +51,10 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | F-01 | P1 | แดชบอร์ดหลักนับใบปิดบัญชี (IsClosingEntry) เข้ารายได้ ⇒ KPI ธ.ค./ปีนี้ = 0 หลังปิดปี | `DashboardService` 5 query ตัด `IsClosingEntry` |
 | F-03 | P1 | aging ใส่ CN/DN ทั้งสองฝั่ง (CN ฝั่งขายไปลด AP) | `AgingReportService` กรองด้วย `CnDnPurchaseSideOverride` (null = พฤติกรรมเดิม จนกว่าจะ backfill) |
 | A-04 | P2 | `DOC_NO_JE` ฟ้องใบเสนอราคา/PO ทุกใบ และพลาดใบ Paid ที่ไม่มี JE | จำกัดชนิดที่ AutoPost ลง JE + `DocumentStatusRules` |
+| G-01 | P1 | เส้นอนุมัติผ่านลายเซ็น (`/approvals/setup·approve·reject`, `/external/quotations/approve`) ไม่มีด่าน `Document.Approve` · external ข้ามขั้นภายในที่ Pending · reject ตั้ง Rejected (ทางตัน B-03) | `SignatureApprovalService.RequireApproveAsync` ทุกทางเข้า · external ต้องมี actingUserId + ตรวจขั้นภายใน · reject → Draft |
+| G-03 | P1 | LINE "บันทึก {ร้าน} {จำนวน}" อนุมัติ Expense อัตโนมัติให้ทุกสมาชิก + `catch {}` กลืน error แล้วตอบ ✅ | ด่าน `CanApproveAsync(Expense)` → ไม่มีสิทธิ์ = ร่าง · error = บอกว่าร่างแล้วอนุมัติไม่ผ่านพร้อมเหตุผล |
+| G-04 | P2 | LINE postback ใช้สำเนามือ role list แทน `DocumentPermissionHelper` | ใช้ `CanApproveAsync(doc.DocumentType)` |
+| G-05 | P1 | อนุมัติผ่านมือถือไม่มีด่านสิทธิ์ (B-02 แก้แค่ Status writer) | `MobileApiService` ตรวจ `CanApproveAsync` ก่อน `ApproveDocumentAsync` (403 `PERM-DOC-APPROVE`) |
 
 ### P0 ที่ **ยืนยันแล้วแต่ยังไม่แก้** (ขนาด M/L หรือต้องตัดสินใจ) — เรียงตามความเสียหาย
 1. **A-06 [P1→ควรถือเป็น P0][M]** ขายสินค้าคงคลังด้วย "ใบเสร็จรับเงิน" standalone (หรือแปลงจาก Quotation/BillingNote → Receipt) ลงรายได้แต่**ไม่ตัดสต๊อก ไม่ลง COGS** (`ApplyStockMovementsAsync` switch ไม่มี Receipt/RV `_ => 0` · DocumentService.cs:12490-12510) — ชนิดเอกสารบนจอเปลี่ยนกำไรขั้นต้น. **ต้องตัดสิน**: (ก) Receipt/RV ที่มีบรรทัดสินค้า TrackStock เดินสาย −1 + COGS เหมือน TIV หรือ (ข) บล็อกพร้อมบอกให้ใช้ใบกำกับ/ใบแจ้งหนี้ — ทีม A แนะ (ก) เพราะ POS ใช้เส้นตัวเองอยู่แล้ว
@@ -184,6 +188,20 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | E-15 | P3 | S | RebuildAverageCost SaveChanges กลาง void txn + LogWarning | ○ |
 | — | — | — | ตรวจแล้วไม่ใช่บั๊ก: StockLedger lock/WAC/SetAbsolute · ApplyStockMovements void/CN/DN/GRN · POS ผ่าน ledger + BOM 4 เส้น · หัวสลิปผ่าน PosSlipHeader อ่าน ภ.พ.06 · SYSTEM_REVIEW H-A8/H-A9 ปิดแล้วจริงโดยเฟส 0 (ยังไม่ติ๊ก) · H-A7 ยังเปิด | |
 
+### ทีม G — security / tenant / สิทธิ์ (9 ข้อ)
+| ID | P | ขนาด | เรื่อง | สถานะ |
+| --- | --- | --- | --- | --- |
+| G-01 | P1 | S | ลายเซ็น/external approve ไม่มีด่าน Document.Approve · ข้ามขั้นภายใน | ✅ |
+| G-02 | P1 | S | รหัสผูก LINE 6 หลัก (ผู้ใช้ 10 นาที · สลิป 24 ชม.) ค้นข้ามทุกบริษัท ไม่มี attempt limit ⇒ oracle ✅/❌ ชนแล้วได้สลิป/ตัวตนคนอื่น (`LineBotService.cs:100-107` · `PayslipLineDeliveryService.cs:84-92`) | ○ **ควรแก้ก่อน** (ตัวนับผิดต่อ lineUserId ใน DB แบบ ChatRateLimiter · scope CompanyId · ลดอายุ 24 ชม.) |
+| G-03 | P1 | S | LINE text auto-approve ทุกสมาชิก + catch {} | ✅ |
+| G-04 | P2 | S | LINE postback สำเนา role list | ✅ |
+| G-05 | P1 | S | มือถืออนุมัติไม่มีด่านสิทธิ์/ไม่ตรวจผู้อนุมัติของขั้น | ✅ (ด่านสิทธิ์) · "ผู้กด = ผู้อนุมัติของขั้นนั้น" ยังไม่ตรวจ (ApprovalStep.Approver) |
+| G-06 | P2 | M | ลูกค้าหน้าร้าน CMS ได้ JWT ชนิดเดียวกับผู้ใช้ระบบ (`CmsCustomerService.cs:166`) ⇒ ผ่าน `[Authorize]` ของ 11 controller ที่ไม่มี companyId · endpoint นี้ไม่มีหน้าเว็บไหนเรียก | ○ ต้องเลือก ต่อสาย (scheme/purpose แยก) หรือลบ |
+| G-07 | P1 | M | `write_permission_gate_check` เฝ้า 3 ไฟล์ — controller ที่ลง JE/ภาษี/สต๊อกอีก ≥20 ไฟล์ permRefs=0 (50 ทวิ · เช็ค · สินทรัพย์ · เงินทดรอง · recurring · import · warehouse · Bank/Pos เดิม) | ○ เพิ่มเข้า WATCHED ทีละไฟล์ + ใส่ด่าน |
+| G-08 | P3 | S | impersonation: `imp_by` ไม่มีใครอ่าน ⇒ PII log เป็นชื่อ Owner · read-only ดูแค่ verb (GET ที่เขียนหลุด) | ○ |
+| G-09 | P3 | S | token สาธารณะเก็บ plaintext (PayslipDelivery · QuotationAccept · DeliverySign · lodging) — VendorPortalTokens hash ถูกแล้ว | ○ |
+| — | — | — | ตรวจแล้วไม่ใช่บั๊ก: ExternalApprove เป็น POST ใต้ TenantGuard (ไม่ใช่ "GET เปลี่ยนสถานะ") · PublicQuotation/e-sign token 256-bit 30 วัน · PayslipPublic token 256-bit 7 วัน revoke + mask (**SYSTEM_REVIEW §7 เรื่อง tier rate limit ควรถอด**) · LINE webhook HMAC FixedTimeEquals · /api/v1 scope ทุก endpoint · CMS anonymous scope companyId+siteId + sanitizer · file access GUID ไม่มี traversal · LodgingPublic token scope | |
+
 ### ทีม F — รายงาน ↔ สมุดบัญชี (10 ข้อ · **บางส่วน**)
 | ID | P | ขนาด | เรื่อง | สถานะ |
 | --- | --- | --- | --- | --- |
@@ -200,7 +218,7 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 
 ## §4 สิ่งที่ main agent เปิดไฟล์ยืนยันเอง (ฝ่ายค้าน)
 ดู `erp-review/2026-09-05/VERIFY-main.md` — CONFIRMED: C-01 · C-04 (ตัวอย่าง) · A-01 · A-02 · A-06 · B-02 ·
-E-01 · E-04 · E-05 · E-08 · F-01 · F-03 · พบเพิ่ม MAIN-01. **ยังไม่มีข้อไหนถูกหักล้าง** — แต่ P1/P2 ที่เหลือ
+E-01 · E-04 · E-05 · E-08 · F-01 · F-03 · G-01 · G-03 · G-05 · พบเพิ่ม MAIN-01. **ยังไม่มีข้อไหนถูกหักล้าง** — แต่ P1/P2 ที่เหลือ
 (○) ยังไม่ผ่านการ verify ซ้ำ ให้เปิดไฟล์ก่อนลงมือทุกข้อตามกติกา CLAUDE.md
 
 ## §5 ข้อแก้ไข SYSTEM_REVIEW_2026-09.md ที่ค้นพบ
@@ -237,11 +255,11 @@ IntegrationService `Status = Approved` ใน initializer เดิน AutoPost 
 6. ขยาย `sequence_lock_check` ให้จับ `.Max() + 1` (C-08) · ✅ ขยาย `stock_writer_check` จับ `Set<StockMovement>()` แล้ว
 
 ## §9 รอบถัดไป (ลำดับ)
-1. **รันทีม G · H · I** จาก `erp-review/2026-09-05/BRIEF.md` (batch ละ ≤3 agent · เขียนรายงาน append)
+1. **รวมผล H · I** (รันอยู่) · **G-02** (รหัสผูก LINE) และ **G-07** (allow-list 20 ไฟล์) เป็นงาน security ชิ้นแรก
 2. ตัดสินใจ A-06 (ก/ข) และ F-08 (BillingNote เป็นลูกหนี้ไหม) — ต้องเจ้าของโปรเจกต์/นักบัญชี
 3. Sprint "ราก": DocumentStatusRules ไล่ 22 จุดที่เหลือ + checker · MovementTypes + E-02 · journal interceptor + C-04
 4. D-04 (CoA Level) ก่อนรับลูกค้าที่ import ผังเอง
 5. sync SYSTEM_REVIEW ตาม §5
 
 ---
-_ผลิตโดย 6 subagent (ทีม A–F) + main agent verify/แก้ · 2026-09-05 · ไม่ได้คอมไพล์ — env ไม่มี .NET SDK_
+_ผลิตโดย 7 subagent (ทีม A–G) + main agent verify/แก้ · 2026-09-05 · ไม่ได้คอมไพล์ — env ไม่มี .NET SDK_

@@ -17,3 +17,7 @@
 ## ทีม F (รายงานบางส่วน — agent ถูกตัดกลางคัน)
 - F-01 CONFIRMED — grep IsClosingEntry ใน DashboardService.cs = 0 ขณะ YearEndClose ติดธง และ AccountingService P&L กรอง `!j.IsClosingEntry` (C-T02)
 - F-03 CONFIRMED — grep CnDnPurchaseSideOverride ใน AgingReportService.cs = 0 · :50-55 ตัดสินฝั่งจากชนิดอย่างเดียว
+## ทีม G
+- G-01 CONFIRMED — grep RequirePermission|HasPermission|CanApprove ใน SignatureApprovalController.cs + SignatureApprovalService.cs = 0 · ExternalApproveQuotationAsync :321-400 ไม่ตรวจขั้นภายใน Pending · :294 `Status = Rejected`
+- G-03 CONFIRMED — LineBotService.cs:262 `try { ApproveDocumentAsync } catch { }` แล้วตอบ ✅ · ไม่มีด่านสิทธิ์ (ต่างจาก postback :596-600)
+- G-05 CONFIRMED — MobileApiService.QuickApproveAsync ไม่มี permission check (อ่านตอน verify B-02) · ApprovalRequests.Add มี call site จริง (ApprovalService.cs:233) ⇒ ผลกระทบไม่ใช่ 0

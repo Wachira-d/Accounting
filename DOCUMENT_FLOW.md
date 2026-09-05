@@ -739,6 +739,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 > ApprovalRequest — **เดิมตั้ง `Status = Approved` ตรง ๆ เหมือน ③ ก่อนแก้ ⇒ เอกสาร
 > "อนุมัติแล้ว" เลขยัง DRAFT-{guid} ไม่มี JE/สต๊อก แล้วรับชำระต่อได้ — แก้แล้ว รอบ 135
 > (ERP_REVIEW B-02); ตีกลับผ่านมือถือเด้งกลับ Draft เหมือน ApprovalService ไม่ใช่ Rejected**)
+> **ด่านสิทธิ์**: ทุกทางเข้าต้องผ่าน `DocumentPermissionHelper.CanApproveAsync` ก่อนถึง ApproveDocumentAsync —
+> ① DenyDocAsync ② ApprovalService (ตามกฎ) ③ `SignatureApprovalService.RequireApproveAsync` (รอบ 135 · G-01)
+> ④ `MobileApiService` (G-05) · LINE text/postback (G-03/G-04) — เดิม ③④+LINE มีแค่ [Authorize]
 > กติกา: ห้ามเขียน `Document.Status` นอก `IDocumentService` — ทางเข้าใหม่ทุกทางต้องเรียก
 > `ApproveDocumentAsync` (checker `document_status_writer_check` อยู่ในลิสต์ที่ควรมี §8 ของ ERP_REVIEW)
 > RequireApprovalForDocuments (เกินวงเงิน) ยกเว้นให้เอกสารที่เซ็นครบแล้ว

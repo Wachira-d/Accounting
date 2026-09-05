@@ -16,13 +16,16 @@ public class SignatureApprovalService : ISignatureApprovalService
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
     private readonly INotificationEngine? _notify;
 
+    private readonly IPermissionService _perms;
     public SignatureApprovalService(AccountingDbContext db, IDocumentService docService,
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
+        IPermissionService perms,
         INotificationEngine? notify = null)
     {
         _db = db;
         _docService = docService;
         _vendorIntel = vendorIntel;
+        _perms = perms;
         _notify = notify;
     }
 
@@ -92,6 +95,22 @@ public class SignatureApprovalService : ISignatureApprovalService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>ด่านสิทธิ์เดียวของทุกทางเข้าในบริการนี้ — เดิมทั้ง 3 controller มีแค่ [Authorize]
+    /// ⇒ สมาชิกคนไหนก็ตั้งขั้นเอง/อนุมัติแทน/ยิง "อนุมัติจากลูกค้า" ได้ ทำให้ด่าน Document.Approve
+    /// ใน DocumentController เป็นโมฆะ (ERP_REVIEW G-01). กติกาเดียวกับ DocumentController.DenyDocAsync</summary>
+    private async Task RequireApproveAsync(Guid companyId, string userId, DocumentType type, string verb)
+    {
+        if (Guid.TryParse(userId, out var uid)
+            && await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, uid, type))
+            return;
+        var dir = DocumentPermissionHelper.IsRevenue(type) ? "Revenue"
+            : DocumentPermissionHelper.IsPurchase(type) ? "Purchase" : null;
+        throw new BusinessRuleException(
+            $"ไม่มีสิทธิ์{verb}เอกสาร {type} (ต้องการ Document.Approve"
+            + (dir == null ? ")" : $" หรือ Document.{dir}.Approve)"),
+            "PERM-DOC-APPROVE", 403);
+    }
+
     // ==================== DOCUMENT APPROVAL SETUP ====================
 
     public async Task<List<DocumentApprovalResponse>> SetupApprovalAsync(Guid companyId, SetupDocumentApprovalRequest request, string userId)
@@ -99,6 +118,7 @@ public class SignatureApprovalService : ISignatureApprovalService
         var doc = await _db.Documents
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await RequireApproveAsync(companyId, userId, doc.DocumentType, "ตั้งขั้นอนุมัติ");
 
         // Remove existing pending approvals
         var existing = await _db.Set<DocumentApproval>()
@@ -188,6 +208,7 @@ public class SignatureApprovalService : ISignatureApprovalService
             .Include(a => a.Document)
             .FirstOrDefaultAsync(a => a.Id == approvalId && a.CompanyId == companyId && !a.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบรายการอนุมัติ");
+        await RequireApproveAsync(companyId, userId, approval.Document.DocumentType, "อนุมัติ");
 
         if (approval.Status != ApprovalStatus.Pending)
             throw new InvalidOperationException("รายการนี้ดำเนินการแล้ว");
@@ -282,6 +303,7 @@ public class SignatureApprovalService : ISignatureApprovalService
             .Include(a => a.Document)
             .FirstOrDefaultAsync(a => a.Id == approvalId && a.CompanyId == companyId && !a.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบรายการอนุมัติ");
+        await RequireApproveAsync(companyId, userId, approval.Document.DocumentType, "ตีกลับ");
 
         if (approval.Status != ApprovalStatus.Pending)
             throw new InvalidOperationException("รายการนี้ดำเนินการแล้ว");
@@ -290,8 +312,10 @@ public class SignatureApprovalService : ISignatureApprovalService
         approval.RejectedAt = DateTime.UtcNow;
         approval.Comments = request.Comments;
 
-        // Update document status
-        approval.Document.Status = DocumentStatus.Rejected;
+        // ตีกลับ = เด้งเอกสารกลับ Draft ให้แก้แล้วส่งใหม่ (กติกาเดียวกับ ApprovalService/มือถือ)
+        // — เดิมตั้ง Rejected ซึ่งเป็นสถานะปลายทาง: แก้ได้แต่อนุมัติ/ส่งใหม่ไม่ได้ (ERP_REVIEW B-03)
+        if (approval.Document.Status is DocumentStatus.WaitingApproval or DocumentStatus.Rejected)
+            approval.Document.Status = DocumentStatus.Draft;
 
         await _db.SaveChangesAsync();
 
@@ -318,11 +342,14 @@ public class SignatureApprovalService : ISignatureApprovalService
 
     // ==================== EXTERNAL API APPROVE ====================
 
-    public async Task<QuotationApprovalResult> ExternalApproveQuotationAsync(Guid companyId, Guid documentId, ExternalApproveRequest request, string? ipAddress)
+    public async Task<QuotationApprovalResult> ExternalApproveQuotationAsync(Guid companyId, Guid documentId, ExternalApproveRequest request, string? ipAddress, string actingUserId)
     {
         var doc = await _db.Documents
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // ผู้บันทึก "ลูกค้าอนุมัติแล้ว" คือสมาชิกที่ล็อกอิน — ต้องมีสิทธิ์อนุมัติเอง ไม่งั้นพิมพ์
+        // ชื่อ/ลายเซ็นลูกค้าเองแล้วอนุมัติข้ามผู้จัดการได้ (G-01)
+        await RequireApproveAsync(companyId, actingUserId, DocumentType.Quotation, "บันทึกการอนุมัติจากลูกค้าของ");
 
         if (doc.DocumentType != DocumentType.Quotation)
             throw new InvalidOperationException("เอกสารนี้ไม่ใช่ใบเสนอราคา");
@@ -332,6 +359,14 @@ public class SignatureApprovalService : ISignatureApprovalService
 
         if (string.IsNullOrWhiteSpace(request.SignatureData))
             throw new InvalidOperationException("กรุณาระบุลายเซ็น");
+
+        // ขั้นภายในที่ยัง Pending ต้องผ่านก่อน — เส้นภายใน (ApproveAsync/CheckAllApprovedAndProcessAsync)
+        // ตรวจอยู่แล้ว แต่เส้นนี้เดิมข้ามไป ApproveDocumentAsync ทันที (G-01)
+        var internalPending = await _db.Set<DocumentApproval>()
+            .AnyAsync(a => a.DocumentId == documentId && a.ApproverRole != "Customer"
+                && a.Status == ApprovalStatus.Pending && !a.IsDeleted);
+        if (internalPending)
+            throw new InvalidOperationException("ยังมีขั้นอนุมัติภายในที่รออยู่ — อนุมัติภายในให้ครบก่อน แล้วจึงบันทึกการอนุมัติจากลูกค้า");
 
         // Find or create customer approval step
         var customerApproval = await _db.Set<DocumentApproval>()

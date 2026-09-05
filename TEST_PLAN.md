@@ -3661,3 +3661,7 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | D-01 | แก้สินค้า: เปลี่ยน SKU/หน่วย/ติ๊กติดตามสต็อก | บันทึกแล้วค่าเปลี่ยนจริง · ชนิดสินค้าถูกล็อกพร้อมคำอธิบาย (เปิดสร้างใหม่ปลดล็อก) |
 | F-01 | ปิดปีแล้วเปิด app.html เลือกช่วง ธ.ค./ปีนี้ | KPI รายได้/ค่าใช้จ่าย/กราฟ = P&L (ไม่ใช่ 0) |
 | F-03 | CN ฝั่งขาย (`CnDnPurchaseSideOverride=false`) ยังไม่ apply | อยู่ใน AR aging เป็นลบ · **ไม่**อยู่ใน AP aging · CN เก่าที่ override = null ยังโผล่ทั้งสองฝั่ง (พฤติกรรมเดิม จนกว่าจะ backfill) |
+| G-01 | Staff (ไม่มี Document.Approve) POST `/approvals/setup` · `/{id}/approve` · `/{id}/reject` · `/external/quotations/{id}/approve` | 403 `PERM-DOC-APPROVE` ทุกเส้น · Owner/Accountant ผ่าน · external ที่ยังมีขั้นภายใน Pending → 400 บอกให้อนุมัติภายในก่อน · reject → เอกสาร Draft (ไม่ใช่ Rejected) |
+| G-03 | Viewer พิมพ์ "จ่าย ร้านA 500" ใน LINE | Expense เป็นร่าง + ข้อความ 📝 (ไม่มี JE) · Owner พิมพ์ → ✅ พร้อมเลขจริง · approve ล้ม (เช่นงวดปิด) → 📝 บอกเหตุผล ไม่ใช่ ✅ |
+| G-04 | custom role ที่มี Document.Approve กดอนุมัติผ่าน LINE postback | ผ่าน (เดิม role list ปฏิเสธ) · Accountant ที่ถูกถอดสิทธิ์ → ❌ |
+| G-05 | Staff กดอนุมัติขั้นสุดท้ายผ่านมือถือ | 403 · ApprovalRequest ยัง Pending |
