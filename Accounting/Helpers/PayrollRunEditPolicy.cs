@@ -42,6 +42,23 @@ public static class PayrollRunEditPolicy
     /// <c>PayrollService.ReopenPaidRunAsync</c> เพราะต้อง query FiscalPeriods
     /// (ใส่ตรงนี้จะกลายเป็น N+1 บนหน้ารายการรอบ). ฝั่ง UI จึงอาจโชว์ปุ่มแล้ว
     /// เซิร์ฟเวอร์ปฏิเสธพร้อมเหตุผล — ยอมได้ เพราะข้อความบอกทางแก้ชัด</summary>
+    /// <summary>ยกเลิกทั้งรอบ (→ Voided) ได้ไหม — กติกา สปส. **เดียวกับ CanReopen**:
+    /// นำส่งแล้ว = มี JE ก้อนที่สอง (Dr 21815 / Cr Bank) ที่ Void ไม่แตะ ⇒ ถ้ายอมให้ยกเลิก
+    /// จะกลับแค่ JE จ่าย เหลือ 21815 **ติดลบ** ถาวร + แถวนำส่งยังบอกว่านำส่งแล้ว ⇒ รอบใหม่
+    /// นำส่งซ้ำงวด. เดิม VoidPayrollAsync ตรวจแค่ "Voided ซ้ำ" — ด่านครอบทางเดียว
+    /// (ERP_REVIEW_2026-09-05 H-01)</summary>
+    public static (bool Can, string? Reason) CanVoid(string? status, DateTime? ssoSettledAt)
+    {
+        if (status == Voided)
+            return (false, "รอบจ่ายเงินเดือนนี้ถูกยกเลิกแล้ว");
+        if (ssoSettledAt.HasValue)
+            return (false,
+                $"รอบนี้นำส่งประกันสังคมไปแล้วเมื่อ {ssoSettledAt.Value.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)} — "
+                + "ต้องกลับรายการนำส่ง สปส. ก่อน (และถ้ายื่น สปส.1-10 ไปแล้วต้องยื่นแก้ไขด้วย) "
+                + "จึงจะยกเลิกรอบได้");
+        return (true, null);
+    }
+
     public static (bool Can, string? Reason) CanReopen(string? status, DateTime? ssoSettledAt)
     {
         if (status != Paid)

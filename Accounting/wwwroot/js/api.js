@@ -136,6 +136,9 @@ const API = {
   post(url, data, signal) { return this.request('POST', url, data, false, signal); },
   put(url, data, signal) { return this.request('PUT', url, data, false, signal); },
   del(url, signal) { return this.request('DELETE', url, null, false, signal); },
+  // alias — 5 หน้า (employees/leave-types/project-time/roles) เรียก API.delete(...) ซึ่งไม่เคยมี
+  // ⇒ TypeError ก่อนยิง request ⇒ ปุ่มลบตายเงียบตั้งแต่เขียนหน้า (ERP_REVIEW I-02)
+  delete(url, signal) { return this.del(url, signal); },
   upload(url, formData, signal) { return this.request('POST', url, formData, true, signal); },
   _logError(method, url, status, msg) {
     try { fetch('/api/error-log/client', { method: 'POST', headers: { 'Content-Type': 'application/json' },

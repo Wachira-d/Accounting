@@ -21,3 +21,10 @@
 - G-01 CONFIRMED — grep RequirePermission|HasPermission|CanApprove ใน SignatureApprovalController.cs + SignatureApprovalService.cs = 0 · ExternalApproveQuotationAsync :321-400 ไม่ตรวจขั้นภายใน Pending · :294 `Status = Rejected`
 - G-03 CONFIRMED — LineBotService.cs:262 `try { ApproveDocumentAsync } catch { }` แล้วตอบ ✅ · ไม่มีด่านสิทธิ์ (ต่างจาก postback :596-600)
 - G-05 CONFIRMED — MobileApiService.QuickApproveAsync ไม่มี permission check (อ่านตอน verify B-02) · ApprovalRequests.Add มี call site จริง (ApprovalService.cs:233) ⇒ ผลกระทบไม่ใช่ 0
+## ทีม H
+- H-01 CONFIRMED — PayrollService.cs VoidPayrollAsync :2753-2830 ตรวจแค่ `Status == "Voided"`; grep SsoSettled ในช่วง Void = 0 · Reopen :2920 เรียก `PayrollRunEditPolicy.CanReopen(run.Status, run.SsoSettledAt)` ซึ่งเขียนเหตุผลไว้เองว่านำส่งแล้วจะเหลือ 21815 ค้าง
+## ทีม I
+- I-01 CONFIRMED — recurring.html:63 `value="Yearly"` · AllEnums.cs:683-691 ไม่มี Yearly (Annual=365) · BiWeekly/SemiAnnual ไม่มี option
+- I-02 CONFIRMED — api.js:138 มีแค่ `del(` · grep `API.delete(` = 5 จุด/4 หน้า
+- I-04 CONFIRMED — fixed-assets.html:121-125 ไม่มี None · FixedAssetService.cs:50-56 บังคับ None พร้อมข้อความชี้ "ไม่คิดค่าเสื่อม" · document-scan.html:3597 ไม่มี None
+- I-06 CONFIRMED — SampleDataController.cs:6 `[Authorize]` เท่านั้น · Seed/Cleanup ไม่มีด่าน (เทียบ BulkCleanupController.cs:32-48 มี IsOwnerAsync)

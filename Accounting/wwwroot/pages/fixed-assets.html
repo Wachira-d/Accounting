@@ -122,6 +122,7 @@
                 <option value="StraightLine">เส้นตรง (Straight Line)</option>
                 <option value="DecliningBalance">ยอดลดลง (Declining Balance)</option>
                 <option value="DoubleDecliningBalance">ยอดลดลงทวีคูณ</option>
+                <option value="None">ไม่คิดค่าเสื่อม (ที่ดิน / งานระหว่างก่อสร้าง)</option>
               </select>
             </div>
             <div class="form-group"><label class="form-label">หมายเลขเครื่อง</label><input type="text" class="form-input" id="fSerial"></div>
@@ -283,7 +284,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
-    const methodMap = { StraightLine:'เส้นตรง', DecliningBalance:'ยอดลดลง', DoubleDecliningBalance:'ยอดลดลงทวีคูณ' };
+    const methodMap = { StraightLine:'เส้นตรง', DecliningBalance:'ยอดลดลง', DoubleDecliningBalance:'ยอดลดลงทวีคูณ', None:'ไม่คิดค่าเสื่อม' };
     const statusMap = { Active:'ใช้งาน', Disposed:'จำหน่าย', FullyDepreciated:'หมดค่าเสื่อม', WrittenOff:'ตัดจำหน่าย' };
     const Page = {
       page: 1, allAssets: [], _currentAsset: null, _accounts: [], currentType: '',

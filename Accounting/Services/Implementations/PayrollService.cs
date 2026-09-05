@@ -2756,8 +2756,9 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
-        if (run.Status == "Voided")
-            throw new InvalidOperationException("รอบจ่ายเงินเดือนนี้ถูกยกเลิกแล้ว");
+        var (canVoid, voidBlockReason) = PayrollRunEditPolicy.CanVoid(run.Status, run.SsoSettledAt);
+        if (!canVoid)
+            throw new InvalidOperationException(voidBlockReason!);
 
         // Paid runs CAN be voided — but the posted journal entry MUST be
         // reversed in the same transaction so AP/cash/WHT/SSO payables don't

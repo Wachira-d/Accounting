@@ -3598,6 +3598,7 @@
                   <option value="StraightLine" ${(line.globalAssetSuggestion?.depreciationMethod ?? 'StraightLine') === 'StraightLine' ? 'selected' : ''}>เส้นตรง (Straight Line)</option>
                   <option value="DecliningBalance" ${line.globalAssetSuggestion?.depreciationMethod === 'DecliningBalance' ? 'selected' : ''}>ยอดลดลง (Declining)</option>
                   <option value="DoubleDecliningBalance" ${line.globalAssetSuggestion?.depreciationMethod === 'DoubleDecliningBalance' ? 'selected' : ''}>ยอดลดลงสองเท่า</option>
+                  <option value="None" ${line.globalAssetSuggestion?.depreciationMethod === 'None' ? 'selected' : ''}>ไม่คิดค่าเสื่อม (ที่ดิน)</option>
                 </select>
               </div>
               <div>

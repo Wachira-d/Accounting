@@ -58,9 +58,11 @@
               <select class="form-select" id="fFrequency">
                 <option value="Daily">รายวัน</option>
                 <option value="Weekly">รายสัปดาห์</option>
+                <option value="BiWeekly">ราย 2 สัปดาห์</option>
                 <option value="Monthly" selected>รายเดือน</option>
                 <option value="Quarterly">รายไตรมาส</option>
-                <option value="Yearly">รายปี</option>
+                <option value="SemiAnnual">ราย 6 เดือน</option>
+                <option value="Annual">รายปี</option>
               </select>
             </div>
           </div>
@@ -177,7 +179,7 @@ const Page = {
       const items = res.data?.items || res.data || [];
       this.items = items;
       const tbody = document.getElementById('tableBody');
-      const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',Yearly:'รายปี'};
+      const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',BiWeekly:'ราย 2 สัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',SemiAnnual:'ราย 6 เดือน',Annual:'รายปี'}; // ชื่อ = สมาชิก enum RecurringFrequency จริง (เดิม 'Yearly' ⇒ 400 ทุกครั้ง · ERP_REVIEW I-01)
       if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
       tbody.innerHTML = items.map(r => `<tr>
         <td><span class="font-medium">${r.name || '-'}</span></td>
@@ -496,7 +498,7 @@ const Page = {
       if (!this.bankAccounts || !this.expenseCategories) await this.loadFormData();
       const res = await api.getRecurringItem(id);
       const r = res.data;
-      const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',Yearly:'รายปี'};
+      const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',BiWeekly:'ราย 2 สัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',SemiAnnual:'ราย 6 เดือน',Annual:'รายปี'}; // ชื่อ = สมาชิก enum RecurringFrequency จริง (เดิม 'Yearly' ⇒ 400 ทุกครั้ง · ERP_REVIEW I-01)
       document.getElementById('detailTitle').textContent = r.name || 'รายละเอียด';
       let tdPaymentName = 'เงินสด (ค่าเริ่มต้น)', tdExpenseName = '-', tdCombined = false;
       try {

@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -26,6 +27,18 @@ public class SampleDataController : ControllerBase
     private readonly AccountingDbContext _db;
     public SampleDataController(AccountingDbContext db) { _db = db; }
 
+    /// <summary>Owner/SystemAdmin เท่านั้น (กติกาเดียวกับ BulkCleanupController) — seed กินเลขรัน
+    /// §86/4 ชุดจริง + สร้างเอกสาร Approved · cleanup ลบผู้ติดต่อด้วยชื่อขึ้นต้น ⇒ เดิมสมาชิกคนไหนก็
+    /// ยิงได้ (ERP_REVIEW I-06)</summary>
+    private async Task<bool> IsOwnerAsync(Guid companyId, Guid userId)
+    {
+        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        if (user?.IsSystemAdmin == true) return true;
+        var cu = await _db.CompanyUsers.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.UserId == userId);
+        return cu?.Role == UserRole.Owner;
+    }
+
     [HttpGet("status")]
     public async Task<ActionResult<ApiResponse<object>>> Status(Guid companyId)
     {
@@ -37,6 +50,8 @@ public class SampleDataController : ControllerBase
     [HttpPost("seed")]
     public async Task<ActionResult<ApiResponse<object>>> Seed(Guid companyId)
     {
+        if (!await IsOwnerAsync(companyId, JwtHelper.GetUserIdFromClaims(User)))
+            return StatusCode(403, new ApiResponse<object>(false, null, "เฉพาะเจ้าของบริษัทเท่านั้นที่ใส่ข้อมูลตัวอย่างได้ (กินเลขเอกสารชุดจริง)"));
         var existing = await _db.Documents.AnyAsync(d => d.CompanyId == companyId
             && d.Reference == "SAMPLE_DATA");
         if (existing)
@@ -142,6 +157,8 @@ public class SampleDataController : ControllerBase
     [HttpDelete]
     public async Task<ActionResult<ApiResponse<object>>> Cleanup(Guid companyId)
     {
+        if (!await IsOwnerAsync(companyId, JwtHelper.GetUserIdFromClaims(User)))
+            return StatusCode(403, new ApiResponse<object>(false, null, "เฉพาะเจ้าของบริษัทเท่านั้นที่ลบข้อมูลตัวอย่างได้"));
         var docs = await _db.Documents
             .Where(d => d.CompanyId == companyId && d.Reference == "SAMPLE_DATA")
             .ToListAsync();

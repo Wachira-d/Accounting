@@ -22,10 +22,10 @@
 | E | สต๊อก · costing · 3-way match · POS · โอนคลัง | ✅ ครบ 15 ข้อ | `report-E.md` |
 | F | รายงาน/แดชบอร์ด ↔ สมุดบัญชี ("สองความจริง") | ⚠️ **บางส่วน** 10 ข้อ (agent ถูกตัดด้วย rate limit) | `report-F.md` |
 | G | security/tenant ในส่วน §10 (SignatureApproval ภายนอก · PayslipPublic · Impersonation · CMS anonymous · LINE · /api/v1 · allow-list ของ write_permission_gate_check) | ✅ ครบ 9 ข้อ (รอบ 3) — **ไม่พบ IDOR/รั่วข้ามบริษัทตรง ๆ** ปัญหาหลักคือ "สิทธิ์" ไม่ใช่ "ตัวตน" | `report-G.md` |
-| H | payroll/HR ↔ GL · โมดูลรอง (ExpenseClaim/PettyCash/Cheque/Advance) · recurring · bank recon · lodging/CMS ↔ เอกสาร | ❌ ยังไม่ได้รัน | — |
-| I | label map/ฟอร์ม↔payload/dead reference ทุกหน้า · เมนู↔สิทธิ์ · **แผนที่ช่องว่างสู่ ERP** | ❌ ยังไม่ได้รัน (ทิ้งผลสแกน enum×หน้า ไว้: ใช้แล้วโดยทีม A) | — |
+| H | payroll/HR ↔ GL · โมดูลรอง (ExpenseClaim/PettyCash/Cheque/Advance) · recurring · bank recon · lodging/CMS ↔ เอกสาร | ✅ ครบ 17 ข้อ (รอบ 3) — P0 1 · P1 9 | `report-H.md` |
+| I | label map/ฟอร์ม↔payload/dead reference ทุกหน้า · เมนู↔สิทธิ์ · **แผนที่ช่องว่างสู่ ERP** | ✅ ครบ 10 ข้อ + ตาราง enum×หน้า + ERP gap map 21 โมดูล (รอบ 3) | `report-I.md` |
 
-**H · I รันอยู่ (รอบ 3 เริ่ม 06:32 UTC)** — ผลจะถูกเติมในไฟล์นี้เมื่อเสร็จ · G เสร็จแล้ว (ปิดความเสี่ยงอันดับ 1-4 ของ §10 SYSTEM_REVIEW: ตรวจแล้ว **ไม่ใช่บั๊ก** 5 พื้นที่ · ที่พบคือช่องอนุมัติทางอ้อมไม่มีด่านสิทธิ์ — แก้แล้ว)
+**ครบทั้ง 9 ทีมแล้ว** (F ได้บางส่วน — ควรรันซ้ำให้ครบในรอบถัดไป: งบการเงิน/ภ.พ.30↔GL/export/scheduled report ยังไม่ได้ไล่) · G เสร็จแล้ว (ปิดความเสี่ยงอันดับ 1-4 ของ §10 SYSTEM_REVIEW: ตรวจแล้ว **ไม่ใช่บั๊ก** 5 พื้นที่ · ที่พบคือช่องอนุมัติทางอ้อมไม่มีด่านสิทธิ์ — แก้แล้ว)
 
 ## §1 สรุปผู้บริหาร
 
@@ -55,6 +55,11 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | G-03 | P1 | LINE "บันทึก {ร้าน} {จำนวน}" อนุมัติ Expense อัตโนมัติให้ทุกสมาชิก + `catch {}` กลืน error แล้วตอบ ✅ | ด่าน `CanApproveAsync(Expense)` → ไม่มีสิทธิ์ = ร่าง · error = บอกว่าร่างแล้วอนุมัติไม่ผ่านพร้อมเหตุผล |
 | G-04 | P2 | LINE postback ใช้สำเนามือ role list แทน `DocumentPermissionHelper` | ใช้ `CanApproveAsync(doc.DocumentType)` |
 | G-05 | P1 | อนุมัติผ่านมือถือไม่มีด่านสิทธิ์ (B-02 แก้แค่ Status writer) | `MobileApiService` ตรวจ `CanApproveAsync` ก่อน `ApproveDocumentAsync` (403 `PERM-DOC-APPROVE`) |
+| I-01 | P1 | รายการเกิดซ้ำ "รายปี" สร้าง/แก้ไม่ได้ — select ส่ง `Yearly` แต่ enum ชื่อ `Annual` ⇒ 400 ทุกครั้ง · BiWeekly/SemiAnnual ไม่มีใน UI | recurring.html option+label ตรง enum 7/7 |
+| I-02 | P1 | ปุ่มลบตาย 5 จุด/4 หน้า (employees · leave-types ×2 · project-time · roles) — `API.delete` ไม่มี (มีแค่ `del`) ⇒ TypeError ก่อนยิง | api.js alias `delete → del` (แก้ที่เดียวปิด 5 จุด) |
+| I-04 | P1 | ลงทะเบียนที่ดินไม่ได้ — server บังคับ `DepreciationMethod.None` แต่ select ไม่มีตัวเลือกนั้น (ข้อความ error ชี้ทางแก้ที่ไม่มี) | เพิ่ม option None ใน fixed-assets.html + document-scan.html + label map |
+| I-06 | P1 | สมาชิกคนไหนก็ POST `sample-data/seed`/DELETE ได้ — กินเลขรัน §86/4 จริง + `Status=Approved` ตรง + cleanup ลบผู้ติดต่อด้วยชื่อขึ้นต้น | ด่าน Owner/SystemAdmin (กติกาเดียวกับ BulkCleanupController) · seed ผ่าน IDocumentService ยังเปิด |
+| H-01 | **P0** | ยกเลิกรอบเงินเดือนที่นำส่ง สปส. แล้วได้ (Void ไม่ตรวจ `SsoSettledAt` ขณะ Reopen ตรวจ) ⇒ กลับ JE จ่าย แต่ JE นำส่งอยู่ ⇒ 21815 ติดลบถาวร + เสี่ยงนำส่งซ้ำ | `PayrollRunEditPolicy.CanVoid` (กติกา สปส. เดียวกับ CanReopen) เรียกใน `VoidPayrollAsync` + เทสต์ล็อกให้สองด่านเท่ากัน |
 
 ### P0 ที่ **ยืนยันแล้วแต่ยังไม่แก้** (ขนาด M/L หรือต้องตัดสินใจ) — เรียงตามความเสียหาย
 1. **A-06 [P1→ควรถือเป็น P0][M]** ขายสินค้าคงคลังด้วย "ใบเสร็จรับเงิน" standalone (หรือแปลงจาก Quotation/BillingNote → Receipt) ลงรายได้แต่**ไม่ตัดสต๊อก ไม่ลง COGS** (`ApplyStockMovementsAsync` switch ไม่มี Receipt/RV `_ => 0` · DocumentService.cs:12490-12510) — ชนิดเอกสารบนจอเปลี่ยนกำไรขั้นต้น. **ต้องตัดสิน**: (ก) Receipt/RV ที่มีบรรทัดสินค้า TrackStock เดินสาย −1 + COGS เหมือน TIV หรือ (ข) บล็อกพร้อมบอกให้ใช้ใบกำกับ/ใบแจ้งหนี้ — ทีม A แนะ (ก) เพราะ POS ใช้เส้นตัวเองอยู่แล้ว
@@ -202,6 +207,43 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | G-09 | P3 | S | token สาธารณะเก็บ plaintext (PayslipDelivery · QuotationAccept · DeliverySign · lodging) — VendorPortalTokens hash ถูกแล้ว | ○ |
 | — | — | — | ตรวจแล้วไม่ใช่บั๊ก: ExternalApprove เป็น POST ใต้ TenantGuard (ไม่ใช่ "GET เปลี่ยนสถานะ") · PublicQuotation/e-sign token 256-bit 30 วัน · PayslipPublic token 256-bit 7 วัน revoke + mask (**SYSTEM_REVIEW §7 เรื่อง tier rate limit ควรถอด**) · LINE webhook HMAC FixedTimeEquals · /api/v1 scope ทุก endpoint · CMS anonymous scope companyId+siteId + sanitizer · file access GUID ไม่มี traversal · LodgingPublic token scope | |
 
+### ทีม H — payroll/HR ↔ GL · โมดูลรอง (17 ข้อ)
+| ID | P | ขนาด | เรื่อง | สถานะ |
+| --- | --- | --- | --- | --- |
+| H-01 | P0 | S | Void รอบที่นำส่ง สปส. แล้ว ⇒ 21815 ติดลบ | ✅ |
+| H-02 | P1 | M | นำส่ง ภ.ง.ด.1 ไม่ stamp run · Reopen ไม่รู้ · ไม่มี Reverse · dup-check บล็อกนำส่งเพิ่ม ⇒ 21914 ค้าง W′−W | ○ |
+| H-03 | P1 | M | Import: `OtherDeductions += SalaryAdvance` → Cr ค่าใช้จ่ายเงินเดือนแทน Cr 115x ⇒ ลูกหนี้ค้าง + หักซ้ำรอบหน้า · Loan ไม่มีผัง → ลดค่าใช้จ่ายเงียบ | ○ |
+| H-04 | P1 | S | `AdvanceRecovered` ไม่ขึ้นสลิป/LINE (พิมพ์ NetPay แต่โอนจริง NetPay − Advance) | ○ |
+| H-05 | P1 | M | เงินสดย่อย: Replenish ไม่มี JE · Disburse `new JournalEntry` ตรง (เลข Guid · ไม่ผ่าน Builder/งวดปิด) · ไม่มี void | ○ (C-04 class + E-07 class) |
+| H-06 | P1 | M | เช็คเด้ง/ยกเลิก = เปลี่ยน status อย่างเดียว ไม่กลับ Payment/JE/ยอดธนาคาร · MarkCleared ขยับ CurrentBalance ไม่มี JE · เช็คจากฟอร์มเอกสารไม่สร้าง Cheque | ○ |
+| H-07 | P1 | S | ทิป POS fallback prefix "216" → **21610 เงินมัดจำรับ** ทุกบริษัทผังมาตรฐาน · TipPayoutService หา "2160"/"1011" ที่ไม่มี (throw เสมอ) และไม่มีใครเรียก · WHT 3% ม.40(2) กับพนักงาน — **ขัด SYSTEM_REVIEW §8 "tip ถูก"** | ○ ต้องเลือกบัญชี "ทิปค้างจ่าย" ให้ถูกก่อนแก้ |
+| H-08 | P1 | M | คอมมิชชัน Approve = เปลี่ยน status จบ — ไม่มี PayrollItem/JE/เอกสาร | ○ |
+| H-09 | P1 | M | ลาไม่รับค่าจ้างหักเฉพาะ `LeaveType == "UnpaidLeave"` literal — `IsPaid` ที่ผู้ใช้ตั้งไม่ถูกอ่าน | ○ |
+| H-10 | P1 | S | SmeOperationsController/ChequeController มีแค่ [Authorize] + หลุด allow-list (= G-07) | ○ |
+| H-11 | P2 | M | TimeBilling `new Document` ตรง ข้าม CreateDocumentAsync · Billed ถาวรแม้ลบ Draft | ○ |
+| H-12 | P2 | S | 21816 (กท.) / 21818 (PVD) ไม่มี type นำส่ง ⇒ ไม่มีทางล้าง (D-R5 ปิดครึ่ง) | ○ |
+| H-13 | P2 | S | แก้ยอดหลัง Approved ไม่ถอยสถานะ ⇒ จ่ายได้โดยไม่ re-approve | ○ อาจเป็น design |
+| H-14 | P2 | S | Employee: 14 ฟิลด์ Create-only (ชื่อ/เลขบัตร/DOB…) · Response ขาด 13 ฟิลด์ · employees.html hardcode `socialSecurityNumber: null` — **D-U1 ยังเปิด** | ○ |
+| H-15 | P2 | S | (สงสัย) Recurring JE `EntryDate = UtcNow` ตกงวดก่อนถ้า startDate serialize เป็น 17:00 UTC | ○ ต้องเช็ค recurring.html |
+| H-16 | P3 | S | ExpenseClaim PV ไม่ส่ง BankAccountId ⇒ GL ลดเงินสดแม้จ่ายโอน · Paid claim void ไม่ได้ | ○ |
+| H-17 | P3 | S | เงินทดรอง Disbursed ไม่มีทางออก · ลาออกก่อนหักครบ = 115x ค้าง | ○ |
+| — | — | — | ตรวจแล้วไม่ใช่บั๊ก: JE เงินเดือนสมดุลตามพีชคณิต + วินิจฉัยรายคน · Pay/Void/Reopen ล็อกแถว · SalaryAdvance/ExpenseClaim/Lodging/CMS ผ่าน IDocumentService · Recurring ล็อกข้ามเครื่องจริง · Terminate → UserLoginPolicy ครอบ · D-T2 ปิดแล้วจริง | |
+
+### ทีม I — หน้าจอ/เมนู/สถานะข้ามหน้า + ERP gap map (10 ข้อ)
+| ID | P | ขนาด | เรื่อง | สถานะ |
+| --- | --- | --- | --- | --- |
+| I-01 | P1 | S | recurring `Yearly` ≠ enum `Annual` | ✅ |
+| I-02 | P1 | S | `API.delete` ไม่มี — ปุ่มลบตาย 5 จุด | ✅ |
+| I-03 | P1 | M | POS select ส่งเลข 0–4 แต่ `PosOrderType` เริ่ม WalkIn=1 ⇒ ประเภทออเดอร์เก็บผิดสมาชิก**ทุกแถว** · KDS `Takeaway`≠`TakeAway` · pos-reports map รองรับสองระบบเลข (เคยแก้ที่ป้าย) | ○ ต้อง migration ข้อมูล + `Enum.IsDefined` guard |
+| I-04 | P1 | S | select ค่าเสื่อมไม่มี `None` | ✅ |
+| I-05 | P2 | S | employees.html: ธนาคาร 3 ช่องไม่ hydrate · `bankAccountName`/`isSubjectToSocialSecurity` ไม่ส่งตอนแก้ · ธง ปกส. รีเซ็ตติ๊กเสมอ (= H-14 คนละมุม) | ○ |
+| I-06 | P1 | S | SampleData seed/cleanup ไม่มีด่าน | ✅ (ด่าน Owner) · seed `Status=Approved` ตรงยังเปิด (ราก §2 จุดที่ 4) |
+| I-07 | P1 | L | "สิทธิ์ตามเมนู" บังคับที่จอเท่านั้น — `IPermissionService` ใช้ใน 10/~140 controller · middleware ไม่ตรวจ permission (= G-07 ภาพใหญ่) | ○ **ราก ERP ข้อ 7** |
+| I-08 | P2 | M | ตาราง enum × หน้า ≥60 map/30+ ไฟล์: ตัวกรองสถานะ 6 หน้ากรองสถานะที่ backend เซ็ตจริงไม่ได้ (`Suggested/Printed/Created/Voided/Submitted`) · ค่าผี `Generated` · PayrollRunStatus/LeaveType/ApprovalStatus/JournalEntryStatus ไม่มี label map เลย | ○ → `GET /api/meta/enums` + `Layout.enumLabel/enumOptions` + checker |
+| I-09 | P3 | S | `Layout.statusLabel` ไม่มีจริง (documents.html:8988 dead branch) | ○ |
+| I-10 | P3 | S | `typeof this.<เมธอดตัวเอง> === 'function'` 7 จุด — มีจริงทุกตัว (กลิ่น ไม่ใช่บั๊ก) | ○ checker |
+| — | — | — | ตรวจแล้วไม่ใช่บั๊ก: ฟอร์ม↔payload 20 หน้าที่ฟ้องเป็นฟอร์มสร้างอย่างเดียว · dead-ref ที่เหลืออยู่ในคอมเมนต์/DOM API/`*-logic.js` · RolePermission/BulkCleanup มีด่าน Owner · delivery-sign/quotation-accept/line-bind ไม่ orphan | |
+
 ### ทีม F — รายงาน ↔ สมุดบัญชี (10 ข้อ · **บางส่วน**)
 | ID | P | ขนาด | เรื่อง | สถานะ |
 | --- | --- | --- | --- | --- |
@@ -218,7 +260,7 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 
 ## §4 สิ่งที่ main agent เปิดไฟล์ยืนยันเอง (ฝ่ายค้าน)
 ดู `erp-review/2026-09-05/VERIFY-main.md` — CONFIRMED: C-01 · C-04 (ตัวอย่าง) · A-01 · A-02 · A-06 · B-02 ·
-E-01 · E-04 · E-05 · E-08 · F-01 · F-03 · G-01 · G-03 · G-05 · พบเพิ่ม MAIN-01. **ยังไม่มีข้อไหนถูกหักล้าง** — แต่ P1/P2 ที่เหลือ
+E-01 · E-04 · E-05 · E-08 · F-01 · F-03 · G-01 · G-03 · G-05 · H-01 · I-01 · I-02 · I-04 · I-06 · พบเพิ่ม MAIN-01. **ยังไม่มีข้อไหนถูกหักล้าง** — แต่ P1/P2 ที่เหลือ
 (○) ยังไม่ผ่านการ verify ซ้ำ ให้เปิดไฟล์ก่อนลงมือทุกข้อตามกติกา CLAUDE.md
 
 ## §5 ข้อแก้ไข SYSTEM_REVIEW_2026-09.md ที่ค้นพบ
@@ -227,6 +269,7 @@ E-01 · E-04 · E-05 · E-08 · F-01 · F-03 · G-01 · G-03 · G-05 · พบ�
 - **H-A8/H-A9** ปิดแล้วโดยเฟส 0 (ทีม E ยืนยัน) แต่ยังไม่ติ๊ก · **H-A7** (ปิดกะไม่ลง JE เงินขาด/เกิน) ยังเปิด `PosService.cs:169-178`
 - **C-T04 ✅** แต่ด่านงวดปิดยังไม่ครอบ 3 ไฟล์ (C-02/C-10) · **T-11 ✅** แต่ backfill `IS NOT NULL` ทิ้งแถว null (B-07)
 - **C-R3** `FiscalYear.RangeFor` ยังคำนวณเอง ≥8 จุด (ทีม D ระบุไฟล์)
+- §8 "POS tip ลงบัญชีถูก" **ขัดกับ H-07** (fallback prefix 216 → 21610 เงินมัดจำรับ) · **D-U1 ยังเปิด** (H-14) · **D-T2 ปิดแล้วจริง** · **D-R5 ปิดครึ่ง** (21914 ✔ · 21816/21818 ✘ → H-12)
 
 ## §6 แผนที่ช่องว่างสู่ ERP (จากข้อเสนอของทีม A–F · ทีม I ที่จะทำตารางเต็มยังไม่ได้รัน)
 
@@ -237,6 +280,11 @@ E-01 · E-04 · E-05 · E-08 · F-01 · F-03 · G-01 · G-03 · G-05 · พบ�
 4. **Header-inheritance contract + PATCH DTO** (ปิด B-06/09/10/13 · B-01 ✅ · D-10/11)
 5. **Inventory เป็น subledger จริง** — MovementTypes enum · ใบปรับปรุงสต๊อกเป็นเอกสาร · costing ต่อคลัง · reconcile สต๊อก↔GL ที่หาบัญชีถูก (E-02/07/10/11) · สถานะ PO/SO Open/PartiallyReceived/Closed · Reservation/ATP (`ReservedQuantity` มีคอลัมน์ไม่มีใครเขียน)
 6. **Sub-ledger ↔ GL reconciliation รายวัน** เป็นรายงานมาตรฐาน (AR/AP/Inventory/VAT/มัดจำ) — วันนี้ "สองความจริง" ถูกพบโดยการอ่านโค้ด ไม่ใช่โดยระบบ
+7. **สิทธิ์ที่ server ชั้นเดียว** (ทีม I I-07 + ทีม G G-07) — วันนี้ "สิทธิ์ตามเมนู" คือการซ่อนปุ่ม: `IPermissionService` ถูกเรียกใน 10/~140 controller และ middleware ตรวจแค่สมาชิกภาพ ⇒ segregation of duties ไม่มีจริงนอกเอกสาร/เงินเดือน/ค่าใช้จ่าย/ลา/PDPA/metering · ทางแก้: permission ต่อ route (attribute + action filter) + checker เป็น deny-list `[PublicSurface]`
+8. **enum → UI จากแหล่งเดียว** (I-08 · A-10/A-11) — `Helpers/EnumLabels` → `GET /api/meta/enums` → `Layout.enumLabel/enumOptions` สร้าง option runtime (กลไก roles.html↔navItems) + checker `enum_option_value_check`
+9. **Sales Order** เป็นเอกสารกลาง — ไม่มี SO = `ReservedQuantity`/ATP/backorder/PriceList ไม่มีที่อยู่ (ทีม E+I ชี้ตรงกัน)
+
+**ERP gap map 21 โมดูล** (ทีม I · ตารางเต็ม+ไฟล์อ้างอิงใน `report-I.md` §ERP): ✅ GL · AR · AP · Audit (hash chain) · e-Tax (XAdES จริง) — แต่ทุกตัวมีรากค้าง (C-04 · F-08 · C-07 · I-07) · 🔨 Inventory/WMS (FIFO จริง · ไม่มี bin/lot · ReservedQuantity เขียนที่เดียว=0) · Purchasing (ไม่มีสถานะ PO) · Sales/CRM (**ไม่มี SalesOrder entity** · Lead แค่ CMS) · Manufacturing (ไม่มี WIP · UnitConversion ไม่ถึงบรรทัด) · Fixed Assets (I-04 · C-05/06 · ค่าเสื่อม 2 ชุดบัญชี 📋) · HR/Payroll (ไฟล์โอนเงินเดือน 📋 · ปฏิทินวันหยุด 📋) · Projects · Budgeting · Multi-company (elimination ยังไม่ตรวจ) · Multi-branch (JE ไม่ติด BranchId) · Multi-currency (`JournalLine` ไม่มี ClosingRate/ForeignCurrency/OriginalRate ทั้งที่ CLAUDE.md G บทที่ 19 บังคับ · B-08) · Approval workflow (3 engine คนละกติกา) · Reporting/BI (ReportBuilder 10 endpoint ไม่มีหน้าเรียก) · API/Integration (E-commerce ไม่มี UI · Open Banking "simulate") · POS (I-03 · ภ.พ.06 · สาขา) · Lodging/CMS (ปลายทางตาม LODGING_BOOKING_AUDIT) · SoD (I-07) · 📋 SO · WMS bin/lot · ค่าเผื่อหนี้ · ไฟล์โอนเงินเดือน
 
 **โมดูล ERP ที่ยังไม่มี/มีครึ่งเดียว** (จากที่ทีมพบระหว่างทาง — ทีม I จะทำตารางเต็ม): Sales Order · Return แยกจาก CN · Stock Adjustment/Transfer มีเลขและอนุมัติ · UoM หลายระดับในบรรทัดเอกสาร (UnitConversion มี CRUD แต่ไม่ถูกใช้) · PriceList ต่อสาขา/ลูกค้า · WIP/ค่าแรง/โสหุ้ยในการผลิต · Backorder/Drop-ship/RMA · Depreciation สองชุดบัญชี (TFRS/พ.ร.ฎ.145) · Period-close checklist · Consignment off-balance subledger · หน้า "ยอดค้างรับต่อ PO"
 
@@ -255,11 +303,11 @@ IntegrationService `Status = Approved` ใน initializer เดิน AutoPost 
 6. ขยาย `sequence_lock_check` ให้จับ `.Max() + 1` (C-08) · ✅ ขยาย `stock_writer_check` จับ `Set<StockMovement>()` แล้ว
 
 ## §9 รอบถัดไป (ลำดับ)
-1. **รวมผล H · I** (รันอยู่) · **G-02** (รหัสผูก LINE) และ **G-07** (allow-list 20 ไฟล์) เป็นงาน security ชิ้นแรก
+1. **รันทีม F ซ้ำให้ครบ** (งบการเงิน/ภ.พ.30↔GL/export/scheduled report) · **G-02** (รหัสผูก LINE) + **G-07/I-07** (สิทธิ์ที่ server) เป็นงาน security ชิ้นแรก · **I-03** (POS OrderType migration) ก่อนมีตรรกะเงินบน OrderType
 2. ตัดสินใจ A-06 (ก/ข) และ F-08 (BillingNote เป็นลูกหนี้ไหม) — ต้องเจ้าของโปรเจกต์/นักบัญชี
 3. Sprint "ราก": DocumentStatusRules ไล่ 22 จุดที่เหลือ + checker · MovementTypes + E-02 · journal interceptor + C-04
 4. D-04 (CoA Level) ก่อนรับลูกค้าที่ import ผังเอง
 5. sync SYSTEM_REVIEW ตาม §5
 
 ---
-_ผลิตโดย 7 subagent (ทีม A–G) + main agent verify/แก้ · 2026-09-05 · ไม่ได้คอมไพล์ — env ไม่มี .NET SDK_
+_ผลิตโดย 9 subagent (ทีม A–I · F บางส่วน) + main agent verify/แก้ · 2026-09-05 · ไม่ได้คอมไพล์ — env ไม่มี .NET SDK_
