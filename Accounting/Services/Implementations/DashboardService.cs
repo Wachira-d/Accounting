@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Dashboard;
 using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
@@ -99,8 +100,8 @@ public class DashboardService : IDashboardService
         // Sequential queries — DbContext is NOT thread-safe, cannot use Task.WhenAll
         var receivables = await _db.Documents
             .Where(d => d.CompanyId == companyId
-                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
-                    || d.DocumentType == DocumentType.BillingNote || d.DocumentType == DocumentType.DebitNote)
+                // ชุดชนิดลูกหนี้จาก Helpers/ArApScope — ใบวางบิลไม่อยู่ในนั้น (ไม่มี JE · ครอบใบแจ้งหนี้ = นับซ้ำ · ERP_REVIEW F-08)
+                && ArApScope.ReceivableTypes.Contains(d.DocumentType)
                 && arApStatuses.Contains(d.Status))
             .SumAsync(d => d.BalanceDue);
 

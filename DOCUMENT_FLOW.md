@@ -1182,7 +1182,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | `Invoice` | Dr AR / Cr Rev + Cr **[21913 บริการล้วน \| 21911 มีสินค้า TrackStock]** | ❌ (DN จัดการแยก) | output — บริการล้วน: เข้าเมื่อ `OutputVatDueAt` (รับเงิน §78/1); มีสินค้า/legacy (GL ลง 21911 ตรง): เข้าทันทีตาม tax point (§78 ส่งมอบ) | `TaxPointDate` snapshot; บริการ → `OutputVatDueAt` ตอนรับชำระ | รับชำระ (Payment/ใบเสร็จ settlement) → `TryReclassifyUndueOutputVatAsync`: JV Dr 21913 / Cr 21911 เต็มยอดคงเหลือ **รวม JE ของ CN/DN ที่อ้างใบนี้ (RelatedDocumentId) และ stamp `OutputVatDueAt` ให้ทั้งใบเดิมและ CN/DN ลูก** (รอบ 135 · ERP_REVIEW C-01 — เดิมรวมแค่ JE ของใบเดิม ⇒ VAT ของ DN ค้าง 21913 ถาวรและไม่เข้า ภ.พ.30; ยกเลิกการรับชำระ (`TryUndoUndueOutputVatReclassAsync`) ล้าง stamp ของลูกด้วย) (full-on-first-settlement, GL-driven, idempotent). แปลงเป็น TIV → supersede reverse JE ทั้งใบ (รวม 21913) ใบกำกับลง 21911 เอง |
 | `TaxInvoice` | Dr AR / Cr Rev + Cr 21911 | ❌ | output | `TaxPointDate` snapshot | – |
 | `BillingNote` | ❌ (รอ Receipt) | ❌ | – | – | **รวมใบค้างหลายใบได้**: `POST document/billing-note/from-invoices` — 1 บรรทัด/ใบ ยอด=BalanceDue, `DocumentLine.SourceDocumentId` ชี้ใบต้นทาง (กันวางบิลซ้ำใน BN active) |
-| `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 | ❌ (Receipt **ไม่อยู่** ใน `ApplyStockMovementsAsync` switch — ถ้าต้อง OUT ต้อง issue Invoice/TaxInvoice ก่อน) | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
+| `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 **+ Dr 51110 / Cr 11500 (COGS) เมื่อ `CompanySettings.CashSaleStockPolicy = MoveStockAndCogs` (default)** | ตาม `CashSaleStockPolicy` (รอบ 136 · ERP_REVIEW A-06): `MoveStockAndCogs` (default) = OUT เหมือนใบกำกับ · `Ignore` = ไม่แตะ (พฤติกรรมเดิม) · `Block` = อนุมัติไม่ได้ให้ออกใบกำกับแทน — กติกาอยู่ที่ `Helpers/CashSaleStockRules` ใช้ทั้งทิศสต๊อก/COGS/ด่าน approve · ใบเสร็จที่อ้าง Invoice และใบมัดจำไม่กระทบ | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
 | `ReceiptVoucher` standalone | เหมือน Receipt | ❌ (same as Receipt) | output | DocumentDate | รองรับ `IsDeposit` (2 เคส VAT ดู §3.7) |
 | `DeliveryNote` | ❌ | ❌ (ตั้งใจไม่ trigger — Invoice ที่ตามมาจะ OUT ให้, กัน double-count) | – | – | ใช้คู่กับ Invoice ใน Quotation→DN→Invoice chain |
 | `DebitNote` | Dr AR / Cr Rev + Cr VAT | ❌ | output (หรือ input ถ้า `RelatedDocumentId` เป็น purchase: PI/Expense/CIL/**PV**) | DocumentDate | บังคับมี `RelatedDocumentId`; คู่ค้าต้องตรงใบเดิม (hard block) |
@@ -2845,7 +2845,11 @@ _ที่ถือชนิด+VAT) — ห้ามเขียนเงื่
 _drift · ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง เลขที่ขอไว้แล้ว_
 _ไม่ได้ใช้ (เส้นทาง fail) ไม่เคยทำให้เกิดช่องว่างอยู่แล้ว · ประทับ_
 _`IsTaxInvoiceByLaw` ลงเอกสารด้วยเหมือนเส้น approve;_
-_Last verified against codebase: 2026-09-05 (รอบ 135 — **ผลตรวจทีม ERP review A–F** (`ERP_REVIEW_2026-09-05.md`):_
+_Last verified against codebase: 2026-09-05 (รอบ 136 — **3 ข้อที่เจ้าของโปรเจกต์ตัดสิน**: ใบเสร็จ standalone_
+_ที่ขายสินค้าคงคลัง → `CashSaleStockPolicy` ตั้งค่าได้ 3 ทาง (default ตัดสต๊อก+COGS = **เปลี่ยนพฤติกรรม**) ·_
+_ใบวางบิลออกจากชุดลูกหนี้ทุกจุดผ่าน `Helpers/ArApScope` · บัญชีทิป POS ตั้งค่าได้ `PosTipPayableAccountCode` +_
+_`TipAccountResolver` (default 21814→21819 ห้าม 216xx) ใช้ทั้ง POS/TipPayout)_
+_ก่อนหน้า: 2026-09-05 (รอบ 135 — **ผลตรวจทีม ERP review A–F** (`ERP_REVIEW_2026-09-05.md`):_
 _§3.2 ทางเข้า approve ที่ 4 (มือถือ) เข้า `ApproveDocumentAsync` · §2.4 ด่าน PO→PI เมื่อมี GRN ·_
 _undue VAT reclass รวม CN/DN ลูก + stamp/unstamp `OutputVatDueAt` · §65ตรี(4) YTD ใช้_
 _`DocumentStatusRules` · portal ลูกค้าเห็นเฉพาะเอกสารที่ออกแล้ว (`PortalService.PortalDocuments`) ·_

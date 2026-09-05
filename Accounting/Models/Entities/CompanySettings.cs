@@ -336,4 +336,14 @@ public class CompanySettings : TenantEntity
     /// nav entry visible (e.g. "ปฏิทินการลา" for a small team that
     /// doesn't need it). NULL or "[]" = nothing hidden.</summary>
     public string? OwnerHiddenMenuIdsJson { get; set; }
+
+    // ── ใบเสร็จ/ใบสำคัญรับ standalone ที่มีสินค้าคงคลัง ทำอะไรกับสต๊อก ──
+    // default = MoveStockAndCogs (ตัดสต๊อก+COGS เหมือนใบกำกับ) — **เปลี่ยนพฤติกรรม** จากเดิม
+    // ที่ไม่แตะสต๊อกเลย เพราะเดิมคือบั๊กกำไรขั้นต้น (ERP_REVIEW A-06) · ปรับเป็น Ignore/Block ได้
+    // กติกาทั้งหมดอยู่ที่ Helpers/CashSaleStockRules
+    public CashSaleStockPolicy CashSaleStockPolicy { get; set; } = CashSaleStockPolicy.MoveStockAndCogs;
+
+    // ── บัญชีทิปพนักงานค้างจ่าย (POS รับทิป Cr · TipPayout จ่าย Dr) ──
+    // null = ใช้ค่าแนะนำจาก Helpers/TipAccountResolver (21814 → 21819) — ห้ามตก 216xx เงินมัดจำ
+    public string? PosTipPayableAccountCode { get; set; }
 }

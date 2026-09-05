@@ -4558,6 +4558,11 @@ public static class DatabaseMigrationHelper
             // 1=แยกใบกำกับ–ใบเสร็จเสมอ 2=ค้าปลีกใบเดียวที่จุดขาย. DEFAULT 0 ⇒
             // tenant เดิมไม่กระทบ
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "ReceiptIssueMode" integer NOT NULL DEFAULT 0;""",
+            // ใบเสร็จ standalone ที่มีสินค้าคงคลัง: 0=ไม่แตะสต๊อก (เดิม) 1=ตัดสต๊อก+COGS (ค่าแนะนำ · DEFAULT) 2=บล็อก
+            // DEFAULT 1 ตั้งใจเปลี่ยนพฤติกรรม — ของเดิมคือบั๊กกำไรขั้นต้น (ERP_REVIEW_2026-09-05 A-06)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "CashSaleStockPolicy" integer NOT NULL DEFAULT 1;""",
+            // บัญชีทิปพนักงานค้างจ่ายที่ POS/TipPayout ใช้ (NULL = default 21814→21819 · ERP_REVIEW H-07)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PosTipPayableAccountCode" varchar(20) NULL;""",
             // "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV เสมอ" (แกนคนละแกนกับ ReceiptIssueMode)
             // **nullable โดยตั้งใจ**: NULL = ยังไม่เคยตั้ง → ระบบใช้ค่าแนะนำ = เปิด
             // (TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled) ⇒ ไม่ต้องให้ผู้ใช้ไปหา

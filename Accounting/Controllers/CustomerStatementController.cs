@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Enums;
 using Microsoft.AspNetCore.Authorization;
@@ -55,7 +56,7 @@ public class CustomerStatementController : ControllerBase
         // ฝั่งซื้อ = PI/Expense เพิ่ม AP, CN ลด, PV ตัด AP
         DocumentType[] debitTypes = side == "AP"
             ? new[] { DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.DebitNote }
-            : new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote, DocumentType.DebitNote };
+            : ArApScope.ReceivableTypes;   // ใบวางบิลไม่ใช่ลูกหนี้ — ครอบใบแจ้งหนี้ที่อยู่ในใบแจ้งยอดแล้ว (ERP_REVIEW F-08)
         DocumentType[] creditTypes = side == "AP"
             ? new[] { DocumentType.CreditNote, DocumentType.PaymentVoucher }
             : new[] { DocumentType.CreditNote, DocumentType.Receipt, DocumentType.ReceiptVoucher };

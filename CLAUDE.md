@@ -1833,6 +1833,9 @@ billing, quota resolution) → อัปเดตไฟล์ + ป้ายส�
   enum→UI จากแหล่งเดียว · Sales Order)
 - helper ใหม่ที่ทุกเส้นต้องใช้แทนสำเนามือ: `Helpers/DocumentStatusRules` (แทน `== Approved`) ·
   `Helpers/StockMovementSign` (เครื่องหมาย StockMovement) · `PayrollRunEditPolicy.CanVoid` ·
+  `Helpers/CashSaleStockRules` (ใบเสร็จ standalone ↔ สต๊อก/COGS ตาม `CashSaleStockPolicy`) ·
+  `Helpers/ArApScope` (ชุดชนิดลูกหนี้/เจ้าหนี้ — ใบวางบิล**ไม่ใช่**ลูกหนี้) ·
+  `Helpers/TipAccountResolver` (บัญชีทิป POS/TipPayout — ห้าม 216xx) ·
   ทุกทางเข้าอนุมัติเอกสาร (เว็บ/กฎ/ลายเซ็น/มือถือ/LINE) ต้องผ่าน `DocumentPermissionHelper.CanApproveAsync`
 
 ## 📕 SYSTEM_REVIEW_2026-09.md — ลิสต์งานจากการตรวจทั้งระบบ (8 ทีม)

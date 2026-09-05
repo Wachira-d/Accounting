@@ -60,6 +60,27 @@ public class SettingsService : ISettingsService
             settings.ReceiptIssueMode = request.ReceiptIssueMode.Value;
         if (request.UnifyTaxInvoiceNumberSeries.HasValue)
             settings.UnifyTaxInvoiceNumberSeries = request.UnifyTaxInvoiceNumberSeries.Value;
+        // ใบเสร็จ standalone ที่มีสินค้าคงคลัง — รับเฉพาะค่าที่นิยามไว้จริง
+        if (request.CashSaleStockPolicy.HasValue
+            && Enum.IsDefined(typeof(CashSaleStockPolicy), request.CashSaleStockPolicy.Value))
+            settings.CashSaleStockPolicy = request.CashSaleStockPolicy.Value;
+        // บัญชีทิปพนักงานค้างจ่าย: "" = ล้างกลับค่าแนะนำ · ต้องมีในผังบัญชีของบริษัทและเป็นบัญชีลงรายการได้
+        // (ไม่งั้น POS จะ fold ทิปเข้ารายได้เงียบ ๆ — ห้ามรับรหัสที่ไม่มีจริง)
+        if (request.PosTipPayableAccountCode != null)
+        {
+            var code = request.PosTipPayableAccountCode.Trim();
+            if (code.Length == 0) settings.PosTipPayableAccountCode = null;
+            else
+            {
+                var ok = await _db.ChartOfAccounts.AsNoTracking().AnyAsync(a => a.CompanyId == companyId
+                    && a.AccountCode == code && a.IsActive && !a.IsDeleted && a.Level >= 4);
+                if (!ok)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบบัญชี {code} ในผังบัญชี (หรือไม่ใช่บัญชีที่ลงรายการได้) — เลือกบัญชีหนี้สิน \"ค้างจ่ายพนักงาน\" ที่มีอยู่จริง",
+                        "SET-TIP-ACCOUNT");
+                settings.PosTipPayableAccountCode = code;
+            }
+        }
         // ภาษาเอกสาร — รับเฉพาะ th/en (ค่าอื่น = ไม่แก้ กันค่าขยะจาก client)
         if (request.DocumentLanguage != null)
         {
@@ -562,7 +583,11 @@ public class SettingsService : ISettingsService
         s.UseCustomAuthorizedSignatory,
         s.AuthorizedSignatoryName,
         s.AuthorizedSignatoryTitle,
-        s.AuthorizedSignatorySignatureBase64);
+        s.AuthorizedSignatorySignatureBase64,
+        s.CashSaleStockPolicy,
+        Accounting.Helpers.CashSaleStockRules.Describe(s.CashSaleStockPolicy),
+        s.PosTipPayableAccountCode,
+        Accounting.Helpers.TipAccountResolver.CodeCandidates(s.PosTipPayableAccountCode)[0]);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

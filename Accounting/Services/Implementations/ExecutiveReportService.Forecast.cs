@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Executive;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations.Forecast;
@@ -27,10 +28,7 @@ public partial class ExecutiveReportService
         // sees no upcoming payables.
         var ar = await _db.Documents
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
-            .Where(d => d.DocumentType == DocumentType.Invoice
-                     || d.DocumentType == DocumentType.TaxInvoice
-                     || d.DocumentType == DocumentType.BillingNote
-                     || d.DocumentType == DocumentType.DebitNote)
+            .Where(d => ArApScope.ReceivableTypes.Contains(d.DocumentType))   // ใบวางบิลไม่นับเป็นลูกหนี้ (F-08)
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.BalanceDue > 0)
             .Select(d => new { d.DueDate, d.DocumentDate, d.BalanceDue, d.DocumentNumber })

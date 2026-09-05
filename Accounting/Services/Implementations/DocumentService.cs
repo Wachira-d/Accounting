@@ -4475,6 +4475,8 @@ public partial class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
 
+        await EnsureCashSaleStockPolicyAllowsAsync(companyId, doc);   // นโยบาย Block (ERP_REVIEW A-06) — ก่อนออกเลข
+
         // ── ซ่อมบรรทัดที่เก็บ "ยอดรวม VAT" ลง Amount (ผิด convention) ─────────
         // เอกสารที่ OCR สร้างไว้ก่อน 2026-08-14 เก็บ Line.Amount เป็นยอดรวม VAT
         // ⇒ JE ลง Dr ค่าใช้จ่าย(รวม VAT) + Dr ภาษีซื้อ(VAT ซ้ำ) = เดบิตเกินเครดิต
@@ -12451,6 +12453,35 @@ public partial class DocumentService : IDocumentService
             : doc.InternalNotes.TrimEnd() + "\n\n" + note;
     }
 
+    /// <summary>นโยบายสต๊อกของใบเสร็จ standalone ของบริษัท — อ่านจาก CompanySettings (ไม่มีแถว = ค่า default
+    /// ของ entity = MoveStockAndCogs) · กติกาการใช้อยู่ที่ Helpers/CashSaleStockRules</summary>
+    private async Task<Models.Enums.CashSaleStockPolicy> GetCashSaleStockPolicyAsync(Guid companyId)
+        => await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (Models.Enums.CashSaleStockPolicy?)s.CashSaleStockPolicy)
+            .FirstOrDefaultAsync() ?? Models.Enums.CashSaleStockPolicy.MoveStockAndCogs;
+
+    /// <summary>นโยบาย Block: ใบเสร็จ/ใบสำคัญรับ standalone ที่มีบรรทัดสินค้าคงคลัง (TrackStock)
+    /// อนุมัติไม่ได้ — บอกทางไปต่อ (ออกใบกำกับภาษี/ใบแจ้งหนี้แทน) · ทำก่อนออกเลข §86/4</summary>
+    private async Task EnsureCashSaleStockPolicyAllowsAsync(Guid companyId, Document doc)
+    {
+        if (!CashSaleStockRules.AppliesTo(doc) || doc.Lines == null) return;
+        var policy = await GetCashSaleStockPolicyAsync(companyId);
+        if (!CashSaleStockRules.BlocksApproval(policy)) return;
+        var codes = doc.Lines.Where(l => !l.IsDeleted && !string.IsNullOrWhiteSpace(l.ProductCode))
+            .Select(l => l.ProductCode!).Distinct().ToList();
+        if (codes.Count == 0) return;
+        var tracked = await _db.Products.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && codes.Contains(p.Code) && !p.IsDeleted && p.TrackStock)
+            .Select(p => p.Code).ToListAsync();
+        if (tracked.Count == 0) return;
+        throw new BusinessRuleException(
+            $"นโยบายบริษัทไม่ให้ขายสินค้าคงคลัง ({string.Join(", ", tracked.Take(3))}) ด้วยใบเสร็จ/ใบสำคัญรับโดยตรง — "
+            + "ให้ออกใบกำกับภาษี (หรือใบแจ้งหนี้แล้วรับชำระ) แทน เพื่อให้สต๊อกและต้นทุนขายถูกตัดครบ · "
+            + "เปลี่ยนนโยบายได้ที่ ตั้งค่า → เอกสาร → ใบเสร็จที่ขายสินค้าคงคลัง",
+            "CASH-SALE-STOCK-BLOCK");
+    }
+
     private async Task ApplyStockMovementsAsync(Guid companyId, Document doc, int sign, string actor)
     {
         if (sign == 0) return;
@@ -12560,6 +12591,10 @@ public partial class DocumentService : IDocumentService
             DocumentType.DebitNote when doc.DebitNoteReason == Models.Enums.DebitNoteReason.ExtraGoods => -1,
             _ => 0,
         };
+        // ใบเสร็จ/ใบสำคัญรับ standalone ที่ขายสินค้าคงคลังโดยตรง — ตามนโยบายบริษัท
+        // (CashSaleStockPolicy) เดิมตกที่ `_ => 0` เสมอ ⇒ ลงรายได้แต่สต๊อกไม่ลด (ERP_REVIEW A-06)
+        if (direction == 0 && CashSaleStockRules.AppliesTo(doc))
+            direction = CashSaleStockRules.StockDirection(await GetCashSaleStockPolicyAsync(companyId));
         if (direction == 0) return;
 
         // ใบเพิ่มหนี้ "ฝั่งซื้อ" แบบผู้ขายส่งของเกิน (source = PI/Expense/CIL):
@@ -13844,6 +13879,33 @@ public partial class DocumentService : IDocumentService
                 if (moneyAccount != null && cashAmt != 0m)
                     AddLine(moneyAccount.Id, cashAmt, 0,
                         $"{(doc.BankAccountId.HasValue ? "รับเงินเข้าบัญชี" : "รับเงินสด")}{(driveDeposit ? " (สุทธิหลังหักมัดจำ)" : "")} - {doc.DocumentNumber}");
+
+                // COGS perpetual สำหรับใบเสร็จ standalone ที่ขายสินค้าคงคลัง — ตามนโยบาย
+                // CashSaleStockPolicy เดียวกับที่ ApplyStockMovementsAsync ใช้ตัดสต๊อก (สองที่นี้
+                // ต้องตอบตรงกันเสมอ ไม่งั้นสต๊อกลดแต่ GL 11500 ไม่ลด หรือกลับกัน) · สูตร/บัญชี
+                // เดียวกับสาขา Invoice/TaxInvoice (Dr 51110 / Cr 11500) — ERP_REVIEW A-06
+                if (CashSaleStockRules.AppliesTo(doc)
+                    && CashSaleStockRules.PostsCogs(await GetCashSaleStockPolicyAsync(companyId)))
+                {
+                    var rcCogs = await ComputeSalesCogsAsync(companyId, doc);
+                    if (rcCogs > 0)
+                    {
+                        var rcCogsAcc = await FindAccountAsync(companyId, "51110") ?? await FindAccountAsync(companyId, "511");
+                        var rcInvAcc = await FindAccountAsync(companyId, "11500") ?? await FindAccountAsync(companyId, "115");
+                        if (rcCogsAcc != null && rcInvAcc != null)
+                        {
+                            AddLine(rcCogsAcc.Id, rcCogs, 0, $"ต้นทุนขาย - {doc.DocumentNumber}");
+                            AddLine(rcInvAcc.Id, 0, rcCogs, $"ตัดสินค้าคงเหลือ - {doc.DocumentNumber}");
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "ไม่พบผังต้นทุนขาย (511xx) หรือสินค้าคงเหลือ (115xx) — ข้ามการลง COGS ของใบเสร็จ {DocNo}",
+                                doc.DocumentNumber);
+                            AppendInternalNote(doc, "⚠️ ไม่ได้ลงต้นทุนขายให้ใบเสร็จนี้ (ผังไม่มี 511xx/115xx) — ตรวจผังบัญชีแล้วลง JE ปรับปรุงเอง");
+                        }
+                    }
+                }
 
                 if (driveDeposit)
                 {

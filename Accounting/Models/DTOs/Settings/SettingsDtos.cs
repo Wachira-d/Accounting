@@ -120,7 +120,11 @@ public record UpdateCompanySettingsRequest(
     bool? UseCustomAuthorizedSignatory = null,
     string? AuthorizedSignatoryName = null,
     string? AuthorizedSignatoryTitle = null,
-    string? AuthorizedSignatorySignatureBase64 = null);
+    string? AuthorizedSignatorySignatureBase64 = null,
+    // ใบเสร็จ standalone ที่มีสินค้าคงคลัง (null = ไม่แก้) · กติกาอยู่ที่ Helpers/CashSaleStockRules
+    CashSaleStockPolicy? CashSaleStockPolicy = null,
+    // บัญชีทิปพนักงานค้างจ่าย: "" = ล้าง (กลับไปใช้ค่าแนะนำ) · null = ไม่แก้ · ต้องมีในผังบัญชีจริง
+    string? PosTipPayableAccountCode = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -219,7 +223,13 @@ public record CompanySettingsResponse(
     bool UseCustomAuthorizedSignatory = false,
     string? AuthorizedSignatoryName = null,
     string? AuthorizedSignatoryTitle = null,
-    string? AuthorizedSignatorySignatureBase64 = null);
+    string? AuthorizedSignatorySignatureBase64 = null,
+    // ใบเสร็จ standalone ที่มีสินค้าคงคลัง (0=ไม่แตะ 1=ตัดสต๊อก+COGS 2=บล็อก) + คำอธิบายจากเซิร์ฟเวอร์
+    CashSaleStockPolicy CashSaleStockPolicy = CashSaleStockPolicy.MoveStockAndCogs,
+    string? CashSaleStockPolicyDescription = null,
+    // บัญชีทิปพนักงานค้างจ่าย (null = ใช้ค่าแนะนำ) + รหัสที่ระบบจะใช้จริงตอนนี้
+    string? PosTipPayableAccountCode = null,
+    string? PosTipPayableAccountCodeEffective = null);
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(

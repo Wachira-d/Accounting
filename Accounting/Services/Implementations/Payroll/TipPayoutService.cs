@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -83,9 +84,11 @@ public class TipPayoutService : ITipPayoutService
                 $"สัดส่วนแจกจ่ายต้องรวม 100% (ได้รับ {totalShare:N2}%)");
 
         // 2. Look up GL accounts
-        var tipLiab = await _db.ChartOfAccounts.AsNoTracking()
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId
-                && a.AccountCode == "2160" && a.IsActive, ct);
+        // บัญชีเดียวกับที่ POS ลง Cr ตอนรับทิป (CompanySettings.PosTipPayableAccountCode → default) —
+        // เดิมหา "2160" ที่ไม่มีในผังมาตรฐาน ⇒ throw ทุกครั้ง (ERP_REVIEW H-07)
+        var tipCfg = await _db.CompanySettings.AsNoTracking()
+            .Where(cs => cs.CompanyId == companyId).Select(cs => cs.PosTipPayableAccountCode).FirstOrDefaultAsync(ct);
+        var tipLiab = await TipAccountResolver.ResolveAsync(_db, companyId, tipCfg, ct);
         var cash = await _db.ChartOfAccounts.AsNoTracking()
             .FirstOrDefaultAsync(a => a.CompanyId == companyId
                 && a.AccountCode.StartsWith("1011") && a.IsActive, ct);
@@ -94,7 +97,7 @@ public class TipPayoutService : ITipPayoutService
                 && a.AccountCode == "21915" && a.IsActive, ct);
         if (tipLiab == null || cash == null)
             throw new InvalidOperationException(
-                "ผังบัญชี 2160 (ทิปค้างจ่าย) หรือ 1011 (เงินสด) ไม่พบ — สร้างก่อน");
+                "ไม่พบบัญชีทิปค้างจ่าย (ตั้งได้ที่ ตั้งค่า → POS → บัญชีทิปพนักงาน; ค่าแนะนำ 21814/21819) หรือบัญชีเงินสด 1011 — สร้าง/ตั้งค่าก่อน");
 
         const decimal WhtThreshold = 1000m;
         const decimal WhtRate = 3m;       // §50 ทวิ + ม.40(2) ค่าบริการ → 3%

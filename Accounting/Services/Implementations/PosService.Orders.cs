@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Pos;
 using Accounting.Models.Entities;
@@ -1303,9 +1304,11 @@ public partial class PosService
         // default; fall back to any 21xx liability with "ทิป" in name.
         if (order.TipAmount > 0)
         {
-            var tipAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "2160")
-                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("216") && a.Level >= 4)
-                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("21") && a.AccountName.Contains("ทิป") && a.Level >= 4);
+            // บัญชีจาก CompanySettings.PosTipPayableAccountCode → default 21814/21819 → 21xxx ที่ชื่อมี "ทิป"
+            // (เดิม fallback prefix "216" ⇒ ผังมาตรฐานได้ 21610 "เงินมัดจำรับ" ทุกบริษัท · ERP_REVIEW H-07)
+            var tipCfg = await _db.CompanySettings.AsNoTracking()
+                .Where(cs => cs.CompanyId == companyId).Select(cs => cs.PosTipPayableAccountCode).FirstOrDefaultAsync();
+            var tipAccount = await TipAccountResolver.ResolveAsync(_db, companyId, tipCfg);
             if (tipAccount != null)
                 lines.Add(new(tipAccount.Id, 0, order.TipAmount, $"ทิปลูกค้า POS #{order.OrderNumber}"));
             // If no tip-account exists, fold into Sales so JE balances — better

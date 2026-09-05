@@ -1467,6 +1467,27 @@ public enum ReceiptIssueMode
     RetailReceipt = 2,
 }
 
+/// <summary>
+/// ใบเสร็จรับเงิน/ใบสำคัญรับ **standalone** (ไม่อ้างใบแจ้งหนี้ · ไม่ใช่มัดจำ) ที่มีบรรทัดสินค้า
+/// คงคลัง ต้องทำอะไรกับสต๊อก — เดิม `ApplyStockMovementsAsync` ไม่รู้จัก Receipt/RV เลย
+/// (`_ => 0`) ทั้งที่ ValidConversions ให้ Quotation/BillingNote → Receipt ⇒ ขายสินค้าด้วย
+/// ใบเสร็จลงรายได้แต่ไม่ตัดสต๊อก/ไม่ลง COGS ขณะที่ TaxInvoice+IssuedAsCashReceipt ตัดครบ —
+/// "ชนิดเอกสารบนจอเปลี่ยนกำไรขั้นต้น" (ERP_REVIEW_2026-09-05 A-06). เจ้าของโปรเจกต์ให้
+/// **ตั้งค่าได้ทุกทาง** — กติกาอยู่ที่ Helpers/CashSaleStockRules ตัวเดียว
+/// </summary>
+public enum CashSaleStockPolicy
+{
+    /// <summary>ไม่แตะสต๊อก/ไม่ลง COGS (พฤติกรรมเดิม) — เหมาะกับกิจการที่ใช้ใบเสร็จ
+    /// เฉพาะบริการ หรือคุมสต๊อกนอกระบบ</summary>
+    Ignore = 0,
+    /// <summary>ตัดสต๊อก + ลง COGS (Dr 511xx / Cr 115xx) เหมือนใบกำกับภาษี — ค่าแนะนำ
+    /// เพราะกำไรขั้นต้นต่อบิลถูกทุกช่องทาง (TFRS NPAEs บทที่ 8)</summary>
+    MoveStockAndCogs = 1,
+    /// <summary>ปฏิเสธการอนุมัติพร้อมบอกให้ออกใบกำกับภาษี/ใบแจ้งหนี้แทน — สำหรับ
+    /// กิจการที่ต้องการให้ทุกการขายสินค้ามีใบกำกับเสมอ</summary>
+    Block = 2,
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 //  AI integration enums — keep numeric values STABLE because they're
 //  persisted directly in AiSuggestionFeedback.ProviderUsed and the daily

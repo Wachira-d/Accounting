@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -69,10 +70,7 @@ public class SubLedgerReconciliationService
                     && d.Status != DocumentStatus.Voided
                     && d.Status != DocumentStatus.Rejected
                     && d.BalanceDue > 0
-                    && (d.DocumentType == DocumentType.Invoice
-                        || d.DocumentType == DocumentType.TaxInvoice
-                        || d.DocumentType == DocumentType.BillingNote
-                        || d.DocumentType == DocumentType.DebitNote))
+                    && ArApScope.ReceivableTypes.Contains(d.DocumentType))   // ใบวางบิลไม่มี JE — ไม่อยู่ในลูกหนี้ (F-08)
                 .GroupBy(d => 1)
                 .Select(g => new { Total = g.Sum(d => d.BalanceDue), Count = g.Count() })
                 .FirstOrDefaultAsync();

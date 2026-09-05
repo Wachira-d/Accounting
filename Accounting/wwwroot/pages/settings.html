@@ -435,6 +435,19 @@
         </select>
         <div id="sReceiptIssueModeHint" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6"></div>
       </div>
+      <h4 style="margin-top:18px">ใบเสร็จ/ใบสำคัญรับที่ขายสินค้าคงคลังโดยตรง</h4>
+      <p class="text-sm text-gray-600" style="margin-bottom:8px">
+        ใบเสร็จที่<b>ไม่ได้อ้างใบแจ้งหนี้</b>และมีบรรทัดสินค้าคงคลัง ต้องทำอะไรกับสต๊อกและต้นทุนขาย —
+        ใบเสร็จรับชำระใบแจ้งหนี้และใบมัดจำไม่กระทบ (ใบแจ้งหนี้/ใบกำกับตัดสต๊อกอยู่แล้ว)
+      </p>
+      <div class="form-group" style="max-width:640px">
+        <select class="form-input" id="sCashSaleStockPolicy">
+          <option value="1">ตัดสต๊อก + ลงต้นทุนขาย เหมือนใบกำกับภาษี (ค่าแนะนำ)</option>
+          <option value="0">ไม่แตะสต๊อก/ไม่ลงต้นทุนขาย (ลงรายได้อย่างเดียว)</option>
+          <option value="2">ไม่อนุญาต — ต้องออกใบกำกับภาษี/ใบแจ้งหนี้แทน</option>
+        </select>
+        <div id="sCashSaleStockPolicyHint" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6"></div>
+      </div>
       <div class="form-group" style="max-width:640px;margin-top:10px">
         <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
           <input type="checkbox" id="sUnifyTaxInvoiceSeries" style="margin-top:3px">
@@ -851,6 +864,13 @@
           <option value="Block">บล็อก — เกินงบอนุมัติไม่ได้</option>
         </select>
       </div>
+      <div class="form-group" style="max-width:640px">
+        <label class="form-label" for="sPosTipAccountCode">บัญชีทิปพนักงานค้างจ่าย (POS รับทิป → จ่ายพนักงาน)</label>
+        <input class="form-input" id="sPosTipAccountCode" placeholder="เว้นว่าง = ใช้ค่าแนะนำ (21814 → 21819)" maxlength="20">
+        <div id="sPosTipAccountCodeHint" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6">
+          ต้องเป็นบัญชีหนี้สินที่ลงรายการได้และมีอยู่ในผังบัญชี — ห้ามใช้บัญชีเงินมัดจำรับ (216xx) เพราะทิปไม่ใช่มัดจำ
+        </div>
+      </div>
       <div class="form-group form-checkbox"><input type="checkbox" id="sAllowNegativeStock"><label for="sAllowNegativeStock">อนุญาตให้สต๊อกติดลบ (ขายเกินจำนวนคงเหลือได้) — ปิดไว้ = บล็อกการตัดสต๊อกเกินยอด</label></div>
       <div class="form-group form-checkbox advanced-only"><input type="checkbox" id="sEclEnabled"><label for="sEclEnabled">เปิดการตั้งค่าเผื่อหนี้สงสัยจะสูญ (ECL) อัตโนมัติรายเดือน <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">TFRS NPAEs</span></label></div>
 
@@ -1186,6 +1206,14 @@
        *  (serverText). ตอนผู้ใช้เพิ่งเปลี่ยน dropdown ยังไม่ได้บันทึก จึงไม่มี
        *  ค่าจากเซิร์ฟเวอร์ → แสดงคำเตือนว่ายังไม่บันทึก แทนที่จะเดาข้อความเอง
        *  (ห้ามสร้างสำเนามือของ ReceiptIssuePolicy.Describe ฝั่ง JS) */
+      /** คำอธิบายนโยบายใบเสร็จ standalone มาจากเซิร์ฟเวอร์ (CashSaleStockRules.Describe) เท่านั้น */
+      _renderCashSalePolicyHint(serverText) {
+        const el = document.getElementById('sCashSaleStockPolicyHint');
+        if (!el) return;
+        el.innerHTML = serverText
+          ? Layout.esc(serverText)
+          : '⚠️ ยังไม่ได้บันทึก — กด "บันทึกการตั้งค่า" แล้วระบบจะยืนยันผลของนโยบายนี้';
+      },
       _renderReceiptModeHint(serverText) {
         const el = document.getElementById('sReceiptIssueModeHint');
         if (!el) return;
@@ -2129,6 +2157,25 @@
             this._renderReceiptModeHint(s.receiptIssueModeDescription);
             _rimSel.onchange = () => this._renderReceiptModeHint(null);
           }
+          // นโยบายใบเสร็จ standalone ที่ขายสินค้าคงคลัง (ERP_REVIEW A-06) — enum ชื่อ/เลขก็ได้
+          const _cspSel = document.getElementById('sCashSaleStockPolicy');
+          if (_cspSel) {
+            const _cspMap = { Ignore: '0', MoveStockAndCogs: '1', Block: '2' };
+            const _cspRaw = s.cashSaleStockPolicy;
+            _cspSel.value = _cspMap[_cspRaw] ?? String(_cspRaw ?? 1);
+            this._renderCashSalePolicyHint(s.cashSaleStockPolicyDescription);
+            _cspSel.onchange = () => this._renderCashSalePolicyHint(null);
+          }
+          // บัญชีทิปพนักงาน (ERP_REVIEW H-07) — ว่าง = ค่าแนะนำ; แสดงรหัสที่ระบบจะใช้จริง
+          const _tipEl = document.getElementById('sPosTipAccountCode');
+          if (_tipEl) {
+            _tipEl.value = s.posTipPayableAccountCode || '';
+            const _tipHint = document.getElementById('sPosTipAccountCodeHint');
+            if (_tipHint && s.posTipPayableAccountCodeEffective)
+              _tipHint.textContent = `ตอนนี้ระบบจะลงทิปที่บัญชี ${s.posTipPayableAccountCodeEffective}` +
+                (s.posTipPayableAccountCode ? '' : ' (ค่าแนะนำ — เว้นว่างอยู่)') +
+                ' · ต้องเป็นบัญชีหนี้สินที่มีอยู่ในผังบัญชี ห้ามใช้ 216xx เงินมัดจำ';
+          }
           // null/undefined = ยังไม่เคยตั้ง → ค่าแนะนำคือ **เปิด** (ไม่ใช่ปิด)
           // ต้องตรงกับ TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled ฝั่งเซิร์ฟเวอร์
           const _uniCb = document.getElementById('sUnifyTaxInvoiceSeries');
@@ -2355,6 +2402,9 @@
             // enum เป็นตัวเลข — Layout.intOrNull กันค่าว่าง/ขยะไม่ให้กลายเป็น 0
             // โดยบังเอิญ (0 = "ใบเดียวจบ" ซึ่งเป็นค่าจริงที่มีความหมาย)
             receiptIssueMode: Layout.intOrNull('sReceiptIssueMode'),
+            cashSaleStockPolicy: Layout.intOrNull('sCashSaleStockPolicy'),
+            // "" = ล้างกลับค่าแนะนำ (server: null=ไม่แก้ · ""=ล้าง · ค่าอื่นต้องมีในผัง)
+            posTipPayableAccountCode: (document.getElementById('sPosTipAccountCode')?.value ?? '').trim(),
             unifyTaxInvoiceNumberSeries: document.getElementById('sUnifyTaxInvoiceSeries')?.checked || false,
             // ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดแยก)
             stampWidthMm: parseFloat(document.getElementById('sStampW')?.value || '32'),

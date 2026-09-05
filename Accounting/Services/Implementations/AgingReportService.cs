@@ -38,7 +38,7 @@ public class AgingReportService : IAgingReportService
         var asOfDate = request.AsOfDate ?? DateTime.UtcNow.Date;
 
         // Document types per side (หลักบัญชีไทย):
-        //   AR (ลูกหนี้):  Invoice/TaxInvoice/BillingNote/DebitNote เพิ่มยอด
+        //   AR (ลูกหนี้):  Invoice/TaxInvoice/DebitNote เพิ่มยอด (ชุดจาก Helpers/ArApScope)
         //                  CreditNote ลดยอด → รวมแยกต่างหากด้านล่าง.
         //   AP (เจ้าหนี้): PurchaseInvoice เพิ่มหนี้การค้า (21210),
         //                  Expense เพิ่มเจ้าหนี้อื่น (21220),
@@ -48,8 +48,8 @@ public class AgingReportService : IAgingReportService
         //   หนี้/จ่ายตรงเสมอ — ห้ามอยู่ใน aging (เคยมีบั๊ก voucher BalanceDue>0
         //   จาก data ไม่ครบ → ขึ้น aging หลอกว่าค้างจ่าย).
         var positiveTypes = reportType == AgingReportType.AccountsReceivable
-            ? new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote, DocumentType.DebitNote }
-            : new[] { DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.DebitNote };
+            ? ArApScope.ReceivableTypes    // ใบวางบิลไม่นับ — ไม่มี JE และครอบใบแจ้งหนี้ที่ตั้งลูกหนี้แล้ว (ERP_REVIEW F-08)
+            : ArApScope.PayableTypes;
         var negativeType = DocumentType.CreditNote;
 
         var allTypes = positiveTypes.Concat(new[] { negativeType }).ToArray();

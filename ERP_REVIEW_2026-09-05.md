@@ -55,6 +55,9 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | G-03 | P1 | LINE "บันทึก {ร้าน} {จำนวน}" อนุมัติ Expense อัตโนมัติให้ทุกสมาชิก + `catch {}` กลืน error แล้วตอบ ✅ | ด่าน `CanApproveAsync(Expense)` → ไม่มีสิทธิ์ = ร่าง · error = บอกว่าร่างแล้วอนุมัติไม่ผ่านพร้อมเหตุผล |
 | G-04 | P2 | LINE postback ใช้สำเนามือ role list แทน `DocumentPermissionHelper` | ใช้ `CanApproveAsync(doc.DocumentType)` |
 | G-05 | P1 | อนุมัติผ่านมือถือไม่มีด่านสิทธิ์ (B-02 แก้แค่ Status writer) | `MobileApiService` ตรวจ `CanApproveAsync` ก่อน `ApproveDocumentAsync` (403 `PERM-DOC-APPROVE`) |
+| A-06 | P1 | ขายสินค้าคงคลังด้วยใบเสร็จ standalone ไม่ตัดสต๊อก/ไม่ลง COGS — **เจ้าของตัดสิน: ตั้งค่าได้ทุกทาง** | `CashSaleStockPolicy` (Ignore / MoveStockAndCogs=default / Block) + `Helpers/CashSaleStockRules` ใช้ทั้งทิศสต๊อก · COGS · ด่านอนุมัติ · หน้าตั้งค่า |
+| F-08 | P1 | ใบวางบิลถูกนับเป็นลูกหนี้ (ไม่มี JE · ครอบใบแจ้งหนี้ = นับซ้ำ) — **เจ้าของตัดสิน: ปรับให้ถูกต้อง** | `Helpers/ArApScope.ReceivableTypes` แหล่งเดียว → Dashboard · Aging · SubLedgerRecon · Forecast · CustomerStatement (ปิด F-02/F-09 บางส่วน) |
+| H-07 | P1 | ทิป POS fallback prefix 216 → 21610 "เงินมัดจำรับ" · TipPayout หา 2160 ที่ไม่มี — **เจ้าของตัดสิน: ตั้งค่าได้** | `CompanySettings.PosTipPayableAccountCode` + `Helpers/TipAccountResolver` (default 21814→21819 · ห้าม 216xx) ใช้ทั้ง POS และ TipPayout · หน้าตั้งค่า |
 | I-01 | P1 | รายการเกิดซ้ำ "รายปี" สร้าง/แก้ไม่ได้ — select ส่ง `Yearly` แต่ enum ชื่อ `Annual` ⇒ 400 ทุกครั้ง · BiWeekly/SemiAnnual ไม่มีใน UI | recurring.html option+label ตรง enum 7/7 |
 | I-02 | P1 | ปุ่มลบตาย 5 จุด/4 หน้า (employees · leave-types ×2 · project-time · roles) — `API.delete` ไม่มี (มีแค่ `del`) ⇒ TypeError ก่อนยิง | api.js alias `delete → del` (แก้ที่เดียวปิด 5 จุด) |
 | I-04 | P1 | ลงทะเบียนที่ดินไม่ได้ — server บังคับ `DepreciationMethod.None` แต่ select ไม่มีตัวเลือกนั้น (ข้อความ error ชี้ทางแก้ที่ไม่มี) | เพิ่ม option None ใน fixed-assets.html + document-scan.html + label map |
@@ -62,7 +65,7 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | H-01 | **P0** | ยกเลิกรอบเงินเดือนที่นำส่ง สปส. แล้วได้ (Void ไม่ตรวจ `SsoSettledAt` ขณะ Reopen ตรวจ) ⇒ กลับ JE จ่าย แต่ JE นำส่งอยู่ ⇒ 21815 ติดลบถาวร + เสี่ยงนำส่งซ้ำ | `PayrollRunEditPolicy.CanVoid` (กติกา สปส. เดียวกับ CanReopen) เรียกใน `VoidPayrollAsync` + เทสต์ล็อกให้สองด่านเท่ากัน |
 
 ### P0 ที่ **ยืนยันแล้วแต่ยังไม่แก้** (ขนาด M/L หรือต้องตัดสินใจ) — เรียงตามความเสียหาย
-1. **A-06 [P1→ควรถือเป็น P0][M]** ขายสินค้าคงคลังด้วย "ใบเสร็จรับเงิน" standalone (หรือแปลงจาก Quotation/BillingNote → Receipt) ลงรายได้แต่**ไม่ตัดสต๊อก ไม่ลง COGS** (`ApplyStockMovementsAsync` switch ไม่มี Receipt/RV `_ => 0` · DocumentService.cs:12490-12510) — ชนิดเอกสารบนจอเปลี่ยนกำไรขั้นต้น. **ต้องตัดสิน**: (ก) Receipt/RV ที่มีบรรทัดสินค้า TrackStock เดินสาย −1 + COGS เหมือน TIV หรือ (ข) บล็อกพร้อมบอกให้ใช้ใบกำกับ/ใบแจ้งหนี้ — ทีม A แนะ (ก) เพราะ POS ใช้เส้นตัวเองอยู่แล้ว
+1. ~~**A-06**~~ ✅ ปิดแล้วเป็นการตั้งค่า `CashSaleStockPolicy` (เจ้าของตัดสิน 2026-09-05: "ตั้งค่าได้ทุกทาง") — **default = ตัดสต๊อก+COGS = เปลี่ยนพฤติกรรม** ใบเสร็จ standalone ที่มีสินค้า TrackStock จะเริ่มตัดสต๊อก/ลง COGS ตั้งแต่ deploy · บริษัทที่ต้องการแบบเดิมตั้งเป็น Ignore ได้ที่ ตั้งค่า → เอกสาร · เดิม:** ขายสินค้าคงคลังด้วย "ใบเสร็จรับเงิน" standalone (หรือแปลงจาก Quotation/BillingNote → Receipt) ลงรายได้แต่**ไม่ตัดสต๊อก ไม่ลง COGS** (`ApplyStockMovementsAsync` switch ไม่มี Receipt/RV `_ => 0` · DocumentService.cs:12490-12510) — ชนิดเอกสารบนจอเปลี่ยนกำไรขั้นต้น. **ต้องตัดสิน**: (ก) Receipt/RV ที่มีบรรทัดสินค้า TrackStock เดินสาย −1 + COGS เหมือน TIV หรือ (ข) บล็อกพร้อมบอกให้ใช้ใบกำกับ/ใบแจ้งหนี้ — ทีม A แนะ (ก) เพราะ POS ใช้เส้นตัวเองอยู่แล้ว
 2. **E-07 [P1][M]** ปรับสต๊อก/ตรวจนับ/รับโอนขาด **ไม่มี JE เลย** (`StockCountService.cs:18` doc-comment "caller posts it" แต่ caller ไม่ทำ) ⇒ GL 11500 กับ subledger ห่างขึ้นทุกรอบนับ — ทางแก้ที่ทีม E เสนอ: "ใบปรับปรุงสต๊อก" เป็นเอกสาร (เลข·อนุมัติ·JE·เหตุผล·สิทธิ์) ปิด E-07/E-08/E-10 พร้อมกัน
 3. **E-02 [P1][M]** costing/รายงานรู้จักแค่ IN/OUT/ADJUST แต่ ledger ถูกป้อน OPENING/TRANSFER_* ⇒ สต๊อกยกมาหายจาก FIFO/WAC rebuild/รายงาน — ต้องมี `MovementTypes` static class + นิยาม "เป็น layer/บริโภค" ที่เดียว
 4. **D-04 [P1][M]** นำเข้าผังบัญชี CSV ตั้ง `Level = code.Length <= 4 ? 1 : 2` ⇒ 59 จุดที่กรอง `Level >= 4` มองไม่เห็นบัญชีที่นำเข้า (AutoPost ตก fallback/LogWarning · payroll หา 54111 ไม่เจอ) — ระบบใช้ไม่ได้กับลูกค้าที่ย้ายจากโปรแกรมอื่น · ต้องมี `ChartOfAccountLevel.Resolve` ตัวเดียว (Create/Import/Seed) + migration ซ่อม Level เดิม หรือเลิกพึ่ง Level → `IsPostable`
@@ -105,7 +108,7 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | A-03 | P2 | S | BankAiAugmenter/AdvancedAiAugmenter aging นับเฉพาะ Approved‖PartiallyPaid — Sent/Overdue หลุด | ○ |
 | A-04 | P2 | S | DOC_NO_JE false positive | ✅ |
 | A-05 | P2 | S | conversion rate ใบเสนอราคา = "ที่อนุมัติ" ไม่ใช่ "ที่ถูกแปลง" (ExecutiveReportService.Sales.cs:42) | ○ |
-| A-06 | P1 | M | Receipt standalone ไม่ตัดสต๊อก/COGS | ✔ (§1 ข้อ 1) |
+| A-06 | P1 | M | Receipt standalone ไม่ตัดสต๊อก/COGS | ✅ ตั้งค่าได้ (CashSaleStockPolicy · default ตัดสต๊อก+COGS) |
 | A-07 | P2 | S | โมดัลแปลงซ่อน option ที่มี ⇒ PO→GRN แปลงจากจอไม่ได้ (documents.html:1432-1456 static) | ○ — ควรสร้าง option จาก `allowed` ที่ server คืน |
 | A-08 | P2 | S | กฎอนุมัติ sme-config เลือกชนิดได้ 5/16 | ○ |
 | A-09 | P3 | S | risk.html ส่ง `JournalEntry` เข้า enum DocumentType → 400 | ○ |
@@ -216,7 +219,7 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | H-04 | P1 | S | `AdvanceRecovered` ไม่ขึ้นสลิป/LINE (พิมพ์ NetPay แต่โอนจริง NetPay − Advance) | ○ |
 | H-05 | P1 | M | เงินสดย่อย: Replenish ไม่มี JE · Disburse `new JournalEntry` ตรง (เลข Guid · ไม่ผ่าน Builder/งวดปิด) · ไม่มี void | ○ (C-04 class + E-07 class) |
 | H-06 | P1 | M | เช็คเด้ง/ยกเลิก = เปลี่ยน status อย่างเดียว ไม่กลับ Payment/JE/ยอดธนาคาร · MarkCleared ขยับ CurrentBalance ไม่มี JE · เช็คจากฟอร์มเอกสารไม่สร้าง Cheque | ○ |
-| H-07 | P1 | S | ทิป POS fallback prefix "216" → **21610 เงินมัดจำรับ** ทุกบริษัทผังมาตรฐาน · TipPayoutService หา "2160"/"1011" ที่ไม่มี (throw เสมอ) และไม่มีใครเรียก · WHT 3% ม.40(2) กับพนักงาน — **ขัด SYSTEM_REVIEW §8 "tip ถูก"** | ○ ต้องเลือกบัญชี "ทิปค้างจ่าย" ให้ถูกก่อนแก้ |
+| H-07 | P1 | S | ทิป POS fallback prefix "216" → **21610 เงินมัดจำรับ** ทุกบริษัทผังมาตรฐาน · TipPayoutService หา "2160"/"1011" ที่ไม่มี (throw เสมอ) และไม่มีใครเรียก · WHT 3% ม.40(2) กับพนักงาน — **ขัด SYSTEM_REVIEW §8 "tip ถูก"** | ✅ บัญชีตั้งค่าได้ + resolver เดียว (POS/TipPayout) · WHT ประเภทเงินได้ + ปุ่มเรียก TipPayout ยังเปิด |
 | H-08 | P1 | M | คอมมิชชัน Approve = เปลี่ยน status จบ — ไม่มี PayrollItem/JE/เอกสาร | ○ |
 | H-09 | P1 | M | ลาไม่รับค่าจ้างหักเฉพาะ `LeaveType == "UnpaidLeave"` literal — `IsPaid` ที่ผู้ใช้ตั้งไม่ถูกอ่าน | ○ |
 | H-10 | P1 | S | SmeOperationsController/ChequeController มีแค่ [Authorize] + หลุด allow-list (= G-07) | ○ |
@@ -250,7 +253,7 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | F-01 | P1 | S | แดชบอร์ดนับ IsClosingEntry | ✅ |
 | F-03 | P1 | S | aging CN/DN ทั้งสองฝั่ง | ✅ |
 | F-04 | P1 | S | Executive Summary นับ Draft/Voided เป็นเกินกำหนด · void ไม่ล้าง BalanceDue | ○ |
-| F-08 | P1 | M | BillingNote นับเป็นลูกหนี้ใน Dashboard/Aging/recon ทั้งที่ไม่มี JE | ○ ต้องตัดสินนโยบาย (ใบวางบิลครอบใบแจ้งหนี้ = นับซ้ำ) |
+| F-08 | P1 | M | BillingNote นับเป็นลูกหนี้ใน Dashboard/Aging/recon ทั้งที่ไม่มี JE | ✅ ArApScope (ใบวางบิลออกจากลูกหนี้ทุกจุด) |
 | F-02 | P2 | S | AR/AP แดชบอร์ด ≠ aging (ชนิด/สถานะ/CN คนละชุด) | ○ |
 | F-05 | P2 | S | รายงานเอกสารกรองแค่ `!= Voided && != Draft` | ○ (ใช้ `DocumentStatusRules`) |
 | F-06 | P2 | S | Report Builder แหล่ง JE กรอง Posted เท่านั้น — Reversed หายแต่ใบกลับยังอยู่ | ○ |
@@ -304,7 +307,7 @@ IntegrationService `Status = Approved` ใน initializer เดิน AutoPost 
 
 ## §9 รอบถัดไป (ลำดับ)
 1. **รันทีม F ซ้ำให้ครบ** (งบการเงิน/ภ.พ.30↔GL/export/scheduled report) · **G-02** (รหัสผูก LINE) + **G-07/I-07** (สิทธิ์ที่ server) เป็นงาน security ชิ้นแรก · **I-03** (POS OrderType migration) ก่อนมีตรรกะเงินบน OrderType
-2. ตัดสินใจ A-06 (ก/ข) และ F-08 (BillingNote เป็นลูกหนี้ไหม) — ต้องเจ้าของโปรเจกต์/นักบัญชี
+2. ~~ตัดสินใจ A-06 / F-08 / H-07~~ ✅ เจ้าของตัดสินแล้ว (ตั้งค่าได้ · ใบวางบิลออกจากลูกหนี้ · บัญชีทิปตั้งค่าได้) — ทำแล้วในคอมมิตรอบ 136
 3. Sprint "ราก": DocumentStatusRules ไล่ 22 จุดที่เหลือ + checker · MovementTypes + E-02 · journal interceptor + C-04
 4. D-04 (CoA Level) ก่อนรับลูกค้าที่ import ผังเอง
 5. sync SYSTEM_REVIEW ตาม §5
