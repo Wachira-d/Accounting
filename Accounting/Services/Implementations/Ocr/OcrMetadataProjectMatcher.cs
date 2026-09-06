@@ -410,8 +410,9 @@ internal sealed class OcrMetadataProjectMatcher
             {
                 var res = await _ai!.MatchLineProjectAsync(
                     companyId, scanResultId, it.Description!, it.Amount, candidates, ct);
-                if (res.UsedAi && !string.IsNullOrEmpty(res.Answer)
-                    && validIds.Contains(res.Answer)
+                // ★ นักเรียน (local model) ที่ผ่านเกณฑ์ routing ใช้ได้เท่า AI (กฎเหล็ก #1 · T3-01)
+                if (res.HasModelAnswer
+                    && validIds.Contains(res.Answer!)
                     && Guid.TryParse(res.Answer, out var pid))
                 {
                     var c = candidates.First(x => string.Equals(x.ProjectId, res.Answer, StringComparison.OrdinalIgnoreCase));

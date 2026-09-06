@@ -59,6 +59,21 @@ public class AzureDiPatternLearner
         decimal sourceConfidence,
         CancellationToken ct = default)
     {
+        // ⚠️ ด่านคุณภาพก่อน "สอน" (ผลตรวจ 2026-09-05 T3-06): ค่านี้มาจากผลอ่านของ
+        // Azure ที่**ยังไม่มีใครยืนยัน** — ใบแรกที่อ่านชื่อผู้ขายเพี้ยนจะกลายเป็น
+        // "known good" (ConfirmedCount=1) แล้ว VendorKnownGoodCorrector เอาไปทับ
+        // ค่าที่อ่าน**ถูก**ในใบถัดไป (similarity ≥ 0.80 ผ่านง่ายกับชื่อไทยยาว).
+        // สอนเฉพาะเมื่อความมั่นใจทั้งใบ ≥ 0.85 (เกณฑ์เดียวกับไฮไลต์เหลืองกฎเหล็ก #3)
+        // — ต่ำกว่านั้นให้รอผู้ใช้ยืนยันผ่าน SubmitCorrectionAsync ซึ่งสอนด้วย
+        // Source="UserCorrection" ที่แรงกว่าอยู่แล้ว
+        const decimal MinConfidenceToLearn = 0.85m;
+        if (sourceConfidence < MinConfidenceToLearn)
+        {
+            _logger.LogDebug("AzureDI learner: skip — confidence {Conf:P0} < {Min:P0} (รอผู้ใช้ยืนยันก่อนสอน)",
+                sourceConfidence, MinConfidenceToLearn);
+            return;
+        }
+
         // 1. Location patterns — reuse the existing learning path so
         //    DocumentZoneAnalyzer.ApplyLearnedPatterns picks them up
         //    on the next Tier-2/3 scan with no further wiring.

@@ -21,9 +21,24 @@ public class OcrController : ControllerBase
     // สำหรับ "สร้าง + อนุมัติ" — อนุมัติที่ controller ไม่ฉีดเข้า OcrService
     // (กันวงกลม DI + OcrService ไม่ควรรู้จัก approve pipeline ทั้งชุด)
     private readonly IDocumentService _documentService;
+    // ด่านสิทธิ์ (ผลตรวจ 2026-09-05 T1-06): เส้น "สร้าง+อนุมัติ" และ "บันทึก JE" จากหน้าสแกน
+    // เป็นทางอนุมัติทางที่ 4 ที่ไม่มีด่าน — ใช้ตัวตัดสินกลางเดียวกับเว็บ/ลายเซ็น/LINE/มือถือ
+    private readonly IPermissionService _perms;
     public OcrController(IOcrService service, IOcrQuotaService quota, AccountingDbContext db,
-        IDocumentService documentService)
-    { _service = service; _quota = quota; _db = db; _documentService = documentService; }
+        IDocumentService documentService, IPermissionService perms)
+    { _service = service; _quota = quota; _db = db; _documentService = documentService; _perms = perms; }
+
+    /// <summary>ชนิดเอกสารเป้าหมายของสแกน (override จาก query ก่อน แล้วค่อยที่ scan อนุมานไว้)</summary>
+    private async Task<Models.Enums.DocumentType?> ResolveTargetTypeAsync(Guid companyId, Guid scanId, string? targetType)
+    {
+        var raw = targetType;
+        if (string.IsNullOrWhiteSpace(raw))
+            raw = await _db.Set<OcrScanResult>().AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.Id == scanId)
+                .Select(r => r.TargetDocumentType)
+                .FirstOrDefaultAsync();
+        return Enum.TryParse<Models.Enums.DocumentType>(raw, true, out var dt) ? dt : null;
+    }
 
     /// <summary>Resolve a REAL user id to stamp on uploads. JWT/user-key auth
     /// gives a genuine user. Integration (int_) key auth sets NameIdentifier to
@@ -277,7 +292,19 @@ public class OcrController : ControllerBase
         // Pass the user GUID (not Identity.Name, which is the email) so the
         // created document's CreatedBy resolves to a real user → its
         // signature prints. The service still owner-falls-back if empty.
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var userGuid = JwtHelper.GetUserIdFromClaims(User);
+        var userId = userGuid.ToString();
+
+        // ด่านสิทธิ์ "สร้าง" (T1-06) — ข้อความบอกคีย์ที่ต้องขอ ไม่ใช่ 403 เปล่า
+        var target = await ResolveTargetTypeAsync(companyId, scanId, targetType);
+        if (target is Models.Enums.DocumentType tType
+            && !await DocumentPermissionHelper.CanCreateAsync(_perms, companyId, userGuid, tType))
+        {
+            return StatusCode(403, new ApiResponse<OcrResultResponse>(false, null,
+                $"ไม่มีสิทธิ์สร้างเอกสารประเภท {tType} — ขอสิทธิ์สร้างเอกสาร"
+                + (DocumentPermissionHelper.IsRevenue(tType) ? "ฝั่งขาย" : "ฝั่งซื้อ") + "จากเจ้าของบริษัท"));
+        }
+
         var result = await _service.CreateDocumentFromScanAsync(
             companyId, scanId, userId, targetType, allowDuplicate);
 
@@ -288,18 +315,42 @@ public class OcrController : ControllerBase
         // เข้าใจว่าไม่มีใบเกิดขึ้นแล้วสแกนซ้ำ = ใบซ้ำ)
         if (approve && result.CreatedDocumentId.HasValue)
         {
-            try
-            {
-                await _documentService.ApproveDocumentAsync(
-                    companyId, result.CreatedDocumentId.Value, userId);
-            }
-            catch (Exception ex)
+            string? skipReason = null;
+            // T1-04: วันที่อ่านไม่ได้ถูกเติม "วันนี้" — ห้ามอนุมัติอัตโนมัติจนผู้ใช้ยืนยันวัน
+            // (วันที่ = tax point/งวด ภ.พ.30 · เลขเอกสาร gap-free ออกตามวันนี้แก้ย้อนไม่ได้)
+            if (result.ExtractedDate == null)
+                skipReason = "อ่านวันที่บนกระดาษไม่ได้ (ระบบเติมวันนี้เป็นค่าเริ่มต้น) — เปิดใบ Draft ยืนยันวันที่ก่อนกดอนุมัติ";
+            // T1-06: ด่านสิทธิ์อนุมัติ — ตัวเดียวกับ DocumentController/ลายเซ็น/LINE/มือถือ
+            var createdType = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == result.CreatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => (Models.Enums.DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync();
+            if (skipReason == null && createdType is Models.Enums.DocumentType cType
+                && !await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userGuid, cType))
+                skipReason = $"ไม่มีสิทธิ์อนุมัติเอกสารประเภท {cType} — สร้างเป็น Draft ไว้แล้ว รอผู้มีสิทธิ์อนุมัติ";
+
+            if (skipReason != null)
             {
                 result = result with
                 {
-                    ProcessingNotes = (result.ProcessingNotes ?? "")
-                        + "\n[APPROVE-FAIL] " + ex.Message,
+                    ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[APPROVE-SKIP] " + skipReason,
                 };
+            }
+            else
+            {
+                try
+                {
+                    await _documentService.ApproveDocumentAsync(
+                        companyId, result.CreatedDocumentId.Value, userId);
+                }
+                catch (Exception ex)
+                {
+                    result = result with
+                    {
+                        ProcessingNotes = (result.ProcessingNotes ?? "")
+                            + "\n[APPROVE-FAIL] " + ex.Message,
+                    };
+                }
             }
         }
         return Ok(new ApiResponse<OcrResultResponse>(true, result));
@@ -343,6 +394,11 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> CreateJournalEntry(
         Guid companyId, Guid scanId, [FromBody] Models.DTOs.Ocr.CreateJeFromScanRequest request)
     {
+        // T1-06: ลง JE จริงต้องมีสิทธิ์จัดการใบสำคัญ (คีย์เดียวกับหน้า JE manual)
+        var jeUser = JwtHelper.GetUserIdFromClaims(User);
+        if (!await _perms.HasPermissionAsync(companyId, jeUser, Models.Constants.PermissionKeys.JournalManage))
+            return StatusCode(403, new ApiResponse<object>(false, null,
+                "ไม่มีสิทธิ์บันทึกใบสำคัญ (JE) — ขอสิทธิ์ “จัดการใบสำคัญ” จากเจ้าของบริษัท หรือกด “สร้างเอกสาร” แทน"));
         var jeId = await _service.CreateJournalEntryFromScanAsync(companyId, scanId, request, User.Identity?.Name ?? "");
         return Ok(new ApiResponse<object>(true, new { journalEntryId = jeId }, "บันทึก JE จากสแกนสำเร็จ"));
     }

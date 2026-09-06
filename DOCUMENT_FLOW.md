@@ -116,6 +116,35 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      ทั้ง frontend+backend รู้จักอยู่แล้ว) · `[VAT-NOTE]` = เตือนอย่างเดียว.
      **ไม่ใส่ keyword "น้ำมัน" เดี่ยว ๆ** — จะโดนน้ำมันพืชของร้านอาหารซึ่ง
      เคลมได้ตามปกติ
+- **ด่านก่อนสร้าง/อนุมัติ (รอบ 137 — ผลตรวจไปป์ไลน์ OCR)**:
+  1. **สิทธิ์** — `OcrController.CreateDocument` เช็ค
+     `DocumentPermissionHelper.CanCreateAsync(targetType)` ก่อนสร้าง และ
+     `CanApproveAsync(createdType)` ก่อนอนุมัติ · `create-journal-entry` เช็ค
+     `PermissionKeys.JournalManage`. **เดิมทั้งสองเส้นมีแค่ `[Authorize]`** ⇒
+     เป็นทางอนุมัติทางที่ 4 ที่รอบก่อน (ลายเซ็น/LINE/มือถือ) ยังปิดไม่ครบ ·
+     ไม่มีสิทธิ์อนุมัติ = ใบ Draft ยังถูกสร้าง แล้วแนบ `[APPROVE-SKIP]` กลับมา
+     (ห้าม silent no-op)
+  2. **วันที่อ่านไม่ได้ → ห้าม auto-approve** — `ExtractedDate == null` ⇒
+     `[APPROVE-SKIP]` + `FieldConfidence[DocumentDate]=0.30` +
+     `[DATE-UNKNOWN]` ใน `ProcessingNotes`. เอกสารยังถูกเติม "วันนี้" ตาม
+     กฎเหล็ก #3 (ห้ามปล่อยว่าง) แต่วันที่ = tax point/งวด ภ.พ.30 และเลขเอกสาร
+     gap-free ออกตามวันนั้นแก้ย้อนหลังไม่ได้ ⇒ ต้องให้คนยืนยันก่อน
+  3. **50 ทวิ ที่ "เราถูกหัก" ไม่สร้างเอกสารขาย** — `InferWhtCertWeAreWithheld`
+     = true ⇒ ลงทะเบียน `WhtCreditReceived` (`EnsureWhtCreditFromCertAsync`)
+     แล้ว **throw `OCR-WHTCERT-NO-SALE`** พร้อมบอกทางไปต่อ · auto-create ก็ถูก
+     ปิดด้วย (`criticalFieldsOk && ocrWeAreWithheld != true`). เดิม role
+     inferrer ตั้ง target = `ReceiptVoucher` แล้วเส้นนี้สร้าง RV **ไม่มีใบต้นทาง**
+     ⇒ ตอนอนุมัติ JE เป็น "ขายสด" (Dr เงินสด / Cr รายได้ + ภาษีขาย) = รายได้
+     เบิ้ล + VAT ขายเบิ้ล + AR ไม่ถูกล้าง
+  4. **เลขใบกำกับของผู้ขาย ต้องมาจากใบกำกับจริง** — กระดาษที่ระบบอ่านได้ว่าเป็น
+     `Invoice`/`Receipt`/`DeliveryNote`/`Quotation`/`BillingNote` **ไม่** set
+     `HasTaxInvoiceReference` อีกต่อไป (เดิมเอาเลขใบแจ้งหนี้ไปลง
+     `SupplierInvoiceNumber` ⇒ เคลมภาษีซื้องวดนี้ทั้งที่ใบกำกับยังไม่มา
+     §82/5(1)) → แนบ `[TAX-INV-PENDING]` แทน แล้วพัก VAT ที่ 11640 รอเติมเลข
+     ใบกำกับเมื่อได้รับ (flow §3.6 เดิม)
+  5. **รหัสสาขาไม่แต่ง** — ไม่รู้สาขาผู้ขาย = `SupplierBranchCode = null`
+     (เดิม `?? "00000"` ⇒ รายงานภาษีซื้อ §87 พิมพ์ "สำนักงานใหญ่" ให้ใบสาขา);
+     ด่าน §86/4 ตอนอนุมัติเป็นคนบังคับกรอก
 - **Service**: `OcrService.CreateDocumentFromScanAsync` (`OcrService.cs:3245`)
 - **กฎเหล็ก #3**: OCR ต้อง pre-fill **ครบทุก field §86/4** — ผู้ใช้แค่ "ยืนยัน"
 - **Field ที่ OCR map**:
@@ -129,9 +158,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - PV: `bookSupplierInvoice` flag → `HasTaxInvoiceReference = true` +
     `SupplierInvoiceNumber / Date / BranchCode`
 - **Fallback chain (กฎเหล็ก #3)**:
-  Vision/OCR → local distillation model → historical lookup (vendor's last doc)
-  → rule defaults (VAT 7%, branch 00000, vendor default GL) → AI ตอน last resort
-  (ผ่าน `IAiOrchestrator.AskAsync` per กฎเหล็ก #1)
+  OCR engine cascade → local distillation model (**นักเรียน**) → historical
+  lookup (vendor's last doc) → rule defaults (VAT 7%, vendor default GL) → AI
+  ตอน last resort (ผ่าน `IAiOrchestrator.AskAsync` per กฎเหล็ก #1)
+  - **นักเรียนตอบแทนครูได้จริงตั้งแต่รอบ 137** — orchestrator short-circuit คืน
+    `UsedAi=false` พร้อมคำตอบของ local model; เดิม call site ทุกจุดบนเส้น OCR
+    มี `UsedAi &&` เป็นด่านแรก ⇒ **คำตอบนักเรียนถูกทิ้งทุกครั้ง** (ยิ่ง local
+    โต ระบบยิ่งได้แต่ heuristic เปล่า ๆ = "เรียนแล้วโง่ลง") → ตอนนี้ใช้
+    `OcrAiAugmentationResult.HasModelAnswer` (ครูหรือนักเรียนก็ได้) ผ่าน
+    anti-hallucination guard เดิมทุกด่าน · ป้าย `<Feature>UsedAi` ยังหมายถึง
+    "provider ถูกเรียกจริง" เท่านั้น (ป้ายซื่อสัตย์ตามกฎเหล็ก #1 ข้อ 6)
+  - **ไม่แต่งบรรทัดให้ยอดตรง** — การกระทบยอด "Σ บรรทัด ↔ หัวใบ" ย้ายไปที่
+    `Helpers/OcrLineReconciler` (pure + เทสต์ด้วยตัวเลขจริง): เทียบกับ**ยอดก่อน
+    VAT** ไม่ใช่ยอดรวม · ส่วนลดต้องมีบนกระดาษ (`ExtractedDiscountAmount`) ·
+    ตัดสินไม่ได้/บรรทัดขาด = `[Σ-GAP]` ให้คนดู. เดิมเทียบผิดฝั่ง ⇒ ใบมีส่วนลด
+    ถูกตีเป็น "ราคารวม VAT" แล้ว**แต่งบรรทัด "ค่าขนส่ง/บริการอื่น"** ที่ไม่มีบน
+    กระดาษ · ส่วนลดถูกคิดเทียบยอดรวมแล้วบวก VAT ซ้ำ (เอกสาร ≠ กระดาษ)
 - **แหล่งเงิน (Cr) auto-fill — 3 ชั้น priority** (`OcrService.cs` credit auto-fill
   + `ResolvePaymentSourceOverrideAsync`): สำหรับ PV/Receipt/Expense จ่ายสด —
   (1) partner metadata top-level `paymentAccountCode`/`bankCode`/`bankAccountCode`
@@ -4580,6 +4622,7 @@ _(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Con
 | 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
 | 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
 | 12 | JE migrate + business gaps ปิด | JE Builder phase 2 (ReclassifyLine + FxRevaluation refactor), UnifiedPaymentQueryService cross-domain (AR+AP+POS+CMS), POS deposit IsDeposit+DepositRealizedAt, TipPayoutService §50 ทวิ (3% WHT >1000), RecurringLateFeeAccrualJob (rate/grace/cap config), DocumentLineDeliveryService LINE flex, Budget scenarios best/base/worst |
+| 137 | ไปป์ไลน์ OCR → เอกสาร (ทีมตรวจ 5 ทีม) | ด่านสิทธิ์ที่เส้น OCR (`CanCreateAsync`/`CanApproveAsync`/`JournalManage`) = ทางอนุมัติทางที่ 4 ที่รอบก่อนยังไม่ปิด · 50 ทวิ ที่เราถูกหัก เลิกสร้างใบสำคัญรับ standalone (รายได้เบิ้ล) → ลงทะเบียนเครดิตภาษีแล้ว throw `OCR-WHTCERT-NO-SALE` · `Helpers/OcrLineReconciler` (pure+เทสต์) แทนตรรกะ 4 เคสที่เทียบ Σ บรรทัดกับ**ยอดหลัง VAT** ⇒ เลิกแต่งบรรทัด "ค่าขนส่ง/บริการอื่น" และเลิกคิดส่วนลดผิดฐาน · JE จากสแกนบล็อก §82/5 + ฐาน WHT = total−VAT (เท่าเส้นเอกสาร) + ผังภาษี 11610/21916/21917 (เดิม 11511/21701 ไม่มีในผังมาตรฐาน ⇒ ตกไปหยิบบัญชีคุม "116") · เลขใบแจ้งหนี้เลิกลง `SupplierInvoiceNumber` (§82/5(1)) → `[TAX-INV-PENDING]` · `SupplierBranchCode` ไม่แต่ง "00000" · วันที่อ่านไม่ได้ = ห้าม auto-approve · คำตอบ "นักเรียน" ถูกใช้จริง (`HasModelAnswer`) ทั้ง 5 จุด · `AzureDiPatternLearner` สอนเฉพาะ conf ≥0.85 · CAPTURE ฝั่งยอมรับบนเส้น 1-click · `Failed` ไม่ถูกทับเป็น `Completed` · `AmountTripleExtractor` ไม่ทับยอดที่ engine อ่านมาแล้ว · "เลขที่" ของที่อยู่ไม่ชนะเลขที่เอกสาร |
 | 134 | สแกนซ้ำคัดลอกข้อมูลไม่ครบ (ผู้ใช้รายงาน) | เส้น `Cached` เคยคัดลอก **10 ช่องจาก 49** ⇒ ข้อความดิบ · รายการสินค้า · ช่อง §86/4 ฝั่งผู้ซื้อ · `TargetDocumentType` · หมวดค่าใช้จ่าย · WHT · ค่าความมั่นใจรายช่อง **หายเงียบ 39 ช่อง** ทุกครั้งที่อัปโหลดไฟล์เดิมซ้ำ → `Helpers/OcrScanSnapshot` เป็น **deny-list** (คัดลอกทุกช่อง ยกเว้น 15 ช่องที่เป็นตัวตนของแถว) + `OcrScanSnapshotTests` เติมค่าทุกช่องพิสูจน์ว่าไม่มีช่องไหนหลุด · ด่านไฟล์ซ้ำกรอง `!IsDuplicate` + `OrderByDescending(CreatedAt)` (เดิมได้สำเนาของสำเนา แบบไม่ deterministic) · `ScanAsync(forceRescan)` + retry เลิกทิ้งแถวค้าง `Processing` และบอกเลขสแกนปลายทาง · ปุ่ม "สแกนใหม่" เลิกส่ง scanId ไป endpoint ที่รับ fileAttachmentId (500 มาตลอด) · กล่อง Raw Text เลิกโทษ Docker เมื่อ engine เป็น `Cached`/`EtaxXml` · `OcrConfidenceGateway` ข้อ 2b จับ "ตัวเลขสามช่องขัดกันเอง" · migration COALESCE ซ่อมแถวสำเนาที่พังไปแล้ว |
 | 133 | สัญญาณความมั่นใจของ OCR + ด่าน PDPA ก่อนส่ง prompt | `fc()` ในหน้า review เลิก fallback ไปคะแนน**ทั้งใบ** (เดิม "00000 · 95%" บนค่าที่ระบบเดาให้) → "—" · stamp `SellerBranchCode/BuyerBranchCode = 0.30` เมื่ออ่านไม่ได้ · `Layout.applyOcrConfidenceHints` ตัวกลางตัวเดียว ใช้ทั้งฟอร์มเอกสารและ**หน้า review ที่ผู้ใช้ตัดสินใจจริง** · เปิดแก้ VendorAddress/BuyerName/BuyerAddress/PaymentTermsDays ครบทั้ง ฟอร์ม→payload→DTO→persist · `AiPromptSanitizer`: regex อีเมล + เลขบัญชีที่มีป้าย + **สตริงใน array ที่ไม่เคยถูกปิดบังเลย** + `AllowTaxIdInPrompt` คงเฉพาะเลขนิติบุคคล (เลขบัตรประชาชนปิดบังเสมอ §26) · `pg_try_advisory_lock` บนงานเทรน · `AiFeatureKey` 4 ค่าที่ตายแล้ว → `[Obsolete(error)]` |
 | 128 | POS เฟส 3 — ขายแล้วกินสูตร | `ProductType.RawMaterial` · `Product.ConsumesBomOnSale` · `Helpers/BomConsumption` (บริสุทธิ์ · เรียงผลลัพธ์คงที่กัน deadlock) · ตัด/คืนวัตถุดิบครบ 4 เส้นผ่านตัวเดียว · ท็อปปิ้งผูกวัตถุดิบ (`ProductModifierOption.ComponentProductId`) · สูตรเป็น **เวอร์ชัน** ไม่เขียนทับ (`mfg/products/{id}/recipe`) |
@@ -4588,3 +4631,11 @@ _(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Con
 | 124 | โมดูลที่พัก (Lodging) | วิเคราะห์ TakeTime → `Lodging*` 14 ตาราง · `LodgingPricingEngine` pure + 19 เทสต์ · storefront `/booking` + `/reservation/{token}` · front desk + ตั้งค่า 2 หน้า · มัดจำ Receipt(IsDeposit) → เช็คเอาต์ TaxInvoice DepositApplied* → ยกเลิก Refund/Realize ตามนโยบาย snapshot · seed เมื่อสร้างเว็บโรงแรม |
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._
+
+_Last verified against codebase: 2026-09-06 (รอบ 137 — **ไปป์ไลน์ OCR → เอกสาร**:_
+_ตั้งทีมตรวจ 5 ด้าน (สมองนักบัญชี · วิศวกรรมการสกัด · สถาปัตยกรรมการเรียนรู้/AI ·_
+_UX 1-click · คุณภาพ/ตัวชี้วัด) แล้วแก้ 16 ข้อที่ยืนยันด้วยการเปิดไฟล์เอง —_
+_รายละเอียดครบใน `OCR_PIPELINE_REVIEW_2026-09-06.md` §2 · ที่เหลือเป็น backlog §3._
+_จุดที่ flow เปลี่ยนจริง: ด่านก่อนสร้าง/อนุมัติ 5 ข้อใน §2.2 · fallback chain_
+_(นักเรียนตอบแทนครูได้ + ไม่แต่งบรรทัดให้ยอดตรง) · เส้น `create-journal-entry`_
+_บล็อก §82/5 และใช้ผังภาษีชุดเดียวกับเส้นเอกสาร)_

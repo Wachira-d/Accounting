@@ -134,10 +134,34 @@ public sealed record OcrAiAugmentationResult(
     IReadOnlyList<string> ComplianceFlags,
     string? Reasoning,
     bool UsedAi,
-    Guid? FeedbackId);
+    Guid? FeedbackId,
+    // ★ กฎเหล็ก #1 (ผลตรวจ 2026-09-05 T3-01): orchestrator short-circuit ด้วย
+    // "นักเรียน" (local distillation model มั่นใจ ≥ threshold) คืน UsedAi=false
+    // พร้อมคำตอบของนักเรียน — เดิม call site ทุกจุดมี `UsedAi &&` เป็นด่านแรก
+    // ⇒ คำตอบนักเรียนถูกทิ้งทุกครั้ง = ระบบ "เรียนแล้วไม่เคยใช้ที่เรียน".
+    // FromStudent=true แปลว่า Answer มาจากนักเรียนที่ผ่านเกณฑ์ routing แล้ว
+    // — call site ใช้ได้เหมือนคำตอบ AI (ผ่าน anti-hallucination guard เดิม)
+    // แต่ป้าย UI ต้องเป็น "⚙️ ระบบเรียนรู้แล้ว" ไม่ใช่ "🤖 AI"
+    bool FromStudent = false)
+{
+    /// <summary>มีคำตอบที่ใช้ได้จาก "ครู" (AI) หรือ "นักเรียน" (local model) —
+    /// ใช้แทน <c>UsedAi</c> ที่ call site เมื่อต้องการนำคำตอบไป apply</summary>
+    public bool HasModelAnswer => (UsedAi || FromStudent) && !string.IsNullOrWhiteSpace(Answer);
+
+    /// <summary>ป้ายแหล่งคำตอบสำหรับ reasoning trace</summary>
+    public string SourceLabel => UsedAi ? "AI" : FromStudent ? "Student" : "Local";
+}
 
 public class OcrAiAugmenter : IOcrAiAugmenter
 {
+    /// <summary>คำตอบนี้มาจากนักเรียน (short-circuit ของ orchestrator) หรือไม่ —
+    /// <see cref="AiOrchestrator"/> ตั้ง <c>ProviderModel = "local:{version}"</c> เฉพาะเส้นนี้</summary>
+    internal static bool IsStudentAnswer(AiResponse resp) =>
+        !resp.UsedAi
+        && resp.Status == AiCallStatus.Skipped
+        && !string.IsNullOrEmpty(resp.PrimaryAnswer)
+        && resp.ProviderModel?.StartsWith("local:", StringComparison.Ordinal) == true;
+
     private const int CandidateLimit = 12;
     private const int VendorHistoryLookbackMonths = 24;
 
@@ -355,7 +379,8 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 ComplianceFlags: resp.ComplianceFlags,
                 Reasoning: resp.Reasoning,
                 UsedAi: resp.UsedAi,
-                FeedbackId: resp.FeedbackId);
+                FeedbackId: resp.FeedbackId,
+                FromStudent: IsStudentAnswer(resp));
         }
         catch (Exception ex)
         {
@@ -473,7 +498,8 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 ComplianceFlags: resp.ComplianceFlags,
                 Reasoning: resp.Reasoning,
                 UsedAi: resp.UsedAi,
-                FeedbackId: resp.FeedbackId);
+                FeedbackId: resp.FeedbackId,
+                FromStudent: IsStudentAnswer(resp));
         }
         catch (Exception ex)
         {
@@ -551,7 +577,8 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 ComplianceFlags: resp.ComplianceFlags,
                 Reasoning: resp.Reasoning,
                 UsedAi: resp.UsedAi,
-                FeedbackId: resp.FeedbackId);
+                FeedbackId: resp.FeedbackId,
+                FromStudent: IsStudentAnswer(resp));
         }
         catch (Exception ex)
         {
@@ -582,9 +609,10 @@ public class OcrAiAugmenter : IOcrAiAugmenter
 
             // Hallucination guard — AI must return one of the candidate ids.
             var valid = candidates.Select(c => c.ProjectId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (!resp.UsedAi || string.IsNullOrEmpty(resp.PrimaryAnswer) || !valid.Contains(resp.PrimaryAnswer))
+            var projFromStudent = IsStudentAnswer(resp);
+            if (!(resp.UsedAi || projFromStudent) || string.IsNullOrEmpty(resp.PrimaryAnswer) || !valid.Contains(resp.PrimaryAnswer))
             {
-                if (resp.UsedAi)
+                if (resp.UsedAi || projFromStudent)
                     _logger.LogWarning(
                         "OcrAiAugmenter.MatchLineProject: AI returned project '{Ans}' not in candidates ({N}). Leaving line unassigned.",
                         resp.PrimaryAnswer, candidates.Count);
@@ -598,8 +626,9 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 Risks: resp.Risks,
                 ComplianceFlags: resp.ComplianceFlags,
                 Reasoning: resp.Reasoning,
-                UsedAi: true,
-                FeedbackId: resp.FeedbackId);
+                UsedAi: resp.UsedAi,
+                FeedbackId: resp.FeedbackId,
+                FromStudent: projFromStudent);
         }
         catch (Exception ex)
         {
@@ -630,7 +659,8 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 companyId, scanResultId, rawText, documentType, vendorName,
                 subTotal, vatAmount, totalAmount);
             var resp = await _orchestrator.AskAsync(req, ct);
-            if (!resp.UsedAi || string.IsNullOrWhiteSpace(resp.RawResponseJson))
+            var splitFromStudent = IsStudentAnswer(resp) && !string.IsNullOrWhiteSpace(resp.RawResponseJson);
+            if (!(resp.UsedAi || splitFromStudent) || string.IsNullOrWhiteSpace(resp.RawResponseJson))
                 return Empty("ai unavailable");
 
             return new OcrAiAugmentationResult(
@@ -640,8 +670,9 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 Risks: resp.Risks,
                 ComplianceFlags: resp.ComplianceFlags,
                 Reasoning: resp.Reasoning,
-                UsedAi: true,
-                FeedbackId: resp.FeedbackId);
+                UsedAi: resp.UsedAi,
+                FeedbackId: resp.FeedbackId,
+                FromStudent: splitFromStudent);
         }
         catch (Exception ex)
         {

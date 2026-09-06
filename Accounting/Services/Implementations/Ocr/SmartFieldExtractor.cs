@@ -783,7 +783,11 @@ internal static class SmartFieldExtractor
             && data.SubTotal.Value > 0)
         {
             var s = data.SubTotal.Value; var v = data.VatAmount.Value; var t = data.TotalAmount.Value;
-            existingConsistent = Math.Abs(s + v - t) < 1m && Math.Abs(v / s - 0.07m) < 0.01m;
+            existingConsistent = Math.Abs(s + v - t) < 1m
+                && (Math.Abs(v / s - 0.07m) < 0.01m
+                    // ใบ 0%/ยกเว้น (ส่งออก · สินค้าเกษตร · ค่าเช่า): VAT = 0 และ sub = total
+                    // คือค่าที่ถูกต้องตามกฎหมาย ไม่ใช่ "ไม่สอดคล้อง" — เดิมตกไปแต่ง VAT 7/107 ทับ
+                    || (v == 0m && Math.Abs(s - t) < 1m));
         }
         if (existingConsistent) return;
 
@@ -791,7 +795,20 @@ internal static class SmartFieldExtractor
         // When the extractor produced a complete arithmetic-valid triple,
         // OVERRIDE existing partial / inconsistent values — the math check
         // is more trustworthy than whatever single keyword regex picked up.
-        if (sub.HasValue && vat.HasValue && total.HasValue
+        //
+        // ⚠️ ด่านกัน "สามค่าที่ลงตัวแต่เป็นคนละเรื่อง" (ผลตรวจ 2026-09-05 T2-09): engine
+        // อ่านหัวใบถูก (Makro 1,000 / 49 / 1,049 — บิลผสม 7%/ยกเว้น จึงไม่ใช่ 7% พอดี)
+        // แต่ตัวค้นสามค่าไปจับ (951 / 49 / 1,000) ที่ลงตัวเพราะ 1,000 คือ "เงินสดรับ"
+        // และ 951 คือ "เงินทอน" ⇒ ทับค่าถูกด้วยค่าแต่ง แล้วตั้ง confidence 0.95.
+        // กติกา: ถ้า engine อ่านยอดรวมมาแล้ว สามค่าใหม่ต้อง "ตกลง" กับยอดรวมนั้น
+        // ถึงจะทับได้ — ไม่งั้นเติมเฉพาะช่องว่าง (partial fallback ข้างล่าง)
+        var engineTotal = data.TotalAmount;
+        var agreesWithEngineTotal = engineTotal is null or 0m
+            || (total.HasValue && Math.Abs(total.Value - engineTotal.Value) < 1m);
+        if (!agreesWithEngineTotal && total.HasValue)
+            data.ReasoningTrace.Add(
+                $"[AmountTriple] สามค่าที่ลงตัว (Total={total:N2}) ไม่ตรงยอดรวมที่ engine อ่าน ({engineTotal:N2}) — ไม่ทับ");
+        if (agreesWithEngineTotal && sub.HasValue && vat.HasValue && total.HasValue
             && sub.Value > 0 && Math.Abs(sub.Value + vat.Value - total.Value) < 1m)
         {
             data.SubTotal = sub;
@@ -863,11 +880,19 @@ internal static class SmartFieldExtractor
             return;
         }
 
+        // ⚠️ "เลขที่" ของ**ที่อยู่** (เลขที่ 99/1 ถ.สุขุมวิท · No. 123/45 Sukhumvit Rd.)
+        // ใช้คำเดียวกับเลขที่เอกสาร และมักอยู่**ก่อน**เลขที่ใบในหัวกระดาษ ⇒ เดิมชนะ
+        // ทุกใบที่พิมพ์ที่อยู่แบบนี้ (ผลตรวจ 2026-09-05 T2-10). สองด่าน: (1) ค่าที่ตาม
+        // ด้วยคำบอกที่อยู่ (ถ./ถนน/หมู่/ซอย/ต./อ./แขวง/เขต/Rd/Road/Soi/Moo) ถูกคัดออก
+        // (2) ป้ายเฉพาะของเอกสาร (เลขที่ใบกำกับ/ใบเสร็จ/Tax Invoice No.) มาก่อนป้ายทั่วไป
+        const string notAddress =
+            @"(?!\s*(?:ถ\.|ถนน|หมู่|ม\.\s*\d|ซ\.|ซอย|ต\.|ตำบล|อ\.|อำเภอ|แขวง|เขต|จ\.|จังหวัด|Rd\b|Road\b|Soi\b|Moo\b|Street\b|St\.))";
         var patterns = new[]
         {
-            @"(?:เลขที่|เลขที|เลข\s?ที่|No\.?)\s*\(\s*No\.?\s*\)\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
-            @"เลขที่(?!ใบแจ้งหนี้|สัญญา|บัญชี|ผู้เสียภาษี)\s*\(?\s*(?:No\.?)?\s*\)?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
-            @"(?:^|\s)No\.\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
+            @"(?:เลขที่ใบกำกับ(?:ภาษี)?|เลขที่ใบเสร็จ(?:รับเงิน)?|Tax\s*Invoice\s*No\.?|Receipt\s*No\.?)\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
+            @"(?:เลขที่|เลขที|เลข\s?ที่|No\.?)\s*\(\s*No\.?\s*\)\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})" + notAddress,
+            @"เลขที่(?!ใบแจ้งหนี้|สัญญา|บัญชี|ผู้เสียภาษี)\s*\(?\s*(?:No\.?)?\s*\)?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})" + notAddress,
+            @"(?:^|\s)No\.\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})" + notAddress,
             @"(?:Invoice\s*No\.?|เลขที่ใบแจ้งหนี้)\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
         };
         foreach (var p in patterns)
