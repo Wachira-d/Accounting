@@ -2706,7 +2706,7 @@ public class OcrService : IOcrService
     {
         var data = new OcrExtractedData
         {
-            DocumentType = MapAzureDocType(azure.DocumentType, azure.ModelId),
+            DocumentType = MapAzureDocType(azure.DocumentType, azure.ModelId, azure.RawText),
             Confidence = azure.OverallConfidence,
             DocumentNumber = azure.InvoiceId,
             DocumentDate = azure.InvoiceDate,
@@ -2764,8 +2764,29 @@ public class OcrService : IOcrService
                 Quantity = item.Quantity,
                 UnitPrice = item.UnitPrice,
                 Amount = item.Amount,
+                // ค่าที่ Azure อ่านมาให้แล้ว — ใช้ของจริงก่อนเสมอ แล้วค่อยให้
+                // ThaiVatTypeRule เดาเฉพาะบรรทัดที่ยังว่าง (T2-04)
+                Unit = string.IsNullOrWhiteSpace(item.Unit) ? null : item.Unit!.Trim(),
+                VatRate = item.TaxRate,
+                VatAmount = item.Tax,
             });
         }
+
+        // ── กำหนดชำระที่ใบพิมพ์ไว้ → เครดิตเทอม (T2-04) ──
+        // Azure คืน DueDate มาอยู่แล้ว แต่ไม่มีใครอ่าน ⇒ ระบบไปเดาเครดิตเทอมจาก
+        // ประวัติผู้ขายทั้งที่กระดาษบอกไว้ตรง ๆ · เก็บเป็น "จำนวนวัน" ให้ตรงกับ
+        // ช่องที่ระบบใช้จริง และเฉพาะเมื่อค่าสมเหตุสมผล (0–365 วัน)
+        if (azure.DueDate.HasValue && azure.InvoiceDate.HasValue)
+        {
+            var days = (int)(azure.DueDate.Value.Date - azure.InvoiceDate.Value.Date).TotalDays;
+            if (days is >= 0 and <= 365)
+            {
+                data.PaymentTermsDays ??= days;
+                data.ReasoningTrace.Add($"[Azure DI] กำหนดชำระบนใบ {azure.DueDate:d} → เครดิต {days} วัน");
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(azure.PurchaseOrder))
+            data.ReasoningTrace.Add($"[Azure DI] อ้างใบสั่งซื้อ {azure.PurchaseOrder} — ตรวจสอบการผูก PO ก่อนยืนยัน");
 
         // ─── Recover missing fields from keyValuePairs ───
         // Azure's keyValuePairs feature catches Thai-anchored data that
@@ -3115,8 +3136,29 @@ public class OcrService : IOcrService
         return hits.Count == 1 ? hits[0] : null;
     }
 
-    private static string MapAzureDocType(string? azureDocType, string? modelId)
+    /// <summary>ชนิดกระดาษ — **สิ่งที่พิมพ์อยู่บนใบชนะเสมอ**
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจ 2026-09-06 · T2-14): ชื่อไฟล์เป็นตัวเลือกโมเดล
+    /// (<c>AzureDiRequestPlanner.DetectModelFromFilename</c> — "receipt"/"cafe"/"ใบเสร็จ"
+    /// → prebuilt-receipt) แล้ว <c>modelId</c> ก็บังคับชนิดเป็น <c>Receipt</c> ต่อ
+    /// ⇒ **ใบกำกับภาษีเต็มรูปที่ผู้ใช้ตั้งชื่อไฟล์ว่า "receipt-2026-09.pdf" ถูกตีเป็น
+    /// ใบเสร็จ** แล้วโดนปิดเคลมภาษีซื้อตาม §82/5(1) ทั้งที่กระดาษถูกต้องครบ</para></summary>
+    /// <summary>ทางเข้าสำหรับเทสต์ — ตรรกะเดียวกับที่ pipeline ใช้จริง</summary>
+    internal static string MapAzureDocTypeForTest(string? azureDocType, string? modelId, string? rawText)
+        => MapAzureDocType(azureDocType, modelId, rawText);
+
+    private static string MapAzureDocType(string? azureDocType, string? modelId, string? rawText = null)
     {
+        // คำบนกระดาษเป็นหลักฐาน ส่วนชื่อไฟล์/โมเดลเป็นแค่การเดาของเรา
+        if (!string.IsNullOrWhiteSpace(rawText))
+        {
+            var t = Ocr.ThaiTextNormalizer.Normalize(rawText);
+            if (t.Contains("ใบลดหนี้", StringComparison.OrdinalIgnoreCase)) return "CreditNote";
+            if (t.Contains("ใบเพิ่มหนี้", StringComparison.OrdinalIgnoreCase)) return "DebitNote";
+            if (t.Contains("ใบกำกับภาษี", StringComparison.OrdinalIgnoreCase)
+                || t.Contains("tax invoice", StringComparison.OrdinalIgnoreCase))
+                return "Invoice";   // ใบกำกับ = เอกสารภาษี ไม่ใช่ Receipt
+        }
         if (modelId?.Contains("receipt", StringComparison.OrdinalIgnoreCase) == true)
             return "Receipt";
         return azureDocType?.ToLowerInvariant() switch

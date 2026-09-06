@@ -465,6 +465,13 @@ public class AzureDocumentIntelligenceService
                         UnitPrice = GetCurrencyField(itemObj, "UnitPrice"),
                         Amount = GetCurrencyField(itemObj, "Amount"),
                         ProductCode = GetStringField(itemObj, "ProductCode"),
+                        // ⚠️ prebuilt-invoice คืนสามช่องนี้มาอยู่แล้วในคำตอบเดียวกัน แต่เดิม
+                        // **ไม่เคยอ่าน** ⇒ ระบบไปเดา VAT รายบรรทัดจาก keyword ทั้งที่มีคำตอบ
+                        // ตรง ๆ อยู่ในมือ และหน่วยนับตกไปใช้ค่า default "ชิ้น"
+                        // (ผลตรวจไปป์ไลน์ OCR 2026-09-06 · T2-04)
+                        Unit = GetStringField(itemObj, "Unit"),
+                        TaxRate = ParsePercent(GetStringField(itemObj, "TaxRate")),
+                        Tax = GetCurrencyField(itemObj, "Tax"),
                     };
                     result.Items.Add(line);
                 }
@@ -591,6 +598,16 @@ public class AzureDocumentIntelligenceService
         if (f.TryGetProperty("content", out var c) && DateTime.TryParse(c.GetString(), out var dt2))
             return dt2;
         return null;
+    }
+
+    /// <summary>"7%" · "7.0 %" · "7" → 7 — Azure คืนอัตราเป็นข้อความ</summary>
+    private static decimal? ParsePercent(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var cleaned = new string(raw.Where(c => char.IsDigit(c) || c == '.' || c == '-').ToArray());
+        return decimal.TryParse(cleaned, System.Globalization.NumberStyles.Number,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= 0m && v <= 100m
+            ? v : null;
     }
 
     private static decimal? GetCurrencyField(JsonElement fields, string name)
@@ -785,4 +802,14 @@ public class AzureDiLineItem
     public decimal? UnitPrice { get; set; }
     public decimal? Amount { get; set; }
     public string? ProductCode { get; set; }
+
+    /// <summary>หน่วยนับที่พิมพ์บนใบ ("ถุง" · "PCS") — ตรงกว่าการเดาจากคำอธิบาย</summary>
+    public string? Unit { get; set; }
+
+    /// <summary>อัตราภาษีรายบรรทัดตามที่ Azure อ่านได้ (เช่น 7) — คำตอบตรงของ
+    /// โจทย์ "ใบผสม 7%/ยกเว้น" ที่ระบบเคยต้องเดาจาก keyword</summary>
+    public decimal? TaxRate { get; set; }
+
+    /// <summary>ยอดภาษีรายบรรทัด (ถ้าใบพิมพ์แยก)</summary>
+    public decimal? Tax { get; set; }
 }
