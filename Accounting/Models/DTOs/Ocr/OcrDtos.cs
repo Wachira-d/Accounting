@@ -117,7 +117,12 @@ public record OcrResultResponse(
     /// <para>⚠️ ที่มา (T4-11): ทั้งฝั่งผลิต (<c>document-scan.html</c>) และฝั่งบริโภค
     /// (<c>documents.html</c>) อ้างชื่อนี้อยู่แล้ว แต่ <b>DTO ตรงกลางไม่มีช่อง</b>
     /// ⇒ การแก้ผังบัญชีในฟอร์มไม่เคยถูกบันทึกเป็นตัวอย่างสอนเลย</para></summary>
-    Guid? GlAccountAiFeedbackId = null);
+    Guid? GlAccountAiFeedbackId = null,
+    /// <summary>อัตราหัก ณ ที่จ่ายที่ **กฎหมายกำหนด** สำหรับหมวดรายจ่ายนี้ (ท.ป.4/2528)
+    /// — ข้อเสนอ ไม่ใช่ค่าที่ระบบตั้งให้ (<c>WhtRate</c> = ยอดที่พิมพ์บนกระดาษ)</summary>
+    decimal? SuggestedWhtRate = null,
+    /// <summary>รหัสประเภทเงินได้ ม.40 — บังคับก่อนออก 50 ทวิ/ภ.ง.ด.3/53 (T4-06)</summary>
+    string? WhtIncomeTypeCode = null);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);
@@ -201,6 +206,9 @@ public record OcrCorrectionRequest(
     string? CreditAccountCode = null,
     bool? HasWht = null,
     decimal? WhtRate = null,
+    /// <summary>ประเภทเงินได้ ม.40 ที่ผู้ใช้เลือก — ต้องส่งกลับมาได้ ไม่งั้น 50 ทวิ
+    /// และ ภ.ง.ด.3/53 ไม่มีข้อมูลนี้ (T4-06)</summary>
+    string? WhtIncomeTypeCode = null,
     // Phase-1 role-inference correction: when user changes the inferred
     // "เอกสารที่จะสร้าง" dropdown, this string carries the new value so the
     // backend can both update the scan record AND train VendorIntelligence

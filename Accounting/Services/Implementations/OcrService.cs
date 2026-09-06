@@ -1517,6 +1517,11 @@ public class OcrService : IOcrService
                     + "(Cr ขายรอรับรู้ 217xx แทนรายได้ — รับรู้รายได้เมื่อส่งมอบ/ออกใบกำกับ)");
             }
 
+            // ข้อเสนอ WHT ตามกฎหมาย + ประเภทเงินได้ ม.40 — ต้อง persist ไม่งั้นหายตอน
+            // reload หน้า และเส้นสร้างเอกสารอ่านจากแถวนี้ (T1-07 · T4-06)
+            scanResult.SuggestedWhtRate = extractedData.SuggestedWhtRate;
+            scanResult.WhtIncomeTypeCode = extractedData.WhtIncomeTypeCode;
+
             // ───── Re-sync mutable fields (extractedData → scanResult) ─────
             // Persist mutations from VendorIntel / Learner / role inferrer
             // back to OcrScanResult so they reach MapToResponse() and
@@ -3599,6 +3604,10 @@ public class OcrService : IOcrService
         if (correction.ExpenseCategory != null) result.ExpenseCategory = correction.ExpenseCategory;
         if (correction.HasWht.HasValue) result.HasWht = correction.HasWht.Value;
         if (correction.WhtRate.HasValue) result.WhtRate = correction.WhtRate;
+        // ประเภทเงินได้ ม.40 ที่ผู้ใช้เลือก — "" = ล้างค่า (กติกาช่องแก้ไขของเรพนี้)
+        if (correction.WhtIncomeTypeCode != null)
+            result.WhtIncomeTypeCode = correction.WhtIncomeTypeCode.Length == 0
+                ? null : correction.WhtIncomeTypeCode;
         // ── ช่องที่เพิ่งเปิดให้ผู้ใช้แก้ได้ (เดิมไม่มีทางแก้เลย) ──
         if (correction.BuyerTaxId != null) result.BuyerTaxId = correction.BuyerTaxId;
         if (correction.VendorBranchCode != null) result.VendorBranchCode = correction.VendorBranchCode;
@@ -4837,6 +4846,19 @@ public class OcrService : IOcrService
         }
         var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
+        // ⚠️ ไม่หักให้เอง (ผู้ใช้ต้องยืนยัน) แต่ **ต้องเตือน** เมื่อกฎหมายให้หักและถึงเกณฑ์
+        // ฿1,000 ท.ป.4/2528 ข้อ 12 — ไม่หัก = ผู้จ่ายรับผิด ม.54 + เงินเพิ่ม 1.5%/เดือน
+        // (ผลตรวจ 2026-09-06 · T1-07 · T1-24)
+        if (!isSalesSide && whtRate == 0m && result.SuggestedWhtRate is > 0m
+            && Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(whtBase, 0m))
+        {
+            var it = Accounting.Helpers.ThaiWhtRateTable.Find(result.WhtIncomeTypeCode);
+            result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                + $"\n[WHT-SUGGEST] หมวดรายจ่ายนี้กฎหมายให้ผู้จ่ายหัก ณ ที่จ่าย {result.SuggestedWhtRate}%"
+                + (it != null ? $" ({it.TaxSection} {it.Name} → {string.Join("/", it.ApplicableForms)})" : "")
+                + $" ≈ {Math.Round(whtBase * result.SuggestedWhtRate!.Value / 100m, 2, MidpointRounding.AwayFromZero):N2} บาท "
+                + "— กระดาษไม่ได้พิมพ์ไว้ ระบบจึงไม่หักให้ ตรวจแล้วกรอกในใบก่อนอนุมัติ";
+        }
         // MidpointRounding.AwayFromZero — เส้น JE (:5568) ระบุไว้แล้ว แต่เส้นนี้ลืม ⇒
         // ฐาน 101.50 × 3% ได้ 3.04 กับ 3.05 ตามปุ่มที่กด (ผลตรวจ 2026-09-06 · T5-N6)
         var headerWht = whtRate > 0
@@ -5050,6 +5072,9 @@ public class OcrService : IOcrService
             SupplierBranchCode = bookSupplierRef
                 ? (string.IsNullOrWhiteSpace(vendorBranchForBook) ? null : vendorBranchForBook)
                 : null,
+            // ประเภทเงินได้ ม.40 — ใบที่มีการหัก ณ ที่จ่ายต้องมีค่านี้ก่อนออก 50 ทวิ
+            // และก่อนขึ้น ภ.ง.ด.3/53 (เดิมเส้น OCR ไม่เคยเซ็ตเลย ⇒ ต้องไปกรอกในใบทุกครั้ง)
+            IncomeTypeCode = !isSalesSide && whtRate > 0m ? result.WhtIncomeTypeCode : null,
             // หมวดค่าใช้จ่ายระดับเอกสาร = ผังเดบิตที่ AI/ผู้ใช้เลือก
             ExpenseCategoryId = !isSalesSide ? scanDebitAccountId : null,
             // แหล่งเงิน/ช่องทางชำระ = ผังเครดิตที่เลือกใน review (ฝั่งซื้อ)
@@ -5390,6 +5415,25 @@ public class OcrService : IOcrService
                     result.ProcessingNotes = (result.ProcessingNotes ?? "")
                         + $"\n[VAT-CLAIM] ผังบัญชีที่เลือกตั้งเป็นภาษีซื้อต้องห้าม — ปิดการเคลมให้ {forcedByChart} บรรทัด (§82/5)";
             }
+        }
+
+        // ── ผู้ขายต่างประเทศ: ภาระ ภ.พ.36 (§83/6) + ภ.ง.ด.54 (§70) ──────────
+        // นักบัญชีเห็น invoice จาก AWS/Google/Adobe แล้วรู้ทันทีว่าต้อง (1) นำส่ง VAT 7%
+        // แทนผู้ขายด้วย ภ.พ.36 (แล้วเคลมเป็นภาษีซื้อเดือนถัดไป) (2) หัก ณ ที่จ่ายตาม
+        // ม.70 ถ้าเป็นค่าบริการ/ค่าสิทธิ — ระบบเดิม**ไม่เคยพูดถึงทั้งสองอย่าง**
+        // ⇒ ภาระหายทั้งก้อน (เบี้ยปรับ 2 เท่า + เงินเพิ่ม) · ผลตรวจ 2026-09-06 · T1-12
+        if (!isSalesSide
+            && Accounting.Helpers.ThaiVatTypeRule.LooksForeignVendor(null, result.ExtractedVendorTaxId)
+            && (result.ExtractedTotalAmount ?? 0m) > 0m)
+        {
+            var baseAmt = Math.Max(0m, (result.ExtractedTotalAmount ?? 0m) - (result.ExtractedVatAmount ?? 0m));
+            var pp36 = Math.Round(baseAmt * 0.07m, 2, MidpointRounding.AwayFromZero);
+            result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                + $"\n[PP36] ผู้ขายไม่มีเลขผู้เสียภาษีไทย — ถ้าเป็นบริการที่ใช้ในไทย ต้องนำส่ง VAT แทน "
+                + $"ผู้ประกอบการต่างประเทศด้วย ภ.พ.36 ≈ {pp36:N2} บาท (§83/6) ภายในวันที่ 7/15 ของเดือนถัดไป "
+                + "แล้วจึงเคลมเป็นภาษีซื้อในเดือนที่นำส่ง"
+                + $"\n[PND54] ค่าบริการ/ค่าสิทธิ/ดอกเบี้ยที่จ่ายออกต่างประเทศ ต้องหัก ณ ที่จ่ายตาม ม.70 "
+                + "(ทั่วไป 15% · เงินปันผล 10%) และยื่น ภ.ง.ด.54 — ตรวจอนุสัญญาภาษีซ้อน (DTA) ก่อนใช้อัตรา";
         }
 
         // ── สกุลเงินต่างประเทศต้องมีอัตราแลกเปลี่ยน (T1-05 · T1-12) ──────────
@@ -7014,7 +7058,9 @@ public class OcrService : IOcrService
             // สกุลเงินอ่านจากข้อความบนกระดาษ (ตัวเดียวกับที่เส้น "สร้างทันที" ใช้)
             // — ส่งออกมาเพื่อให้เส้น handoff ได้คำตอบเดียวกัน (T4-08)
             Currency: InferCurrency(r.RawTextContent),
-            GlAccountAiFeedbackId: r.GlAccountAiFeedbackId);
+            GlAccountAiFeedbackId: r.GlAccountAiFeedbackId,
+            SuggestedWhtRate: r.SuggestedWhtRate,
+            WhtIncomeTypeCode: r.WhtIncomeTypeCode);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
@@ -7643,6 +7689,22 @@ internal class OcrExtractedData
     public string? VatAccountName { get; set; }
     public bool HasWht { get; set; }
     public decimal? WhtRate { get; set; }
+
+    /// <summary>อัตราที่ **กฎหมายกำหนด** สำหรับหมวดรายจ่ายนี้ (ท.ป.4/2528) —
+    /// แยกจาก <see cref="WhtRate"/> ซึ่งคือ "ยอดที่พิมพ์อยู่บนกระดาษ"
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจ 2026-09-06 · T1-07): ระบบเดิมเสนอหัก ณ ที่จ่าย
+    /// **เฉพาะเมื่อกระดาษพูดถึง WHT** — แต่ใบแจ้งหนี้ค่าบริการของผู้ขายไทยเกือบทั้งหมด
+    /// ไม่พิมพ์ เพราะหน้าที่หักเป็นของ**ผู้จ่าย** ⇒ ระบบไม่เคยเตือนเลย แล้วผู้จ่าย
+    /// รับผิดตาม ม.54 (ต้องจ่ายภาษีที่ไม่ได้หักเอง + เงินเพิ่ม 1.5%/เดือน)</para>
+    ///
+    /// <para>เป็น **ข้อเสนอ** ไม่ใช่การตัดสิน — ระบบไม่ตั้ง <c>HasWht</c> ให้เอง
+    /// เพราะหักเกินก็ผิด (ผู้รับต้องไปขอคืน) หน้าเว็บโชว์เป็นปุ่ม "ใช้อัตรานี้"</para></summary>
+    public decimal? SuggestedWhtRate { get; set; }
+
+    /// <summary>รหัสประเภทเงินได้ ม.40 (<see cref="Accounting.Helpers.ThaiWhtRateTable"/>) —
+    /// จำเป็นต่อ **หนังสือรับรอง 50 ทวิ + ภ.ง.ด.3/53** ไม่ใช่แค่อัตรา (T4-06)</summary>
+    public string? WhtIncomeTypeCode { get; set; }
     public int? PaymentTermsDays { get; set; }
     public string? ZoneSummary { get; set; }
     public string? BuyerName { get; set; }

@@ -4800,6 +4800,8 @@ public static class DatabaseMigrationHelper
             """,
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiSuggested" varchar(50) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeUsedAi" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "SuggestedWhtRate" numeric(5,2) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "WhtIncomeTypeCode" varchar(10) NULL;""",
 
             // ===== ล้าง regex ที่กลืนขึ้นบรรทัดใหม่ออกจากรูปแบบที่เรียนรู้ไว้แล้ว =====
             // OcrLearnedPatterns เก็บ "regex ที่ใช้ดึงค่า" ลงฐานข้อมูล ⇒ แถวที่

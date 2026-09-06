@@ -35,6 +35,7 @@ internal static class ExpenseCategoryResolver
         string AccountCode,       // CoA code ("5402")
         string AccountName,       // Account name ("ค่าน้ำมันเชื้อเพลิง")
         decimal? StatutoryWhtRate,// 0/1/2/3/5/10/15 — null when not applicable
+        string? WhtIncomeTypeCode,// รหัส ม.40 (ThaiWhtRateTable) — คู่กับอัตราเสมอ
         decimal Confidence,
         List<string> Reasons);
 
@@ -109,7 +110,7 @@ internal static class ExpenseCategoryResolver
             : $"จับคู่ '{best.Category}' จาก score {bestScore:F1}";
         reasons.Add(reasonText);
         return new CategoryResult(best.Category, best.AccountCode, best.AccountName,
-            best.StatutoryWhtRate, conf, reasons);
+            best.StatutoryWhtRate, best.WhtIncomeTypeCode, conf, reasons);
     }
 
     /// <summary>Per-industry weighting factor for a category. Returns 1.0
@@ -200,13 +201,19 @@ internal static class ExpenseCategoryResolver
         return string.Join(" ", parts);
     }
 
+    /// <param name="WhtIncomeTypeCode">รหัสประเภทเงินได้ ม.40 ตาม
+    /// <see cref="Accounting.Helpers.ThaiWhtRateTable"/> — ต้องมาคู่กับ
+    /// <paramref name="StatutoryWhtRate"/> เสมอ เพราะ **หนังสือรับรอง 50 ทวิ และ
+    /// ภ.ง.ด.3/53 ต้องระบุประเภทเงินได้** ไม่ใช่แค่อัตรา (ผลตรวจ 2026-09-06 · T4-06:
+    /// ระบบไม่มีช่องนี้ทั้งสาย ⇒ ฉากหักภาษี ณ ที่จ่ายทำ 1-click ไม่ได้จริง)</param>
     private record CategoryRule(
         string Category,
         string AccountCode,
         string AccountName,
         decimal? StatutoryWhtRate,
         string[] Keywords,
-        string[] VendorBrands);
+        string[] VendorBrands,
+        string? WhtIncomeTypeCode = null);
 
     // ─── Rule library ───────────────────────────────────────────────────
     // Order doesn't matter — we score every rule and pick the best.
@@ -249,7 +256,8 @@ internal static class ExpenseCategoryResolver
             VendorBrands: new[] {
                 "ais", "เอไอเอส", "true", "ทรู", "dtac", "ดีแทค", "tot", "ทีโอที",
                 "cat", "3bb", "nt", "เอ็นที"
-            }),
+            },
+            WhtIncomeTypeCode: "8"),
 
         // ─── ค่าเช่า — 5301 (5% WHT mandatory) ───
         new CategoryRule("ค่าเช่า", "5301", "ค่าเช่า",
@@ -258,7 +266,8 @@ internal static class ExpenseCategoryResolver
                 "ค่าเช่า", "rent", "rental", "lease", "เช่า", "เช่าสำนักงาน", "เช่าอาคาร",
                 "เช่ารถ", "เช่าเครื่อง", "ค่าที่จอด"
             },
-            VendorBrands: Array.Empty<string>()),
+            VendorBrands: Array.Empty<string>(),
+            WhtIncomeTypeCode: "5"),
 
         // ─── ค่าโฆษณา — 5101 (2% WHT) ───
         new CategoryRule("ค่าโฆษณาและส่งเสริมการขาย", "5101", "ค่าโฆษณาและส่งเสริมการขาย",
@@ -268,7 +277,8 @@ internal static class ExpenseCategoryResolver
                 "tiktok ads", "promotion", "ส่งเสริมการขาย", "ป้าย", "บิลบอร์ด",
                 "เผยแพร่", "marketing"
             },
-            VendorBrands: new[] { "google", "facebook", "meta", "tiktok", "line ads" }),
+            VendorBrands: new[] { "google", "facebook", "meta", "tiktok", "line ads" },
+            WhtIncomeTypeCode: "8ad"),
 
         // ─── ค่าขนส่ง / จัดส่ง — 5102 (1% WHT for transport services) ───
         new CategoryRule("ค่าขนส่ง / ค่าจัดส่ง", "5102", "ค่าขนส่ง",
@@ -280,7 +290,8 @@ internal static class ExpenseCategoryResolver
             VendorBrands: new[] {
                 "kerry", "เคอรี่", "flash", "แฟลช", "j&t", "เจแอนด์ที", "thai post",
                 "ไปรษณีย์ไทย", "dhl", "fedex", "ems", "ninja"
-            }),
+            },
+            WhtIncomeTypeCode: "8tr"),
 
         // ─── ซื้อสินค้า / วัตถุดิบ — ค้าส่ง/ค้าปลีกรายใหญ่ (ไม่มี WHT) ───
         // Makro/Lotus/BigC ฯลฯ = ซื้อของเข้าร้าน/วัตถุดิบเกือบเสมอ — ก่อนมี
@@ -306,7 +317,8 @@ internal static class ExpenseCategoryResolver
                 "ค่าบริการ", "service fee", "consulting service", "ค่าจ้าง", "รับจ้าง",
                 "ค่าแรง", "labor"
             },
-            VendorBrands: Array.Empty<string>()),
+            VendorBrands: Array.Empty<string>(),
+            WhtIncomeTypeCode: "8"),
 
         // ─── ค่าที่ปรึกษากฎหมาย / ตรวจสอบบัญชี — 5502 (3% WHT) ───
         new CategoryRule("ค่าที่ปรึกษากฎหมาย / บัญชี", "5502", "ค่าที่ปรึกษา",
@@ -315,7 +327,8 @@ internal static class ExpenseCategoryResolver
                 "ที่ปรึกษา", "consultant", "consultancy", "audit", "ตรวจสอบบัญชี",
                 "นักบัญชี", "นิติกร", "ทนาย", "lawyer", "auditor", "ภาษีอากร", "tax service"
             },
-            VendorBrands: Array.Empty<string>()),
+            VendorBrands: Array.Empty<string>(),
+            WhtIncomeTypeCode: "6"),
 
         // ─── ค่าธรรมเนียมธนาคาร — 5503 (no WHT, banks deduct themselves) ───
         new CategoryRule("ค่าธรรมเนียมธนาคาร", "5503", "ค่าธรรมเนียมธนาคาร",
@@ -347,7 +360,8 @@ internal static class ExpenseCategoryResolver
                 "ซ่อม", "repair", "maintenance", "บำรุง", "บำรุงรักษา", "อะไหล่",
                 "spare part", "ดูแล", "เปลี่ยน", "ติดตั้ง", "install"
             },
-            VendorBrands: Array.Empty<string>()),
+            VendorBrands: Array.Empty<string>(),
+            WhtIncomeTypeCode: "8"),
 
         // ─── ค่าเดินทาง — 5401 (no WHT for personal travel reimbursement) ───
         new CategoryRule("ค่าเดินทาง", "5401", "ค่าเดินทาง",
@@ -375,7 +389,8 @@ internal static class ExpenseCategoryResolver
                 "ทำความสะอาด", "cleaning", "แม่บ้าน", "housekeeping", "กำจัดปลวก",
                 "pest control"
             },
-            VendorBrands: Array.Empty<string>()),
+            VendorBrands: Array.Empty<string>(),
+            WhtIncomeTypeCode: "8"),
 
         // ─── ค่าประกัน — 5800 ───
         new CategoryRule("ค่าประกัน", "5800", "ค่าใช้จ่ายในการประกัน",
@@ -393,7 +408,8 @@ internal static class ExpenseCategoryResolver
         new CategoryRule("ดอกเบี้ยจ่าย", "5701", "ดอกเบี้ยจ่าย",
             StatutoryWhtRate: 15m,
             Keywords: new[] { "ดอกเบี้ย", "interest", "loan interest", "ดอกเบี้ยเงินกู้" },
-            VendorBrands: Array.Empty<string>()),
+            VendorBrands: Array.Empty<string>(),
+            WhtIncomeTypeCode: "4a"),
     };
 
     /// <summary>Apply the resolver's output to an OcrExtractedData, filling in
@@ -424,6 +440,18 @@ internal static class ExpenseCategoryResolver
         // receipt shows no WHT line, don't auto-suggest 1%/3%/etc. just
         // because the expense category technically allows it.
         bool docMentionsWht = rawText != null && ContainsWhtKeyword(rawText);
+
+        // ── ข้อเสนอตามกฎหมาย (แยกจาก "ยอดที่พิมพ์บนกระดาษ") · T1-07 ──────────
+        // ผู้ขายไทยเกือบทั้งหมด**ไม่พิมพ์** WHT บนใบแจ้งหนี้ เพราะหน้าที่หักเป็นของ
+        // ผู้จ่าย ⇒ กติกาเดิม (ต้องมีคำว่า WHT บนกระดาษ) แทบไม่เคยเป็นจริง และผู้จ่าย
+        // รับผิด ม.54 ถ้าลืมหัก. เก็บเป็น **ข้อเสนอ** ไม่ตั้ง HasWht ให้เอง —
+        // หักเกินก็ผิด (ผู้รับต้องไปขอคืน) จึงให้คนกดยืนยัน
+        if (result.StatutoryWhtRate is > 0m && result.Confidence >= 0.6m)
+        {
+            data.SuggestedWhtRate = result.StatutoryWhtRate;
+            data.WhtIncomeTypeCode ??= result.WhtIncomeTypeCode;
+        }
+
         if (!data.HasWht && !data.WhtRate.HasValue && result.StatutoryWhtRate.HasValue
             && result.StatutoryWhtRate.Value > 0 && result.Confidence >= 0.6m
             && docMentionsWht)
@@ -437,10 +465,15 @@ internal static class ExpenseCategoryResolver
         else if (!data.HasWht && result.StatutoryWhtRate.HasValue
                  && result.StatutoryWhtRate.Value > 0 && rawText != null && !docMentionsWht)
         {
-            // Surface the deliberate skip so admin can see WHY no WHT was
-            // suggested even though the category rule would have set it.
+            // กระดาษไม่พิมพ์ WHT — ไม่ตั้งค่าให้เอง แต่ **ต้องบอกผู้ใช้ว่ากฎหมายให้หัก**
+            // (เดิมเขียนว่า "ใช้ไม่ได้" ซึ่งไม่จริง: หน้าที่หักเป็นของผู้จ่าย ไม่ใช่ของ
+            // กระดาษ — ผู้ใช้ที่เชื่อบรรทัดนี้จะลืมหักแล้วรับผิด ม.54)
+            var incomeType = Accounting.Helpers.ThaiWhtRateTable.Find(result.WhtIncomeTypeCode);
             data.ReasoningTrace.Add(
-                $"[Category] ข้าม WHT inference — เอกสารไม่มียอดหัก ณ ที่จ่าย (statutory {result.StatutoryWhtRate}% สำหรับ '{result.Category}' ใช้ไม่ได้)");
+                $"[Category] กระดาษไม่ได้พิมพ์ยอดหัก ณ ที่จ่าย — แต่หมวด '{result.Category}' "
+                + $"กฎหมายกำหนดให้ผู้จ่ายหัก {result.StatutoryWhtRate}%"
+                + (incomeType != null ? $" (ประเภทเงินได้ {incomeType.TaxSection} {incomeType.Name})" : "")
+                + " · ตรวจสอบก่อนยืนยัน (ท.ป.4/2528 · ไม่หัก = ผู้จ่ายรับผิด ม.54)");
         }
         foreach (var r in result.Reasons)
             data.ReasoningTrace.Add("[Category] " + r);

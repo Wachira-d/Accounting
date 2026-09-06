@@ -302,6 +302,13 @@ public class OcrScanResult : TenantEntity
     public string? SuggestedAccountsJson { get; set; }
     public bool HasWht { get; set; }
     public decimal? WhtRate { get; set; }
+
+    /// <summary>อัตราหัก ณ ที่จ่ายที่ **กฎหมายกำหนด** สำหรับหมวดนี้ (ท.ป.4/2528) —
+    /// ข้อเสนอ ไม่ใช่ค่าที่ระบบตัดสินให้ (ดู <c>OcrExtractedData.SuggestedWhtRate</c>)</summary>
+    public decimal? SuggestedWhtRate { get; set; }
+
+    /// <summary>รหัสประเภทเงินได้ ม.40 — ต้องมีก่อนออก 50 ทวิ/ภ.ง.ด.3/53</summary>
+    public string? WhtIncomeTypeCode { get; set; }
     public int? PaymentTermsDays { get; set; }
 
     // Duplicate detection
