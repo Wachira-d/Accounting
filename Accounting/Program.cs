@@ -705,6 +705,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob
 // ReclassifyExpiredUndueInputVatAsync มีมาตั้งแต่ต้นแต่ไม่มีใครเรียก ⇒ ยอด
 // 11640 ค้างเป็นสินทรัพย์ลอยในงบตลอดไป (พบโดย task force รอบตรวจระบบ)
 builder.Services.AddHostedService<Accounting.Services.Background.UndueInputVatExpiryJob>();
+// กวาดสแกน OCR ที่ค้าง Processing (process ถูกฆ่ากลางทาง) + คืนโควตาที่หักไปแล้ว
+builder.Services.AddHostedService<Accounting.Services.Background.OcrStuckScanSweepJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();

@@ -315,11 +315,13 @@ public class OcrController : ControllerBase
         // เข้าใจว่าไม่มีใบเกิดขึ้นแล้วสแกนซ้ำ = ใบซ้ำ)
         if (approve && result.CreatedDocumentId.HasValue)
         {
-            string? skipReason = null;
-            // T1-04: วันที่อ่านไม่ได้ถูกเติม "วันนี้" — ห้ามอนุมัติอัตโนมัติจนผู้ใช้ยืนยันวัน
-            // (วันที่ = tax point/งวด ภ.พ.30 · เลขเอกสาร gap-free ออกตามวันนี้แก้ย้อนไม่ได้)
-            if (result.ExtractedDate == null)
-                skipReason = "อ่านวันที่บนกระดาษไม่ได้ (ระบบเติมวันนี้เป็นค่าเริ่มต้น) — เปิดใบ Draft ยืนยันวันที่ก่อนกดอนุมัติ";
+            // ตัวตัดสิน "พร้อมลงบัญชีเองไหม" อยู่ที่ Helpers/OcrPostingReadiness ตัวเดียว
+            // (เว็บ · LINE · มือถือ ต้องใช้ตัวเดียวกัน — ไม่งั้นสามช่องทางสามนโยบาย)
+            // ครอบทั้งวันที่ที่อ่านไม่ได้ · Σ บรรทัดไม่ตรงหัวใบ · ไม่รู้อัตราแลกเปลี่ยน ·
+            // กระดาษยังไม่ใช่ใบกำกับ · 50 ทวิ ที่เราถูกหัก
+            var readiness = Helpers.OcrPostingReadiness.Evaluate(
+                result.ProcessingNotes, result.ExtractedDate != null);
+            var skipReason = readiness.CanAutoApprove ? null : readiness.Reason;
             // T1-06: ด่านสิทธิ์อนุมัติ — ตัวเดียวกับ DocumentController/ลายเซ็น/LINE/มือถือ
             var createdType = await _db.Documents.AsNoTracking()
                 .Where(d => d.Id == result.CreatedDocumentId.Value && d.CompanyId == companyId)

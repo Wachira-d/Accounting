@@ -75,6 +75,8 @@ public class OcrService : IOcrService
     private readonly Ocr.GlobalDocWorkflowLearner? _docWorkflowLearner;
     private readonly Services.Ai.IOcrAiAugmenter? _aiAugmenter;
     private readonly Services.Ai.IAiFeedbackRecorder? _feedbackRecorder;
+    /// <summary>อัตรา ธปท. สำหรับใบสกุลต่างประเทศ (optional — ไม่มี = ให้ผู้ใช้กรอกเอง)</summary>
+    private readonly Services.Interfaces.IBotExchangeRateService? _fxRates;
     private readonly Services.Interfaces.IAccountingService? _accounting;
     private readonly Ocr.ProductMatcher? _productMatcher;
 
@@ -96,11 +98,13 @@ public class OcrService : IOcrService
         Services.Ai.IOcrAiAugmenter? aiAugmenter = null,
         Services.Interfaces.IAccountingService? accounting = null,
         Ocr.ProductMatcher? productMatcher = null,
-        Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null)
+        Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
+        Services.Interfaces.IBotExchangeRateService? fxRates = null)
     {
         _docWorkflowLearner = docWorkflowLearner;
         _aiAugmenter = aiAugmenter;
         _feedbackRecorder = feedbackRecorder;
+        _fxRates = fxRates;
         _accounting = accounting;
         _productMatcher = productMatcher;
         _db = db;
@@ -4480,7 +4484,38 @@ public class OcrService : IOcrService
 
     /// <param name="allowDuplicate">ผู้ใช้ยืนยันแล้วว่ารู้ตัวว่าเป็นใบซ้ำและยังต้องการสร้าง —
     /// ส่งมาจากหน้าเว็บหลังกดยืนยันในกล่องเตือนเท่านั้น</param>
+    ///
+    /// <remarks>
+    /// ⚠️ ด่านกันซ้ำทั้งหมด (`CreatedDocumentId` · `FindDuplicateDocumentWarningAsync`)
+    /// เป็นการ **อ่านแล้วค่อยเขียน** โดย transaction เพิ่งเปิดทีหลัง ⇒ สองคำขอที่มาพร้อมกัน
+    /// (ดับเบิลคลิก · เปิดสองแท็บ · เว็บ+LINE · สอง instance) **ผ่านด่านทั้งคู่** แล้วได้
+    /// เอกสารสองใบจากกระดาษใบเดียว = VAT ซ้ำใน ภ.พ.30 + จ่ายเจ้าหนี้ซ้ำ
+    /// (ผลตรวจไปป์ไลน์ OCR 2026-09-06 · T5). ล็อกต่อ "สแกน 1 ใบ" ด้วย
+    /// <see cref="Accounting.Helpers.JobLock"/> (session-level try-lock — ข้าม instance ได้
+    /// เพราะคีย์มาจาก <see cref="Accounting.Helpers.AdvisoryLockKey"/> ที่ไม่สุ่มต่อ process)
+    /// · ใช้ **try** ไม่ใช่ wait: คำขอที่สองไม่ควรรอแล้วสร้างใบที่สองต่อ — ควรบอกให้รีเฟรช
+    /// </remarks>
     public async Task<OcrResultResponse> CreateDocumentFromScanAsync(
+        Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride, bool allowDuplicate)
+    {
+        OcrResultResponse? outcome = null;
+        var ran = await Accounting.Helpers.JobLock.RunExclusiveAsync(
+            _db, "ocr-create-document", scanResultId.ToString("N"),
+            async () =>
+            {
+                outcome = await CreateDocumentFromScanCoreAsync(
+                    companyId, scanResultId, createdBy, targetTypeOverride, allowDuplicate);
+            },
+            _logger, companyId);
+        if (!ran || outcome == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "กำลังสร้างเอกสารจากสแกนใบนี้อยู่ (มีอีกหน้าต่าง/อีกเครื่องกดพร้อมกัน) — "
+                + "รอสักครู่แล้วรีเฟรชหน้า จะเห็นปุ่ม \"สร้างแล้ว →\" บนการ์ด",
+                "OCR-CREATE-IN-PROGRESS");
+        return outcome;
+    }
+
+    private async Task<OcrResultResponse> CreateDocumentFromScanCoreAsync(
         Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride, bool allowDuplicate)
     {
         var result = await _db.Set<OcrScanResult>()
@@ -5323,6 +5358,61 @@ public class OcrService : IOcrService
             }
         }
 
+        // ── ธงผังบัญชีเป็นตัวปิดการเคลมภาษีซื้อ (T1-05) ───────────────────────
+        // เส้นคีย์มือผ่าน DocumentService บังคับข้อนี้มาตลอด แต่เส้น OCR สร้าง entity
+        // เองจึงข้ามไป ⇒ ใบเดียวกันได้คำตอบคนละอย่างตามทางที่เข้า. ตัวตัดสินอยู่ที่
+        // Helpers/InputVatAccountPolicy ตัวเดียว (pure + มีเทสต์)
+        if (!isSalesSide)
+        {
+            var lineAccountIds = document.Lines
+                .Where(l => l.AccountId.HasValue)
+                .Select(l => l.AccountId!.Value)
+                .Distinct()
+                .ToList();
+            if (lineAccountIds.Count > 0)
+            {
+                var flags = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && lineAccountIds.Contains(a.Id))
+                    .Select(a => new { a.Id, a.InputVatClaimable })
+                    .ToDictionaryAsync(x => x.Id, x => x.InputVatClaimable);
+                var forcedByChart = 0;
+                foreach (var dl in document.Lines)
+                {
+                    bool? acctClaimable = dl.AccountId.HasValue && flags.TryGetValue(dl.AccountId.Value, out var f)
+                        ? f : null;
+                    var outcome = Accounting.Helpers.InputVatAccountPolicy.Apply(
+                        dl.IsVatClaimable, dl.VatNonClaimableReason, acctClaimable);
+                    dl.IsVatClaimable = outcome.Claimable;
+                    dl.VatNonClaimableReason = outcome.Reason;
+                    if (outcome.Changed) forcedByChart++;
+                }
+                if (forcedByChart > 0)
+                    result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                        + $"\n[VAT-CLAIM] ผังบัญชีที่เลือกตั้งเป็นภาษีซื้อต้องห้าม — ปิดการเคลมให้ {forcedByChart} บรรทัด (§82/5)";
+            }
+        }
+
+        // ── สกุลเงินต่างประเทศต้องมีอัตราแลกเปลี่ยน (T1-05 · T1-12) ──────────
+        // `Currency` ถูกอ่านจากกระดาษมาตั้งแต่ต้น แต่ไม่เคยมีใครหา `ExchangeRate` ให้
+        // ⇒ ใบ USD ถูกบันทึกเป็นบาทเงียบ ๆ (ตัวเลขเท่าเดิม ความหมายผิดหลายสิบเท่า).
+        // ไม่รู้อัตรา = **บอกว่าไม่รู้** แล้วห้าม auto-approve — ห้ามแต่งอัตราให้เอง
+        if (!string.Equals(document.Currency, "THB", StringComparison.OrdinalIgnoreCase))
+        {
+            var fxRate = await ResolveScanExchangeRateAsync(document.Currency, document.DocumentDate);
+            if (fxRate is decimal fx && fx > 0m)
+            {
+                document.ExchangeRate = fx;
+                result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                    + $"\n[FX] {document.Currency} @ {fx:N4} (อัตรา ธปท. วันที่เอกสาร) — ตรวจสอบก่อนยืนยัน";
+            }
+            else
+            {
+                result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                    + $"\n[FX-UNKNOWN] เอกสารสกุล {document.Currency} แต่ยังไม่มีอัตราแลกเปลี่ยนของวันที่นี้ — "
+                    + "กรอกอัตราในใบก่อนอนุมัติ (ระบบไม่เดาอัตราให้)";
+            }
+        }
+
         _db.Documents.Add(document);
 
         result.CreatedDocumentId = document.Id;
@@ -5681,6 +5771,28 @@ public class OcrService : IOcrService
         // Re-link the scanned file to nothing extra — it stays attached to the
         // scan; the JE references it via the scan in the audit trail.
         return je.Id;
+    }
+
+    /// <summary>อัตราแลกเปลี่ยนของวันที่เอกสาร — คืน <c>null</c> เมื่อหาไม่ได้
+    ///
+    /// <para>ห้าม throw: กฎเหล็ก #3 บังคับว่าสแกนต้องได้ Draft เสมอ ผู้ใช้กรอกอัตราเองได้
+    /// ที่ใบ ส่วนด่านตอน **อนุมัติ** (<c>DocumentService.ResolveExchangeRateAsync</c>)
+    /// เป็นตัวบล็อกจริงถ้ายังไม่มีอัตรา</para></summary>
+    private async Task<decimal?> ResolveScanExchangeRateAsync(string? currency, DateTime documentDate)
+    {
+        if (string.IsNullOrWhiteSpace(currency)
+            || string.Equals(currency, "THB", StringComparison.OrdinalIgnoreCase)) return 1m;
+        if (_fxRates == null) return null;
+        try
+        {
+            var rate = await _fxRates.GetRateAsync(currency.ToUpperInvariant(), documentDate);
+            return rate != null && rate.MidRate > 0m ? rate.MidRate : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ดึงอัตราแลกเปลี่ยน {Cur} ไม่สำเร็จ — ปล่อยให้ผู้ใช้กรอกเอง", currency);
+            return null;
+        }
     }
 
     /// <summary>Resolve a company account by exact code → Id (active only).</summary>
@@ -6556,6 +6668,23 @@ public class OcrService : IOcrService
         //     ONLY while it's still Draft. Approved/Paid documents are
         //     financial records and must not be deleted via the OCR UI —
         //     the user has to void/reverse them through the normal docs UI.
+        // ⚠️ สแกนที่ลง **JE ตรง** (ปุ่ม "บันทึก JE") ไม่มี Document ให้ cascade —
+        // เดิมจึงหลุดด่านข้างล่างทั้งหมดแล้วลบได้ ⇒ **ลบหลักฐานของรายการบัญชีที่ post
+        // ไปแล้ว** (พ.ร.บ.การบัญชี ม.10 ให้เก็บ 5 ปี · ผู้สอบบัญชีเปิด JE แล้วไม่มีเอกสาร
+        // ต้นทาง) — ผลตรวจไปป์ไลน์ OCR 2026-09-06 · T5
+        if (result.CreatedJournalEntryId.HasValue)
+        {
+            var jeNo = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.Id == result.CreatedJournalEntryId.Value && j.CompanyId == companyId)
+                .Select(j => j.EntryNumber)
+                .FirstOrDefaultAsync();
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"สแกนนี้เป็นหลักฐานของใบสำคัญ {jeNo ?? "ที่ลงบัญชีแล้ว"} — ลบไม่ได้ "
+                + "(พ.ร.บ.การบัญชี ม.10 ต้องเก็บเอกสารประกอบ 5 ปี) · ถ้าลงผิด ให้กลับรายการ "
+                + "ใบสำคัญนั้นจากหน้าใบสำคัญก่อน แล้วค่อยลบสแกน",
+                "OCR-DELETE-HAS-JE");
+        }
+
         if (result.CreatedDocumentId.HasValue)
         {
             if (!cascadeCreatedDocument)
