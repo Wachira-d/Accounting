@@ -388,21 +388,6 @@ public static class FieldPatternLibrary
             }
         }
         // Pattern 2: dd <Thai-month> yyyy
-        var thaiMonths = new Dictionary<string, int>
-        {
-            {"มกราคม",1},{"ม.ค",1},{"มค",1},
-            {"กุมภาพันธ์",2},{"ก.พ",2},{"กพ",2},
-            {"มีนาคม",3},{"มี.ค",3},{"มีค",3},
-            {"เมษายน",4},{"เม.ย",4},{"เมย",4},
-            {"พฤษภาคม",5},{"พ.ค",5},{"พค",5},
-            {"มิถุนายน",6},{"มิ.ย",6},{"มิย",6},
-            {"กรกฎาคม",7},{"ก.ค",7},{"กค",7},
-            {"สิงหาคม",8},{"ส.ค",8},{"สค",8},
-            {"กันยายน",9},{"ก.ย",9},{"กย",9},
-            {"ตุลาคม",10},{"ต.ค",10},{"ตค",10},
-            {"พฤศจิกายน",11},{"พ.ย",11},{"พย",11},
-            {"ธันวาคม",12},{"ธ.ค",12},{"ธค",12},
-        };
         foreach (Match m in Regex.Matches(text,
             @"(\d{1,2})\s+([฀-๿\.]+)\s+(\d{4})"))
         {
@@ -410,9 +395,10 @@ public static class FieldPatternLibrary
             string monthStr = m.Groups[2].Value;
             int year = int.Parse(m.Groups[3].Value);
             if (year > 2400) year -= 543;
-            int month = 0;
-            foreach (var (key, val) in thaiMonths)
-                if (monthStr.Contains(key)) { month = val; break; }
+            // ตารางชื่อเดือนอยู่ที่ Helpers/ThaiMonthName ตัวเดียว — เดิมไฟล์นี้มี
+            // สำเนาของตัวเอง ซึ่งรู้จักชื่อเต็มแต่เส้นทางหลักไม่รู้จัก ⇒ ใบเดียวกัน
+            // อ่านวันที่ได้/ไม่ได้ต่างกันตาม engine ที่ใช้ (ผลตรวจ 2026-09-06 · T2-13)
+            var month = Accounting.Helpers.ThaiMonthName.TryParse(monthStr) ?? 0;
             if (month > 0 && TryBuildDate(year, month, day, out var d))
             {
                 results.Add(new FieldCandidate

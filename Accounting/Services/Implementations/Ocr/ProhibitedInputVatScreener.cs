@@ -92,13 +92,28 @@ internal static class ProhibitedInputVatScreener
         + "กระบะ 4 ประตู (นับเป็นรถยนต์นั่งตามพิกัดสรรพสามิต) · รถตู้ ≤ 10 ที่นั่ง. "
         + "แนะนำระบุชนิดรถ+ทะเบียนในรายละเอียดบรรทัดเป็นหลักฐาน";
 
+    // ── ข้อยกเว้น: "แก๊ส/ก๊าซ" ที่ **ไม่ใช่** ค่าใช้จ่ายเกี่ยวกับรถ ──
+    // แก๊สหุงต้มของร้านอาหาร/โรงงานเป็นภาษีซื้อที่เคลมได้ตามปกติ — ถ้าไม่ยกเว้น
+    // ร้านอาหารทุกร้านจะถูกปิดเคลมค่าแก๊สทุกเดือน (เสียสิทธิ์จริง ไม่ใช่แค่คำเตือน)
+    private static readonly string[] NonVehicleGasKeywords =
+    {
+        "หุงต้ม", "ปิคนิค", "ปิกนิก", "ถังแก๊ส", "ถังก๊าซ", "แก๊สอุตสาหกรรม",
+        "ก๊าซอุตสาหกรรม", "ออกซิเจน", "อาร์กอน", "co2", "คาร์บอนไดออกไซด์",
+    };
+
     /// <summary>คัดกรองจากข้อความเอกสาร (normalize แล้ว) + ชื่อผู้ขาย +
-    /// คำอธิบายรายการ — คืน verdict แรกที่เข้าข่าย (รับรอง > รถ)</summary>
+    /// คำอธิบายรายการ — คืน verdict แรกที่เข้าข่าย (รับรอง > รถ)
+    ///
+    /// <para>⚠️ <b>ขอบเขตของ haystack สำคัญพอ ๆ กับตัวคำ</b> (ผลตรวจ 2026-09-06 · T1-13):
+    /// คำที่บ่งชี้ <b>ผู้ขาย</b> (ปั๊มน้ำมัน) ต้องเทียบกับ<b>ชื่อผู้ขาย</b>เท่านั้น —
+    /// เดิมเทียบกับข้อความทั้งหน้า ⇒ คำว่า "Shell"/"PTT"/"pure" ที่โผล่ในโฆษณาท้ายใบ
+    /// ที่อยู่ หรือ<b>ชื่อสินค้า</b> ("PURE LIFE" น้ำดื่ม) ทำให้ใบนั้นถูกปิดเคลม VAT
+    /// ทั้งใบ = เสียสิทธิ์จริง ไม่ใช่แค่คำเตือน</para></summary>
     internal static ProhibitedVatVerdict Screen(
         string? rawText, string? vendorName, IEnumerable<string?> lineDescriptions)
     {
-        var hay = ((rawText ?? "") + "\n" + (vendorName ?? "") + "\n"
-            + string.Join("\n", lineDescriptions.Where(d => d != null)));
+        var lines = string.Join("\n", lineDescriptions.Where(d => d != null));
+        var hay = ((rawText ?? "") + "\n" + (vendorName ?? "") + "\n" + lines);
         if (string.IsNullOrWhiteSpace(hay)) return new(null, null, null);
 
         // §82/5(4) — ต้องห้ามเสมอ ไม่ต้องถามชนิดอะไรต่อ
@@ -108,8 +123,14 @@ internal static class ProhibitedInputVatScreener
                 + "(และรายจ่ายถูกจำกัดตาม §65 ตรี(4)) · VAT จะถูกรวมเป็นค่าใช้จ่าย");
 
         // §82/5(6) — น้ำมัน/ซ่อม/เช่ารถ ตัดสินตามชนิดรถ
+        //  · คำ "ชนิดค่าใช้จ่าย" ดูได้ทั้งหน้า (มันคือสิ่งที่ซื้อ)
+        //  · คำ "ชื่อปั๊ม" ดูเฉพาะ**ชื่อผู้ขาย** — โผล่ที่อื่นแปลว่าอะไรก็ได้
         var isVehicleCost = ContainsAny(hay, VehicleCostKeywords)
-            || ContainsAny(hay, FuelVendorKeywords);
+            || ContainsAny(vendorName ?? "", FuelVendorKeywords);
+        // แก๊ส/ก๊าซ ที่เป็นของหุงต้ม/อุตสาหกรรม ไม่ใช่ค่าใช้จ่ายเกี่ยวกับรถ
+        if (isVehicleCost && ContainsAny(hay, NonVehicleGasKeywords)
+            && !ContainsAny(hay, VehicleCostKeywords.Where(k => k is not ("ก๊าซ" or "แก๊ส")).ToArray()))
+            return new(null, null, null);
         if (!isVehicleCost) return new(null, null, null);
 
         if (ContainsAny(hay, ClaimableVehicleKeywords))
@@ -126,6 +147,40 @@ internal static class ProhibitedInputVatScreener
             + VehicleGuidance);
     }
 
+    /// <summary>คำใดคำหนึ่งปรากฏใน <paramref name="hay"/> หรือไม่
+    ///
+    /// <para>⚠️ คำที่เป็น <b>ตัวอักษร/ตัวเลขละติน</b> ต้องเทียบแบบ "ขอบคำ" เท่านั้น —
+    /// เดิมใช้ <c>Contains</c> ล้วน ⇒ รหัสน้ำมัน <c>"b7"</c>/<c>"e20"</c> ไปแมตช์กับ
+    /// รหัสสินค้า/ขนาดบนใบวัสดุ (<c>"SIZE20"</c> มี <c>"e20"</c> อยู่ข้างใน) และ
+    /// <c>"pure"</c> ไปแมตช์ <c>"purity"</c>/<c>"PURE LIFE"</c> (น้ำดื่ม)
+    /// ⇒ <b>ปิดเคลมภาษีซื้อทั้งใบ</b>ให้ใบที่ไม่เกี่ยวกับรถเลย = เสียสิทธิ์จริง.
+    /// คำภาษาไทยยังใช้ <c>Contains</c> ได้เพราะภาษาไทยเขียนติดกันไม่มีขอบคำ และ
+    /// คำในลิสต์ยาวพอ (ตัวที่สั้นถูกกันด้วย <see cref="NonVehicleGasKeywords"/>)</para></summary>
     private static bool ContainsAny(string hay, string[] keywords)
-        => keywords.Any(k => hay.Contains(k, StringComparison.OrdinalIgnoreCase));
+        => keywords.Any(k => IsLatinToken(k)
+            ? ContainsAtTokenBoundary(hay, k)
+            : hay.Contains(k, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>คำนี้ประกอบด้วยตัวอักษร/ตัวเลขละติน (+ อักขระคั่น) ล้วนหรือไม่</summary>
+    private static bool IsLatinToken(string k)
+        => k.All(c => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9') || c is ' ' or '-' or '.' or '(' or ')');
+
+    /// <summary>พบ <paramref name="keyword"/> โดยมี "ขอบคำ" ทั้งสองด้าน —
+    /// ตัวอักษร/ตัวเลขละตินติดกันถือว่าเป็นคำเดียวกัน (จึงไม่แมตช์)</summary>
+    private static bool ContainsAtTokenBoundary(string hay, string keyword)
+    {
+        for (var i = hay.IndexOf(keyword, StringComparison.OrdinalIgnoreCase); i >= 0;
+             i = hay.IndexOf(keyword, i + 1, StringComparison.OrdinalIgnoreCase))
+        {
+            var beforeOk = i == 0 || !IsLatinAlnum(hay[i - 1]);
+            var endIdx = i + keyword.Length;
+            var afterOk = endIdx >= hay.Length || !IsLatinAlnum(hay[endIdx]);
+            if (beforeOk && afterOk) return true;
+        }
+        return false;
+    }
+
+    private static bool IsLatinAlnum(char c)
+        => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
 }
