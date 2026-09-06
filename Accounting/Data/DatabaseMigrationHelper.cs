@@ -1874,6 +1874,10 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorAddress" varchar(1000) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerBranchCode" varchar(10) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "BuyerAddress" varchar(1000) NULL;""",
+            // ตัวชี้วัดคุณภาพ OCR: "ผู้ใช้แก้จริง" ต้องแยกจาก "ระบบบันทึกแถว"
+            // (เดิมนับจาก UpdatedAt != null ⇒ ~100% ทุก tenant = อ่านไม่ได้)
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "UserCorrectedAt" timestamptz NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "UserCorrectedFields" varchar(500) NULL;""",
             // AI GL suggestion transparency — เก็บ AI primary แม้ถูก confidence guard ปฏิเสธ
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiSuggestedCode" varchar(20) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiConfidence" numeric(5,4) NULL;""",

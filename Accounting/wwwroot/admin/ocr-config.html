@@ -889,23 +889,41 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         el.innerHTML = '<p style="color:#94a3b8;font-size:14px">ยังไม่มีข้อมูลความแม่นยำในช่วง 30 วันที่ผ่านมา</p>';
         return;
       }
+      // KPI ต้องอ่านเป็น "คู่" — อัตราเรียก AI ที่ลดลงอย่างเดียวแยกไม่ออกว่า
+      // นักเรียนเก่งขึ้น หรือโค้ดหยุดใช้คำตอบของโมเดล (กฎเหล็ก #1 ข้อ 6)
+      const pct = v => ((v || 0) * 100).toFixed(1) + '%';
       el.innerHTML = `
         <table class="credit-table">
-          <thead><tr><th>Company</th><th>สแกน</th><th>แก้ไข</th><th>%แก้ไข</th><th>Patterns</th><th>Negative</th><th>มั่นใจสูง</th></tr></thead>
+          <thead><tr>
+            <th>Company</th><th>สแกน</th><th>เรียก AI จริง</th><th>%เรียก AI ↓</th>
+            <th>ผ่านรอบแรก ↑</th><th>ผู้ใช้แก้</th><th>ช่องที่แก้บ่อย</th>
+            <th>Patterns</th><th>Negative</th><th>มั่นใจสูง</th>
+          </tr></thead>
           <tbody>
             ${reports.map(r => `
-              <tr>
-                <td style="font-size:11px;color:#64748b">${r.companyId.substring(0,8)}...</td>
+              <tr${r.isRegression ? ' style="background:#fef2f2"' : ''} title="${AdminLayout.esc(r.verdict || '')}">
+                <td style="font-size:11px;color:#64748b">${AdminLayout.esc(String(r.companyId).substring(0,8))}...</td>
                 <td>${r.totalScans}</td>
-                <td>${r.correctedScans}</td>
-                <td>${(r.correctionRate*100).toFixed(1)}%</td>
+                <td>${r.aiBilledScans}</td>
+                <td>${pct(r.aiCallRate)}</td>
+                <td${r.isRegression ? ' style="color:#b91c1c;font-weight:600"' : ''}>${pct(r.firstPassAcceptRate)}</td>
+                <td>${r.correctedScans} (${pct(r.correctionRate)})</td>
+                <td style="font-size:11px;color:#64748b">${AdminLayout.esc((r.topCorrectedFields || []).join(' · '))}</td>
                 <td>${r.totalLearnedPatterns}</td>
                 <td>${r.negativeExamples}</td>
                 <td>${r.highConfidencePatterns}</td>
               </tr>
             `).join('')}
           </tbody>
-        </table>`;
+        </table>
+        <p style="color:#64748b;font-size:12px;margin-top:8px">
+          อ่านเป็นคู่เสมอ — <b>%เรียก AI</b> ควรลดลง <b>พร้อมกับ</b> <b>ผ่านรอบแรก</b> ที่คงที่หรือสูงขึ้น.
+          ถ้าทั้งสองลดลงพร้อมกัน (แถวสีแดง) แปลว่า "ประหยัดโดยโง่ลง" — ไปตรวจว่าคำตอบของนักเรียนถูกใช้จริงไหม
+        </p>
+        <ul style="color:#64748b;font-size:12px;margin-top:4px">
+          ${reports.filter(r => r.verdict).map(r =>
+            `<li>${AdminLayout.esc(String(r.companyId).substring(0,8))}: ${AdminLayout.esc(r.verdict)}</li>`).join('')}
+        </ul>`;
     }
 
     async function runMaintenance() {

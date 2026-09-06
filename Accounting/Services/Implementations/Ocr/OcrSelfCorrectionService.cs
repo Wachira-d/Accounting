@@ -21,6 +21,15 @@ public class OcrSelfCorrectionService
         _logger = logger;
     }
 
+    /// <param name="CorrectedScans">สแกนที่ <b>คน</b> แก้จริงอย่างน้อยหนึ่งช่อง
+    /// (จาก <c>UserCorrectedAt</c> — ไม่ใช่ <c>UpdatedAt</c> ที่ระบบเองก็ขยับ)</param>
+    /// <param name="AiBilledScans">สแกนที่เรียก provider จริง (เสียเงิน)</param>
+    /// <param name="DocumentsCreated">สแกนที่กลายเป็นเอกสาร</param>
+    /// <param name="AiCallRate">KPI ตัวที่ 1 — ควรลดลง</param>
+    /// <param name="FirstPassAcceptRate">KPI ตัวที่ 2 — ต้องอ่านคู่กันเสมอ (ควรคงที่/สูงขึ้น)</param>
+    /// <param name="Verdict">คำตัดสินภาษาคนจาก <c>Helpers/OcrQualityKpi</c></param>
+    /// <param name="IsRegression">ตัวเลขบอกว่ากำลัง "ประหยัดโดยโง่ลง"</param>
+    /// <param name="TopCorrectedFields">ช่องที่ถูกแก้บ่อยสุด (ชื่อ:จำนวน) — บอกว่าควรปรับปรุงตรงไหนก่อน</param>
     public record AccuracyReport(
         Guid CompanyId,
         int TotalScans,
@@ -29,41 +38,109 @@ public class OcrSelfCorrectionService
         int TotalLearnedPatterns,
         int NegativeExamples,
         int HighConfidencePatterns,
-        DateTime GeneratedAt);
+        DateTime GeneratedAt,
+        int AiBilledScans = 0,
+        int DocumentsCreated = 0,
+        decimal AiCallRate = 0m,
+        decimal FirstPassAcceptRate = 0m,
+        string Verdict = "",
+        bool IsRegression = false,
+        IReadOnlyList<string>? TopCorrectedFields = null);
 
+    /// <summary>ตัวชี้วัดคุณภาพไปป์ไลน์ OCR ต่อบริษัท (30 วันล่าสุด)
+    ///
+    /// <para>⚠️ สองอย่างที่แก้จากรุ่นเดิม (ผลตรวจ 2026-09-06 · T5):</para>
+    /// <list type="number">
+    /// <item><b>"ใบที่ถูกแก้" เคยนับจาก <c>UpdatedAt != null</c></b> ซึ่งขยับทุกครั้งที่
+    ///   ระบบเองบันทึกแถว (จบการสแกน · ผูกเอกสารที่สร้าง · sync ตอนอนุมัติ) ⇒ อัตราการแก้
+    ///   ≈ 100% ทุก tenant ตลอดกาล = ตัวเลขที่<b>อ่านไม่ได้</b> · ตอนนี้ใช้
+    ///   <c>UserCorrectedAt</c> ที่ถูกตั้งเฉพาะตอนคนแก้จริง</item>
+    /// <item><b>N+1</b> — เดิมยิง 3 query ต่อบริษัทใน <c>foreach</c> (บริษัท 200 ราย =
+    ///   601 query ต่อการเปิดหน้าแอดมินหนึ่งครั้ง) · ตอนนี้ group ทั้งหมดเป็น 3 query</item>
+    /// </list>
+    ///
+    /// <para>คืน <b>KPI คู่</b> ตาม <c>Helpers/OcrQualityKpi</c>: อัตราเรียก AI อย่างเดียว
+    /// แยกไม่ออกว่า "นักเรียนเก่งขึ้น" หรือ "โค้ดหยุดใช้คำตอบของโมเดล" — ต้องอ่านคู่กับ
+    /// first-pass accept rate เสมอ</para></summary>
     public async Task<List<AccuracyReport>> ComputeAccuracyAsync(CancellationToken ct = default)
     {
         var since = DateTime.UtcNow.AddDays(-30);
-        var reports = new List<AccuracyReport>();
+        var now = DateTime.UtcNow;
 
-        var companyIds = await _db.Set<Models.Entities.OcrScanResult>()
-            .Where(r => r.CreatedAt >= since)
-            .Select(r => r.CompanyId)
-            .Distinct()
+        var scanStats = await _db.Set<Models.Entities.OcrScanResult>().AsNoTracking()
+            .Where(r => r.CreatedAt >= since && !r.IsDeleted)
+            .GroupBy(r => r.CompanyId)
+            .Select(g => new
+            {
+                CompanyId = g.Key,
+                Total = g.Count(),
+                Corrected = g.Count(r => r.UserCorrectedAt != null),
+                WithDocument = g.Count(r => r.CreatedDocumentId != null),
+                // "เสียเงินจริง" = feature ใดก็ได้บนใบนี้ที่เรียก provider
+                // (ธง UsedAi ถูกตั้งเฉพาะตอนจ่ายเงินจริง — ดู AiResponse.UsedAi)
+                AiBilled = g.Count(r => r.GlAccountUsedAi || r.TargetDocTypeUsedAi || r.LineSplitUsedAi),
+            })
             .ToListAsync(ct);
 
-        foreach (var companyId in companyIds)
+        var companyIds = scanStats.Select(s => s.CompanyId).ToList();
+        if (companyIds.Count == 0) return new List<AccuracyReport>();
+
+        var patternStats = (await _db.OcrLearnedPatterns.AsNoTracking()
+            .Where(p => companyIds.Contains(p.CompanyId))
+            .GroupBy(p => p.CompanyId)
+            .Select(g => new
+            {
+                CompanyId = g.Key,
+                Positive = g.Count(p => !p.IsNegativeExample),
+                Negative = g.Count(p => p.IsNegativeExample),
+                HighConfidence = g.Count(p => !p.IsNegativeExample && p.TimesConfirmed >= 5),
+            })
+            .ToListAsync(ct))
+            .ToDictionary(x => x.CompanyId);
+
+        // ช่องที่ถูกแก้บ่อยสุด — บอกว่าควรไปปรับปรุงตัวสกัดช่องไหนก่อน
+        // (เก็บเป็น CSV บนแถว จึงต้องดึงมานับฝั่งแอป — จำนวนแถวถูกจำกัดด้วยช่วง 30 วันแล้ว)
+        var correctedRows = await _db.Set<Models.Entities.OcrScanResult>().AsNoTracking()
+            .Where(r => r.CreatedAt >= since && !r.IsDeleted && r.UserCorrectedFields != null)
+            .Select(r => new { r.CompanyId, r.UserCorrectedFields })
+            .ToListAsync(ct);
+        var fieldCounts = new Dictionary<Guid, Dictionary<string, int>>();
+        foreach (var row in correctedRows)
         {
-            var totalScans = await _db.Set<Models.Entities.OcrScanResult>()
-                .CountAsync(r => r.CompanyId == companyId && r.CreatedAt >= since, ct);
+            if (!fieldCounts.TryGetValue(row.CompanyId, out var map))
+                fieldCounts[row.CompanyId] = map = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var f in (row.UserCorrectedFields ?? "").Split(
+                         ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                map[f] = map.TryGetValue(f, out var n) ? n + 1 : 1;
+        }
 
-            var corrected = await _db.Set<Models.Entities.OcrScanResult>()
-                .CountAsync(r => r.CompanyId == companyId && r.CreatedAt >= since
-                    && r.UpdatedAt != null, ct);
-
-            var patterns = await _db.OcrLearnedPatterns
-                .Where(p => p.CompanyId == companyId)
-                .ToListAsync(ct);
+        var reports = new List<AccuracyReport>(scanStats.Count);
+        foreach (var s in scanStats)
+        {
+            patternStats.TryGetValue(s.CompanyId, out var pat);
+            var kpi = Accounting.Helpers.OcrQualityKpi.Read(
+                s.Total, s.AiBilled, s.WithDocument, s.Corrected);
+            var top = fieldCounts.TryGetValue(s.CompanyId, out var fc)
+                ? fc.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Take(5).Select(kv => $"{kv.Key}:{kv.Value}").ToList()
+                : new List<string>();
 
             reports.Add(new AccuracyReport(
-                companyId,
-                TotalScans: totalScans,
-                CorrectedScans: corrected,
-                CorrectionRate: totalScans == 0 ? 0m : (decimal)corrected / totalScans,
-                TotalLearnedPatterns: patterns.Count(p => !p.IsNegativeExample),
-                NegativeExamples: patterns.Count(p => p.IsNegativeExample),
-                HighConfidencePatterns: patterns.Count(p => !p.IsNegativeExample && p.TimesConfirmed >= 5),
-                GeneratedAt: DateTime.UtcNow));
+                s.CompanyId,
+                TotalScans: s.Total,
+                CorrectedScans: s.Corrected,
+                CorrectionRate: s.Total == 0 ? 0m : Math.Round((decimal)s.Corrected / s.Total, 4, MidpointRounding.AwayFromZero),
+                TotalLearnedPatterns: pat?.Positive ?? 0,
+                NegativeExamples: pat?.Negative ?? 0,
+                HighConfidencePatterns: pat?.HighConfidence ?? 0,
+                GeneratedAt: now,
+                AiBilledScans: s.AiBilled,
+                DocumentsCreated: s.WithDocument,
+                AiCallRate: kpi.AiCallRate,
+                FirstPassAcceptRate: kpi.FirstPassAcceptRate,
+                Verdict: kpi.Verdict,
+                IsRegression: kpi.IsRegression,
+                TopCorrectedFields: top));
         }
 
         return reports;

@@ -11792,6 +11792,26 @@ public partial class DocumentService : IDocumentService
             if (change.TargetDocumentType != null) scan.TargetDocumentType = change.TargetDocumentType;
             if (linesChanged) scan.ExtractedItemsJson = linesJson;
 
+            // ★ ตัวชี้วัดคุณภาพ (D4): การแก้ Draft ก่อนอนุมัติก็คือ "ผู้ใช้ต้องแก้"
+            // เหมือนกับการแก้ในหน้า review — ไม่งั้น first-pass accept rate จะสูงเกินจริง
+            var touched = new List<string>();
+            if (change.VendorName != null) touched.Add("VendorName");
+            if (change.VendorTaxId != null) touched.Add("VendorTaxId");
+            if (change.VendorBranchCode != null) touched.Add("VendorBranchCode");
+            if (change.DocumentNumber != null) touched.Add("DocumentNumber");
+            if (change.DocumentDate != null) touched.Add("DocumentDate");
+            if (change.SubTotal != null) touched.Add("SubTotal");
+            if (change.VatAmount != null) touched.Add("VatAmount");
+            if (change.TotalAmount != null) touched.Add("TotalAmount");
+            if (change.TargetDocumentType != null) touched.Add("TargetDocumentType");
+            if (linesChanged) touched.Add("Lines");
+            if (touched.Count > 0)
+            {
+                scan.UserCorrectedAt ??= DateTime.UtcNow;
+                scan.UserCorrectedFields = Accounting.Helpers.OcrCorrectedFieldList.Merge(
+                    scan.UserCorrectedFields, touched);
+            }
+
             await _db.SaveChangesAsync();
             _logger.LogInformation(
                 "ปิดลูปสอนจากเอกสารที่อนุมัติ {Doc} → sync สแกน {Scan} (ผู้ใช้แก้ก่อนอนุมัติ)",

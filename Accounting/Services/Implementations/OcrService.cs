@@ -3750,6 +3750,17 @@ public class OcrService : IOcrService
             });
         }
 
+        // ★ ตัวชี้วัดคุณภาพ (D4): "ผู้ใช้แก้จริง" ต้องแยกจาก "ระบบบันทึกแถว"
+        // — เดิมนับจาก UpdatedAt != null ซึ่งขยับทุกครั้งที่ระบบเซฟเอง ⇒ อัตราการแก้
+        // ~100% ทุก tenant = ตัวเลขที่อ่านไม่ได้ (ผลตรวจ 2026-09-06 · T5)
+        var correctedFields = Accounting.Helpers.OcrCorrectedFieldList.From(correction);
+        if (correctedFields.Length > 0)
+        {
+            result.UserCorrectedAt ??= DateTime.UtcNow;   // ครั้งแรกเท่านั้น
+            result.UserCorrectedFields = Accounting.Helpers.OcrCorrectedFieldList.Merge(
+                result.UserCorrectedFields, correctedFields);
+        }
+
         await _db.SaveChangesAsync();
 
         // ───── Train VendorIntelligence with the corrected target type ─────

@@ -198,6 +198,18 @@ public class OcrScanResult : TenantEntity
     public string? BuyerBranchCode { get; set; }
     public string? BuyerAddress { get; set; }
 
+    /// <summary>ผู้ใช้แก้ค่าที่ระบบเติมให้ไปแล้วอย่างน้อยหนึ่งช่อง (ครั้งแรกเมื่อไร)
+    ///
+    /// <para>⚠️ ตัวชี้วัดคุณภาพ OCR เดิมนับ "ใบที่ถูกแก้" จาก <c>UpdatedAt != null</c>
+    /// ซึ่งขยับทุกครั้งที่<b>ระบบเอง</b>บันทึกแถว (จบการสแกน · ผูกเอกสารที่สร้าง ·
+    /// sync ตอนอนุมัติ) ⇒ อัตราการแก้ = ~100% ทุก tenant = ตัวเลขที่อ่านไม่ได้เลย
+    /// (ผลตรวจ 2026-09-06 · T5). ช่องนี้ถูกตั้งเฉพาะตอน<b>คนแก้จริง</b>เท่านั้น</para></summary>
+    public DateTime? UserCorrectedAt { get; set; }
+
+    /// <summary>ชื่อช่องที่ผู้ใช้แก้ (คั่นด้วย <c>,</c>) — ใช้ดูว่าไปป์ไลน์พลาดตรงไหนบ่อย
+    /// เพื่อจัดลำดับงานปรับปรุง ไม่ใช่แค่รู้ว่า "ถูกแก้"</summary>
+    public string? UserCorrectedFields { get; set; }
+
     // ─── Document role inference ──────────────────────────────────────
     // Thai-accounting workflow separates THREE distinct concepts:
     //   • ScannedDocumentType — the physical paper we OCR'd (e.g. "Receipt")
