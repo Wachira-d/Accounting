@@ -1361,8 +1361,11 @@
               `/api/companies/${cid}/ocr/${picked[i]}/create-document?approve=true`);
             const d = r?.data;
             if (d?.createdDocumentId) {
-              // ProcessingNotes มีเหตุผลตอนอนุมัติไม่ผ่าน (ได้ใบร่างแทน)
-              if ((d.processingNotes || '').includes('อนุมัติไม่สำเร็จ')) draft++; else ok++;
+              // ProcessingNotes มีเหตุผลตอนอนุมัติไม่ผ่าน/ถูกข้าม (ได้ใบร่างแทน)
+              // ⚠️ เดิมเทียบสตริง 'อนุมัติไม่สำเร็จ' ซึ่ง **ไม่มีที่ไหนในเซิร์ฟเวอร์
+              // เขียนลง ProcessingNotes** ⇒ นับ "ลงบัญชีแล้ว" ทุกใบเสมอ แม้ใบยัง
+              // เป็น Draft (ผลตรวจ 2026-09-06 · T4-02)
+              if (Page.parseScanNotes(d.processingNotes).notApproved) draft++; else ok++;
             } else failed.push(picked[i]);
           } catch (e) {
             failed.push(picked[i] + ': ' + (e?.message || ''));
@@ -1374,6 +1377,40 @@
         if (failed.length) parts.push(`ไม่สำเร็จ ${failed.length} ใบ`);
         Layout.toast(parts.join(' · '), failed.length ? 'warning' : 'success', 8000);
         await this.loadScans();
+      },
+
+      /**
+       * ตัวอ่านแท็กใน `ProcessingNotes` **ตัวเดียว**ของหน้านี้
+       *
+       * เซิร์ฟเวอร์สื่อสารสถานะที่ผู้ใช้ต้องรู้ผ่านแท็กในหมายเหตุ:
+       *  `[APPROVE-FAIL]` อนุมัติไม่ผ่าน · `[APPROVE-SKIP]` ไม่ได้อนุมัติให้
+       *  (วันที่อ่านไม่ได้ / ไม่มีสิทธิ์) · `[Σ-GAP]` ผลรวมบรรทัดไม่ตรงหัวใบ ·
+       *  `[DATE-UNKNOWN]` วันที่เป็นค่าเริ่มต้น · `[TAX-INV-PENDING]` ยังไม่ใช่
+       *  ใบกำกับ (VAT พักไว้) · `[WHT-CERT]` 50 ทวิ ที่เราถูกหัก
+       *
+       * ⚠️ เดิมแต่ละจุดอ่านเอง — จุดหนึ่งหาแต่ `[APPROVE-FAIL]` อีกจุดเทียบสตริง
+       * `'อนุมัติไม่สำเร็จ'` ที่เซิร์ฟเวอร์ไม่เคยเขียน ⇒ ใบที่ยังเป็น Draft ถูก
+       * รายงานว่า "ลงบัญชีแล้ว" (ผลตรวจ 2026-09-06 · T4-01/02/03)
+       */
+      parseScanNotes(notes) {
+        const t = String(notes || '');
+        const pick = (tag) =>
+          [...t.matchAll(new RegExp('\\[' + tag + '\\]\\s*([^\n]+)', 'g'))].map(m => m[1].trim());
+        const fail = pick('APPROVE-FAIL');
+        const skip = pick('APPROVE-SKIP');
+        const gaps = pick('Σ-GAP');
+        return {
+          notApproved: fail.length > 0 || skip.length > 0,
+          notApprovedReason: fail[0] || skip[0] || 'ไม่ทราบสาเหตุ',
+          gaps,
+          warnings: [
+            ...gaps,
+            ...pick('DATE-UNKNOWN'),
+            ...pick('TAX-INV-PENDING'),
+            ...pick('WHT-CERT'),
+            ...skip,
+          ],
+        };
       },
 
       renderScanCard(scan) {
@@ -2022,6 +2059,21 @@
             }
           }
 
+          // ── แท็กที่เซิร์ฟเวอร์ใส่ใน ProcessingNotes (ตัวกลางตัวเดียว) ──
+          // ⚠️ ที่มา (ผลตรวจ OCR 2026-09-06 · T4-03): แท็กใหม่ 5 ตัวจากรอบแก้ฝั่ง
+          // เซิร์ฟเวอร์ (Σ-GAP · DATE-UNKNOWN · WHT-CERT · TAX-INV-PENDING ·
+          // APPROVE-SKIP) **ไม่มีที่ไหนในหน้าเว็บอ่านเลย** ⇒ สัญญาณที่นักบัญชี
+          // ต้องเห็นที่สุด (ยอดบรรทัดไม่ครบ / วันที่เป็นค่าเดา) มองไม่เห็นเลย
+          const scanFlags = Page.parseScanNotes(scan.processingNotes);
+          let serverFlagBanner = '';
+          if (scanFlags.warnings.length) {
+            serverFlagBanner = `
+              <div style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;padding:12px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;color:#92400e;line-height:1.7">
+                <div style="font-weight:700;margin-bottom:4px">⚠️ ตรวจก่อนยืนยัน — ระบบไม่แน่ใจข้อมูลบางส่วน</div>
+                ${scanFlags.warnings.map(w => `<div style="margin-top:3px">• ${Layout.esc(w)}</div>`).join('')}
+              </div>`;
+          }
+
           // §82/5 VAT-claim warning — ดึงข้อความ [VAT-CLAIM] ที่ backend
           // ใส่ใน processingNotes (ใบกำกับอย่างย่อ/ใบเสร็จ ที่เคลม VAT ไม่ได้)
           // → แสดงเป็น banner แดงเด่น เตือนผู้ใช้ก่อนสร้างเอกสาร
@@ -2056,6 +2108,7 @@
             ${imagePreview}
             ${dbdBanner}
             ${vatClaimBanner}
+            ${serverFlagBanner}
             <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:12px;color:#1e3a8a;line-height:1.6">
               <strong>&#x1F4A1; การสอนระบบ:</strong> หากมีข้อมูลที่ระบบแกะไม่ถูกต้อง แก้ไขในช่องด้านล่างแล้วกดปุ่ม "บันทึก &amp; สอนระบบ"
               ระบบจะจดจำตำแหน่งและคำใกล้เคียงในเอกสาร ครั้งต่อไปจาก vendor นี้จะแกะข้อมูลถูกต้องอัตโนมัติ
@@ -3215,10 +3268,13 @@
           if (approve && r?.createdDocumentId) {
             // สร้าง+อนุมัติ = ตั้งใจจบใบนี้เลย → พาไปดูใบที่อนุมัติแล้ว
             // (แนบ warning จาก approve ไว้ใน toast ก่อนออกจากหน้า ถ้ามี)
-            if (r.processingNotes && /\[APPROVE-FAIL\]/.test(r.processingNotes)) {
-              const why = (r.processingNotes.split('[APPROVE-FAIL]')[1] || '').trim();
-              Layout.toast('สร้างเอกสารแล้ว แต่อนุมัติไม่ผ่าน:\n' + why
-                + '\n\nเปิดใบเพื่อแก้แล้วกดอนุมัติเองได้', 'warning', 9000);
+            // ⚠️ เดิมหาแต่ `[APPROVE-FAIL]` — เซิร์ฟเวอร์เพิ่ม `[APPROVE-SKIP]`
+            // (วันที่อ่านไม่ได้ / ไม่มีสิทธิ์อนุมัติ) ⇒ ใบที่ยังเป็น Draft ขึ้น toast
+            // ว่า "อนุมัติแล้ว" (ผลตรวจ 2026-09-06 · T4-01)
+            const cf = Page.parseScanNotes(r.processingNotes);
+            if (cf.notApproved) {
+              Layout.toast('สร้างเอกสารแล้ว แต่ยังไม่ได้อนุมัติ:\n' + cf.notApprovedReason
+                + '\n\nเปิดใบเพื่อตรวจ/แก้ แล้วกดอนุมัติเอง', 'warning', 9000);
             } else {
               Layout.toast('สร้าง + อนุมัติเอกสารแล้ว');
             }
@@ -4209,9 +4265,12 @@
           // ⚠️ '00000' ที่ท้ายสายยัง**เป็นการเดา** (ประกาศอธิบดีฯ 199 บังคับให้
           // ระบุสาขาจริง) — จึงต้องมีช่องให้ผู้ใช้แก้บนหน้า review เสมอ
           // (เพิ่งต่อสายในรอบนี้: revVendorBranch → correction → scan)
+          // ⚠️ ห้ามเติม '00000' เอง (ผลตรวจ 2026-09-06 · T4-05): เซิร์ฟเวอร์เลิกเดา
+          // สาขาแล้ว การเติมกลับที่นี่ = ย้าย defect class เดิมจาก server มา client
+          // ⇒ ใบของสาขาที่ 3 ลงเป็นสำนักงานใหญ่ในรายงานภาษีซื้อ §87 เหมือนเดิม
           supplierBranchCode: hasSupplierRef
             ? ((document.getElementById('revVendorBranch')?.value || '').trim()
-               || scan.vendorBranchCode || '00000')
+               || scan.vendorBranchCode || null)
             : null,
           supplierAddress: hasSupplierRef ? (scan.vendorAddress || null) : null,
           supplierTaxId: hasSupplierRef ? scan.extractedVendorTaxId : null,

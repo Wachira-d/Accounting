@@ -329,12 +329,10 @@ public class OcrController : ControllerBase
                 && !await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userGuid, cType))
                 skipReason = $"ไม่มีสิทธิ์อนุมัติเอกสารประเภท {cType} — สร้างเป็น Draft ไว้แล้ว รอผู้มีสิทธิ์อนุมัติ";
 
+            string? approveNote = null;
             if (skipReason != null)
             {
-                result = result with
-                {
-                    ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[APPROVE-SKIP] " + skipReason,
-                };
+                approveNote = "\n[APPROVE-SKIP] " + skipReason;
             }
             else
             {
@@ -345,11 +343,21 @@ public class OcrController : ControllerBase
                 }
                 catch (Exception ex)
                 {
-                    result = result with
-                    {
-                        ProcessingNotes = (result.ProcessingNotes ?? "")
-                            + "\n[APPROVE-FAIL] " + ex.Message,
-                    };
+                    approveNote = "\n[APPROVE-FAIL] " + ex.Message;
+                }
+            }
+            if (approveNote != null)
+            {
+                result = result with { ProcessingNotes = (result.ProcessingNotes ?? "") + approveNote };
+                // ⚠️ เขียนลงแถวจริงด้วย — เดิมต่อสตริงใส่ DTO อย่างเดียว ⇒ เหตุผลอยู่ใน
+                // HTTP response ครั้งเดียวแล้ว**หายถาวร**: เปิดหน้าใหม่/รีเฟรชแล้วไม่มีอะไร
+                // บอกว่าทำไมใบยังเป็น Draft (ผลตรวจ 2026-09-06 · T5-N8 — "ล้มดังในที่ที่คนดู")
+                var scanRow = await _db.Set<OcrScanResult>()
+                    .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanId);
+                if (scanRow != null)
+                {
+                    scanRow.ProcessingNotes = (scanRow.ProcessingNotes ?? "") + approveNote;
+                    await _db.SaveChangesAsync();
                 }
             }
         }

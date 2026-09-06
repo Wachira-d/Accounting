@@ -1915,7 +1915,9 @@
             try { const el = document.getElementById('fSupplierTaxInvoiceDatePV');
               if (el) el.value = Layout.dateInput(payload.supplierTaxInvoiceDate); } catch (_) {}
           }
-          setVal('fSupplierBranchCode', payload.supplierBranchCode || '00000');
+          // ⚠️ ห้ามเติม '00000' เอง (ผลตรวจ 2026-09-06 · T4-05) — ไม่รู้สาขาคือ
+          // "ไม่รู้" ไม่ใช่ "สำนักงานใหญ่"; ด่าน §86/4 ตอนอนุมัติเป็นคนบังคับกรอก
+          setVal('fSupplierBranchCode', payload.supplierBranchCode || '');
           // เติม supplierTaxId จาก OCR handoff โดยตรง — กันเคสที่ contact เดิม
           // ใน DB ยังไม่มี TaxId (ถูก match จากชื่อ ตอน OCR backfill ไม่ทัน)
           // _fillSupplierTaxIdFromContact จะ override ทีหลังถ้าหา TaxId จาก

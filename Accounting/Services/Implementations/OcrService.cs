@@ -203,7 +203,13 @@ public class OcrService : IOcrService
             Accounting.Helpers.OcrScanSnapshot.CopyExtractionFrom(duplicateOf, scanResult);
             scanResult.ScanStatus = "Completed";
             scanResult.OcrEngine = "Cached";   // copied from a prior scan; no OCR engine ran
-            scanResult.ProcessingNotes = $"Duplicate of scan {duplicateOf.Id} (engine: {duplicateOf.OcrEngine ?? "unknown"})";
+            // คำตัดสินเกี่ยวกับ "ตัวกระดาษ" (§82/5 เคลมไม่ได้ · ยังไม่ใช่ใบกำกับ · วันที่เดา ·
+            // ยอดบรรทัดไม่ครบ) ต้องติดไปกับสำเนาด้วย — เดิมถูกเขียนทับทั้งก้อน ⇒ อัปไฟล์เดิม
+            // ซ้ำแล้วใบกำกับอย่างย่อกลับมาเคลมภาษีซื้อได้ (ผลตรวจ 2026-09-06 · T5-N1)
+            var carriedNotes = Accounting.Helpers.OcrScanSnapshot.DecisionNotes(duplicateOf.ProcessingNotes);
+            scanResult.ProcessingNotes =
+                $"Duplicate of scan {duplicateOf.Id} (engine: {duplicateOf.OcrEngine ?? "unknown"})"
+                + (carriedNotes.Length > 0 ? "\n" + carriedNotes : "");
             scanResult.ProcessedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
             return await AttachComplianceAsync(companyId, MapToResponse(scanResult));
@@ -678,7 +684,7 @@ public class OcrService : IOcrService
             // เส้นทาง Tesseract แบบฝังคืนแต่ข้อความล้วน ⇒ Items ว่างทุกใบ
             // ผลคือเอกสารได้บรรทัดสรุปใบเดียว แยกหมวดค่าใช้จ่ายไม่ได้
             // (ยังลงบัญชีได้ = local path ที่มีอยู่แล้ว ⇒ kill-switch ผ่าน)
-            await TrySplitLineItemsWithAiAsync(companyId, scanResult, extractedData, extractedText);
+            await TrySplitLineItemsAsync(companyId, scanResult, extractedData, extractedText);
 
             // ── เชื่อค่าเงินจากระบบภายนอก (override OCR vision) ──
             // พาร์ทเนอร์ที่ยิง OCR ผ่าน API ส่งยอดที่กรอก/คำนวณเองมาใน metadata →
@@ -4252,11 +4258,14 @@ public class OcrService : IOcrService
         // Document number
         // ⚠️ "เลขที่ 99/1 ถ.สุขุมวิท" (ที่อยู่) ใช้คำเดียวกับเลขที่เอกสาร — คัดค่าที่ตาม
         // ด้วยคำบอกที่อยู่ออก (ผลตรวจ 2026-09-05 T2-10) · ป้ายเฉพาะของเอกสารมาก่อน
+        // `tokEnd` ต้องมาก่อน `notAddr` — ไม่งั้น regex backtrack ให้กลุ่มสั้นลงจนด่านผ่าน
+        // ("เลขที่ 123/45 ถนนพระราม 4" → "123/4") · ผลตรวจ 2026-09-06 · T5-N2
+        const string tokEnd = @"(?![A-Za-z0-9\-/])";
         const string notAddr = @"(?!\s*(?:ถ\.|ถนน|หมู่|ม\.\s*\d|ซ\.|ซอย|ต\.|ตำบล|อ\.|อำเภอ|แขวง|เขต|จ\.|จังหวัด|Rd\b|Road\b|Soi\b|Moo\b))";
         string?[] docNumPatterns = {
             @"(?:เลขที่ใบกำกับ(?:ภาษี)?|เลขที่ใบเสร็จ(?:รับเงิน)?|Tax\s*Invoice\s*No\.?|Receipt\s*No\.?)\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,})",
-            @"เลขที่\s*[:：]?\s*([A-Za-z0-9\-/]+\d+)" + notAddr,
-            @"(?:No|เลข(?:ที่)?)\s*\.?\s*[:：]?\s*([A-Za-z0-9\-/]+)" + notAddr,
+            @"เลขที่\s*[:：]?\s*([A-Za-z0-9\-/]+\d+)" + tokEnd + notAddr,
+            @"(?:No|เลข(?:ที่)?)\s*\.?\s*[:：]?\s*([A-Za-z0-9\-/]+)" + tokEnd + notAddr,
             @"(?:INV|REC|TAX|TX|IV|PO|CN|DN)[\-/]?\s*(\d[\d\-/]*)",
         };
         foreach (var pattern in docNumPatterns)
@@ -4793,7 +4802,11 @@ public class OcrService : IOcrService
         }
         var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
-        var headerWht = whtRate > 0 ? Math.Round(whtBase * whtRate / 100m, 2) : 0m;
+        // MidpointRounding.AwayFromZero — เส้น JE (:5568) ระบุไว้แล้ว แต่เส้นนี้ลืม ⇒
+        // ฐาน 101.50 × 3% ได้ 3.04 กับ 3.05 ตามปุ่มที่กด (ผลตรวจ 2026-09-06 · T5-N6)
+        var headerWht = whtRate > 0
+            ? Math.Round(whtBase * whtRate / 100m, 2, MidpointRounding.AwayFromZero)
+            : 0m;
         // App-wide convention (DocumentService / IntegrationService):
         // TotalAmount = SubTotal + VAT − WHT (net payable). The paper's grand
         // total does NOT deduct WHT, so subtract here — otherwise
@@ -5078,20 +5091,30 @@ public class OcrService : IOcrService
             decimal docDiscountPercent = recon.DiscountPercent;   // ใช้เฉพาะ case C
             if (recon.PricesIncludeVat)
                 document.PricesIncludeVat = true;    // Case A — ถอด VAT ออกจากยอดบรรทัดข้างล่าง
-            if (docDiscountPercent > 0m)
+            if (docDiscountPercent > 0m && recon.TargetLineSum is decimal targetSum && items.Count > 0)
             {
-                // Case C: ส่วนลดที่กระดาษพิมพ์ไว้จริง กระจายลงทุกบรรทัด แล้วยัดเศษบรรทัดสุดท้าย
-                // ให้ Σ บรรทัด = ยอดก่อน VAT บนกระดาษเป๊ะ (วินัยเงิน: ห้ามต่างสตางค์)
-                foreach (var it in items)
+                // Case C: ส่วนลดที่กระดาษพิมพ์ไว้จริง — **กระจายเป็นจำนวนเงิน** ตามสัดส่วน
+                // แล้วยัดเศษที่บรรทัดสุดท้าย ⇒ Σ บรรทัด = ยอดก่อน VAT บนกระดาษ **เป๊ะเสมอ**
+                //
+                // ⚠️ ห้ามคิดจาก % ที่ปัด 2 ตำแหน่ง (ผลตรวจ 2026-09-06 · T5-N4): บิล 999,999
+                // ลด 33,333 คลาดถึง ฿33 · และตัวยัดเศษที่จำกัด ≤ ฿1 จะ "ยอมแพ้เงียบ" ⇒
+                // Σ Line.Amount ≠ SubTotal ⇒ ตอนอนุมัติ JE เดบิตจากบรรทัดแต่เครดิตจากยอดหัว
+                // ⇒ เด้ง "การบันทึกบัญชีไม่สมดุล" โดยผู้ใช้ไม่รู้ว่าเลขไหนผิด
+                var grossList = items
+                    .Select(x => x.UnitPrice.HasValue ? x.UnitPrice.Value * (x.Quantity ?? 1m) : (x.Amount ?? 0m))
+                    .ToList();
+                var grossTotal = grossList.Sum();
+                if (grossTotal > 0m)
                 {
-                    var gross = it.UnitPrice.HasValue ? it.UnitPrice.Value * (it.Quantity ?? 1m) : (it.Amount ?? 0m);
-                    it.Amount = Math.Round(gross * (1m - docDiscountPercent / 100m), 2, MidpointRounding.AwayFromZero);
-                }
-                if (recon.TargetLineSum is decimal targetSum && items.Count > 0)
-                {
-                    var rem = Math.Round(targetSum - items.Sum(x => x.Amount ?? 0m), 2);
-                    if (rem != 0m && Math.Abs(rem) <= Accounting.Helpers.OcrLineReconciler.Tolerance)
-                        items[^1].Amount = Math.Round((items[^1].Amount ?? 0m) + rem, 2, MidpointRounding.AwayFromZero);
+                    decimal assigned = 0m;
+                    for (var di = 0; di < items.Count; di++)
+                    {
+                        var share = di == items.Count - 1
+                            ? targetSum - assigned
+                            : Math.Round(targetSum * grossList[di] / grossTotal, 2, MidpointRounding.AwayFromZero);
+                        assigned += share;
+                        items[di].Amount = share;
+                    }
                 }
             }
             if (recon.UnreconciledGap != 0m)
@@ -5591,9 +5614,12 @@ public class OcrService : IOcrService
             // ภ.ง.ด.53 (21917) เมื่อผู้รับเงินเป็นนิติบุคคล · ภ.ง.ด.3 (21916) เมื่อเป็นบุคคล
             // — ตัดสินจากเลขผู้เสียภาษีของผู้ขายบนกระดาษ (กติกาเดียวกับ PdfGenerationService)
             var payeeJuristic = Ocr.SmartFieldExtractor.IsJuristicTaxId(result.ExtractedVendorTaxId);
+            // ⚠️ fallback ด้วยชื่อ "หัก ณ ที่จ่าย" เฉย ๆ จะไปโดน 21914 (ภ.ง.ด.1 เงินเดือน)
+            // ซึ่งเป็นแบบยื่นคนละใบ ⇒ ยอดนำส่งผิดทั้งสองแบบ (ผลตรวจ 2026-09-06 · T5-N7)
             whtAcc = await ResolveTaxAccountAsync(companyId,
                 payeeJuristic ? new[] { "21917", "21916" } : new[] { "21916", "21917" },
-                AccountType.Liability, "หัก ณ ที่จ่าย");
+                AccountType.Liability, "หัก ณ ที่จ่าย",
+                excludeNameKeywords: new[] { "ภ.ง.ด.1", "ภ.ง.ด. 1", "เงินเดือน" });
         }
 
         // Build a guaranteed-balanced set of lines. Optional VAT/WHT lines only
@@ -5604,9 +5630,23 @@ public class OcrService : IOcrService
         {
             var vatLine = vatAcc != null ? vat : 0m;
             var revenueAmt = total - vatLine;
-            lines.Add(new(debitAcc, total, 0m, "ลูกหนี้/เงินรับ"));
+            // ฝั่งขาย: ลูกค้าหักภาษี ณ ที่จ่ายจากเรา → เงินที่ได้รับจริงน้อยกว่ายอดใบ
+            // ส่วนที่ถูกหักเป็น **สินทรัพย์** (เครดิตภาษีใช้ใน ภ.ง.ด.50/51) ไม่ใช่หนี้สิน
+            // ⚠️ เดิมคำนวณ wht ไว้แล้วแต่สาขานี้ไม่ใส่บรรทัดเลย ⇒ ลูกหนี้เกินจริงเท่ายอดหัก
+            // และไม่มีเครดิตภาษี ⇒ จ่าย CIT เกิน (ผลตรวจ 2026-09-06 · T5-N3)
+            var sellerWhtAcc = wht > 0m
+                ? await ResolveTaxAccountAsync(companyId, new[] { "11910" }, AccountType.Asset, "ภาษีถูกหัก")
+                : null;
+            var sellerWht = sellerWhtAcc != null ? wht : 0m;
+            lines.Add(new(debitAcc, total - sellerWht, 0m, "ลูกหนี้/เงินรับ"));
+            if (sellerWht > 0m) lines.Add(new(sellerWhtAcc!.Value, sellerWht, 0m, "ภาษีถูกหัก ณ ที่จ่าย"));
             lines.Add(new(creditAcc, 0m, revenueAmt, "รายได้"));
             if (vatLine > 0m) lines.Add(new(vatAcc!.Value, 0m, vatLine, "ภาษีขาย"));
+            if (wht > 0m && sellerWhtAcc == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ใบนี้ถูกหักภาษี ณ ที่จ่าย แต่ผังบัญชียังไม่มี \"11910 ภาษีถูกหัก ณ ที่จ่าย\" — "
+                    + "เพิ่มผังบัญชีนี้ก่อน หรือปลดติ๊ก \"บันทึกภาษีหัก ณ ที่จ่าย\" แล้วบันทึกใหม่",
+                    "OCR-JE-NO-WHT-ASSET");
         }
         else
         {
@@ -5657,7 +5697,8 @@ public class OcrService : IOcrService
     /// then falling back to the first active account of the right type whose
     /// name contains the keyword. Returns null when nothing matches (caller
     /// then folds the amount into the primary line to keep the JE balanced).</summary>
-    private async Task<Guid?> ResolveTaxAccountAsync(Guid companyId, string[] codes, AccountType type, string nameKeyword)
+    private async Task<Guid?> ResolveTaxAccountAsync(Guid companyId, string[] codes, AccountType type,
+        string nameKeyword, string[]? excludeNameKeywords = null)
     {
         foreach (var c in codes)
         {
@@ -5666,9 +5707,12 @@ public class OcrService : IOcrService
         }
         // ค้นด้วยชื่อ: เอาบัญชีที่ "ลงรายการได้" ก่อน (รหัสยาวสุด = ระดับลึกสุด) — เดิม
         // OrderBy รหัสแบบข้อความทำให้บัญชีคุม "116" ชนะ "11610" (ผลตรวจ 2026-09-05 T1-01)
-        return await _db.ChartOfAccounts
+        var q = _db.ChartOfAccounts
             .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
-                && a.AccountType == type && a.AccountName!.Contains(nameKeyword))
+                && a.AccountType == type && a.AccountName!.Contains(nameKeyword));
+        foreach (var ex in excludeNameKeywords ?? Array.Empty<string>())
+            q = q.Where(a => !a.AccountName!.Contains(ex));
+        return await q
             .OrderByDescending(a => a.AccountCode.Length)
             .ThenBy(a => a.AccountCode)
             .Select(a => (Guid?)a.Id)
@@ -6837,7 +6881,11 @@ public class OcrService : IOcrService
             BuyerBranchCode: data?.BuyerBranchCode ?? r.BuyerBranchCode ?? "00000",
             BuyerAddress: data?.BuyerAddress ?? r.BuyerAddress,
             // ป้ายซื่อสัตย์ตามกฎเหล็ก #1 — บอกว่ารายการในใบนี้ AI เป็นคนแตกให้
-            LineSplitUsedAi: r.LineSplitUsedAi);
+            LineSplitUsedAi: r.LineSplitUsedAi,
+            // สกุลเงินอ่านจากข้อความบนกระดาษ (ตัวเดียวกับที่เส้น "สร้างทันที" ใช้)
+            // — ส่งออกมาเพื่อให้เส้น handoff ได้คำตอบเดียวกัน (T4-08)
+            Currency: InferCurrency(r.RawTextContent),
+            GlAccountAiFeedbackId: r.GlAccountAiFeedbackId);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
@@ -6967,38 +7015,68 @@ public class OcrService : IOcrService
     /// <para>AI ปิด/ล่ม/ตอบไม่ลงตัว → ไม่ทำอะไร ⇒ คงพฤติกรรมเดิม (บรรทัดสรุป
     /// ใบเดียวจากยอดหัวกระดาษ) ผู้ใช้ยังสร้างเอกสารได้ครบ</para>
     /// </summary>
-    private async Task TrySplitLineItemsWithAiAsync(
+    /// <summary>แตกรายการสินค้าเมื่อ engine ไม่คืนตาราง — ครู (AI) → นักเรียน (local model)
+    /// → <see cref="Accounting.Helpers.RawTextLineSplitter"/> (ไม่ต้องมีโมเดลเลย)
+    ///
+    /// <para>ทั้งสามทางเดินผ่าน <see cref="Accounting.Helpers.OcrLineSplitGuard"/> ตัวเดียวกัน:
+    /// ผลรวมบรรทัดต้องตรงยอดบนกระดาษถึงจะกลายเป็นรายการทางบัญชี ⇒ ทางที่เดาผิดถูกปฏิเสธ
+    /// ไม่ใช่ถูกบันทึก. ก่อนหน้านี้มีแต่ทางแรก และ feature นี้ไม่มี student ⇒ ปิด provider
+    /// = เอกสารได้บรรทัดสรุปใบเดียวตลอดกาล (kill-switch ไม่ผ่าน · ผลตรวจ 2026-09-06 T3-02)</para></summary>
+    private async Task TrySplitLineItemsAsync(
         Guid companyId, OcrScanResult scanResult, OcrExtractedData data, string? rawText)
     {
         var scanResultId = scanResult.Id;
-        if (_aiAugmenter == null) return;
         if (data.Items.Count > 0) return;                    // engine ให้รายการมาแล้ว
         if (string.IsNullOrWhiteSpace(rawText)) return;
 
         var sub = data.SubTotal ?? 0m;
         var total = data.TotalAmount ?? 0m;
-        if (sub <= 0m && total <= 0m) return;                // ไม่มียอดให้ตรวจ = ไม่เรียก
+        if (sub <= 0m && total <= 0m) return;                // ไม่มียอดให้ตรวจ = ไม่เดา
 
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            var res = await _aiAugmenter.SplitLineItemsAsync(
-                companyId, scanResultId, rawText,
-                data.DocumentType, data.VendorName,
-                data.SubTotal, data.VatAmount, data.TotalAmount, cts.Token);
+            string? candidateJson = null;
+            Guid? modelFeedbackId = null;
+            var usedProvider = false;
+            var source = "local-text";
 
-            // ★ T3-01: นักเรียน (local model) ที่ short-circuit ใช้ได้เท่า AI — ผ่านด่านเดียวกัน
-            if (!res.HasModelAnswer) return;
+            if (_aiAugmenter != null)
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                var res = await _aiAugmenter.SplitLineItemsAsync(
+                    companyId, scanResultId, rawText,
+                    data.DocumentType, data.VendorName,
+                    data.SubTotal, data.VatAmount, data.TotalAmount, cts.Token);
+
+                // ★ T3-01: นักเรียน (local model) ที่ short-circuit ใช้ได้เท่า AI — ผ่านด่านเดียวกัน
+                if (res.HasModelAnswer)
+                {
+                    candidateJson = res.Answer;
+                    modelFeedbackId = res.FeedbackId;
+                    usedProvider = res.UsedAi;
+                    source = res.SourceLabel;
+                }
+            }
+
+            // ★ T3-02: ไม่มีโมเดลตอบ (ปิด provider / เกินงบ / ยังไม่มี student) →
+            // แตกบรรทัดจากข้อความเอง แล้วให้ด่านตัวเดิมเป็นคนตัดสิน
+            candidateJson ??= Accounting.Helpers.RawTextLineSplitter.SplitToJson(rawText);
+            if (string.IsNullOrWhiteSpace(candidateJson))
+            {
+                data.ReasoningTrace.Add("[LineSplit] ข้อความไม่มีบรรทัดที่ลงท้ายด้วยจำนวนเงิน — ใช้บรรทัดสรุปใบเดียว");
+                return;
+            }
 
             // ด่านตรวจอยู่ใน Helpers/OcrLineSplitGuard (pure + มีเทสต์) —
-            // ตรรกะที่ตัดสินว่า "ยอมให้บรรทัดที่ AI แต่งกลายเป็นรายการบัญชีไหม"
+            // ตรรกะที่ตัดสินว่า "ยอมให้บรรทัดที่แตกมากลายเป็นรายการบัญชีไหม"
             // ต้องทดสอบได้ ไม่ใช่ฝังกลางเมธอด async
-            var guard = Accounting.Helpers.OcrLineSplitGuard.Evaluate(res.Answer, sub, total);
+            var guard = Accounting.Helpers.OcrLineSplitGuard.Evaluate(candidateJson, sub, total);
             if (!guard.Accepted)
             {
-                data.ReasoningTrace.Add($"[LineSplit] ไม่รับผลจาก AI — {guard.Reason}");
+                data.ReasoningTrace.Add($"[LineSplit] ไม่รับผลจาก {source} — {guard.Reason}");
                 _logger.LogInformation(
-                    "AI line-split ถูกปฏิเสธ (scan {ScanId}): {Reason}", scanResultId, guard.Reason);
+                    "line-split ถูกปฏิเสธ (scan {ScanId}, source {Source}): {Reason}",
+                    scanResultId, source, guard.Reason);
                 return;
             }
 
@@ -7016,15 +7094,17 @@ public class OcrService : IOcrService
             // ปิด loop การเรียนรู้ (กฎเหล็ก #1 ขั้น CAPTURE) — เก็บ feedbackId
             // ไว้กับสแกน เพื่อให้ตอนผู้ใช้แก้/ยืนยันรายการในหน้า review
             // ระบบส่งคำตอบจริงกลับไปสอนได้ ไม่งั้น = จ่าย token ฟรีทุกใบ
-            scanResult.LineSplitAiFeedbackId = res.FeedbackId;
-            scanResult.LineSplitUsedAi = res.UsedAi;   // ป้ายซื่อสัตย์: true เฉพาะ provider จริง
+            // (เส้น local-text ไม่มีแถวโมเดล จึงไม่มี feedbackId ให้เก็บ)
+            scanResult.LineSplitAiFeedbackId = modelFeedbackId;
+            scanResult.LineSplitUsedAi = usedProvider;   // ป้ายซื่อสัตย์: true เฉพาะ provider จริง
             data.ReasoningTrace.Add(
-                $"🤖 [LineSplit] AI แตกรายการจากข้อความได้ {guard.Lines.Count} บรรทัด " +
-                $"(รวม ฿{guard.Sum:N2} ตรงกับยอดบนกระดาษ) — กรุณาตรวจก่อนยืนยัน");
+                (usedProvider ? "🤖 [LineSplit] AI" : "⚙️ [LineSplit] ระบบ")
+                + $" แตกรายการจากข้อความได้ {guard.Lines.Count} บรรทัด "
+                + $"(รวม ฿{guard.Sum:N2} ตรงกับยอดบนกระดาษ) — กรุณาตรวจก่อนยืนยัน");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "AI line-split ล้มเหลว — ใช้บรรทัดสรุปใบเดียวตามเดิม");
+            _logger.LogWarning(ex, "line-split ล้มเหลว — ใช้บรรทัดสรุปใบเดียวตามเดิม");
         }
     }
 

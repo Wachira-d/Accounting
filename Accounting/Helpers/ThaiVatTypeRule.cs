@@ -40,12 +40,54 @@ public static class ThaiVatTypeRule
         "ค่ารักษาพยาบาล", "โรงพยาบาล",
     };
 
-    /// <summary>รายการนี้เข้าข่ายยกเว้น §81 จากคำอธิบายหรือไม่</summary>
+    /// <summary>คำที่ <b>มีคำยกเว้นอยู่ข้างใน แต่ไม่ใช่รายการยกเว้น</b> — ตรวจก่อนเสมอ
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจไปป์ไลน์ OCR 2026-09-06 · T2-07): เดิมใช้ <c>Contains</c>
+    /// ตรง ๆ กับคำสั้น 2 พยางค์ ⇒ "ขนมปัง" มี "นม" · "หนังสือค้ำประกัน" มี "หนังสือ" ·
+    /// "milk tea" มี "milk" ⇒ ถูกตีเป็นยกเว้น §81 แล้ว <c>SpreadHeaderVat</c> ไม่เฉลี่ย
+    /// VAT ลงบรรทัดนั้น — ถ้าทั้งใบถูกตีว่ายกเว้น VAT ทั้งใบจะกลายเป็นศูนย์<b>เงียบ ๆ</b>
+    /// ทั้งที่กระดาษมี VAT (รายงานภาษีซื้อ §87 แยกคอลัมน์ผิด)</para></summary>
+    public static readonly string[] NotExemptDespiteKeyword =
+    {
+        "หนังสือค้ำประกัน", "หนังสือรับรอง", "หนังสือสัญญา", "หนังสือมอบอำนาจ",
+        "หนังสือเดินทาง", "หนังสือเวียน",
+        "milk tea", "นมข้นหวาน", "ครีมเทียม",
+        "ผักดอง", "ผลไม้ดอง", "ผลไม้กระป๋อง", "ผักกระป๋อง",
+    };
+
+    /// <summary>คำที่ต่อหน้าคำยกเว้นได้โดยไม่เปลี่ยนความหมาย ("ค่านม" · "และผัก")</summary>
+    private static readonly string[] ThaiConnectorPrefixes = { "ค่า", "และ", "รวม", "ซื้อ" };
+
+    /// <summary>รายการนี้เข้าข่ายยกเว้น §81 จากคำอธิบายหรือไม่
+    ///
+    /// <para>กติกา: คำยกเว้นต้องอยู่ <b>ต้นคำ</b> — ภาษาไทยเขียนติดกัน จึงถือว่า
+    /// "ต้นคำ" คือ ตัวอักษรก่อนหน้าไม่ใช่อักษรไทย/ตัวอักษรอังกฤษ หรือข้อความก่อนหน้า
+    /// ลงท้ายด้วยคำเชื่อมที่รู้จัก ("ค่า" · "และ" · "รวม" · "ซื้อ") · และต้องไม่อยู่ใน
+    /// รายการ <see cref="NotExemptDespiteKeyword"/></para></summary>
     public static bool LooksExempt(string? description)
     {
         if (string.IsNullOrWhiteSpace(description)) return false;
         var d = description.ToLowerInvariant();
-        return ExemptKeywords.Any(k => d.Contains(k));
+        if (NotExemptDespiteKeyword.Any(x => d.Contains(x))) return false;
+        return ExemptKeywords.Any(k => ContainsAtWordStart(d, k));
+    }
+
+    /// <summary>คำ <paramref name="keyword"/> ปรากฏใน <paramref name="text"/> แบบ "ต้นคำ" หรือไม่</summary>
+    internal static bool ContainsAtWordStart(string text, string keyword)
+    {
+        if (string.IsNullOrEmpty(keyword)) return false;
+        for (var i = text.IndexOf(keyword, StringComparison.Ordinal); i >= 0;
+             i = text.IndexOf(keyword, i + 1, StringComparison.Ordinal))
+        {
+            if (i == 0) return true;
+            var prev = text[i - 1];
+            // ตัวก่อนหน้าไม่ใช่ตัวอักษร (ช่องว่าง · เครื่องหมาย · ตัวเลข) = ต้นคำแน่นอน
+            if (!char.IsLetter(prev)) return true;
+            // ภาษาไทยเขียนติดกัน — ยอมรับเมื่อข้อความก่อนหน้าลงท้ายด้วยคำเชื่อม
+            var before = text[..i];
+            if (ThaiConnectorPrefixes.Any(p => before.EndsWith(p, StringComparison.Ordinal))) return true;
+        }
+        return false;
     }
 
     /// <summary>ผู้ขายอยู่ต่างประเทศหรือไม่ — เลขผู้เสียภาษีไทยมี 13 หลักเสมอ

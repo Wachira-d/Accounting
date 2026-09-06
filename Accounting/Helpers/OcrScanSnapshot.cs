@@ -64,6 +64,30 @@ public static class OcrScanSnapshot
     /// ต้องเขียนกลับไปที่แถวที่ให้คำตอบนั้น มิฉะนั้นวงจร distillation ขาด
     /// (กฎเหล็ก #1) และป้าย "🤖 AI แนะนำ" จะโกหกว่าเป็นคำแนะนำของระบบ</para>
     /// </summary>
+    /// <summary>แท็กใน <c>ProcessingNotes</c> ที่เป็น **คำตัดสินเกี่ยวกับตัวกระดาษ**
+    /// (ไม่ใช่ diagnostic ของการอัปโหลดครั้งนั้น) ⇒ ต้องติดไปกับสำเนาเสมอ
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจ OCR 2026-09-06 · T5-N1): <c>ProcessingNotes</c> อยู่ใน
+    /// deny-list (ถูกต้อง — มันมีร่องรอย tier/engine ของการอัปโหลดครั้งนั้น) แต่เส้น
+    /// "ไฟล์ซ้ำ" เขียนทับทั้งก้อนด้วย <c>"Duplicate of scan …"</c> ⇒ ธง
+    /// <c>[VAT-CLAIM]</c> (§82/5 เคลมภาษีซื้อไม่ได้) หายไปด้วย และระบบ<b>ไม่มีคอลัมน์
+    /// อื่นเก็บคำตัดสินนี้เลย</b> — คำตัดสินทางกฎหมายอยู่ในสตริงล้วน ⇒
+    /// <b>อัปไฟล์เดิมซ้ำ = ใบกำกับอย่างย่อ/ค่ารับรอง กลับมาเคลมภาษีซื้อได้</b></para></summary>
+    public static readonly string[] DecisionNoteTags =
+        { "[VAT-CLAIM]", "[VAT-NOTE]", "[TAX-INV-PENDING]", "[DATE-UNKNOWN]", "[WHT-CERT]", "[Σ-GAP]" };
+
+    /// <summary>คัดเฉพาะบรรทัดที่เป็นคำตัดสินจากหมายเหตุของสแกนต้นฉบับ</summary>
+    public static string DecisionNotes(string? processingNotes)
+    {
+        if (string.IsNullOrWhiteSpace(processingNotes)) return string.Empty;
+        var kept = processingNotes
+            .Split('\n')
+            .Select(l => l.TrimEnd())
+            .Where(l => DecisionNoteTags.Any(t => l.Contains(t, StringComparison.Ordinal)))
+            .ToList();
+        return kept.Count == 0 ? string.Empty : string.Join("\n", kept);
+    }
+
     public static readonly IReadOnlySet<string> RowIdentityFields =
         new HashSet<string>(StringComparer.Ordinal)
         {

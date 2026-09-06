@@ -103,7 +103,21 @@ public record OcrResultResponse(
     /// (<c>AiFeatureKey.OcrLineItemSplit</c> — ทำงานเมื่อ engine ไม่คืนตาราง
     /// รายการมาเลย) ⇒ UI ติดป้าย "🤖 AI แตกรายการให้ กรุณาตรวจ" ให้ซื่อสัตย์
     /// ตามกฎเหล็ก #1 (ป้าย "🤖 AI แนะนำ" เฉพาะตอนเรียก AI จริง)</summary>
-    bool LineSplitUsedAi = false);
+    bool LineSplitUsedAi = false,
+    /// <summary>สกุลเงินที่อ่านได้จากกระดาษ (null = ไม่พบสัญลักษณ์/รหัสสกุล → THB)
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจ OCR 2026-09-06 · T4-08): เส้น "สร้างทันที" อ่านสกุลเงิน
+    /// จาก <c>InferCurrency(RawTextContent)</c> แต่ DTO ไม่มีช่องนี้ ⇒ เส้น
+    /// "📝 แก้ในฟอร์มก่อน" (handoff) ได้ THB เสมอ — <b>ใบเดียวกัน สองคำตอบ</b>
+    /// (invoice USD ถูกบันทึกเป็นบาท ตัวเลขเท่าเดิมแต่ความหมายผิดหลายสิบเท่า)</para></summary>
+    string? Currency = null,
+    /// <summary>FK ของแถว feedback ผัง GL — หน้าเว็บส่งต่อไปกับฟอร์มเอกสาร เพื่อให้
+    /// ตอนผู้ใช้ยืนยัน/แก้ผัง ระบบสอน local model กลับได้ (กฎเหล็ก #1 ขั้น CAPTURE)
+    ///
+    /// <para>⚠️ ที่มา (T4-11): ทั้งฝั่งผลิต (<c>document-scan.html</c>) และฝั่งบริโภค
+    /// (<c>documents.html</c>) อ้างชื่อนี้อยู่แล้ว แต่ <b>DTO ตรงกลางไม่มีช่อง</b>
+    /// ⇒ การแก้ผังบัญชีในฟอร์มไม่เคยถูกบันทึกเป็นตัวอย่างสอนเลย</para></summary>
+    Guid? GlAccountAiFeedbackId = null);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);
