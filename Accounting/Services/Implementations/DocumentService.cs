@@ -5398,6 +5398,11 @@ public partial class DocumentService : IDocumentService
             .Where(l => l.DocumentId == doc.Id).ToListAsync();
         await RecordLineAccountFeedbackAsync(approvedLines);
 
+        // ปิดลูปที่ "เอกสารที่ลงจริง" ไม่ใช่ "ช่องบนสแกน" (สถาปัตยกรรมเป้าหมาย D3)
+        // — ผู้ใช้เปิด Draft แล้วแก้ชื่อผู้ขาย/วันที่/ยอด/รหัสสาขาก่อนอนุมัติได้
+        // เดิมไม่มีใครบอกนักเรียนเลย ⇒ เรียนจากคำตอบที่ผู้ใช้ปฏิเสธไปแล้ว
+        await SyncScanToPostedDocumentAsync(companyId, doc, approvedLines);
+
         var approved = await GetDocumentAsync(companyId, documentId);
 
         // Auto-feed ProjectCostEntry when an approved EXPENSE-side
@@ -11716,6 +11721,109 @@ public partial class DocumentService : IDocumentService
     /// AccountCode ของ user choice กับ AiPrimaryAnswer แล้วเรียก
     /// RecordUserChoiceAsync (acceptedAi=true ถ้าตรง, false ถ้าแก้). ทนต่อ
     /// recorder/FX ปิด (graceful degradation เงียบ).</summary>
+    /// <summary>อัปเดตแถวสแกนต้นทางให้ตรงกับ "เอกสารที่อนุมัติแล้ว"
+    /// (สถาปัตยกรรมเป้าหมาย D3 · กฎเหล็ก #1 ขั้น CAPTURE)
+    ///
+    /// <para>ทำไม: นักเรียนทุกตัวที่เรียนจากไปป์ไลน์ OCR
+    /// (<c>OcrFullReviewDistillationModel</c> · <c>LineSplitDistillationModel</c> ·
+    /// ตัวเรียนรู้ผู้ขาย/หมวดรายจ่าย) mine จาก <c>OcrScanResult</c> ที่
+    /// <c>CreatedDocumentId != null</c> — ซึ่งเป็นค่า ณ ตอน<b>กดสร้าง</b> (ยัง Draft)
+    /// ผู้ใช้ที่เปิด Draft แล้วแก้ก่อนอนุมัติจึงไม่เคยถูกนับเป็นการสอนเลย</para>
+    ///
+    /// <para>ตัวตัดสินว่า "ช่องไหนควรเปลี่ยน" อยู่ใน <c>Helpers/OcrPostedTruth</c>
+    /// (pure + มีเทสต์) — ห้ามเขียนกติกาเทียบค่าเองที่นี่ · best-effort เสมอ
+    /// (ล้มแล้วต้องไม่ทำให้การอนุมัติล้ม)</para></summary>
+    private async Task SyncScanToPostedDocumentAsync(
+        Guid companyId, Document doc, List<DocumentLine> approvedLines)
+    {
+        try
+        {
+            var scan = await _db.Set<OcrScanResult>()
+                .FirstOrDefaultAsync(s => s.CompanyId == companyId
+                    && s.CreatedDocumentId == doc.Id && !s.IsDeleted);
+            if (scan == null) return;
+
+            var isPurchase = Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType);
+            var contact = doc.ContactId != Guid.Empty
+                ? await _db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
+                    .Select(c => new { c.Name, c.TaxId })
+                    .FirstOrDefaultAsync()
+                : null;
+
+            var current = new Accounting.Helpers.OcrPostedSnapshot(
+                VendorName: scan.ExtractedVendorName,
+                VendorTaxId: scan.ExtractedVendorTaxId,
+                VendorBranchCode: scan.VendorBranchCode,
+                DocumentNumber: scan.ExtractedDocumentNumber,
+                DocumentDate: scan.ExtractedDate,
+                SubTotal: scan.ExtractedSubTotal,
+                VatAmount: scan.ExtractedVatAmount,
+                TotalAmount: scan.ExtractedTotalAmount,
+                TargetDocumentType: scan.TargetDocumentType);
+
+            // ยอด 0 บนเอกสารแปลว่า "ไม่ได้กรอก" มากกว่า "เป็นศูนย์จริง" ⇒ ส่ง null
+            // ให้ helper แปลว่าไม่แตะ (ห้ามล้างค่าที่สแกนอ่านมาได้ด้วยศูนย์)
+            var posted = new Accounting.Helpers.OcrPostedSnapshot(
+                VendorName: contact?.Name,
+                VendorTaxId: contact?.TaxId,
+                // รหัสสาขา/เลขใบกำกับของผู้ขาย มีความหมายเฉพาะฝั่งซื้อ
+                VendorBranchCode: isPurchase ? doc.SupplierBranchCode : null,
+                DocumentNumber: isPurchase ? doc.SupplierInvoiceNumber : null,
+                DocumentDate: doc.DocumentDate,
+                SubTotal: doc.SubTotal > 0m ? doc.SubTotal : null,
+                VatAmount: doc.VatAmount > 0m ? doc.VatAmount : null,
+                TotalAmount: doc.TotalAmount > 0m ? doc.TotalAmount : null,
+                TargetDocumentType: doc.DocumentType.ToString());
+
+            var change = Accounting.Helpers.OcrPostedTruth.Diff(current, posted);
+            var linesJson = BuildScanItemsJsonFromLines(approvedLines);
+            var linesChanged = linesJson != null && linesJson != scan.ExtractedItemsJson;
+            if (!change.HasChanges && !linesChanged) return;
+
+            if (change.VendorName != null) scan.ExtractedVendorName = change.VendorName;
+            if (change.VendorTaxId != null) scan.ExtractedVendorTaxId = change.VendorTaxId;
+            if (change.VendorBranchCode != null) scan.VendorBranchCode = change.VendorBranchCode;
+            if (change.DocumentNumber != null) scan.ExtractedDocumentNumber = change.DocumentNumber;
+            if (change.DocumentDate != null) scan.ExtractedDate = change.DocumentDate;
+            if (change.SubTotal != null) scan.ExtractedSubTotal = change.SubTotal;
+            if (change.VatAmount != null) scan.ExtractedVatAmount = change.VatAmount;
+            if (change.TotalAmount != null) scan.ExtractedTotalAmount = change.TotalAmount;
+            if (change.TargetDocumentType != null) scan.TargetDocumentType = change.TargetDocumentType;
+            if (linesChanged) scan.ExtractedItemsJson = linesJson;
+
+            await _db.SaveChangesAsync();
+            _logger.LogInformation(
+                "ปิดลูปสอนจากเอกสารที่อนุมัติ {Doc} → sync สแกน {Scan} (ผู้ใช้แก้ก่อนอนุมัติ)",
+                doc.DocumentNumber, scan.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "sync สแกนกับเอกสารที่อนุมัติไม่สำเร็จ (doc {DocId})", doc.Id);
+        }
+    }
+
+    /// <summary>แปลงบรรทัดของเอกสารที่อนุมัติแล้วกลับเป็นรูป
+    /// <c>OcrScanResult.ExtractedItemsJson</c> เพื่อให้นักเรียนแตกบรรทัดเรียนจาก
+    /// ชุดบรรทัดที่ <b>ลงบัญชีจริง</b> · คืน <c>null</c> เมื่อไม่มีบรรทัด</summary>
+    private static string? BuildScanItemsJsonFromLines(List<DocumentLine> lines)
+    {
+        var usable = lines
+            .Where(l => !string.IsNullOrWhiteSpace(l.Description))
+            .OrderBy(l => l.LineOrder)
+            .ToList();
+        if (usable.Count == 0) return null;
+        return System.Text.Json.JsonSerializer.Serialize(usable.Select(l => new
+        {
+            Description = l.Description,
+            Quantity = l.Quantity,
+            Unit = l.Unit,
+            UnitPrice = l.UnitPrice,
+            Amount = l.Amount,
+            VatRate = l.VatRate,
+        }));
+    }
+
     private async Task RecordLineAccountFeedbackAsync(IEnumerable<DocumentLine> lines, CancellationToken ct = default)
     {
         if (_feedbackRecorder == null) return;

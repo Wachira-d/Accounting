@@ -558,6 +558,13 @@ builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistilla
 // → เขียน student แบบ bespoke ที่เรียน "รายช่อง" แทน single-answer (ดูไฟล์นั้น)
 builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
     Accounting.Services.Ai.Distillation.OcrFullReviewDistillationModel>();
+// นักเรียนของ OcrLineItemSplit — AiFeatureKey ตัวสุดท้ายในไปป์ไลน์ OCR ที่ยังไม่มี
+// student (กฎเหล็ก #1 ข้อ 2 feature parity) ⇒ ปิด provider แล้วกระดาษที่ engine อ่าน
+// ตารางไม่ออกจะได้บรรทัดสรุปใบเดียวตลอดกาล = ขัดกฎเหล็ก #3 ข้อ 6 ตรง ๆ.
+// ตอบสองชั้น: จำโครงบิลประจำที่ผู้ใช้ยืนยันแล้ว → กติกา RawTextLineSplitter
+// (ตอบได้ตั้งแต่ใบแรกของ tenant ใหม่ = cold-start ไม่ว่างเปล่า)
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.LineSplitDistillationModel>();
 foreach (var genericFeatureKey in new[]
 {
     Accounting.Models.Enums.AiFeatureKey.DocumentTypeClassification,

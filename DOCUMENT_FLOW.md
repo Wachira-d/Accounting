@@ -4674,3 +4674,14 @@ _Last verified against codebase: 2026-09-06 (รอบ 139 — **ตรวจย
 ฝั่งซื้อโยน `OCR-JE-NO-WHT-LIABILITY` เมื่อผังไม่มี 21916/21917 แทนที่จะทิ้ง
 บรรทัดหักภาษีเงียบ ๆ · คำตอบของ local model ถูกใช้ในทุกเส้นที่ AI ไม่พร้อม
 ผ่านธง `AiResponse.FromLocalModel` (kill-switch กฎเหล็ก #1 ข้อ 5))_
+
+
+---
+
+_Last verified against codebase: 2026-09-06 (รอบ 140 — **ปิดลูปการสอนที่เอกสารที่ลงจริง**:
+`ApproveDocumentAsync` เรียก `SyncScanToPostedDocumentAsync` ต่อจาก
+`RecordLineAccountFeedbackAsync` — sync แถว `OcrScanResult` ต้นทาง (ค้นด้วย
+`CreatedDocumentId`) ให้ตรงกับเอกสารที่อนุมัติ รวม `ExtractedItemsJson` จากบรรทัดที่ลงจริง
+⇒ นักเรียนที่ mine จาก "สแกนที่สร้างเอกสารสำเร็จ" ได้ความจริงหลังผู้ใช้แก้ Draft.
+ตัวตัดสินช่องที่เปลี่ยนอยู่ใน `Helpers/OcrPostedTruth` (ห้ามลบค่าเดิมด้วยช่องว่าง/ศูนย์ ·
+อนุมัติซ้ำไม่เปลี่ยนอะไร) · best-effort: ล้มแล้วการอนุมัติต้องไม่ล้ม)_
