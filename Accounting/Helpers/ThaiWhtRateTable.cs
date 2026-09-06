@@ -76,6 +76,23 @@ public static class ThaiWhtRateTable
     };
 
     /// <summary>หาตามรหัส หรือตามมาตรา ("40(5)") — คืน null เมื่อไม่รู้จัก</summary>
+    /// <summary>อัตราหัก ณ ที่จ่ายที่กฎหมายกำหนด (ท.ป.4/2528 + §3 เตรส) —
+    /// ใช้ "snap" อัตราที่อนุมานจากยอดบนกระดาษเข้าหาค่าที่เป็นไปได้จริง
+    ///
+    /// <para>อยู่ที่นี่ที่เดียวเพื่อไม่ให้มีลิสต์อัตราชุดที่สอง (ตารางกฎหมาย
+    /// ที่คัดลอกไปเขียนใหม่ = เตือน/คิดผิดตลอดไป — บทเรียนใน CLAUDE.md)</para></summary>
+    public static readonly decimal[] StatutoryRates = { 1m, 2m, 3m, 5m, 10m, 15m };
+
+    /// <summary>ดึงอัตราตามกฎหมายที่ใกล้ที่สุดเมื่อห่างไม่เกิน
+    /// <paramref name="tolerance"/> — ไกลกว่านั้นคืน <c>null</c> (ไม่ใช่อัตราของไทย
+    /// = อย่าเดา ปล่อยให้ด่านตรวจเตือนแทน)</summary>
+    public static decimal? SnapToStatutory(decimal? rate, decimal tolerance = 0.15m)
+    {
+        if (rate is not decimal r || r <= 0m) return null;
+        var nearest = StatutoryRates.OrderBy(v => Math.Abs(v - r)).First();
+        return Math.Abs(nearest - r) <= tolerance ? nearest : null;
+    }
+
     public static IncomeType? Find(string? codeOrSection)
     {
         if (string.IsNullOrWhiteSpace(codeOrSection)) return null;

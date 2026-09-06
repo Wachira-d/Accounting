@@ -577,15 +577,35 @@ public class OcrService : IOcrService
             var whtRatePct = extractedData.HasWht && extractedData.WhtRate.HasValue
                 ? extractedData.WhtRate.Value
                 : (decimal?)null;
-            decimal? whtAmt = null;
-            // Calculate expected WHT from subTotal × rate when not extracted (for sanity validation)
-            if (whtRatePct.HasValue && extractedData.SubTotal.HasValue)
-                // AwayFromZero matches the convention used throughout the rest
-                // of the system (PayrollService, TaxService, JE balance check).
-                // .NET's default Math.Round uses banker's rounding which would
-                // shift the WHT amount by 1 satang on half-baht boundaries and
-                // break ภงด.3 cross-tick reconciliation.
-                whtAmt = Math.Round(extractedData.SubTotal.Value * whtRatePct.Value / 100m, 2, MidpointRounding.AwayFromZero);
+            // ★ ยอดหัก ณ ที่จ่ายที่ส่งให้ด่านตรวจ ต้องเป็น **ยอดที่พิมพ์บนกระดาษ**
+            //
+            // ⚠️ เดิมบรรทัดนี้ **คำนวณ** whtAmt = SubTotal × Rate/100 แล้วส่งเข้าไป
+            // ให้ด่านที่ตรวจว่า "WhtAmount ≈ SubTotal × Rate/100" ⇒ ด่านเทียบสูตร
+            // กับผลของสูตรตัวเอง ⇒ **ผ่านทุกครั้งตลอดกาล** = ด่านที่ไม่มีอยู่จริง
+            // (ผลตรวจ 2026-09-06 · T2-02) · ตอนนี้อ่านจากกระดาษผ่าน
+            // Helpers/PaperWhtReader — ไม่มีบนกระดาษ = null (ด่านข้ามไป ไม่แต่งยอด)
+            var paperWht = Accounting.Helpers.PaperWhtReader.Read(
+                extractedText, extractedData.SubTotal);
+            decimal? whtAmt = paperWht.Amount;
+            // กระดาษบอกยอดแต่ไม่บอกอัตรา → อนุมานอัตราจากยอดจริง (แล้ว
+            // NormalizeWhtRate จะ snap เข้าอัตราตามกฎหมายให้อีกชั้น)
+            if (!whtRatePct.HasValue && paperWht.Amount is > 0m
+                && extractedData.SubTotal is > 0m)
+            {
+                var derived = Math.Round(
+                    paperWht.Amount.Value / extractedData.SubTotal.Value * 100m, 2,
+                    MidpointRounding.AwayFromZero);
+                extractedData.HasWht = true;
+                // เขียนลง WhtRate เฉพาะเมื่อ snap เข้าอัตราตามกฎหมายได้ —
+                // SmartFieldExtractor.NormalizeWhtRate ทำงานไปก่อนหน้านี้แล้ว
+                // ค่าดิบอย่าง 3.21% จึงจะค้างอยู่ถาวรถ้าเขียนลงไปตรง ๆ
+                // (อัตราที่ snap ไม่ได้ = ผู้ขายคิดผิดฐาน → ปล่อยให้ด่านเตือน)
+                whtRatePct = Accounting.Helpers.ThaiWhtRateTable.SnapToStatutory(derived) ?? derived;
+                if (Accounting.Helpers.ThaiWhtRateTable.SnapToStatutory(derived) is decimal snapped)
+                    extractedData.WhtRate ??= snapped;
+            }
+            // กระดาษบอกอัตราแต่ไม่บอกยอด → ไม่มีอะไรให้ตรวจ (ห้ามคำนวณยอดแล้ว
+            // เอาไปตรวจกับสูตรเดิม — นั่นคือบั๊กที่เพิ่งแก้)
 
             var gatewayResult = OcrConfidenceGateway.Validate(
                 extractedData.Confidence,

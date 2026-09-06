@@ -204,15 +204,27 @@ public static class OcrConfidenceGateway
             }
         }
 
-        // 8. WHT formula sanity: WhtAmount ≈ SubTotal × WhtRate / 100
+        // 8. WHT formula sanity: ยอดที่**พิมพ์บนกระดาษ** ≈ SubTotal × Rate / 100
+        //
+        // ⚠️ ด่านนี้มีความหมายก็ต่อเมื่อ <paramref name="whtAmount"/> เป็นยอดที่
+        // **อ่านมาจากกระดาษ** — ผู้เรียกเคยส่งผลของสูตรเดียวกันนี้เข้ามา ทำให้
+        // เทียบสูตรกับตัวเอง ⇒ ผ่านทุกครั้งตลอดกาล (ผลตรวจ 2026-09-06 · T2-02)
+        // ดู Helpers/PaperWhtReader ที่ฝั่งผู้เรียก
+        //
+        // เคสที่ด่านนี้จับได้จริง: ผู้ขายคิด 3% จากยอด**รวม VAT** (ต้องคิดจากยอด
+        // ก่อน VAT) · OCR อ่านอัตราเป็น 5% ทั้งที่กระดาษเขียน 3% · ยอดหักถูก
+        // คีย์มือผิดหลัก
         if (whtAmount.HasValue && whtRatePercent.HasValue && subTotal.HasValue
             && subTotal.Value > 0 && whtRatePercent.Value > 0)
         {
-            var expectedWht = Math.Round(subTotal.Value * whtRatePercent.Value / 100m, 2);
+            var expectedWht = Math.Round(subTotal.Value * whtRatePercent.Value / 100m, 2,
+                MidpointRounding.AwayFromZero);
             var diff = Math.Abs(expectedWht - whtAmount.Value);
             if (diff > config.MathTolerance)
             {
-                warnings.Add($"ภาษีหัก ณ ที่จ่ายไม่ตรงสูตร: {whtRatePercent}% × {subTotal:N2} = {expectedWht:N2} ≠ {whtAmount:N2}");
+                warnings.Add($"ภาษีหัก ณ ที่จ่ายบนกระดาษ {whtAmount:N2} ไม่ตรงสูตร "
+                    + $"({whtRatePercent}% × {subTotal:N2} = {expectedWht:N2}) — "
+                    + "ตรวจว่าอัตราถูกอ่านถูกไหม และผู้ขายคิดจากยอดก่อน VAT หรือหลัง VAT");
                 penalty += config.MathPenalty * 0.5m;
             }
         }
