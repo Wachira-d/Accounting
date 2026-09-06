@@ -3036,7 +3036,27 @@ public class AiSuggestionController : ControllerBase
         Guid companyId, Guid scanResultId, CancellationToken ct)
     {
         var r = await _advAi.ReviewOcrAsync(companyId, scanResultId, ct);
-        return Ok(new ApiResponse<object>(true, ToAdvancedDto(r)));
+
+        // ── ด่านกันคำตอบที่แต่งขึ้นก่อนให้แตะฟอร์ม (T3-07) ───────────────────
+        // เดิมหน้าเว็บเขียนคำตอบ AI ลงช่องตรง ๆ ทุกช่อง **รวมยอดเงินและเลขผู้เสียภาษี**
+        // โดยเซิร์ฟเวอร์ตรวจแค่ว่า JSON มี key ครบไหม ⇒ ตัวเลขที่โมเดลแต่งกลายเป็นยอด
+        // บนใบกำกับ §86/4 ด้วยการกดปุ่มเดียว. ตัวตัดสินต้องอยู่ที่เซิร์ฟเวอร์
+        // (Helpers/OcrReviewGuard) — หน้าเว็บได้แค่ "ช่องที่ผ่าน" กับ "ช่องที่ไม่ผ่าน
+        // + เหตุผล" ไปแสดงเป็นคำแนะนำ
+        var scanAmounts = await _db.Set<Models.Entities.OcrScanResult>().AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.Id == scanResultId)
+            .Select(x => new { x.ExtractedSubTotal, x.ExtractedVatAmount, x.ExtractedTotalAmount })
+            .FirstOrDefaultAsync(ct);
+        var guard = Helpers.OcrReviewGuard.Filter(r.StructuredJson,
+            scanAmounts?.ExtractedSubTotal, scanAmounts?.ExtractedVatAmount, scanAmounts?.ExtractedTotalAmount);
+
+        var dto = ToAdvancedDto(r);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            review = dto,
+            accepted = guard.Accepted,
+            rejected = guard.Rejected.Select(x => new { field = x.Field, value = x.Value, reason = x.Reason }),
+        }));
     }
 
     /// <summary>

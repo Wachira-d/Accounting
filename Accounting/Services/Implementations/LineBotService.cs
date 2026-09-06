@@ -540,9 +540,25 @@ public class LineBotService : ILineBotService
                     text = "📌 บิลไม่มีเลขผู้เสียภาษี — ออกใบรับรองแทนใบเสร็จรับเงินให้ พร้อมแนบรูปเป็นหลักฐาน (§65 ตรี)",
                 });
 
-            var buttons = new List<object>
-            {
-                new
+            // ── คำเตือนที่เซิร์ฟเวอร์ตัดสินไว้แล้ว ต้องอยู่บนการ์ดด้วย ──────────
+            // ⚠️ ที่มา (ผลตรวจ 2026-09-06 · T4-15): การ์ดนี้ให้ "อนุมัติ 1 แตะ" โดย
+            // **ไม่แสดง §82/5 / Σ-GAP / หน้าที่หัก ณ ที่จ่าย เลยสักบรรทัด** ⇒ ผู้ใช้
+            // LINE ตัดสินใจจากข้อมูลน้อยกว่าผู้ใช้เว็บบนกระดาษใบเดียวกัน
+            var lineWarnings = OcrScanWarnings(r.ProcessingNotes);
+            foreach (var w in lineWarnings.Take(3))
+                bodyRows.Add(new
+                {
+                    type = "text", size = "xs", color = "#b45309", wrap = true, margin = "sm",
+                    text = "⚠️ " + w,
+                });
+
+            // ตัวตัดสิน "พร้อมลงบัญชีเองไหม" ตัวเดียวกับเว็บ (Helpers/OcrPostingReadiness)
+            var readiness = Accounting.Helpers.OcrPostingReadiness.Evaluate(
+                r.ProcessingNotes, r.ExtractedDate != null);
+
+            var buttons = new List<object>();
+            if (readiness.CanAutoApprove)
+                buttons.Add(new
                 {
                     type = "button", style = "primary", color = "#16a34a", height = "sm",
                     action = new
@@ -551,8 +567,13 @@ public class LineBotService : ILineBotService
                         data = $"approve:{r.CreatedDocumentId!.Value}",
                         displayText = "อนุมัติเอกสาร",
                     }
-                },
-            };
+                });
+            else
+                bodyRows.Add(new
+                {
+                    type = "text", size = "xs", color = "#b91c1c", wrap = true, margin = "md",
+                    text = "⛔ ยังอนุมัติจากแชทไม่ได้ — " + readiness.Reason,
+                });
             if (!string.IsNullOrEmpty(baseUrl))
                 buttons.Add(new
                 {
@@ -563,6 +584,10 @@ public class LineBotService : ILineBotService
                         uri = $"{baseUrl}/pages/document-scan.html?reviewScan={r.Id}",
                     }
                 });
+
+            // Flex ที่ไม่มีปุ่มเลย = การ์ดที่กดอะไรไม่ได้ → ตกไปใช้ข้อความธรรมดา
+            // (ผู้ใช้ต้องได้คำตอบเสมอ และต้องมีทางไปต่อ)
+            if (buttons.Count == 0) return false;
 
             var bubble = new
             {
@@ -578,6 +603,28 @@ public class LineBotService : ILineBotService
             _logger.LogWarning(ex, "LINE flex card failed — falling back to text reply");
             return false;
         }
+    }
+
+    /// <summary>คำเตือนจากแท็กที่เซิร์ฟเวอร์ใส่ไว้ใน <c>ProcessingNotes</c> —
+    /// ใช้แท็กชุดเดียวกับหน้าเว็บ (<c>Page.parseScanNotes</c>) เพื่อไม่ให้สองช่องทาง
+    /// เห็นข้อมูลคนละชุดบนกระดาษใบเดียวกัน</summary>
+    internal static List<string> OcrScanWarnings(string? processingNotes)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrWhiteSpace(processingNotes)) return result;
+        string[] tags = { "[VAT-CLAIM]", "[Σ-GAP]", "[WHT-SUGGEST]", "[TAX-INV-PENDING]", "[PP36]", "[DATE-UNKNOWN]", "[FX-UNKNOWN]" };
+        foreach (var line in processingNotes.Split('\n'))
+        {
+            var t = line.Trim();
+            foreach (var tag in tags)
+            {
+                if (!t.StartsWith(tag, StringComparison.Ordinal)) continue;
+                var text = t[tag.Length..].Trim();
+                if (text.Length > 0) result.Add(text.Length > 160 ? text[..160] + "…" : text);
+                break;
+            }
+        }
+        return result;
     }
 
     /// <summary>postback จากปุ่มใน Flex card — "approve:{documentId}".

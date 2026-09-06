@@ -1167,6 +1167,10 @@ const Layout = {
     { section: 'เครื่องมือ: AI · OCR · นำเข้าข้อมูล', icon: '🤖', description: 'สแกนเอกสาร · AI ช่วยงาน · นำเข้า/ส่งออก · ย้ายจากระบบเดิม' },
     { id: 'document-scan', label: 'สแกนเอกสาร (OCR)', icon: '📸', href: '/pages/document-scan.html', feature: 'AI_Features', _i18nKey: 'nav.documentScan',
       description: 'สแกนใบเสร็จ-ใบกำกับด้วยกล้อง · Azure DI + Tesseract · RD compliance check' },
+    // ⚠️ หน้านี้มีมาตลอดแต่ **ไม่มีทางเข้าจากเมนูใดทั้งระบบ** (ผลตรวจ 2026-09-06 · T4-14)
+    // ทั้งที่เป็นปลายทางของทุกใบที่ระบบตัดสินเองไม่ได้ — ผู้ใช้จึงไม่มีวันเห็นคิวที่ค้าง
+    { id: 'ocr-review-queue', label: 'คิวรอตรวจ (OCR)', icon: '📋', href: '/pages/review-queue.html', feature: 'AI_Features',
+      description: 'ใบที่ระบบไม่มั่นใจ — ยอดไม่ตรง · อ่านวันที่ไม่ได้ · เคลมภาษีซื้อไม่ได้ · รอคนตัดสิน' },
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools',
       description: 'auto-categorize · anomaly · cash-flow forecast · vendor canon · GL suggestion' },
     { id: 'assistant', label: 'ผู้ช่วยบัญชี AI', icon: '💬', href: '/pages/assistant.html', feature: 'AI_Features',

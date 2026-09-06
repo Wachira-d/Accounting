@@ -122,7 +122,10 @@ public record OcrResultResponse(
     /// — ข้อเสนอ ไม่ใช่ค่าที่ระบบตั้งให้ (<c>WhtRate</c> = ยอดที่พิมพ์บนกระดาษ)</summary>
     decimal? SuggestedWhtRate = null,
     /// <summary>รหัสประเภทเงินได้ ม.40 — บังคับก่อนออก 50 ทวิ/ภ.ง.ด.3/53 (T4-06)</summary>
-    string? WhtIncomeTypeCode = null);
+    string? WhtIncomeTypeCode = null,
+    /// <summary>หมายเหตุ/เหตุผลทางธุรกิจที่ผู้ใช้เขียน (§65 ตรี(3)/(14)) — ต้อง echo
+    /// กลับมาให้ฟอร์ม hydrate ได้ ไม่งั้น "เปิดแก้แล้วบันทึก ค่าหายเงียบ ๆ" (T4-10)</summary>
+    string? UserNotes = null);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);

@@ -1392,6 +1392,41 @@
        * `'อนุมัติไม่สำเร็จ'` ที่เซิร์ฟเวอร์ไม่เคยเขียน ⇒ ใบที่ยังเป็น Draft ถูก
        * รายงานว่า "ลงบัญชีแล้ว" (ผลตรวจ 2026-09-06 · T4-01/02/03)
        */
+      /// ตารางประเภทเงินได้ ม.40 — **โหลดจากเซิร์ฟเวอร์เสมอ**
+      /// (กติกา: ตารางกฎหมายมีที่เดียวใน Helpers/ThaiWhtRateTable แล้วหน้าเว็บสร้าง UI
+      ///  จาก endpoint — ห้ามพิมพ์อัตราซ้ำใน JS เพราะจะ drift แล้วยอดหักผิดตั้งแต่ต้นทาง)
+      _whtIncomeTypes: null,
+
+      async loadWhtIncomeTypes() {
+        if (this._whtIncomeTypes) return this._whtIncomeTypes;
+        try {
+          const r = await API.get('/api/reference/income-types');
+          const rows = (r && r.data) || [];
+          this._whtIncomeTypes = rows.map(x => ({
+            code: x.code ?? x.Code,
+            name: x.name ?? x.Name,
+            taxSection: x.taxSection ?? x.TaxSection,
+          })).filter(x => x.code);
+        } catch { this._whtIncomeTypes = []; }
+        return this._whtIncomeTypes;
+      },
+
+      /// ผู้ใช้ยอมรับอัตราที่กฎหมายกำหนด — ระบบไม่ติ๊กให้เอง (หักเกินก็ผิด)
+      applySuggestedWht() {
+        const rate = this._reviewScan && this._reviewScan.suggestedWhtRate;
+        if (!rate) return;
+        const cb = document.getElementById('revHasWht');
+        const sel = document.getElementById('revWhtRate');
+        if (cb) { cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); }
+        if (sel) {
+          sel.disabled = false;
+          sel.value = String(rate);
+          sel.dataset.userTouched = '1';
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        Layout.toast(`ตั้งหัก ณ ที่จ่าย ${rate}% ตามที่กฎหมายกำหนด — ตรวจประเภทเงินได้ด้วย`, 'success');
+      },
+
       parseScanNotes(notes) {
         const t = String(notes || '');
         const pick = (tag) =>
@@ -1946,6 +1981,9 @@
         if (!api) return;
 
         try {
+          // ตารางประเภทเงินได้ต้องพร้อม**ก่อน**วาดฟอร์ม ไม่งั้น dropdown ว่างในรอบแรก
+          // (กฎ "ห้ามใครมาก่อนชนะ" — โหลดขนานแล้ววาดก่อนธงมาถึงคือบั๊กเดิม)
+          await this.loadWhtIncomeTypes();
           const res = await api.getOcrResult(scanId);
           const scan = res.data || res;
           this._reviewScan = scan;
@@ -2393,6 +2431,33 @@
                   </select>
                 </div>
               </div>
+              <!-- ประเภทเงินได้ ม.40 — บังคับก่อนออก 50 ทวิ/ภ.ง.ด.3/53 (T4-06) -->
+              <div class="review-field">
+                <label>ประเภทเงินได้ (ม.40)</label>
+                <select class="form-input" id="revWhtIncomeType">
+                  <option value="">— ไม่ระบุ —</option>
+                  ${(Page._whtIncomeTypes || []).map(t => `
+                    <option value="${Layout.esc(t.code)}" ${scan.whtIncomeTypeCode === t.code ? 'selected' : ''}>
+                      ${Layout.esc(t.taxSection)} ${Layout.esc(t.name)}</option>`).join('')}
+                </select>
+              </div>
+              ${scan.suggestedWhtRate && !scan.hasWht ? `
+              <div style="margin:6px 0;padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:12px;color:#92400e;line-height:1.6">
+                ⚖️ หมวดรายจ่ายนี้กฎหมายให้ <strong>ผู้จ่าย</strong> หัก ณ ที่จ่าย
+                <strong>${Layout.esc(String(scan.suggestedWhtRate))}%</strong>
+                — กระดาษไม่ได้พิมพ์ไว้ ระบบจึงไม่หักให้
+                <button type="button" class="btn btn-sm btn-outline" style="margin-left:6px"
+                        onclick="Page.applySuggestedWht()">ใช้อัตรานี้</button>
+                <div style="margin-top:3px;opacity:.85">ไม่หัก = ผู้จ่ายรับผิด ม.54 + เงินเพิ่ม 1.5%/เดือน (ท.ป.4/2528)</div>
+              </div>` : ''}
+              <!-- §65 ตรี(3)/(14): เหตุผลว่าเกี่ยวกับกิจการ — เดิมเซิร์ฟเวอร์รับช่องนี้
+                   และ persist ให้แล้ว แต่หน้าเว็บ**ไม่มีช่องให้กรอกเลย** (T4-10) -->
+              <div class="review-field" style="grid-column:1/-1">
+                <label>หมายเหตุ / เหตุผลทางธุรกิจ</label>
+                <input type="text" class="form-input" id="revUserNotes"
+                       placeholder="เช่น เลี้ยงรับรองลูกค้าโครงการ A — ใช้ประกอบกิจการ (§65 ตรี)"
+                       value="${Layout.esc(scan.userNotes || '')}">
+              </div>
               ${scan.paymentTermsDays ? `<div class="review-field"><label>เงื่อนไขชำระ</label><span class="form-input" style="background:var(--gray-50)">${scan.paymentTermsDays} วัน</span></div>` : ''}
               ${scan.extractedItems && scan.extractedItems.length > 0 ? `
               <div style="margin-top:8px">
@@ -2609,6 +2674,21 @@
             createBtn.className = 'btn btn-primary';
           }
 
+          // ── จำว่าผู้ใช้แตะช่องไหนแล้ว (กฎ "ค่าผู้ใช้ชนะเสมอ") ──
+          // ผูกที่ **กล่องแม่** ครั้งเดียว — innerHTML ที่วาดใหม่ทุกครั้งจะล้าง
+          // dataset ของลูกให้เอง ⇒ เปิดสแกนใบใหม่ = เริ่มนับใหม่โดยอัตโนมัติ
+          {
+            const rb = document.getElementById('reviewBody');
+            if (rb && rb.dataset.touchWired !== '1') {
+              rb.dataset.touchWired = '1';
+              rb.addEventListener('input', (e) => {
+                const t = e.target;
+                if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) {
+                  t.dataset.userTouched = '1';
+                }
+              });
+            }
+          }
           Layout.openModal('reviewModal');
 
           // Enter = ยืนยัน + ลงบัญชี (กฎเหล็ก #3 ข้อ 4: default action = approve)
@@ -2975,7 +3055,13 @@
             API.post(`/api/companies/${cid}/ai/ocr/${scanId}/ai-review`).catch(e => ({ data: null, err: e })),
             API.post(`/api/companies/${cid}/ai/ocr/${scanId}/conversion-suggestions`).catch(e => ({ data: null, err: e })),
           ]);
-          const review = reviewRes && reviewRes.data ? reviewRes.data : null;
+          // เซิร์ฟเวอร์กรองคำตอบ AI ให้แล้ว (Helpers/OcrReviewGuard) — คืนเป็น
+          // { review, accepted, rejected } · รูปเก่า (dto ตรง ๆ) ยังรองรับเพื่อไม่ให้
+          // หน้าเว็บที่ยังไม่รีเฟรชพัง
+          const revPayload = reviewRes && reviewRes.data ? reviewRes.data : null;
+          const review = revPayload && revPayload.review ? revPayload.review : revPayload;
+          const aiAccepted = (revPayload && revPayload.accepted) || null;
+          const aiRejected = (revPayload && revPayload.rejected) || [];
           const conv = convRes && convRes.data ? convRes.data : null;
           if (!review && !conv) {
             Layout.toast('AI ไม่ตอบ — ใช้ข้อมูลเดิมต่อ', 'warning');
@@ -2990,15 +3076,17 @@
           // Apply corrections: parse review.structured (JSON string of
           // the full AI response) — corrections field carries the field-
           // level overrides. Apply them to the visible form inputs.
-          let corrections = null;
           if (review && review.structured) {
-            try {
-              const parsed = JSON.parse(review.structured);
-              corrections = parsed.corrections || null;
-              this._lastAiReview = parsed;
-            } catch (e) { /* tolerate malformed */ }
+            try { this._lastAiReview = JSON.parse(review.structured); }
+            catch (e) { /* tolerate malformed */ }
           }
-          if (corrections) this._applyAiCorrections(corrections);
+          // ⚠️ ห้ามอ่าน corrections ดิบจาก structured อีกต่อไป — ใช้เฉพาะช่องที่
+          // เซิร์ฟเวอร์รับรองแล้ว (ยอดเงินต้องผ่านสามเหลี่ยม · เลขภาษีต้องผ่าน mod-11)
+          if (aiAccepted) this._applyAiCorrections(aiAccepted);
+          if (aiRejected.length) {
+            aiRejected.forEach(x => Layout.toast(
+              `⚠️ AI เสนอ "${x.field}" = ${x.value} แต่ไม่ผ่านด่านตรวจ: ${x.reason}`, 'warning', 9000));
+          }
           // ── เก็บ feedbackId ไว้ปิด loop ตอนผู้ใช้กดบันทึก/สร้างเอกสาร ──
           // ⚠️ เดิม `feedbackId` ที่ AI คืนมาถูก**ทิ้งทันที** ⇒ AiFeedbackTrainingJob
           // (ซึ่ง mine เฉพาะแถวที่ UserChosenAt != null) ไม่เคยได้ข้อมูลจาก
@@ -3042,13 +3130,19 @@
         // เจอเพราะ audit prompt: OcrReviewPrompt สั่งให้โมเดลแก้เลขผู้เสียภาษี
         // แต่ input ที่ให้ไปถูกปิดบัง — คำตอบจึงเป็นค่าปิดบังโดยธรรมชาติ
         const looksMasked = (v) => typeof v === 'string' && /x{3,}/i.test(v);
+        // ── ค่าของผู้ใช้ชนะเสมอ (กฎเหล็ก #4 A "ห้ามใครมาก่อนชนะ") ──
+        // เดิมปุ่มนี้ทับทุกช่องรวมช่องที่ผู้ใช้เพิ่งพิมพ์แก้ไปเมื่อสิบวินาทีก่อน
         const set = (id, val) => {
           if (looksMasked(val)) return;   // ค่าที่ถูกปิดบัง = ไม่ใช่ข้อมูลจริง
           const el = document.getElementById(id);
-          if (el && val != null && String(val).trim() !== '') {
-            el.value = val;
-            el.dispatchEvent(new Event('change', { bubbles: true }));
+          if (!el || val == null || String(val).trim() === '') return;
+          if (el.dataset.userTouched === '1') {
+            Layout.toast(`คง "${el.value}" ที่คุณกรอกไว้ (AI เสนอ ${val})`, 'info', 6000);
+            return;
           }
+          el.value = val;
+          el.dataset.autoSrc = 'ai';
+          el.dispatchEvent(new Event('change', { bubbles: true }));
         };
         set('revDocNumber', c.document_number);
         set('revDate', c.document_date);
@@ -3117,6 +3211,10 @@
           creditAccountCode: v('revCreditAccount'),
           hasWht: document.getElementById('revHasWht')?.checked || false,
           whtRate: f('revWhtRate'),
+          // ⚠️ เพิ่มช่องใน request DTO ไม่ได้แปลว่าผู้ใช้กรอกได้ — ต้องไล่ให้ครบ
+          // ฟอร์ม → payload builder → DTO → persist (กฎเหล็ก #4 B)
+          whtIncomeTypeCode: v('revWhtIncomeType') ?? '',
+          notes: document.getElementById('revUserNotes')?.value ?? '',
           // ⚠️ 3 ช่องนี้ถูกเพิ่มใน OcrCorrectionRequest + persist ฝั่งเซิร์ฟเวอร์
           // ไปแล้ว แต่ payload builder ตัวเดียวของหน้านี้ไม่เคยส่งมาเลย
           // ⇒ ครึ่งเซิร์ฟเวอร์ของการแก้ ship ไปเฉย ๆ ผู้ใช้ยังแก้ไม่ได้
@@ -4247,7 +4345,10 @@
           // เอกสารจริง. ดูรายละเอียด OCR ได้ในหน้า review (ส่วน "AI raw
           // response") อยู่แล้ว. notes บนเอกสารเก็บแค่ marker สะอาดอ้างอิง
           // ไฟล์ต้นทาง (ตรงกับ path auto-create ฝั่ง backend)
-          notes: scan.originalFileName ? `สร้างจากการสแกน OCR: ${scan.originalFileName}` : null,
+          // เหตุผลทางธุรกิจของผู้ใช้ต้องมาก่อน ที่มาของไฟล์เป็นข้อมูลระบบต่อท้าย
+          // (เดิมเขียนทับด้วยชื่อไฟล์อย่างเดียว ⇒ §65 ตรี ไม่มีที่ให้เขียนเหตุผล)
+          notes: [scan.userNotes, scan.originalFileName ? `สร้างจากการสแกน OCR: ${scan.originalFileName}` : null]
+            .filter(Boolean).join(' · ') || null,
           lines,
           // ส่วนลดระดับใบ (จาก reconcile ยึดยอดรวมทั้งสิ้น) → ช่อง "ส่วนลด
           // ท้ายบิล" ในฟอร์ม — ห้ามกระจายใส่บรรทัด (ดูคอมเมนต์ reconcile)

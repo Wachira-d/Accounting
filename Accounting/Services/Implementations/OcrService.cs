@@ -7102,7 +7102,8 @@ public class OcrService : IOcrService
             Currency: InferCurrency(r.RawTextContent),
             GlAccountAiFeedbackId: r.GlAccountAiFeedbackId,
             SuggestedWhtRate: r.SuggestedWhtRate,
-            WhtIncomeTypeCode: r.WhtIncomeTypeCode);
+            WhtIncomeTypeCode: r.WhtIncomeTypeCode,
+            UserNotes: r.UserNotes);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
