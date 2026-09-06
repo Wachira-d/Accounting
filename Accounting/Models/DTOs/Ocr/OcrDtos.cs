@@ -125,7 +125,13 @@ public record OcrResultResponse(
     string? WhtIncomeTypeCode = null,
     /// <summary>หมายเหตุ/เหตุผลทางธุรกิจที่ผู้ใช้เขียน (§65 ตรี(3)/(14)) — ต้อง echo
     /// กลับมาให้ฟอร์ม hydrate ได้ ไม่งั้น "เปิดแก้แล้วบันทึก ค่าหายเงียบ ๆ" (T4-10)</summary>
-    string? UserNotes = null);
+    string? UserNotes = null,
+    /// <summary>สมุดที่มาของค่ารายช่อง (JSON จาก <c>Helpers/OcrFieldArbiter</c>) —
+    /// หน้า review ใช้ตอบคำถาม "ค่านี้มาจากไหน" ให้ผู้ใช้ (สถาปัตยกรรมเป้าหมาย D1)
+    ///
+    /// <para><c>null</c> = สแกนรุ่นก่อนมีระบบนี้ ⇒ หน้าเว็บต้อง<b>ไม่วาดอะไร</b>
+    /// (ไม่ใช่วาดว่า "ไม่มีที่มา" ซึ่งเป็นคนละความหมาย)</para></summary>
+    string? FieldDecisionsJson = null);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);

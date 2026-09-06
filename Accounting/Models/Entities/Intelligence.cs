@@ -210,6 +210,18 @@ public class OcrScanResult : TenantEntity
     /// เพื่อจัดลำดับงานปรับปรุง ไม่ใช่แค่รู้ว่า "ถูกแก้"</summary>
     public string? UserCorrectedFields { get; set; }
 
+    /// <summary>**สมุดที่มาของค่ารายช่อง** — JSON ของ
+    /// <c>Helpers/OcrFieldArbiter.ToJson()</c> (สถาปัตยกรรมเป้าหมาย D1)
+    ///
+    /// <para>ไปป์ไลน์มี 6+ แหล่งเขียนทับช่องเดียวกันตามลำดับบรรทัดในเมธอด ⇒ เดิม
+    /// ไล่ย้อนไม่ได้เลยว่าค่าที่ผู้ใช้เห็นมาจาก engine · ป้ายบนกระดาษ · ประวัติผู้ขาย ·
+    /// นักเรียน หรือ AI. ช่องนี้เก็บผู้ชนะ + ตัวเลือกที่แพ้ของแต่ละช่อง</para>
+    ///
+    /// <para>⚠️ เฟสนี้ <b>บันทึกที่มาอย่างเดียว ยังไม่ย้ายตัวตัดสิน</b> — ค่าที่ใช้จริง
+    /// ยังมาจากลำดับเดิมทุกประการ (แผนของ §4 D1: ทำทีละขั้น ไม่ให้การรื้อใหญ่
+    /// กลายเป็นความเสี่ยงที่มากกว่าปัญหาเดิม)</para></summary>
+    public string? FieldDecisionsJson { get; set; }
+
     // ─── Document role inference ──────────────────────────────────────
     // Thai-accounting workflow separates THREE distinct concepts:
     //   • ScannedDocumentType — the physical paper we OCR'd (e.g. "Receipt")

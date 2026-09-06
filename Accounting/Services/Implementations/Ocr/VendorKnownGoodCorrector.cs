@@ -76,6 +76,13 @@ public class VendorKnownGoodCorrector
                 data.VendorName = best.v.Value;
                 data.ReasoningTrace.Add(
                     $"[KnownGood] กู้คืน VendorTaxId '{taxId}' จากชื่อใกล้เคียง '{best.v.Value}' (sim {best.sim:P0})");
+                // บันทึกที่มา (D1) — ค่ามาจากประวัติผู้ขาย ไม่ใช่จากกระดาษใบนี้
+                data.Note(Accounting.Helpers.OcrFieldKeys.SellerTaxId, taxId,
+                    Accounting.Helpers.OcrFieldSource.VendorHistory, (decimal)best.sim,
+                    $"กู้จากชื่อใกล้เคียง '{best.v.Value}'");
+                data.Note(Accounting.Helpers.OcrFieldKeys.SellerName, best.v.Value,
+                    Accounting.Helpers.OcrFieldSource.VendorHistory, (decimal)best.sim,
+                    $"known-good ยืนยันแล้ว {best.v.ConfirmedCount} ครั้ง");
             }
         }
 
@@ -120,6 +127,9 @@ public class VendorKnownGoodCorrector
         {
             data.ReasoningTrace.Add(
                 $"[KnownGood] แทน VendorName '{data.VendorName}' → '{nameMatch}'");
+            data.Note(Accounting.Helpers.OcrFieldKeys.SellerName, nameMatch,
+                Accounting.Helpers.OcrFieldSource.VendorHistory, (decimal)SimilarityThreshold,
+                $"แทนค่าที่ engine อ่านได้ '{data.VendorName}'");
             data.VendorName = nameMatch;
             swaps++;
         }

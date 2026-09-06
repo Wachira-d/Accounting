@@ -1011,6 +1011,16 @@ public class OcrService : IOcrService
                 scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
                     string.Join("\n", canon.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
             }
+            // ── สมุดที่มาของค่ารายช่อง (D1) ──────────────────────────────────
+            // ยังไม่ย้ายตัวตัดสิน — ค่าที่ผู้ใช้เห็นมาจากลำดับเดิมทุกประการ
+            // เก็บไว้เพื่อ (ก) ผู้ใช้กดดูได้ว่า "ค่านี้มาจากไหน" (ข) เวลาไล่บั๊ก
+            // จะรู้ทันทีว่าใครเป็นคนใส่ ไม่ต้องเดาจากลำดับบรรทัดในเมธอด 2,000 บรรทัด
+            if (extractedData.FieldCandidates.Count > 0)
+            {
+                var decisions = Accounting.Helpers.OcrFieldArbiter.DecideAll(extractedData.FieldCandidates);
+                scanResult.FieldDecisionsJson = Accounting.Helpers.OcrFieldArbiter.ToJson(decisions);
+            }
+
             // [Reasoning] section is built AFTER vendorPred so VendorIntel/Learner traces are included.
 
             // ───── Default category resolution (Thai expense classifier) ─────
@@ -2726,6 +2736,42 @@ public class OcrService : IOcrService
         // Per-field confidence (cast decimal → double for OcrExtractedData dictionary)
         foreach (var (k, v) in azure.FieldConfidence)
             data.FieldConfidence[k] = (double)v;
+
+        // ── บันทึกที่มาของค่า (D1) ───────────────────────────────────────────
+        // Azure เป็นแหล่งเดียวที่รายงานความมั่นใจ **รายช่อง** จริง ๆ จึงแยกได้ว่า
+        // ช่องไหนควรถือเป็น AzureHighConfidence (≥ 0.85 = เกณฑ์เดียวกับไฮไลต์เหลือง
+        // กฎเหล็ก #3 ข้อ 3) และช่องไหนเป็นแค่ผลอ่านธรรมดา — ห้ามเหมาทั้งใบด้วย
+        // OverallConfidence เพราะใบเดียวกันมีช่องที่ชัดและช่องที่เบลอปนกัน
+        decimal AzureConf(string canonicalKey)
+        {
+            foreach (var (k, v) in azure.FieldConfidence)
+                if (string.Equals(Accounting.Helpers.OcrFieldKeys.Canonical(k), canonicalKey, StringComparison.Ordinal))
+                    return v;
+            return azure.OverallConfidence;
+        }
+        void NoteAzure(string field, object? value)
+        {
+            var conf = AzureConf(field);
+            var src = conf >= 0.85m
+                ? Accounting.Helpers.OcrFieldSource.AzureHighConfidence
+                : Accounting.Helpers.OcrFieldSource.Engine;
+            var evidence = $"Azure DI {azure.ModelId}";
+            switch (value)
+            {
+                case string sv: data.Note(field, sv, src, conf, evidence); break;
+                case decimal dv: data.Note(field, dv, src, conf, evidence); break;
+                case DateTime tv: data.Note(field, tv, src, conf, evidence); break;
+            }
+        }
+        NoteAzure(Accounting.Helpers.OcrFieldKeys.SellerName, data.VendorName);
+        NoteAzure(Accounting.Helpers.OcrFieldKeys.SellerTaxId, data.VendorTaxId);
+        NoteAzure(Accounting.Helpers.OcrFieldKeys.BuyerName, data.BuyerName);
+        NoteAzure(Accounting.Helpers.OcrFieldKeys.BuyerTaxId, data.BuyerTaxId);
+        NoteAzure(Accounting.Helpers.OcrFieldKeys.DocumentNumber, data.DocumentNumber);
+        NoteAzure(Accounting.Helpers.OcrFieldKeys.DocumentDate, data.DocumentDate);
+        NoteAzure(Accounting.Helpers.OcrFieldKeys.SubTotal, data.SubTotal);
+        NoteAzure(Accounting.Helpers.OcrFieldKeys.VatAmount, data.VatAmount);
+        NoteAzure(Accounting.Helpers.OcrFieldKeys.TotalAmount, data.TotalAmount);
 
         // Reasoning trace
         data.ReasoningTrace.Add($"[Azure DI] Model: {azure.ModelId} | Pages: {azure.PageCount} | Documents: {azure.MultiDocumentCount}");
@@ -7108,7 +7154,8 @@ public class OcrService : IOcrService
             GlAccountAiFeedbackId: r.GlAccountAiFeedbackId,
             SuggestedWhtRate: r.SuggestedWhtRate,
             WhtIncomeTypeCode: r.WhtIncomeTypeCode,
-            UserNotes: r.UserNotes);
+            UserNotes: r.UserNotes,
+            FieldDecisionsJson: r.FieldDecisionsJson);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
@@ -7759,6 +7806,40 @@ internal class OcrExtractedData
     public string? BuyerTaxId { get; set; }
     public Dictionary<string, double> FieldConfidence { get; set; } = new();
     public List<string> ReasoningTrace { get; set; } = new();
+
+    /// <summary>**สมุดบันทึกว่าใครเสนอค่าอะไรให้ช่องไหน** (สถาปัตยกรรมเป้าหมาย D1)
+    ///
+    /// <para>ไปป์ไลน์นี้มี 6+ แหล่งเขียนทับช่องเดียวกันตามลำดับบรรทัดในเมธอด ⇒ ไล่ย้อน
+    /// ไม่ได้ว่าค่าที่ผู้ใช้เห็นมาจากไหน และผลลัพธ์ขึ้นกับลำดับโค้ด ไม่ใช่คุณภาพหลักฐาน.
+    /// ทุกแหล่งเรียก <see cref="Note"/> ตอนเสนอค่า แล้ว <c>Helpers/OcrFieldArbiter</c>
+    /// เป็นคนตัดสิน/บันทึกที่มา</para>
+    ///
+    /// <para><b>เฟสนี้บันทึกที่มาอย่างเดียว — ยังไม่ย้ายตัวตัดสิน</b> (ค่าที่ผู้ใช้เห็น
+    /// ยังมาจากลำดับเดิมทุกประการ) ตามแผนของ §4 D1 ที่ให้ทำทีละขั้นเพื่อไม่ให้การ
+    /// รื้อใหญ่กลายเป็นความเสี่ยงที่มากกว่าปัญหาเดิม</para></summary>
+    public List<Accounting.Helpers.OcrFieldCandidate> FieldCandidates { get; set; } = new();
+
+    /// <summary>บันทึกว่าแหล่งหนึ่งเสนอค่าอะไรให้ช่องหนึ่ง — ค่าว่างถูกข้าม
+    /// (ไม่บันทึก "ไม่มีคำตอบ" เป็นผู้เสนอ)</summary>
+    public void Note(string field, string? value, Accounting.Helpers.OcrFieldSource source,
+        decimal confidence, string? evidence = null)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        FieldCandidates.Add(new Accounting.Helpers.OcrFieldCandidate(
+            field, value.Trim(), source, confidence, evidence));
+    }
+
+    /// <summary>รูปแบบตัวเลข/วันที่ที่ใช้บันทึกที่มา — ต้องเป็นรูปเดียวทุกแหล่ง
+    /// ไม่งั้น "ค่าเดียวกัน" จากสองแหล่งจะดูเหมือนคนละค่า</summary>
+    public void Note(string field, decimal? value, Accounting.Helpers.OcrFieldSource source,
+        decimal confidence, string? evidence = null)
+        => Note(field, value?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            source, confidence, evidence);
+
+    public void Note(string field, DateTime? value, Accounting.Helpers.OcrFieldSource source,
+        decimal confidence, string? evidence = null)
+        => Note(field, value?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+            source, confidence, evidence);
     // === DBD enrichment ===
     public bool DbdLookupAttempted { get; set; }
     public bool DbdMatched { get; set; }

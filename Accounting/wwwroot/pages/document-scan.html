@@ -1427,6 +1427,40 @@
         Layout.toast(`ตั้งหัก ณ ที่จ่าย ${rate}% ตามที่กฎหมายกำหนด — ตรวจประเภทเงินได้ด้วย`, 'success');
       },
 
+      /// สมุด "ค่านี้มาจากไหน" (D1) — เซิร์ฟเวอร์ตัดสินและส่งมาแล้ว หน้าเว็บแค่แสดง
+      /// (undefined = สแกนรุ่นก่อนมีระบบนี้ ⇒ ไม่วาดอะไร ไม่ใช่วาดว่า "ไม่มีที่มา")
+      renderFieldSources(json) {
+        if (!json) return '';
+        let rows = [];
+        try { rows = JSON.parse(json) || []; } catch (e) { return ''; }
+        if (!rows.length) return '';
+        const label = {
+          EtaxXml: 'e-Tax XML (ลายเซ็นดิจิทัล)', AzureHighConfidence: 'Azure DI (มั่นใจสูง)',
+          PaperLabel: 'ป้ายกำกับบนกระดาษ', Engine: 'ผลอ่านของ engine',
+          LearnedPattern: 'แพตเทิร์นที่เรียนไว้', Student: 'ระบบเรียนรู้แล้ว',
+          VendorHistory: 'ประวัติผู้ขาย/ทะเบียน', Rule: 'กติกาของระบบ',
+          Ai: 'AI แนะนำ', Guess: 'ค่าเดา — ต้องตรวจสอบ',
+        };
+        return `
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px">🧾 ค่านี้มาจากไหน</div>
+          <div style="display:grid;gap:4px">
+            ${rows.map(r => {
+              const alts = (r.alternatives || []).filter(a => a.value !== r.value);
+              return `<div style="font-size:11px;padding:4px 8px;background:var(--gray-50);border-radius:4px">
+                <span style="color:var(--gray-700);font-weight:600">${Layout.esc(r.field || '')}</span>
+                <span style="color:var(--gray-900)"> = ${Layout.esc(String(r.value ?? ''))}</span>
+                <span style="color:var(--gray-500)"> · ${Layout.esc(label[r.source] || r.source || '')}</span>
+                ${r.evidence ? `<span style="color:var(--gray-400)"> · ${Layout.esc(r.evidence)}</span>` : ''}
+                ${alts.length ? `<div style="color:var(--gray-400);margin-top:2px">แหล่งอื่นเสนอ: ${
+                  alts.map(a => Layout.esc(String(a.value ?? '')) + ' (' + Layout.esc(label[a.source] || a.source || '') + ')').join(' · ')
+                }</div>` : ''}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      },
+
       parseScanNotes(notes) {
         const t = String(notes || '');
         const pick = (tag) =>
@@ -2583,6 +2617,8 @@
                     }).join('')}
                   </div>
                 </div>` : ''}
+
+                ${Page.renderFieldSources(scan.fieldDecisionsJson)}
 
                 ${scan.processingNotes ? `
                 <div style="margin-bottom:12px">

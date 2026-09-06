@@ -333,6 +333,12 @@ internal static class SmartFieldExtractor
             newBuyerTaxId = null;
         data.VendorTaxId = newVendorTaxId;
         data.BuyerTaxId = newBuyerTaxId;
+        // บันทึกที่มา (D1) — เลขที่มี**ป้ายกำกับ**นำหน้าน่าเชื่อกว่าเลขลอย ๆ กลางหน้า
+        // (บาร์โค้ด EAN-13 ผ่าน mod-11 ไทยได้ ~1/10 — บทเรียนในไฟล์ CLAUDE.md)
+        data.Note(Accounting.Helpers.OcrFieldKeys.SellerTaxId, newVendorTaxId, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.85m,
+            "เลขผู้เสียภาษีฝั่งผู้ขายบนกระดาษ");
+        data.Note(Accounting.Helpers.OcrFieldKeys.BuyerTaxId, newBuyerTaxId, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.85m,
+            "เลขผู้เสียภาษีฝั่งผู้ซื้อบนกระดาษ");
 
         // Name resolution: extract company names, attach to nearest keyword
         var names = ExtractCompanyNames(text);
@@ -817,6 +823,10 @@ internal static class SmartFieldExtractor
             data.FieldConfidence["SubTotal"] = 0.95;
             data.FieldConfidence["VatAmount"] = 0.95;
             data.FieldConfidence["TotalAmount"] = 0.95;
+            const string tripleEvidence = "สามค่าที่ลงตัวและตรงกับยอดรวมที่ engine อ่าน";
+            data.Note(Accounting.Helpers.OcrFieldKeys.SubTotal, sub, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.95m, tripleEvidence);
+            data.Note(Accounting.Helpers.OcrFieldKeys.VatAmount, vat, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.95m, tripleEvidence);
+            data.Note(Accounting.Helpers.OcrFieldKeys.TotalAmount, total, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.95m, tripleEvidence);
             data.ReasoningTrace.Add(
                 $"[AmountTriple] math-consistent: SubTotal={sub:N2} + VAT={vat:N2} = Total={total:N2} (VAT {vat / sub:P1})");
             return;
@@ -827,16 +837,19 @@ internal static class SmartFieldExtractor
         {
             data.TotalAmount = total;
             data.FieldConfidence["TotalAmount"] = 0.8;
+            data.Note(Accounting.Helpers.OcrFieldKeys.TotalAmount, total, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.80m, "เติมช่องที่ว่างจากข้อความ");
         }
         if (sub.HasValue && (data.SubTotal is null or 0m))
         {
             data.SubTotal = sub;
             data.FieldConfidence["SubTotal"] = 0.8;
+            data.Note(Accounting.Helpers.OcrFieldKeys.SubTotal, sub, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.80m, "เติมช่องที่ว่างจากข้อความ");
         }
         if (vat.HasValue && (data.VatAmount is null or 0m))
         {
             data.VatAmount = vat;
             data.FieldConfidence["VatAmount"] = 0.8;
+            data.Note(Accounting.Helpers.OcrFieldKeys.VatAmount, vat, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.80m, "เติมช่องที่ว่างจากข้อความ");
         }
     }
 
@@ -907,6 +920,8 @@ internal static class SmartFieldExtractor
                 if (v.Count(char.IsDigit) < 3) continue;
                 data.DocumentNumber = v;
                 data.FieldConfidence["DocumentNumber"] = 0.85;
+                data.Note(Accounting.Helpers.OcrFieldKeys.DocumentNumber, v, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.85m,
+                    "เลขที่ที่มีป้ายกำกับนำหน้าบนกระดาษ");
                 return;
             }
         }

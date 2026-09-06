@@ -1878,6 +1878,8 @@ public static class DatabaseMigrationHelper
             // (เดิมนับจาก UpdatedAt != null ⇒ ~100% ทุก tenant = อ่านไม่ได้)
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "UserCorrectedAt" timestamptz NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "UserCorrectedFields" varchar(500) NULL;""",
+            // สมุดที่มาของค่ารายช่อง (D1) — ผู้ชนะ + ตัวเลือกที่แพ้ของแต่ละช่อง
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "FieldDecisionsJson" text NULL;""",
             // AI GL suggestion transparency — เก็บ AI primary แม้ถูก confidence guard ปฏิเสธ
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiSuggestedCode" varchar(20) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiConfidence" numeric(5,4) NULL;""",
