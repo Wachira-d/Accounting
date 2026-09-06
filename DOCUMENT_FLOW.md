@@ -116,7 +116,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      ทั้ง frontend+backend รู้จักอยู่แล้ว) · `[VAT-NOTE]` = เตือนอย่างเดียว.
      **ไม่ใส่ keyword "น้ำมัน" เดี่ยว ๆ** — จะโดนน้ำมันพืชของร้านอาหารซึ่ง
      เคลมได้ตามปกติ
-- **ด่านก่อนสร้าง/อนุมัติ (รอบ 137 — ผลตรวจไปป์ไลน์ OCR)**:
+- **ด่านก่อนสร้าง/อนุมัติ (รอบ 137 — ผลตรวจไปป์ไลน์ OCR · แก้เพิ่มรอบ 139)**:
   1. **สิทธิ์** — `OcrController.CreateDocument` เช็ค
      `DocumentPermissionHelper.CanCreateAsync(targetType)` ก่อนสร้าง และ
      `CanApproveAsync(createdType)` ก่อนอนุมัติ · `create-journal-entry` เช็ค
@@ -124,6 +124,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      เป็นทางอนุมัติทางที่ 4 ที่รอบก่อน (ลายเซ็น/LINE/มือถือ) ยังปิดไม่ครบ ·
      ไม่มีสิทธิ์อนุมัติ = ใบ Draft ยังถูกสร้าง แล้วแนบ `[APPROVE-SKIP]` กลับมา
      (ห้าม silent no-op)
+
+     **ชนิดเป้าหมายของด่าน = `Helpers/OcrTargetDocumentType.Resolve()`** ตัวเดียว
+     กับที่ `CreateDocumentFromScanAsync` ใช้จริง — ลำดับ: ผูก PO แล้ว →
+     `PurchaseInvoice` · pseudo `"Deposit"` → `Receipt` + `IsDeposit` ·
+     override ของผู้ใช้ · `TargetDocumentType` บนแถวสแกน · fallback ตามชนิด
+     กระดาษ (`Invoice`/`TaxInvoice`→`PurchaseInvoice` · `Receipt`→`PaymentVoucher`
+     · `CertificateInLieu` → เอง · อื่น ๆ → `Expense`). **ฟังก์ชันนี้ไม่มีทาง
+     คืน "ไม่รู้"** เพราะเส้นสร้างเอกสารสร้างจริงเสมอ _(รอบ 139: ตัวแปลงเดิมใน
+     controller คืน `null` เมื่อแปลงไม่ได้ ⇒ ด่านถูกข้ามเงียบ ๆ ในเคสที่พบบ่อย
+     ที่สุด — สแกนใหม่ที่ยังไม่มี `TargetDocumentType` และใบมัดจำ)_
   2. **วันที่อ่านไม่ได้ → ห้าม auto-approve** — `ExtractedDate == null` ⇒
      `[APPROVE-SKIP]` + `FieldConfidence[DocumentDate]=0.30` +
      `[DATE-UNKNOWN]` ใน `ProcessingNotes`. เอกสารยังถูกเติม "วันนี้" ตาม
@@ -142,7 +152,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      `SupplierInvoiceNumber` ⇒ เคลมภาษีซื้องวดนี้ทั้งที่ใบกำกับยังไม่มา
      §82/5(1)) → แนบ `[TAX-INV-PENDING]` แทน แล้วพัก VAT ที่ 11640 รอเติมเลข
      ใบกำกับเมื่อได้รับ (flow §3.6 เดิม)
-  5. **รหัสสาขาไม่แต่ง** — ไม่รู้สาขาผู้ขาย = `SupplierBranchCode = null`
+  5. **บันทึก JE ตรง: ภาษีหัก ณ ที่จ่ายต้องมีผังรองรับทั้งสองฝั่ง** — ฝั่งขาย
+     (เราถูกหัก) ไม่มี `11910` → `OCR-JE-NO-WHT-ASSET` · ฝั่งซื้อ (เราหัก)
+     ไม่มี `21916`/`21917` → `OCR-JE-NO-WHT-LIABILITY`. ทั้งสองด่านอยู่**ก่อน**
+     สร้างบรรทัด JE _(รอบ 139: ฝั่งซื้อเคยปล่อยให้บรรทัด WHT หายเงียบ ⇒ เครดิต
+     เต็มจำนวน = "จ่ายผู้ขายครบ" ทั้งที่ติ๊กว่าหัก ⇒ ไม่มีหนี้สินให้นำส่ง
+     ภ.ง.ด.3/53 + เจ้าหนี้เกินจริง + 50 ทวิ ที่ออกไปแล้วไม่มีคู่ในบัญชี)_
+  6. **รหัสสาขาไม่แต่ง** — ไม่รู้สาขาผู้ขาย = `SupplierBranchCode = null`
      (เดิม `?? "00000"` ⇒ รายงานภาษีซื้อ §87 พิมพ์ "สำนักงานใหญ่" ให้ใบสาขา);
      ด่าน §86/4 ตอนอนุมัติเป็นคนบังคับกรอก
 - **Service**: `OcrService.CreateDocumentFromScanAsync` (`OcrService.cs:3245`)
@@ -4648,3 +4664,13 @@ _จุดที่ flow เปลี่ยนจริง: สร้างเ�
 _เส้น OCR บังคับธง `InputVatClaimable` + อัตราแลกเปลี่ยนเหมือนเส้นคีย์มือ ·_
 _auto-approve ตัดสินด้วย `Helpers/OcrPostingReadiness` ตัวเดียวทุกช่องทาง ·_
 _`Document.IncomeTypeCode` ถูกเซ็ตจากสแกนเมื่อมีการหัก ณ ที่จ่าย)_
+
+---
+
+_Last verified against codebase: 2026-09-06 (รอบ 139 — **ตรวจย้อนงานรอบ 137**:
+จุดที่ flow เปลี่ยนจริง: ด่านสิทธิ์ "สร้างเอกสารจากสแกน" ใช้
+`Helpers/OcrTargetDocumentType` ตัวเดียวกับเส้นที่สร้างเอกสาร จึงไม่ถูกข้ามอีก
+เมื่อสแกนยังไม่มี `TargetDocumentType` หรือเป็นใบมัดจำ · เส้น "บันทึก JE ตรง"
+ฝั่งซื้อโยน `OCR-JE-NO-WHT-LIABILITY` เมื่อผังไม่มี 21916/21917 แทนที่จะทิ้ง
+บรรทัดหักภาษีเงียบ ๆ · คำตอบของ local model ถูกใช้ในทุกเส้นที่ AI ไม่พร้อม
+ผ่านธง `AiResponse.FromLocalModel` (kill-switch กฎเหล็ก #1 ข้อ 5))_

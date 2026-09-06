@@ -98,6 +98,8 @@ public class AiOrchestrator : IAiOrchestrator
             SuggestedActions = Array.Empty<string>(),
             UsedAi = false,
             UsedCache = false,
+            // ★ ธงเดียวที่ผู้เรียกต้องดู — ไม่ต้องเดาจากรูปแบบของ ProviderModel อีก
+            FromLocalModel = true,
             FeedbackId = fid,
             ProviderModel = "local:" + localPred.ModelVersion,
             // ★ E-AI-01: เส้น short-circuit ต้องส่งคำตอบแบบมีโครงของนักเรียนออกไปด้วย
@@ -175,7 +177,7 @@ public class AiOrchestrator : IAiOrchestrator
         {
             var fidDisabled = await RecordSkip(request, AiCallStatus.Skipped,
                 "Feature disabled by admin routing policy", ct);
-            return FallbackToLocal(request, AiCallStatus.Skipped, null, fidDisabled);
+            return FallbackToLocal(request, AiCallStatus.Skipped, null, fidDisabled, fromLocalModel: localPred != null);
         }
 
         if (!request.ForceProviderCall && !request.BypassCache)
@@ -186,7 +188,7 @@ public class AiOrchestrator : IAiOrchestrator
                 {
                     var fid = await RecordSkip(request, AiCallStatus.Skipped,
                         "Feature disabled by admin routing policy", ct);
-                    return FallbackToLocal(request, AiCallStatus.Skipped, null, fid);
+                    return FallbackToLocal(request, AiCallStatus.Skipped, null, fid, fromLocalModel: localPred != null);
                 }
 
                 case AiFeatureRoutingMode.LocalOnly:
@@ -196,7 +198,7 @@ public class AiOrchestrator : IAiOrchestrator
                     // No local — degrade gracefully to LocalFallback with skipped status.
                     var fidLocal = await RecordSkip(request, AiCallStatus.Skipped,
                         "LocalOnly mode but no local prediction available", ct);
-                    return FallbackToLocal(request, AiCallStatus.Skipped, null, fidLocal);
+                    return FallbackToLocal(request, AiCallStatus.Skipped, null, fidLocal, fromLocalModel: localPred != null);
 
                 case AiFeatureRoutingMode.Hybrid:
                     if (localPred != null && localPred.Confidence >= routing.LocalConfidenceThreshold)
@@ -237,7 +239,7 @@ public class AiOrchestrator : IAiOrchestrator
         if (settings == null || !settings.AiAugmentationEnabled)
         {
             var fid = await RecordSkip(request, AiCallStatus.Skipped, "AiAugmentationEnabled=false", ct);
-            return FallbackToLocal(request, AiCallStatus.Skipped, error: null, feedbackId: fid);
+            return FallbackToLocal(request, AiCallStatus.Skipped, error: null, feedbackId: fid, fromLocalModel: localPred != null);
         }
 
         // ── Step 2: locate active provider ────────────────────────────
@@ -246,14 +248,14 @@ public class AiOrchestrator : IAiOrchestrator
         if (providerConfig == null)
         {
             var fid = await RecordSkip(request, AiCallStatus.NoProvider, "No active AI provider configured", ct);
-            return FallbackToLocal(request, AiCallStatus.NoProvider, error: null, feedbackId: fid);
+            return FallbackToLocal(request, AiCallStatus.NoProvider, error: null, feedbackId: fid, fromLocalModel: localPred != null);
         }
         var providerImpl = _providers.FirstOrDefault(p => p.Kind == providerConfig.ProviderType);
         if (providerImpl == null)
         {
             var fid = await RecordSkip(request, AiCallStatus.NoProvider,
                 $"Provider {providerConfig.ProviderType} not registered", ct);
-            return FallbackToLocal(request, AiCallStatus.NoProvider, error: null, feedbackId: fid);
+            return FallbackToLocal(request, AiCallStatus.NoProvider, error: null, feedbackId: fid, fromLocalModel: localPred != null);
         }
 
         // ── Step 3: budget check (skippable when ForceProviderCall) ──
@@ -265,7 +267,7 @@ public class AiOrchestrator : IAiOrchestrator
             {
                 var fid = await RecordSkip(request, AiCallStatus.BudgetExceeded, budget.BlockedReason, ct);
                 return FallbackToLocal(request, AiCallStatus.BudgetExceeded,
-                    error: budget.BlockedReason, feedbackId: fid);
+                    error: budget.BlockedReason, feedbackId: fid, fromLocalModel: localPred != null);
             }
         }
 
@@ -353,7 +355,7 @@ public class AiOrchestrator : IAiOrchestrator
                 InputTokens: raw.InputTokens, OutputTokens: raw.OutputTokens, CostUsd: 0m,
                 CacheHitOfFeedbackId: null, ErrorMessage: raw.Error), ct);
             _logger.LogWarning("AI provider call failed ({Feature}): {Err}", request.FeatureKey, raw.Error);
-            return FallbackToLocal(request, AiCallStatus.Failed, error: raw.Error, feedbackId: fid);
+            return FallbackToLocal(request, AiCallStatus.Failed, error: raw.Error, feedbackId: fid, fromLocalModel: localPred != null);
         }
 
         // ── Step 7: parse provider content ────────────────────────────
@@ -374,7 +376,7 @@ public class AiOrchestrator : IAiOrchestrator
                     (int)sw.ElapsedMilliseconds, raw.InputTokens, raw.OutputTokens,
                     ComputeCost(raw, providerConfig), CacheHitOfFeedbackId: null,
                     ErrorMessage: "Empty plan response"), ct);
-                return FallbackToLocal(request, AiCallStatus.InvalidResponse, error: "Empty plan response", feedbackId: efid);
+                return FallbackToLocal(request, AiCallStatus.InvalidResponse, error: "Empty plan response", feedbackId: efid, fromLocalModel: localPred != null);
             }
 
             var planFid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
@@ -416,7 +418,7 @@ public class AiOrchestrator : IAiOrchestrator
                 ComputeCost(raw, providerConfig),
                 CacheHitOfFeedbackId: null,
                 ErrorMessage: "Schema mismatch: no primary answer or alternatives"), ct);
-            return FallbackToLocal(request, AiCallStatus.InvalidResponse, error: "Schema mismatch", feedbackId: fid);
+            return FallbackToLocal(request, AiCallStatus.InvalidResponse, error: "Schema mismatch", feedbackId: fid, fromLocalModel: localPred != null);
         }
 
         var cost = ComputeCost(raw, providerConfig);
@@ -554,7 +556,12 @@ public class AiOrchestrator : IAiOrchestrator
         catch { return userPromptJson; }
     }
 
-    private static AiResponse FallbackToLocal(AiRequest req, AiCallStatus status, string? error, Guid? feedbackId)
+    /// <param name="fromLocalModel">คำตอบที่ติดมากับ <paramref name="req"/> มาจาก
+    /// <b>นักเรียน</b> (distillation model) จริงหรือไม่ — ผู้เรียกบางรายส่ง heuristic
+    /// ของตัวเองมาใน <c>LocalPrimaryAnswer</c> ซึ่งไม่ใช่คำตอบของนักเรียน จึงต้องแยกกัน
+    /// (ผู้เรียกจะได้ไม่เอา heuristic ของตัวเองกลับไปติดป้ายว่า "ระบบเรียนรู้แล้ว")</param>
+    private static AiResponse FallbackToLocal(AiRequest req, AiCallStatus status, string? error, Guid? feedbackId,
+        bool fromLocalModel = false)
         => new()
         {
             Status = status,
@@ -567,6 +574,8 @@ public class AiOrchestrator : IAiOrchestrator
             SuggestedActions = Array.Empty<string>(),
             UsedAi = false,
             UsedCache = false,
+            // ★ kill-switch/degradation ก็ยังเป็นคำตอบของนักเรียน (กฎเหล็ก #1 ข้อ 5)
+            FromLocalModel = fromLocalModel,
             FeedbackId = feedbackId,
             ProviderModel = null,
             // ★ E-AI-01: AI ล่ม/เกินงบ → ยังต้องส่งคำตอบมีโครงของนักเรียนออกไป

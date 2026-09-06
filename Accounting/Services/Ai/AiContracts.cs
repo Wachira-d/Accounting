@@ -159,6 +159,18 @@ public sealed record AiResponse
     public bool UsedAi { get; init; }
     public bool UsedCache { get; init; }
 
+    /// <summary>True เมื่อ <see cref="PrimaryAnswer"/> มาจาก <b>นักเรียน</b>
+    /// (local distillation model) — ไม่ว่าจะเป็นเส้น short-circuit ที่นักเรียนมั่นใจพอ
+    /// หรือเส้น degradation (provider ปิด/ล่ม/เกินงบ/ตอบไม่เข้า schema).
+    ///
+    /// <para>⚠️ กฎเหล็ก #1: <see cref="UsedAi"/> ตอบคำถาม "จ่ายเงินให้ provider ไหม"
+    /// เท่านั้น — <b>ห้าม</b>ใช้เป็นด่านว่า "มีคำตอบให้ใช้ไหม" ให้ใช้ธงนี้แทน
+    /// (ผลตรวจ 2026-09-06: การเดาจาก <c>ProviderModel.StartsWith("local:")</c>
+    /// ครอบเฉพาะเส้น short-circuit ⇒ ตอนปิด provider ทั้งหมด (kill-switch ข้อ 5)
+    /// คำตอบของนักเรียนถูกทิ้งทุกครั้ง ซึ่งเป็นเคสที่กฎข้อนั้นเขียนมาเพื่อรองรับพอดี)</para>
+    /// </summary>
+    public bool FromLocalModel { get; init; }
+
     /// <summary>FK to the AiSuggestionFeedback row written for this call.
     /// UI passes this back to /api/.../ai-feedback/{id}/record when the
     /// user confirms their choice so the training set captures the

@@ -4609,38 +4609,20 @@ public class OcrService : IOcrService
         // pseudo-target "Deposit" (ใบมัดจำ) — ไม่ใช่ค่าใน enum: ลงเป็น Receipt
         // + IsDeposit=true (ทรงเดียวกับฟอร์มเอกสาร ห้าม drift สองทาง). ต้อง
         // ตัดสินก่อน Enum.TryParse ไม่งั้นตกไป fallback แล้วกลายเป็น Expense
-        var wantDeposit = string.Equals(targetTypeOverride, "Deposit", StringComparison.OrdinalIgnoreCase)
-            || (string.IsNullOrWhiteSpace(targetTypeOverride)
-                && string.Equals(result.TargetDocumentType, "Deposit", StringComparison.OrdinalIgnoreCase));
-
-        DocumentType docType;
+        // ★ ตัวตัดสินอยู่ที่ Helpers/OcrTargetDocumentType ตัวเดียว — ด่านสิทธิ์ใน
+        // OcrController เรียกตัวเดียวกัน (ผลตรวจย้อน 2026-09-06: ด่านเดิมมีตัวแปลง
+        // ของตัวเองที่คืน null แล้วข้ามด่าน ทั้งที่เส้นนี้ยังสร้างเอกสารจริงเสมอ)
+        var resolvedTarget = Accounting.Helpers.OcrTargetDocumentType.Resolve(
+            targetTypeOverride, result.TargetDocumentType, result.DocumentType,
+            hasLinkedPurchaseOrder: result.LinkedPurchaseOrderId.HasValue);
+        var wantDeposit = resolvedTarget.IsDeposit;
+        var docType = resolvedTarget.Type;
         if (wantDeposit)
-        {
-            docType = DocumentType.Receipt;
-            result.TargetDocumentType = "Deposit";
-        }
+            result.TargetDocumentType = Accounting.Helpers.OcrTargetDocumentType.DepositPseudoType;
         else if (!string.IsNullOrWhiteSpace(targetTypeOverride)
             && Enum.TryParse<DocumentType>(targetTypeOverride, ignoreCase: true, out var overrideTarget))
-        {
-            docType = overrideTarget;
             // Persist the user's choice so re-opening the scan reflects it.
             result.TargetDocumentType = overrideTarget.ToString();
-        }
-        else if (!string.IsNullOrEmpty(result.TargetDocumentType)
-            && Enum.TryParse<DocumentType>(result.TargetDocumentType, ignoreCase: true, out var inferredTarget))
-        {
-            docType = inferredTarget;
-        }
-        else
-        {
-            docType = result.DocumentType switch
-            {
-                "Invoice" or "TaxInvoice" => DocumentType.PurchaseInvoice,
-                "Receipt" => DocumentType.PaymentVoucher,
-                "CertificateInLieu" => DocumentType.CertificateInLieu,
-                _ => DocumentType.Expense
-            };
-        }
 
         // ─── PO LINKAGE — receive against the operator-linked PO ───
         // When the scan was linked to a PO via /link-po, force the target to
@@ -5813,19 +5795,31 @@ public class OcrService : IOcrService
             var sellerWhtAcc = wht > 0m
                 ? await ResolveTaxAccountAsync(companyId, new[] { "11910" }, AccountType.Asset, "ภาษีถูกหัก")
                 : null;
-            var sellerWht = sellerWhtAcc != null ? wht : 0m;
-            lines.Add(new(debitAcc, total - sellerWht, 0m, "ลูกหนี้/เงินรับ"));
-            if (sellerWht > 0m) lines.Add(new(sellerWhtAcc!.Value, sellerWht, 0m, "ภาษีถูกหัก ณ ที่จ่าย"));
-            lines.Add(new(creditAcc, 0m, revenueAmt, "รายได้"));
-            if (vatLine > 0m) lines.Add(new(vatAcc!.Value, 0m, vatLine, "ภาษีขาย"));
             if (wht > 0m && sellerWhtAcc == null)
                 throw new Accounting.Helpers.BusinessRuleException(
                     "ใบนี้ถูกหักภาษี ณ ที่จ่าย แต่ผังบัญชียังไม่มี \"11910 ภาษีถูกหัก ณ ที่จ่าย\" — "
                     + "เพิ่มผังบัญชีนี้ก่อน หรือปลดติ๊ก \"บันทึกภาษีหัก ณ ที่จ่าย\" แล้วบันทึกใหม่",
                     "OCR-JE-NO-WHT-ASSET");
+            var sellerWht = sellerWhtAcc != null ? wht : 0m;
+            lines.Add(new(debitAcc, total - sellerWht, 0m, "ลูกหนี้/เงินรับ"));
+            if (sellerWht > 0m) lines.Add(new(sellerWhtAcc!.Value, sellerWht, 0m, "ภาษีถูกหัก ณ ที่จ่าย"));
+            lines.Add(new(creditAcc, 0m, revenueAmt, "รายได้"));
+            if (vatLine > 0m) lines.Add(new(vatAcc!.Value, 0m, vatLine, "ภาษีขาย"));
         }
         else
         {
+            // ⚠️ ฝั่งซื้อ: เราเป็นผู้หักภาษี ณ ที่จ่าย ⇒ ยอดที่หักไว้เป็น **หนี้สิน**
+            // ที่ต้องนำส่งกรมสรรพากร (ภ.ง.ด.3/53 วันที่ 7/15 ของเดือนถัดไป).
+            // ถ้าหาผังไม่เจอแล้วปล่อยให้ whtLine = 0 เงียบ ๆ ⇒ เครดิตเต็มจำนวน
+            // = "จ่ายผู้ขายครบ" ทั้งที่ผู้ใช้ติ๊กว่าหัก ⇒ ไม่มีหนี้สินให้นำส่ง +
+            // เจ้าหนี้เกินจริง + 50 ทวิ ที่ออกไปแล้วไม่มีคู่ในบัญชี. ล้มดังพร้อม
+            // ทางไปต่อ — ทรงเดียวกับฝั่งขาย (ผลตรวจย้อน 2026-09-06: ฝั่งขายแก้แล้ว
+            // ที่ T5-N3 แต่ฝั่งซื้อ ซึ่งเป็นเคสที่พบบ่อยกว่า ถูกทิ้งไว้)
+            if (wht > 0m && whtAcc == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ใบนี้มีภาษีหัก ณ ที่จ่าย แต่ผังบัญชียังไม่มี \"21916 ภ.ง.ด.3\" / \"21917 ภ.ง.ด.53\" — "
+                    + "เพิ่มผังบัญชีนี้ก่อน หรือปลดติ๊ก \"บันทึกภาษีหัก ณ ที่จ่าย\" แล้วบันทึกใหม่",
+                    "OCR-JE-NO-WHT-LIABILITY");
             var vatLine = vatAcc != null ? vat : 0m;
             var whtLine = whtAcc != null ? wht : 0m;
             var expenseAmt = total - vatLine;

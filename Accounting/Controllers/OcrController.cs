@@ -28,16 +28,25 @@ public class OcrController : ControllerBase
         IDocumentService documentService, IPermissionService perms)
     { _service = service; _quota = quota; _db = db; _documentService = documentService; _perms = perms; }
 
-    /// <summary>ชนิดเอกสารเป้าหมายของสแกน (override จาก query ก่อน แล้วค่อยที่ scan อนุมานไว้)</summary>
+    /// <summary>ชนิดเอกสารที่สแกนนี้จะกลายเป็น — ผ่าน <c>Helpers.OcrTargetDocumentType</c>
+    /// ตัวเดียวกับที่ <c>OcrService.CreateDocumentFromScanAsync</c> ใช้จริง
+    ///
+    /// <para>⚠️ เดิมเมธอดนี้แปลงเองแล้ว <b>คืน null</b> เมื่อแปลงไม่ได้ (สแกนที่ยังไม่มี
+    /// <c>TargetDocumentType</c> · ค่า pseudo "Deposit") ⇒ ผู้เรียกข้ามด่านสิทธิ์ไปเลย
+    /// ทั้งที่ service ยังสร้างเอกสารจริงด้วย fallback ตามชนิดกระดาษ — และ "Deposit"
+    /// กลายเป็น <b>Receipt ฝั่งขาย</b> (ผลตรวจย้อน 2026-09-06 · คอมมิต 4fd8dd6)</para>
+    ///
+    /// <para>คืน null เฉพาะเมื่อ<b>ไม่พบแถวสแกน</b> — เส้นนั้นจะไป 404/ข้อความของ service เอง</para></summary>
     private async Task<Models.Enums.DocumentType?> ResolveTargetTypeAsync(Guid companyId, Guid scanId, string? targetType)
     {
-        var raw = targetType;
-        if (string.IsNullOrWhiteSpace(raw))
-            raw = await _db.Set<OcrScanResult>().AsNoTracking()
-                .Where(r => r.CompanyId == companyId && r.Id == scanId)
-                .Select(r => r.TargetDocumentType)
-                .FirstOrDefaultAsync();
-        return Enum.TryParse<Models.Enums.DocumentType>(raw, true, out var dt) ? dt : null;
+        var scan = await _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.Id == scanId)
+            .Select(r => new { r.TargetDocumentType, r.DocumentType, r.LinkedPurchaseOrderId })
+            .FirstOrDefaultAsync();
+        if (scan == null) return null;
+        return Accounting.Helpers.OcrTargetDocumentType.Resolve(
+            targetType, scan.TargetDocumentType, scan.DocumentType,
+            hasLinkedPurchaseOrder: scan.LinkedPurchaseOrderId.HasValue).Type;
     }
 
     /// <summary>Resolve a REAL user id to stamp on uploads. JWT/user-key auth

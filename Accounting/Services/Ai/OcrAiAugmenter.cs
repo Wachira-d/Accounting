@@ -154,13 +154,20 @@ public sealed record OcrAiAugmentationResult(
 
 public class OcrAiAugmenter : IOcrAiAugmenter
 {
-    /// <summary>คำตอบนี้มาจากนักเรียน (short-circuit ของ orchestrator) หรือไม่ —
-    /// <see cref="AiOrchestrator"/> ตั้ง <c>ProviderModel = "local:{version}"</c> เฉพาะเส้นนี้</summary>
+    /// <summary>คำตอบนี้มาจากนักเรียน (local distillation model) หรือไม่ —
+    /// อ่านจากธง <see cref="AiResponse.FromLocalModel"/> ที่ orchestrator ตั้งให้
+    /// <b>ทุกเส้น</b> ที่นักเรียนเป็นคนตอบ
+    ///
+    /// <para>⚠️ เดิมเดาจาก <c>Status == Skipped &amp;&amp; ProviderModel.StartsWith("local:")</c>
+    /// ซึ่งเป็นลายเซ็นของเส้น short-circuit <b>เส้นเดียว</b> — เส้น degradation
+    /// (<c>NoProvider</c> ตอนปิด provider ทุกตัว · <c>BudgetExceeded</c> · <c>Failed</c> ·
+    /// <c>InvalidResponse</c>) ตั้ง <c>ProviderModel = null</c> ⇒ คำตอบของนักเรียนถูกทิ้ง
+    /// <b>ทุกครั้งที่ AI ไม่พร้อม</b> ซึ่งคือเคสที่กฎเหล็ก #1 ข้อ 5 (kill-switch) เขียนมา
+    /// เพื่อรองรับพอดี (ผลตรวจ 2026-09-06 รอบตรวจย้อน 4fd8dd6)</para></summary>
     internal static bool IsStudentAnswer(AiResponse resp) =>
         !resp.UsedAi
-        && resp.Status == AiCallStatus.Skipped
-        && !string.IsNullOrEmpty(resp.PrimaryAnswer)
-        && resp.ProviderModel?.StartsWith("local:", StringComparison.Ordinal) == true;
+        && resp.FromLocalModel
+        && !string.IsNullOrEmpty(resp.PrimaryAnswer);
 
     private const int CandidateLimit = 12;
     private const int VendorHistoryLookbackMonths = 24;
