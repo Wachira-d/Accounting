@@ -36,7 +36,15 @@ public class AiFeedbackTrainingJob : BackgroundService
         if (!_config.GetValue("Ai:FeedbackTraining:Enabled", true)) return;
         var interval = TimeSpan.FromHours(_config.GetValue("Ai:FeedbackTraining:IntervalHours", 6));
 
-        try { await Task.Delay(TimeSpan.FromMinutes(7), stoppingToken); }
+        // ★ โหลด "นักเรียน" เข้าหน่วยความจำทันทีที่ boot — ไม่ต้องรอรอบเทรนแรก
+        // (กฎเหล็ก #1 ข้อ 5: ปิด provider แล้วต้องทำงานได้ **ตั้งแต่วินาทีแรก**
+        // ไม่ใช่หลัง deploy ไป 7 นาที). หน่วง 1 นาทีให้ migration/DB พร้อมก่อน
+        try { await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken); }
+        catch (OperationCanceledException) { return; }
+        try { await ReloadModelsIntoThisProcessAsync(stoppingToken); }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลดนักเรียนตอน boot ไม่สำเร็จ (จะลองใหม่รอบถัดไป)"); }
+
+        try { await Task.Delay(TimeSpan.FromMinutes(6), stoppingToken); }
         catch (OperationCanceledException) { return; }
 
         while (!stoppingToken.IsCancellationRequested)
@@ -53,11 +61,33 @@ public class AiFeedbackTrainingJob : BackgroundService
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
 
-        // กันสอง instance เทรนพร้อมกัน (E-AI-07) — ใช้ตัวล็อกกลางตัวเดียวกับ
-        // job อื่นทุกตัว (Helpers/JobLock) แทนสำเนาที่เขียนไว้เองในไฟล์นี้
+        // ═══ สองอย่างนี้มีขอบเขตคนละแบบ — ห้ามอยู่ใต้ล็อกเดียวกัน ═══
+        //
+        // 1) **เทรน** = เขียนข้อมูลลงฐานที่ทุก instance ใช้ร่วมกัน ⇒ ต้องกันสอง
+        //    instance ทำพร้อมกัน (E-AI-07) ด้วย try-lock: ใครแพ้ก็ข้ามรอบไป
+        //
+        // 2) **โหลดเข้าหน่วยความจำ** = state ของ **process นี้** (ILocalDistillationModel
+        //    เป็น singleton ต่อ process) ⇒ ต้องทำ **ทุก instance ทุกรอบ**
+        //
+        // ⚠️ เดิมข้อ 2 อยู่ข้างในล็อกของข้อ 1 ⇒ instance ที่แพ้ล็อก **ไม่เคยมี
+        // นักเรียนเลยตลอดอายุ process** (try-lock ไม่รอ — และ instance เดิมมักชนะซ้ำ ๆ)
+        // ⇒ คำขอที่ load balancer ส่งไปเครื่องนั้นได้ heuristic เปล่า ๆ หรือถูกส่งไป
+        // เรียก provider ทุกครั้ง = กฎเหล็ก #1 ใช้ไม่ได้จริงบน N-1 เครื่อง
+        // และอาการนี้มองไม่เห็นจาก log เพราะแต่ละเครื่องทำงาน "ถูกต้อง" ในสายตาตัวเอง
         await Accounting.Helpers.JobLock.RunExclusiveAsync(
             db, Accounting.Helpers.AdvisoryLockKey.AiFeedbackTraining, "global",
             () => RunTrainingPassAsync(db, ct), _logger, ct: ct);
+
+        await ReloadModelsIntoThisProcessAsync(ct);
+    }
+
+    /// <summary>โหลดนักเรียนทุกตัวของทุกบริษัทเข้าหน่วยความจำของ <b>process นี้</b>
+    /// — ไม่แตะข้อมูล จึงรันพร้อมกันหลาย instance ได้โดยไม่ต้องมีล็อก</summary>
+    private async Task ReloadModelsIntoThisProcessAsync(CancellationToken ct)
+    {
+        using var scope = _services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+        await ReloadDistillationModelsAsync(db, ct);
     }
 
     private async Task RunTrainingPassAsync(AccountingDbContext db, CancellationToken ct)
@@ -65,7 +95,6 @@ public class AiFeedbackTrainingJob : BackgroundService
         var cutoff = DateTime.UtcNow.AddDays(-30);
         await RefreshAllLocalModelHealthsAsync(db, cutoff, ct);
         await TrainLocalModelsAsync(db, ct);
-        await ReloadDistillationModelsAsync(db, ct);
 
         // Stamp "last trained" — drives the admin badge.
         var settings = await db.SiteSettings.FirstOrDefaultAsync(ct);
@@ -496,6 +525,11 @@ public class AiFeedbackTrainingJob : BackgroundService
     /// Rebuild the in-memory distilled student models (vendor canon,
     /// GL account) from the freshly-trained feedback corpus. Runs per
     /// company since each company's prediction table is independent.
+    ///
+    /// <para>⚠️ <b>ต้องรันทุก instance</b> ไม่ใช่เฉพาะตัวที่ชนะ advisory lock —
+    /// เป็น state ต่อ process ไม่ใช่ข้อมูลที่ใช้ร่วมกัน (ดูหมายเหตุใน
+    /// <c>RunOnceAsync</c>). ตัวเมธอดนี้ <b>อ่านอย่างเดียว</b> จึงรันพร้อมกัน
+    /// หลายเครื่องได้โดยไม่ต้องมีล็อก</para>
     ///
     /// The models are SINGLETON in DI; resolving them here gets the
     /// same instance the orchestrator uses, so the reload immediately

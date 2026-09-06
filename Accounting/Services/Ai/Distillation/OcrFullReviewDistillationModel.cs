@@ -196,14 +196,10 @@ public sealed class OcrFullReviewDistillationModel : ILocalDistillationModel
         }
     }
 
-    /// <summary>คีย์ผู้ขาย — เลขภาษี 13 หลักชนะชื่อเสมอ (ชื่อสะกดต่างได้)
-    /// รูปแบบเดียวกับที่ ExpenseCategoryLearner / GlobalDocWorkflowLearner ใช้</summary>
+    /// <summary>คีย์ผู้ขาย — ผ่าน <c>Helpers/VendorLearningKey</c> ตัวเดียวของระบบ
+    /// (เดิมสูตรนี้ถูกคัดลอกไปเขียนใหม่ 6 ที่ และมี 1 ที่ที่ลืมด่าน 13 หลัก)</summary>
     private static string VendorKey(string? taxId, string? name)
-    {
-        var digits = Accounting.Helpers.ThaiTaxId.Normalize(taxId);
-        if (digits.Length == 13) return $"tax:{digits}";
-        return string.IsNullOrWhiteSpace(name) ? "" : $"name:{name.Trim().ToLowerInvariant()}";
-    }
+        => Accounting.Helpers.VendorLearningKey.For(taxId, name);
 
     private static string? Str(JsonElement root, string prop)
         => root.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String

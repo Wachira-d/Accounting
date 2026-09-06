@@ -376,17 +376,11 @@ public class ExpenseCategoryLearner
         }
     }
 
+    /// <summary>คีย์ผู้ขาย — ผ่าน <c>Helpers/VendorLearningKey</c> ตัวเดียวของระบบ
+    /// (ห้ามเขียนสูตรเอง: ฝั่งเขียนกับฝั่งอ่านที่ใช้คีย์คนละชุด = ความรู้ที่สะสมไว้
+    /// ไม่เคยถูกอ่าน — ผลตรวจ 2026-09-06 · T3-09)</summary>
     private static string NormalizeVendorKey(string? taxId, string? name)
-    {
-        if (!string.IsNullOrEmpty(taxId))
-        {
-            var digits = new string(taxId.Where(char.IsDigit).ToArray());
-            if (digits.Length == 13) return $"tax:{digits}";
-        }
-        if (!string.IsNullOrEmpty(name))
-            return $"name:{name.Trim().ToLowerInvariant()}";
-        return "";
-    }
+        => Accounting.Helpers.VendorLearningKey.For(taxId, name);
 
     private static string NormalizeDescription(string? description)
     {

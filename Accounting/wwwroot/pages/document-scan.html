@@ -2248,7 +2248,11 @@
                 </select>
               </div>
               <div class="review-field" style="background:#fef3c7;border:1px solid #fcd34d;padding:8px 10px;border-radius:6px">
-                <label style="color:#78350f;font-weight:600">เอกสารที่จะสร้างในระบบ <span style="font-weight:400;font-size:11px">⚙️ ระบบแนะนำ (จากชนิดเอกสาร)</span></label>
+                <!-- ป้ายซื่อสัตย์ตามกฎเหล็ก #1 ข้อ "UI ติดป้ายซื่อสัตย์": "🤖 AI แนะนำ"
+                     เฉพาะตอนเรียก provider จริงเท่านั้น (targetDocTypeUsedAi) ไม่งั้นเป็น
+                     "⚙️ ระบบแนะนำ" — ธงนี้มีบนแถวสแกนมาตลอดแต่เพิ่งถูกส่งออกมาใน DTO
+                     (ผลตรวจ 2026-09-06 · T3-12) -->
+                <label style="color:#78350f;font-weight:600">เอกสารที่จะสร้างในระบบ <span style="font-weight:400;font-size:11px">${scan.targetDocTypeUsedAi ? '🤖 AI แนะนำ' : '⚙️ ระบบแนะนำ (จากชนิดเอกสาร/บทบาทบนกระดาษ)'}</span></label>
                 <select class="form-input" id="revTargetDocType" style="flex:1;background:white">
                   <option value="">— เลือก —</option>
                   <option value="PurchaseInvoice" ${scan.targetDocumentType === 'PurchaseInvoice' ? 'selected' : ''}>ใบแจ้งหนี้ซื้อ (AP)</option>

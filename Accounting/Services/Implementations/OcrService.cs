@@ -1209,11 +1209,12 @@ public class OcrService : IOcrService
                 {
                     try
                     {
-                        var fedVKey = !string.IsNullOrEmpty(extractedData.VendorTaxId)
-                            ? $"tax:{new string(extractedData.VendorTaxId.Where(char.IsDigit).ToArray())}"
-                            : !string.IsNullOrEmpty(extractedData.VendorName)
-                                ? $"name:{extractedData.VendorName.Trim().ToLowerInvariant()}"
-                                : null;
+                        // ⚠️ เดิมสร้างคีย์เองแล้ว **ลืมด่าน 13 หลัก** ⇒ ใบที่ OCR อ่านเลข
+                        // ผู้เสียภาษีไม่ครบจะไปหา "tax:0105556" ที่ไม่มีใครเคยเขียน
+                        // (ฝั่งเขียนตกไปใช้ "name:") ⇒ ความรู้จากผู้เช่าคนอื่นไม่เคยถูกใช้เลย
+                        // สำหรับใบกลุ่มนั้น — ตอนนี้ทั้งสองฝั่งผ่าน Helpers/VendorLearningKey
+                        var fedVKey = Accounting.Helpers.VendorLearningKey.For(
+                            extractedData.VendorTaxId, extractedData.VendorName);
                         if (!string.IsNullOrEmpty(fedVKey))
                         {
                             var (fedTarget, fedTenants) = await _docWorkflowLearner.PredictAsync(fedVKey, extractedData.DocumentType);
@@ -3921,18 +3922,10 @@ public class OcrService : IOcrService
             var targetDocType = correction.TargetDocumentType ?? result.TargetDocumentType;
             if (!string.IsNullOrEmpty(scannedDocType) && !string.IsNullOrEmpty(targetDocType))
             {
-                // Inline normalization (same shape ExpenseCategoryLearner uses):
-                // tax-id wins when valid 13-digit; else lowercased name.
+                // คีย์เดียวกับฝั่งอ่าน (Helpers/VendorLearningKey) — ห้ามเขียนสูตรเอง
                 var taxId = correction.VendorTaxId ?? result.ExtractedVendorTaxId;
                 var name = correction.VendorName ?? result.ExtractedVendorName;
-                string vKey = "";
-                if (!string.IsNullOrEmpty(taxId))
-                {
-                    var digits = new string(taxId.Where(char.IsDigit).ToArray());
-                    if (digits.Length == 13) vKey = $"tax:{digits}";
-                }
-                if (string.IsNullOrEmpty(vKey) && !string.IsNullOrEmpty(name))
-                    vKey = $"name:{name.Trim().ToLowerInvariant()}";
+                var vKey = Accounting.Helpers.VendorLearningKey.For(taxId, name);
 
                 if (!string.IsNullOrEmpty(vKey))
                 {
@@ -7142,12 +7135,20 @@ public class OcrService : IOcrService
             GlAccountAiConfidence: r.GlAccountAiConfidence,
             // §86/4 (กฎเหล็ก #3): ค่าจาก scan ล่าสุดก่อน แล้ว fallback ค่าที่เก็บไว้
             // — สาขาต้องมีค่าเสมอ ("00000" = สำนักงานใหญ่) ห้ามปล่อย null ให้ UI
-            VendorBranchCode: data?.VendorBranchCode ?? r.VendorBranchCode ?? "00000",
+            // ⚠️ ห้ามเติม "00000" (ผลตรวจ 2026-09-06 · T1-10 ต่อ): เส้นเขียนเอกสาร
+            // เลิกเดาสาขาไปแล้ว แต่ **DTO ยังเดาอยู่** ⇒ ช่องบนหน้า review ถูก
+            // pre-fill เป็น "สำนักงานใหญ่" ทุกใบ แล้วผู้ใช้กดยืนยัน 1 คลิก
+            // ⇒ ใบของสาขาที่ 3 ขึ้นรายงานภาษีซื้อ §87 เป็นสำนักงานใหญ่เหมือนเดิม
+            // (ประกาศอธิบดีฯ ฉบับที่ 199 บังคับให้ระบุสาขาจริง) · หน้าเว็บมีหมายเหตุ
+            // ห้ามเติมเองอยู่แล้ว แต่ถูกลบล้างเพราะเซิร์ฟเวอร์ส่ง "00000" มาให้ก่อน
+            // — "ไม่รู้ = บอกว่าไม่รู้" แล้วให้ป้าย confidence 0.30 เตือน
+            VendorBranchCode: data?.VendorBranchCode ?? r.VendorBranchCode,
             VendorAddress: data?.VendorAddress ?? r.VendorAddress,
-            BuyerBranchCode: data?.BuyerBranchCode ?? r.BuyerBranchCode ?? "00000",
+            BuyerBranchCode: data?.BuyerBranchCode ?? r.BuyerBranchCode,
             BuyerAddress: data?.BuyerAddress ?? r.BuyerAddress,
             // ป้ายซื่อสัตย์ตามกฎเหล็ก #1 — บอกว่ารายการในใบนี้ AI เป็นคนแตกให้
             LineSplitUsedAi: r.LineSplitUsedAi,
+            TargetDocTypeUsedAi: r.TargetDocTypeUsedAi,
             // สกุลเงินอ่านจากข้อความบนกระดาษ (ตัวเดียวกับที่เส้น "สร้างทันที" ใช้)
             // — ส่งออกมาเพื่อให้เส้น handoff ได้คำตอบเดียวกัน (T4-08)
             Currency: InferCurrency(r.RawTextContent),

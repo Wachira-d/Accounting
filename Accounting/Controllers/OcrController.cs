@@ -1666,14 +1666,7 @@ public class OcrController : ControllerBase
         if (string.IsNullOrEmpty(taxId) && string.IsNullOrEmpty(name))
             return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุ taxId หรือ name อย่างน้อย 1 อย่าง"));
 
-        string key = "";
-        if (!string.IsNullOrEmpty(taxId))
-        {
-            var digits = new string(taxId.Where(char.IsDigit).ToArray());
-            if (digits.Length == 13) key = $"tax:{digits}";
-        }
-        if (string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(name))
-            key = $"name:{name.Trim().ToLowerInvariant()}";
+        var key = Accounting.Helpers.VendorLearningKey.For(taxId, name);
 
         var intel = await _db.OcrVendorIntelligence
             .FirstOrDefaultAsync(v => v.CompanyId == companyId && v.VendorKey == key && !v.IsDeleted);

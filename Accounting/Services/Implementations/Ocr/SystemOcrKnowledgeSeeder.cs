@@ -117,7 +117,7 @@ public class SystemOcrKnowledgeSeeder
         {
             foreach (var vendorAlias in s.VendorAliases)
             {
-                var vendorKey = $"name:{vendorAlias.Trim().ToLowerInvariant()}";
+                var vendorKey = Accounting.Helpers.VendorLearningKey.ForName(vendorAlias);
                 foreach (var kwAlias in s.KeywordAliases)
                 {
                     var keyword = kwAlias.Trim().ToLowerInvariant();
@@ -157,7 +157,7 @@ public class SystemOcrKnowledgeSeeder
         {
             foreach (var alias in s.VendorAliases)
             {
-                var key = $"name:{alias.Trim().ToLowerInvariant()}";
+                var key = Accounting.Helpers.VendorLearningKey.ForName(alias);
                 var existing = await _db.SystemOcrVendorIntelligence
                     .FirstOrDefaultAsync(v => v.VendorKey == key && !v.IsDeleted, ct);
                 if (existing != null && !overwrite) continue;
