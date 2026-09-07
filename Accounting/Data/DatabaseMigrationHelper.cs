@@ -2691,6 +2691,12 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "SourceDocumentId" uuid NULL;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "SourceDocumentLineId" uuid NULL;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "NeedsReview" boolean NOT NULL DEFAULT false;""",
+            // ทบทวนอายุการใช้งานแบบ prospective (TFRS for NPAEs บทที่ 10) — ผลตรวจทีม E · E-06
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "DepreciableBaseAtReview" numeric NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "RemainingLifeMonthsAtReview" integer NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "ReviewEffectiveFromMonthIndex" integer NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "UsefulLifeReviewedAt" timestamptz NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "UsefulLifeReviewedBy" text NULL;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "AssetType" integer NOT NULL DEFAULT 1;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LeaseTermMonths" integer NULL;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LessorName" varchar(200) NULL;""",

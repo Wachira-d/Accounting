@@ -130,7 +130,8 @@ public class FixedAssetController : ControllerBase
         Guid companyId, Guid assetId, [FromBody] AdjustUsefulLifeRequest request)
     {
         if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ทบทวนอายุการใช้งาน") is { } deny) return deny;
-        var result = await _assetService.AdjustUsefulLifeAsync(companyId, assetId, request);
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.AdjustUsefulLifeAsync(companyId, assetId, request, userId);
         return Ok(new ApiResponse<FixedAssetResponse>(true, result, "ปรับอายุการใช้งานสำเร็จ"));
     }
 

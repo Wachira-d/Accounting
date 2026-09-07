@@ -73,8 +73,8 @@
 | ✅ E-02 | E | เส้นรูปใน LINE สร้างเอกสารโดยไม่ผ่าน `CanCreateAsync` (ด่านอยู่ที่ controller เว็บเท่านั้น) | `LineBotService.cs:480` |
 | ✅ E-03 | E | การ์ด "อนุมัติเลย" ใน LINE ไม่อ่าน `ComplianceIssues` ทั้งที่ค่ามาถึงแล้ว | `LineBotService.cs:543-576` |
 | ✅ E-04 | E | `FixedAssetController` ไม่มีคีย์สิทธิ์เลย + endpoint มือแข่งกับ cron ได้ | `FixedAssetController.cs:116` |
-| E-05 | E | `DisposeAsync`/`WriteOffAsync` ไม่คิดค่าเสื่อมถึงวันขาย + silent no-op เมื่อไม่มีผังบัญชี | `FixedAssetService.cs:381-486` |
-| E-06 | E | `AdjustUsefulLifeAsync` ทบทวนอายุแบบย้อนหลัง (ผิด TFRS บทที่ 10) + ไม่มี `UsefulLifeReviewedAt` | `FixedAssetService.cs:586-608` |
+| ✅ E-05 | E | `DisposeAsync`/`WriteOffAsync` ไม่คิดค่าเสื่อมถึงวันขาย + silent no-op เมื่อไม่มีผังบัญชี | `FixedAssetService.cs:381-486` |
+| ✅ E-06 | E | `AdjustUsefulLifeAsync` ทบทวนอายุแบบย้อนหลัง (ผิด TFRS บทที่ 10) + ไม่มี `UsefulLifeReviewedAt` | `FixedAssetService.cs:586-608` |
 | ✅ F-03 | F | deep-link 9 จุด/6 หน้า ใช้ชื่อ query param ที่ปลายทางไม่อ่าน | ดูรายงาน F |
 | ✅ F-04 | F | `_revenueDocTypes`/`_expenseDocTypes` ยัด CN/DN/DeliveryNote เป็น revenue ทั้งที่เป็น `BothSides` | `layout.js:2528-2533` |
 | ✅ F-05 | F | ปุ่มลบบริษัทในคอนโซลแอดมินพิมพ์ `AdminApi` (ของจริง `AdminAPI`) | `admin/customers.html:466` |

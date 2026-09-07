@@ -176,10 +176,16 @@ public class FixedAssetService : IFixedAssetService
         // (`CalculateDepreciationAsync`) และ catch-up ตอนจำหน่าย เรียกตัวเดียวกัน
         // (เดิมสูตรถูกเขียนซ้ำสองที่ แล้วเส้นโพสต์ **ไม่มี switch-to-straight-line**
         //  ⇒ ตัวเลขที่ผู้ใช้เห็นล่วงหน้า ≠ ตัวเลขที่ลงบัญชี ตั้งแต่งวดที่ 2)
+        // ทบทวนอายุแล้ว → แผนที่เหลือคิดจากฐานใหม่ และเริ่มที่งวดถัดจากวันทบทวน
+        var ep = EffectiveDepParams(asset, 0);
+        var shift = asset.ReviewEffectiveFromMonthIndex ?? 0;
+        var already = asset.AccumulatedDepreciation;
         foreach (var p in Accounting.Helpers.DepreciationSchedule.Build(
-                     asset.DepreciationMethod, asset.PurchaseCost, asset.SalvageValue,
-                     asset.UsefulLifeMonths, asset.PurchaseDate))
-            rows.Add((p.Year, p.Month, p.Amount, p.Accumulated, p.NetBookValue));
+                     asset.DepreciationMethod, ep.Cost, ep.Salvage, ep.Life,
+                     asset.PurchaseDate.AddMonths(shift)))
+            rows.Add((p.Year, p.Month, p.Amount,
+                      shift > 0 ? already + p.Accumulated : p.Accumulated,
+                      p.NetBookValue));
         return rows;
     }
 
@@ -343,16 +349,30 @@ public class FixedAssetService : IFixedAssetService
         if (asset.Status != AssetStatus.Active && asset.Status != AssetStatus.FullyDepreciated)
             throw new InvalidOperationException("สินทรัพย์นี้ไม่สามารถจำหน่ายได้");
 
+        // สินทรัพย์ที่ไม่มี GL mapping: เดิมข้ามการสร้าง JE ทั้งก้อนแบบเงียบ ๆ แต่ยัง
+        // เขียนทะเบียนเป็น "ตัดครบแล้ว" ⇒ ทะเบียนกับ GL แยกทางกันถาวรโดย API ตอบว่า
+        // "จำหน่ายสำเร็จ" (ผลตรวจทีม E · E-05 — คลาสเดียวกับ IntegrationService)
+        if (!asset.AssetAccountId.HasValue || !asset.AccumulatedDepreciationAccountId.HasValue)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"สินทรัพย์ “{asset.Name}” ยังไม่ได้ผูกผังบัญชีสินทรัพย์/ค่าเสื่อมสะสม — "
+                + "ผูกบัญชีที่หน้าทะเบียนสินทรัพย์ก่อน จึงจะจำหน่ายได้ "
+                + "(ไม่งั้นทะเบียนจะบอกว่าจำหน่ายแล้วแต่บัญชีไม่มีรายการใด ๆ)",
+                "ASSET-DISPOSE-NO-GL");
+
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
+        {
+        // ค่าเสื่อมงวดที่ค้างถึงเดือนที่ขาย ต้องลงก่อนคิดกำไร/ขาดทุน (§65 ทวิ) —
+        // ไม่งั้นกำไรจากการจำหน่ายเกินจริงเท่ากับค่าเสื่อมที่ขาด และงวดเหล่านั้น
+        // จะไม่มีวันถูกโพสต์ย้อนหลังเพราะ Status กลายเป็น Disposed
+        await PostCatchUpDepreciationAsync(companyId, asset, request.DisposalDate, performedBy);
+
         asset.Status = AssetStatus.Disposed;
         asset.DisposalDate = request.DisposalDate;
         asset.DisposalAmount = request.DisposalAmount;
 
         var gainLoss = request.DisposalAmount - asset.NetBookValue;
 
-        await using var transaction = await _db.Database.BeginTransactionAsync();
-        try
-        {
-        if (asset.AssetAccountId.HasValue && asset.AccumulatedDepreciationAccountId.HasValue)
         {
             var entryNumber = $"DEP-DISP-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
 
@@ -447,7 +467,12 @@ public class FixedAssetService : IFixedAssetService
             _db.JournalEntries.Add(journalEntry);
         }
 
-        asset.AccumulatedDepreciation = asset.PurchaseCost;
+        // ⚠️ เดิมเขียน `AccumulatedDepreciation = PurchaseCost` ซึ่งเป็นค่าที่
+        // **ไม่ตรงกับที่โพสต์จริง** (โพสต์ 60,000 แต่ทะเบียนบันทึก 120,000)
+        // ⇒ รายงานทะเบียน/หมายเหตุประกอบงบที่อ่านฟิลด์นี้เล่าคนละเรื่องกับ GL
+        // (ผลตรวจทีม E · E-05 ข้อ ง) · ตอนนี้คงยอดสะสมจริงไว้ (ซึ่งถูกต้องแล้ว
+        // หลังคิดค่าเสื่อมค้างถึงวันจำหน่าย) และ NBV = 0 หมายถึง "ไม่ได้ถือครอง
+        // แล้ว" ตามที่ JE ตัดออกทั้งราคาทุนและค่าเสื่อมสะสม
         asset.NetBookValue = 0;
 
         await _db.SaveChangesAsync();
@@ -470,16 +495,29 @@ public class FixedAssetService : IFixedAssetService
         if (asset.Status != AssetStatus.Active && asset.Status != AssetStatus.FullyDepreciated)
             throw new InvalidOperationException("สินทรัพย์นี้ไม่สามารถตัดจำหน่ายได้");
 
-        var remainingNBV = asset.NetBookValue;
-        asset.Status = AssetStatus.WrittenOff;
-        asset.DisposalDate = request.WriteOffDate;
-        asset.DisposalAmount = 0;
+        // fail loud เหมือนเส้นจำหน่าย — ห้ามล้างทะเบียนทั้งที่ไม่มี JE ใด ๆ เกิดขึ้น
+        if (!asset.AssetAccountId.HasValue || !asset.AccumulatedDepreciationAccountId.HasValue)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"สินทรัพย์ “{asset.Name}” ยังไม่ได้ผูกผังบัญชีสินทรัพย์/ค่าเสื่อมสะสม — "
+                + "ผูกบัญชีที่หน้าทะเบียนสินทรัพย์ก่อน จึงจะตัดจำหน่ายได้",
+                "ASSET-WRITEOFF-NO-GL");
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
+        // ค่าเสื่อมที่ค้างถึงวันตัดจำหน่ายต้องลงก่อน — ไม่งั้นขาดทุนจากการตัดจำหน่าย
+        // สูงเกินจริงเท่ากับค่าเสื่อมที่ไม่ได้ลง
+        await PostCatchUpDepreciationAsync(companyId, asset, request.WriteOffDate, performedBy);
+
+        // อ่าน NBV **หลัง** คิดค่าเสื่อมค้าง — ไม่งั้นขาดทุนจากการตัดจำหน่ายจะสูง
+        // เกินจริงเท่ากับค่าเสื่อมที่ยังไม่ได้ลง
+        var remainingNBV = asset.NetBookValue;
+
+        asset.Status = AssetStatus.WrittenOff;
+        asset.DisposalDate = request.WriteOffDate;
+        asset.DisposalAmount = 0;
+
         // Journal entry: ตัดจำหน่ายสินทรัพย์ (NBV เหลือ 0, ไม่ได้รับเงิน)
-        if (asset.AssetAccountId.HasValue && asset.AccumulatedDepreciationAccountId.HasValue)
         {
             var entryNumber = $"WO-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
 
@@ -538,7 +576,12 @@ public class FixedAssetService : IFixedAssetService
         }
 
         // Update asset NBV
-        asset.AccumulatedDepreciation = asset.PurchaseCost;
+        // ⚠️ เดิมเขียน `AccumulatedDepreciation = PurchaseCost` ซึ่งเป็นค่าที่
+        // **ไม่ตรงกับที่โพสต์จริง** (โพสต์ 60,000 แต่ทะเบียนบันทึก 120,000)
+        // ⇒ รายงานทะเบียน/หมายเหตุประกอบงบที่อ่านฟิลด์นี้เล่าคนละเรื่องกับ GL
+        // (ผลตรวจทีม E · E-05 ข้อ ง) · ตอนนี้คงยอดสะสมจริงไว้ (ซึ่งถูกต้องแล้ว
+        // หลังคิดค่าเสื่อมค้างถึงวันจำหน่าย) และ NBV = 0 หมายถึง "ไม่ได้ถือครอง
+        // แล้ว" ตามที่ JE ตัดออกทั้งราคาทุนและค่าเสื่อมสะสม
         asset.NetBookValue = 0;
 
         await _db.SaveChangesAsync();
@@ -552,7 +595,7 @@ public class FixedAssetService : IFixedAssetService
         }
     }
 
-    public async Task<FixedAssetResponse> AdjustUsefulLifeAsync(Guid companyId, Guid assetId, AdjustUsefulLifeRequest request)
+    public async Task<FixedAssetResponse> AdjustUsefulLifeAsync(Guid companyId, Guid assetId, AdjustUsefulLifeRequest request, string performedBy)
     {
         var asset = await _db.FixedAssets
             .FirstOrDefaultAsync(a => a.Id == assetId && a.CompanyId == companyId)
@@ -564,13 +607,78 @@ public class FixedAssetService : IFixedAssetService
         if (request.NewUsefulLifeMonths <= 0)
             throw new ArgumentException("อายุการใช้งานต้องมากกว่า 0 เดือน");
 
-        asset.UsefulLifeMonths = request.NewUsefulLifeMonths;
         if (request.NewSalvageValue.HasValue)
         {
             if (request.NewSalvageValue.Value < 0)
                 throw new ArgumentException("มูลค่าซากต้องไม่ติดลบ");
             asset.SalvageValue = request.NewSalvageValue.Value;
         }
+
+        // งวดล่าสุดที่โพสต์ไปแล้ว = จุดที่การทบทวนเริ่มมีผลกับงวดถัดไป
+        var lastPosted = await _db.AssetDepreciations
+            .Where(d => d.FixedAssetId == asset.Id && d.IsPosted)
+            .OrderByDescending(d => d.Year).ThenByDescending(d => d.Month)
+            .Select(d => new { d.Year, d.Month })
+            .FirstOrDefaultAsync();
+        var postedIndex = lastPosted == null
+            ? -1
+            : Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
+                  asset.PurchaseDate, lastPosted.Year, lastPosted.Month);
+        var elapsed = postedIndex + 1;                       // จำนวนงวดที่คิดไปแล้ว
+        var remaining = request.NewUsefulLifeMonths - elapsed;
+        if (remaining <= 0)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"อายุใหม่ {request.NewUsefulLifeMonths} เดือน สั้นกว่าที่คิดค่าเสื่อมไปแล้ว "
+                + $"({elapsed} งวด) — ถ้าต้องการตัดจบทันที ให้ใช้ “ตัดจำหน่าย” แทน",
+                "ASSET-LIFE-TOO-SHORT");
+
+        // เปลี่ยนประมาณการ = **prospective** — ตรึงฐานที่เหลือ (NBV) กับอายุคงเหลือ
+        // ไว้ตรง ๆ แทนการหวังให้สูตรที่หารจากราคาทุนเดาถูก (ผลตรวจทีม E · E-06)
+        var before = new
+        {
+            asset.UsefulLifeMonths, asset.SalvageValue,
+            asset.NetBookValue, asset.AccumulatedDepreciation,
+        };
+        asset.UsefulLifeMonths = request.NewUsefulLifeMonths;
+        asset.DepreciableBaseAtReview = asset.NetBookValue - asset.SalvageValue;
+        asset.RemainingLifeMonthsAtReview = remaining;
+        asset.ReviewEffectiveFromMonthIndex = elapsed;
+        asset.UsefulLifeReviewedAt = DateTime.UtcNow;
+        asset.UsefulLifeReviewedBy = performedBy;
+
+        // แถวแผนที่ยังไม่โพสต์เป็นตารางของอายุ**เดิม** — ต้องสร้างใหม่ในธุรกรรม
+        // เดียวกัน ไม่งั้นหน้าจอโชว์แผนเก่าขณะที่ยอดโพสต์เดินตามฐานใหม่
+        var stalePlan = await _db.AssetDepreciations
+            .Where(d => d.FixedAssetId == asset.Id && !d.IsPosted)
+            .ToListAsync();
+        _db.AssetDepreciations.RemoveRange(stalePlan);
+        foreach (var (y, m, amount, accumulated, nbv) in BuildScheduleRows(asset))
+        {
+            _db.AssetDepreciations.Add(new AssetDepreciation
+            {
+                CompanyId = companyId, FixedAssetId = asset.Id,
+                Year = y, Month = m, Amount = amount,
+                AccumulatedAmount = accumulated, NetBookValue = nbv,
+                IsPosted = false, CreatedBy = performedBy,
+            });
+        }
+
+        // การเปลี่ยนตัวเลขที่กระทบค่าใช้จ่ายต้องเข้า AuditLog (hash chain) —
+        // ผู้สอบบัญชีถามว่า "ใครเปลี่ยนอายุจาก X เป็น Y ด้วยอำนาจอะไร"
+        _db.AuditLogs.Add(new AuditLog
+        {
+            UserId = Guid.TryParse(performedBy, out var uid) ? uid : Guid.Empty,
+            Action = Models.Enums.AuditAction.Update,
+            EntityType = nameof(FixedAsset),
+            EntityId = asset.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                asset.UsefulLifeMonths, asset.SalvageValue,
+                asset.DepreciableBaseAtReview, asset.RemainingLifeMonthsAtReview,
+                Reason = request.Reason,
+            }),
+        });
 
         await _db.SaveChangesAsync();
         return MapToResponse(asset);
@@ -590,6 +698,144 @@ public class FixedAssetService : IFixedAssetService
         return depreciations.Select(d => new DepreciationResponse(
             d.Id, d.FixedAssetId, d.Year, d.Month,
             d.Amount, d.AccumulatedAmount, d.NetBookValue, d.IsPosted)).ToList();
+    }
+
+    /// <summary>
+    /// พารามิเตอร์ที่ใช้คิดค่าเสื่อม "ณ ตอนนี้" — แปลงฐาน/อายุ/ดัชนีงวดให้สะท้อน
+    /// การทบทวนอายุการใช้งานล่าสุด (TFRS for NPAEs บทที่ 10: เปลี่ยนประมาณการ =
+    /// <b>prospective</b> คิดจาก NBV คงเหลือ ÷ อายุคงเหลือ ไม่ใช่ราคาทุน ÷ อายุใหม่)
+    ///
+    /// <para>ทำที่นี่แทนการแก้ตัวสูตร เพื่อให้ <c>Helpers/DepreciationSchedule</c>
+    /// ยังเป็นฟังก์ชันบริสุทธิ์ที่เทสต์ได้โดยไม่ต้องรู้จัก entity</para>
+    ///
+    /// <para><c>DepreciableBaseAtReview == null</c> = <b>ยังไม่เคยทบทวน</b> ⇒ ใช้
+    /// ราคาทุนเดิมตามปกติ (ต้องแยกจาก "ทบทวนแล้วได้ค่าเท่าเดิม")</para>
+    /// </summary>
+    private static (decimal Cost, decimal Salvage, int Life, int Index) EffectiveDepParams(
+        FixedAsset asset, int monthIndex)
+    {
+        if (asset.DepreciableBaseAtReview is not decimal baseAmt
+            || asset.RemainingLifeMonthsAtReview is not int remaining
+            || asset.ReviewEffectiveFromMonthIndex is not int from
+            || remaining <= 0)
+            return (asset.PurchaseCost, asset.SalvageValue, asset.UsefulLifeMonths, monthIndex);
+
+        // ฐานใหม่ถูกใส่กลับเป็น "ราคาทุนเสมือน" = ฐาน + ซาก เพื่อให้สูตรเส้นตรง
+        // `(cost − salvage) / life` ให้ผลเท่ากับ `ฐาน / อายุคงเหลือ` พอดี
+        return (baseAmt + asset.SalvageValue, asset.SalvageValue, remaining, monthIndex - from);
+    }
+
+    /// <summary>
+    /// คิดค่าเสื่อมงวดที่ยัง<b>ค้าง</b>จนถึงเดือนที่จำหน่าย/ตัดจำหน่าย แล้วโพสต์เป็น
+    /// JE แยกลงวันเดียวกับการจำหน่าย — คืนยอดที่โพสต์ (0 = ไม่มีอะไรค้าง)
+    ///
+    /// ═══ ที่มา (ผลตรวจทีม E · SYSTEM_AUDIT_2026-09-07.md E-05) ═══
+    /// <para><c>DisposeAsync</c>/<c>WriteOffAsync</c> คิด <c>gainLoss</c> จาก
+    /// <c>NetBookValue</c> ที่ค้างอยู่จาก<b>งวดที่โพสต์ล่าสุด</b> ⇒ สินทรัพย์ที่ขาย
+    /// กลางปีหลัง cron โพสต์ถึงเดือนก่อนหน้า จะขาดค่าเสื่อมของเดือนที่เหลือ
+    /// (ตัวอย่างจริง: ทุน 120,000 · SL 60 เดือน · โพสต์ถึง 06/2026 · ขาย 15 ก.ย.
+    /// ⇒ ขาด 3 งวด = 6,000 ⇒ กำไรจากการจำหน่ายเกินจริง 6,000 และค่าใช้จ่าย
+    /// ค่าเสื่อมขาดถาวร เพราะพอ <c>Status</c> เป็น <c>Disposed</c> แล้ว
+    /// <c>CalculateDepreciationAsync</c> กรอง <c>Status == Active</c> ทิ้ง)</para>
+    ///
+    /// <para>§65 ทวิ ให้หักค่าเสื่อมตามส่วนของเวลาที่ถือครอง — กำไรสุทธิรวมเท่ากัน
+    /// แต่<b>การจำแนกใน ภ.ง.ด.50 ผิด</b> ถ้าไม่คิดส่วนนี้</para>
+    /// </summary>
+    private async Task<decimal> PostCatchUpDepreciationAsync(
+        Guid companyId, FixedAsset asset, DateTime upTo, string performedBy)
+    {
+        if (asset.DepreciationMethod == DepreciationMethod.None || asset.UsefulLifeMonths <= 0)
+            return 0m;
+        if (!asset.DepreciationExpenseAccountId.HasValue || !asset.AccumulatedDepreciationAccountId.HasValue)
+            return 0m;   // ไม่มี GL mapping — เส้นจำหน่ายจะ throw ให้เองอยู่แล้ว
+
+        // ไล่ทีละงวดตั้งแต่งวดถัดจากที่โพสต์ล่าสุด จนถึงเดือนของวันที่จำหน่าย
+        var lastPosted = await _db.AssetDepreciations
+            .Where(d => d.FixedAssetId == asset.Id && d.IsPosted)
+            .OrderByDescending(d => d.Year).ThenByDescending(d => d.Month)
+            .Select(d => new { d.Year, d.Month })
+            .FirstOrDefaultAsync();
+
+        var startIndex = lastPosted == null
+            ? 0
+            : Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
+                  asset.PurchaseDate, lastPosted.Year, lastPosted.Month) + 1;
+        var endIndex = Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
+            asset.PurchaseDate, upTo.Year, upTo.Month);
+        if (startIndex < 0) startIndex = 0;
+        if (endIndex < startIndex) return 0m;
+
+        var total = 0m;
+        var nbv = asset.NetBookValue;
+        for (var i = startIndex; i <= endIndex; i++)
+        {
+            var ep = EffectiveDepParams(asset, i);
+            var amount = Accounting.Helpers.DepreciationSchedule.AmountForPeriod(
+                asset.DepreciationMethod, ep.Cost, ep.Salvage, ep.Life, ep.Index, nbv);
+            if (amount <= 0m) break;
+            var periodDate = asset.PurchaseDate.AddMonths(i + 1);
+            _db.AssetDepreciations.Add(new AssetDepreciation
+            {
+                CompanyId = companyId,
+                FixedAssetId = asset.Id,
+                Year = periodDate.Year,
+                Month = periodDate.Month,
+                Amount = amount,
+                AccumulatedAmount = asset.AccumulatedDepreciation + total + amount,
+                NetBookValue = nbv - amount,
+                IsPosted = true,
+                CreatedBy = performedBy,
+            });
+            total += amount;
+            nbv -= amount;
+        }
+        if (total <= 0m) return 0m;
+
+        // งวดปิดต้องกันเหมือนเส้นค่าเสื่อมปกติ
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
+            p.CompanyId == companyId && p.StartDate <= upTo && p.EndDate >= upTo);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ยังมีค่าเสื่อมค้าง {total:N2} บาทถึงวันที่จำหน่าย แต่งวดบัญชี "
+                + $"“{period.Name}” ปิดแล้ว — เปิดงวดก่อนแล้วทำรายการจำหน่ายใหม่",
+                "ASSET-DISPOSE-CLOSED-PERIOD");
+
+        var je = new JournalEntry
+        {
+            CompanyId = companyId,
+            EntryNumber = $"JV-{upTo:yyyyMM}-DEPCU{Guid.NewGuid().ToString()[..4].ToUpper()}",
+            // ⚠️ ลงวันเดียวกับการจำหน่าย ไม่ใช่ "วันนี้" — ค่าเสื่อมส่วนนี้เกิดขึ้น
+            // ในช่วงที่ยังถือครองอยู่ (บทเรียน "วันที่ของรายการกลับ ไม่ใช่วันนี้เสมอ")
+            EntryDate = upTo,
+            JournalType = JournalType.General,
+            Description = $"ค่าเสื่อมราคาถึงวันจำหน่าย - {asset.Name} ({asset.AssetCode})",
+            Status = JournalEntryStatus.Posted,
+            IsAutoGenerated = true,
+            FiscalPeriodId = period?.Id,
+            ProjectId = asset.ProjectId,
+            TotalDebit = total,
+            TotalCredit = total,
+            CreatedBy = performedBy,
+        };
+        je.Lines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id,
+            AccountId = asset.DepreciationExpenseAccountId.Value,
+            DebitAmount = total, CreditAmount = 0,
+            Description = $"ค่าเสื่อมราคาถึงวันจำหน่าย - {asset.Name}",
+        });
+        je.Lines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id,
+            AccountId = asset.AccumulatedDepreciationAccountId.Value,
+            DebitAmount = 0, CreditAmount = total,
+            Description = $"ค่าเสื่อมราคาสะสม - {asset.Name}",
+        });
+        _db.JournalEntries.Add(je);
+
+        asset.AccumulatedDepreciation += total;
+        asset.NetBookValue -= total;
+        return total;
     }
 
     public async Task<List<DepreciationResponse>> CalculateDepreciationAsync(
@@ -638,9 +884,10 @@ public class FixedAssetService : IFixedAssetService
             // มูลค่าซาก · การปัดเศษ 2 ตำแหน่งแบบ AwayFromZero และงวดสุดท้ายรับเศษ
             var monthIndex = Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
                 asset.PurchaseDate, request.Year, request.Month);
+            var effective = EffectiveDepParams(asset, monthIndex);
             var monthlyDepreciation = Accounting.Helpers.DepreciationSchedule.AmountForPeriod(
-                asset.DepreciationMethod, asset.PurchaseCost, asset.SalvageValue,
-                asset.UsefulLifeMonths, monthIndex, asset.NetBookValue);
+                asset.DepreciationMethod, effective.Cost, effective.Salvage,
+                effective.Life, effective.Index, asset.NetBookValue);
 
             if (monthlyDepreciation <= 0)
             {

@@ -115,9 +115,12 @@ public record WriteOffAssetRequest(
     DateTime WriteOffDate,
     string? Reason);
 
+/// <param name="Reason">เหตุผลที่ทบทวน — TFRS for NPAEs บทที่ 10 ให้ทบทวนสิ้นปี
+/// และผู้สอบบัญชีถามเสมอว่าเปลี่ยนเพราะอะไร (เก็บลง AuditLog พร้อมค่าก่อน/หลัง)</param>
 public record AdjustUsefulLifeRequest(
     int NewUsefulLifeMonths,
-    decimal? NewSalvageValue);
+    decimal? NewSalvageValue,
+    string? Reason = null);
 
 public record AssetCategoryResponse(
     string Category,

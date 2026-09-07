@@ -41,6 +41,35 @@ public class FixedAsset : TenantEntity
     public decimal PurchaseCost { get; set; }
     public decimal SalvageValue { get; set; }
     public int UsefulLifeMonths { get; set; }
+
+    // ───── ทบทวนอายุการใช้งาน (TFRS for NPAEs บทที่ 10) ─────
+    // ⚠️ ที่มา (ผลตรวจทีม E · SYSTEM_AUDIT_2026-09-07.md E-06): เดิม
+    // `AdjustUsefulLifeAsync` แค่เขียนทับ `UsefulLifeMonths` แล้วจบ — แต่สูตร
+    // เส้นตรงหารจาก **ราคาทุนเดิม** ไม่ใช่ NBV คงเหลือ ⇒ การเปลี่ยนประมาณการ
+    // กลายเป็นการคิดย้อนหลัง (retrospective) ซึ่งผิดมาตรฐาน: ทุน 120,000 อายุ
+    // 60 เดือน โพสต์ไป 24 งวด (NBV 72,000) แล้วย่นเหลือ 36 เดือน ควรได้
+    // 72,000/12 = 6,000/เดือน แต่โค้ดให้ 120,000/36 = 3,333.33 ⇒ ค่าเสื่อม
+    // ปีถัดไปหายไป 32,000 และตัดจบที่งวดที่ 45.6 แทนที่จะเป็น 36
+    //
+    // เก็บ "ฐานที่ใช้คิดต่อจากนี้" ไว้ตรง ๆ แทนการหวังให้สูตรเดาถูก
+
+    /// <summary>มูลค่าที่เหลือให้คิดค่าเสื่อม ณ วันทบทวน (= NBV ตอนนั้น) —
+    /// <c>null</c> = <b>ยังไม่เคยทบทวน</b> (ต่างจาก "ทบทวนแล้วได้ค่าเท่าเดิม")</summary>
+    public decimal? DepreciableBaseAtReview { get; set; }
+
+    /// <summary>อายุคงเหลือ (เดือน) นับจากงวดถัดจากวันทบทวน</summary>
+    public int? RemainingLifeMonthsAtReview { get; set; }
+
+    /// <summary>ลำดับงวด (0-based) ที่การทบทวนเริ่มมีผล — ใช้แปลงดัชนีงวดให้
+    /// สูตรคิดจากฐานใหม่ได้โดยไม่ต้องแก้ตัวสูตรเอง</summary>
+    public int? ReviewEffectiveFromMonthIndex { get; set; }
+
+    /// <summary>ทบทวนครั้งล่าสุดเมื่อไร — ผู้สอบบัญชีถามข้อนี้ตรง ๆ
+    /// (CLAUDE.md §G บทที่ 10)</summary>
+    public DateTime? UsefulLifeReviewedAt { get; set; }
+
+    /// <summary>ใครเป็นคนทบทวน</summary>
+    public string? UsefulLifeReviewedBy { get; set; }
     public DepreciationMethod DepreciationMethod { get; set; } = DepreciationMethod.StraightLine;
     public decimal AccumulatedDepreciation { get; set; }
     public decimal NetBookValue { get; set; }
