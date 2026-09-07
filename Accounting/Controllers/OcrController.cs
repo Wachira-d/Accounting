@@ -817,6 +817,21 @@ public class OcrController : ControllerBase
             catch { /* alias learning skipped when JSON is malformed */ }
         }
 
+        // โหลดสินค้าที่ผู้ใช้เลือกไว้ **ครั้งเดียว** ก่อนเข้าลูป
+        //
+        // ⚠️ ที่มา (ผลตรวจทีม G · SYSTEM_AUDIT_2026-09-07.md G-05): ลูปนี้วน
+        // 1 รอบต่อบรรทัดสินค้า และข้างในมี round trip 4-7 ครั้งต่อบรรทัด ⇒ ใบส่งของ
+        // ค้าส่ง 50 บรรทัด = **~250-350 query ในหนึ่ง request** ทั้งหมดอยู่ใน
+        // transaction เดียว ⇒ ถือ connection + ล็อกแถวสินค้ายาว บิลใหญ่ (100+
+        // บรรทัด) เสี่ยง timeout
+        var pickedIds = req.Lines.Where(l => l.ProductId.HasValue)
+            .Select(l => l.ProductId!.Value).Distinct().ToList();
+        var pickedProducts = pickedIds.Count == 0
+            ? new Dictionary<Guid, Models.Entities.Product>()
+            : await _db.Products
+                .Where(x => x.CompanyId == companyId && pickedIds.Contains(x.Id) && !x.IsDeleted)
+                .ToDictionaryAsync(x => x.Id);
+
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -921,8 +936,7 @@ public class OcrController : ControllerBase
 
                 if (item.ProductId.HasValue)
                 {
-                    var p = await _db.Products.FirstOrDefaultAsync(x =>
-                        x.CompanyId == companyId && x.Id == item.ProductId.Value && !x.IsDeleted);
+                    pickedProducts.TryGetValue(item.ProductId.Value, out var p);
                     if (p == null)
                     {
                         lineResults.Add(new OcrStockImportLineResult(item.LineIndex, Guid.Empty, "", "", 0, 0, false, false, "ไม่พบสินค้าในระบบ"));
@@ -983,8 +997,11 @@ public class OcrController : ControllerBase
                 }
                 else
                 {
-                    var p = await _db.Products.AsNoTracking().FirstAsync(x => x.Id == productId);
-                    newBalance = p.CurrentStock;
+                    // ⚠️ ต้องอ่านค่าล่าสุด (ไม่ใช่จาก dict ที่โหลดก่อนลูป) เพราะบรรทัด
+                    // ก่อนหน้าในใบเดียวกันอาจขยับสต๊อกของสินค้าตัวเดียวกันไปแล้ว
+                    var p = await _db.Products
+                        .FirstOrDefaultAsync(x => x.Id == productId && x.CompanyId == companyId);
+                    newBalance = p?.CurrentStock ?? 0m;
                 }
 
                 var aliasLearned = false;

@@ -79,7 +79,7 @@ shared volume) ซึ่งเป็นการตัดสินใจด้�
 | ✅ C-01 | C | `RefundDepositAsync` JE ไม่บาลานซ์เมื่อไม่มีผัง 21913 | `DocumentService.cs:3704-3745` |
 | ✅ C-02 | C | CN/DN ฝั่งซื้อไม่ดู `IsVatClaimable` | `DocumentService.cs:13566-13606` |
 | ✅ C-03 | C | `TryReclassifyUndueOutputVatAsync` ใช้ `ResolveFiscalPeriodAsync` (ไม่เช็คงวดปิด) | `DocumentService.cs:12472` |
-| C-04 | C | `CnDnPurchaseSideOverride` อ่านใน JE แต่ไม่อ่านใน `ApplyStockMovementsAsync` | — |
+| ✅ C-04 | C | `CnDnPurchaseSideOverride` อ่านใน JE แต่ไม่อ่านใน `ApplyStockMovementsAsync` | — |
 | C-05 | C | ใบเสร็จตัดชำระ/ใบลดหนี้คืนเงิน ออกนอก `ApproveDocumentAsync` ⇒ ข้ามด่าน §86/4 · `IssuerBranchCode` · `RetentionUntil` · `TaxPointDate` | — |
 | ✅ D-02 | D | dropdown อัตรา/ประเภทพิมพ์มือใน `recurring.html` + `admin/ocr-config.html` (ผิดกฎหมาย 4 จุด) | `recurring.html:91-110` |
 | ✅ D-03 | D | `8ad`/`8tr` หายจาก renderer 50 ทวิ ทั้ง 3 ตัว | — |
@@ -97,7 +97,7 @@ shared volume) ซึ่งเป็นการตัดสินใจด้�
 | ✅ F-05 | F | ปุ่มลบบริษัทในคอนโซลแอดมินพิมพ์ `AdminApi` (ของจริง `AdminAPI`) | `admin/customers.html:466` |
 | ✅ G-03 | G | `AssociationRuleMiner` ลบทั้งตารางแล้วเขียนใหม่ ไม่มีล็อก ไม่มี transaction | `AssociationRuleMiner.cs:181-199` |
 | ✅ G-04 | G | `PaymentIntentReconcileJob` commit ปล่อยล็อกก่อนงานจริงเริ่ม | `PaymentIntentReconcileJob.cs:71-95` |
-| G-05 | G | N+1 ยืนยันแล้ว 3 จุด | `OcrController.cs:823` · `CrossTenantKnowledgeAggregator.cs:150` · `EmailScheduleService.cs:286` |
+| ✅ G-05 | G | N+1 ยืนยันแล้ว 3 จุด | `OcrController.cs:823` · `CrossTenantKnowledgeAggregator.cs:150` · `EmailScheduleService.cs:286` |
 
 ### P2
 

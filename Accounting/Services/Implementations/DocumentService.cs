@@ -12768,6 +12768,17 @@ public partial class DocumentService : IDocumentService
             DocumentType.DebitNote when doc.DebitNoteReason == Models.Enums.DebitNoteReason.ExtraGoods => -1,
             _ => 0,
         };
+        // ⚠️ ทิศของ CN/DN ข้างบนเขียนจากมุม **ฝั่งขาย** — CN Return = ลูกค้าคืนของ
+        // เข้ามา (+1) · DN ExtraGoods = เราส่งของเพิ่มออกไป (−1) · แต่ CN/DN เป็น
+        // ชนิด `BothSides` (`Helpers/DocumentSide`) และเส้น JE อ่าน
+        // `CnDnPurchaseSideOverride` อยู่แล้ว **ส่วนเส้นสต๊อกไม่เคยอ่านเลย**
+        // (ผลตรวจทีม C · C-04) ⇒ ใบลดหนี้ที่เรา**คืนของให้ผู้ขาย** กลับ
+        // **เพิ่ม**สต๊อกแทนที่จะลด และใบเพิ่มหนี้ที่ผู้ขาย**ส่งของเพิ่มมาให้เรา**
+        // กลับ**ลด**สต๊อก ⇒ ยอดคงเหลือเพี้ยนสองเท่าของจำนวนที่คืน/รับเพิ่ม
+        if (direction != 0
+            && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+            && doc.CnDnPurchaseSideOverride == true)
+            direction = -direction;
         // ใบเสร็จ/ใบสำคัญรับ standalone ที่ขายสินค้าคงคลังโดยตรง — ตามนโยบายบริษัท
         // (CashSaleStockPolicy) เดิมตกที่ `_ => 0` เสมอ ⇒ ลงรายได้แต่สต๊อกไม่ลด (ERP_REVIEW A-06)
         if (direction == 0 && CashSaleStockRules.AppliesTo(doc))
