@@ -172,45 +172,14 @@ public class FixedAssetService : IFixedAssetService
             || asset.UsefulLifeMonths <= 0 || asset.PurchaseCost <= asset.SalvageValue)
             return rows;
 
-        var nbv = asset.PurchaseCost;
-        var accumulated = 0m;
-        for (int i = 0; i < asset.UsefulLifeMonths; i++)
-        {
-            var periodDate = asset.PurchaseDate.AddMonths(i + 1);
-            var depAmount = asset.DepreciationMethod switch
-            {
-                DepreciationMethod.StraightLine =>
-                    (asset.PurchaseCost - asset.SalvageValue) / asset.UsefulLifeMonths,
-                DepreciationMethod.DecliningBalance =>
-                    nbv * (1.0m / asset.UsefulLifeMonths),
-                DepreciationMethod.DoubleDecliningBalance =>
-                    nbv * (2.0m / asset.UsefulLifeMonths),
-                _ => throw new NotSupportedException(
-                    $"วิธีคิดค่าเสื่อมราคา '{asset.DepreciationMethod}' ไม่รองรับ")
-            };
-
-            // Switch-to-straight-line (มาตรฐานสากล): declining balance เป็น
-            // asymptotic ไม่มีวันถึง salvage ภายในอายุใช้งาน — เมื่อเส้นตรงจาก
-            // NBV คงเหลือ (เกลี่ยเดือนที่เหลือ) สูงกว่า DB ของงวด ให้สลับใช้
-            // เส้นตรง เพื่อให้ NBV ลงถึง salvage พอดี ณ สิ้นอายุ
-            if (asset.DepreciationMethod is DepreciationMethod.DecliningBalance
-                or DepreciationMethod.DoubleDecliningBalance)
-            {
-                var remainingMonths = asset.UsefulLifeMonths - i;
-                var slRemaining = (nbv - asset.SalvageValue) / remainingMonths;
-                if (slRemaining > depAmount) depAmount = slRemaining;
-            }
-
-            if (nbv - depAmount < asset.SalvageValue)
-                depAmount = nbv - asset.SalvageValue;
-            if (depAmount <= 0) break;
-
-            accumulated += depAmount;
-            nbv -= depAmount;
-            rows.Add((periodDate.Year, periodDate.Month, depAmount, accumulated, nbv));
-
-            if (nbv <= asset.SalvageValue) break;
-        }
+        // สูตรอยู่ที่ Helpers/DepreciationSchedule ที่เดียว — เส้นที่โพสต์ JE
+        // (`CalculateDepreciationAsync`) และ catch-up ตอนจำหน่าย เรียกตัวเดียวกัน
+        // (เดิมสูตรถูกเขียนซ้ำสองที่ แล้วเส้นโพสต์ **ไม่มี switch-to-straight-line**
+        //  ⇒ ตัวเลขที่ผู้ใช้เห็นล่วงหน้า ≠ ตัวเลขที่ลงบัญชี ตั้งแต่งวดที่ 2)
+        foreach (var p in Accounting.Helpers.DepreciationSchedule.Build(
+                     asset.DepreciationMethod, asset.PurchaseCost, asset.SalvageValue,
+                     asset.UsefulLifeMonths, asset.PurchaseDate))
+            rows.Add((p.Year, p.Month, p.Amount, p.Accumulated, p.NetBookValue));
         return rows;
     }
 
@@ -626,6 +595,19 @@ public class FixedAssetService : IFixedAssetService
     public async Task<List<DepreciationResponse>> CalculateDepreciationAsync(
         Guid companyId, CalculateDepreciationRequest request, string performedBy)
     {
+        // กันการโพสต์ซ้ำของงวดเดียวกันข้าม instance/แท็บ — cron มี JobLock ของ
+        // ตัวเองอยู่แล้ว แต่ล็อกนั้นอยู่ที่ตัว background service ไม่ได้อยู่ที่นี่
+        // ⇒ endpoint มือกับ cron แข่งกันได้ แล้วบวกค่าเสื่อมสองเท่า (E-04)
+        // ต้องอยู่ใน transaction — pg_advisory_xact_lock ปล่อยล็อกตอน commit
+        var ownsTransaction = _db.Database.CurrentTransaction is null;
+        var tx = ownsTransaction ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            Accounting.Helpers.AdvisoryLockKey.For(companyId,
+                Accounting.Helpers.AdvisoryLockKey.AssetDepreciation,
+                $"{request.Year}-{request.Month:D2}"));
+
         var assets = await _db.FixedAssets
             .Where(a => a.CompanyId == companyId && a.Status == AssetStatus.Active)
             .ToListAsync();
@@ -651,21 +633,14 @@ public class FixedAssetService : IFixedAssetService
                     && d.Year == request.Year && d.Month == request.Month);
             if (depreciation != null && depreciation.IsPosted) continue;
 
-            var monthlyDepreciation = asset.DepreciationMethod switch
-            {
-                DepreciationMethod.StraightLine =>
-                    (asset.PurchaseCost - asset.SalvageValue) / asset.UsefulLifeMonths,
-                DepreciationMethod.DecliningBalance =>
-                    asset.NetBookValue * (1.0m / asset.UsefulLifeMonths),
-                DepreciationMethod.DoubleDecliningBalance =>
-                    asset.NetBookValue * (2.0m / asset.UsefulLifeMonths),
-                _ => throw new NotSupportedException(
-                    $"วิธีคิดค่าเสื่อมราคา '{asset.DepreciationMethod}' ไม่รองรับ สำหรับสินทรัพย์ '{asset.Name}'")
-            };
-
-            // Don't depreciate below salvage value
-            if (asset.NetBookValue - monthlyDepreciation < asset.SalvageValue)
-                monthlyDepreciation = asset.NetBookValue - asset.SalvageValue;
+            // **สูตรเดียวกับตารางที่ผู้ใช้เห็น** (Helpers/DepreciationSchedule) —
+            // รวม switch-to-straight-line · การหยุดเมื่อครบอายุใช้งาน · cap ที่
+            // มูลค่าซาก · การปัดเศษ 2 ตำแหน่งแบบ AwayFromZero และงวดสุดท้ายรับเศษ
+            var monthIndex = Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
+                asset.PurchaseDate, request.Year, request.Month);
+            var monthlyDepreciation = Accounting.Helpers.DepreciationSchedule.AmountForPeriod(
+                asset.DepreciationMethod, asset.PurchaseCost, asset.SalvageValue,
+                asset.UsefulLifeMonths, monthIndex, asset.NetBookValue);
 
             if (monthlyDepreciation <= 0)
             {
@@ -786,10 +761,16 @@ public class FixedAssetService : IFixedAssetService
         }
 
         await _db.SaveChangesAsync();
+        if (tx != null) await tx.CommitAsync();
 
         return processed.Select(d => new DepreciationResponse(
             d.Id, d.FixedAssetId, d.Year, d.Month,
             d.Amount, d.AccumulatedAmount, d.NetBookValue, d.IsPosted)).ToList();
+        }
+        finally
+        {
+            if (tx != null) await tx.DisposeAsync();
+        }
     }
 
     public async Task<RevaluationResponse> RevalueAsync(Guid companyId, Guid assetId, RevalueAssetRequest request, string performedBy)

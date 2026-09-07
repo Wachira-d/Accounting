@@ -41,9 +41,9 @@
 | A-01 | A | รหัสผูก LINE 6 หลักค้นแบบ global + ไม่มีตัวนับความพยายาม ⇒ brute-force ยึดบัญชี | `LineBotService.cs:95-116` |
 | A-02 | A | `SiteCustomer` JWT ใช้ key/issuer/audience ชุดเดียวกับผู้ใช้ ERP | `CmsCustomerService.cs:166` · `JwtHelper.cs:10` |
 | D-01 | D | ตารางอัตรา WHT ชุดที่ 3 ใน `TaxService` (40(1)=3% คงที่ · คีย์ `"5"`/`"6"` ชนกับ `ThaiWhtRateTable`) | `TaxService.cs:19-33` |
-| E-01 | E | `CalculateDepreciationAsync` ไม่มี switch-to-straight-line ⇒ DecliningBalance ไม่มีวันจบ + ตัวเลขต่างจากตารางที่ผู้ใช้เห็น 35% | `FixedAssetService.cs:654-668` |
-| F-01 | F | ปิดบิลออฟไลน์ใน POS อ่าน DOM id ที่ไม่มีในหน้า ⇒ TypeError เงียบ โหมดออฟไลน์ตายทั้งก้อน | `pos.html:2252-2284` |
-| F-02 | F | ตารางแมป 50 ทวิ ฝั่ง JS ตกรหัส `8ad`/`8tr` ที่ระบบเองสร้าง ⇒ ช่องประเภทว่างแต่ยอดรวมเต็ม | `wht.html:403-414` |
+| ✅ E-01 | E | `CalculateDepreciationAsync` ไม่มี switch-to-straight-line ⇒ DecliningBalance ไม่มีวันจบ + ตัวเลขต่างจากตารางที่ผู้ใช้เห็น 35% | `FixedAssetService.cs:654-668` |
+| ✅ F-01 | F | ปิดบิลออฟไลน์ใน POS อ่าน DOM id ที่ไม่มีในหน้า ⇒ TypeError เงียบ โหมดออฟไลน์ตายทั้งก้อน | `pos.html:2252-2284` |
+| ✅ F-02 | F | ตารางแมป 50 ทวิ ฝั่ง JS ตกรหัส `8ad`/`8tr` ที่ระบบเองสร้าง ⇒ ช่องประเภทว่างแต่ยอดรวมเต็ม | `wht.html:403-414` |
 | G-01 | G | background job 4 ตัวไม่มี JobLock (2 ตัวส่งอีเมลถึงลูกค้าจริง) | `ScheduledReportDispatcher.cs:55` · `AbandonedCartService.cs:63` · `OcrMlBackgroundService.cs:85` · `BackgroundJobService.cs:94` |
 | G-02 | G | ไฟล์อัปโหลดเขียน local disk ตรง 13 จุด ไม่มี storage abstraction | ทั้งเรพ (ดูรายงาน G) |
 
@@ -64,7 +64,7 @@
 | C-03 | C | `TryReclassifyUndueOutputVatAsync` ใช้ `ResolveFiscalPeriodAsync` (ไม่เช็คงวดปิด) | `DocumentService.cs:12472` |
 | C-04 | C | `CnDnPurchaseSideOverride` อ่านใน JE แต่ไม่อ่านใน `ApplyStockMovementsAsync` | — |
 | C-05 | C | ใบเสร็จตัดชำระ/ใบลดหนี้คืนเงิน ออกนอก `ApproveDocumentAsync` ⇒ ข้ามด่าน §86/4 · `IssuerBranchCode` · `RetentionUntil` · `TaxPointDate` | — |
-| D-02 | D | dropdown อัตรา/ประเภทพิมพ์มือใน `recurring.html` + `admin/ocr-config.html` (ผิดกฎหมาย 4 จุด) | `recurring.html:91-110` |
+| ✅ D-02 | D | dropdown อัตรา/ประเภทพิมพ์มือใน `recurring.html` + `admin/ocr-config.html` (ผิดกฎหมาย 4 จุด) | `recurring.html:91-110` |
 | D-03 | D | `8ad`/`8tr` หายจาก renderer 50 ทวิ ทั้ง 3 ตัว | — |
 | D-04 | D | Col7 ประเภทเงินได้ต่างกันระหว่างสองเส้น export ภ.ง.ด. | — |
 | D-05 | D | ภ.ง.ด.1 e-Filing คืนไฟล์เปล่าแล้วประทับว่า export แล้ว | — |
@@ -72,12 +72,12 @@
 | D-07 | D | `DefaultRate = t.JuristicRate ?? t.IndividualRate` ไม่ดูชนิดผู้รับ | `ThaiWhtRateTable` call site |
 | E-02 | E | เส้นรูปใน LINE สร้างเอกสารโดยไม่ผ่าน `CanCreateAsync` (ด่านอยู่ที่ controller เว็บเท่านั้น) | `LineBotService.cs:480` |
 | E-03 | E | การ์ด "อนุมัติเลย" ใน LINE ไม่อ่าน `ComplianceIssues` ทั้งที่ค่ามาถึงแล้ว | `LineBotService.cs:543-576` |
-| E-04 | E | `FixedAssetController` ไม่มีคีย์สิทธิ์เลย + endpoint มือแข่งกับ cron ได้ | `FixedAssetController.cs:116` |
+| ✅ E-04 | E | `FixedAssetController` ไม่มีคีย์สิทธิ์เลย + endpoint มือแข่งกับ cron ได้ | `FixedAssetController.cs:116` |
 | E-05 | E | `DisposeAsync`/`WriteOffAsync` ไม่คิดค่าเสื่อมถึงวันขาย + silent no-op เมื่อไม่มีผังบัญชี | `FixedAssetService.cs:381-486` |
 | E-06 | E | `AdjustUsefulLifeAsync` ทบทวนอายุแบบย้อนหลัง (ผิด TFRS บทที่ 10) + ไม่มี `UsefulLifeReviewedAt` | `FixedAssetService.cs:586-608` |
 | F-03 | F | deep-link 9 จุด/6 หน้า ใช้ชื่อ query param ที่ปลายทางไม่อ่าน | ดูรายงาน F |
 | F-04 | F | `_revenueDocTypes`/`_expenseDocTypes` ยัด CN/DN/DeliveryNote เป็น revenue ทั้งที่เป็น `BothSides` | `layout.js:2528-2533` |
-| F-05 | F | ปุ่มลบบริษัทในคอนโซลแอดมินพิมพ์ `AdminApi` (ของจริง `AdminAPI`) | `admin/customers.html:466` |
+| ✅ F-05 | F | ปุ่มลบบริษัทในคอนโซลแอดมินพิมพ์ `AdminApi` (ของจริง `AdminAPI`) | `admin/customers.html:466` |
 | G-03 | G | `AssociationRuleMiner` ลบทั้งตารางแล้วเขียนใหม่ ไม่มีล็อก ไม่มี transaction | `AssociationRuleMiner.cs:181-199` |
 | G-04 | G | `PaymentIntentReconcileJob` commit ปล่อยล็อกก่อนงานจริงเริ่ม | `PaymentIntentReconcileJob.cs:71-95` |
 | G-05 | G | N+1 ยืนยันแล้ว 3 จุด | `OcrController.cs:823` · `CrossTenantKnowledgeAggregator.cs:150` · `EmailScheduleService.cs:286` |
@@ -98,7 +98,7 @@
 | D-09 | D | `IssuedDate = DateTime.UtcNow` แทนวันจ่าย และไม่แปลงเป็นเวลากรุงเทพ |
 | D-10 | D | เลขหนังสือรับรอง WHT ไม่ผ่าน `SequenceNumber` |
 | E-07 | E | `Users.LineUserId` เป็น index ไม่ unique + `FirstOrDefaultAsync` ไม่มี `OrderBy` |
-| F-06 | F | แปลง พ.ศ.→ค.ศ. ใน `admin/ocr-config.html` ให้ผลห่างจริง 500 ปี (ปีย่อ 2 หลัก) |
+| ✅ F-06 | F | แปลง พ.ศ.→ค.ศ. ใน `admin/ocr-config.html` ให้ผลห่างจริง 500 ปี (ปีย่อ 2 หลัก) |
 | G-06 | G | rate limit เป็น per-process ⇒ เพดานจริง = เพดาน × จำนวนเครื่อง |
 | G-07 | G | `BulkCleanupController` สแกนทั้งบริษัทโดยไม่จำกัดช่วงเวลา |
 

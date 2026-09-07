@@ -1,4 +1,5 @@
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.FixedAsset;
 using Accounting.Services.Interfaces;
@@ -13,10 +14,31 @@ namespace Accounting.Controllers;
 public class FixedAssetController : ControllerBase
 {
     private readonly IFixedAssetService _assetService;
+    private readonly IPermissionService _permissions;
 
-    public FixedAssetController(IFixedAssetService assetService)
+    public FixedAssetController(IFixedAssetService assetService, IPermissionService permissions)
     {
         _assetService = assetService;
+        _permissions = permissions;
+    }
+
+    /// <summary>
+    /// ด่านสิทธิ์ตัวเดียวของคอนโทรลเลอร์นี้ — ข้อความปฏิเสธต้องบอก **ชื่อคีย์ที่ต้องขอ**
+    /// ให้ตรงกันทุกจุด (จุดที่ต่างคนต่างแต่งข้อความจะ drift แน่นอน)
+    ///
+    /// ⚠️ ที่มา (ผลตรวจทีม E · E-04): ทั้งไฟล์มีแค่ <c>[Authorize]</c> ระดับคลาส
+    /// ซึ่งตอบแค่ "ล็อกอินอยู่ไหม" ⇒ สมาชิกคนไหนก็โพสต์ JE ค่าเสื่อม · จำหน่าย
+    /// (ลง JE กำไร/ขาดทุน 43030/57110) · ตัดจำหน่าย · ตีราคาใหม่ · ทบทวนอายุได้
+    /// </summary>
+    private async Task<ActionResult?> RequireAssetAsync(Guid companyId, string permKey, string verb)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await _permissions.HasPermissionAsync(companyId, userId, permKey))
+            return null;
+        return StatusCode(403, new ApiResponse<object>(false, new
+        {
+            requiredPermission = permKey.Replace("perm:", ""),
+        }, $"ไม่มีสิทธิ์{verb} — ต้องได้รับสิทธิ์ \u201c{permKey.Replace("perm:", "")}\u201d จากเจ้าของบริษัทก่อน"));
     }
 
     [HttpGet]
@@ -58,6 +80,7 @@ public class FixedAssetController : ControllerBase
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> Create(
         Guid companyId, [FromBody] CreateFixedAssetRequest request)
     {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ขึ้นทะเบียนสินทรัพย์") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.CreateAsync(companyId, request, userId);
         return StatusCode(201, new ApiResponse<FixedAssetResponse>(true, result, "สร้างสินทรัพย์ถาวรสำเร็จ"));
@@ -67,6 +90,7 @@ public class FixedAssetController : ControllerBase
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> Update(
         Guid companyId, Guid assetId, [FromBody] UpdateFixedAssetRequest request)
     {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "แก้ไขทะเบียนสินทรัพย์") is { } deny) return deny;
         var result = await _assetService.UpdateAsync(companyId, assetId, request);
         return Ok(new ApiResponse<FixedAssetResponse>(true, result));
     }
@@ -76,6 +100,7 @@ public class FixedAssetController : ControllerBase
     [HttpDelete("{assetId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid assetId)
     {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ลบสินทรัพย์") is { } deny) return deny;
         await _assetService.DeleteAsync(companyId, assetId);
         return Ok(new ApiResponse<string>(true, "ลบสินทรัพย์สำเร็จ"));
     }
@@ -84,6 +109,7 @@ public class FixedAssetController : ControllerBase
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> Dispose(
         Guid companyId, Guid assetId, [FromBody] DisposeAssetRequest request)
     {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetDispose, "จำหน่ายสินทรัพย์") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.DisposeAsync(companyId, assetId, request, userId);
         return Ok(new ApiResponse<FixedAssetResponse>(true, result, "จำหน่ายสินทรัพย์สำเร็จ"));
@@ -93,6 +119,7 @@ public class FixedAssetController : ControllerBase
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> WriteOff(
         Guid companyId, Guid assetId, [FromBody] WriteOffAssetRequest request)
     {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetDispose, "ตัดจำหน่ายสินทรัพย์") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.WriteOffAsync(companyId, assetId, request, userId);
         return Ok(new ApiResponse<FixedAssetResponse>(true, result, "ตัดจำหน่ายสินทรัพย์สำเร็จ"));
@@ -102,6 +129,7 @@ public class FixedAssetController : ControllerBase
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> AdjustUsefulLife(
         Guid companyId, Guid assetId, [FromBody] AdjustUsefulLifeRequest request)
     {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ทบทวนอายุการใช้งาน") is { } deny) return deny;
         var result = await _assetService.AdjustUsefulLifeAsync(companyId, assetId, request);
         return Ok(new ApiResponse<FixedAssetResponse>(true, result, "ปรับอายุการใช้งานสำเร็จ"));
     }
@@ -117,6 +145,7 @@ public class FixedAssetController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<DepreciationResponse>>>> CalculateDepreciation(
         Guid companyId, [FromBody] CalculateDepreciationRequest request)
     {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetDepreciate, "โพสต์ค่าเสื่อมราคาประจำงวด") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.CalculateDepreciationAsync(companyId, request, userId);
         return Ok(new ApiResponse<List<DepreciationResponse>>(true, result, $"คำนวณค่าเสื่อมราคาสำเร็จ {result.Count} รายการ"));
@@ -126,6 +155,7 @@ public class FixedAssetController : ControllerBase
     public async Task<ActionResult<ApiResponse<RevaluationResponse>>> Revalue(
         Guid companyId, Guid assetId, [FromBody] RevalueAssetRequest request)
     {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetDispose, "ตีราคาสินทรัพย์ใหม่") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.RevalueAsync(companyId, assetId, request, userId);
         return Ok(new ApiResponse<RevaluationResponse>(true, result, "ตีราคาสินทรัพย์ใหม่สำเร็จ"));
@@ -157,6 +187,7 @@ public class FixedAssetController : ControllerBase
     public async Task<ActionResult<ApiResponse<ImportFixedAssetsResult>>> Import(
         Guid companyId, [FromBody] List<ImportFixedAssetRow> rows)
     {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "นำเข้าทะเบียนสินทรัพย์") is { } deny) return deny;
         if (rows.Count > 1000) return BadRequest(new ApiResponse<object>(false, null, "สูงสุด 1,000 รายการต่อครั้ง"));
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _assetService.ImportAsync(companyId, rows, userId);

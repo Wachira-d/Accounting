@@ -102,6 +102,15 @@ public static class AdvisoryLockKey
     public const string PaymentSequence = "pay-seq";
     /// <summary>รหัสสินทรัพย์ถาวร — part = prefix ของบริษัท</summary>
     public const string AssetSequence = "asset-seq";
+
+    /// <summary>โพสต์ค่าเสื่อมราคาของงวดหนึ่ง — ผูกกับ (บริษัท, ปี-เดือน)
+    ///
+    /// <para>⚠️ cron มี <c>JobLock</c> ของตัวเองอยู่แล้ว แต่ล็อกนั้นอยู่ที่
+    /// <b>ตัว background service</b> ไม่ได้อยู่ในเมธอดที่ลง JE ⇒ ผู้ใช้กด
+    /// <c>POST depreciate</c> ตอน cron กำลังรัน (หรือกดสองแท็บพร้อมกัน) จะผ่าน
+    /// ด่าน <c>IsPosted</c> พร้อมกันทั้งคู่แล้ว <b>บวก AccumulatedDepreciation
+    /// สองเท่า</b> พร้อม JE คนละใบ (ผลตรวจทีม E · E-04)</para></summary>
+    public const string AssetDepreciation = "asset-dep";
     /// <summary>เลขการจองที่พัก — part = prefix รวมงวด</summary>
     public const string ReservationSequence = "resv-seq";
     /// <summary>เลขคำสั่งซื้อ/การจองจากหน้าเว็บ (CMS) — part = prefix รวมงวด</summary>

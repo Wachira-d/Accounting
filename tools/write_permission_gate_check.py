@@ -39,6 +39,10 @@ WATCHED = [
     # [Authorize] ระดับคลาส ⇒ สมาชิกคนไหนก็ยื่นแทนบริษัทได้ · checker รายงานเขียว
     # ตลอดเพราะไฟล์นี้ไม่เคยอยู่ในลิสต์ (บทเรียน "allow-list ครบไหม ≠ ผ่านไหม")
     "Accounting/Controllers/EtaxController.cs",
+    # เพิ่มรอบ 148 — ทุก write ที่นี่ขยับ GL จริง (โพสต์ JE ค่าเสื่อม · จำหน่าย
+    # ลง JE กำไร/ขาดทุน · ตัดจำหน่าย · ตีราคาใหม่) แต่มีแค่ [Authorize] ระดับคลาส
+    # และ **ไม่มีคีย์สิทธิ์สินทรัพย์อยู่ใน PermissionKeys เลย** จนถึงรอบนี้
+    "Accounting/Controllers/FixedAssetController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -49,6 +53,7 @@ GATE_MARKERS = (
     "RequirePayrollWriteAsync",
     "RequireBillingAsync",
     "RequireEtaxAsync",
+    "RequireAssetAsync",
     "RequireAnyAsync",
     "HasPermissionAsync",
     "UserRole.Owner",          # ด่าน Owner-only (purge)

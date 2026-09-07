@@ -123,6 +123,16 @@ public static class PermissionKeys
     public const string EtaxSubmit = P + "Etax.Submit";
     public const string EtaxVoid   = P + "Etax.Void";
 
+    // ───── สินทรัพย์ถาวร ─────
+    // ⚠️ เดิม `FixedAssetController` มีแค่ `[Authorize]` และ **ไม่มีคีย์สิทธิ์
+    // สินทรัพย์เลยสักตัวในไฟล์นี้** ⇒ ต่อให้อยากเช็คก็ยังไม่มีคีย์ให้เช็ค
+    // ⇒ สมาชิกคนไหนก็โพสต์ JE ค่าเสื่อม · จำหน่าย · ตัดจำหน่าย · ตีราคาใหม่ได้
+    // (ผลตรวจทีม E · E-04) · ระดับสิทธิ์เลือกจาก **ผลกระทบ** ไม่ใช่ HTTP verb:
+    // แก้ทะเบียนเฉย ๆ = Manage · ขยับ GL = Depreciate/Dispose
+    public const string AssetManage     = P + "Asset.Manage";
+    public const string AssetDepreciate = P + "Asset.Depreciate";
+    public const string AssetDispose    = P + "Asset.Dispose";
+
     // ───── Banking / Reconciliation ─────
     public const string BankView          = P + "Bank.View";
     public const string BankReconcile     = P + "Bank.Reconcile";
@@ -241,6 +251,11 @@ public static class PermissionKeys
         new(EtaxIssue,  "e-Tax", "สร้าง/ลงนาม e-Tax Invoice",   "generate XML · ลงนามดิจิทัล · ออก PDF/A-3"),
         new(EtaxSubmit, "e-Tax", "นำส่ง e-Tax ต่อกรมสรรพากร",   "ย้อนกลับไม่ได้เมื่อ RD ตอบรับแล้ว · รวมส่งทางอีเมล"),
         new(EtaxVoid,   "e-Tax", "ยกเลิก e-Tax",                "ทำได้ก่อน RD ตอบรับเท่านั้น"),
+
+        // สินทรัพย์ถาวร
+        new(AssetManage,     "สินทรัพย์", "จัดการทะเบียนสินทรัพย์", "ขึ้นทะเบียน · แก้ไข · ลบ · นำเข้า · ทบทวนอายุใช้งาน"),
+        new(AssetDepreciate, "สินทรัพย์", "โพสต์ค่าเสื่อมราคา",     "ลง JE ค่าเสื่อมประจำงวด (ย้อนกลับต้องกลับรายการ)"),
+        new(AssetDispose,    "สินทรัพย์", "จำหน่าย/ตัดจำหน่าย/ตีราคาใหม่", "ลง JE กำไร-ขาดทุนจากการจำหน่าย"),
 
         // Banking
         new(BankView,         "ธนาคาร",  "ดูบัญชีธนาคาร",            "ยอดคงเหลือ · transactions"),
