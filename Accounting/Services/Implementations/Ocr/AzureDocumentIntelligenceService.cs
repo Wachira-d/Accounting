@@ -522,20 +522,20 @@ public class AzureDocumentIntelligenceService
                 grid[r, c] = text;
             }
 
-            // Detect column roles from the first row (headers)
-            int descCol = -1, qtyCol = -1, priceCol = -1, amountCol = -1;
-            for (int c = 0; c < colCount; c++)
-            {
-                var h = (grid[0, c] ?? "").ToLowerInvariant();
-                if (descCol < 0 && (h.Contains("รายการ") || h.Contains("description") || h.Contains("desc")
-                    || h.Contains("สินค้า") || h.Contains("ชื่อ") || h.Contains("รายละเอียด"))) descCol = c;
-                else if (qtyCol < 0 && (h.Contains("จำนวน") || h.Contains("qty") || h.Contains("quantity")
-                    || h.Contains("จํานวน"))) qtyCol = c;
-                else if (priceCol < 0 && (h.Contains("ราคา/หน่วย") || h.Contains("unit price") || h.Contains("ราคาต่อ")
-                    || h.Contains("price"))) priceCol = c;
-                else if (amountCol < 0 && (h.Contains("รวม") || h.Contains("amount") || h.Contains("total")
-                    || h.Contains("จำนวนเงิน") || h.Contains("จํานวนเงิน"))) amountCol = c;
-            }
+            // ★ จับคู่หัวคอลัมน์ผ่าน Helpers/OcrTableColumnMapper ตัวเดียว (pure + เทสต์)
+            //
+            // ⚠️ เดิมไล่ if-else ตามลำดับ desc → qty → price → amount โดย qty จับ
+            // `Contains("จำนวน")` — แต่หัวคอลัมน์ยอดเงินบนใบไทยเขียนว่า **"จำนวนเงิน"**
+            // ซึ่งมีคำว่า "จำนวน" อยู่ข้างใน ⇒ คอลัมน์**ยอดเงิน**ถูกจองเป็นคอลัมน์
+            // **จำนวน** ⇒ Quantity = 1,240.00 และยอดเงินตกไปที่คอลัมน์สุดท้ายตาม
+            // fallback ⇒ ตัวเลขผิดทั้งบรรทัดโดย "ดูเหมือนอ่านได้" ทุกช่อง
+            // (ผลตรวจ 2026-09-06 · T2-11) · ตอนนี้ตัดสินด้วย "ความเจาะจงของคำ"
+            // ไม่ใช่ลำดับที่คนเขียนบังเอิญวางไว้
+            var headerRow = new string?[colCount];
+            for (int c = 0; c < colCount; c++) headerRow[c] = grid[0, c];
+            var cols = Accounting.Helpers.OcrTableColumnMapper.Map(headerRow);
+            int descCol = cols.Description, qtyCol = cols.Quantity,
+                priceCol = cols.UnitPrice, amountCol = cols.Amount;
             if (descCol < 0) continue;     // need at least description column
             if (amountCol < 0)
             {

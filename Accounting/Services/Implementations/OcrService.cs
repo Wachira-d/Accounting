@@ -1143,13 +1143,37 @@ public class OcrService : IOcrService
                 ?? extractedData.ExpenseCategory;
             var (learnedCode, learnedName, learnedConf) = await _categoryLearner.PredictAsync(
                 companyId, extractedData.VendorTaxId, extractedData.VendorName, bestDescription);
-            if (learnedCode != null && learnedConf >= 0.55m)
+            // ⚠️ เดิมบล็อกนี้ **ทับผังเดบิตโดยไม่เทียบกับใคร** และไม่อัปเดต
+            // FieldConfidence ⇒ (ก) คำตอบของ NaiveBayes ที่ 0.92 และของ **สินค้า
+            // master ที่ 0.95** (ซึ่ง doc-comment ข้างบนเขียนเองว่า "แข็งแรงที่สุด
+            // เพราะคนตั้งใจตั้งไว้") ถูกทับด้วยตัวเรียนรู้ที่มั่นใจแค่ 0.55
+            // (ข) ป้ายความมั่นใจยังค้างที่ 0.95 ของเจ้าเดิม ⇒ ไฮไลต์เหลืองตาม
+            // กฎเหล็ก #3 ข้อ 3 ไม่ขึ้น ทั้งที่ค่าที่แสดงมาจากแหล่งที่อ่อนกว่ามาก
+            // (ผลตรวจ 2026-09-06 · T3-08)
+            // กติกา: ผู้มาทีหลังต้อง **มั่นใจกว่าจริง** ถึงจะทับ และต้องเขียน
+            // ความมั่นใจของตัวเองลงไปด้วยเสมอ
+            var existingDebitConf = (decimal)extractedData.FieldConfidence
+                .GetValueOrDefault("DebitAccount", 0);
+            if (learnedCode != null && learnedConf >= 0.55m && learnedConf > existingDebitConf)
             {
                 extractedData.DebitAccountCode = learnedCode;
                 extractedData.DebitAccountName = learnedName;
+                extractedData.FieldConfidence["DebitAccount"] = (double)learnedConf;
                 extractedData.ReasoningTrace.Add($"[Learner] เคยใช้รหัส {learnedCode} กับผู้ขายนี้+คำอธิบายนี้ (confidence {learnedConf:P0})");
+            }
+            else if (learnedCode != null && learnedConf >= 0.55m)
+            {
+                // ไม่ทับ แต่ต้องบอกว่ามีความเห็นที่ต่าง — ห้ามเงียบ
+                extractedData.ReasoningTrace.Add(
+                    $"[Learner] เคยใช้รหัส {learnedCode} (confidence {learnedConf:P0}) "
+                    + $"แต่ไม่ทับค่าเดิม {extractedData.DebitAccountCode} ที่มั่นใจกว่า ({existingDebitConf:P0})");
+            }
 
-                // Per-line override
+            // Per-line: เติมเฉพาะบรรทัดที่ยังว่าง (ไม่ทับของสินค้า master)
+            // — ทำนอกเงื่อนไขข้างบน เพราะบรรทัดที่ยังว่างควรได้คำตอบเสมอ
+            // แม้หัวใบจะมีเจ้าอื่นที่มั่นใจกว่าอยู่แล้ว
+            if (learnedCode != null && learnedConf >= 0.55m)
+            {
                 foreach (var item in extractedData.Items)
                 {
                     if (string.IsNullOrEmpty(item.SuggestedAccountCode))
@@ -3087,7 +3111,11 @@ public class OcrService : IOcrService
                 ? WhtPayerFormType.Pnd3
                 : WhtPayerFormType.Pnd53,
             // ประเภทเงินได้ — ป้อนให้ CheckRate ตรวจอัตรากับ ท.ป.4/2528 ได้
-            IncomeTypeCode = InferIncomeTypeCode(result.RawTextContent),
+            // ★ ตัวอ่านอยู่ที่ Helpers/WhtCertIncomeType — ส่งฐานเงินได้ไปช่วยชี้ขาด
+            // ด้วย (ฟอร์ม 50 ทวิ พิมพ์ทุกประเภทเป็นรายการให้ติ๊ก ⇒ ต้องดูว่า
+            // **แถวไหนมีจำนวนเงิน** ไม่ใช่ดูว่าคำไหนปรากฏ)
+            IncomeTypeCode = Accounting.Helpers.WhtCertIncomeType.Infer(
+                result.RawTextContent, baseAmount > 0m ? baseAmount : null),
             IncomeAmount = baseAmount,
             WhtRate = whtResolved.Rate,
             WhtAmount = whtAmount,
@@ -3177,32 +3205,6 @@ public class OcrService : IOcrService
     ///
     /// <para><b>ห้ามเดาจากอัตราที่หัก</b> เพราะจะทำให้ CheckRate ตรวจกับตัวเอง
     /// แล้วผ่านทุกครั้ง = ปิดตัวตรวจโดยไม่รู้ตัว</para></summary>
-    internal static string? InferIncomeTypeCode(string? rawText)
-    {
-        if (string.IsNullOrWhiteSpace(rawText)) return null;
-        var t = rawText.ToLowerInvariant().Replace(" ", "");
-
-        // (รหัสที่คืน, คำบ่งชี้) — รหัสต้องอยู่ในรูปที่ CheckRate อ่านออก
-        var families = new (string Code, string[] Markers)[]
-        {
-            ("40(1) เงินเดือน",      new[] { "40(1)", "เงินเดือน", "ค่าจ้าง" }),
-            ("40(2) ค่านายหน้า",     new[] { "40(2)", "ค่านายหน้า", "ค่าธรรมเนียม", "คอมมิชชั่น", "คอมมิชชัน" }),
-            ("40(3) ค่าสิทธิ",       new[] { "40(3)", "ค่าแห่งลิขสิทธิ์", "ค่าสิทธิ", "royalty" }),
-            ("40(4)(ก) ดอกเบี้ย",    new[] { "40(4)(ก)", "ดอกเบี้ย" }),
-            ("40(4)(ข) เงินปันผล",   new[] { "40(4)(ข)", "เงินปันผล", "dividend" }),
-            ("40(5) ค่าเช่า",        new[] { "40(5)", "ค่าเช่า" }),
-            ("40(6) วิชาชีพอิสระ",   new[] { "40(6)", "วิชาชีพอิสระ" }),
-            ("40(7) ค่ารับเหมา",     new[] { "40(7)", "รับเหมา" }),
-            ("40(8) ค่าโฆษณา",       new[] { "ค่าโฆษณา" }),
-            ("40(8) ค่าขนส่ง",       new[] { "ค่าขนส่ง" }),
-            ("40(8) ค่าบริการ",      new[] { "40(8)", "ค่าบริการ", "ค่าจ้างทำของ" }),
-        };
-
-        var hits = families.Where(f => f.Markers.Any(m => t.Contains(m))).Select(f => f.Code).ToList();
-        // เจอกลุ่มเดียวเท่านั้นจึงเชื่อได้ — หลายกลุ่ม = ข้อความหัวฟอร์ม
-        return hits.Count == 1 ? hits[0] : null;
-    }
-
     /// <summary>ชนิดกระดาษ — **สิ่งที่พิมพ์อยู่บนใบชนะเสมอ**
     ///
     /// <para>⚠️ ที่มา (ผลตรวจ 2026-09-06 · T2-14): ชื่อไฟล์เป็นตัวเลือกโมเดล
