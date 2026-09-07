@@ -2290,14 +2290,21 @@ public class OcrService : IOcrService
             // A hint only — the user still chooses; never blocks anything.
             try
             {
-                var hasLines = extractedData.Items.Count > 0;
                 var vendorHasProductHistory = scanResult.MatchedContactId.HasValue
                     && await _db.ProductAliases.AsNoTracking().AnyAsync(a =>
                         a.CompanyId == companyId && !a.IsDeleted
                         && a.ContactId == scanResult.MatchedContactId.Value);
-                scanResult.SuggestedEntryMode = (hasLines && vendorHasProductHistory) ? "Stock" : "Expense";
-                if (scanResult.SuggestedEntryMode == "Stock")
-                    extractedData.ReasoningTrace.Add("[EntryMode] ผู้ขายเคยนำเข้าสินค้าเข้า Stock — แนะนำ \"บันทึกเข้า Stock\"");
+                // ⚠️ เดิมใช้สัญญาณเดียว (ผู้ขายเคยนำเข้าสต๊อกไหม) ⇒ บริษัทค้าขายที่
+                // เพิ่งเริ่มใช้ระบบ ทุกใบซื้อสินค้าถูกแนะนำเป็นค่าใช้จ่าย ทั้งที่
+                // ApplyProductCrossReferenceAsync จับคู่บรรทัดกับ Product master
+                // ได้อยู่แล้วแต่ผลไม่ถูกใช้ตัดสิน (ผลตรวจ 2026-09-06 · T1-19)
+                var advice = Accounting.Helpers.OcrEntryModeAdvisor.Decide(
+                    lineCount: extractedData.Items.Count,
+                    linesMatchedToProductMaster: extractedData.ProductMasterMatchedLines,
+                    vendorHasProductHistory: vendorHasProductHistory,
+                    industry: companyContext?.IndustryType);
+                scanResult.SuggestedEntryMode = advice.Mode.ToString();
+                extractedData.ReasoningTrace.Add($"[EntryMode] {advice.Mode} — {advice.Reason}");
             }
             catch (Exception emEx)
             {
@@ -2667,6 +2674,10 @@ public class OcrService : IOcrService
     /// Header-level DebitAccount is updated when ≥2 line items resolve to
     /// the same product account, or when there's only one line.
     /// </summary>
+    /// <summary>จับคู่บรรทัดกับ Product master แล้ว<b>บันทึกจำนวนบรรทัดที่ตรง</b>
+    /// ลง <see cref="OcrExtractedData.ProductMasterMatchedLines"/> — ตัวเลขนี้เป็น
+    /// หลักฐานเดียวที่ใช้ได้ตั้งแต่ใบแรก (cold-start) ว่า "ของบนใบนี้คือสินค้าของเรา"
+    /// เดิมคำนวณแล้วทิ้ง มีแต่ผังบัญชีที่ถูกใช้ต่อ (ผลตรวจ T1-19)</summary>
     private async Task ApplyProductCrossReferenceAsync(Guid companyId, OcrExtractedData data)
     {
         if (data.Items == null || data.Items.Count == 0) return;
@@ -2700,6 +2711,7 @@ public class OcrService : IOcrService
                 || (!string.IsNullOrEmpty(p.Name) && p.Name.Length >= 3 && desc.Contains(p.Name.ToLowerInvariant())));
 
             if (match == null) continue;
+            data.ProductMasterMatchedLines++;
             line.SuggestedAccountCode = match.AccountCode;
             var entry = accountHits.GetValueOrDefault(match.AccountCode);
             accountHits[match.AccountCode] = (match.AccountName, entry.Count + 1);
@@ -7867,6 +7879,11 @@ internal class OcrExtractedData
     /// <summary>Header discount (ส่วนลด) read off the paper — flows to
     /// Document.DiscountAmount on creation.</summary>
     public decimal? DiscountAmount { get; set; }
+
+    /// <summary>จำนวนบรรทัดที่จับคู่กับ Product master ของบริษัทได้ (ตั้งโดย
+    /// <c>ApplyProductCrossReferenceAsync</c>) — หลักฐาน cold-start ว่า "ของบน
+    /// ใบนี้คือสินค้าของเรา" ใช้โดย <see cref="Accounting.Helpers.OcrEntryModeAdvisor"/></summary>
+    public int ProductMasterMatchedLines { get; set; }
     public string? DebitAccountCode { get; set; }
     public string? DebitAccountName { get; set; }
     public string? CreditAccountCode { get; set; }

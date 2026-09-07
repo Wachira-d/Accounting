@@ -120,6 +120,26 @@ internal static class ExpenseCategoryResolver
     private static decimal IndustryWeight(string category, IndustryType? industry)
     {
         if (!industry.HasValue || industry.Value == IndustryType.General) return 1.0m;
+
+        // ── "ซื้อสินค้า / วัตถุดิบ" (51110 ต้นทุนสินค้า) กับกิจการที่ไม่ถือสต๊อก ──
+        //
+        // ⚠️ rule นี้ชนะด้วย **ชื่อผู้ขายเป็นแบรนด์ค้าส่ง** (+4 คะแนน) โดยไม่ดูเลย
+        // ว่าบริษัทเราขายอะไร ⇒ บริษัทซอฟต์แวร์/คลินิก/สำนักงานบัญชีที่ซื้อกาแฟ ·
+        // กระดาษ A4 · สายไฟ ที่ Makro/HomePro/ไทวัสดุ ได้ผัง "ต้นทุนสินค้า" ทุกใบ
+        // ⇒ กำไรขั้นต้นในงบเพี้ยน และ §65 ตรี(3) เครื่องดื่มพนักงานอาจเป็นสวัสดิการ
+        // (ผลตรวจ 2026-09-06 · T1-16) — resolver รับ industry เข้ามาแล้วแต่ rule
+        // นี้ไม่ได้ใช้
+        //
+        // ทำไม 0.25 ไม่ใช่ 0: คอมเมนต์ของ rule นั้นบอกเจตนาไว้ถูกว่ามันมีไว้กัน
+        // "บิล Makro ที่อ่านรายการไม่ได้ แล้วแพ้ keyword หลง ๆ ในข้อความท้ายบิล" —
+        // ตัดทิ้งเลยจะคืนบั๊กนั้นกลับมา · 0.25 ทำให้แบรนด์เดี่ยว (4 → 1.0) **แพ้**
+        // หมวดที่มี keyword จริงบนบรรทัด (คำยาว ≥6 ตัวในคลังหลัก = 2 คะแนน/คำ)
+        // แต่ยัง**ชนะเมื่อไม่มีอะไรอื่นเลย** และ confidence ตกเหลือ 0.50 ⇒ หน้า
+        // review ไฮไลต์เหลืองตามกฎเหล็ก #3 ให้คนดูแทนที่จะเงียบ
+        if (category == "ซื้อสินค้า / วัตถุดิบ"
+            && !Accounting.Helpers.InventoryIndustry.KeepsInventory(industry))
+            return 0.25m;
+
         // Bias matrix — keys are subsets of the rule's Category Thai labels.
         // Values are multiplicative factors applied to the raw keyword score.
         var weights = (industry.Value, category) switch

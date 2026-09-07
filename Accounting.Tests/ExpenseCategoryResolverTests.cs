@@ -63,6 +63,73 @@ public class ExpenseCategoryResolverTests
         Assert.Null(result);
     }
 
+    // ═══ T1-16: แบรนด์ค้าส่งบังคับผัง "ต้นทุนสินค้า" โดยไม่ดูว่าบริษัทเราขายอะไร ═══
+    //
+    // เดิม: ชื่อผู้ขายเป็นแบรนด์ค้าส่ง = +4 คะแนน ⇒ ชนะทุกอย่างเสมอ ⇒ บริษัท
+    // ซอฟต์แวร์ที่ซื้อกาแฟ/กระดาษ A4 ที่ Makro ได้ผัง 51110 ต้นทุนสินค้าทุกใบ
+    // ⇒ กำไรขั้นต้นในงบเพี้ยน
+
+    [Fact]
+    public void บริษัทซอฟต์แวร์ซื้อกระดาษที่_Makro_ต้องได้ค่าวัสดุสำนักงานไม่ใช่ต้นทุนสินค้า()
+    {
+        var result = ExpenseCategoryResolver.Resolve(
+            vendorName: "สยามแม็คโคร จำกัด (มหาชน) makro",
+            headerDescription: null,
+            lineDescriptions: new[] { "กระดาษถ่ายเอกสาร A4 80 แกรม", "ปากกาลูกลื่น" },
+            rawText: null,
+            industry: Accounting.Models.Enums.IndustryType.Technology);
+
+        Assert.NotNull(result);
+        Assert.NotEqual("51110", result!.AccountCode);
+    }
+
+    [Fact]
+    public void บริษัทค้าขายซื้อของที่_Makro_ต้องยังได้ต้นทุนสินค้าเหมือนเดิม()
+    {
+        var result = ExpenseCategoryResolver.Resolve(
+            vendorName: "สยามแม็คโคร จำกัด (มหาชน) makro",
+            headerDescription: null,
+            lineDescriptions: new[] { "กระดาษถ่ายเอกสาร A4 80 แกรม", "ปากกาลูกลื่น" },
+            rawText: null,
+            industry: Accounting.Models.Enums.IndustryType.Trading);
+
+        Assert.NotNull(result);
+        Assert.Equal("51110", result!.AccountCode);
+    }
+
+    [Fact]
+    public void บิลค้าส่งที่อ่านรายการไม่ได้เลย_ยังต้องตกที่ต้นทุนสินค้าแบบมั่นใจต่ำ()
+    {
+        // เจตนาเดิมของ rule นี้ (กันบิล Makro ที่อ่านรายการไม่ได้แล้วแพ้ keyword
+        // หลง ๆ ท้ายบิล) ต้องไม่หายไป — แค่ confidence ต่ำลงจนหน้า review
+        // ไฮไลต์เหลืองตามกฎเหล็ก #3
+        var result = ExpenseCategoryResolver.Resolve(
+            vendorName: "makro",
+            headerDescription: null,
+            lineDescriptions: null,
+            rawText: null,
+            industry: Accounting.Models.Enums.IndustryType.Technology);
+
+        Assert.NotNull(result);
+        Assert.Equal("51110", result!.AccountCode);
+        Assert.True(result.Confidence < 0.85m);
+    }
+
+    [Fact]
+    public void ไม่รู้ประเภทกิจการ_ต้องไม่ลงโทษ_rule_ใด()
+    {
+        // "ยังไม่ได้ตั้งค่า" ≠ "รู้ว่าไม่ถือสต๊อก" — ห้ามเปลี่ยนพฤติกรรมเดิม
+        var result = ExpenseCategoryResolver.Resolve(
+            vendorName: "makro",
+            headerDescription: null,
+            lineDescriptions: null,
+            rawText: null,
+            industry: null);
+
+        Assert.NotNull(result);
+        Assert.Equal("51110", result!.AccountCode);
+    }
+
     [Fact]
     public void Confidence_is_bounded_between_zero_and_one()
     {
