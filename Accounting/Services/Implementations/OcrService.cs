@@ -121,7 +121,7 @@ public class OcrService : IOcrService
         _rdComplianceValidator = rdComplianceValidator;
     }
 
-    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false)
+    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false, bool forceRescan = false)
     {
         // Normalize the user's engine preference into one of three modes.
         // "auto" = current cascade; "azure" = Tier 1 only (no local fallback
@@ -146,12 +146,24 @@ public class OcrService : IOcrService
         }
         catch { /* hash is optional */ }
 
-        // Check for duplicate by file hash
+        // ── ด่านไฟล์ซ้ำ (hash ตรง) ──
+        // `forceRescan` = ผู้ใช้กด "สแกนใหม่" เพราะไม่พอใจผลเดิม — ต้องเดินเส้น
+        // engine จริง ไม่ใช่คืนสำเนาเดิมแล้วตอบว่า "สแกนใหม่สำเร็จ" (silent no-op)
+        //
+        // ⚠️ สองเงื่อนไขที่เพิ่มเข้ามา (บั๊กจริง):
+        //   • `!r.IsDuplicate` — เดิมไม่กรอง ⇒ **สำเนาของสำเนา**: การอัปโหลดครั้งที่ 3
+        //     อาจไปคัดลอกจากแถวสำเนาของครั้งที่ 2 ทำให้ข้อมูลที่หายไปแล้วยิ่งหายซ้ำ
+        //   • `OrderByDescending(CreatedAt)` — เดิมไม่มี OrderBy ⇒ ได้แถวไหนขึ้นกับ
+        //     query plan (ไม่ deterministic) · เลือก "ต้นฉบับล่าสุด" เพราะหลังผู้ใช้
+        //     กดสแกนใหม่ด้วย engine ที่ดีกว่า ผลที่ใหม่กว่าคือผลที่ควรใช้ต่อ
         OcrScanResult? duplicateOf = null;
-        if (!string.IsNullOrEmpty(fileHash))
+        if (!forceRescan && !string.IsNullOrEmpty(fileHash))
         {
             duplicateOf = await _db.Set<OcrScanResult>()
-                .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.FileHash == fileHash && r.ScanStatus == "Completed");
+                .Where(r => r.CompanyId == companyId && r.FileHash == fileHash
+                            && r.ScanStatus == "Completed" && !r.IsDuplicate)
+                .OrderByDescending(r => r.CreatedAt)
+                .FirstOrDefaultAsync();
         }
 
         var scanResult = new OcrScanResult
@@ -180,17 +192,16 @@ public class OcrService : IOcrService
 
         if (duplicateOf != null)
         {
+            // คัดลอก **ผลการอ่านทั้งหมด** ผ่านตัวกลางตัวเดียว — เดิมเป็นรายการช่อง
+            // ที่เขียนด้วยมือ **10 ช่องจาก 49 ช่องที่ควรคัดลอก** ⇒ ข้อความดิบ · รายการสินค้า ·
+            // ช่อง §86/4 ฝั่งผู้ซื้อ · TargetDocumentType · หมวดค่าใช้จ่าย · WHT ·
+            // ค่าความมั่นใจรายช่อง **หายเงียบทุกครั้งที่อัปโหลดไฟล์เดิมซ้ำ**
+            // (ดูเหตุผลเต็ม + ลิสต์ช่องที่ห้ามคัดลอกใน Helpers/OcrScanSnapshot)
+            // ⚠️ ชื่อเต็ม — ไฟล์นี้อยู่ใน Accounting.Services.Implementations และเรพมี
+            // `Accounting.Services.Helpers` อยู่ด้วย ⇒ `Helpers.X` จะผูกไปชั้นใกล้แล้ว
+            // CS0234 (กติกาใน CLAUDE.md §F · จับได้ด้วย tools/namespace_shadow_check.py)
+            Accounting.Helpers.OcrScanSnapshot.CopyExtractionFrom(duplicateOf, scanResult);
             scanResult.ScanStatus = "Completed";
-            scanResult.DocumentType = duplicateOf.DocumentType;
-            scanResult.Confidence = duplicateOf.Confidence;
-            scanResult.ExtractedDocumentNumber = duplicateOf.ExtractedDocumentNumber;
-            scanResult.ExtractedDate = duplicateOf.ExtractedDate;
-            scanResult.ExtractedVendorName = duplicateOf.ExtractedVendorName;
-            scanResult.ExtractedVendorTaxId = duplicateOf.ExtractedVendorTaxId;
-            scanResult.ExtractedSubTotal = duplicateOf.ExtractedSubTotal;
-            scanResult.ExtractedVatAmount = duplicateOf.ExtractedVatAmount;
-            scanResult.ExtractedTotalAmount = duplicateOf.ExtractedTotalAmount;
-            scanResult.MatchedContactId = duplicateOf.MatchedContactId;
             scanResult.OcrEngine = "Cached";   // copied from a prior scan; no OCR engine ran
             scanResult.ProcessingNotes = $"Duplicate of scan {duplicateOf.Id} (engine: {duplicateOf.OcrEngine ?? "unknown"})";
             scanResult.ProcessedAt = DateTime.UtcNow;

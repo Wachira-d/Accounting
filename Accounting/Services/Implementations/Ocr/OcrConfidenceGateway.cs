@@ -79,6 +79,40 @@ public static class OcrConfidenceGateway
             }
         }
 
+        // 2b. ── "ตัวเลขสามช่องขัดกันเอง" — ด่านที่ไม่ขึ้นกับ MathTolerance ──
+        //
+        // ที่มา (ใบจริงที่ผู้ใช้ส่งมา): SubTotal 922.44 · VAT 68.00 · Total 990.00
+        //   • 922.44 + 68.00 = 990.44 ≠ 990.00 → ห่าง 0.44 ซึ่ง **น้อยกว่า** tolerance
+        //     ค่าเริ่มต้น ฿2.00 ⇒ ข้อ 2 ไม่ฟ้อง
+        //   • VAT 7% ของ 922.44 = 64.57 ≠ 68.00 → อัตราที่คำนวณได้ 7.37% ซึ่งยัง
+        //     **อยู่ในกรอบ** 6.5–7.5% ของข้อ 3 ⇒ ข้อ 3 ก็ไม่ฟ้อง
+        //   ⇒ ใบที่อย่างน้อยสองช่องอ่านผิด ผ่านทั้งสองด่านเงียบ ๆ ด้วย confidence 95%
+        //
+        // ทำไมต้องให้ **ทั้งสองเงื่อนไขจริงพร้อมกัน**: ใบที่มีหลายอัตรา (7% + 0% +
+        // ยกเว้น) จะมี VAT ≠ 7% ของยอดรวมโดยชอบธรรม — แต่ใบพวกนั้น
+        // `SubTotal + VAT = Total` **เป๊ะ** เพราะเป็นตัวเลขที่ผู้ขายพิมพ์ให้สอดคล้องกัน
+        // ⇒ เงื่อนไขแรกกรองมันออกไปหมด ด่านนี้จึงฟ้องเฉพาะกระดาษที่ขัดกันเองจริง ๆ
+        // ("checker ที่ฟ้องผิด = checker ที่พังแล้ว" ใช้กับคำเตือนถึงผู้ใช้ด้วย)
+        //
+        // ค่าคลาดเคลื่อนที่ยอมรับ: การปัดเศษให้ผลต่างได้ไม่เกิน 1 สตางค์ต่อการปัด
+        // 1 ครั้ง — ผลรวมจึงยอม ฿0.02 และ VAT ยอม 1 สตางค์ต่อบรรทัด (ขั้นต่ำ ฿0.02)
+        if (mathConsistent && subTotal.HasValue && vatAmount.HasValue && total.HasValue
+            && subTotal.Value > 0m && vatAmount.Value > 0m)
+        {
+            var sumGap = Math.Abs(subTotal.Value + vatAmount.Value - total.Value);
+            var expectedVat = Math.Round(subTotal.Value * 0.07m, 2, MidpointRounding.AwayFromZero);
+            var vatGap = Math.Abs(vatAmount.Value - expectedVat);
+            var vatSlack = Math.Max(0.02m, 0.01m * (lineItems?.Count ?? 0));
+            if (sumGap > 0.02m && vatGap > vatSlack)
+            {
+                warnings.Add(
+                    $"ตัวเลขสามช่องขัดกันเอง: {subTotal:N2} + {vatAmount:N2} = {(subTotal + vatAmount):N2} ≠ {total:N2} " +
+                    $"และ VAT 7% ของ {subTotal:N2} ควรเป็น {expectedVat:N2} ไม่ใช่ {vatAmount:N2} — อย่างน้อยหนึ่งช่องอ่านผิด");
+                penalty += config.MathPenalty;
+                mathConsistent = false;
+            }
+        }
+
         // 3. VAT rate sanity: should be ~7% in Thailand (or 0% / exempt)
         if (subTotal.HasValue && vatAmount.HasValue && subTotal.Value > 0 && vatAmount.Value > 0)
         {
