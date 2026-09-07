@@ -3494,12 +3494,25 @@ public class OcrService : IOcrService
         //    ที่ external แตกสินค้าเดียวเป็น 2 บรรทัดเท่า ๆ กัน). หลัง fold
         //    phantom แล้ว ที่เหลือคือบรรทัดสินค้าจริง — merge ตาม description.
         //    เก็บลำดับเดิม (LINQ GroupBy ไม่ stable → dictionary).
+        //    ⚠️ ต้องเทียบ **ราคาต่อหน่วย** ด้วย ไม่ใช่ description อย่างเดียว
+        //    (ผลตรวจ 2026-09-06 · T2-20): "ค่าแรง 500" + "ค่าแรง 300" ถูกยุบเป็น
+        //    qty 2 × ฿400 — **ราคาต่อหน่วยที่ไม่มีอยู่บนกระดาษ** · ยอดรวมยังตรง
+        //    จึงเงียบสนิท แต่ค่านี้ไหลต่อไปเป็นต้นทุนสินค้าตอนนำเข้าสต๊อก
+        //    (ProductMatcher เขียน cost) และเป็นรายละเอียดรายบรรทัดของรายงาน §87
+        //    เจตนาเดิมของขั้นนี้เขียนไว้เองว่า "สินค้าเดียวที่ถูกแตกเป็น 2 บรรทัด
+        //    **เท่า ๆ กัน**" — ซึ่งแปลว่าราคาต่อหน่วยต้องเท่ากันอยู่แล้ว
         var seen = new Dictionary<string, OcrExtractedLineItem>(StringComparer.OrdinalIgnoreCase);
         var merged = new List<OcrExtractedLineItem>();
         foreach (var item in data.Items)
         {
-            var key = (item.Description ?? "").Trim();
-            if (string.IsNullOrEmpty(key))
+            var desc = (item.Description ?? "").Trim();
+            // ราคา/หน่วยที่ยังไม่รู้ (null/0) ใช้คีย์ว่าง — ยุบกับบรรทัดที่ราคาเท่ากัน
+            // ไม่ได้ แต่ยุบกับบรรทัดที่ยังไม่รู้ราคาเหมือนกันได้
+            var priceKey = (item.UnitPrice ?? 0m) > 0m
+                ? Math.Round(item.UnitPrice!.Value, 2).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : "";
+            var key = string.IsNullOrEmpty(desc) ? "" : desc + "\u0001" + priceKey;
+            if (string.IsNullOrEmpty(desc))
             {
                 merged.Add(item);
                 continue;

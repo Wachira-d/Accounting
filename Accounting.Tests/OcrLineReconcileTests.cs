@@ -116,4 +116,37 @@ public class OcrLineReconcileTests
         OcrService.SanitizeVatSplitArtifacts(d);
         Assert.Equal(100m, d.Items[0].Quantity);
     }
+
+    // ═══ T2-20: ยุบบรรทัดชื่อซ้ำโดยไม่ดูราคา = แต่งราคาต่อหน่วยที่ไม่มีบนกระดาษ ═══
+
+    [Fact]
+    public void ชื่อซ้ำแต่ราคาต่อหน่วยต่างกัน_ห้ามยุบเป็นบรรทัดเดียว()
+    {
+        // กระดาษ: "ค่าแรง 500" + "ค่าแรง 300" — เดิมยุบเป็น qty 2 × ฿400
+        // ยอดรวมยังตรง (800) จึงเงียบสนิท แต่ ฿400 ไม่มีอยู่บนกระดาษเลย
+        // และค่านี้ไหลต่อเป็นต้นทุนตอนนำเข้าสต๊อก + รายละเอียดรายบรรทัด §87
+        var d = new OcrExtractedData();
+        d.Items.Add(Line(qty: 1m, up: 500m, amt: 500m, desc: "ค่าแรง"));
+        d.Items.Add(Line(qty: 1m, up: 300m, amt: 300m, desc: "ค่าแรง"));
+        OcrService.SanitizeVatSplitArtifacts(d);
+        Assert.Equal(2, d.Items.Count);
+        Assert.Contains(d.Items, i => i.UnitPrice == 500m);
+        Assert.Contains(d.Items, i => i.UnitPrice == 300m);
+        Assert.Equal(800m, d.Items.Sum(i => i.Amount ?? 0m));
+    }
+
+    [Fact]
+    public void ชื่อซ้ำและราคาต่อหน่วยเท่ากัน_ยังต้องยุบเหมือนเดิม()
+    {
+        // เจตนาเดิมของขั้นนี้: external OCR แตกสินค้าเดียวเป็น 2 บรรทัดเท่า ๆ กัน
+        // (VAT split) — เคสนี้ต้องยังยุบได้ ไม่งั้นแก้บั๊กแล้วปิดฟีเจอร์ทิ้ง
+        var d = new OcrExtractedData();
+        d.Items.Add(Line(qty: 2m, up: 250m, amt: 500m, desc: "กระดาษ A4"));
+        d.Items.Add(Line(qty: 1m, up: 250m, amt: 250m, desc: "กระดาษ A4"));
+        OcrService.SanitizeVatSplitArtifacts(d);
+        var only = Assert.Single(d.Items);
+        Assert.Equal(3m, only.Quantity);
+        Assert.Equal(750m, only.Amount);
+        Assert.Equal(250m, only.UnitPrice);
+    }
 }
