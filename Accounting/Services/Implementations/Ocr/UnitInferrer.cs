@@ -56,8 +56,52 @@ internal static class UnitInferrer
     {
         var inferred = Infer(description);
         if (string.IsNullOrWhiteSpace(extractedUnit)) return inferred ?? "ชิ้น";
-        var trimmed = extractedUnit.Trim();
+        var trimmed = FromUneceCode(extractedUnit.Trim());
         if (trimmed == "ชิ้น" && inferred != null) return inferred;
         return trimmed;
+    }
+
+    /// <summary>รหัสหน่วย UN/ECE Rec.20 → หน่วยไทย
+    ///
+    /// <para>e-Tax XML (UBL/CII) เก็บหน่วยเป็น <c>unitCode</c> ตามมาตรฐานสากล —
+    /// <c>C62</c> (ชิ้น) · <c>KGM</c> (กก.) · <c>HUR</c> (ชม.) ฯลฯ. ถ้าเอาไปใส่
+    /// <c>DocumentLine.Unit</c> ตรง ๆ ใบที่พิมพ์ออกไปจะขึ้นว่า "C62" ซึ่งแย่กว่า
+    /// ค่า default เดิม — แต่ถ้า**ทิ้ง**ก็เสียข้อมูลที่เอกสารมีลายเซ็นดิจิทัลบอกไว้แล้ว
+    /// (ผลตรวจ 2026-09-06 · T2-08). รหัสที่ไม่รู้จักคืนค่าเดิม (อาจเป็นหน่วยไทย
+    /// ที่ผู้ออกใบใส่มาตรง ๆ ซึ่งพบได้บ่อยในใบไทย)</para></summary>
+    internal static string FromUneceCode(string unit)
+    {
+        return unit.ToUpperInvariant() switch
+        {
+            "C62" or "EA" or "PCE" or "H87" or "NAR" => "ชิ้น",
+            "KGM" => "กก.",
+            "GRM" => "กรัม",
+            "TNE" => "ตัน",
+            "LTR" => "ลิตร",
+            "MLT" => "มล.",
+            "MTR" => "เมตร",
+            "CMT" => "ซม.",
+            "MMT" => "มม.",
+            "KMT" => "กม.",
+            "MTK" => "ตร.ม.",
+            "MTQ" => "ลบ.ม.",
+            "HUR" => "ชม.",
+            "DAY" => "วัน",
+            "MON" => "เดือน",
+            "ANN" => "ปี",
+            "SET" => "ชุด",
+            "PK" or "XPK" => "แพ็ค",
+            "BX" or "XBX" => "กล่อง",
+            "BG" or "XBG" => "ถุง",
+            "CT" or "XCT" => "ลัง",
+            "RO" or "XRO" => "ม้วน",
+            "BO" or "XBO" => "ขวด",
+            "CAN" or "XCA" => "กระป๋อง",
+            "TU" or "XTU" => "หลอด",
+            "PR" or "NPR" => "คู่",
+            "KWH" => "หน่วย",
+            "E48" or "WEE" => "งาน",
+            _ => unit,
+        };
     }
 }

@@ -106,6 +106,12 @@ public static class OcrScanSnapshot
             nameof(OcrScanResult.CreatedDocumentId),
             nameof(OcrScanResult.CreatedJournalEntryId),
             nameof(OcrScanResult.StockImportedAt),
+            // ★ ร่องรอย "คนแก้" เป็นของ **การอัปโหลดครั้งนั้น** ไม่ใช่ของกระดาษ —
+            // คัดลอกมาแล้วสำเนาใหม่จะถูกนับว่า "ผู้ใช้แก้แล้ว" ทั้งที่ยังไม่มีใครแตะ
+            // ⇒ อัตราการแก้พองเกินจริง และ first-pass accept rate ต่ำเกินจริง
+            // (ตัวชี้วัดคู่ใน Helpers/OcrQualityKpi จะอ่านไม่ได้ทันที)
+            nameof(OcrScanResult.UserCorrectedAt),
+            nameof(OcrScanResult.UserCorrectedFields),
         };
 
     // อ่าน metadata ครั้งเดียวตอนโหลดคลาส — reflection ต่อการเรียกจะช้าเกินไป

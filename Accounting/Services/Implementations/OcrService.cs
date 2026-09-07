@@ -1591,6 +1591,9 @@ public class OcrService : IOcrService
             scanResult.HasWht = extractedData.HasWht;
             scanResult.WhtRate = extractedData.WhtRate;
             scanResult.PaymentTermsDays = extractedData.PaymentTermsDays;
+            // สกุลเงิน: ค่าที่เอกสารประกาศไว้ (e-Tax XML) ก่อน แล้วค่อยเดาจากข้อความ
+            // — เก็บลงแถวเพื่อให้เส้นสร้างเอกสาร/DTO ไม่ต้องเดาซ้ำคนละที่
+            scanResult.Currency = extractedData.Currency ?? InferCurrency(extractedText);
             scanResult.Confidence = extractedData.Confidence;
 
             // Build [Reasoning] section LAST so it includes VendorIntel + Learner traces
@@ -5099,7 +5102,8 @@ public class OcrService : IOcrService
             // สกุลเงินบนกระดาษ — เดิมไม่เคยอ่าน ใบ USD จึงถูกบันทึกเป็นบาทเงียบ ๆ
             // (ตัวเลขเท่าเดิมแต่ความหมายผิด = ยอดผิดหลายสิบเท่า) ตรวจจากสัญลักษณ์/
             // รหัสสกุลบนเอกสาร ไม่พบ = THB ตามเดิม
-            Currency = InferCurrency(result.RawTextContent) ?? "THB",
+            // สกุลเงินที่เอกสารประกาศไว้ (e-Tax XML) ชนะการเดาจากข้อความเสมอ
+            Currency = result.Currency ?? InferCurrency(result.RawTextContent) ?? "THB",
             // เหตุผลการลดหนี้ (§86/10) — บังคับก่อนอนุมัติ เดิม OCR ไม่เคยเซ็ต
             // ใบลดหนี้ที่สแกนมาจึงติดบล็อก "ต้องระบุเหตุผล" ทุกใบ 100%
             // กระดาษมักพิมพ์เหตุผลไว้อยู่แล้ว → อ่านจากข้อความ ถ้าไม่พบค่อยให้ผู้ใช้เลือก
@@ -7168,7 +7172,7 @@ public class OcrService : IOcrService
             TargetDocTypeUsedAi: r.TargetDocTypeUsedAi,
             // สกุลเงินอ่านจากข้อความบนกระดาษ (ตัวเดียวกับที่เส้น "สร้างทันที" ใช้)
             // — ส่งออกมาเพื่อให้เส้น handoff ได้คำตอบเดียวกัน (T4-08)
-            Currency: InferCurrency(r.RawTextContent),
+            Currency: r.Currency ?? InferCurrency(r.RawTextContent),
             GlAccountAiFeedbackId: r.GlAccountAiFeedbackId,
             SuggestedWhtRate: r.SuggestedWhtRate,
             WhtIncomeTypeCode: r.WhtIncomeTypeCode,
@@ -7220,6 +7224,13 @@ public class OcrService : IOcrService
             SubTotal = etax.LineTotal ?? etax.TaxBasis,
             VatAmount = etax.VatAmount,
             TotalAmount = etax.GrandTotal,
+            // ★ ส่วนลดท้ายบิลที่ XML **ประกาศไว้แล้ว** = LineTotal − TaxBasis
+            // (TaxBasisTotalAmount คือฐานภาษีหลังหักส่วนลดตามสเปก CII)
+            // ⇒ ไม่ต้องอนุมานจากส่วนต่างเหมือนเส้นอ่านกระดาษ (ผลตรวจ T2-08)
+            DiscountAmount = etax.LineTotal is decimal lt && etax.TaxBasis is decimal tb
+                && lt - tb > 0m ? lt - tb : null,
+            // สกุลเงินที่ XML ประกาศไว้ — ไม่ต้องเดาจากข้อความ
+            Currency = string.IsNullOrWhiteSpace(etax.Currency) ? null : etax.Currency!.Trim().ToUpperInvariant(),
         };
 
         // ใช้ชื่อช่องกลาง (Helpers/OcrFieldKeys.cs) — เดิมใช้ชื่อชุดของ Azure
@@ -7244,6 +7255,12 @@ public class OcrService : IOcrService
                 Quantity = li.Quantity,
                 UnitPrice = li.UnitPrice,
                 Amount = li.Amount,
+                // ★ หน่วยนับที่ XML ประกาศไว้ (unitCode ตาม UN/ECE Rec.20) —
+                // ตัวสกัดอ่านมาได้ตั้งแต่แรกแต่ตัว map ทิ้งทุกครั้ง ⇒ ทุกบรรทัด
+                // ของใบ e-Tax ตกไปเป็น "ชิ้น" ทั้งที่เอกสารที่มีลายเซ็นดิจิทัล
+                // บอกหน่วยจริงไว้แล้ว (ผลตรวจ 2026-09-06 · T2-08)
+                Unit = string.IsNullOrWhiteSpace(li.Unit)
+                    ? null : Ocr.UnitInferrer.FromUneceCode(li.Unit.Trim()),
             });
         }
 
@@ -7819,6 +7836,15 @@ internal class OcrExtractedData
     /// จำเป็นต่อ **หนังสือรับรอง 50 ทวิ + ภ.ง.ด.3/53** ไม่ใช่แค่อัตรา (T4-06)</summary>
     public string? WhtIncomeTypeCode { get; set; }
     public int? PaymentTermsDays { get; set; }
+
+    /// <summary>สกุลเงินที่<b>เอกสารประกาศไว้</b> (e-Tax XML <c>InvoiceCurrencyCode</c>)
+    /// — <c>null</c> = ต้องเดาจากข้อความ
+    ///
+    /// <para>⚠️ e-Tax XML บอกสกุลเงินไว้ตรง ๆ พร้อมลายเซ็นดิจิทัล แต่เส้นสร้างเอกสาร
+    /// กลับไป **เดาจาก raw text** ทุกครั้ง (<c>InferCurrency</c>) ⇒ ใบ USD ที่ XML
+    /// ประกาศชัดยังมีโอกาสถูกบันทึกเป็นบาท = ตัวเลขผิดหลายสิบเท่าเงียบ ๆ
+    /// (ผลตรวจ 2026-09-06 · T2-08)</para></summary>
+    public string? Currency { get; set; }
     public string? ZoneSummary { get; set; }
     public string? BuyerName { get; set; }
     public string? BuyerTaxId { get; set; }

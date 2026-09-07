@@ -222,6 +222,14 @@ public class OcrScanResult : TenantEntity
     /// กลายเป็นความเสี่ยงที่มากกว่าปัญหาเดิม)</para></summary>
     public string? FieldDecisionsJson { get; set; }
 
+    /// <summary>สกุลเงินของเอกสาร — จาก e-Tax XML (ประกาศไว้ + มีลายเซ็น) ก่อน
+    /// แล้วจึงเดาจากข้อความ · <c>null</c> = ยังไม่รู้ (ผู้เรียกตกไปใช้ "THB")
+    ///
+    /// <para>⚠️ เดิมไม่มีที่เก็บ ⇒ ทั้งเส้นสร้างเอกสารและ DTO ต่างคนต่าง
+    /// <c>InferCurrency(RawTextContent)</c> ⇒ เดาสองที่ที่อาจไม่ตรงกัน และค่าที่
+    /// e-Tax XML ประกาศไว้ชัด ๆ ถูกทิ้งทุกครั้ง (ผลตรวจ 2026-09-06 · T2-08)</para></summary>
+    public string? Currency { get; set; }
+
     // ─── Document role inference ──────────────────────────────────────
     // Thai-accounting workflow separates THREE distinct concepts:
     //   • ScannedDocumentType — the physical paper we OCR'd (e.g. "Receipt")
