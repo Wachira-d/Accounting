@@ -3679,7 +3679,8 @@ public partial class DocumentService : IDocumentService
         // lock แถวมัดจำ + reload ยอดใต้ lock แล้วทำทั้งหมดใน transaction เดียว
         await using var refundTx = await _db.Database.BeginTransactionAsync();
         await _db.Database.ExecuteSqlRawAsync(
-            "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} FOR UPDATE", documentId);
+            "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+            documentId, companyId);
         await _db.Entry(doc).ReloadAsync();   // DepositRefunded/Realized ล่าสุดใต้ lock
 
         // แยกฐาน + VAT จากยอด gross ที่จะคืน (ตามสัดส่วนเดิมของใบ)
@@ -3707,6 +3708,16 @@ public partial class DocumentService : IDocumentService
         var moneyAcc = await FindAccountAsync(companyId, "111");
         if (deferredAcc == null || moneyAcc == null)
             throw new InvalidOperationException("ไม่พบผังบัญชีขายรอรับรู้/เงินสดสำหรับคืนมัดจำ");
+        // ⚠️ ผลตรวจทีม C · C-01: บรรทัดภาษีขายถูกใส่แบบมีเงื่อนไข
+        // (`if (refundVat > 0 && outVatAcc != null)`) แต่หัว JE ประกาศ
+        // `TotalDebit = request.Amount` (ฐาน + VAT) เสมอ ⇒ ผังที่ไม่มี 21911/21913
+        // จะได้ JE ที่ **Dr ขาดไปเท่ากับ VAT** โดยหัวบอกว่าบาลานซ์ — งบไม่ลงตัว
+        // เงียบ ๆ · ต้องล้มดังพร้อมบอกทางไปต่อ (กติกา "ห้าม silent no-op")
+        if (refundVat > 0 && outVatAcc == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ไม่พบผังบัญชีภาษีขาย (21911/21913) สำหรับคืนมัดจำที่มี VAT — "
+                + "กรุณาเพิ่มผังบัญชีภาษีขายก่อน แล้วทำรายการคืนมัดจำใหม่",
+                "DEPOSIT-REFUND-NO-OUTVAT");
 
         var when = request.RefundDate ?? DateTime.UtcNow;
         var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
@@ -4264,7 +4275,7 @@ public partial class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException($"ไม่พบสมุดรายวัน {journalEntryNumber} (Posted)");
         // row-lock กัน apply ซ้อน + re-read mark
         await _db.Database.ExecuteSqlRawAsync(
-            @"SELECT ""Id"" FROM ""JournalEntries"" WHERE ""Id"" = {0} FOR UPDATE", jv.Id);
+            @"SELECT ""Id"" FROM ""JournalEntries"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1} FOR UPDATE", jv.Id, companyId);
         await _db.Entry(jv).ReloadAsync();
         if (jv.DepositAppliedToDocumentId.HasValue)
         {
@@ -8594,7 +8605,8 @@ public partial class DocumentService : IDocumentService
 
         // Lock source row to prevent concurrent balance modifications (FOR UPDATE)
         await _db.Database.ExecuteSqlRawAsync(
-            "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} FOR UPDATE", doc.RelatedDocumentId.Value);
+            "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+            doc.RelatedDocumentId.Value, companyId);
 
         var source = await _db.Documents.FirstOrDefaultAsync(d =>
             d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
@@ -11536,7 +11548,10 @@ public partial class DocumentService : IDocumentService
 
         var now = DateTime.UtcNow;
         var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
-        var period = await RequireOpenFiscalPeriodAsync(companyId, now, "รายการตัดหนี้สูญ");
+        // ป้ายต้องตรงกับสิ่งที่ทำจริง — ผู้ใช้อ่านข้อความนี้เพื่อรู้ว่าต้องเปิดงวดไหน
+        // ทำอะไร (เดิมเขียน "รายการตัดหนี้สูญ" ทั้งที่เมธอดนี้คือย้ายภาษีซื้อรอเคลม
+        // 11640 → 11610 · ผลตรวจทีม C · C-06)
+        var period = await RequireOpenFiscalPeriodAsync(companyId, now, "รายการย้ายภาษีซื้อรอเคลมเป็นภาษีซื้อขอคืนได้");
         var je = new JournalEntry
         {
             CompanyId = companyId,
@@ -12519,6 +12534,27 @@ public partial class DocumentService : IDocumentService
 
             var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
             var period = await ResolveFiscalPeriodAsync(companyId, when);
+            // ⚠️ ผลตรวจทีม C · C-03: เดิมใช้ `ResolveFiscalPeriodAsync` เปล่า ๆ
+            // (ไม่ดู `Status`) ⇒ ย้าย VAT 21913 → 21911 เข้างวดที่ **ปิดและยื่น
+            // ภ.พ.30 ไปแล้ว** ได้ ⇒ งบที่ยื่นกับบัญชีไม่ตรงกันถาวร ขณะที่เส้นลง JE
+            // ด้วยมือตรวจอยู่แล้ว = สองมาตรฐานกับข้อมูลชุดเดียวกัน
+            //
+            // ที่นี่ **ห้าม throw** เพราะเมธอดนี้ถูกเรียกหลังรับชำระเงินสำเร็จแล้ว
+            // (การรับเงินเกิดขึ้นจริง ล้มทั้งรายการ = ทิ้งข้อมูลของผู้ใช้) — แต่
+            // ก็ห้ามเงียบ: บอกบนตัวเอกสารที่ผู้ใช้เปิดดู + log + คงสถานะพัก
+            // เอาไว้ให้ retry ได้เมื่อเปิดงวด (กติกา "ดังใน 3 ที่")
+            if (period != null && period.Status != FiscalPeriodStatus.Open)
+            {
+                var msg = $"[VAT-RECLASS-BLOCKED] ภาษีขาย {net21913:N2} บาทถึงกำหนดวันที่ "
+                    + $"{when:yyyy-MM-dd} แต่งวด “{period.Name}” ปิดแล้ว — ยังค้างที่ 21913 "
+                    + "และยังไม่เข้า ภ.พ.30 · เปิดงวดแล้วกด “ย้ายภาษีขายถึงกำหนด” อีกครั้ง";
+                AppendInternalNote(inv, msg);
+                _logger.LogWarning(
+                    "Reclassify VAT ใบแจ้งหนี้ {Doc}: งวด {Period} ปิดแล้ว — VAT {Vat:N2} ค้าง 21913",
+                    inv.DocumentNumber, period.Name, net21913);
+                await _db.SaveChangesAsync();
+                return;
+            }
             var je = new JournalEntry
             {
                 CompanyId = companyId,
@@ -13946,9 +13982,16 @@ public partial class DocumentService : IDocumentService
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
                     var thisWht = doc.WithholdingTaxAmount;
+                    // ⚠️ สองลิสต์นี้ต้องยาวเท่ากันและเรียงตรงกันเสมอ (บรรทัดที่ i
+                    // ของ pendingLines คู่กับ lineProjects[i]) — เดิม `if` ไม่มี
+                    // ปีกกา ⇒ ตอน moneyAccount เป็น null จะได้ lineProjects เกินมา
+                    // หนึ่งช่อง แล้ว **ป้ายโครงการของทุกบรรทัดที่เหลือเลื่อนไปหมด**
+                    // (ผลตรวจทีม C · C-08)
                     if (moneyAccount != null)
+                    {
                         pendingLines.Add((moneyAccount.Id, cashThb, 0m, $"รับชำระ - {doc.DocumentNumber}"));
-                    lineProjects.Add(doc.ProjectId);
+                        lineProjects.Add(doc.ProjectId);
+                    }
                     if (thisWht > 0)
                     {
                         var whtAccount = await FindAccountAsync(companyId, "11910");
@@ -13970,9 +14013,16 @@ public partial class DocumentService : IDocumentService
                 {
                     // Accrual: AR was already net of WHT at Invoice time, so
                     // Receipt just moves the net cash from AR to Cash.
+                    // ⚠️ สองลิสต์นี้ต้องยาวเท่ากันและเรียงตรงกันเสมอ (บรรทัดที่ i
+                    // ของ pendingLines คู่กับ lineProjects[i]) — เดิม `if` ไม่มี
+                    // ปีกกา ⇒ ตอน moneyAccount เป็น null จะได้ lineProjects เกินมา
+                    // หนึ่งช่อง แล้ว **ป้ายโครงการของทุกบรรทัดที่เหลือเลื่อนไปหมด**
+                    // (ผลตรวจทีม C · C-08)
                     if (moneyAccount != null)
+                    {
                         pendingLines.Add((moneyAccount.Id, cashThb, 0m, $"รับชำระ - {doc.DocumentNumber}"));
-                    lineProjects.Add(doc.ProjectId);
+                        lineProjects.Add(doc.ProjectId);
+                    }
                     arThb = SrcThb(doc.TotalAmount);
                     if (arAccount != null)
                     {
@@ -14067,8 +14117,10 @@ public partial class DocumentService : IDocumentService
                             if (!_seenDeps.Add(mDepId.Value)) continue;   // ใบนี้หักไปแล้วในรอบนี้ → ข้าม
                             // row-lock กัน race เหมือนใบเดียว
                             await _db.Database.ExecuteSqlRawAsync(
-                                @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} FOR UPDATE", mDepId.Value);
-                            var mDeposit = await _db.Documents.FirstOrDefaultAsync(d => d.Id == mDepId.Value);
+                                @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1} FOR UPDATE",
+                                mDepId.Value, companyId);
+                            var mDeposit = await _db.Documents.FirstOrDefaultAsync(
+                                d => d.Id == mDepId.Value && d.CompanyId == companyId);
                             if (mDeposit == null) continue;
                             // one-shot guard ต่อใบ (self-heal ถ้าใบที่หักถูก void/ลบ → มาร์คโมฆะ)
                             if (mDeposit.DepositAppliedToDocumentId.HasValue
@@ -14140,8 +14192,8 @@ public partial class DocumentService : IDocumentService
                             .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
                     if (depIdForLock.HasValue)
                         await _db.Database.ExecuteSqlRawAsync(
-                            @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} FOR UPDATE",
-                            depIdForLock.Value);
+                            @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1} FOR UPDATE",
+                            depIdForLock.Value, companyId);
                     var deposit = depIdForLock.HasValue
                         ? await _db.Documents.FirstOrDefaultAsync(d => d.Id == depIdForLock.Value)
                         : null;
@@ -14285,7 +14337,7 @@ public partial class DocumentService : IDocumentService
                         // approve พร้อมกันอ้าง JV เดียว → ทั้งคู่อ่าน mark=null ก่อนใคร
                         // เขียน → ผ่าน guard ทั้งคู่ → Dr เบิ้ล. serialize ด้วย FOR UPDATE
                         await _db.Database.ExecuteSqlRawAsync(
-                            @"SELECT ""Id"" FROM ""JournalEntries"" WHERE ""Id"" = {0} FOR UPDATE", depJe.Id);
+                            @"SELECT ""Id"" FROM ""JournalEntries"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1} FOR UPDATE", depJe.Id, companyId);
                         await _db.Entry(depJe).ReloadAsync();
                         // กัน double-reverse: journal เดียวถูกนำไปหักได้ครั้งเดียว —
                         // แต่ **มาร์คต้องยังมีชีวิต**: ถ้าเอกสารที่อ้าง (เช็คเอาท์เดิม) ถูก
