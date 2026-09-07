@@ -117,7 +117,13 @@ public sealed record DataSubjectAccessResult(
     /// <summary>บัญชีภายนอก (Google/Facebook/LINE) ที่ผูกไว้ — ม.30 ให้เจ้าของข้อมูล
     /// ขอ "สำเนาข้อมูลทั้งหมดที่เก็บอยู่" ซึ่งรวมความเชื่อมโยงกับผู้ให้บริการภายนอก
     /// (เป็นข้อมูลที่ทำให้เข้าบัญชีได้ ⇒ ต้องอยู่ในรายงานให้เจ้าของเห็นและถอดได้)</summary>
-    List<Dictionary<string, object?>>? ExternalLogins = null);
+    List<Dictionary<string, object?>>? ExternalLogins = null,
+    /// <summary>ผลสแกน OCR ที่ผูกกับเจ้าของข้อมูล — ม.30 บังคับให้รายงาน
+    /// <b>ทุกชุดข้อมูลที่เก็บอยู่</b> และแถวสแกนเก็บข้อความทั้งหน้ากระดาษไว้
+    /// (ชื่อ · ที่อยู่ · เลขผู้เสียภาษี) เดิมไม่เคยถูกรายงานเลย (ผลตรวจ T5) ·
+    /// รายงานเป็น<b>สรุปรายแถว</b> ไม่ยกข้อความดิบมา เพราะกระดาษใบเดียวกันมี
+    /// ข้อมูลของคู่ค้าอีกฝ่ายอยู่ด้วย</summary>
+    List<Dictionary<string, object?>>? OcrScans = null);
 
 public sealed record ErasureImpactReport(
     int UserRowsAffected,
@@ -372,12 +378,45 @@ public class PdpaService : IPdpaService
         var total = (userProfile.Count > 0 ? 1 : 0) + contactRows.Count
             + docRows.Count + payRows.Count + logRows.Count + extRows.Count;
 
+        // ── ผลสแกน OCR ที่ผูกกับเจ้าของข้อมูล (ม.30) ──
+        // แถวสแกนเก็บ RawTextContent = ข้อความทั้งหน้ากระดาษ (ชื่อ · ที่อยู่ ·
+        // เลขผู้เสียภาษี) แต่เดิม**ไม่เคยถูกรายงานเลย** ⇒ คำตอบที่ส่งให้เจ้าของ
+        // ข้อมูลไม่ครบตามที่กฎหมายบังคับ (ผลตรวจ 2026-09-06 · T5)
+        //
+        // ★ รายงานเป็น**สรุปรายแถว** ไม่ยกข้อความดิบมา — กระดาษใบเดียวกันมี
+        //   ข้อมูลของคู่ค้าอีกฝ่ายอยู่ด้วย การส่งข้อความทั้งหน้าให้ผู้ขอ =
+        //   เปิดเผยข้อมูลของบุคคลที่สามไปพร้อมกัน
+        var scanRows = new List<Dictionary<string, object?>>();
+        if (contactId.HasValue)
+        {
+            var scans = await _db.Set<OcrScanResult>().AsNoTracking()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                    && r.MatchedContactId == contactId.Value)
+                .OrderByDescending(r => r.CreatedAt)
+                .Select(r => new {
+                    r.Id, r.OriginalFileName, r.CreatedAt, r.ScanStatus,
+                    r.ExtractedDocumentNumber, r.ExtractedDate, r.ExtractedTotalAmount,
+                    r.CreatedDocumentId,
+                })
+                .Take(500)
+                .ToListAsync(ct);
+            scanRows = scans.Select(r => new Dictionary<string, object?> {
+                ["id"] = r.Id, ["fileName"] = r.OriginalFileName,
+                ["scannedAt"] = r.CreatedAt, ["status"] = r.ScanStatus,
+                ["documentNumber"] = r.ExtractedDocumentNumber,
+                ["documentDate"] = r.ExtractedDate, ["amount"] = r.ExtractedTotalAmount,
+                ["createdDocumentId"] = r.CreatedDocumentId,
+                ["note"] = "ไฟล์สแกนเก็บข้อความทั้งหน้าไว้ — ขอสำเนาไฟล์ต้นฉบับได้ที่ผู้ควบคุมข้อมูล",
+            }).ToList();
+        }
+
         return new DataSubjectAccessResult(
             GeneratedAt: DateTime.UtcNow,
             SubjectIdentifier: user?.Email ?? contacts.FirstOrDefault()?.Email,
             UserProfile: userProfile, Contacts: contactRows,
             Documents: docRows, Payments: payRows, AccessLogs: logRows,
-            TotalRecords: total, ExternalLogins: extRows);
+            TotalRecords: total + scanRows.Count, ExternalLogins: extRows,
+            OcrScans: scanRows);
     }
 
     public async Task<int> ApplyRectificationAsync(Guid companyId,
@@ -487,6 +526,35 @@ public class PdpaService : IPdpaService
                 c.LineUserId = null;
                 c.IsDeleted = !hasRetained;   // ลบจริงเฉพาะที่หมด retention
                 changed++;
+            }
+
+            // ── ผลสแกน OCR ของคู่ค้ารายนี้ (ม.33) ──
+            // ⚠️ เดิมเส้นนี้ anonymise แต่ Users + Contacts ⇒ ผู้ที่ใช้สิทธิขอลบ
+            // ยัง**ค้นเจอตัวเองได้เต็ม ๆ** ในตารางสแกน เพราะ `RawTextContent`
+            // เก็บข้อความทั้งหน้ากระดาษ (ชื่อ · ที่อยู่ · เลขผู้เสียภาษี) พร้อม
+            // ช่องที่แยกไว้แล้วอีกสิบกว่าช่อง (ผลตรวจ 2026-09-06 · T5)
+            //
+            // ★ ใช้กติกา legal hold **ชุดเดียวกับ Contact** ข้างบน: สแกนของ
+            //   เอกสารที่ยังอยู่ในงวดเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10 · §87/3)
+            //   ต้องคงไว้ — MAX(retention) ชนะสิทธิขอลบตามที่ CLAUDE.md กฎ M ระบุ
+            //   ส่วนสแกนที่พ้นงวดแล้วล้างช่องข้อมูลส่วนบุคคลทิ้งได้จริง
+            var scanCutoff = DateTime.UtcNow.AddYears(-5);
+            var scanRowsToErase = await _db.Set<OcrScanResult>()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                    && r.MatchedContactId == contactId.Value
+                    && r.CreatedAt <= scanCutoff
+                    && (r.ExtractedDate == null || r.ExtractedDate <= scanCutoff))
+                .ToListAsync(ct);
+            foreach (var row in scanRowsToErase)
+            {
+                // รายการช่องอยู่ที่ Helpers/OcrScanPii ที่เดียว — เทสต์ reflection
+                // ฟ้องเมื่อมีช่องข้อความใหม่ที่ยังไม่ถูกตัดสินว่าเป็น PII หรือไม่
+                if (Accounting.Helpers.OcrScanPii.Anonymize(row) > 0)
+                {
+                    row.UpdatedAt = DateTime.UtcNow;
+                    row.UpdatedBy = actor;
+                    changed++;
+                }
             }
         }
 
