@@ -621,11 +621,17 @@ public class OcrService : IOcrService
                 whtAmount: whtAmt,
                 whtRatePercent: whtRatePct,
                 documentNumber: extractedData.DocumentNumber,
-                vendorName: extractedData.VendorName);
+                vendorName: extractedData.VendorName,
+                documentDiscount: extractedData.DiscountAmount);
 
             extractedData.Confidence = gatewayResult.AdjustedConfidence;
             foreach (var w in gatewayResult.Warnings)
                 extractedData.ReasoningTrace.Add("[Gateway] " + w);
+            // ข้อสังเกตที่ไม่ใช่ความผิด (ใบผสมอัตรา VAT · ราคารวม VAT · ส่วนลดที่
+            // กระดาษพิมพ์ไว้) — ติดป้ายคนละแบบและ **ไม่หักคะแนน** เพื่อไม่ให้
+            // คำเตือนจริงจมอยู่ในกองคำเตือนปลอม (ผลตรวจ T2-03/T2-16)
+            foreach (var n in gatewayResult.Notes)
+                extractedData.ReasoningTrace.Add("[Gateway·ข้อสังเกต] " + n);
 
             // ── ด่านตรวจเลขที่เอกสาร (anti-hallucination) ──
             // ที่มา (บั๊กจริง): บิล กฟภ. มี "เลขที่ (No.)" กับ "เลขที่ใบแจ้งหนี้"

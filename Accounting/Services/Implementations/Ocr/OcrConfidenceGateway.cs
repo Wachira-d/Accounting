@@ -9,7 +9,12 @@ namespace Accounting.Services.Implementations.Ocr;
 /// </summary>
 public static class OcrConfidenceGateway
 {
-    public record GatewayResult(decimal AdjustedConfidence, List<string> Warnings, bool MathConsistent);
+    /// <param name="Warnings">สิ่งที่<b>น่าจะผิด</b> — มี penalty เสมอ ผู้ใช้ต้องดู</param>
+    /// <param name="Notes">ข้อสังเกตที่<b>ไม่ใช่ความผิด</b> (เช่น ใบผสมอัตรา VAT, ราคารวม VAT)
+    /// — ไม่มี penalty. แยกออกจาก Warnings เพราะ "คำเตือนที่ฟ้องใบถูกกฎหมายทุกใบ
+    /// = คำเตือนที่ผู้ใช้เรียนรู้ที่จะเมิน" แล้วคำเตือนจริงจะถูกเมินตามไปด้วย</param>
+    public record GatewayResult(decimal AdjustedConfidence, List<string> Warnings, bool MathConsistent,
+        List<string> Notes);
 
     /// <summary>Default config — used when caller doesn't pass overrides.
     /// Production code should pass config from SiteSettings via Validate(...config).</summary>
@@ -43,10 +48,12 @@ public static class OcrConfidenceGateway
         decimal? whtAmount = null,
         decimal? whtRatePercent = null,
         string? documentNumber = null,
-        string? vendorName = null)
+        string? vendorName = null,
+        decimal? documentDiscount = null)
     {
         config ??= GatewayConfig.Default;
         var warnings = new List<string>();
+        var notes = new List<string>();
         var penalty = 0m;
         var mathConsistent = true;
 
@@ -113,14 +120,42 @@ public static class OcrConfidenceGateway
             }
         }
 
-        // 3. VAT rate sanity: should be ~7% in Thailand (or 0% / exempt)
+        // 3. อัตรา VAT เทียบยอดรวม — **ไม่สมมาตรสองทิศ**
+        //
+        // ⚠️ เดิมฟ้องทุกครั้งที่อัตรานอกกรอบ 6.5–7.5% ทั้งสองทิศ ⇒ บิลผสม
+        // 7% + ยกเว้น §81 (Makro/BigC: สินค้ามี VAT 700 + ยกเว้น 300 → VAT 49
+        // → อัตรารวม 4.9%) โดน −0.10 **ทุกใบ** ทั้งที่กระดาษถูกต้องตามกฎหมาย
+        // — ซึ่งขัดกับคอมเมนต์ของข้อ 2b ข้างบนที่อธิบายเคสนี้ไว้เองแล้ว
+        // (ผลตรวจ 2026-09-06 · T2-03)
+        //
+        // ทิศที่ยังผิดจริงเสมอ: **สูงกว่า 7%** — ใบเดียวมีอัตราสูงสุดได้ 7%
+        // ตามกฎหมายไทย จะเกินได้ก็ต่อเมื่ออ่านตัวเลขผิด (เช่น VAT 150 บนยอด
+        // 1,000 = 15%) ⇒ ฟ้อง + หักคะแนน
+        //
+        // ทิศที่ **ต่ำกว่า** 6.5%: เป็นไปได้โดยชอบธรรมจากส่วนผสมยกเว้น §81 /
+        // ศูนย์ §80/1 — แต่ก็เกิดได้จาก "OCR อ่าน VAT ขาดหลัก" เช่นกัน. สอง
+        // เคสนี้แยกกันด้วย <c>mathConsistent</c>: ใบผสมที่ผู้ขายพิมพ์เอง
+        // Sub + VAT = Total **เป๊ะ** ส่วนใบที่อ่านขาดหลักจะไม่ลงตัว (ข้อ 2/2b
+        // จับไปแล้ว) ⇒ ลงตัว = ข้อสังเกต (ไม่หักคะแนน) · ไม่ลงตัว = คำเตือน
         if (subTotal.HasValue && vatAmount.HasValue && subTotal.Value > 0 && vatAmount.Value > 0)
         {
             var rate = vatAmount.Value / subTotal.Value * 100m;
-            if (rate < 6.5m || rate > 7.5m)
+            if (rate > 7.5m)
             {
-                warnings.Add($"อัตรา VAT ผิดปกติ: {rate:N1}% (ปกติ 7%)");
+                warnings.Add($"อัตรา VAT ผิดปกติ: {rate:N1}% — สูงกว่าอัตราสูงสุดตามกฎหมาย (7%)");
                 penalty += config.VatRatePenalty;
+            }
+            else if (rate < 6.5m)
+            {
+                if (mathConsistent)
+                    notes.Add($"อัตรา VAT รวมทั้งใบ {rate:N1}% (ต่ำกว่า 7%) — น่าจะมีสินค้ายกเว้น §81 "
+                        + "หรืออัตรา 0% §80/1 ปนอยู่ ตรวจอัตรารายบรรทัดอีกครั้ง");
+                else
+                {
+                    warnings.Add($"อัตรา VAT ผิดปกติ: {rate:N1}% (ปกติ 7%) และตัวเลขหัวใบไม่ลงตัว "
+                        + "— อาจอ่าน VAT ขาดหลัก");
+                    penalty += config.VatRatePenalty;
+                }
             }
         }
 
@@ -170,19 +205,40 @@ public static class OcrConfidenceGateway
             penalty += config.MathPenalty;
         }
 
-        // 7. Line-item math: sum of Item.Amount should ≈ SubTotal
+        // 7. Σ บรรทัด ↔ หัวใบ — **ใช้ตัวจำแนกตัวเดียวกับตอนสร้างเอกสาร**
+        //
+        // ⚠️ เดิมเทียบ Σ บรรทัดกับ `SubTotal` ตรง ๆ ⇒ ใบที่ราคาต่อหน่วย
+        // **รวม VAT แล้ว** (IKEA/ค้าปลีก/ร้านอาหาร: บรรทัด 1,396 · sub 1,304.67)
+        // ห่าง 91.33 → ฟ้อง + −0.15 + `mathConsistent=false` บนใบที่ตัวเลข
+        // ถูกทุกช่อง ⇒ 0.95 − 0.15 = 0.80 ตกเกณฑ์ auto-create 0.85
+        // (ผลตรวจ 2026-09-06 · T2-16)
+        //
+        // ที่แย่กว่าคือ `CreateDocumentFromScanAsync` **รู้จักเคสนี้อยู่แล้ว**
+        // ผ่าน Helpers/OcrLineReconciler — ด่านกับเส้นทำงานอนุมานเรื่องเดียวกัน
+        // คนละสูตร = สำเนามือที่ drift แน่นอน. ตอนนี้เรียกตัวเดียวกัน:
+        // เคส B (ตรง SubTotal) / A (ราคารวม VAT) / C (ส่วนลดที่กระดาษพิมพ์ไว้)
+        // = ลงตัว ไม่ฟ้อง · LinesShort / Ambiguous = ฟ้องจริง
         if (lineItems != null && lineItems.Count > 0 && subTotal.HasValue)
         {
             var withAmounts = lineItems.Where(i => i.Amount.HasValue).ToList();
             if (withAmounts.Count > 0)
             {
                 var lineSum = withAmounts.Sum(i => i.Amount!.Value);
-                var diff = Math.Abs(lineSum - subTotal.Value);
-                if (diff > config.MathTolerance)
+                var recon = Accounting.Helpers.OcrLineReconciler.Classify(
+                    lineSum, subTotal.Value, vatAmount ?? 0m, total ?? 0m, documentDiscount ?? 0m);
+                switch (recon.Case)
                 {
-                    warnings.Add($"ผลรวมรายการ {lineSum:N2} ≠ ยอดก่อน VAT {subTotal:N2} (ห่าง {diff:N2})");
-                    penalty += config.MathPenalty * 0.75m;
-                    mathConsistent = false;
+                    case Accounting.Helpers.OcrLineReconcileCase.PricesIncludeVat:
+                    case Accounting.Helpers.OcrLineReconcileCase.DiscountOnSubTotal:
+                    case Accounting.Helpers.OcrLineReconcileCase.DiscountOnTotal:
+                        notes.Add(recon.Note);
+                        break;
+                    case Accounting.Helpers.OcrLineReconcileCase.LinesShort:
+                    case Accounting.Helpers.OcrLineReconcileCase.Ambiguous:
+                        warnings.Add(recon.Note);
+                        penalty += config.MathPenalty * 0.75m;
+                        mathConsistent = false;
+                        break;
                 }
             }
 
@@ -261,7 +317,7 @@ public static class OcrConfidenceGateway
         if (penalty > config.MaxPenalty) penalty = config.MaxPenalty;
 
         var adjusted = Math.Max(0m, Math.Min(1m, modelConfidence - penalty));
-        return new GatewayResult(adjusted, warnings, mathConsistent);
+        return new GatewayResult(adjusted, warnings, mathConsistent, notes);
     }
 
     private static bool ValidateThaiTaxId(string taxId)
