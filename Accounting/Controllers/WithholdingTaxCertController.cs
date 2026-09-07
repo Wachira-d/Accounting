@@ -170,6 +170,10 @@ public class WithholdingTaxCertController : ControllerBase
             // ค่าที่ฟอร์มควรเติมให้ก่อน (เคสปกติของบริษัท = ผู้รับเป็นนิติบุคคล)
             // null = กฎหมายไม่มีอัตราคงที่ ⇒ ห้ามเติมตัวเลขปลอมให้ช่องไม่ว่าง
             DefaultRate = t.JuristicRate ?? t.IndividualRate,
+            // แถวบนแบบ 50 ทวิ — ส่งมาให้หน้าเว็บ **แสดง** อย่างเดียว ห้ามคิดเอง
+            // (เดิม wht.html ถือ allow-list ของรหัสที่พิมพ์มือ ซึ่งตกรหัสที่ระบบ
+            //  เองสร้าง `8ad`/`8tr` ⇒ ช่องประเภทว่างแต่ยอดรวมเต็ม — D-03/F-02)
+            CertificateRow = Accounting.Helpers.ThaiWhtRateTable.CertificateRow(t.Code),
             t.ApplicableForms,
             t.Note,
         });

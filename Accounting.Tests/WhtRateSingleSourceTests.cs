@@ -52,6 +52,35 @@ public class WhtRateSingleSourceTests
         Assert.Null(ThaiWhtRateTable.RateFor(null, payeeIsJuristic: true));
     }
 
+    [Theory]
+    [InlineData("1", "1")]        // เงินเดือน 40(1)
+    [InlineData("2", "2")]        // ค่านายหน้า 40(2)
+    [InlineData("3", "3")]        // ค่าสิทธิ 40(3)
+    [InlineData("4a", "4a")]      // ดอกเบี้ย 40(4)(ก)
+    [InlineData("4b", "4b")]      // เงินปันผล 40(4)(ข)
+    [InlineData("5", "5")]        // ค่าเช่า 40(5)
+    [InlineData("6", "5")]        // วิชาชีพอิสระ 40(6) → แถว 5 (ม.3 เตรส)
+    [InlineData("7", "5")]        // ค่ารับเหมา 40(7)
+    [InlineData("8", "5")]        // ค่าจ้างทำของ 40(8)
+    [InlineData("8ad", "5")]      // ★ ค่าโฆษณา — เดิมหายจากทุกแถว
+    [InlineData("8tr", "5")]      // ★ ค่าขนส่ง — เดิมหายจากทุกแถว
+    public void ทุกประเภทเงินได้ต้องมีแถวบนแบบ50ทวิ(string code, string expectedRow)
+    {
+        Assert.Equal(expectedRow, ThaiWhtRateTable.CertificateRow(code));
+    }
+
+    [Fact]
+    public void รหัสที่ไม่รู้จักต้องตกแถวอื่นๆ_ไม่ใช่หายเงียบ()
+    {
+        // ทิศของความผิดพลาดต้องเป็น "โผล่ผิดแถว" ไม่ใช่ "หายจากทุกแถวแต่ยอดรวมเต็ม"
+        // (ซึ่งทำให้ผู้รับเงินยื่นเครดิตภาษีไม่ได้)
+        Assert.Equal("6", ThaiWhtRateTable.CertificateRow("zzz"));
+        Assert.Equal("6", ThaiWhtRateTable.CertificateRow("99"));
+        Assert.Equal("6", ThaiWhtRateTable.CertificateRow(null));
+        // 40(4) ที่ไม่ระบุวงเล็บ ชี้ขาดไม่ได้ว่าดอกเบี้ย (15%) หรือปันผล (10%) — ห้ามเดา
+        Assert.Equal("6", ThaiWhtRateTable.CertificateRow("40(4)"));
+    }
+
     [Fact]
     public void ค้นด้วยมาตราก็ได้ผลเดียวกับค้นด้วยรหัส()
     {

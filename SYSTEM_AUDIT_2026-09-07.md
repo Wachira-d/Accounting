@@ -65,7 +65,7 @@
 | C-04 | C | `CnDnPurchaseSideOverride` อ่านใน JE แต่ไม่อ่านใน `ApplyStockMovementsAsync` | — |
 | C-05 | C | ใบเสร็จตัดชำระ/ใบลดหนี้คืนเงิน ออกนอก `ApproveDocumentAsync` ⇒ ข้ามด่าน §86/4 · `IssuerBranchCode` · `RetentionUntil` · `TaxPointDate` | — |
 | ✅ D-02 | D | dropdown อัตรา/ประเภทพิมพ์มือใน `recurring.html` + `admin/ocr-config.html` (ผิดกฎหมาย 4 จุด) | `recurring.html:91-110` |
-| D-03 | D | `8ad`/`8tr` หายจาก renderer 50 ทวิ ทั้ง 3 ตัว | — |
+| ✅ D-03 | D | `8ad`/`8tr` หายจาก renderer 50 ทวิ ทั้ง 3 ตัว | — |
 | D-04 | D | Col7 ประเภทเงินได้ต่างกันระหว่างสองเส้น export ภ.ง.ด. | — |
 | D-05 | D | ภ.ง.ด.1 e-Filing คืนไฟล์เปล่าแล้วประทับว่า export แล้ว | — |
 | D-06 | D | ภ.ง.ด.2 ไม่มีช่องผู้รับเงินและไม่มี enum `WithholdingTax2` | — |

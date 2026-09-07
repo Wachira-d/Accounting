@@ -75,6 +75,46 @@ public static class ThaiWhtRateTable
             new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" }),
     };
 
+    /// <summary>
+    /// แถวบนแบบ **หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)** ที่ประเภทเงินได้นี้ต้องไปอยู่
+    /// — <c>"1" "2" "3" "4a" "4b" "5" "6"</c>
+    ///
+    /// ═══ ที่มา (ผลตรวจทีม D/F · SYSTEM_AUDIT_2026-09-07.md D-03 · F-02) ═══
+    /// <para>ทั้ง renderer ฝั่ง PDF และฝั่ง JS ต่างถือ <b>allow-list ของรหัสที่พิมพ์
+    /// มือ</b> ซึ่งตกรหัสที่ระบบเองสร้าง (<c>8ad</c> ค่าโฆษณา 2% · <c>8tr</c>
+    /// ค่าขนส่ง 1%) และแถว "อื่น ๆ" ก็เป็น allow-list (<c>9/99/other</c>) จึงไม่ใช่
+    /// ตาข่ายรับ ⇒ บรรทัดนั้น<b>หายจากทุกแถว</b> แต่ยอดรวมท้ายตารางยังเต็ม ⇒
+    /// ผู้รับเงินเอาไปยื่นเครดิตภาษีไม่ได้ (เอกสารที่กฎหมายบังคับออก 2 ฉบับ)</para>
+    ///
+    /// <para><b>ทิศของความผิดพลาดต้องเป็น "ไปโผล่แถวอื่น ๆ" ไม่ใช่ "หายเงียบ"</b>
+    /// — รหัสที่ไม่รู้จักจึงตกแถว 6 เสมอ · <c>"40(4)"</c> ที่ไม่ระบุวงเล็บ (ก)/(ข)
+    /// ก็ตกแถว 6 เพราะชี้ขาดไม่ได้ว่าเป็นดอกเบี้ยหรือปันผล (คนละอัตรา 15% vs 10%)
+    /// — ห้ามเดา</para>
+    /// </summary>
+    public static string CertificateRow(string? codeOrSection)
+    {
+        var section = Find(codeOrSection)?.TaxSection
+            ?? (codeOrSection ?? "").Trim();
+        section = section.Replace(" ", "");
+        if (section.StartsWith("40(1)", StringComparison.Ordinal)) return "1";
+        if (section.StartsWith("40(2)", StringComparison.Ordinal)) return "2";
+        if (section.StartsWith("40(3)", StringComparison.Ordinal)) return "3";
+        if (section.StartsWith("40(4)", StringComparison.Ordinal))
+        {
+            // รองรับทั้งอักษรไทย (ก)/(ข) และละติน (a)/(b)
+            if (section.Contains("(ข)", StringComparison.Ordinal)
+                || section.EndsWith("(b)", StringComparison.OrdinalIgnoreCase)) return "4b";
+            if (section.Contains("(ก)", StringComparison.Ordinal)
+                || section.EndsWith("(a)", StringComparison.OrdinalIgnoreCase)) return "4a";
+            return "6";
+        }
+        if (section.StartsWith("40(5)", StringComparison.Ordinal)
+            || section.StartsWith("40(6)", StringComparison.Ordinal)
+            || section.StartsWith("40(7)", StringComparison.Ordinal)
+            || section.StartsWith("40(8)", StringComparison.Ordinal)) return "5";
+        return "6";
+    }
+
     /// <summary>หาตามรหัส หรือตามมาตรา ("40(5)") — คืน null เมื่อไม่รู้จัก</summary>
     /// <summary>อัตราหัก ณ ที่จ่ายที่กฎหมายกำหนด (ท.ป.4/2528 + §3 เตรส) —
     /// ใช้ "snap" อัตราที่อนุมานจากยอดบนกระดาษเข้าหาค่าที่เป็นไปได้จริง

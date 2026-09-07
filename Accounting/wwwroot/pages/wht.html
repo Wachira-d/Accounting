@@ -424,25 +424,13 @@
         // ⇒ บรรทัดนั้นหายจากทุกแถว แต่ยอดรวมท้ายตาราง (มาจากเซิร์ฟเวอร์) ยังเต็ม
         // ⇒ ผู้รับเงินเอาไปยื่นเครดิตภาษีไม่ได้เพราะไม่มีประเภทเงินได้
         // ทิศของความผิดพลาดต้องเป็น "ไปโผล่แถวอื่น ๆ" ไม่ใช่ "หายเงียบ"
-        const sectionOf = (code) => {
-          const t = this._incomeTypes.find(x => String(x.code) === String(code));
-          // ยังไม่มีตารางจากเซิร์ฟเวอร์ (โหลดล้ม) → ใช้ค่าที่บรรทัดถืออยู่เป็นมาตรา
-          return String(t?.taxSection || code || '').replace(/\s/g, '');
-        };
-        // มาตรา → คีย์แถว · ไม่รู้จัก = แถว 6 (อื่น ๆ) เสมอ
+        // คีย์แถวมาจาก **เซิร์ฟเวอร์** (`Helpers/ThaiWhtRateTable.CertificateRow`)
+        // หน้าเว็บมีหน้าที่แสดงอย่างเดียว — drift เป็นศูนย์โดยโครงสร้าง (กลไก
+        // เดียวกับ `complianceIssues` / `MENU_SECTIONS` / `documentTitle`)
+        // รหัสที่เซิร์ฟเวอร์ไม่รู้จักตกแถว 6 เสมอ ⇒ "โผล่ผิดแถว" ไม่ใช่ "หายเงียบ"
         const rowKeyOf = (line) => {
-          const sec = sectionOf(line.incomeTypeCode);
-          if (sec.startsWith('40(1)')) return 'r1';
-          if (sec.startsWith('40(2)')) return 'r2';
-          if (sec.startsWith('40(3)')) return 'r3';
-          if (sec.startsWith('40(4)')) {
-            // (ก) ดอกเบี้ย · (ข) เงินปันผล — รองรับทั้งอักษรไทยและละติน
-            if (/\((?:ข|b|B)\)/.test(sec)) return 'r4b';
-            if (/\((?:ก|a|A)\)/.test(sec)) return 'r4a';
-            return 'r6';   // 40(4) ที่ไม่ระบุวงเล็บ = ชี้ขาดไม่ได้ ห้ามเดา
-          }
-          if (/^40\((?:5|6|7|8)\)/.test(sec)) return 'r5';
-          return 'r6';
+          const t = this._incomeTypes.find(x => String(x.code) === String(line.incomeTypeCode));
+          return 'r' + (t?.certificateRow || '6');
         };
         const buckets = { r1: [], r2: [], r3: [], r4a: [], r4b: [], r5: [], r6: [] };
         allLines.forEach(l => buckets[rowKeyOf(l)].push(l));

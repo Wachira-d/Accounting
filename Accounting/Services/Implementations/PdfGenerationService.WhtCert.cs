@@ -302,10 +302,18 @@ public partial class PdfGenerationService
     private static void BuildIncomeTable(QuestPDF.Fluent.ColumnDescriptor col,
         List<WithholdingTaxCertLine> lines, decimal totalIncome, decimal totalTax)
     {
-        (decimal Inc, decimal Tax, DateTime? Date) Match(params string[] codes)
+        // แถวของแต่ละบรรทัดตัดสินจาก **มาตรา** ผ่านตารางกลางตัวเดียว
+        // (`Helpers/ThaiWhtRateTable.CertificateRow`) ไม่ใช่ allow-list ของรหัส
+        // ที่พิมพ์มือ — เดิมตกรหัส `8ad`/`8tr` ที่ระบบเองสร้าง และแถว "อื่น ๆ"
+        // ก็เป็น allow-list จึงไม่ใช่ตาข่ายรับ ⇒ บรรทัดหายจากทุกแถวแต่ยอดรวม
+        // ยังเต็ม (ผลตรวจทีม D · D-03)
+        var byRow = lines
+            .GroupBy(l => Accounting.Helpers.ThaiWhtRateTable.CertificateRow(l.IncomeTypeCode))
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        (decimal Inc, decimal Tax, DateTime? Date) Match(string rowKey)
         {
-            var hits = lines.Where(l => codes.Contains(l.IncomeTypeCode)).ToList();
-            if (hits.Count == 0) return (0, 0, null);
+            if (!byRow.TryGetValue(rowKey, out var hits) || hits.Count == 0) return (0, 0, null);
             return (hits.Sum(l => l.IncomeAmount), hits.Sum(l => l.TaxAmount), hits[0].PaymentDate);
         }
         string FmtDate(DateTime? d) => d.HasValue
@@ -349,10 +357,10 @@ public partial class PdfGenerationService
                     .Text(label).FontSize(labelSize);
                 NumCells(m);
             }
-            Row("1. เงินเดือน ค่าจ้าง เบี้ยเลี้ยง โบนัส ฯลฯ ตามมาตรา 40 (1)", Match("1", "40(1)"));
-            Row("2. ค่าธรรมเนียม ค่านายหน้า ฯลฯ ตามมาตรา 40 (2)", Match("2", "40(2)"));
-            Row("3. ค่าแห่งลิขสิทธิ์ ฯลฯ ตามมาตรา 40 (3)", Match("3", "40(3)"));
-            Row("4. (ก) ดอกเบี้ย ฯลฯ ตามมาตรา 40 (4) (ก)", Match("4a", "40(4)(a)"));
+            Row("1. เงินเดือน ค่าจ้าง เบี้ยเลี้ยง โบนัส ฯลฯ ตามมาตรา 40 (1)", Match("1"));
+            Row("2. ค่าธรรมเนียม ค่านายหน้า ฯลฯ ตามมาตรา 40 (2)", Match("2"));
+            Row("3. ค่าแห่งลิขสิทธิ์ ฯลฯ ตามมาตรา 40 (3)", Match("3"));
+            Row("4. (ก) ดอกเบี้ย ฯลฯ ตามมาตรา 40 (4) (ก)", Match("4a"));
             // Row 4(ข) — the dividend block with the full nested sub-list, to
             // match the official RD form verbatim.
             tbl.Cell().Border(1).BorderColor(Colors.Black).Padding(3).Column(cell =>
@@ -371,14 +379,14 @@ public partial class PdfGenerationService
                 cell.Item().PaddingLeft(22).Text("(2.4) กำไรที่รับรู้ทางบัญชีโดยวิธีส่วนได้เสีย (equity method)").FontSize(7.5f);
                 cell.Item().PaddingLeft(22).Text("(2.5) อื่น ๆ (ระบุ) ............................................").FontSize(7.5f);
             });
-            NumCells(Match("4b", "40(4)(b)"));
+            NumCells(Match("4b"));
             Row("5. การจ่ายเงินได้ที่ต้องหักภาษี ณ ที่จ่าย ตามคำสั่งกรมสรรพากรที่ออกตามมาตรา 3 เตรส " +
                 "เช่น รางวัล ส่วนลดหรือประโยชน์ใด ๆ เนื่องจากการส่งเสริมการขาย รางวัลในการประกวด การแข่งขัน " +
                 "การชิงโชค ค่าแสดงของนักแสดงสาธารณะ ค่าจ้างทำของ ค่าโฆษณา ค่าเช่า ค่าขนส่ง ค่าบริการ " +
                 "ค่าเบี้ยประกันวินาศภัย ฯลฯ",
-                Match("5", "6", "7", "8", "40(5)", "40(6)", "40(7)", "40(8)"), 8f);
+                Match("5"), 8f);
             Row("6. อื่น ๆ (ระบุ) ........................................................",
-                Match("9", "99", "other"));
+                Match("6"));
             // Totals row
             tbl.Cell().ColumnSpan(2).Border(1).BorderColor(Colors.Black).Padding(3).AlignRight()
                 .Text("รวมเงินที่จ่ายและภาษีที่หักนำส่ง").FontSize(9.5f).Bold();
