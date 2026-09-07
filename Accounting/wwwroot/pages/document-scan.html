@@ -2328,8 +2328,15 @@
               <div style="margin:8px 0;padding:8px 12px;border-radius:8px;font-size:13px;${scan.suggestedEntryMode === 'Stock'
                 ? 'background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46'
                 : 'background:#eff6ff;border:1px solid #93c5fd;color:#1e40af'}">
-                💡 ระบบแนะนำ: <strong>${scan.suggestedEntryMode === 'Stock' ? 'บันทึกเข้า Stock (ผู้ขายรายนี้เคยนำเข้าสินค้า)' : 'บันทึกเป็นค่าใช้จ่าย'}</strong>
+                <!-- ⚠️ ห้ามเขียน "เหตุผล" ไว้ตรงนี้: เดิมหน้าเว็บฟันธงว่า
+                     "(ผู้ขายรายนี้เคยนำเข้าสินค้า)" ซึ่งเป็นสำเนามือของกติกา
+                     ฝั่งเซิร์ฟเวอร์ — พอ OcrEntryModeAdvisor เพิ่มเส้นทาง
+                     cold-start (บรรทัดตรง Product master + ประเภทกิจการ)
+                     ข้อความนี้ก็ผิดทันทีโดยไม่มีอะไรฟ้อง · เหตุผลจริงอยู่ใน
+                     [EntryMode] ของแผงเหตุผล ซึ่งเซิร์ฟเวอร์เป็นคนเขียน -->
+                💡 ระบบแนะนำ: <strong>${scan.suggestedEntryMode === 'Stock' ? 'บันทึกเข้า Stock' : 'บันทึกเป็นค่าใช้จ่าย'}</strong>
                 ${scan.suggestedEntryMode === 'Stock' ? '— ใช้ปุ่ม "นำเข้าสต็อก" หลังตรวจสอบรายการ' : ''}
+                <span style="opacity:.75">· ดูเหตุผลที่ระบบเลือกได้ที่ [EntryMode] ในแผง Processing Notes</span>
               </div>` : ''}
               ${scan.linkedPurchaseOrderId ? `
               <div style="margin:8px 0;padding:10px 14px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;color:#065f46;display:flex;justify-content:space-between;align-items:center;gap:10px">
@@ -2670,7 +2677,12 @@
                     .replace(/\[Reasoning\]/g,'<strong style="color:#7c3aed">[Reasoning]</strong>')
                     .replace(/\[VendorIntel\]/g,'<strong style="color:#0d9488;background:#ccfbf1;padding:1px 4px;border-radius:3px">🧠 VendorIntel</strong>')
                     .replace(/\[Learner\]/g,'<strong style="color:#0891b2;background:#cffafe;padding:1px 4px;border-radius:3px">📚 Learner</strong>')
+                    .replace(/\[Gateway·ข้อสังเกต\]/g,'<strong style="color:#2563eb;background:#eff6ff;padding:1px 4px;border-radius:3px">💡 ข้อสังเกต</strong>')
                     .replace(/\[Gateway\]/g,'<strong style="color:#dc2626">[Gateway]</strong>')
+                    .replace(/\[EntryMode\]/g,'<strong style="color:#7c3aed">[EntryMode]</strong>')
+                    .replace(/\[Deposit-Buy\]/g,'<strong style="color:#b45309;background:#fffbeb;padding:1px 4px;border-radius:3px">[มัดจำฝั่งซื้อ]</strong>')
+                    .replace(/\[PAY-SOURCE-GUESS\]/g,'<strong style="color:#b45309">[แหล่งเงินที่ระบบเดา]</strong>')
+                    .replace(/\[VAT (back-calc|skip)\]/g,'<strong style="color:#059669">[VAT $1]</strong>')
                     .replace(/\[(Seller|Buyer|Header|Items|Summary|Payment)\]/g,'<span style="color:#2563eb;font-weight:600">[$1]</span>')
                     .replace(/\[Swap\]/g,'<strong style="color:#d97706">[Swap]</strong>')}</pre>
                 </div>` : ''}
