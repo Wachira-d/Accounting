@@ -3897,3 +3897,7 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | J-04 | ยิงคำขอ OCR ระหว่างที่ mining กำลังเขียนตาราง | ต้องยังได้คำแนะนำ — เดิมมีหน้าต่างที่ตาราง**ว่างสนิท**ระหว่าง `SaveChanges` สองครั้ง (เกิดได้แม้เครื่องเดียว) |
 | J-05 | 2 instance + `BackgroundJobService` รอบเดียวกันหลัง 02:00 UTC | งานบำรุงรักษา OCR ต้องรันครั้งเดียว — guard `LastOcrMaintenanceAt` เป็น read-then-write ที่ห่างกัน 14 บรรทัด กันได้แค่ใน process เดียว |
 | J-06 | 2 instance + `PaymentIntentReconcileJob` | แต่ละ intent ต้องถูก refresh **ครั้งเดียวต่อรอบ** (สองเครื่องได้คนละชุด) — เดิม commit ปล่อยล็อกก่อนลูปเริ่ม และ SELECT ไม่ mark แถว ⇒ ยิง provider ซ้ำทั้งชุดทุก 5 นาที |
+| S-01 | ลูกค้าหน้าร้านสมัครเองแล้วล็อกอินที่ `/portal/login` เอาโทเคนที่ได้ไปยิง endpoint ของ ERP (เช่น `/api/companies/{id}/documents`) | ต้องได้ **401** จากชั้น validate (audience คนละค่า) — เดิมโทเคนมี key/issuer/audience/รูปร่าง claim เหมือนโทเคนพนักงานทุกประการ จึงผ่าน `[Authorize]` ทุกตัว |
+| S-02 | ตรวจ payload ของโทเคนทั้งสองแบบ | ต้องมี claim `token_use` = `erp` / `storefront` และโทเคนหน้าร้านต้องมี `site_id` |
+| S-03 | ผู้ใช้ที่ล็อกอินด้วย JWT ของบริษัท A แนบ header `X-Integration-Key: อะไรก็ได้` แล้วยิง `/api/companies/{B}/...` | ต้องได้ **403 ข้ามบริษัท** — เดิม `TenantGuardFilter` เช็คแค่ว่า header **มีอยู่** จึงข้ามด่านทั้งดุ้น |
+| S-04 | คำขอที่ผ่าน `ApiKeyMiddleware` จริง (คีย์ถูกต้อง) | ต้องยังผ่านเหมือนเดิม — ธงที่ใช้คือ `Items["IsApiKeyAuth"]` + `AuthenticationType == "ApiKey"` ที่ middleware เป็นคนตั้ง |

@@ -163,7 +163,13 @@ public class CmsCustomerService : ICmsCustomerService
         customer.LastLoginAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        var token = JwtHelper.GenerateToken(customer.Id, customer.Email, customer.FullName ?? "", _config);
+        // ⚠️ ห้ามใช้ `JwtHelper.GenerateToken` ตัวเดียวกับผู้ใช้ ERP — โทเคนที่
+        // ออกให้คนที่สมัครหน้าร้านเองได้ฟรี จะมี key/issuer/audience/รูปร่าง claim
+        // เหมือนโทเคนพนักงานทุกประการ ⇒ ผ่าน [Authorize] ของ ERP ทุกตัว
+        // (ผลตรวจทีม A · A-02) · ตัวนี้ใช้ audience คนละค่า ⇒ scheme ของ ERP
+        // ปฏิเสธตั้งแต่ชั้น validate
+        var token = JwtHelper.GenerateStorefrontCustomerToken(
+            customer.Id, siteId, customer.Email, customer.FullName ?? "", _config);
         return new CustomerLoginResponse
         {
             Token = token, FullName = customer.FullName, Email = customer.Email,

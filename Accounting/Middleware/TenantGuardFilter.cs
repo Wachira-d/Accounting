@@ -44,10 +44,21 @@ public class TenantGuardFilter : IAsyncActionFilter
             return;
         }
 
-        // API key flows (X-Api-Key / X-Integration-Key) ใช้ flow แยกของตัวเอง
-        // — ApiKeyMiddleware ตรวจ company-scoped key. ไม่ต้อง guard ซ้ำ.
-        if (context.HttpContext.Request.Headers.ContainsKey("X-Api-Key")
-            || context.HttpContext.Request.Headers.ContainsKey("X-Integration-Key"))
+        // API key flows ใช้ flow แยกของตัวเอง — ApiKeyMiddleware ตรวจ
+        // company-scoped key ไปแล้ว ไม่ต้อง guard ซ้ำ
+        //
+        // ⚠️ ที่มา (ผลตรวจทีม A · SYSTEM_AUDIT_2026-09-07.md A-03): เดิมเช็ค
+        // **การมีอยู่ของ header** (`ContainsKey`) ⇒ ผู้ใช้ที่ล็อกอินด้วย JWT ของ
+        // บริษัท A แนบ `X-Integration-Key: อะไรก็ได้` แล้วยิงไป
+        // `/api/companies/{B}/...` จะ **ข้ามด่านข้ามบริษัททั้งดุ้น** — header ที่
+        // ผู้เรียกใส่เองไม่ใช่หลักฐานว่าผ่านการตรวจ
+        //
+        // ตัวที่เป็นหลักฐานจริงคือธงที่ **middleware เป็นคนตั้ง** หลังตรวจคีย์ผ่าน
+        // (`IsApiKeyAuth`) + identity ที่มัน mint (`AuthenticationType == "ApiKey"`)
+        // — กติกาเดียวกับ "ธงที่บอกว่าใครตอบ ต้องมาจากคนที่รู้ ไม่ใช่เดาที่ปลายทาง"
+        if (context.HttpContext.Items.TryGetValue("IsApiKeyAuth", out var apiKeyAuth)
+            && apiKeyAuth is true
+            && string.Equals(user.Identity?.AuthenticationType, "ApiKey", StringComparison.Ordinal))
         {
             await next();
             return;

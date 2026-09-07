@@ -7,6 +7,65 @@ namespace Accounting.Helpers;
 
 public static class JwtHelper
 {
+    /// <summary>ค่า claim <c>token_use</c> ของโทเคนผู้ใช้ ERP</summary>
+    public const string TokenUseErp = "erp";
+
+    /// <summary>ค่า claim <c>token_use</c> ของโทเคนลูกค้าหน้าร้าน (storefront)</summary>
+    public const string TokenUseStorefront = "storefront";
+
+    /// <summary>ชื่อ claim ที่บอกว่าโทเคนใบนี้ออกให้ "ใคร ใช้กับอะไร"</summary>
+    public const string TokenUseClaim = "token_use";
+
+    /// <summary>
+    /// โทเคนของ <b>ลูกค้าหน้าร้าน</b> (<c>SiteCustomer</c>) — ไม่ใช่ผู้ใช้ ERP
+    ///
+    /// ═══ ที่มา (ผลตรวจทีม A · SYSTEM_AUDIT_2026-09-07.md A-02) ═══
+    /// <para><c>CmsCustomerService.CustomerLoginAsync</c> เคยเรียก
+    /// <see cref="GenerateToken"/> ตัวเดียวกับผู้ใช้ ERP ⇒ โทเคนที่ออกให้
+    /// <b>คนที่สมัครหน้าร้านเองได้ฟรี</b> มี key · issuer · audience · รูปร่าง
+    /// claim <b>เหมือนโทเคนพนักงานทุกประการ</b> — ต่างแค่ <c>NameIdentifier</c>
+    /// เป็น id ของ <c>SiteCustomer</c> ⇒ ผ่าน <c>[Authorize]</c> ของ ERP ทุกตัว
+    /// และ endpoint ที่ตัดสินจาก <c>companyId</c> ใน route อย่างเดียวจะรับไปทำงาน</para>
+    ///
+    /// <para><b>วิธีกัน</b>: ใช้ <c>audience</c> คนละค่า ⇒ scheme ของ ERP
+    /// (<c>ValidateAudience = true</c>) <b>ปฏิเสธตั้งแต่ชั้น validate</b> โดยไม่ต้อง
+    /// พึ่งให้ทุก endpoint จำได้ว่าต้องเช็ค — ด่านที่ต้องให้คนจำ คือด่านที่วันหนึ่ง
+    /// จะมีคนลืม · แถม claim <c>token_use</c> ไว้ให้ตรวจ/ไล่ log ได้ด้วย</para>
+    /// </summary>
+    public static string GenerateStorefrontCustomerToken(
+        Guid customerId, Guid siteId, string email, string fullName, IConfiguration config)
+    {
+        var secret = config["Jwt:Secret"]
+            ?? throw new InvalidOperationException("JWT:Secret is not configured");
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var claims = new List<Claim>
+        {
+            new Claim(ClaimTypes.NameIdentifier, customerId.ToString()),
+            new Claim(ClaimTypes.Email, email),
+            new Claim(ClaimTypes.Name, fullName),
+            new Claim("site_id", siteId.ToString()),
+            new Claim(TokenUseClaim, TokenUseStorefront),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: config["Jwt:Issuer"],
+            audience: StorefrontAudience(config),
+            claims: claims,
+            // อายุสั้นกว่าโทเคนพนักงาน — เป็นบัญชีที่ใครก็สมัครเองได้
+            expires: DateTime.UtcNow.AddHours(24),
+            signingCredentials: credentials);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    /// <summary>audience ของโทเคนหน้าร้าน — ต้องไม่เท่ากับ <c>Jwt:Audience</c>
+    /// ของ ERP มิฉะนั้นการแยกจะหายไปเงียบ ๆ</summary>
+    public static string StorefrontAudience(IConfiguration config)
+        => (config["Jwt:Audience"] ?? "accounting") + ":storefront";
+
     public static string GenerateToken(Guid userId, string email, string fullName, IConfiguration config, bool isSystemAdmin = false)
     {
         var secret = config["Jwt:Secret"]
@@ -20,6 +79,8 @@ public static class JwtHelper
             new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
             new Claim(ClaimTypes.Email, email),
             new Claim(ClaimTypes.Name, fullName),
+            // โทเคนของผู้ใช้ ERP — แยกจากโทเคนลูกค้าหน้าร้านที่ใครก็สมัครเองได้
+            new Claim(TokenUseClaim, TokenUseErp),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 

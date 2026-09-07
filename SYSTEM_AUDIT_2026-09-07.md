@@ -39,7 +39,7 @@
 | ID | ทีม | เรื่อง | file:line |
 | --- | --- | --- | --- |
 | ✅ A-01 | A | รหัสผูก LINE 6 หลักค้นแบบ global + ไม่มีตัวนับความพยายาม ⇒ brute-force ยึดบัญชี | `LineBotService.cs:95-116` |
-| A-02 | A | `SiteCustomer` JWT ใช้ key/issuer/audience ชุดเดียวกับผู้ใช้ ERP | `CmsCustomerService.cs:166` · `JwtHelper.cs:10` |
+| ✅ A-02 | A | `SiteCustomer` JWT ใช้ key/issuer/audience ชุดเดียวกับผู้ใช้ ERP | `CmsCustomerService.cs:166` · `JwtHelper.cs:10` |
 | ✅ D-01 | D | ตารางอัตรา WHT ชุดที่ 3 ใน `TaxService` (40(1)=3% คงที่ · คีย์ `"5"`/`"6"` ชนกับ `ThaiWhtRateTable`) | `TaxService.cs:19-33` |
 | ✅ E-01 | E | `CalculateDepreciationAsync` ไม่มี switch-to-straight-line ⇒ DecliningBalance ไม่มีวันจบ + ตัวเลขต่างจากตารางที่ผู้ใช้เห็น 35% | `FixedAssetService.cs:654-668` |
 | ✅ F-01 | F | ปิดบิลออฟไลน์ใน POS อ่าน DOM id ที่ไม่มีในหน้า ⇒ TypeError เงียบ โหมดออฟไลน์ตายทั้งก้อน | `pos.html:2252-2284` |
@@ -51,7 +51,7 @@
 
 | ID | ทีม | เรื่อง | file:line |
 | --- | --- | --- | --- |
-| A-03 | A | `TenantGuardFilter` ถูกข้ามด้วย header `X-Integration-Key` ค่าอะไรก็ได้ | `TenantGuardFilter.cs:47-54` |
+| ✅ A-03 | A | `TenantGuardFilter` ถูกข้ามด้วย header `X-Integration-Key` ค่าอะไรก็ได้ | `TenantGuardFilter.cs:47-54` |
 | A-04 | A | webhook fan-out ไปทุก config ของผู้เช่า | — |
 | A-05 | A | `/api/integration/*` ใช้ BCrypt ทุก request ไม่มีแคช/rate limit | — |
 | B-05 | B | ลายเซ็นเป็น XMLDSig ไม่ใช่ XAdES-BES; `DigitalSignature` เก็บ hash ไม่ใช่ `SignatureValue` | `EtaxInvoiceService` |
