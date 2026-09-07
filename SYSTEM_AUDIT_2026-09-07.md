@@ -28,8 +28,8 @@
 | ระดับ | ทั้งหมด | ปิดแล้ว | เหลือ |
 | --- | ---: | ---: | ---: |
 | P0 | 8 | **7** | 1 (G-02 storage abstraction — ต้องให้เจ้าของเลือก backend ก่อน) |
-| P1 | 27 | 12 | 15 |
-| P2 | 14 | 3 | 11 |
+| P1 | 26 | 18 | 8 |
+| P2 | 14 | 4 | 10 |
 
 **ทุกข้อที่ปิดผ่านขั้นตอนเดียวกัน**: เปิดไฟล์ยืนยันเอง → reproduce ด้วย simulation
 เมื่อเป็นตัวเลข → แก้ → ล็อกด้วยเทสต์/checker → รัน checker ครบ 31 ตัว + brace
@@ -69,8 +69,7 @@ shared volume) ซึ่งเป็นการตัดสินใจด้�
 | ID | ทีม | เรื่อง | file:line |
 | --- | --- | --- | --- |
 | ✅ A-03 | A | `TenantGuardFilter` ถูกข้ามด้วย header `X-Integration-Key` ค่าอะไรก็ได้ | `TenantGuardFilter.cs:47-54` |
-| A-04 | A | webhook fan-out ไปทุก config ของผู้เช่า | — |
-| A-05 | A | `/api/integration/*` ใช้ BCrypt ทุก request ไม่มีแคช/rate limit | — |
+| ✅ A-05 | A | `/api/integration/*` ใช้ BCrypt ทุก request ไม่มีแคช/rate limit | — |
 | B-05 | B | ลายเซ็นเป็น XMLDSig ไม่ใช่ XAdES-BES; `DigitalSignature` เก็บ hash ไม่ใช่ `SignatureValue` | `EtaxInvoiceService` |
 | B-06 | B | ไม่มี cron นำส่งภายในวันที่ 15 · `retry-failed` ไม่มี UI เรียก | — |
 | B-07 | B | `ThaiAdminCodes` แต่งรหัสอำเภอ/ตำบลแล้ว default เป็น กทม. | `ThaiAdminCodes.cs` |
@@ -141,6 +140,24 @@ shared volume) ซึ่งเป็นการตัดสินใจด้�
   scanner ฟ้องว่าโหลดตารางไม่จำกัด แต่ verify แล้วเป็น projection/GroupBy ฝั่ง SQL ที่ scope แล้ว
 - **`PosService.Orders.cs:1339`** — scanner นับเป็น N+1 ผิด (query อยู่นอก `foreach` ที่ไม่มีปีกกา)
 - **เส้น OCR cached เสียโควตา** — รายงานรอบก่อนผิด: `OcrController` คืนโควตาเมื่อ `IsDuplicate` อยู่แล้ว
+
+### ผลตรวจที่ verify แล้วพบว่า **รายงานผิด** (บันทึกไว้ ไม่ใช่ข้ามเงียบ)
+
+- **A-04 "webhook fan-out ไปทุก config ของผู้เช่า"** — ตรวจแล้ว **ไม่มีตัวส่ง
+  webhook อยู่ในเรพเลย**: `WebhookUrl`/`WebhookEnabled` ถูกเก็บบน
+  `ExternalIntegration`/`ApiKey` และมี migration ให้ แต่ `grep` ทั้งเรพหา
+  `SendWebhook`/`NotifyWebhook`/`DispatchWebhook` และการใช้ `WebhookUrl` นอกไฟล์
+  DTO/entity → **0 จุด** ⇒ เป็นช่องที่ตั้งค่าได้แต่ไม่มีใครอ่าน (defect class
+  "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้") **ไม่ใช่** ช่องโหว่ fan-out ตามที่รายงาน
+  · งานที่ควรทำจริงคือตัดสินว่า "ต่อสาย หรือ ลบ" — เป็นการตัดสินใจของเจ้าของโปรเจกต์
+- **A-05 vs รายงานทีม G เรื่องแคช BCrypt** — ทั้งสองทีมพูดถูกคนละครึ่ง: ทีม G
+  บอกว่ามีแคช (`_verifiedKeys` เพดาน 2,000 + TTL 5 นาที) ซึ่งจริง **แต่แคชนั้น
+  ใช้เฉพาะเส้น `X-Api-Key`** · เส้น `X-Integration-Key`
+  (`TryAuthenticateIntegrationAsync`) เรียก `BCrypt.Verify` ตรง ๆ ทุก request
+  ตามที่ทีม A รายงาน = **สองมาตรฐานในไฟล์เดียวกัน** ⇒ ยืนยันว่า A-05 เป็นบั๊กจริง
+  และแก้แล้ว
+  _(บทเรียน: เมื่อสองทีมรายงานขัดกัน มักเป็นเพราะแต่ละทีมดู **คนละเส้นทาง** ของ_
+  _โค้ดเดียวกัน — ต้องเปิดดูทั้งสองเส้นเอง ไม่ใช่เลือกเชื่อทีมใดทีมหนึ่ง)_
 
 ---
 

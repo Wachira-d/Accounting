@@ -198,7 +198,15 @@ public class ApiKeyMiddleware
             .Select(i => new { i.Id, i.CompanyId, i.ApiKeyHash, i.RateLimitPerMinute })
             .ToListAsync();
 
-        var match = candidates.FirstOrDefault(c => BCrypt.Net.BCrypt.Verify(rawKey, c.ApiKeyHash));
+        // ⚠️ ที่มา (ผลตรวจทีม A · SYSTEM_AUDIT_2026-09-07.md A-05): เส้นนี้เรียก
+        // `BCrypt.Verify` ตรง ๆ ทุก request ขณะที่เส้น `X-Api-Key` ใช้ตัวแคช
+        // (`VerifyKeyCached`) มาตั้งแต่แรก — **สองมาตรฐานในไฟล์เดียวกัน** ·
+        // BCrypt ถูกออกแบบให้ช้าโดยตั้งใจ (~100ms) เพราะใช้กับรหัสผ่านที่คนพิมพ์
+        // ไม่ใช่ header ที่คู่ค้ายิงมาทุก request ⇒ CPU เต็ม thread pool ตัน
+        // ทั้งเซิร์ฟเวอร์ช้า · แคชเฉพาะ "ลายเซ็นถูกไหม" ส่วนสถานะ `IsActive`/
+        // `IsDeleted` ยังอ่านจาก DB ทุก request อยู่แล้ว (query ข้างบน) ⇒
+        // การปิดการเชื่อมต่อยังมีผลทันที
+        var match = candidates.FirstOrDefault(c => VerifyKeyCached(rawKey, c.ApiKeyHash));
         if (match == null)
         {
             context.Response.StatusCode = 401;
