@@ -1578,6 +1578,53 @@ public class OcrService : IOcrService
                     + "(Cr ขายรอรับรู้ 217xx แทนรายได้ — รับรู้รายได้เมื่อส่งมอบ/ออกใบกำกับ)");
             }
 
+            // ───── มัดจำ/จ่ายล่วงหน้า (ฝั่ง**ซื้อ**) ─────
+            // ⚠️ เดิมบล็อกข้างบนครอบเฉพาะฝั่งขาย — ฝั่งซื้อไม่มีเส้นทางเลย
+            // (ผลตรวจ 2026-09-06 · T1-15) ⇒ ใบเสร็จรับเงินมัดจำ 30% จากผู้รับเหมา/
+            // ผู้ขายเครื่องจักร ถูก ExpenseCategoryResolver จัดเป็นค่าจ้าง/ต้นทุน
+            // แล้วลงเป็น**ค่าใช้จ่ายทันที** ทั้งที่ยังไม่ได้รับมอบงาน ⇒ รับรู้
+            // ค่าใช้จ่ายเร็วเกิน (ผิดงวด) และเมื่อใบจริงมาทีหลังจะลงซ้ำทั้งก้อน
+            //
+            // ขั้นนี้แก้เฉพาะ**ผังบัญชีที่แนะนำ** (Dr สินทรัพย์ 118xx) ซึ่งตัด
+            // ความผิดเรื่องงวดได้แล้ว — flow หักมัดจำอัตโนมัติตอนใบจริงมาถึง
+            // ยังเป็นงานแยก (backlog T1-15) จึงเขียนป้ายไว้ให้คนเห็นด้วย
+            if (extractedData.OurRole == "Buyer"
+                && DepositKeywordRegex.IsMatch(scanResult.RawTextContent ?? "")
+                && !DepositExclusionRegex.IsMatch(scanResult.RawTextContent ?? ""))
+            {
+                var depCodes = Accounting.Helpers.PurchaseDepositAccount
+                    .PreferredCodes(scanResult.RawTextContent);
+                var depRows = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
+                        && depCodes.Contains(a.AccountCode))
+                    .Select(a => new { a.AccountCode, a.AccountName })
+                    .ToListAsync();
+                var depPick = depCodes
+                    .Select(c => depRows.FirstOrDefault(a => a.AccountCode == c))
+                    .FirstOrDefault(a => a != null);
+                if (depPick != null)
+                {
+                    extractedData.DebitAccountCode = depPick.AccountCode;
+                    extractedData.DebitAccountName = depPick.AccountName;
+                    extractedData.FieldConfidence["DebitAccount"] = 0.80;
+                    extractedData.ReasoningTrace.Add(
+                        $"[Deposit-Buy] เอกสารระบุ \"มัดจำ/จ่ายล่วงหน้า\" และเราเป็นผู้จ่าย → "
+                        + $"Dr {depPick.AccountCode} {depPick.AccountName} (สินทรัพย์) แทนค่าใช้จ่าย "
+                        + "— โอนเข้าค่าใช้จ่าย/ต้นทุนเมื่อรับมอบงานหรือได้รับใบกำกับเต็มจำนวน");
+                }
+                else
+                {
+                    // ไม่มีผัง 118xx = บอกว่าไม่มี ไม่ใช่เงียบแล้วปล่อยลงค่าใช้จ่าย
+                    extractedData.ReasoningTrace.Add(
+                        "[Deposit-Buy] เอกสารระบุ \"มัดจำ/จ่ายล่วงหน้า\" แต่ผังบัญชียังไม่มี "
+                        + "\"เงินมัดจำจ่ายล่วงหน้า\" (118/11810/11820) — กรุณาเพิ่มผังแล้วเลือกเอง "
+                        + "ไม่ควรลงเป็นค่าใช้จ่ายทันที");
+                }
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                    + "\n[DEPOSIT-BUY] ใบนี้เป็นมัดจำ/จ่ายล่วงหน้าฝั่งซื้อ — ยอดนี้ยังไม่ใช่"
+                    + "ค่าใช้จ่ายของงวด ต้องหักกลบเมื่อได้รับใบกำกับเต็มจำนวน";
+            }
+
             // ข้อเสนอ WHT ตามกฎหมาย + ประเภทเงินได้ ม.40 — ต้อง persist ไม่งั้นหายตอน
             // reload หน้า และเส้นสร้างเอกสารอ่านจากแถวนี้ (T1-07 · T4-06)
             scanResult.SuggestedWhtRate = extractedData.SuggestedWhtRate;
@@ -1801,7 +1848,15 @@ public class OcrService : IOcrService
                 {
                     scanResult.IsDuplicate = true;
                     scanResult.DuplicateOfScanId = docDuplicate.Id;
-                    scanResult.ProcessingNotes = $"Possible duplicate: same doc number {extractedData.DocumentNumber} and amount {extractedData.TotalAmount}";
+                    // ⚠️ เดิมบรรทัดนี้ใช้ `=` **ทับ** ProcessingNotes ทั้งก้อน ⇒ สแกน
+                    // ที่ถูกตีว่าซ้ำจะเสียทุกอย่างที่สะสมมาก่อนหน้า รวม **[VAT-CLAIM]**
+                    // (ธง §82/5 ที่ด่านบันทึก JE อ่านด้วย `Contains("[VAT-CLAIM]")`)
+                    // ⇒ ใบภาษีซื้อต้องห้ามที่บังเอิญซ้ำ ผ่านด่าน §82/5 ไปได้ ·
+                    // และเสีย [Field Confidence] / [Deposit-Buy] / [Reasoning] ไปด้วย
+                    // — ต่อท้ายเสมอ ห้ามทับ (ผลตรวจ 2026-09-06 · พบระหว่างแก้ T1-15)
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + $"\n[Duplicate] อาจซ้ำกับสแกนก่อนหน้า — เลขที่ {extractedData.DocumentNumber} "
+                        + $"และยอด {extractedData.TotalAmount:N2} ตรงกัน";
                 }
             }
 

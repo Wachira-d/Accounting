@@ -90,3 +90,34 @@ public class ThaiBillSurchargeTests
         Assert.Equal(5000m, r.ServiceChargeAmount);
     }
 }
+
+/// <summary>
+/// <see cref="Accounting.Helpers.PurchaseDepositAccount"/> — ผังบัญชีเมื่อ
+/// <b>เราเป็นผู้จ่าย</b>มัดจำ/เงินล่วงหน้า (ผลตรวจ OCR 2026-09-06 · T1-15)
+///
+/// <para>เดิมระบบรู้จักใบมัดจำเฉพาะฝั่งขาย ⇒ ใบเสร็จรับเงินมัดจำ 30% จาก
+/// ผู้รับเหมาถูกลงเป็น<b>ค่าใช้จ่ายทันที</b> ทั้งที่ยังไม่ได้รับมอบงาน</para>
+/// </summary>
+public class PurchaseDepositAccountTests
+{
+    [Fact]
+    public void คำว่ามัดจำ_ต้องเลือกบัญชีเงินมัดจำก่อน()
+        => Assert.Equal("11810",
+            Accounting.Helpers.PurchaseDepositAccount.PreferredCodes("ใบเสร็จรับเงินมัดจำ 30%")[0]);
+
+    [Fact]
+    public void คำว่าจ่ายล่วงหน้า_ต้องเลือกบัญชีเงินจ่ายล่วงหน้าก่อน()
+        => Assert.Equal("11820",
+            Accounting.Helpers.PurchaseDepositAccount.PreferredCodes("ชำระล่วงหน้าค่าสินค้า")[0]);
+
+    [Fact]
+    public void ทุกทางเลือกต้องจบที่บัญชีคุม_118_เพื่อให้ผังที่ยังไม่แตกย่อยใช้ได้()
+    {
+        Assert.Equal("118", Accounting.Helpers.PurchaseDepositAccount.PreferredCodes("มัดจำ")[^1]);
+        Assert.Equal("118", Accounting.Helpers.PurchaseDepositAccount.PreferredCodes("ADVANCE PAYMENT")[^1]);
+    }
+
+    [Fact]
+    public void ข้อความว่าง_ต้องไม่ระเบิดและยังคืนลำดับเริ่มต้น()
+        => Assert.Equal("11810", Accounting.Helpers.PurchaseDepositAccount.PreferredCodes(null)[0]);
+}
