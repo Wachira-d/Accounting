@@ -38,7 +38,7 @@ public class OcrScanComplianceEvaluatorTests
     private static OcrResultResponse Scan(
         string? buyerTaxId = null, string? rawText = RawPaper,
         string docType = "TaxInvoice", decimal? total = 6420.00m,
-        string? ourRole = "Buyer") => new(
+        string? ourRole = "Buyer", string? processingNotes = null) => new(
             Id: Guid.NewGuid(), OriginalFileName: "CCF_000076_page-0003.jpg",
             ScanStatus: "Completed", DocumentType: docType, Confidence: 0.75m,
             ExtractedVendorName: "ห้างหุ้นส่วนจำกัด สหกลชลบุรี",
@@ -46,7 +46,26 @@ public class OcrScanComplianceEvaluatorTests
             ExtractedDate: new DateTime(2026, 8, 27, 0, 0, 0, DateTimeKind.Utc),
             ExtractedSubTotal: 6000m, ExtractedVatAmount: 420m, ExtractedTotalAmount: total,
             MatchedContactId: null, CreatedDocumentId: null, ProcessedAt: DateTime.UtcNow,
-            RawTextContent: rawText, BuyerTaxId: buyerTaxId, OurRole: ourRole);
+            RawTextContent: rawText, BuyerTaxId: buyerTaxId, OurRole: ourRole,
+            ProcessingNotes: processingNotes);
+
+    // ═══ T1-17: แหล่งเงินที่ระบบเดาให้เอง ต้องไม่เงียบ และต้องไม่ปนกับคำเตือนภาษี ═══
+
+    [Fact]
+    public void แหล่งเงินที่ระบบเดา_ต้องขึ้นเป็นข้อสังเกต_ไม่ใช่คำเตือน()
+    {
+        var issues = OcrScanComplianceEvaluator.Evaluate(
+            Scan(processingNotes: "[PAY-SOURCE-GUESS] แหล่งเงิน 11110 เงินสด เป็นค่าที่ระบบเลือกให้เอง"),
+            OurTaxId);
+        var note = Assert.Single(issues);
+        Assert.Equal("info", note.Severity);
+        Assert.Contains("แหล่งเงิน", note.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ไม่มีป้ายเดาแหล่งเงิน_ต้องไม่มีข้อสังเกตนี้()
+        => Assert.DoesNotContain(OcrScanComplianceEvaluator.Evaluate(Scan(), OurTaxId),
+            i => i.Severity == "info");
 
     // ═══ เคสที่ผู้ใช้รายงาน ═══
 

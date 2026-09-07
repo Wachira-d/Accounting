@@ -1710,6 +1710,19 @@ public class OcrService : IOcrService
                             extractedData.CreditAccountName = creditAcct.AccountName;
                             extractedData.ReasoningTrace.Add(
                                 $"[Credit] เลือกบัญชีเครดิต {creditAcct.AccountCode} จากประเภทเอกสาร {extractedData.TargetDocumentType} (default lowest-code)");
+                            // ★ ป้ายซื่อสัตย์: ชั้นนี้คือ "เดาแบบมีเหตุผล" ไม่ใช่ค่าที่
+                            //   อ่านมาจากกระดาษ — สำหรับใบจ่ายเงิน แหล่งเงินที่เดา
+                            //   ผิดทำให้ (ก) เงินสดในมือติดลบทั้งที่จ่ายผ่านธนาคาร
+                            //   (ข) กระทบยอดธนาคารไม่เจอคู่ · ต้องดังถึงผู้ใช้ ไม่ใช่
+                            //   อยู่แต่ใน trace ที่ไม่มีใครเปิด (ผลตรวจ T1-17)
+                            //   — ตัวเลือกเชิงนโยบาย "ปล่อยว่างแล้วบังคับเลือก" เป็น
+                            //   คำถามของเจ้าของโปรเจกต์ ยังไม่ตัดสินแทน
+                            if (isCashCreditType)
+                                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                                    + $"\n[PAY-SOURCE-GUESS] แหล่งเงิน {creditAcct.AccountCode} "
+                                    + $"{creditAcct.AccountName} เป็นค่าที่ระบบเลือกให้เอง "
+                                    + "(กระดาษไม่ได้ระบุ และบริษัทยังไม่ได้ตั้งบัญชีจ่ายเริ่มต้น) "
+                                    + "— ตรวจว่าจ่ายจากบัญชีนี้จริงก่อนอนุมัติ";
                             break;
                         }
                     }
