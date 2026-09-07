@@ -75,8 +75,8 @@
 | ✅ E-04 | E | `FixedAssetController` ไม่มีคีย์สิทธิ์เลย + endpoint มือแข่งกับ cron ได้ | `FixedAssetController.cs:116` |
 | E-05 | E | `DisposeAsync`/`WriteOffAsync` ไม่คิดค่าเสื่อมถึงวันขาย + silent no-op เมื่อไม่มีผังบัญชี | `FixedAssetService.cs:381-486` |
 | E-06 | E | `AdjustUsefulLifeAsync` ทบทวนอายุแบบย้อนหลัง (ผิด TFRS บทที่ 10) + ไม่มี `UsefulLifeReviewedAt` | `FixedAssetService.cs:586-608` |
-| F-03 | F | deep-link 9 จุด/6 หน้า ใช้ชื่อ query param ที่ปลายทางไม่อ่าน | ดูรายงาน F |
-| F-04 | F | `_revenueDocTypes`/`_expenseDocTypes` ยัด CN/DN/DeliveryNote เป็น revenue ทั้งที่เป็น `BothSides` | `layout.js:2528-2533` |
+| ✅ F-03 | F | deep-link 9 จุด/6 หน้า ใช้ชื่อ query param ที่ปลายทางไม่อ่าน | ดูรายงาน F |
+| ✅ F-04 | F | `_revenueDocTypes`/`_expenseDocTypes` ยัด CN/DN/DeliveryNote เป็น revenue ทั้งที่เป็น `BothSides` | `layout.js:2528-2533` |
 | ✅ F-05 | F | ปุ่มลบบริษัทในคอนโซลแอดมินพิมพ์ `AdminApi` (ของจริง `AdminAPI`) | `admin/customers.html:466` |
 | ✅ G-03 | G | `AssociationRuleMiner` ลบทั้งตารางแล้วเขียนใหม่ ไม่มีล็อก ไม่มี transaction | `AssociationRuleMiner.cs:181-199` |
 | ✅ G-04 | G | `PaymentIntentReconcileJob` commit ปล่อยล็อกก่อนงานจริงเริ่ม | `PaymentIntentReconcileJob.cs:71-95` |

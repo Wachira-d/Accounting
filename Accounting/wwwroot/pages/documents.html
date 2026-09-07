@@ -1777,7 +1777,14 @@
         // เปลี่ยนผังบัญชี / ยกเลิกเอกสาร / ดู JE.
         // (ที่มา: ลิงก์เดิมใช้ ?search=<เลขที่> แต่หน้านี้ไม่เคยอ่าน ?search=
         //  → ตกมาที่ลิสต์เอกสารเปล่า ๆ = "กดแล้วไม่เด้งอะไรขึ้นมา")
-        const openDocId = params.get('openDoc');
+        //
+        // ⚠️ ผลตรวจทีม F · F-03: มีลิงก์อีก **9 จุดใน 6 หน้า** ที่ส่งชื่อพารามิเตอร์
+        // ที่หน้านี้ไม่เคยอ่าน — `?id=` (quick-sale · cms-orders · cms-bookings ·
+        // revenue-recognition) และ `?view=` (projects · deposit-center ×2) ⇒ กด
+        // "เปิดดูเอกสาร" หลังขายเสร็จแล้วได้ **ลิสต์เอกสารหน้า 1** ไม่ใช่ใบที่เพิ่งออก
+        // รับ alias ไว้ที่นี่ด้วย เพราะลิงก์ที่ส่งออกไปแล้ว/บุ๊กมาร์กแก้ย้อนหลังไม่ได้
+        // (กติกาเดียวกับ "ต้องทิ้งหน้า redirect ไว้ที่ URL เดิม")
+        const openDocId = params.get('openDoc') || params.get('id') || params.get('view');
         if (openDocId) {
           try { await this.detail(openDocId); }
           catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
@@ -1787,7 +1794,10 @@
         // create modal pre-set to the right side + document type. We do
         // this AFTER the contacts/projects/payment-channels loads above
         // because openCreate touches those.
-        const openCreate = params.get('openCreate');
+        // `?new=deposit` จากหน้าศูนย์มัดจำ — เปิดฟอร์มรับมัดจำฝั่งรายรับ
+        // (เดิมไม่มีตัวรับ ⇒ ปุ่ม "+ รับมัดจำใหม่" พาไปลิสต์เปล่า)
+        let openCreate = params.get('openCreate');
+        if (!openCreate && params.get('new') === 'deposit') openCreate = 'revenue';
         if (openCreate === 'expense' || openCreate === 'revenue') {
           this.openCreate(openCreate);
           // Pre-select the requested document type if provided.
@@ -6479,8 +6489,9 @@
           const res = await api.getDocuments(q);
           let rows = res.data?.items || res.data || [];
           if (!this.docType && this.side) {
-            const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
-            rows = rows.filter(d => types.includes(d.documentType));
+            // ใบลดหนี้/เพิ่มหนี้/ใบส่งของอยู่ได้ทั้งสองฝั่ง — ตัดสินรายใบด้วย
+            // `Layout.docSide` (mirror ของ Helpers/DocumentSide) ไม่ใช่ลิสต์ชนิด
+            rows = rows.filter(d => Layout.docSide(d) === this.side);
           }
           const cols = [
             { key: 'documentNumber', label: 'เลขที่' },
@@ -6695,8 +6706,9 @@
         let q = `?page=${this.page}&pageSize=20`;
         if (this.docType) q += `&type=${this.docType}`;
         if (!this.docType && this.side) {
-          const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
-          types.forEach(t => q += `&types=${t}`);
+          // ขอชนิดกำกวม (CN/DN/ใบส่งของ) มาด้วยเสมอ — เซิร์ฟเวอร์กรองได้แค่ตาม
+          // "ชนิด" ไม่รู้บทบาทของแต่ละใบ แล้วค่อยกรองจริงด้วย Layout.docSide
+          Layout.docTypesForSide(this.side).forEach(t => q += `&types=${t}`);
         }
         if (status === 'stale') q += '&staleOnly=true';
         else if (status) q += `&status=${status}`;
@@ -6714,8 +6726,7 @@
           let items = data?.items || data || [];
           // Client-side filter by side as fallback (if API doesn't support multi-type filter)
           if (!this.docType && this.side) {
-            const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
-            items = items.filter(d => types.includes(d.documentType));
+            items = items.filter(d => Layout.docSide(d) === this.side);
           }
           this._currentItems = items;
           const tbody = document.getElementById('tableBody');
@@ -6873,8 +6884,7 @@
       _typeQs() {
         if (this.docType) return `?type=${this.docType}`;
         if (this.side) {
-          const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
-          return '?' + types.map(t => `types=${t}`).join('&');
+          return '?' + Layout.docTypesForSide(this.side).map(t => `types=${t}`).join('&');
         }
         return '';
       },

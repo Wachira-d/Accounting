@@ -224,6 +224,18 @@
         return;
       }
       await this.loadConfigStatus();
+      // deep-link จากแดชบอร์ด (`?status=Error`) — เดิมหน้านี้ไม่มี URLSearchParams
+      // เลย ⇒ การ์ด "e-Tax ที่ส่งไม่สำเร็จ" พาไปลิสต์ทั้งหมด ผู้ใช้ต้องไล่หาเอง
+      // (ผลตรวจทีม F · F-03)
+      const wantStatus = new URLSearchParams(location.search).get('status');
+      if (wantStatus) {
+        this.currentStatus = wantStatus;
+        const tab = document.querySelector(`.tab[data-status="${CSS.escape(wantStatus)}"]`);
+        if (tab) {
+          document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+        }
+      }
       await this.load();
     },
 

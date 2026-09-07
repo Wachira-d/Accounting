@@ -139,6 +139,14 @@
         if (!Layout.init('projects')) return;
         Layout.setTitle('โครงการ');
         await this.load();
+        // deep-link จากหน้าเอกสาร (`?id=`) — เดิมหน้านี้ไม่มี URLSearchParams เลย
+        // ⇒ กดชิปโครงการในหน้ารายละเอียดเอกสารแล้วได้ลิสต์โครงการเปล่า ๆ
+        // (ผลตรวจทีม F · F-03)
+        const deepId = new URLSearchParams(location.search).get('id');
+        if (deepId) {
+          try { await this.viewDetail(deepId); }
+          catch (e) { Layout.toast('เปิดโครงการไม่สำเร็จ: ' + e.message, 'error'); }
+        }
       },
       async load() {
         const api = Layout.api(); if (!api) return;

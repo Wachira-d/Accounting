@@ -2554,6 +2554,46 @@ const Layout = {
   // งวดบัญชีและไฟล์ export ก็ขาดตามไปด้วย ⇒ สาย PO→GRN→PI ใช้จากฝั่งจ่ายไม่ได้เลย
   _expenseDocTypes: ['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','Expense','PaymentVoucher','CertificateInLieu'],
 
+  /** ชนิดที่อยู่ได้ **ทั้งสองฝั่ง** — ต้องดูบทบาทของใบนั้นถึงจะบอกได้
+   *  (mirror ของ `Helpers/DocumentSide.BothSides`)
+   *
+   *  ⚠️ ที่มา (ผลตรวจทีม F · F-04): สองลิสต์ข้างบนยัด `CreditNote` · `DebitNote` ·
+   *  `DeliveryNote` เข้า **ฝั่งขายอย่างเดียว** ทั้งที่ฝั่ง C# ประกาศชัดว่าเป็น
+   *  `BothSides` ⇒ ใบลดหนี้/เพิ่มหนี้ที่ผู้ขายออกให้เรา (§86/10 — ระบบตั้ง
+   *  `cnDnPurchaseSideOverride = true` และลง JE ฝั่งซื้อถูกต้องแล้ว) **หายจากแท็บ
+   *  "ฝั่งรายจ่าย" ทั้งหมด รวมถึงไฟล์ export** แล้วไปโผล่ปนกับใบลดหนี้ขาย ⇒
+   *  กระทบยอดกับ ภ.พ.30 ซื้อไม่มีวันลง */
+  _bothSideDocTypes: ['CreditNote', 'DebitNote', 'DeliveryNote'],
+
+  /** ฝั่งของเอกสารหนึ่งใบ — `'revenue'` | `'expense'`
+   *
+   *  กติกาเดียวกับ `Helpers/DocumentSide.IsSales`: ชนิดที่ไม่กำกวมตอบจากตัวชนิดเอง ·
+   *  ชนิดกำกวมดู `cnDnPurchaseSideOverride` ก่อน แล้วค่อยดู `ourRole` ·
+   *  ไม่รู้ทั้งคู่ = **ฝั่งซื้อ** (default ที่ปลอดภัยกว่า — การตีเป็นฝั่งขายผิดจะไป
+   *  สร้างรายการในรายงานภาษี**ขาย** ซึ่งกระทบ ภ.พ.30 ที่ยื่นออกไปแล้ว)
+   *
+   *  @param {object} doc DocumentResponse
+   */
+  docSide(doc) {
+    const t = doc?.documentType;
+    if (this._revenueDocTypes.includes(t) && !this._bothSideDocTypes.includes(t)) return 'revenue';
+    if (this._expenseDocTypes.includes(t)) return 'expense';
+    if (this._bothSideDocTypes.includes(t)) {
+      if (doc?.cnDnPurchaseSideOverride === true) return 'expense';
+      if (doc?.cnDnPurchaseSideOverride === false) return 'revenue';
+      return String(doc?.ourRole || '').toLowerCase() === 'seller' ? 'revenue' : 'expense';
+    }
+    return 'expense';
+  },
+
+  /** ชนิดที่ต้อง **ขอจากเซิร์ฟเวอร์** เมื่อผู้ใช้เลือกฝั่งหนึ่ง — รวมชนิดกำกวม
+   *  ทั้งหมดเสมอ แล้วค่อยกรองด้วย `docSide()` ฝั่ง client (เซิร์ฟเวอร์กรองตาม
+   *  "ชนิด" ได้อย่างเดียว ไม่รู้บทบาทของแต่ละใบ) */
+  docTypesForSide(side) {
+    const base = side === 'revenue' ? this._revenueDocTypes : this._expenseDocTypes;
+    return [...new Set([...base, ...this._bothSideDocTypes])];
+  },
+
   /**
    * ป้ายเอกสารตาม "หัวกระดาษจริง" — ไม่ใช่แค่ชนิด enum (TODO A4)
    *

@@ -107,7 +107,7 @@
             <td style="text-align:right;color:${l.variance>=0?'#15803d':'#dc2626'};font-weight:600">${l.variance >= 0 ? '+' : ''}${this._fmt(l.variance)}</td>
           </tr>`).join('');
         const banner = posted
-          ? `<div style="padding:14px;border-radius:10px;background:${postResult.outcome === 'Posted' ? '#dcfce7' : '#fef3c7'};border:1px solid ${postResult.outcome === 'Posted' ? '#86efac' : '#fde047'};margin-bottom:14px"><b>${postResult.outcome === 'Posted' ? '✓ Posted' : postResult.outcome}</b> — ${postResult.message || ''} ${postResult.journalNumber ? `· JE <a href="/pages/journals.html?id=${postResult.journalEntryId}" style="color:#1e40af;font-weight:600">${postResult.journalNumber}</a>` : ''}</div>`
+          ? `<div style="padding:14px;border-radius:10px;background:${postResult.outcome === 'Posted' ? '#dcfce7' : '#fef3c7'};border:1px solid ${postResult.outcome === 'Posted' ? '#86efac' : '#fde047'};margin-bottom:14px"><b>${postResult.outcome === 'Posted' ? '✓ Posted' : postResult.outcome}</b> — ${postResult.message || ''} ${postResult.journalNumber ? `· JE <a href="/pages/journals.html?entryId=${postResult.journalEntryId}" style="color:#1e40af;font-weight:600">${postResult.journalNumber}</a>` : ''}</div>`
           : '<div style="padding:10px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;margin-bottom:14px;color:#1e40af;font-size:13px">📊 ตัวอย่าง — ยังไม่ post · กดปุ่ม "Post JE" เพื่อบันทึก</div>';
         document.getElementById('resultBox').innerHTML = `
           <div class="card">

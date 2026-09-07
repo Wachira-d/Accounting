@@ -289,7 +289,7 @@
     const Page = {
       page: 1, allAssets: [], _currentAsset: null, _accounts: [], currentType: '',
       showOnlyNeedsReview: false,
-      filterNeedsReview() { this.showOnlyNeedsReview = true; this.load(); },
+      filterNeedsReview() { this.showOnlyNeedsReview = true; return this.load(); },
       clearNeedsReviewFilter() { this.showOnlyNeedsReview = false; this.load(); },
       async init() {
         if (!Layout.init('fixed-assets')) return;
@@ -300,7 +300,12 @@
         if (nameEl) nameEl.addEventListener('blur', () => this.suggestAssetCategory());
         // Deep-link from the OCR import-result table — ?id={assetId}
         // auto-opens the detail modal.
-        const deepId = new URLSearchParams(location.search).get('id');
+        // รับทั้ง `?id=` และ alias `?assetId=` ที่หน้าเอกสารส่งมา (ผลตรวจทีม F · F-03)
+        // — ลิงก์ที่ส่งออกไปแล้วแก้ย้อนหลังไม่ได้ จึงต้องรับทั้งสองชื่อ
+        const qs = new URLSearchParams(location.search);
+        // `?filter=needs-review` จากแดชบอร์ด — เดิมไม่มีตัวรับ ⇒ กดแล้วได้ลิสต์ทั้งหมด
+        if (qs.get('filter') === 'needs-review') await this.filterNeedsReview();
+        const deepId = qs.get('id') || qs.get('assetId');
         if (deepId) await this.viewDetail(deepId);
       },
 

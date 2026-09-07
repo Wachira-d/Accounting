@@ -598,7 +598,16 @@
       } catch(e) { alert(e.message); }
     }
 
-    loadUsers();
+    // deep-link จากหน้าลูกค้า (`?userId=`) — เดิมหน้านี้ไม่มี URLSearchParams เลย
+    // ⇒ กด "ดูผู้ใช้" แล้วได้ลิสต์ผู้ใช้ทั้งระบบ ต้องไล่หาเอง (ผลตรวจทีม F · F-03)
+    (async function () {
+      await loadUsers();
+      const wantUser = new URLSearchParams(location.search).get('userId');
+      if (wantUser) {
+        try { await showUserDetail(wantUser); }
+        catch (e) { AdminLayout.toast('เปิดข้อมูลผู้ใช้ไม่สำเร็จ — ' + (e?.message || e), 'error'); }
+      }
+    })();
   </script>
 </body>
 </html>

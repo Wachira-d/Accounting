@@ -423,7 +423,9 @@
       },
       showBooking(bk) {
         // ทุกเอกสารใน booking เดียวกัน (มัดจำ → ใบกำกับ → ใบเสร็จ)
-        location.href = '/pages/documents.html?booking=' + encodeURIComponent(bk);
+        // ค้นด้วยรหัส booking — หน้าเอกสารรับ `?search=` (ไม่มีตัวรับ `?booking=`)
+        // (ผลตรวจทีม F · F-03)
+        location.href = '/pages/documents.html?search=' + encodeURIComponent(bk);
       },
       row(id) { return (this.data?.rows || []).find(r => r.id === id); },
       openRealize(id) {

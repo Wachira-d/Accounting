@@ -189,6 +189,21 @@
         this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
         await this.loadIncomeTypes();
         await this.load();
+        // deep-link จากหน้ารายละเอียดเอกสาร (`?documentId=`) — เดิมหน้านี้ไม่มี
+        // URLSearchParams เลย ⇒ ลิงก์ "ดูใบหัก ณ ที่จ่าย →" พาไปลิสต์ทั้งหมด
+        // แล้วผู้ใช้ต้องไล่หาเอง (ผลตรวจทีม F · F-03)
+        const deepDocId = new URLSearchParams(location.search).get('documentId');
+        if (deepDocId) {
+          const hit = this.allCerts.find(c => c.documentId === deepDocId);
+          if (hit) {
+            // กรองลิสต์ให้เหลือใบนั้น — ผู้ใช้เห็นทันทีว่ามาถูกที่ ไม่ต้องไล่หาเอง
+            const input = document.getElementById('searchInput');
+            if (input) { input.value = hit.certificateNumber || ''; this.filter(); }
+          } else {
+            // ไม่มีใบสำหรับเอกสารนี้ = ยังไม่เคยออก — บอกทางไปต่อ ห้ามเงียบ
+            Layout.toast('ยังไม่มีหนังสือรับรองหัก ณ ที่จ่ายของเอกสารนี้ — กด "สร้างใหม่" เพื่อออกใบ', 'warning');
+          }
+        }
       },
       async load() {
         const api = Layout.api(); if (!api) return;
