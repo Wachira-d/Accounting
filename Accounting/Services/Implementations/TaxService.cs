@@ -15,25 +15,6 @@ public partial class TaxService : ITaxService
     // ที่ยื่น จึงห้ามล้มทั้งรายงาน แต่ก็ห้ามหายเงียบโดยไม่มีร่องรอย)
     private readonly ILogger<TaxService>? _logger;
 
-    // Thai WHT rate table by income type
-    private static readonly Dictionary<string, decimal> WhtRateTable = new()
-    {
-        { "40(1)", 3m },   // เงินเดือน ค่าจ้าง (Salary, Wages)
-        { "40(2)", 3m },   // ค่านายหน้า (Commission)
-        { "40(3)", 3m },   // ค่าสิทธิ์/ลิขสิทธิ์ (Royalties) — ท.ป.4 หัก 3% (ทั้งบุคคลและนิติบุคคลไทย)
-        { "40(4)a", 15m }, // ดอกเบี้ย (Interest)
-        { "40(4)b", 10m }, // เงินปันผล (Dividends)
-        { "40(5)", 5m },   // ค่าเช่า (Rent - property)
-        { "40(6)", 3m },   // วิชาชีพอิสระ (Professional fees)
-        { "40(7)", 3m },   // ค่ารับเหมา (Contractors)
-        { "40(8)", 3m },   // ค่าจ้างทำของ (Service fees)
-        { "3", 3m },       // ค่าบริการทั่วไป (General services)
-        { "5", 1m },       // ค่าขนส่ง (Transportation)
-        { "6", 2m },       // ค่าประกันภัย (Insurance premiums)
-        { "advertising", 2m }, // ค่าโฆษณา
-        { "default", 3m }      // Default rate
-    };
-
     public TaxService(AccountingDbContext db, ILogger<TaxService>? logger = null)
     {
         _db = db;
@@ -1780,7 +1761,7 @@ public partial class TaxService : ITaxService
                     // Determine WHT rate from income type or use line rate
                     var whtRate = line.WithholdingTaxRate > 0
                         ? line.WithholdingTaxRate
-                        : GetWhtRate(line.IncomeTypeCode);
+                        : GetWhtRate(line.IncomeTypeCode, line.Amount, line.WithholdingTaxAmount);
 
                     report.Lines.Add(new TaxReportLine
                     {
@@ -2510,14 +2491,37 @@ public partial class TaxService : ITaxService
         return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
     }
 
-    private static decimal GetWhtRate(string? incomeTypeCode)
+    /// <summary>
+    /// อัตราหัก ณ ที่จ่ายของบรรทัดที่ยังไม่ได้บันทึกอัตราไว้
+    ///
+    /// ═══ ที่มา (ผลตรวจทีม D · SYSTEM_AUDIT_2026-09-07.md D-01) ═══
+    /// <para>ไฟล์นี้เคยถือ <b>ตารางอัตราชุดที่สาม</b> ของระบบ ซึ่งผิดกฎหมายและ
+    /// ชนกับรหัสของ <see cref="Accounting.Helpers.ThaiWhtRateTable"/> ด้วย:
+    /// <c>"40(1)"</c> เงินเดือนใส่ 3% คงที่ (กฎหมายเป็นอัตราขั้นบันได) ·
+    /// คีย์ <c>"5"</c> ใส่ 1% "ค่าขนส่ง" แต่รหัส <c>5</c> ของตารางกลางคือ
+    /// <b>ค่าเช่า 5%</b> · คีย์ <c>"6"</c> ใส่ 2% "ค่าประกันภัย" แต่รหัส <c>6</c>
+    /// คือ <b>วิชาชีพอิสระ 3%</b> ⇒ บรรทัดที่ระบบเองสร้างด้วยรหัสกลาง จะถูก
+    /// รายงานด้วยอัตราของประเภทอื่นทั้งดุ้น</para>
+    ///
+    /// <para><b>ลำดับการหาคำตอบ</b> — ห้ามเดา: (1) อัตราตามกฎหมายจากตารางกลาง
+    /// (2) ถ้ากฎหมายไม่ได้กำหนดคงที่ (เงินเดือน 40(1) = ขั้นบันได) หรือไม่รู้จัก
+    /// รหัส ให้ <b>คำนวณจากยอดที่หักจริงบนบรรทัดนั้น</b> ซึ่งเป็นข้อมูลจริง
+    /// ไม่ใช่ค่าที่แต่งขึ้น (3) คำนวณไม่ได้ = คืน 0 = "ไม่ทราบ" ให้ผู้ใช้เห็นว่า
+    /// ต้องเติม แทนการใส่ 3% ปลอมให้ช่องไม่ว่าง</para>
+    /// </summary>
+    private static decimal GetWhtRate(string? incomeTypeCode, decimal incomeAmount, decimal taxAmount)
     {
-        if (string.IsNullOrEmpty(incomeTypeCode))
-            return WhtRateTable["default"];
+        // (1) อัตราตามกฎหมาย — ผู้รับส่วนใหญ่ในรายงาน ภ.ง.ด.3/53 เป็นนิติบุคคล
+        var statutory = Accounting.Helpers.ThaiWhtRateTable.RateFor(incomeTypeCode, payeeIsJuristic: true)
+            ?? Accounting.Helpers.ThaiWhtRateTable.RateFor(incomeTypeCode, payeeIsJuristic: false);
+        if (statutory is decimal r) return r;
 
-        return WhtRateTable.TryGetValue(incomeTypeCode, out var rate)
-            ? rate
-            : WhtRateTable["default"];
+        // (2) คิดกลับจากยอดที่หักจริง (เงินเดือนขั้นบันได / รหัสที่ไม่รู้จัก)
+        if (incomeAmount > 0m && taxAmount > 0m)
+            return Math.Round(taxAmount / incomeAmount * 100m, 2, MidpointRounding.AwayFromZero);
+
+        // (3) ไม่รู้ = บอกว่าไม่รู้
+        return 0m;
     }
 
     public async Task<TaxReportResponse> GetTaxReportAsync(Guid companyId, Guid reportId)

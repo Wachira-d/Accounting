@@ -40,7 +40,7 @@
 | --- | --- | --- | --- |
 | ✅ A-01 | A | รหัสผูก LINE 6 หลักค้นแบบ global + ไม่มีตัวนับความพยายาม ⇒ brute-force ยึดบัญชี | `LineBotService.cs:95-116` |
 | A-02 | A | `SiteCustomer` JWT ใช้ key/issuer/audience ชุดเดียวกับผู้ใช้ ERP | `CmsCustomerService.cs:166` · `JwtHelper.cs:10` |
-| D-01 | D | ตารางอัตรา WHT ชุดที่ 3 ใน `TaxService` (40(1)=3% คงที่ · คีย์ `"5"`/`"6"` ชนกับ `ThaiWhtRateTable`) | `TaxService.cs:19-33` |
+| ✅ D-01 | D | ตารางอัตรา WHT ชุดที่ 3 ใน `TaxService` (40(1)=3% คงที่ · คีย์ `"5"`/`"6"` ชนกับ `ThaiWhtRateTable`) | `TaxService.cs:19-33` |
 | ✅ E-01 | E | `CalculateDepreciationAsync` ไม่มี switch-to-straight-line ⇒ DecliningBalance ไม่มีวันจบ + ตัวเลขต่างจากตารางที่ผู้ใช้เห็น 35% | `FixedAssetService.cs:654-668` |
 | ✅ F-01 | F | ปิดบิลออฟไลน์ใน POS อ่าน DOM id ที่ไม่มีในหน้า ⇒ TypeError เงียบ โหมดออฟไลน์ตายทั้งก้อน | `pos.html:2252-2284` |
 | ✅ F-02 | F | ตารางแมป 50 ทวิ ฝั่ง JS ตกรหัส `8ad`/`8tr` ที่ระบบเองสร้าง ⇒ ช่องประเภทว่างแต่ยอดรวมเต็ม | `wht.html:403-414` |

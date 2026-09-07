@@ -203,25 +203,31 @@ public class ThaiGovIntegrationService : IThaiGovIntegrationService
         ));
     }
 
+    /// <summary>
+    /// อัตราหัก ณ ที่จ่ายตาม ท.ป.4/2528 — สร้างจาก
+    /// <see cref="Accounting.Helpers.ThaiWhtRateTable"/> ตัวเดียวของระบบ
+    ///
+    /// <para>⚠️ เดิมที่นี่พิมพ์ตารางไว้เอง = <b>ตารางชุดที่สี่</b> (ผลตรวจทีม D ·
+    /// D-01) — ตัวเลขบังเอิญถูกตามกฎหมาย แต่ "ตารางกฎหมายที่คัดลอกไปเขียนใหม่
+    /// = คิดผิดตลอดไป" คือ defect class ที่เรพนี้เจอซ้ำที่สุด: วันที่กฎหมาย
+    /// เปลี่ยน จะมีที่ต้องแก้มากกว่าหนึ่งที่ และคนแก้จะเห็นแค่ที่เดียว</para>
+    ///
+    /// <para>ค่าที่กฎหมาย<b>ไม่ได้กำหนดคงที่</b> (เงินเดือน 40(1) = อัตราขั้นบันได)
+    /// ตารางกลางเก็บเป็น <c>null</c> — ที่นี่แปลงเป็น 0 พร้อมหมายเหตุ เพราะสัญญา
+    /// ของ <c>RdWhtRateInfo</c> เป็น <c>decimal</c> ไม่ใช่ nullable</para>
+    /// </summary>
     public Task<List<RdWhtRateInfo>> GetWhtRatesAsync()
     {
-        // Thai WHT rates per Revenue Code categories
-        return Task.FromResult(new List<RdWhtRateInfo>
-        {
-            new("40(1)", "เงินเดือน ค่าจ้าง", 0, 0, "หัก ณ ที่จ่ายตามอัตราก้าวหน้า"),
-            new("40(2)", "ค่านายหน้า ค่าธรรมเนียม", 3, 3, "ภ.ง.ด.3 / ภ.ง.ด.53"),
-            new("40(3)", "ค่าลิขสิทธิ์ ค่าสิทธิ", 3, 3, null),
-            new("40(4)(a)", "ดอกเบี้ย", 15, 1, "บุคคลธรรมดา 15% / นิติบุคคล 1%"),
-            new("40(4)(b)", "เงินปันผล", 10, 10, "เครดิตภาษีเงินปันผลตามมาตรา 47 ทวิ"),
-            new("40(5)", "ค่าเช่าทรัพย์สิน", 5, 5, null),
-            new("40(6)", "วิชาชีพอิสระ", 3, 3, "แพทย์ ทนาย วิศวกร สถาปนิก บัญชี ประณีตศิลป์"),
-            new("40(7)", "รับเหมาก่อสร้าง", 3, 3, null),
-            new("40(8)", "ค่าจ้างทำของ ค่าบริการ", 3, 3, "อัตราทั่วไป"),
-            new("40(8)", "ค่าโฆษณา", 2, 2, null),
-            new("40(8)", "ค่าขนส่ง", 1, 1, null),
-            new("40(8)", "ค่าเบี้ยประกันวินาศภัย", 1, 1, null),
-            new("40(8)", "รางวัล ส่วนลด จูงใจ", 3, 3, "จ่ายให้บริษัทหรือห้างหุ้นส่วนนิติบุคคล"),
-        });
+        var rows = Accounting.Helpers.ThaiWhtRateTable.All.Select(t => new RdWhtRateInfo(
+            t.TaxSection,
+            t.Name,
+            t.IndividualRate ?? 0m,
+            t.JuristicRate ?? 0m,
+            t.Note ?? (t.IndividualRate is null && t.JuristicRate is null
+                ? "กฎหมายไม่ได้กำหนดอัตราคงที่ — คำนวณตามฐานภาษีเงินได้บุคคลธรรมดา"
+                : string.Join(" / ", t.ApplicableForms))))
+            .ToList();
+        return Task.FromResult(rows);
     }
 
     public async Task<RdBranchInfo?> LookupBranchAsync(string taxId, string branchCode)
