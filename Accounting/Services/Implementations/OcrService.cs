@@ -4592,21 +4592,30 @@ public class OcrService : IOcrService
             // sanity rounding match. When in doubt, leave both fields
             // null so the gateway flags it as low-confidence + the user
             // sees the original total verbatim.
-            var vendorTaxIdValid = !string.IsNullOrEmpty(data.VendorTaxId)
-                && new string(data.VendorTaxId.Where(char.IsDigit).ToArray()).Length == 13;
-            if (vendorTaxIdValid)
+            // ★ ด่านตัวเดียวอยู่ที่ Helpers/VatBackCalcGuard (pure + มีเทสต์)
+            //   เดิมเงื่อนไขคือ "มีคำว่าใบกำกับภาษีที่ไหนก็ได้บนหน้า + ผู้ขายมี
+            //   เลข 13 หลัก" ⇒ ใบเสร็จร้านที่พิมพ์ท้ายบิลว่า "ขอใบกำกับภาษีได้ที่
+            //   เคาน์เตอร์" และใบที่ขายสินค้ายกเว้น §81 ก็ถูกแยก 7/107 ออกมาเป็น
+            //   "ภาษีซื้อ" ที่ไม่มีอยู่จริง แล้วไหลไป ภ.พ.30 (ผลตรวจ T1-22)
+            var backCalc = Accounting.Helpers.VatBackCalcGuard.Decide(
+                text, data.VendorTaxId, data.Items.Select(i => i.Description));
+            if (backCalc.Allowed)
             {
                 data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2, MidpointRounding.AwayFromZero);
                 data.VatAmount = data.TotalAmount.Value - data.SubTotal.Value;
-                data.ReasoningTrace.Add(
-                    "[VAT back-calc] vendor มี Tax ID 13 หลัก + เอกสารเป็น TaxInvoice → แยก VAT 7% จากยอดรวม");
+                // ★ ค่าที่ **คำนวณ** ต้องติดป้ายความมั่นใจเสมอ ไม่ใช่กลืนไปกับค่าที่
+                //   อ่านมาจากกระดาษ — เดิมไม่มี key ทั้งสองช่อง ⇒ ป้ายเหลืองไม่เคยขึ้น
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.VatAmount] = backCalc.Confidence;
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SubTotal] = backCalc.Confidence;
+                data.ReasoningTrace.Add("[VAT back-calc] " + backCalc.Reason);
             }
             else
             {
-                data.ReasoningTrace.Add(
-                    "[VAT skip] เอกสารพูดถึง 'ใบกำกับภาษี' แต่ vendor ไม่มี Tax ID 13 หลัก " +
-                    "— ไม่สามารถ back-calc VAT ได้ (vendor ไม่จด VAT). " +
-                    "ใส่ TotalAmount ตามที่อ่านมา, SubTotal/VatAmount = null");
+                // เหตุผลมาจากด่านตัวเดียวกัน — ห้ามเขียนข้อความชุดที่สองที่นี่
+                // (เดิมมีข้อความเขียนมือครอบเฉพาะเคส "ไม่มีเลข 13 หลัก" เท่านั้น
+                //  อีกสองเคสที่เพิ่มเข้ามาจะเงียบถ้าไม่รวมมาที่เดียว)
+                data.ReasoningTrace.Add("[VAT skip] " + backCalc.Reason
+                    + " — ใส่ยอดรวมตามที่อ่านมา ส่วน SubTotal/VatAmount เว้นว่างให้ผู้ใช้ตรวจ");
             }
         }
 
@@ -4629,18 +4638,46 @@ public class OcrService : IOcrService
             if (data.VatAmount > 0) { data.VatAccountCode = "1400"; data.VatAccountName = "ภาษีซื้อ"; }
         }
 
-        // WHT detection
-        var whtMatch = Regex.Match(text, @"หัก\s*ณ\s*ที่จ่าย|ภาษี\s*หัก|WHT|W/?T", RegexOptions.IgnoreCase);
+        // ── WHT detection ──
+        //
+        // ⚠️ เดิม `WHT|W/?T` **ไม่มี word-boundary** ⇒ `W/?T` จับ "T" ตัวเดียวใน
+        // คำอังกฤษทั่วไปได้ (growth · Newton · WATT …) ⇒ `HasWht=true` บนใบที่
+        // ไม่เกี่ยวเลย แล้วหน้า review ติ๊ก "มีภาษีหัก ณ ที่จ่าย" ให้เอง
+        // (ผลตรวจ 2026-09-06 · T1-23)
+        //
+        // และเดิมอัตรามาจาก "เลข%" **ตัวไหนก็ได้** ในหน้าต่าง 70 ตัวอักษรรอบป้าย
+        // ⇒ "ส่วนลด 3%" ที่อยู่ใกล้กันกลายเป็นอัตราหัก ณ ที่จ่าย → หักจริง
+        // ตอนนี้บังคับให้ % อยู่**หลังป้าย ไม่เกิน 20 ตัวอักษร และบรรทัดเดียวกัน**
+        var whtMatch = Regex.Match(text,
+            @"หัก[ \t]*ณ[ \t]*ที่จ่าย|ภาษี[ \t]*หัก|\bWHT\b|\bW\.?T\.?\b",
+            RegexOptions.IgnoreCase);
         if (whtMatch.Success)
         {
             data.HasWht = true;
-            var whtArea = text.Substring(Math.Max(0, whtMatch.Index - 20),
-                Math.Min(whtMatch.Length + 50, text.Length - Math.Max(0, whtMatch.Index - 20)));
-            var rateMatch = Regex.Match(whtArea, @"(\d+)\s*%");
-            if (rateMatch.Success)
+            var rateMatch = Regex.Match(text,
+                @"(?:หัก[ \t]*ณ[ \t]*ที่จ่าย|ภาษี[ \t]*หัก|\bWHT\b)[^%\n]{0,20}?([0-9]+(?:\.[0-9]+)?)[ \t]*%",
+                RegexOptions.IgnoreCase);
+            if (rateMatch.Success
+                && decimal.TryParse(rateMatch.Groups[1].Value,
+                    System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out var rawRate)
+                // อัตราต้องอยู่ในตารางกฎหมาย (ท.ป.4/2528 + §3 เตรส) — ตัวตัดสิน
+                // ตัวเดียวคือ Helpers/ThaiWhtRateTable ห้ามเขียนลิสต์ซ้ำที่นี่
+                && Accounting.Helpers.ThaiWhtRateTable.SnapToStatutory(rawRate) is decimal snapped)
             {
-                var rate = int.Parse(rateMatch.Groups[1].Value);
-                if (rate is 1 or 2 or 3 or 5 or 10 or 15) data.WhtRate = rate;
+                // ── เกณฑ์ 1,000 บาท (ท.ป.4/2528 ข้อ 12) ──
+                // เดิมไม่มีที่ไหนในเส้น OCR เรียกเกณฑ์นี้เลย ⇒ ใบ 500 บาทก็ถูกตั้ง
+                // อัตราหัก 3% ให้ (ผู้รับเงินโดนหักเกินความจำเป็น) — ผลตรวจ T1-24
+                var whtBase = data.SubTotal ?? data.TotalAmount ?? 0m;
+                if (whtBase > 0m && !Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(whtBase))
+                {
+                    data.HasWht = false;
+                    data.ReasoningTrace.Add(
+                        $"[WHT] กระดาษระบุอัตรา {snapped}% แต่ฐาน {whtBase:N2} บาท ต่ำกว่าเกณฑ์ "
+                        + "1,000 บาท (ท.ป.4/2528 ข้อ 12) → ไม่ตั้งภาษีหัก ณ ที่จ่ายให้ "
+                        + "(ถ้ารวมทั้งสัญญาถึงเกณฑ์ ให้ติ๊กเอง)");
+                }
+                else data.WhtRate = snapped;
             }
         }
 
