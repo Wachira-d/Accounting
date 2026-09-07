@@ -32,7 +32,12 @@ public interface IOcrService
     /// แล้วเดินเส้น engine จริง — ใช้กับปุ่ม "สแกนใหม่" เท่านั้น · ถ้าไม่มีธงนี้
     /// การกดสแกนใหม่จะได้สำเนาของผลเดิมกลับมาแล้วตอบว่า "สำเร็จ" (silent no-op)
     /// </summary>
-    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false, bool forceRescan = false);
+    /// <param name="actingUserId">ผู้ใช้ที่เป็นเจ้าของการกระทำ — ใช้ตรวจสิทธิ์
+    /// "สร้างเอกสารชนิดนี้ได้ไหม" ก่อน auto-create · <c>null</c> = เส้นที่ไม่มี
+    /// ผู้ใช้เป็นเจ้าของ (partner API ที่คุมด้วย scope ของ key อยู่แล้ว · งาน
+    /// เบื้องหลัง) ⇒ ไม่ตรวจ. **ทางเข้าที่เป็นคนต้องส่งเสมอ** ไม่งั้นด่านสิทธิ์
+    /// ที่อยู่ใน controller อย่างเดียวจะถูกลัดผ่าน (ผลตรวจทีม E · E-02)</param>
+    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false, bool forceRescan = false, Guid? actingUserId = null);
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null);

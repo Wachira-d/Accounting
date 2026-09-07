@@ -33,13 +33,32 @@ public class LineBotService : ILineBotService
         IHttpClientFactory httpFactory, ILogger<LineBotService> logger,
         IDocumentService docService, IPayslipLineDeliveryService payslipLine,
         IOcrService ocr, IOcrQuotaService ocrQuota, IChatbotService chat,
-        IPermissionService perms)
+        IPermissionService perms, IChatRateLimiter rateLimiter, IEmailService email)
     {
         _db = db; _config = config; _httpFactory = httpFactory;
         _logger = logger; _docService = docService; _payslipLine = payslipLine;
         _ocr = ocr; _ocrQuota = ocrQuota; _chat = chat; _perms = perms;
+        _rateLimiter = rateLimiter; _email = email;
     }
     private readonly IPermissionService _perms;
+    private readonly IChatRateLimiter _rateLimiter;
+    private readonly IEmailService _email;
+
+    /// <summary>เพดานความพยายาม "ผูกบัญชี" ต่อ LINE user หนึ่งราย
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจทีม A · A-01): รหัสผูก 6 หลักถูกค้นแบบ **global**
+    /// (query ไม่มีอะไรผูกกับผู้ส่งเลย) และ <c>LineBindCode</c> ไม่มีตัวนับความ
+    /// พยายาม ⇒ เดาผิดไม่มีผลอะไร · ด่านเดียวที่เหลือคือ rate limit ชั้น HTTP ซึ่ง
+    /// <c>/api/line-webhook</c> ตกชั้น anonymous <b>600 req/นาที</b> และคิดต่อ IP
+    /// ซึ่งเป็น **IP ของ LINE** ทั้งหมด ⇒ ที่รหัสมีชีวิต 10 ใบ ต้องเดาราว 100,000
+    /// ครั้ง = <b>~5.5 ชม.</b> ก็ยึดบัญชีคนอื่นได้ (เห็น P&amp;L · ถาม RAG ของบริษัท
+    /// นั้น · สร้าง/อนุมัติเอกสาร)</para>
+    ///
+    /// <para>ที่ 10 ครั้ง/วัน การเดา 100,000 ครั้งใช้เวลา ~27 ปี · นับผ่าน
+    /// <see cref="IChatRateLimiter"/> ซึ่งเป็น atomic upsert บน PostgreSQL จึงนับ
+    /// ตรงข้าม instance (ห้ามใช้ dict ใน process ตามกฎ multi-instance)</para></summary>
+    private const int BindAttemptsPerMinute = 3;
+    private const int BindAttemptsPerDay = 10;
 
     public async Task<string> IssueBindCodeAsync(Guid userId)
     {
@@ -72,6 +91,48 @@ public class LineBotService : ILineBotService
             Encoding.ASCII.GetBytes(headerSignature));
     }
 
+    private const string BindThrottledReply =
+        "⛔ ลองผูกบัญชีบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่\n"
+        + "ถ้าไม่ได้เป็นคนลอง แปลว่ามีคนพยายามเดารหัสผูกบัญชีของคุณอยู่ "
+        + "กรุณาแจ้งผู้ดูแลระบบ";
+
+    /// <summary>นับความพยายามผูกบัญชีต่อ LINE user — fail-open เหมือน
+    /// <see cref="IChatRateLimiter"/> (ตารางนับพัง ≠ เหตุผลที่จะปิดการผูกบัญชี
+    /// ทั้งระบบ) แต่ทุกครั้งที่ชนเพดานจะถูกบันทึกเป็น strike ไว้ให้ตามรอย</summary>
+    private async Task<bool> TryConsumeBindAttemptAsync(string lineUserId)
+    {
+        var key = "linebind:" + lineUserId;
+        var ok = await _rateLimiter.TryConsumeAsync(key, BindAttemptsPerMinute, BindAttemptsPerDay);
+        if (!ok)
+        {
+            await _rateLimiter.RecordStrikeAsync(key);
+            _logger.LogWarning("ความพยายามผูกบัญชี LINE เกินเพดาน — lineUserId ลงท้าย {Tail}",
+                lineUserId.Length > 6 ? lineUserId[^6..] : lineUserId);
+        }
+        return ok;
+    }
+
+    /// <summary>แจ้งเจ้าของบัญชีทางอีเมลว่ามี LINE ผูกเข้ามา — ห้ามเงียบ
+    /// (ล้มก็ไม่ทำให้การผูกล้ม แต่ต้อง log ให้เห็น)</summary>
+    private async Task NotifyLineBoundAsync(User user, string lineUserId)
+    {
+        if (string.IsNullOrWhiteSpace(user.Email)) return;
+        var tail = lineUserId.Length > 6 ? lineUserId[^6..] : lineUserId;
+        try
+        {
+            await _email.SendAsync(user.Email, "มีการเชื่อมบัญชี LINE เข้ากับบัญชีของคุณ",
+                $"<p>บัญชี LINE (ลงท้าย <b>{System.Net.WebUtility.HtmlEncode(tail)}</b>) ถูกเชื่อมกับบัญชี "
+                + $"<b>{System.Net.WebUtility.HtmlEncode(user.Email)}</b> เมื่อ "
+                + $"{DateTime.UtcNow.AddHours(7):dd/MM/yyyy HH:mm} น. (เวลาไทย)</p>"
+                + "<p>ถ้าไม่ได้ทำเอง กรุณาเข้าเว็บไซต์เพื่อ<b>ถอดการเชื่อมต่อ</b> "
+                + "และเปลี่ยนรหัสผ่านทันที</p>");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ส่งอีเมลแจ้งการผูก LINE ไม่สำเร็จ (userId {UserId})", user.Id);
+        }
+    }
+
     public async Task<string?> HandleMessageAsync(string lineUserId, string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
@@ -87,6 +148,8 @@ public class LineBotService : ILineBotService
             var slipCode = new string(msg.Where(char.IsDigit).ToArray());
             if (slipCode.Length != 6)
                 return "กรุณาส่ง: สลิป {รหัส 6 หลัก ที่ได้จากฝ่ายบุคคล}";
+            if (!await TryConsumeBindAttemptAsync(lineUserId))
+                return BindThrottledReply;
             var reply = await _payslipLine.TryBindFromLineAsync(lineUserId, slipCode);
             return reply ?? "❌ รหัสรับสลิปไม่ถูกต้องหรือหมดอายุ — กรุณาขอรหัสใหม่จากฝ่ายบุคคล";
         }
@@ -97,15 +160,42 @@ public class LineBotService : ILineBotService
         {
             var code = new string(msg.Where(char.IsDigit).ToArray());
             if (code.Length != 6) return "กรุณาส่ง: ผูก {รหัส 6 หลัก จากเว็บไซต์}";
+            if (!await TryConsumeBindAttemptAsync(lineUserId))
+                return BindThrottledReply;
             var row = await _db.LineBindCodes
                 .Include(c => c.User)
                 .Where(c => c.Code == code && c.UsedAt == null && c.ExpiresAt > DateTime.UtcNow)
+                .OrderByDescending(c => c.CreatedAt)
                 .FirstOrDefaultAsync();
             if (row == null) return "❌ รหัสไม่ถูกต้องหรือหมดอายุ — กรุณาขอรหัสใหม่จากเว็บไซต์";
             row.UsedAt = DateTime.UtcNow;
             row.UsedByLineUserId = lineUserId;
+            // LINE เดียวผูกได้กับบัญชีเดียว — ถอดของบัญชีอื่นที่ถือค่าเดิมก่อน
+            // (คอลัมน์นี้เป็น index **ไม่ unique** ⇒ ถ้ามีสองแถวค่าเท่ากัน
+            //  `FirstOrDefaultAsync` ที่ไม่มี OrderBy จะหยิบแถวไหนก็ได้ตามแผน
+            //  query ⇒ บอททำงานในนามบัญชีที่ผู้ใช้ไม่ได้ตั้งใจ — ผลตรวจ E-07)
+            await _db.Users
+                .Where(u => u.LineUserId == lineUserId && u.Id != row.UserId)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.LineUserId, (string?)null));
             row.User.LineUserId = lineUserId;
+
+            // การเปลี่ยนแปลงที่กระทบ "ใครเข้าบัญชีได้" ห้ามเงียบ (กฎเหล็ก #4)
+            _db.AuditLogs.Add(new AuditLog
+            {
+                UserId = row.UserId,
+                UserEmail = row.User.Email,
+                Action = Models.Enums.AuditAction.Update,
+                EntityType = "LineBindCode",
+                EntityId = row.UserId.ToString(),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    Bound = true,
+                    // ห้าม log id เต็ม (เป็นตัวระบุตัวบุคคลฝั่ง LINE)
+                    LineUserIdTail = lineUserId.Length > 6 ? lineUserId[^6..] : lineUserId,
+                }),
+            });
             await _db.SaveChangesAsync();
+            await NotifyLineBoundAsync(row.User, lineUserId);
             return $"✅ เชื่อมต่อสำเร็จ — สวัสดี {row.User.FullName}\n" +
                    "ลองใช้งาน:\n" +
                    "• 📷 ส่งรูปใบเสร็จมาได้เลย — ระบบอ่านและสร้างเอกสารให้ทันที\n" +
@@ -477,7 +567,10 @@ public class LineBotService : ILineBotService
         Models.DTOs.Ocr.OcrResultResponse result;
         try
         {
-            result = await _ocr.ScanAsync(companyId, attachmentId, null, lineMeta, autoCreate: true);
+            // ส่ง actingUserId เสมอ — เส้นนี้สร้างเอกสารเองโดยไม่ผ่าน
+            // /create-document ที่มีด่านสิทธิ์ ⇒ ด่านต้องอยู่ในบริการ (E-02)
+            result = await _ocr.ScanAsync(companyId, attachmentId, null, lineMeta,
+                autoCreate: true, actingUserId: user.Id);
         }
         catch (Exception ex)
         {
@@ -545,16 +638,35 @@ public class LineBotService : ILineBotService
             // **ไม่แสดง §82/5 / Σ-GAP / หน้าที่หัก ณ ที่จ่าย เลยสักบรรทัด** ⇒ ผู้ใช้
             // LINE ตัดสินใจจากข้อมูลน้อยกว่าผู้ใช้เว็บบนกระดาษใบเดียวกัน
             var lineWarnings = OcrScanWarnings(r.ProcessingNotes);
+            // ผลตรวจ §86/4 ที่เซิร์ฟเวอร์คำนวณแล้ว (OcrScanComplianceEvaluator)
+            // ต้องอยู่บนการ์ดด้วย ไม่ใช่เห็นเฉพาะบนเว็บ
+            foreach (var ci in r.ComplianceIssues ?? new List<Models.DTOs.Ocr.OcrScanIssueDto>())
+                lineWarnings.Add(ci.Message);
             foreach (var w in lineWarnings.Take(3))
                 bodyRows.Add(new
                 {
                     type = "text", size = "xs", color = "#b45309", wrap = true, margin = "sm",
                     text = "⚠️ " + w,
                 });
+            // ตัดคำเตือนทิ้งเงียบ ๆ ไม่ได้ — ต้องบอกว่ายังมีอีกกี่ข้อและดูที่ไหน
+            if (lineWarnings.Count > 3)
+                bodyRows.Add(new
+                {
+                    type = "text", size = "xs", color = "#b45309", wrap = true, margin = "sm",
+                    text = $"⚠️ …และอีก {lineWarnings.Count - 3} ข้อ — เปิดหน้าเว็บเพื่อดูทั้งหมด",
+                });
 
             // ตัวตัดสิน "พร้อมลงบัญชีเองไหม" ตัวเดียวกับเว็บ (Helpers/OcrPostingReadiness)
+            //
+            // ⚠️ เดิมส่งแค่ ProcessingNotes + มีวันที่ไหม ⇒ **ไม่เคยอ่าน
+            // `ComplianceIssues` เลย** ทั้งที่ค่ามาถึงในมือแล้ว (ScanAsync คืน
+            // ผ่าน AttachComplianceAsync) ⇒ ใบที่เว็บ**ไม่มีแม้ช่องให้ติ๊ก**
+            // ("ผู้ซื้อไม่ใช่บริษัทนี้ — อาจเป็นเอกสารของบริษัทอื่น") บน LINE
+            // ขึ้นปุ่มเขียวให้กดลง JE + เข้ารายงานภาษีซื้อ (ผลตรวจทีม E · E-03)
             var readiness = Accounting.Helpers.OcrPostingReadiness.Evaluate(
-                r.ProcessingNotes, r.ExtractedDate != null);
+                r.ProcessingNotes, r.ExtractedDate != null,
+                r.ComplianceIssues?.Select(i => i.Severity),
+                r.Quality?.Letter);
 
             var buttons = new List<object>();
             if (readiness.CanAutoApprove)
@@ -612,7 +724,9 @@ public class LineBotService : ILineBotService
     {
         var result = new List<string>();
         if (string.IsNullOrWhiteSpace(processingNotes)) return result;
-        string[] tags = { "[VAT-CLAIM]", "[Σ-GAP]", "[WHT-SUGGEST]", "[TAX-INV-PENDING]", "[PP36]", "[DATE-UNKNOWN]", "[FX-UNKNOWN]" };
+        // [WHT-CERT] เคยตกหล่นจากลิสต์นี้ทั้งที่เป็น blocking tag ใน
+        // OcrPostingReadiness ⇒ ปุ่มอนุมัติหายโดยไม่มีคำเตือนอธิบายว่าทำไม
+        string[] tags = { "[VAT-CLAIM]", "[Σ-GAP]", "[WHT-SUGGEST]", "[WHT-CERT]", "[TAX-INV-PENDING]", "[PP36]", "[DATE-UNKNOWN]", "[FX-UNKNOWN]" };
         foreach (var line in processingNotes.Split('\n'))
         {
             var t = line.Trim();

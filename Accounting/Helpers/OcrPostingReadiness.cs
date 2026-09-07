@@ -35,6 +35,45 @@ public static class OcrPostingReadiness
     ///
     /// <para><paramref name="hasUsableDate"/> = <c>ExtractedDate != null</c> —
     /// แยกจากแท็กเพราะแถวเก่าที่สแกนก่อนรอบนี้ยังไม่มี <c>[DATE-UNKNOWN]</c></para></summary>
+    /// <summary>
+    /// ตัดสินจากสัญญาณ **ทุกชุด** ที่เซิร์ฟเวอร์มีอยู่แล้ว — แท็กใน
+    /// <c>ProcessingNotes</c> · ผลตรวจ §86/4 (<c>ComplianceIssues</c>) · เกรดคุณภาพ
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจทีม E · E-03): doc-comment ข้างบนเขียนเองว่าเป็น
+    /// "ตัวตัดสินตัวเดียวของทุกช่องทาง" แต่มันดูแค่ 5 แท็ก ขณะที่เว็บมีเกณฑ์
+    /// เพิ่มอีกชุดใน JS ⇒ ใบที่มี issue ระดับ <c>error</c> ("ผู้ซื้อในเอกสารไม่ตรง
+    /// กับบริษัท — อาจเป็นเอกสารของบริษัทอื่น") บนเว็บ<b>ไม่มีแม้ช่องให้ติ๊ก</b>
+    /// แต่บน LINE ขึ้นปุ่มเขียว "อนุมัติเลย" ให้กดลง JE + เข้ารายงานภาษีซื้อ</para>
+    /// </summary>
+    /// <param name="issueSeverities">ค่า <c>Severity</c> ของทุก issue —
+    /// <b><c>null</c> = ยังไม่ได้ประเมิน</b> ซึ่งไม่ใช่ "ไม่มีปัญหา" (สัญญา
+    /// เดียวกับที่หน้าเว็บใช้) ⇒ ห้ามอนุมัติเอง</param>
+    /// <param name="qualityLetter">เกรดคุณภาพภาพ — <c>"D"</c> = ควรถ่ายใหม่</param>
+    public static Verdict Evaluate(
+        string? processingNotes,
+        bool hasUsableDate,
+        IEnumerable<string>? issueSeverities,
+        string? qualityLetter)
+    {
+        var baseVerdict = Evaluate(processingNotes, hasUsableDate);
+        if (!baseVerdict.CanAutoApprove) return baseVerdict;
+
+        if (issueSeverities is null)
+            return new Verdict(false,
+                "ยังไม่ได้ตรวจความครบถ้วนตามสรรพากร — เปิดใบ Draft ตรวจแล้วกดอนุมัติเอง");
+
+        if (issueSeverities.Any(sev => string.Equals(sev, "error", StringComparison.OrdinalIgnoreCase)))
+            return new Verdict(false,
+                "เอกสารมีข้อผิดพลาดตามข้อกำหนดสรรพากร (เช่น ผู้ซื้อไม่ใช่บริษัทนี้) — "
+                + "เปิดใบ Draft ตรวจแล้วกดอนุมัติเอง");
+
+        if (string.Equals(qualityLetter, "D", StringComparison.OrdinalIgnoreCase))
+            return new Verdict(false,
+                "คุณภาพภาพต่ำ (เกรด D) — ถ่ายใหม่ให้ชัดขึ้น หรือเปิดใบ Draft ตรวจก่อน");
+
+        return new Verdict(true, null);
+    }
+
     public static Verdict Evaluate(string? processingNotes, bool hasUsableDate)
     {
         if (!hasUsableDate)

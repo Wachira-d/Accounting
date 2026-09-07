@@ -38,7 +38,7 @@
 
 | ID | ทีม | เรื่อง | file:line |
 | --- | --- | --- | --- |
-| A-01 | A | รหัสผูก LINE 6 หลักค้นแบบ global + ไม่มีตัวนับความพยายาม ⇒ brute-force ยึดบัญชี | `LineBotService.cs:95-116` |
+| ✅ A-01 | A | รหัสผูก LINE 6 หลักค้นแบบ global + ไม่มีตัวนับความพยายาม ⇒ brute-force ยึดบัญชี | `LineBotService.cs:95-116` |
 | A-02 | A | `SiteCustomer` JWT ใช้ key/issuer/audience ชุดเดียวกับผู้ใช้ ERP | `CmsCustomerService.cs:166` · `JwtHelper.cs:10` |
 | D-01 | D | ตารางอัตรา WHT ชุดที่ 3 ใน `TaxService` (40(1)=3% คงที่ · คีย์ `"5"`/`"6"` ชนกับ `ThaiWhtRateTable`) | `TaxService.cs:19-33` |
 | ✅ E-01 | E | `CalculateDepreciationAsync` ไม่มี switch-to-straight-line ⇒ DecliningBalance ไม่มีวันจบ + ตัวเลขต่างจากตารางที่ผู้ใช้เห็น 35% | `FixedAssetService.cs:654-668` |
@@ -70,8 +70,8 @@
 | D-05 | D | ภ.ง.ด.1 e-Filing คืนไฟล์เปล่าแล้วประทับว่า export แล้ว | — |
 | D-06 | D | ภ.ง.ด.2 ไม่มีช่องผู้รับเงินและไม่มี enum `WithholdingTax2` | — |
 | D-07 | D | `DefaultRate = t.JuristicRate ?? t.IndividualRate` ไม่ดูชนิดผู้รับ | `ThaiWhtRateTable` call site |
-| E-02 | E | เส้นรูปใน LINE สร้างเอกสารโดยไม่ผ่าน `CanCreateAsync` (ด่านอยู่ที่ controller เว็บเท่านั้น) | `LineBotService.cs:480` |
-| E-03 | E | การ์ด "อนุมัติเลย" ใน LINE ไม่อ่าน `ComplianceIssues` ทั้งที่ค่ามาถึงแล้ว | `LineBotService.cs:543-576` |
+| ✅ E-02 | E | เส้นรูปใน LINE สร้างเอกสารโดยไม่ผ่าน `CanCreateAsync` (ด่านอยู่ที่ controller เว็บเท่านั้น) | `LineBotService.cs:480` |
+| ✅ E-03 | E | การ์ด "อนุมัติเลย" ใน LINE ไม่อ่าน `ComplianceIssues` ทั้งที่ค่ามาถึงแล้ว | `LineBotService.cs:543-576` |
 | ✅ E-04 | E | `FixedAssetController` ไม่มีคีย์สิทธิ์เลย + endpoint มือแข่งกับ cron ได้ | `FixedAssetController.cs:116` |
 | E-05 | E | `DisposeAsync`/`WriteOffAsync` ไม่คิดค่าเสื่อมถึงวันขาย + silent no-op เมื่อไม่มีผังบัญชี | `FixedAssetService.cs:381-486` |
 | E-06 | E | `AdjustUsefulLifeAsync` ทบทวนอายุแบบย้อนหลัง (ผิด TFRS บทที่ 10) + ไม่มี `UsefulLifeReviewedAt` | `FixedAssetService.cs:586-608` |
@@ -97,7 +97,7 @@
 | D-08 | D | `H|`/`T|` + วันที่ พ.ศ. แบบขีดทับ ยังค้างใน ภ.ง.ด.1/1ก/2 |
 | D-09 | D | `IssuedDate = DateTime.UtcNow` แทนวันจ่าย และไม่แปลงเป็นเวลากรุงเทพ |
 | D-10 | D | เลขหนังสือรับรอง WHT ไม่ผ่าน `SequenceNumber` |
-| E-07 | E | `Users.LineUserId` เป็น index ไม่ unique + `FirstOrDefaultAsync` ไม่มี `OrderBy` |
+| ✅ E-07 | E | `Users.LineUserId` เป็น index ไม่ unique + `FirstOrDefaultAsync` ไม่มี `OrderBy` |
 | ✅ F-06 | F | แปลง พ.ศ.→ค.ศ. ใน `admin/ocr-config.html` ให้ผลห่างจริง 500 ปี (ปีย่อ 2 หลัก) |
 | G-06 | G | rate limit เป็น per-process ⇒ เพดานจริง = เพดาน × จำนวนเครื่อง |
 | G-07 | G | `BulkCleanupController` สแกนทั้งบริษัทโดยไม่จำกัดช่วงเวลา |

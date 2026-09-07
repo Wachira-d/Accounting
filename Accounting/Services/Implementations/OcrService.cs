@@ -99,8 +99,10 @@ public class OcrService : IOcrService
         Services.Interfaces.IAccountingService? accounting = null,
         Ocr.ProductMatcher? productMatcher = null,
         Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
-        Services.Interfaces.IBotExchangeRateService? fxRates = null)
+        Services.Interfaces.IBotExchangeRateService? fxRates = null,
+        Services.Interfaces.IPermissionService? perms = null)
     {
+        _perms = perms;
         _docWorkflowLearner = docWorkflowLearner;
         _aiAugmenter = aiAugmenter;
         _feedbackRecorder = feedbackRecorder;
@@ -125,7 +127,32 @@ public class OcrService : IOcrService
         _rdComplianceValidator = rdComplianceValidator;
     }
 
-    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false, bool forceRescan = false)
+    private readonly Services.Interfaces.IPermissionService? _perms;
+
+    /// <summary>
+    /// ด่าน "สร้างเอกสารชนิดนี้ได้ไหม" สำหรับเส้นที่ auto-create ในตัวเอง
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจทีม E · E-02): ด่าน <c>CanCreateAsync</c> อยู่ที่
+    /// <c>OcrController</c> เท่านั้น — แต่ <c>ScanAsync(autoCreate: true)</c>
+    /// สร้าง Draft เองโดยไม่ผ่าน controller นั้นเลย ⇒ <b>เส้นรูปใน LINE</b>
+    /// สร้างเอกสารได้ทุกชนิดโดยไม่ถูกตรวจสิทธิ์ (สมาชิกที่เจ้าของตั้งใจให้มีแค่
+    /// สิทธิ์ฝั่งขาย ถ่ายบิลเข้า LINE แล้วได้ PurchaseInvoice/Expense)</para>
+    ///
+    /// <para><paramref name="actingUserId"/> = <c>null</c> แปลว่า "เส้นที่ไม่มี
+    /// ผู้ใช้เป็นเจ้าของการกระทำ" (partner API ที่ถูกคุมด้วย scope ของ API key
+    /// อยู่แล้ว · งานเบื้องหลัง) ⇒ ไม่ตรวจ — <b>ไม่ใช่ค่าเริ่มต้นสำหรับคน</b></para>
+    /// </summary>
+    private async Task<bool> CanActorCreateAsync(Guid companyId, Guid? actingUserId, OcrScanResult scan)
+    {
+        if (actingUserId is not Guid uid || _perms is null) return true;
+        var target = Accounting.Helpers.OcrTargetDocumentType.Resolve(
+            null, scan.TargetDocumentType, scan.DocumentType,
+            hasLinkedPurchaseOrder: scan.LinkedPurchaseOrderId.HasValue).Type;
+        return await Accounting.Helpers.DocumentPermissionHelper.CanCreateAsync(
+            _perms, companyId, uid, target);
+    }
+
+    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false, bool forceRescan = false, Guid? actingUserId = null)
     {
         // Normalize the user's engine preference into one of three modes.
         // "auto" = current cascade; "azure" = Tier 1 only (no local fallback
@@ -2513,7 +2540,17 @@ public class OcrService : IOcrService
             {
                 try
                 {
-                    await AutoCreateDocumentAsync(companyId, scanResult, extractedData);
+                    // ด่านสิทธิ์ต้องอยู่ตรงนี้ ไม่ใช่ที่ controller ตัวเดียว —
+                    // เส้นนี้สร้าง Draft เองโดยไม่ผ่าน /create-document (E-02)
+                    if (!await CanActorCreateAsync(companyId, actingUserId, scanResult))
+                    {
+                        // ห้ามเงียบ — ผู้ใช้ต้องรู้ว่าต้องขอสิทธิ์อะไร
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                            + "\n[NO-PERM] อ่านเอกสารสำเร็จแต่ยังสร้างเอกสารให้ไม่ได้ — "
+                            + "บัญชีของคุณไม่มีสิทธิ์สร้างเอกสารประเภทนี้ กรุณาขอสิทธิ์จากเจ้าของบริษัท";
+                    }
+                    else
+                        await AutoCreateDocumentAsync(companyId, scanResult, extractedData);
                 }
                 catch (Exception ex)
                 {

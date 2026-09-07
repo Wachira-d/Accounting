@@ -3638,6 +3638,14 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_LineBindCodes_Code" ON "LineBindCodes" ("Code") WHERE "UsedAt" IS NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Users_LineUserId" ON "Users" ("LineUserId") WHERE "LineUserId" IS NOT NULL;""",
+            // LINE เดียว = บัญชีเดียว — เดิมเป็น index ธรรมดา (บรรทัดถัดขึ้นไปในไฟล์
+            // เดียวกันเขียน CREATE UNIQUE INDEX ให้ LineUserStates อยู่แล้ว) และ
+            // ตอนผูกก็ไม่เคยล้างค่าเดิมของผู้ใช้รายอื่น ⇒ มีสองแถวค่าเท่ากันได้ แล้ว
+            // `FirstOrDefaultAsync` ที่ไม่มี ORDER BY หยิบแถวไหนก็ได้ตามแผน query
+            // ⇒ บอทตอบในนามบัญชีที่ผู้ใช้ไม่ได้ตั้งใจ (ผลตรวจทีม E · E-07)
+            // ต้องล้างของซ้ำก่อน ไม่งั้น CREATE UNIQUE INDEX ล้ม: เก็บแถวที่ผูกล่าสุด
+            """UPDATE "Users" u SET "LineUserId" = NULL WHERE "LineUserId" IS NOT NULL AND EXISTS (SELECT 1 FROM "Users" v WHERE v."LineUserId" = u."LineUserId" AND (COALESCE(v."UpdatedAt", v."CreatedAt"), v."Id") > (COALESCE(u."UpdatedAt", u."CreatedAt"), u."Id"));""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_Users_LineUserId" ON "Users" ("LineUserId") WHERE "LineUserId" IS NOT NULL;""",
 
             // ===== LineUserStates — multi-company active selection per LINE user =====
             """
