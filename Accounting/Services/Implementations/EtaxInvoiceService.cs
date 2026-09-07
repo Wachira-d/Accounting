@@ -244,8 +244,19 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         await using var dbTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            var count = await _db.EtaxInvoices.CountAsync(e => e.CompanyId == companyId);
-            var etaxRef = $"ETAX-{company.TaxId}-{DateTime.UtcNow:yyyyMMdd}-{(count + 1):D6}";
+            // เลข ETAX ต้องไม่ซ้ำและไม่ "วนกลับ" — เดิมใช้ `CountAsync() + 1` ซึ่งพลาด
+            // 3 อย่างตามบทเรียน `Helpers/SequenceNumber`: ไม่มีล็อก (สอง instance ได้
+            // เลขเดียวกัน) · นับจากจำนวนแถวไม่ใช่เลขสูงสุด (ลบแถวทิ้ง = เลขวนกลับไป
+            // ทับใบเก่า) · ไม่เห็นแถวที่ยัง Add ค้างใน change tracker
+            var etaxPrefix = $"ETAX-{company.TaxId}-{DateTime.UtcNow:yyyyMMdd}-";
+            var etaxRef = await Accounting.Helpers.SequenceNumber.NextAsync(
+                _db, companyId, Accounting.Helpers.AdvisoryLockKey.ModuleSequence, etaxPrefix,
+                _db.EtaxInvoices.IgnoreQueryFilters()
+                    .Where(e => e.CompanyId == companyId && e.EtaxRefNumber.StartsWith(etaxPrefix))
+                    .Select(e => e.EtaxRefNumber),
+                _db.ChangeTracker.Entries<Models.Entities.EtaxInvoice>()
+                    .Select(en => en.Entity.EtaxRefNumber),
+                digits: 6);
 
             // For CN/DN, load original document for OriginalDocumentReference per ETDA spec
             Document? originalDoc = null;
@@ -415,7 +426,20 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             // (กันส่งเอกสารเซ็นแบบ development ไปสรรพากร แม้ AutoSubmit เปิด)
             if (etaxConfig.AutoSubmit && usedRealCert)
             {
-                return await SubmitToRevenueAsync(companyId, etax.Id);
+                // ★ "ส่งไม่ได้เพราะยังไม่ได้ตั้งค่า RD API" **ไม่ใช่ "ลงนามล้มเหลว"**
+                //   — ถ้าปล่อยให้หลุดไป catch ข้างล่าง เอกสารที่เซ็นสำเร็จแล้วจะถูก
+                //   ตั้งเป็น Status=Error + "ลงนามล้มเหลว" ซึ่งไม่จริงและผู้ใช้จะไป
+                //   ไล่แก้ certificate ผิดทาง (ข้อความ error ที่เดาสาเหตุแทนผู้ใช้)
+                try
+                {
+                    return await SubmitToRevenueAsync(companyId, etax.Id);
+                }
+                catch (Accounting.Helpers.BusinessRuleException brex)
+                {
+                    _logger.LogWarning("e-Tax {EtaxRef}: ลงนามสำเร็จแต่ยังนำส่งไม่ได้ — {Reason}",
+                        etax.EtaxRefNumber, brex.Message);
+                    return MapToResponse(etax);
+                }
             }
             if (etaxConfig.AutoSubmit && !usedRealCert)
                 _logger.LogWarning("e-Tax {EtaxRef}: AutoSubmit ข้าม — เซ็นแบบ development ยังส่ง RD ไม่ได้", etax.EtaxRefNumber);
@@ -534,16 +558,34 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             ? _config["Etax:RdTestApiBaseUrl"]
             : _config["Etax:RdApiBaseUrl"];
 
-        // If no API key configured, use offline mode (mark as submitted without calling API)
+        // ── ยังไม่ได้ตั้งค่าการเชื่อมต่อกรมสรรพากร ──
+        //
+        // ⚠️ เดิมบล็อกนี้เป็น "โหมดออฟไลน์" ที่ **ประทับว่าส่งสำเร็จ** ทั้งที่ไม่เคย
+        // ยิง HTTP ไปไหนเลย: ตั้ง Status=Submitted · SubmittedAt=UtcNow ·
+        // SubmissionId="OFFLINE-…" แล้วคอนโทรลเลอร์ตอบ "ส่งกรมสรรพากรสำเร็จ"
+        // และ `RdApiKey` มีค่าเริ่มต้นเป็นสตริงว่างใน appsettings ⇒ **ลูกค้าที่ยัง
+        // ไม่ได้กรอกคีย์เดินเข้าเส้นนี้ 100%** (ผลตรวจ e-Tax รอบ 147)
+        //
+        // ที่ร้ายกว่าคำว่า "สำเร็จ": `SubmittedAt != null` ถูกใช้เป็น**ด่านล็อก
+        // เอกสาร** 4 จุดใน DocumentService ("เอกสารนี้ส่ง e-Tax ไปสรรพากรแล้ว —
+        // แก้ไม่ได้") ⇒ เอกสารถูกล็อกถาวรด้วยเหตุการณ์ที่ไม่เคยเกิดขึ้น ขณะที่
+        // กรมสรรพากรไม่เคยได้รับอะไรเลย และผู้ใช้ไม่มีทางรู้จนถึงวันถูกตรวจ
+        //
+        // ⇒ ล้มดังพร้อมทางไปต่อ (กติกา "ปฏิเสธแล้วต้องมีทางไปต่อ") · ห้ามแตะ
+        //   SubmittedAt/Status — เอกสารยังอยู่สถานะ "ลงนามแล้ว" ซึ่งเป็นความจริง
         if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(baseUrl))
         {
-            _logger.LogWarning("RD API not configured. Using offline submission mode for e-Tax {EtaxRef}", etax.EtaxRefNumber);
-            etax.Status = EtaxStatus.Submitted;
-            etax.SubmittedAt = DateTime.UtcNow;
-            etax.SubmissionId = $"OFFLINE-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid().ToString()[..8]}";
-            etax.ErrorMessage = "โหมดออฟไลน์: กรุณาตั้งค่า RD API Key เพื่อส่งข้อมูลจริง";
+            _logger.LogWarning("RD API not configured — ไม่ส่ง e-Tax {EtaxRef} (ไม่ประทับว่าส่งแล้ว)",
+                etax.EtaxRefNumber);
+            etax.ErrorMessage = "ยังไม่ได้ตั้งค่าการเชื่อมต่อกรมสรรพากร — เอกสารลงนามแล้วแต่ยังไม่ได้นำส่ง";
+            etax.ErrorCode = "RD_API_NOT_CONFIGURED";
             await _db.SaveChangesAsync();
-            return MapToResponse(etax);
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ยังไม่ได้ตั้งค่าการเชื่อมต่อกรมสรรพากร (RD API Key / URL) จึงยังนำส่ง e-Tax ไม่ได้ — "
+                + "ไปที่หน้าตั้งค่า e-Tax เพื่อกรอกคีย์ที่ได้รับจากกรมสรรพากร "
+                + "หรือเปลี่ยนไปใช้โหมด \u201ce-Tax Invoice by Email\u201d สำหรับกิจการที่รายได้ไม่เกิน 30 ล้านบาท/ปี "
+                + "· เอกสารยังอยู่สถานะ \u201cลงนามแล้ว\u201d และนำส่งภายหลังได้",
+                "ETAX-RD-NOT-CONFIGURED");
         }
 
         try

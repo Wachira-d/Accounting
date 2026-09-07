@@ -1,4 +1,5 @@
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.DTOs.Email;
@@ -19,20 +20,49 @@ public class EtaxController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly Data.AccountingDbContext _db;
     private readonly IDocumentEmailService _docEmailService;
+    private readonly IPermissionService _permissions;
 
     public EtaxController(IEtaxInvoiceService etaxService, IConfiguration configuration,
-        Data.AccountingDbContext db, IDocumentEmailService docEmailService)
+        Data.AccountingDbContext db, IDocumentEmailService docEmailService,
+        IPermissionService permissions)
     {
         _etaxService = etaxService;
         _configuration = configuration;
         _db = db;
         _docEmailService = docEmailService;
+        _permissions = permissions;
+    }
+
+    /// <summary>ด่านสิทธิ์ตัวเดียวของคอนโทรลเลอร์นี้
+    ///
+    /// <para>⚠️ เดิมมีแค่ <c>[Authorize]</c> ระดับคลาส ซึ่งตอบแค่ "ล็อกอินอยู่ไหม"
+    /// ไม่ใช่ "มีสิทธิ์ทำสิ่งนี้ไหม" ⇒ สมาชิกคนไหนของบริษัทก็ **ยื่นเอกสารต่อ
+    /// กรมสรรพากรแทนบริษัทได้** ทั้งที่การยื่นที่ RD ตอบรับแล้ว **ย้อนกลับไม่ได้**
+    /// (โค้ดเองเขียนไว้ใน <c>VoidAsync</c>) · และ
+    /// <c>tools/write_permission_gate_check.py</c> เป็น allow-list ที่ไม่เคยมอง
+    /// ไฟล์นี้ จึงรายงานเขียวตลอด — เพิ่มเข้าลิสต์แล้ว (ผลตรวจรอบ 147)</para>
+    ///
+    /// <para>รวมเป็นเมธอดเดียวเพราะข้อความปฏิเสธต้องบอก<b>ชื่อคีย์ที่ต้องขอ</b>
+    /// ให้ตรงกันทุกจุด — 10 endpoint ที่ต่างคนต่างแต่งข้อความจะ drift แน่นอน</para>
+    ///
+    /// <para>Owner/SystemAdmin ผ่านอัตโนมัติ ⇒ ผู้ที่เปิดบริษัทเองไม่กระทบ</para>
+    /// </summary>
+    private async Task<ActionResult?> RequireEtaxAsync(Guid companyId, string permKey, string verb)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await _permissions.HasPermissionAsync(companyId, userId, permKey))
+            return null;
+        return StatusCode(403, new ApiResponse<object>(false, new
+        {
+            requiredPermission = permKey.Replace("perm:", ""),
+        }, $"ไม่มีสิทธิ์{verb} — ต้องได้รับสิทธิ์ \u201c{permKey.Replace("perm:", "")}\u201d จากเจ้าของบริษัทก่อน"));
     }
 
     [HttpPost("generate")]
     public async Task<ActionResult<ApiResponse<EtaxInvoiceResponse>>> Generate(
         Guid companyId, [FromBody] GenerateEtaxRequest request)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxIssue, "สร้าง e-Tax Invoice") is { } d) return d;
         var result = await _etaxService.GenerateAsync(companyId, request);
         return Ok(new ApiResponse<EtaxInvoiceResponse>(true, result, "สร้าง e-Tax Invoice สำเร็จ"));
     }
@@ -62,6 +92,7 @@ public class EtaxController : ControllerBase
     [HttpPost("{etaxId:guid}/sign")]
     public async Task<ActionResult<ApiResponse<EtaxInvoiceResponse>>> Sign(Guid companyId, Guid etaxId)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxIssue, "ลงนาม e-Tax") is { } d) return d;
         var result = await _etaxService.SignAsync(companyId, etaxId);
         return Ok(new ApiResponse<EtaxInvoiceResponse>(true, result, "ลงนามดิจิทัลสำเร็จ"));
     }
@@ -69,6 +100,7 @@ public class EtaxController : ControllerBase
     [HttpPost("{etaxId:guid}/submit")]
     public async Task<ActionResult<ApiResponse<EtaxInvoiceResponse>>> Submit(Guid companyId, Guid etaxId)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxSubmit, "นำส่ง e-Tax ต่อกรมสรรพากร") is { } d) return d;
         var result = await _etaxService.SubmitToRevenueAsync(companyId, etaxId);
         return Ok(new ApiResponse<EtaxInvoiceResponse>(true, result, "ส่งกรมสรรพากรสำเร็จ"));
     }
@@ -81,6 +113,7 @@ public class EtaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<EtaxRetryResultDto>>> RetryFailed(Guid companyId,
         [FromQuery] int limit = 100)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxSubmit, "นำส่ง e-Tax ต่อกรมสรรพากร") is { } d) return d;
         // EtaxStatus.Error = submission ล้มเหลวเชิงเทคนิค (network/cert/RD portal)
         // ที่ retry มีโอกาสสำเร็จ. Rejected = RD ปฏิเสธเชิงธุรกิจ retry ไม่ช่วย
         var failed = await _etaxService.GetAllAsync(companyId, Models.Enums.EtaxStatus.Error,
@@ -135,6 +168,7 @@ public class EtaxController : ControllerBase
     [HttpPost("{etaxId:guid}/generate-pdf")]
     public async Task<ActionResult<ApiResponse<object>>> GeneratePdf(Guid companyId, Guid etaxId)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxIssue, "ออกไฟล์ PDF/A-3 ของ e-Tax") is { } d) return d;
         var (pdf, fileName) = await _etaxService.GeneratePdfA3Async(companyId, etaxId);
         return Ok(new ApiResponse<object>(true, new
         {
@@ -148,6 +182,7 @@ public class EtaxController : ControllerBase
     [HttpPost("{etaxId:guid}/void")]
     public async Task<ActionResult<ApiResponse<bool>>> Void(Guid companyId, Guid etaxId)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxVoid, "ยกเลิก e-Tax") is { } d) return d;
         await _etaxService.VoidAsync(companyId, etaxId);
         return Ok(new ApiResponse<bool>(true, true, "ยกเลิกสำเร็จ"));
     }
@@ -156,6 +191,7 @@ public class EtaxController : ControllerBase
     [HttpPost("{etaxId:guid}/sign-and-submit")]
     public async Task<ActionResult<ApiResponse<EtaxInvoiceResponse>>> SignAndSubmit(Guid companyId, Guid etaxId)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxSubmit, "ลงนามและนำส่ง e-Tax") is { } d) return d;
         var signed = await _etaxService.SignAsync(companyId, etaxId);
         if (signed.Status == EtaxStatus.Signed)
         {
@@ -170,6 +206,7 @@ public class EtaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<EtaxInvoiceResponse>>> QuickSubmit(
         Guid companyId, [FromBody] GenerateEtaxRequest request)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxSubmit, "ออกและนำส่ง e-Tax ในขั้นตอนเดียว") is { } d) return d;
         var etax = await _etaxService.GenerateAsync(companyId, request);
         var signed = await _etaxService.SignAsync(companyId, etax.Id);
         if (signed.Status == EtaxStatus.Signed)
@@ -238,6 +275,7 @@ public class EtaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<DocumentEmailLogResponse>>> SendByEmail(
         Guid companyId, Guid etaxId, [FromBody] SendEtaxByEmailRequest request)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxSubmit, "ส่ง e-Tax ทางอีเมล") is { } d) return d;
         var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
         var log = await _docEmailService.SendEtaxByEmailAsync(companyId, etaxId, request, actor);
         var dto = MapLog(log);
@@ -269,6 +307,7 @@ public class EtaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<EtaxConfigResponse>>> UpdateConfig(
         Guid companyId, [FromBody] UpdateEtaxConfigRequest req)
     {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.CompanySettingsEdit, "แก้ไขการตั้งค่า e-Tax") is { } d) return d;
         var s = await GetOrCreateSettings(companyId);
         if (req.Mode.HasValue) s.EtaxMode = req.Mode.Value;
         if (req.Enabled.HasValue) s.EtaxEnabled = req.Enabled.Value;

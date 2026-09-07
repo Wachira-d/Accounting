@@ -115,6 +115,14 @@ public static class PermissionKeys
     public const string DocumentPurchaseApprove = P + "Document.Purchase.Approve";
     public const string DocumentPurchaseVoid    = P + "Document.Purchase.Void";
 
+    // ───── e-Tax Invoice (ETDA ขมธอ.3-2560) ─────
+    // ⚠️ เดิม `EtaxController` มีแค่ `[Authorize]` ระดับคลาส = "ล็อกอินอยู่ไหม"
+    // ⇒ สมาชิกคนไหนก็ **ยื่นเอกสารต่อกรมสรรพากรแทนบริษัทได้** และการยื่นที่ RD
+    // ตอบรับแล้ว **ย้อนกลับไม่ได้** (โค้ดเองเขียนไว้ใน VoidAsync) — ผลตรวจรอบ 147
+    public const string EtaxIssue  = P + "Etax.Issue";
+    public const string EtaxSubmit = P + "Etax.Submit";
+    public const string EtaxVoid   = P + "Etax.Void";
+
     // ───── Banking / Reconciliation ─────
     public const string BankView          = P + "Bank.View";
     public const string BankReconcile     = P + "Bank.Reconcile";
@@ -228,6 +236,11 @@ public static class PermissionKeys
         new(DocumentPurchaseCreate, "เอกสาร", "สร้างเอกสารฝั่งรายจ่าย",  "ออก PI/PO/PV/Expense"),
         new(DocumentPurchaseApprove,"เอกสาร", "อนุมัติเอกสารฝั่งรายจ่าย", "อนุมัติเฉพาะเอกสารซื้อ/จ่าย"),
         new(DocumentPurchaseVoid,   "เอกสาร", "ยกเลิกเอกสารฝั่งรายจ่าย",  "void เฉพาะเอกสารซื้อ/จ่าย"),
+
+        // e-Tax Invoice
+        new(EtaxIssue,  "e-Tax", "สร้าง/ลงนาม e-Tax Invoice",   "generate XML · ลงนามดิจิทัล · ออก PDF/A-3"),
+        new(EtaxSubmit, "e-Tax", "นำส่ง e-Tax ต่อกรมสรรพากร",   "ย้อนกลับไม่ได้เมื่อ RD ตอบรับแล้ว · รวมส่งทางอีเมล"),
+        new(EtaxVoid,   "e-Tax", "ยกเลิก e-Tax",                "ทำได้ก่อน RD ตอบรับเท่านั้น"),
 
         // Banking
         new(BankView,         "ธนาคาร",  "ดูบัญชีธนาคาร",            "ยอดคงเหลือ · transactions"),

@@ -34,6 +34,11 @@ WATCHED = [
     # ซื้อโควตา · ส่งหลักฐานชำระเงิน) แต่มีแค่ [Authorize] ระดับคลาสมาตลอด
     # ⇒ สมาชิกคนไหนก็กดแทนบริษัทได้ · checker ไม่เคยมองเพราะไม่อยู่ในลิสต์นี้
     "Accounting/Controllers/MeteringController.cs",
+    # เพิ่มรอบ 147 — ทุก write ที่นี่ "ยื่นเอกสารต่อกรมสรรพากรแทนบริษัท"
+    # (ออก/ลงนาม/นำส่ง/ยกเลิก e-Tax · ส่งอีเมลที่มี timestamp ของ ETDA) แต่มีแค่
+    # [Authorize] ระดับคลาส ⇒ สมาชิกคนไหนก็ยื่นแทนบริษัทได้ · checker รายงานเขียว
+    # ตลอดเพราะไฟล์นี้ไม่เคยอยู่ในลิสต์ (บทเรียน "allow-list ครบไหม ≠ ผ่านไหม")
+    "Accounting/Controllers/EtaxController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -43,6 +48,7 @@ GATE_MARKERS = (
     "DocumentPermissionHelper",
     "RequirePayrollWriteAsync",
     "RequireBillingAsync",
+    "RequireEtaxAsync",
     "RequireAnyAsync",
     "HasPermissionAsync",
     "UserRole.Owner",          # ด่าน Owner-only (purge)

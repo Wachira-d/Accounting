@@ -1370,7 +1370,24 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Storage**: `EtaxInvoice` entity → `XmlContent` + `EtaxRefNumber` +
   `CertificateSerialNumber` + `SignedAt`
 - **Submission**: cron ส่ง batch ภายในวันที่ 15 ของเดือนถัดไป →
-  `SubmittedToRdAt`
+  `SubmittedToRdAt` — ⚠️ **ยังไม่มีในโค้ด** (ไม่มี hosted service ตัวไหนเรียก
+  `SubmitToRevenueAsync`; `retry-failed` ก็ไม่มี UI เรียก) ดู `SYSTEM_AUDIT_2026-09-07.md` B-06
+- **เมื่อยังไม่ได้ตั้งค่า RD API** (รอบ 147) — เดิม `SubmitToRevenueAsync` ตั้ง
+  `Status=Submitted` + `SubmissionId="OFFLINE-…"` ทั้งที่**ไม่เคยยิงไปที่ไหนเลย**
+  ⇒ เอกสารถูกประทับว่า "นำส่งแล้ว" และล็อกถาวร (void ไม่ได้ ส่งซ้ำไม่ได้).
+  ตอนนี้ **ไม่ประทับ** — คงสถานะ `Signed` แล้ว throw
+  `BusinessRuleException("ETAX-RD-NOT-CONFIGURED")` พร้อมบอกทางไปต่อ ·
+  เส้น auto-submit จับ exception นี้แล้วคืนใบที่ลงนามแล้ว (ลงนามไม่ถือว่าล้ม) ·
+  migration ล้างแถวเก่าที่ `SubmissionId LIKE 'OFFLINE-%'` กลับเป็น `Signed`
+- **เลข `EtaxRefNumber`** (รอบ 147) — `ETAX-{TaxId}-{yyyyMMdd}-{seq:D6}` ออกผ่าน
+  `Helpers/SequenceNumber.NextAsync` (advisory lock + integer-max + change tracker)
+  ภายใน transaction เดียวกับการ insert · เดิมใช้ `CountAsync()+1` ซึ่งเลขวนกลับ
+  ไปทับของเดิมเมื่อมีการลบแถว และสอง instance ได้เลขเดียวกัน
+- **ด่านสิทธิ์** (รอบ 147) — `EtaxController` ทุก write endpoint ผ่าน
+  `RequireEtaxAsync` → `PermissionKeys.EtaxIssue` (ออก/สร้าง PDF) ·
+  `EtaxSubmit` (ลงนาม/นำส่ง/quick-submit/ส่งอีเมล/retry) · `EtaxVoid` (ยกเลิก) ·
+  `CompanySettingsEdit` (แก้ config). ไฟล์นี้อยู่ใน `WATCHED` ของ
+  `tools/write_permission_gate_check.py` แล้ว
 - **ยอดเงิน (CII summation) — ต้อง ex-VAT ทั้งหมด** (`BuildLineItem` +
   summation `:667`):
   - per-line: `ChargeAmount` (unit price) + `ActualAmount` (discount) ถอด VAT
@@ -4693,3 +4710,13 @@ _Last verified against codebase: 2026-09-06 (รอบ 142 — **สมุดท
 ตัดสิน/บันทึกลง `OcrScanResult.FieldDecisionsJson` → `OcrResultResponse` → แผง
 "ค่านี้มาจากไหน" ในหน้า review. **ค่าที่ใช้จริงยังมาจากลำดับเดิมทุกช่อง** — เฟสนี้
 เปลี่ยนแค่ "ตรวจสอบที่มาได้" ยังไม่ย้ายตัวตัดสิน)_
+
+
+---
+
+_Last verified against codebase: 2026-09-07 (รอบ 147 — **e-Tax: หยุดโกหกว่าส่งแล้ว +
+ด่านสิทธิ์ + เลขรัน**: `SubmitToRevenueAsync` ไม่ประทับ `Submitted` เมื่อยังไม่ได้ตั้งค่า
+RD API (เดิมประทับ + ล็อกเอกสารถาวร) · `EtaxController` 10 write endpoint ผ่านด่าน
+`RequireEtaxAsync` + เพิ่มไฟล์เข้า `WATCHED` ของ checker (เดิมรายงานเขียวตลอดเพราะไม่เคยมอง
+ไฟล์นี้) · `EtaxRefNumber` ย้ายไป `SequenceNumber`. ผลตรวจ 7 ทีมรอบนี้อยู่ใน
+`SYSTEM_AUDIT_2026-09-07.md`)_
