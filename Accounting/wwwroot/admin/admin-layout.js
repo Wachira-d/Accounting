@@ -21,6 +21,22 @@ const AdminLayout = {
       .replace(/'/g, '&#39;');
   },
 
+  /** แปลง "ปี" ที่อ่านจากเอกสารไทยเป็น ค.ศ. — กติกาเดียวกับ `Layout.normalizeThaiYear`
+   *  และ `Helpers/ThaiDate.NormalizeYear` เป๊ะ (หน้าแอดมินไม่ได้โหลด `js/layout.js`
+   *  จึงเป็นสำเนาที่ **ต้องมี** — ไม่ใช่ drift)
+   *
+   *  ⚠️ ที่มา: หน้านี้เคยเขียนเกณฑ์ของตัวเอง ("เติม '20' หน้าปีย่อเสมอ แล้วถ้าเกิน
+   *  currentYear+10 ค่อยลบ 543") ⇒ ปีย่อ พ.ศ. `69` → 2069 → **1526** */
+  normalizeThaiYear(year, shortBeFloor = 60) {
+    const y = parseInt(year, 10);
+    if (!Number.isFinite(y)) return NaN;
+    if (y >= 2400) return y - 543;
+    if (y >= 1900) return y;
+    if (y >= 100) return y;
+    if (y >= shortBeFloor) return 2500 + y - 543;
+    return 2000 + y;
+  },
+
   /** ค่าที่จะฝังใน **JS string literal ภายใน onclick=""** — ไม่ใช่ `esc()`
    *
    *  กติกาเดียวกับ `Layout.jsArg` เป๊ะ (หน้าแอดมินไม่ได้โหลด `js/layout.js`)

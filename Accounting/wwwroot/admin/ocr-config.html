@@ -499,15 +499,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
           </div>
           <div>
             <label style="display:block;font-size:12px;font-weight:600;color:#78350f;margin-bottom:2px">WHT %</label>
+            <!-- ตัวเลือกสร้างจาก /api/reference/income-types (Helpers/ThaiWhtRateTable)
+                 ⚠️ เดิมพิมพ์ไว้เองและ **ผิดกฎหมาย 2 จุด**: "10% (วิชาชีพอิสระ)"
+                 (40(6) = 3%) และ "15% (ดอกเบี้ย / ค่าสิทธิ)" (ค่าสิทธิ 40(3) = 3%)
+                 — ตัวอย่างฝึกระดับระบบที่ติดอัตราผิดจะสอนทุก tenant ผิดตาม -->
             <select id="trainSysWhtRate" style="width:100%;padding:6px 10px;border:1px solid #fcd34d;border-radius:6px;font-size:12px">
               <option value="">— ไม่ระบุ —</option>
               <option value="0">0% (ไม่หัก)</option>
-              <option value="1">1% (ขนส่ง / ค่าขนถ่าย)</option>
-              <option value="2">2% (โฆษณา)</option>
-              <option value="3">3% (บริการทั่วไป / รับเหมา)</option>
-              <option value="5">5% (ค่าเช่า)</option>
-              <option value="10">10% (วิชาชีพอิสระ)</option>
-              <option value="15">15% (ดอกเบี้ย / ค่าสิทธิ)</option>
             </select>
           </div>
           <div>
@@ -832,6 +830,38 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         __diagStep('diagStep3', 'step 3: init() THREW', '#ef4444');
         __diagError(String(err && err.message || err));
       }
+
+      // เติมตัวเลือกอัตราหัก ณ ที่จ่ายจากตารางกฎหมายฝั่งเซิร์ฟเวอร์
+      // (ห้ามพิมพ์อัตราไว้ใน HTML — ตารางกฎหมายที่คัดลอกไปเขียนใหม่ = สอนผิดถาวร)
+      (async function loadWhtRateOptions() {
+        var sel = document.getElementById('trainSysWhtRate');
+        if (!sel) return;
+        try {
+          var res = await fetch('/api/reference/income-types');
+          var json = await res.json();
+          var types = json && (json.data || json) || [];
+          var seen = {};
+          types.forEach(function (t) {
+            [t.individualRate, t.juristicRate].forEach(function (r) {
+              if (r == null || seen[r]) return;
+              seen[r] = 1;
+              var names = types.filter(function (x) {
+                return x.individualRate === r || x.juristicRate === r;
+              }).map(function (x) { return x.name; }).join(' / ');
+              var o = document.createElement('option');
+              o.value = String(r);
+              o.textContent = r + '% (' + names + ')';
+              sel.appendChild(o);
+            });
+          });
+        } catch (e) {
+          // ห้ามตกไปใช้ลิสต์ที่พิมพ์เอง — บอกว่าทำไมมีแค่ "ไม่หัก"
+          var o = document.createElement('option');
+          o.disabled = true;
+          o.textContent = '— โหลดตารางอัตราไม่สำเร็จ (รีเฟรชหน้า) —';
+          sel.appendChild(o);
+        }
+      })();
 
       // Step 4: Check sidebar element exists (synchronous, not setTimeout)
       var s = document.querySelector('.admin-sidebar');
@@ -1495,11 +1525,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
             if (isoMatch) {
               iso = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
             } else if (dmyMatch) {
-              let yy = dmyMatch[3];
-              if (yy.length === 2) yy = '20' + yy;
-              // If year > current+10, assume Thai Buddhist year and convert
-              const yNum = parseInt(yy, 10);
-              if (yNum > new Date().getFullYear() + 10) yy = String(yNum - 543);
+              // ⚠️ เดิมเขียนเกณฑ์ของตัวเอง (เติม '20' หน้าปีย่อเสมอ แล้วค่อยลบ 543
+              // ถ้าเกิน currentYear+10) ⇒ ปีย่อ พ.ศ. "69" → 2069 → **1526**
+              // ใช้ตัวกลางตัวเดียวที่ mirror `Helpers/ThaiDate.NormalizeYear`
+              const yy = String(AdminLayout.normalizeThaiYear(dmyMatch[3]));
               iso = `${yy}-${dmyMatch[2].padStart(2,'0')}-${dmyMatch[1].padStart(2,'0')}`;
             }
             if (iso) document.getElementById('trainSysDocDate').value = iso;

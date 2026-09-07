@@ -209,7 +209,7 @@
           </div>
           <div class="btn-row">
             <button class="btn btn-pay" onclick="Page.openPayPad()" style="font-size:18px;padding:14px 0">💰 ชำระเงิน</button>
-            <button class="btn btn-complete" onclick="Page.completeOrder()">ปิดบิล</button>
+            <button class="btn btn-complete" onclick="Page.completeOrderClick()">ปิดบิล</button>
           </div>
           <div class="btn-row">
             <button class="btn btn-void" style="flex:1" onclick="Page.voidOrder()" data-i18n="common.cancel">ยกเลิก</button>
@@ -1906,8 +1906,17 @@
 
       // ===== Pay-pad calculator =====
       async openPayPad() {
-        const orderId = await this.createOrderIfNeeded();
-        if (!orderId) return;
+        // ออฟไลน์: ยังไม่มีออเดอร์บนเซิร์ฟเวอร์ให้ผูก — เปิดแป้นจากตะกร้าในเครื่องแทน
+        // (เดิมเส้นออฟไลน์เข้าแป้นนี้ไม่ได้เลยเพราะ createOrderIfNeeded ยิง API)
+        this._payPadOffline = (!navigator.onLine && !this.currentOrderId);
+        if (!this._payPadOffline) {
+          const orderId = await this.createOrderIfNeeded();
+          if (!orderId) return;
+        } else if (!this.session) {
+          Layout.toast('กรุณาเปิดกะก่อน (กะต้องเปิดตอนยังออนไลน์)', 'warning'); return;
+        } else if (!this.cart.length) {
+          Layout.toast('ตะกร้าว่าง', 'warning'); return;
+        }
         this._payPadMethod = 'Cash';
         // Reset tab UI
         document.querySelectorAll('#payPadTabs .ppt').forEach(b => b.classList.toggle('active', b.dataset.method === 'Cash'));
@@ -1936,15 +1945,19 @@
       },
       _payPadRemaining() {
         const order = this.currentOrder;
-        if (!order) return 0;
+        if (!order) {
+          // ออฟไลน์รับชำระทีเดียวจบ ⇒ ยอดคงเหลือ = ยอดตะกร้าทั้งใบ
+          if (!this._payPadOffline) return 0;
+          return +this.cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0).toFixed(2);
+        }
         const paid = (order.payments || []).reduce((s, p) => s + p.amount, 0);
         return Math.max(0, +(order.netAmount - paid).toFixed(2));
       },
       _payPadRecalc() {
         const order = this.currentOrder;
-        const net = order?.netAmount || 0;
+        const remaining = this._payPadRemaining();
+        const net = order?.netAmount ?? remaining;
         const paid = (order?.payments || []).reduce((s, p) => s + p.amount, 0);
-        const remaining = Math.max(0, +(net - paid).toFixed(2));
         const received = parseFloat(document.getElementById('ppReceived').value) || 0;
         document.getElementById('ppDue').textContent = Layout.money(net);
         document.getElementById('ppPaid').textContent = Layout.money(paid);
@@ -1986,14 +1999,33 @@
         document.getElementById('ppReceived').value = this._payPadRemaining().toFixed(2);
         this._payPadRecalc();
       },
+      /// อ่านค่าจากแป้นชำระเงิน — **ตัวอ่านตัวเดียว**ของทั้งเส้นออนไลน์และออฟไลน์
+      /// (เดิมเส้นออฟไลน์อ่าน id ชุดของตัวเอง `payMethod`/`payAmount`/`payRef`
+      /// ซึ่ง **ไม่มีอยู่ในหน้านี้เลย** ⇒ TypeError เงียบ ๆ ตั้งแต่บรรทัดแรก)
+      _readPayPad() {
+        return {
+          method: this._payPadMethod || 'Cash',
+          received: parseFloat(document.getElementById('ppReceived').value) || 0,
+          referenceNo: document.getElementById('ppRef').value || null,
+        };
+      },
       async payPadConfirm() {
+        const pad = this._readPayPad();
+        const method = pad.method;
+        const received = pad.received;
+        const remaining = this._payPadRemaining();
+        if (received <= 0) { Layout.toast('ใส่จำนวนเงินก่อน', 'warning'); return; }
+        if (this._payPadOffline) {
+          if (received + 0.005 < remaining) {
+            Layout.toast(`ยอดชำระไม่ครบ (${received.toFixed(2)} / ${remaining.toFixed(2)}) — โหมดออฟไลน์รับชำระทีเดียว`, 'error');
+            return;
+          }
+          Layout.closeModal('payPadModal');
+          return this._completeOrderOffline(pad);
+        }
         const api = Layout.api(); if (!api) return;
         const orderId = this.currentOrderId;
         if (!orderId) return;
-        const method = this._payPadMethod || 'Cash';
-        const received = parseFloat(document.getElementById('ppReceived').value) || 0;
-        const remaining = this._payPadRemaining();
-        if (received <= 0) { Layout.toast('ใส่จำนวนเงินก่อน', 'warning'); return; }
         // For cash: amount = min(received, remaining) — overpayment becomes change.
         // For non-cash: amount = received (no change concept).
         const amount = method === 'Cash' ? Math.min(received, remaining) : received;
@@ -2030,6 +2062,15 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
+      /// ตัวห่อสำหรับ onclick — `Page.completeOrder()` เป็น async ที่ไม่มีใคร catch
+      /// ⇒ ข้อผิดพลาดใด ๆ กลายเป็น unhandled rejection ที่**ไม่ขึ้นบนจอเลย**
+      /// (ปุ่มเงินห้ามเงียบ)
+      completeOrderClick() {
+        Promise.resolve(this.completeOrder()).catch(e => {
+          console.error('completeOrder', e);
+          Layout.toast('ปิดบิลไม่สำเร็จ: ' + (e?.message || e), 'error');
+        });
+      },
       async completeOrder() {
         // Offline branch — when the connection is down AND nothing has been
         // sent to the server yet for this cart, queue the whole sale locally
@@ -2246,20 +2287,27 @@
         await this._refreshOfflineBadge();
       },
 
-      async _completeOrderOffline() {
+      async _completeOrderOffline(pad) {
         if (!this.session) { Layout.toast('กรุณาเปิดกะก่อน (กะต้องเปิดตอนยังออนไลน์)', 'warning'); return; }
         if (!this.cart.length) { Layout.toast('ตะกร้าว่าง', 'warning'); return; }
-        const method = document.getElementById('payMethod').value;
-        const recv = parseFloat(document.getElementById('payAmount').value) || 0;
-        const subtotal = this.cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
-        if (recv + 0.01 < subtotal) {
+        // ต้องมาจากแป้นชำระเงินเท่านั้น — ห้ามเดาวิธีชำระ/ยอดรับให้เอง
+        // ("ค่า default ที่แต่งขึ้นอันตรายกว่าการไม่ตอบ" — ใบเสร็จออฟไลน์กลายเป็น
+        //  รายการเงินสดที่ไม่มีใครสั่ง แล้ว sync ขึ้นเป็นความจริงบน GL)
+        if (!pad) {
+          Layout.toast('ออฟไลน์: กดปุ่ม 💰 ชำระเงิน เพื่อระบุวิธีชำระและยอดรับก่อนปิดบิล', 'warning');
+          return;
+        }
+        const method = pad.method;
+        const recv = pad.received;
+        const subtotal = +this.cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0).toFixed(2);
+        if (recv + 0.005 < subtotal) {
           Layout.toast(`ยอดชำระไม่ครบ (${recv.toFixed(2)} / ${subtotal.toFixed(2)}) — โหมดออฟไลน์รับชำระทีเดียว`, 'error');
           return;
         }
         const payload = {
           clientOrderId: this._uuid(),
           sessionId: this.session.id,
-          orderType: document.getElementById('orderType').value || 'DineIn',
+          orderType: parseInt(document.getElementById('orderType').value) || 0,
           customerId: this._attachedCustomerId || null,
           customerName: document.getElementById('fCustomerName').value || null,
           tableNumber: document.getElementById('fTableNo').value || null,
@@ -2281,7 +2329,7 @@
             paymentMethod: method,
             amount: subtotal,
             receivedAmount: recv,
-            referenceNo: document.getElementById('payRef').value || null,
+            referenceNo: pad.referenceNo,
           }],
         };
         try { await this._queueOfflineOrder(payload); }

@@ -463,7 +463,7 @@
       const typed = prompt(`⛔ ลบบริษัท "${AdminLayout.esc(name)}"\n\nบริษัทจะหายจากรายการของทุก user ทันที (ข้อมูลบัญชีเก็บตามกฎหมาย 5 ปี)\n\nพิมพ์ชื่อบริษัทให้ตรงทุกตัวอักษรเพื่อยืนยัน:`);
       if (typed === null) return;
       try {
-        await AdminApi.deleteCompany(id, typed);
+        await AdminAPI.deleteCompany(id, typed);
         alert('ลบบริษัทเรียบร้อย');
         document.getElementById('detailDrawer')?.classList?.remove('open');
         loadCustomers();

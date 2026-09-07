@@ -400,18 +400,48 @@
         const fc = (type) => (d.taxFormType === type || d.taxFormName === type) ? '&#9745;' : '&#9744;';
         const chk = (cond) => cond ? '&#9745;' : '&#9744;';
 
-        const getLines = (codes) => allLines.filter(l => codes.includes(l.incomeTypeCode));
-        const row = (codes) => {
-          const ls = getLines(codes);
+        // แถวบนแบบ 50 ทวิ ตัดสินจาก **มาตรา** ที่เซิร์ฟเวอร์ส่งมากับตารางประเภท
+        // เงินได้ (`_incomeTypes[].taxSection`) ไม่ใช่ลิสต์รหัสที่พิมพ์มือ
+        //
+        // ⚠️ เดิมเป็น allow-list ของรหัส 6 ชุด ซึ่ง **ตกรหัสที่ระบบเองสร้าง**:
+        // `8ad` (ค่าโฆษณา 2%) และ `8tr` (ค่าขนส่ง 1%) ไม่อยู่ในชุดไหนเลย และแถว
+        // "อื่น ๆ" ก็เป็น allow-list `['9','99','other']` จึงไม่ใช่ตาข่ายรับ
+        // ⇒ บรรทัดนั้นหายจากทุกแถว แต่ยอดรวมท้ายตาราง (มาจากเซิร์ฟเวอร์) ยังเต็ม
+        // ⇒ ผู้รับเงินเอาไปยื่นเครดิตภาษีไม่ได้เพราะไม่มีประเภทเงินได้
+        // ทิศของความผิดพลาดต้องเป็น "ไปโผล่แถวอื่น ๆ" ไม่ใช่ "หายเงียบ"
+        const sectionOf = (code) => {
+          const t = this._incomeTypes.find(x => String(x.code) === String(code));
+          // ยังไม่มีตารางจากเซิร์ฟเวอร์ (โหลดล้ม) → ใช้ค่าที่บรรทัดถืออยู่เป็นมาตรา
+          return String(t?.taxSection || code || '').replace(/\s/g, '');
+        };
+        // มาตรา → คีย์แถว · ไม่รู้จัก = แถว 6 (อื่น ๆ) เสมอ
+        const rowKeyOf = (line) => {
+          const sec = sectionOf(line.incomeTypeCode);
+          if (sec.startsWith('40(1)')) return 'r1';
+          if (sec.startsWith('40(2)')) return 'r2';
+          if (sec.startsWith('40(3)')) return 'r3';
+          if (sec.startsWith('40(4)')) {
+            // (ก) ดอกเบี้ย · (ข) เงินปันผล — รองรับทั้งอักษรไทยและละติน
+            if (/\((?:ข|b|B)\)/.test(sec)) return 'r4b';
+            if (/\((?:ก|a|A)\)/.test(sec)) return 'r4a';
+            return 'r6';   // 40(4) ที่ไม่ระบุวงเล็บ = ชี้ขาดไม่ได้ ห้ามเดา
+          }
+          if (/^40\((?:5|6|7|8)\)/.test(sec)) return 'r5';
+          return 'r6';
+        };
+        const buckets = { r1: [], r2: [], r3: [], r4a: [], r4b: [], r5: [], r6: [] };
+        allLines.forEach(l => buckets[rowKeyOf(l)].push(l));
+        const row = (key) => {
+          const ls = buckets[key];
           return { has: ls.length > 0, inc: ls.reduce((s,l)=>s+l.incomeAmount,0), tax: ls.reduce((s,l)=>s+l.taxAmount,0), date: ls.length > 0 ? ls[0].paymentDate : null };
         };
-        const r1 = row(['1','40(1)']);
-        const r2 = row(['2','40(2)']);
-        const r3 = row(['3','40(3)']);
-        const r4a = row(['4a','40(4)a','40(4)(a)']);
-        const r4b = row(['4b','40(4)b','40(4)(b)']);
-        const r5 = row(['5','6','7','8','40(5)','40(6)','40(7)','40(8)']);
-        const r6 = row(['9','99','other']);
+        const r1 = row('r1'), r2 = row('r2'), r3 = row('r3');
+        const r4a = row('r4a'), r4b = row('r4b'), r5 = row('r5'), r6 = row('r6');
+        // ด่านก่อนพิมพ์: Σ แถว 1-6 ต้องเท่ากับยอดรวมที่เซิร์ฟเวอร์คำนวณ
+        // (ถ้าไม่เท่า = มีบรรทัดตกหล่นจากทุกแถว — ห้ามพิมพ์เอกสารที่ยอดไม่ตรงเงียบ ๆ)
+        const rowTaxSum = [r1, r2, r3, r4a, r4b, r5, r6].reduce((s, r) => s + r.tax, 0);
+        if (Math.abs(rowTaxSum - (d.totalTaxAmount || 0)) > 0.005)
+          Layout.toast(`⚠️ ยอดภาษีในช่องประเภทเงินได้ (${Layout.money(rowTaxSum)}) ไม่ตรงกับยอดรวม (${Layout.money(d.totalTaxAmount)}) — มีบรรทัดที่ระบบจัดประเภทไม่ได้`, 'error');
         const mk = (r) => r.has
           ? `<td class="dtc">${Layout.date(r.date)}</td><td class="amt">${Layout.money(r.inc)}</td><td class="amt">${Layout.money(r.tax)}</td>`
           : '<td></td><td></td><td></td>';
