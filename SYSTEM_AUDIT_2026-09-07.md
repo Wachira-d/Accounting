@@ -75,9 +75,9 @@ shared volume) ซึ่งเป็นการตัดสินใจด้�
 | B-06 | B | ไม่มี cron นำส่งภายในวันที่ 15 · `retry-failed` ไม่มี UI เรียก | — |
 | B-07 | B | `ThaiAdminCodes` แต่งรหัสอำเภอ/ตำบลแล้ว default เป็น กทม. | `ThaiAdminCodes.cs` |
 | B-08 | B | ส่งยอดสกุลต่างประเทศให้ RD โดยไม่แปลง | — |
-| B-09 | B | สร้าง e-Tax อัตโนมัติล้มแล้วกลืนด้วย `LogWarning` | `DocumentService.cs:5470-5478` |
+| ✅ B-09 | B | สร้าง e-Tax อัตโนมัติล้มแล้วกลืนด้วย `LogWarning` | `DocumentService.cs:5470-5478` |
 | ✅ C-01 | C | `RefundDepositAsync` JE ไม่บาลานซ์เมื่อไม่มีผัง 21913 | `DocumentService.cs:3704-3745` |
-| C-02 | C | CN/DN ฝั่งซื้อไม่ดู `IsVatClaimable` | `DocumentService.cs:13566-13606` |
+| ✅ C-02 | C | CN/DN ฝั่งซื้อไม่ดู `IsVatClaimable` | `DocumentService.cs:13566-13606` |
 | ✅ C-03 | C | `TryReclassifyUndueOutputVatAsync` ใช้ `ResolveFiscalPeriodAsync` (ไม่เช็คงวดปิด) | `DocumentService.cs:12472` |
 | C-04 | C | `CnDnPurchaseSideOverride` อ่านใน JE แต่ไม่อ่านใน `ApplyStockMovementsAsync` | — |
 | C-05 | C | ใบเสร็จตัดชำระ/ใบลดหนี้คืนเงิน ออกนอก `ApproveDocumentAsync` ⇒ ข้ามด่าน §86/4 · `IssuerBranchCode` · `RetentionUntil` · `TaxPointDate` | — |
@@ -104,7 +104,7 @@ shared volume) ซึ่งเป็นการตัดสินใจด้�
 | ID | ทีม | เรื่อง |
 | --- | --- | --- |
 | A-06 | A | `CreateOrderAsync` ไม่เรียก `EnsureCartScopeAsync` |
-| A-07 | A | login/register ของ portal ไม่อยู่ใน tier `auth:` |
+| ✅ A-07 | A | login/register ของ portal ไม่อยู่ใน tier `auth:` |
 | A-08 | A | chat rate limit คีย์ด้วย `X-Forwarded-For` ที่ปลอมได้ |
 | B-10 | B | ไม่มี `EtdaTimestampToken` · `SendEtaxByEmailAsync` ไม่บังคับ `Status ≥ Signed` |
 | ✅ C-06 | C | ป้ายไทยผิดใน `RequireOpenFiscalPeriodAsync(..., "รายการตัดหนี้สูญ")` `:11539` |
@@ -116,7 +116,7 @@ shared volume) ซึ่งเป็นการตัดสินใจด้�
 | D-10 | D | เลขหนังสือรับรอง WHT ไม่ผ่าน `SequenceNumber` |
 | ✅ E-07 | E | `Users.LineUserId` เป็น index ไม่ unique + `FirstOrDefaultAsync` ไม่มี `OrderBy` |
 | ✅ F-06 | F | แปลง พ.ศ.→ค.ศ. ใน `admin/ocr-config.html` ให้ผลห่างจริง 500 ปี (ปีย่อ 2 หลัก) |
-| G-06 | G | rate limit เป็น per-process ⇒ เพดานจริง = เพดาน × จำนวนเครื่อง |
+| ✅ G-06 | G | rate limit เป็น per-process ⇒ เพดานจริง = เพดาน × จำนวนเครื่อง |
 | G-07 | G | `BulkCleanupController` สแกนทั้งบริษัทโดยไม่จำกัดช่วงเวลา |
 
 ---

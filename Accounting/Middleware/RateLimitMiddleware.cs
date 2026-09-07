@@ -33,7 +33,14 @@ public class RateLimitMiddleware
         // ลิงก์ยืนยันที่ดูเหมือนระบบส่งเอง · เดา token ได้ 600 ครั้ง/นาที ·
         // เอนูมอีเมลจากข้อความตอบกลับที่ต่างกันระหว่าง "มีบัญชี" กับ "ไม่มี"
         || path.StartsWith("/api/auth/sso", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/api/auth/external-logins", StringComparison.OrdinalIgnoreCase);
+        || path.StartsWith("/api/auth/external-logins", StringComparison.OrdinalIgnoreCase)
+        // ⚠️ ประตูล็อกอินของ **ลูกค้า/คู่ค้า** ก็เป็นประตูล็อกอิน (ผลตรวจทีม A · A-07)
+        // เดิมตกไป tier anonymous 600/นาที ⇒ ยิงเดารหัสผ่านลูกค้าได้ 60 เท่าของ
+        // เพดานที่ตั้งใจ · และเส้นผูกบัญชีหน้าร้านก็อยู่ในกลุ่มเดียวกัน
+        || path.StartsWith("/api/portal/login", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/api/portal/register", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith("/portal/login", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith("/portal/register", StringComparison.OrdinalIgnoreCase);
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -66,6 +73,34 @@ public class RateLimitMiddleware
             // เป็นพันคนจาก IP เดียวจะถูกบล็อกทันที.
             clientKey = $"auth:{context.Connection.RemoteIpAddress}";
             limit = _authEndpointMaxPerMinute;
+
+            // ⚠️ ตัวนับในหน่วยความจำเป็น **per-process** (ผลตรวจทีม G · G-06) ⇒
+            // deploy N instance = เพดานจริงกลายเป็น 10 × N ต่อ IP ซึ่งเป็นการ
+            // ปิดด่านที่ตั้งใจกัน credential stuffing โดยไม่ได้ตั้งใจ
+            //
+            // tier นี้ (และ tier นี้เท่านั้น) นับซ้ำที่ฐานข้อมูลด้วย atomic upsert
+            // — tier ทั่วไป 600/3000 ปล่อยเป็น per-process ได้ เพราะไม่ใช่ control
+            // ด้านความปลอดภัย และการยิง DB ทุก request จะแพงเกินคุ้ม
+            //
+            // fail-open เหมือน `ChatRateLimiter` (ตารางนับพัง ≠ เหตุผลที่จะปิด
+            // ประตูล็อกอินทั้งระบบ) — ตัวนับในหน่วยความจำยังทำงานอยู่เป็นชั้นแรก
+            var shared = context.RequestServices
+                .GetService(typeof(Accounting.Services.Interfaces.IChatRateLimiter))
+                as Accounting.Services.Interfaces.IChatRateLimiter;
+            if (shared != null
+                && !await shared.TryConsumeAsync(clientKey, _authEndpointMaxPerMinute,
+                        _authEndpointMaxPerMinute * 60, context.RequestAborted))
+            {
+                await shared.RecordStrikeAsync(clientKey, context.RequestAborted);
+                context.Response.StatusCode = 429;
+                context.Response.Headers.Append("Retry-After", "60");
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    success = false,
+                    message = "พยายามเข้าสู่ระบบบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่"
+                });
+                return;
+            }
         }
         else if (isAuthenticated)
         {

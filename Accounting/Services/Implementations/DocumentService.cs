@@ -5482,8 +5482,21 @@ public partial class DocumentService : IDocumentService
         }
         catch (Exception ex)
         {
-            // Don't surface the error — approval already succeeded. The user can
-            // retry manually from the detail modal's "สร้าง e-Tax" button.
+            // การอนุมัติสำเร็จไปแล้ว จึงไม่ throw (ล้มทั้งรายการ = ทิ้งข้อมูลผู้ใช้)
+            // — แต่ **ห้ามเงียบ**: log ของเซิร์ฟเวอร์ไม่ใช่ช่องทางแจ้งผู้ใช้
+            //
+            // ⚠️ ที่มา (ผลตรวจทีม B · SYSTEM_AUDIT_2026-09-07.md B-09): เดิมมีแค่
+            // `LogWarning` ⇒ บริษัทที่เปิด `EtaxAutoSign`/`EtaxAutoSubmit` ไว้เชื่อว่า
+            // ทุกใบที่อนุมัติถูกออก e-Tax ให้อัตโนมัติ แต่ใบที่ล้ม (เลขผู้เสียภาษี
+            // ผู้ซื้อไม่ครบ · ที่อยู่บริษัทไม่ครบ · ยังไม่ได้ตั้งค่า RD API) เงียบ
+            // สนิท ⇒ ไม่ถูกนำส่งภายในวันที่ 15 และไม่มีใครรู้จนสรรพากรทวง
+            //
+            // ดังใน 2 ที่ที่ผู้ใช้เปิดดูจริง: หมายเหตุภายในบนตัวเอกสาร + log
+            // (ห้ามใช้ `Notes` — PdfGenerationService พิมพ์ลงกระดาษที่ส่งให้ลูกค้า)
+            AppendInternalNote(doc,
+                $"[ETAX-AUTO-FAILED] ออก e-Tax อัตโนมัติไม่สำเร็จ: {ex.Message} — "
+                + "กด “สร้าง e-Tax” ที่หน้ารายละเอียดเอกสารเพื่อลองใหม่ "
+                + "(เอกสารนี้ยังไม่ถูกนำส่งกรมสรรพากร)");
             _logger.LogWarning(ex,
                 "Auto e-Tax generation failed for document {DocId} ({DocNumber})",
                 doc.Id, doc.DocumentNumber);
@@ -13591,15 +13604,29 @@ public partial class DocumentService : IDocumentService
                 //   Purch CN  → Cr expense (reverse)
                 //   Purch DN  → Dr expense (add)
                 var lineIsDebit = isPurchaseSide ? !isCreditNote : isCreditNote;
+                // ⚠️ ภาษีซื้อต้องห้าม §82/5 (ผลตรวจทีม C · C-02): ฝั่งซื้อ บรรทัดที่
+                // `IsVatClaimable = false` ตอนตั้งหนี้ **รวม VAT เป็นต้นทุน** ไม่เคย
+                // ลง 11610 ⇒ CN/DN ที่กลับรายการต้องกลับ "ต้นทุนรวม VAT" ให้ตรงกัน
+                // ไม่งั้น 11610 ติดลบทั้งที่ไม่เคยถูก Dr และค่าใช้จ่ายกลับไม่ครบ
+                // (เส้น PI/PV ทำแบบนี้อยู่แล้ว — ที่นี่คือจุดที่ตกหล่น)
+                var lineAmt = isPurchaseSide && !docLine.IsVatClaimable
+                    ? docLine.Amount + docLine.VatAmount
+                    : docLine.Amount;
                 AddLine(lineAccId.Value,
-                    lineIsDebit ? docLine.Amount : 0,
-                    lineIsDebit ? 0 : docLine.Amount,
-                    $"{typeLabel} - {docLine.Description}",
+                    lineIsDebit ? lineAmt : 0,
+                    lineIsDebit ? 0 : lineAmt,
+                    $"{typeLabel} - {docLine.Description}"
+                        + (isPurchaseSide && !docLine.IsVatClaimable ? " (รวมภาษีซื้อต้องห้าม §82/5)" : ""),
                     docLine.ProjectId);
             }
 
             // === VAT line ===
-            if (doc.VatAmount > 0)
+            // ฝั่งซื้อคิดเฉพาะส่วนที่ **เคลมได้** — ส่วนที่ต้องห้ามถูกพับเข้าบรรทัด
+            // ค่าใช้จ่ายข้างบนแล้ว (ตรงกับที่ใบตั้งหนี้ทำตอน Dr)
+            var cnDnVatAmount = isPurchaseSide
+                ? doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount)
+                : doc.VatAmount;
+            if (cnDnVatAmount > 0)
             {
                 // Sales: Output VAT 21911 (liability), Purchase: Input VAT 116 (asset)
                 // ⚠️ เคส VAT ใบเดิมยัง "พัก" อยู่บัญชีรอ (undue): CN/DN ต้องกลับ
@@ -13636,8 +13663,8 @@ public partial class DocumentService : IDocumentService
                     // Same direction rule as revenue/expense lines
                     var vatIsDebit = isPurchaseSide ? !isCreditNote : isCreditNote;
                     AddLine(vatAcc.Id,
-                        vatIsDebit ? doc.VatAmount : 0,
-                        vatIsDebit ? 0 : doc.VatAmount,
+                        vatIsDebit ? cnDnVatAmount : 0,
+                        vatIsDebit ? 0 : cnDnVatAmount,
                         $"{typeLabel} ภาษี{(isPurchaseSide ? "ซื้อ" : "ขาย")}"
                         + (vatCode is "21913" or "11640" ? " (กลับรายการบัญชีพัก undue)" : ""));
                 }
