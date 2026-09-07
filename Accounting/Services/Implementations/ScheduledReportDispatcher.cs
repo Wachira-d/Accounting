@@ -44,12 +44,30 @@ public class ScheduledReportDispatcher : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try { await RunOnceAsync(stoppingToken); }
+            try { await RunGuardedAsync(stoppingToken); }
             catch (Exception ex) { _logger.LogError(ex, "ScheduledReportDispatcher iteration failed"); }
             // 60 นาทีต่อรอบ — schedule granularity ระดับชั่วโมง
             try { await Task.Delay(TimeSpan.FromHours(1), stoppingToken); }
             catch (TaskCanceledException) { break; }
         }
+    }
+
+    /// <summary>กันสอง instance ส่งรายงานรอบเดียวกันพร้อมกัน (ผลตรวจทีม G · G-01)
+    ///
+    /// <para>⚠️ <c>IsDue</c> อ่าน <c>LastSentAt</c> แล้ว <b>ส่งอีเมลก่อน</b> ค่อย
+    /// เขียนกลับ ⇒ ทุก instance ตื่นพร้อมกัน (หน่วงเริ่มงาน 2 นาทีเท่ากันทุกเครื่อง
+    /// หลัง deploy) จึงอ่านเห็นค่าเก่าเหมือนกันหมด ⇒ ลูกค้าได้รายงาน P&amp;L /
+    /// AR aging <b>N ฉบับตามจำนวนเครื่อง</b> ทุกงวด</para>
+    ///
+    /// <para>ใช้ <b>try</b> ไม่ใช่ wait — งานตามตารางที่อีกเครื่องทำอยู่ การรอคือ
+    /// ทำงานเดิมซ้ำเปล่า ๆ</para></summary>
+    private async Task RunGuardedAsync(CancellationToken ct)
+    {
+        using var lockScope = _scopes.CreateScope();
+        var lockDb = lockScope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+        await Accounting.Helpers.JobLock.RunExclusiveAsync(
+            lockDb, Accounting.Helpers.AdvisoryLockKey.BackgroundJob,
+            nameof(ScheduledReportDispatcher), () => RunOnceAsync(ct), _logger, ct: ct);
     }
 
     private async Task RunOnceAsync(CancellationToken ct)

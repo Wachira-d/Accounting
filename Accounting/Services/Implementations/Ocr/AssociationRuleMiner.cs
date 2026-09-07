@@ -180,9 +180,19 @@ public class AssociationRuleMiner
         }
 
         // Persist — wipe + replace (we re-mined from scratch)
+        //
+        // ⚠️ ต้องอยู่ใน **transaction เดียว** (ผลตรวจทีม G · G-03): เดิม
+        // `SaveChanges` สองครั้งแยกกัน ⇒ มีหน้าต่างที่ตาราง **ว่างสนิท** ระหว่าง
+        // ลบกับใส่ ⇒ คำขอ OCR ที่วิ่งเข้ามาตอนนั้นไม่ได้คำแนะนำเลย (เกิดได้แม้
+        // เครื่องเดียว) · ส่วนการรันพร้อมกันสองเครื่อง (ซึ่งทำให้ได้ 4,000 แถว
+        // กฎซ้ำกันทุกข้อ เพราะตารางไม่มี unique index) กันด้วย JobLock ที่
+        // `OcrMlBackgroundService` แล้ว
+        var ownsTx = _db.Database.CurrentTransaction is null;
+        var tx = ownsTx ? await _db.Database.BeginTransactionAsync(ct) : null;
+        try
+        {
         var existing = await _db.SystemOcrAssociationRules.IgnoreQueryFilters().ToListAsync(ct);
         _db.SystemOcrAssociationRules.RemoveRange(existing);
-        await _db.SaveChangesAsync(ct);
 
         foreach (var r in rules.OrderByDescending(x => x.Lift).Take(2000))
         {
@@ -198,6 +208,12 @@ public class AssociationRuleMiner
             });
         }
         await _db.SaveChangesAsync(ct);
+        if (tx != null) await tx.CommitAsync(ct);
+        }
+        finally
+        {
+            if (tx != null) await tx.DisposeAsync();
+        }
         sw.Stop();
 
         _logger.LogInformation("Association mining: {N} txn → {R} rules in {T}",

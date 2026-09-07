@@ -68,7 +68,7 @@ public class OcrMlBackgroundService : BackgroundService
         {
             try
             {
-                await RunOnceAsync(stoppingToken);
+                await RunGuardedAsync(stoppingToken);
             }
             catch (Exception ex)
             {
@@ -78,6 +78,25 @@ public class OcrMlBackgroundService : BackgroundService
             try { await Task.Delay(interval, stoppingToken); }
             catch (OperationCanceledException) { break; }
         }
+    }
+
+    /// <summary>กันสอง instance เขียนตารางความรู้ระดับระบบพร้อมกัน (ผลตรวจทีม G · G-01)
+    ///
+    /// <para>⚠️ ทั้งสองขั้นข้างในเขียนตารางที่ใช้ร่วมกันทุก tenant:
+    /// <c>CrossTenantKnowledgeAggregator</c> เป็น read-then-insert ที่ไม่มี unique
+    /// index กันไว้ · <c>AssociationRuleMiner</c> <b>ลบทั้งตารางแล้วเขียนใหม่</b>
+    /// ด้วย <c>SaveChanges</c> สองครั้งที่ไม่มี transaction ครอบ ⇒ ลำดับที่เกิดได้
+    /// จริงคือ A-delete · B-delete · A-insert · B-insert = กฎซ้ำกันทุกข้อ</para>
+    ///
+    /// <para>หน่วงเริ่มงาน 5 นาทีเท่ากันทุกเครื่อง ⇒ ตื่นพร้อมกัน<b>เกือบเสมอ</b>
+    /// ไม่ใช่ "นาน ๆ ที"</para></summary>
+    private async Task RunGuardedAsync(CancellationToken ct)
+    {
+        using var lockScope = _services.CreateScope();
+        var lockDb = lockScope.ServiceProvider.GetRequiredService<Data.AccountingDbContext>();
+        await Accounting.Helpers.JobLock.RunExclusiveAsync(
+            lockDb, Accounting.Helpers.AdvisoryLockKey.BackgroundJob,
+            nameof(OcrMlBackgroundService), () => RunOnceAsync(ct), _logger, ct: ct);
     }
 
     /// <summary>One pass — exposed so the admin endpoint can trigger

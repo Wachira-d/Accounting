@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Services.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -29,7 +30,7 @@ public class AbandonedCartService : BackgroundService
         {
             try
             {
-                await ProcessAbandonedCarts(stoppingToken);
+                await ProcessAbandonedCartsGuarded(stoppingToken);
             }
             catch (Exception ex)
             {
@@ -38,6 +39,22 @@ public class AbandonedCartService : BackgroundService
 
             await Task.Delay(TimeSpan.FromMinutes(60), stoppingToken);
         }
+    }
+
+    /// <summary>กันสอง instance ส่งอีเมลตามตะกร้าชุดเดียวกัน (ผลตรวจทีม G · G-01)
+    ///
+    /// <para>⚠️ ธง <c>AbandonedEmailSentAt</c> เดิมไม่ถูก persist จนกว่าจะจบทั้ง
+    /// 100 ใบ ⇒ (ก) สอง instance อ่านชุดเดียวกันแล้วส่งซ้ำทั้งชุด (ข) แม้เครื่อง
+    /// เดียว ถ้า crash กลางลูป อีเมลที่ส่งไปแล้วไม่มีร่องรอย รอบหน้าส่งซ้ำหมด ·
+    /// และ <c>RemoveRange</c> ของตะกร้าหมดอายุเป็น <b>hard delete</b> ที่รัน
+    /// พร้อมกันสองเครื่องได้</para></summary>
+    private async Task ProcessAbandonedCartsGuarded(CancellationToken ct)
+    {
+        using var lockScope = _scopeFactory.CreateScope();
+        var lockDb = lockScope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+        await Accounting.Helpers.JobLock.RunExclusiveAsync(
+            lockDb, Accounting.Helpers.AdvisoryLockKey.BackgroundJob,
+            nameof(AbandonedCartService), () => ProcessAbandonedCarts(ct), _logger, ct: ct);
     }
 
     private async Task ProcessAbandonedCarts(CancellationToken ct)
@@ -75,6 +92,9 @@ public class AbandonedCartService : BackgroundService
                     var body = BuildRecoveryEmail(cart, lang);
                     await emailService.SendAsync(cart.Customer.Email, subject, body);
                     cart.AbandonedEmailSentAt = DateTime.UtcNow;
+                    // บันทึกทันทีทีละใบ — ธง "ส่งแล้ว" ต้อง durable ก่อนส่งใบถัดไป
+                    // ไม่งั้น crash/ct ถูกยกเลิกกลางลูป = ส่งซ้ำทั้งชุดในรอบหน้า
+                    await db.SaveChangesAsync(ct);
                     _logger.LogInformation("Abandoned cart recovery email sent to {Email}", cart.Customer.Email);
                 }
                 catch (Exception ex)

@@ -97,25 +97,35 @@ public class BackgroundJobService : BackgroundService
         {
             // Idempotent daily run — checks SiteSettings.LastOcrMaintenanceAt to skip
             // if already run today. Survives restarts and multiple cycles per hour.
+            //
+            // ⚠️ guard นั้นเป็น read-then-write ที่ห่างกัน 14 บรรทัด ⇒ กันได้แค่
+            // **รอบซ้ำใน process เดียวกัน** ไม่ได้กันข้ามเครื่อง (ผลตรวจทีม G · G-01)
+            // ล็อกต่อ sub-job ไม่ใช่ครอบทั้ง RunCycle เพราะรอบ 15 นาทีจะถูกข้าม
+            // ทั้งก้อนถ้าล็อกรวม (dunning/ocr-maintenance เป็นคนละคีย์)
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-            var settings = await db.SiteSettings.FirstOrDefaultAsync(ct);
-            if (settings == null) return;
-            if (settings.LastOcrMaintenanceAt.HasValue
-                && settings.LastOcrMaintenanceAt.Value.Date == DateTime.UtcNow.Date)
-                return;
+            await Accounting.Helpers.JobLock.RunExclusiveAsync(
+                db, Accounting.Helpers.AdvisoryLockKey.BackgroundJob, "ocr-maintenance",
+                async () =>
+            {
+                var settings = await db.SiteSettings.FirstOrDefaultAsync(ct);
+                if (settings == null) return;
+                if (settings.LastOcrMaintenanceAt.HasValue
+                    && settings.LastOcrMaintenanceAt.Value.Date == DateTime.UtcNow.Date)
+                    return;
 
-            // Run daily after 02:00 UTC to avoid hot path
-            if (DateTime.UtcNow.Hour < 2) return;
+                // Run daily after 02:00 UTC to avoid hot path
+                if (DateTime.UtcNow.Hour < 2) return;
 
-            var svc = scope.ServiceProvider.GetRequiredService<Ocr.OcrSelfCorrectionService>();
-            await svc.RunMaintenanceAsync(ct);
+                var svc = scope.ServiceProvider.GetRequiredService<Ocr.OcrSelfCorrectionService>();
+                await svc.RunMaintenanceAsync(ct);
 
-            // Also run monthly OCR quota reset (idempotent — only resets subs whose UsageResetDate has passed)
-            var quotaSvc = scope.ServiceProvider.GetRequiredService<IOcrQuotaService>();
-            await quotaSvc.ResetMonthlyUsageAsync();
+                // Also run monthly OCR quota reset (idempotent — only resets subs whose UsageResetDate has passed)
+                var quotaSvc = scope.ServiceProvider.GetRequiredService<IOcrQuotaService>();
+                await quotaSvc.ResetMonthlyUsageAsync();
 
-            settings.LastOcrMaintenanceAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+                settings.LastOcrMaintenanceAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+            }, _logger, ct: ct);
         }
         catch (Exception ex)
         {

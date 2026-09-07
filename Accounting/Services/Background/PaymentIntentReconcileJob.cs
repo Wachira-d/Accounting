@@ -68,20 +68,39 @@ public class PaymentIntentReconcileJob : BackgroundService
         // "ดังพอ" ต้องดังในที่ที่คนดู) · optional เพราะ engine อาจไม่ได้ register
         var notify = scope.ServiceProvider.GetService<Accounting.Services.Interfaces.INotificationEngine>();
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        // คีย์ระดับระบบ (ไม่ผูกบริษัท) — งานเดินทีเดียวทุก tenant
-        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-            new object[] { AdvisoryLockKey.For(AdvisoryLockKey.PaymentIntent, "reconcile-tick") }, ct);
-
+        // **จอง**แถวด้วยคำสั่งเดียว แทนการล็อกรอบนอกแล้ว SELECT เฉย ๆ
+        //
+        // ⚠️ ที่มา (ผลตรวจทีม G · G-04): เดิมเปิด transaction + `pg_advisory_xact_lock`
+        // แล้ว **commit ทิ้งก่อนลูปเริ่ม** — ล็อกแบบ xact ปล่อยตอน commit และการ
+        // SELECT ไม่ได้ mark แถวเลย (`LastPolledAt` ยังไม่ขยับ) ⇒ ทุก instance
+        // เลือกได้ **ชุดเดียวกันเป๊ะ** (เรียงด้วย `LastPolledAt` เหมือนกัน) แล้วยิง
+        // provider ซ้ำทั้งชุดทุก 5 นาที — โควตาและค่าบริการเป็นของเรา
+        //
+        // รูปนี้ลอกจาก `EmailScheduleService.ProcessPendingQueueAsync`: CTE +
+        // `FOR UPDATE SKIP LOCKED` + `RETURNING` ที่ set `LastPolledAt` ในคำสั่ง
+        // เดียว ⇒ สองเครื่องได้คนละชุดโดยไม่ต้องรอกัน
         var cutoff = DateTime.UtcNow - PollInterval;
-        var due = await db.PaymentIntents.AsNoTracking()
-            .Where(i => (i.Status == PaymentIntentStatus.Created || i.Status == PaymentIntentStatus.Pending)
-                     && (i.LastPolledAt == null || i.LastPolledAt < cutoff))
-            .OrderBy(i => i.LastPolledAt)
-            .Take(MaxPerCycle)
-            .Select(i => new { i.Id, i.CompanyId, i.ProviderCode, i.CreatedAt, i.ProviderConfigId, i.Amount })
+        var claimed = await db.PaymentIntents.FromSqlRaw(
+            """
+            WITH picked AS (
+                SELECT "Id" FROM "PaymentIntents"
+                WHERE "Status" IN ({3}, {4})
+                  AND ("LastPolledAt" IS NULL OR "LastPolledAt" < {0})
+                ORDER BY "LastPolledAt" NULLS FIRST
+                LIMIT {1}
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE "PaymentIntents" p SET "LastPolledAt" = {2}
+            FROM picked WHERE p."Id" = picked."Id"
+            RETURNING p.*;
+            """, cutoff, MaxPerCycle, DateTime.UtcNow,
+            (int)PaymentIntentStatus.Created, (int)PaymentIntentStatus.Pending)
+            .AsNoTracking()
             .ToListAsync(ct);
-        await tx.CommitAsync(ct);
+
+        var due = claimed
+            .Select(i => new { i.Id, i.CompanyId, i.ProviderCode, i.CreatedAt, i.ProviderConfigId, i.Amount })
+            .ToList();
 
         if (due.Count == 0) return;
 

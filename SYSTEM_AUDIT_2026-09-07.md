@@ -44,7 +44,7 @@
 | ✅ E-01 | E | `CalculateDepreciationAsync` ไม่มี switch-to-straight-line ⇒ DecliningBalance ไม่มีวันจบ + ตัวเลขต่างจากตารางที่ผู้ใช้เห็น 35% | `FixedAssetService.cs:654-668` |
 | ✅ F-01 | F | ปิดบิลออฟไลน์ใน POS อ่าน DOM id ที่ไม่มีในหน้า ⇒ TypeError เงียบ โหมดออฟไลน์ตายทั้งก้อน | `pos.html:2252-2284` |
 | ✅ F-02 | F | ตารางแมป 50 ทวิ ฝั่ง JS ตกรหัส `8ad`/`8tr` ที่ระบบเองสร้าง ⇒ ช่องประเภทว่างแต่ยอดรวมเต็ม | `wht.html:403-414` |
-| G-01 | G | background job 4 ตัวไม่มี JobLock (2 ตัวส่งอีเมลถึงลูกค้าจริง) | `ScheduledReportDispatcher.cs:55` · `AbandonedCartService.cs:63` · `OcrMlBackgroundService.cs:85` · `BackgroundJobService.cs:94` |
+| ✅ G-01 | G | background job 4 ตัวไม่มี JobLock (2 ตัวส่งอีเมลถึงลูกค้าจริง) | `ScheduledReportDispatcher.cs:55` · `AbandonedCartService.cs:63` · `OcrMlBackgroundService.cs:85` · `BackgroundJobService.cs:94` |
 | G-02 | G | ไฟล์อัปโหลดเขียน local disk ตรง 13 จุด ไม่มี storage abstraction | ทั้งเรพ (ดูรายงาน G) |
 
 ### P1
@@ -78,8 +78,8 @@
 | F-03 | F | deep-link 9 จุด/6 หน้า ใช้ชื่อ query param ที่ปลายทางไม่อ่าน | ดูรายงาน F |
 | F-04 | F | `_revenueDocTypes`/`_expenseDocTypes` ยัด CN/DN/DeliveryNote เป็น revenue ทั้งที่เป็น `BothSides` | `layout.js:2528-2533` |
 | ✅ F-05 | F | ปุ่มลบบริษัทในคอนโซลแอดมินพิมพ์ `AdminApi` (ของจริง `AdminAPI`) | `admin/customers.html:466` |
-| G-03 | G | `AssociationRuleMiner` ลบทั้งตารางแล้วเขียนใหม่ ไม่มีล็อก ไม่มี transaction | `AssociationRuleMiner.cs:181-199` |
-| G-04 | G | `PaymentIntentReconcileJob` commit ปล่อยล็อกก่อนงานจริงเริ่ม | `PaymentIntentReconcileJob.cs:71-95` |
+| ✅ G-03 | G | `AssociationRuleMiner` ลบทั้งตารางแล้วเขียนใหม่ ไม่มีล็อก ไม่มี transaction | `AssociationRuleMiner.cs:181-199` |
+| ✅ G-04 | G | `PaymentIntentReconcileJob` commit ปล่อยล็อกก่อนงานจริงเริ่ม | `PaymentIntentReconcileJob.cs:71-95` |
 | G-05 | G | N+1 ยืนยันแล้ว 3 จุด | `OcrController.cs:823` · `CrossTenantKnowledgeAggregator.cs:150` · `EmailScheduleService.cs:286` |
 
 ### P2
