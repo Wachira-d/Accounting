@@ -593,9 +593,16 @@ public class AzureDocumentIntelligenceService
     private static DateTime? GetDateField(JsonElement fields, string name)
     {
         if (!fields.TryGetProperty(name, out var f)) return null;
-        if (f.TryGetProperty("valueDate", out var v) && DateTime.TryParse(v.GetString(), out var dt))
+        // ⚠️ เดิม `DateTime.TryParse(...)` เปล่า ๆ ⇒ ผลขึ้นกับ culture ของ process:
+        // th-TH ใช้ปฏิทินพุทธ ⇒ `valueDate` ISO "2026-09-05" กลายเป็น ค.ศ. 1483
+        // แล้วถูก ValidateAndNormalizeDate ล้างทิ้ง (ทุกใบไม่มีวันที่) · en-US
+        // อ่าน `content` แบบไทย "05/08/2569" เป็น MM/dd ⇒ เดือน 5 วัน 8 สลับกัน
+        // → ตัวแปลงกลางตัวเดียว (ผลตรวจ 2026-09-06 · T2-19)
+        if (f.TryGetProperty("valueDate", out var v)
+            && Accounting.Helpers.ThaiDate.TryParseFlexible(v.GetString(), out var dt))
             return dt;
-        if (f.TryGetProperty("content", out var c) && DateTime.TryParse(c.GetString(), out var dt2))
+        if (f.TryGetProperty("content", out var c)
+            && Accounting.Helpers.ThaiDate.TryParseFlexible(c.GetString(), out var dt2))
             return dt2;
         return null;
     }

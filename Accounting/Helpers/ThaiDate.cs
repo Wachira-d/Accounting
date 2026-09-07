@@ -92,4 +92,96 @@ public static class ThaiDate
         _ when year >= shortBeFloor => 2500 + year - 543,   // พ.ศ. ย่อ (69 → 2026)
         _ => 2000 + year,             // ค.ศ. ย่อ (26 → 2026)
     };
+
+    /// <summary>
+    /// แปลงข้อความวันที่จาก OCR/engine เป็น <see cref="DateTime"/> โดย
+    /// <b>ไม่ขึ้นกับ culture ของ process</b>
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจ OCR 2026-09-06 · T2-19): เส้น OCR เรียก
+    /// <c>DateTime.TryParse(value, out var d)</c> เปล่า ๆ 4 จุด ⇒ ผลลัพธ์
+    /// ขึ้นกับ culture ของคอนเทนเนอร์ที่รันจริง — ถ้าตั้ง th-TH ปฏิทินเริ่มต้น
+    /// เป็น<b>พุทธศักราช</b> ⇒ ISO "2026-09-05" ถูกอ่านเป็น พ.ศ. 2026 =
+    /// ค.ศ. 1483 ⇒ <c>ValidateAndNormalizeDate</c> เห็น <c>year &lt; 1990</c>
+    /// แล้ว<b>ล้างค่าทิ้ง</b> ⇒ ทุกใบจาก python/Azure K-V ไม่มีวันที่ · กลับกัน
+    /// ถ้าบังคับ InvariantCulture ล้วน ๆ วันที่ไทยแบบ <c>15/08/2569</c> จะถูก
+    /// อ่านเป็น MM/dd แล้ว<b>พังทั้งใบ</b> (เดือน 15 ไม่มีจริง) — สองทิศนี้
+    /// แก้พร้อมกันไม่ได้ด้วย culture เดียว จึงต้องไล่ตามลำดับ</para>
+    ///
+    /// <para>ลำดับ: (1) ISO 8601 (ต้องขึ้นต้น <c>yyyy-MM-dd</c> เท่านั้น) อ่านผ่าน
+    /// <see cref="DateTimeOffset"/> + Invariant แล้วเอา<b>เวลาตามที่เอกสารเขียน</b>
+    /// (2) รูปแบบบนกระดาษไทย <c>d/M/yyyy</c> · <c>d-M-yy</c> · <c>yyyy/M/d</c> ·
+    /// <c>yyyyMMdd</c> — <b>แยกตัวเลขเองด้วย regex ไม่ผ่าน culture ใด ๆ</b>
+    /// (3) ปีที่ได้ผ่าน <see cref="NormalizeYear"/> เสมอ — พ.ศ. บนกระดาษจึงกลายเป็น
+    /// ค.ศ. ที่จุดเดียว ไม่ใช่ให้แต่ละผู้เรียกลบ 543 กันเอง (4) วัน/เดือนที่เกินจริง
+    /// (32/13) คืน <c>false</c> — ห้ามปัดให้เป็นวันที่ที่ "ดูใช้ได้"</para>
+    /// </summary>
+    public static bool TryParseFlexible(string? text, out DateTime value)
+    {
+        value = default;
+        var t = (text ?? "").Trim();
+        if (t.Length == 0) return false;
+
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+
+        // (1) machine-generated — ISO 8601 / roundtrip จาก Azure DI · python · e-Tax XML
+        //
+        // ★ ต้องบังคับว่า "ขึ้นต้นด้วยปี 4 หลัก แล้วตามด้วย -MM-dd" ก่อน ห้ามโยน
+        //   TryParse ทั่วไปเข้ามาที่นี่: Invariant อ่าน `05/08/2026` เป็น **MM/dd**
+        //   = 8 พ.ค. ทั้งที่กระดาษไทยหมายถึง 5 ส.ค. ⇒ ใบที่วันและเดือนต่างกันแต่
+        //   ทั้งคู่ ≤ 12 จะเพี้ยนเงียบ ๆ (ไม่ error เพราะวันที่ยังสมเหตุสมผล)
+        if (System.Text.RegularExpressions.Regex.IsMatch(t, @"^[0-9]{4}-[0-9]{2}-[0-9]{2}")
+            && DateTimeOffset.TryParse(t, inv,
+                System.Globalization.DateTimeStyles.AllowWhiteSpaces, out var iso))
+            // ใช้ DateTimeOffset แล้วอ่าน .DateTime = **เวลาตามที่เอกสารเขียน**
+            // ห้ามแปลงเป็นเวลาเครื่อง: "2026-09-05T00:30+07:00" บนเครื่องโซนลบ
+            // จะถอยเป็น 4 ก.ย. เงียบ ๆ — วันที่บนกระดาษต้องไม่ขึ้นกับโซนของเซิร์ฟเวอร์
+            return Build(iso.DateTime.Year, iso.DateTime.Month, iso.DateTime.Day, out value);
+
+        // (2) รูปแบบบนกระดาษไทย — แยกตัวเลขเองทั้งหมด **ไม่ผ่าน culture ใด ๆ**
+        //     (ใช้ TryParseExact กับรูปแบบ "yy" ไม่ได้ เพราะ .NET เติมศตวรรษให้
+        //      ตาม TwoDigitYearMax ของปฏิทินก่อน ⇒ "69" กลายเป็น 1969 แล้ว
+        //      NormalizeYear มองไม่เห็นว่ามันเป็น พ.ศ. ย่อ)
+        var dmy = System.Text.RegularExpressions.Regex.Match(
+            t, @"^([0-9]{1,2})[/\-.]([0-9]{1,2})[/\-.]([0-9]{2}|[0-9]{4})$");
+        if (dmy.Success)
+            return Build(NormalizeYear(int.Parse(dmy.Groups[3].Value, inv)),
+                int.Parse(dmy.Groups[2].Value, inv),
+                int.Parse(dmy.Groups[1].Value, inv), out value);
+
+        var ymd = System.Text.RegularExpressions.Regex.Match(
+            t, @"^([0-9]{4})[/\-.]([0-9]{1,2})[/\-.]([0-9]{1,2})$");
+        if (ymd.Success)
+            return Build(NormalizeYear(int.Parse(ymd.Groups[1].Value, inv)),
+                int.Parse(ymd.Groups[2].Value, inv),
+                int.Parse(ymd.Groups[3].Value, inv), out value);
+
+        // (2ข) "15 สิงหาคม 2569" / "15 ส.ค. 69" — ชื่อเดือนไทยเต็ม/ย่อ ผ่าน
+        //      ตัวแปลงกลาง Helpers/ThaiMonthName (ตัวเดียวกับที่ SmartFieldExtractor ใช้)
+        //      เดิมรูปแบบนี้อ่านได้เฉพาะตอน process ตั้ง culture th-TH เท่านั้น
+        //      — ซึ่งเป็นเงื่อนไขเดียวกับที่ทำให้ ISO พังทั้งระบบ
+        var named = System.Text.RegularExpressions.Regex.Match(
+            t, @"^([0-9]{1,2})[ \t]+([^ \t0-9]+)[ \t]+([0-9]{2}|[0-9]{4})$");
+        if (named.Success && ThaiMonthName.TryParse(named.Groups[2].Value) is int mo)
+            return Build(NormalizeYear(int.Parse(named.Groups[3].Value, inv)), mo,
+                int.Parse(named.Groups[1].Value, inv), out value);
+
+        var compact = System.Text.RegularExpressions.Regex.Match(t, @"^([0-9]{4})([0-9]{2})([0-9]{2})$");
+        if (compact.Success)
+            return Build(NormalizeYear(int.Parse(compact.Groups[1].Value, inv)),
+                int.Parse(compact.Groups[2].Value, inv),
+                int.Parse(compact.Groups[3].Value, inv), out value);
+
+        return false;
+
+        // สร้างวันที่แบบตรวจความถูกต้องเอง — วัน/เดือนเกินจริง (32/13) = อ่านผิด
+        // ต้องคืน false ไม่ใช่ปัดให้เป็นวันที่ที่ "ดูใช้ได้" (ห้ามแต่งค่า)
+        static bool Build(int year, int month, int day, out DateTime outValue)
+        {
+            outValue = default;
+            if (year is < 1900 or > 2400 || month is < 1 or > 12 || day < 1) return false;
+            if (day > DateTime.DaysInMonth(year, month)) return false;
+            outValue = new DateTime(year, month, day, 0, 0, 0, DateTimeKind.Utc);
+            return true;
+        }
+    }
 }

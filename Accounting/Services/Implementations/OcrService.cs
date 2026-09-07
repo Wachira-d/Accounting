@@ -3062,7 +3062,11 @@ public class OcrService : IOcrService
             if (!data.DocumentDate.HasValue
                 && (keyLower.Contains("วันที่") || keyLower == "date" || keyLower.Contains("invoice date")))
             {
-                if (DateTime.TryParse(value, out var d))
+                // ⚠️ เดิม `DateTime.TryParse(value, out var d)` เปล่า ๆ ⇒ ผลขึ้นกับ
+                // culture ของ process (th-TH = ปฏิทินพุทธ ⇒ ISO 2026 → ค.ศ. 1483
+                // → ถูกล้างทิ้ง) และอ่าน dd/MM แบบไทยไม่ได้เมื่อ culture เป็น en-US
+                // → ตัวแปลงกลางตัวเดียว (ผลตรวจ 2026-09-06 · T2-19)
+                if (Accounting.Helpers.ThaiDate.TryParseFlexible(value, out var d))
                     // Pin Kind=Utc with same y/m/d — see BUGFIX note in
                     // SmartFieldExtractor.ValidateAndNormalizeDate.
                     data.DocumentDate = new DateTime(d.Year, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc);
@@ -3595,10 +3599,31 @@ public class OcrService : IOcrService
                 $"Local OCR: ไม่สามารถอ่านไฟล์ต้นทาง ({ex.Message})", ex);
         }
 
+        // ─── ปรับภาพก่อนส่ง (เหมือนเส้น Azure) ───
+        // ⚠️ เดิมส่ง `fileData` **ดิบ** ⇒ engine ที่อ่อนกว่า Azure กลับได้ภาพที่
+        // แย่กว่า: รูปจากมือถือมี EXIF orientation 6/8 (ตะแคง) · ความคมต่ำ ·
+        // ภาพเล็ก — ทั้งที่ `Ocr.ImagePreprocessor` มีอยู่แล้วและถูกเรียกจาก
+        // ที่เดียวคือเส้น Azure (defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้")
+        // ⇒ ผลตรวจ 2026-09-06 · T2-17 · PaddleOCR เรียงบรรทัดจากพิกัด y แล้ว x
+        // ⇒ ภาพตะแคง = ทุก regex ที่อิง "ป้ายกับค่าอยู่บรรทัดเดียวกัน" หลุดหมด
+        // ผ่าน EffectiveContentType เหมือนเส้น Azure — ไฟล์ที่ไม่มี ContentType
+        // ติดมาจะถูกเดาจากนามสกุล มิฉะนั้น ImagePreprocessor ข้ามทันที
+        // (มันเช็ค `contentType.StartsWith("image/")`) ⇒ ปรับภาพไม่เกิดขึ้นเลย
+        var localContentType = OcrPreprocessor.EffectiveContentType(
+            file.ContentType ?? "", file.OriginalFileName);
+        var localPrep = Ocr.ImagePreprocessor.Process(fileData, localContentType, file.OriginalFileName);
+        if (localPrep.StepsApplied.Count > 0)
+        {
+            fileData = localPrep.Bytes;
+            localContentType = localPrep.ContentType;
+            _logger.LogInformation("Image preprocessed for local OCR {File}: {Steps}",
+                file.OriginalFileName, string.Join(", ", localPrep.StepsApplied));
+        }
+
         using var form = new MultipartFormDataContent();
         var fileContent = new ByteArrayContent(fileData);
-        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
-            file.ContentType ?? "application/octet-stream");
+        fileContent.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue(localContentType);
         form.Add(fileContent, "file", file.OriginalFileName);
 
         HttpResponseMessage response;
@@ -3647,8 +3672,9 @@ public class OcrService : IOcrService
                 ZoneSummary = root.TryGetProperty("ocr_engine", out var oe) ? $"Local OCR: {oe.GetString()}" : "Local OCR: paddleocr",
             };
 
+            // ตัวแปลงกลาง — python คืน ISO แต่ห้ามพึ่ง culture ของ process (T2-19)
             if (root.TryGetProperty("document_date", out var dd) && dd.GetString() is string dateStr
-                && DateTime.TryParse(dateStr, out var parsedDate))
+                && Accounting.Helpers.ThaiDate.TryParseFlexible(dateStr, out var parsedDate))
             {
                 // Pin to Kind=Utc using the same y/m/d so JSON/DB
                 // round-trip doesn't shift to the previous calendar day
