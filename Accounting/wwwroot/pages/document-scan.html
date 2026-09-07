@@ -1709,8 +1709,30 @@
           Layout.toast('สร้างเอกสารสำเร็จ');
           this.loadScans();
         } catch (err) {
+          // ── ทางไปต่อเมื่อโดนด่านกันซ้ำ ──
+          // เซิร์ฟเวอร์รับ allowDuplicate มาตั้งแต่ต้น และข้อความเตือนบอกให้
+          // "กดยืนยันสร้างซ้ำ" — แต่ไม่เคยมีปุ่มนั้นอยู่จริง ⇒ ผู้ใช้ที่เจอ
+          // ใบซ้ำ (จริงหรือเตือนผิด) ตันสนิท (ผลตรวจ T1-14)
+          if (this._isDuplicateBlock(err)) {
+            if (!confirm(err.message + '\n\nยืนยันสร้างเอกสารใหม่อีกใบ?')) return;
+            try {
+              await api.ocrCreateDocument(scanId, target, false, true);
+              Layout.toast('สร้างเอกสารสำเร็จ (ยืนยันสร้างซ้ำ)');
+              this.loadScans();
+            } catch (err2) {
+              Layout.toast('สร้างเอกสารไม่สำเร็จ: ' + err2.message, 'error');
+            }
+            return;
+          }
           Layout.toast('สร้างเอกสารไม่สำเร็จ: ' + err.message, 'error');
         }
+      },
+
+      /** ข้อความนี้มาจากด่านกันซ้ำหรือเปล่า — ดูจากคำที่เซิร์ฟเวอร์เขียนไว้เอง
+       *  (ห้ามคัดลอกกติกามาตัดสินฝั่ง JS = สำเนามือที่รอ drift) */
+      _isDuplicateBlock(err) {
+        const m = String(err?.message || '');
+        return m.includes('ยืนยันสร้างซ้ำ') || m.includes('ซ้ำกับที่สแกนไว้แล้ว');
       },
 
       // ── `rescan(scanId)` ถูกลบแล้ว — อย่าสร้างกลับมา ──
@@ -3434,7 +3456,7 @@
        * the real document was already issued in an external system and only
        * the GL posting needs to land here.
        */
-      async createJeFromReview() {
+      async createJeFromReview(allowDuplicate = false) {
         if (!this._reviewScan) return;
         const cid = Layout.getCompanyId();
         const token = localStorage.getItem('token');
@@ -3448,7 +3470,8 @@
           Layout.toast('บัญชีเดบิตและเครดิตต้องไม่ใช่บัญชีเดียวกัน', 'error');
           return;
         }
-        if (!confirm('บันทึกเป็น Journal Entry เท่านั้น (ไม่สร้างเอกสารในระบบ)?\nระบบจะลง Dr/Cr + ภาษีซื้อ-ขาย/หัก ณ ที่จ่าย ให้อัตโนมัติตามยอดที่อ่านได้')) return;
+        if (!allowDuplicate
+            && !confirm('บันทึกเป็น Journal Entry เท่านั้น (ไม่สร้างเอกสารในระบบ)?\nระบบจะลง Dr/Cr + ภาษีซื้อ-ขาย/หัก ณ ที่จ่าย ให้อัตโนมัติตามยอดที่อ่านได้')) return;
         const btn = document.getElementById('reviewCreateJeBtn');
         btn.disabled = true; btn.textContent = 'กำลังบันทึก JE...';
         try {
@@ -3462,9 +3485,17 @@
               entryDate: document.getElementById('revDate')?.value || null,
               postVat: true,
               postWht: true,
+              allowDuplicate: allowDuplicate,
             }),
           });
           const j = await r.json();
+          // ด่านกันซ้ำเพิ่งถูกต่อสายเข้าเส้น JE (เดิมไม่มีเลย — ผลตรวจ T1-14)
+          // ⇒ ต้องมีทางยืนยันเหมือนเส้นสร้างเอกสาร ไม่ใช่ตันที่ toast สีแดง
+          if (!j.success && !allowDuplicate && this._isDuplicateBlock({ message: j.message })) {
+            btn.disabled = false; btn.textContent = '🧾 บันทึก JE เท่านั้น';
+            if (!confirm(j.message + '\n\nยืนยันบันทึก JE อีกครั้ง?')) return;
+            return await this.createJeFromReview(true);
+          }
           if (!j.success) throw new Error(j.message);
           Layout.toast('บันทึก JE สำเร็จ', 'success');
           btn.textContent = '🧾 บันทึก JE แล้ว';

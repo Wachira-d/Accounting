@@ -5810,6 +5810,17 @@ public class OcrService : IOcrService
         if (result.CreatedDocumentId.HasValue)
             throw new InvalidOperationException("สแกนนี้สร้างเอกสารไปแล้ว — ไม่ต้องบันทึก JE ซ้ำ");
 
+        // ── ด่านกันซ้ำ: เส้น JE ตรงเดิม **ไม่มีเลย** (ผลตรวจ 2026-09-06 · T1-14) ──
+        // เส้นสร้างเอกสารเรียก FindDuplicateDocumentWarningAsync มาตั้งแต่ต้น แต่
+        // ปุ่ม "บันทึก JE" ลัดผ่านไปทั้งดุ้น ⇒ ใบกำกับใบเดียวกันถูกลงบัญชีสองครั้ง
+        // (ญาติของ "ด่านที่ครอบแค่ทางเดียว คือด่านที่ไม่มี" — หลังใส่ด่านที่ไหน
+        // ต้องไล่ทุกทางเข้าที่แตะข้อมูลชุดเดียวกัน)
+        if (!request.AllowDuplicate)
+        {
+            var jeDupMsg = await FindDuplicateDocumentWarningAsync(companyId, result);
+            if (jeDupMsg != null) throw new Accounting.Helpers.BusinessRuleException(jeDupMsg);
+        }
+
         // §82/5 — เส้น JE ตรงเดิมข้ามด่านภาษีซื้อทุกด่านที่เส้นเอกสารมี (ผลตรวจ 2026-09-05
         // T1-02): screener ตั้ง [VAT-CLAIM] ไว้ถูกแล้ว (ใบย่อ/ค่ารับรอง/รถยนต์นั่ง) แต่
         // ผู้ใช้ติ๊ก "ลงภาษีซื้อ" ที่นี่ได้ ⇒ เคลมภาษีซื้อต้องห้ามลง GL ตรง ๆ. ล้มดังพร้อม
@@ -6969,43 +6980,63 @@ public class OcrService : IOcrService
             }
         }
 
-        // เทียบกับเอกสารจริง: เลขเอกสารเดียวกัน + คู่ค้าเดียวกัน + ยอดเท่ากัน
+        // ── เทียบกับเอกสารจริง: เลขที่เดียวกัน + คู่ค้าเดียวกัน ──
+        //
+        // ⚠️ เดิมต้อง "เลขที่ **และ** ยอดตรงถึงสตางค์" ถึงจะเตือน — ยอดต่างแม้
+        // บาทเดียวก็ `return null` เงียบ ⇒ OCR อ่าน 1,070 เป็น 1,010 (หลักเดียว
+        // เพี้ยน = ความผิดพลาดที่พบบ่อยที่สุดของ OCR) ⇒ ใบซ้ำหลุดเข้าระบบ ⇒
+        // **เคลมภาษีซื้อสองครั้ง**จากใบกำกับใบเดียว (ผลตรวจ 2026-09-06 · T1-14)
+        // §86/4 บังคับให้เลขใบกำกับ unique ต่อผู้ขาย ⇒ "ผู้ขายเดียวกัน + เลข
+        // เดียวกัน" = ใบเดียวกันเสมอ · ตรรกะตัดสินอยู่ใน Helpers/OcrDuplicateScanRule
         var docNo = (result.ExtractedDocumentNumber ?? "").Trim();
-        var total = result.ExtractedTotalAmount;
-        if (docNo.Length < 3 || total is null or 0) return null;
+        if (docNo.Length < 3) return null;
         var vendorDigits = Accounting.Helpers.ThaiTaxId.Normalize(result.ExtractedVendorTaxId);
 
         // ฝั่งซื้อเก็บเลขใบของผู้ขายไว้ที่ SupplierInvoiceNumber; ฝั่งขายใช้
         // DocumentNumber ของเราเอง — เทียบทั้งสองช่องเพื่อครอบทั้งสองทิศ
-        var candidates = await _db.Documents.AsNoTracking()
+        var rows = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && d.Status != DocumentStatus.Voided
                 && (d.SupplierInvoiceNumber == docNo || d.DocumentNumber == docNo))
             .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.TotalAmount, d.ContactId })
             .Take(20)
             .ToListAsync();
-        if (candidates.Count == 0) return null;
+        if (rows.Count == 0) return null;
 
-        var hit = candidates.FirstOrDefault(c => Math.Abs(c.TotalAmount - total.Value) <= 0.01m);
-        if (hit == null) return null;
+        // ดึงเลขผู้เสียภาษีของคู่ค้าทุกใบในคราวเดียว (กัน N+1)
+        var contactIds = rows.Select(r => r.ContactId).Where(id => id != Guid.Empty).Distinct().ToList();
+        var contactTaxes = contactIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : (await _db.Contacts.AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+                    .Select(c => new { c.Id, c.TaxId })
+                    .ToListAsync())
+                .ToDictionary(c => c.Id,
+                    c => Accounting.Helpers.ThaiTaxId.Normalize(c.TaxId) ?? "");
 
-        // ยืนยันคู่ค้าให้แน่ใจก่อนบล็อก — เลขเอกสารซ้ำข้าม vendor เกิดได้จริง
-        // (ผู้ขายคนละรายใช้เลขรันเดียวกัน) ถ้าคู่ค้าไม่ตรงถือว่าคนละใบ
-        // ⚠️ Document.ContactId เป็น `Guid` ไม่ใช่ `Guid?` — "ไม่มีคู่ค้า" แทนด้วย
-        // Guid.Empty ไม่ใช่ null (เคยเขียน .HasValue/.Value = CS1061 ล้มทั้ง solution)
-        if (!string.IsNullOrEmpty(vendorDigits) && hit.ContactId != Guid.Empty)
-        {
-            var contactTax = await _db.Contacts.AsNoTracking()
-                .Where(c => c.Id == hit.ContactId && c.CompanyId == companyId)
-                .Select(c => c.TaxId).FirstOrDefaultAsync();
-            if (!string.IsNullOrEmpty(contactTax)
-                && Accounting.Helpers.ThaiTaxId.Normalize(contactTax) != vendorDigits)
-                return null;
-        }
+        var candidates = rows.Select(r => new Accounting.Helpers.DuplicateCandidate(
+                r.Id, r.DocumentNumber, r.DocumentDate, r.TotalAmount,
+                r.ContactId != Guid.Empty && contactTaxes.TryGetValue(r.ContactId, out var tx) ? tx : ""))
+            .ToList();
 
-        return $"มีเอกสาร {hit.DocumentNumber} ({hit.DocumentDate:dd/MM/yyyy}) ยอด {hit.TotalAmount:N2} "
-             + $"ที่ใช้เลขที่ \"{docNo}\" และยอดเดียวกันอยู่แล้ว — สร้างซ้ำจะทำให้ยอดในรายงานภาษีเกินจริง "
-             + "· เปิดใบเดิมแทน หรือกดยืนยันสร้างซ้ำถ้าเป็นคนละใบจริง";
+        var decision = Accounting.Helpers.OcrDuplicateScanRule.Decide(
+            candidates, result.ExtractedTotalAmount, vendorDigits, result.ExtractedDate);
+        if (decision.Match is not Accounting.Helpers.DuplicateCandidate hit)
+            return null;
+
+        if (decision.Verdict == Accounting.Helpers.OcrDuplicateVerdict.SameNumberAndAmount)
+            return $"มีเอกสาร {hit.DocumentNumber} ({hit.DocumentDate:dd/MM/yyyy}) ยอด {hit.TotalAmount:N2} "
+                 + $"ที่ใช้เลขที่ “{docNo}” และยอดเดียวกันอยู่แล้ว — สร้างซ้ำจะทำให้ยอดในรายงานภาษีเกินจริง "
+                 + "· เปิดใบเดิมแทน หรือกดยืนยันสร้างซ้ำถ้าเป็นคนละใบจริง";
+
+        // เลขที่ตรงแต่ยอดต่าง — บอกส่วนต่างให้คนตัดสิน (ห้ามเงียบ)
+        var gapText = decision.AmountGap > 0m
+            ? $"ยอดต่างกัน {decision.AmountGap:N2} บาท (ใบเดิม {hit.TotalAmount:N2} · ที่อ่านได้ {result.ExtractedTotalAmount:N2}) — OCR อาจอ่านยอดผิด"
+            : $"ใบเดิมยอด {hit.TotalAmount:N2} · ใบนี้ระบบอ่านยอดไม่ได้";
+        return $"มีเอกสาร {hit.DocumentNumber} ({hit.DocumentDate:dd/MM/yyyy}) ที่ใช้เลขที่ “{docNo}” "
+             + $"ของผู้ขายรายเดียวกันอยู่แล้ว · {gapText} "
+             + "· เลขใบกำกับภาษีไม่ซ้ำกันต่อผู้ขาย (§86/4) จึงน่าจะเป็นใบเดียวกัน — "
+             + "เปิดใบเดิมแทน หรือกดยืนยันสร้างซ้ำถ้าเป็นคนละใบจริง";
     }
 
     /// <summary>เติมคำเตือน "ข้อมูลตามสรรพากรยังไม่ครบ" ให้ผลสแกนที่จะส่งออกไป

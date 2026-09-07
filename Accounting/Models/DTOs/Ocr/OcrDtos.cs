@@ -278,4 +278,7 @@ public record CreateJeFromScanRequest(
     string? Description = null,
     DateTime? EntryDate = null,
     bool PostVat = true,
-    bool PostWht = true);
+    bool PostWht = true,
+    // ผู้ใช้ยืนยันแล้วว่าเป็นคนละใบจริง แม้เลขที่จะซ้ำ — ทรงเดียวกับเส้นสร้าง
+    // เอกสาร (ผลตรวจ T1-14: เส้น JE ตรงเดิมไม่มีด่านกันซ้ำเลย)
+    bool AllowDuplicate = false);

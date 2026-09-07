@@ -936,10 +936,15 @@ const API = {
       ocrRetryScan: (scanId) => API.post(`${base}/ocr/${scanId}/retry`),
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),
-      ocrCreateDocument: (id, targetType, approve = false) => {
+      // allowDuplicate = ผู้ใช้ยืนยันแล้วว่าเป็นคนละใบจริง แม้เลขที่จะซ้ำกับ
+      // เอกสารที่มีอยู่ — เซิร์ฟเวอร์รับพารามิเตอร์นี้มาตั้งแต่ต้นแต่ไม่เคยมีใคร
+      // ส่ง ⇒ ข้อความเตือนบอกให้ "กดยืนยันสร้างซ้ำ" โดยไม่มีปุ่มนั้นอยู่จริง
+      // (ผลตรวจ T1-14 — ปฏิเสธแล้วต้องมีทางไปต่อ)
+      ocrCreateDocument: (id, targetType, approve = false, allowDuplicate = false) => {
         const q = new URLSearchParams();
         if (targetType) q.set('targetType', targetType);
         if (approve) q.set('approve', 'true');
+        if (allowDuplicate) q.set('allowDuplicate', 'true');
         const qs = q.toString();
         return API.post(`${base}/ocr/${id}/create-document${qs ? '?' + qs : ''}`);
       },
