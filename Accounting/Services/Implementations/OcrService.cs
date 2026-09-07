@@ -7647,6 +7647,56 @@ public class OcrService : IOcrService
             }
         }
 
+        // 2c) ค่าบริการ (Service Charge) + ปัดเศษ — บิลร้านอาหาร/โรงแรมเป็น
+        // งานประจำวันของ SME แต่ทั้งเรพไม่เคยอ่านสองช่องนี้เลย (ผลตรวจ T2-18)
+        // ⇒ อาหาร 1,000 · SC 10% = 100 · ยอดก่อน VAT 1,100 ⇒ Σ บรรทัดที่ OCR
+        // อ่านได้ 1,000 ไม่ตรงหัวใบ 1,100 ⇒ ตัวจำแนกตกเป็น LinesShort ทุกใบ
+        // (เอกสารมีบรรทัดรวม 1,000 แต่หัวใบ 1,100 — ขัดกันเองในใบเดียว)
+        //
+        // ★ ด่านกันการแต่งบรรทัด: "ค่าบริการ" เป็นคำกว้าง — ใบแจ้งหนี้บริการ
+        //   ("ค่าบริการรายเดือน 5,000") ก็เข้าป้ายนี้ ถ้าเติมเป็นบรรทัดใหม่จะ
+        //   นับซ้ำทันที ⇒ เติมได้ **เฉพาะเมื่อยอดหัวใบยืนยันเอง** คือ
+        //   Σ บรรทัด + SC ≈ ยอดก่อน VAT (ภายในค่าเผื่อของ OcrLineReconciler)
+        //   ยืนยันไม่ได้ = ไม่เติม แค่จดไว้ใน trace ให้คนดู
+        //   ("ค่าที่แต่งขึ้นเพื่อให้โค้ดเดินต่อได้ อันตรายกว่าการไม่ตอบ")
+        var surcharge = Accounting.Helpers.ThaiBillSurcharge.Read(text);
+        if (surcharge.ServiceChargeAmount is decimal scAmt && scAmt > 0m)
+        {
+            var hasServiceLine = data.Items.Any(it =>
+                !string.IsNullOrEmpty(it.Description) &&
+                (it.Description.Contains("ค่าบริการ") || it.Description.Contains("เซอร์วิส")
+                 || it.Description.IndexOf("service charge", StringComparison.OrdinalIgnoreCase) >= 0));
+            var lineSum = data.Items.Sum(it => it.Amount ?? ((it.Quantity ?? 0m) * (it.UnitPrice ?? 0m)));
+            var hdrSub = data.SubTotal ?? 0m;
+            var reconciles = hdrSub > 0m && data.Items.Count > 0
+                && Math.Abs(lineSum + scAmt - hdrSub) <= Accounting.Helpers.OcrLineReconciler.Tolerance
+                && Math.Abs(lineSum - hdrSub) > Accounting.Helpers.OcrLineReconciler.Tolerance;
+            if (!hasServiceLine && reconciles)
+            {
+                var pctLabel = surcharge.ServiceChargePercent is decimal p2
+                    ? $" {p2:0.##}%" : "";
+                data.Items.Add(new OcrExtractedLineItem
+                {
+                    Description = $"ค่าบริการ (Service Charge){pctLabel}",
+                    Quantity = 1m,
+                    UnitPrice = scAmt,
+                    Amount = scAmt,
+                });
+                data.ReasoningTrace.Add(
+                    $"[Enrich] ค่าบริการบนบิล ฿{scAmt:N2}{pctLabel} — เพิ่มเป็น line "
+                    + $"(Σ บรรทัด {lineSum:N2} + {scAmt:N2} = ยอดก่อน VAT {hdrSub:N2})");
+            }
+            else if (!hasServiceLine)
+            {
+                data.ReasoningTrace.Add(
+                    $"[Enrich] พบ “ค่าบริการ ฿{scAmt:N2}” บนเอกสาร แต่ยอดหัวใบยืนยันไม่ได้ "
+                    + "(อาจเป็นชื่อรายการปกติของใบแจ้งหนี้บริการ) — ไม่เติมเป็นบรรทัด");
+            }
+        }
+        if (surcharge.RoundingAdjustment is decimal roundAdj && roundAdj != 0m)
+            data.ReasoningTrace.Add($"[Enrich] บิลระบุปัดเศษ {roundAdj:N2} บาท "
+                + "— อยู่ในค่าเผื่อของด่านผลรวม ไม่ปรับตัวเลขใด");
+
         // 3) Per-line unit from the description (ถุง/เส้น/กล่อง/ลัง…) — reuses
         //    the stock-import unit detector so the two paths agree.
         foreach (var it in data.Items)
