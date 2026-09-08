@@ -1504,6 +1504,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - ออกได้เฉพาะฝั่งซื้อ (`PurchaseInvoice`/`Expense`/`PaymentVoucher`/
     `CertificateInLieu`) — ฝั่งขายเราเป็น "ผู้ถูกหัก" ลูกค้าเป็นคนออกใบให้
     (เส้นรับชำระหลายใบเคยไม่กรองชนิดเอกสาร)
+- **ข้อเสนอประเภทเงินได้/อัตราหักจากเส้น OCR ต้องมี "หลักฐานที่ผูกกับเงิน"** —
+  `ExpenseCategoryResolver.Resolve` แบ่งหลักฐานเป็นสามชั้น: ชื่อผู้ขาย/หัวเรื่อง/
+  **บรรทัดที่มียอด** = น้ำหนักเต็ม · **บรรทัดยอด 0** + `rawText` ทั้งใบ = ครึ่งเดียว ·
+  และ `CategoryResult.MoneyBackedEvidence` เป็นเงื่อนไขบังคับของการเสนอ
+  `SuggestedWhtRate` + `WhtIncomeTypeCode` (หมวดยังเสนอได้ตามปกติ). เหตุ: ใบจริง
+  `TXE05202609T000434` มีแถว "ค่าจัดส่ง / Shipping Fee **0.00**" ที่แบบฟอร์มพิมพ์ไว้
+  ทุกใบ ส่วนแถวที่มีเงินจริง 2,137.38 อ่านคำอธิบายไม่ออก ("0") ⇒ กฎ "ค่าขนส่ง" ชนะ
+  จากคำบนแถวยอด 0 แล้วระบบเสนอ "40(8) ค่าขนส่ง · หัก 1%" ทั้งที่กระดาษไม่ได้บอกว่า
+  จ่ายค่าขนส่ง — หมวดเดาผิดผู้ใช้แก้ได้ แต่ประเภทเงินได้ผิดไหลไป 50 ทวิ + ภ.ง.ด.3/53
+  (เทสต์: `ExpenseCategoryResolverTests` ล็อกทั้งสองทิศ)
 - **ประเภทเงินได้ ม.40 มาจาก `DocumentLine.IncomeTypeCode`** (ไม่ใช่หัวเอกสาร) —
   `AutoGenerateFromDocumentAsync` อ่าน `line.IncomeTypeCode ?? "8"` ต่อบรรทัด และ
   `TaxFilingExportService.MapIncomeTypeCode` ก็ map จากค่าเดียวกันลงไฟล์ ภ.ง.ด.3/53.

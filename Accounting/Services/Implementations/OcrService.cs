@@ -1088,13 +1088,23 @@ public class OcrService : IOcrService
             // can't find "ค่าไฟฟ้า" / "การไฟฟ้า" in a "ค ่ า ไฟ ฟ ้ า" /
             // "ก า ร ไฟ ฟ ้ า" string.
             var categoryResolverText = Ocr.ThaiTextNormalizer.Normalize(extractedText);
+            // แยกบรรทัด "ที่มีเงินจริง" ออกจากแถวที่แบบฟอร์มพิมพ์ไว้ยอด 0
+            // (เช่น "ค่าจัดส่ง / Shipping Fee 0.00" ที่ขึ้นทุกใบของผู้ขายรายนั้น) —
+            // แถวยอด 0 เป็นหลักฐานอ่อน และห้ามใช้ตัดสินประเภทเงินได้ ม.40
+            var paidLines = extractedData.Items
+                .Where(i => (i.Amount ?? 0m) > 0m || (i.UnitPrice ?? 0m) > 0m)
+                .Select(i => i.Description).ToList();
+            var zeroLines = extractedData.Items
+                .Where(i => (i.Amount ?? 0m) <= 0m && (i.UnitPrice ?? 0m) <= 0m)
+                .Select(i => i.Description).ToList();
             var categoryResult = Ocr.ExpenseCategoryResolver.Resolve(
                 vendorName: extractedData.VendorName,
                 headerDescription: extractedData.ExpenseCategory,
-                lineDescriptions: extractedData.Items.Select(i => i.Description),
+                lineDescriptions: paidLines,
                 rawText: categoryResolverText,
                 industry: companyContext?.IndustryType,
-                businessType: companyContext?.BusinessType);
+                businessType: companyContext?.BusinessType,
+                zeroAmountLineDescriptions: zeroLines);
             if (categoryResult != null)
                 Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult, categoryResolverText);
 

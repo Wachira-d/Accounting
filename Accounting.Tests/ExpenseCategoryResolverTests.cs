@@ -1,3 +1,4 @@
+using Accounting.Services.Implementations;
 using Accounting.Services.Implementations.Ocr;
 using Xunit;
 
@@ -141,5 +142,73 @@ public class ExpenseCategoryResolverTests
 
         Assert.NotNull(result);
         Assert.InRange(result!.Confidence, 0m, 1m);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // แถวที่แบบฟอร์มพิมพ์ไว้ยอด 0 ห้ามตัดสินประเภทเงินได้ ม.40
+    // (ใบจริง TXE05202609T000434 — Scommerce: แถวที่มีเงิน 2,137.38 อ่านคำอธิบาย
+    //  ไม่ออก "0" · แถวที่อ่านออกคือ "ค่าจัดส่ง / Shipping Fee 0.00")
+    // ─────────────────────────────────────────────────────────────────────
+
+    private const string ScommerceRawText =
+        "ใบกำกับภาษี TXE05202609T000434 Scommerce (Thailand) Co., Ltd.\n"
+        + "1 0 2 1,068.69 2,137.38\n"
+        + "2 ค่าจัดส่ง / Shipping Fee 1 0.00 0.00\n"
+        + "VAT 140.46 ยอดรวมทั้งสิ้น 2,147";
+
+    [Fact]
+    public void แถวค่าจัดส่งยอดศูนย์_ไม่เสนอประเภทเงินได้และอัตราหัก()
+    {
+        var result = ExpenseCategoryResolver.Resolve(
+            vendorName: "Scommerce (Thailand) Co., Ltd.",
+            headerDescription: null,
+            lineDescriptions: new[] { "0" },                          // แถวที่มีเงินจริง
+            rawText: ScommerceRawText,
+            zeroAmountLineDescriptions: new[] { "ค่าจัดส่ง / Shipping Fee" });
+
+        // ยังเสนอหมวดได้ (ไม่ปิดด่านทิ้ง) แต่ต้องไม่ลากไปถึงประเภทเงินได้
+        Assert.NotNull(result);
+        Assert.False(result!.MoneyBackedEvidence);
+
+        var data = new OcrExtractedData();
+        ExpenseCategoryResolver.ApplyTo(data, result, ScommerceRawText);
+        Assert.Null(data.WhtIncomeTypeCode);
+        Assert.Null(data.SuggestedWhtRate);
+        Assert.False(data.HasWht);
+    }
+
+    [Fact]
+    public void ค่าขนส่งบนแถวที่มีเงินจริง_ยังเสนอ_40_8_ขนส่ง_1_เปอร์เซ็นต์()
+    {
+        // ทิศตรงข้าม — ถ้าไม่ล็อกไว้ การแก้ข้างบนอาจกลายเป็น "ปิดด่านทิ้ง"
+        var result = ExpenseCategoryResolver.Resolve(
+            vendorName: "บริษัท ขนส่งด่วน จำกัด",
+            headerDescription: null,
+            lineDescriptions: new[] { "ค่าขนส่งสินค้า / Shipping Fee กรุงเทพ-ชลบุรี" },
+            rawText: "ค่าขนส่งสินค้า / Shipping Fee 10,000 บาท");
+
+        Assert.NotNull(result);
+        Assert.True(result!.MoneyBackedEvidence);
+        Assert.Equal(1m, result.StatutoryWhtRate);
+
+        var data = new OcrExtractedData();
+        ExpenseCategoryResolver.ApplyTo(data, result, "ค่าขนส่งสินค้า / Shipping Fee 10,000 บาท");
+        Assert.Equal("8tr", data.WhtIncomeTypeCode);
+        Assert.Equal(1m, data.SuggestedWhtRate);
+    }
+
+    [Fact]
+    public void ชื่อผู้ขายเป็นแบรนด์ขนส่ง_นับเป็นหลักฐานที่ผูกกับเงิน()
+    {
+        // ชื่อผู้ขายผูกกับ "ใครรับเงิน" เสมอ จึงเป็นหลักฐานเต็มแม้บรรทัดอ่านไม่ออก
+        var result = ExpenseCategoryResolver.Resolve(
+            vendorName: "บริษัท เคอรี่ เอ็กซ์เพรส (ประเทศไทย) จำกัด",
+            headerDescription: null,
+            lineDescriptions: new[] { "0" },
+            rawText: "ใบกำกับภาษี");
+
+        Assert.NotNull(result);
+        Assert.True(result!.MoneyBackedEvidence);
+        Assert.Equal("8tr", result.WhtIncomeTypeCode);
     }
 }

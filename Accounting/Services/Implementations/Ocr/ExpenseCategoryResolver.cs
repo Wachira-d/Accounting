@@ -37,34 +37,53 @@ internal static class ExpenseCategoryResolver
         decimal? StatutoryWhtRate,// 0/1/2/3/5/10/15 — null when not applicable
         string? WhtIncomeTypeCode,// รหัส ม.40 (ThaiWhtRateTable) — คู่กับอัตราเสมอ
         decimal Confidence,
-        List<string> Reasons);
+        List<string> Reasons,
+        /// <summary>หลักฐานที่ทำให้กฎนี้ชนะ **ผูกกับเงิน**หรือไม่ (เจอในชื่อผู้ขาย/
+        /// หัวเรื่อง/บรรทัดที่มียอด) — false = เจอเฉพาะใน rawText หรือแถวยอด 0
+        /// ⇒ เสนอหมวดได้ แต่**ห้ามเสนอประเภทเงินได้ ม.40 / อัตราหัก ณ ที่จ่าย**</summary>
+        bool MoneyBackedEvidence = true);
 
     /// <summary>Returns null when no rule matches.</summary>
+    /// <param name="lineDescriptions">คำอธิบายของบรรทัดที่ **มีจำนวนเงิน** —
+    /// หลักฐานน้ำหนักเต็ม</param>
+    /// <param name="zeroAmountLineDescriptions">คำอธิบายของบรรทัดที่ยอด = 0
+    /// (แถวที่แบบฟอร์มพิมพ์ไว้ตายตัว เช่น "ค่าจัดส่ง / Shipping Fee 0.00" ที่ขึ้น
+    /// ทุกใบไม่ว่าจะมีค่าส่งจริงหรือไม่) — **หลักฐานอ่อน** ชั้นเดียวกับ rawText
+    /// และ**ห้ามใช้ตัดสินประเภทเงินได้ ม.40** เพราะยอด 0 ไม่ได้บอกว่าจ่ายอะไรจริง
+    /// (บทเรียนเดียวกับฟอร์ม 50 ทวิ ที่พิมพ์ทุกประเภทไว้ให้ติ๊ก: สิ่งที่ตอบคำถาม
+    /// คือ**แถวที่มีจำนวนเงิน** ไม่ใช่คำที่ปรากฏบนหน้า)</param>
     public static CategoryResult? Resolve(
         string? vendorName,
         string? headerDescription,
         IEnumerable<string?>? lineDescriptions,
         string? rawText,
         IndustryType? industry = null,
-        BusinessType? businessType = null)
+        BusinessType? businessType = null,
+        IEnumerable<string?>? zeroAmountLineDescriptions = null)
     {
         var reasons = new List<string>();
-        // Two-tier corpus: ข้อมูลตรง (ผู้ขาย/หัวเรื่อง/บรรทัดรายการ) น้ำหนักเต็ม;
-        // rawText ทั้งใบเป็นหลักฐานอ่อน (มีข้อความแฝงเยอะ เช่น เงื่อนไขท้ายบิล
-        // ที่มีคำว่า "ที่ปรึกษา"/"ภาษีอากร") → นับครึ่งเดียว กันหมวดเพี้ยนจากคำหลง
+        // สามชั้น: ข้อมูลที่ **ผูกกับเงิน** (ผู้ขาย/หัวเรื่อง/บรรทัดที่มียอด)
+        // น้ำหนักเต็ม · บรรทัดยอด 0 + rawText ทั้งใบเป็นหลักฐานอ่อน (มีข้อความแฝง
+        // เยอะ เช่น เงื่อนไขท้ายบิลที่มีคำว่า "ที่ปรึกษา"/"ภาษีอากร") นับครึ่งเดียว
         var primaryCorpus = BuildCorpus(vendorName, headerDescription, lineDescriptions, null).ToLowerInvariant();
-        var corpus = BuildCorpus(vendorName, headerDescription, lineDescriptions, rawText).ToLowerInvariant();
+        var weakParts = BuildCorpus(null, null, zeroAmountLineDescriptions, rawText);
+        var corpus = (primaryCorpus + " " + weakParts).ToLowerInvariant();
 
         // Score every rule against the corpus; highest wins.
         CategoryRule? best = null;
         decimal bestScore = 0m;
+        bool bestMoneyBacked = false;
         foreach (var rule in Rules)
         {
             decimal kwScore = 0m;
+            // "หลักฐานผูกกับเงิน" = คำที่เจอในชั้นน้ำหนักเต็ม (ชื่อผู้ขาย/หัวเรื่อง/
+            // บรรทัดที่มียอด) — ใช้เป็นเงื่อนไขของการเสนอ **ประเภทเงินได้ ม.40**
+            // ห้ามให้คำที่เจอเฉพาะใน rawText/แถวยอด 0 ตัดสินอัตราหัก ณ ที่จ่าย
+            bool moneyBacked = false;
             foreach (var kw in rule.Keywords)
             {
                 var k = kw.ToLowerInvariant();
-                if (primaryCorpus.Contains(k)) kwScore += kw.Length >= 6 ? 2m : 1m;
+                if (primaryCorpus.Contains(k)) { kwScore += kw.Length >= 6 ? 2m : 1m; moneyBacked = true; }
                 else if (corpus.Contains(k)) kwScore += kw.Length >= 6 ? 1m : 0.5m;
             }
             // Vendor-brand matches outweigh single keyword hits because they're
@@ -74,7 +93,7 @@ internal static class ExpenseCategoryResolver
             foreach (var brand in rule.VendorBrands)
                 if (!string.IsNullOrEmpty(vendorName)
                     && vendorName.ToLowerInvariant().Contains(brand.ToLowerInvariant()))
-                { kwScore += 4; brandExactHit = true; }
+                { kwScore += 4; brandExactHit = true; moneyBacked = true; }
 
             // Fuzzy brand fallback: when exact substring missed, use char
             // n-gram cosine to catch OCR variants of brand names ("ปตท."
@@ -88,6 +107,7 @@ internal static class ExpenseCategoryResolver
                     if (sim >= 0.65)
                     {
                         kwScore += 2;     // half of exact match's +4
+                        moneyBacked = true;   // ชื่อผู้ขายคือหลักฐานที่ผูกกับเงินเสมอ
                         break;
                     }
                 }
@@ -98,7 +118,7 @@ internal static class ExpenseCategoryResolver
             // per-industry weight. Default weight is 1.0 (no change).
             var industryWeight = IndustryWeight(rule.Category, industry);
             decimal score = kwScore * industryWeight;
-            if (score > bestScore) { bestScore = score; best = rule; }
+            if (score > bestScore) { bestScore = score; best = rule; bestMoneyBacked = moneyBacked; }
         }
 
         if (best == null || bestScore <= 0) return null;
@@ -109,8 +129,11 @@ internal static class ExpenseCategoryResolver
             ? $"จับคู่ '{best.Category}' จาก score {bestScore:F1} (industry={industry.Value})"
             : $"จับคู่ '{best.Category}' จาก score {bestScore:F1}";
         reasons.Add(reasonText);
+        if (!bestMoneyBacked && best.StatutoryWhtRate is > 0m)
+            reasons.Add($"หลักฐานของ '{best.Category}' อยู่นอกบรรทัดที่มีจำนวนเงิน "
+                + "(ข้อความทั้งใบ/แถวยอด 0) → เสนอหมวดได้ แต่ไม่เสนอประเภทเงินได้/อัตราหัก ณ ที่จ่าย");
         return new CategoryResult(best.Category, best.AccountCode, best.AccountName,
-            best.StatutoryWhtRate, best.WhtIncomeTypeCode, conf, reasons);
+            best.StatutoryWhtRate, best.WhtIncomeTypeCode, conf, reasons, bestMoneyBacked);
     }
 
     /// <summary>Per-industry weighting factor for a category. Returns 1.0
@@ -466,7 +489,14 @@ internal static class ExpenseCategoryResolver
         // ผู้จ่าย ⇒ กติกาเดิม (ต้องมีคำว่า WHT บนกระดาษ) แทบไม่เคยเป็นจริง และผู้จ่าย
         // รับผิด ม.54 ถ้าลืมหัก. เก็บเป็น **ข้อเสนอ** ไม่ตั้ง HasWht ให้เอง —
         // หักเกินก็ผิด (ผู้รับต้องไปขอคืน) จึงให้คนกดยืนยัน
-        if (result.StatutoryWhtRate is > 0m && result.Confidence >= 0.6m)
+        //
+        // ⚠️ ต้องมี **หลักฐานที่ผูกกับเงิน** ด้วย — ใบจริง (TXE05202609T000434) มีแถว
+        // "ค่าจัดส่ง / Shipping Fee 0.00" ที่แบบฟอร์มพิมพ์ไว้ทุกใบ ส่วนแถวที่มีเงิน
+        // จริง 2,137.38 อ่านคำอธิบายไม่ออก ("0") ⇒ กฎ "ค่าขนส่ง" ชนะจากคำบนแถวยอด 0
+        // แล้วระบบเสนอ "40(8) ค่าขนส่ง · หัก 1%" ทั้งที่กระดาษไม่ได้บอกว่าจ่ายค่าขนส่ง
+        // — หมวดเดาผิดแค่ให้ผู้ใช้เลือกใหม่ แต่ประเภทเงินได้ผิดไหลไป 50 ทวิ + ภ.ง.ด.3/53
+        if (result.StatutoryWhtRate is > 0m && result.Confidence >= 0.6m
+            && result.MoneyBackedEvidence)
         {
             data.SuggestedWhtRate = result.StatutoryWhtRate;
             data.WhtIncomeTypeCode ??= result.WhtIncomeTypeCode;
@@ -474,7 +504,7 @@ internal static class ExpenseCategoryResolver
 
         if (!data.HasWht && !data.WhtRate.HasValue && result.StatutoryWhtRate.HasValue
             && result.StatutoryWhtRate.Value > 0 && result.Confidence >= 0.6m
-            && docMentionsWht)
+            && result.MoneyBackedEvidence && docMentionsWht)
         {
             data.HasWht = true;
             data.WhtRate = result.StatutoryWhtRate;
@@ -483,7 +513,8 @@ internal static class ExpenseCategoryResolver
                 $"[Category] อนุมาน WHT {result.StatutoryWhtRate}% จากหมวด '{result.Category}' (ป.รัษฎากร ม.50, เอกสารกล่าวถึง WHT)");
         }
         else if (!data.HasWht && result.StatutoryWhtRate.HasValue
-                 && result.StatutoryWhtRate.Value > 0 && rawText != null && !docMentionsWht)
+                 && result.StatutoryWhtRate.Value > 0 && rawText != null && !docMentionsWht
+                 && result.MoneyBackedEvidence)
         {
             // กระดาษไม่พิมพ์ WHT — ไม่ตั้งค่าให้เอง แต่ **ต้องบอกผู้ใช้ว่ากฎหมายให้หัก**
             // (เดิมเขียนว่า "ใช้ไม่ได้" ซึ่งไม่จริง: หน้าที่หักเป็นของผู้จ่าย ไม่ใช่ของ
