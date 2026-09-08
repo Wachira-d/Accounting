@@ -230,7 +230,7 @@ public class FixedAssetService : IFixedAssetService
             .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.SourceDocumentId == documentId)
             .OrderBy(a => a.AssetCode)
             .ToListAsync();
-        return items.Select(MapToResponse).ToList();
+        return await MapWithSourceDocAsync(companyId, items);
     }
 
     public async Task<List<FixedAssetResponse>> GetNeedsReviewAsync(Guid companyId)
