@@ -44,7 +44,7 @@ public class OcrReviewGuardTests
     [Fact]
     public void เลขผู้เสียภาษีที่ถูกต้อง_รับได้()
     {
-        var json = $$"""{"corrections":{"vendor_tax_id":"{{TaxIdValid}}"}}""";
+        var json = $$$"""{"corrections":{"vendor_tax_id":"{{{TaxIdValid}}}"}}""";
         var r = OcrReviewGuard.Filter(json, null, null, null);
         Assert.Equal(TaxIdValid, r.Accepted["vendor_tax_id"]);
     }
@@ -66,7 +66,7 @@ public class OcrReviewGuardTests
     [InlineData("2099-01-01", false)]
     public void วันที่ต้อง_parse_ได้และอยู่ในช่วงที่เป็นไปได้(string value, bool accepted)
     {
-        var json = $$"""{"corrections":{"document_date":"{{value}}"}}""";
+        var json = $$$"""{"corrections":{"document_date":"{{{value}}}"}}""";
         var r = OcrReviewGuard.Filter(json, null, null, null);
         Assert.Equal(accepted, r.Accepted.ContainsKey("document_date"));
     }

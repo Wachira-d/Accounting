@@ -52,7 +52,9 @@ OK_AFTER = re.compile(r'^\s*(?:[;,)\]}]|\+|\.\w|\?\?|==|!=|\)\s*[;,.])')
 _INTERESTING = re.compile(r"""["'@$]|/[/*]""")
 
 # หัวสตริงทุกแบบของ C#: (คำนำหน้า)(รั้ว quote)
-_STR_OPEN = re.compile(r'(\$@|@\$|\$|@)?("{3,}|")')
+# `$` ซ้ำได้หลายตัว (raw string ที่ต้องการปีกกาหลายชั้น: $$""" / $$$""")
+# — รุ่นแรกจับได้ตัวเดียว ⇒ นับ k ผิดแล้ว parse hole เพี้ยนทั้งสตริง
+_STR_OPEN = re.compile(r'((?:\$+@?)|(?:@\$*))?("{3,}|")')
 
 
 def _skip_trivia(text, i):
@@ -107,6 +109,41 @@ def _skip_hole(text, i):
     return n
 
 
+def _raw_brace_overflow(body, k):
+    """เนื้อหาของ interpolated raw string มีปีกกาปิดติดกัน ≥ k นอก hole หรือไม่
+
+    กติกา C#: `$` k ตัว ⇒ เปิด/ปิด interpolation ด้วยปีกกา k ตัว ⇒ ปีกกาที่เป็น
+    **เนื้อหา** ต้องติดกันน้อยกว่า k เสมอ มิฉะนั้น CS9007 (ต้องเพิ่ม `$`).
+    เดินซ้าย→ขวานับ run ของปีกกา: run ≥ k ที่ **ไม่ได้ปิด hole ที่เปิดค้างอยู่**
+    คือจุดที่ระเบิด — over-approximate ฝั่ง "ถือว่าอยู่ใน hole" ไว้ก่อนเสมอ
+    เพื่อไม่ฟ้องผิด (checker ที่ฟ้องผิด = checker ที่พังแล้ว)"""
+    j, n, depth = 0, len(body), 0
+    while j < n:
+        ch = body[j]
+        if ch not in "{}":
+            j += 1
+            continue
+        run = 1
+        while j + run < n and body[j + run] == ch:
+            run += 1
+        if ch == "{":
+            if run >= k:
+                depth += 1
+                j += k
+                continue
+            j += run
+            continue
+        # ch == "}"
+        if run < k:
+            j += run
+            continue
+        if depth > 0:
+            depth -= 1
+            j += k
+            continue
+        return True
+    return False
+
 def _skip_string(text, i):
     """i ชี้ที่หัวสตริง → คืน (ตำแหน่งถัดจากสตริง, ข้อมูลสำหรับ heuristic)
 
@@ -130,6 +167,12 @@ def _skip_string(text, i):
                 first_nl = body.find("\n")
                 if body[:first_nl].strip():
                     return end, ("raw-multiline", i, body_start)
+            # interpolated raw string: จำนวน `$` = จำนวนปีกกาที่ใช้เปิด/ปิด hole
+            # ⇒ ปีกกาปิด **ที่เป็นเนื้อหา** ติดกันครบจำนวนนั้นเมื่อไร คอมไพเลอร์
+            # อ่านเป็น "ปิด hole" แล้วฟ้อง CS9007 (JSON `…"}}` ใน $$""" เจอบ่อยที่สุด)
+            k = prefix.count("$")
+            if k >= 1 and _raw_brace_overflow(body, k):
+                return end, ("raw-brace", i, body_start, k)
         return end, None
 
     j = i + len(prefix) + 1
@@ -183,7 +226,12 @@ def scan_text(text):
             continue
 
         end, info = _skip_string(text, i)
-        if info and info[0] == "raw-multiline":
+        if info and info[0] == "raw-brace":
+            problems.append((line_of(info[1]), 0,
+                f'interpolated raw string มี `$` {info[3]} ตัว แต่เนื้อหามีปีกกาปิด '
+                f'ติดกัน {info[3]} ตัว (เช่นท้าย JSON `"}}}}`) → คอมไพเลอร์อ่านเป็น '
+                'การปิด interpolation — CS9007 เพิ่ม `$` และปีกกาของ hole อีก 1 ตัว'))
+        elif info and info[0] == "raw-multiline":
             problems.append((line_of(info[1]), 0,
                 'raw string หลายบรรทัด: หลัง \"\"\" ที่เปิด ต้องขึ้นบรรทัดใหม่ทันที '
                 '(ห้ามมีเนื้อหาบรรทัดเดียวกับตัวเปิด) — CS8997'))
@@ -257,6 +305,19 @@ GOOD_RAW = '''class A {
 }'''
 
 
+# interpolated raw string: `$$` แต่เนื้อหาลงท้ายด้วย `}}` (JSON ปิดสองชั้น)
+# ⇒ คอมไพเลอร์อ่านเป็นการปิด interpolation = CS9007
+BAD_RAW_BRACE = '''class A {
+    string J(string v) => $$"""{"corrections":{"document_date":"{{v}}"}}""";
+}'''
+
+# ถูกกฎ: เพิ่ม `$` เป็น 3 ⇒ `}}` สองตัวเป็นเนื้อหาได้ · และเคสที่มีปีกกาปิด
+# เดี่ยวท้ายสตริงซึ่งถูกต้องอยู่แล้วกับ `$$`
+GOOD_RAW_BRACE = '''class A {
+    string J(string v) => $$$"""{"corrections":{"document_date":"{{{v}}}"}}""";
+    string K(string u, string t) => $$"""{"@type":"WebPage","url":"{{u}}/{{t}}"}""";
+}'''
+
 def self_test():
     ok = True
     if scan_text(GOOD):
@@ -281,6 +342,19 @@ def self_test():
     if scan_text(GOOD_RAW):
         print("❌ self-test: ฟ้องผิดบน raw string ที่ถูกกฎ")
         for p in scan_text(GOOD_RAW):
+            print("   ", p)
+        ok = False
+    else:
+        print("✅ self-test: raw string ที่ถูกกฎ ไม่ฟ้อง")
+
+    if not scan_text(BAD_RAW_BRACE):
+        print("❌ self-test: CS9007 ($ ไม่พอกับ `}}` ในเนื้อหา) — จับไม่ได้")
+        ok = False
+    else:
+        print("✅ self-test: จับ CS9007 ปีกกาปิดเกินจำนวน `$` ได้")
+    if scan_text(GOOD_RAW_BRACE):
+        print("❌ self-test: ฟ้องผิดบน interpolated raw string ที่ถูกกฎ")
+        for p in scan_text(GOOD_RAW_BRACE):
             print("   ", p)
         ok = False
     else:
