@@ -272,7 +272,9 @@ public record SiteSettingsResponse(
     bool RegistrationEnabled,
     bool MaintenanceMode,
     string? MaintenanceMessage,
-    string DefaultLanguage);
+    string DefaultLanguage,
+    string? ContactAddress = null,
+    string? BusinessHours = null);
 
 public record UpdateSiteSettingsRequest(
     string? SiteName,
@@ -298,7 +300,9 @@ public record UpdateSiteSettingsRequest(
     bool? RegistrationEnabled,
     bool? MaintenanceMode,
     string? MaintenanceMessage,
-    string? DefaultLanguage);
+    string? DefaultLanguage,
+    string? ContactAddress = null,
+    string? BusinessHours = null);
 
 public record LandingPageResponse(
     string? SiteName,
@@ -321,7 +325,9 @@ public record LandingPageResponse(
     string? YouTubeUrl,
     string? InstagramUrl,
     bool RegistrationEnabled,
-    string DefaultLanguage);
+    string DefaultLanguage,
+    string? ContactAddress = null,
+    string? BusinessHours = null);
 
 // ===== Number Series =====
 public record CreateNumberSeriesRequest(

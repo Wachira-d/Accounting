@@ -297,6 +297,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "SourceDocumentId" uuid NULL;""",
 
             // ===== SSO / OAuth ตั้งจากหน้าแอดมินได้ (เดิมมีแต่ appsettings) =====
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "ContactAddress" text NULL;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "BusinessHours" text NULL;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "GoogleLoginEnabled" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "GoogleClientId" text NULL;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "GoogleClientSecret" text NULL;""",

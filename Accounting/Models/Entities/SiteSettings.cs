@@ -12,6 +12,12 @@ public class SiteSettings : BaseEntity
     public string? ContactPhone { get; set; }
     public string? ContactLine { get; set; }
     public string? ContactEmail { get; set; }
+    /// <summary>ที่อยู่สำนักงานที่แสดงบนหน้า "ติดต่อเรา" — ว่าง = ไม่แสดงแถวนั้น
+    /// (ห้ามให้หน้าเว็บพิมพ์ที่อยู่สมมติแทน — "ค่าที่แต่งขึ้นอันตรายกว่าการไม่ตอบ")</summary>
+    public string? ContactAddress { get; set; }
+    /// <summary>เวลาทำการ — บรรทัดละช่วง รูปแบบ "ป้าย|เวลา" (เช่น `จันทร์ - ศุกร์|9:00 - 18:00`)
+    /// ว่าง = ไม่แสดงกล่องเวลาทำการ</summary>
+    public string? BusinessHours { get; set; }
 
     // Landing Page – Accounting Services (JSONB array of service packages)
     public string? ServicesJson { get; set; }

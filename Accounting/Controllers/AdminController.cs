@@ -1726,7 +1726,7 @@ public class AdminController : ControllerBase
             return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
                 null, null, null, null, null, null, null, null, null, null,
                 new List<LandingServiceItem>(), null, null, null, null, null,
-                null, null, null, null, null, true, false, null, "th")));
+                null, null, null, null, null, true, false, null, "th", null, null)));
 
         var services = DeserializeServices(settings.ServicesJson);
         return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
@@ -1738,7 +1738,8 @@ public class AdminController : ControllerBase
             settings.FacebookUrl, settings.LineOfficialUrl, settings.WebsiteUrl,
             settings.YouTubeUrl, settings.InstagramUrl,
             settings.RegistrationEnabled, settings.MaintenanceMode,
-            settings.MaintenanceMessage, settings.DefaultLanguage)));
+            settings.MaintenanceMessage, settings.DefaultLanguage,
+            settings.ContactAddress, settings.BusinessHours)));
     }
 
     [HttpPut("site-settings")]
@@ -1763,6 +1764,8 @@ public class AdminController : ControllerBase
         settings.ContactPhone = request.ContactPhone;
         settings.ContactLine = request.ContactLine;
         settings.ContactEmail = request.ContactEmail;
+        settings.ContactAddress = request.ContactAddress;
+        settings.BusinessHours = request.BusinessHours;
         settings.PricingSectionTitle = request.PricingSectionTitle;
         settings.PricingSectionSubtitle = request.PricingSectionSubtitle;
         settings.FacebookUrl = request.FacebookUrl;
@@ -1799,7 +1802,8 @@ public class AdminController : ControllerBase
             settings.FacebookUrl, settings.LineOfficialUrl, settings.WebsiteUrl,
             settings.YouTubeUrl, settings.InstagramUrl,
             settings.RegistrationEnabled, settings.MaintenanceMode,
-            settings.MaintenanceMessage, settings.DefaultLanguage),
+            settings.MaintenanceMessage, settings.DefaultLanguage,
+            settings.ContactAddress, settings.BusinessHours),
             "บันทึกการตั้งค่าสำเร็จ"));
     }
 
@@ -1945,7 +1949,8 @@ public class AdminController : ControllerBase
             settings?.FacebookUrl, settings?.LineOfficialUrl, settings?.WebsiteUrl,
             settings?.YouTubeUrl, settings?.InstagramUrl,
             settings?.RegistrationEnabled ?? true,
-            settings?.DefaultLanguage ?? "th")));
+            settings?.DefaultLanguage ?? "th",
+            settings?.ContactAddress, settings?.BusinessHours)));
     }
 
     private static List<LandingServiceItem> DeserializeServices(string? json)

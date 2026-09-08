@@ -131,44 +131,44 @@
         </div>
       </div>
 
-      <div class="contact-info-card">
+      <!-- ช่องทางติดต่อ — ค่าจาก "ตั้งค่าเว็บไซต์" (แอดมิน) ทั้งหมด
+           ทุกแถวเริ่มต้นซ่อนไว้ แล้วเปิดเฉพาะช่องที่ตั้งค่าจริง — ห้ามพิมพ์ค่า
+           สมมติ (support@nextacc.com / 02-xxx-xxxx) ค้างไว้บนหน้าสาธารณะ
+           เพราะลูกค้าจะติดต่อไปที่ช่องทางที่ไม่มีอยู่จริง -->
+      <div class="contact-info-card" id="contactInfoCard" hidden>
         <h3 data-i18n="contact.infoTitle">ช่องทางติดต่อ</h3>
-        <div class="info-item">
+        <div class="info-item" id="ciEmail" hidden>
           <div class="info-icon">&#128231;</div>
           <div class="info-text">
             <h4 data-i18n="contact.infoEmail">อีเมล</h4>
-            <p>support@nextacc.com</p>
+            <p><a id="ciEmailLink" href="#" style="color:inherit;text-decoration:none"></a></p>
           </div>
         </div>
-        <div class="info-item">
+        <div class="info-item" id="ciPhone" hidden>
           <div class="info-icon">&#128222;</div>
           <div class="info-text">
             <h4 data-i18n="contact.infoPhone">โทรศัพท์</h4>
-            <p>02-xxx-xxxx (จ-ศ 9:00-18:00)</p>
+            <p><a id="ciPhoneLink" href="#" style="color:inherit;text-decoration:none"></a></p>
           </div>
         </div>
-        <div class="info-item">
+        <div class="info-item" id="ciLine" hidden>
           <div class="info-icon">&#128172;</div>
           <div class="info-text">
             <h4>LINE Official</h4>
-            <p>@nextacc</p>
+            <p><a id="ciLineLink" href="#" style="color:inherit;text-decoration:none"></a></p>
           </div>
         </div>
-        <div class="info-item">
+        <div class="info-item" id="ciOffice" hidden>
           <div class="info-icon">&#127970;</div>
           <div class="info-text">
             <h4 data-i18n="contact.infoOffice">สำนักงาน</h4>
-            <p data-i18n="contact.officeLoc">กรุงเทพมหานคร ประเทศไทย</p>
+            <p id="ciOfficeText"></p>
           </div>
         </div>
 
-        <div style="margin-top:32px;padding-top:24px;border-top:1px solid var(--gray-200)">
+        <div id="ciHoursBox" hidden style="margin-top:32px;padding-top:24px;border-top:1px solid var(--gray-200)">
           <h3 style="margin-bottom:16px" data-i18n="contact.hoursTitle">เวลาทำการ</h3>
-          <div style="font-size:0.9rem;color:var(--gray-600);line-height:2">
-            <div style="display:flex;justify-content:space-between"><span data-i18n="contact.monFri">จันทร์ - ศุกร์</span><span style="font-weight:600;color:var(--gray-900)">9:00 - 18:00</span></div>
-            <div style="display:flex;justify-content:space-between"><span data-i18n="contact.sat">เสาร์</span><span style="font-weight:600;color:var(--gray-900)">10:00 - 15:00</span></div>
-            <div style="display:flex;justify-content:space-between"><span data-i18n="contact.sun">อาทิตย์</span><span style="color:#DC2626" data-i18n="contact.closed">ปิดทำการ</span></div>
-          </div>
+          <div id="ciHours" style="font-size:0.9rem;color:var(--gray-600);line-height:2"></div>
         </div>
       </div>
     </div>
@@ -178,6 +178,51 @@
   <script src="/js/i18n.js"></script>
   <script>
     I18n.init();
+
+    // ดึงข้อมูลติดต่อจาก "ตั้งค่าเว็บไซต์" — endpoint เดียวกับที่หน้าแรกใช้
+    // (index.html) เพื่อไม่ให้มีแหล่งความจริงชุดที่สอง. ล้มเหลว/ยังไม่ตั้งค่า
+    // → การ์ดยังซ่อนอยู่ ผู้ใช้ยังส่งฟอร์มได้ตามปกติ
+    (async () => {
+      const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      const show = (id, txt, href) => {
+        if (!txt) return false;
+        const row = document.getElementById(id);
+        const link = document.getElementById(id + 'Link');
+        if (link) { link.textContent = txt; link.href = href || '#'; if (!href) link.removeAttribute('href'); }
+        row.hidden = false;
+        return true;
+      };
+      try {
+        const res = await fetch('/api/site/landing');
+        const d = (await res.json()).data;
+        if (!d) return;
+        let any = false;
+        any = show('ciEmail', d.contactEmail, d.contactEmail ? 'mailto:' + d.contactEmail : null) || any;
+        any = show('ciPhone', d.contactPhone,
+          d.contactPhone ? 'tel:' + String(d.contactPhone).replace(/[^0-9+]/g, '') : null) || any;
+        any = show('ciLine', d.contactLine || d.lineOfficialUrl, d.lineOfficialUrl || null) || any;
+        if (d.contactAddress) {
+          document.getElementById('ciOfficeText').textContent = d.contactAddress;
+          document.getElementById('ciOffice').hidden = false;
+          any = true;
+        }
+        // เวลาทำการ: บรรทัดละ "ป้าย|เวลา" — ไม่มีค่า = ไม่แสดงกล่องนี้
+        if (d.businessHours) {
+          const rows = String(d.businessHours).split(/\r?\n/)
+            .map(l => l.trim()).filter(Boolean)
+            .map(l => { const i = l.indexOf('|'); return i < 0 ? [l, ''] : [l.slice(0, i).trim(), l.slice(i + 1).trim()]; });
+          if (rows.length) {
+            document.getElementById('ciHours').innerHTML = rows.map(([k, v]) =>
+              `<div style="display:flex;justify-content:space-between"><span>${esc(k)}</span>`
+              + `<span style="font-weight:600;color:var(--gray-900)">${esc(v)}</span></div>`).join('');
+            document.getElementById('ciHoursBox').hidden = false;
+            any = true;
+          }
+        }
+        if (any) document.getElementById('contactInfoCard').hidden = false;
+      } catch (e) { /* ไม่มีข้อมูล = ไม่แสดงการ์ด (ห้ามโชว์ค่าสมมติ) */ }
+    })();
     function toggleMobileNav() {
       document.getElementById('navLinks').classList.toggle('show');
     }

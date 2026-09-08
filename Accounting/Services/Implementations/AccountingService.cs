@@ -2453,7 +2453,7 @@ public partial class AccountingService : IAccountingService
         var draftCount = await _db.JournalEntries.CountAsync(j =>
             j.FiscalPeriodId == periodId && j.Status == JournalEntryStatus.Draft);
         if (draftCount > 0)
-            issues.Add($"ยังมีใบสำคั��� Draft {draftCount} รายการ (ต้อง Post หรือ Void ก่อน)");
+            issues.Add($"ยังมีใบสำคัญ Draft {draftCount} รายการ (ต้อง Post หรือ Void ก่อน)");
 
         // 2. Draft documents in this period
         var draftDocs = await _db.Documents.CountAsync(d =>
