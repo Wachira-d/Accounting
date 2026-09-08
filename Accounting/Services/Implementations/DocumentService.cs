@@ -12108,20 +12108,13 @@ public partial class DocumentService : IDocumentService
             : allPpe.FirstOrDefault(a => a.AccountCode == code)?.Id;
 
         // TFRS for NPAEs บทที่ 10 — ต้นทุนสินทรัพย์ = ราคาซื้อ + ค่าใช้จ่ายที่
-        // ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม) → capitalize เข้า
-        // asset เดียวกัน ไม่แยกเป็นหลาย asset. group บรรทัดที่ลงผัง PPE
-        // ตัวเดียวกัน + เลือก "main line" (description ไม่ใช่ auxiliary)
-        // เป็นชื่อ asset, รวมต้นทุนทุก line ใน group เป็น cost
-        static bool IsAuxiliary(string? desc)
-        {
-            if (string.IsNullOrWhiteSpace(desc)) return false;
-            var d = desc.ToLowerInvariant();
-            return d.Contains("ขนส่ง") || d.Contains("จัดส่ง") || d.Contains("ติดตั้ง")
-                || d.Contains("ฝึกอบรม") || d.Contains("ค่าธรรมเนียม") || d.Contains("ค่าบริการ")
-                || d.Contains("shipping") || d.Contains("delivery") || d.Contains("freight")
-                || d.Contains("install") || d.Contains("training") || d.Contains("setup")
-                || d.Contains("ค่าประกัน");
-        }
+        // ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม)
+        //
+        // ⚠️ **หนึ่งใบ = หลายสินทรัพย์ได้** — เดิมโค้ดนี้จัดกลุ่มด้วย AccountId แล้ว
+        // สร้าง asset **ตัวเดียวต่อผัง** ⇒ ใบที่ซื้อแอร์ 3 เครื่องบน 12210 ได้
+        // ทะเบียน 1 แถวราคารวม (จำหน่ายทีละเครื่องไม่ได้ · นับจำนวนผิด).
+        // ตอนนี้แผนมาจาก `Helpers/AssetRegistrationPlanner` ตัวเดียว: บรรทัดจริง
+        // = 1 สินทรัพย์/บรรทัด · ค่าใช้จ่ายประกอบเฉลี่ยตามสัดส่วนเข้าทุกตัว
 
         // group บรรทัดที่เป็น PPE ตามผัง (AccountId) — บรรทัดที่ผังไม่ใช่ PPE ข้าม
         var ppeLines = doc.Lines.Where(l =>
@@ -12136,23 +12129,36 @@ public partial class DocumentService : IDocumentService
         {
             var code = accMap[grp.Key];
             var cls = Tax.FixedAssetAccountClassifier.Resolve(code)!;
-            // main line = บรรทัดแรกที่ description ไม่ใช่ auxiliary (ถ้าทุกบรรทัด
-            // ใน group เป็น auxiliary ก็ใช้ตัวแรก — edge case คือ stand-alone
-            // delivery doc ที่ผังลง PPE)
-            var mainLine = grp.FirstOrDefault(l => !IsAuxiliary(l.Description)) ?? grp.First();
-            var totalCost = grp.Sum(l => l.Amount);
+            // แผนของกลุ่มนี้: บรรทัดจริง = 1 สินทรัพย์/บรรทัด · ค่าใช้จ่ายประกอบ
+            // เฉลี่ยตามสัดส่วนราคาเข้าทุกตัว (ทุกบรรทัดเป็น auxiliary = ใบค่าติดตั้ง
+            // เดี่ยว ๆ ที่ผังลง PPE → ยังขึ้นทะเบียน 1 ตัว ไม่ปล่อยให้ Dr 12xxx
+            // ลอยโดยไม่มีคู่ในทะเบียน)
+            var planned = Accounting.Helpers.AssetRegistrationPlanner.Plan(
+                grp.Select(l => new Accounting.Helpers.AssetRegistrationPlanner.Line(
+                    l.Id, l.Description, l.Amount)).ToList());
+            var auxDescs = grp
+                .Where(l => Accounting.Helpers.AssetRegistrationPlanner.IsAuxiliary(l.Description))
+                .Select(l => $"{l.Description?.Trim()} {l.Amount:N2}").ToList();
 
-            // dedupe — เคยลง asset จาก mainLine นี้แล้ว (re-approve) ข้าม
+            foreach (var plan in planned)
+            {
+            var mainLine = grp.First(l => l.Id == plan.SourceLineId);
+            var totalCost = plan.Cost;
+
+            // dedupe — เคยลง asset จากบรรทัดนี้แล้ว (re-approve) ข้าม
             var dup = await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId
                 && a.SourceDocumentLineId == mainLine.Id);
             if (dup) continue;
 
             // ใส่ aux description ลง Description ของ asset เพื่อ audit trail
-            // (เห็นว่าต้นทุนรวมค่าขนส่ง/ติดตั้งแล้ว)
-            var auxDescs = grp.Where(l => IsAuxiliary(l.Description))
-                .Select(l => $"{l.Description?.Trim()} {l.Amount:N2}").ToList();
+            // (เห็นว่าต้นทุนรวมค่าขนส่ง/ติดตั้งแล้ว — และเฉลี่ยมาเท่าไร)
             var assetDesc = $"ลงทะเบียนอัตโนมัติจาก {doc.DocumentNumber}"
-                + (auxDescs.Count > 0 ? $" (รวม: {string.Join(", ", auxDescs)})" : "");
+                + (auxDescs.Count > 0
+                    ? $" (รวม: {string.Join(", ", auxDescs)}"
+                      + (plan.AllocatedAuxiliary > 0m && planned.Count > 1
+                          ? $" — เฉลี่ยเข้ารายการนี้ {plan.AllocatedAuxiliary:N2}" : "")
+                      + ")"
+                    : "");
 
             // ยังไม่ออกเลขจริงตอน NeedsReview — ใส่ placeholder "DRAFT-{guid}"
             // เพื่อไม่ให้กิน counter (gap-free). เลขจริง FA-yyyyMM-#### จะออก
@@ -12190,6 +12196,7 @@ public partial class DocumentService : IDocumentService
                 // ไม่ให้ asset registration ล้ม ทำ approve พัง — log ไว้
                 _logger.LogWarning(ex, "Auto-register fixed asset failed (doc {Doc} line {Line})",
                     doc.DocumentNumber, mainLine.Id);
+            }
             }
         }
     }

@@ -936,12 +936,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      เดียวกันทั้ง COGS JE / stock stamp / refund
 9. **Fixed asset auto-register** (`:1799`) — `AutoRegisterFixedAssetsAsync`:
    บรรทัดที่ลงผัง 12210 / 12220 / 12230 / 12240 / 12260 / 12270 / 12290 /
-   12310 → **group ตาม AccountId** → 1 group = 1 `FixedAsset` (TFRS for NPAEs
-   บทที่ 10: ค่าขนส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม/setup ฯลฯ = ต้นทุนที่ทำ
-   ให้พร้อมใช้ — รวมเป็น cost ของ asset หลัก ไม่แยก asset)
-   - main line = บรรทัดแรกใน group ที่ description ไม่ใช่ auxiliary keyword
-   - cost = sum ของทุก line ใน group (รวม aux)
-   - asset Description log auxiliary breakdown ไว้ audit trail
+   12310 → group ตาม AccountId เพื่อหาค่าใช้จ่ายประกอบของผังนั้น แล้ววางแผน
+   ด้วย **`Helpers/AssetRegistrationPlanner`** (pure ตัวเดียว — ห้ามเขียนกติกา
+   นี้ซ้ำที่อื่น):
+   - **บรรทัดจริง 1 บรรทัด = สินทรัพย์ 1 ตัว** ⇒ ใบเดียวซื้อหลายชิ้นในผังเดียวกัน
+     (แอร์ 3 เครื่องบน 12210) ได้ทะเบียน **3 แถว** · เดิม group ตาม AccountId
+     แล้วสร้างตัวเดียวราคารวม ⇒ จำหน่ายทีละเครื่องไม่ได้ · นับจำนวนทรัพย์สินผิด
+     (ผู้ใช้รายงาน 2026-09-08)
+   - **ค่าใช้จ่ายประกอบ** (ขนส่ง/จัดส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม/ค่าบริการ/
+     ค่าประกัน/shipping/delivery/freight/install/training/setup) = ต้นทุนที่ทำให้
+     พร้อมใช้ตาม TFRS for NPAEs บทที่ 10 → **เฉลี่ยตามสัดส่วนราคา** เข้าทุกตัวใน
+     กลุ่ม (บรรทัดสุดท้ายรับเศษ) ⇒ **Σ ต้นทุนที่ขึ้นทะเบียน = Σ ยอดบรรทัดในกลุ่ม
+     เป๊ะเสมอ** (invariant · เทสต์ `AssetRegistrationPlannerTests`)
+   - ทุกบรรทัดเป็นค่าใช้จ่ายประกอบ (ใบค่าติดตั้งเดี่ยวที่ผังลง PPE) → ยังขึ้น
+     ทะเบียน 1 ตัว ไม่ปล่อยให้ Dr 12xxx ลอยโดยไม่มีคู่ในทะเบียน
+   - `SourceDocumentLineId` = บรรทัดของสินทรัพย์ตัวนั้น (คีย์กันสร้างซ้ำตอน re-approve)
+   - asset Description log auxiliary breakdown + ส่วนที่เฉลี่ยเข้าตัวนี้ ไว้ audit trail
    - **AssetCode = "DRAFT-{guid:14}"** placeholder (ไม่กิน counter)
      → user กดยืนยันใน `FixedAssetService.UpdateAsync` → generate
      `FA-yyyyMM-####` จริง (gap-free, ลำดับตามเวลายืนยัน)
