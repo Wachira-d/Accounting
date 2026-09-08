@@ -47,6 +47,7 @@ public class HelpCenterController : ControllerBase
         r.FileName,
         r.DurationSeconds,
         r.IsPublished,
+        r.IsPublic,
         r.SortOrder,
         r.ViewCount,
         // null = ฝังไม่ได้ → UI ต้องวาดปุ่ม "เปิดในแท็บใหม่" ไม่ใช่กรอบว่าง
@@ -112,6 +113,45 @@ public class HelpCenterController : ControllerBase
         }));
     }
 
+    /// <summary>**เส้นสาธารณะ** — คนที่ยังไม่สมัครก็อ่านได้ (หน้า `/docs.html`)
+    ///
+    /// <para>คืนเฉพาะแถวที่แอดมินตั้งใจเปิดทั้งสองชั้น: <c>IsPublished</c>
+    /// (พร้อมเผยแพร่) **และ** <c>IsPublic</c> (ยอมให้คนนอกเห็น) — ค่า default ของ
+    /// <c>IsPublic</c> เป็น false จึงไม่มีเนื้อหาเดิมชิ้นไหนหลุดออกไปจากการเพิ่ม
+    /// เส้นนี้ · ไม่คืน <c>StoragePath</c>/<c>FileName</c>/<c>ViewCount</c> เพราะ
+    /// เป็นข้อมูลภายใน ไม่ใช่สิ่งที่หน้าเว็บสาธารณะต้องใช้</para></summary>
+    [HttpGet("public")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<object>>> PublicList()
+    {
+        var rows = await _db.HelpResources.AsNoTracking()
+            .Where(r => !r.IsDeleted && r.IsPublished && r.IsPublic)
+            .OrderBy(r => r.Category).ThenBy(r => r.SortOrder).ThenBy(r => r.Title)
+            .Take(200)
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            items = rows.Select(r => new
+            {
+                r.Id, r.Title, r.Description,
+                category = r.Category.ToString(),
+                categoryLabel = CategoryLabel(r.Category),
+                r.ModuleCode,
+                kind = r.Kind.ToString(),
+                r.DurationSeconds,
+                embedUrl = HelpMediaEmbed.ToEmbedUrl(r.SourceUrl ?? r.StoragePath, r.Provider),
+                thumbnailUrl = r.ThumbnailUrl ?? HelpMediaEmbed.ThumbnailUrl(r.SourceUrl, r.Provider),
+                // ลิงก์เปิดแท็บใหม่สำหรับสื่อที่ฝังไม่ได้ — ห้ามให้การ์ดกดแล้วเงียบ
+                openUrl = r.SourceUrl ?? r.StoragePath,
+            }),
+            // หมวดสร้างจากเนื้อหาที่มีจริงเหมือนเส้นในระบบ (drift เป็นศูนย์)
+            categories = rows.GroupBy(r => r.Category)
+                .Select(g => new { value = g.Key.ToString(), label = CategoryLabel(g.Key), count = g.Count() })
+                .OrderBy(x => x.label),
+        }));
+    }
+
     /// <summary>นับยอดเปิดดู — best-effort ไม่ให้ล้มเส้นการดู</summary>
     [HttpPost("{id:guid}/view")]
     public async Task<ActionResult<ApiResponse<object>>> RecordView(Guid id)
@@ -130,7 +170,8 @@ public class HelpCenterController : ControllerBase
     public record UpsertHelpRequest(
         Guid? Id, string Title, string? Description, string Category, string? ModuleCode,
         string Kind, string? SourceUrl, string? StoragePath, string? FileName,
-        int DurationSeconds, string? ThumbnailUrl, bool IsPublished, int SortOrder);
+        int DurationSeconds, string? ThumbnailUrl, bool IsPublished, int SortOrder,
+        bool IsPublic = false);
 
     [HttpPost]
     [Authorize(Roles = "SystemAdmin")]
@@ -172,6 +213,7 @@ public class HelpCenterController : ControllerBase
         row.DurationSeconds = Math.Max(0, req.DurationSeconds);
         row.ThumbnailUrl = string.IsNullOrWhiteSpace(req.ThumbnailUrl) ? null : req.ThumbnailUrl.Trim();
         row.IsPublished = req.IsPublished;
+        row.IsPublic = req.IsPublic;
         row.SortOrder = req.SortOrder;
         // เดา provider จาก URL เสมอ — ให้ผู้ดูแลเลือกเองแล้วเลือกผิด = ฝังไม่ขึ้น
         // โดยไม่มีอะไรบอกว่าทำไม

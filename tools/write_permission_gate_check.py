@@ -60,6 +60,11 @@ GATE_MARKERS = (
     "IsInRole(\"SystemAdmin\")",
 )
 
+# `[Authorize(Roles = "…")]` / `[Authorize(Policy = "…")]` **บน action** ก็เป็นด่าน
+# — ต่างจาก `[Authorize]` เปล่า ๆ ซึ่งตอบแค่ "ล็อกอินอยู่ไหม" (บทเรียนใน CLAUDE.md).
+# ไม่นับ attribute ระดับ**คลาส** เพราะ scan() อ่านเฉพาะช่วงของ action อยู่แล้ว
+ATTR_GATE_RE = re.compile(r'\[Authorize\s*\(\s*(Roles|Policy)\s*=')
+
 # POST ที่ "อ่านอย่างเดียว" — รับ body มาคำนวณแล้วคืนค่า ไม่แตะฐานข้อมูล
 # (ต้องระบุชื่อเมธอดตรง ๆ เพื่อให้การเพิ่มรายการเป็นการตัดสินใจที่ตั้งใจ)
 READ_ONLY_POSTS = {
@@ -96,7 +101,7 @@ def scan(path):
         name = nm.group(1) if nm else "?"
         if name in READ_ONLY_POSTS:
             continue
-        if any(k in body for k in GATE_MARKERS):
+        if any(k in body for k in GATE_MARKERS) or ATTR_GATE_RE.search(body):
             continue
         bad.append((i + 1, verb, route, name))
     return bad

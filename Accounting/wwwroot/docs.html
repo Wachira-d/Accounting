@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คู่มือ & สอนการใช้งาน — NextAcc</title>
+  <meta name="description" content="คู่มือการใช้งานระบบบัญชีออนไลน์ NextAcc — วิดีโอสอน ขั้นตอนเริ่มต้น เอกสาร API และคู่มือรายโมดูล">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NextAcc">
+  <meta property="og:title" content="คู่มือ & สอนการใช้งาน | NextAcc">
+  <meta property="og:description" content="เริ่มต้นใช้งานระบบบัญชีออนไลน์ NextAcc ทีละขั้น พร้อมวิดีโอสอนและเอกสารสำหรับนักพัฒนา">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .docs-page { min-height:100vh; background:var(--gray-50); }
+    .docs-hero { background:linear-gradient(135deg, var(--primary) 0%, #4338ca 100%); color:#fff; padding:120px 0 60px; text-align:center; }
+    .docs-hero h1 { font-size:2.4rem; margin:0 0 12px; }
+    .docs-hero p { opacity:.9; max-width:640px; margin:0 auto; }
+    .docs-body { max-width:1100px; margin:-30px auto 60px; padding:0 20px; }
+    .card { background:#fff; border:1px solid var(--gray-200); border-radius:16px; padding:28px; margin-bottom:24px; }
+    .card h2 { font-size:1.35rem; margin:0 0 6px; }
+    .card .sub { color:var(--gray-600); font-size:.95rem; margin:0 0 20px; }
+    .steps { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:16px; }
+    .step { border:1px solid var(--gray-200); border-radius:12px; padding:16px; background:var(--gray-50); }
+    .step .n { display:inline-flex; width:26px; height:26px; border-radius:999px; background:var(--primary);
+               color:#fff; font-size:13px; font-weight:700; align-items:center; justify-content:center; margin-bottom:8px; }
+    .step h3 { font-size:1rem; margin:0 0 6px; }
+    .step p { font-size:.85rem; color:var(--gray-600); margin:0; line-height:1.7; }
+    .cat-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
+    .cat { padding:6px 14px; border-radius:999px; border:1px solid var(--gray-200); background:#fff;
+           font-size:13px; cursor:pointer; color:var(--gray-700); }
+    .cat.on { background:var(--primary); border-color:var(--primary); color:#fff; font-weight:600; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; }
+    .item { border:1px solid var(--gray-200); border-radius:12px; overflow:hidden; display:flex; flex-direction:column;
+            background:#fff; text-decoration:none; color:inherit; transition:box-shadow .15s; }
+    .item:hover { box-shadow:0 6px 20px rgba(0,0,0,.08); }
+    .thumb { aspect-ratio:16/9; background:#0f172a; display:flex; align-items:center; justify-content:center;
+             font-size:38px; color:#94a3b8; position:relative; }
+    .thumb img { width:100%; height:100%; object-fit:cover; }
+    .item .body { padding:12px 14px; display:flex; flex-direction:column; gap:6px; }
+    .item .ttl { font-weight:700; font-size:14px; line-height:1.5; }
+    .item .ds { font-size:12px; color:var(--gray-600); line-height:1.6; }
+    .chip { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600;
+            background:#eef2ff; color:#3730a3; }
+    .linkrow { display:flex; gap:12px; align-items:flex-start; padding:14px 0; border-top:1px solid var(--gray-200); }
+    .linkrow:first-of-type { border-top:0; }
+    .linkrow .ic { font-size:22px; line-height:1; }
+    .linkrow h3 { font-size:1rem; margin:0 0 4px; }
+    .linkrow p { font-size:.85rem; color:var(--gray-600); margin:0; line-height:1.7; }
+    .need-login { font-size:11px; font-weight:600; color:#b45309; background:#fffbeb; border:1px solid #fde68a;
+                  border-radius:999px; padding:2px 8px; margin-left:6px; white-space:nowrap; }
+    .empty { text-align:center; color:var(--gray-500); padding:28px 12px; font-size:.9rem; line-height:1.9; }
+    @media (max-width:768px) { .docs-hero h1 { font-size:1.8rem; } }
+  </style>
+</head>
+<body>
+  <div class="docs-page">
+    <nav class="landing-nav" id="navbar">
+      <div class="container nav-inner">
+        <a href="/" class="nav-logo"><span>Next Acc</span></a>
+        <div class="nav-links" id="navLinks">
+          <a href="/#features" data-i18n="landing.navFeatures">ฟีเจอร์</a>
+          <a href="/#pricing" data-i18n="landing.navPricing">ราคา</a>
+          <a href="/docs.html" style="color:var(--primary);font-weight:600" data-i18n="landing.navDocs">คู่มือการใช้งาน</a>
+          <a href="/contact.html" data-i18n="landing.navContact">ติดต่อเรา</a>
+        </div>
+        <div class="nav-actions">
+          <a href="/login.html" class="btn btn-ghost" data-i18n="landing.login">เข้าสู่ระบบ</a>
+          <a href="/register.html" class="btn btn-primary" data-i18n="landing.tryFree">ทดลองใช้ฟรี</a>
+        </div>
+        <button class="nav-mobile-toggle" onclick="toggleMobileNav()">&#9776;</button>
+      </div>
+    </nav>
+
+    <div class="docs-hero">
+      <div class="container">
+        <h1>คู่มือ &amp; สอนการใช้งาน</h1>
+        <p>เริ่มใช้ระบบบัญชีออนไลน์ตั้งแต่ตั้งค่าบริษัทจนออกเอกสารและยื่นภาษี — พร้อมวิดีโอสอนและเอกสารสำหรับนักพัฒนา</p>
+      </div>
+    </div>
+
+    <div class="docs-body">
+      <!-- ขั้นตอนเริ่มต้น — ลำดับเดียวกับที่ /pages/getting-started.html พาทำจริงหลังสมัคร -->
+      <div class="card">
+        <h2>เริ่มต้นใน 5 ขั้น</h2>
+        <p class="sub">หลังสมัคร ระบบจะพาทำตามลำดับนี้ในหน้า "เริ่มต้นใช้งาน" — ที่นี่คือภาพรวมให้ดูก่อนตัดสินใจ</p>
+        <div class="steps">
+          <div class="step"><span class="n">1</span><h3>ข้อมูลบริษัท</h3>
+            <p>ชื่อ · เลขประจำตัวผู้เสียภาษี 13 หลัก · รหัสสาขา · สถานะจด VAT — ใช้พิมพ์บนใบกำกับภาษีตาม ป.รัษฎากร §86/4</p></div>
+          <div class="step"><span class="n">2</span><h3>ผังบัญชี</h3>
+            <p>ระบบมีผังมาตรฐานให้แล้ว ปรับเพิ่ม/ลดได้ตามธุรกิจ — ทุกเอกสารที่อนุมัติจะลงบัญชีตามผังนี้</p></div>
+          <div class="step"><span class="n">3</span><h3>ลูกค้า · ผู้ขาย · สินค้า</h3>
+            <p>นำเข้าจาก Excel ได้ หรือให้ระบบสร้างให้อัตโนมัติจากเอกสารที่สแกน</p></div>
+          <div class="step"><span class="n">4</span><h3>ออกเอกสารใบแรก</h3>
+            <p>ใบเสนอราคา → ใบแจ้งหนี้ → ใบกำกับภาษี/ใบเสร็จ แปลงต่อกันได้ เลขที่ออกตอนอนุมัติแบบไม่มีเลขข้าม</p></div>
+          <div class="step"><span class="n">5</span><h3>ภาษีและรายงาน</h3>
+            <p>รายงานภาษีซื้อ/ขาย §87 · ภ.พ.30 · ภ.ง.ด.3/53 · 50 ทวิ · งบการเงิน — สร้างจากเอกสารที่บันทึกไว้แล้ว</p></div>
+        </div>
+      </div>
+
+      <!-- คลังวิดีโอ/บทความ: ดึงจากศูนย์ช่วยเหลือชุดเดียวกับในระบบ (ไม่มีสำเนามือ) -->
+      <div class="card" id="tutorials">
+        <h2>วิดีโอ &amp; บทความสอนใช้งาน</h2>
+        <p class="sub">เนื้อหาชุดเดียวกับศูนย์ช่วยเหลือในระบบ — ส่วนที่เปิดให้อ่านได้โดยไม่ต้องสมัคร</p>
+        <div class="cat-bar" id="catBar"></div>
+        <div class="grid" id="grid"></div>
+        <div class="empty" id="empty" hidden>
+          ยังไม่มีเนื้อหาที่เปิดสาธารณะในตอนนี้<br>
+          คู่มือฉบับเต็มและวิดีโอทั้งหมดอยู่ในระบบ — <a href="/register.html" style="color:var(--primary);font-weight:600">สมัครใช้ฟรี</a>
+          แล้วเปิดเมนู "คู่มือ &amp; วิดีโอสอนใช้งาน" ได้ทันที
+        </div>
+      </div>
+
+      <!-- คู่มือในระบบ: ลิงก์ตรง ไม่คัดลอกเนื้อหามาไว้ที่สอง -->
+      <div class="card" id="in-app">
+        <h2>คู่มือฉบับเต็ม (ในระบบ)</h2>
+        <p class="sub">อยู่หลังหน้าเข้าสู่ระบบ เพราะเป็นวิธีใช้งานจริงทีละหน้าจอ — สมัครใช้ฟรีแล้วเข้าได้ทันที</p>
+        <a class="linkrow" href="/pages/getting-started.html" style="text-decoration:none;color:inherit">
+          <span class="ic">🚀</span>
+          <span><h3>เริ่มต้นใช้งาน <span class="need-login">ต้องเข้าสู่ระบบ</span></h3>
+          <p>เช็กลิสต์ตั้งค่าทีละขั้น พร้อมสถานะว่าทำถึงไหนแล้ว</p></span>
+        </a>
+        <a class="linkrow" href="/pages/help.html" style="text-decoration:none;color:inherit">
+          <span class="ic">🎓</span>
+          <span><h3>คู่มือ &amp; วิดีโอสอนใช้งาน <span class="need-login">ต้องเข้าสู่ระบบ</span></h3>
+          <p>แยกตามเรื่อง (บัญชี · ภาษี · เงินเดือน) และตามธุรกิจ (ที่พัก · POS · เว็บไซต์)</p></span>
+        </a>
+        <a class="linkrow" href="/pages/api-developer.html" id="api">
+          <span class="ic">📘</span>
+          <span><h3>เอกสาร API สำหรับนักพัฒนา <span class="need-login">ต้องเข้าสู่ระบบ</span></h3>
+          <p>เชื่อมระบบภายนอกเข้ากับ <code>/api/v1</code> — คีย์ · ขอบเขตสิทธิ์ · ตัวอย่างเรียกใช้</p></span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script>
+    I18n.init();
+    function toggleMobileNav() {
+      document.getElementById('navLinks').classList.toggle('show');
+    }
+    window.addEventListener('scroll', () => {
+      document.getElementById('navbar').classList.toggle('scrolled', window.scrollY > 10);
+    });
+
+    // คลังเนื้อหา — ดึงจาก endpoint สาธารณะของศูนย์ช่วยเหลือชุดเดียวกับในระบบ
+    // (แอดมินต้องติ๊ก "เปิดสาธารณะ" ทีละชิ้น จึงไม่มีเนื้อหาภายในหลุดออกมาเอง)
+    const Docs = {
+      items: [], cat: '',
+      esc(v) {
+        return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      },
+      dur(sec) {
+        if (!sec) return '';
+        const m = Math.floor(sec / 60), s = sec % 60;
+        return `${m}:${String(s).padStart(2, '0')}`;
+      },
+      async load() {
+        try {
+          const res = await fetch('/api/help/public');
+          const d = (await res.json()).data;
+          this.items = d?.items || [];
+          this.renderCats(d?.categories || []);
+        } catch (e) { this.items = []; }
+        this.render();
+      },
+      renderCats(cats) {
+        if (!cats.length) return;
+        const bar = document.getElementById('catBar');
+        bar.innerHTML = [{ value: '', label: 'ทั้งหมด' }, ...cats]
+          .map(c => `<button class="cat${c.value === this.cat ? ' on' : ''}" data-cat="${this.esc(c.value)}">`
+            + `${this.esc(c.label)}${c.count ? ` (${c.count})` : ''}</button>`).join('');
+        bar.querySelectorAll('.cat').forEach(b => b.addEventListener('click', () => {
+          this.cat = b.dataset.cat; this.renderCats(cats); this.render();
+        }));
+      },
+      render() {
+        const rows = this.cat ? this.items.filter(x => x.category === this.cat) : this.items;
+        const grid = document.getElementById('grid');
+        document.getElementById('empty').hidden = rows.length > 0;
+        document.getElementById('catBar').hidden = this.items.length === 0;
+        const icon = { Video: '▶', Document: '📄', Article: '📝', Link: '🔗' };
+        grid.innerHTML = rows.map(r => {
+          // เปิดในแท็บใหม่เมื่อมีลิงก์จริง — ไม่มีลิงก์ = การ์ดอ่านอย่างเดียว
+          // (ห้ามให้กดแล้วไม่มีอะไรเกิดขึ้น)
+          const href = r.embedUrl || r.openUrl;
+          const tag = href ? 'a' : 'div';
+          const attr = href ? ` href="${this.esc(href)}" target="_blank" rel="noopener"` : '';
+          const thumb = r.thumbnailUrl
+            ? `<img src="${this.esc(r.thumbnailUrl)}" alt="${this.esc(r.title)}">`
+            : (icon[r.kind] || '📘');
+          return `<${tag} class="item"${attr}>
+            <div class="thumb">${thumb}</div>
+            <div class="body">
+              <span class="chip">${this.esc(r.categoryLabel)}${r.durationSeconds ? ' · ' + this.dur(r.durationSeconds) : ''}</span>
+              <div class="ttl">${this.esc(r.title)}</div>
+              ${r.description ? `<div class="ds">${this.esc(r.description)}</div>` : ''}
+            </div>
+          </${tag}>`;
+        }).join('');
+      },
+    };
+    Docs.load();
+  </script>
+</body>
+</html>

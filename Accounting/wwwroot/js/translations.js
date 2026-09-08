@@ -147,7 +147,7 @@ setup: {
 landing: {
   title: 'Next Acc - ระบบบัญชีออนไลน์ที่ดีที่สุดสำหรับธุรกิจไทย',
   navFeatures: 'ฟีเจอร์', navServices: 'บริการบัญชี', navPricing: 'ราคา',
-  navFaq: 'คำถามที่พบบ่อย', navContact: 'ติดต่อเรา',
+  navFaq: 'คำถามที่พบบ่อย', navContact: 'ติดต่อเรา', navDocs: 'คู่มือการใช้งาน',
   login: 'เข้าสู่ระบบ', tryFree: 'ทดลองใช้ฟรี',
   heroBadge: '🚀 ระบบบัญชีออนไลน์รุ่นใหม่',
   heroTitle1: 'จัดการบัญชีธุรกิจ', heroTitle2: 'อย่างมืออาชีพ',
@@ -757,7 +757,7 @@ setup: {
 landing: {
   title: 'Next Acc - Best Online Accounting for Thai Businesses',
   navFeatures: 'Features', navServices: 'Accounting Services', navPricing: 'Pricing',
-  navFaq: 'FAQ', navContact: 'Contact Us',
+  navFaq: 'FAQ', navContact: 'Contact Us', navDocs: 'Guides',
   login: 'Sign In', tryFree: 'Try Free',
   heroBadge: '🚀 Next-Gen Online Accounting',
   heroTitle1: 'Manage Business Finances', heroTitle2: 'Like a Pro',

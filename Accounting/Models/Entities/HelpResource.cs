@@ -53,6 +53,14 @@ public class HelpResource : BaseEntity
 
     /// <summary>ยังไม่เผยแพร่ = เห็นเฉพาะแอดมิน (ใช้เตรียมเนื้อหาก่อนปล่อย)</summary>
     public bool IsPublished { get; set; } = true;
+
+    /// <summary>แสดงบน**หน้าเว็บสาธารณะ** (`/docs.html`) ให้คนที่ยังไม่ได้สมัครดูได้ด้วย
+    ///
+    /// <para>default = <c>false</c> โดยตั้งใจ: เนื้อหาในศูนย์ช่วยเหลือส่วนใหญ่สอน
+    /// "วิธีใช้ระบบ" ซึ่งเดิมกำหนดไว้ว่าต้องล็อกอินก่อน (ดู doc-comment ของ
+    /// <c>HelpCenterController</c>) — การเปิดสู่สาธารณะจึงต้องเป็น**การตัดสินใจของ
+    /// แอดมินทีละชิ้น** ไม่ใช่ผลข้างเคียงของการเพิ่มหน้าเว็บ</para></summary>
+    public bool IsPublic { get; set; }
     public int SortOrder { get; set; }
 
     /// <summary>ยอดเปิดดู — ใช้จัดลำดับ "ที่คนดูมากที่สุด" และดูว่าเนื้อหาไหนไม่มีคนใช้</summary>

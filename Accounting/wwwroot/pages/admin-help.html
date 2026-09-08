@@ -138,6 +138,11 @@
               <input type="checkbox" id="fPub" checked> เผยแพร่ให้ลูกค้าเห็น
             </label>
           </div>
+          <div style="display:flex;align-items:flex-end">
+            <label style="display:flex;gap:8px;align-items:center" title="แสดงบน /docs.html ให้คนที่ยังไม่สมัครดูได้ — ต้องติ๊ก &quot;เผยแพร่&quot; ด้วย">
+              <input type="checkbox" id="fPublic"> เปิดสาธารณะ (หน้าเว็บหลัก)
+            </label>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -191,7 +196,8 @@
               ? '<div style="font-size:11px;color:#b45309">⚠️ ฝังไม่ได้ — จะเปิดแท็บใหม่แทน</div>' : ''}
           </td>
           <td class="num">${(r.viewCount || 0).toLocaleString('th-TH')}</td>
-          <td><span class="pill ${r.isPublished ? 'on' : 'off'}">${r.isPublished ? 'เผยแพร่' : 'ร่าง'}</span></td>
+          <td><span class="pill ${r.isPublished ? 'on' : 'off'}">${r.isPublished ? 'เผยแพร่' : 'ร่าง'}</span>
+            ${r.isPublic ? '<span class="pill on" style="background:#ecfdf5;color:#065f46;margin-left:4px">สาธารณะ</span>' : ''}</td>
           <td class="num">${r.sortOrder}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.edit(${i})">แก้ไข</button>
@@ -221,6 +227,7 @@
         set('fStoragePath', r?.storagePath || '');
         set('fSort', r?.sortOrder ?? 10);
         document.getElementById('fPub').checked = r ? !!r.isPublished : true;
+        document.getElementById('fPublic').checked = r ? !!r.isPublic : false;
         document.getElementById('upInfo').textContent = r?.fileName || '';
         document.getElementById('fFile').value = '';
         this.onKindChange();
@@ -260,6 +267,7 @@
           durationSeconds: +document.getElementById('fDur').value || 0,
           thumbnailUrl: null,
           isPublished: document.getElementById('fPub').checked,
+          isPublic: document.getElementById('fPublic').checked,
           sortOrder: +document.getElementById('fSort').value || 0,
         };
         try {
