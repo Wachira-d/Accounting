@@ -2234,12 +2234,20 @@ public partial class PdfGenerationService : IPdfGenerationService
         string Chk(bool v) => v ? "&#9745;" : "&#9744;";
         string Fc(TaxType t) => cert.TaxFormType == t ? "&#9745;" : "&#9744;";
 
-        List<WithholdingTaxCertLine> Match(string code) => code switch
-        {
-            "5" => lines.Where(l => l.IncomeTypeCode is "5" or "6" or "7" or "8" or "40(5)" or "40(6)" or "40(7)" or "40(8)").ToList(),
-            "other" => lines.Where(l => l.IncomeTypeCode is "9" or "99" or "other").ToList(),
-            _ => lines.Where(l => l.IncomeTypeCode == code).ToList()
-        };
+        // แถวของแต่ละบรรทัดตัดสินจาก **มาตรา** ผ่านตารางกลางตัวเดียว
+        // (`Helpers/ThaiWhtRateTable.CertificateRow`) — เหมือน renderer ฝั่ง
+        // QuestPDF (`PdfGenerationService.WhtCert.cs`) ที่แก้ไปแล้วรอบก่อน.
+        // เดิมที่นี่ยังเป็น allow-list พิมพ์มือ ⇒ ตกรหัสที่ระบบเองสร้าง
+        // (`8ad` ค่าโฆษณา · `8tr` ค่าขนส่ง จาก ExpenseCategoryResolver) และ
+        // แถว "อื่น ๆ" ก็เป็น allow-list จึงไม่ใช่ตาข่ายรับ ⇒ บรรทัดหายจาก
+        // ทุกแถวแต่ยอดรวมท้ายตารางยังเต็ม (D-03 แก้ฝั่งเดียว เหลืออีกฝั่ง)
+        var certRowOf = lines
+            .GroupBy(l => Accounting.Helpers.ThaiWhtRateTable.CertificateRow(l.IncomeTypeCode))
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+        // "other" = แถว 6 ของแบบ 50 ทวิ ซึ่ง CertificateRow คืนเป็น "6"
+        List<WithholdingTaxCertLine> Match(string code) =>
+            certRowOf.TryGetValue(code == "other" ? "6" : code, out var hits)
+                ? hits : new List<WithholdingTaxCertLine>();
         string Mk(string code)
         {
             var ml = Match(code);

@@ -5366,9 +5366,6 @@ public class OcrService : IOcrService
             SupplierBranchCode = bookSupplierRef
                 ? (string.IsNullOrWhiteSpace(vendorBranchForBook) ? null : vendorBranchForBook)
                 : null,
-            // ประเภทเงินได้ ม.40 — ใบที่มีการหัก ณ ที่จ่ายต้องมีค่านี้ก่อนออก 50 ทวิ
-            // และก่อนขึ้น ภ.ง.ด.3/53 (เดิมเส้น OCR ไม่เคยเซ็ตเลย ⇒ ต้องไปกรอกในใบทุกครั้ง)
-            IncomeTypeCode = !isSalesSide && whtRate > 0m ? result.WhtIncomeTypeCode : null,
             // หมวดค่าใช้จ่ายระดับเอกสาร = ผังเดบิตที่ AI/ผู้ใช้เลือก
             ExpenseCategoryId = !isSalesSide ? scanDebitAccountId : null,
             // แหล่งเงิน/ช่องทางชำระ = ผังเครดิตที่เลือกใน review (ฝั่งซื้อ)
@@ -5621,6 +5618,12 @@ public class OcrService : IOcrService
                     // the WHT cert auto-generation has line data ready.
                     WithholdingTaxRate = whtRate,
                     WithholdingTaxAmount = lineWht,
+                    // ประเภทเงินได้ ม.40 — WithholdingTaxCertService อ่านจาก
+                    // **บรรทัด** (`line.IncomeTypeCode ?? "8"`) ตอนออก 50 ทวิ และ
+                    // ไฟล์ ภ.ง.ด.3/53 ก็ map จากค่าเดียวกันนี้ ⇒ ไม่เติมที่นี่
+                    // = ทุกใบจากเส้น OCR ตกไปเป็น "8 ค่าบริการอื่น ๆ" เสมอ
+                    // (เดิมเส้น OCR ไม่เคยเซ็ตเลย ⇒ ต้องไปกรอกในใบทุกครั้ง)
+                    IncomeTypeCode = !isSalesSide && whtRate > 0m ? result.WhtIncomeTypeCode : null,
                     AccountId = lineAccountId,
                     GlAccountAiFeedbackId = lineGlFeedbackId,
                     ProductCode = lineProductCode,
@@ -5652,6 +5655,9 @@ public class OcrService : IOcrService
                 VatAmount = result.ExtractedVatAmount ?? 0,
                 WithholdingTaxRate = whtRate,
                 WithholdingTaxAmount = headerWht,
+                // ประเภทเงินได้ ม.40 — เหมือนสาขามีรายการย่อย: ตัวออก 50 ทวิ /
+                // ไฟล์ ภ.ง.ด.3/53 อ่านค่านี้จากบรรทัด ไม่ใช่จากหัวเอกสาร
+                IncomeTypeCode = !isSalesSide && whtRate > 0m ? result.WhtIncomeTypeCode : null,
                 // Scan-level suggested debit GL — previously this branch left
                 // the account empty even when the classifier knew the answer.
                 AccountId = scanDebitAccountId,

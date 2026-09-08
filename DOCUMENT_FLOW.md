@@ -1504,7 +1504,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - ออกได้เฉพาะฝั่งซื้อ (`PurchaseInvoice`/`Expense`/`PaymentVoucher`/
     `CertificateInLieu`) — ฝั่งขายเราเป็น "ผู้ถูกหัก" ลูกค้าเป็นคนออกใบให้
     (เส้นรับชำระหลายใบเคยไม่กรองชนิดเอกสาร)
-- **PDF**: `PdfGenerationService.WhtCert.cs`
+- **ประเภทเงินได้ ม.40 มาจาก `DocumentLine.IncomeTypeCode`** (ไม่ใช่หัวเอกสาร) —
+  `AutoGenerateFromDocumentAsync` อ่าน `line.IncomeTypeCode ?? "8"` ต่อบรรทัด และ
+  `TaxFilingExportService.MapIncomeTypeCode` ก็ map จากค่าเดียวกันลงไฟล์ ภ.ง.ด.3/53.
+  **เส้น OCR เติมค่านี้ลงบรรทัดตอนสร้างเอกสารแล้ว** (`OcrService`:5626/5660 —
+  ฝั่งซื้อ + `whtRate > 0` เท่านั้น) จากรหัส `ThaiWhtRateTable` ที่
+  `ExpenseCategoryResolver` เดาไว้ (`8`/`5`/`8ad`/`8tr`/…); เดิมไม่เคยเซ็ตเลย ⇒
+  ทุกใบจากเส้น OCR ตกเป็น `"8"` ค่าบริการอื่น ๆ เสมอ
+- **PDF**: `PdfGenerationService.WhtCert.cs` (QuestPDF) **และ**
+  `PdfGenerationService.cs:2237` (HTML) — **ทั้งสองตัวจัดบรรทัดลงแถว 1–6 ของแบบ
+  ผ่าน `ThaiWhtRateTable.CertificateRow` ตัวเดียว** ห้ามเขียน allow-list ของรหัสเอง
+  (แถว "อื่น ๆ" ของ HTML คือคีย์ `"other"` ซึ่งตรงกับ `"6"` ที่ helper คืน).
+  เดิมฝั่ง HTML ยังเป็น allow-list พิมพ์มือ ⇒ รหัสที่ระบบเองสร้าง (`8ad` ค่าโฆษณา ·
+  `8tr` ค่าขนส่ง · `4a`/`4b`) **หายจากทุกแถวแต่ยอดรวมท้ายตารางยังเต็ม**
+  (D-03 แก้ฝั่ง QuestPDF ไปแล้ว เหลือฝั่ง HTML — "แก้ตัวเดียว เหลือที่เหลือ")
 - **ประเภทแบบ guard (ภ.ง.ด.3 ↔ 53)**: `ResolveWhtFormType` + `DetectJuristic`
   บังคับที่ **ทุก create path** (`CreateAsync`, `AutoGenerateFromDocumentAsync`,
   `UpdateAsync`) — ประเภทแบบขึ้นกับ **ผู้ถูกหักภาษี**: นิติบุคคล → 53,

@@ -408,9 +408,9 @@ public class MobileApiService : IMobileApiService
                         .Select(d => (DocumentType?)d.DocumentType)
                         .FirstOrDefaultAsync()
                         ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
-                    if (!await DocumentPermissionHelper.CanApproveAsync(perms, companyId, userId, docType.Value))
+                    if (!await DocumentPermissionHelper.CanApproveAsync(perms, companyId, userId, docType))
                         throw new BusinessRuleException(
-                            $"ไม่มีสิทธิ์อนุมัติเอกสาร {docType.Value} (ต้องการ Document.Approve หรือสิทธิ์อนุมัติฝั่งซื้อ/ขาย)",
+                            $"ไม่มีสิทธิ์อนุมัติเอกสาร {docType} (ต้องการ Document.Approve หรือสิทธิ์อนุมัติฝั่งซื้อ/ขาย)",
                             "PERM-DOC-APPROVE", 403);
                     var approved = await docSvc.ApproveDocumentAsync(companyId, entityId,
                         $"mobile:{userId}", acknowledgeWarnings: true);
