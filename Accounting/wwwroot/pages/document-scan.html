@@ -601,6 +601,16 @@
       /// backend recompute amount = qty×price + persist ลง ExtractedItemsJson แล้ว
       /// คืน amount ใหม่ → อัปเดตช่อง "รวม" โดยไม่ refetch. เก็บ state modal ที่เหลือไว้.
       async saveLineFields(scanId, lineIndex) {
+        // ⚠️ เมธอดนี้ถูกเรียกจาก `onchange` ซึ่ง **ไม่มีใคร await** — ถ้าผู้ใช้พิมพ์
+        // ช่องสุดท้ายแล้วกด "ยืนยัน + ลงบัญชี" ทันที blur จะยิงคำขอนี้ออกไปพร้อม ๆ
+        // กับคำขอสร้างเอกสาร ⇒ เอกสารอาจถูกสร้างจากค่าก่อนแก้ (แข่งกันเงียบ ๆ)
+        // → ลงทะเบียนงานที่ค้างไว้ ให้ createDocFromReview รอให้จบก่อนเสมอ
+        const p = this._saveLineFieldsInner(scanId, lineIndex);
+        this._pendingLineSaves.add(p);
+        try { await p; } finally { this._pendingLineSaves.delete(p); }
+      },
+      _pendingLineSaves: new Set(),
+      async _saveLineFieldsInner(scanId, lineIndex) {
         try {
           const cid = Layout.getCompanyId();
           const row = document.querySelector(`tr[data-line-row="${lineIndex}"]`);
@@ -3371,11 +3381,26 @@
       },
 
       /** persist review edits ลง scan (เงียบ — ไม่มี toast/ปุ่มเปลี่ยน) */
-      async _persistReviewEdits() {
+      async _persistReviewEdits({ required = false } = {}) {
         if (!this._reviewScan) return;
         const api = Layout.api(); if (!api) return;
+        // ช่องที่กำลังพิมพ์ค้างอยู่ต้อง commit ก่อน — ไม่งั้น onchange ของมัน
+        // จะยิงหลังคำขอสร้างเอกสาร
+        try { document.activeElement?.blur?.(); } catch { /* ไม่สำคัญ */ }
+        // รอให้การบันทึก "รายบรรทัด" ที่ค้างอยู่จบก่อน (ดู saveLineFields)
+        if (this._pendingLineSaves.size)
+          await Promise.allSettled([...this._pendingLineSaves]);
         try { await api.ocrCorrect(this._reviewScan.id, this._buildReviewCorrection()); }
-        catch (e) { /* best-effort — create จะใช้ค่าเดิมถ้า save ล้ม */ }
+        catch (e) {
+          // ⚠️ เดิม catch เปล่า พร้อมหมายเหตุว่า "create จะใช้ค่าเดิมถ้า save ล้ม"
+          // — นั่นคือ silent no-op เต็มรูปแบบ: ผู้ใช้แก้ข้อมูล กดสร้าง แล้วได้
+          // เอกสารที่ยังเป็นค่าเดิมโดยไม่มีอะไรบอกเลยสักอย่าง (ผู้ใช้รายงานเอง)
+          // เส้นที่กำลังจะสร้างเอกสารต้อง **ล้มดัง** ดีกว่าสร้างจากค่าเก่า
+          if (required) throw new Error(
+            'บันทึกค่าที่แก้ไม่สำเร็จ จึงยังไม่สร้างเอกสาร (กันไม่ให้ได้ใบที่เป็นค่าเดิม): '
+            + (e?.message || e));
+          Layout.toast('บันทึกค่าที่แก้ไม่สำเร็จ: ' + (e?.message || e), 'error');
+        }
         await this._closeAiReviewFeedback();
       },
 
@@ -3441,7 +3466,7 @@
           // ⭐ บันทึกค่าที่ผู้ใช้แก้/เลือกใน review (ผังบัญชี, เลขใบกำกับ, วันที่,
           // หมวด, WHT ฯลฯ) ลง scan ก่อนสร้าง — ไม่งั้นค่าที่เลือกหายเพราะ
           // create อ่านจาก scan ที่ persist ไว้. (เดิมต้องกด "บันทึก" เองก่อน)
-          await this._persistReviewEdits();
+          await this._persistReviewEdits({ required: true });
           // Pass the live target-type pick so the chosen เอกสารที่จะสร้าง
           // takes effect without needing a separate "บันทึก" first.
           const target = document.getElementById('revTargetDocType')?.value || null;

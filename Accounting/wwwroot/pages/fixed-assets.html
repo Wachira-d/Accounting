@@ -484,8 +484,11 @@
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           tbody.innerHTML = items.map(a => `<tr${a.needsReview ? ' style="background:#fffbeb"' : ''}>
-            <td class="font-medium">${a.assetCode}${a.needsReview ? ' <span title="ระบบสร้างให้อัตโนมัติ — กรุณาตรวจสอบรายละเอียดก่อนใช้งาน" style="background:#fbbf24;color:#78350f;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">⚠️ รอตรวจ</span>' : ''}</td>
-            <td>${a.name}<div style="font-size:11px;color:#64748b">${this._typeLabel(a.assetType || 'Tangible')}${a.lessorName?' · '+Layout.esc(a.lessorName):''}</div></td>
+            <td class="font-medium">${a.assetCode}${a.needsReview ? ' <span title="ระบบสร้างให้อัตโนมัติ — กรุณาตรวจสอบรายละเอียดก่อนใช้งาน" style="background:#fbbf24;color:#78350f;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">⚠️ รอตรวจ</span>' : ''}
+              ${String(a.assetCode || '').startsWith('DRAFT-')
+                ? '<div style="font-size:10px;color:#92400e;margin-top:2px">รหัสชั่วคราว — เลขจริง FA-ปีเดือน-#### จะออกเมื่อกด "ตรวจสอบและยืนยัน"</div>' : ''}</td>
+            <td>${a.name}<div style="font-size:11px;color:#64748b">${this._typeLabel(a.assetType || 'Tangible')}${a.lessorName?' · '+Layout.esc(a.lessorName):''}</div>
+              ${a.sourceDocumentNumber ? `<div style="font-size:11px;color:#64748b;margin-top:2px">📄 สร้างจาก <a href="/pages/documents.html?openDoc=${Layout.esc(a.sourceDocumentId || '')}" style="color:var(--primary)">${Layout.esc(a.sourceDocumentNumber)}</a></div>` : ''}</td>
             <td>${a.category || '-'}</td>
             <td>${Layout.date(a.purchaseDate)}</td>
             <td class="text-right">${Layout.money(a.purchaseCost)}</td>

@@ -77,7 +77,11 @@ public record FixedAssetResponse(
     decimal? MonthlyLeasePayment = null,
     Guid? ProjectId = null,
     bool NeedsReview = false,
-    Guid? SourceDocumentId = null);
+    Guid? SourceDocumentId = null,
+    /// <summary>เลขเอกสารที่สร้างสินทรัพย์ตัวนี้ — UI ต้องแสดงคู่กับรายการเสมอ
+    /// เพราะเมื่อพบสินทรัพย์ซ้ำ ทางแก้อยู่ที่**เอกสาร** ไม่ใช่ที่ทะเบียน
+    /// (ลบสินทรัพย์ทิ้งขณะใบต้นทางยังลง Dr 12210 = งบดุลกับทะเบียนไม่ตรงถาวร)</summary>
+    string? SourceDocumentNumber = null);
 
 public record DepreciationResponse(
     Guid Id,

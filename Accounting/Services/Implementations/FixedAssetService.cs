@@ -215,7 +215,7 @@ public class FixedAssetService : IFixedAssetService
             .ToListAsync();
 
         return new PagedResponse<FixedAssetResponse>(
-            items.Select(MapToResponse).ToList(),
+            await MapWithSourceDocAsync(companyId, items),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
@@ -239,7 +239,7 @@ public class FixedAssetService : IFixedAssetService
             .Where(a => a.CompanyId == companyId && a.NeedsReview)
             .OrderByDescending(a => a.CreatedAt)
             .ToListAsync();
-        return items.Select(MapToResponse).ToList();
+        return await MapWithSourceDocAsync(companyId, items);
     }
 
     /// <summary>ลบสินทรัพย์ที่ลงทะเบียนผิด (เช่น auto-register แยกผิด/ซ้ำ).
@@ -1277,7 +1277,25 @@ public class FixedAssetService : IFixedAssetService
                 .FirstOrDefaultAsync();
     }
 
-    private static FixedAssetResponse MapToResponse(FixedAsset a) =>
+    /// <summary>เติม "สร้างจากเอกสารใบไหน" ให้ทุกแถวในครั้งเดียว (ไม่ยิง query
+    /// ต่อแถว) — ใช้กับเส้นที่แสดง**รายการ** เพื่อให้ผู้ใช้เห็นต้นทางทันที</summary>
+    private async Task<List<FixedAssetResponse>> MapWithSourceDocAsync(
+        Guid companyId, List<FixedAsset> items)
+    {
+        var ids = items.Where(a => a.SourceDocumentId.HasValue)
+            .Select(a => a.SourceDocumentId!.Value).Distinct().ToList();
+        var map = ids.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && ids.Contains(d.Id))
+                .Select(d => new { d.Id, d.DocumentNumber })
+                .ToDictionaryAsync(x => x.Id, x => x.DocumentNumber);
+        return items.Select(a => MapToResponse(a,
+            a.SourceDocumentId.HasValue && map.TryGetValue(a.SourceDocumentId.Value, out var n)
+                ? n : null)).ToList();
+    }
+
+    private static FixedAssetResponse MapToResponse(FixedAsset a, string? sourceDocumentNumber = null) =>
         new(a.Id, a.AssetCode, a.Name, a.Description, a.Category,
             a.Location, a.SerialNumber, a.PurchaseDate, a.PurchaseCost,
             a.SalvageValue, a.UsefulLifeMonths, a.DepreciationMethod,
@@ -1286,5 +1304,5 @@ public class FixedAssetService : IFixedAssetService
             a.AssetAccountId, a.DepreciationExpenseAccountId,
             a.AccumulatedDepreciationAccountId,
             a.AssetType, a.LeaseTermMonths, a.LessorName, a.MonthlyLeasePayment,
-            a.ProjectId, a.NeedsReview, a.SourceDocumentId);
+            a.ProjectId, a.NeedsReview, a.SourceDocumentId, sourceDocumentNumber);
 }
