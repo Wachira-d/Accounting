@@ -10602,8 +10602,19 @@
           // และชื่อหัวต้องเป็นหัว **ของใบนี้จริง ๆ** — ใบ combined จ่ายครบได้หัว
           // 3-in-1 ไม่ใช่ "ใบกำกับภาษี/ใบเสร็จรับเงิน" (เดิมเขียนตายตัว ผู้ใช้ที่
           // ถือใบ combined อ่านแล้วนึกว่าระบบจะสร้างใบกำกับใหม่อีกใบ)
-          const tivFull = _rpDt === 'TaxInvoice' && fullFirst;
+          // ⬅ และต้องรับเงิน "วันเดียวกับวันที่บนใบ" เท่านั้น (ม.105 — กติกาเดียวกับ
+          // Helpers/ReceiptIssuePolicy ฝั่งเซิร์ฟเวอร์). รับเงินคนละวัน → ใบเดิมไม่ยก
+          // หัวเป็นใบเสร็จแล้ว ⇒ ถ้ายังปลดติ๊กไว้ ลูกค้าจะ**ไม่ได้ใบเสร็จเลยสักใบ**
+          const _docDay = (this._currentDoc?.documentDate || '').slice(0, 10);
+          const _sameDay = !!_docDay && dateEl.value === _docDay;
+          const tivFull = _rpDt === 'TaxInvoice' && fullFirst && _sameDay;
           rpIssueCb.checked = !tivFull;
+          if (_rpDt === 'TaxInvoice' && fullFirst && !_sameDay) {
+            if (rpIssueHint) rpIssueHint.textContent =
+              `➕ สร้างใบเสร็จรับเงินแยก 1 ใบ ลงวันที่ ${Layout.date(dateEl.value)} — รับเงินคนละวันกับวันที่บนใบ `
+              + `(${Layout.date(_docDay)}) ใบเดิมจึงยกหัวเป็นใบเสร็จไม่ได้ ใบรับต้องลงวันที่ที่รับเงินจริง (ม.105)`;
+            return;
+          }
           // ⚠️ นี่คือหัว **สมมติ** ("ถ้าจ่ายครบจะกลายเป็น...") ไม่ใช่หัวปัจจุบัน —
           // ต้องล้าง documentTitle ที่เซิร์ฟเวอร์คำนวณจากสถานะจริงทิ้ง ไม่งั้น
           // docHeaderLabel จะคืนค่าเดิมและข้อความจะบอกว่า "จะเปลี่ยนเป็น <หัวเดิม>"
@@ -10615,6 +10626,8 @@
         };
         _refreshIssueDefault();
         amountEl.oninput = _refreshIssueDefault;
+        // วันที่รับเงินเป็นตัวตัดสินว่าจะมีใบเสร็จแยกไหม → ต้องคำนวณใหม่เมื่อผู้ใช้เปลี่ยนวัน
+        dateEl.onchange = _refreshIssueDefault;
         // Populate the bank-override dropdown with the company's bank
         // accounts. Default option (empty value) keeps the doc's channel.
         const rpBank = document.getElementById('rpBankOverride');

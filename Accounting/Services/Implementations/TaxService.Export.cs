@@ -321,14 +321,15 @@ public partial class TaxService
         return rows;
     }
 
-    /// <summary>VAT side of a report line — matches the server-side recalc
-    /// grouping (INPUT = ภาษีซื้อ, EXEMPT/carry-forward = summary, else output).</summary>
-    internal static string LineSide(TaxReportLine l) => l.IncomeTypeCode switch
-    {
-        "INPUT" or "JE_INPUT" => "input",
-        "EXEMPT" or "VAT_CREDIT_CF" => "summary",
-        _ => "output",
-    };
+    /// <summary>ฝั่งของบรรทัดรายงาน — มอบต่อให้ <c>Helpers/VatReportLineKind</c>
+    /// ตัวเดียวของระบบ (เดิมเป็นสำเนามือ 1 ใน 5 ชุดที่ไม่ตรงกัน)</summary>
+    internal static string LineSide(TaxReportLine l)
+        => Accounting.Helpers.VatReportLineKind.SideOf(l.IncomeTypeCode) switch
+        {
+            Accounting.Helpers.VatReportSide.Input => "input",
+            Accounting.Helpers.VatReportSide.Summary => "summary",
+            _ => "output",
+        };
 
     private static string BranchLabel(Company? c) => c?.BranchName
         ?? (c?.BranchCode == "00000" || string.IsNullOrEmpty(c?.BranchCode) ? "สำนักงานใหญ่" : c.BranchCode);

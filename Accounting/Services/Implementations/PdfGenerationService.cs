@@ -1615,6 +1615,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (doc.BalanceDue > 0.01m || doc.PaidAmount <= 0.005m) return;
         if (doc.Status is DocumentStatus.Voided
             or DocumentStatus.Rejected or DocumentStatus.WaitingApproval) return;
+        // "same-day settlement" ที่คอมเมนต์ข้างบนเขียนไว้ตั้งแต่ต้น — เดิม**ไม่เคย
+        // เทียบวันที่จริง** (ผู้ใช้รายงาน 2026-09-10: ใบลงวันที่ 5 ส.ค. รับเงินคนละวัน
+        // แล้วกระดาษยกหัวเป็น "…/ใบเสร็จรับเงิน" = ใบรับลงวันที่เท็จ ม.105)
+        var settledOn = await DocumentService.LoadSettlementDatesAsync(_db, companyId, new[] { doc.Id });
+        if (!ReceiptIssuePolicy.SettledSameDay(doc.DocumentDate,
+                settledOn.TryGetValue(doc.Id, out var paidOn) ? paidOn : null)) return;
         // ชำระผ่านการออกใบเสร็จแยก (Receipt/RV อ้างใบนี้) → ใบเสร็จคือคนละใบ
         doc.ServedAsReceipt = !await HasSeparateReceiptAsync(companyId, doc.Id);
     }

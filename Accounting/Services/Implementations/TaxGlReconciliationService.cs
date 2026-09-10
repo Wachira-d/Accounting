@@ -204,8 +204,10 @@ public class TaxGlReconciliationService
                 var excluded = report.Lines
                     .Where(l => l.IsExcluded && l.IncomeTypeCode != "SUMMARY")
                     .Where(l => isOutputVat
-                        ? l.IncomeTypeCode is "OUTPUT" or "JE_OUTPUT" or null or ""
-                        : l.IncomeTypeCode is "INPUT" or "JE_INPUT")
+                        // ตัวจำแนกฝั่งตัวเดียวของระบบ (Helpers/VatReportLineKind) —
+                        // แถวยอดรวมของแบบไม่ใช่รายการเอกสาร จึงไม่เข้าทั้งสองฝั่ง
+                        ? Accounting.Helpers.VatReportLineKind.BelongsToDetailReport(l.IncomeTypeCode, true)
+                        : Accounting.Helpers.VatReportLineKind.BelongsToDetailReport(l.IncomeTypeCode, false))
                     .ToList();
                 if (excluded.Count > 0)
                     causes.Add(new ReconCause("EXCLUDED_LINES",

@@ -1565,7 +1565,9 @@ public partial class DocumentService : IDocumentService
             pceRows.Count > 0, pceRows.Count, pceRows.Sum(r => r.Amount), bookedByProject,
             pceByLine,
             servedAsReceipt: ComputeServedAsReceipt(doc, hasSeparateReceiptDoc,
-                await GetReceiptIssueModeAsync(companyId)));
+                await GetReceiptIssueModeAsync(companyId),
+                (await LoadSettlementDatesAsync(_db, companyId, new[] { documentId }))
+                    .TryGetValue(documentId, out var settledOnDoc) ? settledOnDoc : null));
         if (pp30 != null)
             resp = resp with
             {
@@ -1944,8 +1946,12 @@ public partial class DocumentService : IDocumentService
         // (query คงที่ 3 ครั้ง/หน้า ไม่ใช่ N+1) เพื่อให้ป้ายบนตารางตรงกับกระดาษ
         // ทุกเคส รวมชื่อหัวที่ผู้ใช้ตั้งเอง/CustomTitle/§86/6 อย่างย่อ
         var receiptModeForPage = await GetReceiptIssueModeAsync(companyId);
+        // วันรับเงินจริงของใบกำกับในหน้านี้ (batch เดียว) — ใบที่รับเงินคนละวัน
+        // กับวันที่บนใบ ยกหัวเป็นใบเสร็จไม่ได้ ต้องมี REC แยก (ม.105)
+        var settledOnPage = await LoadSettlementDatesAsync(_db, companyId, tivIdsOnPage);
         foreach (var d in items)
-            d.ServedAsReceipt = ComputeServedAsReceipt(d, tivWithReceipt.Contains(d.Id), receiptModeForPage);
+            d.ServedAsReceipt = ComputeServedAsReceipt(d, tivWithReceipt.Contains(d.Id), receiptModeForPage,
+                settledOnPage.TryGetValue(d.Id, out var paidOn) ? paidOn : null);
         var titles = await PdfGenerationService.ResolveDocumentTitlesAsync(_db, companyId, items);
 
         return new PagedResponse<DocumentResponse>(
@@ -10785,11 +10791,23 @@ public partial class DocumentService : IDocumentService
             //     ใบเสร็จในตัวไม่ได้ด้วย (ถูก suppress) ⇒ ลูกค้าไม่มีใบเสร็จเลย)
             //   • โหมดแยกใบยังปิด "ใบรวมทำหน้าที่ใบเสร็จเอง" ด้วย — ไม่งั้นใบ
             //     combined จะเป็นข้อยกเว้นที่หลุดนโยบายเงียบ ๆ
+            //   • และรับเงิน**วันเดียวกับวันที่บนใบ**เท่านั้น (ขายสด/รับหน้างาน) —
+            //     ผู้ใช้รายงาน 2026-09-10: กดบันทึกรับเงินบนใบลงวันที่ 5 ส.ค. โดยเงิน
+            //     เข้าคนละวัน แล้ว "ใบเดิม" เปลี่ยนหัวเป็นใบเสร็จ ⇒ ใบรับลงวันที่เท็จ
+            //     (ม.105 ใบรับต้องลงวันที่ที่รับเงินจริง) และไม่ตรงกับ 50 ทวิ ของผู้จ่าย.
+            //     คนละวัน → เดินเส้นเดียวกับ "แปลงเอกสารเป็นใบเสร็จรับเงิน" คือออก
+            //     REC แยกลงวันที่รับเงิน (CreateSettlementReceiptAsync ข้างล่าง)
             var receiptMode = await GetReceiptIssueModeAsync(companyId);
             var forceSeparate = Accounting.Helpers.ReceiptIssuePolicy.ForcesSeparateReceipt(receiptMode);
-            var combinedSelfReceipt = !forceSeparate
+            var notCombinedReason = Accounting.Helpers.ReceiptIssuePolicy
+                .WhyNotCombined(receiptMode, doc.DocumentDate, payment.PaymentDate);
+            var combinedSelfReceipt = notCombinedReason == null
                 && doc.DocumentType == DocumentType.TaxInvoice
                 && doc.CombinedInvoiceTaxInvoice && singleShotFull;
+            if (notCombinedReason != null && doc.DocumentType == DocumentType.TaxInvoice
+                && doc.CombinedInvoiceTaxInvoice && singleShotFull)
+                _logger.LogInformation(
+                    "ใบ {Doc} ไม่ยกหัวเป็นใบเสร็จในตัว — {Reason}", doc.DocumentNumber, notCombinedReason);
 
             var wantReceipt = (forceSeparate
                     || (request.IssueReceiptDocument
@@ -15148,13 +15166,44 @@ public partial class DocumentService : IDocumentService
             .Select(s => (ReceiptIssueMode?)s.ReceiptIssueMode)
             .FirstOrDefaultAsync() ?? ReceiptIssueMode.Combined;
 
+    /// <summary>วันที่ "รับเงินจริง" ของแต่ละเอกสาร = วันที่ของรายการรับชำระ
+    /// <b>ล่าสุดที่ยังไม่ถูกยกเลิก</b> (รวมเงินก้อนเดียวที่จัดสรรหลายใบผ่าน
+    /// <c>PaymentAllocation</c>) — batch เดียวต่อหน้า ไม่ใช่ N+1
+    ///
+    /// <para>ไม่มีคีย์ในดิกชันนารี = <b>ไม่รู้ว่ารับเงินวันไหน</b> (ยอดถูกปิดด้วย
+    /// การหักใบมัดจำ / ข้อมูลก่อนย้ายระบบ) ซึ่ง
+    /// <c>ReceiptIssuePolicy.SettledSameDay</c> ตีเป็น "ไม่ยกหัวเป็นใบเสร็จ" —
+    /// "ไม่รู้ = บอกว่าไม่รู้" และการพิมพ์ใบเสร็จเกินอันตรายกว่าการไม่พิมพ์</para></summary>
+    internal static async Task<Dictionary<Guid, DateTime>> LoadSettlementDatesAsync(
+        AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> documentIds)
+    {
+        if (documentIds.Count == 0) return new Dictionary<Guid, DateTime>();
+        var ids = documentIds.Distinct().ToList();
+        var direct = await db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && ids.Contains(p.DocumentId))
+            .Select(p => new { DocId = p.DocumentId, p.PaymentDate })
+            .ToListAsync();
+        var allocated = await db.PaymentAllocations.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && ids.Contains(a.DocumentId)
+                && !a.Payment.IsDeleted)
+            .Select(a => new { DocId = a.DocumentId, a.Payment.PaymentDate })
+            .ToListAsync();
+        return direct.Concat(allocated)
+            .GroupBy(r => r.DocId)
+            .ToDictionary(g => g.Key, g => g.Max(r => r.PaymentDate));
+    }
+
     /// <summary>ใบกำกับ "ทำหน้าที่ใบเสร็จในตัว" ไหม — mirror ของกติกาใน
     /// <c>PdfGenerationService.ResolveServedAsReceiptAsync</c> (เจ้าของกฎตอน
     /// render): TaxInvoice + ยอดคงเหลือ ≈ 0 + เคยรับเงินจริง + ลงบัญชีแล้ว +
-    /// ไม่มีใบเสร็จแยกอ้างถึง. แก้ที่ใดที่หนึ่งต้องแก้อีกที่เสมอ ไม่งั้นป้าย
-    /// บนหน้าจอจะไม่ตรงกับหัวที่พิมพ์ออกมา (defect class "สอง renderer ห้าม drift")</summary>
+    /// ไม่มีใบเสร็จแยกอ้างถึง + <b>รับเงินวันเดียวกับวันที่บนใบ</b>. แก้ที่ใดที่หนึ่ง
+    /// ต้องแก้อีกที่เสมอ ไม่งั้นป้ายบนหน้าจอจะไม่ตรงกับหัวที่พิมพ์ออกมา
+    /// (defect class "สอง renderer ห้าม drift")
+    ///
+    /// <para><paramref name="settledOn"/> = วันที่รับเงินจริง (จาก
+    /// <see cref="LoadSettlementDatesAsync"/>) — <c>null</c> = ไม่รู้ ⇒ ไม่ยกหัว</para></summary>
     internal static bool ComputeServedAsReceipt(Document d, bool hasSeparateReceipt,
-        ReceiptIssueMode mode = ReceiptIssueMode.Combined)
+        ReceiptIssueMode mode, DateTime? settledOn)
     {
         if (d.DocumentType != DocumentType.TaxInvoice) return false;
         // นโยบายบริษัท "แยกใบกำกับ–ใบเสร็จเสมอ" → ใบกำกับไม่ยกหัวเป็นใบเสร็จ
@@ -15168,6 +15217,9 @@ public partial class DocumentService : IDocumentService
         if (d.BalanceDue > 0.01m || d.PaidAmount <= 0.005m) return false;
         if (d.Status is DocumentStatus.Voided
             or DocumentStatus.Rejected or DocumentStatus.WaitingApproval) return false;
+        // ⬅ รับเงิน "คนละวันกับวันที่บนใบ" → ใบนี้ยกหัวเป็นใบเสร็จไม่ได้ ใบเสร็จ
+        // ตัวจริงคือ REC ที่ลงวันที่รับเงิน (ม.105 — ดู ReceiptIssuePolicy)
+        if (!Accounting.Helpers.ReceiptIssuePolicy.SettledSameDay(d.DocumentDate, settledOn)) return false;
         return !hasSeparateReceipt;
     }
 

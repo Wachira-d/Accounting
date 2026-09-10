@@ -94,16 +94,24 @@ public partial class PdfGenerationService
         string kind, string theme)
     {
         var isSales = kind == "sales";
-        // เฉพาะรายการที่นับจริง (ไม่รวม excluded / summary carry-forward)
+        // ⚠️ เดิมฝั่งขายใช้ **deny-list** ("ไม่ใช่ INPUT/JE_INPUT = ขาย") ⇒ แถว
+        // **ยอดรวมของแบบ ภ.พ.30** ที่ไม่มีวันที่/เลขที่ใบ (ยอดซื้อยกเว้น §81 ·
+        // เครดิตภาษีซื้อยกมา) ตกเข้ารายงานภาษี**ขาย** เป็นรายการที่ 1 ลงวันที่
+        // 01/01/0544 (= `default(DateTime)` + 543) และถูกบวกเข้ายอดรวมท้ายตาราง
+        // ⇒ ยอดขายในรายงาน §87 เกินจริง (ผู้ใช้รายงาน 2026-09-10).
+        // ตัวจำแนกอยู่ที่ Helpers/VatReportLineKind ตัวเดียว — ห้ามเทียบรหัสเองที่นี่
         var lines = report.Lines
-            .Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY")
-            // JE_INPUT = ภาษีซื้อจาก JV เช่นกัน — เดิมเทียบแค่ "INPUT" ⇒ JE_INPUT
-            // หลุดไปโผล่ในรายงานภาษีขาย + หายจากรายงานภาษีซื้อ (Excel/CSV/จอ
-            // จัดฝั่งถูกหมด — PDF ตกที่เดียว)
-            .Where(l => isSales
-                ? l.IncomeTypeCode != "INPUT" && l.IncomeTypeCode != "JE_INPUT"
-                : l.IncomeTypeCode == "INPUT" || l.IncomeTypeCode == "JE_INPUT")
+            .Where(l => !l.IsExcluded)
+            .Where(l => Accounting.Helpers.VatReportLineKind
+                .BelongsToDetailReport(l.IncomeTypeCode, isSales))
             .OrderBy(l => l.TransactionDate).ThenBy(l => l.LineOrder)
+            .ToList();
+        // ยอดรวมของแบบที่ตัดออกจากตาราง ต้องยัง**หาเจอ**ในรายงานฝั่งของมัน —
+        // ห้ามหายเงียบ (กฎเหล็ก #4 A "ห้าม silent no-op")
+        var notes = report.Lines
+            .Where(l => !l.IsExcluded)
+            .Where(l => Accounting.Helpers.VatReportLineKind.IsNoteFor(l.IncomeTypeCode, isSales))
+            .OrderBy(l => l.LineOrder)
             .ToList();
         var sumBase = lines.Sum(l => l.IncomeAmount);
         var sumVat = lines.Sum(l => l.TaxAmount);
@@ -167,6 +175,18 @@ public partial class PdfGenerationService
             });
 
             col.Item().PaddingTop(10).AlignRight().Text($"จำนวน {lines.Count} รายการ").FontSize(8).FontColor("#64748B");
+
+            // หมายเหตุท้ายรายงาน — ยอดที่ไม่ใช่ "รายการใบกำกับ" แต่ต้องกระทบยอด
+            // กับแบบ ภ.พ.30 ได้ (ยอดขาย 0%/ยกเว้นในรายงานขาย · ยอดซื้อยกเว้นใน
+            // รายงานซื้อ). ไม่รวมในยอดรวมของตารางข้างบนโดยตั้งใจ
+            if (notes.Count > 0)
+            {
+                col.Item().PaddingTop(6).Text("หมายเหตุ (ไม่นับรวมในตาราง §87 — ใช้กระทบยอดกับแบบ ภ.พ.30)")
+                    .FontSize(8).Bold().FontColor("#64748B");
+                foreach (var n in notes)
+                    col.Item().PaddingLeft(8).Text($"• {n.Description}  {M(n.IncomeAmount)}")
+                        .FontSize(8).FontColor("#64748B");
+            }
         });
     }
 
@@ -178,17 +198,31 @@ public partial class PdfGenerationService
         // และ JE_INPUT ออกด้วย ไม่งั้นเครดิตยกมาถูกนับเป็น "ยอดขายที่ได้รับยกเว้น"
         // ในช่อง 1/§81. อีกทั้งขายอัตรา 0% (§80/1) เก็บ TaxRate = 0 เหมือนยกเว้น →
         // แยกไม่ได้ด้วยอัตรา ต้องดู IncomeTypeCode ("EXEMPT" = §81, ที่เหลือ 0% = ส่งออก)
-        var salesLines = report.Lines.Where(l => !l.IsExcluded
-            && l.IncomeTypeCode != "SUMMARY" && l.IncomeTypeCode != "INPUT"
-            && l.IncomeTypeCode != "JE_INPUT" && l.IncomeTypeCode != "VAT_CREDIT_CF").ToList();
-        var std = salesLines.Where(l => l.TaxRate >= 6.5m).Sum(l => l.IncomeAmount);
-        var exempt = salesLines.Where(l => l.TaxRate < 6.5m && l.IncomeTypeCode == "EXEMPT")
+        // ⚠️ เดิมแยกช่องด้วย `TaxRate < 6.5 && IncomeTypeCode == "EXEMPT"` ซึ่งเขียน
+        // ไว้ตอนที่ "EXEMPT" ยังหมายถึงยอดยกเว้นของ**ทั้งสองฝั่ง** — หลังแยกเป็น
+        // EXEMPT_SALES (ขาย) / EXEMPT (ซื้อ) รหัสเดิมกลายเป็นฝั่ง**ซื้อ** ⇒
+        // ช่อง 8 ได้ยอด**ซื้อ**ยกเว้น และยอด**ขาย**ยกเว้นตกไปอยู่ช่อง 7 แทน
+        // (ช่อง 7/8 สลับกัน) · ตัวแมปช่องอยู่ที่ Helpers/VatReportLineKind ตัวเดียว
+        var active = report.Lines.Where(l => !l.IsExcluded).ToList();
+        decimal BoxOf(Accounting.Helpers.Pp30SalesBox box) => active
+            .Where(l => Accounting.Helpers.VatReportLineKind.SalesBoxOf(l.IncomeTypeCode) == box)
             .Sum(l => l.IncomeAmount);
-        var zero = salesLines.Where(l => l.TaxRate < 6.5m && l.IncomeTypeCode != "EXEMPT")
-            .Sum(l => l.IncomeAmount);
+        var zero = BoxOf(Accounting.Helpers.Pp30SalesBox.ZeroRated);
+        var exempt = BoxOf(Accounting.Helpers.Pp30SalesBox.Exempt);
+        // แถวรายการเอกสารเก็บฐานที่ "ไม่ยกเว้น" (7% + 0%) ⇒ ช่อง 5 ต้องหักยอด 0%
+        // ออก ไม่ใช่คัดแถวตามอัตรา (ใบผสม 7%+0% เก็บ TaxRate = อัตราสูงสุดของใบ
+        // ⇒ ฐาน 0% ของใบนั้นจะถูกนับเข้าช่อง 5 แล้วซ้ำกับแถวยอดรวมช่อง 7 อีกที)
+        var std = Accounting.Helpers.VatReportLineKind.StandardBase(
+            BoxOf(Accounting.Helpers.Pp30SalesBox.Standard7), zero);
         var totalSales = std + zero + exempt;
-        var purchaseBase = report.Lines.Where(l => !l.IsExcluded
-            && (l.IncomeTypeCode == "INPUT" || l.IncomeTypeCode == "JE_INPUT")).Sum(l => l.IncomeAmount);
+        var purchaseBase = active.Where(l => Accounting.Helpers.VatReportLineKind
+            .SideOf(l.IncomeTypeCode) == Accounting.Helpers.VatReportSide.Input).Sum(l => l.IncomeAmount);
+        // ยอดซื้อยกเว้น §81 ไม่มีช่องในแบบ — แสดงเป็นหมายเหตุ (เดิมถูกนับเป็น
+        // ยอดขายยกเว้นช่อง 8). รายงานที่สร้าง**ก่อน**การแยกช่อง 7/8 รหัสนี้รวม
+        // ยอดขายยกเว้นไว้ด้วย → บอกให้กดสร้างรายงานใหม่ ไม่ใช่เดาแทนผู้ใช้
+        var exemptPurchaseNote = active
+            .Where(l => l.IncomeTypeCode == Accounting.Helpers.VatReportLineKind.ExemptPurchases)
+            .Sum(l => l.IncomeAmount);
 
         string M(decimal v) => v.ToString("N2");
         var payable = report.NetVat >= 0 ? report.NetVat : 0;
@@ -222,6 +256,14 @@ public partial class PdfGenerationService
             col.Item().PaddingVertical(6);
             Box("8", "ภาษีที่ต้องชำระในเดือนนี้", M(payable), strong: payable > 0, color: payable > 0 ? "#DC2626" : "#0F172A");
             Box("9", "ภาษีที่ชำระเกิน (ยกไปเดือนถัดไป/ขอคืน)", M(credit), strong: credit > 0, color: credit > 0 ? "#16A34A" : "#0F172A");
+
+            if (exemptPurchaseNote != 0)
+            {
+                col.Item().PaddingTop(10).Text(
+                        $"ยอดซื้อที่ได้รับยกเว้นภาษี (§81) {M(exemptPurchaseNote)} บาท — ไม่เข้าช่องใดของแบบ ภ.พ.30 "
+                        + "(ภาษีซื้อของยอดนี้ลงเป็นต้นทุน ไม่ใช่เครดิต)")
+                    .FontSize(8).FontColor("#64748B");
+            }
 
             col.Item().PaddingTop(16).Text(t =>
             {

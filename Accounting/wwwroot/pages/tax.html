@@ -512,7 +512,10 @@
         const branch = b => { const x = String(b || '').replace(/\D/g, ''); return (!x || x === '00000' || x === '0') ? 'สำนักงานใหญ่' : 'สาขาที่ ' + x; };
         const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const dstr = s => { try { return s ? new Date(s).toLocaleDateString('th-TH') : ''; } catch { return ''; } };
-        const sideOf = ln => { const c = ln.incomeTypeCode; if (c === 'INPUT' || c === 'JE_INPUT') return 'input'; if (c === 'EXEMPT' || c === 'VAT_CREDIT_CF') return 'summary'; return 'output'; };
+        // ฝั่งของบรรทัดมาจากเซิร์ฟเวอร์ (Helpers/VatReportLineKind) — หน้านี้แสดง
+        // อย่างเดียว. เดิมหน้านี้จำแนกเอง 2 จุด ⇒ รหัสยอดรวมที่เพิ่มทีหลัง
+        // (EXEMPT_SALES/ZERO_RATED_SALES) ตกไปอยู่ฝั่ง "ขาย" โดยไม่มีอะไรฟ้อง
+        const sideOf = ln => ln.side || 'output';
         // §87: แบบพิมพ์ราชการต้องเรียงตามวันที่ใบกำกับ — server เรียง LineOrder
         // ให้แล้ว แต่ sort ซ้ำฝั่ง client เพื่อให้รายงานเก่า (generate ก่อนแก้)
         // พิมพ์ออกมาถูกลำดับทันทีโดยไม่ต้อง regenerate
@@ -573,7 +576,7 @@
               <div class="grid grid-3 gap-4">
                 ${String(d.taxType).startsWith('WithholdingTax') ? `
                 <div><span class="text-gray-500 text-xs">เงินได้ที่จ่าย (ฐานหัก)</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
-                <div><span class="text-gray-500 text-xs">จำนวนผู้ถูกหัก/รายการ</span><div class="text-lg font-bold">${(d.lines || []).filter(l => l.incomeTypeCode !== 'SUMMARY').length}</div></div>
+                <div><span class="text-gray-500 text-xs">จำนวนผู้ถูกหัก/รายการ</span><div class="text-lg font-bold">${(d.lines || []).filter(l => l.side !== 'summary').length}</div></div>
                 <div><span class="text-gray-500 text-xs">ภาษีนำส่ง</span><div class="text-lg font-bold ${d.totalTaxWithheld > 0 ? 'text-danger' : ''}">${Layout.money(d.totalTaxWithheld)}</div><div class="text-xs text-gray-400">ยื่นภายในวันที่ 7 (e-Filing 15) เดือนถัดไป</div></div>
                 ` : d.taxType === 'CorporateIncomeTax' ? `
                 <div><span class="text-gray-500 text-xs">รายได้รวมทั้งปี</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
@@ -606,12 +609,9 @@
             const isVat = d.taxType === 'VAT';
             // Classify each line by VAT side using its IncomeTypeCode
             // (matches the server-side recalc grouping in UpdateTaxReportAsync).
-            const sideOf = (ln) => {
-              const c = ln.incomeTypeCode;
-              if (c === 'INPUT' || c === 'JE_INPUT') return 'input';
-              if (c === 'EXEMPT' || c === 'VAT_CREDIT_CF') return 'summary';
-              return 'output';
-            };
+            // เซิร์ฟเวอร์ตัดสินฝั่งมาแล้ว (TaxReportLineResponse.Side) — ห้ามจำแนก
+            // จาก incomeTypeCode เองที่นี่ (สำเนามือชุดที่ 2 ของกติกาเดียวกัน)
+            const sideOf = (ln) => ln.side || 'output';
             // escape ครบทุกอักขระ ไม่ใช่แค่ quote — ใช้ทั้งใน attribute และ text node
             const esc = (s) => Layout.esc(s);
             const renderRow = (ln) => {

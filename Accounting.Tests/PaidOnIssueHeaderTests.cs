@@ -17,15 +17,21 @@ namespace Accounting.Tests;
 /// </summary>
 public class PaidOnIssueHeaderTests
 {
-    /// <summary>mirror ของ DocumentService.ComputeServedAsReceipt หลังแก้</summary>
+    /// <summary>mirror ของ DocumentService.ComputeServedAsReceipt หลังแก้
+    ///
+    /// <para>ด่าน "รับเงินวันเดียวกับวันที่บนใบ" (ม.105 — เพิ่ม 2026-09-10) ถูก
+    /// ล็อกไว้ที่ <c>CombinedReceiptSameDayTests</c> ไฟล์นี้จึงสมมติว่ารับเงิน
+    /// วันเดียวกันเสมอ เพื่อให้เทสต์ชุดนี้ยังตอบคำถามเดิม (เจตนา PaidOnIssue)</para></summary>
     private static bool Served(
         string docType, string status, bool paidOnIssue,
-        decimal balanceDue, decimal paidAmount, bool hasSeparateReceipt)
+        decimal balanceDue, decimal paidAmount, bool hasSeparateReceipt,
+        bool settledSameDay = true)
     {
         if (docType != "TaxInvoice") return false;
         if (status == "Draft") return paidOnIssue && !hasSeparateReceipt;
         if (balanceDue > 0.01m || paidAmount <= 0.005m) return false;
         if (status is "Voided" or "Rejected" or "WaitingApproval") return false;
+        if (!settledSameDay) return false;
         return !hasSeparateReceipt;
     }
 
@@ -56,6 +62,14 @@ public class PaidOnIssueHeaderTests
     {
         Assert.True(Served("TaxInvoice", "Paid", false, 0m, 301444.42m, false));
         Assert.True(Served("TaxInvoice", "Paid", true, 0m, 301444.42m, false));
+    }
+
+    [Fact]
+    public void Payment_on_another_day_never_prints_the_combined_header()
+    {
+        // ผู้ใช้รายงาน 2026-09-10: ใบ 5 ส.ค. รับเงินคนละวัน — ใบเสร็จตัวจริงคือ REC
+        // ที่ลงวันที่รับเงิน ไม่ใช่หัวบนใบเดิม (รายละเอียดใน CombinedReceiptSameDayTests)
+        Assert.False(Served("TaxInvoice", "Paid", false, 0m, 111800m, false, settledSameDay: false));
     }
 
     [Fact]

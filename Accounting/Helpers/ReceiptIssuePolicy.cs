@@ -1,3 +1,4 @@
+using System.Globalization;
 using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
@@ -26,6 +27,48 @@ public static class ReceiptIssuePolicy
     /// จากการรับเงินก้อนเดียว</summary>
     public static bool AllowsCombinedReceiptHeader(ReceiptIssueMode mode)
         => mode != ReceiptIssueMode.SeparateReceipt;
+
+    /// <summary>ใบกำกับใบนี้ยกหัวเป็น "ใบเสร็จรับเงิน" ในตัวได้ไหม — <b>ต้องรับเงิน
+    /// ครบในวันเดียวกับวันที่บนใบ</b> (ขายสด/รับเงินหน้างาน) เท่านั้น
+    ///
+    /// <para>═══ ที่มา (ผู้ใช้รายงาน 2026-09-10) ═══
+    /// กด "บันทึกชำระเงิน" บนใบแจ้งหนี้/ใบกำกับภาษีลงวันที่ 5 ส.ค. โดยเงินเข้าจริง
+    /// คนละวัน แล้ว<b>ใบเดิม</b>เปลี่ยนหัวเป็น "ใบแจ้งหนี้/ใบกำกับภาษี/ใบเสร็จรับเงิน"
+    /// ⇒ กระดาษที่ลงวันที่ 5 ส.ค. ประกาศว่ารับเงินวันที่ 5 ส.ค. ทั้งที่รับจริงวันอื่น
+    /// = <b>ใบรับที่ลงวันที่เท็จ</b> (ป.รัษฎากร ม.105 ใบรับต้องออก "ทันทีที่รับเงิน"
+    /// และลงวันที่ที่รับเงินจริง) · ผู้จ่ายที่หัก ณ ที่จ่ายก็ออก 50 ทวิ ลงวันที่ที่
+    /// จ่ายจริง ⇒ วันบนใบเสร็จกับ 50 ทวิ ไม่ตรงกัน</para>
+    ///
+    /// <para>โค้ดเดิม<b>ไม่เคยเทียบวันที่เลย</b> ทั้งที่ doc-comment ของทั้งสองฝั่ง
+    /// (<c>ResolveServedAsReceiptAsync</c> / <c>ComputeServedAsReceipt</c>) เขียนไว้เอง
+    /// ว่า "ชำระครบ <b>ณ วันออก</b> (cash sale / same-day settlement)" — เจตนาถูก
+    /// โค้ดไม่ทำตาม (กฎเหล็ก #4: doc-comment ที่เขียนสูตรถูกไว้ ไม่ได้แปลว่าโค้ดทำตาม)</para>
+    ///
+    /// <para><paramref name="settledOn"/> = วันที่ของการรับชำระที่ปิดยอด (วันที่บน
+    /// ใบเสร็จที่ต้องออก). <c>null</c> = <b>ไม่รู้</b> ว่ารับเงินวันไหน (ยอดถูกปิดด้วย
+    /// การหักมัดจำ ซึ่งใบมัดจำเป็นหลักฐานรับเงินอยู่แล้ว / ข้อมูลก่อนย้ายระบบ) →
+    /// ไม่ยกหัว: "ไม่รู้ = บอกว่าไม่รู้" และการพิมพ์ใบเสร็จเกินอันตรายกว่าการไม่พิมพ์</para></summary>
+    public static bool SettledSameDay(DateTime documentDate, DateTime? settledOn)
+        => settledOn.HasValue && settledOn.Value.Date == documentDate.Date;
+
+    /// <summary>เหตุผลที่ยก/ไม่ยกหัวเป็นใบเสร็จ — เอาไปโชว์ได้ (ห้ามให้หน้าจอ
+    /// ซ่อนแล้วผู้ใช้เดาเอง). <c>null</c> = ยกหัวได้</summary>
+    public static string? WhyNotCombined(ReceiptIssueMode mode, DateTime documentDate, DateTime? settledOn)
+    {
+        if (!AllowsCombinedReceiptHeader(mode)) return Describe(mode);
+        if (!settledOn.HasValue)
+            return "ยอดถูกปิดโดยไม่มีรายการรับชำระที่ระบุวันที่ (เช่นหักจากใบมัดจำ) — "
+                + "หลักฐานรับเงินคือใบที่รับเงินจริง ไม่ใช่ใบนี้";
+        if (settledOn.Value.Date != documentDate.Date)
+            // ⚠️ ต้องระบุ InvariantCulture — ถ้า process ตั้ง culture th-TH ปฏิทินเริ่มต้น
+            // เป็นพุทธศักราช ⇒ "05/08/2569" ปนกับ ค.ศ. ในข้อความเดียวกันโดยเงียบ
+            return $"รับเงินจริงวันที่ {Day(settledOn.Value)} คนละวันกับวันที่บนใบ "
+                + $"({Day(documentDate)}) — ใบรับต้องลงวันที่ที่รับเงินจริง (ม.105) "
+                + "ระบบจึงออกใบเสร็จรับเงินแยกให้ลงวันที่รับเงิน";
+        return null;
+    }
+
+    private static string Day(DateTime d) => d.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
 
     /// <summary>ค่าเริ่มต้นของ "ออกใบเสร็จให้ลูกค้าด้วยไหม" ตอนบันทึกรับชำระ
     /// (<c>CreatePaymentRequest.IssueReceiptDocument</c> ที่ไม่ได้ระบุมา)

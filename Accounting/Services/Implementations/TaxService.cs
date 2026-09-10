@@ -1430,12 +1430,10 @@ public partial class TaxService : ITaxService
         if (report.Lines == null || report.Lines.Count == 0) return;
         if (report.TaxType == TaxType.CorporateIncomeTax) return;
 
-        static int Rank(TaxReportLine l) => l.IncomeTypeCode switch
-        {
-            "EXEMPT" or "VAT_CREDIT_CF" or "SUMMARY" or "TAX_CREDIT" => 2,  // ท้ายสุด
-            "INPUT" or "JE_INPUT" => 1,                                      // ภาษีซื้อ
-            _ => 0,                                                          // ภาษีขาย/WHT
-        };
+        // ลำดับกลุ่ม = ค่าของ VatReportSide (Output 0 → Input 1 → Summary 2) —
+        // ตัวจำแนกอยู่ที่ Helpers/VatReportLineKind ตัวเดียวทั้งระบบ
+        static int Rank(TaxReportLine l)
+            => (int)Accounting.Helpers.VatReportLineKind.SideOf(l.IncomeTypeCode);
 
         var ordered = report.Lines
             .Select((Line, Idx) => (Line, Idx))
@@ -2592,9 +2590,14 @@ public partial class TaxService : ITaxService
                             .Where(s => s.CompanyId == companyId)
                             .Select(s => (ReceiptIssueMode?)s.ReceiptIssueMode)
                             .FirstOrDefaultAsync() ?? ReceiptIssueMode.Combined;
+                        // วันรับเงินจริงต่อใบ — ใบที่รับเงินคนละวันกับวันที่บนใบ
+                        // ยกหัวเป็นใบเสร็จไม่ได้ (ม.105) ป้ายในรายงานต้องตรงกับกระดาษ
+                        var settledOn = await DocumentService.LoadSettlementDatesAsync(
+                            _db, companyId, tivIds);
                         foreach (var d in docsForTitle)
                             d.ServedAsReceipt = DocumentService.ComputeServedAsReceipt(
-                                d, withReceipt.Contains(d.Id), mode);
+                                d, withReceipt.Contains(d.Id), mode,
+                                settledOn.TryGetValue(d.Id, out var paidOn) ? paidOn : null);
                         kindByDoc = await PdfGenerationService.ResolveDocumentTitlesAsync(
                             _db, companyId, docsForTitle);
                     }
@@ -3611,7 +3614,8 @@ public partial class TaxService : ITaxService
             l.Id, l.LineOrder, l.TaxPayerId, l.TaxPayerName,
             l.TransactionDate, l.Description, l.IncomeAmount,
             l.TaxRate, l.TaxAmount, l.IncomeTypeCode, l.IsExcluded,
-            l.DocumentId)).ToList(),
+            l.DocumentId,
+            Side: LineSide(l))).ToList(),
         r.Notes,
         // echo CitAmount กลับด้วย (กฎ "เก็บแล้วต้อง echo กลับ") — UI/รายงานจะได้
         // แยกยอด CIT ออกจากยอดหัก ณ ที่จ่ายได้โดยไม่ต้องเดาจากชนิดรายงาน
