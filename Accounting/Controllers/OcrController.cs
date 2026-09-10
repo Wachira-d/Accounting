@@ -444,6 +444,14 @@ public class OcrController : ControllerBase
         }, req.ProjectId.HasValue ? verb + "แล้ว" : "ล้าง project ทุกบรรทัดแล้ว"));
     }
 
+    /// <summary>พรีวิวบรรทัด (อ่านอย่างเดียว ไม่บันทึก) — ปุ่ม “แก้ในฟอร์มก่อน” ต้องใช้ผลนี้
+    /// เติมฟอร์ม ไม่คำนวณกระทบยอดเองบนหน้าเว็บ</summary>
+    [HttpGet("{scanId:guid}/line-preview")]
+    public async Task<ActionResult<ApiResponse<OcrLinePreviewResponse>>> LinePreview(
+        Guid companyId, Guid scanId, [FromQuery] string? targetType = null)
+        => Ok(new ApiResponse<OcrLinePreviewResponse>(true,
+            await _service.PreviewDocumentLinesAsync(companyId, scanId, targetType)));
+
     /// <summary>List the matched vendor's open Purchase Orders for the
     /// review modal's "เลือก PO" picker — each PO comes back with its
     /// line items inline so the operator can map OCR↔PO lines without

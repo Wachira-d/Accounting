@@ -4153,64 +4153,6 @@
        * item typeahead to upgrade an OCR'd "น้ำดื่ม 12 ขวด" line into a
        * linked product, or to fix anything the OCR mis-extracted.
        */
-      /** ยุบ VAT-split phantom lines (mirror backend CleanVatSplitLines).
-       * เคส external OCR แตกสินค้า 1 ตัวเป็น "...(ส่วนมีภาษี)" + "...(ส่วนไม่มีภาษี)"
-       * + เศษ ≤฿1 (VAT/0.07 rounding). gate ด้วย marker — ไม่มี marker ไม่แตะ. */
-      _cleanVatSplitLines(lines) {
-        if (!Array.isArray(lines) || lines.length < 2) return lines || [];
-        const markers = ['ส่วนมีภาษี','ส่วนที่มีภาษี','ส่วนคิดภาษี','ส่วนไม่มีภาษี',
-          'ส่วนที่ไม่มีภาษี','ส่วนยกเว้นภาษี','vatable','non-vat','non vat','nonvat',
-          'vat included','vat-included','incl. vat','incl vat','vat excluded',
-          'vat-excluded','excl. vat','excl vat','with vat','without vat','มีภาษี','ไม่มีภาษี'];
-        const trimMarker = (desc) => {
-          let s = (desc || '').replace(/\s+$/,'');
-          let had = false;
-          for (let i = 0; i < 3; i++) {
-            if (!s.endsWith(')')) break;
-            const open = s.lastIndexOf('(');
-            if (open < 0) break;
-            const inside = s.substring(open + 1, s.length - 1).trim().toLowerCase();
-            if (!markers.some(m => inside.includes(m.toLowerCase()))) break;
-            s = s.substring(0, open).replace(/\s+$/,'');
-            had = true;
-          }
-          return { had, cleaned: s };
-        };
-        const anyMarker = lines.some(l => trimMarker(l.description).had);
-        if (!anyMarker) return lines;   // เอกสารปกติ — ไม่แตะ
-        // 1) trim suffix
-        let trimmed = lines.map(l => ({ ...l, description: trimMarker(l.description).cleaned }));
-        const TOL = 1;
-        const amt = (l) => (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1);
-        // 2) fold phantom ≤฿1 เข้าบรรทัดใหญ่สุด
-        const phantoms = trimmed.filter(l => amt(l) > 0 && amt(l) <= TOL && (Number(l.unitPrice)||0) <= TOL);
-        let reals = trimmed.filter(l => !phantoms.includes(l));
-        if (phantoms.length > 0 && reals.length > 0) {
-          const foldAmt = phantoms.reduce((s,p) => s + amt(p), 0);
-          let main = reals.reduce((a,b) => amt(b) > amt(a) ? b : a, reals[0]);
-          const newAmt = amt(main) + foldAmt;
-          main.unitPrice = (Number(main.quantity)||1) > 0
-            ? Math.round((newAmt / (Number(main.quantity)||1)) * 100) / 100 : newAmt;
-          trimmed = reals;
-        }
-        // 3) merge true duplicate (desc เดียวกัน)
-        const out = [];
-        const seen = {};
-        for (const l of trimmed) {
-          const key = (l.description || '').trim();
-          if (key && seen[key] !== undefined) {
-            const ex = out[seen[key]];
-            const newQty = (Number(ex.quantity)||0) + (Number(l.quantity)||0);
-            const totAmt = amt(ex) + amt(l);
-            ex.quantity = newQty;
-            ex.unitPrice = newQty > 0 ? Math.round((totAmt / newQty) * 100) / 100 : ex.unitPrice;
-          } else {
-            if (key) seen[key] = out.length;
-            out.push(l);
-          }
-        }
-        return out;
-      },
 
       async openInDocumentForm(overrideType) {
         if (!this._reviewScan) return;
@@ -4258,143 +4200,45 @@
         // 'Deposit' = pseudo-target ฝั่งขาย ไม่มีใน enum ฝั่งเซิร์ฟเวอร์
         const side = this._resolveDocSide(targetType, scan) === 'Sales' ? 'revenue' : 'expense';
 
-        // Extract line items the OCR pulled out. ProductCode left blank
-        // here — the typeahead on the documents page will let the user
-        // attach a product to each line interactively.
-        let lines = (scan.extractedItems || []).map(it => {
-          const qty = Number(it.quantity) || 1;
-          const amt = Number(it.amount) || 0;
-          let unitPrice = Number(it.unitPrice) || 0;
-          // ── ด่านคณิตบรรทัด (บั๊กจริง — บิลค่าไฟ 59 ล้าน) ──
-          // OCR อ่าน "ยอดรวมบรรทัด" มาเป็นราคา/หน่วย: qty=3,611 (kWh) ×
-          // unitPrice=16,351.48 (ที่จริงคือยอดทั้งบิล) = 59,046,338.88.
-          // จับได้เพราะ unitPrice ≈ amount ทั้งที่ qty > 1 — ราคาต่อหน่วยจริง
-          // ต้องเป็น amount/qty. **หารหาราคาต่อหน่วย ไม่ใช่ตั้ง qty=1**:
-          // จำนวน 3,611 หน่วยเป็นข้อมูลจริงจากมิเตอร์ (ตรวจย้อน/เทียบเดือน
-          // ได้) ทิ้งไม่ได้ — ตามหลักบัญชี ราคาทุนต่อหน่วยคำนวณจากยอดจ่าย
-          // จริงหารปริมาณ ไม่ใช่บิดปริมาณให้เข้ากับราคา
-          if (qty > 1 && amt > 0 && unitPrice > 0
-              && Math.abs(unitPrice - amt) <= Math.max(1, amt * 0.02)
-              && Math.abs(unitPrice * qty - amt) > Math.max(1, amt * 0.02)) {
-            unitPrice = amt / qty;
-          }
-          if (!unitPrice && amt && qty) unitPrice = amt / qty;
-          // ── ส่วนลดรายบรรทัดจากกระดาษ (บั๊กจริง — ใบ Scommerce ส่วนลดซ้อน) ──
-          // e-invoice หลายเจ้าพิมพ์ [ราคาเต็ม | ส่วนลด | ยอดสุทธิ] ต่อบรรทัด:
-          // qty×unitPrice > amount = บรรทัดนั้นมีส่วนลดจริง. เดิมทิ้งส่วนต่างนี้
-          // เงียบ ๆ (discountPercent:0 เสมอ) ⇒ ยอดบรรทัดในฟอร์มสูงเกินจริง แล้ว
-          // ตัว reconcile ก็เพี้ยนต่อทั้งแถว. เก็บเป็นส่วนลดยอดเงิน (โหมด ฿)
-          // ให้ตรงกับที่กระดาษพิมพ์
-          let lineDiscount = 0;
-          if (amt > 0 && unitPrice > 0) {
-            const grossLine = Math.round(qty * unitPrice * 100) / 100;
-            const diff = Math.round((grossLine - amt) * 100) / 100;
-            if (diff > 0.01 && diff < grossLine) lineDiscount = diff;
-          }
-          return {
-            description: it.description || '',
-            quantity: qty,
-            // หน่วยจากสแกน (เดิม field นี้ถูกทิ้งตรงนี้ → ฟอร์ม default "ชิ้น"
-            // เสมอ ทั้งที่ backend อนุมานให้แล้ว เช่นค่าไฟ = "หน่วย")
-            unit: it.unit || null,
-            unitPrice,
-            discountPercent: 0,
-            discountAmount: lineDiscount,
-            // ⚠️ อัตรา VAT รายบรรทัดถูกตัดสินที่เซิร์ฟเวอร์แล้ว (Azure อ่านมาได้จริง
-            // หรือ Helpers/ThaiVatTypeRule) — เดิมเส้นนี้**คำนวณใหม่เองเป็น 7/0 ทั้งใบ**
-            // ⇒ ใบผสม 7%/ยกเว้น (Makro/BigC/บิลอาหาร) เพี้ยนเฉพาะทาง "แก้ในฟอร์มก่อน"
-            // ส่วนทาง "ยืนยันทันที" ถูก = ใบเดียวกันสองคำตอบ (T4-04)
-            vatRate: it.vatRate != null
-              ? it.vatRate
-              : (scan.extractedVatAmount && scan.extractedSubTotal ? 7 : 0),
-            withholdingTaxRate: scan.hasWht ? (scan.whtRate || 0) : 0,
-            // ⚠️ เดิม 2 ช่องนี้ถูกทิ้งทั้งที่ฟอร์มปลายทางอ่านทั้งคู่ ⇒
-            //   • ผังบัญชีรายบรรทัดที่ระบบแนะนำ (คอลัมน์ "บัญชี" ในตาราง review)
-            //     หายหมด ทุกบรรทัดได้รหัสเดียวกันจาก header แทน
-            //   • ปุ่ม "📌 โครงการหลัก / ใช้ทุกบรรทัด" ในหน้า review ไม่มีผลเลย
-            accountCode: it.suggestedAccountCode || null,
-            projectId: it.projectId || null,
-          };
-        });
-        // ⭐ ยุบ VAT-split phantom lines ที่ external OCR แตกมา ("...(ส่วนมีภาษี)"
-        // 4,691.57 + "...(ส่วนไม่มีภาษี)" 0.02). clean ที่นี่ → user เห็น 1 บรรทัด
-        // ในฟอร์มทันที (frontend, ไม่ต้อง rebuild backend). backend
-        // CleanVatSplitLines เป็น safety net อีกชั้น.
-        lines = this._cleanVatSplitLines(lines);
+        // ── บรรทัด + กระทบยอด: **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว** ──
+        //
+        // เดิมบล็อกนี้เป็นสำเนา JS ของตัวสร้างบรรทัด (ราคารวม VAT · ส่วนลด · บรรทัดขาด)
+        // ที่ให้คำตอบ**คนละแบบ**กับปุ่ม “สร้างเอกสาร” บนกระดาษใบเดียวกัน — ใบลักกี้เวย์:
+        // JS แต่งส่วนลดท้ายบิล 87.28 ที่ไม่มีบนกระดาษ ขณะเซิร์ฟเวอร์เห็นเป็นราคารวม VAT
+        // (ผลตรวจ 2026-09-10). ตอนนี้เรียก GET ocr/{id}/line-preview ซึ่งใช้
+        // BuildScanLinesAsync ตัวเดียวกับเส้นสร้างเอกสาร — ล้มแล้วต้องบอก ไม่ใช่คำนวณเอง
+        // เงียบ ๆ (ห้ามสร้างสำเนาที่สองกลับมา)
+        let preview;
+        try {
+          const api = Layout.api();
+          preview = (await api.ocrLinePreview(scan.id, targetType))?.data;
+        } catch (e) {
+          Layout.toast('เตรียมรายการจากผลสแกนไม่สำเร็จ: ' + (e.message || '') + ' — ลองใหม่ หรือใช้ปุ่ม “สร้างเอกสาร” แทน', 'error');
+          return;
+        }
+        if (!preview) { Layout.toast('เตรียมรายการจากผลสแกนไม่สำเร็จ — ลองใหม่', 'error'); return; }
+
+        let lines = (preview.lines || []).map(l => ({
+          description: l.description || '',
+          quantity: Number(l.quantity) || 1,
+          unit: l.unit || null,
+          unitPrice: Number(l.unitPrice) || 0,
+          // ส่วนลดจากตัวสร้างบรรทัด (เคส C: ส่วนลดที่กระดาษพิมพ์ไว้ กระจายเป็นจำนวนเงิน)
+          discountPercent: 0,
+          discountAmount: Number(l.discountAmount) || 0,
+          vatRate: l.vatRate ?? 0,
+          withholdingTaxRate: Number(l.withholdingTaxRate) || 0,
+          accountCode: l.accountCode || null,
+          projectId: l.projectId || null,
+        }));
         // Always provide at least one row so the user has somewhere to start.
         if (!lines.length) lines.push({ description: '', quantity: 1, unitPrice: 0, discountPercent: 0, vatRate: 7, withholdingTaxRate: 0 });
 
-        // pricesIncludeVat: ตรวจจาก math 3 ทาง (heuristic เดิมพลาดเคส "Incl.VAT
-        // บนคอลัมน์ราคา" เพราะใช้แค่ |total−subtotal|<1):
-        //   (A) ราคารวม VAT — linesGross > subtotal และ ≤ total (ห่างไม่เกิน
-        //       ยอดบรรทัดที่ OCR อาจไม่อ่าน)
-        //   (B) ราคาแยก VAT — linesGross ≈ subtotal (มาตรฐาน)
-        //   (C) มีส่วนลด — linesGross > total (เกินยอดสุทธิ)
-        //   (D) OCR แกะราคาขาด — linesGross < subtotal
-        // ประกาศก่อน reconcile (กัน TDZ).
-        const hdrSub   = Number(scan.extractedSubTotal) || 0;
-        const hdrTotal = Number(scan.extractedTotalAmount) || 0;
-        const hdrVat   = Number(scan.extractedVatAmount) || 0;
-        // ยอดบรรทัดสุทธิ = qty×unitPrice − ส่วนลดรายบรรทัด (ตรงกับที่ฟอร์มจะ
-        // คำนวณ) — เดิมใช้ gross ล้วนไม่หักส่วนลด ทำให้ใบที่มีส่วนลดรายบรรทัด
-        // reconcile เพี้ยนทั้งแถว
-        const _lineNet = (l) => Math.round(((Number(l.unitPrice) || 0) * (Number(l.quantity) || 1)
-          - (Number(l.discountAmount) || 0)) * 100) / 100;
-        const _linesNet = Math.round(lines.reduce((s, l) => s + _lineNet(l), 0) * 100) / 100;
-        const TOL = 1;   // บาท
-        let pricesIncludeVat = false;
-        if (hdrSub > 0 && hdrTotal > 0 && _linesNet > 0
-            && _linesNet > hdrSub + TOL && _linesNet <= hdrTotal + TOL) {
-          // Case A: ราคารวม VAT — เคส OfficeMate/PEAK ที่ Unit Price = Incl.VAT
-          pricesIncludeVat = true;
-        }
-
-        // 🔧 Reconcile — **ยอดรวมทั้งสิ้น (hdrTotal) เป็นหลักเสมอ**: เป็นตัวเลข
-        // ที่จ่ายจริง/ตรวจกับกระดาษง่ายสุด ทุกอย่างต้องไล่กลับมาลงตัวที่ยอดนี้.
-        //
-        // บั๊กจริง (ใบ Scommerce ส่วนลดซ้อน): เวอร์ชันเดิมเทียบ "ยอดบรรทัด
-        // ex-VAT" กับ "ยอดรวม incl-VAT" ตรง ๆ แล้วยัดส่วนต่างเป็นส่วนลดรายบรรทัด
-        // ⇒ บรรทัดถูกกดลงจนฐานภาษีเท่ากับยอดรวมทั้งบิล (7,371.01) แล้วฟอร์ม
-        // บวก VAT ซ้ำอีกชั้นเป็น 7,853.22 — เทียบข้ามฐานราคาไม่ได้เด็ดขาด.
-        //
-        // ฐานที่ถูก: ฝั่งบรรทัด (ex-VAT) ต้องเทียบกับ "ฐานภาษี" = hdrTotal −
-        // hdrVat. ส่วนเกิน = ส่วนลดท้ายบิล (ใบอย่าง Scommerce พิมพ์เป็น
-        // "ส่วนลด/Discount" ระดับใบจริง ๆ — ไม่ใช่ของบรรทัดไหน จึงห้ามกระจาย
-        // ใส่บรรทัด: ราคาต่อหน่วยจะเพี้ยนและระบบเรียนรู้ราคาผิด). ส่วนขาด =
-        // มีบรรทัดที่ OCR ไม่อ่าน — เพิ่มบรรทัดให้เห็นชัดว่าต้องตรวจ
-        let billDiscountAmount = 0;
-        if (lines.length > 0 && hdrTotal > 0) {
-          if (pricesIncludeVat) {
-            // Case A: บรรทัดรวม VAT แล้ว → เทียบกับยอดรวมตรง ๆ ฐานเดียวกัน
-            const diff = Math.round((_linesNet - hdrTotal) * 100) / 100;
-            if (diff < -TOL) {
-              const inferredRate = hdrSub > 0 ? Math.round((hdrVat / hdrSub) * 1000) / 10 : 7;
-              lines.push({
-                description: 'ค่าขนส่ง/บริการอื่น (ตรวจสอบใบจริง)',
-                quantity: 1, unitPrice: -diff, discountPercent: 0, discountAmount: 0,
-                vatRate: inferredRate || 7, withholdingTaxRate: 0,
-              });
-            } else if (diff > TOL) {
-              billDiscountAmount = diff;   // ส่วนลดท้ายบิล (ฐานรวม VAT ตามโหมดใบ)
-            }
-          } else {
-            // บรรทัด ex-VAT → ฐานเทียบ = ยอดรวม − VAT (ใบไม่มี VAT: hdrVat=0
-            // ฐานเทียบ = ยอดรวมพอดี). ใช้ hdrSub ยันเมื่อไม่มี VAT header
-            const expectedBase = Math.round((hdrTotal - hdrVat) * 100) / 100;
-            const diff = Math.round((_linesNet - expectedBase) * 100) / 100;
-            if (diff > TOL) {
-              billDiscountAmount = diff;   // เช่น Scommerce: 7,579.44 − 6,888.79 = 690.65
-            } else if (diff < -TOL) {
-              const inferredRate = hdrVat > 0 ? (Math.round((hdrVat / expectedBase) * 1000) / 10 || 7) : 0;
-              lines.push({
-                description: 'ค่าขนส่ง/บริการอื่น (ตรวจสอบใบจริง)',
-                quantity: 1, unitPrice: -diff, discountPercent: 0, discountAmount: 0,
-                vatRate: inferredRate, withholdingTaxRate: 0,
-              });
-            }
-            // |diff| ≤ TOL = ลงตัวแล้ว ไม่แตะอะไร
-          }
-        }
+        const pricesIncludeVat = !!preview.pricesIncludeVat;
+        // ส่วนลดท้ายบิลถูกกระจายลงบรรทัดโดยตัวสร้างแล้ว (Σ บรรทัด = ยอดก่อน VAT บนกระดาษ)
+        // ช่องว่างที่กระทบไม่ได้ ([Σ-GAP]) เซิร์ฟเวอร์รายงานเป็นข้อความให้คนตัดสิน ไม่แต่งบรรทัด
+        const billDiscountAmount = 0;
+        if (preview.notes) Layout.toast(preview.notes, 'info');
 
         // Derive a due date from the credit terms the OCR read ("Net 30" →
         // PaymentTermsDays = 30) so AR/AP documents land with วันครบกำหนด

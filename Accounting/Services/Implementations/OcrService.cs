@@ -5856,6 +5856,110 @@ public class OcrService : IOcrService
 
     }
 
+    public async Task<OcrLinePreviewResponse> PreviewDocumentLinesAsync(
+        Guid companyId, Guid scanResultId, string? targetTypeOverride)
+    {
+        // AsNoTracking — เมธอดนี้ต้องไม่บันทึกอะไร (NormalizeSwappedHeaderAmounts/BuildScanLinesAsync
+        // เขียน ProcessingNotes ลง object ในหน่วยความจำ ซึ่งจะไม่ถูก persist)
+        var result = await _db.Set<OcrScanResult>().AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == scanResultId && r.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบผลสแกน");
+
+        var notesBefore = result.ProcessingNotes ?? "";
+        NormalizeSwappedHeaderAmounts(result);
+
+        var items = new List<OcrExtractedLineItem>();
+        if (!string.IsNullOrWhiteSpace(result.ExtractedItemsJson))
+        {
+            try
+            {
+                items = System.Text.Json.JsonSerializer
+                    .Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson) ?? new();
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                _logger.LogWarning(ex, "OCR ExtractedItemsJson parse failed for scan {ScanId}", result.Id);
+            }
+        }
+        if (items.Count > 0)
+        {
+            var tmpSan = new OcrExtractedData();
+            foreach (var it in items) tmpSan.Items.Add(it);
+            SanitizeVatSplitArtifacts(tmpSan);
+            items = tmpSan.Items.ToList();
+        }
+
+        var resolvedTarget = Accounting.Helpers.OcrTargetDocumentType.Resolve(
+            targetTypeOverride, result.TargetDocumentType, result.DocumentType,
+            hasLinkedPurchaseOrder: result.LinkedPurchaseOrderId.HasValue);
+        var docType = resolvedTarget.Type;
+
+        Document? linkedPo = null;
+        Dictionary<int, Guid?> poLineMap = new();
+        if (result.LinkedPurchaseOrderId.HasValue)
+        {
+            linkedPo = await _db.Documents.AsNoTracking()
+                .Include(d => d.Lines)
+                .FirstOrDefaultAsync(d => d.Id == result.LinkedPurchaseOrderId.Value
+                    && d.CompanyId == companyId && !d.IsDeleted);
+            if (linkedPo != null)
+            {
+                docType = DocumentType.PurchaseInvoice;
+                if (!string.IsNullOrWhiteSpace(result.PoLineMappingsJson))
+                {
+                    try
+                    {
+                        var raw = System.Text.Json.JsonSerializer
+                            .Deserialize<Dictionary<string, Guid?>>(result.PoLineMappingsJson) ?? new();
+                        foreach (var (k, v) in raw)
+                            if (int.TryParse(k, out var idx)) poLineMap[idx] = v;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "PoLineMappingsJson parse failed for scan {ScanId}", result.Id);
+                    }
+                }
+            }
+        }
+
+        var isSalesSide = Accounting.Helpers.DocumentSide.IsSales(docType, result.OurRole);
+        var hdrDiscRaw = result.ExtractedDiscountAmount ?? 0;
+        var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
+        var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
+        var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        var headerWht = whtRate > 0
+            ? Math.Round(whtBase * whtRate / 100m, 2, MidpointRounding.AwayFromZero)
+            : 0m;
+        var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(companyId, result);
+
+        var document = new Document { CompanyId = companyId, DocumentType = docType };
+        await BuildScanLinesAsync(companyId, result, items, document, linkedPo, poLineMap,
+            scanDebitAccountId, headerSubTotal, hdrDiscRaw, whtRate, headerWht, isSalesSide);
+
+        // AccountId → รหัสผัง (ฟอร์มปลายทางรับเป็น code)
+        var accountIds = document.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
+        var codeMap = accountIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, a => a.AccountCode);
+
+        var lines = document.Lines.OrderBy(l => l.LineOrder).Select(l => new OcrLinePreviewLineDto(
+            l.Description, l.Quantity, l.Unit, l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount,
+            l.VatRate, l.VatAmount, l.WithholdingTaxRate,
+            l.AccountId.HasValue && codeMap.TryGetValue(l.AccountId.Value, out var code) ? code : null,
+            l.ProductCode, l.ProjectId, l.SourceLineId)).ToList();
+
+        var notesAfter = result.ProcessingNotes ?? "";
+        var delta = notesAfter.Length > notesBefore.Length ? notesAfter[notesBefore.Length..].Trim() : null;
+
+        return new OcrLinePreviewResponse(
+            resolvedTarget.IsDeposit ? Accounting.Helpers.OcrTargetDocumentType.DepositPseudoType : docType.ToString(),
+            isSalesSide, document.PricesIncludeVat,
+            headerSubTotal, result.ExtractedVatAmount ?? 0m, result.ExtractedTotalAmount ?? 0m, headerWht,
+            lines, string.IsNullOrWhiteSpace(delta) ? null : delta);
+    }
+
     /// <summary>ยอดก่อน VAT ของหัวใบที่ใช้เป็นตัวตั้ง — ใช้ <c>ExtractedSubTotal</c> เฉพาะเมื่อ
     /// ผูกกับยอดรวมได้ (รองรับ VAT-incl + ส่วนลดจริง) ไม่งั้นถอยจากยอดรวม (ตัวเลขเด่นที่
     /// เชื่อถือได้สุด) เพื่อให้ subtotal/บรรทัด/ยอดรวมแตกกันไม่ได้ · สูตรเดียวทั้งสองทางเข้า</summary>

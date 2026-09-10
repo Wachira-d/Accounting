@@ -153,6 +153,32 @@ public record OpenPurchaseOrderLineDto(
     Guid Id, int LineOrder, string Description, decimal Quantity,
     decimal UnitPrice, decimal Amount, Guid? AccountId, string? AccountCode);
 
+/// <summary>ผลพรีวิวบรรทัดที่**เซิร์ฟเวอร์**สร้างจากผลสแกน (ตัวสร้างเดียวกับปุ่ม “สร้างเอกสาร” —
+/// <c>BuildScanLinesAsync</c>) ให้ปุ่ม “แก้ในฟอร์มก่อน” นำไปเติมฟอร์ม **โดยไม่คำนวณเอง**
+///
+/// <para>ที่มา (2026-09-10): หน้า document-scan.html มีสำเนา JS ของตรรกะกระทบยอดที่ให้คำตอบ
+/// คนละแบบกับเซิร์ฟเวอร์บนกระดาษใบเดียวกัน (ใบลักกี้เวย์: JS แต่งส่วนลดท้ายบิล 87.28 ที่ไม่มี
+/// บนกระดาษ) — กลไกเดียวกับ <c>complianceIssues</c>/<c>documentTitle</c>: เซิร์ฟเวอร์คำนวณ
+/// หน้าเว็บแสดงอย่างเดียว</para>
+///
+/// <param name="Notes">ข้อความ [Σ]/[Σ-GAP]/[Σ-SWAP] ที่ตัวสร้างเขียนระหว่างพรีวิว (ไม่ persist)</param></summary>
+public record OcrLinePreviewResponse(
+    string TargetDocumentType,
+    bool IsSalesSide,
+    bool PricesIncludeVat,
+    decimal HeaderSubTotal,
+    decimal HeaderVat,
+    decimal HeaderTotal,
+    decimal HeaderWht,
+    IReadOnlyList<OcrLinePreviewLineDto> Lines,
+    string? Notes);
+
+public record OcrLinePreviewLineDto(
+    string Description, decimal Quantity, string? Unit, decimal UnitPrice,
+    decimal DiscountPercent, decimal DiscountAmount, decimal Amount,
+    decimal VatRate, decimal VatAmount, decimal WithholdingTaxRate,
+    string? AccountCode, string? ProductCode, Guid? ProjectId, Guid? SourceLineId);
+
 /// <summary>Body of POST /ocr/{scanId}/link-po — the chosen PO plus the
 /// per-OCR-line mapping (line index → PO line id). Unmapped indices are
 /// omitted; nulls explicitly clear a mapping.</summary>

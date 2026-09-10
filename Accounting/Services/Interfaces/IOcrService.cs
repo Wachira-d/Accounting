@@ -96,6 +96,11 @@ public interface IOcrService
     /// มีทางออกแค่ "แกะใหม่" ซึ่งจำกัดจำนวนครั้ง) คืนจำนวนบรรทัดหลังแก้</summary>
     Task<int> ModifyExtractedLineAsync(Guid companyId, Guid scanResultId, string action, int lineIndex);
 
+    /// <summary>พรีวิวบรรทัดที่จะได้เมื่อสร้างเอกสารจากสแกนนี้ — ใช้ตัวสร้างบรรทัดตัวเดียวกับ
+    /// <see cref="CreateDocumentFromScanAsync(Guid, Guid, string, string?)"/> แต่ไม่บันทึกอะไร
+    /// (หน้าเว็บ “แก้ในฟอร์มก่อน” ต้องไม่คำนวณเอง)</summary>
+    Task<OcrLinePreviewResponse> PreviewDocumentLinesAsync(Guid companyId, Guid scanResultId, string? targetTypeOverride);
+
     /// <summary>List the matched vendor's open Purchase Orders together with
     /// their line items so the review UI can render the "เลือก PO" picker.
     /// Returns empty when no contact is matched or no open POs exist.</summary>

@@ -957,6 +957,8 @@ const API = {
       ocrMatchContact: (scanId, contactId) => API.post(`${base}/ocr/${scanId}/match-contact/${contactId}`),
       ocrDelete: (scanId, cascade = false, reason = null) => API.del(`${base}/ocr/${scanId}?cascade=${cascade ? 'true' : 'false'}${reason ? '&reason=' + encodeURIComponent(reason) : ''}`),
       // PO linkage — list, link, unlink
+      // พรีวิวบรรทัดที่เซิร์ฟเวอร์สร้าง (ตัวเดียวกับปุ่มสร้างเอกสาร) — ปุ่ม “แก้ในฟอร์มก่อน” ใช้ตัวนี้
+      ocrLinePreview: (scanId, targetType) => API.get(`${base}/ocr/${scanId}/line-preview${targetType ? `?targetType=${encodeURIComponent(targetType)}` : ''}`),
       ocrOpenPos: (scanId) => API.get(`${base}/ocr/${scanId}/open-pos`),
       ocrLinkPo: (scanId, data) => API.post(`${base}/ocr/${scanId}/link-po`, data),
       ocrUnlinkPo: (scanId) => API.del(`${base}/ocr/${scanId}/link-po`),
