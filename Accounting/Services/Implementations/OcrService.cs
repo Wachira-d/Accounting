@@ -34,24 +34,8 @@ public class OcrService : IOcrService
         RegexOptions.Compiled);
     // รหัสสาขา: ย้ายกฎไป BranchCodeExtractor (pure + testable) เพื่ออ่านทั้ง
     // ฝั่งผู้ขายและผู้ซื้อด้วยกฎเดียวกัน — ห้ามมี regex สาขาซ้ำในไฟล์นี้อีก
-    /// <summary>คำที่บอกว่าเอกสารรับเงินใบนี้เป็น "มัดจำ/รับล่วงหน้า" (ลง 217xx
-    /// ไม่ใช่รายได้). "เงินประกัน" ไม่รวม — เป็นหลักประกันสัญญาคนละบัญชี</summary>
-    private static readonly Regex DepositKeywordRegex = new(
-        @"เงินมัดจำ|ค่ามัดจำ|มัดจำ|เงินจอง|ค่าจอง|รับล่วงหน้า|เงินล่วงหน้า|ชำระล่วงหน้า"
-        + @"|DEPOSIT|ADVANCE\s*(?:PAYMENT|RECEIVED)|PAYMENT\s*IN\s*ADVANCE|PRE-?PAYMENT"
-        + @"|DOWN\s*PAYMENT|BOOKING\s*FEE|RESERVATION\s*FEE",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    /// <summary>เอกสารที่ **ไม่ใช่** มัดจำแม้มีคำว่า DEPOSIT — คอมเมนต์ของ regex
-    /// ข้างบนระบุเองว่า "เงินประกันไม่รวม (คนละบัญชี)" แต่ alternation `DEPOSIT`
-    /// เดี่ยว ๆ ดูด SECURITY/GUARANTEE/DAMAGE DEPOSIT (= 215xx หนี้สินเงินประกัน
-    /// ไม่ใช่ 217xx ขายรอรับรู้ — ลงผิดแล้วถูกรับรู้เป็นรายได้ตอนเคลียร์มัดจำ)
-    /// และ CASH DEPOSIT / DEPOSIT TO A/C ของสลิปนำฝากธนาคาร. เจอคำพวกนี้ =
-    /// ไม่ auto-flag ปล่อยให้ผู้ใช้ติ๊กเองถ้าใช่มัดจำจริง</summary>
-    private static readonly Regex DepositExclusionRegex = new(
-        @"เงินประกัน|SECURITY\s*DEPOSIT|GUARANTEE\s*DEPOSIT|RENTAL\s*DEPOSIT"
-        + @"|DAMAGE\s*DEPOSIT|CASH\s*DEPOSIT|DEPOSIT\s*TO\s*A/?C|FIXED\s*DEPOSIT",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // คำ/ข้อยกเว้นเรื่อง "มัดจำ" ย้ายไป Helpers/OcrDepositMarker ตัวเดียว — ตัวนั้นบังคับว่า
+    // คำต้องมีเงิน > 0 ประกอบ และบรรทัด "หัก…มัดจำ" ไม่ใช่ใบมัดจำ (สแกนจริง 2026-09-10)
     private static readonly Regex VendorAddressRegex = new(
         @"(?:ที่อยู่|ADDRESS)\s*[:：]?\s*((?:[^\n]+\n?){1,4}?)(?=\n\s*(?:โทร|TEL|เลขประจำตัว|TAX\s*ID|อีเมล|EMAIL|FAX|$))",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -1603,9 +1587,15 @@ public class OcrService : IOcrService
             // "ใบเสร็จ" แล้วไปติ๊กมัดจำเองในฟอร์ม ลืมติ๊ก = รับรู้รายได้เร็วเกิน
             // (ผิดทั้งงบและงวด ภ.พ.30). "Deposit" เป็น pseudo-target ที่ฟอร์ม
             // แปลงเป็น Receipt + IsDeposit ให้เอง
+            // ตัวตัดสิน "เป็นใบมัดจำจริงไหม" อยู่ที่ Helpers/OcrDepositMarker ตัวเดียว (คำต้องมีเงิน
+            // ประกอบ · แถวฟอร์ม "หักเงินมัดจำ 0.00" ไม่นับ) — ใช้ร่วมสองฝั่ง
+            var depositDecision = Accounting.Helpers.OcrDepositMarker.Decide(
+                scanResult.RawTextContent, extractedData.Items.Select(i => (i.Description, i.Amount)));
+            if (!depositDecision.IsDeposit
+                && Accounting.Helpers.OcrDepositMarker.Keyword.IsMatch(scanResult.RawTextContent ?? ""))
+                extractedData.ReasoningTrace.Add($"[Deposit] พบคำว่ามัดจำแต่ไม่ถือเป็นใบมัดจำ — {depositDecision.Reason}");
             if (extractedData.OurRole == "Seller"
-                && DepositKeywordRegex.IsMatch(scanResult.RawTextContent ?? "")
-                && !DepositExclusionRegex.IsMatch(scanResult.RawTextContent ?? "")
+                && depositDecision.IsDeposit
                 && extractedData.TargetDocumentType
                     is null or nameof(DocumentType.Receipt) or nameof(DocumentType.Invoice))
             {
@@ -1625,9 +1615,7 @@ public class OcrService : IOcrService
             // ขั้นนี้แก้เฉพาะ**ผังบัญชีที่แนะนำ** (Dr สินทรัพย์ 118xx) ซึ่งตัด
             // ความผิดเรื่องงวดได้แล้ว — flow หักมัดจำอัตโนมัติตอนใบจริงมาถึง
             // ยังเป็นงานแยก (backlog T1-15) จึงเขียนป้ายไว้ให้คนเห็นด้วย
-            if (extractedData.OurRole == "Buyer"
-                && DepositKeywordRegex.IsMatch(scanResult.RawTextContent ?? "")
-                && !DepositExclusionRegex.IsMatch(scanResult.RawTextContent ?? ""))
+            if (extractedData.OurRole == "Buyer" && depositDecision.IsDeposit)
             {
                 var depCodes = Accounting.Helpers.PurchaseDepositAccount
                     .PreferredCodes(scanResult.RawTextContent);
@@ -4882,6 +4870,11 @@ public class OcrService : IOcrService
             if (dupMsg != null) throw new Accounting.Helpers.BusinessRuleException(dupMsg);
         }
 
+        // ป้ายยอดสลับ (SubTotal ↔ Total) ที่สแกนเก่า persist ไว้ก่อนมีตัวซ่อมในขั้นสกัด —
+        // ต้องซ่อมที่นี่ด้วย ไม่งั้นสแกนที่ค้างอยู่ (เช่นใบลักกี้เวย์ 667/43.64/623.36)
+        // ยังสร้างเอกสารผิดต่อไปแม้โค้ดขั้นสกัดแก้แล้ว · ตัวตัดสิน = OcrHeaderAmounts ตัวเดียว
+        NormalizeSwappedHeaderAmounts(result);
+
         // Document type precedence: explicit caller override (the user's live
         // dropdown pick in the review modal) → persisted inferred
         // TargetDocumentType → fallback mapping off the scanned paper type.
@@ -5131,22 +5124,8 @@ public class OcrService : IOcrService
         // ใช้ ExtractedSubTotal เฉพาะตอนที่ tie กับ grand total (รองรับ VAT-incl +
         // ส่วนลดจริง); ไม่งั้น derive จาก grand total (ตัวเลขเด่น/พาร์ทเนอร์ส่ง =
         // ตัวตั้งต้นที่เชื่อถือได้สุด) เพื่อให้ subtotal/line/total แตกกันไม่ได้.
-        var hdrTotalRaw = result.ExtractedTotalAmount ?? 0;
-        var hdrVatRaw = result.ExtractedVatAmount ?? 0;
         var hdrDiscRaw = result.ExtractedDiscountAmount ?? 0;
-        decimal headerSubTotal;
-        if (hdrTotalRaw <= 0)
-        {
-            // ไม่มี grand total ที่เชื่อได้ → คงพฤติกรรมเดิม (ใช้ subtotal ที่ OCR แกะ)
-            headerSubTotal = result.ExtractedSubTotal ?? 0m;
-        }
-        else
-        {
-            var subFromTotal = Math.Max(0, hdrTotalRaw - hdrVatRaw);
-            var subTies = result.ExtractedSubTotal is > 0
-                && Math.Abs((result.ExtractedSubTotal!.Value + hdrVatRaw - hdrDiscRaw) - hdrTotalRaw) <= 1m;
-            headerSubTotal = subTies ? result.ExtractedSubTotal!.Value : subFromTotal;
-        }
+        var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
         var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
         // ⚠️ ไม่หักให้เอง (ผู้ใช้ต้องยืนยัน) แต่ **ต้องเตือน** เมื่อกฎหมายให้หักและถึงเกณฑ์
@@ -5178,24 +5157,7 @@ public class OcrService : IOcrService
         // Used as the line-account fallback when a line has neither a PO
         // mapping nor its own SuggestedAccountCode — so every line lands with
         // a GL pick wherever the classifier produced one.
-        Guid? scanDebitAccountId = null;
-        if (!string.IsNullOrWhiteSpace(result.SuggestedAccountsJson))
-        {
-            try
-            {
-                using var sa = System.Text.Json.JsonDocument.Parse(result.SuggestedAccountsJson);
-                if (sa.RootElement.TryGetProperty("DebitAccountCode", out var dac)
-                    && dac.ValueKind == System.Text.Json.JsonValueKind.String
-                    && !string.IsNullOrWhiteSpace(dac.GetString()))
-                {
-                    scanDebitAccountId = await _db.ChartOfAccounts.AsNoTracking()
-                        .Where(a => a.CompanyId == companyId && a.AccountCode == dac.GetString() && !a.IsDeleted)
-                        .Select(a => (Guid?)a.Id)
-                        .FirstOrDefaultAsync();
-                }
-            }
-            catch { /* malformed suggestion JSON — line GL stays empty */ }
-        }
+        var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(companyId, result);
 
         // ── Pre-fill: แหล่งเงิน/ช่องทางชำระ (Credit account ที่ผู้ใช้เลือกใน review) ──
         // CreditAccountCode = ผังที่จะลง Cr (เช่น 11110 เงินสด, 11120 ธนาคาร,
@@ -5416,6 +5378,221 @@ public class OcrService : IOcrService
             items = tmpSan.Items.ToList();
         }
 
+        // ★ ตัวสร้างบรรทัดจากผลสแกน **ตัวเดียว** — RepopulateDocumentLinesFromScanAsync
+        // เรียกตัวนี้ด้วย (เดิมมีสำเนาที่สองที่ไม่รู้จัก PricesIncludeVat/ส่วนลด/VAT รายบรรทัด
+        // ⇒ กระดาษใบเดียวกันได้บรรทัดคนละแบบตามปุ่มที่กด — ผลตรวจ 2026-09-10)
+        await BuildScanLinesAsync(companyId, result, items, document, linkedPo, poLineMap,
+            scanDebitAccountId, headerSubTotal, hdrDiscRaw, whtRate, headerWht, isSalesSide);
+
+        // เอกสารที่ scan ตรวจว่า "เคลมภาษีซื้อไม่ได้" ([VAT-CLAIM] เช่นใบกำกับ
+        // อย่างย่อ §82/5(2) / ใบเสร็จไม่ใช่ใบกำกับเต็มรูป §82/5(1)) — ต้องปิด
+        // เคลมที่ระดับบรรทัดด้วย: default IsVatClaimable=true จะพา VAT ไปพัก
+        // 11640 แล้วกล่องเติมใบกำกับชวนผู้ใช้กรอกเลขสลิป POS ดันเข้า 11610 =
+        // ทำผิดกฎหมายทั้งที่ตั้งใจดี. ปิดแล้ว VAT fold เข้าค่าใช้จ่ายตอน approve
+        // ตามที่กฎหมายกำหนดทันที
+        if (!isSalesSide && vatNotClaimable)
+        {
+            foreach (var dl in document.Lines)
+            {
+                dl.IsVatClaimable = false;
+                dl.VatNonClaimableReason ??=
+                    "เอกสารต้นทางเคลมภาษีซื้อไม่ได้ (ใบกำกับอย่างย่อ/ไม่ใช่ใบกำกับเต็มรูป §82/5) — ขอใบกำกับเต็มรูปจากผู้ขายหากต้องการเคลม";
+            }
+        }
+
+        // ── ธงผังบัญชีเป็นตัวปิดการเคลมภาษีซื้อ (T1-05) ───────────────────────
+        // เส้นคีย์มือผ่าน DocumentService บังคับข้อนี้มาตลอด แต่เส้น OCR สร้าง entity
+        // เองจึงข้ามไป ⇒ ใบเดียวกันได้คำตอบคนละอย่างตามทางที่เข้า. ตัวตัดสินอยู่ที่
+        // Helpers/InputVatAccountPolicy ตัวเดียว (pure + มีเทสต์)
+        if (!isSalesSide)
+        {
+            var lineAccountIds = document.Lines
+                .Where(l => l.AccountId.HasValue)
+                .Select(l => l.AccountId!.Value)
+                .Distinct()
+                .ToList();
+            if (lineAccountIds.Count > 0)
+            {
+                var flags = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && lineAccountIds.Contains(a.Id))
+                    .Select(a => new { a.Id, a.InputVatClaimable })
+                    .ToDictionaryAsync(x => x.Id, x => x.InputVatClaimable);
+                var forcedByChart = 0;
+                foreach (var dl in document.Lines)
+                {
+                    bool? acctClaimable = dl.AccountId.HasValue && flags.TryGetValue(dl.AccountId.Value, out var f)
+                        ? f : null;
+                    var outcome = Accounting.Helpers.InputVatAccountPolicy.Apply(
+                        dl.IsVatClaimable, dl.VatNonClaimableReason, acctClaimable);
+                    dl.IsVatClaimable = outcome.Claimable;
+                    dl.VatNonClaimableReason = outcome.Reason;
+                    if (outcome.Changed) forcedByChart++;
+                }
+                if (forcedByChart > 0)
+                    result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                        + $"\n[VAT-CLAIM] ผังบัญชีที่เลือกตั้งเป็นภาษีซื้อต้องห้าม — ปิดการเคลมให้ {forcedByChart} บรรทัด (§82/5)";
+            }
+        }
+
+        // ── ผู้ขายต่างประเทศ: ภาระ ภ.พ.36 (§83/6) + ภ.ง.ด.54 (§70) ──────────
+        // นักบัญชีเห็น invoice จาก AWS/Google/Adobe แล้วรู้ทันทีว่าต้อง (1) นำส่ง VAT 7%
+        // แทนผู้ขายด้วย ภ.พ.36 (แล้วเคลมเป็นภาษีซื้อเดือนถัดไป) (2) หัก ณ ที่จ่ายตาม
+        // ม.70 ถ้าเป็นค่าบริการ/ค่าสิทธิ — ระบบเดิม**ไม่เคยพูดถึงทั้งสองอย่าง**
+        // ⇒ ภาระหายทั้งก้อน (เบี้ยปรับ 2 เท่า + เงินเพิ่ม) · ผลตรวจ 2026-09-06 · T1-12
+        if (!isSalesSide
+            && Accounting.Helpers.ThaiVatTypeRule.LooksForeignVendor(null, result.ExtractedVendorTaxId)
+            && (result.ExtractedTotalAmount ?? 0m) > 0m)
+        {
+            var baseAmt = Math.Max(0m, (result.ExtractedTotalAmount ?? 0m) - (result.ExtractedVatAmount ?? 0m));
+            var pp36 = Math.Round(baseAmt * 0.07m, 2, MidpointRounding.AwayFromZero);
+            result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                + $"\n[PP36] ผู้ขายไม่มีเลขผู้เสียภาษีไทย — ถ้าเป็นบริการที่ใช้ในไทย ต้องนำส่ง VAT แทน "
+                + $"ผู้ประกอบการต่างประเทศด้วย ภ.พ.36 ≈ {pp36:N2} บาท (§83/6) ภายในวันที่ 7/15 ของเดือนถัดไป "
+                + "แล้วจึงเคลมเป็นภาษีซื้อในเดือนที่นำส่ง"
+                + $"\n[PND54] ค่าบริการ/ค่าสิทธิ/ดอกเบี้ยที่จ่ายออกต่างประเทศ ต้องหัก ณ ที่จ่ายตาม ม.70 "
+                + "(ทั่วไป 15% · เงินปันผล 10%) และยื่น ภ.ง.ด.54 — ตรวจอนุสัญญาภาษีซ้อน (DTA) ก่อนใช้อัตรา";
+        }
+
+        // ── สกุลเงินต่างประเทศต้องมีอัตราแลกเปลี่ยน (T1-05 · T1-12) ──────────
+        // `Currency` ถูกอ่านจากกระดาษมาตั้งแต่ต้น แต่ไม่เคยมีใครหา `ExchangeRate` ให้
+        // ⇒ ใบ USD ถูกบันทึกเป็นบาทเงียบ ๆ (ตัวเลขเท่าเดิม ความหมายผิดหลายสิบเท่า).
+        // ไม่รู้อัตรา = **บอกว่าไม่รู้** แล้วห้าม auto-approve — ห้ามแต่งอัตราให้เอง
+        if (!string.Equals(document.Currency, "THB", StringComparison.OrdinalIgnoreCase))
+        {
+            var fxRate = await ResolveScanExchangeRateAsync(document.Currency, document.DocumentDate);
+            if (fxRate is decimal fx && fx > 0m)
+            {
+                document.ExchangeRate = fx;
+                result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                    + $"\n[FX] {document.Currency} @ {fx:N4} (อัตรา ธปท. วันที่เอกสาร) — ตรวจสอบก่อนยืนยัน";
+            }
+            else
+            {
+                result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                    + $"\n[FX-UNKNOWN] เอกสารสกุล {document.Currency} แต่ยังไม่มีอัตราแลกเปลี่ยนของวันที่นี้ — "
+                    + "กรอกอัตราในใบก่อนอนุมัติ (ระบบไม่เดาอัตราให้)";
+            }
+        }
+
+        _db.Documents.Add(document);
+
+        result.CreatedDocumentId = document.Id;
+        result.MatchedContactId = contactId;
+
+        await _db.SaveChangesAsync();
+        await txn.CommitAsync();
+
+        // ★ CAPTURE ฝั่ง "ยอมรับ" (กฎเหล็ก #1 · ผลตรวจ 2026-09-05 T3-03): เส้น 1-click
+        // (สร้างจากการ์ด/สร้างทั้งชุด) ไม่ผ่าน SubmitCorrectionAsync ⇒ เดิมตัวอย่าง
+        // "ผู้ใช้รับตามที่เติม" หายหมด เหลือแต่ตัวอย่างที่แก้ = selection bias ให้นักเรียน
+        // (ผัง GL ปิดลูปที่ ApproveDocument อยู่แล้ว — ที่นี่ปิดชนิดเอกสาร + คู่ค้า)
+        if (_feedbackRecorder != null)
+        {
+            try
+            {
+                if (result.TargetDocTypeAiFeedbackId is Guid dtFid)
+                    await _feedbackRecorder.RecordUserChoiceAsync(dtFid, docType.ToString(),
+                        acceptedAi: string.Equals(result.TargetDocumentType, docType.ToString(), StringComparison.OrdinalIgnoreCase),
+                        CancellationToken.None);
+                if (result.AiSuggestionFeedbackId is Guid vFid && contactId is Guid chosenContact)
+                    await _feedbackRecorder.RecordUserChoiceAsync(vFid, chosenContact.ToString(),
+                        acceptedAi: result.AiSuggestedContactId == chosenContact,
+                        CancellationToken.None);
+            }
+            catch (Exception fx)
+            {
+                _logger.LogWarning(fx, "บันทึก feedback ฝั่งยอมรับตอนสร้างเอกสารจากสแกนไม่สำเร็จ (scan {Id})", result.Id);
+            }
+        }
+
+        // Re-link scanned file to the created document (orphan prevention)
+        await RelinkScanFileToDocumentAsync(companyId, result.FileAttachmentId, document.Id);
+
+        // Run RD-compliance + tenant-mismatch validation on the freshly
+        // created document (Task 5 of ERP upgrade). Failures don't roll
+        // back the document creation — they surface as
+        // Document.RdComplianceStatus badges + OcrValidationLog rows.
+        // ── หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่ "เราถูกหัก" ──────────────
+        // ทิศทางดูจากช่อง "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" vs "ผู้ถูกหักภาษี ณ ที่จ่าย"
+        // ว่าเลขผู้เสียภาษีของบริษัทเราอยู่ช่องไหน — เราอยู่ช่องผู้ถูกหัก = ได้เครดิต
+        // ภาษีใช้ใน ภ.ง.ด.50/51 → ลงทะเบียนให้เลย (ดู WHT_CREDIT_PLAN.md)
+        try
+        {
+            var ourTaxId = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
+            var weAreWithheld = Ocr.OcrDocumentRoleInferrer.InferWhtCertWeAreWithheld(
+                result.RawTextContent, ourTaxId);
+            if (weAreWithheld == true && (result.ExtractedTotalAmount ?? 0) > 0)
+            {
+                await EnsureWhtCreditFromCertAsync(companyId, result, document.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "บันทึกทะเบียนภาษีถูกหักจากหนังสือรับรองไม่สำเร็จ (scan {Id})", result.Id);
+        }
+
+        if (_rdComplianceValidator != null)
+        {
+            try
+            {
+                var ocrResultDto = MapToResponse(result);
+                await _rdComplianceValidator.EvaluateAndPersistAsync(
+                    companyId, document.Id, ocrResultDto, result.RawTextContent);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "RdComplianceValidator failed for document {DocId}", document.Id);
+            }
+        }
+
+        return MapToResponse(result);
+    }
+
+    /// <summary>ตรวจ RD compliance ซ้ำจากผลสแกนเดิม (ไม่ต้องสแกนใหม่)
+    ///
+    /// <para>ทำไมต้องมี: ผลตรวจถูก persist ลง <c>RdComplianceIssuesJson</c>
+    /// ตอนสแกน "ครั้งเดียว" — เมื่อ validator ฉลาดขึ้นภายหลัง (เช่น Rule 3
+    /// เปลี่ยนจากดูช่อง BuyerTaxId ว่าง → ค้นเลขบริษัทใน raw text ทั้งหน้า)
+    /// ใบที่สแกนไว้ก่อนหน้ายังโชว์คำเตือนเก่าตลอดไป ทั้งที่กระดาษครบจริง
+    /// (เคสจริง: ใบกำกับปั๊มน้ำมันมี TAX ID ผู้ซื้อบรรทัดล่างสุด OCR แยกช่อง
+    /// ไม่ได้ แต่เลขอยู่ใน raw text — ตรวจซ้ำแล้วหายเตือนเอง)</para></summary>
+    public async Task<(string Status, string IssuesJson)> RecheckRdComplianceAsync(
+        Guid companyId, Guid documentId)
+    {
+        if (_rdComplianceValidator == null)
+            throw new InvalidOperationException("ตัวตรวจความครบถ้วนตามกรมสรรพากรยังไม่ได้เปิดใช้งาน");
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
+            ?? throw new KeyNotFoundException(
+                "ไม่พบผลสแกน OCR ของเอกสารนี้ — ตรวจซ้ำได้เฉพาะเอกสารที่สร้างจากการสแกน");
+        var dto = MapToResponse(scan);
+        var status = await _rdComplianceValidator.EvaluateAndPersistAsync(
+            companyId, documentId, dto, scan.RawTextContent);
+        var issues = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => d.RdComplianceIssuesJson)
+            .FirstOrDefaultAsync();
+        _logger.LogInformation("ตรวจ RD compliance ซ้ำ doc {DocId} → {Status}", documentId, status);
+        return (status.ToString(), issues ?? "[]");
+    }
+
+    /// <summary>
+    /// **ตัวสร้าง DocumentLine จากผลสแกน — ตัวเดียวของทุกทางเข้า** (สร้างเอกสารจากสแกน ·
+    /// ดึงรายการซ้ำเข้าเอกสารว่าง). กระทบยอด Σ บรรทัด ↔ หัวใบผ่าน
+    /// <see cref="Accounting.Helpers.OcrLineReconciler"/> (ราคารวม VAT · ส่วนลดบนกระดาษ ·
+    /// บรรทัดขาด) · อัตรา VAT รายบรรทัด (<see cref="Accounting.Helpers.ThaiVatTypeRule"/>) ·
+    /// เฉลี่ย VAT/WHT ลงบรรทัดโดยเศษอยู่บรรทัดสุดท้าย · ผังบัญชี PO-line → SuggestedAccountCode →
+    /// ผังระดับสแกน · แนบ feedbackId ปิดลูปการสอน (กฎเหล็ก #1)
+    ///
+    /// <para>ตั้ง <c>document.PricesIncludeVat</c> เมื่อกระดาษพิมพ์ราคารวม VAT และเขียน
+    /// <c>result.ProcessingNotes</c> ([Σ]/[Σ-GAP]) — ผู้เรียกต้อง persist ทั้งคู่</para>
+    /// </summary>
+    private async Task BuildScanLinesAsync(
+        Guid companyId, OcrScanResult result, List<OcrExtractedLineItem> items, Document document,
+        Document? linkedPo, Dictionary<int, Guid?> poLineMap, Guid? scanDebitAccountId,
+        decimal headerSubTotal, decimal hdrDiscRaw, decimal whtRate, decimal headerWht, bool isSalesSide)
+    {
         if (items.Count > 0)
         {
             // 🔧 Reconcile line amounts — แยก 4 case (เลิกใส่ "ส่วนลด" มั่วๆ
@@ -5677,197 +5854,59 @@ public class OcrService : IOcrService
             });
         }
 
-        // เอกสารที่ scan ตรวจว่า "เคลมภาษีซื้อไม่ได้" ([VAT-CLAIM] เช่นใบกำกับ
-        // อย่างย่อ §82/5(2) / ใบเสร็จไม่ใช่ใบกำกับเต็มรูป §82/5(1)) — ต้องปิด
-        // เคลมที่ระดับบรรทัดด้วย: default IsVatClaimable=true จะพา VAT ไปพัก
-        // 11640 แล้วกล่องเติมใบกำกับชวนผู้ใช้กรอกเลขสลิป POS ดันเข้า 11610 =
-        // ทำผิดกฎหมายทั้งที่ตั้งใจดี. ปิดแล้ว VAT fold เข้าค่าใช้จ่ายตอน approve
-        // ตามที่กฎหมายกำหนดทันที
-        if (!isSalesSide && vatNotClaimable)
-        {
-            foreach (var dl in document.Lines)
-            {
-                dl.IsVatClaimable = false;
-                dl.VatNonClaimableReason ??=
-                    "เอกสารต้นทางเคลมภาษีซื้อไม่ได้ (ใบกำกับอย่างย่อ/ไม่ใช่ใบกำกับเต็มรูป §82/5) — ขอใบกำกับเต็มรูปจากผู้ขายหากต้องการเคลม";
-            }
-        }
-
-        // ── ธงผังบัญชีเป็นตัวปิดการเคลมภาษีซื้อ (T1-05) ───────────────────────
-        // เส้นคีย์มือผ่าน DocumentService บังคับข้อนี้มาตลอด แต่เส้น OCR สร้าง entity
-        // เองจึงข้ามไป ⇒ ใบเดียวกันได้คำตอบคนละอย่างตามทางที่เข้า. ตัวตัดสินอยู่ที่
-        // Helpers/InputVatAccountPolicy ตัวเดียว (pure + มีเทสต์)
-        if (!isSalesSide)
-        {
-            var lineAccountIds = document.Lines
-                .Where(l => l.AccountId.HasValue)
-                .Select(l => l.AccountId!.Value)
-                .Distinct()
-                .ToList();
-            if (lineAccountIds.Count > 0)
-            {
-                var flags = await _db.ChartOfAccounts.AsNoTracking()
-                    .Where(a => a.CompanyId == companyId && lineAccountIds.Contains(a.Id))
-                    .Select(a => new { a.Id, a.InputVatClaimable })
-                    .ToDictionaryAsync(x => x.Id, x => x.InputVatClaimable);
-                var forcedByChart = 0;
-                foreach (var dl in document.Lines)
-                {
-                    bool? acctClaimable = dl.AccountId.HasValue && flags.TryGetValue(dl.AccountId.Value, out var f)
-                        ? f : null;
-                    var outcome = Accounting.Helpers.InputVatAccountPolicy.Apply(
-                        dl.IsVatClaimable, dl.VatNonClaimableReason, acctClaimable);
-                    dl.IsVatClaimable = outcome.Claimable;
-                    dl.VatNonClaimableReason = outcome.Reason;
-                    if (outcome.Changed) forcedByChart++;
-                }
-                if (forcedByChart > 0)
-                    result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                        + $"\n[VAT-CLAIM] ผังบัญชีที่เลือกตั้งเป็นภาษีซื้อต้องห้าม — ปิดการเคลมให้ {forcedByChart} บรรทัด (§82/5)";
-            }
-        }
-
-        // ── ผู้ขายต่างประเทศ: ภาระ ภ.พ.36 (§83/6) + ภ.ง.ด.54 (§70) ──────────
-        // นักบัญชีเห็น invoice จาก AWS/Google/Adobe แล้วรู้ทันทีว่าต้อง (1) นำส่ง VAT 7%
-        // แทนผู้ขายด้วย ภ.พ.36 (แล้วเคลมเป็นภาษีซื้อเดือนถัดไป) (2) หัก ณ ที่จ่ายตาม
-        // ม.70 ถ้าเป็นค่าบริการ/ค่าสิทธิ — ระบบเดิม**ไม่เคยพูดถึงทั้งสองอย่าง**
-        // ⇒ ภาระหายทั้งก้อน (เบี้ยปรับ 2 เท่า + เงินเพิ่ม) · ผลตรวจ 2026-09-06 · T1-12
-        if (!isSalesSide
-            && Accounting.Helpers.ThaiVatTypeRule.LooksForeignVendor(null, result.ExtractedVendorTaxId)
-            && (result.ExtractedTotalAmount ?? 0m) > 0m)
-        {
-            var baseAmt = Math.Max(0m, (result.ExtractedTotalAmount ?? 0m) - (result.ExtractedVatAmount ?? 0m));
-            var pp36 = Math.Round(baseAmt * 0.07m, 2, MidpointRounding.AwayFromZero);
-            result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                + $"\n[PP36] ผู้ขายไม่มีเลขผู้เสียภาษีไทย — ถ้าเป็นบริการที่ใช้ในไทย ต้องนำส่ง VAT แทน "
-                + $"ผู้ประกอบการต่างประเทศด้วย ภ.พ.36 ≈ {pp36:N2} บาท (§83/6) ภายในวันที่ 7/15 ของเดือนถัดไป "
-                + "แล้วจึงเคลมเป็นภาษีซื้อในเดือนที่นำส่ง"
-                + $"\n[PND54] ค่าบริการ/ค่าสิทธิ/ดอกเบี้ยที่จ่ายออกต่างประเทศ ต้องหัก ณ ที่จ่ายตาม ม.70 "
-                + "(ทั่วไป 15% · เงินปันผล 10%) และยื่น ภ.ง.ด.54 — ตรวจอนุสัญญาภาษีซ้อน (DTA) ก่อนใช้อัตรา";
-        }
-
-        // ── สกุลเงินต่างประเทศต้องมีอัตราแลกเปลี่ยน (T1-05 · T1-12) ──────────
-        // `Currency` ถูกอ่านจากกระดาษมาตั้งแต่ต้น แต่ไม่เคยมีใครหา `ExchangeRate` ให้
-        // ⇒ ใบ USD ถูกบันทึกเป็นบาทเงียบ ๆ (ตัวเลขเท่าเดิม ความหมายผิดหลายสิบเท่า).
-        // ไม่รู้อัตรา = **บอกว่าไม่รู้** แล้วห้าม auto-approve — ห้ามแต่งอัตราให้เอง
-        if (!string.Equals(document.Currency, "THB", StringComparison.OrdinalIgnoreCase))
-        {
-            var fxRate = await ResolveScanExchangeRateAsync(document.Currency, document.DocumentDate);
-            if (fxRate is decimal fx && fx > 0m)
-            {
-                document.ExchangeRate = fx;
-                result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                    + $"\n[FX] {document.Currency} @ {fx:N4} (อัตรา ธปท. วันที่เอกสาร) — ตรวจสอบก่อนยืนยัน";
-            }
-            else
-            {
-                result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                    + $"\n[FX-UNKNOWN] เอกสารสกุล {document.Currency} แต่ยังไม่มีอัตราแลกเปลี่ยนของวันที่นี้ — "
-                    + "กรอกอัตราในใบก่อนอนุมัติ (ระบบไม่เดาอัตราให้)";
-            }
-        }
-
-        _db.Documents.Add(document);
-
-        result.CreatedDocumentId = document.Id;
-        result.MatchedContactId = contactId;
-
-        await _db.SaveChangesAsync();
-        await txn.CommitAsync();
-
-        // ★ CAPTURE ฝั่ง "ยอมรับ" (กฎเหล็ก #1 · ผลตรวจ 2026-09-05 T3-03): เส้น 1-click
-        // (สร้างจากการ์ด/สร้างทั้งชุด) ไม่ผ่าน SubmitCorrectionAsync ⇒ เดิมตัวอย่าง
-        // "ผู้ใช้รับตามที่เติม" หายหมด เหลือแต่ตัวอย่างที่แก้ = selection bias ให้นักเรียน
-        // (ผัง GL ปิดลูปที่ ApproveDocument อยู่แล้ว — ที่นี่ปิดชนิดเอกสาร + คู่ค้า)
-        if (_feedbackRecorder != null)
-        {
-            try
-            {
-                if (result.TargetDocTypeAiFeedbackId is Guid dtFid)
-                    await _feedbackRecorder.RecordUserChoiceAsync(dtFid, docType.ToString(),
-                        acceptedAi: string.Equals(result.TargetDocumentType, docType.ToString(), StringComparison.OrdinalIgnoreCase),
-                        CancellationToken.None);
-                if (result.AiSuggestionFeedbackId is Guid vFid && contactId is Guid chosenContact)
-                    await _feedbackRecorder.RecordUserChoiceAsync(vFid, chosenContact.ToString(),
-                        acceptedAi: result.AiSuggestedContactId == chosenContact,
-                        CancellationToken.None);
-            }
-            catch (Exception fx)
-            {
-                _logger.LogWarning(fx, "บันทึก feedback ฝั่งยอมรับตอนสร้างเอกสารจากสแกนไม่สำเร็จ (scan {Id})", result.Id);
-            }
-        }
-
-        // Re-link scanned file to the created document (orphan prevention)
-        await RelinkScanFileToDocumentAsync(companyId, result.FileAttachmentId, document.Id);
-
-        // Run RD-compliance + tenant-mismatch validation on the freshly
-        // created document (Task 5 of ERP upgrade). Failures don't roll
-        // back the document creation — they surface as
-        // Document.RdComplianceStatus badges + OcrValidationLog rows.
-        // ── หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่ "เราถูกหัก" ──────────────
-        // ทิศทางดูจากช่อง "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" vs "ผู้ถูกหักภาษี ณ ที่จ่าย"
-        // ว่าเลขผู้เสียภาษีของบริษัทเราอยู่ช่องไหน — เราอยู่ช่องผู้ถูกหัก = ได้เครดิต
-        // ภาษีใช้ใน ภ.ง.ด.50/51 → ลงทะเบียนให้เลย (ดู WHT_CREDIT_PLAN.md)
-        try
-        {
-            var ourTaxId = await _db.Companies.AsNoTracking()
-                .Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
-            var weAreWithheld = Ocr.OcrDocumentRoleInferrer.InferWhtCertWeAreWithheld(
-                result.RawTextContent, ourTaxId);
-            if (weAreWithheld == true && (result.ExtractedTotalAmount ?? 0) > 0)
-            {
-                await EnsureWhtCreditFromCertAsync(companyId, result, document.Id);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "บันทึกทะเบียนภาษีถูกหักจากหนังสือรับรองไม่สำเร็จ (scan {Id})", result.Id);
-        }
-
-        if (_rdComplianceValidator != null)
-        {
-            try
-            {
-                var ocrResultDto = MapToResponse(result);
-                await _rdComplianceValidator.EvaluateAndPersistAsync(
-                    companyId, document.Id, ocrResultDto, result.RawTextContent);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "RdComplianceValidator failed for document {DocId}", document.Id);
-            }
-        }
-
-        return MapToResponse(result);
     }
 
-    /// <summary>ตรวจ RD compliance ซ้ำจากผลสแกนเดิม (ไม่ต้องสแกนใหม่)
-    ///
-    /// <para>ทำไมต้องมี: ผลตรวจถูก persist ลง <c>RdComplianceIssuesJson</c>
-    /// ตอนสแกน "ครั้งเดียว" — เมื่อ validator ฉลาดขึ้นภายหลัง (เช่น Rule 3
-    /// เปลี่ยนจากดูช่อง BuyerTaxId ว่าง → ค้นเลขบริษัทใน raw text ทั้งหน้า)
-    /// ใบที่สแกนไว้ก่อนหน้ายังโชว์คำเตือนเก่าตลอดไป ทั้งที่กระดาษครบจริง
-    /// (เคสจริง: ใบกำกับปั๊มน้ำมันมี TAX ID ผู้ซื้อบรรทัดล่างสุด OCR แยกช่อง
-    /// ไม่ได้ แต่เลขอยู่ใน raw text — ตรวจซ้ำแล้วหายเตือนเอง)</para></summary>
-    public async Task<(string Status, string IssuesJson)> RecheckRdComplianceAsync(
-        Guid companyId, Guid documentId)
+    /// <summary>ยอดก่อน VAT ของหัวใบที่ใช้เป็นตัวตั้ง — ใช้ <c>ExtractedSubTotal</c> เฉพาะเมื่อ
+    /// ผูกกับยอดรวมได้ (รองรับ VAT-incl + ส่วนลดจริง) ไม่งั้นถอยจากยอดรวม (ตัวเลขเด่นที่
+    /// เชื่อถือได้สุด) เพื่อให้ subtotal/บรรทัด/ยอดรวมแตกกันไม่ได้ · สูตรเดียวทั้งสองทางเข้า</summary>
+    private static decimal ResolveHeaderSubTotal(OcrScanResult result, decimal hdrDiscRaw)
     {
-        if (_rdComplianceValidator == null)
-            throw new InvalidOperationException("ตัวตรวจความครบถ้วนตามกรมสรรพากรยังไม่ได้เปิดใช้งาน");
-        var scan = await _db.Set<OcrScanResult>()
-            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
-            ?? throw new KeyNotFoundException(
-                "ไม่พบผลสแกน OCR ของเอกสารนี้ — ตรวจซ้ำได้เฉพาะเอกสารที่สร้างจากการสแกน");
-        var dto = MapToResponse(scan);
-        var status = await _rdComplianceValidator.EvaluateAndPersistAsync(
-            companyId, documentId, dto, scan.RawTextContent);
-        var issues = await _db.Documents.AsNoTracking()
-            .Where(d => d.Id == documentId && d.CompanyId == companyId)
-            .Select(d => d.RdComplianceIssuesJson)
-            .FirstOrDefaultAsync();
-        _logger.LogInformation("ตรวจ RD compliance ซ้ำ doc {DocId} → {Status}", documentId, status);
-        return (status.ToString(), issues ?? "[]");
+        var hdrTotalRaw = result.ExtractedTotalAmount ?? 0;
+        var hdrVatRaw = result.ExtractedVatAmount ?? 0;
+        if (hdrTotalRaw <= 0) return result.ExtractedSubTotal ?? 0m;
+        var subFromTotal = Math.Max(0, hdrTotalRaw - hdrVatRaw);
+        var subTies = result.ExtractedSubTotal is > 0
+            && Math.Abs((result.ExtractedSubTotal!.Value + hdrVatRaw - hdrDiscRaw) - hdrTotalRaw) <= 1m;
+        return subTies ? result.ExtractedSubTotal!.Value : subFromTotal;
+    }
+
+    /// <summary>ผังเดบิตระดับสแกน (จาก SuggestedAccountsJson.DebitAccountCode) → Id ในผังของ
+    /// บริษัท — ใช้เป็น fallback ของบรรทัดที่ไม่มีผังของตัวเอง · ตัวเดียวทั้งสองทางเข้า</summary>
+    private async Task<Guid?> ResolveScanDebitAccountIdAsync(Guid companyId, OcrScanResult result)
+    {
+        if (string.IsNullOrWhiteSpace(result.SuggestedAccountsJson)) return null;
+        try
+        {
+            using var sa = System.Text.Json.JsonDocument.Parse(result.SuggestedAccountsJson);
+            if (sa.RootElement.TryGetProperty("DebitAccountCode", out var dac)
+                && dac.ValueKind == System.Text.Json.JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(dac.GetString()))
+            {
+                var code = dac.GetString();
+                return await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && a.AccountCode == code && !a.IsDeleted)
+                    .Select(a => (Guid?)a.Id)
+                    .FirstOrDefaultAsync();
+            }
+        }
+        catch { /* malformed suggestion JSON — line GL stays empty */ }
+        return null;
+    }
+
+    /// <summary>ป้ายยอดสลับ (SubTotal ↔ Total) ที่สแกน persist ไว้ — ซ่อมก่อนใช้สร้างบรรทัด
+    /// ตัวตัดสิน = <see cref="Accounting.Helpers.OcrHeaderAmounts"/> ตัวเดียว · ใช้ทั้งสองทางเข้า</summary>
+    private void NormalizeSwappedHeaderAmounts(OcrScanResult result)
+    {
+        if (!Accounting.Helpers.OcrHeaderAmounts.IsSwapped(
+                result.ExtractedSubTotal, result.ExtractedVatAmount, result.ExtractedTotalAmount))
+            return;
+        var subBefore = result.ExtractedSubTotal!.Value;
+        var totBefore = result.ExtractedTotalAmount!.Value;
+        (result.ExtractedSubTotal, result.ExtractedTotalAmount) = (result.ExtractedTotalAmount, result.ExtractedSubTotal);
+        result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n"
+            + Accounting.Helpers.OcrHeaderAmounts.SwapNote(subBefore, totBefore);
+        _logger.LogInformation("OCR scan {ScanId}: สลับป้าย SubTotal/Total กลับ ({Sub} ↔ {Tot})",
+            result.Id, subBefore, totBefore);
     }
 
     /// <summary>
@@ -5927,55 +5966,35 @@ public class OcrService : IOcrService
             items = tmpSan.Items.ToList();
         }
 
-        if (items.Count > 0)
-        {
-            int lineOrder = 1;
-            foreach (var item in items)
-            {
-                Guid? lineAccountId = null;
-                if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
-                {
-                    var lineAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
-                    lineAccountId = lineAccount?.Id;
-                }
-                document.Lines.Add(new DocumentLine
-                {
-                    LineOrder = lineOrder++,
-                    Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
-                    Quantity = item.Quantity ?? 1,
-                    Unit = UnitInferrer.Resolve(item.Unit, item.Description),
-                    UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
-                    Amount = item.Amount ?? 0,
-                    VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
-                    AccountId = lineAccountId,
-                    ProjectId = item.ProjectId,
-                });
-            }
-        }
-        else
-        {
-            document.Lines.Add(new DocumentLine
-            {
-                LineOrder = 1,
-                Description = result.DocumentType ?? "รายการจาก OCR",
-                Quantity = 1,
-                UnitPrice = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
-                Amount = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
-                VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
-                VatAmount = result.ExtractedVatAmount ?? 0,
-            });
-        }
+        // ★ ตัวสร้างบรรทัดตัวเดียวกับ CreateDocumentFromScanAsync — เดิมเส้นนี้เขียนบรรทัดเอง
+        // (UnitPrice = item.UnitPrice, VAT 7% ทั้งใบ, ไม่รู้จัก PricesIncludeVat/ส่วนลด/VAT
+        // รายบรรทัด/WHT) = สำเนาที่สองที่ให้คำตอบคนละแบบบนกระดาษใบเดียวกัน
+        NormalizeSwappedHeaderAmounts(result);
+        var hdrDiscRaw = result.ExtractedDiscountAmount ?? 0;
+        var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
+        var isSalesSide = Accounting.Helpers.DocumentSide.IsSales(document.DocumentType, result.OurRole);
+        var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
+        var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        var headerWht = whtRate > 0
+            ? Math.Round(whtBase * whtRate / 100m, 2, MidpointRounding.AwayFromZero)
+            : 0m;
+        var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(companyId, result);
+        await BuildScanLinesAsync(companyId, result, items, document, linkedPo: null,
+            poLineMap: new Dictionary<int, Guid?>(), scanDebitAccountId, headerSubTotal, hdrDiscRaw,
+            whtRate, headerWht, isSalesSide);
 
         // Recompute header totals from the rebuilt lines so the document is
         // self-consistent even before the user opens + saves it.
         var subTotal = document.Lines.Sum(l => l.Amount);
         var vat = document.Lines.Sum(l =>
-            l.VatAmount != 0 ? l.VatAmount : Math.Round(l.Amount * l.VatRate / 100m, 2));
+            l.VatAmount != 0 ? l.VatAmount : Math.Round(l.Amount * l.VatRate / 100m, 2, MidpointRounding.AwayFromZero));
+        var wht = document.Lines.Sum(l => l.WithholdingTaxAmount);
         document.SubTotal = subTotal;
         document.VatAmount = vat;
-        document.TotalAmount = subTotal + vat;
-        document.BalanceDue = subTotal + vat;
+        document.WithholdingTaxAmount = wht;
+        // convention เดียวกับ DocumentService: TotalAmount = Sub + VAT − WHT
+        document.TotalAmount = subTotal + vat - wht;
+        document.BalanceDue = subTotal + vat - wht;
         document.UpdatedAt = DateTime.UtcNow;
         document.UpdatedBy = performedBy;
 

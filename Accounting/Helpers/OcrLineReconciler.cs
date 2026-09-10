@@ -70,6 +70,13 @@ public static class OcrLineReconciler
         if (grossSum <= 0m || (headerSubTotal <= 0m && headerTotal <= 0m))
             return new(OcrLineReconcileCase.NoHeader, false, 0m, null, 0m, "");
 
+        // engine ติดป้าย SubTotal/Total สลับ (ลักกี้เวย์ 667 ↔ 623.36) — ถ้าไม่สลับกลับ
+        // Σ บรรทัด 667 จะ “ตรง SubTotal” แล้วตกเคส B ทั้งที่จริงคือเคส A (ราคารวม VAT)
+        // ตัวตัดสินอยู่ที่ OcrHeaderAmounts ตัวเดียว
+        var (nSub, _, nTot, _) = OcrHeaderAmounts.Normalize(headerSubTotal, headerVat, headerTotal);
+        headerSubTotal = nSub ?? headerSubTotal;
+        headerTotal = nTot ?? headerTotal;
+
         // (B) ราคาแยก VAT มาตรฐาน — Σ บรรทัดตรงยอดก่อน VAT
         if (headerSubTotal > 0m && Math.Abs(grossSum - headerSubTotal) <= Tolerance)
             return new(OcrLineReconcileCase.LinesMatchSubTotal, false, 0m, null, 0m, "");

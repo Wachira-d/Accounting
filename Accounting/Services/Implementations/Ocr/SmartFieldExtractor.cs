@@ -270,6 +270,30 @@ internal static class SmartFieldExtractor
         var bothDistinct = hasVendor && hasBuyer
             && data.VendorTaxId != data.BuyerTaxId
             && !NamesEqual(data.VendorName, data.BuyerName);
+
+        // ชื่อที่ engine ตัดสั้น (Azure คืน “แอม แฮปปี้” จากบรรทัด “หจก. แอม แฮปปี้เนส”) —
+        // ทุกตัวสำรองในเมธอดนี้เป็น “เติมเฉพาะช่องว่าง” จึงไม่มีใครซ่อม · ขยายด้วยบรรทัด
+        // เต็มจากกระดาษที่**ครอบ**ค่าเดิม ทำ**ทั้งสองฝั่ง** (คู่สมมาตร — แก้ฝั่งเดียวคือ
+        // เหลืออีกฝั่ง) · ตัวตัดสินอยู่ที่ Helpers/OcrPartyName
+        {
+            var paperNames = ExtractCompanyNames(text).Select(n => n.FullName).ToList();
+            var fullBuyer = Accounting.Helpers.OcrPartyName.ExpandTruncated(data.BuyerName, paperNames, data.VendorName);
+            if (fullBuyer != null)
+            {
+                data.ReasoningTrace.Add($"[Buyer] ขยายชื่อจากบรรทัดกระดาษ “{data.BuyerName}” → “{fullBuyer}”");
+                data.BuyerName = fullBuyer;
+                data.Note(Accounting.Helpers.OcrFieldKeys.BuyerName, fullBuyer, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.85m,
+                    "ชื่อเต็มบรรทัดบนกระดาษครอบชื่อที่ engine ตัดสั้น");
+            }
+            var fullVendor = Accounting.Helpers.OcrPartyName.ExpandTruncated(data.VendorName, paperNames, data.BuyerName);
+            if (fullVendor != null)
+            {
+                data.ReasoningTrace.Add($"[Vendor] ขยายชื่อจากบรรทัดกระดาษ “{data.VendorName}” → “{fullVendor}”");
+                data.VendorName = fullVendor;
+                data.Note(Accounting.Helpers.OcrFieldKeys.SellerName, fullVendor, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.85m,
+                    "ชื่อเต็มบรรทัดบนกระดาษครอบชื่อที่ engine ตัดสั้น");
+            }
+        }
         if (bothDistinct) return;
 
         // Find seller/buyer keyword positions in raw text
@@ -782,6 +806,20 @@ internal static class SmartFieldExtractor
     // "(Total)", ...) and survives Tesseract OCR errors in the labels.
     private static void TryExtractAmountsFromRawText(string text, OcrExtractedData data)
     {
+        // ป้ายสลับ (SubTotal ↔ Total) — ซ่อมก่อนทุกอย่าง ไม่งั้นด่านความสอดคล้องด้านล่าง
+        // ฟ้อง “ไม่ตรง” แล้วเดินต่อไปหาสามค่าใหม่ทั้งที่ค่าเดิมถูกอยู่แล้วแค่กลับด้าน
+        // (สแกนจริง 2026-09-10 · ลักกี้เวย์: 667/43.64/623.36) — ตัวตัดสินอยู่ที่
+        // Helpers/OcrHeaderAmounts ตัวเดียว
+        if (Accounting.Helpers.OcrHeaderAmounts.IsSwapped(data.SubTotal, data.VatAmount, data.TotalAmount))
+        {
+            var subBefore = data.SubTotal!.Value; var totBefore = data.TotalAmount!.Value;
+            (data.SubTotal, data.TotalAmount) = (data.TotalAmount, data.SubTotal);
+            // ค่าที่สลับมาไม่ใช่ค่าที่ engine ยืนยันเอง — ลดความมั่นใจให้ไฮไลต์ตรวจ (กฎเหล็ก #3 ข้อ 3)
+            data.FieldConfidence["SubTotal"] = Math.Min(data.FieldConfidence.GetValueOrDefault("SubTotal", 0.8), 0.80);
+            data.FieldConfidence["TotalAmount"] = Math.Min(data.FieldConfidence.GetValueOrDefault("TotalAmount", 0.8), 0.80);
+            data.ReasoningTrace.Add(Accounting.Helpers.OcrHeaderAmounts.SwapNote(subBefore, totBefore));
+        }
+
         // Pre-check: are existing values consistent with the 7% rule?
         // If yes, the OCR provider got it right — keep it.
         bool existingConsistent = false;
@@ -809,8 +847,20 @@ internal static class SmartFieldExtractor
         // กติกา: ถ้า engine อ่านยอดรวมมาแล้ว สามค่าใหม่ต้อง "ตกลง" กับยอดรวมนั้น
         // ถึงจะทับได้ — ไม่งั้นเติมเฉพาะช่องว่าง (partial fallback ข้างล่าง)
         var engineTotal = data.TotalAmount;
+        // “ตกลงกับ engine” = ยอดรวมของสามค่าตรงกับ**ค่าใดค่าหนึ่งที่ engine อ่านมาจริง**
+        // (Total หรือ SubTotal — กรณีป้ายสลับ) — ยังคงกันเคส Makro (951/49/1,000 ที่ 1,000
+        // เป็นเงินสดรับ ไม่ใช่ค่าที่ engine อ่านเป็นหัวใบ) เพราะ 1,000 ไม่ตรงทั้ง 1,049 และ 1,000?
+        // — ตรงกับ SubTotal 1,000 ของ Makro! จึงต้องเพิ่มเงื่อนไข: ยอมรับทาง SubTotal
+        // เฉพาะเมื่อสามค่าใหม่เป็น permutation ของค่า engine ทั้งสาม (ไม่มีตัวเลขใหม่)
+        var engineSub = data.SubTotal;
+        var engineVat = data.VatAmount;
+        bool Near(decimal? a, decimal? b) => a.HasValue && b.HasValue && Math.Abs(a.Value - b.Value) < 1m;
+        var isPermutationOfEngine = total.HasValue && sub.HasValue && vat.HasValue
+            && Near(vat, engineVat)
+            && ((Near(total, engineTotal) && Near(sub, engineSub)) || (Near(total, engineSub) && Near(sub, engineTotal)));
         var agreesWithEngineTotal = engineTotal is null or 0m
-            || (total.HasValue && Math.Abs(total.Value - engineTotal.Value) < 1m);
+            || (total.HasValue && Math.Abs(total.Value - engineTotal.Value) < 1m)
+            || isPermutationOfEngine;
         if (!agreesWithEngineTotal && total.HasValue)
             data.ReasoningTrace.Add(
                 $"[AmountTriple] สามค่าที่ลงตัว (Total={total:N2}) ไม่ตรงยอดรวมที่ engine อ่าน ({engineTotal:N2}) — ไม่ทับ");
