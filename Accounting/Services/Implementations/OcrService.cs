@@ -2374,6 +2374,12 @@ public class OcrService : IOcrService
                 }
             }
 
+            // ─── ใบต้นทางทุกชนิด (ทั่วไปกว่า PO ข้างบน) ───
+            // ผู้ใช้ 2026-09-10: "PO บุญทรัพย์ 599 อยู่ในระบบ พอ OCR ใบแจ้งหนี้ซื้อบุญทรัพย์ 599 เข้ามา
+            // ต้องผูกให้เลย · มีเลข PO ยิ่งชัวร์ · ครอบคลุมทุกประเภทเอกสาร" — บล็อก PO ข้างบนผูก
+            // เฉพาะเมื่อเลข PO พิมพ์บนกระดาษ; ตัวนี้เพิ่มเกณฑ์ยอดตรง + ฝั่งขาย + ทุกคู่ใน ValidConversions
+            await SuggestPredecessorLinkAsync(companyId, scanResult, extractedData, extractedText);
+
             // ─── Stock vs Expense suggestion (business-flow step) ───
             // Recommend which entry mode the operator should pick:
             //   "Stock"   — this vendor has product aliases on file (we've
@@ -4941,6 +4947,24 @@ public class OcrService : IOcrService
         // และให้คำตอบไม่ตรงกันบนเอกสารใบเดียว
         var isSalesSide = Accounting.Helpers.DocumentSide.IsSales(docType, result.OurRole);
 
+        // ─── ใบต้นทางทุกชนิด (Helpers/OcrPredecessorMatcher) ───
+        // ผูกไว้ตอนสแกน (อัตโนมัติ) หรือผู้ใช้เลือกใน review — เอกสารใหม่ต้องชี้กลับด้วย
+        // RelatedDocumentId เหมือนเส้น PO. ถ้าผู้ใช้เปลี่ยนชนิดเป้าหมายจนต้นทางไม่ใช่ชนิดที่
+        // แปลงมาเป็นเอกสารนี้ได้อีก → ไม่ผูก + บอกใน Notes (ห้ามผูกผิดคู่เงียบ ๆ)
+        Document? linkedPred = null;
+        if (linkedPo == null && result.LinkedPredecessorDocumentId.HasValue)
+        {
+            linkedPred = await _db.Documents.AsNoTracking()
+                .FirstOrDefaultAsync(d => d.Id == result.LinkedPredecessorDocumentId.Value
+                    && d.CompanyId == companyId && !d.IsDeleted);
+            if (linkedPred != null && !DocumentService.GetPredecessorTypes(docType).Contains(linkedPred.DocumentType))
+            {
+                result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                    + $"\n[LINK] ไม่ผูกกับ {linkedPred.DocumentNumber}: {linkedPred.DocumentType} ไม่ใช่ต้นทางของ {docType}";
+                linkedPred = null;
+            }
+        }
+
         // ── 50 ทวิ ที่ "เราถูกหัก" (ผลตรวจ 2026-09-05 T1-11) ─────────────────
         // กระดาษนี้เป็นหลักฐานเครดิตภาษีของใบขายที่ออกไปแล้ว ไม่ใช่ใบขายใบใหม่.
         // เดิม role inferrer ตั้ง target = ReceiptVoucher แล้วเส้นนี้สร้าง RV ที่ไม่มี
@@ -4948,7 +4972,7 @@ public class OcrService : IOcrService
         // Cr รายได้ + ภาษีขาย) ⇒ รายได้เบิ้ล + VAT ขายเบิ้ล + AR ไม่ถูกล้าง.
         // ทางที่ถูก: ลงทะเบียนเครดิตภาษี (WhtCreditReceived) อย่างเดียว แล้วให้ผู้ใช้
         // ผูกกับใบขาย/ใบเสร็จเดิม — ไม่แต่งเอกสารที่ไม่มีบนโลก
-        if (isSalesSide && linkedPo == null)
+        if (isSalesSide && linkedPo == null && linkedPred == null)
         {
             var ourTaxIdForCert = await _db.Companies.AsNoTracking()
                 .Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
@@ -4978,23 +5002,13 @@ public class OcrService : IOcrService
             // Counterparty = buyer on the paper. MatchedContactId points at the
             // vendor side, which on a sales doc is ourselves — never use it as
             // the primary pick here.
-            contactId = null;
+            // ใบต้นทางที่ผูกไว้รู้คู่ค้าอยู่แล้ว — ใช้ตัวนั้นก่อน (ไม่งั้น OCR อ่านชื่อผู้ซื้อเพี้ยน
+            // แล้วสร้างลูกค้าใหม่ ทั้งที่ใบเสนอราคาต้นทางชี้ลูกค้าเดิมชัด ๆ)
+            contactId = linkedPred?.ContactId;
             var buyerTax = result.BuyerTaxId;
             var buyerNm = result.BuyerName;
-            if (!string.IsNullOrWhiteSpace(buyerTax))
-            {
-                // normalize เลขภาษี (กันสร้างลูกค้าซ้ำจาก format ต่างกัน — เคสเดียว
-                // กับ vendor ฝั่งซื้อ)
-                var buyerTaxDigits = DocumentService.NormalizeTaxDigits(buyerTax);
-                contactId = (await _db.Contacts
-                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
-                        && c.TaxId != null && c.TaxId != "")
-                    .Select(c => new { c.Id, c.TaxId })
-                    .ToListAsync())
-                    .Where(c => DocumentService.NormalizeTaxDigits(c.TaxId) == buyerTaxDigits)
-                    .Select(c => (Guid?)c.Id)
-                    .FirstOrDefault();
-            }
+            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerTax))
+                contactId = await ResolveContactIdByTaxIdAsync(companyId, buyerTax);
             if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerNm))
                 contactId = await _db.Contacts
                     .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Name.Contains(buyerNm))
@@ -5317,10 +5331,12 @@ public class OcrService : IOcrService
                 result.UserNotes,
                 linkedPo != null
                     ? $"Created from OCR scan: {result.OriginalFileName} (รับตาม PO {linkedPo.DocumentNumber})"
-                    : $"Created from OCR scan: {result.OriginalFileName}",
+                    : linkedPred != null
+                        ? $"Created from OCR scan: {result.OriginalFileName} (อ้างอิง {linkedPred.DocumentNumber})"
+                        : $"Created from OCR scan: {result.OriginalFileName}",
             }.Where(s => !string.IsNullOrWhiteSpace(s))),
             // Linkback so the new PI's "อ้างอิงเอกสาร" surfaces the PO.
-            RelatedDocumentId = linkedPo?.Id,
+            RelatedDocumentId = linkedPo?.Id ?? linkedPred?.Id,
             // ใบรับรองแทนใบเสร็จ — legal fields the printed form requires.
             CertificateReason = docType == DocumentType.CertificateInLieu
                 ? "ผู้ขาย/ผู้รับเงินไม่สามารถออกใบเสร็จรับเงินได้" : null,
@@ -7516,6 +7532,11 @@ public class OcrService : IOcrService
             OpenPoNumbersJson: r.OpenPoNumbersJson,
             LinkedPurchaseOrderId: r.LinkedPurchaseOrderId,
             LinkedPurchaseOrderNumber: r.LinkedPurchaseOrderNumber,
+            LinkedPredecessorDocumentId: r.LinkedPredecessorDocumentId,
+            LinkedPredecessorNumber: r.LinkedPredecessorNumber,
+            LinkedPredecessorType: r.LinkedPredecessorType,
+            PredecessorLinkReason: r.PredecessorLinkReason,
+            PredecessorCandidatesJson: r.PredecessorCandidatesJson,
             ExtractedDiscountAmount: data?.DiscountAmount ?? r.ExtractedDiscountAmount,
             GlAccountUsedAi: r.GlAccountUsedAi,
             // ชื่อบัญชี — UI resolve เองจาก CoA ที่โหลดไว้ (MapToResponse sync,
@@ -8199,6 +8220,206 @@ public class OcrService : IOcrService
         scan.LinkedPurchaseOrderId = null;
         scan.LinkedPurchaseOrderNumber = null;
         scan.PoLineMappingsJson = null;
+        if (scan.LinkedPredecessorType == nameof(DocumentType.PurchaseOrder)) ClearPredecessorLink(scan);
+        await _db.SaveChangesAsync();
+        return MapToResponse(scan);
+    }
+
+    // ═══════════════ ใบต้นทางทุกชนิด (Helpers/OcrPredecessorMatcher) ═══════════════
+
+    /// <summary>คู่ค้าจากเลขผู้เสียภาษี (normalize ก่อนเทียบ — กันรูปแบบต่างกัน) — ใช้ทั้งเส้นสร้างเอกสาร
+    /// ฝั่งขายและตัวหาใบต้นทาง (เดิมเขียน query นี้ inline ในเส้นสร้างเอกสาร)</summary>
+    private async Task<Guid?> ResolveContactIdByTaxIdAsync(Guid companyId, string? taxId)
+    {
+        if (string.IsNullOrWhiteSpace(taxId)) return null;
+        var digits = DocumentService.NormalizeTaxDigits(taxId);
+        if (string.IsNullOrEmpty(digits)) return null;
+        return (await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.TaxId != null && c.TaxId != "")
+                .Select(c => new { c.Id, c.TaxId })
+                .ToListAsync())
+            .Where(c => DocumentService.NormalizeTaxDigits(c.TaxId) == digits)
+            .Select(c => (Guid?)c.Id)
+            .FirstOrDefault();
+    }
+
+    /// <summary>คำนวณผู้สมัคร "ใบต้นทาง" ของสแกนด้วยตัวตัดสินตัวเดียว — ใช้ทั้งตอนสแกนและ GET สด</summary>
+    private async Task<(Accounting.Helpers.PredecessorDecision Decision, List<Accounting.Helpers.PredecessorCandidate> Loaded)> ComputePredecessorDecisionAsync(
+        Guid companyId, OcrScanResult scan, string? rawText, IReadOnlyList<string> lineDescriptions)
+    {
+        var empty = (new Accounting.Helpers.PredecessorDecision(null, Array.Empty<Accounting.Helpers.RankedPredecessor>(), "ไม่มีชนิดต้นทางสำหรับเอกสารเป้าหมายนี้"), new List<Accounting.Helpers.PredecessorCandidate>());
+        var target = Accounting.Helpers.OcrTargetDocumentType.Resolve(
+            null, scan.TargetDocumentType, scan.DocumentType,
+            hasLinkedPurchaseOrder: scan.LinkedPurchaseOrderId.HasValue);
+        var predTypes = DocumentService.GetPredecessorTypes(target.Type).ToList();
+        if (predTypes.Count == 0) return empty;
+
+        var isSales = Accounting.Helpers.DocumentSide.IsSales(target.Type, scan.OurRole);
+        var contactId = isSales
+            ? await ResolveContactIdByTaxIdAsync(companyId, scan.BuyerTaxId)
+            : scan.MatchedContactId;
+        if (!contactId.HasValue)
+            return (new Accounting.Helpers.PredecessorDecision(null, Array.Empty<Accounting.Helpers.RankedPredecessor>(),
+                isSales ? "ยังไม่รู้ว่าผู้ซื้อบนกระดาษเป็นลูกค้ารายไหน" : "ยังไม่ได้จับคู่ผู้ขาย"), new List<Accounting.Helpers.PredecessorCandidate>());
+
+        // "เปิดอยู่" = ออกแล้วและยังไม่จบสาย — ร่าง/รออนุมัติยังไม่มีผลทางบัญชี · Paid = จบแล้ว
+        var cutoff = DateTime.UtcNow.AddMonths(-12);
+        var docs = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.ContactId == contactId.Value
+                && predTypes.Contains(d.DocumentType)
+                && d.Status != DocumentStatus.Draft
+                && d.Status != DocumentStatus.WaitingApproval
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Rejected
+                && d.Status != DocumentStatus.Paid
+                && d.DocumentDate >= cutoff)
+            .OrderByDescending(d => d.DocumentDate)
+            .Take(20)
+            .ToListAsync();
+        var loaded = docs.Select(d => new Accounting.Helpers.PredecessorCandidate(
+                d.Id, d.DocumentType, d.DocumentNumber, d.DocumentDate, d.TotalAmount, d.BalanceDue,
+                d.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).Select(l => l.Description ?? "").ToList()))
+            .ToList();
+        var facts = new Accounting.Helpers.PredecessorScanFacts(rawText ?? scan.RawTextContent, scan.ExtractedTotalAmount, scan.ExtractedSubTotal, lineDescriptions);
+        return (Accounting.Helpers.OcrPredecessorMatcher.Decide(facts, loaded), loaded);
+    }
+
+    private static List<PredecessorCandidateDto> ToCandidateDtos(IEnumerable<Accounting.Helpers.RankedPredecessor> ranked)
+        => ranked.Select(r => new PredecessorCandidateDto(
+            r.Candidate.Id, r.Candidate.Type.ToString(), r.Candidate.DocumentNumber, r.Candidate.DocumentDate,
+            r.Candidate.TotalAmount, r.Candidate.BalanceDue, r.Strength.ToString(), r.Score, r.Reason)).ToList();
+
+    private static IReadOnlyList<string> ScanLineDescriptions(OcrScanResult scan)
+    {
+        if (string.IsNullOrWhiteSpace(scan.ExtractedItemsJson)) return Array.Empty<string>();
+        try
+        {
+            return (System.Text.Json.JsonSerializer.Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new())
+                .Select(i => i.Description ?? "").ToList();
+        }
+        catch { return Array.Empty<string>(); }
+    }
+
+    private static void ApplyPredecessorLink(OcrScanResult scan, Accounting.Helpers.PredecessorCandidate c, string reason)
+    {
+        scan.LinkedPredecessorDocumentId = c.Id;
+        scan.LinkedPredecessorNumber = c.DocumentNumber;
+        scan.LinkedPredecessorType = c.Type.ToString();
+        scan.PredecessorLinkReason = reason;
+        if (c.Type == DocumentType.PurchaseOrder)
+        {
+            // เดินเส้น PO เดิมด้วย — สืบทอด GL รายบรรทัด + บังคับเป้าหมาย PurchaseInvoice
+            scan.LinkedPurchaseOrderId = c.Id;
+            scan.LinkedPurchaseOrderNumber = c.DocumentNumber;
+            scan.TargetDocumentType = nameof(DocumentType.PurchaseInvoice);
+        }
+    }
+
+    private static void ClearPredecessorLink(OcrScanResult scan)
+    {
+        scan.LinkedPredecessorDocumentId = null;
+        scan.LinkedPredecessorNumber = null;
+        scan.LinkedPredecessorType = null;
+        scan.PredecessorLinkReason = null;
+    }
+
+    /// <summary>ขั้นสแกน: หาใบต้นทาง → ผูกอัตโนมัติเมื่อชัด · เก็บผู้สมัครไว้ให้เลือก · ไม่ล้มการสแกน</summary>
+    private async Task SuggestPredecessorLinkAsync(Guid companyId, OcrScanResult scanResult, OcrExtractedData extractedData, string? extractedText)
+    {
+        try
+        {
+            var lines = extractedData.Items.Select(i => i.Description ?? "").ToList();
+            var (decision, loaded) = await ComputePredecessorDecisionAsync(companyId, scanResult, extractedText, lines);
+            if (loaded.Count == 0) return;
+            scanResult.PredecessorCandidatesJson = System.Text.Json.JsonSerializer.Serialize(ToCandidateDtos(decision.Candidates));
+            if (decision.AutoLink != null
+                && !scanResult.LinkedPredecessorDocumentId.HasValue
+                && !scanResult.LinkedPurchaseOrderId.HasValue)
+            {
+                ApplyPredecessorLink(scanResult, decision.AutoLink.Candidate, "auto: " + decision.AutoLink.Reason);
+            }
+            else if (decision.AutoLink != null && scanResult.LinkedPurchaseOrderId.HasValue
+                && !scanResult.LinkedPredecessorDocumentId.HasValue
+                && decision.AutoLink.Candidate.Id == scanResult.LinkedPurchaseOrderId.Value)
+            {
+                // บล็อก PO ข้างบนผูกใบเดียวกันไว้แล้ว — บันทึกในช่องทั่วไปให้หน้าเว็บเห็นเหตุผลเดียวกัน
+                ApplyPredecessorLink(scanResult, decision.AutoLink.Candidate, "auto: " + decision.AutoLink.Reason);
+            }
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[LINK] " + decision.Summary;
+            extractedData.ReasoningTrace.Add("[LINK] " + decision.Summary);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Predecessor-link check failed (non-fatal) for scan {ScanId}", scanResult.Id);
+        }
+    }
+
+    public async Task<List<PredecessorCandidateDto>> GetPredecessorCandidatesAsync(Guid companyId, Guid scanResultId)
+    {
+        var scan = await _db.Set<OcrScanResult>().AsNoTracking()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการสแกน");
+        var (decision, _) = await ComputePredecessorDecisionAsync(companyId, scan, scan.RawTextContent, ScanLineDescriptions(scan));
+        return ToCandidateDtos(decision.Candidates);
+    }
+
+    public async Task<OcrResultResponse> LinkPredecessorAsync(Guid companyId, Guid scanResultId,
+        LinkPredecessorRequest request, string performedBy)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการสแกน");
+        if (scan.CreatedDocumentId.HasValue)
+            throw new Accounting.Helpers.BusinessRuleException("เอกสารถูกสร้างจากสแกนนี้แล้ว — เปลี่ยนใบต้นทางที่ตัวเอกสารแทน");
+
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสารต้นทาง");
+
+        var target = Accounting.Helpers.OcrTargetDocumentType.Resolve(
+            null, scan.TargetDocumentType, scan.DocumentType, hasLinkedPurchaseOrder: false);
+        if (!DocumentService.GetPredecessorTypes(target.Type).Contains(doc.DocumentType))
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"{doc.DocumentType} ไม่ใช่เอกสารต้นทางของ {target.Type} — เปลี่ยนชนิดเอกสารเป้าหมายก่อน หรือเลือกใบชนิดอื่น");
+
+        // คู่ค้าต้องตรงกัน — กันผูกใบของคนอื่นด้วยการยิง id (ฝั่งซื้อเทียบผู้ขายที่จับคู่ ·
+        // ฝั่งขายเทียบลูกค้าจากเลขภาษีผู้ซื้อเมื่อรู้)
+        var isSales = Accounting.Helpers.DocumentSide.IsSales(target.Type, scan.OurRole);
+        var expected = isSales ? await ResolveContactIdByTaxIdAsync(companyId, scan.BuyerTaxId) : scan.MatchedContactId;
+        if (expected.HasValue && doc.ContactId != expected.Value)
+            throw new Accounting.Helpers.BusinessRuleException("เอกสารต้นทางนี้ไม่ใช่ของคู่ค้ารายเดียวกับกระดาษที่สแกน");
+
+        if (doc.DocumentType == DocumentType.PurchaseOrder)
+        {
+            // เดินเส้น PO เดิม (ตรวจสิทธิ์/สืบทอด GL/เรียนรู้ alias) แล้วค่อยประทับช่องทั่วไป
+            await LinkPurchaseOrderAsync(companyId, scanResultId, new LinkPurchaseOrderRequest(doc.Id, null), performedBy);
+            scan = await _db.Set<OcrScanResult>().FirstAsync(r => r.Id == scanResultId);
+        }
+        scan.LinkedPredecessorDocumentId = doc.Id;
+        scan.LinkedPredecessorNumber = doc.DocumentNumber;
+        scan.LinkedPredecessorType = doc.DocumentType.ToString();
+        scan.PredecessorLinkReason = "user";
+        scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + $"\n[LINK] ผู้ใช้ผูกกับ {doc.DocumentType} {doc.DocumentNumber}";
+        await _db.SaveChangesAsync();
+        return MapToResponse(scan);
+    }
+
+    public async Task<OcrResultResponse> UnlinkPredecessorAsync(Guid companyId, Guid scanResultId)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการสแกน");
+        if (scan.CreatedDocumentId.HasValue)
+            throw new Accounting.Helpers.BusinessRuleException("เอกสารถูกสร้างจากสแกนนี้แล้ว — แก้การอ้างอิงที่ตัวเอกสารแทน");
+        if (scan.LinkedPredecessorType == nameof(DocumentType.PurchaseOrder))
+        {
+            scan.LinkedPurchaseOrderId = null;
+            scan.LinkedPurchaseOrderNumber = null;
+            scan.PoLineMappingsJson = null;
+        }
+        ClearPredecessorLink(scan);
         await _db.SaveChangesAsync();
         return MapToResponse(scan);
     }

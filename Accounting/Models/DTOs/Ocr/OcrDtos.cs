@@ -137,7 +137,15 @@ public record OcrResultResponse(
     ///
     /// <para><c>null</c> = สแกนรุ่นก่อนมีระบบนี้ ⇒ หน้าเว็บต้อง<b>ไม่วาดอะไร</b>
     /// (ไม่ใช่วาดว่า "ไม่มีที่มา" ซึ่งเป็นคนละความหมาย)</para></summary>
-    string? FieldDecisionsJson = null);
+    string? FieldDecisionsJson = null,
+    // ─── ใบต้นทางทุกชนิด (Helpers/OcrPredecessorMatcher) ───
+    Guid? LinkedPredecessorDocumentId = null,
+    string? LinkedPredecessorNumber = null,
+    string? LinkedPredecessorType = null,
+    string? PredecessorLinkReason = null,
+    /// <summary>JSON ของ <c>List&lt;PredecessorCandidateDto&gt;</c> เรียงตามคะแนน — <c>null</c> = ยังไม่ได้วิเคราะห์
+    /// (สแกนรุ่นก่อน) · <c>[]</c> = วิเคราะห์แล้วไม่พบ · หน้าเว็บวาดปุ่ม "เลือกใบต้นทาง" เฉพาะเมื่อมีรายการ</summary>
+    string? PredecessorCandidatesJson = null);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);
@@ -185,6 +193,14 @@ public record OcrLinePreviewLineDto(
 public record LinkPurchaseOrderRequest(
     Guid PurchaseOrderId,
     Dictionary<int, Guid?>? LineMappings);
+
+/// <summary>เอกสารในระบบที่อาจเป็นใบต้นทางของสแกน — ผลจาก <c>Helpers/OcrPredecessorMatcher</c>
+/// (เซิร์ฟเวอร์ตัดสิน Strength/Reason · หน้าเว็บแสดงอย่างเดียว)</summary>
+public record PredecessorCandidateDto(
+    Guid DocumentId, string DocumentType, string DocumentNumber, DateTime DocumentDate,
+    decimal TotalAmount, decimal BalanceDue, string Strength, int Score, string Reason);
+
+public record LinkPredecessorRequest(Guid DocumentId);
 
 /// <param name="Reasons">เหตุผลว่าทำไมได้เกรดนี้ — <c>ScanQualityGrader</c>
 /// สร้างรายการนี้ให้ครบทุกครั้งอยู่แล้ว แต่ DTO เดิม<b>ทิ้งทั้งก้อน</b> ⇒

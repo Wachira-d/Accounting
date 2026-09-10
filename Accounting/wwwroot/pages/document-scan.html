@@ -1990,6 +1990,72 @@
         };
       },
 
+      // ============= ใบต้นทางทุกชนิด (ทั่วไปกว่า PO) =============
+      // รายการ/เหตุผล/ระดับความแน่นมาจาก GET predecessor-candidates (เซิร์ฟเวอร์คำนวณสด) —
+      // หน้านี้ไม่คำนวณความคล้ายเอง (สำเนามือของ OcrPredecessorMatcher จะ drift แน่นอน)
+      async openPredecessorPicker(scanId) {
+        const api = Layout.api(); if (!api) return;
+        let cands = [];
+        try { const res = await api.ocrPredecessorCandidates(scanId); cands = res?.data || res || []; }
+        catch (err) { Layout.toast('โหลดรายการเอกสารต้นทางไม่สำเร็จ: ' + err.message, 'error'); return; }
+        if (!cands.length) { Layout.toast('ไม่พบเอกสารต้นทางที่เกี่ยวข้องกับคู่ค้ารายนี้', 'error'); return; }
+        const strengthBadge = s => ({
+          ExplicitReference: '<span style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-size:11px">เลขที่บนกระดาษ</span>',
+          ExactTotal: '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:4px;font-size:11px">ยอดตรง</span>',
+          LineOverlap: '<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:11px">รายการคล้าย</span>',
+        })[s] || '';
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+        overlay.innerHTML = `
+          <div style="background:white;border-radius:12px;padding:20px;width:min(760px,95vw);max-height:85vh;overflow:auto;box-shadow:0 25px 50px rgba(0,0,0,.25)">
+            <h3 style="margin:0 0 6px 0;font-size:18px">🔗 เลือกเอกสารต้นทางที่กระดาษใบนี้ต่อเนื่องมา</h3>
+            <p style="margin:0 0 14px 0;font-size:13px;color:#6b7280">เอกสารที่สร้างจากสแกนจะอ้างอิงใบที่เลือก (ใบซื้อ→ปิด PO · ใบเสร็จ→ตัดลูกหนี้ของใบแจ้งหนี้) · เรียงจากที่ระบบมั่นใจที่สุด</p>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              ${cands.map((c, i) => `
+                <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;cursor:pointer">
+                  <input type="radio" name="predPick" value="${Layout.esc(c.documentId)}" data-type="${Layout.esc(c.documentType)}" ${i === 0 ? 'checked' : ''} style="margin-top:3px">
+                  <span style="flex:1">
+                    <div style="font-weight:600">${Layout.esc(Layout.docTypeLabel(c.documentType))} ${Layout.esc(c.documentNumber)} · ฿${Layout.money(c.totalAmount)}${c.balanceDue !== c.totalAmount ? ` (ค้าง ฿${Layout.money(c.balanceDue)})` : ''} ${strengthBadge(c.strength)}</div>
+                    <div style="font-size:12px;color:#6b7280">${Layout.esc(Layout.date(c.documentDate))} · ${Layout.esc(c.reason)}</div>
+                  </span>
+                </label>`).join('')}
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+              <button class="btn btn-outline" onclick="this.closest('div[style*=fixed]').remove()">ยกเลิก</button>
+              <button class="btn btn-primary" id="predPickerSaveBtn">ผูกกับใบนี้</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+        document.getElementById('predPickerSaveBtn').onclick = async () => {
+          const picked = overlay.querySelector('input[name="predPick"]:checked');
+          if (!picked) return;
+          if (picked.dataset.type === 'PurchaseOrder') {
+            // PO มีขั้นจับคู่รายบรรทัดของตัวเอง — ส่งต่อให้ตัวเลือก PO เดิม (ไม่ทำสำเนา)
+            overlay.remove();
+            this.openPoPicker(scanId);
+            return;
+          }
+          try {
+            await api.ocrLinkPredecessor(scanId, picked.value);
+            Layout.toast('ผูกกับเอกสารต้นทางแล้ว');
+            overlay.remove();
+            this.openReview(scanId);
+          } catch (err) {
+            Layout.toast('ผูกไม่สำเร็จ: ' + err.message, 'error');
+          }
+        };
+      },
+
+      async unlinkPredecessor(scanId) {
+        if (!confirm('ยกเลิกการผูกกับเอกสารต้นทาง? เอกสารที่สร้างจากสแกนนี้จะไม่อ้างอิงใบเดิม')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.ocrUnlinkPredecessor(scanId);
+          Layout.toast('ยกเลิกการผูกแล้ว');
+          this.openReview(scanId);
+        } catch (err) { Layout.toast('ยกเลิกไม่สำเร็จ: ' + err.message, 'error'); }
+      },
+
       async unlinkPo(scanId) {
         if (!confirm('ยกเลิกการผูกกับใบสั่งซื้อ?')) return;
         const api = Layout.api(); if (!api) return;
@@ -2362,6 +2428,30 @@
                     <button class="btn btn-sm btn-primary" onclick="Page.openPoPicker('${Layout.jsArg(scan.id)}')" style="white-space:nowrap">🔗 ผูกกับ PO</button>
                   </div>`;
                 } catch { return ''; }
+              })()}
+              ${(() => {
+                // ใบต้นทางทุกชนิด (เซิร์ฟเวอร์ตัดสินด้วย OcrPredecessorMatcher — หน้านี้แสดงอย่างเดียว)
+                // PO ที่ผูกแล้วมีแถบของตัวเองข้างบน จึงวาดเฉพาะชนิดอื่น / ผู้สมัครที่ยังไม่ผูก
+                if (scan.linkedPredecessorDocumentId && !scan.linkedPurchaseOrderId) {
+                  const reason = (scan.predecessorLinkReason || '').replace(/^auto:\s*/, '');
+                  return `<div style="margin:8px 0;padding:10px 14px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;color:#065f46;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                    <span>🔗 <strong>ต่อเนื่องจาก ${Layout.esc(Layout.docTypeLabel(scan.linkedPredecessorType))} ${Layout.esc(scan.linkedPredecessorNumber || '')}</strong>${reason ? ' — ' + Layout.esc(reason) : ''} · เอกสารที่สร้างจะอ้างอิงใบนี้
+                      <a href="/pages/documents.html?openDoc=${encodeURIComponent(scan.linkedPredecessorDocumentId)}" target="_blank" style="color:#065f46;text-decoration:underline;margin-left:6px">เปิดใบต้นทาง</a></span>
+                    <span style="display:flex;gap:6px">
+                      <button class="btn btn-sm btn-outline" onclick="Page.openPredecessorPicker('${Layout.jsArg(scan.id)}')" style="border-color:#059669;color:#065f46">เลือกใบอื่น</button>
+                      <button class="btn btn-sm btn-outline" onclick="Page.unlinkPredecessor('${Layout.jsArg(scan.id)}')" style="border-color:#059669;color:#065f46">ยกเลิกการผูก</button>
+                    </span>
+                  </div>`;
+                }
+                if (scan.linkedPurchaseOrderId || scan.linkedPredecessorDocumentId) return '';
+                let cands = [];
+                try { cands = scan.predecessorCandidatesJson ? JSON.parse(scan.predecessorCandidatesJson) : []; } catch { cands = []; }
+                if (!cands.length) return '';
+                const top = cands[0];
+                return `<div style="margin:8px 0;padding:8px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;font-size:13px;color:#9a3412;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span>🧩 <strong>พบเอกสารต้นทางที่อาจตรงกัน ${cands.length} ใบ</strong> — ใกล้ที่สุด: ${Layout.esc(Layout.docTypeLabel(top.documentType))} ${Layout.esc(top.documentNumber)} ฿${Layout.money(top.totalAmount)} (${Layout.esc(top.reason)})</span>
+                  <button class="btn btn-sm btn-primary" onclick="Page.openPredecessorPicker('${Layout.jsArg(scan.id)}')" style="white-space:nowrap">🔗 เลือกใบที่จะผูก</button>
+                </div>`;
               })()}
               <div class="review-field">
                 <label>ชื่อผู้ขาย</label>

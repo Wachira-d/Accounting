@@ -480,6 +480,26 @@ public class OcrController : ControllerBase
             await _service.UnlinkPurchaseOrderAsync(companyId, scanId),
             "ยกเลิกการผูก PO แล้ว"));
 
+    /// <summary>ใบต้นทางทุกชนิดที่อาจตรงกับสแกน (PO/GRN · ใบเสนอราคา/ใบวางบิล/ใบส่งของ · ใบแจ้งหนี้/ใบกำกับ)
+    /// — เซิร์ฟเวอร์ให้เหตุผลและระดับความแน่นมาแล้ว หน้าเว็บแสดงอย่างเดียว</summary>
+    [HttpGet("{scanId:guid}/predecessor-candidates")]
+    public async Task<ActionResult<ApiResponse<List<PredecessorCandidateDto>>>> PredecessorCandidates(Guid companyId, Guid scanId)
+        => Ok(new ApiResponse<List<PredecessorCandidateDto>>(true,
+            await _service.GetPredecessorCandidatesAsync(companyId, scanId)));
+
+    [HttpPost("{scanId:guid}/link-predecessor")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> LinkPredecessor(
+        Guid companyId, Guid scanId, [FromBody] LinkPredecessorRequest request)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.LinkPredecessorAsync(companyId, scanId, request, User.Identity?.Name ?? "ocr-link"),
+            "ผูกกับเอกสารต้นทางแล้ว"));
+
+    [HttpDelete("{scanId:guid}/link-predecessor")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> UnlinkPredecessor(Guid companyId, Guid scanId)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.UnlinkPredecessorAsync(companyId, scanId),
+            "ยกเลิกการผูกเอกสารต้นทางแล้ว"));
+
     public sealed record SetLineProjectRequest(int LineIndex, Guid? ProjectId, string? ProjectName);
 
     /// <summary>Assign / clear a project on one OCR-extracted line.

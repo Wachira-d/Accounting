@@ -118,6 +118,16 @@ public interface IOcrService
     /// re-pick or fall back to a plain expense.</summary>
     Task<OcrResultResponse> UnlinkPurchaseOrderAsync(Guid companyId, Guid scanResultId);
 
+    /// <summary>ใบต้นทางที่อาจตรงกับสแกน (ทุกชนิดเอกสาร) — คำนวณสดจาก <c>Helpers/OcrPredecessorMatcher</c>
+    /// เรียงตามคะแนน; ว่าง = ไม่มีอะไรเกี่ยว</summary>
+    Task<List<PredecessorCandidateDto>> GetPredecessorCandidatesAsync(Guid companyId, Guid scanResultId);
+
+    /// <summary>ผูกสแกนกับใบต้นทางที่ผู้ใช้เลือก — ต้องเป็นชนิดที่แปลงมาเป็นเอกสารเป้าหมายได้
+    /// และเป็นคู่ค้ารายเดียวกัน; ต้นทางเป็น PO จะเดินเส้น <see cref="LinkPurchaseOrderAsync"/> ด้วย</summary>
+    Task<OcrResultResponse> LinkPredecessorAsync(Guid companyId, Guid scanResultId, LinkPredecessorRequest request, string performedBy);
+
+    Task<OcrResultResponse> UnlinkPredecessorAsync(Guid companyId, Guid scanResultId);
+
     Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction);
     Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false, string? reason = null, Guid? performedByUserId = null);
     Task<object> RegisterAssetFromScanAsync(Guid companyId, Guid scanResultId,

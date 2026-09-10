@@ -966,6 +966,9 @@ const API = {
       ocrOpenPos: (scanId) => API.get(`${base}/ocr/${scanId}/open-pos`),
       ocrLinkPo: (scanId, data) => API.post(`${base}/ocr/${scanId}/link-po`, data),
       ocrUnlinkPo: (scanId) => API.del(`${base}/ocr/${scanId}/link-po`),
+      ocrPredecessorCandidates: (scanId) => API.get(`${base}/ocr/${scanId}/predecessor-candidates`),
+      ocrLinkPredecessor: (scanId, documentId) => API.post(`${base}/ocr/${scanId}/link-predecessor`, { documentId }),
+      ocrUnlinkPredecessor: (scanId) => API.del(`${base}/ocr/${scanId}/link-predecessor`),
       // Webhooks
       getWebhooks: () => API.get(`${base}/webhooks`),
       createWebhook: (d) => API.post(`${base}/webhooks`, d),

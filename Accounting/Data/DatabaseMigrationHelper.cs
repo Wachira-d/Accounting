@@ -1975,6 +1975,22 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PoLineMappingsJson" text NULL;
             """,
+            // ใบต้นทางทุกชนิด (ทั่วไปกว่า PO) — Helpers/OcrPredecessorMatcher
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LinkedPredecessorDocumentId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LinkedPredecessorNumber" varchar(50) NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LinkedPredecessorType" varchar(40) NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PredecessorLinkReason" text NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PredecessorCandidatesJson" text NULL;
+            """,
             // Header discount read off the paper (raw-text enrichment).
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExtractedDiscountAmount" numeric(18,2) NULL;

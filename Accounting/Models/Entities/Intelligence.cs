@@ -171,6 +171,17 @@ public class OcrScanResult : TenantEntity
     /// learning on document creation.</summary>
     public string? PoLineMappingsJson { get; set; }
 
+    // ─── ใบต้นทางทุกชนิด (2026-09-10 — ทั่วไปกว่า PO) ───
+    // ผลของ Helpers/OcrPredecessorMatcher: เอกสารในระบบที่สแกนใบนี้ "ต่อเนื่อง" มา (PO/GRN →
+    // ใบซื้อ · ใบเสนอราคา/ใบวางบิล/ใบส่งของ → ใบแจ้งหนี้ · ใบแจ้งหนี้/ใบกำกับ → ใบเสร็จ ฯลฯ)
+    // ผูกอัตโนมัติเมื่อชัด (เลขที่บนกระดาษ / ยอดตรงใบเดียว) ไม่งั้นเก็บผู้สมัครไว้ให้คนเลือก.
+    // เมื่อต้นทางเป็น PO จะตั้ง LinkedPurchaseOrderId ด้วย (เส้นสืบทอด GL รายบรรทัดเดิม)
+    public Guid? LinkedPredecessorDocumentId { get; set; }
+    public string? LinkedPredecessorNumber { get; set; }
+    public string? LinkedPredecessorType { get; set; }        // enum-string DocumentType
+    public string? PredecessorLinkReason { get; set; }        // "auto: …" / "user"
+    public string? PredecessorCandidatesJson { get; set; }    // List<PredecessorCandidateDto>
+
     /// <summary>Structured metadata an external system (e.g. a project /
     /// materials-ordering system) sends ALONGSIDE the uploaded document.
     /// Lists each ordered item with its originating project/order so we can

@@ -85,6 +85,21 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Flow**: อัปโหลด → OCR เก็บ `OcrScanResult` → review modal → "สร้างเอกสาร"
 - **Endpoint**: `POST /api/companies/{id}/ocr/{scanId}/create-document`
   (`?targetType=` เลือกชนิด · `?approve=true` = **สร้าง + อนุมัติทันที**)
+- **ผูกใบต้นทางทุกชนิด (2026-09-10 · `Helpers/OcrPredecessorMatcher`)** — ตอนสแกนเสร็จ
+  `SuggestPredecessorLinkAsync` หา "เอกสารเปิดอยู่ของคู่ค้าเดียวกัน" ที่มีชนิดอยู่ใน
+  `DocumentService.GetPredecessorTypes(target)` (ด้านกลับของ `ValidConversions` — PO/GRN → ใบซื้อ ·
+  ใบเสนอราคา/ใบวางบิล/ใบส่งของ → ใบแจ้งหนี้ · ใบแจ้งหนี้/ใบกำกับ → ใบเสร็จ ฯลฯ; ฝั่งขายหาลูกค้าจาก
+  `BuyerTaxId`) แล้วตัดสินด้วยตัวเดียว: **เลขที่เดิมพิมพ์บนกระดาษ** (ใบเดียว ⇒ ผูกอัตโนมัติ · หลายใบ
+  ⇒ ให้เลือก) → **ยอดรวมตรง ±1 บาท** กับ Total หรือยอดค้าง (ใบเดียว ⇒ ผูกอัตโนมัติ · หลายใบ ⇒ ให้เลือก
+  ห้ามเดา) → **รายการคล้าย** (เสนอเท่านั้น). ผลลง `OcrScanResult.LinkedPredecessor*` +
+  `PredecessorCandidatesJson` (เซิร์ฟเวอร์ให้ Strength/Reason — หน้าเว็บแสดงอย่างเดียว) · ต้นทางเป็น PO
+  ⇒ ตั้ง `LinkedPurchaseOrderId` ด้วย (เส้นสืบทอด GL รายบรรทัดเดิม). ตอน `CreateDocumentFromScanAsync`
+  เอกสารใหม่ได้ `RelatedDocumentId = linkedPo ?? linkedPred` (ฝั่งขายใช้ `ContactId` ของใบต้นทางก่อน
+  อ่านชื่อผู้ซื้อจากกระดาษ) · ถ้าผู้ใช้เปลี่ยนชนิดเป้าหมายจนต้นทางไม่ใช่ชนิดที่แปลงมาได้ → ไม่ผูก +
+  `[LINK]` ใน Notes (ไม่ผูกผิดคู่เงียบ). Endpoint: `GET {scanId}/predecessor-candidates` (คำนวณสด) ·
+  `POST/DELETE {scanId}/link-predecessor` (ตรวจชนิด + คู่ค้าเดียวกัน · PO เดินผ่าน `link-po` เดิม).
+  เดิมมีแค่ PO→ใบซื้อ และผูกอัตโนมัติเฉพาะเมื่อเลข PO อยู่บนกระดาษ (ผู้ใช้: "PO บุญทรัพย์ 599 กับ
+  ใบแจ้งหนี้ 599 ต้องผูกให้เอง")
 - **ทางออกจาก review modal 4 ทาง**: `📝 ยืนยันในฟอร์ม` (แนะนำ — ผ่าน
   sessionStorage handoff เข้า `documents.html`) · `สร้างทันที` (Draft) ·
   `⚡ สร้าง + อนุมัติ` · `🧾 JE เท่านั้น`. ทุกทางที่สร้างสำเร็จ **ปิด modal +

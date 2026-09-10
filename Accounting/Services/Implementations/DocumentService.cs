@@ -8982,6 +8982,12 @@ public partial class DocumentService : IDocumentService
     public static IReadOnlyList<DocumentType> GetValidConversionTargets(DocumentType source) =>
         ValidConversions.TryGetValue(source, out var targets) ? targets : Array.Empty<DocumentType>();
 
+    /// <summary>ด้านกลับของ <see cref="ValidConversions"/>: เอกสารชนิดไหน "แปลงมาเป็น" <paramref name="target"/> ได้
+    /// — คือชนิดที่สแกนใบใหม่ควรไปหา "ใบต้นทาง" ในระบบ (PO/GRN ของใบซื้อ · ใบเสนอราคา/ใบวางบิล/ใบส่งของ
+    /// ของใบแจ้งหนี้ · ใบแจ้งหนี้/ใบกำกับของใบเสร็จ ฯลฯ). คำนวณจากตารางเดียว ไม่พิมพ์ซ้ำ</summary>
+    public static IReadOnlyList<DocumentType> GetPredecessorTypes(DocumentType target) =>
+        ValidConversions.Where(kv => kv.Value.Contains(target)).Select(kv => kv.Key).Distinct().ToList();
+
     /// <summary>เกณฑ์รับรู้ WHT เป็นแบบ Cash หรือไม่ (ค่าเริ่มต้นของระบบ = Cash)
     ///
     /// <para>Cash = ใบแจ้งหนี้ตั้งลูกหนี้ไว้ <b>gross</b> (ยังไม่แตะ 11910) แล้วรับรู้
